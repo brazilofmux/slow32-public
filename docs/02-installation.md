@@ -17,57 +17,58 @@ The SLOW-32 toolchain consists of these essential tools:
 
 ## Building from Source
 
-### Quick Build
+### Option 1: Download Pre-built Binaries (Recommended)
 
 ```bash
-# Clone the repository
-git clone https://github.com/brazilofmux/slow32-public.git
-cd slow32-public
+# Download the latest release
+wget https://github.com/brazilofmux/slow32-public/releases/latest/download/slow32-tools-linux-x86_64.tar.gz
 
-# Build all tools
-cd tools
-make
-cd ..
+# Extract to your preferred location
+mkdir -p $HOME/slow32-tools
+tar -xzf slow32-tools-linux-x86_64.tar.gz -C $HOME/slow32-tools
 
-# Tools are now in their respective directories:
-# tools/assembler/slow32asm
-# tools/linker/s32-ld
-# tools/emulator/slow32
-# tools/emulator/slow32-fast
-# tools/utilities/slow32dis
-# tools/utilities/s32-objdump
-# tools/utilities/s32-exedump
+# Set up environment
+export SLOW32_HOME=$HOME/slow32-tools
+export PATH=$SLOW32_HOME/bin:$PATH
 
-# Build runtime libraries (for C programs)
-cd runtime
-for f in *.s; do
-    ../tools/assembler/slow32asm -o ${f%.s}.s32o $f
-done
-cd ..
+# Verify installation
+slow32asm --version
 ```
 
-### Installation to System
+### Option 2: Build from Source
 
 ```bash
-# Optional: Install to a standard location
-INSTALL_DIR=$HOME/slow32-tools
-mkdir -p $INSTALL_DIR/bin
+# Clone the toolchain repository (private - requires access)
+git clone https://github.com/brazilofmux/slow32-tools.git $HOME/slow32-tools
+cd $HOME/slow32-tools
 
-# Copy executables
-cp tools/assembler/slow32asm $INSTALL_DIR/bin/
-cp tools/linker/s32-ld $INSTALL_DIR/bin/
-cp tools/emulator/slow32 $INSTALL_DIR/bin/
-cp tools/emulator/slow32-fast $INSTALL_DIR/bin/
-cp tools/utilities/slow32dis $INSTALL_DIR/bin/
-cp tools/utilities/s32-objdump $INSTALL_DIR/bin/
-cp tools/utilities/s32-exedump $INSTALL_DIR/bin/
+# Build all tools
+make
 
-# Add to PATH
+# Set up environment
+export SLOW32_HOME=$HOME/slow32-tools
+export PATH=$SLOW32_HOME/bin:$PATH
+
+# Tools are now in:
+# $SLOW32_HOME/bin/slow32asm      - Assembler
+# $SLOW32_HOME/bin/s32-ld         - Linker
+# $SLOW32_HOME/bin/slow32         - Reference emulator
+# $SLOW32_HOME/bin/slow32-fast    - Fast emulator
+# $SLOW32_HOME/bin/slow32dis      - Disassembler
+# $SLOW32_HOME/bin/s32-objdump    - Object file analyzer
+# $SLOW32_HOME/bin/s32-exedump    - Executable analyzer
+# $SLOW32_HOME/lib/*.s32o         - Runtime libraries
+```
+
+### Setting Up Your Environment
+
+```bash
+# Add to ~/.bashrc or ~/.zshrc
 echo 'export SLOW32_HOME=$HOME/slow32-tools' >> ~/.bashrc
 echo 'export PATH=$SLOW32_HOME/bin:$PATH' >> ~/.bashrc
 source ~/.bashrc
 
-# 3. Verify installation
+# Verify installation
 slow32asm --version
 slow32 --help
 ```
@@ -199,12 +200,20 @@ s32-exedump program.s32x
 
 For C/C++ compilation support, you'll need to build LLVM with the SLOW-32 backend.
 
-### Building LLVM with SLOW-32
-See [LLVM Backend Guide](35-llvm-backend.md) for detailed instructions on:
-- Cloning LLVM source
-- Adding the SLOW-32 backend
-- Applying integration patches
-- Building LLVM with SLOW-32 support
+### Getting the Backend
+
+The SLOW-32 backend for LLVM is distributed separately:
+
+```bash
+# Download backend patches from releases
+wget https://github.com/brazilofmux/slow32-public/releases/latest/download/slow32-llvm-backend.tar.gz
+
+# Follow the instructions in the archive
+tar -xzf slow32-llvm-backend.tar.gz
+cat slow32-llvm-backend/README.txt
+```
+
+See [LLVM Backend Guide](35-llvm-backend.md) for detailed build instructions.
 
 ## Environment Setup
 
@@ -317,11 +326,14 @@ make test
 
 ## Getting Binaries
 
-Since the implementation is currently private, binaries will be distributed through:
+Binaries are distributed through:
 
-1. **GitHub Releases** - Check the releases page of this repository
-2. **Direct Download** - Links will be provided when available
-3. **Build Service** - A build service may be provided in the future
+1. **GitHub Releases** - https://github.com/brazilofmux/slow32-public/releases
+2. **Platform Support**:
+   - Linux x86_64 (Ubuntu 20.04+, Debian 11+)
+   - macOS (planned)
+   - Windows WSL2 (use Linux binaries)
+3. **Source Code** - Private repository (contact for access)
 
 ## Support
 

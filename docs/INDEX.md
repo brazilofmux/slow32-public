@@ -15,11 +15,16 @@
 - [Architecture Rationale](05-architecture-rationale.md) - Why SLOW-32 exists
 - [Overview](00-overview.md) - Philosophy and goals
 - [Programmer's Guide](20-programmers-guide.md) - How to write SLOW-32 code
+- [ABI Reference](21-abi-reference.md) - Calling conventions and register usage
 - [Instruction Set](25-instruction-set.md) - Complete ISA reference
+- [Relocations](26-relocations.md) - Relocation types and usage
 
 ### 🔧 Toolchain
 - [Toolchain Overview](15-toolchain-overview.md) - All tools explained
+- [Object Format](30-object-format.md) - Binary file formats (.s32o, .s32x)
 - [LLVM Backend](35-llvm-backend.md) - C/C++ compilation
+- [Emulators](40-emulators.md) - Reference and fast emulators
+- [I/O and Host](50-io-and-host.md) - Input/output interfaces
 
 ### 📊 Technical Details
 - [Known Limitations](91-known-limitations.md) - Current constraints
@@ -47,7 +52,8 @@
 1. Understand [Object Format](30-object-format.md) - Binary layout
 2. Master [Toolchain Overview](15-toolchain-overview.md) - Tool capabilities
 3. Explore [Emulators](40-emulators.md) - Execution model
-4. Review [Performance](60-performance.md) - Optimization strategies
+4. Study [I/O and Host](50-io-and-host.md) - System interfaces
+5. Review [ABI Reference](21-abi-reference.md) - Low-level conventions
 
 ## Document Conventions
 

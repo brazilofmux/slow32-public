@@ -23,27 +23,31 @@ The SLOW-32 backend is implemented as an experimental LLVM target, providing:
 
 ### Build Steps
 
+**Note:** The SLOW-32 backend source is not included in the public repository. It is distributed separately through GitHub releases.
+
 ```bash
-# Clone standard LLVM (no SLOW32 yet)
+# Clone standard LLVM
 git clone https://github.com/llvm/llvm-project.git ~/llvm-project
 cd ~/llvm-project
 
-# Clone this repository to get SLOW32 backend
-git clone https://github.com/brazilofmux/slow32-public.git ~/slow32-public
+# Download the SLOW-32 backend distribution
+wget https://github.com/brazilofmux/slow32-public/releases/latest/download/slow32-llvm-backend.tar.gz
+tar -xzf slow32-llvm-backend.tar.gz
 
-# Copy SLOW32 backend to LLVM
-cp -r ~/slow32-public/llvm-backend/SLOW32 llvm/lib/Target/
+# The archive contains:
+# - SLOW32/ directory (backend source)
+# - patches/ directory (integration patches)
+# - apply-backend.sh (installation script)
+# - README.txt (detailed instructions)
 
-# Apply integration patches
-cd ~/llvm-project
-patch -p1 < ~/slow32-public/llvm-backend/patches/llvm-integration.patch
-patch -p1 < ~/slow32-public/llvm-backend/patches/clang-integration.patch
+# Apply the backend to LLVM
+./slow32-llvm-backend/apply-backend.sh
 
-# Copy Clang support files
-cp ~/slow32-public/llvm-backend/clang-support/SLOW32.h \
-   clang/lib/Basic/Targets/
-cp ~/slow32-public/llvm-backend/clang-support/SLOW32.cpp \
-   clang/lib/Basic/Targets/
+# This script will:
+# 1. Copy SLOW32 backend to llvm/lib/Target/
+# 2. Apply LLVM integration patches
+# 3. Apply Clang integration patches
+# 4. Add SLOW32 to build configuration
 
 # Create build directory
 mkdir build && cd build
@@ -95,15 +99,25 @@ llc -mtriple=slow32-unknown-none program.ll -o program.s
 
 The SLOW-32 target uses this data layout string:
 ```
-e-m:e-p:32:32-i32:32-i64:32-f32:32-f64:32-v64:32-v128:32-a:0:32-n32-S32
+e-m:e-p:32:32:32-i1:8:32-i8:8:32-i16:16:32-i32:32:32-i64:32:32-f32:32:32-f64:32:32-v64:32:32-v128:32:32-a:0:32-n32-S32
 ```
 
 Meaning:
-- Little-endian (`e`)
-- 32-bit pointers
-- 32-bit integers (default)
-- 32-bit alignment for most types
-- Native integer width is 32 bits
+- `e` - Little-endian byte order
+- `m:e` - ELF name mangling
+- `p:32:32:32` - 32-bit pointers with 32-bit size and alignment
+- `i1:8:32` - i1 uses 8 bits storage, 32-bit alignment
+- `i8:8:32` - i8 uses 8 bits storage, 32-bit alignment
+- `i16:16:32` - i16 uses 16 bits storage, 32-bit alignment
+- `i32:32:32` - i32 uses 32 bits storage, 32-bit alignment
+- `i64:32:32` - i64 uses 32-bit alignment (split across registers)
+- `f32:32:32` - float uses 32 bits, 32-bit alignment (soft-float)
+- `f64:32:32` - double uses 32-bit alignment (soft-float)
+- `v64:32:32` - 64-bit vectors, 32-bit alignment
+- `v128:32:32` - 128-bit vectors, 32-bit alignment
+- `a:0:32` - Aggregate alignment is 32 bits
+- `n32` - Native integer width is 32 bits
+- `S32` - Stack natural alignment is 32 bits
 
 ## Backend Implementation
 

@@ -23,6 +23,9 @@ The SLOW-32 project consists of three main repositories:
 If you have the SLOW-32 toolchain already built:
 
 ```bash
+# Set up environment (if not already done)
+export SLOW32_HOME=$HOME/slow32-tools  # or wherever you installed the tools
+
 # 1. Write a simple assembly program
 cat > hello.s << 'EOF'
         .section .rodata
@@ -43,13 +46,13 @@ _start:
 EOF
 
 # 2. Assemble
-~/slow-32/assembler/slow32asm -o hello.s32o hello.s
+$SLOW32_HOME/bin/slow32asm -o hello.s32o hello.s
 
 # 3. Link
-~/slow-32/linker/s32-ld -o hello.s32x ~/slow-32/runtime/crt0.s32o hello.s32o
+$SLOW32_HOME/bin/s32-ld -o hello.s32x $SLOW32_HOME/lib/crt0.s32o hello.s32o
 
 # 4. Run
-~/slow-32/emulator/slow32 hello.s32x
+$SLOW32_HOME/bin/slow32 hello.s32x
 ```
 
 ## Building from Source
@@ -58,24 +61,38 @@ EOF
 
 ```bash
 # Clone and build slow-32 toolchain
-git clone [repository-url] ~/slow-32
-cd ~/slow-32
+git clone https://github.com/brazilofmux/slow32-tools.git ~/slow32-tools
+cd ~/slow32-tools
 make
 
 # This builds:
-# - assembler/slow32asm - The assembler
-# - linker/s32-ld - The linker
-# - emulator/slow32 - Reference emulator
-# - emulator/slow32-fast - Optimized emulator
-# - runtime/*.s32o - Runtime libraries
+# - bin/slow32asm - The assembler
+# - bin/s32-ld - The linker
+# - bin/slow32 - Reference emulator
+# - bin/slow32-fast - Optimized emulator
+# - lib/*.s32o - Runtime libraries
+
+# Set up environment
+export SLOW32_HOME=$HOME/slow32-tools
+export PATH=$SLOW32_HOME/bin:$PATH
 ```
 
 ### Step 2: Build the LLVM Backend
 
 ```bash
-# Clone LLVM with SLOW-32 backend
-git clone [repository-url] ~/llvm-project
+# Clone standard LLVM (the SLOW-32 backend is distributed separately)
+git clone https://github.com/llvm/llvm-project.git ~/llvm-project
 cd ~/llvm-project
+
+# Get the SLOW-32 backend patches from releases
+# Note: Backend source is not included in public repository
+# Download from: https://github.com/brazilofmux/slow32-public/releases
+wget https://github.com/brazilofmux/slow32-public/releases/latest/download/slow32-llvm-backend.tar.gz
+tar -xzf slow32-llvm-backend.tar.gz
+
+# Apply the backend integration
+./apply-slow32-backend.sh
+
 mkdir build && cd build
 
 # Configure LLVM with SLOW-32 as experimental target
@@ -106,16 +123,16 @@ make -j$(nproc) llc clang
     program.ll -o program.s
 
 # Assemble
-~/slow-32/assembler/slow32asm -o program.s32o program.s
+$SLOW32_HOME/bin/slow32asm -o program.s32o program.s
 
 # Link with runtime
-~/slow-32/linker/s32-ld -o program.s32x \
-    ~/slow-32/runtime/crt0.s32o \
+$SLOW32_HOME/bin/s32-ld -o program.s32x \
+    $SLOW32_HOME/lib/crt0.s32o \
     program.s32o \
-    ~/slow-32/runtime/intrinsics.s32o
+    $SLOW32_HOME/lib/intrinsics.s32o
 
 # Run
-~/slow-32/emulator/slow32 program.s32x
+$SLOW32_HOME/bin/slow32 program.s32x
 ```
 
 ### Method 2: Using the Compile Script (Convenience)
@@ -133,18 +150,18 @@ fi
 
 BASENAME=$(basename "$1" .c)
 LLVM_BIN=~/llvm-project/build/bin
-SLOW32=~/slow-32
+SLOW32_HOME=${SLOW32_HOME:-$HOME/slow32-tools}
 
 # Compile
 $LLVM_BIN/clang --target slow32-unknown-none -S -emit-llvm -O1 "$1" -o "$BASENAME.ll"
 $LLVM_BIN/llc -mtriple=slow32-unknown-none "$BASENAME.ll" -o "$BASENAME.s"
 
 # Assemble and link
-$SLOW32/assembler/slow32asm -o "$BASENAME.s32o" "$BASENAME.s"
-$SLOW32/linker/s32-ld -o "$BASENAME.s32x" \
-    $SLOW32/runtime/crt0.s32o \
+$SLOW32_HOME/bin/slow32asm -o "$BASENAME.s32o" "$BASENAME.s"
+$SLOW32_HOME/bin/s32-ld -o "$BASENAME.s32x" \
+    $SLOW32_HOME/lib/crt0.s32o \
     "$BASENAME.s32o" \
-    $SLOW32/runtime/intrinsics.s32o
+    $SLOW32_HOME/lib/intrinsics.s32o
 
 echo "Created $BASENAME.s32x"
 ```
@@ -155,35 +172,35 @@ The SLOW-32 emulator has comprehensive debugging features:
 
 ```bash
 # Trace every instruction
-~/slow-32/emulator/slow32 -t program.s32x
+$SLOW32_HOME/bin/slow32 -t program.s32x
 
 # Show register changes only
-~/slow-32/emulator/slow32 -r program.s32x
+$SLOW32_HOME/bin/slow32 -r program.s32x
 
 # Step through one instruction at a time
-~/slow-32/emulator/slow32 -s program.s32x
+$SLOW32_HOME/bin/slow32 -s program.s32x
 
 # Set a breakpoint
-~/slow-32/emulator/slow32 -b 0x100 program.s32x
+$SLOW32_HOME/bin/slow32 -b 0x100 program.s32x
 
 # Watch memory accesses
-~/slow-32/emulator/slow32 -w 0x1000-0x2000 program.s32x
+$SLOW32_HOME/bin/slow32 -w 0x1000-0x2000 program.s32x
 
 # Limit execution cycles (catch infinite loops)
-~/slow-32/emulator/slow32 -c 1000 program.s32x
+$SLOW32_HOME/bin/slow32 -c 1000 program.s32x
 ```
 
 ## Analyzing Binaries
 
 ```bash
 # Disassemble executable
-~/slow-32/tools/slow32dis program.s32x
+$SLOW32_HOME/bin/slow32dis program.s32x
 
 # Examine object file
-~/slow-32/tools/s32-objdump program.s32o
+$SLOW32_HOME/bin/s32-objdump program.s32o
 
 # Examine executable structure
-~/slow-32/tools/s32-exedump program.s32x
+$SLOW32_HOME/bin/s32-exedump program.s32x
 ```
 
 ## Example: Hello World in C
@@ -210,7 +227,7 @@ int main() {
 Compile and run:
 ```bash
 ./slow32-compile.sh hello.c
-~/slow-32/emulator/slow32 hello.s32x
+$SLOW32_HOME/bin/slow32 hello.s32x
 ```
 
 ## Important Notes
@@ -225,7 +242,8 @@ Compile and run:
 
 ## Next Steps
 
-- Read the [Programmer's Guide](20-programmers-guide.md) for detailed ABI information
+- Read the [Programmer's Guide](20-programmers-guide.md) for programming basics
+- Study the [ABI Reference](21-abi-reference.md) for calling conventions
 - Check the [Instruction Set Reference](25-instruction-set.md) for assembly programming
 - See [Examples](../examples/) for more sample programs
 - Review [Known Issues](91-known-issues.md) for current limitations
@@ -238,7 +256,7 @@ Compile and run:
 **Solution**: Use -O1 or -O2 optimization level
 
 **Problem**: Infinite loop in emulator
-**Solution**: Use -c flag to limit cycles: `slow32 -c 10000 program.s32x`
+**Solution**: Use -c flag to limit cycles: `$SLOW32_HOME/bin/slow32 -c 10000 program.s32x`
 
 **Problem**: Segmentation fault in program
 **Solution**: Check stack usage - default stack is limited

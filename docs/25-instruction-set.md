@@ -48,6 +48,47 @@ SLOW-32 uses 32-bit fixed-width instructions with several formats:
 [31:26] opcode | [25:21] rd | [20:0] offset
 ```
 
+## Constant Materialization
+
+### Loading 32-bit Constants
+
+SLOW-32 uses the RISC-V approach for loading 32-bit constants, with an important fix for sign-extension:
+
+```asm
+# Load 32-bit constant 0xDEADBEEF
+lui r3, %hi(0xDEADBEEF)    # Load upper 20 bits
+addi r3, r3, %lo(0xDEADBEEF) # Add lower 12 bits (sign-extended)
+```
+
+**Critical Note:** The `%lo` value is sign-extended from 12 to 32 bits. When the 12th bit is 1 (negative), this affects the upper bits:
+
+```asm
+# Example: Loading 0xDEADBEEF
+# %hi(0xDEADBEEF) = 0xDEADC (adjusted for sign extension)
+# %lo(0xDEADBEEF) = 0xEEF (which sign-extends to 0xFFFFFEEF)
+
+lui r3, 0xDEADC      # r3 = 0xDEADC000
+addi r3, r3, -0x111  # r3 = 0xDEADBEEF (0xEEF as signed 12-bit = -0x111)
+```
+
+The assembler handles this automatically with `%hi/%lo` operators.
+
+### Small Constants
+
+For values that fit in 12 bits (-2048 to 2047):
+```asm
+addi r3, r0, 42      # Load small positive constant
+addi r3, r0, -100    # Load small negative constant
+```
+
+### Pseudo-instruction LI
+
+The assembler provides `li` (load immediate) as a pseudo-instruction:
+```asm
+li r3, 42            # Expands to: addi r3, r0, 42
+li r3, 0xDEADBEEF    # Expands to: lui + addi sequence
+```
+
 ## Core Arithmetic Instructions
 
 | Instruction | Format | Description | Emulator | Assembler | Compiler | Notes |
