@@ -44,9 +44,26 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   // Booleans come back as 0/1 in a GPR
   setBooleanContents(ZeroOrOneBooleanContent);
   setBooleanVectorContents(ZeroOrOneBooleanContent);
+  
+  // Configure SETCC to produce 0/1 in a GPR (will use default lowering)
+  // This is important for SELECT to work correctly
+  setOperationAction(ISD::SETCC, MVT::i32, Legal);
+  
+  // Configure BRCOND to be Custom (we have a lowering for it)
+  setOperationAction(ISD::BRCOND, MVT::Other, Custom);
 
   // Tell LLVM to expand i64 operations into ADDC/ADDE and SUBC/SUBE pairs
   setOperationAction(ISD::MUL, MVT::i64, Expand);
+  
+  // Custom lower 32-bit multiply-high operations for i64 multiply expansion
+  setOperationAction(ISD::UMUL_LOHI, MVT::i32, Custom);
+  setOperationAction(ISD::SMUL_LOHI, MVT::i32, Custom);
+  setOperationAction(ISD::MULHS, MVT::i32, Custom);
+  setOperationAction(ISD::MULHU, MVT::i32, Custom);
+  
+  // i64 division/remainder - let LLVM expand these
+  // Since SLOW32 doesn't have hardware support, LLVM will generate
+  // calls to compiler-rt functions (__divdi3, __udivdi3, __moddi3, __umoddi3)
   setOperationAction(ISD::SDIV, MVT::i64, Expand);
   setOperationAction(ISD::UDIV, MVT::i64, Expand);
   setOperationAction(ISD::SREM, MVT::i64, Expand);
@@ -58,13 +75,12 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   setOperationAction(ISD::AND, MVT::i64, Expand);
   setOperationAction(ISD::OR, MVT::i64, Expand);
   setOperationAction(ISD::XOR, MVT::i64, Expand);
-  // Custom lower SELECT_CC to use branches since we don't have conditional move
-  // SELECT_CC is expanded to BR_CC, and SELECT is lowered to conditional branches
-  // We need at least one of them to not be Expand to avoid assertion
+  // SELECT is our canonical operation (ChatGPT 5's one-way street approach)
+  // SELECT_CC always expands to SELECT + SETCC, never the other way around
   setOperationAction(ISD::SELECT_CC, MVT::i32, Expand);
   setOperationAction(ISD::SELECT_CC, MVT::i64, Expand);
   setOperationAction(ISD::SELECT, MVT::i32, Custom);
-  setOperationAction(ISD::SELECT, MVT::i64, Expand);
+  setOperationAction(ISD::SELECT, MVT::i64, Custom);  // Custom for i64 too to avoid loops
   // Note: We DO support SETCC via SLT/SLTU/SEQ/SNE instructions
 
   // Support for 64-bit operations - use custom lowering for shifts
@@ -133,6 +149,10 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   // This forces word-aligned operations and prevents byte-wise expansion issues
   setMinFunctionAlignment(Align(4));
   setPrefFunctionAlignment(Align(4));
+  
+  // Note: i64 divide/rem operations are set to Expand above
+  // This will cause LLVM to generate libcalls to __divdi3, __udivdi3, __moddi3, __umoddi3
+  // These need to be provided by compiler-rt or a similar runtime library
 }
 
 const char *SLOW32TargetLowering::getTargetNodeName(unsigned Opcode) const {
@@ -166,6 +186,10 @@ SDValue SLOW32TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) cons
     case ISD::UADDO_CARRY:    return LowerUADDO_CARRY(Op, DAG);
     case ISD::USUBO:          return LowerUSUBO(Op, DAG);
     case ISD::USUBO_CARRY:    return LowerUSUBO_CARRY(Op, DAG);
+    case ISD::UMUL_LOHI:      return LowerUMUL_LOHI(Op, DAG);
+    case ISD::SMUL_LOHI:      return LowerSMUL_LOHI(Op, DAG);
+    case ISD::MULHU:          return LowerMULHU(Op, DAG);
+    case ISD::MULHS:          return LowerMULHS(Op, DAG);
     // For i64 shifts, expand to shift-parts
     case ISD::SHL:
     case ISD::SRA:
@@ -296,19 +320,46 @@ SDValue SLOW32TargetLowering::LowerVAARG(SDValue Op, SelectionDAG &DAG) const { 
 
 SDValue SLOW32TargetLowering::LowerSELECT(SDValue Op, SelectionDAG &DAG) const {
   SDLoc DL(Op);
+  EVT VT = Op.getValueType();
   SDValue Cond = Op.getOperand(0);
   SDValue TrueV = Op.getOperand(1);
   SDValue FalseV = Op.getOperand(2);
 
   // SELECT is: Cond ? TrueV : FalseV
-  // Since SLOW32 doesn't have conditional moves, we expand to SELECT_CC
-  // which will then be expanded to branches
+  // Use ChatGPT 5's mask trick: result = F ^ ((T ^ F) & mask)
+  // where mask = -C (0->0x00000000, 1->0xFFFFFFFF)
+  // This avoids creating SELECT_CC nodes and prevents loops
 
-  // Create a SELECT_CC with the condition compared to zero
-  SDValue Zero = DAG.getConstant(0, DL, Cond.getValueType());
-  return DAG.getNode(ISD::SELECT_CC, DL, Op.getValueType(),
-                     Cond, Zero, TrueV, FalseV,
-                     DAG.getCondCode(ISD::SETNE));
+  // Ensure condition is normalized to i32 (0 or 1)
+  if (Cond.getValueType() != MVT::i32) {
+    // Normalize to i32 boolean (SETCC already produces 0/1)
+    Cond = DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::i32, Cond);
+  }
+
+  // For i64 SELECT, split into two i32 SELECTs
+  if (VT == MVT::i64) {
+    // Split i64 operands into hi/lo parts
+    SDValue TrueHi, TrueLo, FalseHi, FalseLo;
+    std::tie(TrueLo, TrueHi) = DAG.SplitScalar(TrueV, DL, MVT::i32, MVT::i32);
+    std::tie(FalseLo, FalseHi) = DAG.SplitScalar(FalseV, DL, MVT::i32, MVT::i32);
+    
+    // Select each half independently using the same condition
+    SDValue ResLo = DAG.getNode(ISD::SELECT, DL, MVT::i32, Cond, TrueLo, FalseLo);
+    SDValue ResHi = DAG.getNode(ISD::SELECT, DL, MVT::i32, Cond, TrueHi, FalseHi);
+    
+    // Combine results
+    return DAG.getNode(ISD::BUILD_PAIR, DL, MVT::i64, ResLo, ResHi);
+  }
+
+  // For i32, use the mask trick to avoid branches
+  // mask = -C (0 -> 0x00000000, 1 -> 0xFFFFFFFF)
+  SDValue Zero = DAG.getConstant(0, DL, MVT::i32);
+  SDValue Mask = DAG.getNode(ISD::SUB, DL, MVT::i32, Zero, Cond);
+
+  // result = F ^ ((T ^ F) & mask)
+  SDValue TF = DAG.getNode(ISD::XOR, DL, VT, TrueV, FalseV);
+  SDValue And = DAG.getNode(ISD::AND, DL, VT, TF, Mask);
+  return DAG.getNode(ISD::XOR, DL, VT, FalseV, And);
 }
 
 
@@ -1286,4 +1337,109 @@ SDValue SLOW32TargetLowering::LowerUSUBO_CARRY(SDValue Op, SelectionDAG &DAG) co
   }
   
   return DAG.getMergeValues({Diff, Bout}, DL);
+}
+
+// Lower unsigned 32x32->64 multiply (returns both low and high parts)
+// Since SLOW32 doesn't have a multiply-high instruction, we decompose
+// into 16-bit multiplies following ChatGPT 5's approach B
+SDValue SLOW32TargetLowering::LowerUMUL_LOHI(SDValue Op, SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  SDValue A = Op.getOperand(0);
+  SDValue B = Op.getOperand(1);
+  EVT VT = MVT::i32;
+  
+  // Split each 32-bit value into 16-bit halves
+  SDValue Mask16 = DAG.getConstant(0xFFFF, DL, VT);
+  SDValue Sixteen = DAG.getConstant(16, DL, VT);
+  
+  // A = (AH << 16) | AL
+  SDValue AL = DAG.getNode(ISD::AND, DL, VT, A, Mask16);
+  SDValue AH = DAG.getNode(ISD::SRL, DL, VT, A, Sixteen);
+  
+  // B = (BH << 16) | BL
+  SDValue BL = DAG.getNode(ISD::AND, DL, VT, B, Mask16);
+  SDValue BH = DAG.getNode(ISD::SRL, DL, VT, B, Sixteen);
+  
+  // Compute four 16x16->32 products
+  SDValue P0 = DAG.getNode(ISD::MUL, DL, VT, AL, BL);  // AL * BL
+  SDValue P1 = DAG.getNode(ISD::MUL, DL, VT, AL, BH);  // AL * BH
+  SDValue P2 = DAG.getNode(ISD::MUL, DL, VT, AH, BL);  // AH * BL
+  SDValue P3 = DAG.getNode(ISD::MUL, DL, VT, AH, BH);  // AH * BH
+  
+  // Now we need to combine:
+  // Result = P0 + (P1 << 16) + (P2 << 16) + (P3 << 32)
+  
+  // Low 32 bits: P0_low + ((P1 + P2) << 16)_low
+  // High 32 bits: P3 + P0_high + ((P1 + P2) << 16)_high + ((P1 + P2) >> 16)
+  
+  // First, compute P1 + P2
+  SDValue Mid = DAG.getNode(ISD::ADD, DL, VT, P1, P2);
+  
+  // Add the middle part to P0's high 16 bits
+  SDValue P0Hi = DAG.getNode(ISD::SRL, DL, VT, P0, Sixteen);
+  SDValue MidPlusP0Hi = DAG.getNode(ISD::ADD, DL, VT, Mid, P0Hi);
+  
+  // Low result: (P0 & 0xFFFF) | ((MidPlusP0Hi & 0xFFFF) << 16)
+  SDValue P0Lo = DAG.getNode(ISD::AND, DL, VT, P0, Mask16);
+  SDValue MidLo = DAG.getNode(ISD::AND, DL, VT, MidPlusP0Hi, Mask16);
+  SDValue MidLoShifted = DAG.getNode(ISD::SHL, DL, VT, MidLo, Sixteen);
+  SDValue Lo = DAG.getNode(ISD::OR, DL, VT, P0Lo, MidLoShifted);
+  
+  // High result: P3 + (MidPlusP0Hi >> 16)
+  SDValue MidHi = DAG.getNode(ISD::SRL, DL, VT, MidPlusP0Hi, Sixteen);
+  SDValue Hi = DAG.getNode(ISD::ADD, DL, VT, P3, MidHi);
+  
+  return DAG.getMergeValues({Lo, Hi}, DL);
+}
+
+// Lower signed 32x32->64 multiply
+SDValue SLOW32TargetLowering::LowerSMUL_LOHI(SDValue Op, SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  SDValue A = Op.getOperand(0);
+  SDValue B = Op.getOperand(1);
+  EVT VT = MVT::i32;
+  
+  // Use unsigned multiply and then correct for sign
+  SDValue UMulLoHi = DAG.getNode(ISD::UMUL_LOHI, DL, DAG.getVTList(VT, VT), A, B);
+  SDValue Lo = UMulLoHi.getValue(0);
+  SDValue Hi = UMulLoHi.getValue(1);
+  
+  // Correction for signed multiply:
+  // If A < 0, subtract B from Hi
+  // If B < 0, subtract A from Hi
+  SDValue Zero = DAG.getConstant(0, DL, VT);
+  SDValue ASign = DAG.getSetCC(DL, VT, A, Zero, ISD::SETLT);
+  SDValue BSign = DAG.getSetCC(DL, VT, B, Zero, ISD::SETLT);
+  
+  // Create masked values for subtraction
+  SDValue BMask = DAG.getNode(ISD::AND, DL, VT, B, ASign);
+  SDValue AMask = DAG.getNode(ISD::AND, DL, VT, A, BSign);
+  
+  // Adjust Hi
+  Hi = DAG.getNode(ISD::SUB, DL, VT, Hi, BMask);
+  Hi = DAG.getNode(ISD::SUB, DL, VT, Hi, AMask);
+  
+  return DAG.getMergeValues({Lo, Hi}, DL);
+}
+
+// Lower unsigned multiply-high (just the high part)
+SDValue SLOW32TargetLowering::LowerMULHU(SDValue Op, SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  SDValue A = Op.getOperand(0);
+  SDValue B = Op.getOperand(1);
+  EVT VT = MVT::i32;
+  
+  SDValue UMulLoHi = DAG.getNode(ISD::UMUL_LOHI, DL, DAG.getVTList(VT, VT), A, B);
+  return UMulLoHi.getValue(1);  // Return just the high part
+}
+
+// Lower signed multiply-high (just the high part)
+SDValue SLOW32TargetLowering::LowerMULHS(SDValue Op, SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  SDValue A = Op.getOperand(0);
+  SDValue B = Op.getOperand(1);
+  EVT VT = MVT::i32;
+  
+  SDValue SMulLoHi = DAG.getNode(ISD::SMUL_LOHI, DL, DAG.getVTList(VT, VT), A, B);
+  return SMulLoHi.getValue(1);  // Return just the high part
 }

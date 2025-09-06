@@ -47,6 +47,10 @@ public:
   SDValue LowerUADDO_CARRY (SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerUSUBO       (SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerUSUBO_CARRY (SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerUMUL_LOHI   (SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerSMUL_LOHI   (SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerMULHU       (SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerMULHS       (SDValue Op, SelectionDAG &DAG) const;
 
   SDValue LowerFormalArguments(SDValue Chain, CallingConv::ID CallConv,
                                bool isVarArg,
