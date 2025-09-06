@@ -12,10 +12,11 @@ Converts SLOW-32 assembly language into object files.
 - **Input**: `.s` assembly files
 - **Output**: `.s32o` object files
 - **Features**:
-  - Full macro support
-  - Symbol resolution
-  - Relocation generation
+  - Symbol resolution (labels and references)
+  - Relocation generation (R_SLOW32_ABS32, R_SLOW32_HI20, R_SLOW32_LO12)
   - Section management (.text, .data, .rodata, .bss)
+  - Basic expression evaluation (%hi/%lo for addresses)
+  - Two-pass assembly for forward references
 
 ```bash
 slow32asm -o output.s32o input.s

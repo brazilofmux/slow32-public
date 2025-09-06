@@ -139,14 +139,16 @@ SLOW-32 uses 32-bit fixed-width instructions with several formats:
 | DEBUG rs1 | - | Output character | ✅ | ✅ | ⚠️ | Outputs rs1 as char |
 | YIELD | - | Waste cycles | ✅ | ✅ | ❌ | For timing |
 
-## Pseudo-Instructions (Assembler Only)
+## Pseudo-Instructions (Not Yet Implemented)
+
+These are common pseudo-instructions that would be useful but are not yet implemented in slow32asm. Use the expanded forms directly:
 
 | Instruction | Expansion | Description |
 |------------|-----------|-------------|
-| li rd, imm | lui+ori or addi | Load immediate |
-| mv rd, rs | add rd, rs, r0 | Move register |
-| jr rs | jalr r0, rs, 0 | Jump register (v3 compiler tried this, needs fixing) |
-| ret | jalr r0, lr, 0 | Return from function |
+| li rd, imm | lui+ori or addi | Load immediate - use LUI+ORI for large values, ADDI for small |
+| mv rd, rs | add rd, rs, r0 | Move register - use ADD with r0 |
+| jr rs | jalr r0, rs, 0 | Jump register - use JALR with r0 as link |
+| ret | jalr r0, lr, 0 | Return from function - use JALR |
 
 ## Register Conventions
 
