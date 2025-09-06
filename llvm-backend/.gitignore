@@ -1,0 +1,13 @@
+# The SLOW32 backend is included in this repository
+
+# Temporary files
+*.tmp
+*.bak
+*~
+
+# Build artifacts if someone tries to build here
+*.o
+*.d
+*.inc
+CMakeFiles/
+*.cmake
