@@ -4,8 +4,19 @@
 *.so
 *.exe
 *.out
+*.s32o
+*.s32x
 build/
 bin/
+
+# Tool binaries
+tools/assembler/slow32asm
+tools/linker/s32-ld
+tools/emulator/slow32
+tools/emulator/slow32-fast
+tools/utilities/s32-objdump
+tools/utilities/s32-exedump
+tools/utilities/slow32dis
 
 # Editor files
 .vscode/
