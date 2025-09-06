@@ -1,6 +1,6 @@
 # SLOW-32: Building an Application-Level Assembly Sandbox (Without the Hardware Baggage)
 
-*What if you could explore compilers, linkers, and emulators against a clean, modern ISA—without dragging along decades of hardware quirks? SLOW-32 is a tiny, fast, and friendly CPU architecture designed for learning, tooling, and experimentation at the **application-level**. No real/protected/flat modes, no MMU, no paging, no virtual memory, no carry bit, no interrupts, no DMA—just the essentials for writing code and building tools that run blisteringly fast in a host-managed sandbox.*
+*What if you could explore compilers, linkers, and emulators against a clean, modern ISA—without dragging along decades of hardware quirks? [SLOW-32][6] is a tiny, fast, and friendly CPU architecture designed for learning, tooling, and experimentation at the **application-level**. No real/protected/flat modes, no MMU, no paging, no virtual memory, no carry bit, no interrupts, no DMA—just the essentials for writing code and building tools that run blisteringly fast in a host-managed sandbox.*
 
 ---
 
@@ -27,7 +27,7 @@ The result is a “just-enough” computer that’s ideal for compiler backends,
 
 1. **Toolchain Deep Dive**: Clang adjustments → LLVM backend → assembler → linker → loaders.
 2. **Emulator Internals**: Two emulators (fast vs. debug/trace), determinism, and crash semantics.
-3. **ABI & Calling Conventions**: Registers, stack, prolog/epilog, codegen patterns, varargs handling.
+3. **[ABI & Calling Conventions][5]**: Registers, stack, prolog/epilog, codegen patterns, varargs handling.
 4. **I/O & Host Facilities**: From `DEBUG` to MMIO ring buffers and a TRAP interface.
 5. **Object Format & Metadata**: `.s32x` layout, the Interrupt Service Table as *file metadata*, and host policies (W^X).
 6. **Performance Notes**: Branch shaping, PHI moves, and why simplicity wins.
@@ -58,6 +58,7 @@ The result is a “just-enough” computer that’s ideal for compiler backends,
 ### Tooling end-to-end (today and tomorrow)
 
 **Compilation Pipeline:**
+
 - **C/C++ source** → Clang with `--target slow32-unknown-none`
 - **Clang** → LLVM IR (with SLOW‑32 data layout and ABI)
 - **LLVM IR** → SLOW‑32 assembly (via custom backend)
@@ -65,13 +66,15 @@ The result is a “just-enough” computer that’s ideal for compiler backends,
 - **Objects** → Executable `.s32x` (via linker)
 
 **Analysis & Execution Tools:**
+
 - **Binary inspection**: `s32-objdump` (objects), `s32-exedump` (executables), `slow32dis` (disassembly)
 - **Execution**: Fast emulator (~350M inst/sec) or debug emulator (tracing, breakpoints, watchpoints)
 
 **Key Components:**
-- **Native Clang target & LLVM backend**: Generate SLOW‑32 code that favors simple compare+branch patterns and register moves over flags.
-- **Assembler & Linker**: Produce `.s32x` files that bundle code/data plus metadata (including the IST) for the host/emulator.
-- **Two emulators**: a *fast* one for throughput and a *debug* one with comprehensive debugging features.
+
+- **Native Clang target & [LLVM backend][2]**: Generate SLOW‑32 code that favors simple compare+branch patterns and register moves over flags.
+- **[Assembler & Linker][3]**: Produce `.s32x` files that bundle code/data plus metadata (including the IST) for the host/emulator.
+- **[Two emulators][4]**: a *fast* one for throughput and a *debug* one with comprehensive debugging features.
 - **Analysis utilities**: Tools for inspecting binaries at every stage of the pipeline.
 
 ---
@@ -89,7 +92,7 @@ SLOW-32 is influenced by RISC-V (but not opcode-compatible). It uses 32-bit fixe
 - **Special**: `LUI`, `NOP`, `HALT`, `DEBUG`, `YIELD` (timing).
 - **Register conventions**: `r0=zero`, `r1`=return value, `r3–r10`=args, `r11–r28`=saved, `r29`=sp, `r30`=fp, `r31`=lr.
 
-> Implementation status, memory map, and cycle costs are tracked in the SLOW-32 Instruction Set Reference. (Link in the post footer.)
+> Implementation status, memory map, and cycle costs are tracked in the [SLOW-32 Instruction Set Reference][1].
 
 ---
 
@@ -180,4 +183,15 @@ The host tears down the sandbox and spawns a new instance. State is cheap, and (
 In upcoming posts I’ll publish build/run snippets, disassembly walkthroughs, and trace screenshots as the toolchain firms up. If you’re into compilers, emulators, or teaching systems programming: this is for you. Comment with questions, wishlist features, or your favorite micro-benchmarks you’d like to see.
 
 *Next up: Toolchain Deep Dive—mapping LLVM IR to SLOW-32 patterns, and why compare+branch beats status flags in a teaching ISA.*
+
+---
+
+## Links
+
+[1]: https://github.com/brazilofmux/slow32-public/blob/main/docs/25-instruction-set.md
+[2]: https://github.com/brazilofmux/slow32-public/tree/main/llvm-backend
+[3]: https://github.com/brazilofmux/slow32-public/tree/main/tools
+[4]: https://github.com/brazilofmux/slow32-public/tree/main/tools/emulator
+[5]: https://github.com/brazilofmux/slow32-public/blob/main/docs/20-programmers-guide.md
+[6]: https://github.com/brazilofmux/slow32-public
 
