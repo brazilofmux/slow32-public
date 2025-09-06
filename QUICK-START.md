@@ -65,7 +65,9 @@ You should see "Hi" printed!
 
 ## Using C with LLVM (Advanced)
 
-If you have LLVM built with the SLOW-32 backend:
+First, build LLVM with the SLOW-32 backend (see [llvm-backend/README.md](llvm-backend/README.md) for full instructions).
+
+Once you have LLVM built with SLOW-32 support:
 
 ```bash
 # Write C code

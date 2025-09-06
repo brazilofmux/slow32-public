@@ -24,9 +24,26 @@ The SLOW-32 backend is implemented as an experimental LLVM target, providing:
 ### Build Steps
 
 ```bash
-# Clone LLVM with SLOW-32 backend
-git clone [repository] ~/llvm-project
+# Clone standard LLVM (no SLOW32 yet)
+git clone https://github.com/llvm/llvm-project.git ~/llvm-project
 cd ~/llvm-project
+
+# Clone this repository to get SLOW32 backend
+git clone https://github.com/brazilofmux/slow32-public.git ~/slow32-public
+
+# Copy SLOW32 backend to LLVM
+cp -r ~/slow32-public/llvm-backend/SLOW32 llvm/lib/Target/
+
+# Apply integration patches
+cd ~/llvm-project
+patch -p1 < ~/slow32-public/llvm-backend/patches/llvm-integration.patch
+patch -p1 < ~/slow32-public/llvm-backend/patches/clang-integration.patch
+
+# Copy Clang support files
+cp ~/slow32-public/llvm-backend/clang-support/SLOW32.h \
+   clang/lib/Basic/Targets/
+cp ~/slow32-public/llvm-backend/clang-support/SLOW32.cpp \
+   clang/lib/Basic/Targets/
 
 # Create build directory
 mkdir build && cd build
