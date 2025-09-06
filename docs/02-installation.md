@@ -1,6 +1,6 @@
 # Installation Guide
 
-This guide covers installing the SLOW-32 toolchain from pre-built binaries or building from released source.
+This guide covers building the SLOW-32 toolchain from source.
 
 ## Required Tools
 
@@ -15,35 +15,54 @@ The SLOW-32 toolchain consists of these essential tools:
 7. **s32-exedump** - Executable analyzer
 8. **Runtime libraries** - crt0.s32o, intrinsics.s32o
 
-## Download Pre-built Binaries
+## Building from Source
 
-### Latest Release
-
-Download the latest release from the GitHub releases page:
+### Quick Build
 
 ```bash
-# Download the release archive (example version)
-wget https://github.com/[username]/slow32-public/releases/download/v1.0.0/slow32-tools-1.0.0-linux-x64.tar.gz
+# Clone the repository
+git clone https://github.com/brazilofmux/slow32-public.git
+cd slow32-public
 
-# Extract the archive
-tar -xzf slow32-tools-1.0.0-linux-x64.tar.gz
+# Build all tools
+cd tools
+make
+cd ..
 
-# The archive contains:
-# slow32-tools/
-#   ├── bin/          # All executable tools
-#   ├── lib/          # Runtime libraries
-#   ├── examples/     # Example programs
-#   └── README.txt    # Quick reference
+# Tools are now in their respective directories:
+# tools/assembler/slow32asm
+# tools/linker/s32-ld
+# tools/emulator/slow32
+# tools/emulator/slow32-fast
+# tools/utilities/slow32dis
+# tools/utilities/s32-objdump
+# tools/utilities/s32-exedump
+
+# Build runtime libraries (for C programs)
+cd runtime
+for f in *.s; do
+    ../tools/assembler/slow32asm -o ${f%.s}.s32o $f
+done
+cd ..
 ```
 
-### Manual Installation
+### Installation to System
 
 ```bash
-# 1. Extract to a directory
-mkdir -p ~/slow32-tools
-tar -xzf slow32-tools-1.0.0-linux-x64.tar.gz -C ~/slow32-tools --strip-components=1
+# Optional: Install to a standard location
+INSTALL_DIR=$HOME/slow32-tools
+mkdir -p $INSTALL_DIR/bin
 
-# 2. Add to PATH
+# Copy executables
+cp tools/assembler/slow32asm $INSTALL_DIR/bin/
+cp tools/linker/s32-ld $INSTALL_DIR/bin/
+cp tools/emulator/slow32 $INSTALL_DIR/bin/
+cp tools/emulator/slow32-fast $INSTALL_DIR/bin/
+cp tools/utilities/slow32dis $INSTALL_DIR/bin/
+cp tools/utilities/s32-objdump $INSTALL_DIR/bin/
+cp tools/utilities/s32-exedump $INSTALL_DIR/bin/
+
+# Add to PATH
 echo 'export SLOW32_HOME=$HOME/slow32-tools' >> ~/.bashrc
 echo 'export PATH=$SLOW32_HOME/bin:$PATH' >> ~/.bashrc
 source ~/.bashrc
@@ -178,18 +197,14 @@ s32-exedump program.s32x
 
 ## Optional: LLVM Backend
 
-For C/C++ compilation support, you'll need the LLVM backend. This is a separate, larger installation.
+For C/C++ compilation support, you'll need to build LLVM with the SLOW-32 backend.
 
-### Option 1: Pre-built LLVM (if available)
-```bash
-# Download pre-built LLVM with SLOW-32 backend
-wget [release-url]/llvm-slow32-19.0-linux-x64.tar.gz
-tar -xzf llvm-slow32-19.0-linux-x64.tar.gz -C ~/
-export PATH=$HOME/llvm-slow32/bin:$PATH
-```
-
-### Option 2: Build LLVM from Source
-See [LLVM Backend Guide](35-llvm-backend.md) for detailed instructions.
+### Building LLVM with SLOW-32
+See [LLVM Backend Guide](35-llvm-backend.md) for detailed instructions on:
+- Cloning LLVM source
+- Adding the SLOW-32 backend
+- Applying integration patches
+- Building LLVM with SLOW-32 support
 
 ## Environment Setup
 
