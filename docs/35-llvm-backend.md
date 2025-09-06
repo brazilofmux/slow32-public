@@ -13,11 +13,13 @@ The SLOW-32 backend is implemented as an experimental LLVM target, providing:
 ## Building the Backend
 
 ### Prerequisites
-- LLVM 19+ source code
+- LLVM source code (tested with LLVM 22.0.0git/main branch)
 - CMake 3.20+
 - C++17 compiler
 - ~16GB RAM for full build
 - ~50GB disk space
+
+**Note:** The SLOW32 backend was developed against LLVM's main branch (22.0.0git). While it should work with LLVM 19.0+, it's actively tested on bleeding-edge LLVM.
 
 ### Build Steps
 

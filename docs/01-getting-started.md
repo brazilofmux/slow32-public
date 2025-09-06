@@ -5,7 +5,7 @@ This guide will walk you through setting up and using the SLOW-32 toolchain.
 ## Prerequisites
 
 - Linux system (tested on Ubuntu/Debian)
-- LLVM 19+ with Clang
+- LLVM 19+ with Clang (or LLVM main branch/22.0.0git for latest features)
 - CMake 3.20+
 - Make or Ninja
 - Basic development tools (gcc, g++, git)

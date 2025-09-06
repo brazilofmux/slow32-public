@@ -12,7 +12,7 @@ When building a new CPU architecture, you face a choice: write your own compiler
 - **You inherit decades of compiler research** - register allocation, instruction scheduling, all battle-tested
 - **The learning curve is steep but finite** - TableGen takes time to master, but then you're productive
 
-The [SLOW-32 LLVM backend][1] started in late August 2024, heavily inspired by RISC-V's clean design. Within days, we had basic 32-bit arithmetic working. Functions compiled. Loops ran. Everything looked great.
+The [SLOW-32 LLVM backend][1] started in late August 2024, heavily inspired by RISC-V's clean design. We're developing against LLVM's main branch (22.0.0git) - living on the bleeding edge to get the latest optimizations and infrastructure. Within days, we had basic 32-bit arithmetic working. Functions compiled. Loops ran. Everything looked great.
 
 Then we tried to compile this:
 

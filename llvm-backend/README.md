@@ -21,11 +21,13 @@ This directory contains everything needed to add SLOW-32 support to LLVM:
 
 ## Prerequisites
 
-- LLVM 19.0+ source code
+- LLVM source code (tested with LLVM 22.0.0git/main branch)
 - CMake 3.20+
 - C++17 compatible compiler
 - ~50GB disk space for full build
 - ~16GB RAM for parallel builds
+
+**Note:** The SLOW32 backend was developed against LLVM's main branch (22.0.0git). It should work with LLVM 19.0+ but is actively tested on bleeding-edge LLVM.
 
 ## Quick Installation
 
