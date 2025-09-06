@@ -165,19 +165,19 @@ These are common pseudo-instructions that would be useful but are not yet implem
 
 ## Implementation Notes
 
-### Compiler Issues
-1. **JALR format**: Compiler v3 tried `jalr r0, lr` but needs third parameter: `jalr r0, lr, 0`
-2. **Immediate instructions**: Many immediate variants (SLTI, ANDI, etc.) not used by compiler
-3. **Branch instructions**: Compiler prefers comparison + BEQ/BNE over direct branches
+### Underutilized Instructions
+These instructions are fully implemented but rarely used:
+- **ANDI, ORI, XORI**: Bitwise immediate operations
+- **SLTI, SLTIU**: Set-less-than immediate variants
+- **YIELD**: Cycle wasting (mainly for testing)
 
-### Missing Features
-1. **Atomic operations**: No atomic instructions for threading
-2. **Floating point**: No FP support
-3. **SIMD**: No vector instructions
-4. **Privileged**: No system/trap instructions
-
-### PHI-Related Issues
-The compiler generates PHI moves using basic ADD instructions. Critical edge splitting is needed for correct placement.
+### Not Implemented
+The ISA intentionally excludes:
+- **Atomic operations**: No threading support
+- **Floating point**: Integer-only architecture
+- **SIMD**: No vector instructions
+- **Privileged modes**: Application-level only
+- **Carry flag**: Deliberate design choice
 
 ## Memory Model
 
@@ -196,13 +196,14 @@ The compiler generates PHI moves using basic ADD instructions. Critical edge spl
 
 ## Verification Status
 
-### Working Examples
-- Basic arithmetic
-- Function calls
-- String operations
-- Simple loops (with PHI issues)
+### Fully Tested
+- Basic arithmetic (ADD, SUB, AND, OR, XOR)
+- Function calls (JAL, JALR)
+- Memory operations (LDW, STW, LDB, STB)
+- Branches (BEQ, BNE, BLT, BGE)
+- Comparisons (SLT, SLTU)
 
-### Known Issues
-- PHI moves placement (critical edges)
-- Some immediate instructions untested
-- Branch variants underutilized
+### Partially Tested
+- Some immediate instruction variants
+- YIELD instruction (cycle counting)
+- Half-word memory operations (LDH, STH)
