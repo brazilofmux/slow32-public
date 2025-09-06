@@ -1,18 +1,35 @@
-# SLOW-32 Guide
+# SLOW-32 Architecture
 
 **Application-level assembly, without the hardware baggage.**
 
-SLOW-32 is a fictitious 32-bit ISA and toolchain designed for learning, compilers, and emulation. No modes, no MMU, no paging, no interrupts, no carry flag—just the essentials for writing code that runs in a host-managed sandbox.
+SLOW-32 is a minimalist 32-bit RISC architecture designed for learning, compilers, and emulation. No modes, no MMU, no paging, no interrupts, no carry flag—just the essentials for writing code that runs in a host-managed sandbox.
 
-- **Toolchain**: clang tweaks → LLVM backend → assembler → linker → two emulators → objdump/exedump/disassembler
-- **I/O**: `DEBUG` instruction today; MMIO ring buffers and a TRAP interface on the roadmap
-- **Safety**: one W^X line; IST lives as **.s32x metadata**, not memory-mapped
-- **Performance**: tight loops can hit ~200–350M instr/s on a modern host (fast emulator); speed isn't the goal, clarity is
+## Quick Start
+
+```bash
+# Build the toolchain
+cd tools && make && cd ..
+
+# Run your first program
+echo '.globl _start; _start: addi r1,r0,72; debug r1; halt' > test.s
+tools/assembler/slow32asm -o test.s32o test.s
+tools/linker/s32-ld -o test.s32x test.s32o
+tools/emulator/slow32 test.s32x  # Prints 'H'
+```
+
+See [QUICK-START.md](QUICK-START.md) for detailed instructions.
+
+## Why SLOW-32?
+
+- **Clarity over legacy:** Fixed-width instructions, simple register file, straightforward memory model
+- **Predictability over complexity:** No hidden state machines, no interrupts, no undefined behavior  
+- **Speed through simplicity:** ~350M instructions/sec on modern hardware (fast emulator)
+- **Crash-safe by design:** Programs run in isolated sandboxes; crashes don't affect the host
 
 ## Start here
-- **[Installation](docs/02-installation.md)** - Download and install the toolchain
-- **[Quickstart](docs/10-quickstart.md)** - Run your first program in 2 minutes
-- **[Architecture Rationale](docs/05-architecture-rationale.md)** - Why SLOW-32 exists
+- **[Quick Start Guide](QUICK-START.md)** - Build and run in 5 minutes
+- **[Architecture Rationale](docs/05-architecture-rationale.md)** - Why SLOW-32 exists  
+- **[Programmer's Guide](docs/20-programmers-guide.md)** - Write SLOW-32 code
 - **[Examples](examples/)** - Working code with explanations
 
 ## Documentation

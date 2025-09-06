@@ -81,14 +81,13 @@ int main() {
 ### Assembly Programs
 ```bash
 # Assemble
-~/slow-32/assembler/slow32asm -o example.s32o example.s
+../tools/assembler/slow32asm -o example.s32o example.s
 
-# Link
-~/slow-32/linker/s32-ld -o example.s32x \
-    ~/slow-32/runtime/crt0.s32o example.s32o
+# Link (simple program without C runtime)
+../tools/linker/s32-ld -o example.s32x example.s32o
 
 # Run
-~/slow-32/emulator/slow32 example.s32x
+../tools/emulator/slow32 example.s32x
 ```
 
 ### C Programs
