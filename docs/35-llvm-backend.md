@@ -172,7 +172,7 @@ The backend handles these patterns:
 
 **Constants:**
 - Small immediates: Single ADDI
-- Large constants: LUI + ADDI (RISC-V style)
+- Large constants: LUI + ADDI (RISC-V style, sign-extended LO12)
 
 ## Supported Features
 
@@ -188,7 +188,8 @@ The backend handles these patterns:
 - Switch statements (jump tables)
 - Varargs functions
 - Inline assembly (basic)
-- 64-bit integers (ADD/SUB with carry)
+- 64-bit integers (ADD/SUB with optimized carry/borrow)
+- 64-bit shifts (all shift amounts 0-63)
 
 ### Partial Support ⚠️
 

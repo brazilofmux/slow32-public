@@ -48,7 +48,7 @@ clang --target slow32-unknown-none -O1 program.c  # Works
 #### Limited 64-bit Support
 **Impact:** 64-bit multiply/divide not fully implemented.
 **Workaround:** Use 32-bit arithmetic or wait for libgcc port.
-**Status:** ADD/SUB working, MUL/DIV in progress.
+**Status:** ADD/SUB/shifts fully working with optimized sequences, MUL/DIV in progress.
 
 #### Struct Passing
 **Impact:** Large structs passed by value may fail.

@@ -187,7 +187,7 @@ SDValue SLOW32TargetLowering::LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) 
     return DAG.getTargetGlobalAddress(GV, DL, VT, GA->getOffset());
   }
 
-  // For data (global variables), use %hi/%lo addressing
+  // For data (global variables), use %hi/%lo addressing with RISC-V style
   // Create target global address nodes with appropriate flags
   SDValue TargetGAHi = DAG.getTargetGlobalAddress(GV, DL, VT,
                                                    GA->getOffset(), SLOW32II::MO_HI);
@@ -197,12 +197,13 @@ SDValue SLOW32TargetLowering::LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) 
   // Generate: lui rd, %hi(symbol)
   SDValue Hi = DAG.getNode(SLOW32ISD::HI, DL, VT, TargetGAHi);
 
-  // Generate: ori rd, rd, %lo(symbol)
-  // Use OR to get ORI instruction (16-bit unsigned immediate)
+  // Generate: addi rd, rd, %lo(symbol)
+  // Use ADD to get ADDI instruction with sign-extended 12-bit immediate
+  // This properly handles the sign extension and bit 11 adjustment
   SDValue Lo = DAG.getNode(SLOW32ISD::LO, DL, VT, TargetGALo);
 
-  // Combine with OR to generate ORI
-  return DAG.getNode(ISD::OR, DL, VT, Hi, Lo);
+  // Combine with ADD to generate ADDI (sign-extended LO12)
+  return DAG.getNode(ISD::ADD, DL, VT, Hi, Lo);
 }
 
 SDValue SLOW32TargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const {
@@ -262,18 +263,18 @@ SDValue SLOW32TargetLowering::LowerJumpTable(SDValue Op, SelectionDAG &DAG) cons
   JumpTableSDNode *JT = cast<JumpTableSDNode>(Op);
   EVT VT = Op.getValueType();
 
-  // Similar to global addresses, use %hi/%lo addressing for jump tables
+  // Similar to global addresses, use %hi/%lo addressing with RISC-V style
   SDValue TargetJTHi = DAG.getTargetJumpTable(JT->getIndex(), VT, SLOW32II::MO_HI);
   SDValue TargetJTLo = DAG.getTargetJumpTable(JT->getIndex(), VT, SLOW32II::MO_LO);
 
   // Generate: lui rd, %hi(jumptable)
   SDValue Hi = DAG.getNode(SLOW32ISD::HI, DL, VT, TargetJTHi);
 
-  // Generate: ori rd, rd, %lo(jumptable)
+  // Generate: addi rd, rd, %lo(jumptable)
   SDValue Lo = DAG.getNode(SLOW32ISD::LO, DL, VT, TargetJTLo);
 
-  // Combine with OR to generate ORI
-  return DAG.getNode(ISD::OR, DL, VT, Hi, Lo);
+  // Combine with ADD to generate ADDI (sign-extended LO12)
+  return DAG.getNode(ISD::ADD, DL, VT, Hi, Lo);
 }
 
 SDValue SLOW32TargetLowering::LowerVASTART(SDValue Op, SelectionDAG &DAG) const {
@@ -351,21 +352,34 @@ SDValue SLOW32TargetLowering::LowerSHL_PARTS(SDValue Op, SelectionDAG &DAG) cons
   SDValue Shamt = Op.getOperand(2);
   EVT VT = Lo.getValueType();
 
-  // For now, just handle the normal case where shift < 32
-  // The general case would need branches which we can't express here
-  // LLVM will insert runtime checks if needed
-
+  // Handle both cases: shift < 32 and shift >= 32
+  SDValue Zero = DAG.getConstant(0, DL, VT);
+  SDValue ThirtyOne = DAG.getConstant(31, DL, VT);
+  SDValue ThirtyTwo = DAG.getConstant(32, DL, VT);
+  
+  // Check if shift >= 32
+  SDValue IsGE32 = DAG.getSetCC(DL, MVT::i32, Shamt, ThirtyOne, ISD::SETUGT);
+  
+  // Case 1: shift < 32
   // NewLo = Lo << Shamt
   // NewHi = (Hi << Shamt) | (Lo >> (32 - Shamt))
   SDValue LoShl = DAG.getNode(ISD::SHL, DL, VT, Lo, Shamt);
-
   SDValue HiShl = DAG.getNode(ISD::SHL, DL, VT, Hi, Shamt);
-  SDValue ThirtyTwo = DAG.getConstant(32, DL, VT);
   SDValue InvShamt = DAG.getNode(ISD::SUB, DL, VT, ThirtyTwo, Shamt);
   SDValue LoShr = DAG.getNode(ISD::SRL, DL, VT, Lo, InvShamt);
-  SDValue HiResult = DAG.getNode(ISD::OR, DL, VT, HiShl, LoShr);
+  SDValue HiLess32 = DAG.getNode(ISD::OR, DL, VT, HiShl, LoShr);
+  
+  // Case 2: shift >= 32
+  // NewLo = 0
+  // NewHi = Lo << (Shamt - 32)
+  SDValue ShamtMinus32 = DAG.getNode(ISD::SUB, DL, VT, Shamt, ThirtyTwo);
+  SDValue HiGE32 = DAG.getNode(ISD::SHL, DL, VT, Lo, ShamtMinus32);
+  
+  // Select based on shift amount
+  SDValue NewLo = DAG.getNode(ISD::SELECT, DL, VT, IsGE32, Zero, LoShl);
+  SDValue NewHi = DAG.getNode(ISD::SELECT, DL, VT, IsGE32, HiGE32, HiLess32);
 
-  return DAG.getMergeValues({LoShl, HiResult}, DL);
+  return DAG.getMergeValues({NewLo, NewHi}, DL);
 }
 
 // Lower 64-bit logical shift right into 32-bit operations
@@ -376,17 +390,34 @@ SDValue SLOW32TargetLowering::LowerSRL_PARTS(SDValue Op, SelectionDAG &DAG) cons
   SDValue Shamt = Op.getOperand(2);
   EVT VT = Lo.getValueType();
 
-  // For now, handle the normal case where shift < 32
+  // Handle both cases: shift < 32 and shift >= 32
+  SDValue Zero = DAG.getConstant(0, DL, VT);
+  SDValue ThirtyOne = DAG.getConstant(31, DL, VT);
+  SDValue ThirtyTwo = DAG.getConstant(32, DL, VT);
+  
+  // Check if shift >= 32
+  SDValue IsGE32 = DAG.getSetCC(DL, MVT::i32, Shamt, ThirtyOne, ISD::SETUGT);
+  
+  // Case 1: shift < 32
   // NewLo = (Lo >> Shamt) | (Hi << (32 - Shamt))
   // NewHi = Hi >> Shamt
   SDValue LoShr = DAG.getNode(ISD::SRL, DL, VT, Lo, Shamt);
   SDValue HiShr = DAG.getNode(ISD::SRL, DL, VT, Hi, Shamt);
-  SDValue ThirtyTwo = DAG.getConstant(32, DL, VT);
   SDValue InvShamt = DAG.getNode(ISD::SUB, DL, VT, ThirtyTwo, Shamt);
   SDValue HiShl = DAG.getNode(ISD::SHL, DL, VT, Hi, InvShamt);
-  SDValue LoResult = DAG.getNode(ISD::OR, DL, VT, LoShr, HiShl);
+  SDValue LoLess32 = DAG.getNode(ISD::OR, DL, VT, LoShr, HiShl);
+  
+  // Case 2: shift >= 32
+  // NewLo = Hi >> (Shamt - 32)
+  // NewHi = 0
+  SDValue ShamtMinus32 = DAG.getNode(ISD::SUB, DL, VT, Shamt, ThirtyTwo);
+  SDValue LoGE32 = DAG.getNode(ISD::SRL, DL, VT, Hi, ShamtMinus32);
+  
+  // Select based on shift amount
+  SDValue NewLo = DAG.getNode(ISD::SELECT, DL, VT, IsGE32, LoGE32, LoLess32);
+  SDValue NewHi = DAG.getNode(ISD::SELECT, DL, VT, IsGE32, Zero, HiShr);
 
-  return DAG.getMergeValues({LoResult, HiShr}, DL);
+  return DAG.getMergeValues({NewLo, NewHi}, DL);
 }
 
 // Lower 64-bit arithmetic shift right into 32-bit operations
@@ -397,17 +428,34 @@ SDValue SLOW32TargetLowering::LowerSRA_PARTS(SDValue Op, SelectionDAG &DAG) cons
   SDValue Shamt = Op.getOperand(2);
   EVT VT = Lo.getValueType();
 
-  // For now, handle the normal case where shift < 32
+  // Handle both cases: shift < 32 and shift >= 32
+  SDValue ThirtyOne = DAG.getConstant(31, DL, VT);
+  SDValue ThirtyTwo = DAG.getConstant(32, DL, VT);
+  
+  // Check if shift >= 32
+  SDValue IsGE32 = DAG.getSetCC(DL, MVT::i32, Shamt, ThirtyOne, ISD::SETUGT);
+  
+  // Case 1: shift < 32
   // NewLo = (Lo >> Shamt) | (Hi << (32 - Shamt))
   // NewHi = Hi >> Shamt (arithmetic)
   SDValue LoShr = DAG.getNode(ISD::SRL, DL, VT, Lo, Shamt);
   SDValue HiSra = DAG.getNode(ISD::SRA, DL, VT, Hi, Shamt);
-  SDValue ThirtyTwo = DAG.getConstant(32, DL, VT);
   SDValue InvShamt = DAG.getNode(ISD::SUB, DL, VT, ThirtyTwo, Shamt);
   SDValue HiShl = DAG.getNode(ISD::SHL, DL, VT, Hi, InvShamt);
-  SDValue LoResult = DAG.getNode(ISD::OR, DL, VT, LoShr, HiShl);
+  SDValue LoLess32 = DAG.getNode(ISD::OR, DL, VT, LoShr, HiShl);
+  
+  // Case 2: shift >= 32
+  // NewLo = Hi >> (Shamt - 32) (arithmetic)
+  // NewHi = Hi >> 31 (all sign bits)
+  SDValue ShamtMinus32 = DAG.getNode(ISD::SUB, DL, VT, Shamt, ThirtyTwo);
+  SDValue LoGE32 = DAG.getNode(ISD::SRA, DL, VT, Hi, ShamtMinus32);
+  SDValue HiGE32 = DAG.getNode(ISD::SRA, DL, VT, Hi, ThirtyOne);
+  
+  // Select based on shift amount
+  SDValue NewLo = DAG.getNode(ISD::SELECT, DL, VT, IsGE32, LoGE32, LoLess32);
+  SDValue NewHi = DAG.getNode(ISD::SELECT, DL, VT, IsGE32, HiGE32, HiSra);
 
-  return DAG.getMergeValues({LoResult, HiSra}, DL);
+  return DAG.getMergeValues({NewLo, NewHi}, DL);
 }
 
 SDValue SLOW32TargetLowering::LowerBRCOND(SDValue Op, SelectionDAG &DAG) const {
