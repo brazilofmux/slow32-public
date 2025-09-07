@@ -185,6 +185,10 @@ static void op_andi(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_
     cpu->regs[inst->rd] = cpu->regs[inst->rs1] & inst->imm;
 }
 
+static void op_xori(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    cpu->regs[inst->rd] = cpu->regs[inst->rs1] ^ inst->imm;
+}
+
 static void op_slli(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     cpu->regs[inst->rd] = cpu->regs[inst->rs1] << (inst->imm & 0x1F);
 }
@@ -418,6 +422,7 @@ static handler_fn get_handler(uint8_t opcode) {
         case OP_ADDI: return op_addi;
         case OP_ORI: return op_ori;
         case OP_ANDI: return op_andi;
+        case OP_XORI: return op_xori;
         case OP_SLLI: return op_slli;
         case OP_SRLI: return op_srli;
         case OP_SRAI: return op_srai;
@@ -476,6 +481,7 @@ static void predecode_program(fast_cpu_state_t *cpu, uint32_t code_size) {
                 break;
                 
             case OP_ORI ... OP_ANDI:
+            case OP_XORI:
             case OP_SLTIU:
                 // I-format with zero-extended immediates
                 di->rd = (raw >> 7) & 0x1F;

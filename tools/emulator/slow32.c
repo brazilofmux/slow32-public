@@ -28,8 +28,9 @@ static instruction_t decode_instruction(uint32_t raw) {
             break;
 
         case OP_ORI ... OP_ANDI:
+        case OP_XORI:
         case OP_SLTIU:
-            // ORI, ANDI, and SLTIU use zero-extended immediates
+            // ORI, ANDI, XORI, and SLTIU use zero-extended immediates
             inst.format = FMT_I;
             inst.rd = (raw >> 7) & 0x1F;
             inst.rs1 = (raw >> 15) & 0x1F;
@@ -256,6 +257,7 @@ static const char* get_opcode_name(opcode_t op) {
         case OP_ADDI: return "ADDI";
         case OP_ORI: return "ORI";
         case OP_ANDI: return "ANDI";
+        case OP_XORI: return "XORI";
         case OP_SLLI: return "SLLI";
         case OP_SRLI: return "SRLI";
         case OP_SRAI: return "SRAI";
@@ -458,6 +460,9 @@ void cpu_step(cpu_state_t *cpu) {
             break;
         case OP_ANDI:
             cpu->regs[inst.rd] = rs1_val & inst.imm;
+            break;
+        case OP_XORI:
+            cpu->regs[inst.rd] = rs1_val ^ inst.imm;
             break;
         case OP_SLLI:
             cpu->regs[inst.rd] = rs1_val << (inst.imm & 0x1F);

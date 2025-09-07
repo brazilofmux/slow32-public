@@ -55,6 +55,7 @@ typedef enum {
     OP_SLEU   = 0x1B,  // Set less or equal (unsigned)
     OP_SGE    = 0x1C,  // Set greater or equal (signed)
     OP_SGEU   = 0x1D,  // Set greater or equal (unsigned)
+    OP_XORI   = 0x1E,  // XOR immediate
     
     OP_LUI    = 0x20,
     

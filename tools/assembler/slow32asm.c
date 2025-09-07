@@ -109,6 +109,7 @@ static instruction_def_t instruction_table[] = {
     {"addi",  0x10, FMT_I},
     {"ori",   0x11, FMT_I},
     {"andi",  0x12, FMT_I},
+    {"xori",  0x1E, FMT_I},
     {"slli",  0x13, FMT_I},
     {"srli",  0x14, FMT_I},
     {"srai",  0x15, FMT_I},

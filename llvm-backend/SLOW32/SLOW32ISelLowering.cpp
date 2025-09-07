@@ -68,6 +68,20 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   setOperationAction(ISD::UDIV, MVT::i64, Expand);
   setOperationAction(ISD::SREM, MVT::i64, Expand);
   setOperationAction(ISD::UREM, MVT::i64, Expand);
+  
+  // SLOW32 is not recognized in LLVM's RuntimeLibcalls infrastructure,
+  // so we need to explicitly set which libcall implementations to use for i64 div/rem
+  // These use the standard compiler-rt/libgcc implementations
+  setLibcallImpl(RTLIB::SDIV_I64, RTLIB::impl___divdi3);
+  setLibcallImpl(RTLIB::UDIV_I64, RTLIB::impl___udivdi3);
+  setLibcallImpl(RTLIB::SREM_I64, RTLIB::impl___moddi3);
+  setLibcallImpl(RTLIB::UREM_I64, RTLIB::impl___umoddi3);
+  
+  // Set the calling convention for these libcall implementations to use C calling convention
+  for (RTLIB::LibcallImpl Impl : {RTLIB::impl___divdi3, RTLIB::impl___udivdi3,
+                                   RTLIB::impl___moddi3, RTLIB::impl___umoddi3}) {
+    setLibcallImplCallingConv(Impl, CallingConv::C);
+  }
   // These will use our shift-parts implementation
   setOperationAction(ISD::SHL, MVT::i64, Custom);
   setOperationAction(ISD::SRA, MVT::i64, Custom);

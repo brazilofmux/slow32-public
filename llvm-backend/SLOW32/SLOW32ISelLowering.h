@@ -2,6 +2,7 @@
 #define LLVM_LIB_TARGET_SLOW32_SLOW32ISELLOWERING_H
 
 #include "llvm/CodeGen/TargetLowering.h"
+#include "llvm/IR/RuntimeLibcalls.h"
 
 namespace llvm {
 namespace SLOW32ISD {
