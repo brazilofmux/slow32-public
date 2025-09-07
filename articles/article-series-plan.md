@@ -1,310 +1,302 @@
 # SLOW-32 Substack Article Series Plan
 
 ## Overview
-This document outlines the planned article series for SLOW-32, a modern educational CPU architecture and toolchain. Each article will explore different aspects of the system, from high-level design philosophy to deep technical implementation details.
+This document outlines the article series for SLOW-32, a modern educational CPU architecture and toolchain. Rather than massive comprehensive articles, we're taking a focused, story-driven approach where each article solves one interesting problem or explores one key concept.
 
 ## Published Articles
-1. **SLOW‑32: Building an Application‑Level Assembly Sandbox** ✅
+
+### 1. **SLOW‑32: Building an Application‑Level Assembly Sandbox** ✅
    - Introduction to the project philosophy
    - High-level architecture overview
    - Why "less is more" for educational CPUs
    - Application-level vs system-level design choices
 
-## Planned Article Series
+### 2. **Building an LLVM Backend: The 64-bit Integer Breakthrough** ✅
+   - The carry flag problem on SLOW-32
+   - Why ADDC/ADDE failed spectacularly
+   - The UADDO/USUBO solution
+   - Beautiful 4-instruction i64 operations
+   - Lessons about not fighting your architecture
 
-### Part 2: The LLVM Backend Journey (Technical Deep Dive)
-**Title:** "Building a Custom LLVM Backend from Scratch: The SLOW-32 Story"
-- **Motivation:** Why LLVM over custom compiler
-- **Key Topics:**
-  - Setting up LLVM for a new target
-  - TableGen and instruction selection
-  - Register allocation for 32 registers
-  - The 64-bit integer breakthrough (UADDO/USUBO approach)
-  - Jump tables and switch statements
-  - Varargs implementation
-  - PHI node handling
-- **Code Examples:**
-  - Walk through a simple function compilation
-  - Show LLVM IR → SLOW-32 assembly transformation
-  - Demonstrate optimization passes
-- **Lessons Learned:**
-  - What worked (RISC-V inspiration)
-  - What didn't (early ADDC/ADDE attempts)
-  - Collaboration stories (Claude + ChatGPT teamwork)
+## Upcoming LLVM Backend Stories
 
-### Part 3: The Assembler & Object File Format
-**Title:** "Designing a Modern Assembler: Relocations, Symbols, and Binary Formats"
-- **Key Topics:**
-  - Object file format (.s32o) design
-  - Relocation types (R_SLOW32_ABS32, R_SLOW32_HI20, etc.)
-  - Symbol tables and string tables
-  - Pseudo-instructions (li, mv, call)
-  - Expression evaluation
-  - Section handling (.text, .data, .rodata, .bss)
-- **Implementation Details:**
-  - Two-pass assembly process
-  - Handling forward references
-  - %hi()/%lo() for 32-bit constants
-  - Jump table support (.word with symbols)
-- **Code walkthrough:** Assembling a complex program with multiple sections
+### 3. **Varargs and the Case of the Backwards Arguments**
+   - The mystery: arguments appearing in reverse order
+   - Register save ordering discoveries
+   - How SLOW-32's simple approach beats complexity
+   - The elegant char* va_list solution
 
-### Part 4: The Linker - Where Magic Happens
-**Title:** "Building a Linker: From Objects to Executables"
-- **Key Topics:**
-  - Executable format (.s32x) design
-  - Symbol resolution across files
-  - Relocation processing
-  - Section merging and layout
-  - The W^X boundary implementation
-  - HI20/LO12 relocation pairing
-- **Technical Challenges:**
-  - Handling weak symbols
-  - Common block allocation
-  - Optimizing layout for cache
-  - Interrupt Service Table metadata
-- **Case Study:** Linking a multi-file program with runtime library
+### 4. **Jump Tables Without Jump Tables**
+   - How to implement switch statements without native support
+   - The .word directive and symbol references
+   - LLVM's jump table generation
+   - Performance implications
 
-### Part 5: Two Emulators, Two Philosophies
-**Title:** "Fast vs Debug: Building Complementary Emulators"
-- **The Fast Emulator:**
-  - Direct threaded interpretation
-  - Computed goto dispatch
-  - ~350M instructions/second
-  - Memory protection boundaries
-  - Minimal overhead design
-- **The Debug Emulator:**
-  - Comprehensive tracing (-t flag)
-  - Register change tracking (-r flag)
-  - Breakpoints and watchpoints
-  - Memory access monitoring
-  - Step-by-step execution
-- **Implementation techniques:**
-  - Efficient instruction decode
-  - Branch prediction hints
-  - Cache-friendly data structures
-- **Performance analysis and benchmarks**
+### 5. **The SELECT Problem: Why Conditional Moves Are Tricky**
+   - LLVM's ISD::SELECT operation
+   - Why our first attempt generated 8 instructions
+   - The branch vs conditional move tradeoff
+   - Final 3-instruction solution
 
-### Part 6: The Runtime Library
-**Title:** "Building a Minimal C Runtime: From crt0 to printf"
-- **Core Components:**
-  - crt0.s - Program startup
-  - Stack initialization
-  - Intrinsics (memcpy, memset, etc.)
-  - The printf implementation saga
-- **Varargs on SLOW-32:**
-  - Register vs stack arguments
-  - The simple char* va_list approach
-  - Why it's cleaner than x86
-- **Standard library subset:**
-  - String operations
-  - Memory operations
-  - Integer to string conversions
-- **Code size optimization techniques**
+### 6. **Calling Convention Crimes: The Register Clobber Mystery**
+   - Accidentally destroying registers across calls
+   - LLVM's assumptions vs our implementation
+   - The importance of callee-saved registers
+   - How we caught it with torture tests
 
-### Part 7: The Instruction Set Design
-**Title:** "Designing a Clean RISC ISA: Lessons from SLOW-32"
-- **Design Principles:**
-  - Fixed 32-bit instructions
-  - No condition codes (compare-and-branch)
-  - Simple addressing modes
-  - Register-register operations
-- **Instruction Formats:**
-  - R-type (register-register)
-  - I-type (immediate)
-  - B-type (branches)
-  - J-type (jumps)
-  - U-type (upper immediate)
-- **Notable Instructions:**
-  - DEBUG - The only I/O mechanism
-  - HALT vs YIELD
-  - The comparison zoo (SEQ, SNE, SLT, etc.)
-- **What's NOT there and why:**
-  - No carry flag
-  - No interrupts
-  - No privileged modes
-  - No MMU/TLB
+## Toolchain Deep Dives
 
-### Part 8: Testing & Regression Infrastructure
-**Title:** "Ensuring Correctness: Building a Regression Test Suite"
-- **The Test Framework:**
-  - Automated test discovery
-  - Expected output validation
-  - Performance regression detection
-  - Coverage analysis
-- **Test Categories:**
-  - Feature tests (arithmetic, branches, etc.)
-  - Bug regression tests
-  - Torture tests (complex programs)
-  - Performance benchmarks
-- **Real bugs caught:**
-  - The varargs clobber bug
-  - 32-bit constant loading issues
-  - Memcpy register allocation bug
-- **Continuous testing philosophy**
+### 7. **The %hi/%lo Problem: Loading 32-bit Constants**
+   - Why you can't fit 32 bits in a 32-bit instruction
+   - The LUI+ADDI dance
+   - Sign extension gotchas
+   - How the assembler and linker cooperate
 
-### Part 9: Debugging Tools & Developer Experience
-**Title:** "Building Developer Tools: Disassemblers, Dumps, and Diagnostics"
-- **Tool Suite:**
-  - s32-objdump - Object file analysis
-  - s32-exedump - Executable inspection
-  - slow32dis - Interactive disassembler
-- **Implementation highlights:**
-  - Symbol-aware disassembly
-  - Relocation visualization
-  - Section layout display
-- **Developer workflow optimization:**
-  - Error messages that help
-  - Debugging mysterious crashes
-  - Performance profiling support
+### 8. **Two-Pass Assembly: Why Forward References Matter**
+   - The bootstrap problem
+   - Symbol resolution strategies
+   - Why we kept it simple
+   - Real examples that break single-pass
 
-### Part 10: Real Programs & Benchmarks
-**Title:** "From Hello World to CRC32: Real Programs on SLOW-32"
-- **Example Programs:**
-  - Hello World evolution
-  - Recursive factorial
-  - CRC32 with lookup tables
-  - Printf implementation
-  - Sorting algorithms
-- **Performance Analysis:**
-  - Instruction mix statistics
-  - Hot path optimization
-  - Register pressure analysis
-- **Code generation patterns:**
-  - Loop optimizations
-  - Function call overhead
-  - Switch statement efficiency
+### 9. **Relocations: The Assembler-Linker Contract**
+   - What R_SLOW32_HI20 really means
+   - Symbol arithmetic and overflow
+   - The paired relocation requirement
+   - Debug information preservation
 
-### Part 11: The 64-bit Integer Saga
-**Title:** "Supporting 64-bit Math Without 64-bit Registers"
-- **The Challenge:**
-  - Register pairs (R1:R2, R3:R4)
-  - Carry/borrow without flags
-- **The UADDO/USUBO Breakthrough:**
-  - Why ADDC/ADDE failed
-  - The elegant comparison approach
-  - 4-instruction i64 operations
-- **Implementation Details:**
-  - Shift-parts for i64 shifts
-  - Calling convention changes
-  - LLVM backend modifications
-- **Remaining work:** i64 multiply/divide
+### 10. **Building the Linker: Section Tetris**
+   - Merging .text from multiple files
+   - The W^X boundary calculation
+   - Symbol resolution precedence
+   - Why layout order matters
 
-### Part 12: Future Directions & Extensions
-**Title:** "What's Next for SLOW-32: Floating Point, SIMD, and Beyond"
-- **Near-term plans:**
-  - Floating-point extension
-  - MMIO ring buffers
-  - TRAP instruction
-  - Lightweight standard library
-- **Experimental ideas:**
-  - Basic atomics
-  - SIMD for memcpy/crypto
-  - JIT compilation with TCC
-  - Multi-instance coordination
-- **Community & Collaboration:**
-  - How to contribute
-  - Educational use cases
-  - Potential research projects
+### 11. **Object vs Executable: Two File Formats, One Goal**
+   - The .s32o format design
+   - The .s32x format and why it's different
+   - Metadata that survives linking
+   - The Interrupt Service Table trick
 
-### Part 13: Lessons Learned & Reflections
-**Title:** "What I Learned Building a CPU Toolchain from Scratch"
-- **Technical Insights:**
-  - LLVM backend gotchas
-  - The importance of regression tests
-  - Performance vs simplicity tradeoffs
-- **Project Management:**
-  - Incremental development
-  - The value of working examples
-  - Documentation as you go
-- **Collaboration Stories:**
-  - Human-AI pair programming
-  - Open source community feedback
-  - Educational applications
+## Emulator Stories
 
-## Special Topics (Potential Bonus Articles)
+### 12. **350 Million Instructions Per Second: The Fast Emulator**
+   - Computed goto magic
+   - Why switch statements are slow
+   - Memory protection without MMU
+   - The DEBUG instruction fast path
 
-### A. The Standalone Compiler
-**Title:** "Building a Standalone LLVM IR to Assembly Compiler"
-- The translator architecture
-- SSA to register allocation
-- PHI node elimination
-- Why we kept it alongside LLVM backend
+### 13. **The Debug Emulator: When Slow Is Good**
+   - Comprehensive tracing architecture
+   - Register diff visualization
+   - Memory access patterns
+   - Finding bugs with -r flag
 
-### B. Comparison with Other Educational ISAs
-**Title:** "SLOW-32 vs RISC-V, ARM, and MIPS: Design Tradeoffs"
-- Instruction encoding comparison
-- Complexity analysis
-- Performance characteristics
-- Educational value assessment
+## Runtime and Architecture Stories
 
-### C. Using SLOW-32 for Compiler Education
-**Title:** "Teaching Compilers with SLOW-32: A Curriculum Guide"
-- Course outline
-- Lab exercises
-- Student projects
-- Assessment strategies
+### 14. **crt0.s: Where Programs Begin**
+   - Stack pointer initialization
+   - The argc/argv setup dance
+   - Why _start comes before main
+   - The HALT at the end
 
-### D. Security in a Sandbox
-**Title:** "Crash-Safe by Design: SLOW-32's Security Model"
-- Memory protection without MMU
-- W^X enforcement
-- Sandboxing strategies
-- Host-guest boundaries
+### 15. **Printf Without an OS: The DEBUG Instruction Story**
+   - One instruction for all I/O
+   - Building printf on top of putchar
+   - Format string parsing
+   - Why we kept it minimal
 
-## Article Writing Guidelines
+### 16. **Memcpy and the Register Allocation Bug**
+   - Hand-optimized assembly gone wrong
+   - The clobber list mistake
+   - How torture tests saved us
+   - Performance vs correctness
 
-### Target Audience
-- Compiler engineers
-- Systems programmers
-- CS students (advanced undergraduate/graduate)
-- Programming language enthusiasts
-- Emulator developers
+### 17. **The Instruction That Isn't: Pseudo-Instructions**
+   - Why 'li' is actually LUI+ADDI
+   - The 'mv' that's really ADD
+   - CALL and its link register magic
+   - Assembler convenience vs ISA purity
 
-### Article Structure
-1. **Hook:** Real problem or interesting question
-2. **Context:** Why this matters
-3. **Technical Content:** Deep dive with code
-4. **Practical Examples:** Working demonstrations
-5. **Lessons Learned:** What worked, what didn't
-6. **Next Steps:** What comes after
+## Architecture Philosophy
 
-### Code Examples Strategy
-- Show real, working code
-- Include command lines to reproduce
-- Highlight key insights in comments
-- Provide before/after comparisons
-- Link to GitHub for full source
+### 18. **No Flags, No Problem: Compare-and-Branch Design**
+   - Why condition codes complicate pipelines
+   - The RISC philosophy of visible state
+   - Comparison results in registers
+   - Performance implications
 
-### Visual Elements
-- Instruction encoding diagrams
-- Memory layout illustrations
-- Performance graphs
-- Architecture block diagrams
-- Assembly/machine code comparisons
+### 19. **W^X Without an MMU: Protection Through Segmentation**
+   - Code segment execute-only
+   - Data segment no-execute
+   - The boundary calculation
+   - Why it's enough for education
 
-## Publishing Schedule
-- Target: One article every 2-3 weeks
-- Allow flexibility for technical articles that need more research
-- Coordinate with code releases and feature completions
-- Build momentum with consistent publishing
+### 20. **The DEBUG Instruction: Minimalist I/O**
+   - One instruction to rule them all
+   - Character output simplicity
+   - Future MMIO extensions
+   - Host-guest boundaries
 
-## Cross-Promotion Ideas
-- Reference previous articles for context
-- Preview upcoming topics
-- Create article series collections
-- Develop companion GitHub examples
-- Consider video walkthroughs for complex topics
+## War Stories and Bug Hunts
 
-## Metrics to Track
-- Reader engagement (likes, comments)
-- Technical questions raised
-- Code contributions inspired
-- Educational adoptions
-- Performance of different article types
+### 21. **The Varargs Clobber Mystery**
+   - Symptoms: corrupted variadic arguments
+   - The register save order revelation
+   - Why it only failed sometimes
+   - The fix that simplified everything
 
-## Notes for Future Articles
-- Document interesting bugs as they're fixed
-- Save performance optimization stories
-- Track "aha!" moments during development
-- Collect reader questions for FAQ articles
-- Consider guest posts from contributors
+### 22. **When i64 Shifts Go Wrong**
+   - Shifts >= 32 bits failing silently
+   - The undefined behavior trap
+   - LLVM's assumptions vs reality
+   - The explicit masking solution
+
+### 23. **The Great Symbol Resolution Rewrite**
+   - Why weak symbols broke everything
+   - Common blocks and FORTRAN legacy
+   - The precedence rules that work
+   - Linker complexity management
+
+## Testing and Developer Tools
+
+### 24. **Torture Tests: Finding Bugs Before Users Do**
+   - The automated test framework
+   - Categories: features, regression, torture
+   - Real bugs caught and fixed
+   - Continuous testing philosophy
+
+### 25. **Building a Disassembler That Doesn't Suck**
+   - Symbol-aware disassembly
+   - Relocation visualization
+   - Section layout display
+   - Error messages that actually help
+
+## Formal Toolchain Documentation (Reference Style)
+
+### Technical Reference Series
+*These articles provide formal, comprehensive documentation in the style of classic processor manuals and toolchain guides.*
+
+### TR-1. **SLOW-32 Instruction Set Architecture Reference**
+   - Complete opcode tables
+   - Instruction encoding formats
+   - Detailed instruction descriptions
+   - Timing and pipeline behavior
+   - Assembly language syntax
+
+### TR-2. **SLOW-32 Application Binary Interface (ABI)**
+   - Register usage conventions
+   - Calling conventions
+   - Stack frame layout
+   - Data type representations
+   - System call interface (DEBUG)
+
+### TR-3. **SLOW-32 Object File Format Specification**
+   - File header structure
+   - Section headers
+   - Symbol table format
+   - Relocation entries
+   - String table organization
+
+### TR-4. **SLOW-32 Executable Format Specification**
+   - Executable header
+   - Segment layout
+   - Entry point specification
+   - Interrupt Service Table
+   - Memory map requirements
+
+### TR-5. **SLOW-32 Assembler Reference Manual**
+   - Directive reference (.text, .data, etc.)
+   - Pseudo-instruction expansions
+   - Expression evaluation rules
+   - Symbol resolution
+   - Macro capabilities (future)
+
+### TR-6. **SLOW-32 Linker Reference Manual**
+   - Command-line options
+   - Symbol resolution rules
+   - Section merging algorithm
+   - Relocation processing
+   - Map file generation
+
+### TR-7. **SLOW-32 Runtime Library Reference**
+   - Function reference (memcpy, printf, etc.)
+   - Intrinsics documentation
+   - Startup code (crt0)
+   - Stack initialization
+   - Variable argument handling
+
+### TR-8. **SLOW-32 Emulator User Guide**
+   - Command-line options
+   - Debug flags and tracing
+   - Performance characteristics
+   - Memory protection model
+   - Host interface (DEBUG instruction)
+
+## Future Directions & Reflections
+
+### 26. **What's Next for SLOW-32**
+   - Floating-point extension design
+   - MMIO ring buffers for real I/O
+   - TRAP instruction considerations
+   - Community contributions
+
+### 27. **Lessons from Building a Toolchain**
+   - LLVM backend gotchas
+   - Regression test importance
+   - Human-AI collaboration
+   - What I'd do differently
+
+## Special Topics
+
+### The Standalone LLVM IR Compiler
+   - Why we built it alongside the backend
+   - SSA to register allocation
+   - PHI node elimination
+   - Performance comparisons
+
+### SLOW-32 vs Other Educational ISAs
+   - Comparison with RISC-V RV32I
+   - Why simpler than MIPS
+   - Learning curve analysis
+   - Educational effectiveness
+
+## Writing Strategy
+
+### Two Article Tracks
+
+1. **Story Articles (Substack style)**
+   - Problem → struggle → breakthrough narrative
+   - Personal development journey
+   - "Aha!" moments and lessons learned
+   - 5-10 minute reads
+   - Published every 2-3 weeks
+
+2. **Technical References (Documentation style)**
+   - Formal specifications and manuals
+   - Complete reference documentation
+   - Professional datasheet format
+   - Published as toolchain components mature
+   - Living documents in the repository
+
+### Article Guidelines
+
+**For Story Articles:**
+- Start with a real problem or bug
+- Show the failed attempts
+- Build to the breakthrough
+- Include working code snippets
+- End with lessons learned
+
+**For Technical References:**
+- Follow classic manual structure
+- Complete tables and specifications
+- Formal language and precise definitions
+- Cross-references and indices
+- Version-controlled with the code
+
+### Publishing Notes
+
+- Story articles go to Substack
+- Technical references live in /docs
+- Cross-link between the two
+- Story articles can preview technical details
+- Technical docs can reference story articles for context
