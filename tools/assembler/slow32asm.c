@@ -724,8 +724,357 @@ static bool assemble_line(assembler_t *as, char *line) {
                 }
             }
             return true;
+        } else if ((strcmp(tokens[0], ".zero") == 0 || strcmp(tokens[0], ".space") == 0) && num_tokens > 1) {
+            // .zero/.space N - reserve N bytes of zeros
+            int num_bytes = parse_immediate(tokens[1]);
+            if (num_bytes < 0) {
+                fprintf(stderr, ".zero/.space requires positive byte count\n");
+                return false;
+            }
+            for (int i = 0; i < num_bytes; i++) {
+                as->instructions[as->num_instructions].instruction = 0x80000000;
+                as->instructions[as->num_instructions].address = as->current_addr;
+                as->instructions[as->num_instructions].section = as->current_section;
+                as->instructions[as->num_instructions].is_data_byte = true;
+                as->num_instructions++;
+                as->current_addr++;
+                bump_size(as, as->current_section, 1);
+            }
+            return true;
+        } else if (strcmp(tokens[0], ".long") == 0 && num_tokens > 1) {
+            // .long - alias for .word (emit 32-bit values)
+            // Reuse .word logic
+            for (int i = 1; i < num_tokens; i++) {
+                char sym[64]; int is_hi=0, is_lo=0;
+                int val = parse_immediate_or_symbol(tokens[i], sym, &is_hi, &is_lo);
+                if (val == -1) {
+                    if (is_hi || is_lo) {
+                        fprintf(stderr, ".long %%hi/%%lo not supported here; use plain symbol\n");
+                        return false;
+                    }
+                    // placeholder + relocation
+                    as->instructions[as->num_instructions].instruction = 0;
+                    as->instructions[as->num_instructions].address = as->current_addr;
+                    as->instructions[as->num_instructions].section = as->current_section;
+                    as->instructions[as->num_instructions].is_data_byte = false;
+                    as->num_instructions++;
+                    add_relocation(as, as->current_addr, sym, S32O_REL_32, 0, as->current_section);
+                } else {
+                    as->instructions[as->num_instructions].instruction = (uint32_t)val;
+                    as->instructions[as->num_instructions].address = as->current_addr;
+                    as->instructions[as->num_instructions].section = as->current_section;
+                    as->instructions[as->num_instructions].is_data_byte = false;
+                    as->num_instructions++;
+                }
+                as->current_addr += 4;
+                bump_size(as, as->current_section, 4);
+            }
+            return true;
+        } else if (strcmp(tokens[0], ".quad") == 0 && num_tokens > 1) {
+            // .quad - emit 64-bit values (as two 32-bit words, little-endian)
+            for (int i = 1; i < num_tokens; i++) {
+                int64_t value = 0;
+                if (tokens[i][0] == '0' && tokens[i][1] == 'x') {
+                    value = strtoull(tokens[i] + 2, NULL, 16);
+                } else if (tokens[i][0] == '-') {
+                    value = strtoll(tokens[i], NULL, 10);
+                } else {
+                    value = strtoull(tokens[i], NULL, 10);
+                }
+                
+                // Low 32 bits
+                as->instructions[as->num_instructions].instruction = (uint32_t)(value & 0xFFFFFFFF);
+                as->instructions[as->num_instructions].address = as->current_addr;
+                as->instructions[as->num_instructions].section = as->current_section;
+                as->instructions[as->num_instructions].is_data_byte = false;
+                as->num_instructions++;
+                as->current_addr += 4;
+                bump_size(as, as->current_section, 4);
+                
+                // High 32 bits
+                as->instructions[as->num_instructions].instruction = (uint32_t)((value >> 32) & 0xFFFFFFFF);
+                as->instructions[as->num_instructions].address = as->current_addr;
+                as->instructions[as->num_instructions].section = as->current_section;
+                as->instructions[as->num_instructions].is_data_byte = false;
+                as->num_instructions++;
+                as->current_addr += 4;
+                bump_size(as, as->current_section, 4);
+            }
+            return true;
+        } else if (strcmp(tokens[0], ".text") == 0) {
+            // .text - switch to code section
+            as->current_section = SECTION_CODE;
+            as->current_addr = as->code_size;
+            return true;
+        } else if (strcmp(tokens[0], ".data") == 0) {
+            // .data - switch to data section
+            as->current_section = SECTION_DATA;
+            as->current_addr = as->data_size;
+            return true;
+        } else if (strcmp(tokens[0], ".bss") == 0) {
+            // .bss - switch to BSS section
+            as->current_section = SECTION_BSS;
+            as->current_addr = as->bss_size;
+            return true;
+        } else if ((strcmp(tokens[0], ".equ") == 0 || strcmp(tokens[0], ".set") == 0) && num_tokens >= 3) {
+            // .equ/.set symbol, value - define a constant
+            char *symbol = tokens[1];
+            int value = parse_immediate(tokens[2]);
+            
+            // Add as a label with the constant value
+            label_t *label = find_label(as, symbol);
+            if (label) {
+                // Update existing label
+                label->address = value;
+                label->is_defined = true;
+            } else {
+                // Add new label
+                add_label(as, symbol, value);
+                as->labels[as->num_labels - 1].is_defined = true;
+            }
+            return true;
+        } else if (strcmp(tokens[0], ".comm") == 0 && num_tokens >= 3) {
+            // .comm symbol, size[, alignment] - declare common symbol
+            char *symbol = tokens[1];
+            int size = parse_immediate(tokens[2]);
+            
+            // Add to BSS section
+            section_t saved_section = as->current_section;
+            uint32_t saved_addr = as->current_addr;
+            
+            as->current_section = SECTION_BSS;
+            as->current_addr = as->bss_size;
+            
+            // Add alignment if specified
+            if (num_tokens > 3) {
+                int align = parse_immediate(tokens[3]);
+                int align_mask = align - 1;
+                if (as->current_addr & align_mask) {
+                    int padding = align - (as->current_addr & align_mask);
+                    as->current_addr += padding;
+                    as->bss_size += padding;
+                }
+            }
+            
+            // Add label for the symbol
+            add_label(as, symbol, as->current_addr);
+            label_t *label = &as->labels[as->num_labels - 1];
+            label->section = SECTION_BSS;
+            label->is_global = true;
+            label->is_defined = true;
+            
+            // Reserve space
+            as->bss_size += size;
+            
+            // Restore section
+            as->current_section = saved_section;
+            as->current_addr = saved_addr;
+            return true;
         }
         // Ignore other directives
+        return true;
+    }
+    
+    // Handle pseudo-instructions before real instructions
+    if (strcmp(tokens[0], "li") == 0 && num_tokens >= 3) {
+        // li rd, imm - load immediate
+        int rd = parse_register(tokens[1]);
+        
+        // Try to resolve as label/constant first
+        int32_t imm;
+        label_t *label = find_label(as, tokens[2]);
+        if (label && label->is_defined) {
+            imm = label->address;
+        } else {
+            imm = parse_immediate(tokens[2]);
+        }
+        
+        if (imm >= -2048 && imm < 2048) {
+            // Small immediate - use ADDI
+            instruction_t *inst = &as->instructions[as->num_instructions];
+            inst->opcode = 0x10;  // ADDI
+            inst->address = as->current_addr;
+            inst->section = as->current_section;
+            inst->instruction = encode_i(0x10, rd, 0, imm);
+            as->num_instructions++;
+            as->current_addr += 4;
+            bump_size(as, as->current_section, 4);
+        } else {
+            // Large immediate - use LUI + ORI
+            uint32_t upper = ((uint32_t)imm >> 12) & 0xFFFFF;
+            uint32_t lower = imm & 0xFFF;
+            
+            // If lower has sign bit set, adjust upper
+            if (lower & 0x800) {
+                upper = (upper + 1) & 0xFFFFF;
+            }
+            
+            // LUI rd, upper
+            instruction_t *inst1 = &as->instructions[as->num_instructions];
+            inst1->opcode = 0x25;  // LUI
+            inst1->address = as->current_addr;
+            inst1->section = as->current_section;
+            inst1->instruction = encode_u(0x25, rd, upper << 12);
+            as->num_instructions++;
+            as->current_addr += 4;
+            bump_size(as, as->current_section, 4);
+            
+            // ORI rd, rd, lower (if needed)
+            if (lower != 0) {
+                instruction_t *inst2 = &as->instructions[as->num_instructions];
+                inst2->opcode = 0x14;  // ORI
+                inst2->address = as->current_addr;
+                inst2->section = as->current_section;
+                inst2->instruction = encode_i(0x14, rd, rd, lower);
+                as->num_instructions++;
+                as->current_addr += 4;
+                bump_size(as, as->current_section, 4);
+            }
+        }
+        return true;
+    } else if (strcmp(tokens[0], "ret") == 0) {
+        // ret - return (jr r31)
+        instruction_t *inst = &as->instructions[as->num_instructions];
+        inst->opcode = 0x28;  // JR
+        inst->address = as->current_addr;
+        inst->section = as->current_section;
+        inst->instruction = encode_i(0x28, 0, 31, 0);  // jr r31
+        as->num_instructions++;
+        as->current_addr += 4;
+        bump_size(as, as->current_section, 4);
+        return true;
+    } else if (strcmp(tokens[0], "mv") == 0 && num_tokens >= 3) {
+        // mv rd, rs - move register (add rd, rs, r0)
+        int rd = parse_register(tokens[1]);
+        int rs = parse_register(tokens[2]);
+        instruction_t *inst = &as->instructions[as->num_instructions];
+        inst->opcode = 0x00;  // ADD
+        inst->address = as->current_addr;
+        inst->section = as->current_section;
+        inst->instruction = encode_r(0x00, rd, rs, 0);
+        as->num_instructions++;
+        as->current_addr += 4;
+        bump_size(as, as->current_section, 4);
+        return true;
+    } else if (strcmp(tokens[0], "nop") == 0) {
+        // nop - no operation (add r0, r0, r0)
+        instruction_t *inst = &as->instructions[as->num_instructions];
+        inst->opcode = 0x00;  // ADD
+        inst->address = as->current_addr;
+        inst->section = as->current_section;
+        inst->instruction = encode_r(0x00, 0, 0, 0);
+        as->num_instructions++;
+        as->current_addr += 4;
+        bump_size(as, as->current_section, 4);
+        return true;
+    } else if (strcmp(tokens[0], "j") == 0 && num_tokens >= 2) {
+        // j label - unconditional jump (jal r0, label)
+        instruction_t *inst = &as->instructions[as->num_instructions];
+        inst->opcode = 0x27;  // JAL
+        inst->address = as->current_addr;
+        inst->section = as->current_section;
+        inst->has_label_ref = true;
+        strcpy(inst->label_ref, tokens[1]);
+        inst->instruction = encode_j(0x27, 0, 0);  // Will be fixed up later
+        as->num_instructions++;
+        as->current_addr += 4;
+        bump_size(as, as->current_section, 4);
+        return true;
+    } else if (strcmp(tokens[0], "call") == 0 && num_tokens >= 2) {
+        // call label - function call (jal r31, label)
+        instruction_t *inst = &as->instructions[as->num_instructions];
+        inst->opcode = 0x27;  // JAL
+        inst->address = as->current_addr;
+        inst->section = as->current_section;
+        inst->has_label_ref = true;
+        strcpy(inst->label_ref, tokens[1]);
+        inst->instruction = encode_j(0x27, 31, 0);  // rd=r31, offset will be fixed up
+        as->num_instructions++;
+        as->current_addr += 4;
+        bump_size(as, as->current_section, 4);
+        return true;
+    } else if (strcmp(tokens[0], "not") == 0 && num_tokens >= 3) {
+        // not rd, rs - bitwise NOT (xori rd, rs, -1)
+        int rd = parse_register(tokens[1]);
+        int rs = parse_register(tokens[2]);
+        instruction_t *inst = &as->instructions[as->num_instructions];
+        inst->opcode = 0x1E;  // XORI
+        inst->address = as->current_addr;
+        inst->section = as->current_section;
+        inst->instruction = encode_i(0x1E, rd, rs, -1);
+        as->num_instructions++;
+        as->current_addr += 4;
+        bump_size(as, as->current_section, 4);
+        return true;
+    } else if (strcmp(tokens[0], "neg") == 0 && num_tokens >= 3) {
+        // neg rd, rs - negate (sub rd, r0, rs)
+        int rd = parse_register(tokens[1]);
+        int rs = parse_register(tokens[2]);
+        instruction_t *inst = &as->instructions[as->num_instructions];
+        inst->opcode = 0x01;  // SUB
+        inst->address = as->current_addr;
+        inst->section = as->current_section;
+        inst->instruction = encode_r(0x01, rd, 0, rs);
+        as->num_instructions++;
+        as->current_addr += 4;
+        bump_size(as, as->current_section, 4);
+        return true;
+    } else if (strcmp(tokens[0], "seqz") == 0 && num_tokens >= 3) {
+        // seqz rd, rs - set if equal to zero (seq rd, rs, r0)
+        int rd = parse_register(tokens[1]);
+        int rs = parse_register(tokens[2]);
+        instruction_t *inst = &as->instructions[as->num_instructions];
+        inst->opcode = 0x0C;  // SEQ
+        inst->address = as->current_addr;
+        inst->section = as->current_section;
+        inst->instruction = encode_r(0x0C, rd, rs, 0);
+        as->num_instructions++;
+        as->current_addr += 4;
+        bump_size(as, as->current_section, 4);
+        return true;
+    } else if (strcmp(tokens[0], "snez") == 0 && num_tokens >= 3) {
+        // snez rd, rs - set if not equal to zero (sne rd, rs, r0)
+        int rd = parse_register(tokens[1]);
+        int rs = parse_register(tokens[2]);
+        instruction_t *inst = &as->instructions[as->num_instructions];
+        inst->opcode = 0x0D;  // SNE
+        inst->address = as->current_addr;
+        inst->section = as->current_section;
+        inst->instruction = encode_r(0x0D, rd, rs, 0);
+        as->num_instructions++;
+        as->current_addr += 4;
+        bump_size(as, as->current_section, 4);
+        return true;
+    } else if (strcmp(tokens[0], "la") == 0 && num_tokens >= 3) {
+        // la rd, symbol - load address (lui + ori with symbol)
+        int rd = parse_register(tokens[1]);
+        char *symbol = tokens[2];
+        
+        // LUI rd, %hi(symbol)
+        instruction_t *inst1 = &as->instructions[as->num_instructions];
+        inst1->opcode = 0x25;  // LUI
+        inst1->address = as->current_addr;
+        inst1->section = as->current_section;
+        inst1->has_symbol_ref = true;
+        inst1->symbol_is_hi = true;
+        strcpy(inst1->symbol_ref, symbol);
+        inst1->instruction = encode_u(0x25, rd, 0);  // Upper bits will be filled by relocation
+        as->num_instructions++;
+        as->current_addr += 4;
+        bump_size(as, as->current_section, 4);
+        
+        // ORI rd, rd, %lo(symbol)
+        instruction_t *inst2 = &as->instructions[as->num_instructions];
+        inst2->opcode = 0x14;  // ORI
+        inst2->address = as->current_addr;
+        inst2->section = as->current_section;
+        inst2->has_symbol_ref = true;
+        inst2->symbol_is_lo = true;
+        strcpy(inst2->symbol_ref, symbol);
+        inst2->instruction = encode_i(0x14, rd, rd, 0);  // Lower bits will be filled by relocation
+        as->num_instructions++;
+        as->current_addr += 4;
+        bump_size(as, as->current_section, 4);
         return true;
     }
     
