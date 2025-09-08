@@ -1255,6 +1255,10 @@ static void write_executable(linker_state_t *ld) {
     }
     
     // Write header
+    uint32_t flags = 0;
+    if (ld->enable_wxorx) flags |= S32X_FLAG_W_XOR_X;
+    if (ld->mmio_size > 0) flags |= S32X_FLAG_MMIO;
+    
     s32x_header_t header = {
         .magic = S32X_MAGIC,
         .version = 1,
@@ -1265,7 +1269,7 @@ static void write_executable(linker_state_t *ld) {
         .sec_offset = section_table_offset,
         .str_offset = string_table_offset,
         .str_size = ld->string_table_size,
-        .flags = ld->enable_wxorx ? S32X_FLAG_W_XOR_X : 0,
+        .flags = flags,
         .code_limit = ld->code_limit,
         .rodata_limit = ld->rodata_limit,
         .data_limit = ld->bss_limit,
@@ -1273,7 +1277,7 @@ static void write_executable(linker_state_t *ld) {
         .mem_size = DEFAULT_MEM_SIZE,
         .heap_base = ld->heap_base,
         .checksum = 0,
-        .reserved = 0
+        .mmio_base = ld->mmio_base
     };
     
     fwrite(&header, sizeof(header), 1, f);

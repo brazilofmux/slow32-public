@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "memory_manager.h"
+#include "mmio_ring.h"
 
 #define NUM_REGS 32
 #define DEFAULT_MEM_SIZE (256 * 1024 * 1024)  // Default 256MB to match architecture spec
@@ -107,7 +108,7 @@ typedef struct {
     int32_t imm;
 } instruction_t;
 
-typedef struct {
+typedef struct cpu_state {
     uint32_t regs[NUM_REGS];
     uint32_t pc;
     memory_manager_t mm;    // Memory manager instead of raw pointer
@@ -121,6 +122,12 @@ typedef struct {
     uint32_t rodata_limit;  // End of read-only region
     uint32_t data_limit;    // End of writable region
     bool wxorx_enabled;     // W^X protection enabled
+    
+    // MMIO support (auto-detected)
+    bool mmio_enabled;      // MMIO detected/enabled
+    bool mmio_initialized;  // MMIO actually set up
+    mmio_ring_state_t *mmio; // MMIO state (allocated on demand)
+    void *mmio_mem;         // Host pointer to MMIO memory
     
     struct {
         bool enabled;

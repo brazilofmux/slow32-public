@@ -89,32 +89,52 @@ $SLOW32_HOME/bin/slow32 program.s32x
 echo $?    # Prints r1 value at halt
 ```
 
-## Planned I/O Interfaces
+## Memory-Mapped I/O (MMIO) Support
 
-### Memory-Mapped I/O (MMIO)
+### MMIO Console Interface
 
-**Status**: Planned for v2.0
+**Status**: Implemented in v2.0
 
-Proposed memory map:
+SLOW-32 now includes full MMIO support for console I/O operations. The implementation features a ring buffer architecture for efficient bidirectional communication.
+
+Memory map:
 ```
 0x10000000 - 0x1FFFFFFF    MMIO region (256MB)
-  0x10000000 - Console output
-  0x10000004 - Console input
-  0x10000008 - Console status
-  0x10001000 - Timer
-  0x10002000 - Interrupt controller
+  0x10000000 - Console output (write-only)
+  0x10000004 - Console input (read-only) 
+  0x10000008 - Console status (read-only)
+  0x10001000 - Timer (reserved for future)
+  0x10002000 - Interrupt controller (reserved for future)
 ```
 
-Example usage (future):
+Example usage:
 ```asm
 # Write character to console
 li r3, 0x10000000
 li r4, 'A'
 stw r4, r3+0
 
-# Read character
-li r3, 0x10000004
-ldw r4, r3+0
+# Read character with status check
+li r3, 0x10000008  # Status register
+li r4, 0x10000004  # Input register
+wait_input:
+    ldw r5, r3+0    # Check status
+    beq r5, r0, wait_input
+    ldw r6, r4+0    # Read character
+```
+
+### MMIO Implementation Features
+
+- **Ring buffer architecture** for efficient data transfer
+- **YIELD instruction support** for cooperative I/O waiting
+- **Automatic heap allocation** in the linker
+- **Console I/O with status checking**
+- **Configurable via linker flags**
+
+To enable MMIO in your programs:
+```bash
+# Link with MMIO support
+./linker/s32-ld -o program.s32x --enable-mmio runtime/crt0.s32o program.s32o
 ```
 
 ### TRAP Instruction
@@ -323,12 +343,12 @@ $SLOW32_HOME/bin/slow32 program.s32x > /dev/null
 
 ## Future Enhancements
 
-### Phase 1: MMIO Console (v2.0)
-- Bidirectional console I/O
-- Status/control registers
-- Interrupt support
+### Phase 1: Extended MMIO (v2.1)
+- Timer support
+- Interrupt controller
+- Additional device interfaces
 
-### Phase 2: TRAP System Calls (v2.1)
+### Phase 2: TRAP System Calls (v2.2)
 - File operations
 - Process control
 - Time/date access

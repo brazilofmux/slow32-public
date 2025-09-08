@@ -5,9 +5,11 @@
 #include <getopt.h>
 #include <time.h>
 #include <inttypes.h>
+#include <sys/mman.h>
 #include "slow32.h"
 #include "s32x_loader.h"
 #include "memory_manager.h"
+#include "mmio_ring.h"
 
 // Enable to trap on unaligned LD/ST (recommended for a strict ISA)
 #ifndef S32_ALLOW_UNALIGNED
@@ -15,6 +17,51 @@
 #endif
 
 // CPU state is now defined in slow32.h with memory_manager_t
+
+// Initialize MMIO on first YIELD
+static void cpu_init_mmio(cpu_state_t *cpu) {
+    if (cpu->mmio_initialized) return;
+    
+    // Allocate MMIO state
+    cpu->mmio = (mmio_ring_state_t*)calloc(1, sizeof(mmio_ring_state_t));
+    if (!cpu->mmio) {
+        fprintf(stderr, "Failed to allocate MMIO state\n");
+        cpu->mmio_enabled = false;
+        return;
+    }
+    
+    // Initialize with heap after data limit
+    uint32_t heap_base = (cpu->data_limit + 0xFFF) & ~0xFFF;  // Page align
+    uint32_t heap_size = 0x01000000;  // 16MB heap by default
+    mmio_ring_init(cpu->mmio, heap_base, heap_size);
+    
+    // Map MMIO memory
+    cpu->mmio_mem = mmio_ring_map(cpu->mmio);
+    if (!cpu->mmio_mem) {
+        fprintf(stderr, "Failed to map MMIO memory\n");
+        free(cpu->mmio);
+        cpu->mmio = NULL;
+        cpu->mmio_enabled = false;
+        return;
+    }
+    
+    // Add MMIO as a memory region
+    memory_region_t *mmio_region = mm_allocate_region(&cpu->mm, 
+                                                      MMIO_BASE, 
+                                                      0x10000,  // 64KB
+                                                      PROT_READ | PROT_WRITE);
+    if (!mmio_region) {
+        munmap(cpu->mmio_mem, 0x10000);
+        free(cpu->mmio);
+        cpu->mmio = NULL;
+        cpu->mmio_mem = NULL;
+        cpu->mmio_enabled = false;
+        return;
+    }
+    
+    mmio_region->host_addr = cpu->mmio_mem;
+    cpu->mmio_initialized = true;
+}
 
 static instruction_t decode_instruction(uint32_t raw) {
     //printf("[TRACE] decode_instruction: raw=0x%08X\n", raw);
@@ -109,6 +156,13 @@ void cpu_init(cpu_state_t *cpu) {
     cpu->cycle_count = 0;
     cpu->inst_count = 0;
     cpu->halted = false;
+    
+    // MMIO auto-detection fields
+    cpu->mmio_enabled = false;
+    cpu->mmio_initialized = false;
+    cpu->mmio = NULL;
+    cpu->mmio_mem = NULL;
+    
     //printf("[TRACE] cpu_init: completed\n");
     fflush(stdout);
 }
@@ -116,6 +170,17 @@ void cpu_init(cpu_state_t *cpu) {
 void cpu_destroy(cpu_state_t *cpu) {
     //printf("[TRACE] cpu_destroy: starting\n");
     fflush(stdout);
+    
+    // Clean up MMIO if initialized
+    if (cpu->mmio_mem) {
+        munmap(cpu->mmio_mem, 0x10000);
+        cpu->mmio_mem = NULL;
+    }
+    if (cpu->mmio) {
+        free(cpu->mmio);
+        cpu->mmio = NULL;
+    }
+    
     mm_destroy(&cpu->mm);
     //printf("[TRACE] cpu_destroy: completed\n");
     fflush(stdout);
@@ -274,6 +339,13 @@ bool cpu_load_binary(cpu_state_t *cpu, const char *filename) {
     cpu->data_limit = header.data_limit;
     cpu->wxorx_enabled = cpu->mm.wxorx_enabled;  // Kept for compatibility
     
+    // Check header flag for MMIO configuration
+    if (header.flags & S32X_FLAG_MMIO) {
+        cpu->mmio_enabled = true;
+        // Initialize MMIO immediately since we know it's needed
+        cpu_init_mmio(cpu);
+    }
+    
     // Executable loaded successfully
     
     //printf("[TRACE] About to call mem_print_map\n");
@@ -290,6 +362,27 @@ static uint32_t cpu_load(cpu_state_t *cpu, uint32_t addr, int size) {
     //printf("[TRACE] cpu_load: addr=0x%08X, size=%d\n", addr, size);
     fflush(stdout);
     uint32_t value = 0;
+    
+    // Check if this is MMIO access
+    if (addr >= MMIO_BASE && addr < MMIO_BASE + 0x10000) {
+        
+        if (cpu->mmio_initialized) {
+            if (size == 4) {
+                value = mmio_ring_read(cpu->mmio, addr, size);
+            } else {
+                // For byte/halfword MMIO reads, read word and extract
+                uint32_t word_addr = addr & ~3;
+                uint32_t word = mmio_ring_read(cpu->mmio, word_addr, 4);
+                int shift = (addr & 3) * 8;
+                if (size == 1) {
+                    value = (word >> shift) & 0xFF;
+                } else if (size == 2) {
+                    value = (word >> shift) & 0xFFFF;
+                }
+            }
+        }
+        return value;
+    }
     
     if (mm_read(&cpu->mm, addr, &value, size) < 0) {
         fprintf(stderr, "Memory fault: Failed to read %d bytes at 0x%08X\n", size, addr);
@@ -308,6 +401,30 @@ static uint32_t cpu_load(cpu_state_t *cpu, uint32_t addr, int size) {
 }
 
 static void cpu_store(cpu_state_t *cpu, uint32_t addr, uint32_t value, int size) {
+    // Check if this is MMIO access
+    if (addr >= MMIO_BASE && addr < MMIO_BASE + 0x10000) {
+        
+        if (cpu->mmio_initialized) {
+            if (size == 4) {
+                mmio_ring_write(cpu->mmio, cpu, addr, value, size);
+            } else {
+                // For byte/halfword MMIO writes, do read-modify-write
+                uint32_t word_addr = addr & ~3;
+                uint32_t word = mmio_ring_read(cpu->mmio, word_addr, 4);
+                int shift = (addr & 3) * 8;
+                
+                if (size == 1) {
+                    word = (word & ~(0xFF << shift)) | ((value & 0xFF) << shift);
+                } else if (size == 2) {
+                    word = (word & ~(0xFFFF << shift)) | ((value & 0xFFFF) << shift);
+                }
+                
+                mmio_ring_write(cpu->mmio, cpu, word_addr, word, 4);
+            }
+        }
+        return;
+    }
+    
     // Store to memory
     // Prepare data based on size
     uint32_t data = value;
@@ -593,12 +710,27 @@ void cpu_step(cpu_state_t *cpu) {
         // System instructions
         case OP_NOP:
             break;
+        
+        case OP_YIELD:
+            // YIELD is the MMIO synchronization point
+            if (cpu->mmio_initialized) {
+                // Process ring buffers in both directions
+                mmio_ring_process(cpu->mmio, cpu);
+            }
+            // YIELD is also a scheduling hint (could sleep here)
+            break;
+            
         case OP_DEBUG:
             // DEBUG instruction output
             putchar(cpu->regs[inst.rs1] & 0xFF);
             fflush(stdout);
             break;
+            
         case OP_HALT:
+            // Process any final MMIO before halting
+            if (cpu->mmio_initialized) {
+                mmio_ring_process(cpu->mmio, cpu);
+            }
             printf("HALT at PC=0x%08X\n", cpu->pc);
             cpu->halted = true;
             break;

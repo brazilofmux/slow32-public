@@ -4,6 +4,9 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -146,11 +149,11 @@ static int mm_setup_from_s32x(memory_manager_t *mm,
     }
     
     // Read-only data segment: initially read+write for loading
-    // Note: rodata starts at 0x100000, not immediately after code!
-    if (rodata_limit > 0x100000) {
+    // rodata starts immediately after code
+    if (rodata_limit > code_limit) {
         // Allocating rodata segment
         fflush(stderr);
-        if (!mm_allocate_region(mm, 0x100000, rodata_limit - 0x100000, PROT_READ | PROT_WRITE)) {
+        if (!mm_allocate_region(mm, code_limit, rodata_limit - code_limit, PROT_READ | PROT_WRITE)) {
             // Failed to allocate rodata segment
             fflush(stderr);
             return -1;
@@ -160,14 +163,11 @@ static int mm_setup_from_s32x(memory_manager_t *mm,
     }
     
     // Read-write data segment
-    // Note: In this test case, data_limit == heap_base == 0x200000, so no data segment
-    // But if there was one, it would likely start at some aligned address
-    // For now, skip if data_limit == 0x200000 (no actual data)
-    if (data_limit > 0x200000) {
+    // Data starts immediately after rodata
+    if (data_limit > rodata_limit) {
         // Allocating data segment
         fflush(stderr);
-        // This would need proper start address detection
-        if (!mm_allocate_region(mm, 0x200000, data_limit - 0x200000, 
+        if (!mm_allocate_region(mm, rodata_limit, data_limit - rodata_limit, 
                                 PROT_READ | PROT_WRITE)) {
             // Failed to allocate data segment
             fflush(stderr);
@@ -177,12 +177,30 @@ static int mm_setup_from_s32x(memory_manager_t *mm,
         fflush(stderr);
     }
     
-    // Stack region (allocate 1MB for stack)
-    uint32_t stack_size = 1024 * 1024;
-    uint32_t stack_start = stack_base - stack_size;
+    // Heap region - from end of data to stack base
+    // Heap typically starts at 0x3000 in our memory layout
+    uint32_t heap_start = (data_limit + 0xFFF) & ~0xFFF;  // Round up to page
+    if (heap_start < 0x3000) heap_start = 0x3000;  // Minimum heap start
+    
+    if (stack_base > heap_start) {
+        // Allocating heap segment
+        fflush(stderr);
+        if (!mm_allocate_region(mm, heap_start, stack_base - heap_start, PROT_READ | PROT_WRITE)) {
+            // Failed to allocate heap segment
+            fflush(stderr);
+            return -1;
+        }
+        // Heap segment allocated
+        fflush(stderr);
+    }
+    
+    // Stack region - small stack around the stack pointer
+    // Stack grows down, so allocate from heap end to beyond stack base
+    uint32_t stack_size = 64 * 1024;  // 64KB stack
+    uint32_t stack_end = stack_base + 0x1000;  // A bit above stack base
     // Allocating stack segment
     fflush(stderr);
-    if (!mm_allocate_region(mm, stack_start, stack_size, PROT_READ | PROT_WRITE)) {
+    if (!mm_allocate_region(mm, stack_base, stack_end - stack_base, PROT_READ | PROT_WRITE)) {
         // Failed to allocate stack segment
         fflush(stderr);
         return -1;
