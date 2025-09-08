@@ -18,13 +18,16 @@
 
 // Default memory layout
 #define DEFAULT_CODE_BASE    0x00000000
-#define DEFAULT_CODE_LIMIT   0x00100000  // 1MB for code
-#define DEFAULT_RODATA_BASE  0x00100000
-#define DEFAULT_RODATA_LIMIT 0x00200000  // 1MB for rodata
-#define DEFAULT_DATA_BASE    0x00200000
-#define DEFAULT_DATA_LIMIT   0x00300000  // 1MB for data
+#define DEFAULT_CODE_SIZE    0x00100000  // 1MB for code
+#define DEFAULT_RODATA_SIZE  0x00100000  // 1MB for rodata
+#define DEFAULT_DATA_SIZE    0x00100000  // 1MB for data
+#define DEFAULT_STACK_SIZE   0x00010000  // 64KB stack
 #define DEFAULT_STACK_BASE   0x0FFFFFF0
 #define DEFAULT_MEM_SIZE     0x10000000  // 256MB total
+
+// Compact memory layout (4KB pages)
+#define COMPACT_PAGE_SIZE    0x00001000  // 4KB
+#define COMPACT_STACK_SIZE   0x00001000  // 4KB stack
 
 // Input file information
 typedef struct {
@@ -102,14 +105,18 @@ typedef struct {
     // Memory layout
     uint32_t entry_point;
     uint32_t code_base;
-    uint32_t code_limit;
+    uint32_t code_size;     // Configurable size
+    uint32_t code_limit;    // Computed: code_base + code_size
     uint32_t rodata_base;
-    uint32_t rodata_limit;
+    uint32_t rodata_size;   // Configurable size
+    uint32_t rodata_limit;  // Computed: rodata_base + rodata_size
     uint32_t data_base;
-    uint32_t data_limit;
+    uint32_t data_size;     // Configurable size
+    uint32_t data_limit;    // Computed: data_base + data_size
     uint32_t bss_base;
     uint32_t bss_limit;
     uint32_t stack_base;
+    uint32_t stack_size;    // Configurable stack size
     uint32_t heap_base;
     uint32_t mmio_base;
     uint32_t mmio_size;
@@ -118,8 +125,12 @@ typedef struct {
     bool verbose;
     bool strip_symbols;
     bool enable_wxorx;
+    bool print_map;         // Generate memory map file
+    bool pack_sections;     // Pack sections tightly
+    bool compact_mode;      // Ultra-compact 4KB page mode
     const char *output_file;
     const char *entry_symbol;
+    const char *map_file;   // Memory map output file
 } linker_state_t;
 
 // String table management
@@ -463,6 +474,106 @@ static void build_symbol_table(linker_state_t *ld) {
 
 // Assign memory addresses to sections
 static void layout_sections(linker_state_t *ld) {
+    // First, calculate actual sizes needed
+    uint32_t code_size_needed = 0;
+    uint32_t rodata_size_needed = 0;
+    uint32_t data_size_needed = 0;
+    uint32_t bss_size_needed = 0;
+    
+    for (int i = 0; i < ld->num_sections; i++) {
+        combined_section_t *sec = &ld->sections[i];
+        switch (sec->type) {
+            case S32_SEC_CODE:
+                code_size_needed += sec->size;
+                break;
+            case S32_SEC_RODATA:
+                rodata_size_needed += sec->size;
+                break;
+            case S32_SEC_DATA:
+                data_size_needed += sec->size;
+                break;
+            case S32_SEC_BSS:
+                bss_size_needed += sec->size;
+                break;
+        }
+    }
+    
+    // Automatic compact layout if sizes are small enough
+    bool auto_compact = false;
+    if (ld->compact_mode || 
+        (code_size_needed <= COMPACT_PAGE_SIZE && 
+         rodata_size_needed <= COMPACT_PAGE_SIZE && 
+         data_size_needed + bss_size_needed <= COMPACT_PAGE_SIZE)) {
+        auto_compact = true;
+    }
+    
+    if (auto_compact || ld->pack_sections) {
+        // Automatic compact/packed layout
+        uint32_t current_addr = ld->code_base;
+        
+        // Place code at base
+        ld->code_base = current_addr;
+        
+        // Layout code sections
+        for (int i = 0; i < ld->num_sections; i++) {
+            if (ld->sections[i].type == S32_SEC_CODE) {
+                current_addr += ld->sections[i].size;
+            }
+        }
+        
+        // Align to page boundary for protection
+        current_addr = (current_addr + 0xFFF) & ~0xFFF;
+        ld->code_limit = current_addr;
+        
+        // Place rodata after code
+        ld->rodata_base = current_addr;
+        for (int i = 0; i < ld->num_sections; i++) {
+            if (ld->sections[i].type == S32_SEC_RODATA) {
+                current_addr += ld->sections[i].size;
+            }
+        }
+        
+        // Align to page boundary for protection
+        current_addr = (current_addr + 0xFFF) & ~0xFFF;
+        ld->rodata_limit = current_addr;
+        
+        // Place data/bss after rodata
+        ld->data_base = current_addr;
+        for (int i = 0; i < ld->num_sections; i++) {
+            if (ld->sections[i].type == S32_SEC_DATA || 
+                ld->sections[i].type == S32_SEC_BSS) {
+                current_addr += ld->sections[i].size;
+            }
+        }
+        
+        // Align to page boundary
+        current_addr = (current_addr + 0xFFF) & ~0xFFF;
+        ld->data_limit = current_addr;
+        
+        // Set heap and stack
+        ld->heap_base = current_addr;
+        
+        // If stack size explicitly set or in compact mode, place stack close
+        if (ld->stack_size != DEFAULT_STACK_SIZE || auto_compact) {
+            // Place stack after a small heap gap
+            uint32_t heap_gap = auto_compact ? COMPACT_PAGE_SIZE : 0x10000; // 4KB or 64KB heap
+            ld->stack_base = current_addr + heap_gap + ld->stack_size;
+            ld->stack_base = (ld->stack_base + 0xF) & ~0xF; // 16-byte align
+        }
+        // Otherwise use default high stack
+        
+        if (ld->verbose && auto_compact) {
+            printf("Using automatic compact layout (total: %u bytes)\n", current_addr);
+        }
+    } else {
+        // Traditional fixed-size layout
+        ld->code_limit = ld->code_base + ld->code_size;
+        ld->rodata_base = ld->code_limit;
+        ld->rodata_limit = ld->rodata_base + ld->rodata_size;
+        ld->data_base = ld->rodata_limit;
+        ld->data_limit = ld->data_base + ld->data_size;
+    }
+    
     uint32_t code_addr = ld->code_base;
     uint32_t rodata_addr = ld->rodata_base;
     uint32_t data_addr = ld->data_base;
@@ -519,11 +630,27 @@ static void layout_sections(linker_state_t *ld) {
         }
     }
     
-    // Update limits
-    ld->code_limit = code_addr;
-    ld->rodata_limit = rodata_addr;
-    ld->data_limit = data_addr;
+    // Record actual end addresses
     ld->bss_limit = bss_addr;
+    
+    // Check for overflow if not in automatic mode
+    if (!ld->pack_sections && !ld->compact_mode) {
+        if (code_addr > ld->code_limit) {
+            fprintf(stderr, "Error: Code section overflow (0x%X > 0x%X)\n", code_addr, ld->code_limit);
+            fprintf(stderr, "Hint: Use --code-size to increase limit or --pack-sections for automatic layout\n");
+            exit(1);
+        }
+        if (rodata_addr > ld->rodata_limit) {
+            fprintf(stderr, "Error: Rodata section overflow (0x%X > 0x%X)\n", rodata_addr, ld->rodata_limit);
+            fprintf(stderr, "Hint: Use --rodata-size to increase limit or --pack-sections for automatic layout\n");
+            exit(1);
+        }
+        if (bss_addr > ld->data_limit) {
+            fprintf(stderr, "Error: Data/BSS section overflow (0x%X > 0x%X)\n", bss_addr, ld->data_limit);
+            fprintf(stderr, "Hint: Use --data-size to increase limit or --pack-sections for automatic layout\n");
+            exit(1);
+        }
+    }
     
     // Set heap base after BSS
     ld->heap_base = (ld->bss_limit + 0xFFF) & ~0xFFF;  // Page align
@@ -1001,6 +1128,89 @@ static uint32_t find_entry_point(linker_state_t *ld) {
     return 0;  // Default to address 0
 }
 
+// Write memory map file
+static void write_memory_map(linker_state_t *ld) {
+    if (!ld->print_map) return;
+    
+    // Generate .map filename from output filename
+    char map_filename[256];
+    snprintf(map_filename, sizeof(map_filename), "%s.map", ld->output_file);
+    
+    FILE *f = fopen(map_filename, "w");
+    if (!f) {
+        fprintf(stderr, "Warning: Cannot create map file '%s'\n", map_filename);
+        return;
+    }
+    
+    fprintf(f, "Memory Map for %s\n", ld->output_file);
+    fprintf(f, "================================================================================\n\n");
+    
+    fprintf(f, "Memory Configuration:\n");
+    fprintf(f, "  Code:     0x%08X - 0x%08X (%u bytes, %.1f KB)\n", 
+            ld->code_base, ld->code_limit, ld->code_limit - ld->code_base,
+            (ld->code_limit - ld->code_base) / 1024.0);
+    fprintf(f, "  Rodata:   0x%08X - 0x%08X (%u bytes, %.1f KB)\n",
+            ld->rodata_base, ld->rodata_limit, ld->rodata_limit - ld->rodata_base,
+            (ld->rodata_limit - ld->rodata_base) / 1024.0);
+    fprintf(f, "  Data:     0x%08X - 0x%08X (%u bytes, %.1f KB)\n",
+            ld->data_base, ld->data_limit, ld->data_limit - ld->data_base,
+            (ld->data_limit - ld->data_base) / 1024.0);
+    fprintf(f, "  BSS:      0x%08X - 0x%08X (%u bytes, %.1f KB)\n",
+            ld->data_limit, ld->bss_limit, ld->bss_limit - ld->data_limit,
+            (ld->bss_limit - ld->data_limit) / 1024.0);
+    fprintf(f, "  Heap:     0x%08X\n", ld->heap_base);
+    fprintf(f, "  Stack:    0x%08X (size: %u bytes, %.1f KB)\n", 
+            ld->stack_base, ld->stack_size, ld->stack_size / 1024.0);
+    if (ld->mmio_size > 0) {
+        fprintf(f, "  MMIO:     0x%08X - 0x%08X (%u bytes)\n",
+                ld->mmio_base, ld->mmio_base + ld->mmio_size, ld->mmio_size);
+    }
+    fprintf(f, "\nEntry Point: 0x%08X\n", ld->entry_point);
+    fprintf(f, "\n================================================================================\n\n");
+    
+    // Section details
+    fprintf(f, "Sections:\n");
+    fprintf(f, "  Address    Size       Name         Type\n");
+    fprintf(f, "  ---------  ---------  -----------  --------\n");
+    
+    for (int i = 0; i < ld->num_sections; i++) {
+        combined_section_t *sec = &ld->sections[i];
+        const char *type_str = "OTHER";
+        switch (sec->type) {
+            case S32_SEC_CODE:   type_str = "CODE"; break;
+            case S32_SEC_RODATA: type_str = "RODATA"; break;
+            case S32_SEC_DATA:   type_str = "DATA"; break;
+            case S32_SEC_BSS:    type_str = "BSS"; break;
+        }
+        fprintf(f, "  0x%08X 0x%08X %-12s %s\n",
+                sec->vaddr, sec->size, sec->name, type_str);
+    }
+    
+    fprintf(f, "\n================================================================================\n\n");
+    
+    // Global symbols
+    fprintf(f, "Global Symbols:\n");
+    fprintf(f, "  Address    Size       Name\n");
+    fprintf(f, "  ---------  ---------  -----------\n");
+    
+    for (int i = 0; i < ld->num_symbols; i++) {
+        symbol_entry_t *sym = &ld->symbols[i];
+        if (sym->binding == S32O_BIND_GLOBAL && sym->defined_in_file >= 0) {
+            fprintf(f, "  0x%08X 0x%08X %s\n", sym->value, sym->size, sym->name);
+        }
+    }
+    
+    fprintf(f, "\n================================================================================\n");
+    fprintf(f, "Total memory usage: %u bytes (%.1f KB)\n",
+            ld->bss_limit, ld->bss_limit / 1024.0);
+    
+    fclose(f);
+    
+    if (ld->verbose) {
+        printf("Memory map written to %s\n", map_filename);
+    }
+}
+
 // Write executable file
 static void write_executable(linker_state_t *ld) {
     FILE *f = fopen(ld->output_file, "wb");
@@ -1124,17 +1334,41 @@ static void cleanup(linker_state_t *ld) {
     }
 }
 
+// Parse size with optional K/M suffix
+static uint32_t parse_size(const char *str) {
+    char *end;
+    unsigned long val = strtoul(str, &end, 0);
+    
+    if (*end == 'K' || *end == 'k') {
+        val *= 1024;
+    } else if (*end == 'M' || *end == 'm') {
+        val *= 1024 * 1024;
+    }
+    
+    return (uint32_t)val;
+}
+
 // Print usage
 static void print_usage(const char *prog) {
     fprintf(stderr, "Usage: %s [options] file.s32o [...] -o output.s32x\n", prog);
     fprintf(stderr, "Options:\n");
-    fprintf(stderr, "  -o FILE      Output file (required)\n");
-    fprintf(stderr, "  -e SYMBOL    Entry point symbol (default: _start)\n");
-    fprintf(stderr, "  -s           Strip symbols\n");
-    fprintf(stderr, "  -v           Verbose output\n");
-    fprintf(stderr, "  --wxorx      Enable W^X protection\n");
-    fprintf(stderr, "  --mmio SIZE  Reserve SIZE bytes for MMIO region\n");
-    fprintf(stderr, "  --help       Show this help\n");
+    fprintf(stderr, "  -o FILE           Output file (required)\n");
+    fprintf(stderr, "  -e SYMBOL         Entry point symbol (default: _start)\n");
+    fprintf(stderr, "  -s                Strip symbols\n");
+    fprintf(stderr, "  -v                Verbose output\n");
+    fprintf(stderr, "  --wxorx           Enable W^X protection\n");
+    fprintf(stderr, "  --no-wxorx        Disable W^X protection\n");
+    fprintf(stderr, "Memory layout options:\n");
+    fprintf(stderr, "  --code-size SIZE  Max code segment size (default: 1MB)\n");
+    fprintf(stderr, "  --rodata-size SIZE Max rodata size (default: 1MB)\n");
+    fprintf(stderr, "  --data-size SIZE  Max data+bss size (default: 1MB)\n");
+    fprintf(stderr, "  --stack-size SIZE Stack size (default: 64KB)\n");
+    fprintf(stderr, "  --mmio SIZE       Reserve SIZE bytes for MMIO region\n");
+    fprintf(stderr, "  --pack-sections   Pack sections tightly to minimize gaps\n");
+    fprintf(stderr, "  --compact         Ultra-compact mode (4KB pages, minimal memory)\n");
+    fprintf(stderr, "  --print-map       Generate memory map file (.map)\n");
+    fprintf(stderr, "  --help            Show this help\n");
+    fprintf(stderr, "\nSizes can use suffixes: K=1024, M=1024*1024\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -1142,11 +1376,10 @@ int main(int argc, char *argv[]) {
     
     // Initialize defaults
     ld.code_base = DEFAULT_CODE_BASE;
-    ld.code_limit = DEFAULT_CODE_LIMIT;
-    ld.rodata_base = DEFAULT_RODATA_BASE;
-    ld.rodata_limit = DEFAULT_RODATA_LIMIT;
-    ld.data_base = DEFAULT_DATA_BASE;
-    ld.data_limit = DEFAULT_DATA_LIMIT;
+    ld.code_size = DEFAULT_CODE_SIZE;
+    ld.rodata_size = DEFAULT_RODATA_SIZE;
+    ld.data_size = DEFAULT_DATA_SIZE;
+    ld.stack_size = DEFAULT_STACK_SIZE;
     ld.stack_base = DEFAULT_STACK_BASE;
     ld.enable_wxorx = true;  // Default to secure
     
@@ -1167,8 +1400,23 @@ int main(int argc, char *argv[]) {
             ld.enable_wxorx = true;
         } else if (strcmp(argv[i], "--no-wxorx") == 0) {
             ld.enable_wxorx = false;
+        } else if (strcmp(argv[i], "--code-size") == 0 && i + 1 < argc) {
+            ld.code_size = parse_size(argv[++i]);
+        } else if (strcmp(argv[i], "--rodata-size") == 0 && i + 1 < argc) {
+            ld.rodata_size = parse_size(argv[++i]);
+        } else if (strcmp(argv[i], "--data-size") == 0 && i + 1 < argc) {
+            ld.data_size = parse_size(argv[++i]);
+        } else if (strcmp(argv[i], "--stack-size") == 0 && i + 1 < argc) {
+            ld.stack_size = parse_size(argv[++i]);
         } else if (strcmp(argv[i], "--mmio") == 0 && i + 1 < argc) {
-            ld.mmio_size = strtoul(argv[++i], NULL, 0);
+            ld.mmio_size = parse_size(argv[++i]);
+        } else if (strcmp(argv[i], "--pack-sections") == 0) {
+            ld.pack_sections = true;
+        } else if (strcmp(argv[i], "--compact") == 0) {
+            ld.compact_mode = true;
+            ld.pack_sections = true;  // Compact implies packing
+        } else if (strcmp(argv[i], "--print-map") == 0) {
+            ld.print_map = true;
         } else if (strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -1222,6 +1470,7 @@ int main(int argc, char *argv[]) {
     
     // Write output
     write_executable(&ld);
+    write_memory_map(&ld);
     
     // Clean up
     cleanup(&ld);
