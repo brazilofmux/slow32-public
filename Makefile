@@ -1,19 +1,22 @@
 # SLOW-32 Project Makefile
 
-.PHONY: all clean emulator assembler compiler runtime test
+.PHONY: all clean emulator assembler linker runtime test tools
 
-all: emulator assembler compiler runtime
+all: tools runtime
+
+tools:
+	$(MAKE) -C tools
 
 emulator:
-	$(MAKE) -C emulator
+	$(MAKE) -C tools/emulator
 
 assembler:
-	$(MAKE) -C assembler
+	$(MAKE) -C tools/assembler
 
-compiler:
-	$(MAKE) -C llvm-backend/standalone
+linker:
+	$(MAKE) -C tools/linker
 
-runtime: assembler
+runtime: tools
 	$(MAKE) -C runtime
 
 test: all
@@ -21,9 +24,10 @@ test: all
 	@echo "Testing assembler..."
 	@echo "addi r1, r0, 42" > /tmp/test.s
 	@echo "halt" >> /tmp/test.s
-	@./assembler/slow32asm /tmp/test.s /tmp/test.bin
+	@./tools/assembler/slow32asm /tmp/test.s /tmp/test.s32o
 	@echo "Testing emulator..."
-	@./emulator/slow32 /tmp/test.bin | grep "r01=0x0000002A" && echo "✓ Basic test passed"
+	@./tools/linker/s32-ld -o /tmp/test.s32x /tmp/test.s32o
+	@./tools/emulator/slow32 /tmp/test.s32x | grep "r01=0x0000002A" && echo "✓ Basic test passed"
 
 benchmark: emulator
 	@if [ -f tests/binaries/bench.bin ]; then \
@@ -37,12 +41,9 @@ benchmark: emulator
 	fi
 
 clean:
-	$(MAKE) -C emulator clean
-	$(MAKE) -C assembler clean
-	$(MAKE) -C llvm-backend/standalone clean
+	$(MAKE) -C tools clean
 	$(MAKE) -C runtime clean
-	rm -rf tests/
-	rm -f *.o *.bin *.ll *.s
+	rm -f *.o *.bin *.ll *.s *.s32o *.s32x
 
 help:
 	@echo "SLOW-32 Build System"

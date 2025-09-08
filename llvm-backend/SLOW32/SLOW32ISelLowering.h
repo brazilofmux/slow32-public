@@ -52,6 +52,8 @@ public:
   SDValue LowerSMUL_LOHI   (SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerMULHU       (SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerMULHS       (SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerUDIV        (SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerUREM        (SDValue Op, SelectionDAG &DAG) const;
 
   SDValue LowerFormalArguments(SDValue Chain, CallingConv::ID CallConv,
                                bool isVarArg,
@@ -90,6 +92,17 @@ public:
   // Replace custom node results for type legalization
   void ReplaceNodeResults(SDNode *N, SmallVectorImpl<SDValue> &Results,
                           SelectionDAG &DAG) const override;
+
+  // Inline assembly support
+  ConstraintType getConstraintType(StringRef Constraint) const override;
+  
+  std::pair<unsigned, const TargetRegisterClass *>
+  getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
+                               StringRef Constraint, MVT VT) const override;
+  
+  void LowerAsmOperandForConstraint(SDValue Op, StringRef Constraint,
+                                    std::vector<SDValue> &Ops,
+                                    SelectionDAG &DAG) const override;
 };
 }
 #endif

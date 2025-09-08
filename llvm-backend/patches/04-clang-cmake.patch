@@ -1,0 +1,12 @@
+diff --git a/clang/lib/Basic/CMakeLists.txt b/clang/lib/Basic/CMakeLists.txt
+index adfc6ee32..691bfb0b9 100644
+--- a/clang/lib/Basic/CMakeLists.txt
++++ b/clang/lib/Basic/CMakeLists.txt
+@@ -113,6 +113,7 @@ add_clang_library(clangBasic
+   Targets/OSTargets.cpp
+   Targets/PPC.cpp
+   Targets/RISCV.cpp
++  Targets/SLOW32.cpp
+   Targets/SPIR.cpp
+   Targets/Sparc.cpp
+   Targets/SystemZ.cpp

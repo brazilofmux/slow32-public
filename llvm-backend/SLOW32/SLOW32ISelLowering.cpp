@@ -9,6 +9,7 @@
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/ADT/StringSwitch.h"
 
 using namespace llvm;
 
@@ -60,6 +61,13 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   setOperationAction(ISD::SMUL_LOHI, MVT::i32, Custom);
   setOperationAction(ISD::MULHS, MVT::i32, Custom);
   setOperationAction(ISD::MULHU, MVT::i32, Custom);
+  
+  // i32 unsigned division/remainder - SLOW32 only has signed DIV/REM instructions
+  // Use custom lowering to generate libcalls for unsigned operations
+  setOperationAction(ISD::UDIV, MVT::i32, Custom);  // Will call __udivsi3
+  setOperationAction(ISD::UREM, MVT::i32, Custom);  // Will call __umodsi3
+  setOperationAction(ISD::UDIVREM, MVT::i32, Expand);  // Combined operation also needs expansion
+  setOperationAction(ISD::SDIVREM, MVT::i32, Expand);  // Also expand signed divrem
   
   // i64 division/remainder - let LLVM expand these
   // Since SLOW32 doesn't have hardware support, LLVM will generate
@@ -204,6 +212,8 @@ SDValue SLOW32TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) cons
     case ISD::SMUL_LOHI:      return LowerSMUL_LOHI(Op, DAG);
     case ISD::MULHU:          return LowerMULHU(Op, DAG);
     case ISD::MULHS:          return LowerMULHS(Op, DAG);
+    case ISD::UDIV:           return LowerUDIV(Op, DAG);
+    case ISD::UREM:           return LowerUREM(Op, DAG);
     // For i64 shifts, expand to shift-parts
     case ISD::SHL:
     case ISD::SRA:
@@ -220,12 +230,7 @@ SDValue SLOW32TargetLowering::LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) 
   EVT VT = Op.getValueType();
   const GlobalValue *GV = GA->getGlobal();
 
-  // For functions, just return the target symbol - JAL will handle it directly
-  if (isa<Function>(GV)) {
-    return DAG.getTargetGlobalAddress(GV, DL, VT, GA->getOffset());
-  }
-
-  // For data (global variables), use %hi/%lo addressing with RISC-V style
+  // Use %hi/%lo addressing for all global addresses (both functions and data)
   // Create target global address nodes with appropriate flags
   SDValue TargetGAHi = DAG.getTargetGlobalAddress(GV, DL, VT,
                                                    GA->getOffset(), SLOW32II::MO_HI);
@@ -812,6 +817,13 @@ SDValue SLOW32TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   SDValue Chain = CLI.Chain;
   SDValue Callee = CLI.Callee;
   CallingConv::ID CallConv = CLI.CallConv;
+  bool IsTailCall = CLI.IsTailCall;
+
+  // SLOW32 doesn't support tail calls yet, so convert them to regular calls
+  if (IsTailCall) {
+    CLI.IsTailCall = false;
+    IsTailCall = false;
+  }
 
   // For now, implement a basic call that:
   // 1. Passes arguments in r3-r10
@@ -1456,4 +1468,162 @@ SDValue SLOW32TargetLowering::LowerMULHS(SDValue Op, SelectionDAG &DAG) const {
   
   SDValue SMulLoHi = DAG.getNode(ISD::SMUL_LOHI, DL, DAG.getVTList(VT, VT), A, B);
   return SMulLoHi.getValue(1);  // Return just the high part
+}
+
+SDValue SLOW32TargetLowering::LowerUDIV(SDValue Op, SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  EVT VT = Op.getValueType();
+  
+  // Create a library call to __udivsi3
+  SDValue Chain = DAG.getEntryNode();
+  TargetLowering::ArgListTy Args;
+  
+  Type *Int32Ty = Type::getInt32Ty(*DAG.getContext());
+  
+  TargetLowering::ArgListEntry Entry1(Op.getOperand(0), Int32Ty);
+  Args.push_back(Entry1);
+  
+  TargetLowering::ArgListEntry Entry2(Op.getOperand(1), Int32Ty);
+  Args.push_back(Entry2);
+  
+  TargetLowering::CallLoweringInfo CLI(DAG);
+  CLI.setDebugLoc(DL)
+     .setChain(Chain)
+     .setLibCallee(CallingConv::C, VT.getTypeForEVT(*DAG.getContext()),
+                   DAG.getExternalSymbol("__udivsi3", getPointerTy(DAG.getDataLayout())),
+                   std::move(Args))
+     .setTailCall(false);
+  
+  std::pair<SDValue, SDValue> CallResult = LowerCallTo(CLI);
+  return CallResult.first;
+}
+
+SDValue SLOW32TargetLowering::LowerUREM(SDValue Op, SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  EVT VT = Op.getValueType();
+  
+  // Create a library call to __umodsi3
+  SDValue Chain = DAG.getEntryNode();
+  TargetLowering::ArgListTy Args;
+  
+  Type *Int32Ty = Type::getInt32Ty(*DAG.getContext());
+  
+  TargetLowering::ArgListEntry Entry1(Op.getOperand(0), Int32Ty);
+  Args.push_back(Entry1);
+  
+  TargetLowering::ArgListEntry Entry2(Op.getOperand(1), Int32Ty);
+  Args.push_back(Entry2);
+  
+  TargetLowering::CallLoweringInfo CLI(DAG);
+  CLI.setDebugLoc(DL)
+     .setChain(Chain)
+     .setLibCallee(CallingConv::C, VT.getTypeForEVT(*DAG.getContext()),
+                   DAG.getExternalSymbol("__umodsi3", getPointerTy(DAG.getDataLayout())),
+                   std::move(Args))
+     .setTailCall(false);
+  
+  std::pair<SDValue, SDValue> CallResult = LowerCallTo(CLI);
+  return CallResult.first;
+}
+//===----------------------------------------------------------------------===//
+// Inline Assembly Support
+//===----------------------------------------------------------------------===//
+
+TargetLowering::ConstraintType
+SLOW32TargetLowering::getConstraintType(StringRef Constraint) const {
+  if (Constraint.size() == 1) {
+    switch (Constraint[0]) {
+    default:
+      break;
+    case 'r':
+      return C_RegisterClass;
+    case 'i':
+    case 'n':
+      return C_Immediate;
+    case 'm':
+      return C_Memory;
+    }
+  }
+  return TargetLowering::getConstraintType(Constraint);
+}
+
+std::pair<unsigned, const TargetRegisterClass *>
+SLOW32TargetLowering::getRegForInlineAsmConstraint(
+    const TargetRegisterInfo *TRI, StringRef Constraint, MVT VT) const {
+  // First handle single-character constraints
+  if (Constraint.size() == 1) {
+    switch (Constraint[0]) {
+    case 'r':
+      // General purpose register for any integer type
+      if (VT == MVT::i32 || VT == MVT::i16 || VT == MVT::i8 || VT == MVT::i1)
+        return std::make_pair(0U, &SLOW32::GPRRegClass);
+      break;
+    default:
+      break;
+    }
+  }
+  
+  // Handle specific register names like {r1}, {r2}, etc.
+  if (Constraint.size() > 1 && Constraint[0] == '{' && 
+      Constraint[Constraint.size() - 1] == '}') {
+    StringRef RegName = Constraint.slice(1, Constraint.size() - 1);
+    
+    // Try to parse as r0-r31
+    if (RegName.starts_with("r")) {
+      unsigned RegNum;
+      if (!RegName.substr(1).getAsInteger(10, RegNum) && RegNum < 32) {
+        // Map to the corresponding register
+        unsigned Reg = SLOW32::R0 + RegNum;
+        return std::make_pair(Reg, &SLOW32::GPRRegClass);
+      }
+    }
+    
+    // Handle register aliases
+    unsigned Reg = StringSwitch<unsigned>(RegName.lower())
+                      .Case("zero", SLOW32::R0)
+                      .Case("rv", SLOW32::R1)
+                      .Case("t0", SLOW32::R2)
+                      .Case("a0", SLOW32::R3)
+                      .Case("a1", SLOW32::R4)
+                      .Case("a2", SLOW32::R5)
+                      .Case("a3", SLOW32::R6)
+                      .Case("a4", SLOW32::R7)
+                      .Case("a5", SLOW32::R8)
+                      .Case("a6", SLOW32::R9)
+                      .Case("a7", SLOW32::R10)
+                      .Case("sp", SLOW32::R29)
+                      .Case("fp", SLOW32::R30)
+                      .Case("lr", SLOW32::R31)
+                      .Case("ra", SLOW32::R31)
+                      .Default(0);
+    
+    if (Reg)
+      return std::make_pair(Reg, &SLOW32::GPRRegClass);
+  }
+  
+  // Fall back to the default implementation
+  return TargetLowering::getRegForInlineAsmConstraint(TRI, Constraint, VT);
+}
+
+void SLOW32TargetLowering::LowerAsmOperandForConstraint(
+    SDValue Op, StringRef Constraint, std::vector<SDValue> &Ops,
+    SelectionDAG &DAG) const {
+  // Handle 'i' and 'n' immediate constraints
+  if (Constraint.size() == 1) {
+    switch (Constraint[0]) {
+    case 'i': // Simple integer immediate
+    case 'n': // Integer immediate for "n"umerics
+      if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(Op)) {
+        Ops.push_back(DAG.getTargetConstant(C->getZExtValue(), SDLoc(Op),
+                                           Op.getValueType()));
+        return;
+      }
+      break;
+    default:
+      break;
+    }
+  }
+  
+  // Fall back to default implementation
+  TargetLowering::LowerAsmOperandForConstraint(Op, Constraint, Ops, DAG);
 }

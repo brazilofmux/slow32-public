@@ -283,11 +283,11 @@ bool SLOW32InstrInfo::reverseBranchCondition(
   
   // Reverse the condition
   switch (Opcode) {
-  case SLOW32::BEQ:
+  case SLOW32::BEQ_pat:
     NewOpcode = SLOW32::BNE_pat;
     break;
   case SLOW32::BNE_pat:
-    NewOpcode = SLOW32::BEQ;
+    NewOpcode = SLOW32::BEQ_pat;
     break;
   case SLOW32::BLT:
     NewOpcode = SLOW32::BGE;

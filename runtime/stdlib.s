@@ -3,35 +3,7 @@
 .global putchar
 .global puts
 .global putint
-.global memcpy
-.global strlen
 
-# memcpy - wrapper around llvm.memcpy intrinsic
-# Args: r3 = dest, r4 = src, r5 = size
-memcpy:
-    # Just forward to the LLVM intrinsic implementation
-    # Args already in r3, r4, r5 - perfect for forwarding
-    addi sp, sp, -8
-    stw sp+0, lr
-    jal llvm.memcpy.p0.p0.i32
-    ldw lr, sp+0
-    addi sp, sp, 8
-    jalr r0, lr, 0
-
-# strlen - calculate string length
-# Args: r3 = str
-# Returns: r1 = length
-strlen:
-    add r1, r0, r0      # length = 0
-    add r12, r3, r0     # ptr = str
-strlen_loop:
-    ldbu r13, r12+0     # load byte
-    beq r13, r0, strlen_done  # if null, done
-    addi r1, r1, 1      # length++
-    addi r12, r12, 1    # ptr++
-    jal strlen_loop
-strlen_done:
-    jalr r0, lr, 0
 
 # putchar(int c) - output a character
 # r1 = character to print

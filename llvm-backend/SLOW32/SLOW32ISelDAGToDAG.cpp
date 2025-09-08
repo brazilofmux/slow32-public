@@ -85,70 +85,39 @@ public:
       // Let TableGen patterns handle branch selection
       break;
     case SLOW32ISD::CALL: {
-      // Handle CALL node selection manually
+      // Handle CALL node selection manually to deal with variable_ops properly
       SDLoc DL(N);
       SDValue Callee = N->getOperand(1);
       
-      // Check if this is a direct call
-      if (Callee.getOpcode() == ISD::TargetGlobalAddress || 
-          Callee.getOpcode() == ISD::TargetExternalSymbol) {
-        
-        // Create JAL_CALL machine instruction with variable_ops
-        SmallVector<SDValue, 16> Ops;
-        Ops.push_back(Callee);  // The target
-        
-        // Check for glue input indicating argument registers are set up
-        SDValue GlueIn;
-        if (N->getNumOperands() > 2 && 
-            N->getOperand(N->getNumOperands()-1).getValueType() == MVT::Glue) {
-          GlueIn = N->getOperand(N->getNumOperands()-1);
-        }
-        
-        // If we have glue input, look for CopyToReg nodes to find argument registers
-        if (GlueIn.getNode()) {
-          // Look for CopyToReg nodes in the glue chain and add their registers as implicit uses
-          SDNode *Current = GlueIn.getNode();
-          while (Current && Current->getOpcode() == ISD::CopyToReg) {
-            if (Current->getNumOperands() >= 2) {
-              if (auto *RegNode = dyn_cast<RegisterSDNode>(Current->getOperand(1))) {
-                unsigned Reg = RegNode->getReg();
-                // Check if it's an argument register (R3-R10)
-                if (Reg >= SLOW32::R3 && Reg <= SLOW32::R10) {
-                  // Add the register as an implicit use
-                  Ops.push_back(CurDAG->getRegister(Reg, MVT::i32));
-                }
-              }
-            }
-            // Move to the chain input of this CopyToReg
-            if (Current->getNumOperands() >= 4 && 
-                Current->getOperand(3).getValueType() == MVT::Glue) {
-              Current = Current->getOperand(3).getNode();
-            } else {
-              break;
-            }
-          }
-        }
-        
-        // Add chain
-        Ops.push_back(N->getOperand(0));
-        
-        // Add glue if present
-        if (GlueIn.getNode()) {
-          Ops.push_back(GlueIn);
-        }
-        
-        // Create the machine node
-        MachineSDNode *CallNode = CurDAG->getMachineNode(SLOW32::JAL_CALL, DL,
-                                                         MVT::Other, MVT::Glue, Ops);
-        
-        // Replace and remove
-        CurDAG->ReplaceAllUsesWith(N, CallNode);
-        CurDAG->RemoveDeadNode(N);
-        return;
+      // Build operands for the call instruction
+      SmallVector<SDValue, 8> Ops;
+      Ops.push_back(Callee);
+      
+      // Add chain
+      Ops.push_back(N->getOperand(0));
+      
+      // Add glue if present
+      if (N->getNumOperands() > 2 && 
+          N->getOperand(N->getNumOperands()-1).getValueType() == MVT::Glue) {
+        Ops.push_back(N->getOperand(N->getNumOperands()-1));
       }
       
-      // For indirect calls, fall through
-      break;
+      // Determine which call instruction to use
+      unsigned Opcode;
+      if (Callee.getOpcode() == ISD::TargetGlobalAddress || 
+          Callee.getOpcode() == ISD::TargetExternalSymbol) {
+        Opcode = SLOW32::JAL_CALL;
+      } else {
+        Opcode = SLOW32::JALR_CALL;
+      }
+      
+      // Create the machine node
+      MachineSDNode *CallNode = CurDAG->getMachineNode(Opcode, DL,
+                                                       MVT::Other, MVT::Glue, Ops);
+      
+      // Replace the node
+      ReplaceNode(N, CallNode);
+      return;
     }
     case SLOW32ISD::RET_FLAG: {
       // Select between RET and RET64 based on whether R2 is live
@@ -207,16 +176,9 @@ public:
       ReplaceNode(N, Result);
       return;
     }
-    case ISD::GlobalAddress: {
-      // For now, just load the address into a register using LI
-      SDLoc DL(N);
-      GlobalAddressSDNode *GA = cast<GlobalAddressSDNode>(N);
-      SDValue TGA = CurDAG->getTargetGlobalAddress(GA->getGlobal(), DL, MVT::i32,
-                                                   GA->getOffset(), GA->getTargetFlags());
-      SDNode *Result = CurDAG->getMachineNode(SLOW32::LI, DL, MVT::i32, TGA);
-      ReplaceNode(N, Result);
-      return;
-    }
+    // Let standard patterns handle GlobalAddress
+    // It should be converted to TargetGlobalAddress by lowering
+    // and then matched by TableGen patterns
     default:
       break;
     }

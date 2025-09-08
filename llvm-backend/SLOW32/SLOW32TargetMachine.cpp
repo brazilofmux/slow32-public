@@ -54,6 +54,17 @@ public:
   }
 
   bool addInstSelector() override;
+  
+  // Override to disable problematic optimization passes
+  void addMachineSSAOptimization() override {
+    // Skip Machine LICM - it causes hangs when combined with block placement
+    // This is a temporary workaround until the root cause is fixed
+    disablePass(&MachineLICMID);
+    disablePass(&MachineBlockPlacementID);
+    
+    // Call parent implementation
+    TargetPassConfig::addMachineSSAOptimization();
+  }
 };
 } // end anonymous namespace
 

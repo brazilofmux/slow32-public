@@ -238,6 +238,9 @@ def : Pat<(sext_inreg (add GPR:$src, simm16:$imm), i8),
 // Removed: LLVM canonicalizes immediates to RHS
 
 // For global addresses, use %hi/%lo for proper 32-bit addressing
+// Pattern for loading a global address (including function addresses) into a register
+def : Pat<(i32 tglobaladdr:$addr), (LOAD_ADDR tglobaladdr:$addr)>;
+
 // Load from global: use LOAD_ADDR pseudo to form address, then load
 def : Pat<(load (i32 tglobaladdr:$addr)), 
           (LDW (LOAD_ADDR tglobaladdr:$addr), 0)>;
@@ -402,7 +405,7 @@ let isCall = 1, Defs = [R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R31], Uses = [R
 }
 
 // Note: Call patterns are handled manually in SLOW32ISelDAGToDAG.cpp
-// because we need to handle the variadic nature of calls and preserve glue chains
+// because we need to handle the variadic nature of calls and glue chains properly
 
 //===----------------------------------------------------------------------===//
 // Additional patterns for better code generation

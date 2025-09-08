@@ -9,6 +9,12 @@ public:
     : AsmPrinter(TM, std::move(Streamer)) {}
   void emitInstruction(const MachineInstr *MI) override;
   void emitBasicBlockStart(const MachineBasicBlock &MBB) override;
+  
+  // Inline assembly support
+  bool PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
+                      const char *ExtraCode, raw_ostream &OS) override;
+  bool PrintAsmMemoryOperand(const MachineInstr *MI, unsigned OpNo,
+                            const char *ExtraCode, raw_ostream &OS) override;
 };
 }
 #endif

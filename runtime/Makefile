@@ -2,7 +2,7 @@
 
 # Paths
 LLVM_BIN = ~/llvm-project/build/bin
-ASSEMBLER = ../assembler/slow32asm
+ASSEMBLER = ../tools/assembler/slow32asm
 
 # Compiler flags
 CLANG = $(LLVM_BIN)/clang
@@ -13,7 +13,8 @@ CFLAGS = -target $(TARGET) -S -emit-llvm -O2
 # Object files
 RUNTIME_OBJS = crt0.s32o intrinsics.s32o intrinsics_extra.s32o \
                stdlib.s32o putchar.s32o debug_char.s32o \
-               printf.s32o builtins.s32o
+               printf.s32o builtins.s32o string.s32o malloc.s32o \
+               stdlib_utils.s32o stdio.s32o math.s32o yield.s32o
 
 # Default target
 all: $(RUNTIME_OBJS)
@@ -34,6 +35,37 @@ printf.ll: printf.c
 	$(CLANG) $(CFLAGS) $< -o $@
 
 printf.s: printf.ll  
+	$(LLC) -mtriple=$(TARGET) $< -o $@
+
+# Rules for new C libraries
+string.ll: string.c
+	$(CLANG) $(CFLAGS) -Iinclude $< -o $@
+
+string.s: string.ll
+	$(LLC) -mtriple=$(TARGET) $< -o $@
+
+malloc.ll: malloc.c
+	$(CLANG) $(CFLAGS) -Iinclude $< -o $@
+
+malloc.s: malloc.ll
+	$(LLC) -mtriple=$(TARGET) $< -o $@
+
+stdlib_utils.ll: stdlib_utils.c
+	$(CLANG) $(CFLAGS) -Iinclude $< -o $@
+
+stdlib_utils.s: stdlib_utils.ll
+	$(LLC) -mtriple=$(TARGET) $< -o $@
+
+stdio.ll: stdio.c
+	$(CLANG) $(CFLAGS) -Iinclude $< -o $@
+
+stdio.s: stdio.ll
+	$(LLC) -mtriple=$(TARGET) $< -o $@
+
+math.ll: math.c
+	$(CLANG) $(CFLAGS) -Iinclude $< -o $@
+
+math.s: math.ll
 	$(LLC) -mtriple=$(TARGET) $< -o $@
 
 # Clean target

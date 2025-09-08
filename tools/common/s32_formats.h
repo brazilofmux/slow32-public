@@ -106,7 +106,7 @@ typedef struct {
     uint32_t mem_size;     // 0x30: Total memory to allocate
     uint32_t heap_base;    // 0x34: Start of heap
     uint32_t checksum;     // 0x38: CRC32 of all sections
-    uint32_t reserved;     // 0x3C: Reserved (must be 0)
+    uint32_t mmio_base;    // 0x3C: MMIO region base (if S32X_FLAG_MMIO set)
 } s32x_header_t;
 
 // Executable flags
@@ -117,6 +117,7 @@ typedef struct {
 #define S32X_FLAG_STRIPPED   0x0010  // Symbols stripped
 #define S32X_FLAG_PIC        0x0020  // Position-independent code
 #define S32X_FLAG_COMPRESSED 0x0040  // Section data is compressed
+#define S32X_FLAG_MMIO       0x0080  // Has MMIO region enabled
 
 // Section entry (20 bytes)
 typedef struct {
