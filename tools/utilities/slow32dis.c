@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdbool.h>
+#include "../common/s32_formats.h"
 
 // SLOW32 instruction formats
 typedef enum {
@@ -23,33 +24,36 @@ typedef struct {
 static instruction_info_t instructions[] = {
     {"add",   0x00, FMT_R},
     {"sub",   0x01, FMT_R},
-    {"mul",   0x02, FMT_R},
-    {"div",   0x03, FMT_R},
-    {"rem",   0x04, FMT_R},
-    {"and",   0x05, FMT_R},
-    {"or",    0x06, FMT_R},
-    {"xor",   0x07, FMT_R},
-    {"sll",   0x08, FMT_R},
-    {"srl",   0x09, FMT_R},
-    {"sra",   0x0A, FMT_R},
-    {"slt",   0x0B, FMT_R},
-    {"sltu",  0x0C, FMT_R},
+    {"xor",   0x02, FMT_R},
+    {"or",    0x03, FMT_R},
+    {"and",   0x04, FMT_R},
+    {"sll",   0x05, FMT_R},
+    {"srl",   0x06, FMT_R},
+    {"sra",   0x07, FMT_R},
+    {"slt",   0x08, FMT_R},
+    {"sltu",  0x09, FMT_R},
+    {"mul",   0x0A, FMT_R},
+    {"mulh",  0x0B, FMT_R},
+    {"div",   0x0C, FMT_R},
+    {"rem",   0x0D, FMT_R},
+    {"seq",   0x0E, FMT_R},
+    {"sne",   0x0F, FMT_R},
     
     {"addi",  0x10, FMT_I},
-    {"andi",  0x11, FMT_I},
-    {"ori",   0x12, FMT_I},
-    {"xori",  0x13, FMT_I},
-    {"slli",  0x14, FMT_I},
-    {"srli",  0x15, FMT_I},
-    {"srai",  0x16, FMT_I},
-    {"slti",  0x17, FMT_I},
-    {"sltiu", 0x18, FMT_I},
-    {"sgt",   0x19, FMT_R},
-    {"sgtu",  0x1A, FMT_R},
-    {"sle",   0x1B, FMT_R},
-    {"sleu",  0x1C, FMT_R},
-    {"sge",   0x1D, FMT_R},
-    {"sgeu",  0x1E, FMT_R},
+    {"ori",   0x11, FMT_I},
+    {"andi",  0x12, FMT_I},
+    {"slli",  0x13, FMT_I},
+    {"srli",  0x14, FMT_I},
+    {"srai",  0x15, FMT_I},
+    {"slti",  0x16, FMT_I},
+    {"sltiu", 0x17, FMT_I},
+    {"sgt",   0x18, FMT_R},
+    {"sgtu",  0x19, FMT_R},
+    {"sle",   0x1A, FMT_R},
+    {"sleu",  0x1B, FMT_R},
+    {"sge",   0x1C, FMT_R},
+    {"sgeu",  0x1D, FMT_R},
+    {"xori",  0x1E, FMT_I},
     
     {"lui",   0x20, FMT_U},
     
@@ -63,15 +67,22 @@ static instruction_info_t instructions[] = {
     {"sth",   0x39, FMT_S},
     {"stw",   0x3A, FMT_S},
     
-    {"beq",   0x40, FMT_B},
-    {"bne",   0x41, FMT_B},
-    {"blt",   0x42, FMT_B},
-    {"bge",   0x43, FMT_B},
-    {"bltu",  0x44, FMT_B},
-    {"bgeu",  0x45, FMT_B},
+    {"assert_eq", 0x3F, FMT_R},
     
-    {"jal",   0x50, FMT_J},
-    {"jalr",  0x51, FMT_I},
+    {"jal",   0x40, FMT_J},
+    {"jalr",  0x41, FMT_I},
+    
+    {"beq",   0x48, FMT_B},
+    {"bne",   0x49, FMT_B},
+    {"blt",   0x4A, FMT_B},
+    {"bge",   0x4B, FMT_B},
+    {"bltu",  0x4C, FMT_B},
+    {"bgeu",  0x4D, FMT_B},
+    
+    {"nop",   0x50, FMT_R},
+    {"yield", 0x51, FMT_R},
+    {"debug", 0x52, FMT_I},
+    {"halt",  0x7F, FMT_R},
     
     {NULL, 0, FMT_UNKNOWN}
 };
@@ -99,28 +110,30 @@ static inline int extract_imm_i(uint32_t inst) {
 }
 
 static inline int extract_imm_s(uint32_t inst) {
-    int32_t imm = ((inst >> 7) & 0x1F) | ((inst >> 20) & 0xFE0);
-    // Sign extend from 12 bits
-    if (imm & 0x800) imm |= 0xFFFFF000;
+    // SLOW-32 store format (matching emulator)
+    int32_t imm = ((inst >> 7) & 0x1F) | (((int32_t)inst >> 25) << 5);
     return imm;
 }
 
 static inline int extract_imm_b(uint32_t inst) {
-    int32_t imm = ((inst >> 8) & 0x1E) | ((inst >> 20) & 0x7E0) |
-                  ((inst << 4) & 0x800) | ((inst >> 19) & 0x1000);
-    // Sign extend from 13 bits
-    if (imm & 0x1000) imm |= 0xFFFFE000;
+    // SLOW-32 branch format (matching emulator)
+    int32_t imm = (((inst >> 8) & 0xF) << 1) | (((inst >> 25) & 0x3F) << 5) |
+                  (((inst >> 7) & 0x1) << 11) | (((int32_t)inst >> 31) << 12);
     return imm;
 }
 
 static inline int extract_imm_u(uint32_t inst) {
-    return (inst >> 12) & 0xFFFFF;  // RISC-V style: 20-bit immediate in bits [31:12]
+    // SLOW-32 LUI format - immediate already in bits [31:12]
+    return inst & 0xFFFFF000;
 }
 
 static inline int extract_imm_j(uint32_t inst) {
-    int32_t imm = ((inst >> 12) & 0xFF) | ((inst >> 3) & 0x300) |
-                  ((inst << 2) & 0x400) | ((inst >> 9) & 0x7FE) |
-                  ((inst >> 11) & 0x100000);
+    // SLOW-32 JAL format (matching emulator)
+    uint32_t imm20 = (inst >> 31) & 0x1;
+    uint32_t imm10_1 = (inst >> 21) & 0x3FF;
+    uint32_t imm11 = (inst >> 20) & 0x1;
+    uint32_t imm19_12 = (inst >> 12) & 0xFF;
+    int32_t imm = (imm20 << 20) | (imm19_12 << 12) | (imm11 << 11) | (imm10_1 << 1);
     // Sign extend from 21 bits
     if (imm & 0x100000) imm |= 0xFFE00000;
     return imm;
@@ -134,6 +147,22 @@ static instruction_info_t* find_instruction(uint32_t opcode) {
         }
     }
     return NULL;
+}
+
+// Special case disassembly helpers
+static const char* get_reg_name(int reg) {
+    static char bufs[4][8];  // Rotate through 4 buffers
+    static int buf_idx = 0;
+    
+    if (reg == 0) return "zero";
+    if (reg == 29) return "sp";
+    if (reg == 30) return "fp";
+    if (reg == 31) return "lr";
+    
+    char *buf = bufs[buf_idx];
+    buf_idx = (buf_idx + 1) % 4;
+    sprintf(buf, "r%d", reg);
+    return buf;
 }
 
 // Disassemble a single instruction
@@ -150,12 +179,24 @@ static void disassemble_instruction(uint32_t addr, uint32_t inst) {
     
     printf("%s", info->mnemonic);
     
+    // Special cases
+    if (opcode == 0x7F) {  // HALT
+        printf("\n");
+        return;
+    }
+    
+    if (opcode == 0x52) {  // DEBUG
+        int rs1 = extract_rs1(inst);
+        printf(" %s\n", get_reg_name(rs1));
+        return;
+    }
+    
     switch (info->format) {
         case FMT_R: {
             int rd = extract_rd(inst);
             int rs1 = extract_rs1(inst);
             int rs2 = extract_rs2(inst);
-            printf(" r%d, r%d, r%d", rd, rs1, rs2);
+            printf(" %s, %s, %s", get_reg_name(rd), get_reg_name(rs1), get_reg_name(rs2));
             break;
         }
         
@@ -164,12 +205,12 @@ static void disassemble_instruction(uint32_t addr, uint32_t inst) {
             int rs1 = extract_rs1(inst);
             int imm = extract_imm_i(inst);
             
-            if (opcode == 0x51) {  // jalr
-                printf(" r%d, r%d, %d", rd, rs1, imm);
+            if (opcode == 0x41) {  // jalr
+                printf(" %s, %s, %d", get_reg_name(rd), get_reg_name(rs1), imm);
             } else if (opcode >= 0x30 && opcode <= 0x34) {  // loads
-                printf(" r%d, r%d+%d", rd, rs1, imm);
+                printf(" %s, %s+%d", get_reg_name(rd), get_reg_name(rs1), imm);
             } else {
-                printf(" r%d, r%d, %d", rd, rs1, imm);
+                printf(" %s, %s, %d", get_reg_name(rd), get_reg_name(rs1), imm);
             }
             break;
         }
@@ -178,7 +219,7 @@ static void disassemble_instruction(uint32_t addr, uint32_t inst) {
             int rs1 = extract_rs1(inst);
             int rs2 = extract_rs2(inst);
             int imm = extract_imm_s(inst);
-            printf(" r%d+%d, r%d", rs1, imm, rs2);
+            printf(" %s+%d, %s", get_reg_name(rs1), imm, get_reg_name(rs2));
             break;
         }
         
@@ -186,14 +227,15 @@ static void disassemble_instruction(uint32_t addr, uint32_t inst) {
             int rs1 = extract_rs1(inst);
             int rs2 = extract_rs2(inst);
             int imm = extract_imm_b(inst);
-            printf(" r%d, r%d, 0x%x", rs1, rs2, addr + imm);
+            // Branches are PC+4 relative in SLOW-32
+            printf(" %s, %s, 0x%x", get_reg_name(rs1), get_reg_name(rs2), addr + 4 + imm);
             break;
         }
         
         case FMT_U: {
             int rd = extract_rd(inst);
             int imm = extract_imm_u(inst);
-            printf(" r%d, %d", rd, imm);
+            printf(" %s, 0x%x", get_reg_name(rd), imm >> 12);  // Show upper 20 bits
             break;
         }
         
@@ -203,7 +245,7 @@ static void disassemble_instruction(uint32_t addr, uint32_t inst) {
             if (rd == 0) {
                 printf(" 0x%x", addr + imm);  // Unconditional jump
             } else {
-                printf(" r%d, 0x%x", rd, addr + imm);
+                printf(" %s, 0x%x", get_reg_name(rd), addr + imm);
             }
             break;
         }
@@ -214,29 +256,6 @@ static void disassemble_instruction(uint32_t addr, uint32_t inst) {
     
     printf("\n");
 }
-
-// S32X header structure
-typedef struct {
-    uint32_t magic;        // 'X23S'
-    uint32_t version;
-    uint32_t entry_point;
-    uint32_t stack_base;
-    uint32_t sect_count;
-    uint32_t sect_offset;
-    uint32_t sym_count;
-    uint32_t sym_offset;
-} s32x_header_t;
-
-// Section header
-typedef struct {
-    uint32_t type;
-    uint32_t flags;
-    uint32_t vaddr;
-    uint32_t size;
-    uint32_t offset;
-    uint32_t align;
-    char name[16];
-} s32x_section_t;
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
@@ -258,26 +277,37 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    // Check magic (little-endian: 'X23S' = 0x53333258)
-    if (header.magic != 0x53333258) {  // 'X23S' in little-endian
+    // Check magic
+    if (header.magic != S32X_MAGIC) {
         fprintf(stderr, "Not a valid S32X file (magic: 0x%08x)\n", header.magic);
         fclose(f);
         return 1;
     }
     
     printf("S32X Executable Disassembly\n");
-    printf("Entry point: 0x%08x\n", header.entry_point);
+    printf("Entry point: 0x%08x\n", header.entry);
     printf("Stack base:  0x%08x\n", header.stack_base);
     printf("\n");
     
+    // Read string table
+    char *strtab = malloc(header.str_size);
+    if (!strtab) {
+        fprintf(stderr, "Cannot allocate string table\n");
+        fclose(f);
+        return 1;
+    }
+    fseek(f, header.str_offset, SEEK_SET);
+    fread(strtab, 1, header.str_size, f);
+    
     // Read sections
-    fseek(f, header.sect_offset, SEEK_SET);
-    for (uint32_t i = 0; i < header.sect_count; i++) {
+    fseek(f, header.sec_offset, SEEK_SET);
+    for (uint32_t i = 0; i < header.nsections; i++) {
         s32x_section_t sect;
         if (fread(&sect, sizeof(sect), 1, f) != 1) break;
         
-        if (sect.type == 1) {  // Code section
-            printf("Section: %s at 0x%08x (%d bytes)\n", sect.name, sect.vaddr, sect.size);
+        if (sect.type == S32_SEC_CODE) {  // Code section
+            const char *name = &strtab[sect.name_offset];
+            printf("Section: %s at 0x%08x (%d bytes)\n", name, sect.vaddr, sect.mem_size);
             printf("----------------------------------------\n");
             
             // Save position
@@ -322,6 +352,7 @@ int main(int argc, char *argv[]) {
         }
     }
     
+    free(strtab);
     fclose(f);
     return 0;
 }

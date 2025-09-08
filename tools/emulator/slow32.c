@@ -7,13 +7,18 @@
 #include <inttypes.h>
 #include "slow32.h"
 #include "s32x_loader.h"
+#include "memory_manager.h"
 
 // Enable to trap on unaligned LD/ST (recommended for a strict ISA)
 #ifndef S32_ALLOW_UNALIGNED
 #define S32_TRAP_ON_UNALIGNED 1
 #endif
 
+// CPU state is now defined in slow32.h with memory_manager_t
+
 static instruction_t decode_instruction(uint32_t raw) {
+    //printf("[TRACE] decode_instruction: raw=0x%08X\n", raw);
+    fflush(stdout);
     instruction_t inst = {0};
     inst.raw = raw;
     inst.opcode = raw & 0x7F;
@@ -30,11 +35,10 @@ static instruction_t decode_instruction(uint32_t raw) {
         case OP_ORI ... OP_ANDI:
         case OP_XORI:
         case OP_SLTIU:
-            // ORI, ANDI, XORI, and SLTIU use zero-extended immediates
             inst.format = FMT_I;
             inst.rd = (raw >> 7) & 0x1F;
             inst.rs1 = (raw >> 15) & 0x1F;
-            inst.imm = (raw >> 20) & 0xFFF;  // Zero-extend 12-bit immediate
+            inst.imm = (raw >> 20) & 0xFFF;  // Zero-extend
             break;
             
         case OP_ADDI:
@@ -44,7 +48,7 @@ static instruction_t decode_instruction(uint32_t raw) {
             inst.format = FMT_I;
             inst.rd = (raw >> 7) & 0x1F;
             inst.rs1 = (raw >> 15) & 0x1F;
-            inst.imm = ((int32_t)raw) >> 20;  // Sign-extend for others
+            inst.imm = ((int32_t)raw) >> 20;  // Sign-extend
             break;
             
         case OP_STB ... OP_STW:
@@ -65,7 +69,7 @@ static instruction_t decode_instruction(uint32_t raw) {
         case OP_LUI:
             inst.format = FMT_U;
             inst.rd = (raw >> 7) & 0x1F;
-            inst.imm = raw & 0xFFFFF000;  // Keep immediate in bits [31:12] position
+            inst.imm = raw & 0xFFFFF000;
             break;
             
         case OP_JAL:
@@ -87,7 +91,7 @@ static instruction_t decode_instruction(uint32_t raw) {
             inst.format = FMT_R;
             inst.rs1 = (raw >> 15) & 0x1F;
             if (inst.opcode == OP_ASSERT_EQ) {
-                inst.rs2 = (raw >> 20) & 0x1F;  // ASSERT_EQ needs both rs1 and rs2
+                inst.rs2 = (raw >> 20) & 0x1F;
             }
             break;
     }
@@ -96,658 +100,645 @@ static instruction_t decode_instruction(uint32_t raw) {
 }
 
 void cpu_init(cpu_state_t *cpu) {
-    cpu->memory = calloc(1, DEFAULT_MEM_SIZE);
-    if (!cpu->memory) {
-        fprintf(stderr, "Failed to allocate memory\n");
-        exit(1);
-    }
+    //printf("[TRACE] cpu_init: starting\n");
+    fflush(stdout);
+    memset(cpu, 0, sizeof(*cpu));
+    mm_init(&cpu->mm, false);  // W^X will be set by loader
     cpu->regs[REG_SP] = 0x0FFFFFF0;
     cpu->pc = 0;
     cpu->cycle_count = 0;
+    cpu->inst_count = 0;
     cpu->halted = false;
-    
-    // Default memory protection limits (updated by .s32x loader)
-    cpu->code_limit = CODE_SIZE;
-    cpu->rodata_limit = CODE_SIZE;
-    cpu->data_limit = DEFAULT_MEM_SIZE;
-    cpu->wxorx_enabled = false;
+    //printf("[TRACE] cpu_init: completed\n");
+    fflush(stdout);
 }
 
 void cpu_destroy(cpu_state_t *cpu) {
-    if (cpu->memory) {
-        free(cpu->memory);
-        cpu->memory = NULL;
-    }
+    //printf("[TRACE] cpu_destroy: starting\n");
+    fflush(stdout);
+    mm_destroy(&cpu->mm);
+    //printf("[TRACE] cpu_destroy: completed\n");
+    fflush(stdout);
 }
 
-// Removed legacy v2 format support
-
-// S32X executable loader - the ONLY supported format
-bool cpu_load_binary(cpu_state_t *cpu, const char *filename, uint32_t load_addr) {
-    (void)load_addr;  // Unused - S32X defines its own memory layout
-    
-    s32x_loader_config_t config = {
-        .memory = (uint32_t*)cpu->memory,
-        .mem_size = DEFAULT_MEM_SIZE,
-        .pc = &cpu->pc,
-        .sp = NULL,  // We'll set SP via registers
-        .registers = cpu->regs,
-        .verbose = true
-    };
-    
-    s32x_load_result_t result = load_s32x_file(filename, &config);
-    if (!result.success) {
-        fprintf(stderr, "Failed to load executable: %s\n", result.error_msg);
-        fprintf(stderr, "Note: Only S32X format executables are supported.\n");
-        fprintf(stderr, "Use: linker/s32-ld <object.o> -o <output.s32x>\n");
+// Modified loader to use memory manager
+bool cpu_load_binary(cpu_state_t *cpu, const char *filename) {
+    FILE *f = fopen(filename, "rb");
+    if (!f) {
+        fprintf(stderr, "Cannot open file: %s\n", filename);
         return false;
     }
     
-    // Update CPU state with memory protection info
-    cpu->code_limit = result.code_limit;
-    cpu->rodata_limit = result.rodata_limit;
-    cpu->data_limit = result.data_limit;
-    cpu->wxorx_enabled = result.has_wxorx;
-    
-    if (result.has_wxorx) {
-        printf("W^X protection enabled: code limit = 0x%08X\n", result.code_limit);
+    s32x_header_t header;
+    if (fread(&header, sizeof(header), 1, f) != 1) {
+        fprintf(stderr, "Cannot read header\n");
+        fclose(f);
+        return false;
     }
+    
+    if (header.magic != S32X_MAGIC) {
+        fprintf(stderr, "Invalid magic: 0x%08X\n", header.magic);
+        fclose(f);
+        return false;
+    }
+    
+    // W^X protection is enforced by hardware (mprotect) making code/rodata non-writable
+    // The flag is preserved for .s32x compatibility but protection is always active
+    cpu->mm.wxorx_enabled = (header.flags & S32X_FLAG_W_XOR_X) != 0;
+    
+    // Memory layout loaded from header
+    
+    // Allocate memory regions based on executable requirements
+    //printf("[TRACE] About to call mem_setup_from_s32x\n");
+    fflush(stdout);
+    if (mm_setup_from_s32x(&cpu->mm, header.code_limit, header.rodata_limit,
+                          header.data_limit, header.stack_base) < 0) {
+        fprintf(stderr, "Failed to allocate memory regions\n");
+        fclose(f);
+        return false;
+    }
+    //printf("[TRACE] mem_setup_from_s32x completed successfully\n");
+    fflush(stdout);
+    
+    // Read string table
+    //printf("[TRACE] Allocating string table: size=%u\n", header.str_size);
+    fflush(stdout);
+    char *strtab = malloc(header.str_size);
+    if (!strtab) {
+        fprintf(stderr, "Out of memory for string table\n");
+        fclose(f);
+        return false;
+    }
+    
+    //printf("[TRACE] Seeking to string table at offset %u\n", header.str_offset);
+    fflush(stdout);
+    fseek(f, header.str_offset, SEEK_SET);
+    //printf("[TRACE] Reading string table\n");
+    fflush(stdout);
+    fread(strtab, 1, header.str_size, f);
+    //printf("[TRACE] String table read complete\n");
+    fflush(stdout);
+    
+    // Load sections into allocated regions
+    //printf("[TRACE] Loading %u sections starting at offset %u\n", header.nsections, header.sec_offset);
+    fflush(stdout);
+    fseek(f, header.sec_offset, SEEK_SET);
+    for (uint32_t i = 0; i < header.nsections; i++) {
+        //printf("[TRACE] Loading section %u/%u\n", i+1, header.nsections);
+        fflush(stdout);
+        s32x_section_t section;
+        if (fread(&section, sizeof(section), 1, f) != 1) {
+            fprintf(stderr, "Cannot read section %u\n", i);
+            free(strtab);
+            fclose(f);
+            return false;
+        }
+        
+        const char *name = (section.name_offset < header.str_size) ? 
+                           &strtab[section.name_offset] : "?";
+        
+        // Loading section
+        
+        // Load section data
+        if (section.size > 0 && section.offset > 0) {
+            long current_pos = ftell(f);
+            fseek(f, section.offset, SEEK_SET);
+            
+            // Read into temporary buffer first
+            uint8_t *temp = malloc(section.size);
+            if (!temp || fread(temp, 1, section.size, f) != section.size) {
+                fprintf(stderr, "Cannot read section '%s' data\n", name);
+                free(temp);
+                free(strtab);
+                fclose(f);
+                return false;
+            }
+            
+            // Write to memory through memory manager
+            // Write to memory through memory manager
+            if (mm_write(&cpu->mm, section.vaddr, temp, section.size) < 0) {
+                fprintf(stderr, "Cannot write section '%s' to memory\n", name);
+                free(temp);
+                free(strtab);
+                fclose(f);
+                return false;
+            }
+            
+            free(temp);
+            fseek(f, current_pos, SEEK_SET);
+        }
+        
+        // Zero-fill BSS sections and padding
+        if (section.mem_size > section.size) {
+            uint32_t zero_size = section.mem_size - section.size;
+            uint8_t *zeros = calloc(1, zero_size);
+            if (zeros) {
+                mm_write(&cpu->mm, section.vaddr + section.size, zeros, zero_size);
+                free(zeros);
+            }
+        }
+    }
+    
+    //printf("[TRACE] All sections loaded, freeing string table\n");
+    fflush(stdout);
+    free(strtab);
+    //printf("[TRACE] Closing file\n");
+    fflush(stdout);
+    fclose(f);
+    
+    // Finalize memory protection after loading
+    //printf("[TRACE] About to call mem_protect_regions\n");
+    fflush(stdout);
+    // Apply memory protection (code and rodata become read-only)
+    if (mm_protect_regions(&cpu->mm, header.code_limit, header.rodata_limit) < 0) {
+        fprintf(stderr, "Failed to set memory protection\n");
+        return false;
+    }
+    
+    // Cache the code region for fast instruction fetch
+    cpu->code_region = NULL;
+    for (memory_region_t *r = cpu->mm.regions; r; r = r->next) {
+        if (r->vaddr_start == 0) {
+            cpu->code_region = r;
+            break;
+        }
+    }
+    
+    // Set up CPU state
+    //printf("[TRACE] mem_protect_regions completed, setting up CPU state\n");
+    fflush(stdout);
+    cpu->pc = header.entry;
+    cpu->regs[REG_SP] = header.stack_base;
+    cpu->code_limit = header.code_limit;
+    cpu->rodata_limit = header.rodata_limit;
+    cpu->data_limit = header.data_limit;
+    cpu->wxorx_enabled = cpu->mm.wxorx_enabled;  // Kept for compatibility
+    
+    // Executable loaded successfully
+    
+    //printf("[TRACE] About to call mem_print_map\n");
+    fflush(stdout);
+    // Memory map configured
+    //printf("[TRACE] cpu_load_binary completed successfully\n");
+    fflush(stdout);
     
     return true;
 }
 
-void cpu_reset(cpu_state_t *cpu, uint32_t entry_point) {
-    memset(cpu->regs, 0, sizeof(cpu->regs));
-    cpu->regs[REG_SP] = 0x0FFFFFF0;
-    cpu->pc = entry_point;
-    cpu->cycle_count = 0;
-    cpu->halted = false;
-}
-
-static uint32_t mem_read(cpu_state_t *cpu, uint32_t addr, int size) {
-    if (addr > DEFAULT_MEM_SIZE - (uint32_t)size
-#if S32_TRAP_ON_UNALIGNED
-        || (size==4 && (addr&3)) || (size==2 && (addr&1))
-#endif
-       ) {
-        fprintf(stderr, "Memory read out of bounds: 0x%08X\n", addr);
+// Memory access functions using memory manager
+static uint32_t cpu_load(cpu_state_t *cpu, uint32_t addr, int size) {
+    //printf("[TRACE] cpu_load: addr=0x%08X, size=%d\n", addr, size);
+    fflush(stdout);
+    uint32_t value = 0;
+    
+    if (mm_read(&cpu->mm, addr, &value, size) < 0) {
+        fprintf(stderr, "Memory fault: Failed to read %d bytes at 0x%08X\n", size, addr);
         cpu->halted = true;
         return 0;
     }
     
-    uint32_t val = 0;
-    switch (size) {
-        case 1:
-            val = cpu->memory[addr];
-            break;
-        case 2:
-            val = *(uint16_t*)(cpu->memory + addr);
-            break;
-        case 4:
-            val = *(uint32_t*)(cpu->memory + addr);
-            break;
+    // Handle partial reads for byte/halfword
+    if (size == 1) {
+        value &= 0xFF;
+    } else if (size == 2) {
+        value &= 0xFFFF;
     }
     
-    // Memory watch
-    if (cpu->debug.watch_enabled && addr >= cpu->debug.watch_start && addr < cpu->debug.watch_end) {
-        printf("[MEM READ ] 0x%08X: 0x%0*X (size=%d)\n", addr, size*2, val, size);
-    }
-    
-    cpu->cycle_count += 3;
-    return val;
+    return value;
 }
 
-static void mem_write(cpu_state_t *cpu, uint32_t addr, uint32_t val, int size) {
-    if (addr > DEFAULT_MEM_SIZE - (uint32_t)size
-#if S32_TRAP_ON_UNALIGNED
-        || (size==4 && (addr&3)) || (size==2 && (addr&1))
-#endif
-       ) {
-        fprintf(stderr, "Memory write out of bounds: 0x%08X\n", addr);
+static void cpu_store(cpu_state_t *cpu, uint32_t addr, uint32_t value, int size) {
+    // Store to memory
+    // Prepare data based on size
+    uint32_t data = value;
+    if (size == 1) {
+        data &= 0xFF;
+    } else if (size == 2) {
+        data &= 0xFFFF;
+    }
+    
+    if (mm_write(&cpu->mm, addr, &data, size) < 0) {
+        fprintf(stderr, "Memory fault: Failed to write %d bytes at 0x%08X\n", size, addr);
         cpu->halted = true;
-        return;
     }
-    
-    // W^X protection: Cannot write to code or rodata segments
-    if (cpu->wxorx_enabled && addr < cpu->rodata_limit) {
-        fprintf(stderr, "Security violation: Attempt to write to protected memory at 0x%08X\n", addr);
+}
+
+// Instruction fetch - optimized with single boundary check and fast path
+static uint32_t cpu_fetch(cpu_state_t *cpu, uint32_t addr) {
+    // Single boundary check: ensure we can fetch 4 bytes of instruction
+    // This protects against executing data/stack and wild jumps
+    // code_limit is first byte AFTER code, so last valid inst is at code_limit-4
+    if (addr >= cpu->code_limit) {
+        fprintf(stderr, "Execute fault: PC=0x%08X outside code segment [0, 0x%08X)\n", 
+                addr, cpu->code_limit);
         cpu->halted = true;
-        return;
+        return 0;
     }
     
-    // Memory watch - before write
-    if (cpu->debug.watch_enabled && addr >= cpu->debug.watch_start && addr < cpu->debug.watch_end) {
-        printf("[MEM WRITE] 0x%08X: 0x%0*X (size=%d)\n", addr, size*2, val, size);
+    // Fast path: use cached code region pointer
+    if (cpu->code_region && addr < cpu->code_region->vaddr_end) {
+        uint32_t inst;
+        memcpy(&inst, (uint8_t*)cpu->code_region->host_addr + addr, 4);
+        return inst;
     }
     
-    switch (size) {
-        case 1:
-            cpu->memory[addr] = val & 0xFF;
-            break;
-        case 2:
-            *(uint16_t*)(cpu->memory + addr) = val & 0xFFFF;
-            break;
-        case 4:
-            *(uint32_t*)(cpu->memory + addr) = val;
-            break;
+    // Fallback to mm_read (shouldn't happen with valid .s32x)
+    uint32_t inst = 0;
+    if (mm_read(&cpu->mm, addr, &inst, 4) < 0) {
+        fprintf(stderr, "Fetch fault: Cannot read instruction at 0x%08X\n", addr);
+        cpu->halted = true;
+        return 0;
     }
-    
-    cpu->cycle_count += 3;
-}
-
-// Debug helper: Get instruction name
-static const char* get_opcode_name(opcode_t op) {
-    switch(op) {
-        case OP_ADD: return "ADD";
-        case OP_SUB: return "SUB";
-        case OP_XOR: return "XOR";
-        case OP_OR: return "OR";
-        case OP_AND: return "AND";
-        case OP_SLL: return "SLL";
-        case OP_SRL: return "SRL";
-        case OP_SRA: return "SRA";
-        case OP_SLT: return "SLT";
-        case OP_SLTU: return "SLTU";
-        case OP_MUL: return "MUL";
-        case OP_MULH: return "MULH";
-        case OP_DIV: return "DIV";
-        case OP_REM: return "REM";
-        case OP_SEQ: return "SEQ";
-        case OP_SNE: return "SNE";
-        case OP_ADDI: return "ADDI";
-        case OP_ORI: return "ORI";
-        case OP_ANDI: return "ANDI";
-        case OP_XORI: return "XORI";
-        case OP_SLLI: return "SLLI";
-        case OP_SRLI: return "SRLI";
-        case OP_SRAI: return "SRAI";
-        case OP_SLTI: return "SLTI";
-        case OP_SLTIU: return "SLTIU";
-        case OP_LUI: return "LUI";
-        case OP_LDB: return "LDB";
-        case OP_LDH: return "LDH";
-        case OP_LDW: return "LDW";
-        case OP_LDBU: return "LDBU";
-        case OP_LDHU: return "LDHU";
-        case OP_STB: return "STB";
-        case OP_STH: return "STH";
-        case OP_STW: return "STW";
-        case OP_JAL: return "JAL";
-        case OP_JALR: return "JALR";
-        case OP_BEQ: return "BEQ";
-        case OP_BNE: return "BNE";
-        case OP_BLT: return "BLT";
-        case OP_BGE: return "BGE";
-        case OP_BLTU: return "BLTU";
-        case OP_BGEU: return "BGEU";
-        case OP_NOP: return "NOP";
-        case OP_HALT: return "HALT";
-        default: return "UNKNOWN";
-    }
-}
-
-// Debug helper: Format instruction for display
-static void format_instruction(char *buf, size_t size, instruction_t *inst, uint32_t pc) {
-    const char *name = get_opcode_name(inst->opcode);
-    
-    switch(inst->format) {
-        case FMT_R:
-            snprintf(buf, size, "%-6s r%d, r%d, r%d", name, inst->rd, inst->rs1, inst->rs2);
-            break;
-        case FMT_I:
-            if (inst->opcode >= OP_LDB && inst->opcode <= OP_LDHU) {
-                snprintf(buf, size, "%-6s r%d, r%d+%d", name, inst->rd, inst->rs1, inst->imm);
-            } else {
-                snprintf(buf, size, "%-6s r%d, r%d, %d", name, inst->rd, inst->rs1, inst->imm);
-            }
-            break;
-        case FMT_S:
-            snprintf(buf, size, "%-6s r%d+%d, r%d", name, inst->rs1, inst->imm, inst->rs2);
-            break;
-        case FMT_B:
-            snprintf(buf, size, "%-6s r%d, r%d, 0x%x", name, inst->rs1, inst->rs2, pc + inst->imm);
-            break;
-        case FMT_U:
-            snprintf(buf, size, "%-6s r%d, 0x%x", name, inst->rd, inst->imm >> 12);
-            break;
-        case FMT_J:
-            snprintf(buf, size, "%-6s r%d, 0x%x", name, inst->rd, pc + inst->imm);
-            break;
-        default:
-            snprintf(buf, size, "%-6s", name);
-            break;
-    }
+    return inst;
 }
 
 void cpu_step(cpu_state_t *cpu) {
+    // Execute instruction
     if (cpu->halted) return;
-    
-    // Check cycle limit
-    if (cpu->debug.max_cycles > 0 && cpu->cycle_count >= cpu->debug.max_cycles) {
-        fprintf(stderr, "\nCycle limit reached (%" PRIu64 " cycles)\n", cpu->cycle_count);
-        fprintf(stderr, "Stopped at PC=0x%08X\n", cpu->pc);
-        cpu->halted = true;
-        return;
-    }
     
     // Check breakpoints
     for (int i = 0; i < cpu->debug.num_breakpoints; i++) {
         if (cpu->pc == cpu->debug.breakpoints[i]) {
-            fprintf(stderr, "\nBreakpoint hit at PC=0x%08X\n", cpu->pc);
-            cpu->halted = true;
-            return;
+            printf("Breakpoint hit at 0x%08X\n", cpu->pc);
+            cpu->debug.step_mode = true;
         }
     }
     
-    if (cpu->pc >= cpu->code_limit) {
-        fprintf(stderr, "Execute from non-code at 0x%08X\n", cpu->pc);
-        cpu->halted = true;
-        return;
+    // Fetch and decode instruction
+    uint32_t raw_inst = cpu_fetch(cpu, cpu->pc);
+    if (cpu->halted) return;
+    
+    instruction_t inst = decode_instruction(raw_inst);
+    
+    if (cpu->debug.trace_instructions) {
+        printf("[%08" PRIx64 "] PC=%08X: %08X ", cpu->cycle_count, cpu->pc, raw_inst);
     }
     
-    // Save previous register values for change detection
+    // Save current register state for change detection
     if (cpu->debug.show_reg_changes) {
         memcpy(cpu->debug.prev_regs, cpu->regs, sizeof(cpu->regs));
     }
     
-    uint32_t inst_raw = *(uint32_t*)(cpu->memory + cpu->pc);
-    instruction_t inst = decode_instruction(inst_raw);
-    
-    // Trace instruction before execution
-    if (cpu->debug.trace_instructions) {
-        char inst_str[80];
-        format_instruction(inst_str, sizeof(inst_str), &inst, cpu->pc);
-        printf("[0x%08X] %-30s", cpu->pc, inst_str);
-        
-        // Show source register values
-        if (inst.format == FMT_R || inst.format == FMT_I || inst.format == FMT_B) {
-            printf(" ; r%d=0x%08X", inst.rs1, cpu->regs[inst.rs1]);
-            if (inst.format == FMT_R || inst.format == FMT_B) {
-                printf(", r%d=0x%08X", inst.rs2, cpu->regs[inst.rs2]);
-            }
-        }
-    }
-    
     uint32_t next_pc = cpu->pc + 4;
-    uint32_t rs1_val = cpu->regs[inst.rs1];
-    uint32_t rs2_val = cpu->regs[inst.rs2];
+    cpu->regs[REG_ZERO] = 0;  // Ensure r0 is always 0
     
+    // Execute instruction
     switch (inst.opcode) {
+        // R-type arithmetic
         case OP_ADD:
-            cpu->regs[inst.rd] = rs1_val + rs2_val;
+            cpu->regs[inst.rd] = cpu->regs[inst.rs1] + cpu->regs[inst.rs2];
             break;
         case OP_SUB:
-            cpu->regs[inst.rd] = rs1_val - rs2_val;
+            cpu->regs[inst.rd] = cpu->regs[inst.rs1] - cpu->regs[inst.rs2];
             break;
         case OP_XOR:
-            cpu->regs[inst.rd] = rs1_val ^ rs2_val;
+            cpu->regs[inst.rd] = cpu->regs[inst.rs1] ^ cpu->regs[inst.rs2];
             break;
         case OP_OR:
-            cpu->regs[inst.rd] = rs1_val | rs2_val;
+            cpu->regs[inst.rd] = cpu->regs[inst.rs1] | cpu->regs[inst.rs2];
             break;
         case OP_AND:
-            cpu->regs[inst.rd] = rs1_val & rs2_val;
+            cpu->regs[inst.rd] = cpu->regs[inst.rs1] & cpu->regs[inst.rs2];
             break;
         case OP_SLL:
-            cpu->regs[inst.rd] = rs1_val << (rs2_val & 0x1F);
+            cpu->regs[inst.rd] = cpu->regs[inst.rs1] << (cpu->regs[inst.rs2] & 0x1F);
             break;
         case OP_SRL:
-            cpu->regs[inst.rd] = rs1_val >> (rs2_val & 0x1F);
+            cpu->regs[inst.rd] = cpu->regs[inst.rs1] >> (cpu->regs[inst.rs2] & 0x1F);
             break;
         case OP_SRA:
-            cpu->regs[inst.rd] = (int32_t)rs1_val >> (rs2_val & 0x1F);
+            cpu->regs[inst.rd] = (int32_t)cpu->regs[inst.rs1] >> (cpu->regs[inst.rs2] & 0x1F);
             break;
         case OP_SLT:
-            cpu->regs[inst.rd] = ((int32_t)rs1_val < (int32_t)rs2_val) ? 1 : 0;
+            cpu->regs[inst.rd] = ((int32_t)cpu->regs[inst.rs1] < (int32_t)cpu->regs[inst.rs2]) ? 1 : 0;
             break;
         case OP_SLTU:
-            cpu->regs[inst.rd] = (rs1_val < rs2_val) ? 1 : 0;
+            cpu->regs[inst.rd] = (cpu->regs[inst.rs1] < cpu->regs[inst.rs2]) ? 1 : 0;
             break;
         case OP_MUL:
-            cpu->regs[inst.rd] = rs1_val * rs2_val;
-            cpu->cycle_count += 31;
+            cpu->regs[inst.rd] = cpu->regs[inst.rs1] * cpu->regs[inst.rs2];
             break;
-        case OP_MULH:
-            cpu->regs[inst.rd] = ((int64_t)(int32_t)rs1_val * (int64_t)(int32_t)rs2_val) >> 32;
-            cpu->cycle_count += 31;
+        case OP_MULH: {
+            int64_t result = (int64_t)(int32_t)cpu->regs[inst.rs1] * (int64_t)(int32_t)cpu->regs[inst.rs2];
+            cpu->regs[inst.rd] = (uint32_t)(result >> 32);
             break;
+        }
         case OP_DIV:
-            if (rs2_val != 0) {
-                cpu->regs[inst.rd] = (int32_t)rs1_val / (int32_t)rs2_val;
+            if (cpu->regs[inst.rs2] == 0) {
+                cpu->regs[inst.rd] = 0xFFFFFFFF;
             } else {
-                cpu->regs[inst.rd] = -1;
+                cpu->regs[inst.rd] = (int32_t)cpu->regs[inst.rs1] / (int32_t)cpu->regs[inst.rs2];
             }
-            cpu->cycle_count += 63;
             break;
         case OP_REM:
-            if (rs2_val != 0) {
-                cpu->regs[inst.rd] = (int32_t)rs1_val % (int32_t)rs2_val;
+            if (cpu->regs[inst.rs2] == 0) {
+                cpu->regs[inst.rd] = cpu->regs[inst.rs1];
             } else {
-                cpu->regs[inst.rd] = rs1_val;
+                cpu->regs[inst.rd] = (int32_t)cpu->regs[inst.rs1] % (int32_t)cpu->regs[inst.rs2];
             }
-            cpu->cycle_count += 63;
             break;
         case OP_SEQ:
-            cpu->regs[inst.rd] = (rs1_val == rs2_val) ? 1 : 0;
+            cpu->regs[inst.rd] = (cpu->regs[inst.rs1] == cpu->regs[inst.rs2]) ? 1 : 0;
             break;
         case OP_SNE:
-            cpu->regs[inst.rd] = (rs1_val != rs2_val) ? 1 : 0;
+            cpu->regs[inst.rd] = (cpu->regs[inst.rs1] != cpu->regs[inst.rs2]) ? 1 : 0;
             break;
         case OP_SGT:
-            cpu->regs[inst.rd] = ((int32_t)rs1_val > (int32_t)rs2_val) ? 1 : 0;
+            cpu->regs[inst.rd] = ((int32_t)cpu->regs[inst.rs1] > (int32_t)cpu->regs[inst.rs2]) ? 1 : 0;
             break;
         case OP_SGTU:
-            cpu->regs[inst.rd] = (rs1_val > rs2_val) ? 1 : 0;
+            cpu->regs[inst.rd] = (cpu->regs[inst.rs1] > cpu->regs[inst.rs2]) ? 1 : 0;
             break;
         case OP_SLE:
-            cpu->regs[inst.rd] = ((int32_t)rs1_val <= (int32_t)rs2_val) ? 1 : 0;
+            cpu->regs[inst.rd] = ((int32_t)cpu->regs[inst.rs1] <= (int32_t)cpu->regs[inst.rs2]) ? 1 : 0;
             break;
         case OP_SLEU:
-            cpu->regs[inst.rd] = (rs1_val <= rs2_val) ? 1 : 0;
+            cpu->regs[inst.rd] = (cpu->regs[inst.rs1] <= cpu->regs[inst.rs2]) ? 1 : 0;
             break;
         case OP_SGE:
-            cpu->regs[inst.rd] = ((int32_t)rs1_val >= (int32_t)rs2_val) ? 1 : 0;
+            cpu->regs[inst.rd] = ((int32_t)cpu->regs[inst.rs1] >= (int32_t)cpu->regs[inst.rs2]) ? 1 : 0;
             break;
         case OP_SGEU:
-            cpu->regs[inst.rd] = (rs1_val >= rs2_val) ? 1 : 0;
+            cpu->regs[inst.rd] = (cpu->regs[inst.rs1] >= cpu->regs[inst.rs2]) ? 1 : 0;
             break;
             
+        // I-type arithmetic
         case OP_ADDI:
-            cpu->regs[inst.rd] = rs1_val + inst.imm;
+            cpu->regs[inst.rd] = cpu->regs[inst.rs1] + inst.imm;
             break;
         case OP_ORI:
-            cpu->regs[inst.rd] = rs1_val | inst.imm;
+            cpu->regs[inst.rd] = cpu->regs[inst.rs1] | inst.imm;
             break;
         case OP_ANDI:
-            cpu->regs[inst.rd] = rs1_val & inst.imm;
+            cpu->regs[inst.rd] = cpu->regs[inst.rs1] & inst.imm;
             break;
         case OP_XORI:
-            cpu->regs[inst.rd] = rs1_val ^ inst.imm;
+            cpu->regs[inst.rd] = cpu->regs[inst.rs1] ^ inst.imm;
             break;
         case OP_SLLI:
-            cpu->regs[inst.rd] = rs1_val << (inst.imm & 0x1F);
+            cpu->regs[inst.rd] = cpu->regs[inst.rs1] << (inst.imm & 0x1F);
             break;
         case OP_SRLI:
-            cpu->regs[inst.rd] = rs1_val >> (inst.imm & 0x1F);
+            cpu->regs[inst.rd] = cpu->regs[inst.rs1] >> (inst.imm & 0x1F);
             break;
         case OP_SRAI:
-            cpu->regs[inst.rd] = (int32_t)rs1_val >> (inst.imm & 0x1F);
+            cpu->regs[inst.rd] = (int32_t)cpu->regs[inst.rs1] >> (inst.imm & 0x1F);
             break;
         case OP_SLTI:
-            cpu->regs[inst.rd] = ((int32_t)rs1_val < inst.imm) ? 1 : 0;
+            cpu->regs[inst.rd] = ((int32_t)cpu->regs[inst.rs1] < inst.imm) ? 1 : 0;
             break;
         case OP_SLTIU:
-            cpu->regs[inst.rd] = (rs1_val < (uint32_t)inst.imm) ? 1 : 0;
+            cpu->regs[inst.rd] = (cpu->regs[inst.rs1] < (uint32_t)inst.imm) ? 1 : 0;
             break;
             
-        case OP_LUI:
-            cpu->regs[inst.rd] = inst.imm;  // imm already has bits [31:12] set correctly
+        // Load instructions
+        case OP_LDB: {
+            uint32_t addr = cpu->regs[inst.rs1] + inst.imm;
+            uint32_t byte = cpu_load(cpu, addr, 1);
+            cpu->regs[inst.rd] = (int32_t)(int8_t)byte;
             break;
+        }
+        case OP_LDH: {
+            uint32_t addr = cpu->regs[inst.rs1] + inst.imm;
+            uint32_t half = cpu_load(cpu, addr, 2);
+            cpu->regs[inst.rd] = (int32_t)(int16_t)half;
+            break;
+        }
+        case OP_LDW: {
+            uint32_t addr = cpu->regs[inst.rs1] + inst.imm;
+            cpu->regs[inst.rd] = cpu_load(cpu, addr, 4);
+            break;
+        }
+        case OP_LDBU: {
+            uint32_t addr = cpu->regs[inst.rs1] + inst.imm;
+            cpu->regs[inst.rd] = cpu_load(cpu, addr, 1);
+            break;
+        }
+        case OP_LDHU: {
+            uint32_t addr = cpu->regs[inst.rs1] + inst.imm;
+            cpu->regs[inst.rd] = cpu_load(cpu, addr, 2);
+            break;
+        }
             
-        case OP_LDB:
-            cpu->regs[inst.rd] = (int8_t)mem_read(cpu, rs1_val + inst.imm, 1);
+        // Store instructions
+        case OP_STB: {
+            uint32_t addr = cpu->regs[inst.rs1] + inst.imm;
+            cpu_store(cpu, addr, cpu->regs[inst.rs2], 1);
             break;
-        case OP_LDH:
-            cpu->regs[inst.rd] = (int16_t)mem_read(cpu, rs1_val + inst.imm, 2);
+        }
+        case OP_STH: {
+            uint32_t addr = cpu->regs[inst.rs1] + inst.imm;
+            cpu_store(cpu, addr, cpu->regs[inst.rs2], 2);
             break;
-        case OP_LDW:
-            cpu->regs[inst.rd] = mem_read(cpu, rs1_val + inst.imm, 4);
+        }
+        case OP_STW: {
+            uint32_t addr = cpu->regs[inst.rs1] + inst.imm;
+            cpu_store(cpu, addr, cpu->regs[inst.rs2], 4);
             break;
-        case OP_LDBU:
-            cpu->regs[inst.rd] = mem_read(cpu, rs1_val + inst.imm, 1);
-            break;
-        case OP_LDHU:
-            cpu->regs[inst.rd] = mem_read(cpu, rs1_val + inst.imm, 2);
-            break;
+        }
             
-        case OP_STB:
-            mem_write(cpu, rs1_val + inst.imm, rs2_val, 1);
-            break;
-        case OP_STH:
-            mem_write(cpu, rs1_val + inst.imm, rs2_val, 2);
-            break;
-        case OP_STW:
-            mem_write(cpu, rs1_val + inst.imm, rs2_val, 4);
-            break;
-            
-        case OP_JAL:
-            cpu->regs[inst.rd] = next_pc;
-            next_pc = cpu->pc + inst.imm;
-            break;
-        case OP_JALR:
-            cpu->regs[inst.rd] = next_pc;
-            next_pc = (rs1_val + inst.imm) & ~1;
-            break;
-            
+        // Branch instructions
         case OP_BEQ:
-            if (rs1_val == rs2_val) {
-                if (getenv("SLOW32_DEBUG_BRANCH")) {
-                    printf("BEQ: pc=%08x imm=%d base=%08x target=%08x (taken)\n", 
-                           cpu->pc, inst.imm, next_pc, next_pc + inst.imm);
-                }
+            //printf("[TRACE] BEQ: r%d(0x%08X) == r%d(0x%08X)? imm=%d\n", 
+            //       inst.rs1, cpu->regs[inst.rs1], inst.rs2, cpu->regs[inst.rs2], inst.imm);
+            //fflush(stdout);
+            if (cpu->regs[inst.rs1] == cpu->regs[inst.rs2]) {
                 next_pc = next_pc + inst.imm;  // PC+4 base!
+                //printf("[TRACE] BEQ taken: next_pc=0x%08X\n", next_pc);
+                //fflush(stdout);
             }
             break;
         case OP_BNE:
-            if (rs1_val != rs2_val) next_pc = next_pc + inst.imm;  // PC+4 base!
+            if (cpu->regs[inst.rs1] != cpu->regs[inst.rs2]) {
+                next_pc = next_pc + inst.imm;  // PC+4 base!
+            }
             break;
         case OP_BLT:
-            if ((int32_t)rs1_val < (int32_t)rs2_val) next_pc = next_pc + inst.imm;  // PC+4 base!
+            if ((int32_t)cpu->regs[inst.rs1] < (int32_t)cpu->regs[inst.rs2]) {
+                next_pc = next_pc + inst.imm;  // PC+4 base!
+            }
             break;
         case OP_BGE:
-            if ((int32_t)rs1_val >= (int32_t)rs2_val) next_pc = next_pc + inst.imm;  // PC+4 base!
+            if ((int32_t)cpu->regs[inst.rs1] >= (int32_t)cpu->regs[inst.rs2]) {
+                next_pc = next_pc + inst.imm;  // PC+4 base!
+            }
             break;
         case OP_BLTU:
-            if (rs1_val < rs2_val) next_pc = next_pc + inst.imm;  // PC+4 base!
+            if (cpu->regs[inst.rs1] < cpu->regs[inst.rs2]) {
+                next_pc = next_pc + inst.imm;  // PC+4 base!
+            }
             break;
         case OP_BGEU:
-            if (rs1_val >= rs2_val) next_pc = next_pc + inst.imm;  // PC+4 base!
+            if (cpu->regs[inst.rs1] >= cpu->regs[inst.rs2]) {
+                next_pc = next_pc + inst.imm;  // PC+4 base!
+            }
             break;
             
+        // Jump instructions
+        case OP_JAL:
+            // JAL instruction
+            cpu->regs[inst.rd] = cpu->pc + 4;
+            next_pc = cpu->pc + inst.imm;
+            break;
+        case OP_JALR:
+            cpu->regs[inst.rd] = cpu->pc + 4;
+            next_pc = (cpu->regs[inst.rs1] + inst.imm) & ~1;
+            break;
+            
+        // U-type
+        case OP_LUI:
+            cpu->regs[inst.rd] = inst.imm;
+            break;
+            
+        // System instructions
         case OP_NOP:
             break;
-        case OP_YIELD:
-            cpu->cycle_count += rs1_val;
-            break;
         case OP_DEBUG:
-            putchar(rs1_val & 0xFF);
+            // DEBUG instruction output
+            putchar(cpu->regs[inst.rs1] & 0xFF);
             fflush(stdout);
             break;
         case OP_HALT:
+            printf("HALT at PC=0x%08X\n", cpu->pc);
             cpu->halted = true;
-            printf("HALT at PC=0x%08X after %" PRIu64 " cycles\n", cpu->pc, cpu->cycle_count);
-            return;
-            
-        case 0x3F:  // ASSERT_EQ - for testing
-            if (rs1_val != rs2_val) {
-                fprintf(stderr, "ASSERT r%d==r%d failed @PC=%08x (%08x!=%08x)\n",
-                        inst.rs1, inst.rs2, cpu->pc, rs1_val, rs2_val);
+            break;
+        case OP_ASSERT_EQ:
+            if (cpu->regs[inst.rs1] != cpu->regs[inst.rs2]) {
+                fprintf(stderr, "Assertion failed: r%d (0x%08X) != r%d (0x%08X)\n",
+                       inst.rs1, cpu->regs[inst.rs1], inst.rs2, cpu->regs[inst.rs2]);
                 cpu->halted = true;
-                cpu->regs[1] = 0xDEADBEEF;  // Signal assertion failure
-                return;
             }
             break;
             
         default:
             fprintf(stderr, "Unknown opcode: 0x%02X at PC=0x%08X\n", inst.opcode, cpu->pc);
             cpu->halted = true;
-            return;
+            break;
     }
     
-    cpu->regs[REG_ZERO] = 0;
+    cpu->regs[REG_ZERO] = 0;  // Ensure r0 stays 0
+    cpu->pc = next_pc;
+    cpu->cycle_count++;
+    cpu->inst_count++;
     
-    // Complete instruction trace
-    if (cpu->debug.trace_instructions) {
-        // Show result for instructions that write to a register
-        if (inst.rd != 0 && inst.format != FMT_S && inst.format != FMT_B && inst.opcode != OP_NOP) {
-            printf(" => r%d=0x%08X", inst.rd, cpu->regs[inst.rd]);
+    // Show register changes
+    if (cpu->debug.show_reg_changes) {
+        for (int i = 1; i < NUM_REGS; i++) {
+            if (cpu->regs[i] != cpu->debug.prev_regs[i]) {
+                printf("  r%d: 0x%08X -> 0x%08X", i, cpu->debug.prev_regs[i], cpu->regs[i]);
+            }
         }
+    }
+    
+    if (cpu->debug.trace_instructions || cpu->debug.show_reg_changes) {
         printf("\n");
     }
     
-    // Show register changes
-    if (cpu->debug.show_reg_changes && !cpu->debug.trace_instructions) {
-        bool any_changed = false;
-        for (int i = 1; i < NUM_REGS; i++) {  // Skip r0
-            if (cpu->regs[i] != cpu->debug.prev_regs[i]) {
-                if (!any_changed) {
-                    printf("[0x%08X] ", cpu->pc);
-                    any_changed = true;
-                }
-                printf("r%d: 0x%08X -> 0x%08X  ", i, cpu->debug.prev_regs[i], cpu->regs[i]);
-            }
-        }
-        if (any_changed) printf("\n");
+    // Check cycle limit
+    if (cpu->debug.max_cycles > 0 && cpu->cycle_count >= cpu->debug.max_cycles) {
+        printf("Cycle limit reached (%lu cycles)\n", cpu->debug.max_cycles);
+        cpu->halted = true;
     }
-    
-    cpu->pc = next_pc;
-    cpu->cycle_count++;
 }
 
 void cpu_run(cpu_state_t *cpu) {
-    struct timespec start, end;
-    clock_gettime(CLOCK_MONOTONIC, &start);
-    
-    uint64_t inst_count = 0;
+    //printf("[TRACE] cpu_run: ENTER, halted=%d\n", cpu->halted);
+    fflush(stdout);
     while (!cpu->halted) {
-        cpu_step(cpu);
-        inst_count++;
-    }
-    
-    clock_gettime(CLOCK_MONOTONIC, &end);
-    double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
-    
-    if (getenv("SHOW_PERF")) {
-        printf("\nPerformance: %.2f MIPS (%.0f inst/sec)\n", 
-               inst_count / elapsed / 1e6, inst_count / elapsed);
-    }
-}
-
-void cpu_dump_regs(cpu_state_t *cpu) {
-    printf("\nFinal state:\n");
-    printf("PC=0x%08X  Cycles=%" PRIu64 "\n", cpu->pc, cpu->cycle_count);
-    for (int i = 0; i < NUM_REGS; i += 4) {
-        printf("r%02d=0x%08X  r%02d=0x%08X  r%02d=0x%08X  r%02d=0x%08X\n",
-               i, cpu->regs[i], i+1, cpu->regs[i+1],
-               i+2, cpu->regs[i+2], i+3, cpu->regs[i+3]);
-    }
-}
-
-void cpu_dump_mem(cpu_state_t *cpu, uint32_t addr, uint32_t size) {
-    printf("Memory dump at 0x%08X:\n", addr);
-    for (uint32_t i = 0; i < size; i += 16) {
-        printf("%08X: ", addr + i);
-        for (int j = 0; j < 16 && (i + j) < size; j++) {
-            printf("%02X ", cpu->memory[addr + i + j]);
+        //printf("[TRACE] cpu_run: loop iteration\n");
+        fflush(stdout);
+        if (cpu->debug.step_mode) {
+            cpu_step(cpu);
+            printf("Press Enter to continue, 'r' to run, 'q' to quit: ");
+            char c = getchar();
+            if (c == 'q') {
+                cpu->halted = true;
+            } else if (c == 'r') {
+                cpu->debug.step_mode = false;
+            }
+        } else {
+            cpu_step(cpu);
         }
-        printf("\n");
     }
 }
 
 int main(int argc, char *argv[]) {
-    bool step_mode = false;
-    bool dump_regs = true;
-    bool trace = false;
-    bool show_changes = false;
-    uint64_t max_cycles = 0;
-    uint32_t breakpoint_addr = 0;
-    uint32_t watch_start = 0, watch_end = 0;
+    if (argc < 2) {
+        fprintf(stderr, "Usage: %s <program.s32x> [options]\n", argv[0]);
+        fprintf(stderr, "Options:\n");
+        fprintf(stderr, "  -s              Step mode\n");
+        fprintf(stderr, "  -t              Trace instructions\n");
+        fprintf(stderr, "  -r              Show register changes\n");
+        fprintf(stderr, "  -c <cycles>     Limit execution cycles\n");
+        fprintf(stderr, "  -b <addr>       Set breakpoint\n");
+        fprintf(stderr, "  -w <start-end>  Watch memory range\n");
+        return 1;
+    }
     
+    cpu_state_t cpu;
+    cpu_init(&cpu);
+    
+    // Parse command line options
     int opt;
-    while ((opt = getopt(argc, argv, "sthrc:b:w:")) != -1) {
+    while ((opt = getopt(argc, argv, "strc:b:w:")) != -1) {
         switch (opt) {
             case 's':
-                step_mode = true;
+                cpu.debug.step_mode = true;
+                cpu.debug.enabled = true;
                 break;
             case 't':
-                trace = true;
+                cpu.debug.trace_instructions = true;
+                cpu.debug.enabled = true;
                 break;
             case 'r':
-                show_changes = true;
+                cpu.debug.show_reg_changes = true;
+                cpu.debug.enabled = true;
                 break;
             case 'c':
-                max_cycles = strtoull(optarg, NULL, 0);
+                cpu.debug.max_cycles = strtoull(optarg, NULL, 0);
+                cpu.debug.enabled = true;
                 break;
             case 'b':
-                breakpoint_addr = strtoul(optarg, NULL, 0);
+                if (cpu.debug.num_breakpoints < 16) {
+                    cpu.debug.breakpoints[cpu.debug.num_breakpoints++] = strtoul(optarg, NULL, 0);
+                    cpu.debug.enabled = true;
+                }
                 break;
             case 'w': {
                 char *dash = strchr(optarg, '-');
                 if (dash) {
                     *dash = '\0';
-                    watch_start = strtoul(optarg, NULL, 0);
-                    watch_end = strtoul(dash + 1, NULL, 0);
-                } else {
-                    fprintf(stderr, "Error: -w requires range (e.g., -w 0x1000-0x2000)\n");
-                    return 1;
+                    cpu.debug.watch_start = strtoul(optarg, NULL, 0);
+                    cpu.debug.watch_end = strtoul(dash + 1, NULL, 0);
+                    cpu.debug.watch_enabled = true;
+                    cpu.debug.enabled = true;
                 }
                 break;
             }
-            case 'h':
-                printf("Usage: %s [options] <binary>\n", argv[0]);
-                printf("Options:\n");
-                printf("  -s          Step mode (press Enter for each instruction)\n");
-                printf("  -t          Trace mode (print each instruction)\n");
-                printf("  -r          Show register changes only\n");
-                printf("  -c <cycles> Limit execution to N cycles\n");
-                printf("  -b <addr>   Set breakpoint at address\n");
-                printf("  -w <range>  Watch memory range (e.g., -w 0x1000-0x2000)\n");
-                printf("  -h          Show this help\n");
-                return 0;
-            default:
-                fprintf(stderr, "Usage: %s [options] <binary>\n", argv[0]);
-                fprintf(stderr, "Try '%s -h' for help\n", argv[0]);
-                return 1;
         }
     }
     
-    if (optind >= argc) {
-        fprintf(stderr, "Error: No binary file specified\n");
-        fprintf(stderr, "Usage: %s [-s] <binary>\n", argv[0]);
-        return 1;
-    }
-    
-    cpu_state_t cpu = {0};
-    cpu_init(&cpu);
-    
-    // Configure debug options
-    cpu.debug.trace_instructions = trace;
-    cpu.debug.show_reg_changes = show_changes;
-    cpu.debug.max_cycles = max_cycles;
-    if (breakpoint_addr) {
-        cpu.debug.breakpoints[0] = breakpoint_addr;
-        cpu.debug.num_breakpoints = 1;
-    }
-    if (watch_start && watch_end) {
-        cpu.debug.watch_start = watch_start;
-        cpu.debug.watch_end = watch_end;
-        cpu.debug.watch_enabled = true;
-    }
-    
-    if (!cpu_load_binary(&cpu, argv[optind], 0)) {
+    // Load program
+    if (!cpu_load_binary(&cpu, argv[optind])) {
         cpu_destroy(&cpu);
         return 1;
     }
     
-    printf("Starting execution at 0x%08X\n", cpu.pc);
-    if (max_cycles > 0) {
-        printf("Cycle limit: %" PRIu64 "\n", max_cycles);
-    }
+    // Run program
+    printf("Starting execution\n");
+    clock_t start = clock();
+    cpu_run(&cpu);
+    clock_t end = clock();
     
-    if (step_mode) {
-        cpu.debug.step_mode = true;
-        printf("Step mode enabled. Press Enter to execute each instruction.\n");
-        while (!cpu.halted) {
-            printf("PC=0x%08X: ", cpu.pc);
-            getchar();
-            cpu_step(&cpu);
-        }
-    } else {
-        cpu_run(&cpu);
-    }
-    
-    if (dump_regs) {
-        cpu_dump_regs(&cpu);
+    // Calculate performance
+    double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
+    if (elapsed > 0) {
+        double mips = (cpu.inst_count / elapsed) / 1e6;
+        printf("\nProgram halted.\n");
+        printf("Instructions executed: %" PRIu64 "\n", cpu.inst_count);
+        printf("Cycles: %" PRIu64 "\n", cpu.cycle_count);
+        printf("Wall time: %.6f seconds\n", elapsed);
+        printf("Performance: %.2f MIPS\n", mips);
     }
     
     cpu_destroy(&cpu);

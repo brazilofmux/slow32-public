@@ -10,6 +10,7 @@
 #include <inttypes.h>
 #include "slow32.h"
 #include "s32x_loader.h"
+#include "memory_manager.h"
 
 // Enable to trap on unaligned LD/ST (recommended for a strict ISA)
 #ifndef S32_ALLOW_UNALIGNED
@@ -37,8 +38,7 @@ struct decoded_inst {
 struct fast_cpu_state {
     uint32_t regs[32];
     uint32_t pc;
-    uint8_t *memory;
-    uint32_t mem_size;
+    memory_manager_t mm;  // Memory manager instead of raw pointer
     decoded_inst_t *decoded_code;
     uint32_t code_words;
     bool halted;
@@ -52,14 +52,18 @@ struct fast_cpu_state {
     uint32_t data_limit;
 };
 
-// Write protection helper
+// Write protection check - now handled by mprotect() but kept for defense-in-depth
 static inline bool write_protected(fast_cpu_state_t* cpu, uint32_t addr) {
-    return cpu->wx_enabled && addr < cpu->rodata_limit;
+    // Always protect code and rodata from writes (hardware enforces this too)
+    return addr < cpu->rodata_limit;
 }
 
 // Bounds checking helpers
 static inline bool in_bounds(fast_cpu_state_t* cpu, uint32_t addr, uint32_t size) {
-    return addr <= cpu->mem_size - size;
+    // Check if region exists for this address
+    memory_region_t *region = mm_find_region(&cpu->mm, addr);
+    if (!region) return false;
+    return addr + size <= region->vaddr_end;
 }
 static inline bool aligned(uint32_t addr, uint32_t size) {
 #if S32_TRAP_ON_UNALIGNED
@@ -215,104 +219,119 @@ static void op_lui(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
 
 static void op_ldw(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     uint32_t addr = cpu->regs[inst->rs1] + inst->imm;
-    if (!in_bounds(cpu, addr, 4) || !aligned(addr,4)) {
+    if (!aligned(addr,4)) {
+        fprintf(stderr, "Error: Unaligned read at 0x%08x\n", addr);
+        cpu->halted = true;
+        return;
+    }
+    uint32_t value;
+    if (mm_read(&cpu->mm, addr, &value, 4) != 0) {
         fprintf(stderr, "Error: Read out of bounds at 0x%08x\n", addr);
         cpu->halted = true;
         return;
     }
-    cpu->regs[inst->rd] = *(uint32_t*)(cpu->memory + addr);
+    cpu->regs[inst->rd] = value;
     cpu->cycle_count += 3;
 }
 
 static void op_ldh(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     uint32_t addr = cpu->regs[inst->rs1] + inst->imm;
-    if (!in_bounds(cpu, addr, 2) || !aligned(addr,2)) {
+    if (!aligned(addr,2)) {
+        fprintf(stderr, "Error: Unaligned read at 0x%08x\n", addr);
+        cpu->halted = true;
+        return;
+    }
+    uint16_t value;
+    if (mm_read(&cpu->mm, addr, &value, 2) != 0) {
         fprintf(stderr, "Error: Read out of bounds at 0x%08x\n", addr);
         cpu->halted = true;
         return;
     }
-    cpu->regs[inst->rd] = (int32_t)(int16_t)*(uint16_t*)(cpu->memory + addr);
+    cpu->regs[inst->rd] = (int32_t)(int16_t)value;
     cpu->cycle_count += 3;
 }
 
 static void op_ldhu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     uint32_t addr = cpu->regs[inst->rs1] + inst->imm;
-    if (!in_bounds(cpu, addr, 2) || !aligned(addr,2)) {
+    if (!aligned(addr,2)) {
+        fprintf(stderr, "Error: Unaligned read at 0x%08x\n", addr);
+        cpu->halted = true;
+        return;
+    }
+    uint16_t value;
+    if (mm_read(&cpu->mm, addr, &value, 2) != 0) {
         fprintf(stderr, "Error: Read out of bounds at 0x%08x\n", addr);
         cpu->halted = true;
         return;
     }
-    cpu->regs[inst->rd] = *(uint16_t*)(cpu->memory + addr);
+    cpu->regs[inst->rd] = value;
     cpu->cycle_count += 3;
 }
 
 static void op_ldb(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     uint32_t addr = cpu->regs[inst->rs1] + inst->imm;
-    if (!in_bounds(cpu, addr, 1)) {
+    uint8_t value;
+    if (mm_read(&cpu->mm, addr, &value, 1) != 0) {
         fprintf(stderr, "Error: Read out of bounds at 0x%08x\n", addr);
         cpu->halted = true;
         return;
     }
-    cpu->regs[inst->rd] = (int32_t)(int8_t)*(uint8_t*)(cpu->memory + addr);
+    cpu->regs[inst->rd] = (int32_t)(int8_t)value;
     cpu->cycle_count += 3;
 }
 
 static void op_ldbu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     uint32_t addr = cpu->regs[inst->rs1] + inst->imm;
-    if (!in_bounds(cpu, addr, 1)) {
+    uint8_t value;
+    if (mm_read(&cpu->mm, addr, &value, 1) != 0) {
         fprintf(stderr, "Error: Read out of bounds at 0x%08x\n", addr);
         cpu->halted = true;
         return;
     }
-    cpu->regs[inst->rd] = *(uint8_t*)(cpu->memory + addr);
+    cpu->regs[inst->rd] = value;
     cpu->cycle_count += 3;
 }
 
 static void op_stw(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     uint32_t addr = cpu->regs[inst->rs1] + inst->imm;
-    if (!in_bounds(cpu, addr, 4) || !aligned(addr,4)) {
-        fprintf(stderr, "Error: Write out of bounds at 0x%08x\n", addr);
+    if (!aligned(addr,4)) {
+        fprintf(stderr, "Error: Unaligned write at 0x%08x\n", addr);
         cpu->halted = true;
         return;
     }
-    if (write_protected(cpu, addr)) {
-        fprintf(stderr, "Error: Write to protected memory at 0x%08x\n", addr);
+    uint32_t value = cpu->regs[inst->rs2];
+    if (mm_write(&cpu->mm, addr, &value, 4) != 0) {
+        fprintf(stderr, "Error: Write out of bounds or to protected memory at 0x%08x\n", addr);
         cpu->halted = true;
         return;
     }
-    *(uint32_t*)(cpu->memory + addr) = cpu->regs[inst->rs2];
     cpu->cycle_count += 3;
 }
 
 static void op_sth(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     uint32_t addr = cpu->regs[inst->rs1] + inst->imm;
-    if (!in_bounds(cpu, addr, 2) || !aligned(addr,2)) {
-        fprintf(stderr, "Error: Write out of bounds at 0x%08x\n", addr);
+    if (!aligned(addr,2)) {
+        fprintf(stderr, "Error: Unaligned write at 0x%08x\n", addr);
         cpu->halted = true;
         return;
     }
-    if (write_protected(cpu, addr)) {
-        fprintf(stderr, "Error: Write to protected memory at 0x%08x\n", addr);
+    uint16_t value = cpu->regs[inst->rs2] & 0xFFFF;
+    if (mm_write(&cpu->mm, addr, &value, 2) != 0) {
+        fprintf(stderr, "Error: Write out of bounds or to protected memory at 0x%08x\n", addr);
         cpu->halted = true;
         return;
     }
-    *(uint16_t*)(cpu->memory + addr) = cpu->regs[inst->rs2] & 0xFFFF;
     cpu->cycle_count += 3;
 }
 
 static void op_stb(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     uint32_t addr = cpu->regs[inst->rs1] + inst->imm;
-    if (!in_bounds(cpu, addr, 1)) {
-        fprintf(stderr, "Error: Write out of bounds at 0x%08x\n", addr);
+    uint8_t value = cpu->regs[inst->rs2] & 0xFF;
+    if (mm_write(&cpu->mm, addr, &value, 1) != 0) {
+        fprintf(stderr, "Error: Write out of bounds or to protected memory at 0x%08x\n", addr);
         cpu->halted = true;
         return;
     }
-    if (write_protected(cpu, addr)) {
-        fprintf(stderr, "Error: Write to protected memory at 0x%08x\n", addr);
-        cpu->halted = true;
-        return;
-    }
-    *(uint8_t*)(cpu->memory + addr) = cpu->regs[inst->rs2] & 0xFF;
     cpu->cycle_count += 3;
 }
 
@@ -461,7 +480,12 @@ static void predecode_program(fast_cpu_state_t *cpu, uint32_t code_size) {
     
     for (uint32_t i = 0; i < cpu->code_words; i++) {
         uint32_t pc = i * 4;
-        uint32_t raw = *(uint32_t*)(cpu->memory + pc);
+        uint32_t raw;
+        if (mm_read(&cpu->mm, pc, &raw, 4) != 0) {
+            fprintf(stderr, "Error: Failed to read instruction at 0x%08x\n", pc);
+            cpu->halted = true;
+            return;
+        }
         decoded_inst_t *di = &cpu->decoded_code[i];
         
         // Extract opcode from lower 7 bits (RISC-V style)
@@ -568,8 +592,11 @@ static void predecode_program(fast_cpu_state_t *cpu, uint32_t code_size) {
 
 // Fast execution loop
 static inline void cpu_step_fast(fast_cpu_state_t *cpu) {
+    // Single boundary check protects against wild jumps and executing data
+    // This is the only check needed in the hot path
     if ((cpu->pc >> 2) >= cpu->code_words) {
-        fprintf(stderr, "PC out of bounds: 0x%08x\n", cpu->pc);
+        fprintf(stderr, "Execute fault: PC=0x%08x outside code segment [0, 0x%08x)\n", 
+                cpu->pc, cpu->code_words << 2);
         cpu->halted = true;
         return;
     }
@@ -593,16 +620,53 @@ int main(int argc, char **argv) {
     }
     
     fast_cpu_state_t cpu = {0};
-    cpu.memory = calloc(1, DEFAULT_MEM_SIZE);
-    cpu.mem_size = DEFAULT_MEM_SIZE;
-    if (!cpu.memory) {
-        fprintf(stderr, "Failed to allocate memory\n");
+    mm_init(&cpu.mm, false);  // Initialize memory manager
+    
+    // First pass: load header to get memory layout
+    FILE *file = fopen(argv[1], "rb");
+    if (!file) {
+        fprintf(stderr, "Error: Cannot open file %s\n", argv[1]);
+        return 1;
+    }
+    
+    // Read the header first to get memory layout
+    s32x_header_t header;
+    if (fread(&header, sizeof(header), 1, file) != 1) {
+        fprintf(stderr, "Error: Cannot read header\n");
+        fclose(file);
+        return 1;
+    }
+    
+    if (header.magic != S32X_MAGIC) {
+        fprintf(stderr, "Error: Invalid magic number\n");
+        fclose(file);
+        return 1;
+    }
+    
+    // Set up memory regions based on header
+    if (mm_setup_from_s32x(&cpu.mm, header.code_limit, header.rodata_limit, 
+                          header.data_limit, header.stack_base) != 0) {
+        fprintf(stderr, "Error: Failed to allocate memory regions\n");
+        fclose(file);
+        mm_destroy(&cpu.mm);
+        return 1;
+    }
+    
+    fclose(file);
+    
+    // Now load the file using the loader
+    // We need to create a temporary flat buffer for the loader
+    // Use the full memory size from header for loader compatibility
+    uint32_t *temp_mem = calloc(1, header.mem_size);
+    if (!temp_mem) {
+        fprintf(stderr, "Failed to allocate temporary memory\n");
+        mm_destroy(&cpu.mm);
         return 1;
     }
     
     s32x_loader_config_t cfg = {
-        .memory = (uint32_t*)cpu.memory,
-        .mem_size = DEFAULT_MEM_SIZE,
+        .memory = temp_mem,
+        .mem_size = header.mem_size,
         .pc = &cpu.pc,
         .sp = NULL,
         .registers = cpu.regs,
@@ -612,7 +676,48 @@ int main(int argc, char **argv) {
     s32x_load_result_t lr = load_s32x_file(argv[1], &cfg);
     if (!lr.success) {
         fprintf(stderr, "%s\n", lr.error_msg);
-        free(cpu.memory);
+        free(temp_mem);
+        mm_destroy(&cpu.mm);
+        return 1;
+    }
+    
+    // Copy loaded sections to memory manager regions
+    // Code section
+    if (lr.code_limit > 0) {
+        if (mm_write(&cpu.mm, 0, temp_mem, lr.code_limit) != 0) {
+            fprintf(stderr, "Error: Failed to copy code section\n");
+            free(temp_mem);
+            mm_destroy(&cpu.mm);
+            return 1;
+        }
+    }
+    
+    // Read-only data section  
+    if (lr.rodata_limit > 0x100000) {
+        if (mm_write(&cpu.mm, 0x100000, temp_mem + 0x100000/4, lr.rodata_limit - 0x100000) != 0) {
+            fprintf(stderr, "Error: Failed to copy rodata section\n");
+            free(temp_mem);
+            mm_destroy(&cpu.mm);
+            return 1;
+        }
+    }
+    
+    // Data section (if any)
+    if (lr.data_limit > 0x200000) {
+        if (mm_write(&cpu.mm, 0x200000, temp_mem + 0x200000/4, lr.data_limit - 0x200000) != 0) {
+            fprintf(stderr, "Error: Failed to copy data section\n");
+            free(temp_mem);
+            mm_destroy(&cpu.mm);
+            return 1;
+        }
+    }
+    
+    free(temp_mem);
+    
+    // Protect regions after loading
+    if (mm_protect_regions(&cpu.mm, lr.code_limit, lr.rodata_limit) != 0) {
+        fprintf(stderr, "Error: Failed to protect memory regions\n");
+        mm_destroy(&cpu.mm);
         return 1;
     }
     
@@ -627,6 +732,7 @@ int main(int argc, char **argv) {
     predecode_program(&cpu, lr.code_limit);
     
     // Time the execution
+    printf("Starting execution at PC 0x%08x\n", cpu.pc);
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
     
@@ -639,6 +745,7 @@ int main(int argc, char **argv) {
     // Calculate elapsed time
     double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
     
+    printf("HALT at PC 0x%08x\n", cpu.pc);
     printf("\nProgram halted.\n");
     printf("Exit code: %d\n", cpu.regs[1]);
     printf("Instructions executed: %" PRIu64 "\n", cpu.inst_count);
@@ -652,6 +759,6 @@ int main(int argc, char **argv) {
     }
     
     free(cpu.decoded_code);
-    free(cpu.memory);
+    mm_destroy(&cpu.mm);
     return cpu.regs[1];
 }

@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "memory_manager.h"
 
 #define NUM_REGS 32
 #define DEFAULT_MEM_SIZE (256 * 1024 * 1024)  // Default 256MB to match architecture spec
@@ -109,8 +110,10 @@ typedef struct {
 typedef struct {
     uint32_t regs[NUM_REGS];
     uint32_t pc;
-    uint8_t *memory;
+    memory_manager_t mm;    // Memory manager instead of raw pointer
+    memory_region_t *code_region; // Cached pointer to code region for fast fetch
     uint64_t cycle_count;
+    uint64_t inst_count;    // Instructions executed
     bool halted;
     
     // Memory protection limits (from .s32x executable)
@@ -136,7 +139,7 @@ typedef struct {
 
 void cpu_init(cpu_state_t *cpu);
 void cpu_destroy(cpu_state_t *cpu);
-bool cpu_load_binary(cpu_state_t *cpu, const char *filename, uint32_t load_addr);
+bool cpu_load_binary(cpu_state_t *cpu, const char *filename);
 void cpu_reset(cpu_state_t *cpu, uint32_t entry_point);
 void cpu_step(cpu_state_t *cpu);
 void cpu_run(cpu_state_t *cpu);
