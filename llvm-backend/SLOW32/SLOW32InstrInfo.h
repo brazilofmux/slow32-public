@@ -17,9 +17,13 @@
 
 namespace llvm {
 
+class SLOW32Subtarget;
+
 class SLOW32InstrInfo : public SLOW32GenInstrInfo {
+  const SLOW32Subtarget &STI;
+
 public:
-  SLOW32InstrInfo();
+  explicit SLOW32InstrInfo(const SLOW32Subtarget &STI);
 
   void copyPhysReg(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
                    const DebugLoc &DL, Register DestReg, Register SrcReg,

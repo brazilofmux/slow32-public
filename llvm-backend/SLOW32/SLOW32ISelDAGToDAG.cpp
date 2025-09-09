@@ -93,10 +93,44 @@ public:
       SmallVector<SDValue, 8> Ops;
       Ops.push_back(Callee);
       
-      // Add chain
+      // Walk the glue chain to find argument registers that need to be marked as implicit uses
+      SmallVector<unsigned, 8> ArgRegs;
+      if (N->getNumOperands() > 2 && 
+          N->getOperand(N->getNumOperands()-1).getValueType() == MVT::Glue) {
+        SDValue GlueIn = N->getOperand(N->getNumOperands()-1);
+        
+        // Walk backwards through the glue chain looking for CopyToReg nodes
+        SDNode *Current = GlueIn.getNode();
+        while (Current && Current->getOpcode() == ISD::CopyToReg) {
+          if (Current->getNumOperands() >= 2) {
+            if (auto *RegNode = dyn_cast<RegisterSDNode>(Current->getOperand(1))) {
+              unsigned Reg = RegNode->getReg();
+              // Check if this is an argument register (R3-R10)
+              if (Reg >= SLOW32::R3 && Reg <= SLOW32::R10) {
+                ArgRegs.push_back(Reg);
+              }
+            }
+          }
+          // Move to the glue input of this CopyToReg (if it exists)
+          if (Current->getNumOperands() >= 4 && 
+              Current->getOperand(3).getValueType() == MVT::Glue) {
+            Current = Current->getOperand(3).getNode();
+          } else {
+            break;
+          }
+        }
+        
+        // Add implicit register uses for argument registers
+        // These need to be added as SDValue register operands before chain/glue
+        for (unsigned Reg : ArgRegs) {
+          Ops.push_back(CurDAG->getRegister(Reg, MVT::i32));
+        }
+      }
+      
+      // Add chain (must be after regular operands, before glue)
       Ops.push_back(N->getOperand(0));
       
-      // Add glue if present
+      // Add glue if present (must be last)
       if (N->getNumOperands() > 2 && 
           N->getOperand(N->getNumOperands()-1).getValueType() == MVT::Glue) {
         Ops.push_back(N->getOperand(N->getNumOperands()-1));

@@ -21,7 +21,7 @@ using namespace llvm;
 SLOW32Subtarget::SLOW32Subtarget(const Triple &TT, StringRef CPU, StringRef FS,
                                    const TargetMachine &TM)
     : SLOW32GenSubtargetInfo(TT, CPU, /*TuneCPU*/ CPU, FS),
-      FrameLowering(), InstrInfo(), RegInfo(), TLInfo(TM) {
+      FrameLowering(), InstrInfo(*this), RegInfo(), TLInfo(TM) {
   
   // Select default CPU if none provided
   std::string CPUName = std::string(CPU);

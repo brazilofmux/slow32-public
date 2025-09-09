@@ -8,6 +8,7 @@
 
 #include "SLOW32InstrInfo.h"
 #include "SLOW32.h"
+#include "SLOW32Subtarget.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Debug.h"
@@ -21,8 +22,10 @@
 
 using namespace llvm;
 
-SLOW32InstrInfo::SLOW32InstrInfo()
-    : SLOW32GenInstrInfo(SLOW32::ADJCALLSTACKDOWN, SLOW32::ADJCALLSTACKUP) {}
+SLOW32InstrInfo::SLOW32InstrInfo(const SLOW32Subtarget &STI)
+    : SLOW32GenInstrInfo(STI, SLOW32::ADJCALLSTACKDOWN, SLOW32::ADJCALLSTACKUP,
+                         /*CatchRetOpcode=*/0, /*ReturnOpcode=*/0),
+      STI(STI) {}
 
 void SLOW32InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                    MachineBasicBlock::iterator I,
