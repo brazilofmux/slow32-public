@@ -25,6 +25,8 @@ See [QUICK-START.md](QUICK-START.md) for detailed instructions.
 - **Predictability over complexity:** No hidden state machines, no interrupts, no undefined behavior  
 - **Speed through simplicity:** ~350M instructions/sec on modern hardware (fast emulator)
 - **Crash-safe by design:** Programs run in isolated sandboxes; crashes don't affect the host
+- **Professional C library:** Complete libc.s32a with stdio, stdlib, string, ctype support
+- **Archive tooling:** Create and manage libraries with s32-ar, just like standard Unix ar
 
 ## Start here
 - **[Quick Start Guide](QUICK-START.md)** - Build and run in 5 minutes
