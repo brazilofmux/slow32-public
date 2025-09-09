@@ -14,7 +14,8 @@ CFLAGS = -target $(TARGET) -S -emit-llvm -O2
 RUNTIME_OBJS = crt0.s32o intrinsics.s32o intrinsics_extra.s32o \
                stdlib.s32o putchar.s32o debug_char.s32o \
                printf.s32o builtins.s32o string.s32o malloc.s32o \
-               stdlib_utils.s32o stdio.s32o math.s32o yield.s32o
+               stdlib_utils.s32o stdio.s32o math.s32o yield.s32o \
+               stdlib_extra.s32o string_extra.s32o ctype.s32o
 
 # Default target
 all: $(RUNTIME_OBJS)
@@ -66,6 +67,24 @@ math.ll: math.c
 	$(CLANG) $(CFLAGS) -Iinclude $< -o $@
 
 math.s: math.ll
+	$(LLC) -mtriple=$(TARGET) $< -o $@
+
+stdlib_extra.ll: stdlib_extra.c
+	$(CLANG) $(CFLAGS) -Iinclude $< -o $@
+
+stdlib_extra.s: stdlib_extra.ll
+	$(LLC) -mtriple=$(TARGET) $< -o $@
+
+string_extra.ll: string_extra.c
+	$(CLANG) $(CFLAGS) -Iinclude $< -o $@
+
+string_extra.s: string_extra.ll
+	$(LLC) -mtriple=$(TARGET) $< -o $@
+
+ctype.ll: ctype.c
+	$(CLANG) $(CFLAGS) -Iinclude $< -o $@
+
+ctype.s: ctype.ll
 	$(LLC) -mtriple=$(TARGET) $< -o $@
 
 # Clean target

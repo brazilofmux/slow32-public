@@ -6,7 +6,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include "../common/s32_formats.h"
+#include "../../common/s32_formats.h"
 
 static void print_header(s32x_header_t *header) {
     printf("Executable Header:\n");

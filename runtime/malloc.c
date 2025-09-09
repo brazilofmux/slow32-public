@@ -2,8 +2,10 @@
 #include <stddef.h>
 #include <string.h>
 
-#define HEAP_START 0x00100000
-#define HEAP_SIZE  0x00100000  // 1MB heap
+// These symbols are provided by the linker
+extern char __heap_start[];
+extern char __heap_end[];
+
 #define ALIGN_SIZE 8
 
 typedef struct block {
@@ -12,14 +14,14 @@ typedef struct block {
     int free;
 } block_t;
 
-static block_t *heap_start = NULL;
-static void *heap_end = (void *)(HEAP_START + HEAP_SIZE);
+static block_t *heap_head = NULL;
 
 static void init_heap(void) {
-    heap_start = (block_t *)HEAP_START;
-    heap_start->size = HEAP_SIZE - sizeof(block_t);
-    heap_start->next = NULL;
-    heap_start->free = 1;
+    heap_head = (block_t *)__heap_start;
+    size_t heap_size = (size_t)(__heap_end - __heap_start);
+    heap_head->size = heap_size - sizeof(block_t);
+    heap_head->next = NULL;
+    heap_head->free = 1;
 }
 
 static size_t align_size(size_t size) {
@@ -29,10 +31,10 @@ static size_t align_size(size_t size) {
 void *malloc(size_t size) {
     if (size == 0) return NULL;
     
-    if (!heap_start) init_heap();
+    if (!heap_head) init_heap();
     
     size = align_size(size);
-    block_t *current = heap_start;
+    block_t *current = heap_head;
     
     while (current) {
         if (current->free && current->size >= size) {
@@ -61,7 +63,7 @@ void free(void *ptr) {
     block_t *block = (block_t *)((char *)ptr - sizeof(block_t));
     block->free = 1;
     
-    block_t *current = heap_start;
+    block_t *current = heap_head;
     while (current) {
         if (current->free && current->next && current->next->free) {
             current->size += sizeof(block_t) + current->next->size;

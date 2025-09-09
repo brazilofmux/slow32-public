@@ -7,7 +7,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <assert.h>
-#include "../common/s32_formats.h"
+#include "../../common/s32_formats.h"
+#include "../../common/s32a_format.h"
 
 // Configuration
 #define MAX_INPUT_FILES 100
@@ -39,6 +40,7 @@ typedef struct {
     s32o_reloc_t *relocations;
     char *string_table;
     uint32_t section_base[MAX_SECTIONS];  // Where each section gets placed
+    uint8_t **section_data;  // Section data for archive members (NULL for regular files)
 } input_file_t;
 
 // Combined section information
@@ -159,6 +161,225 @@ static uint32_t add_string(linker_state_t *ld, const char *str) {
     return new_offset;
 }
 
+// Forward declaration
+static bool load_object_file(linker_state_t *ld, const char *filename);
+
+// Load an object file from memory (for archive members)
+static bool load_object_from_memory(linker_state_t *ld, const char *filename, 
+                                   uint8_t *data, size_t size) {
+    if (ld->num_input_files >= MAX_INPUT_FILES) {
+        fprintf(stderr, "Error: Too many input files\n");
+        return false;
+    }
+    
+    input_file_t *inf = &ld->input_files[ld->num_input_files];
+    inf->filename = strdup(filename);
+    inf->file = NULL;  // No file handle for archive members
+    
+    // Verify size
+    if (size < sizeof(s32o_header_t)) {
+        fprintf(stderr, "Error: Archive member '%s' too small\n", filename);
+        return false;
+    }
+    
+    // Copy header
+    memcpy(&inf->header, data, sizeof(s32o_header_t));
+    
+    // Verify magic
+    if (inf->header.magic != S32O_MAGIC) {
+        fprintf(stderr, "Error: Archive member '%s' is not a valid .s32o file\n", filename);
+        return false;
+    }
+    
+    // Allocate and copy sections
+    inf->sections = calloc(inf->header.nsections, sizeof(s32o_section_t));
+    memcpy(inf->sections, data + inf->header.sec_offset, 
+           inf->header.nsections * sizeof(s32o_section_t));
+    
+    // Allocate and copy symbols
+    inf->symbols = calloc(inf->header.nsymbols, sizeof(s32o_symbol_t));
+    memcpy(inf->symbols, data + inf->header.sym_offset,
+           inf->header.nsymbols * sizeof(s32o_symbol_t));
+    
+    // Copy string table
+    inf->string_table = malloc(inf->header.str_size);
+    memcpy(inf->string_table, data + inf->header.str_offset, inf->header.str_size);
+    
+    // Store section data for archive members
+    inf->section_data = calloc(inf->header.nsections, sizeof(uint8_t*));
+    for (uint32_t i = 0; i < inf->header.nsections; i++) {
+        if (inf->sections[i].size > 0 && inf->sections[i].offset > 0) {
+            inf->section_data[i] = malloc(inf->sections[i].size);
+            memcpy(inf->section_data[i], data + inf->sections[i].offset, inf->sections[i].size);
+        }
+    }
+    
+    // Count and copy relocations
+    uint32_t total_relocs = 0;
+    for (uint32_t i = 0; i < inf->header.nsections; i++) {
+        total_relocs += inf->sections[i].nrelocs;
+    }
+    if (total_relocs > 0) {
+        inf->relocations = calloc(total_relocs, sizeof(s32o_reloc_t));
+        uint32_t reloc_idx = 0;
+        for (uint32_t i = 0; i < inf->header.nsections; i++) {
+            if (inf->sections[i].nrelocs > 0) {
+                memcpy(&inf->relocations[reloc_idx], 
+                       data + inf->sections[i].reloc_offset,
+                       inf->sections[i].nrelocs * sizeof(s32o_reloc_t));
+                reloc_idx += inf->sections[i].nrelocs;
+            }
+        }
+    }
+    
+    if (ld->verbose) {
+        printf("Loaded '%s' from archive: %d sections, %d symbols\n", 
+               filename, inf->header.nsections, inf->header.nsymbols);
+    }
+    
+    ld->num_input_files++;
+    return true;
+}
+
+// Check if a symbol is undefined in the current link
+static bool is_symbol_undefined(linker_state_t *ld, const char *symbol_name) {
+    // Look through all undefined symbols in loaded objects
+    for (int i = 0; i < ld->num_input_files; i++) {
+        input_file_t *inf = &ld->input_files[i];
+        for (uint32_t j = 0; j < inf->header.nsymbols; j++) {
+            if (inf->symbols[j].binding == S32O_BIND_GLOBAL && 
+                inf->symbols[j].section == 0) {
+                const char *name = inf->string_table + inf->symbols[j].name_offset;
+                if (strcmp(name, symbol_name) == 0) {
+                    // Check if it's defined elsewhere
+                    bool defined = false;
+                    for (int k = 0; k < ld->num_input_files; k++) {
+                        input_file_t *inf2 = &ld->input_files[k];
+                        for (uint32_t l = 0; l < inf2->header.nsymbols; l++) {
+                            if (inf2->symbols[l].binding == S32O_BIND_GLOBAL && 
+                                inf2->symbols[l].section != 0) {
+                                const char *name2 = inf2->string_table + inf2->symbols[l].name_offset;
+                                if (strcmp(name2, symbol_name) == 0) {
+                                    defined = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (defined) break;
+                    }
+                    if (!defined) return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+// Load an archive file, extracting only needed members
+static bool load_archive_file(linker_state_t *ld, const char *filename) {
+    FILE *f = fopen(filename, "rb");
+    if (!f) {
+        fprintf(stderr, "Error: Cannot open '%s'\n", filename);
+        return false;
+    }
+    
+    // Read archive header
+    s32a_header_t hdr;
+    if (fread(&hdr, sizeof(hdr), 1, f) != 1) {
+        fprintf(stderr, "Error: Cannot read archive header from '%s'\n", filename);
+        fclose(f);
+        return false;
+    }
+    
+    // Verify magic
+    if (hdr.magic != S32A_MAGIC) {
+        // Not an archive, try as object file
+        fclose(f);
+        return load_object_file(ld, filename);
+    }
+    
+    if (ld->verbose) {
+        printf("Processing archive '%s': %d members, %d symbols\n", 
+               filename, hdr.nmembers, hdr.nsymbols);
+    }
+    
+    // Read string table
+    char *strings = malloc(hdr.str_size);
+    fseek(f, hdr.str_offset, SEEK_SET);
+    fread(strings, 1, hdr.str_size, f);
+    
+    // Read symbol index
+    s32a_symbol_t *symbols = malloc(hdr.nsymbols * sizeof(s32a_symbol_t));
+    fseek(f, hdr.sym_offset, SEEK_SET);
+    fread(symbols, sizeof(s32a_symbol_t), hdr.nsymbols, f);
+    
+    // Read member table
+    s32a_member_t *members = malloc(hdr.nmembers * sizeof(s32a_member_t));
+    fseek(f, hdr.mem_offset, SEEK_SET);
+    fread(members, sizeof(s32a_member_t), hdr.nmembers, f);
+    
+    // Track which members we've loaded
+    bool *loaded = calloc(hdr.nmembers, sizeof(bool));
+    
+    // Iteratively load members that resolve undefined symbols
+    bool added_any;
+    do {
+        added_any = false;
+        
+        // Check each symbol in the index
+        for (uint32_t i = 0; i < hdr.nsymbols; i++) {
+            const char *sym_name = strings + symbols[i].name_offset;
+            uint32_t member_idx = symbols[i].member_index;
+            
+            // Skip if we've already loaded this member
+            if (loaded[member_idx]) continue;
+            
+            // Check if this symbol is undefined
+            if (is_symbol_undefined(ld, sym_name)) {
+                // Load this member
+                s32a_member_t *member = &members[member_idx];
+                const char *member_name = strings + member->name_offset;
+                
+                if (ld->verbose) {
+                    printf("  Loading member '%s' for symbol '%s'\n", 
+                           member_name, sym_name);
+                }
+                
+                // Read member data
+                uint8_t *data = malloc(member->size);
+                fseek(f, member->offset, SEEK_SET);
+                fread(data, 1, member->size, f);
+                
+                // Load the object
+                char full_name[256];
+                snprintf(full_name, sizeof(full_name), "%s(%s)", filename, member_name);
+                if (!load_object_from_memory(ld, full_name, data, member->size)) {
+                    free(data);
+                    free(loaded);
+                    free(members);
+                    free(symbols);
+                    free(strings);
+                    fclose(f);
+                    return false;
+                }
+                
+                free(data);
+                loaded[member_idx] = true;
+                added_any = true;
+            }
+        }
+    } while (added_any);  // Keep going until no new members added
+    
+    // Cleanup
+    free(loaded);
+    free(members);
+    free(symbols);
+    free(strings);
+    fclose(f);
+    
+    return true;
+}
+
 // Load a single object file
 static bool load_object_file(linker_state_t *ld, const char *filename) {
     if (ld->num_input_files >= MAX_INPUT_FILES) {
@@ -212,6 +433,9 @@ static bool load_object_file(linker_state_t *ld, const char *filename) {
         fprintf(stderr, "Error: Failed to read string table from %s\n", filename);
         return false;
     }
+    
+    // For regular files, section data is read on demand
+    inf->section_data = NULL;
     
     // Count total relocations and allocate
     uint32_t total_relocs = 0;
@@ -711,7 +935,7 @@ static void inject_memory_map_symbols(linker_state_t *ld) {
                 // Update existing symbol if it was undefined
                 if (ld->symbols[s].defined_in_file < 0) {
                     ld->symbols[s].value = special_symbols[i].value;
-                    ld->symbols[s].defined_in_file = -2;  // Special marker for linker-defined
+                    ld->symbols[s].defined_in_file = MAX_INPUT_FILES;  // Special marker for linker-defined
                     ld->symbols[s].type = 0;  // NOTYPE
                     ld->symbols[s].binding = 1;  // GLOBAL
                 }
@@ -728,7 +952,7 @@ static void inject_memory_map_symbols(linker_state_t *ld) {
             sym->size = 0;
             sym->type = 0;  // NOTYPE
             sym->binding = 1;  // GLOBAL
-            sym->defined_in_file = -2;  // Linker-defined
+            sym->defined_in_file = MAX_INPUT_FILES;  // Linker-defined
             sym->section_idx = -1;
             sym->is_weak = false;
             sym->is_used = false;  // Will be set true if referenced
@@ -869,10 +1093,18 @@ static void load_section_data(linker_state_t *ld) {
             s32o_section_t *isec = &inf->sections[sec->parts[p].section_idx];
             
             if (isec->size > 0 && isec->offset > 0) {
-                fseek(inf->file, isec->offset, SEEK_SET);
-                if (fread(sec->data + sec->parts[p].offset, 1, isec->size, inf->file) != isec->size) {
-                    fprintf(stderr, "Error: Failed to read section data from %s\n", inf->filename);
-                    exit(1);
+                if (inf->section_data != NULL) {
+                    // Archive member - data already loaded
+                    memcpy(sec->data + sec->parts[p].offset, 
+                           inf->section_data[sec->parts[p].section_idx], 
+                           isec->size);
+                } else {
+                    // Regular file - read from disk
+                    fseek(inf->file, isec->offset, SEEK_SET);
+                    if (fread(sec->data + sec->parts[p].offset, 1, isec->size, inf->file) != isec->size) {
+                        fprintf(stderr, "Error: Failed to read section data from %s\n", inf->filename);
+                        exit(1);
+                    }
                 }
             }
         }
@@ -1451,7 +1683,7 @@ int main(int argc, char *argv[]) {
     
     // Load all input files
     for (int i = 0; i < num_input_files; i++) {
-        if (!load_object_file(&ld, input_files[i])) {
+        if (!load_archive_file(&ld, input_files[i])) {
             cleanup(&ld);
             return 1;
         }

@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include "../common/s32_formats.h"
+#include "../../common/s32_formats.h"
 
 // Loader configuration
 typedef struct {

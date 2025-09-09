@@ -7,7 +7,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <ctype.h>
-#include "../common/s32_formats.h"
+#include "../../common/s32_formats.h"
 
 // Command-line options
 typedef struct {

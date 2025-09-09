@@ -1,9 +1,9 @@
 # SLOW-32 Runtime: putchar implementation
-# Takes character in r3, outputs via DEBUG instruction
+# Takes character in r1 (first arg per calling convention), outputs via DEBUG instruction
 
 .global putchar
 
 putchar:
-    debug r3        # Output character in r3
-    add r1, r3, r0  # Return the character
+    debug r1        # Output character in r1 (first arg)
+    # r1 already contains return value
     jalr r0, lr, 0  # Return

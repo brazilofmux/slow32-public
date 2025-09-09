@@ -19,11 +19,4 @@ strlen:
 .strlen_done:
     jalr r0, lr, 0
 
-# va_start/va_end - just nops for now
-.global llvm.va_start.p0
-llvm.va_start.p0:
-    jalr r0, lr, 0
-
-.global llvm.va_end.p0
-llvm.va_end.p0:
-    jalr r0, lr, 0
+# va_start/va_end are in intrinsics.s

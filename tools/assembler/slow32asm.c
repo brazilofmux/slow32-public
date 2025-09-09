@@ -5,7 +5,7 @@
 #include <ctype.h>
 #include <stdbool.h>
 #include <getopt.h>
-#include "../common/s32_formats.h"
+#include "../../common/s32_formats.h"
 
 #define MAX_LINE 256
 #define MAX_TOKENS 8

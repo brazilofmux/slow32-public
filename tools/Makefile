@@ -1,23 +1,16 @@
-# SLOW-32 Tools Master Makefile
+CC = gcc
+CFLAGS = -O2 -Wall -I../common
+TARGETS = s32-objdump s32-exedump
 
-.PHONY: all clean assembler linker emulator utilities
+all: $(TARGETS)
 
-all: assembler linker emulator utilities
+s32-objdump: s32-objdump.c ../common/s32_formats.h
+	$(CC) $(CFLAGS) s32-objdump.c -o s32-objdump
 
-assembler:
-	$(MAKE) -C assembler
-
-linker:
-	$(MAKE) -C linker
-
-emulator:
-	$(MAKE) -C emulator
-
-utilities:
-	$(MAKE) -C utilities
+s32-exedump: s32-exedump.c ../common/s32_formats.h
+	$(CC) $(CFLAGS) s32-exedump.c -o s32-exedump
 
 clean:
-	$(MAKE) -C assembler clean
-	$(MAKE) -C linker clean
-	$(MAKE) -C emulator clean
-	$(MAKE) -C utilities clean
+	rm -f $(TARGETS)
+
+.PHONY: all clean

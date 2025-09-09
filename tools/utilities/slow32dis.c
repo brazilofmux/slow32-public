@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdbool.h>
-#include "../common/s32_formats.h"
+#include "../../common/s32_formats.h"
 
 // SLOW32 instruction formats
 typedef enum {
