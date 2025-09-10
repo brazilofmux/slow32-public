@@ -6,7 +6,7 @@
 
 Every C programmer eventually encounters variadic functions - those magical functions like `printf` that accept a variable number of arguments. Behind that convenient `...` syntax lies one of the messiest parts of most ABIs. On x86-64, you need to understand the difference between register and stack parameters, maintain counts of floating-point arguments, and deal with the infamous `va_list` structure that's actually machine-specific assembly code in disguise.
 
-I've implemented varargs on multiple architectures, and it's always been painful. Until SLOW32.
+I've used varargs on multiple architectures, and it's always been painful. Until SLOW32.
 
 ## The Traditional Mess
 
@@ -123,11 +123,8 @@ if (IsVarArg) {
 This simplicity cascades through the entire system:
 
 1. **Printf is tiny**: Our printf implementation is under 400 lines of straightforward C, with no assembly required.
-
 2. **Debugging is trivial**: Arguments are always in the same place on the stack. You can inspect them with a simple memory dump.
-
 3. **No architecture-specific code**: The same varargs macros work everywhere. Port SLOW32 to a new host? Varargs just works.
-
 4. **Perfect ABI stability**: The calling convention can't change based on argument types or counts. A varargs function looks the same whether it takes 2 arguments or 20.
 
 ## The Test That Proves It
