@@ -18,19 +18,19 @@ This document outlines the article series for SLOW-32, a modern educational CPU 
    - Beautiful 4-instruction i64 operations
    - Lessons about not fighting your architecture
 
-## Upcoming LLVM Backend Stories
-
-### 3. **Varargs and the Case of the Backwards Arguments**
+### 3. **Varargs Done Right: A Simple and Elegant Solution** ✅
    - The mystery: arguments appearing in reverse order
    - Register save ordering discoveries
    - How SLOW-32's simple approach beats complexity
    - The elegant char* va_list solution
 
-### 4. **Jump Tables Without Jump Tables**
+### 4. **Jump Tables Without Jump Tables** ✅
    - How to implement switch statements without native support
-   - The .word directive and symbol references
-   - LLVM's jump table generation
-   - Performance implications
+   - LLVM's clever value table optimization
+   - Performance that beats traditional jump tables
+   - Security benefits of no indirect jumps
+
+## Upcoming LLVM Backend Stories
 
 ### 5. **The SELECT Problem: Why Conditional Moves Are Tricky**
    - LLVM's ISD::SELECT operation
