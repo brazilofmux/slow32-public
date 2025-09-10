@@ -1,0 +1,143 @@
+# SLOW-32 Toolchain Docker Image
+# This image contains the complete toolchain for building SLOW-32 executables
+# Includes: clang, llc, assembler, linker, ar, objdump, etc.
+
+# Stage 1: Build LLVM/Clang with SLOW-32 backend
+FROM alpine:3.19 AS llvm-builder
+
+# Install build dependencies
+RUN apk add --no-cache \
+    build-base \
+    cmake \
+    ninja \
+    git \
+    python3 \
+    py3-pip \
+    linux-headers \
+    patch
+
+# Clone LLVM project (main branch for LLVM 22 development)
+WORKDIR /build
+RUN git clone --depth 1 --branch main https://github.com/llvm/llvm-project.git
+
+# Copy SLOW-32 backend files and patches
+COPY llvm-backend/SLOW32 /build/llvm-project/llvm/lib/Target/SLOW32
+COPY llvm-backend/clang/SLOW32.cpp /build/llvm-project/clang/lib/Basic/Targets/
+COPY llvm-backend/clang/SLOW32.h /build/llvm-project/clang/lib/Basic/Targets/
+COPY llvm-backend/patches /build/patches
+
+# Apply patches to integrate SLOW-32 into LLVM
+WORKDIR /build/llvm-project
+RUN patch -p1 < /build/patches/01-llvm-triple.patch && \
+    patch -p1 < /build/patches/02-llvm-cmake.patch && \
+    patch -p1 < /build/patches/03-clang-targets.patch && \
+    patch -p1 < /build/patches/04-clang-cmake.patch
+
+# Configure and build LLVM with SLOW-32 target
+# Note: llc is built as part of LLVM core tools (not a separate project)
+WORKDIR /build/llvm-project/build
+RUN cmake -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DLLVM_ENABLE_PROJECTS="clang" \
+    -DLLVM_TARGETS_TO_BUILD="SLOW32" \
+    -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="SLOW32" \
+    -DLLVM_BUILD_TOOLS=ON \
+    -DCMAKE_INSTALL_PREFIX=/opt/llvm \
+    ../llvm
+
+RUN ninja && ninja install
+
+# Stage 2: Build SLOW-32 native tools and create final image
+FROM alpine:3.19
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    gcc \
+    g++ \
+    make \
+    libstdc++ \
+    bash
+
+# Copy LLVM installation from builder
+COPY --from=llvm-builder /opt/llvm /opt/llvm
+
+# Copy SLOW-32 source for building native tools
+WORKDIR /slow32-build
+COPY common /slow32-build/common
+COPY tools/assembler /slow32-build/tools/assembler
+COPY tools/linker /slow32-build/tools/linker
+COPY tools/utilities /slow32-build/tools/utilities
+COPY runtime /slow32-build/runtime
+COPY Makefile /slow32-build/
+
+# Build SLOW-32 native tools (clean first to ensure fresh builds with musl)
+RUN make -C tools/assembler clean && make -C tools/assembler && \
+    make -C tools/linker clean && make -C tools/linker && \
+    make -C tools/utilities clean && make -C tools/utilities
+
+# Build runtime libraries
+RUN make -C runtime
+
+# Create installation directory structure
+RUN mkdir -p /opt/slow32/bin /opt/slow32/lib /opt/slow32/include
+
+# Install tools
+RUN cp tools/assembler/slow32asm /opt/slow32/bin/ && \
+    cp tools/linker/s32-ld /opt/slow32/bin/ && \
+    cp tools/utilities/s32-ar /opt/slow32/bin/ && \
+    cp tools/utilities/s32-objdump /opt/slow32/bin/ && \
+    cp tools/utilities/s32-exedump /opt/slow32/bin/ && \
+    cp tools/utilities/slow32dis /opt/slow32/bin/
+
+# Install runtime libraries and headers
+RUN cp runtime/*.s32o /opt/slow32/lib/ && \
+    cp runtime/*.s32a /opt/slow32/lib/ && \
+    cp -r runtime/include/* /opt/slow32/include/ 2>/dev/null || true
+
+# Set up environment
+ENV PATH="/opt/llvm/bin:/opt/slow32/bin:${PATH}"
+ENV SLOW32_HOME="/opt/slow32"
+ENV SLOW32_INCLUDE="${SLOW32_HOME}/include"
+ENV SLOW32_LIB="${SLOW32_HOME}/lib"
+
+# Working directory should be /data (mounted volume)
+WORKDIR /data
+
+# Create a helper script for easy compilation
+RUN printf '#!/bin/bash\n\
+# SLOW-32 Compilation Helper\n\
+# Usage: s32cc input.c [output.s32x]\n\
+\n\
+if [ $# -lt 1 ]; then\n\
+    echo "Usage: s32cc input.c [output.s32x]"\n\
+    exit 1\n\
+fi\n\
+\n\
+INPUT="$1"\n\
+OUTPUT="${2:-${INPUT%%.c}.s32x}"\n\
+BASE="${INPUT%%.c}"\n\
+\n\
+echo "Compiling $INPUT to $OUTPUT..."\n\
+\n\
+# Generate LLVM IR\n\
+clang -target slow32-unknown-none -S -emit-llvm -O2 -I${SLOW32_INCLUDE} "$INPUT" -o "${BASE}.ll" || exit 1\n\
+\n\
+# Generate assembly\n\
+llc -mtriple=slow32-unknown-none "${BASE}.ll" -o "${BASE}.s" || exit 1\n\
+\n\
+# Assemble\n\
+slow32asm "${BASE}.s" "${BASE}.s32o" || exit 1\n\
+\n\
+# Link\n\
+s32-ld -o "$OUTPUT" \\\n\
+    ${SLOW32_LIB}/crt0.s32o \\\n\
+    "${BASE}.s32o" \\\n\
+    ${SLOW32_LIB}/libs32.s32a \\\n\
+    ${SLOW32_LIB}/libc.s32a \\\n\
+    ${SLOW32_LIB}/builtins.s32o || exit 1\n\
+\n\
+echo "Successfully created $OUTPUT"\n' > /opt/slow32/bin/s32cc && chmod +x /opt/slow32/bin/s32cc
+
+# Container is ephemeral - expects input/output via /data mount
+# Default: compile all .c files in /data
+CMD ["bash", "-c", "if ls /data/*.c 1> /dev/null 2>&1; then for f in /data/*.c; do echo \"Compiling $f...\"; s32cc \"$f\" || exit 1; done; echo 'Compilation complete'; else echo 'No .c files found in /data'; exit 1; fi"]

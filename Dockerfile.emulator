@@ -1,0 +1,157 @@
+# SLOW-32 Emulator Docker Image
+# This image contains the SLOW-32 emulator for running .s32x executables
+# Includes both standard and optimized emulator versions
+
+# Stage 1: Build the emulators
+FROM alpine:3.19 AS builder
+
+# Install build dependencies
+RUN apk add --no-cache \
+    gcc \
+    g++ \
+    make \
+    linux-headers
+
+# Copy emulator source code
+WORKDIR /build
+COPY common /build/common
+COPY tools/emulator /build/tools/emulator
+COPY tools/utilities /build/tools/utilities
+
+# Build emulators (clean first to ensure fresh builds with musl)
+RUN make -C tools/emulator clean && make -C tools/emulator
+
+# Build disassembler (useful for debugging) - clean first
+RUN make -C tools/utilities clean && make -C tools/utilities slow32dis s32-exedump
+
+# Stage 2: Create minimal runtime image
+FROM alpine:3.19
+
+# Install minimal runtime dependencies
+RUN apk add --no-cache \
+    libstdc++ \
+    bash
+
+# Copy emulators from builder
+COPY --from=builder /build/tools/emulator/slow32 /usr/local/bin/slow32
+COPY --from=builder /build/tools/emulator/slow32-fast /usr/local/bin/slow32-fast
+COPY --from=builder /build/tools/utilities/slow32dis /usr/local/bin/slow32dis
+COPY --from=builder /build/tools/utilities/s32-exedump /usr/local/bin/s32-exedump
+
+# Working directory should be /data (mounted volume)
+WORKDIR /data
+
+# Create a helper script for running programs with various debug options
+RUN echo '#!/bin/bash\n\
+# SLOW-32 Emulator Runner\n\
+# Usage: s32run [options] program.s32x [args...]\n\
+\n\
+EMULATOR="slow32"\n\
+DEBUG_OPTS=""\n\
+PROGRAM=""\n\
+PROGRAM_ARGS=""\n\
+\n\
+function show_help() {\n\
+    echo "SLOW-32 Emulator Runner"\n\
+    echo "Usage: s32run [options] program.s32x [args...]"\n\
+    echo ""\n\
+    echo "Options:"\n\
+    echo "  -f, --fast        Use optimized emulator (slow32-fast)"\n\
+    echo "  -s, --step        Step through each instruction"\n\
+    echo "  -t, --trace       Trace every instruction"\n\
+    echo "  -r, --registers   Show register changes"\n\
+    echo "  -c N, --cycles N  Limit execution to N cycles"\n\
+    echo "  -b ADDR           Set breakpoint at address"\n\
+    echo "  -w RANGE          Watch memory range (e.g., 0x1000-0x2000)"\n\
+    echo "  -d, --disasm      Disassemble before running"\n\
+    echo "  -x, --examine     Examine executable headers before running"\n\
+    echo "  -h, --help        Show this help"\n\
+    exit 0\n\
+}\n\
+\n\
+DISASM=0\n\
+EXAMINE=0\n\
+\n\
+while [[ $# -gt 0 ]]; do\n\
+    case $1 in\n\
+        -f|--fast)\n\
+            EMULATOR="slow32-fast"\n\
+            shift\n\
+            ;;\n\
+        -s|--step)\n\
+            DEBUG_OPTS="$DEBUG_OPTS -s"\n\
+            shift\n\
+            ;;\n\
+        -t|--trace)\n\
+            DEBUG_OPTS="$DEBUG_OPTS -t"\n\
+            shift\n\
+            ;;\n\
+        -r|--registers)\n\
+            DEBUG_OPTS="$DEBUG_OPTS -r"\n\
+            shift\n\
+            ;;\n\
+        -c|--cycles)\n\
+            DEBUG_OPTS="$DEBUG_OPTS -c $2"\n\
+            shift 2\n\
+            ;;\n\
+        -b)\n\
+            DEBUG_OPTS="$DEBUG_OPTS -b $2"\n\
+            shift 2\n\
+            ;;\n\
+        -w)\n\
+            DEBUG_OPTS="$DEBUG_OPTS -w $2"\n\
+            shift 2\n\
+            ;;\n\
+        -d|--disasm)\n\
+            DISASM=1\n\
+            shift\n\
+            ;;\n\
+        -x|--examine)\n\
+            EXAMINE=1\n\
+            shift\n\
+            ;;\n\
+        -h|--help)\n\
+            show_help\n\
+            ;;\n\
+        *.s32x)\n\
+            PROGRAM="$1"\n\
+            shift\n\
+            PROGRAM_ARGS="$@"\n\
+            break\n\
+            ;;\n\
+        *)\n\
+            echo "Unknown option: $1"\n\
+            show_help\n\
+            ;;\n\
+    esac\n\
+done\n\
+\n\
+if [ -z "$PROGRAM" ]; then\n\
+    echo "Error: No program specified"\n\
+    show_help\n\
+fi\n\
+\n\
+if [ ! -f "$PROGRAM" ]; then\n\
+    echo "Error: Program file not found: $PROGRAM"\n\
+    exit 1\n\
+fi\n\
+\n\
+if [ $EXAMINE -eq 1 ]; then\n\
+    echo "=== Executable Information ==="\n\
+    s32-exedump "$PROGRAM"\n\
+    echo ""\n\
+fi\n\
+\n\
+if [ $DISASM -eq 1 ]; then\n\
+    echo "=== Disassembly ==="\n\
+    slow32dis "$PROGRAM"\n\
+    echo ""\n\
+fi\n\
+\n\
+echo "=== Running $PROGRAM with $EMULATOR ==="\n\
+$EMULATOR $DEBUG_OPTS "$PROGRAM" $PROGRAM_ARGS\n\
+' > /usr/local/bin/s32run && chmod +x /usr/local/bin/s32run
+
+# Container is ephemeral - expects .s32x files via /data mount
+# Default: run all .s32x files in /data
+CMD ["bash", "-c", "if ls /data/*.s32x 1> /dev/null 2>&1; then for f in /data/*.s32x; do echo \"Running $f...\"; echo '---'; slow32 \"$f\" || exit 1; echo ''; done; else echo 'No .s32x files found in /data'; exit 1; fi"]

@@ -6,6 +6,17 @@ SLOW-32 is a minimalist 32-bit RISC architecture designed for learning, compiler
 
 ## Quick Start
 
+### Option 1: Docker (Recommended)
+```bash
+# Build images
+./docker-build.sh
+
+# Compile and run C program
+docker run -v $(pwd):/data slow32-toolchain
+docker run -v $(pwd):/data slow32-emulator
+```
+
+### Option 2: Build from Source
 ```bash
 # Build the toolchain
 cd tools && make && cd ..
