@@ -55,14 +55,14 @@ public:
 
   bool addInstSelector() override;
   
-  // Override to disable problematic optimization passes
+  // Optimization hang fix (2025-09-09):
+  // LLVM optimization passes were hanging with -O1/-O2 on loop code
+  // Root cause: BR (unconditional branch) was missing isBarrier=1 flag in TableGen
+  // Without isBarrier, optimizer thought there was fallthrough after BR
+  // This caused Branch Folder and Machine Block Placement to loop infinitely
+  // Fix applied: Added isBarrier=1 to BR instruction definition in SLOW32InstrInfo.td
+  // ChatGPT 5's analyzeBranch improvements (rounds 1-3) are also beneficial and retained
   void addMachineSSAOptimization() override {
-    // Skip Machine LICM - it causes hangs when combined with block placement
-    // This is a temporary workaround until the root cause is fixed
-    disablePass(&MachineLICMID);
-    disablePass(&MachineBlockPlacementID);
-    
-    // Call parent implementation
     TargetPassConfig::addMachineSSAOptimization();
   }
 };

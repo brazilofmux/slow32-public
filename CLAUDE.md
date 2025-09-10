@@ -9,27 +9,25 @@ SLOW-32 is a 32-bit RISC CPU with complete toolchain. This file contains quick c
 make
 
 # Compile and run C program (BEST method - native SLOW32 target)
-~/llvm-project/build/bin/clang --target slow32-unknown-none -S -emit-llvm -O1 program.c -o program.ll
+~/llvm-project/build/bin/clang -target slow32-unknown-none -S -emit-llvm -O2 -Iruntime/include program.c -o program.ll
 ~/llvm-project/build/bin/llc -mtriple=slow32-unknown-none program.ll -o program.s
-./assembler/slow32asm program.s program.s32o
-./linker/s32-ld -o program.s32x runtime/crt0.s32o program.s32o runtime/intrinsics.s32o
-# For 64-bit operations, also link runtime/builtins.s32o
-./emulator/slow32 program.s32x
+./tools/assembler/slow32asm program.s program.s32o
+# Link with archives (linker finds _start in libs32.s32a)
+./tools/linker/s32-ld -o program.s32x program.s32o runtime/libs32.s32a runtime/libc.s32a runtime/builtins.s32o
+./tools/emulator/slow32 program.s32x
 
-# Alternative: Use standalone compiler (legacy)
-clang-19 -S -emit-llvm -O1 program.c -o program.ll
-./llvm-backend/standalone/slow32-compile program.ll > program.s
-./assembler/slow32asm program.s program.s32o
-./linker/s32-ld -o program.s32x runtime/crt0.s32o program.s32o runtime/intrinsics.s32o
-./emulator/slow32 program.s32x
+# Alternative: Standalone compiler (DEPRECATED - DO NOT USE)
+# The standalone compiler in compiler/ is deprecated and should not be used.
+# It cannot properly handle varargs and other complex C features.
+# Always use the native LLVM backend method above.
 
 # Debug mode
-./emulator/slow32 program.s32x -s  # step through each instruction
-./emulator/slow32 -t program.s32x  # trace every instruction
-./emulator/slow32 -r program.s32x  # show register changes
-./emulator/slow32 -c 1000 program.s32x  # limit to 1000 cycles
-./emulator/slow32 -b 0x100 program.s32x  # break at address
-./emulator/slow32 -w 0x1000-0x2000 program.s32x  # watch memory range
+./tools/emulator/slow32 program.s32x -s  # step through each instruction
+./tools/emulator/slow32 -t program.s32x  # trace every instruction
+./tools/emulator/slow32 -r program.s32x  # show register changes
+./tools/emulator/slow32 -c 1000 program.s32x  # limit to 1000 cycles
+./tools/emulator/slow32 -b 0x100 program.s32x  # break at address
+./tools/emulator/slow32 -w 0x1000-0x2000 program.s32x  # watch memory range
 ```
 
 ## Key Architecture Points
@@ -57,8 +55,12 @@ clang-19 -S -emit-llvm -O1 program.c -o program.ll
   - All logical operations (AND, OR, XOR, shifts)
   - All comparison operations (EQ, NE, LT, GT, LE, GE for both signed/unsigned)
   - Comprehensive regression test coverage
-✅ Native Clang target: `--target slow32-unknown-none`  
+✅ Native Clang target: `-target slow32-unknown-none` (note: single dash)  
 ✅ XORI instruction (opcode 0x1E) for XOR immediate operations
+✅ LLVM backend updated for latest LLVM API (Sep 2025)
+✅ Regression tests passing (14/19 tests, 5 skipped due to missing test files)
+✅ Runtime libraries built as archives: libs32.s32a (2.1KB), libc.s32a (30KB)
+✅ Optimization passes fixed - no more LLC hangs
 
 ⚠️ Requires -O1 or -O2 (unoptimized exhausts registers)  
 ⚠️ See docs/IMPROVEMENTS.md for known issues
@@ -67,9 +69,9 @@ clang-19 -S -emit-llvm -O1 program.c -o program.ll
 ## Important Notes for Toolchain
 
 - **Always use the linker** - Never concatenate .s files!
-- **crt0.s32o must be first** - Contains _start at address 0
-- **Link order**: crt0.s32o, program.s32o, intrinsics.s32o
-- **Use -O1 or -O2** - Unoptimized code runs out of registers
+- **Link order**: program.s32o, libs32.s32a, libc.s32a, builtins.s32o
+- **Use -O2** - Default optimization level, -O1 also works
+- **Archives available**: libs32.s32a (core runtime with crt0), libc.s32a (standard C library)
 
 ## Working C Examples
 
@@ -106,13 +108,13 @@ cd ~/slow-32/regression && ./run-tests.sh
 cd ~/slow-32/regression && ./run-tests.sh feature-arithmetic
 
 # Analyze binaries
-./tools/s32-objdump file.s32o   # Dump object file
-./tools/s32-exedump file.s32x   # Dump executable
-./tools/slow32dis file.s32x [start] [end]  # Disassembler
+./tools/utilities/s32-objdump file.s32o   # Dump object file
+./tools/utilities/s32-exedump file.s32x   # Dump executable
+./tools/utilities/slow32dis file.s32x [start] [end]  # Disassembler
 
 # Performance test
-time ./emulator/slow32 program.s32x  # ~350M inst/sec
-time ./emulator/slow32-fast program.s32x  # Optimized version
+time ./tools/emulator/slow32 program.s32x  # ~350M inst/sec
+time ./tools/emulator/slow32-fast program.s32x  # Optimized version
 ```
 
 ## Regression Testing

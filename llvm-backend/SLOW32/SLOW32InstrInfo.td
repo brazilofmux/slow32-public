@@ -333,7 +333,8 @@ def RET64 : S32Inst<(outs), (ins), "jalr r0, r31, 0">;
 // in SLOW32ISelDAGToDAG.cpp to choose between RET and RET64
 
 // For unconditional branches
-let isBranch = 1, isTerminator = 1 in {
+// CRITICAL: isBarrier=1 needed to prevent optimizer thinking there's fallthrough!
+let isBranch = 1, isTerminator = 1, isBarrier = 1 in {
   def BR : S32Inst<(outs), (ins brtarget:$target), "jal r0, $target", [(br bb:$target)]>;
 }
 
