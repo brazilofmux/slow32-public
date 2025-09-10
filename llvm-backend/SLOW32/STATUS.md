@@ -1,6 +1,6 @@
 # SLOW32 Backend Status
 
-Last Updated: 2025-09-03
+Last Updated: 2025-09-09
 
 ## Overview
 The SLOW32 LLVM backend is functional for basic C programs. It can compile functions with arguments, return values, arithmetic operations, memory access, global variables, and basic varargs support.
@@ -31,14 +31,14 @@ The SLOW32 LLVM backend is functional for basic C programs. It can compile funct
 
 ### Instructions
 - **Arithmetic**: ADD, SUB, MUL, DIV, REM (+ immediate variants)
-- **Logical**: AND, OR, XOR (+ immediate variants)
+- **Logical**: AND, OR, XOR, XORI (+ immediate variants)
 - **Shifts**: SLL, SRL, SRA (both immediate and register forms)
 - **Memory**: 
   - Word: LDW, STW with base+offset addressing
   - Byte: LDB (sign-extend), LDBU (zero-extend), STB
   - Halfword: LDH (sign-extend), LDHU (zero-extend), STH
-- **Comparison**: SLT, SLTU, SEQ, SNE, SGT, SGTU, SGE, SGEU
-- **Control Flow**: JAL, JALR for calls; BEQ, BNE, BLT, BGE for branches
+- **Comparison**: SLT, SLTU, SEQ, SNE, SGT, SGTU, SGE, SGEU, SLE, SLEU
+- **Control Flow**: JAL, JALR for calls; BEQ, BNE, BLT, BGE, BLTU, BGEU for branches
 - **Constants**: LI (pseudo), LUI, ORI for loading immediates
 
 ### Function Support
@@ -57,6 +57,9 @@ The SLOW32 LLVM backend is functional for basic C programs. It can compile funct
   - va_start implementation
   - Saving unused arg registers
   - Simple variadic functions work
+- **64-bit Integer Support**: Full i64 operations via custom lowering and libcalls
+- **Jump Tables**: Supported for switch statements
+- **LLVM Intrinsics**: memcpy, memset, lifetime, smax/smin, umax/umin
 
 ## ⚠️ Partially Working
 
@@ -74,16 +77,14 @@ The SLOW32 LLVM backend is functional for basic C programs. It can compile funct
 - Stack varargs not fully tested
 
 ### Switch Statements
-- Basic lowering works
-- Needs proper analyzeBranch implementation for optimization
-- Jump tables not yet implemented
+- ✅ Basic lowering works
+- ✅ Jump tables fully implemented and working
+- Needs proper analyzeBranch implementation for further optimization
 
 ## ❌ Not Implemented
 
-### Missing Branch Instructions
-- BLE, BGT (signed comparisons)
-- BLTU, BGEU, BLEU, BGTU (unsigned comparisons)
-- These can be synthesized from existing branches
+### Missing Branch Instructions  
+- BLE, BGT, BLEU, BGTU (can be synthesized from existing branches)
 
 ### CFG Optimization
 - analyzeBranch not implemented (returns false)
