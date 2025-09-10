@@ -1,10 +1,9 @@
-// SLOW-32 Fast Emulator - Fixed version with correct instruction encoding
-// Pre-decode + function pointer dispatch for maximum speed
+// SLOW-32 Fast Emulator - Optimized with pre-decode and function pointer dispatch
+// Metadata-driven memory layout from s32x headers
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <string.h>
 #include <stdbool.h>
 #include <time.h>
 #include <inttypes.h>
@@ -820,7 +819,9 @@ int main(int argc, char **argv) {
     }
     
     // Copy loaded sections to memory manager regions
-    // Code section
+    // The loader has already placed everything at the correct virtual addresses in temp_mem
+    
+    // Code section: from 0 to code_limit
     if (lr.code_limit > 0) {
         if (mm_write(&cpu.mm, 0, temp_mem, lr.code_limit) != 0) {
             fprintf(stderr, "Error: Failed to copy code section\n");
@@ -830,9 +831,10 @@ int main(int argc, char **argv) {
         }
     }
     
-    // Read-only data section  
-    if (lr.rodata_limit > 0x100000) {
-        if (mm_write(&cpu.mm, 0x100000, temp_mem + 0x100000/4, lr.rodata_limit - 0x100000) != 0) {
+    // Read-only data section: from code_limit to rodata_limit
+    if (lr.rodata_limit > lr.code_limit) {
+        uint8_t *rodata_src = (uint8_t *)temp_mem + lr.code_limit;
+        if (mm_write(&cpu.mm, lr.code_limit, rodata_src, lr.rodata_limit - lr.code_limit) != 0) {
             fprintf(stderr, "Error: Failed to copy rodata section\n");
             free(temp_mem);
             mm_destroy(&cpu.mm);
@@ -840,9 +842,10 @@ int main(int argc, char **argv) {
         }
     }
     
-    // Data section (if any)
-    if (lr.data_limit > 0x200000) {
-        if (mm_write(&cpu.mm, 0x200000, temp_mem + 0x200000/4, lr.data_limit - 0x200000) != 0) {
+    // Data section: from rodata_limit to data_limit
+    if (lr.data_limit > lr.rodata_limit) {
+        uint8_t *data_src = (uint8_t *)temp_mem + lr.rodata_limit;
+        if (mm_write(&cpu.mm, lr.rodata_limit, data_src, lr.data_limit - lr.rodata_limit) != 0) {
             fprintf(stderr, "Error: Failed to copy data section\n");
             free(temp_mem);
             mm_destroy(&cpu.mm);
@@ -859,8 +862,8 @@ int main(int argc, char **argv) {
         return 1;
     }
     
-    cpu.regs[REG_SP] = lr.stack_base;
-    cpu.regs[REG_FP] = lr.stack_base;
+    cpu.regs[REG_SP] = header.stack_base;
+    cpu.regs[REG_FP] = header.stack_base;
     cpu.code_words = lr.code_limit / 4;   // predecode [0, code_limit)
     cpu.wx_enabled = lr.has_wxorx;
     cpu.code_limit = lr.code_limit;

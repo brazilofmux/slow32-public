@@ -13,7 +13,7 @@ make
 ~/llvm-project/build/bin/llc -mtriple=slow32-unknown-none program.ll -o program.s
 ./tools/assembler/slow32asm program.s program.s32o
 # Link with crt0.s32o explicitly first (contains _start)
-./tools/linker/s32-ld -o program.s32x runtime/crt0.s32o program.s32o runtime/libs32.s32a runtime/libc.s32a runtime/builtins.s32o
+./tools/linker/s32-ld -o program.s32x runtime/crt0.s32o program.s32o runtime/libs32.s32a runtime/libc.s32a
 ./tools/emulator/slow32 program.s32x
 
 # Alternative: Standalone compiler (DEPRECATED - DO NOT USE)
@@ -70,9 +70,9 @@ make
 
 - **Always use the linker** - Never concatenate .s files!
 - **crt0.s32o must be explicitly linked** - Contains _start (not included in archives)
-- **Link order**: crt0.s32o, program.s32o, libs32.s32a, libc.s32a, builtins.s32o
+- **Link order**: crt0.s32o, program.s32o, libs32.s32a, libc.s32a
 - **Use -O2** - Default optimization level, -O1 also works
-- **Archives available**: libs32.s32a (runtime intrinsics), libc.s32a (standard C library)
+- **Archives available**: libs32.s32a (runtime intrinsics + builtins), libc.s32a (standard C library)
 
 ## Working C Examples
 
