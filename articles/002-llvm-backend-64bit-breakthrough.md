@@ -31,6 +31,7 @@ And the compiler crashed.
 Here's what makes 64-bit arithmetic interesting on a 32-bit machine: when you add the low 32 bits, you might generate a carry that needs to be added to the high 32 bits.
 
 On x86, you'd do:
+
 ```asm
 add eax, ecx    ; Add low parts, sets carry flag
 adc ebx, edx    ; Add high parts + carry flag
@@ -60,7 +61,7 @@ setOperationAction(ISD::ADDE, MVT::i32, Custom);
 Then implement custom lowering that somehow tracks the carry between instructions. We tried:
 
 - Expanding to complex bit manipulation (slow, ugly)
-- Using a special register for carry (violated our architecture principles)  
+- Using a special register for carry (violated our architecture principles)
 - Various other hacks (all terrible)
 
 After days of fighting with this, we had bloated, incorrect code. A simple 64-bit add was generating 15+ instructions. Something was fundamentally wrong with our approach.
@@ -104,13 +105,13 @@ SDValue SLOW32TargetLowering::LowerUADDO(SDValue Op, SelectionDAG &DAG) const {
   SDLoc dl(Op);
   SDValue LHS = Op.getOperand(0);
   SDValue RHS = Op.getOperand(1);
-  
+
   // Perform the addition
   SDValue Sum = DAG.getNode(ISD::ADD, dl, MVT::i32, LHS, RHS);
-  
+
   // Check for overflow: sum < LHS means we wrapped
   SDValue Overflow = DAG.getSetCC(dl, MVT::i32, Sum, LHS, ISD::SETULT);
-  
+
   // Return both results
   return DAG.getMergeValues({Sum, Overflow}, dl);
 }
@@ -127,7 +128,7 @@ Here's what that original 64-bit add compiles to now:
 ```asm
 add64:
     add r2, r4, r6      # Add high 32 bits
-    add r1, r3, r5      # Add low 32 bits  
+    add r1, r3, r5      # Add low 32 bits
     sltu r3, r1, r3     # Check if low add overflowed (sum < operand)
     add r2, r2, r3      # Add carry to high bits
     jalr r0, lr, 0      # Return

@@ -62,7 +62,7 @@ int test_switch(int x) {
 Here's the LLVM IR after optimization:
 
 ```llvm
-@switch.table.test_switch = private constant [5 x i32] 
+@switch.table.test_switch = private constant [5 x i32]
     [i32 10, i32 20, i32 30, i32 -1, i32 50]
 
 define i32 @test_switch(i32 %x) {
@@ -71,7 +71,7 @@ define i32 @test_switch(i32 %x) {
   br i1 %0, label %switch.lookup, label %return
 
 switch.lookup:
-  %switch.gep = getelementptr [5 x i32], ptr @switch.table.test_switch, 
+  %switch.gep = getelementptr [5 x i32], ptr @switch.table.test_switch,
                                i32 %switch.tableidx
   %switch.load = load i32, ptr %switch.gep
   br label %return
@@ -87,6 +87,7 @@ Wait, what? LLVM created a jump table... but not a table of *addresses*. It's a 
 ## The Value Table Optimization
 
 Since our switch statement just returns different values for different cases, LLVM transforms the entire switch into:
+
 1. Bounds check: is the input in range?
 2. If yes, index into a table of *return values*
 3. Return the value from the table
@@ -99,12 +100,12 @@ test_switch:
     addi r2, r0, 4              # load 4
     sgtu r2, r1, r2             # is (x-1) > 4?
     jnz  r2, .default           # if so, return default
-    
+
     # Load address of value table
     lui  r3, %hi(.switch.table)
     ori  r2, r0, %lo(.switch.table)
     add  r2, r3, r2
-    
+
     # Index into table (multiply by 4 for word size)
     slli r1, r1, 2
     add  r1, r1, r2
@@ -117,7 +118,7 @@ test_switch:
 
 .switch.table:
     .word 10    # case 1
-    .word 20    # case 2  
+    .word 20    # case 2
     .word 30    # case 3
     .word -1    # case 4 (missing, use default)
     .word 50    # case 5
@@ -134,7 +135,7 @@ Fair point. Let's try a more complex example:
 ```c
 void complex_switch(int x) {
     switch (x) {
-        case 1: 
+        case 1:
             printf("Starting process\n");
             init_system();
             break;
@@ -167,13 +168,14 @@ When SLOW-32 can't do true jump tables, we still benefit from LLVM's switch opti
 SLOW32TargetLowering::SLOW32TargetLowering() {
     // We can't do indirect branches
     setOperationAction(ISD::BR_JT, MVT::Other, Expand);
-    
+
     // But we can handle jump table addresses as data
     setOperationAction(ISD::JumpTable, MVT::i32, Custom);
 }
 ```
 
 This triggers LLVM's "no jump table" optimization path, which includes:
+
 - Value tables for simple switches
 - Decision trees for complex switches
 - Bit tests for switches with power-of-2 cases
@@ -192,6 +194,7 @@ One crucial piece that makes this work is our assembler's `.word` directive:
 ```
 
 The `.word` directive can contain:
+
 - Literal values (like our return values)
 - Symbol addresses (for theoretical jump tables)
 - Expressions (`symbol + offset`)
@@ -203,11 +206,8 @@ Even though SLOW-32 can't jump to these addresses, having them as data enables f
 Not having indirect jumps forced us to think differently about switch statements. The result? We often get *better* code than architectures with jump tables:
 
 1. **No Branch Predictor Pollution**: Traditional jump tables confuse branch predictors. Our approach uses predictable conditional branches.
-
 2. **Better Cache Behavior**: Value tables are more compact than jump tables (4 bytes per entry vs potentially distant code targets).
-
 3. **Security**: No indirect jumps means no jump-oriented programming (JOP) attacks. Control flow is statically analyzable.
-
 4. **Simplicity**: The CPU doesn't need to handle indirect branch speculation, BTB entries for computed jumps, or any of that complexity.
 
 ## Performance Numbers
@@ -233,11 +233,8 @@ The value table approach is unbeatable when applicable. Even when we fall back t
 Building a CPU without indirect jumps seemed like a limitation at first. But constraints breed creativity:
 
 1. **Trust the Optimizer**: LLVM's switch lowering is remarkably sophisticated. It found optimizations I never would have thought of.
-
 2. **Data is Code**: When you can't compute jump addresses, compute data addresses instead. The value table hack is brilliant.
-
 3. **Profile-Guided Optimization**: Even without jump tables, knowing which cases are common lets LLVM reorder comparisons optimally.
-
 4. **Simplicity Wins**: Our "limited" architecture generates faster, safer, more predictable code than "full-featured" alternatives.
 
 ## What's Next?

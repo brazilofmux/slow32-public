@@ -22,7 +22,7 @@ The `va_list` becomes this monstrosity:
 ```c
 typedef struct {
     unsigned int gp_offset;     // Offset to next GP register arg
-    unsigned int fp_offset;     // Offset to next FP register arg  
+    unsigned int fp_offset;     // Offset to next FP register arg
     void *overflow_arg_area;    // Pointer to stack args
     void *reg_save_area;        // Pointer to register save area
 } va_list[1];
@@ -61,12 +61,12 @@ When you compile a varargs function like this:
 int sum(int count, ...) {
     va_list args;
     va_start(args, count);
-    
+
     int total = 0;
     for (int i = 0; i < count; i++) {
         total += va_arg(args, int);
     }
-    
+
     va_end(args);
     return total;
 }
@@ -105,7 +105,7 @@ if (IsVarArg) {
     for (unsigned i = 0; i < 8; ++i) {
         unsigned Reg = SLOW32::R3 + i;
         unsigned Offset = i * 4;
-        
+
         SDValue Store = DAG.getStore(
             Chain, DL,
             DAG.getRegister(Reg, MVT::i32),
@@ -140,7 +140,7 @@ Here's my favorite test that demonstrates the elegance:
 int test_mixed(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    
+
     int sum = 0;
     for (const char *p = fmt; *p; p++) {
         switch (*p) {
@@ -153,7 +153,7 @@ int test_mixed(const char *fmt, ...) {
             }
         }
     }
-    
+
     va_end(args);
     return sum;
 }
@@ -195,7 +195,7 @@ void debug_char(int c);  // SLOW32's output primitive
 void mini_printf(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    
+
     for (const char *p = fmt; *p; p++) {
         if (*p == '%') {
             p++;
@@ -223,7 +223,7 @@ void mini_printf(const char *fmt, ...) {
             debug_char(*p);
         }
     }
-    
+
     va_end(args);
 }
 
