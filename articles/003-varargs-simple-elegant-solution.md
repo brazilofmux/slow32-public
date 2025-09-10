@@ -234,7 +234,7 @@ Compile it, run it, and marvel at how something so simple just works.
 
 ## What's Next
 
-With varargs conquered, we turned to other challenges. The next article will dive into how we built an assembler that makes both humans and compilers happy - including the pseudo-instructions that make hand-written assembly actually pleasant.
+With varargs conquered, we turned to other challenges. The next article explores another seemingly impossible challenge: implementing efficient switch statements without indirect jump instructions. How do you build jump tables when your CPU can't jump to computed addresses? The answer involves some clever LLVM optimizations that turn a limitation into a performance win.
 
 But the varargs story captures something essential about SLOW32: by questioning assumptions and accepting small trade-offs, we can achieve dramatic simplifications. Not every optimization is worth its complexity cost.
 
