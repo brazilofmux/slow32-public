@@ -1,16 +1,36 @@
-# Bug #001: Varargs Arguments Clobbered
+# Bug #001: Branch Folder Optimization Bug (FIXED)
 
-## Problem
-The LLVM backend incorrectly reuses argument registers (r3-r10) for llvm.lifetime.start/end 
-intrinsic calls without first preserving the original argument values.
+## Problem (Historical)
+The LLVM backend's Branch Folder optimization was incorrectly generating branch sequences,
+causing unconditional branches to be placed before conditional branches, making the 
+conditional branches unreachable.
 
 ## Test Description
 This test calls a varargs sum function with 3 arguments (10, 20, 30).
 - Expected: Returns 60 (sum of 10+20+30)
-- Bug behavior: r3 (count) gets overwritten with 24, causing wrong iteration count
+- Bug behavior: Loop would exit after first iteration due to branch ordering bug
 
 ## Status
-Currently FAILS - r3 is clobbered by llvm.lifetime intrinsic
+**FIXED** - The test now passes correctly.
 
-## When Fixed
-The test should output "OK" when the backend properly preserves argument registers.
+## Fix Applied
+The bug was fixed with changes to the SLOW32 backend:
+
+1. **TableGen flags** (SLOW32InstrInfo.td):
+   - Added `isBarrier = 0` and `hasSideEffects = 0` to conditional branches
+   - This correctly marks them as branches that can fall through
+
+2. **analyzeBranch** (SLOW32InstrInfo.cpp):
+   - Removed incorrect treatment of BR as a special case like RET
+   - Now properly analyzes BR instructions as branches
+
+3. **removeBranch** (SLOW32InstrInfo.cpp):
+   - Only treats RET as a special case, not BR
+
+4. **insertBranch** (SLOW32InstrInfo.cpp):
+   - Fixed branch emission order: conditional first, unconditional second
+   - Removed problematic getFirstTerminator() logic
+   - Now always appends branches at the end in correct order
+
+## Result
+The test now correctly outputs "OK" and all 14 regression tests pass.

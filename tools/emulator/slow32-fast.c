@@ -54,6 +54,7 @@ struct fast_cpu_state {
     // MMIO support
     bool mmio_enabled;
     bool mmio_initialized;
+    uint32_t mmio_base;     // MMIO base address from header
     mmio_ring_state_t *mmio_state;
 };
 
@@ -106,7 +107,7 @@ static void mmio_write_fast(fast_cpu_state_t *cpu, uint32_t addr, uint32_t value
     temp_cpu.mmio = cpu->mmio_state;
     temp_cpu.mmio_initialized = cpu->mmio_initialized;
     
-    mmio_ring_write(cpu->mmio_state, &temp_cpu, MMIO_BASE + addr, value, size);
+    mmio_ring_write(cpu->mmio_state, &temp_cpu, cpu->mmio_base + addr, value, size);
     
     // Copy back any changes
     cpu->halted = temp_cpu.halted;
@@ -291,14 +292,14 @@ static void op_ldw(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
     }
     
     // Check for MMIO access
-    if (addr >= MMIO_BASE && addr < MMIO_BASE + 0x10000) {
+    if (addr >= cpu->mmio_base && addr < cpu->mmio_base + 0x10000) {
         // Initialize MMIO on first access if enabled
         if (cpu->mmio_enabled && !cpu->mmio_initialized) {
             cpu_init_mmio(cpu);
         }
         
         if (cpu->mmio_initialized) {
-            uint32_t value = mmio_ring_read(cpu->mmio_state, addr - MMIO_BASE, 4);
+            uint32_t value = mmio_ring_read(cpu->mmio_state, addr - cpu->mmio_base, 4);
             cpu->regs[inst->rd] = value;
             cpu->cycle_count += 3;
             return;
@@ -382,14 +383,14 @@ static void op_stw(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
     }
     
     // Check for MMIO access
-    if (addr >= MMIO_BASE && addr < MMIO_BASE + 0x10000) {
+    if (addr >= cpu->mmio_base && addr < cpu->mmio_base + 0x10000) {
         // Initialize MMIO on first access if enabled
         if (cpu->mmio_enabled && !cpu->mmio_initialized) {
             cpu_init_mmio(cpu);
         }
         
         if (cpu->mmio_initialized) {
-            mmio_write_fast(cpu, addr - MMIO_BASE, cpu->regs[inst->rs2], 4);
+            mmio_write_fast(cpu, addr - cpu->mmio_base, cpu->regs[inst->rs2], 4);
             // MMIO processing happens only on YIELD
             cpu->cycle_count += 3;
             return;
@@ -425,14 +426,14 @@ static void op_stb(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
     uint32_t addr = cpu->regs[inst->rs1] + inst->imm;
     
     // Check for MMIO access
-    if (addr >= MMIO_BASE && addr < MMIO_BASE + 0x10000) {
+    if (addr >= cpu->mmio_base && addr < cpu->mmio_base + 0x10000) {
         // Initialize MMIO on first access if enabled
         if (cpu->mmio_enabled && !cpu->mmio_initialized) {
             cpu_init_mmio(cpu);
         }
         
         if (cpu->mmio_initialized) {
-            mmio_write_fast(cpu, addr - MMIO_BASE, cpu->regs[inst->rs2] & 0xFF, 1);
+            mmio_write_fast(cpu, addr - cpu->mmio_base, cpu->regs[inst->rs2] & 0xFF, 1);
             cpu->cycle_count += 3;
             return;
         }
@@ -768,6 +769,7 @@ int main(int argc, char **argv) {
     // Check header flag for MMIO configuration
     if (header.flags & S32X_FLAG_MMIO) {
         cpu.mmio_enabled = true;
+        cpu.mmio_base = header.mmio_base;
         // Initialize MMIO immediately since we know it's needed
         cpu.mmio_state = (mmio_ring_state_t*)calloc(1, sizeof(mmio_ring_state_t));
         if (cpu.mmio_state) {

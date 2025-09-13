@@ -65,6 +65,26 @@ static size_t utoa(unsigned int uval, char *buf) {
     return p - buf;
 }
 
+// Convert unsigned to octal string
+static size_t utoo(unsigned int uval, char *buf) {
+    char *p = buf;
+    char *q = p;
+    
+    if (uval == 0) {
+        *p++ = '0';
+        *p = '\0';
+        return 1;
+    }
+    
+    while (uval > 0) {
+        *p++ = '0' + (uval & 7);
+        uval >>= 3;
+    }
+    *p = '\0';
+    ReverseDigits(q, p-1);
+    return p - buf;
+}
+
 // Convert signed to decimal string
 static size_t ltoa(int val, char *buf) {
     char *p = buf;
@@ -126,6 +146,17 @@ int vprintf(const char *format, va_list ap) {
                 unsigned int val = va_arg(ap, unsigned int);
                 char buf[9]; // Enough for FFFFFFFF
                 size_t len = utox(val, buf, *p == 'X');
+                for (size_t i = 0; i < len; i++) {
+                    putchar(buf[i]);
+                    count++;
+                }
+                break;
+            }
+            
+            case 'o': { // Octal
+                unsigned int val = va_arg(ap, unsigned int);
+                char buf[12]; // Enough for 37777777777
+                size_t len = utoo(val, buf);
                 for (size_t i = 0; i < len; i++) {
                     putchar(buf[i]);
                     count++;
@@ -237,6 +268,15 @@ int vsprintf(char *buffer, const char *format, va_list ap) {
                 unsigned int val = va_arg(ap, unsigned int);
                 char buf[9];
                 size_t len = utox(val, buf, *p == 'X');
+                memcpy(out, buf, len);
+                out += len;
+                break;
+            }
+            
+            case 'o': {
+                unsigned int val = va_arg(ap, unsigned int);
+                char buf[12];
+                size_t len = utoo(val, buf);
                 memcpy(out, buf, len);
                 out += len;
                 break;

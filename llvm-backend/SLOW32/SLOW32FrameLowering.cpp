@@ -12,11 +12,21 @@ using namespace llvm;
 
 void SLOW32FrameLowering::emitPrologue(MachineFunction &MF, MachineBasicBlock &MBB) const {
   MachineFrameInfo &MFI = MF.getFrameInfo();
-  const SLOW32InstrInfo *TII = 
+  const SLOW32InstrInfo *TII =
       static_cast<const SLOW32InstrInfo*>(MF.getSubtarget().getInstrInfo());
-  
+
   MachineBasicBlock::iterator MBBI = MBB.begin();
   DebugLoc DL;
+
+  // TEMPORARILY DISABLED: Marking physical registers as live-in
+  // Causes assertion in Machine Copy Propagation pass
+  // if (&MBB == &MF.front()) {
+  //   for (Register R : {SLOW32::SP, SLOW32::FP, SLOW32::LR}) {
+  //     if (!MBB.isLiveIn(R)) {
+  //       MBB.addLiveIn(R);
+  //     }
+  //   }
+  // }
   
   // Calculate frame size
   uint64_t FrameSize = MFI.getStackSize();

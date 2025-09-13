@@ -80,6 +80,8 @@ static const char *reloc_type_name(uint32_t type) {
         case S32O_REL_BRANCH: return "BRANCH";
         case S32O_REL_JAL:    return "JAL";
         case S32O_REL_CALL:   return "CALL";
+        case S32O_REL_PCREL_HI20: return "PCREL_HI20";
+        case S32O_REL_PCREL_LO12: return "PCREL_LO12";
         default:              return "UNKNOWN";
     }
 }

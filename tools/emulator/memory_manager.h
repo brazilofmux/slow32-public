@@ -133,48 +133,28 @@ static int mm_setup_from_s32x(memory_manager_t *mm,
                               uint32_t rodata_limit, 
                               uint32_t data_limit,
                               uint32_t stack_base) {
-    // Setting up memory from s32x header
-    fflush(stderr);
     // Code segment: initially read+write for loading, will become read-only
     if (code_limit > 0) {
-        // Allocating code segment
-        fflush(stderr);
         if (!mm_allocate_region(mm, 0, code_limit, PROT_READ | PROT_WRITE)) {
-            // Failed to allocate code segment
-            fflush(stderr);
             return -1;
         }
-        // Code segment allocated
-        fflush(stderr);
     }
     
     // Read-only data segment: initially read+write for loading
     // rodata starts immediately after code
     if (rodata_limit > code_limit) {
-        // Allocating rodata segment
-        fflush(stderr);
         if (!mm_allocate_region(mm, code_limit, rodata_limit - code_limit, PROT_READ | PROT_WRITE)) {
-            // Failed to allocate rodata segment
-            fflush(stderr);
             return -1;
         }
-        // Rodata segment allocated
-        fflush(stderr);
     }
     
     // Read-write data segment
     // Data starts immediately after rodata
     if (data_limit > rodata_limit) {
-        // Allocating data segment
-        fflush(stderr);
         if (!mm_allocate_region(mm, rodata_limit, data_limit - rodata_limit, 
                                 PROT_READ | PROT_WRITE)) {
-            // Failed to allocate data segment
-            fflush(stderr);
             return -1;
         }
-        // Data segment allocated
-        fflush(stderr);
     }
     
     // Heap region - from end of data to stack base
@@ -183,30 +163,18 @@ static int mm_setup_from_s32x(memory_manager_t *mm,
     if (heap_start < 0x3000) heap_start = 0x3000;  // Minimum heap start
     
     if (stack_base > heap_start) {
-        // Allocating heap segment
-        fflush(stderr);
         if (!mm_allocate_region(mm, heap_start, stack_base - heap_start, PROT_READ | PROT_WRITE)) {
-            // Failed to allocate heap segment
-            fflush(stderr);
             return -1;
         }
-        // Heap segment allocated
-        fflush(stderr);
     }
     
     // Stack region - small stack around the stack pointer
     // Stack grows down, so allocate from heap end to beyond stack base
     uint32_t stack_size = 64 * 1024;  // 64KB stack
     uint32_t stack_end = stack_base + 0x1000;  // A bit above stack base
-    // Allocating stack segment
-    fflush(stderr);
     if (!mm_allocate_region(mm, stack_base, stack_end - stack_base, PROT_READ | PROT_WRITE)) {
-        // Failed to allocate stack segment
-        fflush(stderr);
         return -1;
     }
-    // Stack segment allocated
-    fflush(stderr);
     
     return 0;
 }

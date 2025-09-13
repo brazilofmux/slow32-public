@@ -13,6 +13,8 @@
 
 using namespace llvm;
 
+#define DEBUG_TYPE "slow32-lower"
+
 SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   : TargetLowering(TM) {
   // Set up the register classes
@@ -157,7 +159,6 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   // setOperationAction(ISD::LOAD, MVT::i32, Custom);
   // setOperationAction(ISD::STORE, MVT::i32, Custom);
 
-  // Configure memcpy/memmove/memset expansion
   // Now that we allow misaligned i32 access, we can safely expand
   // larger memcpy operations using word loads/stores
   MaxStoresPerMemcpy = 8;        // Allow up to 32 bytes inline (8 word stores)
@@ -175,6 +176,9 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   // Note: i64 divide/rem operations are set to Expand above
   // This will cause LLVM to generate libcalls to __divdi3, __udivdi3, __moddi3, __umoddi3
   // These need to be provided by compiler-rt or a similar runtime library
+  
+  // Register custom DAG combines
+  setTargetDAGCombine({ISD::ADD, ISD::MUL, ISD::AND, ISD::OR, ISD::SHL});
 }
 
 const char *SLOW32TargetLowering::getTargetNodeName(unsigned Opcode) const {
@@ -229,13 +233,18 @@ SDValue SLOW32TargetLowering::LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) 
   GlobalAddressSDNode *GA = cast<GlobalAddressSDNode>(Op);
   EVT VT = Op.getValueType();
   const GlobalValue *GV = GA->getGlobal();
+  
+  // Debug: Check if we have an offset
+  int64_t Offset = GA->getOffset();
+  LLVM_DEBUG(dbgs() << "LowerGlobalAddress: " << GV->getName() 
+                    << " offset=" << Offset << "\n");
 
   // Use %hi/%lo addressing for all global addresses (both functions and data)
   // Create target global address nodes with appropriate flags
   SDValue TargetGAHi = DAG.getTargetGlobalAddress(GV, DL, VT,
-                                                   GA->getOffset(), SLOW32II::MO_HI);
+                                                   Offset, SLOW32II::MO_HI);
   SDValue TargetGALo = DAG.getTargetGlobalAddress(GV, DL, VT,
-                                                   GA->getOffset(), SLOW32II::MO_LO);
+                                                   Offset, SLOW32II::MO_LO);
 
   // Generate: lui rd, %hi(symbol)
   SDValue Hi = DAG.getNode(SLOW32ISD::HI, DL, VT, TargetGAHi);
@@ -632,9 +641,10 @@ SDValue SLOW32TargetLowering::LowerFormalArguments(
 
   // Process arguments
   // Stack arguments are above the frame pointer, pushed by caller
-  // Layout: [arg10][arg9][saved lr][saved fp] <- FP points here
-  // So first stack arg (arg9) is at FP+8, next at FP+12, etc.
-  unsigned StackOffset = 8; // Skip saved FP and LR
+  // Layout: [arg10][arg9] <- FP points here (to caller's SP)
+  //         [saved lr][saved fp] <- These are BELOW FP in our frame
+  // So first stack arg (arg9) is at FP+0, next at FP+4, etc.
+  unsigned StackOffset = 0; // Stack args start right at FP
   SmallVector<SDValue, 8> OutChains;
 
   for (unsigned i = 0; i < Ins.size(); ++i) {
@@ -921,8 +931,24 @@ SDValue SLOW32TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
 EVT SLOW32TargetLowering::getOptimalMemOpType(
     LLVMContext &Context, const MemOp &Op,
     const AttributeList &FuncAttributes) const {
-  // SLOW32 only has efficient 32-bit operations
-  // Using i32 for memcpy/memset will generate clean word-sized loads/stores
+  // At -O0, keep it simple and correct with byte operations
+  if (getTargetMachine().getOptLevel() == CodeGenOptLevel::None)
+    return MVT::i8;
+  
+  // With weak alignment, avoid wide ops to prevent endian issues
+  unsigned DstAlign = Op.getDstAlign().value();
+  unsigned MinAlign = DstAlign;
+  
+  // For memcpy, also consider source alignment
+  if (Op.isMemcpy()) {
+    unsigned SrcAlign = Op.getSrcAlign().value();
+    MinAlign = std::min(DstAlign, SrcAlign);
+  }
+  
+  if (MinAlign < 4 || Op.size() < 4)
+    return MVT::i8;
+  
+  // For aligned cases at O1/O2, use efficient word operations
   return MVT::i32;
 }
 
@@ -1129,16 +1155,16 @@ SLOW32TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
 bool SLOW32TargetLowering::allowsMisalignedMemoryAccesses(
     EVT VT, unsigned AddrSpace, Align Alignment,
     MachineMemOperand::Flags Flags, unsigned *Fast) const {
-  // SLOW32 can do unaligned loads/stores, but they're slower
-  // However, allowing them prevents the catastrophic register
-  // allocation bug in byte-wise memcpy expansion
-  if (Fast)
-    *Fast = 0;  // Unaligned is slower but works
-
-  // Allow unaligned access for i32 to prevent byte-wise expansion
-  if (VT == MVT::i32)
-    return true;
-
+  // For i32, allow misaligned access but mark it as slow
+  // This lets LLVM use it when necessary but prefer byte ops
+  // when guided by getOptimalMemOpType
+  if (VT == MVT::i32 && Alignment < Align(4)) {
+    if (Fast) 
+      *Fast = 0;  // Legal but slow -> prefer byte ops
+    return true;    // Emulator/hw can handle if it must
+  }
+  
+  // Conservative for other types
   return false;
 }
 
@@ -1626,4 +1652,232 @@ void SLOW32TargetLowering::LowerAsmOperandForConstraint(
   
   // Fall back to default implementation
   TargetLowering::LowerAsmOperandForConstraint(Op, Constraint, Ops, DAG);
+}//===----------------------------------------------------------------------===//
+// Custom DAG Combine Implementation
+//===----------------------------------------------------------------------===//
+
+SDValue SLOW32TargetLowering::PerformDAGCombine(SDNode *N, 
+                                                DAGCombinerInfo &DCI) const {
+  switch (N->getOpcode()) {
+  default: break;
+  case ISD::ADD:   return performADDCombine(N, DCI);
+  case ISD::MUL:   return performMULCombine(N, DCI);
+  case ISD::AND:   return performANDCombine(N, DCI);
+  case ISD::OR:    return performORCombine(N, DCI);
+  case ISD::SHL:   return performSHLCombine(N, DCI);
+  case ISD::LOAD:  return performLOADCombine(N, DCI);
+  case ISD::STORE: return performSTORECombine(N, DCI);
+  }
+  return SDValue();
+}
+
+SDValue SLOW32TargetLowering::performADDCombine(SDNode *N, 
+                                                DAGCombinerInfo &DCI) const {
+  SelectionDAG &DAG = DCI.DAG;
+  SDLoc DL(N);
+  
+  // Combine (add x, (shl y, 1)) -> (add (shl y, 1), x) 
+  // to help with addressing mode matching
+  SDValue N0 = N->getOperand(0);
+  SDValue N1 = N->getOperand(1);
+  
+  // Only do add -> mul transforms BEFORE legalization
+  // to avoid infinite loops. The MUL combine does mul -> add+shl
+  // after legalization, so we must stop doing add+shl -> mul by then.
+  // We need to check both isAfterLegalizeDAG and !isBeforeLegalize
+  // to catch all post-legalization phases.
+  if (!DCI.isBeforeLegalize()) {
+    return SDValue();
+  }
+  
+  // Combine (add (shl x, 2), x) -> (mul x, 5)
+  // Useful for array indexing patterns
+  if (N0.getOpcode() == ISD::SHL && N0.getOperand(0) == N1) {
+    if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(N0.getOperand(1))) {
+      unsigned ShAmt = C->getZExtValue();
+      if (ShAmt >= 1 && ShAmt <= 3) {
+        // (x << n) + x = x * ((1 << n) + 1)
+        unsigned MulConst = (1U << ShAmt) + 1;
+        return DAG.getNode(ISD::MUL, DL, N->getValueType(0), N1,
+                          DAG.getConstant(MulConst, DL, N->getValueType(0)));
+      }
+    }
+  }
+  
+  // Combine (add x, (shl x, 2)) -> (mul x, 5)
+  if (N1.getOpcode() == ISD::SHL && N1.getOperand(0) == N0) {
+    if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(N1.getOperand(1))) {
+      unsigned ShAmt = C->getZExtValue();
+      if (ShAmt >= 1 && ShAmt <= 3) {
+        unsigned MulConst = (1U << ShAmt) + 1;
+        return DAG.getNode(ISD::MUL, DL, N->getValueType(0), N0,
+                          DAG.getConstant(MulConst, DL, N->getValueType(0)));
+      }
+    }
+  }
+  
+  return SDValue();
+}
+
+SDValue SLOW32TargetLowering::performMULCombine(SDNode *N, 
+                                                DAGCombinerInfo &DCI) const {
+  SelectionDAG &DAG = DCI.DAG;
+  SDLoc DL(N);
+  
+  // Optimize multiply by constants
+  ConstantSDNode *C = dyn_cast<ConstantSDNode>(N->getOperand(1));
+  if (!C) return SDValue();
+  
+  uint64_t MulAmt = C->getZExtValue();
+  
+  // Only do power-of-2 combines before legalization to avoid infinite loops
+  if (DCI.isBeforeLegalize() && isPowerOf2_64(MulAmt)) {
+    unsigned ShAmt = Log2_64(MulAmt);
+    return DAG.getNode(ISD::SHL, DL, N->getValueType(0),
+                      N->getOperand(0),
+                      DAG.getConstant(ShAmt, DL, MVT::i32));
+  }
+  
+  // Only do these non-power-of-2 combines AFTER legalization to avoid
+  // infinite loops with the ADD combine that does the reverse transformation.
+  // The ADD combine runs during legalization, converting add+shl -> mul.
+  // If we do mul -> add+shl before that, we get an infinite loop.
+  if (!DCI.isAfterLegalizeDAG()) {
+    return SDValue();
+  }
+  
+  // Optimize (mul x, 3) -> (add (shl x, 1), x)
+  // Optimize (mul x, 5) -> (add (shl x, 2), x)
+  // Optimize (mul x, 9) -> (add (shl x, 3), x)
+  if (MulAmt == 3 || MulAmt == 5 || MulAmt == 9) {
+    unsigned ShAmt = (MulAmt == 3) ? 1 : (MulAmt == 5) ? 2 : 3;
+    SDValue Shl = DAG.getNode(ISD::SHL, DL, N->getValueType(0),
+                             N->getOperand(0),
+                             DAG.getConstant(ShAmt, DL, MVT::i32));
+    return DAG.getNode(ISD::ADD, DL, N->getValueType(0), Shl, N->getOperand(0));
+  }
+  
+  // Optimize (mul x, 6) -> (shl (mul x, 3), 1) -> (shl (add (shl x, 1), x), 1)
+  if (MulAmt == 6) {
+    SDValue Shl1 = DAG.getNode(ISD::SHL, DL, N->getValueType(0),
+                               N->getOperand(0),
+                               DAG.getConstant(1, DL, MVT::i32));
+    SDValue Add = DAG.getNode(ISD::ADD, DL, N->getValueType(0), 
+                             Shl1, N->getOperand(0));
+    return DAG.getNode(ISD::SHL, DL, N->getValueType(0),
+                      Add, DAG.getConstant(1, DL, MVT::i32));
+  }
+  
+  return SDValue();
+}
+
+SDValue SLOW32TargetLowering::performANDCombine(SDNode *N, 
+                                                DAGCombinerInfo &DCI) const {
+  SDLoc DL(N);
+  
+  // Optimize (and x, 0xFFFF) to zero-extend pattern if beneficial
+  ConstantSDNode *C = dyn_cast<ConstantSDNode>(N->getOperand(1));
+  if (!C) return SDValue();
+  
+  uint64_t AndMask = C->getZExtValue();
+  
+  // Optimize (and (srl x, 16), 0xFFFF) -> (srli x, 16)
+  // The shift already zero-extends the upper bits
+  if (AndMask == 0xFFFF && N->getOperand(0).getOpcode() == ISD::SRL) {
+    if (ConstantSDNode *ShC = dyn_cast<ConstantSDNode>(N->getOperand(0).getOperand(1))) {
+      if (ShC->getZExtValue() == 16) {
+        return N->getOperand(0); // The SRL already masks correctly
+      }
+    }
+  }
+  
+  // Optimize (and x, 1) when used by a branch - helps with bool tests
+  if (AndMask == 1 && N->hasOneUse()) {
+    SDNode *Use = N->use_begin()->getUser();
+    if (Use->getOpcode() == ISD::BRCOND || Use->getOpcode() == ISD::BR_CC) {
+      // Keep as-is, this is optimal for flag testing
+      return SDValue();
+    }
+  }
+  
+  return SDValue();
+}
+
+SDValue SLOW32TargetLowering::performORCombine(SDNode *N, 
+                                               DAGCombinerInfo &DCI) const {
+  SelectionDAG &DAG = DCI.DAG;
+  SDLoc DL(N);
+  
+  // Combine (or (shl x, 16), (and y, 0xFFFF)) -> pack high/low halves
+  // This pattern appears in 32-bit constant materialization
+  SDValue N0 = N->getOperand(0);
+  SDValue N1 = N->getOperand(1);
+  
+  if (N0.getOpcode() == ISD::SHL && N1.getOpcode() == ISD::AND) {
+    if (ConstantSDNode *ShC = dyn_cast<ConstantSDNode>(N0.getOperand(1))) {
+      if (ConstantSDNode *AndC = dyn_cast<ConstantSDNode>(N1.getOperand(1))) {
+        if (ShC->getZExtValue() == 16 && AndC->getZExtValue() == 0xFFFF) {
+          // This is a common pattern for packing two 16-bit values
+          // Keep it as-is for now, but could optimize further
+          return SDValue();
+        }
+      }
+    }
+  }
+  
+  return SDValue();
+}
+
+SDValue SLOW32TargetLowering::performSHLCombine(SDNode *N, 
+                                                DAGCombinerInfo &DCI) const {
+  SelectionDAG &DAG = DCI.DAG;
+  SDLoc DL(N);
+  
+  // Combine (shl (shl x, c1), c2) -> (shl x, c1+c2)
+  if (N->getOperand(0).getOpcode() == ISD::SHL) {
+    if (ConstantSDNode *C1 = dyn_cast<ConstantSDNode>(N->getOperand(0).getOperand(1))) {
+      if (ConstantSDNode *C2 = dyn_cast<ConstantSDNode>(N->getOperand(1))) {
+        unsigned ShAmt = C1->getZExtValue() + C2->getZExtValue();
+        if (ShAmt < 32) {
+          return DAG.getNode(ISD::SHL, DL, N->getValueType(0),
+                            N->getOperand(0).getOperand(0),
+                            DAG.getConstant(ShAmt, DL, MVT::i32));
+        }
+      }
+    }
+  }
+  
+  return SDValue();
+}
+
+SDValue SLOW32TargetLowering::performLOADCombine(SDNode *N, 
+                                                 DAGCombinerInfo &DCI) const {
+  LoadSDNode *LD = cast<LoadSDNode>(N);
+  
+  // Don't combine volatile loads
+  if (LD->isVolatile())
+    return SDValue();
+  
+  // Could add combines for:
+  // - Combining narrow loads into wider loads
+  // - Optimizing load+shift patterns
+  // - Pre-increment/post-increment addressing patterns
+  
+  return SDValue();
+}
+
+SDValue SLOW32TargetLowering::performSTORECombine(SDNode *N, 
+                                                  DAGCombinerInfo &DCI) const {
+  StoreSDNode *ST = cast<StoreSDNode>(N);
+  
+  // Don't combine volatile stores
+  if (ST->isVolatile())
+    return SDValue();
+  
+  // Could add combines for:
+  // - Combining narrow stores into wider stores
+  // - Optimizing store of constants
+  // - Pre-increment/post-increment addressing patterns
+  
+  return SDValue();
 }

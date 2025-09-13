@@ -86,35 +86,49 @@ bool SLOW32InstrInfo::analyzeBranch(MachineBasicBlock &MBB,
   Cond.clear();
   
   LLVM_DEBUG(dbgs() << "analyzeBranch BB#" << MBB.getNumber() 
-                    << " allowModify=" << (AllowModify ? "yes" : "no") << "\n");
+                    << " allowModify=" << (AllowModify ? "yes" : "no")
+                    << " successors=" << MBB.succ_size() << "\n");
   
-  // Start from the end of the basic block; skip debug instructions
+  // Start from the end of the basic block and look for terminators
   MachineBasicBlock::iterator I = MBB.getLastNonDebugInstr();
   if (I == MBB.end())
     return false; // empty block => fallthrough
   
-  // getLastNonDebugInstr() doesn't skip CFI; walk back over any trailing CFI
-  while (I->isCFIInstruction() && I != MBB.begin())
+  // IMPORTANT: If the block has no successors, we can't analyze it meaningfully
+  // This can happen after noreturn calls (exit, abort, etc.)
+  if (MBB.succ_empty())
+    return true; // Can't analyze blocks with no successors
+  
+  // Skip back over any non-terminator instructions to find the actual terminators
+  // This handles blocks where calls or other instructions come before the branch
+  while (I != MBB.begin() && !isUnpredicatedTerminator(*I)) {
+    LLVM_DEBUG(dbgs() << "  Skipping non-terminator: " << *I);
     --I;
-  if (I->isCFIInstruction())
-    return false; // only CFI at end => fallthrough
+  }
+    
+  // If we didn't find any terminator, this block falls through
+  if (!isUnpredicatedTerminator(*I)) {
+    LLVM_DEBUG(dbgs() << "  No terminator found, treating as fallthrough\n");
+    return false; // No terminator => fallthrough
+  }
   
   LLVM_DEBUG(dbgs() << "  Last non-debug instr opcode: " << I->getOpcode() 
                     << " (BEQ_pat=" << SLOW32::BEQ_pat << ", BNE_pat=" << SLOW32::BNE_pat
                     << ", BR=" << SLOW32::BR << ")\n");
 
-  // If the block ends with a return/barrier, there is no analyzable branch.
+  // If the block ends with a return, there is no analyzable branch.
   // BUT: TailDup may have left stale branches immediately before the RET.
   // If we're allowed to modify, strip them here so Folder/Placement don't loop.
-  if (I->isReturn() || I->isBarrier()) {
+  // Note: Don't bail out on BR (which has isBarrier=1) - it's a branch we need to analyze!
+  if (I->isReturn()) {
     if (AllowModify) {
       int BytesRemoved = 0;
       unsigned N = removeBranch(MBB, &BytesRemoved);
-      LLVM_DEBUG(dbgs() << "  end=RET/BAR; removed " << N << " stale branch(es)\n");
+      LLVM_DEBUG(dbgs() << "  end=RET; removed " << N << " stale branch(es)\n");
     } else {
-      LLVM_DEBUG(dbgs() << "  end=RET/BAR; no modify, leaving as-is\n");
+      LLVM_DEBUG(dbgs() << "  end=RET; no modify, leaving as-is\n");
     }
-    return false;  // Successfully analyzed: no branches here
+    return false;  // Successfully analyzed: no branches (just return)
   }
 
   // Check for unconditional branch (BR)
@@ -183,13 +197,26 @@ bool SLOW32InstrInfo::analyzeBranch(MachineBasicBlock &MBB,
       Cond.push_back(I->getOperand(1)); // Second register
       
       LLVM_DEBUG(dbgs() << "  Found cond+uncond: TBB=BB#" << TBB->getNumber() 
-                        << " FBB=BB#" << FBB->getNumber() << "\n");
+                        << " FBB=BB#" << (FBB ? FBB->getNumber() : -1) << "\n");
       return false;
     }
     
     // Just a conditional branch with fall-through
     TBB = TargetBB;
-    LLVM_DEBUG(dbgs() << "  Found cond only: TBB=BB#" << TBB->getNumber() << "\n");
+    
+    // CRITICAL: Check if this block actually has a fallthrough successor
+    // A conditional branch should have 2 successors (taken and fallthrough)
+    // If it only has 1 successor, the fallthrough path is unreachable/deleted
+    if (MBB.succ_size() == 1) {
+      LLVM_DEBUG(dbgs() << "  Conditional branch with only 1 successor - no fallthrough!\n");
+      // This is really an unconditional branch disguised as conditional
+      // Return true to indicate we can't properly analyze this
+      return true;
+    }
+    
+    // Don't normalize conditional branches that target layout successor
+    // (they still need the explicit branch even if target is next block)
+    LLVM_DEBUG(dbgs() << "  Found cond only: TBB=BB#" << (TBB ? TBB->getNumber() : -1) << "\n");
     
     // Save the condition
     Cond.push_back(MachineOperand::CreateImm(Opcode));
@@ -199,8 +226,9 @@ bool SLOW32InstrInfo::analyzeBranch(MachineBasicBlock &MBB,
     return false;
   }
 
-  // Unknown branch type
-  return true;
+  // If we get here, we have an unrecognized terminator instruction
+  LLVM_DEBUG(dbgs() << "  Unrecognized terminator instruction (opcode=" << I->getOpcode() << ")\n");
+  return true; // Can't analyze this terminator
 }
 
 unsigned SLOW32InstrInfo::insertBranch(MachineBasicBlock &MBB,
@@ -213,34 +241,36 @@ unsigned SLOW32InstrInfo::insertBranch(MachineBasicBlock &MBB,
   
   unsigned Count = 0;
   
-  // Insert before the first terminator if one exists (e.g., RET),
-  // otherwise at the end of the block
-  MachineBasicBlock::iterator InsertPos = MBB.getFirstTerminator();
+  // Always insert at the end of the block to maintain proper order
+  // Branch Folder expects us to build the terminator sequence from scratch
   
   // Unconditional branch
   if (Cond.empty()) {
-    BuildMI(MBB, InsertPos, DL, get(SLOW32::BR)).addMBB(TBB);
-    Count = 1;
+    // Only insert if TBB is not the layout successor (fallthrough)
+    if (!MBB.isLayoutSuccessor(TBB)) {
+      BuildMI(&MBB, DL, get(SLOW32::BR)).addMBB(TBB);
+      Count = 1;
+    }
+    // Note: Don't add successors here - Branch Folder manages CFG edges
   } else {
     // Conditional branch
     assert(Cond.size() == 3 && "Invalid condition");
     unsigned Opcode = Cond[0].getImm();
     
-    MachineInstr *CondMI =
-      BuildMI(MBB, InsertPos, DL, get(Opcode))
-        .add(Cond[1])  // First register
-        .add(Cond[2])  // Second register
-        .addMBB(TBB)
-        .getInstr();
+    // Emit conditional branch first
+    BuildMI(&MBB, DL, get(Opcode))
+      .add(Cond[1])  // First register
+      .add(Cond[2])  // Second register
+      .addMBB(TBB);
     Count = 1;
     
-    // Add unconditional branch if FBB is specified
-    // Insert explicitly after the conditional to guarantee correct order
-    if (FBB) {
-      auto AfterCond = std::next(CondMI->getIterator());
-      BuildMI(MBB, AfterCond, DL, get(SLOW32::BR)).addMBB(FBB);
+    // Add unconditional branch if FBB is specified and it's not fallthrough
+    // This comes AFTER the conditional branch
+    if (FBB && !MBB.isLayoutSuccessor(FBB)) {
+      BuildMI(&MBB, DL, get(SLOW32::BR)).addMBB(FBB);
       Count = 2;
     }
+    // Note: Don't add successors here - Branch Folder manages CFG edges
   }
   
   if (BytesAdded)
@@ -251,10 +281,6 @@ unsigned SLOW32InstrInfo::insertBranch(MachineBasicBlock &MBB,
 
 unsigned SLOW32InstrInfo::removeBranch(MachineBasicBlock &MBB,
                                         int *BytesRemoved) const {
-  MachineBasicBlock::iterator I = MBB.getLastNonDebugInstr();
-  if (I == MBB.end())
-    return 0;
-  
   unsigned Count = 0;
   
   // Helper to check if an instruction is a branch
@@ -266,59 +292,25 @@ unsigned SLOW32InstrInfo::removeBranch(MachineBasicBlock &MBB,
            Opc == SLOW32::BGE;
   };
   
-  // Case 1: Block ends with a return/barrier, and dead branch(es) sit immediately before it
-  // (this happens after tail-dup of a RET-only successor)
-  if (I->isReturn() || I->isBarrier()) {
-    LLVM_DEBUG(dbgs() << "removeBranch: RET at end; scanning for BR before RET\n");
-    MachineBasicBlock::iterator J = I;
-    if (J != MBB.begin()) {
-      --J;
-      // Skip debug and CFI instructions
-      while ((J->isDebugInstr() || J->isCFIInstruction()) && J != MBB.begin())
-        --J;
-      
-      // Remove up to two branches immediately preceding the RET
-      while (IsBranch(J->getOpcode())) {
-        MachineBasicBlock::iterator ToErase = J;
-        bool isAtBegin = (J == MBB.begin());
-        if (!isAtBegin) {
-          --J;
-          // Skip debug/CFI instructions
-          while (J != MBB.begin() && (J->isDebugInstr() || J->isCFIInstruction()))
-            --J;
-        }
-        ToErase->eraseFromParent();
-        Count++;
-        
-        if (Count == 2 || isAtBegin)
-          break;
-      }
-    }
-  } else {
-    // Case 2: Normal case - remove branches from the end
-    // Walk back over any trailing CFI/DBG first
-    while (I != MBB.begin() && (I->isDebugInstr() || I->isCFIInstruction()))
+  // Robust approach: repeatedly get last non-debug instruction and remove if branch
+  // This avoids iterator invalidation issues
+  while (true) {
+    MachineBasicBlock::iterator I = MBB.getLastNonDebugInstr();
+    if (I == MBB.end())
+      break;
+    
+    // Walk back over trailing CFI
+    while (I != MBB.begin() && I->isCFIInstruction())
       --I;
     
-    while (I != MBB.begin()) {
-      if (!IsBranch(I->getOpcode()))
-        break;
-      
-      // Remove this branch
-      MachineBasicBlock::iterator J = I;
-      --I;
-      J->eraseFromParent();
-      Count++;
-      
-      // Step to the previous non-DBG/CFI for the next iteration
-      while (I != MBB.begin() && (I->isDebugInstr() || I->isCFIInstruction()))
-        --I;
-      
-      // Stop after removing 2 branches (conditional + unconditional)
-      if (Count == 2)
-        break;
-    }
+    if (!IsBranch(I->getOpcode()))
+      break;
+    
+    I->eraseFromParent();
+    ++Count;
   }
+  
+  // Note: Don't modify successors here - Branch Folder manages CFG edges
   
   if (BytesRemoved)
     *BytesRemoved = Count * 4;

@@ -47,7 +47,7 @@ static void cpu_init_mmio(cpu_state_t *cpu) {
     
     // Add MMIO as a memory region
     memory_region_t *mmio_region = mm_allocate_region(&cpu->mm, 
-                                                      MMIO_BASE, 
+                                                      cpu->mmio_base, 
                                                       0x10000,  // 64KB
                                                       PROT_READ | PROT_WRITE);
     if (!mmio_region) {
@@ -280,7 +280,6 @@ bool cpu_load_binary(cpu_state_t *cpu, const char *filename) {
             }
             
             // Write to memory through memory manager
-            // Write to memory through memory manager
             if (mm_write(&cpu->mm, section.vaddr, temp, section.size) < 0) {
                 fprintf(stderr, "Cannot write section '%s' to memory\n", name);
                 free(temp);
@@ -342,6 +341,7 @@ bool cpu_load_binary(cpu_state_t *cpu, const char *filename) {
     // Check header flag for MMIO configuration
     if (header.flags & S32X_FLAG_MMIO) {
         cpu->mmio_enabled = true;
+        cpu->mmio_base = header.mmio_base;
         // Initialize MMIO immediately since we know it's needed
         cpu_init_mmio(cpu);
     }
@@ -359,12 +359,11 @@ bool cpu_load_binary(cpu_state_t *cpu, const char *filename) {
 
 // Memory access functions using memory manager
 static uint32_t cpu_load(cpu_state_t *cpu, uint32_t addr, int size) {
-    //printf("[TRACE] cpu_load: addr=0x%08X, size=%d\n", addr, size);
     fflush(stdout);
     uint32_t value = 0;
     
-    // Check if this is MMIO access
-    if (addr >= MMIO_BASE && addr < MMIO_BASE + 0x10000) {
+    // Check if this is MMIO access (only if MMIO is configured)
+    if (cpu->mmio_base != 0 && addr >= cpu->mmio_base && addr < cpu->mmio_base + 0x10000) {
         
         if (cpu->mmio_initialized) {
             if (size == 4) {
@@ -401,8 +400,8 @@ static uint32_t cpu_load(cpu_state_t *cpu, uint32_t addr, int size) {
 }
 
 static void cpu_store(cpu_state_t *cpu, uint32_t addr, uint32_t value, int size) {
-    // Check if this is MMIO access
-    if (addr >= MMIO_BASE && addr < MMIO_BASE + 0x10000) {
+    // Check if this is MMIO access (only if MMIO is configured)
+    if (cpu->mmio_base != 0 && addr >= cpu->mmio_base && addr < cpu->mmio_base + 0x10000) {
         
         if (cpu->mmio_initialized) {
             if (size == 4) {

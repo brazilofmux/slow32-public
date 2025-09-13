@@ -21,6 +21,8 @@ class FunctionPass;
 class SLOW32TargetMachine;
 
 FunctionPass *createSLOW32ISelDag(SLOW32TargetMachine &TM);
+// FunctionPass *createSLOW32NormalizeCallTailsPass();  // Disabled - not needed after upstream fixes
+// FunctionPass *createSLOW32RepairCFGFromTerminatorsPass();  // Disabled - not needed after upstream fixes
 
 // SLOW32 specific instruction flags
 namespace SLOW32II {

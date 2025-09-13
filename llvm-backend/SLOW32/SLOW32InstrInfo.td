@@ -17,6 +17,10 @@ def uimm16 : Operand<i32>, ImmLeaf<i32, [{
   return isUInt<16>(Imm);
 }]>;
 
+// Complex address pattern for load/store instructions
+// SelectAddr splits addresses into base + offset
+def SLOW32Addr : ComplexPattern<iPTR, 2, "SelectAddr", [], []>;
+
 // Define SLOW32-specific SDNodes
 def SLOW32hi : SDNode<"SLOW32ISD::HI", SDTIntUnaryOp>;
 def SLOW32lo : SDNode<"SLOW32ISD::LO", SDTIntUnaryOp>;
@@ -186,6 +190,7 @@ def : Pat<(load GPR:$addr), (LDW GPR:$addr, 0)>;
 def : Pat<(store GPR:$val, GPR:$addr), (STW GPR:$addr, GPR:$val, 0)>;
 
 // Patterns for loads with offsets (base + immediate)
+// Also use ComplexPattern for better address matching
 def : Pat<(load (add GPR:$base, simm16:$offset)), 
           (LDW GPR:$base, simm16:$offset)>;
 def : Pat<(sextloadi8 (add GPR:$base, simm16:$offset)), 
@@ -210,6 +215,7 @@ def : Pat<(truncstorei16 GPR:$val, (add GPR:$base, simm16:$offset)),
           (STH GPR:$base, GPR:$val, simm16:$offset)>;
 
 // Patterns for byte loads (sign-extended and zero-extended)
+// Keep the simple patterns with explicit addressing modes
 def : Pat<(sextloadi8 GPR:$addr), (LDB GPR:$addr, 0)>;
 def : Pat<(zextloadi8 GPR:$addr), (LDBU GPR:$addr, 0)>;
 def : Pat<(extloadi8 GPR:$addr), (LDBU GPR:$addr, 0)>;
@@ -320,13 +326,14 @@ def SLOW32call : SDNode<"SLOW32ISD::CALL", SDT_SLOW32Call,
 // R1 is implicitly used for return values (may be undef for void)
 // We always set R1 (to undef for void) so Uses=[R1] is always satisfied
 // For i32 returns, only R1 is used
-let isReturn = 1, isTerminator = 1, isBarrier = 1, Uses = [R1],
-    hasSideEffects = 0, mayStore = 0, mayLoad = 0 in
+// isNotDuplicable prevents tail duplication which can cause Branch Folder issues
+let isReturn = 1, isTerminator = 1, isBarrier = 1, isNotDuplicable = 1,
+    Uses = [R1], hasSideEffects = 0, mayStore = 0, mayLoad = 0 in
 def RET : S32Inst<(outs), (ins), "jalr r0, r31, 0">;
 
 // For i64 returns, both R1 and R2 are used
-let isReturn = 1, isTerminator = 1, isBarrier = 1, Uses = [R1, R2], 
-    hasSideEffects = 0, mayStore = 0, mayLoad = 0 in
+let isReturn = 1, isTerminator = 1, isBarrier = 1, isNotDuplicable = 1,
+    Uses = [R1, R2], hasSideEffects = 0, mayStore = 0, mayLoad = 0 in
 def RET64 : S32Inst<(outs), (ins), "jalr r0, r31, 0">;
 
 // Pattern: RET_FLAG node is now handled in custom instruction selection
@@ -338,8 +345,8 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1 in {
   def BR : S32Inst<(outs), (ins brtarget:$target), "jal r0, $target", [(br bb:$target)]>;
 }
 
-// Conditional branches - all are terminators
-let isBranch = 1, isTerminator = 1 in {
+// Conditional branches - all are terminators but NOT barriers (can fall through)
+let isBranch = 1, isTerminator = 1, isBarrier = 0, hasSideEffects = 0 in {
   def BEQ_pat : S32Inst<(outs), (ins GPR:$rs1, GPR:$rs2, brtarget:$target), 
                         "beq $rs1, $rs2, $target",
                         [(SLOW32brcc GPR:$rs1, GPR:$rs2, bb:$target)]>;

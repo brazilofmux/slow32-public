@@ -1,5 +1,5 @@
 diff --git a/llvm/include/llvm/TargetParser/Triple.h b/llvm/include/llvm/TargetParser/Triple.h
-index c8fa482a9..b170a26fc 100644
+index f9b4fc3aa..9b202ba5d 100644
 --- a/llvm/include/llvm/TargetParser/Triple.h
 +++ b/llvm/include/llvm/TargetParser/Triple.h
 @@ -79,6 +79,7 @@ public:

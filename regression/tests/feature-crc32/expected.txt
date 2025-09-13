@@ -1,1 +1,3 @@
+CRC32 of 'ABC' = 0xA3830348
+Expected value = 0xA3830348
 PASS

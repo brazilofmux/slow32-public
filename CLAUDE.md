@@ -8,11 +8,16 @@ SLOW-32 is a 32-bit RISC CPU with complete toolchain. This file contains quick c
 # Build everything
 make
 
-# Compile and run C program (BEST method - native SLOW32 target)
+# Quick test of toolchain
+./scripts/test-quick.sh
+
+# Compile C program with helper script
+./scripts/compile.sh program.c [output.s32x]
+
+# Compile and run C program (manual method - native SLOW32 target)
 ~/llvm-project/build/bin/clang -target slow32-unknown-none -S -emit-llvm -O2 -Iruntime/include program.c -o program.ll
 ~/llvm-project/build/bin/llc -mtriple=slow32-unknown-none program.ll -o program.s
 ./tools/assembler/slow32asm program.s program.s32o
-# Link with crt0.s32o explicitly first (contains _start)
 ./tools/linker/s32-ld -o program.s32x runtime/crt0.s32o program.s32o runtime/libs32.s32a runtime/libc.s32a
 ./tools/emulator/slow32 program.s32x
 
@@ -40,14 +45,15 @@ make
 
 ## Working Features
 
-✅ Complete toolchain with proper linker (not concatenation!)  
-✅ Object files (.s32o) with relocations and symbol tables  
-✅ Executable format (.s32x) with resolved symbols  
-✅ All comparison instructions (SEQ, SNE, SGT/U, SLE/U, etc.)  
-✅ PHI node support for SSA form  
-✅ LLVM intrinsics: memcpy, memset, lifetime, smax/smin  
-✅ Varargs fully working with clang SLOW32 target!  
-✅ Jump tables for switch statements (assembler, linker, LLVM backend all support)  
+✅ Complete toolchain with proper linker (not concatenation!)
+✅ Object files (.s32o) with relocations and symbol tables
+✅ Executable format (.s32x) with resolved symbols
+✅ All comparison instructions (SEQ, SNE, SGT/U, SLE/U, etc.)
+✅ PHI node support for SSA form
+✅ LLVM intrinsics: memcpy, memset, lifetime, smax/smin
+✅ Varargs fully working with clang SLOW32 target!
+✅ Jump tables for switch statements (assembler, linker, LLVM backend all support)
+✅ Advanced relocations: %hi(symbol+offset), %lo(symbol+offset), %pcrel_hi, %pcrel_lo
 ✅ 64-bit integers: FULLY COMPLETE including:
   - ADD/SUB with carry/borrow
   - MUL via UMUL_LOHI/SMUL_LOHI custom lowering
@@ -55,24 +61,27 @@ make
   - All logical operations (AND, OR, XOR, shifts)
   - All comparison operations (EQ, NE, LT, GT, LE, GE for both signed/unsigned)
   - Comprehensive regression test coverage
-✅ Native Clang target: `-target slow32-unknown-none` (note: single dash)  
+✅ Native Clang target: `-target slow32-unknown-none` (note: single dash)
 ✅ XORI instruction (opcode 0x1E) for XOR immediate operations
 ✅ LLVM backend updated for latest LLVM API (Sep 2025)
-✅ Regression tests passing (14/19 tests, 5 skipped due to missing test files)
-✅ Runtime libraries built as archives: libs32.s32a (2.1KB), libc.s32a (30KB)
-✅ Optimization passes fixed - no more LLC hangs
+✅ Regression tests: ALL 14/14 PASSING! (Fixed MMIO bug, stack args offset)
+✅ Runtime libraries built as archives: libs32.s32a (5.3KB), libc.s32a (14KB)
+✅ ALL optimization levels working (-O0, -O1, -O2)!
+✅ MMIO support: Emulators use MMIO base from executable header, linker provides __mmio_base symbol
+✅ Fixed emulator MMIO bug: no longer treats address 0x0-0xFFFF as MMIO when mmio_base=0
+✅ Fixed LLVM backend stack argument bug: arguments 9+ now correctly accessed at fp+0, fp+4, etc.
 
-⚠️ Requires -O1 or -O2 (unoptimized exhausts registers)  
 ⚠️ See docs/IMPROVEMENTS.md for known issues
 
 
 ## Important Notes for Toolchain
 
 - **Always use the linker** - Never concatenate .s files!
-- **crt0.s32o must be explicitly linked** - Contains _start (not included in archives)
+- **crt0.s32o must be explicitly linked first** - Contains _start at address 0 (not included in archives)
 - **Link order**: crt0.s32o, program.s32o, libs32.s32a, libc.s32a
-- **Use -O2** - Default optimization level, -O1 also works
-- **Archives available**: libs32.s32a (runtime intrinsics + builtins), libc.s32a (standard C library)
+- **Use -O2** - Default optimization level, -O0 and -O1 also work
+- **Archives available**: libs32.s32a (runtime intrinsics + 64-bit builtins), libc.s32a (standard C library)
+- **MMIO support**: Use `--mmio SIZE` flag with linker (e.g., `--mmio 64K`), access via __mmio_base symbol
 
 ## Working C Examples
 
@@ -97,6 +106,27 @@ int sum_to_n(int n) {
     }
     return sum;
 }
+```
+
+## Docker Support
+
+Docker containers provide a clean baseline for testing. Two containers available:
+- `slow32-toolchain`: Full development environment with LLVM 22
+- `slow32-emulator`: Lightweight runtime for testing executables
+
+```bash
+# Build Docker images (if not already built)
+docker build -t slow32-toolchain -f Dockerfile.toolchain .
+docker build -t slow32-emulator -f Dockerfile.emulator .
+
+# Test against clean baseline when unsure if changes broke something
+docker run --rm -v $(pwd):/workspace slow32-toolchain bash -c "cd /workspace && make"
+
+# Run tests in clean environment
+docker run --rm -v $(pwd):/workspace slow32-toolchain bash -c "cd /workspace/regression && ./run-tests.sh"
+
+# Test specific program compilation (uses clang/llc from /usr/local/bin in container)
+docker run --rm -v $(pwd):/workspace slow32-toolchain bash -c "cd /workspace && clang -target slow32-unknown-none -S -emit-llvm -O2 -Iruntime/include test.c -o test.ll && llc -mtriple=slow32-unknown-none test.ll -o test.s"
 ```
 
 ## Testing Commands

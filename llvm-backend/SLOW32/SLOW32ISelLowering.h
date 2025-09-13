@@ -103,6 +103,19 @@ public:
   void LowerAsmOperandForConstraint(SDValue Op, StringRef Constraint,
                                     std::vector<SDValue> &Ops,
                                     SelectionDAG &DAG) const override;
+  
+  // Custom DAG combines
+  SDValue PerformDAGCombine(SDNode *N, DAGCombinerInfo &DCI) const override;
+  
+private:
+  // Helper functions for DAG combines
+  SDValue performADDCombine(SDNode *N, DAGCombinerInfo &DCI) const;
+  SDValue performMULCombine(SDNode *N, DAGCombinerInfo &DCI) const;
+  SDValue performANDCombine(SDNode *N, DAGCombinerInfo &DCI) const;
+  SDValue performORCombine(SDNode *N, DAGCombinerInfo &DCI) const;
+  SDValue performSHLCombine(SDNode *N, DAGCombinerInfo &DCI) const;
+  SDValue performLOADCombine(SDNode *N, DAGCombinerInfo &DCI) const;
+  SDValue performSTORECombine(SDNode *N, DAGCombinerInfo &DCI) const;
 };
 }
 #endif

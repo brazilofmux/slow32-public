@@ -49,9 +49,12 @@ typedef struct {
     char label_ref[64];
     int label_offset;
     bool has_symbol_ref;    // True if this references a global symbol
-    char symbol_ref[64];    // Symbol name for %hi()/%lo()
+    char symbol_ref[64];    // Symbol name for %hi()/%lo()/%pcrel_hi()/%pcrel_lo()
     bool symbol_is_hi;      // True if this is %hi(symbol)
     bool symbol_is_lo;      // True if this is %lo(symbol)
+    bool symbol_is_pcrel_hi;// True if this is %pcrel_hi(symbol)
+    bool symbol_is_pcrel_lo;// True if this is %pcrel_lo(label)
+    int32_t symbol_addend;  // Addend for symbol+offset forms
     section_t section;      // Which section this belongs to
     bool is_data_byte;      // True if this is a .db directive byte
     bool needs_relocation;  // True if this instruction references an undefined symbol
@@ -175,28 +178,112 @@ static bool is_identifier_start(char c) {
 
 // Parse immediate value or %hi()/%lo() operator
 // Returns -1 if it's a symbolic reference that needs relocation
-static int parse_immediate_or_symbol(const char *str, char *symbol_out, int *is_hi, int *is_lo) {
-    // Check for %hi(symbol)
+// Also returns the addend (offset) if symbol+offset form is used
+static int parse_immediate_or_symbol_ex(const char *str, char *symbol_out, int *is_hi, int *is_lo, 
+                                        int *is_pcrel_hi, int *is_pcrel_lo, int32_t *addend_out) {
+    *addend_out = 0;
+    *is_pcrel_hi = 0;
+    *is_pcrel_lo = 0;
+    
+    // Check for %hi(symbol[+offset])
     if (strncmp(str, "%hi(", 4) == 0) {
         const char *end = strchr(str + 4, ')');
         if (end) {
             int len = end - (str + 4);
-            strncpy(symbol_out, str + 4, len);
-            symbol_out[len] = '\0';
+            char expr[256];
+            strncpy(expr, str + 4, len);
+            expr[len] = '\0';
+            
+            // Parse symbol[+/-offset]
+            char *plus = strchr(expr, '+');
+            char *minus = strchr(expr, '-');
+            if (plus) {
+                *plus = '\0';
+                strcpy(symbol_out, expr);
+                *addend_out = atoi(plus + 1);
+            } else if (minus) {
+                *minus = '\0';
+                strcpy(symbol_out, expr);
+                *addend_out = -atoi(minus + 1);
+            } else {
+                strcpy(symbol_out, expr);
+            }
+            
             *is_hi = 1;
             *is_lo = 0;
             return -1;  // Needs relocation
         }
     }
-    // Check for %lo(symbol)
+    // Check for %lo(symbol[+offset])
     else if (strncmp(str, "%lo(", 4) == 0) {
         const char *end = strchr(str + 4, ')');
         if (end) {
             int len = end - (str + 4);
-            strncpy(symbol_out, str + 4, len);
-            symbol_out[len] = '\0';
+            char expr[256];
+            strncpy(expr, str + 4, len);
+            expr[len] = '\0';
+            
+            // Parse symbol[+/-offset]
+            char *plus = strchr(expr, '+');
+            char *minus = strchr(expr, '-');
+            if (plus) {
+                *plus = '\0';
+                strcpy(symbol_out, expr);
+                *addend_out = atoi(plus + 1);
+            } else if (minus) {
+                *minus = '\0';
+                strcpy(symbol_out, expr);
+                *addend_out = -atoi(minus + 1);
+            } else {
+                strcpy(symbol_out, expr);
+            }
+            
             *is_hi = 0;
             *is_lo = 1;
+            return -1;  // Needs relocation
+        }
+    }
+    // Check for %pcrel_hi(symbol[+offset])
+    else if (strncmp(str, "%pcrel_hi(", 10) == 0) {
+        const char *end = strchr(str + 10, ')');
+        if (end) {
+            int len = end - (str + 10);
+            char expr[256];
+            strncpy(expr, str + 10, len);
+            expr[len] = '\0';
+            
+            // Parse symbol[+/-offset]
+            char *plus = strchr(expr, '+');
+            char *minus = strchr(expr, '-');
+            if (plus) {
+                *plus = '\0';
+                strcpy(symbol_out, expr);
+                *addend_out = atoi(plus + 1);
+            } else if (minus) {
+                *minus = '\0';
+                strcpy(symbol_out, expr);
+                *addend_out = -atoi(minus + 1);
+            } else {
+                strcpy(symbol_out, expr);
+            }
+            
+            *is_hi = 0;
+            *is_lo = 0;
+            *is_pcrel_hi = 1;
+            return -1;  // Needs relocation
+        }
+    }
+    // Check for %pcrel_lo(label)
+    else if (strncmp(str, "%pcrel_lo(", 10) == 0) {
+        const char *end = strchr(str + 10, ')');
+        if (end) {
+            int len = end - (str + 10);
+            strncpy(symbol_out, str + 10, len);
+            symbol_out[len] = '\0';
+            
+            *is_hi = 0;
+            *is_lo = 0;
+            *is_pcrel_lo = 1;
             return -1;  // Needs relocation
         }
     }
@@ -219,6 +306,14 @@ static int parse_immediate_or_symbol(const char *str, char *symbol_out, int *is_
         symbol_out[63] = '\0';
         return -1;
     }
+}
+
+// Compatibility wrapper for old code that doesn't need addend
+static int parse_immediate_or_symbol(const char *str, char *symbol_out, int *is_hi, int *is_lo) {
+    int is_pcrel_hi, is_pcrel_lo;
+    int32_t addend;
+    return parse_immediate_or_symbol_ex(str, symbol_out, is_hi, is_lo, 
+                                        &is_pcrel_hi, &is_pcrel_lo, &addend);
 }
 
 // Compatibility wrapper for old code
@@ -1146,12 +1241,16 @@ static bool assemble_line(assembler_t *as, char *line) {
                     
                     // Check for %lo(symbol) in loads
                     char symbol[64];
-                    int is_hi, is_lo;
-                    imm = parse_immediate_or_symbol(plus + 1, symbol, &is_hi, &is_lo);
+                    int is_hi, is_lo, is_pcrel_hi, is_pcrel_lo;
+                    int32_t addend;
+                    imm = parse_immediate_or_symbol_ex(plus + 1, symbol, &is_hi, &is_lo,
+                                                       &is_pcrel_hi, &is_pcrel_lo, &addend);
                     
-                    if (imm == -1 && is_lo) {
+                    if (imm == -1 && (is_lo || is_pcrel_lo)) {
                         inst->has_symbol_ref = true;
-                        inst->symbol_is_lo = true;
+                        inst->symbol_is_lo = is_lo;
+                        inst->symbol_is_pcrel_lo = is_pcrel_lo;
+                        inst->symbol_addend = addend;
                         strcpy(inst->symbol_ref, symbol);
                         inst->instruction = encode_i(inst->opcode, rd, rs1, 0);
                     } else {
@@ -1169,19 +1268,24 @@ static bool assemble_line(assembler_t *as, char *line) {
                 
                 // Check for %lo(symbol)
                 char symbol[64];
-                int is_hi, is_lo;
-                int imm = parse_immediate_or_symbol(tokens[3], symbol, &is_hi, &is_lo);
+                int is_hi, is_lo, is_pcrel_hi, is_pcrel_lo;
+                int32_t addend;
+                int imm = parse_immediate_or_symbol_ex(tokens[3], symbol, &is_hi, &is_lo,
+                                                       &is_pcrel_hi, &is_pcrel_lo, &addend);
                 
-                if (imm == -1 && is_lo) {
-                    // This is a %lo(symbol) reference - needs LO12 relocation
+                if (imm == -1 && (is_lo || is_pcrel_lo)) {
+                    // This is a %lo(symbol) or %pcrel_lo(label) reference
                     inst->has_symbol_ref = true;
                     inst->symbol_is_hi = false;
-                    inst->symbol_is_lo = true;
+                    inst->symbol_is_lo = is_lo;
+                    inst->symbol_is_pcrel_hi = false;
+                    inst->symbol_is_pcrel_lo = is_pcrel_lo;
+                    inst->symbol_addend = addend;
                     strcpy(inst->symbol_ref, symbol);
                     inst->instruction = encode_i(inst->opcode, rd, rs1, 0);  // Placeholder
                 } else if (is_identifier_start(tokens[3][0])) {
                     // Raw labels in I-type are not supported
-                    fprintf(stderr, "Error: Raw label '%s' in I-type instruction. Use %%hi/%%lo(symbol) instead.\n", tokens[3]);
+                    fprintf(stderr, "Error: Raw label '%s' in I-type instruction. Use %%hi/%%lo(symbol) or %%pcrel_hi/%%pcrel_lo instead.\n", tokens[3]);
                     return false;
                 } else {
                     inst->instruction = encode_i(inst->opcode, rd, rs1, imm);
@@ -1201,12 +1305,16 @@ static bool assemble_line(assembler_t *as, char *line) {
                 
                 // Check for %lo(symbol) in stores
                 char symbol[64];
-                int is_hi, is_lo;
-                imm = parse_immediate_or_symbol(plus + 1, symbol, &is_hi, &is_lo);
+                int is_hi, is_lo, is_pcrel_hi, is_pcrel_lo;
+                int32_t addend;
+                imm = parse_immediate_or_symbol_ex(plus + 1, symbol, &is_hi, &is_lo,
+                                                   &is_pcrel_hi, &is_pcrel_lo, &addend);
                 
-                if (imm == -1 && is_lo) {
+                if (imm == -1 && (is_lo || is_pcrel_lo)) {
                     inst->has_symbol_ref = true;
-                    inst->symbol_is_lo = true;
+                    inst->symbol_is_lo = is_lo;
+                    inst->symbol_is_pcrel_lo = is_pcrel_lo;
+                    inst->symbol_addend = addend;
                     strcpy(inst->symbol_ref, symbol);
                     imm = 0;  // Placeholder
                 }
@@ -1215,12 +1323,16 @@ static bool assemble_line(assembler_t *as, char *line) {
                 if (num_tokens > 3) {
                     // Check for %lo(symbol) in 3-operand form
                     char symbol[64];
-                    int is_hi, is_lo;
-                    imm = parse_immediate_or_symbol(tokens[3], symbol, &is_hi, &is_lo);
+                    int is_hi, is_lo, is_pcrel_hi, is_pcrel_lo;
+                    int32_t addend;
+                    imm = parse_immediate_or_symbol_ex(tokens[3], symbol, &is_hi, &is_lo,
+                                                       &is_pcrel_hi, &is_pcrel_lo, &addend);
                     
-                    if (imm == -1 && is_lo) {
+                    if (imm == -1 && (is_lo || is_pcrel_lo)) {
                         inst->has_symbol_ref = true;
-                        inst->symbol_is_lo = true;
+                        inst->symbol_is_lo = is_lo;
+                        inst->symbol_is_pcrel_lo = is_pcrel_lo;
+                        inst->symbol_addend = addend;
                         strcpy(inst->symbol_ref, symbol);
                         imm = 0;  // Placeholder
                     }
@@ -1252,16 +1364,21 @@ static bool assemble_line(assembler_t *as, char *line) {
             if (num_tokens < 3) return false;
             int rd = parse_register(tokens[1]);
             
-            // Check for %hi(symbol)
+            // Check for %hi(symbol) or %pcrel_hi(symbol)
             char symbol[64];
-            int is_hi, is_lo;
-            int imm = parse_immediate_or_symbol(tokens[2], symbol, &is_hi, &is_lo);
+            int is_hi, is_lo, is_pcrel_hi, is_pcrel_lo;
+            int32_t addend;
+            int imm = parse_immediate_or_symbol_ex(tokens[2], symbol, &is_hi, &is_lo,
+                                                   &is_pcrel_hi, &is_pcrel_lo, &addend);
             
-            if (imm == -1 && is_hi) {
-                // This is a %hi(symbol) reference - needs HI20 relocation
+            if (imm == -1 && (is_hi || is_pcrel_hi)) {
+                // This is a %hi(symbol) or %pcrel_hi(symbol) reference
                 inst->has_symbol_ref = true;
-                inst->symbol_is_hi = true;
+                inst->symbol_is_hi = is_hi;
                 inst->symbol_is_lo = false;
+                inst->symbol_is_pcrel_hi = is_pcrel_hi;
+                inst->symbol_is_pcrel_lo = false;
+                inst->symbol_addend = addend;
                 strcpy(inst->symbol_ref, symbol);
                 inst->instruction = encode_u(inst->opcode, rd, 0);  // Placeholder
             } else {
@@ -1707,14 +1824,28 @@ int main(int argc, char *argv[]) {
     }
     fclose(input);
     
-    // Process all symbol references (%hi and %lo)
+    // Process all symbol references (%hi, %lo, %pcrel_hi, %pcrel_lo)
     for (int i = 0; i < as.num_instructions; i++) {
         instruction_t *inst = &as.instructions[i];
         if (inst->has_symbol_ref) {
-            // Add relocation for this symbol reference
-            uint32_t reloc_type = inst->symbol_is_hi ? S32O_REL_HI20 : S32O_REL_LO12;
+            // Determine relocation type based on the symbol reference type
+            uint32_t reloc_type;
+            if (inst->symbol_is_hi) {
+                reloc_type = S32O_REL_HI20;
+            } else if (inst->symbol_is_lo) {
+                reloc_type = S32O_REL_LO12;
+            } else if (inst->symbol_is_pcrel_hi) {
+                reloc_type = S32O_REL_PCREL_HI20;
+            } else if (inst->symbol_is_pcrel_lo) {
+                reloc_type = S32O_REL_PCREL_LO12;
+            } else {
+                // Default to 32-bit relocation if no specific type
+                reloc_type = S32O_REL_32;
+            }
+            
+            // Add relocation with the addend
             add_relocation(&as, inst->address, inst->symbol_ref, 
-                          reloc_type, 0, inst->section);
+                          reloc_type, inst->symbol_addend, inst->section);
             inst->needs_relocation = true;
         }
     }

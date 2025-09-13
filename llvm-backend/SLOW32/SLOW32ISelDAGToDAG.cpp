@@ -24,6 +24,96 @@ public:
   SLOW32DAGToDAGISel(SLOW32TargetMachine &TM)
       : SelectionDAGISel(TM) {}
 
+  // Select address mode for loads/stores
+  // This is critical for proper byte-wise memcpy expansion
+  bool SelectAddr(SDValue N, SDValue &Base, SDValue &Offset) {
+    SDLoc DL(N);
+    
+    // Handle GlobalAddress nodes with offsets (critical for memcpy expansion)
+    // This handles patterns like .L__const.main.str+1, .L__const.main.str+2, etc.
+    if (GlobalAddressSDNode *GA = dyn_cast<GlobalAddressSDNode>(N)) {
+      int64_t GOffset = GA->getOffset();
+      
+      // Split the GlobalAddress into base address and offset
+      // Create a GlobalAddress with offset 0 for the base
+      SDValue GABase = CurDAG->getTargetGlobalAddress(
+        GA->getGlobal(), DL, MVT::i32, 0, GA->getTargetFlags());
+      
+      // Generate LUI+ADDI to materialize the base address
+      SDValue Hi = SDValue(CurDAG->getMachineNode(SLOW32::LUI, DL, MVT::i32,
+                                                  GABase), 0);
+      Base = SDValue(CurDAG->getMachineNode(SLOW32::ADDI, DL, MVT::i32,
+                                            Hi, GABase), 0);
+      
+      // The offset from the GlobalAddress
+      Offset = CurDAG->getTargetConstant(GOffset, DL, MVT::i32);
+      return true;
+    }
+    
+    // Handle (base + constant) addressing
+    if (N.getOpcode() == ISD::ADD) {
+      // Check if the first operand is a GlobalAddress with an offset
+      if (GlobalAddressSDNode *GA = dyn_cast<GlobalAddressSDNode>(N.getOperand(0))) {
+        if (auto *CN = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
+          int64_t CVal = CN->getSExtValue();
+          int64_t GOffset = GA->getOffset();
+          int64_t TotalOffset = GOffset + CVal;
+          
+          // Check if total offset fits in 16-bit signed immediate
+          if (isInt<16>(TotalOffset)) {
+            // Create base address (GlobalAddress with offset 0)
+            SDValue GABase = CurDAG->getTargetGlobalAddress(
+              GA->getGlobal(), DL, MVT::i32, 0, GA->getTargetFlags());
+            
+            // Generate LUI+ADDI to materialize the base address
+            SDValue Hi = SDValue(CurDAG->getMachineNode(SLOW32::LUI, DL, MVT::i32,
+                                                        GABase), 0);
+            Base = SDValue(CurDAG->getMachineNode(SLOW32::ADDI, DL, MVT::i32,
+                                                  Hi, GABase), 0);
+            
+            Offset = CurDAG->getTargetConstant(TotalOffset, DL, MVT::i32);
+            return true;
+          }
+        }
+      }
+      
+      // Normal ADD pattern with constant offset
+      if (auto *CN = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
+        int64_t CVal = CN->getSExtValue();
+        // Check if constant fits in 16-bit signed immediate
+        if (isInt<16>(CVal)) {
+          Base = N.getOperand(0);
+          Offset = CurDAG->getTargetConstant(CVal, DL, MVT::i32);
+          return true;
+        }
+      }
+    }
+    
+    // Handle nested ADD for (HI+LO)+offset patterns
+    if (N.getOpcode() == ISD::ADD && N.getOperand(0).getOpcode() == ISD::ADD) {
+      if (auto *CN = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
+        int64_t CVal = CN->getSExtValue();
+        if (isInt<16>(CVal)) {
+          Base = N.getOperand(0);
+          Offset = CurDAG->getTargetConstant(CVal, DL, MVT::i32);
+          return true;
+        }
+      }
+    }
+    
+    // Handle FrameIndex nodes
+    if (auto *FI = dyn_cast<FrameIndexSDNode>(N)) {
+      Base = CurDAG->getTargetFrameIndex(FI->getIndex(), MVT::i32);
+      Offset = CurDAG->getTargetConstant(0, DL, MVT::i32);
+      return true;
+    }
+    
+    // Default case: base with 0 offset
+    Base = N;
+    Offset = CurDAG->getTargetConstant(0, DL, MVT::i32);
+    return true;
+  }
+
   void Select(SDNode *N) override {
     // Handle custom nodes
     if (N->isMachineOpcode()) {

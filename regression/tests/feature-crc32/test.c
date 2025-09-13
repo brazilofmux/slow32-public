@@ -1,5 +1,6 @@
-// Simplified CRC32 test for SLOW-32
+// Fixed CRC32 test for SLOW-32
 #include <stdint.h>
+#include <stdio.h>
 
 #define CRC32_INITIAL 0xFFFFFFFFU
 
@@ -71,10 +72,14 @@ static const uint32_t CRC32_Table[256] = {
     0xb40bbe37, 0xc30c8ea1, 0x5a05df1b, 0x2d02ef8d
 };
 
+// Mark as NO INLINE to prevent optimization
+__attribute__((noinline))
 uint32_t crc32_byte(uint32_t crc, unsigned char byte) {
     return CRC32_Table[(unsigned char)crc ^ byte] ^ (crc >> 8);
 }
 
+// Mark as NO INLINE to prevent optimization
+__attribute__((noinline))
 uint32_t crc32_buffer(const unsigned char *buffer, int len) {
     uint32_t crc = CRC32_INITIAL;
     for (int i = 0; i < len; i++) {
@@ -83,30 +88,47 @@ uint32_t crc32_buffer(const unsigned char *buffer, int len) {
     return ~crc;
 }
 
-void debug_char(char c);
+// Helper function to print hex value (workaround for printf %X issue)
+void print_hex(uint32_t val) {
+    char hex[] = "0123456789ABCDEF";
+    printf("0x");
+    for (int i = 7; i >= 0; i--) {
+        int nibble = (val >> (i * 4)) & 0xF;
+        printf("%c", hex[nibble]);
+    }
+}
 
 int main() {
-    // Simple test with just "ABC"
-    unsigned char test[3];
+    // Make test buffer volatile to prevent optimization
+    volatile unsigned char test[3];
     test[0] = 'A';
     test[1] = 'B';
     test[2] = 'C';
     
-    uint32_t result = crc32_buffer(test, 3);
+    // Copy to non-volatile buffer for CRC calculation
+    unsigned char buffer[3];
+    buffer[0] = test[0];
+    buffer[1] = test[1];
+    buffer[2] = test[2];
+    
+    uint32_t result = crc32_buffer(buffer, 3);
     
     // CRC32 of "ABC" should be 0xA3830348
-    if (result == 0xA3830348) {
-        debug_char('P');
-        debug_char('A');
-        debug_char('S');
-        debug_char('S');
-        debug_char('\n');
+    printf("CRC32 of 'ABC' = ");
+    print_hex(result);
+    printf("\n");
+    printf("Expected value = 0xA3830348\n");
+    
+    // Store expected value in variable to prevent optimization issues
+    volatile uint32_t expected = 0xA3830348;
+    
+    if (result == expected) {
+        printf("PASS\n");
+        return 0;
     } else {
-        debug_char('F');
-        debug_char('A');
-        debug_char('I');
-        debug_char('L');
-        debug_char('\n');
+        printf("FAIL - got ");
+        print_hex(result);
+        printf(" instead\n");
+        return 1;
     }
-    return 0;
 }

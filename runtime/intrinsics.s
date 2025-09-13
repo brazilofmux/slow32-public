@@ -54,11 +54,12 @@ llvm.memcpy.p0.p0.i32:
     beq r14, r0, .memcpy_body  # if !(count<=0) -> body
     beq r0, r0, .memcpy_done
 .memcpy_body:
-    ldw r15, r12+0
-    stw r11+0, r15
-    addi r11, r11, 4
-    addi r12, r12, 4
-    addi r13, r13, -4
+    # Use byte-wise copy to preserve byte ordering for strings
+    ldbu r15, r12+0
+    stb r11+0, r15
+    addi r11, r11, 1
+    addi r12, r12, 1
+    addi r13, r13, -1
     beq r0, r0, .memcpy_loop
 .memcpy_done:
     # Restore registers

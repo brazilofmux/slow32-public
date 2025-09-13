@@ -16,6 +16,7 @@
 #define MAX_SYMBOLS 10000
 #define MAX_RELOCATIONS 10000
 #define STRING_TABLE_SIZE (64 * 1024)
+#define MAX_LIB_PATHS 32
 
 // Default memory layout
 #define DEFAULT_CODE_BASE    0x00000000
@@ -133,6 +134,10 @@ typedef struct {
     const char *output_file;
     const char *entry_symbol;
     const char *map_file;   // Memory map output file
+    
+    // Library search paths
+    const char *lib_paths[MAX_LIB_PATHS];
+    int num_lib_paths;
 } linker_state_t;
 
 // String table management
@@ -275,11 +280,59 @@ static bool is_symbol_undefined(linker_state_t *ld, const char *symbol_name) {
     return false;
 }
 
+// Find a library file using search paths
+static char* find_library_file(linker_state_t *ld, const char *filename) {
+    static char path_buffer[1024];
+    
+    // First try as-is (absolute path or relative to current dir)
+    FILE *f = fopen(filename, "rb");
+    if (f) {
+        fclose(f);
+        return (char*)filename;
+    }
+    
+    // If filename starts with -l, convert to lib<name>.s32a
+    char libname[256];
+    if (strncmp(filename, "-l", 2) == 0) {
+        snprintf(libname, sizeof(libname), "lib%s.s32a", filename + 2);
+    } else {
+        // Already a filename, just use it
+        strncpy(libname, filename, sizeof(libname) - 1);
+        libname[sizeof(libname) - 1] = '\0';
+    }
+    
+    // Try each library search path
+    for (int i = 0; i < ld->num_lib_paths; i++) {
+        snprintf(path_buffer, sizeof(path_buffer), "%s/%s", ld->lib_paths[i], libname);
+        f = fopen(path_buffer, "rb");
+        if (f) {
+            fclose(f);
+            return path_buffer;
+        }
+    }
+    
+    // Not found
+    return NULL;
+}
+
 // Load an archive file, extracting only needed members
 static bool load_archive_file(linker_state_t *ld, const char *filename) {
-    FILE *f = fopen(filename, "rb");
+    // Try to find the file using library search paths
+    const char *actual_path = find_library_file(ld, filename);
+    if (!actual_path) {
+        fprintf(stderr, "Error: Cannot find library '%s'\n", filename);
+        if (ld->num_lib_paths > 0) {
+            fprintf(stderr, "Searched in:\n");
+            for (int i = 0; i < ld->num_lib_paths; i++) {
+                fprintf(stderr, "  %s\n", ld->lib_paths[i]);
+            }
+        }
+        return false;
+    }
+    
+    FILE *f = fopen(actual_path, "rb");
     if (!f) {
-        fprintf(stderr, "Error: Cannot open '%s'\n", filename);
+        fprintf(stderr, "Error: Cannot open '%s'\n", actual_path);
         return false;
     }
     
@@ -1317,6 +1370,60 @@ static void apply_relocations(linker_state_t *ld) {
                 }
                 break;
                 
+            case S32O_REL_PCREL_HI20:
+                // PC-relative high 20 bits (for AUIPC)
+                {
+                    // Calculate PC-relative offset (pc already defined above)
+                    int32_t offset = (int32_t)(value - pc);
+                    
+                    // Extract high 20 bits with bit 11 adjustment (same as HI20)
+                    uint32_t lo12 = offset & 0xFFF;
+                    uint32_t hi20 = (offset >> 12) & 0xFFFFF;
+                    
+                    // If bit 11 of lo12 is set, increment hi20
+                    if (lo12 & 0x800) {
+                        hi20 = (hi20 + 1) & 0xFFFFF;
+                    }
+                    
+                    // Clear upper 20 bits and set new value
+                    *target = (*target & 0xFFF) | (hi20 << 12);
+                    
+                    if (ld->verbose) {
+                        printf("  PCREL_HI20: PC=0x%x, target=0x%x, offset=0x%x, hi20=0x%x\n",
+                               pc, value, offset, hi20);
+                    }
+                }
+                break;
+                
+            case S32O_REL_PCREL_LO12:
+                // PC-relative low 12 bits (paired with PCREL_HI20)
+                // This is tricky: it needs to reference the address of the PCREL_HI20
+                // For now, we'll use the symbol value directly (may need adjustment)
+                {
+                    uint32_t imm = value & 0xFFF;
+                    uint32_t opcode = *target & 0x7F;
+                    
+                    // Different instruction formats need different handling
+                    if (opcode == 0x10 || opcode == 0x11 || opcode == 0x12 || opcode == 0x1E ||
+                        opcode == 0x13 || opcode == 0x14 || opcode == 0x15) {
+                        // I-type: ADDI, ORI, ANDI, XORI, etc.
+                        *target = (*target & 0xFFFFF) | (imm << 20);
+                    } else if (opcode >= 0x30 && opcode <= 0x34) {
+                        // Load instructions (I-type format)
+                        *target = (*target & 0xFFFFF) | (imm << 20);
+                    } else if (opcode >= 0x38 && opcode <= 0x3A) {
+                        // Store instructions (S-type format)
+                        uint32_t imm11_5 = (imm >> 5) & 0x7F;
+                        uint32_t imm4_0 = imm & 0x1F;
+                        *target = (*target & 0xFE000F80) | (imm11_5 << 25) | (imm4_0 << 7);
+                    }
+                    
+                    if (ld->verbose) {
+                        printf("  PCREL_LO12: value=0x%x, imm=0x%x\n", value, imm);
+                    }
+                }
+                break;
+                
             default:
                 fprintf(stderr, "Warning: Unknown relocation type %d\n", rel->type);
                 break;
@@ -1590,6 +1697,8 @@ static void print_usage(const char *prog) {
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "  -o FILE           Output file (required)\n");
     fprintf(stderr, "  -e SYMBOL         Entry point symbol (default: _start)\n");
+    fprintf(stderr, "  -L PATH           Add library search path\n");
+    fprintf(stderr, "  -l NAME           Link with library libNAME.s32a\n");
     fprintf(stderr, "  -s                Strip symbols\n");
     fprintf(stderr, "  -v                Verbose output\n");
     fprintf(stderr, "  --wxorx           Enable W^X protection\n");
@@ -1628,6 +1737,32 @@ int main(int argc, char *argv[]) {
             ld.output_file = argv[++i];
         } else if (strcmp(argv[i], "-e") == 0 && i + 1 < argc) {
             ld.entry_symbol = argv[++i];
+        } else if (strcmp(argv[i], "-L") == 0 && i + 1 < argc) {
+            if (ld.num_lib_paths >= MAX_LIB_PATHS) {
+                fprintf(stderr, "Error: Too many library paths (max %d)\n", MAX_LIB_PATHS);
+                return 1;
+            }
+            ld.lib_paths[ld.num_lib_paths++] = argv[++i];
+        } else if (strncmp(argv[i], "-l", 2) == 0) {
+            // Handle both -lname and -l name formats
+            const char *libname;
+            if (argv[i][2] != '\0') {
+                // -lname format
+                libname = argv[i];
+            } else if (i + 1 < argc) {
+                // -l name format
+                char *temp = malloc(strlen(argv[i+1]) + 3);
+                sprintf(temp, "-l%s", argv[++i]);
+                libname = temp;
+            } else {
+                fprintf(stderr, "Error: -l requires a library name\n");
+                return 1;
+            }
+            if (num_input_files >= MAX_INPUT_FILES) {
+                fprintf(stderr, "Error: Too many input files\n");
+                return 1;
+            }
+            input_files[num_input_files++] = libname;
         } else if (strcmp(argv[i], "-s") == 0) {
             ld.strip_symbols = true;
         } else if (strcmp(argv[i], "-v") == 0) {
