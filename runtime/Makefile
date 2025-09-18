@@ -14,33 +14,44 @@ OPT_LEVEL = -O2
 CFLAGS_BASE = -target $(TARGET) -S -emit-llvm -Iinclude
 CFLAGS = $(CFLAGS_BASE) $(OPT_LEVEL)
 
-# Core runtime objects (always needed)
-CORE_OBJS = crt0.s32o intrinsics.s32o intrinsics_extra.s32o \
-            debug_char.s32o yield.s32o
+# Compiler runtime objects (always needed, linked last)
+# These provide compiler support functions like division, intrinsics
+COMPILER_RT_OBJS = intrinsics.s32o intrinsics_extra.s32o \
+                   builtins.s32o divsi3.s32o \
+                   debug_char.s32o yield.s32o
 
-# Standard library objects for libc.s32a
-LIBC_OBJS = string.s32o string_extra.s32o \
-            stdio.s32o stdio_minimal.s32o printf.s32o putchar.s32o \
-            malloc.s32o stdlib.s32o stdlib_extra.s32o stdlib_utils.s32o \
-            convert_extra.s32o ctype.s32o memory_extra.s32o
+# Core C library objects (common to all libc versions)
+LIBC_CORE_OBJS = string.s32o string_extra.s32o \
+                 malloc.s32o stdlib.s32o stdlib_extra.s32o stdlib_utils.s32o \
+                 convert.s32o convert_extra.s32o ctype.s32o memory_extra.s32o \
+                 printf.s32o
+
+# I/O objects for DEBUG version (simple, unbuffered)
+STDIO_DEBUG_OBJS = putchar.s32o stdio_minimal.s32o
+
+# I/O objects for MMIO version (buffered, ring buffer)
+STDIO_MMIO_OBJS = stdio.s32o stdio_buffered.s32o flush_mmio.s32o
 
 # Math library objects for libm.s32a (future - currently disabled due to float support)
 # LIBM_OBJS = math.s32o
 
-# Builtins for 64-bit operations
-BUILTIN_OBJS = builtins.s32o
+# Startup code (linked first, not in any archive)
+STARTUP_OBJ = crt0.s32o
 
 # All object files
-ALL_OBJS = $(CORE_OBJS) $(LIBC_OBJS) $(BUILTIN_OBJS)
+ALL_OBJS = $(STARTUP_OBJ) $(COMPILER_RT_OBJS) $(LIBC_CORE_OBJS) \
+           $(STDIO_DEBUG_OBJS) $(STDIO_MMIO_OBJS)
 
 # C source files that need compilation
-C_SOURCES = printf.c builtins.c string.c malloc.c stdlib_utils.c \
+C_SOURCES = printf.c convert.c builtins.c string.c malloc.c stdlib_utils.c \
             stdio.c stdlib_extra.c string_extra.c ctype.c \
-            stdio_minimal.c convert_extra.c memory_extra.c
+            stdio_minimal.c convert_extra.c memory_extra.c \
+            stdio_buffered.c flush_mmio.c flush_debug.c \
+            debug_char.c yield.c putchar.c
 # Note: math.c excluded due to floating point operations not yet supported
 
 # Default target builds everything
-all: tools $(ALL_OBJS) libc.s32a libs32.s32a
+all: tools $(ALL_OBJS) libs32.s32a libc_debug.s32a libc_mmio.s32a
 
 # Ensure tools are built first
 tools:
@@ -64,41 +75,116 @@ tools:
 %.s: %.ll
 	$(LLC) -mtriple=$(TARGET) $< -o $@
 
-# Files that might need -O1 instead of -O2 (if register pressure is an issue)
+# Files that need -O2 (lower optimization to avoid issues)
 # Override optimization for specific problematic files
-stdio.ll: OPT_LEVEL = -O1
+stdio.ll: OPT_LEVEL = -O2
 stdio.ll: stdio.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
 
+# FIXED: VAARG optimization bug resolved (2025-09-13)
+# Custom VAARG lowering now ensures correct 32-bit loads for promoted types
+# printf.ll: OPT_LEVEL = -O0  # No longer needed - can use default -O2!
+printf.ll: printf.c
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
+
+flush_mmio.ll: OPT_LEVEL = -O2
+flush_mmio.ll: flush_mmio.c
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
+
+stdio_buffered.ll: OPT_LEVEL = -O2
+stdio_buffered.ll: stdio_buffered.c
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
+
+string_extra.ll: OPT_LEVEL = -O2
+string_extra.ll: string_extra.c
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
+
+string.ll: OPT_LEVEL = -O2
+string.ll: string.c
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
+
+builtins.ll: OPT_LEVEL = -O2
+builtins.ll: builtins.c
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
+
+malloc.ll: OPT_LEVEL = -O2
+malloc.ll: malloc.c
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
+
+ctype.ll: OPT_LEVEL = -O2
+ctype.ll: ctype.c
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
+
+convert_extra.ll: OPT_LEVEL = -O2
+convert_extra.ll: convert_extra.c
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
+
+memory_extra.ll: OPT_LEVEL = -O2
+memory_extra.ll: memory_extra.c
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
+
+stdlib_extra.ll: OPT_LEVEL = -O2
+stdlib_extra.ll: stdlib_extra.c
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
+
+# Special LLC rules to avoid double optimization
+stdio.s: stdio.ll
+	$(LLC) -mtriple=$(TARGET) -O2 $< -o $@
+
+printf.s: printf.ll
+	$(LLC) -mtriple=$(TARGET) -O2 $< -o $@
+
+string_extra.s: string_extra.ll
+	$(LLC) -mtriple=$(TARGET) -O2 $< -o $@
+
 # Archive targets
-libc.s32a: $(LIBC_OBJS)
-	@echo "Creating libc.s32a..."
+# Compiler runtime library (always linked last)
+libs32.s32a: $(COMPILER_RT_OBJS)
+	@echo "Creating libs32.s32a (compiler runtime)..."
 	$(ARCHIVER) c $@ $^
 	@echo "Archive size: $$(ls -lh $@ | awk '{print $$5}')"
 
-libs32.s32a: $(CORE_OBJS)
-	@echo "Creating libs32.s32a..."
+# Debug version of libc (uses DEBUG instruction for I/O)
+libc_debug.s32a: $(LIBC_CORE_OBJS) $(STDIO_DEBUG_OBJS)
+	@echo "Creating libc_debug.s32a (DEBUG I/O)..."
 	$(ARCHIVER) c $@ $^
 	@echo "Archive size: $$(ls -lh $@ | awk '{print $$5}')"
 
-# Special handling for assembly-only files that don't have C sources
-convert_extra.s32o: convert_extra.s
-	$(ASSEMBLER) $< $@
+# MMIO version of libc (uses ring buffer for I/O)
+libc_mmio.s32a: $(LIBC_CORE_OBJS) $(STDIO_MMIO_OBJS)
+	@echo "Creating libc_mmio.s32a (MMIO I/O)..."
+	$(ARCHIVER) c $@ $^
+	@echo "Archive size: $$(ls -lh $@ | awk '{print $$5}')"
 
-memory_extra.s32o: memory_extra.s
-	$(ASSEMBLER) $< $@
-
-stdio_minimal.s32o: stdio_minimal.s
-	$(ASSEMBLER) $< $@
+# Note: The pattern rule %.s32o: %.s handles all assembly files
+# including both hand-written ones and those generated from C sources
 
 # Clean targets
 clean:
 	rm -f *.s32o *.ll *.s32a
+	# Clean generated .s files (but keep hand-written assembly sources)
+	@for src in $(C_SOURCES); do \
+		base=$$(basename $$src .c); \
+		rm -f $$base.s; \
+	done
 	@echo "Cleaned runtime directory"
 
 clean-intermediate:
 	rm -f *.ll
+	# Clean generated .s files from C sources
+	@for src in $(C_SOURCES); do \
+		base=$$(basename $$src .c); \
+		rm -f $$base.s; \
+	done
 	@echo "Cleaned intermediate files"
+
+# Remove old/obsolete archive versions
+clean-old:
+	@echo "Removing obsolete archive versions..."
+	-rm -f libc.s32a libc_fixed.s32a libc_simple.s32a libc_stabilized.s32a
+	-rm -f libs32_test.s32a libc_debug_old.s32a libc_mmio_old.s32a
+	-rm -f libc_original.s32a libc_debug_broken.s32a libc_mmio_broken.s32a
+	@echo "Old archives removed."
 
 # Rebuild from C sources
 rebuild: clean all
@@ -111,24 +197,44 @@ size:
 	@echo "Object file sizes:"
 	@ls -lh *.s32o 2>/dev/null | head -20 || echo "No object files built yet"
 
+# Check critical symbols are present
+check: libs32.s32a libc_debug.s32a libc_mmio.s32a
+	@echo "Checking critical symbols..."
+	@echo -n "  __udivsi3 in libs32.s32a: "
+	@$(ARCHIVER) -t libs32.s32a | grep -q "divsi3.s32o" && echo "✓" || (echo "✗ MISSING!"; exit 1)
+	@echo -n "  __divsi3 in libs32.s32a: "
+	@$(ARCHIVER) -t libs32.s32a | grep -q "divsi3.s32o" && echo "✓" || (echo "✗ MISSING!"; exit 1)
+	@echo -n "  printf in libc_debug.s32a: "
+	@$(ARCHIVER) -t libc_debug.s32a | grep -q "printf.s32o" && echo "✓" || (echo "✗ MISSING!"; exit 1)
+	@echo -n "  malloc in libc_debug.s32a: "
+	@$(ARCHIVER) -t libc_debug.s32a | grep -q "malloc.s32o" && echo "✓" || (echo "✗ MISSING!"; exit 1)
+	@echo "All critical symbols present."
+
 # Help target
 help:
-	@echo "SLOW-32 Runtime Library Makefile"
+	@echo "SLOW-32 Runtime Library Build System"
+	@echo "====================================="
+	@echo ""
+	@echo "Libraries produced:"
+	@echo "  libs32.s32a      - Compiler runtime (intrinsics, division, builtins)"
+	@echo "  libc_debug.s32a  - C library using DEBUG instruction for I/O"
+	@echo "  libc_mmio.s32a   - C library using MMIO ring buffer for I/O"
+	@echo "  crt0.s32o        - Startup code (not in any archive)"
 	@echo ""
 	@echo "Targets:"
-	@echo "  all              - Build all libraries and archives (default)"
-	@echo "  libc.s32a        - Build C standard library archive"
-	@echo "  libs32.s32a      - Build core runtime archive"
+	@echo "  all              - Build all libraries (default)"
+	@echo "  check            - Verify critical symbols are present"
 	@echo "  clean            - Remove all built files"
+	@echo "  clean-old        - Remove obsolete archive versions"
 	@echo "  clean-intermediate - Remove intermediate .ll files only"
 	@echo "  rebuild          - Clean and rebuild everything"
 	@echo "  size             - Show sizes of built archives and objects"
 	@echo "  help             - Show this help message"
 	@echo ""
-	@echo "Individual objects can be built with: make <name>.s32o"
-	@echo "Example: make printf.s32o"
+	@echo "Link order: crt0.s32o user.s32o libc_*.s32a libs32.s32a"
+	@echo "Example: s32-ld -o prog.s32x crt0.s32o prog.s32o libc_debug.s32a libs32.s32a"
 
-.PHONY: all clean clean-intermediate rebuild size help tools
+.PHONY: all clean clean-intermediate clean-old rebuild size help tools check
 # Archive size comparison:
 # Original (with optimizations): 22.8KB
 # New (optimizations disabled): 31KB

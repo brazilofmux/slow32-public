@@ -8,13 +8,13 @@ def brtarget : Operand<OtherVT> {
   let PrintMethod = "printBranchTarget";
 }
 
-// Define immediate operands with proper constraints
-def simm16 : Operand<i32>, ImmLeaf<i32, [{
-  return isInt<16>(Imm);
+// Define immediate operands with proper constraints (RV-style 12-bit window)
+def simm12 : Operand<i32>, ImmLeaf<i32, [{
+  return isInt<12>(Imm);
 }]>;
 
-def uimm16 : Operand<i32>, ImmLeaf<i32, [{
-  return isUInt<16>(Imm);
+def uimm12 : Operand<i32>, ImmLeaf<i32, [{
+  return isUInt<12>(Imm);
 }]>;
 
 // Complex address pattern for load/store instructions
@@ -59,10 +59,10 @@ let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
   def AND  : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2), "and $rd, $rs1, $rs2">;
   def OR   : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2), "or  $rd, $rs1, $rs2">;
   def XOR  : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2), "xor $rd, $rs1, $rs2">;
-  def ADDI : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, simm16:$imm), "addi $rd, $rs1, $imm">;
-  def ANDI : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, uimm16:$imm), "andi $rd, $rs1, $imm">;
-  def ORI  : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, uimm16:$imm), "ori  $rd, $rs1, $imm">;
-  def XORI : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, uimm16:$imm), "xori $rd, $rs1, $imm">;
+  def ADDI : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, simm12:$imm), "addi $rd, $rs1, $imm">;
+  def ANDI : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, simm12:$imm), "andi $rd, $rs1, $imm">;
+  def ORI  : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, simm12:$imm), "ori  $rd, $rs1, $imm">;
+  def XORI : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, simm12:$imm), "xori $rd, $rs1, $imm">;
   // Register-register shifts
   def SLL  : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2), "sll $rd, $rs1, $rs2">;
   def SRL  : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2), "srl $rd, $rs1, $rs2">;
@@ -94,18 +94,18 @@ let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
 
 // Load instructions
 let hasSideEffects = 0, mayLoad = 1, mayStore = 0 in {
-  def LDB  : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, i32imm:$imm), "ldb $rd, $rs1+$imm">;
-  def LDBU : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, i32imm:$imm), "ldbu $rd, $rs1+$imm">;
-  def LDH  : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, i32imm:$imm), "ldh $rd, $rs1+$imm">;
-  def LDHU : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, i32imm:$imm), "ldhu $rd, $rs1+$imm">;
-  def LDW  : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, i32imm:$imm), "ldw $rd, $rs1+$imm">;
+  def LDB  : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, simm12:$imm), "ldb $rd, $rs1+$imm">;
+  def LDBU : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, simm12:$imm), "ldbu $rd, $rs1+$imm">;
+  def LDH  : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, simm12:$imm), "ldh $rd, $rs1+$imm">;
+  def LDHU : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, simm12:$imm), "ldhu $rd, $rs1+$imm">;
+  def LDW  : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, simm12:$imm), "ldw $rd, $rs1+$imm">;
 }
 
 // Store instructions 
 let hasSideEffects = 0, mayLoad = 0, mayStore = 1 in {
-  def STB  : S32Inst<(outs), (ins GPR:$rs1, GPR:$rs2, i32imm:$imm), "stb $rs1+$imm, $rs2">;
-  def STH  : S32Inst<(outs), (ins GPR:$rs1, GPR:$rs2, i32imm:$imm), "sth $rs1+$imm, $rs2">;
-  def STW  : S32Inst<(outs), (ins GPR:$rs1, GPR:$rs2, i32imm:$imm), "stw $rs1+$imm, $rs2">;
+  def STB  : S32Inst<(outs), (ins GPR:$rs1, GPR:$rs2, simm12:$imm), "stb $rs1+$imm, $rs2">;
+  def STH  : S32Inst<(outs), (ins GPR:$rs1, GPR:$rs2, simm12:$imm), "sth $rs1+$imm, $rs2">;
+  def STW  : S32Inst<(outs), (ins GPR:$rs1, GPR:$rs2, simm12:$imm), "stw $rs1+$imm, $rs2">;
 }
 
 // Branch instructions
@@ -147,43 +147,16 @@ def : Pat<(setule GPR:$a, GPR:$b), (SLEU GPR:$a, GPR:$b)>;
 
 // Patterns for loading constants
 // Small constants that fit in 16 bits (signed or unsigned)
-def : Pat<(i32 simm16:$val), (ADDI R0, simm16:$val)>;
-
-// For any constant (fallback pattern using ORI for now)
-// This will truncate large constants but at least won't crash
-def : Pat<(i32 imm:$val), (ORI R0, imm:$val)>;
+def : Pat<(i32 simm12:$val), (ADDI R0, simm12:$val)>;
 
 // Patterns for %hi/%lo addressing with global addresses
 def : Pat<(SLOW32hi tglobaladdr:$addr), (LUI tglobaladdr:$addr)>;
-def : Pat<(SLOW32lo tglobaladdr:$addr), (ORI R0, tglobaladdr:$addr)>;
-
-// Patterns for %hi/%lo addressing with external symbols
 def : Pat<(SLOW32hi texternalsym:$addr), (LUI texternalsym:$addr)>;
-def : Pat<(SLOW32lo texternalsym:$addr), (ORI R0, texternalsym:$addr)>;
-
-// Patterns for %hi/%lo addressing with jump tables
 def : Pat<(SLOW32hi tjumptable:$addr), (LUI tjumptable:$addr)>;
-def : Pat<(SLOW32lo tjumptable:$addr), (ORI R0, tjumptable:$addr)>;
 
-// Pattern for combining %hi and %lo into a full address using OR
-// Note: The LOAD_ADDR pseudo instruction handles global addresses
-// to ensure correct instruction ordering (LUI before ORI).
-def : Pat<(or (SLOW32hi tglobaladdr:$addr), (SLOW32lo tglobaladdr:$addr)),
-          (LOAD_ADDR tglobaladdr:$addr)>;
-def : Pat<(or (SLOW32lo tglobaladdr:$addr), (SLOW32hi tglobaladdr:$addr)),
-          (LOAD_ADDR tglobaladdr:$addr)>;
+// DAG lowering now materialises globals via the LOAD_ADDR pseudo, so no extra
+// combination patterns are required here.
 
-// For external symbols, we still use direct patterns.
-def : Pat<(or (SLOW32hi texternalsym:$addr), (SLOW32lo texternalsym:$addr)),
-          (ORI (LUI texternalsym:$addr), texternalsym:$addr)>;
-def : Pat<(or (SLOW32lo texternalsym:$addr), (SLOW32hi texternalsym:$addr)),
-          (ORI (LUI texternalsym:$addr), texternalsym:$addr)>;
-
-// For jump tables
-def : Pat<(or (SLOW32hi tjumptable:$addr), (SLOW32lo tjumptable:$addr)),
-          (ORI (LUI tjumptable:$addr), tjumptable:$addr)>;
-def : Pat<(or (SLOW32lo tjumptable:$addr), (SLOW32hi tjumptable:$addr)),
-          (ORI (LUI tjumptable:$addr), tjumptable:$addr)>;
 
 // Patterns for loads and stores
 def : Pat<(load GPR:$addr), (LDW GPR:$addr, 0)>;
@@ -191,28 +164,28 @@ def : Pat<(store GPR:$val, GPR:$addr), (STW GPR:$addr, GPR:$val, 0)>;
 
 // Patterns for loads with offsets (base + immediate)
 // Also use ComplexPattern for better address matching
-def : Pat<(load (add GPR:$base, simm16:$offset)), 
-          (LDW GPR:$base, simm16:$offset)>;
-def : Pat<(sextloadi8 (add GPR:$base, simm16:$offset)), 
-          (LDB GPR:$base, simm16:$offset)>;
-def : Pat<(zextloadi8 (add GPR:$base, simm16:$offset)), 
-          (LDBU GPR:$base, simm16:$offset)>;
-def : Pat<(extloadi8 (add GPR:$base, simm16:$offset)), 
-          (LDBU GPR:$base, simm16:$offset)>;
-def : Pat<(sextloadi16 (add GPR:$base, simm16:$offset)), 
-          (LDH GPR:$base, simm16:$offset)>;
-def : Pat<(zextloadi16 (add GPR:$base, simm16:$offset)), 
-          (LDHU GPR:$base, simm16:$offset)>;
-def : Pat<(extloadi16 (add GPR:$base, simm16:$offset)), 
-          (LDHU GPR:$base, simm16:$offset)>;
+def : Pat<(load (add GPR:$base, simm12:$offset)), 
+          (LDW GPR:$base, simm12:$offset)>;
+def : Pat<(sextloadi8 (add GPR:$base, simm12:$offset)), 
+          (LDB GPR:$base, simm12:$offset)>;
+def : Pat<(zextloadi8 (add GPR:$base, simm12:$offset)), 
+          (LDBU GPR:$base, simm12:$offset)>;
+def : Pat<(extloadi8 (add GPR:$base, simm12:$offset)), 
+          (LDBU GPR:$base, simm12:$offset)>;
+def : Pat<(sextloadi16 (add GPR:$base, simm12:$offset)), 
+          (LDH GPR:$base, simm12:$offset)>;
+def : Pat<(zextloadi16 (add GPR:$base, simm12:$offset)), 
+          (LDHU GPR:$base, simm12:$offset)>;
+def : Pat<(extloadi16 (add GPR:$base, simm12:$offset)), 
+          (LDHU GPR:$base, simm12:$offset)>;
 
 // Patterns for stores with offsets (base + immediate)
-def : Pat<(store GPR:$val, (add GPR:$base, simm16:$offset)), 
-          (STW GPR:$base, GPR:$val, simm16:$offset)>;
-def : Pat<(truncstorei8 GPR:$val, (add GPR:$base, simm16:$offset)), 
-          (STB GPR:$base, GPR:$val, simm16:$offset)>;
-def : Pat<(truncstorei16 GPR:$val, (add GPR:$base, simm16:$offset)), 
-          (STH GPR:$base, GPR:$val, simm16:$offset)>;
+def : Pat<(store GPR:$val, (add GPR:$base, simm12:$offset)), 
+          (STW GPR:$base, GPR:$val, simm12:$offset)>;
+def : Pat<(truncstorei8 GPR:$val, (add GPR:$base, simm12:$offset)), 
+          (STB GPR:$base, GPR:$val, simm12:$offset)>;
+def : Pat<(truncstorei16 GPR:$val, (add GPR:$base, simm12:$offset)), 
+          (STH GPR:$base, GPR:$val, simm12:$offset)>;
 
 // Patterns for byte loads (sign-extended and zero-extended)
 // Keep the simple patterns with explicit addressing modes
@@ -239,8 +212,8 @@ def : Pat<(sext_inreg GPR:$src, i16),
 
 // Pattern for adding small constant to byte and sign-extending
 // This handles the common pattern: (sext_inreg (add reg, small_const), i8)
-def : Pat<(sext_inreg (add GPR:$src, simm16:$imm), i8),
-          (SRAI (SLLI (ADDI GPR:$src, simm16:$imm), 24), 24)>;
+def : Pat<(sext_inreg (add GPR:$src, simm12:$imm), i8),
+          (SRAI (SLLI (ADDI GPR:$src, simm12:$imm), 24), 24)>;
 // Removed: LLVM canonicalizes immediates to RHS
 
 // For global addresses, use %hi/%lo for proper 32-bit addressing
@@ -256,10 +229,10 @@ def : Pat<(store GPR:$val, (i32 tglobaladdr:$addr)),
           (STW (LOAD_ADDR tglobaladdr:$addr), GPR:$val, 0)>;
 
 // Patterns for immediate operations
-def : Pat<(add GPR:$a, simm16:$b), (ADDI GPR:$a, simm16:$b)>;
-def : Pat<(and GPR:$a, uimm16:$b), (ANDI GPR:$a, uimm16:$b)>;
-def : Pat<(or  GPR:$a, uimm16:$b), (ORI  GPR:$a, uimm16:$b)>;
-def : Pat<(xor GPR:$a, uimm16:$b), (XORI GPR:$a, uimm16:$b)>;
+def : Pat<(add GPR:$a, simm12:$b), (ADDI GPR:$a, simm12:$b)>;
+def : Pat<(and GPR:$a, uimm12:$b), (ANDI GPR:$a, uimm12:$b)>;
+def : Pat<(or  GPR:$a, uimm12:$b), (ORI  GPR:$a, uimm12:$b)>;
+def : Pat<(xor GPR:$a, uimm12:$b), (XORI GPR:$a, uimm12:$b)>;
 
 // For large constants that don't fit in 16 bits, materialize them in a register first
 // This will be handled by the constant materialization patterns below
@@ -274,7 +247,7 @@ def LO16 : SDNodeXForm<imm, [{
 
 // Patterns for materializing constants
 // Small constants that fit in 16 bits (signed)
-def : Pat<(i32 simm16:$imm), (ADDI R0, simm16:$imm)>;
+def : Pat<(i32 simm12:$imm), (ADDI R0, simm12:$imm)>;
 
 // Constants that need LUI only (upper 16 bits, lower 16 bits are 0)
 def HI16_ONLY : PatLeaf<(imm), [{
@@ -420,16 +393,16 @@ let isCall = 1, Defs = [R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R31], Uses = [R
 //===----------------------------------------------------------------------===//
 
 // Byte and halfword load patterns with different extensions
-def : Pat<(i32 (extloadi8 (add GPR:$rs1, simm16:$off))),
-          (LDB GPR:$rs1, simm16:$off)>;
-def : Pat<(i32 (extloadi16 (add GPR:$rs1, simm16:$off))),
-          (LDH GPR:$rs1, simm16:$off)>;
+def : Pat<(i32 (extloadi8 (add GPR:$rs1, simm12:$off))),
+          (LDB GPR:$rs1, simm12:$off)>;
+def : Pat<(i32 (extloadi16 (add GPR:$rs1, simm12:$off))),
+          (LDH GPR:$rs1, simm12:$off)>;
 
 // Zero extension patterns
-def : Pat<(i32 (zextloadi8 (add GPR:$rs1, simm16:$off))),
-          (LDBU GPR:$rs1, simm16:$off)>;
-def : Pat<(i32 (zextloadi16 (add GPR:$rs1, simm16:$off))),
-          (LDHU GPR:$rs1, simm16:$off)>;
+def : Pat<(i32 (zextloadi8 (add GPR:$rs1, simm12:$off))),
+          (LDBU GPR:$rs1, simm12:$off)>;
+def : Pat<(i32 (zextloadi16 (add GPR:$rs1, simm12:$off))),
+          (LDHU GPR:$rs1, simm12:$off)>;
 
 // Sign extension from i8/i16 without shift sequences
 def : Pat<(i32 (sext_inreg GPR:$rs1, i8)),
@@ -438,8 +411,8 @@ def : Pat<(i32 (sext_inreg GPR:$rs1, i16)),
           (SRA (SLL GPR:$rs1, 16), 16)>;
 
 // Patterns for adding immediates to different types
-def : Pat<(i32 (add GPR:$rs1, simm16:$imm)),
-          (ADDI GPR:$rs1, simm16:$imm)>;
+def : Pat<(i32 (add GPR:$rs1, simm12:$imm)),
+          (ADDI GPR:$rs1, simm12:$imm)>;
 
 
 // Load/store pairs for memcpy optimization
@@ -447,19 +420,19 @@ def : Pat<(i32 (add GPR:$rs1, simm16:$imm)),
 multiclass LoadStorePat<ValueType vt, PatFrag ldop, PatFrag stop, 
                         S32Inst ldinst, S32Inst stinst> {
   def : Pat<(vt (ldop GPR:$base)), (ldinst GPR:$base, 0)>;
-  def : Pat<(vt (ldop (add GPR:$base, simm16:$off))), 
-            (ldinst GPR:$base, simm16:$off)>;
+  def : Pat<(vt (ldop (add GPR:$base, simm12:$off))), 
+            (ldinst GPR:$base, simm12:$off)>;
   def : Pat<(stop vt:$val, GPR:$base), (stinst GPR:$base, 0, vt:$val)>;
-  def : Pat<(stop vt:$val, (add GPR:$base, simm16:$off)), 
-            (stinst GPR:$base, simm16:$off, vt:$val)>;
+  def : Pat<(stop vt:$val, (add GPR:$base, simm12:$off)), 
+            (stinst GPR:$base, simm12:$off, vt:$val)>;
 }
 
 defm : LoadStorePat<i32, load, store, LDW, STW>;
 
 // Patterns for constant materialization
 def : Pat<(i32 0), (ADDI R0, 0)>;
-def : Pat<(i32 simm16:$imm), (ADDI R0, simm16:$imm)>;
-def : Pat<(i32 uimm16:$imm), (ORI R0, uimm16:$imm)>;
+def : Pat<(i32 simm12:$imm), (ADDI R0, simm12:$imm)>;
+def : Pat<(i32 uimm12:$imm), (ORI R0, uimm12:$imm)>;
 
 // Upper 16-bit constant patterns
 def : Pat<(i32 (shl (i32 imm:$imm), (i32 16))),
@@ -502,4 +475,3 @@ def : Pat<(subc GPR:$lhs, GPR:$rhs),
           (SUBC_PSEUDO GPR:$lhs, GPR:$rhs)>;
 def : Pat<(sube GPR:$lhs, GPR:$rhs),
           (SUBE_PSEUDO GPR:$lhs, GPR:$rhs, R0)>;
-

@@ -1,9 +1,11 @@
 # SLOW32 Backend Status
 
-Last Updated: 2025-09-03
+Last Updated: 2025-09-15 (MOTHBALLED)
 
 ## Overview
-The SLOW32 LLVM backend is functional for basic C programs. It can compile functions with arguments, return values, arithmetic operations, memory access, global variables, and basic varargs support.
+The SLOW32 LLVM backend achieved remarkable completeness before being mothballed due to LLVM main branch instability. It successfully compiles complex C programs including CRC32 calculations, printf with varargs, 64-bit integer operations, and more.
+
+**MOTHBALL STATUS**: Project paused at commit 417a5a678 (2025-09-13) which is the last known fully working state. After rebasing to LLVM main (2025-09-15), optimization at -O1/-O2 causes hangs in Branch Folder/Block Placement passes. Waiting for LLVM 22 stabilization.
 
 ## Architecture Reminder
 - 32-bit RISC architecture
@@ -39,7 +41,7 @@ The SLOW32 LLVM backend is functional for basic C programs. It can compile funct
   - Halfword: LDH (sign-extend), LDHU (zero-extend), STH
 - **Comparison**: SLT, SLTU, SEQ, SNE, SGT, SGTU, SGE, SGEU
 - **Control Flow**: JAL, JALR for calls; BEQ, BNE, BLT, BGE for branches
-- **Constants**: LI (pseudo), LUI, ORI for loading immediates
+- **Constants**: LI (pseudo), LUI, ADDI for loading immediates
 
 ### Function Support
 - Function prologue/epilogue generation
@@ -61,7 +63,7 @@ The SLOW32 LLVM backend is functional for basic C programs. It can compile funct
 ## ⚠️ Partially Working
 
 ### %hi/%lo Addressing
-- Generates correct LUI + ORI sequences
+- Generates correct LUI + ADDI sequences with 12-bit signed immediates
 - Relocations work at binary level
 - ✅ Assembly syntax now properly emits %hi() and %lo() markers
 - Distinguishes between function addresses (direct) and data addresses (%hi/%lo)
@@ -246,5 +248,30 @@ All 8 regression tests with test files passing:
 - ✓ feature-loops
 - ✓ feature-shifts
 
+## Final Status at Mothball (2025-09-15)
+
+### Major Achievements
+- ✅ **Full 64-bit integer support** including division/remainder via libcalls
+- ✅ **Printf with varargs** fully working (after fixing VAARG optimization bug)
+- ✅ **Complex programs** like CRC32 calculations with 1KB lookup tables
+- ✅ **Switch statements** with jump tables
+- ✅ **All optimization levels** working at stable commit (417a5a678)
+- ✅ **Function pointers** and indirect calls
+- ✅ **Inline assembly** with register/immediate/memory constraints
+- ✅ **14/14 regression tests passing** at stable commit
+
+### Known Issues at Latest LLVM Main
+- Branch analyzer incompatible with latest optimization infrastructure
+- LLC hangs at -O1/-O2 in Branch Folder/Block Placement passes
+- Runtime cannot be built at optimization levels above -O0
+
+### Collaboration Notes
+This project was a remarkable collaboration between human expertise and AI assistance:
+- Claude and ChatGPT 5 were instrumental in solving complex issues
+- 64-bit operations implementation guided by ChatGPT 5's "one-way street" approach
+- VAARG optimization bug identified and fixed with AI assistance
+- Branch folder issues debugged through extensive AI collaboration
+
 ---
-*This backend is under active development. Expect rough edges but steady progress.*
+*Backend mothballed 2025-09-15. Use commit 417a5a678 for stable version.*
+*Waiting for LLVM 22 stabilization before continuing development.*

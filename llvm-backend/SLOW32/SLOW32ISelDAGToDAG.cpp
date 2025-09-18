@@ -13,6 +13,7 @@
 #include "llvm/CodeGen/SelectionDAGISel.h"
 #include "llvm/CodeGen/SelectionDAGNodes.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/MathExtras.h"
 
 using namespace llvm;
 
@@ -24,91 +25,99 @@ public:
   SLOW32DAGToDAGISel(SLOW32TargetMachine &TM)
       : SelectionDAGISel(TM) {}
 
+private:
+  SDValue createLoadAddrForGlobal(const SDLoc &DL,
+                                  GlobalAddressSDNode *GA,
+                                  int64_t AdditionalOffset) const {
+    int64_t TotalOffset = GA->getOffset() + AdditionalOffset;
+    SDValue BaseSym = CurDAG->getTargetGlobalAddress(
+        GA->getGlobal(), DL, MVT::i32, TotalOffset, GA->getTargetFlags());
+    SDNode *LoadAddr =
+        CurDAG->getMachineNode(SLOW32::LOAD_ADDR, DL, MVT::i32, BaseSym);
+    return SDValue(LoadAddr, 0);
+  }
+
+  SDValue tryFoldLoadAddrAddend(SDValue LoadAddr, int64_t ExtraOffset,
+                                const SDLoc &DL) const {
+    SDNode *LoadAddrNode = LoadAddr.getNode();
+    if (!LoadAddrNode || !LoadAddrNode->isMachineOpcode() ||
+        LoadAddrNode->getMachineOpcode() != SLOW32::LOAD_ADDR)
+      return SDValue();
+
+    SDValue SymbolOp = LoadAddrNode->getOperand(0);
+    if (auto *GA = dyn_cast<GlobalAddressSDNode>(SymbolOp.getNode()))
+      return createLoadAddrForGlobal(DL, GA, ExtraOffset);
+
+    return SDValue();
+  }
+
+public:
   // Select address mode for loads/stores
   // This is critical for proper byte-wise memcpy expansion
   bool SelectAddr(SDValue N, SDValue &Base, SDValue &Offset) {
     SDLoc DL(N);
-    
-    // Handle GlobalAddress nodes with offsets (critical for memcpy expansion)
-    // This handles patterns like .L__const.main.str+1, .L__const.main.str+2, etc.
-    if (GlobalAddressSDNode *GA = dyn_cast<GlobalAddressSDNode>(N)) {
-      int64_t GOffset = GA->getOffset();
-      
-      // Split the GlobalAddress into base address and offset
-      // Create a GlobalAddress with offset 0 for the base
-      SDValue GABase = CurDAG->getTargetGlobalAddress(
-        GA->getGlobal(), DL, MVT::i32, 0, GA->getTargetFlags());
-      
-      // Generate LUI+ADDI to materialize the base address
-      SDValue Hi = SDValue(CurDAG->getMachineNode(SLOW32::LUI, DL, MVT::i32,
-                                                  GABase), 0);
-      Base = SDValue(CurDAG->getMachineNode(SLOW32::ADDI, DL, MVT::i32,
-                                            Hi, GABase), 0);
-      
-      // The offset from the GlobalAddress
-      Offset = CurDAG->getTargetConstant(GOffset, DL, MVT::i32);
+
+    if (auto *GA = dyn_cast<GlobalAddressSDNode>(N)) {
+      Base = createLoadAddrForGlobal(DL, GA, /*AdditionalOffset=*/0);
+      Offset = CurDAG->getTargetConstant(0, DL, MVT::i32);
       return true;
     }
-    
-    // Handle (base + constant) addressing
+
     if (N.getOpcode() == ISD::ADD) {
-      // Check if the first operand is a GlobalAddress with an offset
-      if (GlobalAddressSDNode *GA = dyn_cast<GlobalAddressSDNode>(N.getOperand(0))) {
-        if (auto *CN = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
-          int64_t CVal = CN->getSExtValue();
-          int64_t GOffset = GA->getOffset();
-          int64_t TotalOffset = GOffset + CVal;
-          
-          // Check if total offset fits in 16-bit signed immediate
-          if (isInt<16>(TotalOffset)) {
-            // Create base address (GlobalAddress with offset 0)
-            SDValue GABase = CurDAG->getTargetGlobalAddress(
-              GA->getGlobal(), DL, MVT::i32, 0, GA->getTargetFlags());
-            
-            // Generate LUI+ADDI to materialize the base address
-            SDValue Hi = SDValue(CurDAG->getMachineNode(SLOW32::LUI, DL, MVT::i32,
-                                                        GABase), 0);
-            Base = SDValue(CurDAG->getMachineNode(SLOW32::ADDI, DL, MVT::i32,
-                                                  Hi, GABase), 0);
-            
-            Offset = CurDAG->getTargetConstant(TotalOffset, DL, MVT::i32);
-            return true;
-          }
+      if (auto *GA = dyn_cast<GlobalAddressSDNode>(N.getOperand(0))) {
+        if (const auto *CN = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
+          Base = createLoadAddrForGlobal(DL, GA, CN->getSExtValue());
+          Offset = CurDAG->getTargetConstant(0, DL, MVT::i32);
+          return true;
         }
       }
-      
-      // Normal ADD pattern with constant offset
-      if (auto *CN = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
+      if (auto *GA = dyn_cast<GlobalAddressSDNode>(N.getOperand(1))) {
+        if (const auto *CN = dyn_cast<ConstantSDNode>(N.getOperand(0))) {
+          Base = createLoadAddrForGlobal(DL, GA, CN->getSExtValue());
+          Offset = CurDAG->getTargetConstant(0, DL, MVT::i32);
+          return true;
+        }
+      }
+
+      if (const auto *CN = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
+        if (SDValue Folded = tryFoldLoadAddrAddend(N.getOperand(0),
+                                                   CN->getSExtValue(), DL)) {
+          Base = Folded;
+          Offset = CurDAG->getTargetConstant(0, DL, MVT::i32);
+          return true;
+        }
+
         int64_t CVal = CN->getSExtValue();
-        // Check if constant fits in 16-bit signed immediate
-        if (isInt<16>(CVal)) {
+        if (isInt<12>(CVal)) {
           Base = N.getOperand(0);
           Offset = CurDAG->getTargetConstant(CVal, DL, MVT::i32);
           return true;
         }
       }
-    }
-    
-    // Handle nested ADD for (HI+LO)+offset patterns
-    if (N.getOpcode() == ISD::ADD && N.getOperand(0).getOpcode() == ISD::ADD) {
-      if (auto *CN = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
+
+      if (const auto *CN = dyn_cast<ConstantSDNode>(N.getOperand(0))) {
+        if (SDValue Folded = tryFoldLoadAddrAddend(N.getOperand(1),
+                                                   CN->getSExtValue(), DL)) {
+          Base = Folded;
+          Offset = CurDAG->getTargetConstant(0, DL, MVT::i32);
+          return true;
+        }
+
         int64_t CVal = CN->getSExtValue();
-        if (isInt<16>(CVal)) {
-          Base = N.getOperand(0);
+        if (isInt<12>(CVal)) {
+          Base = N.getOperand(1);
           Offset = CurDAG->getTargetConstant(CVal, DL, MVT::i32);
           return true;
         }
       }
     }
-    
-    // Handle FrameIndex nodes
+
     if (auto *FI = dyn_cast<FrameIndexSDNode>(N)) {
       Base = CurDAG->getTargetFrameIndex(FI->getIndex(), MVT::i32);
       Offset = CurDAG->getTargetConstant(0, DL, MVT::i32);
       return true;
     }
-    
-    // Default case: base with 0 offset
+
     Base = N;
     Offset = CurDAG->getTargetConstant(0, DL, MVT::i32);
     return true;
@@ -122,6 +131,45 @@ public:
     }
     
     switch (N->getOpcode()) {
+    case ISD::ADD: {
+      SDLoc DL(N);
+      SDValue Op0 = N->getOperand(0);
+      SDValue Op1 = N->getOperand(1);
+
+      if (auto *GA = dyn_cast<GlobalAddressSDNode>(Op0)) {
+        if (const auto *CN = dyn_cast<ConstantSDNode>(Op1)) {
+          SDValue Folded =
+              createLoadAddrForGlobal(DL, GA, CN->getSExtValue());
+          ReplaceNode(N, Folded.getNode());
+          return;
+        }
+      }
+      if (auto *GA = dyn_cast<GlobalAddressSDNode>(Op1)) {
+        if (const auto *CN = dyn_cast<ConstantSDNode>(Op0)) {
+          SDValue Folded =
+              createLoadAddrForGlobal(DL, GA, CN->getSExtValue());
+          ReplaceNode(N, Folded.getNode());
+          return;
+        }
+      }
+
+      if (const auto *CN = dyn_cast<ConstantSDNode>(Op1)) {
+        if (SDValue Folded =
+                tryFoldLoadAddrAddend(Op0, CN->getSExtValue(), DL)) {
+          ReplaceNode(N, Folded.getNode());
+          return;
+        }
+      }
+      if (const auto *CN = dyn_cast<ConstantSDNode>(Op0)) {
+        if (SDValue Folded =
+                tryFoldLoadAddrAddend(Op1, CN->getSExtValue(), DL)) {
+          ReplaceNode(N, Folded.getNode());
+          return;
+        }
+      }
+
+      break;
+    }
     case ISD::Constant: {
       // Handle large constants that don't fit in immediate fields
       auto *CN = cast<ConstantSDNode>(N);
@@ -132,40 +180,35 @@ public:
         break;
       }
       
-      // For large constants, we need LUI + ADDI (RISC-V style)
+      // For large constants, we need LUI + ADDI (RISC-V style rounding)
       SDLoc DL(N);
       EVT VT = N->getValueType(0);
+
+      int64_t Hi = (Imm + 0x800) >> 12;
+      int32_t Lo = Imm - static_cast<int64_t>(Hi << 12);
+      assert(isInt<12>(Lo) && "Lo12 out of range after materialisation");
+
       SDValue Result;
-      
-      // Split into 20-bit upper and 12-bit lower parts
-      uint32_t UImm = (uint32_t)Imm;
-      int32_t Lo12 = UImm & 0xFFF;
-      int32_t Hi20 = (UImm >> 12) & 0xFFFFF;
-      
-      // If bit 11 of Lo12 is set, it will be sign-extended by ADDI
-      // We need to adjust Hi20 to compensate
-      if (Lo12 & 0x800) {
-        Hi20 = (Hi20 + 1) & 0xFFFFF;  // Increment and mask to 20 bits
-        // Keep Lo12 as the original 12-bit value for the instruction encoding
-        // ADDI will sign-extend it at runtime
-      }
-      
-      if (Hi20 == 0 && !(Lo12 & 0x800)) {
-        // Just ADDI is enough (small positive constant that fits in 12 bits)
+
+      uint32_t HiBits = static_cast<uint32_t>(Hi) & 0xFFFFF;
+      SDValue HiImm = CurDAG->getTargetConstant(HiBits, DL, MVT::i32);
+      APInt LoAP(32, static_cast<uint64_t>(static_cast<int64_t>(Lo)), true);
+      SDValue LoImm = CurDAG->getTargetConstant(LoAP, DL, MVT::i32);
+
+      if (Hi == 0) {
+        // Pure ADDI from zero (covers both positive and negative 12-bit values)
         Result = SDValue(CurDAG->getMachineNode(SLOW32::ADDI, DL, VT,
                                        CurDAG->getRegister(SLOW32::R0, VT),
-                                       CurDAG->getTargetConstant(Lo12, DL, VT)), 0);
-      } else if (Lo12 == 0) {
-        // Just LUI is enough (lower 12 bits are zero)
-        Result = SDValue(CurDAG->getMachineNode(SLOW32::LUI, DL, VT,
-                                       CurDAG->getTargetConstant(Hi20, DL, VT)), 0);
+                                       LoImm),
+                         0);
+      } else if (Lo == 0) {
+        Result = SDValue(
+            CurDAG->getMachineNode(SLOW32::LUI, DL, VT, HiImm), 0);
       } else {
-        // Need both LUI and ADDI
-        SDValue HiNode = SDValue(CurDAG->getMachineNode(SLOW32::LUI, DL, VT,
-                                    CurDAG->getTargetConstant(Hi20, DL, VT)), 0);
-        Result = SDValue(CurDAG->getMachineNode(SLOW32::ADDI, DL, VT,
-                                       HiNode,
-                                       CurDAG->getTargetConstant(Lo12, DL, VT)), 0);
+        SDValue HiNode =
+            SDValue(CurDAG->getMachineNode(SLOW32::LUI, DL, VT, HiImm), 0);
+        Result = SDValue(
+            CurDAG->getMachineNode(SLOW32::ADDI, DL, VT, HiNode, LoImm), 0);
       }
       
       ReplaceNode(N, Result.getNode());

@@ -16,6 +16,10 @@ add_llvm_target(SLOW32CodeGen
   SLOW32FrameLowering.cpp
   SLOW32ISelDAGToDAG.cpp
   SLOW32ISelLowering.cpp
+  SLOW32ISelLoweringCombines.cpp
+  SLOW32ISelLoweringInlineAsm.cpp
+  SLOW32ISelLoweringVarargs.cpp
+  SLOW32LoadAddrOpt.cpp
   SLOW32InstrInfo.cpp
   SLOW32MachineFunctionInfo.cpp
   SLOW32MCInstLowering.cpp

@@ -45,15 +45,15 @@ make
 
 ## Working Features
 
-✅ Complete toolchain with proper linker (not concatenation!)
-✅ Object files (.s32o) with relocations and symbol tables
-✅ Executable format (.s32x) with resolved symbols
-✅ All comparison instructions (SEQ, SNE, SGT/U, SLE/U, etc.)
-✅ PHI node support for SSA form
-✅ LLVM intrinsics: memcpy, memset, lifetime, smax/smin
-✅ Varargs fully working with clang SLOW32 target!
-✅ Jump tables for switch statements (assembler, linker, LLVM backend all support)
-✅ Advanced relocations: %hi(symbol+offset), %lo(symbol+offset), %pcrel_hi, %pcrel_lo
+✅ Complete toolchain with proper linker (not concatenation!)  
+✅ Object files (.s32o) with relocations and symbol tables  
+✅ Executable format (.s32x) with resolved symbols  
+✅ All comparison instructions (SEQ, SNE, SGT/U, SLE/U, etc.)  
+✅ PHI node support for SSA form  
+✅ LLVM intrinsics: memcpy, memset, lifetime, smax/smin  
+✅ Varargs fully working with clang SLOW32 target!  
+✅ Jump tables for switch statements (assembler, linker, LLVM backend all support)  
+✅ Advanced relocations: %hi(symbol+offset), %lo(symbol+offset), %pcrel_hi, %pcrel_lo  
 ✅ 64-bit integers: FULLY COMPLETE including:
   - ADD/SUB with carry/borrow
   - MUL via UMUL_LOHI/SMUL_LOHI custom lowering
@@ -61,15 +61,18 @@ make
   - All logical operations (AND, OR, XOR, shifts)
   - All comparison operations (EQ, NE, LT, GT, LE, GE for both signed/unsigned)
   - Comprehensive regression test coverage
-✅ Native Clang target: `-target slow32-unknown-none` (note: single dash)
+✅ Native Clang target: `-target slow32-unknown-none` (note: single dash)  
 ✅ XORI instruction (opcode 0x1E) for XOR immediate operations
 ✅ LLVM backend updated for latest LLVM API (Sep 2025)
 ✅ Regression tests: ALL 14/14 PASSING! (Fixed MMIO bug, stack args offset)
 ✅ Runtime libraries built as archives: libs32.s32a (5.3KB), libc.s32a (14KB)
-✅ ALL optimization levels working (-O0, -O1, -O2)!
+✅ Optimization passes fixed - no more LLC hangs
 ✅ MMIO support: Emulators use MMIO base from executable header, linker provides __mmio_base symbol
 ✅ Fixed emulator MMIO bug: no longer treats address 0x0-0xFFFF as MMIO when mmio_base=0
 ✅ Fixed LLVM backend stack argument bug: arguments 9+ now correctly accessed at fp+0, fp+4, etc.
+
+✅ Runtime builds successfully with -O0, -O1, and -O2
+✅ Some complex files (printf.c, stdio.c, etc.) use -O1 to avoid optimizer performance issues
 
 ⚠️ See docs/IMPROVEMENTS.md for known issues
 
@@ -79,7 +82,7 @@ make
 - **Always use the linker** - Never concatenate .s files!
 - **crt0.s32o must be explicitly linked first** - Contains _start at address 0 (not included in archives)
 - **Link order**: crt0.s32o, program.s32o, libs32.s32a, libc.s32a
-- **Use -O2** - Default optimization level, -O0 and -O1 also work
+- **Use -O2** - Default optimization level, -O1 also works
 - **Archives available**: libs32.s32a (runtime intrinsics + 64-bit builtins), libc.s32a (standard C library)
 - **MMIO support**: Use `--mmio SIZE` flag with linker (e.g., `--mmio 64K`), access via __mmio_base symbol
 

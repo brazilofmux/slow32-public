@@ -1,39 +1,61 @@
-# Build artifacts
+# Object files
 *.o
-*.a
-*.so
+*.obj
+
+# Executables
 *.exe
 *.out
+emulator/slow32
+emulator/slow32-*
+!emulator/slow32-*.c
+assembler/slow32asm
+compiler/slow32-compile
+tools/s32-objdump
+tools/s32-exedump
+linker/s32-ld
+
+# Test files
+*.bin
+*.ll
+!tests/*.c
+!tests/*.ll
+!examples/*.c
+test*.s
+test*.o
+verify*.s
+verify*.o
+
+# Assembly files (except in specific directories)
+/*.s
+!runtime/*.s
+!tests/*.s
+!examples/*.s
+
+# Temporary compilation files in root
+/*.c
+!test*.c
+benchmark*
+assembler_reloc_patch.txt
+
+# Object and executable formats
 *.s32o
 *.s32x
-build/
-bin/
-
-# Tool binaries
-tools/assembler/slow32asm
-tools/linker/s32-ld
-tools/emulator/slow32
-tools/emulator/slow32-fast
-tools/utilities/s32-objdump
-tools/utilities/s32-exedump
-tools/utilities/slow32dis
 
 # Editor files
 .vscode/
-.idea/
 *.swp
-*.swo
 *~
-.DS_Store
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-.venv/
-venv/
+# Build artifacts
+build/
+*.a
+*.so
 
-# Temporary files
-*.tmp
-*.log
-.cache/
+# Debug files
+*.dSYM/
+core
+*.core
+vgcore.*
+
+# Stuff
+feedback

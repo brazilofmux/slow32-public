@@ -13,6 +13,42 @@ This document consolidates feedback and improvement suggestions for the SLOW-32 
 - **S-format parsing**: Explicit `rs2` handling
 - **`%lo(symbol)`**: Keep in loads/stores exactly as-is
 
+## Toolchain Status (2025-09-08)
+
+### New Features
+1. **Archive tool (s32-ar)** ✅
+   - Create, list, extract .s32a archives
+   - Symbol index for efficient linking
+   - Compatible with standard ar operations
+   
+2. **Runtime library archive** ✅
+   - All runtime components in libruntime.s32a
+   - Includes expanded stdlib, ctype, string functions
+   
+3. **Expanded C library** ✅
+   - qsort, bsearch, strtol, strtok_r
+   - Full ctype.h implementation
+   - div/ldiv functions
+   - Memory and string utilities
+
+### Recently Fixed (2025-09-09)
+1. **~~CRITICAL: Function arguments not passed for external symbols~~** ✅ FIXED/FALSE ALARM
+   - **2025-09-09 Investigation**: This was a misdiagnosis - LLVM backend DOES generate correct code!
+   - Tested: `puts()`, `strcpy()`, and other external calls work perfectly
+   - Arguments ARE properly loaded into registers (r3, r4, etc.) before JAL
+   - Assembler DOES create proper relocations for external symbols
+   - All test cases link and execute successfully
+   
+2. **Memory fault in malloc/printf** ✅ FIXED
+   - Root cause was in malloc implementation
+   - Test programs now run successfully
+   - malloc/free tested with stress tests (100+ allocations)
+   
+3. **Linker library paths** ✅ IMPLEMENTED
+   - -L flag now implemented for library search paths
+   - -l flag for linking libraries (e.g., -lc links libc.s32a)
+   - Supports multiple search paths
+
 ## Compiler Improvements
 
 ### Recently Fixed (2025-09-01)
@@ -29,14 +65,15 @@ This document consolidates feedback and improvement suggestions for the SLOW-32 
    - Now expands to `ori rd, r0, imm` for assembler compatibility
 
 ### Still Needed
-1. **Full 32-bit addresses with LUI/ADDI**
-   - Current: Only using ORI (16-bit immediates)
-   - Need: `lui rd, %hi(symbol); addi rd, rd, %lo(symbol)`
-   - Note: Must use ADDI not ORI for correct sign extension
+1. **~~Full 32-bit addresses with LUI/ADDI~~** ✅ IMPLEMENTED
+   - LLVM backend now generates LUI/ADDI for 32-bit addresses
+   - Properly uses `lui rd, %hi(symbol)` and `addi rd, rd, %lo(symbol)`
+   - Tested and working with high memory addresses
 
 2. **Switch statement control flow**
-   - Currently generates incorrect branch labels
-   - Jump table support needed
+   - Jump tables supported in assembler and linker
+   - .word directive supports symbols via REL_32 relocations
+   - LLVM backend may need tuning to avoid excessive .word generation
 
 3. **Address formation correctness**
    - GEP scaling issues
@@ -71,13 +108,19 @@ This document consolidates feedback and improvement suggestions for the SLOW-32 
 
 **Additional Guards**: Add checks for edge cases (size ≤ 0, not multiples of 4) to prevent spins
 
-## Priority Order
+## Priority Order (Updated 2025-09-09)
 
-1. **Runtime intrinsics** - Fix `bne` loops (causes infinite loops)
-2. **Compiler LUI/ORI** - Switch to LUI/ADDI (causes incorrect addresses)
-3. **Linker error handling** - Add hard errors for unresolved symbols
-4. **Assembler `.word symbol`** - Support REL_32 relocations
-5. **Emulator safety** - Improve shared loader checks
+Most critical issues have been resolved:
+- ✅ **Runtime intrinsics** - Core intrinsics (memcpy/memset) use safe BEQ patterns
+- ✅ **Compiler LUI/ADDI** - Implemented for 32-bit addresses
+- ✅ **Assembler `.word symbol`** - REL_32 relocations working
+- ✅ **Linker library paths** - -L and -l flags implemented
+
+Remaining lower-priority items:
+1. **Linker error handling** - Add hard errors for unresolved symbols
+2. **Emulator safety** - Improve shared loader checks
+3. **Printf formatting** - Output formatting needs improvement
+4. **BNE usage in stdlib** - Some library functions still use BNE (but working)
 
 ## Testing Recommendations
 

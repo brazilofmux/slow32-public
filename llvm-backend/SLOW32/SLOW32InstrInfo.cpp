@@ -9,9 +9,10 @@
 #include "SLOW32InstrInfo.h"
 #include "SLOW32.h"
 #include "SLOW32Subtarget.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
-#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #define DEBUG_TYPE "slow32-branch"
 
@@ -21,6 +22,47 @@
 #include "SLOW32GenInstrInfo.inc"
 
 using namespace llvm;
+
+namespace {
+
+bool isConditionalBranch(unsigned Opcode) {
+  switch (Opcode) {
+  case SLOW32::BEQ_pat:
+  case SLOW32::BNE_pat:
+  case SLOW32::BLT:
+  case SLOW32::BGE:
+    return true;
+  default:
+    return false;
+  }
+}
+
+MachineBasicBlock *getBranchTarget(const MachineInstr &MI) {
+  assert(MI.getDesc().isBranch() && "Unexpected non-branch opcode");
+  unsigned Idx = MI.getNumExplicitOperands();
+  if (Idx == 0)
+    return nullptr;
+  const MachineOperand &MO = MI.getOperand(Idx - 1);
+  // NOTE: SLOW32 conditional branch pseudos still use an immediate slot for
+  // their offset. Earlier revs blindly called getMBB() here which returned
+  // garbage and triggered TailDuplicator asserts when the optimizer tried to
+  // rewrite CFG edges. Keep this guard in place (and update tests) if we ever
+  // adjust the TableGen patterns.
+  if (!MO.isMBB())
+    return nullptr;
+  return MO.getMBB();
+}
+
+void buildCondFromBranch(MachineInstr &MI,
+                         SmallVectorImpl<MachineOperand> &Cond) {
+  assert(isConditionalBranch(MI.getOpcode()) &&
+         "Trying to build a condition from a non-conditional branch");
+  Cond.push_back(MachineOperand::CreateImm(MI.getOpcode()));
+  Cond.push_back(MI.getOperand(0));
+  Cond.push_back(MI.getOperand(1));
+}
+
+} // namespace
 
 SLOW32InstrInfo::SLOW32InstrInfo(const SLOW32Subtarget &STI)
     : SLOW32GenInstrInfo(STI, SLOW32::ADJCALLSTACKDOWN, SLOW32::ADJCALLSTACKUP,
@@ -76,252 +118,161 @@ void SLOW32InstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
 
 // Analyze the branching code at the end of MBB
 bool SLOW32InstrInfo::analyzeBranch(MachineBasicBlock &MBB,
-                                     MachineBasicBlock *&TBB,
-                                     MachineBasicBlock *&FBB,
-                                     SmallVectorImpl<MachineOperand> &Cond,
-                                     bool AllowModify) const {
-  // Always start clean - reset outputs to avoid stale data
+                                    MachineBasicBlock *&TBB,
+                                    MachineBasicBlock *&FBB,
+                                    SmallVectorImpl<MachineOperand> &Cond,
+                                    bool AllowModify) const {
   TBB = nullptr;
   FBB = nullptr;
   Cond.clear();
-  
-  LLVM_DEBUG(dbgs() << "analyzeBranch BB#" << MBB.getNumber() 
-                    << " allowModify=" << (AllowModify ? "yes" : "no")
-                    << " successors=" << MBB.succ_size() << "\n");
-  
-  // Start from the end of the basic block and look for terminators
+
   MachineBasicBlock::iterator I = MBB.getLastNonDebugInstr();
   if (I == MBB.end())
-    return false; // empty block => fallthrough
-  
-  // IMPORTANT: If the block has no successors, we can't analyze it meaningfully
-  // This can happen after noreturn calls (exit, abort, etc.)
-  if (MBB.succ_empty())
-    return true; // Can't analyze blocks with no successors
-  
-  // Skip back over any non-terminator instructions to find the actual terminators
-  // This handles blocks where calls or other instructions come before the branch
-  while (I != MBB.begin() && !isUnpredicatedTerminator(*I)) {
-    LLVM_DEBUG(dbgs() << "  Skipping non-terminator: " << *I);
-    --I;
-  }
-    
-  // If we didn't find any terminator, this block falls through
-  if (!isUnpredicatedTerminator(*I)) {
-    LLVM_DEBUG(dbgs() << "  No terminator found, treating as fallthrough\n");
-    return false; // No terminator => fallthrough
-  }
-  
-  LLVM_DEBUG(dbgs() << "  Last non-debug instr opcode: " << I->getOpcode() 
-                    << " (BEQ_pat=" << SLOW32::BEQ_pat << ", BNE_pat=" << SLOW32::BNE_pat
-                    << ", BR=" << SLOW32::BR << ")\n");
-
-  // If the block ends with a return, there is no analyzable branch.
-  // BUT: TailDup may have left stale branches immediately before the RET.
-  // If we're allowed to modify, strip them here so Folder/Placement don't loop.
-  // Note: Don't bail out on BR (which has isBarrier=1) - it's a branch we need to analyze!
-  if (I->isReturn()) {
-    if (AllowModify) {
-      int BytesRemoved = 0;
-      unsigned N = removeBranch(MBB, &BytesRemoved);
-      LLVM_DEBUG(dbgs() << "  end=RET; removed " << N << " stale branch(es)\n");
-    } else {
-      LLVM_DEBUG(dbgs() << "  end=RET; no modify, leaving as-is\n");
-    }
-    return false;  // Successfully analyzed: no branches (just return)
-  }
-
-  // Check for unconditional branch (BR)
-  if (I->getOpcode() == SLOW32::BR) {
-    LLVM_DEBUG(dbgs() << "  Last instr is BR\n");
-    if (!I->getOperand(0).isMBB())
-      return true; // Can't handle indirect branch
-    
-    // Check if there's a conditional branch before this unconditional branch
-    if (I != MBB.begin()) {
-      MachineBasicBlock::iterator J = I;
-      --J;
-      while ((J->isDebugInstr() || J->isCFIInstruction()) && J != MBB.begin())
-        --J;
-        
-      unsigned PrevOpcode = J->getOpcode();
-      if (PrevOpcode == SLOW32::BEQ_pat || PrevOpcode == SLOW32::BNE_pat ||
-          PrevOpcode == SLOW32::BLT || PrevOpcode == SLOW32::BGE) {
-        // Conditional branch followed by unconditional branch
-        LLVM_DEBUG(dbgs() << "  Found cond before uncond, opcode=" << PrevOpcode << "\n");
-        if (J->getOperand(2).isMBB()) {
-          TBB = J->getOperand(2).getMBB(); // Conditional target
-          FBB = I->getOperand(0).getMBB(); // Unconditional target
-          
-          // Save the condition
-          Cond.push_back(MachineOperand::CreateImm(PrevOpcode));
-          Cond.push_back(J->getOperand(0)); // First register
-          Cond.push_back(J->getOperand(1)); // Second register
-          return false;
-        }
-      }
-    }
-    
-    // Just an unconditional branch
-    TBB = I->getOperand(0).getMBB();
     return false;
+
+  while (I->isCFIInstruction() && I != MBB.begin())
+    --I;
+
+  if (!isUnpredicatedTerminator(*I))
+    return false;
+
+  MachineBasicBlock::iterator FirstUncond = MBB.end();
+  int NumTerminators = 0;
+  for (auto It = I.getReverse(); It != MBB.rend() && isUnpredicatedTerminator(*It);
+       ++It) {
+    ++NumTerminators;
+    if (It->getDesc().isUnconditionalBranch() ||
+        It->getDesc().isIndirectBranch())
+      FirstUncond = It.getReverse();
   }
 
-  // Check for conditional branches
-  unsigned Opcode = I->getOpcode();
-  if (Opcode == SLOW32::BEQ_pat || Opcode == SLOW32::BNE_pat ||
-      Opcode == SLOW32::BLT || Opcode == SLOW32::BGE) {
-    LLVM_DEBUG(dbgs() << "  Last instr is conditional branch opcode=" << Opcode << "\n");
-    // Conditional branch
-    MachineBasicBlock *TargetBB = nullptr;
-    if (I->getOperand(2).isMBB()) {
-      TargetBB = I->getOperand(2).getMBB();
-    } else {
-      return true; // Can't handle this branch
+  if (AllowModify && FirstUncond != MBB.end()) {
+    while (std::next(FirstUncond) != MBB.end()) {
+      std::next(FirstUncond)->eraseFromParent();
+      --NumTerminators;
     }
+    I = FirstUncond;
+  }
 
-    // Check if there's a following unconditional branch
-    MachineBasicBlock::iterator J = I;
-    ++J;
-    while (J != MBB.end() && (J->isDebugInstr() || J->isCFIInstruction()))
-      ++J;
-    
-    if (J != MBB.end() && J->getOpcode() == SLOW32::BR && J->getOperand(0).isMBB()) {
-      // Conditional branch followed by unconditional branch
-      TBB = TargetBB;
-      FBB = J->getOperand(0).getMBB();
-      
-      // Save the condition
-      Cond.push_back(MachineOperand::CreateImm(Opcode));
-      Cond.push_back(I->getOperand(0)); // First register
-      Cond.push_back(I->getOperand(1)); // Second register
-      
-      LLVM_DEBUG(dbgs() << "  Found cond+uncond: TBB=BB#" << TBB->getNumber() 
-                        << " FBB=BB#" << (FBB ? FBB->getNumber() : -1) << "\n");
-      return false;
-    }
-    
-    // Just a conditional branch with fall-through
-    TBB = TargetBB;
-    
-    // CRITICAL: Check if this block actually has a fallthrough successor
-    // A conditional branch should have 2 successors (taken and fallthrough)
-    // If it only has 1 successor, the fallthrough path is unreachable/deleted
-    if (MBB.succ_size() == 1) {
-      LLVM_DEBUG(dbgs() << "  Conditional branch with only 1 successor - no fallthrough!\n");
-      // This is really an unconditional branch disguised as conditional
-      // Return true to indicate we can't properly analyze this
+  if (I->getDesc().isIndirectBranch() || I->isPreISelOpcode())
+    return true;
+
+  if (NumTerminators > 2)
+    return true;
+
+  if (NumTerminators == 1) {
+    if (I->getDesc().isUnconditionalBranch()) {
+      if (MachineBasicBlock *Target = getBranchTarget(*I)) {
+        TBB = Target;
+        return false;
+      }
       return true;
     }
-    
-    // Don't normalize conditional branches that target layout successor
-    // (they still need the explicit branch even if target is next block)
-    LLVM_DEBUG(dbgs() << "  Found cond only: TBB=BB#" << (TBB ? TBB->getNumber() : -1) << "\n");
-    
-    // Save the condition
-    Cond.push_back(MachineOperand::CreateImm(Opcode));
-    Cond.push_back(I->getOperand(0)); // First register
-    Cond.push_back(I->getOperand(1)); // Second register
-    
-    return false;
+    if (I->getDesc().isConditionalBranch()) {
+      MachineBasicBlock *Target = getBranchTarget(*I);
+      if (!Target)
+        return true;
+      buildCondFromBranch(*I, Cond);
+      TBB = Target;
+      return false;
+    }
+    return true;
   }
 
-  // If we get here, we have an unrecognized terminator instruction
-  LLVM_DEBUG(dbgs() << "  Unrecognized terminator instruction (opcode=" << I->getOpcode() << ")\n");
-  return true; // Can't analyze this terminator
+  // NumTerminators == 2
+  MachineBasicBlock::iterator SecondLast = std::prev(I);
+  while (SecondLast->isCFIInstruction() || SecondLast->isDebugInstr()) {
+    if (SecondLast == MBB.begin())
+      break;
+    --SecondLast;
+  }
+
+  if (!SecondLast->getDesc().isConditionalBranch() ||
+      !I->getDesc().isUnconditionalBranch())
+    return true;
+
+  MachineBasicBlock *TrueTarget = getBranchTarget(*SecondLast);
+  MachineBasicBlock *FalseTarget = getBranchTarget(*I);
+  if (!TrueTarget || !FalseTarget)
+    return true;
+
+  buildCondFromBranch(*SecondLast, Cond);
+  TBB = TrueTarget;
+  FBB = FalseTarget;
+  return false;
 }
 
 unsigned SLOW32InstrInfo::insertBranch(MachineBasicBlock &MBB,
-                                        MachineBasicBlock *TBB,
-                                        MachineBasicBlock *FBB,
-                                        ArrayRef<MachineOperand> Cond,
-                                        const DebugLoc &DL,
-                                        int *BytesAdded) const {
+                                       MachineBasicBlock *TBB,
+                                       MachineBasicBlock *FBB,
+                                       ArrayRef<MachineOperand> Cond,
+                                       const DebugLoc &DL,
+                                       int *BytesAdded) const {
   assert(TBB && "insertBranch must have a target basic block");
-  
-  unsigned Count = 0;
-  
-  // Always insert at the end of the block to maintain proper order
-  // Branch Folder expects us to build the terminator sequence from scratch
-  
-  // Unconditional branch
-  if (Cond.empty()) {
-    // Only insert if TBB is not the layout successor (fallthrough)
-    if (!MBB.isLayoutSuccessor(TBB)) {
-      BuildMI(&MBB, DL, get(SLOW32::BR)).addMBB(TBB);
-      Count = 1;
-    }
-    // Note: Don't add successors here - Branch Folder manages CFG edges
-  } else {
-    // Conditional branch
-    assert(Cond.size() == 3 && "Invalid condition");
-    unsigned Opcode = Cond[0].getImm();
-    
-    // Emit conditional branch first
-    BuildMI(&MBB, DL, get(Opcode))
-      .add(Cond[1])  // First register
-      .add(Cond[2])  // Second register
-      .addMBB(TBB);
-    Count = 1;
-    
-    // Add unconditional branch if FBB is specified and it's not fallthrough
-    // This comes AFTER the conditional branch
-    if (FBB && !MBB.isLayoutSuccessor(FBB)) {
-      BuildMI(&MBB, DL, get(SLOW32::BR)).addMBB(FBB);
-      Count = 2;
-    }
-    // Note: Don't add successors here - Branch Folder manages CFG edges
-  }
-  
+
   if (BytesAdded)
-    *BytesAdded = Count * 4; // Each instruction is 4 bytes
-    
-  return Count;
+    *BytesAdded = 0;
+
+  if (Cond.empty()) {
+    MachineInstr &MI = *BuildMI(&MBB, DL, get(SLOW32::BR)).addMBB(TBB);
+    if (BytesAdded)
+      *BytesAdded += getInstSizeInBytes(MI);
+    return 1;
+  }
+
+  assert(Cond.size() == 3 && "Invalid condition");
+
+  MachineInstr &CondMI =
+      *BuildMI(&MBB, DL, get(Cond[0].getImm()))
+            .add(Cond[1])
+            .add(Cond[2])
+            .addMBB(TBB);
+  if (BytesAdded)
+    *BytesAdded += getInstSizeInBytes(CondMI);
+
+  if (!FBB)
+    return 1;
+
+  MachineInstr &BrMI = *BuildMI(&MBB, DL, get(SLOW32::BR)).addMBB(FBB);
+  if (BytesAdded)
+    *BytesAdded += getInstSizeInBytes(BrMI);
+  return 2;
 }
 
 unsigned SLOW32InstrInfo::removeBranch(MachineBasicBlock &MBB,
-                                        int *BytesRemoved) const {
-  unsigned Count = 0;
-  
-  // Helper to check if an instruction is a branch
-  auto IsBranch = [](unsigned Opc) {
-    return Opc == SLOW32::BR ||
-           Opc == SLOW32::BEQ_pat ||
-           Opc == SLOW32::BNE_pat ||
-           Opc == SLOW32::BLT ||
-           Opc == SLOW32::BGE;
-  };
-  
-  // Robust approach: repeatedly get last non-debug instruction and remove if branch
-  // This avoids iterator invalidation issues
-  while (true) {
-    MachineBasicBlock::iterator I = MBB.getLastNonDebugInstr();
-    if (I == MBB.end())
-      break;
-    
-    // Walk back over trailing CFI
-    while (I != MBB.begin() && I->isCFIInstruction())
-      --I;
-    
-    if (!IsBranch(I->getOpcode()))
-      break;
-    
-    I->eraseFromParent();
-    ++Count;
-  }
-  
-  // Note: Don't modify successors here - Branch Folder manages CFG edges
-  
+                                       int *BytesRemoved) const {
   if (BytesRemoved)
-    *BytesRemoved = Count * 4;
-    
-  return Count;
+    *BytesRemoved = 0;
+
+  MachineBasicBlock::iterator I = MBB.getLastNonDebugInstr();
+  if (I == MBB.end())
+    return 0;
+
+  if (!I->getDesc().isUnconditionalBranch() &&
+      !I->getDesc().isConditionalBranch())
+    return 0;
+
+  if (BytesRemoved)
+    *BytesRemoved += getInstSizeInBytes(*I);
+  I->eraseFromParent();
+
+  I = MBB.getLastNonDebugInstr();
+  if (I == MBB.end())
+    return 1;
+
+  if (!I->getDesc().isConditionalBranch())
+    return 1;
+
+  if (BytesRemoved)
+    *BytesRemoved += getInstSizeInBytes(*I);
+  I->eraseFromParent();
+  return 2;
 }
 
 bool SLOW32InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   switch (MI.getOpcode()) {
   case SLOW32::LOAD_ADDR: {
-    // Expand LOAD_ADDR pseudo into LUI + ORI sequence
+    // Expand LOAD_ADDR pseudo into LUI + ADDI sequence (RISC-V style)
     // This ensures they stay together in the correct order
     MachineBasicBlock &MBB = *MI.getParent();
     const DebugLoc &DL = MI.getDebugLoc();
@@ -329,14 +280,17 @@ bool SLOW32InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     const MachineOperand &Symbol = MI.getOperand(1);
     
     // Generate LUI rd, %hi(symbol)
-    BuildMI(MBB, MI, DL, get(SLOW32::LUI), DestReg)
-      .add(Symbol);  // Will be printed with %hi
-    
-    // Generate ORI rd, rd, %lo(symbol)  
-    BuildMI(MBB, MI, DL, get(SLOW32::ORI), DestReg)
-      .addReg(DestReg)
-      .add(Symbol);  // Will be printed with %lo
-    
+    MachineInstrBuilder HiMI =
+        BuildMI(MBB, MI, DL, get(SLOW32::LUI), DestReg).add(Symbol);
+    HiMI->getOperand(1).setTargetFlags(SLOW32II::MO_HI);
+
+    // Generate ADDI rd, rd, %lo(symbol)  
+    MachineInstrBuilder LoMI =
+        BuildMI(MBB, MI, DL, get(SLOW32::ADDI), DestReg)
+            .addReg(DestReg)
+            .add(Symbol);
+    LoMI->getOperand(2).setTargetFlags(SLOW32II::MO_LO);
+
     MI.eraseFromParent();
     return true;
   }

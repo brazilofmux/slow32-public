@@ -113,6 +113,13 @@ public:
     case 'r': // General purpose register
       Info.setAllowsRegister();
       return true;
+    case 'i': // Integer immediate
+    case 'n': // Integer constant without relocation
+      Info.setRequiresImmediate();
+      return true;
+    case 'm': // Memory operand
+      Info.setAllowsMemory();
+      return true;
     }
   }
 

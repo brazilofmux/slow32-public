@@ -14,12 +14,14 @@
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
+#include "llvm/InitializePasses.h"
 #include "llvm/MC/TargetRegistry.h"
 
 using namespace llvm;
 
 extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSLOW32Target() {
   RegisterTargetMachine<SLOW32TargetMachine> X(getTheSLOW32Target());
+  initializeSLOW32LoadAddrOptPass(*PassRegistry::getPassRegistry());
 }
 
 static std::string computeDataLayout() {
@@ -72,6 +74,7 @@ bool SLOW32PassConfig::addInstSelector() {
 }
 
 void SLOW32PassConfig::addPreRegAlloc() {
+  addPass(createSLOW32LoadAddrOptPass());
   TargetPassConfig::addPreRegAlloc();
 }
 

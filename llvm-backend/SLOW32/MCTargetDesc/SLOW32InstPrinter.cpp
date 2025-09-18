@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SLOW32InstPrinter.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
@@ -15,7 +16,6 @@
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
-#include <cstring>
 
 using namespace llvm;
 
@@ -38,46 +38,54 @@ void SLOW32InstPrinter::printRegName(raw_ostream &O, MCRegister Reg) {
 void SLOW32InstPrinter::printOperand(const MCInst *MI, unsigned OpNum,
                                       const MCSubtargetInfo &STI, raw_ostream &O) {
   const MCOperand &Op = MI->getOperand(OpNum);
-  
+
   if (Op.isReg()) {
     printRegName(O, Op.getReg());
   } else if (Op.isImm()) {
-    O << Op.getImm();
+    // Check if this is an ADDI instruction that needs sign-extended 12-bit
+    // immediate. MCInstrInfo returns StringRef, so use it directly rather than
+    // assuming a null-terminated C string.
+    StringRef Mnemonic = MII.getName(MI->getOpcode());
+
+    // Special handling for ADDI instruction's immediate operand
+    // ADDI uses 12-bit signed immediates that need sign extension when printing
+    if (Mnemonic == "ADDI" && OpNum == 2) {
+      int64_t Imm = Op.getImm();
+      // Mask to 12 bits first in case larger value is stored
+      Imm = Imm & 0xFFF;
+      // If bit 11 is set, sign-extend from 12 bits
+      if (Imm & 0x800) {
+        Imm = Imm - 0x1000;
+      }
+      O << Imm;
+    } else {
+      O << Op.getImm();
+    }
   } else if (Op.isExpr()) {
-    // For SLOW32, we need to handle %hi and %lo for global addresses
-    // We check the instruction mnemonic to determine if this needs %hi or %lo
-    // This is a simplified approach - ideally we'd use target flags from MCInstLowering
-    
-    // Get the instruction name from the generated instruction info
-    const MCInstrDesc &Desc = MII.get(MI->getOpcode());
-    const char *Mnemonic = MII.getName(MI->getOpcode()).data();
-    
+    // For SLOW32, we need to handle %hi/%lo fixups when the operand is a
+    // symbolic expression. We drive this off the opcode until we plumb
+    // dedicated MCExprs through the MC layer.
+    StringRef Mnemonic = MII.getName(MI->getOpcode());
+
     // Check if this is a LUI instruction (needs %hi)
-    if (Mnemonic && strstr(Mnemonic, "LUI")) {
+    if (Mnemonic == "LUI") {
       O << "%hi(";
       MAI.printExpr(O, *Op.getExpr());
       O << ")";
     }
-    // Check if this is an ORI, ADDI or LI instruction following a pattern (needs %lo)
-    else if (Mnemonic && (strstr(Mnemonic, "ORI") || strstr(Mnemonic, "ADDI") || strstr(Mnemonic, "LI"))) {
-      // Check if this is for the lower part of an address
-      // by looking at the register operand (should be r0 for %lo)
-      if (OpNum > 1 && MI->getOperand(1).isReg()) {
-        MCRegister Reg = MI->getOperand(1).getReg();
-        const char *RegName = getRegisterName(Reg);
-        if (RegName && strcmp(RegName, "r0") == 0) {
-          O << "%lo(";
-          MAI.printExpr(O, *Op.getExpr());
-          O << ")";
-        } else {
-          // Regular expression without %lo
-          MAI.printExpr(O, *Op.getExpr());
-        }
-      } else {
-        // Regular expression
-        MAI.printExpr(O, *Op.getExpr());
-      }
-    } else {
+    // ADDI materialises the low 12 bits of an address.
+    else if (Mnemonic == "ADDI") {
+      O << "%lo(";
+      MAI.printExpr(O, *Op.getExpr());
+      O << ")";
+    }
+    // Keep supporting legacy ORI-based materialisation for now.
+    else if (Mnemonic == "ORI") {
+      O << "%lo(";
+      MAI.printExpr(O, *Op.getExpr());
+      O << ")";
+    }
+    else {
       // For other instructions, print the expression normally
       MAI.printExpr(O, *Op.getExpr());
     }

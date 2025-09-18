@@ -1,15 +1,15 @@
 # Makefile for SLOW-32 examples
 # Adjust paths if your setup differs
 
-SLOW32 = ~/slow-32
+SLOW32 = ..
 LLVM = ~/llvm-project/build/bin
 
 # Tools
 CC = $(LLVM)/clang
 LLC = $(LLVM)/llc
-AS = $(SLOW32)/assembler/slow32asm
-LD = $(SLOW32)/linker/s32-ld
-EMU = $(SLOW32)/emulator/slow32
+AS = $(SLOW32)/tools/assembler/slow32asm
+LD = $(SLOW32)/tools/linker/s32-ld
+EMU = $(SLOW32)/tools/emulator/slow32
 RUNTIME = $(SLOW32)/runtime
 
 # Flags
@@ -52,7 +52,7 @@ fibonacci.s32x: fibonacci.s32o
 	$(LD) -o $@ $(RUNTIME)/crt0.s32o $<
 
 %.s32x: %.s32o
-	$(LD) -o $@ $(RUNTIME)/crt0.s32o $< $(RUNTIME)/intrinsics.s32o
+	$(LD) -o $@ $(RUNTIME)/crt0.s32o $< $(RUNTIME)/libs32.s32a $(RUNTIME)/libc_debug.s32a
 
 # Run targets
 run-%: %.s32x

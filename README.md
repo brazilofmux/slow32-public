@@ -1,88 +1,221 @@
-# SLOW-32 Architecture
+# SLOW-32 Project
 
-**Application-level assembly, without the hardware baggage.**
+A deliberately inefficient 32-bit RISC CPU architecture with complete toolchain.
 
-SLOW-32 is a minimalist 32-bit RISC architecture designed for learning, compilers, and emulation. No modes, no MMU, no paging, no interrupts, no carry flag—just the essentials for writing code that runs in a host-managed sandbox.
+**Built in under 2 hours** - From spec to working C compiler!  
+**Purpose**: Educational CPU design and sandboxed compute engine
 
 ## Quick Start
 
-### Option 1: Docker (Recommended)
 ```bash
-# Build images
-./docker-build.sh
+# Build everything
+make
 
-# Compile and run C program
-docker run -v $(pwd):/data slow32-toolchain
-docker run -v $(pwd):/data slow32-emulator
+# Compile C to executable (Native LLVM target)
+~/llvm-project/build/bin/clang -target slow32-unknown-none -S -emit-llvm -O2 -Iruntime/include program.c -o program.ll
+~/llvm-project/build/bin/llc -mtriple=slow32-unknown-none program.ll -o program.s
+./tools/assembler/slow32asm program.s program.s32o
+./tools/linker/s32-ld -o program.s32x runtime/crt0.s32o program.s32o runtime/libs32.s32a runtime/libc.s32a runtime/builtins.s32o
+./tools/emulator/slow32 program.s32x
+
+# Or assemble and run assembly directly
+./tools/assembler/slow32asm program.s program.s32o
+./tools/linker/s32-ld -o program.s32x runtime/crt0.s32o program.s32o runtime/libs32.s32a runtime/libc.s32a
+./tools/emulator/slow32 program.s32x
 ```
 
-### Option 2: Build from Source
-```bash
-# Build the toolchain
-cd tools && make && cd ..
+## Architecture Overview
 
-# Run your first program
-echo '.globl _start; _start: addi r1,r0,72; debug r1; halt' > test.s
-tools/assembler/slow32asm -o test.s32o test.s
-tools/linker/s32-ld -o test.s32x test.s32o
-tools/emulator/slow32 test.s32x  # Prints 'H'
+- **32-bit RISC-like ISA** with 32 registers (r0 hardwired to zero)
+- **No condition codes** - comparisons return 0/1 in GPR
+- **Fixed 32-bit instructions**
+- **W^X memory protection** - code segment is execute-only
+- **Single-ported memory** (deliberately slow!)
+- **DEBUG instruction** for character output
+- **Sparse memory allocation** - Only allocates touched pages (99.4% memory savings!)
+- **Performance**: ~45 MIPS (slow32), ~220 MIPS (slow32-fast)
+
+### Register Convention
+- `r0`: Always zero
+- `r1-r2`: Return values
+- `r3-r10`: Function arguments
+- `r11-r28`: General purpose
+- `r29`: Stack pointer (sp)
+- `r30`: Frame pointer (fp)
+- `r31`: Link register (lr)
+
+## Instruction Set
+
+### Arithmetic (R-type)
+- `add`, `sub`, `and`, `or`, `xor` - Basic arithmetic/logic
+- `sll`, `srl`, `sra` - Shifts
+- `mul`, `mulh`, `div`, `rem` - Multiplication/division
+
+### Comparison (R-type)
+- `slt`, `sltu` - Set less than (signed/unsigned)
+- `seq` - Set equal (rd = rs1 == rs2 ? 1 : 0)
+- `sne` - Set not equal (rd = rs1 != rs2 ? 1 : 0)
+- `sgt`, `sgtu` - Set greater than (signed/unsigned)
+- `sle`, `sleu` - Set less or equal (signed/unsigned)
+- `sge`, `sgeu` - Set greater or equal (signed/unsigned)
+
+### Immediate (I-type)
+- `addi`, `ori`, `andi` - Immediate operations
+- `slli`, `srli`, `srai` - Immediate shifts
+- `slti`, `sltiu` - Set less than immediate
+- `lui` - Load upper immediate
+
+### Memory Operations
+- `ldb`, `ldh`, `ldw` - Load byte/half/word (signed)
+- `ldbu`, `ldhu` - Load byte/half (unsigned)
+- `stb`, `sth`, `stw` - Store byte/half/word
+
+### Control Flow
+- `jal` - Jump and link
+- `jalr` - Jump and link register
+- `beq`, `bne` - Branch equal/not equal
+- `blt`, `bge` - Branch less than/greater or equal
+- `bltu`, `bgeu` - Branch unsigned comparisons
+
+### Special Instructions
+- `nop` - No operation
+- `yield` - Waste cycles
+- `debug` - Output character in rs1
+- `halt` - Stop execution
+
+## Assembler Directives
+
+Following RISC-V/GNU conventions:
+
+- `.text` / `.code` - Code section
+- `.data` - Data section
+- `.byte` - 8-bit values
+- `.half` - 16-bit values
+- `.word` - 32-bit values
+- `.string` - Null-terminated string
+- `.ascii` - String without null terminator
+- `.global` - Global symbol
+
+## Memory Layout
+
+### Automatic Compact Mode
+The linker automatically detects small programs and creates ultra-compact layouts:
+- **Tiny programs**: As small as 9KB total (4KB code + 4KB heap + 1KB stack)
+- **Page-aligned**: 4KB boundaries for hardware memory protection
+- **Configurable**: Full control with `--code-size`, `--stack-size`, etc.
+
+### Default Layout
+| Address Range | Size | Description |
+|--------------|------|-------------|
+| 0x00000000 - 0x000FFFFF | 1MB | Code segment (execute-only) |
+| 0x00100000 - 0x0FFFFFFF | 255MB | Data segment (read/write) |
+| 0x10000000+ | - | MMIO region (future) |
+| Stack: 0x0FFFFFF0 | - | Grows downward |
+
+## Performance Characteristics
+
+- Memory operations: 3 cycles
+- Multiplication: 32 cycles
+- Division/Remainder: 64 cycles
+- All other operations: 1 cycle
+- YIELD instruction: Variable cycle waste
+
+## Project Structure
+
+```
+slow-32/
+├── emulator/         # CPU emulator with W^X protection
+├── assembler/        # Two-pass assembler with relocation support
+├── linker/           # Linker with symbol resolution
+├── runtime/          # C runtime (crt0) and intrinsics
+├── llvm-backend/     # LLVM IR to SLOW-32 compiler
+│   └── standalone/   # Standalone compiler implementation
+├── tools/            # Binary analysis tools (objdump, exedump)
+├── tests/            # Test programs and benchmarks
+└── docs/             # Documentation
+    ├── INSTRUCTION-SET.md    # Complete ISA reference
+    ├── file-formats.md       # Object and executable formats
+    └── IMPROVEMENTS.md       # Known issues and improvements
 ```
 
-See [QUICK-START.md](QUICK-START.md) for detailed instructions.
+## Example Programs
 
-## Why SLOW-32?
+### Hello World (Assembly)
+```asm
+.data
+    msg: .string "Hello, World!\n"
 
-- **Clarity over legacy:** Fixed-width instructions, simple register file, straightforward memory model
-- **Predictability over complexity:** No hidden state machines, no interrupts, no undefined behavior  
-- **Speed through simplicity:** ~350M instructions/sec on modern hardware (fast emulator)
-- **Crash-safe by design:** Programs run in isolated sandboxes; crashes don't affect the host
-- **Professional C library:** Complete libc.s32a with stdio, stdlib, string, ctype support
-- **Archive tooling:** Create and manage libraries with s32-ar, just like standard Unix ar
+.text
+.global _start
+_start:
+    lui r10, 0x100      # Load data segment base
+    add r11, r10, r0    # Initialize pointer
+    
+print_loop:
+    ldbu r12, r11+0     # Load character
+    seq r13, r12, r0    # Check for null
+    bne r13, r0, done   # Exit if null
+    debug r12           # Print character
+    addi r11, r11, 1    # Next character
+    beq r0, r0, print_loop
+    
+done:
+    halt
+```
 
-## Start here
-- **[Quick Start Guide](QUICK-START.md)** - Build and run in 5 minutes
-- **[Architecture Rationale](docs/05-architecture-rationale.md)** - Why SLOW-32 exists  
-- **[Programmer's Guide](docs/20-programmers-guide.md)** - Write SLOW-32 code
-- **[Examples](examples/)** - Working code with explanations
+### C Example
+```c
+int factorial(int n) {
+    if (n <= 1) return 1;
+    return n * factorial(n - 1);
+}
+
+int main() {
+    return factorial(5);  // Returns 120
+}
+```
+
+## Current Status
+
+✅ **Complete toolchain** - C → LLVM IR → Assembly → Object → Linked Executable  
+✅ **CPU emulator** - ~350M instructions/second with W^X protection  
+✅ **Assembler** - Two-pass with labels, relocations, standard directives  
+✅ **Linker** - Symbol resolution, HI20/LO12 relocations  
+✅ **Compiler** - LLVM IR with PHI nodes, intrinsics, comparisons  
+✅ **Runtime** - crt0, printf, memcpy/memset, min/max intrinsics  
+✅ **Tools** - objdump for object files, exedump for executables  
+
+## Known Limitations
+
+- Requires -O1 or -O2 (unoptimized code exhausts registers)
+- Limited stdlib (printf, puts, putchar, putint)
+- No floating point support
+- No system calls beyond DEBUG instruction
+- See `docs/IMPROVEMENTS.md` for detailed issues and fixes
+
+## Building from Source
+
+```bash
+# Prerequisites: clang-19, make, gcc
+
+# Build everything
+make
+
+# Or build components individually
+cd emulator && make        # Builds slow32 and slow32-fast
+cd assembler && make       # Builds slow32asm
+cd linker && make          # Builds s32-ld
+cd llvm-backend/standalone && make  # Builds slow32-compile
+cd tools && make           # Builds s32-objdump and s32-exedump
+```
 
 ## Documentation
 
-### Essential Guides
-- **[Installation](docs/02-installation.md)** - Download and install binaries
-- **[Getting Started](docs/01-getting-started.md)** - Build from source
-- **[Programmer's Guide](docs/20-programmers-guide.md)** - ABI, calling conventions, memory model
-- **[Instruction Set](docs/25-instruction-set.md)** - Complete ISA reference
-- **[Architecture Rationale](docs/05-architecture-rationale.md)** - Design philosophy
-
-### Toolchain
-- **[Toolchain Overview](docs/15-toolchain-overview.md)** - All tools explained
-- **[LLVM Backend](docs/35-llvm-backend.md)** - Compiler details and usage
-- **[LLVM Integration](llvm-backend/)** - Adding SLOW32 to LLVM/Clang
-
-### Reference
-- **[Known Limitations](docs/91-known-limitations.md)** - Current constraints and workarounds
-- **[Roadmap](docs/90-roadmap.md)** - Future plans
-
-## Status
-
-**Working:**
-- Complete toolchain (assembler, linker, emulator)
-- LLVM backend with Clang support
-- 32-bit arithmetic and logic
-- Function calls and stack management
-- Global variables and arrays
-- Basic 64-bit integer support
-- Varargs and switch statements
-
-**In Progress:**
-- Full 64-bit arithmetic
-- I/O beyond DEBUG instruction
-- Soft-float library
-
-**Planned:**
-- MMIO and TRAP interfaces
-- Floating-point support
-- Source-level debugging
+- [Instruction Set Reference](docs/INSTRUCTION-SET.md) - Complete ISA documentation
+- [File Formats](docs/file-formats.md) - Object (.s32o) and executable (.s32x) formats
+- [Improvements](docs/IMPROVEMENTS.md) - Known issues and suggested fixes
+- [CLAUDE.md](CLAUDE.md) - AI assistant instructions and quick reference
 
 ## License
-MIT (docs/examples). See individual subprojects for their licenses.
+
+Educational project - free to use for learning purposes.

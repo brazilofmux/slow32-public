@@ -14,6 +14,7 @@
 #ifndef LLVM_LIB_TARGET_SLOW32_SLOW32_H
 #define LLVM_LIB_TARGET_SLOW32_SLOW32_H
 
+#include "llvm/PassRegistry.h"
 #include "llvm/Target/TargetMachine.h"
 
 namespace llvm {
@@ -21,6 +22,8 @@ class FunctionPass;
 class SLOW32TargetMachine;
 
 FunctionPass *createSLOW32ISelDag(SLOW32TargetMachine &TM);
+FunctionPass *createSLOW32LoadAddrOptPass();
+void initializeSLOW32LoadAddrOptPass(PassRegistry &);
 // FunctionPass *createSLOW32NormalizeCallTailsPass();  // Disabled - not needed after upstream fixes
 // FunctionPass *createSLOW32RepairCFGFromTerminatorsPass();  // Disabled - not needed after upstream fixes
 
