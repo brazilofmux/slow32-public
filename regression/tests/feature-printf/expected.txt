@@ -1,0 +1,16 @@
+Hello, World!
+Positive: 42
+Negative: -42
+Zero: 0
+Multiple: 10, 20, 30
+Unsigned: 42
+Unsigned max: 4294967295
+Char: X, String: test
+Hex lower: ff
+Hex upper: FF
+Hex zero: 0
+Octal: 377
+Octal zero: 0
+Pointer: 0xdeadbeef
+Percent: %
+Complex: int=-100 uint=200 hex=0xabcd oct=755 char=Z str="hello"

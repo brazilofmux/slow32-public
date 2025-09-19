@@ -4,11 +4,11 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-// Integer to string conversion functions
-size_t ltoa(int val, char *buf);
-size_t utoa(unsigned int uval, char *buf);
-size_t utoo(unsigned int uval, char *buf);
-size_t utox(unsigned int uval, char *buf, bool uppercase);
+// Integer to string conversion functions used by the printf runtime.
+size_t slow32_ltoa(int val, char *buf);
+size_t slow32_utoa(unsigned int uval, char *buf);
+size_t slow32_utoo(unsigned int uval, char *buf);
+size_t slow32_utox(unsigned int uval, char *buf, bool uppercase);
 
 // Hex digit tables
 extern const char Digits16U[17];

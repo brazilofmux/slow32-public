@@ -119,6 +119,10 @@ convert_extra.ll: OPT_LEVEL = -O2
 convert_extra.ll: convert_extra.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
 
+convert.ll: OPT_LEVEL = -O0
+convert.ll: convert.c
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
+
 memory_extra.ll: OPT_LEVEL = -O2
 memory_extra.ll: memory_extra.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@

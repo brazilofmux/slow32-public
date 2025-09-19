@@ -24,6 +24,17 @@ typedef union {
     } s;
 } du_int;
 
+extern uint32_t __udivsi3(uint32_t n, uint32_t d);
+
+// 32-bit unsigned modulo helper expected by LLVM when lowering UREM
+uint32_t __umodsi3(uint32_t n, uint32_t d) {
+    if (d == 0)
+        return n; // match compiler-rt semantics
+
+    uint32_t q = __udivsi3(n, d);
+    return n - q * d;
+}
+
 // 64-bit unsigned division
 uint64_t __udivdi3(uint64_t n, uint64_t d) {
     if (d == 0) {

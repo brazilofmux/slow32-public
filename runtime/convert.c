@@ -16,27 +16,43 @@ static void ReverseDigits(char *pFirst, char *pLast) {
 }
 
 // Convert unsigned to decimal string
-size_t utoa(unsigned int uval, char *buf) {
-    char *p = buf;
-    char *q = p;
-
+size_t slow32_utoa(unsigned int uval, char *buf) {
     if (uval == 0) {
-        *p++ = '0';
-        *p = '\0';
+        buf[0] = '0';
+        buf[1] = '\0';
         return 1;
     }
 
-    while (uval > 0) {
-        *p++ = '0' + (uval % 10);
-        uval /= 10;
+    static const unsigned int POWERS_OF_TEN[] = {
+        1000000000u, 100000000u, 10000000u, 1000000u, 100000u,
+        10000u, 1000u, 100u, 10u, 1u
+    };
+
+    char *p = buf;
+    bool started = false;
+
+    for (unsigned i = 0; i < sizeof(POWERS_OF_TEN) / sizeof(POWERS_OF_TEN[0]); ++i) {
+        unsigned int power = POWERS_OF_TEN[i];
+        if (!started) {
+            if (uval < power)
+                continue;
+            started = true;
+        }
+
+        unsigned int digit = 0;
+        while (uval >= power) {
+            uval -= power;
+            ++digit;
+        }
+        *p++ = (char)('0' + digit);
     }
+
     *p = '\0';
-    ReverseDigits(q, p-1);
-    return p - buf;
+    return (size_t)(p - buf);
 }
 
 // Convert signed to decimal string
-size_t ltoa(int val, char *buf) {
+size_t slow32_ltoa(int val, char *buf) {
     char *p = buf;
     unsigned int uval;
     bool is_negative = val < 0;
@@ -47,12 +63,12 @@ size_t ltoa(int val, char *buf) {
     } else {
         uval = (unsigned int)val;
     }
-    p += utoa(uval, p);
+    p += slow32_utoa(uval, p);
     return p - buf;
 }
 
 // Convert unsigned to octal string
-size_t utoo(unsigned int uval, char *buf) {
+size_t slow32_utoo(unsigned int uval, char *buf) {
     char *p = buf;
     char *q = p;
 
@@ -76,7 +92,7 @@ const char Digits16U[17] = "0123456789ABCDEF";
 const char Digits16L[17] = "0123456789abcdef";
 
 // Convert unsigned to hex string (uppercase)
-size_t utox(unsigned int uval, char *buf, bool uppercase) {
+size_t slow32_utox(unsigned int uval, char *buf, bool uppercase) {
     char *p = buf;
     char *q = p;
     const char *digits = uppercase ? Digits16U : Digits16L;
