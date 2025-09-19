@@ -2,8 +2,9 @@
 
 A deliberately inefficient 32-bit RISC CPU architecture with complete toolchain.
 
-**Built in under 2 hours** - From spec to working C compiler!  
+**Built in under 2 hours** - From spec to working C compiler!
 **Purpose**: Educational CPU design and sandboxed compute engine
+**Status**: Active maintenance-ready baseline with all optimization levels (-O0, -O1, -O2) working
 
 ## Quick Start
 
@@ -12,10 +13,11 @@ A deliberately inefficient 32-bit RISC CPU architecture with complete toolchain.
 make
 
 # Compile C to executable (Native LLVM target)
+# Note: All optimization levels (-O0, -O1, -O2) are supported
 ~/llvm-project/build/bin/clang -target slow32-unknown-none -S -emit-llvm -O2 -Iruntime/include program.c -o program.ll
 ~/llvm-project/build/bin/llc -mtriple=slow32-unknown-none program.ll -o program.s
 ./tools/assembler/slow32asm program.s program.s32o
-./tools/linker/s32-ld -o program.s32x runtime/crt0.s32o program.s32o runtime/libs32.s32a runtime/libc.s32a runtime/builtins.s32o
+./tools/linker/s32-ld -o program.s32x runtime/crt0.s32o program.s32o runtime/libs32.s32a runtime/libc.s32a
 ./tools/emulator/slow32 program.s32x
 
 # Or assemble and run assembly directly
@@ -177,19 +179,21 @@ int main() {
 
 ## Current Status
 
-✅ **Complete toolchain** - C → LLVM IR → Assembly → Object → Linked Executable  
-✅ **CPU emulator** - ~350M instructions/second with W^X protection  
-✅ **Assembler** - Two-pass with labels, relocations, standard directives  
-✅ **Linker** - Symbol resolution, HI20/LO12 relocations  
-✅ **Compiler** - LLVM IR with PHI nodes, intrinsics, comparisons  
-✅ **Runtime** - crt0, printf, memcpy/memset, min/max intrinsics  
+✅ **Complete toolchain** - C → LLVM IR → Assembly → Object → Linked Executable
+✅ **Native Clang target** - `-target slow32-unknown-none` (single dash)
+✅ **All optimization levels** - -O0, -O1, -O2 fully working
+✅ **CPU emulator** - ~350M instructions/second with W^X protection
+✅ **Assembler** - Two-pass with labels, relocations, standard directives
+✅ **Linker** - Symbol resolution, HI20/LO12 relocations, proper archives
+✅ **LLVM backend** - PHI nodes, intrinsics, varargs, jump tables, 64-bit integers
+✅ **Runtime** - crt0, printf with varargs, memcpy/memset, 64-bit builtins
+✅ **Regression tests** - All 14/14 passing
 ✅ **Tools** - objdump for object files, exedump for executables  
 
 ## Known Limitations
 
-- Requires -O1 or -O2 (unoptimized code exhausts registers)
+- No floating point support (soft-float not implemented)
 - Limited stdlib (printf, puts, putchar, putint)
-- No floating point support
 - No system calls beyond DEBUG instruction
 - See `docs/IMPROVEMENTS.md` for detailed issues and fixes
 
