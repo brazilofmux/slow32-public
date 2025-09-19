@@ -291,6 +291,15 @@ def SLOW32brcc : SDNode<"SLOW32ISD::BR_CC", SDT_SLOW32BrCC,
 def SLOW32brne : SDNode<"SLOW32ISD::BR_NE", SDT_SLOW32BrCC,
                         [SDNPHasChain]>;
 
+def SLOW32brlt  : SDNode<"SLOW32ISD::BR_LT",  SDT_SLOW32BrCC, [SDNPHasChain]>;
+def SLOW32brge  : SDNode<"SLOW32ISD::BR_GE",  SDT_SLOW32BrCC, [SDNPHasChain]>;
+def SLOW32brgt  : SDNode<"SLOW32ISD::BR_GT",  SDT_SLOW32BrCC, [SDNPHasChain]>;
+def SLOW32brle  : SDNode<"SLOW32ISD::BR_LE",  SDT_SLOW32BrCC, [SDNPHasChain]>;
+def SLOW32brltu : SDNode<"SLOW32ISD::BR_LTU", SDT_SLOW32BrCC, [SDNPHasChain]>;
+def SLOW32brgeu : SDNode<"SLOW32ISD::BR_GEU", SDT_SLOW32BrCC, [SDNPHasChain]>;
+def SLOW32brgtu : SDNode<"SLOW32ISD::BR_GTU", SDT_SLOW32BrCC, [SDNPHasChain]>;
+def SLOW32brleu : SDNode<"SLOW32ISD::BR_LEU", SDT_SLOW32BrCC, [SDNPHasChain]>;
+
 // Call node uses the SDT_SLOW32Call defined in InstrFormats.td
 def SLOW32call : SDNode<"SLOW32ISD::CALL", SDT_SLOW32Call,
                         [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue, SDNPVariadic]>;
@@ -329,10 +338,36 @@ let isBranch = 1, isTerminator = 1, isBarrier = 0, hasSideEffects = 0 in {
                         [(SLOW32brne GPR:$rs1, GPR:$rs2, bb:$target)]>;
   
   def BLT : S32Inst<(outs), (ins GPR:$rs1, GPR:$rs2, brtarget:$target), 
-                    "blt $rs1, $rs2, $target">;
+                    "blt $rs1, $rs2, $target",
+                    [(SLOW32brlt GPR:$rs1, GPR:$rs2, bb:$target)]>;
   
   def BGE : S32Inst<(outs), (ins GPR:$rs1, GPR:$rs2, brtarget:$target), 
-                    "bge $rs1, $rs2, $target">;
+                    "bge $rs1, $rs2, $target",
+                    [(SLOW32brge GPR:$rs1, GPR:$rs2, bb:$target)]>;
+
+  def BGT : S32Inst<(outs), (ins GPR:$rs1, GPR:$rs2, brtarget:$target),
+                    "bgt $rs1, $rs2, $target",
+                    [(SLOW32brgt GPR:$rs1, GPR:$rs2, bb:$target)]>;
+
+  def BLE : S32Inst<(outs), (ins GPR:$rs1, GPR:$rs2, brtarget:$target),
+                    "ble $rs1, $rs2, $target",
+                    [(SLOW32brle GPR:$rs1, GPR:$rs2, bb:$target)]>;
+
+  def BLTU : S32Inst<(outs), (ins GPR:$rs1, GPR:$rs2, brtarget:$target),
+                     "bltu $rs1, $rs2, $target",
+                     [(SLOW32brltu GPR:$rs1, GPR:$rs2, bb:$target)]>;
+
+  def BGEU : S32Inst<(outs), (ins GPR:$rs1, GPR:$rs2, brtarget:$target),
+                     "bgeu $rs1, $rs2, $target",
+                     [(SLOW32brgeu GPR:$rs1, GPR:$rs2, bb:$target)]>;
+
+  def BGTU : S32Inst<(outs), (ins GPR:$rs1, GPR:$rs2, brtarget:$target),
+                     "bgtu $rs1, $rs2, $target",
+                     [(SLOW32brgtu GPR:$rs1, GPR:$rs2, bb:$target)]>;
+
+  def BLEU : S32Inst<(outs), (ins GPR:$rs1, GPR:$rs2, brtarget:$target),
+                     "bleu $rs1, $rs2, $target",
+                     [(SLOW32brleu GPR:$rs1, GPR:$rs2, bb:$target)]>;
 }
 
 // Pattern matching for brcond with setcc
@@ -354,6 +389,27 @@ def : Pat<(brcond (i32 (setlt GPR:$a, GPR:$b)), bb:$target),
 def : Pat<(brcond (i32 (setge GPR:$a, GPR:$b)), bb:$target),
           (BGE GPR:$a, GPR:$b, bb:$target)>;
 
+// brcond (setgt a, b), target => bgt a, b, target
+def : Pat<(brcond (i32 (setgt GPR:$a, GPR:$b)), bb:$target),
+          (BGT GPR:$a, GPR:$b, bb:$target)>;
+
+// brcond (setle a, b), target => ble a, b, target
+def : Pat<(brcond (i32 (setle GPR:$a, GPR:$b)), bb:$target),
+          (BLE GPR:$a, GPR:$b, bb:$target)>;
+
+// Unsigned branch patterns
+def : Pat<(brcond (i32 (setult GPR:$a, GPR:$b)), bb:$target),
+          (BLTU GPR:$a, GPR:$b, bb:$target)>;
+
+def : Pat<(brcond (i32 (setuge GPR:$a, GPR:$b)), bb:$target),
+          (BGEU GPR:$a, GPR:$b, bb:$target)>;
+
+def : Pat<(brcond (i32 (setugt GPR:$a, GPR:$b)), bb:$target),
+          (BGTU GPR:$a, GPR:$b, bb:$target)>;
+
+def : Pat<(brcond (i32 (setule GPR:$a, GPR:$b)), bb:$target),
+          (BLEU GPR:$a, GPR:$b, bb:$target)>;
+
 // Additional patterns for immediate comparisons with branches
 // brcond (setlt a, imm), target => load imm to temp, then blt
 def : Pat<(brcond (i32 (setlt GPR:$a, imm:$b)), bb:$target),
@@ -361,6 +417,24 @@ def : Pat<(brcond (i32 (setlt GPR:$a, imm:$b)), bb:$target),
 
 def : Pat<(brcond (i32 (setge GPR:$a, imm:$b)), bb:$target),
           (BGE GPR:$a, (LI imm:$b), bb:$target)>;
+
+def : Pat<(brcond (i32 (setgt GPR:$a, imm:$b)), bb:$target),
+          (BGT GPR:$a, (LI imm:$b), bb:$target)>;
+
+def : Pat<(brcond (i32 (setle GPR:$a, imm:$b)), bb:$target),
+          (BLE GPR:$a, (LI imm:$b), bb:$target)>;
+
+def : Pat<(brcond (i32 (setult GPR:$a, imm:$b)), bb:$target),
+          (BLTU GPR:$a, (LI imm:$b), bb:$target)>;
+
+def : Pat<(brcond (i32 (setuge GPR:$a, imm:$b)), bb:$target),
+          (BGEU GPR:$a, (LI imm:$b), bb:$target)>;
+
+def : Pat<(brcond (i32 (setugt GPR:$a, imm:$b)), bb:$target),
+          (BGTU GPR:$a, (LI imm:$b), bb:$target)>;
+
+def : Pat<(brcond (i32 (setule GPR:$a, imm:$b)), bb:$target),
+          (BLEU GPR:$a, (LI imm:$b), bb:$target)>;
 
 // For comparisons with zero (common in switch lowering)
 // brcond reg, target => bne reg, r0, target (branch if reg != 0)

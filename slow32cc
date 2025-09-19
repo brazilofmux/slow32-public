@@ -1,0 +1,250 @@
+#!/bin/bash
+
+# SLOW-32 C Compiler Driver
+# Usage: slow32cc [options] source.c -o output.bin
+#
+# A complete compilation driver that handles the entire pipeline:
+#   C → LLVM IR → SLOW-32 Assembly → Binary
+
+VERSION="1.0.0"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Default values
+OPTIMIZATION="-O1"
+OUTPUT_FILE=""
+INPUT_FILE=""
+KEEP_INTERMEDIATES=0
+VERBOSE=0
+EMIT_ASM=0
+EMIT_LLVM=0
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+usage() {
+    cat << EOF
+SLOW-32 C Compiler Driver v$VERSION
+
+Usage: $0 [options] source.c -o output
+
+Options:
+    -o <file>       Output binary file (required)
+    -O<level>       Optimization level (0, 1, 2, s, z) [default: 1]
+    -S              Emit assembly only, don't assemble to binary
+    -emit-llvm      Emit LLVM IR only, don't compile further
+    -k, --keep      Keep intermediate files (.ll, .s)
+    -v, --verbose   Verbose output
+    -h, --help      Show this help message
+    --version       Show version information
+
+Examples:
+    $0 hello.c -o hello.bin           # Basic compilation
+    $0 -O2 program.c -o program.bin   # With optimization
+    $0 -S program.c -o program.s      # Assembly output only
+    $0 -k -v test.c -o test.bin       # Keep intermediates, verbose
+
+Environment:
+    SLOW32_CLANG    Clang binary to use [default: clang-19]
+    SLOW32_OPT      Additional clang options
+
+EOF
+    exit 1
+}
+
+error() {
+    echo -e "${RED}Error:${NC} $1" >&2
+    exit 1
+}
+
+info() {
+    if [ $VERBOSE -eq 1 ]; then
+        echo -e "${GREEN}[INFO]${NC} $1" >&2
+    fi
+}
+
+warning() {
+    echo -e "${YELLOW}Warning:${NC} $1" >&2
+}
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -o)
+            OUTPUT_FILE="$2"
+            shift 2
+            ;;
+        -O*)
+            OPTIMIZATION="$1"
+            shift
+            ;;
+        -S)
+            EMIT_ASM=1
+            shift
+            ;;
+        -emit-llvm)
+            EMIT_LLVM=1
+            shift
+            ;;
+        -k|--keep)
+            KEEP_INTERMEDIATES=1
+            shift
+            ;;
+        -v|--verbose)
+            VERBOSE=1
+            shift
+            ;;
+        -h|--help)
+            usage
+            ;;
+        --version)
+            echo "slow32cc version $VERSION"
+            exit 0
+            ;;
+        -*)
+            error "Unknown option: $1"
+            ;;
+        *)
+            if [ -z "$INPUT_FILE" ]; then
+                INPUT_FILE="$1"
+            else
+                error "Multiple input files not supported"
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Validate arguments
+if [ -z "$INPUT_FILE" ]; then
+    error "No input file specified"
+fi
+
+if [ ! -f "$INPUT_FILE" ]; then
+    error "Input file not found: $INPUT_FILE"
+fi
+
+if [ -z "$OUTPUT_FILE" ]; then
+    error "No output file specified (use -o)"
+fi
+
+# Determine file paths
+BASE_NAME=$(basename "$INPUT_FILE" .c)
+DIR_NAME=$(dirname "$OUTPUT_FILE")
+TEMP_DIR="${TMPDIR:-/tmp}/slow32cc_$$"
+
+# Create temp directory
+mkdir -p "$TEMP_DIR" || error "Failed to create temp directory"
+trap "[ $KEEP_INTERMEDIATES -eq 0 ] && rm -rf '$TEMP_DIR'" EXIT
+
+# Check for required tools
+CLANG="${SLOW32_CLANG:-clang-19}"
+if ! command -v "$CLANG" &> /dev/null; then
+    error "$CLANG not found. Please install LLVM 19 or set SLOW32_CLANG"
+fi
+
+COMPILER="$SCRIPT_DIR/llvm-backend/standalone/slow32-compile"
+if [ ! -x "$COMPILER" ]; then
+    error "SLOW-32 compiler not found or not executable: $COMPILER"
+fi
+
+ASSEMBLER="$SCRIPT_DIR/assembler/slow32asm"
+if [ ! -x "$ASSEMBLER" ]; then
+    error "SLOW-32 assembler not found or not executable: $ASSEMBLER"
+fi
+
+# Step 1: Compile C to LLVM IR
+LLVM_FILE="$TEMP_DIR/$BASE_NAME.ll"
+info "Compiling C to LLVM IR..."
+
+"$CLANG" -S -emit-llvm $OPTIMIZATION $SLOW32_OPT "$INPUT_FILE" -o "$LLVM_FILE" || {
+    error "Failed to compile C to LLVM IR"
+}
+
+if [ $EMIT_LLVM -eq 1 ]; then
+    cp "$LLVM_FILE" "$OUTPUT_FILE"
+    info "LLVM IR written to $OUTPUT_FILE"
+    exit 0
+fi
+
+# Step 2: Compile LLVM IR to SLOW-32 Assembly
+ASM_FILE="$TEMP_DIR/$BASE_NAME.s"
+info "Compiling LLVM IR to SLOW-32 assembly..."
+
+"$COMPILER" "$LLVM_FILE" > "$ASM_FILE" 2>"$TEMP_DIR/compiler.err" || {
+    cat "$TEMP_DIR/compiler.err" >&2
+    error "Failed to compile LLVM IR to SLOW-32 assembly"
+}
+
+# Check for compiler warnings
+if [ -s "$TEMP_DIR/compiler.err" ] && [ $VERBOSE -eq 1 ]; then
+    warning "Compiler warnings:"
+    cat "$TEMP_DIR/compiler.err" >&2
+fi
+
+# Step 3: Link with runtime libraries
+LINKED_ASM="$TEMP_DIR/${BASE_NAME}_linked.s"
+info "Linking with runtime libraries..."
+
+# Check which runtime files exist
+RUNTIME_FILES=""
+if [ -f "$SCRIPT_DIR/runtime/crt0.s" ]; then
+    RUNTIME_FILES="$SCRIPT_DIR/runtime/crt0.s"
+    info "Including crt0.s"
+fi
+
+# Add main program
+RUNTIME_FILES="$RUNTIME_FILES $ASM_FILE"
+
+# Add intrinsics library if it exists
+if [ -f "$SCRIPT_DIR/runtime/intrinsics.s" ]; then
+    RUNTIME_FILES="$RUNTIME_FILES $SCRIPT_DIR/runtime/intrinsics.s"
+    info "Including intrinsics.s"
+fi
+
+# Add standard library if it exists
+if [ -f "$SCRIPT_DIR/runtime/stdlib.s" ]; then
+    RUNTIME_FILES="$RUNTIME_FILES $SCRIPT_DIR/runtime/stdlib.s"
+    info "Including stdlib.s"
+fi
+
+# Concatenate all files
+cat $RUNTIME_FILES > "$LINKED_ASM" || error "Failed to link runtime libraries"
+
+if [ $EMIT_ASM -eq 1 ]; then
+    cp "$LINKED_ASM" "$OUTPUT_FILE"
+    info "Assembly written to $OUTPUT_FILE"
+    exit 0
+fi
+
+# Step 4: Assemble to binary
+info "Assembling to binary..."
+
+"$ASSEMBLER" "$LINKED_ASM" "$OUTPUT_FILE" 2>"$TEMP_DIR/assembler.err" || {
+    cat "$TEMP_DIR/assembler.err" >&2
+    error "Assembly failed"
+}
+
+# Check assembler output
+if [ -s "$TEMP_DIR/assembler.err" ] && [ $VERBOSE -eq 1 ]; then
+    cat "$TEMP_DIR/assembler.err" >&2
+fi
+
+# Keep intermediate files if requested
+if [ $KEEP_INTERMEDIATES -eq 1 ]; then
+    cp "$LLVM_FILE" "$DIR_NAME/$BASE_NAME.ll"
+    cp "$LINKED_ASM" "$DIR_NAME/$BASE_NAME.s"
+    info "Intermediate files saved:"
+    info "  LLVM IR: $DIR_NAME/$BASE_NAME.ll"
+    info "  Assembly: $DIR_NAME/$BASE_NAME.s"
+fi
+
+# Success!
+if [ $VERBOSE -eq 1 ]; then
+    SIZE=$(stat -c%s "$OUTPUT_FILE" 2>/dev/null || stat -f%z "$OUTPUT_FILE" 2>/dev/null)
+    echo -e "${GREEN}Success!${NC} Binary written to $OUTPUT_FILE ($SIZE bytes)"
+else
+    echo "$OUTPUT_FILE"
+fi

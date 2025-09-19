@@ -31,6 +31,12 @@ bool isConditionalBranch(unsigned Opcode) {
   case SLOW32::BNE_pat:
   case SLOW32::BLT:
   case SLOW32::BGE:
+  case SLOW32::BGT:
+  case SLOW32::BLE:
+  case SLOW32::BLTU:
+  case SLOW32::BGEU:
+  case SLOW32::BGTU:
+  case SLOW32::BLEU:
     return true;
   default:
     return false;
@@ -319,6 +325,24 @@ bool SLOW32InstrInfo::reverseBranchCondition(
     break;
   case SLOW32::BGE:
     NewOpcode = SLOW32::BLT;
+    break;
+  case SLOW32::BGT:
+    NewOpcode = SLOW32::BLE;
+    break;
+  case SLOW32::BLE:
+    NewOpcode = SLOW32::BGT;
+    break;
+  case SLOW32::BLTU:
+    NewOpcode = SLOW32::BGEU;
+    break;
+  case SLOW32::BGEU:
+    NewOpcode = SLOW32::BLTU;
+    break;
+  case SLOW32::BGTU:
+    NewOpcode = SLOW32::BLEU;
+    break;
+  case SLOW32::BLEU:
+    NewOpcode = SLOW32::BGTU;
     break;
   default:
     return true; // Can't reverse this condition

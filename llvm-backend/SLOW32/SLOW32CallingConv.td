@@ -1,13 +1,24 @@
 
 // CallingConvLower.td is needed for calling convention definitions
-def CC_SLOW32 : CallingConv< [
-  // i64 values use register pairs - return value in R1:R2
-  CCIfType<[i64], CCAssignToRegWithShadow<[R1, R3, R5, R7, R9], 
-                                           [R2, R4, R6, R8, R10]>>,
-  // i32 values use single registers
+
+// Argument passing: up to eight 32-bit integer GPRs (r3-r10). 64-bit integers
+// occupy a pair of registers and otherwise spill to the caller-provided stack
+// slots in 4-byte aligned chunks. Byval arguments use the generic support in
+// CCState which will carve out register and stack space as needed.
+def CC_SLOW32 : CallingConv<[
+  CCIfByVal<CCPassByVal<4, 4>>,
+  CCIfType<[i64], CCAssignToRegWithShadow<[R3, R5, R7, R9],
+                                           [R4, R6, R8, R10]>>,
+  CCIfType<[i32], CCAssignToReg<[R3, R4, R5, R6, R7, R8, R9, R10]>>,
+  CCIfType<[i64], CCAssignToStack<8, 4>>,
+  CCIfType<[i32], CCAssignToStack<4, 4>>
+]>;
+
+// Return values: scalars in r1 (and r2 for 64-bit). Anything that doesn't fit
+// spills to a caller-allocated memory slot.
+def RetCC_SLOW32 : CallingConv<[
+  CCIfType<[i64], CCAssignToRegWithShadow<[R1], [R2]>>,
   CCIfType<[i32], CCAssignToReg<[R1]>>,
-  CCIfType<[i32], CCAssignToReg<[R3,R4,R5,R6,R7,R8,R9,R10]>>,
-  CCIfType<[i32], CCAssignToStack<4, 4>>,
-  // i64 values on stack need 8-byte slots with 4-byte alignment
-  CCIfType<[i64], CCAssignToStack<8, 4>>
+  CCIfType<[i64], CCAssignToStack<8, 4>>,
+  CCIfType<[i32], CCAssignToStack<4, 4>>
 ]>;

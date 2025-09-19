@@ -6,7 +6,8 @@
 set -e
 
 # Paths
-SLOW32_BASE="/home/sdennis/slow-32"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SLOW32_BASE="$(cd "$SCRIPT_DIR/.." && pwd)"
 LLVM_BIN="$HOME/llvm-project/build/bin"
 
 # Tools
@@ -36,6 +37,9 @@ NC='\033[0m'
 TOTAL=0
 PASSED=0
 FAILED=0
+
+# Ensure runtime libraries are rebuilt with any local changes.
+make -C "$SLOW32_BASE/runtime" libc_debug.s32a libs32.s32a >/dev/null
 
 # Clean results directory
 rm -rf "$RESULTS_DIR"

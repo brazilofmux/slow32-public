@@ -11,6 +11,14 @@ enum NodeType {
   RET_FLAG,
   BR_CC,  // Conditional branch (BEQ)
   BR_NE,  // Branch not equal (BNE)
+  BR_LT,  // Signed less-than
+  BR_GE,  // Signed greater-or-equal
+  BR_GT,  // Signed greater-than
+  BR_LE,  // Signed less-or-equal
+  BR_LTU, // Unsigned less-than
+  BR_GEU, // Unsigned greater-or-equal
+  BR_GTU, // Unsigned greater-than
+  BR_LEU, // Unsigned less-or-equal
   CALL,   // Function call
   HI,     // High 20 bits of an address
   LO      // Low 12 bits of an address

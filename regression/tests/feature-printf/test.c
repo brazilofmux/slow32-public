@@ -16,8 +16,7 @@ int main() {
 
     // Test unsigned
     printf("Unsigned: %u\n", 42u);
-    // Note: There's a bug with large unsigned values (shows 246091775 instead of 4294967295)
-    // This appears to be a separate issue from the %d formatting bug that was fixed
+    // Previously we truncated at 24-bit and printed 246091775; verify the full 32-bit range now.
     printf("Unsigned max: %u\n", 4294967295u);
 
     // Test character and string
