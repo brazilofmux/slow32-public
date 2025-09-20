@@ -63,8 +63,7 @@ vprintf:                                # @vprintf
 .LBB0_5:
 	ldbu r1, r11+1
 	addi r2, r1, -37
-	sgtu r3, r2, r20
-	bne r3, r19, .LBB0_44
+	bgtu r2, r20, .LBB0_44
 .LBB0_6:
 	slli r2, r2, 2
 	add r2, r22, r2
@@ -161,9 +160,8 @@ vprintf:                                # @vprintf
 	jal r31, slow32_utox
 	add r17, r1, r0
 	addi r1, r0, 7
-	sgtu r1, r17, r1
 	addi r24, r0, 8
-	bne r1, r15, .LBB0_34
+	bgtu r17, r1, .LBB0_34
 .LBB0_28:
 	add r25, r24, r0
 .LBB0_29:
@@ -433,226 +431,160 @@ vsprintf:                               # @vsprintf
 	stw fp+-60, lr
 	add r12, r4, r0
 	add r11, r3, r0
-	addi r16, fp, -64
-	stw r16+0, r5
-	addi r17, r0, 37
-	addi r18, r0, 83
-	addi r19, r0, 0
-	lui r20, %hi(.LJTI2_0)
-	addi r20, r20, %lo(.LJTI2_0)
-	ori r21, r0, 88
+	addi r18, fp, -64
+	stw r18+0, r5
+	addi r19, r0, 37
+	addi r20, r0, 83
+	lui r21, %hi(.LJTI2_0)
+	addi r21, r21, %lo(.LJTI2_0)
+	ori r22, r0, 88
 	addi r13, fp, -76
-	add r22, r3, r0
-	addi r24, r0, 48
+	addi r23, r0, 48
+	addi r24, r0, 120
+	addi r14, r0, 0
+	add r15, r3, r0
 	jal r0, .LBB2_1
-.LBB2_9:
-	add r22, r22, r1
+.LBB2_10:
+	ldw r2, r18+0
+	ldw r3, r2+0
+	addi r2, r2, 4
+	stw r18+0, r2
+	seq r5, r1, r22
+	add r4, r13, r0
+	jal r31, slow32_utox
+.LBB2_7:
+	add r16, r1, r0
+	add r3, r15, r0
+	add r4, r13, r0
+	add r5, r1, r0
+	jal r31, memcpy
+	add r15, r15, r16
 	addi r12, r12, 2
 .LBB2_1:
 	ldbu r1, r12+0
-	beq r1, r17, .LBB2_4
+	beq r1, r19, .LBB2_4
 .LBB2_2:
-	addi r2, r0, 0
-	beq r1, r2, .LBB2_35
+	beq r1, r14, .LBB2_20
 .LBB2_3:
 	addi r12, r12, 1
-	addi r2, r22, 1
-	stb r22+0, r1
-	add r22, r2, r0
+	addi r2, r15, 1
+	stb r15+0, r1
+	add r15, r2, r0
 	jal r0, .LBB2_1
 .LBB2_4:
 	ldbu r1, r12+1
 	addi r2, r1, -37
-	sgtu r3, r2, r18
-	bne r3, r19, .LBB2_34
+	bgtu r2, r20, .LBB2_19
 .LBB2_5:
 	slli r2, r2, 2
-	add r2, r20, r2
+	add r2, r21, r2
 	ldw r2, r2+0
 	jalr r31, r2, 0
-.LBB2_13:
-	ldw r2, r16+0
-	ldw r3, r2+0
-	addi r2, r2, 4
-	stw r16+0, r2
-	seq r5, r1, r21
-	add r4, r13, r0
-	jal r31, slow32_utox
-	beq r1, r19, .LBB2_9
-.LBB2_14:
-	add r2, r19, r0
-.LBB2_15:
-	add r3, r13, r2
-	ldbu r3, r3+0
-	add r4, r22, r2
-	stb r4+0, r3
-	addi r2, r2, 1
-	sltu r3, r2, r1
-	bne r3, r19, .LBB2_15
-	jal r0, .LBB2_9
 .LBB2_6:
-	ldw r1, r16+0
+	ldw r1, r18+0
 	ldw r3, r1+0
 	addi r1, r1, 4
-	stw r16+0, r1
+	stw r18+0, r1
 	add r4, r13, r0
 	jal r31, slow32_ltoa
-	beq r1, r19, .LBB2_9
-.LBB2_7:
-	add r2, r19, r0
-.LBB2_8:
-	add r3, r13, r2
-	ldbu r3, r3+0
-	add r4, r22, r2
-	stb r4+0, r3
-	addi r2, r2, 1
-	sltu r3, r2, r1
-	bne r3, r19, .LBB2_8
-	jal r0, .LBB2_9
-.LBB2_32:
-	addi r1, r22, 1
-	stb r22+0, r17
-	jal r0, .LBB2_33
-.LBB2_34:
-	stb r22+0, r17
+	jal r0, .LBB2_7
+.LBB2_17:
+	addi r1, r15, 1
+	stb r15+0, r19
+	jal r0, .LBB2_18
+.LBB2_19:
+	stb r15+0, r19
 	ldbu r1, r12+1
-	addi r2, r22, 2
-	stb r22+1, r1
+	addi r2, r15, 2
+	stb r15+1, r1
 	addi r12, r12, 2
-	add r22, r2, r0
+	add r15, r2, r0
 	jal r0, .LBB2_1
-.LBB2_16:
-	ldw r1, r16+0
+.LBB2_11:
+	ldw r1, r18+0
 	ldw r3, r1+0
 	addi r1, r1, 4
-	stw r16+0, r1
+	stw r18+0, r1
 	add r4, r13, r0
 	jal r31, slow32_utoo
-	beq r1, r19, .LBB2_9
-.LBB2_17:
-	addi r2, r0, 0
-	add r3, r2, r0
-.LBB2_18:
-	add r4, r13, r3
-	ldbu r4, r4+0
-	add r5, r22, r3
-	stb r5+0, r4
-	addi r3, r3, 1
-	sltu r4, r3, r1
-	bne r4, r2, .LBB2_18
-	jal r0, .LBB2_9
-.LBB2_19:
-	ldw r1, r16+0
-	ldw r3, r1+0
-	addi r1, r1, 4
-	stw r16+0, r1
-	stb r22+0, r24
-	addi r23, r22, 2
-	addi r1, r0, 120
-	stb r22+1, r1
-	addi r14, fp, -76
-	addi r15, r0, 0
-	add r4, r14, r0
-	add r5, r15, r0
-	jal r31, slow32_utox
-	addi r2, r0, 7
-	sgtu r2, r1, r2
-	bne r2, r15, .LBB2_24
-.LBB2_20:
-	addi r2, r0, 8
-	sub r2, r2, r1
-	addi r3, r0, 0
-	beq r2, r3, .LBB2_23
-.LBB2_21:
-	add r4, r3, r0
-.LBB2_22:
-	add r5, r23, r4
-	stb r5+0, r24
-	addi r4, r4, 1
-	sltu r5, r4, r2
-	bne r5, r3, .LBB2_22
-.LBB2_23:
-	sub r2, r22, r1
-	addi r23, r2, 10
-.LBB2_24:
-	beq r1, r15, .LBB2_27
-.LBB2_25:
-	add r2, r15, r0
-.LBB2_26:
-	add r3, r14, r2
-	ldbu r3, r3+0
-	add r4, r23, r2
-	stb r4+0, r3
-	addi r2, r2, 1
-	sltu r3, r2, r1
-	bne r3, r15, .LBB2_26
-.LBB2_27:
-	add r22, r23, r1
-	addi r12, r12, 2
-	jal r0, .LBB2_1
-.LBB2_28:
-	ldw r1, r16+0
-	ldw r2, r1+0
-	addi r1, r1, 4
-	stw r16+0, r1
-	addi r1, r22, 1
-	stb r22+0, r2
-.LBB2_33:
-	addi r12, r12, 2
-	add r22, r1, r0
-	jal r0, .LBB2_1
-.LBB2_10:
-	ldw r1, r16+0
-	ldw r3, r1+0
-	addi r1, r1, 4
-	stw r16+0, r1
-	addi r14, fp, -76
-	add r4, r14, r0
-	jal r31, slow32_utoa
-	addi r2, r0, 0
-	beq r1, r2, .LBB2_9
-.LBB2_11:
-	add r3, r2, r0
+	jal r0, .LBB2_7
 .LBB2_12:
-	add r4, r14, r3
-	ldbu r4, r4+0
-	add r5, r22, r3
-	stb r5+0, r4
-	addi r3, r3, 1
-	sltu r4, r3, r1
-	bne r4, r2, .LBB2_12
-	jal r0, .LBB2_9
-.LBB2_29:
-	ldw r1, r16+0
+	ldw r1, r18+0
+	ldw r3, r1+0
+	addi r1, r1, 4
+	stw r18+0, r1
+	stb r15+0, r23
+	addi r16, r15, 2
+	stb r15+1, r24
+	add r4, r13, r0
+	add r5, r14, r0
+	jal r31, slow32_utox
+	add r17, r1, r0
+	addi r1, r0, 7
+	bgtu r17, r1, .LBB2_14
+.LBB2_13:
+	addi r1, r0, 8
+	sub r5, r1, r17
+	addi r4, r0, 48
+	add r3, r16, r0
+	jal r31, memset
+	sub r1, r15, r17
+	addi r16, r1, 10
+.LBB2_14:
+	addi r4, fp, -76
+	add r3, r16, r0
+	add r5, r17, r0
+	jal r31, memcpy
+	add r15, r16, r17
+	addi r12, r12, 2
+	jal r0, .LBB2_1
+.LBB2_15:
+	ldw r1, r18+0
 	ldw r2, r1+0
 	addi r1, r1, 4
-	stw r16+0, r1
+	stw r18+0, r1
+	addi r1, r15, 1
+	stb r15+0, r2
+.LBB2_18:
+	addi r12, r12, 2
+	add r15, r1, r0
+	jal r0, .LBB2_1
+.LBB2_8:
+	ldw r1, r18+0
+	ldw r3, r1+0
+	addi r1, r1, 4
+	stw r18+0, r1
+	addi r16, fp, -76
+	add r4, r16, r0
+	jal r31, slow32_utoa
+	jal r0, .LBB2_9
+.LBB2_16:
+	ldw r1, r18+0
+	ldw r2, r1+0
+	addi r1, r1, 4
+	stw r18+0, r1
 	ori r1, r0, 0
 	seq r1, r2, r1
 	lui r3, %hi(.L.str)
 	addi r3, r3, %lo(.L.str)
 	xor r3, r2, r3
-	addi r15, r0, 0
-	sub r1, r15, r1
+	sub r1, r14, r1
 	and r1, r3, r1
-	xor r14, r2, r1
-	add r3, r14, r0
+	xor r16, r2, r1
+	add r3, r16, r0
 	jal r31, strlen
-	beq r1, r15, .LBB2_9
-.LBB2_30:
-	add r2, r15, r0
-.LBB2_31:
-	add r3, r14, r2
-	ldbu r3, r3+0
-	add r4, r22, r2
-	stb r4+0, r3
-	addi r2, r2, 1
-	sltu r3, r2, r1
-	bne r3, r15, .LBB2_31
-	jal r0, .LBB2_9
-.LBB2_35:
-	stb r22+0, r2
-	sub r1, r22, r11
+.LBB2_9:
+	add r17, r1, r0
+	add r3, r15, r0
+	add r4, r16, r0
+	add r5, r1, r0
+	jal r31, memcpy
+	add r15, r15, r17
+	addi r12, r12, 2
+	jal r0, .LBB2_1
+.LBB2_20:
+	stb r15+0, r14
+	sub r1, r15, r11
 	ldw lr, fp+-60
 	ldw r24, fp+-56
 	ldw r23, fp+-52
@@ -677,90 +609,90 @@ vsprintf:                               # @vsprintf
 	.section	.rodata,"a",@progbits
 	.p2align	2, 0x0
 .LJTI2_0:
-	.word	.LBB2_32
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_13
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_28
+	.word	.LBB2_17
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_10
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_15
 	.word	.LBB2_6
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
 	.word	.LBB2_6
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_34
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_19
+	.word	.LBB2_11
+	.word	.LBB2_12
+	.word	.LBB2_19
+	.word	.LBB2_19
 	.word	.LBB2_16
 	.word	.LBB2_19
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_29
-	.word	.LBB2_34
+	.word	.LBB2_8
+	.word	.LBB2_19
+	.word	.LBB2_19
 	.word	.LBB2_10
-	.word	.LBB2_34
-	.word	.LBB2_34
-	.word	.LBB2_13
                                         # -- End function
 	.text
 	.globl	sprintf                         # -- Begin function sprintf
@@ -779,9 +711,9 @@ sprintf:                                # @sprintf
 	stw r1+16, r9
 	stw r1+12, r8
 	stw r1+8, r7
-	stw r1+0, r5
 	ori  r2, r1, 4
 	stw r2+0, r6
+	stw r1+0, r5
 	addi r2, fp, -32
 	stw r2+0, r1
 	add r5, r1, r0
@@ -800,5 +732,5 @@ sprintf:                                # @sprintf
 	.asciz	"(null)"
 	.size	.L.str, 7
 
-	.ident	"clang version 22.0.0git (https://github.com/llvm/llvm-project.git f70c231862e530d8ddece5423fa27678d1eecb34)"
+	.ident	"clang version 22.0.0git (https://github.com/llvm/llvm-project.git f4f5c1e34ae9343d25641431f4d691b10fec3591)"
 	.section	".note.GNU-stack","",@progbits

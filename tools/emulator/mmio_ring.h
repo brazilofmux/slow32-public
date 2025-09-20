@@ -5,20 +5,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// MMIO memory map - matches what's already defined in slow32.h
-#define MMIO_BASE     0x10000000
-#define REQ_HEAD      (MMIO_BASE + 0x0000)
-#define REQ_TAIL      (MMIO_BASE + 0x0004)
-#define REQ_RING      (MMIO_BASE + 0x1000)
-#define RESP_HEAD     (MMIO_BASE + 0x2000)
-#define RESP_TAIL     (MMIO_BASE + 0x2004)
-#define RESP_RING     (MMIO_BASE + 0x3000)
-#define DATA_BUFFER   (MMIO_BASE + 0x4000)
-
-// Ring parameters
-#define RING_SIZE     256           // Number of descriptors
-#define DESC_SIZE     16            // Bytes per descriptor
-#define DATA_BUF_SIZE (56 * 1024)   // 56KB data buffer
+#include "../../common/mmio_ring_layout.h"
 
 // I/O descriptor structure
 typedef struct {
@@ -29,20 +16,7 @@ typedef struct {
 } io_descriptor_t;
 
 // Operation codes for I/O (prefixed to avoid conflicts)
-typedef enum {
-    IO_OP_NOP        = 0x00,
-    IO_OP_PUTCHAR    = 0x01,
-    IO_OP_GETCHAR    = 0x02,
-    IO_OP_WRITE      = 0x03,
-    IO_OP_READ       = 0x04,
-    IO_OP_OPEN       = 0x05,
-    IO_OP_CLOSE      = 0x06,
-    IO_OP_SEEK       = 0x07,
-    IO_OP_BRK        = 0x08,
-    IO_OP_EXIT       = 0x09,
-    IO_OP_STAT       = 0x0A,
-    IO_OP_FLUSH      = 0x0B,
-} io_opcode_t;
+typedef enum s32_mmio_opcode io_opcode_t;
 
 // Forward declaration
 struct cpu_state;
@@ -54,7 +28,10 @@ typedef struct {
     uint32_t req_tail;      // Request consumer (device reads)
     uint32_t resp_head;     // Response producer (device writes)
     uint32_t resp_tail;     // Response consumer (CPU reads)
-    
+
+    // Base address of the MMIO window in guest memory
+    uint32_t base_addr;
+
     // Ring buffers (allocated as part of MMIO memory)
     io_descriptor_t *req_ring;
     io_descriptor_t *resp_ring;
@@ -89,7 +66,7 @@ static inline bool mmio_has_requests(mmio_ring_state_t *mmio) {
 
 // Ring buffer utilities
 static inline bool ring_full(uint32_t head, uint32_t tail) {
-    return ((head + 1) % RING_SIZE) == tail;
+    return ((head + 1u) % S32_MMIO_RING_ENTRIES) == tail;
 }
 
 static inline bool ring_empty(uint32_t head, uint32_t tail) {
@@ -97,7 +74,7 @@ static inline bool ring_empty(uint32_t head, uint32_t tail) {
 }
 
 static inline uint32_t ring_next(uint32_t index) {
-    return (index + 1) % RING_SIZE;
+    return (index + 1u) % S32_MMIO_RING_ENTRIES;
 }
 
 #endif // MMIO_RING_H

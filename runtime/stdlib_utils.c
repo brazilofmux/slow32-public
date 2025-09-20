@@ -3,30 +3,26 @@
 
 extern void yield(void);
 
-#define MMIO_BASE     0x10000000
-#define REQ_HEAD      (*(volatile unsigned int*)(MMIO_BASE + 0x0000))
-#define REQ_TAIL      (*(volatile unsigned int*)(MMIO_BASE + 0x0004))
-#define REQ_RING      ((volatile unsigned int*)(MMIO_BASE + 0x1000))
-
-#define OP_EXIT       0x09
+#include "mmio_ring.h"
 
 void exit(int status) {
-    unsigned int req_head = REQ_HEAD;
-    unsigned int req_tail = REQ_TAIL;
-    
-    while (((req_head + 1) % 256) == req_tail) {
+    unsigned int req_head = S32_MMIO_REQ_HEAD;
+    unsigned int req_tail = S32_MMIO_REQ_TAIL;
+    volatile unsigned int *req_ring = S32_MMIO_REQ_RING;
+
+    while (((req_head + 1u) % S32_MMIO_RING_ENTRIES) == req_tail) {
         yield();
-        req_tail = REQ_TAIL;
+        req_tail = S32_MMIO_REQ_TAIL;
     }
-    
-    unsigned int idx = req_head * 4;
-    REQ_RING[idx + 0] = OP_EXIT;
-    REQ_RING[idx + 1] = 0;
-    REQ_RING[idx + 2] = 0;
-    REQ_RING[idx + 3] = status;
-    
-    REQ_HEAD = (req_head + 1) % 256;
-    
+
+    unsigned int idx = req_head * S32_MMIO_DESC_WORDS;
+    req_ring[idx + 0] = S32_MMIO_OP_EXIT;
+    req_ring[idx + 1] = 0;
+    req_ring[idx + 2] = 0;
+    req_ring[idx + 3] = (unsigned int)status;
+
+    S32_MMIO_REQ_HEAD = (req_head + 1u) % S32_MMIO_RING_ENTRIES;
+
     while (1) yield();
 }
 
@@ -98,4 +94,3 @@ void srand(unsigned int seed) {
 char *getenv(const char *name) {
     return NULL;
 }
-

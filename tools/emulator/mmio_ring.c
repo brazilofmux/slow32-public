@@ -17,6 +17,7 @@ void mmio_ring_init(mmio_ring_state_t *mmio, uint32_t heap_base, uint32_t heap_s
     mmio->req_tail = 0;
     mmio->resp_head = 0;
     mmio->resp_tail = 0;
+    mmio->base_addr = 0;
     
     // Initialize heap
     mmio->brk_current = heap_base;
@@ -26,7 +27,8 @@ void mmio_ring_init(mmio_ring_state_t *mmio, uint32_t heap_base, uint32_t heap_s
 // Map MMIO memory region (returns host pointer to MMIO base)
 void* mmio_ring_map(mmio_ring_state_t *mmio) {
     // Allocate 64KB for entire MMIO region
-    void *mmio_mem = mmap(NULL, 0x10000, PROT_READ | PROT_WRITE,
+    size_t window_size = S32_MMIO_DATA_BUFFER_OFFSET + S32_MMIO_DATA_CAPACITY;
+    void *mmio_mem = mmap(NULL, window_size, PROT_READ | PROT_WRITE,
                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (mmio_mem == MAP_FAILED) {
         perror("Failed to map MMIO memory");
@@ -37,13 +39,13 @@ void* mmio_ring_map(mmio_ring_state_t *mmio) {
     uint8_t *base = (uint8_t*)mmio_mem;
     
     // Skip head/tail registers at offset 0
-    mmio->req_ring = (io_descriptor_t*)(base + 0x1000);
-    mmio->resp_ring = (io_descriptor_t*)(base + 0x3000);
-    mmio->data_buffer = base + 0x4000;
+    mmio->req_ring = (io_descriptor_t*)(base + S32_MMIO_REQ_RING_OFFSET);
+    mmio->resp_ring = (io_descriptor_t*)(base + S32_MMIO_RESP_RING_OFFSET);
+    mmio->data_buffer = base + S32_MMIO_DATA_BUFFER_OFFSET;
     
     // Clear rings
-    memset(mmio->req_ring, 0, RING_SIZE * DESC_SIZE);
-    memset(mmio->resp_ring, 0, RING_SIZE * DESC_SIZE);
+    memset(mmio->req_ring, 0, S32_MMIO_RING_ENTRIES * S32_MMIO_DESC_BYTES);
+    memset(mmio->resp_ring, 0, S32_MMIO_RING_ENTRIES * S32_MMIO_DESC_BYTES);
     
     return mmio_mem;
 }
@@ -51,28 +53,40 @@ void* mmio_ring_map(mmio_ring_state_t *mmio) {
 // MMIO read handler
 uint32_t mmio_ring_read(mmio_ring_state_t *mmio, uint32_t addr, int size) {
     if (size != 4) return 0;  // Only 32-bit reads
-    
-    switch (addr) {
-        case REQ_HEAD:
+
+    if (addr < mmio->base_addr) {
+        return 0;
+    }
+
+    uint32_t rel = addr - mmio->base_addr;
+    if (rel >= S32_MMIO_DATA_BUFFER_OFFSET + S32_MMIO_DATA_CAPACITY) {
+        return 0;
+    }
+
+    switch (rel) {
+        case S32_MMIO_REQ_HEAD_OFFSET:
             return mmio->req_head;
-        case REQ_TAIL:
+        case S32_MMIO_REQ_TAIL_OFFSET:
             return mmio->req_tail;
-        case RESP_HEAD:
+        case S32_MMIO_RESP_HEAD_OFFSET:
             return mmio->resp_head;
-        case RESP_TAIL:
+        case S32_MMIO_RESP_TAIL_OFFSET:
             return mmio->resp_tail;
         default:
             // Reading from rings or data buffer
-            if (addr >= REQ_RING && addr < REQ_RING + RING_SIZE * DESC_SIZE) {
-                uint32_t offset = (addr - REQ_RING) / 4;
+            if (rel >= S32_MMIO_REQ_RING_OFFSET &&
+                rel < S32_MMIO_REQ_RING_OFFSET + S32_MMIO_RING_ENTRIES * S32_MMIO_DESC_BYTES) {
+                uint32_t offset = (rel - S32_MMIO_REQ_RING_OFFSET) / 4;
                 return ((uint32_t*)mmio->req_ring)[offset];
             }
-            if (addr >= RESP_RING && addr < RESP_RING + RING_SIZE * DESC_SIZE) {
-                uint32_t offset = (addr - RESP_RING) / 4;
+            if (rel >= S32_MMIO_RESP_RING_OFFSET &&
+                rel < S32_MMIO_RESP_RING_OFFSET + S32_MMIO_RING_ENTRIES * S32_MMIO_DESC_BYTES) {
+                uint32_t offset = (rel - S32_MMIO_RESP_RING_OFFSET) / 4;
                 return ((uint32_t*)mmio->resp_ring)[offset];
             }
-            if (addr >= DATA_BUFFER && addr < DATA_BUFFER + DATA_BUF_SIZE) {
-                uint32_t offset = addr - DATA_BUFFER;
+            if (rel >= S32_MMIO_DATA_BUFFER_OFFSET &&
+                rel < S32_MMIO_DATA_BUFFER_OFFSET + S32_MMIO_DATA_CAPACITY) {
+                uint32_t offset = rel - S32_MMIO_DATA_BUFFER_OFFSET;
                 uint32_t value = 0;
                 memcpy(&value, mmio->data_buffer + offset, 4);
                 return value;
@@ -84,32 +98,44 @@ uint32_t mmio_ring_read(mmio_ring_state_t *mmio, uint32_t addr, int size) {
 // MMIO write handler
 void mmio_ring_write(mmio_ring_state_t *mmio, struct cpu_state *cpu, uint32_t addr, uint32_t value, int size) {
     if (size != 4) return;  // Only 32-bit writes
-    
-    switch (addr) {
-        case REQ_HEAD:
-            mmio->req_head = value % RING_SIZE;
+
+    if (addr < mmio->base_addr) {
+        return;
+    }
+
+    uint32_t rel = addr - mmio->base_addr;
+    if (rel >= S32_MMIO_DATA_BUFFER_OFFSET + S32_MMIO_DATA_CAPACITY) {
+        return;
+    }
+
+    switch (rel) {
+        case S32_MMIO_REQ_HEAD_OFFSET:
+            mmio->req_head = value % S32_MMIO_RING_ENTRIES;
             break;
-        case REQ_TAIL:
-            mmio->req_tail = value % RING_SIZE;
+        case S32_MMIO_REQ_TAIL_OFFSET:
+            mmio->req_tail = value % S32_MMIO_RING_ENTRIES;
             break;
-        case RESP_HEAD:
-            mmio->resp_head = value % RING_SIZE;
+        case S32_MMIO_RESP_HEAD_OFFSET:
+            mmio->resp_head = value % S32_MMIO_RING_ENTRIES;
             break;
-        case RESP_TAIL:
-            mmio->resp_tail = value % RING_SIZE;
+        case S32_MMIO_RESP_TAIL_OFFSET:
+            mmio->resp_tail = value % S32_MMIO_RING_ENTRIES;
             break;
         default:
             // Writing to rings or data buffer
-            if (addr >= REQ_RING && addr < REQ_RING + RING_SIZE * DESC_SIZE) {
-                uint32_t offset = (addr - REQ_RING) / 4;
+            if (rel >= S32_MMIO_REQ_RING_OFFSET &&
+                rel < S32_MMIO_REQ_RING_OFFSET + S32_MMIO_RING_ENTRIES * S32_MMIO_DESC_BYTES) {
+                uint32_t offset = (rel - S32_MMIO_REQ_RING_OFFSET) / 4;
                 ((uint32_t*)mmio->req_ring)[offset] = value;
             }
-            else if (addr >= RESP_RING && addr < RESP_RING + RING_SIZE * DESC_SIZE) {
-                uint32_t offset = (addr - RESP_RING) / 4;
+            else if (rel >= S32_MMIO_RESP_RING_OFFSET &&
+                     rel < S32_MMIO_RESP_RING_OFFSET + S32_MMIO_RING_ENTRIES * S32_MMIO_DESC_BYTES) {
+                uint32_t offset = (rel - S32_MMIO_RESP_RING_OFFSET) / 4;
                 ((uint32_t*)mmio->resp_ring)[offset] = value;
             }
-            else if (addr >= DATA_BUFFER && addr < DATA_BUFFER + DATA_BUF_SIZE) {
-                uint32_t offset = addr - DATA_BUFFER;
+            else if (rel >= S32_MMIO_DATA_BUFFER_OFFSET &&
+                     rel < S32_MMIO_DATA_BUFFER_OFFSET + S32_MMIO_DATA_CAPACITY) {
+                uint32_t offset = rel - S32_MMIO_DATA_BUFFER_OFFSET;
                 memcpy(mmio->data_buffer + offset, &value, 4);
             }
             break;
@@ -123,12 +149,12 @@ static void process_request(mmio_ring_state_t *mmio, cpu_state_t *cpu, io_descri
     resp.offset = req->offset;
     
     switch (req->opcode) {
-        case IO_OP_NOP:
+        case S32_MMIO_OP_NOP:
             resp.status = 0;
             break;
             
-        case IO_OP_PUTCHAR: {
-            uint32_t offset = req->offset % DATA_BUF_SIZE;
+        case S32_MMIO_OP_PUTCHAR: {
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
             uint8_t ch = mmio->data_buffer[offset];
             fputc(ch, stdout);
             fflush(stdout);
@@ -136,13 +162,13 @@ static void process_request(mmio_ring_state_t *mmio, cpu_state_t *cpu, io_descri
             break;
         }
         
-        case IO_OP_WRITE: {
+        case S32_MMIO_OP_WRITE: {
             int fd = req->status;  // fd is in status field for requests
             if (fd == 1 || fd == 2) {  // stdout or stderr
                 FILE *stream = (fd == 1) ? stdout : stderr;
                 uint32_t written = 0;
-                for (uint32_t i = 0; i < req->length && i < DATA_BUF_SIZE; i++) {
-                    fputc(mmio->data_buffer[(req->offset + i) % DATA_BUF_SIZE], stream);
+                for (uint32_t i = 0; i < req->length && i < S32_MMIO_DATA_CAPACITY; i++) {
+                    fputc(mmio->data_buffer[(req->offset + i) % S32_MMIO_DATA_CAPACITY], stream);
                     written++;
                 }
                 fflush(stream);
@@ -155,15 +181,15 @@ static void process_request(mmio_ring_state_t *mmio, cpu_state_t *cpu, io_descri
             break;
         }
         
-        case IO_OP_READ: {
+        case S32_MMIO_OP_READ: {
             int fd = req->status;  // fd is in status field
             if (fd == 0) {  // stdin
                 uint32_t read_count = 0;
-                for (uint32_t i = 0; i < req->length && i < DATA_BUF_SIZE; i++) {
+                for (uint32_t i = 0; i < req->length && i < S32_MMIO_DATA_CAPACITY; i++) {
                     int ch = fgetc(stdin);
                     if (ch == EOF) break;
                     
-                    mmio->data_buffer[(req->offset + i) % DATA_BUF_SIZE] = (uint8_t)ch;
+                    mmio->data_buffer[(req->offset + i) % S32_MMIO_DATA_CAPACITY] = (uint8_t)ch;
                     read_count++;
                     
                     if (ch == '\n') break;  // Line buffered
@@ -177,10 +203,10 @@ static void process_request(mmio_ring_state_t *mmio, cpu_state_t *cpu, io_descri
             break;
         }
         
-        case IO_OP_GETCHAR: {
+        case S32_MMIO_OP_GETCHAR: {
             int ch = fgetc(stdin);
             if (ch != EOF) {
-                mmio->data_buffer[req->offset % DATA_BUF_SIZE] = (uint8_t)ch;
+                mmio->data_buffer[req->offset % S32_MMIO_DATA_CAPACITY] = (uint8_t)ch;
                 resp.length = 1;
                 resp.status = 0;
             } else {
@@ -190,7 +216,7 @@ static void process_request(mmio_ring_state_t *mmio, cpu_state_t *cpu, io_descri
             break;
         }
         
-        case IO_OP_BRK: {
+        case S32_MMIO_OP_BRK: {
             uint32_t requested = req->status;  // New break value in status
             
             if (requested == 0) {
@@ -210,12 +236,12 @@ static void process_request(mmio_ring_state_t *mmio, cpu_state_t *cpu, io_descri
             break;
         }
         
-        case IO_OP_EXIT:
+        case S32_MMIO_OP_EXIT:
             cpu->halted = true;
             resp.status = req->status;  // Exit code
             break;
             
-        case IO_OP_FLUSH:
+        case S32_MMIO_OP_FLUSH:
             fflush(stdout);
             fflush(stderr);
             resp.status = 0;
