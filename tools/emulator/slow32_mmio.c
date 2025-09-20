@@ -83,7 +83,7 @@ static int cpu_mem_write_mmio(cpu_state_mmio_t *cpu_ext, uint32_t addr, uint32_t
     // Check if this is MMIO
     if (cpu_ext->mmio_enabled && addr >= MMIO_BASE && addr < MMIO_BASE + 0x10000) {
         if (size == 4) {
-            mmio_ring_write(&cpu_ext->mmio, &cpu_ext->cpu, addr, value, size);
+            mmio_ring_write(&cpu_ext->mmio, NULL, addr, value, size);
             return 0;
         }
         return -1;  // Only 32-bit MMIO writes for now
@@ -108,7 +108,8 @@ static void cpu_step_mmio(cpu_state_mmio_t *cpu_ext) {
         case OP_YIELD:
             // YIELD is the ring buffer sync point
             if (cpu_ext->mmio_enabled) {
-                mmio_ring_process(&cpu_ext->mmio, cpu);
+                mmio_cpu_iface_t iface = { .halted = &cpu->halted };
+                mmio_ring_process(&cpu_ext->mmio, &iface);
             }
             cpu->cycle_count++;
             break;
@@ -116,7 +117,8 @@ static void cpu_step_mmio(cpu_state_mmio_t *cpu_ext) {
         case OP_HALT:
             // Process any final I/O before halting
             if (cpu_ext->mmio_enabled) {
-                mmio_ring_process(&cpu_ext->mmio, cpu);
+                mmio_cpu_iface_t iface = { .halted = &cpu->halted };
+                mmio_ring_process(&cpu_ext->mmio, &iface);
             }
             cpu->halted = true;
             break;
@@ -192,7 +194,8 @@ int main(int argc, char *argv[]) {
         
         // Optional: Process MMIO every N instructions for responsiveness
         if (enable_mmio && (cpu_ext.cpu.inst_count % 1000) == 0) {
-            mmio_ring_process(&cpu_ext.mmio, &cpu_ext.cpu);
+            mmio_cpu_iface_t iface = { .halted = &cpu_ext.cpu.halted };
+            mmio_ring_process(&cpu_ext.mmio, &iface);
         }
     }
     

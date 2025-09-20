@@ -96,7 +96,9 @@ uint32_t mmio_ring_read(mmio_ring_state_t *mmio, uint32_t addr, int size) {
 }
 
 // MMIO write handler
-void mmio_ring_write(mmio_ring_state_t *mmio, struct cpu_state *cpu, uint32_t addr, uint32_t value, int size) {
+void mmio_ring_write(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, uint32_t addr, uint32_t value, int size) {
+    (void)cpu;  // Reserved for future use (e.g., trapping on special writes)
+
     if (size != 4) return;  // Only 32-bit writes
 
     if (addr < mmio->base_addr) {
@@ -143,7 +145,7 @@ void mmio_ring_write(mmio_ring_state_t *mmio, struct cpu_state *cpu, uint32_t ad
 }
 
 // Process a single request
-static void process_request(mmio_ring_state_t *mmio, cpu_state_t *cpu, io_descriptor_t *req) {
+static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_descriptor_t *req) {
     io_descriptor_t resp = {0};
     resp.opcode = req->opcode;
     resp.offset = req->offset;
@@ -237,7 +239,9 @@ static void process_request(mmio_ring_state_t *mmio, cpu_state_t *cpu, io_descri
         }
         
         case S32_MMIO_OP_EXIT:
-            cpu->halted = true;
+            if (cpu && cpu->halted) {
+                *(cpu->halted) = true;
+            }
             resp.status = req->status;  // Exit code
             break;
             
@@ -261,7 +265,7 @@ static void process_request(mmio_ring_state_t *mmio, cpu_state_t *cpu, io_descri
 }
 
 // Process pending requests
-void mmio_ring_process(mmio_ring_state_t *mmio, cpu_state_t *cpu) {
+void mmio_ring_process(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu) {
     while (!ring_empty(mmio->req_head, mmio->req_tail)) {
         io_descriptor_t *req = &mmio->req_ring[mmio->req_tail];
         process_request(mmio, cpu, req);

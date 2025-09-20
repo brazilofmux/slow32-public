@@ -124,11 +124,7 @@ typedef struct cpu_state {
     bool wxorx_enabled;     // W^X protection enabled
     
     // MMIO support (auto-detected)
-    bool mmio_enabled;      // MMIO detected/enabled
-    bool mmio_initialized;  // MMIO actually set up
-    uint32_t mmio_base;     // MMIO base address from header
-    mmio_ring_state_t *mmio; // MMIO state (allocated on demand)
-    void *mmio_mem;         // Host pointer to MMIO memory
+    mmio_device_t mmio;
     
     struct {
         bool enabled;

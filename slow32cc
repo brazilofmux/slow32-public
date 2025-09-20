@@ -6,7 +6,7 @@
 # A complete compilation driver that handles the entire pipeline:
 #   C → LLVM IR → SLOW-32 Assembly → Binary
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Default values
@@ -17,6 +17,7 @@ KEEP_INTERMEDIATES=0
 VERBOSE=0
 EMIT_ASM=0
 EMIT_LLVM=0
+LIBC_VARIANT="${LIBC:-debug}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -35,6 +36,7 @@ Options:
     -O<level>       Optimization level (0, 1, 2, s, z) [default: 1]
     -S              Emit assembly only, don't assemble to binary
     -emit-llvm      Emit LLVM IR only, don't compile further
+    --libc=<name>   Select runtime libc (debug|mmio) [default: debug]
     -k, --keep      Keep intermediate files (.ll, .s)
     -v, --verbose   Verbose output
     -h, --help      Show this help message
@@ -47,7 +49,9 @@ Examples:
     $0 -k -v test.c -o test.bin       # Keep intermediates, verbose
 
 Environment:
-    SLOW32_CLANG    Clang binary to use [default: clang-19]
+    LLVM_BIN        Root of the LLVM toolchain (defaults to ~/llvm-project/build/bin)
+    SLOW32_CLANG    Override clang path
+    SLOW32_LLC      Override llc path
     SLOW32_OPT      Additional clang options
 
 EOF
@@ -86,6 +90,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -emit-llvm)
             EMIT_LLVM=1
+            shift
+            ;;
+        --libc=*)
+            LIBC_VARIANT="${1#*=}"
             shift
             ;;
         -k|--keep)
@@ -139,27 +147,63 @@ TEMP_DIR="${TMPDIR:-/tmp}/slow32cc_$$"
 mkdir -p "$TEMP_DIR" || error "Failed to create temp directory"
 trap "[ $KEEP_INTERMEDIATES -eq 0 ] && rm -rf '$TEMP_DIR'" EXIT
 
+# Ensure output directory exists (no-op for current directory)
+mkdir -p "$DIR_NAME" 2>/dev/null || true
+
 # Check for required tools
-CLANG="${SLOW32_CLANG:-clang-19}"
-if ! command -v "$CLANG" &> /dev/null; then
-    error "$CLANG not found. Please install LLVM 19 or set SLOW32_CLANG"
+LLVM_BIN_DEFAULT="$HOME/llvm-project/build/bin"
+LLVM_BIN_ROOT="${LLVM_BIN:-$LLVM_BIN_DEFAULT}"
+
+resolve_tool() {
+    local override="$1"
+    local preferred="$2"
+    local fallback="$3"
+
+    if [ -n "$override" ]; then
+        echo "$override"
+        return
+    fi
+
+    if [ -n "$preferred" ] && [ -x "$preferred" ]; then
+        echo "$preferred"
+        return
+    fi
+
+    if command -v "$fallback" >/dev/null 2>&1; then
+        command -v "$fallback"
+        return
+    fi
+
+    echo ""
+}
+
+CLANG_BIN=$(resolve_tool "$SLOW32_CLANG" "$LLVM_BIN_ROOT/clang" "clang")
+if [ -z "$CLANG_BIN" ]; then
+    error "Unable to locate clang. Build LLVM or set LLVM_BIN/SLOW32_CLANG."
 fi
 
-COMPILER="$SCRIPT_DIR/llvm-backend/standalone/slow32-compile"
-if [ ! -x "$COMPILER" ]; then
-    error "SLOW-32 compiler not found or not executable: $COMPILER"
+LLC_BIN=$(resolve_tool "$SLOW32_LLC" "$LLVM_BIN_ROOT/llc" "llc")
+if [ -z "$LLC_BIN" ]; then
+    error "Unable to locate llc. Build LLVM or set LLVM_BIN/SLOW32_LLC."
 fi
 
-ASSEMBLER="$SCRIPT_DIR/assembler/slow32asm"
+ASSEMBLER="$SCRIPT_DIR/tools/assembler/slow32asm"
 if [ ! -x "$ASSEMBLER" ]; then
     error "SLOW-32 assembler not found or not executable: $ASSEMBLER"
 fi
 
+LINKER="$SCRIPT_DIR/tools/linker/s32-ld"
+if [ ! -x "$LINKER" ]; then
+    error "SLOW-32 linker not found or not executable: $LINKER"
+fi
+
 # Step 1: Compile C to LLVM IR
 LLVM_FILE="$TEMP_DIR/$BASE_NAME.ll"
-info "Compiling C to LLVM IR..."
+info "Compiling C to LLVM IR ($CLANG_BIN)..."
 
-"$CLANG" -S -emit-llvm $OPTIMIZATION $SLOW32_OPT "$INPUT_FILE" -o "$LLVM_FILE" || {
+"$CLANG_BIN" -target slow32-unknown-none -S -emit-llvm $OPTIMIZATION $SLOW32_OPT \
+    -I"$SCRIPT_DIR/runtime/include" \
+    "$INPUT_FILE" -o "$LLVM_FILE" || {
     error "Failed to compile C to LLVM IR"
 }
 
@@ -171,71 +215,78 @@ fi
 
 # Step 2: Compile LLVM IR to SLOW-32 Assembly
 ASM_FILE="$TEMP_DIR/$BASE_NAME.s"
-info "Compiling LLVM IR to SLOW-32 assembly..."
+info "Lowering LLVM IR with $LLC_BIN..."
 
-"$COMPILER" "$LLVM_FILE" > "$ASM_FILE" 2>"$TEMP_DIR/compiler.err" || {
-    cat "$TEMP_DIR/compiler.err" >&2
+"$LLC_BIN" -mtriple=slow32-unknown-none "$LLVM_FILE" -o "$ASM_FILE" \
+    2>"$TEMP_DIR/llc.err" || {
+    cat "$TEMP_DIR/llc.err" >&2
     error "Failed to compile LLVM IR to SLOW-32 assembly"
 }
 
-# Check for compiler warnings
-if [ -s "$TEMP_DIR/compiler.err" ] && [ $VERBOSE -eq 1 ]; then
-    warning "Compiler warnings:"
-    cat "$TEMP_DIR/compiler.err" >&2
+if [ -s "$TEMP_DIR/llc.err" ] && [ $VERBOSE -eq 1 ]; then
+    warning "llc emitted warnings:"
+    cat "$TEMP_DIR/llc.err" >&2
 fi
-
-# Step 3: Link with runtime libraries
-LINKED_ASM="$TEMP_DIR/${BASE_NAME}_linked.s"
-info "Linking with runtime libraries..."
-
-# Check which runtime files exist
-RUNTIME_FILES=""
-if [ -f "$SCRIPT_DIR/runtime/crt0.s" ]; then
-    RUNTIME_FILES="$SCRIPT_DIR/runtime/crt0.s"
-    info "Including crt0.s"
-fi
-
-# Add main program
-RUNTIME_FILES="$RUNTIME_FILES $ASM_FILE"
-
-# Add intrinsics library if it exists
-if [ -f "$SCRIPT_DIR/runtime/intrinsics.s" ]; then
-    RUNTIME_FILES="$RUNTIME_FILES $SCRIPT_DIR/runtime/intrinsics.s"
-    info "Including intrinsics.s"
-fi
-
-# Add standard library if it exists
-if [ -f "$SCRIPT_DIR/runtime/stdlib.s" ]; then
-    RUNTIME_FILES="$RUNTIME_FILES $SCRIPT_DIR/runtime/stdlib.s"
-    info "Including stdlib.s"
-fi
-
-# Concatenate all files
-cat $RUNTIME_FILES > "$LINKED_ASM" || error "Failed to link runtime libraries"
 
 if [ $EMIT_ASM -eq 1 ]; then
-    cp "$LINKED_ASM" "$OUTPUT_FILE"
+    cp "$ASM_FILE" "$OUTPUT_FILE"
     info "Assembly written to $OUTPUT_FILE"
     exit 0
 fi
 
-# Step 4: Assemble to binary
-info "Assembling to binary..."
+# Step 3: Assemble to object
+OBJ_FILE="$TEMP_DIR/$BASE_NAME.s32o"
+info "Assembling with slow32asm..."
 
-"$ASSEMBLER" "$LINKED_ASM" "$OUTPUT_FILE" 2>"$TEMP_DIR/assembler.err" || {
+"$ASSEMBLER" "$ASM_FILE" "$OBJ_FILE" 2>"$TEMP_DIR/assembler.err" || {
     cat "$TEMP_DIR/assembler.err" >&2
     error "Assembly failed"
 }
 
-# Check assembler output
 if [ -s "$TEMP_DIR/assembler.err" ] && [ $VERBOSE -eq 1 ]; then
+    warning "Assembler warnings:"
     cat "$TEMP_DIR/assembler.err" >&2
+fi
+
+# Step 4: Link with runtime libraries
+CRT0="$SCRIPT_DIR/runtime/crt0.s32o"
+LIBS32="$SCRIPT_DIR/runtime/libs32.s32a"
+
+case "$LIBC_VARIANT" in
+    debug)
+        LIBC_ARCHIVE="$SCRIPT_DIR/runtime/libc_debug.s32a"
+        ;;
+    mmio)
+        LIBC_ARCHIVE="$SCRIPT_DIR/runtime/libc_mmio.s32a"
+        ;;
+    *)
+        error "Unsupported libc variant: $LIBC_VARIANT"
+        ;;
+esac
+
+for dep in "$CRT0" "$LIBC_ARCHIVE" "$LIBS32"; do
+    if [ ! -f "$dep" ]; then
+        error "Missing runtime artifact: $dep (run 'make runtime')"
+    fi
+done
+
+info "Linking final binary..."
+
+"$LINKER" -o "$OUTPUT_FILE" "$CRT0" "$OBJ_FILE" "$LIBC_ARCHIVE" "$LIBS32" \
+    2>"$TEMP_DIR/link.err" || {
+    cat "$TEMP_DIR/link.err" >&2
+    error "Linking failed"
+}
+
+if [ -s "$TEMP_DIR/link.err" ] && [ $VERBOSE -eq 1 ]; then
+    warning "Linker warnings:"
+    cat "$TEMP_DIR/link.err" >&2
 fi
 
 # Keep intermediate files if requested
 if [ $KEEP_INTERMEDIATES -eq 1 ]; then
     cp "$LLVM_FILE" "$DIR_NAME/$BASE_NAME.ll"
-    cp "$LINKED_ASM" "$DIR_NAME/$BASE_NAME.s"
+    cp "$ASM_FILE" "$DIR_NAME/$BASE_NAME.s"
     info "Intermediate files saved:"
     info "  LLVM IR: $DIR_NAME/$BASE_NAME.ll"
     info "  Assembly: $DIR_NAME/$BASE_NAME.s"

@@ -5,8 +5,10 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
 #include <time.h>
 #include <inttypes.h>
+#include <sys/mman.h>
 #include "slow32.h"
 #include "s32x_loader.h"
 #include "memory_manager.h"
@@ -16,6 +18,10 @@
 #ifndef S32_ALLOW_UNALIGNED
 #define S32_TRAP_ON_UNALIGNED 1
 #endif
+
+#define S32_MMIO_WINDOW_SIZE \
+    (S32_MMIO_DATA_BUFFER_OFFSET + S32_MMIO_DATA_CAPACITY)
+#define S32_MMIO_REGION_SIZE 0x00010000u
 
 // Forward declarations
 typedef struct fast_cpu_state fast_cpu_state_t;
@@ -27,13 +33,18 @@ typedef void (*handler_fn)(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t
 // Pre-decoded instruction with handler pointer
 struct decoded_inst {
     handler_fn handler;
+    int32_t imm;
     uint8_t rd;
     uint8_t rs1;
     uint8_t rs2;
-    int32_t imm;
-    uint32_t fallthrough_pc;
-    uint32_t branch_target;  // Pre-computed for branches
+    uint8_t pad;  // keeps the struct 16 bytes and available for future flags
 };
+
+typedef struct {
+    uint32_t start;
+    uint32_t end;
+    memory_region_t *region;
+} region_cache_entry_t;
 
 struct fast_cpu_state {
     uint32_t regs[32];
@@ -52,10 +63,10 @@ struct fast_cpu_state {
     uint32_t data_limit;
     
     // MMIO support
-    bool mmio_enabled;
-    bool mmio_initialized;
-    uint32_t mmio_base;     // MMIO base address from header
-    mmio_ring_state_t *mmio_state;
+    mmio_device_t mmio;
+    
+    region_cache_entry_t region_cache[2];
+    uint8_t region_cache_next;
 };
 
 // Forward declaration for adapter function
@@ -63,54 +74,78 @@ static void cpu_halt_fast(fast_cpu_state_t *cpu);
 
 // MMIO initialization
 static void cpu_init_mmio(fast_cpu_state_t *cpu) {
-    if (cpu->mmio_initialized) return;
-    
-    // Allocate MMIO state
-    cpu->mmio_state = calloc(1, sizeof(mmio_ring_state_t));
-    if (!cpu->mmio_state) {
+    if (cpu->mmio.initialized || !cpu->mmio.enabled) {
         return;
     }
-    
-    // Initialize MMIO with heap info
-    uint32_t heap_base = (cpu->data_limit + 0xFFF) & ~0xFFF;  // Page align
-    uint32_t heap_size = 0x01000000;  // 16MB heap by default
-    mmio_ring_init(cpu->mmio_state, heap_base, heap_size);
-    
-    cpu->mmio_initialized = true;
+
+    // Allocate MMIO state
+    cpu->mmio.state = calloc(1, sizeof(mmio_ring_state_t));
+    if (!cpu->mmio.state) {
+        fprintf(stderr, "Failed to allocate MMIO state\n");
+        cpu->mmio.enabled = false;
+        return;
+    }
+
+    // Initialize MMIO ring with heap information
+    uint32_t heap_base = (cpu->data_limit + 0xFFFu) & ~0xFFFu;  // Page align after data
+    uint32_t heap_size = 0x01000000u;  // 16MB default heap window
+    mmio_ring_init(cpu->mmio.state, heap_base, heap_size);
+
+    // Map MMIO window into host memory and register with the memory manager
+    cpu->mmio.mem = mmio_ring_map(cpu->mmio.state);
+    if (!cpu->mmio.mem) {
+        fprintf(stderr, "Failed to map MMIO memory\n");
+        free(cpu->mmio.state);
+        cpu->mmio.state = NULL;
+        cpu->mmio.enabled = false;
+        return;
+    }
+
+    memory_region_t *mmio_region = mm_allocate_region(&cpu->mm, cpu->mmio.base,
+                                                      S32_MMIO_REGION_SIZE,
+                                                      PROT_READ | PROT_WRITE);
+    if (!mmio_region) {
+        fprintf(stderr, "Failed to allocate MMIO region\n");
+        munmap(cpu->mmio.mem, S32_MMIO_WINDOW_SIZE);
+        cpu->mmio.mem = NULL;
+        free(cpu->mmio.state);
+        cpu->mmio.state = NULL;
+        cpu->mmio.enabled = false;
+        return;
+    }
+
+    mmio_region->host_addr = cpu->mmio.mem;
+    cpu->mmio.state->base_addr = cpu->mmio.base;
+    cpu->mmio.initialized = true;
 }
 
 // Adapter function to process MMIO without cpu_state
 static void mmio_process_fast(fast_cpu_state_t *cpu) {
-    // Create temporary cpu_state for MMIO processing
-    cpu_state_t temp_cpu = {0};
-    memcpy(temp_cpu.regs, cpu->regs, sizeof(cpu->regs));
-    temp_cpu.pc = cpu->pc;
-    temp_cpu.halted = cpu->halted;
-    temp_cpu.mmio = cpu->mmio_state;
-    temp_cpu.mmio_initialized = cpu->mmio_initialized;
-    
-    mmio_ring_process(cpu->mmio_state, &temp_cpu);
-    
-    // Copy back any changes
-    memcpy(cpu->regs, temp_cpu.regs, sizeof(cpu->regs));
-    cpu->pc = temp_cpu.pc;
-    cpu->halted = temp_cpu.halted;
+    mmio_cpu_iface_t iface = { .halted = &cpu->halted };
+    mmio_ring_process(cpu->mmio.state, &iface);
 }
 
 // MMIO write wrapper for fast CPU
 static void mmio_write_fast(fast_cpu_state_t *cpu, uint32_t addr, uint32_t value, int size) {
-    // Create temporary cpu_state for MMIO write
-    cpu_state_t temp_cpu = {0};
-    memcpy(temp_cpu.regs, cpu->regs, sizeof(cpu->regs));
-    temp_cpu.pc = cpu->pc;
-    temp_cpu.halted = cpu->halted;
-    temp_cpu.mmio = cpu->mmio_state;
-    temp_cpu.mmio_initialized = cpu->mmio_initialized;
-    
-    mmio_ring_write(cpu->mmio_state, &temp_cpu, cpu->mmio_base + addr, value, size);
-    
-    // Copy back any changes
-    cpu->halted = temp_cpu.halted;
+    if (size != 4) {
+        uint32_t word_addr = addr & ~0x3u;
+        uint32_t word = mmio_ring_read(cpu->mmio.state, word_addr, 4);
+        int shift = (addr & 0x3u) * 8;
+
+        if (size == 1) {
+            word = (word & ~(0xFFu << shift)) | ((value & 0xFFu) << shift);
+        } else if (size == 2) {
+            word = (word & ~(0xFFFFu << shift)) | ((value & 0xFFFFu) << shift);
+        } else {
+            return;  // Unsupported width
+        }
+
+        addr = word_addr;
+        value = word;
+        size = 4;
+    }
+
+    mmio_ring_write(cpu->mmio.state, NULL, addr, value, size);
 }
 
 // Helper to halt the fast CPU
@@ -118,25 +153,78 @@ static void cpu_halt_fast(fast_cpu_state_t *cpu) {
     cpu->halted = true;
 }
 
-// Write protection check - now handled by mprotect() but kept for defense-in-depth
-static inline bool write_protected(fast_cpu_state_t* cpu, uint32_t addr) {
-    // Always protect code and rodata from writes (hardware enforces this too)
-    return addr < cpu->rodata_limit;
-}
-
-// Bounds checking helpers
-static inline bool in_bounds(fast_cpu_state_t* cpu, uint32_t addr, uint32_t size) {
-    // Check if region exists for this address
-    memory_region_t *region = mm_find_region(&cpu->mm, addr);
-    if (!region) return false;
-    return addr + size <= region->vaddr_end;
-}
 static inline bool aligned(uint32_t addr, uint32_t size) {
 #if S32_TRAP_ON_UNALIGNED
     return (addr & (size - 1)) == 0;
 #else
     return true;
 #endif
+}
+
+static inline memory_region_t *region_cache_lookup(fast_cpu_state_t *cpu, uint32_t addr, uint32_t size, int prot_flags) {
+    uint32_t end = addr + size;
+    if (end < addr) {
+        return NULL;  // overflow
+    }
+
+    for (int i = 0; i < 2; ++i) {
+        region_cache_entry_t *entry = &cpu->region_cache[i];
+        memory_region_t *cached = entry->region;
+        if (!cached) {
+            continue;
+        }
+        if (addr >= entry->start && end <= entry->end) {
+            if ((cached->prot_flags & prot_flags) == prot_flags) {
+                return cached;
+            }
+            break;  // permissions don't match; fall through to fresh lookup
+        }
+    }
+
+    memory_region_t *region = mm_find_region(&cpu->mm, addr);
+    if (!region) {
+        return NULL;
+    }
+    if (end > region->vaddr_end) {
+        return NULL;
+    }
+    if ((region->prot_flags & prot_flags) != prot_flags) {
+        return NULL;
+    }
+
+    region_cache_entry_t *slot = &cpu->region_cache[cpu->region_cache_next & 1u];
+    slot->start = region->vaddr_start;
+    slot->end = region->vaddr_end;
+    slot->region = region;
+    cpu->region_cache_next ^= 1u;
+    return region;
+}
+
+static inline uint8_t *region_host_ptr(memory_region_t *region, uint32_t addr) {
+    return (uint8_t *)region->host_addr + (addr - region->vaddr_start);
+}
+
+static inline bool mm_load_bytes_fast(fast_cpu_state_t *cpu, uint32_t addr, void *dest, uint32_t size) {
+    memory_region_t *region = region_cache_lookup(cpu, addr, size, PROT_READ);
+    if (!region) {
+        return false;
+    }
+    memcpy(dest, region_host_ptr(region, addr), size);
+    return true;
+}
+
+static inline bool mm_store_bytes_fast(fast_cpu_state_t *cpu, uint32_t addr, const void *src, uint32_t size) {
+    memory_region_t *region = region_cache_lookup(cpu, addr, size, PROT_WRITE);
+    if (!region) {
+        return false;
+    }
+    memcpy(region_host_ptr(region, addr), src, size);
+    return true;
+}
+
+static inline bool is_mmio_addr(fast_cpu_state_t *cpu, uint32_t addr) {
+    return cpu->mmio.initialized &&
+           __builtin_expect((uint32_t)(addr - cpu->mmio.base) < S32_MMIO_REGION_SIZE, 0);
 }
 
 // Handler implementations
@@ -292,22 +380,15 @@ static void op_ldw(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
     }
     
     // Check for MMIO access
-    if (addr >= cpu->mmio_base && addr < cpu->mmio_base + 0x10000) {
-        // Initialize MMIO on first access if enabled
-        if (cpu->mmio_enabled && !cpu->mmio_initialized) {
-            cpu_init_mmio(cpu);
-        }
-        
-        if (cpu->mmio_initialized) {
-            uint32_t value = mmio_ring_read(cpu->mmio_state, addr - cpu->mmio_base, 4);
-            cpu->regs[inst->rd] = value;
-            cpu->cycle_count += 3;
-            return;
-        }
+    if (is_mmio_addr(cpu, addr)) {
+        uint32_t value = mmio_ring_read(cpu->mmio.state, addr, 4);
+        cpu->regs[inst->rd] = value;
+        cpu->cycle_count += 3;
+        return;
     }
-    
+
     uint32_t value;
-    if (mm_read(&cpu->mm, addr, &value, 4) != 0) {
+    if (!mm_load_bytes_fast(cpu, addr, &value, sizeof(value))) {
         fprintf(stderr, "Error: Read out of bounds at 0x%08x\n", addr);
         cpu->halted = true;
         return;
@@ -324,7 +405,7 @@ static void op_ldh(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
         return;
     }
     uint16_t value;
-    if (mm_read(&cpu->mm, addr, &value, 2) != 0) {
+    if (!mm_load_bytes_fast(cpu, addr, &value, sizeof(value))) {
         fprintf(stderr, "Error: Read out of bounds at 0x%08x\n", addr);
         cpu->halted = true;
         return;
@@ -341,7 +422,7 @@ static void op_ldhu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_
         return;
     }
     uint16_t value;
-    if (mm_read(&cpu->mm, addr, &value, 2) != 0) {
+    if (!mm_load_bytes_fast(cpu, addr, &value, sizeof(value))) {
         fprintf(stderr, "Error: Read out of bounds at 0x%08x\n", addr);
         cpu->halted = true;
         return;
@@ -353,7 +434,7 @@ static void op_ldhu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_
 static void op_ldb(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     uint32_t addr = cpu->regs[inst->rs1] + inst->imm;
     uint8_t value;
-    if (mm_read(&cpu->mm, addr, &value, 1) != 0) {
+    if (!mm_load_bytes_fast(cpu, addr, &value, sizeof(value))) {
         fprintf(stderr, "Error: Read out of bounds at 0x%08x\n", addr);
         cpu->halted = true;
         return;
@@ -365,7 +446,7 @@ static void op_ldb(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
 static void op_ldbu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     uint32_t addr = cpu->regs[inst->rs1] + inst->imm;
     uint8_t value;
-    if (mm_read(&cpu->mm, addr, &value, 1) != 0) {
+    if (!mm_load_bytes_fast(cpu, addr, &value, sizeof(value))) {
         fprintf(stderr, "Error: Read out of bounds at 0x%08x\n", addr);
         cpu->halted = true;
         return;
@@ -383,22 +464,15 @@ static void op_stw(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
     }
     
     // Check for MMIO access
-    if (addr >= cpu->mmio_base && addr < cpu->mmio_base + 0x10000) {
-        // Initialize MMIO on first access if enabled
-        if (cpu->mmio_enabled && !cpu->mmio_initialized) {
-            cpu_init_mmio(cpu);
-        }
-        
-        if (cpu->mmio_initialized) {
-            mmio_write_fast(cpu, addr - cpu->mmio_base, cpu->regs[inst->rs2], 4);
-            // MMIO processing happens only on YIELD
-            cpu->cycle_count += 3;
-            return;
-        }
+    if (is_mmio_addr(cpu, addr)) {
+        mmio_write_fast(cpu, addr, cpu->regs[inst->rs2], 4);
+        // MMIO processing happens only on YIELD
+        cpu->cycle_count += 3;
+        return;
     }
-    
+
     uint32_t value = cpu->regs[inst->rs2];
-    if (mm_write(&cpu->mm, addr, &value, 4) != 0) {
+    if (!mm_store_bytes_fast(cpu, addr, &value, sizeof(value))) {
         fprintf(stderr, "Error: Write out of bounds or to protected memory at 0x%08x\n", addr);
         cpu->halted = true;
         return;
@@ -414,7 +488,7 @@ static void op_sth(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
         return;
     }
     uint16_t value = cpu->regs[inst->rs2] & 0xFFFF;
-    if (mm_write(&cpu->mm, addr, &value, 2) != 0) {
+    if (!mm_store_bytes_fast(cpu, addr, &value, sizeof(value))) {
         fprintf(stderr, "Error: Write out of bounds or to protected memory at 0x%08x\n", addr);
         cpu->halted = true;
         return;
@@ -426,21 +500,14 @@ static void op_stb(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
     uint32_t addr = cpu->regs[inst->rs1] + inst->imm;
     
     // Check for MMIO access
-    if (addr >= cpu->mmio_base && addr < cpu->mmio_base + 0x10000) {
-        // Initialize MMIO on first access if enabled
-        if (cpu->mmio_enabled && !cpu->mmio_initialized) {
-            cpu_init_mmio(cpu);
-        }
-        
-        if (cpu->mmio_initialized) {
-            mmio_write_fast(cpu, addr - cpu->mmio_base, cpu->regs[inst->rs2] & 0xFF, 1);
-            cpu->cycle_count += 3;
-            return;
-        }
+    if (is_mmio_addr(cpu, addr)) {
+        mmio_write_fast(cpu, addr, cpu->regs[inst->rs2] & 0xFF, 1);
+        cpu->cycle_count += 3;
+        return;
     }
     
     uint8_t value = cpu->regs[inst->rs2] & 0xFF;
-    if (mm_write(&cpu->mm, addr, &value, 1) != 0) {
+    if (!mm_store_bytes_fast(cpu, addr, &value, sizeof(value))) {
         fprintf(stderr, "Error: Write out of bounds or to protected memory at 0x%08x\n", addr);
         cpu->halted = true;
         return;
@@ -448,56 +515,60 @@ static void op_stb(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
     cpu->cycle_count += 3;
 }
 
+static inline uint32_t branch_target(fast_cpu_state_t *cpu, decoded_inst_t *inst) {
+    return cpu->pc + 4 + inst->imm;
+}
+
 static void op_beq(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     if (cpu->regs[inst->rs1] == cpu->regs[inst->rs2]) {
-        *next_pc = inst->branch_target;
+        *next_pc = branch_target(cpu, inst);
     }
 }
 
 static void op_bne(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     if (cpu->regs[inst->rs1] != cpu->regs[inst->rs2]) {
-        *next_pc = inst->branch_target;
+        *next_pc = branch_target(cpu, inst);
     }
 }
 
 static void op_blt(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     if ((int32_t)cpu->regs[inst->rs1] < (int32_t)cpu->regs[inst->rs2]) {
-        *next_pc = inst->branch_target;
+        *next_pc = branch_target(cpu, inst);
     }
 }
 
 static void op_bge(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     if ((int32_t)cpu->regs[inst->rs1] >= (int32_t)cpu->regs[inst->rs2]) {
-        *next_pc = inst->branch_target;
+        *next_pc = branch_target(cpu, inst);
     }
 }
 
 static void op_bltu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     if (cpu->regs[inst->rs1] < cpu->regs[inst->rs2]) {
-        *next_pc = inst->branch_target;
+        *next_pc = branch_target(cpu, inst);
     }
 }
 
 static void op_bgeu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     if (cpu->regs[inst->rs1] >= cpu->regs[inst->rs2]) {
-        *next_pc = inst->branch_target;
+        *next_pc = branch_target(cpu, inst);
     }
 }
 
 static void op_jal(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
-    cpu->regs[inst->rd] = inst->fallthrough_pc;
-    *next_pc = inst->branch_target;
+    cpu->regs[inst->rd] = cpu->pc + 4;
+    *next_pc = cpu->pc + inst->imm;
 }
 
 static void op_jalr(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     uint32_t target = (cpu->regs[inst->rs1] + inst->imm) & ~1;
-    cpu->regs[inst->rd] = inst->fallthrough_pc;
+    cpu->regs[inst->rd] = cpu->pc + 4;
     *next_pc = target;
 }
 
 static void op_halt(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     // Process any final MMIO before halting
-    if (cpu->mmio_initialized && cpu->mmio_state) {
+    if (cpu->mmio.initialized && cpu->mmio.state) {
         mmio_process_fast(cpu);
     }
     cpu->halted = true;
@@ -522,7 +593,7 @@ static void op_yield(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next
     cpu->cycle_count += cpu->regs[inst->rs1];
     
     // Process MMIO if enabled and initialized
-    if (cpu->mmio_initialized && cpu->mmio_state) {
+    if (cpu->mmio.initialized && cpu->mmio.state) {
         mmio_process_fast(cpu);
     }
 }
@@ -614,7 +685,6 @@ static void predecode_program(fast_cpu_state_t *cpu, uint32_t code_size) {
         // Extract opcode from lower 7 bits (RISC-V style)
         uint8_t opcode = raw & 0x7F;
         di->handler = get_handler(opcode);
-        di->fallthrough_pc = pc + 4;
         
         // Decode based on opcode ranges (matching slow32.c)
         switch (opcode) {
@@ -663,7 +733,6 @@ static void predecode_program(fast_cpu_state_t *cpu, uint32_t code_size) {
                 di->rs2 = (raw >> 20) & 0x1F;
                 di->imm = (((raw >> 8) & 0xF) << 1) | (((raw >> 25) & 0x3F) << 5) |
                          (((raw >> 7) & 0x1) << 11) | (((int32_t)raw >> 31) << 12);
-                di->branch_target = pc + 4 + di->imm;  // PC+4 relative!
                 break;
                 
             case OP_LUI:
@@ -687,7 +756,6 @@ static void predecode_program(fast_cpu_state_t *cpu, uint32_t code_size) {
                     di->imm = (imm20 << 20) | (imm19_12 << 12) | (imm11 << 11) | (imm10_1 << 1);
                     if (di->imm & 0x100000) di->imm |= 0xFFE00000;  // Sign extend
                 }
-                di->branch_target = pc + di->imm;  // PC relative for JAL
                 break;
                 
             case OP_NOP:
@@ -725,7 +793,7 @@ static inline void cpu_step_fast(fast_cpu_state_t *cpu) {
     }
     
     decoded_inst_t *di = &cpu->decoded_code[cpu->pc >> 2];
-    uint32_t next_pc = di->fallthrough_pc;
+    uint32_t next_pc = cpu->pc + 4;
     
     // Direct function call - no switch!
     di->handler(cpu, di, &next_pc);
@@ -768,18 +836,8 @@ int main(int argc, char **argv) {
     
     // Check header flag for MMIO configuration
     if (header.flags & S32X_FLAG_MMIO) {
-        cpu.mmio_enabled = true;
-        cpu.mmio_base = header.mmio_base;
-        // Initialize MMIO immediately since we know it's needed
-        cpu.mmio_state = (mmio_ring_state_t*)calloc(1, sizeof(mmio_ring_state_t));
-        if (cpu.mmio_state) {
-            // Initialize with heap region (dummy values, actual heap managed by guest)
-            mmio_ring_init(cpu.mmio_state, 0x02000000, 0x01000000);
-            cpu.mmio_initialized = true;
-        } else {
-            fprintf(stderr, "Warning: Failed to allocate MMIO state\n");
-            cpu.mmio_initialized = false;
-        }
+        cpu.mmio.enabled = true;
+        cpu.mmio.base = header.mmio_base;
     }
     
     // Set up memory regions based on header
@@ -871,18 +929,23 @@ int main(int argc, char **argv) {
     cpu.code_limit = lr.code_limit;
     cpu.rodata_limit = lr.rodata_limit;
     cpu.data_limit = lr.data_limit;
-    
+
+    if (cpu.mmio.enabled && !cpu.mmio.initialized) {
+        // Final limits are in place; now the MMIO heap aligns with slow32
+        cpu_init_mmio(&cpu);
+    }
+
     predecode_program(&cpu, lr.code_limit);
     
     // Time the execution
     printf("Starting execution at PC 0x%08x\n", cpu.pc);
-    if (cpu.mmio_enabled) {
+    if (cpu.mmio.enabled) {
         printf("MMIO enabled for this program\n");
     }
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
     
-    uint64_t max_instructions = 10000000;  // 10M instruction limit for debugging
+    uint64_t max_instructions = 100000000;  // 100M instruction limit for debugging
     while (!cpu.halted && cpu.inst_count < max_instructions) {
         cpu_step_fast(&cpu);
     }
@@ -911,8 +974,11 @@ int main(int argc, char **argv) {
     }
     
     // Cleanup
-    if (cpu.mmio_initialized) {
-        free(cpu.mmio_state);
+    if (cpu.mmio.mem) {
+        munmap(cpu.mmio.mem, S32_MMIO_WINDOW_SIZE);
+    }
+    if (cpu.mmio.state) {
+        free(cpu.mmio.state);
     }
     free(cpu.decoded_code);
     mm_destroy(&cpu.mm);

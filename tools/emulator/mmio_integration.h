@@ -77,7 +77,7 @@ static inline int cpu_mem_write(cpu_state_ext_t *cpu, uint32_t addr, const void 
     // Check if this is MMIO
     if (cpu->mmio_enabled && addr >= MMIO_BASE && addr < MMIO_BASE + 0x10000) {
         if (size == 4) {
-            mmio_ring_write(&cpu->mmio, &cpu->base, addr, *(uint32_t*)src, size);
+            mmio_ring_write(&cpu->mmio, NULL, addr, *(uint32_t*)src, size);
             return 0;
         } else if (size == 1) {
             // Byte write to MMIO (read-modify-write for simplicity)
@@ -85,7 +85,7 @@ static inline int cpu_mem_write(cpu_state_ext_t *cpu, uint32_t addr, const void 
             uint8_t byte = *(uint8_t*)src;
             int shift = (addr & 3) * 8;
             word = (word & ~(0xFF << shift)) | (byte << shift);
-            mmio_ring_write(&cpu->mmio, &cpu->base, addr & ~3, word, 4);
+            mmio_ring_write(&cpu->mmio, NULL, addr & ~3, word, 4);
             return 0;
         }
         return -1;  // Unsupported size
@@ -98,7 +98,8 @@ static inline int cpu_mem_write(cpu_state_ext_t *cpu, uint32_t addr, const void 
 // Process MMIO requests (call in main loop)
 static inline void cpu_process_mmio(cpu_state_ext_t *cpu) {
     if (cpu->mmio_enabled && mmio_has_requests(&cpu->mmio)) {
-        mmio_ring_process(&cpu->mmio, &cpu->base);
+        mmio_cpu_iface_t iface = { .halted = &cpu->base.halted };
+        mmio_ring_process(&cpu->mmio, &iface);
     }
 }
 

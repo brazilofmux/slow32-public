@@ -31,7 +31,7 @@ typedef struct {
 
     // Base address of the MMIO window in guest memory
     uint32_t base_addr;
-
+    
     // Ring buffers (allocated as part of MMIO memory)
     io_descriptor_t *req_ring;
     io_descriptor_t *resp_ring;
@@ -46,6 +46,20 @@ typedef struct {
     uint64_t total_responses;
 } mmio_ring_state_t;
 
+// Common MMIO configuration shared by both emulators
+typedef struct {
+    bool enabled;
+    bool initialized;
+    uint32_t base;
+    mmio_ring_state_t *state;
+    void *mem;
+} mmio_device_t;
+
+// Minimal host-facing interface exposed to MMIO helpers
+typedef struct {
+    bool *halted;
+} mmio_cpu_iface_t;
+
 // Initialize MMIO ring buffers
 void mmio_ring_init(mmio_ring_state_t *mmio, uint32_t heap_base, uint32_t heap_size);
 
@@ -54,10 +68,10 @@ void* mmio_ring_map(mmio_ring_state_t *mmio);
 
 // MMIO read/write handlers
 uint32_t mmio_ring_read(mmio_ring_state_t *mmio, uint32_t addr, int size);
-void mmio_ring_write(mmio_ring_state_t *mmio, struct cpu_state *cpu, uint32_t addr, uint32_t value, int size);
+void mmio_ring_write(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, uint32_t addr, uint32_t value, int size);
 
 // Process pending requests (called by emulator main loop)
-void mmio_ring_process(mmio_ring_state_t *mmio, struct cpu_state *cpu);
+void mmio_ring_process(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu);
 
 // Check if there are pending requests
 static inline bool mmio_has_requests(mmio_ring_state_t *mmio) {
