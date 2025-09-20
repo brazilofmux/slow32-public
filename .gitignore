@@ -32,7 +32,8 @@ verify*.o
 # Temporary compilation files in root
 /*.c
 !test*.c
-benchmark*
+/benchmark*
+!examples/benchmark*
 assembler_reloc_patch.txt
 
 # Object and executable formats
