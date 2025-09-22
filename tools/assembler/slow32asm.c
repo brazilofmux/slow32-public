@@ -618,7 +618,34 @@ static bool assemble_line(assembler_t *as, char *line) {
     
     // Lowercase only mnemonic/directive (tokens[0]); keep operand/symbol case
     for (char *pp = tokens[0]; *pp; ++pp) *pp = (char)tolower((unsigned char)*pp);
-    
+
+    // Expand convenient branch aliases that the LLVM backend emits but the
+    // hardware still implements via the original BLT/BGE encodings.
+    if (!strcmp(tokens[0], "bgt") || !strcmp(tokens[0], "ble") ||
+        !strcmp(tokens[0], "bgtu") || !strcmp(tokens[0], "bleu")) {
+        if (num_tokens < 4) {
+            fprintf(stderr, "Assembler error: %s requires two registers and a target\n",
+                    tokens[0]);
+            return false;
+        }
+
+        // Swap the register operands so we can reuse the existing encoding.
+        char tmp[64];
+        strcpy(tmp, tokens[1]);
+        strcpy(tokens[1], tokens[2]);
+        strcpy(tokens[2], tmp);
+
+        if (!strcmp(tokens[0], "bgt")) {
+            strcpy(tokens[0], "blt");
+        } else if (!strcmp(tokens[0], "ble")) {
+            strcpy(tokens[0], "bge");
+        } else if (!strcmp(tokens[0], "bgtu")) {
+            strcpy(tokens[0], "bltu");
+        } else {
+            strcpy(tokens[0], "bgeu");
+        }
+    }
+
     // Handle directives
     if (tokens[0][0] == '.') {
         if (strcmp(tokens[0], ".data") == 0) {
@@ -1876,13 +1903,29 @@ int main(int argc, char *argv[]) {
                 case FMT_B:
                     // Branches are PC+4 relative
                     offset = label_addr - (inst->address + 4);
-                    inst->instruction = (inst->instruction & 0x01FFF07F) | 
+                    // Check if offset fits in 12-bit signed immediate (even values only)
+                    if (offset < -4096 || offset > 4094) {
+                        fprintf(stderr, "Error: Branch offset out of range at address 0x%08X\n", inst->address);
+                        fprintf(stderr, "       Target label '%s' at 0x%08X is %d bytes away\n",
+                                inst->label_ref, label_addr, offset);
+                        fprintf(stderr, "       Branch instructions can only reach +/-4096 bytes\n");
+                        exit(1);
+                    }
+                    inst->instruction = (inst->instruction & 0x01FFF07F) |
                         (encode_b(0, 0, 0, offset) & 0xFE000F80);
                     break;
                 case FMT_J:
                     // JAL is PC relative (not PC+4)
                     offset = label_addr - inst->address;
-                    inst->instruction = (inst->instruction & 0x00000FFF) | 
+                    // Check if offset fits in 20-bit signed immediate (even values only)
+                    if (offset < -1048576 || offset > 1048574) {
+                        fprintf(stderr, "Error: JAL offset out of range at address 0x%08X\n", inst->address);
+                        fprintf(stderr, "       Target label '%s' at 0x%08X is %d bytes away\n",
+                                inst->label_ref, label_addr, offset);
+                        fprintf(stderr, "       JAL instructions can only reach +/-1MB\n");
+                        exit(1);
+                    }
+                    inst->instruction = (inst->instruction & 0x00000FFF) |
                         (encode_j(0, 0, offset) & 0xFFFFF000);
                     break;
                 default:

@@ -17,7 +17,7 @@
 #include <stdio.h>
 
 #ifndef BENCH_ITERS
-#define BENCH_ITERS 1000000u
+#define BENCH_ITERS 10000000u
 #endif
 
 #define NOINLINE __attribute__((noinline))
