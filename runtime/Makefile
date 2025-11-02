@@ -1,7 +1,8 @@
 # SLOW-32 Runtime Library Makefile
 
 # Paths
-LLVM_BIN = ~/llvm-project/build/bin
+# Allow LLVM_BIN to be overridden by environment variable (for Docker builds)
+LLVM_BIN ?= ~/llvm-project/build/bin
 ASSEMBLER = ../tools/assembler/slow32asm
 ARCHIVER = ../tools/utilities/s32-ar
 
