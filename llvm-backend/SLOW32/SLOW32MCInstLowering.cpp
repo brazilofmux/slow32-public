@@ -1,6 +1,7 @@
 //===-- SLOW32MCInstLowering.cpp -----------------------------------------===//
 #include "SLOW32MCInstLowering.h"
 #include "SLOW32.h"
+#include "MCTargetDesc/SLOW32MCExpr.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCExpr.h"
@@ -34,11 +35,11 @@ static MCOperand lowerOperand(AsmPrinter &AP, const MachineOperand &MO) {
       // Check target flags for %hi/%lo and wrap the expression
       unsigned TargetFlags = MO.getTargetFlags();
       if (TargetFlags == SLOW32II::MO_HI) {
-        // Create %hi(symbol+offset) - this will be handled by the assembler
-        // For now, just use the plain symbol - the assembler will handle %hi/%lo
-        // when we emit the proper syntax in the instruction printer
+        Expr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_HI, Expr,
+                                    AP.OutContext);
       } else if (TargetFlags == SLOW32II::MO_LO) {
-        // Create %lo(symbol+offset) - this will be handled by the assembler
+        Expr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_LO, Expr,
+                                    AP.OutContext);
       }
       
       return MCOperand::createExpr(Expr);
@@ -49,12 +50,13 @@ static MCOperand lowerOperand(AsmPrinter &AP, const MachineOperand &MO) {
       
       // ExternalSymbol doesn't have offset support - only GlobalAddress and JumpTableIndex do
       
-      // Check target flags for %hi/%lo
       unsigned TargetFlags = MO.getTargetFlags();
       if (TargetFlags == SLOW32II::MO_HI) {
-        // Create %hi(symbol) - this will be handled by the assembler
+        Expr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_HI, Expr,
+                                    AP.OutContext);
       } else if (TargetFlags == SLOW32II::MO_LO) {
-        // Create %lo(symbol) - this will be handled by the assembler
+        Expr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_LO, Expr,
+                                    AP.OutContext);
       }
       
       return MCOperand::createExpr(Expr);
@@ -71,12 +73,13 @@ static MCOperand lowerOperand(AsmPrinter &AP, const MachineOperand &MO) {
       // JumpTableIndex doesn't support getOffset() according to LLVM API
       // Jump tables don't have offsets - they're indexed by the jump table index
       
-      // Check target flags for %hi/%lo
       unsigned TargetFlags = MO.getTargetFlags();
       if (TargetFlags == SLOW32II::MO_HI) {
-        // Create %hi(jumptable) - this will be handled by the assembler
+        Expr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_HI, Expr,
+                                    AP.OutContext);
       } else if (TargetFlags == SLOW32II::MO_LO) {
-        // Create %lo(jumptable) - this will be handled by the assembler
+        Expr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_LO, Expr,
+                                    AP.OutContext);
       }
       
       return MCOperand::createExpr(Expr);

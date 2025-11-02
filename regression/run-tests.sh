@@ -38,8 +38,8 @@ TOTAL=0
 PASSED=0
 FAILED=0
 
-# Ensure runtime libraries are rebuilt with any local changes.
-make -C "$SLOW32_BASE/runtime" libc_debug.s32a libs32.s32a >/dev/null
+# Ensure runtime libraries are rebuilt with any local changes. [Let's not do this. It's out of control.]
+# make -C "$SLOW32_BASE/runtime" libc_debug.s32a libs32.s32a >/dev/null
 
 # Clean results directory
 rm -rf "$RESULTS_DIR"

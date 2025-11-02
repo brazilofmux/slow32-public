@@ -18,19 +18,22 @@ CFLAGS = $(CFLAGS_BASE) $(OPT_LEVEL)
 # These provide compiler support functions like division, intrinsics
 COMPILER_RT_OBJS = intrinsics.s32o intrinsics_extra.s32o \
                    builtins.s32o divsi3.s32o \
-                   debug_char.s32o yield.s32o
+                   debug_char.s32o
 
 # Core C library objects (common to all libc versions)
 LIBC_CORE_OBJS = string.s32o string_extra.s32o \
                  malloc.s32o stdlib.s32o stdlib_extra.s32o stdlib_utils.s32o \
                  convert.s32o convert_extra.s32o ctype.s32o memory_extra.s32o \
-                 printf.s32o
+                 printf_enhanced.s32o
 
 # I/O objects for DEBUG version (simple, unbuffered)
 STDIO_DEBUG_OBJS = putchar.s32o stdio_minimal.s32o
 
 # I/O objects for MMIO version (buffered, ring buffer)
 STDIO_MMIO_OBJS = stdio.s32o stdio_buffered.s32o flush_mmio.s32o
+
+# MMIO-only helpers
+LIBC_MMIO_EXTRA_OBJS = yield.s32o
 
 # Math library objects for libm.s32a (future - currently disabled due to float support)
 # LIBM_OBJS = math.s32o
@@ -40,10 +43,10 @@ STARTUP_OBJ = crt0.s32o
 
 # All object files
 ALL_OBJS = $(STARTUP_OBJ) $(COMPILER_RT_OBJS) $(LIBC_CORE_OBJS) \
-           $(STDIO_DEBUG_OBJS) $(STDIO_MMIO_OBJS)
+           $(STDIO_DEBUG_OBJS) $(STDIO_MMIO_OBJS) $(LIBC_MMIO_EXTRA_OBJS)
 
 # C source files that need compilation
-C_SOURCES = printf.c convert.c builtins.c string.c malloc.c stdlib_utils.c \
+C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_utils.c \
             stdio.c stdlib_extra.c string_extra.c ctype.c \
             stdio_minimal.c convert_extra.c memory_extra.c \
             stdio_buffered.c flush_mmio.c flush_debug.c \
@@ -81,10 +84,9 @@ stdio.ll: OPT_LEVEL = -O2
 stdio.ll: stdio.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
 
-# FIXED: VAARG optimization bug resolved (2025-09-13)
-# Custom VAARG lowering now ensures correct 32-bit loads for promoted types
-# printf.ll: OPT_LEVEL = -O0  # No longer needed - can use default -O2!
-printf.ll: printf.c
+# Enhanced printf with long branch/jump support
+printf_enhanced.ll: OPT_LEVEL = -O1
+printf_enhanced.ll: printf_enhanced.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
 
 flush_mmio.ll: OPT_LEVEL = -O2
@@ -135,9 +137,6 @@ stdlib_extra.ll: stdlib_extra.c
 stdio.s: stdio.ll
 	$(LLC) -mtriple=$(TARGET) -O2 $< -o $@
 
-printf.s: printf.ll
-	$(LLC) -mtriple=$(TARGET) -O2 $< -o $@
-
 string_extra.s: string_extra.ll
 	$(LLC) -mtriple=$(TARGET) -O2 $< -o $@
 
@@ -155,7 +154,7 @@ libc_debug.s32a: $(LIBC_CORE_OBJS) $(STDIO_DEBUG_OBJS)
 	@echo "Archive size: $$(ls -lh $@ | awk '{print $$5}')"
 
 # MMIO version of libc (uses ring buffer for I/O)
-libc_mmio.s32a: $(LIBC_CORE_OBJS) $(STDIO_MMIO_OBJS)
+libc_mmio.s32a: $(LIBC_CORE_OBJS) $(STDIO_MMIO_OBJS) $(LIBC_MMIO_EXTRA_OBJS)
 	@echo "Creating libc_mmio.s32a (MMIO I/O)..."
 	$(ARCHIVER) c $@ $^
 	@echo "Archive size: $$(ls -lh $@ | awk '{print $$5}')"
@@ -209,7 +208,7 @@ check: libs32.s32a libc_debug.s32a libc_mmio.s32a
 	@echo -n "  __divsi3 in libs32.s32a: "
 	@$(ARCHIVER) -t libs32.s32a | grep -q "divsi3.s32o" && echo "✓" || (echo "✗ MISSING!"; exit 1)
 	@echo -n "  printf in libc_debug.s32a: "
-	@$(ARCHIVER) -t libc_debug.s32a | grep -q "printf.s32o" && echo "✓" || (echo "✗ MISSING!"; exit 1)
+	@$(ARCHIVER) -t libc_debug.s32a | grep -q "printf_enhanced.s32o" && echo "✓" || (echo "✗ MISSING!"; exit 1)
 	@echo -n "  malloc in libc_debug.s32a: "
 	@$(ARCHIVER) -t libc_debug.s32a | grep -q "malloc.s32o" && echo "✓" || (echo "✗ MISSING!"; exit 1)
 	@echo "All critical symbols present."

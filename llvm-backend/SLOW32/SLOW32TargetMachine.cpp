@@ -57,6 +57,7 @@ public:
 
   bool addInstSelector() override;
   void addPreRegAlloc() override;
+  void addPreEmitPass() override;
 
   void addMachineSSAOptimization() override {
     TargetPassConfig::addMachineSSAOptimization();
@@ -76,6 +77,10 @@ bool SLOW32PassConfig::addInstSelector() {
 void SLOW32PassConfig::addPreRegAlloc() {
   addPass(createSLOW32LoadAddrOptPass());
   TargetPassConfig::addPreRegAlloc();
+}
+
+void SLOW32PassConfig::addPreEmitPass() {
+  addPass(&BranchRelaxationPassID);
 }
 
 MachineFunctionInfo *SLOW32TargetMachine::createMachineFunctionInfo(

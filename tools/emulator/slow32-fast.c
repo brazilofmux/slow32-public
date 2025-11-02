@@ -945,7 +945,7 @@ int main(int argc, char **argv) {
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
     
-    uint64_t max_instructions = 100000000;  // 100M instruction limit for debugging
+    uint64_t max_instructions = 1000000000;  // 1B instruction limit for debugging
     while (!cpu.halted && cpu.inst_count < max_instructions) {
         cpu_step_fast(&cpu);
     }

@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SLOW32InstPrinter.h"
+#include "MCTargetDesc/SLOW32MCExpr.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCExpr.h"
@@ -62,33 +63,7 @@ void SLOW32InstPrinter::printOperand(const MCInst *MI, unsigned OpNum,
       O << Op.getImm();
     }
   } else if (Op.isExpr()) {
-    // For SLOW32, we need to handle %hi/%lo fixups when the operand is a
-    // symbolic expression. We drive this off the opcode until we plumb
-    // dedicated MCExprs through the MC layer.
-    StringRef Mnemonic = MII.getName(MI->getOpcode());
-
-    // Check if this is a LUI instruction (needs %hi)
-    if (Mnemonic == "LUI") {
-      O << "%hi(";
-      MAI.printExpr(O, *Op.getExpr());
-      O << ")";
-    }
-    // ADDI materialises the low 12 bits of an address.
-    else if (Mnemonic == "ADDI") {
-      O << "%lo(";
-      MAI.printExpr(O, *Op.getExpr());
-      O << ")";
-    }
-    // Keep supporting legacy ORI-based materialisation for now.
-    else if (Mnemonic == "ORI") {
-      O << "%lo(";
-      MAI.printExpr(O, *Op.getExpr());
-      O << ")";
-    }
-    else {
-      // For other instructions, print the expression normally
-      MAI.printExpr(O, *Op.getExpr());
-    }
+    MAI.printExpr(O, *Op.getExpr());
   } else {
     llvm_unreachable("Unknown operand type");
   }

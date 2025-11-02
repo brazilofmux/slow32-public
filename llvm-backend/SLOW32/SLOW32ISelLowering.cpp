@@ -1263,16 +1263,18 @@ EVT SLOW32TargetLowering::getOptimalMemOpType(
   if (getTargetMachine().getOptLevel() == CodeGenOptLevel::None)
     return MVT::i8;
   
-  // With weak alignment, avoid wide ops to prevent endian issues
-  unsigned DstAlign = Op.getDstAlign().value();
+  // Keep the lowering conservative when the destination alignment is not
+  // fixed. SelectionDAG sets DstAlignCanChange for stack slots and similar
+  // cases, and calling getDstAlign() in that scenario trips an assertion.
+  unsigned DstAlign = Op.isFixedDstAlign() ? Op.getDstAlign().value() : 1;
   unsigned MinAlign = DstAlign;
-  
-  // For memcpy, also consider source alignment
+
+  // For memcpy, also consider the source alignment.
   if (Op.isMemcpy()) {
     unsigned SrcAlign = Op.getSrcAlign().value();
-    MinAlign = std::min(DstAlign, SrcAlign);
+    MinAlign = std::min(MinAlign, SrcAlign);
   }
-  
+
   if (MinAlign < 4 || Op.size() < 4)
     return MVT::i8;
   

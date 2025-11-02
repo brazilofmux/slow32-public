@@ -618,7 +618,7 @@ static bool assemble_line(assembler_t *as, char *line) {
     
     // Lowercase only mnemonic/directive (tokens[0]); keep operand/symbol case
     for (char *pp = tokens[0]; *pp; ++pp) *pp = (char)tolower((unsigned char)*pp);
-
+    
     // Expand convenient branch aliases that the LLVM backend emits but the
     // hardware still implements via the original BLT/BGE encodings.
     if (!strcmp(tokens[0], "bgt") || !strcmp(tokens[0], "ble") ||

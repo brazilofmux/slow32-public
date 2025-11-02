@@ -115,14 +115,25 @@ let hasSideEffects = 0, mayLoad = 0, mayStore = 0, isBranch = 1, isTerminator = 
 }
 
 // Jump instructions
-let hasSideEffects = 0, mayLoad = 0, mayStore = 0, isBranch = 1, isTerminator = 1, isBarrier = 1 in {
+// JAL is primarily used for calls, not branches. Don't mark it as isBranch
+// to avoid confusing branch analysis passes.
+let hasSideEffects = 0, mayLoad = 0, mayStore = 0, isCall = 1 in {
   def JAL  : S32Inst<(outs), (ins i32imm:$sym), "jal r31, $sym">;
-  def JALR : S32Inst<(outs), (ins GPR:$rs1), "jalr r31, $rs1, 0">;
+}
+
+// JALR can be used for indirect calls or indirect branches
+let hasSideEffects = 0, mayLoad = 0, mayStore = 0, isBranch = 1, isTerminator = 1,
+    isBarrier = 1, isIndirectBranch = 1 in {
+  def JALR : S32Inst<(outs GPR:$rd), (ins GPR:$rs1), "jalr $rd, $rs1, 0">;
 }
 
 // Pattern for indirect branch (brind) - use JALR with R0 as link register
-// Since we don't need the return address, we use R0 which always reads 0
-def : Pat<(brind GPR:$rs1), (JALR GPR:$rs1)>;
+// Since we don't need the return address, expand via pseudo to force rd = r0
+let isCodeGenOnly = 1, isPseudo = 1, isBranch = 1, isTerminator = 1, isBarrier = 1,
+    isIndirectBranch = 1, hasSideEffects = 0, mayLoad = 0, mayStore = 0 in
+def BRIND_JALR : S32Inst<(outs), (ins GPR:$rs1), "# BRIND_JALR $rs1">;
+
+def : Pat<(brind GPR:$rs1), (BRIND_JALR GPR:$rs1)>;
 
 def : Pat<(add GPR:$a, GPR:$b), (ADD GPR:$a, GPR:$b)>;
 def : Pat<(sub GPR:$a, GPR:$b), (SUB GPR:$a, GPR:$b)>;
@@ -327,6 +338,16 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1 in {
   def BR : S32Inst<(outs), (ins brtarget:$target), "jal r0, $target", [(br bb:$target)]>;
 }
 
+// Long-branch pseudos (expanded post-RA)
+// Carry an explicit scratch register so both the Machine and MC paths can
+// agree on which temporary gets clobbered by the materialisation sequence.
+let isBranch = 1, isTerminator = 1, isBarrier = 1,
+    hasSideEffects = 0, mayLoad = 0, mayStore = 0,
+    isCodeGenOnly = 1, isPseudo = 1 in {
+  def PseudoLongBR : S32Inst<(outs GPR:$scratch), (ins brtarget:$target),
+                             "# PseudoLongBR $target">;
+}
+
 // Conditional branches - all are terminators but NOT barriers (can fall through)
 let isBranch = 1, isTerminator = 1, isBarrier = 0, hasSideEffects = 0 in {
   def BEQ_pat : S32Inst<(outs), (ins GPR:$rs1, GPR:$rs2, brtarget:$target), 
@@ -368,6 +389,41 @@ let isBranch = 1, isTerminator = 1, isBarrier = 0, hasSideEffects = 0 in {
   def BLEU : S32Inst<(outs), (ins GPR:$rs1, GPR:$rs2, brtarget:$target),
                      "bleu $rs1, $rs2, $target",
                      [(SLOW32brleu GPR:$rs1, GPR:$rs2, bb:$target)]>;
+}
+
+let isBranch = 1, isTerminator = 1, isBarrier = 0, hasSideEffects = 0,
+    mayLoad = 0, mayStore = 0,
+    isCodeGenOnly = 1, isPseudo = 1 in {
+  def PseudoLongBEQ : S32Inst<(outs GPR:$scratch),
+                            (ins GPR:$rs1, GPR:$rs2, brtarget:$target),
+                            "# PseudoLongBEQ $target">;
+  def PseudoLongBNE : S32Inst<(outs GPR:$scratch),
+                            (ins GPR:$rs1, GPR:$rs2, brtarget:$target),
+                            "# PseudoLongBNE $target">;
+  def PseudoLongBLT : S32Inst<(outs GPR:$scratch),
+                            (ins GPR:$rs1, GPR:$rs2, brtarget:$target),
+                            "# PseudoLongBLT $target">;
+  def PseudoLongBGE : S32Inst<(outs GPR:$scratch),
+                            (ins GPR:$rs1, GPR:$rs2, brtarget:$target),
+                            "# PseudoLongBGE $target">;
+  def PseudoLongBGT : S32Inst<(outs GPR:$scratch),
+                            (ins GPR:$rs1, GPR:$rs2, brtarget:$target),
+                            "# PseudoLongBGT $target">;
+  def PseudoLongBLE : S32Inst<(outs GPR:$scratch),
+                            (ins GPR:$rs1, GPR:$rs2, brtarget:$target),
+                            "# PseudoLongBLE $target">;
+  def PseudoLongBLTU : S32Inst<(outs GPR:$scratch),
+                             (ins GPR:$rs1, GPR:$rs2, brtarget:$target),
+                             "# PseudoLongBLTU $target">;
+  def PseudoLongBGEU : S32Inst<(outs GPR:$scratch),
+                             (ins GPR:$rs1, GPR:$rs2, brtarget:$target),
+                             "# PseudoLongBGEU $target">;
+  def PseudoLongBGTU : S32Inst<(outs GPR:$scratch),
+                             (ins GPR:$rs1, GPR:$rs2, brtarget:$target),
+                             "# PseudoLongBGTU $target">;
+  def PseudoLongBLEU : S32Inst<(outs GPR:$scratch),
+                             (ins GPR:$rs1, GPR:$rs2, brtarget:$target),
+                             "# PseudoLongBLEU $target">;
 }
 
 // Pattern matching for brcond with setcc
@@ -449,14 +505,14 @@ def : Pat<(brcond GPR:$cond, bb:$target),
 // - R31 (link register)
 // Uses includes R29 (stack pointer) - argument registers will be added dynamically via variable_ops
 let isCall = 1, Defs = [R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R31], Uses = [R29], usesCustomInserter = 0,
-    hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
-  def JAL_CALL : S32Inst<(outs), (ins brtarget:$target, variable_ops), "jal r31, $target">;
+    hasSideEffects = 0, mayLoad = 0, mayStore = 0, isCodeGenOnly = 1, isPseudo = 1 in {
+  def JAL_CALL : S32Inst<(outs), (ins brtarget:$target, variable_ops), "# JAL_CALL $target">;
 }
 
 // JALR for indirect calls (calling through a register)
 let isCall = 1, Defs = [R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R31], Uses = [R29], usesCustomInserter = 0,
-    hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
-  def JALR_CALL : S32Inst<(outs), (ins GPR:$rs1, variable_ops), "jalr r31, $rs1, 0">;
+    hasSideEffects = 0, mayLoad = 0, mayStore = 0, isCodeGenOnly = 1, isPseudo = 1 in {
+  def JALR_CALL : S32Inst<(outs), (ins GPR:$rs1, variable_ops), "# JALR_CALL $rs1">;
 }
 
 // Note: Call patterns are handled manually in SLOW32ISelDAGToDAG.cpp

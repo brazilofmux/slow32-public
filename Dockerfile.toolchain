@@ -70,6 +70,9 @@ COPY tools/utilities /slow32-build/tools/utilities
 COPY runtime /slow32-build/runtime
 COPY Makefile /slow32-build/
 
+# Ensure runtime build finds LLVM toolchain installed in /opt/llvm
+ENV LLVM_BIN="/opt/llvm/bin"
+
 # Build SLOW-32 native tools (clean first to ensure fresh builds with musl)
 RUN make -C tools/assembler clean && make -C tools/assembler && \
     make -C tools/linker clean && make -C tools/linker && \

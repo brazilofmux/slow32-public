@@ -19,8 +19,8 @@ typedef struct FILE {
 } FILE;
 
 // Helper to write a descriptor to the request ring
-static void write_descriptor(volatile uint32_t *ring_base, uint32_t index,
-                             uint32_t opcode, uint32_t length,
+static void write_descriptor(volatile uint32_t *ring_base, uint32_t index, 
+                             uint32_t opcode, uint32_t length, 
                              uint32_t offset, uint32_t status) {
     uint32_t desc_offset = index * S32_MMIO_DESC_WORDS;
     ring_base[desc_offset + 0] = opcode;
@@ -51,22 +51,22 @@ void __flush_mmio(FILE *stream) {
         __asm__ volatile("YIELD r0, r0, r0");
         req_tail = *req_tail_ptr;
     }
-
+    
     // Copy data to MMIO data buffer
     // Using offset 0 for simplicity - could manage multiple buffers
     for (size_t i = 0; i < stream->count; i++) {
         data_buffer[i] = stream->buffer[i];
     }
-
+    
     // Write descriptor
     write_descriptor(req_ring, req_head, S32_MMIO_OP_WRITE, (uint32_t)stream->count, 0u, (uint32_t)stream->fd);
 
     // Advance head
     *req_head_ptr = next_head;
-
+    
     // Yield to let emulator process the request
     __asm__ volatile("YIELD r0, r0, r0");
-
+    
     // Reset buffer
     stream->ptr = stream->buffer;
     stream->count = 0;

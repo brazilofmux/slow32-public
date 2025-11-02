@@ -4,6 +4,7 @@ add_llvm_component_library(LLVMSLOW32Desc
   SLOW32InstPrinter.cpp
   SLOW32MCAsmInfo.cpp
   SLOW32MCCodeEmitter.cpp
+  SLOW32MCExpr.cpp
   SLOW32MCTargetDesc.cpp
 
   LINK_COMPONENTS

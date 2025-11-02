@@ -19,6 +19,7 @@ linker/s32-ld
 *.ll
 !tests/*.c
 !tests/*.ll
+!examples/*.c
 test*.s
 test*.o
 verify*.s
@@ -28,12 +29,13 @@ verify*.o
 /*.s
 !runtime/*.s
 !tests/*.s
+!examples/*.s
 
 # Temporary compilation files in root
 /*.c
 !test*.c
-/benchmark*
-!examples/benchmark*
+benchmark*
+!examples/benchmark_core.c
 assembler_reloc_patch.txt
 
 # Object and executable formats

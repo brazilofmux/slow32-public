@@ -43,6 +43,8 @@ llvm.memcpy.p0.p0.i32:
     stw sp+8, r11
     stw sp+12, r12
     stw sp+16, r13
+    stw sp+20, r14
+    stw sp+24, r15
     
     add r11, r3, r0   # dest
     add r12, r4, r0   # src  
@@ -66,6 +68,8 @@ llvm.memcpy.p0.p0.i32:
     ldw r11, sp+8
     ldw r12, sp+12
     ldw r13, sp+16
+    ldw r14, sp+20
+    ldw r15, sp+24
     
     # Return dest in r1
     add r1, r3, r0
@@ -89,6 +93,8 @@ llvm.memset.p0.i32:
     stw sp+8, r11
     stw sp+12, r12
     stw sp+16, r13
+    stw sp+20, r14
+    stw sp+24, r15
     
     add r11, r3, r0   # dest
     add r12, r4, r0   # value (we'll replicate to word)
@@ -116,6 +122,8 @@ llvm.memset.p0.i32:
     ldw r11, sp+8
     ldw r12, sp+12
     ldw r13, sp+16
+    ldw r14, sp+20
+    ldw r15, sp+24
     
     # Return dest in r1
     add r1, r3, r0

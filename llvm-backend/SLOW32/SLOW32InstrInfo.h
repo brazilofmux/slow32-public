@@ -18,6 +18,7 @@
 namespace llvm {
 
 class SLOW32Subtarget;
+class RegScavenger;
 
 class SLOW32InstrInfo : public SLOW32GenInstrInfo {
   const SLOW32Subtarget &STI;
@@ -64,6 +65,17 @@ public:
 
   // Pseudo instruction expansion
   bool expandPostRAPseudo(MachineInstr &MI) const override;
+
+  bool isBranchOffsetInRange(unsigned BranchOpc, int64_t Offset) const override;
+
+  MachineBasicBlock *getBranchDestBlock(const MachineInstr &MI) const override;
+
+  void insertIndirectBranch(MachineBasicBlock &MBB, MachineBasicBlock &DestBB,
+                            MachineBasicBlock &RestoreBB, const DebugLoc &DL,
+                            int64_t BrOffset,
+                            RegScavenger *RS) const override;
+
+  unsigned getInstSizeInBytes(const MachineInstr &MI) const override;
 };
 
 } // end namespace llvm

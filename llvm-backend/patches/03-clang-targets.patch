@@ -1,5 +1,5 @@
 diff --git a/clang/lib/Basic/Targets.cpp b/clang/lib/Basic/Targets.cpp
-index 1ae244eda..bd0083ba0 100644
+index f39c698b5d..9fab6d85e1 100644
 --- a/clang/lib/Basic/Targets.cpp
 +++ b/clang/lib/Basic/Targets.cpp
 @@ -31,6 +31,7 @@
@@ -10,7 +10,7 @@ index 1ae244eda..bd0083ba0 100644
  #include "Targets/SPIR.h"
  #include "Targets/Sparc.h"
  #include "Targets/SystemZ.h"
-@@ -270,6 +271,9 @@ std::unique_ptr<TargetInfo> AllocateTarget(const llvm::Triple &Triple,
+@@ -277,6 +278,9 @@ std::unique_ptr<TargetInfo> AllocateTarget(const llvm::Triple &Triple,
    case llvm::Triple::msp430:
      return std::make_unique<MSP430TargetInfo>(Triple, Opts);
  

@@ -46,6 +46,7 @@ SLOW32RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
 BitVector SLOW32RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
   Reserved.set(SLOW32::R0);   // r0 is always zero
+  Reserved.set(SLOW32::R2);   // Reserved for long-branch materialisation
   Reserved.set(SLOW32::R29);  // Stack pointer (sp)
   Reserved.set(SLOW32::R30);  // Frame pointer (fp)
   return Reserved;
