@@ -255,30 +255,92 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
         case S32_MMIO_OP_GETTIME: {
             struct timespec ts;
             if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
-                resp.status = 0xFFFFFFFFu;
+                resp.status = S32_MMIO_STATUS_ERR;
                 resp.length = 0;
                 break;
             }
 
-            if (req->length < 8u) {
-                resp.status = EINVAL;
+            if (req->length < sizeof(s32_mmio_timepair64_t)) {
+                resp.status = S32_MMIO_STATUS_ERR;
                 resp.length = 0;
                 break;
             }
 
             uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
-            if (offset > (S32_MMIO_DATA_CAPACITY - 8u)) {
-                resp.status = EOVERFLOW;
+            if (offset > (S32_MMIO_DATA_CAPACITY - sizeof(s32_mmio_timepair64_t))) {
+                resp.status = S32_MMIO_STATUS_ERR;
                 resp.length = 0;
                 break;
             }
 
-            uint32_t seconds = (uint32_t)ts.tv_sec;
-            uint32_t nanos = (uint32_t)ts.tv_nsec;
-            memcpy(mmio->data_buffer + offset, &seconds, sizeof(uint32_t));
-            memcpy(mmio->data_buffer + offset + sizeof(uint32_t), &nanos, sizeof(uint32_t));
-            resp.length = 8u;
-            resp.status = 0;
+            uint64_t seconds = (ts.tv_sec < 0) ? 0ull : (uint64_t)ts.tv_sec;
+            s32_mmio_timepair64_t pair = {
+                .seconds_lo = (uint32_t)(seconds & 0xFFFFFFFFu),
+                .seconds_hi = (uint32_t)(seconds >> 32),
+                .nanoseconds = (uint32_t)ts.tv_nsec,
+                .reserved = 0u,
+            };
+            memcpy(mmio->data_buffer + offset, &pair, sizeof(pair));
+            resp.length = sizeof(s32_mmio_timepair64_t);
+            resp.status = S32_MMIO_STATUS_OK;
+            break;
+        }
+
+        case S32_MMIO_OP_SLEEP: {
+            if (req->length < sizeof(s32_mmio_timepair64_t)) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (offset > (S32_MMIO_DATA_CAPACITY - sizeof(s32_mmio_timepair64_t))) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            s32_mmio_timepair64_t interval = {0u, 0u, 0u, 0u};
+            memcpy(&interval, mmio->data_buffer + offset, sizeof(interval));
+
+            if (interval.nanoseconds >= 1000000000u) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint64_t seconds = ((uint64_t)interval.seconds_hi << 32) | interval.seconds_lo;
+
+            struct timespec req_ts = {
+                .tv_sec = (time_t)seconds,
+                .tv_nsec = (long)interval.nanoseconds,
+            };
+            struct timespec rem_ts = {0, 0};
+
+            int rc = nanosleep(&req_ts, &rem_ts);
+            if (rc == -1) {
+                if (errno == EINTR) {
+                    uint64_t rem_secs = (rem_ts.tv_sec < 0) ? 0ull : (uint64_t)rem_ts.tv_sec;
+                    s32_mmio_timepair64_t remainder = {
+                        .seconds_lo = (uint32_t)(rem_secs & 0xFFFFFFFFu),
+                        .seconds_hi = (uint32_t)(rem_secs >> 32),
+                        .nanoseconds = (uint32_t)rem_ts.tv_nsec,
+                        .reserved = 0u,
+                    };
+                    memcpy(mmio->data_buffer + offset, &remainder, sizeof(remainder));
+                    resp.length = sizeof(s32_mmio_timepair64_t);
+                    resp.status = S32_MMIO_STATUS_EINTR;
+                } else {
+                    resp.status = S32_MMIO_STATUS_ERR;
+                    resp.length = 0;
+                }
+                break;
+            }
+
+            s32_mmio_timepair64_t remainder = {0u, 0u, 0u, 0u};
+            memcpy(mmio->data_buffer + offset, &remainder, sizeof(remainder));
+            resp.length = sizeof(s32_mmio_timepair64_t);
+            resp.status = S32_MMIO_STATUS_OK;
             break;
         }
             

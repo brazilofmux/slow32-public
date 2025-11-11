@@ -23,6 +23,13 @@ enum {
 #define S32_MMIO_DESC_BYTES   (S32_MMIO_DESC_WORDS * sizeof(uint32_t))
 #define S32_MMIO_DATA_CAPACITY (48u * 1024u)  // Total bytes available in data buffer
 
+// Common response status codes (errno wiring TBD)
+enum {
+    S32_MMIO_STATUS_OK    = 0u,
+    S32_MMIO_STATUS_EINTR = 0xFFFFFFFEu,
+    S32_MMIO_STATUS_ERR   = 0xFFFFFFFFu,
+};
+
 // Opcode range tags help keep services grouped
 enum {
     S32_MMIO_OPCODE_RANGE_CORE  = 0x00,  // Basic file/process I/O
@@ -51,8 +58,8 @@ enum s32_mmio_opcode {
     S32_MMIO_OP_FLUSH   = 0x0B,
 
     // 0x30 - 0x3F : Time & event services
-    S32_MMIO_OP_GETTIME     = 0x30,  // Returns wall-clock seconds/nanoseconds
-    S32_MMIO_OP_SLEEP       = 0x31,  // Sleep for N microseconds (future)
+    S32_MMIO_OP_GETTIME     = 0x30,  // Returns wall-clock time (64-bit seconds + nanos)
+    S32_MMIO_OP_SLEEP       = 0x31,  // nanosleep() + remainder reporting (64-bit seconds)
     S32_MMIO_OP_TIMER_START = 0x32,  // Arm timer, host completes on HP ring (future)
     S32_MMIO_OP_TIMER_CANCEL= 0x33,  // Cancel timer (future)
     S32_MMIO_OP_POLL        = 0x34,  // poll()/select()-style wait (future)
@@ -65,5 +72,12 @@ enum s32_mmio_opcode {
     S32_MMIO_OP_RECV        = 0x44,  // recv()/read() on socket
     S32_MMIO_OP_SHUTDOWN    = 0x45,  // shutdown()/close socket half
 };
+
+typedef struct s32_mmio_timepair64 {
+    uint32_t seconds_lo;   // low 32 bits of seconds
+    uint32_t seconds_hi;   // high 32 bits of seconds
+    uint32_t nanoseconds;  // 0..999,999,999
+    uint32_t reserved;     // align to 16 bytes / future flags
+} s32_mmio_timepair64_t;
 
 #endif // S32_MMIO_RING_LAYOUT_H

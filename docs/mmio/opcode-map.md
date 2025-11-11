@@ -7,7 +7,7 @@ The ring descriptors double as Linux-style syscall packets. To keep them memorab
 | `0x00–0x0F` | Core process + stdio syscalls   | Current ops: `NOP`, `PUTCHAR`, `GETCHAR`, `WRITE`, `READ`, `OPEN`, `CLOSE`, `SEEK`, `BRK`, `EXIT`, `STAT`, `FLUSH`. |
 | `0x10–0x1F` | Memory / process management     | Reserved for `MMAP`, `MUNMAP`, `SPAWN`, etc. |
 | `0x20–0x2F` | Filesystem metadata & tooling   | Reserved for `FSTAT`, `UNLINK`, `DUP`, etc. |
-| `0x30–0x3F` | Time, timers, and wait APIs     | Implemented: `GETTIME`. Planned: `SLEEP`, `TIMER_START`, `TIMER_CANCEL`, `POLL`. |
+| `0x30–0x3F` | Time, timers, and wait APIs     | Implemented: `GETTIME`, `SLEEP`. Planned: `TIMER_START`, `TIMER_CANCEL`, `POLL`. |
 | `0x40–0x4F` | Networking / IPC                | Reserved identifiers for `SOCKET`, `CONNECT`, `ACCEPT`, `SEND`, `RECV`, `SHUTDOWN`, etc. |
 | `0x60–0x7F` | Host services (env, randomness) | Reserved for `GETENV`, `RANDOM`, etc. |
 | `0x80–0xFF` | Experimental / user-defined     | Safe playground for prototypes; no stability guarantees. |
@@ -25,9 +25,19 @@ Bulk arguments and structs live in `DATA_BUFFER`. Producers must write payloads 
 
 ## `GETTIME` Contract (0x30)
 
-- **Request**: `length` ≥ 8, `offset` aligned so `{seconds, nanoseconds}` fits entirely in the data buffer.  
-- **Response**: Writes two little-endian `uint32_t` words (`seconds`, `nanoseconds`) to `DATA_BUFFER[offset]`, sets `resp.length = 8`, and returns `resp.status = 0` on success. Errors clear `resp.length` and return `resp.status = 0xFFFFFFFF` (our current “-1” sentinel).
-- **Usage**: libc can back `clock_gettime`, `time`, or `gettimeofday` by issuing this opcode and converting to the desired struct.
+- **Request**: `length` ≥ 16 and `offset` aligned so the 16-byte `s32_mmio_timepair64_t` tuple fits entirely in the data buffer. The payload packs `seconds_lo`, `seconds_hi`, `nanoseconds`, and a reserved field for future flags.
+- **Response**: Host writes the full tuple (`seconds_lo`/`seconds_hi` = 64-bit seconds, `nanoseconds` = 0..999,999,999, `reserved` = 0). `resp.length` is set to 16 and `resp.status = S32_MMIO_STATUS_OK` on success; errors clear `resp.length` and return `S32_MMIO_STATUS_ERR`.
+- **Usage**: libc reconstructs the 64-bit seconds value and feeds `clock_gettime`, `time`, etc. This lifts the 2038 limitation for MMIO builds.
 - **Runtime helper**: `runtime/time_mmio.c` wires this opcode into `clock_gettime()` and `time()` via the shared `s32_mmio_request()` helper so user programs can call standard libc APIs.
+
+## `SLEEP` Contract (0x31)
+
+- **Request**: `length` must be 16 and `offset` must point at an `s32_mmio_timepair64_t` describing the requested `nanosleep(2)` interval (64-bit seconds split across `seconds_hi/lo`, plus nanoseconds).
+- **Response**:
+  - Success → host zeroes the remainder, copies it back, sets `resp.length = 16`, and returns `resp.status = S32_MMIO_STATUS_OK`.
+  - Interrupted (`EINTR`) → host copies the remaining time from `nanosleep(2)`, sets `resp.length = 16`, and returns `resp.status = S32_MMIO_STATUS_EINTR`.
+  - Other errors → host clears `resp.length` and returns `resp.status = S32_MMIO_STATUS_ERR` (our sentinel `0xFFFFFFFF`).
+- **Semantics**: Libc mirrors POSIX: `nanosleep()` returns `-1` when interrupted or on error, storing the pending interval in `rem` when provided. We still lack a global `errno`, so callers distinguish interruptions vs. fatal errors by examining whether a remainder was returned (`rem` only changes on EINTR).
+- **Runtime helper**: `runtime/time_mmio.c` exposes `nanosleep()`, `usleep()`, and `sleep()` wrappers that speak this opcode. These helpers already understand `S32_MMIO_STATUS_EINTR`, so any caller that retries with the returned remainder will get Linux-like behavior.
 
 Future services should extend this file with their opcode IDs, payload expectations, and completion behavior so host and guest stay synchronized.

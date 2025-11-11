@@ -5,7 +5,7 @@
 extern "C" {
 #endif
 
-typedef unsigned int time_t;
+typedef unsigned long long time_t;
 
 struct timespec {
     time_t tv_sec;
@@ -16,6 +16,7 @@ struct timespec {
 
 int clock_gettime(int clock_id, struct timespec *ts);
 time_t time(time_t *t);
+int nanosleep(const struct timespec *req, struct timespec *rem);
 
 #ifdef __cplusplus
 }

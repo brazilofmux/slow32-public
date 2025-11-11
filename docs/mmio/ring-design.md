@@ -51,8 +51,8 @@ The MMIO bridge mirrors the Linux user/kernel ABI. Treat every descriptor as a c
 | `0x0A`       | `OP_STAT`                | `fstat(2)`     | `status`: fd (or sentinel for `stat`), result struct placed in `DATA_BUFFER` | Returns 0 or `-errno`.                   |
 | `0x08/0x09`  | `OP_BRK` / `OP_EXIT`     | `brk(2)`/`_exit(2)` | `status`: new break / exit code                       | Returns new program break or halts instance. |
 | `0x0B`       | `OP_FLUSH`               | `fsync(2)` lite| `status`: fd (stdout/stderr)                           | Returns 0 or `-errno`.                   |
-| `0x30`       | `OP_GETTIME`             | `clock_gettime(2)` | `length` ≥ 8, `offset`: destination for `{sec,nsec}` pair | Writes 8 bytes and returns 0 or `-errno`. |
-| `0x31`       | `OP_SLEEP` (future)      | `nanosleep(2)` | `length`: microseconds, optional remaining time buffer | Returns 0 or `-errno`.                   |
+| `0x30`       | `OP_GETTIME`             | `clock_gettime(2)` | `length` ≥ 16, `offset`: destination for `s32_mmio_timepair64_t` | Writes 16 bytes and returns OK/ERR.      |
+| `0x31`       | `OP_SLEEP`              | `nanosleep(2)` | `length = 16`, buffer holds `s32_mmio_timepair64_t` on input and remainder on output | `resp.status = OK/EINTR/ERR`.            |
 | `0x32`       | `OP_TIMER_START` (future)| `timerfd_settime`-like | Payload describes timer id/interval; completion via HP ring | Returns timer handle or `-errno`.        |
 | `0x33`       | `OP_TIMER_CANCEL` (future)| `timerfd_settime` | Payload describes handle                              | Returns 0 or `-errno`.                   |
 | `0x34`       | `OP_POLL` (future)       | `poll(2)`/`select(2)` | Payload describes fds + timeout                        | Returns ready count or `-errno`.         |
