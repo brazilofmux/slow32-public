@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <sys/mman.h>
+#include <time.h>
 
 // Initialize MMIO ring buffers
 void mmio_ring_init(mmio_ring_state_t *mmio, uint32_t heap_base, uint32_t heap_size) {
@@ -175,10 +176,10 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 }
                 fflush(stream);
                 resp.length = written;
-                resp.status = 0;
+                resp.status = written;
             } else {
                 resp.length = 0;
-                resp.status = EBADF;
+                resp.status = 0xFFFFFFFFu;
             }
             break;
         }
@@ -197,10 +198,10 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                     if (ch == '\n') break;  // Line buffered
                 }
                 resp.length = read_count;
-                resp.status = 0;
+                resp.status = read_count;
             } else {
                 resp.length = 0;
-                resp.status = EBADF;
+                resp.status = 0xFFFFFFFFu;
             }
             break;
         }
@@ -250,6 +251,36 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             fflush(stderr);
             resp.status = 0;
             break;
+
+        case S32_MMIO_OP_GETTIME: {
+            struct timespec ts;
+            if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
+                resp.status = 0xFFFFFFFFu;
+                resp.length = 0;
+                break;
+            }
+
+            if (req->length < 8u) {
+                resp.status = EINVAL;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (offset > (S32_MMIO_DATA_CAPACITY - 8u)) {
+                resp.status = EOVERFLOW;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t seconds = (uint32_t)ts.tv_sec;
+            uint32_t nanos = (uint32_t)ts.tv_nsec;
+            memcpy(mmio->data_buffer + offset, &seconds, sizeof(uint32_t));
+            memcpy(mmio->data_buffer + offset + sizeof(uint32_t), &nanos, sizeof(uint32_t));
+            resp.length = 8u;
+            resp.status = 0;
+            break;
+        }
             
         default:
             resp.status = ENOSYS;  // Not implemented

@@ -37,6 +37,11 @@ static inline volatile uint8_t *s32_mmio_reg8_ptr(uint32_t offset) {
 #define S32_MMIO_RESP_RING (s32_mmio_reg32_ptr(S32_MMIO_RESP_RING_OFFSET))
 #define S32_MMIO_DATA_BUFFER (s32_mmio_reg8_ptr(S32_MMIO_DATA_BUFFER_OFFSET))
 
+int s32_mmio_request(unsigned int opcode,
+                     unsigned int length,
+                     unsigned int offset,
+                     unsigned int status);
+
 #ifdef __cplusplus
 }
 #endif

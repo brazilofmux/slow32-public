@@ -18,6 +18,7 @@ VERBOSE=0
 EMIT_ASM=0
 EMIT_LLVM=0
 LIBC_VARIANT="${LIBC:-debug}"
+declare -a LINKER_EXTRA_FLAGS=()
 
 # Colors for output
 RED='\033[0;31m'
@@ -258,6 +259,7 @@ case "$LIBC_VARIANT" in
         ;;
     mmio)
         LIBC_ARCHIVE="$SCRIPT_DIR/runtime/libc_mmio.s32a"
+        LINKER_EXTRA_FLAGS+=(--mmio 64k)
         ;;
     *)
         error "Unsupported libc variant: $LIBC_VARIANT"
@@ -272,7 +274,8 @@ done
 
 info "Linking final binary..."
 
-"$LINKER" -o "$OUTPUT_FILE" "$CRT0" "$OBJ_FILE" "$LIBC_ARCHIVE" "$LIBS32" \
+"$LINKER" -o "$OUTPUT_FILE" "${LINKER_EXTRA_FLAGS[@]}" \
+    "$CRT0" "$OBJ_FILE" "$LIBC_ARCHIVE" "$LIBS32" \
     2>"$TEMP_DIR/link.err" || {
     cat "$TEMP_DIR/link.err" >&2
     error "Linking failed"

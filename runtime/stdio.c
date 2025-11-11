@@ -3,8 +3,6 @@
 #include <string.h>
 #include <stdarg.h>
 
-extern void yield(void);
-
 #include "mmio_ring.h"
 
 #define FLAG_READ     0x01
@@ -21,51 +19,15 @@ FILE *stdin = &_stdin;
 FILE *stdout = &_stdout;
 FILE *stderr = &_stderr;
 
-static unsigned int mmio_request(unsigned int opcode, unsigned int length, 
-                                  unsigned int offset, unsigned int status) {
-    unsigned int req_head = S32_MMIO_REQ_HEAD;
-    unsigned int req_tail = S32_MMIO_REQ_TAIL;
-    volatile unsigned int *req_ring = S32_MMIO_REQ_RING;
-    volatile unsigned int *resp_ring = S32_MMIO_RESP_RING;
-
-    while (((req_head + 1u) % S32_MMIO_RING_ENTRIES) == req_tail) {
-        yield();
-        req_tail = S32_MMIO_REQ_TAIL;
-    }
-
-    unsigned int idx = req_head * S32_MMIO_DESC_WORDS;
-    req_ring[idx + 0] = opcode;
-    req_ring[idx + 1] = length;
-    req_ring[idx + 2] = offset;
-    req_ring[idx + 3] = status;
-
-    S32_MMIO_REQ_HEAD = (req_head + 1u) % S32_MMIO_RING_ENTRIES;
-
-    unsigned int resp_head = S32_MMIO_RESP_HEAD;
-    unsigned int resp_tail = S32_MMIO_RESP_TAIL;
-
-    while (resp_head == resp_tail) {
-        yield();
-        resp_head = S32_MMIO_RESP_HEAD;
-        resp_tail = S32_MMIO_RESP_TAIL;
-    }
-
-    idx = resp_head * S32_MMIO_DESC_WORDS;
-    unsigned int result = resp_ring[idx + 3];
-    S32_MMIO_RESP_TAIL = (resp_tail + 1u) % S32_MMIO_RING_ENTRIES;
-
-    return result;
-}
-
 int putchar(int c) {
     volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
     data_buffer[0] = (unsigned char)c;
-    mmio_request(S32_MMIO_OP_PUTCHAR, 1u, 0u, 0u);
+    s32_mmio_request(S32_MMIO_OP_PUTCHAR, 1u, 0u, 0u);
     return c;
 }
 
 int getchar(void) {
-    unsigned int result = mmio_request(S32_MMIO_OP_GETCHAR, 0u, 0u, 0u);
+    unsigned int result = (unsigned int)s32_mmio_request(S32_MMIO_OP_GETCHAR, 0u, 0u, 0u);
     if (result == 0xFFFFFFFF) return EOF;
     volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
     return (int)data_buffer[0];
@@ -93,7 +55,7 @@ FILE *fopen(const char *pathname, const char *mode) {
     volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
     memcpy((void *)data_buffer, pathname, len + 1);
     
-    f->fd = mmio_request(S32_MMIO_OP_OPEN, len + 1u, 0u, f->flags);
+    f->fd = s32_mmio_request(S32_MMIO_OP_OPEN, len + 1u, 0u, f->flags);
     if (f->fd < 0) {
         free(f);
         return NULL;
@@ -114,7 +76,7 @@ int fclose(FILE *stream) {
     
     if (stream->buffer) free(stream->buffer);
     
-    int result = mmio_request(S32_MMIO_OP_CLOSE, 0u, 0u, stream->fd);
+    int result = s32_mmio_request(S32_MMIO_OP_CLOSE, 0u, 0u, stream->fd);
     
     if (stream != stdin && stream != stdout && stream != stderr) {
         free(stream);
@@ -142,7 +104,7 @@ size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
     
     volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
     memcpy((void *)data_buffer, ptr, total);
-    unsigned int written = mmio_request(S32_MMIO_OP_WRITE, total, 0u, stream->fd);
+    unsigned int written = (unsigned int)s32_mmio_request(S32_MMIO_OP_WRITE, total, 0u, stream->fd);
     
     if (written != total) {
         stream->error = 1;
@@ -176,7 +138,7 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
         return nmemb;
     }
     
-    unsigned int bytes_read = mmio_request(S32_MMIO_OP_READ, total, 0u, stream->fd);
+    unsigned int bytes_read = (unsigned int)s32_mmio_request(S32_MMIO_OP_READ, total, 0u, stream->fd);
     
     if (bytes_read == 0) {
         stream->eof = 1;
@@ -243,7 +205,7 @@ int fseek(FILE *stream, long offset, int whence) {
     data_buffer[0] = (unsigned char)whence;
     *(long *)(void *)(data_buffer + 4) = offset;
     
-    int result = mmio_request(S32_MMIO_OP_SEEK, 8u, 0u, stream->fd);
+    int result = s32_mmio_request(S32_MMIO_OP_SEEK, 8u, 0u, stream->fd);
     if (result < 0) {
         stream->error = 1;
         return -1;

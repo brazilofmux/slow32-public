@@ -216,6 +216,14 @@ void main_loop() {
 }
 ```
 
+## Ring Contracts & Linux Analogy
+
+- **Directionality**: `REQUEST_*` registers/ring are produced by the guest and consumed by the host; `RESPONSE_*` (and any high-priority response ring) reverse that ownership. Single-producer/single-consumer means we only need store-release when the producer advances `head` and load-acquire before the consumer reads the descriptor.
+- **Descriptor schema**: Reuse the 16-byte structure from `common/mmio_ring_layout.h`—word 0 opcode, word 1 primary length, word 2 secondary value (offset, pointer index, etc.), word 3 fd/flag/status. Payloads or structs spill into the shared data buffer.
+- **Linux correspondence**: Opcodes map directly onto Linux/POSIX syscalls (`OPEN`, `READ`, `WRITE`, `SEEK`, `STAT`, `BRK`, `EXIT`). The emulator acts like the kernel: it interprets the descriptor/data buffer, performs the host OS call, and returns either positive results (bytes, offsets, fds) or negative errno codes in the completion descriptor.
+- **High-priority responses**: A tiny host-produced ring delivers timers, async signals, debugger traps, or host shutdown notices before the normal response queue, ensuring low latency even under heavy bulk traffic. Guests simply poll the HP ring first on each TRAP/YIELD.
+- **Blocking semantics**: Guest code TRAPs immediately after queuing work and YIELDs while waiting, guaranteeing the emulator checks the rings at well-defined synchronization points without background polling threads or interrupts.
+
 ## Flow Control Strategy
 
 ### Per-Queue Strategies

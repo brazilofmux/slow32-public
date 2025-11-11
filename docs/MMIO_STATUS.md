@@ -16,6 +16,8 @@ MMIO is now functional in both `slow32` and `slow32-fast` emulators with linker-
 - **Memory Layout**: MMIO at `0x10000000`, 64KB region
 - **Ring Buffers**: Request/response queues for host-guest communication
 - **Guest Symbols**: Linker creates `__mmio_base` and `__mmio_end` symbols
+- **Linux-Compatible ABI**: Ring descriptors carry Linux-style syscalls (open/read/write/seek/stat/brk/exit, etc.)
+- **Opcode Registry**: Stable IDs captured in `docs/mmio/opcode-map.md` (now includes `GETTIME` at `0x30`)
 
 ### Test Programs
 - `tests/test_mmio_simple.s` - Basic test that writes to MMIO and uses YIELD
@@ -54,3 +56,14 @@ When `--mmio <size>` is passed to the linker:
 2. Calculates and sets header.mmio_base
 3. Creates __mmio_base and __mmio_end symbols for guest code
 4. Emulator sees flag and initializes MMIO immediately
+
+### Queue Contract Snapshot
+- **Directionality**: `REQ_*` ring is single-producer guest → host, `RESP_*` ring (plus optional HP ring) is single-producer host → guest.
+- **Descriptor schema**: 16-byte entries (opcode, length, offset/pointer index, fd/flags/status) exactly as defined in `common/mmio_ring_layout.h`. Bulk arguments and result structs live in the shared data buffer.
+- **Linux correspondence**: Opcodes intentionally mirror Linux syscalls. The emulator behaves like the kernel, executing the host OS call and returning either success values or negative errno codes through the response ring.
+- **Synchronization**: Producers publish heads after writing payloads (store-release); consumers read descriptors with load-acquire before consuming. Guests TRAP after enqueuing work and YIELD while waiting so the emulator services the rings at deterministic points.
+
+### Next Expansion Steps
+- Define packed layouts for complex structs (`stat`, `seek`, future socket/timer payloads) so host and guest stay bit-for-bit aligned.
+- Reserve opcode IDs and response formats for networking, timers, `poll`/`select`, filesystem metadata updates, and other host services.
+- Flesh out the high-priority response ring contract (entry count, opcodes) and teach the emulator to drain it before normal completions to guarantee low-latency delivery of timers and async signals.

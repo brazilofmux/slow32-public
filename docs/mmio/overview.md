@@ -64,6 +64,18 @@ if (addr >= MMIO_BASE && addr < MMIO_BASE + mmio_size) {
 #define SYS_BRK    6  // For malloc
 ```
 
+## Ring-Based Host Interface
+
+Although the early sketches above talk about discrete devices, the production design collapses everything into the shared ring buffers defined in `common/mmio_ring_layout.h`:
+
+- `REQ_*` registers/ring are **guest → host**. The guest is the only producer: it stages arguments (path strings, file offsets, socket params) in the MMIO data buffer, fills the 16-byte descriptor (opcode, length, offset/pointer index, fd/flags), then bumps `REQ_HEAD`.
+- `RESP_*` registers/ring are **host → guest**. The emulator (acting as the kernel) is the producer: it runs the actual host syscall, writes results plus `errno` into the completion descriptor/data buffer, and bumps `RESP_HEAD`.
+- A small host-produced **high-priority response ring** remains reserved for timers, async signals, debugger traps, or shutdown notices so they preempt normal responses.
+
+Semantics intentionally mirror Linux userland: `OP_OPEN` behaves like `open(2)`, `OP_READ`/`OP_WRITE` like their namesakes, `OP_SEEK` like `lseek(2)`, `OP_STAT`, `OP_BRK`, `OP_EXIT`, etc. New services should preserve that convention—pack the Linux arguments into the descriptor/data buffer, let the emulator invoke the host OS, and return either positive results or negative errno codes. That keeps our libc identical to its Linux counterpart aside from the final trap into the ring queue.
+
+Guest code should YIELD whenever it waits for responses; the emulator drains the request ring, processes work, and posts completions on each TRAP/YIELD/HALT without background polling threads.
+
 ## Implementation Plan
 
 ### Phase 1: Console Device

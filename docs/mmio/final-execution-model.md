@@ -109,6 +109,53 @@ case OP_HALT:
 0x10004000: DATA_BUF   (56KB shared data)
 ```
 
+### Queue Roles and Direction
+
+- `REQ_*` ring is **guest → host**. The guest is the sole producer: it allocates descriptors, fills them, and advances `REQ_HEAD`. The host is the sole consumer: it reads descriptors, performs the requested work, and advances `REQ_TAIL`.
+- `RESP_*` ring is **host → guest**. Roles are inverted: the host produces completions and the guest consumes them.
+- A future **high-priority host → guest ring** can sit alongside the response ring for urgent traffic (timers, async signals, debugger traps). Because we own both endpoints, it can share the same descriptor schema but be polled ahead of the normal completion ring whenever the guest executes TRAP/YIELD.
+
+This mirrors a NIC, but inverted: instead of the host driver feeding descriptors to a device, the SLOW-32 guest feeds work units to the emulator. The host never allocates guest-visible buffers—it only borrows pointers provided inside the descriptor and must acknowledge completion through the response/HP rings.
+
+### Descriptor Ownership and Lifecycle
+
+1. **Guest produces**: write the opcode, payload pointers/lengths, and flags into the next free request descriptor. Issue a store-release before publishing the updated `REQ_HEAD`.
+2. **Host consumes**: poll `REQ_HEAD` vs `REQ_TAIL`. For each new descriptor, perform the work (e.g., copy from/to the shared data buffer, touch host files, etc.). When done, write a completion descriptor into the response ring, including status/result fields, then store-release `RESP_HEAD`.
+3. **Guest completes**: poll `RESP_HEAD` vs `RESP_TAIL`. Once a completion arrives, load the results, advance `RESP_TAIL`, and continue. If the guest is blocked, it executes `YIELD`, which guarantees the host will service the rings before returning control.
+
+Because each ring is single-producer/single-consumer, simple head/tail counters with wraparound are sufficient. Memory fences only need to order “payload before head update” and “head observation before payload read,” which keeps the implementation lightweight on both sides.
+
+### High-Priority Queue (Optional)
+
+The optional HP ring is tiny (dozens of entries) and host-produced. Typical uses:
+
+- Deliver timer expirations or watchdog pings without waiting for the standard response path.
+- Notify the guest about debugger events, breakpoints, or host-driven shutdown requests.
+- Surface asynchronous device arrivals (e.g., inbound socket ready) while large transfers continue in the normal ring.
+
+The emulator must drain the HP ring before touching the normal response ring each time it wakes, ensuring low latency even when bulk transfers keep the regular ring busy. Guests simply poll both rings inside the same TRAP/YIELD handling loop.
+
+### Linux-Style Contract
+
+Think of the MMIO bridge as the user/kernel boundary: guest code is effectively **Linux userland**, while the host emulator stands in for the **kernel**. Every descriptor is a pseudo-syscall struct:
+
+```
+word 0: opcode      // which syscall
+word 1: length      // main byte count (e.g., buffer size)
+word 2: offset      // secondary value (file offset, data pointer index, etc.)
+word 3: status/arg  // descriptor-specific flags, fd, errno, etc.
+```
+
+Payload bytes live in `DATA_BUF`; descriptors only carry small integers/handles so we keep the rings compact. Standard opcodes already mirror familiar Linux syscalls:
+
+- `S32_MMIO_OP_OPEN`: path string in `DATA_BUF`, `length` = bytes incl. NUL, `status` carries `O_*`-style flags. Host opens/creates the file and returns a small integer fd that guest reuses, just like `open(2)`.
+- `S32_MMIO_OP_READ`/`WRITE`: fd in `status`, byte count in `length`, data staged in/out of `DATA_BUF`, matching `read(2)`/`write(2)` semantics (short reads indicate EOF, short writes report error).
+- `S32_MMIO_OP_SEEK`: fd in `status`, `DATA_BUF` holds packed `off_t`+`whence`, aligning with `lseek(2)`.
+- `S32_MMIO_OP_CLOSE`, `S32_MMIO_OP_STAT`, `S32_MMIO_OP_BRK`, `S32_MMIO_OP_EXIT` map directly to their Linux namesakes.
+- `S32_MMIO_OP_GETTIME` (0x30) drops a `{seconds, nanoseconds}` pair into `DATA_BUF` (8 bytes) so libc can implement `clock_gettime`, `time`, or `gettimeofday` without new firmware.
+
+Future extensions (sockets, timers, `poll`, `gettimeofday`, etc.) can keep building on this convention: drop the Linux syscall arguments into the descriptor/data buffer, let the host execute the real OS call, and post the result plus `errno` back through the completion ring. Because both halves follow the same schema, we can implement libc once and trust the emulator to provide kernel-like behavior without inventing bespoke firmware semantics.
+
 ### Critical Optimization
 The host can check if guest is blocked in YIELD:
 ```c
