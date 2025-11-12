@@ -60,3 +60,7 @@ vgcore.*
 
 # Stuff
 feedback
+
+# TinyMUX
+stringutil.cpp
+stringutil.h

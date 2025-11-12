@@ -151,7 +151,8 @@ Payload bytes live in `DATA_BUF`; descriptors only carry small integers/handles 
 - `S32_MMIO_OP_OPEN`: path string in `DATA_BUF`, `length` = bytes incl. NUL, `status` carries `O_*`-style flags. Host opens/creates the file and returns a small integer fd that guest reuses, just like `open(2)`.
 - `S32_MMIO_OP_READ`/`WRITE`: fd in `status`, byte count in `length`, data staged in/out of `DATA_BUF`, matching `read(2)`/`write(2)` semantics (short reads indicate EOF, short writes report error).
 - `S32_MMIO_OP_SEEK`: fd in `status`, `DATA_BUF` holds packed `off_t`+`whence`, aligning with `lseek(2)`.
-- `S32_MMIO_OP_CLOSE`, `S32_MMIO_OP_STAT`, `S32_MMIO_OP_BRK`, `S32_MMIO_OP_EXIT` map directly to their Linux namesakes.
+- `S32_MMIO_OP_CLOSE`, `S32_MMIO_OP_BRK`, `S32_MMIO_OP_EXIT` map directly to their Linux namesakes.
+- `S32_MMIO_OP_STAT`: `status` carries either an fd (for `fstat`) or `S32_MMIO_STAT_PATH_SENTINEL` (for `stat`), and the response overwrites the caller’s buffer with an `s32_mmio_stat_result_t` (64-bit dev/ino/size, POSIX mode bits, nanosecond timestamps).
 - `S32_MMIO_OP_GETTIME` (0x30) drops a `{seconds_lo, seconds_hi, nanoseconds}` tuple into `DATA_BUF` (16 bytes) so libc can implement `clock_gettime`, `time`, or `gettimeofday` without new firmware or Year-2038 limits.
 
 Future extensions (sockets, timers, `poll`, `gettimeofday`, etc.) can keep building on this convention: drop the Linux syscall arguments into the descriptor/data buffer, let the host execute the real OS call, and post the result plus `errno` back through the completion ring. Because both halves follow the same schema, we can implement libc once and trust the emulator to provide kernel-like behavior without inventing bespoke firmware semantics.

@@ -7,7 +7,24 @@
 #include <unistd.h>
 #include <errno.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <time.h>
+
+#if defined(__APPLE__)
+#define STAT_ATIME_SEC(st)  ((st).st_atimespec.tv_sec)
+#define STAT_ATIME_NSEC(st) ((st).st_atimespec.tv_nsec)
+#define STAT_MTIME_SEC(st)  ((st).st_mtimespec.tv_sec)
+#define STAT_MTIME_NSEC(st) ((st).st_mtimespec.tv_nsec)
+#define STAT_CTIME_SEC(st)  ((st).st_ctimespec.tv_sec)
+#define STAT_CTIME_NSEC(st) ((st).st_ctimespec.tv_nsec)
+#else
+#define STAT_ATIME_SEC(st)  ((st).st_atim.tv_sec)
+#define STAT_ATIME_NSEC(st) ((st).st_atim.tv_nsec)
+#define STAT_MTIME_SEC(st)  ((st).st_mtim.tv_sec)
+#define STAT_MTIME_NSEC(st) ((st).st_mtim.tv_nsec)
+#define STAT_CTIME_SEC(st)  ((st).st_ctim.tv_sec)
+#define STAT_CTIME_NSEC(st) ((st).st_ctim.tv_nsec)
+#endif
 
 // Initialize MMIO ring buffers
 void mmio_ring_init(mmio_ring_state_t *mmio, uint32_t heap_base, uint32_t heap_size) {
@@ -251,6 +268,73 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             fflush(stderr);
             resp.status = 0;
             break;
+
+        case S32_MMIO_OP_STAT: {
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            uint32_t max_bytes = S32_MMIO_DATA_CAPACITY - offset;
+
+            if (max_bytes < sizeof(s32_mmio_stat_result_t)) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            struct stat host_stat;
+            memset(&host_stat, 0, sizeof(host_stat));
+
+            int rc = -1;
+            if (req->status == S32_MMIO_STAT_PATH_SENTINEL) {
+                if (req->length == 0 || req->length > max_bytes) {
+                    resp.status = S32_MMIO_STATUS_ERR;
+                    resp.length = 0;
+                    break;
+                }
+
+                char *path = (char *)malloc(req->length);
+                if (!path) {
+                    resp.status = S32_MMIO_STATUS_ERR;
+                    resp.length = 0;
+                    break;
+                }
+
+                memcpy(path, mmio->data_buffer + offset, req->length);
+                path[req->length - 1u] = '\0';
+                rc = stat(path, &host_stat);
+                free(path);
+            } else {
+                rc = fstat((int)req->status, &host_stat);
+            }
+
+            if (rc != 0) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            s32_mmio_stat_result_t result = {
+                .st_dev = (uint64_t)host_stat.st_dev,
+                .st_ino = (uint64_t)host_stat.st_ino,
+                .st_mode = (uint32_t)host_stat.st_mode,
+                .st_nlink = (uint32_t)host_stat.st_nlink,
+                .st_uid = (uint32_t)host_stat.st_uid,
+                .st_gid = (uint32_t)host_stat.st_gid,
+                .st_rdev = (uint64_t)host_stat.st_rdev,
+                .st_size = (uint64_t)((host_stat.st_size < 0) ? 0 : host_stat.st_size),
+                .st_blksize = (uint64_t)((host_stat.st_blksize < 0) ? 0 : host_stat.st_blksize),
+                .st_blocks = (uint64_t)((host_stat.st_blocks < 0) ? 0 : host_stat.st_blocks),
+                .st_atime_sec = (uint64_t)STAT_ATIME_SEC(host_stat),
+                .st_atime_nsec = (uint32_t)STAT_ATIME_NSEC(host_stat),
+                .st_mtime_sec = (uint64_t)STAT_MTIME_SEC(host_stat),
+                .st_mtime_nsec = (uint32_t)STAT_MTIME_NSEC(host_stat),
+                .st_ctime_sec = (uint64_t)STAT_CTIME_SEC(host_stat),
+                .st_ctime_nsec = (uint32_t)STAT_CTIME_NSEC(host_stat),
+            };
+
+            memcpy(mmio->data_buffer + offset, &result, sizeof(result));
+            resp.length = sizeof(result);
+            resp.status = S32_MMIO_STATUS_OK;
+            break;
+        }
 
         case S32_MMIO_OP_GETTIME: {
             struct timespec ts;

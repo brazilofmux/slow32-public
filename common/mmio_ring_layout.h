@@ -30,6 +30,9 @@ enum {
     S32_MMIO_STATUS_ERR   = 0xFFFFFFFFu,
 };
 
+// Special status value for STAT requests that target a pathname (not fd)
+#define S32_MMIO_STAT_PATH_SENTINEL 0xFFFFFFFFu
+
 // Opcode range tags help keep services grouped
 enum {
     S32_MMIO_OPCODE_RANGE_CORE  = 0x00,  // Basic file/process I/O
@@ -54,7 +57,7 @@ enum s32_mmio_opcode {
     S32_MMIO_OP_SEEK    = 0x07,
     S32_MMIO_OP_BRK     = 0x08,
     S32_MMIO_OP_EXIT    = 0x09,
-    S32_MMIO_OP_STAT    = 0x0A,
+    S32_MMIO_OP_STAT    = 0x0A,  // stat()/fstat() metadata fetch
     S32_MMIO_OP_FLUSH   = 0x0B,
 
     // 0x30 - 0x3F : Time & event services
@@ -73,11 +76,40 @@ enum s32_mmio_opcode {
     S32_MMIO_OP_SHUTDOWN    = 0x45,  // shutdown()/close socket half
 };
 
+#pragma pack(push, 1)
+
 typedef struct s32_mmio_timepair64 {
     uint32_t seconds_lo;   // low 32 bits of seconds
     uint32_t seconds_hi;   // high 32 bits of seconds
     uint32_t nanoseconds;  // 0..999,999,999
     uint32_t reserved;     // align to 16 bytes / future flags
 } s32_mmio_timepair64_t;
+
+#pragma pack(pop)
+
+// Packed stat payload shared between guest and host
+#pragma pack(push, 1)
+typedef struct s32_mmio_stat_result {
+    uint64_t st_dev;
+    uint64_t st_ino;
+    uint32_t st_mode;
+    uint32_t st_nlink;
+    uint32_t st_uid;
+    uint32_t st_gid;
+    uint64_t st_rdev;
+    uint64_t st_size;
+    uint64_t st_blksize;
+    uint64_t st_blocks;
+    uint64_t st_atime_sec;
+    uint32_t st_atime_nsec;
+    uint32_t _pad0;
+    uint64_t st_mtime_sec;
+    uint32_t st_mtime_nsec;
+    uint32_t _pad1;
+    uint64_t st_ctime_sec;
+    uint32_t st_ctime_nsec;
+    uint32_t _pad2;
+} s32_mmio_stat_result_t;
+#pragma pack(pop)
 
 #endif // S32_MMIO_RING_LAYOUT_H

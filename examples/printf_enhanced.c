@@ -11,6 +11,10 @@ void putchar(int c);
 size_t strlen(const char *s);
 void *memcpy(void *dest, const void *src, size_t n);
 
+// 64-bit division helpers provided by builtins.c
+extern uint64_t __udivdi3(uint64_t, uint64_t);
+extern uint64_t __umoddi3(uint64_t, uint64_t);
+
 // Two-digit lookup table for fast conversion
 // Each pair represents 00, 01, 02...98, 99
 static const char Digits100[201] =
@@ -74,6 +78,8 @@ static size_t utoa32_fast(uint32_t val, char *buf) {
 }
 
 // Convert unsigned 64-bit to decimal using two-digit optimization
+#define S32_MAX_DEC_DIGITS 20
+
 static size_t utoa64_fast(uint64_t val, char *buf) {
     if (val == 0) {
         buf[0] = '0';
@@ -81,28 +87,47 @@ static size_t utoa64_fast(uint64_t val, char *buf) {
         return 1;
     }
 
-    char *p = buf;
+    uint8_t bcd[S32_MAX_DEC_DIGITS] = {0};
 
-    while (val >= 100) {
-        uint64_t rem = val % 100;
-        val /= 100;
-        const char *digits = Digits100 + (rem * 2);
-        *p++ = digits[1];
-        *p++ = digits[0];
+    for (int bit = 63; bit >= 0; bit--) {
+        if (((val >> bit) & 1ULL) == 0 && bit < 63) {
+            bool any = false;
+            for (int check = 0; check < S32_MAX_DEC_DIGITS; check++) {
+                if (bcd[check] != 0) {
+                    any = true;
+                    break;
+                }
+            }
+            if (!any) {
+                continue;
+            }
+        }
+
+        for (int i = 0; i < S32_MAX_DEC_DIGITS; i++) {
+            if (bcd[i] >= 5) {
+                bcd[i] = (uint8_t)(bcd[i] + 3);
+            }
+        }
+
+        uint8_t carry = (uint8_t)((val >> bit) & 1ULL);
+        for (int i = S32_MAX_DEC_DIGITS - 1; i >= 0; i--) {
+            uint8_t new_carry = (uint8_t)((bcd[i] & 0x8u) ? 1u : 0u);
+            bcd[i] = (uint8_t)(((bcd[i] << 1) & 0xFu) | carry);
+            carry = new_carry;
+        }
     }
 
-    if (val >= 10) {
-        const char *digits = Digits100 + (val * 2);
-        *p++ = digits[1];
-        *p++ = digits[0];
-    } else {
-        *p++ = (char)('0' + val);
+    size_t start = 0;
+    while (start < S32_MAX_DEC_DIGITS && bcd[start] == 0) {
+        start++;
     }
 
-    size_t len = (size_t)(p - buf);
-    reverse_string(buf, buf + len - 1);
-    buf[len] = '\0';
-    return len;
+    size_t out = 0;
+    for (size_t i = start; i < S32_MAX_DEC_DIGITS; i++) {
+        buf[out++] = (char)('0' + bcd[i]);
+    }
+    buf[out] = '\0';
+    return out;
 }
 
 // Convert signed 32-bit to decimal

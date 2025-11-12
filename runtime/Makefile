@@ -34,7 +34,10 @@ STDIO_DEBUG_OBJS = putchar.s32o stdio_minimal.s32o
 STDIO_MMIO_OBJS = stdio.s32o stdio_buffered.s32o flush_mmio.s32o
 
 # MMIO-only helpers
-LIBC_MMIO_EXTRA_OBJS = yield.s32o mmio_request.s32o time_mmio.s32o
+LIBC_MMIO_EXTRA_OBJS = yield.s32o mmio_request.s32o time_mmio.s32o stat_mmio.s32o
+
+# Debug-only extras (fallback stubs)
+LIBC_DEBUG_EXTRA_OBJS = stat_stub.s32o
 
 # Math library objects for libm.s32a (future - currently disabled due to float support)
 # LIBM_OBJS = math.s32o
@@ -51,7 +54,8 @@ C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_util
             stdio.c stdlib_extra.c string_extra.c ctype.c \
             stdio_minimal.c convert_extra.c memory_extra.c \
             stdio_buffered.c flush_mmio.c flush_debug.c \
-            debug_char.c yield.c putchar.c mmio_request.c time_mmio.c
+            debug_char.c yield.c putchar.c mmio_request.c time_mmio.c \
+            stat_mmio.c stat_stub.c
 # Note: math.c excluded due to floating point operations not yet supported
 
 # Default target builds everything
@@ -149,7 +153,7 @@ libs32.s32a: $(COMPILER_RT_OBJS)
 	@echo "Archive size: $$(ls -lh $@ | awk '{print $$5}')"
 
 # Debug version of libc (uses DEBUG instruction for I/O)
-libc_debug.s32a: $(LIBC_CORE_OBJS) $(STDIO_DEBUG_OBJS)
+libc_debug.s32a: $(LIBC_CORE_OBJS) $(STDIO_DEBUG_OBJS) $(LIBC_DEBUG_EXTRA_OBJS)
 	@echo "Creating libc_debug.s32a (DEBUG I/O)..."
 	$(ARCHIVER) c $@ $^
 	@echo "Archive size: $$(ls -lh $@ | awk '{print $$5}')"

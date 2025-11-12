@@ -40,4 +40,22 @@ Bulk arguments and structs live in `DATA_BUFFER`. Producers must write payloads 
 - **Semantics**: Libc mirrors POSIX: `nanosleep()` returns `-1` when interrupted or on error, storing the pending interval in `rem` when provided. We still lack a global `errno`, so callers distinguish interruptions vs. fatal errors by examining whether a remainder was returned (`rem` only changes on EINTR).
 - **Runtime helper**: `runtime/time_mmio.c` exposes `nanosleep()`, `usleep()`, and `sleep()` wrappers that speak this opcode. These helpers already understand `S32_MMIO_STATUS_EINTR`, so any caller that retries with the returned remainder will get Linux-like behavior.
 
+## `STAT` Contract (0x0A)
+
+- **Request**:
+  - `fstat(fd)`: set `status = fd`, `length = 0`, and `offset` to the destination for the eventual result.
+  - `stat(path)`: copy the NUL-terminated pathname into `DATA_BUFFER[offset]`, set `length = strlen(path)+1`, and write `status = S32_MMIO_STAT_PATH_SENTINEL`.
+- **Response**: On success the emulator copies an `s32_mmio_stat_result_t` to `DATA_BUFFER[offset]`, sets `resp.length = sizeof(s32_mmio_stat_result_t)`, and returns `resp.status = S32_MMIO_STATUS_OK`. Errors clear `resp.length` and set `resp.status = S32_MMIO_STATUS_ERR`.
+- **Result layout**:
+
+| Field | Bits | Description |
+|-------|------|-------------|
+| `st_dev`, `st_ino`, `st_rdev` | 64 | Device/inode ids (zero-extended). |
+| `st_mode` | 32 | POSIX mode bits (`S_IF*`, `S_IRUSR`, etc.). |
+| `st_nlink`, `st_uid`, `st_gid` | 32 | Link count and owner ids. |
+| `st_size`, `st_blksize`, `st_blocks` | 64 | Size in bytes, preferred block size, allocated blocks. |
+| `st_atime_sec/nsec`, `st_mtime_sec/nsec`, `st_ctime_sec/nsec` | 64+32 each | Timestamps with nanosecond precision. |
+
+- **Runtime helper**: `runtime/stat_mmio.c` exposes `stat()`/`fstat()` that copy the packed structure into the public `struct stat`. When linking against `libc_debug.s32a`, tiny stubs return `-1` so binaries still link, albeit without metadata.
+
 Future services should extend this file with their opcode IDs, payload expectations, and completion behavior so host and guest stay synchronized.

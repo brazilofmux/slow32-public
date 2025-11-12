@@ -35,7 +35,14 @@ uint32_t __umodsi3(uint32_t n, uint32_t d) {
     return n - q * d;
 }
 
+#ifdef __clang__
+#define S32_NO_OPT __attribute__((optnone))
+#else
+#define S32_NO_OPT
+#endif
+
 // 64-bit unsigned division
+uint64_t __udivdi3(uint64_t n, uint64_t d) S32_NO_OPT;
 uint64_t __udivdi3(uint64_t n, uint64_t d) {
     if (d == 0) {
         // Division by zero - return max value
@@ -97,6 +104,7 @@ int64_t __divdi3(int64_t n, int64_t d) {
 }
 
 // 64-bit unsigned modulo
+uint64_t __umoddi3(uint64_t n, uint64_t d) S32_NO_OPT;
 uint64_t __umoddi3(uint64_t n, uint64_t d) {
     if (d == 0) {
         // Division by zero - return dividend
