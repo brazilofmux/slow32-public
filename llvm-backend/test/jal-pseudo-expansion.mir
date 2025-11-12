@@ -1,0 +1,46 @@
+# RUN: llc -mtriple=slow32-unknown-none -passes=post-ra-pseudos %s -o - | FileCheck %s
+# REQUIRES: slow32-registered-target
+
+--- |
+  declare void @callee()
+
+  define void @call_direct() {
+  entry:
+    call void @callee()
+    ret void
+  }
+
+  define void @branch_indirect(void ()* %target) {
+  entry:
+    call void %target()
+    ret void
+  }
+...
+
+# CHECK-LABEL: name: call_direct
+# CHECK:       JAL @callee, implicit $r29, implicit-def $r1, implicit-def $r2
+# CHECK-SAME:  implicit-def $r3, implicit-def $r4, implicit-def $r5
+# CHECK-SAME:  implicit-def $r6, implicit-def $r7, implicit-def $r8
+# CHECK-SAME:  implicit-def $r9, implicit-def $r10, implicit-def $r31
+---
+name:            call_direct
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    JAL_CALL @callee, implicit $r29, implicit-def $r1, implicit-def $r2, implicit-def $r3, implicit-def $r4, implicit-def $r5, implicit-def $r6, implicit-def $r7, implicit-def $r8, implicit-def $r9, implicit-def $r10, implicit-def $r31
+    RET implicit $r1
+...
+
+# CHECK-LABEL: name: branch_indirect
+# CHECK:       $r0 = JALR $r5
+---
+name:            branch_indirect
+tracksRegLiveness: true
+liveins:
+  - { reg: '$r5' }
+body:             |
+  bb.0:
+    liveins: $r5
+    BRIND_JALR $r5
+    RET implicit undef $r1
+...

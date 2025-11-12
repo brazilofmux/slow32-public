@@ -1,0 +1,66 @@
+# RUN: llc -mtriple=slow32-unknown-none -run-pass=branch-folder -verify-machineinstrs %s -o - | FileCheck %s
+# REQUIRES: slow32-registered-target
+
+--- |
+  define void @remove_fallthrough_branch() { ret void }
+  define void @cond_and_uncond() { ret void }
+...
+
+# CHECK-LABEL: name: remove_fallthrough_branch
+# CHECK: bb.0:
+# CHECK-NOT: BR
+---
+name:            remove_fallthrough_branch
+alignment:       4
+tracksRegLiveness: false
+noPhis:          true
+isSSA:           false
+noVRegs:         true
+registers:       []
+body:             |
+  bb.0:
+    successors: %bb.1(0x80000000)
+    BR %bb.1
+
+  bb.1:
+    RET implicit undef $r1
+...
+
+# CHECK-LABEL: name: cond_and_uncond
+# CHECK: bb.0:
+# CHECK: BNE_pat %0, %1, %bb.2
+# CHECK-NOT: BR %bb.1
+---
+name:            cond_and_uncond
+alignment:       4
+tracksRegLiveness: true
+noPhis:          true
+isSSA:           false
+noVRegs:         false
+registers:
+  - { id: 0, class: gpr }
+  - { id: 1, class: gpr }
+  - { id: 2, class: gpr }
+  - { id: 3, class: gpr }
+liveins:
+  - { reg: '$r3' }
+  - { reg: '$r4' }
+body:             |
+  bb.0:
+    successors: %bb.1(0x40000000), %bb.2(0x40000000)
+    liveins: $r3, $r4
+    %0:gpr = COPY $r3
+    %1:gpr = COPY $r4
+    BNE_pat %0, %1, %bb.2
+    BR %bb.1
+
+  bb.1:
+    %2:gpr = ADDI $r0, 1
+    $r1 = COPY %2
+    RET implicit $r1
+
+  bb.2:
+    %3:gpr = ADDI $r0, 2
+    $r1 = COPY %3
+    RET implicit $r1
+...

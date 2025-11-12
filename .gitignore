@@ -19,6 +19,8 @@ linker/s32-ld
 *.ll
 !tests/*.c
 !tests/*.ll
+!llvm-backend/test/*.ll
+!llvm-backend/test/*.mir
 !examples/*.c
 test*.s
 test*.o

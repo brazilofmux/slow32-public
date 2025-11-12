@@ -19,6 +19,13 @@ rsync -av \
     ~/llvm-project/clang/lib/Basic/Targets/SLOW32.* \
     "$BACKEND_DIR/clang/"
 
+# Backup the LLVM test files
+echo "Backing up SLOW32 test files..."
+mkdir -p "$BACKEND_DIR/test"
+rsync -av --delete \
+    ~/llvm-project/llvm/test/CodeGen/SLOW32/ \
+    "$BACKEND_DIR/test/"
+
 echo "Backup complete!"
 echo ""
 echo "Don't forget to:"
