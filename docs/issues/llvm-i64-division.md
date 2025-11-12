@@ -74,14 +74,18 @@ Because SLOW32 only has 32-bit `mul`/`mulh` implemented via software splitting (
 1. `SLOW32TargetLowering` calls `setOperationAction(ISD::UDIV, MVT::i64, Expand)` intending to force libcalls, but the target-independent legalization still performs strength reduction for constant divisors before the libcall decision is made.
 2. The legalization relies on correct `i64` multiply-high support. Our current lowering for `ISD::UMUL_LOHI` (splitting into four 16×16 products) likely misses carries, so the synthesized division/remainder sequence is mathematically incorrect.
 
+## Status Update (2024-11-11)
+- Reimplemented the custom `UMUL_LOHI` lowering so every 16-bit partial product is masked, shifted, and merged with explicit carry propagation. This fixes the bogus multiply-high results that constant-division relied on.
+- Added `llvm/test/CodeGen/SLOW32/umul-lohi.ll` to pin the new lowering strategy so future tweaks cannot drop those carries silently.
+- Rebuilt the toolchain and reran the original `test_i64_div.c` repro through the assembler/linker/emulator pipeline; the program now prints the expected `18446744073709551615`.
+
 ## Workarounds
 - Avoid emitting `/` or `%` on 64-bit values in the runtime. `runtime/printf_enhanced.c` currently uses a double-dabble converter for `%llu` to stay clear of the miscompiled path.
 - Manually call `__udivdi3`/`__umoddi3` from C and mark them `__attribute__((used))` so LLVM cannot strength-reduce the operation (not practical for general code).
 
 ## Next Steps for the LLVM Backend
-1. Decide whether SLOW32 should **always** lower `i64` division/modulo to libcalls, even for constant divisors. If so, add a target hook (e.g., override `isIntDivCheap`/`isIntDivRemCheap`) or custom DAG combine to block `DivRemByConstant` transforms.
-2. Alternatively, fix the custom multiply-high lowering in `SLOW32ISelLowering.cpp` so that the generated code preserves carries correctly when used by constant-division expansions.
-3. Add an LLVM regression test (e.g., `llvm/test/CodeGen/SLOW32/i64-div-const.ll`) that verifies `udiv i64` by 10 lowers to a libcall or otherwise produces the correct quotient.
-4. Once fixed, simplify `%llu` printing paths in `runtime/printf_enhanced.c` back to straightforward div/mod loops.
+- ✅ Preserve correctness in the custom multiply-high lowering used by constant-division (done via the new `UMUL_LOHI` expansion).
+- ✅ Land a regression test that exercises the carry paths in the new lowering (`llvm/test/CodeGen/SLOW32/umul-lohi.ll`).
+- ☐ Simplify `%llu` printing in `runtime/printf_enhanced.c` now that the backend can safely emit div/mod loops again (needs runtime-side follow-up once the formatter is retested).
 
-Until the backend is fixed, downstream projects should continue to avoid `uint64_t` division/modulo in performance-critical code.
+Until the runtime-side cleanups land everywhere, downstream projects should continue to avoid `uint64_t` division/modulo in performance-critical code unless they can pick up the updated backend.
