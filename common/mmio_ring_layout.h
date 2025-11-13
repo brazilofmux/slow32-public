@@ -74,6 +74,10 @@ enum s32_mmio_opcode {
     S32_MMIO_OP_SEND        = 0x43,  // send()/write() on socket
     S32_MMIO_OP_RECV        = 0x44,  // recv()/read() on socket
     S32_MMIO_OP_SHUTDOWN    = 0x45,  // shutdown()/close socket half
+
+    // 0x60 - 0x6F : Host environment services
+    S32_MMIO_OP_ARGS_INFO   = 0x60,  // Query argc/total-bytes for guest argv[]
+    S32_MMIO_OP_ARGS_DATA   = 0x61,  // Copy flattened argv blob from host
 };
 
 #pragma pack(push, 1)
@@ -111,5 +115,20 @@ typedef struct s32_mmio_stat_result {
     uint32_t _pad2;
 } s32_mmio_stat_result_t;
 #pragma pack(pop)
+
+// Host argument metadata returned by S32_MMIO_OP_ARGS_INFO
+#pragma pack(push, 1)
+typedef struct s32_mmio_args_info {
+    uint32_t argc;         // Number of arguments (argv[0] included)
+    uint32_t total_bytes;  // Bytes needed to store all NUL-terminated strings
+    uint32_t flags;        // Reserved for future features (envp, etc.)
+    uint32_t reserved;     // Keep structure 16-byte aligned
+} s32_mmio_args_info_t;
+#pragma pack(pop)
+
+#define S32_MMIO_ARGS_FLAG_ENVP 0x00000001u  // Placeholder for future envp support
+
+#define S32_MMIO_ARGS_MAX_BYTES (64u * 1024u)  // Safety cap for argv blob transfers
+
 
 #endif // S32_MMIO_RING_LAYOUT_H

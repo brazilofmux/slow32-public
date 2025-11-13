@@ -44,6 +44,11 @@ typedef struct {
     // Statistics
     uint64_t total_requests;
     uint64_t total_responses;
+
+    // Cached host argument data
+    uint32_t args_argc;
+    uint32_t args_total_bytes;
+    uint8_t *args_blob;
 } mmio_ring_state_t;
 
 // Common MMIO configuration shared by both emulators
@@ -90,5 +95,12 @@ static inline bool ring_empty(uint32_t head, uint32_t tail) {
 static inline uint32_t ring_next(uint32_t index) {
     return (index + 1u) % S32_MMIO_RING_ENTRIES;
 }
+
+// Argument management helpers
+int mmio_ring_set_args(mmio_ring_state_t *mmio,
+                       uint32_t argc,
+                       char *const *argv);
+
+void mmio_ring_clear_args(mmio_ring_state_t *mmio);
 
 #endif // MMIO_RING_H

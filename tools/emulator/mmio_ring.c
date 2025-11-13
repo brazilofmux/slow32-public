@@ -6,6 +6,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <limits.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -40,6 +41,10 @@ void mmio_ring_init(mmio_ring_state_t *mmio, uint32_t heap_base, uint32_t heap_s
     // Initialize heap
     mmio->brk_current = heap_base;
     mmio->brk_max = heap_base + heap_size;
+
+    mmio->args_blob = NULL;
+    mmio->args_argc = 0;
+    mmio->args_total_bytes = 0;
 }
 
 // Map MMIO memory region (returns host pointer to MMIO base)
@@ -66,6 +71,66 @@ void* mmio_ring_map(mmio_ring_state_t *mmio) {
     memset(mmio->resp_ring, 0, S32_MMIO_RING_ENTRIES * S32_MMIO_DESC_BYTES);
     
     return mmio_mem;
+}
+
+void mmio_ring_clear_args(mmio_ring_state_t *mmio) {
+    if (!mmio) {
+        return;
+    }
+    free(mmio->args_blob);
+    mmio->args_blob = NULL;
+    mmio->args_argc = 0;
+    mmio->args_total_bytes = 0;
+}
+
+int mmio_ring_set_args(mmio_ring_state_t *mmio,
+                       uint32_t argc,
+                       char *const *argv) {
+    if (!mmio) {
+        return -1;
+    }
+
+    mmio_ring_clear_args(mmio);
+
+    if (argc == 0 || argv == NULL) {
+        return 0;
+    }
+
+    uint64_t total_bytes = 0;
+    for (uint32_t i = 0; i < argc; ++i) {
+        const char *arg = argv[i] ? argv[i] : "";
+        size_t len = strlen(arg) + 1u;
+        total_bytes += len;
+        if (total_bytes > S32_MMIO_ARGS_MAX_BYTES || total_bytes > UINT32_MAX) {
+            mmio_ring_clear_args(mmio);
+            return -1;
+        }
+    }
+
+    if (total_bytes == 0) {
+        mmio->args_argc = argc;
+        mmio->args_total_bytes = 0;
+        return 0;
+    }
+
+    uint8_t *blob = (uint8_t *)malloc((size_t)total_bytes);
+    if (!blob) {
+        mmio_ring_clear_args(mmio);
+        return -1;
+    }
+
+    size_t offset = 0;
+    for (uint32_t i = 0; i < argc; ++i) {
+        const char *arg = argv[i] ? argv[i] : "";
+        size_t len = strlen(arg) + 1u;
+        memcpy(blob + offset, arg, len);
+        offset += len;
+    }
+
+    mmio->args_blob = blob;
+    mmio->args_argc = argc;
+    mmio->args_total_bytes = (uint32_t)total_bytes;
+    return 0;
 }
 
 // MMIO read handler
@@ -424,6 +489,82 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             s32_mmio_timepair64_t remainder = {0u, 0u, 0u, 0u};
             memcpy(mmio->data_buffer + offset, &remainder, sizeof(remainder));
             resp.length = sizeof(s32_mmio_timepair64_t);
+            resp.status = S32_MMIO_STATUS_OK;
+            break;
+        }
+
+        case S32_MMIO_OP_ARGS_INFO: {
+            if (req->length < sizeof(s32_mmio_args_info_t)) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (offset > (S32_MMIO_DATA_CAPACITY - sizeof(s32_mmio_args_info_t))) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            s32_mmio_args_info_t info = {
+                .argc = mmio->args_argc,
+                .total_bytes = mmio->args_total_bytes,
+                .flags = (mmio->args_total_bytes > 0) ? 0u : 0u,
+                .reserved = 0u,
+            };
+
+            memcpy(mmio->data_buffer + offset, &info, sizeof(info));
+            resp.length = sizeof(info);
+            resp.status = S32_MMIO_STATUS_OK;
+            break;
+        }
+
+        case S32_MMIO_OP_ARGS_DATA: {
+            if (req->length == 0) {
+                resp.length = 0;
+                resp.status = S32_MMIO_STATUS_OK;
+                break;
+            }
+
+            if (req->length > S32_MMIO_DATA_CAPACITY) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t dest = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (dest > (S32_MMIO_DATA_CAPACITY - req->length)) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t source_offset = req->status;
+            if (source_offset > mmio->args_total_bytes) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t remaining = mmio->args_total_bytes - source_offset;
+            uint32_t to_copy = req->length;
+            if (to_copy > remaining) {
+                to_copy = remaining;
+            }
+
+            if (to_copy > 0) {
+                if (!mmio->args_blob) {
+                    resp.status = S32_MMIO_STATUS_ERR;
+                    resp.length = 0;
+                    break;
+                }
+                memcpy(mmio->data_buffer + dest,
+                       mmio->args_blob + source_offset,
+                       to_copy);
+            }
+
+            resp.length = to_copy;
             resp.status = S32_MMIO_STATUS_OK;
             break;
         }

@@ -95,6 +95,7 @@ static void cpu_init_mmio(fast_cpu_state_t *cpu) {
     cpu->mmio.mem = mmio_ring_map(cpu->mmio.state);
     if (!cpu->mmio.mem) {
         fprintf(stderr, "Failed to map MMIO memory\n");
+        mmio_ring_clear_args(cpu->mmio.state);
         free(cpu->mmio.state);
         cpu->mmio.state = NULL;
         cpu->mmio.enabled = false;
@@ -108,6 +109,7 @@ static void cpu_init_mmio(fast_cpu_state_t *cpu) {
         fprintf(stderr, "Failed to allocate MMIO region\n");
         munmap(cpu->mmio.mem, S32_MMIO_WINDOW_SIZE);
         cpu->mmio.mem = NULL;
+        mmio_ring_clear_args(cpu->mmio.state);
         free(cpu->mmio.state);
         cpu->mmio.state = NULL;
         cpu->mmio.enabled = false;
@@ -806,13 +808,16 @@ static inline void cpu_step_fast(fast_cpu_state_t *cpu) {
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <binary>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <binary> [-- <args...>]\n", argv[0]);
         return 1;
     }
     
     fast_cpu_state_t cpu = {0};
     mm_init(&cpu.mm, false);  // Initialize memory manager
     
+    int guest_argc = argc - 1;
+    char **guest_argv = &argv[1];
+
     // First pass: load header to get memory layout
     FILE *file = fopen(argv[1], "rb");
     if (!file) {
@@ -935,6 +940,26 @@ int main(int argc, char **argv) {
         cpu_init_mmio(&cpu);
     }
 
+    if (cpu.mmio.enabled && cpu.mmio.state) {
+        if (mmio_ring_set_args(cpu.mmio.state, (uint32_t)guest_argc, guest_argv) != 0) {
+            fprintf(stderr, "Error: unable to stage guest arguments (too many bytes?)\n");
+            if (cpu.mmio.mem) {
+                munmap(cpu.mmio.mem, S32_MMIO_WINDOW_SIZE);
+                cpu.mmio.mem = NULL;
+            }
+            if (cpu.mmio.state) {
+                mmio_ring_clear_args(cpu.mmio.state);
+                free(cpu.mmio.state);
+                cpu.mmio.state = NULL;
+            }
+            free(cpu.decoded_code);
+            mm_destroy(&cpu.mm);
+            return 1;
+        }
+    } else if (guest_argc > 1) {
+        fprintf(stderr, "Warning: guest arguments ignored because MMIO is disabled.\n");
+    }
+
     predecode_program(&cpu, lr.code_limit);
     
     // Time the execution
@@ -978,6 +1003,7 @@ int main(int argc, char **argv) {
         munmap(cpu.mmio.mem, S32_MMIO_WINDOW_SIZE);
     }
     if (cpu.mmio.state) {
+        mmio_ring_clear_args(cpu.mmio.state);
         free(cpu.mmio.state);
     }
     free(cpu.decoded_code);

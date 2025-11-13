@@ -46,6 +46,7 @@ static void cpu_init_mmio(cpu_state_mmio_t *cpu_ext, bool enable_mmio) {
         if (!cpu_ext->mmio_mem) {
             fprintf(stderr, "Failed to map MMIO memory\n");
             cpu_ext->mmio_enabled = false;
+            mmio_ring_clear_args(&cpu_ext->mmio);
             return;
         }
         
@@ -57,6 +58,7 @@ static void cpu_init_mmio(cpu_state_mmio_t *cpu_ext, bool enable_mmio) {
         if (!mmio_region) {
             munmap(cpu_ext->mmio_mem, 0x10000);
             cpu_ext->mmio_enabled = false;
+            mmio_ring_clear_args(&cpu_ext->mmio);
             return;
         }
         
@@ -152,7 +154,7 @@ int main(int argc, char *argv[]) {
                 verbose = true;
                 break;
             case 'h':
-                printf("Usage: %s [-m] [-v] program.s32x\n", argv[0]);
+                printf("Usage: %s [-m] [-v] program.s32x [-- <args...>]\n", argv[0]);
                 printf("  -m  Enable MMIO ring buffers\n");
                 printf("  -v  Verbose output\n");
                 return 0;
@@ -168,6 +170,8 @@ int main(int argc, char *argv[]) {
     }
     
     filename = argv[optind];
+    int guest_argc = argc - optind;
+    char **guest_argv = &argv[optind];
     
     // Initialize CPU with optional MMIO
     cpu_init_mmio(&cpu_ext, enable_mmio);
@@ -180,6 +184,21 @@ int main(int argc, char *argv[]) {
     if (!cpu_load_binary(&cpu_ext.cpu, filename)) {
         fprintf(stderr, "Failed to load program\n");
         return 1;
+    }
+
+    if (cpu_ext.mmio_enabled) {
+        if (mmio_ring_set_args(&cpu_ext.mmio, (uint32_t)guest_argc, guest_argv) != 0) {
+            fprintf(stderr, "Error: unable to stage guest arguments (too many bytes?)\n");
+            if (cpu_ext.mmio_mem) {
+                munmap(cpu_ext.mmio_mem, 0x10000);
+                cpu_ext.mmio_mem = NULL;
+            }
+            mmio_ring_clear_args(&cpu_ext.mmio);
+            cpu_destroy(&cpu_ext.cpu);
+            return 1;
+        }
+    } else if (guest_argc > 1) {
+        fprintf(stderr, "Warning: guest arguments ignored because MMIO is disabled.\n");
     }
     
     // Run program
@@ -219,7 +238,9 @@ int main(int argc, char *argv[]) {
     // Cleanup
     if (cpu_ext.mmio_mem) {
         munmap(cpu_ext.mmio_mem, 0x10000);
+        cpu_ext.mmio_mem = NULL;
     }
+    mmio_ring_clear_args(&cpu_ext.mmio);
     cpu_destroy(&cpu_ext.cpu);
     
     return 0;

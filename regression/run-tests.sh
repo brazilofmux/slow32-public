@@ -20,6 +20,7 @@ EMULATOR="$SLOW32_BASE/tools/emulator/slow32"
 # Runtime components
 CRT0="$SLOW32_BASE/runtime/crt0.s32o"
 LIBC_DEBUG="$SLOW32_BASE/runtime/libc_debug.s32a"
+LIBC_MMIO="$SLOW32_BASE/runtime/libc_mmio.s32a"
 LIBS32="$SLOW32_BASE/runtime/libs32.s32a"
 
 # Test configuration
@@ -64,6 +65,18 @@ run_test() {
     
     mkdir -p "$result_path"
     
+    # Determine runtime variant
+    local use_mmio=0
+    if [ -f "$test_path/use_mmio" ]; then
+        use_mmio=1
+    fi
+
+    # Optional command-line arguments
+    local run_args=()
+    if [ -f "$test_path/args.txt" ]; then
+        mapfile -t run_args < "$test_path/args.txt"
+    fi
+
     # Compile: C -> LLVM IR (with our runtime includes)
     if ! $CLANG -target slow32-unknown-none -S -emit-llvm -O0 \
          -I"$SLOW32_BASE/runtime/include" \
@@ -90,8 +103,16 @@ run_test() {
     fi
     
     # Link: OBJ -> EXE (with proper libraries)
+    local libc_archive="$LIBC_DEBUG"
+    local linker_args=()
+    if [ $use_mmio -eq 1 ]; then
+        libc_archive="$LIBC_MMIO"
+        linker_args+=(--mmio 64K)
+    fi
+
     if ! $LINKER -o "$result_path/test.s32x" \
-         $CRT0 "$result_path/test.s32o" $LIBC_DEBUG $LIBS32 \
+         "${linker_args[@]}" \
+         $CRT0 "$result_path/test.s32o" "$libc_archive" $LIBS32 \
          2>"$result_path/link.err"; then
         echo -e "${RED}FAIL${NC} (link)"
         FAILED=$((FAILED + 1))
@@ -99,11 +120,15 @@ run_test() {
     fi
     
     # Run with timeout
-    if timeout $TIMEOUT $EMULATOR "$result_path/test.s32x" \
+    if timeout $TIMEOUT $EMULATOR "$result_path/test.s32x" "${run_args[@]}" \
          >"$result_path/output_full.txt" 2>&1; then
-        # Extract actual output (between "Starting execution" and "HALT")
-        sed -n '/^Starting execution/,/^HALT at PC/{/^Starting execution/d;/^HALT at PC/d;p}' \
-            "$result_path/output_full.txt" > "$result_path/output.txt"
+        # Extract guest program output between "Starting execution" and the runtime summary
+        awk '
+            /^Starting execution/ { capture=1; next }
+            /^HALT at PC/ { capture=0 }
+            /^Program halted\./ { capture=0 }
+            capture { print }
+        ' "$result_path/output_full.txt" > "$result_path/output.txt"
         
         # Check expected output (strip trailing whitespace/newlines for comparison)
         if [ -f "$test_path/expected.txt" ]; then

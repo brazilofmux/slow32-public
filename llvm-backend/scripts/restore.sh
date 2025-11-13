@@ -27,14 +27,5 @@ rsync -av \
     "$BACKEND_DIR/clang/SLOW32."* \
     ~/llvm-project/clang/lib/Basic/Targets/
 
-# Restore the LLVM test files
-if [ -d "$BACKEND_DIR/test" ]; then
-    echo "Restoring SLOW32 test files..."
-    mkdir -p ~/llvm-project/llvm/test/CodeGen/SLOW32
-    rsync -av --delete \
-        "$BACKEND_DIR/test/" \
-        ~/llvm-project/llvm/test/CodeGen/SLOW32/
-fi
-
 echo "Restore complete!"
 echo "Remember to rebuild LLVM after restoring."

@@ -79,9 +79,89 @@ Because SLOW32 only has 32-bit `mul`/`mulh` implemented via software splitting (
 - Added `llvm/test/CodeGen/SLOW32/umul-lohi.ll` to pin the new lowering strategy so future tweaks cannot drop those carries silently.
 - Rebuilt the toolchain and reran the original `test_i64_div.c` repro through the assembler/linker/emulator pipeline; the program now prints the expected `18446744073709551615`.
 
+## New Regression (2025-03-04)
+Although constant divisors now behave correctly when the compiler expands them itself, directly calling the runtime libcalls still produces corrupt high halves:
+
+```c
+#include <stdint.h>
+#include <stdio.h>
+
+extern uint64_t __udivdi3(uint64_t, uint64_t);
+extern uint64_t __umoddi3(uint64_t, uint64_t);
+
+int main(void) {
+    uint64_t value = 1234ULL;
+    uint64_t q = __udivdi3(value, 10ULL);
+    uint64_t r = __umoddi3(value, 10ULL);
+    printf("q=%llu r=%llu\n", (unsigned long long)q, (unsigned long long)r);
+    return 0;
+}
+```
+
+Build and run with the `slow32cc` driver:
+
+```bash
+./slow32cc test_small_div.c -O2 -o test_small_div.s32x
+tools/emulator/slow32 test_small_div.s32x
+```
+
+Observed output:
+
+```
+q=4294967419 r=4
+```
+
+Expected output:
+
+```
+q=123 r=4
+```
+
+The remainder is correct but the upper 32 bits of the quotient are garbage (here `0x00000001`). Any formatting code that inspects the high word—such as the `%llu` converter—believes the quotient is still ≥2³² and keeps iterating, producing the `491322686312992511615` string discovered while testing the restored division-based formatter.
+
+**Hypothesis:** the backend never zero-extends the high 32-bit register when returning from the `__udivdi3` libcall. The handwritten long-division logic in `runtime/builtins.c` only ever writes the low word once the quotient drops below 2³², leaving the return register pair `(r2:r1)` with an old high value. When clang synthesizes division-by-constant loops it does not emit the libcall, so the issue only shows up when code explicitly calls `__udivdi3`/`__umoddi3`.
+
+## Fix (2025-03-05)
+- Reworked the runtime’s `__udivdi3` so the quotient is accumulated via explicit 32-bit halves instead of relying on `uint64_t` bit shifts (`slow-32/runtime/builtins.c`). Each loop iteration now toggles either the low or high word directly, which guarantees that the callee clears `r2` whenever the true result fits in 32 bits.
+- Rebuilt `libs32.s32a` and reran the failing repros with the existing `test_small_div.c` sample plus the union-based sanity check below (`./slow32cc <file>.c -O2 -o <file>.s32x && tools/emulator/slow32 <file>.s32x`).
+- Both programs now report `hi=0` and `q=123 r=4`, so direct libcalls line up with the constant-division expansion again.
+
+The extra sanity harness used to observe the raw register halves:
+
+```c
+#include <stdint.h>
+#include <stdio.h>
+
+extern uint64_t __udivdi3(uint64_t, uint64_t);
+
+int main(void) {
+    union {
+        uint64_t ll;
+        struct {
+            uint32_t lo;
+            uint32_t hi;
+        } parts;
+    } q = {0};
+
+    q.ll = __udivdi3(1234ULL, 10ULL);
+    printf("lo=%u hi=%u\n", q.parts.lo, q.parts.hi);
+    return 0;
+}
+```
+
+## Formatter Follow-up (2025-03-05)
+- `runtime/printf_enhanced.c` now routes `%llu` through the standard `__udivdi3`/`__umoddi3` helpers again. The converter processes the number in base-100 chunks so it still leverages the `Digits100` table without needing the temporary double-dabble BCD buffer.
+- The shared `udivmoddi3_core` helper drives both `__udivdi3` (for quotients) and `__umoddi3` (which now derives the remainder as `n - q * d`), so the libcall pair always agrees on the high word before handing results back to the caller.
+- Rebuilt both libc variants and verified that printing `18446744073709551615ULL` via `printf("value=%llu\n", v);` produces the expected decimal string under the emulator using the current toolchain. A new regression (`regression/tests/feature-printf-llu`) covers this end-to-end.
+
+**Next steps:**
+
+1. Landed `llvm/test/CodeGen/SLOW32/udiv-libcall.ll`, which issues an explicit `@__udivdi3` call and verifies the caller copies both halves of the returned quotient (guarding the ABI contract).
+2. Monitor downstream consumers to ensure the reinstated `%llu` path covers their needs; add more printf regression tests if issues pop up.
+
 ## Workarounds
-- Avoid emitting `/` or `%` on 64-bit values in the runtime. `runtime/printf_enhanced.c` currently uses a double-dabble converter for `%llu` to stay clear of the miscompiled path.
-- Manually call `__udivdi3`/`__umoddi3` from C and mark them `__attribute__((used))` so LLVM cannot strength-reduce the operation (not practical for general code).
+- Older toolchain drops should keep the double-dabble `%llu` path if they cannot pick up the updated backend/runtime pair; current builds no longer require it.
+- Manually call `__udivdi3`/`__umoddi3` from C and mark them `__attribute__((used))` if you must stay on an older compiler where constant-folding still tries to synthesize division sequences.
 
 ## Next Steps for the LLVM Backend
 - ✅ Preserve correctness in the custom multiply-high lowering used by constant-division (done via the new `UMUL_LOHI` expansion).

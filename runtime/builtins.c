@@ -41,16 +41,18 @@ uint32_t __umodsi3(uint32_t n, uint32_t d) {
 #define S32_NO_OPT
 #endif
 
-// 64-bit unsigned division
-uint64_t __udivdi3(uint64_t n, uint64_t d) S32_NO_OPT;
-uint64_t __udivdi3(uint64_t n, uint64_t d) {
+static uint64_t udivmoddi3_core(uint64_t n, uint64_t d, uint64_t *rem) {
     if (d == 0) {
         // Division by zero - return max value
+        if (rem)
+            *rem = n;
         return ~0ULL;
     }
     
     // Special case: dividend < divisor
     if (n < d) {
+        if (rem)
+            *rem = n;
         return 0;
     }
     
@@ -63,22 +65,38 @@ uint64_t __udivdi3(uint64_t n, uint64_t d) {
             temp >>= 1;
             shift++;
         }
+        if (rem)
+            *rem = n & (d - 1);
         return n >> shift;
     }
     
     // Long division algorithm
-    uint64_t quotient = 0;
+    du_int quotient_parts;
+    quotient_parts.ll = 0;
     uint64_t remainder = 0;
     
     for (int i = 63; i >= 0; i--) {
         remainder = (remainder << 1) | ((n >> i) & 1);
         if (remainder >= d) {
             remainder -= d;
-            quotient |= (1ULL << i);
+            unsigned bit = (unsigned)i;
+            if (bit >= 32) {
+                quotient_parts.s.hi |= ((uint32_t)1u) << (bit - 32);
+            } else {
+                quotient_parts.s.lo |= ((uint32_t)1u) << bit;
+            }
         }
     }
     
-    return quotient;
+    if (rem)
+        *rem = remainder;
+    return quotient_parts.ll;
+}
+
+// 64-bit unsigned division
+uint64_t __udivdi3(uint64_t n, uint64_t d) S32_NO_OPT;
+uint64_t __udivdi3(uint64_t n, uint64_t d) {
+    return udivmoddi3_core(n, d, 0);
 }
 
 // 64-bit signed division
@@ -107,31 +125,12 @@ int64_t __divdi3(int64_t n, int64_t d) {
 uint64_t __umoddi3(uint64_t n, uint64_t d) S32_NO_OPT;
 uint64_t __umoddi3(uint64_t n, uint64_t d) {
     if (d == 0) {
-        // Division by zero - return dividend
+        // Match compiler-rt semantics: modulo by zero yields the dividend.
         return n;
     }
-    
-    // Special case: dividend < divisor
-    if (n < d) {
-        return n;
-    }
-    
-    // Special case: divisor is power of 2
-    if ((d & (d - 1)) == 0) {
-        return n & (d - 1);
-    }
-    
-    // Long division algorithm to get remainder
-    uint64_t remainder = 0;
-    
-    for (int i = 63; i >= 0; i--) {
-        remainder = (remainder << 1) | ((n >> i) & 1);
-        if (remainder >= d) {
-            remainder -= d;
-        }
-    }
-    
-    return remainder;
+
+    uint64_t quotient = __udivdi3(n, d);
+    return n - (quotient * d);
 }
 
 // 64-bit signed modulo

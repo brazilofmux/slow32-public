@@ -13,6 +13,7 @@
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/RegisterScavenging.h"
+#include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
@@ -141,9 +142,8 @@ unsigned getInvertedLongBranchOpcode(unsigned Opcode) {
 } // namespace
 
 SLOW32InstrInfo::SLOW32InstrInfo(const SLOW32Subtarget &STI)
-    : SLOW32GenInstrInfo(STI, *STI.getRegisterInfo(), SLOW32::ADJCALLSTACKDOWN,
-                         SLOW32::ADJCALLSTACKUP, /*CatchRetOpcode=*/0,
-                         /*ReturnOpcode=*/0),
+    : SLOW32GenInstrInfo(STI, SLOW32::ADJCALLSTACKDOWN, SLOW32::ADJCALLSTACKUP,
+                         /*CatchRetOpcode=*/0, /*ReturnOpcode=*/0),
       STI(STI) {}
 
 void SLOW32InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
@@ -163,6 +163,7 @@ void SLOW32InstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
                                           Register SrcReg, bool isKill,
                                           int FrameIndex,
                                           const TargetRegisterClass *RC,
+                                          const TargetRegisterInfo *TRI,
                                           Register VReg,
                                           MachineInstr::MIFlag Flags) const {
   DebugLoc DL;
@@ -177,8 +178,10 @@ void SLOW32InstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
 
 void SLOW32InstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
                                            MachineBasicBlock::iterator I,
-                                           Register DestReg, int FrameIndex,
+                                           Register DestReg,
+                                           int FrameIndex,
                                            const TargetRegisterClass *RC,
+                                           const TargetRegisterInfo *TRI,
                                            Register VReg,
                                            MachineInstr::MIFlag Flags) const {
   DebugLoc DL;

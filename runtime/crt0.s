@@ -11,8 +11,8 @@ _start:
     # Clear frame pointer
     add  fp, r0, r0
     
-    # Call main
-    jal  main
+    # Call runtime entry point that fetches argc/argv and calls main
+    jal  __slow32_start
     
-    # Exit - just halt after main returns
+    # Fallback halt if __slow32_start ever returns
     halt

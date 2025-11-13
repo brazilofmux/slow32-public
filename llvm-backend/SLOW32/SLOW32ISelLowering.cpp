@@ -211,11 +211,20 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   setLibcallImpl(RTLIB::UDIV_I32, RTLIB::impl___udivsi3);
   setLibcallImpl(RTLIB::UREM_I32, RTLIB::impl___umodsi3);
 
+  // All of these helpers follow the plain C calling convention.
+  for (RTLIB::LibcallImpl Impl : {RTLIB::impl___divdi3, RTLIB::impl___udivdi3,
+                                  RTLIB::impl___moddi3, RTLIB::impl___umoddi3,
+                                  RTLIB::impl___udivsi3, RTLIB::impl___umodsi3}) {
+    setLibcallImplCallingConv(Impl, CallingConv::C);
+  }
+
   // The runtime ships native C implementations of the basic memory helpers.
   setLibcallImpl(RTLIB::MEMCPY, RTLIB::impl_memcpy);
   setLibcallImpl(RTLIB::MEMMOVE, RTLIB::impl_memmove);
   setLibcallImpl(RTLIB::MEMSET, RTLIB::impl_memset);
-
+  for (RTLIB::LibcallImpl Impl : {RTLIB::impl_memcpy, RTLIB::impl_memmove,
+                                  RTLIB::impl_memset})
+    setLibcallImplCallingConv(Impl, CallingConv::C);
   // These will use our shift-parts implementation
   setOperationAction(ISD::SHL, MVT::i64, Custom);
   setOperationAction(ISD::SRA, MVT::i64, Custom);
@@ -1688,56 +1697,53 @@ SDValue SLOW32TargetLowering::LowerUSUBO_CARRY(SDValue Op, SelectionDAG &DAG) co
 // Lower unsigned 32x32->64 multiply (returns both low and high parts)
 // Since SLOW32 doesn't have a multiply-high instruction, we decompose
 // into 16-bit multiplies following ChatGPT 5's approach B
-SDValue SLOW32TargetLowering::LowerUMUL_LOHI(SDValue Op,
-                                             SelectionDAG &DAG) const {
+SDValue SLOW32TargetLowering::LowerUMUL_LOHI(SDValue Op, SelectionDAG &DAG) const {
   SDLoc DL(Op);
   SDValue A = Op.getOperand(0);
   SDValue B = Op.getOperand(1);
   EVT VT = MVT::i32;
-
+  
+  // Split each 32-bit value into 16-bit halves
   SDValue Mask16 = DAG.getConstant(0xFFFF, DL, VT);
-  SDValue Shift16 = DAG.getConstant(16, DL, VT);
-
-  // Split the operands into 16-bit halves so we can accumulate the partial
-  // products explicitly.  This avoids relying on a non-existent mulh instruction
-  // and gives us precise control over the carries.
+  SDValue Sixteen = DAG.getConstant(16, DL, VT);
+  
+  // A = (AH << 16) | AL
   SDValue AL = DAG.getNode(ISD::AND, DL, VT, A, Mask16);
-  SDValue AH = DAG.getNode(ISD::SRL, DL, VT, A, Shift16);
+  SDValue AH = DAG.getNode(ISD::SRL, DL, VT, A, Sixteen);
+  
+  // B = (BH << 16) | BL
   SDValue BL = DAG.getNode(ISD::AND, DL, VT, B, Mask16);
-  SDValue BH = DAG.getNode(ISD::SRL, DL, VT, B, Shift16);
-
-  SDValue P0 = DAG.getNode(ISD::MUL, DL, VT, AL, BL); // AL * BL
-  SDValue P1 = DAG.getNode(ISD::MUL, DL, VT, AL, BH); // AL * BH
-  SDValue P2 = DAG.getNode(ISD::MUL, DL, VT, AH, BL); // AH * BL
-  SDValue P3 = DAG.getNode(ISD::MUL, DL, VT, AH, BH); // AH * BH
-
-  auto getLowHalf = [&](SDValue Value) {
-    return DAG.getNode(ISD::AND, DL, VT, Value, Mask16);
-  };
-  auto getHighHalf = [&](SDValue Value) {
-    return DAG.getNode(ISD::SRL, DL, VT, Value, Shift16);
-  };
-
-  SDValue P0Lo = getLowHalf(P0);
-  SDValue P0Hi = getHighHalf(P0);
-  SDValue P1Lo = getLowHalf(P1);
-  SDValue P1Hi = getHighHalf(P1);
-  SDValue P2Lo = getLowHalf(P2);
-  SDValue P2Hi = getHighHalf(P2);
-
-  // Combine the cross terms and propagate the carry from the low half.
-  SDValue Mid = DAG.getNode(ISD::ADD, DL, VT, P1Lo, P2Lo);
-  Mid = DAG.getNode(ISD::ADD, DL, VT, Mid, P0Hi);
-
-  SDValue MidLo = getLowHalf(Mid);
-  SDValue MidCarry = getHighHalf(Mid);
-  SDValue MidLoShifted = DAG.getNode(ISD::SHL, DL, VT, MidLo, Shift16);
+  SDValue BH = DAG.getNode(ISD::SRL, DL, VT, B, Sixteen);
+  
+  // Compute four 16x16->32 products
+  SDValue P0 = DAG.getNode(ISD::MUL, DL, VT, AL, BL);  // AL * BL
+  SDValue P1 = DAG.getNode(ISD::MUL, DL, VT, AL, BH);  // AL * BH
+  SDValue P2 = DAG.getNode(ISD::MUL, DL, VT, AH, BL);  // AH * BL
+  SDValue P3 = DAG.getNode(ISD::MUL, DL, VT, AH, BH);  // AH * BH
+  
+  // Now we need to combine:
+  // Result = P0 + (P1 << 16) + (P2 << 16) + (P3 << 32)
+  
+  // Low 32 bits: P0_low + ((P1 + P2) << 16)_low
+  // High 32 bits: P3 + P0_high + ((P1 + P2) << 16)_high + ((P1 + P2) >> 16)
+  
+  // First, compute P1 + P2
+  SDValue Mid = DAG.getNode(ISD::ADD, DL, VT, P1, P2);
+  
+  // Add the middle part to P0's high 16 bits
+  SDValue P0Hi = DAG.getNode(ISD::SRL, DL, VT, P0, Sixteen);
+  SDValue MidPlusP0Hi = DAG.getNode(ISD::ADD, DL, VT, Mid, P0Hi);
+  
+  // Low result: (P0 & 0xFFFF) | ((MidPlusP0Hi & 0xFFFF) << 16)
+  SDValue P0Lo = DAG.getNode(ISD::AND, DL, VT, P0, Mask16);
+  SDValue MidLo = DAG.getNode(ISD::AND, DL, VT, MidPlusP0Hi, Mask16);
+  SDValue MidLoShifted = DAG.getNode(ISD::SHL, DL, VT, MidLo, Sixteen);
   SDValue Lo = DAG.getNode(ISD::OR, DL, VT, P0Lo, MidLoShifted);
-
-  SDValue Hi = DAG.getNode(ISD::ADD, DL, VT, P3, P1Hi);
-  Hi = DAG.getNode(ISD::ADD, DL, VT, Hi, P2Hi);
-  Hi = DAG.getNode(ISD::ADD, DL, VT, Hi, MidCarry);
-
+  
+  // High result: P3 + (MidPlusP0Hi >> 16)
+  SDValue MidHi = DAG.getNode(ISD::SRL, DL, VT, MidPlusP0Hi, Sixteen);
+  SDValue Hi = DAG.getNode(ISD::ADD, DL, VT, P3, MidHi);
+  
   return DAG.getMergeValues({Lo, Hi}, DL);
 }
 

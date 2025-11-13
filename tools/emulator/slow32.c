@@ -39,6 +39,7 @@ static void cpu_init_mmio(cpu_state_t *cpu) {
     cpu->mmio.mem = mmio_ring_map(cpu->mmio.state);
     if (!cpu->mmio.mem) {
         fprintf(stderr, "Failed to map MMIO memory\n");
+        mmio_ring_clear_args(cpu->mmio.state);
         free(cpu->mmio.state);
         cpu->mmio.state = NULL;
         cpu->mmio.enabled = false;
@@ -52,6 +53,7 @@ static void cpu_init_mmio(cpu_state_t *cpu) {
                                                       PROT_READ | PROT_WRITE);
     if (!mmio_region) {
         munmap(cpu->mmio.mem, 0x10000);
+        mmio_ring_clear_args(cpu->mmio.state);
         free(cpu->mmio.state);
         cpu->mmio.state = NULL;
         cpu->mmio.mem = NULL;
@@ -179,6 +181,7 @@ void cpu_destroy(cpu_state_t *cpu) {
         cpu->mmio.mem = NULL;
     }
     if (cpu->mmio.state) {
+        mmio_ring_clear_args(cpu->mmio.state);
         free(cpu->mmio.state);
         cpu->mmio.state = NULL;
     }
@@ -799,7 +802,7 @@ void cpu_run(cpu_state_t *cpu) {
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <program.s32x> [options]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [options] <program.s32x> [-- <args...>]\n", argv[0]);
         fprintf(stderr, "Options:\n");
         fprintf(stderr, "  -s              Step mode\n");
         fprintf(stderr, "  -t              Trace instructions\n");
@@ -854,9 +857,27 @@ int main(int argc, char *argv[]) {
     }
     
     // Load program
+    if (optind >= argc) {
+        fprintf(stderr, "Error: missing program path\n");
+        cpu_destroy(&cpu);
+        return 1;
+    }
+
     if (!cpu_load_binary(&cpu, argv[optind])) {
         cpu_destroy(&cpu);
         return 1;
+    }
+
+    int guest_argc = argc - optind;
+    char **guest_argv = &argv[optind];
+    if (cpu.mmio.enabled && cpu.mmio.state) {
+        if (mmio_ring_set_args(cpu.mmio.state, (uint32_t)guest_argc, guest_argv) != 0) {
+            fprintf(stderr, "Error: unable to stage guest arguments (too many bytes?)\n");
+            cpu_destroy(&cpu);
+            return 1;
+        }
+    } else if (guest_argc > 1) {
+        fprintf(stderr, "Warning: guest arguments ignored because MMIO is disabled.\n");
     }
     
     // Run program
