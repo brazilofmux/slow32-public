@@ -179,16 +179,16 @@ int main() {
 
 ## Current Status
 
-✅ **Complete toolchain** - C → LLVM IR → Assembly → Object → Linked Executable
-✅ **Native Clang target** - `-target slow32-unknown-none` (single dash)
-✅ **All optimization levels** - -O0, -O1, -O2 fully working
-✅ **CPU emulator** - ~350M instructions/second with W^X protection
-✅ **Assembler** - Two-pass with labels, relocations, standard directives
-✅ **Linker** - Symbol resolution, HI20/LO12 relocations, proper archives
-✅ **LLVM backend** - PHI nodes, intrinsics, varargs, jump tables, 64-bit integers
-✅ **Runtime** - crt0, printf with varargs, memcpy/memset, 64-bit builtins
-✅ **Regression tests** - All 14/14 passing
-✅ **Tools** - objdump for object files, exedump for executables  
+- ✅ **Complete toolchain** - C → LLVM IR → Assembly → Object → Linked Executable
+- ✅ **Native Clang target** - `-target slow32-unknown-none` (single dash)
+- ✅ **All optimization levels** - -O0, -O1, -O2 fully working
+- ✅ **CPU emulator** - ~350M instructions/second with W^X protection
+- ✅ **Assembler** - Two-pass with labels, relocations, standard directives
+- ✅ **Linker** - Symbol resolution, HI20/LO12 relocations, proper archives
+- ✅ **LLVM backend** - PHI nodes, intrinsics, varargs, jump tables, 64-bit integers
+- ✅ **Runtime** - crt0, printf with varargs, memcpy/memset, 64-bit builtins
+- ✅ **Regression tests** - All 14/14 passing
+- ✅ **Tools** - objdump for object files, exedump for executables  
 
 ## Known Limitations
 
