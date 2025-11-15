@@ -1,0 +1,12 @@
+diff --git a/include/system/arch_init.h b/include/system/arch_init.h
+index 51e24c3091..16501051f0 100644
+--- a/include/system/arch_init.h
++++ b/include/system/arch_init.h
+@@ -23,6 +23,7 @@ enum {
+     QEMU_ARCH_AVR = (1 << 21),
+     QEMU_ARCH_HEXAGON = (1 << 22),
+     QEMU_ARCH_LOONGARCH = (1 << 23),
++    QEMU_ARCH_SLOW32 = (1 << 24),
+ };
+ 
+ bool qemu_arch_available(unsigned qemu_arch_mask);

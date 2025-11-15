@@ -1,0 +1,15 @@
+diff --git a/README.rst b/README.rst
+index b120a1f69e..1d13e3f89e 100644
+--- a/README.rst
++++ b/README.rst
+@@ -41,6 +41,10 @@ current development version that is available at
+ folder in the source tree, and is built by `Sphinx
+ <https://www.sphinx-doc.org/en/master/>`_.
+ 
++Slow32-specific design notes for the in-tree private toolchain live under
++``docs/slow32-tcg/`` (see ``overview.md`` and ``todo.md``) alongside the
++top-level ``AGENTS.md`` guidance.
++
+ 
+ Building
+ ========

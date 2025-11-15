@@ -1,0 +1,24 @@
+diff --git a/target/Kconfig b/target/Kconfig
+index d0c7b59d9c..e1af341863 100644
+--- a/target/Kconfig
++++ b/target/Kconfig
+@@ -8,6 +8,7 @@ source m68k/Kconfig
+ source microblaze/Kconfig
+ source mips/Kconfig
+ source openrisc/Kconfig
++source slow32/Kconfig
+ source ppc/Kconfig
+ source riscv/Kconfig
+ source rx/Kconfig
+diff --git a/target/meson.build b/target/meson.build
+index b29598e7c5..242b08a1a3 100644
+--- a/target/meson.build
++++ b/target/meson.build
+@@ -9,6 +9,7 @@ subdir('m68k')
+ subdir('microblaze')
+ subdir('mips')
+ subdir('openrisc')
++subdir('slow32')
+ subdir('ppc')
+ subdir('riscv')
+ subdir('rx')

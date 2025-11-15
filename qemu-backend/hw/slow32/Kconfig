@@ -1,0 +1,4 @@
+config SLOW32_TCG
+    bool
+    default y
+    depends on SLOW32

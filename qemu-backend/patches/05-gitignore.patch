@@ -1,0 +1,9 @@
+diff --git a/.gitignore b/.gitignore
+index 61fa39967b..6574e09fde 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -20,3 +20,4 @@ GTAGS
+ *.swp
+ *.patch
+ *.gcov
++/slow-32/

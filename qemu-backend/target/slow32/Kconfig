@@ -1,0 +1,3 @@
+config SLOW32
+    bool
+    select TCG

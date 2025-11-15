@@ -38,6 +38,9 @@ benchmark*
 !examples/benchmark_core.c
 assembler_reloc_patch.txt
 
+# Patch files (should be in llvm-backend/patches or qemu-backend/patches)
+/*.patch
+
 # Object and executable formats
 *.s32o
 *.s32x
