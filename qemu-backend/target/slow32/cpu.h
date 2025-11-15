@@ -7,6 +7,8 @@
 #ifndef SLOW32_CPU_H
 #define SLOW32_CPU_H
 
+#include <stdbool.h>
+
 #include "cpu-qom.h"
 #include "exec/cpu-common.h"
 #include "exec/cpu-defs.h"
@@ -35,6 +37,8 @@ struct CPUArchState {
     uint32_t pc;
     uint32_t next_pc;
     uint32_t mmio_base;
+    uint32_t code_limit;
+    uint32_t rodata_limit;
     uint32_t data_limit;
     uint32_t heap_base;
     uint32_t mem_size;
@@ -42,8 +46,13 @@ struct CPUArchState {
     uint32_t halted;
     uint64_t insn_retired;
     uint64_t tb_translated;
+    uint64_t tb_translated_bytes;
+    uint64_t tb_translated_insns;
+    uint64_t tb_exec_count;
+    uint64_t tb_exec_insns;
     uint64_t translate_time_us;
     int64_t run_start_us;
+    bool layout_defined;
 };
 
 static inline uint32_t slow32_get_reg(const CPUSlow32State *env, int idx)

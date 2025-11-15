@@ -1,5 +1,7 @@
 #include "qemu/osdep.h"
 
+#include <inttypes.h>
+
 #include "qapi/error.h"
 #include "cpu.h"
 #include "accel/tcg/cpu-ops.h"
@@ -11,6 +13,7 @@
 #include "exec/gdbstub.h"
 #include "gdbstub/helpers.h"
 #include "tcg/tcg.h"
+#include "qemu/log.h"
 #include "mmio.h"
 
 static void slow32_cpu_set_pc(CPUState *cs, vaddr value)
@@ -70,11 +73,50 @@ static bool slow32_cpu_tlb_fill(CPUState *cs, vaddr addr, int size,
                                 MMUAccessType access_type, int mmu_idx,
                                 bool probe, uintptr_t retaddr)
 {
+    CPUSlow32State *env = cpu_env(cs);
+    Slow32CPU *cpu = SLOW32_CPU(cs);
     vaddr page = addr & TARGET_PAGE_MASK;
-    int prot = PAGE_READ | PAGE_WRITE | PAGE_EXEC;
+    uint32_t mem_limit = env->mem_size;
+    bool have_mem_limit = mem_limit != 0;
+    int prot = 0;
+
+    if (env->layout_defined && env->code_limit &&
+        page < env->code_limit) {
+        prot = PAGE_READ | PAGE_EXEC;
+    } else if (env->layout_defined && env->rodata_limit &&
+               page < env->rodata_limit) {
+        prot = PAGE_READ;
+    } else {
+        if (have_mem_limit && page >= mem_limit) {
+            goto fault;
+        }
+        prot = PAGE_READ | PAGE_WRITE;
+        if (!env->layout_defined) {
+            prot |= PAGE_EXEC;
+        }
+    }
+
+    if (env->mmio_base) {
+        uint32_t mmio_start = env->mmio_base & TARGET_PAGE_MASK;
+        uint64_t mmio_end =
+            (uint64_t)env->mmio_base + S32_MMIO_WINDOW_SIZE;
+        if (page >= mmio_start && (uint64_t)page < mmio_end) {
+            prot = PAGE_READ | PAGE_WRITE;
+        }
+    }
 
     tlb_set_page(cs, page, page, prot, mmu_idx, TARGET_PAGE_SIZE);
     return true;
+
+fault:
+    qemu_log_mask(LOG_GUEST_ERROR,
+                  "slow32: invalid %s at 0x%08" PRIx64 "\n",
+                  access_type == MMU_INST_FETCH ? "fetch" :
+                  access_type == MMU_DATA_LOAD ? "load" : "store",
+                  (uint64_t)addr);
+    env->halted = 1;
+    slow32_cpu_complete_halt(cpu);
+    cpu_loop_exit_restore(cs, retaddr);
 }
 
 static void slow32_cpu_do_interrupt(CPUState *cs)
@@ -104,13 +146,20 @@ static void slow32_cpu_reset_hold(Object *obj, ResetType type)
     env->pc = 0;
     env->next_pc = 0;
     env->data_limit = 0;
+    env->code_limit = 0;
+    env->rodata_limit = 0;
     env->heap_base = 0;
     env->mem_size = 0;
     env->halted = 0;
     env->insn_retired = 0;
     env->tb_translated = 0;
+    env->tb_translated_bytes = 0;
+    env->tb_translated_insns = 0;
+    env->tb_exec_count = 0;
+    env->tb_exec_insns = 0;
     env->translate_time_us = 0;
     env->run_start_us = 0;
+    env->layout_defined = false;
 
     slow32_mmio_reset(cpu);
 }

@@ -1,4 +1,4 @@
-#include "../runtime/include/stdio.h"
+#include <stdio.h>
 
 int main() {
     printf("Hello from SLOW-32!\n");

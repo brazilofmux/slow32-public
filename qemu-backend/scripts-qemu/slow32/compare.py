@@ -63,6 +63,8 @@ def run_cmd(argv: Sequence[str]) -> Tuple[float, subprocess.CompletedProcess[str
     proc = subprocess.run(
         argv,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
     )
     duration = time.perf_counter() - start

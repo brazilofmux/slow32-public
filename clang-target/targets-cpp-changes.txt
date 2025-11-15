@@ -1,0 +1,11 @@
+#include "Targets/PPC.h"
+#include "Targets/RISCV.h"
+#include "Targets/SLOW32.h"
+#include "Targets/SPIR.h"
+#include "Targets/Sparc.h"
+--
+
+  case llvm::Triple::slow32:
+    return std::make_unique<SLOW32TargetInfo>(Triple, Opts);
+
+  case llvm::Triple::mips:

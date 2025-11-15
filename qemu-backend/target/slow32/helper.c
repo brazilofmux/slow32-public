@@ -37,6 +37,19 @@ void slow32_cpu_complete_halt(Slow32CPU *cpu)
            " wall_ms=%.3f translate_ms=%.3f exec_ms=%.3f tb_count=%" PRIu64 "\n",
            env->insn_retired, wall_ms, translate_ms, exec_ms,
            env->tb_translated);
+    double avg_bytes = env->tb_translated
+                       ? (double)env->tb_translated_bytes / env->tb_translated
+                       : 0.0;
+    double avg_insn = env->tb_translated
+                      ? (double)env->tb_translated_insns / env->tb_translated
+                      : 0.0;
+    double avg_exec = env->tb_exec_count
+                      ? (double)env->tb_exec_insns / env->tb_exec_count
+                      : 0.0;
+    printf("  TB translate: count=%" PRIu64 " avg_bytes=%.2f avg_insns=%.2f\n",
+           env->tb_translated, avg_bytes, avg_insn);
+    printf("  TB exec: count=%" PRIu64 " avg_guest_insns=%.2f total_guest_insns=%" PRIu64 " (hits=%" PRIu64 ")\n",
+           env->tb_exec_count, avg_exec, env->tb_exec_insns, env->tb_exec_count);
     fflush(stdout);
 
     cs->halted = 1;
@@ -45,8 +58,10 @@ void slow32_cpu_complete_halt(Slow32CPU *cpu)
 
 void HELPER(slow32_halt)(CPUSlow32State *env)
 {
-    Slow32CPU *cpu = SLOW32_CPU(env_cpu(env));
+    CPUState *cs = env_cpu(env);
+    Slow32CPU *cpu = SLOW32_CPU(cs);
 
     slow32_handle_yield(cpu);
     slow32_cpu_complete_halt(cpu);
+    cpu_exit(cs);
 }

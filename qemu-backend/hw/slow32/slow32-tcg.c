@@ -52,6 +52,8 @@ typedef struct QEMU_PACKED Slow32XSection {
 
 #define S32X_MAGIC 0x53333258
 #define S32_MACHINE_SLOW32 0x32
+#define S32X_FLAG_W_XOR_X    0x0001u
+#define S32X_FLAG_MMIO       0x0080u
 
 static bool slow32_load_flat(MachineState *machine, Slow32CPU *cpu,
                              Error **errp)
@@ -69,9 +71,12 @@ static bool slow32_load_flat(MachineState *machine, Slow32CPU *cpu,
     env->next_pc = 0;
     env->regs[SLOW32_REG_SP] = SLOW32_DEFAULT_STACK_TOP;
     env->stack_top = SLOW32_DEFAULT_STACK_TOP;
+    env->code_limit = 0;
+    env->rodata_limit = 0;
     env->data_limit = machine->ram_size;
     env->heap_base = 0;
     env->mem_size = machine->ram_size;
+    env->layout_defined = false;
     slow32_mmio_reconfigure(cpu);
     return true;
 }
@@ -160,10 +165,13 @@ static bool slow32_load_s32x(Slow32MachineState *sms, MachineState *machine,
     env->next_pc = hdr.entry;
     env->stack_top = hdr.stack_base ? hdr.stack_base : SLOW32_DEFAULT_STACK_TOP;
     env->regs[SLOW32_REG_SP] = env->stack_top;
-    env->mmio_base = hdr.mmio_base;
+    env->code_limit = hdr.code_limit;
+    env->rodata_limit = hdr.rodata_limit;
     env->data_limit = hdr.data_limit;
     env->heap_base = hdr.heap_base ? hdr.heap_base : hdr.data_limit;
     env->mem_size = hdr.mem_size ? hdr.mem_size : machine->ram_size;
+    env->layout_defined = true;
+    env->mmio_base = (hdr.flags & S32X_FLAG_MMIO) ? hdr.mmio_base : 0;
     slow32_mmio_reconfigure(cpu);
 
     return true;

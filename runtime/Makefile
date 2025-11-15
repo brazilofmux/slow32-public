@@ -92,7 +92,7 @@ stdio.ll: stdio.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
 
 # Enhanced printf with long branch/jump support
-printf_enhanced.ll: OPT_LEVEL = -O1
+printf_enhanced.ll: OPT_LEVEL = -O2
 printf_enhanced.ll: printf_enhanced.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
 

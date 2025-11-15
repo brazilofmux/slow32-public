@@ -18,6 +18,7 @@
 #include "exec/helper-gen.h"
 #include "exec/translator.h"
 #include "exec/translation-block.h"
+#include "exec/plugin-gen.h"
 #include "tcg/tcg.h"
 #include "tcg/tcg-op.h"
 #include "qemu/log.h"
@@ -30,13 +31,26 @@
 #define DISAS_BRANCH 1
 #define DISAS_EXIT   2
 
+#define SLOW32_TB_MAX_INSNS 128
+
+typedef struct Slow32PendingCmp {
+    bool valid;
+    bool rhs_is_imm;
+    uint8_t rd;
+    uint8_t lhs;
+    uint8_t rhs;
+    int32_t imm;
+    TCGCond cond;
+} Slow32PendingCmp;
+
 typedef struct DisasContext {
+    DisasContextBase base;
     CPUSlow32State *env;
-    TranslationBlock *tb;
     target_ulong pc;
     target_ulong next_pc;
     int is_jmp;
     int insn_count;
+    Slow32PendingCmp pending_cmp;
 } DisasContext;
 
 enum {
@@ -108,6 +122,8 @@ static TCGv_i32 cpu_pc;
 static TCGv_i32 cpu_next_pc;
 static TCGv_i32 cpu_halted;
 static TCGv_i64 cpu_insn_retired;
+static TCGv_i64 cpu_tb_exec_count;
+static TCGv_i64 cpu_tb_exec_insns;
 
 static inline TCGv_i32 load_gpr(int reg)
 {
@@ -150,6 +166,78 @@ static inline void store_condi(int rd, TCGCond cond, TCGv_i32 lhs, int32_t imm)
     TCGv_i32 t = tcg_temp_new_i32();
     tcg_gen_setcondi_i32(cond, t, lhs, imm);
     store_gpr(rd, t);
+}
+
+static inline void slow32_emit_tb_enter(DisasContext *ctx)
+{
+    if (ctx->insn_count <= 0) {
+        return;
+    }
+    tcg_gen_addi_i64(cpu_tb_exec_count, cpu_tb_exec_count, 1);
+    tcg_gen_addi_i64(cpu_tb_exec_insns, cpu_tb_exec_insns, ctx->insn_count);
+}
+
+static void slow32_clear_pending_cmp(DisasContext *ctx)
+{
+    ctx->pending_cmp.valid = false;
+}
+
+static void slow32_flush_pending_cmp(DisasContext *ctx)
+{
+    Slow32PendingCmp *cmp = &ctx->pending_cmp;
+
+    if (!cmp->valid) {
+        return;
+    }
+
+    if (cmp->rd != SLOW32_REG_ZERO) {
+        TCGv_i32 lhs = load_gpr(cmp->lhs);
+        if (cmp->rhs_is_imm) {
+            store_condi(cmp->rd, cmp->cond, lhs, cmp->imm);
+        } else {
+            store_cond(cmp->rd, cmp->cond, lhs, load_gpr(cmp->rhs));
+        }
+    }
+
+    slow32_clear_pending_cmp(ctx);
+}
+
+static void slow32_queue_cmp_reg(DisasContext *ctx, int rd, TCGCond cond,
+                                 int rs1, int rs2)
+{
+    slow32_flush_pending_cmp(ctx);
+
+    if (rd == SLOW32_REG_ZERO) {
+        return;
+    }
+
+    ctx->pending_cmp = (Slow32PendingCmp) {
+        .valid = true,
+        .rhs_is_imm = false,
+        .rd = rd,
+        .lhs = rs1,
+        .rhs = rs2,
+        .cond = cond,
+    };
+}
+
+static void slow32_queue_cmp_imm(DisasContext *ctx, int rd, TCGCond cond,
+                                 int rs1, int32_t imm)
+{
+    slow32_flush_pending_cmp(ctx);
+
+    if (rd == SLOW32_REG_ZERO) {
+        return;
+    }
+
+    ctx->pending_cmp = (Slow32PendingCmp) {
+        .valid = true,
+        .rhs_is_imm = true,
+        .rd = rd,
+        .lhs = rs1,
+        .imm = imm,
+        .cond = cond,
+    };
 }
 
 static inline TCGv_i32 gen_addr(int rs1, int32_t imm)
@@ -247,25 +335,111 @@ static inline void commit_pc_tcg(TCGv_i32 value)
     tcg_gen_mov_i32(cpu_next_pc, value);
 }
 
+static inline void lookup_and_goto_ptr(DisasContext *ctx)
+{
+    slow32_emit_tb_enter(ctx);
+    if (tb_cflags(ctx->base.tb) & CF_NO_GOTO_PTR) {
+        tcg_gen_exit_tb(NULL, 0);
+    } else {
+        tcg_gen_lookup_and_goto_ptr();
+    }
+}
+
+static inline void gen_goto_tb(DisasContext *ctx, int tb_num,
+                               target_ulong dest)
+{
+    slow32_emit_tb_enter(ctx);
+    commit_pc_const(dest);
+
+    if (translator_use_goto_tb(&ctx->base, dest)) {
+        tcg_gen_goto_tb(tb_num);
+        tcg_gen_exit_tb(ctx->base.tb, tb_num);
+    } else {
+        lookup_and_goto_ptr(ctx);
+    }
+}
+
+static inline void slow32_exit_tb(DisasContext *ctx)
+{
+    slow32_emit_tb_enter(ctx);
+    tcg_gen_exit_tb(NULL, 0);
+}
+
 static void gen_cond_branch(DisasContext *ctx, TCGCond cond,
                             TCGv_i32 lhs, TCGv_i32 rhs, target_ulong target)
 {
     TCGLabel *label_taken = gen_new_label();
-    TCGLabel *label_done = gen_new_label();
 
     tcg_gen_brcond_i32(cond, lhs, rhs, label_taken);
 
     /* Not taken path */
-    commit_pc_const(ctx->next_pc);
-    tcg_gen_br(label_done);
+    tcg_gen_addi_i64(cpu_insn_retired, cpu_insn_retired, ctx->insn_count);
+    gen_goto_tb(ctx, 1, ctx->next_pc);
 
     /* Taken path */
     gen_set_label(label_taken);
-    commit_pc_const(target);
-
-    gen_set_label(label_done);
-    tcg_gen_exit_tb(NULL, 0);
+    tcg_gen_addi_i64(cpu_insn_retired, cpu_insn_retired, ctx->insn_count);
+    gen_goto_tb(ctx, 0, target);
     ctx->is_jmp = DISAS_BRANCH;
+}
+
+static void slow32_emit_cmp_and_branch(DisasContext *ctx, TCGCond cond,
+                                       target_ulong target)
+{
+    Slow32PendingCmp *cmp = &ctx->pending_cmp;
+    TCGv_i32 lhs = load_gpr(cmp->lhs);
+    TCGv_i32 rhs_val;
+
+    if (cmp->rhs_is_imm) {
+        rhs_val = tcg_constant_i32(cmp->imm);
+    } else {
+        rhs_val = load_gpr(cmp->rhs);
+    }
+
+    if (cmp->rd != SLOW32_REG_ZERO) {
+        if (cmp->rhs_is_imm) {
+            store_condi(cmp->rd, cmp->cond, lhs, cmp->imm);
+        } else {
+            store_cond(cmp->rd, cmp->cond, lhs, rhs_val);
+        }
+    }
+
+    gen_cond_branch(ctx, cond, lhs, rhs_val, target);
+}
+
+static bool slow32_is_cmp_branch_pair(DisasContext *ctx, uint32_t raw)
+{
+    Slow32PendingCmp *cmp = &ctx->pending_cmp;
+
+    if (!cmp->valid) {
+        return false;
+    }
+
+    uint8_t opcode = raw & 0x7F;
+    if (opcode != OP_BEQ && opcode != OP_BNE) {
+        return false;
+    }
+
+    uint8_t rs1 = decode_rs1(raw);
+    uint8_t rs2 = decode_rs2(raw);
+
+    return (rs1 == cmp->rd && rs2 == SLOW32_REG_ZERO) ||
+           (rs2 == cmp->rd && rs1 == SLOW32_REG_ZERO);
+}
+
+static void slow32_do_collapse_cmp_branch(DisasContext *ctx, uint32_t raw)
+{
+    Slow32PendingCmp *cmp = &ctx->pending_cmp;
+    uint8_t opcode = raw & 0x7F;
+    target_ulong target = ctx->next_pc + decode_b_imm(raw);
+    TCGCond cond = cmp->cond;
+
+    if (opcode == OP_BEQ) {
+        cond = tcg_invert_cond(cond);
+    }
+
+    slow32_emit_cmp_and_branch(ctx, cond, target);
+    slow32_clear_pending_cmp(ctx);
 }
 
 static void gen_set_halted(int value)
@@ -333,34 +507,34 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
         break;
     }
     case OP_SEQ:
-        store_cond(rd, TCG_COND_EQ, load_gpr(rs1), load_gpr(rs2));
+        slow32_queue_cmp_reg(ctx, rd, TCG_COND_EQ, rs1, rs2);
         break;
     case OP_SNE:
-        store_cond(rd, TCG_COND_NE, load_gpr(rs1), load_gpr(rs2));
+        slow32_queue_cmp_reg(ctx, rd, TCG_COND_NE, rs1, rs2);
         break;
     case OP_SLT:
-        store_cond(rd, TCG_COND_LT, load_gpr(rs1), load_gpr(rs2));
+        slow32_queue_cmp_reg(ctx, rd, TCG_COND_LT, rs1, rs2);
         break;
     case OP_SLTU:
-        store_cond(rd, TCG_COND_LTU, load_gpr(rs1), load_gpr(rs2));
+        slow32_queue_cmp_reg(ctx, rd, TCG_COND_LTU, rs1, rs2);
         break;
     case OP_SGT:
-        store_cond(rd, TCG_COND_GT, load_gpr(rs1), load_gpr(rs2));
+        slow32_queue_cmp_reg(ctx, rd, TCG_COND_GT, rs1, rs2);
         break;
     case OP_SGTU:
-        store_cond(rd, TCG_COND_GTU, load_gpr(rs1), load_gpr(rs2));
+        slow32_queue_cmp_reg(ctx, rd, TCG_COND_GTU, rs1, rs2);
         break;
     case OP_SLE:
-        store_cond(rd, TCG_COND_LE, load_gpr(rs1), load_gpr(rs2));
+        slow32_queue_cmp_reg(ctx, rd, TCG_COND_LE, rs1, rs2);
         break;
     case OP_SLEU:
-        store_cond(rd, TCG_COND_LEU, load_gpr(rs1), load_gpr(rs2));
+        slow32_queue_cmp_reg(ctx, rd, TCG_COND_LEU, rs1, rs2);
         break;
     case OP_SGE:
-        store_cond(rd, TCG_COND_GE, load_gpr(rs1), load_gpr(rs2));
+        slow32_queue_cmp_reg(ctx, rd, TCG_COND_GE, rs1, rs2);
         break;
     case OP_SGEU:
-        store_cond(rd, TCG_COND_GEU, load_gpr(rs1), load_gpr(rs2));
+        slow32_queue_cmp_reg(ctx, rd, TCG_COND_GEU, rs1, rs2);
         break;
 
     case OP_ADDI: {
@@ -413,10 +587,10 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
         break;
     }
     case OP_SLTI:
-        store_condi(rd, TCG_COND_LT, load_gpr(rs1), decode_i_imm(raw));
+        slow32_queue_cmp_imm(ctx, rd, TCG_COND_LT, rs1, decode_i_imm(raw));
         break;
     case OP_SLTIU:
-        store_condi(rd, TCG_COND_LTU, load_gpr(rs1), decode_i_imm(raw));
+        slow32_queue_cmp_imm(ctx, rd, TCG_COND_LTU, rs1, decode_i_imm(raw));
         break;
     case OP_LUI:
         store_gpr_imm(rd, raw & 0xFFFFF000);
@@ -546,8 +720,8 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
         int32_t imm = decode_j_imm(raw);
         target_ulong target = ctx->pc + imm;
         store_gpr_imm(rd, ctx->pc + 4);
-        commit_pc_const(target);
-        tcg_gen_exit_tb(NULL, 0);
+        tcg_gen_addi_i64(cpu_insn_retired, cpu_insn_retired, ctx->insn_count);
+        gen_goto_tb(ctx, 0, target);
         ctx->is_jmp = DISAS_BRANCH;
         return false;
     }
@@ -557,8 +731,9 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
         tcg_gen_addi_i32(target, load_gpr(rs1), imm);
         tcg_gen_andi_i32(target, target, ~1);
         store_gpr_imm(rd, ctx->pc + 4);
+        tcg_gen_addi_i64(cpu_insn_retired, cpu_insn_retired, ctx->insn_count);
         commit_pc_tcg(target);
-        tcg_gen_exit_tb(NULL, 0);
+        lookup_and_goto_ptr(ctx);
         ctx->is_jmp = DISAS_BRANCH;
         return false;
     }
@@ -566,8 +741,9 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
     case OP_HALT:
         gen_set_halted(1);
         commit_pc_const(ctx->next_pc);
+        tcg_gen_addi_i64(cpu_insn_retired, cpu_insn_retired, ctx->insn_count);
         gen_helper_slow32_halt(tcg_env);
-        tcg_gen_exit_tb(NULL, 0);
+        slow32_exit_tb(ctx);
         ctx->is_jmp = DISAS_EXIT;
         return false;
 
@@ -577,7 +753,8 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
         tcg_gen_brcond_i32(TCG_COND_EQ, load_gpr(rs1), load_gpr(rs2), ok);
         gen_set_halted(1);
         commit_pc_const(ctx->pc);
-        tcg_gen_exit_tb(NULL, 0);
+        tcg_gen_addi_i64(cpu_insn_retired, cpu_insn_retired, ctx->insn_count);
+        slow32_exit_tb(ctx);
         ctx->is_jmp = DISAS_EXIT;
         return false;
         gen_set_label(ok);
@@ -596,7 +773,8 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
                       opcode, (uint64_t)ctx->pc);
         gen_set_halted(1);
         commit_pc_const(ctx->pc);
-        tcg_gen_exit_tb(NULL, 0);
+        tcg_gen_addi_i64(cpu_insn_retired, cpu_insn_retired, ctx->insn_count);
+        slow32_exit_tb(ctx);
         ctx->is_jmp = DISAS_EXIT;
         return false;
     }
@@ -608,39 +786,93 @@ void slow32_translate_code(CPUState *cs, TranslationBlock *tb, int *max_insns,
                            vaddr pc, void *host_pc)
 {
     CPUSlow32State *env = cpu_env(cs);
-    int limit = *max_insns;
+    /* Aim for bigger TBs to reduce dispatch overhead. */
+    int limit = SLOW32_TB_MAX_INSNS;
+    *max_insns = limit;
     int64_t t0 = g_get_monotonic_time();
     (void)host_pc;
     DisasContext ctx = {
+        .base = {
+            .tb = tb,
+            .pc_first = pc,
+            .pc_next = pc,
+            .is_jmp = DISAS_NEXT,
+            .max_insns = limit,
+        },
         .env = env,
-        .tb = tb,
         .pc = pc,
         .next_pc = pc,
         .is_jmp = DISAS_NEXT,
         .insn_count = 0,
     };
 
+    /* TB chaining hook: start - enables plugin instrumentation and chaining */
+    bool plugin_enabled = plugin_gen_tb_start(cs, &ctx.base);
+
     while (ctx.insn_count < limit) {
         ctx.pc = ctx.next_pc;
         ctx.next_pc = ctx.pc + 4;
+        ctx.base.pc_next = ctx.next_pc;
 
         uint32_t raw = cpu_ldl_code(env, ctx.pc);
+        bool collapse_branch = slow32_is_cmp_branch_pair(&ctx, raw);
+
         tcg_gen_insn_start(ctx.pc, ctx.next_pc);
 
-        ctx.insn_count++;
-        tcg_gen_addi_i64(cpu_insn_retired, cpu_insn_retired, 1);
+        /* TB chaining hook: per-instruction start */
+        if (plugin_enabled) {
+            plugin_gen_insn_start(cs, &ctx.base);
+        }
 
-        if (!translate_one(&ctx, raw)) {
+        ctx.insn_count++;
+        ctx.base.num_insns = ctx.insn_count;
+
+        if (collapse_branch) {
+            slow32_do_collapse_cmp_branch(&ctx, raw);
+            if (plugin_enabled) {
+                plugin_gen_insn_end();
+            }
             break;
         }
+
+        if (!translate_one(&ctx, raw)) {
+            if (plugin_enabled) {
+                plugin_gen_insn_end();
+            }
+            break;
+        }
+
+        bool keep_pending = false;
+        if (ctx.pending_cmp.valid && ctx.is_jmp == DISAS_NEXT &&
+            ctx.insn_count < limit) {
+            uint32_t lookahead = cpu_ldl_code(env, ctx.next_pc);
+            keep_pending = slow32_is_cmp_branch_pair(&ctx, lookahead);
+        }
+
+        if (!keep_pending) {
+            slow32_flush_pending_cmp(&ctx);
+        }
+
+        /* TB chaining hook: per-instruction end */
+        if (plugin_enabled) {
+            plugin_gen_insn_end();
+        }
+
         if (ctx.is_jmp != DISAS_NEXT) {
             break;
         }
     }
 
+    slow32_flush_pending_cmp(&ctx);
+
     if (ctx.is_jmp == DISAS_NEXT) {
-        commit_pc_const(ctx.next_pc);
-        tcg_gen_exit_tb(NULL, 0);
+        tcg_gen_addi_i64(cpu_insn_retired, cpu_insn_retired, ctx.insn_count);
+        gen_goto_tb(&ctx, 0, ctx.next_pc);
+    }
+
+    /* TB chaining hook: end (only if plugins were enabled) */
+    if (plugin_enabled) {
+        plugin_gen_tb_end(cs, ctx.insn_count);
     }
 
     tb->size = ctx.next_pc - pc;
@@ -649,6 +881,8 @@ void slow32_translate_code(CPUState *cs, TranslationBlock *tb, int *max_insns,
 
     env->translate_time_us += g_get_monotonic_time() - t0;
     env->tb_translated++;
+    env->tb_translated_bytes += tb->size;
+    env->tb_translated_insns += ctx.insn_count;
 }
 
 void slow32_translate_init(void)
@@ -673,6 +907,14 @@ void slow32_translate_init(void)
                                               offsetof(CPUSlow32State,
                                                        insn_retired),
                                               "insn_retired");
+    cpu_tb_exec_count = tcg_global_mem_new_i64(tcg_env,
+                                               offsetof(CPUSlow32State,
+                                                        tb_exec_count),
+                                               "tb_exec_count");
+    cpu_tb_exec_insns = tcg_global_mem_new_i64(tcg_env,
+                                               offsetof(CPUSlow32State,
+                                                        tb_exec_insns),
+                                               "tb_exec_insns");
 }
 
 void slow32_cpu_dump_state(CPUState *cs, FILE *f, int flags)
