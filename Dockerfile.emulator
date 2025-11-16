@@ -1,157 +1,120 @@
-# SLOW-32 Emulator Docker Image
-# This image contains the SLOW-32 emulator for running .s32x executables
-# Includes both standard and optimized emulator versions
+# SLOW-32 Emulator Docker Image (Alpine-based)
+# This image contains the SLOW-32 emulators for running .s32x executables
+# Includes C++ emulators (slow32, slow32-fast) and QEMU TCG emulator (built from source)
 
-# Stage 1: Build the emulators
-FROM alpine:3.19 AS builder
+# Stage 1: Build QEMU on Alpine
+FROM alpine:3.21 AS qemu-builder
+
+# Install QEMU build dependencies
+# Reference: https://wiki.qemu.org/Hosts/Linux#Required_additional_packages
+RUN apk add --no-cache \
+    build-base \
+    bash \
+    python3 \
+    py3-setuptools \
+    ninja \
+    meson \
+    pkgconfig \
+    glib-dev \
+    glib-static \
+    pixman-dev \
+    zlib-dev \
+    zlib-static \
+    git \
+    patch \
+    bzip2-dev \
+    ncurses-dev \
+    libpng-dev \
+    libjpeg-turbo-dev \
+    alsa-lib-dev \
+    libslirp-dev
+
+# Clone QEMU source code (shallow clone for minimal size)
+WORKDIR /build
+RUN git clone --depth 1 --branch master https://gitlab.com/qemu-project/qemu.git qemu
+
+# Copy SLOW-32 specific files from build context
+WORKDIR /build/qemu
+COPY qemu-backend/target/slow32 /build/qemu/target/slow32
+COPY qemu-backend/hw/slow32 /build/qemu/hw/slow32
+COPY qemu-backend/configs/targets/slow32-softmmu.mak /build/qemu/configs/targets/slow32-softmmu.mak
+COPY qemu-backend/configs/devices/slow32-softmmu /build/qemu/configs/devices/slow32-softmmu
+COPY qemu-backend/patches /build/patches
+
+# Apply integration patches to QEMU
+RUN cd /build/qemu && \
+    for patch in /build/patches/*.patch; do \
+        echo "Applying $patch..."; \
+        patch -p1 < "$patch" || exit 1; \
+    done
+
+# Configure and build QEMU (non-debug, optimized)
+RUN cd /build/qemu && \
+    ./configure \
+        --target-list=slow32-softmmu \
+        --enable-tcg \
+        --disable-werror \
+        --disable-debug-info \
+        --disable-docs \
+        --disable-gtk \
+        --disable-sdl \
+        --disable-vnc \
+        --disable-spice \
+        --disable-guest-agent \
+        --disable-user \
+        --enable-strip && \
+    ninja -C build
+
+# Stage 2: Build the C++ emulators on Alpine
+FROM alpine:3.21 AS cpp-builder
 
 # Install build dependencies
 RUN apk add --no-cache \
-    gcc \
     g++ \
-    make \
-    linux-headers
+    make
 
 # Copy emulator source code
 WORKDIR /build
 COPY common /build/common
 COPY tools/emulator /build/tools/emulator
-COPY tools/utilities /build/tools/utilities
 
-# Build emulators (clean first to ensure fresh builds with musl)
+# Build emulators
 RUN make -C tools/emulator clean && make -C tools/emulator
 
-# Build disassembler (useful for debugging) - clean first
-RUN make -C tools/utilities clean && make -C tools/utilities slow32dis s32-exedump
+# Stage 3: Create minimal runtime image (Alpine)
+FROM alpine:3.21
 
-# Stage 2: Create minimal runtime image
-FROM alpine:3.19
-
-# Install minimal runtime dependencies
+# Install runtime dependencies
+# C++ emulators need: libstdc++, libgcc
+# QEMU needs: glib, pixman, zlib, libjpeg, libpng, ncurses, bzip2, alsa-lib, libslirp
 RUN apk add --no-cache \
     libstdc++ \
+    libgcc \
+    glib \
+    pixman \
+    zlib \
+    libjpeg-turbo \
+    libpng \
+    ncurses-libs \
+    bzip2-dev \
+    alsa-lib \
+    libslirp \
     bash
 
-# Copy emulators from builder
-COPY --from=builder /build/tools/emulator/slow32 /usr/local/bin/slow32
-COPY --from=builder /build/tools/emulator/slow32-fast /usr/local/bin/slow32-fast
-COPY --from=builder /build/tools/utilities/slow32dis /usr/local/bin/slow32dis
-COPY --from=builder /build/tools/utilities/s32-exedump /usr/local/bin/s32-exedump
+# Copy C++ emulators from builder stage
+COPY --from=cpp-builder /build/tools/emulator/slow32 /usr/local/bin/slow32
+COPY --from=cpp-builder /build/tools/emulator/slow32-fast /usr/local/bin/slow32-fast
 
-# Working directory should be /data (mounted volume)
+# Copy QEMU emulator from builder stage
+COPY --from=qemu-builder /build/qemu/build/qemu-system-slow32 /usr/local/bin/qemu-system-slow32
+
+# Copy helper script for running programs with different emulators
+COPY scripts/s32run /usr/local/bin/s32run
+RUN chmod +x /usr/local/bin/s32run
+
+# Working directory
 WORKDIR /data
 
-# Create a helper script for running programs with various debug options
-RUN echo '#!/bin/bash\n\
-# SLOW-32 Emulator Runner\n\
-# Usage: s32run [options] program.s32x [args...]\n\
-\n\
-EMULATOR="slow32"\n\
-DEBUG_OPTS=""\n\
-PROGRAM=""\n\
-PROGRAM_ARGS=""\n\
-\n\
-function show_help() {\n\
-    echo "SLOW-32 Emulator Runner"\n\
-    echo "Usage: s32run [options] program.s32x [args...]"\n\
-    echo ""\n\
-    echo "Options:"\n\
-    echo "  -f, --fast        Use optimized emulator (slow32-fast)"\n\
-    echo "  -s, --step        Step through each instruction"\n\
-    echo "  -t, --trace       Trace every instruction"\n\
-    echo "  -r, --registers   Show register changes"\n\
-    echo "  -c N, --cycles N  Limit execution to N cycles"\n\
-    echo "  -b ADDR           Set breakpoint at address"\n\
-    echo "  -w RANGE          Watch memory range (e.g., 0x1000-0x2000)"\n\
-    echo "  -d, --disasm      Disassemble before running"\n\
-    echo "  -x, --examine     Examine executable headers before running"\n\
-    echo "  -h, --help        Show this help"\n\
-    exit 0\n\
-}\n\
-\n\
-DISASM=0\n\
-EXAMINE=0\n\
-\n\
-while [[ $# -gt 0 ]]; do\n\
-    case $1 in\n\
-        -f|--fast)\n\
-            EMULATOR="slow32-fast"\n\
-            shift\n\
-            ;;\n\
-        -s|--step)\n\
-            DEBUG_OPTS="$DEBUG_OPTS -s"\n\
-            shift\n\
-            ;;\n\
-        -t|--trace)\n\
-            DEBUG_OPTS="$DEBUG_OPTS -t"\n\
-            shift\n\
-            ;;\n\
-        -r|--registers)\n\
-            DEBUG_OPTS="$DEBUG_OPTS -r"\n\
-            shift\n\
-            ;;\n\
-        -c|--cycles)\n\
-            DEBUG_OPTS="$DEBUG_OPTS -c $2"\n\
-            shift 2\n\
-            ;;\n\
-        -b)\n\
-            DEBUG_OPTS="$DEBUG_OPTS -b $2"\n\
-            shift 2\n\
-            ;;\n\
-        -w)\n\
-            DEBUG_OPTS="$DEBUG_OPTS -w $2"\n\
-            shift 2\n\
-            ;;\n\
-        -d|--disasm)\n\
-            DISASM=1\n\
-            shift\n\
-            ;;\n\
-        -x|--examine)\n\
-            EXAMINE=1\n\
-            shift\n\
-            ;;\n\
-        -h|--help)\n\
-            show_help\n\
-            ;;\n\
-        *.s32x)\n\
-            PROGRAM="$1"\n\
-            shift\n\
-            PROGRAM_ARGS="$@"\n\
-            break\n\
-            ;;\n\
-        *)\n\
-            echo "Unknown option: $1"\n\
-            show_help\n\
-            ;;\n\
-    esac\n\
-done\n\
-\n\
-if [ -z "$PROGRAM" ]; then\n\
-    echo "Error: No program specified"\n\
-    show_help\n\
-fi\n\
-\n\
-if [ ! -f "$PROGRAM" ]; then\n\
-    echo "Error: Program file not found: $PROGRAM"\n\
-    exit 1\n\
-fi\n\
-\n\
-if [ $EXAMINE -eq 1 ]; then\n\
-    echo "=== Executable Information ==="\n\
-    s32-exedump "$PROGRAM"\n\
-    echo ""\n\
-fi\n\
-\n\
-if [ $DISASM -eq 1 ]; then\n\
-    echo "=== Disassembly ==="\n\
-    slow32dis "$PROGRAM"\n\
-    echo ""\n\
-fi\n\
-\n\
-echo "=== Running $PROGRAM with $EMULATOR ==="\n\
-$EMULATOR $DEBUG_OPTS "$PROGRAM" $PROGRAM_ARGS\n\
-' > /usr/local/bin/s32run && chmod +x /usr/local/bin/s32run
-
 # Container is ephemeral - expects .s32x files via /data mount
-# Default: run all .s32x files in /data
+# Default: run all .s32x files in /data with the standard emulator
 CMD ["bash", "-c", "if ls /data/*.s32x 1> /dev/null 2>&1; then for f in /data/*.s32x; do echo \"Running $f...\"; echo '---'; slow32 \"$f\" || exit 1; echo ''; done; else echo 'No .s32x files found in /data'; exit 1; fi"]

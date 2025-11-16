@@ -17,8 +17,8 @@ putint:
     addi r18, sp, -32   # r18 = buffer pointer (below stack)
     
     # Handle negative
-    slt  r2, r16, r0
-    beq  r2, r0, putint_positive
+    slt  r4, r16, r0
+    beq  r4, r0, putint_positive
     addi r1, r0, 45     # '-'
     debug r1
     sub  r16, r0, r16   # make positive
@@ -35,15 +35,15 @@ putint_convert:
     beq  r16, r0, putint_print
     
     # r16 % 10
-    addi r2, r0, 10
-    rem  r3, r16, r2
+    addi r4, r0, 10
+    rem  r3, r16, r4
     addi r3, r3, 48     # convert to ASCII
     stb  r18+0, r3      # store digit
     addi r18, r18, 1
     addi r17, r17, 1
     
     # r16 / 10
-    div  r16, r16, r2
+    div  r16, r16, r4
     beq  r0, r0, putint_convert  # unconditional branch back
     
 putint_print:

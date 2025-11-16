@@ -53,6 +53,7 @@ struct CPUArchState {
     uint64_t translate_time_us;
     int64_t run_start_us;
     bool layout_defined;
+    bool stats_enabled;
 };
 
 static inline uint32_t slow32_get_reg(const CPUSlow32State *env, int idx)
@@ -76,6 +77,7 @@ struct ArchCPU {
 
     CPUSlow32State env;
     Slow32MMIOContext *mmio;
+    bool stats_enabled;
 };
 
 void slow32_translate_init(void);

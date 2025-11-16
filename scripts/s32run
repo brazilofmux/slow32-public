@@ -1,0 +1,96 @@
+#!/bin/bash
+# SLOW-32 Emulator Runner
+# Usage: s32run [options] program.s32x [args...]
+
+EMULATOR="slow32"
+DEBUG_OPTS=""
+PROGRAM=""
+PROGRAM_ARGS=""
+
+function show_help() {
+    echo "SLOW-32 Emulator Runner"
+    echo "Usage: s32run [options] program.s32x [args...]"
+    echo ""
+    echo "Emulator Selection:"
+    echo "  -f, --fast        Use optimized C++ emulator (slow32-fast)"
+    echo "  -q, --qemu        Use QEMU TCG emulator (qemu-system-slow32)"
+    echo ""
+    echo "Debug Options (C++ emulators only):"
+    echo "  -s, --step        Step through each instruction"
+    echo "  -t, --trace       Trace every instruction"
+    echo "  -r, --registers   Show register changes"
+    echo "  -c N, --cycles N  Limit execution to N cycles"
+    echo "  -b ADDR           Set breakpoint at address"
+    echo "  -w RANGE          Watch memory range (e.g., 0x1000-0x2000)"
+    echo ""
+    echo "Other:"
+    echo "  -h, --help        Show this help"
+    exit 0
+}
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -f|--fast)
+            EMULATOR="slow32-fast"
+            shift
+            ;;
+        -q|--qemu)
+            EMULATOR="qemu-system-slow32"
+            shift
+            ;;
+        -s|--step)
+            DEBUG_OPTS="$DEBUG_OPTS -s"
+            shift
+            ;;
+        -t|--trace)
+            DEBUG_OPTS="$DEBUG_OPTS -t"
+            shift
+            ;;
+        -r|--registers)
+            DEBUG_OPTS="$DEBUG_OPTS -r"
+            shift
+            ;;
+        -c|--cycles)
+            DEBUG_OPTS="$DEBUG_OPTS -c $2"
+            shift 2
+            ;;
+        -b)
+            DEBUG_OPTS="$DEBUG_OPTS -b $2"
+            shift 2
+            ;;
+        -w)
+            DEBUG_OPTS="$DEBUG_OPTS -w $2"
+            shift 2
+            ;;
+        -h|--help)
+            show_help
+            ;;
+        *.s32x)
+            PROGRAM="$1"
+            shift
+            PROGRAM_ARGS="$@"
+            break
+            ;;
+        *)
+            echo "Unknown option: $1"
+            show_help
+            ;;
+    esac
+done
+
+if [ -z "$PROGRAM" ]; then
+    echo "Error: No program specified"
+    show_help
+fi
+
+if [ ! -f "$PROGRAM" ]; then
+    echo "Error: Program file not found: $PROGRAM"
+    exit 1
+fi
+
+echo "=== Running $PROGRAM with $EMULATOR ==="
+if [ "$EMULATOR" = "qemu-system-slow32" ]; then
+    exec $EMULATOR -machine slow32-tcg -kernel "$PROGRAM" -nographic $PROGRAM_ARGS
+else
+    exec $EMULATOR $DEBUG_OPTS "$PROGRAM" $PROGRAM_ARGS
+fi

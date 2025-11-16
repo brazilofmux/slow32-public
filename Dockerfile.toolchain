@@ -18,7 +18,7 @@ RUN apk add --no-cache \
 
 # Clone LLVM project (main branch for LLVM 22 development)
 WORKDIR /build
-RUN git clone --depth 1 --branch main https://github.com/llvm/llvm-project.git
+RUN git clone -v --depth 1 --branch main https://github.com/llvm/llvm-project.git
 
 # Copy SLOW-32 backend files and patches
 COPY llvm-backend/SLOW32 /build/llvm-project/llvm/lib/Target/SLOW32

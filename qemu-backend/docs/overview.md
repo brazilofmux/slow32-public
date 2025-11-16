@@ -80,6 +80,7 @@ Future extensions (cycle counters, MMU flags) can be added later. The key is mir
 ## Instrumentation & Benchmarking
 
 - The translator increments a per-CPU instruction counter (`insn_retired`) and accumulates translation time for every TB. `helper.c` prints a single `Slow32 stats: guest_insns=… wall_ms=… translate_ms=… exec_ms=… tb_count=…` line whenever the guest halts so we can see how much time went into translation versus execution.
+- Use `-machine slow32-tcg,stats=off` to disable all counter bookkeeping and suppress the `Slow32 stats` printouts when benchmarking peak performance. (Note: tooling such as `scripts/slow32/compare.py` requires stats to remain enabled.)
 - `scripts/slow32/compare.py` sweeps one or more `.s32x` images and runs each under both `slow32-fast` and `qemu-system-slow32`. Use `--iterations N` to average multiple runs, `--suite DIR_OR_FILE` to point at a directory (all `*.s32x`) or manifest, and `--verbose` to echo the resolved workload list.
 - Example run (smoke workload, 5 iterations):
 

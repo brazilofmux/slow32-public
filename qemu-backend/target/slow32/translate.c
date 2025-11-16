@@ -170,11 +170,19 @@ static inline void store_condi(int rd, TCGCond cond, TCGv_i32 lhs, int32_t imm)
 
 static inline void slow32_emit_tb_enter(DisasContext *ctx)
 {
-    if (ctx->insn_count <= 0) {
+    if (!ctx->env->stats_enabled || ctx->insn_count <= 0) {
         return;
     }
     tcg_gen_addi_i64(cpu_tb_exec_count, cpu_tb_exec_count, 1);
     tcg_gen_addi_i64(cpu_tb_exec_insns, cpu_tb_exec_insns, ctx->insn_count);
+}
+
+static inline void slow32_count_insns(DisasContext *ctx)
+{
+    if (!ctx->env->stats_enabled) {
+        return;
+    }
+    tcg_gen_addi_i64(cpu_insn_retired, cpu_insn_retired, ctx->insn_count);
 }
 
 static void slow32_clear_pending_cmp(DisasContext *ctx)
@@ -373,12 +381,12 @@ static void gen_cond_branch(DisasContext *ctx, TCGCond cond,
     tcg_gen_brcond_i32(cond, lhs, rhs, label_taken);
 
     /* Not taken path */
-    tcg_gen_addi_i64(cpu_insn_retired, cpu_insn_retired, ctx->insn_count);
+    slow32_count_insns(ctx);
     gen_goto_tb(ctx, 1, ctx->next_pc);
 
     /* Taken path */
     gen_set_label(label_taken);
-    tcg_gen_addi_i64(cpu_insn_retired, cpu_insn_retired, ctx->insn_count);
+    slow32_count_insns(ctx);
     gen_goto_tb(ctx, 0, target);
     ctx->is_jmp = DISAS_BRANCH;
 }
@@ -720,7 +728,7 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
         int32_t imm = decode_j_imm(raw);
         target_ulong target = ctx->pc + imm;
         store_gpr_imm(rd, ctx->pc + 4);
-        tcg_gen_addi_i64(cpu_insn_retired, cpu_insn_retired, ctx->insn_count);
+        slow32_count_insns(ctx);
         gen_goto_tb(ctx, 0, target);
         ctx->is_jmp = DISAS_BRANCH;
         return false;
@@ -731,7 +739,7 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
         tcg_gen_addi_i32(target, load_gpr(rs1), imm);
         tcg_gen_andi_i32(target, target, ~1);
         store_gpr_imm(rd, ctx->pc + 4);
-        tcg_gen_addi_i64(cpu_insn_retired, cpu_insn_retired, ctx->insn_count);
+        slow32_count_insns(ctx);
         commit_pc_tcg(target);
         lookup_and_goto_ptr(ctx);
         ctx->is_jmp = DISAS_BRANCH;
@@ -741,7 +749,7 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
     case OP_HALT:
         gen_set_halted(1);
         commit_pc_const(ctx->next_pc);
-        tcg_gen_addi_i64(cpu_insn_retired, cpu_insn_retired, ctx->insn_count);
+        slow32_count_insns(ctx);
         gen_helper_slow32_halt(tcg_env);
         slow32_exit_tb(ctx);
         ctx->is_jmp = DISAS_EXIT;
@@ -753,7 +761,7 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
         tcg_gen_brcond_i32(TCG_COND_EQ, load_gpr(rs1), load_gpr(rs2), ok);
         gen_set_halted(1);
         commit_pc_const(ctx->pc);
-        tcg_gen_addi_i64(cpu_insn_retired, cpu_insn_retired, ctx->insn_count);
+        slow32_count_insns(ctx);
         slow32_exit_tb(ctx);
         ctx->is_jmp = DISAS_EXIT;
         return false;
@@ -773,7 +781,7 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
                       opcode, (uint64_t)ctx->pc);
         gen_set_halted(1);
         commit_pc_const(ctx->pc);
-        tcg_gen_addi_i64(cpu_insn_retired, cpu_insn_retired, ctx->insn_count);
+        slow32_count_insns(ctx);
         slow32_exit_tb(ctx);
         ctx->is_jmp = DISAS_EXIT;
         return false;
@@ -789,7 +797,7 @@ void slow32_translate_code(CPUState *cs, TranslationBlock *tb, int *max_insns,
     /* Aim for bigger TBs to reduce dispatch overhead. */
     int limit = SLOW32_TB_MAX_INSNS;
     *max_insns = limit;
-    int64_t t0 = g_get_monotonic_time();
+    int64_t t0 = env->stats_enabled ? g_get_monotonic_time() : 0;
     (void)host_pc;
     DisasContext ctx = {
         .base = {
@@ -866,7 +874,7 @@ void slow32_translate_code(CPUState *cs, TranslationBlock *tb, int *max_insns,
     slow32_flush_pending_cmp(&ctx);
 
     if (ctx.is_jmp == DISAS_NEXT) {
-        tcg_gen_addi_i64(cpu_insn_retired, cpu_insn_retired, ctx.insn_count);
+        slow32_count_insns(&ctx);
         gen_goto_tb(&ctx, 0, ctx.next_pc);
     }
 
@@ -879,10 +887,12 @@ void slow32_translate_code(CPUState *cs, TranslationBlock *tb, int *max_insns,
     tb->icount = ctx.insn_count;
     *max_insns = ctx.insn_count;
 
-    env->translate_time_us += g_get_monotonic_time() - t0;
-    env->tb_translated++;
-    env->tb_translated_bytes += tb->size;
-    env->tb_translated_insns += ctx.insn_count;
+    if (env->stats_enabled) {
+        env->translate_time_us += g_get_monotonic_time() - t0;
+        env->tb_translated++;
+        env->tb_translated_bytes += tb->size;
+        env->tb_translated_insns += ctx.insn_count;
+    }
 }
 
 void slow32_translate_init(void)

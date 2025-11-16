@@ -1,0 +1,25 @@
+# Docker ignore - supports both toolchain and emulator builds
+# Keep the build context minimal
+
+# Ignore everything by default
+*
+
+# Common files (needed by both)
+!common/
+
+# Toolchain build needs:
+!llvm-backend/
+!tools/assembler/
+!tools/linker/
+!tools/utilities/
+!runtime/
+!Makefile
+
+# Emulator build needs:
+!tools/emulator/
+!qemu-backend/target/slow32/
+!qemu-backend/hw/slow32/
+!qemu-backend/configs/targets/slow32-softmmu.mak
+!qemu-backend/configs/devices/slow32-softmmu/
+!qemu-backend/patches/
+!scripts/s32run

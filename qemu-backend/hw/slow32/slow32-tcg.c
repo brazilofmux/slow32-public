@@ -9,6 +9,7 @@
 #include "qemu/bswap.h"
 #include "target/slow32/cpu.h"
 #include "target/slow32/mmio.h"
+#include "qom/object.h"
 
 #define TYPE_SLOW32_MACHINE "slow32-tcg-machine"
 OBJECT_DECLARE_SIMPLE_TYPE(Slow32MachineState, SLOW32_MACHINE)
@@ -16,8 +17,18 @@ OBJECT_DECLARE_SIMPLE_TYPE(Slow32MachineState, SLOW32_MACHINE)
 typedef struct Slow32MachineState {
     MachineState parent_obj;
     MemoryRegion ram;
+    bool stats_enabled;
 } Slow32MachineState;
 
+static bool slow32_machine_get_stats(Object *obj, Error **errp)
+{
+    return SLOW32_MACHINE(obj)->stats_enabled;
+}
+
+static void slow32_machine_set_stats(Object *obj, bool value, Error **errp)
+{
+    SLOW32_MACHINE(obj)->stats_enabled = value;
+}
 
 typedef struct QEMU_PACKED Slow32XHeader {
     uint32_t magic;
@@ -226,7 +237,9 @@ static void slow32_machine_init(MachineState *machine)
     }
     CPUState *cs = cpu_create(machine->cpu_type);
     Slow32CPU *cpu = SLOW32_CPU(cs);
-    cpu->env.run_start_us = g_get_monotonic_time();
+    cpu->stats_enabled = sms->stats_enabled;
+    cpu->env.stats_enabled = sms->stats_enabled;
+    cpu->env.run_start_us = sms->stats_enabled ? g_get_monotonic_time() : 0;
 
     if (!slow32_load_kernel(sms, machine, cpu, &err)) {
         error_report_err(err);
@@ -243,12 +256,29 @@ static void slow32_machine_class_init(ObjectClass *oc, const void *data)
     mc->default_cpu_type = TYPE_SLOW32_CPU;
     mc->default_ram_size = 256 * MiB;
     mc->ignore_memory_transaction_failures = true;
+
+    object_class_property_add_bool(oc, "stats",
+                                   slow32_machine_get_stats,
+                                   slow32_machine_set_stats);
+    object_class_property_set_description(oc, "stats",
+        "Enable instruction counting and TB timing stats");
+    ObjectProperty *prop = object_class_property_find(oc, "stats");
+    if (prop) {
+        object_property_set_default_bool(prop, true);
+    }
+}
+
+static void slow32_machine_instance_init(Object *obj)
+{
+    Slow32MachineState *sms = SLOW32_MACHINE(obj);
+    sms->stats_enabled = true;
 }
 
 static const TypeInfo slow32_machine_type = {
     .name = TYPE_SLOW32_MACHINE,
     .parent = TYPE_MACHINE,
     .instance_size = sizeof(Slow32MachineState),
+    .instance_init = slow32_machine_instance_init,
     .class_init = slow32_machine_class_init,
 };
 

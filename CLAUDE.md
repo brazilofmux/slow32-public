@@ -115,12 +115,24 @@ int sum_to_n(int n) {
 
 Docker containers provide a clean baseline for testing. Two containers available:
 - `slow32-toolchain`: Full development environment with LLVM 22
-- `slow32-emulator`: Lightweight runtime for testing executables
+- `slow32-emulator`: Lightweight runtime for testing executables (includes slow32, slow32-fast, qemu-system-slow32)
 
 ```bash
 # Build Docker images (if not already built)
 docker build -t slow32-toolchain -f Dockerfile.toolchain .
 docker build -t slow32-emulator -f Dockerfile.emulator .
+
+# Run programs with the emulator container (easy wrapper script)
+./scripts/run-in-docker.sh program.s32x              # Use default slow32 emulator
+./scripts/run-in-docker.sh --fast program.s32x      # Use optimized slow32-fast
+./scripts/run-in-docker.sh --qemu program.s32x      # Use QEMU TCG emulator
+./scripts/run-in-docker.sh -t program.s32x          # Trace mode (C++ emulators only)
+./scripts/run-in-docker.sh --help                   # Show all options
+
+# Manual Docker commands (if you prefer)
+docker run --rm -v $(pwd):/data slow32-emulator s32run program.s32x
+docker run --rm -v $(pwd):/data slow32-emulator s32run --fast program.s32x
+docker run --rm -v $(pwd):/data slow32-emulator s32run --qemu program.s32x
 
 # Test against clean baseline when unsure if changes broke something
 docker run --rm -v $(pwd):/workspace slow32-toolchain bash -c "cd /workspace && make"
