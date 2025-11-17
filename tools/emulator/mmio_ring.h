@@ -7,6 +7,8 @@
 
 #include "../../common/mmio_ring_layout.h"
 
+#define S32_MMIO_MAX_FDS 128
+
 // I/O descriptor structure
 typedef struct {
     uint32_t opcode;    // Operation type
@@ -49,6 +51,9 @@ typedef struct {
     uint32_t args_argc;
     uint32_t args_total_bytes;
     uint8_t *args_blob;
+
+    int host_fds[S32_MMIO_MAX_FDS];
+    bool host_fd_owned[S32_MMIO_MAX_FDS];
 } mmio_ring_state_t;
 
 // Common MMIO configuration shared by both emulators
@@ -63,6 +68,7 @@ typedef struct {
 // Minimal host-facing interface exposed to MMIO helpers
 typedef struct {
     bool *halted;
+    uint32_t *exit_status;  // optional pointer to place exit code
 } mmio_cpu_iface_t;
 
 // Initialize MMIO ring buffers

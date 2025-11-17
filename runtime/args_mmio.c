@@ -135,6 +135,7 @@ int __slow32_fetch_args(int *argc_out, char ***argv_out) {
 
     *argc_out = captured_argc;
     *argv_out = captured_argv;
+
     return 0;
 }
 

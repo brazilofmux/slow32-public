@@ -132,7 +132,9 @@ static int mm_setup_from_s32x(memory_manager_t *mm,
                               uint32_t code_limit,
                               uint32_t rodata_limit, 
                               uint32_t data_limit,
-                              uint32_t stack_base) {
+                              uint32_t stack_base,
+                              uint32_t mmio_base,
+                              uint32_t mmio_size) {
     // Code segment: initially read+write for loading, will become read-only
     if (code_limit > 0) {
         if (!mm_allocate_region(mm, 0, code_limit, PROT_READ | PROT_WRITE)) {
@@ -161,9 +163,14 @@ static int mm_setup_from_s32x(memory_manager_t *mm,
     // Heap typically starts at 0x3000 in our memory layout
     uint32_t heap_start = (data_limit + 0xFFF) & ~0xFFF;  // Round up to page
     if (heap_start < 0x3000) heap_start = 0x3000;  // Minimum heap start
-    
-    if (stack_base > heap_start) {
-        if (!mm_allocate_region(mm, heap_start, stack_base - heap_start, PROT_READ | PROT_WRITE)) {
+
+    uint32_t heap_end = stack_base;
+    if (mmio_size > 0 && mmio_base > 0 && mmio_base < heap_end) {
+        heap_end = mmio_base;  // Stop heap before MMIO window
+    }
+
+    if (heap_end > heap_start) {
+        if (!mm_allocate_region(mm, heap_start, heap_end - heap_start, PROT_READ | PROT_WRITE)) {
             return -1;
         }
     }

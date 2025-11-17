@@ -123,7 +123,7 @@ static void cpu_init_mmio(fast_cpu_state_t *cpu) {
 
 // Adapter function to process MMIO without cpu_state
 static void mmio_process_fast(fast_cpu_state_t *cpu) {
-    mmio_cpu_iface_t iface = { .halted = &cpu->halted };
+    mmio_cpu_iface_t iface = { .halted = &cpu->halted, .exit_status = &cpu->regs[1] };
     mmio_ring_process(cpu->mmio.state, &iface);
 }
 
@@ -846,8 +846,9 @@ int main(int argc, char **argv) {
     }
     
     // Set up memory regions based on header
+    uint32_t mmio_size = (header.flags & S32X_FLAG_MMIO) ? S32_MMIO_REGION_SIZE : 0u;
     if (mm_setup_from_s32x(&cpu.mm, header.code_limit, header.rodata_limit, 
-                          header.data_limit, header.stack_base) != 0) {
+                          header.data_limit, header.stack_base, header.mmio_base, mmio_size) != 0) {
         fprintf(stderr, "Error: Failed to allocate memory regions\n");
         fclose(file);
         mm_destroy(&cpu.mm);

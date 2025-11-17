@@ -3,6 +3,9 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <stdio.h>
+#include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <time.h>
 
 #include "exec/cpu-common.h"
@@ -29,6 +32,7 @@
 #define S32_MMIO_DATA_CAPACITY (48u * 1024u)
 #define S32_MMIO_PAGE_SIZE    0x1000u
 #define S32_MMIO_DEFAULT_HEAP_SIZE (16 * MiB)
+#define S32_MMIO_MAX_FDS      128
 
 #define S32_MMIO_STATUS_OK    0u
 #define S32_MMIO_STATUS_EINTR 0xFFFFFFFEu
@@ -84,7 +88,77 @@ struct Slow32MMIOContext {
     uint32_t args_total_bytes;
     GByteArray *args_blob;
     uint8_t scratch[S32_MMIO_DATA_CAPACITY];
+    int host_fds[S32_MMIO_MAX_FDS];
+    bool host_fd_owned[S32_MMIO_MAX_FDS];
 };
+
+static void slow32_mmio_reset_fds(Slow32MMIOContext *ctx)
+{
+    for (uint32_t i = 0; i < S32_MMIO_MAX_FDS; ++i) {
+        ctx->host_fds[i] = -1;
+        ctx->host_fd_owned[i] = false;
+    }
+    ctx->host_fds[0] = STDIN_FILENO;
+    ctx->host_fds[1] = STDOUT_FILENO;
+    ctx->host_fds[2] = STDERR_FILENO;
+}
+
+static void slow32_mmio_close_owned(Slow32MMIOContext *ctx)
+{
+    for (uint32_t i = 0; i < S32_MMIO_MAX_FDS; ++i) {
+        if (ctx->host_fd_owned[i] && ctx->host_fds[i] >= 0) {
+            close(ctx->host_fds[i]);
+        }
+        ctx->host_fds[i] = -1;
+        ctx->host_fd_owned[i] = false;
+    }
+}
+
+static int slow32_mmio_alloc_fd(Slow32MMIOContext *ctx, int host_fd, bool owned)
+{
+    for (uint32_t i = 0; i < S32_MMIO_MAX_FDS; ++i) {
+        if (ctx->host_fds[i] == -1) {
+            ctx->host_fds[i] = host_fd;
+            ctx->host_fd_owned[i] = owned;
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static int slow32_mmio_host_fd(const Slow32MMIOContext *ctx, uint32_t guest_fd)
+{
+    if (guest_fd >= S32_MMIO_MAX_FDS) {
+        return -1;
+    }
+    return ctx->host_fds[guest_fd];
+}
+
+static int slow32_mmio_translate_open_flags(uint32_t guest_flags,
+                                            bool *needs_mode)
+{
+    const uint32_t flag_read = 0x01u;
+    const uint32_t flag_write = 0x02u;
+    const uint32_t flag_append = 0x04u;
+    const uint32_t flag_create = 0x08u;
+    const uint32_t flag_trunc = 0x10u;
+    const uint32_t known = flag_read | flag_write | flag_append |
+                           flag_create | flag_trunc;
+
+    if ((guest_flags & ~known) == 0u) {
+        int flags = (guest_flags & flag_write)
+                        ? ((guest_flags & flag_read) ? O_RDWR : O_WRONLY)
+                        : O_RDONLY;
+        if (guest_flags & flag_append) flags |= O_APPEND;
+        if (guest_flags & flag_create) flags |= O_CREAT;
+        if (guest_flags & flag_trunc) flags |= O_TRUNC;
+        *needs_mode = (flags & O_CREAT) != 0;
+        return flags;
+    }
+
+    *needs_mode = (guest_flags & O_CREAT) != 0;
+    return (int)guest_flags;
+}
 
 static inline bool slow32_mmio_is_enabled(const CPUSlow32State *env)
 {
@@ -151,6 +225,7 @@ void slow32_mmio_context_init(Slow32CPU *cpu)
     g_assert(cpu->mmio == NULL);
     cpu->mmio = g_new0(Slow32MMIOContext, 1);
     cpu->mmio->args_blob = g_byte_array_sized_new(16);
+    slow32_mmio_reset_fds(cpu->mmio);
     slow32_mmio_init_default_args(cpu->mmio);
 }
 
@@ -159,6 +234,7 @@ void slow32_mmio_context_destroy(Slow32CPU *cpu)
     if (!cpu->mmio) {
         return;
     }
+    slow32_mmio_close_owned(cpu->mmio);
     if (cpu->mmio->args_blob) {
         g_byte_array_unref(cpu->mmio->args_blob);
         cpu->mmio->args_blob = NULL;
@@ -184,6 +260,9 @@ static void slow32_mmio_apply_reset(Slow32CPU *cpu, bool clear_window_first)
     if (!ctx) {
         return;
     }
+
+    slow32_mmio_close_owned(ctx);
+    slow32_mmio_reset_fds(ctx);
 
     ctx->enabled = slow32_mmio_is_enabled(env);
     if (!ctx->enabled) {
@@ -427,6 +506,167 @@ static void slow32_mmio_handle_sleep(const CPUSlow32State *env,
     resp->status = S32_MMIO_STATUS_EINTR;
 }
 
+static void slow32_mmio_handle_write_io(Slow32MMIOContext *ctx,
+                                        const CPUSlow32State *env,
+                                        const Slow32MMIODesc *req,
+                                        Slow32MMIODesc *resp)
+{
+    if (req->length == 0 || req->length >= S32_MMIO_DATA_CAPACITY) {
+        resp->status = S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        return;
+    }
+
+    int host_fd = slow32_mmio_host_fd(ctx, req->status);
+    if (host_fd < 0) {
+        resp->status = S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        return;
+    }
+
+    uint32_t count = MIN(req->length, (uint32_t)S32_MMIO_DATA_CAPACITY);
+    slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, count);
+
+    ssize_t written = write(host_fd, ctx->scratch, count);
+    if (written < 0) {
+        resp->status = S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        return;
+    }
+
+    resp->length = (uint32_t)written;
+    resp->status = (uint32_t)written;
+}
+
+static void slow32_mmio_handle_read_io(Slow32MMIOContext *ctx,
+                                       const CPUSlow32State *env,
+                                       const Slow32MMIODesc *req,
+                                       Slow32MMIODesc *resp)
+{
+    if (req->length == 0 || req->length >= S32_MMIO_DATA_CAPACITY) {
+        resp->status = S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        return;
+    }
+
+    int host_fd = slow32_mmio_host_fd(ctx, req->status);
+    if (host_fd < 0) {
+        resp->status = S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        return;
+    }
+
+    uint32_t count = MIN(req->length, (uint32_t)S32_MMIO_DATA_CAPACITY);
+    ssize_t got = read(host_fd, ctx->scratch, count);
+    if (got < 0) {
+        resp->status = S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        return;
+    }
+
+    if (got > 0) {
+        slow32_mmio_copy_to_guest(env, req->offset, ctx->scratch,
+                                  (uint32_t)got);
+    }
+    resp->length = (uint32_t)got;
+    resp->status = (uint32_t)got;
+}
+
+static void slow32_mmio_handle_open(Slow32MMIOContext *ctx,
+                                    const CPUSlow32State *env,
+                                    const Slow32MMIODesc *req,
+                                    Slow32MMIODesc *resp)
+{
+    if (req->length == 0 || req->length >= S32_MMIO_DATA_CAPACITY) {
+        resp->status = S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        return;
+    }
+
+    slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, req->length);
+    ctx->scratch[req->length] = 0;
+    ctx->scratch[req->length - 1u] = 0;
+
+    bool needs_mode = false;
+    int flags = slow32_mmio_translate_open_flags(req->status, &needs_mode);
+    int host_fd = needs_mode ? open((char *)ctx->scratch, flags, 0644)
+                             : open((char *)ctx->scratch, flags);
+    if (host_fd < 0) {
+        resp->status = S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        return;
+    }
+
+    int guest_fd = slow32_mmio_alloc_fd(ctx, host_fd, true);
+    if (guest_fd < 0) {
+        close(host_fd);
+        resp->status = S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        return;
+    }
+
+    resp->status = (uint32_t)guest_fd;
+    resp->length = 0;
+}
+
+static void slow32_mmio_handle_close(Slow32MMIOContext *ctx,
+                                     const Slow32MMIODesc *req,
+                                     Slow32MMIODesc *resp)
+{
+    uint32_t guest_fd = req->status;
+    if (guest_fd >= S32_MMIO_MAX_FDS || ctx->host_fds[guest_fd] < 0) {
+        resp->status = S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        return;
+    }
+
+    int host_fd = ctx->host_fds[guest_fd];
+    int rc = 0;
+    if (ctx->host_fd_owned[guest_fd]) {
+        rc = close(host_fd);
+    }
+
+    ctx->host_fds[guest_fd] = -1;
+    ctx->host_fd_owned[guest_fd] = false;
+    resp->status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+    resp->length = 0;
+}
+
+static void slow32_mmio_handle_seek(Slow32MMIOContext *ctx,
+                                    const CPUSlow32State *env,
+                                    const Slow32MMIODesc *req,
+                                    Slow32MMIODesc *resp)
+{
+    if (req->length < 8u) {
+        resp->status = S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        return;
+    }
+
+    int host_fd = slow32_mmio_host_fd(ctx, req->status);
+    if (host_fd < 0) {
+        resp->status = S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        return;
+    }
+
+    slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, 8);
+
+    uint8_t whence_raw = ctx->scratch[0];
+    int32_t distance = 0;
+    memcpy(&distance, ctx->scratch + 4, sizeof(int32_t));
+
+    off_t new_pos = lseek(host_fd, (off_t)distance, (int)whence_raw);
+    if (new_pos == (off_t)-1) {
+        resp->status = S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        return;
+    }
+
+    resp->status = (uint32_t)new_pos;
+    resp->length = 0;
+}
+
 static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
                                  const Slow32MMIODesc *req,
                                  Slow32MMIODesc *resp)
@@ -446,16 +686,25 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
         resp->length = 1;
         break;
 
-    case S32_MMIO_OP_WRITE: {
-        uint32_t count = MIN(req->length, (uint32_t)S32_MMIO_DATA_CAPACITY);
-        slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, count);
-        FILE *stream = (req->status == 2) ? stderr : stdout;
-        size_t written = fwrite(ctx->scratch, 1, count, stream);
-        fflush(stream);
-        resp->length = written;
-        resp->status = written;
+    case S32_MMIO_OP_WRITE:
+        slow32_mmio_handle_write_io(ctx, env, req, resp);
         break;
-    }
+
+    case S32_MMIO_OP_READ:
+        slow32_mmio_handle_read_io(ctx, env, req, resp);
+        break;
+
+    case S32_MMIO_OP_OPEN:
+        slow32_mmio_handle_open(ctx, env, req, resp);
+        break;
+
+    case S32_MMIO_OP_CLOSE:
+        slow32_mmio_handle_close(ctx, req, resp);
+        break;
+
+    case S32_MMIO_OP_SEEK:
+        slow32_mmio_handle_seek(ctx, env, req, resp);
+        break;
 
     case S32_MMIO_OP_FLUSH:
         fflush(stdout);

@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <limits.h>
+#include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -27,8 +28,75 @@
 #define STAT_CTIME_NSEC(st) ((st).st_ctim.tv_nsec)
 #endif
 
+static void reset_fd_table(mmio_ring_state_t *mmio) {
+    for (uint32_t i = 0; i < S32_MMIO_MAX_FDS; ++i) {
+        mmio->host_fds[i] = -1;
+        mmio->host_fd_owned[i] = false;
+    }
+
+    mmio->host_fds[0] = STDIN_FILENO;
+    mmio->host_fds[1] = STDOUT_FILENO;
+    mmio->host_fds[2] = STDERR_FILENO;
+}
+
+static int alloc_guest_fd(mmio_ring_state_t *mmio, int host_fd, bool owned) {
+    for (uint32_t i = 0; i < S32_MMIO_MAX_FDS; ++i) {
+        if (mmio->host_fds[i] == -1) {
+            mmio->host_fds[i] = host_fd;
+            mmio->host_fd_owned[i] = owned;
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static int host_fd_for_guest(mmio_ring_state_t *mmio, uint32_t guest_fd) {
+    if (guest_fd >= S32_MMIO_MAX_FDS) {
+        return -1;
+    }
+    return mmio->host_fds[guest_fd];
+}
+
+static int translate_open_flags(uint32_t guest_flags, bool *needs_mode) {
+    const uint32_t flag_read = 0x01u;
+    const uint32_t flag_write = 0x02u;
+    const uint32_t flag_append = 0x04u;
+    const uint32_t flag_create = 0x08u;
+    const uint32_t flag_trunc = 0x10u;
+    const uint32_t known = flag_read | flag_write | flag_append |
+                           flag_create | flag_trunc;
+
+    if ((guest_flags & ~known) == 0u) {
+        int flags = (guest_flags & flag_write)
+                        ? ((guest_flags & flag_read) ? O_RDWR : O_WRONLY)
+                        : O_RDONLY;
+        if (guest_flags & flag_append) flags |= O_APPEND;
+        if (guest_flags & flag_create) flags |= O_CREAT;
+        if (guest_flags & flag_trunc) flags |= O_TRUNC;
+        *needs_mode = (flags & O_CREAT) != 0;
+        return flags;
+    }
+
+    *needs_mode = (guest_flags & O_CREAT) != 0;
+    return (int)guest_flags;
+}
+
+// Debug tracing for argument MMIO operations (enabled via env var)
+static bool trace_args_enabled = false;
+static bool trace_io_enabled = false;
+static inline void maybe_init_trace_flag(void) {
+    static bool initialized = false;
+    if (initialized) return;
+    initialized = true;
+    if (getenv("S32_MMIO_TRACE")) {
+        trace_args_enabled = true;
+        trace_io_enabled = true;
+    }
+}
+
 // Initialize MMIO ring buffers
 void mmio_ring_init(mmio_ring_state_t *mmio, uint32_t heap_base, uint32_t heap_size) {
+    maybe_init_trace_flag();
     memset(mmio, 0, sizeof(mmio_ring_state_t));
     
     // Initialize indices
@@ -45,6 +113,8 @@ void mmio_ring_init(mmio_ring_state_t *mmio, uint32_t heap_base, uint32_t heap_s
     mmio->args_blob = NULL;
     mmio->args_argc = 0;
     mmio->args_total_bytes = 0;
+
+    reset_fd_table(mmio);
 }
 
 // Map MMIO memory region (returns host pointer to MMIO base)
@@ -248,43 +318,184 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
         }
         
         case S32_MMIO_OP_WRITE: {
-            int fd = req->status;  // fd is in status field for requests
-            if (fd == 1 || fd == 2) {  // stdout or stderr
-                FILE *stream = (fd == 1) ? stdout : stderr;
-                uint32_t written = 0;
-                for (uint32_t i = 0; i < req->length && i < S32_MMIO_DATA_CAPACITY; i++) {
-                    fputc(mmio->data_buffer[(req->offset + i) % S32_MMIO_DATA_CAPACITY], stream);
-                    written++;
-                }
-                fflush(stream);
-                resp.length = written;
-                resp.status = written;
-            } else {
+            int host_fd = host_fd_for_guest(mmio, req->status);
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            uint32_t max_bytes = S32_MMIO_DATA_CAPACITY - offset;
+            uint32_t to_write = req->length;
+
+            if (host_fd < 0 || to_write == 0 || to_write > S32_MMIO_DATA_CAPACITY) {
+                resp.status = S32_MMIO_STATUS_ERR;
                 resp.length = 0;
-                resp.status = 0xFFFFFFFFu;
+                break;
+            }
+
+            if (to_write > max_bytes) {
+                to_write = max_bytes;
+            }
+
+            ssize_t written = write(host_fd, mmio->data_buffer + offset, to_write);
+            if (written < 0) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            resp.length = (uint32_t)written;
+            resp.status = (uint32_t)written;
+            break;
+        }
+
+        case S32_MMIO_OP_READ: {
+            int host_fd = host_fd_for_guest(mmio, req->status);
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            uint32_t max_bytes = S32_MMIO_DATA_CAPACITY - offset;
+            uint32_t to_read = req->length;
+
+            if (host_fd < 0 || to_read == 0 || to_read > S32_MMIO_DATA_CAPACITY) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                if (trace_io_enabled) {
+                    fprintf(stderr, "[MMIO] READ invalid fd=%d len=%u\n",
+                            host_fd, to_read);
+                }
+                break;
+            }
+
+            if (to_read > max_bytes) {
+                to_read = max_bytes;
+            }
+
+            ssize_t read_count = read(host_fd, mmio->data_buffer + offset, to_read);
+            if (read_count < 0) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                if (trace_io_enabled) {
+                    fprintf(stderr, "[MMIO] READ error fd=%d len=%u errno=%d\n",
+                            host_fd, to_read, errno);
+                }
+                break;
+            }
+
+            resp.length = (uint32_t)read_count;
+            resp.status = (uint32_t)read_count;
+            if (trace_io_enabled) {
+                fprintf(stderr, "[MMIO] READ fd=%d len=%u -> %zd\n",
+                        host_fd, to_read, read_count);
             }
             break;
         }
-        
-        case S32_MMIO_OP_READ: {
-            int fd = req->status;  // fd is in status field
-            if (fd == 0) {  // stdin
-                uint32_t read_count = 0;
-                for (uint32_t i = 0; i < req->length && i < S32_MMIO_DATA_CAPACITY; i++) {
-                    int ch = fgetc(stdin);
-                    if (ch == EOF) break;
-                    
-                    mmio->data_buffer[(req->offset + i) % S32_MMIO_DATA_CAPACITY] = (uint8_t)ch;
-                    read_count++;
-                    
-                    if (ch == '\n') break;  // Line buffered
-                }
-                resp.length = read_count;
-                resp.status = read_count;
-            } else {
+
+        case S32_MMIO_OP_OPEN: {
+            if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+                resp.status = S32_MMIO_STATUS_ERR;
                 resp.length = 0;
-                resp.status = 0xFFFFFFFFu;
+                break;
             }
+
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (offset > (S32_MMIO_DATA_CAPACITY - req->length)) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            char *path = (char *)malloc(req->length + 1u);
+            if (!path) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            memcpy(path, mmio->data_buffer + offset, req->length);
+            path[req->length] = '\0';
+            path[req->length - 1u] = '\0';
+
+            bool needs_mode = false;
+            int flags = translate_open_flags(req->status, &needs_mode);
+            int host_fd = needs_mode ? open(path, flags, 0644) : open(path, flags);
+            free(path);
+
+            if (host_fd < 0) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                if (trace_io_enabled) {
+                    fprintf(stderr, "[MMIO] OPEN failed (flags=0x%x errno=%d)\n",
+                            req->status, errno);
+                }
+                break;
+            }
+
+            int guest_fd = alloc_guest_fd(mmio, host_fd, true);
+            if (guest_fd < 0) {
+                close(host_fd);
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                if (trace_io_enabled) {
+                    fprintf(stderr, "[MMIO] OPEN no free guest fd (host_fd=%d)\n",
+                            host_fd);
+                }
+                break;
+            }
+
+            if (trace_io_enabled) {
+                fprintf(stderr, "[MMIO] OPEN guest_fd=%d host_fd=%d len=%u\n",
+                        guest_fd, host_fd, req->length);
+            }
+            resp.status = (uint32_t)guest_fd;
+            resp.length = 0;
+            break;
+        }
+
+        case S32_MMIO_OP_CLOSE: {
+            uint32_t guest_fd = req->status;
+            if (guest_fd >= S32_MMIO_MAX_FDS || mmio->host_fds[guest_fd] < 0) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            int host_fd = mmio->host_fds[guest_fd];
+            int rc = 0;
+            if (mmio->host_fd_owned[guest_fd]) {
+                rc = close(host_fd);
+            }
+
+            mmio->host_fds[guest_fd] = -1;
+            mmio->host_fd_owned[guest_fd] = false;
+
+            resp.status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+            resp.length = 0;
+            break;
+        }
+
+        case S32_MMIO_OP_SEEK: {
+            int host_fd = host_fd_for_guest(mmio, req->status);
+            if (host_fd < 0 || req->length < 8u) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (offset > (S32_MMIO_DATA_CAPACITY - 8u)) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint8_t whence_raw = mmio->data_buffer[offset];
+            int32_t distance = 0;
+            memcpy(&distance, mmio->data_buffer + offset + 4u, sizeof(int32_t));
+
+            off_t new_pos = lseek(host_fd, (off_t)distance, (int)whence_raw);
+            if (new_pos == (off_t)-1) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            resp.status = (uint32_t)new_pos;
+            resp.length = 0;
             break;
         }
         
@@ -322,8 +533,13 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
         }
         
         case S32_MMIO_OP_EXIT:
-            if (cpu && cpu->halted) {
-                *(cpu->halted) = true;
+            if (cpu) {
+                if (cpu->halted) {
+                    *(cpu->halted) = true;
+                }
+                if (cpu->exit_status) {
+                    *(cpu->exit_status) = req->status;
+                }
             }
             resp.status = req->status;  // Exit code
             break;
@@ -514,6 +730,11 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 .reserved = 0u,
             };
 
+            if (trace_args_enabled) {
+                fprintf(stderr, "[MMIO TRACE] ARGS_INFO argc=%u total=%u offset=%u\n",
+                        info.argc, info.total_bytes, offset);
+            }
+
             memcpy(mmio->data_buffer + offset, &info, sizeof(info));
             resp.length = sizeof(info);
             resp.status = S32_MMIO_STATUS_OK;
@@ -564,6 +785,24 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                        to_copy);
             }
 
+            if (trace_args_enabled) {
+                fprintf(stderr, "[MMIO TRACE] ARGS_DATA req_len=%u dest=0x%X src_off=%u copied=%u\n",
+                        req->length, dest, source_offset, to_copy);
+                if (mmio->args_blob && to_copy > 0) {
+                    uint32_t preview = (to_copy < 16u) ? to_copy : 16u;
+                    fprintf(stderr, "              args_blob[0..%u]:", preview);
+                    for (uint32_t i = 0; i < preview; ++i) {
+                        fprintf(stderr, " %02x", mmio->args_blob[i]);
+                    }
+                    fprintf(stderr, "\n");
+                    fprintf(stderr, "              data_buffer[0..%u]:", preview);
+                    for (uint32_t i = 0; i < preview; ++i) {
+                        fprintf(stderr, " %02x", mmio->data_buffer[i]);
+                    }
+                    fprintf(stderr, "\n");
+                }
+            }
+
             resp.length = to_copy;
             resp.status = S32_MMIO_STATUS_OK;
             break;
@@ -576,6 +815,11 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
     
     // Write response
     if (!ring_full(mmio->resp_head, mmio->resp_tail)) {
+        if (trace_io_enabled) {
+            fprintf(stderr, "[MMIO] RESP head=%u tail=%u opcode=0x%X status=%u len=%u\n",
+                    mmio->resp_head, mmio->resp_tail, resp.opcode,
+                    resp.status, resp.length);
+        }
         mmio->resp_ring[mmio->resp_head] = resp;
         mmio->resp_head = ring_next(mmio->resp_head);
         mmio->total_responses++;

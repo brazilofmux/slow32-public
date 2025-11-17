@@ -110,7 +110,7 @@ static void cpu_step_mmio(cpu_state_mmio_t *cpu_ext) {
         case OP_YIELD:
             // YIELD is the ring buffer sync point
             if (cpu_ext->mmio_enabled) {
-                mmio_cpu_iface_t iface = { .halted = &cpu->halted };
+                mmio_cpu_iface_t iface = { .halted = &cpu->halted, .exit_status = &cpu->regs[REG_R1] };
                 mmio_ring_process(&cpu_ext->mmio, &iface);
             }
             cpu->cycle_count++;
@@ -119,7 +119,7 @@ static void cpu_step_mmio(cpu_state_mmio_t *cpu_ext) {
         case OP_HALT:
             // Process any final I/O before halting
             if (cpu_ext->mmio_enabled) {
-                mmio_cpu_iface_t iface = { .halted = &cpu->halted };
+                mmio_cpu_iface_t iface = { .halted = &cpu->halted, .exit_status = &cpu->regs[REG_R1] };
                 mmio_ring_process(&cpu_ext->mmio, &iface);
             }
             cpu->halted = true;
@@ -213,7 +213,7 @@ int main(int argc, char *argv[]) {
         
         // Optional: Process MMIO every N instructions for responsiveness
         if (enable_mmio && (cpu_ext.cpu.inst_count % 1000) == 0) {
-            mmio_cpu_iface_t iface = { .halted = &cpu_ext.cpu.halted };
+            mmio_cpu_iface_t iface = { .halted = &cpu_ext.cpu.halted, .exit_status = &cpu_ext.cpu.regs[REG_R1] };
             mmio_ring_process(&cpu_ext.mmio, &iface);
         }
     }

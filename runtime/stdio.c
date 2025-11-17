@@ -139,6 +139,11 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
     }
     
     unsigned int bytes_read = (unsigned int)s32_mmio_request(S32_MMIO_OP_READ, total, 0u, stream->fd);
+
+    if (bytes_read == S32_MMIO_STATUS_ERR || bytes_read == S32_MMIO_STATUS_EINTR) {
+        stream->error = 1;
+        return 0;
+    }
     
     if (bytes_read == 0) {
         stream->eof = 1;
@@ -151,8 +156,8 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
     
     volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
     memcpy(ptr, (void *)data_buffer, bytes_read);
-    // Avoid division - only return full reads
-    return (bytes_read == total) ? nmemb : 0;
+    // Return the number of fully read elements (may be partial at EOF)
+    return bytes_read / size;
 }
 
 int fgetc(FILE *stream) {

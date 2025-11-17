@@ -98,9 +98,9 @@ static inline int cpu_mem_write(cpu_state_ext_t *cpu, uint32_t addr, const void 
 // Process MMIO requests (call in main loop)
 static inline void cpu_process_mmio(cpu_state_ext_t *cpu) {
     if (cpu->mmio_enabled && mmio_has_requests(&cpu->mmio)) {
-        mmio_cpu_iface_t iface = { .halted = &cpu->base.halted };
-        mmio_ring_process(&cpu->mmio, &iface);
-    }
+            mmio_cpu_iface_t iface = { .halted = &cpu->base.halted, .exit_status = &cpu->base.regs[REG_R1] };
+            mmio_ring_process(&cpu->mmio, &iface);
+        }
 }
 
 // Cleanup

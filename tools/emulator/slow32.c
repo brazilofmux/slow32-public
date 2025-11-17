@@ -221,8 +221,9 @@ bool cpu_load_binary(cpu_state_t *cpu, const char *filename) {
     // Allocate memory regions based on executable requirements
     //printf("[TRACE] About to call mem_setup_from_s32x\n");
     fflush(stdout);
+    uint32_t mmio_size = (header.flags & S32X_FLAG_MMIO) ? 0x10000u : 0u;
     if (mm_setup_from_s32x(&cpu->mm, header.code_limit, header.rodata_limit,
-                          header.data_limit, header.stack_base) < 0) {
+                          header.data_limit, header.stack_base, header.mmio_base, mmio_size) < 0) {
         fprintf(stderr, "Failed to allocate memory regions\n");
         fclose(f);
         return false;
@@ -439,7 +440,8 @@ static void cpu_store(cpu_state_t *cpu, uint32_t addr, uint32_t value, int size)
     }
     
     if (mm_write(&cpu->mm, addr, &data, size) < 0) {
-        fprintf(stderr, "Memory fault: Failed to write %d bytes at 0x%08X\n", size, addr);
+        fprintf(stderr, "Memory fault: Failed to write %d bytes at 0x%08X (PC=0x%08X SP=0x%08X)\n",
+                size, addr, cpu->pc, cpu->regs[REG_SP]);
         cpu->halted = true;
     }
 }
@@ -718,7 +720,7 @@ void cpu_step(cpu_state_t *cpu) {
         case OP_YIELD:
             // YIELD is the MMIO synchronization point
             if (cpu->mmio.initialized) {
-                mmio_cpu_iface_t iface = { .halted = &cpu->halted };
+                mmio_cpu_iface_t iface = { .halted = &cpu->halted, .exit_status = &cpu->regs[1] };
                 // Process ring buffers in both directions
                 mmio_ring_process(cpu->mmio.state, &iface);
             }
@@ -734,7 +736,7 @@ void cpu_step(cpu_state_t *cpu) {
         case OP_HALT:
             // Process any final MMIO before halting
             if (cpu->mmio.initialized) {
-                mmio_cpu_iface_t iface = { .halted = &cpu->halted };
+                mmio_cpu_iface_t iface = { .halted = &cpu->halted, .exit_status = &cpu->regs[1] };
                 mmio_ring_process(cpu->mmio.state, &iface);
             }
             printf("HALT at PC=0x%08X\n", cpu->pc);
@@ -882,6 +884,7 @@ int main(int argc, char *argv[]) {
     
     // Run program
     printf("Starting execution\n");
+    fflush(stdout);
     clock_t start = clock();
     cpu_run(&cpu);
     clock_t end = clock();

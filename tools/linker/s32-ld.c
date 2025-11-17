@@ -851,12 +851,15 @@ static void layout_sections(linker_state_t *ld) {
         ld->data_limit = ld->data_base + ld->data_size;
     }
     
+    uint32_t data_limit_cap = ld->data_limit;  // Preserve configured limit for overflow checks
     uint32_t code_addr = ld->code_base;
     uint32_t rodata_addr = ld->rodata_base;
     uint32_t data_addr = ld->data_base;
     uint32_t bss_addr = ld->data_base;  // BSS follows data
     
-    // First pass: assign addresses based on section type
+    // First pass: lay out code/rodata/data. BSS (and any other trailing
+    // sections) are assigned in a second pass so they always start after
+    // the final data byte, regardless of input section order.
     for (int i = 0; i < ld->num_sections; i++) {
         combined_section_t *sec = &ld->sections[i];
         
@@ -884,19 +887,32 @@ static void layout_sections(linker_state_t *ld) {
                 if (data_addr > bss_addr) bss_addr = data_addr;
                 break;
                 
-            case S32_SEC_BSS:
-                bss_addr = (bss_addr + sec->align - 1) & ~(sec->align - 1);
-                sec->vaddr = bss_addr;
-                bss_addr += sec->size;
-                break;
-                
             default:
-                // Other sections go after BSS
-                bss_addr = (bss_addr + sec->align - 1) & ~(sec->align - 1);
-                sec->vaddr = bss_addr;
-                bss_addr += sec->size;
+                // Defer BSS/other sections to keep them after data
                 break;
         }
+    }
+    
+    // Data ends where the initialized data sections finish.
+    ld->data_limit = data_addr;
+    if (bss_addr < data_addr) {
+        bss_addr = data_addr;
+    }
+    
+    // Second pass: place BSS and any other trailing sections contiguously
+    // after data, honoring each section's alignment.
+    for (int i = 0; i < ld->num_sections; i++) {
+        combined_section_t *sec = &ld->sections[i];
+        
+        if (sec->type == S32_SEC_CODE ||
+            sec->type == S32_SEC_RODATA ||
+            sec->type == S32_SEC_DATA) {
+            continue;  // Already placed in the first pass
+        }
+        
+        bss_addr = (bss_addr + sec->align - 1) & ~(sec->align - 1);
+        sec->vaddr = bss_addr;
+        bss_addr += sec->size;
     }
     
     if (ld->verbose) {
@@ -922,8 +938,8 @@ static void layout_sections(linker_state_t *ld) {
             fprintf(stderr, "Hint: Use --rodata-size to increase limit or --pack-sections for automatic layout\n");
             exit(1);
         }
-        if (bss_addr > ld->data_limit) {
-            fprintf(stderr, "Error: Data/BSS section overflow (0x%X > 0x%X)\n", bss_addr, ld->data_limit);
+        if (bss_addr > data_limit_cap) {
+            fprintf(stderr, "Error: Data/BSS section overflow (0x%X > 0x%X)\n", bss_addr, data_limit_cap);
             fprintf(stderr, "Hint: Use --data-size to increase limit or --pack-sections for automatic layout\n");
             exit(1);
         }
