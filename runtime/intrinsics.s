@@ -88,35 +88,43 @@ llvm.memset.p0.i32:
     stw sp+0, lr
     stw sp+4, fp
     add fp, sp, r0
-    
+
     # Save registers
     stw sp+8, r11
     stw sp+12, r12
     stw sp+16, r13
     stw sp+20, r14
     stw sp+24, r15
-    
+
     add r11, r3, r0   # dest
-    add r12, r4, r0   # value (we'll replicate to word)
+    add r12, r4, r0   # value (byte)
     add r13, r5, r0   # count
-    
+
     # Replicate byte to full word: 0x01 -> 0x01010101
     andi r12, r12, 0xFF
-    sll r14, r12, 8
+    slli r14, r12, 8
     or r12, r12, r14     # 0x0101
-    sll r14, r12, 16
+    slli r14, r12, 16
     or r12, r12, r14     # 0x01010101
-    
-.memset_loop:
-    # while (count > 0) { ... }
-    sle r14, r13, r0           # r14 = (count <= 0)
-    beq r14, r0, .memset_body  # if !(count<=0) -> body
-    beq r0, r0, .memset_done
-.memset_body:
+
+    # Word-wise loop: while (count >= 4)
+.memset_word_loop:
+    slti r14, r13, 4         # r14 = (count < 4)
+    bne r14, r0, .memset_byte_loop  # if count < 4, handle remaining bytes
     stw r11+0, r12
     addi r11, r11, 4
     addi r13, r13, -4
-    beq r0, r0, .memset_loop
+    beq r0, r0, .memset_word_loop
+
+    # Byte-wise loop for remaining bytes (0-3 bytes)
+.memset_byte_loop:
+    sle r14, r13, r0           # r14 = (count <= 0)
+    bne r14, r0, .memset_done  # if count <= 0, done
+    stb r11+0, r12             # store one byte
+    addi r11, r11, 1
+    addi r13, r13, -1
+    beq r0, r0, .memset_byte_loop
+
 .memset_done:
     # Restore registers
     ldw r11, sp+8
@@ -124,10 +132,10 @@ llvm.memset.p0.i32:
     ldw r13, sp+16
     ldw r14, sp+20
     ldw r15, sp+24
-    
+
     # Return dest in r1
     add r1, r3, r0
-    
+
     add sp, fp, r0
     ldw lr, sp+0
     ldw fp, sp+4

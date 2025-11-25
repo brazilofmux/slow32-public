@@ -32,18 +32,20 @@ public:
                    bool RenamableSrc = false) const override;
   
   void storeRegToStackSlot(MachineBasicBlock &MBB,
-                           MachineBasicBlock::iterator I, Register SrcReg,
-                           bool isKill, int FrameIndex,
-                           const TargetRegisterClass *RC, Register VReg,
-                           MachineInstr::MIFlag Flags =
-                               MachineInstr::NoFlags) const override;
-
+                          MachineBasicBlock::iterator I,
+                          Register SrcReg, bool isKill, int FrameIndex,
+                          const TargetRegisterClass *RC,
+                          const TargetRegisterInfo *TRI,
+                          Register VReg,
+                          MachineInstr::MIFlag Flags = MachineInstr::NoFlags) const override;
+  
   void loadRegFromStackSlot(MachineBasicBlock &MBB,
-                            MachineBasicBlock::iterator I, Register DestReg,
-                            int FrameIndex, const TargetRegisterClass *RC,
-                            Register VReg,
-                            MachineInstr::MIFlag Flags =
-                                MachineInstr::NoFlags) const override;
+                           MachineBasicBlock::iterator I,
+                           Register DestReg, int FrameIndex,
+                           const TargetRegisterClass *RC,
+                           const TargetRegisterInfo *TRI,
+                           Register VReg,
+                           MachineInstr::MIFlag Flags = MachineInstr::NoFlags) const override;
 
   // Branch analysis
   bool analyzeBranch(MachineBasicBlock &MBB, MachineBasicBlock *&TBB,

@@ -23,8 +23,6 @@
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include <utility>
-
 using namespace llvm;
 
 namespace {
@@ -125,27 +123,10 @@ public:
 
   bool mayNeedRelaxation(unsigned Opcode, ArrayRef<MCOperand> Operands,
                          const MCSubtargetInfo &STI) const override {
+    (void)Opcode;
     (void)Operands;
     (void)STI;
-
-    switch (Opcode) {
-    case SLOW32::BR:
-    case SLOW32::BEQ:
-    case SLOW32::BEQ_pat:
-    case SLOW32::BNE:
-    case SLOW32::BNE_pat:
-    case SLOW32::BLT:
-    case SLOW32::BGE:
-    case SLOW32::BGT:
-    case SLOW32::BLE:
-    case SLOW32::BLTU:
-    case SLOW32::BGEU:
-    case SLOW32::BGTU:
-    case SLOW32::BLEU:
-      return true;
-    default:
-      return false;
-    }
+    return false;
   }
 
   bool fixupNeedsRelaxation(const MCFixup &Fixup,
@@ -168,19 +149,8 @@ public:
     assert(RelaxedOp != Inst.getOpcode() &&
            "relaxInstruction called on non-relaxable opcode");
 
-    MCInst Relaxed;
-    Relaxed.setOpcode(RelaxedOp);
-
-    // Use the architecturally reserved R2 as the scratch register for the
-    // materialised long-branch sequence. The compiler never allocates R2, so
-    // assembled sources that rely on relaxation remain correct without having
-    // to plumb extra operands through the front-end syntax.
-    Relaxed.addOperand(MCOperand::createReg(SLOW32::R2));
-
-    for (unsigned I = 0, E = Inst.getNumOperands(); I < E; ++I)
-      Relaxed.addOperand(Inst.getOperand(I));
-
-    Inst = std::move(Relaxed);
+    (void)RelaxedOp;
+    llvm_unreachable("MC relaxation disabled for SLOW32");
   }
 
   std::unique_ptr<MCObjectTargetWriter>

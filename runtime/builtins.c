@@ -36,7 +36,7 @@ uint32_t __umodsi3(uint32_t n, uint32_t d) {
 }
 
 #ifdef __clang__
-#define S32_NO_OPT __attribute__((optnone))
+#define S32_NO_OPT
 #else
 #define S32_NO_OPT
 #endif
