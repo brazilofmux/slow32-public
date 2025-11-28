@@ -62,6 +62,4 @@ void srand(unsigned int seed) {
     rand_seed = seed;
 }
 
-char *getenv(const char *name) {
-    return NULL;
-}
+// getenv() is now implemented in envp_mmio.c (MMIO) or envp_stub.c (debug)

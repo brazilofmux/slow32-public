@@ -78,6 +78,9 @@ enum s32_mmio_opcode {
     // 0x60 - 0x6F : Host environment services
     S32_MMIO_OP_ARGS_INFO   = 0x60,  // Query argc/total-bytes for guest argv[]
     S32_MMIO_OP_ARGS_DATA   = 0x61,  // Copy flattened argv blob from host
+    S32_MMIO_OP_ENVP_INFO   = 0x62,  // Query envc/total-bytes for guest environ[]
+    S32_MMIO_OP_ENVP_DATA   = 0x63,  // Copy flattened envp blob from host
+    S32_MMIO_OP_GETENV      = 0x64,  // Lookup single env var by name (returns value)
 };
 
 #pragma pack(push, 1)
@@ -129,6 +132,18 @@ typedef struct s32_mmio_args_info {
 #define S32_MMIO_ARGS_FLAG_ENVP 0x00000001u  // Placeholder for future envp support
 
 #define S32_MMIO_ARGS_MAX_BYTES (64u * 1024u)  // Safety cap for argv blob transfers
+
+// Host environment metadata returned by S32_MMIO_OP_ENVP_INFO
+#pragma pack(push, 1)
+typedef struct s32_mmio_envp_info {
+    uint32_t envc;         // Number of environment variables
+    uint32_t total_bytes;  // Bytes needed to store all NUL-terminated "KEY=VALUE" strings
+    uint32_t flags;        // Reserved for future features
+    uint32_t reserved;     // Keep structure 16-byte aligned
+} s32_mmio_envp_info_t;
+#pragma pack(pop)
+
+#define S32_MMIO_ENVP_MAX_BYTES (128u * 1024u)  // Safety cap for envp blob transfers
 
 
 #endif // S32_MMIO_RING_LAYOUT_H

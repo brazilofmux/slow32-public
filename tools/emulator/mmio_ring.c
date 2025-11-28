@@ -114,6 +114,10 @@ void mmio_ring_init(mmio_ring_state_t *mmio, uint32_t heap_base, uint32_t heap_s
     mmio->args_argc = 0;
     mmio->args_total_bytes = 0;
 
+    mmio->envp_blob = NULL;
+    mmio->envp_envc = 0;
+    mmio->envp_total_bytes = 0;
+
     reset_fd_table(mmio);
 }
 
@@ -200,6 +204,66 @@ int mmio_ring_set_args(mmio_ring_state_t *mmio,
     mmio->args_blob = blob;
     mmio->args_argc = argc;
     mmio->args_total_bytes = (uint32_t)total_bytes;
+    return 0;
+}
+
+void mmio_ring_clear_envp(mmio_ring_state_t *mmio) {
+    if (!mmio) {
+        return;
+    }
+    free(mmio->envp_blob);
+    mmio->envp_blob = NULL;
+    mmio->envp_envc = 0;
+    mmio->envp_total_bytes = 0;
+}
+
+int mmio_ring_set_envp(mmio_ring_state_t *mmio,
+                       char *const *envp) {
+    if (!mmio) {
+        return -1;
+    }
+
+    mmio_ring_clear_envp(mmio);
+
+    if (envp == NULL) {
+        return 0;
+    }
+
+    // Count environment variables and total bytes
+    uint32_t envc = 0;
+    uint64_t total_bytes = 0;
+    for (char *const *p = envp; *p != NULL; ++p) {
+        size_t len = strlen(*p) + 1u;
+        total_bytes += len;
+        envc++;
+        if (total_bytes > S32_MMIO_ENVP_MAX_BYTES || total_bytes > UINT32_MAX) {
+            mmio_ring_clear_envp(mmio);
+            return -1;
+        }
+    }
+
+    if (envc == 0 || total_bytes == 0) {
+        mmio->envp_envc = 0;
+        mmio->envp_total_bytes = 0;
+        return 0;
+    }
+
+    uint8_t *blob = (uint8_t *)malloc((size_t)total_bytes);
+    if (!blob) {
+        mmio_ring_clear_envp(mmio);
+        return -1;
+    }
+
+    size_t offset = 0;
+    for (char *const *p = envp; *p != NULL; ++p) {
+        size_t len = strlen(*p) + 1u;
+        memcpy(blob + offset, *p, len);
+        offset += len;
+    }
+
+    mmio->envp_blob = blob;
+    mmio->envp_envc = envc;
+    mmio->envp_total_bytes = (uint32_t)total_bytes;
     return 0;
 }
 
@@ -807,7 +871,156 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             resp.status = S32_MMIO_STATUS_OK;
             break;
         }
-            
+
+        case S32_MMIO_OP_ENVP_INFO: {
+            if (req->length < sizeof(s32_mmio_envp_info_t)) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (offset > (S32_MMIO_DATA_CAPACITY - sizeof(s32_mmio_envp_info_t))) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            s32_mmio_envp_info_t info = {
+                .envc = mmio->envp_envc,
+                .total_bytes = mmio->envp_total_bytes,
+                .flags = 0u,
+                .reserved = 0u,
+            };
+
+            if (trace_args_enabled) {
+                fprintf(stderr, "[MMIO TRACE] ENVP_INFO envc=%u total=%u offset=%u\n",
+                        info.envc, info.total_bytes, offset);
+            }
+
+            memcpy(mmio->data_buffer + offset, &info, sizeof(info));
+            resp.length = sizeof(info);
+            resp.status = S32_MMIO_STATUS_OK;
+            break;
+        }
+
+        case S32_MMIO_OP_ENVP_DATA: {
+            if (req->length == 0) {
+                resp.length = 0;
+                resp.status = S32_MMIO_STATUS_OK;
+                break;
+            }
+
+            if (req->length > S32_MMIO_DATA_CAPACITY) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t dest = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (dest > (S32_MMIO_DATA_CAPACITY - req->length)) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t source_offset = req->status;
+            if (source_offset > mmio->envp_total_bytes) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t remaining = mmio->envp_total_bytes - source_offset;
+            uint32_t to_copy = req->length;
+            if (to_copy > remaining) {
+                to_copy = remaining;
+            }
+
+            if (to_copy > 0) {
+                if (!mmio->envp_blob) {
+                    resp.status = S32_MMIO_STATUS_ERR;
+                    resp.length = 0;
+                    break;
+                }
+                memcpy(mmio->data_buffer + dest,
+                       mmio->envp_blob + source_offset,
+                       to_copy);
+            }
+
+            if (trace_args_enabled) {
+                fprintf(stderr, "[MMIO TRACE] ENVP_DATA req_len=%u dest=0x%X src_off=%u copied=%u\n",
+                        req->length, dest, source_offset, to_copy);
+            }
+
+            resp.length = to_copy;
+            resp.status = S32_MMIO_STATUS_OK;
+            break;
+        }
+
+        case S32_MMIO_OP_GETENV: {
+            // Request: name in data buffer, length = name length (including NUL)
+            // Response: value in data buffer, status = value length (0 if not found)
+            if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (offset > (S32_MMIO_DATA_CAPACITY - req->length)) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            // Extract the name from data buffer
+            char *name = (char *)malloc(req->length + 1);
+            if (!name) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+            memcpy(name, mmio->data_buffer + offset, req->length);
+            name[req->length] = '\0';
+
+            if (trace_args_enabled) {
+                fprintf(stderr, "[MMIO TRACE] GETENV request for '%s'\n", name);
+            }
+
+            // Look up in host environment
+            const char *value = getenv(name);
+            free(name);
+
+            if (!value) {
+                if (trace_args_enabled) {
+                    fprintf(stderr, "[MMIO TRACE] GETENV not found\n");
+                }
+                // Not found - return error status
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            size_t value_len = strlen(value);
+
+            // Safety check: ensure we don't write past end of buffer
+            // offset is where we write (req->offset % CAPACITY)
+            if (offset + value_len > S32_MMIO_DATA_CAPACITY) {
+                value_len = S32_MMIO_DATA_CAPACITY - offset;
+            }
+
+            // Copy value to data buffer
+            memcpy(mmio->data_buffer + offset, value, value_len);
+            resp.length = (uint32_t)value_len;
+            resp.status = (uint32_t)value_len;
+
+            if (trace_args_enabled) {
+                fprintf(stderr, "[MMIO TRACE] GETENV found value len=%zu\n", value_len);
+            }
+            break;
+        }
+
         default:
             resp.status = ENOSYS;  // Not implemented
             break;

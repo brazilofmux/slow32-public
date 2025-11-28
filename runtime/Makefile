@@ -35,10 +35,12 @@ STDIO_MMIO_OBJS = stdio.s32o stdio_buffered.s32o flush_mmio.s32o
 
 # MMIO-only helpers
 LIBC_MMIO_EXTRA_OBJS = mmio_request.s32o time_mmio.s32o \
-                       stat_mmio.s32o args_mmio.s32o exit_mmio.s32o
+                       stat_mmio.s32o args_mmio.s32o exit_mmio.s32o \
+                       envp_mmio.s32o
 
 # Debug-only extras (fallback stubs)
-LIBC_DEBUG_EXTRA_OBJS = stat_stub.s32o args_stub.s32o exit_debug.s32o
+LIBC_DEBUG_EXTRA_OBJS = stat_stub.s32o args_stub.s32o exit_debug.s32o \
+                        envp_stub.s32o
 
 # Math library objects for libm.s32a (future - currently disabled due to float support)
 # LIBM_OBJS = math.s32o
@@ -57,7 +59,7 @@ C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_util
             stdio_buffered.c flush_mmio.c flush_debug.c \
             debug_char.c yield.c putchar.c mmio_request.c time_mmio.c \
             stat_mmio.c stat_stub.c start.c args_mmio.c args_stub.c \
-            exit_mmio.c exit_debug.c
+            exit_mmio.c exit_debug.c envp_mmio.c envp_stub.c
 # Note: math.c excluded due to floating point operations not yet supported
 
 # Default target builds everything
@@ -138,6 +140,15 @@ memory_extra.ll: memory_extra.c
 
 stdlib_extra.ll: OPT_LEVEL = -O2
 stdlib_extra.ll: stdlib_extra.c
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
+
+# Environment variable support (needs -O0 due to i1 load issue)
+envp_mmio.ll: OPT_LEVEL = -O0
+envp_mmio.ll: envp_mmio.c
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
+
+envp_stub.ll: OPT_LEVEL = -O0
+envp_stub.ll: envp_stub.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
 
 # Special LLC rules to avoid double optimization

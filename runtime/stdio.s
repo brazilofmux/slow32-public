@@ -1455,5 +1455,5 @@ stderr:
 	.word	_stderr
 	.size	stderr, 4
 
-	.ident	"clang version 22.0.0git (https://github.com/llvm/llvm-project.git ac9888e035be3ab40b82c1eef452ebc584686b59)"
+	.ident	"clang version 22.0.0git (https://github.com/llvm/llvm-project.git 64733ade54e83caa20942f58250ac6667cdd1ee7)"
 	.section	".note.GNU-stack","",@progbits

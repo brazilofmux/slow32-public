@@ -52,6 +52,11 @@ typedef struct {
     uint32_t args_total_bytes;
     uint8_t *args_blob;
 
+    // Cached host environment data
+    uint32_t envp_envc;
+    uint32_t envp_total_bytes;
+    uint8_t *envp_blob;
+
     int host_fds[S32_MMIO_MAX_FDS];
     bool host_fd_owned[S32_MMIO_MAX_FDS];
 } mmio_ring_state_t;
@@ -108,5 +113,11 @@ int mmio_ring_set_args(mmio_ring_state_t *mmio,
                        char *const *argv);
 
 void mmio_ring_clear_args(mmio_ring_state_t *mmio);
+
+// Environment management helpers
+int mmio_ring_set_envp(mmio_ring_state_t *mmio,
+                       char *const *envp);
+
+void mmio_ring_clear_envp(mmio_ring_state_t *mmio);
 
 #endif // MMIO_RING_H

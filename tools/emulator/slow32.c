@@ -878,6 +878,12 @@ int main(int argc, char *argv[]) {
             cpu_destroy(&cpu);
             return 1;
         }
+        // Pass through host environment to guest
+        extern char **environ;
+        if (mmio_ring_set_envp(cpu.mmio.state, environ) != 0) {
+            fprintf(stderr, "Warning: unable to stage host environment (too many bytes?)\n");
+            // Non-fatal - continue without environment
+        }
     } else if (guest_argc > 1) {
         fprintf(stderr, "Warning: guest arguments ignored because MMIO is disabled.\n");
     }

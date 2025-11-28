@@ -56,6 +56,9 @@
 
 #define S32_MMIO_OP_ARGS_INFO 0x60
 #define S32_MMIO_OP_ARGS_DATA 0x61
+#define S32_MMIO_OP_ENVP_INFO 0x62
+#define S32_MMIO_OP_ENVP_DATA 0x63
+#define S32_MMIO_OP_GETENV    0x64
 
 typedef struct Slow32MMIODesc {
     uint32_t opcode;
@@ -78,6 +81,13 @@ typedef struct s32_mmio_args_info {
     uint32_t reserved;
 } s32_mmio_args_info_t;
 
+typedef struct s32_mmio_envp_info {
+    uint32_t envc;
+    uint32_t total_bytes;
+    uint32_t flags;
+    uint32_t reserved;
+} s32_mmio_envp_info_t;
+
 struct Slow32MMIOContext {
     bool enabled;
     uint32_t req_tail;
@@ -87,6 +97,9 @@ struct Slow32MMIOContext {
     uint32_t args_argc;
     uint32_t args_total_bytes;
     GByteArray *args_blob;
+    uint32_t envp_envc;
+    uint32_t envp_total_bytes;
+    GByteArray *envp_blob;
     uint8_t scratch[S32_MMIO_DATA_CAPACITY];
     int host_fds[S32_MMIO_MAX_FDS];
     bool host_fd_owned[S32_MMIO_MAX_FDS];
@@ -220,13 +233,55 @@ static void slow32_mmio_init_default_args(Slow32MMIOContext *ctx)
     g_byte_array_append(ctx->args_blob, &zero, 1);
 }
 
+static void slow32_mmio_init_default_envp(Slow32MMIOContext *ctx)
+{
+    ctx->envp_envc = 0;
+    ctx->envp_total_bytes = 0;
+    g_byte_array_set_size(ctx->envp_blob, 0);
+
+    /* Populate from host environment (environ is declared in unistd.h) */
+    if (!environ) {
+        return;
+    }
+
+    /* Count environment variables and total bytes needed */
+    uint32_t envc = 0;
+    uint64_t total_bytes = 0;
+    for (char **p = environ; *p != NULL; ++p) {
+        size_t len = strlen(*p) + 1;
+        total_bytes += len;
+        envc++;
+        /* Safety cap to avoid excessive memory usage */
+        if (total_bytes > (128u * 1024u)) {
+            break;
+        }
+    }
+
+    if (envc == 0 || total_bytes == 0) {
+        return;
+    }
+
+    /* Build the blob of NUL-terminated KEY=VALUE strings */
+    g_byte_array_set_size(ctx->envp_blob, 0);
+    uint32_t count = 0;
+    for (char **p = environ; *p != NULL && count < envc; ++p, ++count) {
+        size_t len = strlen(*p) + 1;
+        g_byte_array_append(ctx->envp_blob, (const guint8 *)*p, len);
+    }
+
+    ctx->envp_envc = envc;
+    ctx->envp_total_bytes = (uint32_t)ctx->envp_blob->len;
+}
+
 void slow32_mmio_context_init(Slow32CPU *cpu)
 {
     g_assert(cpu->mmio == NULL);
     cpu->mmio = g_new0(Slow32MMIOContext, 1);
     cpu->mmio->args_blob = g_byte_array_sized_new(16);
+    cpu->mmio->envp_blob = g_byte_array_sized_new(16);
     slow32_mmio_reset_fds(cpu->mmio);
     slow32_mmio_init_default_args(cpu->mmio);
+    slow32_mmio_init_default_envp(cpu->mmio);
 }
 
 void slow32_mmio_context_destroy(Slow32CPU *cpu)
@@ -238,6 +293,10 @@ void slow32_mmio_context_destroy(Slow32CPU *cpu)
     if (cpu->mmio->args_blob) {
         g_byte_array_unref(cpu->mmio->args_blob);
         cpu->mmio->args_blob = NULL;
+    }
+    if (cpu->mmio->envp_blob) {
+        g_byte_array_unref(cpu->mmio->envp_blob);
+        cpu->mmio->envp_blob = NULL;
     }
     g_free(cpu->mmio);
     cpu->mmio = NULL;
@@ -467,6 +526,110 @@ static void slow32_mmio_handle_args_data(Slow32MMIOContext *ctx,
 
     resp->length = to_copy;
     resp->status = S32_MMIO_STATUS_OK;
+}
+
+static void slow32_mmio_handle_envp_info(Slow32MMIOContext *ctx,
+                                         const CPUSlow32State *env,
+                                         const Slow32MMIODesc *req,
+                                         Slow32MMIODesc *resp)
+{
+    if (req->length < sizeof(s32_mmio_envp_info_t)) {
+        resp->status = S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        return;
+    }
+
+    s32_mmio_envp_info_t info = {
+        .envc = ctx->envp_envc,
+        .total_bytes = ctx->envp_total_bytes,
+        .flags = 0,
+        .reserved = 0,
+    };
+
+    slow32_mmio_copy_to_guest(env, req->offset,
+                              (const uint8_t *)&info, sizeof(info));
+    resp->length = sizeof(info);
+    resp->status = S32_MMIO_STATUS_OK;
+}
+
+static void slow32_mmio_handle_envp_data(Slow32MMIOContext *ctx,
+                                         const CPUSlow32State *env,
+                                         const Slow32MMIODesc *req,
+                                         Slow32MMIODesc *resp)
+{
+    if (!ctx->envp_blob) {
+        resp->status = S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        return;
+    }
+
+    if (req->length == 0) {
+        resp->status = S32_MMIO_STATUS_OK;
+        resp->length = 0;
+        return;
+    }
+
+    if (req->length > S32_MMIO_DATA_CAPACITY) {
+        resp->status = S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        return;
+    }
+
+    if (req->status > ctx->envp_total_bytes) {
+        resp->status = S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        return;
+    }
+
+    uint32_t remaining = ctx->envp_total_bytes - req->status;
+    uint32_t to_copy = MIN(req->length, remaining);
+
+    if (to_copy) {
+        slow32_mmio_copy_to_guest(env, req->offset,
+                                  ctx->envp_blob->data + req->status,
+                                  to_copy);
+    }
+
+    resp->length = to_copy;
+    resp->status = S32_MMIO_STATUS_OK;
+}
+
+static void slow32_mmio_handle_getenv(Slow32MMIOContext *ctx,
+                                      const CPUSlow32State *env,
+                                      const Slow32MMIODesc *req,
+                                      Slow32MMIODesc *resp)
+{
+    if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+        resp->status = S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        return;
+    }
+
+    /* Read the name from guest memory. Clamp the copy length so we always
+     * have room for a terminator even when the guest supplies the maximum
+     * request size.
+     */
+    uint32_t copy_len = MIN(req->length, S32_MMIO_DATA_CAPACITY - 1u);
+    slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, copy_len);
+    ctx->scratch[copy_len] = '\0';
+
+    /* Look up in host environment */
+    const char *value = getenv((const char *)ctx->scratch);
+    if (!value) {
+        resp->status = S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        return;
+    }
+
+    size_t value_len = strlen(value);
+    if (value_len > S32_MMIO_DATA_CAPACITY) {
+        value_len = S32_MMIO_DATA_CAPACITY;
+    }
+
+    slow32_mmio_copy_to_guest(env, req->offset,
+                              (const uint8_t *)value, value_len);
+    resp->length = (uint32_t)value_len;
+    resp->status = (uint32_t)value_len;
 }
 
 static void slow32_mmio_handle_gettime(const CPUSlow32State *env,
@@ -719,6 +882,18 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
 
     case S32_MMIO_OP_ARGS_DATA:
         slow32_mmio_handle_args_data(ctx, env, req, resp);
+        break;
+
+    case S32_MMIO_OP_ENVP_INFO:
+        slow32_mmio_handle_envp_info(ctx, env, req, resp);
+        break;
+
+    case S32_MMIO_OP_ENVP_DATA:
+        slow32_mmio_handle_envp_data(ctx, env, req, resp);
+        break;
+
+    case S32_MMIO_OP_GETENV:
+        slow32_mmio_handle_getenv(ctx, env, req, resp);
         break;
 
     case S32_MMIO_OP_BRK:
