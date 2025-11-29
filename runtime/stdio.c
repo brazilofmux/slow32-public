@@ -204,24 +204,36 @@ int fputs(const char *s, FILE *stream) {
 }
 
 int fseek(FILE *stream, long offset, int whence) {
-    if (!stream) return -1;
-    
+    if (!stream) return -1L;
+
     volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
     data_buffer[0] = (unsigned char)whence;
     *(long *)(void *)(data_buffer + 4) = offset;
-    
+
     int result = s32_mmio_request(S32_MMIO_OP_SEEK, 8u, 0u, stream->fd);
     if (result < 0) {
         stream->error = 1;
         return -1;
     }
-    
+
     stream->eof = 0;
     return 0;
 }
 
 long ftell(FILE *stream) {
-    return fseek(stream, 0, SEEK_CUR);
+    if (!stream) return -1L;
+
+    volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
+    data_buffer[0] = (unsigned char)SEEK_CUR;
+    *(long *)(void *)(data_buffer + 4) = 0;
+
+    int result = s32_mmio_request(S32_MMIO_OP_SEEK, 8u, 0u, stream->fd);
+    if (result < 0) {
+        stream->error = 1;
+        return -1L;
+    }
+
+    return (long)result;
 }
 
 void rewind(FILE *stream) {

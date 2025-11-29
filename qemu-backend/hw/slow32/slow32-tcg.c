@@ -17,18 +17,7 @@ OBJECT_DECLARE_SIMPLE_TYPE(Slow32MachineState, SLOW32_MACHINE)
 typedef struct Slow32MachineState {
     MachineState parent_obj;
     MemoryRegion ram;
-    bool stats_enabled;
 } Slow32MachineState;
-
-static bool slow32_machine_get_stats(Object *obj, Error **errp)
-{
-    return SLOW32_MACHINE(obj)->stats_enabled;
-}
-
-static void slow32_machine_set_stats(Object *obj, bool value, Error **errp)
-{
-    SLOW32_MACHINE(obj)->stats_enabled = value;
-}
 
 typedef struct QEMU_PACKED Slow32XHeader {
     uint32_t magic;
@@ -188,6 +177,44 @@ static bool slow32_load_s32x(Slow32MachineState *sms, MachineState *machine,
     return true;
 }
 
+static void slow32_parse_cmdline(MachineState *machine, Slow32CPU *cpu)
+{
+    const char *cmdline = machine->kernel_cmdline;
+    const char *kernel = machine->kernel_filename;
+
+    /*
+     * Build argv[] for the guest. The kernel filename becomes argv[0],
+     * and the -append arguments become argv[1..n].
+     */
+    int extra_argc = 0;
+    char **extra_argv = NULL;
+    GError *gerr = NULL;
+
+    if (cmdline && *cmdline) {
+        if (!g_shell_parse_argv(cmdline, &extra_argc, &extra_argv, &gerr)) {
+            warn_report("Failed to parse kernel cmdline: %s", gerr->message);
+            g_error_free(gerr);
+            extra_argc = 0;
+            extra_argv = NULL;
+        }
+    }
+
+    /* Build combined argv: [kernel_filename, extra_argv...] */
+    int argc = 1 + extra_argc;
+    char **argv = g_new0(char *, argc + 1);
+
+    argv[0] = g_strdup(kernel ? kernel : "");
+    for (int i = 0; i < extra_argc; i++) {
+        argv[1 + i] = g_strdup(extra_argv[i]);
+    }
+    argv[argc] = NULL;
+
+    slow32_mmio_set_args(cpu, argc, argv);
+
+    g_strfreev(argv);
+    g_strfreev(extra_argv);
+}
+
 static bool slow32_load_kernel(Slow32MachineState *sms, MachineState *machine,
                                Slow32CPU *cpu, Error **errp)
 {
@@ -219,6 +246,10 @@ static bool slow32_load_kernel(Slow32MachineState *sms, MachineState *machine,
         ok = slow32_load_flat(machine, cpu, errp);
     }
 
+    if (ok) {
+        slow32_parse_cmdline(machine, cpu);
+    }
+
     return ok;
 }
 
@@ -237,9 +268,6 @@ static void slow32_machine_init(MachineState *machine)
     }
     CPUState *cs = cpu_create(machine->cpu_type);
     Slow32CPU *cpu = SLOW32_CPU(cs);
-    cpu->stats_enabled = sms->stats_enabled;
-    cpu->env.stats_enabled = sms->stats_enabled;
-    cpu->env.run_start_us = sms->stats_enabled ? g_get_monotonic_time() : 0;
 
     if (!slow32_load_kernel(sms, machine, cpu, &err)) {
         error_report_err(err);
@@ -256,22 +284,10 @@ static void slow32_machine_class_init(ObjectClass *oc, const void *data)
     mc->default_cpu_type = TYPE_SLOW32_CPU;
     mc->default_ram_size = 256 * MiB;
     mc->ignore_memory_transaction_failures = true;
-
-    object_class_property_add_bool(oc, "stats",
-                                   slow32_machine_get_stats,
-                                   slow32_machine_set_stats);
-    object_class_property_set_description(oc, "stats",
-        "Enable instruction counting and TB timing stats");
-    ObjectProperty *prop = object_class_property_find(oc, "stats");
-    if (prop) {
-        object_property_set_default_bool(prop, true);
-    }
 }
 
 static void slow32_machine_instance_init(Object *obj)
 {
-    Slow32MachineState *sms = SLOW32_MACHINE(obj);
-    sms->stats_enabled = true;
 }
 
 static const TypeInfo slow32_machine_type = {

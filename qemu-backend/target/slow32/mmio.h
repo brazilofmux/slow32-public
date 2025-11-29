@@ -10,6 +10,7 @@ void slow32_mmio_context_destroy(Slow32CPU *cpu);
 void slow32_mmio_reset(Slow32CPU *cpu);
 void slow32_mmio_reconfigure(Slow32CPU *cpu);
 void slow32_mmio_process(Slow32CPU *cpu);
+void slow32_mmio_set_args(Slow32CPU *cpu, int argc, char **argv);
 
 #define S32_MMIO_WINDOW_SIZE 0x00010000u
 
