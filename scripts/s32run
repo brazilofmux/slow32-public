@@ -5,7 +5,7 @@
 EMULATOR="slow32"
 DEBUG_OPTS=""
 PROGRAM=""
-PROGRAM_ARGS=""
+PROGRAM_ARGS=()
 
 function show_help() {
     echo "SLOW-32 Emulator Runner"
@@ -15,7 +15,7 @@ function show_help() {
     echo "  -f, --fast        Use optimized C++ emulator (slow32-fast)"
     echo "  -q, --qemu        Use QEMU TCG emulator (qemu-system-slow32)"
     echo ""
-    echo "Debug Options (C++ emulators only):"
+    echo "Debug Options (slow32 only - not supported by slow32-fast or qemu):"
     echo "  -s, --step        Step through each instruction"
     echo "  -t, --trace       Trace every instruction"
     echo "  -r, --registers   Show register changes"
@@ -25,6 +25,11 @@ function show_help() {
     echo ""
     echo "Other:"
     echo "  -h, --help        Show this help"
+    echo ""
+    echo "Notes:"
+    echo "  - Program arguments are passed after the program name"
+    echo "  - For QEMU, arguments are passed via -append"
+    echo "  - Debug options are only supported by slow32, not slow32-fast or qemu"
     exit 0
 }
 
@@ -68,7 +73,8 @@ while [[ $# -gt 0 ]]; do
         *.s32x)
             PROGRAM="$1"
             shift
-            PROGRAM_ARGS="$@"
+            # Collect remaining arguments as program arguments
+            PROGRAM_ARGS=("$@")
             break
             ;;
         *)
@@ -88,9 +94,29 @@ if [ ! -f "$PROGRAM" ]; then
     exit 1
 fi
 
+# Warn if debug options used with emulators that don't support them
+if [ -n "$DEBUG_OPTS" ] && [ "$EMULATOR" != "slow32" ]; then
+    echo "Warning: Debug options are only supported by slow32, ignoring: $DEBUG_OPTS"
+    DEBUG_OPTS=""
+fi
+
 echo "=== Running $PROGRAM with $EMULATOR ==="
 if [ "$EMULATOR" = "qemu-system-slow32" ]; then
-    exec $EMULATOR -machine slow32-tcg -kernel "$PROGRAM" -nographic $PROGRAM_ARGS
+    # QEMU uses -append for program arguments
+    if [ ${#PROGRAM_ARGS[@]} -gt 0 ]; then
+        # Build append string: program name followed by arguments
+        APPEND_STR="$PROGRAM"
+        for arg in "${PROGRAM_ARGS[@]}"; do
+            APPEND_STR="$APPEND_STR $arg"
+        done
+        exec $EMULATOR -machine slow32-tcg -kernel "$PROGRAM" -nographic -append "$APPEND_STR"
+    else
+        exec $EMULATOR -machine slow32-tcg -kernel "$PROGRAM" -nographic
+    fi
+elif [ "$EMULATOR" = "slow32-fast" ]; then
+    # slow32-fast doesn't support debug options, just program and args
+    exec $EMULATOR "$PROGRAM" "${PROGRAM_ARGS[@]}"
 else
-    exec $EMULATOR $DEBUG_OPTS "$PROGRAM" $PROGRAM_ARGS
+    # slow32 supports debug options
+    exec $EMULATOR $DEBUG_OPTS "$PROGRAM" "${PROGRAM_ARGS[@]}"
 fi

@@ -121,9 +121,6 @@ static TCGv_i32 cpu_regs[SLOW32_NUM_GPRS];
 static TCGv_i32 cpu_pc;
 static TCGv_i32 cpu_next_pc;
 static TCGv_i32 cpu_halted;
-static TCGv_i64 cpu_insn_retired;
-static TCGv_i64 cpu_tb_exec_count;
-static TCGv_i64 cpu_tb_exec_insns;
 
 static inline TCGv_i32 load_gpr(int reg)
 {
@@ -170,19 +167,10 @@ static inline void store_condi(int rd, TCGCond cond, TCGv_i32 lhs, int32_t imm)
 
 static inline void slow32_emit_tb_enter(DisasContext *ctx)
 {
-    if (!ctx->env->stats_enabled || ctx->insn_count <= 0) {
-        return;
-    }
-    tcg_gen_addi_i64(cpu_tb_exec_count, cpu_tb_exec_count, 1);
-    tcg_gen_addi_i64(cpu_tb_exec_insns, cpu_tb_exec_insns, ctx->insn_count);
 }
 
 static inline void slow32_count_insns(DisasContext *ctx)
 {
-    if (!ctx->env->stats_enabled) {
-        return;
-    }
-    tcg_gen_addi_i64(cpu_insn_retired, cpu_insn_retired, ctx->insn_count);
 }
 
 static void slow32_clear_pending_cmp(DisasContext *ctx)
@@ -251,7 +239,11 @@ static void slow32_queue_cmp_imm(DisasContext *ctx, int rd, TCGCond cond,
 static inline TCGv_i32 gen_addr(int rs1, int32_t imm)
 {
     TCGv_i32 addr = tcg_temp_new_i32();
-    tcg_gen_addi_i32(addr, load_gpr(rs1), imm);
+    if (imm == 0) {
+        tcg_gen_mov_i32(addr, load_gpr(rs1));
+    } else {
+        tcg_gen_addi_i32(addr, load_gpr(rs1), imm);
+    }
     return addr;
 }
 
@@ -631,10 +623,9 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
         break;
 
     case OP_MUL: {
-        TCGv_i32 lo = tcg_temp_new_i32();
-        TCGv_i32 hi = tcg_temp_new_i32();
-        tcg_gen_muls2_i32(lo, hi, load_gpr(rs1), load_gpr(rs2));
-        store_gpr(rd, lo);
+        TCGv_i32 t = tcg_temp_new_i32();
+        tcg_gen_mul_i32(t, load_gpr(rs1), load_gpr(rs2));
+        store_gpr(rd, t);
         break;
     }
     case OP_MULH: {
@@ -762,9 +753,8 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
         gen_set_halted(1);
         commit_pc_const(ctx->pc);
         slow32_count_insns(ctx);
+        gen_helper_slow32_halt(tcg_env);
         slow32_exit_tb(ctx);
-        ctx->is_jmp = DISAS_EXIT;
-        return false;
         gen_set_label(ok);
         break;
     }
@@ -797,7 +787,6 @@ void slow32_translate_code(CPUState *cs, TranslationBlock *tb, int *max_insns,
     /* Aim for bigger TBs to reduce dispatch overhead. */
     int limit = SLOW32_TB_MAX_INSNS;
     *max_insns = limit;
-    int64_t t0 = env->stats_enabled ? g_get_monotonic_time() : 0;
     (void)host_pc;
     DisasContext ctx = {
         .base = {
@@ -886,13 +875,6 @@ void slow32_translate_code(CPUState *cs, TranslationBlock *tb, int *max_insns,
     tb->size = ctx.next_pc - pc;
     tb->icount = ctx.insn_count;
     *max_insns = ctx.insn_count;
-
-    if (env->stats_enabled) {
-        env->translate_time_us += g_get_monotonic_time() - t0;
-        env->tb_translated++;
-        env->tb_translated_bytes += tb->size;
-        env->tb_translated_insns += ctx.insn_count;
-    }
 }
 
 void slow32_translate_init(void)
@@ -913,18 +895,6 @@ void slow32_translate_init(void)
     cpu_halted = tcg_global_mem_new_i32(tcg_env,
                                         offsetof(CPUSlow32State, halted),
                                         "halted");
-    cpu_insn_retired = tcg_global_mem_new_i64(tcg_env,
-                                              offsetof(CPUSlow32State,
-                                                       insn_retired),
-                                              "insn_retired");
-    cpu_tb_exec_count = tcg_global_mem_new_i64(tcg_env,
-                                               offsetof(CPUSlow32State,
-                                                        tb_exec_count),
-                                               "tb_exec_count");
-    cpu_tb_exec_insns = tcg_global_mem_new_i64(tcg_env,
-                                               offsetof(CPUSlow32State,
-                                                        tb_exec_insns),
-                                               "tb_exec_insns");
 }
 
 void slow32_cpu_dump_state(CPUState *cs, FILE *f, int flags)

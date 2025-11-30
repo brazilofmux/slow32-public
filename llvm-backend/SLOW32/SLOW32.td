@@ -28,6 +28,8 @@ include "SLOW32Processors.td"
 include "SLOW32InstrInfo.td"
 include "SLOW32CallingConv.td"
 
+defm : RemapAllTargetPseudoPointerOperands<GPR>;
+
 //===----------------------------------------------------------------------===//
 // SLOW32 InstrInfo
 //===----------------------------------------------------------------------===//

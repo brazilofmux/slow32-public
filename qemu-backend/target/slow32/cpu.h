@@ -44,16 +44,7 @@ struct CPUArchState {
     uint32_t mem_size;
     uint32_t stack_top;
     uint32_t halted;
-    uint64_t insn_retired;
-    uint64_t tb_translated;
-    uint64_t tb_translated_bytes;
-    uint64_t tb_translated_insns;
-    uint64_t tb_exec_count;
-    uint64_t tb_exec_insns;
-    uint64_t translate_time_us;
-    int64_t run_start_us;
     bool layout_defined;
-    bool stats_enabled;
 };
 
 static inline uint32_t slow32_get_reg(const CPUSlow32State *env, int idx)
@@ -77,7 +68,6 @@ struct ArchCPU {
 
     CPUSlow32State env;
     Slow32MMIOContext *mmio;
-    bool stats_enabled;
 };
 
 void slow32_translate_init(void);

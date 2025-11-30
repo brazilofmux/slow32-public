@@ -151,16 +151,7 @@ static void slow32_cpu_reset_hold(Object *obj, ResetType type)
     env->heap_base = 0;
     env->mem_size = 0;
     env->halted = 0;
-    env->insn_retired = 0;
-    env->tb_translated = 0;
-    env->tb_translated_bytes = 0;
-    env->tb_translated_insns = 0;
-    env->tb_exec_count = 0;
-    env->tb_exec_insns = 0;
-    env->translate_time_us = 0;
-    env->run_start_us = 0;
     env->layout_defined = false;
-    env->stats_enabled = cpu->stats_enabled;
 
     slow32_mmio_reset(cpu);
 }
@@ -283,8 +274,6 @@ static const TCGCPUOps slow32_tcg_ops = {
 
 static void slow32_cpu_initfn(Object *obj)
 {
-    Slow32CPU *cpu = SLOW32_CPU(obj);
-    cpu->stats_enabled = true;
 #ifndef CONFIG_USER_ONLY
     qdev_init_gpio_in_named(DEVICE(obj), slow32_cpu_set_irq, "IRQ", 1);
 #endif
