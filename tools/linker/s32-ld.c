@@ -1033,6 +1033,65 @@ static void inject_memory_map_symbols(linker_state_t *ld) {
     }
 }
 
+// Inject C++ init/fini array symbols
+static void inject_init_array_symbols(linker_state_t *ld) {
+    // Find .init_array section
+    uint32_t init_array_start = 0;
+    uint32_t init_array_end = 0;
+
+    for (int i = 0; i < ld->num_sections; i++) {
+        if (strcmp(ld->sections[i].name, ".init_array") == 0) {
+            init_array_start = ld->sections[i].vaddr;
+            init_array_end = ld->sections[i].vaddr + ld->sections[i].size;
+            break;
+        }
+    }
+
+    // Add __init_array_start and __init_array_end symbols
+    struct {
+        const char *name;
+        uint32_t value;
+    } init_symbols[] = {
+        {"__init_array_start", init_array_start},
+        {"__init_array_end", init_array_end},
+        {NULL, 0}
+    };
+
+    for (int i = 0; init_symbols[i].name != NULL; i++) {
+        bool found = false;
+        for (int s = 0; s < ld->num_symbols; s++) {
+            if (strcmp(ld->symbols[s].name, init_symbols[i].name) == 0) {
+                if (ld->symbols[s].defined_in_file < 0) {
+                    ld->symbols[s].value = init_symbols[i].value;
+                    ld->symbols[s].defined_in_file = MAX_INPUT_FILES;
+                    ld->symbols[s].type = 0;
+                    ld->symbols[s].binding = 1;
+                }
+                found = true;
+                break;
+            }
+        }
+
+        if (!found && ld->num_symbols < MAX_SYMBOLS) {
+            symbol_entry_t *sym = &ld->symbols[ld->num_symbols++];
+            strcpy(sym->name, init_symbols[i].name);
+            sym->value = init_symbols[i].value;
+            sym->size = 0;
+            sym->type = 0;
+            sym->binding = 1;
+            sym->defined_in_file = MAX_INPUT_FILES;
+            sym->section_idx = -1;
+            sym->is_weak = false;
+            sym->is_used = false;
+        }
+    }
+
+    if (ld->verbose && init_array_start != init_array_end) {
+        printf("Injected .init_array symbols: 0x%08X - 0x%08X\n",
+               init_array_start, init_array_end);
+    }
+}
+
 // Collect all relocations
 static void collect_relocations(linker_state_t *ld) {
     for (int f = 0; f < ld->num_input_files; f++) {
@@ -1848,6 +1907,7 @@ int main(int argc, char *argv[]) {
     
     update_symbol_values(&ld);  // Update symbol values after sections have addresses
     inject_memory_map_symbols(&ld);  // Add memory map symbols after layout
+    inject_init_array_symbols(&ld);  // Add C++ init_array symbols
     collect_relocations(&ld);
     load_section_data(&ld);
     apply_relocations(&ld);

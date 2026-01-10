@@ -13,41 +13,31 @@ This document consolidates feedback and improvement suggestions for the SLOW-32 
 - **S-format parsing**: Explicit `rs2` handling
 - **`%lo(symbol)`**: Keep in loads/stores exactly as-is
 
-## Toolchain Status (2025-09-08)
+## Toolchain Status (2025-12-27)
 
-### New Features
-1. **Archive tool (s32-ar)** ✅
-   - Create, list, extract .s32a archives
-   - Symbol index for efficient linking
-   - Compatible with standard ar operations
-   
-2. **Runtime library archive** ✅
-   - All runtime components in libruntime.s32a
-   - Includes expanded stdlib, ctype, string functions
-   
-3. **Expanded C library** ✅
-   - qsort, bsearch, strtol, strtok_r
-   - Full ctype.h implementation
-   - div/ldiv functions
-   - Memory and string utilities
+### Resolved / Verified
+1. **64-bit Division Bug** ✅
+   - The `UMUL_LOHI` custom lowering logic was verified to produce correct results.
+   - `test_i64_div.c` passes with correct output.
+   - Documentation in `docs/issues/llvm-i64-division.md` updated.
 
-### Recently Fixed (2025-09-09)
-1. **~~CRITICAL: Function arguments not passed for external symbols~~** ✅ FIXED/FALSE ALARM
-   - **2025-09-09 Investigation**: This was a misdiagnosis - LLVM backend DOES generate correct code!
-   - Tested: `puts()`, `strcpy()`, and other external calls work perfectly
-   - Arguments ARE properly loaded into registers (r3, r4, etc.) before JAL
-   - Assembler DOES create proper relocations for external symbols
-   - All test cases link and execute successfully
-   
-2. **Memory fault in malloc/printf** ✅ FIXED
-   - Root cause was in malloc implementation
-   - Test programs now run successfully
-   - malloc/free tested with stress tests (100+ allocations)
-   
-3. **Linker library paths** ✅ IMPLEMENTED
-   - -L flag now implemented for library search paths
-   - -l flag for linking libraries (e.g., -lc links libc.s32a)
-   - Supports multiple search paths
+2. **Linker Error Handling** ✅
+   - Linker now hard-errors on unresolved symbols (Exit Code 1).
+   - Prevents generation of broken binaries with missing symbols.
+
+3. **REL_CALL Implementation** ✅
+   - `REL_CALL` relocation type is implemented in the linker (`s32-ld.c`).
+
+4. **Printf Formatting** ✅
+   - `printf` with `%llu` and other formats verified working correctly.
+
+### Open Issues
+1. **BNE usage in stdlib** ⚠️
+   - Some runtime intrinsics (e.g., `memset` in `intrinsics.s`) still use `bne` loops.
+   - Goal: Replace with `beq`-only forms for safer emulation.
+
+2. **Emulator Safety**
+   - Shared loader checks (`rodata_limit` vs `wxorx_enabled`) need unification/improvement.
 
 ## Compiler Improvements
 
@@ -65,17 +55,12 @@ This document consolidates feedback and improvement suggestions for the SLOW-32 
    - Now expands to `ori rd, r0, imm` for assembler compatibility
 
 ### Still Needed
-1. **~~Full 32-bit addresses with LUI/ADDI~~** ✅ IMPLEMENTED
-   - LLVM backend now generates LUI/ADDI for 32-bit addresses
-   - Properly uses `lui rd, %hi(symbol)` and `addi rd, rd, %lo(symbol)`
-   - Tested and working with high memory addresses
-
-2. **Switch statement control flow**
+1. **Switch statement control flow**
    - Jump tables supported in assembler and linker
    - .word directive supports symbols via REL_32 relocations
    - LLVM backend may need tuning to avoid excessive .word generation
 
-3. **Address formation correctness**
+2. **Address formation correctness**
    - GEP scaling issues
    - Issues that cause "works in one TU, breaks when linked" bugs
 
@@ -89,44 +74,30 @@ This document consolidates feedback and improvement suggestions for the SLOW-32 
 ## Linker Improvements
 
 ### Error Handling
-- Hard-error if relocation's symbol can't be resolved (even with `-s`)
+- Hard-error if relocation's symbol can't be resolved (even with `-s`) ✅ DONE
 - Hard-error if failing to map relocation's section
 - Correct **LO12** "unpaired" range check (use signed ±2048, not unsigned)
 - Tighten **BRANCH** upper bound to **+4094** (even offsets only)
 - Tighten **JAL** upper bound to **+1,048,574** (even offsets only)
-- Implement **REL_CALL** as JAL-style PC-relative call
+- Implement **REL_CALL** as JAL-style PC-relative call ✅ DONE
 
-## Runtime/Intrinsics Issues
-
-### Critical Bug
-**Problem**: Loops in intrinsics use `bne` which can spin infinitely if emulator's `bne` handling is off
-
-**Fix**: Replace all `bne` loops with `beq`-only form in:
-- `memcpy`
-- `memset` 
-- Other runtime intrinsics
-
-**Additional Guards**: Add checks for edge cases (size ≤ 0, not multiples of 4) to prevent spins
-
-## Priority Order (Updated 2025-09-09)
+## Priority Order (Updated 2025-12-27)
 
 Most critical issues have been resolved:
-- ✅ **Runtime intrinsics** - Core intrinsics (memcpy/memset) use safe BEQ patterns
-- ✅ **Compiler LUI/ADDI** - Implemented for 32-bit addresses
-- ✅ **Assembler `.word symbol`** - REL_32 relocations working
-- ✅ **Linker library paths** - -L and -l flags implemented
+- ✅ **64-bit Division** - Verified working.
+- ✅ **Linker error handling** - Hard errors implemented.
+- ✅ **Compiler LUI/ADDI** - Implemented for 32-bit addresses.
+- ✅ **Linker library paths** - -L and -l flags implemented.
 
 Remaining lower-priority items:
-1. **Linker error handling** - Add hard errors for unresolved symbols
-2. **Emulator safety** - Improve shared loader checks
-3. **Printf formatting** - Output formatting needs improvement
-4. **BNE usage in stdlib** - Some library functions still use BNE (but working)
+1. **BNE usage in stdlib** - `memset` still uses BNE.
+2. **Emulator safety** - Improve shared loader checks.
+3. **Switch statement optimization** - Jump tables tuning.
+4. **Assembler refinements** - Case handling, `.string` directive behavior.
 
 ## Testing Recommendations
 
-After implementing fixes:
-1. Test varargs/printf functionality
-2. Test multi-file linking with global symbols
-3. Test negative offsets in data access
-4. Test loops with complex control flow
-5. Test all intrinsics with edge cases (0 size, odd sizes, etc.)
+1. Test multi-file linking with global symbols (Verified)
+2. Test negative offsets in data access
+3. Test loops with complex control flow
+4. Test all intrinsics with edge cases (0 size, odd sizes, etc.)

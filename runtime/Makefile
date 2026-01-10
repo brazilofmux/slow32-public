@@ -25,7 +25,8 @@ COMPILER_RT_OBJS = intrinsics.s32o intrinsics_extra.s32o \
 LIBC_CORE_OBJS = string.s32o string_extra.s32o \
                  malloc.s32o stdlib.s32o stdlib_extra.s32o stdlib_utils.s32o \
                  convert.s32o convert_extra.s32o ctype.s32o memory_extra.s32o \
-                 printf_enhanced.s32o start.s32o yield.s32o
+                 printf_enhanced.s32o start.s32o yield.s32o \
+                 cxxabi.s32o
 
 # I/O objects for DEBUG version (simple, unbuffered)
 STDIO_DEBUG_OBJS = putchar.s32o stdio_minimal.s32o
@@ -59,7 +60,8 @@ C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_util
             stdio_buffered.c flush_mmio.c flush_debug.c \
             debug_char.c yield.c putchar.c mmio_request.c time_mmio.c \
             stat_mmio.c stat_stub.c start.c args_mmio.c args_stub.c \
-            exit_mmio.c exit_debug.c envp_mmio.c envp_stub.c
+            exit_mmio.c exit_debug.c envp_mmio.c envp_stub.c \
+            cxxabi.c
 # Note: math.c excluded due to floating point operations not yet supported
 
 # Default target builds everything

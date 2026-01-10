@@ -104,10 +104,14 @@ echo "=== Running $PROGRAM with $EMULATOR ==="
 if [ "$EMULATOR" = "qemu-system-slow32" ]; then
     # QEMU uses -append for program arguments
     if [ ${#PROGRAM_ARGS[@]} -gt 0 ]; then
-        # Build append string: program name followed by arguments
-        APPEND_STR="$PROGRAM"
+        # Build append string from program arguments (QEMU already sets argv[0] to the kernel filename)
+        APPEND_STR=""
         for arg in "${PROGRAM_ARGS[@]}"; do
-            APPEND_STR="$APPEND_STR $arg"
+            if [ -z "$APPEND_STR" ]; then
+                APPEND_STR="$arg"
+            else
+                APPEND_STR="$APPEND_STR $arg"
+            fi
         done
         exec $EMULATOR -machine slow32-tcg -kernel "$PROGRAM" -nographic -append "$APPEND_STR"
     else

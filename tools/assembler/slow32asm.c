@@ -10,7 +10,7 @@
 #define MAX_LINE 256
 #define MAX_TOKENS 8
 #define MAX_LABELS 1024
-#define MAX_INSTRUCTIONS 65536
+#define INITIAL_INSTRUCTION_CAPACITY 65536
 #define MAX_DATA_SIZE (1024 * 1024)  // 1MB max data section
 #define MAX_RELOCATIONS 4096
 #define MAX_STRING_TABLE (64 * 1024) // 64KB string table
@@ -22,7 +22,8 @@ typedef enum {
     SECTION_CODE,
     SECTION_DATA,
     SECTION_BSS,
-    SECTION_RODATA
+    SECTION_RODATA,
+    SECTION_INIT_ARRAY
 } section_t;
 
 typedef struct {
@@ -64,6 +65,7 @@ typedef struct {
     label_t labels[MAX_LABELS];
     int num_labels;
     instruction_t *instructions;  // Dynamically allocated
+    int instructions_capacity;    // Current capacity
     int num_instructions;
     relocation_t relocations[MAX_RELOCATIONS];
     int num_relocations;
@@ -73,9 +75,10 @@ typedef struct {
     uint32_t data_size;         // Size of data section
     uint32_t bss_size;          // Size of bss section
     uint32_t rodata_size;       // Size of rodata section
+    uint32_t init_array_size;   // Size of init_array section
     uint32_t data_start_addr;   // Starting address of data section (0x100000)
     bool generate_object;       // True for object file, false for executable
-    
+
     // String table
     char string_table[MAX_STRING_TABLE];
     uint32_t string_table_size;
@@ -330,7 +333,34 @@ static void bump_size(assembler_t* as, section_t sec, uint32_t n) {
         case SECTION_DATA:   as->data_size   += n; break;
         case SECTION_RODATA: as->rodata_size += n; break;
         case SECTION_BSS:    as->bss_size    += n; break;
+        case SECTION_INIT_ARRAY: as->init_array_size += n; break;
     }
+}
+
+// Ensure there is room for at least `additional` more instructions/data bytes
+static void ensure_instruction_capacity(assembler_t *as, int additional) {
+    if (additional < 0) additional = 0;
+    int needed = as->num_instructions + additional;
+    if (needed <= as->instructions_capacity) return;
+
+    int new_cap = as->instructions_capacity > 0 ? as->instructions_capacity : INITIAL_INSTRUCTION_CAPACITY;
+    while (new_cap < needed) {
+        // Grow geometrically to amortize realloc cost
+        new_cap *= 2;
+        if (new_cap <= 0) {
+            fprintf(stderr, "Instruction buffer size overflow\n");
+            exit(1);
+        }
+    }
+
+    instruction_t *new_buf = realloc(as->instructions, new_cap * sizeof(instruction_t));
+    if (!new_buf) {
+        fprintf(stderr, "Memory allocation failed while expanding instruction buffer\n");
+        exit(1);
+    }
+
+    as->instructions = new_buf;
+    as->instructions_capacity = new_cap;
 }
 
 static char *trim(char *str) {
@@ -681,11 +711,18 @@ static bool assemble_line(assembler_t *as, char *line) {
         } else if (strcmp(tokens[0], ".section") == 0) {
             // Handle .section directive with arguments
             // Example: .section .rodata.str1.1,"aMS",@progbits,1
+            // Example: .section .init_array,"aw",@init_array
             if (num_tokens > 1) {
                 // Check if it's a rodata variant
                 if (strncmp(tokens[1], ".rodata", 7) == 0) {
                     as->current_section = SECTION_RODATA;
                     as->current_addr = as->rodata_size;
+                    return true;
+                }
+                // Check if it's .init_array (C++ global constructors)
+                if (strncmp(tokens[1], ".init_array", 11) == 0) {
+                    as->current_section = SECTION_INIT_ARRAY;
+                    as->current_addr = as->init_array_size;
                     return true;
                 }
                 // Ignore other sections for now (like .note.GNU-stack)
@@ -1458,16 +1495,18 @@ static int write_object_file(assembler_t *as, const char *filename) {
     
     // Count sections and add section names to string table
     int num_sections = 0;
-    uint32_t text_name_offset = 0, data_name_offset = 0, bss_name_offset = 0, rodata_name_offset = 0;
-    
-    // Count relocations per section  
-    int text_relocs = 0, data_relocs = 0, rodata_relocs = 0, bss_relocs = 0;
+    uint32_t text_name_offset = 0, data_name_offset = 0, bss_name_offset = 0;
+    uint32_t rodata_name_offset = 0, init_array_name_offset = 0;
+
+    // Count relocations per section
+    int text_relocs = 0, data_relocs = 0, rodata_relocs = 0, bss_relocs = 0, init_array_relocs = 0;
     for (int i = 0; i < as->num_relocations; i++) {
         switch (as->relocations[i].section) {
             case SECTION_CODE: text_relocs++; break;
             case SECTION_DATA: data_relocs++; break;
             case SECTION_RODATA: rodata_relocs++; break;
             case SECTION_BSS: bss_relocs++; break;
+            case SECTION_INIT_ARRAY: init_array_relocs++; break;
         }
     }
     
@@ -1487,14 +1526,19 @@ static int write_object_file(assembler_t *as, const char *filename) {
         bss_name_offset = add_string(as, ".bss");
         num_sections++;
     }
-    
+    if (as->init_array_size > 0) {
+        init_array_name_offset = add_string(as, ".init_array");
+        num_sections++;
+    }
+
     // Create mapping from internal section enum to output section index
-    int section_map[4] = {0, 0, 0, 0};  // Maps SECTION_* to output section index
+    int section_map[5] = {0, 0, 0, 0, 0};  // Maps SECTION_* to output section index
     int output_section_idx = 1;  // Output sections are 1-based
     if (as->code_size > 0) section_map[SECTION_CODE] = output_section_idx++;
     if (as->rodata_size > 0) section_map[SECTION_RODATA] = output_section_idx++;
     if (as->data_size > 0) section_map[SECTION_DATA] = output_section_idx++;
     if (as->bss_size > 0) section_map[SECTION_BSS] = output_section_idx++;
+    if (as->init_array_size > 0) section_map[SECTION_INIT_ARRAY] = output_section_idx++;
     
     // Build symbol table
     int num_symbols = 0;
@@ -1565,8 +1609,8 @@ static int write_object_file(assembler_t *as, const char *filename) {
     
     // Calculate relocation table offsets
     uint32_t text_reloc_offset = 0, data_reloc_offset = 0;
-    uint32_t rodata_reloc_offset = 0, bss_reloc_offset = 0;
-    
+    uint32_t rodata_reloc_offset = 0, bss_reloc_offset = 0, init_array_reloc_offset = 0;
+
     if (text_relocs > 0) {
         text_reloc_offset = offset;
         offset += text_relocs * sizeof(s32o_reloc_t);
@@ -1583,6 +1627,10 @@ static int write_object_file(assembler_t *as, const char *filename) {
         bss_reloc_offset = offset;
         offset += bss_relocs * sizeof(s32o_reloc_t);
     }
+    if (init_array_relocs > 0) {
+        init_array_reloc_offset = offset;
+        offset += init_array_relocs * sizeof(s32o_reloc_t);
+    }
     
     uint32_t string_table_offset = offset;
     offset += as->string_table_size;
@@ -1591,7 +1639,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
     offset = (offset + 3) & ~3;
     
     // Section data offsets
-    uint32_t code_offset = 0, data_offset = 0, rodata_offset = 0;
+    uint32_t code_offset = 0, data_offset = 0, rodata_offset = 0, init_array_offset = 0;
     if (as->code_size > 0) {
         code_offset = offset;
         offset += as->code_size;
@@ -1603,6 +1651,10 @@ static int write_object_file(assembler_t *as, const char *filename) {
     if (as->data_size > 0) {
         data_offset = offset;
         offset += as->data_size;
+    }
+    if (as->init_array_size > 0) {
+        init_array_offset = offset;
+        offset += as->init_array_size;
     }
     // BSS has no data in file
     
@@ -1680,12 +1732,26 @@ static int write_object_file(assembler_t *as, const char *filename) {
         };
         fwrite(&section, sizeof(section), 1, f);
     }
-    
+
+    if (as->init_array_size > 0) {
+        s32o_section_t section = {
+            .name_offset = init_array_name_offset,
+            .type = S32_SEC_DATA,  // .init_array is treated as DATA for section type
+            .flags = S32_SEC_FLAG_READ | S32_SEC_FLAG_WRITE | S32_SEC_FLAG_ALLOC,
+            .size = as->init_array_size,
+            .offset = init_array_offset,
+            .align = 4,
+            .nrelocs = init_array_relocs,
+            .reloc_offset = init_array_reloc_offset
+        };
+        fwrite(&section, sizeof(section), 1, f);
+    }
+
     // Write symbol table
     fwrite(symbols, sizeof(s32o_symbol_t), num_symbols, f);
     
     // Write relocations for each section
-    for (int sec = 0; sec < 4; sec++) {
+    for (int sec = 0; sec < 5; sec++) {
         section_t sec_type = (section_t)sec;
         for (int i = 0; i < as->num_relocations; i++) {
             if (as->relocations[i].section != sec_type) continue;
@@ -1757,7 +1823,23 @@ static int write_object_file(assembler_t *as, const char *filename) {
         for (int i = 0; i < as->num_instructions; i++) {
             instruction_t *inst = &as->instructions[i];
             if (inst->section != SECTION_DATA) continue;
-            
+
+            if (inst->is_data_byte) {
+                uint8_t byte = inst->instruction & 0xFF;
+                fwrite(&byte, 1, 1, f);
+            } else {
+                fwrite(&inst->instruction, 4, 1, f);
+            }
+        }
+    }
+
+    // Write .init_array section
+    if (as->init_array_size > 0) {
+        fseek(f, init_array_offset, SEEK_SET);
+        for (int i = 0; i < as->num_instructions; i++) {
+            instruction_t *inst = &as->instructions[i];
+            if (inst->section != SECTION_INIT_ARRAY) continue;
+
             if (inst->is_data_byte) {
                 uint8_t byte = inst->instruction & 0xFF;
                 fwrite(&byte, 1, 1, f);
@@ -1829,11 +1911,12 @@ int main(int argc, char *argv[]) {
     }
     
     assembler_t as = {0};
-    as.instructions = calloc(MAX_INSTRUCTIONS, sizeof(instruction_t));
+    as.instructions = calloc(INITIAL_INSTRUCTION_CAPACITY, sizeof(instruction_t));
     if (!as.instructions) {
         fprintf(stderr, "Memory allocation failed\n");
         return 1;
     }
+    as.instructions_capacity = INITIAL_INSTRUCTION_CAPACITY;
     as.current_section = SECTION_CODE;  // Start in code section
     // Object files use section-relative addresses
     as.data_start_addr = 0;
