@@ -1,10 +1,11 @@
 # SLOW-32 Project
 
-A deliberately inefficient 32-bit RISC CPU architecture with complete toolchain.
+A 32-bit RISC CPU architecture with complete production toolchain.
 
-**Built in under 2 hours** - From spec to working C compiler!
+**The journey**: 2 hours from spec to first working C compiler. 4 months (Sept 2025 - Jan 2026) to full production toolchain with native LLVM backend, inline assembly, QEMU TCG emulation, C++ support, and filesystem MMIO.
+
 **Purpose**: Educational CPU design and sandboxed compute engine
-**Status**: Active maintenance-ready baseline with all optimization levels (-O0, -O1, -O2) working
+**Status**: Production-ready toolchain with all optimization levels (-O0, -O1, -O2) working
 
 ## Quick Start
 
@@ -35,7 +36,7 @@ make
 - **Single-ported memory** (deliberately slow!)
 - **DEBUG instruction** for character output
 - **Sparse memory allocation** - Only allocates touched pages (99.4% memory savings!)
-- **Performance**: ~45 MIPS (slow32), ~220 MIPS (slow32-fast)
+- **Three emulators**: slow32 (51 MIPS), slow32-fast (381 MIPS), QEMU TCG (1.2 BIPS)
 
 ### Register Convention
 - `r0`: Always zero
@@ -122,22 +123,35 @@ The linker automatically detects small programs and creates ultra-compact layout
 - All other operations: 1 cycle
 - YIELD instruction: Variable cycle waste
 
+## Benchmark Results
+
+On `benchmark_core.s32x` (285M instructions, mixed arithmetic/branch/memory):
+
+| Emulator | Time | Performance | Notes |
+|----------|------|-------------|-------|
+| slow32 (reference) | 5.58s | 51 MIPS | Portable C interpreter |
+| slow32-fast | 0.75s | 381 MIPS | Optimized C interpreter |
+| QEMU TCG | 0.24s | 1.2 BIPS | JIT compilation |
+
+QEMU TCG achieves 23x speedup over the reference emulator through dynamic binary translation.
+
 ## Project Structure
 
 ```
 slow-32/
-├── emulator/         # CPU emulator with W^X protection
-├── assembler/        # Two-pass assembler with relocation support
-├── linker/           # Linker with symbol resolution
-├── runtime/          # C runtime (crt0) and intrinsics
-├── llvm-backend/     # LLVM IR to SLOW-32 compiler
-│   └── standalone/   # Standalone compiler implementation
-├── tools/            # Binary analysis tools (objdump, exedump)
-├── tests/            # Test programs and benchmarks
+├── tools/
+│   ├── emulator/     # slow32 and slow32-fast interpreters
+│   ├── assembler/    # Two-pass assembler with relocation support
+│   ├── linker/       # Linker with symbol resolution
+│   └── utilities/    # objdump, exedump, disassembler
+├── runtime/          # C/C++ runtime, libc, MMIO support
+├── llvm-backend/     # Native LLVM backend for SLOW-32
+│   └── SLOW32/       # Backend implementation
+├── qemu-backend/     # QEMU TCG backend (1.2 BIPS JIT emulation)
+├── examples/         # Example programs including C++ demos
+├── regression/       # Regression test suite
+├── articles/         # Technical articles about the project
 └── docs/             # Documentation
-    ├── INSTRUCTION-SET.md    # Complete ISA reference
-    ├── file-formats.md       # Object and executable formats
-    └── IMPROVEMENTS.md       # Known issues and improvements
 ```
 
 ## Example Programs
@@ -179,23 +193,24 @@ int main() {
 
 ## Current Status
 
-✅ **Complete toolchain** - C → LLVM IR → Assembly → Object → Linked Executable
-✅ **Native Clang target** - `-target slow32-unknown-none` (single dash)
+✅ **Complete toolchain** - C/C++ → LLVM IR → Assembly → Object → Linked Executable
+✅ **Native Clang target** - `-target slow32-unknown-none` with inline assembly support
 ✅ **All optimization levels** - -O0, -O1, -O2 fully working
-✅ **CPU emulator** - ~350M instructions/second with W^X protection
+✅ **Three emulators** - slow32 (51 MIPS), slow32-fast (381 MIPS), QEMU TCG (1.2 BIPS)
 ✅ **Assembler** - Two-pass with labels, relocations, standard directives
 ✅ **Linker** - Symbol resolution, HI20/LO12 relocations, proper archives
 ✅ **LLVM backend** - PHI nodes, intrinsics, varargs, jump tables, 64-bit integers
-✅ **Runtime** - crt0, printf with varargs, memcpy/memset, 64-bit builtins
+✅ **C++ support** - Classes, templates, virtual functions, lambdas, operator overloading
+✅ **Runtime** - printf, malloc, file I/O via MMIO, 64-bit builtins
+✅ **Filesystem MMIO** - File and directory operations through memory-mapped I/O
 ✅ **Regression tests** - All 14/14 passing
-✅ **Tools** - objdump for object files, exedump for executables  
+✅ **Tools** - objdump, exedump, disassembler  
 
 ## Known Limitations
 
 - No floating point support (soft-float not implemented)
-- Limited stdlib (printf, puts, putchar, putint)
-- No system calls beyond DEBUG instruction
-- See `docs/IMPROVEMENTS.md` for detailed issues and fixes
+- No threading or multiprocessing
+- See `docs/IMPROVEMENTS.md` for detailed issues and roadmap
 
 ## Building from Source
 
