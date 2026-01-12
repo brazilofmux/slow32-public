@@ -26,7 +26,7 @@ LIBC_CORE_OBJS = string.s32o string_extra.s32o \
                  malloc.s32o stdlib.s32o stdlib_extra.s32o stdlib_utils.s32o \
                  convert.s32o convert_extra.s32o ctype.s32o memory_extra.s32o \
                  printf_enhanced.s32o start.s32o yield.s32o \
-                 cxxabi.s32o
+                 cxxabi.s32o time_util.s32o
 
 # I/O objects for DEBUG version (simple, unbuffered)
 STDIO_DEBUG_OBJS = putchar.s32o stdio_minimal.s32o
@@ -37,11 +37,11 @@ STDIO_MMIO_OBJS = stdio.s32o stdio_buffered.s32o flush_mmio.s32o
 # MMIO-only helpers
 LIBC_MMIO_EXTRA_OBJS = mmio_request.s32o time_mmio.s32o \
                        stat_mmio.s32o args_mmio.s32o exit_mmio.s32o \
-                       envp_mmio.s32o
+                       envp_mmio.s32o fs_mmio.s32o dirent_mmio.s32o
 
 # Debug-only extras (fallback stubs)
 LIBC_DEBUG_EXTRA_OBJS = stat_stub.s32o args_stub.s32o exit_debug.s32o \
-                        envp_stub.s32o
+                        envp_stub.s32o fs_stub.s32o dirent_stub.s32o
 
 # Math library objects for libm.s32a (future - currently disabled due to float support)
 # LIBM_OBJS = math.s32o
@@ -51,7 +51,8 @@ STARTUP_OBJ = crt0.s32o
 
 # All object files
 ALL_OBJS = $(STARTUP_OBJ) $(COMPILER_RT_OBJS) $(LIBC_CORE_OBJS) \
-           $(STDIO_DEBUG_OBJS) $(STDIO_MMIO_OBJS) $(LIBC_MMIO_EXTRA_OBJS)
+           $(STDIO_DEBUG_OBJS) $(STDIO_MMIO_OBJS) $(LIBC_MMIO_EXTRA_OBJS) \
+           $(LIBC_DEBUG_EXTRA_OBJS)
 
 # C source files that need compilation
 C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_utils.c \
@@ -61,7 +62,8 @@ C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_util
             debug_char.c yield.c putchar.c mmio_request.c time_mmio.c \
             stat_mmio.c stat_stub.c start.c args_mmio.c args_stub.c \
             exit_mmio.c exit_debug.c envp_mmio.c envp_stub.c \
-            cxxabi.c
+            cxxabi.c time_util.c \
+            fs_mmio.c fs_stub.c dirent_mmio.c dirent_stub.c
 # Note: math.c excluded due to floating point operations not yet supported
 
 # Default target builds everything

@@ -43,6 +43,7 @@ struct CPUArchState {
     uint32_t heap_base;
     uint32_t mem_size;
     uint32_t stack_top;
+    uint32_t stack_end;
     uint32_t halted;
     bool layout_defined;
 };

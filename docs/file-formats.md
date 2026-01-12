@@ -53,7 +53,7 @@ typedef struct {
     uint32_t mem_size;     // 0x30: Total memory to allocate (0 = use data_limit)
     uint32_t heap_base;    // 0x34: Start of heap (0 = no heap, use sbrk)
     uint32_t checksum;     // 0x38: CRC32 of all sections (0 = no checksum)
-    uint32_t reserved;     // 0x3C: Reserved for future use (must be 0)
+    uint32_t mmio_base;    // 0x3C: MMIO region base (if S32X_FLAG_MMIO set)
 } s32x_header_t;
 ```
 
@@ -105,6 +105,7 @@ map within constraints. The emulator enforces these boundaries for protection.
 #define S32X_FLAG_STRIPPED   0x0010  // Symbols stripped
 #define S32X_FLAG_PIC        0x0020  // Position-independent code
 #define S32X_FLAG_COMPRESSED 0x0040  // Section data is compressed
+#define S32X_FLAG_MMIO       0x0080  // Has MMIO region enabled
 ```
 
 ### Section Entry (20 bytes)
@@ -112,7 +113,7 @@ map within constraints. The emulator enforces these boundaries for protection.
 ```c
 typedef struct {
     uint32_t name_offset;  // Offset into string table
-    uint32_t type;         // Section type (see below)
+    uint32_t type;         // Section type (see S32_SEC_*)
     uint32_t vaddr;        // Virtual address to load at
     uint32_t offset;       // File offset to section data
     uint32_t size;         // Size in file (compressed if flag set)
@@ -130,25 +131,25 @@ typedef struct {
 ### Section Types
 
 ```c
-#define S32X_SEC_NULL     0x0000  // Null section
-#define S32X_SEC_CODE     0x0001  // Executable code
-#define S32X_SEC_DATA     0x0002  // Initialized data
-#define S32X_SEC_BSS      0x0003  // Uninitialized data (zero-filled)
-#define S32X_SEC_RODATA   0x0004  // Read-only data
-#define S32X_SEC_EVT      0x0010  // Exception Vector Table
-#define S32X_SEC_TSR      0x0011  // Thread Service Routines table
-#define S32X_SEC_DEBUG    0x0020  // Debug information
-#define S32X_SEC_SYMTAB   0x0021  // Symbol table
-#define S32X_SEC_STRTAB   0x0022  // String table for symbols
+#define S32_SEC_NULL     0x0000  // Null section
+#define S32_SEC_CODE     0x0001  // Executable code
+#define S32_SEC_DATA     0x0002  // Initialized data
+#define S32_SEC_BSS      0x0003  // Uninitialized data (zero-filled)
+#define S32_SEC_RODATA   0x0004  // Read-only data
+#define S32_SEC_EVT      0x0010  // Exception Vector Table
+#define S32_SEC_TSR      0x0011  // Thread Service Routines table
+#define S32_SEC_DEBUG    0x0020  // Debug information
+#define S32_SEC_SYMTAB   0x0021  // Symbol table
+#define S32_SEC_STRTAB   0x0022  // String table for symbols
 ```
 
 ### Section Flags
 
 ```c
-#define S32X_SEC_FLAG_EXEC   0x0001  // Executable
-#define S32X_SEC_FLAG_WRITE  0x0002  // Writable
-#define S32X_SEC_FLAG_READ   0x0004  // Readable
-#define S32X_SEC_FLAG_ALLOC  0x0008  // Allocate memory for this section
+#define S32_SEC_FLAG_EXEC   0x0001  // Executable
+#define S32_SEC_FLAG_WRITE  0x0002  // Writable
+#define S32_SEC_FLAG_READ   0x0004  // Readable
+#define S32_SEC_FLAG_ALLOC  0x0008  // Allocate memory for this section
 ```
 
 ### Exception Vector Table Section
@@ -394,7 +395,7 @@ typedef struct {
 ```c
 typedef struct {
     uint32_t name_offset;  // Offset into string table
-    uint32_t type;         // Section type (same as S32X_SEC_*)
+    uint32_t type;         // Section type (same as S32_SEC_*)
     uint32_t flags;        // Section flags (R/W/X permissions)
     uint32_t size;         // Section size
     uint32_t offset;       // File offset to section data
@@ -457,6 +458,8 @@ typedef struct {
 #define S32O_REL_BRANCH   0x0004  // 13-bit PC-relative branch
 #define S32O_REL_JAL      0x0005  // 21-bit PC-relative jump
 #define S32O_REL_CALL     0x0006  // Function call (HI20+LO12 pair)
+#define S32O_REL_PCREL_HI20 0x0007 // PC-relative high 20 bits (for AUIPC)
+#define S32O_REL_PCREL_LO12 0x0008 // PC-relative low 12 bits (paired with PCREL_HI20)
 ```
 
 ### Common Section Names
@@ -559,6 +562,67 @@ Offset  Size  Description
 0x0058  12    Relocation table (1 relocation)
 0x0064  32    String table
 0x0084  N     Code section data
+```
+
+## SLOW-32 Archive Format (.s32a)
+
+The `.s32a` format is used to bundle multiple `.s32o` object files into a single library, with a symbol index for efficient linking.
+
+### File Structure
+
+```
++-------------------+
+| Header            | 32 bytes
++-------------------+
+| Symbol Index      | Variable (nsymbols * 8 bytes)
++-------------------+
+| Member Table      | Variable (nmembers * 24 bytes)
++-------------------+
+| String Table      | Variable
++-------------------+
+| Member Data       | Variable (packed .s32o files)
++-------------------+
+```
+
+### Header Structure (32 bytes)
+
+```c
+typedef struct {
+    uint32_t magic;         // 0x00: Magic number 0x53333241 ("S32A")
+    uint16_t version;       // 0x04: Format version (1)
+    uint8_t  endian;        // 0x06: Endianness (0x01=little)
+    uint8_t  reserved;      // 0x07: Reserved (must be 0)
+    uint32_t nmembers;      // 0x08: Number of archive members
+    uint32_t mem_offset;    // 0x0C: Offset to member table
+    uint32_t nsymbols;      // 0x10: Number of symbols in index
+    uint32_t sym_offset;    // 0x14: Offset to symbol index
+    uint32_t str_offset;    // 0x18: Offset to string table
+    uint32_t str_size;      // 0x1C: Size of string table
+} s32a_header_t;
+```
+
+### Symbol Index Entry (8 bytes)
+
+Maps global symbols to the archive members that define them.
+
+```c
+typedef struct {
+    uint32_t name_offset;   // Offset into string table
+    uint32_t member_index;  // Index of member in member table
+} s32a_symbol_t;
+```
+
+### Member Entry (24 bytes)
+
+```c
+typedef struct {
+    uint32_t name_offset;   // Offset into string table
+    uint32_t offset;        // File offset to member data (.s32o file)
+    uint32_t size;          // Size of member data
+    uint32_t timestamp;     // Modification time (Unix timestamp)
+    uint32_t uid;           // User ID
+    uint32_t gid;           // Group ID
+} s32a_member_t;
 ```
 
 ## Compatibility Notes

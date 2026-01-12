@@ -573,11 +573,10 @@ static void merge_sections(linker_state_t *ld) {
                                                        isec->flags, isec->align);
             combined_section_t *csec = &ld->sections[combined_idx];
             
-            // Align offset for this part
-            uint32_t aligned_offset = csec->size;
-            if (isec->align > 1) {
-                aligned_offset = (aligned_offset + isec->align - 1) & ~(isec->align - 1);
-            }
+            // Align offset for this part - minimum 4-byte alignment for 32-bit arch
+            uint32_t min_align = 4;  // Word alignment for 32-bit architecture
+            uint32_t align = isec->align > min_align ? isec->align : min_align;
+            uint32_t aligned_offset = (csec->size + align - 1) & ~(align - 1);
             
             // Record where this input section goes
             inf->section_base[s] = aligned_offset;
@@ -1690,7 +1689,7 @@ static void write_executable(linker_state_t *ld) {
         .stack_base = ld->stack_base,
         .mem_size = DEFAULT_MEM_SIZE,
         .heap_base = ld->heap_base,
-        .checksum = 0,
+        .stack_end = ld->stack_base - ld->stack_size,
         .mmio_base = ld->mmio_base
     };
     

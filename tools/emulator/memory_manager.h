@@ -130,9 +130,10 @@ static inline int mm_write(memory_manager_t *mm, uint32_t vaddr, const void *src
 // Allocate regions based on .s32x requirements
 static int mm_setup_from_s32x(memory_manager_t *mm,
                               uint32_t code_limit,
-                              uint32_t rodata_limit, 
+                              uint32_t rodata_limit,
                               uint32_t data_limit,
                               uint32_t stack_base,
+                              uint32_t stack_end,
                               uint32_t mmio_base,
                               uint32_t mmio_size) {
     // Code segment: initially read+write for loading, will become read-only
@@ -141,7 +142,7 @@ static int mm_setup_from_s32x(memory_manager_t *mm,
             return -1;
         }
     }
-    
+
     // Read-only data segment: initially read+write for loading
     // rodata starts immediately after code
     if (rodata_limit > code_limit) {
@@ -149,40 +150,39 @@ static int mm_setup_from_s32x(memory_manager_t *mm,
             return -1;
         }
     }
-    
+
     // Read-write data segment
     // Data starts immediately after rodata
     if (data_limit > rodata_limit) {
-        if (!mm_allocate_region(mm, rodata_limit, data_limit - rodata_limit, 
+        if (!mm_allocate_region(mm, rodata_limit, data_limit - rodata_limit,
                                 PROT_READ | PROT_WRITE)) {
             return -1;
         }
     }
-    
-    // Heap region - from end of data to stack base
+
+    // Heap region - from end of data to stack end
     // Heap typically starts at 0x3000 in our memory layout
     uint32_t heap_start = (data_limit + 0xFFF) & ~0xFFF;  // Round up to page
     if (heap_start < 0x3000) heap_start = 0x3000;  // Minimum heap start
 
-    uint32_t heap_end = stack_base;
-    if (mmio_size > 0 && mmio_base > 0 && mmio_base < heap_end) {
-        heap_end = mmio_base;  // Stop heap before MMIO window
+    uint32_t heap_limit = stack_end;
+    if (mmio_size > 0 && mmio_base > 0 && mmio_base < heap_limit) {
+        heap_limit = mmio_base;  // Stop heap before MMIO window
     }
 
-    if (heap_end > heap_start) {
-        if (!mm_allocate_region(mm, heap_start, heap_end - heap_start, PROT_READ | PROT_WRITE)) {
+    if (heap_limit > heap_start) {
+        if (!mm_allocate_region(mm, heap_start, heap_limit - heap_start, PROT_READ | PROT_WRITE)) {
             return -1;
         }
     }
-    
-    // Stack region - small stack around the stack pointer
-    // Stack grows down, so allocate from heap end to beyond stack base
-    uint32_t stack_size = 64 * 1024;  // 64KB stack
-    uint32_t stack_end = stack_base + 0x1000;  // A bit above stack base
-    if (!mm_allocate_region(mm, stack_base, stack_end - stack_base, PROT_READ | PROT_WRITE)) {
+
+    // Stack region - from stack_end to slightly above stack_base
+    // Stack grows down from stack_base toward stack_end
+    uint32_t stack_top = stack_base + 0x10;  // Small margin above stack_base
+    if (!mm_allocate_region(mm, stack_end, stack_top - stack_end, PROT_READ | PROT_WRITE)) {
         return -1;
     }
-    
+
     return 0;
 }
 

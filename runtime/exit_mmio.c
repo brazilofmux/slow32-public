@@ -3,8 +3,10 @@
 #include "mmio_ring.h"
 
 extern void yield(void);
+extern void __cxa_finalize(void *dso_handle);
 
 void exit(int status) {
+    __cxa_finalize(0);
     unsigned int req_head = S32_MMIO_REQ_HEAD;
     unsigned int req_tail = S32_MMIO_REQ_TAIL;
     volatile unsigned int *req_ring = S32_MMIO_REQ_RING;

@@ -4,10 +4,17 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <dirent.h>
 
 #include "../../common/mmio_ring_layout.h"
 
 #define S32_MMIO_MAX_FDS 128
+
+// File descriptor type tracking
+typedef enum {
+    S32_FD_TYPE_FILE = 0,
+    S32_FD_TYPE_DIR  = 1,
+} s32_fd_type_t;
 
 // I/O descriptor structure
 typedef struct {
@@ -59,6 +66,8 @@ typedef struct {
 
     int host_fds[S32_MMIO_MAX_FDS];
     bool host_fd_owned[S32_MMIO_MAX_FDS];
+    s32_fd_type_t fd_types[S32_MMIO_MAX_FDS];
+    DIR *host_dirs[S32_MMIO_MAX_FDS];
 } mmio_ring_state_t;
 
 // Common MMIO configuration shared by both emulators

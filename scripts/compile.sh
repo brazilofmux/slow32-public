@@ -1,16 +1,30 @@
 #!/bin/bash
-# Simple script to compile a C file to SLOW-32 executable
+# Simple script to compile a C/C++ file to SLOW-32 executable
 
 if [ $# -lt 1 ]; then
-    echo "Usage: $0 <input.c> [output] [--mmio SIZE]"
-    echo "  Compiles a C file to SLOW-32 executable"
+    echo "Usage: $0 <input.c|input.cpp> [output] [--mmio SIZE]"
+    echo "  Compiles a C/C++ file to SLOW-32 executable"
     echo "  Output defaults to input basename with .s32x extension"
     echo "  --mmio SIZE enables MMIO with specified size (e.g., 64K)"
     exit 1
 fi
 
 INPUT="$1"
-BASE=$(basename "$INPUT" .c)
+
+# Detect file type and set compiler accordingly
+if [[ "$INPUT" == *.cpp ]]; then
+    BASE=$(basename "$INPUT" .cpp)
+    COMPILER="clang++"
+    EXTRA_FLAGS="-fno-exceptions -fno-rtti"
+elif [[ "$INPUT" == *.c ]]; then
+    BASE=$(basename "$INPUT" .c)
+    COMPILER="clang"
+    EXTRA_FLAGS=""
+else
+    echo "Error: Input file must be .c or .cpp"
+    exit 1
+fi
+
 OUTPUT="${2:-$BASE.s32x}"
 
 # Check for --mmio flag
@@ -28,9 +42,9 @@ NC='\033[0m' # No Color
 
 echo "Compiling $INPUT -> $OUTPUT"
 
-# Step 1: C to LLVM IR
+# Step 1: C/C++ to LLVM IR
 echo -n "  Generating LLVM IR... "
-~/llvm-project/build/bin/clang -target slow32-unknown-none -S -emit-llvm -O2 -Iruntime/include "$INPUT" -o "$BASE.ll"
+~/llvm-project/build/bin/$COMPILER -target slow32-unknown-none -S -emit-llvm -O2 $EXTRA_FLAGS -Iruntime/include "$INPUT" -o "$BASE.ll"
 if [ $? -ne 0 ]; then
     echo -e "${RED}FAILED${NC}"
     exit 1

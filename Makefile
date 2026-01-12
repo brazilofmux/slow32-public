@@ -17,7 +17,7 @@ CFLAGS := -target $(TARGET) -S -emit-llvm $(OPT) -Iruntime/include
 LIBC ?= debug
 LIBC_ARCHIVE := runtime/libc_$(LIBC).s32a
 
-.PHONY: all clean emulator assembler compiler runtime test tools
+.PHONY: all clean emulator assembler compiler runtime test tools cpp-test cpp-run
 
 all: tools compiler runtime
 
@@ -43,9 +43,16 @@ test: all
 	@echo "Testing assembler..."
 	@echo "addi r1, r0, 42" > /tmp/test.s
 	@echo "halt" >> /tmp/test.s
-	@./tools/assembler/slow32asm /tmp/test.s /tmp/test.bin
+	@./tools/assembler/slow32asm /tmp/test.s /tmp/test.s32o
+	@./tools/linker/s32-ld -o /tmp/test.s32x /tmp/test.s32o
 	@echo "Testing emulator..."
-	@./tools/emulator/slow32 /tmp/test.bin | grep "r01=0x0000002A" && echo "✓ Basic test passed"
+	@./tools/emulator/slow32 -r /tmp/test.s32x | grep "r1: 0x00000000 -> 0x0000002A" && echo "✓ Basic test passed"
+
+cpp-test: tools
+	@./examples/cpp/test_all.sh
+
+cpp-run: all
+	@./examples/cpp/build_and_run.sh
 
 benchmark: emulator
 	@if [ -f tests/binaries/bench.bin ]; then \
@@ -106,6 +113,8 @@ help:
 	@echo "  compiler  - Build the LLVM compiler"
 	@echo "  runtime   - Build runtime libraries"
 	@echo "  test      - Run basic tests"
+	@echo "  cpp-test  - Compile C++ examples (no execution)"
+	@echo "  cpp-run   - Build and run C++ examples"
 	@echo "  benchmark - Compare emulator performance"
 	@echo "  clean     - Remove all build artifacts"
 	@echo "  help      - Show this message"

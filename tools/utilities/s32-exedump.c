@@ -30,6 +30,7 @@ static void print_header(s32x_header_t *header) {
     printf("    ROData limit: 0x%08X\n", header->rodata_limit);
     printf("    Data limit:   0x%08X\n", header->data_limit);
     printf("    Stack base:   0x%08X\n", header->stack_base);
+    printf("    Stack end:    0x%08X\n", header->stack_end);
     printf("    Heap base:    0x%08X\n", header->heap_base);
     printf("    Memory size:  0x%08X\n", header->mem_size);
 }

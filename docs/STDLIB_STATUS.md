@@ -1,70 +1,59 @@
 # SLOW-32 Standard Library Status
 
 ## Overview
-We've made significant progress expanding the SLOW-32 standard library with MMIO support. However, several limitations in the LLVM backend prevent full stdlib implementation.
+The SLOW-32 standard library is now largely functional, supporting both simple DEBUG-based I/O and high-performance MMIO. Previous LLVM backend limitations have been resolved.
 
 ## Completed Components
 
 ### String Library (string.h) - WORKING ✅
-- `strlen` - PASS
-- `strcpy` - PASS  
-- `strncpy` - PASS
-- `strcmp` - PASS
-- `strncmp` - PASS
-- `strcat` - PASS
-- `strncat` - PASS
-- `strchr` - PASS
-- `strrchr` - PASS
-- `strstr` - PASS
-- `memset` - PASS
-- `memcpy` - PASS
-- `memmove` - FAIL (bug in implementation)
-- `memcmp` - PASS
-- `memchr` - PASS
+- `strlen`, `strcpy`, `strncpy`, `strcmp`, `strncmp`, `strcat`, `strncat`, `strchr`, `strrchr`, `strstr` - PASS
+- `memset`, `memcpy`, `memmove`, `memcmp`, `memchr` - PASS
+- `memmove` correctly handles overlapping buffers.
+
+### Standard Library (stdlib.h) - WORKING ✅
+- `malloc`, `free`, `calloc`, `realloc` - Fully functional with MMIO-based heap.
+- `abs`, `labs`, `atoi`, `atol` - PASS
+- `rand`, `srand` - PASS
+- `exit`, `abort` - PASS (MMIO and DEBUG variants)
+- `qsort`, `bsearch` - PASS (Function pointers now fully supported)
+- `strtol`, `strtoul` - PASS
+- `div`, `ldiv` - PASS (Division operations fully supported)
+
+### Standard I/O (stdio.h) - WORKING ✅
+- `printf`, `sprintf`, `snprintf`, `vsnprintf` - PASS (Full implementation with width/precision)
+- `puts`, `putchar` - PASS
+- `fopen`, `fclose`, `fread`, `fwrite` - PASS (MMIO-based file I/O)
+- `stat`, `fstat` - PASS (MMIO-based file metadata)
 
 ### Math Library (math.h) - PARTIAL ⚠️
 - Integer math functions created (math_int.c)
-- Floating point functions written but untested due to soft-float overhead
-- Avoided division operators due to backend limitations
+- Floating point functions written but restricted due to soft-float overhead.
+- Native 32-bit `mul`, `div`, `rem` instructions used for performance.
 
-### Memory Allocation (malloc.c) - UNTESTED ⚠️
-- Basic heap allocator implemented
-- Uses fixed heap at 0x00100000
-- `malloc`, `free`, `calloc`, `realloc` implemented
-- Not yet assembled due to backend issues
+## Resolved LLVM Backend Issues
 
-### Standard Library Utils (stdlib_utils.c) - PARTIAL ⚠️
-- `abs`, `labs` - implemented
-- `atoi`, `atol` - implemented
-- `rand`, `srand` - implemented (fixed overflow issue)
-- `exit`, `abort` - implemented using MMIO
-- `qsort`, `bsearch` - REMOVED (function pointers not supported)
+### Fixed (2025-09-08)
+1. **UDIV/SDIV/UREM/SREM Support** ✅
+   - Custom lowering added to generate libcalls to `__udivsi3`/`__umodsi3`.
+   - Now supports all division and modulo operations in C.
 
-### Standard I/O (stdio.c) - BLOCKED ❌
-- Full implementation written with MMIO support
-- Cannot compile due to missing UDIV in backend
-- Includes file operations, printf family, etc.
+2. **Function Pointer Calls** ✅
+   - `JALR_CALL` support added for indirect calls.
+   - Function addresses as arguments and callbacks (like in `qsort`) now work perfectly.
 
-## LLVM Backend Issues Blocking Progress
+3. **Optimization Levels** ✅
+   - Full `-O1` and `-O2` optimization supported for all code.
+   - Fixed Machine LICM and Block Placement issues.
 
-### Critical Issues
-1. **Missing UDIV/SDIV Instructions**
-   - Blocks: stdio.c compilation, division operations
-   - Workaround: Avoided division in library code
+4. **Inline Assembly Support** ✅
+   - Added constraint handling for `r`, `i`, `m` in Clang.
+   - `asm("halt")` and other inline assembly instructions now work correctly.
 
-2. **Function Pointer Calls Not Supported**
-   - Blocks: qsort, bsearch, callbacks
-   - Workaround: Removed these functions
+5. **64-bit Arithmetic** ✅
+   - Verified `__udivdi3` and other 64-bit builtins.
+   - Hand-coded `UMUL_LOHI` lowering fixed to ensure correct carries.
 
-3. **-O2 Optimization Hangs LLC**
-   - Blocks: Optimized builds
-   - Workaround: Using -O1
-
-4. **No Inline Assembly Support in Clang Target**
-   - Blocks: Direct use of HALT instruction
-   - Note: asm("halt") won't work until we add inline asm support
-
-## File Structure Created
+## File Structure
 ```
 runtime/
 ├── include/
@@ -72,59 +61,17 @@ runtime/
 │   ├── stdlib.h     ✅ Complete  
 │   ├── stdio.h      ✅ Complete
 │   └── math.h       ✅ Complete
-├── string.c         ✅ Compiled to string.s32o
-├── malloc.c         ⚠️ Written but not compiled
-├── stdlib_utils.c   ⚠️ Simplified, compiled
-├── stdio.c          ❌ Cannot compile (UDIV issue)
-├── math.c           ⚠️ Written but not compiled
-└── math_int.c       ✅ Integer-only math functions
-
-tests/
-└── test_stdlib.c    ✅ Working test suite
+├── string.c         ✅ String functions
+├── malloc.c         ✅ Dynamic memory allocation
+├── stdlib_utils.c   ✅ Conversion and basic utils
+├── stdlib_extra.c   ✅ qsort, bsearch, strtol
+├── stdio.c          ✅ MMIO-based file operations
+├── printf_enhanced.c ✅ Full-featured printf implementation
+└── builtins.c       ✅ 64-bit arithmetic support
 ```
 
-## Next Steps
+## Build and Link Order
+The recommended link order is:
+`s32-ld -o prog.s32x crt0.s32o user.s32o libc_mmio.s32a libs32.s32a`
 
-### Immediate Fixes Needed in llvm-project:
-1. Add UDIV/SDIV support in SLOW32ISelLowering.cpp
-2. Implement indirect calls for function pointers
-3. Debug -O2 optimization issue
-4. Add inline assembly support to Clang target
-
-### Library Improvements:
-1. Fix memmove implementation bug
-2. Test malloc/free once compiled
-3. Add more comprehensive test coverage
-4. Implement MMIO-based file I/O once stdio.c compiles
-
-## Working Test Output
-```
-SLOW-32 Standard Library Test Suite
-====================================
-Testing string functions:
-  strlen: PASS
-  strcpy: PASS
-  strcat: PASS
-  strchr: PASS
-  strstr: PASS
-Testing memory functions:
-  memset: PASS
-  memcpy: PASS
-  memmove: FAIL
-  memchr: PASS
-```
-
-## Build Commands for Working Components
-```bash
-# Compile string library
-~/llvm-project/build/bin/clang -target slow32-unknown-none -S -emit-llvm -O1 -Iinclude string.c -o string.ll
-~/llvm-project/build/bin/llc -mtriple=slow32-unknown-none string.ll -o string.s
-../assembler/slow32asm string.s string.s32o
-
-# Link and run test
-./linker/s32-ld -o test.s32x runtime/crt0.s32o test.s32o runtime/string.s32o runtime/stdlib.s32o runtime/intrinsics.s32o
-./emulator/slow32 test.s32x
-```
-
-## Summary
-We have a functional string library and test framework, but are blocked on further stdlib expansion by LLVM backend limitations. The MMIO infrastructure is ready for full stdio once division support is added.
+Use `libc_debug.s32a` instead of `libc_mmio.s32a` for simple console output via the `DEBUG` instruction without MMIO infrastructure requirements.

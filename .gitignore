@@ -31,6 +31,10 @@ verify*.o
 !tests/*.s
 !examples/*.s
 
+# Generated C++ test artifacts
+examples/cpp/*.s
+examples/cpp/*.ll
+
 # Temporary compilation files in root
 /*.c
 !test*.c
@@ -54,6 +58,7 @@ assembler_reloc_patch.txt
 build/
 *.a
 *.so
+csv/
 
 # Debug files
 *.dSYM/

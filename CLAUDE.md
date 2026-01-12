@@ -73,8 +73,6 @@ make
 
 ✅ Runtime builds successfully with -O0, -O1, and -O2
 ✅ Some complex files (printf.c, stdio.c, etc.) use -O1 to avoid optimizer performance issues
-✅ QEMU TCG backend with file I/O MMIO support
-✅ Ragel state machine compiler compatible (goto-driven parsers work)
 
 ⚠️ See docs/IMPROVEMENTS.md for known issues
 
@@ -146,18 +144,6 @@ docker run --rm -v $(pwd):/workspace slow32-toolchain bash -c "cd /workspace/reg
 docker run --rm -v $(pwd):/workspace slow32-toolchain bash -c "cd /workspace && clang -target slow32-unknown-none -S -emit-llvm -O2 -Iruntime/include test.c -o test.ll && llc -mtriple=slow32-unknown-none test.ll -o test.s"
 ```
 
-## Benchmarks
-
-Performance on a Ragel-generated CSV validator processing 15MB of data (285M instructions):
-
-| Emulator | Time | Performance | Notes |
-|----------|------|-------------|-------|
-| slow32 (reference) | 5.99s | 47.6 MIPS | Portable C++ interpreter |
-| slow32-fast | 0.89s | 318.6 MIPS | Optimized interpreter |
-| QEMU TCG | 0.30s | ~950 MIPS | JIT compilation |
-
-The 25KB executable processes CSV at 52 MB/s on QEMU. See `examples/validatecsv_ragel.c` for the benchmark.
-
 ## Testing Commands
 
 ```bash
@@ -173,8 +159,8 @@ cd ~/slow-32/regression && ./run-tests.sh feature-arithmetic
 ./tools/utilities/slow32dis file.s32x [start] [end]  # Disassembler
 
 # Performance test
-time ./tools/emulator/slow32 program.s32x  # ~48 MIPS
-time ./tools/emulator/slow32-fast program.s32x  # ~319 MIPS
+time ./tools/emulator/slow32 program.s32x  # ~350M inst/sec
+time ./tools/emulator/slow32-fast program.s32x  # Optimized version
 ```
 
 ## Regression Testing

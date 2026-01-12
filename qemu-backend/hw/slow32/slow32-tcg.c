@@ -1,8 +1,8 @@
 #include "qemu/osdep.h"
 
 #include "qapi/error.h"
-#include "hw/boards.h"
-#include "hw/loader.h"
+#include "hw/core/boards.h"
+#include "hw/core/loader.h"
 #include "system/memory.h"
 #include "qemu/error-report.h"
 #include "qemu/units.h"
@@ -36,7 +36,7 @@ typedef struct QEMU_PACKED Slow32XHeader {
     uint32_t stack_base;
     uint32_t mem_size;
     uint32_t heap_base;
-    uint32_t checksum;
+    uint32_t stack_end;
     uint32_t mmio_base;
 } Slow32XHeader;
 
@@ -54,32 +54,6 @@ typedef struct QEMU_PACKED Slow32XSection {
 #define S32_MACHINE_SLOW32 0x32
 #define S32X_FLAG_W_XOR_X    0x0001u
 #define S32X_FLAG_MMIO       0x0080u
-
-static bool slow32_load_flat(MachineState *machine, Slow32CPU *cpu,
-                             Error **errp)
-{
-    int64_t sz = load_image_targphys(machine->kernel_filename, 0,
-                                     machine->ram_size, errp);
-    if (sz <= 0) {
-        error_setg(errp, "Failed to load flat image '%s'",
-                   machine->kernel_filename);
-        return false;
-    }
-
-    CPUSlow32State *env = &cpu->env;
-    env->pc = 0;
-    env->next_pc = 0;
-    env->regs[SLOW32_REG_SP] = SLOW32_DEFAULT_STACK_TOP;
-    env->stack_top = SLOW32_DEFAULT_STACK_TOP;
-    env->code_limit = 0;
-    env->rodata_limit = 0;
-    env->data_limit = machine->ram_size;
-    env->heap_base = 0;
-    env->mem_size = machine->ram_size;
-    env->layout_defined = false;
-    slow32_mmio_reconfigure(cpu);
-    return true;
-}
 
 static bool slow32_load_s32x(Slow32MachineState *sms, MachineState *machine,
                              Slow32CPU *cpu, FILE *f, Error **errp)
@@ -164,6 +138,7 @@ static bool slow32_load_s32x(Slow32MachineState *sms, MachineState *machine,
     env->pc = hdr.entry;
     env->next_pc = hdr.entry;
     env->stack_top = hdr.stack_base ? hdr.stack_base : SLOW32_DEFAULT_STACK_TOP;
+    env->stack_end = hdr.stack_end;
     env->regs[SLOW32_REG_SP] = env->stack_top;
     env->code_limit = hdr.code_limit;
     env->rodata_limit = hdr.rodata_limit;
@@ -235,16 +210,17 @@ static bool slow32_load_kernel(Slow32MachineState *sms, MachineState *machine,
         error_setg(errp, "Unable to read kernel header");
         return false;
     }
-    fseek(f, 0, SEEK_SET);
 
-    bool ok;
-    if (magic == cpu_to_le32(S32X_MAGIC)) {
-        ok = slow32_load_s32x(sms, machine, cpu, f, errp);
+    if (magic != cpu_to_le32(S32X_MAGIC)) {
         fclose(f);
-    } else {
-        fclose(f);
-        ok = slow32_load_flat(machine, cpu, errp);
+        error_setg(errp, "Invalid .s32x magic: 0x%08x (expected 0x%08x)",
+                   le32_to_cpu(magic), S32X_MAGIC);
+        return false;
     }
+
+    fseek(f, 0, SEEK_SET);
+    bool ok = slow32_load_s32x(sms, machine, cpu, f, errp);
+    fclose(f);
 
     if (ok) {
         slow32_parse_cmdline(machine, cpu);

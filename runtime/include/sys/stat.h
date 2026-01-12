@@ -53,5 +53,7 @@ struct stat {
 
 int stat(const char *path, struct stat *buf);
 int fstat(int fd, struct stat *buf);
+int lstat(const char *path, struct stat *buf);
+int mkdir(const char *pathname, mode_t mode);
 
 #endif

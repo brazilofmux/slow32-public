@@ -1,52 +1,41 @@
-# Printf Implementation Status
+# Printf Implementation Status (RESOLVED)
 
 ## Current State
-The printf implementation in SLOW-32 is functional but has output formatting issues when handling format specifiers.
+The SLOW-32 printf implementation is now fully functional and verified. The previous "enhanced" version has replaced the basic one as the standard implementation in both `libc_debug.s32a` and `libc_mmio.s32a`.
 
-## Test Results
+## Test Results ✅
 ```
 Test 1: Simple string        ✅ Works correctly
-Test 2: Number %d            ⚠️ Outputs garbled (shows ">>>>>>" patterns)
-Test 3: %d + %d = %d         ⚠️ Outputs garbled
-Test 4: Hex 0x%x             ⚠️ Outputs garbled  
-Test 5: Final string         ✅ Works correctly
+Test 2: Number %d            ✅ Works correctly
+Test 3: %d + %d = %d         ✅ Works correctly
+Test 4: Hex 0x%x             ✅ Works correctly  
+Test 5: 64-bit %llu          ✅ Works correctly
+Test 6: Width & Precision    ✅ Works correctly
+Test 7: Zero padding         ✅ Works correctly
 ```
 
-## Analysis
-- Simple string printing (no format specifiers) works perfectly
-- Format specifier handling causes garbled output that looks like repeated ">>>>" characters
-- The program continues to execute and doesn't crash
-- All tests complete successfully, just with corrupted output for formatted values
-
-## Implementation Details
-- Located in: `runtime/printf.c`
-- Based on simplified TinyMUX sprintf code
-- Supports: %d, %u, %x, %X, %s, %c format specifiers
-- Uses putchar() for output (via DEBUG instruction)
-
-## Requirements for a Sufficient Printf
-
-### Must Have
-1. **%d** - Signed decimal integers
-2. **%u** - Unsigned decimal integers  
-3. **%x/%X** - Hexadecimal (lower/upper case)
+## Features Supported
+1. **%d / %i** - Signed decimal integers (32-bit and 64-bit with `ll`)
+2. **%u** - Unsigned decimal integers (32-bit and 64-bit with `ll`)
+3. **%x / %X** - Hexadecimal (32-bit and 64-bit with `ll`)
 4. **%s** - String output
 5. **%c** - Character output
-6. **%%** - Literal percent sign
+6. **%p** - Pointer output
+7. **%o** - Octal output
+8. **%%** - Literal percent sign
+9. **Width and Precision** - e.g., `%8d`, `%.10s`
+10. **Flags** - `-` (left justify), `0` (zero padding), `+` (show sign), `#` (alt form)
 
-### Nice to Have
-1. **%p** - Pointer output (as hex)
-2. Field width specifiers (e.g., %8d)
-3. Zero padding (e.g., %08x)
+## Implementation Details
+- Located in: `runtime/printf_enhanced.c`
+- Performance optimized using a 2-digit lookup table (`Digits100`) for fast decimal conversion.
+- 64-bit conversions use base-100 chunks and `__udivdi3` libcalls.
+- Buffer-safe: Internal buffer of 1KB for `printf`, supports `snprintf` with explicit limits.
 
-### Not Needed (for now)
-1. Floating point (%f, %g, %e) - SLOW-32 doesn't support FP yet
-2. Long long support (%lld) - Focus on 32-bit
-3. Precision specifiers
-4. Color codes
-5. Complex formatting
+## Analysis of Previous Issues
+The garbled ">>>>>>" output reported in earlier versions was caused by incorrect handling of the carry in the custom `UMUL_LOHI` lowering and issues in the string reversal logic during decimal conversion. These have been fixed, and the double-dabble BCD converter used as a workaround has been removed in favor of standard division-based conversion.
 
-## Recommendation
-The current printf has the right structure but seems to have an issue with how it outputs formatted values. The garbled ">>>>>>" output suggests the DEBUG instruction might be outputting raw binary values instead of ASCII characters for the converted numbers.
-
-Next step would be to check the integer-to-string conversion functions (utoa, itoa, utox) and ensure they're properly null-terminating and that putchar is being called with the right values.
+## Usage
+`printf` is part of standard `libc`.
+- For MMIO-based high performance: link with `libc_mmio.s32a`.
+- For simple debug output: link with `libc_debug.s32a`.

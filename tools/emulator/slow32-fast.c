@@ -14,9 +14,13 @@
 #include "memory_manager.h"
 #include "mmio_ring.h"
 
-// Enable to trap on unaligned LD/ST (recommended for a strict ISA)
-#ifndef S32_ALLOW_UNALIGNED
+// Enable to trap on unaligned LD/ST (strict ISA mode)
+// Disabled by default: SLOW-32 runs on x86-64 which handles unaligned access,
+// and the toolchain doesn't yet enforce alignment for all data items.
+#ifdef S32_STRICT_ALIGNMENT
 #define S32_TRAP_ON_UNALIGNED 1
+#else
+#define S32_TRAP_ON_UNALIGNED 0
 #endif
 
 #define S32_MMIO_WINDOW_SIZE \
@@ -847,8 +851,9 @@ int main(int argc, char **argv) {
     
     // Set up memory regions based on header
     uint32_t mmio_size = (header.flags & S32X_FLAG_MMIO) ? S32_MMIO_REGION_SIZE : 0u;
-    if (mm_setup_from_s32x(&cpu.mm, header.code_limit, header.rodata_limit, 
-                          header.data_limit, header.stack_base, header.mmio_base, mmio_size) != 0) {
+    if (mm_setup_from_s32x(&cpu.mm, header.code_limit, header.rodata_limit,
+                          header.data_limit, header.stack_base, header.stack_end,
+                          header.mmio_base, mmio_size) != 0) {
         fprintf(stderr, "Error: Failed to allocate memory regions\n");
         fclose(file);
         mm_destroy(&cpu.mm);

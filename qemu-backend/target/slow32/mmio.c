@@ -1,5 +1,6 @@
 #include "qemu/osdep.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -34,6 +35,7 @@
 #define S32_MMIO_DEFAULT_HEAP_SIZE (16 * MiB)
 
 #define S32_MMIO_STATUS_OK    0u
+#define S32_MMIO_STATUS_EOF   0xFFFFFFFDu
 #define S32_MMIO_STATUS_EINTR 0xFFFFFFFEu
 #define S32_MMIO_STATUS_ERR   0xFFFFFFFFu
 
@@ -49,6 +51,18 @@
 #define S32_MMIO_OP_EXIT      0x09
 #define S32_MMIO_OP_STAT      0x0A
 #define S32_MMIO_OP_FLUSH     0x0B
+
+#define S32_MMIO_OP_UNLINK    0x20
+#define S32_MMIO_OP_RENAME    0x21
+#define S32_MMIO_OP_MKDIR     0x22
+#define S32_MMIO_OP_RMDIR     0x23
+#define S32_MMIO_OP_LSTAT     0x24
+#define S32_MMIO_OP_ACCESS    0x25
+#define S32_MMIO_OP_CHDIR     0x26
+#define S32_MMIO_OP_GETCWD    0x27
+#define S32_MMIO_OP_OPENDIR   0x28
+#define S32_MMIO_OP_READDIR   0x29
+#define S32_MMIO_OP_CLOSEDIR  0x2A
 
 #define S32_MMIO_OP_GETTIME   0x30
 #define S32_MMIO_OP_SLEEP     0x31
@@ -112,6 +126,29 @@ typedef struct QEMU_PACKED s32_mmio_stat_result {
 #define S32_MMIO_MAX_FDS 128
 #define S32_MMIO_STAT_PATH_SENTINEL 0xFFFFFFFFu
 
+typedef enum {
+    S32_FD_TYPE_FILE = 0,
+    S32_FD_TYPE_DIR  = 1,
+} Slow32FdType;
+
+#define S32_DT_UNKNOWN 0
+#define S32_DT_FIFO    1
+#define S32_DT_CHR     2
+#define S32_DT_DIR     4
+#define S32_DT_BLK     6
+#define S32_DT_REG     8
+#define S32_DT_LNK     10
+#define S32_DT_SOCK    12
+
+typedef struct QEMU_PACKED s32_mmio_dirent {
+    uint64_t d_ino;
+    uint32_t d_type;
+    uint32_t d_namlen;
+    char d_name[256];
+} s32_mmio_dirent_t;
+
+#define S32_MMIO_DIRENT_SIZE sizeof(s32_mmio_dirent_t)
+
 struct Slow32MMIOContext {
     bool enabled;
     uint32_t req_tail;
@@ -126,6 +163,8 @@ struct Slow32MMIOContext {
     GByteArray *envp_blob;
     int host_fds[S32_MMIO_MAX_FDS];
     bool host_fd_owned[S32_MMIO_MAX_FDS];
+    Slow32FdType fd_types[S32_MMIO_MAX_FDS];
+    DIR *host_dirs[S32_MMIO_MAX_FDS];
     uint8_t scratch[S32_MMIO_DATA_CAPACITY];
 };
 
@@ -183,8 +222,14 @@ static void slow32_mmio_clear_window(const CPUSlow32State *env)
 static void slow32_mmio_reset_fd_table(Slow32MMIOContext *ctx)
 {
     for (uint32_t i = 0; i < S32_MMIO_MAX_FDS; ++i) {
+        /* Close any open directory handles */
+        if (ctx->host_dirs[i]) {
+            closedir(ctx->host_dirs[i]);
+        }
         ctx->host_fds[i] = -1;
         ctx->host_fd_owned[i] = false;
+        ctx->fd_types[i] = S32_FD_TYPE_FILE;
+        ctx->host_dirs[i] = NULL;
     }
     /* Map guest fds 0, 1, 2 to host stdin, stdout, stderr */
     ctx->host_fds[0] = STDIN_FILENO;
@@ -196,13 +241,41 @@ static int slow32_mmio_alloc_guest_fd(Slow32MMIOContext *ctx, int host_fd,
                                        bool owned)
 {
     for (uint32_t i = 0; i < S32_MMIO_MAX_FDS; ++i) {
-        if (ctx->host_fds[i] == -1) {
+        if (ctx->host_fds[i] == -1 && ctx->host_dirs[i] == NULL) {
             ctx->host_fds[i] = host_fd;
             ctx->host_fd_owned[i] = owned;
+            ctx->fd_types[i] = S32_FD_TYPE_FILE;
+            ctx->host_dirs[i] = NULL;
             return (int)i;
         }
     }
     return -1;
+}
+
+static int slow32_mmio_alloc_guest_dir_fd(Slow32MMIOContext *ctx, DIR *host_dir)
+{
+    for (uint32_t i = 0; i < S32_MMIO_MAX_FDS; ++i) {
+        if (ctx->host_fds[i] == -1 && ctx->host_dirs[i] == NULL) {
+            ctx->host_fds[i] = -1;
+            ctx->host_fd_owned[i] = true;
+            ctx->fd_types[i] = S32_FD_TYPE_DIR;
+            ctx->host_dirs[i] = host_dir;
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static DIR *slow32_mmio_host_dir_for_guest(Slow32MMIOContext *ctx,
+                                            uint32_t guest_fd)
+{
+    if (guest_fd >= S32_MMIO_MAX_FDS) {
+        return NULL;
+    }
+    if (ctx->fd_types[guest_fd] != S32_FD_TYPE_DIR) {
+        return NULL;
+    }
+    return ctx->host_dirs[guest_fd];
 }
 
 static int slow32_mmio_host_fd_for_guest(Slow32MMIOContext *ctx,
@@ -985,6 +1058,296 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
     case S32_MMIO_OP_GETENV:
         slow32_mmio_handle_getenv(ctx, env, req, resp);
         break;
+
+    /* ========== Filesystem metadata operations (0x20-0x2A) ========== */
+
+    case S32_MMIO_OP_UNLINK: {
+        if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, req->length);
+        ctx->scratch[req->length - 1] = '\0';
+
+        int rc = unlink((char *)ctx->scratch);
+        resp->status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        break;
+    }
+
+    case S32_MMIO_OP_RENAME: {
+        if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        uint32_t old_len = req->status;
+        if (old_len == 0 || old_len >= req->length) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, req->length);
+        ctx->scratch[old_len] = '\0';
+        ctx->scratch[req->length - 1] = '\0';
+
+        const char *oldpath = (char *)ctx->scratch;
+        const char *newpath = (char *)ctx->scratch + old_len;
+
+        int rc = rename(oldpath, newpath);
+        resp->status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        break;
+    }
+
+    case S32_MMIO_OP_MKDIR: {
+        if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, req->length);
+        ctx->scratch[req->length - 1] = '\0';
+
+        mode_t mode = (mode_t)req->status;
+        if (mode == 0) {
+            mode = 0755;
+        }
+
+        int rc = mkdir((char *)ctx->scratch, mode);
+        resp->status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        break;
+    }
+
+    case S32_MMIO_OP_RMDIR: {
+        if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, req->length);
+        ctx->scratch[req->length - 1] = '\0';
+
+        int rc = rmdir((char *)ctx->scratch);
+        resp->status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        break;
+    }
+
+    case S32_MMIO_OP_LSTAT: {
+        if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, req->length);
+        ctx->scratch[req->length - 1] = '\0';
+
+        struct stat host_stat;
+        memset(&host_stat, 0, sizeof(host_stat));
+        int rc = lstat((char *)ctx->scratch, &host_stat);
+
+        if (rc != 0) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        s32_mmio_stat_result_t result = {
+            .st_dev = (uint64_t)host_stat.st_dev,
+            .st_ino = (uint64_t)host_stat.st_ino,
+            .st_mode = (uint32_t)host_stat.st_mode,
+            .st_nlink = (uint32_t)host_stat.st_nlink,
+            .st_uid = (uint32_t)host_stat.st_uid,
+            .st_gid = (uint32_t)host_stat.st_gid,
+            .st_rdev = (uint64_t)host_stat.st_rdev,
+            .st_size = (uint64_t)host_stat.st_size,
+            .st_blksize = (uint64_t)host_stat.st_blksize,
+            .st_blocks = (uint64_t)host_stat.st_blocks,
+#if defined(__APPLE__)
+            .st_atime_sec = (uint64_t)host_stat.st_atimespec.tv_sec,
+            .st_atime_nsec = (uint32_t)host_stat.st_atimespec.tv_nsec,
+            .st_mtime_sec = (uint64_t)host_stat.st_mtimespec.tv_sec,
+            .st_mtime_nsec = (uint32_t)host_stat.st_mtimespec.tv_nsec,
+            .st_ctime_sec = (uint64_t)host_stat.st_ctimespec.tv_sec,
+            .st_ctime_nsec = (uint32_t)host_stat.st_ctimespec.tv_nsec,
+#else
+            .st_atime_sec = (uint64_t)host_stat.st_atim.tv_sec,
+            .st_atime_nsec = (uint32_t)host_stat.st_atim.tv_nsec,
+            .st_mtime_sec = (uint64_t)host_stat.st_mtim.tv_sec,
+            .st_mtime_nsec = (uint32_t)host_stat.st_mtim.tv_nsec,
+            .st_ctime_sec = (uint64_t)host_stat.st_ctim.tv_sec,
+            .st_ctime_nsec = (uint32_t)host_stat.st_ctim.tv_nsec,
+#endif
+        };
+
+        slow32_mmio_copy_to_guest(env, req->offset,
+                                  (const uint8_t *)&result, sizeof(result));
+        resp->length = sizeof(result);
+        resp->status = S32_MMIO_STATUS_OK;
+        break;
+    }
+
+    case S32_MMIO_OP_ACCESS: {
+        if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, req->length);
+        ctx->scratch[req->length - 1] = '\0';
+
+        int mode = (int)req->status;
+        int rc = access((char *)ctx->scratch, mode);
+        resp->status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        break;
+    }
+
+    case S32_MMIO_OP_CHDIR: {
+        if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, req->length);
+        ctx->scratch[req->length - 1] = '\0';
+
+        int rc = chdir((char *)ctx->scratch);
+        resp->status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        break;
+    }
+
+    case S32_MMIO_OP_GETCWD: {
+        if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        uint32_t max_len = MIN(req->length, S32_MMIO_DATA_CAPACITY);
+        char *cwd = getcwd((char *)ctx->scratch, max_len);
+        if (!cwd) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        size_t len = strlen(cwd) + 1;
+        slow32_mmio_copy_to_guest(env, req->offset, ctx->scratch, len);
+        resp->length = (uint32_t)len;
+        resp->status = (uint32_t)len;
+        break;
+    }
+
+    case S32_MMIO_OP_OPENDIR: {
+        if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, req->length);
+        ctx->scratch[req->length - 1] = '\0';
+
+        DIR *host_dir = opendir((char *)ctx->scratch);
+        if (!host_dir) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        int guest_fd = slow32_mmio_alloc_guest_dir_fd(ctx, host_dir);
+        if (guest_fd < 0) {
+            closedir(host_dir);
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        resp->status = (uint32_t)guest_fd;
+        resp->length = 0;
+        break;
+    }
+
+    case S32_MMIO_OP_READDIR: {
+        uint32_t guest_fd = req->status;
+        DIR *host_dir = slow32_mmio_host_dir_for_guest(ctx, guest_fd);
+
+        if (!host_dir) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        errno = 0;
+        struct dirent *entry = readdir(host_dir);
+        if (!entry) {
+            if (errno == 0) {
+                resp->status = S32_MMIO_STATUS_EOF;
+                resp->length = 0;
+            } else {
+                resp->status = S32_MMIO_STATUS_ERR;
+                resp->length = 0;
+            }
+            break;
+        }
+
+        s32_mmio_dirent_t result;
+        memset(&result, 0, sizeof(result));
+        result.d_ino = (uint64_t)entry->d_ino;
+        result.d_type = (uint32_t)entry->d_type;
+        size_t namelen = strlen(entry->d_name);
+        if (namelen > 255) {
+            namelen = 255;
+        }
+        result.d_namlen = (uint32_t)namelen;
+        memcpy(result.d_name, entry->d_name, namelen);
+        result.d_name[namelen] = '\0';
+
+        slow32_mmio_copy_to_guest(env, req->offset,
+                                  (const uint8_t *)&result, sizeof(result));
+        resp->length = sizeof(s32_mmio_dirent_t);
+        resp->status = S32_MMIO_STATUS_OK;
+        break;
+    }
+
+    case S32_MMIO_OP_CLOSEDIR: {
+        uint32_t guest_fd = req->status;
+
+        if (guest_fd >= S32_MMIO_MAX_FDS) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        if (ctx->fd_types[guest_fd] != S32_FD_TYPE_DIR || !ctx->host_dirs[guest_fd]) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        int rc = closedir(ctx->host_dirs[guest_fd]);
+        ctx->host_dirs[guest_fd] = NULL;
+        ctx->host_fds[guest_fd] = -1;
+        ctx->host_fd_owned[guest_fd] = false;
+        ctx->fd_types[guest_fd] = S32_FD_TYPE_FILE;
+
+        resp->status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        break;
+    }
 
     default:
         resp->status = S32_MMIO_STATUS_ERR;

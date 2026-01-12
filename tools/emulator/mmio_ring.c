@@ -32,6 +32,8 @@ static void reset_fd_table(mmio_ring_state_t *mmio) {
     for (uint32_t i = 0; i < S32_MMIO_MAX_FDS; ++i) {
         mmio->host_fds[i] = -1;
         mmio->host_fd_owned[i] = false;
+        mmio->fd_types[i] = S32_FD_TYPE_FILE;
+        mmio->host_dirs[i] = NULL;
     }
 
     mmio->host_fds[0] = STDIN_FILENO;
@@ -41,13 +43,38 @@ static void reset_fd_table(mmio_ring_state_t *mmio) {
 
 static int alloc_guest_fd(mmio_ring_state_t *mmio, int host_fd, bool owned) {
     for (uint32_t i = 0; i < S32_MMIO_MAX_FDS; ++i) {
-        if (mmio->host_fds[i] == -1) {
+        if (mmio->host_fds[i] == -1 && mmio->host_dirs[i] == NULL) {
             mmio->host_fds[i] = host_fd;
             mmio->host_fd_owned[i] = owned;
+            mmio->fd_types[i] = S32_FD_TYPE_FILE;
+            mmio->host_dirs[i] = NULL;
             return (int)i;
         }
     }
     return -1;
+}
+
+static int alloc_guest_dir_fd(mmio_ring_state_t *mmio, DIR *host_dir) {
+    for (uint32_t i = 0; i < S32_MMIO_MAX_FDS; ++i) {
+        if (mmio->host_fds[i] == -1 && mmio->host_dirs[i] == NULL) {
+            mmio->host_fds[i] = -1;  // No underlying file descriptor
+            mmio->host_fd_owned[i] = true;
+            mmio->fd_types[i] = S32_FD_TYPE_DIR;
+            mmio->host_dirs[i] = host_dir;
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static DIR *host_dir_for_guest(mmio_ring_state_t *mmio, uint32_t guest_fd) {
+    if (guest_fd >= S32_MMIO_MAX_FDS) {
+        return NULL;
+    }
+    if (mmio->fd_types[guest_fd] != S32_FD_TYPE_DIR) {
+        return NULL;
+    }
+    return mmio->host_dirs[guest_fd];
 }
 
 static int host_fd_for_guest(mmio_ring_state_t *mmio, uint32_t guest_fd) {
@@ -1003,7 +1030,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             }
 
             size_t value_len = strlen(value);
-
+            
             // Safety check: ensure we don't write past end of buffer
             // offset is where we write (req->offset % CAPACITY)
             if (offset + value_len > S32_MMIO_DATA_CAPACITY) {
@@ -1018,6 +1045,435 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             if (trace_args_enabled) {
                 fprintf(stderr, "[MMIO TRACE] GETENV found value len=%zu\n", value_len);
             }
+            break;
+        }
+
+        // ========== Filesystem metadata operations (0x20-0x2A) ==========
+
+        case S32_MMIO_OP_UNLINK: {
+            // Request: path in data buffer
+            // Response: OK or ERR
+            if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (offset > (S32_MMIO_DATA_CAPACITY - req->length)) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            char *path = (char *)malloc(req->length + 1);
+            if (!path) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+            memcpy(path, mmio->data_buffer + offset, req->length);
+            path[req->length] = '\0';
+
+            int rc = unlink(path);
+            free(path);
+
+            resp.status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+            resp.length = 0;
+            break;
+        }
+
+        case S32_MMIO_OP_RENAME: {
+            // Request: oldpath + newpath in data buffer, status = old_len
+            // Response: OK or ERR
+            if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t old_len = req->status;
+            if (old_len == 0 || old_len >= req->length) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (offset > (S32_MMIO_DATA_CAPACITY - req->length)) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            char *buffer = (char *)malloc(req->length + 2);
+            if (!buffer) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+            memcpy(buffer, mmio->data_buffer + offset, req->length);
+            buffer[old_len] = '\0';
+            buffer[req->length] = '\0';
+
+            const char *oldpath = buffer;
+            const char *newpath = buffer + old_len;
+
+            int rc = rename(oldpath, newpath);
+            free(buffer);
+
+            resp.status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+            resp.length = 0;
+            break;
+        }
+
+        case S32_MMIO_OP_MKDIR: {
+            // Request: path in data buffer, status = mode
+            // Response: OK or ERR
+            if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (offset > (S32_MMIO_DATA_CAPACITY - req->length)) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            char *path = (char *)malloc(req->length + 1);
+            if (!path) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+            memcpy(path, mmio->data_buffer + offset, req->length);
+            path[req->length] = '\0';
+
+            mode_t mode = (mode_t)req->status;
+            if (mode == 0) mode = 0755;  // Default mode
+
+            int rc = mkdir(path, mode);
+            free(path);
+
+            resp.status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+            resp.length = 0;
+            break;
+        }
+
+        case S32_MMIO_OP_RMDIR: {
+            // Request: path in data buffer
+            // Response: OK or ERR
+            if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (offset > (S32_MMIO_DATA_CAPACITY - req->length)) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            char *path = (char *)malloc(req->length + 1);
+            if (!path) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+            memcpy(path, mmio->data_buffer + offset, req->length);
+            path[req->length] = '\0';
+
+            int rc = rmdir(path);
+            free(path);
+
+            resp.status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+            resp.length = 0;
+            break;
+        }
+
+        case S32_MMIO_OP_LSTAT: {
+            // Request: path in data buffer (like STAT but no symlink follow)
+            // Response: stat result in data buffer
+            if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            uint32_t max_bytes = S32_MMIO_DATA_CAPACITY - offset;
+
+            if (max_bytes < sizeof(s32_mmio_stat_result_t)) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            char *path = (char *)malloc(req->length + 1);
+            if (!path) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+            memcpy(path, mmio->data_buffer + offset, req->length);
+            path[req->length] = '\0';
+
+            struct stat host_stat;
+            memset(&host_stat, 0, sizeof(host_stat));
+            int rc = lstat(path, &host_stat);
+            free(path);
+
+            if (rc != 0) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            s32_mmio_stat_result_t result = {
+                .st_dev = (uint64_t)host_stat.st_dev,
+                .st_ino = (uint64_t)host_stat.st_ino,
+                .st_mode = (uint32_t)host_stat.st_mode,
+                .st_nlink = (uint32_t)host_stat.st_nlink,
+                .st_uid = (uint32_t)host_stat.st_uid,
+                .st_gid = (uint32_t)host_stat.st_gid,
+                .st_rdev = (uint64_t)host_stat.st_rdev,
+                .st_size = (uint64_t)((host_stat.st_size < 0) ? 0 : host_stat.st_size),
+                .st_blksize = (uint64_t)((host_stat.st_blksize < 0) ? 0 : host_stat.st_blksize),
+                .st_blocks = (uint64_t)((host_stat.st_blocks < 0) ? 0 : host_stat.st_blocks),
+                .st_atime_sec = (uint64_t)STAT_ATIME_SEC(host_stat),
+                .st_atime_nsec = (uint32_t)STAT_ATIME_NSEC(host_stat),
+                .st_mtime_sec = (uint64_t)STAT_MTIME_SEC(host_stat),
+                .st_mtime_nsec = (uint32_t)STAT_MTIME_NSEC(host_stat),
+                .st_ctime_sec = (uint64_t)STAT_CTIME_SEC(host_stat),
+                .st_ctime_nsec = (uint32_t)STAT_CTIME_NSEC(host_stat),
+            };
+
+            memcpy(mmio->data_buffer + offset, &result, sizeof(result));
+            resp.length = sizeof(result);
+            resp.status = S32_MMIO_STATUS_OK;
+            break;
+        }
+
+        case S32_MMIO_OP_ACCESS: {
+            // Request: path in data buffer, status = mode (F_OK|R_OK|W_OK|X_OK)
+            // Response: OK if accessible, ERR if not
+            if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (offset > (S32_MMIO_DATA_CAPACITY - req->length)) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            char *path = (char *)malloc(req->length + 1);
+            if (!path) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+            memcpy(path, mmio->data_buffer + offset, req->length);
+            path[req->length] = '\0';
+
+            // Map guest access modes to host (they match POSIX values)
+            int mode = (int)req->status;
+            int rc = access(path, mode);
+            free(path);
+
+            resp.status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+            resp.length = 0;
+            break;
+        }
+
+        case S32_MMIO_OP_CHDIR: {
+            // Request: path in data buffer
+            // Response: OK or ERR
+            if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (offset > (S32_MMIO_DATA_CAPACITY - req->length)) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            char *path = (char *)malloc(req->length + 1);
+            if (!path) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+            memcpy(path, mmio->data_buffer + offset, req->length);
+            path[req->length] = '\0';
+
+            int rc = chdir(path);
+            free(path);
+
+            resp.status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+            resp.length = 0;
+            break;
+        }
+
+        case S32_MMIO_OP_GETCWD: {
+            // Request: length = max buffer size
+            // Response: path in data buffer, status = actual length (including NUL)
+            if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            uint32_t max_len = S32_MMIO_DATA_CAPACITY - offset;
+            if (req->length < max_len) max_len = req->length;
+
+            char *cwd = getcwd((char *)(mmio->data_buffer + offset), max_len);
+            if (!cwd) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            size_t len = strlen(cwd) + 1;  // Include NUL terminator
+            resp.length = (uint32_t)len;
+            resp.status = (uint32_t)len;
+            break;
+        }
+
+        case S32_MMIO_OP_OPENDIR: {
+            // Request: path in data buffer
+            // Response: directory descriptor in status, or ERR
+            if (req->length == 0 || req->length > S32_MMIO_DATA_CAPACITY) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (offset > (S32_MMIO_DATA_CAPACITY - req->length)) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            char *path = (char *)malloc(req->length + 1);
+            if (!path) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+            memcpy(path, mmio->data_buffer + offset, req->length);
+            path[req->length] = '\0';
+
+            DIR *host_dir = opendir(path);
+            free(path);
+
+            if (!host_dir) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            int guest_fd = alloc_guest_dir_fd(mmio, host_dir);
+            if (guest_fd < 0) {
+                closedir(host_dir);
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            resp.status = (uint32_t)guest_fd;
+            resp.length = 0;
+            break;
+        }
+
+        case S32_MMIO_OP_READDIR: {
+            // Request: status = directory descriptor
+            // Response: dirent in data buffer, status = OK/EOF/ERR
+            uint32_t guest_fd = req->status;
+            DIR *host_dir = host_dir_for_guest(mmio, guest_fd);
+
+            if (!host_dir) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (offset > (S32_MMIO_DATA_CAPACITY - sizeof(s32_mmio_dirent_t))) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            errno = 0;
+            struct dirent *entry = readdir(host_dir);
+            if (!entry) {
+                if (errno == 0) {
+                    // End of directory
+                    resp.status = S32_MMIO_STATUS_EOF;
+                    resp.length = 0;
+                } else {
+                    resp.status = S32_MMIO_STATUS_ERR;
+                    resp.length = 0;
+                }
+                break;
+            }
+
+            s32_mmio_dirent_t result;
+            memset(&result, 0, sizeof(result));
+            result.d_ino = (uint64_t)entry->d_ino;
+            result.d_type = (uint32_t)entry->d_type;
+            size_t namelen = strlen(entry->d_name);
+            if (namelen > 255) namelen = 255;
+            result.d_namlen = (uint32_t)namelen;
+            memcpy(result.d_name, entry->d_name, namelen);
+            result.d_name[namelen] = '\0';
+
+            memcpy(mmio->data_buffer + offset, &result, sizeof(result));
+            resp.length = sizeof(s32_mmio_dirent_t);
+            resp.status = S32_MMIO_STATUS_OK;
+            break;
+        }
+
+        case S32_MMIO_OP_CLOSEDIR: {
+            // Request: status = directory descriptor
+            // Response: OK or ERR
+            uint32_t guest_fd = req->status;
+
+            if (guest_fd >= S32_MMIO_MAX_FDS) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            if (mmio->fd_types[guest_fd] != S32_FD_TYPE_DIR || !mmio->host_dirs[guest_fd]) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            int rc = closedir(mmio->host_dirs[guest_fd]);
+            mmio->host_dirs[guest_fd] = NULL;
+            mmio->host_fds[guest_fd] = -1;
+            mmio->host_fd_owned[guest_fd] = false;
+            mmio->fd_types[guest_fd] = S32_FD_TYPE_FILE;
+
+            resp.status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+            resp.length = 0;
             break;
         }
 

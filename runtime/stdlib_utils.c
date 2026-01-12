@@ -9,6 +9,10 @@ long labs(long n) {
     return (n < 0) ? -n : n;
 }
 
+long long llabs(long long n) {
+    return (n < 0) ? -n : n;
+}
+
 int atoi(const char *nptr) {
     int result = 0;
     int sign = 1;

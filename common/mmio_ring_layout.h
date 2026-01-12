@@ -26,6 +26,7 @@ enum {
 // Common response status codes (errno wiring TBD)
 enum {
     S32_MMIO_STATUS_OK    = 0u,
+    S32_MMIO_STATUS_EOF   = 0xFFFFFFFDu,  // End of file/directory
     S32_MMIO_STATUS_EINTR = 0xFFFFFFFEu,
     S32_MMIO_STATUS_ERR   = 0xFFFFFFFFu,
 };
@@ -59,6 +60,19 @@ enum s32_mmio_opcode {
     S32_MMIO_OP_EXIT    = 0x09,
     S32_MMIO_OP_STAT    = 0x0A,  // stat()/fstat() metadata fetch
     S32_MMIO_OP_FLUSH   = 0x0B,
+
+    // 0x20 - 0x2F : Filesystem metadata operations
+    S32_MMIO_OP_UNLINK   = 0x20,  // unlink/remove - delete a file
+    S32_MMIO_OP_RENAME   = 0x21,  // rename/move a file
+    S32_MMIO_OP_MKDIR    = 0x22,  // create directory
+    S32_MMIO_OP_RMDIR    = 0x23,  // remove directory
+    S32_MMIO_OP_LSTAT    = 0x24,  // stat without following symlinks
+    S32_MMIO_OP_ACCESS   = 0x25,  // check file accessibility
+    S32_MMIO_OP_CHDIR    = 0x26,  // change current directory
+    S32_MMIO_OP_GETCWD   = 0x27,  // get current working directory
+    S32_MMIO_OP_OPENDIR  = 0x28,  // open directory stream
+    S32_MMIO_OP_READDIR  = 0x29,  // read directory entry
+    S32_MMIO_OP_CLOSEDIR = 0x2A,  // close directory stream
 
     // 0x30 - 0x3F : Time & event services
     S32_MMIO_OP_GETTIME     = 0x30,  // Returns wall-clock time (64-bit seconds + nanos)
@@ -144,6 +158,34 @@ typedef struct s32_mmio_envp_info {
 #pragma pack(pop)
 
 #define S32_MMIO_ENVP_MAX_BYTES (128u * 1024u)  // Safety cap for envp blob transfers
+
+// Access mode constants for S32_MMIO_OP_ACCESS
+#define S32_MMIO_F_OK 0  // File exists
+#define S32_MMIO_X_OK 1  // Execute permission
+#define S32_MMIO_W_OK 2  // Write permission
+#define S32_MMIO_R_OK 4  // Read permission
+
+// File type constants for dirent (matching POSIX DT_* values)
+#define S32_DT_UNKNOWN 0
+#define S32_DT_FIFO    1
+#define S32_DT_CHR     2
+#define S32_DT_DIR     4
+#define S32_DT_BLK     6
+#define S32_DT_REG     8
+#define S32_DT_LNK     10
+#define S32_DT_SOCK    12
+
+// Directory entry structure for S32_MMIO_OP_READDIR
+#pragma pack(push, 1)
+typedef struct s32_mmio_dirent {
+    uint64_t d_ino;        // Inode number
+    uint32_t d_type;       // File type (DT_REG, DT_DIR, DT_LNK, etc.)
+    uint32_t d_namlen;     // Length of name (excluding NUL)
+    char d_name[256];      // Filename (NUL-terminated)
+} s32_mmio_dirent_t;
+#pragma pack(pop)
+
+#define S32_MMIO_DIRENT_SIZE sizeof(s32_mmio_dirent_t)  // 272 bytes
 
 
 #endif // S32_MMIO_RING_LAYOUT_H

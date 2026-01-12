@@ -1,194 +1,198 @@
 # SLOW-32 Instruction Set Reference
 
 ## Overview
-This document tracks the implementation status of SLOW-32 instructions across all toolchain components:
-- **Emulator**: Executes instructions
-- **Assembler**: Converts assembly to machine code
-- **Compiler**: Generates assembly from LLVM IR
-
-## Status Legend
-- ✅ Fully implemented and tested
-- ⚠️ Partially implemented or untested
-- ❌ Not implemented
-- ➖ Not applicable
+This document tracks the implementation status of SLOW-32 instructions across all toolchain components. SLOW-32 is a 32-bit RISC ISA inspired by RISC-V, featuring 32 general-purpose registers and fixed-width 32-bit instructions.
 
 ## Instruction Format
 
-SLOW-32 uses 32-bit fixed-width instructions with several formats:
+SLOW-32 instructions are 32 bits wide, little-endian. The opcode is always in bits [6:0].
 
 ### R-Type (Register)
+Used for register-register arithmetic, logical, and comparison operations.
 ```
-[31:26] opcode | [25:21] rd | [20:16] rs1 | [15:11] rs2 | [10:0] unused
+[31:25] funct7 | [24:20] rs2 | [19:15] rs1 | [14:12] funct3 | [11:7] rd | [6:0] opcode
 ```
+*Note: In the current implementation, funct3 and funct7 are largely unused as the 7-bit opcode uniquely identifies the instruction.*
 
 ### I-Type (Immediate)
+Used for register-immediate operations, loads, and JALR.
 ```
-[31:26] opcode | [25:21] rd | [20:16] rs1 | [15:0] imm16
+[31:20] imm[11:0] | [19:15] rs1 | [14:12] funct3 | [11:7] rd | [6:0] opcode
+```
+
+### S-Type (Store)
+Used for store instructions.
+```
+[31:25] imm[11:5] | [24:20] rs2 | [19:15] rs1 | [14:12] funct3 | [11:7] imm[4:0] | [6:0] opcode
 ```
 
 ### B-Type (Branch)
+Used for conditional branch instructions. Immediates are encoded with a 13-bit signed offset (multiples of 2).
 ```
-[31:26] opcode | [25:21] rs1 | [20:16] rs2 | [15:0] offset
+[31] imm[12] | [30:25] imm[10:5] | [24:20] rs2 | [19:15] rs1 | [14:12] funct3 | [11:8] imm[4:1] | [7] imm[11] | [6:0] opcode
+```
+
+### U-Type (Upper Immediate)
+Used for LUI.
+```
+[31:12] imm[31:12] | [11:7] rd | [6:0] opcode
 ```
 
 ### J-Type (Jump)
+Used for JAL. Immediates are encoded with a 21-bit signed offset (multiples of 2).
 ```
-[31:26] opcode | [25:21] rd | [20:0] offset
+[31] imm[20] | [30:21] imm[10:1] | [20] imm[11] | [19:12] imm[19:12] | [11:7] rd | [6:0] opcode
 ```
+
+---
 
 ## Core Arithmetic Instructions
 
-| Instruction | Format | Description | Emulator | Assembler | Compiler | Notes |
-|------------|--------|-------------|----------|-----------|----------|-------|
-| ADD rd, rs1, rs2 | R | rd = rs1 + rs2 | ✅ | ✅ | ✅ | |
-| ADDI rd, rs1, imm | I | rd = rs1 + imm | ✅ | ✅ | ✅ | imm: -2048 to 2047 |
-| SUB rd, rs1, rs2 | R | rd = rs1 - rs2 | ✅ | ✅ | ✅ | |
-| MUL rd, rs1, rs2 | R | rd = rs1 * rs2 | ✅ | ✅ | ✅ | 32 cycles |
-| DIV rd, rs1, rs2 | R | rd = rs1 / rs2 | ✅ | ✅ | ✅ | 64 cycles, signed |
-| REM rd, rs1, rs2 | R | rd = rs1 % rs2 | ✅ | ✅ | ✅ | 64 cycles, signed |
+| Instruction | Opcode | Format | Description | Status | Notes |
+|------------|--------|--------|-------------|--------|-------|
+| ADD rd, rs1, rs2 | 0x00 | R | rd = rs1 + rs2 | ✅ | |
+| SUB rd, rs1, rs2 | 0x01 | R | rd = rs1 - rs2 | ✅ | |
+| MUL rd, rs1, rs2 | 0x0A | R | rd = rs1 * rs2 | ✅ | 32 cycles |
+| MULH rd, rs1, rs2| 0x0B | R | rd = (rs1 * rs2) >> 32 | ✅ | Unsigned high part |
+| DIV rd, rs1, rs2 | 0x0C | R | rd = rs1 / rs2 | ✅ | 64 cycles, signed |
+| REM rd, rs1, rs2 | 0x0D | R | rd = rs1 % rs2 | ✅ | 64 cycles, signed |
+| ADDI rd, rs1, imm| 0x10 | I | rd = rs1 + imm | ✅ | 12-bit signed imm |
 
 ## Logical Instructions
 
-| Instruction | Format | Description | Emulator | Assembler | Compiler | Notes |
-|------------|--------|-------------|----------|-----------|----------|-------|
-| AND rd, rs1, rs2 | R | rd = rs1 & rs2 | ✅ | ✅ | ✅ | |
-| ANDI rd, rs1, imm | I | rd = rs1 & imm | ✅ | ✅ | ⚠️ | Compiler rarely uses |
-| OR rd, rs1, rs2 | R | rd = rs1 \| rs2 | ✅ | ✅ | ✅ | |
-| ORI rd, rs1, imm | I | rd = rs1 \| imm | ✅ | ✅ | ✅ | Used for large constants |
-| XOR rd, rs1, rs2 | R | rd = rs1 ^ rs2 | ✅ | ✅ | ✅ | |
-| XORI rd, rs1, imm | I | rd = rs1 ^ imm | ✅ | ✅ | ⚠️ | Compiler rarely uses |
+| Instruction | Opcode | Format | Description | Status | Notes |
+|------------|--------|--------|-------------|--------|-------|
+| XOR rd, rs1, rs2 | 0x02 | R | rd = rs1 ^ rs2 | ✅ | |
+| OR rd, rs1, rs2  | 0x03 | R | rd = rs1 \| rs2 | ✅ | |
+| AND rd, rs1, rs2 | 0x04 | R | rd = rs1 & rs2 | ✅ | |
+| ORI rd, rs1, imm | 0x11 | I | rd = rs1 \| imm | ✅ | |
+| ANDI rd, rs1, imm| 0x12 | I | rd = rs1 & imm | ✅ | |
+| XORI rd, rs1, imm| 0x1E | I | rd = rs1 ^ imm | ✅ | |
 
 ## Shift Instructions
 
-| Instruction | Format | Description | Emulator | Assembler | Compiler | Notes |
-|------------|--------|-------------|----------|-----------|----------|-------|
-| SLL rd, rs1, rs2 | R | rd = rs1 << rs2 | ✅ | ✅ | ✅ | Logical left shift |
-| SLLI rd, rs1, imm | I | rd = rs1 << imm | ✅ | ✅ | ✅ | |
-| SRL rd, rs1, rs2 | R | rd = rs1 >> rs2 | ✅ | ✅ | ✅ | Logical right shift |
-| SRLI rd, rs1, imm | I | rd = rs1 >> imm | ✅ | ✅ | ⚠️ | |
-| SRA rd, rs1, rs2 | R | rd = rs1 >>> rs2 | ✅ | ✅ | ✅ | Arithmetic right shift |
-| SRAI rd, rs1, imm | I | rd = rs1 >>> imm | ✅ | ✅ | ⚠️ | |
+| Instruction | Opcode | Format | Description | Status | Notes |
+|------------|--------|--------|-------------|--------|-------|
+| SLL rd, rs1, rs2 | 0x05 | R | rd = rs1 << rs2 | ✅ | Logical left shift |
+| SRL rd, rs1, rs2 | 0x06 | R | rd = rs1 >> rs2 | ✅ | Logical right shift |
+| SRA rd, rs1, rs2 | 0x07 | R | rd = rs1 >>> rs2 | ✅ | Arithmetic right shift |
+| SLLI rd, rs1, imm| 0x13 | I | rd = rs1 << imm | ✅ | |
+| SRLI rd, rs1, imm| 0x14 | I | rd = rs1 >> imm | ✅ | |
+| SRAI rd, rs1, imm| 0x15 | I | rd = rs1 >>> imm | ✅ | |
 
 ## Comparison Instructions
 
-| Instruction | Format | Description | Emulator | Assembler | Compiler | Notes |
-|------------|--------|-------------|----------|-----------|----------|-------|
-| SLT rd, rs1, rs2 | R | rd = (rs1 < rs2) ? 1 : 0 | ✅ | ✅ | ✅ | Signed |
-| SLTI rd, rs1, imm | I | rd = (rs1 < imm) ? 1 : 0 | ✅ | ✅ | ⚠️ | Signed |
-| SLTU rd, rs1, rs2 | R | rd = (rs1 < rs2) ? 1 : 0 | ✅ | ✅ | ✅ | Unsigned |
-| SLTIU rd, rs1, imm | I | rd = (rs1 < imm) ? 1 : 0 | ✅ | ✅ | ⚠️ | Unsigned |
-| SEQ rd, rs1, rs2 | R | rd = (rs1 == rs2) ? 1 : 0 | ✅ | ✅ | ✅ | Set equal |
-| SNE rd, rs1, rs2 | R | rd = (rs1 != rs2) ? 1 : 0 | ✅ | ✅ | ✅ | Set not equal |
-| SGT rd, rs1, rs2 | R | rd = (rs1 > rs2) ? 1 : 0 | ✅ | ✅ | ✅ | Signed |
-| SGE rd, rs1, rs2 | R | rd = (rs1 >= rs2) ? 1 : 0 | ✅ | ✅ | ✅ | Signed |
-| SGTU rd, rs1, rs2 | R | rd = (rs1 > rs2) ? 1 : 0 | ✅ | ✅ | ✅ | Unsigned |
-| SGEU rd, rs1, rs2 | R | rd = (rs1 >= rs2) ? 1 : 0 | ✅ | ✅ | ✅ | Unsigned |
-| SLE rd, rs1, rs2 | R | rd = (rs1 <= rs2) ? 1 : 0 | ✅ | ✅ | ✅ | Signed |
-| SLEU rd, rs1, rs2 | R | rd = (rs1 <= rs2) ? 1 : 0 | ✅ | ✅ | ✅ | Unsigned |
+| Instruction | Opcode | Format | Description | Status | Notes |
+|------------|--------|--------|-------------|--------|-------|
+| SLT rd, rs1, rs2 | 0x08 | R | rd = (rs1 < rs2) ? 1 : 0 | ✅ | Signed |
+| SLTU rd, rs1, rs2| 0x09 | R | rd = (rs1 < rs2) ? 1 : 0 | ✅ | Unsigned |
+| SEQ rd, rs1, rs2 | 0x0E | R | rd = (rs1 == rs2) ? 1 : 0 | ✅ | Set equal |
+| SNE rd, rs1, rs2 | 0x0F | R | rd = (rs1 != rs2) ? 1 : 0 | ✅ | Set not equal |
+| SLTI rd, rs1, imm| 0x16 | I | rd = (rs1 < imm) ? 1 : 0 | ✅ | Signed |
+| SLTIU rd, rs1, imm| 0x17 | I | rd = (rs1 < imm) ? 1 : 0 | ✅ | Unsigned |
+| SGT rd, rs1, rs2 | 0x18 | R | rd = (rs1 > rs2) ? 1 : 0 | ✅ | Signed |
+| SGTU rd, rs1, rs2| 0x19 | R | rd = (rs1 > rs2) ? 1 : 0 | ✅ | Unsigned |
+| SLE rd, rs1, rs2 | 0x1A | R | rd = (rs1 <= rs2) ? 1 : 0 | ✅ | Signed |
+| SLEU rd, rs1, rs2| 0x1B | R | rd = (rs1 <= rs2) ? 1 : 0 | ✅ | Unsigned |
+| SGE rd, rs1, rs2 | 0x1C | R | rd = (rs1 >= rs2) ? 1 : 0 | ✅ | Signed |
+| SGEU rd, rs1, rs2| 0x1D | R | rd = (rs1 >= rs2) ? 1 : 0 | ✅ | Unsigned |
 
 ## Branch Instructions
 
-| Instruction | Format | Description | Emulator | Assembler | Compiler | Notes |
-|------------|--------|-------------|----------|-----------|----------|-------|
-| BEQ rs1, rs2, offset | B | if (rs1 == rs2) PC += offset | ✅ | ✅ | ✅ | |
-| BNE rs1, rs2, offset | B | if (rs1 != rs2) PC += offset | ✅ | ✅ | ✅ | |
-| BLT rs1, rs2, offset | B | if (rs1 < rs2) PC += offset | ✅ | ✅ | ⚠️ | Signed |
-| BGE rs1, rs2, offset | B | if (rs1 >= rs2) PC += offset | ✅ | ✅ | ⚠️ | Signed |
-| BLTU rs1, rs2, offset | B | if (rs1 < rs2) PC += offset | ✅ | ✅ | ⚠️ | Unsigned |
-| BGEU rs1, rs2, offset | B | if (rs1 >= rs2) PC += offset | ✅ | ✅ | ⚠️ | Unsigned |
+| Instruction | Opcode | Format | Description | Status | Notes |
+|------------|--------|--------|-------------|--------|-------|
+| BEQ rs1, rs2, imm | 0x48 | B | if (rs1 == rs2) PC += imm | ✅ | |
+| BNE rs1, rs2, imm | 0x49 | B | if (rs1 != rs2) PC += imm | ✅ | |
+| BLT rs1, rs2, imm | 0x4A | B | if (rs1 < rs2) PC += imm | ✅ | Signed |
+| BGE rs1, rs2, imm | 0x4B | B | if (rs1 >= rs2) PC += imm | ✅ | Signed |
+| BLTU rs1, rs2, imm| 0x4C | B | if (rs1 < rs2) PC += imm | ✅ | Unsigned |
+| BGEU rs1, rs2, imm| 0x4D | B | if (rs1 >= rs2) PC += imm | ✅ | Unsigned |
 
 ## Jump Instructions
 
-| Instruction | Format | Description | Emulator | Assembler | Compiler | Notes |
-|------------|--------|-------------|----------|-----------|----------|-------|
-| JAL rd, offset | J | rd = PC + 4; PC = offset | ✅ | ✅ | ✅ | Function calls |
-| JALR rd, rs1, imm | I | rd = PC + 4; PC = rs1 + imm | ✅ | ✅ | ✅ | Returns/indirect |
+| Instruction | Opcode | Format | Description | Status | Notes |
+|------------|--------|--------|-------------|--------|-------|
+| JAL rd, imm      | 0x40 | J | rd = PC + 4; PC += imm | ✅ | |
+| JALR rd, rs1, imm | 0x41 | I | rd = PC + 4; PC = rs1 + imm | ✅ | |
 
 ## Memory Instructions
 
-| Instruction | Format | Description | Emulator | Assembler | Compiler | Notes |
-|------------|--------|-------------|----------|-----------|----------|-------|
-| LDW rd, rs1+imm | I | rd = mem[rs1 + imm] | ✅ | ✅ | ✅ | Load word (32-bit) |
-| LDH rd, rs1+imm | I | rd = mem[rs1 + imm] | ✅ | ✅ | ⚠️ | Load halfword (16-bit) signed |
-| LDHU rd, rs1+imm | I | rd = mem[rs1 + imm] | ✅ | ✅ | ✅ | Load halfword unsigned |
-| LDB rd, rs1+imm | I | rd = mem[rs1 + imm] | ✅ | ✅ | ⚠️ | Load byte (8-bit) signed |
-| LDBU rd, rs1+imm | I | rd = mem[rs1 + imm] | ✅ | ✅ | ✅ | Load byte unsigned |
-| STW rs1+imm, rs2 | I | mem[rs1 + imm] = rs2 | ✅ | ✅ | ✅ | Store word |
-| STH rs1+imm, rs2 | I | mem[rs1 + imm] = rs2 | ✅ | ✅ | ⚠️ | Store halfword |
-| STB rs1+imm, rs2 | I | mem[rs1 + imm] = rs2 | ✅ | ✅ | ⚠️ | Store byte |
+| Instruction | Opcode | Format | Description | Status | Notes |
+|------------|--------|--------|-------------|--------|-------|
+| LDB rd, rs1+imm  | 0x30 | I | rd = sext(mem8[rs1+imm]) | ✅ | |
+| LDH rd, rs1+imm  | 0x31 | I | rd = sext(mem16[rs1+imm]) | ✅ | |
+| LDW rd, rs1+imm  | 0x32 | I | rd = mem32[rs1+imm] | ✅ | |
+| LDBU rd, rs1+imm | 0x33 | I | rd = zext(mem8[rs1+imm]) | ✅ | |
+| LDHU rd, rs1+imm | 0x34 | I | rd = zext(mem16[rs1+imm]) | ✅ | |
+| STB rs1+imm, rs2 | 0x38 | S | mem8[rs1+imm] = rs2 | ✅ | |
+| STH rs1+imm, rs2 | 0x39 | S | mem16[rs1+imm] = rs2 | ✅ | |
+| STW rs1+imm, rs2 | 0x3A | S | mem32[rs1+imm] = rs2 | ✅ | |
 
 ## Special Instructions
 
-| Instruction | Format | Description | Emulator | Assembler | Compiler | Notes |
-|------------|--------|-------------|----------|-----------|----------|-------|
-| LUI rd, imm | I | rd = imm << 12 | ✅ | ✅ | ✅ | Load upper immediate |
-| NOP | - | No operation | ✅ | ✅ | ➖ | Encoded as ADD r0, r0, r0 |
-| HALT | - | Stop execution | ✅ | ✅ | ✅ | End program |
-| DEBUG rs1 | - | Output character | ✅ | ✅ | ⚠️ | Outputs rs1 as char |
-| YIELD | - | Waste cycles | ✅ | ✅ | ❌ | For timing |
+| Instruction | Opcode | Format | Description | Status | Notes |
+|------------|--------|--------|-------------|--------|-------|
+| LUI rd, imm   | 0x20 | U | rd = imm << 12 | ✅ | |
+| ASSERT_EQ rs1, rs2 | 0x3F | R | Trap if rs1 != rs2 | ✅ | Testing only |
+| NOP           | 0x50 | - | No operation | ✅ | |
+| YIELD         | 0x51 | R | Host interface yield | ✅ | |
+| DEBUG rs1     | 0x52 | R | Output char in rs1 | ✅ | |
+| HALT          | 0x7F | - | Stop execution | ✅ | |
 
-## Pseudo-Instructions (Assembler Only)
+---
+
+## Pseudo-Instructions
 
 | Instruction | Expansion | Description |
 |------------|-----------|-------------|
-| li rd, imm | lui+ori or addi | Load immediate |
-| mv rd, rs | add rd, rs, r0 | Move register |
-| jr rs | jalr r0, rs, 0 | Jump register (v3 compiler tried this, needs fixing) |
-| ret | jalr r0, lr, 0 | Return from function |
+| li rd, imm | lui + ori | Load 32-bit immediate |
+| la rd, sym | lui + ori | Load address of symbol |
+| mv rd, rs  | addi rd, rs, 0 | Move register |
+| not rd, rs | xori rd, rs, -1 | Bitwise NOT |
+| neg rd, rs | sub rd, r0, rs | Negate |
+| seqz rd, rs| seq rd, rs, r0 | Set if equal to zero |
+| snez rd, rs| sne rd, rs, r0 | Set if not equal to zero |
+| j imm      | jal r0, imm | Unconditional jump |
+| jal sym    | jal r31, sym | Jump and link (call) |
+| jr rs      | jalr r0, rs, 0 | Jump register |
+| ret        | jalr r0, lr, 0 | Return from function |
+| call sym   | jal lr, sym | Call function |
+| nop        | add r0, r0, r0 | No operation |
+| bgt rs1, rs2, imm | blt rs2, rs1, imm | Branch if greater than |
+| ble rs1, rs2, imm | bge rs2, rs1, imm | Branch if less or equal |
+| bgtu rs1, rs2, imm| bltu rs2, rs1, imm| Branch if greater than (U) |
+| bleu rs1, rs2, imm| bgeu rs2, rs1, imm| Branch if less or equal (U) |
 
-## Register Conventions
+---
 
-| Register | Name | Purpose | Saved |
-|----------|------|---------|-------|
-| r0 | zero | Always 0 | - |
-| r1 | rv | Return value | No |
-| r2 | t0 | Temporary | No |
-| r3-r10 | a0-a7 | Arguments | No |
-| r11-r28 | s0-s17 | Saved registers | Yes |
-| r29 | sp | Stack pointer | Yes |
-| r30 | fp | Frame pointer | Yes |
-| r31 | lr | Link register | Yes |
+## Register Conventions (ABI)
 
-## Implementation Notes
+| Register | Name | Alias | Purpose | Saved |
+|----------|------|-------|---------|-------|
+| r0 | zero | - | Hardwired Zero | - |
+| r1 | rv | - | Return Value | No |
+| r2 | t0 | - | Temporary | No |
+| r3-r10 | a0-a7 | - | Function Arguments | No |
+| r11-r28 | s0-s17 | - | Saved Registers | Yes |
+| r29 | sp | - | Stack Pointer | Yes |
+| r30 | fp | - | Frame Pointer | Yes |
+| r31 | lr | - | Link Register | Yes |
 
-### Compiler Issues
-1. **JALR format**: Compiler v3 tried `jalr r0, lr` but needs third parameter: `jalr r0, lr, 0`
-2. **Immediate instructions**: Many immediate variants (SLTI, ANDI, etc.) not used by compiler
-3. **Branch instructions**: Compiler prefers comparison + BEQ/BNE over direct branches
+*Note: Assembler supports `zero`, `sp`, `fp`, and `lr` aliases. The compiler uses full ABI aliases.*
 
-### Missing Features
-1. **Atomic operations**: No atomic instructions for threading
-2. **Floating point**: No FP support
-3. **SIMD**: No vector instructions
-4. **Privileged**: No system/trap instructions
-
-### PHI-Related Issues
-The compiler generates PHI moves using basic ADD instructions. Critical edge splitting is needed for correct placement.
+---
 
 ## Memory Model
 
-- **Code Segment**: 0x00000000 - 0x000FFFFF (1MB, execute-only)
-- **Data Segment**: 0x00100000 - 0x0FFFFFFF (255MB, read/write)
-- **Stack**: Starts at 0x0FFFFFF0, grows down
-- **W^X Protection**: Code is execute-only, data is read/write only
+- **Code**: `0x00000000 - 0x000FFFFF` (1MB, Execute-only)
+- **Data**: `0x00100000 - 0x0FFFFFFF` (255MB, Read/Write)
+- **MMIO**: `0x10000000+`
+- **Stack**: Starts at `0x0FFFFFF0`, grows downward.
+- **W^X Protection**: Enforced via memory manager.
 
-## Performance Characteristics
+## Performance
 
-- **Memory ops**: 3 cycles
-- **Multiply**: 32 cycles
-- **Divide/Rem**: 64 cycles
-- **All others**: 1 cycle
-- **YIELD**: Variable cycle waste
-
-## Verification Status
-
-### Working Examples
-- Basic arithmetic
-- Function calls
-- String operations
-- Simple loops (with PHI issues)
-
-### Known Issues
-- PHI moves placement (critical edges)
-- Some immediate instructions untested
-- Branch variants underutilized
+- **Standard**: 1 cycle per instruction.
+- **Memory**: 3 cycles.
+- **Multiply**: 32 cycles.
+- **Divide/Rem**: 64 cycles.

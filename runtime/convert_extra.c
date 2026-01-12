@@ -161,6 +161,165 @@ char *utoa(unsigned int value, char *str, int base) {
     return str;
 }
 
+// strtoull - convert string to unsigned 64-bit integer
+unsigned long long strtoull(const char *nptr, char **endptr, int base) {
+    const char *s = nptr;
+    unsigned long long result = 0;
+    unsigned long long cutoff;
+    int cutlim;
+    int c;
+    int neg = 0;
+    int any = 0;
+
+    // Skip whitespace
+    while (isspace(*s)) s++;
+
+    // Check for sign
+    if (*s == '-') {
+        neg = 1;
+        s++;
+    } else if (*s == '+') {
+        s++;
+    }
+
+    // Determine base
+    if ((base == 0 || base == 16) && *s == '0' && (s[1] == 'x' || s[1] == 'X')) {
+        s += 2;
+        base = 16;
+    } else if (base == 0) {
+        base = (*s == '0') ? 8 : 10;
+    }
+
+    // Check base validity
+    if (base < 2 || base > 36) {
+        if (endptr) *endptr = (char *)nptr;
+        return 0;
+    }
+
+    // Calculate overflow cutoff values for 64-bit
+    #define ULLONG_MAX_VAL 0xFFFFFFFFFFFFFFFFULL
+    cutoff = ULLONG_MAX_VAL / base;
+    cutlim = ULLONG_MAX_VAL % base;
+
+    // Process digits
+    while ((c = *s) != '\0') {
+        if (isdigit(c)) {
+            c -= '0';
+        } else if (isalpha(c)) {
+            c = toupper(c) - 'A' + 10;
+        } else {
+            break;
+        }
+
+        if (c >= base) break;
+
+        // Check for overflow
+        if (result > cutoff || (result == cutoff && c > cutlim)) {
+            result = ULLONG_MAX_VAL;
+            any = -1;
+            break;
+        }
+
+        result = result * base + c;
+        any = 1;
+        s++;
+    }
+
+    if (any < 0) {
+        result = ULLONG_MAX_VAL;
+    } else if (neg) {
+        result = -result;
+    }
+
+    if (endptr) {
+        *endptr = (char *)(any ? s : nptr);
+    }
+
+    return result;
+}
+
+// strtoll - convert string to signed 64-bit integer
+long long strtoll(const char *nptr, char **endptr, int base) {
+    const char *s = nptr;
+    unsigned long long acc = 0;
+    int neg = 0;
+    int any = 0;
+    int c;
+
+    // Skip whitespace
+    while (isspace(*s)) s++;
+
+    // Check for sign
+    if (*s == '-') {
+        neg = 1;
+        s++;
+    } else if (*s == '+') {
+        s++;
+    }
+
+    // Determine base
+    if ((base == 0 || base == 16) && *s == '0' && (s[1] == 'x' || s[1] == 'X')) {
+        s += 2;
+        base = 16;
+    } else if (base == 0) {
+        base = (*s == '0') ? 8 : 10;
+    }
+
+    // Check base validity
+    if (base < 2 || base > 36) {
+        if (endptr) *endptr = (char *)nptr;
+        return 0;
+    }
+
+    // Calculate overflow limits for signed 64-bit
+    #define LLONG_MAX_VAL  0x7FFFFFFFFFFFFFFFLL
+    #define LLONG_MIN_VAL  (-LLONG_MAX_VAL - 1LL)
+    unsigned long long limit = neg ?
+        ((unsigned long long)LLONG_MAX_VAL + 1) :  // -LLONG_MIN
+        (unsigned long long)LLONG_MAX_VAL;
+    unsigned long long cutoff = limit / base;
+    int cutlim = limit % base;
+
+    // Process digits
+    while ((c = *s) != '\0') {
+        if (isdigit(c)) {
+            c -= '0';
+        } else if (isalpha(c)) {
+            c = toupper(c) - 'A' + 10;
+        } else {
+            break;
+        }
+
+        if (c >= base) break;
+
+        // Check for overflow
+        if (acc > cutoff || (acc == cutoff && c > cutlim)) {
+            acc = limit;
+            any = -1;
+            break;
+        }
+
+        acc = acc * base + c;
+        any = 1;
+        s++;
+    }
+
+    if (endptr) {
+        *endptr = (char *)(any ? s : nptr);
+    }
+
+    if (any < 0) {
+        return neg ? LLONG_MIN_VAL : LLONG_MAX_VAL;
+    }
+
+    return neg ? -(long long)acc : (long long)acc;
+}
+
+// atoll - convert string to long long (convenience wrapper)
+long long atoll(const char *nptr) {
+    return strtoll(nptr, (char **)0, 10);
+}
+
 // ltoa - convert long to string
 char *ltoa(long value, char *str, int base) {
     if (base < 2 || base > 36) {

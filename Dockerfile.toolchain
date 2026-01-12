@@ -141,6 +141,41 @@ s32-ld -o "$OUTPUT" \\\n\
 \n\
 echo "Successfully created $OUTPUT"\n' > /opt/slow32/bin/s32cc && chmod +x /opt/slow32/bin/s32cc
 
+# Create a helper script for C++ compilation
+RUN printf '#!/bin/bash\n\
+# SLOW-32 C++ Compilation Helper\n\
+# Usage: s32c++ input.cpp [output.s32x]\n\
+\n\
+if [ $# -lt 1 ]; then\n\
+    echo "Usage: s32c++ input.cpp [output.s32x]"\n\
+    exit 1\n\
+fi\n\
+\n\
+INPUT="$1"\n\
+OUTPUT="${2:-${INPUT%%.cpp}.s32x}"\n\
+BASE="${INPUT%%.cpp}"\n\
+\n\
+echo "Compiling $INPUT to $OUTPUT..."\n\
+\n\
+# Generate LLVM IR (C++ mode with no exceptions/RTTI)\n\
+clang++ -target slow32-unknown-none -S -emit-llvm -O2 -fno-exceptions -fno-rtti -I${SLOW32_INCLUDE} "$INPUT" -o "${BASE}.ll" || exit 1\n\
+\n\
+# Generate assembly\n\
+llc -mtriple=slow32-unknown-none "${BASE}.ll" -o "${BASE}.s" || exit 1\n\
+\n\
+# Assemble\n\
+slow32asm "${BASE}.s" "${BASE}.s32o" || exit 1\n\
+\n\
+# Link\n\
+s32-ld -o "$OUTPUT" \\\n\
+    ${SLOW32_LIB}/crt0.s32o \\\n\
+    "${BASE}.s32o" \\\n\
+    ${SLOW32_LIB}/libs32.s32a \\\n\
+    ${SLOW32_LIB}/libc.s32a \\\n\
+    ${SLOW32_LIB}/builtins.s32o || exit 1\n\
+\n\
+echo "Successfully created $OUTPUT"\n' > /opt/slow32/bin/s32c++ && chmod +x /opt/slow32/bin/s32c++
+
 # Container is ephemeral - expects input/output via /data mount
 # Default: compile all .c files in /data
 CMD ["bash", "-c", "if ls /data/*.c 1> /dev/null 2>&1; then for f in /data/*.c; do echo \"Compiling $f...\"; s32cc \"$f\" || exit 1; done; echo 'Compilation complete'; else echo 'No .c files found in /data'; exit 1; fi"]

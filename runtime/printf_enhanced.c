@@ -664,3 +664,28 @@ int vprintf(const char *format, va_list ap) {
 
     return len;
 }
+
+// Forward declaration for fwrite
+size_t fwrite(const void *ptr, size_t size, size_t nmemb, void *stream);
+
+// vfprintf - format and output to FILE stream using va_list
+int vfprintf(void *stream, const char *format, va_list ap) {
+    char buffer[1024];
+    int len = vsnprintf_enhanced(buffer, sizeof(buffer), format, ap);
+
+    if (len > 0) {
+        if (len >= (int)sizeof(buffer)) len = sizeof(buffer) - 1;
+        fwrite(buffer, 1, len, stream);
+    }
+
+    return len;
+}
+
+// fprintf - format and output to FILE stream
+int fprintf(void *stream, const char *format, ...) {
+    va_list ap;
+    va_start(ap, format);
+    int len = vfprintf(stream, format, ap);
+    va_end(ap);
+    return len;
+}

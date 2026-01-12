@@ -78,7 +78,7 @@ typedef struct {
     uint32_t init_array_size;   // Size of init_array section
     uint32_t data_start_addr;   // Starting address of data section (0x100000)
     bool generate_object;       // True for object file, false for executable
-
+    
     // String table
     char string_table[MAX_STRING_TABLE];
     uint32_t string_table_size;
@@ -329,10 +329,10 @@ static int parse_immediate(const char *str) {
 // Helper to update the size of the current section
 static void bump_size(assembler_t* as, section_t sec, uint32_t n) {
     switch (sec) {
-        case SECTION_CODE:   as->code_size   += n; break;
-        case SECTION_DATA:   as->data_size   += n; break;
-        case SECTION_RODATA: as->rodata_size += n; break;
-        case SECTION_BSS:    as->bss_size    += n; break;
+        case SECTION_CODE:       as->code_size       += n; break;
+        case SECTION_DATA:       as->data_size       += n; break;
+        case SECTION_RODATA:     as->rodata_size     += n; break;
+        case SECTION_BSS:        as->bss_size        += n; break;
         case SECTION_INIT_ARRAY: as->init_array_size += n; break;
     }
 }
@@ -544,6 +544,7 @@ static int process_string_literal(assembler_t *as, const char *str) {
         }
         
         // Emit the byte
+        ensure_instruction_capacity(as, 1);
         as->instructions[as->num_instructions].instruction = byte | 0x80000000;
         as->instructions[as->num_instructions].address = as->current_addr;
         as->instructions[as->num_instructions].section = as->current_section;
@@ -753,6 +754,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                         return false;
                     }
                     // placeholder + relocation
+                    ensure_instruction_capacity(as, 1);
                     as->instructions[as->num_instructions].instruction = 0;
                     as->instructions[as->num_instructions].address = as->current_addr;
                     as->instructions[as->num_instructions].section = as->current_section;
@@ -764,6 +766,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                                 sym, as->current_addr, as->current_section);
                     }
                 } else {
+                    ensure_instruction_capacity(as, 1);
                     as->instructions[as->num_instructions].instruction = (uint32_t)val;
                     as->instructions[as->num_instructions].address = as->current_addr;
                     as->instructions[as->num_instructions].section = as->current_section;
@@ -779,6 +782,7 @@ static bool assemble_line(assembler_t *as, char *line) {
             for (int i = 1; i < num_tokens; i++) {
                 uint16_t value = parse_immediate(tokens[i]) & 0xFFFF;
                 // Store as two bytes in little-endian order
+                ensure_instruction_capacity(as, 2);
                 as->instructions[as->num_instructions].instruction = (value & 0xFF) | 0x80000000;
                 as->instructions[as->num_instructions].address = as->current_addr;
                 as->instructions[as->num_instructions].section = as->current_section;
@@ -812,6 +816,7 @@ static bool assemble_line(assembler_t *as, char *line) {
             }
             
             // Add NOP instructions (0x00000000) or zero bytes as padding
+            ensure_instruction_capacity(as, padding);
             for (int p = 0; p < padding; p++) {
                 as->instructions[as->num_instructions].instruction = 0x00000000 | 0x80000000;
                 as->instructions[as->num_instructions].address = as->current_addr;
@@ -835,6 +840,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                 } else {
                     // Process numeric byte
                     uint8_t byte = parse_immediate(tokens[i]) & 0xFF;
+                    ensure_instruction_capacity(as, 1);
                     as->instructions[as->num_instructions].instruction = byte | 0x80000000;
                     as->instructions[as->num_instructions].address = as->current_addr;
                     as->instructions[as->num_instructions].section = as->current_section;
@@ -855,6 +861,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                         return false;
                     }
                     // NUL terminator after each string
+                    ensure_instruction_capacity(as, 1);
                     as->instructions[as->num_instructions].instruction = 0x80000000;
                     as->instructions[as->num_instructions].address = as->current_addr;
                     as->instructions[as->num_instructions].section = as->current_section;
@@ -890,6 +897,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                 fprintf(stderr, ".zero/.space requires positive byte count\n");
                 return false;
             }
+            ensure_instruction_capacity(as, num_bytes);
             for (int i = 0; i < num_bytes; i++) {
                 as->instructions[as->num_instructions].instruction = 0x80000000;
                 as->instructions[as->num_instructions].address = as->current_addr;
@@ -912,6 +920,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                         return false;
                     }
                     // placeholder + relocation
+                    ensure_instruction_capacity(as, 1);
                     as->instructions[as->num_instructions].instruction = 0;
                     as->instructions[as->num_instructions].address = as->current_addr;
                     as->instructions[as->num_instructions].section = as->current_section;
@@ -919,6 +928,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                     as->num_instructions++;
                     add_relocation(as, as->current_addr, sym, S32O_REL_32, 0, as->current_section);
                 } else {
+                    ensure_instruction_capacity(as, 1);
                     as->instructions[as->num_instructions].instruction = (uint32_t)val;
                     as->instructions[as->num_instructions].address = as->current_addr;
                     as->instructions[as->num_instructions].section = as->current_section;
@@ -942,6 +952,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                 }
                 
                 // Low 32 bits
+                ensure_instruction_capacity(as, 2);
                 as->instructions[as->num_instructions].instruction = (uint32_t)(value & 0xFFFFFFFF);
                 as->instructions[as->num_instructions].address = as->current_addr;
                 as->instructions[as->num_instructions].section = as->current_section;
@@ -1050,6 +1061,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         
         if (imm >= -2048 && imm < 2048) {
             // Small immediate - use ADDI
+            ensure_instruction_capacity(as, 1);
             instruction_t *inst = &as->instructions[as->num_instructions];
             inst->opcode = 0x10;  // ADDI
             inst->address = as->current_addr;
@@ -1069,6 +1081,7 @@ static bool assemble_line(assembler_t *as, char *line) {
             }
             
             // LUI rd, upper
+            ensure_instruction_capacity(as, 1);
             instruction_t *inst1 = &as->instructions[as->num_instructions];
             inst1->opcode = 0x25;  // LUI
             inst1->address = as->current_addr;
@@ -1080,6 +1093,7 @@ static bool assemble_line(assembler_t *as, char *line) {
             
             // ORI rd, rd, lower (if needed)
             if (lower != 0) {
+                ensure_instruction_capacity(as, 1);
                 instruction_t *inst2 = &as->instructions[as->num_instructions];
                 inst2->opcode = 0x14;  // ORI
                 inst2->address = as->current_addr;
@@ -1093,6 +1107,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         return true;
     } else if (strcmp(tokens[0], "ret") == 0) {
         // ret - return (jr r31)
+        ensure_instruction_capacity(as, 1);
         instruction_t *inst = &as->instructions[as->num_instructions];
         inst->opcode = 0x28;  // JR
         inst->address = as->current_addr;
@@ -1106,6 +1121,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         // mv rd, rs - move register (add rd, rs, r0)
         int rd = parse_register(tokens[1]);
         int rs = parse_register(tokens[2]);
+        ensure_instruction_capacity(as, 1);
         instruction_t *inst = &as->instructions[as->num_instructions];
         inst->opcode = 0x00;  // ADD
         inst->address = as->current_addr;
@@ -1117,6 +1133,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         return true;
     } else if (strcmp(tokens[0], "nop") == 0) {
         // nop - no operation (add r0, r0, r0)
+        ensure_instruction_capacity(as, 1);
         instruction_t *inst = &as->instructions[as->num_instructions];
         inst->opcode = 0x00;  // ADD
         inst->address = as->current_addr;
@@ -1128,6 +1145,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         return true;
     } else if (strcmp(tokens[0], "j") == 0 && num_tokens >= 2) {
         // j label - unconditional jump (jal r0, label)
+        ensure_instruction_capacity(as, 1);
         instruction_t *inst = &as->instructions[as->num_instructions];
         inst->opcode = 0x27;  // JAL
         inst->address = as->current_addr;
@@ -1141,6 +1159,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         return true;
     } else if (strcmp(tokens[0], "call") == 0 && num_tokens >= 2) {
         // call label - function call (jal r31, label)
+        ensure_instruction_capacity(as, 1);
         instruction_t *inst = &as->instructions[as->num_instructions];
         inst->opcode = 0x27;  // JAL
         inst->address = as->current_addr;
@@ -1156,6 +1175,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         // not rd, rs - bitwise NOT (xori rd, rs, -1)
         int rd = parse_register(tokens[1]);
         int rs = parse_register(tokens[2]);
+        ensure_instruction_capacity(as, 1);
         instruction_t *inst = &as->instructions[as->num_instructions];
         inst->opcode = 0x1E;  // XORI
         inst->address = as->current_addr;
@@ -1169,6 +1189,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         // neg rd, rs - negate (sub rd, r0, rs)
         int rd = parse_register(tokens[1]);
         int rs = parse_register(tokens[2]);
+        ensure_instruction_capacity(as, 1);
         instruction_t *inst = &as->instructions[as->num_instructions];
         inst->opcode = 0x01;  // SUB
         inst->address = as->current_addr;
@@ -1182,6 +1203,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         // seqz rd, rs - set if equal to zero (seq rd, rs, r0)
         int rd = parse_register(tokens[1]);
         int rs = parse_register(tokens[2]);
+        ensure_instruction_capacity(as, 1);
         instruction_t *inst = &as->instructions[as->num_instructions];
         inst->opcode = 0x0C;  // SEQ
         inst->address = as->current_addr;
@@ -1195,6 +1217,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         // snez rd, rs - set if not equal to zero (sne rd, rs, r0)
         int rd = parse_register(tokens[1]);
         int rs = parse_register(tokens[2]);
+        ensure_instruction_capacity(as, 1);
         instruction_t *inst = &as->instructions[as->num_instructions];
         inst->opcode = 0x0D;  // SNE
         inst->address = as->current_addr;
@@ -1210,6 +1233,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         char *symbol = tokens[2];
         
         // LUI rd, %hi(symbol)
+        ensure_instruction_capacity(as, 2);
         instruction_t *inst1 = &as->instructions[as->num_instructions];
         inst1->opcode = 0x25;  // LUI
         inst1->address = as->current_addr;
@@ -1246,6 +1270,7 @@ static bool assemble_line(assembler_t *as, char *line) {
     // Auto-align to word boundary before instructions in code section
     if (as->current_section == SECTION_CODE && (as->current_addr & 3)) {
         int padding = 4 - (as->current_addr & 3);
+        ensure_instruction_capacity(as, padding);
         for (int p = 0; p < padding; p++) {
             as->instructions[as->num_instructions].instruction = 0x00000000 | 0x80000000;
             as->instructions[as->num_instructions].address = as->current_addr;
@@ -1257,6 +1282,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         }
     }
     
+    ensure_instruction_capacity(as, 1);
     instruction_t *inst = &as->instructions[as->num_instructions];
     inst->opcode = inst_def->opcode;
     inst->address = as->current_addr;
@@ -1509,7 +1535,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
             case SECTION_INIT_ARRAY: init_array_relocs++; break;
         }
     }
-    
+
     if (as->code_size > 0) {
         text_name_offset = add_string(as, ".text");
         num_sections++;
@@ -1736,7 +1762,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
     if (as->init_array_size > 0) {
         s32o_section_t section = {
             .name_offset = init_array_name_offset,
-            .type = S32_SEC_DATA,  // .init_array is treated as DATA for section type
+            .type = S32_SEC_DATA,  // Treat as data for linking purposes
             .flags = S32_SEC_FLAG_READ | S32_SEC_FLAG_WRITE | S32_SEC_FLAG_ALLOC,
             .size = as->init_array_size,
             .offset = init_array_offset,
@@ -1911,12 +1937,12 @@ int main(int argc, char *argv[]) {
     }
     
     assembler_t as = {0};
-    as.instructions = calloc(INITIAL_INSTRUCTION_CAPACITY, sizeof(instruction_t));
+    as.instructions_capacity = INITIAL_INSTRUCTION_CAPACITY;
+    as.instructions = calloc(as.instructions_capacity, sizeof(instruction_t));
     if (!as.instructions) {
         fprintf(stderr, "Memory allocation failed\n");
         return 1;
     }
-    as.instructions_capacity = INITIAL_INSTRUCTION_CAPACITY;
     as.current_section = SECTION_CODE;  // Start in code section
     // Object files use section-relative addresses
     as.data_start_addr = 0;

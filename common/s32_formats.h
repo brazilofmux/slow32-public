@@ -104,10 +104,10 @@ typedef struct {
     uint32_t code_limit;   // 0x20: End of code region
     uint32_t rodata_limit; // 0x24: End of read-only region
     uint32_t data_limit;   // 0x28: End of data region
-    uint32_t stack_base;   // 0x2C: Initial stack pointer
+    uint32_t stack_base;   // 0x2C: Initial stack pointer (top of stack)
     uint32_t mem_size;     // 0x30: Total memory to allocate
     uint32_t heap_base;    // 0x34: Start of heap
-    uint32_t checksum;     // 0x38: CRC32 of all sections
+    uint32_t stack_end;    // 0x38: Bottom of stack (stack grows down to here)
     uint32_t mmio_base;    // 0x3C: MMIO region base (if S32X_FLAG_MMIO set)
 } s32x_header_t;
 

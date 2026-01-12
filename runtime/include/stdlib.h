@@ -16,11 +16,15 @@ void abort(void);
 
 int abs(int n);
 long labs(long n);
+long long llabs(long long n);
 
 int atoi(const char *nptr);
 long atol(const char *nptr);
+long long atoll(const char *nptr);
 long strtol(const char *nptr, char **endptr, int base);
 unsigned long strtoul(const char *nptr, char **endptr, int base);
+long long strtoll(const char *nptr, char **endptr, int base);
+unsigned long long strtoull(const char *nptr, char **endptr, int base);
 
 void qsort(void *base, size_t nmemb, size_t size,
            int (*compar)(const void *, const void *));

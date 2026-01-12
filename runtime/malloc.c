@@ -12,6 +12,7 @@ typedef struct block {
     size_t size;
     struct block *next;
     int free;
+    int _pad;  // Pad to 16 bytes (multiple of ALIGN_SIZE) for aligned allocations
 } block_t;
 
 static block_t *heap_head = NULL;

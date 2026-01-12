@@ -11,6 +11,8 @@
 #define FLAG_CREATE   0x08
 #define FLAG_TRUNC    0x10
 
+#define STDIO_BUF_SIZE 4096  // 4KB read buffer
+
 static FILE _stdin = {0, FLAG_READ, 0, 0, NULL, 0, 0, 0};
 static FILE _stdout = {1, FLAG_WRITE, 0, 0, NULL, 0, 0, 0};
 static FILE _stderr = {2, FLAG_WRITE, 0, 0, NULL, 0, 0, 0};
@@ -63,11 +65,18 @@ FILE *fopen(const char *pathname, const char *mode) {
     
     f->error = 0;
     f->eof = 0;
-    f->buffer = NULL;
-    f->buf_size = 0;
+
+    // Allocate read buffer for readable files
+    if (f->flags & FLAG_READ) {
+        f->buffer = malloc(STDIO_BUF_SIZE);
+        f->buf_size = f->buffer ? STDIO_BUF_SIZE : 0;
+    } else {
+        f->buffer = NULL;
+        f->buf_size = 0;
+    }
     f->buf_pos = 0;
     f->buf_len = 0;
-    
+
     return f;
 }
 
@@ -115,49 +124,113 @@ size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
     return nmemb;
 }
 
+// Internal: fill the read buffer from MMIO
+static size_t fread_fill_buffer(FILE *stream) {
+    if (!stream->buffer || stream->buf_size == 0) return 0;
+
+    size_t to_read = stream->buf_size;
+    if (to_read > S32_MMIO_DATA_CAPACITY) {
+        to_read = S32_MMIO_DATA_CAPACITY;
+    }
+
+    unsigned int bytes_read = (unsigned int)s32_mmio_request(
+        S32_MMIO_OP_READ, to_read, 0u, stream->fd);
+
+    if (bytes_read == S32_MMIO_STATUS_ERR || bytes_read == S32_MMIO_STATUS_EINTR) {
+        stream->error = 1;
+        return 0;
+    }
+
+    if (bytes_read == 0) {
+        stream->eof = 1;
+        return 0;
+    }
+
+    volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
+    memcpy(stream->buffer, (void *)data_buffer, bytes_read);
+    stream->buf_pos = 0;
+    stream->buf_len = bytes_read;
+
+    return bytes_read;
+}
+
 size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
     if (!stream || !ptr) return 0;
-    
+
     size_t total = size * nmemb;
     if (total == 0) return 0;
-    if (total > S32_MMIO_DATA_CAPACITY) {
-        total = S32_MMIO_DATA_CAPACITY;
-    }
-    
+
+    // Handle stdin specially (unbuffered, uses getchar)
     if (stream == stdin) {
         unsigned char *p = ptr;
         for (size_t i = 0; i < total; i++) {
             int c = getchar();
             if (c == EOF) {
                 stream->eof = 1;
-                // Avoid division - return 0 for partial read
-                return 0;
+                return i / size;
             }
             p[i] = (unsigned char)c;
         }
         return nmemb;
     }
-    
-    unsigned int bytes_read = (unsigned int)s32_mmio_request(S32_MMIO_OP_READ, total, 0u, stream->fd);
 
-    if (bytes_read == S32_MMIO_STATUS_ERR || bytes_read == S32_MMIO_STATUS_EINTR) {
-        stream->error = 1;
-        return 0;
+    // Buffered read for regular files
+    unsigned char *dest = ptr;
+    size_t remaining = total;
+    size_t bytes_copied = 0;
+
+    while (remaining > 0) {
+        // Check if buffer has data
+        size_t avail = stream->buf_len - stream->buf_pos;
+
+        if (avail > 0) {
+            // Copy from buffer
+            size_t to_copy = (avail < remaining) ? avail : remaining;
+            memcpy(dest, stream->buffer + stream->buf_pos, to_copy);
+            stream->buf_pos += to_copy;
+            dest += to_copy;
+            remaining -= to_copy;
+            bytes_copied += to_copy;
+        } else if (stream->buffer && stream->buf_size > 0) {
+            // Buffer empty, refill it
+            if (fread_fill_buffer(stream) == 0) {
+                // EOF or error
+                break;
+            }
+        } else {
+            // No buffer - direct unbuffered read (fallback)
+            size_t chunk = remaining;
+            if (chunk > S32_MMIO_DATA_CAPACITY) {
+                chunk = S32_MMIO_DATA_CAPACITY;
+            }
+
+            unsigned int bytes_read = (unsigned int)s32_mmio_request(
+                S32_MMIO_OP_READ, chunk, 0u, stream->fd);
+
+            if (bytes_read == S32_MMIO_STATUS_ERR || bytes_read == S32_MMIO_STATUS_EINTR) {
+                stream->error = 1;
+                break;
+            }
+
+            if (bytes_read == 0) {
+                stream->eof = 1;
+                break;
+            }
+
+            volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
+            memcpy(dest, (void *)data_buffer, bytes_read);
+            dest += bytes_read;
+            remaining -= bytes_read;
+            bytes_copied += bytes_read;
+
+            if (bytes_read < chunk) {
+                stream->eof = 1;
+                break;
+            }
+        }
     }
-    
-    if (bytes_read == 0) {
-        stream->eof = 1;
-        return 0;
-    }
-    
-    if (bytes_read < total) {
-        stream->eof = 1;
-    }
-    
-    volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
-    memcpy(ptr, (void *)data_buffer, bytes_read);
-    // Return the number of fully read elements (may be partial at EOF)
-    return bytes_read / size;
+
+    return bytes_copied / size;
 }
 
 int fgetc(FILE *stream) {
@@ -204,7 +277,11 @@ int fputs(const char *s, FILE *stream) {
 }
 
 int fseek(FILE *stream, long offset, int whence) {
-    if (!stream) return -1L;
+    if (!stream) return -1;
+
+    // Invalidate read buffer on seek
+    stream->buf_pos = 0;
+    stream->buf_len = 0;
 
     volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
     data_buffer[0] = (unsigned char)whence;
