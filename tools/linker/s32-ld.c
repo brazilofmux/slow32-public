@@ -121,6 +121,7 @@ typedef struct {
     uint32_t stack_base;
     uint32_t stack_size;    // Configurable stack size
     uint32_t heap_base;
+    uint32_t heap_size;     // Optional heap size before MMIO
     uint32_t mmio_base;
     uint32_t mmio_size;
     
@@ -950,10 +951,22 @@ static void layout_sections(linker_state_t *ld) {
     // Set MMIO region after heap (if configured)
     if (ld->mmio_size > 0) {
         // Leave some space for heap growth
-        ld->mmio_base = ld->heap_base + 0x100000;  // 1MB heap space by default
+        uint32_t heap_space = ld->heap_size ? ld->heap_size : 0x100000;  // 1MB heap space by default
+        ld->mmio_base = ld->heap_base + heap_space;
         ld->mmio_base = (ld->mmio_base + 0xFFF) & ~0xFFF;  // Page align
     } else {
         ld->mmio_base = 0;
+    }
+
+    if (ld->mmio_size > 0) {
+        uint32_t stack_end = ld->stack_base - ld->stack_size;
+        uint32_t mmio_end = ld->mmio_base + ld->mmio_size;
+        if (mmio_end > stack_end) {
+            fprintf(stderr, "Error: MMIO region overlaps stack (MMIO end 0x%X > stack end 0x%X)\n",
+                    mmio_end, stack_end);
+            fprintf(stderr, "Hint: reduce --heap-size/--mmio, reduce --stack-size, or avoid --compact/--pack-sections\n");
+            exit(1);
+        }
     }
     
     if (ld->verbose) {
@@ -1782,6 +1795,7 @@ static void print_usage(const char *prog) {
     fprintf(stderr, "  --rodata-size SIZE Max rodata size (default: 1MB)\n");
     fprintf(stderr, "  --data-size SIZE  Max data+bss size (default: 1MB)\n");
     fprintf(stderr, "  --stack-size SIZE Stack size (default: 64KB)\n");
+    fprintf(stderr, "  --heap-size SIZE  Heap space before MMIO (default: 1MB)\n");
     fprintf(stderr, "  --mmio SIZE       Reserve SIZE bytes for MMIO region\n");
     fprintf(stderr, "  --pack-sections   Pack sections tightly to minimize gaps\n");
     fprintf(stderr, "  --compact         Ultra-compact mode (4KB pages, minimal memory)\n");
@@ -1853,6 +1867,8 @@ int main(int argc, char *argv[]) {
             ld.data_size = parse_size(argv[++i]);
         } else if (strcmp(argv[i], "--stack-size") == 0 && i + 1 < argc) {
             ld.stack_size = parse_size(argv[++i]);
+        } else if (strcmp(argv[i], "--heap-size") == 0 && i + 1 < argc) {
+            ld.heap_size = parse_size(argv[++i]);
         } else if (strcmp(argv[i], "--mmio") == 0 && i + 1 < argc) {
             ld.mmio_size = parse_size(argv[++i]);
         } else if (strcmp(argv[i], "--pack-sections") == 0) {
