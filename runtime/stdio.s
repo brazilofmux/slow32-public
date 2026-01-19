@@ -133,26 +133,27 @@ fopen:                                  # @fopen
 	stw fp+-12, r13
 	stw fp+-16, r14
 	stw fp+-20, r15
-	stw fp+-24, lr
+	stw fp+-24, r16
+	stw fp+-28, lr
 	add r14, r4, r0
 	add r12, r3, r0
 	addi r3, r0, 32
 	jal r31, malloc
-	addi r15, r0, 0
-	beq r1, r15, .LBB3_10
-.LBB3_1:
 	add r11, r1, r0
+	addi r1, r0, 0
+	beq r11, r1, .LBB3_15
+.LBB3_1:
 	addi r4, r0, 114
 	add r3, r14, r0
 	jal r31, strchr
-	ori r3, r0, 0
-	sne r13, r1, r3
+	ori r15, r0, 0
+	sne r13, r1, r15
 	stw r11+4, r13
 	addi r4, r0, 119
 	add r3, r14, r0
 	jal r31, strchr
-	addi r15, r0, 0
-	beq r1, r15, .LBB3_3
+	addi r16, r0, 0
+	beq r1, r16, .LBB3_3
 .LBB3_2:
 	ori  r13, r13, 26
 	stw r11+4, r13
@@ -160,7 +161,7 @@ fopen:                                  # @fopen
 	addi r4, r0, 97
 	add r3, r14, r0
 	jal r31, strchr
-	beq r1, r15, .LBB3_5
+	beq r1, r16, .LBB3_5
 .LBB3_4:
 	ori  r13, r13, 6
 	stw r11+4, r13
@@ -168,43 +169,62 @@ fopen:                                  # @fopen
 	addi r4, r0, 43
 	add r3, r14, r0
 	jal r31, strchr
-	beq r1, r15, .LBB3_7
+	beq r1, r16, .LBB3_7
 .LBB3_6:
 	ori  r13, r13, 3
 	stw r11+4, r13
 .LBB3_7:
 	add r3, r12, r0
 	jal r31, strlen
-	addi r14, r1, 1
-	lui r3, %hi(__mmio_base+16384)
-	addi r3, r3, %lo(__mmio_base+16384)
-	add r4, r12, r0
-	add r5, r14, r0
-	jal r31, memcpy
+	addi r4, r1, 1
+	beq r4, r16, .LBB3_10
+.LBB3_8:
+	lui r1, %hi(__mmio_base+16384)
+	addi r1, r1, %lo(__mmio_base+16384)
+.LBB3_9:
+	add r3, r12, r16
+	ldbu r3, r3+0
+	add r5, r16, r1
+	stb r5+0, r3
+	addi r16, r16, 1
+	bltu r16, r4, .LBB3_9
+.LBB3_10:
 	addi r3, r0, 5
-	addi r15, r0, 0
-	add r4, r14, r0
-	add r5, r15, r0
+	addi r12, r0, 0
+	add r5, r12, r0
 	add r6, r13, r0
 	jal r31, s32_mmio_request
 	stw r11+0, r1
 	addi r3, r0, -1
-	ble r1, r3, .LBB3_9
-.LBB3_8:
-	stw r11+28, r15
-	stw r11+24, r15
-	stw r11+20, r15
-	stw r11+16, r15
-	stw r11+12, r15
-	stw r11+8, r15
-	add r15, r11, r0
-	jal r0, .LBB3_10
-.LBB3_9:
+	ble r1, r3, .LBB3_14
+.LBB3_11:
+	stw r11+8, r12
+	stw r11+12, r12
+	andi r4, r13, 1
+	add r1, r12, r0
+	add r3, r12, r0
+	beq r4, r12, .LBB3_13
+.LBB3_12:
+	lui r13, 1
+	add r3, r13, r0
+	jal r31, malloc
+	seq r3, r1, r15
+	addi r3, r3, -1
+	and r3, r3, r13
+.LBB3_13:
+	stw r11+16, r1
+	stw r11+20, r3
+	stw r11+24, r12
+	stw r11+28, r12
+	add r1, r11, r0
+	jal r0, .LBB3_15
+.LBB3_14:
 	add r3, r11, r0
 	jal r31, free
-.LBB3_10:
-	add r1, r15, r0
-	ldw lr, fp+-24
+	addi r1, r0, 0
+.LBB3_15:
+	ldw lr, fp+-28
+	ldw r16, fp+-24
 	ldw r15, fp+-20
 	ldw r14, fp+-16
 	ldw r13, fp+-12
@@ -296,72 +316,82 @@ fwrite:                                 # @fwrite
 	stw fp+-24, r16
 	stw fp+-28, lr
 	addi r1, r0, 0
-	beq r3, r1, .LBB5_10
+	beq r3, r1, .LBB5_13
 .LBB5_1:
 	addi r7, r0, 0
-	beq r6, r7, .LBB5_10
+	beq r6, r7, .LBB5_13
 .LBB5_2:
 	add r11, r3, r0
 	mul r3, r5, r4
 	add r1, r7, r0
-	beq r3, r7, .LBB5_10
+	beq r3, r7, .LBB5_13
 .LBB5_3:
-	add r15, r5, r0
-	lui r1, 12
-	xor r4, r3, r1
-	sltu r3, r3, r1
-	addi r13, r0, 0
-	sub r3, r13, r3
-	and r3, r4, r3
-	xor r12, r3, r1
-	lui r1, %hi(stdout)
-	addi r1, r1, %lo(stdout)
-	ldw r1, r1+0
-	beq r6, r1, .LBB5_7
+	lui r4, 12
+	xor r7, r3, r4
+	sltu r3, r3, r4
+	addi r1, r0, 0
+	sub r3, r1, r3
+	and r3, r7, r3
+	xor r12, r3, r4
+	lui r3, %hi(stdout)
+	addi r3, r3, %lo(stdout)
+	ldw r3, r3+0
+	beq r6, r3, .LBB5_10
 .LBB5_4:
-	lui r1, %hi(stderr)
-	addi r1, r1, %lo(stderr)
-	ldw r1, r1+0
-	beq r6, r1, .LBB5_7
+	lui r3, %hi(stderr)
+	addi r3, r3, %lo(stderr)
+	ldw r3, r3+0
+	beq r6, r3, .LBB5_10
 .LBB5_5:
+	add r13, r5, r0
+	beq r12, r1, .LBB5_8
+.LBB5_6:
 	lui r3, %hi(__mmio_base+16384)
 	addi r3, r3, %lo(__mmio_base+16384)
-	add r4, r11, r0
-	add r5, r12, r0
-	add r13, r6, r0
-	jal r31, memcpy
-	ldw r6, r13+0
+.LBB5_7:
+	add r4, r11, r1
+	ldbu r4, r4+0
+	add r5, r1, r3
+	stb r5+0, r4
+	addi r1, r1, 1
+	bltu r1, r12, .LBB5_7
+.LBB5_8:
+	ldw r1, r6+0
 	addi r3, r0, 3
 	addi r11, r0, 0
 	add r4, r12, r0
 	add r5, r11, r0
+	add r14, r6, r0
+	add r6, r1, r0
 	jal r31, s32_mmio_request
 	add r3, r1, r0
-	add r1, r15, r0
-	beq r3, r12, .LBB5_10
-.LBB5_6:
+	add r1, r13, r0
+	beq r3, r12, .LBB5_13
+.LBB5_9:
 	addi r1, r0, 1
-	stw r13+8, r1
+	stw r14+8, r1
 	add r1, r11, r0
-	jal r0, .LBB5_10
-.LBB5_7:
+	jal r0, .LBB5_13
+.LBB5_10:
+	add r15, r5, r0
 	lui r16, %hi(__mmio_base+16384)
 	addi r16, r16, %lo(__mmio_base+16384)
-	addi r14, r0, 1
-.LBB5_8:
+	addi r13, r0, 1
+	addi r14, r0, 0
+.LBB5_11:
 	ldbu r1, r11+0
 	stb r16+0, r1
-	add r3, r14, r0
-	add r4, r14, r0
-	add r5, r13, r0
-	add r6, r13, r0
+	add r3, r13, r0
+	add r4, r13, r0
+	add r5, r14, r0
+	add r6, r14, r0
 	jal r31, s32_mmio_request
 	addi r12, r12, -1
 	addi r11, r11, 1
-	bne r12, r13, .LBB5_8
-.LBB5_9:
+	bne r12, r14, .LBB5_11
+.LBB5_12:
 	add r1, r15, r0
-.LBB5_10:
+.LBB5_13:
 	ldw lr, fp+-28
 	ldw r16, fp+-24
 	ldw r15, fp+-20
@@ -381,11 +411,11 @@ fwrite:                                 # @fwrite
 	.type	fread,@function
 fread:                                  # @fread
 # %bb.0:
-	addi sp, sp, -56
+	addi sp, sp, -72
 	stw sp+4, fp
 	stw sp+0, lr
 	add fp, sp, r0
-	addi fp, fp, 56
+	addi fp, fp, 72
 	stw fp+-4, r11
 	stw fp+-8, r12
 	stw fp+-12, r13
@@ -394,92 +424,182 @@ fread:                                  # @fread
 	stw fp+-24, r16
 	stw fp+-28, r17
 	stw fp+-32, r18
-	stw fp+-36, lr
-	addi r11, r0, 0
-	beq r3, r11, .LBB6_15
+	stw fp+-36, r19
+	stw fp+-40, r20
+	stw fp+-44, r21
+	stw fp+-48, r22
+	stw fp+-52, r23
+	stw fp+-56, lr
+	addi r1, r0, 0
+	beq r3, r1, .LBB6_33
 .LBB6_1:
-	add r12, r3, r0
+	add r12, r6, r0
+	add r14, r3, r0
 	addi r3, r0, 0
-	beq r6, r3, .LBB6_15
+	beq r6, r3, .LBB6_33
 .LBB6_2:
-	mul r1, r5, r4
-	add r11, r3, r0
-	beq r1, r3, .LBB6_15
+	add r11, r4, r0
+	mul r19, r5, r4
+	add r1, r3, r0
+	beq r19, r3, .LBB6_33
 .LBB6_3:
-	lui r3, 12
-	xor r7, r1, r3
-	sltu r1, r1, r3
-	addi r11, r0, 0
-	sub r1, r11, r1
-	and r1, r7, r1
-	xor r13, r1, r3
 	lui r1, %hi(stdin)
 	addi r1, r1, %lo(stdin)
 	ldw r1, r1+0
-	beq r6, r1, .LBB6_6
+	beq r12, r1, .LBB6_26
 .LBB6_4:
-	add r14, r4, r0
-	add r15, r6, r0
-	ldw r6, r6+0
-	addi r3, r0, 4
-	addi r11, r0, 0
-	add r4, r13, r0
-	add r5, r11, r0
-	jal r31, s32_mmio_request
-	addi r3, r0, -2
-	bltu r1, r3, .LBB6_10
+	addi r15, r0, 0
+	lui r20, 12
+	addi r16, r0, 4
+	addi r18, r0, 8
+	addi r22, r0, -3
+	addi r21, r0, 12
+	lui r23, %hi(__mmio_base+16384)
+	addi r23, r23, %lo(__mmio_base+16384)
+	add r13, r15, r0
+	jal r0, .LBB6_7
 .LBB6_5:
-	addi r1, r0, 1
-	stw r15+8, r1
-	jal r0, .LBB6_15
+	ldw r3, r12+24
+	add r3, r3, r1
+	stw r12+24, r3
+	add r14, r14, r1
+	sub r19, r19, r1
+	add r13, r1, r13
 .LBB6_6:
-	add r16, r5, r0
-	add r15, r6, r0
-	addi r14, r0, 2
-	addi r17, r0, -1
-	lui r18, %hi(__mmio_base+16384)
-	addi r18, r18, %lo(__mmio_base+16384)
+	beq r19, r15, .LBB6_32
 .LBB6_7:
-	add r3, r14, r0
-	add r4, r11, r0
-	add r5, r11, r0
-	add r6, r11, r0
-	jal r31, s32_mmio_request
-	beq r1, r17, .LBB6_14
+	ldw r1, r12+28
+	ldw r3, r12+24
+	bne r1, r3, .LBB6_16
 .LBB6_8:
-	ldbu r1, r18+0
-	stb r12+0, r1
-	addi r13, r13, -1
-	addi r12, r12, 1
-	bne r13, r11, .LBB6_7
+	ldw r1, r12+16
+	beq r1, r15, .LBB6_19
 .LBB6_9:
-	add r11, r16, r0
-	jal r0, .LBB6_15
+	ldw r1, r12+20
+	beq r1, r15, .LBB6_19
 .LBB6_10:
-	beq r1, r11, .LBB6_14
+	xor r3, r1, r20
+	sltu r1, r1, r20
+	sub r1, r15, r1
+	and r1, r3, r1
+	xor r4, r1, r20
+	ldw r6, r12+0
+	add r3, r16, r0
+	add r5, r15, r0
+	jal r31, s32_mmio_request
+	bgtu r1, r22, .LBB6_31
 .LBB6_11:
-	bgeu r1, r13, .LBB6_13
+	beq r1, r15, .LBB6_30
 .LBB6_12:
-	addi r3, r0, 1
-	stw r15+12, r3
+	beq r1, r15, .LBB6_15
 .LBB6_13:
-	lui r4, %hi(__mmio_base+16384)
-	addi r4, r4, %lo(__mmio_base+16384)
-	add r3, r12, r0
-	add r5, r1, r0
-	add r11, r1, r0
-	jal r31, memcpy
-	add r3, r11, r0
-	add r4, r14, r0
-	jal r31, __udivsi3
-	add r11, r1, r0
-	jal r0, .LBB6_15
+	ldw r3, r12+16
+	add r4, r15, r0
 .LBB6_14:
-	addi r1, r0, 1
-	stw r15+12, r1
+	add r5, r4, r23
+	ldbu r5, r5+0
+	add r6, r3, r4
+	stb r6+0, r5
+	addi r4, r4, 1
+	bltu r4, r1, .LBB6_14
 .LBB6_15:
-	add r1, r11, r0
-	ldw lr, fp+-36
+	stw r12+24, r15
+	stw r12+28, r1
+	jal r0, .LBB6_6
+.LBB6_16:
+	sub r1, r1, r3
+	xor r4, r1, r19
+	sltu r1, r1, r19
+	sub r1, r15, r1
+	and r1, r4, r1
+	xor r1, r19, r1
+	beq r1, r15, .LBB6_5
+.LBB6_17:
+	ldw r4, r12+16
+	add r3, r4, r3
+	add r4, r15, r0
+.LBB6_18:
+	add r5, r3, r4
+	ldbu r5, r5+0
+	add r6, r14, r4
+	stb r6+0, r5
+	addi r4, r4, 1
+	bltu r4, r1, .LBB6_18
+	jal r0, .LBB6_5
+.LBB6_19:
+	xor r1, r19, r20
+	sltu r3, r19, r20
+	sub r3, r15, r3
+	and r1, r1, r3
+	xor r17, r1, r20
+	ldw r6, r12+0
+	add r3, r16, r0
+	add r4, r17, r0
+	add r5, r15, r0
+	jal r31, s32_mmio_request
+	bgtu r1, r22, .LBB6_31
+.LBB6_20:
+	beq r1, r15, .LBB6_30
+.LBB6_21:
+	beq r1, r15, .LBB6_24
+.LBB6_22:
+	add r3, r15, r0
+.LBB6_23:
+	add r4, r3, r23
+	ldbu r4, r4+0
+	add r5, r14, r3
+	stb r5+0, r4
+	addi r3, r3, 1
+	bltu r3, r1, .LBB6_23
+.LBB6_24:
+	add r13, r1, r13
+	bltu r1, r17, .LBB6_30
+.LBB6_25:
+	add r14, r14, r1
+	sub r19, r19, r1
+	jal r0, .LBB6_6
+.LBB6_26:
+	add r17, r5, r0
+	addi r15, r0, 0
+	addi r16, r0, 2
+	addi r18, r0, 12
+	addi r20, r0, -1
+	lui r21, %hi(__mmio_base+16384)
+	addi r21, r21, %lo(__mmio_base+16384)
+	add r13, r15, r0
+.LBB6_27:
+	add r3, r16, r0
+	add r4, r15, r0
+	add r5, r15, r0
+	add r6, r15, r0
+	jal r31, s32_mmio_request
+	beq r1, r20, .LBB6_31
+.LBB6_28:
+	ldbu r1, r21+0
+	add r3, r14, r13
+	stb r3+0, r1
+	addi r13, r13, 1
+	bne r19, r13, .LBB6_27
+.LBB6_29:
+	add r1, r17, r0
+	jal r0, .LBB6_33
+.LBB6_30:
+	add r18, r21, r0
+.LBB6_31:
+	add r1, r12, r18
+	addi r3, r0, 1
+	stw r1+0, r3
+.LBB6_32:
+	add r3, r13, r0
+	add r4, r11, r0
+	jal r31, __udivsi3
+.LBB6_33:
+	ldw lr, fp+-56
+	ldw r23, fp+-52
+	ldw r22, fp+-48
+	ldw r21, fp+-44
+	ldw r20, fp+-40
+	ldw r19, fp+-36
 	ldw r18, fp+-32
 	ldw r17, fp+-28
 	ldw r16, fp+-24
@@ -490,7 +610,7 @@ fread:                                  # @fread
 	ldw r11, fp+-4
 	ldw lr, sp+0
 	ldw fp, sp+4
-	addi sp, sp, 56
+	addi sp, sp, 72
 	jalr r0, r31, 0
 .Lfunc_end6:
 	.size	fread, .Lfunc_end6-fread
@@ -500,86 +620,33 @@ fread:                                  # @fread
 	.type	fgetc,@function
 fgetc:                                  # @fgetc
 # %bb.0:
-	addi sp, sp, -40
+	addi sp, sp, -24
 	stw sp+4, fp
 	stw sp+0, lr
 	add fp, sp, r0
-	addi fp, fp, 40
+	addi fp, fp, 24
 	stw fp+-4, r11
-	stw fp+-8, r12
-	stw fp+-12, r13
-	stw fp+-16, r14
-	stw fp+-20, lr
-	addi r11, r0, -1
-	addi r1, r0, 0
-	beq r3, r1, .LBB7_10
-.LBB7_1:
-	add r12, r3, r0
-	lui r1, %hi(stdin)
-	addi r1, r1, %lo(stdin)
-	ldw r1, r1+0
-	beq r3, r1, .LBB7_4
-.LBB7_2:
-	ldw r6, r12+0
-	addi r3, r0, 4
-	addi r14, r0, 1
-	addi r13, r0, 0
-	add r4, r14, r0
-	add r5, r13, r0
-	jal r31, s32_mmio_request
-	addi r3, r0, -2
-	bltu r1, r3, .LBB7_6
-.LBB7_3:
-	stw r12+8, r14
-	jal r0, .LBB7_10
-.LBB7_4:
-	addi r3, r0, 2
-	addi r4, r0, 0
-	add r5, r4, r0
-	add r6, r4, r0
-	jal r31, s32_mmio_request
-	addi r11, r0, -1
-	beq r1, r11, .LBB7_8
-.LBB7_5:
-	lui r1, %hi(__mmio_base+16384)
-	addi r1, r1, %lo(__mmio_base+16384)
-	ldbu r11, r1+0
-	jal r0, .LBB7_10
-.LBB7_6:
-	beq r1, r13, .LBB7_9
-.LBB7_7:
-	addi r11, fp, -24
-	lui r4, %hi(__mmio_base+16384)
-	addi r4, r4, %lo(__mmio_base+16384)
+	stw fp+-8, lr
+	add r6, r3, r0
+	addi r11, fp, -12
+	addi r4, r0, 1
 	add r3, r11, r0
-	add r5, r1, r0
-	add r12, r1, r0
-	jal r31, memcpy
-	ori r1, r0, 1
-	seq r1, r12, r1
+	add r5, r4, r0
+	jal r31, fread
+	ori r3, r0, 1
+	seq r1, r1, r3
 	ldbu r3, r11+0
-	sub r1, r13, r1
+	addi r4, r0, 0
+	sub r1, r4, r1
 	addi r4, r0, -1
 	xor r3, r3, r4
 	and r1, r3, r1
-	xor r11, r1, r4
-	jal r0, .LBB7_10
-.LBB7_8:
-	addi r1, r0, 1
-	stw r12+12, r1
-	jal r0, .LBB7_10
-.LBB7_9:
-	stw r12+12, r14
-.LBB7_10:
-	add r1, r11, r0
-	ldw lr, fp+-20
-	ldw r14, fp+-16
-	ldw r13, fp+-12
-	ldw r12, fp+-8
+	xor r1, r1, r4
+	ldw lr, fp+-8
 	ldw r11, fp+-4
 	ldw lr, sp+0
 	ldw fp, sp+4
-	addi sp, sp, 40
+	addi sp, sp, 24
 	jalr r0, r31, 0
 .Lfunc_end7:
 	.size	fgetc, .Lfunc_end7-fgetc
@@ -589,86 +656,33 @@ fgetc:                                  # @fgetc
 	.type	getc,@function
 getc:                                   # @getc
 # %bb.0:
-	addi sp, sp, -40
+	addi sp, sp, -24
 	stw sp+4, fp
 	stw sp+0, lr
 	add fp, sp, r0
-	addi fp, fp, 40
+	addi fp, fp, 24
 	stw fp+-4, r11
-	stw fp+-8, r12
-	stw fp+-12, r13
-	stw fp+-16, r14
-	stw fp+-20, lr
-	addi r11, r0, -1
-	addi r1, r0, 0
-	beq r3, r1, .LBB8_10
-.LBB8_1:
-	add r12, r3, r0
-	lui r1, %hi(stdin)
-	addi r1, r1, %lo(stdin)
-	ldw r1, r1+0
-	beq r3, r1, .LBB8_4
-.LBB8_2:
-	ldw r6, r12+0
-	addi r3, r0, 4
-	addi r14, r0, 1
-	addi r13, r0, 0
-	add r4, r14, r0
-	add r5, r13, r0
-	jal r31, s32_mmio_request
-	addi r3, r0, -2
-	bltu r1, r3, .LBB8_6
-.LBB8_3:
-	stw r12+8, r14
-	jal r0, .LBB8_10
-.LBB8_4:
-	addi r3, r0, 2
-	addi r4, r0, 0
-	add r5, r4, r0
-	add r6, r4, r0
-	jal r31, s32_mmio_request
-	addi r11, r0, -1
-	beq r1, r11, .LBB8_8
-.LBB8_5:
-	lui r1, %hi(__mmio_base+16384)
-	addi r1, r1, %lo(__mmio_base+16384)
-	ldbu r11, r1+0
-	jal r0, .LBB8_10
-.LBB8_6:
-	beq r1, r13, .LBB8_9
-.LBB8_7:
-	addi r11, fp, -24
-	lui r4, %hi(__mmio_base+16384)
-	addi r4, r4, %lo(__mmio_base+16384)
+	stw fp+-8, lr
+	add r6, r3, r0
+	addi r11, fp, -12
+	addi r4, r0, 1
 	add r3, r11, r0
-	add r5, r1, r0
-	add r12, r1, r0
-	jal r31, memcpy
-	ori r1, r0, 1
-	seq r1, r12, r1
+	add r5, r4, r0
+	jal r31, fread
+	ori r3, r0, 1
+	seq r1, r1, r3
 	ldbu r3, r11+0
-	sub r1, r13, r1
+	addi r4, r0, 0
+	sub r1, r4, r1
 	addi r4, r0, -1
 	xor r3, r3, r4
 	and r1, r3, r1
-	xor r11, r1, r4
-	jal r0, .LBB8_10
-.LBB8_8:
-	addi r1, r0, 1
-	stw r12+12, r1
-	jal r0, .LBB8_10
-.LBB8_9:
-	stw r12+12, r14
-.LBB8_10:
-	add r1, r11, r0
-	ldw lr, fp+-20
-	ldw r14, fp+-16
-	ldw r13, fp+-12
-	ldw r12, fp+-8
+	xor r1, r1, r4
+	ldw lr, fp+-8
 	ldw r11, fp+-4
 	ldw lr, sp+0
 	ldw fp, sp+4
-	addi sp, sp, 40
+	addi sp, sp, 24
 	jalr r0, r31, 0
 .Lfunc_end8:
 	.size	getc, .Lfunc_end8-getc
@@ -816,11 +830,11 @@ putc:                                   # @putc
 	.type	fgets,@function
 fgets:                                  # @fgets
 # %bb.0:
-	addi sp, sp, -88
+	addi sp, sp, -56
 	stw sp+4, fp
 	stw sp+0, lr
 	add fp, sp, r0
-	addi fp, fp, 88
+	addi fp, fp, 56
 	stw fp+-4, r11
 	stw fp+-8, r12
 	stw fp+-12, r13
@@ -828,116 +842,51 @@ fgets:                                  # @fgets
 	stw fp+-20, r15
 	stw fp+-24, r16
 	stw fp+-28, r17
-	stw fp+-32, r18
-	stw fp+-36, r19
-	stw fp+-40, r20
-	stw fp+-44, r21
-	stw fp+-48, r22
-	stw fp+-52, r23
-	stw fp+-56, r24
-	stw fp+-60, r25
-	stw fp+-64, r26
-	stw fp+-68, r27
-	stw fp+-72, lr
+	stw fp+-32, lr
 	addi r1, r0, 0
-	beq r3, r1, .LBB11_19
+	beq r3, r1, .LBB11_9
 .LBB11_1:
 	addi r13, r0, 1
-	blt r4, r13, .LBB11_19
+	blt r4, r13, .LBB11_9
 .LBB11_2:
 	add r12, r5, r0
 	add r11, r3, r0
-	addi r21, r4, -1
-	addi r14, r0, 0
-	lui r24, %hi(stdin)
-	addi r24, r24, %lo(stdin)
-	addi r15, r0, 2
-	addi r23, r0, 12
-	addi r25, r0, -1
-	lui r16, %hi(__mmio_base+16384)
-	addi r16, r16, %lo(__mmio_base+16384)
-	addi r26, r0, 10
-	addi r17, r0, 4
-	addi r22, r0, 8
-	addi r27, r0, -3
-	addi r18, fp, -76
-	add r20, r14, r0
-	jal r0, .LBB11_4
+	addi r15, r4, -1
+	addi r16, r0, 0
+	addi r14, fp, -36
+	addi r17, r0, 10
 .LBB11_3:
-	addi r3, r20, 1
-	add r4, r11, r20
+	beq r15, r16, .LBB11_6
+.LBB11_4:
+	add r3, r14, r0
+	add r4, r13, r0
+	add r5, r13, r0
+	add r6, r12, r0
+	jal r31, fread
+	bne r1, r13, .LBB11_7
+.LBB11_5:
+	ldbu r1, r14+0
+	addi r3, r16, 1
+	add r4, r11, r16
 	stb r4+0, r1
 	andi r1, r1, 255
-	add r20, r3, r0
-	beq r1, r26, .LBB11_18
-.LBB11_4:
-	beq r21, r20, .LBB11_13
-.LBB11_5:
-	beq r12, r14, .LBB11_14
+	add r16, r3, r0
+	bne r1, r17, .LBB11_3
+	jal r0, .LBB11_8
 .LBB11_6:
-	ldw r1, r24+0
-	beq r12, r1, .LBB11_11
-.LBB11_7:
-	ldw r6, r12+0
-	add r3, r17, r0
-	add r4, r13, r0
-	add r5, r14, r0
-	jal r31, s32_mmio_request
-	bgtu r1, r27, .LBB11_16
-.LBB11_8:
-	add r19, r1, r0
-	beq r1, r14, .LBB11_15
-.LBB11_9:
-	add r3, r18, r0
-	add r4, r16, r0
-	add r5, r19, r0
-	jal r31, memcpy
-	bne r19, r13, .LBB11_17
-.LBB11_10:
-	ldbu r1, r18+0
-	jal r0, .LBB11_3
-.LBB11_11:
 	add r3, r15, r0
-	add r4, r14, r0
-	add r5, r14, r0
-	add r6, r14, r0
-	jal r31, s32_mmio_request
-	beq r1, r25, .LBB11_15
-.LBB11_12:
-	ldbu r1, r16+0
-	jal r0, .LBB11_3
-.LBB11_13:
-	add r3, r21, r0
-	jal r0, .LBB11_18
-.LBB11_14:
+	jal r0, .LBB11_8
+.LBB11_7:
 	addi r1, r0, 0
-	jal r0, .LBB11_19
-.LBB11_15:
-	add r22, r23, r0
-.LBB11_16:
-	add r1, r12, r22
-	stw r1+0, r13
-.LBB11_17:
-	addi r1, r0, 0
-	add r3, r20, r0
-	beq r20, r1, .LBB11_19
-.LBB11_18:
+	add r3, r16, r0
+	beq r16, r1, .LBB11_9
+.LBB11_8:
 	add r1, r11, r3
 	addi r3, r0, 0
 	stb r1+0, r3
 	add r1, r11, r0
-.LBB11_19:
-	ldw lr, fp+-72
-	ldw r27, fp+-68
-	ldw r26, fp+-64
-	ldw r25, fp+-60
-	ldw r24, fp+-56
-	ldw r23, fp+-52
-	ldw r22, fp+-48
-	ldw r21, fp+-44
-	ldw r20, fp+-40
-	ldw r19, fp+-36
-	ldw r18, fp+-32
+.LBB11_9:
+	ldw lr, fp+-32
 	ldw r17, fp+-28
 	ldw r16, fp+-24
 	ldw r15, fp+-20
@@ -947,7 +896,7 @@ fgets:                                  # @fgets
 	ldw r11, fp+-4
 	ldw lr, sp+0
 	ldw fp, sp+4
-	addi sp, sp, 88
+	addi sp, sp, 56
 	jalr r0, r31, 0
 .Lfunc_end11:
 	.size	fgets, .Lfunc_end11-fgets
@@ -976,33 +925,40 @@ fputs:                                  # @fputs
 	add r11, r1, r0
 	addi r16, r0, 0
 	add r3, r16, r0
-	beq r13, r16, .LBB12_9
+	beq r13, r16, .LBB12_12
 .LBB12_1:
-	addi r15, r0, 0
+	addi r1, r0, 0
 	add r3, r16, r0
-	beq r11, r15, .LBB12_9
+	beq r11, r1, .LBB12_12
 .LBB12_2:
-	lui r1, 12
-	xor r3, r11, r1
-	sltu r4, r11, r1
-	sub r4, r15, r4
-	and r3, r3, r4
-	xor r14, r3, r1
-	lui r1, %hi(stdout)
-	addi r1, r1, %lo(stdout)
-	ldw r1, r1+0
-	beq r13, r1, .LBB12_6
+	lui r3, 12
+	xor r4, r11, r3
+	sltu r5, r11, r3
+	sub r5, r1, r5
+	and r4, r4, r5
+	xor r14, r4, r3
+	lui r3, %hi(stdout)
+	addi r3, r3, %lo(stdout)
+	ldw r3, r3+0
+	beq r13, r3, .LBB12_9
 .LBB12_3:
-	lui r1, %hi(stderr)
-	addi r1, r1, %lo(stderr)
-	ldw r1, r1+0
-	beq r13, r1, .LBB12_6
+	lui r3, %hi(stderr)
+	addi r3, r3, %lo(stderr)
+	ldw r3, r3+0
+	beq r13, r3, .LBB12_9
 .LBB12_4:
+	beq r14, r1, .LBB12_7
+.LBB12_5:
 	lui r3, %hi(__mmio_base+16384)
 	addi r3, r3, %lo(__mmio_base+16384)
-	add r4, r12, r0
-	add r5, r14, r0
-	jal r31, memcpy
+.LBB12_6:
+	add r4, r12, r1
+	ldbu r4, r4+0
+	add r5, r1, r3
+	stb r5+0, r4
+	addi r1, r1, 1
+	bltu r1, r14, .LBB12_6
+.LBB12_7:
 	ldw r6, r13+0
 	addi r3, r0, 3
 	addi r12, r0, 0
@@ -1010,17 +966,18 @@ fputs:                                  # @fputs
 	add r5, r12, r0
 	jal r31, s32_mmio_request
 	add r3, r11, r0
-	beq r1, r14, .LBB12_9
-.LBB12_5:
+	beq r1, r14, .LBB12_12
+.LBB12_8:
 	addi r1, r0, 1
 	stw r13+8, r1
 	add r3, r12, r0
-	jal r0, .LBB12_9
-.LBB12_6:
+	jal r0, .LBB12_12
+.LBB12_9:
 	lui r17, %hi(__mmio_base+16384)
 	addi r17, r17, %lo(__mmio_base+16384)
 	addi r13, r0, 1
-.LBB12_7:
+	addi r15, r0, 0
+.LBB12_10:
 	ldbu r1, r12+0
 	stb r17+0, r1
 	add r3, r13, r0
@@ -1030,10 +987,10 @@ fputs:                                  # @fputs
 	jal r31, s32_mmio_request
 	addi r14, r14, -1
 	addi r12, r12, 1
-	bne r14, r15, .LBB12_7
-.LBB12_8:
+	bne r14, r15, .LBB12_10
+.LBB12_11:
 	add r3, r11, r0
-.LBB12_9:
+.LBB12_12:
 	sne r1, r3, r11
 	sub r1, r16, r1
 	ldw lr, fp+-32
@@ -1067,6 +1024,8 @@ fseek:                                  # @fseek
 	addi r11, r0, 0
 	beq r3, r11, .LBB13_2
 .LBB13_1:
+	stw r3+24, r11
+	stw r3+28, r11
 	lui r1, %hi(__mmio_base+16384)
 	addi r1, r1, %lo(__mmio_base+16384)
 	stb r1+0, r5
@@ -1116,36 +1075,30 @@ ftell:                                  # @ftell
 	stw fp+-4, r11
 	stw fp+-8, r12
 	stw fp+-12, lr
-	addi r11, r0, 0
-	beq r3, r11, .LBB14_2
+	addi r5, r0, 0
+	beq r3, r5, .LBB14_3
 .LBB14_1:
-	addi r1, r0, 1
-	lui r4, %hi(__mmio_base+16384)
-	addi r4, r4, %lo(__mmio_base+16384)
-	stb r4+0, r1
+	add r11, r3, r0
+	addi r12, r0, 1
+	lui r1, %hi(__mmio_base+16384)
+	addi r1, r1, %lo(__mmio_base+16384)
+	stb r1+0, r12
 	lui r1, %hi(__mmio_base+16388)
 	addi r1, r1, %lo(__mmio_base+16388)
-	stw r1+0, r11
+	stw r1+0, r5
 	ldw r6, r3+0
-	addi r1, r0, 7
+	addi r3, r0, 7
 	addi r4, r0, 8
-	add r12, r3, r0
-	add r3, r1, r0
-	add r5, r11, r0
 	jal r31, s32_mmio_request
-	ori r3, r0, 0
-	slt r3, r1, r3
-	sub r3, r11, r3
-	andi r3, r3, 4
-	xori r3, r3, 12
-	srli r4, r1, 31
-	srai r1, r1, 31
-	add r3, r12, r3
-	stw r3+0, r4
-	jal r0, .LBB14_3
+	addi r3, r0, -1
+	bgt r1, r3, .LBB14_4
 .LBB14_2:
-	addi r1, r0, -1
+	stw r11+8, r12
+	add r1, r3, r0
+	jal r0, .LBB14_4
 .LBB14_3:
+	addi r1, r0, -1
+.LBB14_4:
 	ldw lr, fp+-12
 	ldw r12, fp+-8
 	ldw r11, fp+-4
@@ -1172,6 +1125,8 @@ rewind:                                 # @rewind
 	addi r11, r0, 0
 	beq r3, r11, .LBB15_2
 .LBB15_1:
+	stw r3+24, r11
+	stw r3+28, r11
 	lui r1, %hi(__mmio_base+16384)
 	addi r1, r1, %lo(__mmio_base+16384)
 	stb r1+0, r11
@@ -1455,5 +1410,5 @@ stderr:
 	.word	_stderr
 	.size	stderr, 4
 
-	.ident	"clang version 22.0.0git (https://github.com/llvm/llvm-project.git 64733ade54e83caa20942f58250ac6667cdd1ee7)"
+	.ident	"clang version 23.0.0git (https://github.com/llvm/llvm-project.git b801877ce5ab0f002ad00415d2a38c92156527ef)"
 	.section	".note.GNU-stack","",@progbits

@@ -127,6 +127,13 @@ let hasSideEffects = 0, mayLoad = 0, mayStore = 0, isBranch = 1, isTerminator = 
   def JALR : S32Inst<(outs GPR:$rd), (ins GPR:$rs1), "jalr $rd, $rs1, 0">;
 }
 
+// Call-marked encodable forms to preserve call semantics through late passes.
+let isCall = 1, Defs = [R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R31],
+    Uses = [R29], hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
+  def JAL_CALLR  : S32Inst<(outs), (ins i32imm:$sym), "jal r31, $sym">;
+  def JALR_CALLR : S32Inst<(outs GPR:$rd), (ins GPR:$rs1), "jalr $rd, $rs1, 0">;
+}
+
 // Pattern for indirect branch (brind) - use JALR with R0 as link register
 // Since we don't need the return address, expand via pseudo to force rd = r0
 let isCodeGenOnly = 1, isPseudo = 1, isBranch = 1, isTerminator = 1, isBarrier = 1,

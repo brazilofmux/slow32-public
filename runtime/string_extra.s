@@ -13,24 +13,31 @@ strdup:                                 # @strdup
 	stw fp+-4, r11
 	stw fp+-8, r12
 	stw fp+-12, lr
-	addi r1, r0, 0
-	beq r3, r1, .LBB0_3
-.LBB0_1:
 	add r11, r3, r0
+	addi r3, r0, 0
+	beq r11, r3, .LBB0_5
+.LBB0_1:
+	add r3, r11, r0
 	jal r31, strlen
 	addi r12, r1, 1
 	add r3, r12, r0
 	jal r31, malloc
-	add r3, r1, r0
-	addi r1, r0, 0
-	beq r3, r1, .LBB0_3
+	addi r3, r0, 0
+	beq r1, r3, .LBB0_5
 .LBB0_2:
-	add r4, r11, r0
-	add r5, r12, r0
-	add r11, r3, r0
-	jal r31, memcpy
-	add r1, r11, r0
+	addi r3, r0, 0
+	beq r12, r3, .LBB0_4
 .LBB0_3:
+	add r4, r11, r3
+	ldbu r4, r4+0
+	add r5, r1, r3
+	stb r5+0, r4
+	addi r3, r3, 1
+	bltu r3, r12, .LBB0_3
+.LBB0_4:
+	add r3, r1, r0
+.LBB0_5:
+	add r1, r3, r0
 	ldw lr, fp+-12
 	ldw r12, fp+-8
 	ldw r11, fp+-4
@@ -503,5 +510,5 @@ strncasecmp:                            # @strncasecmp
 	.type	strtok_save,@object             # @strtok_save
 	.local	strtok_save
 	.comm	strtok_save,4,4
-	.ident	"clang version 22.0.0git (https://github.com/llvm/llvm-project.git 64733ade54e83caa20942f58250ac6667cdd1ee7)"
+	.ident	"clang version 23.0.0git (https://github.com/llvm/llvm-project.git b801877ce5ab0f002ad00415d2a38c92156527ef)"
 	.section	".note.GNU-stack","",@progbits

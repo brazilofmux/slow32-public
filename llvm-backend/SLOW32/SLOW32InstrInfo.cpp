@@ -425,10 +425,12 @@ bool SLOW32InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     const DebugLoc &DL = MI.getDebugLoc();
 
     MachineInstrBuilder MIB =
-        BuildMI(MBB, MI, DL, get(SLOW32::JAL)).add(MI.getOperand(0));
+        BuildMI(MBB, MI, DL, get(SLOW32::JAL_CALLR)).add(MI.getOperand(0));
 
-    for (unsigned I = 1, E = MI.getNumOperands(); I < E; ++I)
-      MIB.add(MI.getOperand(I));
+    for (const MachineOperand &MO : MI.operands()) {
+      if (MO.isRegMask() || (MO.isReg() && MO.isImplicit()))
+        MIB.add(MO);
+    }
 
     PropagateFlags(*MIB);
     for (MachineMemOperand *MMO : MI.memoperands())
@@ -442,11 +444,15 @@ bool SLOW32InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     const DebugLoc &DL = MI.getDebugLoc();
 
     MachineInstrBuilder MIB =
-        BuildMI(MBB, MI, DL, get(SLOW32::JALR))
+        BuildMI(MBB, MI, DL, get(SLOW32::JALR_CALLR))
             .addReg(SLOW32::R31, RegState::Define);
 
-    for (const MachineOperand &MO : MI.operands())
-      MIB.add(MO);
+    MIB.add(MI.getOperand(0));
+
+    for (const MachineOperand &MO : MI.operands()) {
+      if (MO.isRegMask() || (MO.isReg() && MO.isImplicit()))
+        MIB.add(MO);
+    }
 
     PropagateFlags(*MIB);
     for (MachineMemOperand *MMO : MI.memoperands())

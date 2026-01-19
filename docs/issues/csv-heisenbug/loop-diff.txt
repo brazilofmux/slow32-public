@@ -1,0 +1,52 @@
+Key assembly differences in the main parse loop:
+
+=== WITH BARRIER (csv-with-barrier.s lines 293-307) ===
+
+.LBB3_6:                          ; Loop increment
+	addi r22, r22, 1          ; i++
+	ldw r1, r11+4             ; load p->len
+	bgeu r22, r1, .LBB3_92    ; if (i >= len) exit
+.LBB3_7:                          ; Loop body start
+	ldw r1, r11+0             ; load p->data
+	add r1, r1, r22           ; &p->data[i]
+	ldbu r3, r1+0             ; ch = p->data[i]
+	#APP
+	#NO_APP                   ; <-- MEMORY BARRIER
+	ldw r1, r21+0             ; load p->state FRESH after barrier
+	bgtu r1, r25, .LBB3_102   ; bounds check
+.LBB3_8:                          ; Switch dispatch
+	slli r1, r1, 2
+	add r1, r26, r1
+	...
+
+
+=== WITHOUT BARRIER (csv-no-barrier.s lines 285-299) ===
+
+.LBB3_5:                          ; Loop increment
+	addi r22, r22, 1          ; i++
+	ldw r1, r11+4             ; load p->len
+	bgeu r22, r1, .LBB3_94    ; if (i >= len) exit
+.LBB3_6:                          ; State load (HOISTED!)
+	ldw r1, r21+0             ; load p->state EARLY
+	bgtu r1, r25, .LBB3_104   ; bounds check
+.LBB3_7:                          ; Loop body
+	ldw r3, r11+0             ; load p->data
+	add r3, r3, r22           ; &p->data[i]
+	ldbu r3, r3+0             ; ch = p->data[i]
+	slli r1, r1, 2            ; switch on STALE r1
+	add r1, r26, r1
+	...
+
+
+KEY DIFFERENCE:
+- With barrier: state loaded at .LBB3_7 (inside loop body, after barrier)
+- Without barrier: state loaded at .LBB3_6 (hoisted before char load)
+
+The register r1 holds the state in both cases. In the broken version, if control
+flow returns to .LBB3_5 (loop increment) without going through .LBB3_6 again,
+the state in r1 could be stale from a previous iteration.
+
+HYPOTHESIS: Some code paths in the state machine jump back to .LBB3_5 (increment)
+instead of .LBB3_6 (reload state), causing stale state to be reused.
+
+Check: Look for back-edges that skip .LBB3_6 in the broken version.

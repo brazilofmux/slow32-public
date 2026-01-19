@@ -225,6 +225,12 @@ public:
       // Build operands for the call instruction
       SmallVector<SDValue, 8> Ops;
       Ops.push_back(Callee);
+
+      // Preserve the call-preserved register mask if present.
+      if (N->getNumOperands() > 2 &&
+          N->getOperand(2).getOpcode() == ISD::RegisterMask) {
+        Ops.push_back(N->getOperand(2));
+      }
       
       // Walk the glue chain to find argument registers that need to be marked as implicit uses
       SmallVector<unsigned, 8> ArgRegs;

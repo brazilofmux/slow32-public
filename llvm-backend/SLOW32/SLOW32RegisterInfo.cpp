@@ -31,16 +31,13 @@ SLOW32RegisterInfo::SLOW32RegisterInfo() : SLOW32GenRegisterInfo(SLOW32::R31) {}
 
 const MCPhysReg *
 SLOW32RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
-  static const MCPhysReg CalleeSavedRegs[] = {
-    SLOW32::R11, SLOW32::R12, SLOW32::R13, SLOW32::R14,
-    SLOW32::R15, SLOW32::R16, SLOW32::R17, SLOW32::R18,
-    SLOW32::R19, SLOW32::R20, SLOW32::R21, SLOW32::R22,
-    SLOW32::R23, SLOW32::R24, SLOW32::R25, SLOW32::R26,
-    SLOW32::R27, SLOW32::R28,
-    SLOW32::R30, SLOW32::R31,
-    0
-  };
-  return CalleeSavedRegs;
+  return CSR_SLOW32_SaveList;
+}
+
+const uint32_t *
+SLOW32RegisterInfo::getCallPreservedMask(const MachineFunction &MF,
+                                         CallingConv::ID) const {
+  return CSR_SLOW32_RegMask;
 }
 
 BitVector SLOW32RegisterInfo::getReservedRegs(const MachineFunction &MF) const {

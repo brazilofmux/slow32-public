@@ -538,6 +538,7 @@ void SLOW32MCCodeEmitter::encodeInstruction(const MCInst &MI,
     break;
 
   case SLOW32::JAL:
+  case SLOW32::JAL_CALLR:
     Binary = encodeJType(0x40, 31, MI, 0, Fixups);
     break;
   case SLOW32::BR:
@@ -545,6 +546,7 @@ void SLOW32MCCodeEmitter::encodeInstruction(const MCInst &MI,
     break;
 
   case SLOW32::JALR:
+  case SLOW32::JALR_CALLR:
     Binary = encodeJalr(0x41, MI, Fixups);
     break;
   case SLOW32::RET:
