@@ -193,17 +193,17 @@ int main() {
 
 ## Current Status
 
-✅ **Complete toolchain** - C/C++ → LLVM IR → Assembly → Object → Linked Executable
-✅ **Native Clang target** - `-target slow32-unknown-none` with inline assembly support
-✅ **All optimization levels** - -O0, -O1, -O2 fully working
-✅ **Three emulators** - slow32 (51 MIPS), slow32-fast (381 MIPS), QEMU TCG (1.2 BIPS)
-✅ **Assembler** - Two-pass with labels, relocations, standard directives
-✅ **Linker** - Symbol resolution, HI20/LO12 relocations, proper archives
-✅ **LLVM backend** - PHI nodes, intrinsics, varargs, jump tables, 64-bit integers
-✅ **C++ support** - Classes, templates, virtual functions, lambdas, operator overloading
-✅ **Runtime** - printf, malloc, file I/O via MMIO, 64-bit builtins
-✅ **Filesystem MMIO** - File and directory operations through memory-mapped I/O
-✅ **Regression tests** - All 14/14 passing
+✅ **Complete toolchain** - C/C++ → LLVM IR → Assembly → Object → Linked Executable 
+✅ **Native Clang target** - `-target slow32-unknown-none` with inline assembly support 
+✅ **All optimization levels** - -O0, -O1, -O2 fully working 
+✅ **Three emulators** - slow32 (51 MIPS), slow32-fast (381 MIPS), QEMU TCG (1.2 BIPS) 
+✅ **Assembler** - Two-pass with labels, relocations, standard directives 
+✅ **Linker** - Symbol resolution, HI20/LO12 relocations, proper archives 
+✅ **LLVM backend** - PHI nodes, intrinsics, varargs, jump tables, 64-bit integers 
+✅ **C++ support** - Classes, templates, virtual functions, lambdas, operator overloading 
+✅ **Runtime** - printf, malloc, file I/O via MMIO, 64-bit builtins 
+✅ **Filesystem MMIO** - File and directory operations through memory-mapped I/O 
+✅ **Regression tests** - All 14/14 passing 
 ✅ **Tools** - objdump, exedump, disassembler  
 
 ## Known Limitations
