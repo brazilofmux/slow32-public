@@ -166,7 +166,7 @@ slow-32/
 _start:
     lui r10, 0x100      # Load data segment base
     add r11, r10, r0    # Initialize pointer
-    
+
 print_loop:
     ldbu r12, r11+0     # Load character
     seq r13, r12, r0    # Check for null
@@ -174,7 +174,7 @@ print_loop:
     debug r12           # Print character
     addi r11, r11, 1    # Next character
     beq r0, r0, print_loop
-    
+
 done:
     halt
 ```
@@ -193,18 +193,18 @@ int main() {
 
 ## Current Status
 
-✅ **Complete toolchain** - C/C++ → LLVM IR → Assembly → Object → Linked Executable 
-✅ **Native Clang target** - `-target slow32-unknown-none` with inline assembly support 
-✅ **All optimization levels** - -O0, -O1, -O2 fully working 
-✅ **Three emulators** - slow32 (51 MIPS), slow32-fast (381 MIPS), QEMU TCG (1.2 BIPS) 
-✅ **Assembler** - Two-pass with labels, relocations, standard directives 
-✅ **Linker** - Symbol resolution, HI20/LO12 relocations, proper archives 
-✅ **LLVM backend** - PHI nodes, intrinsics, varargs, jump tables, 64-bit integers 
-✅ **C++ support** - Classes, templates, virtual functions, lambdas, operator overloading 
-✅ **Runtime** - printf, malloc, file I/O via MMIO, 64-bit builtins 
-✅ **Filesystem MMIO** - File and directory operations through memory-mapped I/O 
-✅ **Regression tests** - All 14/14 passing 
-✅ **Tools** - objdump, exedump, disassembler  
+- ✅ **Complete toolchain** - C/C++ → LLVM IR → Assembly → Object → Linked Executable
+- ✅ **Native Clang target** - `-target slow32-unknown-none` with inline assembly support
+- ✅ **All optimization levels** - -O0, -O1, -O2 fully working
+- ✅ **Three emulators** - slow32 (51 MIPS), slow32-fast (381 MIPS), QEMU TCG (1.2 BIPS)
+- ✅ **Assembler** - Two-pass with labels, relocations, standard directives
+- ✅ **Linker** - Symbol resolution, HI20/LO12 relocations, proper archives
+- ✅ **LLVM backend** - PHI nodes, intrinsics, varargs, jump tables, 64-bit integers
+- ✅ **C++ support** - Classes, templates, virtual functions, lambdas, operator overloading
+- ✅ **Runtime** - printf, malloc, file I/O via MMIO, 64-bit builtins
+- ✅ **Filesystem MMIO** - File and directory operations through memory-mapped I/O
+- ✅ **Regression tests** - All 14/14 passing
+- ✅ **Tools** - objdump, exedump, disassembler
 
 ## Known Limitations
 
