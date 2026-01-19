@@ -179,10 +179,13 @@ void SLOW32InstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
                                            MachineBasicBlock::iterator I,
                                            Register DestReg, int FrameIndex,
                                            const TargetRegisterClass *RC,
-                                           Register VReg,
+                                           Register VReg, unsigned SubReg,
                                            MachineInstr::MIFlag Flags) const {
   DebugLoc DL;
   if (I != MBB.end()) DL = I->getDebugLoc();
+
+  if (SubReg != 0)
+    report_fatal_error("SLOW32 does not support sub-register stack reloads");
   
   // Load word from stack slot
   BuildMI(MBB, I, DL, get(SLOW32::LDW), DestReg)

@@ -167,10 +167,16 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   // Booleans come back as 0/1 in a GPR
   setBooleanContents(ZeroOrOneBooleanContent);
   setBooleanVectorContents(ZeroOrOneBooleanContent);
+
+  // i1 values live in memory as bytes; promote loads/stores through i8.
+  setLoadExtAction({ISD::EXTLOAD, ISD::SEXTLOAD, ISD::ZEXTLOAD}, MVT::i32,
+                   MVT::i1, Promote);
+  setTruncStoreAction(MVT::i32, MVT::i1, Expand);
   
   // Configure SETCC to produce 0/1 in a GPR (will use default lowering)
   // This is important for SELECT to work correctly
   setOperationAction(ISD::SETCC, MVT::i32, Legal);
+  setOperationAction(ISD::SETCC, MVT::i64, Custom);
   
   // Configure BRCOND to be Custom (we have a lowering for it)
   setOperationAction(ISD::BRCOND, MVT::Other, Custom);
@@ -335,6 +341,7 @@ SDValue SLOW32TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) cons
     case ISD::VAARG:          return LowerVAARG(Op, DAG);
     case ISD::BRCOND:         return LowerBRCOND(Op, DAG);
     case ISD::BR_CC:          return LowerBR_CC(Op, DAG);
+    case ISD::SETCC:          return LowerSETCC(Op, DAG);
     case ISD::SELECT:         return LowerSELECT(Op, DAG);
     case ISD::ROTL:           return LowerROTL(Op, DAG);
     case ISD::ROTR:           return LowerROTR(Op, DAG);
@@ -707,6 +714,115 @@ SDValue SLOW32TargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
   SDLoc DL(Op);
 
   return emitBranchForCond(DAG, DL, Chain, CC, LHS, RHS, Dest);
+}
+
+SDValue SLOW32TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
+  SDValue LHS = Op.getOperand(0);
+  SDValue RHS = Op.getOperand(1);
+  EVT VT = Op.getValueType();
+
+  if (LHS.getValueType() != MVT::i64)
+    return SDValue();
+
+  SDLoc DL(Op);
+  ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(2))->get();
+
+  SDValue LHSLo, LHSHi, RHSLo, RHSHi;
+  std::tie(LHSLo, LHSHi) = DAG.SplitScalar(LHS, DL, MVT::i32, MVT::i32);
+  std::tie(RHSLo, RHSHi) = DAG.SplitScalar(RHS, DL, MVT::i32, MVT::i32);
+
+  auto SetCC32 = [&](ISD::CondCode CC, SDValue A, SDValue B) {
+    return DAG.getNode(ISD::SETCC, DL, MVT::i32, A, B, DAG.getCondCode(CC));
+  };
+  auto And = [&](SDValue A, SDValue B) {
+    return DAG.getNode(ISD::AND, DL, MVT::i32, A, B);
+  };
+  auto Or = [&](SDValue A, SDValue B) {
+    return DAG.getNode(ISD::OR, DL, MVT::i32, A, B);
+  };
+
+  SDValue Res;
+  switch (CC) {
+  case ISD::SETEQ: {
+    SDValue HiEq = SetCC32(ISD::SETEQ, LHSHi, RHSHi);
+    SDValue LoEq = SetCC32(ISD::SETEQ, LHSLo, RHSLo);
+    Res = And(HiEq, LoEq);
+    break;
+  }
+  case ISD::SETNE: {
+    SDValue HiNe = SetCC32(ISD::SETNE, LHSHi, RHSHi);
+    SDValue LoNe = SetCC32(ISD::SETNE, LHSLo, RHSLo);
+    Res = Or(HiNe, LoNe);
+    break;
+  }
+  case ISD::SETLT:
+  case ISD::SETLE:
+  case ISD::SETGT:
+  case ISD::SETGE: {
+    SDValue HiEq = SetCC32(ISD::SETEQ, LHSHi, RHSHi);
+    SDValue HiLt = SetCC32(ISD::SETLT, LHSHi, RHSHi);
+    SDValue HiGt = SetCC32(ISD::SETGT, LHSHi, RHSHi);
+    SDValue LoLt = SetCC32(ISD::SETULT, LHSLo, RHSLo);
+    SDValue LoLe = SetCC32(ISD::SETULE, LHSLo, RHSLo);
+    SDValue LoGt = SetCC32(ISD::SETUGT, LHSLo, RHSLo);
+    SDValue LoGe = SetCC32(ISD::SETUGE, LHSLo, RHSLo);
+
+    switch (CC) {
+    case ISD::SETLT:
+      Res = Or(HiLt, And(HiEq, LoLt));
+      break;
+    case ISD::SETLE:
+      Res = Or(HiLt, And(HiEq, LoLe));
+      break;
+    case ISD::SETGT:
+      Res = Or(HiGt, And(HiEq, LoGt));
+      break;
+    case ISD::SETGE:
+      Res = Or(HiGt, And(HiEq, LoGe));
+      break;
+    default:
+      llvm_unreachable("Unexpected signed condcode");
+    }
+    break;
+  }
+  case ISD::SETULT:
+  case ISD::SETULE:
+  case ISD::SETUGT:
+  case ISD::SETUGE: {
+    SDValue HiEq = SetCC32(ISD::SETEQ, LHSHi, RHSHi);
+    SDValue HiLt = SetCC32(ISD::SETULT, LHSHi, RHSHi);
+    SDValue HiGt = SetCC32(ISD::SETUGT, LHSHi, RHSHi);
+    SDValue LoLt = SetCC32(ISD::SETULT, LHSLo, RHSLo);
+    SDValue LoLe = SetCC32(ISD::SETULE, LHSLo, RHSLo);
+    SDValue LoGt = SetCC32(ISD::SETUGT, LHSLo, RHSLo);
+    SDValue LoGe = SetCC32(ISD::SETUGE, LHSLo, RHSLo);
+
+    switch (CC) {
+    case ISD::SETULT:
+      Res = Or(HiLt, And(HiEq, LoLt));
+      break;
+    case ISD::SETULE:
+      Res = Or(HiLt, And(HiEq, LoLe));
+      break;
+    case ISD::SETUGT:
+      Res = Or(HiGt, And(HiEq, LoGt));
+      break;
+    case ISD::SETUGE:
+      Res = Or(HiGt, And(HiEq, LoGe));
+      break;
+    default:
+      llvm_unreachable("Unexpected unsigned condcode");
+    }
+    break;
+  }
+  default:
+    return SDValue();
+  }
+
+  if (VT != MVT::i32)
+    Res = DAG.getNode(ISD::TRUNCATE, DL, VT, Res);
+
+  return Res;
 }
 
 SDValue SLOW32TargetLowering::LowerFormalArguments(
