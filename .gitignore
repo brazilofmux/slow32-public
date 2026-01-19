@@ -28,6 +28,10 @@ verify*.o
 # Assembly files (except in specific directories)
 /*.s
 !runtime/*.s
+runtime/stdio.s
+runtime/printf.s
+runtime/string_extra.s
+runtime/mmio_stdio_v2.s
 !tests/*.s
 !examples/*.s
 
