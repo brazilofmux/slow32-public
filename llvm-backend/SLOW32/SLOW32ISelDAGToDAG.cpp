@@ -129,8 +129,39 @@ public:
       N->setNodeId(-1);
       return;
     }
-    
+
     switch (N->getOpcode()) {
+    case ISD::OR: {
+      // DAGCombine can turn a ptradd with disjoint bits into an OR. Prefer
+      // ADDI so address arithmetic stays correct even if alignment info is off.
+      if (N->getFlags().hasDisjoint()) {
+        SDLoc DL(N);
+        SDValue Op0 = N->getOperand(0);
+        SDValue Op1 = N->getOperand(1);
+        if (auto *C = dyn_cast<ConstantSDNode>(Op1)) {
+          int64_t Imm = C->getSExtValue();
+          if (isInt<12>(Imm)) {
+            SDValue ImmOp = CurDAG->getTargetConstant(Imm, DL, MVT::i32);
+            SDNode *Res =
+                CurDAG->getMachineNode(SLOW32::ADDI, DL, N->getValueType(0),
+                                       Op0, ImmOp);
+            ReplaceNode(N, Res);
+            return;
+          }
+        } else if (auto *C = dyn_cast<ConstantSDNode>(Op0)) {
+          int64_t Imm = C->getSExtValue();
+          if (isInt<12>(Imm)) {
+            SDValue ImmOp = CurDAG->getTargetConstant(Imm, DL, MVT::i32);
+            SDNode *Res =
+                CurDAG->getMachineNode(SLOW32::ADDI, DL, N->getValueType(0),
+                                       Op1, ImmOp);
+            ReplaceNode(N, Res);
+            return;
+          }
+        }
+      }
+      break;
+    }
     case ISD::ADD: {
       SDLoc DL(N);
       SDValue Op0 = N->getOperand(0);

@@ -334,6 +334,10 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
                 length_mod++;
                 fmt++;
             }
+        } else if (*fmt == 'z') {
+            // size_t modifier - on SLOW-32 (32-bit), size_t is same as unsigned int
+            // so we just skip the modifier and use default (32-bit) handling
+            fmt++;
         } else if (*fmt == 'h') {
             // Short modifier - we'll treat as int
             fmt++;
