@@ -28,10 +28,6 @@ verify*.o
 # Assembly files (except in specific directories)
 /*.s
 !runtime/*.s
-runtime/stdio.s
-runtime/printf.s
-runtime/string_extra.s
-runtime/mmio_stdio_v2.s
 !tests/*.s
 !examples/*.s
 
@@ -42,8 +38,15 @@ examples/cpp/*.ll
 # Temporary compilation files in root
 /*.c
 !test*.c
-benchmark*
+/benchmark*
 !examples/benchmark_core.c
+
+# Benchmarks directory - track sources, ignore build artifacts
+!benchmarks/
+benchmarks/*.ll
+benchmarks/*.s
+benchmarks/*.s32o
+benchmarks/*.s32x
 assembler_reloc_patch.txt
 
 # Patch files (should be in llvm-backend/patches or qemu-backend/patches)
@@ -76,3 +79,7 @@ feedback
 # TinyMUX
 stringutil.cpp
 stringutil.h
+
+# DBT build artifacts
+tools/dbt/slow32-dbt
+tools/dbt/*.o

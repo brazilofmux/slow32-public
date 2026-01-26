@@ -13,9 +13,10 @@ function show_help() {
     echo ""
     echo "Emulator Selection:"
     echo "  -f, --fast        Use optimized C++ emulator (slow32-fast)"
+    echo "  -d, --dbt         Use dynamic binary translator (slow32-dbt)"
     echo "  -q, --qemu        Use QEMU TCG emulator (qemu-system-slow32)"
     echo ""
-    echo "Debug Options (slow32 only - not supported by slow32-fast or qemu):"
+    echo "Debug Options (slow32 and slow32-dbt only - not supported by slow32-fast or qemu):"
     echo "  -s, --step        Step through each instruction"
     echo "  -t, --trace       Trace every instruction"
     echo "  -r, --registers   Show register changes"
@@ -29,7 +30,7 @@ function show_help() {
     echo "Notes:"
     echo "  - Program arguments are passed after the program name"
     echo "  - For QEMU, arguments are passed via -append"
-    echo "  - Debug options are only supported by slow32, not slow32-fast or qemu"
+    echo "  - Debug options are supported by slow32 and slow32-dbt, not slow32-fast or qemu"
     exit 0
 }
 
@@ -37,6 +38,10 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         -f|--fast)
             EMULATOR="slow32-fast"
+            shift
+            ;;
+        -d|--dbt)
+            EMULATOR="slow32-dbt"
             shift
             ;;
         -q|--qemu)
@@ -95,8 +100,8 @@ if [ ! -f "$PROGRAM" ]; then
 fi
 
 # Warn if debug options used with emulators that don't support them
-if [ -n "$DEBUG_OPTS" ] && [ "$EMULATOR" != "slow32" ]; then
-    echo "Warning: Debug options are only supported by slow32, ignoring: $DEBUG_OPTS"
+if [ -n "$DEBUG_OPTS" ] && [ "$EMULATOR" != "slow32" ] && [ "$EMULATOR" != "slow32-dbt" ]; then
+    echo "Warning: Debug options are only supported by slow32 and slow32-dbt, ignoring: $DEBUG_OPTS"
     DEBUG_OPTS=""
 fi
 
@@ -120,6 +125,9 @@ if [ "$EMULATOR" = "qemu-system-slow32" ]; then
 elif [ "$EMULATOR" = "slow32-fast" ]; then
     # slow32-fast doesn't support debug options, just program and args
     exec $EMULATOR "$PROGRAM" "${PROGRAM_ARGS[@]}"
+elif [ "$EMULATOR" = "slow32-dbt" ]; then
+    # slow32-dbt supports debug options like slow32
+    exec $EMULATOR $DEBUG_OPTS "$PROGRAM" "${PROGRAM_ARGS[@]}"
 else
     # slow32 supports debug options
     exec $EMULATOR $DEBUG_OPTS "$PROGRAM" "${PROGRAM_ARGS[@]}"

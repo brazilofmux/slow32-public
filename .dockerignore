@@ -17,6 +17,7 @@
 
 # Emulator build needs:
 !tools/emulator/
+!tools/dbt/
 !qemu-backend/target/slow32/
 !qemu-backend/hw/slow32/
 !qemu-backend/configs/targets/slow32-softmmu.mak

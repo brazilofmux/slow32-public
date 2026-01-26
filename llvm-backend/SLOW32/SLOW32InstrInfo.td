@@ -286,13 +286,15 @@ def : Pat<(sra GPR:$a, imm:$b), (SRAI GPR:$a, imm:$b)>;
 // The comparison patterns are already defined above (lines 83-92)
 // SLOW32 has all comparison instructions as real hardware instructions
 
-// Patterns for immediate comparisons - use LI to load the immediate first
-def : Pat<(setlt GPR:$a, imm:$b), (SLT GPR:$a, (LI imm:$b))>;
-def : Pat<(setgt GPR:$a, imm:$b), (SGT GPR:$a, (LI imm:$b))>;
-def : Pat<(seteq GPR:$a, imm:$b), (SEQ GPR:$a, (LI imm:$b))>;
-def : Pat<(setne GPR:$a, imm:$b), (SNE GPR:$a, (LI imm:$b))>;
-def : Pat<(setge GPR:$a, imm:$b), (SGE GPR:$a, (LI imm:$b))>;
-def : Pat<(setle GPR:$a, imm:$b), (SLE GPR:$a, (LI imm:$b))>;
+// Patterns for immediate comparisons - only for small immediates (12-bit signed)
+// Large constants will be materialized separately by ISD::Constant handling
+// in Select() which generates proper LUI+ADDI sequences
+def : Pat<(setlt GPR:$a, simm12:$b), (SLT GPR:$a, (ADDI R0, simm12:$b))>;
+def : Pat<(setgt GPR:$a, simm12:$b), (SGT GPR:$a, (ADDI R0, simm12:$b))>;
+def : Pat<(seteq GPR:$a, simm12:$b), (SEQ GPR:$a, (ADDI R0, simm12:$b))>;
+def : Pat<(setne GPR:$a, simm12:$b), (SNE GPR:$a, (ADDI R0, simm12:$b))>;
+def : Pat<(setge GPR:$a, simm12:$b), (SGE GPR:$a, (ADDI R0, simm12:$b))>;
+def : Pat<(setle GPR:$a, simm12:$b), (SLE GPR:$a, (ADDI R0, simm12:$b))>;
 
 // Define custom SDNodes
 

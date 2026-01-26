@@ -65,21 +65,26 @@ RUN cd /build/qemu && \
         --enable-strip && \
     ninja -C build
 
-# Stage 2: Build the C++ emulators on Alpine
+# Stage 2: Build the C++ emulators and DBT on Alpine
 FROM alpine:3.21 AS cpp-builder
 
 # Install build dependencies
 RUN apk add --no-cache \
     g++ \
+    gcc \
     make
 
-# Copy emulator source code
+# Copy emulator and DBT source code
 WORKDIR /build
 COPY common /build/common
 COPY tools/emulator /build/tools/emulator
+COPY tools/dbt /build/tools/dbt
 
 # Build emulators
 RUN make -C tools/emulator clean && make -C tools/emulator
+
+# Build DBT
+RUN make -C tools/dbt clean && make -C tools/dbt
 
 # Stage 3: Create minimal runtime image (Alpine)
 FROM alpine:3.21
@@ -104,6 +109,9 @@ RUN apk add --no-cache \
 # Copy C++ emulators from builder stage
 COPY --from=cpp-builder /build/tools/emulator/slow32 /usr/local/bin/slow32
 COPY --from=cpp-builder /build/tools/emulator/slow32-fast /usr/local/bin/slow32-fast
+
+# Copy DBT from builder stage
+COPY --from=cpp-builder /build/tools/dbt/slow32-dbt /usr/local/bin/slow32-dbt
 
 # Copy QEMU emulator from builder stage
 COPY --from=qemu-builder /build/qemu/build/qemu-system-slow32 /usr/local/bin/qemu-system-slow32

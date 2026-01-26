@@ -17,11 +17,11 @@ CFLAGS := -target $(TARGET) -S -emit-llvm $(OPT) -Iruntime/include
 LIBC ?= debug
 LIBC_ARCHIVE := runtime/libc_$(LIBC).s32a
 
-.PHONY: all clean emulator assembler compiler runtime test tools cpp-test cpp-run
+.PHONY: all clean emulator assembler compiler runtime test tools cpp-test cpp-run dbt
 
 all: tools compiler runtime
 
-tools: emulator assembler linker utilities
+tools: emulator assembler linker utilities dbt
 
 emulator:
 	$(MAKE) -C tools/emulator
@@ -34,6 +34,9 @@ linker:
 
 utilities:
 	$(MAKE) -C tools/utilities
+
+dbt:
+	$(MAKE) -C tools/dbt
 
 runtime: assembler
 	$(MAKE) -C runtime
@@ -70,6 +73,7 @@ clean:
 	$(MAKE) -C tools/assembler clean
 	$(MAKE) -C tools/linker clean
 	$(MAKE) -C tools/utilities clean
+	$(MAKE) -C tools/dbt clean
 	$(MAKE) -C runtime clean
 	rm -rf tests/
 	rm -f *.o *.bin *.ll *.s *.s32o *.s32x
@@ -111,6 +115,7 @@ help:
 	@echo "  emulator  - Build the CPU emulator"
 	@echo "  assembler - Build the assembler"
 	@echo "  compiler  - Build the LLVM compiler"
+	@echo "  dbt       - Build the dynamic binary translator"
 	@echo "  runtime   - Build runtime libraries"
 	@echo "  test      - Run basic tests"
 	@echo "  cpp-test  - Compile C++ examples (no execution)"

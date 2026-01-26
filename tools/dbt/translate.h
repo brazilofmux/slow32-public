@@ -1,0 +1,270 @@
+// SLOW-32 DBT: Block Translator
+// Stage 2 - Block caching and direct chaining
+
+#ifndef DBT_TRANSLATE_H
+#define DBT_TRANSLATE_H
+
+#include "cpu_state.h"
+#include "emit_x64.h"
+
+// Forward declarations
+typedef struct block_cache block_cache_t;
+typedef struct translated_block translated_block_t;
+
+// Maximum instructions per basic block
+#define MAX_BLOCK_INSTS 64
+
+#include "dbt_limits.h"
+
+// Stage 4: Superblock limits
+#define MAX_SUPERBLOCK_DEPTH 4      // Max conditional branches to extend past
+#define SUPERBLOCK_PROFILE_MIN_SAMPLES 1000
+#define SUPERBLOCK_TAKEN_PCT_THRESHOLD 3  // Allow extension if taken <= 3%
+
+// Runtime-tunable thresholds (initialized from defaults above)
+extern uint32_t superblock_profile_min_samples;
+extern uint32_t superblock_taken_pct_threshold;
+
+// Translation context
+typedef struct {
+    dbt_cpu_state_t *cpu;
+    emit_ctx_t emit;
+    uint32_t guest_pc;          // Current guest PC being translated
+    uint32_t block_start_pc;    // Start of current block
+    int inst_count;             // Instructions translated so far
+
+    // Stage 2: Block cache integration
+    block_cache_t *cache;       // Block cache (NULL for Stage 1 mode)
+    translated_block_t *block;  // Current block being translated
+    int exit_idx;               // Current exit index for chaining
+
+    // Stage 3: Inline indirect branch lookup
+    bool inline_lookup_enabled; // Emit inline hash lookup for JALR
+
+    // Stage 3 Phase 2: Return Address Stack
+    bool ras_enabled;           // Emit RAS push/predict for calls/returns
+
+    // Stage 4: Superblock extension
+    bool superblock_enabled;    // Extend past forward conditional branches
+    int superblock_depth;       // Number of branches extended past so far
+    int side_exit_emitted;      // Superblock side exits emitted in this block
+    bool profile_side_exits;    // Emit side-exit profile counters
+    uint32_t side_exit_pcs[MAX_BLOCK_EXITS];
+    bool side_exit_info_enabled; // Emit branch_pc info for diagnostics
+    bool avoid_backedge_extend;  // Study-only guard: don't extend across back-edges
+    bool peephole_enabled;       // Study-only: peephole on emitted host code
+
+    // Stage 5: Simple register cache (fixed mapping)
+    bool reg_cache_enabled;
+    uint32_t reg_cache_hits;
+    uint32_t reg_cache_misses;
+    struct {
+        uint8_t guest_reg;
+        bool valid;
+        bool dirty;
+    } reg_cache[4];
+} translate_ctx_t;
+
+// Translated block function signature
+// Called with rbp = &cpu, r14 = cpu->mem_base
+// Returns via 'ret' with exit_reason set in cpu->exit_reason
+typedef void (*translated_block_fn)(void);
+
+// Initialize translation context (Stage 1 mode - no caching)
+void translate_init(translate_ctx_t *ctx, dbt_cpu_state_t *cpu);
+
+// Initialize translation context with cache (Stage 2 mode)
+void translate_init_cached(translate_ctx_t *ctx, dbt_cpu_state_t *cpu, block_cache_t *cache);
+
+// Translate a basic block starting at cpu->pc (Stage 1)
+// Returns pointer to executable code
+translated_block_fn translate_block(translate_ctx_t *ctx);
+
+// Translate and cache a block (Stage 2)
+// Returns the translated_block_t with host code and exit info
+translated_block_t *translate_block_cached(translate_ctx_t *ctx, uint32_t guest_pc);
+
+// ============================================================================
+// SLOW-32 opcode definitions (from slow32.h)
+// ============================================================================
+
+#define OP_ADD    0x00
+#define OP_SUB    0x01
+#define OP_XOR    0x02
+#define OP_OR     0x03
+#define OP_AND    0x04
+#define OP_SLL    0x05
+#define OP_SRL    0x06
+#define OP_SRA    0x07
+#define OP_SLT    0x08
+#define OP_SLTU   0x09
+#define OP_MUL    0x0A
+#define OP_MULH   0x0B
+#define OP_DIV    0x0C
+#define OP_REM    0x0D
+#define OP_SEQ    0x0E
+#define OP_SNE    0x0F
+#define OP_ADDI   0x10
+#define OP_ORI    0x11
+#define OP_ANDI   0x12
+#define OP_SLLI   0x13
+#define OP_SRLI   0x14
+#define OP_SRAI   0x15
+#define OP_SLTI   0x16
+#define OP_SLTIU  0x17
+#define OP_SGT    0x18
+#define OP_SGTU   0x19
+#define OP_SLE    0x1A
+#define OP_SLEU   0x1B
+#define OP_SGE    0x1C
+#define OP_SGEU   0x1D
+#define OP_XORI   0x1E
+#define OP_LUI    0x20
+#define OP_LDB    0x30
+#define OP_LDH    0x31
+#define OP_LDW    0x32
+#define OP_LDBU   0x33
+#define OP_LDHU   0x34
+#define OP_STB    0x38
+#define OP_STH    0x39
+#define OP_STW    0x3A
+#define OP_ASSERT_EQ 0x3F
+#define OP_JAL    0x40
+#define OP_JALR   0x41
+#define OP_BEQ    0x48
+#define OP_BNE    0x49
+#define OP_BLT    0x4A
+#define OP_BGE    0x4B
+#define OP_BLTU   0x4C
+#define OP_BGEU   0x4D
+#define OP_NOP    0x50
+#define OP_YIELD  0x51
+#define OP_DEBUG  0x52
+#define OP_HALT   0x7F
+
+// ============================================================================
+// Instruction format types
+// ============================================================================
+
+typedef enum {
+    FMT_R,      // Register-register: rd, rs1, rs2
+    FMT_I,      // Immediate: rd, rs1, imm12
+    FMT_S,      // Store: rs1, rs2, imm12
+    FMT_B,      // Branch: rs1, rs2, imm13
+    FMT_U,      // Upper immediate: rd, imm20
+    FMT_J,      // Jump: rd, imm21
+} inst_format_t;
+
+// Decoded instruction
+typedef struct {
+    uint32_t raw;
+    uint8_t opcode;
+    uint8_t rd;
+    uint8_t rs1;
+    uint8_t rs2;
+    int32_t imm;
+    inst_format_t format;
+} decoded_inst_t;
+
+// Decode a raw instruction word
+decoded_inst_t decode_instruction(uint32_t raw);
+
+// ============================================================================
+// Individual instruction translators
+// ============================================================================
+
+// Arithmetic
+void translate_add(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_sub(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_addi(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm);
+
+// Logical
+void translate_and(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_or(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_xor(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_andi(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm);
+void translate_ori(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm);
+void translate_xori(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm);
+
+// Shifts
+void translate_sll(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_srl(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_sra(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_slli(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm);
+void translate_srli(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm);
+void translate_srai(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm);
+
+// Comparisons
+void translate_slt(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_sltu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_seq(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_sne(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_sgt(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_sgtu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_sle(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_sleu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_sge(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_sgeu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_slti(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm);
+void translate_sltiu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm);
+
+// Multiply/divide
+void translate_mul(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_mulh(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_div(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_rem(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+
+// Upper immediate
+void translate_lui(translate_ctx_t *ctx, uint8_t rd, int32_t imm);
+
+// Memory
+void translate_ldw(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm);
+void translate_ldh(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm);
+void translate_ldb(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm);
+void translate_ldhu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm);
+void translate_ldbu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm);
+void translate_stw(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm);
+void translate_sth(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm);
+void translate_stb(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm);
+
+// Control flow
+void translate_jal(translate_ctx_t *ctx, uint8_t rd, int32_t imm);
+void translate_jalr(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm);
+// Branch functions return true if block ends, false if superblock continues
+bool translate_beq(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm);
+bool translate_bne(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm);
+bool translate_blt(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm);
+bool translate_bge(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm);
+bool translate_bltu(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm);
+bool translate_bgeu(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm);
+
+// Special
+void translate_nop(translate_ctx_t *ctx);
+void translate_halt(translate_ctx_t *ctx);
+void translate_debug(translate_ctx_t *ctx, uint8_t rs1);
+void translate_yield(translate_ctx_t *ctx);
+void translate_assert_eq(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2);
+
+// ============================================================================
+// Helper functions
+// ============================================================================
+
+// Load guest register into x64 register (handles r0 = 0)
+void emit_load_guest_reg(translate_ctx_t *ctx, x64_reg_t dst, uint8_t guest_reg);
+
+// Store x64 register to guest register (handles r0 = discard)
+void emit_store_guest_reg(translate_ctx_t *ctx, uint8_t guest_reg, x64_reg_t src);
+
+// Store immediate to guest register (handles r0 = discard)
+void emit_store_guest_reg_imm32(translate_ctx_t *ctx, uint8_t guest_reg, uint32_t imm);
+
+// Emit trace control (for mapping codegen to host bytes)
+void dbt_set_emit_trace(bool enabled, uint32_t pc);
+
+// Emit exit sequence (set exit_reason and return)
+void emit_exit(translate_ctx_t *ctx, exit_reason_t reason, uint32_t next_pc);
+
+// Emit exit with info value (e.g., for DEBUG character)
+void emit_exit_with_info(translate_ctx_t *ctx, exit_reason_t reason, uint32_t next_pc, uint32_t info);
+
+#endif // DBT_TRANSLATE_H
