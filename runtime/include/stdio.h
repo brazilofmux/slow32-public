@@ -12,12 +12,19 @@
 #define SEEK_CUR 1
 #define SEEK_END 2
 
-typedef struct {
+typedef struct FILE {
+    // Fields used by stdio_buffered.c (line-buffered output via flush callback)
+    char *buffer;
+    char *ptr;
+    size_t count;
+    size_t size;
+    int mode;
     int fd;
     int flags;
+    void (*flush_fn)(struct FILE *);
+    // Fields used by stdio.c (MMIO buffered I/O for files)
     int error;
     int eof;
-    unsigned char *buffer;
     size_t buf_size;
     size_t buf_pos;
     size_t buf_len;

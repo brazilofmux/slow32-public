@@ -128,7 +128,7 @@ static inline int mm_write(memory_manager_t *mm, uint32_t vaddr, const void *src
 }
 
 // Allocate regions based on .s32x requirements
-static int mm_setup_from_s32x(memory_manager_t *mm,
+__attribute__((unused)) static int mm_setup_from_s32x(memory_manager_t *mm,
                               uint32_t code_limit,
                               uint32_t rodata_limit,
                               uint32_t data_limit,
@@ -187,7 +187,12 @@ static int mm_setup_from_s32x(memory_manager_t *mm,
 }
 
 // Finalize memory protection after loading
-static int mm_protect_regions(memory_manager_t *mm, uint32_t code_limit, uint32_t rodata_limit) {
+__attribute__((unused)) static int mm_protect_regions(memory_manager_t *mm, uint32_t code_limit, uint32_t rodata_limit) {
+    // If W^X is disabled, keep everything writable (RW)
+    if (!mm->wxorx_enabled) {
+        return 0;
+    }
+
     for (memory_region_t *r = mm->regions; r; r = r->next) {
         int new_prot = r->prot_flags;
         
@@ -212,7 +217,7 @@ static int mm_protect_regions(memory_manager_t *mm, uint32_t code_limit, uint32_
 }
 
 // Clean up all allocated regions
-static void mm_destroy(memory_manager_t *mm) {
+__attribute__((unused)) static void mm_destroy(memory_manager_t *mm) {
     memory_region_t *r = mm->regions;
     while (r) {
         memory_region_t *next = r->next;
@@ -225,7 +230,7 @@ static void mm_destroy(memory_manager_t *mm) {
 }
 
 // Debug: print memory map
-static void mm_print_map(memory_manager_t *mm) {
+__attribute__((unused)) static void mm_print_map(memory_manager_t *mm) {
     // Print memory map
     fflush(stderr);
     printf("Memory Map (Total allocated: %u bytes):\n", mm->total_allocated);

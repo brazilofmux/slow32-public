@@ -67,8 +67,6 @@ static void cpu_init_mmio(cpu_state_t *cpu) {
 }
 
 static instruction_t decode_instruction(uint32_t raw) {
-    //printf("[TRACE] decode_instruction: raw=0x%08X\n", raw);
-    fflush(stdout);
     instruction_t inst = {0};
     inst.raw = raw;
     inst.opcode = raw & 0x7F;
@@ -150,8 +148,6 @@ static instruction_t decode_instruction(uint32_t raw) {
 }
 
 void cpu_init(cpu_state_t *cpu) {
-    //printf("[TRACE] cpu_init: starting\n");
-    fflush(stdout);
     memset(cpu, 0, sizeof(*cpu));
     mm_init(&cpu->mm, false);  // W^X will be set by loader
     cpu->regs[REG_SP] = 0x0FFFFFF0;
@@ -166,15 +162,9 @@ void cpu_init(cpu_state_t *cpu) {
     cpu->mmio.base = 0;
     cpu->mmio.state = NULL;
     cpu->mmio.mem = NULL;
-    
-    //printf("[TRACE] cpu_init: completed\n");
-    fflush(stdout);
 }
 
 void cpu_destroy(cpu_state_t *cpu) {
-    //printf("[TRACE] cpu_destroy: starting\n");
-    fflush(stdout);
-    
     // Clean up MMIO if initialized
     if (cpu->mmio.mem) {
         munmap(cpu->mmio.mem, 0x10000);
@@ -187,204 +177,110 @@ void cpu_destroy(cpu_state_t *cpu) {
     }
     
     mm_destroy(&cpu->mm);
-    //printf("[TRACE] cpu_destroy: completed\n");
-    fflush(stdout);
+}
+
+static int mm_write_callback(void *user_data, uint32_t addr, const void *data, uint32_t size) {
+    cpu_state_t *cpu = (cpu_state_t *)user_data;
+    return mm_write(&cpu->mm, addr, data, size);
 }
 
 // Modified loader to use memory manager
 bool cpu_load_binary(cpu_state_t *cpu, const char *filename) {
-    FILE *f = fopen(filename, "rb");
-    if (!f) {
-        fprintf(stderr, "Cannot open file: %s\n", filename);
+    // Read header first to set up memory regions before loading sections
+    s32x_load_result_t hdr = load_s32x_header(filename);
+    if (!hdr.success) {
+        fprintf(stderr, "Header error: %s\n", hdr.error_msg);
         return false;
     }
-    
-    s32x_header_t header;
-    if (fread(&header, sizeof(header), 1, f) != 1) {
-        fprintf(stderr, "Cannot read header\n");
-        fclose(f);
-        return false;
-    }
-    
-    if (header.magic != S32X_MAGIC) {
-        fprintf(stderr, "Invalid magic: 0x%08X\n", header.magic);
-        fclose(f);
-        return false;
-    }
-    
-    // W^X protection is enforced by hardware (mprotect) making code/rodata non-writable
-    // The flag is preserved for .s32x compatibility but protection is always active
-    cpu->mm.wxorx_enabled = (header.flags & S32X_FLAG_W_XOR_X) != 0;
-    
-    // Memory layout loaded from header
-    
-    // Allocate memory regions based on executable requirements
-    //printf("[TRACE] About to call mem_setup_from_s32x\n");
-    fflush(stdout);
-    uint32_t mmio_size = (header.flags & S32X_FLAG_MMIO) ? 0x10000u : 0u;
-    if (mm_setup_from_s32x(&cpu->mm, header.code_limit, header.rodata_limit,
-                          header.data_limit, header.stack_base, header.stack_end,
-                          header.mmio_base, mmio_size) < 0) {
+
+    // Setup memory manager from header metadata
+    uint32_t mmio_size = hdr.has_mmio ? 0x10000u : 0u;
+    if (mm_setup_from_s32x(&cpu->mm, hdr.code_limit, hdr.rodata_limit,
+                          hdr.data_limit, hdr.stack_base, hdr.stack_end,
+                          hdr.mmio_base, mmio_size) < 0) {
         fprintf(stderr, "Failed to allocate memory regions\n");
-        fclose(f);
         return false;
     }
-    //printf("[TRACE] mem_setup_from_s32x completed successfully\n");
-    fflush(stdout);
-    
-    // Read string table
-    //printf("[TRACE] Allocating string table: size=%u\n", header.str_size);
-    fflush(stdout);
-    char *strtab = malloc(header.str_size);
-    if (!strtab) {
-        fprintf(stderr, "Out of memory for string table\n");
-        fclose(f);
+
+    // Load sections via callback into memory manager
+    s32x_loader_config_t config = {
+        .write_cb = mm_write_callback,
+        .user_data = cpu,
+        .mem_size = DEFAULT_MEM_SIZE,
+        .verbose = cpu->debug.trace_instructions
+    };
+
+    s32x_load_result_t result = load_s32x_file(filename, &config);
+    if (!result.success) {
+        fprintf(stderr, "Loader error: %s\n", result.error_msg);
         return false;
     }
-    
-    //printf("[TRACE] Seeking to string table at offset %u\n", header.str_offset);
-    fflush(stdout);
-    fseek(f, header.str_offset, SEEK_SET);
-    //printf("[TRACE] Reading string table\n");
-    fflush(stdout);
-    fread(strtab, 1, header.str_size, f);
-    //printf("[TRACE] String table read complete\n");
-    fflush(stdout);
-    
-    // Load sections into allocated regions
-    //printf("[TRACE] Loading %u sections starting at offset %u\n", header.nsections, header.sec_offset);
-    fflush(stdout);
-    fseek(f, header.sec_offset, SEEK_SET);
-    for (uint32_t i = 0; i < header.nsections; i++) {
-        //printf("[TRACE] Loading section %u/%u\n", i+1, header.nsections);
-        fflush(stdout);
-        s32x_section_t section;
-        if (fread(&section, sizeof(section), 1, f) != 1) {
-            fprintf(stderr, "Cannot read section %u\n", i);
-            free(strtab);
-            fclose(f);
-            return false;
-        }
-        
-        const char *name = (section.name_offset < header.str_size) ? 
-                           &strtab[section.name_offset] : "?";
-        
-        // Loading section
-        
-        // Load section data
-        if (section.size > 0 && section.offset > 0) {
-            long current_pos = ftell(f);
-            fseek(f, section.offset, SEEK_SET);
-            
-            // Read into temporary buffer first
-            uint8_t *temp = malloc(section.size);
-            if (!temp || fread(temp, 1, section.size, f) != section.size) {
-                fprintf(stderr, "Cannot read section '%s' data\n", name);
-                free(temp);
-                free(strtab);
-                fclose(f);
-                return false;
-            }
-            
-            // Write to memory through memory manager
-            if (mm_write(&cpu->mm, section.vaddr, temp, section.size) < 0) {
-                fprintf(stderr, "Cannot write section '%s' to memory\n", name);
-                free(temp);
-                free(strtab);
-                fclose(f);
-                return false;
-            }
-            
-            free(temp);
-            fseek(f, current_pos, SEEK_SET);
-        }
-        
-        // Zero-fill BSS sections and padding
-        if (section.mem_size > section.size) {
-            uint32_t zero_size = section.mem_size - section.size;
-            uint8_t *zeros = calloc(1, zero_size);
-            if (zeros) {
-                mm_write(&cpu->mm, section.vaddr + section.size, zeros, zero_size);
-                free(zeros);
-            }
-        }
-    }
-    
-    //printf("[TRACE] All sections loaded, freeing string table\n");
-    fflush(stdout);
-    free(strtab);
-    //printf("[TRACE] Closing file\n");
-    fflush(stdout);
-    fclose(f);
-    
-    // Finalize memory protection after loading
-    //printf("[TRACE] About to call mem_protect_regions\n");
-    fflush(stdout);
+
+    // Set W^X policy before protecting regions
+    cpu->mm.wxorx_enabled = result.has_wxorx;
+
     // Apply memory protection (code and rodata become read-only)
-    if (mm_protect_regions(&cpu->mm, header.code_limit, header.rodata_limit) < 0) {
+    if (mm_protect_regions(&cpu->mm, result.code_limit, result.rodata_limit) < 0) {
         fprintf(stderr, "Failed to set memory protection\n");
         return false;
     }
-    
+
     // Cache the code region for fast instruction fetch
-    cpu->code_region = NULL;
-    for (memory_region_t *r = cpu->mm.regions; r; r = r->next) {
-        if (r->vaddr_start == 0) {
-            cpu->code_region = r;
-            break;
+    cpu->code_region = mm_find_region(&cpu->mm, result.entry_point);
+    if (!cpu->code_region) {
+        for (memory_region_t *r = cpu->mm.regions; r; r = r->next) {
+            if (r->vaddr_start == 0) {
+                cpu->code_region = r;
+                break;
+            }
         }
     }
-    
+
     // Set up CPU state
-    //printf("[TRACE] mem_protect_regions completed, setting up CPU state\n");
-    fflush(stdout);
-    cpu->pc = header.entry;
-    cpu->regs[REG_SP] = header.stack_base;
-    cpu->code_limit = header.code_limit;
-    cpu->rodata_limit = header.rodata_limit;
-    cpu->data_limit = header.data_limit;
-    cpu->wxorx_enabled = cpu->mm.wxorx_enabled;  // Kept for compatibility
-    
-    // Check header flag for MMIO configuration
-    if (header.flags & S32X_FLAG_MMIO) {
+    cpu->pc = result.entry_point;
+    if (cpu->pc >= result.code_limit) {
+        fprintf(stderr, "Invalid entry point 0x%08X outside code segment [0, 0x%08X)\n",
+                cpu->pc, result.code_limit);
+        return false;
+    }
+    cpu->regs[REG_SP] = result.stack_base;
+    cpu->code_limit = result.code_limit;
+    cpu->rodata_limit = result.rodata_limit;
+    cpu->data_limit = result.data_limit;
+    cpu->wxorx_enabled = result.has_wxorx;
+
+    if (result.has_mmio) {
         cpu->mmio.enabled = true;
-        cpu->mmio.base = header.mmio_base;
-        // Initialize MMIO immediately since we know it's needed
+        cpu->mmio.base = result.mmio_base;
         cpu_init_mmio(cpu);
     }
-    
-    // Executable loaded successfully
-    
-    //printf("[TRACE] About to call mem_print_map\n");
-    fflush(stdout);
-    // Memory map configured
-    //printf("[TRACE] cpu_load_binary completed successfully\n");
-    fflush(stdout);
-    
+
     return true;
 }
 
 // Memory access functions using memory manager
 static uint32_t cpu_load(cpu_state_t *cpu, uint32_t addr, int size) {
-    fflush(stdout);
     uint32_t value = 0;
     
     // Check if this is MMIO access (only if MMIO is configured)
     if (cpu->mmio.base != 0 && addr >= cpu->mmio.base && addr < cpu->mmio.base + 0x10000) {
+        if (!cpu->mmio.enabled || !cpu->mmio.initialized) {
+            fprintf(stderr, "MMIO fault: read at 0x%08X with MMIO disabled\n", addr);
+            cpu->halted = true;
+            return 0;
+        }
 
-        if (cpu->mmio.initialized) {
-            if (size == 4) {
-                value = mmio_ring_read(cpu->mmio.state, addr, size);
-            } else {
-                // For byte/halfword MMIO reads, read word and extract
-                uint32_t word_addr = addr & ~3;
-                uint32_t word = mmio_ring_read(cpu->mmio.state, word_addr, 4);
-                int shift = (addr & 3) * 8;
-                if (size == 1) {
-                    value = (word >> shift) & 0xFF;
-                } else if (size == 2) {
-                    value = (word >> shift) & 0xFFFF;
-                }
+        if (size == 4) {
+            value = mmio_ring_read(cpu->mmio.state, addr, size);
+        } else {
+            // For byte/halfword MMIO reads, read word and extract
+            uint32_t word_addr = addr & ~3;
+            uint32_t word = mmio_ring_read(cpu->mmio.state, word_addr, 4);
+            int shift = (addr & 3) * 8;
+            if (size == 1) {
+                value = (word >> shift) & 0xFF;
+            } else if (size == 2) {
+                value = (word >> shift) & 0xFFFF;
             }
         }
         return value;
@@ -409,24 +305,27 @@ static uint32_t cpu_load(cpu_state_t *cpu, uint32_t addr, int size) {
 static void cpu_store(cpu_state_t *cpu, uint32_t addr, uint32_t value, int size) {
     // Check if this is MMIO access (only if MMIO is configured)
     if (cpu->mmio.base != 0 && addr >= cpu->mmio.base && addr < cpu->mmio.base + 0x10000) {
+        if (!cpu->mmio.enabled || !cpu->mmio.initialized) {
+            fprintf(stderr, "MMIO fault: write at 0x%08X with MMIO disabled\n", addr);
+            cpu->halted = true;
+            return;
+        }
 
-        if (cpu->mmio.initialized) {
-            if (size == 4) {
-                mmio_ring_write(cpu->mmio.state, NULL, addr, value, size);
-            } else {
-                // For byte/halfword MMIO writes, do read-modify-write
-                uint32_t word_addr = addr & ~3;
-                uint32_t word = mmio_ring_read(cpu->mmio.state, word_addr, 4);
-                int shift = (addr & 3) * 8;
-                
-                if (size == 1) {
-                    word = (word & ~(0xFF << shift)) | ((value & 0xFF) << shift);
-                } else if (size == 2) {
-                    word = (word & ~(0xFFFF << shift)) | ((value & 0xFFFF) << shift);
-                }
-                
-                mmio_ring_write(cpu->mmio.state, NULL, word_addr, word, 4);
+        if (size == 4) {
+            mmio_ring_write(cpu->mmio.state, NULL, addr, value, size);
+        } else {
+            // For byte/halfword MMIO writes, do read-modify-write
+            uint32_t word_addr = addr & ~3;
+            uint32_t word = mmio_ring_read(cpu->mmio.state, word_addr, 4);
+            int shift = (addr & 3) * 8;
+            
+            if (size == 1) {
+                word = (word & ~(0xFF << shift)) | ((value & 0xFF) << shift);
+            } else if (size == 2) {
+                word = (word & ~(0xFFFF << shift)) | ((value & 0xFFFF) << shift);
             }
+            
+            mmio_ring_write(cpu->mmio.state, NULL, word_addr, word, 4);
         }
         return;
     }
@@ -460,9 +359,12 @@ static uint32_t cpu_fetch(cpu_state_t *cpu, uint32_t addr) {
     }
     
     // Fast path: use cached code region pointer
-    if (cpu->code_region && addr < cpu->code_region->vaddr_end) {
+    if (cpu->code_region &&
+        addr >= cpu->code_region->vaddr_start &&
+        addr + 4 <= cpu->code_region->vaddr_end) {
         uint32_t inst;
-        memcpy(&inst, (uint8_t*)cpu->code_region->host_addr + addr, 4);
+        uint32_t offset = addr - cpu->code_region->vaddr_start;
+        memcpy(&inst, (uint8_t*)cpu->code_region->host_addr + offset, 4);
         return inst;
     }
     
@@ -783,11 +685,7 @@ void cpu_step(cpu_state_t *cpu) {
 }
 
 void cpu_run(cpu_state_t *cpu) {
-    //printf("[TRACE] cpu_run: ENTER, halted=%d\n", cpu->halted);
-    fflush(stdout);
     while (!cpu->halted) {
-        //printf("[TRACE] cpu_run: loop iteration\n");
-        fflush(stdout);
         if (cpu->debug.step_mode) {
             cpu_step(cpu);
             printf("Press Enter to continue, 'r' to run, 'q' to quit: ");
@@ -907,6 +805,7 @@ int main(int argc, char *argv[]) {
         printf("Performance: %.2f MIPS\n", mips);
     }
     
+    int exit_code = cpu.regs[1];
     cpu_destroy(&cpu);
-    return 0;
+    return exit_code;
 }

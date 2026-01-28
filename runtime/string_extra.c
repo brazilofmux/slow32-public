@@ -183,3 +183,17 @@ int strncasecmp(const char *s1, const char *s2, size_t n) {
     
     return *s1 - *s2;
 }
+
+// Search for byte in memory (reverse)
+void *memrchr(const void *s, int c, size_t n) {
+    const unsigned char *p = (const unsigned char *)s + n;
+    unsigned char ch = (unsigned char)c;
+    
+    while (n--) {
+        if (*--p == ch) {
+            return (void *)p;
+        }
+    }
+    
+    return NULL;
+}

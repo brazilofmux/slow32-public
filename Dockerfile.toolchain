@@ -88,8 +88,7 @@ RUN mkdir -p /opt/slow32/bin /opt/slow32/lib /opt/slow32/include
 RUN cp tools/assembler/slow32asm /opt/slow32/bin/ && \
     cp tools/linker/s32-ld /opt/slow32/bin/ && \
     cp tools/utilities/s32-ar /opt/slow32/bin/ && \
-    cp tools/utilities/s32-objdump /opt/slow32/bin/ && \
-    cp tools/utilities/s32-exedump /opt/slow32/bin/ && \
+    cp tools/utilities/slow32dump /opt/slow32/bin/ && \
     cp tools/utilities/slow32dis /opt/slow32/bin/
 
 # Install runtime libraries and headers
@@ -135,9 +134,8 @@ slow32asm "${BASE}.s" "${BASE}.s32o" || exit 1\n\
 s32-ld -o "$OUTPUT" \\\n\
     ${SLOW32_LIB}/crt0.s32o \\\n\
     "${BASE}.s32o" \\\n\
-    ${SLOW32_LIB}/libs32.s32a \\\n\
-    ${SLOW32_LIB}/libc.s32a \\\n\
-    ${SLOW32_LIB}/builtins.s32o || exit 1\n\
+    ${SLOW32_LIB}/libc_debug.s32a \\\n\
+    ${SLOW32_LIB}/libs32.s32a || exit 1\n\
 \n\
 echo "Successfully created $OUTPUT"\n' > /opt/slow32/bin/s32cc && chmod +x /opt/slow32/bin/s32cc
 
@@ -170,9 +168,8 @@ slow32asm "${BASE}.s" "${BASE}.s32o" || exit 1\n\
 s32-ld -o "$OUTPUT" \\\n\
     ${SLOW32_LIB}/crt0.s32o \\\n\
     "${BASE}.s32o" \\\n\
-    ${SLOW32_LIB}/libs32.s32a \\\n\
-    ${SLOW32_LIB}/libc.s32a \\\n\
-    ${SLOW32_LIB}/builtins.s32o || exit 1\n\
+    ${SLOW32_LIB}/libc_debug.s32a \\\n\
+    ${SLOW32_LIB}/libs32.s32a || exit 1\n\
 \n\
 echo "Successfully created $OUTPUT"\n' > /opt/slow32/bin/s32c++ && chmod +x /opt/slow32/bin/s32c++
 

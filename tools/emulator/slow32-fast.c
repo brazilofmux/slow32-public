@@ -26,6 +26,7 @@
 #define S32_MMIO_WINDOW_SIZE \
     (S32_MMIO_DATA_BUFFER_OFFSET + S32_MMIO_DATA_CAPACITY)
 #define S32_MMIO_REGION_SIZE 0x00010000u
+#define UNUSED(x) (void)(x)
 
 // Forward declarations
 typedef struct fast_cpu_state fast_cpu_state_t;
@@ -73,8 +74,6 @@ struct fast_cpu_state {
     uint8_t region_cache_next;
 };
 
-// Forward declaration for adapter function
-static void cpu_halt_fast(fast_cpu_state_t *cpu);
 
 // MMIO initialization
 static void cpu_init_mmio(fast_cpu_state_t *cpu) {
@@ -154,15 +153,19 @@ static void mmio_write_fast(fast_cpu_state_t *cpu, uint32_t addr, uint32_t value
     mmio_ring_write(cpu->mmio.state, NULL, addr, value, size);
 }
 
-// Helper to halt the fast CPU
-static void cpu_halt_fast(fast_cpu_state_t *cpu) {
-    cpu->halted = true;
+// Write callback for s32x loader
+static int mm_write_callback(void *user_data, uint32_t addr, const void *data, uint32_t size) {
+    fast_cpu_state_t *cpu = (fast_cpu_state_t *)user_data;
+    return mm_write(&cpu->mm, addr, data, size);
 }
+
 
 static inline bool aligned(uint32_t addr, uint32_t size) {
 #if S32_TRAP_ON_UNALIGNED
     return (addr & (size - 1)) == 0;
 #else
+    UNUSED(addr);
+    UNUSED(size);
     return true;
 #endif
 }
@@ -235,57 +238,70 @@ static inline bool is_mmio_addr(fast_cpu_state_t *cpu, uint32_t addr) {
 
 // Handler implementations
 static void op_add(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = cpu->regs[inst->rs1] + cpu->regs[inst->rs2];
 }
 
 static void op_sub(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = cpu->regs[inst->rs1] - cpu->regs[inst->rs2];
 }
 
 static void op_xor(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = cpu->regs[inst->rs1] ^ cpu->regs[inst->rs2];
 }
 
 static void op_or(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = cpu->regs[inst->rs1] | cpu->regs[inst->rs2];
 }
 
 static void op_and(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = cpu->regs[inst->rs1] & cpu->regs[inst->rs2];
 }
 
 static void op_sll(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = cpu->regs[inst->rs1] << (cpu->regs[inst->rs2] & 0x1F);
 }
 
 static void op_srl(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = cpu->regs[inst->rs1] >> (cpu->regs[inst->rs2] & 0x1F);
 }
 
 static void op_sra(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = (int32_t)cpu->regs[inst->rs1] >> (cpu->regs[inst->rs2] & 0x1F);
 }
 
 static void op_slt(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = ((int32_t)cpu->regs[inst->rs1] < (int32_t)cpu->regs[inst->rs2]) ? 1 : 0;
 }
 
 static void op_sltu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = (cpu->regs[inst->rs1] < cpu->regs[inst->rs2]) ? 1 : 0;
 }
 
 static void op_mul(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = cpu->regs[inst->rs1] * cpu->regs[inst->rs2];
     cpu->cycle_count += 31;
 }
 
 static void op_mulh(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     int64_t result = (int64_t)(int32_t)cpu->regs[inst->rs1] * (int64_t)(int32_t)cpu->regs[inst->rs2];
     cpu->regs[inst->rd] = result >> 32;
     cpu->cycle_count += 31;
 }
 
 static void op_div(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     uint32_t divisor = cpu->regs[inst->rs2];
     if (divisor != 0) {
         cpu->regs[inst->rd] = (int32_t)cpu->regs[inst->rs1] / (int32_t)divisor;
@@ -296,6 +312,7 @@ static void op_div(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
 }
 
 static void op_rem(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     uint32_t divisor = cpu->regs[inst->rs2];
     if (divisor != 0) {
         cpu->regs[inst->rd] = (int32_t)cpu->regs[inst->rs1] % (int32_t)divisor;
@@ -306,78 +323,97 @@ static void op_rem(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
 }
 
 static void op_seq(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = (cpu->regs[inst->rs1] == cpu->regs[inst->rs2]) ? 1 : 0;
 }
 
 static void op_sne(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = (cpu->regs[inst->rs1] != cpu->regs[inst->rs2]) ? 1 : 0;
 }
 
 static void op_sgt(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = ((int32_t)cpu->regs[inst->rs1] > (int32_t)cpu->regs[inst->rs2]) ? 1 : 0;
 }
 
 static void op_sgtu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = (cpu->regs[inst->rs1] > cpu->regs[inst->rs2]) ? 1 : 0;
 }
 
 static void op_sle(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = ((int32_t)cpu->regs[inst->rs1] <= (int32_t)cpu->regs[inst->rs2]) ? 1 : 0;
 }
 
 static void op_sleu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = (cpu->regs[inst->rs1] <= cpu->regs[inst->rs2]) ? 1 : 0;
 }
 
 static void op_sge(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = ((int32_t)cpu->regs[inst->rs1] >= (int32_t)cpu->regs[inst->rs2]) ? 1 : 0;
 }
 
 static void op_sgeu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = (cpu->regs[inst->rs1] >= cpu->regs[inst->rs2]) ? 1 : 0;
 }
 
 static void op_addi(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = cpu->regs[inst->rs1] + inst->imm;
 }
 
 static void op_ori(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = cpu->regs[inst->rs1] | inst->imm;
 }
 
 static void op_andi(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = cpu->regs[inst->rs1] & inst->imm;
 }
 
 static void op_xori(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = cpu->regs[inst->rs1] ^ inst->imm;
 }
 
 static void op_slli(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = cpu->regs[inst->rs1] << (inst->imm & 0x1F);
 }
 
 static void op_srli(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = cpu->regs[inst->rs1] >> (inst->imm & 0x1F);
 }
 
 static void op_srai(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = (int32_t)cpu->regs[inst->rs1] >> (inst->imm & 0x1F);
 }
 
 static void op_slti(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = ((int32_t)cpu->regs[inst->rs1] < inst->imm) ? 1 : 0;
 }
 
 static void op_sltiu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = (cpu->regs[inst->rs1] < (uint32_t)inst->imm) ? 1 : 0;
 }
 
 static void op_lui(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     cpu->regs[inst->rd] = inst->imm;
 }
 
 static void op_ldw(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     uint32_t addr = cpu->regs[inst->rs1] + inst->imm;
     if (!aligned(addr,4)) {
         fprintf(stderr, "Error: Unaligned read at 0x%08x\n", addr);
@@ -404,10 +440,20 @@ static void op_ldw(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
 }
 
 static void op_ldh(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     uint32_t addr = cpu->regs[inst->rs1] + inst->imm;
     if (!aligned(addr,2)) {
         fprintf(stderr, "Error: Unaligned read at 0x%08x\n", addr);
         cpu->halted = true;
+        return;
+    }
+    if (is_mmio_addr(cpu, addr)) {
+        uint32_t word_addr = addr & ~0x3u;
+        uint32_t word = mmio_ring_read(cpu->mmio.state, word_addr, 4);
+        int shift = (addr & 0x3u) * 8;
+        uint16_t value = (word >> shift) & 0xFFFFu;
+        cpu->regs[inst->rd] = (int32_t)(int16_t)value;
+        cpu->cycle_count += 3;
         return;
     }
     uint16_t value;
@@ -421,10 +467,20 @@ static void op_ldh(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
 }
 
 static void op_ldhu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     uint32_t addr = cpu->regs[inst->rs1] + inst->imm;
     if (!aligned(addr,2)) {
         fprintf(stderr, "Error: Unaligned read at 0x%08x\n", addr);
         cpu->halted = true;
+        return;
+    }
+    if (is_mmio_addr(cpu, addr)) {
+        uint32_t word_addr = addr & ~0x3u;
+        uint32_t word = mmio_ring_read(cpu->mmio.state, word_addr, 4);
+        int shift = (addr & 0x3u) * 8;
+        uint16_t value = (word >> shift) & 0xFFFFu;
+        cpu->regs[inst->rd] = value;
+        cpu->cycle_count += 3;
         return;
     }
     uint16_t value;
@@ -438,7 +494,17 @@ static void op_ldhu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_
 }
 
 static void op_ldb(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     uint32_t addr = cpu->regs[inst->rs1] + inst->imm;
+    if (is_mmio_addr(cpu, addr)) {
+        uint32_t word_addr = addr & ~0x3u;
+        uint32_t word = mmio_ring_read(cpu->mmio.state, word_addr, 4);
+        int shift = (addr & 0x3u) * 8;
+        uint8_t value = (word >> shift) & 0xFFu;
+        cpu->regs[inst->rd] = (int32_t)(int8_t)value;
+        cpu->cycle_count += 3;
+        return;
+    }
     uint8_t value;
     if (!mm_load_bytes_fast(cpu, addr, &value, sizeof(value))) {
         fprintf(stderr, "Error: Read out of bounds at 0x%08x\n", addr);
@@ -450,7 +516,17 @@ static void op_ldb(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
 }
 
 static void op_ldbu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     uint32_t addr = cpu->regs[inst->rs1] + inst->imm;
+    if (is_mmio_addr(cpu, addr)) {
+        uint32_t word_addr = addr & ~0x3u;
+        uint32_t word = mmio_ring_read(cpu->mmio.state, word_addr, 4);
+        int shift = (addr & 0x3u) * 8;
+        uint8_t value = (word >> shift) & 0xFFu;
+        cpu->regs[inst->rd] = value;
+        cpu->cycle_count += 3;
+        return;
+    }
     uint8_t value;
     if (!mm_load_bytes_fast(cpu, addr, &value, sizeof(value))) {
         fprintf(stderr, "Error: Read out of bounds at 0x%08x\n", addr);
@@ -462,6 +538,7 @@ static void op_ldbu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_
 }
 
 static void op_stw(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     uint32_t addr = cpu->regs[inst->rs1] + inst->imm;
     if (!aligned(addr,4)) {
         fprintf(stderr, "Error: Unaligned write at 0x%08x\n", addr);
@@ -487,10 +564,16 @@ static void op_stw(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
 }
 
 static void op_sth(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     uint32_t addr = cpu->regs[inst->rs1] + inst->imm;
     if (!aligned(addr,2)) {
         fprintf(stderr, "Error: Unaligned write at 0x%08x\n", addr);
         cpu->halted = true;
+        return;
+    }
+    if (is_mmio_addr(cpu, addr)) {
+        mmio_write_fast(cpu, addr, cpu->regs[inst->rs2] & 0xFFFFu, 2);
+        cpu->cycle_count += 3;
         return;
     }
     uint16_t value = cpu->regs[inst->rs2] & 0xFFFF;
@@ -503,6 +586,7 @@ static void op_sth(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
 }
 
 static void op_stb(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     uint32_t addr = cpu->regs[inst->rs1] + inst->imm;
     
     // Check for MMIO access
@@ -573,6 +657,8 @@ static void op_jalr(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_
 }
 
 static void op_halt(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    UNUSED(inst);
     // Process any final MMIO before halting
     if (cpu->mmio.initialized && cpu->mmio.state) {
         mmio_process_fast(cpu);
@@ -581,6 +667,7 @@ static void op_halt(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_
 }
 
 static void op_assert_eq(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     if (cpu->regs[inst->rs1] != cpu->regs[inst->rs2]) {
         fprintf(stderr, "ASSERT r%d==r%d failed @PC=%08x\n", 
                 inst->rs1, inst->rs2, cpu->pc);
@@ -590,14 +677,14 @@ static void op_assert_eq(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *
 }
 
 static void op_debug(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
     putchar(cpu->regs[inst->rs1] & 0xFF);
     fflush(stdout);
 }
 
 static void op_yield(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
-    // Add cycles
-    cpu->cycle_count += cpu->regs[inst->rs1];
-    
+    UNUSED(next_pc);
+    UNUSED(inst);
     // Process MMIO if enabled and initialized
     if (cpu->mmio.initialized && cpu->mmio.state) {
         mmio_process_fast(cpu);
@@ -605,10 +692,15 @@ static void op_yield(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next
 }
 
 static void op_nop(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    UNUSED(inst);
+    UNUSED(cpu);
     // Do nothing
 }
 
 static void op_invalid(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    UNUSED(inst);
     fprintf(stderr, "Invalid instruction at PC 0x%08x\n", cpu->pc);
     cpu->halted = true;
 }
@@ -818,123 +910,67 @@ int main(int argc, char **argv) {
     
     fast_cpu_state_t cpu = {0};
     mm_init(&cpu.mm, false);  // Initialize memory manager
-    
+
     int guest_argc = argc - 1;
     char **guest_argv = &argv[1];
 
-    // First pass: load header to get memory layout
-    FILE *file = fopen(argv[1], "rb");
-    if (!file) {
-        fprintf(stderr, "Error: Cannot open file %s\n", argv[1]);
+    // Read header to get memory layout before loading sections
+    s32x_load_result_t hdr = load_s32x_header(argv[1]);
+    if (!hdr.success) {
+        fprintf(stderr, "Error: %s\n", hdr.error_msg);
         return 1;
     }
-    
-    // Read the header first to get memory layout
-    s32x_header_t header;
-    if (fread(&header, sizeof(header), 1, file) != 1) {
-        fprintf(stderr, "Error: Cannot read header\n");
-        fclose(file);
-        return 1;
-    }
-    
-    if (header.magic != S32X_MAGIC) {
-        fprintf(stderr, "Error: Invalid magic number\n");
-        fclose(file);
-        return 1;
-    }
-    
+
     // Check header flag for MMIO configuration
-    if (header.flags & S32X_FLAG_MMIO) {
+    if (hdr.has_mmio) {
         cpu.mmio.enabled = true;
-        cpu.mmio.base = header.mmio_base;
+        cpu.mmio.base = hdr.mmio_base;
     }
-    
+
     // Set up memory regions based on header
-    uint32_t mmio_size = (header.flags & S32X_FLAG_MMIO) ? S32_MMIO_REGION_SIZE : 0u;
-    if (mm_setup_from_s32x(&cpu.mm, header.code_limit, header.rodata_limit,
-                          header.data_limit, header.stack_base, header.stack_end,
-                          header.mmio_base, mmio_size) != 0) {
+    uint32_t mmio_size = hdr.has_mmio ? S32_MMIO_REGION_SIZE : 0u;
+    if (mm_setup_from_s32x(&cpu.mm, hdr.code_limit, hdr.rodata_limit,
+                          hdr.data_limit, hdr.stack_base, hdr.stack_end,
+                          hdr.mmio_base, mmio_size) != 0) {
         fprintf(stderr, "Error: Failed to allocate memory regions\n");
-        fclose(file);
         mm_destroy(&cpu.mm);
         return 1;
     }
-    
-    fclose(file);
-    
-    // Now load the file using the loader
-    // We need to create a temporary flat buffer for the loader
-    // Use the full memory size from header for loader compatibility
-    uint32_t *temp_mem = calloc(1, header.mem_size);
-    if (!temp_mem) {
-        fprintf(stderr, "Failed to allocate temporary memory\n");
-        mm_destroy(&cpu.mm);
-        return 1;
-    }
-    
+
+    // Load sections directly into memory manager via write callback
     s32x_loader_config_t cfg = {
-        .memory = temp_mem,
-        .mem_size = header.mem_size,
-        .pc = &cpu.pc,
-        .sp = NULL,
-        .registers = cpu.regs,
+        .write_cb = mm_write_callback,
+        .user_data = &cpu,
+        .mem_size = hdr.mem_size,
         .verbose = 0
     };
-    
+
     s32x_load_result_t lr = load_s32x_file(argv[1], &cfg);
     if (!lr.success) {
         fprintf(stderr, "%s\n", lr.error_msg);
-        free(temp_mem);
         mm_destroy(&cpu.mm);
         return 1;
     }
-    
-    // Copy loaded sections to memory manager regions
-    // The loader has already placed everything at the correct virtual addresses in temp_mem
-    
-    // Code section: from 0 to code_limit
-    if (lr.code_limit > 0) {
-        if (mm_write(&cpu.mm, 0, temp_mem, lr.code_limit) != 0) {
-            fprintf(stderr, "Error: Failed to copy code section\n");
-            free(temp_mem);
-            mm_destroy(&cpu.mm);
-            return 1;
-        }
-    }
-    
-    // Read-only data section: from code_limit to rodata_limit
-    if (lr.rodata_limit > lr.code_limit) {
-        uint8_t *rodata_src = (uint8_t *)temp_mem + lr.code_limit;
-        if (mm_write(&cpu.mm, lr.code_limit, rodata_src, lr.rodata_limit - lr.code_limit) != 0) {
-            fprintf(stderr, "Error: Failed to copy rodata section\n");
-            free(temp_mem);
-            mm_destroy(&cpu.mm);
-            return 1;
-        }
-    }
-    
-    // Data section: from rodata_limit to data_limit
-    if (lr.data_limit > lr.rodata_limit) {
-        uint8_t *data_src = (uint8_t *)temp_mem + lr.rodata_limit;
-        if (mm_write(&cpu.mm, lr.rodata_limit, data_src, lr.data_limit - lr.rodata_limit) != 0) {
-            fprintf(stderr, "Error: Failed to copy data section\n");
-            free(temp_mem);
-            mm_destroy(&cpu.mm);
-            return 1;
-        }
-    }
-    
-    free(temp_mem);
-    
+
+    // Set W^X policy from loader result
+    cpu.mm.wxorx_enabled = lr.has_wxorx;
+
     // Protect regions after loading
     if (mm_protect_regions(&cpu.mm, lr.code_limit, lr.rodata_limit) != 0) {
         fprintf(stderr, "Error: Failed to protect memory regions\n");
         mm_destroy(&cpu.mm);
         return 1;
     }
-    
-    cpu.regs[REG_SP] = header.stack_base;
-    cpu.regs[REG_FP] = header.stack_base;
+
+    cpu.pc = lr.entry_point;
+    if (cpu.pc >= lr.code_limit) {
+        fprintf(stderr, "Invalid entry point 0x%08x outside code segment [0, 0x%08x)\n",
+                cpu.pc, lr.code_limit);
+        mm_destroy(&cpu.mm);
+        return 1;
+    }
+    cpu.regs[REG_SP] = lr.stack_base;
+    cpu.regs[REG_FP] = lr.stack_base;
     cpu.code_words = lr.code_limit / 4;   // predecode [0, code_limit)
     cpu.wx_enabled = lr.has_wxorx;
     cpu.code_limit = lr.code_limit;

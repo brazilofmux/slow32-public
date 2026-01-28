@@ -38,3 +38,24 @@ SLOW32Subtarget::SLOW32Subtarget(const Triple &TT, StringRef CPU, StringRef FS,
   if (CPUName != "slow32-minimal")
     HasStdExtM = true;
 }
+
+void SLOW32Subtarget::initLibcallLoweringInfo(LibcallLoweringInfo &Info) const {
+  // SLOW32 is not recognized in LLVM's RuntimeLibcalls infrastructure,
+  // so we need to explicitly set which libcall implementations to use.
+  // These map to the compiler-rt/libgcc style helpers that our crt ships.
+
+  // i64 division/remainder
+  Info.setLibcallImpl(RTLIB::SDIV_I64, RTLIB::impl___divdi3);
+  Info.setLibcallImpl(RTLIB::UDIV_I64, RTLIB::impl___udivdi3);
+  Info.setLibcallImpl(RTLIB::SREM_I64, RTLIB::impl___moddi3);
+  Info.setLibcallImpl(RTLIB::UREM_I64, RTLIB::impl___umoddi3);
+
+  // i32 unsigned division/remainder (SLOW32 only has signed DIV/REM instructions)
+  Info.setLibcallImpl(RTLIB::UDIV_I32, RTLIB::impl___udivsi3);
+  Info.setLibcallImpl(RTLIB::UREM_I32, RTLIB::impl___umodsi3);
+
+  // The runtime ships native C implementations of the basic memory helpers.
+  Info.setLibcallImpl(RTLIB::MEMCPY, RTLIB::impl_memcpy);
+  Info.setLibcallImpl(RTLIB::MEMMOVE, RTLIB::impl_memmove);
+  Info.setLibcallImpl(RTLIB::MEMSET, RTLIB::impl_memset);
+}

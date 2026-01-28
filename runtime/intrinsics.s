@@ -114,8 +114,8 @@ llvm.memset.p0.i32:
     # Phase 1: Align dest to 4-byte boundary (store 0-3 bytes)
 .memset_align_loop:
     # Check if count <= 0
-    sle r14, r13, r0
-    bne r14, r0, .memset_done  # if count <= 0, done
+    sgt r14, r13, r0           # r14 = (count > 0)
+    beq r14, r0, .memset_done  # if !(count > 0) i.e. count <= 0, done
     # Check if dest is 4-byte aligned: (dest & 3) == 0
     andi r14, r11, 3
     beq r14, r0, .memset_word_loop  # if aligned, go to word loop
@@ -128,7 +128,10 @@ llvm.memset.p0.i32:
     # Phase 2: Word-wise loop (dest is now aligned): while (count >= 4)
 .memset_word_loop:
     slti r14, r13, 4         # r14 = (count < 4)
-    bne r14, r0, .memset_tail_loop  # if count < 4, handle remaining bytes
+    beq r14, r0, .memset_word_body # if !(count < 4), i.e. count >= 4, do body
+    beq r0, r0, .memset_tail_loop  # else go to tail
+
+.memset_word_body:
     stw r11+0, r12
     addi r11, r11, 4
     addi r13, r13, -4
@@ -136,8 +139,8 @@ llvm.memset.p0.i32:
 
     # Phase 3: Byte-wise loop for remaining bytes (0-3 bytes)
 .memset_tail_loop:
-    sle r14, r13, r0           # r14 = (count <= 0)
-    bne r14, r0, .memset_done  # if count <= 0, done
+    sgt r14, r13, r0           # r14 = (count > 0)
+    beq r14, r0, .memset_done  # if !(count > 0), done
     stb r11+0, r15             # store one byte (use r15, not r12)
     addi r11, r11, 1
     addi r13, r13, -1

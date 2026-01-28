@@ -1,23 +1,10 @@
 // SLOW-32 Buffered stdio implementation
 // This file is shared between DEBUG and MMIO versions of libc
 
-#include <stddef.h>
-#include <stdint.h>
+#include <stdio.h>
 
 // Buffer size for stdio streams
 #define STDIO_BUFFER_SIZE 256
-
-// FILE structure
-typedef struct FILE {
-    char *buffer;       // Pointer to buffer
-    char *ptr;          // Current position in buffer
-    size_t count;       // Bytes currently in buffer
-    size_t size;        // Total buffer size
-    int mode;           // Buffering mode
-    int fd;             // File descriptor (0=stdin, 1=stdout, 2=stderr)
-    int flags;          // Status flags
-    void (*flush_fn)(struct FILE *);  // Function to flush buffer
-} FILE;
 
 // Buffering modes
 #define _IONBF 0  // No buffering

@@ -25,10 +25,10 @@ The SLOW-32 standard library is now largely functional, supporting both simple D
 - `fopen`, `fclose`, `fread`, `fwrite` - PASS (MMIO-based file I/O)
 - `stat`, `fstat` - PASS (MMIO-based file metadata)
 
-### Math Library (math.h) - PARTIAL ⚠️
-- Integer math functions created (math_int.c)
-- Floating point functions written but restricted due to soft-float overhead.
-- Native 32-bit `mul`, `div`, `rem` instructions used for performance.
+### Math Library (math.h) - INTEGER ONLY ⚠️
+- Integer math functions available in `math_int.c` (`iabs`, `imin`, `imax`, `isqrt`, `ipow`).
+- **NO FLOATING POINT SUPPORT**: The LLVM backend crashes on float/double operations. All standard FP functions in `math.h` are commented out.
+- Native 32-bit `mul`, `div`, `rem` instructions used for integer performance.
 
 ## Resolved LLVM Backend Issues
 

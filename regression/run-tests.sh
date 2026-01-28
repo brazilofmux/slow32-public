@@ -58,8 +58,13 @@ run_test() {
     TOTAL=$((TOTAL + 1))
     printf "%-30s " "$test_name:"
     
-    if [ ! -f "$test_path/test.c" ]; then
-        echo -e "${YELLOW}SKIP${NC} (no test.c)"
+    local asm_source=""
+    if [ -f "$test_path/test.c" ]; then
+        asm_source="c"
+    elif [ -f "$test_path/test.s" ]; then
+        asm_source="s"
+    else
+        echo -e "${YELLOW}SKIP${NC} (no test.c or test.s)"
         return
     fi
     
@@ -77,21 +82,25 @@ run_test() {
         mapfile -t run_args < "$test_path/args.txt"
     fi
 
-    # Compile: C -> LLVM IR (with our runtime includes)
-    if ! $CLANG -target slow32-unknown-none -S -emit-llvm -O0 \
-         -I"$SLOW32_BASE/runtime/include" \
-         "$test_path/test.c" -o "$result_path/test.ll" 2>"$result_path/compile.err"; then
-        echo -e "${RED}FAIL${NC} (compile)"
-        FAILED=$((FAILED + 1))
-        return
-    fi
-    
-    # Generate assembly: LLVM IR -> ASM
-    if ! $LLC -mtriple=slow32-unknown-none \
-         "$result_path/test.ll" -o "$result_path/test.s" 2>"$result_path/llc.err"; then
-        echo -e "${RED}FAIL${NC} (llc)"
-        FAILED=$((FAILED + 1))
-        return
+    if [ "$asm_source" = "c" ]; then
+        # Compile: C -> LLVM IR (with our runtime includes)
+        if ! $CLANG -target slow32-unknown-none -S -emit-llvm -O0 \
+             -I"$SLOW32_BASE/runtime/include" \
+             "$test_path/test.c" -o "$result_path/test.ll" 2>"$result_path/compile.err"; then
+            echo -e "${RED}FAIL${NC} (compile)"
+            FAILED=$((FAILED + 1))
+            return
+        fi
+        
+        # Generate assembly: LLVM IR -> ASM
+        if ! $LLC -mtriple=slow32-unknown-none \
+             "$result_path/test.ll" -o "$result_path/test.s" 2>"$result_path/llc.err"; then
+            echo -e "${RED}FAIL${NC} (llc)"
+            FAILED=$((FAILED + 1))
+            return
+        fi
+    else
+        cp "$test_path/test.s" "$result_path/test.s"
     fi
     
     # Assemble: ASM -> OBJ
@@ -119,9 +128,39 @@ run_test() {
         return
     fi
     
-    # Run with timeout
-    if timeout $TIMEOUT $EMULATOR "$result_path/test.s32x" "${run_args[@]}" \
-         >"$result_path/output_full.txt" 2>&1; then
+    # Run with timeout.
+    # The emulator propagates the guest exit code. We treat non-zero exits
+    # as failures unless an expected_exit.txt is provided.
+    # timeout returns 124 on timeout, 128+N on signal.
+    local emu_exit=0
+    timeout $TIMEOUT $EMULATOR "$result_path/test.s32x" "${run_args[@]}" \
+         >"$result_path/output_full.txt" 2>&1 || emu_exit=$?
+
+    if [ $emu_exit -ge 124 ]; then
+        echo -e "${RED}FAIL${NC} (timeout/crash, exit=$emu_exit)"
+        FAILED=$((FAILED + 1))
+    else
+        # Validate exit code if needed
+        local expected_exit_file="$test_path/expected_exit.txt"
+        if [ -f "$expected_exit_file" ]; then
+            local expected_exit
+            expected_exit=$(tr -d ' \t\n' < "$expected_exit_file")
+            if [ -z "$expected_exit" ]; then
+                expected_exit=0
+            fi
+            if [ "$emu_exit" != "$expected_exit" ]; then
+                echo -e "${RED}FAIL${NC} (exit=$emu_exit, expected=$expected_exit)"
+                FAILED=$((FAILED + 1))
+                return
+            fi
+        else
+            if [ "$emu_exit" != "0" ]; then
+                echo -e "${RED}FAIL${NC} (exit=$emu_exit)"
+                FAILED=$((FAILED + 1))
+                return
+            fi
+        fi
+
         # Extract guest program output between "Starting execution" and the runtime summary
         awk '
             /^Starting execution/ { capture=1; next }
@@ -129,13 +168,13 @@ run_test() {
             /^Program halted\./ { capture=0 }
             capture { print }
         ' "$result_path/output_full.txt" > "$result_path/output.txt"
-        
+
         # Check expected output (strip trailing whitespace/newlines for comparison)
         if [ -f "$test_path/expected.txt" ]; then
             # Strip trailing whitespace and newlines for comparison
             tr -d '\n' < "$result_path/output.txt" > "$result_path/output_stripped.txt"
             tr -d '\n' < "$test_path/expected.txt" > "$result_path/expected_stripped.txt"
-            
+
             if diff -q "$result_path/expected_stripped.txt" "$result_path/output_stripped.txt" >/dev/null 2>&1; then
                 echo -e "${GREEN}PASS${NC}"
                 PASSED=$((PASSED + 1))
@@ -151,9 +190,6 @@ run_test() {
             echo -e "${GREEN}PASS${NC} (no crash)"
             PASSED=$((PASSED + 1))
         fi
-    else
-        echo -e "${RED}FAIL${NC} (timeout/crash)"
-        FAILED=$((FAILED + 1))
     fi
 }
 

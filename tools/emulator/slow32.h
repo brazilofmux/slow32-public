@@ -17,14 +17,6 @@
 #define REG_FP   30
 #define REG_LR   31
 
-#define MMIO_BASE     0x10000000
-#define REQ_HEAD      (MMIO_BASE + 0x0000)
-#define REQ_TAIL      (MMIO_BASE + 0x0004)
-#define REQ_RING      (MMIO_BASE + 0x1000)
-#define RESP_HEAD     (MMIO_BASE + 0x2000)
-#define RESP_TAIL     (MMIO_BASE + 0x2004)
-#define RESP_RING     (MMIO_BASE + 0x3000)
-
 typedef enum {
     OP_ADD    = 0x00,
     OP_SUB    = 0x01,

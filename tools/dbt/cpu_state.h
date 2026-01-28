@@ -76,7 +76,9 @@ typedef struct {
     // Offset: 0xE0
     uint32_t mmio_base;
     bool mmio_enabled;
-    uint8_t _pad2[3];
+    bool wxorx_enabled;
+    bool align_traps_enabled;
+    uint8_t _pad2[1];
 
     // Stage 3: Inline indirect branch lookup
     // Offset: 0xE8
@@ -105,6 +107,13 @@ typedef struct {
 #define CPU_EXIT_INFO_OFFSET    offsetof(dbt_cpu_state_t, exit_info)
 #define CPU_HALTED_OFFSET       offsetof(dbt_cpu_state_t, halted)
 #define CPU_MEM_BASE_OFFSET     offsetof(dbt_cpu_state_t, mem_base)
+#define CPU_MEM_SIZE_OFFSET     offsetof(dbt_cpu_state_t, mem_size)
+#define CPU_CODE_LIMIT_OFFSET   offsetof(dbt_cpu_state_t, code_limit)
+#define CPU_RODATA_LIMIT_OFFSET offsetof(dbt_cpu_state_t, rodata_limit)
+#define CPU_MMIO_BASE_OFFSET    offsetof(dbt_cpu_state_t, mmio_base)
+#define CPU_MMIO_ENABLED_OFFSET offsetof(dbt_cpu_state_t, mmio_enabled)
+#define CPU_WXORX_ENABLED_OFFSET offsetof(dbt_cpu_state_t, wxorx_enabled)
+#define CPU_ALIGN_TRAPS_OFFSET  offsetof(dbt_cpu_state_t, align_traps_enabled)
 #define CPU_LOOKUP_TABLE_OFFSET offsetof(dbt_cpu_state_t, lookup_table)
 #define CPU_LOOKUP_MASK_OFFSET  offsetof(dbt_cpu_state_t, lookup_mask)
 #define CPU_RAS_STACK_OFFSET    offsetof(dbt_cpu_state_t, ras_stack)

@@ -1,22 +1,10 @@
 // SLOW-32 MMIO ring buffer flush implementation
 // This is the backend for the MMIO version of libc
 
-#include <stddef.h>
+#include <stdio.h>
 #include <stdint.h>
 
 #include "mmio_ring.h"
-
-// FILE structure (must match stdio_buffered.c)
-typedef struct FILE {
-    char *buffer;
-    char *ptr;
-    size_t count;
-    size_t size;
-    int mode;
-    int fd;
-    int flags;
-    void (*flush_fn)(struct FILE *);
-} FILE;
 
 // Helper to write a descriptor to the request ring
 static void write_descriptor(volatile uint32_t *ring_base, uint32_t index, 

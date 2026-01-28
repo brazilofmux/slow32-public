@@ -13,6 +13,7 @@
 #include "SLOW32ISelLowering.h"
 #include "SLOW32InstrInfo.h"
 #include "SLOW32RegisterInfo.h"
+#include "llvm/CodeGen/LibcallLoweringInfo.h"
 #include "llvm/CodeGen/SelectionDAGTargetInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include "llvm/IR/DataLayout.h"
@@ -87,6 +88,9 @@ public:
   bool shouldOptimizeForSize() const { return OptimizeForSize; }
   bool shouldPreferImmediate() const { return PreferImmediate; }
   bool shouldFuseShiftMask() const { return FuseShiftMask; }
+
+  // Override to configure libcall implementations for SLOW32
+  void initLibcallLoweringInfo(LibcallLoweringInfo &Info) const override;
 };
 } // end namespace llvm
 

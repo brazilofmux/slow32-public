@@ -1,17 +1,12 @@
 // Minimal stdio functions needed for basic operation
 
-#include <stddef.h>
+#include <stdio.h>
 
 extern int putchar(int c);
 
-// Minimal FILE type for debug runtime
-typedef struct {
-    int fd;
-} FILE;
-
-// Static stream objects
-static FILE _stdout = {1};
-static FILE _stderr = {2};
+// Static stream objects (minimal: only fd matters for debug runtime)
+static FILE _stdout = { .fd = 1 };
+static FILE _stderr = { .fd = 2 };
 
 FILE *stdout = &_stdout;
 FILE *stderr = &_stderr;

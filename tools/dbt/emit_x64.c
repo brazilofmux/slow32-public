@@ -143,6 +143,24 @@ void emit_mov_r32_m32(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, int32_t di
     emit_trace_inst(ctx, "mov_r32_m32", start_off, ctx->offset);
 }
 
+// movzx r32, byte [base + disp32]  (0F B6 /r)
+void emit_movzx_r32_m8(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, int32_t disp) {
+    size_t start_off = ctx->offset;
+    uint8_t rex = rex_for_regs(dst, base, false);
+    emit_rex_if_needed(ctx, rex);
+    emit_byte(ctx, 0x0F);
+    emit_byte(ctx, 0xB6);
+
+    if ((base & 7) == RSP) {
+        emit_byte(ctx, MODRM(MOD_DISP32, dst, RSP));
+        emit_byte(ctx, SIB(0, RSP, RSP));
+    } else {
+        emit_byte(ctx, MODRM(MOD_DISP32, dst, base));
+    }
+    emit_dword(ctx, (uint32_t)disp);
+    emit_trace_inst(ctx, "movzx_r32_m8", start_off, ctx->offset);
+}
+
 // mov [base + disp32], r32  (89 /r)
 void emit_mov_m32_r32(emit_ctx_t *ctx, x64_reg_t base, int32_t disp, x64_reg_t src) {
     size_t start_off = ctx->offset;

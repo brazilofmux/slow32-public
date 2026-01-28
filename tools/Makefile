@@ -1,14 +1,11 @@
 CC = gcc
 CFLAGS = -O2 -Wall -I../common
-TARGETS = s32-objdump s32-exedump
+TARGETS = slow32dump
 
 all: $(TARGETS)
 
-s32-objdump: s32-objdump.c ../common/s32_formats.h
-	$(CC) $(CFLAGS) s32-objdump.c -o s32-objdump
-
-s32-exedump: s32-exedump.c ../common/s32_formats.h
-	$(CC) $(CFLAGS) s32-exedump.c -o s32-exedump
+slow32dump: utilities/slow32dump.c ../common/s32_formats.h
+	$(CC) $(CFLAGS) utilities/slow32dump.c -o utilities/slow32dump
 
 clean:
 	rm -f $(TARGETS)

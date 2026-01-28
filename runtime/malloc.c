@@ -2,57 +2,183 @@
 #include <stddef.h>
 #include <string.h>
 
-// These symbols are provided by the linker
+// Linker symbols for heap boundaries
 extern char __heap_start[];
 extern char __heap_end[];
 
-#define ALIGN_SIZE 8
+#define ALIGNMENT 8
+#define ALIGN(size) (((size) + (ALIGNMENT - 1)) & ~(ALIGNMENT - 1))
 
-typedef struct block {
+// Block header:
+// - size: Total size of the block. LSB is allocated flag.
+typedef struct {
+    size_t size; 
+} header_t;
+
+// Free block structure overlay
+// Only valid when block is free.
+// Layout: [Header (4)] [Next (4)] [Prev (4)] ... [Footer (4)]
+typedef struct free_node {
+    header_t header;
+    struct free_node *next;
+    struct free_node *prev;
+} free_node_t;
+
+// Block footer:
+// - size: Duplicates the size from the header to allow backward traversal.
+typedef struct {
     size_t size;
-    struct block *next;
-    int free;
-    int _pad;  // Pad to 16 bytes (multiple of ALIGN_SIZE) for aligned allocations
-} block_t;
+} footer_t;
 
-static block_t *heap_head = NULL;
+// Flags
+#define ALLOCATED_MASK 0x1
+#define SIZE_MASK (~(size_t)0x7)
 
-static void init_heap(void) {
-    heap_head = (block_t *)__heap_start;
-    size_t heap_size = (size_t)(__heap_end - __heap_start);
-    heap_head->size = heap_size - sizeof(block_t);
-    heap_head->next = NULL;
-    heap_head->free = 1;
+// Bins
+// Sizes: 16, 24, 32, 40, 48, 56, 64, >64
+#define NUM_BINS 8
+#define MAX_SMALL_BIN_SIZE 64
+
+// Sentinel nodes for the bins
+static free_node_t bins[NUM_BINS];
+static int heap_initialized = 0;
+
+static size_t get_size(header_t *block) {
+    return block->size & SIZE_MASK;
 }
 
-static size_t align_size(size_t size) {
-    return (size + ALIGN_SIZE - 1) & ~(ALIGN_SIZE - 1);
+static int is_allocated(header_t *block) {
+    return block->size & ALLOCATED_MASK;
+}
+
+static void set_footer(header_t *block, size_t size) {
+    footer_t *footer = (footer_t *)((char *)block + size - sizeof(footer_t));
+    footer->size = size;
+}
+
+static int get_bin_index(size_t size) {
+    if (size > MAX_SMALL_BIN_SIZE) return NUM_BINS - 1;
+    // sizes start at 16, step 8
+    // 16 -> 0
+    // 24 -> 1
+    // ...
+    // 64 -> 6
+    return (size - 16) / 8;
+}
+
+// Convert a block header pointer to a free_node pointer
+static free_node_t *to_free_node(header_t *block) {
+    return (free_node_t *)block;
+}
+
+// Convert a free_node pointer back to header pointer
+static header_t *to_header(free_node_t *node) {
+    return (header_t *)node;
+}
+
+static void add_to_free_list(header_t *block) {
+    size_t size = get_size(block);
+    int idx = get_bin_index(size);
+    free_node_t *node = to_free_node(block);
+    free_node_t *sentinel = &bins[idx];
+
+    // Insert at head (LIFO)
+    node->next = sentinel->next;
+    node->prev = sentinel;
+    sentinel->next->prev = node;
+    sentinel->next = node;
+}
+
+static void remove_from_free_list(header_t *block) {
+    free_node_t *node = to_free_node(block);
+    
+    // Unlink
+    node->prev->next = node->next;
+    node->next->prev = node->prev;
+    
+    // Safety: clear pointers
+    node->next = NULL;
+    node->prev = NULL;
+}
+
+static void init_heap(void) {
+    if (heap_initialized) return;
+
+    // Initialize bins as circular lists
+    for (int i = 0; i < NUM_BINS; i++) {
+        bins[i].next = &bins[i];
+        bins[i].prev = &bins[i];
+        bins[i].header.size = 0; // Invalid size
+    }
+    
+    size_t start_addr = (size_t)__heap_start;
+    size_t aligned_start = ALIGN(start_addr);
+    
+    // Ensure we have space for at least min block
+    if (aligned_start + 16 > (size_t)__heap_end) return; 
+    
+    header_t *first_block = (header_t *)aligned_start;
+    size_t size = ((size_t)__heap_end - aligned_start) & SIZE_MASK;
+    
+    if (size < 16) return; // Too small
+
+    first_block->size = size; 
+    set_footer(first_block, size);
+    
+    add_to_free_list(first_block);
+    
+    heap_initialized = 1;
 }
 
 void *malloc(size_t size) {
     if (size == 0) return NULL;
+    if (!heap_initialized) init_heap();
     
-    if (!heap_head) init_heap();
+    size_t payload_size = ALIGN(size);
+    size_t required_size = sizeof(header_t) + payload_size + sizeof(footer_t);
+    if (required_size < 16) required_size = 16;
     
-    size = align_size(size);
-    block_t *current = heap_head;
+    int start_bin = get_bin_index(required_size);
     
-    while (current) {
-        if (current->free && current->size >= size) {
-            if (current->size > size + sizeof(block_t) + ALIGN_SIZE) {
-                block_t *new_block = (block_t *)((char *)current + sizeof(block_t) + size);
-                new_block->size = current->size - size - sizeof(block_t);
-                new_block->next = current->next;
-                new_block->free = 1;
+    // 1. Search exact bin (if small)
+    // 2. Search larger bins (Best Fit / First Fit)
+    // For simplicity: Search strictly up from start_bin
+    
+    for (int i = start_bin; i < NUM_BINS; i++) {
+        free_node_t *sentinel = &bins[i];
+        free_node_t *curr = sentinel->next;
+        
+        while (curr != sentinel) {
+            header_t *block = to_header(curr);
+            size_t curr_size = get_size(block);
+            
+            if (curr_size >= required_size) {
+                // Found a fit
+                // Split?
+                if (curr_size >= required_size + 16) {
+                    size_t remaining = curr_size - required_size;
+                    
+                    remove_from_free_list(block);
+                    
+                    block->size = required_size | ALLOCATED_MASK;
+                    set_footer(block, required_size);
+                    
+                    header_t *new_block = (header_t *)((char *)block + required_size);
+                    new_block->size = remaining;
+                    set_footer(new_block, remaining);
+                    
+                    add_to_free_list(new_block);
+                } else {
+                    // Take whole
+                    remove_from_free_list(block);
+                    block->size |= ALLOCATED_MASK;
+                }
                 
-                current->size = size;
-                current->next = new_block;
+                return (char *)block + sizeof(header_t);
             }
             
-            current->free = 0;
-            return (char *)current + sizeof(block_t);
+            curr = curr->next;
         }
-        current = current->next;
     }
     
     return NULL;
@@ -61,18 +187,41 @@ void *malloc(size_t size) {
 void free(void *ptr) {
     if (!ptr) return;
     
-    block_t *block = (block_t *)((char *)ptr - sizeof(block_t));
-    block->free = 1;
+    header_t *block = (header_t *)((char *)ptr - sizeof(header_t));
+    size_t size = get_size(block);
     
-    block_t *current = heap_head;
-    while (current) {
-        if (current->free && current->next && current->next->free) {
-            current->size += sizeof(block_t) + current->next->size;
-            current->next = current->next->next;
-        } else {
-            current = current->next;
+    block->size &= ~ALLOCATED_MASK;
+    
+    // Coalesce Next
+    header_t *next_block = (header_t *)((char *)block + size);
+    if ((char *)next_block < __heap_end) {
+         if (!is_allocated(next_block)) {
+             remove_from_free_list(next_block);
+             size += get_size(next_block);
+             block->size = size;
+             set_footer(block, size);
+         }
+    }
+    
+    // Coalesce Prev
+    if ((char *)block > __heap_start) {
+        footer_t *prev_footer = (footer_t *)((char *)block - sizeof(footer_t));
+        // Check alignment/validity heuristic
+        if ((size_t)prev_footer >= (size_t)__heap_start) {
+             size_t prev_size = prev_footer->size & SIZE_MASK;
+             if (prev_size > 0) {
+                 header_t *prev_block = (header_t *)((char *)block - prev_size);
+                 if (!is_allocated(prev_block)) {
+                     remove_from_free_list(prev_block);
+                     prev_block->size += size;
+                     set_footer(prev_block, prev_block->size);
+                     block = prev_block;
+                 }
+             }
         }
     }
+    
+    add_to_free_list(block);
 }
 
 void *calloc(size_t nmemb, size_t size) {
@@ -91,12 +240,42 @@ void *realloc(void *ptr, size_t size) {
         return NULL;
     }
     
-    block_t *block = (block_t *)((char *)ptr - sizeof(block_t));
-    if (block->size >= size) return ptr;
+    header_t *block = (header_t *)((char *)ptr - sizeof(header_t));
+    size_t current_size = get_size(block);
+    size_t payload_capacity = current_size - sizeof(header_t) - sizeof(footer_t);
+    
+    if (payload_capacity >= size) return ptr;
+    
+    size_t needed_total = sizeof(header_t) + ALIGN(size) + sizeof(footer_t);
+    header_t *next_block = (header_t *)((char *)block + current_size);
+    
+    if ((char *)next_block < __heap_end && !is_allocated(next_block)) {
+        size_t next_size = get_size(next_block);
+        if (current_size + next_size >= needed_total) {
+            remove_from_free_list(next_block);
+            
+            size_t new_total = current_size + next_size;
+            block->size = new_total | ALLOCATED_MASK;
+            set_footer(block, new_total);
+            
+             if (new_total >= needed_total + 16) {
+                 size_t remaining = new_total - needed_total;
+                 block->size = needed_total | ALLOCATED_MASK;
+                 set_footer(block, needed_total);
+                 
+                 header_t *split_block = (header_t *)((char *)block + needed_total);
+                 split_block->size = remaining;
+                 set_footer(split_block, remaining);
+                 add_to_free_list(split_block);
+             }
+             
+             return ptr;
+        }
+    }
     
     void *new_ptr = malloc(size);
     if (new_ptr) {
-        memcpy(new_ptr, ptr, block->size);
+        memcpy(new_ptr, ptr, payload_capacity); 
         free(ptr);
     }
     return new_ptr;

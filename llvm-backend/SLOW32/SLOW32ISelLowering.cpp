@@ -206,14 +206,18 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   setOperationAction(ISD::UREM, MVT::i64, Expand);
   
   // SLOW32 is not recognized in LLVM's RuntimeLibcalls infrastructure,
-  // so we need to explicitly set which libcall implementations to use for the
-  // division/rem library hooks we rely on.  These map to the
-  // compiler-rt/libgcc style helpers that our crt ships.
+  // so we need to explicitly set which libcall implementations to use.
+  // These must be set in BOTH places due to LLVM's transitional libcall API:
+  //   - Here via setLibcallImpl() for makeLibCall(RTLIB::Libcall) calls
+  //   - In SLOW32Subtarget::initLibcallLoweringInfo() for DAG.getLibcalls() calls
+
+  // i64 division/remainder
   setLibcallImpl(RTLIB::SDIV_I64, RTLIB::impl___divdi3);
   setLibcallImpl(RTLIB::UDIV_I64, RTLIB::impl___udivdi3);
   setLibcallImpl(RTLIB::SREM_I64, RTLIB::impl___moddi3);
   setLibcallImpl(RTLIB::UREM_I64, RTLIB::impl___umoddi3);
 
+  // i32 unsigned division/remainder (SLOW32 only has signed DIV/REM instructions)
   setLibcallImpl(RTLIB::UDIV_I32, RTLIB::impl___udivsi3);
   setLibcallImpl(RTLIB::UREM_I32, RTLIB::impl___umodsi3);
 

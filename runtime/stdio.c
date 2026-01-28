@@ -13,9 +13,9 @@
 
 #define STDIO_BUF_SIZE 4096  // 4KB read buffer
 
-static FILE _stdin = {0, FLAG_READ, 0, 0, NULL, 0, 0, 0};
-static FILE _stdout = {1, FLAG_WRITE, 0, 0, NULL, 0, 0, 0};
-static FILE _stderr = {2, FLAG_WRITE, 0, 0, NULL, 0, 0, 0};
+static FILE _stdin  = { .fd = 0, .flags = FLAG_READ };
+static FILE _stdout = { .fd = 1, .flags = FLAG_WRITE };
+static FILE _stderr = { .fd = 2, .flags = FLAG_WRITE };
 
 FILE *stdin = &_stdin;
 FILE *stdout = &_stdout;

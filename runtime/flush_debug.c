@@ -1,19 +1,7 @@
 // SLOW-32 DEBUG instruction flush implementation
 // This is the backend for the DEBUG version of libc
 
-#include <stddef.h>
-
-// FILE structure (must match stdio_buffered.c)
-typedef struct FILE {
-    char *buffer;
-    char *ptr;
-    size_t count;
-    size_t size;
-    int mode;
-    int fd;
-    int flags;
-    void (*flush_fn)(struct FILE *);
-} FILE;
+#include <stdio.h>
 
 // Flush buffer using DEBUG instruction
 void __flush_debug(FILE *stream) {

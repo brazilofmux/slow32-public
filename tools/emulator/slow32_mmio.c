@@ -241,6 +241,8 @@ int main(int argc, char *argv[]) {
         }
     }
     
+    int exit_code = cpu_ext.cpu.regs[REG_R1];
+
     // Cleanup
     if (cpu_ext.mmio_mem) {
         munmap(cpu_ext.mmio_mem, 0x10000);
@@ -249,7 +251,7 @@ int main(int argc, char *argv[]) {
     mmio_ring_clear_args(&cpu_ext.mmio);
     cpu_destroy(&cpu_ext.cpu);
     
-    return 0;
+    return exit_code;
 }
 
 // Include the rest of slow32.c implementation

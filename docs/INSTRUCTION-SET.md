@@ -143,25 +143,53 @@ Used for JAL. Immediates are encoded with a 21-bit signed offset (multiples of 2
 
 ## Pseudo-Instructions
 
+The SLOW-32 assembler supports several pseudo-instructions that expand into one or more native instructions. All immediate operands in pseudo-instructions (and native instructions) support complex constant expressions (e.g., `(10 * 4) + 5`).
+
 | Instruction | Expansion | Description |
 |------------|-----------|-------------|
-| li rd, imm | lui + ori | Load 32-bit immediate |
+| li rd, imm | addi or lui+ori | Load 32-bit immediate |
 | la rd, sym | lui + ori | Load address of symbol |
-| mv rd, rs  | addi rd, rs, 0 | Move register |
+| mv rd, rs  | add rd, rs, r0 | Move register |
 | not rd, rs | xori rd, rs, -1 | Bitwise NOT |
 | neg rd, rs | sub rd, r0, rs | Negate |
 | seqz rd, rs| seq rd, rs, r0 | Set if equal to zero |
 | snez rd, rs| sne rd, rs, r0 | Set if not equal to zero |
-| j imm      | jal r0, imm | Unconditional jump |
-| jal sym    | jal r31, sym | Jump and link (call) |
-| jr rs      | jalr r0, rs, 0 | Jump register |
+| j imm/lbl  | jal r0, imm | Unconditional jump |
+| jal lbl    | jal r31, lbl | Jump and link (call) shorthand |
 | ret        | jalr r0, lr, 0 | Return from function |
-| call sym   | jal lr, sym | Call function |
+| call lbl   | jal r31, lbl | Call function |
 | nop        | add r0, r0, r0 | No operation |
 | bgt rs1, rs2, imm | blt rs2, rs1, imm | Branch if greater than |
 | ble rs1, rs2, imm | bge rs2, rs1, imm | Branch if less or equal |
 | bgtu rs1, rs2, imm| bltu rs2, rs1, imm| Branch if greater than (U) |
 | bleu rs1, rs2, imm| bgeu rs2, rs1, imm| Branch if less or equal (U) |
+
+---
+
+## Assembler Directives
+
+The SLOW-32 assembler recognizes a small set of GNU-ish directives for section
+selection, data definition, and symbol control.
+
+| Directive | Description |
+|-----------|-------------|
+| .text / .code | Switch to code section |
+| .data | Switch to initialized data section |
+| .bss | Switch to BSS section |
+| .rodata | Switch to read-only data section |
+| .section <name> | Honors .rodata* and .init_array; others ignored |
+| .global / .globl <sym> | Mark symbol global |
+| .word <expr>[, ...] | Emit 32-bit words (supports symbol relocations) |
+| .half <expr>[, ...] | Emit 16-bit halfwords |
+| .byte <expr|string>[, ...] | Emit bytes or string literals |
+| .string / .asciz "..." | Emit NUL-terminated strings |
+| .ascii "..." | Emit non-terminated strings |
+| .zero / .space <n> | Emit n zero bytes |
+| .long <expr>[, ...] | Alias for .word |
+| .quad <expr>[, ...] | Emit 64-bit values (little-endian pair of words) |
+| .align <pow2> | Align to 2^pow2 boundary (default 2 = 4 bytes) |
+| .equ / .set <sym>, <expr> | Define absolute symbol constant |
+| .comm <sym>, <size>[, <align>] | Reserve common symbol in BSS |
 
 ---
 

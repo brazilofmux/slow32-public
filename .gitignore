@@ -5,14 +5,15 @@
 # Executables
 *.exe
 *.out
-emulator/slow32
-emulator/slow32-*
-!emulator/slow32-*.c
-assembler/slow32asm
-compiler/slow32-compile
-tools/s32-objdump
-tools/s32-exedump
-linker/s32-ld
+tools/emulator/slow32
+tools/emulator/slow32-fast
+tools/assembler/slow32asm
+tools/linker/s32-ld
+tools/utilities/s32-objdump
+tools/utilities/s32-exedump
+tools/utilities/s32-ar
+tools/utilities/slow32dis
+tools/dbt/slow32-dbt
 
 # Test files
 *.bin
@@ -25,11 +26,53 @@ test*.o
 verify*.s
 verify*.o
 
-# Assembly files (except in specific directories)
+# Assembly files (except hand-written ones in specific directories)
 /*.s
-!runtime/*.s
 !tests/*.s
 !examples/*.s
+
+# Generated assembly from C sources in runtime/
+# Hand-written .s files (intrinsics.s, crt0.s, etc.) are tracked;
+# generated ones (from .c -> .ll -> .s) are build artifacts.
+runtime/stdio.s
+runtime/string.s
+runtime/string_extra.s
+runtime/stdio_buffered.s
+runtime/flush_mmio.s
+runtime/flush_debug.s
+runtime/printf_enhanced.s
+runtime/convert.s
+runtime/convert_extra.s
+runtime/builtins.s
+runtime/malloc.s
+runtime/stdlib_utils.s
+runtime/stdlib_extra.s
+runtime/ctype.s
+runtime/stdio_minimal.s
+runtime/debug_char.s
+runtime/yield.s
+runtime/putchar.s
+runtime/mmio_request.s
+runtime/time_mmio.s
+runtime/stat_mmio.s
+runtime/stat_stub.s
+runtime/start.s
+runtime/args_mmio.s
+runtime/args_stub.s
+runtime/exit_mmio.s
+runtime/exit_debug.s
+runtime/envp_mmio.s
+runtime/envp_stub.s
+runtime/cxxabi.s
+runtime/time_util.s
+runtime/math_int.s
+runtime/fs_mmio.s
+runtime/fs_stub.s
+runtime/dirent_mmio.s
+runtime/dirent_stub.s
+
+# Temporary LLVM files
+*.ll.tmp
 
 # Generated C++ test artifacts
 examples/cpp/*.s
@@ -73,13 +116,7 @@ core
 *.core
 vgcore.*
 
-# Stuff
+# Misc
 feedback
-
-# TinyMUX
 stringutil.cpp
 stringutil.h
-
-# DBT build artifacts
-tools/dbt/slow32-dbt
-tools/dbt/*.o

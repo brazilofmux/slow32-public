@@ -18,7 +18,7 @@ make
 ~/llvm-project/build/bin/clang -target slow32-unknown-none -S -emit-llvm -O2 -Iruntime/include program.c -o program.ll
 ~/llvm-project/build/bin/llc -mtriple=slow32-unknown-none program.ll -o program.s
 ./tools/assembler/slow32asm program.s program.s32o
-./tools/linker/s32-ld -o program.s32x runtime/crt0.s32o program.s32o runtime/libs32.s32a runtime/libc.s32a
+./tools/linker/s32-ld -o program.s32x runtime/crt0.s32o program.s32o runtime/libc_debug.s32a runtime/libs32.s32a
 ./tools/emulator/slow32 program.s32x
 
 # Alternative: Standalone compiler (DEPRECATED - DO NOT USE)
@@ -41,7 +41,7 @@ make
 - No condition codes - comparisons return 0/1 in registers
 - W^X protection - code segment is execute-only (0x0-0xFFFFF)
 - Stack at 0x0FFFFFF0 growing down
-- DEBUG instruction outputs character (only I/O mechanism)
+- DEBUG instruction outputs character; MMIO ring buffers for full I/O (files, args, env)
 
 ## Working Features
 
@@ -64,8 +64,8 @@ make
 ✅ Native Clang target: `-target slow32-unknown-none` (note: single dash)  
 ✅ XORI instruction (opcode 0x1E) for XOR immediate operations
 ✅ LLVM backend updated for latest LLVM API (Sep 2025)
-✅ Regression tests: ALL 14/14 PASSING! (Fixed MMIO bug, stack args offset)
-✅ Runtime libraries built as archives: libs32.s32a (5.3KB), libc.s32a (14KB)
+✅ Regression tests: ALL 23/23 PASSING
+✅ Runtime libraries built as archives: libs32.s32a (6KB), libc_debug.s32a (44KB), libc_mmio.s32a (72KB)
 ✅ Optimization passes fixed - no more LLC hangs
 ✅ MMIO support: Emulators use MMIO base from executable header, linker provides __mmio_base symbol
 ✅ Fixed emulator MMIO bug: no longer treats address 0x0-0xFFFF as MMIO when mmio_base=0
@@ -81,9 +81,9 @@ make
 
 - **Always use the linker** - Never concatenate .s files!
 - **crt0.s32o must be explicitly linked first** - Contains _start at address 0 (not included in archives)
-- **Link order**: crt0.s32o, program.s32o, libs32.s32a, libc.s32a
+- **Link order**: crt0.s32o, program.s32o, libc_debug.s32a (or libc_mmio.s32a), libs32.s32a
 - **Use -O2** - Default optimization level, -O1 also works
-- **Archives available**: libs32.s32a (runtime intrinsics + 64-bit builtins), libc.s32a (standard C library)
+- **Archives available**: libs32.s32a (runtime intrinsics + 64-bit builtins), libc_debug.s32a (DEBUG I/O), libc_mmio.s32a (MMIO ring buffer I/O)
 - **MMIO support**: Use `--mmio SIZE` flag with linker (e.g., `--mmio 64K`), access via __mmio_base symbol
 
 ## Working C Examples
@@ -154,8 +154,8 @@ cd ~/slow-32/regression && ./run-tests.sh
 cd ~/slow-32/regression && ./run-tests.sh feature-arithmetic
 
 # Analyze binaries
-./tools/utilities/s32-objdump file.s32o   # Dump object file
-./tools/utilities/s32-exedump file.s32x   # Dump executable
+./tools/utilities/slow32dump file.s32o    # Dump object file
+./tools/utilities/slow32dump file.s32x    # Dump executable
 ./tools/utilities/slow32dis file.s32x [start] [end]  # Disassembler
 
 # Performance test

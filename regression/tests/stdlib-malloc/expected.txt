@@ -1,0 +1,11 @@
+Starting Malloc Test...
+Allocated p1
+Allocated p2
+Allocated p3
+Freeing p2
+Allocated p4
+PASS: Reused freed block
+Freed all. Allocating 500
+PASS: Coalesced
+PASS: calloc zeroed
+PASS: realloc preserved

@@ -79,6 +79,9 @@ void emit_mov_r64_imm64(emit_ctx_t *ctx, x64_reg_t dst, uint64_t imm);
 // mov r32, [base + disp32]
 void emit_mov_r32_m32(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, int32_t disp);
 
+// movzx r32, byte [base + disp32]
+void emit_movzx_r32_m8(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, int32_t disp);
+
 // mov [base + disp32], r32
 void emit_mov_m32_r32(emit_ctx_t *ctx, x64_reg_t base, int32_t disp, x64_reg_t src);
 

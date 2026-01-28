@@ -1,6 +1,13 @@
 #ifndef _MATH_H
 #define _MATH_H
 
+/* 
+ * NOTE: SLOW-32 does not currently support floating-point arithmetic.
+ * These macros are provided for compatibility, but the functions below
+ * are commented out as they are not implemented in the runtime and 
+ * the backend crashes on FP operations.
+ */
+
 #define M_E        2.7182818284590452354
 #define M_LOG2E    1.4426950408889634074
 #define M_LOG10E   0.43429448190325182765
@@ -15,6 +22,7 @@
 #define M_SQRT2    1.41421356237309504880
 #define M_SQRT1_2  0.70710678118654752440
 
+/* Floating point functions are not supported
 double fabs(double x);
 float fabsf(float x);
 
@@ -90,5 +98,6 @@ float modff(float x, float *iptr);
 int isnan(double x);
 int isinf(double x);
 int isfinite(double x);
+*/
 
 #endif

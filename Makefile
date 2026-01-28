@@ -17,9 +17,9 @@ CFLAGS := -target $(TARGET) -S -emit-llvm $(OPT) -Iruntime/include
 LIBC ?= debug
 LIBC_ARCHIVE := runtime/libc_$(LIBC).s32a
 
-.PHONY: all clean emulator assembler compiler runtime test tools cpp-test cpp-run dbt
+.PHONY: all clean emulator assembler runtime test tools cpp-test cpp-run dbt
 
-all: tools compiler runtime
+all: tools runtime
 
 tools: emulator assembler linker utilities dbt
 
@@ -77,7 +77,7 @@ clean:
 	$(MAKE) -C runtime clean
 	rm -rf tests/
 	rm -f *.o *.bin *.ll *.s *.s32o *.s32x
-	rm -f benchmark* assembler_reloc_patch.txt
+	rm -f benchmark_* assembler_reloc_patch.txt
 	find . -name "*.s32o" -o -name "*.s32x" | grep -v runtime | grep -v regression | xargs rm -f
 
 # C compilation pattern rules
@@ -114,7 +114,6 @@ help:
 	@echo "  all       - Build everything"
 	@echo "  emulator  - Build the CPU emulator"
 	@echo "  assembler - Build the assembler"
-	@echo "  compiler  - Build the LLVM compiler"
 	@echo "  dbt       - Build the dynamic binary translator"
 	@echo "  runtime   - Build runtime libraries"
 	@echo "  test      - Run basic tests"

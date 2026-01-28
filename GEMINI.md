@@ -34,7 +34,7 @@ The project relies on an external LLVM build (assumed at `~/llvm-project/build/b
     - `assembler/`: Custom two-pass assembler (`slow32asm`).
     - `linker/`: Custom linker (`s32-ld`).
     - `emulator/`: CPU emulators (`slow32` and `slow32-fast`).
-    - `utilities/`: Binary analysis tools (`s32-objdump`, `s32-exedump`).
+    - `utilities/`: Binary analysis tools (`slow32dump`, `slow32dis`).
 - **`runtime/`**: C runtime (`crt0`), standard library (`libc`), and intrinsics (`libs32`).
 - **`regression/`**: Comprehensive regression test suite.
 

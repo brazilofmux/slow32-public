@@ -238,8 +238,8 @@ See `slow-32/tools/emulator/s32x_loader.h` for format details.
 
 ### SLOW-32 Binary Linking
 - **Always link with `crt0.s32o` first** - Contains `_start` entry point at address 0
-- Link order: `crt0.s32o` → program objects → `libs32.s32a` → `libc.s32a`
-- Use `slow-32/tools/compile-c.sh` helper script for correct linking
+- Link order: `crt0.s32o` → program objects → `libc_debug.s32a` (or `libc_mmio.s32a`) → `libs32.s32a`
+- Use `slow-32/tools/compile-c.sh` helper script for the minimal object-based flow
 
 ### Memory Protection
 - SLOW-32 enforces W^X (write XOR execute)

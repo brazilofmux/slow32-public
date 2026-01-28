@@ -34,6 +34,7 @@ static bool profile_side_exits = false;
 static bool avoid_backedge_extend = false;
 static bool peephole_enabled = false;
 static bool reg_cache_enabled = false;
+static bool align_traps_enabled = false;
 
 // MMIO state
 static mmio_ring_state_t mmio_state;
@@ -159,11 +160,6 @@ static inline void mmio_sync_to_guest(dbt_cpu_state_t *cpu) {
 static void dbt_handle_yield(dbt_cpu_state_t *cpu) {
     if (!cpu->mmio_enabled) return;
 
-    // Initialize MMIO on first YIELD if not already done
-    if (!mmio_initialized) {
-        dbt_init_mmio(cpu);
-    }
-
     if (!mmio_initialized) return;
 
     // Sync indices from guest memory
@@ -181,92 +177,93 @@ static void dbt_handle_yield(dbt_cpu_state_t *cpu) {
 }
 
 // ============================================================================
-// s32x loader (simplified from emulator)
+// s32x loader (uses shared s32x_loader.h)
 // ============================================================================
 
+// Write callback for flat guest memory
+static int dbt_write_callback(void *user_data, uint32_t addr, const void *data, uint32_t size) {
+    dbt_cpu_state_t *cpu = (dbt_cpu_state_t *)user_data;
+    if (addr + size > cpu->mem_size) return -1;
+    memcpy(cpu->mem_base + addr, data, size);
+    return 0;
+}
+
 bool dbt_load_s32x(dbt_cpu_state_t *cpu, const char *filename) {
-    FILE *f = fopen(filename, "rb");
-    if (!f) {
-        fprintf(stderr, "Cannot open file: %s\n", filename);
+    // Read and validate header
+    s32x_load_result_t hdr = load_s32x_header(filename);
+    if (!hdr.success) {
+        fprintf(stderr, "%s\n", hdr.error_msg);
         return false;
     }
 
-    s32x_header_t header;
-    if (fread(&header, sizeof(header), 1, f) != 1) {
-        fprintf(stderr, "Cannot read header\n");
-        fclose(f);
-        return false;
-    }
-
-    if (header.magic != S32X_MAGIC) {
-        fprintf(stderr, "Invalid magic: 0x%08X (expected 0x%08X)\n",
-                header.magic, S32X_MAGIC);
-        fclose(f);
-        return false;
+    // Resize guest memory to match the executable's declared memory size.
+    if (hdr.mem_size != 0 && hdr.mem_size != cpu->mem_size) {
+        if (cpu->mem_base && cpu->mem_base != MAP_FAILED) {
+            munmap(cpu->mem_base, cpu->mem_size);
+        }
+        cpu->mem_base = mmap(NULL, hdr.mem_size,
+                             PROT_READ | PROT_WRITE,
+                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (cpu->mem_base == MAP_FAILED) {
+            perror("mmap guest memory");
+            return false;
+        }
+        cpu->mem_size = hdr.mem_size;
+        mmio_initialized = false;
     }
 
     // Store memory layout
-    cpu->code_limit = header.code_limit;
-    cpu->rodata_limit = header.rodata_limit;
-    cpu->data_limit = header.data_limit;
-    cpu->stack_base = header.stack_base;
+    cpu->code_limit = hdr.code_limit;
+    cpu->rodata_limit = hdr.rodata_limit;
+    cpu->data_limit = hdr.data_limit;
+    cpu->stack_base = hdr.stack_base;
 
-    // Check for MMIO
-    if (header.flags & S32X_FLAG_MMIO) {
-        cpu->mmio_base = header.mmio_base;
-        cpu->mmio_enabled = true;
-    }
-
-    // Read string table
-    char *strtab = malloc(header.str_size);
-    if (!strtab) {
-        fprintf(stderr, "Out of memory for string table\n");
-        fclose(f);
-        return false;
-    }
-    fseek(f, header.str_offset, SEEK_SET);
-    fread(strtab, 1, header.str_size, f);
-
-    // Load sections
-    fseek(f, header.sec_offset, SEEK_SET);
-    for (uint32_t i = 0; i < header.nsections; i++) {
-        s32x_section_t section;
-        if (fread(&section, sizeof(section), 1, f) != 1) {
-            fprintf(stderr, "Cannot read section %u\n", i);
-            free(strtab);
-            fclose(f);
+    // Check for flags
+    cpu->wxorx_enabled = hdr.has_wxorx;
+    cpu->mmio_base = hdr.mmio_base;
+    cpu->mmio_enabled = hdr.has_mmio != 0;
+    if (cpu->mmio_enabled) {
+        if (cpu->mmio_base == 0 || cpu->mmio_base + 0x10000 > cpu->mem_size) {
+            fprintf(stderr, "DBT: Invalid MMIO base 0x%08X for mem_size 0x%08X\n",
+                    cpu->mmio_base, cpu->mem_size);
             return false;
         }
-
-        if (section.size > 0 && section.offset > 0) {
-            // Check bounds
-            if (section.vaddr + section.size > cpu->mem_size) {
-                fprintf(stderr, "Section at 0x%08X exceeds memory\n", section.vaddr);
-                free(strtab);
-                fclose(f);
-                return false;
-            }
-
-            long current_pos = ftell(f);
-            fseek(f, section.offset, SEEK_SET);
-
-            if (fread(cpu->mem_base + section.vaddr, 1, section.size, f) != section.size) {
-                fprintf(stderr, "Cannot read section data\n");
-                free(strtab);
-                fclose(f);
-                return false;
-            }
-
-            fseek(f, current_pos, SEEK_SET);
-        }
     }
 
-    free(strtab);
-    fclose(f);
+    // Load sections via shared loader
+    s32x_loader_config_t cfg = {
+        .write_cb = dbt_write_callback,
+        .user_data = cpu,
+        .mem_size = cpu->mem_size,
+        .verbose = 0
+    };
+
+    s32x_load_result_t result = load_s32x_file(filename, &cfg);
+    if (!result.success) {
+        fprintf(stderr, "%s\n", result.error_msg);
+        return false;
+    }
+
+    // Initialize entry point and stack pointer from the executable header.
+    cpu->pc = result.entry_point;
+    cpu->regs[REG_SP] = result.stack_base;
+    if (cpu->pc >= result.code_limit) {
+        fprintf(stderr, "Invalid entry point 0x%08X outside code segment [0, 0x%08X)\n",
+                cpu->pc, result.code_limit);
+        return false;
+    }
 
     // Make code section read-only (after loading)
-    if (cpu->code_limit > 0) {
+    if (cpu->code_limit > 0 && cpu->wxorx_enabled) {
         mprotect(cpu->mem_base, cpu->code_limit, PROT_READ);
+    }
+
+    if (cpu->mmio_enabled && !mmio_initialized) {
+        dbt_init_mmio(cpu);
+        if (!mmio_initialized) {
+            fprintf(stderr, "DBT: Failed to initialize MMIO\n");
+            return false;
+        }
     }
 
     return true;
@@ -818,6 +815,8 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -2        Use Stage 2 mode (block cache + chaining)\n");
     fprintf(stderr, "  -3        Use Stage 3 mode (inline indirect lookup)\n");
     fprintf(stderr, "  -4        Use Stage 4 mode (superblock extension, default)\n");
+    fprintf(stderr, "\nEnvironment:\n");
+    fprintf(stderr, "  SLOW32_DBT_ALIGN_TRAP=1  Trap on unaligned LD/ST/fetch\n");
 }
 
 int main(int argc, char **argv) {
@@ -832,7 +831,11 @@ int main(int argc, char **argv) {
     const char *filename = NULL;
     const char *trace_env = getenv("SLOW32_DBT_EMIT_TRACE");
     const char *trace_pc_env = getenv("SLOW32_DBT_EMIT_TRACE_PC");
+    const char *align_env = getenv("SLOW32_DBT_ALIGN_TRAP");
     bool emit_trace = (trace_env && atoi(trace_env) != 0);
+    if (align_env && atoi(align_env) != 0) {
+        align_traps_enabled = true;
+    }
     uint32_t emit_trace_pc = 0;
     if (trace_pc_env && trace_pc_env[0] != '\0') {
         emit_trace_pc = (uint32_t)strtoul(trace_pc_env, NULL, 0);
@@ -941,6 +944,7 @@ int main(int argc, char **argv) {
     // Initialize CPU
     dbt_cpu_state_t cpu;
     dbt_cpu_init(&cpu);
+    cpu.align_traps_enabled = align_traps_enabled;
 
     // Load program
     if (!dbt_load_s32x(&cpu, filename)) {
@@ -1020,6 +1024,7 @@ int main(int argc, char **argv) {
         // Reset CPU and reload program for pass 2
         dbt_cpu_destroy(&cpu);
         dbt_cpu_init(&cpu);
+        cpu.align_traps_enabled = align_traps_enabled;
         if (!dbt_load_s32x(&cpu, filename)) {
             if (stage >= 2) {
                 cache_destroy(&cache);

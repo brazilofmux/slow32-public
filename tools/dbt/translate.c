@@ -362,6 +362,32 @@ void emit_exit_with_info(translate_ctx_t *ctx, exit_reason_t reason,
     emit_ret(e);
 }
 
+static void emit_exit_with_info_reg(translate_ctx_t *ctx, exit_reason_t reason,
+                                    uint32_t next_pc, x64_reg_t info_reg) {
+    emit_ctx_t *e = &ctx->emit;
+    const char *saved_tag = e->trace_tag;
+
+    reg_cache_flush(ctx);
+
+    if (e->trace_enabled) {
+        e->trace_tag = "exit_pc";
+    }
+    emit_mov_m32_imm32(e, RBP, CPU_PC_OFFSET, next_pc);
+
+    if (e->trace_enabled) {
+        e->trace_tag = "exit_reason";
+    }
+    emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, reason);
+
+    if (e->trace_enabled) {
+        e->trace_tag = "exit_info";
+    }
+    emit_mov_m32_r32(e, RBP, CPU_EXIT_INFO_OFFSET, info_reg);
+    e->trace_tag = saved_tag;
+
+    emit_ret(e);
+}
+
 // ============================================================================
 // Arithmetic translations
 // ============================================================================
@@ -713,6 +739,94 @@ void translate_lui(translate_ctx_t *ctx, uint8_t rd, int32_t imm) {
 // Memory translations
 // ============================================================================
 
+static void emit_mem_access_check(translate_ctx_t *ctx, uint32_t access_size,
+                                  exit_reason_t reason, bool is_store) {
+    emit_ctx_t *e = &ctx->emit;
+    size_t fault_jumps[8];
+    int fault_count = 0;
+    size_t ok_jumps[8];
+    int ok_count = 0;
+
+    // Bounds: if mem_size < access_size, fault.
+    emit_mov_r32_m32(e, RDX, RBP, CPU_MEM_SIZE_OFFSET);
+    emit_cmp_r32_imm32(e, RDX, (int32_t)access_size);
+    fault_jumps[fault_count++] = emit_offset(e) + 2;
+    emit_jb_rel32(e, 0);
+
+    // Bounds: if addr > mem_size - access_size, fault.
+    emit_sub_r32_imm32(e, RDX, (int32_t)access_size);
+    emit_cmp_r32_r32(e, RAX, RDX);
+    fault_jumps[fault_count++] = emit_offset(e) + 2;
+    emit_ja_rel32(e, 0);
+
+    if (access_size > 1) {
+        // Optional alignment traps.
+        emit_movzx_r32_m8(e, RCX, RBP, CPU_ALIGN_TRAPS_OFFSET);
+        emit_cmp_r32_imm32(e, RCX, 0);
+        ok_jumps[ok_count++] = emit_offset(e) + 2;
+        emit_je_rel32(e, 0);
+
+        emit_mov_r32_r32(e, RDX, RAX);
+        emit_and_r32_imm32(e, RDX, (int32_t)(access_size - 1));
+        emit_cmp_r32_imm32(e, RDX, 0);
+        fault_jumps[fault_count++] = emit_offset(e) + 2;
+        emit_jne_rel32(e, 0);
+    }
+
+    // MMIO disabled check: if disabled and addr in MMIO window, fault.
+    emit_movzx_r32_m8(e, RCX, RBP, CPU_MMIO_ENABLED_OFFSET);
+    emit_cmp_r32_imm32(e, RCX, 0);
+    ok_jumps[ok_count++] = emit_offset(e) + 2;
+    emit_jne_rel32(e, 0);
+
+    emit_mov_r32_m32(e, RDX, RBP, CPU_MMIO_BASE_OFFSET);
+    emit_cmp_r32_imm32(e, RDX, 0);
+    ok_jumps[ok_count++] = emit_offset(e) + 2;
+    emit_je_rel32(e, 0);
+
+    emit_cmp_r32_r32(e, RAX, RDX);
+    ok_jumps[ok_count++] = emit_offset(e) + 2;
+    emit_jb_rel32(e, 0);
+
+    emit_add_r32_imm32(e, RDX, 0x10000);
+    emit_cmp_r32_r32(e, RAX, RDX);
+    ok_jumps[ok_count++] = emit_offset(e) + 2;
+    emit_jae_rel32(e, 0);
+
+    if (is_store) {
+        // W^X: if enabled, writes below rodata_limit (or code_limit fallback) fault.
+        emit_movzx_r32_m8(e, RCX, RBP, CPU_WXORX_ENABLED_OFFSET);
+        emit_cmp_r32_imm32(e, RCX, 0);
+        ok_jumps[ok_count++] = emit_offset(e) + 2;
+        emit_je_rel32(e, 0);
+
+        emit_mov_r32_m32(e, RDX, RBP, CPU_RODATA_LIMIT_OFFSET);
+        emit_cmp_r32_imm32(e, RDX, 0);
+        size_t have_limit_jump = emit_offset(e) + 2;
+        emit_jne_rel32(e, 0);
+        emit_mov_r32_m32(e, RDX, RBP, CPU_CODE_LIMIT_OFFSET);
+        size_t have_limit_offset = emit_offset(e);
+        emit_patch_rel32(e, have_limit_jump, have_limit_offset);
+
+        emit_cmp_r32_r32(e, RAX, RDX);
+        ok_jumps[ok_count++] = emit_offset(e) + 2;
+        emit_jae_rel32(e, 0);
+    }
+
+    // Fault path (MMIO disabled access or bounds failure)
+    size_t fault_offset = emit_offset(e);
+    emit_exit_with_info_reg(ctx, reason, ctx->guest_pc, RAX);
+
+    // Success path
+    size_t ok_offset = emit_offset(e);
+    for (int i = 0; i < fault_count; i++) {
+        emit_patch_rel32(e, fault_jumps[i], fault_offset);
+    }
+    for (int i = 0; i < ok_count; i++) {
+        emit_patch_rel32(e, ok_jumps[i], ok_offset);
+    }
+}
+
 // Helper to compute address into RAX
 static void emit_compute_addr(translate_ctx_t *ctx, uint8_t rs1, int32_t imm) {
     emit_ctx_t *e = &ctx->emit;
@@ -731,6 +845,7 @@ void translate_ldw(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
     emit_ctx_t *e = &ctx->emit;
 
     emit_compute_addr(ctx, rs1, imm);
+    emit_mem_access_check(ctx, 4, EXIT_FAULT_LOAD, false);
     // Load: ecx = [r14 + rax] where r14 = mem_base
     emit_mov_r32_m32_idx(e, RCX, R14, RAX);
     emit_store_guest_reg(ctx, rd, RCX);
@@ -741,6 +856,7 @@ void translate_ldh(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
     emit_ctx_t *e = &ctx->emit;
 
     emit_compute_addr(ctx, rs1, imm);
+    emit_mem_access_check(ctx, 2, EXIT_FAULT_LOAD, false);
     emit_movsx_r32_m16_idx(e, RCX, R14, RAX);
     emit_store_guest_reg(ctx, rd, RCX);
 }
@@ -750,6 +866,7 @@ void translate_ldb(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
     emit_ctx_t *e = &ctx->emit;
 
     emit_compute_addr(ctx, rs1, imm);
+    emit_mem_access_check(ctx, 1, EXIT_FAULT_LOAD, false);
     emit_movsx_r32_m8_idx(e, RCX, R14, RAX);
     emit_store_guest_reg(ctx, rd, RCX);
 }
@@ -759,6 +876,7 @@ void translate_ldhu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
     emit_ctx_t *e = &ctx->emit;
 
     emit_compute_addr(ctx, rs1, imm);
+    emit_mem_access_check(ctx, 2, EXIT_FAULT_LOAD, false);
     emit_movzx_r32_m16_idx(e, RCX, R14, RAX);
     emit_store_guest_reg(ctx, rd, RCX);
 }
@@ -768,6 +886,7 @@ void translate_ldbu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
     emit_ctx_t *e = &ctx->emit;
 
     emit_compute_addr(ctx, rs1, imm);
+    emit_mem_access_check(ctx, 1, EXIT_FAULT_LOAD, false);
     emit_movzx_r32_m8_idx(e, RCX, R14, RAX);
     emit_store_guest_reg(ctx, rd, RCX);
 }
@@ -776,6 +895,7 @@ void translate_stw(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm) 
     emit_ctx_t *e = &ctx->emit;
 
     emit_compute_addr(ctx, rs1, imm);
+    emit_mem_access_check(ctx, 4, EXIT_FAULT_STORE, true);
     emit_load_guest_reg(ctx, RCX, rs2);
     emit_mov_m32_r32_idx(e, R14, RAX, RCX);
 }
@@ -784,6 +904,7 @@ void translate_sth(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm) 
     emit_ctx_t *e = &ctx->emit;
 
     emit_compute_addr(ctx, rs1, imm);
+    emit_mem_access_check(ctx, 2, EXIT_FAULT_STORE, true);
     emit_load_guest_reg(ctx, RCX, rs2);
     emit_mov_m16_r16_idx(e, R14, RAX, RCX);
 }
@@ -792,6 +913,7 @@ void translate_stb(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm) 
     emit_ctx_t *e = &ctx->emit;
 
     emit_compute_addr(ctx, rs1, imm);
+    emit_mem_access_check(ctx, 1, EXIT_FAULT_STORE, true);
     emit_load_guest_reg(ctx, RCX, rs2);
     emit_mov_m8_r8_idx(e, R14, RAX, RCX);
 }
@@ -1605,6 +1727,16 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
     // emit_int3(e);
 
     while (ctx->inst_count < MAX_BLOCK_INSTS) {
+        if (ctx->guest_pc >= cpu->code_limit ||
+            (cpu->code_limit - ctx->guest_pc) < 4) {
+            emit_exit_with_info(ctx, EXIT_FAULT_FETCH, ctx->guest_pc, ctx->guest_pc);
+            goto block_done;
+        }
+        if (cpu->align_traps_enabled && (ctx->guest_pc & 3u) != 0) {
+            emit_exit_with_info(ctx, EXIT_FAULT_FETCH, ctx->guest_pc, ctx->guest_pc);
+            goto block_done;
+        }
+
         // Fetch and decode
         uint32_t raw = *(uint32_t *)(cpu->mem_base + ctx->guest_pc);
         decoded_inst_t inst = decode_instruction(raw);
@@ -1825,6 +1957,16 @@ retry_translate:
 
     // Translate the block (same logic as Stage 1)
     while (ctx->inst_count < MAX_BLOCK_INSTS) {
+        if (ctx->guest_pc >= cpu->code_limit ||
+            (cpu->code_limit - ctx->guest_pc) < 4) {
+            emit_exit_with_info(ctx, EXIT_FAULT_FETCH, ctx->guest_pc, ctx->guest_pc);
+            goto cached_block_done;
+        }
+        if (cpu->align_traps_enabled && (ctx->guest_pc & 3u) != 0) {
+            emit_exit_with_info(ctx, EXIT_FAULT_FETCH, ctx->guest_pc, ctx->guest_pc);
+            goto cached_block_done;
+        }
+
         // Fetch and decode
         uint32_t raw = *(uint32_t *)(cpu->mem_base + ctx->guest_pc);
         decoded_inst_t inst = decode_instruction(raw);

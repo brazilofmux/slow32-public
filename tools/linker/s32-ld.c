@@ -750,6 +750,13 @@ static void build_symbol_table(linker_state_t *ld) {
 }
 
 // Assign memory addresses to sections
+static bool is_rodata_like_section(uint32_t type) {
+    return type == S32_SEC_RODATA ||
+           type == S32_SEC_EVT ||
+           type == S32_SEC_TSR ||
+           type == S32_SEC_DEBUG;
+}
+
 static void layout_sections(linker_state_t *ld) {
     // First, calculate actual sizes needed
     uint32_t code_size_needed = 0;
@@ -764,6 +771,9 @@ static void layout_sections(linker_state_t *ld) {
                 code_size_needed += sec->size;
                 break;
             case S32_SEC_RODATA:
+            case S32_SEC_EVT:
+            case S32_SEC_TSR:
+            case S32_SEC_DEBUG:
                 rodata_size_needed += sec->size;
                 break;
             case S32_SEC_DATA:
@@ -785,15 +795,17 @@ static void layout_sections(linker_state_t *ld) {
     }
     
     if (auto_compact || ld->pack_sections) {
-        // Automatic compact/packed layout
+        // Automatic compact/packed layout with alignment-aware sizing.
         uint32_t current_addr = ld->code_base;
         
         // Place code at base
         ld->code_base = current_addr;
         
-        // Layout code sections
+        // Layout code sections with alignment
         for (int i = 0; i < ld->num_sections; i++) {
             if (ld->sections[i].type == S32_SEC_CODE) {
+                uint32_t align = ld->sections[i].align ? ld->sections[i].align : 1;
+                current_addr = (current_addr + align - 1) & ~(align - 1);
                 current_addr += ld->sections[i].size;
             }
         }
@@ -802,10 +814,12 @@ static void layout_sections(linker_state_t *ld) {
         current_addr = (current_addr + 0xFFF) & ~0xFFF;
         ld->code_limit = current_addr;
         
-        // Place rodata after code
+        // Place rodata after code (includes EVT/TSR/debug)
         ld->rodata_base = current_addr;
         for (int i = 0; i < ld->num_sections; i++) {
-            if (ld->sections[i].type == S32_SEC_RODATA) {
+            if (is_rodata_like_section(ld->sections[i].type)) {
+                uint32_t align = ld->sections[i].align ? ld->sections[i].align : 1;
+                current_addr = (current_addr + align - 1) & ~(align - 1);
                 current_addr += ld->sections[i].size;
             }
         }
@@ -814,11 +828,21 @@ static void layout_sections(linker_state_t *ld) {
         current_addr = (current_addr + 0xFFF) & ~0xFFF;
         ld->rodata_limit = current_addr;
         
-        // Place data/bss after rodata
+        // Place data after rodata, BSS/other after data
         ld->data_base = current_addr;
         for (int i = 0; i < ld->num_sections; i++) {
-            if (ld->sections[i].type == S32_SEC_DATA || 
-                ld->sections[i].type == S32_SEC_BSS) {
+            if (ld->sections[i].type == S32_SEC_DATA) {
+                uint32_t align = ld->sections[i].align ? ld->sections[i].align : 1;
+                current_addr = (current_addr + align - 1) & ~(align - 1);
+                current_addr += ld->sections[i].size;
+            }
+        }
+        for (int i = 0; i < ld->num_sections; i++) {
+            if (ld->sections[i].type != S32_SEC_CODE &&
+                !is_rodata_like_section(ld->sections[i].type) &&
+                ld->sections[i].type != S32_SEC_DATA) {
+                uint32_t align = ld->sections[i].align ? ld->sections[i].align : 1;
+                current_addr = (current_addr + align - 1) & ~(align - 1);
                 current_addr += ld->sections[i].size;
             }
         }
@@ -875,6 +899,9 @@ static void layout_sections(linker_state_t *ld) {
                 break;
                 
             case S32_SEC_RODATA:
+            case S32_SEC_EVT:
+            case S32_SEC_TSR:
+            case S32_SEC_DEBUG:
                 rodata_addr = (rodata_addr + sec->align - 1) & ~(sec->align - 1);
                 sec->vaddr = rodata_addr;
                 rodata_addr += sec->size;
@@ -905,7 +932,7 @@ static void layout_sections(linker_state_t *ld) {
         combined_section_t *sec = &ld->sections[i];
         
         if (sec->type == S32_SEC_CODE ||
-            sec->type == S32_SEC_RODATA ||
+            is_rodata_like_section(sec->type) ||
             sec->type == S32_SEC_DATA) {
             continue;  // Already placed in the first pass
         }
@@ -987,6 +1014,7 @@ static void layout_sections(linker_state_t *ld) {
 // Inject memory map symbols for runtime use
 static void inject_memory_map_symbols(linker_state_t *ld) {
     // Add special symbols that programs can reference
+    uint32_t stack_end = ld->stack_base - ld->stack_size;
     struct {
         const char *name;
         uint32_t value;
@@ -997,14 +1025,34 @@ static void inject_memory_map_symbols(linker_state_t *ld) {
         {"__rodata_end", ld->rodata_limit},
         {"__data_start", ld->data_base},
         {"__data_end", ld->data_limit},
+        // SLOW-32 loads initialized data directly at VMA today, so load == run.
+        {"__data_load", ld->data_base},
+        {"__data_load_start", ld->data_base},
         {"__bss_start", ld->data_limit},  // BSS starts where data ends
         {"__bss_end", ld->bss_limit},
+        {"__bss_start__", ld->data_limit},
+        {"__bss_end__", ld->bss_limit},
+        {"_bss_start", ld->data_limit},
+        {"_bss_end", ld->bss_limit},
         {"__heap_start", ld->heap_base},
-        {"__heap_end", ld->mmio_size > 0 ? ld->mmio_base : ld->stack_base},    // Heap ends at MMIO or stack if no MMIO
+        {"__heap_end", ld->mmio_size > 0 ? ld->mmio_base : stack_end},    // Heap ends at MMIO or stack bottom if no MMIO
         {"__mmio_base", ld->mmio_base},
         {"__mmio_end", ld->mmio_base + ld->mmio_size},
         {"__stack_base", ld->stack_base},
         {"__stack_top", ld->stack_base},  // Stack grows down
+        {"__stack_end", stack_end},
+        {"__stack_bottom", stack_end},
+        {"_stack", ld->stack_base},
+        // Conventional aliases
+        {"__etext", ld->rodata_limit},
+        {"_etext", ld->rodata_limit},
+        {"etext", ld->rodata_limit},
+        {"__edata", ld->data_limit},
+        {"_edata", ld->data_limit},
+        {"edata", ld->data_limit},
+        {"__end", ld->bss_limit},
+        {"_end", ld->bss_limit},
+        {"end", ld->bss_limit},
         {NULL, 0}
     };
     

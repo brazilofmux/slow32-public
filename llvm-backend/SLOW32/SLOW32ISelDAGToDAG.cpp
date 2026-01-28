@@ -129,7 +129,7 @@ public:
       N->setNodeId(-1);
       return;
     }
-
+    
     switch (N->getOpcode()) {
     case ISD::OR: {
       // DAGCombine can turn a ptradd with disjoint bits into an OR. Prefer

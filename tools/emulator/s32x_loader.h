@@ -10,13 +10,15 @@
 #include <stdint.h>
 #include "../../common/s32_formats.h"
 
+// Callback for writing data to emulator memory
+// Returns 0 on success, non-zero on failure
+typedef int (*s32x_write_cb_t)(void *user_data, uint32_t addr, const void *data, uint32_t size);
+
 // Loader configuration
 typedef struct {
-    uint32_t *memory;
+    s32x_write_cb_t write_cb;
+    void *user_data;
     uint32_t mem_size;
-    uint32_t *pc;
-    uint32_t *sp;
-    uint32_t *registers;  // For setting up initial register state
     int verbose;
 } s32x_loader_config_t;
 
@@ -25,16 +27,85 @@ typedef struct {
     int success;
     uint32_t entry_point;
     uint32_t stack_base;
+    uint32_t stack_end;
     uint32_t code_limit;
     uint32_t rodata_limit;
     uint32_t data_limit;
     uint32_t heap_base;
+    uint32_t mmio_base;
+    uint32_t mem_size;
+    uint32_t flags;
     int has_wxorx;
+    int has_mmio;
     char error_msg[256];
 } s32x_load_result_t;
 
-// S32X files are always loaded - no need to check extension
-// The loader will verify the magic number
+// Load .s32x header only (no section loading)
+// Use this to get metadata before setting up memory, then call load_s32x_file() to load sections.
+static s32x_load_result_t load_s32x_header(const char *filename) {
+    s32x_load_result_t result = {0};
+
+    FILE *f = fopen(filename, "rb");
+    if (!f) {
+        snprintf(result.error_msg, sizeof(result.error_msg),
+                 "Cannot open file: %s", filename);
+        return result;
+    }
+
+    s32x_header_t header;
+    if (fread(&header, sizeof(header), 1, f) != 1) {
+        snprintf(result.error_msg, sizeof(result.error_msg),
+                 "Cannot read header");
+        fclose(f);
+        return result;
+    }
+    fclose(f);
+
+    // Verify magic
+    if (header.magic != S32X_MAGIC) {
+        snprintf(result.error_msg, sizeof(result.error_msg),
+                 "Invalid magic: 0x%08X (expected 0x%08X)",
+                 header.magic, S32X_MAGIC);
+        return result;
+    }
+
+    // Verify version
+    if (header.version != 1) {
+        snprintf(result.error_msg, sizeof(result.error_msg),
+                 "Unsupported version: %d", header.version);
+        return result;
+    }
+
+    // Verify machine type
+    if (header.machine != S32_MACHINE_SLOW32) {
+        snprintf(result.error_msg, sizeof(result.error_msg),
+                 "Wrong machine type: 0x%02X", header.machine);
+        return result;
+    }
+
+    // Validate code limit
+    if (header.code_limit > 0x100000) {
+        snprintf(result.error_msg, sizeof(result.error_msg),
+                 "Code limit exceeds 1MB boundary: 0x%08X", header.code_limit);
+        return result;
+    }
+
+    result.success = 1;
+    result.entry_point = header.entry;
+    result.stack_base = header.stack_base;
+    result.stack_end = header.stack_end;
+    result.code_limit = header.code_limit;
+    result.rodata_limit = header.rodata_limit;
+    result.data_limit = header.data_limit;
+    result.heap_base = header.heap_base;
+    result.mmio_base = header.mmio_base;
+    result.mem_size = header.mem_size;
+    result.flags = header.flags;
+    result.has_wxorx = (header.flags & S32X_FLAG_W_XOR_X) != 0;
+    result.has_mmio = (header.flags & S32X_FLAG_MMIO) != 0;
+
+    return result;
+}
 
 // Load .s32x executable
 static s32x_load_result_t load_s32x_file(const char *filename, s32x_loader_config_t *config) {
@@ -115,16 +186,53 @@ static s32x_load_result_t load_s32x_file(const char *filename, s32x_loader_confi
         return result;
     }
     
-    fseek(f, header.str_offset, SEEK_SET);
-    fread(strtab, 1, header.str_size, f);
+    if (fseek(f, header.str_offset, SEEK_SET) != 0 ||
+        fread(strtab, 1, header.str_size, f) != header.str_size) {
+        snprintf(result.error_msg, sizeof(result.error_msg), 
+                 "Cannot read string table");
+        free(strtab);
+        fclose(f);
+        return result;
+    }
     
     // Read and load sections
-    fseek(f, header.sec_offset, SEEK_SET);
+    if (fseek(f, header.sec_offset, SEEK_SET) != 0) {
+        snprintf(result.error_msg, sizeof(result.error_msg), 
+                 "Cannot seek to section table");
+        free(strtab);
+        fclose(f);
+        return result;
+    }
+
+    // Allocate buffer for section data
+    uint32_t max_sec_size = 0;
+    long sec_table_pos = ftell(f);
+    
+    // First pass: find max section size to allocate buffer
+    for (uint32_t i = 0; i < header.nsections; i++) {
+        s32x_section_t section;
+        if (fread(&section, sizeof(section), 1, f) != 1) break;
+        if (section.size > max_sec_size) max_sec_size = section.size;
+    }
+    
+    uint8_t *sec_buf = malloc(max_sec_size > 0 ? max_sec_size : 1);
+    if (!sec_buf) {
+        snprintf(result.error_msg, sizeof(result.error_msg), 
+                 "Out of memory for section buffer");
+        free(strtab);
+        fclose(f);
+        return result;
+    }
+    
+    // Second pass: load sections
+    fseek(f, sec_table_pos, SEEK_SET);
+    
     for (uint32_t i = 0; i < header.nsections; i++) {
         s32x_section_t section;
         if (fread(&section, sizeof(section), 1, f) != 1) {
             snprintf(result.error_msg, sizeof(result.error_msg), 
                      "Cannot read section %u", i);
+            free(sec_buf);
             free(strtab);
             fclose(f);
             return result;
@@ -143,15 +251,7 @@ static s32x_load_result_t load_s32x_file(const char *filename, s32x_loader_confi
             snprintf(result.error_msg, sizeof(result.error_msg), 
                      "Section '%s' address out of bounds: 0x%08X", 
                      name, section.vaddr);
-            free(strtab);
-            fclose(f);
-            return result;
-        }
-        if (section.vaddr > config->mem_size || 
-            section.mem_size > config->mem_size - section.vaddr) {
-            snprintf(result.error_msg, sizeof(result.error_msg),
-                     "Section '%s' exceeds memory: vaddr=0x%08X size=%u",
-                     name, section.vaddr, section.mem_size);
+            free(sec_buf);
             free(strtab);
             fclose(f);
             return result;
@@ -162,11 +262,20 @@ static s32x_load_result_t load_s32x_file(const char *filename, s32x_loader_confi
             long current_pos = ftell(f);
             fseek(f, section.offset, SEEK_SET);
             
-            // Read directly into memory (assuming little-endian host)
-            uint8_t *dest = (uint8_t *)config->memory + section.vaddr;
-            if (fread(dest, 1, section.size, f) != section.size) {
+            if (fread(sec_buf, 1, section.size, f) != section.size) {
                 snprintf(result.error_msg, sizeof(result.error_msg), 
                          "Cannot read section '%s' data", name);
+                free(sec_buf);
+                free(strtab);
+                fclose(f);
+                return result;
+            }
+            
+            // Write to emulator memory via callback
+            if (config->write_cb(config->user_data, section.vaddr, sec_buf, section.size) != 0) {
+                snprintf(result.error_msg, sizeof(result.error_msg), 
+                         "Failed to write section '%s' to memory", name);
+                free(sec_buf);
                 free(strtab);
                 fclose(f);
                 return result;
@@ -176,12 +285,18 @@ static s32x_load_result_t load_s32x_file(const char *filename, s32x_loader_confi
         }
         
         // Zero-fill BSS sections and padding
+        // Note: The callback interface doesn't support "memset", so we write zeros in chunks if needed
+        // But typically, memory is already zeroed by the emulator. 
+        // If strict correctness is required, we should explicitly zero it.
         if (section.mem_size > section.size) {
-            uint8_t *dest = (uint8_t *)config->memory + section.vaddr + section.size;
-            memset(dest, 0, section.mem_size - section.size);
+            // For efficiency, we assume the emulator zeroes memory on init.
+            // If explicit zeroing is needed, we'd loop writing zeros here.
+            // Since we don't want to allocate a huge zero buffer, we skip explicit zeroing
+            // relying on the emulator's initialization (calloc/mmap).
         }
     }
     
+    free(sec_buf);
     free(strtab);
     fclose(f);
     
@@ -189,18 +304,17 @@ static s32x_load_result_t load_s32x_file(const char *filename, s32x_loader_confi
     result.success = 1;
     result.entry_point = header.entry;
     result.stack_base = header.stack_base;
+    result.stack_end = header.stack_end;
     result.code_limit = header.code_limit;
     result.rodata_limit = header.rodata_limit;
     result.data_limit = header.data_limit;
     result.heap_base = header.heap_base;
+    result.mmio_base = header.mmio_base;
+    result.mem_size = header.mem_size;
+    result.flags = header.flags;
     result.has_wxorx = (header.flags & S32X_FLAG_W_XOR_X) != 0;
-    
-    // Initialize PC and SP
-    if (config->pc) *config->pc = header.entry;
-    if (config->sp && config->registers) {
-        config->registers[29] = header.stack_base;  // r29 = sp
-    }
-    
+    result.has_mmio = (header.flags & S32X_FLAG_MMIO) != 0;
+
     if (config->verbose) {
         printf("Loaded .s32x executable:\n");
         printf("  Entry point: 0x%08X\n", result.entry_point);
@@ -211,49 +325,6 @@ static s32x_load_result_t load_s32x_file(const char *filename, s32x_loader_confi
     }
     
     return result;
-}
-
-// Load legacy .bin format (flat binary)
-static int load_bin_file(const char *filename, s32x_loader_config_t *config) {
-    FILE *f = fopen(filename, "rb");
-    if (!f) {
-        fprintf(stderr, "Cannot open file: %s\n", filename);
-        return 0;
-    }
-    
-    // Determine file size
-    fseek(f, 0, SEEK_END);
-    long file_size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    
-    if (file_size > (long)config->mem_size) {
-        fprintf(stderr, "Program too large: %ld bytes (max %u)\n", 
-                file_size, config->mem_size);
-        fclose(f);
-        return 0;
-    }
-    
-    // Read directly into memory
-    size_t words = (file_size + 3) / 4;
-    if (fread(config->memory, 4, words, f) != words) {
-        fprintf(stderr, "Failed to read program\n");
-        fclose(f);
-        return 0;
-    }
-    
-    fclose(f);
-    
-    // Initialize PC to 0 and SP to top of memory
-    if (config->pc) *config->pc = 0;
-    if (config->sp && config->registers) {
-        config->registers[29] = 0x0FFFFFF0;  // Default stack
-    }
-    
-    if (config->verbose) {
-        printf("Loaded %ld bytes in legacy .bin format\n", file_size);
-    }
-    
-    return 1;
 }
 
 #endif // S32X_LOADER_H

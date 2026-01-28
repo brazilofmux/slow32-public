@@ -1,13 +1,10 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -O2
-TARGETS = s32-objdump s32-exedump slow32dis s32-ar
+TARGETS = slow32dump slow32dis s32-ar
 
 all: $(TARGETS)
 
-s32-objdump: s32-objdump.c
-	$(CC) $(CFLAGS) $< -o $@
-
-s32-exedump: s32-exedump.c
+slow32dump: slow32dump.c
 	$(CC) $(CFLAGS) $< -o $@
 
 slow32dis: slow32dis.c
