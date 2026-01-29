@@ -64,7 +64,7 @@ make
 ✅ Native Clang target: `-target slow32-unknown-none` (note: single dash)  
 ✅ XORI instruction (opcode 0x1E) for XOR immediate operations
 ✅ LLVM backend updated for latest LLVM API (Sep 2025)
-✅ Regression tests: ALL 23/23 PASSING
+✅ Regression tests: ALL 24/24 PASSING
 ✅ Runtime libraries built as archives: libs32.s32a (6KB), libc_debug.s32a (44KB), libc_mmio.s32a (72KB)
 ✅ Optimization passes fixed - no more LLC hangs
 ✅ MMIO support: Emulators use MMIO base from executable header, linker provides __mmio_base symbol

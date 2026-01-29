@@ -144,29 +144,117 @@ void translate_init_cached(translate_ctx_t *ctx, dbt_cpu_state_t *cpu, block_cac
 }
 
 // ============================================================================
-// Stage 5: Simple register cache (fixed mapping)
+// Stage 5: Per-block register allocation (6-slot fully-associative)
 // ============================================================================
 
-#define REG_CACHE_SLOTS 4
+static const x64_reg_t reg_alloc_hosts[REG_ALLOC_SLOTS] = {
+    RBX, R12, R13, RSI, RDI, R11
+};
 
-static const x64_reg_t reg_cache_hosts[REG_CACHE_SLOTS] = { R12, R13, RBX, R11 };
-
-static inline int reg_cache_slot(uint8_t guest_reg) {
-    // Simple XOR hash to separate common colliding registers:
-    // r1 (0x01) & 3 = 1
-    // r29 (SP, 0x1D) & 3 = 1  <- COLLISION in Slot 1
-    //
-    // New hash: (reg ^ (reg >> 2)) & 3
-    // r1  (00001) -> 1 ^ 0 = 1 (Slot 1)
-    // r29 (11101) -> 1 ^ 7 = 6 -> 2 (Slot 2) -> SP moves to Slot 2
-    // r31 (11111) -> 3 ^ 7 = 4 -> 0 (Slot 0) -> LR moves to Slot 0
-    return (guest_reg ^ (guest_reg >> 2)) & (REG_CACHE_SLOTS - 1);
-}
-
-static void reg_cache_reset(translate_ctx_t *ctx) {
-    memset(ctx->reg_cache, 0, sizeof(ctx->reg_cache));
+static void reg_alloc_reset(translate_ctx_t *ctx) {
+    memset(ctx->reg_alloc, 0, sizeof(ctx->reg_alloc));
+    memset(ctx->reg_alloc_map, -1, sizeof(ctx->reg_alloc_map));
     ctx->reg_cache_hits = 0;
     ctx->reg_cache_misses = 0;
+}
+
+// Pre-scan block to determine top-used guest registers for allocation
+static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
+    dbt_cpu_state_t *cpu = ctx->cpu;
+    uint32_t use_count[32] = {0};
+    uint32_t pc = start_pc;
+    int inst_count = 0;
+
+    while (inst_count < MAX_BLOCK_INSTS) {
+        if (pc >= cpu->code_limit || (cpu->code_limit - pc) < 4)
+            break;
+
+        uint32_t raw = *(uint32_t *)(cpu->mem_base + pc);
+        decoded_inst_t inst = decode_instruction(raw);
+
+        // Tally register usage (skip r0)
+        switch (inst.format) {
+            case FMT_R:
+                if (inst.rd != 0)  use_count[inst.rd]++;
+                if (inst.rs1 != 0) use_count[inst.rs1]++;
+                if (inst.rs2 != 0) use_count[inst.rs2]++;
+                break;
+            case FMT_I:
+                if (inst.rd != 0)  use_count[inst.rd]++;
+                if (inst.rs1 != 0) use_count[inst.rs1]++;
+                break;
+            case FMT_S:
+                if (inst.rs1 != 0) use_count[inst.rs1]++;
+                if (inst.rs2 != 0) use_count[inst.rs2]++;
+                break;
+            case FMT_B:
+                if (inst.rs1 != 0) use_count[inst.rs1]++;
+                if (inst.rs2 != 0) use_count[inst.rs2]++;
+                break;
+            case FMT_U:
+                if (inst.rd != 0) use_count[inst.rd]++;
+                break;
+            case FMT_J:
+                if (inst.rd != 0) use_count[inst.rd]++;
+                break;
+        }
+
+        // Stop at block-ending instructions
+        bool is_block_end = false;
+        switch (inst.opcode) {
+            case OP_JAL:
+            case OP_JALR:
+            case OP_HALT:
+            case OP_DEBUG:
+            case OP_YIELD:
+                is_block_end = true;
+                break;
+            case OP_BEQ: case OP_BNE: case OP_BLT: case OP_BGE:
+            case OP_BLTU: case OP_BGEU:
+                // For superblock mode, forward branches continue on fall-through
+                if (ctx->superblock_enabled && inst.imm > 0) {
+                    // Continue scanning fall-through (mirrors superblock heuristic)
+                } else {
+                    is_block_end = true;
+                }
+                break;
+            default:
+                break;
+        }
+        if (is_block_end) break;
+
+        pc += 4;
+        inst_count++;
+    }
+
+    // Select top REG_ALLOC_SLOTS registers by use count
+    for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
+        int best = -1;
+        uint32_t best_count = 0;
+        for (int r = 1; r < 32; r++) {
+            if (use_count[r] > best_count) {
+                best_count = use_count[r];
+                best = r;
+            }
+        }
+        if (best < 0 || best_count == 0) break;
+
+        ctx->reg_alloc[s].guest_reg = (uint8_t)best;
+        ctx->reg_alloc[s].allocated = true;
+        ctx->reg_alloc[s].dirty = false;
+        ctx->reg_alloc_map[best] = (int8_t)s;
+        use_count[best] = 0;  // Remove from consideration
+    }
+}
+
+// Emit prologue: load allocated guest registers into host registers
+static void reg_alloc_emit_prologue(translate_ctx_t *ctx) {
+    emit_ctx_t *e = &ctx->emit;
+    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+        if (!ctx->reg_alloc[i].allocated) continue;
+        emit_mov_r32_m32(e, reg_alloc_hosts[i], RBP,
+                         GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg));
+    }
 }
 
 static void reg_cache_flush(translate_ctx_t *ctx) {
@@ -174,15 +262,27 @@ static void reg_cache_flush(translate_ctx_t *ctx) {
         return;
     }
     emit_ctx_t *e = &ctx->emit;
-    for (int i = 0; i < REG_CACHE_SLOTS; i++) {
-        if (!ctx->reg_cache[i].valid || !ctx->reg_cache[i].dirty) {
+    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+        if (!ctx->reg_alloc[i].allocated || !ctx->reg_alloc[i].dirty) {
             continue;
         }
-        emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(ctx->reg_cache[i].guest_reg),
-                         reg_cache_hosts[i]);
-        // NOTE: Do NOT set dirty=false here! Multiple code paths (e.g., branch
+        emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg),
+                         reg_alloc_hosts[i]);
+        // NOTE: Do NOT clear dirty here! Multiple code paths (e.g., branch
         // taken/fall-through, inline lookup probes) all call flush, but only one
         // executes at runtime. Each path must emit its own flush code.
+    }
+}
+
+// Flush using a dirty-bit snapshot (for deferred side exits)
+static void reg_alloc_flush_snapshot(translate_ctx_t *ctx, const bool *dirty_snapshot) {
+    emit_ctx_t *e = &ctx->emit;
+    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+        if (!ctx->reg_alloc[i].allocated || !dirty_snapshot[i]) {
+            continue;
+        }
+        emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg),
+                         reg_alloc_hosts[i]);
     }
 }
 
@@ -206,28 +306,23 @@ void emit_load_guest_reg(translate_ctx_t *ctx, x64_reg_t dst, uint8_t guest_reg)
         return;
     }
 
-    int slot = reg_cache_slot(guest_reg);
-    x64_reg_t host_reg = reg_cache_hosts[slot];
-    if (!ctx->reg_cache[slot].valid || ctx->reg_cache[slot].guest_reg != guest_reg) {
-        ctx->reg_cache_misses++;
-        if (ctx->reg_cache[slot].valid && ctx->reg_cache[slot].dirty) {
-            emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(ctx->reg_cache[slot].guest_reg),
-                             host_reg);
+    int8_t slot = ctx->reg_alloc_map[guest_reg];
+    if (slot >= 0) {
+        // Allocated — use host register directly
+        ctx->reg_cache_hits++;
+        x64_reg_t host_reg = reg_alloc_hosts[slot];
+        if (dst != host_reg) {
+            emit_mov_r32_r32(e, dst, host_reg);
         }
+    } else {
+        // Not allocated — memory fallback
+        ctx->reg_cache_misses++;
         const char *saved_tag = e->trace_tag;
         if (e->trace_enabled) {
             e->trace_tag = "guest_load";
         }
-        emit_mov_r32_m32(e, host_reg, RBP, GUEST_REG_OFFSET(guest_reg));
+        emit_mov_r32_m32(e, dst, RBP, GUEST_REG_OFFSET(guest_reg));
         e->trace_tag = saved_tag;
-        ctx->reg_cache[slot].valid = true;
-        ctx->reg_cache[slot].dirty = false;
-        ctx->reg_cache[slot].guest_reg = guest_reg;
-    } else {
-        ctx->reg_cache_hits++;
-    }
-    if (dst != host_reg) {
-        emit_mov_r32_r32(e, dst, host_reg);
     }
 }
 
@@ -250,26 +345,25 @@ void emit_store_guest_reg(translate_ctx_t *ctx, uint8_t guest_reg, x64_reg_t src
         return;
     }
 
-    int slot = reg_cache_slot(guest_reg);
-    x64_reg_t host_reg = reg_cache_hosts[slot];
-    if (ctx->reg_cache[slot].valid && ctx->reg_cache[slot].guest_reg != guest_reg) {
-        ctx->reg_cache_misses++;
-        if (ctx->reg_cache[slot].dirty) {
-            emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(ctx->reg_cache[slot].guest_reg),
-                             host_reg);
-        }
-        ctx->reg_cache[slot].dirty = false;
-    } else if (ctx->reg_cache[slot].valid && ctx->reg_cache[slot].guest_reg == guest_reg) {
+    int8_t slot = ctx->reg_alloc_map[guest_reg];
+    if (slot >= 0) {
+        // Allocated — move into host register, mark dirty
         ctx->reg_cache_hits++;
+        x64_reg_t host_reg = reg_alloc_hosts[slot];
+        if (src != host_reg) {
+            emit_mov_r32_r32(e, host_reg, src);
+        }
+        ctx->reg_alloc[slot].dirty = true;
     } else {
+        // Not allocated — memory fallback
         ctx->reg_cache_misses++;
+        const char *saved_tag = e->trace_tag;
+        if (e->trace_enabled) {
+            e->trace_tag = "guest_store";
+        }
+        emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(guest_reg), src);
+        e->trace_tag = saved_tag;
     }
-    if (src != host_reg) {
-        emit_mov_r32_r32(e, host_reg, src);
-    }
-    ctx->reg_cache[slot].valid = true;
-    ctx->reg_cache[slot].dirty = true;
-    ctx->reg_cache[slot].guest_reg = guest_reg;
 }
 
 void emit_store_guest_reg_imm32(translate_ctx_t *ctx, uint8_t guest_reg, uint32_t imm) {
@@ -287,25 +381,22 @@ void emit_store_guest_reg_imm32(translate_ctx_t *ctx, uint8_t guest_reg, uint32_
         return;
     }
 
-    int slot = reg_cache_slot(guest_reg);
-    x64_reg_t host_reg = reg_cache_hosts[slot];
-    if (ctx->reg_cache[slot].valid && ctx->reg_cache[slot].guest_reg != guest_reg) {
-        ctx->reg_cache_misses++;
-        if (ctx->reg_cache[slot].dirty) {
-            emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(ctx->reg_cache[slot].guest_reg),
-                             host_reg);
-        }
-        ctx->reg_cache[slot].dirty = false;
-    } else if (ctx->reg_cache[slot].valid && ctx->reg_cache[slot].guest_reg == guest_reg) {
+    int8_t slot = ctx->reg_alloc_map[guest_reg];
+    if (slot >= 0) {
+        // Allocated — mov imm into host register, mark dirty
         ctx->reg_cache_hits++;
+        emit_mov_r32_imm32(e, reg_alloc_hosts[slot], imm);
+        ctx->reg_alloc[slot].dirty = true;
     } else {
+        // Not allocated — memory fallback
         ctx->reg_cache_misses++;
+        const char *saved_tag = e->trace_tag;
+        if (e->trace_enabled) {
+            e->trace_tag = "guest_store_imm";
+        }
+        emit_mov_m32_imm32(e, RBP, GUEST_REG_OFFSET(guest_reg), imm);
+        e->trace_tag = saved_tag;
     }
-
-    emit_mov_r32_imm32(e, host_reg, imm);
-    ctx->reg_cache[slot].valid = true;
-    ctx->reg_cache[slot].dirty = true;
-    ctx->reg_cache[slot].guest_reg = guest_reg;
 }
 
 // Emit exit sequence
@@ -703,11 +794,27 @@ void translate_div(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    // TODO: Handle division by zero
     emit_load_guest_reg(ctx, RAX, rs1);
-    emit_cdq(e);  // Sign-extend eax into edx:eax
     emit_load_guest_reg(ctx, RCX, rs2);
-    emit_idiv_r32(e, RCX);  // eax = edx:eax / ecx
+
+    // Guard: INT32_MIN / -1 would crash the host (x86 SIGFPE)
+    emit_cmp_r32_imm32(e, RCX, -1);
+    size_t patch_not_neg1 = e->offset;
+    emit_jne_rel32(e, 0);  // patch later
+    emit_cmp_r32_imm32(e, RAX, (int32_t)0x80000000);
+    size_t patch_not_intmin = e->offset;
+    emit_jne_rel32(e, 0);  // patch later
+    // INT32_MIN / -1 = INT32_MIN
+    emit_mov_r32_imm32(e, RAX, 0x80000000);
+    size_t patch_skip_idiv = e->offset;
+    emit_jmp_rel32(e, 0);  // patch later
+
+    emit_patch_rel32(e, patch_not_neg1, e->offset);
+    emit_patch_rel32(e, patch_not_intmin, e->offset);
+    emit_cdq(e);
+    emit_idiv_r32(e, RCX);
+
+    emit_patch_rel32(e, patch_skip_idiv, e->offset);
     emit_store_guest_reg(ctx, rd, RAX);
 }
 
@@ -715,12 +822,28 @@ void translate_rem(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    // TODO: Handle division by zero
     emit_load_guest_reg(ctx, RAX, rs1);
-    emit_cdq(e);
     emit_load_guest_reg(ctx, RCX, rs2);
-    emit_idiv_r32(e, RCX);  // edx = edx:eax % ecx
+
+    // Guard: INT32_MIN % -1 would crash the host (x86 SIGFPE)
+    emit_cmp_r32_imm32(e, RCX, -1);
+    size_t patch_not_neg1 = e->offset;
+    emit_jne_rel32(e, 0);  // patch later
+    emit_cmp_r32_imm32(e, RAX, (int32_t)0x80000000);
+    size_t patch_not_intmin = e->offset;
+    emit_jne_rel32(e, 0);  // patch later
+    // INT32_MIN % -1 = 0
+    emit_xor_r32_r32(e, RAX, RAX);
+    size_t patch_skip_idiv = e->offset;
+    emit_jmp_rel32(e, 0);  // patch later
+
+    emit_patch_rel32(e, patch_not_neg1, e->offset);
+    emit_patch_rel32(e, patch_not_intmin, e->offset);
+    emit_cdq(e);
+    emit_idiv_r32(e, RCX);
     emit_mov_r32_r32(e, RAX, RDX);
+
+    emit_patch_rel32(e, patch_skip_idiv, e->offset);
     emit_store_guest_reg(ctx, rd, RAX);
 }
 
@@ -964,24 +1087,97 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
             ctx->block->exits[exit_idx].chained = true;
         }
     } else {
-        // Target not yet translated - jump to dispatcher stub (will be patched later)
-        // First set exit_reason so dispatcher knows this is a normal branch
-        if (e->trace_enabled) {
-            e->trace_tag = "exit_reason";
-        }
-        emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_BRANCH);
-        e->trace_tag = saved_tag;
-
-        // Get new patch site (after the exit_reason stores)
+        // Target not yet translated - jump to shared_branch_exit stub
+        // (sets exit_reason and returns to dispatcher)
+        // This saves 10 bytes vs inlining the exit_reason store
         patch_site = emit_ptr(e) + 1;
 
-        int64_t rel = (int64_t)(ctx->cache->dispatcher_stub - (patch_site + 4));
+        int64_t rel = (int64_t)(ctx->cache->shared_branch_exit - (patch_site + 4));
         emit_jmp_rel32(e, (int32_t)rel);
 
         // Record for later chaining
         if (ctx->block && exit_idx < MAX_BLOCK_EXITS) {
             cache_record_exit(ctx->cache, ctx->block, exit_idx, target_pc, patch_site);
+            cache_record_pending_chain(ctx->cache, ctx->block, exit_idx, target_pc);
         }
+    }
+}
+
+// Helper for compact chained exits using shared branch exit stub.
+// Used for out-of-line (cold) side exit stubs. Only emits:
+//   reg_cache_flush (if enabled)
+//   mov [rbp+PC], target_pc
+//   jmp target_host_code   (if already chained)
+//   OR jmp shared_branch_exit (if not yet chained; will be patched later)
+//
+// This saves ~10 bytes per unchained exit vs emit_exit_chained because
+// the exit_reason store is in the shared stub, not inlined.
+static void emit_exit_chained_compact(translate_ctx_t *ctx, uint32_t target_pc,
+                                      int exit_idx) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Note: reg_cache_flush must be done by caller with correct snapshot
+
+    // Store target PC
+    emit_mov_m32_imm32(e, RBP, CPU_PC_OFFSET, target_pc);
+
+    if (ctx->cache == NULL) {
+        // Stage 1 mode: fallback to full exit
+        emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_BRANCH);
+        emit_ret(e);
+        return;
+    }
+
+    // Try to chain to already-translated target
+    translated_block_t *target = cache_lookup(ctx->cache, target_pc);
+    uint8_t *patch_site = emit_ptr(e) + 1;  // After jmp opcode (E9)
+
+    if (target && target->host_code) {
+        // Target already translated - emit direct jump
+        int64_t rel = (int64_t)(target->host_code - (patch_site + 4));
+        emit_jmp_rel32(e, (int32_t)rel);
+
+        if (ctx->block && exit_idx < MAX_BLOCK_EXITS) {
+            cache_record_exit(ctx->cache, ctx->block, exit_idx, target_pc, patch_site);
+            ctx->block->exits[exit_idx].chained = true;
+        }
+    } else {
+        // Not yet translated - jump to shared_branch_exit (sets EXIT_REASON + ret)
+        // This will be patched later when the target is translated
+        int64_t rel = (int64_t)(ctx->cache->shared_branch_exit - (patch_site + 4));
+        emit_jmp_rel32(e, (int32_t)rel);
+
+        if (ctx->block && exit_idx < MAX_BLOCK_EXITS) {
+            cache_record_exit(ctx->cache, ctx->block, exit_idx, target_pc, patch_site);
+            cache_record_pending_chain(ctx->cache, ctx->block, exit_idx, target_pc);
+        }
+    }
+}
+
+// Emit all deferred (out-of-line) side exit stubs at the current emit position.
+// Called after the hot path of the block is complete.
+static void emit_deferred_side_exits(translate_ctx_t *ctx) {
+    emit_ctx_t *e = &ctx->emit;
+
+    for (int i = 0; i < ctx->deferred_exit_count; i++) {
+        // Patch the inline jmp to point here
+        size_t cold_offset = emit_offset(e);
+        emit_patch_rel32(e, ctx->deferred_exits[i].jmp_patch_offset, cold_offset);
+
+        // Flush allocated registers using dirty snapshot from branch point
+        if (ctx->reg_cache_enabled) {
+            reg_alloc_flush_snapshot(ctx, ctx->deferred_exits[i].dirty_snapshot);
+        }
+
+        // Record branch_pc on block exit
+        if (ctx->block && ctx->deferred_exits[i].exit_idx < MAX_BLOCK_EXITS) {
+            ctx->block->exits[ctx->deferred_exits[i].exit_idx].branch_pc =
+                ctx->deferred_exits[i].branch_pc;
+        }
+
+        // Emit compact exit (mov PC + jmp shared/chained)
+        emit_exit_chained_compact(ctx, ctx->deferred_exits[i].target_pc,
+                                  ctx->deferred_exits[i].exit_idx);
     }
 }
 
@@ -1181,7 +1377,7 @@ void translate_jal(translate_ctx_t *ctx, uint8_t rd, int32_t imm) {
     }
 
     // Exit with branch to target (chainable)
-    emit_exit_chained(ctx, target_pc, 0);
+    emit_exit_chained(ctx, target_pc, ctx->exit_idx++);
 }
 
 void translate_jalr(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
@@ -1237,7 +1433,8 @@ void translate_jalr(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
 static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2,
                                     int32_t imm,
                                     void (*emit_jcc)(emit_ctx_t *, int32_t),
-                                    void (*emit_jcc_inv)(emit_ctx_t *, int32_t)) {
+                                    void (*emit_jcc_inv)(emit_ctx_t *, int32_t),
+                                    uint8_t inv_cc) {
     emit_ctx_t *e = &ctx->emit;
     uint32_t fall_pc = ctx->guest_pc + 4;
     uint32_t taken_pc = fall_pc + imm;  // PC+4 + imm
@@ -1279,66 +1476,46 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
     e->trace_tag = saved_tag;
 
     if (can_extend) {
-        // Superblock mode: emit inline side exit for taken path, continue with fall-through
+        // Superblock mode: out-of-line side exit for taken path
         //
         // Layout:
         //     cmp rs1, rs2
-        //     jcc_inv skip_side_exit  ; if condition FALSE, skip side exit
-        //     <side exit code for taken_pc>
-        // skip_side_exit:
-        //     <continue with fall-through>
+        //     jcc_inv skip              ; if condition FALSE, skip trampoline
+        //     jmp cold_stub_N           ; 5-byte jump to cold exit at end of block
+        // skip:
+        //     <continue with fall-through>  ; hot path
         //
-        // The inverted condition skips the side exit when we want to fall through
+        // Cold stubs are emitted at end of block by emit_deferred_side_exits().
 
-        // Jump over side exit if condition is FALSE (i.e., don't take branch)
-        size_t skip_patch = emit_offset(e) + 2;
-        emit_jcc_inv(e, 0);  // Placeholder - inverted condition
+        // Jump over trampoline if condition is FALSE (not taken)
+        // Short jcc (2 bytes: 7x 05) skips exactly the 5-byte jmp rel32
+        emit_jcc_short(e, inv_cc, 5);
 
-        // Emit side exit for taken path (branch was taken)
-        // CRITICAL: Save cache state because side exit will flush (clear dirty),
-        // but we are jumping over it for the fallthrough path!
-        uint8_t saved_cache[sizeof(ctx->reg_cache)];
-        memcpy(saved_cache, ctx->reg_cache, sizeof(saved_cache));
+        // Emit 5-byte trampoline jmp to cold stub (patched later)
+        size_t jmp_patch = emit_offset(e) + 1;  // After E9 opcode
+        emit_jmp_rel32(e, 0);  // Placeholder, will be patched
 
-        if (ctx->profile_side_exits || ctx->side_exit_info_enabled) {
-            const char *saved_exit_tag = e->trace_tag;
-
-            // Track runtime side-exit usage
-            if (ctx->profile_side_exits) {
-                if (e->trace_enabled) {
-                    e->trace_tag = "side_exit_taken";
-                }
-                emit_mov_r32_m32(e, R8, RBP, CPU_SIDE_EXIT_TAKEN_OFFSET);
-                emit_add_r32_imm32(e, R8, 1);
-                emit_mov_m32_r32(e, RBP, CPU_SIDE_EXIT_TAKEN_OFFSET, R8);
+        // Record deferred side exit (to be emitted at end of block)
+        if (ctx->deferred_exit_count < MAX_BLOCK_EXITS) {
+            int di = ctx->deferred_exit_count++;
+            ctx->deferred_exits[di].jmp_patch_offset = jmp_patch;
+            ctx->deferred_exits[di].target_pc = taken_pc;
+            ctx->deferred_exits[di].exit_idx = ctx->exit_idx;
+            ctx->deferred_exits[di].branch_pc = branch_pc;
+            // Snapshot dirty bits for flushing in cold stub
+            for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
+                ctx->deferred_exits[di].dirty_snapshot[s] = ctx->reg_alloc[s].dirty;
             }
-
-            // Record branch PC for diagnostics/profiling in dispatcher
-            if (e->trace_enabled) {
-                e->trace_tag = "exit_info";
-            }
-            emit_mov_m32_imm32(e, RBP, CPU_EXIT_INFO_OFFSET, branch_pc);
-            e->trace_tag = saved_exit_tag;
         }
 
         if (ctx->side_exit_emitted < MAX_BLOCK_EXITS) {
             ctx->side_exit_pcs[ctx->side_exit_emitted] = branch_pc;
         }
 
-        if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
-            ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
-        }
-        emit_exit_chained(ctx, taken_pc, ctx->exit_idx++);
+        ctx->exit_idx++;
         ctx->side_exit_emitted++;
 
-        // Restore cache state (dirty flags) for the fallthrough path
-        memcpy(ctx->reg_cache, saved_cache, sizeof(saved_cache));
-
-        // Patch the skip jump to here
-        size_t skip_target = emit_offset(e);
-        emit_patch_rel32(e, skip_patch, skip_target);
-
-        // Increment superblock depth and continue
+        // Increment superblock depth and continue with fall-through (hot path)
         ctx->superblock_depth++;
         ctx->guest_pc = fall_pc;
         ctx->inst_count++;
@@ -1629,27 +1806,27 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len) {
 
 // Branch functions now return true if block ends, false if superblock continues
 bool translate_beq(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm) {
-    return translate_branch_common(ctx, rs1, rs2, imm, emit_je_rel32, emit_jne_rel32);
+    return translate_branch_common(ctx, rs1, rs2, imm, emit_je_rel32, emit_jne_rel32, 0x05);
 }
 
 bool translate_bne(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm) {
-    return translate_branch_common(ctx, rs1, rs2, imm, emit_jne_rel32, emit_je_rel32);
+    return translate_branch_common(ctx, rs1, rs2, imm, emit_jne_rel32, emit_je_rel32, 0x04);
 }
 
 bool translate_blt(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm) {
-    return translate_branch_common(ctx, rs1, rs2, imm, emit_jl_rel32, emit_jge_rel32);
+    return translate_branch_common(ctx, rs1, rs2, imm, emit_jl_rel32, emit_jge_rel32, 0x0D);
 }
 
 bool translate_bge(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm) {
-    return translate_branch_common(ctx, rs1, rs2, imm, emit_jge_rel32, emit_jl_rel32);
+    return translate_branch_common(ctx, rs1, rs2, imm, emit_jge_rel32, emit_jl_rel32, 0x0C);
 }
 
 bool translate_bltu(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm) {
-    return translate_branch_common(ctx, rs1, rs2, imm, emit_jb_rel32, emit_jae_rel32);
+    return translate_branch_common(ctx, rs1, rs2, imm, emit_jb_rel32, emit_jae_rel32, 0x03);
 }
 
 bool translate_bgeu(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm) {
-    return translate_branch_common(ctx, rs1, rs2, imm, emit_jae_rel32, emit_jb_rel32);
+    return translate_branch_common(ctx, rs1, rs2, imm, emit_jae_rel32, emit_jb_rel32, 0x02);
 }
 
 // ============================================================================
@@ -1716,8 +1893,13 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
     ctx->block_start_pc = cpu->pc;
     ctx->inst_count = 0;
     ctx->side_exit_emitted = 0;
+    ctx->deferred_exit_count = 0;
     memset(ctx->side_exit_pcs, 0, sizeof(ctx->side_exit_pcs));
-    reg_cache_reset(ctx);
+    reg_alloc_reset(ctx);
+    if (ctx->reg_cache_enabled) {
+        reg_alloc_prescan(ctx, cpu->pc);
+        reg_alloc_emit_prologue(ctx);
+    }
 
     if (DBT_TRACE) {
         fprintf(stderr, "DBT: Translating block at PC=0x%08X\n", cpu->pc);
@@ -1948,8 +2130,13 @@ retry_translate:
     ctx->block = block;
     ctx->exit_idx = 0;
     ctx->side_exit_emitted = 0;
+    ctx->deferred_exit_count = 0;
     memset(ctx->side_exit_pcs, 0, sizeof(ctx->side_exit_pcs));
-    reg_cache_reset(ctx);
+    reg_alloc_reset(ctx);
+    if (ctx->reg_cache_enabled) {
+        reg_alloc_prescan(ctx, guest_pc);
+        reg_alloc_emit_prologue(ctx);
+    }
 
     if (DBT_TRACE) {
         fprintf(stderr, "DBT: Translating block at PC=0x%08X (cached)\n", guest_pc);
@@ -2107,9 +2294,14 @@ retry_translate:
     }
 
     // Reached max instructions - exit with block end
-    emit_exit_chained(ctx, ctx->guest_pc, 0);
+    emit_exit_chained(ctx, ctx->guest_pc, ctx->exit_idx++);
 
 cached_block_done:
+    // Emit deferred (out-of-line) side exit cold stubs after the hot path
+    if (ctx->deferred_exit_count > 0) {
+        emit_deferred_side_exits(ctx);
+    }
+
     if (ctx->block) {
         ctx->block->reg_cache_hits = ctx->reg_cache_hits;
         ctx->block->reg_cache_misses = ctx->reg_cache_misses;

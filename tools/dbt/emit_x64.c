@@ -125,25 +125,32 @@ void emit_mov_r64_imm64(emit_ctx_t *ctx, x64_reg_t dst, uint64_t imm) {
     emit_qword(ctx, imm);
 }
 
-// mov r32, [base + disp32]  (8B /r)
+// mov r32, [base + disp]  (8B /r) - uses disp8 when possible
 void emit_mov_r32_m32(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, int32_t disp) {
     size_t start_off = ctx->offset;
     uint8_t rex = rex_for_regs(dst, base, false);
     emit_rex_if_needed(ctx, rex);
     emit_byte(ctx, 0x8B);
 
+    bool use_disp8 = (disp >= -128 && disp <= 127);
+    uint8_t mod = use_disp8 ? MOD_DISP8 : MOD_DISP32;
+
     // RSP/R12 needs SIB byte
     if ((base & 7) == RSP) {
-        emit_byte(ctx, MODRM(MOD_DISP32, dst, RSP));
+        emit_byte(ctx, MODRM(mod, dst, RSP));
         emit_byte(ctx, SIB(0, RSP, RSP));  // scale=0, index=none, base=rsp
     } else {
-        emit_byte(ctx, MODRM(MOD_DISP32, dst, base));
+        emit_byte(ctx, MODRM(mod, dst, base));
     }
-    emit_dword(ctx, (uint32_t)disp);
+    if (use_disp8) {
+        emit_byte(ctx, (uint8_t)(int8_t)disp);
+    } else {
+        emit_dword(ctx, (uint32_t)disp);
+    }
     emit_trace_inst(ctx, "mov_r32_m32", start_off, ctx->offset);
 }
 
-// movzx r32, byte [base + disp32]  (0F B6 /r)
+// movzx r32, byte [base + disp]  (0F B6 /r) - uses disp8 when possible
 void emit_movzx_r32_m8(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, int32_t disp) {
     size_t start_off = ctx->offset;
     uint8_t rex = rex_for_regs(dst, base, false);
@@ -151,34 +158,48 @@ void emit_movzx_r32_m8(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, int32_t d
     emit_byte(ctx, 0x0F);
     emit_byte(ctx, 0xB6);
 
+    bool use_disp8 = (disp >= -128 && disp <= 127);
+    uint8_t mod = use_disp8 ? MOD_DISP8 : MOD_DISP32;
+
     if ((base & 7) == RSP) {
-        emit_byte(ctx, MODRM(MOD_DISP32, dst, RSP));
+        emit_byte(ctx, MODRM(mod, dst, RSP));
         emit_byte(ctx, SIB(0, RSP, RSP));
     } else {
-        emit_byte(ctx, MODRM(MOD_DISP32, dst, base));
+        emit_byte(ctx, MODRM(mod, dst, base));
     }
-    emit_dword(ctx, (uint32_t)disp);
+    if (use_disp8) {
+        emit_byte(ctx, (uint8_t)(int8_t)disp);
+    } else {
+        emit_dword(ctx, (uint32_t)disp);
+    }
     emit_trace_inst(ctx, "movzx_r32_m8", start_off, ctx->offset);
 }
 
-// mov [base + disp32], r32  (89 /r)
+// mov [base + disp], r32  (89 /r) - uses disp8 when possible
 void emit_mov_m32_r32(emit_ctx_t *ctx, x64_reg_t base, int32_t disp, x64_reg_t src) {
     size_t start_off = ctx->offset;
     uint8_t rex = rex_for_regs(src, base, false);
     emit_rex_if_needed(ctx, rex);
     emit_byte(ctx, 0x89);
 
+    bool use_disp8 = (disp >= -128 && disp <= 127);
+    uint8_t mod = use_disp8 ? MOD_DISP8 : MOD_DISP32;
+
     if ((base & 7) == RSP) {
-        emit_byte(ctx, MODRM(MOD_DISP32, src, RSP));
+        emit_byte(ctx, MODRM(mod, src, RSP));
         emit_byte(ctx, SIB(0, RSP, RSP));
     } else {
-        emit_byte(ctx, MODRM(MOD_DISP32, src, base));
+        emit_byte(ctx, MODRM(mod, src, base));
     }
-    emit_dword(ctx, (uint32_t)disp);
+    if (use_disp8) {
+        emit_byte(ctx, (uint8_t)(int8_t)disp);
+    } else {
+        emit_dword(ctx, (uint32_t)disp);
+    }
     emit_trace_inst(ctx, "mov_m32_r32", start_off, ctx->offset);
 }
 
-// mov [base + disp32], imm32  (C7 /0 id)
+// mov [base + disp], imm32  (C7 /0 id) - uses disp8 when possible
 void emit_mov_m32_imm32(emit_ctx_t *ctx, x64_reg_t base, int32_t disp, uint32_t imm) {
     size_t start_off = ctx->offset;
     uint8_t rex = 0;
@@ -186,13 +207,20 @@ void emit_mov_m32_imm32(emit_ctx_t *ctx, x64_reg_t base, int32_t disp, uint32_t 
     emit_rex_if_needed(ctx, rex);
     emit_byte(ctx, 0xC7);
 
+    bool use_disp8 = (disp >= -128 && disp <= 127);
+    uint8_t mod = use_disp8 ? MOD_DISP8 : MOD_DISP32;
+
     if ((base & 7) == RSP) {
-        emit_byte(ctx, MODRM(MOD_DISP32, 0, RSP));
+        emit_byte(ctx, MODRM(mod, 0, RSP));
         emit_byte(ctx, SIB(0, RSP, RSP));
     } else {
-        emit_byte(ctx, MODRM(MOD_DISP32, 0, base));
+        emit_byte(ctx, MODRM(mod, 0, base));
     }
-    emit_dword(ctx, (uint32_t)disp);
+    if (use_disp8) {
+        emit_byte(ctx, (uint8_t)(int8_t)disp);
+    } else {
+        emit_dword(ctx, (uint32_t)disp);
+    }
     emit_dword(ctx, imm);
     emit_trace_inst(ctx, "mov_m32_imm32", start_off, ctx->offset);
 }
@@ -290,20 +318,27 @@ void emit_movzx_r32_r8(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t src) {
 // 64-bit memory operations (Stage 3)
 // ============================================================================
 
-// mov r64, [base + disp32]  (REX.W 8B /r)
+// mov r64, [base + disp]  (REX.W 8B /r) - uses disp8 when possible
 void emit_mov_r64_m64(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, int32_t disp) {
     uint8_t rex = rex_for_regs(dst, base, true);  // REX.W for 64-bit
     emit_byte(ctx, REX_BASE | rex);
     emit_byte(ctx, 0x8B);
 
+    bool use_disp8 = (disp >= -128 && disp <= 127);
+    uint8_t mod = use_disp8 ? MOD_DISP8 : MOD_DISP32;
+
     // RSP/R12 needs SIB byte
     if ((base & 7) == RSP) {
-        emit_byte(ctx, MODRM(MOD_DISP32, dst, RSP));
+        emit_byte(ctx, MODRM(mod, dst, RSP));
         emit_byte(ctx, SIB(0, RSP, RSP));
     } else {
-        emit_byte(ctx, MODRM(MOD_DISP32, dst, base));
+        emit_byte(ctx, MODRM(mod, dst, base));
     }
-    emit_dword(ctx, (uint32_t)disp);
+    if (use_disp8) {
+        emit_byte(ctx, (uint8_t)(int8_t)disp);
+    } else {
+        emit_dword(ctx, (uint32_t)disp);
+    }
 }
 
 // mov r64, [base + index*scale + disp32]  (REX.W 8B /r with SIB)
@@ -339,19 +374,26 @@ void emit_mov_r64_m64_sib(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base,
     }
 }
 
-// cmp [base + disp32], r32  (39 /r)
+// cmp [base + disp], r32  (39 /r) - uses disp8 when possible
 void emit_cmp_m32_r32(emit_ctx_t *ctx, x64_reg_t base, int32_t disp, x64_reg_t src) {
     uint8_t rex = rex_for_regs(src, base, false);
     emit_rex_if_needed(ctx, rex);
     emit_byte(ctx, 0x39);
 
+    bool use_disp8 = (disp >= -128 && disp <= 127);
+    uint8_t mod = use_disp8 ? MOD_DISP8 : MOD_DISP32;
+
     if ((base & 7) == RSP) {
-        emit_byte(ctx, MODRM(MOD_DISP32, src, RSP));
+        emit_byte(ctx, MODRM(mod, src, RSP));
         emit_byte(ctx, SIB(0, RSP, RSP));
     } else {
-        emit_byte(ctx, MODRM(MOD_DISP32, src, base));
+        emit_byte(ctx, MODRM(mod, src, base));
     }
-    emit_dword(ctx, (uint32_t)disp);
+    if (use_disp8) {
+        emit_byte(ctx, (uint8_t)(int8_t)disp);
+    } else {
+        emit_dword(ctx, (uint32_t)disp);
+    }
 }
 
 // test r64, r64  (REX.W 85 /r)
@@ -788,6 +830,13 @@ void emit_jb_rel32(emit_ctx_t *ctx, int32_t offset)  { emit_jcc_rel32(ctx, 0x82,
 void emit_jae_rel32(emit_ctx_t *ctx, int32_t offset) { emit_jcc_rel32(ctx, 0x83, offset); }
 void emit_ja_rel32(emit_ctx_t *ctx, int32_t offset)  { emit_jcc_rel32(ctx, 0x87, offset); }
 void emit_jbe_rel32(emit_ctx_t *ctx, int32_t offset) { emit_jcc_rel32(ctx, 0x86, offset); }
+
+// Short conditional jump: 7x rel8 (2 bytes total)
+// cc is the condition code (low nibble of the 0F 8x near opcode)
+void emit_jcc_short(emit_ctx_t *ctx, uint8_t cc, int8_t rel8) {
+    emit_byte(ctx, 0x70 | (cc & 0x0F));
+    emit_byte(ctx, (uint8_t)rel8);
+}
 
 // call rel32  (E8 cd)
 void emit_call_rel32(emit_ctx_t *ctx, int32_t offset) {

@@ -730,17 +730,22 @@ static void run_dbt_stage4(dbt_cpu_state_t *cpu, block_cache_t *cache) {
         if (cpu->exit_reason == EXIT_INDIRECT) {
             cache->inline_miss_count++;
         }
-        if (profile_side_exits) {
-            if (block->side_exit_count > 0) {
-                for (int i = 0; i < block->side_exit_count; i++) {
-                    uint32_t pc = block->side_exit_pcs[i];
-                    cache->side_exit_total_profile[cache_hash(pc)]++;
-                }
+        if (profile_side_exits && block->side_exit_count > 0) {
+            for (int i = 0; i < block->side_exit_count; i++) {
+                uint32_t pc = block->side_exit_pcs[i];
+                cache->side_exit_total_profile[cache_hash(pc)]++;
             }
-            if (cpu->exit_reason == EXIT_BRANCH && cpu->exit_info != 0) {
-                uint32_t pc = cpu->exit_info;
-                cache->side_exit_taken_profile[cache_hash(pc)]++;
-                cpu->exit_info = 0;
+            // Identify which side exit was taken by matching cpu->pc
+            // against the block's exit targets (no longer stored in exit_info)
+            if (cpu->exit_reason == EXIT_BRANCH) {
+                for (int i = 0; i < block->exit_count; i++) {
+                    if (block->exits[i].target_pc == cpu->pc &&
+                        block->exits[i].branch_pc != 0) {
+                        uint32_t bpc = block->exits[i].branch_pc;
+                        cache->side_exit_taken_profile[cache_hash(bpc)]++;
+                        break;
+                    }
+                }
             }
         }
 

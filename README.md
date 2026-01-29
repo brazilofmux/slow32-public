@@ -35,7 +35,7 @@ make
 - **Single-ported memory** (deliberately slow!)
 - **DEBUG instruction** for character output; **MMIO ring buffers** for full I/O
 - **Sparse memory allocation** - Only allocates touched pages (99.4% memory savings!)
-- **Performance**: ~45 MIPS (slow32), ~220 MIPS (slow32-fast)
+- **Performance**: ~45 MIPS (slow32), ~220 MIPS (slow32-fast), ~3.5 BIPS (slow32-dbt, only 2.8x native)
 
 ### Register Convention
 - `r0`: Always zero
@@ -186,12 +186,12 @@ int main() {
 ✅ **Complete toolchain** - C → LLVM IR → Assembly → Object → Linked Executable
 ✅ **Native Clang target** - `-target slow32-unknown-none` (single dash)
 ✅ **All optimization levels** - -O0, -O1, -O2 fully working
-✅ **CPU emulator** - ~350M instructions/second with W^X protection
+✅ **CPU emulator** - ~350M inst/sec (interpreter), ~3.5B inst/sec (DBT) with W^X protection
 ✅ **Assembler** - Two-pass with labels, relocations, standard directives
 ✅ **Linker** - Symbol resolution, HI20/LO12 relocations, proper archives
 ✅ **LLVM backend** - PHI nodes, intrinsics, varargs, jump tables, 64-bit integers
 ✅ **Runtime** - crt0, printf with varargs, memcpy/memset, 64-bit builtins
-✅ **Regression tests** - All 23/23 passing
+✅ **Regression tests** - All 24/24 passing
 ✅ **Tools** - objdump for object files, exedump for executables  
 
 ## Known Limitations

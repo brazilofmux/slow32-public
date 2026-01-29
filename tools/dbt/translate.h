@@ -54,15 +54,29 @@ typedef struct {
     bool avoid_backedge_extend;  // Study-only guard: don't extend across back-edges
     bool peephole_enabled;       // Study-only: peephole on emitted host code
 
-    // Stage 5: Simple register cache (fixed mapping)
+    // Stage 5: Per-block register allocation (6-slot fully-associative)
     bool reg_cache_enabled;
     uint32_t reg_cache_hits;
     uint32_t reg_cache_misses;
+
+    #define REG_ALLOC_SLOTS 6
     struct {
         uint8_t guest_reg;
-        bool valid;
-        bool dirty;
-    } reg_cache[4];
+        bool    allocated;
+        bool    dirty;
+    } reg_alloc[REG_ALLOC_SLOTS];
+    int8_t reg_alloc_map[32];   // guest_reg -> slot index, or -1
+
+    // Out-of-line side exit stubs (deferred to end of block)
+    int deferred_exit_count;
+    struct {
+        size_t jmp_patch_offset;    // offset of rel32 in the inline jmp to cold stub
+        uint32_t target_pc;         // guest PC for this side exit
+        int exit_idx;               // exit index for chaining
+        uint32_t branch_pc;         // guest PC of the branch instruction
+        // Snapshot of dirty bits at the point of the branch (for flushing in cold stub)
+        bool dirty_snapshot[REG_ALLOC_SLOTS];
+    } deferred_exits[MAX_BLOCK_EXITS];
 } translate_ctx_t;
 
 // Translated block function signature

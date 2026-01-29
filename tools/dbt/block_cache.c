@@ -2,6 +2,7 @@
 // Stage 2 - Cache translated blocks and support direct chaining
 
 #include "block_cache.h"
+#include "cpu_state.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,6 +44,38 @@ bool cache_init(block_cache_t *cache) {
     cache->code_buffer[0] = 0xC3;  // ret
     cache->code_buffer_used = 16;  // Align next code
 
+    // Emit shared branch exit stub:
+    //   mov dword [rbp + CPU_EXIT_REASON_OFFSET], EXIT_BRANCH  (10 bytes)
+    //   ret                                                     (1 byte)
+    // Total: 11 bytes
+    {
+        uint8_t *p = cache->code_buffer + cache->code_buffer_used;
+        cache->shared_branch_exit = p;
+        int32_t disp = (int32_t)CPU_EXIT_REASON_OFFSET;
+        // mov dword [rbp + disp32], imm32
+        // C7 85 <disp32> <imm32>
+        *p++ = 0xC7;
+        *p++ = 0x85;
+        *p++ = (disp >> 0) & 0xFF;
+        *p++ = (disp >> 8) & 0xFF;
+        *p++ = (disp >> 16) & 0xFF;
+        *p++ = (disp >> 24) & 0xFF;
+        uint32_t reason = EXIT_BRANCH;
+        *p++ = (reason >> 0) & 0xFF;
+        *p++ = (reason >> 8) & 0xFF;
+        *p++ = (reason >> 16) & 0xFF;
+        *p++ = (reason >> 24) & 0xFF;
+        // ret
+        *p++ = 0xC3;
+        cache->code_buffer_used += (uint32_t)(p - cache->shared_branch_exit);
+        // Align
+        cache->code_buffer_used = (cache->code_buffer_used + 15) & ~15;
+    }
+
+    // Initialize chain pending index
+    memset(cache->chain_pending_head, -1, sizeof(cache->chain_pending_head));
+    cache->chain_pending_used = 0;
+
     return true;
 }
 
@@ -65,8 +98,16 @@ void cache_flush(block_cache_t *cache) {
     memset(cache->block_pool, 0, cache->block_pool_used * sizeof(translated_block_t));
     cache->block_pool_used = 0;
 
-    // Reset code buffer (keep dispatcher stub)
-    cache->code_buffer_used = 16;
+    // Reset code buffer - keep dispatcher stub and shared stubs
+    // The shared_branch_exit stub is at a fixed offset, so we just
+    // need to keep code_buffer_used past it.
+    uint32_t stubs_end = (uint32_t)(cache->shared_branch_exit - cache->code_buffer) + 11;
+    stubs_end = (stubs_end + 15) & ~15;  // Align
+    cache->code_buffer_used = stubs_end;
+
+    // Reset chain pending index
+    memset(cache->chain_pending_head, -1, sizeof(cache->chain_pending_head));
+    cache->chain_pending_used = 0;
 
     cache->flush_count++;
 }
@@ -193,28 +234,62 @@ void cache_record_exit(block_cache_t *cache, translated_block_t *block,
 }
 
 void cache_chain_incoming(block_cache_t *cache, translated_block_t *target) {
+    // Use the O(1) pending chain index if available
+    cache_chain_pending(cache, target);
+}
+
+void cache_record_pending_chain(block_cache_t *cache, translated_block_t *block,
+                                int exit_idx, uint32_t target_pc) {
+    if (cache->chain_pending_used >= CHAIN_PENDING_POOL_SIZE) {
+        return;  // Pool exhausted
+    }
+    uint32_t hash = cache_hash(target_pc);
+    uint32_t entry_idx = cache->chain_pending_used++;
+    uint32_t block_idx = (uint32_t)(block - cache->block_pool);
+
+    cache->chain_pending_entries[entry_idx].target_pc = target_pc;
+    cache->chain_pending_entries[entry_idx].block_idx = block_idx;
+    cache->chain_pending_entries[entry_idx].exit_idx = (uint8_t)exit_idx;
+    cache->chain_pending_entries[entry_idx].next = cache->chain_pending_head[hash];
+    cache->chain_pending_head[hash] = (int32_t)entry_idx;
+}
+
+void cache_chain_pending(block_cache_t *cache, translated_block_t *target) {
     uint32_t target_pc = target->guest_pc;
+    uint32_t hash = cache_hash(target_pc);
+    int32_t prev = -1;
+    int32_t idx = cache->chain_pending_head[hash];
 
-    // Scan all blocks for unchained exits to target_pc
-    for (uint32_t i = 0; i < cache->block_pool_used; i++) {
-        translated_block_t *b = &cache->block_pool[i];
+    while (idx >= 0) {
+        int32_t next = cache->chain_pending_entries[idx].next;
 
-        // Skip the target itself and unused entries
-        if (b == target || b->host_code == NULL) {
-            continue;
-        }
+        if (cache->chain_pending_entries[idx].target_pc == target_pc) {
+            uint32_t block_idx = cache->chain_pending_entries[idx].block_idx;
+            uint8_t exit_idx = cache->chain_pending_entries[idx].exit_idx;
+            translated_block_t *b = &cache->block_pool[block_idx];
 
-        for (int e = 0; e < b->exit_count; e++) {
-            if (!b->exits[e].chained &&
-                b->exits[e].target_pc == target_pc &&
-                b->exits[e].patch_site != NULL) {
+            if (b->host_code != NULL &&
+                exit_idx < b->exit_count &&
+                !b->exits[exit_idx].chained &&
+                b->exits[exit_idx].patch_site != NULL) {
 
-                // Patch the jump to go directly to target
-                cache_patch_jmp(b->exits[e].patch_site, target->host_code);
-                b->exits[e].chained = true;
+                cache_patch_jmp(b->exits[exit_idx].patch_site, target->host_code);
+                b->exits[exit_idx].chained = true;
                 cache->chain_count++;
             }
+
+            // Remove from list
+            if (prev >= 0) {
+                cache->chain_pending_entries[prev].next = next;
+            } else {
+                cache->chain_pending_head[hash] = next;
+            }
+            // Don't update prev - it stays the same since we removed current
+        } else {
+            prev = idx;
         }
+
+        idx = next;
     }
 }
 

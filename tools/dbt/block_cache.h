@@ -73,6 +73,9 @@ struct block_cache {
     // Dispatcher stub address (for unchained exits)
     uint8_t *dispatcher_stub;
 
+    // Shared exit stubs (emitted once in code buffer)
+    uint8_t *shared_branch_exit;    // mov [rbp+EXIT_REASON], EXIT_BRANCH; ret
+
     // Statistics
     uint64_t lookup_count;
     uint64_t lookup_hit_count;
@@ -96,6 +99,18 @@ struct block_cache {
     uint64_t superblock_guest_bytes_total; // Total guest bytes in superblocks
     uint64_t superblock_host_bytes_total;  // Total host bytes in superblocks
     uint64_t peephole_hits;        // Number of peephole rewrites (study only)
+
+    // Chain pending index: reverse lookup for O(1) chaining
+    // chain_pending[hash] = index into chain_pending_entries[], or -1
+    #define CHAIN_PENDING_POOL_SIZE 4096
+    int32_t chain_pending_head[BLOCK_CACHE_SIZE];  // head of linked list per target_pc hash
+    struct {
+        uint32_t target_pc;         // guest PC this exit wants to reach
+        uint32_t block_idx;         // index into block_pool
+        uint8_t exit_idx;           // which exit slot
+        int32_t next;               // next entry in chain, or -1
+    } chain_pending_entries[CHAIN_PENDING_POOL_SIZE];
+    uint32_t chain_pending_used;
 
     // Stage 4: Side-exit profile (indexed by cache_hash(guest_pc))
     uint32_t side_exit_taken_profile[BLOCK_CACHE_SIZE];
@@ -165,6 +180,13 @@ void cache_chain_incoming(block_cache_t *cache, translated_block_t *target);
 // Patch a jmp rel32 instruction to point to a new target
 // patch_site points to the first byte of the rel32 offset
 void cache_patch_jmp(uint8_t *patch_site, uint8_t *target);
+
+// Record a pending chain entry (for O(1) chaining)
+void cache_record_pending_chain(block_cache_t *cache, translated_block_t *block,
+                                int exit_idx, uint32_t target_pc);
+
+// Chain incoming blocks using the pending index (O(1) per target)
+void cache_chain_pending(block_cache_t *cache, translated_block_t *target);
 
 // ============================================================================
 // Statistics

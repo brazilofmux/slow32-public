@@ -1150,8 +1150,6 @@ static bool assemble_line(assembler_t *as, char *line) {
             uint32_t upper = ((uint32_t)imm >> 12) & 0xFFFFF;
             uint32_t lower = imm & 0xFFF;
             
-            if (lower & 0x800) upper = (upper + 1) & 0xFFFFF;
-            
             // LUI rd, upper
             ensure_instruction_capacity(as, 2);
             instruction_t *inst1 = &as->instructions[as->num_instructions];

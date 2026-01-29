@@ -1,0 +1,2 @@
+fib_sum=0x43E8D9B0 prime_count=669 sort_ck=0x7033A2C6
+result=0x33DB79EB

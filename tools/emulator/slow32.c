@@ -452,6 +452,8 @@ void cpu_step(cpu_state_t *cpu) {
         case OP_DIV:
             if (cpu->regs[inst.rs2] == 0) {
                 cpu->regs[inst.rd] = 0xFFFFFFFF;
+            } else if (cpu->regs[inst.rs1] == 0x80000000 && cpu->regs[inst.rs2] == 0xFFFFFFFF) {
+                cpu->regs[inst.rd] = 0x80000000;  // INT32_MIN / -1 = INT32_MIN
             } else {
                 cpu->regs[inst.rd] = (int32_t)cpu->regs[inst.rs1] / (int32_t)cpu->regs[inst.rs2];
             }
@@ -459,6 +461,8 @@ void cpu_step(cpu_state_t *cpu) {
         case OP_REM:
             if (cpu->regs[inst.rs2] == 0) {
                 cpu->regs[inst.rd] = cpu->regs[inst.rs1];
+            } else if (cpu->regs[inst.rs1] == 0x80000000 && cpu->regs[inst.rs2] == 0xFFFFFFFF) {
+                cpu->regs[inst.rd] = 0;  // INT32_MIN % -1 = 0
             } else {
                 cpu->regs[inst.rd] = (int32_t)cpu->regs[inst.rs1] % (int32_t)cpu->regs[inst.rs2];
             }

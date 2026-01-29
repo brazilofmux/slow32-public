@@ -303,10 +303,12 @@ static void op_mulh(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_
 static void op_div(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     UNUSED(next_pc);
     uint32_t divisor = cpu->regs[inst->rs2];
-    if (divisor != 0) {
-        cpu->regs[inst->rd] = (int32_t)cpu->regs[inst->rs1] / (int32_t)divisor;
-    } else {
+    if (divisor == 0) {
         cpu->regs[inst->rd] = -1;
+    } else if (cpu->regs[inst->rs1] == 0x80000000 && divisor == 0xFFFFFFFF) {
+        cpu->regs[inst->rd] = 0x80000000;  // INT32_MIN / -1 = INT32_MIN
+    } else {
+        cpu->regs[inst->rd] = (int32_t)cpu->regs[inst->rs1] / (int32_t)divisor;
     }
     cpu->cycle_count += 63;
 }
@@ -314,10 +316,12 @@ static void op_div(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
 static void op_rem(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     UNUSED(next_pc);
     uint32_t divisor = cpu->regs[inst->rs2];
-    if (divisor != 0) {
-        cpu->regs[inst->rd] = (int32_t)cpu->regs[inst->rs1] % (int32_t)divisor;
-    } else {
+    if (divisor == 0) {
         cpu->regs[inst->rd] = cpu->regs[inst->rs1];
+    } else if (cpu->regs[inst->rs1] == 0x80000000 && divisor == 0xFFFFFFFF) {
+        cpu->regs[inst->rd] = 0;  // INT32_MIN % -1 = 0
+    } else {
+        cpu->regs[inst->rd] = (int32_t)cpu->regs[inst->rs1] % (int32_t)divisor;
     }
     cpu->cycle_count += 63;
 }

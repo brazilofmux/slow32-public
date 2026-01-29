@@ -271,6 +271,10 @@ void emit_jae_rel32(emit_ctx_t *ctx, int32_t offset);
 void emit_ja_rel32(emit_ctx_t *ctx, int32_t offset);
 void emit_jbe_rel32(emit_ctx_t *ctx, int32_t offset);
 
+// Short conditional jump: 7x rel8 (2 bytes)
+// cc is the condition code (low nibble of near 0F 8x opcode)
+void emit_jcc_short(emit_ctx_t *ctx, uint8_t cc, int8_t rel8);
+
 // call rel32
 void emit_call_rel32(emit_ctx_t *ctx, int32_t offset);
 
