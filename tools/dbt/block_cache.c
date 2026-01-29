@@ -271,7 +271,8 @@ void cache_chain_pending(block_cache_t *cache, translated_block_t *target) {
             if (b->host_code != NULL &&
                 exit_idx < b->exit_count &&
                 !b->exits[exit_idx].chained &&
-                b->exits[exit_idx].patch_site != NULL) {
+                b->exits[exit_idx].patch_site != NULL &&
+                b->exits[exit_idx].target_pc == target_pc) {
 
                 cache_patch_jmp(b->exits[exit_idx].patch_site, target->host_code);
                 b->exits[exit_idx].chained = true;
