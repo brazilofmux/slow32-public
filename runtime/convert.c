@@ -1,113 +1,217 @@
-// Integer to string conversion functions
-// Separated from printf.c to prevent aggressive inlining optimizations
+#include "convert.h"
+#include <stdint.h>
 
-#include <stdbool.h>
-#include <stddef.h>
+// Two-digit lookup table for fast conversion
+static const char Digits100[201] =
+    "00010203040506070809"
+    "10111213141516171819"
+    "20212223242526272829"
+    "30313233343536373839"
+    "40414243444546474849"
+    "50515253545556575859"
+    "60616263646566676869"
+    "70717273747576777879"
+    "80818283848586878889"
+    "90919293949596979899";
 
-// Reverse a string in place
-static void ReverseDigits(char *pFirst, char *pLast) {
-    while (pFirst < pLast) {
-        char temp = *pLast;
-        *pLast = *pFirst;
-        *pFirst = temp;
-        pFirst++;
-        pLast--;
+const char Digits16L[17] = "0123456789abcdef";
+const char Digits16U[17] = "0123456789ABCDEF";
+
+// 64-bit division helpers provided by builtins.c
+extern uint64_t __udivdi3(uint64_t, uint64_t);
+extern uint64_t __umoddi3(uint64_t, uint64_t);
+
+static void reverse_string(char *start, char *end) {
+    while (start < end) {
+        char tmp = *start;
+        *start = *end;
+        *end = tmp;
+        start++;
+        end--;
     }
 }
 
-// Convert unsigned to decimal string
-size_t slow32_utoa(unsigned int uval, char *buf) {
-    if (uval == 0) {
+size_t slow32_utoa(unsigned int val, char *buf) {
+    if (val == 0) {
         buf[0] = '0';
         buf[1] = '\0';
         return 1;
     }
 
-    static const unsigned int POWERS_OF_TEN[] = {
-        1000000000u, 100000000u, 10000000u, 1000000u, 100000u,
-        10000u, 1000u, 100u, 10u, 1u
-    };
-
     char *p = buf;
-    bool started = false;
-
-    for (unsigned i = 0; i < sizeof(POWERS_OF_TEN) / sizeof(POWERS_OF_TEN[0]); ++i) {
-        unsigned int power = POWERS_OF_TEN[i];
-        if (!started) {
-            if (uval < power)
-                continue;
-            started = true;
-        }
-
-        unsigned int digit = 0;
-        while (uval >= power) {
-            uval -= power;
-            ++digit;
-        }
-        *p++ = (char)('0' + digit);
+    while (val >= 100) {
+        unsigned int rem = val % 100;
+        val /= 100;
+        const char *digits = Digits100 + (rem * 2);
+        *p++ = digits[1];
+        *p++ = digits[0];
     }
 
-    *p = '\0';
-    return (size_t)(p - buf);
+    if (val >= 10) {
+        const char *digits = Digits100 + (val * 2);
+        *p++ = digits[1];
+        *p++ = digits[0];
+    } else {
+        *p++ = (char)('0' + val);
+    }
+
+    size_t len = (size_t)(p - buf);
+    reverse_string(buf, buf + len - 1);
+    buf[len] = '\0';
+    return len;
 }
 
-// Convert signed to decimal string
 size_t slow32_ltoa(int val, char *buf) {
     char *p = buf;
     unsigned int uval;
-    bool is_negative = val < 0;
 
-    if (is_negative) {
+    if (val < 0) {
         *p++ = '-';
-        uval = (unsigned int)(-val);
+        // Handle INT_MIN: -2147483648
+        uval = (val == (int)0x80000000) ? 0x80000000U : (unsigned int)(-val);
     } else {
         uval = (unsigned int)val;
     }
-    p += slow32_utoa(uval, p);
-    return p - buf;
+
+    // Call internal logic or duplicate it? Duplicating avoids memmove/copy
+    // But sharing is better.
+    // If I call slow32_utoa, it writes to p.
+    size_t len = slow32_utoa(uval, p);
+    return (size_t)(p - buf) + len;
 }
 
-// Convert unsigned to octal string
-size_t slow32_utoo(unsigned int uval, char *buf) {
-    char *p = buf;
-    char *q = p;
+#define S32_MAX_DEC_DIGITS 20
 
-    if (uval == 0) {
-        *p++ = '0';
-        *p = '\0';
+size_t slow32_utoa64(uint64_t val, char *buf) {
+    if (val == 0) {
+        buf[0] = '0';
+        buf[1] = '\0';
         return 1;
     }
 
-    while (uval > 0) {
-        *p++ = '0' + (uval & 7);
-        uval >>= 3;
+    char scratch[S32_MAX_DEC_DIGITS];
+    size_t idx = 0;
+
+    // Use division for 64-bit since we don't have fast trick for large numbers yet
+    // But we can use base-100 to speed up output
+    while (val >= 100) {
+        uint64_t rem = __umoddi3(val, 100ULL);
+        val = __udivdi3(val, 100ULL);
+        const char *digits = Digits100 + (rem * 2);
+        scratch[idx++] = digits[1];
+        scratch[idx++] = digits[0];
     }
-    *p = '\0';
-    ReverseDigits(q, p-1);
+
+    if (val >= 10) {
+        const char *digits = Digits100 + (val * 2);
+        scratch[idx++] = digits[1];
+        scratch[idx++] = digits[0];
+    } else {
+        scratch[idx++] = (char)('0' + val);
+    }
+
+    size_t len = idx;
+    char *out = buf;
+    while (idx > 0) {
+        *out++ = scratch[--idx];
+    }
+    *out = '\0';
+    return len;
+}
+
+size_t slow32_ltoa64(int64_t val, char *buf) {
+    char *p = buf;
+    uint64_t uval;
+
+    if (val < 0) {
+        *p++ = '-';
+        uval = (val == (int64_t)0x8000000000000000LL) ? 0x8000000000000000ULL : (uint64_t)(-val);
+    } else {
+        uval = (uint64_t)val;
+    }
+
+    p += slow32_utoa64(uval, p);
     return p - buf;
 }
 
-// Hex conversion digits
-const char Digits16U[17] = "0123456789ABCDEF";
-const char Digits16L[17] = "0123456789abcdef";
-
-// Convert unsigned to hex string (uppercase)
-size_t slow32_utox(unsigned int uval, char *buf, bool uppercase) {
+size_t slow32_utox(unsigned int val, char *buf, bool uppercase) {
     char *p = buf;
     char *q = p;
     const char *digits = uppercase ? Digits16U : Digits16L;
 
-    if (uval == 0) {
+    if (val == 0) {
         *p++ = '0';
         *p = '\0';
         return 1;
     }
 
-    while (uval > 0) {
-        *p++ = digits[uval & 0xF];
-        uval >>= 4;
+    while (val > 0) {
+        *p++ = digits[val & 0xF];
+        val >>= 4;
     }
+
     *p = '\0';
-    ReverseDigits(q, p-1);
+    reverse_string(q, p - 1);
+    return p - buf;
+}
+
+size_t slow32_utox64(uint64_t val, char *buf, bool uppercase) {
+    char *p = buf;
+    char *q = p;
+    const char *digits = uppercase ? Digits16U : Digits16L;
+
+    if (val == 0) {
+        *p++ = '0';
+        *p = '\0';
+        return 1;
+    }
+
+    while (val > 0) {
+        *p++ = digits[val & 0xF];
+        val >>= 4;
+    }
+
+    *p = '\0';
+    reverse_string(q, p - 1);
+    return p - buf;
+}
+
+size_t slow32_utoo(unsigned int val, char *buf) {
+    char *p = buf;
+    char *q = p;
+
+    if (val == 0) {
+        *p++ = '0';
+        *p = '\0';
+        return 1;
+    }
+
+    while (val > 0) {
+        *p++ = '0' + (val & 7);
+        val >>= 3;
+    }
+
+    *p = '\0';
+    reverse_string(q, p - 1);
+    return p - buf;
+}
+
+size_t slow32_utoo64(uint64_t val, char *buf) {
+    char *p = buf;
+    char *q = p;
+
+    if (val == 0) {
+        *p++ = '0';
+        *p = '\0';
+        return 1;
+    }
+
+    while (val > 0) {
+        *p++ = '0' + (val & 7ULL);
+        val >>= 3;
+    }
+
+    *p = '\0';
+    reverse_string(q, p - 1);
     return p - buf;
 }

@@ -10,15 +10,17 @@ RUN apk add --no-cache \
     build-base \
     cmake \
     ninja \
-    git \
     python3 \
     py3-pip \
     linux-headers \
     patch
 
-# Clone LLVM project (main branch for LLVM 22 development)
+# Download LLVM project (main branch for LLVM 22 development)
 WORKDIR /build
-RUN git clone -v --depth 1 --branch main https://github.com/llvm/llvm-project.git
+RUN wget -q https://github.com/llvm/llvm-project/archive/refs/heads/main.zip -O llvm-project.zip && \
+    unzip -q llvm-project.zip && \
+    mv llvm-project-main llvm-project && \
+    rm llvm-project.zip
 
 # Copy SLOW-32 backend files and patches
 COPY llvm-backend/SLOW32 /build/llvm-project/llvm/lib/Target/SLOW32

@@ -5,232 +5,12 @@
 #include <stdbool.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <stdio.h>
+#include "convert.h"
 
 // Forward declarations
-void putchar(int c);
 size_t strlen(const char *s);
 void *memcpy(void *dest, const void *src, size_t n);
-
-// 64-bit division helpers provided by builtins.c
-extern uint64_t __udivdi3(uint64_t, uint64_t);
-extern uint64_t __umoddi3(uint64_t, uint64_t);
-
-// Two-digit lookup table for fast conversion
-// Each pair represents 00, 01, 02...98, 99
-static const char Digits100[201] =
-    "00010203040506070809"
-    "10111213141516171819"
-    "20212223242526272829"
-    "30313233343536373839"
-    "40414243444546474849"
-    "50515253545556575859"
-    "60616263646566676869"
-    "70717273747576777879"
-    "80818283848586878889"
-    "90919293949596979899";
-
-// Hex digits tables
-static const char Digits16L[17] = "0123456789abcdef";
-static const char Digits16U[17] = "0123456789ABCDEF";
-
-// Reverse a string in place
-static void reverse_string(char *start, char *end) {
-    while (start < end) {
-        char tmp = *start;
-        *start = *end;
-        *end = tmp;
-        start++;
-        end--;
-    }
-}
-
-// Convert unsigned 32-bit to decimal using two-digit optimization
-static size_t utoa32_fast(uint32_t val, char *buf) {
-    if (val == 0) {
-        buf[0] = '0';
-        buf[1] = '\0';
-        return 1;
-    }
-
-    char *p = buf;
-
-    // Process two digits at a time, storing least significant digit first.
-    while (val >= 100) {
-        uint32_t rem = val % 100;
-        val /= 100;
-        const char *digits = Digits100 + (rem * 2);
-        *p++ = digits[1];
-        *p++ = digits[0];
-    }
-
-    if (val >= 10) {
-        const char *digits = Digits100 + (val * 2);
-        *p++ = digits[1];
-        *p++ = digits[0];
-    } else {
-        *p++ = (char)('0' + val);
-    }
-
-    size_t len = (size_t)(p - buf);
-    reverse_string(buf, buf + len - 1);
-    buf[len] = '\0';
-    return len;
-}
-
-// Convert unsigned 64-bit to decimal using runtime libcalls (base-100 chunks)
-#define S32_MAX_DEC_DIGITS 20
-
-static size_t utoa64_fast(uint64_t val, char *buf) {
-    if (val == 0) {
-        buf[0] = '0';
-        buf[1] = '\0';
-        return 1;
-    }
-
-    char scratch[S32_MAX_DEC_DIGITS];
-    size_t idx = 0;
-
-    while (val >= 100) {
-        uint64_t rem = __umoddi3(val, 100ULL);
-        val = __udivdi3(val, 100ULL);
-        const char *digits = Digits100 + (rem * 2);
-        scratch[idx++] = digits[1];
-        scratch[idx++] = digits[0];
-    }
-
-    if (val >= 10) {
-        const char *digits = Digits100 + (val * 2);
-        scratch[idx++] = digits[1];
-        scratch[idx++] = digits[0];
-    } else {
-        scratch[idx++] = (char)('0' + val);
-    }
-
-    size_t len = idx;
-    char *out = buf;
-    while (idx > 0) {
-        *out++ = scratch[--idx];
-    }
-    *out = '\0';
-    return len;
-}
-
-// Convert signed 32-bit to decimal
-static size_t ltoa32_fast(int32_t val, char *buf) {
-    char *p = buf;
-    uint32_t uval;
-
-    if (val < 0) {
-        *p++ = '-';
-        uval = (val == (-2147483647-1)) ? 2147483648U : (uint32_t)(-val);
-    } else {
-        uval = (uint32_t)val;
-    }
-
-    p += utoa32_fast(uval, p);
-    return p - buf;
-}
-
-// Convert signed 64-bit to decimal
-static size_t ltoa64_fast(int64_t val, char *buf) {
-    char *p = buf;
-    uint64_t uval;
-
-    if (val < 0) {
-        *p++ = '-';
-        // Handle INT64_MIN specially
-        uval = (val == (-9223372036854775807LL-1)) ? 9223372036854775808ULL : (uint64_t)(-val);
-    } else {
-        uval = (uint64_t)val;
-    }
-
-    p += utoa64_fast(uval, p);
-    return p - buf;
-}
-
-// Convert to hexadecimal
-static size_t utox32(uint32_t val, char *buf, bool uppercase) {
-    char *p = buf;
-    char *q = p;
-    const char *digits = uppercase ? Digits16U : Digits16L;
-
-    if (val == 0) {
-        *p++ = '0';
-        *p = '\0';
-        return 1;
-    }
-
-    while (val > 0) {
-        *p++ = digits[val & 0xF];
-        val >>= 4;
-    }
-
-    *p = '\0';
-    reverse_string(q, p - 1);
-    return p - buf;
-}
-
-static size_t utox64(uint64_t val, char *buf, bool uppercase) {
-    char *p = buf;
-    char *q = p;
-    const char *digits = uppercase ? Digits16U : Digits16L;
-
-    if (val == 0) {
-        *p++ = '0';
-        *p = '\0';
-        return 1;
-    }
-
-    while (val > 0) {
-        *p++ = digits[val & 0xF];
-        val >>= 4;
-    }
-
-    *p = '\0';
-    reverse_string(q, p - 1);
-    return p - buf;
-}
-
-// Convert to octal
-static size_t utoo32(uint32_t val, char *buf) {
-    char *p = buf;
-    char *q = p;
-
-    if (val == 0) {
-        *p++ = '0';
-        *p = '\0';
-        return 1;
-    }
-
-    while (val > 0) {
-        *p++ = '0' + (val & 7);
-        val >>= 3;
-    }
-
-    *p = '\0';
-    reverse_string(q, p - 1);
-    return p - buf;
-}
-
-static size_t utoo64(uint64_t val, char *buf) {
-    char *p = buf;
-    char *q = p;
-
-    if (val == 0) {
-        *p++ = '0';
-        *p = '\0';
-        return 1;
-    }
-
-    while (val > 0) {
-        *p++ = '0' + (val & 7ULL);
-        val >>= 3;
-    }
-
-    *p = '\0';
-    reverse_string(q, p - 1);
-    return p - buf;
-}
 
 // Buffer size for conversions
 #define CONV_BUF_SIZE 32
@@ -335,14 +115,13 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
                 fmt++;
             }
         } else if (*fmt == 'z') {
-            // size_t modifier - on SLOW-32 (32-bit), size_t is same as unsigned int
-            // so we just skip the modifier and use default (32-bit) handling
+            // size_t modifier
             fmt++;
         } else if (*fmt == 'h') {
-            // Short modifier - we'll treat as int
+            // Short modifier
             fmt++;
             if (*fmt == 'h') {
-                // char modifier - we'll treat as int
+                // char modifier
                 fmt++;
             }
         }
@@ -361,22 +140,22 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
             case 'i': {
                 if (length_mod >= 2) {
                     long long val = va_arg(ap, long long);
-                    conv_len = ltoa64_fast(val, conv_buf);
+                    conv_len = slow32_ltoa64(val, conv_buf);
                     if (val < 0) {
                         is_negative = true;
                     }
                 } else if (length_mod == 1) {
                     long val = va_arg(ap, long);
                     if (sizeof(long) > 4) {
-                        conv_len = ltoa64_fast(val, conv_buf);
+                        conv_len = slow32_ltoa64(val, conv_buf);
                         if (val < 0) is_negative = true;
                     } else {
-                        conv_len = ltoa32_fast((int32_t)val, conv_buf);
+                        conv_len = slow32_ltoa((int32_t)val, conv_buf);
                         if (val < 0) is_negative = true;
                     }
                 } else {
                     int val = va_arg(ap, int);
-                    conv_len = ltoa32_fast(val, conv_buf);
+                    conv_len = slow32_ltoa(val, conv_buf);
                     if (val < 0) is_negative = true;
                 }
                 break;
@@ -385,17 +164,17 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
             case 'u': {
                 if (length_mod >= 2) {
                     unsigned long long val = va_arg(ap, unsigned long long);
-                    conv_len = utoa64_fast(val, conv_buf);
+                    conv_len = slow32_utoa64(val, conv_buf);
                 } else if (length_mod == 1) {
                     unsigned long val = va_arg(ap, unsigned long);
                     if (sizeof(long) > 4) {
-                        conv_len = utoa64_fast(val, conv_buf);
+                        conv_len = slow32_utoa64(val, conv_buf);
                     } else {
-                        conv_len = utoa32_fast((uint32_t)val, conv_buf);
+                        conv_len = slow32_utoa((uint32_t)val, conv_buf);
                     }
                 } else {
                     unsigned val = va_arg(ap, unsigned);
-                    conv_len = utoa32_fast(val, conv_buf);
+                    conv_len = slow32_utoa(val, conv_buf);
                 }
                 break;
             }
@@ -405,17 +184,17 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
                 bool uppercase = (spec == 'X');
                 if (length_mod >= 2) {
                     unsigned long long val = va_arg(ap, unsigned long long);
-                    conv_len = utox64((uint64_t)val, conv_buf, uppercase);
+                    conv_len = slow32_utox64((uint64_t)val, conv_buf, uppercase);
                 } else if (length_mod == 1) {
                     unsigned long val = va_arg(ap, unsigned long);
                     if (sizeof(long) > 4) {
-                        conv_len = utox64((uint64_t)val, conv_buf, uppercase);
+                        conv_len = slow32_utox64((uint64_t)val, conv_buf, uppercase);
                     } else {
-                        conv_len = utox32((uint32_t)val, conv_buf, uppercase);
+                        conv_len = slow32_utox((uint32_t)val, conv_buf, uppercase);
                     }
                 } else {
                     unsigned val = va_arg(ap, unsigned);
-                    conv_len = utox32(val, conv_buf, uppercase);
+                    conv_len = slow32_utox(val, conv_buf, uppercase);
                 }
                 break;
             }
@@ -423,17 +202,17 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
             case 'o': {
                 if (length_mod >= 2) {
                     unsigned long long val = va_arg(ap, unsigned long long);
-                    conv_len = utoo64(val, conv_buf);
+                    conv_len = slow32_utoo64(val, conv_buf);
                 } else if (length_mod == 1) {
                     unsigned long val = va_arg(ap, unsigned long);
                     if (sizeof(long) > 4) {
-                        conv_len = utoo64(val, conv_buf);
+                        conv_len = slow32_utoo64(val, conv_buf);
                     } else {
-                        conv_len = utoo32((uint32_t)val, conv_buf);
+                        conv_len = slow32_utoo((uint32_t)val, conv_buf);
                     }
                 } else {
                     unsigned val = va_arg(ap, unsigned);
-                    conv_len = utoo32(val, conv_buf);
+                    conv_len = slow32_utoo(val, conv_buf);
                 }
                 break;
             }
@@ -443,9 +222,9 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
                 uintptr_t val = (uintptr_t)ptr;
                 pointer_format = true;
 #if UINTPTR_MAX > 0xFFFFFFFFu
-                conv_len = utox64((uint64_t)val, conv_buf, false);
+                conv_len = slow32_utox64((uint64_t)val, conv_buf, false);
 #else
-                conv_len = utox32((uint32_t)val, conv_buf, false);
+                conv_len = slow32_utox((uint32_t)val, conv_buf, false);
 #endif
                 if (!has_width || (size_t)width < (2 + sizeof(uintptr_t) * 2)) {
                     width = (int)(2 + sizeof(uintptr_t) * 2);
@@ -649,8 +428,8 @@ int printf(const char *format, ...) {
     va_end(ap);
 
     // Output to console
-    for (int i = 0; i < len; i++) {
-        putchar(buffer[i]);
+    if (len > 0) {
+        fwrite(buffer, 1, len, stdout);
     }
 
     return len;
@@ -662,18 +441,15 @@ int vprintf(const char *format, va_list ap) {
     int len = vsnprintf_enhanced(buffer, sizeof(buffer), format, ap);
 
     // Output to console
-    for (int i = 0; i < len; i++) {
-        putchar(buffer[i]);
+    if (len > 0) {
+        fwrite(buffer, 1, len, stdout);
     }
 
     return len;
 }
 
-// Forward declaration for fwrite
-size_t fwrite(const void *ptr, size_t size, size_t nmemb, void *stream);
-
 // vfprintf - format and output to FILE stream using va_list
-int vfprintf(void *stream, const char *format, va_list ap) {
+int vfprintf(FILE *stream, const char *format, va_list ap) {
     char buffer[1024];
     int len = vsnprintf_enhanced(buffer, sizeof(buffer), format, ap);
 
@@ -686,7 +462,7 @@ int vfprintf(void *stream, const char *format, va_list ap) {
 }
 
 // fprintf - format and output to FILE stream
-int fprintf(void *stream, const char *format, ...) {
+int fprintf(FILE *stream, const char *format, ...) {
     va_list ap;
     va_start(ap, format);
     int len = vfprintf(stream, format, ap);

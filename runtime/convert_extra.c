@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include "convert.h"
 
 // Define limits since we can't include standard limits.h
 #define ULONG_MAX 0xFFFFFFFFUL
@@ -83,6 +84,19 @@ unsigned long strtoul(const char *nptr, char **endptr, int base) {
 
 // itoa - convert integer to string (non-standard but useful)
 char *itoa(int value, char *str, int base) {
+    if (base == 10) {
+        slow32_ltoa(value, str);
+        return str;
+    }
+    if (base == 16) {
+        slow32_utox((unsigned int)value, str, true);
+        return str;
+    }
+    if (base == 8) {
+        slow32_utoo((unsigned int)value, str);
+        return str;
+    }
+
     if (base < 2 || base > 36) {
         *str = '\0';
         return str;
@@ -93,29 +107,31 @@ char *itoa(int value, char *str, int base) {
     char tmp_char;
     int tmp_value;
     
-    // Handle negative numbers for base 10
-    if (value < 0 && base == 10) {
-        value = -value;
-        *ptr++ = '-';
-        ptr1++;
-    }
-    
     // Convert to string (backwards)
-    char *start = ptr;
+    // Note: for non-standard bases, we treat as unsigned or signed?
+    // Standard practice for itoa with base != 10 is usually unsigned logic
+    // but handled carefully.
+    // My previous impl handled negative for base 10 only.
+    // So for base != 10, it fell through to unsigned-like division?
+    // Wait, previous impl:
+    // if (value < 0 && base == 10) { ... }
+    // do { tmp_value = value % base; value /= base; ... }
+    // If value is negative and base != 10, % returns negative?
+    // In C, % with negative operand is implementation defined or negative.
+    // If negative, '0' + negative is bad.
+    // So usually itoa casts to unsigned for non-10 base.
+    
+    unsigned int uval = (unsigned int)value;
     do {
-        tmp_value = value % base;
-        value /= base;
-        
-        if (tmp_value < 10) {
-            *ptr++ = '0' + tmp_value;
-        } else {
-            *ptr++ = 'A' + (tmp_value - 10);
-        }
-    } while (value);
+        unsigned int digit = uval % base;
+        uval /= base;
+        if (digit < 10) *ptr++ = '0' + digit;
+        else *ptr++ = 'A' + (digit - 10);
+    } while (uval);
     
     *ptr-- = '\0';
     
-    // Reverse the string
+    // Reverse
     while (ptr1 < ptr) {
         tmp_char = *ptr;
         *ptr-- = *ptr1;
@@ -127,6 +143,19 @@ char *itoa(int value, char *str, int base) {
 
 // utoa - convert unsigned integer to string
 char *utoa(unsigned int value, char *str, int base) {
+    if (base == 10) {
+        slow32_utoa(value, str);
+        return str;
+    }
+    if (base == 16) {
+        slow32_utox(value, str, true);
+        return str;
+    }
+    if (base == 8) {
+        slow32_utoo(value, str);
+        return str;
+    }
+
     if (base < 2 || base > 36) {
         *str = '\0';
         return str;
@@ -137,27 +166,19 @@ char *utoa(unsigned int value, char *str, int base) {
     char tmp_char;
     unsigned int tmp_value;
     
-    // Convert to string (backwards)
     do {
         tmp_value = value % base;
         value /= base;
-        
-        if (tmp_value < 10) {
-            *ptr++ = '0' + tmp_value;
-        } else {
-            *ptr++ = 'A' + (tmp_value - 10);
-        }
+        if (tmp_value < 10) *ptr++ = '0' + tmp_value;
+        else *ptr++ = 'A' + (tmp_value - 10);
     } while (value);
     
     *ptr-- = '\0';
-    
-    // Reverse the string
     while (ptr1 < ptr) {
         tmp_char = *ptr;
         *ptr-- = *ptr1;
         *ptr1++ = tmp_char;
     }
-    
     return str;
 }
 
@@ -171,10 +192,8 @@ unsigned long long strtoull(const char *nptr, char **endptr, int base) {
     int neg = 0;
     int any = 0;
 
-    // Skip whitespace
     while (isspace(*s)) s++;
 
-    // Check for sign
     if (*s == '-') {
         neg = 1;
         s++;
@@ -182,7 +201,6 @@ unsigned long long strtoull(const char *nptr, char **endptr, int base) {
         s++;
     }
 
-    // Determine base
     if ((base == 0 || base == 16) && *s == '0' && (s[1] == 'x' || s[1] == 'X')) {
         s += 2;
         base = 16;
@@ -190,18 +208,15 @@ unsigned long long strtoull(const char *nptr, char **endptr, int base) {
         base = (*s == '0') ? 8 : 10;
     }
 
-    // Check base validity
     if (base < 2 || base > 36) {
         if (endptr) *endptr = (char *)nptr;
         return 0;
     }
 
-    // Calculate overflow cutoff values for 64-bit
     #define ULLONG_MAX_VAL 0xFFFFFFFFFFFFFFFFULL
     cutoff = ULLONG_MAX_VAL / base;
     cutlim = ULLONG_MAX_VAL % base;
 
-    // Process digits
     while ((c = *s) != '\0') {
         if (isdigit(c)) {
             c -= '0';
@@ -213,7 +228,6 @@ unsigned long long strtoull(const char *nptr, char **endptr, int base) {
 
         if (c >= base) break;
 
-        // Check for overflow
         if (result > cutoff || (result == cutoff && c > cutlim)) {
             result = ULLONG_MAX_VAL;
             any = -1;
@@ -246,10 +260,8 @@ long long strtoll(const char *nptr, char **endptr, int base) {
     int any = 0;
     int c;
 
-    // Skip whitespace
     while (isspace(*s)) s++;
 
-    // Check for sign
     if (*s == '-') {
         neg = 1;
         s++;
@@ -257,7 +269,6 @@ long long strtoll(const char *nptr, char **endptr, int base) {
         s++;
     }
 
-    // Determine base
     if ((base == 0 || base == 16) && *s == '0' && (s[1] == 'x' || s[1] == 'X')) {
         s += 2;
         base = 16;
@@ -265,22 +276,19 @@ long long strtoll(const char *nptr, char **endptr, int base) {
         base = (*s == '0') ? 8 : 10;
     }
 
-    // Check base validity
     if (base < 2 || base > 36) {
         if (endptr) *endptr = (char *)nptr;
         return 0;
     }
 
-    // Calculate overflow limits for signed 64-bit
     #define LLONG_MAX_VAL  0x7FFFFFFFFFFFFFFFLL
     #define LLONG_MIN_VAL  (-LLONG_MAX_VAL - 1LL)
     unsigned long long limit = neg ?
-        ((unsigned long long)LLONG_MAX_VAL + 1) :  // -LLONG_MIN
+        ((unsigned long long)LLONG_MAX_VAL + 1) :
         (unsigned long long)LLONG_MAX_VAL;
     unsigned long long cutoff = limit / base;
     int cutlim = limit % base;
 
-    // Process digits
     while ((c = *s) != '\0') {
         if (isdigit(c)) {
             c -= '0';
@@ -292,7 +300,6 @@ long long strtoll(const char *nptr, char **endptr, int base) {
 
         if (c >= base) break;
 
-        // Check for overflow
         if (acc > cutoff || (acc == cutoff && c > cutlim)) {
             acc = limit;
             any = -1;
@@ -315,86 +322,25 @@ long long strtoll(const char *nptr, char **endptr, int base) {
     return neg ? -(long long)acc : (long long)acc;
 }
 
-// atoll - convert string to long long (convenience wrapper)
+// atoll
 long long atoll(const char *nptr) {
     return strtoll(nptr, (char **)0, 10);
 }
 
-// ltoa - convert long to string
+// ltoa
 char *ltoa(long value, char *str, int base) {
-    if (base < 2 || base > 36) {
-        *str = '\0';
+    if (base == 10) {
+        slow32_ltoa((int)value, str);
         return str;
     }
-    
-    char *ptr = str;
-    char *ptr1 = str;
-    char tmp_char;
-    long tmp_value;
-    
-    // Handle negative numbers for base 10
-    if (value < 0 && base == 10) {
-        value = -value;
-        *ptr++ = '-';
-        ptr1++;
-    }
-    
-    // Convert to string (backwards)
-    do {
-        tmp_value = value % base;
-        value /= base;
-        
-        if (tmp_value < 10) {
-            *ptr++ = '0' + tmp_value;
-        } else {
-            *ptr++ = 'A' + (tmp_value - 10);
-        }
-    } while (value);
-    
-    *ptr-- = '\0';
-    
-    // Reverse the string
-    while (ptr1 < ptr) {
-        tmp_char = *ptr;
-        *ptr-- = *ptr1;
-        *ptr1++ = tmp_char;
-    }
-    
-    return str;
+    return itoa((int)value, str, base);
 }
 
-// ultoa - convert unsigned long to string
+// ultoa
 char *ultoa(unsigned long value, char *str, int base) {
-    if (base < 2 || base > 36) {
-        *str = '\0';
+    if (base == 10) {
+        slow32_utoa((unsigned int)value, str);
         return str;
     }
-    
-    char *ptr = str;
-    char *ptr1 = str;
-    char tmp_char;
-    unsigned long tmp_value;
-    
-    // Convert to string (backwards)
-    do {
-        tmp_value = value % base;
-        value /= base;
-        
-        if (tmp_value < 10) {
-            *ptr++ = '0' + tmp_value;
-        } else {
-            *ptr++ = 'A' + (tmp_value - 10);
-        }
-    } while (value);
-    
-    *ptr-- = '\0';
-    
-    // Reverse the string
-    while (ptr1 < ptr) {
-        tmp_char = *ptr;
-        *ptr-- = *ptr1;
-        *ptr1++ = tmp_char;
-    }
-    
-    return str;
+    return utoa((unsigned int)value, str, base);
 }

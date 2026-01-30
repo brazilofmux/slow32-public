@@ -1881,8 +1881,8 @@ SDValue SLOW32TargetLowering::LowerSMUL_LOHI(SDValue Op, SelectionDAG &DAG) cons
   SDValue BSign = DAG.getSetCC(DL, VT, B, Zero, ISD::SETLT);
   
   // Create masked values for subtraction
-  SDValue BMask = DAG.getNode(ISD::AND, DL, VT, B, ASign);
-  SDValue AMask = DAG.getNode(ISD::AND, DL, VT, A, BSign);
+  SDValue BMask = DAG.getSelect(DL, VT, ASign, B, Zero);
+  SDValue AMask = DAG.getSelect(DL, VT, BSign, A, Zero);
   
   // Adjust Hi
   Hi = DAG.getNode(ISD::SUB, DL, VT, Hi, BMask);
