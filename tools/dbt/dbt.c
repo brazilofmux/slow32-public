@@ -35,6 +35,7 @@ static bool avoid_backedge_extend = false;
 static bool peephole_enabled = false;
 static bool reg_cache_enabled = false;
 static bool align_traps_enabled = false;
+static bool intrinsics_disabled = false;
 
 // MMIO state
 static mmio_ring_state_t mmio_state;
@@ -114,6 +115,10 @@ static void dbt_init_mmio(dbt_cpu_state_t *cpu) {
     uint32_t heap_base = (cpu->data_limit + 0xFFF) & ~0xFFF;
     uint32_t heap_size = cpu->mmio_base - heap_base;  // Heap up to MMIO
     mmio_ring_init(&mmio_state, heap_base, heap_size);
+
+    // Configure direct access to guest memory (for zero-copy I/O)
+    mmio_state.guest_mem_base = cpu->mem_base;
+    mmio_state.guest_mem_size = cpu->mem_size;
 
     // Point ring buffers directly at guest memory
     uint8_t *mmio_mem = cpu->mem_base + cpu->mmio_base;
@@ -263,6 +268,48 @@ bool dbt_load_s32x(dbt_cpu_state_t *cpu, const char *filename) {
         if (!mmio_initialized) {
             fprintf(stderr, "DBT: Failed to initialize MMIO\n");
             return false;
+        }
+    }
+
+    // Load symbol table for intrinsic recognition
+    cpu->intrinsics_enabled = !intrinsics_disabled;
+    if (cpu->intrinsics_enabled) {
+        s32x_symtab_result_t st = load_s32x_symtab(filename);
+        if (st.success && st.num_symbols > 0) {
+            // Look up known intrinsic functions (try multiple name variants)
+            static const char *memcpy_names[] = {
+                "memcpy", "llvm.memcpy.p0.p0.i32", "llvm.memcpy.p0.p0.i64", NULL
+            };
+            static const char *memset_names[] = {
+                "memset", "llvm.memset.p0.i32", "llvm.memset.p0.i64", NULL
+            };
+            static const char *memmove_names[] = { "memmove", NULL };
+            static const char *strlen_names[] = { "strlen", NULL };
+            static const char *memswap_names[] = { "memswap", NULL };
+
+            for (const char **n = memcpy_names; *n; n++) {
+                uint32_t addr = s32x_symtab_lookup(&st, *n);
+                if (addr) { cpu->intrinsic_memcpy = addr; break; }
+            }
+            for (const char **n = memset_names; *n; n++) {
+                uint32_t addr = s32x_symtab_lookup(&st, *n);
+                if (addr) { cpu->intrinsic_memset = addr; break; }
+            }
+            for (const char **n = memmove_names; *n; n++) {
+                uint32_t addr = s32x_symtab_lookup(&st, *n);
+                if (addr) { cpu->intrinsic_memmove = addr; break; }
+            }
+            for (const char **n = strlen_names; *n; n++) {
+                uint32_t addr = s32x_symtab_lookup(&st, *n);
+                if (addr) { cpu->intrinsic_strlen = addr; break; }
+            }
+            for (const char **n = memswap_names; *n; n++) {
+                uint32_t addr = s32x_symtab_lookup(&st, *n);
+                if (addr) { cpu->intrinsic_memswap = addr; break; }
+            }
+            s32x_symtab_free(&st);
+        } else {
+            cpu->intrinsics_enabled = false;
         }
     }
 
@@ -816,6 +863,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -D        Dump top offender blocks\n");
     fprintf(stderr, "  -O        Disassemble offender host blocks (uses objdump)\n");
     fprintf(stderr, "  -X <pc>   Dump block containing guest PC\n");
+    fprintf(stderr, "  -I        Disable intrinsic recognition (memcpy/memset native stubs)\n");
     fprintf(stderr, "  -1        Use Stage 1 mode (no caching)\n");
     fprintf(stderr, "  -2        Use Stage 2 mode (block cache + chaining)\n");
     fprintf(stderr, "  -3        Use Stage 3 mode (inline indirect lookup)\n");
@@ -874,6 +922,9 @@ int main(int argc, char **argv) {
                     break;
                 case 'R':
                     reg_cache_enabled = true;
+                    break;
+                case 'I':
+                    intrinsics_disabled = true;
                     break;
                 case 't':
                     two_pass = true;
@@ -967,6 +1018,14 @@ int main(int argc, char **argv) {
             fprintf(stderr, "  MMIO base:    0x%08X\n", cpu.mmio_base);
         }
         fprintf(stderr, "  Stage:        %d\n", stage);
+        if (cpu.intrinsics_enabled) {
+            fprintf(stderr, "  Intrinsics:   enabled\n");
+            if (cpu.intrinsic_memcpy)  fprintf(stderr, "    memcpy:  0x%08X\n", cpu.intrinsic_memcpy);
+            if (cpu.intrinsic_memset)  fprintf(stderr, "    memset:  0x%08X\n", cpu.intrinsic_memset);
+            if (cpu.intrinsic_memmove) fprintf(stderr, "    memmove: 0x%08X\n", cpu.intrinsic_memmove);
+            if (cpu.intrinsic_strlen)  fprintf(stderr, "    strlen:  0x%08X\n", cpu.intrinsic_strlen);
+            if (cpu.intrinsic_memswap) fprintf(stderr, "    memswap: 0x%08X\n", cpu.intrinsic_memswap);
+        }
     }
 
     // Initialize block cache for Stage 2 and 3

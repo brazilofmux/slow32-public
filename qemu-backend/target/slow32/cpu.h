@@ -46,6 +46,13 @@ struct CPUArchState {
     uint32_t stack_end;
     uint32_t halted;
     bool layout_defined;
+
+    /* Intrinsic recognition: guest addresses of known functions (0 = none) */
+    uint32_t intrinsic_memcpy;
+    uint32_t intrinsic_memset;
+    uint32_t intrinsic_memmove;
+    uint32_t intrinsic_strlen;
+    uint32_t intrinsic_memswap;
 };
 
 static inline uint32_t slow32_get_reg(const CPUSlow32State *env, int idx)

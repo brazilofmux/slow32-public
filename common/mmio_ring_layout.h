@@ -60,6 +60,7 @@ enum s32_mmio_opcode {
     S32_MMIO_OP_EXIT    = 0x09,
     S32_MMIO_OP_STAT    = 0x0A,  // stat()/fstat() metadata fetch
     S32_MMIO_OP_FLUSH   = 0x0B,
+    S32_MMIO_OP_READ_DIRECT = 0x0C, // Direct read into guest memory (zero-copy)
 
     // 0x20 - 0x2F : Filesystem metadata operations
     S32_MMIO_OP_UNLINK   = 0x20,  // unlink/remove - delete a file

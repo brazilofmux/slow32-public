@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <unistd.h>
 
 #include "mmio_ring.h"
@@ -26,6 +27,9 @@ static FILE _stderr = { .fd = 2, .flags = FLAG_WRITE, .mode = _IONBF };
 FILE *stdin = &_stdin;
 FILE *stdout = &_stdout;
 FILE *stderr = &_stderr;
+
+// Whether the host supports READ_DIRECT (auto-detected on first use)
+static int has_direct_read = 1;
 
 int fflush(FILE *stream);
 
@@ -180,10 +184,21 @@ static size_t fread_fill_buffer(FILE *stream) {
     if (!stream->buffer || stream->buf_size == 0) return 0;
 
     size_t to_read = stream->buf_size;
-    if (to_read > S32_MMIO_DATA_CAPACITY) to_read = S32_MMIO_DATA_CAPACITY;
-
-    unsigned int bytes_read = (unsigned int)s32_mmio_request(
-        S32_MMIO_OP_READ, to_read, 0u, stream->fd);
+    unsigned int bytes_read;
+    
+    if (has_direct_read) {
+        bytes_read = (unsigned int)s32_mmio_request(
+            S32_MMIO_OP_READ_DIRECT, to_read, (uint32_t)stream->buffer, stream->fd);
+        if (bytes_read == S32_MMIO_STATUS_ERR) {
+            has_direct_read = 0;
+        }
+    }
+    
+    if (!has_direct_read) {
+        if (to_read > S32_MMIO_DATA_CAPACITY) to_read = S32_MMIO_DATA_CAPACITY;
+        bytes_read = (unsigned int)s32_mmio_request(
+            S32_MMIO_OP_READ, to_read, 0u, stream->fd);
+    }
 
     if (bytes_read == S32_MMIO_STATUS_ERR || bytes_read == S32_MMIO_STATUS_EINTR) {
         stream->error = 1;
@@ -195,8 +210,11 @@ static size_t fread_fill_buffer(FILE *stream) {
         return 0;
     }
 
-    volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
-    memcpy(stream->buffer, (void *)data_buffer, bytes_read);
+    if (!has_direct_read) {
+        volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
+        memcpy(stream->buffer, (void *)data_buffer, bytes_read);
+    }
+    
     stream->buf_pos = 0;
     stream->buf_len = bytes_read;
 
@@ -246,9 +264,27 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
             dest += to_copy;
             remaining -= to_copy;
             bytes_copied += to_copy;
-        } else if (stream->buffer && stream->buf_size > 0) {
+        } else if (stream->buffer && stream->buf_size > 0 && remaining < stream->buf_size) {
+            // Request fits in buffer or is small, fill buffer first
             if (fread_fill_buffer(stream) == 0) break;
         } else {
+            // Direct read optimization for large or unbuffered reads
+            if (has_direct_read) {
+                unsigned int dres = (unsigned int)s32_mmio_request(
+                    S32_MMIO_OP_READ_DIRECT, remaining, (uint32_t)dest, stream->fd);
+                
+                if (dres != S32_MMIO_STATUS_ERR) {
+                    if (dres == S32_MMIO_STATUS_EINTR) continue;
+                    if (dres == 0) { stream->eof = 1; break; }
+                    dest += dres;
+                    remaining -= dres;
+                    bytes_copied += dres;
+                    continue;
+                }
+                has_direct_read = 0; // Not supported by host
+            }
+
+            // Fallback: chunked read via MMIO buffer
             size_t chunk = remaining;
             if (chunk > S32_MMIO_DATA_CAPACITY) chunk = S32_MMIO_DATA_CAPACITY;
 

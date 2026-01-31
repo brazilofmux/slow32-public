@@ -343,18 +343,24 @@ static FileResult ValidateFile(const char* filename, bool strict) {
     ctx.act = 0;
     ctx.initialized = false;
 
-    char chunk[1024];
+    size_t chunk_size = 65536;
+    char* chunk = malloc(chunk_size);
+    if (!chunk) {
+        result.isValid = false;
+        fclose(f);
+        return result;
+    }
     bool saw_data = false;
     bool fed_eof = false;
 
     while (1) {
-        size_t n = fread(chunk, 1, sizeof(chunk), f);
+        size_t n = fread(chunk, 1, chunk_size, f);
         if (n == 0) {
             at_eof = true;
             break;
         }
         saw_data = true;
-        bool final_chunk = (n < sizeof(chunk));
+        bool final_chunk = (n < chunk_size);
         if (strict) {
             runStrict(chunk, n, final_chunk, &ctx);
         } else {
@@ -370,6 +376,7 @@ static FileResult ValidateFile(const char* filename, bool strict) {
     fclose(f);
 
     if (!saw_data) {
+        free(chunk);
         return result;
     }
 
@@ -383,6 +390,7 @@ static FileResult ValidateFile(const char* filename, bool strict) {
         }
         fed_eof = true;
     }
+    free(chunk);
 
     if (gVerbose) {
         printf("%s: File is %sly %s with %d columns and %d rows.\n",

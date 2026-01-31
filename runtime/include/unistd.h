@@ -24,6 +24,8 @@ char *getcwd(char *buf, size_t size);
 int unlink(const char *pathname);
 int rmdir(const char *pathname);
 int mkdir(const char *pathname, unsigned int mode);
+int open(const char *pathname, int flags, ...);
+int close(int fd);
 
 #ifdef __cplusplus
 }

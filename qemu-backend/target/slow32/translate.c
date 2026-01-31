@@ -447,6 +447,39 @@ static void gen_set_halted(int value)
     tcg_gen_movi_i32(cpu_halted, value);
 }
 
+/*
+ * Try to emit a native intrinsic for the current PC.  If the PC matches
+ * a known intrinsic address, emit a single-instruction TB that calls the
+ * corresponding helper and returns via r31 (link register).  Returns true
+ * if the intrinsic was handled.
+ */
+static bool try_emit_intrinsic(DisasContext *ctx, CPUSlow32State *env)
+{
+    typedef void (*gen_helper_fn)(TCGv_env);
+    struct {
+        uint32_t addr;
+        gen_helper_fn gen;
+    } intrinsics[] = {
+        { env->intrinsic_memcpy,  gen_helper_slow32_native_memcpy },
+        { env->intrinsic_memset,  gen_helper_slow32_native_memset },
+        { env->intrinsic_memmove, gen_helper_slow32_native_memmove },
+        { env->intrinsic_strlen,  gen_helper_slow32_native_strlen },
+        { env->intrinsic_memswap, gen_helper_slow32_native_memswap },
+    };
+
+    for (int i = 0; i < ARRAY_SIZE(intrinsics); i++) {
+        if (intrinsics[i].addr && ctx->pc == intrinsics[i].addr) {
+            intrinsics[i].gen(tcg_env);
+            commit_pc_tcg(load_gpr(31));
+            lookup_and_goto_ptr(ctx);
+            ctx->is_jmp = DISAS_BRANCH;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static bool translate_one(DisasContext *ctx, uint32_t raw)
 {
     uint8_t opcode = raw & 0x7F;
@@ -823,6 +856,13 @@ void slow32_translate_code(CPUState *cs, TranslationBlock *tb, int *max_insns,
 
         ctx.insn_count++;
         ctx.base.num_insns = ctx.insn_count;
+
+        if (try_emit_intrinsic(&ctx, env)) {
+            if (plugin_enabled) {
+                plugin_gen_insn_end();
+            }
+            break;
+        }
 
         if (collapse_branch) {
             slow32_do_collapse_cmp_branch(&ctx, raw);

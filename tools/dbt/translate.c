@@ -2071,6 +2071,344 @@ block_done:
 }
 
 // ============================================================================
+// Intrinsic recognition: emit native stubs for known functions
+// ============================================================================
+
+// Emit a native memcpy/memmove stub:
+//   guest r3=dest, r4=src, r5=count → host memcpy/memmove
+//   returns dest in guest r1, jumps to guest r31
+// Uses: rdi, rsi, rdx, rax, rcx (all caller-saved)
+static bool emit_native_memcpy_stub(translate_ctx_t *ctx, translated_block_t *block,
+                                     bool is_memmove) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Load guest registers into scratch registers
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));   // eax = dest (guest addr)
+    emit_mov_r32_m32(e, RCX, RBP, GUEST_REG_OFFSET(4));   // ecx = src (guest addr)
+    emit_mov_r32_m32(e, RDX, RBP, GUEST_REG_OFFSET(5));   // edx = count
+
+    // Store dest as return value in guest r1
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
+
+    // We need to save rbp, r14, r15 across the call since they're callee-saved
+    // and the C function won't clobber them. But we also need to save our state.
+    // Actually rbp/r14/r15 are callee-saved in the x86-64 ABI, so a C call will preserve them.
+
+    // Set up host memcpy args: rdi = host_dest, rsi = host_src, rdx = count
+    // host_dest = mem_base + dest = r14 + rax (zero-extended)
+    // We need 64-bit add: use movzx to ensure zero-extension, then add
+
+    // rdi = r14 (mem_base, 64-bit)
+    emit_mov_r64_r64(e, RDI, R14);
+    // rdi += rax (eax is already zero-extended to rax by 32-bit mov)
+    // Emit: REX.W add rdi, rax  →  48 01 C7
+    emit_byte(e, 0x48);  // REX.W
+    emit_byte(e, 0x01);  // ADD r/m64, r64
+    emit_byte(e, MODRM(MOD_DIRECT, RAX, RDI));
+
+    // rsi = r14 + rcx
+    emit_mov_r64_r64(e, RSI, R14);
+    // Emit: REX.W add rsi, rcx  →  48 01 CE
+    emit_byte(e, 0x48);
+    emit_byte(e, 0x01);
+    emit_byte(e, MODRM(MOD_DIRECT, RCX, RSI));
+
+    // rdx already has count (zero-extended to 64-bit by the 32-bit load)
+
+    // Save r14 and r15 (in case C function somehow clobbers, though they're callee-saved)
+    // Actually they are callee-saved, so the C function will preserve them.
+    // But we do need to align the stack to 16 bytes before call.
+    // The trampoline does push rbp,rbx,r12,r13,r14,r15 (6 pushes = 48 bytes)
+    // then call *rdx adds 8 bytes return addr. So at entry to translated code,
+    // RSP is 8-byte aligned but not 16-byte aligned.
+    // Before our call, we need to push something to align.
+    emit_push_r64(e, RAX);  // Align stack + save (don't need value)
+
+    // Load host function address and call
+    // mov rax, memcpy/memmove address
+    if (is_memmove) {
+        emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)memmove);
+    } else {
+        emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)memcpy);
+    }
+    emit_call_r64(e, RAX);
+
+    emit_pop_r64(e, RAX);  // Restore stack alignment
+
+    // Set PC to guest r31 (link register)
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(REG_LR));
+    emit_mov_m32_r32(e, RBP, CPU_PC_OFFSET, RAX);
+
+    // Exit with EXIT_INDIRECT (returning to whatever the caller was)
+    emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_INDIRECT);
+    emit_ret(e);
+
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;  // Minimal
+    return !e->overflow;
+}
+
+// Emit a native memset stub:
+//   guest r3=dest, r4=value(byte), r5=count → host memset
+//   returns dest in guest r1, jumps to guest r31
+static bool emit_native_memset_stub(translate_ctx_t *ctx, translated_block_t *block) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Load guest registers
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));   // eax = dest
+    emit_mov_r32_m32(e, RCX, RBP, GUEST_REG_OFFSET(4));   // ecx = value
+    emit_mov_r32_m32(e, RDX, RBP, GUEST_REG_OFFSET(5));   // edx = count
+
+    // Store dest as return value
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
+
+    // host memset args: rdi=ptr, rsi=value, rdx=count
+    // rdi = r14 + rax
+    emit_mov_r64_r64(e, RDI, R14);
+    emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, MODRM(MOD_DIRECT, RAX, RDI));
+
+    // rsi = value (zero-extended)
+    emit_mov_r32_r32(e, RSI, RCX);
+
+    // rdx = count (already set)
+
+    // Align stack and call
+    emit_push_r64(e, RAX);
+    emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)memset);
+    emit_call_r64(e, RAX);
+    emit_pop_r64(e, RAX);
+
+    // Return to guest r31
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(REG_LR));
+    emit_mov_m32_r32(e, RBP, CPU_PC_OFFSET, RAX);
+    emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_INDIRECT);
+    emit_ret(e);
+
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// Emit a native strlen stub:
+//   guest r3=str → host strlen
+//   returns length in guest r1, jumps to guest r31
+static bool emit_native_strlen_stub(translate_ctx_t *ctx, translated_block_t *block) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Load guest r3 (str ptr)
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));
+
+    // rdi = r14 + rax (host pointer)
+    emit_mov_r64_r64(e, RDI, R14);
+    emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, MODRM(MOD_DIRECT, RAX, RDI));
+
+    // Align stack and call strlen
+    emit_push_r64(e, RAX);
+    emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)strlen);
+    emit_call_r64(e, RAX);
+    emit_pop_r64(e, RCX);  // Restore stack (into any reg)
+
+    // Return value from strlen is in rax - store to guest r1
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
+
+    // Return to guest r31
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(REG_LR));
+    emit_mov_m32_r32(e, RBP, CPU_PC_OFFSET, RAX);
+    emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_INDIRECT);
+    emit_ret(e);
+
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// Emit a native memswap stub:
+//   guest r3=a, r4=b, r5=count → inline qword-swap loop on host
+//   no return value, jumps to guest r31
+static bool emit_native_memswap_stub(translate_ctx_t *ctx, translated_block_t *block) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Load guest registers
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));   // eax = a (guest addr)
+    emit_mov_r32_m32(e, RCX, RBP, GUEST_REG_OFFSET(4));   // ecx = b (guest addr)
+    emit_mov_r32_m32(e, RDX, RBP, GUEST_REG_OFFSET(5));   // edx = count
+
+    // rdi = host ptr a = r14 + rax
+    emit_mov_r64_r64(e, RDI, R14);
+    emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, MODRM(MOD_DIRECT, RAX, RDI));
+
+    // rsi = host ptr b = r14 + rcx
+    emit_mov_r64_r64(e, RSI, R14);
+    emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, MODRM(MOD_DIRECT, RCX, RSI));
+
+    // rdx = count (already set, zero-extended)
+
+    // Qword swap loop: while (rdx >= 8) { swap 8 bytes via rax/rcx }
+    //   .Lqword_loop:
+    //     cmp rdx, 8
+    //     jb .Lbyte_loop
+    //     mov rax, [rdi]
+    //     mov rcx, [rsi]
+    //     mov [rdi], rcx
+    //     mov [rsi], rax
+    //     add rdi, 8
+    //     add rsi, 8
+    //     sub rdx, 8
+    //     jmp .Lqword_loop
+    //   .Lbyte_loop:
+    //     test rdx, rdx
+    //     jz .Ldone
+    //     mov al, [rdi]
+    //     mov cl, [rsi]
+    //     mov [rdi], cl
+    //     mov [rsi], al
+    //     inc rdi
+    //     inc rsi
+    //     dec rdx
+    //     jmp .Lbyte_loop
+    //   .Ldone:
+
+    size_t qword_loop = emit_offset(e);
+
+    // cmp edx, 8
+    emit_cmp_r32_imm32(e, RDX, 8);
+    // jb .Lbyte_loop (rel32 — patch later)
+    size_t jb_patch = emit_offset(e);
+    emit_jb_rel32(e, 0);  // placeholder
+
+    // mov rax, [rdi]  — REX.W 48 8B 07
+    emit_byte(e, 0x48); emit_byte(e, 0x8B); emit_byte(e, MODRM(MOD_INDIRECT, RAX, RDI));
+    // mov rcx, [rsi]  — REX.W 48 8B 0E
+    emit_byte(e, 0x48); emit_byte(e, 0x8B); emit_byte(e, MODRM(MOD_INDIRECT, RCX, RSI));
+    // mov [rdi], rcx  — REX.W 48 89 0F
+    emit_byte(e, 0x48); emit_byte(e, 0x89); emit_byte(e, MODRM(MOD_INDIRECT, RCX, RDI));
+    // mov [rsi], rax  — REX.W 48 89 06
+    emit_byte(e, 0x48); emit_byte(e, 0x89); emit_byte(e, MODRM(MOD_INDIRECT, RAX, RSI));
+
+    // add rdi, 8  — REX.W 48 83 C7 08
+    emit_byte(e, 0x48); emit_byte(e, 0x83); emit_byte(e, MODRM(MOD_DIRECT, 0, RDI)); emit_byte(e, 8);
+    // add rsi, 8  — REX.W 48 83 C6 08
+    emit_byte(e, 0x48); emit_byte(e, 0x83); emit_byte(e, MODRM(MOD_DIRECT, 0, RSI)); emit_byte(e, 8);
+    // sub edx, 8
+    emit_sub_r32_imm32(e, RDX, 8);
+
+    // jmp .Lqword_loop
+    int32_t qloop_rel = (int32_t)qword_loop - (int32_t)(emit_offset(e) + 5);
+    emit_jmp_rel32(e, qloop_rel);
+
+    // .Lbyte_loop:
+    size_t byte_loop = emit_offset(e);
+    // Patch the jb
+    emit_patch_rel32(e, jb_patch + 2, byte_loop);  // +2 to skip 0F 8x opcode bytes
+
+    // test edx, edx
+    emit_test_r32_r32(e, RDX, RDX);
+    // jz .Ldone (patch later)
+    size_t jz_patch = emit_offset(e);
+    emit_je_rel32(e, 0);  // placeholder
+
+    // mov al, [rdi]  — 8A 07
+    emit_byte(e, 0x8A); emit_byte(e, MODRM(MOD_INDIRECT, RAX, RDI));
+    // mov cl, [rsi]  — 8A 0E
+    emit_byte(e, 0x8A); emit_byte(e, MODRM(MOD_INDIRECT, RCX, RSI));
+    // mov [rdi], cl  — 88 0F
+    emit_byte(e, 0x88); emit_byte(e, MODRM(MOD_INDIRECT, RCX, RDI));
+    // mov [rsi], al  — 88 06
+    emit_byte(e, 0x88); emit_byte(e, MODRM(MOD_INDIRECT, RAX, RSI));
+
+    // inc rdi  — REX.W 48 FF C7
+    emit_byte(e, 0x48); emit_byte(e, 0xFF); emit_byte(e, MODRM(MOD_DIRECT, 0, RDI));
+    // inc rsi  — REX.W 48 FF C6
+    emit_byte(e, 0x48); emit_byte(e, 0xFF); emit_byte(e, MODRM(MOD_DIRECT, 0, RSI));
+    // dec edx  — FF CA
+    emit_byte(e, 0xFF); emit_byte(e, MODRM(MOD_DIRECT, 1, RDX));
+
+    // jmp .Lbyte_loop
+    int32_t bloop_rel = (int32_t)byte_loop - (int32_t)(emit_offset(e) + 5);
+    emit_jmp_rel32(e, bloop_rel);
+
+    // .Ldone:
+    size_t done = emit_offset(e);
+    emit_patch_rel32(e, jz_patch + 2, done);  // +2 to skip 0F 84 opcode bytes
+
+    // Return to guest r31
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(REG_LR));
+    emit_mov_m32_r32(e, RBP, CPU_PC_OFFSET, RAX);
+    emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_INDIRECT);
+    emit_ret(e);
+
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// Check if guest_pc matches a known intrinsic and emit native stub
+// Returns the block if handled, NULL if not an intrinsic
+static translated_block_t *try_emit_intrinsic(translate_ctx_t *ctx, uint32_t guest_pc) {
+    dbt_cpu_state_t *cpu = ctx->cpu;
+    if (!cpu->intrinsics_enabled) return NULL;
+
+    bool (*emitter)(translate_ctx_t *, translated_block_t *) = NULL;
+    bool is_memmove = false;
+
+    if (cpu->intrinsic_memcpy && guest_pc == cpu->intrinsic_memcpy) {
+        // Will use emit_native_memcpy_stub with is_memmove=false
+    } else if (cpu->intrinsic_memset && guest_pc == cpu->intrinsic_memset) {
+        emitter = emit_native_memset_stub;
+    } else if (cpu->intrinsic_memmove && guest_pc == cpu->intrinsic_memmove) {
+        is_memmove = true;
+    } else if (cpu->intrinsic_strlen && guest_pc == cpu->intrinsic_strlen) {
+        emitter = emit_native_strlen_stub;
+    } else if (cpu->intrinsic_memswap && guest_pc == cpu->intrinsic_memswap) {
+        emitter = emit_native_memswap_stub;
+    } else {
+        return NULL;
+    }
+
+    block_cache_t *cache = ctx->cache;
+    if (!cache) return NULL;
+
+    // Allocate block
+    translated_block_t *block = cache_alloc_block(cache, guest_pc);
+    if (!block) {
+        cache_flush(cache);
+        block = cache_alloc_block(cache, guest_pc);
+        if (!block) return NULL;
+    }
+
+    uint8_t *code_start = cache_get_code_ptr(cache);
+    if (!code_start) {
+        cache_flush(cache);
+        block = cache_alloc_block(cache, guest_pc);
+        code_start = cache_get_code_ptr(cache);
+        if (!code_start || !block) return NULL;
+    }
+
+    // Initialize
+    emit_ctx_t *e = &ctx->emit;
+    emit_init(e, code_start, cache->code_buffer_size - cache->code_buffer_used);
+    memset(block, 0, sizeof(*block));
+    block->guest_pc = guest_pc;
+    block->host_code = code_start;
+
+    bool ok;
+    if (emitter) {
+        ok = emitter(ctx, block);
+    } else {
+        ok = emit_native_memcpy_stub(ctx, block, is_memmove);
+    }
+
+    if (!ok) return NULL;
+
+    block->host_size = emit_offset(e);
+    cache_commit_code(cache, block->host_size);
+    cache_insert(cache, block);
+    cache_chain_incoming(cache, block);
+
+    return block;
+}
+
+// ============================================================================
 // Stage 2: Cached block translation
 // ============================================================================
 
@@ -2084,6 +2422,12 @@ translated_block_t *translate_block_cached(translate_ctx_t *ctx, uint32_t guest_
     if (!cache) {
         fprintf(stderr, "DBT: translate_block_cached called without cache!\n");
         return NULL;
+    }
+
+    // Check for intrinsic recognition before normal translation
+    translated_block_t *intrinsic_block = try_emit_intrinsic(ctx, guest_pc);
+    if (intrinsic_block) {
+        return intrinsic_block;
     }
 
     // Allocate block metadata

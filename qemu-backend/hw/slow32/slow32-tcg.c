@@ -7,6 +7,7 @@
 #include "qemu/error-report.h"
 #include "qemu/units.h"
 #include "qemu/bswap.h"
+#include "qemu/log.h"
 #include "target/slow32/cpu.h"
 #include "target/slow32/mmio.h"
 #include "qom/object.h"
@@ -54,6 +55,131 @@ typedef struct QEMU_PACKED Slow32XSection {
 #define S32_MACHINE_SLOW32 0x32
 #define S32X_FLAG_W_XOR_X    0x0001u
 #define S32X_FLAG_MMIO       0x0080u
+
+#define S32_SEC_SYMTAB       0x0021u
+#define S32_SEC_STRTAB       0x0022u
+
+/* Symbol entry (16 bytes), matches s32o_symbol_t in s32_formats.h */
+typedef struct QEMU_PACKED Slow32Symbol {
+    uint32_t name_offset;
+    uint32_t value;
+    uint16_t section;
+    uint8_t  type;
+    uint8_t  binding;
+    uint32_t size;
+} Slow32Symbol;
+
+/*
+ * Scan the .s32x section table for SYMTAB/STRTAB sections, parse the
+ * symbol table, and populate env->intrinsic_* fields for known library
+ * functions.  This enables the TCG translator to emit native helper
+ * calls instead of translating the guest implementation.
+ */
+static void slow32_load_intrinsics(Slow32CPU *cpu, FILE *f,
+                                   const Slow32XHeader *hdr)
+{
+    CPUSlow32State *env = &cpu->env;
+    uint32_t symtab_offset = 0, symtab_size = 0;
+    uint32_t sym_strtab_offset = 0, sym_strtab_size = 0;
+
+    if (fseek(f, hdr->sec_offset, SEEK_SET) != 0) {
+        return;
+    }
+
+    for (uint32_t i = 0; i < hdr->nsections; i++) {
+        Slow32XSection sec;
+        if (fread(&sec, sizeof(sec), 1, f) != 1) {
+            return;
+        }
+        if (sec.type == S32_SEC_SYMTAB) {
+            symtab_offset = sec.offset;
+            symtab_size = sec.size;
+        } else if (sec.type == S32_SEC_STRTAB) {
+            /* Distinguish symbol STRTAB from section name STRTAB */
+            if (sec.vaddr == 0 && sec.mem_size == 0 &&
+                sec.offset != hdr->str_offset) {
+                sym_strtab_offset = sec.offset;
+                sym_strtab_size = sec.size;
+            }
+        }
+    }
+
+    if (symtab_offset == 0 || sym_strtab_offset == 0 || symtab_size == 0) {
+        return;
+    }
+
+    /* Read symbol string table */
+    g_autofree char *sym_str = g_malloc(sym_strtab_size);
+    if (fseek(f, sym_strtab_offset, SEEK_SET) != 0 ||
+        fread(sym_str, 1, sym_strtab_size, f) != sym_strtab_size) {
+        return;
+    }
+
+    /* Read symbol entries */
+    uint32_t nsyms = symtab_size / sizeof(Slow32Symbol);
+    g_autofree Slow32Symbol *syms = g_malloc(symtab_size);
+    if (fseek(f, symtab_offset, SEEK_SET) != 0 ||
+        fread(syms, sizeof(Slow32Symbol), nsyms, f) != nsyms) {
+        return;
+    }
+
+    /* Name variants to match (same as the DBT) */
+    static const char *memcpy_names[] = {
+        "memcpy", "llvm.memcpy.p0.p0.i32", "llvm.memcpy.p0.p0.i64", NULL
+    };
+    static const char *memset_names[] = {
+        "memset", "llvm.memset.p0.i32", "llvm.memset.p0.i64", NULL
+    };
+    static const char *memmove_names[] = { "memmove", NULL };
+    static const char *strlen_names[] = { "strlen", NULL };
+    static const char *memswap_names[] = { "memswap", NULL };
+
+    struct {
+        uint32_t *dest;
+        const char **names;
+    } lookups[] = {
+        { &env->intrinsic_memcpy,  memcpy_names },
+        { &env->intrinsic_memset,  memset_names },
+        { &env->intrinsic_memmove, memmove_names },
+        { &env->intrinsic_strlen,  strlen_names },
+        { &env->intrinsic_memswap, memswap_names },
+    };
+
+    for (size_t k = 0; k < G_N_ELEMENTS(lookups); k++) {
+        for (const char **n = lookups[k].names; *n; n++) {
+            for (uint32_t i = 0; i < nsyms; i++) {
+                if (syms[i].name_offset < sym_strtab_size &&
+                    strcmp(&sym_str[syms[i].name_offset], *n) == 0 &&
+                    syms[i].value != 0) {
+                    *lookups[k].dest = syms[i].value;
+                    goto next_lookup;
+                }
+            }
+        }
+next_lookup:;
+    }
+
+    if (env->intrinsic_memcpy || env->intrinsic_memset ||
+        env->intrinsic_memmove || env->intrinsic_strlen ||
+        env->intrinsic_memswap) {
+        qemu_log("slow32: native intrinsics detected:\n");
+        if (env->intrinsic_memcpy) {
+            qemu_log("  memcpy:  0x%08x\n", env->intrinsic_memcpy);
+        }
+        if (env->intrinsic_memset) {
+            qemu_log("  memset:  0x%08x\n", env->intrinsic_memset);
+        }
+        if (env->intrinsic_memmove) {
+            qemu_log("  memmove: 0x%08x\n", env->intrinsic_memmove);
+        }
+        if (env->intrinsic_strlen) {
+            qemu_log("  strlen:  0x%08x\n", env->intrinsic_strlen);
+        }
+        if (env->intrinsic_memswap) {
+            qemu_log("  memswap: 0x%08x\n", env->intrinsic_memswap);
+        }
+    }
+}
 
 static bool slow32_load_s32x(Slow32MachineState *sms, MachineState *machine,
                              Slow32CPU *cpu, FILE *f, Error **errp)
@@ -220,6 +346,16 @@ static bool slow32_load_kernel(Slow32MachineState *sms, MachineState *machine,
 
     fseek(f, 0, SEEK_SET);
     bool ok = slow32_load_s32x(sms, machine, cpu, f, errp);
+
+    if (ok) {
+        /* Re-read header for intrinsic symbol scanning */
+        Slow32XHeader hdr;
+        fseek(f, 0, SEEK_SET);
+        if (fread(&hdr, sizeof(hdr), 1, f) == 1) {
+            slow32_load_intrinsics(cpu, f, &hdr);
+        }
+    }
+
     fclose(f);
 
     if (ok) {

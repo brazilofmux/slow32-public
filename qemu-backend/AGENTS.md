@@ -57,7 +57,7 @@
 ## 9. Known Pitfalls & References
 - The LLVM backend currently works around a 64-bit divide/modulo issue (see `slow-32/docs/issues/llvm-i64-division.md`). Do not assume optimizer-generated `div`/`rem` sequences are trustworthy until that fix lands.
 - Some runtime objects (e.g., `printf_enhanced.s32o`) rely on MMIO syscalls introduced in the private tree—ensure your QEMU device model exposes the same addresses before claiming feature parity.
-- Always link with `crt0.s32o` first, followed by program objects, `runtime/libc_debug.s32a` (or `runtime/libc_mmio.s32a`), and `runtime/libs32.s32a`; the helper script `slow-32/tools/compile-c.sh` shows the minimal object-based flow.
+- Always link with `crt0.s32o` first, followed by program objects, `runtime/libs32.s32a`, and `runtime/libc.s32a`; the helper script `slow-32/tools/compile-c.sh` encodes the canonical order.
 - Documentation map: `slow-32/README.md` (project overview), `slow-32/AGENTS.md` (repository etiquette inside the toolchain), `slow-32/CLAUDE.md` (assistant cheat sheet), `slow-32/docs/` (ISA, formats, release notes), `slow-32/examples/` (sample workloads). Consult these before touching generic QEMU subsystems.
 
 Armed with the above, new agents can focus on SLOW-32 specifics instead of rediscovering how to build toolchains or where the ISA is documented, and can stand up the TCG backend incrementally without spelunking unrelated QEMU code.

@@ -98,6 +98,15 @@ typedef struct {
     uint32_t side_exit_taken;
     uint32_t _pad4;
 
+    // Intrinsic recognition: known function addresses (0 = not found)
+    uint32_t intrinsic_memcpy;
+    uint32_t intrinsic_memset;
+    uint32_t intrinsic_memmove;
+    uint32_t intrinsic_strlen;
+    uint32_t intrinsic_memswap;
+    bool intrinsics_enabled;    // false to disable recognition (e.g., -I flag)
+    uint8_t _pad5[3];
+
 } dbt_cpu_state_t;
 
 // Offset macros for generated code

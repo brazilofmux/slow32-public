@@ -41,6 +41,10 @@ typedef struct {
     // Base address of the MMIO window in guest memory
     uint32_t base_addr;
     
+    // Guest memory range for Direct I/O (optional)
+    void *guest_mem_base;
+    uint32_t guest_mem_size;
+
     // Ring buffers (allocated as part of MMIO memory)
     io_descriptor_t *req_ring;
     io_descriptor_t *resp_ring;

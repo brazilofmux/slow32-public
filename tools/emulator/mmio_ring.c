@@ -133,6 +133,9 @@ void mmio_ring_init(mmio_ring_state_t *mmio, uint32_t heap_base, uint32_t heap_s
     mmio->resp_tail = 0;
     mmio->base_addr = 0;
     
+    mmio->guest_mem_base = NULL;
+    mmio->guest_mem_size = 0;
+
     // Initialize heap
     mmio->brk_current = heap_base;
     mmio->brk_max = heap_base + heap_size;
@@ -472,6 +475,72 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             if (trace_io_enabled) {
                 fprintf(stderr, "[MMIO] READ fd=%d len=%u -> %zd\n",
                         host_fd, to_read, read_count);
+            }
+            break;
+        }
+
+        case S32_MMIO_OP_READ_DIRECT: {
+            // Request: status=fd, offset=guest_addr, length=count
+            // Response: status=read_count or ERR
+            
+            if (req->length == 0) {
+                resp.length = 0;
+                resp.status = 0;
+                break;
+            }
+
+            // Must have guest memory configured
+            if (!mmio->guest_mem_base) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                if (trace_io_enabled) {
+                     fprintf(stderr, "[MMIO] READ_DIRECT failed: guest memory not configured\n");
+                }
+                break;
+            }
+
+            int host_fd = host_fd_for_guest(mmio, req->status);
+            if (host_fd < 0) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t guest_addr = req->offset;
+            uint32_t count = req->length;
+
+            // Validate guest address range
+            if (guest_addr >= mmio->guest_mem_size || 
+                (uint64_t)guest_addr + count > mmio->guest_mem_size) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                if (trace_io_enabled) {
+                    fprintf(stderr, "[MMIO] READ_DIRECT bounds check failed: addr=0x%08X len=%u size=0x%08X\n",
+                            guest_addr, count, mmio->guest_mem_size);
+                }
+                break;
+            }
+
+            void *dest = (uint8_t *)mmio->guest_mem_base + guest_addr;
+            
+            ssize_t read_count = read(host_fd, dest, count);
+            
+            if (read_count < 0) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                if (trace_io_enabled) {
+                    fprintf(stderr, "[MMIO] READ_DIRECT error fd=%d addr=0x%08X len=%u errno=%d\n",
+                            host_fd, guest_addr, count, errno);
+                }
+                break;
+            }
+            
+            resp.status = (uint32_t)read_count;
+            resp.length = (uint32_t)read_count;
+
+            if (trace_io_enabled) {
+                fprintf(stderr, "[MMIO] READ_DIRECT fd=%d addr=0x%08X len=%u -> %zd\n",
+                        host_fd, guest_addr, count, read_count);
             }
             break;
         }
@@ -1478,7 +1547,7 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
         }
 
         default:
-            resp.status = ENOSYS;  // Not implemented
+            resp.status = S32_MMIO_STATUS_ERR;  // Not implemented
             break;
     }
     

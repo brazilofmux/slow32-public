@@ -71,11 +71,11 @@ static void unexpectedEof(ParserContext* ctx) {
 }
 
 
-#line 144 "validatecsv.rl"
+#line 149 "validatecsv.rl"
 
 
 
-#line 69 "validatecsv_ragel.c"
+#line 74 "validatecsv_ragel.c"
 static const int csv_loose_c_start = 0;
 static const int csv_loose_c_first_final = 0;
 static const int csv_loose_c_error = -1;
@@ -91,14 +91,14 @@ static const int csv_loose_c_en_cr1 = 7;
 static const int csv_loose_c_en_after_field_cr = 8;
 
 
-#line 147 "validatecsv.rl"
+#line 152 "validatecsv.rl"
 
 
-#line 226 "validatecsv.rl"
+#line 231 "validatecsv.rl"
 
 
 
-#line 86 "validatecsv_ragel.c"
+#line 91 "validatecsv_ragel.c"
 static const int csv_strict_c_start = 0;
 static const int csv_strict_c_first_final = 0;
 static const int csv_strict_c_error = -1;
@@ -114,7 +114,7 @@ static const int csv_strict_c_en_cr1 = 7;
 static const int csv_strict_c_en_after_field_cr = 8;
 
 
-#line 229 "validatecsv.rl"
+#line 234 "validatecsv.rl"
 
 static void runLoose(const char* data, size_t len, bool at_eof, ParserContext* ctx) {
     const unsigned char* p = (const unsigned char*)data;
@@ -126,55 +126,55 @@ static void runLoose(const char* data, size_t len, bool at_eof, ParserContext* c
     int cs = ctx->cs;
 
     
-#line 240 "validatecsv.rl"
-    
-#line 110 "validatecsv_ragel.c"
+#line 245 "validatecsv.rl"
+    if (!ctx->initialized) {
+        
+#line 116 "validatecsv_ragel.c"
 	{
-	if (!ctx->initialized) {
 	cs = csv_loose_c_start;
 	ts = 0;
 	te = 0;
 	act = 0;
-	ctx->initialized = true;
-	}
 	}
 
-#line 241 "validatecsv.rl"
+#line 247 "validatecsv.rl"
+        ctx->initialized = true;
+    }
     
-#line 118 "validatecsv_ragel.c"
+#line 124 "validatecsv_ragel.c"
 	{
 	if ( p == pe )
 		goto _test_eof;
 	switch ( cs )
 	{
 tr0:
-#line 76 "validatecsv.rl"
+#line 81 "validatecsv.rl"
 	{ ctx->state = 6; }
-#line 93 "validatecsv.rl"
+#line 98 "validatecsv.rl"
 	{te = p+1;{ {goto st4;} }}
 	goto st0;
 tr1:
-#line 80 "validatecsv.rl"
+#line 85 "validatecsv.rl"
 	{ ctx->state = 10; finalizeRecord(ctx); }
-#line 89 "validatecsv.rl"
+#line 94 "validatecsv.rl"
 	{te = p+1;{ {goto st0;} }}
 	goto st0;
 tr2:
-#line 73 "validatecsv.rl"
+#line 78 "validatecsv.rl"
 	{ ctx->state = 3; }
-#line 90 "validatecsv.rl"
+#line 95 "validatecsv.rl"
 	{te = p+1;{ {goto st6;} }}
 	goto st0;
 tr3:
-#line 71 "validatecsv.rl"
+#line 76 "validatecsv.rl"
 	{ ctx->state = 1; }
-#line 92 "validatecsv.rl"
+#line 97 "validatecsv.rl"
 	{te = p+1;{ {goto st1;} }}
 	goto st0;
 tr4:
-#line 78 "validatecsv.rl"
+#line 83 "validatecsv.rl"
 	{ ctx->state = 8; ++ctx->fields; }
-#line 91 "validatecsv.rl"
+#line 96 "validatecsv.rl"
 	{te = p+1;{ {goto st5;} }}
 	goto st0;
 st0:
@@ -185,7 +185,7 @@ st0:
 case 0:
 #line 1 "NONE"
 	{ts = p;}
-#line 147 "validatecsv_ragel.c"
+#line 155 "validatecsv_ragel.c"
 	switch( (*p) ) {
 		case 10u: goto tr1;
 		case 13u: goto tr2;
@@ -194,15 +194,15 @@ case 0:
 	}
 	goto tr0;
 tr5:
-#line 77 "validatecsv.rl"
+#line 82 "validatecsv.rl"
 	{ ctx->state = 7; }
-#line 98 "validatecsv.rl"
+#line 103 "validatecsv.rl"
 	{te = p+1;{ {goto st1;} }}
 	goto st1;
 tr6:
-#line 72 "validatecsv.rl"
+#line 77 "validatecsv.rl"
 	{ ctx->state = 2; }
-#line 97 "validatecsv.rl"
+#line 102 "validatecsv.rl"
 	{te = p+1;{ {goto st2;} }}
 	goto st1;
 st1:
@@ -213,38 +213,38 @@ st1:
 case 1:
 #line 1 "NONE"
 	{ts = p;}
-#line 168 "validatecsv_ragel.c"
+#line 176 "validatecsv_ragel.c"
 	if ( (*p) == 34u )
 		goto tr6;
 	goto tr5;
 tr7:
-#line 76 "validatecsv.rl"
+#line 81 "validatecsv.rl"
 	{ ctx->state = 6; }
-#line 106 "validatecsv.rl"
+#line 111 "validatecsv.rl"
 	{te = p+1;{ {goto st4;} }}
 	goto st2;
 tr8:
-#line 81 "validatecsv.rl"
+#line 86 "validatecsv.rl"
 	{ ctx->state = 11; ++ctx->fields; finalizeRecord(ctx); }
-#line 102 "validatecsv.rl"
+#line 107 "validatecsv.rl"
 	{te = p+1;{ {goto st0;} }}
 	goto st2;
 tr9:
-#line 74 "validatecsv.rl"
+#line 79 "validatecsv.rl"
 	{ ctx->state = 4; }
-#line 103 "validatecsv.rl"
+#line 108 "validatecsv.rl"
 	{te = p+1;{ {goto st7;} }}
 	goto st2;
 tr10:
-#line 75 "validatecsv.rl"
+#line 80 "validatecsv.rl"
 	{ ctx->state = 5; }
-#line 105 "validatecsv.rl"
+#line 110 "validatecsv.rl"
 	{te = p+1;{ {goto st3;} }}
 	goto st2;
 tr11:
-#line 78 "validatecsv.rl"
+#line 83 "validatecsv.rl"
 	{ ctx->state = 8; ++ctx->fields; }
-#line 104 "validatecsv.rl"
+#line 109 "validatecsv.rl"
 	{te = p+1;{ {goto st5;} }}
 	goto st2;
 st2:
@@ -255,7 +255,7 @@ st2:
 case 2:
 #line 1 "NONE"
 	{ts = p;}
-#line 197 "validatecsv_ragel.c"
+#line 205 "validatecsv_ragel.c"
 	switch( (*p) ) {
 		case 10u: goto tr8;
 		case 13u: goto tr9;
@@ -264,15 +264,15 @@ case 2:
 	}
 	goto tr7;
 tr12:
-#line 77 "validatecsv.rl"
+#line 82 "validatecsv.rl"
 	{ ctx->state = 7; }
-#line 111 "validatecsv.rl"
+#line 116 "validatecsv.rl"
 	{te = p+1;{ {goto st1;} }}
 	goto st3;
 tr13:
-#line 72 "validatecsv.rl"
+#line 77 "validatecsv.rl"
 	{ ctx->state = 2; }
-#line 110 "validatecsv.rl"
+#line 115 "validatecsv.rl"
 	{te = p+1;{ {goto st2;} }}
 	goto st3;
 st3:
@@ -283,38 +283,38 @@ st3:
 case 3:
 #line 1 "NONE"
 	{ts = p;}
-#line 218 "validatecsv_ragel.c"
+#line 226 "validatecsv_ragel.c"
 	if ( (*p) == 34u )
 		goto tr13;
 	goto tr12;
 tr14:
-#line 76 "validatecsv.rl"
+#line 81 "validatecsv.rl"
 	{ ctx->state = 6; }
-#line 119 "validatecsv.rl"
+#line 124 "validatecsv.rl"
 	{te = p+1;{ {goto st4;} }}
 	goto st4;
 tr15:
-#line 81 "validatecsv.rl"
+#line 86 "validatecsv.rl"
 	{ ctx->state = 11; ++ctx->fields; finalizeRecord(ctx); }
-#line 115 "validatecsv.rl"
+#line 120 "validatecsv.rl"
 	{te = p+1;{ {goto st0;} }}
 	goto st4;
 tr16:
-#line 74 "validatecsv.rl"
+#line 79 "validatecsv.rl"
 	{ ctx->state = 4; }
-#line 116 "validatecsv.rl"
+#line 121 "validatecsv.rl"
 	{te = p+1;{ {goto st7;} }}
 	goto st4;
 tr17:
-#line 76 "validatecsv.rl"
+#line 81 "validatecsv.rl"
 	{ ctx->state = 6; }
-#line 118 "validatecsv.rl"
+#line 123 "validatecsv.rl"
 	{te = p+1;{ {goto st4;} }}
 	goto st4;
 tr18:
-#line 78 "validatecsv.rl"
+#line 83 "validatecsv.rl"
 	{ ctx->state = 8; ++ctx->fields; }
-#line 117 "validatecsv.rl"
+#line 122 "validatecsv.rl"
 	{te = p+1;{ {goto st5;} }}
 	goto st4;
 st4:
@@ -325,7 +325,7 @@ st4:
 case 4:
 #line 1 "NONE"
 	{ts = p;}
-#line 247 "validatecsv_ragel.c"
+#line 255 "validatecsv_ragel.c"
 	switch( (*p) ) {
 		case 10u: goto tr15;
 		case 13u: goto tr16;
@@ -334,33 +334,33 @@ case 4:
 	}
 	goto tr14;
 tr19:
-#line 76 "validatecsv.rl"
+#line 81 "validatecsv.rl"
 	{ ctx->state = 6; }
-#line 127 "validatecsv.rl"
+#line 132 "validatecsv.rl"
 	{te = p+1;{ {goto st4;} }}
 	goto st5;
 tr20:
-#line 81 "validatecsv.rl"
+#line 86 "validatecsv.rl"
 	{ ctx->state = 11; ++ctx->fields; finalizeRecord(ctx); }
-#line 123 "validatecsv.rl"
+#line 128 "validatecsv.rl"
 	{te = p+1;{ {goto st0;} }}
 	goto st5;
 tr21:
-#line 79 "validatecsv.rl"
+#line 84 "validatecsv.rl"
 	{ ctx->state = 9; ++ctx->fields; }
-#line 124 "validatecsv.rl"
+#line 129 "validatecsv.rl"
 	{te = p+1;{ {goto st8;} }}
 	goto st5;
 tr22:
-#line 71 "validatecsv.rl"
+#line 76 "validatecsv.rl"
 	{ ctx->state = 1; }
-#line 126 "validatecsv.rl"
+#line 131 "validatecsv.rl"
 	{te = p+1;{ {goto st1;} }}
 	goto st5;
 tr23:
-#line 78 "validatecsv.rl"
+#line 83 "validatecsv.rl"
 	{ ctx->state = 8; ++ctx->fields; }
-#line 125 "validatecsv.rl"
+#line 130 "validatecsv.rl"
 	{te = p+1;{ {goto st5;} }}
 	goto st5;
 st5:
@@ -371,7 +371,7 @@ st5:
 case 5:
 #line 1 "NONE"
 	{ts = p;}
-#line 280 "validatecsv_ragel.c"
+#line 288 "validatecsv_ragel.c"
 	switch( (*p) ) {
 		case 10u: goto tr20;
 		case 13u: goto tr21;
@@ -380,21 +380,21 @@ case 5:
 	}
 	goto tr19;
 tr24:
-#line 82 "validatecsv.rl"
+#line 87 "validatecsv.rl"
 	{
     ctx->state = 12;
     errorUnexpectedChar(ctx, *p);
     {p++; cs = 6; goto _out;}
 }
-#line 132 "validatecsv.rl"
+#line 137 "validatecsv.rl"
 	{te = p+1;{ /* stay in error */ }}
 	goto st6;
 tr25:
-#line 80 "validatecsv.rl"
+#line 85 "validatecsv.rl"
 	{ ctx->state = 10; finalizeRecord(ctx); }
-#line 131 "validatecsv.rl"
+#line 136 "validatecsv.rl"
 	{te = p+1;{ {goto st0;} }}
-#line 82 "validatecsv.rl"
+#line 87 "validatecsv.rl"
 	{
     ctx->state = 12;
     errorUnexpectedChar(ctx, *p);
@@ -409,26 +409,26 @@ st6:
 case 6:
 #line 1 "NONE"
 	{ts = p;}
-#line 310 "validatecsv_ragel.c"
+#line 318 "validatecsv_ragel.c"
 	if ( (*p) == 10u )
 		goto tr25;
 	goto tr24;
 tr26:
-#line 82 "validatecsv.rl"
+#line 87 "validatecsv.rl"
 	{
     ctx->state = 12;
     errorUnexpectedChar(ctx, *p);
     {p++; cs = 7; goto _out;}
 }
-#line 137 "validatecsv.rl"
+#line 142 "validatecsv.rl"
 	{te = p+1;{ /* stay in error */ }}
 	goto st7;
 tr27:
-#line 81 "validatecsv.rl"
+#line 86 "validatecsv.rl"
 	{ ctx->state = 11; ++ctx->fields; finalizeRecord(ctx); }
-#line 136 "validatecsv.rl"
+#line 141 "validatecsv.rl"
 	{te = p+1;{ {goto st0;} }}
-#line 82 "validatecsv.rl"
+#line 87 "validatecsv.rl"
 	{
     ctx->state = 12;
     errorUnexpectedChar(ctx, *p);
@@ -443,26 +443,26 @@ st7:
 case 7:
 #line 1 "NONE"
 	{ts = p;}
-#line 336 "validatecsv_ragel.c"
+#line 344 "validatecsv_ragel.c"
 	if ( (*p) == 10u )
 		goto tr27;
 	goto tr26;
 tr28:
-#line 82 "validatecsv.rl"
+#line 87 "validatecsv.rl"
 	{
     ctx->state = 12;
     errorUnexpectedChar(ctx, *p);
     {p++; cs = 8; goto _out;}
 }
-#line 142 "validatecsv.rl"
+#line 147 "validatecsv.rl"
 	{te = p+1;{ /* stay in error */ }}
 	goto st8;
 tr29:
-#line 80 "validatecsv.rl"
+#line 85 "validatecsv.rl"
 	{ ctx->state = 10; finalizeRecord(ctx); }
-#line 141 "validatecsv.rl"
+#line 146 "validatecsv.rl"
 	{te = p+1;{ {goto st0;} }}
-#line 82 "validatecsv.rl"
+#line 87 "validatecsv.rl"
 	{
     ctx->state = 12;
     errorUnexpectedChar(ctx, *p);
@@ -477,7 +477,7 @@ st8:
 case 8:
 #line 1 "NONE"
 	{ts = p;}
-#line 362 "validatecsv_ragel.c"
+#line 370 "validatecsv_ragel.c"
 	if ( (*p) == 10u )
 		goto tr29;
 	goto tr28;
@@ -496,7 +496,7 @@ case 8:
 	_out: {}
 	}
 
-#line 242 "validatecsv.rl"
+#line 250 "validatecsv.rl"
 
     ctx->ts = ts;
     ctx->te = te;
@@ -534,55 +534,55 @@ static void runStrict(const char* data, size_t len, bool at_eof, ParserContext* 
     int cs = ctx->cs;
 
     
-#line 274 "validatecsv.rl"
-    
-#line 410 "validatecsv_ragel.c"
+#line 287 "validatecsv.rl"
+    if (!ctx->initialized) {
+        
+#line 424 "validatecsv_ragel.c"
 	{
-	if (!ctx->initialized) {
 	cs = csv_strict_c_start;
 	ts = 0;
 	te = 0;
 	act = 0;
-	ctx->initialized = true;
-	}
 	}
 
-#line 275 "validatecsv.rl"
+#line 289 "validatecsv.rl"
+        ctx->initialized = true;
+    }
     
-#line 416 "validatecsv_ragel.c"
+#line 432 "validatecsv_ragel.c"
 	{
 	if ( p == pe )
 		goto _test_eof;
 	switch ( cs )
 	{
 tr0:
-#line 158 "validatecsv.rl"
+#line 163 "validatecsv.rl"
 	{ ctx->state = 6; }
-#line 175 "validatecsv.rl"
+#line 180 "validatecsv.rl"
 	{te = p+1;{ {goto st4;} }}
 	goto st0;
 tr1:
-#line 162 "validatecsv.rl"
+#line 167 "validatecsv.rl"
 	{ ctx->state = 10; finalizeRecord(ctx); }
-#line 171 "validatecsv.rl"
+#line 176 "validatecsv.rl"
 	{te = p+1;{ {goto st0;} }}
 	goto st0;
 tr2:
-#line 155 "validatecsv.rl"
+#line 160 "validatecsv.rl"
 	{ ctx->state = 3; }
-#line 172 "validatecsv.rl"
+#line 177 "validatecsv.rl"
 	{te = p+1;{ {goto st6;} }}
 	goto st0;
 tr3:
-#line 153 "validatecsv.rl"
+#line 158 "validatecsv.rl"
 	{ ctx->state = 1; }
-#line 174 "validatecsv.rl"
+#line 179 "validatecsv.rl"
 	{te = p+1;{ {goto st1;} }}
 	goto st0;
 tr4:
-#line 160 "validatecsv.rl"
+#line 165 "validatecsv.rl"
 	{ ctx->state = 8; ++ctx->fields; }
-#line 173 "validatecsv.rl"
+#line 178 "validatecsv.rl"
 	{te = p+1;{ {goto st5;} }}
 	goto st0;
 st0:
@@ -593,7 +593,7 @@ st0:
 case 0:
 #line 1 "NONE"
 	{ts = p;}
-#line 447 "validatecsv_ragel.c"
+#line 463 "validatecsv_ragel.c"
 	switch( (*p) ) {
 		case 10u: goto tr1;
 		case 13u: goto tr2;
@@ -602,15 +602,15 @@ case 0:
 	}
 	goto tr0;
 tr5:
-#line 159 "validatecsv.rl"
+#line 164 "validatecsv.rl"
 	{ ctx->state = 7; }
-#line 180 "validatecsv.rl"
+#line 185 "validatecsv.rl"
 	{te = p+1;{ {goto st1;} }}
 	goto st1;
 tr6:
-#line 154 "validatecsv.rl"
+#line 159 "validatecsv.rl"
 	{ ctx->state = 2; }
-#line 179 "validatecsv.rl"
+#line 184 "validatecsv.rl"
 	{te = p+1;{ {goto st2;} }}
 	goto st1;
 st1:
@@ -621,42 +621,42 @@ st1:
 case 1:
 #line 1 "NONE"
 	{ts = p;}
-#line 468 "validatecsv_ragel.c"
+#line 484 "validatecsv_ragel.c"
 	if ( (*p) == 34u )
 		goto tr6;
 	goto tr5;
 tr7:
-#line 164 "validatecsv.rl"
+#line 169 "validatecsv.rl"
 	{
     ctx->state = 12;
     errorUnexpectedChar(ctx, *p);
     {p++; cs = 2; goto _out;}
 }
-#line 188 "validatecsv.rl"
+#line 193 "validatecsv.rl"
 	{te = p+1;{ /* stay in error */ }}
 	goto st2;
 tr8:
-#line 163 "validatecsv.rl"
+#line 168 "validatecsv.rl"
 	{ ctx->state = 11; ++ctx->fields; finalizeRecord(ctx); }
-#line 184 "validatecsv.rl"
+#line 189 "validatecsv.rl"
 	{te = p+1;{ {goto st0;} }}
 	goto st2;
 tr9:
-#line 156 "validatecsv.rl"
+#line 161 "validatecsv.rl"
 	{ ctx->state = 4; }
-#line 185 "validatecsv.rl"
+#line 190 "validatecsv.rl"
 	{te = p+1;{ {goto st7;} }}
 	goto st2;
 tr10:
-#line 157 "validatecsv.rl"
+#line 162 "validatecsv.rl"
 	{ ctx->state = 5; }
-#line 187 "validatecsv.rl"
+#line 192 "validatecsv.rl"
 	{te = p+1;{ {goto st3;} }}
 	goto st2;
 tr11:
-#line 160 "validatecsv.rl"
+#line 165 "validatecsv.rl"
 	{ ctx->state = 8; ++ctx->fields; }
-#line 186 "validatecsv.rl"
+#line 191 "validatecsv.rl"
 	{te = p+1;{ {goto st5;} }}
 	goto st2;
 st2:
@@ -667,7 +667,7 @@ st2:
 case 2:
 #line 1 "NONE"
 	{ts = p;}
-#line 501 "validatecsv_ragel.c"
+#line 517 "validatecsv_ragel.c"
 	switch( (*p) ) {
 		case 10u: goto tr8;
 		case 13u: goto tr9;
@@ -676,15 +676,15 @@ case 2:
 	}
 	goto tr7;
 tr12:
-#line 159 "validatecsv.rl"
+#line 164 "validatecsv.rl"
 	{ ctx->state = 7; }
-#line 193 "validatecsv.rl"
+#line 198 "validatecsv.rl"
 	{te = p+1;{ {goto st1;} }}
 	goto st3;
 tr13:
-#line 154 "validatecsv.rl"
+#line 159 "validatecsv.rl"
 	{ ctx->state = 2; }
-#line 192 "validatecsv.rl"
+#line 197 "validatecsv.rl"
 	{te = p+1;{ {goto st2;} }}
 	goto st3;
 st3:
@@ -695,42 +695,42 @@ st3:
 case 3:
 #line 1 "NONE"
 	{ts = p;}
-#line 522 "validatecsv_ragel.c"
+#line 538 "validatecsv_ragel.c"
 	if ( (*p) == 34u )
 		goto tr13;
 	goto tr12;
 tr14:
-#line 158 "validatecsv.rl"
+#line 163 "validatecsv.rl"
 	{ ctx->state = 6; }
-#line 201 "validatecsv.rl"
+#line 206 "validatecsv.rl"
 	{te = p+1;{ {goto st4;} }}
 	goto st4;
 tr15:
-#line 163 "validatecsv.rl"
+#line 168 "validatecsv.rl"
 	{ ctx->state = 11; ++ctx->fields; finalizeRecord(ctx); }
-#line 197 "validatecsv.rl"
+#line 202 "validatecsv.rl"
 	{te = p+1;{ {goto st0;} }}
 	goto st4;
 tr16:
-#line 156 "validatecsv.rl"
+#line 161 "validatecsv.rl"
 	{ ctx->state = 4; }
-#line 198 "validatecsv.rl"
+#line 203 "validatecsv.rl"
 	{te = p+1;{ {goto st7;} }}
 	goto st4;
 tr17:
-#line 164 "validatecsv.rl"
+#line 169 "validatecsv.rl"
 	{
     ctx->state = 12;
     errorUnexpectedChar(ctx, *p);
     {p++; cs = 4; goto _out;}
 }
-#line 200 "validatecsv.rl"
+#line 205 "validatecsv.rl"
 	{te = p+1;{ /* stay in error */ }}
 	goto st4;
 tr18:
-#line 160 "validatecsv.rl"
+#line 165 "validatecsv.rl"
 	{ ctx->state = 8; ++ctx->fields; }
-#line 199 "validatecsv.rl"
+#line 204 "validatecsv.rl"
 	{te = p+1;{ {goto st5;} }}
 	goto st4;
 st4:
@@ -741,7 +741,7 @@ st4:
 case 4:
 #line 1 "NONE"
 	{ts = p;}
-#line 555 "validatecsv_ragel.c"
+#line 571 "validatecsv_ragel.c"
 	switch( (*p) ) {
 		case 10u: goto tr15;
 		case 13u: goto tr16;
@@ -750,33 +750,33 @@ case 4:
 	}
 	goto tr14;
 tr19:
-#line 158 "validatecsv.rl"
+#line 163 "validatecsv.rl"
 	{ ctx->state = 6; }
-#line 209 "validatecsv.rl"
+#line 214 "validatecsv.rl"
 	{te = p+1;{ {goto st4;} }}
 	goto st5;
 tr20:
-#line 163 "validatecsv.rl"
+#line 168 "validatecsv.rl"
 	{ ctx->state = 11; ++ctx->fields; finalizeRecord(ctx); }
-#line 205 "validatecsv.rl"
+#line 210 "validatecsv.rl"
 	{te = p+1;{ {goto st0;} }}
 	goto st5;
 tr21:
-#line 161 "validatecsv.rl"
+#line 166 "validatecsv.rl"
 	{ ctx->state = 9; ++ctx->fields; }
-#line 206 "validatecsv.rl"
+#line 211 "validatecsv.rl"
 	{te = p+1;{ {goto st8;} }}
 	goto st5;
 tr22:
-#line 153 "validatecsv.rl"
+#line 158 "validatecsv.rl"
 	{ ctx->state = 1; }
-#line 208 "validatecsv.rl"
+#line 213 "validatecsv.rl"
 	{te = p+1;{ {goto st1;} }}
 	goto st5;
 tr23:
-#line 160 "validatecsv.rl"
+#line 165 "validatecsv.rl"
 	{ ctx->state = 8; ++ctx->fields; }
-#line 207 "validatecsv.rl"
+#line 212 "validatecsv.rl"
 	{te = p+1;{ {goto st5;} }}
 	goto st5;
 st5:
@@ -787,7 +787,7 @@ st5:
 case 5:
 #line 1 "NONE"
 	{ts = p;}
-#line 588 "validatecsv_ragel.c"
+#line 604 "validatecsv_ragel.c"
 	switch( (*p) ) {
 		case 10u: goto tr20;
 		case 13u: goto tr21;
@@ -796,21 +796,21 @@ case 5:
 	}
 	goto tr19;
 tr24:
-#line 164 "validatecsv.rl"
+#line 169 "validatecsv.rl"
 	{
     ctx->state = 12;
     errorUnexpectedChar(ctx, *p);
     {p++; cs = 6; goto _out;}
 }
-#line 214 "validatecsv.rl"
+#line 219 "validatecsv.rl"
 	{te = p+1;{ /* stay in error */ }}
 	goto st6;
 tr25:
-#line 162 "validatecsv.rl"
+#line 167 "validatecsv.rl"
 	{ ctx->state = 10; finalizeRecord(ctx); }
-#line 213 "validatecsv.rl"
+#line 218 "validatecsv.rl"
 	{te = p+1;{ {goto st0;} }}
-#line 164 "validatecsv.rl"
+#line 169 "validatecsv.rl"
 	{
     ctx->state = 12;
     errorUnexpectedChar(ctx, *p);
@@ -825,26 +825,26 @@ st6:
 case 6:
 #line 1 "NONE"
 	{ts = p;}
-#line 618 "validatecsv_ragel.c"
+#line 634 "validatecsv_ragel.c"
 	if ( (*p) == 10u )
 		goto tr25;
 	goto tr24;
 tr26:
-#line 164 "validatecsv.rl"
+#line 169 "validatecsv.rl"
 	{
     ctx->state = 12;
     errorUnexpectedChar(ctx, *p);
     {p++; cs = 7; goto _out;}
 }
-#line 219 "validatecsv.rl"
+#line 224 "validatecsv.rl"
 	{te = p+1;{ /* stay in error */ }}
 	goto st7;
 tr27:
-#line 163 "validatecsv.rl"
+#line 168 "validatecsv.rl"
 	{ ctx->state = 11; ++ctx->fields; finalizeRecord(ctx); }
-#line 218 "validatecsv.rl"
+#line 223 "validatecsv.rl"
 	{te = p+1;{ {goto st0;} }}
-#line 164 "validatecsv.rl"
+#line 169 "validatecsv.rl"
 	{
     ctx->state = 12;
     errorUnexpectedChar(ctx, *p);
@@ -859,26 +859,26 @@ st7:
 case 7:
 #line 1 "NONE"
 	{ts = p;}
-#line 644 "validatecsv_ragel.c"
+#line 660 "validatecsv_ragel.c"
 	if ( (*p) == 10u )
 		goto tr27;
 	goto tr26;
 tr28:
-#line 164 "validatecsv.rl"
+#line 169 "validatecsv.rl"
 	{
     ctx->state = 12;
     errorUnexpectedChar(ctx, *p);
     {p++; cs = 8; goto _out;}
 }
-#line 224 "validatecsv.rl"
+#line 229 "validatecsv.rl"
 	{te = p+1;{ /* stay in error */ }}
 	goto st8;
 tr29:
-#line 162 "validatecsv.rl"
+#line 167 "validatecsv.rl"
 	{ ctx->state = 10; finalizeRecord(ctx); }
-#line 223 "validatecsv.rl"
+#line 228 "validatecsv.rl"
 	{te = p+1;{ {goto st0;} }}
-#line 164 "validatecsv.rl"
+#line 169 "validatecsv.rl"
 	{
     ctx->state = 12;
     errorUnexpectedChar(ctx, *p);
@@ -893,7 +893,7 @@ st8:
 case 8:
 #line 1 "NONE"
 	{ts = p;}
-#line 670 "validatecsv_ragel.c"
+#line 686 "validatecsv_ragel.c"
 	if ( (*p) == 10u )
 		goto tr29;
 	goto tr28;
@@ -912,7 +912,7 @@ case 8:
 	_out: {}
 	}
 
-#line 276 "validatecsv.rl"
+#line 292 "validatecsv.rl"
 
     ctx->ts = ts;
     ctx->te = te;
@@ -967,17 +967,24 @@ static FileResult ValidateFile(const char* filename, bool strict) {
     ctx.act = 0;
     ctx.initialized = false;
 
-    char chunk[1024];
+    size_t chunk_size = 65536;
+    char* chunk = malloc(chunk_size);
+    if (!chunk) {
+        result.isValid = false;
+        fclose(f);
+        return result;
+    }
     bool saw_data = false;
     bool fed_eof = false;
 
     while (1) {
-        size_t n = fread(chunk, 1, sizeof(chunk), f);
+        size_t n = fread(chunk, 1, chunk_size, f);
         if (n == 0) {
+            at_eof = true;
             break;
         }
         saw_data = true;
-        bool final_chunk = (n < sizeof(chunk));
+        bool final_chunk = (n < chunk_size);
         if (strict) {
             runStrict(chunk, n, final_chunk, &ctx);
         } else {
@@ -993,6 +1000,7 @@ static FileResult ValidateFile(const char* filename, bool strict) {
     fclose(f);
 
     if (!saw_data) {
+        free(chunk);
         return result;
     }
 
@@ -1006,6 +1014,7 @@ static FileResult ValidateFile(const char* filename, bool strict) {
         }
         fed_eof = true;
     }
+    free(chunk);
 
     if (gVerbose) {
         printf("%s: File is %sly %s with %d columns and %d rows.\n",

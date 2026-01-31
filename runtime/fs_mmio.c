@@ -9,6 +9,21 @@
 #include "sys/stat.h"
 #include "unistd.h"
 
+int open(const char *pathname, int flags, ...) {
+    if (!pathname) return -1;
+    size_t len = strlen(pathname) + 1;
+    if (len > S32_MMIO_DATA_CAPACITY) return -1;
+
+    volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
+    memcpy((void *)data_buffer, pathname, len);
+
+    return s32_mmio_request(S32_MMIO_OP_OPEN, (unsigned int)len, 0u, (unsigned int)flags);
+}
+
+int close(int fd) {
+    return s32_mmio_request(S32_MMIO_OP_CLOSE, 0u, 0u, (unsigned int)fd);
+}
+
 // Helper to copy result into stat struct (shared with stat_mmio.c via inline)
 static int copy_lstat_result(struct stat *dst) {
     s32_mmio_stat_result_t result = {0};

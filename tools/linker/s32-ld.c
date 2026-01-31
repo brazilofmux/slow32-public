@@ -1692,30 +1692,83 @@ static void write_executable(linker_state_t *ld) {
         fprintf(stderr, "Error: Cannot create output file '%s'\n", ld->output_file);
         exit(1);
     }
-    
+
     // Initialize string table
     ld->string_table[0] = '\0';
     ld->string_table_size = 1;
-    
+
+    // Build symbol string table and symbol array
+    char sym_strtab[STRING_TABLE_SIZE];
+    sym_strtab[0] = '\0';
+    uint32_t sym_strtab_size = 1;
+    int num_emit_syms = 0;
+    int max_emit_syms = 0;
+    s32o_symbol_t *emit_syms = NULL;
+    if (!ld->strip_symbols) {
+        for (int i = 0; i < ld->num_symbols; i++) {
+            symbol_entry_t *sym = &ld->symbols[i];
+            if (sym->binding == S32O_BIND_GLOBAL && sym->defined_in_file >= 0) {
+                max_emit_syms++;
+            }
+        }
+    }
+    if (max_emit_syms > 0) {
+        emit_syms = calloc(max_emit_syms, sizeof(s32o_symbol_t));
+        int si = 0;
+        for (int i = 0; i < ld->num_symbols; i++) {
+            symbol_entry_t *sym = &ld->symbols[i];
+            if (sym->binding != S32O_BIND_GLOBAL || sym->defined_in_file < 0)
+                continue;
+            // Add name to sym strtab
+            uint32_t name_off = sym_strtab_size;
+            size_t nlen = strlen(sym->name) + 1;
+            if (name_off + nlen > STRING_TABLE_SIZE) {
+                continue;
+            }
+            memcpy(&sym_strtab[name_off], sym->name, nlen);
+            sym_strtab_size += (uint32_t)nlen;
+            emit_syms[si].name_offset = name_off;
+            emit_syms[si].value = sym->value;
+            emit_syms[si].section = (uint16_t)sym->section_idx;
+            emit_syms[si].type = sym->type;
+            emit_syms[si].binding = sym->binding;
+            emit_syms[si].size = sym->size;
+            si++;
+        }
+        num_emit_syms = si;
+    }
+
+    int has_symtab = (num_emit_syms > 0) ? 1 : 0;
+    int extra_sections = has_symtab ? 2 : 0;  // SYMTAB + sym STRTAB
+    int total_sections = ld->num_sections + extra_sections;
+    if (!has_symtab && emit_syms) {
+        free(emit_syms);
+        emit_syms = NULL;
+    }
+
     // Add section names to string table
-    uint32_t section_name_offsets[MAX_SECTIONS];
+    uint32_t section_name_offsets[MAX_SECTIONS + 2];
     for (int i = 0; i < ld->num_sections; i++) {
         section_name_offsets[i] = add_string(ld, ld->sections[i].name);
     }
-    
+    if (has_symtab) {
+        section_name_offsets[ld->num_sections] = add_string(ld, ".symtab");
+        section_name_offsets[ld->num_sections + 1] = add_string(ld, ".sym_strtab");
+    }
+
     // Calculate file layout
     uint32_t offset = sizeof(s32x_header_t);
     uint32_t section_table_offset = offset;
-    offset += ld->num_sections * sizeof(s32x_section_t);
-    
+    offset += total_sections * sizeof(s32x_section_t);
+
     uint32_t string_table_offset = offset;
     offset += ld->string_table_size;
-    
+
     // Align to 16 bytes for section data
     offset = (offset + 15) & ~15;
-    
-    // Assign file offsets to sections
-    uint32_t section_offsets[MAX_SECTIONS];
+
+    // Assign file offsets to regular sections
+    uint32_t section_offsets[MAX_SECTIONS + 2];
     for (int i = 0; i < ld->num_sections; i++) {
         if (ld->sections[i].type == S32_SEC_BSS) {
             section_offsets[i] = 0;  // BSS has no file data
@@ -1727,19 +1780,34 @@ static void write_executable(linker_state_t *ld) {
             section_offsets[i] = 0;
         }
     }
-    
+
+    // Assign file offsets for SYMTAB and sym STRTAB sections
+    uint32_t symtab_offset = 0, sym_strtab_offset = 0;
+    uint32_t symtab_size = 0;
+    if (has_symtab) {
+        offset = (offset + 3) & ~3;
+        symtab_offset = offset;
+        symtab_size = num_emit_syms * sizeof(s32o_symbol_t);
+        offset += symtab_size;
+        offset = (offset + 3) & ~3;
+        sym_strtab_offset = offset;
+        offset += sym_strtab_size;
+        section_offsets[ld->num_sections] = symtab_offset;
+        section_offsets[ld->num_sections + 1] = sym_strtab_offset;
+    }
+
     // Write header
     uint32_t flags = 0;
     if (ld->enable_wxorx) flags |= S32X_FLAG_W_XOR_X;
     if (ld->mmio_size > 0) flags |= S32X_FLAG_MMIO;
-    
+
     s32x_header_t header = {
         .magic = S32X_MAGIC,
         .version = 1,
         .endian = S32_ENDIAN_LITTLE,
         .machine = S32_MACHINE_SLOW32,
         .entry = ld->entry_point,
-        .nsections = ld->num_sections,
+        .nsections = total_sections,
         .sec_offset = section_table_offset,
         .str_offset = string_table_offset,
         .str_size = ld->string_table_size,
@@ -1753,10 +1821,10 @@ static void write_executable(linker_state_t *ld) {
         .stack_end = ld->stack_base - ld->stack_size,
         .mmio_base = ld->mmio_base
     };
-    
+
     fwrite(&header, sizeof(header), 1, f);
-    
-    // Write section table
+
+    // Write section table (regular sections)
     for (int i = 0; i < ld->num_sections; i++) {
         combined_section_t *csec = &ld->sections[i];
         s32x_section_t section = {
@@ -1770,15 +1838,40 @@ static void write_executable(linker_state_t *ld) {
         };
         fwrite(&section, sizeof(section), 1, f);
     }
-    
+
+    // Write SYMTAB and sym STRTAB section entries
+    if (has_symtab) {
+        s32x_section_t symtab_sec = {
+            .name_offset = section_name_offsets[ld->num_sections],
+            .type = S32_SEC_SYMTAB,
+            .vaddr = 0,
+            .offset = symtab_offset,
+            .size = symtab_size,
+            .mem_size = 0,
+            .flags = 0
+        };
+        fwrite(&symtab_sec, sizeof(symtab_sec), 1, f);
+
+        s32x_section_t strtab_sec = {
+            .name_offset = section_name_offsets[ld->num_sections + 1],
+            .type = S32_SEC_STRTAB,
+            .vaddr = 0,
+            .offset = sym_strtab_offset,
+            .size = sym_strtab_size,
+            .mem_size = 0,
+            .flags = 0
+        };
+        fwrite(&strtab_sec, sizeof(strtab_sec), 1, f);
+    }
+
     // Write string table
     fwrite(ld->string_table, 1, ld->string_table_size, f);
-    
+
     // Align to 16 bytes
     while (ftell(f) % 16) {
         fputc(0, f);
     }
-    
+
     // Write section data
     for (int i = 0; i < ld->num_sections; i++) {
         if (section_offsets[i] > 0 && ld->sections[i].data) {
@@ -1786,13 +1879,25 @@ static void write_executable(linker_state_t *ld) {
             fwrite(ld->sections[i].data, 1, ld->sections[i].size, f);
         }
     }
-    
+
+    // Write SYMTAB and sym STRTAB data
+    if (has_symtab) {
+        fseek(f, symtab_offset, SEEK_SET);
+        fwrite(emit_syms, sizeof(s32o_symbol_t), num_emit_syms, f);
+        fseek(f, sym_strtab_offset, SEEK_SET);
+        fwrite(sym_strtab, 1, sym_strtab_size, f);
+        free(emit_syms);
+    }
+
     fclose(f);
-    
+
     if (ld->verbose) {
         printf("Generated executable: %s\n", ld->output_file);
         printf("  Entry point: 0x%08X\n", ld->entry_point);
         printf("  File size: %d bytes\n", offset);
+        if (has_symtab) {
+            printf("  Symbols: %d global\n", num_emit_syms);
+        }
     }
 }
 

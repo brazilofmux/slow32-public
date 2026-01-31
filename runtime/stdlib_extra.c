@@ -1,17 +1,12 @@
 #include <stdlib.h>
 #include <stddef.h>
+#include <string.h>
 
 // Quick sort implementation
+// swap uses memswap — a single call, no temp buffer, word-optimized in the
+// runtime, and interceptable by the DBT for a native host swap loop.
 static void swap(void *a, void *b, size_t size) {
-    unsigned char *pa = (unsigned char *)a;
-    unsigned char *pb = (unsigned char *)b;
-    unsigned char tmp;
-    
-    while (size--) {
-        tmp = *pa;
-        *pa++ = *pb;
-        *pb++ = tmp;
-    }
+    memswap(a, b, size);
 }
 
 static void *partition(void *base, size_t num, size_t size, 
