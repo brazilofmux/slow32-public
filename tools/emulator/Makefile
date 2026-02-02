@@ -9,10 +9,10 @@ OBJS = slow32.o mmio_ring.o
 all: $(TARGETS)
 
 slow32: $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) -o $@ $^ -lm
 
 slow32-fast: slow32-fast.c $(HEADERS) mmio_ring.o
-	$(CC) $(CFLAGS) -o $@ slow32-fast.c mmio_ring.o -I.
+	$(CC) $(CFLAGS) -o $@ slow32-fast.c mmio_ring.o -I. -lm
 
 %.o: %.c $(HEADERS)
 	$(CC) $(CFLAGS) -c $< -o $@

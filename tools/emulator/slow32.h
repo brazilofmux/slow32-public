@@ -78,6 +78,51 @@ typedef enum {
     OP_NOP    = 0x50,
     OP_YIELD  = 0x51,
     OP_DEBUG  = 0x52,  // Debug output: print char in rs1
+
+    // f32 (single-precision float) instructions
+    OP_FADD_S    = 0x53,  // rd = rs1 + rs2 (IEEE 754 f32)
+    OP_FSUB_S    = 0x54,  // rd = rs1 - rs2
+    OP_FMUL_S    = 0x55,  // rd = rs1 * rs2
+    OP_FDIV_S    = 0x56,  // rd = rs1 / rs2
+    OP_FSQRT_S   = 0x57,  // rd = sqrt(rs1)
+    OP_FEQ_S     = 0x58,  // rd = (rs1 == rs2) ? 1 : 0
+    OP_FLT_S     = 0x59,  // rd = (rs1 < rs2) ? 1 : 0
+    OP_FLE_S     = 0x5A,  // rd = (rs1 <= rs2) ? 1 : 0
+    OP_FCVT_W_S  = 0x5B,  // rd = (int32_t)rs1
+    OP_FCVT_WU_S = 0x5C,  // rd = (uint32_t)rs1
+    OP_FCVT_S_W  = 0x5D,  // rd = (float)(int32_t)rs1
+    OP_FCVT_S_WU = 0x5E,  // rd = (float)(uint32_t)rs1
+    OP_FNEG_S    = 0x5F,  // rd = -rs1 (flip sign bit)
+    OP_FABS_S    = 0x60,  // rd = |rs1| (clear sign bit)
+
+    // f64 (double-precision float) instructions -- register pairs (even:even+1)
+    OP_FADD_D    = 0x61,  // rd:rd+1 = rs1:rs1+1 + rs2:rs2+1
+    OP_FSUB_D    = 0x62,
+    OP_FMUL_D    = 0x63,
+    OP_FDIV_D    = 0x64,
+    OP_FSQRT_D   = 0x65,  // rd:rd+1 = sqrt(rs1:rs1+1)
+    OP_FEQ_D     = 0x66,  // rd = (rs1:rs1+1 == rs2:rs2+1) ? 1 : 0
+    OP_FLT_D     = 0x67,
+    OP_FLE_D     = 0x68,
+    OP_FCVT_W_D  = 0x69,  // rd = (int32_t)(double in rs1:rs1+1)
+    OP_FCVT_WU_D = 0x6A,  // rd = (uint32_t)(double in rs1:rs1+1)
+    OP_FCVT_D_W  = 0x6B,  // rd:rd+1 = (double)(int32_t)rs1
+    OP_FCVT_D_WU = 0x6C,  // rd:rd+1 = (double)(uint32_t)rs1
+    OP_FCVT_D_S  = 0x6D,  // rd:rd+1 = (double)(float in rs1)
+    OP_FCVT_S_D  = 0x6E,  // rd = (float)(double in rs1:rs1+1)
+    OP_FNEG_D    = 0x6F,  // rd:rd+1 = -(rs1:rs1+1)
+    OP_FABS_D    = 0x70,  // rd:rd+1 = |rs1:rs1+1|
+
+    // float <-> int64 conversions
+    OP_FCVT_L_S  = 0x71,  // rd:rd+1 = (int64_t)(float in rs1)
+    OP_FCVT_LU_S = 0x72,  // rd:rd+1 = (uint64_t)(float in rs1)
+    OP_FCVT_S_L  = 0x73,  // rd = (float)(int64_t in rs1:rs1+1)
+    OP_FCVT_S_LU = 0x74,  // rd = (float)(uint64_t in rs1:rs1+1)
+    OP_FCVT_L_D  = 0x75,  // rd:rd+1 = (int64_t)(double in rs1:rs1+1)
+    OP_FCVT_LU_D = 0x76,  // rd:rd+1 = (uint64_t)(double in rs1:rs1+1)
+    OP_FCVT_D_L  = 0x77,  // rd:rd+1 = (double)(int64_t in rs1:rs1+1)
+    OP_FCVT_D_LU = 0x78,  // rd:rd+1 = (double)(uint64_t in rs1:rs1+1)
+
     OP_HALT   = 0x7F,
 } opcode_t;
 

@@ -154,6 +154,47 @@ translated_block_t *translate_block_cached(translate_ctx_t *ctx, uint32_t guest_
 #define OP_NOP    0x50
 #define OP_YIELD  0x51
 #define OP_DEBUG  0x52
+// f32 instructions
+#define OP_FADD_S    0x53
+#define OP_FSUB_S    0x54
+#define OP_FMUL_S    0x55
+#define OP_FDIV_S    0x56
+#define OP_FSQRT_S   0x57
+#define OP_FEQ_S     0x58
+#define OP_FLT_S     0x59
+#define OP_FLE_S     0x5A
+#define OP_FCVT_W_S  0x5B
+#define OP_FCVT_WU_S 0x5C
+#define OP_FCVT_S_W  0x5D
+#define OP_FCVT_S_WU 0x5E
+#define OP_FNEG_S    0x5F
+#define OP_FABS_S    0x60
+// f64 instructions
+#define OP_FADD_D    0x61
+#define OP_FSUB_D    0x62
+#define OP_FMUL_D    0x63
+#define OP_FDIV_D    0x64
+#define OP_FSQRT_D   0x65
+#define OP_FEQ_D     0x66
+#define OP_FLT_D     0x67
+#define OP_FLE_D     0x68
+#define OP_FCVT_W_D  0x69
+#define OP_FCVT_WU_D 0x6A
+#define OP_FCVT_D_W  0x6B
+#define OP_FCVT_D_WU 0x6C
+#define OP_FCVT_D_S  0x6D
+#define OP_FCVT_S_D  0x6E
+#define OP_FNEG_D    0x6F
+#define OP_FABS_D    0x70
+// float <-> int64 conversions
+#define OP_FCVT_L_S  0x71
+#define OP_FCVT_LU_S 0x72
+#define OP_FCVT_S_L  0x73
+#define OP_FCVT_S_LU 0x74
+#define OP_FCVT_L_D  0x75
+#define OP_FCVT_LU_D 0x76
+#define OP_FCVT_D_L  0x77
+#define OP_FCVT_D_LU 0x78
 #define OP_HALT   0x7F
 
 // ============================================================================
@@ -251,6 +292,9 @@ bool translate_blt(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm);
 bool translate_bge(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm);
 bool translate_bltu(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm);
 bool translate_bgeu(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm);
+
+// Floating-point (all use helper-call fallback for now)
+void translate_fp_r_type(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1, uint8_t rs2);
 
 // Special
 void translate_nop(translate_ctx_t *ctx);

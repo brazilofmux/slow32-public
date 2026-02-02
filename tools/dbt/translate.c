@@ -5,6 +5,7 @@
 #include "block_cache.h"
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 // Debug flag - set to 1 to enable translation tracing
 #ifndef DBT_TRACE
@@ -31,6 +32,17 @@ decoded_inst_t decode_instruction(uint32_t raw) {
         case OP_DIV: case OP_REM: case OP_SEQ: case OP_SNE:
         case OP_SGT: case OP_SGTU: case OP_SLE: case OP_SLEU:
         case OP_SGE: case OP_SGEU:
+        // Floating-point R-type
+        case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
+        case OP_FSQRT_S: case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
+        case OP_FCVT_W_S: case OP_FCVT_WU_S: case OP_FCVT_S_W: case OP_FCVT_S_WU:
+        case OP_FNEG_S: case OP_FABS_S:
+        case OP_FADD_D: case OP_FSUB_D: case OP_FMUL_D: case OP_FDIV_D:
+        case OP_FSQRT_D: case OP_FEQ_D: case OP_FLT_D: case OP_FLE_D:
+        case OP_FCVT_W_D: case OP_FCVT_WU_D: case OP_FCVT_D_W: case OP_FCVT_D_WU:
+        case OP_FCVT_D_S: case OP_FCVT_S_D: case OP_FNEG_D: case OP_FABS_D:
+        case OP_FCVT_L_S: case OP_FCVT_LU_S: case OP_FCVT_S_L: case OP_FCVT_S_LU:
+        case OP_FCVT_L_D: case OP_FCVT_LU_D: case OP_FCVT_D_L: case OP_FCVT_D_LU:
             inst.format = FMT_R;
             inst.rd = (raw >> 7) & 0x1F;
             inst.rs1 = (raw >> 15) & 0x1F;
@@ -1856,6 +1868,132 @@ void translate_yield(translate_ctx_t *ctx) {
     emit_exit(ctx, EXIT_YIELD, ctx->guest_pc + 4);
 }
 
+// ============================================================================
+// Floating-point helper (called from JIT code)
+// ============================================================================
+
+static inline void load_f64_pair(uint32_t *regs, uint8_t reg, double *out) {
+    uint64_t bits = ((uint64_t)regs[reg + 1] << 32) | regs[reg];
+    memcpy(out, &bits, 8);
+}
+
+static inline void store_f64_pair(uint32_t *regs, uint8_t reg, double val) {
+    uint64_t bits;
+    memcpy(&bits, &val, 8);
+    regs[reg] = (uint32_t)bits;
+    regs[reg + 1] = (uint32_t)(bits >> 32);
+}
+
+// This function is called from JIT code via emit_call_r64.
+// RDI = cpu state pointer, ESI = opcode, EDX = rd, ECX = rs1, R8D = rs2
+void dbt_fp_helper(dbt_cpu_state_t *cpu, uint32_t opcode,
+                   uint32_t rd, uint32_t rs1, uint32_t rs2) {
+    uint32_t *r = cpu->regs;
+
+    switch (opcode) {
+    // f32 arithmetic
+    case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S: {
+        float a, b, res;
+        memcpy(&a, &r[rs1], 4);
+        memcpy(&b, &r[rs2], 4);
+        switch (opcode) {
+            case OP_FADD_S: res = a + b; break;
+            case OP_FSUB_S: res = a - b; break;
+            case OP_FMUL_S: res = a * b; break;
+            default:        res = a / b; break;
+        }
+        memcpy(&r[rd], &res, 4);
+        break;
+    }
+    case OP_FSQRT_S: {
+        float a, res; memcpy(&a, &r[rs1], 4);
+        res = sqrtf(a);
+        memcpy(&r[rd], &res, 4);
+        break;
+    }
+    case OP_FEQ_S: { float a, b; memcpy(&a, &r[rs1], 4); memcpy(&b, &r[rs2], 4); r[rd] = (a == b) ? 1 : 0; break; }
+    case OP_FLT_S: { float a, b; memcpy(&a, &r[rs1], 4); memcpy(&b, &r[rs2], 4); r[rd] = (a < b) ? 1 : 0; break; }
+    case OP_FLE_S: { float a, b; memcpy(&a, &r[rs1], 4); memcpy(&b, &r[rs2], 4); r[rd] = (a <= b) ? 1 : 0; break; }
+    case OP_FCVT_W_S: { float a; memcpy(&a, &r[rs1], 4); r[rd] = (uint32_t)(int32_t)a; break; }
+    case OP_FCVT_WU_S: { float a; memcpy(&a, &r[rs1], 4); r[rd] = (uint32_t)a; break; }
+    case OP_FCVT_S_W: { float res = (float)(int32_t)r[rs1]; memcpy(&r[rd], &res, 4); break; }
+    case OP_FCVT_S_WU: { float res = (float)r[rs1]; memcpy(&r[rd], &res, 4); break; }
+    case OP_FNEG_S: r[rd] = r[rs1] ^ 0x80000000u; break;
+    case OP_FABS_S: r[rd] = r[rs1] & 0x7FFFFFFFu; break;
+
+    // f64 arithmetic
+    case OP_FADD_D: case OP_FSUB_D: case OP_FMUL_D: case OP_FDIV_D: {
+        double a, b, res;
+        load_f64_pair(r, rs1, &a); load_f64_pair(r, rs2, &b);
+        switch (opcode) {
+            case OP_FADD_D: res = a + b; break;
+            case OP_FSUB_D: res = a - b; break;
+            case OP_FMUL_D: res = a * b; break;
+            default:        res = a / b; break;
+        }
+        store_f64_pair(r, rd, res);
+        break;
+    }
+    case OP_FSQRT_D: { double a, res; load_f64_pair(r, rs1, &a); res = sqrt(a); store_f64_pair(r, rd, res); break; }
+    case OP_FEQ_D: { double a, b; load_f64_pair(r, rs1, &a); load_f64_pair(r, rs2, &b); r[rd] = (a == b) ? 1 : 0; break; }
+    case OP_FLT_D: { double a, b; load_f64_pair(r, rs1, &a); load_f64_pair(r, rs2, &b); r[rd] = (a < b) ? 1 : 0; break; }
+    case OP_FLE_D: { double a, b; load_f64_pair(r, rs1, &a); load_f64_pair(r, rs2, &b); r[rd] = (a <= b) ? 1 : 0; break; }
+    case OP_FCVT_W_D: { double a; load_f64_pair(r, rs1, &a); r[rd] = (uint32_t)(int32_t)a; break; }
+    case OP_FCVT_WU_D: { double a; load_f64_pair(r, rs1, &a); r[rd] = (uint32_t)a; break; }
+    case OP_FCVT_D_W: { store_f64_pair(r, rd, (double)(int32_t)r[rs1]); break; }
+    case OP_FCVT_D_WU: { store_f64_pair(r, rd, (double)r[rs1]); break; }
+    case OP_FCVT_D_S: { float a; memcpy(&a, &r[rs1], 4); store_f64_pair(r, rd, (double)a); break; }
+    case OP_FCVT_S_D: { double a; load_f64_pair(r, rs1, &a); float res = (float)a; memcpy(&r[rd], &res, 4); break; }
+    case OP_FNEG_D: r[rd] = r[rs1]; r[rd + 1] = r[rs1 + 1] ^ 0x80000000u; break;
+    case OP_FABS_D: r[rd] = r[rs1]; r[rd + 1] = r[rs1 + 1] & 0x7FFFFFFFu; break;
+
+    // float <-> int64
+    case OP_FCVT_L_S: { float a; memcpy(&a, &r[rs1], 4); int64_t v = (int64_t)a; r[rd] = (uint32_t)v; r[rd+1] = (uint32_t)((uint64_t)v >> 32); break; }
+    case OP_FCVT_LU_S: { float a; memcpy(&a, &r[rs1], 4); uint64_t v = (uint64_t)a; r[rd] = (uint32_t)v; r[rd+1] = (uint32_t)(v >> 32); break; }
+    case OP_FCVT_S_L: { int64_t v = (int64_t)(((uint64_t)r[rs1+1] << 32) | r[rs1]); float res = (float)v; memcpy(&r[rd], &res, 4); break; }
+    case OP_FCVT_S_LU: { uint64_t v = ((uint64_t)r[rs1+1] << 32) | r[rs1]; float res = (float)v; memcpy(&r[rd], &res, 4); break; }
+    case OP_FCVT_L_D: { double a; load_f64_pair(r, rs1, &a); int64_t v = (int64_t)a; r[rd] = (uint32_t)v; r[rd+1] = (uint32_t)((uint64_t)v >> 32); break; }
+    case OP_FCVT_LU_D: { double a; load_f64_pair(r, rs1, &a); uint64_t v = (uint64_t)a; r[rd] = (uint32_t)v; r[rd+1] = (uint32_t)(v >> 32); break; }
+    case OP_FCVT_D_L: { int64_t v = (int64_t)(((uint64_t)r[rs1+1] << 32) | r[rs1]); store_f64_pair(r, rd, (double)v); break; }
+    case OP_FCVT_D_LU: { uint64_t v = ((uint64_t)r[rs1+1] << 32) | r[rs1]; store_f64_pair(r, rd, (double)v); break; }
+    }
+
+    r[0] = 0;  // Ensure r0 stays 0
+}
+
+void translate_fp_r_type(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1, uint8_t rs2) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Flush register cache before calling helper (it modifies guest regs directly)
+    if (ctx->reg_cache_enabled) {
+        emit_ctx_t *ef = &ctx->emit;
+        for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+            if (!ctx->reg_alloc[i].allocated || !ctx->reg_alloc[i].dirty) continue;
+            uint8_t greg = ctx->reg_alloc[i].guest_reg;
+            emit_mov_m32_r32(ef, RBP, GUEST_REG_OFFSET(greg), reg_alloc_hosts[i]);
+            ctx->reg_alloc[i].dirty = false;
+        }
+    }
+
+    // Set up System V AMD64 ABI call: RDI=cpu, ESI=opcode, EDX=rd, ECX=rs1, R8D=rs2
+    emit_mov_r64_r64(e, RDI, RBP);                  // cpu state
+    emit_mov_r32_imm32(e, RSI, opcode);              // opcode
+    emit_mov_r32_imm32(e, RDX, rd);                  // rd
+    emit_mov_r32_imm32(e, RCX, rs1);                 // rs1
+    emit_mov_r32_imm32(e, R8, rs2);                  // rs2
+    emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)dbt_fp_helper);
+    emit_call_r64(e, RAX);
+
+    // Reload reg cache from memory (helper may have modified any guest regs)
+    if (ctx->reg_cache_enabled) {
+        for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+            if (!ctx->reg_alloc[i].allocated) continue;
+            uint8_t greg = ctx->reg_alloc[i].guest_reg;
+            emit_mov_r32_m32(e, reg_alloc_hosts[i], RBP, GUEST_REG_OFFSET(greg));
+        }
+    }
+}
+
 void translate_assert_eq(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2) {
     emit_ctx_t *e = &ctx->emit;
 
@@ -1971,6 +2109,20 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
             case OP_MULH: translate_mulh(ctx, inst.rd, inst.rs1, inst.rs2); break;
             case OP_DIV:  translate_div(ctx, inst.rd, inst.rs1, inst.rs2); break;
             case OP_REM:  translate_rem(ctx, inst.rd, inst.rs1, inst.rs2); break;
+
+            // Floating-point (helper call fallback)
+            case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
+            case OP_FSQRT_S: case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
+            case OP_FCVT_W_S: case OP_FCVT_WU_S: case OP_FCVT_S_W: case OP_FCVT_S_WU:
+            case OP_FNEG_S: case OP_FABS_S:
+            case OP_FADD_D: case OP_FSUB_D: case OP_FMUL_D: case OP_FDIV_D:
+            case OP_FSQRT_D: case OP_FEQ_D: case OP_FLT_D: case OP_FLE_D:
+            case OP_FCVT_W_D: case OP_FCVT_WU_D: case OP_FCVT_D_W: case OP_FCVT_D_WU:
+            case OP_FCVT_D_S: case OP_FCVT_S_D: case OP_FNEG_D: case OP_FABS_D:
+            case OP_FCVT_L_S: case OP_FCVT_LU_S: case OP_FCVT_S_L: case OP_FCVT_S_LU:
+            case OP_FCVT_L_D: case OP_FCVT_LU_D: case OP_FCVT_D_L: case OP_FCVT_D_LU:
+                translate_fp_r_type(ctx, inst.opcode, inst.rd, inst.rs1, inst.rs2);
+                break;
 
             // Upper immediate
             case OP_LUI:  translate_lui(ctx, inst.rd, inst.imm); break;
@@ -2550,6 +2702,20 @@ retry_translate:
             case OP_MULH: translate_mulh(ctx, inst.rd, inst.rs1, inst.rs2); break;
             case OP_DIV:  translate_div(ctx, inst.rd, inst.rs1, inst.rs2); break;
             case OP_REM:  translate_rem(ctx, inst.rd, inst.rs1, inst.rs2); break;
+
+            // Floating-point (helper call fallback)
+            case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
+            case OP_FSQRT_S: case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
+            case OP_FCVT_W_S: case OP_FCVT_WU_S: case OP_FCVT_S_W: case OP_FCVT_S_WU:
+            case OP_FNEG_S: case OP_FABS_S:
+            case OP_FADD_D: case OP_FSUB_D: case OP_FMUL_D: case OP_FDIV_D:
+            case OP_FSQRT_D: case OP_FEQ_D: case OP_FLT_D: case OP_FLE_D:
+            case OP_FCVT_W_D: case OP_FCVT_WU_D: case OP_FCVT_D_W: case OP_FCVT_D_WU:
+            case OP_FCVT_D_S: case OP_FCVT_S_D: case OP_FNEG_D: case OP_FABS_D:
+            case OP_FCVT_L_S: case OP_FCVT_LU_S: case OP_FCVT_S_L: case OP_FCVT_S_LU:
+            case OP_FCVT_L_D: case OP_FCVT_LU_D: case OP_FCVT_D_L: case OP_FCVT_D_LU:
+                translate_fp_r_type(ctx, inst.opcode, inst.rd, inst.rs1, inst.rs2);
+                break;
 
             // Upper immediate
             case OP_LUI:  translate_lui(ctx, inst.rd, inst.imm); break;

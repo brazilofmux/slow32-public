@@ -17,7 +17,7 @@ CFLAGS = $(CFLAGS_BASE) $(OPT_LEVEL)
 
 # Compiler runtime objects (always needed, linked last)
 # These provide compiler support functions like division, intrinsics
-COMPILER_RT_OBJS = intrinsics.s32o intrinsics_extra.s32o \
+COMPILER_RT_OBJS = intrinsics.s32o intrinsics_extra.s32o float_intrinsics.s32o \
                    builtins.s32o divsi3.s32o \
                    debug_char.s32o
 

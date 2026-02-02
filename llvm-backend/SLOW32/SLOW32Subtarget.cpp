@@ -54,6 +54,23 @@ void SLOW32Subtarget::initLibcallLoweringInfo(LibcallLoweringInfo &Info) const {
   Info.setLibcallImpl(RTLIB::UDIV_I32, RTLIB::impl___udivsi3);
   Info.setLibcallImpl(RTLIB::UREM_I32, RTLIB::impl___umodsi3);
 
+  Info.setLibcallImpl(RTLIB::REM_F32, RTLIB::impl_fmodf);
+  Info.setLibcallImpl(RTLIB::REM_F64, RTLIB::impl_fmod);
+  Info.setLibcallImpl(RTLIB::FMA_F32, RTLIB::impl_fmaf);
+  Info.setLibcallImpl(RTLIB::FMA_F64, RTLIB::impl_fma);
+  Info.setLibcallImpl(RTLIB::RINT_F32, RTLIB::impl_rintf);
+  Info.setLibcallImpl(RTLIB::RINT_F64, RTLIB::impl_rint);
+  Info.setLibcallImpl(RTLIB::NEARBYINT_F32, RTLIB::impl_nearbyintf);
+  Info.setLibcallImpl(RTLIB::NEARBYINT_F64, RTLIB::impl_nearbyint);
+  Info.setLibcallImpl(RTLIB::FLOOR_F32, RTLIB::impl_floorf);
+  Info.setLibcallImpl(RTLIB::FLOOR_F64, RTLIB::impl_floor);
+  Info.setLibcallImpl(RTLIB::CEIL_F32, RTLIB::impl_ceilf);
+  Info.setLibcallImpl(RTLIB::CEIL_F64, RTLIB::impl_ceil);
+  Info.setLibcallImpl(RTLIB::TRUNC_F32, RTLIB::impl_truncf);
+  Info.setLibcallImpl(RTLIB::TRUNC_F64, RTLIB::impl_trunc);
+  Info.setLibcallImpl(RTLIB::ROUND_F32, RTLIB::impl_roundf);
+  Info.setLibcallImpl(RTLIB::ROUND_F64, RTLIB::impl_round);
+
   // The runtime ships native C implementations of the basic memory helpers.
   Info.setLibcallImpl(RTLIB::MEMCPY, RTLIB::impl_memcpy);
   Info.setLibcallImpl(RTLIB::MEMMOVE, RTLIB::impl_memmove);

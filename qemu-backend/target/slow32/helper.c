@@ -231,3 +231,83 @@ void HELPER(slow32_native_memswap)(CPUSlow32State *env)
 
     env->pc = env->next_pc = env->regs[31];
 }
+
+/*
+ * Floating-point helper.
+ *
+ * The raw instruction word is passed in; we decode rd/rs1/rs2 and dispatch
+ * to the appropriate C float operation.  This avoids needing 38 separate
+ * DEF_HELPER macros.
+ */
+#include <math.h>
+
+static inline void qemu_load_f64(CPUSlow32State *env, int reg, double *out)
+{
+    uint64_t bits = ((uint64_t)env->regs[reg + 1] << 32) | env->regs[reg];
+    memcpy(out, &bits, 8);
+}
+
+static inline void qemu_store_f64(CPUSlow32State *env, int reg, double val)
+{
+    uint64_t bits;
+    memcpy(&bits, &val, 8);
+    env->regs[reg] = (uint32_t)bits;
+    env->regs[reg + 1] = (uint32_t)(bits >> 32);
+}
+
+void HELPER(slow32_fp_op)(CPUSlow32State *env, uint32_t raw)
+{
+    uint32_t opcode = raw & 0x7F;
+    int rd  = (raw >> 7)  & 0x1F;
+    int rs1 = (raw >> 15) & 0x1F;
+    int rs2 = (raw >> 20) & 0x1F;
+    uint32_t *r = env->regs;
+
+    switch (opcode) {
+    /* f32 arithmetic */
+    case 0x53: { float a, b, res; memcpy(&a, &r[rs1], 4); memcpy(&b, &r[rs2], 4); res = a + b; memcpy(&r[rd], &res, 4); break; }
+    case 0x54: { float a, b, res; memcpy(&a, &r[rs1], 4); memcpy(&b, &r[rs2], 4); res = a - b; memcpy(&r[rd], &res, 4); break; }
+    case 0x55: { float a, b, res; memcpy(&a, &r[rs1], 4); memcpy(&b, &r[rs2], 4); res = a * b; memcpy(&r[rd], &res, 4); break; }
+    case 0x56: { float a, b, res; memcpy(&a, &r[rs1], 4); memcpy(&b, &r[rs2], 4); res = a / b; memcpy(&r[rd], &res, 4); break; }
+    case 0x57: { float a, res; memcpy(&a, &r[rs1], 4); res = sqrtf(a); memcpy(&r[rd], &res, 4); break; }
+    case 0x58: { float a, b; memcpy(&a, &r[rs1], 4); memcpy(&b, &r[rs2], 4); r[rd] = (a == b) ? 1 : 0; break; }
+    case 0x59: { float a, b; memcpy(&a, &r[rs1], 4); memcpy(&b, &r[rs2], 4); r[rd] = (a < b) ? 1 : 0; break; }
+    case 0x5A: { float a, b; memcpy(&a, &r[rs1], 4); memcpy(&b, &r[rs2], 4); r[rd] = (a <= b) ? 1 : 0; break; }
+    case 0x5B: { float a; memcpy(&a, &r[rs1], 4); r[rd] = (uint32_t)(int32_t)a; break; }
+    case 0x5C: { float a; memcpy(&a, &r[rs1], 4); r[rd] = (uint32_t)a; break; }
+    case 0x5D: { float res = (float)(int32_t)r[rs1]; memcpy(&r[rd], &res, 4); break; }
+    case 0x5E: { float res = (float)r[rs1]; memcpy(&r[rd], &res, 4); break; }
+    case 0x5F: r[rd] = r[rs1] ^ 0x80000000u; break;
+    case 0x60: r[rd] = r[rs1] & 0x7FFFFFFFu; break;
+
+    /* f64 arithmetic */
+    case 0x61: { double a, b, res; qemu_load_f64(env, rs1, &a); qemu_load_f64(env, rs2, &b); res = a + b; qemu_store_f64(env, rd, res); break; }
+    case 0x62: { double a, b, res; qemu_load_f64(env, rs1, &a); qemu_load_f64(env, rs2, &b); res = a - b; qemu_store_f64(env, rd, res); break; }
+    case 0x63: { double a, b, res; qemu_load_f64(env, rs1, &a); qemu_load_f64(env, rs2, &b); res = a * b; qemu_store_f64(env, rd, res); break; }
+    case 0x64: { double a, b, res; qemu_load_f64(env, rs1, &a); qemu_load_f64(env, rs2, &b); res = a / b; qemu_store_f64(env, rd, res); break; }
+    case 0x65: { double a, res; qemu_load_f64(env, rs1, &a); res = sqrt(a); qemu_store_f64(env, rd, res); break; }
+    case 0x66: { double a, b; qemu_load_f64(env, rs1, &a); qemu_load_f64(env, rs2, &b); r[rd] = (a == b) ? 1 : 0; break; }
+    case 0x67: { double a, b; qemu_load_f64(env, rs1, &a); qemu_load_f64(env, rs2, &b); r[rd] = (a < b) ? 1 : 0; break; }
+    case 0x68: { double a, b; qemu_load_f64(env, rs1, &a); qemu_load_f64(env, rs2, &b); r[rd] = (a <= b) ? 1 : 0; break; }
+    case 0x69: { double a; qemu_load_f64(env, rs1, &a); r[rd] = (uint32_t)(int32_t)a; break; }
+    case 0x6A: { double a; qemu_load_f64(env, rs1, &a); r[rd] = (uint32_t)a; break; }
+    case 0x6B: qemu_store_f64(env, rd, (double)(int32_t)r[rs1]); break;
+    case 0x6C: qemu_store_f64(env, rd, (double)r[rs1]); break;
+    case 0x6D: { float a; memcpy(&a, &r[rs1], 4); qemu_store_f64(env, rd, (double)a); break; }
+    case 0x6E: { double a; qemu_load_f64(env, rs1, &a); float res = (float)a; memcpy(&r[rd], &res, 4); break; }
+    case 0x6F: r[rd] = r[rs1]; r[rd + 1] = r[rs1 + 1] ^ 0x80000000u; break;
+    case 0x70: r[rd] = r[rs1]; r[rd + 1] = r[rs1 + 1] & 0x7FFFFFFFu; break;
+
+    /* float <-> int64 */
+    case 0x71: { float a; memcpy(&a, &r[rs1], 4); int64_t v = (int64_t)a; r[rd] = (uint32_t)v; r[rd+1] = (uint32_t)((uint64_t)v >> 32); break; }
+    case 0x72: { float a; memcpy(&a, &r[rs1], 4); uint64_t v = (uint64_t)a; r[rd] = (uint32_t)v; r[rd+1] = (uint32_t)(v >> 32); break; }
+    case 0x73: { int64_t v = (int64_t)(((uint64_t)r[rs1+1] << 32) | r[rs1]); float res = (float)v; memcpy(&r[rd], &res, 4); break; }
+    case 0x74: { uint64_t v = ((uint64_t)r[rs1+1] << 32) | r[rs1]; float res = (float)v; memcpy(&r[rd], &res, 4); break; }
+    case 0x75: { double a; qemu_load_f64(env, rs1, &a); int64_t v = (int64_t)a; r[rd] = (uint32_t)v; r[rd+1] = (uint32_t)((uint64_t)v >> 32); break; }
+    case 0x76: { double a; qemu_load_f64(env, rs1, &a); uint64_t v = (uint64_t)a; r[rd] = (uint32_t)v; r[rd+1] = (uint32_t)(v >> 32); break; }
+    case 0x77: { int64_t v = (int64_t)(((uint64_t)r[rs1+1] << 32) | r[rs1]); qemu_store_f64(env, rd, (double)v); break; }
+    case 0x78: { uint64_t v = ((uint64_t)r[rs1+1] << 32) | r[rs1]; qemu_store_f64(env, rd, (double)v); break; }
+    }
+
+    r[0] = 0;  /* r0 stays zero */
+}

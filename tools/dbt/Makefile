@@ -9,7 +9,7 @@ CFLAGS += -I../emulator  # For s32x_loader.h
 # Disable some warnings that are noisy during development
 CFLAGS += -Wno-unused-parameter -Wno-unused-variable
 
-LDFLAGS =
+LDFLAGS = -lm
 
 # Source files
 SRCS = dbt.c emit_x64.c translate.c block_cache.c

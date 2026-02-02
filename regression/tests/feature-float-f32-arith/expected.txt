@@ -1,0 +1,10 @@
+add: 5
+sub: 1
+mul: 6
+div: 1
+neg add: -4
+neg mul: -15
+neg: -3
+abs: 7
+zero add: 3
+zero mul: 0

@@ -42,10 +42,15 @@ SLOW32RegisterInfo::getCallPreservedMask(const MachineFunction &MF,
 
 BitVector SLOW32RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
-  Reserved.set(SLOW32::R0);   // r0 is always zero
-  Reserved.set(SLOW32::R2);   // Reserved for long-branch materialisation
-  Reserved.set(SLOW32::R29);  // Stack pointer (sp)
-  Reserved.set(SLOW32::R30);  // Frame pointer (fp)
+  // markSuperRegs also reserves containing GPRPair super-registers.
+  // Without this, a reserved register that is part of a non-reserved pair
+  // would have its register unit not fully reserved, causing LiveIntervals
+  // to track its uses and require live-in annotations in every block.
+  markSuperRegs(Reserved, SLOW32::R0);   // r0 is always zero
+  markSuperRegs(Reserved, SLOW32::R2);   // Reserved for long-branch materialisation
+  markSuperRegs(Reserved, SLOW32::R29);  // Stack pointer (sp)
+  markSuperRegs(Reserved, SLOW32::R30);  // Frame pointer (fp)
+  assert(checkAllSuperRegsMarked(Reserved));
   return Reserved;
 }
 

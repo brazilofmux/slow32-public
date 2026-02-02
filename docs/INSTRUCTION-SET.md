@@ -139,6 +139,108 @@ Used for JAL. Immediates are encoded with a 21-bit signed offset (multiples of 2
 | DEBUG rs1     | 0x52 | R | Output char in rs1 | ✅ | |
 | HALT          | 0x7F | - | Stop execution | ✅ | |
 
+## Floating-Point Instructions (Soft-Float in GPRs)
+
+SLOW-32 uses a soft-float architecture where floating-point values live in general-purpose registers. There is no separate FP register file.
+
+- **f32** values occupy a single 32-bit register (IEEE 754 binary32 bit pattern).
+- **f64** values occupy a **register pair** `(rN, rN+1)` where `rN` holds the low 32 bits and `rN+1` holds the high 32 bits. For f64 instructions, the register number specified for rd/rs1/rs2 must be **even** (the odd partner is implicitly `reg+1`).
+- **NaN handling**: Comparisons with NaN operands return 0. Arithmetic with NaN propagates NaN per IEEE 754. No floating-point exception register.
+- **Rounding mode**: Always round-to-nearest-even (IEEE 754 default).
+
+### f32 Arithmetic
+
+| Instruction | Opcode | Format | Description | Status |
+|------------|--------|--------|-------------|--------|
+| FADD.S rd, rs1, rs2 | 0x53 | R | rd = rs1 + rs2 (IEEE 754 f32) | ✅ |
+| FSUB.S rd, rs1, rs2 | 0x54 | R | rd = rs1 - rs2 | ✅ |
+| FMUL.S rd, rs1, rs2 | 0x55 | R | rd = rs1 * rs2 | ✅ |
+| FDIV.S rd, rs1, rs2 | 0x56 | R | rd = rs1 / rs2 | ✅ |
+| FSQRT.S rd, rs1     | 0x57 | R | rd = sqrt(rs1) (rs2 ignored) | ✅ |
+
+### f32 Comparison
+
+| Instruction | Opcode | Format | Description | Status |
+|------------|--------|--------|-------------|--------|
+| FEQ.S rd, rs1, rs2 | 0x58 | R | rd = (rs1 == rs2) ? 1 : 0 | ✅ |
+| FLT.S rd, rs1, rs2 | 0x59 | R | rd = (rs1 < rs2) ? 1 : 0 | ✅ |
+| FLE.S rd, rs1, rs2 | 0x5A | R | rd = (rs1 <= rs2) ? 1 : 0 | ✅ |
+
+### f32 Conversion
+
+| Instruction | Opcode | Format | Description | Status |
+|------------|--------|--------|-------------|--------|
+| FCVT.W.S rd, rs1  | 0x5B | R | rd = (int32_t)rs1 | ✅ |
+| FCVT.WU.S rd, rs1 | 0x5C | R | rd = (uint32_t)rs1 | ✅ |
+| FCVT.S.W rd, rs1  | 0x5D | R | rd = (float)(int32_t)rs1 | ✅ |
+| FCVT.S.WU rd, rs1 | 0x5E | R | rd = (float)(uint32_t)rs1 | ✅ |
+
+### f32 Sign Manipulation
+
+| Instruction | Opcode | Format | Description | Status |
+|------------|--------|--------|-------------|--------|
+| FNEG.S rd, rs1 | 0x5F | R | rd = -rs1 (flip sign bit) | ✅ |
+| FABS.S rd, rs1 | 0x60 | R | rd = \|rs1\| (clear sign bit) | ✅ |
+
+### f64 Arithmetic (Register Pairs)
+
+f64 instructions use register pairs `(rN, rN+1)`. The specified register must be even.
+
+| Instruction | Opcode | Format | Description | Status |
+|------------|--------|--------|-------------|--------|
+| FADD.D rd, rs1, rs2 | 0x61 | R | rd:rd+1 = rs1:rs1+1 + rs2:rs2+1 | ✅ |
+| FSUB.D rd, rs1, rs2 | 0x62 | R | rd:rd+1 = rs1:rs1+1 - rs2:rs2+1 | ✅ |
+| FMUL.D rd, rs1, rs2 | 0x63 | R | rd:rd+1 = rs1:rs1+1 * rs2:rs2+1 | ✅ |
+| FDIV.D rd, rs1, rs2 | 0x64 | R | rd:rd+1 = rs1:rs1+1 / rs2:rs2+1 | ✅ |
+| FSQRT.D rd, rs1     | 0x65 | R | rd:rd+1 = sqrt(rs1:rs1+1) | ✅ |
+
+### f64 Comparison (Register Pairs)
+
+| Instruction | Opcode | Format | Description | Status |
+|------------|--------|--------|-------------|--------|
+| FEQ.D rd, rs1, rs2 | 0x66 | R | rd = (rs1:rs1+1 == rs2:rs2+1) ? 1 : 0 | ✅ |
+| FLT.D rd, rs1, rs2 | 0x67 | R | rd = (rs1:rs1+1 < rs2:rs2+1) ? 1 : 0 | ✅ |
+| FLE.D rd, rs1, rs2 | 0x68 | R | rd = (rs1:rs1+1 <= rs2:rs2+1) ? 1 : 0 | ✅ |
+
+### f64 Conversion
+
+| Instruction | Opcode | Format | Description | Status |
+|------------|--------|--------|-------------|--------|
+| FCVT.W.D rd, rs1   | 0x69 | R | rd = (int32_t)(double in rs1:rs1+1) | ✅ |
+| FCVT.WU.D rd, rs1  | 0x6A | R | rd = (uint32_t)(double in rs1:rs1+1) | ✅ |
+| FCVT.D.W rd, rs1   | 0x6B | R | rd:rd+1 = (double)(int32_t)rs1 | ✅ |
+| FCVT.D.WU rd, rs1  | 0x6C | R | rd:rd+1 = (double)(uint32_t)rs1 | ✅ |
+| FCVT.D.S rd, rs1   | 0x6D | R | rd:rd+1 = (double)(float in rs1) | ✅ |
+| FCVT.S.D rd, rs1   | 0x6E | R | rd = (float)(double in rs1:rs1+1) | ✅ |
+
+### f64 Sign Manipulation
+
+| Instruction | Opcode | Format | Description | Status |
+|------------|--------|--------|-------------|--------|
+| FNEG.D rd, rs1 | 0x6F | R | rd:rd+1 = -(rs1:rs1+1) | ✅ |
+| FABS.D rd, rs1 | 0x70 | R | rd:rd+1 = \|rs1:rs1+1\| | ✅ |
+
+### Float/Int64 Conversions
+
+| Instruction | Opcode | Format | Description | Status |
+|------------|--------|--------|-------------|--------|
+| FCVT.L.S rd, rs1   | 0x71 | R | rd:rd+1 = (int64_t)(float in rs1) | ✅ |
+| FCVT.LU.S rd, rs1  | 0x72 | R | rd:rd+1 = (uint64_t)(float in rs1) | ✅ |
+| FCVT.S.L rd, rs1   | 0x73 | R | rd = (float)(int64_t in rs1:rs1+1) | ✅ |
+| FCVT.S.LU rd, rs1  | 0x74 | R | rd = (float)(uint64_t in rs1:rs1+1) | ✅ |
+| FCVT.L.D rd, rs1   | 0x75 | R | rd:rd+1 = (int64_t)(double in rs1:rs1+1) | ✅ |
+| FCVT.LU.D rd, rs1  | 0x76 | R | rd:rd+1 = (uint64_t)(double in rs1:rs1+1) | ✅ |
+| FCVT.D.L rd, rs1   | 0x77 | R | rd:rd+1 = (double)(int64_t in rs1:rs1+1) | ✅ |
+| FCVT.D.LU rd, rs1  | 0x78 | R | rd:rd+1 = (double)(uint64_t in rs1:rs1+1) | ✅ |
+
+### Remaining Float Operations (Libcalls)
+
+The following operations are too complex for dedicated instructions and remain as library calls:
+
+- `fmodf` / `fmod` -- floating-point remainder
+- `__unordsf2` / `__unorddf2` -- NaN detection (or use `x != x`)
+- All transcendentals: `sin`, `cos`, `tan`, `exp`, `log`, `pow`, etc.
+
 ---
 
 ## Pseudo-Instructions

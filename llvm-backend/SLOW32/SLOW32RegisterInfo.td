@@ -8,6 +8,10 @@ class GPR<string n, bits<5> num, list<string> alt = []> : Register<n> {
   let HWEncoding{15-5} = 0;
 }
 
+// Sub-register indices for register pairs.
+def gsub_0 : SubRegIndex<32>;
+def gsub_1 : SubRegIndex<32, 32>;
+
 // Define all 32 registers (ABI aliases in AltNames)
 def R0  : GPR<"r0",  0, ["zero"]>;
 def R1  : GPR<"r1",  1, ["rv"]>;
@@ -43,8 +47,16 @@ def R30 : GPR<"fp", 30>;
 def R31 : GPR<"lr", 31>;
 
 // Define register class
-def GPR : RegisterClass<"SLOW32", [i32], 32, (add 
+def GPR : RegisterClass<"SLOW32", [i32, f32], 32, (add 
   R0, R1, R2, R3, R4, R5, R6, R7, R8, R9, R10,
   R11, R12, R13, R14, R15, R16, R17, R18, R19, R20, 
   R21, R22, R23, R24, R25, R26, R27, R28, R29, R30, R31)>;
 
+// Even/odd register pairs for 64-bit values (f64/i64).
+def Tuples2GPR : RegisterTuples<[gsub_0, gsub_1],
+                                [(add R0, R2, R4, R6, R8, R10, R12, R14,
+                                      R16, R18, R20, R22, R24, R26, R28, R30),
+                                 (add R1, R3, R5, R7, R9, R11, R13, R15,
+                                      R17, R19, R21, R23, R25, R27, R29, R31)]>;
+
+def GPRPair : RegisterClass<"SLOW32", [f64], 64, (add Tuples2GPR)>;

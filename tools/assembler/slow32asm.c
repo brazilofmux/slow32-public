@@ -379,9 +379,54 @@ static instruction_def_t instruction_table[] = {
     {"nop",   0x50, FMT_NONE},
     {"yield", 0x51, FMT_R},
     {"debug", 0x52, FMT_R},
+
+    // f32 (single-precision float) instructions
+    {"fadd.s",    0x53, FMT_R},
+    {"fsub.s",    0x54, FMT_R},
+    {"fmul.s",    0x55, FMT_R},
+    {"fdiv.s",    0x56, FMT_R},
+    {"fsqrt.s",   0x57, FMT_R},
+    {"feq.s",     0x58, FMT_R},
+    {"flt.s",     0x59, FMT_R},
+    {"fle.s",     0x5A, FMT_R},
+    {"fcvt.w.s",  0x5B, FMT_R},
+    {"fcvt.wu.s", 0x5C, FMT_R},
+    {"fcvt.s.w",  0x5D, FMT_R},
+    {"fcvt.s.wu", 0x5E, FMT_R},
+    {"fneg.s",    0x5F, FMT_R},
+    {"fabs.s",    0x60, FMT_R},
+
+    // f64 (double-precision float) instructions
+    {"fadd.d",    0x61, FMT_R},
+    {"fsub.d",    0x62, FMT_R},
+    {"fmul.d",    0x63, FMT_R},
+    {"fdiv.d",    0x64, FMT_R},
+    {"fsqrt.d",   0x65, FMT_R},
+    {"feq.d",     0x66, FMT_R},
+    {"flt.d",     0x67, FMT_R},
+    {"fle.d",     0x68, FMT_R},
+    {"fcvt.w.d",  0x69, FMT_R},
+    {"fcvt.wu.d", 0x6A, FMT_R},
+    {"fcvt.d.w",  0x6B, FMT_R},
+    {"fcvt.d.wu", 0x6C, FMT_R},
+    {"fcvt.d.s",  0x6D, FMT_R},
+    {"fcvt.s.d",  0x6E, FMT_R},
+    {"fneg.d",    0x6F, FMT_R},
+    {"fabs.d",    0x70, FMT_R},
+
+    // float <-> int64 conversions
+    {"fcvt.l.s",  0x71, FMT_R},
+    {"fcvt.lu.s", 0x72, FMT_R},
+    {"fcvt.s.l",  0x73, FMT_R},
+    {"fcvt.s.lu", 0x74, FMT_R},
+    {"fcvt.l.d",  0x75, FMT_R},
+    {"fcvt.lu.d", 0x76, FMT_R},
+    {"fcvt.d.l",  0x77, FMT_R},
+    {"fcvt.d.lu", 0x78, FMT_R},
+
     {"halt",  0x7F, FMT_NONE},
     {"assert_eq", 0x3F, FMT_R},  // Testing instruction
-    
+
     {NULL, 0, FMT_NONE}
 };
 

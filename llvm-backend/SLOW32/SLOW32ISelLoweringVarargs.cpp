@@ -42,14 +42,16 @@ SDValue SLOW32TargetLowering::LowerVAARG(SDValue Op,
   const DataLayout &DLay = DAG.getDataLayout();
   EVT PtrVT = getPointerTy(DLay);
 
-  // Bail out to the generic expander for types we do not explicitly support yet
-  // (e.g. floating-point). This keeps the compiler from asserting until
-  // SLOW32 grows the required ABI support.
+  // Bail out to the generic expander for types we do not explicitly support
+  // yet. This keeps the compiler from asserting until SLOW32 grows the
+  // required ABI support.
   bool IsPtr = (RetVT == PtrVT);
   bool IsI64 = (RetVT == MVT::i64);
   bool IsSmallInt = RetVT.isInteger() && RetVT.getSizeInBits() <= 32 && RetVT != MVT::i64;
+  bool IsF32 = (RetVT == MVT::f32);
+  bool IsF64 = (RetVT == MVT::f64);
 
-  if (!IsI64 && !IsPtr && !IsSmallInt) {
+  if (!IsI64 && !IsPtr && !IsSmallInt && !IsF32 && !IsF64) {
     SDValue Expanded = DAG.expandVAArg(Op.getNode());
     return DAG.getMergeValues({Expanded, Expanded.getValue(1)}, DL);
   }
@@ -62,12 +64,12 @@ SDValue SLOW32TargetLowering::LowerVAARG(SDValue Op,
 
   // 2) Compute the size to fetch from the slot according to default promotions
   unsigned FetchBytes = 4;         // default for all ≤32-bit integer/pointer types
-  if (IsI64)
+  if (IsI64 || IsF64)
     FetchBytes = 8;
 
   // 3) Perform the load(s)
   SDValue Val;
-  if (IsI64) {
+  if (IsI64 || IsF64) {
     // Load lo/hi 32-bit words and build i64
     SDValue Lo = DAG.getLoad(MVT::i32, DL, Chain, AP, MPIList, Align(4));
     Chain = Lo.getValue(1);
@@ -78,7 +80,8 @@ SDValue SLOW32TargetLowering::LowerVAARG(SDValue Op,
     Chain = Hi.getValue(1);
 
     // BUILD_PAIR {lo, hi} → i64 (legalizer will split if needed)
-    Val = DAG.getNode(ISD::BUILD_PAIR, DL, MVT::i64, Lo, Hi);
+    SDValue Pair = DAG.getNode(ISD::BUILD_PAIR, DL, MVT::i64, Lo, Hi);
+    Val = IsF64 ? DAG.getNode(ISD::BITCAST, DL, RetVT, Pair) : Pair;
   } else {
     // Always load the full 32-bit promoted slot
     SDValue W = DAG.getLoad(MVT::i32, DL, Chain, AP, MPIList, Align(4));
@@ -86,6 +89,8 @@ SDValue SLOW32TargetLowering::LowerVAARG(SDValue Op,
 
     if (RetVT == MVT::i32 || IsPtr)
       Val = W;
+    else if (IsF32)
+      Val = DAG.getNode(ISD::BITCAST, DL, RetVT, W);
     else if (RetVT.getSizeInBits() < 32)
       Val = DAG.getNode(ISD::TRUNCATE, DL, RetVT, W);
   }
@@ -98,4 +103,3 @@ SDValue SLOW32TargetLowering::LowerVAARG(SDValue Op,
   // 5) Return (value, chain)
   return DAG.getMergeValues({Val, Chain}, DL);
 }
-

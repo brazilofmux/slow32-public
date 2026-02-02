@@ -114,6 +114,51 @@ enum {
     OP_NOP    = 0x50,
     OP_YIELD  = 0x51,
     OP_DEBUG  = 0x52,
+
+    // f32 instructions
+    OP_FADD_S    = 0x53,
+    OP_FSUB_S    = 0x54,
+    OP_FMUL_S    = 0x55,
+    OP_FDIV_S    = 0x56,
+    OP_FSQRT_S   = 0x57,
+    OP_FEQ_S     = 0x58,
+    OP_FLT_S     = 0x59,
+    OP_FLE_S     = 0x5A,
+    OP_FCVT_W_S  = 0x5B,
+    OP_FCVT_WU_S = 0x5C,
+    OP_FCVT_S_W  = 0x5D,
+    OP_FCVT_S_WU = 0x5E,
+    OP_FNEG_S    = 0x5F,
+    OP_FABS_S    = 0x60,
+
+    // f64 instructions
+    OP_FADD_D    = 0x61,
+    OP_FSUB_D    = 0x62,
+    OP_FMUL_D    = 0x63,
+    OP_FDIV_D    = 0x64,
+    OP_FSQRT_D   = 0x65,
+    OP_FEQ_D     = 0x66,
+    OP_FLT_D     = 0x67,
+    OP_FLE_D     = 0x68,
+    OP_FCVT_W_D  = 0x69,
+    OP_FCVT_WU_D = 0x6A,
+    OP_FCVT_D_W  = 0x6B,
+    OP_FCVT_D_WU = 0x6C,
+    OP_FCVT_D_S  = 0x6D,
+    OP_FCVT_S_D  = 0x6E,
+    OP_FNEG_D    = 0x6F,
+    OP_FABS_D    = 0x70,
+
+    // float <-> int64 conversions
+    OP_FCVT_L_S  = 0x71,
+    OP_FCVT_LU_S = 0x72,
+    OP_FCVT_S_L  = 0x73,
+    OP_FCVT_S_LU = 0x74,
+    OP_FCVT_L_D  = 0x75,
+    OP_FCVT_LU_D = 0x76,
+    OP_FCVT_D_L  = 0x77,
+    OP_FCVT_D_LU = 0x78,
+
     OP_HALT   = 0x7F,
 };
 
@@ -796,6 +841,20 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
         break;
     case OP_DEBUG:
         gen_helper_slow32_debug(tcg_env, load_gpr(rs1));
+        break;
+
+    /* Floating-point instructions -- dispatch to single helper */
+    case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
+    case OP_FSQRT_S: case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
+    case OP_FCVT_W_S: case OP_FCVT_WU_S: case OP_FCVT_S_W: case OP_FCVT_S_WU:
+    case OP_FNEG_S: case OP_FABS_S:
+    case OP_FADD_D: case OP_FSUB_D: case OP_FMUL_D: case OP_FDIV_D:
+    case OP_FSQRT_D: case OP_FEQ_D: case OP_FLT_D: case OP_FLE_D:
+    case OP_FCVT_W_D: case OP_FCVT_WU_D: case OP_FCVT_D_W: case OP_FCVT_D_WU:
+    case OP_FCVT_D_S: case OP_FCVT_S_D: case OP_FNEG_D: case OP_FABS_D:
+    case OP_FCVT_L_S: case OP_FCVT_LU_S: case OP_FCVT_S_L: case OP_FCVT_S_LU:
+    case OP_FCVT_L_D: case OP_FCVT_LU_D: case OP_FCVT_D_L: case OP_FCVT_D_LU:
+        gen_helper_slow32_fp_op(tcg_env, tcg_constant_i32(raw));
         break;
 
     default:

@@ -6,6 +6,7 @@
 #include <time.h>
 #include <inttypes.h>
 #include <sys/mman.h>
+#include <math.h>
 #include "slow32.h"
 #include "s32x_loader.h"
 #include "memory_manager.h"
@@ -74,6 +75,7 @@ static instruction_t decode_instruction(uint32_t raw) {
     switch (inst.opcode) {
         case OP_ADD ... OP_SNE:
         case OP_SGT ... OP_SGEU:
+        case OP_FADD_S ... OP_FCVT_D_LU:
             inst.format = FMT_R;
             inst.rd = (raw >> 7) & 0x1F;
             inst.rs1 = (raw >> 15) & 0x1F;
@@ -657,6 +659,278 @@ void cpu_step(cpu_state_t *cpu) {
             }
             break;
             
+        // ============================================================
+        // f32 (single-precision float) instructions
+        // ============================================================
+        case OP_FADD_S: {
+            float a, b, r;
+            memcpy(&a, &cpu->regs[inst.rs1], 4);
+            memcpy(&b, &cpu->regs[inst.rs2], 4);
+            r = a + b;
+            memcpy(&cpu->regs[inst.rd], &r, 4);
+            break;
+        }
+        case OP_FSUB_S: {
+            float a, b, r;
+            memcpy(&a, &cpu->regs[inst.rs1], 4);
+            memcpy(&b, &cpu->regs[inst.rs2], 4);
+            r = a - b;
+            memcpy(&cpu->regs[inst.rd], &r, 4);
+            break;
+        }
+        case OP_FMUL_S: {
+            float a, b, r;
+            memcpy(&a, &cpu->regs[inst.rs1], 4);
+            memcpy(&b, &cpu->regs[inst.rs2], 4);
+            r = a * b;
+            memcpy(&cpu->regs[inst.rd], &r, 4);
+            break;
+        }
+        case OP_FDIV_S: {
+            float a, b, r;
+            memcpy(&a, &cpu->regs[inst.rs1], 4);
+            memcpy(&b, &cpu->regs[inst.rs2], 4);
+            r = a / b;
+            memcpy(&cpu->regs[inst.rd], &r, 4);
+            break;
+        }
+        case OP_FSQRT_S: {
+            float a, r;
+            memcpy(&a, &cpu->regs[inst.rs1], 4);
+            r = sqrtf(a);
+            memcpy(&cpu->regs[inst.rd], &r, 4);
+            break;
+        }
+        case OP_FEQ_S: {
+            float a, b;
+            memcpy(&a, &cpu->regs[inst.rs1], 4);
+            memcpy(&b, &cpu->regs[inst.rs2], 4);
+            cpu->regs[inst.rd] = (a == b) ? 1 : 0;
+            break;
+        }
+        case OP_FLT_S: {
+            float a, b;
+            memcpy(&a, &cpu->regs[inst.rs1], 4);
+            memcpy(&b, &cpu->regs[inst.rs2], 4);
+            cpu->regs[inst.rd] = (a < b) ? 1 : 0;
+            break;
+        }
+        case OP_FLE_S: {
+            float a, b;
+            memcpy(&a, &cpu->regs[inst.rs1], 4);
+            memcpy(&b, &cpu->regs[inst.rs2], 4);
+            cpu->regs[inst.rd] = (a <= b) ? 1 : 0;
+            break;
+        }
+        case OP_FCVT_W_S: {
+            float a;
+            memcpy(&a, &cpu->regs[inst.rs1], 4);
+            cpu->regs[inst.rd] = (uint32_t)(int32_t)a;
+            break;
+        }
+        case OP_FCVT_WU_S: {
+            float a;
+            memcpy(&a, &cpu->regs[inst.rs1], 4);
+            cpu->regs[inst.rd] = (uint32_t)a;
+            break;
+        }
+        case OP_FCVT_S_W: {
+            float r = (float)(int32_t)cpu->regs[inst.rs1];
+            memcpy(&cpu->regs[inst.rd], &r, 4);
+            break;
+        }
+        case OP_FCVT_S_WU: {
+            float r = (float)cpu->regs[inst.rs1];
+            memcpy(&cpu->regs[inst.rd], &r, 4);
+            break;
+        }
+        case OP_FNEG_S: {
+            cpu->regs[inst.rd] = cpu->regs[inst.rs1] ^ 0x80000000u;
+            break;
+        }
+        case OP_FABS_S: {
+            cpu->regs[inst.rd] = cpu->regs[inst.rs1] & 0x7FFFFFFFu;
+            break;
+        }
+
+        // ============================================================
+        // f64 (double-precision float) instructions -- register pairs
+        // ============================================================
+        #define LOAD_F64(reg, var) do { \
+            uint32_t lo_ = cpu->regs[(reg)]; \
+            uint32_t hi_ = cpu->regs[(reg) + 1]; \
+            uint64_t bits_ = ((uint64_t)hi_ << 32) | lo_; \
+            memcpy(&(var), &bits_, 8); \
+        } while(0)
+
+        #define STORE_F64(reg, var) do { \
+            uint64_t bits_; \
+            memcpy(&bits_, &(var), 8); \
+            cpu->regs[(reg)] = (uint32_t)bits_; \
+            cpu->regs[(reg) + 1] = (uint32_t)(bits_ >> 32); \
+        } while(0)
+
+        case OP_FADD_D: {
+            double a, b, r;
+            LOAD_F64(inst.rs1, a); LOAD_F64(inst.rs2, b);
+            r = a + b;
+            STORE_F64(inst.rd, r);
+            break;
+        }
+        case OP_FSUB_D: {
+            double a, b, r;
+            LOAD_F64(inst.rs1, a); LOAD_F64(inst.rs2, b);
+            r = a - b;
+            STORE_F64(inst.rd, r);
+            break;
+        }
+        case OP_FMUL_D: {
+            double a, b, r;
+            LOAD_F64(inst.rs1, a); LOAD_F64(inst.rs2, b);
+            r = a * b;
+            STORE_F64(inst.rd, r);
+            break;
+        }
+        case OP_FDIV_D: {
+            double a, b, r;
+            LOAD_F64(inst.rs1, a); LOAD_F64(inst.rs2, b);
+            r = a / b;
+            STORE_F64(inst.rd, r);
+            break;
+        }
+        case OP_FSQRT_D: {
+            double a, r;
+            LOAD_F64(inst.rs1, a);
+            r = sqrt(a);
+            STORE_F64(inst.rd, r);
+            break;
+        }
+        case OP_FEQ_D: {
+            double a, b;
+            LOAD_F64(inst.rs1, a); LOAD_F64(inst.rs2, b);
+            cpu->regs[inst.rd] = (a == b) ? 1 : 0;
+            break;
+        }
+        case OP_FLT_D: {
+            double a, b;
+            LOAD_F64(inst.rs1, a); LOAD_F64(inst.rs2, b);
+            cpu->regs[inst.rd] = (a < b) ? 1 : 0;
+            break;
+        }
+        case OP_FLE_D: {
+            double a, b;
+            LOAD_F64(inst.rs1, a); LOAD_F64(inst.rs2, b);
+            cpu->regs[inst.rd] = (a <= b) ? 1 : 0;
+            break;
+        }
+        case OP_FCVT_W_D: {
+            double a;
+            LOAD_F64(inst.rs1, a);
+            cpu->regs[inst.rd] = (uint32_t)(int32_t)a;
+            break;
+        }
+        case OP_FCVT_WU_D: {
+            double a;
+            LOAD_F64(inst.rs1, a);
+            cpu->regs[inst.rd] = (uint32_t)a;
+            break;
+        }
+        case OP_FCVT_D_W: {
+            double r = (double)(int32_t)cpu->regs[inst.rs1];
+            STORE_F64(inst.rd, r);
+            break;
+        }
+        case OP_FCVT_D_WU: {
+            double r = (double)cpu->regs[inst.rs1];
+            STORE_F64(inst.rd, r);
+            break;
+        }
+        case OP_FCVT_D_S: {
+            float a;
+            memcpy(&a, &cpu->regs[inst.rs1], 4);
+            double r = (double)a;
+            STORE_F64(inst.rd, r);
+            break;
+        }
+        case OP_FCVT_S_D: {
+            double a;
+            LOAD_F64(inst.rs1, a);
+            float r = (float)a;
+            memcpy(&cpu->regs[inst.rd], &r, 4);
+            break;
+        }
+        case OP_FNEG_D: {
+            cpu->regs[inst.rd] = cpu->regs[inst.rs1];
+            cpu->regs[inst.rd + 1] = cpu->regs[inst.rs1 + 1] ^ 0x80000000u;
+            break;
+        }
+        case OP_FABS_D: {
+            cpu->regs[inst.rd] = cpu->regs[inst.rs1];
+            cpu->regs[inst.rd + 1] = cpu->regs[inst.rs1 + 1] & 0x7FFFFFFFu;
+            break;
+        }
+
+        // float <-> int64 conversions
+        case OP_FCVT_L_S: {
+            float a;
+            memcpy(&a, &cpu->regs[inst.rs1], 4);
+            int64_t r = (int64_t)a;
+            cpu->regs[inst.rd] = (uint32_t)r;
+            cpu->regs[inst.rd + 1] = (uint32_t)((uint64_t)r >> 32);
+            break;
+        }
+        case OP_FCVT_LU_S: {
+            float a;
+            memcpy(&a, &cpu->regs[inst.rs1], 4);
+            uint64_t r = (uint64_t)a;
+            cpu->regs[inst.rd] = (uint32_t)r;
+            cpu->regs[inst.rd + 1] = (uint32_t)(r >> 32);
+            break;
+        }
+        case OP_FCVT_S_L: {
+            int64_t val = (int64_t)(((uint64_t)cpu->regs[inst.rs1 + 1] << 32) | cpu->regs[inst.rs1]);
+            float r = (float)val;
+            memcpy(&cpu->regs[inst.rd], &r, 4);
+            break;
+        }
+        case OP_FCVT_S_LU: {
+            uint64_t val = ((uint64_t)cpu->regs[inst.rs1 + 1] << 32) | cpu->regs[inst.rs1];
+            float r = (float)val;
+            memcpy(&cpu->regs[inst.rd], &r, 4);
+            break;
+        }
+        case OP_FCVT_L_D: {
+            double a;
+            LOAD_F64(inst.rs1, a);
+            int64_t r = (int64_t)a;
+            cpu->regs[inst.rd] = (uint32_t)r;
+            cpu->regs[inst.rd + 1] = (uint32_t)((uint64_t)r >> 32);
+            break;
+        }
+        case OP_FCVT_LU_D: {
+            double a;
+            LOAD_F64(inst.rs1, a);
+            uint64_t r = (uint64_t)a;
+            cpu->regs[inst.rd] = (uint32_t)r;
+            cpu->regs[inst.rd + 1] = (uint32_t)(r >> 32);
+            break;
+        }
+        case OP_FCVT_D_L: {
+            int64_t val = (int64_t)(((uint64_t)cpu->regs[inst.rs1 + 1] << 32) | cpu->regs[inst.rs1]);
+            double r = (double)val;
+            STORE_F64(inst.rd, r);
+            break;
+        }
+        case OP_FCVT_D_LU: {
+            uint64_t val = ((uint64_t)cpu->regs[inst.rs1 + 1] << 32) | cpu->regs[inst.rs1];
+            double r = (double)val;
+            STORE_F64(inst.rd, r);
+            break;
+        }
+
+        #undef LOAD_F64
+        #undef STORE_F64
+
         default:
             fprintf(stderr, "Unknown opcode: 0x%02X at PC=0x%08X\n", inst.opcode, cpu->pc);
             cpu->halted = true;

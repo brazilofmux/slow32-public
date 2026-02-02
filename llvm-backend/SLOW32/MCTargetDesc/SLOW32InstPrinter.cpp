@@ -8,6 +8,7 @@
 
 #include "SLOW32InstPrinter.h"
 #include "MCTargetDesc/SLOW32MCExpr.h"
+#include "SLOW32.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCExpr.h"
@@ -67,6 +68,23 @@ void SLOW32InstPrinter::printOperand(const MCInst *MI, unsigned OpNum,
   } else {
     llvm_unreachable("Unknown operand type");
   }
+}
+
+void SLOW32InstPrinter::printGPRPairOperand(const MCInst *MI, unsigned OpNum,
+                                            const MCSubtargetInfo &STI,
+                                            raw_ostream &O) {
+  const MCOperand &Op = MI->getOperand(OpNum);
+  if (!Op.isReg()) {
+    printOperand(MI, OpNum, STI, O);
+    return;
+  }
+
+  MCRegister Reg = Op.getReg();
+  MCRegister Lo = MRI.getSubReg(Reg, gsub_0);
+  if (Lo)
+    printRegName(O, Lo);
+  else
+    printRegName(O, Reg);
 }
 
 void SLOW32InstPrinter::printBranchTarget(const MCInst *MI, unsigned OpNum,

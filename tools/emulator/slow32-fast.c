@@ -9,6 +9,7 @@
 #include <time.h>
 #include <inttypes.h>
 #include <sys/mman.h>
+#include <math.h>
 #include "slow32.h"
 #include "s32x_loader.h"
 #include "memory_manager.h"
@@ -702,6 +703,240 @@ static void op_nop(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_p
     // Do nothing
 }
 
+// ============================================================
+// f32 (single-precision float) handlers
+// ============================================================
+
+#define F32_ARITH_OP(name, op) \
+static void op_##name(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) { \
+    UNUSED(next_pc); \
+    float a, b, r; \
+    memcpy(&a, &cpu->regs[inst->rs1], 4); \
+    memcpy(&b, &cpu->regs[inst->rs2], 4); \
+    r = a op b; \
+    memcpy(&cpu->regs[inst->rd], &r, 4); \
+}
+
+F32_ARITH_OP(fadd_s, +)
+F32_ARITH_OP(fsub_s, -)
+F32_ARITH_OP(fmul_s, *)
+F32_ARITH_OP(fdiv_s, /)
+#undef F32_ARITH_OP
+
+static void op_fsqrt_s(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    float a, r;
+    memcpy(&a, &cpu->regs[inst->rs1], 4);
+    r = sqrtf(a);
+    memcpy(&cpu->regs[inst->rd], &r, 4);
+}
+
+#define F32_CMP_OP(name, op) \
+static void op_##name(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) { \
+    UNUSED(next_pc); \
+    float a, b; \
+    memcpy(&a, &cpu->regs[inst->rs1], 4); \
+    memcpy(&b, &cpu->regs[inst->rs2], 4); \
+    cpu->regs[inst->rd] = (a op b) ? 1 : 0; \
+}
+
+F32_CMP_OP(feq_s, ==)
+F32_CMP_OP(flt_s, <)
+F32_CMP_OP(fle_s, <=)
+#undef F32_CMP_OP
+
+static void op_fcvt_w_s(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    float a; memcpy(&a, &cpu->regs[inst->rs1], 4);
+    cpu->regs[inst->rd] = (uint32_t)(int32_t)a;
+}
+
+static void op_fcvt_wu_s(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    float a; memcpy(&a, &cpu->regs[inst->rs1], 4);
+    cpu->regs[inst->rd] = (uint32_t)a;
+}
+
+static void op_fcvt_s_w(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    float r = (float)(int32_t)cpu->regs[inst->rs1];
+    memcpy(&cpu->regs[inst->rd], &r, 4);
+}
+
+static void op_fcvt_s_wu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    float r = (float)cpu->regs[inst->rs1];
+    memcpy(&cpu->regs[inst->rd], &r, 4);
+}
+
+static void op_fneg_s(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    cpu->regs[inst->rd] = cpu->regs[inst->rs1] ^ 0x80000000u;
+}
+
+static void op_fabs_s(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    cpu->regs[inst->rd] = cpu->regs[inst->rs1] & 0x7FFFFFFFu;
+}
+
+// ============================================================
+// f64 (double-precision float) handlers -- register pairs
+// ============================================================
+
+static inline void load_f64(fast_cpu_state_t *cpu, uint8_t reg, double *out) {
+    uint64_t bits = ((uint64_t)cpu->regs[reg + 1] << 32) | cpu->regs[reg];
+    memcpy(out, &bits, 8);
+}
+
+static inline void store_f64(fast_cpu_state_t *cpu, uint8_t reg, double val) {
+    uint64_t bits;
+    memcpy(&bits, &val, 8);
+    cpu->regs[reg] = (uint32_t)bits;
+    cpu->regs[reg + 1] = (uint32_t)(bits >> 32);
+}
+
+#define F64_ARITH_OP(name, op) \
+static void op_##name(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) { \
+    UNUSED(next_pc); \
+    double a, b, r; \
+    load_f64(cpu, inst->rs1, &a); load_f64(cpu, inst->rs2, &b); \
+    r = a op b; \
+    store_f64(cpu, inst->rd, r); \
+}
+
+F64_ARITH_OP(fadd_d, +)
+F64_ARITH_OP(fsub_d, -)
+F64_ARITH_OP(fmul_d, *)
+F64_ARITH_OP(fdiv_d, /)
+#undef F64_ARITH_OP
+
+static void op_fsqrt_d(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    double a, r;
+    load_f64(cpu, inst->rs1, &a);
+    r = sqrt(a);
+    store_f64(cpu, inst->rd, r);
+}
+
+#define F64_CMP_OP(name, op) \
+static void op_##name(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) { \
+    UNUSED(next_pc); \
+    double a, b; \
+    load_f64(cpu, inst->rs1, &a); load_f64(cpu, inst->rs2, &b); \
+    cpu->regs[inst->rd] = (a op b) ? 1 : 0; \
+}
+
+F64_CMP_OP(feq_d, ==)
+F64_CMP_OP(flt_d, <)
+F64_CMP_OP(fle_d, <=)
+#undef F64_CMP_OP
+
+static void op_fcvt_w_d(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    double a; load_f64(cpu, inst->rs1, &a);
+    cpu->regs[inst->rd] = (uint32_t)(int32_t)a;
+}
+
+static void op_fcvt_wu_d(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    double a; load_f64(cpu, inst->rs1, &a);
+    cpu->regs[inst->rd] = (uint32_t)a;
+}
+
+static void op_fcvt_d_w(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    store_f64(cpu, inst->rd, (double)(int32_t)cpu->regs[inst->rs1]);
+}
+
+static void op_fcvt_d_wu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    store_f64(cpu, inst->rd, (double)cpu->regs[inst->rs1]);
+}
+
+static void op_fcvt_d_s(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    float a; memcpy(&a, &cpu->regs[inst->rs1], 4);
+    store_f64(cpu, inst->rd, (double)a);
+}
+
+static void op_fcvt_s_d(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    double a; load_f64(cpu, inst->rs1, &a);
+    float r = (float)a;
+    memcpy(&cpu->regs[inst->rd], &r, 4);
+}
+
+static void op_fneg_d(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    cpu->regs[inst->rd] = cpu->regs[inst->rs1];
+    cpu->regs[inst->rd + 1] = cpu->regs[inst->rs1 + 1] ^ 0x80000000u;
+}
+
+static void op_fabs_d(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    cpu->regs[inst->rd] = cpu->regs[inst->rs1];
+    cpu->regs[inst->rd + 1] = cpu->regs[inst->rs1 + 1] & 0x7FFFFFFFu;
+}
+
+// float <-> int64 conversion handlers
+static void op_fcvt_l_s(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    float a; memcpy(&a, &cpu->regs[inst->rs1], 4);
+    int64_t r = (int64_t)a;
+    cpu->regs[inst->rd] = (uint32_t)r;
+    cpu->regs[inst->rd + 1] = (uint32_t)((uint64_t)r >> 32);
+}
+
+static void op_fcvt_lu_s(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    float a; memcpy(&a, &cpu->regs[inst->rs1], 4);
+    uint64_t r = (uint64_t)a;
+    cpu->regs[inst->rd] = (uint32_t)r;
+    cpu->regs[inst->rd + 1] = (uint32_t)(r >> 32);
+}
+
+static void op_fcvt_s_l(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    int64_t val = (int64_t)(((uint64_t)cpu->regs[inst->rs1 + 1] << 32) | cpu->regs[inst->rs1]);
+    float r = (float)val;
+    memcpy(&cpu->regs[inst->rd], &r, 4);
+}
+
+static void op_fcvt_s_lu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    uint64_t val = ((uint64_t)cpu->regs[inst->rs1 + 1] << 32) | cpu->regs[inst->rs1];
+    float r = (float)val;
+    memcpy(&cpu->regs[inst->rd], &r, 4);
+}
+
+static void op_fcvt_l_d(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    double a; load_f64(cpu, inst->rs1, &a);
+    int64_t r = (int64_t)a;
+    cpu->regs[inst->rd] = (uint32_t)r;
+    cpu->regs[inst->rd + 1] = (uint32_t)((uint64_t)r >> 32);
+}
+
+static void op_fcvt_lu_d(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    double a; load_f64(cpu, inst->rs1, &a);
+    uint64_t r = (uint64_t)a;
+    cpu->regs[inst->rd] = (uint32_t)r;
+    cpu->regs[inst->rd + 1] = (uint32_t)(r >> 32);
+}
+
+static void op_fcvt_d_l(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    int64_t val = (int64_t)(((uint64_t)cpu->regs[inst->rs1 + 1] << 32) | cpu->regs[inst->rs1]);
+    store_f64(cpu, inst->rd, (double)val);
+}
+
+static void op_fcvt_d_lu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    uint64_t val = ((uint64_t)cpu->regs[inst->rs1 + 1] << 32) | cpu->regs[inst->rs1];
+    store_f64(cpu, inst->rd, (double)val);
+}
+
 static void op_invalid(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     UNUSED(next_pc);
     UNUSED(inst);
@@ -765,6 +1000,47 @@ static handler_fn get_handler(uint8_t opcode) {
         case OP_DEBUG: return op_debug;
         case OP_ASSERT_EQ: return op_assert_eq;
         case OP_HALT: return op_halt;
+        // f32 instructions
+        case OP_FADD_S: return op_fadd_s;
+        case OP_FSUB_S: return op_fsub_s;
+        case OP_FMUL_S: return op_fmul_s;
+        case OP_FDIV_S: return op_fdiv_s;
+        case OP_FSQRT_S: return op_fsqrt_s;
+        case OP_FEQ_S: return op_feq_s;
+        case OP_FLT_S: return op_flt_s;
+        case OP_FLE_S: return op_fle_s;
+        case OP_FCVT_W_S: return op_fcvt_w_s;
+        case OP_FCVT_WU_S: return op_fcvt_wu_s;
+        case OP_FCVT_S_W: return op_fcvt_s_w;
+        case OP_FCVT_S_WU: return op_fcvt_s_wu;
+        case OP_FNEG_S: return op_fneg_s;
+        case OP_FABS_S: return op_fabs_s;
+        // f64 instructions
+        case OP_FADD_D: return op_fadd_d;
+        case OP_FSUB_D: return op_fsub_d;
+        case OP_FMUL_D: return op_fmul_d;
+        case OP_FDIV_D: return op_fdiv_d;
+        case OP_FSQRT_D: return op_fsqrt_d;
+        case OP_FEQ_D: return op_feq_d;
+        case OP_FLT_D: return op_flt_d;
+        case OP_FLE_D: return op_fle_d;
+        case OP_FCVT_W_D: return op_fcvt_w_d;
+        case OP_FCVT_WU_D: return op_fcvt_wu_d;
+        case OP_FCVT_D_W: return op_fcvt_d_w;
+        case OP_FCVT_D_WU: return op_fcvt_d_wu;
+        case OP_FCVT_D_S: return op_fcvt_d_s;
+        case OP_FCVT_S_D: return op_fcvt_s_d;
+        case OP_FNEG_D: return op_fneg_d;
+        case OP_FABS_D: return op_fabs_d;
+        // float <-> int64 conversions
+        case OP_FCVT_L_S: return op_fcvt_l_s;
+        case OP_FCVT_LU_S: return op_fcvt_lu_s;
+        case OP_FCVT_S_L: return op_fcvt_s_l;
+        case OP_FCVT_S_LU: return op_fcvt_s_lu;
+        case OP_FCVT_L_D: return op_fcvt_l_d;
+        case OP_FCVT_LU_D: return op_fcvt_lu_d;
+        case OP_FCVT_D_L: return op_fcvt_d_l;
+        case OP_FCVT_D_LU: return op_fcvt_d_lu;
         default: return op_invalid;
     }
 }
@@ -792,6 +1068,7 @@ static void predecode_program(fast_cpu_state_t *cpu, uint32_t code_size) {
         switch (opcode) {
             case OP_ADD ... OP_SNE:
             case OP_SGT ... OP_SGEU:
+            case OP_FADD_S ... OP_FCVT_D_LU:
                 // R-format
                 di->rd = (raw >> 7) & 0x1F;
                 di->rs1 = (raw >> 15) & 0x1F;
@@ -1022,7 +1299,7 @@ int main(int argc, char **argv) {
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
     
-    uint64_t max_instructions = 1000000000;  // 1B instruction limit for debugging
+    uint64_t max_instructions = 10000000000;  // 10B instruction limit for debugging
     while (!cpu.halted && cpu.inst_count < max_instructions) {
         cpu_step_fast(&cpu);
     }

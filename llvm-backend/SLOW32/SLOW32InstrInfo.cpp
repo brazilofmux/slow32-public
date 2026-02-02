@@ -152,7 +152,23 @@ void SLOW32InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                    Register SrcReg, bool KillSrc,
                                    bool RenamableDest,
                                    bool RenamableSrc) const {
-  // Use ADD rd, rs, r0 to copy registers
+  const SLOW32RegisterInfo &RI = *STI.getRegisterInfo();
+  if (SLOW32::GPRPairRegClass.contains(DestReg, SrcReg)) {
+    Register SrcLo = RI.getSubReg(SrcReg, gsub_0);
+    Register SrcHi = RI.getSubReg(SrcReg, gsub_1);
+    Register DstLo = RI.getSubReg(DestReg, gsub_0);
+    Register DstHi = RI.getSubReg(DestReg, gsub_1);
+
+    BuildMI(MBB, I, DL, get(SLOW32::ADD), DstLo)
+        .addReg(SrcLo, getKillRegState(KillSrc))
+        .addReg(SLOW32::R0);
+    BuildMI(MBB, I, DL, get(SLOW32::ADD), DstHi)
+        .addReg(SrcHi, getKillRegState(KillSrc))
+        .addReg(SLOW32::R0);
+    return;
+  }
+
+  // Use ADD rd, rs, r0 to copy registers.
   BuildMI(MBB, I, DL, get(SLOW32::ADD), DestReg)
       .addReg(SrcReg, getKillRegState(KillSrc))
       .addReg(SLOW32::R0);
@@ -168,7 +184,24 @@ void SLOW32InstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
   DebugLoc DL;
   if (I != MBB.end()) DL = I->getDebugLoc();
   
-  // Store word to stack slot
+  if (RC->hasSubClassEq(&SLOW32::GPRPairRegClass)) {
+    const SLOW32RegisterInfo &RI = *STI.getRegisterInfo();
+    Register SrcLo = RI.getSubReg(SrcReg, gsub_0);
+    Register SrcHi = RI.getSubReg(SrcReg, gsub_1);
+    BuildMI(MBB, I, DL, get(SLOW32::STW))
+        .addReg(SLOW32::R30)
+        .addReg(SrcLo, getKillRegState(isKill))
+        .addFrameIndex(FrameIndex)
+        .addImm(0);
+    BuildMI(MBB, I, DL, get(SLOW32::STW))
+        .addReg(SLOW32::R30)
+        .addReg(SrcHi, getKillRegState(isKill))
+        .addFrameIndex(FrameIndex)
+        .addImm(4);
+    return;
+  }
+
+  // Store word to stack slot.
   BuildMI(MBB, I, DL, get(SLOW32::STW))
       .addReg(SLOW32::R30)  // Frame pointer
       .addReg(SrcReg, getKillRegState(isKill))
@@ -184,10 +217,25 @@ void SLOW32InstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
   DebugLoc DL;
   if (I != MBB.end()) DL = I->getDebugLoc();
 
+  if (RC->hasSubClassEq(&SLOW32::GPRPairRegClass)) {
+    const SLOW32RegisterInfo &RI = *STI.getRegisterInfo();
+    Register DstLo = RI.getSubReg(DestReg, gsub_0);
+    Register DstHi = RI.getSubReg(DestReg, gsub_1);
+    BuildMI(MBB, I, DL, get(SLOW32::LDW), DstLo)
+        .addReg(SLOW32::R30)
+        .addFrameIndex(FrameIndex)
+        .addImm(0);
+    BuildMI(MBB, I, DL, get(SLOW32::LDW), DstHi)
+        .addReg(SLOW32::R30)
+        .addFrameIndex(FrameIndex)
+        .addImm(4);
+    return;
+  }
+
   if (SubReg != 0)
     report_fatal_error("SLOW32 does not support sub-register stack reloads");
-  
-  // Load word from stack slot
+
+  // Load word from stack slot.
   BuildMI(MBB, I, DL, get(SLOW32::LDW), DestReg)
       .addReg(SLOW32::R30)  // Frame pointer
       .addFrameIndex(FrameIndex);

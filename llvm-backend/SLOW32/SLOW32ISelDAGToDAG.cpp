@@ -380,13 +380,68 @@ public:
       ReplaceNode(N, Result);
       return;
     }
+    case ISD::BITCAST: {
+      // f32↔i32 share GPR, f64↔i64 share GPRPair — bitcast is a no-op copy.
+      SDValue Src = N->getOperand(0);
+      ReplaceUses(SDValue(N, 0), Src);
+      CurDAG->RemoveDeadNode(N);
+      return;
+    }
+    case SLOW32ISD::BuildPairF64: {
+      SDLoc DL(N);
+      SDValue Lo = N->getOperand(0);
+      SDValue Hi = N->getOperand(1);
+      SDNode *Result = CurDAG->getMachineNode(SLOW32::BuildPairF64Pseudo, DL,
+                                              MVT::f64, Lo, Hi);
+      ReplaceNode(N, Result);
+      return;
+    }
+    case SLOW32ISD::SplitF64: {
+      SDLoc DL(N);
+      SDValue Src = N->getOperand(0);
+      SDNode *Result = CurDAG->getMachineNode(SLOW32::SplitF64Pseudo, DL,
+                                              MVT::i32, MVT::i32, Src);
+      ReplaceNode(N, Result);
+      return;
+    }
+    case SLOW32ISD::FCVT_L:
+    case SLOW32ISD::FCVT_LU: {
+      // fp → i64 (as f64 GPRPair)
+      SDLoc DL(N);
+      SDValue Src = N->getOperand(0);
+      bool IsSigned = (N->getOpcode() == SLOW32ISD::FCVT_L);
+      unsigned Opc;
+      if (Src.getValueType() == MVT::f32)
+        Opc = IsSigned ? SLOW32::FCVT_L_S : SLOW32::FCVT_LU_S;
+      else
+        Opc = IsSigned ? SLOW32::FCVT_L_D : SLOW32::FCVT_LU_D;
+      SDNode *Result = CurDAG->getMachineNode(Opc, DL, MVT::f64, Src);
+      ReplaceNode(N, Result);
+      return;
+    }
+    case SLOW32ISD::FCVT_FROM_L:
+    case SLOW32ISD::FCVT_FROM_LU: {
+      // i64 (as f64 GPRPair) → fp
+      SDLoc DL(N);
+      SDValue Src = N->getOperand(0);
+      EVT DstVT = N->getValueType(0);
+      bool IsSigned = (N->getOpcode() == SLOW32ISD::FCVT_FROM_L);
+      unsigned Opc;
+      if (DstVT == MVT::f32)
+        Opc = IsSigned ? SLOW32::FCVT_S_L : SLOW32::FCVT_S_LU;
+      else
+        Opc = IsSigned ? SLOW32::FCVT_D_L : SLOW32::FCVT_D_LU;
+      SDNode *Result = CurDAG->getMachineNode(Opc, DL, DstVT, Src);
+      ReplaceNode(N, Result);
+      return;
+    }
     // Let standard patterns handle GlobalAddress
     // It should be converted to TargetGlobalAddress by lowering
     // and then matched by TableGen patterns
     default:
       break;
     }
-    
+
     // Let TableGen handle everything else
     SelectCode(N);
   }

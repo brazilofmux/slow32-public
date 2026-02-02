@@ -1,0 +1,11 @@
+d add: 5
+d sub: 1
+d mul: 6
+d div: 1
+d neg add: -4
+a>b: 1
+b>a: 0
+a==a: 1
+c<a: 1
+d 42+2: 44
+f2d: 5

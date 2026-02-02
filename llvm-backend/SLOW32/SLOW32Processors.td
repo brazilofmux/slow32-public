@@ -18,7 +18,7 @@ class SLOW32ProcessorModel<string n, SchedMachineModel m,
 
 // Generic SLOW32 processor - conservative scheduling
 def : SLOW32ProcessorModel<"generic-slow32", SLOW32Model, 
-                           [FeatureStdExtI, FeatureStdExtM]>;
+                           [FeatureStdExtI, FeatureStdExtM, FeatureStdExtF]>;
 
 // Minimal SLOW32 processor - no multiply/divide
 def : SLOW32ProcessorModel<"slow32-minimal", SLOW32Model, 
@@ -27,12 +27,12 @@ def : SLOW32ProcessorModel<"slow32-minimal", SLOW32Model,
 
 // SLOW32 v1.0 - Basic implementation with multiply/divide
 def : SLOW32ProcessorModel<"slow32-v1", SLOW32Model, 
-                           [FeatureStdExtI, FeatureStdExtM],
+                           [FeatureStdExtI, FeatureStdExtM, FeatureStdExtF],
                            [TunePreferImmediate]>;
 
 // SLOW32 v2.0 - Performance optimized
 def : SLOW32ProcessorModel<"slow32-v2", SLOW32FastModel, 
-                           [FeatureStdExtI, FeatureStdExtM, 
+                           [FeatureStdExtI, FeatureStdExtM, FeatureStdExtF,
                             FeatureFastMul, FeatureBranchPredictor,
                             FeatureReturnStack],
                            [TunePreferImmediate, TuneFuseShiftMask]>;
@@ -44,5 +44,5 @@ def : SLOW32ProcessorModel<"slow32-fp", SLOW32Model,
 
 // Embedded SLOW32 optimized for size
 def : SLOW32ProcessorModel<"slow32-embedded", SLOW32Model, 
-                           [FeatureStdExtI, FeatureStdExtM],
+                           [FeatureStdExtI, FeatureStdExtM, FeatureStdExtF],
                            [TuneOptimizeSize, TunePreferImmediate]>;

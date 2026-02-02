@@ -88,28 +88,46 @@ static MCOperand lowerOperand(AsmPrinter &AP, const MachineOperand &MO) {
       // Handle constant pool references
       MCSymbol *Sym = AP.GetCPISymbol(MO.getIndex());
       const MCExpr *Expr = MCSymbolRefExpr::create(Sym, AP.OutContext);
-      
+
       // ConstantPoolIndex supports getOffset()
       int64_t Offset = MO.getOffset();
       if (Offset != 0) {
         const MCExpr *OffsetExpr = MCConstantExpr::create(Offset, AP.OutContext);
         Expr = MCBinaryExpr::createAdd(Expr, OffsetExpr, AP.OutContext);
       }
-      
+
+      unsigned TargetFlags = MO.getTargetFlags();
+      if (TargetFlags == SLOW32II::MO_HI) {
+        Expr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_HI, Expr,
+                                    AP.OutContext);
+      } else if (TargetFlags == SLOW32II::MO_LO) {
+        Expr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_LO, Expr,
+                                    AP.OutContext);
+      }
+
       return MCOperand::createExpr(Expr);
     }
     case MachineOperand::MO_BlockAddress: {
       // Handle block addresses
       MCSymbol *Sym = AP.GetBlockAddressSymbol(MO.getBlockAddress());
       const MCExpr *Expr = MCSymbolRefExpr::create(Sym, AP.OutContext);
-      
+
       // BlockAddress supports getOffset()
       int64_t Offset = MO.getOffset();
       if (Offset != 0) {
         const MCExpr *OffsetExpr = MCConstantExpr::create(Offset, AP.OutContext);
         Expr = MCBinaryExpr::createAdd(Expr, OffsetExpr, AP.OutContext);
       }
-      
+
+      unsigned TargetFlags = MO.getTargetFlags();
+      if (TargetFlags == SLOW32II::MO_HI) {
+        Expr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_HI, Expr,
+                                    AP.OutContext);
+      } else if (TargetFlags == SLOW32II::MO_LO) {
+        Expr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_LO, Expr,
+                                    AP.OutContext);
+      }
+
       return MCOperand::createExpr(Expr);
     }
     case MachineOperand::MO_Metadata:

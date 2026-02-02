@@ -2,7 +2,8 @@
 #define _MATH_H
 
 /* 
- * NOTE: SLOW-32 does not currently support floating-point arithmetic.
+ * NOTE: SLOW-32 uses soft-float helpers; floating-point is implemented in the
+ * runtime/emulator and not in hardware.
  * These macros are provided for compatibility, but the functions below
  * are commented out as they are not implemented in the runtime and 
  * the backend crashes on FP operations.
@@ -22,7 +23,7 @@
 #define M_SQRT2    1.41421356237309504880
 #define M_SQRT1_2  0.70710678118654752440
 
-/* Floating point functions are not supported
+/* Floating point functions are soft-float based
 double fabs(double x);
 float fabsf(float x);
 

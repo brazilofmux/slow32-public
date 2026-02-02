@@ -40,4 +40,5 @@ Next Review Due: 2025-11-15 (archive this file if the date passes)
 ## Regression Tests
 - Run `ninja -C build check-llvm-codegen-SLOW32` and `check-clang` before merging.
 - Current suite covers arithmetic/control/varargs/addressing plus native branch opcode selection (`llvm/test/CodeGen/SLOW32/branches.ll`); extend it for jump tables and inline asm clobbers.
+- f32/f64 arithmetic, compare, and convert lower to native FP opcodes in GPRs (f64 uses even/odd register pairs). Transcendentals such as `fmodf`/`fmod` remain libcalls.
 - Refresh this section with concrete pass/fail counts on each review cycle; archive the document if it is not updated by the next review date.

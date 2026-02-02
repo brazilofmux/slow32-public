@@ -21,7 +21,13 @@ enum NodeType {
   BR_LEU, // Unsigned less-or-equal
   CALL,   // Function call
   HI,     // High 20 bits of an address
-  LO      // Low 12 bits of an address
+  LO,     // Low 12 bits of an address
+  BuildPairF64,  // Combine two i32 into one f64 (via stack)
+  SplitF64,      // Split one f64 into two i32 (via stack)
+  FCVT_L,        // signed fp → i64 (as f64 GPRPair): takes f32/f64, produces f64
+  FCVT_LU,       // unsigned fp → i64 (as f64 GPRPair)
+  FCVT_FROM_L,   // signed i64 (as f64 GPRPair) → fp: takes f64, produces f32/f64
+  FCVT_FROM_LU   // unsigned i64 (as f64 GPRPair) → fp
 };
 }
 class SLOW32TargetLowering : public TargetLowering {
@@ -34,17 +40,17 @@ public:
   SDValue LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerExternalSymbol(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerJumpTable(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerConstantPool(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerVASTART(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerVAARG(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerBRCOND(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerBR_CC(SDValue Op, SelectionDAG &DAG) const;
-  SDValue LowerSETCC(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerSELECT(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerFCOPYSIGN(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerLOAD(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerSTORE(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerROTL(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerROTR(SDValue Op, SelectionDAG &DAG) const;
-  SDValue LowerI64Shift(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerSHL_PARTS(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerSRL_PARTS(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerSRA_PARTS(SDValue Op, SelectionDAG &DAG) const;

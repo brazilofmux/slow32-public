@@ -138,10 +138,10 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   : TargetLowering(TM, static_cast<const SLOW32TargetMachine&>(TM).getSubtarget()) {
   // Set up the register classes
   addRegisterClass(MVT::i32, &SLOW32::GPRRegClass);
+  addRegisterClass(MVT::f32, &SLOW32::GPRRegClass);
+  addRegisterClass(MVT::f64, &SLOW32::GPRPairRegClass);
 
-  // SLOW32 has no floating point support - all float operations
-  // must be handled via soft-float library calls
-  // We explicitly do NOT add register classes for f32/f64
+  // SLOW32 uses soft-float in GPRs with native f32/f64 instructions.
 
   // Compute derived properties from the register classes
   const SLOW32Subtarget &STI = static_cast<const SLOW32TargetMachine&>(TM).getSubtarget();
@@ -160,10 +160,6 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   setOperationAction(ISD::USUBO,        MVT::i32, Custom);
   setOperationAction(ISD::USUBO_CARRY,  MVT::i32, Custom);
 
-  // Keep i64 add/sub split
-  setOperationAction(ISD::ADD, MVT::i64, Expand);
-  setOperationAction(ISD::SUB, MVT::i64, Expand);
-
   // Booleans come back as 0/1 in a GPR
   setBooleanContents(ZeroOrOneBooleanContent);
   setBooleanVectorContents(ZeroOrOneBooleanContent);
@@ -176,14 +172,10 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   // Configure SETCC to produce 0/1 in a GPR (will use default lowering)
   // This is important for SELECT to work correctly
   setOperationAction(ISD::SETCC, MVT::i32, Legal);
-  setOperationAction(ISD::SETCC, MVT::i64, Custom);
   
   // Configure BRCOND to be Custom (we have a lowering for it)
   setOperationAction(ISD::BRCOND, MVT::Other, Custom);
 
-  // Tell LLVM to expand i64 operations into ADDC/ADDE and SUBC/SUBE pairs
-  setOperationAction(ISD::MUL, MVT::i64, Expand);
-  
   // Custom lower 32-bit multiply-high operations for i64 multiply expansion
   setOperationAction(ISD::UMUL_LOHI, MVT::i32, Custom);
   setOperationAction(ISD::SMUL_LOHI, MVT::i32, Custom);
@@ -196,14 +188,6 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   setOperationAction(ISD::UREM, MVT::i32, Custom);  // Will call __umodsi3
   setOperationAction(ISD::UDIVREM, MVT::i32, Expand);  // Combined operation also needs expansion
   setOperationAction(ISD::SDIVREM, MVT::i32, Expand);  // Also expand signed divrem
-  
-  // i64 division/remainder - let LLVM expand these
-  // Since SLOW32 doesn't have hardware support, LLVM will generate
-  // calls to compiler-rt functions (__divdi3, __udivdi3, __moddi3, __umoddi3)
-  setOperationAction(ISD::SDIV, MVT::i64, Expand);
-  setOperationAction(ISD::UDIV, MVT::i64, Expand);
-  setOperationAction(ISD::SREM, MVT::i64, Expand);
-  setOperationAction(ISD::UREM, MVT::i64, Expand);
   
   // SLOW32 is not recognized in LLVM's RuntimeLibcalls infrastructure,
   // so we need to explicitly set which libcall implementations to use.
@@ -220,25 +204,31 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   // i32 unsigned division/remainder (SLOW32 only has signed DIV/REM instructions)
   setLibcallImpl(RTLIB::UDIV_I32, RTLIB::impl___udivsi3);
   setLibcallImpl(RTLIB::UREM_I32, RTLIB::impl___umodsi3);
+  setLibcallImpl(RTLIB::REM_F32, RTLIB::impl_fmodf);
+  setLibcallImpl(RTLIB::REM_F64, RTLIB::impl_fmod);
+  setLibcallImpl(RTLIB::RINT_F32, RTLIB::impl_rintf);
+  setLibcallImpl(RTLIB::RINT_F64, RTLIB::impl_rint);
+  setLibcallImpl(RTLIB::NEARBYINT_F32, RTLIB::impl_nearbyintf);
+  setLibcallImpl(RTLIB::NEARBYINT_F64, RTLIB::impl_nearbyint);
+  setLibcallImpl(RTLIB::FLOOR_F32, RTLIB::impl_floorf);
+  setLibcallImpl(RTLIB::FLOOR_F64, RTLIB::impl_floor);
+  setLibcallImpl(RTLIB::CEIL_F32, RTLIB::impl_ceilf);
+  setLibcallImpl(RTLIB::CEIL_F64, RTLIB::impl_ceil);
+  setLibcallImpl(RTLIB::TRUNC_F32, RTLIB::impl_truncf);
+  setLibcallImpl(RTLIB::TRUNC_F64, RTLIB::impl_trunc);
+  setLibcallImpl(RTLIB::ROUND_F32, RTLIB::impl_roundf);
+  setLibcallImpl(RTLIB::ROUND_F64, RTLIB::impl_round);
+  setLibcallImpl(RTLIB::FMA_F32, RTLIB::impl_fmaf);
+  setLibcallImpl(RTLIB::FMA_F64, RTLIB::impl_fma);
 
   // The runtime ships native C implementations of the basic memory helpers.
   setLibcallImpl(RTLIB::MEMCPY, RTLIB::impl_memcpy);
   setLibcallImpl(RTLIB::MEMMOVE, RTLIB::impl_memmove);
   setLibcallImpl(RTLIB::MEMSET, RTLIB::impl_memset);
 
-  // These will use our shift-parts implementation
-  setOperationAction(ISD::SHL, MVT::i64, Custom);
-  setOperationAction(ISD::SRA, MVT::i64, Custom);
-  setOperationAction(ISD::SRL, MVT::i64, Custom);
-  setOperationAction(ISD::AND, MVT::i64, Expand);
-  setOperationAction(ISD::OR, MVT::i64, Expand);
-  setOperationAction(ISD::XOR, MVT::i64, Expand);
-  // SELECT is our canonical operation (ChatGPT 5's one-way street approach)
-  // SELECT_CC always expands to SELECT + SETCC, never the other way around
+  // SELECT is our canonical operation — SELECT_CC always expands to SELECT + SETCC
   setOperationAction(ISD::SELECT_CC, MVT::i32, Expand);
-  setOperationAction(ISD::SELECT_CC, MVT::i64, Expand);
   setOperationAction(ISD::SELECT, MVT::i32, Custom);
-  setOperationAction(ISD::SELECT, MVT::i64, Custom);  // Custom for i64 too to avoid loops
   // Note: We DO support SETCC via SLT/SLTU/SEQ/SNE instructions
 
   // Support for 64-bit operations - use custom lowering for shifts
@@ -250,10 +240,7 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   // Set stack pointer - R29 in SLOW32 is the stack pointer
   setStackPointerRegisterToSaveRestore(SLOW32::R29);
 
-  // Note: SLOW32 has no floating point hardware support
-  // Floating point operations will trigger soft-float library calls
-  // which are not currently implemented. For now, floating point
-  // code will fail to compile.
+  // Floating point operations are supported in GPRs with dedicated opcodes.
 
   // Set scheduling preference
   setSchedulingPreference(Sched::Source);
@@ -281,6 +268,7 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   setOperationAction(ISD::GlobalAddress, MVT::i32, Custom);
   setOperationAction(ISD::ExternalSymbol, MVT::i32, Custom);
   setOperationAction(ISD::JumpTable, MVT::i32, Custom);
+  setOperationAction(ISD::ConstantPool, MVT::i32, Custom);
 
   // Varargs support - follow RISC-V pattern
   setOperationAction(ISD::VASTART, MVT::Other, Custom);
@@ -313,6 +301,75 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   
   // Register custom DAG combines
   setTargetDAGCombine({ISD::ADD, ISD::MUL, ISD::AND, ISD::OR, ISD::SHL});
+
+  // f32/f64 operations are legal; fmod remains a libcall.
+  setOperationAction(ISD::FADD, MVT::f32, Legal);
+  setOperationAction(ISD::FSUB, MVT::f32, Legal);
+  setOperationAction(ISD::FMUL, MVT::f32, Legal);
+  setOperationAction(ISD::FDIV, MVT::f32, Legal);
+  setOperationAction(ISD::FSQRT, MVT::f32, Legal);
+  setOperationAction(ISD::FNEG, MVT::f32, Legal);
+  setOperationAction(ISD::FABS, MVT::f32, Legal);
+  setOperationAction(ISD::FCOPYSIGN, MVT::f32, Custom);
+  setOperationAction(ISD::FREM, MVT::f32, Expand);
+  setOperationAction(ISD::FMA, MVT::f32, Expand);
+  setOperationAction(ISD::FRINT, MVT::f32, Expand);
+  setOperationAction(ISD::FNEARBYINT, MVT::f32, Expand);
+  setOperationAction(ISD::FTRUNC, MVT::f32, Expand);
+  setOperationAction(ISD::FCEIL, MVT::f32, Expand);
+  setOperationAction(ISD::FFLOOR, MVT::f32, Expand);
+  setOperationAction(ISD::SETCC, MVT::f32, Legal);
+  setOperationAction(ISD::BR_CC, MVT::f32, Expand);
+  setOperationAction(ISD::SELECT, MVT::f32, Custom);
+  setOperationAction(ISD::SELECT_CC, MVT::f32, Expand);
+  setOperationAction(ISD::FP_ROUND, MVT::f32, Legal);
+  // f32 and i32 share GPR, so bitcast is a no-op.
+  setOperationAction(ISD::BITCAST, MVT::f32, Legal);
+
+  setOperationAction(ISD::FADD, MVT::f64, Legal);
+  setOperationAction(ISD::FSUB, MVT::f64, Legal);
+  setOperationAction(ISD::FMUL, MVT::f64, Legal);
+  setOperationAction(ISD::FDIV, MVT::f64, Legal);
+  setOperationAction(ISD::FSQRT, MVT::f64, Legal);
+  setOperationAction(ISD::FNEG, MVT::f64, Legal);
+  setOperationAction(ISD::FABS, MVT::f64, Legal);
+  setOperationAction(ISD::FCOPYSIGN, MVT::f64, Expand);
+  setOperationAction(ISD::FREM, MVT::f64, Expand);
+  setOperationAction(ISD::FMA, MVT::f64, Expand);
+  setOperationAction(ISD::FRINT, MVT::f64, Expand);
+  setOperationAction(ISD::FNEARBYINT, MVT::f64, Expand);
+  setOperationAction(ISD::FTRUNC, MVT::f64, Expand);
+  setOperationAction(ISD::FCEIL, MVT::f64, Expand);
+  setOperationAction(ISD::FFLOOR, MVT::f64, Expand);
+  setOperationAction(ISD::SETCC, MVT::f64, Legal);
+  setOperationAction(ISD::BR_CC, MVT::f64, Expand);
+  setOperationAction(ISD::SELECT, MVT::f64, Custom);
+  setOperationAction(ISD::SELECT_CC, MVT::f64, Expand);
+  setOperationAction(ISD::FP_EXTEND, MVT::f64, Legal);
+
+  setOperationAction(ISD::FP_TO_SINT, MVT::i32, Legal);
+  setOperationAction(ISD::FP_TO_UINT, MVT::i32, Legal);
+  setOperationAction(ISD::SINT_TO_FP, MVT::f32, Legal);
+  setOperationAction(ISD::UINT_TO_FP, MVT::f32, Legal);
+  setOperationAction(ISD::SINT_TO_FP, MVT::f64, Legal);
+  setOperationAction(ISD::UINT_TO_FP, MVT::f64, Legal);
+
+  // i64 ↔ FP conversions: use hardware FCVT_L/FCVT_S_L instructions
+  // instead of slow libcalls (__fixdfdi, __floatdidf, etc.)
+  setOperationAction(ISD::FP_TO_SINT, MVT::i64, Custom);
+  setOperationAction(ISD::FP_TO_UINT, MVT::i64, Custom);
+  setOperationAction(ISD::SINT_TO_FP, MVT::i64, Custom);
+  setOperationAction(ISD::UINT_TO_FP, MVT::i64, Custom);
+
+  // No extending FP load — decompose into f32 load + fcvt.d.s.
+  setLoadExtAction(ISD::EXTLOAD, MVT::f64, MVT::f32, Expand);
+  // No truncating FP store — decompose into fcvt.s.d + f32 store.
+  setTruncStoreAction(MVT::f64, MVT::f32, Expand);
+
+  // f32 loads/stores are handled by TableGen patterns (LDW/STW).
+  // f64 loads/stores need custom splitting into two i32 loads/stores.
+  setOperationAction(ISD::LOAD, MVT::f64, Custom);
+  setOperationAction(ISD::STORE, MVT::f64, Custom);
 }
 
 const char *SLOW32TargetLowering::getTargetNodeName(unsigned Opcode) const {
@@ -332,6 +389,12 @@ const char *SLOW32TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case SLOW32ISD::CALL: return "SLOW32ISD::CALL";
   case SLOW32ISD::HI: return "SLOW32ISD::HI";
   case SLOW32ISD::LO: return "SLOW32ISD::LO";
+  case SLOW32ISD::BuildPairF64: return "SLOW32ISD::BuildPairF64";
+  case SLOW32ISD::SplitF64: return "SLOW32ISD::SplitF64";
+  case SLOW32ISD::FCVT_L: return "SLOW32ISD::FCVT_L";
+  case SLOW32ISD::FCVT_LU: return "SLOW32ISD::FCVT_LU";
+  case SLOW32ISD::FCVT_FROM_L: return "SLOW32ISD::FCVT_FROM_L";
+  case SLOW32ISD::FCVT_FROM_LU: return "SLOW32ISD::FCVT_FROM_LU";
   }
   return nullptr;
 }
@@ -341,11 +404,14 @@ SDValue SLOW32TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) cons
     case ISD::GlobalAddress:  return LowerGlobalAddress(Op, DAG);
     case ISD::ExternalSymbol: return LowerExternalSymbol(Op, DAG);
     case ISD::JumpTable:      return LowerJumpTable(Op, DAG);
+    case ISD::ConstantPool:   return LowerConstantPool(Op, DAG);
+    case ISD::LOAD:           return LowerLOAD(Op, DAG);
+    case ISD::STORE:          return LowerSTORE(Op, DAG);
     case ISD::VASTART:        return LowerVASTART(Op, DAG);
     case ISD::VAARG:          return LowerVAARG(Op, DAG);
     case ISD::BRCOND:         return LowerBRCOND(Op, DAG);
     case ISD::BR_CC:          return LowerBR_CC(Op, DAG);
-    case ISD::SETCC:          return LowerSETCC(Op, DAG);
+    case ISD::FCOPYSIGN:      return LowerFCOPYSIGN(Op, DAG);
     case ISD::SELECT:         return LowerSELECT(Op, DAG);
     case ISD::ROTL:           return LowerROTL(Op, DAG);
     case ISD::ROTR:           return LowerROTR(Op, DAG);
@@ -362,13 +428,23 @@ SDValue SLOW32TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) cons
     case ISD::MULHS:          return LowerMULHS(Op, DAG);
     case ISD::UDIV:           return LowerUDIV(Op, DAG);
     case ISD::UREM:           return LowerUREM(Op, DAG);
-    // For i64 shifts, expand to shift-parts
-    case ISD::SHL:
-    case ISD::SRA:
-    case ISD::SRL:
-      if (Op.getValueType() == MVT::i64)
-        return LowerI64Shift(Op, DAG);
-      return SDValue();
+    case ISD::SINT_TO_FP:
+    case ISD::UINT_TO_FP: {
+      // i64 → fp: split i64 into halves, combine into GPRPair, hardware convert
+      EVT DstVT = Op.getValueType();
+      SDValue Src = Op.getOperand(0);
+      if (Src.getValueType() != MVT::i64)
+        return SDValue();
+      SDLoc DL(Op);
+      SDValue Lo = DAG.getNode(ISD::EXTRACT_ELEMENT, DL, MVT::i32, Src,
+                               DAG.getConstant(0, DL, MVT::i32));
+      SDValue Hi = DAG.getNode(ISD::EXTRACT_ELEMENT, DL, MVT::i32, Src,
+                               DAG.getConstant(1, DL, MVT::i32));
+      SDValue Pair = DAG.getNode(SLOW32ISD::BuildPairF64, DL, MVT::f64, Lo, Hi);
+      unsigned Opc = (Op.getOpcode() == ISD::SINT_TO_FP) ? SLOW32ISD::FCVT_FROM_L
+                                                          : SLOW32ISD::FCVT_FROM_LU;
+      return DAG.getNode(Opc, DL, DstVT, Pair);
+    }
     default: return SDValue();
   }
 }
@@ -397,6 +473,24 @@ SDValue SLOW32TargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const {
   LoadSDNode *Load = cast<LoadSDNode>(Op);
   SDValue Addr = Load->getBasePtr();
   SDLoc DL(Op);
+  EVT VT = Load->getValueType(0);
+
+  if (VT == MVT::f64) {
+    EVT PtrVT = getPointerTy(DAG.getDataLayout());
+    SDValue Chain = Load->getChain();
+    MachinePointerInfo MPI = Load->getPointerInfo();
+
+    SDValue Lo = DAG.getLoad(MVT::i32, DL, Chain, Addr, MPI, Align(4));
+    Chain = Lo.getValue(1);
+    SDValue AddrHi = DAG.getNode(ISD::ADD, DL, PtrVT, Addr,
+                                 DAG.getConstant(4, DL, PtrVT));
+    SDValue Hi = DAG.getLoad(MVT::i32, DL, Chain, AddrHi,
+                             MPI.getWithOffset(4), Align(4));
+    Chain = Hi.getValue(1);
+
+    SDValue Val = DAG.getNode(SLOW32ISD::BuildPairF64, DL, MVT::f64, Lo, Hi);
+    return DAG.getMergeValues({Val, Chain}, DL);
+  }
 
   // Check if we're loading from a global address
   if (Addr.getOpcode() == ISD::GlobalAddress ||
@@ -415,6 +509,26 @@ SDValue SLOW32TargetLowering::LowerSTORE(SDValue Op, SelectionDAG &DAG) const {
   StoreSDNode *Store = cast<StoreSDNode>(Op);
   SDValue Addr = Store->getBasePtr();
   SDLoc DL(Op);
+  EVT VT = Store->getValue().getValueType();
+
+  if (VT == MVT::f64) {
+    EVT PtrVT = getPointerTy(DAG.getDataLayout());
+    SDValue Chain = Store->getChain();
+    MachinePointerInfo MPI = Store->getPointerInfo();
+
+    SDValue Split = DAG.getNode(SLOW32ISD::SplitF64, DL,
+                                DAG.getVTList(MVT::i32, MVT::i32),
+                                Store->getValue());
+    SDValue Lo = Split.getValue(0);
+    SDValue Hi = Split.getValue(1);
+
+    SDValue StoreLo = DAG.getStore(Chain, DL, Lo, Addr, MPI, Align(4));
+    SDValue AddrHi = DAG.getNode(ISD::ADD, DL, PtrVT, Addr,
+                                 DAG.getConstant(4, DL, PtrVT));
+    SDValue StoreHi = DAG.getStore(StoreLo, DL, Hi, AddrHi,
+                                   MPI.getWithOffset(4), Align(4));
+    return StoreHi;
+  }
 
   // Check if we're storing to a global address
   if (Addr.getOpcode() == ISD::GlobalAddress ||
@@ -459,6 +573,26 @@ SDValue SLOW32TargetLowering::LowerJumpTable(SDValue Op, SelectionDAG &DAG) cons
   return SDValue(Mov, 0);
 }
 
+SDValue SLOW32TargetLowering::LowerConstantPool(SDValue Op,
+                                                 SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  ConstantPoolSDNode *CP = cast<ConstantPoolSDNode>(Op);
+  EVT VT = Op.getValueType();
+
+  SDValue TargetCP;
+  if (CP->isMachineConstantPoolEntry())
+    TargetCP = DAG.getTargetConstantPool(CP->getMachineCPVal(), VT,
+                                         CP->getAlign(), CP->getOffset(),
+                                         CP->getTargetFlags());
+  else
+    TargetCP = DAG.getTargetConstantPool(CP->getConstVal(), VT,
+                                         CP->getAlign(), CP->getOffset(),
+                                         CP->getTargetFlags());
+
+  SDNode *Mov = DAG.getMachineNode(SLOW32::LOAD_ADDR, DL, VT, TargetCP);
+  return SDValue(Mov, 0);
+}
+
 SDValue SLOW32TargetLowering::LowerSELECT(SDValue Op, SelectionDAG &DAG) const {
   SDLoc DL(Op);
   EVT VT = Op.getValueType();
@@ -471,25 +605,36 @@ SDValue SLOW32TargetLowering::LowerSELECT(SDValue Op, SelectionDAG &DAG) const {
   // where mask = -C (0->0x00000000, 1->0xFFFFFFFF)
   // This avoids creating SELECT_CC nodes and prevents loops
 
+  // Handle f64 by splitting into two i32 halves, selecting each,
+  // then recombining via BuildPairF64 (i64 is not legal).
+  if (VT == MVT::f64) {
+    SDValue TrueSplit = DAG.getNode(SLOW32ISD::SplitF64, DL,
+                                    DAG.getVTList(MVT::i32, MVT::i32), TrueV);
+    SDValue FalseSplit = DAG.getNode(SLOW32ISD::SplitF64, DL,
+                                     DAG.getVTList(MVT::i32, MVT::i32), FalseV);
+    SDValue ResLo = DAG.getNode(ISD::SELECT, DL, MVT::i32, Cond,
+                                TrueSplit.getValue(0), FalseSplit.getValue(0));
+    SDValue ResHi = DAG.getNode(ISD::SELECT, DL, MVT::i32, Cond,
+                                TrueSplit.getValue(1), FalseSplit.getValue(1));
+    return DAG.getNode(SLOW32ISD::BuildPairF64, DL, MVT::f64, ResLo, ResHi);
+  }
+
   // Ensure condition is normalized to i32 (0 or 1)
   if (Cond.getValueType() != MVT::i32) {
-    // Normalize to i32 boolean (SETCC already produces 0/1)
     Cond = DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::i32, Cond);
   }
 
-  // For i64 SELECT, split into two i32 SELECTs
-  if (VT == MVT::i64) {
-    // Split i64 operands into hi/lo parts
-    SDValue TrueHi, TrueLo, FalseHi, FalseLo;
-    std::tie(TrueLo, TrueHi) = DAG.SplitScalar(TrueV, DL, MVT::i32, MVT::i32);
-    std::tie(FalseLo, FalseHi) = DAG.SplitScalar(FalseV, DL, MVT::i32, MVT::i32);
-    
-    // Select each half independently using the same condition
-    SDValue ResLo = DAG.getNode(ISD::SELECT, DL, MVT::i32, Cond, TrueLo, FalseLo);
-    SDValue ResHi = DAG.getNode(ISD::SELECT, DL, MVT::i32, Cond, TrueHi, FalseHi);
-    
-    // Combine results
-    return DAG.getNode(ISD::BUILD_PAIR, DL, MVT::i64, ResLo, ResHi);
+  // For f32, bitcast to i32, select, bitcast back. BITCAST f32↔i32 is Legal.
+  if (VT == MVT::f32) {
+    SDValue TrueI = DAG.getNode(ISD::BITCAST, DL, MVT::i32, TrueV);
+    SDValue FalseI = DAG.getNode(ISD::BITCAST, DL, MVT::i32, FalseV);
+    SDValue ResI = DAG.getNode(ISD::SELECT, DL, MVT::i32, Cond, TrueI, FalseI);
+    return DAG.getNode(ISD::BITCAST, DL, MVT::f32, ResI);
+  }
+
+  // Only handle integer selects below.
+  if (!VT.isInteger()) {
+    return SDValue();
   }
 
   // For i32, use the mask trick to avoid branches
@@ -503,37 +648,25 @@ SDValue SLOW32TargetLowering::LowerSELECT(SDValue Op, SelectionDAG &DAG) const {
   return DAG.getNode(ISD::XOR, DL, VT, FalseV, And);
 }
 
-
-// Lower i64 shift operations to shift-parts
-SDValue SLOW32TargetLowering::LowerI64Shift(SDValue Op, SelectionDAG &DAG) const {
+SDValue SLOW32TargetLowering::LowerFCOPYSIGN(SDValue Op,
+                                             SelectionDAG &DAG) const {
   SDLoc DL(Op);
-  SDValue Lo, Hi;
+  SDValue Mag = Op.getOperand(0);
+  SDValue Sign = Op.getOperand(1);
 
-  // Split the i64 value into two i32 parts
-  std::tie(Lo, Hi) = DAG.SplitScalar(Op.getOperand(0), DL, MVT::i32, MVT::i32);
-  SDValue Shamt = Op.getOperand(1);
-
-  // Ensure shift amount is i32
-  if (Shamt.getValueType() != MVT::i32) {
-    Shamt = DAG.getNode(ISD::TRUNCATE, DL, MVT::i32, Shamt);
-  }
-
-  // Call the appropriate shift-parts operation
-  unsigned PartsOpc;
-  switch (Op.getOpcode()) {
-    case ISD::SHL: PartsOpc = ISD::SHL_PARTS; break;
-    case ISD::SRA: PartsOpc = ISD::SRA_PARTS; break;
-    case ISD::SRL: PartsOpc = ISD::SRL_PARTS; break;
-    default: llvm_unreachable("Unexpected shift opcode");
-  }
-
-  SDValue Parts = DAG.getNode(PartsOpc, DL, DAG.getVTList(MVT::i32, MVT::i32),
-                              Lo, Hi, Shamt);
-
-  // Combine the parts back into i64
-  return DAG.getNode(ISD::BUILD_PAIR, DL, MVT::i64,
-                     Parts.getValue(0), Parts.getValue(1));
+  // Implement copysignf via integer bit ops:
+  // (mag & 0x7fffffff) | (sign & 0x80000000)
+  SDValue MagBits = DAG.getNode(ISD::BITCAST, DL, MVT::i32, Mag);
+  SDValue SignBits = DAG.getNode(ISD::BITCAST, DL, MVT::i32, Sign);
+  SDValue MagMask = DAG.getConstant(0x7fffffff, DL, MVT::i32);
+  SDValue SignMask = DAG.getConstant(0x80000000u, DL, MVT::i32);
+  SDValue MagMasked = DAG.getNode(ISD::AND, DL, MVT::i32, MagBits, MagMask);
+  SDValue SignMasked = DAG.getNode(ISD::AND, DL, MVT::i32, SignBits, SignMask);
+  SDValue ResBits = DAG.getNode(ISD::OR, DL, MVT::i32, MagMasked, SignMasked);
+  return DAG.getNode(ISD::BITCAST, DL, MVT::f32, ResBits);
 }
+
+
 
 // Lower 64-bit shift left into 32-bit operations
 // This implements: (Lo, Hi) = SHL_PARTS(Lo, Hi, Shamt)
@@ -698,10 +831,16 @@ SDValue SLOW32TargetLowering::LowerBRCOND(SDValue Op, SelectionDAG &DAG) const {
   LLVM_DEBUG(dbgs() << "LowerBRCOND opcode: " << Cond.getOpcode() << "\n");
 
   if (Cond.getOpcode() == ISD::SETCC) {
-    ISD::CondCode CC = cast<CondCodeSDNode>(Cond.getOperand(2))->get();
     SDValue LHS = Cond.getOperand(0);
     SDValue RHS = Cond.getOperand(1);
-    return emitBranchForCond(DAG, DL, Chain, CC, LHS, RHS, Dest);
+    // Only decompose integer SETCC into direct branch nodes (BR_LT, BR_GEU,
+    // etc.).  Float SETCC must go through the SETCC instruction (FEQ_S,
+    // FLT_S, ...) and then branch on the i32 result, because the BR_*
+    // nodes emit integer compare-and-branch instructions.
+    if (LHS.getValueType().isInteger()) {
+      ISD::CondCode CC = cast<CondCodeSDNode>(Cond.getOperand(2))->get();
+      return emitBranchForCond(DAG, DL, Chain, CC, LHS, RHS, Dest);
+    }
   }
 
   SDValue Zero = DAG.getConstant(0, DL, MVT::i32);
@@ -718,115 +857,6 @@ SDValue SLOW32TargetLowering::LowerBR_CC(SDValue Op, SelectionDAG &DAG) const {
   SDLoc DL(Op);
 
   return emitBranchForCond(DAG, DL, Chain, CC, LHS, RHS, Dest);
-}
-
-SDValue SLOW32TargetLowering::LowerSETCC(SDValue Op, SelectionDAG &DAG) const {
-  SDValue LHS = Op.getOperand(0);
-  SDValue RHS = Op.getOperand(1);
-  EVT VT = Op.getValueType();
-
-  if (LHS.getValueType() != MVT::i64)
-    return SDValue();
-
-  SDLoc DL(Op);
-  ISD::CondCode CC = cast<CondCodeSDNode>(Op.getOperand(2))->get();
-
-  SDValue LHSLo, LHSHi, RHSLo, RHSHi;
-  std::tie(LHSLo, LHSHi) = DAG.SplitScalar(LHS, DL, MVT::i32, MVT::i32);
-  std::tie(RHSLo, RHSHi) = DAG.SplitScalar(RHS, DL, MVT::i32, MVT::i32);
-
-  auto SetCC32 = [&](ISD::CondCode CC, SDValue A, SDValue B) {
-    return DAG.getNode(ISD::SETCC, DL, MVT::i32, A, B, DAG.getCondCode(CC));
-  };
-  auto And = [&](SDValue A, SDValue B) {
-    return DAG.getNode(ISD::AND, DL, MVT::i32, A, B);
-  };
-  auto Or = [&](SDValue A, SDValue B) {
-    return DAG.getNode(ISD::OR, DL, MVT::i32, A, B);
-  };
-
-  SDValue Res;
-  switch (CC) {
-  case ISD::SETEQ: {
-    SDValue HiEq = SetCC32(ISD::SETEQ, LHSHi, RHSHi);
-    SDValue LoEq = SetCC32(ISD::SETEQ, LHSLo, RHSLo);
-    Res = And(HiEq, LoEq);
-    break;
-  }
-  case ISD::SETNE: {
-    SDValue HiNe = SetCC32(ISD::SETNE, LHSHi, RHSHi);
-    SDValue LoNe = SetCC32(ISD::SETNE, LHSLo, RHSLo);
-    Res = Or(HiNe, LoNe);
-    break;
-  }
-  case ISD::SETLT:
-  case ISD::SETLE:
-  case ISD::SETGT:
-  case ISD::SETGE: {
-    SDValue HiEq = SetCC32(ISD::SETEQ, LHSHi, RHSHi);
-    SDValue HiLt = SetCC32(ISD::SETLT, LHSHi, RHSHi);
-    SDValue HiGt = SetCC32(ISD::SETGT, LHSHi, RHSHi);
-    SDValue LoLt = SetCC32(ISD::SETULT, LHSLo, RHSLo);
-    SDValue LoLe = SetCC32(ISD::SETULE, LHSLo, RHSLo);
-    SDValue LoGt = SetCC32(ISD::SETUGT, LHSLo, RHSLo);
-    SDValue LoGe = SetCC32(ISD::SETUGE, LHSLo, RHSLo);
-
-    switch (CC) {
-    case ISD::SETLT:
-      Res = Or(HiLt, And(HiEq, LoLt));
-      break;
-    case ISD::SETLE:
-      Res = Or(HiLt, And(HiEq, LoLe));
-      break;
-    case ISD::SETGT:
-      Res = Or(HiGt, And(HiEq, LoGt));
-      break;
-    case ISD::SETGE:
-      Res = Or(HiGt, And(HiEq, LoGe));
-      break;
-    default:
-      llvm_unreachable("Unexpected signed condcode");
-    }
-    break;
-  }
-  case ISD::SETULT:
-  case ISD::SETULE:
-  case ISD::SETUGT:
-  case ISD::SETUGE: {
-    SDValue HiEq = SetCC32(ISD::SETEQ, LHSHi, RHSHi);
-    SDValue HiLt = SetCC32(ISD::SETULT, LHSHi, RHSHi);
-    SDValue HiGt = SetCC32(ISD::SETUGT, LHSHi, RHSHi);
-    SDValue LoLt = SetCC32(ISD::SETULT, LHSLo, RHSLo);
-    SDValue LoLe = SetCC32(ISD::SETULE, LHSLo, RHSLo);
-    SDValue LoGt = SetCC32(ISD::SETUGT, LHSLo, RHSLo);
-    SDValue LoGe = SetCC32(ISD::SETUGE, LHSLo, RHSLo);
-
-    switch (CC) {
-    case ISD::SETULT:
-      Res = Or(HiLt, And(HiEq, LoLt));
-      break;
-    case ISD::SETULE:
-      Res = Or(HiLt, And(HiEq, LoLe));
-      break;
-    case ISD::SETUGT:
-      Res = Or(HiGt, And(HiEq, LoGt));
-      break;
-    case ISD::SETUGE:
-      Res = Or(HiGt, And(HiEq, LoGe));
-      break;
-    default:
-      llvm_unreachable("Unexpected unsigned condcode");
-    }
-    break;
-  }
-  default:
-    return SDValue();
-  }
-
-  if (VT != MVT::i32)
-    Res = DAG.getNode(ISD::TRUNCATE, DL, VT, Res);
-
-  return Res;
 }
 
 SDValue SLOW32TargetLowering::LowerFormalArguments(
@@ -915,11 +945,33 @@ SDValue SLOW32TargetLowering::LowerFormalArguments(
       Register PhysReg = VA.getLocReg();
       if (!EntryMBB.isLiveIn(PhysReg))
         EntryMBB.addLiveIn(PhysReg);
-      Register VReg = RegInfo.createVirtualRegister(&SLOW32::GPRRegClass);
-      RegInfo.addLiveIn(PhysReg, VReg);
-      SDValue ValIn = DAG.getCopyFromReg(Chain, dl, VReg, VA.getLocVT());
-      Chains.push_back(ValIn.getValue(1));
-      ArgValue = ValIn;
+      if (VA.getLocVT() == MVT::f64) {
+        Register HiPhys = getShadowFor64Bit(PhysReg);
+        if (!HiPhys)
+          report_fatal_error("Missing shadow register for f64 argument");
+        if (!EntryMBB.isLiveIn(HiPhys))
+          EntryMBB.addLiveIn(HiPhys);
+
+        Register LoVReg = RegInfo.createVirtualRegister(&SLOW32::GPRRegClass);
+        Register HiVReg = RegInfo.createVirtualRegister(&SLOW32::GPRRegClass);
+        RegInfo.addLiveIn(PhysReg, LoVReg);
+        RegInfo.addLiveIn(HiPhys, HiVReg);
+
+        SDValue LoCopy = DAG.getCopyFromReg(Chain, dl, LoVReg, MVT::i32);
+        Chains.push_back(LoCopy.getValue(1));
+        SDValue HiCopy = DAG.getCopyFromReg(Chain, dl, HiVReg, MVT::i32);
+        Chains.push_back(HiCopy.getValue(1));
+
+        ArgValue = DAG.getNode(SLOW32ISD::BuildPairF64, dl, MVT::f64,
+                               LoCopy, HiCopy);
+      } else {
+        const TargetRegisterClass *RC = getRegClassFor(VA.getLocVT());
+        Register VReg = RegInfo.createVirtualRegister(RC);
+        RegInfo.addLiveIn(PhysReg, VReg);
+        SDValue ValIn = DAG.getCopyFromReg(Chain, dl, VReg, VA.getLocVT());
+        Chains.push_back(ValIn.getValue(1));
+        ArgValue = ValIn;
+      }
     } else {
       assert(VA.isMemLoc() && "Expected register or memory location");
       unsigned Bytes = VA.getLocVT().getStoreSize();
@@ -1079,19 +1131,15 @@ SDValue SLOW32TargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CC,
 
     SDValue Val = convertValToLocVT(DAG, OutVals[I], VA, DL);
 
-    if (VA.isRegLoc() && VA.getLocVT() == MVT::i64) {
-      // ABI returns 64-bit scalars in register pairs. Split the value into the
-      // low/high halves and copy each to its designated register so we avoid
-      // materialising a spill slot.
+    if (VA.isRegLoc() && VA.getLocVT() == MVT::f64) {
       Register Reg = VA.getLocReg();
       Register Shadow = getShadowFor64Bit(Reg);
-      assert(Shadow && "Unexpected register assignment for i64 return");
+      assert(Shadow && "Unexpected register assignment for f64 return");
 
-      SDValue Lo = DAG.getNode(ISD::TRUNCATE, DL, MVT::i32, Val);
-      SDValue HiShift =
-          DAG.getNode(ISD::SRL, DL, MVT::i64, Val,
-                      DAG.getConstant(32, DL, MVT::i64));
-      SDValue Hi = DAG.getNode(ISD::TRUNCATE, DL, MVT::i32, HiShift);
+      SDValue Split = DAG.getNode(SLOW32ISD::SplitF64, DL,
+                                  DAG.getVTList(MVT::i32, MVT::i32), Val);
+      SDValue Lo = Split.getValue(0);
+      SDValue Hi = Split.getValue(1);
 
       Chain = DAG.getCopyToReg(Chain, DL, Reg, Lo, Glue);
       Glue = Chain.getValue(1);
@@ -1237,6 +1285,19 @@ SDValue SLOW32TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     Arg = convertValToLocVT(DAG, Arg, VA, DL);
 
     if (VA.isRegLoc()) {
+      if (VA.getLocVT() == MVT::f64) {
+        Register LoReg = VA.getLocReg();
+        Register HiReg = getShadowFor64Bit(LoReg);
+        if (!HiReg)
+          report_fatal_error("Missing shadow register for f64 argument");
+
+        SDValue Split = DAG.getNode(SLOW32ISD::SplitF64, DL,
+                                    DAG.getVTList(MVT::i32, MVT::i32), Arg);
+        RegsToPass.emplace_back(LoReg, Split.getValue(0));
+        RegsToPass.emplace_back(HiReg, Split.getValue(1));
+        ++I;
+        continue;
+      }
       RegsToPass.emplace_back(VA.getLocReg(), Arg);
     } else {
       if (!StackPtr.getNode()) {
@@ -1342,6 +1403,24 @@ SDValue SLOW32TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     }
 
     if (VA.isRegLoc()) {
+      if (VA.getLocVT() == MVT::f64) {
+        Register LoReg = VA.getLocReg();
+        Register HiReg = getShadowFor64Bit(LoReg);
+        if (!HiReg)
+          report_fatal_error("Missing shadow register for f64 return");
+
+        SDValue Lo = DAG.getCopyFromReg(Chain, DL, LoReg, MVT::i32, Glue);
+        Chain = Lo.getValue(1);
+        Glue = Lo.getValue(2);
+        SDValue Hi = DAG.getCopyFromReg(Chain, DL, HiReg, MVT::i32, Glue);
+        Chain = Hi.getValue(1);
+        Glue = Hi.getValue(2);
+
+        InVals.push_back(DAG.getNode(SLOW32ISD::BuildPairF64, DL, MVT::f64,
+                                     Lo, Hi));
+        ++I;
+        continue;
+      }
       SDValue Val = DAG.getCopyFromReg(Chain, DL, VA.getLocReg(),
                                        VA.getLocVT(), Glue);
       Chain = Val.getValue(1);
@@ -1483,16 +1562,21 @@ void SLOW32TargetLowering::ReplaceNodeResults(SDNode *N,
   SDLoc DL(N);
 
   switch (N->getOpcode()) {
-    case ISD::SHL:
-    case ISD::SRA:
-    case ISD::SRL:
-      // Handle i64 shifts
-      if (N->getValueType(0) == MVT::i64) {
-        SDValue Result = LowerI64Shift(SDValue(N, 0), DAG);
-        Results.push_back(Result);
-        return;
-      }
-      break;
+    case ISD::FP_TO_SINT:
+    case ISD::FP_TO_UINT: {
+      // fp → i64: hardware convert to GPRPair, then split into i32 halves
+      SDValue Src = N->getOperand(0);
+      unsigned Opc = (N->getOpcode() == ISD::FP_TO_SINT) ? SLOW32ISD::FCVT_L
+                                                          : SLOW32ISD::FCVT_LU;
+      SDValue Pair = DAG.getNode(Opc, DL, MVT::f64, Src);
+      SDValue Split = DAG.getNode(SLOW32ISD::SplitF64, DL,
+                                  DAG.getVTList(MVT::i32, MVT::i32), Pair);
+      SDValue Lo = SDValue(Split.getNode(), 0);
+      SDValue Hi = SDValue(Split.getNode(), 1);
+      SDValue Result = DAG.getNode(ISD::BUILD_PAIR, DL, MVT::i64, Lo, Hi);
+      Results.push_back(Result);
+      return;
+    }
     default:
       break;
   }
@@ -1506,58 +1590,91 @@ SLOW32TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
 
   switch (MI.getOpcode()) {
   case SLOW32::SELECT_PSEUDO: {
-    // SELECT_PSEUDO expands to:
-    //   beq $cond, r0, FalseBB
-    // TrueBB:
-    //   add $dst, $t, r0
-    //   jal r0, DoneBB
-    // FalseBB:
-    //   add $dst, $f, r0
-    // DoneBB:
+    // SELECT_PSEUDO expands to a triangle pattern with a PHI:
+    //
+    //   HeadMBB:
+    //     bne $cond, r0, TailMBB   // if true, branch to TailMBB
+    //   IfFalseMBB:                 // fallthrough (condition is false)
+    //   TailMBB:
+    //     $dst = PHI [$t, HeadMBB], [$f, IfFalseMBB]
 
     MachineFunction *MF = BB->getParent();
     const BasicBlock *LLVM_BB = BB->getBasicBlock();
-    MachineBasicBlock *TrueBB = MF->CreateMachineBasicBlock(LLVM_BB);
-    MachineBasicBlock *FalseBB = MF->CreateMachineBasicBlock(LLVM_BB);
-    MachineBasicBlock *DoneBB = MF->CreateMachineBasicBlock(LLVM_BB);
+
+    MachineBasicBlock *HeadMBB = BB;
+    MachineBasicBlock *IfFalseMBB = MF->CreateMachineBasicBlock(LLVM_BB);
+    MachineBasicBlock *TailMBB = MF->CreateMachineBasicBlock(LLVM_BB);
 
     MachineFunction::iterator It = ++BB->getIterator();
-    MF->insert(It, TrueBB);
-    MF->insert(It, FalseBB);
-    MF->insert(It, DoneBB);
+    MF->insert(It, IfFalseMBB);
+    MF->insert(It, TailMBB);
 
-    // Transfer successors
-    DoneBB->splice(DoneBB->begin(), BB,
-                   std::next(MachineBasicBlock::iterator(MI)), BB->end());
-    DoneBB->transferSuccessorsAndUpdatePHIs(BB);
+    // Move everything after SELECT_PSEUDO to TailMBB.
+    TailMBB->splice(TailMBB->begin(), HeadMBB,
+                    std::next(MachineBasicBlock::iterator(MI)),
+                    HeadMBB->end());
+    TailMBB->transferSuccessorsAndUpdatePHIs(HeadMBB);
 
-    // Set up branches
-    BB->addSuccessor(TrueBB);
-    BB->addSuccessor(FalseBB);
-    TrueBB->addSuccessor(DoneBB);
-    FalseBB->addSuccessor(DoneBB);
+    // Set up CFG edges.
+    HeadMBB->addSuccessor(IfFalseMBB);
+    HeadMBB->addSuccessor(TailMBB);
+    IfFalseMBB->addSuccessor(TailMBB);
 
-    // BB: beq $cond, r0, FalseBB
-    BuildMI(BB, DL, TII.get(SLOW32::BEQ))
+    // HeadMBB: bne $cond, r0, TailMBB  (if true, skip to TailMBB)
+    BuildMI(HeadMBB, DL, TII.get(SLOW32::BNE))
         .addReg(MI.getOperand(1).getReg())  // $cond
         .addReg(SLOW32::R0)
-        .addMBB(FalseBB);
+        .addMBB(TailMBB);
 
-    // TrueBB: add $dst, $t, r0
-    BuildMI(TrueBB, DL, TII.get(SLOW32::ADD), MI.getOperand(0).getReg())
-        .addReg(MI.getOperand(2).getReg())  // $t
-        .addReg(SLOW32::R0);
-    BuildMI(TrueBB, DL, TII.get(SLOW32::JAL))
-        .addReg(SLOW32::R0)
-        .addMBB(DoneBB);
+    // IfFalseMBB is empty — just falls through to TailMBB.
 
-    // FalseBB: add $dst, $f, r0
-    BuildMI(FalseBB, DL, TII.get(SLOW32::ADD), MI.getOperand(0).getReg())
-        .addReg(MI.getOperand(3).getReg())  // $f
-        .addReg(SLOW32::R0);
+    // Propagate live-ins from HeadMBB to the new blocks.  Physical
+    // registers like the stack pointer (R29) must be listed as live-in
+    // in every block that reaches a use.
+    for (const auto &LI : HeadMBB->liveins()) {
+      IfFalseMBB->addLiveIn(LI);
+      TailMBB->addLiveIn(LI);
+    }
+
+    // TailMBB: PHI to merge true/false values.
+    BuildMI(*TailMBB, TailMBB->begin(), DL, TII.get(SLOW32::PHI),
+            MI.getOperand(0).getReg())
+        .addReg(MI.getOperand(2).getReg())  // $t (from HeadMBB)
+        .addMBB(HeadMBB)
+        .addReg(MI.getOperand(3).getReg())  // $f (from IfFalseMBB)
+        .addMBB(IfFalseMBB);
+
+    MF->getProperties().resetNoPHIs();
 
     MI.eraseFromParent();
-    return DoneBB;
+    return TailMBB;
+  }
+  case SLOW32::BuildPairF64Pseudo: {
+    // Combine two i32 halves into a GPRPair (f64) via REG_SEQUENCE.
+    Register LoReg = MI.getOperand(1).getReg();
+    Register HiReg = MI.getOperand(2).getReg();
+    Register DstReg = MI.getOperand(0).getReg();
+
+    BuildMI(*BB, MI, DL, TII.get(TargetOpcode::REG_SEQUENCE), DstReg)
+        .addReg(LoReg)
+        .addImm(gsub_0)
+        .addReg(HiReg)
+        .addImm(gsub_1);
+    MI.eraseFromParent();
+    return BB;
+  }
+  case SLOW32::SplitF64Pseudo: {
+    // Extract two i32 halves from a GPRPair (f64) via COPY with subreg.
+    Register SrcReg = MI.getOperand(2).getReg();
+    Register LoReg = MI.getOperand(0).getReg();
+    Register HiReg = MI.getOperand(1).getReg();
+
+    BuildMI(*BB, MI, DL, TII.get(TargetOpcode::COPY), LoReg)
+        .addReg(SrcReg, RegState(), gsub_0);
+    BuildMI(*BB, MI, DL, TII.get(TargetOpcode::COPY), HiReg)
+        .addReg(SrcReg, RegState(), gsub_1);
+    MI.eraseFromParent();
+    return BB;
   }
   default:
     llvm_unreachable("Unexpected custom inserter!");
