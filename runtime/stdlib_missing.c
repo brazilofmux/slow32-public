@@ -20,6 +20,21 @@ long atol(const char *nptr) {
     return strtol(nptr, NULL, 10);
 }
 
+// dtoa_strtod is provided by Gay's dtoa.c
+extern double dtoa_strtod(const char *s00, char **se);
+
+double strtod(const char *nptr, char **endptr) {
+    return dtoa_strtod(nptr, endptr);
+}
+
+double atof(const char *nptr) {
+    return strtod(nptr, (char **)0);
+}
+
+long long atoll(const char *nptr) {
+    return (long long)strtol(nptr, (char **)0, 10);
+}
+
 static unsigned long int next = 1;
 
 int rand(void) {

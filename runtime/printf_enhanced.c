@@ -569,6 +569,8 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
              spec == 'g' || spec == 'G');
         if (is_negative && conv_str[0] == '-') {
             // Already has minus sign
+        } else if (is_negative && is_signed_conv) {
+            prefix[prefix_len++] = '-';
         } else if (show_sign && !is_negative && is_signed_conv) {
             prefix[prefix_len++] = '+';
         } else if (space_sign && !is_negative && is_signed_conv) {
