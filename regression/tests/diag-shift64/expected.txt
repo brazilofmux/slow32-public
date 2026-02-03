@@ -1,0 +1,13 @@
+t1: 12345678
+t2: fedcba98
+t3: ffff
+t4: 4000000000000000
+t5: 1234567800000000
+t6: 100000000
+t7a: 1
+t7b: 0
+t8lo: ccccdddd
+t8hi: aaaabbbb
+t9: fffffffffedcba98
+t10: ffffffff
+t11: 5678000000001234

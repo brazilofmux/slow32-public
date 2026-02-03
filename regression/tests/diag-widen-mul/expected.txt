@@ -1,0 +1,10 @@
+t1: 4e20
+t2: 100000000
+t3: fffffffe00000001
+t4: 1fffffffe
+t5: 1fffe0000
+t6: ffffffff00000000
+t7lo: 9abcdef0
+t7hi: 12345678
+t8a: b60b60b0
+t8b: 60b60b560

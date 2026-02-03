@@ -26,7 +26,7 @@ LIBC_CORE_OBJS = string.s32o string_extra.s32o \
                  malloc.s32o stdlib.s32o stdlib_extra.s32o stdlib_utils.s32o stdlib_missing.s32o \
                  convert.s32o convert_extra.s32o ctype.s32o \
                  printf_enhanced.s32o start.s32o yield.s32o \
-                 cxxabi.s32o time_extra.s32o math_int.s32o
+                 cxxabi.s32o time_extra.s32o math_int.s32o dtoa.s32o errno.s32o
 
 # I/O objects for DEBUG version (simple, unbuffered)
 STDIO_DEBUG_OBJS = putchar.s32o stdio_minimal.s32o
@@ -62,7 +62,7 @@ C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_util
             debug_char.c yield.c putchar.c mmio_request.c time_mmio.c \
             stat_mmio.c stat_stub.c start.c args_mmio.c args_stub.c \
             exit_mmio.c exit_debug.c envp_mmio.c envp_stub.c \
-            cxxabi.c time_extra.c math_int.c \
+            cxxabi.c time_extra.c math_int.c dtoa.c errno.c \
             fs_mmio.c fs_stub.c dirent_mmio.c dirent_stub.c
 # Note: math.c excluded due to floating point operations not yet supported
 
@@ -101,6 +101,10 @@ stdio.ll: stdio.c
 printf_enhanced.ll: OPT_LEVEL = -O2
 printf_enhanced.ll: printf_enhanced.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
+
+dtoa.ll: OPT_LEVEL = -O2
+dtoa.ll: dtoa.c
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) -DIEEE_8087 $< -o $@
 
 flush_mmio.ll: OPT_LEVEL = -O2
 flush_mmio.ll: flush_mmio.c

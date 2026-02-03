@@ -7,10 +7,10 @@
 #include <getopt.h>
 #include "../../common/s32_formats.h"
 
-#define MAX_LINE 256
+#define MAX_LINE 65536
 #define MAX_TOKENS 8
-#define MAX_TOKEN_LEN 512
-#define MAX_LABELS 1024
+#define MAX_TOKEN_LEN 16384
+#define MAX_LABELS 8192
 #define INITIAL_INSTRUCTION_CAPACITY 65536
 #define MAX_DATA_SIZE (1024 * 1024)  // 1MB max data section
 #define MAX_RELOCATIONS 4096
@@ -631,27 +631,37 @@ static int process_string_literal(assembler_t *as, const char *str) {
         if (*p == '\\' && *(p+1)) {
             // Handle escape sequences
             p++;
-            switch (*p) {
-                case 'n': byte = '\n'; break;
-                case 't': byte = '\t'; break;
-                case 'r': byte = '\r'; break;
-                case '\\': byte = '\\'; break;
-                case '"': byte = '"'; break;
-                case '0': byte = '\0'; break;
-                case 'x': // Hex escape \xHH
-                    if (*(p+1) && *(p+2)) {
-                        char hex[3] = {*(p+1), *(p+2), '\0'};
-                        byte = (uint8_t)strtol(hex, NULL, 16);
-                        p += 2;
-                    } else {
-                        return -1; // Invalid hex escape
-                    }
-                    break;
-                default:
-                    byte = *p; // Unknown escape, use literal
-                    break;
+            if (*p >= '0' && *p <= '7') {
+                int val = 0;
+                int digits = 0;
+                while (digits < 3 && *p >= '0' && *p <= '7') {
+                    val = (val * 8) + (*p - '0');
+                    p++;
+                    digits++;
+                }
+                byte = (uint8_t)val;
+            } else if (*p == 'x') {
+                // Hex escape \xHH
+                if (*(p+1) && *(p+2)) {
+                    char hex[3] = {*(p+1), *(p+2), '\0'};
+                    byte = (uint8_t)strtol(hex, NULL, 16);
+                    p += 3;
+                } else {
+                    return -1; // Invalid hex escape
+                }
+            } else {
+                switch (*p) {
+                    case 'n': byte = '\n'; break;
+                    case 't': byte = '\t'; break;
+                    case 'r': byte = '\r'; break;
+                    case '\\': byte = '\\'; break;
+                    case '"': byte = '"'; break;
+                    default:
+                        byte = *p; // Unknown escape, use literal
+                        break;
+                }
+                p++;
             }
-            p++;
         } else {
             byte = *p++;
         }
@@ -896,7 +906,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                 bump_size(as, as->current_section, 4);
             }
             return true;
-        } else if (strcmp(tokens[0], ".half") == 0 && num_tokens > 1) {
+        } else if ((strcmp(tokens[0], ".half") == 0 || strcmp(tokens[0], ".short") == 0) && num_tokens > 1) {
             // .half - emit 16-bit halfwords
             for (int i = 1; i < num_tokens; i++) {
                 uint16_t value = parse_immediate(tokens[i]) & 0xFFFF;

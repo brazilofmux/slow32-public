@@ -2,88 +2,39 @@
 
 This document consolidates feedback and improvement suggestions for the SLOW-32 toolchain components.
 
-## Assembler Improvements
+## Resolved Issues
 
-### Key Fixes Needed
-- **Register names**: Make case-insensitive
-- **`.word symbol`**: Support via REL_32 relocation for jump tables/data pointers
-- **Auto-align in `.text`**: Use `bump_size()` for uniform section accounting
-- **S-format parsing**: Explicit `rs2` handling
-- **`%lo(symbol)`**: Keep in loads/stores exactly as-is
+### Assembler (all resolved)
+- **Register names**: Case-insensitive via `tolower()` in `parse_register()` ✅
+- **`.word symbol`**: REL_32 relocations for jump tables/data pointers ✅
+- **Auto-align in `.text`**: `bump_size()` for uniform section accounting ✅
+- **S-format parsing**: Explicit `rs2` handling with multiple addressing modes ✅
+- **`%lo(symbol)`**: Correctly marked and applied in loads/stores ✅
 
-*(Note: Case handling and .string directive behavior have been verified as correct/fixed)*
+### LLVM Backend (all resolved)
+- **Switch/jump tables**: Custom `LowerJumpTable()`, assembler REL_32, linker support ✅
+- **Address formation / GEP scaling**: `SelectAddr()` handles global+offset, 12-bit constraints ✅
+- **Long branches**: R2 reserved for materialization, pseudo instructions expanded ✅
 
-## Toolchain Status (2026-01-27)
+### Toolchain (all resolved)
+1. **64-bit Division** ✅ — `UMUL_LOHI` custom lowering verified correct.
+2. **Linker Error Handling** ✅ — Hard errors on unresolved symbols (exit code 1).
+3. **REL_CALL Implementation** ✅ — Implemented in `s32-ld.c`.
+4. **Linker Range Checks** ✅ — LO12 signed ±2048, BRANCH +4094, JAL +1,048,574.
+5. **Printf Formatting** ✅ — `%llu` and other formats verified.
+6. **Runtime Safety & Optimization** ✅ — `memset` beq-only loops, segregated free list malloc.
+7. **Emulator Safety** ✅ — W^X unified across all emulators, respects header flag.
+8. **Shared Loader** ✅ — Callback-based `s32x_loader.h` used by all emulators.
+9. **IEEE 754 Floating-Point** ✅ — Native f32/f64 instructions across entire toolchain.
 
-### Resolved / Verified
-1. **64-bit Division Bug** ✅
-   - The `UMUL_LOHI` custom lowering logic was verified to produce correct results.
-   - `test_i64_div.c` passes with correct output.
-   - Documentation in `docs/issues/llvm-i64-division.md` updated.
+## Open Items
 
-2. **Linker Error Handling** ✅
-   - Linker now hard-errors on unresolved symbols (Exit Code 1).
-   - Prevents generation of broken binaries with missing symbols.
-
-3. **REL_CALL Implementation** ✅
-   - `REL_CALL` relocation type is implemented in the linker (`s32-ld.c`).
-
-4. **Linker Range Checks** ✅
-   - LO12 "unpaired" check uses signed ±2048.
-   - BRANCH upper bound tightened to +4094.
-   - JAL upper bound tightened to +1,048,574.
-
-5. **Printf Formatting** ✅
-   - `printf` with `%llu` and other formats verified working correctly.
-
-6. **Runtime Safety & Optimization** ✅
-   - `memset` now uses `beq`-only loops, avoiding `bne` as per safety guidelines.
-   - `malloc` upgraded to O(1) Segregated Free List allocator.
-   - Floating-point code removed (unsupported); Integer math enabled.
-
-7. **Emulator Safety** ✅
-   - W^X protection logic unified across `slow32`, `slow32-fast`, and `slow32-dbt`.
-   - Protection now respects `S32X_FLAG_W_XOR_X` header flag.
-   - All three emulators use shared `s32x_loader.h` for executable loading.
-
-8. **Shared Loader** ✅
-   - All emulators (slow32, slow32-fast, dbt) now use callback-based `s32x_loader.h`.
-   - `load_s32x_header()` for metadata, `load_s32x_file()` with write callback for sections.
-
-### Open Issues
-1. **Switch statement optimization**
-   - Jump tables supported in assembler and linker
-   - .word directive supports symbols via REL_32 relocations
-   - LLVM backend may need tuning to avoid excessive .word generation
-
-2. **Address formation correctness**
-   - GEP scaling issues
-   - Issues that cause "works in one TU, breaks when linked" bugs
-
-## Emulator Improvements
-
-### All Emulators (slow32, slow32-fast, slow32-dbt)
-- **Shared loader**: All use `s32x_loader.h` with callback-based section loading ✅
-- **Exit code**: All propagate guest exit code ✅
-- **W^X protection**: Consistent enforcement from .s32x header flag ✅
-- **MMIO**: Auto-detected from executable header ✅
-
-## Priority Order (Updated 2026-01-27)
-
-Most critical issues have been resolved:
-- ✅ **64-bit Division** - Verified working.
-- ✅ **Linker error handling** - Hard errors implemented.
-- ✅ **Compiler LUI/ADDI** - Implemented for 32-bit addresses.
-- ✅ **Linker library paths** - -L and -l flags implemented.
-- ✅ **Shared loader** - All emulators unified.
-
-Remaining lower-priority items:
-1. **Switch statement optimization** - Jump tables tuning (LLVM backend).
-2. **Address formation correctness** - GEP scaling issues (LLVM backend).
+1. **String-float conversions** (dtoa/strtod) — Not yet implemented. Significant effort (~6-7K lines). Low priority until needed.
+2. **Math library transcendentals** (sin, cos, exp, log, etc.) — Stubs satisfy the linker; dbt/QEMU intercept at runtime. No soft-float implementations planned.
 
 ## Testing Recommendations
 
-1. Test multi-file linking with global symbols (Verified)
+1. Test multi-file linking with global symbols
 2. Test negative offsets in data access
 3. Test loops with complex control flow
 4. Test all intrinsics with edge cases (0 size, odd sizes, etc.)

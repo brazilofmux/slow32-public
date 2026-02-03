@@ -1,0 +1,3 @@
+a: s=125 decpt=1 sign=0 len=3
+b: s=15 decpt=1 sign=0 len=2
+c: s=12345 decpt=5 sign=0 len=5
