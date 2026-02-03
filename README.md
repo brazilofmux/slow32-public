@@ -201,7 +201,7 @@ int main() {
 - ✅ **LLVM backend** - PHI nodes, intrinsics, varargs, jump tables, 64-bit integers
 - ✅ **Runtime** - crt0, printf with varargs, memcpy/memset, 64-bit builtins
 - ✅ **IEEE 754 floating-point** - f32 and f64 via hardware FP instructions + software dtoa/printf(%f/%e/%g)
-- ✅ **Regression tests** - All 45/45 passing
+- ✅ **Regression tests** - All 46/46 passing
 - ✅ **Tools** - objdump for object files, exedump for executables  
 
 ## Known Limitations

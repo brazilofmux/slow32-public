@@ -34,6 +34,11 @@ typedef struct {
 #define ALLOCATED_MASK 0x1
 #define SIZE_MASK (~(size_t)0x7)
 
+// Layout helpers
+#define HEADER_SIZE ALIGN(sizeof(header_t))
+#define FOOTER_SIZE (sizeof(footer_t))
+#define MIN_BLOCK_SIZE ALIGN(sizeof(free_node_t) + FOOTER_SIZE)
+
 // Bins
 // Sizes: 16, 24, 32, 40, 48, 56, 64, >64
 #define NUM_BINS 8
@@ -52,7 +57,7 @@ static int is_allocated(header_t *block) {
 }
 
 static void set_footer(header_t *block, size_t size) {
-    footer_t *footer = (footer_t *)((char *)block + size - sizeof(footer_t));
+    footer_t *footer = (footer_t *)((char *)block + size - FOOTER_SIZE);
     footer->size = size;
 }
 
@@ -115,12 +120,12 @@ static void init_heap(void) {
     size_t aligned_start = ALIGN(start_addr);
     
     // Ensure we have space for at least min block
-    if (aligned_start + 16 > (size_t)__heap_end) return; 
+    if (aligned_start + MIN_BLOCK_SIZE > (size_t)__heap_end) return; 
     
     header_t *first_block = (header_t *)aligned_start;
     size_t size = ((size_t)__heap_end - aligned_start) & SIZE_MASK;
     
-    if (size < 16) return; // Too small
+    if (size < MIN_BLOCK_SIZE) return; // Too small
 
     first_block->size = size; 
     set_footer(first_block, size);
@@ -135,8 +140,8 @@ void *malloc(size_t size) {
     if (!heap_initialized) init_heap();
     
     size_t payload_size = ALIGN(size);
-    size_t required_size = sizeof(header_t) + payload_size + sizeof(footer_t);
-    if (required_size < 16) required_size = 16;
+    size_t required_size = ALIGN(HEADER_SIZE + payload_size + FOOTER_SIZE);
+    if (required_size < MIN_BLOCK_SIZE) required_size = MIN_BLOCK_SIZE;
     
     int start_bin = get_bin_index(required_size);
     
@@ -155,7 +160,7 @@ void *malloc(size_t size) {
             if (curr_size >= required_size) {
                 // Found a fit
                 // Split?
-                if (curr_size >= required_size + 16) {
+                if (curr_size >= required_size + MIN_BLOCK_SIZE) {
                     size_t remaining = curr_size - required_size;
                     
                     remove_from_free_list(block);
@@ -174,7 +179,7 @@ void *malloc(size_t size) {
                     block->size |= ALLOCATED_MASK;
                 }
                 
-                return (char *)block + sizeof(header_t);
+                return (char *)block + HEADER_SIZE;
             }
             
             curr = curr->next;
@@ -187,7 +192,7 @@ void *malloc(size_t size) {
 void free(void *ptr) {
     if (!ptr) return;
     
-    header_t *block = (header_t *)((char *)ptr - sizeof(header_t));
+    header_t *block = (header_t *)((char *)ptr - HEADER_SIZE);
     size_t size = get_size(block);
     
     block->size &= ~ALLOCATED_MASK;
@@ -205,7 +210,7 @@ void free(void *ptr) {
     
     // Coalesce Prev
     if ((char *)block > __heap_start) {
-        footer_t *prev_footer = (footer_t *)((char *)block - sizeof(footer_t));
+        footer_t *prev_footer = (footer_t *)((char *)block - FOOTER_SIZE);
         // Check alignment/validity heuristic
         if ((size_t)prev_footer >= (size_t)__heap_start) {
              size_t prev_size = prev_footer->size & SIZE_MASK;
@@ -240,13 +245,13 @@ void *realloc(void *ptr, size_t size) {
         return NULL;
     }
     
-    header_t *block = (header_t *)((char *)ptr - sizeof(header_t));
+    header_t *block = (header_t *)((char *)ptr - HEADER_SIZE);
     size_t current_size = get_size(block);
-    size_t payload_capacity = current_size - sizeof(header_t) - sizeof(footer_t);
+    size_t payload_capacity = current_size - HEADER_SIZE - FOOTER_SIZE;
     
     if (payload_capacity >= size) return ptr;
     
-    size_t needed_total = sizeof(header_t) + ALIGN(size) + sizeof(footer_t);
+    size_t needed_total = ALIGN(HEADER_SIZE + ALIGN(size) + FOOTER_SIZE);
     header_t *next_block = (header_t *)((char *)block + current_size);
     
     if ((char *)next_block < __heap_end && !is_allocated(next_block)) {
@@ -258,7 +263,7 @@ void *realloc(void *ptr, size_t size) {
             block->size = new_total | ALLOCATED_MASK;
             set_footer(block, new_total);
             
-             if (new_total >= needed_total + 16) {
+             if (new_total >= needed_total + MIN_BLOCK_SIZE) {
                  size_t remaining = new_total - needed_total;
                  block->size = needed_total | ALLOCATED_MASK;
                  set_footer(block, needed_total);
@@ -275,7 +280,8 @@ void *realloc(void *ptr, size_t size) {
     
     void *new_ptr = malloc(size);
     if (new_ptr) {
-        memcpy(new_ptr, ptr, payload_capacity); 
+        size_t copy_size = payload_capacity < size ? payload_capacity : size;
+        memcpy(new_ptr, ptr, copy_size);
         free(ptr);
     }
     return new_ptr;

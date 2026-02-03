@@ -1,0 +1,11 @@
+Heap stress test
+1. Alignment:       PASS
+2. Calloc reuse:    PASS
+3. Coalesce orders: PASS
+4. Defragmentation: PASS
+5. Alloc/free churn: PASS
+6. Realloc churn:   PASS
+7. Large calloc i64: PASS
+8. Multi int64 blks: PASS
+
+All heap tests passed

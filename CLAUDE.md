@@ -66,7 +66,7 @@ make
 ✅ LLVM backend updated for latest LLVM API (Sep 2025)
 ✅ IEEE 754 floating-point: f32 and f64 via software emulation across entire toolchain
 ✅ dtoa/strtod: David Gay's dtoa for printf("%f/%e/%g") float formatting
-✅ Regression tests: ALL 45/45 PASSING (includes float, dtoa, and strtod test suites)
+✅ Regression tests: ALL 46/46 PASSING (includes float, dtoa, strtod, and malloc test suites)
 ✅ Runtime libraries built as archives: libs32.s32a (6KB), libc_debug.s32a (44KB), libc_mmio.s32a (72KB)
 ✅ Optimization passes fixed - no more LLC hangs
 ✅ MMIO support: Emulators use MMIO base from executable header, linker provides __mmio_base symbol
