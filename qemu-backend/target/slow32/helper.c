@@ -311,3 +311,178 @@ void HELPER(slow32_fp_op)(CPUSlow32State *env, uint32_t raw)
 
     r[0] = 0;  /* r0 stays zero */
 }
+
+/*
+ * Native math function intercept helper.
+ *
+ * Dispatches to the host libm function identified by the intercept table
+ * index.  Arguments and return values follow the SLOW-32 calling convention:
+ *   f32 arg:  r3 (bits), second f32 in r4
+ *   f64 arg:  r3:r4 (low:high), second f64 in r5:r6
+ *   int arg:  next register after float args
+ *   ptr arg:  guest address in register, translated via probe_write()
+ *   f32 ret:  r1
+ *   f64 ret:  r1:r2
+ *   int ret:  r1
+ */
+void HELPER(slow32_native_math)(CPUSlow32State *env, uint32_t index)
+{
+    if (index >= (uint32_t)env->num_math_intercepts) {
+        return;
+    }
+
+    Slow32MathIntercept *mi = &env->math_intercepts[index];
+    void *fn = mi->host_fn;
+    uint32_t *r = env->regs;
+    uintptr_t ra = GETPC();
+
+    switch (mi->sig) {
+    case SLOW32_SIG_F32_F32: {
+        float (*f)(float) = fn;
+        float a;
+        memcpy(&a, &r[3], 4);
+        float res = f(a);
+        memcpy(&r[1], &res, 4);
+        break;
+    }
+    case SLOW32_SIG_F64_F64: {
+        double (*f)(double) = fn;
+        double a;
+        uint64_t bits = ((uint64_t)r[4] << 32) | r[3];
+        memcpy(&a, &bits, 8);
+        double res = f(a);
+        uint64_t rbits;
+        memcpy(&rbits, &res, 8);
+        r[1] = (uint32_t)rbits;
+        r[2] = (uint32_t)(rbits >> 32);
+        break;
+    }
+    case SLOW32_SIG_F32_F32_F32: {
+        float (*f)(float, float) = fn;
+        float a, b;
+        memcpy(&a, &r[3], 4);
+        memcpy(&b, &r[4], 4);
+        float res = f(a, b);
+        memcpy(&r[1], &res, 4);
+        break;
+    }
+    case SLOW32_SIG_F64_F64_F64: {
+        double (*f)(double, double) = fn;
+        double a, b;
+        uint64_t abits = ((uint64_t)r[4] << 32) | r[3];
+        uint64_t bbits = ((uint64_t)r[6] << 32) | r[5];
+        memcpy(&a, &abits, 8);
+        memcpy(&b, &bbits, 8);
+        double res = f(a, b);
+        uint64_t rbits;
+        memcpy(&rbits, &res, 8);
+        r[1] = (uint32_t)rbits;
+        r[2] = (uint32_t)(rbits >> 32);
+        break;
+    }
+    case SLOW32_SIG_F64_F64_I32: {
+        /* double fn(double, int) — ldexp */
+        double (*f)(double, int) = fn;
+        double a;
+        uint64_t abits = ((uint64_t)r[4] << 32) | r[3];
+        memcpy(&a, &abits, 8);
+        int32_t n = (int32_t)r[5];
+        double res = f(a, n);
+        uint64_t rbits;
+        memcpy(&rbits, &res, 8);
+        r[1] = (uint32_t)rbits;
+        r[2] = (uint32_t)(rbits >> 32);
+        break;
+    }
+    case SLOW32_SIG_F32_F32_I32: {
+        /* float fn(float, int) — ldexpf */
+        float (*f)(float, int) = fn;
+        float a;
+        memcpy(&a, &r[3], 4);
+        int32_t n = (int32_t)r[4];
+        float res = f(a, n);
+        memcpy(&r[1], &res, 4);
+        break;
+    }
+    case SLOW32_SIG_F64_F64_DPTR: {
+        /* double fn(double, double*) — modf */
+        double (*f)(double, double *) = fn;
+        double a;
+        uint64_t abits = ((uint64_t)r[4] << 32) | r[3];
+        memcpy(&a, &abits, 8);
+        double ipart;
+        double res = f(a, &ipart);
+        /* Write fractional part to r1:r2 */
+        uint64_t rbits;
+        memcpy(&rbits, &res, 8);
+        r[1] = (uint32_t)rbits;
+        r[2] = (uint32_t)(rbits >> 32);
+        /* Write integer part to guest memory at address in r5 */
+        uint32_t guest_ptr = r[5];
+        uint64_t ibits;
+        memcpy(&ibits, &ipart, 8);
+        cpu_stl_data_ra(env, guest_ptr, (uint32_t)ibits, ra);
+        cpu_stl_data_ra(env, guest_ptr + 4, (uint32_t)(ibits >> 32), ra);
+        break;
+    }
+    case SLOW32_SIG_F64_F64_IPTR: {
+        /* double fn(double, int*) — frexp */
+        double (*f)(double, int *) = fn;
+        double a;
+        uint64_t abits = ((uint64_t)r[4] << 32) | r[3];
+        memcpy(&a, &abits, 8);
+        int exp_val;
+        double res = f(a, &exp_val);
+        uint64_t rbits;
+        memcpy(&rbits, &res, 8);
+        r[1] = (uint32_t)rbits;
+        r[2] = (uint32_t)(rbits >> 32);
+        /* Write exponent to guest memory at address in r5 */
+        uint32_t guest_ptr = r[5];
+        cpu_stl_data_ra(env, guest_ptr, (uint32_t)exp_val, ra);
+        break;
+    }
+    case SLOW32_SIG_F32_F32_FPTR: {
+        /* float fn(float, float*) — modff */
+        float (*f)(float, float *) = fn;
+        float a;
+        memcpy(&a, &r[3], 4);
+        float ipart;
+        float res = f(a, &ipart);
+        memcpy(&r[1], &res, 4);
+        /* Write integer part to guest memory at address in r4 */
+        uint32_t guest_ptr = r[4];
+        uint32_t ibits;
+        memcpy(&ibits, &ipart, 4);
+        cpu_stl_data_ra(env, guest_ptr, ibits, ra);
+        break;
+    }
+    case SLOW32_SIG_F32_F32_IPTR: {
+        /* float fn(float, int*) — frexpf */
+        float (*f)(float, int *) = fn;
+        float a;
+        memcpy(&a, &r[3], 4);
+        int exp_val;
+        float res = f(a, &exp_val);
+        memcpy(&r[1], &res, 4);
+        /* Write exponent to guest memory at address in r4 */
+        uint32_t guest_ptr = r[4];
+        cpu_stl_data_ra(env, guest_ptr, (uint32_t)exp_val, ra);
+        break;
+    }
+    case SLOW32_SIG_I32_F64: {
+        /* int fn(double) — isnan, isinf, isfinite */
+        int (*f)(double) = fn;
+        double a;
+        uint64_t abits = ((uint64_t)r[4] << 32) | r[3];
+        memcpy(&a, &abits, 8);
+        r[1] = (uint32_t)f(a);
+        break;
+    }
+    default:
+        break;
+    }
+
+    r[0] = 0;  /* r0 stays zero */
+    env->pc = env->next_pc = env->regs[31];
+}

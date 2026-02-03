@@ -23,6 +23,29 @@
 
 typedef struct Slow32MMIOContext Slow32MMIOContext;
 
+/* Signature types for math function interception */
+enum {
+    SLOW32_SIG_F32_F32,        /* float fn(float) */
+    SLOW32_SIG_F64_F64,        /* double fn(double) */
+    SLOW32_SIG_F32_F32_F32,    /* float fn(float, float) */
+    SLOW32_SIG_F64_F64_F64,    /* double fn(double, double) */
+    SLOW32_SIG_F64_F64_I32,    /* double fn(double, int) — ldexp */
+    SLOW32_SIG_F32_F32_I32,    /* float fn(float, int) — ldexpf */
+    SLOW32_SIG_F64_F64_DPTR,   /* double fn(double, double*) — modf */
+    SLOW32_SIG_F64_F64_IPTR,   /* double fn(double, int*) — frexp */
+    SLOW32_SIG_F32_F32_FPTR,   /* float fn(float, float*) — modff */
+    SLOW32_SIG_F32_F32_IPTR,   /* float fn(float, int*) — frexpf */
+    SLOW32_SIG_I32_F64,        /* int fn(double) — isnan, isinf, isfinite */
+};
+
+#define SLOW32_MAX_MATH_INTERCEPTS 64
+
+typedef struct {
+    uint32_t guest_addr;   /* 0 = unused */
+    void    *host_fn;      /* pointer to host libm function */
+    uint8_t  sig;          /* SLOW32_SIG_* */
+} Slow32MathIntercept;
+
 struct Slow32CPUClass {
     CPUClass parent_class;
 
@@ -53,6 +76,10 @@ struct CPUArchState {
     uint32_t intrinsic_memmove;
     uint32_t intrinsic_strlen;
     uint32_t intrinsic_memswap;
+
+    /* Math function interception table (populated at load time) */
+    Slow32MathIntercept math_intercepts[SLOW32_MAX_MATH_INTERCEPTS];
+    int num_math_intercepts;
 };
 
 static inline uint32_t slow32_get_reg(const CPUSlow32State *env, int idx)

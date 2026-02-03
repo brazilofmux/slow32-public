@@ -11,6 +11,7 @@
 #include <sys/mman.h>
 #include <time.h>
 #include <inttypes.h>
+#include <math.h>
 
 #include "cpu_state.h"
 #include "translate.h"
@@ -193,6 +194,80 @@ static int dbt_write_callback(void *user_data, uint32_t addr, const void *data, 
     return 0;
 }
 
+// Wrapper functions for C99 classification macros (not addressable as function pointers)
+static int host_isnan(double x) { return isnan(x) ? 1 : 0; }
+static int host_isinf(double x) { return isinf(x) ? 1 : 0; }
+static int host_isfinite(double x) { return isfinite(x) ? 1 : 0; }
+
+// Math function interception table: maps symbol names to host libm functions
+static const struct {
+    const char *name;
+    void       *host_fn;
+    uint8_t     sig;
+} math_intercepts[] = {
+    // f32 unary: float fn(float)
+    { "sqrtf",    (void*)(uintptr_t)sqrtf,    SIG_F32_F32 },
+    { "fabsf",    (void*)(uintptr_t)fabsf,    SIG_F32_F32 },
+    { "sinf",     (void*)(uintptr_t)sinf,     SIG_F32_F32 },
+    { "cosf",     (void*)(uintptr_t)cosf,     SIG_F32_F32 },
+    { "tanf",     (void*)(uintptr_t)tanf,     SIG_F32_F32 },
+    { "asinf",    (void*)(uintptr_t)asinf,    SIG_F32_F32 },
+    { "acosf",    (void*)(uintptr_t)acosf,    SIG_F32_F32 },
+    { "atanf",    (void*)(uintptr_t)atanf,    SIG_F32_F32 },
+    { "sinhf",    (void*)(uintptr_t)sinhf,    SIG_F32_F32 },
+    { "coshf",    (void*)(uintptr_t)coshf,    SIG_F32_F32 },
+    { "tanhf",    (void*)(uintptr_t)tanhf,    SIG_F32_F32 },
+    { "expf",     (void*)(uintptr_t)expf,     SIG_F32_F32 },
+    { "logf",     (void*)(uintptr_t)logf,     SIG_F32_F32 },
+    { "log10f",   (void*)(uintptr_t)log10f,   SIG_F32_F32 },
+    { "ceilf",    (void*)(uintptr_t)ceilf,    SIG_F32_F32 },
+    { "floorf",   (void*)(uintptr_t)floorf,   SIG_F32_F32 },
+    { "roundf",   (void*)(uintptr_t)roundf,   SIG_F32_F32 },
+    { "truncf",   (void*)(uintptr_t)truncf,   SIG_F32_F32 },
+    // f64 unary: double fn(double)
+    { "sqrt",     (void*)(uintptr_t)sqrt,     SIG_F64_F64 },
+    { "fabs",     (void*)(uintptr_t)fabs,     SIG_F64_F64 },
+    { "sin",      (void*)(uintptr_t)sin,      SIG_F64_F64 },
+    { "cos",      (void*)(uintptr_t)cos,      SIG_F64_F64 },
+    { "tan",      (void*)(uintptr_t)tan,      SIG_F64_F64 },
+    { "asin",     (void*)(uintptr_t)asin,     SIG_F64_F64 },
+    { "acos",     (void*)(uintptr_t)acos,     SIG_F64_F64 },
+    { "atan",     (void*)(uintptr_t)atan,     SIG_F64_F64 },
+    { "sinh",     (void*)(uintptr_t)sinh,     SIG_F64_F64 },
+    { "cosh",     (void*)(uintptr_t)cosh,     SIG_F64_F64 },
+    { "tanh",     (void*)(uintptr_t)tanh,     SIG_F64_F64 },
+    { "exp",      (void*)(uintptr_t)exp,      SIG_F64_F64 },
+    { "log",      (void*)(uintptr_t)log,      SIG_F64_F64 },
+    { "log10",    (void*)(uintptr_t)log10,    SIG_F64_F64 },
+    { "ceil",     (void*)(uintptr_t)ceil,     SIG_F64_F64 },
+    { "floor",    (void*)(uintptr_t)floor,    SIG_F64_F64 },
+    { "round",    (void*)(uintptr_t)round,    SIG_F64_F64 },
+    { "trunc",    (void*)(uintptr_t)trunc,    SIG_F64_F64 },
+    // f32 binary: float fn(float, float)
+    { "fmodf",    (void*)(uintptr_t)fmodf,    SIG_F32_F32_F32 },
+    { "powf",     (void*)(uintptr_t)powf,     SIG_F32_F32_F32 },
+    { "atan2f",   (void*)(uintptr_t)atan2f,   SIG_F32_F32_F32 },
+    { "copysignf",(void*)(uintptr_t)copysignf,SIG_F32_F32_F32 },
+    // f64 binary: double fn(double, double)
+    { "fmod",     (void*)(uintptr_t)fmod,     SIG_F64_F64_F64 },
+    { "pow",      (void*)(uintptr_t)pow,      SIG_F64_F64_F64 },
+    { "atan2",    (void*)(uintptr_t)atan2,    SIG_F64_F64_F64 },
+    { "copysign", (void*)(uintptr_t)copysign, SIG_F64_F64_F64 },
+    // float/int mixed
+    { "ldexpf",   (void*)(uintptr_t)ldexpf,   SIG_F32_F32_I32 },
+    { "ldexp",    (void*)(uintptr_t)ldexp,    SIG_F64_F64_I32 },
+    // Pointer-out
+    { "frexpf",   (void*)(uintptr_t)frexpf,   SIG_F32_F32_IPTR2 },
+    { "frexp",    (void*)(uintptr_t)frexp,    SIG_F64_F64_IPTR },
+    { "modff",    (void*)(uintptr_t)modff,    SIG_F32_F32_FPTR },
+    { "modf",     (void*)(uintptr_t)modf,     SIG_F64_F64_DPTR },
+    // Int-returning: int fn(double) — use wrappers since C99 macros aren't addressable
+    { "isnan",    (void*)(uintptr_t)host_isnan,    SIG_I32_F64 },
+    { "isinf",    (void*)(uintptr_t)host_isinf,    SIG_I32_F64 },
+    { "isfinite", (void*)(uintptr_t)host_isfinite, SIG_I32_F64 },
+    { NULL, NULL, 0 }
+};
+
 bool dbt_load_s32x(dbt_cpu_state_t *cpu, const char *filename) {
     // Read and validate header
     s32x_load_result_t hdr = load_s32x_header(filename);
@@ -307,6 +382,20 @@ bool dbt_load_s32x(dbt_cpu_state_t *cpu, const char *filename) {
                 uint32_t addr = s32x_symtab_lookup(&st, *n);
                 if (addr) { cpu->intrinsic_memswap = addr; break; }
             }
+
+            // Populate math function intercept table
+            cpu->num_intercepts = 0;
+            for (int i = 0; math_intercepts[i].name != NULL; i++) {
+                if (cpu->num_intercepts >= MAX_INTERCEPTS) break;
+                uint32_t addr = s32x_symtab_lookup(&st, math_intercepts[i].name);
+                if (addr) {
+                    cpu->intercepts[cpu->num_intercepts].guest_addr = addr;
+                    cpu->intercepts[cpu->num_intercepts].host_fn = math_intercepts[i].host_fn;
+                    cpu->intercepts[cpu->num_intercepts].sig = math_intercepts[i].sig;
+                    cpu->num_intercepts++;
+                }
+            }
+
             s32x_symtab_free(&st);
         } else {
             cpu->intrinsics_enabled = false;
@@ -1025,6 +1114,8 @@ int main(int argc, char **argv) {
             if (cpu.intrinsic_memmove) fprintf(stderr, "    memmove: 0x%08X\n", cpu.intrinsic_memmove);
             if (cpu.intrinsic_strlen)  fprintf(stderr, "    strlen:  0x%08X\n", cpu.intrinsic_strlen);
             if (cpu.intrinsic_memswap) fprintf(stderr, "    memswap: 0x%08X\n", cpu.intrinsic_memswap);
+            if (cpu.num_intercepts > 0)
+                fprintf(stderr, "    math intercepts: %d functions\n", cpu.num_intercepts);
         }
     }
 

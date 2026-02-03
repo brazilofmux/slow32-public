@@ -522,6 +522,17 @@ static bool try_emit_intrinsic(DisasContext *ctx, CPUSlow32State *env)
         }
     }
 
+    /* Check math function intercept table */
+    for (int i = 0; i < env->num_math_intercepts; i++) {
+        if (env->math_intercepts[i].guest_addr == ctx->pc) {
+            gen_helper_slow32_native_math(tcg_env, tcg_constant_i32(i));
+            commit_pc_tcg(load_gpr(31));
+            lookup_and_goto_ptr(ctx);
+            ctx->is_jmp = DISAS_BRANCH;
+            return true;
+        }
+    }
+
     return false;
 }
 

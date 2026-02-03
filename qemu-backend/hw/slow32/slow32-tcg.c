@@ -8,6 +8,7 @@
 #include "qemu/units.h"
 #include "qemu/bswap.h"
 #include "qemu/log.h"
+#include <math.h>
 #include "target/slow32/cpu.h"
 #include "target/slow32/mmio.h"
 #include "qom/object.h"
@@ -68,6 +69,79 @@ typedef struct QEMU_PACKED Slow32Symbol {
     uint8_t  binding;
     uint32_t size;
 } Slow32Symbol;
+
+/* Wrapper functions for C99 classification macros (not addressable) */
+static int host_isnan(double x) { return isnan(x) ? 1 : 0; }
+static int host_isinf(double x) { return isinf(x) ? 1 : 0; }
+static int host_isfinite(double x) { return isfinite(x) ? 1 : 0; }
+
+/* Math function interception table: maps symbol names to host libm functions */
+static const struct {
+    const char *name;
+    void       *host_fn;
+    uint8_t     sig;
+} slow32_math_table[] = {
+    /* f32 unary: float fn(float) */
+    { "sqrtf",     (void *)(uintptr_t)sqrtf,     SLOW32_SIG_F32_F32 },
+    { "fabsf",     (void *)(uintptr_t)fabsf,     SLOW32_SIG_F32_F32 },
+    { "sinf",      (void *)(uintptr_t)sinf,      SLOW32_SIG_F32_F32 },
+    { "cosf",      (void *)(uintptr_t)cosf,      SLOW32_SIG_F32_F32 },
+    { "tanf",      (void *)(uintptr_t)tanf,      SLOW32_SIG_F32_F32 },
+    { "asinf",     (void *)(uintptr_t)asinf,     SLOW32_SIG_F32_F32 },
+    { "acosf",     (void *)(uintptr_t)acosf,     SLOW32_SIG_F32_F32 },
+    { "atanf",     (void *)(uintptr_t)atanf,     SLOW32_SIG_F32_F32 },
+    { "sinhf",     (void *)(uintptr_t)sinhf,     SLOW32_SIG_F32_F32 },
+    { "coshf",     (void *)(uintptr_t)coshf,     SLOW32_SIG_F32_F32 },
+    { "tanhf",     (void *)(uintptr_t)tanhf,     SLOW32_SIG_F32_F32 },
+    { "expf",      (void *)(uintptr_t)expf,      SLOW32_SIG_F32_F32 },
+    { "logf",      (void *)(uintptr_t)logf,      SLOW32_SIG_F32_F32 },
+    { "log10f",    (void *)(uintptr_t)log10f,    SLOW32_SIG_F32_F32 },
+    { "ceilf",     (void *)(uintptr_t)ceilf,     SLOW32_SIG_F32_F32 },
+    { "floorf",    (void *)(uintptr_t)floorf,    SLOW32_SIG_F32_F32 },
+    { "roundf",    (void *)(uintptr_t)roundf,    SLOW32_SIG_F32_F32 },
+    { "truncf",    (void *)(uintptr_t)truncf,    SLOW32_SIG_F32_F32 },
+    /* f64 unary: double fn(double) */
+    { "sqrt",      (void *)(uintptr_t)sqrt,      SLOW32_SIG_F64_F64 },
+    { "fabs",      (void *)(uintptr_t)fabs,      SLOW32_SIG_F64_F64 },
+    { "sin",       (void *)(uintptr_t)sin,       SLOW32_SIG_F64_F64 },
+    { "cos",       (void *)(uintptr_t)cos,       SLOW32_SIG_F64_F64 },
+    { "tan",       (void *)(uintptr_t)tan,       SLOW32_SIG_F64_F64 },
+    { "asin",      (void *)(uintptr_t)asin,      SLOW32_SIG_F64_F64 },
+    { "acos",      (void *)(uintptr_t)acos,      SLOW32_SIG_F64_F64 },
+    { "atan",      (void *)(uintptr_t)atan,      SLOW32_SIG_F64_F64 },
+    { "sinh",      (void *)(uintptr_t)sinh,      SLOW32_SIG_F64_F64 },
+    { "cosh",      (void *)(uintptr_t)cosh,      SLOW32_SIG_F64_F64 },
+    { "tanh",      (void *)(uintptr_t)tanh,      SLOW32_SIG_F64_F64 },
+    { "exp",       (void *)(uintptr_t)exp,       SLOW32_SIG_F64_F64 },
+    { "log",       (void *)(uintptr_t)log,       SLOW32_SIG_F64_F64 },
+    { "log10",     (void *)(uintptr_t)log10,     SLOW32_SIG_F64_F64 },
+    { "ceil",      (void *)(uintptr_t)ceil,      SLOW32_SIG_F64_F64 },
+    { "floor",     (void *)(uintptr_t)floor,     SLOW32_SIG_F64_F64 },
+    { "round",     (void *)(uintptr_t)round,     SLOW32_SIG_F64_F64 },
+    { "trunc",     (void *)(uintptr_t)trunc,     SLOW32_SIG_F64_F64 },
+    /* f32 binary: float fn(float, float) */
+    { "fmodf",     (void *)(uintptr_t)fmodf,     SLOW32_SIG_F32_F32_F32 },
+    { "powf",      (void *)(uintptr_t)powf,      SLOW32_SIG_F32_F32_F32 },
+    { "atan2f",    (void *)(uintptr_t)atan2f,    SLOW32_SIG_F32_F32_F32 },
+    { "copysignf", (void *)(uintptr_t)copysignf, SLOW32_SIG_F32_F32_F32 },
+    /* f64 binary: double fn(double, double) */
+    { "fmod",      (void *)(uintptr_t)fmod,      SLOW32_SIG_F64_F64_F64 },
+    { "pow",       (void *)(uintptr_t)pow,       SLOW32_SIG_F64_F64_F64 },
+    { "atan2",     (void *)(uintptr_t)atan2,     SLOW32_SIG_F64_F64_F64 },
+    { "copysign",  (void *)(uintptr_t)copysign,  SLOW32_SIG_F64_F64_F64 },
+    /* float/int mixed */
+    { "ldexpf",    (void *)(uintptr_t)ldexpf,    SLOW32_SIG_F32_F32_I32 },
+    { "ldexp",     (void *)(uintptr_t)ldexp,     SLOW32_SIG_F64_F64_I32 },
+    /* Pointer-out */
+    { "frexpf",    (void *)(uintptr_t)frexpf,    SLOW32_SIG_F32_F32_IPTR },
+    { "frexp",     (void *)(uintptr_t)frexp,     SLOW32_SIG_F64_F64_IPTR },
+    { "modff",     (void *)(uintptr_t)modff,     SLOW32_SIG_F32_F32_FPTR },
+    { "modf",      (void *)(uintptr_t)modf,      SLOW32_SIG_F64_F64_DPTR },
+    /* Int-returning classification functions */
+    { "isnan",     (void *)(uintptr_t)host_isnan,     SLOW32_SIG_I32_F64 },
+    { "isinf",     (void *)(uintptr_t)host_isinf,     SLOW32_SIG_I32_F64 },
+    { "isfinite",  (void *)(uintptr_t)host_isfinite,  SLOW32_SIG_I32_F64 },
+};
 
 /*
  * Scan the .s32x section table for SYMTAB/STRTAB sections, parse the
@@ -178,6 +252,34 @@ next_lookup:;
         if (env->intrinsic_memswap) {
             qemu_log("  memswap: 0x%08x\n", env->intrinsic_memswap);
         }
+    }
+
+    /* Scan for math function symbols */
+    env->num_math_intercepts = 0;
+    for (size_t m = 0; m < G_N_ELEMENTS(slow32_math_table); m++) {
+        if (env->num_math_intercepts >= SLOW32_MAX_MATH_INTERCEPTS) {
+            break;
+        }
+        for (uint32_t i = 0; i < nsyms; i++) {
+            if (syms[i].name_offset < sym_strtab_size &&
+                strcmp(&sym_str[syms[i].name_offset],
+                       slow32_math_table[m].name) == 0 &&
+                syms[i].value != 0) {
+                int idx = env->num_math_intercepts++;
+                env->math_intercepts[idx].guest_addr =
+                    syms[i].value;
+                env->math_intercepts[idx].host_fn =
+                    slow32_math_table[m].host_fn;
+                env->math_intercepts[idx].sig =
+                    slow32_math_table[m].sig;
+                break;
+            }
+        }
+    }
+
+    if (env->num_math_intercepts > 0) {
+        qemu_log("slow32: math intercepts: %d functions\n",
+                 env->num_math_intercepts);
     }
 }
 

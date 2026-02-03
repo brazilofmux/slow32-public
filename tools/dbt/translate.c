@@ -2494,6 +2494,393 @@ static bool emit_native_memswap_stub(translate_ctx_t *ctx, translated_block_t *b
     return !e->overflow;
 }
 
+// ============================================================================
+// Math function interception emitters
+// ============================================================================
+
+// Helper: emit the common epilogue for math stubs (set PC = LR, exit indirect)
+static void emit_math_epilogue(emit_ctx_t *e) {
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(REG_LR));
+    emit_mov_m32_r32(e, RBP, CPU_PC_OFFSET, RAX);
+    emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_INDIRECT);
+    emit_ret(e);
+}
+
+// float fn(float) — SIG_F32_F32
+// Guest: r3 = float bits in, r1 = float bits out
+static bool emit_native_math_f32_unary(translate_ctx_t *ctx, translated_block_t *block,
+                                        void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Load guest r3 (float bits) into eax
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));
+
+    // movd xmm0, eax  →  66 0F 6E C0
+    emit_byte(e, 0x66); emit_byte(e, 0x0F); emit_byte(e, 0x6E); emit_byte(e, 0xC0);
+
+    // Align stack (entry is 8-byte aligned, need 16-byte for call)
+    emit_push_r64(e, RAX);
+
+    // Call host function
+    emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)host_fn);
+    emit_call_r64(e, RAX);
+
+    emit_pop_r64(e, RAX);  // restore stack alignment
+
+    // movd eax, xmm0  →  66 0F 7E C0
+    emit_byte(e, 0x66); emit_byte(e, 0x0F); emit_byte(e, 0x7E); emit_byte(e, 0xC0);
+
+    // Store result to guest r1
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
+
+    emit_math_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// double fn(double) — SIG_F64_F64
+// Guest: r3=low32, r4=high32 → r1=low32, r2=high32
+static bool emit_native_math_f64_unary(translate_ctx_t *ctx, translated_block_t *block,
+                                        void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Load r3 (low), r4 (high) and combine into rax
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));   // eax = low32
+    emit_mov_r32_m32(e, RDX, RBP, GUEST_REG_OFFSET(4));   // edx = high32
+
+    // shl rdx, 32  →  48 C1 E2 20
+    emit_byte(e, 0x48); emit_byte(e, 0xC1); emit_byte(e, 0xE2); emit_byte(e, 0x20);
+    // or rax, rdx  →  48 09 D0
+    emit_byte(e, 0x48); emit_byte(e, 0x09); emit_byte(e, 0xD0);
+
+    // movq xmm0, rax  →  66 48 0F 6E C0
+    emit_byte(e, 0x66); emit_byte(e, 0x48); emit_byte(e, 0x0F); emit_byte(e, 0x6E); emit_byte(e, 0xC0);
+
+    emit_push_r64(e, RAX);
+    emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)host_fn);
+    emit_call_r64(e, RAX);
+    emit_pop_r64(e, RAX);
+
+    // movq rax, xmm0  →  66 48 0F 7E C0
+    emit_byte(e, 0x66); emit_byte(e, 0x48); emit_byte(e, 0x0F); emit_byte(e, 0x7E); emit_byte(e, 0xC0);
+
+    // Store low32 to r1
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
+    // Shift right 32 to get high32, store to r2
+    // shr rax, 32  →  48 C1 E8 20
+    emit_byte(e, 0x48); emit_byte(e, 0xC1); emit_byte(e, 0xE8); emit_byte(e, 0x20);
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(2), RAX);
+
+    emit_math_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// float fn(float, float) — SIG_F32_F32_F32
+// Guest: r3=x, r4=y → r1=result
+static bool emit_native_math_f32_binary(translate_ctx_t *ctx, translated_block_t *block,
+                                         void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Load r3 → xmm0
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));
+    // movd xmm0, eax
+    emit_byte(e, 0x66); emit_byte(e, 0x0F); emit_byte(e, 0x6E); emit_byte(e, 0xC0);
+
+    // Load r4 → xmm1
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(4));
+    // movd xmm1, eax  →  66 0F 6E C8
+    emit_byte(e, 0x66); emit_byte(e, 0x0F); emit_byte(e, 0x6E); emit_byte(e, 0xC8);
+
+    emit_push_r64(e, RAX);
+    emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)host_fn);
+    emit_call_r64(e, RAX);
+    emit_pop_r64(e, RAX);
+
+    // movd eax, xmm0
+    emit_byte(e, 0x66); emit_byte(e, 0x0F); emit_byte(e, 0x7E); emit_byte(e, 0xC0);
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
+
+    emit_math_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// double fn(double, double) — SIG_F64_F64_F64
+// Guest: r3:r4=x, r5:r6=y → r1:r2=result
+static bool emit_native_math_f64_binary(translate_ctx_t *ctx, translated_block_t *block,
+                                         void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Load r3:r4 → xmm0
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));   // low
+    emit_mov_r32_m32(e, RDX, RBP, GUEST_REG_OFFSET(4));   // high
+    emit_byte(e, 0x48); emit_byte(e, 0xC1); emit_byte(e, 0xE2); emit_byte(e, 0x20); // shl rdx,32
+    emit_byte(e, 0x48); emit_byte(e, 0x09); emit_byte(e, 0xD0); // or rax, rdx
+    // movq xmm0, rax
+    emit_byte(e, 0x66); emit_byte(e, 0x48); emit_byte(e, 0x0F); emit_byte(e, 0x6E); emit_byte(e, 0xC0);
+
+    // Load r5:r6 → xmm1
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(5));   // low
+    emit_mov_r32_m32(e, RDX, RBP, GUEST_REG_OFFSET(6));   // high
+    emit_byte(e, 0x48); emit_byte(e, 0xC1); emit_byte(e, 0xE2); emit_byte(e, 0x20); // shl rdx,32
+    emit_byte(e, 0x48); emit_byte(e, 0x09); emit_byte(e, 0xD0); // or rax, rdx
+    // movq xmm1, rax  →  66 48 0F 6E C8
+    emit_byte(e, 0x66); emit_byte(e, 0x48); emit_byte(e, 0x0F); emit_byte(e, 0x6E); emit_byte(e, 0xC8);
+
+    emit_push_r64(e, RAX);
+    emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)host_fn);
+    emit_call_r64(e, RAX);
+    emit_pop_r64(e, RAX);
+
+    // movq rax, xmm0
+    emit_byte(e, 0x66); emit_byte(e, 0x48); emit_byte(e, 0x0F); emit_byte(e, 0x7E); emit_byte(e, 0xC0);
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
+    emit_byte(e, 0x48); emit_byte(e, 0xC1); emit_byte(e, 0xE8); emit_byte(e, 0x20); // shr rax,32
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(2), RAX);
+
+    emit_math_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// double fn(double, int) — SIG_F64_F64_I32 (ldexp)
+// Guest: r3:r4=x, r5=int → r1:r2=result
+static bool emit_native_math_f64_i32(translate_ctx_t *ctx, translated_block_t *block,
+                                      void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Load r3:r4 → xmm0
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));
+    emit_mov_r32_m32(e, RDX, RBP, GUEST_REG_OFFSET(4));
+    emit_byte(e, 0x48); emit_byte(e, 0xC1); emit_byte(e, 0xE2); emit_byte(e, 0x20);
+    emit_byte(e, 0x48); emit_byte(e, 0x09); emit_byte(e, 0xD0);
+    emit_byte(e, 0x66); emit_byte(e, 0x48); emit_byte(e, 0x0F); emit_byte(e, 0x6E); emit_byte(e, 0xC0);
+
+    // Load r5 → edi (int argument)
+    emit_mov_r32_m32(e, RDI, RBP, GUEST_REG_OFFSET(5));
+
+    emit_push_r64(e, RAX);
+    emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)host_fn);
+    emit_call_r64(e, RAX);
+    emit_pop_r64(e, RAX);
+
+    // movq rax, xmm0
+    emit_byte(e, 0x66); emit_byte(e, 0x48); emit_byte(e, 0x0F); emit_byte(e, 0x7E); emit_byte(e, 0xC0);
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
+    emit_byte(e, 0x48); emit_byte(e, 0xC1); emit_byte(e, 0xE8); emit_byte(e, 0x20);
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(2), RAX);
+
+    emit_math_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// float fn(float, int) — SIG_F32_F32_I32 (ldexpf)
+// Guest: r3=float, r4=int → r1=result
+static bool emit_native_math_f32_i32(translate_ctx_t *ctx, translated_block_t *block,
+                                      void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Load r3 → xmm0
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));
+    emit_byte(e, 0x66); emit_byte(e, 0x0F); emit_byte(e, 0x6E); emit_byte(e, 0xC0);
+
+    // Load r4 → edi
+    emit_mov_r32_m32(e, RDI, RBP, GUEST_REG_OFFSET(4));
+
+    emit_push_r64(e, RAX);
+    emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)host_fn);
+    emit_call_r64(e, RAX);
+    emit_pop_r64(e, RAX);
+
+    // movd eax, xmm0
+    emit_byte(e, 0x66); emit_byte(e, 0x0F); emit_byte(e, 0x7E); emit_byte(e, 0xC0);
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
+
+    emit_math_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// double fn(double, double*) — SIG_F64_F64_DPTR (modf)
+// Guest: r3:r4=x, r5=guest_ptr → r1:r2=result, *ptr written
+static bool emit_native_math_f64_dptr(translate_ctx_t *ctx, translated_block_t *block,
+                                       void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Load r3:r4 → xmm0
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));
+    emit_mov_r32_m32(e, RDX, RBP, GUEST_REG_OFFSET(4));
+    emit_byte(e, 0x48); emit_byte(e, 0xC1); emit_byte(e, 0xE2); emit_byte(e, 0x20);
+    emit_byte(e, 0x48); emit_byte(e, 0x09); emit_byte(e, 0xD0);
+    emit_byte(e, 0x66); emit_byte(e, 0x48); emit_byte(e, 0x0F); emit_byte(e, 0x6E); emit_byte(e, 0xC0);
+
+    // Load r5 (guest pointer), convert to host: rdi = r14 + r5
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(5));
+    emit_mov_r64_r64(e, RDI, R14);
+    // add rdi, rax  →  48 01 C7
+    emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, 0xC7);
+
+    emit_push_r64(e, RAX);
+    emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)host_fn);
+    emit_call_r64(e, RAX);
+    emit_pop_r64(e, RAX);
+
+    // movq rax, xmm0
+    emit_byte(e, 0x66); emit_byte(e, 0x48); emit_byte(e, 0x0F); emit_byte(e, 0x7E); emit_byte(e, 0xC0);
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
+    emit_byte(e, 0x48); emit_byte(e, 0xC1); emit_byte(e, 0xE8); emit_byte(e, 0x20);
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(2), RAX);
+
+    emit_math_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// double fn(double, int*) — SIG_F64_F64_IPTR (frexp)
+// Guest: r3:r4=x, r5=guest_ptr → r1:r2=result, *ptr written
+static bool emit_native_math_f64_iptr(translate_ctx_t *ctx, translated_block_t *block,
+                                       void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Same as f64_dptr — pointer type doesn't matter for the call
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));
+    emit_mov_r32_m32(e, RDX, RBP, GUEST_REG_OFFSET(4));
+    emit_byte(e, 0x48); emit_byte(e, 0xC1); emit_byte(e, 0xE2); emit_byte(e, 0x20);
+    emit_byte(e, 0x48); emit_byte(e, 0x09); emit_byte(e, 0xD0);
+    emit_byte(e, 0x66); emit_byte(e, 0x48); emit_byte(e, 0x0F); emit_byte(e, 0x6E); emit_byte(e, 0xC0);
+
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(5));
+    emit_mov_r64_r64(e, RDI, R14);
+    emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, 0xC7);
+
+    emit_push_r64(e, RAX);
+    emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)host_fn);
+    emit_call_r64(e, RAX);
+    emit_pop_r64(e, RAX);
+
+    emit_byte(e, 0x66); emit_byte(e, 0x48); emit_byte(e, 0x0F); emit_byte(e, 0x7E); emit_byte(e, 0xC0);
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
+    emit_byte(e, 0x48); emit_byte(e, 0xC1); emit_byte(e, 0xE8); emit_byte(e, 0x20);
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(2), RAX);
+
+    emit_math_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// float fn(float, float*) — SIG_F32_F32_FPTR (modff)
+// Guest: r3=float, r4=guest_ptr → r1=result, *ptr written
+static bool emit_native_math_f32_fptr(translate_ctx_t *ctx, translated_block_t *block,
+                                       void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Load r3 → xmm0
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));
+    emit_byte(e, 0x66); emit_byte(e, 0x0F); emit_byte(e, 0x6E); emit_byte(e, 0xC0);
+
+    // Load r4 (guest pointer) → host pointer in rdi
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(4));
+    emit_mov_r64_r64(e, RDI, R14);
+    emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, 0xC7);
+
+    emit_push_r64(e, RAX);
+    emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)host_fn);
+    emit_call_r64(e, RAX);
+    emit_pop_r64(e, RAX);
+
+    // movd eax, xmm0
+    emit_byte(e, 0x66); emit_byte(e, 0x0F); emit_byte(e, 0x7E); emit_byte(e, 0xC0);
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
+
+    emit_math_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// float fn(float, int*) — SIG_F32_F32_IPTR2 (frexpf)
+// Guest: r3=float, r4=guest_ptr → r1=result, *ptr written
+static bool emit_native_math_f32_iptr(translate_ctx_t *ctx, translated_block_t *block,
+                                       void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));
+    emit_byte(e, 0x66); emit_byte(e, 0x0F); emit_byte(e, 0x6E); emit_byte(e, 0xC0);
+
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(4));
+    emit_mov_r64_r64(e, RDI, R14);
+    emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, 0xC7);
+
+    emit_push_r64(e, RAX);
+    emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)host_fn);
+    emit_call_r64(e, RAX);
+    emit_pop_r64(e, RAX);
+
+    emit_byte(e, 0x66); emit_byte(e, 0x0F); emit_byte(e, 0x7E); emit_byte(e, 0xC0);
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
+
+    emit_math_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// int fn(double) — SIG_I32_F64 (isnan, isinf, isfinite)
+// Guest: r3:r4=double → r1=int result
+static bool emit_native_math_i32_f64(translate_ctx_t *ctx, translated_block_t *block,
+                                      void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Load r3:r4 → xmm0
+    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));
+    emit_mov_r32_m32(e, RDX, RBP, GUEST_REG_OFFSET(4));
+    emit_byte(e, 0x48); emit_byte(e, 0xC1); emit_byte(e, 0xE2); emit_byte(e, 0x20);
+    emit_byte(e, 0x48); emit_byte(e, 0x09); emit_byte(e, 0xD0);
+    emit_byte(e, 0x66); emit_byte(e, 0x48); emit_byte(e, 0x0F); emit_byte(e, 0x6E); emit_byte(e, 0xC0);
+
+    emit_push_r64(e, RAX);
+    emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)host_fn);
+    emit_call_r64(e, RAX);
+    emit_pop_r64(e, RAX);
+
+    // Result is in eax (int), store to guest r1
+    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
+
+    emit_math_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// Dispatch to the correct math emitter based on signature type
+static bool emit_native_math_stub(translate_ctx_t *ctx, translated_block_t *block,
+                                   void *host_fn, uint8_t sig) {
+    switch (sig) {
+        case SIG_F32_F32:      return emit_native_math_f32_unary(ctx, block, host_fn);
+        case SIG_F64_F64:      return emit_native_math_f64_unary(ctx, block, host_fn);
+        case SIG_F32_F32_F32:  return emit_native_math_f32_binary(ctx, block, host_fn);
+        case SIG_F64_F64_F64:  return emit_native_math_f64_binary(ctx, block, host_fn);
+        case SIG_F64_F64_I32:  return emit_native_math_f64_i32(ctx, block, host_fn);
+        case SIG_F32_F32_I32:  return emit_native_math_f32_i32(ctx, block, host_fn);
+        case SIG_F64_F64_DPTR: return emit_native_math_f64_dptr(ctx, block, host_fn);
+        case SIG_F64_F64_IPTR: return emit_native_math_f64_iptr(ctx, block, host_fn);
+        case SIG_F32_F32_FPTR: return emit_native_math_f32_fptr(ctx, block, host_fn);
+        case SIG_F32_F32_IPTR2:return emit_native_math_f32_iptr(ctx, block, host_fn);
+        case SIG_I32_F64:      return emit_native_math_i32_f64(ctx, block, host_fn);
+        default: return false;
+    }
+}
+
 // Check if guest_pc matches a known intrinsic and emit native stub
 // Returns the block if handled, NULL if not an intrinsic
 static translated_block_t *try_emit_intrinsic(translate_ctx_t *ctx, uint32_t guest_pc) {
@@ -2514,7 +2901,51 @@ static translated_block_t *try_emit_intrinsic(translate_ctx_t *ctx, uint32_t gue
     } else if (cpu->intrinsic_memswap && guest_pc == cpu->intrinsic_memswap) {
         emitter = emit_native_memswap_stub;
     } else {
-        return NULL;
+        // Check math intercept table
+        void *math_fn = NULL;
+        uint8_t math_sig = 0;
+        for (int i = 0; i < cpu->num_intercepts; i++) {
+            if (cpu->intercepts[i].guest_addr == guest_pc) {
+                math_fn = cpu->intercepts[i].host_fn;
+                math_sig = cpu->intercepts[i].sig;
+                break;
+            }
+        }
+        if (!math_fn) return NULL;
+
+        // Emit math stub
+        block_cache_t *cache = ctx->cache;
+        if (!cache) return NULL;
+
+        translated_block_t *block = cache_alloc_block(cache, guest_pc);
+        if (!block) {
+            cache_flush(cache);
+            block = cache_alloc_block(cache, guest_pc);
+            if (!block) return NULL;
+        }
+
+        uint8_t *code_start = cache_get_code_ptr(cache);
+        if (!code_start) {
+            cache_flush(cache);
+            block = cache_alloc_block(cache, guest_pc);
+            code_start = cache_get_code_ptr(cache);
+            if (!code_start || !block) return NULL;
+        }
+
+        emit_ctx_t *e = &ctx->emit;
+        emit_init(e, code_start, cache->code_buffer_size - cache->code_buffer_used);
+        memset(block, 0, sizeof(*block));
+        block->guest_pc = guest_pc;
+        block->host_code = code_start;
+
+        bool ok = emit_native_math_stub(ctx, block, math_fn, math_sig);
+        if (!ok) return NULL;
+
+        block->host_size = emit_offset(e);
+        cache_commit_code(cache, block->host_size);
+        cache_insert(cache, block);
+        cache_chain_incoming(cache, block);
+        return block;
     }
 
     block_cache_t *cache = ctx->cache;

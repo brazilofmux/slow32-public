@@ -8,6 +8,29 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+// Math/intrinsic function interception (table-driven)
+#define MAX_INTERCEPTS 64
+
+enum {
+    SIG_F32_F32,        // float fn(float)
+    SIG_F64_F64,        // double fn(double)
+    SIG_F32_F32_F32,    // float fn(float, float)
+    SIG_F64_F64_F64,    // double fn(double, double)
+    SIG_F64_F64_I32,    // double fn(double, int)   — ldexp
+    SIG_F32_F32_I32,    // float fn(float, int)     — ldexpf
+    SIG_F64_F64_DPTR,   // double fn(double, double*) — modf
+    SIG_F64_F64_IPTR,   // double fn(double, int*)    — frexp
+    SIG_F32_F32_FPTR,   // float fn(float, float*)    — modff
+    SIG_F32_F32_IPTR2,  // float fn(float, int*)      — frexpf
+    SIG_I32_F64,        // int fn(double)  — isnan, isinf, isfinite
+};
+
+typedef struct {
+    uint32_t guest_addr;    // Address in guest binary (0 = unused)
+    void    *host_fn;       // Host function pointer
+    uint8_t  sig;           // Signature type enum
+} dbt_intercept_t;
+
 // Exit reasons (set by translated code before returning to dispatcher)
 typedef enum {
     EXIT_BRANCH         = 0,    // Normal branch, next_pc in cpu->pc
@@ -106,6 +129,10 @@ typedef struct {
     uint32_t intrinsic_memswap;
     bool intrinsics_enabled;    // false to disable recognition (e.g., -I flag)
     uint8_t _pad5[3];
+
+    // Math function interception table
+    dbt_intercept_t intercepts[MAX_INTERCEPTS];
+    int num_intercepts;
 
 } dbt_cpu_state_t;
 
