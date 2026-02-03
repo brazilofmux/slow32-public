@@ -66,4 +66,16 @@ void srand(unsigned int seed) {
     rand_seed = seed;
 }
 
+// dtoa_strtod is provided by Gay's dtoa.c
+extern double dtoa_strtod(const char *s00, char **se);
+
+double strtod(const char *nptr, char **endptr) {
+    return dtoa_strtod(nptr, endptr);
+}
+
+double atof(const char *nptr) {
+    return strtod(nptr, (char **)0);
+}
+
+// atoll() is in convert_extra.c
 // getenv() is now implemented in envp_mmio.c (MMIO) or envp_stub.c (debug)

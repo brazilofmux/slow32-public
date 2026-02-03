@@ -23,7 +23,7 @@ COMPILER_RT_OBJS = intrinsics.s32o intrinsics_extra.s32o float_intrinsics.s32o \
 
 # Core C library objects (common to all libc versions)
 LIBC_CORE_OBJS = string.s32o string_extra.s32o \
-                 malloc.s32o stdlib.s32o stdlib_extra.s32o stdlib_utils.s32o stdlib_missing.s32o \
+                 malloc.s32o stdlib.s32o stdlib_extra.s32o stdlib_utils.s32o \
                  convert.s32o convert_extra.s32o ctype.s32o \
                  printf_enhanced.s32o start.s32o yield.s32o \
                  cxxabi.s32o time_extra.s32o math_int.s32o dtoa.s32o errno.s32o
@@ -56,7 +56,7 @@ ALL_OBJS = $(STARTUP_OBJ) $(COMPILER_RT_OBJS) $(LIBC_CORE_OBJS) \
 
 # C source files that need compilation
 C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_utils.c \
-            stdio.c stdlib_extra.c stdlib_missing.c string_extra.c ctype.c \
+            stdio.c stdlib_extra.c string_extra.c ctype.c \
             stdio_minimal.c convert_extra.c \
             stdio_buffered.c flush_mmio.c flush_debug.c \
             debug_char.c yield.c putchar.c mmio_request.c time_mmio.c \
@@ -144,10 +144,6 @@ convert.ll: convert.c
 
 stdlib_extra.ll: OPT_LEVEL = -O2
 stdlib_extra.ll: stdlib_extra.c
-	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
-
-stdlib_missing.ll: OPT_LEVEL = -O2
-stdlib_missing.ll: stdlib_missing.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
 
 time_extra.ll: OPT_LEVEL = -O2
