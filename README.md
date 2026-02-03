@@ -79,6 +79,15 @@ make
 - `blt`, `bge` - Branch less than/greater or equal
 - `bltu`, `bgeu` - Branch unsigned comparisons
 
+### Floating-Point (R-type, values in GPRs)
+- `fadd.s`, `fsub.s`, `fmul.s`, `fdiv.s`, `fsqrt.s` - f32 arithmetic
+- `feq.s`, `flt.s`, `fle.s` - f32 comparisons
+- `fcvt.w.s`, `fcvt.wu.s`, `fcvt.s.w`, `fcvt.s.wu` - f32 ↔ int conversions
+- `fadd.d`, `fsub.d`, `fmul.d`, `fdiv.d`, `fsqrt.d` - f64 arithmetic (register pairs)
+- `feq.d`, `flt.d`, `fle.d` - f64 comparisons
+- `fcvt.w.d`, `fcvt.wu.d`, `fcvt.d.w`, `fcvt.d.wu` - f64 ↔ int conversions
+- `fcvt.s.d`, `fcvt.d.s` - f32 ↔ f64 conversions
+
 ### Special Instructions
 - `nop` - No operation
 - `yield` - Waste cycles
@@ -191,12 +200,12 @@ int main() {
 ✅ **Linker** - Symbol resolution, HI20/LO12 relocations, proper archives
 ✅ **LLVM backend** - PHI nodes, intrinsics, varargs, jump tables, 64-bit integers
 ✅ **Runtime** - crt0, printf with varargs, memcpy/memset, 64-bit builtins
-✅ **Regression tests** - All 24/24 passing
+✅ **IEEE 754 floating-point** - f32 and f64 via hardware FP instructions + software dtoa/printf(%f/%e/%g)
+✅ **Regression tests** - All 44/44 passing
 ✅ **Tools** - objdump for object files, exedump for executables  
 
 ## Known Limitations
 
-- No floating point support (soft-float not implemented)
 - No scanf/sscanf (declared but not implemented)
 - See `docs/IMPROVEMENTS.md` for detailed issues and fixes
 
