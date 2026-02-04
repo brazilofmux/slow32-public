@@ -2763,6 +2763,80 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len) {
     while (i + 6 < len) {
         size_t i0 = i;
 
+        // Pattern JCC: Jcc +5 ; JMP rel32  ->  inverted-Jcc (combined target)
+        // The emitter produces "ja +5; jmp target" for bounds checks.
+        // We fold into a single "jbe target" saving 5 bytes.
+        // Matches: 0F 8x [rel32=05000000] E9 [rel32]
+        if (i0 + 11 <= len &&
+            code[i0] == 0x0F &&
+            (code[i0 + 1] & 0xF0) == 0x80 &&        // Jcc near (0F 80..8F)
+            code[i0 + 2] == 0x05 &&                   // rel32 = 5
+            code[i0 + 3] == 0x00 &&
+            code[i0 + 4] == 0x00 &&
+            code[i0 + 5] == 0x00 &&
+            code[i0 + 6] == 0xE9) {                   // JMP rel32
+            // Invert condition: flip low bit of cc byte
+            uint8_t cc = code[i0 + 1];
+            uint8_t inv_cc = cc ^ 0x01;
+            // The JMP target is relative to end of JMP (i0+11).
+            // New Jcc target must be relative to end of new Jcc (i0+6, since 5 bytes of JMP gone).
+            // Original JMP displacement is at i0+7..i0+10.
+            int32_t jmp_disp = (int32_t)((uint32_t)code[i0 + 7] |
+                                         ((uint32_t)code[i0 + 8] << 8) |
+                                         ((uint32_t)code[i0 + 9] << 16) |
+                                         ((uint32_t)code[i0 + 10] << 24));
+            // New displacement: original target was at i0+11+jmp_disp.
+            // New instruction ends at i0+6, so new_disp = (i0+11+jmp_disp) - (i0+6) = jmp_disp + 5.
+            int32_t new_disp = jmp_disp + 5;
+            code[i0 + 0] = 0x0F;
+            code[i0 + 1] = inv_cc;
+            code[i0 + 2] = (uint8_t)(new_disp & 0xFF);
+            code[i0 + 3] = (uint8_t)((new_disp >> 8) & 0xFF);
+            code[i0 + 4] = (uint8_t)((new_disp >> 16) & 0xFF);
+            code[i0 + 5] = (uint8_t)((new_disp >> 24) & 0xFF);
+            // NOP out the former JMP
+            for (size_t k = i0 + 6; k < i0 + 11; k++) {
+                code[k] = 0x90;
+            }
+            hits++;
+            i = i0 + 11;
+            continue;
+        }
+
+        // Pattern DSTORE: mov [rbp+disp8], imm32 ; mov [rbp+disp8], imm32 (same disp)
+        // Dead first store — second write overwrites the same address.
+        // Form: C7 45 disp8 imm32 (7 bytes)  C7 45 disp8 imm32 (7 bytes)
+        if (i0 + 14 <= len &&
+            code[i0] == 0xC7 && code[i0 + 1] == 0x45 &&
+            code[i0 + 7] == 0xC7 && code[i0 + 8] == 0x45 &&
+            code[i0 + 2] == code[i0 + 9]) {  // same disp8
+            // NOP out first store
+            for (size_t k = i0; k < i0 + 7; k++) {
+                code[k] = 0x90;
+            }
+            hits++;
+            i = i0 + 7;
+            continue;
+        }
+
+        // Pattern DSTORE32: mov [rbp+disp32], imm32 ; mov [rbp+disp32], imm32 (same disp)
+        // Form: C7 85 disp32 imm32 (10 bytes)  C7 85 disp32 imm32 (10 bytes)
+        if (i0 + 20 <= len &&
+            code[i0] == 0xC7 && code[i0 + 1] == 0x85 &&
+            code[i0 + 10] == 0xC7 && code[i0 + 11] == 0x85 &&
+            code[i0 + 2] == code[i0 + 12] &&  // same disp32 (byte 0)
+            code[i0 + 3] == code[i0 + 13] &&
+            code[i0 + 4] == code[i0 + 14] &&
+            code[i0 + 5] == code[i0 + 15]) {
+            // NOP out first store
+            for (size_t k = i0; k < i0 + 10; k++) {
+                code[k] = 0x90;
+            }
+            hits++;
+            i = i0 + 10;
+            continue;
+        }
+
         // Pattern 0: xor r32, r32 ; cmp r32, r32 -> xor r32, r32 ; test other, other
         // Keeps the zeroed register intact but removes dependency on it.
         if (i0 + 3 < len && code[i0] == 0x31) {
