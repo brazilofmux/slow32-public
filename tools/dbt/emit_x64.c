@@ -1018,6 +1018,103 @@ void emit_int3(emit_ctx_t *ctx) {
 }
 
 // ============================================================================
+// SSE / FP helpers (f32 inline translation)
+// ============================================================================
+
+// Helper: emit F3 0F xx modrm for SSE scalar single instructions (xmm, xmm)
+static void emit_sse_ss_rr(emit_ctx_t *ctx, uint8_t op2, uint8_t dst_xmm, uint8_t src_xmm) {
+    emit_byte(ctx, 0xF3);
+    emit_byte(ctx, 0x0F);
+    emit_byte(ctx, op2);
+    emit_byte(ctx, MODRM(MOD_DIRECT, dst_xmm & 7, src_xmm & 7));
+}
+
+// movd xmm, r32  (66 [REX] 0F 6E /r)
+void emit_movd_xmm_r32(emit_ctx_t *ctx, uint8_t xmm, x64_reg_t r32) {
+    emit_byte(ctx, 0x66);
+    if (r32 >= R8) emit_byte(ctx, REX_BASE | REX_B);
+    emit_byte(ctx, 0x0F);
+    emit_byte(ctx, 0x6E);
+    emit_byte(ctx, MODRM(MOD_DIRECT, xmm & 7, r32 & 7));
+}
+
+// movd r32, xmm  (66 [REX] 0F 7E /r)
+void emit_movd_r32_xmm(emit_ctx_t *ctx, x64_reg_t r32, uint8_t xmm) {
+    emit_byte(ctx, 0x66);
+    if (r32 >= R8) emit_byte(ctx, REX_BASE | REX_B);
+    emit_byte(ctx, 0x0F);
+    emit_byte(ctx, 0x7E);
+    emit_byte(ctx, MODRM(MOD_DIRECT, xmm & 7, r32 & 7));
+}
+
+// addss xmm, xmm  (F3 0F 58 /r)
+void emit_addss(emit_ctx_t *ctx, uint8_t dst_xmm, uint8_t src_xmm) {
+    emit_sse_ss_rr(ctx, 0x58, dst_xmm, src_xmm);
+}
+
+// subss xmm, xmm  (F3 0F 5C /r)
+void emit_subss(emit_ctx_t *ctx, uint8_t dst_xmm, uint8_t src_xmm) {
+    emit_sse_ss_rr(ctx, 0x5C, dst_xmm, src_xmm);
+}
+
+// mulss xmm, xmm  (F3 0F 59 /r)
+void emit_mulss(emit_ctx_t *ctx, uint8_t dst_xmm, uint8_t src_xmm) {
+    emit_sse_ss_rr(ctx, 0x59, dst_xmm, src_xmm);
+}
+
+// divss xmm, xmm  (F3 0F 5E /r)
+void emit_divss(emit_ctx_t *ctx, uint8_t dst_xmm, uint8_t src_xmm) {
+    emit_sse_ss_rr(ctx, 0x5E, dst_xmm, src_xmm);
+}
+
+// sqrtss xmm, xmm  (F3 0F 51 /r)
+void emit_sqrtss(emit_ctx_t *ctx, uint8_t dst_xmm, uint8_t src_xmm) {
+    emit_sse_ss_rr(ctx, 0x51, dst_xmm, src_xmm);
+}
+
+// ucomiss xmm, xmm  (0F 2E /r)
+void emit_ucomiss(emit_ctx_t *ctx, uint8_t xmm1, uint8_t xmm2) {
+    emit_byte(ctx, 0x0F);
+    emit_byte(ctx, 0x2E);
+    emit_byte(ctx, MODRM(MOD_DIRECT, xmm1 & 7, xmm2 & 7));
+}
+
+// cvttss2si r32, xmm  (F3 [REX] 0F 2C /r)
+void emit_cvttss2si_r32_xmm(emit_ctx_t *ctx, x64_reg_t r32, uint8_t xmm) {
+    emit_byte(ctx, 0xF3);
+    if (r32 >= R8) emit_byte(ctx, REX_BASE | REX_R);
+    emit_byte(ctx, 0x0F);
+    emit_byte(ctx, 0x2C);
+    emit_byte(ctx, MODRM(MOD_DIRECT, r32 & 7, xmm & 7));
+}
+
+// cvtsi2ss xmm, r32  (F3 [REX] 0F 2A /r)
+void emit_cvtsi2ss_xmm_r32(emit_ctx_t *ctx, uint8_t xmm, x64_reg_t r32) {
+    emit_byte(ctx, 0xF3);
+    if (r32 >= R8) emit_byte(ctx, REX_BASE | REX_B);
+    emit_byte(ctx, 0x0F);
+    emit_byte(ctx, 0x2A);
+    emit_byte(ctx, MODRM(MOD_DIRECT, xmm & 7, r32 & 7));
+}
+
+// cvtsi2ss xmm, r64  (F3 REX.W 0F 2A /r) — 64-bit source
+void emit_cvtsi2ss_xmm_r64(emit_ctx_t *ctx, uint8_t xmm, x64_reg_t r64) {
+    emit_byte(ctx, 0xF3);
+    uint8_t rex = REX_W;
+    if (r64 >= R8) rex |= REX_B;
+    emit_byte(ctx, REX_BASE | rex);
+    emit_byte(ctx, 0x0F);
+    emit_byte(ctx, 0x2A);
+    emit_byte(ctx, MODRM(MOD_DIRECT, xmm & 7, r64 & 7));
+}
+
+// setnp (0F 9B /0)
+void emit_setnp(emit_ctx_t *ctx, x64_reg_t dst) { emit_setcc(ctx, 0x9B, dst); }
+
+// setp (0F 9A /0)
+void emit_setp(emit_ctx_t *ctx, x64_reg_t dst)  { emit_setcc(ctx, 0x9A, dst); }
+
+// ============================================================================
 // Patching
 // ============================================================================
 

@@ -313,6 +313,49 @@ void emit_nop(emit_ctx_t *ctx);
 void emit_int3(emit_ctx_t *ctx);
 
 // ============================================================================
+// SSE / FP helpers (f32 inline translation)
+// ============================================================================
+
+// movd xmm, r32  (66 [REX] 0F 6E modrm)
+void emit_movd_xmm_r32(emit_ctx_t *ctx, uint8_t xmm, x64_reg_t r32);
+
+// movd r32, xmm  (66 [REX] 0F 7E modrm)
+void emit_movd_r32_xmm(emit_ctx_t *ctx, x64_reg_t r32, uint8_t xmm);
+
+// addss xmm_dst, xmm_src  (F3 0F 58 modrm)
+void emit_addss(emit_ctx_t *ctx, uint8_t dst_xmm, uint8_t src_xmm);
+
+// subss xmm_dst, xmm_src  (F3 0F 5C modrm)
+void emit_subss(emit_ctx_t *ctx, uint8_t dst_xmm, uint8_t src_xmm);
+
+// mulss xmm_dst, xmm_src  (F3 0F 59 modrm)
+void emit_mulss(emit_ctx_t *ctx, uint8_t dst_xmm, uint8_t src_xmm);
+
+// divss xmm_dst, xmm_src  (F3 0F 5E modrm)
+void emit_divss(emit_ctx_t *ctx, uint8_t dst_xmm, uint8_t src_xmm);
+
+// sqrtss xmm_dst, xmm_src  (F3 0F 51 modrm)
+void emit_sqrtss(emit_ctx_t *ctx, uint8_t dst_xmm, uint8_t src_xmm);
+
+// ucomiss xmm1, xmm2  (0F 2E modrm)
+void emit_ucomiss(emit_ctx_t *ctx, uint8_t xmm1, uint8_t xmm2);
+
+// cvttss2si r32, xmm  (F3 [REX] 0F 2C modrm)
+void emit_cvttss2si_r32_xmm(emit_ctx_t *ctx, x64_reg_t r32, uint8_t xmm);
+
+// cvtsi2ss xmm, r32  (F3 [REX] 0F 2A modrm)
+void emit_cvtsi2ss_xmm_r32(emit_ctx_t *ctx, uint8_t xmm, x64_reg_t r32);
+
+// cvtsi2ss xmm, r64  (F3 REX.W 0F 2A modrm) — for unsigned int32 via zero-extended int64
+void emit_cvtsi2ss_xmm_r64(emit_ctx_t *ctx, uint8_t xmm, x64_reg_t r64);
+
+// setnp r8  (0F 9B modrm)  — PF=0
+void emit_setnp(emit_ctx_t *ctx, x64_reg_t dst);
+
+// setp r8   (0F 9A modrm)  — PF=1
+void emit_setp(emit_ctx_t *ctx, x64_reg_t dst);
+
+// ============================================================================
 // Patching helpers
 // ============================================================================
 

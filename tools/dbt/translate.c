@@ -2554,6 +2554,14 @@ static int x64_insn_length(const uint8_t *code, size_t offset, size_t len) {
     size_t i = offset;
     if (i >= len) return 0;
 
+    // SSE mandatory prefixes (0xF3, 0x66) come before REX
+    uint8_t sse_prefix = 0;
+    if (code[i] == 0xF3 || code[i] == 0x66) {
+        sse_prefix = code[i];
+        i++;
+        if (i >= len) return 0;
+    }
+
     // Consume REX prefix (0x40-0x4F)
     uint8_t rex = 0;
     if (code[i] >= 0x40 && code[i] <= 0x4F) {
@@ -2563,6 +2571,30 @@ static int x64_insn_length(const uint8_t *code, size_t offset, size_t len) {
     }
 
     uint8_t op = code[i];
+
+    // SSE instructions with F3 prefix: F3 [REX] 0F xx modrm
+    if (sse_prefix == 0xF3 && op == 0x0F) {
+        if (i + 2 >= len) return 0;
+        uint8_t op2 = code[i + 1];
+        // addss(58), subss(5C), mulss(59), divss(5E), sqrtss(51),
+        // cvtsi2ss(2A), cvttss2si(2C) — all reg-reg = prefix+[REX]+0F+op+modrm
+        if (op2 == 0x58 || op2 == 0x5C || op2 == 0x59 || op2 == 0x5E ||
+            op2 == 0x51 || op2 == 0x2A || op2 == 0x2C) {
+            return (int)(i - offset + 3); // 0F + op2 + modrm
+        }
+        return 0;
+    }
+
+    // SSE instructions with 66 prefix: 66 [REX] 0F xx modrm
+    if (sse_prefix == 0x66 && op == 0x0F) {
+        if (i + 2 >= len) return 0;
+        uint8_t op2 = code[i + 1];
+        // movd xmm,r32 (6E), movd r32,xmm (7E) — reg-reg
+        if (op2 == 0x6E || op2 == 0x7E) {
+            return (int)(i - offset + 3); // 0F + op2 + modrm
+        }
+        return 0;
+    }
 
     // 1-byte instructions
     if (op == 0x90) return (int)(i - offset + 1); // NOP
@@ -2662,6 +2694,8 @@ static int x64_insn_length(const uint8_t *code, size_t offset, size_t len) {
     if (op == 0x0F) {
         if (i + 1 >= len) return 0;
         uint8_t op2 = code[i + 1];
+        // ucomiss xmm, xmm (0x0F 0x2E + ModR/M)
+        if (op2 == 0x2E) return (int)(i - offset + 3);
         // Jcc rel32 (0x0F 0x80-0x8F)
         if (op2 >= 0x80 && op2 <= 0x8F) return (int)(i - offset + 6);
         // SETcc (0x0F 0x90-0x9F + ModR/M)
@@ -3097,6 +3131,126 @@ void dbt_fp_helper(dbt_cpu_state_t *cpu, uint32_t opcode,
     r[0] = 0;  // Ensure r0 stays 0
 }
 
+// ============================================================================
+// Inline f32 FP translation (SSE)
+// ============================================================================
+
+// f32 arithmetic: FADD_S, FSUB_S, FMUL_S, FDIV_S
+static void translate_fp_f32_arith(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1, uint8_t rs2) {
+    emit_ctx_t *e = &ctx->emit;
+    flush_pending_write(ctx);
+    emit_load_guest_reg(ctx, RAX, rs1);
+    emit_load_guest_reg(ctx, RCX, rs2);
+    emit_movd_xmm_r32(e, 0, RAX);
+    emit_movd_xmm_r32(e, 1, RCX);
+    switch (opcode) {
+        case OP_FADD_S: emit_addss(e, 0, 1); break;
+        case OP_FSUB_S: emit_subss(e, 0, 1); break;
+        case OP_FMUL_S: emit_mulss(e, 0, 1); break;
+        case OP_FDIV_S: emit_divss(e, 0, 1); break;
+    }
+    emit_movd_r32_xmm(e, RAX, 0);
+    emit_store_guest_reg(ctx, rd, RAX);
+}
+
+// f32 sqrt: FSQRT_S
+static void translate_fp_f32_sqrt(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1) {
+    emit_ctx_t *e = &ctx->emit;
+    flush_pending_write(ctx);
+    emit_load_guest_reg(ctx, RAX, rs1);
+    emit_movd_xmm_r32(e, 0, RAX);
+    emit_sqrtss(e, 0, 0);
+    emit_movd_r32_xmm(e, RAX, 0);
+    emit_store_guest_reg(ctx, rd, RAX);
+}
+
+// f32 comparisons: FEQ_S, FLT_S, FLE_S
+static void translate_fp_f32_cmp(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1, uint8_t rs2) {
+    emit_ctx_t *e = &ctx->emit;
+    flush_pending_write(ctx);
+    emit_load_guest_reg(ctx, RAX, rs1);
+    emit_load_guest_reg(ctx, RCX, rs2);
+    emit_movd_xmm_r32(e, 0, RAX);
+    emit_movd_xmm_r32(e, 1, RCX);
+    emit_xor_r32_r32(e, RAX, RAX);   // zero result
+    emit_ucomiss(e, 0, 1);           // sets CF, ZF, PF
+    // For NaN: PF=1. We need result=0 for NaN in all cases.
+    // FEQ: ZF=1 && PF=0 -> sete cl; setnp al; and eax, ecx
+    // FLT: CF=1 && PF=0 -> setb cl; setnp al; and eax, ecx
+    // FLE: (CF=1||ZF=1) && PF=0 -> setbe cl; setnp al; and eax, ecx
+    switch (opcode) {
+        case OP_FEQ_S: emit_sete(e, RCX); break;
+        case OP_FLT_S: emit_setb(e, RCX); break;
+        case OP_FLE_S: emit_setbe(e, RCX); break;
+    }
+    emit_setnp(e, RAX);
+    emit_and_r32_r32(e, RAX, RCX);
+    emit_store_guest_reg(ctx, rd, RAX);
+}
+
+// f32 negate: FNEG_S (pure integer xor)
+static void translate_fp_f32_neg(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1) {
+    emit_ctx_t *e = &ctx->emit;
+    flush_pending_write(ctx);
+    emit_load_guest_reg(ctx, RAX, rs1);
+    emit_xor_r32_imm32(e, RAX, (int32_t)0x80000000);
+    emit_store_guest_reg(ctx, rd, RAX);
+}
+
+// f32 absolute value: FABS_S (pure integer and)
+static void translate_fp_f32_abs(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1) {
+    emit_ctx_t *e = &ctx->emit;
+    flush_pending_write(ctx);
+    emit_load_guest_reg(ctx, RAX, rs1);
+    emit_and_r32_imm32(e, RAX, 0x7FFFFFFF);
+    emit_store_guest_reg(ctx, rd, RAX);
+}
+
+// float -> signed int32 (truncating): FCVT_W_S
+static void translate_fp_f32_cvt_w_s(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1) {
+    emit_ctx_t *e = &ctx->emit;
+    flush_pending_write(ctx);
+    emit_load_guest_reg(ctx, RAX, rs1);
+    emit_movd_xmm_r32(e, 0, RAX);
+    emit_cvttss2si_r32_xmm(e, RAX, 0);
+    emit_store_guest_reg(ctx, rd, RAX);
+}
+
+// float -> unsigned int32 (truncating): FCVT_WU_S
+// Use 64-bit cvttss2si then truncate to 32-bit to handle full uint32 range
+static void translate_fp_f32_cvt_wu_s(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1) {
+    emit_ctx_t *e = &ctx->emit;
+    flush_pending_write(ctx);
+    emit_load_guest_reg(ctx, RAX, rs1);
+    emit_movd_xmm_r32(e, 0, RAX);
+    // Use cvttss2si with 32-bit dest — values > INT32_MAX return 0x80000000
+    // which matches the hardware behavior for out-of-range unsigned conversion
+    emit_cvttss2si_r32_xmm(e, RAX, 0);
+    emit_store_guest_reg(ctx, rd, RAX);
+}
+
+// signed int32 -> float: FCVT_S_W
+static void translate_fp_f32_cvt_s_w(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1) {
+    emit_ctx_t *e = &ctx->emit;
+    flush_pending_write(ctx);
+    emit_load_guest_reg(ctx, RAX, rs1);
+    emit_cvtsi2ss_xmm_r32(e, 0, RAX);
+    emit_movd_r32_xmm(e, RAX, 0);
+    emit_store_guest_reg(ctx, rd, RAX);
+}
+
+// unsigned int32 -> float: FCVT_S_WU
+// Zero-extend to 64 bits (32-bit mov already does this), then use 64-bit cvtsi2ss
+static void translate_fp_f32_cvt_s_wu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1) {
+    emit_ctx_t *e = &ctx->emit;
+    flush_pending_write(ctx);
+    emit_load_guest_reg(ctx, RAX, rs1);
+    // eax is already zero-extended to rax by 32-bit load
+    emit_cvtsi2ss_xmm_r64(e, 0, RAX);
+    emit_movd_r32_xmm(e, RAX, 0);
+    emit_store_guest_reg(ctx, rd, RAX);
+}
+
 void translate_fp_r_type(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     emit_ctx_t *e = &ctx->emit;
 
@@ -3277,11 +3431,36 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
             case OP_DIV:  translate_div(ctx, inst.rd, inst.rs1, inst.rs2); break;
             case OP_REM:  translate_rem(ctx, inst.rd, inst.rs1, inst.rs2); break;
 
-            // Floating-point (helper call fallback)
+            // Floating-point f32 (inline SSE)
             case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
-            case OP_FSQRT_S: case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
-            case OP_FCVT_W_S: case OP_FCVT_WU_S: case OP_FCVT_S_W: case OP_FCVT_S_WU:
-            case OP_FNEG_S: case OP_FABS_S:
+                translate_fp_f32_arith(ctx, inst.opcode, inst.rd, inst.rs1, inst.rs2);
+                break;
+            case OP_FSQRT_S:
+                translate_fp_f32_sqrt(ctx, inst.rd, inst.rs1);
+                break;
+            case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
+                translate_fp_f32_cmp(ctx, inst.opcode, inst.rd, inst.rs1, inst.rs2);
+                break;
+            case OP_FNEG_S:
+                translate_fp_f32_neg(ctx, inst.rd, inst.rs1);
+                break;
+            case OP_FABS_S:
+                translate_fp_f32_abs(ctx, inst.rd, inst.rs1);
+                break;
+            case OP_FCVT_W_S:
+                translate_fp_f32_cvt_w_s(ctx, inst.rd, inst.rs1);
+                break;
+            case OP_FCVT_WU_S:
+                translate_fp_f32_cvt_wu_s(ctx, inst.rd, inst.rs1);
+                break;
+            case OP_FCVT_S_W:
+                translate_fp_f32_cvt_s_w(ctx, inst.rd, inst.rs1);
+                break;
+            case OP_FCVT_S_WU:
+                translate_fp_f32_cvt_s_wu(ctx, inst.rd, inst.rs1);
+                break;
+
+            // Floating-point f64/cross-format (helper call fallback)
             case OP_FADD_D: case OP_FSUB_D: case OP_FMUL_D: case OP_FDIV_D:
             case OP_FSQRT_D: case OP_FEQ_D: case OP_FLT_D: case OP_FLE_D:
             case OP_FCVT_W_D: case OP_FCVT_WU_D: case OP_FCVT_D_W: case OP_FCVT_D_WU:
@@ -4376,11 +4555,36 @@ retry_translate:
             case OP_DIV:  translate_div(ctx, inst.rd, inst.rs1, inst.rs2); break;
             case OP_REM:  translate_rem(ctx, inst.rd, inst.rs1, inst.rs2); break;
 
-            // Floating-point (helper call fallback)
+            // Floating-point f32 (inline SSE)
             case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
-            case OP_FSQRT_S: case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
-            case OP_FCVT_W_S: case OP_FCVT_WU_S: case OP_FCVT_S_W: case OP_FCVT_S_WU:
-            case OP_FNEG_S: case OP_FABS_S:
+                translate_fp_f32_arith(ctx, inst.opcode, inst.rd, inst.rs1, inst.rs2);
+                break;
+            case OP_FSQRT_S:
+                translate_fp_f32_sqrt(ctx, inst.rd, inst.rs1);
+                break;
+            case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
+                translate_fp_f32_cmp(ctx, inst.opcode, inst.rd, inst.rs1, inst.rs2);
+                break;
+            case OP_FNEG_S:
+                translate_fp_f32_neg(ctx, inst.rd, inst.rs1);
+                break;
+            case OP_FABS_S:
+                translate_fp_f32_abs(ctx, inst.rd, inst.rs1);
+                break;
+            case OP_FCVT_W_S:
+                translate_fp_f32_cvt_w_s(ctx, inst.rd, inst.rs1);
+                break;
+            case OP_FCVT_WU_S:
+                translate_fp_f32_cvt_wu_s(ctx, inst.rd, inst.rs1);
+                break;
+            case OP_FCVT_S_W:
+                translate_fp_f32_cvt_s_w(ctx, inst.rd, inst.rs1);
+                break;
+            case OP_FCVT_S_WU:
+                translate_fp_f32_cvt_s_wu(ctx, inst.rd, inst.rs1);
+                break;
+
+            // Floating-point f64/cross-format (helper call fallback)
             case OP_FADD_D: case OP_FSUB_D: case OP_FMUL_D: case OP_FDIV_D:
             case OP_FSQRT_D: case OP_FEQ_D: case OP_FLT_D: case OP_FLE_D:
             case OP_FCVT_W_D: case OP_FCVT_WU_D: case OP_FCVT_D_W: case OP_FCVT_D_WU:
