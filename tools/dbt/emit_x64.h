@@ -14,12 +14,14 @@ typedef struct {
     size_t capacity;    // Buffer size
     size_t offset;      // Current write position
     bool overflow;      // Set if we ran out of space
+    bool rax_pending;   // DEBUG: Set if RAX holds a pending write value (must not be clobbered)
     bool trace_enabled; // Emit trace logging for this block
     const char *trace_tag; // Optional tag for emit trace
 } emit_ctx_t;
 
 // x86-64 register encoding
 typedef enum {
+    X64_NOREG = -1,  // Sentinel: register not available
     RAX = 0, RCX = 1, RDX = 2, RBX = 3,
     RSP = 4, RBP = 5, RSI = 6, RDI = 7,
     R8  = 8, R9  = 9, R10 = 10, R11 = 11,
@@ -112,6 +114,9 @@ void emit_mov_m8_r8_idx(emit_ctx_t *ctx, x64_reg_t base, x64_reg_t index, x64_re
 // mov word [base + index], r16
 void emit_mov_m16_r16_idx(emit_ctx_t *ctx, x64_reg_t base, x64_reg_t index, x64_reg_t src);
 
+// lea r32, [base + disp]  (compute address without memory access)
+void emit_lea_r32_r32_disp(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, int32_t disp);
+
 // movzx r32, r8 (zero-extend byte register to dword)
 void emit_movzx_r32_r8(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t src);
 
@@ -143,9 +148,9 @@ void emit_test_r64_r64(emit_ctx_t *ctx, x64_reg_t a, x64_reg_t b);
 void emit_mov_r32_m32_sib(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base,
                           x64_reg_t index, uint8_t scale, int32_t disp);
 
-// mov [base + index*scale + disp32], r32
-void emit_mov_m32_r32_sib(emit_ctx_t *ctx, x64_reg_t base, x64_reg_t index,
-                          uint8_t scale, int32_t disp, x64_reg_t src);
+// mov [base + index*scale + disp32], imm32
+void emit_mov_m32_imm32_sib(emit_ctx_t *ctx, x64_reg_t base, x64_reg_t index,
+                            uint8_t scale, int32_t disp, uint32_t imm);
 
 // ============================================================================
 // Arithmetic
@@ -248,6 +253,9 @@ void emit_setb(emit_ctx_t *ctx, x64_reg_t dst);     // CF=1 (unsigned <)
 void emit_setae(emit_ctx_t *ctx, x64_reg_t dst);    // CF=0 (unsigned >=)
 void emit_seta(emit_ctx_t *ctx, x64_reg_t dst);     // CF=0 && ZF=0 (unsigned >)
 void emit_setbe(emit_ctx_t *ctx, x64_reg_t dst);    // CF=1 || ZF=1 (unsigned <=)
+
+// Helper to get jcc function from condition code (0x80-0x8F)
+void *emit_jcc_rel32_from_cc(uint8_t cc);
 
 // ============================================================================
 // Control flow

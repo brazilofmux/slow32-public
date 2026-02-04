@@ -79,9 +79,10 @@ SDValue SLOW32TargetLowering::LowerVAARG(SDValue Op,
     SDValue Hi = DAG.getLoad(MVT::i32, DL, Chain, APPlus4, MPIList, Align(4));
     Chain = Hi.getValue(1);
 
-    // BUILD_PAIR {lo, hi} → i64 (legalizer will split if needed)
-    SDValue Pair = DAG.getNode(ISD::BUILD_PAIR, DL, MVT::i64, Lo, Hi);
-    Val = IsF64 ? DAG.getNode(ISD::BITCAST, DL, RetVT, Pair) : Pair;
+    if (IsF64)
+      Val = DAG.getNode(SLOW32ISD::BuildPairF64, DL, MVT::f64, Lo, Hi);
+    else
+      Val = DAG.getNode(ISD::BUILD_PAIR, DL, MVT::i64, Lo, Hi);
   } else {
     // Always load the full 32-bit promoted slot
     SDValue W = DAG.getLoad(MVT::i32, DL, Chain, AP, MPIList, Align(4));

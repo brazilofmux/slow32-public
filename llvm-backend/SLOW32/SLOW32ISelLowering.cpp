@@ -25,6 +25,22 @@ static const MCPhysReg SLOW32ArgRegs[] = {
 static constexpr unsigned NumSLOW32ArgRegs =
     sizeof(SLOW32ArgRegs) / sizeof(SLOW32ArgRegs[0]);
 
+// Consecutive-register shadow lookup for varargs calling convention.
+// Unlike getShadowFor64Bit (which uses pair-aligned R3/R5/R7/R9),
+// this returns the immediately next register for any arg reg.
+static Register getNextArgReg(Register Reg) {
+  switch (Reg) {
+  case SLOW32::R3:  return SLOW32::R4;
+  case SLOW32::R4:  return SLOW32::R5;
+  case SLOW32::R5:  return SLOW32::R6;
+  case SLOW32::R6:  return SLOW32::R7;
+  case SLOW32::R7:  return SLOW32::R8;
+  case SLOW32::R8:  return SLOW32::R9;
+  case SLOW32::R9:  return SLOW32::R10;
+  default: return Register();
+  }
+}
+
 static Register getShadowFor64Bit(Register Reg) {
   switch (Reg) {
   case SLOW32::R1:
@@ -333,7 +349,7 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   setOperationAction(ISD::FSQRT, MVT::f64, Legal);
   setOperationAction(ISD::FNEG, MVT::f64, Legal);
   setOperationAction(ISD::FABS, MVT::f64, Legal);
-  setOperationAction(ISD::FCOPYSIGN, MVT::f64, Expand);
+  setOperationAction(ISD::FCOPYSIGN, MVT::f64, Custom);
   setOperationAction(ISD::FREM, MVT::f64, Expand);
   setOperationAction(ISD::FMA, MVT::f64, Expand);
   setOperationAction(ISD::FRINT, MVT::f64, Expand);
@@ -480,12 +496,14 @@ SDValue SLOW32TargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const {
     SDValue Chain = Load->getChain();
     MachinePointerInfo MPI = Load->getPointerInfo();
 
-    SDValue Lo = DAG.getLoad(MVT::i32, DL, Chain, Addr, MPI, Align(4));
+    Align BaseAlign = Load->getAlign();
+    SDValue Lo = DAG.getLoad(MVT::i32, DL, Chain, Addr, MPI, BaseAlign);
     Chain = Lo.getValue(1);
     SDValue AddrHi = DAG.getNode(ISD::ADD, DL, PtrVT, Addr,
                                  DAG.getConstant(4, DL, PtrVT));
     SDValue Hi = DAG.getLoad(MVT::i32, DL, Chain, AddrHi,
-                             MPI.getWithOffset(4), Align(4));
+                             MPI.getWithOffset(4),
+                             commonAlignment(BaseAlign, 4));
     Chain = Hi.getValue(1);
 
     SDValue Val = DAG.getNode(SLOW32ISD::BuildPairF64, DL, MVT::f64, Lo, Hi);
@@ -522,11 +540,13 @@ SDValue SLOW32TargetLowering::LowerSTORE(SDValue Op, SelectionDAG &DAG) const {
     SDValue Lo = Split.getValue(0);
     SDValue Hi = Split.getValue(1);
 
-    SDValue StoreLo = DAG.getStore(Chain, DL, Lo, Addr, MPI, Align(4));
+    Align BaseAlign = Store->getAlign();
+    SDValue StoreLo = DAG.getStore(Chain, DL, Lo, Addr, MPI, BaseAlign);
     SDValue AddrHi = DAG.getNode(ISD::ADD, DL, PtrVT, Addr,
                                  DAG.getConstant(4, DL, PtrVT));
     SDValue StoreHi = DAG.getStore(StoreLo, DL, Hi, AddrHi,
-                                   MPI.getWithOffset(4), Align(4));
+                                   MPI.getWithOffset(4),
+                                   commonAlignment(BaseAlign, 4));
     return StoreHi;
   }
 
@@ -653,17 +673,51 @@ SDValue SLOW32TargetLowering::LowerFCOPYSIGN(SDValue Op,
   SDLoc DL(Op);
   SDValue Mag = Op.getOperand(0);
   SDValue Sign = Op.getOperand(1);
+  EVT VT = Op.getValueType();
 
-  // Implement copysignf via integer bit ops:
-  // (mag & 0x7fffffff) | (sign & 0x80000000)
-  SDValue MagBits = DAG.getNode(ISD::BITCAST, DL, MVT::i32, Mag);
-  SDValue SignBits = DAG.getNode(ISD::BITCAST, DL, MVT::i32, Sign);
   SDValue MagMask = DAG.getConstant(0x7fffffff, DL, MVT::i32);
   SDValue SignMask = DAG.getConstant(0x80000000u, DL, MVT::i32);
-  SDValue MagMasked = DAG.getNode(ISD::AND, DL, MVT::i32, MagBits, MagMask);
+
+  if (VT == MVT::f32) {
+    // f32: bitcast to i32 and use integer bit ops.
+    SDValue MagBits = DAG.getNode(ISD::BITCAST, DL, MVT::i32, Mag);
+    SDValue SignBits;
+    if (Sign.getValueType() == MVT::f64) {
+      // Mixed copysign(f32, f64): extract sign from f64 high word.
+      SDValue Split = DAG.getNode(SLOW32ISD::SplitF64, DL,
+                                  DAG.getVTList(MVT::i32, MVT::i32), Sign);
+      SignBits = Split.getValue(1);
+    } else {
+      SignBits = DAG.getNode(ISD::BITCAST, DL, MVT::i32, Sign);
+    }
+    SDValue MagMasked = DAG.getNode(ISD::AND, DL, MVT::i32, MagBits, MagMask);
+    SDValue SignMasked = DAG.getNode(ISD::AND, DL, MVT::i32, SignBits, SignMask);
+    SDValue ResBits = DAG.getNode(ISD::OR, DL, MVT::i32, MagMasked, SignMasked);
+    return DAG.getNode(ISD::BITCAST, DL, MVT::f32, ResBits);
+  }
+
+  // f64: split into register pair, operate on the high word (sign bit is
+  // bit 31 of the high i32 in IEEE 754 double).
+  SDValue MagSplit = DAG.getNode(SLOW32ISD::SplitF64, DL,
+                                 DAG.getVTList(MVT::i32, MVT::i32), Mag);
+  SDValue MagLo = MagSplit.getValue(0);
+  SDValue MagHi = MagSplit.getValue(1);
+
+  SDValue SignBits;
+  if (Sign.getValueType() == MVT::f64) {
+    SDValue SignSplit = DAG.getNode(SLOW32ISD::SplitF64, DL,
+                                   DAG.getVTList(MVT::i32, MVT::i32), Sign);
+    SignBits = SignSplit.getValue(1);
+  } else {
+    // Mixed copysign(f64, f32): extract sign from f32 bits directly.
+    SignBits = DAG.getNode(ISD::BITCAST, DL, MVT::i32, Sign);
+  }
+
+  SDValue HiMasked = DAG.getNode(ISD::AND, DL, MVT::i32, MagHi, MagMask);
   SDValue SignMasked = DAG.getNode(ISD::AND, DL, MVT::i32, SignBits, SignMask);
-  SDValue ResBits = DAG.getNode(ISD::OR, DL, MVT::i32, MagMasked, SignMasked);
-  return DAG.getNode(ISD::BITCAST, DL, MVT::f32, ResBits);
+  SDValue NewHi = DAG.getNode(ISD::OR, DL, MVT::i32, HiMasked, SignMasked);
+
+  return DAG.getNode(SLOW32ISD::BuildPairF64, DL, MVT::f64, MagLo, NewHi);
 }
 
 
@@ -879,7 +933,8 @@ SDValue SLOW32TargetLowering::LowerFormalArguments(
 
   SmallVector<CCValAssign, 16> ArgLocs;
   CCState CCInfo(CallConv, isVarArg, MF, ArgLocs, *DAG.getContext());
-  CCInfo.AnalyzeFormalArguments(Ins, CC_SLOW32);
+  CCInfo.AnalyzeFormalArguments(Ins,
+                               isVarArg ? CC_SLOW32_VarArg : CC_SLOW32);
 
   SmallVector<SDValue, 8> Chains;
   SmallVector<SDValue, 8> ArgValues(ArgLocs.size());
@@ -908,7 +963,8 @@ SDValue SLOW32TargetLowering::LowerFormalArguments(
         return false;
 
       Register LoPhys = LoVA.getLocReg();
-      Register HiPhys = getShadowFor64Bit(LoPhys);
+      Register HiPhys = isVarArg ? getNextArgReg(LoPhys)
+                                 : getShadowFor64Bit(LoPhys);
       if (!HiPhys)
         return false;
 
@@ -946,7 +1002,8 @@ SDValue SLOW32TargetLowering::LowerFormalArguments(
       if (!EntryMBB.isLiveIn(PhysReg))
         EntryMBB.addLiveIn(PhysReg);
       if (VA.getLocVT() == MVT::f64) {
-        Register HiPhys = getShadowFor64Bit(PhysReg);
+        Register HiPhys = isVarArg ? getNextArgReg(PhysReg)
+                                   : getShadowFor64Bit(PhysReg);
         if (!HiPhys)
           report_fatal_error("Missing shadow register for f64 argument");
         if (!EntryMBB.isLiveIn(HiPhys))
@@ -1197,7 +1254,8 @@ SDValue SLOW32TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
 
   SmallVector<CCValAssign, 16> ArgLocs;
   CCState CCInfo(CallConv, IsVarArg, MF, ArgLocs, *DAG.getContext());
-  CCInfo.AnalyzeCallOperands(CLI.Outs, CC_SLOW32);
+  CCInfo.AnalyzeCallOperands(CLI.Outs,
+                             IsVarArg ? CC_SLOW32_VarArg : CC_SLOW32);
 
   unsigned StackSize = CCInfo.getStackSize();
 
@@ -1254,7 +1312,8 @@ SDValue SLOW32TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
       if (LoOut.OrigArgIndex != HiOut.OrigArgIndex)
         return false;
       Register LoReg = LoVA.getLocReg();
-      Register HiReg = getShadowFor64Bit(LoReg);
+      Register HiReg = IsVarArg ? getNextArgReg(LoReg)
+                                : getShadowFor64Bit(LoReg);
       if (!HiReg)
         return false;
 
@@ -1287,7 +1346,8 @@ SDValue SLOW32TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     if (VA.isRegLoc()) {
       if (VA.getLocVT() == MVT::f64) {
         Register LoReg = VA.getLocReg();
-        Register HiReg = getShadowFor64Bit(LoReg);
+        Register HiReg = IsVarArg ? getNextArgReg(LoReg)
+                                  : getShadowFor64Bit(LoReg);
         if (!HiReg)
           report_fatal_error("Missing shadow register for f64 argument");
 

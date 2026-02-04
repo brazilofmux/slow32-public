@@ -4,6 +4,14 @@
 #include "emit_x64.h"
 #include <string.h>
 #include <stdio.h>
+#include <assert.h>
+
+#define CHECK_RAX_WRITE(ctx, reg) \
+    do { \
+        if ((reg) == RAX) { \
+            assert(!(ctx)->rax_pending && "Clobbering RAX with pending write!"); \
+        } \
+    } while (0)
 
 // ============================================================================
 // Core emitter functions
@@ -91,6 +99,7 @@ static inline bool needs_rex_for_byte_reg(x64_reg_t r) {
 
 // mov r32, r32  (89 /r)
 void emit_mov_r32_r32(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t src) {
+    CHECK_RAX_WRITE(ctx, dst);
     size_t start_off = ctx->offset;
     uint8_t rex = rex_for_regs(src, dst, false);
     emit_rex_if_needed(ctx, rex);
@@ -109,6 +118,7 @@ void emit_mov_r64_r64(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t src) {
 
 // mov r32, imm32  (B8+rd id)
 void emit_mov_r32_imm32(emit_ctx_t *ctx, x64_reg_t dst, uint32_t imm) {
+    CHECK_RAX_WRITE(ctx, dst);
     size_t start_off = ctx->offset;
     if (dst >= R8) emit_byte(ctx, REX_BASE | REX_B);
     emit_byte(ctx, 0xB8 + (dst & 7));
@@ -127,6 +137,7 @@ void emit_mov_r64_imm64(emit_ctx_t *ctx, x64_reg_t dst, uint64_t imm) {
 
 // mov r32, [base + disp]  (8B /r) - uses disp8 when possible
 void emit_mov_r32_m32(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, int32_t disp) {
+    CHECK_RAX_WRITE(ctx, dst);
     size_t start_off = ctx->offset;
     uint8_t rex = rex_for_regs(dst, base, false);
     emit_rex_if_needed(ctx, rex);
@@ -152,6 +163,7 @@ void emit_mov_r32_m32(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, int32_t di
 
 // movzx r32, byte [base + disp]  (0F B6 /r) - uses disp8 when possible
 void emit_movzx_r32_m8(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, int32_t disp) {
+    CHECK_RAX_WRITE(ctx, dst);
     size_t start_off = ctx->offset;
     uint8_t rex = rex_for_regs(dst, base, false);
     emit_rex_if_needed(ctx, rex);
@@ -227,6 +239,7 @@ void emit_mov_m32_imm32(emit_ctx_t *ctx, x64_reg_t base, int32_t disp, uint32_t 
 
 // mov r32, [base + index*1]  (8B /r with SIB)
 void emit_mov_r32_m32_idx(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, x64_reg_t index) {
+    CHECK_RAX_WRITE(ctx, dst);
     uint8_t rex = rex_for_sib(dst, base, index, false);
     emit_rex_if_needed(ctx, rex);
     emit_byte(ctx, 0x8B);
@@ -245,6 +258,7 @@ void emit_mov_m32_r32_idx(emit_ctx_t *ctx, x64_reg_t base, x64_reg_t index, x64_
 
 // movsx r32, byte [base + index]  (0F BE /r with SIB)
 void emit_movsx_r32_m8_idx(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, x64_reg_t index) {
+    CHECK_RAX_WRITE(ctx, dst);
     uint8_t rex = rex_for_sib(dst, base, index, false);
     emit_rex_if_needed(ctx, rex);
     emit_byte(ctx, 0x0F);
@@ -255,6 +269,7 @@ void emit_movsx_r32_m8_idx(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, x64_r
 
 // movzx r32, byte [base + index]  (0F B6 /r with SIB)
 void emit_movzx_r32_m8_idx(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, x64_reg_t index) {
+    CHECK_RAX_WRITE(ctx, dst);
     uint8_t rex = rex_for_sib(dst, base, index, false);
     emit_rex_if_needed(ctx, rex);
     emit_byte(ctx, 0x0F);
@@ -265,6 +280,7 @@ void emit_movzx_r32_m8_idx(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, x64_r
 
 // movsx r32, word [base + index]  (0F BF /r with SIB)
 void emit_movsx_r32_m16_idx(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, x64_reg_t index) {
+    CHECK_RAX_WRITE(ctx, dst);
     uint8_t rex = rex_for_sib(dst, base, index, false);
     emit_rex_if_needed(ctx, rex);
     emit_byte(ctx, 0x0F);
@@ -275,6 +291,7 @@ void emit_movsx_r32_m16_idx(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, x64_
 
 // movzx r32, word [base + index]  (0F B7 /r with SIB)
 void emit_movzx_r32_m16_idx(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, x64_reg_t index) {
+    CHECK_RAX_WRITE(ctx, dst);
     uint8_t rex = rex_for_sib(dst, base, index, false);
     emit_rex_if_needed(ctx, rex);
     emit_byte(ctx, 0x0F);
@@ -304,6 +321,44 @@ void emit_mov_m16_r16_idx(emit_ctx_t *ctx, x64_reg_t base, x64_reg_t index, x64_
     emit_byte(ctx, SIB(0, index, base));
 }
 
+// lea r32, [base + disp]  (8D /r) - like mov_r32_m32 but opcode 0x8D
+void emit_lea_r32_r32_disp(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, int32_t disp) {
+    CHECK_RAX_WRITE(ctx, dst);
+    size_t start_off = ctx->offset;
+    uint8_t rex = rex_for_regs(dst, base, false);
+    emit_rex_if_needed(ctx, rex);
+    emit_byte(ctx, 0x8D);
+
+    // R13 (low 3 bits = 101 = RBP) with mod=00 encodes [RIP+disp32],
+    // so always use at least MOD_DISP8 for R13/RBP base.
+    bool force_disp = ((base & 7) == RBP);
+    bool use_disp8 = (disp >= -128 && disp <= 127);
+
+    uint8_t mod;
+    if (disp == 0 && !force_disp) {
+        mod = MOD_INDIRECT;
+    } else if (use_disp8) {
+        mod = MOD_DISP8;
+    } else {
+        mod = MOD_DISP32;
+    }
+
+    // RSP/R12 (low 3 bits = 100) needs SIB byte
+    if ((base & 7) == RSP) {
+        emit_byte(ctx, MODRM(mod, dst, RSP));
+        emit_byte(ctx, SIB(0, RSP, base));  // index=RSP means no index
+    } else {
+        emit_byte(ctx, MODRM(mod, dst, base));
+    }
+
+    if (mod == MOD_DISP8) {
+        emit_byte(ctx, (uint8_t)(int8_t)disp);
+    } else if (mod == MOD_DISP32) {
+        emit_dword(ctx, (uint32_t)disp);
+    }
+    emit_trace_inst(ctx, "lea_r32_r32_disp", start_off, ctx->offset);
+}
+
 // movzx r32, r8  (0F B6 /r)
 void emit_movzx_r32_r8(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t src) {
     uint8_t rex = rex_for_regs(dst, src, false);
@@ -320,6 +375,7 @@ void emit_movzx_r32_r8(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t src) {
 
 // mov r64, [base + disp]  (REX.W 8B /r) - uses disp8 when possible
 void emit_mov_r64_m64(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, int32_t disp) {
+    CHECK_RAX_WRITE(ctx, dst);
     uint8_t rex = rex_for_regs(dst, base, true);  // REX.W for 64-bit
     emit_byte(ctx, REX_BASE | rex);
     emit_byte(ctx, 0x8B);
@@ -345,6 +401,7 @@ void emit_mov_r64_m64(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base, int32_t di
 // scale_log2: 0=*1, 1=*2, 2=*4, 3=*8
 void emit_mov_r64_m64_sib(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base,
                           x64_reg_t index, uint8_t scale, int32_t disp) {
+    CHECK_RAX_WRITE(ctx, dst);
     // Convert scale to log2: 1->0, 2->1, 4->2, 8->3
     uint8_t scale_bits;
     switch (scale) {
@@ -411,6 +468,7 @@ void emit_test_r64_r64(emit_ctx_t *ctx, x64_reg_t a, x64_reg_t b) {
 // mov r32, [base + index*scale + disp32]  (8B /r with SIB)
 void emit_mov_r32_m32_sib(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t base,
                           x64_reg_t index, uint8_t scale, int32_t disp) {
+    CHECK_RAX_WRITE(ctx, dst);
     // Convert scale to log2: 1->0, 2->1, 4->2, 8->3
     uint8_t scale_bits;
     switch (scale) {
@@ -469,12 +527,46 @@ void emit_mov_m32_r32_sib(emit_ctx_t *ctx, x64_reg_t base, x64_reg_t index,
     }
 }
 
+// mov [base + index*scale + disp32], imm32  (C7 /0 with SIB)
+void emit_mov_m32_imm32_sib(emit_ctx_t *ctx, x64_reg_t base, x64_reg_t index,
+                            uint8_t scale, int32_t disp, uint32_t imm) {
+    uint8_t scale_bits;
+    switch (scale) {
+        case 1: scale_bits = 0; break;
+        case 2: scale_bits = 1; break;
+        case 4: scale_bits = 2; break;
+        case 8: scale_bits = 3; break;
+        default: scale_bits = 0; break;
+    }
+
+    uint8_t rex = 0;
+    if (base >= R8) rex |= REX_B;
+    if (index >= R8) rex |= REX_X;
+    emit_rex_if_needed(ctx, rex);
+    emit_byte(ctx, 0xC7);
+
+    if (disp == 0 && (base & 7) != RBP) {
+        emit_byte(ctx, MODRM(MOD_INDIRECT, 0, RSP));
+        emit_byte(ctx, SIB(scale_bits, index, base));
+    } else if (disp >= -128 && disp <= 127) {
+        emit_byte(ctx, MODRM(MOD_DISP8, 0, RSP));
+        emit_byte(ctx, SIB(scale_bits, index, base));
+        emit_byte(ctx, (uint8_t)disp);
+    } else {
+        emit_byte(ctx, MODRM(MOD_DISP32, 0, RSP));
+        emit_byte(ctx, SIB(scale_bits, index, base));
+        emit_dword(ctx, (uint32_t)disp);
+    }
+    emit_dword(ctx, imm);
+}
+
 // ============================================================================
 // Arithmetic
 // ============================================================================
 
 // add r32, r32  (01 /r)
 void emit_add_r32_r32(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t src) {
+    CHECK_RAX_WRITE(ctx, dst);
     size_t start_off = ctx->offset;
     uint8_t rex = rex_for_regs(src, dst, false);
     emit_rex_if_needed(ctx, rex);
@@ -485,6 +577,7 @@ void emit_add_r32_r32(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t src) {
 
 // add r32, imm32  (81 /0 id or 83 /0 ib for small imm)
 void emit_add_r32_imm32(emit_ctx_t *ctx, x64_reg_t dst, int32_t imm) {
+    CHECK_RAX_WRITE(ctx, dst);
     size_t start_off = ctx->offset;
     uint8_t rex = 0;
     if (dst >= R8) rex |= REX_B;
@@ -504,6 +597,7 @@ void emit_add_r32_imm32(emit_ctx_t *ctx, x64_reg_t dst, int32_t imm) {
 
 // sub r32, r32  (29 /r)
 void emit_sub_r32_r32(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t src) {
+    CHECK_RAX_WRITE(ctx, dst);
     uint8_t rex = rex_for_regs(src, dst, false);
     emit_rex_if_needed(ctx, rex);
     emit_byte(ctx, 0x29);
@@ -512,6 +606,7 @@ void emit_sub_r32_r32(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t src) {
 
 // sub r32, imm32  (81 /5 id or 83 /5 ib)
 void emit_sub_r32_imm32(emit_ctx_t *ctx, x64_reg_t dst, int32_t imm) {
+    CHECK_RAX_WRITE(ctx, dst);
     uint8_t rex = 0;
     if (dst >= R8) rex |= REX_B;
     emit_rex_if_needed(ctx, rex);
@@ -529,6 +624,7 @@ void emit_sub_r32_imm32(emit_ctx_t *ctx, x64_reg_t dst, int32_t imm) {
 
 // imul r32, r32  (0F AF /r)
 void emit_imul_r32_r32(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t src) {
+    CHECK_RAX_WRITE(ctx, dst);
     uint8_t rex = rex_for_regs(dst, src, false);
     emit_rex_if_needed(ctx, rex);
     emit_byte(ctx, 0x0F);
@@ -538,6 +634,7 @@ void emit_imul_r32_r32(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t src) {
 
 // mul r32  (F7 /4) - edx:eax = eax * r32
 void emit_mul_r32(emit_ctx_t *ctx, x64_reg_t src) {
+    CHECK_RAX_WRITE(ctx, RAX);
     uint8_t rex = 0;
     if (src >= R8) rex |= REX_B;
     emit_rex_if_needed(ctx, rex);
@@ -547,6 +644,7 @@ void emit_mul_r32(emit_ctx_t *ctx, x64_reg_t src) {
 
 // idiv r32  (F7 /7) - eax = edx:eax / r32, edx = remainder
 void emit_idiv_r32(emit_ctx_t *ctx, x64_reg_t src) {
+    CHECK_RAX_WRITE(ctx, RAX);
     uint8_t rex = 0;
     if (src >= R8) rex |= REX_B;
     emit_rex_if_needed(ctx, rex);
@@ -556,6 +654,7 @@ void emit_idiv_r32(emit_ctx_t *ctx, x64_reg_t src) {
 
 // div r32  (F7 /6)
 void emit_div_r32(emit_ctx_t *ctx, x64_reg_t src) {
+    CHECK_RAX_WRITE(ctx, RAX);
     uint8_t rex = 0;
     if (src >= R8) rex |= REX_B;
     emit_rex_if_needed(ctx, rex);
@@ -570,6 +669,7 @@ void emit_cdq(emit_ctx_t *ctx) {
 
 // xor r32, r32  (31 /r)
 void emit_xor_r32_r32(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t src) {
+    CHECK_RAX_WRITE(ctx, dst);
     size_t start_off = ctx->offset;
     uint8_t rex = rex_for_regs(src, dst, false);
     emit_rex_if_needed(ctx, rex);
@@ -580,6 +680,7 @@ void emit_xor_r32_r32(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t src) {
 
 // and r32, r32  (21 /r)
 void emit_and_r32_r32(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t src) {
+    CHECK_RAX_WRITE(ctx, dst);
     uint8_t rex = rex_for_regs(src, dst, false);
     emit_rex_if_needed(ctx, rex);
     emit_byte(ctx, 0x21);
@@ -588,6 +689,7 @@ void emit_and_r32_r32(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t src) {
 
 // and r32, imm32  (81 /4 id or 83 /4 ib)
 void emit_and_r32_imm32(emit_ctx_t *ctx, x64_reg_t dst, int32_t imm) {
+    CHECK_RAX_WRITE(ctx, dst);
     uint8_t rex = 0;
     if (dst >= R8) rex |= REX_B;
     emit_rex_if_needed(ctx, rex);
@@ -605,6 +707,7 @@ void emit_and_r32_imm32(emit_ctx_t *ctx, x64_reg_t dst, int32_t imm) {
 
 // or r32, r32  (09 /r)
 void emit_or_r32_r32(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t src) {
+    CHECK_RAX_WRITE(ctx, dst);
     size_t start_off = ctx->offset;
     uint8_t rex = rex_for_regs(src, dst, false);
     emit_rex_if_needed(ctx, rex);
@@ -615,6 +718,7 @@ void emit_or_r32_r32(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t src) {
 
 // or r32, imm32  (81 /1 id or 83 /1 ib)
 void emit_or_r32_imm32(emit_ctx_t *ctx, x64_reg_t dst, int32_t imm) {
+    CHECK_RAX_WRITE(ctx, dst);
     uint8_t rex = 0;
     if (dst >= R8) rex |= REX_B;
     emit_rex_if_needed(ctx, rex);
@@ -632,6 +736,7 @@ void emit_or_r32_imm32(emit_ctx_t *ctx, x64_reg_t dst, int32_t imm) {
 
 // xor r32, imm32  (81 /6 id or 83 /6 ib)
 void emit_xor_r32_imm32(emit_ctx_t *ctx, x64_reg_t dst, int32_t imm) {
+    CHECK_RAX_WRITE(ctx, dst);
     uint8_t rex = 0;
     if (dst >= R8) rex |= REX_B;
     emit_rex_if_needed(ctx, rex);
@@ -649,6 +754,7 @@ void emit_xor_r32_imm32(emit_ctx_t *ctx, x64_reg_t dst, int32_t imm) {
 
 // neg r32  (F7 /3)
 void emit_neg_r32(emit_ctx_t *ctx, x64_reg_t dst) {
+    CHECK_RAX_WRITE(ctx, dst);
     uint8_t rex = 0;
     if (dst >= R8) rex |= REX_B;
     emit_rex_if_needed(ctx, rex);
@@ -658,6 +764,7 @@ void emit_neg_r32(emit_ctx_t *ctx, x64_reg_t dst) {
 
 // not r32  (F7 /2)
 void emit_not_r32(emit_ctx_t *ctx, x64_reg_t dst) {
+    CHECK_RAX_WRITE(ctx, dst);
     uint8_t rex = 0;
     if (dst >= R8) rex |= REX_B;
     emit_rex_if_needed(ctx, rex);
@@ -671,6 +778,7 @@ void emit_not_r32(emit_ctx_t *ctx, x64_reg_t dst) {
 
 // shl r32, cl  (D3 /4)
 void emit_shl_r32_cl(emit_ctx_t *ctx, x64_reg_t dst) {
+    CHECK_RAX_WRITE(ctx, dst);
     uint8_t rex = 0;
     if (dst >= R8) rex |= REX_B;
     emit_rex_if_needed(ctx, rex);
@@ -692,6 +800,7 @@ void emit_shl_r32_imm8(emit_ctx_t *ctx, x64_reg_t dst, uint8_t imm) {
 
 // shr r32, cl  (D3 /5)
 void emit_shr_r32_cl(emit_ctx_t *ctx, x64_reg_t dst) {
+    CHECK_RAX_WRITE(ctx, dst);
     uint8_t rex = 0;
     if (dst >= R8) rex |= REX_B;
     emit_rex_if_needed(ctx, rex);
@@ -713,6 +822,7 @@ void emit_shr_r32_imm8(emit_ctx_t *ctx, x64_reg_t dst, uint8_t imm) {
 
 // sar r32, cl  (D3 /7)
 void emit_sar_r32_cl(emit_ctx_t *ctx, x64_reg_t dst) {
+    CHECK_RAX_WRITE(ctx, dst);
     uint8_t rex = 0;
     if (dst >= R8) rex |= REX_B;
     emit_rex_if_needed(ctx, rex);
@@ -722,6 +832,7 @@ void emit_sar_r32_cl(emit_ctx_t *ctx, x64_reg_t dst) {
 
 // sar r32, imm8  (C1 /7 ib)
 void emit_sar_r32_imm8(emit_ctx_t *ctx, x64_reg_t dst, uint8_t imm) {
+    CHECK_RAX_WRITE(ctx, dst);
     uint8_t rex = 0;
     if (dst >= R8) rex |= REX_B;
     emit_rex_if_needed(ctx, rex);
@@ -831,6 +942,23 @@ void emit_jae_rel32(emit_ctx_t *ctx, int32_t offset) { emit_jcc_rel32(ctx, 0x83,
 void emit_ja_rel32(emit_ctx_t *ctx, int32_t offset)  { emit_jcc_rel32(ctx, 0x87, offset); }
 void emit_jbe_rel32(emit_ctx_t *ctx, int32_t offset) { emit_jcc_rel32(ctx, 0x86, offset); }
 
+// Helper to get jcc function from condition code (0x80-0x8F)
+void *emit_jcc_rel32_from_cc(uint8_t cc) {
+    switch (cc) {
+        case 0x84: return (void *)emit_je_rel32;
+        case 0x85: return (void *)emit_jne_rel32;
+        case 0x8C: return (void *)emit_jl_rel32;
+        case 0x8D: return (void *)emit_jge_rel32;
+        case 0x8F: return (void *)emit_jg_rel32;
+        case 0x8E: return (void *)emit_jle_rel32;
+        case 0x82: return (void *)emit_jb_rel32;
+        case 0x83: return (void *)emit_jae_rel32;
+        case 0x87: return (void *)emit_ja_rel32;
+        case 0x86: return (void *)emit_jbe_rel32;
+        default: return NULL;
+    }
+}
+
 // Short conditional jump: 7x rel8 (2 bytes total)
 // cc is the condition code (low nibble of the 0F 8x near opcode)
 void emit_jcc_short(emit_ctx_t *ctx, uint8_t cc, int8_t rel8) {
@@ -870,6 +998,7 @@ void emit_push_r64(emit_ctx_t *ctx, x64_reg_t reg) {
 
 // pop r64  (58+rd)
 void emit_pop_r64(emit_ctx_t *ctx, x64_reg_t reg) {
+    CHECK_RAX_WRITE(ctx, reg);
     if (reg >= R8) emit_byte(ctx, REX_BASE | REX_B);
     emit_byte(ctx, 0x58 + (reg & 7));
 }

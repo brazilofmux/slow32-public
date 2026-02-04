@@ -19,6 +19,22 @@ def CC_SLOW32 : CallingConv<[
   CCIfType<[i32], CCAssignToStack<4, 4>>
 ]>;
 
+// Varargs calling convention: 64-bit values use consecutive register pairs
+// (no alignment gaps) so that the save area matches sequential va_arg reads.
+def CC_SLOW32_VarArg : CallingConv<[
+  CCIfByVal<CCPassByVal<4, 4>>,
+  CCIfType<[f64], CCAssignToRegWithShadow<[R3, R4, R5, R6, R7, R8, R9],
+                                          [R4, R5, R6, R7, R8, R9, R10]>>,
+  CCIfType<[i64], CCAssignToRegWithShadow<[R3, R4, R5, R6, R7, R8, R9],
+                                          [R4, R5, R6, R7, R8, R9, R10]>>,
+  CCIfType<[f32], CCAssignToReg<[R3, R4, R5, R6, R7, R8, R9, R10]>>,
+  CCIfType<[i32], CCAssignToReg<[R3, R4, R5, R6, R7, R8, R9, R10]>>,
+  CCIfType<[f64], CCAssignToStack<8, 4>>,
+  CCIfType<[i64], CCAssignToStack<8, 4>>,
+  CCIfType<[f32], CCAssignToStack<4, 4>>,
+  CCIfType<[i32], CCAssignToStack<4, 4>>
+]>;
+
 // Return values: scalars in r1 (and r2 for 64-bit). Anything that doesn't fit
 // spills to a caller-allocated memory slot.
 def RetCC_SLOW32 : CallingConv<[

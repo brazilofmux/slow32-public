@@ -356,7 +356,6 @@ static FileResult ValidateFile(const char* filename, bool strict) {
     while (1) {
         size_t n = fread(chunk, 1, chunk_size, f);
         if (n == 0) {
-            at_eof = true;
             break;
         }
         saw_data = true;

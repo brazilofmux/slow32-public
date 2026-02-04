@@ -74,7 +74,9 @@ struct block_cache {
     uint8_t *dispatcher_stub;
 
     // Shared exit stubs (emitted once in code buffer)
-    uint8_t *shared_branch_exit;    // mov [rbp+EXIT_REASON], EXIT_BRANCH; ret
+    uint8_t *shared_branch_exit;    // mov [rbp+EXIT_REASON], EXIT_BRANCH; jmp native_dispatcher
+    uint8_t *native_dispatcher;     // Native dispatch trampoline in code buffer
+    uint32_t stubs_end;             // End of shared stubs in code buffer
 
     // Statistics
     uint64_t lookup_count;
@@ -209,8 +211,8 @@ uint32_t cache_side_exit_total_count(block_cache_t *cache, uint32_t branch_pc);
 
 static inline uint32_t cache_hash(uint32_t guest_pc) {
     // SLOW-32 instructions are 4-byte aligned
-    // Shift out low 2 bits and mask to table size
-    return (guest_pc >> 2) & BLOCK_CACHE_MASK;
+    // Shift out low 2 bits and fold higher bits to reduce collisions
+    return ((guest_pc >> 2) ^ (guest_pc >> 12)) & BLOCK_CACHE_MASK;
 }
 
 #endif // DBT_BLOCK_CACHE_H

@@ -49,12 +49,11 @@ echo ""
 
 for test in $TESTS; do
     name=$(basename "$(dirname "$test")")
+    dbt_args=()
 
-    # Skip MMIO test (not implemented)
-    if [[ "$name" == *"mmio"* ]]; then
-        echo -e "${YELLOW}SKIP${NC}: $name (MMIO not implemented)"
-        SKIP=$((SKIP+1))
-        continue
+    # Some tests require the DBT register cache to be enabled
+    if [ -f "$REGRESSION_DIR/tests/$name/require_dbt_regcache" ]; then
+        dbt_args+=("-R")
     fi
 
     # Run interpreter - filter to just program output (lines between "Starting" and "HALT")
@@ -63,7 +62,7 @@ for test in $TESTS; do
     interp_exit=$?
 
     # Run DBT
-    dbt_full=$("$DBT" "$test" 2>&1) || true
+    dbt_full=$("$DBT" "${dbt_args[@]}" "$test" 2>&1) || true
     dbt_exit=$?
 
     # Extract just the DEBUG output (program's actual output before HALT/stats)
@@ -74,7 +73,7 @@ for test in $TESTS; do
     # For simplicity, just compare exit codes for now
     if [ "$interp_exit" = "$dbt_exit" ]; then
         # Check if interpreter shows HALT (success path)
-        if echo "$interp_full" | grep -q "HALT at"; then
+        if echo "$interp_full" | grep -q "HALT at" || echo "$interp_full" | grep -q "Program halted."; then
             echo -e "${GREEN}PASS${NC}: $name (exit=$dbt_exit)"
             PASS=$((PASS+1))
         else

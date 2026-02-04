@@ -17,9 +17,12 @@ RUN apk add --no-cache \
 
 # Download LLVM project (main branch for LLVM 22 development)
 WORKDIR /build
-RUN wget -q https://github.com/llvm/llvm-project/archive/refs/heads/main.zip -O llvm-project.zip && \
+# Pin to a known-good LLVM commit to avoid transient upstream breakage.
+# Update this SHA when you want to pull in newer upstream changes.
+ARG LLVM_COMMIT=c373d7632ac1fe8374b7f2b9536d7e746ed24786
+RUN wget -q https://github.com/llvm/llvm-project/archive/${LLVM_COMMIT}.zip -O llvm-project.zip && \
     unzip -q llvm-project.zip && \
-    mv llvm-project-main llvm-project && \
+    mv llvm-project-${LLVM_COMMIT} llvm-project && \
     rm llvm-project.zip
 
 # Copy SLOW-32 backend files and patches

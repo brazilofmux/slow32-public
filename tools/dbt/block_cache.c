@@ -46,8 +46,8 @@ bool cache_init(block_cache_t *cache) {
 
     // Emit shared branch exit stub:
     //   mov dword [rbp + CPU_EXIT_REASON_OFFSET], EXIT_BRANCH  (10 bytes)
-    //   ret                                                     (1 byte)
-    // Total: 11 bytes
+    //   jmp native_dispatcher                                   (5 bytes)
+    // Total: 15 bytes
     {
         uint8_t *p = cache->code_buffer + cache->code_buffer_used;
         cache->shared_branch_exit = p;
@@ -65,12 +65,139 @@ bool cache_init(block_cache_t *cache) {
         *p++ = (reason >> 8) & 0xFF;
         *p++ = (reason >> 16) & 0xFF;
         *p++ = (reason >> 24) & 0xFF;
-        // ret
-        *p++ = 0xC3;
+        // jmp rel32 (placeholder — patched after native_dispatcher is emitted)
+        uint8_t *jmp_patch = p;
+        *p++ = 0xE9;
+        *p++ = 0x00; *p++ = 0x00; *p++ = 0x00; *p++ = 0x00;
         cache->code_buffer_used += (uint32_t)(p - cache->shared_branch_exit);
+    }
+
+    // Emit native dispatcher trampoline
+    // Stays in generated code — does full linear-probe cache lookup.
+    // On hit: jumps to block->host_code (keeps return address on stack).
+    // On miss: ret to C dispatcher (execute_translated).
+    //
+    // Register usage (all free at any exit path):
+    //   RBP = &cpu (preserved), R14 = mem_base (preserved), R15 = lookup_table (preserved)
+    //   RAX, RCX, RDX, R8, R10 = scratch
+    {
+        uint8_t *p = cache->code_buffer + cache->code_buffer_used;
+        cache->native_dispatcher = p;
+
+        // Patch the jmp in shared_branch_exit to point here
+        {
+            uint8_t *jmp_site = cache->shared_branch_exit + 10; // after mov dword
+            int32_t rel = (int32_t)(p - (jmp_site + 5));
+            jmp_site[1] = (rel >> 0) & 0xFF;
+            jmp_site[2] = (rel >> 8) & 0xFF;
+            jmp_site[3] = (rel >> 16) & 0xFF;
+            jmp_site[4] = (rel >> 24) & 0xFF;
+        }
+
+        int32_t pc_off = (int32_t)CPU_PC_OFFSET;
+        int32_t mask_off = (int32_t)CPU_LOOKUP_MASK_OFFSET;
+
+        // mov ecx, [rbp + pc_off]          ; ecx = cpu->pc
+        *p++ = 0x8B; *p++ = 0x8D;
+        *p++ = (pc_off >> 0) & 0xFF; *p++ = (pc_off >> 8) & 0xFF;
+        *p++ = (pc_off >> 16) & 0xFF; *p++ = (pc_off >> 24) & 0xFF;
+
+        // mov eax, ecx                     ; eax = pc
+        *p++ = 0x89; *p++ = 0xC8;
+
+        // shr eax, 2                       ; eax = pc >> 2
+        *p++ = 0xC1; *p++ = 0xE8; *p++ = 0x02;
+
+        // mov r11d, ecx                    ; r11d = pc
+        *p++ = 0x44; *p++ = 0x89; *p++ = 0xCB;
+
+        // shr r11d, 12                     ; r11d = pc >> 12
+        *p++ = 0x41; *p++ = 0xC1; *p++ = 0xEB; *p++ = 0x0C;
+
+        // xor eax, r11d                    ; eax ^= r11d
+        *p++ = 0x44; *p++ = 0x31; *p++ = 0xD8;
+
+        // mov r10d, [rbp + mask_off]       ; r10d = BLOCK_CACHE_MASK
+        *p++ = 0x44; *p++ = 0x8B; *p++ = 0x95;
+        *p++ = (mask_off >> 0) & 0xFF; *p++ = (mask_off >> 8) & 0xFF;
+        *p++ = (mask_off >> 16) & 0xFF; *p++ = (mask_off >> 24) & 0xFF;
+
+        // and eax, r10d                    ; hash &= mask
+        *p++ = 0x44; *p++ = 0x21; *p++ = 0xD0;
+
+        // mov r8d, eax                     ; r8d = start index
+        *p++ = 0x41; *p++ = 0x89; *p++ = 0xC0;
+
+        // .probe:
+        uint8_t *probe_label = p;
+
+        // mov rdx, [r15 + rax*8]           ; rdx = blocks[hash]
+        *p++ = 0x49; *p++ = 0x8B; *p++ = 0x14; *p++ = 0xC7;
+
+        // test rdx, rdx                    ; NULL check
+        *p++ = 0x48; *p++ = 0x85; *p++ = 0xD2;
+
+        // jz .miss (rel32)
+        *p++ = 0x0F; *p++ = 0x84;
+        uint8_t *jz_miss_patch = p;
+        *p++ = 0x00; *p++ = 0x00; *p++ = 0x00; *p++ = 0x00; // placeholder
+
+        // cmp [rdx], ecx                   ; block->guest_pc == target?
+        *p++ = 0x39; *p++ = 0x0A;
+
+        // je .hit (rel32)
+        *p++ = 0x0F; *p++ = 0x84;
+        uint8_t *je_hit_patch = p;
+        *p++ = 0x00; *p++ = 0x00; *p++ = 0x00; *p++ = 0x00; // placeholder
+
+        // inc eax
+        *p++ = 0xFF; *p++ = 0xC0;
+
+        // and eax, r10d                    ; wrap around
+        *p++ = 0x44; *p++ = 0x21; *p++ = 0xD0;
+
+        // cmp eax, r8d                     ; full circle?
+        *p++ = 0x44; *p++ = 0x39; *p++ = 0xC0;
+
+        // jne .probe
+        *p++ = 0x75;
+        *p = (uint8_t)(probe_label - (p + 1));
+        p++;
+
+        // .miss:
+        {
+            int32_t rel = (int32_t)(p - (jz_miss_patch + 4));
+            jz_miss_patch[0] = (rel >> 0) & 0xFF;
+            jz_miss_patch[1] = (rel >> 8) & 0xFF;
+            jz_miss_patch[2] = (rel >> 16) & 0xFF;
+            jz_miss_patch[3] = (rel >> 24) & 0xFF;
+        }
+
+        // ret                               ; return to C dispatcher
+        *p++ = 0xC3;
+
+        // .hit:
+        {
+            int32_t rel = (int32_t)(p - (je_hit_patch + 4));
+            je_hit_patch[0] = (rel >> 0) & 0xFF;
+            je_hit_patch[1] = (rel >> 8) & 0xFF;
+            je_hit_patch[2] = (rel >> 16) & 0xFF;
+            je_hit_patch[3] = (rel >> 24) & 0xFF;
+        }
+
+        // inc dword [rdx + 24]             ; exec_count++ (offset 24 in translated_block_t)
+        *p++ = 0xFF; *p++ = 0x42; *p++ = 0x18;
+
+        // jmp [rdx + 8]                    ; jmp block->host_code (offset 8)
+        *p++ = 0xFF; *p++ = 0x62; *p++ = 0x08;
+
+        cache->code_buffer_used += (uint32_t)(p - cache->native_dispatcher);
         // Align
         cache->code_buffer_used = (cache->code_buffer_used + 15) & ~15;
     }
+
+    // Record where stubs end (for cache_flush)
+    cache->stubs_end = cache->code_buffer_used;
 
     // Initialize chain pending index
     memset(cache->chain_pending_head, -1, sizeof(cache->chain_pending_head));
@@ -98,12 +225,8 @@ void cache_flush(block_cache_t *cache) {
     memset(cache->block_pool, 0, cache->block_pool_used * sizeof(translated_block_t));
     cache->block_pool_used = 0;
 
-    // Reset code buffer - keep dispatcher stub and shared stubs
-    // The shared_branch_exit stub is at a fixed offset, so we just
-    // need to keep code_buffer_used past it.
-    uint32_t stubs_end = (uint32_t)(cache->shared_branch_exit - cache->code_buffer) + 11;
-    stubs_end = (stubs_end + 15) & ~15;  // Align
-    cache->code_buffer_used = stubs_end;
+    // Reset code buffer - keep dispatcher stub, shared_branch_exit, and native_dispatcher
+    cache->code_buffer_used = cache->stubs_end;
 
     // Reset chain pending index
     memset(cache->chain_pending_head, -1, sizeof(cache->chain_pending_head));

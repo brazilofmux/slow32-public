@@ -52,7 +52,7 @@ typedef struct {
     uint32_t side_exit_pcs[MAX_BLOCK_EXITS];
     bool side_exit_info_enabled; // Emit branch_pc info for diagnostics
     bool avoid_backedge_extend;  // Study-only guard: don't extend across back-edges
-    bool peephole_enabled;       // Study-only: peephole on emitted host code
+    bool peephole_enabled;       // Peephole optimize emitted host code
 
     // Stage 5: Per-block register allocation (6-slot fully-associative)
     bool reg_cache_enabled;
@@ -66,6 +66,50 @@ typedef struct {
         bool    dirty;
     } reg_alloc[REG_ALLOC_SLOTS];
     int8_t reg_alloc_map[32];   // guest_reg -> slot index, or -1
+
+    // Guest PC → host code offset map (for in-block back-edge loops)
+    int pc_map_count;
+    struct {
+        uint32_t guest_pc;
+        size_t   host_offset;
+    } pc_map[MAX_BLOCK_INSTS];
+
+    // Back-edge detection (from prescan): prevents stale pending write flushes
+    bool has_backedge;
+    uint32_t backedge_target_pc;
+    uint32_t backedge_targets[MAX_BLOCK_INSTS];
+    int backedge_target_count;
+    uint32_t loop_written_regs; // Bitmask of registers written within the detected loop
+
+    // Dead temporary elimination: pending write tracker
+    struct {
+        uint8_t guest_reg;    // Which guest register
+        x64_reg_t host_reg;   // Which x64 reg holds the value (RAX)
+        bool valid;            // Is there a pending write?
+        bool can_skip_store;   // Level 2: true if store can be skipped entirely
+    } pending_write;
+
+    // Prescan liveness: can_skip_store[i] for each instruction
+    bool dead_temp_skip[MAX_BLOCK_INSTS];
+
+    // Current instruction index (for dead_temp_skip lookup)
+    int current_inst_idx;
+
+    // Constant propagation: track registers with known values at translate time
+    struct {
+        bool valid;
+        uint32_t value;
+    } reg_constants[32];
+
+    // Compare-Branch fusion state
+    struct {
+        bool valid;
+        uint8_t opcode;       // Original comparison opcode (SLT, SEQ, etc.)
+        uint8_t rd;           // Destination register of the comparison
+        uint8_t rs1, rs2;     // Operands of the comparison
+        bool rs2_is_imm;      // True if rs2 is an immediate (for SLTI, etc.)
+        int32_t imm;          // Immediate value if rs2_is_imm is true
+    } pending_cond;
 
     // Out-of-line side exit stubs (deferred to end of block)
     int deferred_exit_count;

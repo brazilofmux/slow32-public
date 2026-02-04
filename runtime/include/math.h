@@ -1,12 +1,12 @@
 #ifndef _MATH_H
 #define _MATH_H
 
-/* 
- * NOTE: SLOW-32 uses soft-float helpers; floating-point is implemented in the
- * runtime/emulator and not in hardware.
- * These macros are provided for compatibility, but the functions below
- * are commented out as they are not implemented in the runtime and 
- * the backend crashes on FP operations.
+/*
+ * NOTE: SLOW-32 now supports native f32/f64 in the toolchain. Many math
+ * functions are provided as libcalls that may be intercepted by fast
+ * emulators; stubs are used for others. Prototypes are provided so standard
+ * C/C++ code can compile, and missing symbols will fail to link unless
+ * a stub is added in the runtime.
  */
 
 #define M_E        2.7182818284590452354
@@ -23,7 +23,6 @@
 #define M_SQRT2    1.41421356237309504880
 #define M_SQRT1_2  0.70710678118654752440
 
-/* Floating point functions are soft-float based
 double fabs(double x);
 float fabsf(float x);
 
@@ -87,6 +86,9 @@ float truncf(float x);
 double fmod(double x, double y);
 float fmodf(float x, float y);
 
+double copysign(double x, double y);
+float copysignf(float x, float y);
+
 double ldexp(double x, int exp);
 float ldexpf(float x, int exp);
 
@@ -99,6 +101,5 @@ float modff(float x, float *iptr);
 int isnan(double x);
 int isinf(double x);
 int isfinite(double x);
-*/
 
 #endif

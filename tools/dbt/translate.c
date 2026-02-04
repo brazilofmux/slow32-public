@@ -176,6 +176,14 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
     uint32_t use_count[32] = {0};
     uint32_t pc = start_pc;
     int inst_count = 0;
+    decoded_inst_t decoded[MAX_BLOCK_INSTS];
+
+    // Initialize dead_temp_skip array
+    memset(ctx->dead_temp_skip, 0, sizeof(ctx->dead_temp_skip));
+    ctx->loop_written_regs = 0;
+    ctx->backedge_target_count = 0;
+    ctx->has_backedge = false;
+    ctx->backedge_target_pc = 0;
 
     while (inst_count < MAX_BLOCK_INSTS) {
         if (pc >= cpu->code_limit || (cpu->code_limit - pc) < 4)
@@ -183,6 +191,7 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
 
         uint32_t raw = *(uint32_t *)(cpu->mem_base + pc);
         decoded_inst_t inst = decode_instruction(raw);
+        decoded[inst_count] = inst;
 
         // Tally register usage (skip r0)
         switch (inst.format) {
@@ -227,16 +236,102 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
                 if (ctx->superblock_enabled && inst.imm > 0) {
                     // Continue scanning fall-through (mirrors superblock heuristic)
                 } else {
+                    // Detect in-block back-edge: backward branch targeting within this block
+                    if (inst.imm < 0 && ctx->reg_cache_enabled) {
+                        uint32_t target = pc + 4 + inst.imm;
+                        if (target >= start_pc) {
+                            ctx->has_backedge = true;
+                            ctx->backedge_target_pc = target;
+                            bool seen = false;
+                            for (int i = 0; i < ctx->backedge_target_count; i++) {
+                                if (ctx->backedge_targets[i] == target) {
+                                    seen = true;
+                                    break;
+                                }
+                            }
+                            if (!seen && ctx->backedge_target_count < MAX_BLOCK_INSTS) {
+                                ctx->backedge_targets[ctx->backedge_target_count++] = target;
+                            }
+                            
+                            // Compute registers written in the loop body (target to current)
+                            // Used for minimizing dirty snapshots in deferred side exits
+                            uint32_t target_idx = (target - start_pc) / 4;
+                            // Note: inst_count is the current instruction index
+                            for (int k = target_idx; k <= inst_count; k++) {
+                                uint8_t wr = 0;
+                                switch (decoded[k].format) {
+                                    case FMT_R: case FMT_I: case FMT_U: case FMT_J:
+                                        wr = decoded[k].rd; break;
+                                    default: break;
+                                }
+                                if (wr != 0) ctx->loop_written_regs |= (1u << wr);
+                            }
+                        }
+                    }
                     is_block_end = true;
                 }
                 break;
             default:
                 break;
         }
-        if (is_block_end) break;
+        if (is_block_end) {
+            inst_count++;  // Include the block-ending instruction
+            break;
+        }
 
         pc += 4;
         inst_count++;
+    }
+
+    // Dead temporary elimination: backward liveness scan
+    // For each instruction that writes a register, determine if the value
+    // has at most 1 read before the next write (making store skippable).
+    {
+        int read_count_before_write[32];
+        for (int r = 0; r < 32; r++)
+            read_count_before_write[r] = 2;  // Conservative: assume live at block end
+
+        for (int i = inst_count - 1; i >= 0; i--) {
+            decoded_inst_t *dinst = &decoded[i];
+            uint8_t wr = 0;   // written register
+            uint8_t r1 = 0, r2 = 0;  // read registers
+
+            switch (dinst->format) {
+                case FMT_R:
+                    wr = dinst->rd;
+                    r1 = dinst->rs1;
+                    r2 = dinst->rs2;
+                    break;
+                case FMT_I:
+                    wr = dinst->rd;
+                    r1 = dinst->rs1;
+                    break;
+                case FMT_S:
+                    r1 = dinst->rs1;
+                    r2 = dinst->rs2;
+                    break;
+                case FMT_B:
+                    r1 = dinst->rs1;
+                    r2 = dinst->rs2;
+                    break;
+                case FMT_U:
+                    wr = dinst->rd;
+                    break;
+                case FMT_J:
+                    wr = dinst->rd;
+                    break;
+            }
+
+            // Process write first (backward: write kills liveness)
+            if (wr != 0) {
+                ctx->dead_temp_skip[i] = (read_count_before_write[wr] <= 1);
+                read_count_before_write[wr] = 0;
+            }
+
+            // Process reads after (backward: reads establish liveness)
+            if (r1 != 0) read_count_before_write[r1]++;
+            if (r2 != 0) read_count_before_write[r2]++;
+        }
     }
 
     // Select top REG_ALLOC_SLOTS registers by use count
@@ -269,7 +364,110 @@ static void reg_alloc_emit_prologue(translate_ctx_t *ctx) {
     }
 }
 
+// Dead temporary elimination: flush any pending write to memory
+// Forward declarations
+static void reg_cache_flush(translate_ctx_t *ctx);
+
+// Return the host register for a cached guest register, or X64_NOREG if not cached.
+static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg) {
+    if (!ctx->reg_cache_enabled || guest_reg == 0) return X64_NOREG;
+    int8_t slot = ctx->reg_alloc_map[guest_reg];
+    return (slot >= 0) ? reg_alloc_hosts[slot] : X64_NOREG;
+}
+
+// Reset all constant propagation state (e.g., at block start or back-edge targets)
+static inline void const_prop_reset(translate_ctx_t *ctx) {
+    for (int i = 0; i < 32; i++) {
+        ctx->reg_constants[i].valid = false;
+    }
+    ctx->reg_constants[0].valid = true;
+    ctx->reg_constants[0].value = 0;
+}
+
+static inline bool is_backedge_target(translate_ctx_t *ctx, uint32_t pc) {
+    if (!ctx->has_backedge) return false;
+    for (int i = 0; i < ctx->backedge_target_count; i++) {
+        if (ctx->backedge_targets[i] == pc) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static inline void flush_pending_write(translate_ctx_t *ctx) {
+    if (!ctx->pending_write.valid) return;
+    emit_mov_m32_r32(&ctx->emit, RBP,
+                     GUEST_REG_OFFSET(ctx->pending_write.guest_reg),
+                     ctx->pending_write.host_reg);
+    ctx->pending_write.valid = false;
+    ctx->emit.rax_pending = false;
+}
+
+// Materialize a deferred comparison into its destination register
+static void materialize_pending_cond(translate_ctx_t *ctx) {
+    if (!ctx->pending_cond.valid) return;
+    
+    emit_ctx_t *e = &ctx->emit;
+    uint8_t opcode = ctx->pending_cond.opcode;
+    uint8_t rd = ctx->pending_cond.rd;
+    uint8_t rs1 = ctx->pending_cond.rs1;
+    uint8_t rs2 = ctx->pending_cond.rs2;
+    bool rs2_is_imm = ctx->pending_cond.rs2_is_imm;
+    int32_t imm = ctx->pending_cond.imm;
+
+    // Reset valid bit BEFORE emitting anything that might trigger another flush/materialize
+    ctx->pending_cond.valid = false;
+
+    // Use host registers for comparison operands when available
+    x64_reg_t h1 = guest_host_reg(ctx, rs1);
+    x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : RAX;
+    if (h1 == X64_NOREG) emit_load_guest_reg(ctx, RAX, rs1);
+
+    if (rs2_is_imm) {
+        // Comparison with immediate (SLTI, SLTIU)
+        if (h1 != X64_NOREG) flush_pending_write(ctx);
+        emit_cmp_r32_imm32(e, cmp_a, imm);
+    } else {
+        // Register-register comparison (SLT, SLTU, SEQ, SNE, ...)
+        x64_reg_t h2 = guest_host_reg(ctx, rs2);
+        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : RCX;
+        if (h2 == X64_NOREG) emit_load_guest_reg(ctx, RCX, rs2);
+        if (h1 != X64_NOREG) flush_pending_write(ctx);
+        emit_cmp_r32_r32(e, cmp_a, cmp_b);
+    }
+
+    // Determine correct setcc based on opcode
+    void (*emit_setcc_fn)(emit_ctx_t *, x64_reg_t) = NULL;
+    switch (opcode) {
+        case OP_SLT:  case OP_SLTI:  emit_setcc_fn = emit_setl;  break;
+        case OP_SLTU: case OP_SLTIU: emit_setcc_fn = emit_setb;  break;
+        case OP_SEQ:                 emit_setcc_fn = emit_sete;  break;
+        case OP_SNE:                 emit_setcc_fn = emit_setne; break;
+        case OP_SGT:                 emit_setcc_fn = emit_setg;  break;
+        case OP_SGTU:                emit_setcc_fn = emit_seta;  break;
+        case OP_SLE:                 emit_setcc_fn = emit_setle; break;
+        case OP_SLEU:                emit_setcc_fn = emit_setbe; break;
+        case OP_SGE:                 emit_setcc_fn = emit_setge; break;
+        case OP_SGEU:                emit_setcc_fn = emit_setae; break;
+        default:
+            fprintf(stderr, "materialize_pending_cond: unknown opcode 0x%02X\n", opcode);
+            return;
+    }
+
+    if (emit_setcc_fn) {
+        emit_setcc_fn(e, RAX);
+        emit_movzx_r32_r8(e, RAX, RAX);
+        emit_store_guest_reg(ctx, rd, RAX);
+    }
+}
+
+static inline void flush_pending_cond(translate_ctx_t *ctx) {
+    materialize_pending_cond(ctx);
+}
+
 static void reg_cache_flush(translate_ctx_t *ctx) {
+    flush_pending_cond(ctx);
+    flush_pending_write(ctx);
     if (!ctx->reg_cache_enabled) {
         return;
     }
@@ -288,6 +486,7 @@ static void reg_cache_flush(translate_ctx_t *ctx) {
 
 // Flush using a dirty-bit snapshot (for deferred side exits)
 static void reg_alloc_flush_snapshot(translate_ctx_t *ctx, const bool *dirty_snapshot) {
+    flush_pending_write(ctx);
     emit_ctx_t *e = &ctx->emit;
     for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
         if (!ctx->reg_alloc[i].allocated || !dirty_snapshot[i]) {
@@ -301,10 +500,38 @@ static void reg_alloc_flush_snapshot(translate_ctx_t *ctx, const bool *dirty_sna
 // Load guest register into x86-64 register
 void emit_load_guest_reg(translate_ctx_t *ctx, x64_reg_t dst, uint8_t guest_reg) {
     emit_ctx_t *e = &ctx->emit;
+
     if (guest_reg == 0) {
-        // r0 is always 0
+        // r0 is always 0 — flush pending if it would clobber dst
+        if (ctx->pending_write.valid && dst == ctx->pending_write.host_reg) {
+            flush_pending_write(ctx);
+        }
         emit_xor_r32_r32(e, dst, dst);
         return;
+    }
+
+    // Dead temporary elimination: check pending write
+    if (ctx->pending_write.valid) {
+        if (guest_reg == ctx->pending_write.guest_reg) {
+            // CONSUME: value is already in pending.host_reg
+            x64_reg_t preg = ctx->pending_write.host_reg;
+            if (!ctx->pending_write.can_skip_store) {
+                // Level 1: still need memory store for later reads
+                emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(guest_reg), preg);
+            }
+            // Level 2: if can_skip_store, skip entirely
+            ctx->pending_write.valid = false;
+            ctx->emit.rax_pending = false;
+            if (dst != preg) {
+                emit_mov_r32_r32(e, dst, preg);
+            }
+            ctx->reg_cache_hits++;
+            return;
+        }
+        if (dst == ctx->pending_write.host_reg) {
+            // About to clobber the pending register — flush first
+            flush_pending_write(ctx);
+        }
     }
 
     if (!ctx->reg_cache_enabled) {
@@ -346,8 +573,27 @@ void emit_store_guest_reg(translate_ctx_t *ctx, uint8_t guest_reg, x64_reg_t src
         return;
     }
 
+    // Constant propagation: non-constant write invalidates known value
+    ctx->reg_constants[guest_reg].valid = false;
+
+    // If there's a pending write for the same guest register, discard it
+    if (ctx->pending_write.valid && ctx->pending_write.guest_reg == guest_reg) {
+        ctx->pending_write.valid = false;
+        ctx->emit.rax_pending = false;
+    }
+
     if (!ctx->reg_cache_enabled) {
-        // Store to CPU state: mov [rbp + offset], src
+        // Dead temporary elimination: defer RAX stores as pending writes
+        if (src == RAX) {
+            flush_pending_write(ctx);  // Flush any previous pending
+            ctx->pending_write.guest_reg = guest_reg;
+            ctx->pending_write.host_reg = RAX;
+            ctx->pending_write.valid = true;
+            ctx->emit.rax_pending = true;
+            ctx->pending_write.can_skip_store = ctx->dead_temp_skip[ctx->current_inst_idx];
+            return;
+        }
+        // Non-RAX stores (e.g., RCX from loads) — store normally
         const char *saved_tag = e->trace_tag;
         if (e->trace_enabled) {
             e->trace_tag = "guest_store";
@@ -367,7 +613,16 @@ void emit_store_guest_reg(translate_ctx_t *ctx, uint8_t guest_reg, x64_reg_t src
         }
         ctx->reg_alloc[slot].dirty = true;
     } else {
-        // Not allocated — memory fallback
+        // Not allocated — defer RAX stores as pending writes
+        if (src == RAX) {
+            flush_pending_write(ctx);
+            ctx->pending_write.guest_reg = guest_reg;
+            ctx->pending_write.host_reg = RAX;
+            ctx->pending_write.valid = true;
+            ctx->emit.rax_pending = true;
+            ctx->pending_write.can_skip_store = ctx->dead_temp_skip[ctx->current_inst_idx];
+            return;
+        }
         ctx->reg_cache_misses++;
         const char *saved_tag = e->trace_tag;
         if (e->trace_enabled) {
@@ -382,6 +637,16 @@ void emit_store_guest_reg_imm32(translate_ctx_t *ctx, uint8_t guest_reg, uint32_
     emit_ctx_t *e = &ctx->emit;
     if (guest_reg == 0) {
         return;
+    }
+
+    // Constant propagation: record the known value
+    ctx->reg_constants[guest_reg].valid = true;
+    ctx->reg_constants[guest_reg].value = imm;
+
+    // Discard pending write for same register (being overwritten)
+    if (ctx->pending_write.valid && ctx->pending_write.guest_reg == guest_reg) {
+        ctx->pending_write.valid = false;
+        ctx->emit.rax_pending = false;
     }
     if (!ctx->reg_cache_enabled) {
         const char *saved_tag = e->trace_tag;
@@ -416,7 +681,7 @@ void emit_exit(translate_ctx_t *ctx, exit_reason_t reason, uint32_t next_pc) {
     emit_ctx_t *e = &ctx->emit;
     const char *saved_tag = e->trace_tag;
 
-    reg_cache_flush(ctx);
+    reg_cache_flush(ctx);  // also flushes pending_cond
 
     // Store next PC
     if (e->trace_enabled) {
@@ -499,24 +764,89 @@ void translate_add(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    emit_load_guest_reg(ctx, RAX, rs1);
-    if (rs2 != 0) {
-        emit_load_guest_reg(ctx, RCX, rs2);
-        emit_add_r32_r32(e, RAX, RCX);
+    // Constant folding: both operands known
+    if (ctx->reg_constants[rs1].valid && ctx->reg_constants[rs2].valid) {
+        uint32_t result = ctx->reg_constants[rs1].value + ctx->reg_constants[rs2].value;
+        emit_store_guest_reg_imm32(ctx, rd, result);
+        return;
     }
-    emit_store_guest_reg(ctx, rd, RAX);
+
+    x64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != X64_NOREG) {
+        // Use host register directly as accumulator
+        if (rs2 == 0) {
+            emit_load_guest_reg(ctx, hd, rs1);
+        } else if (rd == rs1) {
+            // hd already has rs1
+            x64_reg_t h2 = guest_host_reg(ctx, rs2);
+            if (h2 != X64_NOREG) emit_add_r32_r32(e, hd, h2);
+            else { emit_load_guest_reg(ctx, RCX, rs2); emit_add_r32_r32(e, hd, RCX); }
+        } else if (rd == rs2) {
+            // Commutative: hd already has rs2, add rs1
+            x64_reg_t h1 = guest_host_reg(ctx, rs1);
+            if (h1 != X64_NOREG) emit_add_r32_r32(e, hd, h1);
+            else { emit_load_guest_reg(ctx, RAX, rs1); emit_add_r32_r32(e, hd, RAX); }
+        } else {
+            emit_load_guest_reg(ctx, hd, rs1);
+            x64_reg_t h2 = guest_host_reg(ctx, rs2);
+            if (h2 != X64_NOREG) emit_add_r32_r32(e, hd, h2);
+            else { emit_load_guest_reg(ctx, RCX, rs2); emit_add_r32_r32(e, hd, RCX); }
+        }
+        ctx->reg_alloc[ctx->reg_alloc_map[rd]].dirty = true;
+        ctx->reg_constants[rd].valid = false;
+    } else {
+        emit_load_guest_reg(ctx, RAX, rs1);
+        if (rs2 != 0) {
+            emit_load_guest_reg(ctx, RCX, rs2);
+            emit_add_r32_r32(e, RAX, RCX);
+        }
+        emit_store_guest_reg(ctx, rd, RAX);
+    }
 }
 
 void translate_sub(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    emit_load_guest_reg(ctx, RAX, rs1);
-    if (rs2 != 0) {
-        emit_load_guest_reg(ctx, RCX, rs2);
-        emit_sub_r32_r32(e, RAX, RCX);
+    // Constant folding: both operands known
+    if (ctx->reg_constants[rs1].valid && ctx->reg_constants[rs2].valid) {
+        uint32_t result = ctx->reg_constants[rs1].value - ctx->reg_constants[rs2].value;
+        emit_store_guest_reg_imm32(ctx, rd, result);
+        return;
     }
-    emit_store_guest_reg(ctx, rd, RAX);
+
+    x64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != X64_NOREG) {
+        if (rs2 == 0) {
+            emit_load_guest_reg(ctx, hd, rs1);
+        } else if (rd == rs1) {
+            // hd already has rs1
+            x64_reg_t h2 = guest_host_reg(ctx, rs2);
+            if (h2 != X64_NOREG) emit_sub_r32_r32(e, hd, h2);
+            else { emit_load_guest_reg(ctx, RCX, rs2); emit_sub_r32_r32(e, hd, RCX); }
+        } else if (rd == rs2) {
+            // rd == rs2: hd holds rs2; loading rs1 into hd would clobber it.
+            // Save rs2 to scratch, load rs1 into hd, then sub scratch.
+            emit_mov_r32_r32(e, RCX, hd);
+            emit_load_guest_reg(ctx, hd, rs1);
+            emit_sub_r32_r32(e, hd, RCX);
+        } else {
+            // rd != rs1 && rd != rs2: safe to overwrite hd
+            emit_load_guest_reg(ctx, hd, rs1);
+            x64_reg_t h2 = guest_host_reg(ctx, rs2);
+            if (h2 != X64_NOREG) emit_sub_r32_r32(e, hd, h2);
+            else { emit_load_guest_reg(ctx, RCX, rs2); emit_sub_r32_r32(e, hd, RCX); }
+        }
+        ctx->reg_alloc[ctx->reg_alloc_map[rd]].dirty = true;
+        ctx->reg_constants[rd].valid = false;
+    } else {
+        emit_load_guest_reg(ctx, RAX, rs1);
+        if (rs2 != 0) {
+            emit_load_guest_reg(ctx, RCX, rs2);
+            emit_sub_r32_r32(e, RAX, RCX);
+        }
+        emit_store_guest_reg(ctx, rd, RAX);
+    }
 }
 
 void translate_addi(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
@@ -524,16 +854,32 @@ void translate_addi(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
     emit_ctx_t *e = &ctx->emit;
 
     if (rs1 == 0) {
-        // rd = 0 + imm = imm
         emit_store_guest_reg_imm32(ctx, rd, (uint32_t)imm);
         return;
+    }
+
+    // Constant folding: if rs1 is a known constant, compute result at translate time
+    if (ctx->reg_constants[rs1].valid) {
+        uint32_t result = ctx->reg_constants[rs1].value + (uint32_t)imm;
+        emit_store_guest_reg_imm32(ctx, rd, result);
+        return;
+    }
+
+    x64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != X64_NOREG) {
+        emit_load_guest_reg(ctx, hd, rs1); // no-op if rd == rs1
+        if (imm != 0) {
+            emit_add_r32_imm32(e, hd, imm);
+        }
+        ctx->reg_alloc[ctx->reg_alloc_map[rd]].dirty = true;
+        ctx->reg_constants[rd].valid = false;
     } else {
         emit_load_guest_reg(ctx, RAX, rs1);
         if (imm != 0) {
             emit_add_r32_imm32(e, RAX, imm);
         }
+        emit_store_guest_reg(ctx, rd, RAX);
     }
-    emit_store_guest_reg(ctx, rd, RAX);
 }
 
 // ============================================================================
@@ -545,39 +891,123 @@ void translate_and(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     emit_ctx_t *e = &ctx->emit;
 
     if (rs1 == 0 || rs2 == 0) {
-        // Anything AND 0 = 0
         emit_store_guest_reg_imm32(ctx, rd, 0);
         return;
+    }
+
+    // Constant folding: both operands known
+    if (ctx->reg_constants[rs1].valid && ctx->reg_constants[rs2].valid) {
+        uint32_t result = ctx->reg_constants[rs1].value & ctx->reg_constants[rs2].value;
+        emit_store_guest_reg_imm32(ctx, rd, result);
+        return;
+    }
+
+    x64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != X64_NOREG) {
+        if (rd == rs1) {
+            x64_reg_t h2 = guest_host_reg(ctx, rs2);
+            if (h2 != X64_NOREG) emit_and_r32_r32(e, hd, h2);
+            else { emit_load_guest_reg(ctx, RCX, rs2); emit_and_r32_r32(e, hd, RCX); }
+        } else if (rd == rs2) {
+            x64_reg_t h1 = guest_host_reg(ctx, rs1);
+            if (h1 != X64_NOREG) emit_and_r32_r32(e, hd, h1);
+            else { emit_load_guest_reg(ctx, RAX, rs1); emit_and_r32_r32(e, hd, RAX); }
+        } else {
+            emit_load_guest_reg(ctx, hd, rs1);
+            x64_reg_t h2 = guest_host_reg(ctx, rs2);
+            if (h2 != X64_NOREG) emit_and_r32_r32(e, hd, h2);
+            else { emit_load_guest_reg(ctx, RCX, rs2); emit_and_r32_r32(e, hd, RCX); }
+        }
+        ctx->reg_alloc[ctx->reg_alloc_map[rd]].dirty = true;
+        ctx->reg_constants[rd].valid = false;
     } else {
         emit_load_guest_reg(ctx, RAX, rs1);
         emit_load_guest_reg(ctx, RCX, rs2);
         emit_and_r32_r32(e, RAX, RCX);
+        emit_store_guest_reg(ctx, rd, RAX);
     }
-    emit_store_guest_reg(ctx, rd, RAX);
 }
 
 void translate_or(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    emit_load_guest_reg(ctx, RAX, rs1);
-    if (rs2 != 0) {
-        emit_load_guest_reg(ctx, RCX, rs2);
-        emit_or_r32_r32(e, RAX, RCX);
+    // Constant folding: both operands known
+    if (ctx->reg_constants[rs1].valid && ctx->reg_constants[rs2].valid) {
+        uint32_t result = ctx->reg_constants[rs1].value | ctx->reg_constants[rs2].value;
+        emit_store_guest_reg_imm32(ctx, rd, result);
+        return;
     }
-    emit_store_guest_reg(ctx, rd, RAX);
+
+    x64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != X64_NOREG) {
+        if (rs2 == 0) {
+            emit_load_guest_reg(ctx, hd, rs1);
+        } else if (rd == rs1) {
+            x64_reg_t h2 = guest_host_reg(ctx, rs2);
+            if (h2 != X64_NOREG) emit_or_r32_r32(e, hd, h2);
+            else { emit_load_guest_reg(ctx, RCX, rs2); emit_or_r32_r32(e, hd, RCX); }
+        } else if (rd == rs2) {
+            x64_reg_t h1 = guest_host_reg(ctx, rs1);
+            if (h1 != X64_NOREG) emit_or_r32_r32(e, hd, h1);
+            else { emit_load_guest_reg(ctx, RAX, rs1); emit_or_r32_r32(e, hd, RAX); }
+        } else {
+            emit_load_guest_reg(ctx, hd, rs1);
+            x64_reg_t h2 = guest_host_reg(ctx, rs2);
+            if (h2 != X64_NOREG) emit_or_r32_r32(e, hd, h2);
+            else { emit_load_guest_reg(ctx, RCX, rs2); emit_or_r32_r32(e, hd, RCX); }
+        }
+        ctx->reg_alloc[ctx->reg_alloc_map[rd]].dirty = true;
+        ctx->reg_constants[rd].valid = false;
+    } else {
+        emit_load_guest_reg(ctx, RAX, rs1);
+        if (rs2 != 0) {
+            emit_load_guest_reg(ctx, RCX, rs2);
+            emit_or_r32_r32(e, RAX, RCX);
+        }
+        emit_store_guest_reg(ctx, rd, RAX);
+    }
 }
 
 void translate_xor(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    emit_load_guest_reg(ctx, RAX, rs1);
-    if (rs2 != 0) {
-        emit_load_guest_reg(ctx, RCX, rs2);
-        emit_xor_r32_r32(e, RAX, RCX);
+    // Constant folding: both operands known
+    if (ctx->reg_constants[rs1].valid && ctx->reg_constants[rs2].valid) {
+        uint32_t result = ctx->reg_constants[rs1].value ^ ctx->reg_constants[rs2].value;
+        emit_store_guest_reg_imm32(ctx, rd, result);
+        return;
     }
-    emit_store_guest_reg(ctx, rd, RAX);
+
+    x64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != X64_NOREG) {
+        if (rs2 == 0) {
+            emit_load_guest_reg(ctx, hd, rs1);
+        } else if (rd == rs1) {
+            x64_reg_t h2 = guest_host_reg(ctx, rs2);
+            if (h2 != X64_NOREG) emit_xor_r32_r32(e, hd, h2);
+            else { emit_load_guest_reg(ctx, RCX, rs2); emit_xor_r32_r32(e, hd, RCX); }
+        } else if (rd == rs2) {
+            x64_reg_t h1 = guest_host_reg(ctx, rs1);
+            if (h1 != X64_NOREG) emit_xor_r32_r32(e, hd, h1);
+            else { emit_load_guest_reg(ctx, RAX, rs1); emit_xor_r32_r32(e, hd, RAX); }
+        } else {
+            emit_load_guest_reg(ctx, hd, rs1);
+            x64_reg_t h2 = guest_host_reg(ctx, rs2);
+            if (h2 != X64_NOREG) emit_xor_r32_r32(e, hd, h2);
+            else { emit_load_guest_reg(ctx, RCX, rs2); emit_xor_r32_r32(e, hd, RCX); }
+        }
+        ctx->reg_alloc[ctx->reg_alloc_map[rd]].dirty = true;
+        ctx->reg_constants[rd].valid = false;
+    } else {
+        emit_load_guest_reg(ctx, RAX, rs1);
+        if (rs2 != 0) {
+            emit_load_guest_reg(ctx, RCX, rs2);
+            emit_xor_r32_r32(e, RAX, RCX);
+        }
+        emit_store_guest_reg(ctx, rd, RAX);
+    }
 }
 
 void translate_andi(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
@@ -587,11 +1017,26 @@ void translate_andi(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
     if (rs1 == 0) {
         emit_store_guest_reg_imm32(ctx, rd, 0);
         return;
+    }
+
+    // Constant folding
+    if (ctx->reg_constants[rs1].valid) {
+        uint32_t result = ctx->reg_constants[rs1].value & (uint32_t)imm;
+        emit_store_guest_reg_imm32(ctx, rd, result);
+        return;
+    }
+
+    x64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != X64_NOREG) {
+        emit_load_guest_reg(ctx, hd, rs1);
+        emit_and_r32_imm32(e, hd, imm);
+        ctx->reg_alloc[ctx->reg_alloc_map[rd]].dirty = true;
+        ctx->reg_constants[rd].valid = false;
     } else {
         emit_load_guest_reg(ctx, RAX, rs1);
         emit_and_r32_imm32(e, RAX, imm);
+        emit_store_guest_reg(ctx, rd, RAX);
     }
-    emit_store_guest_reg(ctx, rd, RAX);
 }
 
 void translate_ori(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
@@ -602,11 +1047,29 @@ void translate_ori(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
         emit_store_guest_reg_imm32(ctx, rd, (uint32_t)imm);
         return;
     }
-    emit_load_guest_reg(ctx, RAX, rs1);
-    if (imm != 0) {
-        emit_or_r32_imm32(e, RAX, imm);
+
+    // Constant folding
+    if (ctx->reg_constants[rs1].valid) {
+        uint32_t result = ctx->reg_constants[rs1].value | (uint32_t)imm;
+        emit_store_guest_reg_imm32(ctx, rd, result);
+        return;
     }
-    emit_store_guest_reg(ctx, rd, RAX);
+
+    x64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != X64_NOREG) {
+        emit_load_guest_reg(ctx, hd, rs1);
+        if (imm != 0) {
+            emit_or_r32_imm32(e, hd, imm);
+        }
+        ctx->reg_alloc[ctx->reg_alloc_map[rd]].dirty = true;
+        ctx->reg_constants[rd].valid = false;
+    } else {
+        emit_load_guest_reg(ctx, RAX, rs1);
+        if (imm != 0) {
+            emit_or_r32_imm32(e, RAX, imm);
+        }
+        emit_store_guest_reg(ctx, rd, RAX);
+    }
 }
 
 void translate_xori(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
@@ -617,11 +1080,29 @@ void translate_xori(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
         emit_store_guest_reg_imm32(ctx, rd, (uint32_t)imm);
         return;
     }
-    emit_load_guest_reg(ctx, RAX, rs1);
-    if (imm != 0) {
-        emit_xor_r32_imm32(e, RAX, imm);
+
+    // Constant folding
+    if (ctx->reg_constants[rs1].valid) {
+        uint32_t result = ctx->reg_constants[rs1].value ^ (uint32_t)imm;
+        emit_store_guest_reg_imm32(ctx, rd, result);
+        return;
     }
-    emit_store_guest_reg(ctx, rd, RAX);
+
+    x64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != X64_NOREG) {
+        emit_load_guest_reg(ctx, hd, rs1);
+        if (imm != 0) {
+            emit_xor_r32_imm32(e, hd, imm);
+        }
+        ctx->reg_alloc[ctx->reg_alloc_map[rd]].dirty = true;
+        ctx->reg_constants[rd].valid = false;
+    } else {
+        emit_load_guest_reg(ctx, RAX, rs1);
+        if (imm != 0) {
+            emit_xor_r32_imm32(e, RAX, imm);
+        }
+        emit_store_guest_reg(ctx, rd, RAX);
+    }
 }
 
 // ============================================================================
@@ -632,135 +1113,290 @@ void translate_sll(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    emit_load_guest_reg(ctx, RAX, rs1);
-    if (rs2 != 0) {
-        emit_load_guest_reg(ctx, RCX, rs2);
-        emit_shl_r32_cl(e, RAX);
+    x64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != X64_NOREG) {
+        if (rs2 != 0) emit_load_guest_reg(ctx, RCX, rs2);
+        emit_load_guest_reg(ctx, hd, rs1);
+        if (rs2 != 0) emit_shl_r32_cl(e, hd);
+        ctx->reg_alloc[ctx->reg_alloc_map[rd]].dirty = true;
+        ctx->reg_constants[rd].valid = false;
+    } else {
+        emit_load_guest_reg(ctx, RAX, rs1);
+        if (rs2 != 0) {
+            emit_load_guest_reg(ctx, RCX, rs2);
+            emit_shl_r32_cl(e, RAX);
+        }
+        emit_store_guest_reg(ctx, rd, RAX);
     }
-    emit_store_guest_reg(ctx, rd, RAX);
 }
 
 void translate_srl(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    emit_load_guest_reg(ctx, RAX, rs1);
-    if (rs2 != 0) {
-        emit_load_guest_reg(ctx, RCX, rs2);
-        emit_shr_r32_cl(e, RAX);
+    x64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != X64_NOREG) {
+        if (rs2 != 0) emit_load_guest_reg(ctx, RCX, rs2);
+        emit_load_guest_reg(ctx, hd, rs1);
+        if (rs2 != 0) emit_shr_r32_cl(e, hd);
+        ctx->reg_alloc[ctx->reg_alloc_map[rd]].dirty = true;
+        ctx->reg_constants[rd].valid = false;
+    } else {
+        emit_load_guest_reg(ctx, RAX, rs1);
+        if (rs2 != 0) {
+            emit_load_guest_reg(ctx, RCX, rs2);
+            emit_shr_r32_cl(e, RAX);
+        }
+        emit_store_guest_reg(ctx, rd, RAX);
     }
-    emit_store_guest_reg(ctx, rd, RAX);
 }
 
 void translate_sra(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    emit_load_guest_reg(ctx, RAX, rs1);
-    if (rs2 != 0) {
-        emit_load_guest_reg(ctx, RCX, rs2);
-        emit_sar_r32_cl(e, RAX);
+    x64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != X64_NOREG) {
+        if (rs2 != 0) emit_load_guest_reg(ctx, RCX, rs2);
+        emit_load_guest_reg(ctx, hd, rs1);
+        if (rs2 != 0) emit_sar_r32_cl(e, hd);
+        ctx->reg_alloc[ctx->reg_alloc_map[rd]].dirty = true;
+        ctx->reg_constants[rd].valid = false;
+    } else {
+        emit_load_guest_reg(ctx, RAX, rs1);
+        if (rs2 != 0) {
+            emit_load_guest_reg(ctx, RCX, rs2);
+            emit_sar_r32_cl(e, RAX);
+        }
+        emit_store_guest_reg(ctx, rd, RAX);
     }
-    emit_store_guest_reg(ctx, rd, RAX);
 }
 
 void translate_slli(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    emit_load_guest_reg(ctx, RAX, rs1);
-    if ((imm & 0x1F) != 0) {
-        emit_shl_r32_imm8(e, RAX, imm & 0x1F);
+    // Constant folding
+    if (ctx->reg_constants[rs1].valid) {
+        uint32_t result = ctx->reg_constants[rs1].value << (imm & 0x1F);
+        emit_store_guest_reg_imm32(ctx, rd, result);
+        return;
     }
-    emit_store_guest_reg(ctx, rd, RAX);
+
+    x64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != X64_NOREG) {
+        emit_load_guest_reg(ctx, hd, rs1);
+        if ((imm & 0x1F) != 0) emit_shl_r32_imm8(e, hd, imm & 0x1F);
+        ctx->reg_alloc[ctx->reg_alloc_map[rd]].dirty = true;
+        ctx->reg_constants[rd].valid = false;
+    } else {
+        emit_load_guest_reg(ctx, RAX, rs1);
+        if ((imm & 0x1F) != 0) emit_shl_r32_imm8(e, RAX, imm & 0x1F);
+        emit_store_guest_reg(ctx, rd, RAX);
+    }
 }
 
 void translate_srli(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    emit_load_guest_reg(ctx, RAX, rs1);
-    if ((imm & 0x1F) != 0) {
-        emit_shr_r32_imm8(e, RAX, imm & 0x1F);
+    // Constant folding
+    if (ctx->reg_constants[rs1].valid) {
+        uint32_t result = ctx->reg_constants[rs1].value >> (imm & 0x1F);
+        emit_store_guest_reg_imm32(ctx, rd, result);
+        return;
     }
-    emit_store_guest_reg(ctx, rd, RAX);
+
+    x64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != X64_NOREG) {
+        emit_load_guest_reg(ctx, hd, rs1);
+        if ((imm & 0x1F) != 0) emit_shr_r32_imm8(e, hd, imm & 0x1F);
+        ctx->reg_alloc[ctx->reg_alloc_map[rd]].dirty = true;
+        ctx->reg_constants[rd].valid = false;
+    } else {
+        emit_load_guest_reg(ctx, RAX, rs1);
+        if ((imm & 0x1F) != 0) emit_shr_r32_imm8(e, RAX, imm & 0x1F);
+        emit_store_guest_reg(ctx, rd, RAX);
+    }
 }
 
 void translate_srai(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    emit_load_guest_reg(ctx, RAX, rs1);
-    if ((imm & 0x1F) != 0) {
-        emit_sar_r32_imm8(e, RAX, imm & 0x1F);
+    // Constant folding (arithmetic right shift)
+    if (ctx->reg_constants[rs1].valid) {
+        uint32_t result = (uint32_t)((int32_t)ctx->reg_constants[rs1].value >> (imm & 0x1F));
+        emit_store_guest_reg_imm32(ctx, rd, result);
+        return;
     }
-    emit_store_guest_reg(ctx, rd, RAX);
+
+    x64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != X64_NOREG) {
+        emit_load_guest_reg(ctx, hd, rs1);
+        if ((imm & 0x1F) != 0) emit_sar_r32_imm8(e, hd, imm & 0x1F);
+        ctx->reg_alloc[ctx->reg_alloc_map[rd]].dirty = true;
+        ctx->reg_constants[rd].valid = false;
+    } else {
+        emit_load_guest_reg(ctx, RAX, rs1);
+        if ((imm & 0x1F) != 0) emit_sar_r32_imm8(e, RAX, imm & 0x1F);
+        emit_store_guest_reg(ctx, rd, RAX);
+    }
 }
 
 // ============================================================================
 // Comparison translations
 // ============================================================================
 
-// Helper for compare and set
-static void translate_cmp_set(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2,
-                              void (*emit_setcc)(emit_ctx_t *, x64_reg_t)) {
-    if (rd == 0) return;
+// Peephole lookahead: check if the next instruction is a BEQ/BNE testing 'rd'
+// against r0, which enables compare-branch fusion.
+static bool can_fuse_with_next(translate_ctx_t *ctx, uint8_t rd) {
+    dbt_cpu_state_t *cpu = ctx->cpu;
+    uint32_t next_pc = ctx->guest_pc + 4;
+
+    // Bounds check: need 4 bytes for the next instruction
+    if (next_pc + 4 > cpu->code_limit) return false;
+
+    uint32_t raw = *(uint32_t *)(cpu->mem_base + next_pc);
+    uint8_t opcode = raw & 0x7F;
+
+    // Only BEQ and BNE can be fused
+    if (opcode != OP_BEQ && opcode != OP_BNE) return false;
+
+    // Extract rs1 and rs2 from B-type encoding
+    uint8_t rs1 = (raw >> 15) & 0x1F;
+    uint8_t rs2 = (raw >> 20) & 0x1F;
+
+    // Pattern: Bxx rd, r0, target  (testing comparison result against zero)
+    return (rs1 == rd && rs2 == 0) || (rs2 == rd && rs1 == 0);
+}
+
+// Emit a comparison immediately (non-deferred path)
+static void emit_cmp_set_immediate(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2,
+                                   void (*emit_setcc)(emit_ctx_t *, x64_reg_t)) {
     emit_ctx_t *e = &ctx->emit;
 
-    emit_load_guest_reg(ctx, RAX, rs1);
-    emit_load_guest_reg(ctx, RCX, rs2);
-    emit_cmp_r32_r32(e, RAX, RCX);
+    // Use host registers for comparison operands when available
+    x64_reg_t h1 = guest_host_reg(ctx, rs1);
+    x64_reg_t h2 = guest_host_reg(ctx, rs2);
+    x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : RAX;
+    x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : RCX;
+    if (h1 == X64_NOREG) emit_load_guest_reg(ctx, RAX, rs1);
+    if (h2 == X64_NOREG) emit_load_guest_reg(ctx, RCX, rs2);
+    // Flush pending write before clobbering RAX with setcc result
+    if (h1 != X64_NOREG) flush_pending_write(ctx);
+    emit_cmp_r32_r32(e, cmp_a, cmp_b);
+    // SETCC + MOVZX into RAX, then store to rd
     emit_setcc(e, RAX);
     emit_movzx_r32_r8(e, RAX, RAX);
     emit_store_guest_reg(ctx, rd, RAX);
 }
 
+// Helper for compare and set
+static void translate_cmp_set(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2,
+                              uint8_t opcode) {
+    if (rd == 0) return;
+
+    // Only defer if the next instruction is a fusible BEQ/BNE
+    if (can_fuse_with_next(ctx, rd)) {
+        // Flush any existing pending condition
+        flush_pending_cond(ctx);
+
+        // Defer the comparison for fusion with the next branch
+        ctx->pending_cond.opcode = opcode;
+        ctx->pending_cond.rd = rd;
+        ctx->pending_cond.rs1 = rs1;
+        ctx->pending_cond.rs2 = rs2;
+        ctx->pending_cond.rs2_is_imm = false;
+        ctx->pending_cond.valid = true;
+        // Invalidate constant for rd — the comparison writes rd even though
+        // the store is deferred for fusion
+        ctx->reg_constants[rd].valid = false;
+        return;
+    }
+
+    // Not fusible — emit the comparison immediately
+    void (*emit_setcc_fn)(emit_ctx_t *, x64_reg_t) = NULL;
+    switch (opcode) {
+        case OP_SLT:  emit_setcc_fn = emit_setl;  break;
+        case OP_SLTU: emit_setcc_fn = emit_setb;  break;
+        case OP_SEQ:  emit_setcc_fn = emit_sete;  break;
+        case OP_SNE:  emit_setcc_fn = emit_setne; break;
+        case OP_SGT:  emit_setcc_fn = emit_setg;  break;
+        case OP_SGTU: emit_setcc_fn = emit_seta;  break;
+        case OP_SLE:  emit_setcc_fn = emit_setle; break;
+        case OP_SLEU: emit_setcc_fn = emit_setbe; break;
+        case OP_SGE:  emit_setcc_fn = emit_setge; break;
+        case OP_SGEU: emit_setcc_fn = emit_setae; break;
+    }
+    emit_cmp_set_immediate(ctx, rd, rs1, rs2, emit_setcc_fn);
+}
+
 void translate_slt(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
-    translate_cmp_set(ctx, rd, rs1, rs2, emit_setl);
+    translate_cmp_set(ctx, rd, rs1, rs2, OP_SLT);
 }
 
 void translate_sltu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
-    translate_cmp_set(ctx, rd, rs1, rs2, emit_setb);
+    translate_cmp_set(ctx, rd, rs1, rs2, OP_SLTU);
 }
 
 void translate_seq(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
-    translate_cmp_set(ctx, rd, rs1, rs2, emit_sete);
+    translate_cmp_set(ctx, rd, rs1, rs2, OP_SEQ);
 }
 
 void translate_sne(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
-    translate_cmp_set(ctx, rd, rs1, rs2, emit_setne);
+    translate_cmp_set(ctx, rd, rs1, rs2, OP_SNE);
 }
 
 void translate_sgt(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
-    translate_cmp_set(ctx, rd, rs1, rs2, emit_setg);
+    translate_cmp_set(ctx, rd, rs1, rs2, OP_SGT);
 }
 
 void translate_sgtu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
-    translate_cmp_set(ctx, rd, rs1, rs2, emit_seta);
+    translate_cmp_set(ctx, rd, rs1, rs2, OP_SGTU);
 }
 
 void translate_sle(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
-    translate_cmp_set(ctx, rd, rs1, rs2, emit_setle);
+    translate_cmp_set(ctx, rd, rs1, rs2, OP_SLE);
 }
 
 void translate_sleu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
-    translate_cmp_set(ctx, rd, rs1, rs2, emit_setbe);
+    translate_cmp_set(ctx, rd, rs1, rs2, OP_SLEU);
 }
 
 void translate_sge(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
-    translate_cmp_set(ctx, rd, rs1, rs2, emit_setge);
+    translate_cmp_set(ctx, rd, rs1, rs2, OP_SGE);
 }
 
 void translate_sgeu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
-    translate_cmp_set(ctx, rd, rs1, rs2, emit_setae);
+    translate_cmp_set(ctx, rd, rs1, rs2, OP_SGEU);
 }
 
 void translate_slti(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
     if (rd == 0) return;
-    emit_ctx_t *e = &ctx->emit;
 
-    emit_load_guest_reg(ctx, RAX, rs1);
-    emit_cmp_r32_imm32(e, RAX, imm);
+    if (can_fuse_with_next(ctx, rd)) {
+        flush_pending_cond(ctx);
+        ctx->pending_cond.opcode = OP_SLTI;
+        ctx->pending_cond.rd = rd;
+        ctx->pending_cond.rs1 = rs1;
+        ctx->pending_cond.rs2_is_imm = true;
+        ctx->pending_cond.imm = imm;
+        ctx->pending_cond.valid = true;
+        ctx->reg_constants[rd].valid = false;
+        return;
+    }
+
+    // Not fusible — emit immediately
+    emit_ctx_t *e = &ctx->emit;
+    x64_reg_t h1 = guest_host_reg(ctx, rs1);
+    if (h1 != X64_NOREG) {
+        flush_pending_write(ctx);
+        emit_cmp_r32_imm32(e, h1, imm);
+    } else {
+        emit_load_guest_reg(ctx, RAX, rs1);
+        emit_cmp_r32_imm32(e, RAX, imm);
+    }
     emit_setl(e, RAX);
     emit_movzx_r32_r8(e, RAX, RAX);
     emit_store_guest_reg(ctx, rd, RAX);
@@ -768,10 +1404,29 @@ void translate_slti(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
 
 void translate_sltiu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
     if (rd == 0) return;
-    emit_ctx_t *e = &ctx->emit;
 
-    emit_load_guest_reg(ctx, RAX, rs1);
-    emit_cmp_r32_imm32(e, RAX, imm);
+    if (can_fuse_with_next(ctx, rd)) {
+        flush_pending_cond(ctx);
+        ctx->pending_cond.opcode = OP_SLTIU;
+        ctx->pending_cond.rd = rd;
+        ctx->pending_cond.rs1 = rs1;
+        ctx->pending_cond.rs2_is_imm = true;
+        ctx->pending_cond.imm = imm;
+        ctx->pending_cond.valid = true;
+        ctx->reg_constants[rd].valid = false;
+        return;
+    }
+
+    // Not fusible — emit immediately
+    emit_ctx_t *e = &ctx->emit;
+    x64_reg_t h1 = guest_host_reg(ctx, rs1);
+    if (h1 != X64_NOREG) {
+        flush_pending_write(ctx);
+        emit_cmp_r32_imm32(e, h1, imm);
+    } else {
+        emit_load_guest_reg(ctx, RAX, rs1);
+        emit_cmp_r32_imm32(e, RAX, imm);
+    }
     emit_setb(e, RAX);
     emit_movzx_r32_r8(e, RAX, RAX);
     emit_store_guest_reg(ctx, rd, RAX);
@@ -785,10 +1440,33 @@ void translate_mul(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    emit_load_guest_reg(ctx, RAX, rs1);
-    emit_load_guest_reg(ctx, RCX, rs2);
-    emit_imul_r32_r32(e, RAX, RCX);
-    emit_store_guest_reg(ctx, rd, RAX);
+    x64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != X64_NOREG) {
+        // IMUL r32, r32 works with any registers; commutative
+        if (rd == rs1) {
+            // hd already has rs1
+            x64_reg_t h2 = guest_host_reg(ctx, rs2);
+            if (h2 != X64_NOREG) emit_imul_r32_r32(e, hd, h2);
+            else { emit_load_guest_reg(ctx, RCX, rs2); emit_imul_r32_r32(e, hd, RCX); }
+        } else if (rd == rs2) {
+            // hd already has rs2; commutative so IMUL hd, rs1
+            x64_reg_t h1 = guest_host_reg(ctx, rs1);
+            if (h1 != X64_NOREG) emit_imul_r32_r32(e, hd, h1);
+            else { emit_load_guest_reg(ctx, RAX, rs1); emit_imul_r32_r32(e, hd, RAX); }
+        } else {
+            emit_load_guest_reg(ctx, hd, rs1);
+            x64_reg_t h2 = guest_host_reg(ctx, rs2);
+            if (h2 != X64_NOREG) emit_imul_r32_r32(e, hd, h2);
+            else { emit_load_guest_reg(ctx, RCX, rs2); emit_imul_r32_r32(e, hd, RCX); }
+        }
+        ctx->reg_alloc[ctx->reg_alloc_map[rd]].dirty = true;
+        ctx->reg_constants[rd].valid = false;
+    } else {
+        emit_load_guest_reg(ctx, RAX, rs1);
+        emit_load_guest_reg(ctx, RCX, rs2);
+        emit_imul_r32_r32(e, RAX, RCX);
+        emit_store_guest_reg(ctx, rd, RAX);
+    }
 }
 
 void translate_mulh(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
@@ -817,6 +1495,7 @@ void translate_div(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     size_t patch_not_intmin = e->offset;
     emit_jne_rel32(e, 0);  // patch later
     // INT32_MIN / -1 = INT32_MIN
+    flush_pending_write(ctx);  // About to clobber RAX
     emit_mov_r32_imm32(e, RAX, 0x80000000);
     size_t patch_skip_idiv = e->offset;
     emit_jmp_rel32(e, 0);  // patch later
@@ -845,6 +1524,7 @@ void translate_rem(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     size_t patch_not_intmin = e->offset;
     emit_jne_rel32(e, 0);  // patch later
     // INT32_MIN % -1 = 0
+    flush_pending_write(ctx);  // About to clobber RAX
     emit_xor_r32_r32(e, RAX, RAX);
     size_t patch_skip_idiv = e->offset;
     emit_jmp_rel32(e, 0);  // patch later
@@ -874,86 +1554,73 @@ void translate_lui(translate_ctx_t *ctx, uint8_t rd, int32_t imm) {
 // Memory translations
 // ============================================================================
 
-static void emit_mem_access_check(translate_ctx_t *ctx, uint32_t access_size,
+static void emit_mem_access_check(translate_ctx_t *ctx, x64_reg_t addr_reg,
+                                  uint32_t access_size,
                                   exit_reason_t reason, bool is_store) {
     emit_ctx_t *e = &ctx->emit;
+    dbt_cpu_state_t *cpu = ctx->cpu;
     size_t fault_jumps[8];
     int fault_count = 0;
     size_t ok_jumps[8];
     int ok_count = 0;
 
-    // Bounds: if mem_size < access_size, fault.
-    emit_mov_r32_m32(e, RDX, RBP, CPU_MEM_SIZE_OFFSET);
-    emit_cmp_r32_imm32(e, RDX, (int32_t)access_size);
-    fault_jumps[fault_count++] = emit_offset(e) + 2;
-    emit_jb_rel32(e, 0);
+    if (cpu->mem_size < access_size) {
+        emit_exit_with_info_reg(ctx, reason, ctx->guest_pc, addr_reg);
+        return;
+    }
 
-    // Bounds: if addr > mem_size - access_size, fault.
-    emit_sub_r32_imm32(e, RDX, (int32_t)access_size);
-    emit_cmp_r32_r32(e, RAX, RDX);
+    // 1. Bounds check — always needed, embed mem_size as immediate
+    //    addr must be <= mem_size - access_size
+    uint32_t limit = cpu->mem_size - access_size;
+    emit_cmp_r32_imm32(e, addr_reg, (int32_t)limit);
     fault_jumps[fault_count++] = emit_offset(e) + 2;
     emit_ja_rel32(e, 0);
 
-    if (access_size > 1) {
-        // Optional alignment traps.
-        emit_movzx_r32_m8(e, RCX, RBP, CPU_ALIGN_TRAPS_OFFSET);
-        emit_cmp_r32_imm32(e, RCX, 0);
-        ok_jumps[ok_count++] = emit_offset(e) + 2;
-        emit_je_rel32(e, 0);
-
-        emit_mov_r32_r32(e, RDX, RAX);
+    // 2. Alignment check — only when align_traps_enabled && access_size > 1
+    if (cpu->align_traps_enabled && access_size > 1) {
+        emit_mov_r32_r32(e, RDX, addr_reg);
         emit_and_r32_imm32(e, RDX, (int32_t)(access_size - 1));
-        emit_cmp_r32_imm32(e, RDX, 0);
         fault_jumps[fault_count++] = emit_offset(e) + 2;
         emit_jne_rel32(e, 0);
     }
 
-    // MMIO disabled check: if disabled and addr in MMIO window, fault.
-    emit_movzx_r32_m8(e, RCX, RBP, CPU_MMIO_ENABLED_OFFSET);
-    emit_cmp_r32_imm32(e, RCX, 0);
-    ok_jumps[ok_count++] = emit_offset(e) + 2;
-    emit_jne_rel32(e, 0);
-
-    emit_mov_r32_m32(e, RDX, RBP, CPU_MMIO_BASE_OFFSET);
-    emit_cmp_r32_imm32(e, RDX, 0);
-    ok_jumps[ok_count++] = emit_offset(e) + 2;
-    emit_je_rel32(e, 0);
-
-    emit_cmp_r32_r32(e, RAX, RDX);
-    ok_jumps[ok_count++] = emit_offset(e) + 2;
-    emit_jb_rel32(e, 0);
-
-    emit_add_r32_imm32(e, RDX, 0x10000);
-    emit_cmp_r32_r32(e, RAX, RDX);
-    ok_jumps[ok_count++] = emit_offset(e) + 2;
-    emit_jae_rel32(e, 0);
-
-    if (is_store) {
-        // W^X: if enabled, writes below rodata_limit (or code_limit fallback) fault.
-        emit_movzx_r32_m8(e, RCX, RBP, CPU_WXORX_ENABLED_OFFSET);
-        emit_cmp_r32_imm32(e, RCX, 0);
+    // 3. MMIO disabled check — only when mmio_base != 0 && !mmio_enabled
+    //    If addr falls in the disabled MMIO window, fault.
+    if (!cpu->mmio_enabled && cpu->mmio_base != 0) {
+        emit_cmp_r32_imm32(e, addr_reg, (int32_t)cpu->mmio_base);
         ok_jumps[ok_count++] = emit_offset(e) + 2;
-        emit_je_rel32(e, 0);
-
-        emit_mov_r32_m32(e, RDX, RBP, CPU_RODATA_LIMIT_OFFSET);
-        emit_cmp_r32_imm32(e, RDX, 0);
-        size_t have_limit_jump = emit_offset(e) + 2;
-        emit_jne_rel32(e, 0);
-        emit_mov_r32_m32(e, RDX, RBP, CPU_CODE_LIMIT_OFFSET);
-        size_t have_limit_offset = emit_offset(e);
-        emit_patch_rel32(e, have_limit_jump, have_limit_offset);
-
-        emit_cmp_r32_r32(e, RAX, RDX);
-        ok_jumps[ok_count++] = emit_offset(e) + 2;
-        emit_jae_rel32(e, 0);
+        emit_jb_rel32(e, 0);
+        emit_cmp_r32_imm32(e, addr_reg, (int32_t)(cpu->mmio_base + 0x10000));
+        fault_jumps[fault_count++] = emit_offset(e) + 2;
+        emit_jb_rel32(e, 0);
+        // addr >= mmio_base + 0x10000 falls through to next check (or ok)
     }
 
-    // Fault path (MMIO disabled access or bounds failure)
+    // 4. W^X check — stores only, only when wxorx_enabled
+    //    Writes below rodata_limit (or code_limit fallback) fault.
+    if (is_store && cpu->wxorx_enabled) {
+        uint32_t wx_limit = cpu->rodata_limit ? cpu->rodata_limit : cpu->code_limit;
+        if (wx_limit > 0) {
+            emit_cmp_r32_imm32(e, addr_reg, (int32_t)wx_limit);
+            fault_jumps[fault_count++] = emit_offset(e) + 2;
+            emit_jb_rel32(e, 0);
+        }
+    }
+
+    // Success path — jump over fault handler
+    size_t ok_jump = emit_offset(e) + 1;
+    emit_jmp_rel32(e, 0);
+
+    // Fault path — need address in RAX for exit_info
     size_t fault_offset = emit_offset(e);
+    if (addr_reg != RAX) {
+        emit_mov_r32_r32(e, RAX, addr_reg);
+    }
     emit_exit_with_info_reg(ctx, reason, ctx->guest_pc, RAX);
 
-    // Success path
+    // Patch all jumps
     size_t ok_offset = emit_offset(e);
+    emit_patch_rel32(e, ok_jump, ok_offset);
     for (int i = 0; i < fault_count; i++) {
         emit_patch_rel32(e, fault_jumps[i], fault_offset);
     }
@@ -962,27 +1629,53 @@ static void emit_mem_access_check(translate_ctx_t *ctx, uint32_t access_size,
     }
 }
 
-// Helper to compute address into RAX
-static void emit_compute_addr(translate_ctx_t *ctx, uint8_t rs1, int32_t imm) {
+// Helper to compute address — returns the register holding the effective address.
+// When the base register is allocated and imm==0, returns the host register directly
+// (no instructions emitted). When allocated and imm!=0, uses LEA (1 inst vs 2).
+static x64_reg_t emit_compute_addr(translate_ctx_t *ctx, uint8_t rs1, int32_t imm) {
     emit_ctx_t *e = &ctx->emit;
     if (rs1 == 0) {
+        flush_pending_write(ctx);  // About to clobber RAX
         emit_mov_r32_imm32(e, RAX, (uint32_t)imm);
-    } else {
-        emit_load_guest_reg(ctx, RAX, rs1);
-        if (imm != 0) {
-            emit_add_r32_imm32(e, RAX, imm);
-        }
+        return RAX;
     }
+
+    // Constant folding: if rs1 is a known constant, fold address at translate time
+    if (ctx->reg_constants[rs1].valid) {
+        uint32_t addr = ctx->reg_constants[rs1].value + (uint32_t)imm;
+        flush_pending_write(ctx);  // About to clobber RAX
+        emit_mov_r32_imm32(e, RAX, addr);
+        return RAX;
+    }
+
+    x64_reg_t host = guest_host_reg(ctx, rs1);
+    if (host != X64_NOREG) {
+        if (imm == 0) {
+            // Address already in host register — use directly
+            flush_pending_write(ctx);  // Fault path's reg_cache_flush would clear this at translate-time
+            return host;
+        }
+        // LEA: compute base+offset into RAX without clobbering host reg
+        flush_pending_write(ctx);  // About to clobber RAX
+        emit_lea_r32_r32_disp(e, RAX, host, imm);
+        return RAX;
+    }
+
+    // Not allocated — existing path
+    emit_load_guest_reg(ctx, RAX, rs1);
+    if (imm != 0) {
+        emit_add_r32_imm32(e, RAX, imm);
+    }
+    return RAX;
 }
 
 void translate_ldw(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    emit_compute_addr(ctx, rs1, imm);
-    emit_mem_access_check(ctx, 4, EXIT_FAULT_LOAD, false);
-    // Load: ecx = [r14 + rax] where r14 = mem_base
-    emit_mov_r32_m32_idx(e, RCX, R14, RAX);
+    x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
+    emit_mem_access_check(ctx, addr, 4, EXIT_FAULT_LOAD, false);
+    emit_mov_r32_m32_idx(e, RCX, R14, addr);
     emit_store_guest_reg(ctx, rd, RCX);
 }
 
@@ -990,9 +1683,9 @@ void translate_ldh(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    emit_compute_addr(ctx, rs1, imm);
-    emit_mem_access_check(ctx, 2, EXIT_FAULT_LOAD, false);
-    emit_movsx_r32_m16_idx(e, RCX, R14, RAX);
+    x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
+    emit_mem_access_check(ctx, addr, 2, EXIT_FAULT_LOAD, false);
+    emit_movsx_r32_m16_idx(e, RCX, R14, addr);
     emit_store_guest_reg(ctx, rd, RCX);
 }
 
@@ -1000,9 +1693,9 @@ void translate_ldb(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    emit_compute_addr(ctx, rs1, imm);
-    emit_mem_access_check(ctx, 1, EXIT_FAULT_LOAD, false);
-    emit_movsx_r32_m8_idx(e, RCX, R14, RAX);
+    x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
+    emit_mem_access_check(ctx, addr, 1, EXIT_FAULT_LOAD, false);
+    emit_movsx_r32_m8_idx(e, RCX, R14, addr);
     emit_store_guest_reg(ctx, rd, RCX);
 }
 
@@ -1010,9 +1703,9 @@ void translate_ldhu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    emit_compute_addr(ctx, rs1, imm);
-    emit_mem_access_check(ctx, 2, EXIT_FAULT_LOAD, false);
-    emit_movzx_r32_m16_idx(e, RCX, R14, RAX);
+    x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
+    emit_mem_access_check(ctx, addr, 2, EXIT_FAULT_LOAD, false);
+    emit_movzx_r32_m16_idx(e, RCX, R14, addr);
     emit_store_guest_reg(ctx, rd, RCX);
 }
 
@@ -1020,37 +1713,37 @@ void translate_ldbu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    emit_compute_addr(ctx, rs1, imm);
-    emit_mem_access_check(ctx, 1, EXIT_FAULT_LOAD, false);
-    emit_movzx_r32_m8_idx(e, RCX, R14, RAX);
+    x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
+    emit_mem_access_check(ctx, addr, 1, EXIT_FAULT_LOAD, false);
+    emit_movzx_r32_m8_idx(e, RCX, R14, addr);
     emit_store_guest_reg(ctx, rd, RCX);
 }
 
 void translate_stw(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm) {
     emit_ctx_t *e = &ctx->emit;
 
-    emit_compute_addr(ctx, rs1, imm);
-    emit_mem_access_check(ctx, 4, EXIT_FAULT_STORE, true);
+    x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
+    emit_mem_access_check(ctx, addr, 4, EXIT_FAULT_STORE, true);
     emit_load_guest_reg(ctx, RCX, rs2);
-    emit_mov_m32_r32_idx(e, R14, RAX, RCX);
+    emit_mov_m32_r32_idx(e, R14, addr, RCX);
 }
 
 void translate_sth(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm) {
     emit_ctx_t *e = &ctx->emit;
 
-    emit_compute_addr(ctx, rs1, imm);
-    emit_mem_access_check(ctx, 2, EXIT_FAULT_STORE, true);
+    x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
+    emit_mem_access_check(ctx, addr, 2, EXIT_FAULT_STORE, true);
     emit_load_guest_reg(ctx, RCX, rs2);
-    emit_mov_m16_r16_idx(e, R14, RAX, RCX);
+    emit_mov_m16_r16_idx(e, R14, addr, RCX);
 }
 
 void translate_stb(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm) {
     emit_ctx_t *e = &ctx->emit;
 
-    emit_compute_addr(ctx, rs1, imm);
-    emit_mem_access_check(ctx, 1, EXIT_FAULT_STORE, true);
+    x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
+    emit_mem_access_check(ctx, addr, 1, EXIT_FAULT_STORE, true);
     emit_load_guest_reg(ctx, RCX, rs2);
-    emit_mov_m8_r8_idx(e, R14, RAX, RCX);
+    emit_mov_m8_r8_idx(e, R14, addr, RCX);
 }
 
 // ============================================================================
@@ -1063,7 +1756,7 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
     emit_ctx_t *e = &ctx->emit;
     const char *saved_tag = e->trace_tag;
 
-    reg_cache_flush(ctx);
+    reg_cache_flush(ctx);  // also flushes pending_cond
 
     // Store target PC in case we return to dispatcher or need it for debug
     if (e->trace_enabled) {
@@ -1129,6 +1822,7 @@ static void emit_exit_chained_compact(translate_ctx_t *ctx, uint32_t target_pc,
     emit_ctx_t *e = &ctx->emit;
 
     // Note: reg_cache_flush must be done by caller with correct snapshot
+    flush_pending_cond(ctx);
 
     // Store target PC
     emit_mov_m32_imm32(e, RBP, CPU_PC_OFFSET, target_pc);
@@ -1272,11 +1966,17 @@ static void emit_indirect_lookup_with_target(translate_ctx_t *ctx,
     emit_mov_m32_r32(e, RBP, CPU_PC_OFFSET, target_save);
 
     // Store exit reason = EXIT_INDIRECT
-    emit_mov_r32_imm32(e, RAX, EXIT_INDIRECT);
-    emit_mov_m32_r32(e, RBP, CPU_EXIT_REASON_OFFSET, RAX);
+    emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_INDIRECT);
 
-    // Return to dispatcher
-    emit_ret(e);
+    // Jump to native dispatcher for full linear-probe lookup
+    // (gives indirect branches a second chance beyond the 4-probe inline lookup)
+    if (ctx->cache && ctx->cache->native_dispatcher) {
+        uint8_t *dispatcher = ctx->cache->native_dispatcher;
+        int32_t rel = (int32_t)(dispatcher - (emit_ptr(e) + 5));
+        emit_jmp_rel32(e, rel);
+    } else {
+        emit_ret(e);
+    }
 }
 
 // Emit inline hash table lookup for indirect branches
@@ -1308,8 +2008,7 @@ static void emit_ras_push(translate_ctx_t *ctx, uint32_t return_pc) {
 
     // 2. Store return_pc at ras_stack[top]
     // ras_stack is at CPU_RAS_STACK_OFFSET, each entry is 4 bytes
-    emit_mov_r32_imm32(e, RAX, return_pc);
-    emit_mov_m32_r32_sib(e, RBP, RCX, 4, CPU_RAS_STACK_OFFSET, RAX);
+    emit_mov_m32_imm32_sib(e, RBP, RCX, 4, CPU_RAS_STACK_OFFSET, return_pc);
 
     // 3. Increment top with wrap: top = (top + 1) & RAS_MASK
     emit_add_r32_imm32(e, RCX, 1);
@@ -1374,6 +2073,7 @@ void translate_jal(translate_ctx_t *ctx, uint8_t rd, int32_t imm) {
 
     // Store return address if rd != 0
     if (rd != 0) {
+        flush_pending_write(ctx);  // About to clobber RAX directly
         emit_mov_r32_imm32(e, RAX, return_pc);
         emit_store_guest_reg(ctx, rd, RAX);
     }
@@ -1410,6 +2110,8 @@ void translate_jalr(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
         emit_mov_r64_r64(e, R8, RAX);
         emit_mov_r32_imm32(e, RAX, return_pc);
         emit_store_guest_reg(ctx, rd, RAX);
+        // Flush any deferred write before restoring target into RAX
+        flush_pending_write(ctx);
         // Restore target
         emit_mov_r64_r64(e, RAX, R8);
     }
@@ -1433,10 +2135,19 @@ void translate_jalr(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
     } else {
         // Stage 2 fallback: return to dispatcher
         emit_mov_m32_r32(e, RBP, CPU_PC_OFFSET, RAX);
-        emit_mov_r32_imm32(e, RAX, EXIT_INDIRECT);
-        emit_mov_m32_r32(e, RBP, CPU_EXIT_REASON_OFFSET, RAX);
+        emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_INDIRECT);
         emit_ret(e);
     }
+}
+
+// Look up host code offset for a guest PC within the current block.
+// Returns the host offset, or (size_t)-1 if not found.
+static size_t pc_map_lookup(translate_ctx_t *ctx, uint32_t guest_pc) {
+    for (int i = 0; i < ctx->pc_map_count; i++) {
+        if (ctx->pc_map[i].guest_pc == guest_pc)
+            return ctx->pc_map[i].host_offset;
+    }
+    return (size_t)-1;
 }
 
 // Helper for conditional branches
@@ -1467,25 +2178,145 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
         can_extend = false;
     }
 
-    // Compare (special-case zero register to emit test)
-    const char *saved_tag = e->trace_tag;
-    if (e->trace_enabled) {
-        e->trace_tag = "branch_compare";
+    // Compare-Branch Fusion
+    bool fused = false;
+    if (ctx->pending_cond.valid) {
+        // We have a deferred comparison. Is it the one this branch is testing?
+        // Branch instructions (BEQ/BNE/...) in SLOW-32 test if (rs1 == rs2).
+        // Common pattern: SLT r1, r2, r3; BNE r1, r0, label.
+        // This is testing if (r2 < r3) != 0, which is just (r2 < r3).
+
+        bool match = (rs2 == 0 && rs1 == ctx->pending_cond.rd) ||
+                     (rs1 == 0 && rs2 == ctx->pending_cond.rd);
+        if (match) {
+            // FUSION OPPORTUNITY: Bxx rd, r0, target where rd is the result of a comparison
+            uint8_t cmp_op = ctx->pending_cond.opcode;
+            uint8_t c_rs1 = ctx->pending_cond.rs1;
+            uint8_t c_rs2 = ctx->pending_cond.rs2;
+            bool c_rs2_is_imm = ctx->pending_cond.rs2_is_imm;
+            int32_t c_imm = ctx->pending_cond.imm;
+            uint8_t c_rd = ctx->pending_cond.rd;
+
+            // Discard the pending condition BEFORE emitting anything to avoid
+            // re-entrant flushes in emit_load_guest_reg clobbering registers.
+            ctx->pending_cond.valid = false;
+
+            if (DBT_TRACE) {
+                fprintf(stderr, "  [fusion] Fusing branch at 0x%08X with comparison opcode 0x%02X\n",
+                        branch_pc, cmp_op);
+            }
+
+            // 1. Emit the comparison
+            x64_reg_t h1 = guest_host_reg(ctx, c_rs1);
+            x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : RAX;
+            if (h1 == X64_NOREG) emit_load_guest_reg(ctx, RAX, c_rs1);
+
+            if (c_rs2_is_imm) {
+                if (h1 != X64_NOREG) flush_pending_write(ctx);
+                emit_cmp_r32_imm32(e, cmp_a, c_imm);
+            } else {
+                x64_reg_t h2 = guest_host_reg(ctx, c_rs2);
+                x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : RCX;
+                if (h2 == X64_NOREG) emit_load_guest_reg(ctx, RCX, c_rs2);
+                if (h1 != X64_NOREG) flush_pending_write(ctx);
+                emit_cmp_r32_r32(e, cmp_a, cmp_b);
+            }
+
+            // 2. Materialize the comparison result into rd.
+            //    SETCC, MOVZX, and MOV/store do NOT modify x86 flags,
+            //    so the fused Jcc below still reads the correct CMP flags.
+            {
+                void (*emit_setcc_fn)(emit_ctx_t *, x64_reg_t) = NULL;
+                switch (cmp_op) {
+                    case OP_SLT:  case OP_SLTI:  emit_setcc_fn = emit_setl;  break;
+                    case OP_SLTU: case OP_SLTIU: emit_setcc_fn = emit_setb;  break;
+                    case OP_SEQ:                 emit_setcc_fn = emit_sete;  break;
+                    case OP_SNE:                 emit_setcc_fn = emit_setne; break;
+                    case OP_SGT:                 emit_setcc_fn = emit_setg;  break;
+                    case OP_SGTU:                emit_setcc_fn = emit_seta;  break;
+                    case OP_SLE:                 emit_setcc_fn = emit_setle; break;
+                    case OP_SLEU:                emit_setcc_fn = emit_setbe; break;
+                    case OP_SGE:                 emit_setcc_fn = emit_setge; break;
+                    case OP_SGEU:                emit_setcc_fn = emit_setae; break;
+                }
+                if (emit_setcc_fn) {
+                    emit_setcc_fn(e, RAX);
+                    emit_movzx_r32_r8(e, RAX, RAX);
+                    emit_store_guest_reg(ctx, c_rd, RAX);
+                }
+            }
+
+            // 3. Map SLOW-32 comparison + branch condition to x86-64 condition codes
+            // We are testing: if ((c_rs1 OP c_rs2) BRANCH_TYPE 0) jump target
+            // where BRANCH_TYPE is == (BEQ) or != (BNE).
+
+            bool is_beq = (inv_cc == 0x05); // BEQ's inverted CC is 0x85 (JNE), low nibble 5
+            bool is_bne = (inv_cc == 0x04); // BNE's inverted CC is 0x84 (JE), low nibble 4
+
+            if (is_beq || is_bne) {
+                // Determine the base x86 condition for the comparison 'cmp_op'
+                uint8_t base_cc = 0;     // e.g., 0x84 for JE
+                uint8_t base_cc_inv = 0; // e.g., 0x85 for JNE
+
+                switch (cmp_op) {
+                    case OP_SLT:  case OP_SLTI:  base_cc = 0x8C; base_cc_inv = 0x8D; break; // JL / JGE
+                    case OP_SLTU: case OP_SLTIU: base_cc = 0x82; base_cc_inv = 0x83; break; // JB / JAE
+                    case OP_SEQ:                 base_cc = 0x84; base_cc_inv = 0x85; break; // JE / JNE
+                    case OP_SNE:                 base_cc = 0x85; base_cc_inv = 0x84; break; // JNE / JE
+                    case OP_SGT:                 base_cc = 0x8F; base_cc_inv = 0x8E; break; // JG / JLE
+                    case OP_SGTU:                base_cc = 0x87; base_cc_inv = 0x86; break; // JA / JBE
+                    case OP_SLE:                 base_cc = 0x8E; base_cc_inv = 0x8F; break; // JLE / JG
+                    case OP_SLEU:                base_cc = 0x86; base_cc_inv = 0x87; break; // JBE / JA
+                    case OP_SGE:                 base_cc = 0x8D; base_cc_inv = 0x8C; break; // JGE / JL
+                    case OP_SGEU:                base_cc = 0x83; base_cc_inv = 0x82; break; // JAE / JB
+                }
+
+                if (is_bne) {
+                    // if (cond != 0) jump  =>  jump if comparison was TRUE
+                    emit_jcc = (void (*)(emit_ctx_t *, int32_t))emit_jcc_rel32_from_cc(base_cc);
+                    emit_jcc_inv = (void (*)(emit_ctx_t *, int32_t))emit_jcc_rel32_from_cc(base_cc_inv);
+                    inv_cc = base_cc_inv & 0x0F;
+                } else {
+                    // if (cond == 0) jump  =>  jump if comparison was FALSE
+                    emit_jcc = (void (*)(emit_ctx_t *, int32_t))emit_jcc_rel32_from_cc(base_cc_inv);
+                    emit_jcc_inv = (void (*)(emit_ctx_t *, int32_t))emit_jcc_rel32_from_cc(base_cc);
+                    inv_cc = base_cc & 0x0F;
+                }
+
+                if (emit_jcc) {
+                    fused = true;
+                }
+            }
+        }
+
+        if (!fused) {
+            // Not a fusion candidate, materialize it now
+            flush_pending_cond(ctx);
+        }
     }
-    if (rs1 == 0 && rs2 == 0) {
-        emit_xor_r32_r32(e, RAX, RAX);
-    } else if (rs1 == 0) {
-        emit_load_guest_reg(ctx, RAX, rs2);
-        emit_test_r32_r32(e, RAX, RAX);
-    } else if (rs2 == 0) {
-        emit_load_guest_reg(ctx, RAX, rs1);
-        emit_test_r32_r32(e, RAX, RAX);
-    } else {
-        emit_load_guest_reg(ctx, RAX, rs1);
-        emit_load_guest_reg(ctx, RCX, rs2);
-        emit_cmp_r32_r32(e, RAX, RCX);
+
+    if (!fused) {
+        // Standard comparison logic
+        const char *saved_tag_cmp = e->trace_tag;
+        if (e->trace_enabled) {
+            e->trace_tag = "branch_compare";
+        }
+        if (rs1 == 0 && rs2 == 0) {
+            flush_pending_write(ctx);  // About to clobber RAX directly
+            emit_xor_r32_r32(e, RAX, RAX);
+        } else if (rs1 == 0) {
+            emit_load_guest_reg(ctx, RAX, rs2);
+            emit_test_r32_r32(e, RAX, RAX);
+        } else if (rs2 == 0) {
+            emit_load_guest_reg(ctx, RAX, rs1);
+            emit_test_r32_r32(e, RAX, RAX);
+        } else {
+            emit_load_guest_reg(ctx, RAX, rs1);
+            emit_load_guest_reg(ctx, RCX, rs2);
+            emit_cmp_r32_r32(e, RAX, RCX);
+        }
+        e->trace_tag = saved_tag_cmp;
     }
-    e->trace_tag = saved_tag;
 
     if (can_extend) {
         // Superblock mode: out-of-line side exit for taken path
@@ -1501,6 +2332,7 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
 
         // Jump over trampoline if condition is FALSE (not taken)
         // Short jcc (2 bytes: 7x 05) skips exactly the 5-byte jmp rel32
+        (void)emit_jcc_inv;
         emit_jcc_short(e, inv_cc, 5);
 
         // Emit 5-byte trampoline jmp to cold stub (patched later)
@@ -1538,6 +2370,64 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
         }
 
         return false;  // Don't end block - continue translating
+    }
+
+    // Check for in-block back-edge: if the taken target is within this block,
+    // we can emit a direct jmp back to the loop body, skipping the register
+    // flush and prologue reload entirely. This is a major win for tight loops.
+    size_t backedge_host_offset = (size_t)-1;
+    if (imm < 0 && ctx->reg_cache_enabled &&
+        taken_pc >= ctx->block_start_pc) {
+        backedge_host_offset = pc_map_lookup(ctx, taken_pc);
+    }
+
+    if (backedge_host_offset != (size_t)-1) {
+        // In-block back-edge: emit tight loop
+        //   [compare]
+        //   jcc taken_path
+        //   [fall-through: flush + exit with fall_pc]
+        //   taken_path:
+        //   [jmp directly to loop body - no flush, no PC store]
+
+        // IMPORTANT: The back-edge loop means cached registers can accumulate
+        // dirty changes across iterations. Any deferred side exit in the loop
+        // body has a dirty_snapshot captured during the first (translation-time)
+        // pass, which may not reflect registers dirtied in subsequent iterations.
+        // Mark registers written in the loop as dirty in all deferred exit snapshots
+        // so they are correctly flushed if a side exit is taken after iterating.
+        for (int di = 0; di < ctx->deferred_exit_count; di++) {
+            for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
+                if (ctx->reg_alloc[s].allocated) {
+                    uint8_t guest_reg = ctx->reg_alloc[s].guest_reg;
+                    if (ctx->loop_written_regs & (1u << guest_reg)) {
+                        ctx->deferred_exits[di].dirty_snapshot[s] = true;
+                    }
+                }
+            }
+        }
+
+        size_t jcc_patch = emit_offset(e) + 2;
+        emit_jcc(e, 0);  // Placeholder
+
+        // Fall-through path: exit the loop
+        if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
+            ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
+        }
+        emit_exit_chained(ctx, fall_pc, ctx->exit_idx++);
+
+        // Taken path: direct jump back to loop body (no flush needed)
+        size_t taken_offset = emit_offset(e);
+        emit_patch_rel32(e, jcc_patch, taken_offset);
+        // Jump directly to the host offset of the back-edge target
+        int32_t rel = (int32_t)backedge_host_offset - (int32_t)(emit_offset(e) + 5);
+        emit_jmp_rel32(e, rel);
+
+        if (DBT_TRACE) {
+            fprintf(stderr, "  [loop] In-block back-edge at 0x%08X -> 0x%08X (host offset %zu)\n",
+                    branch_pc, taken_pc, backedge_host_offset);
+        }
+
+        return true;  // Block ends
     }
 
     // Normal mode: end block with both exits
@@ -1720,6 +2610,10 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len) {
                         continue;
                     }
                 }
+                // No Pattern C match — skip past this mov r32, imm32 instruction
+                // to avoid landing inside the immediate on the next iteration.
+                i = end0;
+                continue;
             }
         }
 
@@ -1964,6 +2858,9 @@ void dbt_fp_helper(dbt_cpu_state_t *cpu, uint32_t opcode,
 void translate_fp_r_type(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     emit_ctx_t *e = &ctx->emit;
 
+    // Flush pending write before calling helper (clobbers everything)
+    flush_pending_write(ctx);
+
     // Flush register cache before calling helper (it modifies guest regs directly)
     if (ctx->reg_cache_enabled) {
         emit_ctx_t *ef = &ctx->emit;
@@ -2032,8 +2929,18 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
     ctx->inst_count = 0;
     ctx->side_exit_emitted = 0;
     ctx->deferred_exit_count = 0;
+    ctx->pc_map_count = 0;
+    ctx->pending_write.valid = false;
+    ctx->emit.rax_pending = false;
+    ctx->pending_cond.valid = false;
+    ctx->current_inst_idx = 0;
+    ctx->has_backedge = false;
+    ctx->backedge_target_pc = 0;
+    ctx->backedge_target_count = 0;
     memset(ctx->side_exit_pcs, 0, sizeof(ctx->side_exit_pcs));
+    memset(ctx->dead_temp_skip, 0, sizeof(ctx->dead_temp_skip));
     reg_alloc_reset(ctx);
+    const_prop_reset(ctx);
     if (ctx->reg_cache_enabled) {
         reg_alloc_prescan(ctx, cpu->pc);
         reg_alloc_emit_prologue(ctx);
@@ -2057,6 +2964,21 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
             goto block_done;
         }
 
+        // Flush pending writes before back-edge target to prevent stale
+        // RAX stores from re-executing with wrong values on loop iterations.
+        // Also invalidate all constants since values may change across iterations.
+        if (is_backedge_target(ctx, ctx->guest_pc)) {
+            flush_pending_write(ctx);
+            const_prop_reset(ctx);
+        }
+
+        // Record guest PC → host offset for in-block back-edge optimization
+        if (ctx->pc_map_count < MAX_BLOCK_INSTS) {
+            ctx->pc_map[ctx->pc_map_count].guest_pc = ctx->guest_pc;
+            ctx->pc_map[ctx->pc_map_count].host_offset = emit_offset(e);
+            ctx->pc_map_count++;
+        }
+
         // Fetch and decode
         uint32_t raw = *(uint32_t *)(cpu->mem_base + ctx->guest_pc);
         decoded_inst_t inst = decode_instruction(raw);
@@ -2066,6 +2988,9 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
                     ctx->inst_count, ctx->guest_pc, raw, inst.opcode,
                     inst.rd, inst.rs1, inst.rs2, inst.imm);
         }
+
+        // Track instruction index for dead temporary elimination
+        ctx->current_inst_idx = ctx->inst_count;
 
         // Translate based on opcode
         switch (inst.opcode) {
@@ -3058,8 +3983,18 @@ retry_translate:
     ctx->exit_idx = 0;
     ctx->side_exit_emitted = 0;
     ctx->deferred_exit_count = 0;
+    ctx->pc_map_count = 0;
+    ctx->pending_write.valid = false;
+    ctx->emit.rax_pending = false;
+    ctx->pending_cond.valid = false;
+    ctx->current_inst_idx = 0;
+    ctx->has_backedge = false;
+    ctx->backedge_target_pc = 0;
+    ctx->backedge_target_count = 0;
     memset(ctx->side_exit_pcs, 0, sizeof(ctx->side_exit_pcs));
+    memset(ctx->dead_temp_skip, 0, sizeof(ctx->dead_temp_skip));
     reg_alloc_reset(ctx);
+    const_prop_reset(ctx);
     if (ctx->reg_cache_enabled) {
         reg_alloc_prescan(ctx, guest_pc);
         reg_alloc_emit_prologue(ctx);
@@ -3081,6 +4016,21 @@ retry_translate:
             goto cached_block_done;
         }
 
+        // Flush pending writes before back-edge target to prevent stale
+        // RAX stores from re-executing with wrong values on loop iterations.
+        // Also invalidate all constants since values may change across iterations.
+        if (is_backedge_target(ctx, ctx->guest_pc)) {
+            flush_pending_write(ctx);
+            const_prop_reset(ctx);
+        }
+
+        // Record guest PC → host offset for in-block back-edge optimization
+        if (ctx->pc_map_count < MAX_BLOCK_INSTS) {
+            ctx->pc_map[ctx->pc_map_count].guest_pc = ctx->guest_pc;
+            ctx->pc_map[ctx->pc_map_count].host_offset = emit_offset(e);
+            ctx->pc_map_count++;
+        }
+
         // Fetch and decode
         uint32_t raw = *(uint32_t *)(cpu->mem_base + ctx->guest_pc);
         decoded_inst_t inst = decode_instruction(raw);
@@ -3090,6 +4040,9 @@ retry_translate:
                     ctx->inst_count, ctx->guest_pc, raw, inst.opcode,
                     inst.rd, inst.rs1, inst.rs2, inst.imm);
         }
+
+        // Track instruction index for dead temporary elimination
+        ctx->current_inst_idx = ctx->inst_count;
 
         // Translate based on opcode
         switch (inst.opcode) {

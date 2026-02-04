@@ -33,7 +33,8 @@ static uint64_t profile_tsc_start = 0;
 static uint64_t profile_tsc_end = 0;
 static bool profile_side_exits = false;
 static bool avoid_backedge_extend = false;
-static bool peephole_enabled = false;
+static bool peephole_enabled = true;
+static bool superblock_enabled = true;
 static bool reg_cache_enabled = false;
 static bool align_traps_enabled = false;
 static bool intrinsics_disabled = false;
@@ -802,7 +803,7 @@ static void run_dbt_stage4(dbt_cpu_state_t *cpu, block_cache_t *cache) {
     translate_init_cached(&ctx, cpu, cache);
     ctx.inline_lookup_enabled = true;   // Keep Stage 3 inline lookup
     ctx.ras_enabled = true;              // Keep Stage 3 RAS
-    ctx.superblock_enabled = true;       // Enable Stage 4 superblock extension
+    ctx.superblock_enabled = superblock_enabled; // Enable Stage 4 superblock extension
     ctx.profile_side_exits = profile_side_exits;
     ctx.side_exit_info_enabled = profile_side_exits;   // Study-only diagnostics
     ctx.avoid_backedge_extend = avoid_backedge_extend;
@@ -944,7 +945,8 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -p        Profile timing breakdown (implies -s)\n");
     fprintf(stderr, "  -E        Study-only: enable side-exit bookkeeping\n");
     fprintf(stderr, "  -B        Study-only: avoid extending across back-edges\n");
-    fprintf(stderr, "  -P        Study-only: peephole optimize emitted x86-64\n");
+    fprintf(stderr, "  -P        Disable peephole optimization on emitted x86-64\n");
+    fprintf(stderr, "  -S        Toggle superblock expansion (default: on)\n");
     fprintf(stderr, "  -R        Enable fixed register cache (Stage 4)\n");
     fprintf(stderr, "  -t        Two-pass superblock profiling (Stage 4 only)\n");
     fprintf(stderr, "  -M <n>    Min samples before using side-exit rate\n");
@@ -1007,7 +1009,10 @@ int main(int argc, char **argv) {
                     avoid_backedge_extend = true;
                     break;
                 case 'P':
-                    peephole_enabled = true;
+                    peephole_enabled = false;
+                    break;
+                case 'S':
+                    superblock_enabled = !superblock_enabled;
                     break;
                 case 'R':
                     reg_cache_enabled = true;
