@@ -107,7 +107,8 @@ static void dbt_init_mmio(dbt_cpu_state_t *cpu) {
     if (mmio_initialized || !cpu->mmio_enabled) return;
 
     // Check that MMIO base is within guest memory
-    if (cpu->mmio_base + 0x10000 > cpu->mem_size) {
+    if (cpu->mmio_base > cpu->mem_size ||
+        cpu->mem_size - cpu->mmio_base < 0x10000) {
         fprintf(stderr, "DBT: MMIO base 0x%08X exceeds guest memory\n", cpu->mmio_base);
         cpu->mmio_enabled = false;
         return;
@@ -115,7 +116,13 @@ static void dbt_init_mmio(dbt_cpu_state_t *cpu) {
 
     // Initialize MMIO state with heap after data limit
     uint32_t heap_base = (cpu->data_limit + 0xFFF) & ~0xFFF;
-    uint32_t heap_size = cpu->mmio_base - heap_base;  // Heap up to MMIO
+    uint32_t heap_size = 0;
+    if (heap_base <= cpu->mmio_base) {
+        heap_size = cpu->mmio_base - heap_base;  // Heap up to MMIO
+    } else {
+        fprintf(stderr, "DBT: MMIO heap base 0x%08X exceeds MMIO base 0x%08X\n",
+                heap_base, cpu->mmio_base);
+    }
     mmio_ring_init(&mmio_state, heap_base, heap_size);
 
     // Configure direct access to guest memory (for zero-copy I/O)
@@ -190,7 +197,7 @@ static void dbt_handle_yield(dbt_cpu_state_t *cpu) {
 // Write callback for flat guest memory
 static int dbt_write_callback(void *user_data, uint32_t addr, const void *data, uint32_t size) {
     dbt_cpu_state_t *cpu = (dbt_cpu_state_t *)user_data;
-    if (addr + size > cpu->mem_size) return -1;
+    if (size > cpu->mem_size || addr > cpu->mem_size - size) return -1;
     memcpy(cpu->mem_base + addr, data, size);
     return 0;
 }
@@ -304,7 +311,9 @@ bool dbt_load_s32x(dbt_cpu_state_t *cpu, const char *filename) {
     cpu->mmio_base = hdr.mmio_base;
     cpu->mmio_enabled = hdr.has_mmio != 0;
     if (cpu->mmio_enabled) {
-        if (cpu->mmio_base == 0 || cpu->mmio_base + 0x10000 > cpu->mem_size) {
+        if (cpu->mmio_base == 0 ||
+            cpu->mmio_base > cpu->mem_size ||
+            cpu->mem_size - cpu->mmio_base < 0x10000) {
             fprintf(stderr, "DBT: Invalid MMIO base 0x%08X for mem_size 0x%08X\n",
                     cpu->mmio_base, cpu->mem_size);
             return false;

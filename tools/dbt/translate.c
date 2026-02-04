@@ -1629,6 +1629,90 @@ static void emit_mem_access_check(translate_ctx_t *ctx, x64_reg_t addr_reg,
     }
 }
 
+// Memory access check for dynamic sizes (e.g., memcpy/memset)
+// Assumes addr_reg and size_reg are 32-bit, size_reg is bytes.
+static void emit_mem_access_check_dynamic(translate_ctx_t *ctx,
+                                          x64_reg_t addr_reg,
+                                          x64_reg_t size_reg,
+                                          exit_reason_t reason,
+                                          bool is_store) {
+    emit_ctx_t *e = &ctx->emit;
+    dbt_cpu_state_t *cpu = ctx->cpu;
+    size_t fault_jumps[8];
+    int fault_count = 0;
+    size_t ok_jumps[8];
+    int ok_count = 0;
+
+    // size == 0 => ok (no access)
+    emit_test_r32_r32(e, size_reg, size_reg);
+    ok_jumps[ok_count++] = emit_offset(e) + 2;
+    emit_je_rel32(e, 0);
+
+    // size > mem_size => fault
+    emit_cmp_r32_imm32(e, size_reg, (int32_t)cpu->mem_size);
+    fault_jumps[fault_count++] = emit_offset(e) + 2;
+    emit_ja_rel32(e, 0);
+
+    // addr <= mem_size - size
+    emit_mov_r32_imm32(e, R8, cpu->mem_size);
+    emit_sub_r32_r32(e, R8, size_reg);
+    emit_cmp_r32_r32(e, addr_reg, R8);
+    fault_jumps[fault_count++] = emit_offset(e) + 2;
+    emit_ja_rel32(e, 0);
+
+    // MMIO disabled window check for dynamic ranges
+    if (!cpu->mmio_enabled && cpu->mmio_base != 0) {
+        // end = addr + size
+        emit_mov_r32_r32(e, R9, addr_reg);
+        emit_add_r32_r32(e, R9, size_reg);
+
+        // if end <= mmio_base => ok
+        emit_cmp_r32_imm32(e, R9, (int32_t)cpu->mmio_base);
+        ok_jumps[ok_count++] = emit_offset(e) + 2;
+        emit_jbe_rel32(e, 0);
+
+        // if addr >= mmio_base + 0x10000 => ok
+        emit_cmp_r32_imm32(e, addr_reg, (int32_t)(cpu->mmio_base + 0x10000));
+        ok_jumps[ok_count++] = emit_offset(e) + 2;
+        emit_jae_rel32(e, 0);
+
+        // overlap => fault
+        fault_jumps[fault_count++] = emit_offset(e) + 1;
+        emit_jmp_rel32(e, 0);
+    }
+
+    // W^X check — stores only
+    if (is_store && cpu->wxorx_enabled) {
+        uint32_t wx_limit = cpu->rodata_limit ? cpu->rodata_limit : cpu->code_limit;
+        if (wx_limit > 0) {
+            emit_cmp_r32_imm32(e, addr_reg, (int32_t)wx_limit);
+            fault_jumps[fault_count++] = emit_offset(e) + 2;
+            emit_jb_rel32(e, 0);
+        }
+    }
+
+    // Success path — jump over fault handler
+    size_t ok_jump = emit_offset(e) + 1;
+    emit_jmp_rel32(e, 0);
+
+    // Fault path — need address in RAX for exit_info
+    size_t fault_offset = emit_offset(e);
+    if (addr_reg != RAX) {
+        emit_mov_r32_r32(e, RAX, addr_reg);
+    }
+    emit_exit_with_info_reg(ctx, reason, ctx->guest_pc, RAX);
+
+    // Patch all jumps
+    size_t ok_offset = emit_offset(e);
+    emit_patch_rel32(e, ok_jump, ok_offset);
+    for (int i = 0; i < fault_count; i++) {
+        emit_patch_rel32(e, fault_jumps[i], fault_offset);
+    }
+    for (int i = 0; i < ok_count; i++) {
+        emit_patch_rel32(e, ok_jumps[i], ok_offset);
+    }
+}
+
 // Helper to compute address — returns the register holding the effective address.
 // When the base register is allocated and imm==0, returns the host register directly
 // (no instructions emitted). When allocated and imm!=0, uses LEA (1 inst vs 2).
@@ -3168,6 +3252,10 @@ static bool emit_native_memcpy_stub(translate_ctx_t *ctx, translated_block_t *bl
     emit_mov_r32_m32(e, RCX, RBP, GUEST_REG_OFFSET(4));   // ecx = src (guest addr)
     emit_mov_r32_m32(e, RDX, RBP, GUEST_REG_OFFSET(5));   // edx = count
 
+    // Bounds/MMIO/W^X checks for src/dest (dynamic size in rdx)
+    emit_mem_access_check_dynamic(ctx, RCX, RDX, EXIT_FAULT_LOAD, false);
+    emit_mem_access_check_dynamic(ctx, RAX, RDX, EXIT_FAULT_STORE, true);
+
     // Store dest as return value in guest r1
     emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
 
@@ -3240,6 +3328,9 @@ static bool emit_native_memset_stub(translate_ctx_t *ctx, translated_block_t *bl
     emit_mov_r32_m32(e, RCX, RBP, GUEST_REG_OFFSET(4));   // ecx = value
     emit_mov_r32_m32(e, RDX, RBP, GUEST_REG_OFFSET(5));   // edx = count
 
+    // Bounds/MMIO/W^X checks for dest (dynamic size in rdx)
+    emit_mem_access_check_dynamic(ctx, RAX, RDX, EXIT_FAULT_STORE, true);
+
     // Store dest as return value
     emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
 
@@ -3278,18 +3369,42 @@ static bool emit_native_strlen_stub(translate_ctx_t *ctx, translated_block_t *bl
 
     // Load guest r3 (str ptr)
     emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));
+    // Save guest addr in RBX for fault reporting
+    emit_mov_r32_r32(e, RBX, RAX);
+
+    // Bounds check: addr must be < mem_size
+    emit_cmp_r32_imm32(e, RAX, (int32_t)ctx->cpu->mem_size);
+    size_t fault_addr_patch = emit_offset(e) + 2;
+    emit_jae_rel32(e, 0);
 
     // rdi = r14 + rax (host pointer)
     emit_mov_r64_r64(e, RDI, R14);
     emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, MODRM(MOD_DIRECT, RAX, RDI));
+    // Save start pointer in r12
+    emit_mov_r64_r64(e, R12, RDI);
 
-    // Align stack and call strlen
+    // rdx = mem_size - addr (bounded length)
+    emit_mov_r32_imm32(e, RDX, ctx->cpu->mem_size);
+    emit_sub_r32_r32(e, RDX, RAX);
+
+    // rsi = 0 (search for null byte)
+    emit_xor_r32_r32(e, RSI, RSI);
+
+    // Align stack and call memchr
     emit_push_r64(e, RAX);
-    emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)strlen);
+    emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)memchr);
     emit_call_r64(e, RAX);
     emit_pop_r64(e, RCX);  // Restore stack (into any reg)
 
-    // Return value from strlen is in rax - store to guest r1
+    // If not found, fault
+    emit_test_r32_r32(e, RAX, RAX);
+    size_t fault_null_patch = emit_offset(e) + 2;
+    emit_je_rel32(e, 0);
+
+    // len = found - start
+    emit_byte(e, 0x4C); emit_byte(e, 0x29); emit_byte(e, 0xE0); // sub rax, r12
+
+    // Return value from memchr is in rax - store length to guest r1
     emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
 
     // Return to guest r31
@@ -3297,6 +3412,14 @@ static bool emit_native_strlen_stub(translate_ctx_t *ctx, translated_block_t *bl
     emit_mov_m32_r32(e, RBP, CPU_PC_OFFSET, RAX);
     emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_INDIRECT);
     emit_ret(e);
+
+    // Fault path (bounds or missing terminator)
+    size_t fault_offset = emit_offset(e);
+    emit_mov_r32_r32(e, RAX, RBX);
+    emit_exit_with_info_reg(ctx, EXIT_FAULT_LOAD, ctx->guest_pc, RAX);
+
+    emit_patch_rel32(e, fault_addr_patch, fault_offset);
+    emit_patch_rel32(e, fault_null_patch, fault_offset);
 
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
@@ -3313,6 +3436,10 @@ static bool emit_native_memswap_stub(translate_ctx_t *ctx, translated_block_t *b
     emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));   // eax = a (guest addr)
     emit_mov_r32_m32(e, RCX, RBP, GUEST_REG_OFFSET(4));   // ecx = b (guest addr)
     emit_mov_r32_m32(e, RDX, RBP, GUEST_REG_OFFSET(5));   // edx = count
+
+    // Bounds/MMIO/W^X checks for both ranges (dynamic size in rdx)
+    emit_mem_access_check_dynamic(ctx, RAX, RDX, EXIT_FAULT_STORE, true);
+    emit_mem_access_check_dynamic(ctx, RCX, RDX, EXIT_FAULT_STORE, true);
 
     // rdi = host ptr a = r14 + rax
     emit_mov_r64_r64(e, RDI, R14);
@@ -3651,8 +3778,9 @@ static bool emit_native_math_f64_dptr(translate_ctx_t *ctx, translated_block_t *
     emit_byte(e, 0x48); emit_byte(e, 0x09); emit_byte(e, 0xD0);
     emit_byte(e, 0x66); emit_byte(e, 0x48); emit_byte(e, 0x0F); emit_byte(e, 0x6E); emit_byte(e, 0xC0);
 
-    // Load r5 (guest pointer), convert to host: rdi = r14 + r5
+    // Load r5 (guest pointer), bounds check (store 8 bytes), convert to host
     emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(5));
+    emit_mem_access_check(ctx, RAX, 8, EXIT_FAULT_STORE, true);
     emit_mov_r64_r64(e, RDI, R14);
     // add rdi, rax  →  48 01 C7
     emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, 0xC7);
@@ -3688,6 +3816,7 @@ static bool emit_native_math_f64_iptr(translate_ctx_t *ctx, translated_block_t *
     emit_byte(e, 0x66); emit_byte(e, 0x48); emit_byte(e, 0x0F); emit_byte(e, 0x6E); emit_byte(e, 0xC0);
 
     emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(5));
+    emit_mem_access_check(ctx, RAX, 4, EXIT_FAULT_STORE, true);
     emit_mov_r64_r64(e, RDI, R14);
     emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, 0xC7);
 
@@ -3717,8 +3846,9 @@ static bool emit_native_math_f32_fptr(translate_ctx_t *ctx, translated_block_t *
     emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));
     emit_byte(e, 0x66); emit_byte(e, 0x0F); emit_byte(e, 0x6E); emit_byte(e, 0xC0);
 
-    // Load r4 (guest pointer) → host pointer in rdi
+    // Load r4 (guest pointer), bounds check (store 4 bytes) → host pointer in rdi
     emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(4));
+    emit_mem_access_check(ctx, RAX, 4, EXIT_FAULT_STORE, true);
     emit_mov_r64_r64(e, RDI, R14);
     emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, 0xC7);
 
@@ -3747,6 +3877,7 @@ static bool emit_native_math_f32_iptr(translate_ctx_t *ctx, translated_block_t *
     emit_byte(e, 0x66); emit_byte(e, 0x0F); emit_byte(e, 0x6E); emit_byte(e, 0xC0);
 
     emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(4));
+    emit_mem_access_check(ctx, RAX, 4, EXIT_FAULT_STORE, true);
     emit_mov_r64_r64(e, RDI, R14);
     emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, 0xC7);
 
