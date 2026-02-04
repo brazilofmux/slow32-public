@@ -35,7 +35,7 @@ static bool profile_side_exits = false;
 static bool avoid_backedge_extend = false;
 static bool peephole_enabled = true;
 static bool superblock_enabled = true;
-static bool reg_cache_enabled = false;
+static bool reg_cache_enabled = true;
 static bool align_traps_enabled = false;
 static bool intrinsics_disabled = false;
 
@@ -956,7 +956,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -B        Study-only: avoid extending across back-edges\n");
     fprintf(stderr, "  -P        Disable peephole optimization on emitted x86-64\n");
     fprintf(stderr, "  -S        Toggle superblock expansion (default: on)\n");
-    fprintf(stderr, "  -R        Enable fixed register cache (Stage 4)\n");
+    fprintf(stderr, "  -R        Toggle fixed register cache (default: on)\n");
     fprintf(stderr, "  -t        Two-pass superblock profiling (Stage 4 only)\n");
     fprintf(stderr, "  -M <n>    Min samples before using side-exit rate\n");
     fprintf(stderr, "  -T <pct>  Max taken %% to allow superblock extension\n");
@@ -1024,7 +1024,7 @@ int main(int argc, char **argv) {
                     superblock_enabled = !superblock_enabled;
                     break;
                 case 'R':
-                    reg_cache_enabled = true;
+                    reg_cache_enabled = !reg_cache_enabled;
                     break;
                 case 'I':
                     intrinsics_disabled = true;

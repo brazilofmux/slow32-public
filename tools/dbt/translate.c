@@ -2548,6 +2548,181 @@ void dbt_set_emit_trace(bool enabled, uint32_t pc) {
     emit_trace_pc = pc;
 }
 
+// Return the length of the x86-64 instruction at code[offset], or 0 if unknown.
+// Only needs to handle instructions the DBT emitter generates.
+static int x64_insn_length(const uint8_t *code, size_t offset, size_t len) {
+    size_t i = offset;
+    if (i >= len) return 0;
+
+    // Consume REX prefix (0x40-0x4F)
+    uint8_t rex = 0;
+    if (code[i] >= 0x40 && code[i] <= 0x4F) {
+        rex = code[i];
+        i++;
+        if (i >= len) return 0;
+    }
+
+    uint8_t op = code[i];
+
+    // 1-byte instructions
+    if (op == 0x90) return (int)(i - offset + 1); // NOP
+    if (op == 0xC3) return (int)(i - offset + 1); // RET
+    if ((op & 0xF0) == 0x50) return (int)(i - offset + 1); // PUSH/POP r64
+    if (op == 0x99) return (int)(i - offset + 1); // CDQ
+    if (op == 0xF4) return (int)(i - offset + 1); // HLT
+
+    // MOV r32/r64, imm32/imm64 (0xB8-0xBF)
+    if ((op & 0xF8) == 0xB8) {
+        if (rex & 0x48) return (int)(i - offset + 9); // REX.W: mov r64, imm64
+        return (int)(i - offset + 5); // mov r32, imm32
+    }
+
+    // JMP/CALL rel32 (0xE8, 0xE9)
+    if (op == 0xE8 || op == 0xE9) return (int)(i - offset + 5);
+
+    // JMP/Jcc rel8 (0xEB, 0x70-0x7F)
+    if (op == 0xEB) return (int)(i - offset + 2);
+    if (op >= 0x70 && op <= 0x7F) return (int)(i - offset + 2);
+
+    // 2-byte ALU reg,reg: ADD(01), OR(09), AND(21), SUB(29), XOR(31), CMP(39)
+    // TEST(85), MOV(89,8B)
+    // These have a ModR/M byte; length depends on addressing mode
+    if (op == 0x01 || op == 0x09 || op == 0x21 || op == 0x29 ||
+        op == 0x31 || op == 0x39 || op == 0x85 || op == 0x87 ||
+        op == 0x89 || op == 0x8B || op == 0x8D || op == 0xF7) {
+        if (i + 1 >= len) return 0;
+        uint8_t modrm = code[i + 1];
+        uint8_t mod = modrm & 0xC0;
+        uint8_t rm = modrm & 0x07;
+        int base = (int)(i - offset + 2);
+        if (mod == 0xC0) return base;                // reg,reg
+        if (mod == 0x00 && rm == 0x05) return base + 4; // [rip+disp32] or [disp32]
+        if (mod == 0x00) {
+            if (rm == 0x04) return base + 1;         // SIB, no disp
+            return base;                              // [reg]
+        }
+        if (mod == 0x40) {
+            if (rm == 0x04) return base + 2;         // SIB + disp8
+            return base + 1;                          // [reg+disp8]
+        }
+        if (mod == 0x80) {
+            if (rm == 0x04) return base + 5;         // SIB + disp32
+            return base + 4;                          // [reg+disp32]
+        }
+        return 0;
+    }
+
+    // ALU r/m32, imm32 (0x81 + ModR/M)
+    if (op == 0x81) {
+        if (i + 1 >= len) return 0;
+        uint8_t modrm = code[i + 1];
+        uint8_t mod = modrm & 0xC0;
+        int base = (int)(i - offset + 2);
+        if (mod == 0xC0) return base + 4;  // reg, imm32
+        return 0; // memory forms not expected
+    }
+
+    // ALU r/m32, imm8 (0x83 + ModR/M)
+    if (op == 0x83) {
+        if (i + 1 >= len) return 0;
+        uint8_t modrm = code[i + 1];
+        uint8_t mod = modrm & 0xC0;
+        int base = (int)(i - offset + 2);
+        if (mod == 0xC0) return base + 1;  // reg, imm8
+        return 0;
+    }
+
+    // C7 group: MOV r/m32, imm32
+    if (op == 0xC7) {
+        if (i + 1 >= len) return 0;
+        uint8_t modrm = code[i + 1];
+        uint8_t mod = modrm & 0xC0;
+        uint8_t rm = modrm & 0x07;
+        int base = (int)(i - offset + 2);
+        if (mod == 0xC0) return base + 4;              // reg, imm32
+        if (mod == 0x80 && rm == 0x05) return base + 8; // [rbp+disp32], imm32
+        if (mod == 0x80) {
+            if (rm == 0x04) return base + 9;           // SIB+disp32+imm32
+            return base + 8;                            // [reg+disp32], imm32
+        }
+        return 0;
+    }
+
+    // FF group: INC/DEC/CALL/JMP indirect
+    if (op == 0xFF) {
+        if (i + 1 >= len) return 0;
+        uint8_t modrm = code[i + 1];
+        uint8_t mod = modrm & 0xC0;
+        int base = (int)(i - offset + 2);
+        if (mod == 0xC0) return base;
+        return 0;
+    }
+
+    // 0F prefix: two-byte opcodes
+    if (op == 0x0F) {
+        if (i + 1 >= len) return 0;
+        uint8_t op2 = code[i + 1];
+        // Jcc rel32 (0x0F 0x80-0x8F)
+        if (op2 >= 0x80 && op2 <= 0x8F) return (int)(i - offset + 6);
+        // SETcc (0x0F 0x90-0x9F + ModR/M)
+        if (op2 >= 0x90 && op2 <= 0x9F) return (int)(i - offset + 3);
+        // MOVZX (0x0F 0xB6/0xB7 + ModR/M)
+        if (op2 == 0xB6 || op2 == 0xB7) {
+            if (i + 2 >= len) return 0;
+            uint8_t modrm = code[i + 2];
+            uint8_t mod = modrm & 0xC0;
+            uint8_t rm = modrm & 0x07;
+            int base = (int)(i - offset + 3);
+            if (mod == 0xC0) return base;
+            if (mod == 0x80) {
+                if (rm == 0x04) return base + 5;
+                return base + 4;
+            }
+            if (mod == 0x40) {
+                if (rm == 0x04) return base + 2;
+                return base + 1;
+            }
+            if (mod == 0x00) {
+                if (rm == 0x04) return base + 1;
+                if (rm == 0x05) return base + 4;
+                return base;
+            }
+            return 0;
+        }
+        // IMUL r32, r/m32 (0x0F 0xAF + ModR/M)
+        if (op2 == 0xAF) {
+            if (i + 2 >= len) return 0;
+            uint8_t modrm = code[i + 2];
+            uint8_t mod = modrm & 0xC0;
+            int base = (int)(i - offset + 3);
+            if (mod == 0xC0) return base;
+            return 0;
+        }
+        return 0;
+    }
+
+    // IDIV / DIV / MUL / IMUL (F7 /reg) - handled above with 0xF7
+    // SHIFT (D3) - shift by CL
+    if (op == 0xD3) {
+        if (i + 1 >= len) return 0;
+        uint8_t modrm = code[i + 1];
+        uint8_t mod = modrm & 0xC0;
+        if (mod == 0xC0) return (int)(i - offset + 2);
+        return 0;
+    }
+
+    // SHIFT by imm8 (C1)
+    if (op == 0xC1) {
+        if (i + 1 >= len) return 0;
+        uint8_t modrm = code[i + 1];
+        uint8_t mod = modrm & 0xC0;
+        if (mod == 0xC0) return (int)(i - offset + 3); // reg, imm8
+        return 0;
+    }
+
+    return 0; // Unknown
+}
+
 static size_t peephole_optimize_x64(uint8_t *code, size_t len) {
     size_t hits = 0;
     size_t i = 0;
@@ -2711,27 +2886,15 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len) {
         if (code[a] >= 0x40 && code[a] <= 0x4F) {
             rex0 = code[a++];
         }
-        if (a >= len) {
-            i = i0 + 1;
-            continue;
-        }
+        if (a >= len) goto skip_insn;
         uint8_t op0 = code[a++];
-        if (a >= len) {
-            i = i0 + 1;
-            continue;
-        }
+        if (a >= len) goto skip_insn;
         uint8_t modrm0 = code[a++];
         uint8_t mod0 = modrm0 & 0xC0;
         uint8_t rm0 = modrm0 & 0x07;
         uint8_t reg0 = ((modrm0 >> 3) & 0x07) | ((rex0 & 0x4) ? 0x08 : 0x00);
-        if (mod0 != 0x80 || rm0 != 0x05 || (rex0 & 0x01)) {
-            i = i0 + 1;
-            continue;
-        }
-        if (a + 4 > len) {
-            i = i0 + 1;
-            continue;
-        }
+        if (mod0 != 0x80 || rm0 != 0x05 || (rex0 & 0x01)) goto skip_insn;
+        if (a + 4 > len) goto skip_insn;
         uint32_t disp0 = (uint32_t)code[a] |
                          ((uint32_t)code[a + 1] << 8) |
                          ((uint32_t)code[a + 2] << 16) |
@@ -2744,27 +2907,15 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len) {
         if (b < len && code[b] >= 0x40 && code[b] <= 0x4F) {
             rex1 = code[b++];
         }
-        if (b >= len) {
-            i = i0 + 1;
-            continue;
-        }
+        if (b >= len) goto skip_insn;
         uint8_t op1 = code[b++];
-        if (b >= len) {
-            i = i0 + 1;
-            continue;
-        }
+        if (b >= len) goto skip_insn;
         uint8_t modrm1 = code[b++];
         uint8_t mod1 = modrm1 & 0xC0;
         uint8_t rm1 = modrm1 & 0x07;
         uint8_t reg1 = ((modrm1 >> 3) & 0x07) | ((rex1 & 0x4) ? 0x08 : 0x00);
-        if (mod1 != 0x80 || rm1 != 0x05 || (rex1 & 0x01)) {
-            i = i0 + 1;
-            continue;
-        }
-        if (b + 4 > len) {
-            i = i0 + 1;
-            continue;
-        }
+        if (mod1 != 0x80 || rm1 != 0x05 || (rex1 & 0x01)) goto skip_insn;
+        if (b + 4 > len) goto skip_insn;
         uint32_t disp1 = (uint32_t)code[b] |
                          ((uint32_t)code[b + 1] << 8) |
                          ((uint32_t)code[b + 2] << 16) |
@@ -2793,7 +2944,10 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len) {
             }
         }
 
-        i = i0 + 1;
+skip_insn:;
+        int skip = x64_insn_length(code, i0, len);
+        if (skip <= 0) break;  // Unknown instruction, stop scanning
+        i = i0 + skip;
     }
     return hits;
 }

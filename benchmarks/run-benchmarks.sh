@@ -96,7 +96,7 @@ for bench in $BENCHMARKS; do
             fi
         fi
 
-        echo -n "  DBT Stage 4 (-R): "
+        echo -n "  DBT Stage 4 (no regcache): "
         if [ ${#TIME_CMD[@]} -ne 0 ]; then
             out_file=$(mktemp)
             time_out=$( { "${TIME_CMD[@]}" "$DBT" -4 -R "$bench.s32x" >"$out_file"; } 2>&1 )

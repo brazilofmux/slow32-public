@@ -51,11 +51,6 @@ for test in $TESTS; do
     name=$(basename "$(dirname "$test")")
     dbt_args=()
 
-    # Some tests require the DBT register cache to be enabled
-    if [ -f "$REGRESSION_DIR/tests/$name/require_dbt_regcache" ]; then
-        dbt_args+=("-R")
-    fi
-
     # Run interpreter - filter to just program output (lines between "Starting" and "HALT")
     # Actually, easier to just compare exit codes and check if both PASS/FAIL in output
     interp_full=$("$INTERP" "$test" 2>&1) || true
