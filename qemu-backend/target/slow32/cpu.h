@@ -109,7 +109,7 @@ void slow32_translate_init(void);
 void slow32_translate_code(CPUState *cs, TranslationBlock *tb, int *max_insns,
                            vaddr pc, void *host_pc);
 void slow32_cpu_dump_state(CPUState *cpu, FILE *f, int flags);
-void slow32_disas_set_info(CPUState *cpu, disassemble_info *info);
+void slow32_disas_set_info(const CPUState *cpu, disassemble_info *info);
 void slow32_handle_debug(uint32_t value);
 void slow32_handle_yield(Slow32CPU *cpu);
 void slow32_cpu_complete_halt(Slow32CPU *cpu);

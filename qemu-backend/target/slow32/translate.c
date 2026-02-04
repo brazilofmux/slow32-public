@@ -1019,7 +1019,7 @@ void slow32_cpu_dump_state(CPUState *cs, FILE *f, int flags)
     }
 }
 
-void slow32_disas_set_info(CPUState *cs, disassemble_info *info)
+void slow32_disas_set_info(const CPUState *cs, disassemble_info *info)
 {
     info->print_insn = NULL;
 }
