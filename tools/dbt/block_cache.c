@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stddef.h>
 #include <sys/mman.h>
 
 // Maximum number of blocks we can store
@@ -16,6 +17,14 @@
 // ============================================================================
 
 bool cache_init(block_cache_t *cache) {
+    // Keep native dispatcher field offsets in sync with translated_block_t layout.
+    _Static_assert(offsetof(translated_block_t, guest_pc) == 0,
+                   "translated_block_t layout changed: guest_pc offset");
+    _Static_assert(offsetof(translated_block_t, host_code) == 8,
+                   "translated_block_t layout changed: host_code offset");
+    _Static_assert(offsetof(translated_block_t, exec_count) == 24,
+                   "translated_block_t layout changed: exec_count offset");
+
     memset(cache, 0, sizeof(*cache));
 
     // Allocate block metadata pool

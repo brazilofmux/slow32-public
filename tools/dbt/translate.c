@@ -1909,10 +1909,14 @@ static void emit_indirect_lookup_with_target(translate_ctx_t *ctx,
         emit_mov_r64_r64(e, target_save, target_reg);
     }
 
-    // Compute hash: (target >> 2) & MASK
-    emit_mov_r32_m32(e, RCX, RBP, CPU_LOOKUP_MASK_OFFSET);  // rcx = mask
+    // Compute hash: ((target >> 2) ^ (target >> 12)) & MASK
+    // Use RCX as a temp and reload mask to avoid clobbering target_save.
     emit_mov_r32_r32(e, RDX, target_save);                   // rdx = target (32-bit)
+    emit_mov_r32_r32(e, RCX, RDX);                           // rcx = target (temp)
     emit_shr_r32_imm8(e, RDX, 2);                            // rdx >>= 2
+    emit_shr_r32_imm8(e, RCX, 12);                           // rcx >>= 12
+    emit_xor_r32_r32(e, RDX, RCX);                           // rdx ^= rcx
+    emit_mov_r32_m32(e, RCX, RBP, CPU_LOOKUP_MASK_OFFSET);   // rcx = mask
     emit_and_r32_r32(e, RDX, RCX);                           // rdx = hash
 
     // r10d = hash index (probe cursor)
