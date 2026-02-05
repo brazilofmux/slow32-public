@@ -6,13 +6,19 @@ measurably reduce DBT overhead or correct DBT-specific behavior.
 
 ## Current State
 
-At ~60% of native speed on integer workloads. 8 optimization phases already
-shipped (see `tools/dbt/TODO.md`). Register cache is now on by default.
-The remaining gap is a mix of:
-- Dispatch/exit overhead on short blocks
-- FP instructions going through a C helper call
-- Superblock policy not yet tuned with real-world profiling data
+At ~60% of native speed on integer workloads. Register cache on by default
+(6-slot fully-associative). Stage 4 superblocks with deferred cold exits.
+Peephole optimizer with JCC folding, dead store elimination, and NOP
+compaction. Inline f32 FP via SSE. In-block back-edge loop optimization.
+
+Code buffer: 42KB for bench-loops (105 blocks), 55KB for CSV validator
+(145 blocks). 265-395 peephole rewrites per workload.
+
+Remaining gap is a mix of:
+- `x64_insn_length()` can't decode all instructions → blocks skip compaction
 - Intrinsic stubs paying full call overhead even for tiny sizes
+- Superblock policy not yet tuned with real-world profiling data
+- Cross-block register allocation for multi-block loops
 
 ## Guiding Principles
 
@@ -34,81 +40,14 @@ The remaining gap is a mix of:
 
 ---
 
-## Priority 1: Measure and Baseline
+## Priority 1: Cross-block register allocation for self-loops
 
-Before chasing any optimization, establish solid baselines.
+**Current state:** Each block independently allocates registers. When a hot
+loop's back-edge chains back to the same block, the prologue reloads
+registers that were just flushed by the epilogue.
 
-### 1A. Comprehensive benchmark run
-
-Collect `-p -s -D` output for all 5 benchmarks and the CSV workload across
-stages 2/3/4. Record:
-- Wall time, translate/exec/dispatch breakdown
-- Cache hit rate, chain count, inline hit/miss ratio
-- RAS hit rate
-- Top 5 hottest blocks and their instruction mix
-- Side-exit taken percentages
-
-This data drives every decision below. Without it, priority ordering is
-guesswork.
-
-### 1B. Profile a real program (CSV parser or similar)
-
-The benchmarks are tight integer loops. A real program exercises different
-paths: function calls, string processing, memory allocation patterns, possibly
-FP. Profile it the same way. The goal is to find whether dispatch overhead or
-code quality dominates for real workloads.
-
----
-
-## Priority 2: Inline FP operations (surgical subset)
-
-**Current state:** Every FP instruction calls `dbt_fp_helper()`, which:
-1. Flushes all pending writes
-2. Flushes all dirty cached registers to memory
-3. Sets up 5 arguments in SysV ABI registers
-4. Calls through a function pointer (10-byte `mov r64, imm64` + `call`)
-5. Reloads all cached registers from memory
-6. The helper itself does a `switch` on opcode, then `memcpy`-based type
-   punning, then the actual FP operation
-
-That is ~40-50 host instructions of overhead per guest FP instruction, plus
-the indirect call's branch prediction cost, plus the register cache
-flush/reload destroying any cached state.
-
-**Why this matters:** FP-heavy workloads (scientific computing, any future
-graphics or DSP code) will be dominated by this overhead. Even a single
-`FADD_S` in a hot loop means the register cache is worthless for that block.
-
-**What to implement:**
-- Inline the f32 arithmetic subset first: `FADD_S`, `FSUB_S`, `FMUL_S`,
-  `FDIV_S`. These are just `movd xmm0, eax; movd xmm1, ecx; addss/subss/
-  mulss/divss xmm0, xmm1; movd eax, xmm0` — about 4 instructions each.
-- Inline `FEQ_S`, `FLT_S`, `FLE_S`: `comiss` + `setcc`.
-- Inline `FNEG_S` and `FABS_S`: these are already bitwise ops on integers,
-  so just emit `xor r32, 0x80000000` / `and r32, 0x7FFFFFFF` directly.
-  (The helper already does this, but the call overhead remains.)
-- `FCVT_W_S` / `FCVT_S_W`: `cvttss2si` / `cvtsi2ss`.
-
-**Do not inline yet:** f64 operations (register pair complexity), `FSQRT_*`
-(rare), conversions between f32/f64 (rare). Keep the helper for these.
-
-**Evidence gate:** Profile a program with FP ops (write a small FP benchmark
-if none exists — matrix multiply with floats, or a Mandelbrot set). Confirm
-FP blocks appear in the top 5 hottest.
-
----
-
-## Priority 3: Cross-block register allocation for self-loops
-
-**Current state:** TODO item #6 in `tools/dbt/TODO.md`. Each block
-independently allocates registers. When a hot loop's back-edge chains back
-to the same block, the prologue reloads registers that were just flushed by
-the epilogue.
-
-**The in-block back-edge optimization (TODO #1) already handles this for
-loops that fit within a single block.** The gap is loops that span 2-3
-blocks (e.g., a loop body with a function call that gets inlined across
-block boundaries).
+The in-block back-edge optimization already handles loops that fit within
+a single block (23.5% improvement). The gap is loops that span 2-3 blocks.
 
 **What to implement:**
 - When a block's only predecessor is itself (self-loop via direct chain),
@@ -124,7 +63,7 @@ consumes relative to the block body.
 
 ---
 
-## Priority 4: Superblock policy tuning
+## Priority 2: Superblock policy tuning
 
 **Current state:** Stage 4 extends past forward branches with
 `taken_pct <= 3%` threshold. Two-pass profiling available via `-t`.
@@ -136,7 +75,7 @@ consumes relative to the block body.
 - Side-exit flush cost accumulates with superblock depth.
 
 **Experiments to run:**
-1. Sweep thresholds: `SWEEP_THRESHOLDS="1 3 5 10 20" ./run-benchmarks.sh`
+1. Sweep thresholds: 1%, 3%, 5%, 10%, 20%.
 2. Compare `-t` (two-pass) vs single-pass on each benchmark.
 3. Try `-B` (avoid backedge extend) — does it help or hurt?
 4. Measure side-exit taken rates with `-E -s` and correlate with regressions.
@@ -144,42 +83,11 @@ consumes relative to the block body.
 **What to implement (based on results):**
 - If two-pass consistently helps, make it the default.
 - If `-B` helps, make it the default.
-- If optimal threshold varies per-program, consider adaptive thresholds
-  (start aggressive, back off if side-exit rate exceeds N%).
+- If optimal threshold varies per-program, consider adaptive thresholds.
 
 ---
 
-## Priority 5: Dispatch overhead reduction
-
-**Current state:** The native dispatcher trampoline (TODO #5) keeps
-unchained transitions in generated code. But every block exit still:
-1. Stores `exit_reason` to `[rbp + 0x84]`
-2. Stores `pc` to `[rbp + 0x80]`
-3. Jumps to shared exit stub or native dispatcher
-
-For chained blocks, the overhead is just a `jmp rel32` (effectively free).
-The cost is in unchained indirect branches (JALR) and first-time transitions.
-
-**What to investigate:**
-- What fraction of total exits are unchained? (`-s` shows chain_count vs
-  total lookups.)
-- For JALR-heavy code, does the inline lookup hit rate justify the code
-  bloat? (4 probes × ~20 bytes each = 80 bytes per JALR site.)
-- Is the hash function good enough? Collisions cause probe chains which
-  cause inline misses which fall through to the native dispatcher.
-
-**Potential improvements:**
-- Increase inline probe count from 4 to 6 for programs with many indirect
-  branches (configurable via flag).
-- Consider a separate indirect-branch target cache (IBTC) with a different
-  hash function optimized for return addresses.
-- For the native dispatcher, consider a two-level lookup: small direct-mapped
-  cache (256 entries, 1 probe) as first check, then fall through to the full
-  linear-probe table on miss.
-
----
-
-## Priority 6: Intrinsic stub size specialization
+## Priority 3: Intrinsic stub size specialization
 
 **Current state:** `memcpy`, `memset`, `memmove`, `strlen`, `memswap` are
 intercepted and emitted as native stubs calling host libc. Bounds checks
@@ -193,37 +101,47 @@ instructions for memcpy) can exceed the cost of the copy itself.
 - At translation time, if the size argument is a known constant (via
   `reg_constants[]`), emit inline loads/stores instead of a call.
   Example: 4-byte memcpy → `mov eax, [src]; mov [dst], eax`.
-- For unknown sizes, keep the current stub but consider `rep movsb` for
-  small-to-medium sizes (avoids function call overhead, ERMS makes this
-  fast on modern CPUs).
-- This only matters if intrinsic calls are frequent. Check with `-s`.
+- For unknown sizes, keep the current stub but consider `rep movsb`.
+- This only matters if intrinsic calls are frequent.
 
 **Evidence gate:** Instrument intrinsic stubs to log call frequency and
-size distribution. If most calls are >64 bytes, this optimization has
-negligible value.
+size distribution. If most calls are >64 bytes, this has negligible value.
 
 ---
 
-## Priority 7: Code cache layout and I-cache pressure
+## Priority 4: Dispatch overhead reduction
+
+**Current state:** Chained blocks are just `jmp rel32` (effectively free).
+The cost is in unchained indirect branches (JALR) and first-time transitions.
+Inline lookup uses 4 probes per JALR site.
+
+**What to investigate:**
+- What fraction of total exits are unchained? (`-s` shows chain_count vs
+  total lookups.)
+- For JALR-heavy code, does the inline lookup hit rate justify the code
+  bloat? (4 probes × ~20 bytes each = 80 bytes per JALR site.)
+
+**Potential improvements:**
+- Increase inline probe count from 4 to 6 for indirect-branch-heavy code.
+- Consider a separate IBTC with a different hash function optimized for
+  return addresses.
+- Two-level dispatch: small direct-mapped cache (256 entries) as first
+  check, then fall through to full table.
+
+---
+
+## Priority 5: Code cache layout and I-cache pressure
 
 **Current state:** 4MB code buffer, linear allocation. Deferred side exits
-are emitted at the end of each block (after the hot path). Superblocks can
-be large (up to 4 extended branches × 64 instructions).
-
-**The concern:** Cold side-exit stubs interleave with hot block code in the
-same cache lines. If many blocks have side exits, the I-cache fills with
-cold code.
+emitted at end of each block (after the hot path). Superblocks can be large.
 
 **What to investigate:**
 - Measure I-cache miss rate with `perf stat` on a long-running benchmark.
-- Compare code buffer utilization (`-s` reports code_buffer_used).
+- Compare code buffer utilization.
 
 **Potential improvements:**
-- Split the code buffer into hot and cold regions. Hot path code goes at
-  the front; deferred exits go at the back. This improves I-cache density
-  for the hot path.
-- This is a moderate refactor (cold stubs need to know the cold region
-  base address, and chaining infrastructure needs to handle two regions).
+- Split code buffer into hot and cold regions.
+- This is a moderate refactor.
 
 ---
 
@@ -231,29 +149,30 @@ cold code.
 
 ### Adaptive block size limit
 `MAX_BLOCK_INSTS` is fixed at 64. Some hot functions might benefit from
-larger blocks (fewer exits), while short blocks waste translation time.
-Consider making this adaptive based on block execution count.
+larger blocks. Consider making this adaptive based on block execution count.
 
 ### Lazy constant materialization
-Currently `LUI` + `ORI`/`ADDI` sequences each store to guest state. With
-constant propagation, the intermediate `LUI` result could be folded into
-the final operation. This already partially works but could be extended.
+`LUI` + `ORI`/`ADDI` sequences each store to guest state. With constant
+propagation, the intermediate `LUI` result could be folded into the final
+operation.
 
 ### Flag-based condition codes
-SLOW-32 materializes comparison results into registers (`SLT`, `SEQ`, etc.)
-then branches on them. The compare-branch fusion optimization already
-handles the common case. Extending this to handle non-adjacent
-compare-branch pairs (with intervening non-flag-clobbering instructions)
-would eliminate more materializations.
+Extending compare-branch fusion to handle non-adjacent compare-branch pairs
+(with intervening non-flag-clobbering instructions) would eliminate more
+materializations.
 
 ### Profile-guided register allocation
 Instead of prescan-based "top 6 by use count," use execution profiles to
-weight registers by dynamic frequency. A register used once in a cold path
-shouldn't displace one used in every loop iteration.
+weight registers by dynamic frequency.
+
+### Additional peephole patterns
+- `mov r, imm; op r, ...` → `op imm, ...` where supported
+- Redundant sign/zero extension elimination
+- Load-op fusion for memory operands
 
 ---
 
-## Completed (from TODO.md)
+## Completed
 
 1. ~~In-block back-edge loop optimization~~ (23.5% improvement)
 2. ~~Direct host register ALU operations~~
@@ -268,3 +187,9 @@ shouldn't displace one used in every loop iteration.
 11. ~~Constant propagation and folding~~
 12. ~~Register cache enabled by default~~ (`-R` now toggles off)
 13. ~~Peephole SIGILL fix~~ (x64_insn_length-based scanner advancement)
+14. ~~Inline f32 FP operations~~ (14 opcodes via SSE)
+15. ~~Peephole JCC folding~~ (Jcc +5; JMP → inverted Jcc)
+16. ~~Peephole dead store elimination~~ (duplicate mov [rbp+disp], imm32)
+17. ~~NOP compaction~~ (removes peephole NOPs, adjusts branches)
+18. ~~x64_insn_length REX.W bugfix~~ (rex & 0x48 → rex & 0x08)
+19. ~~Expand x64_insn_length() coverage~~ (added 0x88, 0xBE/0xBF, 0xCC, C7 memory forms; +19-22% more peephole rewrites, ~1KB code savings)

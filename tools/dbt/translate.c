@@ -2599,6 +2599,7 @@ static int x64_insn_length(const uint8_t *code, size_t offset, size_t len) {
     // 1-byte instructions
     if (op == 0x90) return (int)(i - offset + 1); // NOP
     if (op == 0xC3) return (int)(i - offset + 1); // RET
+    if (op == 0xCC) return (int)(i - offset + 1); // INT3
     if ((op & 0xF0) == 0x50) return (int)(i - offset + 1); // PUSH/POP r64
     if (op == 0x99) return (int)(i - offset + 1); // CDQ
     if (op == 0xF4) return (int)(i - offset + 1); // HLT
@@ -2617,11 +2618,11 @@ static int x64_insn_length(const uint8_t *code, size_t offset, size_t len) {
     if (op >= 0x70 && op <= 0x7F) return (int)(i - offset + 2);
 
     // 2-byte ALU reg,reg: ADD(01), OR(09), AND(21), SUB(29), XOR(31), CMP(39)
-    // TEST(85), MOV(89,8B)
+    // TEST(85), MOV(88,89,8B), LEA(8D)
     // These have a ModR/M byte; length depends on addressing mode
     if (op == 0x01 || op == 0x09 || op == 0x21 || op == 0x29 ||
         op == 0x31 || op == 0x39 || op == 0x85 || op == 0x87 ||
-        op == 0x89 || op == 0x8B || op == 0x8D || op == 0xF7) {
+        op == 0x88 || op == 0x89 || op == 0x8B || op == 0x8D || op == 0xF7) {
         if (i + 1 >= len) return 0;
         uint8_t modrm = code[i + 1];
         uint8_t mod = modrm & 0xC0;
@@ -2672,10 +2673,18 @@ static int x64_insn_length(const uint8_t *code, size_t offset, size_t len) {
         uint8_t rm = modrm & 0x07;
         int base = (int)(i - offset + 2);
         if (mod == 0xC0) return base + 4;              // reg, imm32
-        if (mod == 0x80 && rm == 0x05) return base + 8; // [rbp+disp32], imm32
+        if (mod == 0x00) {
+            if (rm == 0x04) return base + 5;           // SIB + imm32
+            if (rm == 0x05) return base + 8;           // [rip+disp32] + imm32
+            return base + 4;                            // [reg] + imm32
+        }
+        if (mod == 0x40) {
+            if (rm == 0x04) return base + 6;           // SIB+disp8+imm32
+            return base + 5;                            // [reg+disp8]+imm32
+        }
         if (mod == 0x80) {
             if (rm == 0x04) return base + 9;           // SIB+disp32+imm32
-            return base + 8;                            // [reg+disp32], imm32
+            return base + 8;                            // [reg+disp32]+imm32
         }
         return 0;
     }
@@ -2700,8 +2709,8 @@ static int x64_insn_length(const uint8_t *code, size_t offset, size_t len) {
         if (op2 >= 0x80 && op2 <= 0x8F) return (int)(i - offset + 6);
         // SETcc (0x0F 0x90-0x9F + ModR/M)
         if (op2 >= 0x90 && op2 <= 0x9F) return (int)(i - offset + 3);
-        // MOVZX (0x0F 0xB6/0xB7 + ModR/M)
-        if (op2 == 0xB6 || op2 == 0xB7) {
+        // MOVZX (0x0F 0xB6/0xB7) / MOVSX (0x0F 0xBE/0xBF) + ModR/M
+        if (op2 == 0xB6 || op2 == 0xB7 || op2 == 0xBE || op2 == 0xBF) {
             if (i + 2 >= len) return 0;
             uint8_t modrm = code[i + 2];
             uint8_t mod = modrm & 0xC0;
