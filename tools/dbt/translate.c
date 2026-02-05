@@ -1695,6 +1695,9 @@ static void emit_mem_access_check(translate_ctx_t *ctx, x64_reg_t addr_reg,
     emit_ctx_t *e = &ctx->emit;
     dbt_cpu_state_t *cpu = ctx->cpu;
 
+    // -U flag: skip all checks (unsafe, for benchmarking)
+    if (cpu->bounds_checks_disabled) return;
+
     // Bounds check elimination: skip if already validated
     int coverage = bounds_elim_lookup(ctx, base_guest_reg, offset, access_size, is_store);
     if (coverage == 2) {
@@ -1801,6 +1804,10 @@ static void emit_mem_access_check_dynamic(translate_ctx_t *ctx,
                                           bool is_store) {
     emit_ctx_t *e = &ctx->emit;
     dbt_cpu_state_t *cpu = ctx->cpu;
+
+    // -U flag: skip all checks (unsafe, for benchmarking)
+    if (cpu->bounds_checks_disabled) return;
+
     size_t fault_jumps[8];
     int fault_count = 0;
     size_t ok_jumps[8];

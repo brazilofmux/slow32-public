@@ -101,7 +101,7 @@ typedef struct {
     bool mmio_enabled;
     bool wxorx_enabled;
     bool align_traps_enabled;
-    uint8_t _pad2[1];
+    bool bounds_checks_disabled;  // -U flag: skip all bounds/W^X checks
 
     // Stage 3: Inline indirect branch lookup
     // Offset: 0xE8

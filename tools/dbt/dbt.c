@@ -38,6 +38,7 @@ static bool superblock_enabled = true;
 static bool reg_cache_enabled = true;
 static bool align_traps_enabled = false;
 static bool intrinsics_disabled = false;
+static bool bounds_checks_disabled = false;
 
 // MMIO state
 static mmio_ring_state_t mmio_state;
@@ -964,6 +965,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -O        Disassemble offender host blocks (uses objdump)\n");
     fprintf(stderr, "  -X <pc>   Dump block containing guest PC\n");
     fprintf(stderr, "  -I        Disable intrinsic recognition (memcpy/memset native stubs)\n");
+    fprintf(stderr, "  -U        UNSAFE: Disable all bounds/W^X checks (for benchmarking)\n");
     fprintf(stderr, "  -1        Use Stage 1 mode (no caching)\n");
     fprintf(stderr, "  -2        Use Stage 2 mode (block cache + chaining)\n");
     fprintf(stderr, "  -3        Use Stage 3 mode (inline indirect lookup)\n");
@@ -1028,6 +1030,9 @@ int main(int argc, char **argv) {
                     break;
                 case 'I':
                     intrinsics_disabled = true;
+                    break;
+                case 'U':
+                    bounds_checks_disabled = true;
                     break;
                 case 't':
                     two_pass = true;
@@ -1104,6 +1109,7 @@ int main(int argc, char **argv) {
     dbt_cpu_state_t cpu;
     dbt_cpu_init(&cpu);
     cpu.align_traps_enabled = align_traps_enabled;
+    cpu.bounds_checks_disabled = bounds_checks_disabled;
 
     // Load program
     if (!dbt_load_s32x(&cpu, filename)) {
@@ -1194,6 +1200,7 @@ int main(int argc, char **argv) {
         dbt_cpu_destroy(&cpu);
         dbt_cpu_init(&cpu);
         cpu.align_traps_enabled = align_traps_enabled;
+        cpu.bounds_checks_disabled = bounds_checks_disabled;
         if (!dbt_load_s32x(&cpu, filename)) {
             if (stage >= 2) {
                 cache_destroy(&cache);
