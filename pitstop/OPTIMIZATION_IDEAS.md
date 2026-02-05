@@ -145,13 +145,12 @@ These occur but are not concentrated in hot blocks.
   low exec count.
 
 **validatecsv (csv2/descriptions.csv):**
-- 0xC7DC (285 execs, 378B): CSV inner loop. 10 guest insns. Dominated by
-  bounds check overhead (3 memory ops). Branch comparisons now use cached
-  regs directly. Remaining waste: `mov %ecx,%ebx` after load (copying
-  load result into cached reg), `mov %ebx,%ecx` before store (copying
-  cached reg to scratch for store operand).
+- 0xC7DC (285 execs, 322B): CSV inner loop. 10 guest insns. Dominated by
+  bounds check overhead (3 memory ops). Branch comparisons use cached
+  regs directly. Loads/stores use cached host registers directly (no
+  scratch RCX copy).
 - 0x210 (285 execs, 150B): Setup/call block. Lean.
-- 0x1678 (179 execs, 384B): Same structure as benchmark_core 0xC70.
+- 0x1678 (179 execs, 396B): Same structure as benchmark_core 0xC70.
   MOV-ALU redundancy, plus SETcc→movzx→mov chain for comparison result
   materialization.
 - 0xEAAC (68 execs, 417B): JALR inline lookup (same as benchmark_core).
@@ -280,3 +279,4 @@ weight registers by dynamic frequency.
 21. ~~Emitter: cached registers in branch comparisons~~ (translate_branch_common uses guest_host_reg() directly in CMP/TEST instead of copying to scratch RAX/RCX; -288B code on benchmark_core, -144B on CSV; subsumes most MOV-CMP peephole hits at the source)
 22. ~~Redundant bounds check elimination~~ (validates address ranges per base register, skips checks when range already proven safe)
 23. ~~Register cache expansion 6→8 slots~~ (added R8/R9; CSV hot block 0xC7DC: 71%→100% cache hit rate; R8/R9 scratch in JALR/RAS pre-flushed before clobber)
+24. ~~Direct load/store with cached registers~~ (loads go directly into cached host reg instead of scratch RCX+MOV copy; stores use cached host reg directly; CSV 0xC7DC: 378B→322B, eliminates ~1200 redundant MOVs per CSV run)
