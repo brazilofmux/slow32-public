@@ -2605,7 +2605,7 @@ static int x64_insn_length(const uint8_t *code, size_t offset, size_t len) {
 
     // MOV r32/r64, imm32/imm64 (0xB8-0xBF)
     if ((op & 0xF8) == 0xB8) {
-        if (rex & 0x48) return (int)(i - offset + 9); // REX.W: mov r64, imm64
+        if (rex & 0x08) return (int)(i - offset + 9); // REX.W: mov r64, imm64
         return (int)(i - offset + 5); // mov r32, imm32
     }
 
@@ -3058,6 +3058,141 @@ skip_insn:;
         i = i0 + skip;
     }
     return hits;
+}
+
+// NOP compaction: remove 0x90 NOPs left by peephole optimizer and adjust jumps
+static size_t nop_compact_x64(uint8_t *code, size_t len,
+                               translated_block_t *block)
+{
+    // Skip oversized blocks to limit stack usage (~3 bytes per position)
+    if (len > 16384) return len;
+
+    // Phase 1: Classify bytes — find standalone 1-byte NOPs
+    bool is_nop[len];
+    memset(is_nop, 0, sizeof(is_nop));
+    size_t pos = 0;
+    while (pos < len) {
+        int ilen = x64_insn_length(code, pos, len);
+        if (ilen <= 0) break;
+        if (ilen == 1 && code[pos] == 0x90)
+            is_nop[pos] = true;
+        pos += ilen;
+    }
+    size_t scanned_end = pos;
+
+    // If we couldn't scan the entire block, skip compaction — we can't
+    // safely adjust branches in the unscanned tail.
+    if (scanned_end < len)
+        return len;
+
+    // Count NOPs; bail if nothing to compact
+    size_t nop_count = 0;
+    for (size_t i = 0; i < scanned_end; i++)
+        if (is_nop[i]) nop_count++;
+    if (nop_count == 0) return len;
+
+    // Phase 2: Build cumulative shift map
+    uint16_t shift[len + 1];
+    uint16_t cum = 0;
+    for (size_t i = 0; i <= len; i++) {
+        shift[i] = cum;
+        if (i < len && is_nop[i]) cum++;
+    }
+
+    // Phase 3: Adjust relative displacements before compacting
+    pos = 0;
+    while (pos < scanned_end) {
+        int ilen = x64_insn_length(code, pos, len);
+        if (ilen <= 0) break;
+        if (is_nop[pos]) { pos += ilen; continue; }
+
+        uint8_t op = code[pos];
+        size_t disp_off = 0;  // offset of displacement within instruction
+        size_t insn_len = 0;
+        int disp_size = 0;    // 1 for rel8, 4 for rel32
+
+        // Jcc near: 0F 8x rel32 (6 bytes)
+        if (pos + 1 < scanned_end && op == 0x0F && (code[pos + 1] & 0xF0) == 0x80) {
+            disp_off = 2; insn_len = 6; disp_size = 4;
+        }
+        // JMP near: E9 rel32 (5 bytes)
+        else if (op == 0xE9) {
+            disp_off = 1; insn_len = 5; disp_size = 4;
+        }
+        // CALL near: E8 rel32 (5 bytes)
+        else if (op == 0xE8) {
+            disp_off = 1; insn_len = 5; disp_size = 4;
+        }
+        // Jcc short: 7x rel8 (2 bytes)
+        else if ((op & 0xF0) == 0x70) {
+            disp_off = 1; insn_len = 2; disp_size = 1;
+        }
+        // JMP short: EB rel8 (2 bytes)
+        else if (op == 0xEB) {
+            disp_off = 1; insn_len = 2; disp_size = 1;
+        }
+
+        if (disp_size > 0 && pos + insn_len <= scanned_end) {
+            int32_t old_disp;
+            if (disp_size == 4) {
+                old_disp = (int32_t)((uint32_t)code[pos + disp_off] |
+                           ((uint32_t)code[pos + disp_off + 1] << 8) |
+                           ((uint32_t)code[pos + disp_off + 2] << 16) |
+                           ((uint32_t)code[pos + disp_off + 3] << 24));
+            } else {
+                old_disp = (int8_t)code[pos + disp_off];
+            }
+
+            int64_t old_target = (int64_t)pos + (int64_t)insn_len + (int64_t)old_disp;
+            int32_t new_disp;
+
+            if (old_target >= 0 && (size_t)old_target <= scanned_end) {
+                // Intra-block: both source and target shift
+                new_disp = old_disp + (int32_t)shift[pos] - (int32_t)shift[(size_t)old_target];
+            } else {
+                // Extra-block: only source shifts
+                new_disp = old_disp + (int32_t)shift[pos];
+            }
+
+            if (disp_size == 1) {
+                // Check rel8 overflow
+                if (new_disp < -128 || new_disp > 127)
+                    return len;  // Abort compaction
+                code[pos + disp_off] = (uint8_t)(int8_t)new_disp;
+            } else {
+                code[pos + disp_off + 0] = (uint8_t)(new_disp & 0xFF);
+                code[pos + disp_off + 1] = (uint8_t)((new_disp >> 8) & 0xFF);
+                code[pos + disp_off + 2] = (uint8_t)((new_disp >> 16) & 0xFF);
+                code[pos + disp_off + 3] = (uint8_t)((new_disp >> 24) & 0xFF);
+            }
+        }
+
+        pos += ilen;
+    }
+
+    // Phase 4: Compact — remove NOP bytes
+    size_t new_len = 0;
+    for (size_t j = 0; j < scanned_end; j++) {
+        if (!is_nop[j])
+            code[new_len++] = code[j];
+    }
+    // Copy any unscanned tail verbatim
+    for (size_t j = scanned_end; j < len; j++) {
+        code[new_len++] = code[j];
+    }
+
+    // Phase 5: Adjust patch_site pointers in block exits
+    for (uint8_t i = 0; i < block->exit_count; i++) {
+        size_t old_off = (size_t)(block->exits[i].patch_site - code);
+        if (old_off < scanned_end) {
+            block->exits[i].patch_site = code + (old_off - shift[old_off]);
+        }
+    }
+
+    // Phase 6: Fill freed tail with INT3 for debugging
+    memset(code + new_len, 0xCC, len - new_len);
+
+    return new_len;
 }
 
 // Branch functions now return true if block ends, false if superblock continues
@@ -4775,6 +4910,9 @@ cached_block_done:
         size_t hits = peephole_optimize_x64(block->host_code, block->host_size);
         if (hits > 0) {
             cache->peephole_hits += hits;
+            // Compact NOPs out of the code
+            size_t new_size = nop_compact_x64(block->host_code, block->host_size, block);
+            block->host_size = (uint32_t)new_size;
         }
     }
 
