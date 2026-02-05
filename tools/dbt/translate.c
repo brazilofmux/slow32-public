@@ -3803,11 +3803,12 @@ void translate_fp_r_type(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8
     // Flush pending write before calling helper (clobbers everything)
     flush_pending_write(ctx);
 
-    // Flush register cache before calling helper (it modifies guest regs directly)
+    // Flush ALL cached registers before calling helper - it reads from memory!
+    // Must flush ALL, not just dirty, because helper reads rs1/rs2 from memory.
     if (ctx->reg_cache_enabled) {
         emit_ctx_t *ef = &ctx->emit;
         for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
-            if (!ctx->reg_alloc[i].allocated || !ctx->reg_alloc[i].dirty) continue;
+            if (!ctx->reg_alloc[i].allocated) continue;
             uint8_t greg = ctx->reg_alloc[i].guest_reg;
             emit_mov_m32_r32(ef, RBP, GUEST_REG_OFFSET(greg), reg_alloc_hosts[i]);
             ctx->reg_alloc[i].dirty = false;

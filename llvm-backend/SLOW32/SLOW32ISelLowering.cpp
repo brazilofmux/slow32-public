@@ -28,15 +28,15 @@ static constexpr unsigned NumSLOW32ArgRegs =
 // Consecutive-register shadow lookup for varargs calling convention.
 // Unlike getShadowFor64Bit (which uses pair-aligned R3/R5/R7/R9),
 // this returns the immediately next register for any arg reg.
+// Only R3-R7 are used for varargs; R8-R10 are excluded to avoid gaps
+// between the register save area and stack arguments.
 static Register getNextArgReg(Register Reg) {
   switch (Reg) {
   case SLOW32::R3:  return SLOW32::R4;
   case SLOW32::R4:  return SLOW32::R5;
   case SLOW32::R5:  return SLOW32::R6;
   case SLOW32::R6:  return SLOW32::R7;
-  case SLOW32::R7:  return SLOW32::R8;
-  case SLOW32::R8:  return SLOW32::R9;
-  case SLOW32::R9:  return SLOW32::R10;
+  // R7 -> R8 and beyond are omitted; R8-R10 not saved for varargs
   default: return Register();
   }
 }
@@ -1052,8 +1052,12 @@ SDValue SLOW32TargetLowering::LowerFormalArguments(
 
   if (isVarArg) {
     unsigned FirstVAReg = CCInfo.getFirstUnallocated(SLOW32ArgRegs);
-    unsigned NumArgRegs = NumSLOW32ArgRegs;
-    unsigned NumRegsLeft = FirstVAReg < NumArgRegs ? NumArgRegs - FirstVAReg : 0;
+    // For varargs, save R3-R7 (indices 0-4). R8-R10 are excluded:
+    // - Caller CC uses R3-R7 for i32/f32, and R4:R5, R6:R7 for i64/f64 pairs
+    // - Callee saves exactly the regs caller can use, avoiding garbage gaps
+    // - This limits varargs to 4 slots after R3 (format string), or 2 double pairs
+    const unsigned NumVarArgRegs = 5;
+    unsigned NumRegsLeft = FirstVAReg < NumVarArgRegs ? NumVarArgRegs - FirstVAReg : 0;
 
     int VarArgsFrameIndex = 0;
     int VarArgsSaveSize = static_cast<int>(NumRegsLeft * 4);
@@ -1065,7 +1069,7 @@ SDValue SLOW32TargetLowering::LowerFormalArguments(
       SDValue FIN = DAG.getFrameIndex(VarArgsFrameIndex, PtrVT);
 
       SmallVector<unsigned, 8> PendingRegs;
-      for (unsigned RegIdx = FirstVAReg; RegIdx < NumArgRegs; ++RegIdx)
+      for (unsigned RegIdx = FirstVAReg; RegIdx < NumVarArgRegs; ++RegIdx)
         PendingRegs.push_back(RegIdx);
 
       for (unsigned Slot = 0; Slot < PendingRegs.size(); ++Slot) {
