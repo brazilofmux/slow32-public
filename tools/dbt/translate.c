@@ -384,6 +384,73 @@ static inline void const_prop_reset(translate_ctx_t *ctx) {
     ctx->reg_constants[0].value = 0;
 }
 
+// Reset all bounds check elimination state (at block start or back-edge targets)
+static inline void bounds_elim_reset(translate_ctx_t *ctx) {
+    ctx->validated_range_count = 0;
+}
+
+// Check if an access is already covered by a previously validated range.
+// Returns: 0 = not covered, 1 = bounds covered (may still need W^X),
+//          2 = fully covered (bounds + W^X if needed)
+static int bounds_elim_lookup(translate_ctx_t *ctx, uint8_t base_reg,
+                              int32_t offset, uint32_t access_size,
+                              bool is_store) {
+    if (base_reg == 0) return 0;
+    uint32_t access_lo = (uint32_t)offset;
+    uint32_t access_hi = (uint32_t)offset + access_size;
+    for (int i = 0; i < ctx->validated_range_count; i++) {
+        if (ctx->validated_ranges[i].guest_reg == base_reg) {
+            if (access_lo >= ctx->validated_ranges[i].lo_offset &&
+                access_hi <= ctx->validated_ranges[i].hi_end) {
+                if (!is_store) return 2;
+                if (ctx->validated_ranges[i].is_store_ok) return 2;
+                return 1;  // bounds ok, but W^X not yet checked
+            }
+        }
+    }
+    return 0;
+}
+
+// Record a validated range after emitting a bounds check
+static void bounds_elim_record(translate_ctx_t *ctx, uint8_t base_reg,
+                               int32_t offset, uint32_t access_size,
+                               bool is_store) {
+    if (base_reg == 0) return;
+    uint32_t new_lo = (uint32_t)offset;
+    uint32_t new_hi = (uint32_t)offset + access_size;
+
+    // Try to extend an existing range for the same base register
+    for (int i = 0; i < ctx->validated_range_count; i++) {
+        if (ctx->validated_ranges[i].guest_reg == base_reg) {
+            if (new_lo < ctx->validated_ranges[i].lo_offset)
+                ctx->validated_ranges[i].lo_offset = new_lo;
+            if (new_hi > ctx->validated_ranges[i].hi_end)
+                ctx->validated_ranges[i].hi_end = new_hi;
+            if (is_store)
+                ctx->validated_ranges[i].is_store_ok = true;
+            return;
+        }
+    }
+    // New entry
+    if (ctx->validated_range_count < MAX_VALIDATED_RANGES) {
+        int idx = ctx->validated_range_count++;
+        ctx->validated_ranges[idx].guest_reg = base_reg;
+        ctx->validated_ranges[idx].lo_offset = new_lo;
+        ctx->validated_ranges[idx].hi_end = new_hi;
+        ctx->validated_ranges[idx].is_store_ok = is_store;
+    }
+}
+
+// Invalidate validated ranges when a base register is modified
+static void bounds_elim_invalidate(translate_ctx_t *ctx, uint8_t guest_reg) {
+    for (int i = 0; i < ctx->validated_range_count; i++) {
+        if (ctx->validated_ranges[i].guest_reg == guest_reg) {
+            ctx->validated_ranges[i] = ctx->validated_ranges[--ctx->validated_range_count];
+            i--;  // re-check this index
+        }
+    }
+}
+
 static inline bool is_backedge_target(translate_ctx_t *ctx, uint32_t pc) {
     if (!ctx->has_backedge) return false;
     for (int i = 0; i < ctx->backedge_target_count; i++) {
@@ -576,6 +643,9 @@ void emit_store_guest_reg(translate_ctx_t *ctx, uint8_t guest_reg, x64_reg_t src
     // Constant propagation: non-constant write invalidates known value
     ctx->reg_constants[guest_reg].valid = false;
 
+    // Bounds check elimination: invalidate ranges using this register as base
+    bounds_elim_invalidate(ctx, guest_reg);
+
     // If there's a pending write for the same guest register, discard it
     if (ctx->pending_write.valid && ctx->pending_write.guest_reg == guest_reg) {
         ctx->pending_write.valid = false;
@@ -642,6 +712,9 @@ void emit_store_guest_reg_imm32(translate_ctx_t *ctx, uint8_t guest_reg, uint32_
     // Constant propagation: record the known value
     ctx->reg_constants[guest_reg].valid = true;
     ctx->reg_constants[guest_reg].value = imm;
+
+    // Bounds check elimination: invalidate ranges using this register as base
+    bounds_elim_invalidate(ctx, guest_reg);
 
     // Discard pending write for same register (being overwritten)
     if (ctx->pending_write.valid && ctx->pending_write.guest_reg == guest_reg) {
@@ -1556,9 +1629,19 @@ void translate_lui(translate_ctx_t *ctx, uint8_t rd, int32_t imm) {
 
 static void emit_mem_access_check(translate_ctx_t *ctx, x64_reg_t addr_reg,
                                   uint32_t access_size,
-                                  exit_reason_t reason, bool is_store) {
+                                  exit_reason_t reason, bool is_store,
+                                  uint8_t base_guest_reg, int32_t offset) {
     emit_ctx_t *e = &ctx->emit;
     dbt_cpu_state_t *cpu = ctx->cpu;
+
+    // Bounds check elimination: skip if already validated
+    int coverage = bounds_elim_lookup(ctx, base_guest_reg, offset, access_size, is_store);
+    if (coverage == 2) {
+        // Fully covered — skip all checks
+        return;
+    }
+    bool skip_bounds = (coverage == 1);
+
     size_t fault_jumps[8];
     int fault_count = 0;
     size_t ok_jumps[8];
@@ -1569,35 +1652,34 @@ static void emit_mem_access_check(translate_ctx_t *ctx, x64_reg_t addr_reg,
         return;
     }
 
-    // 1. Bounds check — always needed, embed mem_size as immediate
-    //    addr must be <= mem_size - access_size
-    uint32_t limit = cpu->mem_size - access_size;
-    emit_cmp_r32_imm32(e, addr_reg, (int32_t)limit);
-    fault_jumps[fault_count++] = emit_offset(e) + 2;
-    emit_ja_rel32(e, 0);
-
-    // 2. Alignment check — only when align_traps_enabled && access_size > 1
-    if (cpu->align_traps_enabled && access_size > 1) {
-        emit_mov_r32_r32(e, RDX, addr_reg);
-        emit_and_r32_imm32(e, RDX, (int32_t)(access_size - 1));
+    // 1. Bounds check — skip if already validated for this base+offset range
+    if (!skip_bounds) {
+        uint32_t limit = cpu->mem_size - access_size;
+        emit_cmp_r32_imm32(e, addr_reg, (int32_t)limit);
         fault_jumps[fault_count++] = emit_offset(e) + 2;
-        emit_jne_rel32(e, 0);
-    }
+        emit_ja_rel32(e, 0);
 
-    // 3. MMIO disabled check — only when mmio_base != 0 && !mmio_enabled
-    //    If addr falls in the disabled MMIO window, fault.
-    if (!cpu->mmio_enabled && cpu->mmio_base != 0) {
-        emit_cmp_r32_imm32(e, addr_reg, (int32_t)cpu->mmio_base);
-        ok_jumps[ok_count++] = emit_offset(e) + 2;
-        emit_jb_rel32(e, 0);
-        emit_cmp_r32_imm32(e, addr_reg, (int32_t)(cpu->mmio_base + 0x10000));
-        fault_jumps[fault_count++] = emit_offset(e) + 2;
-        emit_jb_rel32(e, 0);
-        // addr >= mmio_base + 0x10000 falls through to next check (or ok)
+        // 2. Alignment check — only when align_traps_enabled && access_size > 1
+        if (cpu->align_traps_enabled && access_size > 1) {
+            emit_mov_r32_r32(e, RDX, addr_reg);
+            emit_and_r32_imm32(e, RDX, (int32_t)(access_size - 1));
+            fault_jumps[fault_count++] = emit_offset(e) + 2;
+            emit_jne_rel32(e, 0);
+        }
+
+        // 3. MMIO disabled check — only when mmio_base != 0 && !mmio_enabled
+        if (!cpu->mmio_enabled && cpu->mmio_base != 0) {
+            emit_cmp_r32_imm32(e, addr_reg, (int32_t)cpu->mmio_base);
+            ok_jumps[ok_count++] = emit_offset(e) + 2;
+            emit_jb_rel32(e, 0);
+            emit_cmp_r32_imm32(e, addr_reg, (int32_t)(cpu->mmio_base + 0x10000));
+            fault_jumps[fault_count++] = emit_offset(e) + 2;
+            emit_jb_rel32(e, 0);
+        }
     }
 
     // 4. W^X check — stores only, only when wxorx_enabled
-    //    Writes below rodata_limit (or code_limit fallback) fault.
+    //    Needed even when bounds are skipped (unless fully covered)
     if (is_store && cpu->wxorx_enabled) {
         uint32_t wx_limit = cpu->rodata_limit ? cpu->rodata_limit : cpu->code_limit;
         if (wx_limit > 0) {
@@ -1605,6 +1687,18 @@ static void emit_mem_access_check(translate_ctx_t *ctx, x64_reg_t addr_reg,
             fault_jumps[fault_count++] = emit_offset(e) + 2;
             emit_jb_rel32(e, 0);
         }
+    }
+
+    if (fault_count == 0 && ok_count == 0) {
+        // No checks were emitted (e.g., skip_bounds with no W^X)
+        // Record the range and return
+        if (!skip_bounds) {
+            bounds_elim_record(ctx, base_guest_reg, offset, access_size, is_store);
+        } else if (is_store) {
+            // Update existing range's is_store_ok
+            bounds_elim_record(ctx, base_guest_reg, offset, access_size, true);
+        }
+        return;
     }
 
     // Success path — jump over fault handler
@@ -1626,6 +1720,14 @@ static void emit_mem_access_check(translate_ctx_t *ctx, x64_reg_t addr_reg,
     }
     for (int i = 0; i < ok_count; i++) {
         emit_patch_rel32(e, ok_jumps[i], ok_offset);
+    }
+
+    // Record validated range after successful check emission
+    if (!skip_bounds) {
+        bounds_elim_record(ctx, base_guest_reg, offset, access_size, is_store);
+    } else if (is_store) {
+        // W^X was checked — update the existing range
+        bounds_elim_record(ctx, base_guest_reg, offset, access_size, true);
     }
 }
 
@@ -1756,9 +1858,11 @@ static x64_reg_t emit_compute_addr(translate_ctx_t *ctx, uint8_t rs1, int32_t im
 void translate_ldw(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
+    // Disable range tracking when address was constant-folded
+    uint8_t base_reg = (rs1 != 0 && ctx->reg_constants[rs1].valid) ? 0 : rs1;
 
     x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
-    emit_mem_access_check(ctx, addr, 4, EXIT_FAULT_LOAD, false);
+    emit_mem_access_check(ctx, addr, 4, EXIT_FAULT_LOAD, false, base_reg, imm);
     emit_mov_r32_m32_idx(e, RCX, R14, addr);
     emit_store_guest_reg(ctx, rd, RCX);
 }
@@ -1766,9 +1870,10 @@ void translate_ldw(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
 void translate_ldh(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
+    uint8_t base_reg = (rs1 != 0 && ctx->reg_constants[rs1].valid) ? 0 : rs1;
 
     x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
-    emit_mem_access_check(ctx, addr, 2, EXIT_FAULT_LOAD, false);
+    emit_mem_access_check(ctx, addr, 2, EXIT_FAULT_LOAD, false, base_reg, imm);
     emit_movsx_r32_m16_idx(e, RCX, R14, addr);
     emit_store_guest_reg(ctx, rd, RCX);
 }
@@ -1776,9 +1881,10 @@ void translate_ldh(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
 void translate_ldb(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
+    uint8_t base_reg = (rs1 != 0 && ctx->reg_constants[rs1].valid) ? 0 : rs1;
 
     x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
-    emit_mem_access_check(ctx, addr, 1, EXIT_FAULT_LOAD, false);
+    emit_mem_access_check(ctx, addr, 1, EXIT_FAULT_LOAD, false, base_reg, imm);
     emit_movsx_r32_m8_idx(e, RCX, R14, addr);
     emit_store_guest_reg(ctx, rd, RCX);
 }
@@ -1786,9 +1892,10 @@ void translate_ldb(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
 void translate_ldhu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
+    uint8_t base_reg = (rs1 != 0 && ctx->reg_constants[rs1].valid) ? 0 : rs1;
 
     x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
-    emit_mem_access_check(ctx, addr, 2, EXIT_FAULT_LOAD, false);
+    emit_mem_access_check(ctx, addr, 2, EXIT_FAULT_LOAD, false, base_reg, imm);
     emit_movzx_r32_m16_idx(e, RCX, R14, addr);
     emit_store_guest_reg(ctx, rd, RCX);
 }
@@ -1796,36 +1903,40 @@ void translate_ldhu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
 void translate_ldbu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
+    uint8_t base_reg = (rs1 != 0 && ctx->reg_constants[rs1].valid) ? 0 : rs1;
 
     x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
-    emit_mem_access_check(ctx, addr, 1, EXIT_FAULT_LOAD, false);
+    emit_mem_access_check(ctx, addr, 1, EXIT_FAULT_LOAD, false, base_reg, imm);
     emit_movzx_r32_m8_idx(e, RCX, R14, addr);
     emit_store_guest_reg(ctx, rd, RCX);
 }
 
 void translate_stw(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm) {
     emit_ctx_t *e = &ctx->emit;
+    uint8_t base_reg = (rs1 != 0 && ctx->reg_constants[rs1].valid) ? 0 : rs1;
 
     x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
-    emit_mem_access_check(ctx, addr, 4, EXIT_FAULT_STORE, true);
+    emit_mem_access_check(ctx, addr, 4, EXIT_FAULT_STORE, true, base_reg, imm);
     emit_load_guest_reg(ctx, RCX, rs2);
     emit_mov_m32_r32_idx(e, R14, addr, RCX);
 }
 
 void translate_sth(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm) {
     emit_ctx_t *e = &ctx->emit;
+    uint8_t base_reg = (rs1 != 0 && ctx->reg_constants[rs1].valid) ? 0 : rs1;
 
     x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
-    emit_mem_access_check(ctx, addr, 2, EXIT_FAULT_STORE, true);
+    emit_mem_access_check(ctx, addr, 2, EXIT_FAULT_STORE, true, base_reg, imm);
     emit_load_guest_reg(ctx, RCX, rs2);
     emit_mov_m16_r16_idx(e, R14, addr, RCX);
 }
 
 void translate_stb(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm) {
     emit_ctx_t *e = &ctx->emit;
+    uint8_t base_reg = (rs1 != 0 && ctx->reg_constants[rs1].valid) ? 0 : rs1;
 
     x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
-    emit_mem_access_check(ctx, addr, 1, EXIT_FAULT_STORE, true);
+    emit_mem_access_check(ctx, addr, 1, EXIT_FAULT_STORE, true, base_reg, imm);
     emit_load_guest_reg(ctx, RCX, rs2);
     emit_mov_m8_r8_idx(e, R14, addr, RCX);
 }
@@ -3652,6 +3763,7 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
     memset(ctx->dead_temp_skip, 0, sizeof(ctx->dead_temp_skip));
     reg_alloc_reset(ctx);
     const_prop_reset(ctx);
+    bounds_elim_reset(ctx);
     if (ctx->reg_cache_enabled) {
         reg_alloc_prescan(ctx, cpu->pc);
         reg_alloc_emit_prologue(ctx);
@@ -3681,6 +3793,7 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
         if (is_backedge_target(ctx, ctx->guest_pc)) {
             flush_pending_write(ctx);
             const_prop_reset(ctx);
+            bounds_elim_reset(ctx);
         }
 
         // Record guest PC → host offset for in-block back-edge optimization
@@ -4428,7 +4541,7 @@ static bool emit_native_math_f64_dptr(translate_ctx_t *ctx, translated_block_t *
 
     // Load r5 (guest pointer), bounds check (store 8 bytes), convert to host
     emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(5));
-    emit_mem_access_check(ctx, RAX, 8, EXIT_FAULT_STORE, true);
+    emit_mem_access_check(ctx, RAX, 8, EXIT_FAULT_STORE, true, 0, 0);
     emit_mov_r64_r64(e, RDI, R14);
     // add rdi, rax  →  48 01 C7
     emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, 0xC7);
@@ -4464,7 +4577,7 @@ static bool emit_native_math_f64_iptr(translate_ctx_t *ctx, translated_block_t *
     emit_byte(e, 0x66); emit_byte(e, 0x48); emit_byte(e, 0x0F); emit_byte(e, 0x6E); emit_byte(e, 0xC0);
 
     emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(5));
-    emit_mem_access_check(ctx, RAX, 4, EXIT_FAULT_STORE, true);
+    emit_mem_access_check(ctx, RAX, 4, EXIT_FAULT_STORE, true, 0, 0);
     emit_mov_r64_r64(e, RDI, R14);
     emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, 0xC7);
 
@@ -4496,7 +4609,7 @@ static bool emit_native_math_f32_fptr(translate_ctx_t *ctx, translated_block_t *
 
     // Load r4 (guest pointer), bounds check (store 4 bytes) → host pointer in rdi
     emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(4));
-    emit_mem_access_check(ctx, RAX, 4, EXIT_FAULT_STORE, true);
+    emit_mem_access_check(ctx, RAX, 4, EXIT_FAULT_STORE, true, 0, 0);
     emit_mov_r64_r64(e, RDI, R14);
     emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, 0xC7);
 
@@ -4525,7 +4638,7 @@ static bool emit_native_math_f32_iptr(translate_ctx_t *ctx, translated_block_t *
     emit_byte(e, 0x66); emit_byte(e, 0x0F); emit_byte(e, 0x6E); emit_byte(e, 0xC0);
 
     emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(4));
-    emit_mem_access_check(ctx, RAX, 4, EXIT_FAULT_STORE, true);
+    emit_mem_access_check(ctx, RAX, 4, EXIT_FAULT_STORE, true, 0, 0);
     emit_mov_r64_r64(e, RDI, R14);
     emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, 0xC7);
 
@@ -4778,6 +4891,7 @@ retry_translate:
     memset(ctx->dead_temp_skip, 0, sizeof(ctx->dead_temp_skip));
     reg_alloc_reset(ctx);
     const_prop_reset(ctx);
+    bounds_elim_reset(ctx);
     if (ctx->reg_cache_enabled) {
         reg_alloc_prescan(ctx, guest_pc);
         reg_alloc_emit_prologue(ctx);
@@ -4805,6 +4919,7 @@ retry_translate:
         if (is_backedge_target(ctx, ctx->guest_pc)) {
             flush_pending_write(ctx);
             const_prop_reset(ctx);
+            bounds_elim_reset(ctx);
         }
 
         // Record guest PC → host offset for in-block back-edge optimization

@@ -101,6 +101,16 @@ typedef struct {
         uint32_t value;
     } reg_constants[32];
 
+    // Bounds check elimination: track validated address ranges per base register
+    #define MAX_VALIDATED_RANGES 8
+    struct {
+        uint8_t guest_reg;   // Base guest register (0 = unused)
+        uint32_t lo_offset;  // Lowest validated offset (base + lo_offset)
+        uint32_t hi_end;     // Highest validated end (base + hi_end), exclusive
+        bool is_store_ok;    // W^X has been checked for this range
+    } validated_ranges[MAX_VALIDATED_RANGES];
+    int validated_range_count;
+
     // Compare-Branch fusion state
     struct {
         bool valid;
