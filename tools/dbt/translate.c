@@ -2846,6 +2846,85 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len) {
             continue;
         }
 
+        // Pattern MOV_CMP: mov rA, rB ; cmp/test using rA → substitute rB, NOP mov
+        // Only when rA is provably dead (next insn is SETcc/Jcc/JMP/mov-to-rA)
+        if (i0 + 4 <= len) {
+            uint8_t op_mov = code[i0];
+            if (op_mov == 0x89 || op_mov == 0x8B) {
+                uint8_t modrm_mov = code[i0 + 1];
+                if ((modrm_mov & 0xC0) == 0xC0) {
+                    uint8_t mov_dst, mov_src;
+                    if (op_mov == 0x89) {
+                        mov_dst = modrm_mov & 0x07;
+                        mov_src = (modrm_mov >> 3) & 0x07;
+                    } else {
+                        mov_dst = (modrm_mov >> 3) & 0x07;
+                        mov_src = modrm_mov & 0x07;
+                    }
+                    if (mov_dst != mov_src) {
+                        size_t cmp_pos = i0 + 2;
+                        uint8_t op_cmp = code[cmp_pos];
+                        if (cmp_pos + 2 <= len &&
+                            (op_cmp == 0x39 || op_cmp == 0x3B || op_cmp == 0x85)) {
+                            uint8_t modrm_cmp = code[cmp_pos + 1];
+                            if ((modrm_cmp & 0xC0) == 0xC0) {
+                                uint8_t cmp_reg = (modrm_cmp >> 3) & 0x07;
+                                uint8_t cmp_rm = modrm_cmp & 0x07;
+                                bool in_reg = (cmp_reg == mov_dst);
+                                bool in_rm = (cmp_rm == mov_dst);
+                                if (in_reg || in_rm) {
+                                    size_t after = cmp_pos + 2;
+                                    bool dead = false;
+                                    if (after < len) {
+                                        uint8_t next = code[after];
+                                        // SETcc (0F 90-9F) or Jcc near (0F 80-8F)
+                                        if (after + 1 < len && next == 0x0F) {
+                                            uint8_t next2 = code[after + 1];
+                                            if ((next2 >= 0x90 && next2 <= 0x9F) ||
+                                                (next2 >= 0x80 && next2 <= 0x8F))
+                                                dead = true;
+                                        }
+                                        // Jcc short (70-7F)
+                                        if (next >= 0x70 && next <= 0x7F) dead = true;
+                                        // JMP (E9, EB)
+                                        if (next == 0xE9 || next == 0xEB) dead = true;
+                                        // MOV overwriting mov_dst: 89 xx with rm=mov_dst, mod=C0
+                                        if (next == 0x89 && after + 1 < len) {
+                                            uint8_t nm = code[after + 1];
+                                            if ((nm & 0xC0) == 0xC0 && (nm & 0x07) == mov_dst)
+                                                dead = true;
+                                        }
+                                        // 8B xx with reg=mov_dst
+                                        if (next == 0x8B && after + 1 < len) {
+                                            uint8_t nm = code[after + 1];
+                                            if (((nm >> 3) & 0x07) == mov_dst)
+                                                dead = true;
+                                        }
+                                        // B8+rd imm32
+                                        if ((next & 0xF8) == 0xB8 && (next & 0x07) == mov_dst)
+                                            dead = true;
+                                    }
+                                    if (dead) {
+                                        uint8_t new_modrm = modrm_cmp;
+                                        if (in_reg)
+                                            new_modrm = (new_modrm & 0xC7) | (mov_src << 3);
+                                        if (in_rm)
+                                            new_modrm = (new_modrm & 0xF8) | mov_src;
+                                        code[cmp_pos + 1] = new_modrm;
+                                        code[i0] = 0x90;
+                                        code[i0 + 1] = 0x90;
+                                        hits++;
+                                        i = cmp_pos;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Pattern 0: xor r32, r32 ; cmp r32, r32 -> xor r32, r32 ; test other, other
         // Keeps the zeroed register intact but removes dependency on it.
         if (i0 + 3 < len && code[i0] == 0x31) {

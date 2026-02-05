@@ -13,7 +13,8 @@ compaction. Full `x64_insn_length()` coverage for all emitter-produced
 instructions. Inline f32 FP via SSE. In-block back-edge loop optimization.
 
 Code buffer: 41KB for bench-loops (105 blocks), 41KB for benchmark_core
-(100 blocks). 324-471 peephole rewrites per workload.
+(100 blocks). 356-471 peephole rewrites per workload (391+ with MOV-CMP
+folding).
 
 ### Key profiling data (benchmark_core, `-p` with sample rate 1)
 
@@ -67,10 +68,52 @@ low-risk, additive, and immediately measurable.
 - `mov r, imm; op r, ...` → `op imm, ...` where x86 supports immediate
   operands (ADD, SUB, CMP, AND, OR, XOR, TEST with imm). Eliminates a MOV
   and frees a register.
+- MOV-ALU folding: `mov rA, rB; alu rX, rA` → `alu rX, rB` (generalize
+  MOV-CMP to XOR, AND, OR, ADD, SUB, etc. when rA is dead). Observed in
+  benchmark_core block 0xC70 (e.g., `mov eax,esi; mov ecx,ebx; xor ecx,eax`).
 - Redundant sign/zero extension elimination: `movzx eax, al` after an
   instruction that already zero-extended eax.
 - Load-op fusion: `mov r, [mem]; op r2, r` → `op r2, [mem]` where the
   load result is only used once.
+
+**Key finding from CSV validator analysis:** The dominant remaining
+pattern is NOT adjacent `mov rA,rB; cmp rX,rA` — it is the emitter
+producing `mov cached_reg → temp; [load]; cmp temp, other` for branch
+instructions. The MOV and CMP are separated by a memory load (guest reg
+not in cache). This happens because the emitter uses eax/ecx as scratch
+temps rather than comparing cached host registers directly.
+
+This means **further peephole patterns have diminishing returns** for
+the comparison case. The higher-leverage fix would be in the emitter:
+teach `emit_branch` to compare cached registers directly (e.g.,
+`cmp %esi,%edi` instead of `mov %esi,%eax; mov 0x3c(%rbp),%ecx;
+cmp %ecx,%eax`). This is an emitter-level change, not a peephole.
+
+**Hot block analysis (validatecsv, csv2/descriptions.csv):**
+- Block 0xC7DC (285 execs): CSV parser inner loop — 10 guest insns
+  (2 loads, 1 store, 3 adds, 1 sub, 1 beq, 1 ldw, 1 bne). 384 host
+  bytes. Two branch instructions each produce `mov reg→temp; cmp temp,X`
+  but with a memory load between MOV and CMP (uncached guest reg). The
+  MOV-CMP peephole can't fold these because they're not adjacent.
+- Block 0x210 (285 execs): 152 host bytes. Contains one foldable
+  `mov %ebx,%eax; cmp %ecx,%eax; jb` that IS being folded (+1 hit).
+- Block 0x1678 (179 execs): Identical structure to benchmark_core 0xC70.
+
+**Hot block analysis (benchmark_core):**
+- Block 0xD0A8 (121 execs): JALR inline lookup — 4-probe open-addressing
+  hash table, duplicated for predicted/mispredicted paths. Waste is
+  structural (duplicated probe sequence), not peephole-addressable.
+- Block 0xC70 (5 execs): Arithmetic superblock with several MOV-ALU
+  sequences (`mov rA,rB; xor/sub/and rX,rA`). MOV-CMP folding helped
+  where CMP/TEST follows, but ~6 MOV-ALU opportunities remain.
+- MOV-ALU generalization: would catch XOR/SUB/AND cases but only in
+  blocks with low execution counts (5 execs). Low payoff.
+
+**Recommendation:** Peephole is near diminishing returns for current
+workloads. The next high-leverage improvement is emitter-level: emit
+CMP/TEST directly between cached registers instead of routing through
+scratch temps. This would eliminate the MOV instructions at the source
+rather than trying to clean them up afterwards.
 
 **Evidence gate:** Count pattern occurrences in `-O` output for the hottest
 blocks. Measure code size and wall time before/after.
@@ -200,3 +243,4 @@ weight registers by dynamic frequency.
 17. ~~NOP compaction~~ (removes peephole NOPs, adjusts branches)
 18. ~~x64_insn_length REX.W bugfix~~ (rex & 0x48 → rex & 0x08)
 19. ~~Expand x64_insn_length() coverage~~ (added 0x88, 0xBE/0xBF, 0xCC, C7 memory forms; +19-22% more peephole rewrites, ~1KB code savings)
+20. ~~Peephole MOV-CMP/TEST folding~~ (mov rA,rB; cmp/test rA → substitute rB directly; +35 rewrites on benchmark_core, 356→391)
