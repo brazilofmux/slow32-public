@@ -9,16 +9,32 @@ measurably reduce DBT overhead or correct DBT-specific behavior.
 At ~60% of native speed on integer workloads. Register cache on by default
 (6-slot fully-associative). Stage 4 superblocks with deferred cold exits.
 Peephole optimizer with JCC folding, dead store elimination, and NOP
-compaction. Inline f32 FP via SSE. In-block back-edge loop optimization.
+compaction. Full `x64_insn_length()` coverage for all emitter-produced
+instructions. Inline f32 FP via SSE. In-block back-edge loop optimization.
 
-Code buffer: 42KB for bench-loops (105 blocks), 55KB for CSV validator
-(145 blocks). 265-395 peephole rewrites per workload.
+Code buffer: 41KB for bench-loops (105 blocks), 41KB for benchmark_core
+(100 blocks). 324-471 peephole rewrites per workload.
 
-Remaining gap is a mix of:
-- `x64_insn_length()` can't decode all instructions → blocks skip compaction
-- Intrinsic stubs paying full call overhead even for tiny sizes
-- Superblock policy not yet tuned with real-world profiling data
-- Cross-block register allocation for multi-block loops
+### Key profiling data (benchmark_core, `-p` with sample rate 1)
+
+| Metric | Stage 3 | Stage 4 |
+|--------|---------|---------|
+| Wall time | 0.156s | 0.046s |
+| Translate | 0.000s | 0.001s |
+| Exec (native code) | **0.156s (100%)** | **0.045s (98%)** |
+| Dispatch (C loop) | 0.000s | 0.000s |
+| Blocks | 125 | 100 |
+
+**CRITICAL:** The default `-p` sample rate of 1/1000 produces garbage data
+for workloads with <1000 dispatch iterations (~100-400 in practice). Use
+sample rate 1 for accurate results on short workloads.
+
+**All time is in native code execution.** Dispatch overhead is zero — block
+chaining keeps execution in JIT code. The 3.4x Stage 3→4 speedup comes
+from superblocks producing tighter native code (fewer register cache
+flush/reload cycles, fewer block transitions, more straight-line code).
+
+The bottleneck is **native code quality**, not dispatch or translation.
 
 ## Guiding Principles
 
@@ -34,56 +50,50 @@ Remaining gap is a mix of:
 ## Evidence Gates (Required Before Implementation)
 
 - Stage comparison: measure `-1/-2/-3/-4` on at least two real workloads.
-- Attribution: collect `-p` timing breakdown and `-s` block-cache stats.
+- Attribution: collect `-p` timing breakdown (sample rate 1) and `-s` stats.
 - Hotspot proof: for micro-optimizations, show the affected opcode(s) or
   block(s) are among the hottest 5 (`-D -O`).
 
 ---
 
-## Priority 1: Cross-block register allocation for self-loops
+## Priority 1: Additional peephole patterns
 
-**Current state:** Each block independently allocates registers. When a hot
-loop's back-edge chains back to the same block, the prologue reloads
-registers that were just flushed by the epilogue.
+**Why this is #1:** All execution time is in native code. Peephole
+optimization directly improves the code that's running. The infrastructure
+is solid (full instruction scanning, NOP compaction). Each pattern is
+low-risk, additive, and immediately measurable.
 
-The in-block back-edge optimization already handles loops that fit within
-a single block (23.5% improvement). The gap is loops that span 2-3 blocks.
+**Patterns to implement:**
+- `mov r, imm; op r, ...` → `op imm, ...` where x86 supports immediate
+  operands (ADD, SUB, CMP, AND, OR, XOR, TEST with imm). Eliminates a MOV
+  and frees a register.
+- Redundant sign/zero extension elimination: `movzx eax, al` after an
+  instruction that already zero-extended eax.
+- Load-op fusion: `mov r, [mem]; op r2, r` → `op r2, [mem]` where the
+  load result is only used once.
 
-**What to implement:**
-- When a block's only predecessor is itself (self-loop via direct chain),
-  emit a "steady-state" entry point after the prologue. The back-edge
-  chains to the steady-state entry, skipping the load. The first entry
-  uses the normal prologue.
-- This is a special case of cross-block allocation but covers the most
-  common hot pattern.
-
-**Evidence gate:** Check `-D` output for blocks where `exec_count` is high
-and the block chains to itself. Measure how much time the prologue/epilogue
-consumes relative to the block body.
+**Evidence gate:** Count pattern occurrences in `-O` output for the hottest
+blocks. Measure code size and wall time before/after.
 
 ---
 
-## Priority 2: Superblock policy tuning
+## Priority 2: Register cache efficiency
 
-**Current state:** Stage 4 extends past forward branches with
-`taken_pct <= 3%` threshold. Two-pass profiling available via `-t`.
-`avoid_backedge_extend` flag exists but is off by default.
+**Why:** The 3.4x superblock speedup proves that reducing prologue/epilogue
+overhead matters enormously. Currently 6 registers are cached. The prescan
+picks "top 6 by static use count" which may not match dynamic hotness.
 
-**Known issues:**
-- Stage 4 can regress when superblocks extend across hot back-edges.
-- The 3% threshold is a guess. Different programs may want different values.
-- Side-exit flush cost accumulates with superblock depth.
+**What to investigate:**
+- Profile which cached registers are actually read/written in hot blocks
+  (the `regcache=N/M` stat in `-D` output).
+- Check if increasing cache size from 6 to 8 helps (more registers cached
+  vs more prologue/epilogue overhead).
+- Check if the prescan selection matches what the hot path actually uses.
 
-**Experiments to run:**
-1. Sweep thresholds: 1%, 3%, 5%, 10%, 20%.
-2. Compare `-t` (two-pass) vs single-pass on each benchmark.
-3. Try `-B` (avoid backedge extend) — does it help or hurt?
-4. Measure side-exit taken rates with `-E -s` and correlate with regressions.
-
-**What to implement (based on results):**
-- If two-pass consistently helps, make it the default.
-- If `-B` helps, make it the default.
-- If optimal threshold varies per-program, consider adaptive thresholds.
+**Potential improvements:**
+- Increase register cache slots from 6 to 8 (or make configurable)
+- Weight register selection by block execution count (profile-guided)
+- Reduce prologue/epilogue cost by only saving/restoring dirty registers
 
 ---
 
@@ -109,28 +119,7 @@ size distribution. If most calls are >64 bytes, this has negligible value.
 
 ---
 
-## Priority 4: Dispatch overhead reduction
-
-**Current state:** Chained blocks are just `jmp rel32` (effectively free).
-The cost is in unchained indirect branches (JALR) and first-time transitions.
-Inline lookup uses 4 probes per JALR site.
-
-**What to investigate:**
-- What fraction of total exits are unchained? (`-s` shows chain_count vs
-  total lookups.)
-- For JALR-heavy code, does the inline lookup hit rate justify the code
-  bloat? (4 probes × ~20 bytes each = 80 bytes per JALR site.)
-
-**Potential improvements:**
-- Increase inline probe count from 4 to 6 for indirect-branch-heavy code.
-- Consider a separate IBTC with a different hash function optimized for
-  return addresses.
-- Two-level dispatch: small direct-mapped cache (256 entries) as first
-  check, then fall through to full table.
-
----
-
-## Priority 5: Code cache layout and I-cache pressure
+## Priority 4: Code cache layout and I-cache pressure
 
 **Current state:** 4MB code buffer, linear allocation. Deferred side exits
 emitted at end of each block (after the hot path). Superblocks can be large.
@@ -146,6 +135,29 @@ emitted at end of each block (after the hot path). Superblocks can be large.
 ---
 
 ## Lower Priority / Future Ideas
+
+### Cross-block register allocation for multi-block loops
+**Evidence gate failed:** All hot loops in current workloads fit within
+single blocks (handled by in-block back-edge optimization). Zero multi-block
+back-edges observed across bench-loops, benchmark_core, and CSV validator.
+Revisit if workloads with multi-block loops emerge.
+
+### Superblock policy tuning
+**Evidence gate failed:** Swept thresholds (1%, 3%, 5%, 10%, 20%), compared
+two-pass vs single-pass, tested `-B` (avoid backedge extend). All produced
+identical results — same superblock count, same code size, same performance.
+Side-exit offender list is empty for all workloads. The branches being
+extended past are all 0% taken, so any threshold permits extension. Nothing
+to tune. Superblocks themselves are hugely valuable (3.4x on benchmark_core)
+but the policy knobs are already at their optimum for current workloads.
+
+### Dispatch overhead reduction (JALR)
+**Evidence gate failed:** Accurate profiling (sample rate 1) shows dispatch
+time is 0.000s — block chaining keeps all execution in native code. The
+hottest JALR block (71-121 executions) resolves via inline lookup and chains
+without returning to C. Only 28 inline lookup misses out of 373+ lookups.
+The dispatch loop is not a bottleneck. Revisit if workloads with high
+indirect-branch miss rates emerge.
 
 ### Adaptive block size limit
 `MAX_BLOCK_INSTS` is fixed at 64. Some hot functions might benefit from
@@ -164,11 +176,6 @@ materializations.
 ### Profile-guided register allocation
 Instead of prescan-based "top 6 by use count," use execution profiles to
 weight registers by dynamic frequency.
-
-### Additional peephole patterns
-- `mov r, imm; op r, ...` → `op imm, ...` where supported
-- Redundant sign/zero extension elimination
-- Load-op fusion for memory operands
 
 ---
 
