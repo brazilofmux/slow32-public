@@ -2393,15 +2393,33 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
             flush_pending_write(ctx);  // About to clobber RAX directly
             emit_xor_r32_r32(e, RAX, RAX);
         } else if (rs1 == 0) {
-            emit_load_guest_reg(ctx, RAX, rs2);
-            emit_test_r32_r32(e, RAX, RAX);
+            x64_reg_t h2 = guest_host_reg(ctx, rs2);
+            if (h2 != X64_NOREG) {
+                flush_pending_write(ctx);
+                emit_test_r32_r32(e, h2, h2);
+            } else {
+                emit_load_guest_reg(ctx, RAX, rs2);
+                emit_test_r32_r32(e, RAX, RAX);
+            }
         } else if (rs2 == 0) {
-            emit_load_guest_reg(ctx, RAX, rs1);
-            emit_test_r32_r32(e, RAX, RAX);
+            x64_reg_t h1 = guest_host_reg(ctx, rs1);
+            if (h1 != X64_NOREG) {
+                flush_pending_write(ctx);
+                emit_test_r32_r32(e, h1, h1);
+            } else {
+                emit_load_guest_reg(ctx, RAX, rs1);
+                emit_test_r32_r32(e, RAX, RAX);
+            }
         } else {
-            emit_load_guest_reg(ctx, RAX, rs1);
-            emit_load_guest_reg(ctx, RCX, rs2);
-            emit_cmp_r32_r32(e, RAX, RCX);
+            x64_reg_t h1 = guest_host_reg(ctx, rs1);
+            x64_reg_t h2 = guest_host_reg(ctx, rs2);
+            x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : RAX;
+            x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : RCX;
+            if (h1 == X64_NOREG) emit_load_guest_reg(ctx, RAX, rs1);
+            if (h2 == X64_NOREG) emit_load_guest_reg(ctx, RCX, rs2);
+            if (h1 != X64_NOREG || h2 != X64_NOREG)
+                flush_pending_write(ctx);
+            emit_cmp_r32_r32(e, cmp_a, cmp_b);
         }
         e->trace_tag = saved_tag_cmp;
     }
