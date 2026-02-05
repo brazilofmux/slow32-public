@@ -69,18 +69,14 @@ MOV-CMP to XOR, AND, OR, ADD, SUB. Observed in benchmark_core block
 0xC70 (e.g., `mov eax,esi; mov ecx,ebx; xor ecx,eax`). However, these
 only appear in low-execution blocks (5 execs). **Low payoff.**
 
-### 1b. Emitter-level ALU with cached registers
+### 1b. ~~Emitter-level ALU with cached registers~~ (DONE)
 
-Same idea as the branch comparison fix but for ALU instructions (ADD,
-SUB, XOR, AND, OR). The emitter currently copies cached registers into
-scratch temps before operating. For example, `XOR r5, r17, r20` produces
-`mov %esi,%eax; mov %ebx,%ecx; xor %ecx,%eax` when all three could be
-done with cached registers directly. This is the dominant remaining
-source of redundant MOVs in hot blocks like 0xC70/0x1678.
-
-**Evidence:** Block 0xC70 (benchmark_core, 5 execs) and 0x1678
-(validatecsv, 179 execs) both show 6+ redundant MOVs feeding ALU ops.
-The 179-exec block makes this worth investigating.
+**Completed.** See item #25 in the completed list. ALU reg-reg ops
+already had cached register support in their `hd != X64_NOREG` branches.
+The remaining waste was SETcc materialization always going through RAX
+(fixed: SETcc+MOVZX directly into cached hd) and SUB rd==rs2 using 3
+instructions (fixed: NEG+ADD when both operands cached). Remaining MOVs
+in these blocks are inherent 2-operand x86 copies (rd != rs1).
 
 ### 1c. ~~Redundant bounds check elimination~~ (DONE)
 
@@ -150,9 +146,9 @@ These occur but are not concentrated in hot blocks.
   regs directly. Loads/stores use cached host registers directly (no
   scratch RCX copy).
 - 0x210 (285 execs, 150B): Setup/call block. Lean.
-- 0x1678 (179 execs, 396B): Same structure as benchmark_core 0xC70.
-  MOV-ALU redundancy, plus SETcc→movzx→mov chain for comparison result
-  materialization.
+- 0x1678 (179 execs, 390B): Same structure as benchmark_core 0xC70.
+  SETcc now goes directly into cached host registers. SUB rd==rs2
+  uses NEG+ADD when both operands are cached.
 - 0xEAAC (68 execs, 417B): JALR inline lookup (same as benchmark_core).
 
 **Evidence gate:** Dump `-O` for target blocks, count pattern instances,
@@ -280,3 +276,4 @@ weight registers by dynamic frequency.
 22. ~~Redundant bounds check elimination~~ (validates address ranges per base register, skips checks when range already proven safe)
 23. ~~Register cache expansion 6→8 slots~~ (added R8/R9; CSV hot block 0xC7DC: 71%→100% cache hit rate; R8/R9 scratch in JALR/RAS pre-flushed before clobber)
 24. ~~Direct load/store with cached registers~~ (loads go directly into cached host reg instead of scratch RCX+MOV copy; stores use cached host reg directly; CSV 0xC7DC: 378B→322B, eliminates ~1200 redundant MOVs per CSV run)
+25. ~~SETcc and SUB with cached registers~~ (SETcc+MOVZX directly into cached rd instead of going through RAX; SUB rd==rs2 uses NEG+ADD when both operands cached; CSV 0x1678: 396B→390B)
