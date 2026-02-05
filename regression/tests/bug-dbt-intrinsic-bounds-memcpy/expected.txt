@@ -1,1 +1,1 @@
-Memory fault: Failed to read 4 bytes at 0x20000000
+Memory fault: Failed to read 1 bytes at 0x20000000
