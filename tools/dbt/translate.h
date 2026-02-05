@@ -54,12 +54,12 @@ typedef struct {
     bool avoid_backedge_extend;  // Study-only guard: don't extend across back-edges
     bool peephole_enabled;       // Peephole optimize emitted host code
 
-    // Stage 5: Per-block register allocation (6-slot fully-associative)
+    // Stage 5: Per-block register allocation (8-slot fully-associative)
     bool reg_cache_enabled;
     uint32_t reg_cache_hits;
     uint32_t reg_cache_misses;
 
-    #define REG_ALLOC_SLOTS 6
+    #define REG_ALLOC_SLOTS 8
     struct {
         uint8_t guest_reg;
         bool    allocated;

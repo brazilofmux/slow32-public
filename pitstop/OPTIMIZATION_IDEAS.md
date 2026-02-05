@@ -7,7 +7,7 @@ measurably reduce DBT overhead or correct DBT-specific behavior.
 ## Current State
 
 At ~60% of native speed on integer workloads. Register cache on by default
-(6-slot fully-associative). Stage 4 superblocks with deferred cold exits.
+(8-slot fully-associative). Stage 4 superblocks with deferred cold exits.
 Peephole optimizer with JCC folding, dead store elimination, and NOP
 compaction. Full `x64_insn_length()` coverage for all emitter-produced
 instructions. Inline f32 FP via SSE. In-block back-edge loop optimization.
@@ -82,9 +82,9 @@ source of redundant MOVs in hot blocks like 0xC70/0x1678.
 (validatecsv, 179 execs) both show 6+ redundant MOVs feeding ALU ops.
 The 179-exec block makes this worth investigating.
 
-### 1c. Redundant bounds check elimination
+### 1c. ~~Redundant bounds check elimination~~ (DONE)
 
-**This is the highest-value remaining opportunity.**
+**Completed.** See item #22 in the completed list.
 
 The biggest source of code bloat is memory access bounds checking. Each
 LDW/STW emits ~50-60 bytes of host code on the hot path (LEA, CMP, Jcc,
@@ -163,26 +163,11 @@ measure code size and wall time before/after.
 
 ## Priority 2: Register cache efficiency
 
-**Why:** The 3.4x superblock speedup proves that reducing prologue/epilogue
-overhead matters enormously. Currently 6 registers are cached. The prescan
-picks "top 6 by static use count" which may not match dynamic hotness.
+**Status: DONE** — expanded from 6 to 8 slots using R8/R9. Block 0xC7DC
+(CSV hot loop) improved from 71% to 100% cache hit rate. R8/R9 scratch
+usage in JALR/RAS code resolved via pre-flush of dirty cached values.
 
-**What to investigate:**
-- Profile which cached registers are actually read/written in hot blocks
-  (the `regcache=N/M` stat in `-D` output).
-- Check if increasing cache size from 6 to 8 helps (more registers cached
-  vs more prologue/epilogue overhead).
-- Check if the prescan selection matches what the hot path actually uses.
-
-**Concrete evidence:** In the CSV hot loop (block 0xC7DC), guest regs
-r15 and r16 are accessed but not cached (only 6 slots available). Each
-miss costs a memory load/store round-trip. r15 is compared in `beq r14,
-r15` (generating `mov 0x3c(%rbp),%ecx` on every iteration). r16 is
-updated in `add r16, r20, r16` (load + add + store = 12 bytes, vs 3
-bytes if cached). Going to 8 slots would likely capture both.
-
-**Potential improvements:**
-- Increase register cache slots from 6 to 8 (or make configurable)
+**Remaining ideas:**
 - Weight register selection by block execution count (profile-guided)
 - Reduce prologue/epilogue cost by only saving/restoring dirty registers
 
@@ -293,3 +278,5 @@ weight registers by dynamic frequency.
 19. ~~Expand x64_insn_length() coverage~~ (added 0x88, 0xBE/0xBF, 0xCC, C7 memory forms; +19-22% more peephole rewrites, ~1KB code savings)
 20. ~~Peephole MOV-CMP/TEST folding~~ (mov rA,rB; cmp/test rA → substitute rB directly; +35 rewrites on benchmark_core)
 21. ~~Emitter: cached registers in branch comparisons~~ (translate_branch_common uses guest_host_reg() directly in CMP/TEST instead of copying to scratch RAX/RCX; -288B code on benchmark_core, -144B on CSV; subsumes most MOV-CMP peephole hits at the source)
+22. ~~Redundant bounds check elimination~~ (validates address ranges per base register, skips checks when range already proven safe)
+23. ~~Register cache expansion 6→8 slots~~ (added R8/R9; CSV hot block 0xC7DC: 71%→100% cache hit rate; R8/R9 scratch in JALR/RAS pre-flushed before clobber)

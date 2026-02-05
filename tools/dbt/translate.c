@@ -156,11 +156,11 @@ void translate_init_cached(translate_ctx_t *ctx, dbt_cpu_state_t *cpu, block_cac
 }
 
 // ============================================================================
-// Stage 5: Per-block register allocation (6-slot fully-associative)
+// Stage 5: Per-block register allocation (8-slot fully-associative)
 // ============================================================================
 
 static const x64_reg_t reg_alloc_hosts[REG_ALLOC_SLOTS] = {
-    RBX, R12, R13, RSI, RDI, R11
+    RBX, R12, R13, RSI, RDI, R11, R8, R9
 };
 
 static void reg_alloc_reset(translate_ctx_t *ctx) {
@@ -561,6 +561,22 @@ static void reg_alloc_flush_snapshot(translate_ctx_t *ctx, const bool *dirty_sna
         }
         emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg),
                          reg_alloc_hosts[i]);
+    }
+}
+
+// Flush specific host registers that are about to be used as scratch.
+// Writes dirty cached values back to memory but keeps slots allocated (dirty=false).
+// Used before JALR/RAS code that clobbers R8/R9 as temporaries.
+static void flush_cached_host_regs(translate_ctx_t *ctx, x64_reg_t r1, x64_reg_t r2) {
+    if (!ctx->reg_cache_enabled) return;
+    emit_ctx_t *e = &ctx->emit;
+    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+        if (!ctx->reg_alloc[i].allocated || !ctx->reg_alloc[i].dirty) continue;
+        if (reg_alloc_hosts[i] == r1 || reg_alloc_hosts[i] == r2) {
+            emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg),
+                             reg_alloc_hosts[i]);
+            ctx->reg_alloc[i].dirty = false;
+        }
     }
 }
 
@@ -2301,6 +2317,10 @@ void translate_jalr(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
         emit_add_r32_imm32(e, RAX, imm);
     }
     emit_and_r32_imm32(e, RAX, (int32_t)~1u);
+
+    // Flush R8/R9 cached values before using them as scratch.
+    // JALR always ends the block, so no reload is needed.
+    flush_cached_host_regs(ctx, R8, R9);
 
     // Store return address if rd != 0
     // Do this BEFORE we potentially clobber RAX with lookup code
