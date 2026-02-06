@@ -1,7 +1,7 @@
 # SLOW-32 Forth Kernel
 
 ## Status
-Stage 4: Bootstrap Prelude. Self-extending Forth with ~25 standard vocabulary words loaded at startup.
+Stage 4: Bootstrap Prelude. Self-extending Forth with ~35 standard vocabulary words loaded at startup.
 
 ## Architecture
 - **Direct Threaded Code**: IP points to a list of XTs.
@@ -17,8 +17,8 @@ Stage 4: Bootstrap Prelude. Self-extending Forth with ~25 standard vocabulary wo
 - **Stack**: `DUP`, `DROP`, `SWAP`, `OVER`, `>R`, `R>`, `R@`, `DEPTH`, `DSP@`, `DSTKTOP`
 - **Arithmetic**: `+`, `-`, `*`, `/`, `MOD`, `/MOD`, `NEGATE`, `1+`, `1-`
 - **Logic**: `AND`, `OR`, `XOR`, `INVERT`, `LSHIFT`, `RSHIFT`
-- **Comparison**: `=`, `<>`, `<`, `>`, `0=`, `0<`
-- **Memory**: `!`, `@`, `C!`, `C@`
+- **Comparison**: `=`, `<>`, `<`, `>`, `0=`, `0<`, `U<`
+- **Memory**: `!`, `@`, `C!`, `C@`, `C,`
 - **I/O**: `EMIT`, `KEY`, `TYPE`, `.`, `.S`, `CR`, `ACCEPT`
 - **Compiler**: `:`, `;`, `IMMEDIATE`, `,`, `ALLOT`, `[`, `]`, `CREATE`, `DOES>`, `S"`, `."`, `'`, `[']`, `LIT`, `CHAR`, `[CHAR]`, `RECURSE`, `POSTPONE`
 - **Control flow**: `IF`, `ELSE`, `THEN`, `BEGIN`, `AGAIN`, `UNTIL`, `WHILE`, `REPEAT`
@@ -36,11 +36,12 @@ Loaded automatically from `prelude.fth` at startup:
 - **Cell ops**: `CELLS`, `CELL+`, `CHARS`, `CHAR+`
 - **Output**: `SPACE`, `SPACES`
 - **Base**: `DECIMAL`, `HEX`
-- **Memory**: `+!`
-- **Comparison**: `<=`, `>=`
+- **Memory**: `+!`, `FILL`, `ERASE`, `MOVE`
+- **Comparison**: `<=`, `>=`, `0>`, `0<>`
+- **Compiler**: `LITERAL`
 - **Defining**: `VARIABLE`, `CONSTANT`, `VALUE`, `TO`, `DEFER`, `IS`, `ACTION-OF`
 - **Control flow**: `CASE`, `OF`, `ENDOF`, `ENDCASE`
-- **Comments**: `\` (backslash line comment)
+- **Comments**: `\` (backslash line comment), `(` (paren comment)
 
 ## Dictionary Structure
 - **Header**:

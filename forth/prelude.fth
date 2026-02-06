@@ -66,5 +66,37 @@
 : IS         ' 8 +  STATE @ IF POSTPONE LIT , POSTPONE !  ELSE !  THEN ; IMMEDIATE
 : ACTION-OF  ' 8 +  STATE @ IF POSTPONE LIT , POSTPONE @  ELSE @  THEN ; IMMEDIATE
 
+\ --- Paren comments ---
+: (  BEGIN
+       TOIN @ NTIB @ < WHILE
+       TIB TOIN @ + C@   1 TOIN +!
+       41 = IF EXIT THEN
+     REPEAT ; IMMEDIATE
+
+\ --- Compile-time literal ---
+: LITERAL  ['] LIT , , ; IMMEDIATE
+
+\ --- Comparison extensions ---
+: 0>   0 > ;
+: 0<>  0 <> ;
+
+\ --- Memory operations ---
+: FILL  ( addr u char -- )
+  -ROT  0 DO 2DUP I + C! LOOP 2DROP ;
+
+: ERASE  ( addr u -- )  0 FILL ;
+
+: MOVE  ( src dest u -- )
+  DUP 0= IF DROP 2DROP EXIT THEN
+  >R 2DUP U< IF
+    \ src < dest: copy backward (high to low) for overlap safety
+    R> 1-  BEGIN  DUP 0< 0= WHILE
+      >R  OVER R@ + C@  OVER R@ + C!  R> 1-
+    REPEAT DROP
+  ELSE
+    \ dest <= src: copy forward (low to high)
+    R> 0 DO  OVER I + C@  OVER I + C!  LOOP
+  THEN 2DROP ;
+
 \ Enable interactive prompts
 PROMPTS-ON

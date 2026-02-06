@@ -3114,6 +3114,50 @@ xt_postpone:
     # THEN:
     .word xt_exit
 
+# Word: C, ( char -- ) store byte at HERE, advance HERE by 1
+.text
+    .align 2
+head_ccomma:
+    .word head_postpone
+    .byte 2
+    .ascii "C,"
+    .align 2
+xt_ccomma:
+    .word ccomma_word
+ccomma_word:
+    ldw r1, r28, 0         # char
+    addi r28, r28, 4       # pop
+    lui r2, %hi(var_here)
+    addi r2, r2, %lo(var_here)
+    ldw r3, r2, 0          # HERE
+    stb r3, r1, 0          # store byte
+    addi r3, r3, 1         # HERE += 1
+    stw r2, r3, 0          # update HERE
+    jal r0, next
+
+# Word: U< ( u1 u2 -- flag ) unsigned less-than
+.text
+    .align 2
+head_ult:
+    .word head_ccomma
+    .byte 2
+    .ascii "U<"
+    .align 2
+xt_ult:
+    .word ult_word
+ult_word:
+    ldw r1, r28, 0         # b (TOS)
+    ldw r2, r28, 4         # a (second)
+    addi r3, r0, 0
+    bltu r2, r1, ult_set
+    jal r0, ult_push
+ult_set:
+    addi r3, r0, 1
+ult_push:
+    addi r28, r28, 4
+    stw r28, r3, 0
+    jal r0, next
+
 # ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
@@ -3123,7 +3167,7 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_postpone        # Point to last defined word
+    .word head_ult             # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_len: .word 0
