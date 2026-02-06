@@ -67,21 +67,40 @@ bool SLOW32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   // Get the frame index operand
   MachineOperand &FIOp = MI.getOperand(FIOperandNum);
   int FrameIndex = FIOp.getIndex();
-  
+
   // Calculate the actual offset from the frame pointer
   int64_t Offset = MFI.getObjectOffset(FrameIndex);
-  
+
   // Stack pointer adjustments between call frames are already baked into the
   // prologue/epilogue. Just account for them here so we keep consistent offsets.
   Offset += SPAdj;
 
-  // Frame indexes currently enter without an additional offset. If we start
-  // using addFrameIndex with non-zero displacements we will thread that here.
+  // GPRPair spills/reloads append an extra immediate (+0 or +4) after the
+  // frame index to select the lo/hi half.  Fold it in and remove it so the
+  // instruction has the correct operand count.
+  if (FIOperandNum + 1 < MI.getNumOperands() &&
+      MI.getOperand(FIOperandNum + 1).isImm()) {
+    Offset += MI.getOperand(FIOperandNum + 1).getImm();
+    MI.removeOperand(FIOperandNum + 1);
+  }
+
+  // Determine the base register operand.
+  // Store instructions (STW/STH/STB) have no def, so operands are:
+  //   op0=base(rs1), op1=value(rs2), op2=offset/FI  →  base at FIOperandNum-2
+  // Load and other instructions have a def:
+  //   op0=def(rd), op1=base(rs1), op2=offset/FI     →  base at FIOperandNum-1
+  unsigned Opc = MI.getOpcode();
+  unsigned BaseOpIdx;
+  if (Opc == SLOW32::STW || Opc == SLOW32::STH || Opc == SLOW32::STB) {
+    BaseOpIdx = FIOperandNum - 2;
+  } else {
+    BaseOpIdx = FIOperandNum - 1;
+  }
 
   // Ensure the base+offset fits in the 12-bit signed window supported by the
   // instruction. If not, materialise the high part using additional ADDI nodes
   // so the final memory op keeps a legal displacement.
-  MachineOperand &BaseOp = MI.getOperand(FIOperandNum - 1);
+  MachineOperand &BaseOp = MI.getOperand(BaseOpIdx);
   Register BaseReg = BaseOp.getReg();
   DebugLoc DL = MI.getDebugLoc();
 
