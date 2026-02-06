@@ -22,7 +22,7 @@ SLOW-32 is a 32-bit, orthogonal, 3-address RISC instruction set. It's inspired b
 
 Here's what SLOW-32 *has*:
 
-- Eighty-plus instructions. Fixed-width 32-bit encoding, little-endian. Thirty-two general-purpose registers (r0 hardwired to zero). The full complement of integer arithmetic, logical, shift, comparison, branch, jump, load/store, and IEEE 754 floating-point (both f32 and f64, soft-float in GPRs using register pairs for doubles).
+- Eighty-plus instructions. Fixed-width 32-bit encoding, little-endian. Thirty-two general-purpose registers (r0 hardwired to zero). The full complement of integer arithmetic, logical, shift, comparison, branch, jump, and load/store. IEEE 754 floating-point (f32 and f64) lives in GPRs — no separate FP register file. Doubles use register pairs. The emulators hook transcendental functions (sin, cos, sqrt, etc.) to host libm, and dtoa handles float-to-string conversion. The whole FP subsystem went from nothing to working in three days.
 - A complete toolchain: a custom assembler with GNU-style directives and expression evaluation, a linker, a librarian, a disassembler, and an LLVM backend with Clang integration. You can write C or C++, compile it with Clang, and produce a SLOW-32 executable.
 - A microcontroller-style memory model: code lives low (W^X enforced), data and stack live high, one MMIO device (a ring buffer accessed via YIELD), no interrupts. The linker controls the memory map. A binary can address anywhere from 4 KB to 256 MB depending on how you configure it.
 
@@ -134,7 +134,7 @@ Five emulators, plus native x86-64 for comparison. The two interpreters and the 
 
 ### What the Numbers Mean
 
-The DBT runs pure compute at **5.9 billion guest instructions per second** — on a 3.6 GHz processor, that's roughly 1.7 guest instructions per host clock cycle. The JIT is generating tight enough x86-64 that the superscalar execution engine is retiring more than one guest operation per cycle.
+The DBT runs pure compute at **5.9 billion guest instructions per second** — on a 3.6 GHz processor, that's roughly 1.6 guest instructions per host clock cycle. The JIT is generating tight enough x86-64 that the superscalar execution engine is retiring more than one guest operation per cycle.
 
 The DBT is **5x faster than QEMU TCG** on compute and **3x faster** on the I/O-bound CSV workload. QEMU is a serious, battle-tested emulator; beating it by this margin on a custom ISA is not something I expected.
 
@@ -238,6 +238,8 @@ If you're a systems programmer sitting on a stack of ideas you never had time to
 **Repository**: [github.com/brazilofmux/slow32-public](https://github.com/brazilofmux/slow32-public)
 
 **Hardware**: AMD Ryzen 5 3600 (6-core, 3.6 GHz base clock), Linux.
+
+**Commit**: [`fcbe528`](https://github.com/brazilofmux/slow32-public/tree/fcbe528) — all emulators built with GCC `-O2`, SLOW-32 programs compiled with Clang/LLC `-O2` via the LLVM backend.
 
 **Benchmark commands**:
 ```bash
