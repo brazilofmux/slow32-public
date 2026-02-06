@@ -2973,6 +2973,42 @@ dotquote_end_parse:
 dotquote_done:
     jal r0, next
 
+# Word: ' ( "name" -- xt )
+# Parse the next word and return its execution token
+.text
+    .align 2
+head_tick:
+    .word head_dotquote
+    .byte 1
+    .ascii "'"
+    .align 2
+xt_tick:
+    .word docol_word
+    .word xt_word
+    .word xt_find
+    .word xt_drop
+    .word xt_exit
+
+# Word: ['] ( "name" -- ) IMMEDIATE compile-time
+# At compile time: parse next word, find its XT, compile LIT <xt>
+.text
+    .align 2
+head_bracket_tick:
+    .word head_tick
+    .byte 0x83             # length 3 + IMMEDIATE flag (0x80)
+    .ascii "[']"
+    .align 2
+xt_bracket_tick:
+    .word docol_word
+    .word xt_word
+    .word xt_find
+    .word xt_drop
+    .word xt_lit
+    .word xt_lit           # pushes xt_lit itself as a literal
+    .word xt_comma         # compile xt_lit at HERE
+    .word xt_comma         # compile the XT at HERE
+    .word xt_exit
+
 # ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
@@ -2982,7 +3018,7 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_dotquote        # Point to last defined word
+    .word head_bracket_tick    # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_len: .word 0
