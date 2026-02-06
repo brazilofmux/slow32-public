@@ -2422,9 +2422,15 @@ do_word:
     stw r2, r3, 0          # compile (DO) xt
     addi r2, r2, 4
     stw r1, r2, 0          # update HERE
-    # Push HERE (loop-back target) onto data stack
+    # Save current leave-list head, reset for this loop
+    lui r4, %hi(var_leave_list)
+    addi r4, r4, %lo(var_leave_list)
+    ldw r5, r4, 0          # r5 = old leave-list head
+    stw r4, r0, 0          # var_leave_list = 0 (empty for new loop)
     addi r28, r28, -4
-    stw r28, r2, 0
+    stw r28, r5, 0         # push old leave-list head
+    addi r28, r28, -4
+    stw r28, r2, 0         # push HERE (loop-back target)
 do_done:
     jal r0, next
 
@@ -2445,7 +2451,8 @@ loop_word:
     ldw r8, r8, 0
     beq r8, r0, loop_done
     ldw r4, r28, 0         # r4 = loop-back target addr
-    addi r28, r28, 4       # pop
+    ldw r10, r28, 4        # r10 = old leave-list head (saved by DO)
+    addi r28, r28, 8       # pop both
     lui r1, %hi(var_here)
     addi r1, r1, %lo(var_here)
     ldw r2, r1, 0          # r2 = HERE
@@ -2457,7 +2464,22 @@ loop_word:
     sub r5, r4, r5         # offset = target - (offset_cell + 4)
     stw r2, r5, 0          # compile offset
     addi r2, r2, 4
-    stw r1, r2, 0          # update HERE
+    stw r1, r2, 0          # update HERE; r2 = new HERE (past LOOP)
+    # Patch all LEAVE forward branches from var_leave_list
+    lui r8, %hi(var_leave_list)
+    addi r8, r8, %lo(var_leave_list)
+    ldw r9, r8, 0          # r9 = current leave-list head
+loop_patch_leaves:
+    beq r9, r0, loop_patch_done
+    ldw r5, r9, 0          # r5 = next link from placeholder
+    addi r6, r9, 4         # r6 = patch_addr + 4
+    sub r6, r2, r6         # offset = HERE - (patch_addr + 4)
+    stw r9, r6, 0          # overwrite placeholder with real offset
+    add r9, r5, r0         # advance to next
+    jal r0, loop_patch_leaves
+loop_patch_done:
+    # Restore outer loop's leave-list
+    stw r8, r10, 0         # var_leave_list = old head
 loop_done:
     jal r0, next
 
@@ -2478,7 +2500,8 @@ ploop_word:
     ldw r8, r8, 0
     beq r8, r0, ploop_done
     ldw r4, r28, 0         # r4 = loop-back target addr
-    addi r28, r28, 4       # pop
+    ldw r10, r28, 4        # r10 = old leave-list head (saved by DO)
+    addi r28, r28, 8       # pop both
     lui r1, %hi(var_here)
     addi r1, r1, %lo(var_here)
     ldw r2, r1, 0          # r2 = HERE
@@ -2490,8 +2513,64 @@ ploop_word:
     sub r5, r4, r5         # offset = target - (offset_cell + 4)
     stw r2, r5, 0          # compile offset
     addi r2, r2, 4
-    stw r1, r2, 0          # update HERE
+    stw r1, r2, 0          # update HERE; r2 = new HERE (past +LOOP)
+    # Patch all LEAVE forward branches from var_leave_list
+    lui r8, %hi(var_leave_list)
+    addi r8, r8, %lo(var_leave_list)
+    ldw r9, r8, 0          # r9 = current leave-list head
+ploop_patch_leaves:
+    beq r9, r0, ploop_patch_done
+    ldw r5, r9, 0          # r5 = next link from placeholder
+    addi r6, r9, 4         # r6 = patch_addr + 4
+    sub r6, r2, r6         # offset = HERE - (patch_addr + 4)
+    stw r9, r6, 0          # overwrite placeholder with real offset
+    add r9, r5, r0         # advance to next
+    jal r0, ploop_patch_leaves
+ploop_patch_done:
+    # Restore outer loop's leave-list
+    stw r8, r10, 0         # var_leave_list = old head
 ploop_done:
+    jal r0, next
+
+# Word: LEAVE ( -- ) IMMEDIATE compile-time
+# Compiles UNLOOP + BRANCH + placeholder offset, chains into leave-list
+.text
+    .align 2
+head_leave:
+    .word head_ploop
+    .byte 0x85
+    .ascii "LEAVE"
+    .align 2
+xt_leave:
+    .word leave_word
+leave_word:
+    lui r8, %hi(var_state)
+    addi r8, r8, %lo(var_state)
+    ldw r8, r8, 0
+    beq r8, r0, leave_done
+    lui r1, %hi(var_here)
+    addi r1, r1, %lo(var_here)
+    ldw r2, r1, 0          # r2 = HERE
+    # Compile xt_unloop at HERE
+    lui r3, %hi(xt_unloop)
+    addi r3, r3, %lo(xt_unloop)
+    stw r2, r3, 0          # [HERE] = xt_unloop
+    # Compile xt_branch at HERE+4
+    lui r3, %hi(xt_branch)
+    addi r3, r3, %lo(xt_branch)
+    stw r2, r3, 4          # [HERE+4] = xt_branch
+    # HERE+8 = offset placeholder cell
+    addi r4, r2, 8         # r4 = address of placeholder cell
+    # Chain into var_leave_list: placeholder stores old head, variable gets new head
+    lui r6, %hi(var_leave_list)
+    addi r6, r6, %lo(var_leave_list)
+    ldw r5, r6, 0          # r5 = old leave-list head
+    stw r4, r5, 0          # [placeholder] = old head (forward link)
+    stw r6, r4, 0          # var_leave_list = this placeholder addr
+    # Update HERE past the 3 cells
+    addi r2, r2, 12
+    stw r1, r2, 0          # update HERE
+leave_done:
     jal r0, next
 
 # ----------------------------------------------------------------------
@@ -2503,11 +2582,12 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_ploop           # Point to last defined word
+    .word head_leave           # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_len: .word 0
 var_prompt_enabled: .word 0        # 0 = suppress prompts (prelude), 1 = show prompts
+var_leave_list:     .word 0        # compile-time leave-list head for DO...LOOP
 
     .align 2
 interp_exec_thread:
