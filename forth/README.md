@@ -20,7 +20,7 @@ Stage 4: Bootstrap Prelude. Self-extending Forth with ~25 standard vocabulary wo
 - **Comparison**: `=`, `<>`, `<`, `>`, `0=`, `0<`
 - **Memory**: `!`, `@`, `C!`, `C@`
 - **I/O**: `EMIT`, `KEY`, `TYPE`, `.`, `.S`, `CR`, `ACCEPT`
-- **Compiler**: `:`, `;`, `IMMEDIATE`, `,`, `ALLOT`, `[`, `]`, `CREATE`, `DOES>`, `S"`, `."`, `'`, `[']`
+- **Compiler**: `:`, `;`, `IMMEDIATE`, `,`, `ALLOT`, `[`, `]`, `CREATE`, `DOES>`, `S"`, `."`, `'`, `[']`, `LIT`, `CHAR`, `[CHAR]`, `RECURSE`, `POSTPONE`
 - **Control flow**: `IF`, `ELSE`, `THEN`, `BEGIN`, `AGAIN`, `UNTIL`, `WHILE`, `REPEAT`
 - **Loops**: `DO`, `LOOP`, `+LOOP`, `I`, `J`, `UNLOOP`, `LEAVE`
 - **Variables**: `STATE`, `BASE`, `BASE!`, `LATEST`, `HERE`, `TIB`, `TOIN`, `NTIB`
@@ -38,7 +38,8 @@ Loaded automatically from `prelude.fth` at startup:
 - **Base**: `DECIMAL`, `HEX`
 - **Memory**: `+!`
 - **Comparison**: `<=`, `>=`
-- **Defining**: `VARIABLE`, `CONSTANT`
+- **Defining**: `VARIABLE`, `CONSTANT`, `VALUE`, `TO`, `DEFER`, `IS`, `ACTION-OF`
+- **Control flow**: `CASE`, `OF`, `ENDOF`, `ENDCASE`
 - **Comments**: `\` (backslash line comment)
 
 ## Dictionary Structure

@@ -47,5 +47,24 @@
 : VARIABLE  CREATE 0 , ;
 : CONSTANT  CREATE , DOES> @ ;
 
+\ --- CASE/OF/ENDOF/ENDCASE ---
+\ Usage: ( n ) CASE  1 OF ." one" ENDOF  2 OF ." two" ENDOF  ." default" ENDCASE
+: CASE    0 ; IMMEDIATE
+: OF      POSTPONE OVER POSTPONE = POSTPONE IF POSTPONE DROP ; IMMEDIATE
+: ENDOF   POSTPONE ELSE ; IMMEDIATE
+: ENDCASE POSTPONE DROP  BEGIN ?DUP WHILE POSTPONE THEN REPEAT ; IMMEDIATE
+
+\ --- VALUE / TO ---
+\ Usage: 42 VALUE X   X .   99 TO X   X .
+\ Body is at XT+8 for all CREATE/DOES> words (skip codeword + does-cell).
+: VALUE   CREATE , DOES> @ ;
+: TO  ' 8 +  STATE @ IF POSTPONE LIT , POSTPONE !  ELSE !  THEN ; IMMEDIATE
+
+\ --- Deferred words ---
+\ Usage: DEFER GREET   : HI ." hi" CR ;   ' HI IS GREET   GREET
+: DEFER      CREATE 0 , DOES> @ EXECUTE ;
+: IS         ' 8 +  STATE @ IF POSTPONE LIT , POSTPONE !  ELSE !  THEN ; IMMEDIATE
+: ACTION-OF  ' 8 +  STATE @ IF POSTPONE LIT , POSTPONE @  ELSE @  THEN ; IMMEDIATE
+
 \ Enable interactive prompts
 PROMPTS-ON

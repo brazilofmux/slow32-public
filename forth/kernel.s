@@ -88,7 +88,13 @@ dodoes:
     ldw r26, r25, 4    # IP = does-thread (from XT+4)
     jal r0, next
 
-# Word: LIT (Internal)
+# Word: LIT ( -- x ) runtime: push next cell from instruction stream
+.text
+    .align 2
+head_lit:
+    .word head_exit
+    .byte 3
+    .ascii "LIT"
     .align 2
 xt_lit:
     .word lit_word
@@ -103,7 +109,7 @@ lit_word:
 .text
     .align 2
 head_execute:
-    .word head_exit
+    .word head_lit
     .byte 7
     .ascii "EXECUTE"
     .align 2
@@ -3009,6 +3015,105 @@ xt_bracket_tick:
     .word xt_comma         # compile the XT at HERE
     .word xt_exit
 
+# Word: CHAR ( "name" -- char )
+# Parse the next word and push its first character
+.text
+    .align 2
+head_char:
+    .word head_bracket_tick
+    .byte 4
+    .ascii "CHAR"
+    .align 2
+xt_char:
+    .word docol_word
+    .word xt_word
+    .word xt_one_plus
+    .word xt_cfetch
+    .word xt_exit
+
+# Word: [CHAR] ( "name" -- ) IMMEDIATE compile-time
+# At compile time: parse next word, get first char, compile LIT <char>
+.text
+    .align 2
+head_bracket_char:
+    .word head_char
+    .byte 0x86             # length 6 + IMMEDIATE flag (0x80)
+    .ascii "[CHAR]"
+    .align 2
+xt_bracket_char:
+    .word docol_word
+    .word xt_word
+    .word xt_one_plus
+    .word xt_cfetch
+    .word xt_lit
+    .word xt_lit           # pushes xt_lit itself
+    .word xt_comma         # compile xt_lit at HERE
+    .word xt_comma         # compile the char value at HERE
+    .word xt_exit
+
+# Word: RECURSE ( -- ) IMMEDIATE compile-time
+# Compile a call to the word currently being defined.
+# Computes XT from LATEST header: aligned(header + 5 + (len & 0x7F))
+.text
+    .align 2
+head_recurse:
+    .word head_bracket_char
+    .byte 0x87             # length 7 + IMMEDIATE flag (0x80)
+    .ascii "RECURSE"
+    .align 2
+xt_recurse:
+    .word docol_word
+    .word xt_latest        # push &var_latest
+    .word xt_fetch         # read header address
+    .word xt_dup           # header header
+    .word xt_lit
+    .word 4
+    .word xt_plus          # header (header+4)
+    .word xt_cfetch        # header len_byte
+    .word xt_lit
+    .word 127
+    .word xt_and           # header clean_len
+    .word xt_plus          # (header + clean_len)
+    .word xt_lit
+    .word 8                # 5 (link+len) + 3 (alignment round-up)
+    .word xt_plus          # (header + clean_len + 8)
+    .word xt_lit
+    .word -4               # 0xFFFFFFFC alignment mask
+    .word xt_and           # aligned XT
+    .word xt_comma         # compile XT at HERE
+    .word xt_exit
+
+# Word: POSTPONE ( "name" -- ) IMMEDIATE compile-time
+# If next word is IMMEDIATE, compile its XT directly.
+# If non-immediate, compile code that will compile it later: LIT <xt> ,
+.text
+    .align 2
+head_postpone:
+    .word head_recurse
+    .byte 0x88             # length 8 + IMMEDIATE flag (0x80)
+    .ascii "POSTPONE"
+    .align 2
+xt_postpone:
+    .word docol_word
+    .word xt_word          # parse next token
+    .word xt_find          # ( xt flag )
+    .word xt_0branch       # if flag=0 (not immediate), jump to else
+    .word 12               # skip 3 cells to ELSE
+    # IF (immediate word): just compile its XT
+    .word xt_comma
+    .word xt_branch
+    .word 28               # skip 7 cells to EXIT
+    # ELSE (non-immediate): compile LIT <xt> ,
+    .word xt_lit
+    .word xt_lit           # push xt_lit as literal
+    .word xt_comma         # compile xt_lit at HERE
+    .word xt_comma         # compile the XT at HERE
+    .word xt_lit
+    .word xt_comma         # push xt_comma as literal
+    .word xt_comma         # compile xt_comma at HERE
+    # THEN:
+    .word xt_exit
+
 # ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
@@ -3018,7 +3123,7 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_bracket_tick    # Point to last defined word
+    .word head_postpone        # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_len: .word 0

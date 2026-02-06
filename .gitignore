@@ -109,6 +109,7 @@ build/
 *.a
 *.so
 csv/
+csv2/
 
 # Debug files
 *.dSYM/
