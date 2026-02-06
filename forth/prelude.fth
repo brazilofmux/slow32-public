@@ -43,5 +43,9 @@
 : <=  > 0= ;
 : >=  < 0= ;
 
+\ --- Defining words ---
+: VARIABLE  CREATE 0 , ;
+: CONSTANT  CREATE , DOES> @ ;
+
 \ Enable interactive prompts
 PROMPTS-ON

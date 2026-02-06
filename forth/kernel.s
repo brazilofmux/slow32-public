@@ -67,6 +67,27 @@ docol_word:
     addi r26, r25, 4   # IP = XT + 4 (body)
     jal r0, next
 
+# Word: DOCREATE (Internal) - runtime for CREATE'd words
+# Layout: [docreate] [does-cell] [data...]
+#          W          W+4         W+8 = PFA
+docreate:
+    addi r1, r25, 8    # PFA = W + 8 (skip code-ptr + does-cell)
+    addi r28, r28, -4
+    stw r28, r1, 0     # push PFA
+    jal r0, next
+
+# Word: DODOES (Internal) - runtime for DOES> modified words
+# Layout: [dodoes] [does-thread-addr] [data...]
+#          W        W+4                W+8 = PFA
+dodoes:
+    addi r1, r25, 8    # PFA = W + 8
+    addi r28, r28, -4
+    stw r28, r1, 0     # push PFA
+    addi r27, r27, -4
+    stw r27, r26, 0    # push IP to return stack
+    ldw r26, r25, 4    # IP = does-thread (from XT+4)
+    jal r0, next
+
 # Word: LIT (Internal)
     .align 2
 xt_lit:
@@ -2266,6 +2287,37 @@ prompts_on_word:
     jal r0, next
 
 # Word: (DO) ( limit start -- ) runtime for DO
+# Word: (DOES>) (Internal) - runtime for DOES>
+# Called during defining word execution. Patches LATEST word for DOES> behavior.
+# IP points to the does-thread (the XTs after DOES> in the defining word).
+.text
+    .align 2
+xt_does_runtime:
+    .word does_runtime_word
+does_runtime_word:
+    # Find LATEST word's XT address
+    lui r1, %hi(var_latest)
+    addi r1, r1, %lo(var_latest)
+    ldw r2, r1, 0          # r2 = LATEST header
+    ldbu r3, r2, 4         # length byte (with possible IMMEDIATE flag)
+    addi r4, r0, 0x7F
+    and r3, r3, r4         # mask off IMMEDIATE bit
+    addi r3, r3, 5         # skip: link(4) + len(1) + name_len
+    add r3, r2, r3         # past end of name
+    addi r3, r3, 3         # align up
+    addi r4, r0, -4
+    and r3, r3, r4         # r3 = XT address
+    # Patch code field to dodoes
+    lui r4, %hi(dodoes)
+    addi r4, r4, %lo(dodoes)
+    stw r3, r4, 0          # XT[0] = dodoes
+    # Store does-thread address (current IP) into does-cell at XT+4
+    stw r3, r26, 4         # XT[4] = does-thread address
+    # EXIT: pop IP from return stack (don't execute the does-thread now)
+    ldw r26, r27, 0
+    addi r27, r27, 4
+    jal r0, next
+
 # Pushes limit then index onto return stack
 .text
     .align 2
@@ -2573,6 +2625,145 @@ leave_word:
 leave_done:
     jal r0, next
 
+# Word: CREATE ( "name" -- ) parse name, build header with docreate
+.text
+    .align 2
+head_create:
+    .word head_leave
+    .byte 6
+    .ascii "CREATE"
+    .align 2
+xt_create:
+    .word create_word
+create_word:
+    # Parse next name (same logic as colon_word)
+    lui r1, %hi(tib)
+    addi r1, r1, %lo(tib)
+    lui r2, %hi(var_source_len)
+    addi r2, r2, %lo(var_source_len)
+    ldw r2, r2, 0
+    lui r3, %hi(var_to_in)
+    addi r3, r3, %lo(var_to_in)
+    ldw r4, r3, 0
+create_skip:
+    bge r4, r2, create_done
+    add r5, r1, r4
+    ldbu r6, r5, 0
+    addi r7, r0, 32
+    bne r6, r7, create_found
+    addi r4, r4, 1
+    jal r0, create_skip
+create_found:
+    add r11, r1, r4
+    add r12, r4, r0
+create_scan:
+    bge r4, r2, create_end
+    add r5, r1, r4
+    ldbu r6, r5, 0
+    addi r7, r0, 32
+    beq r6, r7, create_end
+    addi r4, r4, 1
+    jal r0, create_scan
+create_end:
+    sub r13, r4, r12
+    stw r3, r4, 0          # update >IN
+    beq r13, r0, create_done
+    # Build counted string in PAD (uppercased)
+    lui r14, %hi(pad)
+    addi r14, r14, %lo(pad)
+    stb r14, r13, 0
+    addi r15, r14, 1
+    add r16, r11, r0
+    add r17, r0, r0
+create_copy_loop:
+    bge r17, r13, create_copy_done
+    ldbu r18, r16, 0
+    addi r19, r0, 97
+    blt r18, r19, create_no_upper
+    addi r19, r0, 122
+    bgt r18, r19, create_no_upper
+    addi r18, r18, -32
+create_no_upper:
+    stb r15, r18, 0
+    addi r15, r15, 1
+    addi r16, r16, 1
+    addi r17, r17, 1
+    jal r0, create_copy_loop
+create_copy_done:
+    # HERE pointer
+    lui r3, %hi(var_here)
+    addi r3, r3, %lo(var_here)
+    ldw r4, r3, 0
+    add r12, r4, r0        # remember header start
+    # Link
+    lui r5, %hi(var_latest)
+    addi r5, r5, %lo(var_latest)
+    ldw r6, r5, 0
+    stw r4, r6, 0
+    addi r4, r4, 4
+    # Length byte
+    addi r7, r0, 0x7F
+    and r2, r13, r7
+    stb r4, r2, 0
+    addi r4, r4, 1
+    # Copy name characters from PAD+1
+    addi r8, r14, 1
+    add r9, r0, r0
+create_header_copy:
+    bge r9, r13, create_header_done
+    ldbu r10, r8, 0
+    stb r4, r10, 0
+    addi r4, r4, 1
+    addi r8, r8, 1
+    addi r9, r9, 1
+    jal r0, create_header_copy
+create_header_done:
+    # Align to 4-byte boundary
+    addi r10, r0, 3
+    add r4, r4, r10
+    addi r10, r0, -4
+    and r4, r4, r10
+    # Codeword = docreate
+    lui r11, %hi(docreate)
+    addi r11, r11, %lo(docreate)
+    stw r4, r11, 0
+    addi r4, r4, 4
+    # Reserve does-cell (initialized to 0)
+    stw r4, r0, 0
+    addi r4, r4, 4
+    # Update HERE and LATEST (no compile state change)
+    stw r3, r4, 0          # HERE = after does-cell
+    stw r5, r12, 0         # LATEST = new header
+create_done:
+    jal r0, next
+
+# Word: DOES> ( -- ) IMMEDIATE compile-time
+# Compiles (DOES>) runtime token into current definition
+.text
+    .align 2
+head_does:
+    .word head_create
+    .byte 0x85
+    .ascii "DOES>"
+    .align 2
+xt_does:
+    .word does_compile_word
+does_compile_word:
+    lui r8, %hi(var_state)
+    addi r8, r8, %lo(var_state)
+    ldw r8, r8, 0
+    beq r8, r0, does_compile_done
+    lui r1, %hi(var_here)
+    addi r1, r1, %lo(var_here)
+    ldw r2, r1, 0          # r2 = HERE
+    lui r3, %hi(xt_does_runtime)
+    addi r3, r3, %lo(xt_does_runtime)
+    stw r2, r3, 0          # compile xt_does_runtime at HERE
+    addi r2, r2, 4
+    stw r1, r2, 0          # update HERE
+does_compile_done:
+    jal r0, next
+
 # ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
@@ -2582,7 +2773,7 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_leave           # Point to last defined word
+    .word head_does            # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_len: .word 0
