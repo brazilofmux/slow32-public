@@ -1623,16 +1623,16 @@ void translate_div(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
 
     // Guard: INT32_MIN / -1 would crash the host (x86 SIGFPE)
     emit_cmp_r32_imm32(e, RCX, -1);
-    size_t patch_not_neg1 = e->offset;
     emit_jne_rel32(e, 0);  // patch later
+    size_t patch_not_neg1 = e->offset - 4;  // displacement is last 4 bytes
     emit_cmp_r32_imm32(e, RAX, (int32_t)0x80000000);
-    size_t patch_not_intmin = e->offset;
     emit_jne_rel32(e, 0);  // patch later
+    size_t patch_not_intmin = e->offset - 4;
     // INT32_MIN / -1 = INT32_MIN
     flush_pending_write(ctx);  // About to clobber RAX
     emit_mov_r32_imm32(e, RAX, 0x80000000);
-    size_t patch_skip_idiv = e->offset;
     emit_jmp_rel32(e, 0);  // patch later
+    size_t patch_skip_idiv = e->offset - 4;
 
     emit_patch_rel32(e, patch_not_neg1, e->offset);
     emit_patch_rel32(e, patch_not_intmin, e->offset);
@@ -1652,16 +1652,16 @@ void translate_rem(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
 
     // Guard: INT32_MIN % -1 would crash the host (x86 SIGFPE)
     emit_cmp_r32_imm32(e, RCX, -1);
-    size_t patch_not_neg1 = e->offset;
     emit_jne_rel32(e, 0);  // patch later
+    size_t patch_not_neg1 = e->offset - 4;  // displacement is last 4 bytes
     emit_cmp_r32_imm32(e, RAX, (int32_t)0x80000000);
-    size_t patch_not_intmin = e->offset;
     emit_jne_rel32(e, 0);  // patch later
+    size_t patch_not_intmin = e->offset - 4;
     // INT32_MIN % -1 = 0
     flush_pending_write(ctx);  // About to clobber RAX
     emit_xor_r32_r32(e, RAX, RAX);
-    size_t patch_skip_idiv = e->offset;
     emit_jmp_rel32(e, 0);  // patch later
+    size_t patch_skip_idiv = e->offset - 4;
 
     emit_patch_rel32(e, patch_not_neg1, e->offset);
     emit_patch_rel32(e, patch_not_intmin, e->offset);
