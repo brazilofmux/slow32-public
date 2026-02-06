@@ -69,7 +69,7 @@ This is where W^X pays off. Because guest code is immutable, you never need to i
 
 ### Stage 3 — Superblocks and Register Locality
 
-A basic block ends at every branch. But most branches are predictable — a loop back-edge, a function's hot path. Superblocks extend translation across taken branches, producing longer sequences of straight-line code that the optimizer can work with.
+A basic block ends at every branch. But many branches are predictable — a loop back-edge, a function's hot path. Superblocks extend translation across taken branches, producing longer sequences of straight-line code that the optimizer can work with.
 
 The key insight: longer blocks mean more opportunity for register caching. If a guest register is loaded at the top of a superblock and used six times before the exit, you can keep it in a host register for the entire block instead of hitting memory on every access. On x86-64 with its generous register file, this is a massive win.
 
@@ -81,7 +81,7 @@ Stage 3 had a problem: the act of measuring side-exit frequency affected the cod
 
 This is also where peephole optimization enters. The emitter recognizes common patterns in the x86-64 output — redundant loads, unnecessary register-to-register moves, flag computations that are never consumed — and eliminates them. The patterns are simple but the cumulative effect is significant, particularly in tight loops where the same guest registers are manipulated repeatedly.
 
-The register cache became global across a superblock: guest registers are loaded into host GPRs at block entry, held across the entire translated sequence, and only materialized (written back to the CPU state struct) at exits and savepoints. This is where the performance went from hundreds of MIPS to multiple GIPS.
+The register cache became global across a superblock (flushed at boundaries): guest registers are loaded into host GPRs at block entry, held across the entire translated sequence, and only materialized (written back to the CPU state struct) at exits and savepoints. This is where the performance went from hundreds of MIPS to multiple GIPS.
 
 Getting this right was the hardest part of the project. MMIO accesses must see current register values. Block exits must leave the CPU state consistent. Register aliasing (two guest registers mapped to the same host register across a chain boundary) introduces subtle correctness hazards. The differential testing infrastructure — comparing register state against the interpreter at every block boundary — was the only thing that made this tractable.
 
@@ -170,7 +170,7 @@ Every programming environment picks its tradeoffs, and the mainstream options oc
 
 SLOW-32 occupies a **fourth corner**: simple, fast enough, sandboxed, but restricted. The sandbox is so small and so cheap that *crashing doesn't matter*. A SLOW-32 instance can be as small as 4 KB. Spawn a thousand of them. If one faults — a bad pointer, a runaway loop, a logic error — kill it and restart. No garbage collector pause, no borrow checker negotiation, no segfault postmortem. Just a disposable microcontroller that happens to run on your existing CPU at billions of instructions per second.
 
-The restricted API is a feature, not a limitation. A SLOW-32 instance talks to the outside world through a single MMIO ring buffer. That's it. No filesystem access, no network sockets, no shared memory. The host decides what the guest can do. This is the security model of a microcontroller, and it's the simplest security model that actually works.
+**The restricted API is a feature, not a limitation.** A SLOW-32 instance talks to the outside world through a single MMIO ring buffer. That's it. No filesystem access, no network sockets, no shared memory. The host decides what the guest can do. This is the security model of a microcontroller, and it's the simplest security model that actually works.
 
 ---
 
