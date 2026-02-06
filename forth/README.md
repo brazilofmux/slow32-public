@@ -22,6 +22,7 @@ Stage 4: Bootstrap Prelude. Self-extending Forth with ~25 standard vocabulary wo
 - **I/O**: `EMIT`, `KEY`, `TYPE`, `.`, `.S`, `CR`, `ACCEPT`
 - **Compiler**: `:`, `;`, `IMMEDIATE`, `,`, `ALLOT`, `[`, `]`
 - **Control flow**: `IF`, `ELSE`, `THEN`, `BEGIN`, `AGAIN`, `UNTIL`, `WHILE`, `REPEAT`
+- **Loops**: `DO`, `LOOP`, `+LOOP`, `I`, `J`, `UNLOOP`
 - **Variables**: `STATE`, `BASE`, `BASE!`, `LATEST`, `HERE`, `TIB`, `TOIN`, `NTIB`
 - **Parser**: `WORD`, `FIND`, `NUMBER`, `PARSE-WORD`, `INTERPRET`
 - **Other**: `HELLO`, `PROMPTS-ON`

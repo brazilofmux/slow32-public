@@ -2265,6 +2265,235 @@ prompts_on_word:
     stw r1, r2, 0
     jal r0, next
 
+# Word: (DO) ( limit start -- ) runtime for DO
+# Pushes limit then index onto return stack
+.text
+    .align 2
+head_do_runtime:
+    .word head_prompts_on
+    .byte 4
+    .ascii "(DO)"
+    .align 2
+xt_do_runtime:
+    .word do_runtime_word
+do_runtime_word:
+    ldw r1, r28, 4         # r1 = limit (second on stack)
+    ldw r2, r28, 0         # r2 = start/index (top of stack)
+    addi r28, r28, 8       # pop both
+    addi r27, r27, -4
+    stw r27, r1, 0         # push limit onto return stack
+    addi r27, r27, -4
+    stw r27, r2, 0         # push index onto return stack
+    jal r0, next
+
+# Word: (LOOP) ( -- ) runtime for LOOP, inline offset follows
+# Increments index by 1. If boundary crossed, exit loop.
+.text
+    .align 2
+head_loop_runtime:
+    .word head_do_runtime
+    .byte 6
+    .ascii "(LOOP)"
+    .align 2
+xt_loop_runtime:
+    .word loop_runtime_word
+loop_runtime_word:
+    ldw r1, r27, 0         # r1 = index
+    ldw r2, r27, 4         # r2 = limit
+    sub r3, r1, r2         # r3 = old_index - limit
+    addi r4, r1, 1         # r4 = new_index = index + 1
+    sub r5, r4, r2         # r5 = new_index - limit
+    xor r6, r3, r5         # sign-flip test
+    slt r6, r6, r0         # r6 = 1 if sign bit set (boundary crossed)
+    bne r6, r0, loop_exit
+    # Continue loop: store new index, branch back
+    stw r27, r4, 0         # update index on return stack
+    ldw r1, r26, 0         # load offset
+    addi r26, r26, 4       # skip offset cell
+    add r26, r26, r1       # IP += offset (branch back)
+    jal r0, next
+loop_exit:
+    # Exit loop: drop loop params from return stack, skip offset
+    addi r27, r27, 8       # drop index and limit
+    addi r26, r26, 4       # skip offset cell
+    jal r0, next
+
+# Word: (+LOOP) ( n -- ) runtime for +LOOP, inline offset follows
+# Adds n to index. If boundary crossed, exit loop.
+.text
+    .align 2
+head_ploop_runtime:
+    .word head_loop_runtime
+    .byte 7
+    .ascii "(+LOOP)"
+    .align 2
+xt_ploop_runtime:
+    .word ploop_runtime_word
+ploop_runtime_word:
+    ldw r7, r28, 0         # r7 = increment n
+    addi r28, r28, 4       # pop n
+    ldw r1, r27, 0         # r1 = index
+    ldw r2, r27, 4         # r2 = limit
+    sub r3, r1, r2         # r3 = old_index - limit
+    add r4, r1, r7         # r4 = new_index = index + n
+    sub r5, r4, r2         # r5 = new_index - limit
+    xor r6, r3, r5         # sign-flip test
+    slt r6, r6, r0         # r6 = 1 if sign bit set (boundary crossed)
+    bne r6, r0, ploop_exit
+    # Continue loop: store new index, branch back
+    stw r27, r4, 0         # update index on return stack
+    ldw r1, r26, 0         # load offset
+    addi r26, r26, 4       # skip offset cell
+    add r26, r26, r1       # IP += offset (branch back)
+    jal r0, next
+ploop_exit:
+    # Exit loop: drop loop params from return stack, skip offset
+    addi r27, r27, 8       # drop index and limit
+    addi r26, r26, 4       # skip offset cell
+    jal r0, next
+
+# Word: I ( -- n ) push current loop index to data stack
+.text
+    .align 2
+head_i:
+    .word head_ploop_runtime
+    .byte 1
+    .ascii "I"
+    .align 2
+xt_i:
+    .word i_word
+i_word:
+    ldw r1, r27, 0         # index is at RSP[0]
+    addi r28, r28, -4
+    stw r28, r1, 0
+    jal r0, next
+
+# Word: J ( -- n ) push outer loop index to data stack
+.text
+    .align 2
+head_j:
+    .word head_i
+    .byte 1
+    .ascii "J"
+    .align 2
+xt_j:
+    .word j_word
+j_word:
+    ldw r1, r27, 8         # outer index is at RSP[8] (skip inner index + inner limit)
+    addi r28, r28, -4
+    stw r28, r1, 0
+    jal r0, next
+
+# Word: UNLOOP ( -- ) drop loop params from return stack
+.text
+    .align 2
+head_unloop:
+    .word head_j
+    .byte 6
+    .ascii "UNLOOP"
+    .align 2
+xt_unloop:
+    .word unloop_word
+unloop_word:
+    addi r27, r27, 8       # drop index and limit from return stack
+    jal r0, next
+
+# Word: DO ( -- addr ) IMMEDIATE compile-time
+# Compiles (DO) xt, pushes HERE as loop-back target
+.text
+    .align 2
+head_do:
+    .word head_unloop
+    .byte 0x82
+    .ascii "DO"
+    .align 2
+xt_do:
+    .word do_word
+do_word:
+    lui r8, %hi(var_state)
+    addi r8, r8, %lo(var_state)
+    ldw r8, r8, 0
+    beq r8, r0, do_done
+    lui r1, %hi(var_here)
+    addi r1, r1, %lo(var_here)
+    ldw r2, r1, 0          # r2 = HERE
+    lui r3, %hi(xt_do_runtime)
+    addi r3, r3, %lo(xt_do_runtime)
+    stw r2, r3, 0          # compile (DO) xt
+    addi r2, r2, 4
+    stw r1, r2, 0          # update HERE
+    # Push HERE (loop-back target) onto data stack
+    addi r28, r28, -4
+    stw r28, r2, 0
+do_done:
+    jal r0, next
+
+# Word: LOOP ( addr -- ) IMMEDIATE compile-time
+# Compiles (LOOP) xt + backward offset to loop-back target
+.text
+    .align 2
+head_loop:
+    .word head_do
+    .byte 0x84
+    .ascii "LOOP"
+    .align 2
+xt_loop:
+    .word loop_word
+loop_word:
+    lui r8, %hi(var_state)
+    addi r8, r8, %lo(var_state)
+    ldw r8, r8, 0
+    beq r8, r0, loop_done
+    ldw r4, r28, 0         # r4 = loop-back target addr
+    addi r28, r28, 4       # pop
+    lui r1, %hi(var_here)
+    addi r1, r1, %lo(var_here)
+    ldw r2, r1, 0          # r2 = HERE
+    lui r3, %hi(xt_loop_runtime)
+    addi r3, r3, %lo(xt_loop_runtime)
+    stw r2, r3, 0          # compile (LOOP) xt
+    addi r2, r2, 4         # r2 = offset cell addr
+    addi r5, r2, 4         # r5 = offset cell addr + 4
+    sub r5, r4, r5         # offset = target - (offset_cell + 4)
+    stw r2, r5, 0          # compile offset
+    addi r2, r2, 4
+    stw r1, r2, 0          # update HERE
+loop_done:
+    jal r0, next
+
+# Word: +LOOP ( addr -- ) IMMEDIATE compile-time
+# Compiles (+LOOP) xt + backward offset to loop-back target
+.text
+    .align 2
+head_ploop:
+    .word head_loop
+    .byte 0x85
+    .ascii "+LOOP"
+    .align 2
+xt_ploop:
+    .word ploop_word
+ploop_word:
+    lui r8, %hi(var_state)
+    addi r8, r8, %lo(var_state)
+    ldw r8, r8, 0
+    beq r8, r0, ploop_done
+    ldw r4, r28, 0         # r4 = loop-back target addr
+    addi r28, r28, 4       # pop
+    lui r1, %hi(var_here)
+    addi r1, r1, %lo(var_here)
+    ldw r2, r1, 0          # r2 = HERE
+    lui r3, %hi(xt_ploop_runtime)
+    addi r3, r3, %lo(xt_ploop_runtime)
+    stw r2, r3, 0          # compile (+LOOP) xt
+    addi r2, r2, 4         # r2 = offset cell addr
+    addi r5, r2, 4         # r5 = offset cell addr + 4
+    sub r5, r4, r5         # offset = target - (offset_cell + 4)
+    stw r2, r5, 0          # compile offset
+    addi r2, r2, 4
+    stw r1, r2, 0          # update HERE
+ploop_done:
+    jal r0, next
+
 # ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
@@ -2274,7 +2503,7 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_prompts_on      # Point to last defined word
+    .word head_ploop           # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_len: .word 0
