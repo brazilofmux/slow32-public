@@ -159,7 +159,7 @@ xt_emit:
 emit_word:
     ldw r3, r28, 0     # r3 = TOS
     addi r28, r28, 4   # DSP++
-    jal putchar
+    debug r3
     jal r0, next
 
 # Word: KEY ( -- c )
@@ -323,12 +323,12 @@ accept_loop:
     
     # Check EOF (-1)
     addi r2, r0, -1
-    beq r1, r2, accept_done
-    
+    beq r1, r2, accept_eof
+
     # Check Newline (10)
     addi r2, r0, 10
     beq r1, r2, accept_done
-    
+
     # Check CR (13) - treat as newline
     addi r2, r0, 13
     beq r1, r2, accept_done
@@ -340,14 +340,26 @@ accept_loop:
     addi r6, r6, 1     # i++
     jal r0, accept_loop
 
+accept_eof:
+    # EOF with no chars read: return -1 to signal EOF
+    bne r6, r0, accept_done  # if we already read something, return count
+    addi r6, r0, -1           # signal EOF
 accept_done:
     addi r28, r28, -4  # push result
     stw r28, r6, 0     # Store count
 
-    # Update #TIB and reset >IN
-    lui r7, %hi(var_source_len)
-    addi r7, r7, %lo(var_source_len)
-    stw r7, r6, 0
+    # Update #TIB and reset >IN (use count or 0 for EOF)
+    add r7, r6, r0      # save count
+    blt r6, r0, accept_eof_tib  # if EOF (-1), set #TIB=0
+    lui r8, %hi(var_source_len)
+    addi r8, r8, %lo(var_source_len)
+    stw r8, r6, 0
+    jal r0, accept_reset_in
+accept_eof_tib:
+    lui r8, %hi(var_source_len)
+    addi r8, r8, %lo(var_source_len)
+    stw r8, r0, 0
+accept_reset_in:
     lui r8, %hi(var_to_in)
     addi r8, r8, %lo(var_to_in)
     stw r8, r0, 0
@@ -457,21 +469,11 @@ type_word:
     add r6, r0, r0     # i = 0
 type_loop:
     bge r6, r4, type_done
-    
+
     add r7, r5, r6     # addr + i
     ldbu r3, r7, 0     # char
-    
-    # Save loop state
-    add r11, r4, r0
-    add r12, r5, r0
-    add r13, r6, r0
-    
-    jal putchar
-    
-    add r4, r11, r0
-    add r5, r12, r0
-    add r6, r13, r0
-    
+    debug r3
+
     addi r6, r6, 1
     jal r0, type_loop
 
@@ -567,7 +569,7 @@ dot_build_done:
 dot_emit_loop:
     beq r15, r0, dot_emit_done
     ldbu r3, r14, 0
-    jal putchar
+    debug r3
     addi r14, r14, 1
     addi r15, r15, -1
     jal r0, dot_emit_loop
@@ -585,11 +587,7 @@ head_hello:
     .ascii "HELLO"
     .align 2
 xt_hello:
-    .word hello_word
-
-hello_word:
     .word docol_word
-hello_body:
     .word xt_lit, 72, xt_emit  # H
     .word xt_lit, 101, xt_emit # e
     .word xt_lit, 108, xt_emit # l
@@ -736,13 +734,13 @@ num_tib_word:
     stw r28, r1, 0
     jal r0, next
 
-# Word: STORE ( x a-addr -- )
+# Word: ! ( x a-addr -- )
 .text
     .align 2
 head_store:
     .word head_num_tib
-    .byte 5
-    .ascii "STORE"
+    .byte 1
+    .ascii "!"
     .align 2
 xt_store:
     .word store_word
@@ -754,13 +752,13 @@ store_word:
     stw r1, r2, 0      # *addr = x (Remember: stw base, src, offset)
     jal r0, next
 
-# Word: FETCH ( a-addr -- x )
+# Word: @ ( a-addr -- x )
 .text
     .align 2
 head_fetch:
     .word head_store
-    .byte 5
-    .ascii "FETCH"
+    .byte 1
+    .ascii "@"
     .align 2
 xt_fetch:
     .word fetch_word
@@ -783,7 +781,7 @@ xt_cr:
     .word cr_word
 cr_word:
     addi r3, r0, 10
-    jal putchar
+    debug r3
     jal r0, next
 
 # Word: C@ ( c-addr -- x ) unsigned byte fetch
@@ -1350,9 +1348,9 @@ interpret_resume:
 interpret_error:
     addi r28, r28, 8         # drop n and flag
     addi r3, r0, 63          # '?'
-    jal putchar
+    debug r3
     addi r3, r0, 10          # newline
-    jal putchar
+    debug r3
     jal r0, interpret_loop
 
 interpret_done:
@@ -1909,7 +1907,8 @@ xt_invert:
     .word invert_word
 invert_word:
     ldw r1, r28, 0
-    not r1, r1         # bitwise NOT
+    addi r2, r0, -1    # r2 = 0xFFFFFFFF
+    xor r1, r1, r2     # bitwise NOT (full 32-bit)
     stw r28, r1, 0
     jal r0, next
 
@@ -2147,6 +2146,125 @@ dstack_top_word:
     addi r28, r28, -4
     stw r28, r1, 0
     jal r0, next
+
+# Word: C! ( c addr -- ) store byte
+.text
+    .align 2
+head_cstore:
+    .word head_dstack_top
+    .byte 2
+    .ascii "C!"
+    .align 2
+xt_cstore:
+    .word cstore_word
+cstore_word:
+    ldw r1, r28, 0     # addr
+    ldw r2, r28, 4     # c
+    addi r28, r28, 8   # pop both
+    stb r1, r2, 0      # *addr = c (byte)
+    jal r0, next
+
+# Word: LSHIFT ( x n -- x<<n )
+.text
+    .align 2
+head_lshift:
+    .word head_cstore
+    .byte 6
+    .ascii "LSHIFT"
+    .align 2
+xt_lshift:
+    .word lshift_word
+lshift_word:
+    ldw r1, r28, 0     # n
+    ldw r2, r28, 4     # x
+    sll r2, r2, r1
+    addi r28, r28, 4
+    stw r28, r2, 0
+    jal r0, next
+
+# Word: RSHIFT ( x n -- x>>n ) logical
+.text
+    .align 2
+head_rshift:
+    .word head_lshift
+    .byte 6
+    .ascii "RSHIFT"
+    .align 2
+xt_rshift:
+    .word rshift_word
+rshift_word:
+    ldw r1, r28, 0     # n
+    ldw r2, r28, 4     # x
+    srl r2, r2, r1
+    addi r28, r28, 4
+    stw r28, r2, 0
+    jal r0, next
+
+# Word: NEGATE ( n -- -n )
+.text
+    .align 2
+head_negate:
+    .word head_rshift
+    .byte 6
+    .ascii "NEGATE"
+    .align 2
+xt_negate:
+    .word negate_word
+negate_word:
+    ldw r1, r28, 0
+    sub r1, r0, r1
+    stw r28, r1, 0
+    jal r0, next
+
+# Word: 1+ ( n -- n+1 )
+.text
+    .align 2
+head_one_plus:
+    .word head_negate
+    .byte 2
+    .ascii "1+"
+    .align 2
+xt_one_plus:
+    .word one_plus_word
+one_plus_word:
+    ldw r1, r28, 0
+    addi r1, r1, 1
+    stw r28, r1, 0
+    jal r0, next
+
+# Word: 1- ( n -- n-1 )
+.text
+    .align 2
+head_one_minus:
+    .word head_one_plus
+    .byte 2
+    .ascii "1-"
+    .align 2
+xt_one_minus:
+    .word one_minus_word
+one_minus_word:
+    ldw r1, r28, 0
+    addi r1, r1, -1
+    stw r28, r1, 0
+    jal r0, next
+
+# Word: PROMPTS-ON ( -- ) enable interactive prompts
+.text
+    .align 2
+head_prompts_on:
+    .word head_one_minus
+    .byte 10
+    .ascii "PROMPTS-ON"
+    .align 2
+xt_prompts_on:
+    .word prompts_on_word
+prompts_on_word:
+    lui r1, %hi(var_prompt_enabled)
+    addi r1, r1, %lo(var_prompt_enabled)
+    addi r2, r0, 1
+    stw r1, r2, 0
+    jal r0, next
+
 # ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
@@ -2156,10 +2274,11 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_dstack_top      # Point to last defined word
+    .word head_prompts_on      # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_len: .word 0
+var_prompt_enabled: .word 0        # 0 = suppress prompts (prelude), 1 = show prompts
 
     .align 2
 interp_exec_thread:
@@ -2179,37 +2298,56 @@ pad:            .space 128         # Scratch pad for strings/numbers
 
 
 # ----------------------------------------------------------------------
-# Test Program
+# Boot Program
 # ----------------------------------------------------------------------
 .data
 str_prompt:
     .ascii "ok> "
+str_banner:
+    .ascii "SLOW-32 Forth\n"
 
 .text
 cold_start_body:
-    # Ensure BASE initialized to 10
+    # Initialize BASE to 10
     .word xt_lit, 10
     .word xt_base
     .word xt_store
 
-    # Simple outer loop: prompt, read line, interpret, repeat
+    # Print banner
+    .word xt_lit, str_banner, xt_lit, 14, xt_type
+
+    # REPL loop
 cold_loop:
+    # Conditional prompt: check var_prompt_enabled
+    .word xt_lit, var_prompt_enabled
+    .word xt_fetch
+    .word xt_0branch, 20     # skip 5 cells if prompts disabled
     .word xt_lit, str_prompt, xt_lit, 4, xt_type
+
+cold_after_prompt:
     .word xt_tib       # TIB address
     .word xt_lit, 128  # Max length
-    .word xt_accept    # Returns count
-    .word xt_dup       # keep count for zero check
-    .word xt_0branch, 36  # if no input, exit loop
+    .word xt_accept    # Returns count (-1 = EOF)
+
+    # Check EOF: count == -1?
+    .word xt_dup, xt_lit, -1, xt_equals
+    .word xt_0branch, 8   # skip 2 cells if NOT EOF
+    .word xt_drop, xt_bye  # EOF: exit
+
+    # Check blank line: count == 0?
+    .word xt_dup, xt_zero_equal
+    .word xt_0branch, 12   # skip 3 cells if NOT blank
+    .word xt_drop
+    .word xt_branch, -116  # blank: loop back to cold_loop
+
+    # Normal line: interpret
     .word xt_num_tib   # #TIB address
     .word xt_store     # #TIB !
     .word xt_lit, 0
     .word xt_to_in
     .word xt_store     # >IN !
     .word xt_interpret
-    .word xt_branch, -84
-cold_exit:
-    .word xt_drop
-    .word xt_bye
+    .word xt_branch, -152  # back to cold_loop
 
 
 .data
