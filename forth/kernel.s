@@ -2318,6 +2318,28 @@ does_runtime_word:
     addi r27, r27, 4
     jal r0, next
 
+# Word: (S") (Internal) - runtime for string literals
+# Reads inline [length][string...padded] from IP, pushes ( c-addr u )
+.text
+    .align 2
+xt_sliteral:
+    .word sliteral_word
+sliteral_word:
+    ldw r1, r26, 0         # r1 = length (from inline cell)
+    addi r2, r26, 4        # r2 = string start (IP + 4)
+    # Advance IP past length cell + padded string
+    addi r3, r1, 3         # round up to 4-byte boundary
+    addi r4, r0, -4
+    and r3, r3, r4         # r3 = padded string length
+    addi r26, r26, 4       # skip length cell
+    add r26, r26, r3       # skip string data
+    # Push ( c-addr u )
+    addi r28, r28, -4
+    stw r28, r2, 0         # push c-addr
+    addi r28, r28, -4
+    stw r28, r1, 0         # push u (length, TOS)
+    jal r0, next
+
 # Pushes limit then index onto return stack
 .text
     .align 2
@@ -2764,6 +2786,193 @@ does_compile_word:
 does_compile_done:
     jal r0, next
 
+# Word: COUNT ( c-addr -- c-addr+1 u ) convert counted string to addr+len
+.text
+    .align 2
+head_count:
+    .word head_does
+    .byte 5
+    .ascii "COUNT"
+    .align 2
+xt_count:
+    .word count_word
+count_word:
+    ldw r1, r28, 0         # c-addr
+    ldbu r2, r1, 0         # length byte
+    addi r1, r1, 1         # c-addr + 1
+    stw r28, r1, 0         # replace TOS with c-addr+1 (becomes second)
+    addi r28, r28, -4
+    stw r28, r2, 0         # push length (new TOS)
+    jal r0, next
+
+# Word: S" ( -- c-addr u ) IMMEDIATE compile-time
+# Parses to closing ", compiles xt_sliteral + length + string data (padded)
+.text
+    .align 2
+head_squote:
+    .word head_count
+    .byte 0x82             # length 2 + IMMEDIATE flag (0x80)
+    .ascii "S\""
+    .align 2
+xt_squote:
+    .word squote_word
+squote_word:
+    # Only works in compile mode
+    lui r8, %hi(var_state)
+    addi r8, r8, %lo(var_state)
+    ldw r8, r8, 0
+    beq r8, r0, squote_done
+
+    # Compile xt_sliteral at HERE
+    lui r14, %hi(var_here)
+    addi r14, r14, %lo(var_here)
+    ldw r15, r14, 0        # r15 = HERE
+    lui r1, %hi(xt_sliteral)
+    addi r1, r1, %lo(xt_sliteral)
+    stw r15, r1, 0         # compile xt_sliteral
+    addi r15, r15, 4       # advance past xt
+    add r16, r15, r0       # r16 = address where length will go (fill later)
+    addi r15, r15, 4       # skip length cell (will fill after parsing)
+
+    # Parse from TIB: skip one leading space, then copy chars until "
+    lui r1, %hi(tib)
+    addi r1, r1, %lo(tib)
+    lui r2, %hi(var_source_len)
+    addi r2, r2, %lo(var_source_len)
+    ldw r2, r2, 0          # r2 = #TIB
+    lui r3, %hi(var_to_in)
+    addi r3, r3, %lo(var_to_in)
+    ldw r4, r3, 0          # r4 = >IN
+
+    # Skip exactly one leading space (standard: S" <space>string")
+    bge r4, r2, squote_end_parse
+    add r5, r1, r4
+    ldbu r6, r5, 0
+    addi r7, r0, 32        # space
+    bne r6, r7, squote_parse_loop  # no leading space, start parsing
+    addi r4, r4, 1         # skip the space
+
+squote_parse_loop:
+    bge r4, r2, squote_end_parse   # end of input
+    add r5, r1, r4
+    ldbu r6, r5, 0
+    addi r7, r0, 34        # '"' (ASCII 34)
+    beq r6, r7, squote_found_quote
+    # Copy char to HERE
+    stb r15, r6, 0
+    addi r15, r15, 1
+    addi r4, r4, 1
+    jal r0, squote_parse_loop
+
+squote_found_quote:
+    addi r4, r4, 1         # skip past closing "
+
+squote_end_parse:
+    # Update >IN
+    stw r3, r4, 0
+
+    # Calculate string length: r15 (current) - r16 (length cell) - 4
+    sub r1, r15, r16
+    addi r1, r1, -4        # r1 = string length
+    stw r16, r1, 0         # store length at the reserved cell
+
+    # Pad to 4-byte alignment
+    addi r2, r15, 3
+    addi r3, r0, -4
+    and r15, r2, r3        # r15 = aligned HERE
+
+    # Update HERE
+    stw r14, r15, 0
+
+squote_done:
+    jal r0, next
+
+# Word: ." ( -- ) IMMEDIATE compile-time
+# Like S" but also compiles xt_type after the string data
+.text
+    .align 2
+head_dotquote:
+    .word head_squote
+    .byte 0x82             # length 2 + IMMEDIATE flag (0x80)
+    .ascii ".\""
+    .align 2
+xt_dotquote:
+    .word dotquote_word
+dotquote_word:
+    # Only works in compile mode
+    lui r8, %hi(var_state)
+    addi r8, r8, %lo(var_state)
+    ldw r8, r8, 0
+    beq r8, r0, dotquote_done
+
+    # Compile xt_sliteral at HERE
+    lui r14, %hi(var_here)
+    addi r14, r14, %lo(var_here)
+    ldw r15, r14, 0        # r15 = HERE
+    lui r1, %hi(xt_sliteral)
+    addi r1, r1, %lo(xt_sliteral)
+    stw r15, r1, 0         # compile xt_sliteral
+    addi r15, r15, 4
+    add r16, r15, r0       # r16 = length cell address
+    addi r15, r15, 4       # skip length cell
+
+    # Parse from TIB: skip one leading space, then copy chars until "
+    lui r1, %hi(tib)
+    addi r1, r1, %lo(tib)
+    lui r2, %hi(var_source_len)
+    addi r2, r2, %lo(var_source_len)
+    ldw r2, r2, 0
+    lui r3, %hi(var_to_in)
+    addi r3, r3, %lo(var_to_in)
+    ldw r4, r3, 0
+
+    # Skip exactly one leading space
+    bge r4, r2, dotquote_end_parse
+    add r5, r1, r4
+    ldbu r6, r5, 0
+    addi r7, r0, 32
+    bne r6, r7, dotquote_parse_loop
+    addi r4, r4, 1
+
+dotquote_parse_loop:
+    bge r4, r2, dotquote_end_parse
+    add r5, r1, r4
+    ldbu r6, r5, 0
+    addi r7, r0, 34        # '"'
+    beq r6, r7, dotquote_found_quote
+    stb r15, r6, 0
+    addi r15, r15, 1
+    addi r4, r4, 1
+    jal r0, dotquote_parse_loop
+
+dotquote_found_quote:
+    addi r4, r4, 1
+
+dotquote_end_parse:
+    stw r3, r4, 0          # update >IN
+
+    # Calculate and store string length
+    sub r1, r15, r16
+    addi r1, r1, -4
+    stw r16, r1, 0
+
+    # Pad to 4-byte alignment
+    addi r2, r15, 3
+    addi r3, r0, -4
+    and r15, r2, r3
+
+    # Also compile xt_type after the string data
+    lui r1, %hi(xt_type)
+    addi r1, r1, %lo(xt_type)
+    stw r15, r1, 0
+    addi r15, r15, 4
+
+    # Update HERE
+    stw r14, r15, 0
+
+dotquote_done:
+    jal r0, next
+
 # ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
@@ -2773,7 +2982,7 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_does            # Point to last defined word
+    .word head_dotquote        # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_len: .word 0
