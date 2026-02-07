@@ -370,5 +370,8 @@ VARIABLE SOURCE-BUF 128 BUFFER: SOURCE-BUF-DATA
   2DUP S" FLOATING" COMPARE 0= IF 2DROP FALSE TRUE EXIT THEN
   2DROP FALSE ;
 
+\ --- Compile-time ---
+: COMPILE,  ( xt -- )  , ;
+
 \ Enable interactive prompts
 PROMPTS-ON

@@ -20,7 +20,7 @@ Stage 4: Bootstrap Prelude. Self-extending Forth with ~50 standard vocabulary wo
 - **Comparison**: `=`, `<>`, `<`, `>`, `0=`, `0<`, `U<`
 - **Memory**: `!`, `@`, `C!`, `C@`, `C,`, `2!`, `2@`
 - **I/O**: `EMIT`, `KEY`, `TYPE`, `.`, `.S`, `CR`, `ACCEPT`
-- **Compiler**: `:`, `;`, `IMMEDIATE`, `,`, `ALLOT`, `[`, `]`, `CREATE`, `DOES>`, `S"`, `."`, `'`, `[']`, `LIT`, `CHAR`, `[CHAR]`, `RECURSE`, `POSTPONE`
+- **Compiler**: `:`, `;`, `:NONAME`, `IMMEDIATE`, `,`, `ALLOT`, `[`, `]`, `CREATE`, `DOES>`, `S"`, `."`, `C"`, `S\"`, `'`, `[']`, `LIT`, `CHAR`, `[CHAR]`, `RECURSE`, `POSTPONE`
 - **Control flow**: `IF`, `ELSE`, `THEN`, `BEGIN`, `AGAIN`, `UNTIL`, `WHILE`, `REPEAT`
 - **Loops**: `DO`, `?DO`, `LOOP`, `+LOOP`, `I`, `J`, `UNLOOP`, `LEAVE`
 - **Variables**: `STATE`, `BASE`, `BASE!`, `LATEST`, `HERE`, `TIB`, `TOIN`, `NTIB`
@@ -40,7 +40,7 @@ Loaded automatically from `prelude.fth` at startup:
 - **Base**: `DECIMAL`, `HEX`
 - **Memory**: `+!`, `FILL`, `ERASE`, `MOVE`, `BLANK`
 - **Comparison**: `<=`, `>=`, `0>`, `0<>`, `U>`
-- **Compiler**: `LITERAL`
+- **Compiler**: `LITERAL`, `COMPILE,`
 - **Defining**: `VARIABLE`, `CONSTANT`, `2VARIABLE`, `2CONSTANT`, `VALUE`, `TO`, `DEFER`, `IS`, `ACTION-OF`, `MARKER`, `BUFFER:`
 - **Control flow**: `CASE`, `OF`, `ENDOF`, `ENDCASE`
 - **Pictured Output**: `MU/MOD`, `#`, `#S`, `SIGN`, `U.`, `.R`, `U.R`, `HOLDS`

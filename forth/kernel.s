@@ -4240,6 +4240,373 @@ rename_file_push:
     stw r28, r2, 0
     jal r0, next
 
+# Word: :NONAME ( -- xt ) Start anonymous colon definition
+.text
+    .align 2
+head_noname:
+    .word head_rename_file
+    .byte 7
+    .ascii ":NONAME"
+    .align 2
+xt_noname:
+    .word noname_word
+noname_word:
+    lui r1, %hi(var_here)
+    addi r1, r1, %lo(var_here)
+    ldw r2, r1, 0              # r2 = HERE = the XT we'll return
+    addi r28, r28, -4
+    stw r28, r2, 0             # push XT onto data stack
+    lui r3, %hi(docol_word)
+    addi r3, r3, %lo(docol_word)
+    stw r2, r3, 0              # [HERE] = docol_word (codeword)
+    addi r2, r2, 4
+    stw r1, r2, 0              # HERE += 4
+    lui r4, %hi(var_state)
+    addi r4, r4, %lo(var_state)
+    addi r5, r0, 1
+    stw r4, r5, 0              # STATE = 1 (compile mode)
+    jal r0, next
+
+# Word: C" ( "string" -- ) IMMEDIATE - compile counted string literal
+# Runtime: pushes c-addr where byte[0]=count, byte[1..n]=chars
+.text
+    .align 2
+xt_cliteral:
+    .word cliteral_word
+cliteral_word:
+    add r1, r26, r0            # r1 = c-addr (points to count byte in thread)
+    ldbu r2, r26, 0            # r2 = count
+    addi r2, r2, 1             # +1 for count byte itself
+    addi r2, r2, 3             # round up
+    addi r3, r0, -4
+    and r2, r2, r3             # padded total size
+    add r26, r26, r2           # advance IP past inline data
+    addi r28, r28, -4
+    stw r28, r1, 0             # push c-addr
+    jal r0, next
+
+.text
+    .align 2
+head_cquote:
+    .word head_noname
+    .byte 0x82                 # IMMEDIATE flag (0x80) + length 2
+    .ascii "C\""
+    .align 2
+xt_cquote:
+    .word cquote_word
+cquote_word:
+    # Only works in compile mode
+    lui r8, %hi(var_state)
+    addi r8, r8, %lo(var_state)
+    ldw r8, r8, 0
+    beq r8, r0, cquote_done
+
+    # Compile xt_cliteral at HERE
+    lui r14, %hi(var_here)
+    addi r14, r14, %lo(var_here)
+    ldw r15, r14, 0            # r15 = HERE
+    lui r1, %hi(xt_cliteral)
+    addi r1, r1, %lo(xt_cliteral)
+    stw r15, r1, 0             # compile xt_cliteral
+    addi r15, r15, 4           # advance past xt
+    add r16, r15, r0           # r16 = address of count byte (fill later)
+    addi r15, r15, 1           # skip past count byte, chars start here
+
+    # Parse from TIB: skip one leading space, then copy chars until "
+    lui r1, %hi(tib)
+    addi r1, r1, %lo(tib)
+    lui r2, %hi(var_source_len)
+    addi r2, r2, %lo(var_source_len)
+    ldw r2, r2, 0              # r2 = #TIB
+    lui r3, %hi(var_to_in)
+    addi r3, r3, %lo(var_to_in)
+    ldw r4, r3, 0              # r4 = >IN
+
+    # Skip exactly one leading space
+    bge r4, r2, cquote_end_parse
+    add r5, r1, r4
+    ldbu r6, r5, 0
+    addi r7, r0, 32            # space
+    bne r6, r7, cquote_parse_loop
+    addi r4, r4, 1             # skip the space
+
+cquote_parse_loop:
+    bge r4, r2, cquote_end_parse
+    add r5, r1, r4
+    ldbu r6, r5, 0
+    addi r7, r0, 34            # '"'
+    beq r6, r7, cquote_found_quote
+    # Copy char to HERE
+    stb r15, r6, 0
+    addi r15, r15, 1
+    addi r4, r4, 1
+    jal r0, cquote_parse_loop
+
+cquote_found_quote:
+    addi r4, r4, 1             # skip past closing "
+
+cquote_end_parse:
+    # Update >IN
+    stw r3, r4, 0
+
+    # Calculate string length and store count byte
+    sub r1, r15, r16
+    addi r1, r1, -1            # r1 = char count (exclude count byte itself)
+    stb r16, r1, 0             # store count byte
+
+    # Pad to 4-byte alignment (count byte + chars)
+    # Total inline size = 1 + r1, round up to multiple of 4
+    addi r2, r15, 3
+    addi r5, r0, -4
+    and r15, r2, r5            # r15 = aligned HERE
+
+    # Update HERE
+    stw r14, r15, 0
+
+cquote_done:
+    jal r0, next
+
+# Word: S\" ( "string" -- ) IMMEDIATE - compile string with escape sequences
+# Uses xt_sliteral runtime (same as S"), but parses backslash escapes
+.text
+    .align 2
+head_squote_escape:
+    .word head_cquote
+    .byte 0x83                 # IMMEDIATE flag (0x80) + length 3
+    .ascii "S\\\""             # S\"
+    .align 2
+xt_squote_escape:
+    .word squote_escape_word
+squote_escape_word:
+    # Only works in compile mode
+    lui r8, %hi(var_state)
+    addi r8, r8, %lo(var_state)
+    ldw r8, r8, 0
+    beq r8, r0, se_done
+
+    # Compile xt_sliteral at HERE
+    lui r14, %hi(var_here)
+    addi r14, r14, %lo(var_here)
+    ldw r15, r14, 0            # r15 = HERE
+    lui r1, %hi(xt_sliteral)
+    addi r1, r1, %lo(xt_sliteral)
+    stw r15, r1, 0             # compile xt_sliteral
+    addi r15, r15, 4           # advance past xt
+    add r16, r15, r0           # r16 = address of length cell (fill later)
+    addi r15, r15, 4           # skip length cell, chars start here
+
+    # Parse from TIB: skip one leading space, then copy chars with escape processing
+    lui r1, %hi(tib)
+    addi r1, r1, %lo(tib)
+    lui r2, %hi(var_source_len)
+    addi r2, r2, %lo(var_source_len)
+    ldw r2, r2, 0              # r2 = #TIB
+    lui r3, %hi(var_to_in)
+    addi r3, r3, %lo(var_to_in)
+    ldw r4, r3, 0              # r4 = >IN
+
+    # Skip exactly one leading space
+    bge r4, r2, se_end_parse
+    add r5, r1, r4
+    ldbu r6, r5, 0
+    addi r7, r0, 32            # space
+    bne r6, r7, se_parse_loop
+    addi r4, r4, 1             # skip the space
+
+se_parse_loop:
+    bge r4, r2, se_end_parse
+    add r5, r1, r4
+    ldbu r6, r5, 0
+    addi r7, r0, 34            # '"'
+    beq r6, r7, se_found_quote
+    addi r7, r0, 92            # '\'
+    beq r6, r7, se_escape
+    # Normal char: copy to HERE
+    stb r15, r6, 0
+    addi r15, r15, 1
+    addi r4, r4, 1
+    jal r0, se_parse_loop
+
+se_escape:
+    # Backslash found, read next char
+    addi r4, r4, 1             # skip the backslash
+    bge r4, r2, se_end_parse   # end of input after backslash
+    add r5, r1, r4
+    ldbu r6, r5, 0             # r6 = char after backslash
+    addi r4, r4, 1             # consume it
+
+    # Check each escape character
+    addi r7, r0, 97            # 'a' -> BEL (7)
+    beq r6, r7, se_esc_a
+    addi r7, r0, 98            # 'b' -> BS (8)
+    beq r6, r7, se_esc_b
+    addi r7, r0, 101           # 'e' -> ESC (27)
+    beq r6, r7, se_esc_e
+    addi r7, r0, 102           # 'f' -> FF (12)
+    beq r6, r7, se_esc_f
+    addi r7, r0, 108           # 'l' -> LF (10)
+    beq r6, r7, se_esc_n
+    addi r7, r0, 110           # 'n' -> LF (10)
+    beq r6, r7, se_esc_n
+    addi r7, r0, 114           # 'r' -> CR (13)
+    beq r6, r7, se_esc_r
+    addi r7, r0, 116           # 't' -> TAB (9)
+    beq r6, r7, se_esc_t
+    addi r7, r0, 118           # 'v' -> VT (11)
+    beq r6, r7, se_esc_v
+    addi r7, r0, 122           # 'z' -> NUL (0)
+    beq r6, r7, se_esc_z
+    addi r7, r0, 92            # '\\' -> backslash (92)
+    beq r6, r7, se_esc_lit
+    addi r7, r0, 34            # '"' -> double quote (34)
+    beq r6, r7, se_esc_lit
+    addi r7, r0, 113           # 'q' -> double quote (34)
+    beq r6, r7, se_esc_q
+    addi r7, r0, 109           # 'm' -> CR+LF
+    beq r6, r7, se_esc_m
+    addi r7, r0, 120           # 'x' -> hex byte
+    beq r6, r7, se_esc_x
+    # Unknown escape: store the char literally
+    jal r0, se_esc_lit
+
+se_esc_a:
+    addi r6, r0, 7
+    jal r0, se_esc_lit
+se_esc_b:
+    addi r6, r0, 8
+    jal r0, se_esc_lit
+se_esc_e:
+    addi r6, r0, 27
+    jal r0, se_esc_lit
+se_esc_f:
+    addi r6, r0, 12
+    jal r0, se_esc_lit
+se_esc_n:
+    addi r6, r0, 10
+    jal r0, se_esc_lit
+se_esc_r:
+    addi r6, r0, 13
+    jal r0, se_esc_lit
+se_esc_t:
+    addi r6, r0, 9
+    jal r0, se_esc_lit
+se_esc_v:
+    addi r6, r0, 11
+    jal r0, se_esc_lit
+se_esc_z:
+    addi r6, r0, 0
+    jal r0, se_esc_lit
+se_esc_q:
+    addi r6, r0, 34
+    jal r0, se_esc_lit
+
+se_esc_m:
+    # CR + LF (two bytes)
+    addi r6, r0, 13
+    stb r15, r6, 0
+    addi r15, r15, 1
+    addi r6, r0, 10
+    stb r15, r6, 0
+    addi r15, r15, 1
+    jal r0, se_parse_loop
+
+se_esc_x:
+    # Read two hex digits
+    bge r4, r2, se_end_parse
+    add r5, r1, r4
+    ldbu r6, r5, 0             # first hex digit
+    addi r4, r4, 1
+    # Convert first hex digit
+    addi r7, r0, 48            # '0'
+    blt r6, r7, se_hex_bad1
+    addi r7, r0, 58            # '9'+1
+    blt r6, r7, se_hex_digit1
+    addi r7, r0, 65            # 'A'
+    blt r6, r7, se_hex_bad1
+    addi r7, r0, 71            # 'F'+1
+    blt r6, r7, se_hex_upper1
+    addi r7, r0, 97            # 'a'
+    blt r6, r7, se_hex_bad1
+    addi r7, r0, 103           # 'f'+1
+    blt r6, r7, se_hex_lower1
+se_hex_bad1:
+    addi r8, r0, 0             # bad digit, treat as 0
+    jal r0, se_hex_d2
+se_hex_digit1:
+    addi r8, r6, -48           # r8 = digit value
+    jal r0, se_hex_d2
+se_hex_upper1:
+    addi r8, r6, -55           # 'A'-10 = 55
+    jal r0, se_hex_d2
+se_hex_lower1:
+    addi r8, r6, -87           # 'a'-10 = 87
+
+se_hex_d2:
+    # r8 = high nibble
+    slli r8, r8, 4             # shift to high nibble
+    bge r4, r2, se_hex_store   # end of input, use what we have
+    add r5, r1, r4
+    ldbu r6, r5, 0             # second hex digit
+    addi r4, r4, 1
+    # Convert second hex digit
+    addi r7, r0, 48
+    blt r6, r7, se_hex_store
+    addi r7, r0, 58
+    blt r6, r7, se_hex_digit2
+    addi r7, r0, 65
+    blt r6, r7, se_hex_store
+    addi r7, r0, 71
+    blt r6, r7, se_hex_upper2
+    addi r7, r0, 97
+    blt r6, r7, se_hex_store
+    addi r7, r0, 103
+    blt r6, r7, se_hex_lower2
+    jal r0, se_hex_store       # bad second digit
+se_hex_digit2:
+    addi r6, r6, -48
+    or r8, r8, r6
+    jal r0, se_hex_store
+se_hex_upper2:
+    addi r6, r6, -55
+    or r8, r8, r6
+    jal r0, se_hex_store
+se_hex_lower2:
+    addi r6, r6, -87
+    or r8, r8, r6
+
+se_hex_store:
+    add r6, r8, r0             # r6 = byte value
+    jal r0, se_esc_lit         # store it
+
+se_esc_lit:
+    # Store r6 at HERE and continue
+    stb r15, r6, 0
+    addi r15, r15, 1
+    jal r0, se_parse_loop
+
+se_found_quote:
+    addi r4, r4, 1             # skip past closing "
+
+se_end_parse:
+    # Update >IN
+    stw r3, r4, 0
+
+    # Calculate string length and store in length cell
+    sub r1, r15, r16
+    addi r1, r1, -4            # r1 = string length (subtract length cell)
+    stw r16, r1, 0             # store length at the reserved cell
+
+    # Pad to 4-byte alignment
+    addi r2, r15, 3
+    addi r5, r0, -4
+    and r15, r2, r5            # r15 = aligned HERE
+
+    # Update HERE
+    stw r14, r15, 0
+
+se_done:
+    jal r0, next
+
 # ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
@@ -4249,7 +4616,7 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_rename_file         # Point to last defined word
+    .word head_squote_escape       # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_len: .word 0
