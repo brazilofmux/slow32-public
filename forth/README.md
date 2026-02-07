@@ -14,7 +14,7 @@ Stage 4: Bootstrap Prelude. Self-extending Forth with ~35 standard vocabulary wo
 
 ## Primitives (Assembly)
 - **Control**: `EXIT`, `EXECUTE`, `BYE`, `BRANCH`, `0BRANCH`
-- **Stack**: `DUP`, `DROP`, `SWAP`, `OVER`, `>R`, `R>`, `R@`, `DEPTH`, `DSP@`, `DSTKTOP`
+- **Stack**: `DUP`, `DROP`, `SWAP`, `OVER`, `>R`, `R>`, `R@`, `DEPTH`, `DSP@`, `DSTKTOP`, `PICK`
 - **Arithmetic**: `+`, `-`, `*`, `/`, `MOD`, `/MOD`, `NEGATE`, `1+`, `1-`
 - **Logic**: `AND`, `OR`, `XOR`, `INVERT`, `LSHIFT`, `RSHIFT`
 - **Comparison**: `=`, `<>`, `<`, `>`, `0=`, `0<`, `U<`
@@ -43,6 +43,7 @@ Loaded automatically from `prelude.fth` at startup:
 - **Defining**: `VARIABLE`, `CONSTANT`, `VALUE`, `TO`, `DEFER`, `IS`, `ACTION-OF`
 - **Control flow**: `CASE`, `OF`, `ENDOF`, `ENDCASE`
 - **Pictured Output**: `#`, `#S`, `SIGN`, `U.`, `.R`, `U.R`
+- **Strings**: `CMOVE`, `CMOVE>`, `/STRING`, `COMPARE`, `SEARCH`, `PLACE`, `-TRAILING`
 - **Comments**: `\` (backslash line comment), `(` (paren comment)
 
 ## Dictionary Structure

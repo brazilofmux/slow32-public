@@ -3221,6 +3221,26 @@ sharp_greater_word:
     stw r28, r5, 0            # TOS = len
     jal r0, next
 
+# Word: PICK ( n -- x ) Copy n-th stack item (0=DUP, 1=OVER, etc.)
+.text
+    .align 2
+head_pick:
+    .word head_sharp_greater
+    .byte 4
+    .ascii "PICK"
+    .align 2
+xt_pick:
+    .word pick_word
+pick_word:
+    ldw r1, r28, 0        # n
+    addi r1, r1, 1         # n+1 (skip past n itself)
+    add r1, r1, r1         # (n+1) * 2
+    add r1, r1, r1         # (n+1) * 4
+    add r1, r28, r1        # DSP + (n+1)*4
+    ldw r2, r1, 0          # fetch item
+    stw r28, r2, 0         # replace TOS
+    jal r0, next
+
 # ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
@@ -3230,7 +3250,7 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_sharp_greater   # Point to last defined word
+    .word head_pick            # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_len: .word 0

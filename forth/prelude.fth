@@ -121,5 +121,64 @@
 : U.R  ( u width -- )
   >R <# #S #> R> OVER - SPACES TYPE ;
 
+\ --- String Utilities ---
+: CMOVE  ( src dest u -- )
+  DUP 0 > IF 0 DO  OVER I + C@  OVER I + C!  LOOP ELSE DROP THEN 2DROP ;
+
+: CMOVE>  ( src dest u -- )
+  BEGIN DUP 0 > WHILE
+    1- >R  OVER R@ + C@  OVER R@ + C!  R>
+  REPEAT DROP 2DROP ;
+
+: /STRING  ( addr u n -- addr+n u-n )
+  ROT OVER + ROT ROT - ;
+
+: COMPARE  ( a1 u1 a2 u2 -- n )
+  ROT 2DUP SWAP - >R MIN    ( a1 a2 min-len  R: u1-u2 )
+  DUP 0 > IF
+    0 DO
+      OVER I + C@  OVER I + C@  -
+      ?DUP IF
+        0< IF 2DROP R> DROP -1 ELSE 2DROP R> DROP 1 THEN
+        UNLOOP EXIT
+      THEN
+    LOOP
+  ELSE DROP THEN
+  2DROP
+  R> DUP IF 0< IF DROP -1 ELSE DROP 1 THEN THEN ;
+
+: (STREQ)  ( a1 a2 u -- flag )
+  DUP 0 > IF
+    0 DO
+      OVER I + C@  OVER I + C@ <> IF 2DROP 0 UNLOOP EXIT THEN
+    LOOP
+  ELSE DROP THEN
+  2DROP 1 ;
+
+: SEARCH  ( a1 u1 a2 u2 -- a3 u3 flag )
+  DUP 0= IF 2DROP 1 EXIT THEN
+  ROT >R ROT R>                ( a2 u2 a1 u1 )
+  DUP 3 PICK - 1+ 0 MAX       ( a2 u2 a1 u1 limit )
+  DUP 0 > IF
+    0 DO
+      OVER I +                   ( a2 u2 a1 u1 a1+i )
+      4 PICK 4 PICK              ( a2 u2 a1 u1 a1+i a2 u2 )
+      (STREQ) IF
+        SWAP I + SWAP I -        ( a2 u2 a1+i u1-i )
+        2SWAP 2DROP 1
+        UNLOOP EXIT
+      THEN
+    LOOP
+  ELSE DROP THEN
+  2SWAP 2DROP 0 ;
+
+: PLACE  ( addr u dest -- )
+  2DUP C!  1+ SWAP CMOVE ;
+
+: -TRAILING  ( addr u -- addr u' )
+  BEGIN DUP 0 > WHILE
+    2DUP + 1- C@ BL <> IF EXIT THEN 1-
+  REPEAT ;
+
 \ Enable interactive prompts
 PROMPTS-ON
