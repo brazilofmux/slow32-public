@@ -10,6 +10,7 @@
 : 2DUP   OVER OVER ;
 : 2DROP  DROP DROP ;
 : 2SWAP  >R -ROT R> -ROT ;
+: 2OVER  >R >R 2DUP R> R> 2SWAP ;
 : ?DUP   DUP IF DUP THEN ;
 
 \ --- Arithmetic ---
@@ -46,6 +47,8 @@
 \ --- Defining words ---
 : VARIABLE  CREATE 0 , ;
 : CONSTANT  CREATE , DOES> @ ;
+: 2VARIABLE  CREATE 0 , 0 , ;
+: 2CONSTANT  CREATE , , DOES> 2@ ;
 
 \ --- CASE/OF/ENDOF/ENDCASE ---
 \ Usage: ( n ) CASE  1 OF ." one" ENDOF  2 OF ." two" ENDOF  ." default" ENDCASE

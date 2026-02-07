@@ -3241,6 +3241,103 @@ pick_word:
     stw r28, r2, 0         # replace TOS
     jal r0, next
 
+# Word: 2! ( x1 x2 addr -- ) Store pair: x2 at addr, x1 at addr+4
+.text
+    .align 2
+head_two_store:
+    .word head_pick
+    .byte 2
+    .ascii "2!"
+    .align 2
+xt_two_store:
+    .word two_store_word
+two_store_word:
+    ldw r1, r28, 0        # r1 = addr
+    ldw r2, r28, 4        # r2 = x2
+    ldw r3, r28, 8        # r3 = x1
+    stw r1, r2, 0         # *addr = x2
+    stw r1, r3, 4         # *(addr+4) = x1
+    addi r28, r28, 12     # pop 3 items
+    jal r0, next
+
+# Word: 2@ ( addr -- x1 x2 ) Fetch pair: x1 from addr+4, x2 from addr
+.text
+    .align 2
+head_two_fetch:
+    .word head_two_store
+    .byte 2
+    .ascii "2@"
+    .align 2
+xt_two_fetch:
+    .word two_fetch_word
+two_fetch_word:
+    ldw r1, r28, 0        # r1 = addr
+    ldw r2, r1, 4         # r2 = x1 (addr+4)
+    ldw r3, r1, 0         # r3 = x2 (addr)
+    stw r28, r2, 0        # replace TOS with x1
+    addi r28, r28, -4
+    stw r28, r3, 0        # push x2
+    jal r0, next
+
+# Word: 2>R ( x1 x2 -- ) (R: -- x1 x2)
+.text
+    .align 2
+head_two_to_r:
+    .word head_two_fetch
+    .byte 3
+    .ascii "2>R"
+    .align 2
+xt_two_to_r:
+    .word two_to_r_word
+two_to_r_word:
+    ldw r1, r28, 4        # r1 = x1
+    ldw r2, r28, 0        # r2 = x2
+    addi r28, r28, 8      # pop 2 from data stack
+    addi r27, r27, -4
+    stw r27, r1, 0        # push x1 (deeper)
+    addi r27, r27, -4
+    stw r27, r2, 0        # push x2 (on top)
+    jal r0, next
+
+# Word: 2R> ( -- x1 x2 ) (R: x1 x2 --)
+.text
+    .align 2
+head_two_r_from:
+    .word head_two_to_r
+    .byte 3
+    .ascii "2R>"
+    .align 2
+xt_two_r_from:
+    .word two_r_from_word
+two_r_from_word:
+    ldw r2, r27, 0        # r2 = x2 (top of return stack)
+    ldw r1, r27, 4        # r1 = x1 (deeper)
+    addi r27, r27, 8      # pop 2 from return stack
+    addi r28, r28, -4
+    stw r28, r1, 0        # push x1
+    addi r28, r28, -4
+    stw r28, r2, 0        # push x2
+    jal r0, next
+
+# Word: 2R@ ( -- x1 x2 ) (R: x1 x2 -- x1 x2)
+.text
+    .align 2
+head_two_r_fetch:
+    .word head_two_r_from
+    .byte 3
+    .ascii "2R@"
+    .align 2
+xt_two_r_fetch:
+    .word two_r_fetch_word
+two_r_fetch_word:
+    ldw r2, r27, 0        # r2 = x2
+    ldw r1, r27, 4        # r1 = x1
+    addi r28, r28, -4
+    stw r28, r1, 0        # push x1
+    addi r28, r28, -4
+    stw r28, r2, 0        # push x2
+    jal r0, next
+
 # ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
@@ -3250,7 +3347,7 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_pick            # Point to last defined word
+    .word head_two_r_fetch     # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_len: .word 0
