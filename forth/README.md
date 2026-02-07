@@ -15,7 +15,7 @@ Stage 4: Bootstrap Prelude. Self-extending Forth with ~35 standard vocabulary wo
 ## Primitives (Assembly)
 - **Control**: `EXIT`, `EXECUTE`, `BYE`, `BRANCH`, `0BRANCH`
 - **Stack**: `DUP`, `DROP`, `SWAP`, `OVER`, `>R`, `R>`, `R@`, `2>R`, `2R>`, `2R@`, `DEPTH`, `DSP@`, `DSTKTOP`, `PICK`
-- **Arithmetic**: `+`, `-`, `*`, `/`, `MOD`, `/MOD`, `NEGATE`, `1+`, `1-`
+- **Arithmetic**: `+`, `-`, `*`, `/`, `MOD`, `/MOD`, `NEGATE`, `1+`, `1-`, `S>D`, `D+`, `D-`, `UM/MOD`
 - **Logic**: `AND`, `OR`, `XOR`, `INVERT`, `LSHIFT`, `RSHIFT`
 - **Comparison**: `=`, `<>`, `<`, `>`, `0=`, `0<`, `U<`
 - **Memory**: `!`, `@`, `C!`, `C@`, `C,`, `2!`, `2@`
@@ -42,7 +42,8 @@ Loaded automatically from `prelude.fth` at startup:
 - **Compiler**: `LITERAL`
 - **Defining**: `VARIABLE`, `CONSTANT`, `2VARIABLE`, `2CONSTANT`, `VALUE`, `TO`, `DEFER`, `IS`, `ACTION-OF`
 - **Control flow**: `CASE`, `OF`, `ENDOF`, `ENDCASE`
-- **Pictured Output**: `#`, `#S`, `SIGN`, `U.`, `.R`, `U.R`
+- **Pictured Output**: `MU/MOD`, `#`, `#S`, `SIGN`, `U.`, `.R`, `U.R`
+- **Double-Number**: `D>S`, `DNEGATE`, `DABS`, `D0=`, `D0<`, `D=`, `D<`, `M+`, `D.`, `D.R`
 - **Strings**: `CMOVE`, `CMOVE>`, `/STRING`, `COMPARE`, `SEARCH`, `PLACE`, `-TRAILING`
 - **Comments**: `\` (backslash line comment), `(` (paren comment)
 

@@ -101,28 +101,31 @@
     R> 0 DO  OVER I + C@  OVER I + C!  LOOP
   THEN 2DROP ;
 
-\ --- Pictured Numeric Output ---
-: #  ( u -- u' )
-  BASE @ /MOD SWAP
+\ --- Pictured Numeric Output (double-cell) ---
+: MU/MOD  ( ud u -- rem udquot )
+  >R 0 R@ UM/MOD -ROT R> UM/MOD ROT ;
+
+: #  ( ud -- ud' )
+  BASE @ MU/MOD ROT
   DUP 10 < IF 48 + ELSE 10 - 65 + THEN
   HOLD ;
 
-: #S  ( u -- 0 )
-  BEGIN # DUP 0= UNTIL ;
+: #S  ( ud -- 0 0 )
+  BEGIN # 2DUP OR 0= UNTIL ;
 
 : SIGN  ( n -- )
   0< IF 45 HOLD THEN ;
 
 : U.  ( u -- )
-  <# #S #> TYPE SPACE ;
+  0 <# #S #> TYPE SPACE ;
 
 : .R  ( n width -- )
-  SWAP DUP >R ABS
+  SWAP DUP >R ABS 0
   <# #S R> SIGN #>
   ROT OVER - SPACES TYPE ;
 
 : U.R  ( u width -- )
-  >R <# #S #> R> OVER - SPACES TYPE ;
+  >R 0 <# #S #> R> OVER - SPACES TYPE ;
 
 \ --- String Utilities ---
 : CMOVE  ( src dest u -- )
@@ -182,6 +185,18 @@
   BEGIN DUP 0 > WHILE
     2DUP + 1- C@ BL <> IF EXIT THEN 1-
   REPEAT ;
+
+\ --- Double-Number Arithmetic ---
+: D>S  ( d -- n )  DROP ;
+: DNEGATE  ( d -- -d )  INVERT SWAP INVERT SWAP 1 0 D+ ;
+: DABS  ( d -- |d| )  DUP 0< IF DNEGATE THEN ;
+: D0=  ( d -- flag )  OR 0= ;
+: D0<  ( d -- flag )  NIP 0< ;
+: D=  ( d1 d2 -- flag )  D- D0= ;
+: D<  ( d1 d2 -- flag )  ROT 2DUP = IF 2DROP U< ELSE > NIP NIP THEN ;
+: M+  ( d n -- d )  S>D D+ ;
+: D.  ( d -- )  DUP >R DABS <# #S R> SIGN #> TYPE SPACE ;
+: D.R  ( d width -- )  >R DUP >R DABS <# #S R> SIGN #> R> OVER - SPACES TYPE ;
 
 \ Enable interactive prompts
 PROMPTS-ON

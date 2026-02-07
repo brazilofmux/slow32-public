@@ -3198,7 +3198,7 @@ hold_word:
     stw r2, r3, 0             # save updated HLD
     jal r0, next
 
-# Word: #> ( u -- addr len ) End pictured numeric output
+# Word: #> ( ud -- addr len ) End pictured numeric output
 .text
     .align 2
 head_sharp_greater:
@@ -3216,7 +3216,8 @@ sharp_greater_word:
     addi r4, r4, %lo(pad)
     addi r4, r4, 128          # pad + 128 = end
     sub r5, r4, r3            # len = end - HLD
-    stw r28, r3, 0            # replace TOS (was u) with addr
+    addi r28, r28, 4          # pop ud_hi (double-cell input)
+    stw r28, r3, 0            # replace ud_lo with addr
     addi r28, r28, -4         # push
     stw r28, r5, 0            # TOS = len
     jal r0, next
@@ -3338,6 +3339,105 @@ two_r_fetch_word:
     stw r28, r2, 0        # push x2
     jal r0, next
 
+# Word: S>D ( n -- d ) Sign-extend single to double
+.text
+    .align 2
+head_s_to_d:
+    .word head_two_r_fetch
+    .byte 3
+    .ascii "S>D"
+    .align 2
+xt_s_to_d:
+    .word s_to_d_word
+s_to_d_word:
+    ldw r1, r28, 0        # n
+    slt r2, r1, r0        # 1 if n<0, else 0
+    sub r2, r0, r2        # 0 or -1 (sign extension)
+    addi r28, r28, -4
+    stw r28, r2, 0        # push hi
+    jal r0, next
+
+# Word: D+ ( d1 d2 -- d3 ) Add doubles with carry
+.text
+    .align 2
+head_d_plus:
+    .word head_s_to_d
+    .byte 2
+    .ascii "D+"
+    .align 2
+xt_d_plus:
+    .word d_plus_word
+d_plus_word:
+    ldw r4, r28, 0        # hi2
+    ldw r3, r28, 4        # lo2
+    ldw r2, r28, 8        # hi1
+    ldw r1, r28, 12       # lo1
+    add r5, r1, r3        # lo3 = lo1 + lo2
+    sltu r6, r5, r1       # carry
+    add r7, r2, r4        # hi1 + hi2
+    add r7, r7, r6        # hi3 = hi1 + hi2 + carry
+    addi r28, r28, 8      # pop 2 (4->2)
+    stw r28, r7, 0        # hi3
+    stw r28, r5, 4        # lo3
+    jal r0, next
+
+# Word: D- ( d1 d2 -- d3 ) Subtract doubles with borrow
+.text
+    .align 2
+head_d_minus:
+    .word head_d_plus
+    .byte 2
+    .ascii "D-"
+    .align 2
+xt_d_minus:
+    .word d_minus_word
+d_minus_word:
+    ldw r4, r28, 0        # hi2
+    ldw r3, r28, 4        # lo2
+    ldw r2, r28, 8        # hi1
+    ldw r1, r28, 12       # lo1
+    sltu r6, r1, r3       # borrow = (lo1 < lo2)
+    sub r5, r1, r3        # lo3 = lo1 - lo2
+    sub r7, r2, r4        # hi1 - hi2
+    sub r7, r7, r6        # hi3 = hi1 - hi2 - borrow
+    addi r28, r28, 8
+    stw r28, r7, 0
+    stw r28, r5, 4
+    jal r0, next
+
+# Word: UM/MOD ( ud u -- rem quot ) Unsigned 64/32 division
+.text
+    .align 2
+head_um_mod:
+    .word head_d_minus
+    .byte 6
+    .ascii "UM/MOD"
+    .align 2
+xt_um_mod:
+    .word um_mod_word
+um_mod_word:
+    ldw r3, r28, 0        # u (divisor)
+    ldw r2, r28, 4        # ud_hi -> remainder
+    ldw r1, r28, 8        # ud_lo -> quotient
+    addi r4, r0, 32       # counter
+    addi r6, r0, 31       # shift constant
+um_mod_loop:
+    srl r5, r1, r6        # carry = bit 31 of quotient
+    add r1, r1, r1        # quotient <<= 1
+    add r2, r2, r2        # remainder <<= 1
+    add r2, r2, r5        # remainder += carry
+    sltu r7, r2, r3       # r7 = (remainder < divisor)
+    bne r7, r0, um_mod_skip
+    sub r2, r2, r3        # remainder -= divisor
+    addi r1, r1, 1        # set quotient bit
+um_mod_skip:
+    addi r4, r4, -1
+    bne r4, r0, um_mod_loop
+    addi r28, r28, 4      # pop 1 (3->2)
+    stw r28, r1, 0        # quotient
+    stw r28, r2, 4        # remainder
+    jal r0, next
+
 # ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
@@ -3347,7 +3447,7 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_two_r_fetch     # Point to last defined word
+    .word head_um_mod          # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_len: .word 0

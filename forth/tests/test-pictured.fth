@@ -11,15 +11,15 @@
 
 \ HOLD for custom prefix: $2A (hex 42)
 HEX
-: TEST-PREFIX  <# #S 24 HOLD #> TYPE ;
+: TEST-PREFIX  0 <# #S 24 HOLD #> TYPE ;
 2A TEST-PREFIX CR
 DECIMAL
 
 \ SIGN positive (should not add minus)
-<# 42 #S 42 SIGN #> TYPE CR
+<# 42 0 #S 42 SIGN #> TYPE CR
 
 \ SIGN negative (should add minus)
-<# 42 #S -1 SIGN #> TYPE CR
+<# 42 0 #S -1 SIGN #> TYPE CR
 
 \ .R wider than number
 42 6 .R CR
