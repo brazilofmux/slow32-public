@@ -3786,6 +3786,87 @@ two_div_word:
     stw r28, r1, 0
     jal r0, next
 
+# Word: SOURCE-ID ( -- a-addr )
+.text
+    .align 2
+head_source_id:
+    .word head_two_div
+    .byte 9
+    .ascii "SOURCE-ID"
+    .align 2
+xt_source_id:
+    .word source_id_word
+source_id_word:
+    lui r1, %hi(var_source_id)
+    addi r1, r1, %lo(var_source_id)
+    ldw r1, r1, 0      # Load the value
+    addi r28, r28, -4
+    stw r28, r1, 0
+    jal r0, next
+
+# Word: MS ( n -- ) Sleep for n milliseconds
+.text
+    .align 2
+head_ms:
+    .word head_source_id
+    .byte 2
+    .ascii "MS"
+    .align 2
+xt_ms:
+    .word ms_word
+ms_word:
+    ldw r4, r28, 0     # n (ms)
+    addi r28, r28, 4   # pop
+    # usleep takes microseconds. n ms = n * 1000 us.
+    addi r1, r0, 1000
+    mul r4, r4, r1
+    jal usleep
+    jal r0, next
+
+# Word: QUIT ( -- ) Reset return stack and enter interpretation loop
+.text
+    .align 2
+head_quit:
+    .word head_ms
+    .byte 4
+    .ascii "QUIT"
+    .align 2
+xt_quit:
+    .word quit_word
+quit_word:
+    # Reset return stack
+    lui r27, %hi(rstack_top)
+    addi r27, r27, %lo(rstack_top)
+    # Reset state to 0 (interpreting)
+    lui r1, %hi(var_state)
+    addi r1, r1, %lo(var_state)
+    stw r1, r0, 0
+    # Reset SOURCE-ID to 0 (Console)
+    lui r1, %hi(var_source_id)
+    addi r1, r1, %lo(var_source_id)
+    stw r1, r0, 0
+    # Jump to cold_loop
+    lui r26, %hi(cold_loop)
+    addi r26, r26, %lo(cold_loop)
+    jal r0, next
+
+# Word: LIMIT ( -- a-addr )
+.text
+    .align 2
+head_limit:
+    .word head_quit
+    .byte 5
+    .ascii "LIMIT"
+    .align 2
+xt_limit:
+    .word limit_word
+limit_word:
+    lui r1, %hi(user_dictionary_end)
+    addi r1, r1, %lo(user_dictionary_end)
+    addi r28, r28, -4
+    stw r28, r1, 0
+    jal r0, next
+
 # ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
@@ -3795,7 +3876,7 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_two_div         # Point to last defined word
+    .word head_limit         # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_len: .word 0
@@ -3817,6 +3898,7 @@ interp_resume_xt:
     .align 2
 tib:            .space 128         # Terminal Input Buffer
 user_dictionary: .space 65536      # Space for new words
+user_dictionary_end:
 pad:            .space 128         # Scratch pad for strings/numbers
 
 

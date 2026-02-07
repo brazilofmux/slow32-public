@@ -19,7 +19,7 @@
 : MAX    2DUP < IF SWAP THEN DROP ;
 
 \ --- Constants ---
-: TRUE   1 ;
+: TRUE   -1 ;
 : FALSE  0 ;
 : BL     32 ;
 
@@ -271,6 +271,31 @@
 : [UNDEFINED]  ( "name" -- flag )  WORD FIND DROP 0= ; IMMEDIATE
 
 : BLANK  ( addr u -- )  BL FILL ;
+
+\ --- Missing Core / Utility Words ---
+
+: WORDS
+  LATEST @
+  BEGIN
+    DUP
+  WHILE
+    DUP 4 + C@ 127 AND >R
+    DUP 5 + R@ TYPE SPACE
+    R> DROP @
+  REPEAT
+  DROP CR ;
+
+: UNUSED ( -- u )
+  LIMIT HERE - ;
+
+: ENVIRONMENT? ( c-addr u -- false | i*x true )
+  2DUP S" /COUNTED-STRING" COMPARE 0= IF 2DROP 255 TRUE EXIT THEN
+  2DUP S" /HOLD" COMPARE 0= IF 2DROP 128 TRUE EXIT THEN
+  2DUP S" /PAD" COMPARE 0= IF 2DROP 128 TRUE EXIT THEN
+  2DUP S" ADDRESS-UNIT-BITS" COMPARE 0= IF 2DROP 8 TRUE EXIT THEN
+  2DUP S" CORE" COMPARE 0= IF 2DROP TRUE TRUE EXIT THEN
+  2DUP S" FLOATING" COMPARE 0= IF 2DROP FALSE TRUE EXIT THEN
+  2DROP FALSE ;
 
 \ Enable interactive prompts
 PROMPTS-ON
