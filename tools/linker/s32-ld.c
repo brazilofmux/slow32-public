@@ -13,9 +13,9 @@
 // Configuration
 #define MAX_INPUT_FILES 100
 #define MAX_SECTIONS 1000
-#define MAX_SYMBOLS 10000
-#define MAX_RELOCATIONS 10000
-#define STRING_TABLE_SIZE (64 * 1024)
+#define MAX_SYMBOLS 32000
+#define MAX_RELOCATIONS 32000
+#define STRING_TABLE_SIZE (256 * 1024)
 #define MAX_LIB_PATHS 32
 
 // Default memory layout
@@ -1958,7 +1958,8 @@ static void print_usage(const char *prog) {
 }
 
 int main(int argc, char *argv[]) {
-    linker_state_t ld = {0};
+    static linker_state_t ld;
+    memset(&ld, 0, sizeof(ld));
     
     // Initialize defaults
     ld.code_base = DEFAULT_CODE_BASE;

@@ -76,12 +76,14 @@ void *bsearch(const void *key, const void *base, size_t nmemb, size_t size,
 // String to long conversion with error checking
 long strtol(const char *nptr, char **endptr, int base) {
     const char *s = nptr;
+    const char *digits_start;
     long result = 0;
     int sign = 1;
-    
+    int found_digit = 0;
+
     // Skip whitespace
     while (*s == ' ' || (*s >= '\t' && *s <= '\r')) s++;
-    
+
     // Handle sign
     if (*s == '-') {
         sign = -1;
@@ -89,7 +91,7 @@ long strtol(const char *nptr, char **endptr, int base) {
     } else if (*s == '+') {
         s++;
     }
-    
+
     // Handle base
     if (base == 0) {
         if (*s == '0') {
@@ -99,6 +101,8 @@ long strtol(const char *nptr, char **endptr, int base) {
                 s++;
             } else {
                 base = 8;
+                // The leading '0' counts as a digit
+                found_digit = 1;
             }
         } else {
             base = 10;
@@ -108,8 +112,9 @@ long strtol(const char *nptr, char **endptr, int base) {
             s += 2;
         }
     }
-    
+
     // Convert digits
+    digits_start = s;
     while (*s) {
         int digit;
         if (*s >= '0' && *s <= '9') {
@@ -121,17 +126,19 @@ long strtol(const char *nptr, char **endptr, int base) {
         } else {
             break;
         }
-        
+
         if (digit >= base) break;
-        
+
+        found_digit = 1;
         result = result * base + digit;
         s++;
     }
-    
+
     if (endptr) {
-        *endptr = (char *)s;
+        // Per C standard: if no conversion performed, set endptr to nptr
+        *endptr = found_digit ? (char *)s : (char *)nptr;
     }
-    
+
     return result * sign;
 }
 

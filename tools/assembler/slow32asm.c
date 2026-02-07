@@ -10,11 +10,11 @@
 #define MAX_LINE 65536
 #define MAX_TOKENS 8
 #define MAX_TOKEN_LEN 16384
-#define MAX_LABELS 8192
+#define MAX_LABELS 32768
 #define INITIAL_INSTRUCTION_CAPACITY 65536
 #define MAX_DATA_SIZE (1024 * 1024)  // 1MB max data section
-#define MAX_RELOCATIONS 4096
-#define MAX_STRING_TABLE (64 * 1024) // 64KB string table
+#define MAX_RELOCATIONS 16384
+#define MAX_STRING_TABLE (256 * 1024) // 256KB string table
 
 // SLOW-32 assembler now only outputs object files (.s32o)
 // Binary executables are created by the linker (.s32x)

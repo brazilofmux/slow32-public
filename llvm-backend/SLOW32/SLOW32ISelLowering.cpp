@@ -278,6 +278,13 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   setOperationAction(ISD::ROTL, MVT::i32, Custom);
   setOperationAction(ISD::ROTR, MVT::i32, Custom);
 
+  // SLOW32 doesn't have bit counting instructions
+  setOperationAction(ISD::CTPOP, MVT::i32, Expand);
+  setOperationAction(ISD::CTLZ, MVT::i32, Expand);
+  setOperationAction(ISD::CTTZ, MVT::i32, Expand);
+  setOperationAction(ISD::CTLZ_ZERO_UNDEF, MVT::i32, Expand);
+  setOperationAction(ISD::CTTZ_ZERO_UNDEF, MVT::i32, Expand);
+
   // SLOW32 doesn't have conditional move, leave SELECT for default expansion
 
   // Custom lower global addresses and external symbols
