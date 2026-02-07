@@ -1,0 +1,7 @@
+PASS: cross-file add
+PASS: cross-file mul
+PASS: global read
+PASS: global write
+PASS: cross-file string
+PASS: callback
+PASS: struct fill

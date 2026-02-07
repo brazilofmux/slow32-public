@@ -37,7 +37,7 @@ None at this time.
 
 ## Testing Recommendations
 
-1. Test multi-file linking with global symbols
+1. Test multi-file linking with global symbols ✅ (`feature-multifile`)
 2. Test negative offsets in data access ✅ (`feature-negative-offset`)
 3. Test loops with complex control flow ✅ (`feature-control-flow`)
 4. Test all intrinsics with edge cases (0 size, odd sizes, etc.) ✅ (`stdlib-string-edge`)

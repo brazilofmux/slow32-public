@@ -110,7 +110,36 @@ run_test() {
         FAILED=$((FAILED + 1))
         return
     fi
-    
+
+    # Compile and assemble any extra .c files (multi-file tests)
+    local extra_objs=()
+    for extra_c in "$test_path"/*.c; do
+        [ -f "$extra_c" ] || continue
+        [ "$(basename "$extra_c")" = "test.c" ] && continue
+        local base
+        base="$(basename "$extra_c" .c)"
+        if ! $CLANG -target slow32-unknown-none -S -emit-llvm -O0 \
+             -I"$SLOW32_BASE/runtime/include" \
+             "$extra_c" -o "$result_path/$base.ll" 2>>"$result_path/compile.err"; then
+            echo -e "${RED}FAIL${NC} (compile $base.c)"
+            FAILED=$((FAILED + 1))
+            return
+        fi
+        if ! $LLC -mtriple=slow32-unknown-none \
+             "$result_path/$base.ll" -o "$result_path/$base.s" 2>>"$result_path/llc.err"; then
+            echo -e "${RED}FAIL${NC} (llc $base.c)"
+            FAILED=$((FAILED + 1))
+            return
+        fi
+        if ! $ASSEMBLER "$result_path/$base.s" "$result_path/$base.s32o" \
+             >>"$result_path/asm.out" 2>>"$result_path/asm.err"; then
+            echo -e "${RED}FAIL${NC} (assemble $base.c)"
+            FAILED=$((FAILED + 1))
+            return
+        fi
+        extra_objs+=("$result_path/$base.s32o")
+    done
+
     # Link: OBJ -> EXE (with proper libraries)
     local libc_archive="$LIBC_DEBUG"
     local linker_args=()
@@ -121,7 +150,7 @@ run_test() {
 
     if ! $LINKER -o "$result_path/test.s32x" \
          "${linker_args[@]}" \
-         $CRT0 "$result_path/test.s32o" "$libc_archive" $LIBS32 \
+         $CRT0 "$result_path/test.s32o" "${extra_objs[@]}" "$libc_archive" $LIBS32 \
          2>"$result_path/link.err"; then
         echo -e "${RED}FAIL${NC} (link)"
         FAILED=$((FAILED + 1))
