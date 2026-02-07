@@ -66,7 +66,6 @@ public:
   SDValue LowerUMUL_LOHI   (SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerSMUL_LOHI   (SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerMULHU       (SDValue Op, SelectionDAG &DAG) const;
-  SDValue LowerMULHS       (SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerUDIV        (SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerUREM        (SDValue Op, SelectionDAG &DAG) const;
 

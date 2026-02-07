@@ -195,7 +195,7 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   // Custom lower 32-bit multiply-high operations for i64 multiply expansion
   setOperationAction(ISD::UMUL_LOHI, MVT::i32, Custom);
   setOperationAction(ISD::SMUL_LOHI, MVT::i32, Custom);
-  setOperationAction(ISD::MULHS, MVT::i32, Custom);
+  setOperationAction(ISD::MULHS, MVT::i32, Legal);
   setOperationAction(ISD::MULHU, MVT::i32, Custom);
   
   // i32 unsigned division/remainder - SLOW32 only has signed DIV/REM instructions
@@ -441,7 +441,6 @@ SDValue SLOW32TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) cons
     case ISD::UMUL_LOHI:      return LowerUMUL_LOHI(Op, DAG);
     case ISD::SMUL_LOHI:      return LowerSMUL_LOHI(Op, DAG);
     case ISD::MULHU:          return LowerMULHU(Op, DAG);
-    case ISD::MULHS:          return LowerMULHS(Op, DAG);
     case ISD::UDIV:           return LowerUDIV(Op, DAG);
     case ISD::UREM:           return LowerUREM(Op, DAG);
     case ISD::SINT_TO_FP:
@@ -1996,48 +1995,8 @@ SDValue SLOW32TargetLowering::LowerUMUL_LOHI(SDValue Op,
   SDValue B = Op.getOperand(1);
   EVT VT = MVT::i32;
 
-  SDValue Mask16 = DAG.getConstant(0xFFFF, DL, VT);
-  SDValue Shift16 = DAG.getConstant(16, DL, VT);
-
-  // Split the operands into 16-bit halves so we can accumulate the partial
-  // products explicitly.  This avoids relying on a non-existent mulh instruction
-  // and gives us precise control over the carries.
-  SDValue AL = DAG.getNode(ISD::AND, DL, VT, A, Mask16);
-  SDValue AH = DAG.getNode(ISD::SRL, DL, VT, A, Shift16);
-  SDValue BL = DAG.getNode(ISD::AND, DL, VT, B, Mask16);
-  SDValue BH = DAG.getNode(ISD::SRL, DL, VT, B, Shift16);
-
-  SDValue P0 = DAG.getNode(ISD::MUL, DL, VT, AL, BL); // AL * BL
-  SDValue P1 = DAG.getNode(ISD::MUL, DL, VT, AL, BH); // AL * BH
-  SDValue P2 = DAG.getNode(ISD::MUL, DL, VT, AH, BL); // AH * BL
-  SDValue P3 = DAG.getNode(ISD::MUL, DL, VT, AH, BH); // AH * BH
-
-  auto getLowHalf = [&](SDValue Value) {
-    return DAG.getNode(ISD::AND, DL, VT, Value, Mask16);
-  };
-  auto getHighHalf = [&](SDValue Value) {
-    return DAG.getNode(ISD::SRL, DL, VT, Value, Shift16);
-  };
-
-  SDValue P0Lo = getLowHalf(P0);
-  SDValue P0Hi = getHighHalf(P0);
-  SDValue P1Lo = getLowHalf(P1);
-  SDValue P1Hi = getHighHalf(P1);
-  SDValue P2Lo = getLowHalf(P2);
-  SDValue P2Hi = getHighHalf(P2);
-
-  // Combine the cross terms and propagate the carry from the low half.
-  SDValue Mid = DAG.getNode(ISD::ADD, DL, VT, P1Lo, P2Lo);
-  Mid = DAG.getNode(ISD::ADD, DL, VT, Mid, P0Hi);
-
-  SDValue MidLo = getLowHalf(Mid);
-  SDValue MidCarry = getHighHalf(Mid);
-  SDValue MidLoShifted = DAG.getNode(ISD::SHL, DL, VT, MidLo, Shift16);
-  SDValue Lo = DAG.getNode(ISD::OR, DL, VT, P0Lo, MidLoShifted);
-
-  SDValue Hi = DAG.getNode(ISD::ADD, DL, VT, P3, P1Hi);
-  Hi = DAG.getNode(ISD::ADD, DL, VT, Hi, P2Hi);
-  Hi = DAG.getNode(ISD::ADD, DL, VT, Hi, MidCarry);
+  SDValue Lo = DAG.getNode(ISD::MUL, DL, VT, A, B);
+  SDValue Hi = LowerMULHU(Op, DAG);
 
   return DAG.getMergeValues({Lo, Hi}, DL);
 }
@@ -2049,25 +2008,8 @@ SDValue SLOW32TargetLowering::LowerSMUL_LOHI(SDValue Op, SelectionDAG &DAG) cons
   SDValue B = Op.getOperand(1);
   EVT VT = MVT::i32;
   
-  // Use unsigned multiply and then correct for sign
-  SDValue UMulLoHi = DAG.getNode(ISD::UMUL_LOHI, DL, DAG.getVTList(VT, VT), A, B);
-  SDValue Lo = UMulLoHi.getValue(0);
-  SDValue Hi = UMulLoHi.getValue(1);
-  
-  // Correction for signed multiply:
-  // If A < 0, subtract B from Hi
-  // If B < 0, subtract A from Hi
-  SDValue Zero = DAG.getConstant(0, DL, VT);
-  SDValue ASign = DAG.getSetCC(DL, VT, A, Zero, ISD::SETLT);
-  SDValue BSign = DAG.getSetCC(DL, VT, B, Zero, ISD::SETLT);
-  
-  // Create masked values for subtraction
-  SDValue BMask = DAG.getSelect(DL, VT, ASign, B, Zero);
-  SDValue AMask = DAG.getSelect(DL, VT, BSign, A, Zero);
-  
-  // Adjust Hi
-  Hi = DAG.getNode(ISD::SUB, DL, VT, Hi, BMask);
-  Hi = DAG.getNode(ISD::SUB, DL, VT, Hi, AMask);
+  SDValue Lo = DAG.getNode(ISD::MUL, DL, VT, A, B);
+  SDValue Hi = DAG.getNode(ISD::MULHS, DL, VT, A, B);
   
   return DAG.getMergeValues({Lo, Hi}, DL);
 }
@@ -2078,20 +2020,24 @@ SDValue SLOW32TargetLowering::LowerMULHU(SDValue Op, SelectionDAG &DAG) const {
   SDValue A = Op.getOperand(0);
   SDValue B = Op.getOperand(1);
   EVT VT = MVT::i32;
-  
-  SDValue UMulLoHi = DAG.getNode(ISD::UMUL_LOHI, DL, DAG.getVTList(VT, VT), A, B);
-  return UMulLoHi.getValue(1);  // Return just the high part
-}
 
-// Lower signed multiply-high (just the high part)
-SDValue SLOW32TargetLowering::LowerMULHS(SDValue Op, SelectionDAG &DAG) const {
-  SDLoc DL(Op);
-  SDValue A = Op.getOperand(0);
-  SDValue B = Op.getOperand(1);
-  EVT VT = MVT::i32;
-  
-  SDValue SMulLoHi = DAG.getNode(ISD::SMUL_LOHI, DL, DAG.getVTList(VT, VT), A, B);
-  return SMulLoHi.getValue(1);  // Return just the high part
+  // MULHU(A, B) = MULHS(A, B) + (A < 0 ? B : 0) + (B < 0 ? A : 0)
+  SDValue MulHS = DAG.getNode(ISD::MULHS, DL, VT, A, B);
+
+  SDValue Shift31 = DAG.getConstant(31, DL, VT);
+
+  // Correction for A < 0: (A >> 31) & B
+  SDValue MaskA = DAG.getNode(ISD::SRA, DL, VT, A, Shift31);
+  SDValue CorrA = DAG.getNode(ISD::AND, DL, VT, MaskA, B);
+
+  // Correction for B < 0: (B >> 31) & A
+  SDValue MaskB = DAG.getNode(ISD::SRA, DL, VT, B, Shift31);
+  SDValue CorrB = DAG.getNode(ISD::AND, DL, VT, MaskB, A);
+
+  SDValue Hi = DAG.getNode(ISD::ADD, DL, VT, MulHS, CorrA);
+  Hi = DAG.getNode(ISD::ADD, DL, VT, Hi, CorrB);
+
+  return Hi;
 }
 
 SDValue SLOW32TargetLowering::LowerUDIV(SDValue Op, SelectionDAG &DAG) const {

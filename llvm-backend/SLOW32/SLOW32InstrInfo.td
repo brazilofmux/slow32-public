@@ -88,6 +88,7 @@ let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
   def SLEU : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2), "sleu $rd, $rs1, $rs2">;
   
   def MUL  : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2), "mul $rd, $rs1, $rs2">;
+  def MULH : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2), "mulh $rd, $rs1, $rs2">;
   def DIV  : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2), "div $rd, $rs1, $rs2">;
   def REM  : S32Inst<(outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2), "rem $rd, $rs1, $rs2">;
   def LUI  : S32Inst<(outs GPR:$rd), (ins i32imm:$imm), "lui $rd, $imm">;
@@ -208,6 +209,7 @@ def : Pat<(sub (i32 GPR:$a), (i32 GPR:$b)), (SUB (i32 GPR:$a), (i32 GPR:$b))>;
 def : Pat<(and (i32 GPR:$a), (i32 GPR:$b)), (AND (i32 GPR:$a), (i32 GPR:$b))>;
 def : Pat<(or  (i32 GPR:$a), (i32 GPR:$b)), (OR  (i32 GPR:$a), (i32 GPR:$b))>;
 def : Pat<(mul (i32 GPR:$a), (i32 GPR:$b)), (MUL (i32 GPR:$a), (i32 GPR:$b))>;
+def : Pat<(mulhs (i32 GPR:$a), (i32 GPR:$b)), (MULH (i32 GPR:$a), (i32 GPR:$b))>;
 def : Pat<(sdiv (i32 GPR:$a), (i32 GPR:$b)), (DIV (i32 GPR:$a), (i32 GPR:$b))>;
 def : Pat<(srem (i32 GPR:$a), (i32 GPR:$b)), (REM (i32 GPR:$a), (i32 GPR:$b))>;
 def : Pat<(xor (i32 GPR:$a), (i32 GPR:$b)), (XOR (i32 GPR:$a), (i32 GPR:$b))>;

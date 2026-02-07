@@ -16,6 +16,7 @@ Next Review Due: 2025-11-15 (archive this file if the date passes)
 ## ✅ Working
 - Core SelectionDAG + MC plumbing, prologue/epilogue, and register classes.
 - Integer, logical, shift, and memory instructions (immediate and register forms).
+- Multiply + high-multiply (`MUL`, `MULH`) opcodes in instruction selection.
 - Call/return path with glue-managed CopyToReg, `%hi`/`%lo` global materialisation, and stack argument spill.
 - 64-bit scalar ABI now routes through the r1/r2 and r3/r4 register pairs without gratuitous spill slots.
 - Varargs fast path: `va_start`, register spill to the shadow area, and `va_arg` for integers/pointers.
