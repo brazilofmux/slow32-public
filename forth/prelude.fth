@@ -241,5 +241,36 @@
 
 : PAD  ( -- addr )  HERE 128 + ;
 
+\ --- Utilities, Loops & Parsing ---
+
+: 2*  ( n -- n*2 )  DUP + ;
+: U>  ( u1 u2 -- flag )  SWAP U< ;
+
+: REFILL  ( -- flag )  TIB 128 ACCEPT -1 <> ;
+
+: MARKER  ( "name" -- )
+  LATEST @ HERE @
+  CREATE , ,
+  DOES>
+    DUP @ HERE !
+    CELL+ @ LATEST ! ;
+
+: .(  ( "text)" -- )  41 PARSE TYPE ; IMMEDIATE
+
+: BUFFER:  ( u "name" -- )  CREATE ALLOT ;
+
+: NOOP  ( -- ) ;
+
+: ROLL  ( xu..x0 u -- xu-1..x0 xu )
+  ?DUP IF SWAP >R 1- RECURSE R> SWAP THEN ;
+
+: HOLDS  ( addr u -- )
+  BEGIN DUP WHILE 1- 2DUP + C@ HOLD REPEAT 2DROP ;
+
+: [DEFINED]  ( "name" -- flag )  WORD FIND DROP 0<> ; IMMEDIATE
+: [UNDEFINED]  ( "name" -- flag )  WORD FIND DROP 0= ; IMMEDIATE
+
+: BLANK  ( addr u -- )  BL FILL ;
+
 \ Enable interactive prompts
 PROMPTS-ON

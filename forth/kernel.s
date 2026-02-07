@@ -3623,6 +3623,169 @@ abort_word:
     addi r26, r26, %lo(cold_loop)
     jal r0, next
 
+# Word: (?DO) runtime ( limit start -- ) Conditional loop entry
+# If limit == start, skip loop body (branch forward using offset).
+# Otherwise push limit/start to return stack and skip the offset cell.
+.text
+    .align 2
+head_qdo_runtime:
+    .word head_abort
+    .byte 5
+    .ascii "(?DO)"
+    .align 2
+xt_qdo_runtime:
+    .word qdo_runtime_word
+qdo_runtime_word:
+    ldw r1, r28, 4             # r1 = limit (NOS)
+    ldw r2, r28, 0             # r2 = start (TOS)
+    addi r28, r28, 8           # pop both
+    beq r1, r2, qdo_skip
+    # Enter loop: push to return stack
+    addi r27, r27, -4
+    stw r27, r1, 0             # push limit
+    addi r27, r27, -4
+    stw r27, r2, 0             # push index
+    addi r26, r26, 4           # skip offset cell
+    jal r0, next
+qdo_skip:
+    # Skip loop body: branch forward
+    ldw r1, r26, 0             # load forward offset
+    addi r26, r26, 4           # skip offset cell
+    add r26, r26, r1           # IP += offset
+    jal r0, next
+
+# Word: ?DO ( limit start -- ) IMMEDIATE - Conditional DO loop
+# Like DO but skips loop body if limit == start.
+.text
+    .align 2
+head_qdo_compile:
+    .word head_qdo_runtime
+    .byte 0x83                 # IMMEDIATE, length 3
+    .ascii "?DO"
+    .align 2
+xt_qdo_compile:
+    .word qdo_compile_word
+qdo_compile_word:
+    lui r8, %hi(var_state)
+    addi r8, r8, %lo(var_state)
+    ldw r8, r8, 0
+    beq r8, r0, qdo_compile_done  # If not compiling, skip
+
+    lui r1, %hi(var_here)
+    addi r1, r1, %lo(var_here)
+    ldw r2, r1, 0              # r2 = HERE
+
+    # Compile xt_qdo_runtime at HERE
+    lui r3, %hi(xt_qdo_runtime)
+    addi r3, r3, %lo(xt_qdo_runtime)
+    stw r2, r3, 0              # [HERE] = xt_qdo_runtime
+    addi r2, r2, 4
+
+    # Save current leave-list head, reset for this loop
+    lui r4, %hi(var_leave_list)
+    addi r4, r4, %lo(var_leave_list)
+    ldw r5, r4, 0              # r5 = old leave-list head
+    stw r4, r0, 0              # var_leave_list = 0 (empty for new loop)
+
+    # Compile offset placeholder at HERE (will be patched by LOOP/+LOOP)
+    # Chain this placeholder into the leave-list so LOOP patches it
+    addi r6, r2, 0             # r6 = address of placeholder cell
+    stw r6, r0, 0              # [placeholder] = 0 (no prior LEAVE)
+    stw r4, r6, 0              # var_leave_list = placeholder addr
+    addi r2, r2, 4
+
+    # Update HERE
+    stw r1, r2, 0
+
+    # Push old leave-list head and HERE (loop-back target) on data stack
+    addi r28, r28, -4
+    stw r28, r5, 0             # push old leave-list head
+    addi r28, r28, -4
+    stw r28, r2, 0             # push HERE (loop-back target for LOOP)
+qdo_compile_done:
+    jal r0, next
+
+# Word: PARSE ( char -- addr u ) Parse from >IN until delimiter
+# Does NOT skip leading delimiters. Updates >IN past delimiter.
+.text
+    .align 2
+head_parse:
+    .word head_qdo_compile
+    .byte 5
+    .ascii "PARSE"
+    .align 2
+xt_parse:
+    .word parse_impl_word
+parse_impl_word:
+    ldw r8, r28, 0             # r8 = delimiter char
+    addi r28, r28, 4           # pop delimiter
+
+    # Load TIB base
+    lui r1, %hi(tib)
+    addi r1, r1, %lo(tib)
+
+    # Load #TIB
+    lui r2, %hi(var_source_len)
+    addi r2, r2, %lo(var_source_len)
+    ldw r2, r2, 0              # r2 = #TIB
+
+    # Load >IN
+    lui r3, %hi(var_to_in)
+    addi r3, r3, %lo(var_to_in)
+    ldw r4, r3, 0              # r4 = >IN
+
+    # r9 = start address (TIB + >IN)
+    add r9, r1, r4
+    # r10 = count
+    add r10, r0, r0            # count = 0
+
+parse_impl_scan:
+    # Check if >IN + count >= #TIB
+    add r5, r4, r10
+    bge r5, r2, parse_impl_end_nodel
+    # Load char at TIB[>IN + count]
+    add r6, r1, r5
+    ldbu r7, r6, 0
+    beq r7, r8, parse_impl_end_found
+    addi r10, r10, 1
+    jal r0, parse_impl_scan
+
+parse_impl_end_found:
+    # Delimiter found: >IN = start_offset + count + 1 (skip delimiter)
+    add r5, r4, r10
+    addi r5, r5, 1
+    stw r3, r5, 0              # update >IN
+    jal r0, parse_impl_push
+
+parse_impl_end_nodel:
+    # End of input, no delimiter: >IN = start_offset + count
+    add r5, r4, r10
+    stw r3, r5, 0              # update >IN
+
+parse_impl_push:
+    # Push (addr count) on data stack
+    addi r28, r28, -4
+    stw r28, r9, 0             # push start address
+    addi r28, r28, -4
+    stw r28, r10, 0            # push count
+    jal r0, next
+
+# Word: 2/ ( n -- n/2 ) Arithmetic right shift by 1
+.text
+    .align 2
+head_two_div:
+    .word head_parse
+    .byte 2
+    .ascii "2/"
+    .align 2
+xt_two_div:
+    .word two_div_word
+two_div_word:
+    ldw r1, r28, 0
+    srai r1, r1, 1             # arithmetic right shift preserves sign
+    stw r28, r1, 0
+    jal r0, next
+
 # ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
@@ -3632,7 +3795,7 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_abort           # Point to last defined word
+    .word head_two_div         # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_len: .word 0

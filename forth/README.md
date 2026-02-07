@@ -15,16 +15,16 @@ Stage 4: Bootstrap Prelude. Self-extending Forth with ~50 standard vocabulary wo
 ## Primitives (Assembly)
 - **Control**: `EXIT`, `EXECUTE`, `BYE`, `BRANCH`, `0BRANCH`
 - **Stack**: `DUP`, `DROP`, `SWAP`, `OVER`, `>R`, `R>`, `R@`, `2>R`, `2R>`, `2R@`, `DEPTH`, `DSP@`, `DSTKTOP`, `PICK`
-- **Arithmetic**: `+`, `-`, `*`, `/`, `MOD`, `/MOD`, `NEGATE`, `1+`, `1-`, `S>D`, `D+`, `D-`, `UM/MOD`, `UM*`, `M*`
+- **Arithmetic**: `+`, `-`, `*`, `/`, `MOD`, `/MOD`, `NEGATE`, `1+`, `1-`, `2/`, `S>D`, `D+`, `D-`, `UM/MOD`, `UM*`, `M*`
 - **Logic**: `AND`, `OR`, `XOR`, `INVERT`, `LSHIFT`, `RSHIFT`
 - **Comparison**: `=`, `<>`, `<`, `>`, `0=`, `0<`, `U<`
 - **Memory**: `!`, `@`, `C!`, `C@`, `C,`, `2!`, `2@`
 - **I/O**: `EMIT`, `KEY`, `TYPE`, `.`, `.S`, `CR`, `ACCEPT`
 - **Compiler**: `:`, `;`, `IMMEDIATE`, `,`, `ALLOT`, `[`, `]`, `CREATE`, `DOES>`, `S"`, `."`, `'`, `[']`, `LIT`, `CHAR`, `[CHAR]`, `RECURSE`, `POSTPONE`
 - **Control flow**: `IF`, `ELSE`, `THEN`, `BEGIN`, `AGAIN`, `UNTIL`, `WHILE`, `REPEAT`
-- **Loops**: `DO`, `LOOP`, `+LOOP`, `I`, `J`, `UNLOOP`, `LEAVE`
+- **Loops**: `DO`, `?DO`, `LOOP`, `+LOOP`, `I`, `J`, `UNLOOP`, `LEAVE`
 - **Variables**: `STATE`, `BASE`, `BASE!`, `LATEST`, `HERE`, `TIB`, `TOIN`, `NTIB`
-- **Parser**: `WORD`, `FIND`, `NUMBER`, `PARSE-WORD`, `INTERPRET`
+- **Parser**: `WORD`, `FIND`, `NUMBER`, `PARSE-WORD`, `PARSE`, `INTERPRET`
 - **Strings**: `COUNT`
 - **Pictured Output**: `<#`, `HOLD`, `#>`
 - **System**: `ABORT`, `EVALUATE`
@@ -33,21 +33,24 @@ Stage 4: Bootstrap Prelude. Self-extending Forth with ~50 standard vocabulary wo
 ## Prelude Words (Forth)
 Loaded automatically from `prelude.fth` at startup:
 - **Stack**: `ROT`, `-ROT`, `NIP`, `TUCK`, `2DUP`, `2DROP`, `2SWAP`, `2OVER`, `?DUP`
-- **Arithmetic**: `ABS`, `MIN`, `MAX`
+- **Arithmetic**: `ABS`, `MIN`, `MAX`, `2*`
 - **Constants**: `TRUE`, `FALSE`, `BL`
 - **Cell ops**: `CELLS`, `CELL+`, `CHARS`, `CHAR+`
 - **Output**: `SPACE`, `SPACES`
 - **Base**: `DECIMAL`, `HEX`
-- **Memory**: `+!`, `FILL`, `ERASE`, `MOVE`
-- **Comparison**: `<=`, `>=`, `0>`, `0<>`
+- **Memory**: `+!`, `FILL`, `ERASE`, `MOVE`, `BLANK`
+- **Comparison**: `<=`, `>=`, `0>`, `0<>`, `U>`
 - **Compiler**: `LITERAL`
-- **Defining**: `VARIABLE`, `CONSTANT`, `2VARIABLE`, `2CONSTANT`, `VALUE`, `TO`, `DEFER`, `IS`, `ACTION-OF`
+- **Defining**: `VARIABLE`, `CONSTANT`, `2VARIABLE`, `2CONSTANT`, `VALUE`, `TO`, `DEFER`, `IS`, `ACTION-OF`, `MARKER`, `BUFFER:`
 - **Control flow**: `CASE`, `OF`, `ENDOF`, `ENDCASE`
-- **Pictured Output**: `MU/MOD`, `#`, `#S`, `SIGN`, `U.`, `.R`, `U.R`
+- **Pictured Output**: `MU/MOD`, `#`, `#S`, `SIGN`, `U.`, `.R`, `U.R`, `HOLDS`
 - **Core Arithmetic**: `SM/REM`, `FM/MOD`, `*/MOD`, `*/`
 - **Double-Number**: `D>S`, `DNEGATE`, `DABS`, `D0=`, `D0<`, `D=`, `D<`, `M+`, `D.`, `D.R`
 - **Strings**: `CMOVE`, `CMOVE>`, `/STRING`, `COMPARE`, `SEARCH`, `PLACE`, `-TRAILING`
-- **System**: `>BODY`, `SOURCE`, `WITHIN`, `ALIGNED`, `ALIGN`, `ABORT"`, `>IN`, `PAD`
+- **System**: `>BODY`, `SOURCE`, `WITHIN`, `ALIGNED`, `ALIGN`, `ABORT"`, `>IN`, `PAD`, `REFILL`, `NOOP`
+- **Stack**: `ROLL`
+- **I/O**: `.(` (immediate display)
+- **Compiler**: `[DEFINED]`, `[UNDEFINED]`
 - **Comments**: `\` (backslash line comment), `(` (paren comment)
 
 ## Dictionary Structure
