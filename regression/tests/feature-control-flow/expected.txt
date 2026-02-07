@@ -1,0 +1,13 @@
+PASS: nested break
+PASS: nested continue
+PASS: break+continue
+PASS: goto forward
+PASS: goto backward
+PASS: deep if/else
+PASS: multi-exit loop
+PASS: switch in loop
+PASS: short-circuit &&
+PASS: short-circuit ||
+PASS: short-circuit combo
+PASS: while break
+PASS: do-while

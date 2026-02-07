@@ -1,0 +1,23 @@
+PASS: strtol decimal
+PASS: strtol negative
+PASS: strtol hex 0x
+PASS: strtol hex
+PASS: strtol octal
+PASS: strtol auto dec
+PASS: strtol auto hex
+PASS: strtol auto oct
+PASS: strtol endptr val
+PASS: strtol endptr pos
+PASS: strtol whitespace
+PASS: strtol empty
+PASS: strtol invalid
+PASS: strtoul
+PASS: strtoul hex
+PASS: atoi basic
+PASS: atoi negative
+PASS: atoi whitespace
+PASS: atol
+PASS: strtoll large
+PASS: strtoll neg large
+PASS: strtoull large
+PASS: atoll

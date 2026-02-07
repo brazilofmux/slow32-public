@@ -1,0 +1,12 @@
+PASS: struct fields
+PASS: nested struct
+PASS: struct via pointer
+PASS: negative index -1
+PASS: negative index -5
+PASS: positive index +4
+PASS: stack array
+PASS: many locals
+PASS: union overlay
+PASS: array of structs
+PASS: backward walk
+PASS: char+int struct

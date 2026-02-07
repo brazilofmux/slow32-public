@@ -38,8 +38,8 @@ None at this time.
 ## Testing Recommendations
 
 1. Test multi-file linking with global symbols
-2. Test negative offsets in data access
-3. Test loops with complex control flow
-4. Test all intrinsics with edge cases (0 size, odd sizes, etc.)
-5. Add string function regression tests (strlen, strcpy, memcpy, etc.)
-6. Add stdlib regression tests (qsort, strtol, realloc)
+2. Test negative offsets in data access ✅ (`feature-negative-offset`)
+3. Test loops with complex control flow ✅ (`feature-control-flow`)
+4. Test all intrinsics with edge cases (0 size, odd sizes, etc.) ✅ (`stdlib-string-edge`)
+5. Add string function regression tests (strlen, strcpy, memcpy, etc.) ✅ (`stdlib-string-funcs`)
+6. Add stdlib regression tests (qsort, strtol, realloc) ✅ (`stdlib-qsort`, `stdlib-strtol`)

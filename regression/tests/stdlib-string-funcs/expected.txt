@@ -1,0 +1,49 @@
+PASS: strlen empty
+PASS: strlen hello
+PASS: strlen long
+PASS: strnlen within
+PASS: strnlen capped
+PASS: strnlen empty
+PASS: strcpy
+PASS: strncpy content
+PASS: strncpy null-pad
+PASS: strncpy trunc
+PASS: strcmp equal
+PASS: strcmp less
+PASS: strcmp greater
+PASS: strcmp prefix
+PASS: strncmp equal n
+PASS: strncmp diff
+PASS: strncmp zero
+PASS: strcat
+PASS: strncat
+PASS: strchr found
+PASS: strchr not found
+PASS: strchr null-term
+PASS: strrchr found
+PASS: strrchr not found
+PASS: strstr found
+PASS: strstr not found
+PASS: strstr empty needle
+PASS: strpbrk found
+PASS: strpbrk not found
+PASS: strspn
+PASS: strspn none
+PASS: strcspn
+PASS: strcspn all
+PASS: strtok
+PASS: strtok_r
+PASS: strdup
+PASS: strcasecmp equal
+PASS: strcasecmp diff
+PASS: strncasecmp
+PASS: memcpy
+PASS: memmove
+PASS: memset
+PASS: memcmp equal
+PASS: memcmp less
+PASS: memcmp greater
+PASS: memchr found
+PASS: memchr not found
+PASS: memrchr found
+PASS: memrchr not found

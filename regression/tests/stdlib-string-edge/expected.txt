@@ -1,0 +1,19 @@
+PASS: memcpy size 0
+PASS: memcpy size 1
+PASS: memcpy size 3
+PASS: memcpy size 7
+PASS: memcpy size 15
+PASS: memcpy size 31
+PASS: memset size 0
+PASS: memset size 1
+PASS: memset size 3
+PASS: memset size 7
+PASS: memset size 15
+PASS: memset size 31
+PASS: memmove overlap fwd
+PASS: memmove overlap bwd
+PASS: memmove size 0
+PASS: memcmp size 0
+PASS: strlen empty
+PASS: strcpy empty
+PASS: strlen after strcpy empty

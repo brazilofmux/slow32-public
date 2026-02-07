@@ -1,0 +1,10 @@
+PASS: qsort int asc
+PASS: qsort int desc
+PASS: qsort strings
+PASS: qsort sorted
+PASS: qsort single
+PASS: qsort zero
+PASS: bsearch found
+PASS: bsearch first
+PASS: bsearch last
+PASS: bsearch not found
