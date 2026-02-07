@@ -75,6 +75,7 @@ static instruction_t decode_instruction(uint32_t raw) {
     switch (inst.opcode) {
         case OP_ADD ... OP_SNE:
         case OP_SGT ... OP_SGEU:
+        case OP_MULHU:
         case OP_FADD_S ... OP_FCVT_D_LU:
             inst.format = FMT_R;
             inst.rd = (raw >> 7) & 0x1F;
@@ -448,6 +449,11 @@ void cpu_step(cpu_state_t *cpu) {
             break;
         case OP_MULH: {
             int64_t result = (int64_t)(int32_t)cpu->regs[inst.rs1] * (int64_t)(int32_t)cpu->regs[inst.rs2];
+            cpu->regs[inst.rd] = (uint32_t)(result >> 32);
+            break;
+        }
+        case OP_MULHU: {
+            uint64_t result = (uint64_t)cpu->regs[inst.rs1] * (uint64_t)cpu->regs[inst.rs2];
             cpu->regs[inst.rd] = (uint32_t)(result >> 32);
             break;
         }

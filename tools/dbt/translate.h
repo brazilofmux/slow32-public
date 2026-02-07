@@ -119,6 +119,7 @@ typedef struct {
         uint8_t rs1, rs2;     // Operands of the comparison
         bool rs2_is_imm;      // True if rs2 is an immediate (for SLTI, etc.)
         int32_t imm;          // Immediate value if rs2_is_imm is true
+        int inst_idx;         // Instruction index (for dead_temp_skip lookup)
     } pending_cond;
 
     // Out-of-line side exit stubs (deferred to end of block)
@@ -187,6 +188,7 @@ translated_block_t *translate_block_cached(translate_ctx_t *ctx, uint32_t guest_
 #define OP_SGE    0x1C
 #define OP_SGEU   0x1D
 #define OP_XORI   0x1E
+#define OP_MULHU  0x1F
 #define OP_LUI    0x20
 #define OP_LDB    0x30
 #define OP_LDH    0x31

@@ -86,6 +86,7 @@ enum {
     OP_SGE    = 0x1C,
     OP_SGEU   = 0x1D,
     OP_XORI   = 0x1E,
+    OP_MULHU  = 0x1F,
 
     OP_LUI    = 0x20,
 
@@ -721,6 +722,13 @@ static bool translate_one(DisasContext *ctx, uint32_t raw)
         TCGv_i32 lo = tcg_temp_new_i32();
         TCGv_i32 hi = tcg_temp_new_i32();
         tcg_gen_muls2_i32(lo, hi, load_gpr(rs1), load_gpr(rs2));
+        store_gpr(rd, hi);
+        break;
+    }
+    case OP_MULHU: {
+        TCGv_i32 lo = tcg_temp_new_i32();
+        TCGv_i32 hi = tcg_temp_new_i32();
+        tcg_gen_mulu2_i32(lo, hi, load_gpr(rs1), load_gpr(rs2));
         store_gpr(rd, hi);
         break;
     }

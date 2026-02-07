@@ -196,7 +196,7 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   setOperationAction(ISD::UMUL_LOHI, MVT::i32, Custom);
   setOperationAction(ISD::SMUL_LOHI, MVT::i32, Custom);
   setOperationAction(ISD::MULHS, MVT::i32, Legal);
-  setOperationAction(ISD::MULHU, MVT::i32, Custom);
+  setOperationAction(ISD::MULHU, MVT::i32, Legal);
   
   // i32 unsigned division/remainder - SLOW32 only has signed DIV/REM instructions
   // Use custom lowering to generate libcalls for unsigned operations
@@ -440,7 +440,6 @@ SDValue SLOW32TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) cons
     case ISD::USUBO_CARRY:    return LowerUSUBO_CARRY(Op, DAG);
     case ISD::UMUL_LOHI:      return LowerUMUL_LOHI(Op, DAG);
     case ISD::SMUL_LOHI:      return LowerSMUL_LOHI(Op, DAG);
-    case ISD::MULHU:          return LowerMULHU(Op, DAG);
     case ISD::UDIV:           return LowerUDIV(Op, DAG);
     case ISD::UREM:           return LowerUREM(Op, DAG);
     case ISD::SINT_TO_FP:
@@ -1986,8 +1985,6 @@ SDValue SLOW32TargetLowering::LowerUSUBO_CARRY(SDValue Op, SelectionDAG &DAG) co
 }
 
 // Lower unsigned 32x32->64 multiply (returns both low and high parts)
-// Since SLOW32 doesn't have a multiply-high instruction, we decompose
-// into 16-bit multiplies following ChatGPT 5's approach B
 SDValue SLOW32TargetLowering::LowerUMUL_LOHI(SDValue Op,
                                              SelectionDAG &DAG) const {
   SDLoc DL(Op);
@@ -1996,7 +1993,7 @@ SDValue SLOW32TargetLowering::LowerUMUL_LOHI(SDValue Op,
   EVT VT = MVT::i32;
 
   SDValue Lo = DAG.getNode(ISD::MUL, DL, VT, A, B);
-  SDValue Hi = LowerMULHU(Op, DAG);
+  SDValue Hi = DAG.getNode(ISD::MULHU, DL, VT, A, B);
 
   return DAG.getMergeValues({Lo, Hi}, DL);
 }
@@ -2012,32 +2009,6 @@ SDValue SLOW32TargetLowering::LowerSMUL_LOHI(SDValue Op, SelectionDAG &DAG) cons
   SDValue Hi = DAG.getNode(ISD::MULHS, DL, VT, A, B);
   
   return DAG.getMergeValues({Lo, Hi}, DL);
-}
-
-// Lower unsigned multiply-high (just the high part)
-SDValue SLOW32TargetLowering::LowerMULHU(SDValue Op, SelectionDAG &DAG) const {
-  SDLoc DL(Op);
-  SDValue A = Op.getOperand(0);
-  SDValue B = Op.getOperand(1);
-  EVT VT = MVT::i32;
-
-  // MULHU(A, B) = MULHS(A, B) + (A < 0 ? B : 0) + (B < 0 ? A : 0)
-  SDValue MulHS = DAG.getNode(ISD::MULHS, DL, VT, A, B);
-
-  SDValue Shift31 = DAG.getConstant(31, DL, VT);
-
-  // Correction for A < 0: (A >> 31) & B
-  SDValue MaskA = DAG.getNode(ISD::SRA, DL, VT, A, Shift31);
-  SDValue CorrA = DAG.getNode(ISD::AND, DL, VT, MaskA, B);
-
-  // Correction for B < 0: (B >> 31) & A
-  SDValue MaskB = DAG.getNode(ISD::SRA, DL, VT, B, Shift31);
-  SDValue CorrB = DAG.getNode(ISD::AND, DL, VT, MaskB, A);
-
-  SDValue Hi = DAG.getNode(ISD::ADD, DL, VT, MulHS, CorrA);
-  Hi = DAG.getNode(ISD::ADD, DL, VT, Hi, CorrB);
-
-  return Hi;
 }
 
 SDValue SLOW32TargetLowering::LowerUDIV(SDValue Op, SelectionDAG &DAG) const {

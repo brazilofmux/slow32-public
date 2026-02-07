@@ -301,6 +301,13 @@ static void op_mulh(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_
     cpu->cycle_count += 31;
 }
 
+static void op_mulhu(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
+    UNUSED(next_pc);
+    uint64_t result = (uint64_t)cpu->regs[inst->rs1] * (uint64_t)cpu->regs[inst->rs2];
+    cpu->regs[inst->rd] = result >> 32;
+    cpu->cycle_count += 31;
+}
+
 static void op_div(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *next_pc) {
     UNUSED(next_pc);
     uint32_t divisor = cpu->regs[inst->rs2];
@@ -959,6 +966,7 @@ static handler_fn get_handler(uint8_t opcode) {
         case OP_SLTU: return op_sltu;
         case OP_MUL: return op_mul;
         case OP_MULH: return op_mulh;
+        case OP_MULHU: return op_mulhu;
         case OP_DIV: return op_div;
         case OP_REM: return op_rem;
         case OP_SEQ: return op_seq;
@@ -1068,6 +1076,7 @@ static void predecode_program(fast_cpu_state_t *cpu, uint32_t code_size) {
         switch (opcode) {
             case OP_ADD ... OP_SNE:
             case OP_SGT ... OP_SGEU:
+            case OP_MULHU:
             case OP_FADD_S ... OP_FCVT_D_LU:
                 // R-format
                 di->rd = (raw >> 7) & 0x1F;

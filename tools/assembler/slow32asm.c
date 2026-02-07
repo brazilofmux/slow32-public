@@ -333,6 +333,7 @@ static instruction_def_t instruction_table[] = {
     {"sltu",  0x09, FMT_R},
     {"mul",   0x0A, FMT_R},
     {"mulh",  0x0B, FMT_R},
+    {"mulhu", 0x1F, FMT_R},
     {"div",   0x0C, FMT_R},
     {"rem",   0x0D, FMT_R},
     {"seq",   0x0E, FMT_R},

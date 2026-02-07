@@ -54,6 +54,7 @@ Used for JAL. Immediates are encoded with a 21-bit signed offset (multiples of 2
 | SUB rd, rs1, rs2 | 0x01 | R | rd = rs1 - rs2 | ✅ | |
 | MUL rd, rs1, rs2 | 0x0A | R | rd = rs1 * rs2 | ✅ | 32 cycles |
 | MULH rd, rs1, rs2| 0x0B | R | rd = (rs1 * rs2) >> 32 | ✅ | Signed high part |
+| MULHU rd, rs1, rs2| 0x1F | R | rd = (rs1 * rs2) >> 32 | ✅ | Unsigned high part |
 | DIV rd, rs1, rs2 | 0x0C | R | rd = rs1 / rs2 | ✅ | 64 cycles, signed |
 | REM rd, rs1, rs2 | 0x0D | R | rd = rs1 % rs2 | ✅ | 64 cycles, signed |
 | ADDI rd, rs1, imm| 0x10 | I | rd = rs1 + imm | ✅ | 12-bit signed imm |

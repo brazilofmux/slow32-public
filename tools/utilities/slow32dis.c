@@ -54,7 +54,8 @@ static instruction_info_t instructions[] = {
     {"sge",   0x1C, FMT_R},
     {"sgeu",  0x1D, FMT_R},
     {"xori",  0x1E, FMT_I},
-    
+    {"mulhu", 0x1F, FMT_R},
+
     {"lui",   0x20, FMT_U},
     
     {"ldb",   0x30, FMT_I},

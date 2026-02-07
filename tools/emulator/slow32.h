@@ -50,7 +50,8 @@ typedef enum {
     OP_SGE    = 0x1C,  // Set greater or equal (signed)
     OP_SGEU   = 0x1D,  // Set greater or equal (unsigned)
     OP_XORI   = 0x1E,  // XOR immediate
-    
+    OP_MULHU  = 0x1F,  // Unsigned multiply high (rd = upper 32 bits of rs1*rs2 unsigned)
+
     OP_LUI    = 0x20,
     
     OP_LDB    = 0x30,

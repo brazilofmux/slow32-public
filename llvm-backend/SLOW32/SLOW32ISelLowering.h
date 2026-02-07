@@ -65,7 +65,6 @@ public:
   SDValue LowerUSUBO_CARRY (SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerUMUL_LOHI   (SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerSMUL_LOHI   (SDValue Op, SelectionDAG &DAG) const;
-  SDValue LowerMULHU       (SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerUDIV        (SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerUREM        (SDValue Op, SelectionDAG &DAG) const;
 

@@ -31,7 +31,7 @@ decoded_inst_t decode_instruction(uint32_t raw) {
         case OP_SLT: case OP_SLTU: case OP_MUL: case OP_MULH:
         case OP_DIV: case OP_REM: case OP_SEQ: case OP_SNE:
         case OP_SGT: case OP_SGTU: case OP_SLE: case OP_SLEU:
-        case OP_SGE: case OP_SGEU:
+        case OP_SGE: case OP_SGEU: case OP_MULHU:
         // Floating-point R-type
         case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
         case OP_FSQRT_S: case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
@@ -1428,6 +1428,7 @@ static void translate_cmp_set(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uin
         ctx->pending_cond.rs1 = rs1;
         ctx->pending_cond.rs2 = rs2;
         ctx->pending_cond.rs2_is_imm = false;
+        ctx->pending_cond.inst_idx = ctx->current_inst_idx;
         ctx->pending_cond.valid = true;
         // Invalidate constant for rd — the comparison writes rd even though
         // the store is deferred for fusion
@@ -1502,6 +1503,7 @@ void translate_slti(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
         ctx->pending_cond.rs1 = rs1;
         ctx->pending_cond.rs2_is_imm = true;
         ctx->pending_cond.imm = imm;
+        ctx->pending_cond.inst_idx = ctx->current_inst_idx;
         ctx->pending_cond.valid = true;
         ctx->reg_constants[rd].valid = false;
         return;
@@ -1539,6 +1541,7 @@ void translate_sltiu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm)
         ctx->pending_cond.rs1 = rs1;
         ctx->pending_cond.rs2_is_imm = true;
         ctx->pending_cond.imm = imm;
+        ctx->pending_cond.inst_idx = ctx->current_inst_idx;
         ctx->pending_cond.valid = true;
         ctx->reg_constants[rd].valid = false;
         return;
@@ -1610,6 +1613,17 @@ void translate_mulh(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) 
     emit_load_guest_reg(ctx, RAX, rs1);
     emit_load_guest_reg(ctx, RCX, rs2);
     emit_imul_one_r32(e, RCX);  // edx:eax = eax * ecx (signed)
+    emit_mov_r32_r32(e, RAX, RDX);  // High part in edx
+    emit_store_guest_reg(ctx, rd, RAX);
+}
+
+void translate_mulhu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
+    if (rd == 0) return;
+    emit_ctx_t *e = &ctx->emit;
+
+    emit_load_guest_reg(ctx, RAX, rs1);
+    emit_load_guest_reg(ctx, RCX, rs2);
+    emit_mul_r32(e, RCX);  // edx:eax = eax * ecx (unsigned)
     emit_mov_r32_r32(e, RAX, RDX);  // High part in edx
     emit_store_guest_reg(ctx, rd, RAX);
 }
@@ -2515,6 +2529,7 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
             bool c_rs2_is_imm = ctx->pending_cond.rs2_is_imm;
             int32_t c_imm = ctx->pending_cond.imm;
             uint8_t c_rd = ctx->pending_cond.rd;
+            int c_inst_idx = ctx->pending_cond.inst_idx;
 
             // Discard the pending condition BEFORE emitting anything to avoid
             // re-entrant flushes in emit_load_guest_reg clobbering registers.
@@ -2541,10 +2556,14 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
                 emit_cmp_r32_r32(e, cmp_a, cmp_b);
             }
 
-            // 2. Materialize the comparison result into rd.
+            // 2. Materialize the comparison result into rd — but skip if rd
+            //    is a dead temporary (only consumed by this branch).
             //    SETCC, MOVZX, and MOV/store do NOT modify x86 flags,
             //    so the fused Jcc below still reads the correct CMP flags.
-            {
+            bool rd_is_dead = (c_inst_idx >= 0 &&
+                               c_inst_idx < MAX_BLOCK_INSTS &&
+                               ctx->dead_temp_skip[c_inst_idx]);
+            if (!rd_is_dead) {
                 void (*emit_setcc_fn)(emit_ctx_t *, x64_reg_t) = NULL;
                 switch (cmp_op) {
                     case OP_SLT:  case OP_SLTI:  emit_setcc_fn = emit_setl;  break;
@@ -3977,6 +3996,7 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
             // Multiply/Divide
             case OP_MUL:  translate_mul(ctx, inst.rd, inst.rs1, inst.rs2); break;
             case OP_MULH: translate_mulh(ctx, inst.rd, inst.rs1, inst.rs2); break;
+            case OP_MULHU: translate_mulhu(ctx, inst.rd, inst.rs1, inst.rs2); break;
             case OP_DIV:  translate_div(ctx, inst.rd, inst.rs1, inst.rs2); break;
             case OP_REM:  translate_rem(ctx, inst.rd, inst.rs1, inst.rs2); break;
 
@@ -5103,6 +5123,7 @@ retry_translate:
             // Multiply/Divide
             case OP_MUL:  translate_mul(ctx, inst.rd, inst.rs1, inst.rs2); break;
             case OP_MULH: translate_mulh(ctx, inst.rd, inst.rs1, inst.rs2); break;
+            case OP_MULHU: translate_mulhu(ctx, inst.rd, inst.rs1, inst.rs2); break;
             case OP_DIV:  translate_div(ctx, inst.rd, inst.rs1, inst.rs2); break;
             case OP_REM:  translate_rem(ctx, inst.rd, inst.rs1, inst.rs2); break;
 
