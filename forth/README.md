@@ -27,6 +27,7 @@ Stage 4: Bootstrap Prelude. Self-extending Forth with ~50 standard vocabulary wo
 - **Parser**: `WORD`, `FIND`, `NUMBER`, `PARSE-WORD`, `PARSE`, `INTERPRET`
 - **Strings**: `COUNT`
 - **Pictured Output**: `<#`, `HOLD`, `#>`
+- **Exception**: `CATCH`, `THROW`
 - **System**: `ABORT`, `EVALUATE`
 - **Other**: `HELLO`, `PROMPTS-ON`
 

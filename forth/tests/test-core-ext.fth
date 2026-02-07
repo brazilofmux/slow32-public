@@ -1,4 +1,4 @@
-\ Test Core Extension words: COMPILE, :NONAME C" S\"
+\ Test Core Extension words: COMPILE, :NONAME C" S\" CATCH THROW
 
 \ --- COMPILE, ---
 \ Use COMPILE, to manually compile a word into a definition
@@ -59,5 +59,31 @@ TS5
 \ Hex escape
 : TS6  S\" \x41\x42\x43" TYPE CR ;
 TS6
+
+\ --- CATCH/THROW ---
+\ CATCH with no exception
+: OK-WORD  42 . ;
+' OK-WORD CATCH . CR
+
+\ CATCH with THROW
+: BAD-WORD  99 THROW ;
+' BAD-WORD CATCH . CR
+
+\ THROW 0 does nothing
+: ZERO-THROW  0 THROW 55 . ;
+' ZERO-THROW CATCH . CR
+
+\ Stack restored to depth at CATCH entry
+10 20 30 ' BAD-WORD CATCH . . . . CR
+
+\ Nested CATCH — inner catches
+: INNER  -1 THROW ;
+: MID  ['] INNER CATCH ;
+' MID CATCH . CR
+
+\ Nested CATCH — inner doesn't catch, outer does
+: PASS-THRU  77 THROW ;
+: NO-CATCH  PASS-THRU ;
+' NO-CATCH CATCH . CR
 
 BYE

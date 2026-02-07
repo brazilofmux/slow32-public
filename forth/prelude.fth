@@ -286,9 +286,6 @@
 
 : BLANK  ( addr u -- )  BL FILL ;
 
-: THROW ( ior -- )
-  ?DUP IF ." Error ior=" . CR ABORT THEN ;
-
 \ --- Missing Core / Utility Words ---
 
 : WORDS

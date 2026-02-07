@@ -3619,6 +3619,9 @@ abort_word:
     lui r1, %hi(var_state)
     addi r1, r1, %lo(var_state)
     stw r1, r0, 0              # STATE = 0
+    lui r1, %hi(var_catch_frame)
+    addi r1, r1, %lo(var_catch_frame)
+    stw r1, r0, 0              # var_catch_frame = 0
     lui r26, %hi(cold_loop)
     addi r26, r26, %lo(cold_loop)
     jal r0, next
@@ -4607,6 +4610,132 @@ se_end_parse:
 se_done:
     jal r0, next
 
+# Word: CATCH ( i*x xt -- j*x 0 | i*x n )
+# Save exception frame, EXECUTE xt. If xt returns normally, push 0.
+# If THROW fires during xt, restore stacks and push throw code n.
+.text
+    .align 2
+head_catch:
+    .word head_squote_escape
+    .byte 5
+    .ascii "CATCH"
+    .align 2
+xt_catch:
+    .word catch_word
+catch_word:
+    # Pop xt from data stack
+    ldw r25, r28, 0            # r25 = xt (W register)
+    addi r28, r28, 4           # DSP++
+
+    # Push exception frame onto return stack:
+    #   [RSP+8] = old var_catch_frame
+    #   [RSP+4] = saved DSP
+    #   [RSP+0] = saved IP (caller's continuation)
+    lui r1, %hi(var_catch_frame)
+    addi r1, r1, %lo(var_catch_frame)
+    ldw r2, r1, 0              # r2 = old catch frame
+
+    addi r27, r27, -4
+    stw r27, r2, 0             # push old_catch_frame
+    addi r27, r27, -4
+    stw r27, r28, 0            # push DSP
+    addi r27, r27, -4
+    stw r27, r26, 0            # push IP (caller continuation)
+
+    # Set var_catch_frame = RSP (points to saved-IP cell)
+    stw r1, r27, 0             # var_catch_frame = RSP
+
+    # Set IP to catch_resume_thread so that when DOCOL saves IP,
+    # EXIT will return here to clean up the exception frame.
+    lui r26, %hi(catch_resume_thread)
+    addi r26, r26, %lo(catch_resume_thread)
+
+    # EXECUTE the xt: jump into its code pointer
+    ldw r24, r25, 0            # code pointer = *xt
+    jalr r0, r24, 0            # jump to word's code
+
+.text
+catch_resume_thread:
+    .word xt_catch_resume
+
+    .align 2
+xt_catch_resume:
+    .word catch_resume_word
+catch_resume_word:
+    # xt returned normally — pop exception frame
+    ldw r2, r27, 0             # pop saved IP
+    addi r27, r27, 4
+    ldw r3, r27, 0             # pop saved DSP (discard — stack is fine)
+    addi r27, r27, 4
+    ldw r4, r27, 0             # pop old_catch_frame
+    addi r27, r27, 4
+
+    # Restore var_catch_frame
+    lui r1, %hi(var_catch_frame)
+    addi r1, r1, %lo(var_catch_frame)
+    stw r1, r4, 0              # var_catch_frame = old value
+
+    # Restore IP to caller's continuation
+    add r26, r2, r0
+
+    # Push 0 (no exception)
+    addi r28, r28, -4
+    stw r28, r0, 0             # push 0
+
+    jal r0, next
+
+# Word: THROW ( k*x n -- k*x | i*x n )
+# If n=0, drop and continue. If n!=0 and a CATCH frame exists, unwind.
+# If no frame, ABORT.
+.text
+    .align 2
+head_throw:
+    .word head_catch
+    .byte 5
+    .ascii "THROW"
+    .align 2
+xt_throw:
+    .word throw_word
+throw_word:
+    ldw r1, r28, 0             # r1 = n (throw code)
+    addi r28, r28, 4           # pop n
+
+    # If n=0, just continue
+    beq r1, r0, throw_zero
+
+    # Check for catch frame
+    lui r2, %hi(var_catch_frame)
+    addi r2, r2, %lo(var_catch_frame)
+    ldw r3, r2, 0              # r3 = var_catch_frame
+    beq r3, r0, throw_no_catch
+
+    # Unwind to catch frame
+    add r27, r3, r0            # RSP = var_catch_frame
+
+    # Pop exception frame
+    ldw r26, r27, 0            # IP = saved IP
+    addi r27, r27, 4
+    ldw r28, r27, 0            # DSP = saved DSP
+    addi r27, r27, 4
+    ldw r4, r27, 0             # old_catch_frame
+    addi r27, r27, 4
+
+    # Restore var_catch_frame
+    stw r2, r4, 0              # var_catch_frame = old value
+
+    # Push throw code onto restored data stack
+    addi r28, r28, -4
+    stw r28, r1, 0             # push n
+
+    jal r0, next
+
+throw_zero:
+    jal r0, next
+
+throw_no_catch:
+    # No catch frame — ABORT
+    jal r0, abort_word
+
 # ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
@@ -4616,13 +4745,14 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_squote_escape       # Point to last defined word
+    .word head_throw               # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_len: .word 0
 var_prompt_enabled: .word 0        # 0 = suppress prompts (prelude), 1 = show prompts
 var_leave_list:     .word 0        # compile-time leave-list head for DO...LOOP
 var_hld:            .word 0            # Pictured numeric output pointer into PAD
+var_catch_frame:    .word 0            # Exception frame pointer (0 = none)
 
     .align 2
 interp_exec_thread:
