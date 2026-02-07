@@ -642,6 +642,16 @@ void emit_mul_r32(emit_ctx_t *ctx, x64_reg_t src) {
     emit_byte(ctx, MODRM(MOD_DIRECT, 4, src));
 }
 
+// imul r32  (F7 /5) - signed edx:eax = eax * r32
+void emit_imul_one_r32(emit_ctx_t *ctx, x64_reg_t src) {
+    CHECK_RAX_WRITE(ctx, RAX);
+    uint8_t rex = 0;
+    if (src >= R8) rex |= REX_B;
+    emit_rex_if_needed(ctx, rex);
+    emit_byte(ctx, 0xF7);
+    emit_byte(ctx, MODRM(MOD_DIRECT, 5, src));
+}
+
 // idiv r32  (F7 /7) - eax = edx:eax / r32, edx = remainder
 void emit_idiv_r32(emit_ctx_t *ctx, x64_reg_t src) {
     CHECK_RAX_WRITE(ctx, RAX);

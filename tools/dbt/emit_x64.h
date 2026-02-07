@@ -174,6 +174,9 @@ void emit_imul_r32_r32(emit_ctx_t *ctx, x64_reg_t dst, x64_reg_t src);
 // mul r32  (unsigned: edx:eax = eax * r32)
 void emit_mul_r32(emit_ctx_t *ctx, x64_reg_t src);
 
+// imul r32  (signed: edx:eax = eax * r32)
+void emit_imul_one_r32(emit_ctx_t *ctx, x64_reg_t src);
+
 // idiv r32  (signed: eax = edx:eax / r32, edx = remainder)
 void emit_idiv_r32(emit_ctx_t *ctx, x64_reg_t src);
 

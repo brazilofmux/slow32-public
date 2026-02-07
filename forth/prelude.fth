@@ -198,5 +198,48 @@
 : D.  ( d -- )  DUP >R DABS <# #S R> SIGN #> TYPE SPACE ;
 : D.R  ( d width -- )  >R DUP >R DABS <# #S R> SIGN #> R> OVER - SPACES TYPE ;
 
+\ --- Core Arithmetic & System ---
+
+: SM/REM  ( d n -- rem quot )
+  2DUP XOR >R              \ R: sign of quotient
+  OVER >R                   \ R: sign of remainder (= sign of dividend hi)
+  ABS >R DABS R>            \ make all positive: ( ud |n| )
+  UM/MOD                    \ ( urem uquot )
+  R> 0< IF SWAP NEGATE SWAP THEN   \ rem gets dividend sign
+  R> 0< IF NEGATE THEN ;           \ quot gets combined sign
+
+: FM/MOD  ( d n -- rem quot )
+  DUP >R                    \ save divisor
+  SM/REM
+  DUP 0< IF                 \ quotient negative?
+    OVER IF                  \ remainder nonzero?
+      1- SWAP R> + SWAP EXIT
+    THEN
+  THEN
+  R> DROP ;
+
+: */MOD  ( n1 n2 n3 -- rem quot )  >R M* R> FM/MOD ;
+: */     ( n1 n2 n3 -- n4 )  */MOD NIP ;
+
+: >BODY  ( xt -- addr )  8 + ;
+
+: SOURCE  ( -- addr u )  TIB NTIB @ ;
+
+: WITHIN  ( n lo hi -- flag )  OVER - >R - R> U< ;
+
+: ALIGNED  ( addr -- a-addr )  3 + -4 AND ;
+
+: ALIGN  ( -- )  HERE ALIGNED HERE - ALLOT ;
+
+: ABORT"  ( flag "text" -- )
+  POSTPONE IF
+  POSTPONE S" POSTPONE TYPE
+  POSTPONE ABORT
+  POSTPONE THEN ; IMMEDIATE
+
+: >IN  ( -- addr )  TOIN ;
+
+: PAD  ( -- addr )  HERE 128 + ;
+
 \ Enable interactive prompts
 PROMPTS-ON

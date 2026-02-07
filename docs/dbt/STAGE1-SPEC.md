@@ -738,7 +738,7 @@ int main(int argc, char **argv) {
 | SGT, SGE, SLE, SGTU, SGEU, SLEU | Medium | cmp + setcc + movzx |
 | SLTI, SLTIU | Medium | cmp imm + setcc + movzx |
 | MUL | Medium | x86-64 imul |
-| MULH | Medium | x86-64 mul (unsigned high) |
+| MULH | Medium | x86-64 imul (signed high) |
 | DIV, REM | Medium | x86-64 idiv, handle div-by-zero |
 | LUI | Simple | mov imm32 |
 | LDB, LDH, LDW | Medium | Memory access + sign extend |

@@ -3438,6 +3438,191 @@ um_mod_skip:
     stw r28, r2, 4        # remainder
     jal r0, next
 
+# Word: UM* ( u1 u2 -- ud ) Unsigned 32x32->64 multiply
+.text
+    .align 2
+head_um_star:
+    .word head_um_mod
+    .byte 3
+    .ascii "UM*"
+    .align 2
+xt_um_star:
+    .word um_star_word
+um_star_word:
+    ldw r2, r28, 0        # u2
+    ldw r1, r28, 4        # u1
+    mul r3, r1, r2         # lo = low 32 bits
+    mulh r4, r1, r2        # hi = signed high
+    # Convert signed high to unsigned: hi += (u1<0 ? u2 : 0) + (u2<0 ? u1 : 0)
+    slt r5, r1, r0         # 1 if u1 has bit 31 set
+    mul r6, r5, r2         # u2 if u1 "negative", else 0
+    add r4, r4, r6
+    slt r5, r2, r0         # 1 if u2 has bit 31 set
+    mul r6, r5, r1         # u1 if u2 "negative", else 0
+    add r4, r4, r6
+    stw r28, r4, 0         # hi (TOS)
+    stw r28, r3, 4         # lo (NOS)
+    jal r0, next
+
+# Word: M* ( n1 n2 -- d ) Signed 32x32->64 multiply
+.text
+    .align 2
+head_m_star:
+    .word head_um_star
+    .byte 2
+    .ascii "M*"
+    .align 2
+xt_m_star:
+    .word m_star_word
+m_star_word:
+    ldw r2, r28, 0        # n2
+    ldw r1, r28, 4        # n1
+    mul r3, r1, r2         # lo (same bits signed or unsigned)
+    mulh r4, r1, r2        # hi (signed — MULH is signed on SLOW-32)
+    stw r28, r4, 0         # hi
+    stw r28, r3, 4         # lo
+    jal r0, next
+
+# Word: EVALUATE ( addr u -- ) Interpret a string
+# Saves/restores >IN, #TIB, interp_saved_ip, interp_resume_target
+.text
+    .align 2
+head_evaluate:
+    .word head_m_star
+    .byte 8
+    .ascii "EVALUATE"
+    .align 2
+xt_evaluate:
+    .word evaluate_word
+evaluate_word:
+    # Save interpreter state on return stack
+    lui r1, %hi(interp_saved_ip)
+    addi r1, r1, %lo(interp_saved_ip)
+    ldw r2, r1, 0
+    addi r27, r27, -4
+    stw r27, r2, 0             # push interp_saved_ip
+
+    lui r1, %hi(interp_resume_target)
+    addi r1, r1, %lo(interp_resume_target)
+    ldw r2, r1, 0
+    addi r27, r27, -4
+    stw r27, r2, 0             # push interp_resume_target
+
+    lui r1, %hi(var_to_in)
+    addi r1, r1, %lo(var_to_in)
+    ldw r2, r1, 0
+    addi r27, r27, -4
+    stw r27, r2, 0             # push >IN
+
+    lui r1, %hi(var_source_len)
+    addi r1, r1, %lo(var_source_len)
+    ldw r2, r1, 0
+    addi r27, r27, -4
+    stw r27, r2, 0             # push #TIB
+
+    # Pop ( addr u ) from data stack
+    ldw r9, r28, 0             # u = length
+    ldw r8, r28, 4             # addr = source
+    addi r28, r28, 8
+
+    # Set #TIB = u
+    lui r1, %hi(var_source_len)
+    addi r1, r1, %lo(var_source_len)
+    stw r1, r9, 0
+
+    # Copy string to TIB
+    lui r10, %hi(tib)
+    addi r10, r10, %lo(tib)
+    add r11, r0, r0            # i = 0
+evaluate_copy:
+    bge r11, r9, evaluate_copy_done
+    add r12, r8, r11
+    ldbu r13, r12, 0
+    add r14, r10, r11
+    stb r14, r13, 0
+    addi r11, r11, 1
+    jal r0, evaluate_copy
+evaluate_copy_done:
+
+    # Set >IN = 0
+    lui r1, %hi(var_to_in)
+    addi r1, r1, %lo(var_to_in)
+    stw r1, r0, 0
+
+    # Call INTERPRET (threaded)
+    # Save current IP, set up mini-thread
+    addi r27, r27, -4
+    stw r27, r26, 0            # push IP to return stack
+
+    lui r26, %hi(evaluate_thread)
+    addi r26, r26, %lo(evaluate_thread)
+    jal r0, next
+
+.text
+evaluate_thread:
+    .word xt_interpret
+    .word xt_evaluate_resume
+
+    .align 2
+xt_evaluate_resume:
+    .word evaluate_resume
+evaluate_resume:
+    # Restore IP
+    ldw r26, r27, 0
+    addi r27, r27, 4
+
+    # Restore #TIB
+    ldw r2, r27, 0
+    addi r27, r27, 4
+    lui r1, %hi(var_source_len)
+    addi r1, r1, %lo(var_source_len)
+    stw r1, r2, 0
+
+    # Restore >IN
+    ldw r2, r27, 0
+    addi r27, r27, 4
+    lui r1, %hi(var_to_in)
+    addi r1, r1, %lo(var_to_in)
+    stw r1, r2, 0
+
+    # Restore interp_resume_target
+    ldw r2, r27, 0
+    addi r27, r27, 4
+    lui r1, %hi(interp_resume_target)
+    addi r1, r1, %lo(interp_resume_target)
+    stw r1, r2, 0
+
+    # Restore interp_saved_ip
+    ldw r2, r27, 0
+    addi r27, r27, 4
+    lui r1, %hi(interp_saved_ip)
+    addi r1, r1, %lo(interp_saved_ip)
+    stw r1, r2, 0
+
+    jal r0, next
+
+# Word: ABORT ( -- ) Reset stacks and state, jump to REPL
+.text
+    .align 2
+head_abort:
+    .word head_evaluate
+    .byte 5
+    .ascii "ABORT"
+    .align 2
+xt_abort:
+    .word abort_word
+abort_word:
+    lui r28, %hi(dstack_top)
+    addi r28, r28, %lo(dstack_top)
+    lui r27, %hi(rstack_top)
+    addi r27, r27, %lo(rstack_top)
+    lui r1, %hi(var_state)
+    addi r1, r1, %lo(var_state)
+    stw r1, r0, 0              # STATE = 0
+    lui r26, %hi(cold_loop)
+    addi r26, r26, %lo(cold_loop)
+    jal r0, next
+
 # ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
@@ -3447,7 +3632,7 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_um_mod          # Point to last defined word
+    .word head_abort           # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_len: .word 0

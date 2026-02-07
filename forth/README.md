@@ -1,7 +1,7 @@
 # SLOW-32 Forth Kernel
 
 ## Status
-Stage 4: Bootstrap Prelude. Self-extending Forth with ~35 standard vocabulary words loaded at startup.
+Stage 4: Bootstrap Prelude. Self-extending Forth with ~50 standard vocabulary words loaded at startup.
 
 ## Architecture
 - **Direct Threaded Code**: IP points to a list of XTs.
@@ -15,7 +15,7 @@ Stage 4: Bootstrap Prelude. Self-extending Forth with ~35 standard vocabulary wo
 ## Primitives (Assembly)
 - **Control**: `EXIT`, `EXECUTE`, `BYE`, `BRANCH`, `0BRANCH`
 - **Stack**: `DUP`, `DROP`, `SWAP`, `OVER`, `>R`, `R>`, `R@`, `2>R`, `2R>`, `2R@`, `DEPTH`, `DSP@`, `DSTKTOP`, `PICK`
-- **Arithmetic**: `+`, `-`, `*`, `/`, `MOD`, `/MOD`, `NEGATE`, `1+`, `1-`, `S>D`, `D+`, `D-`, `UM/MOD`
+- **Arithmetic**: `+`, `-`, `*`, `/`, `MOD`, `/MOD`, `NEGATE`, `1+`, `1-`, `S>D`, `D+`, `D-`, `UM/MOD`, `UM*`, `M*`
 - **Logic**: `AND`, `OR`, `XOR`, `INVERT`, `LSHIFT`, `RSHIFT`
 - **Comparison**: `=`, `<>`, `<`, `>`, `0=`, `0<`, `U<`
 - **Memory**: `!`, `@`, `C!`, `C@`, `C,`, `2!`, `2@`
@@ -27,6 +27,7 @@ Stage 4: Bootstrap Prelude. Self-extending Forth with ~35 standard vocabulary wo
 - **Parser**: `WORD`, `FIND`, `NUMBER`, `PARSE-WORD`, `INTERPRET`
 - **Strings**: `COUNT`
 - **Pictured Output**: `<#`, `HOLD`, `#>`
+- **System**: `ABORT`, `EVALUATE`
 - **Other**: `HELLO`, `PROMPTS-ON`
 
 ## Prelude Words (Forth)
@@ -43,8 +44,10 @@ Loaded automatically from `prelude.fth` at startup:
 - **Defining**: `VARIABLE`, `CONSTANT`, `2VARIABLE`, `2CONSTANT`, `VALUE`, `TO`, `DEFER`, `IS`, `ACTION-OF`
 - **Control flow**: `CASE`, `OF`, `ENDOF`, `ENDCASE`
 - **Pictured Output**: `MU/MOD`, `#`, `#S`, `SIGN`, `U.`, `.R`, `U.R`
+- **Core Arithmetic**: `SM/REM`, `FM/MOD`, `*/MOD`, `*/`
 - **Double-Number**: `D>S`, `DNEGATE`, `DABS`, `D0=`, `D0<`, `D=`, `D<`, `M+`, `D.`, `D.R`
 - **Strings**: `CMOVE`, `CMOVE>`, `/STRING`, `COMPARE`, `SEARCH`, `PLACE`, `-TRAILING`
+- **System**: `>BODY`, `SOURCE`, `WITHIN`, `ALIGNED`, `ALIGN`, `ABORT"`, `>IN`, `PAD`
 - **Comments**: `\` (backslash line comment), `(` (paren comment)
 
 ## Dictionary Structure

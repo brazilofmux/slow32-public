@@ -1609,7 +1609,7 @@ void translate_mulh(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) 
 
     emit_load_guest_reg(ctx, RAX, rs1);
     emit_load_guest_reg(ctx, RCX, rs2);
-    emit_mul_r32(e, RCX);  // edx:eax = eax * ecx (unsigned)
+    emit_imul_one_r32(e, RCX);  // edx:eax = eax * ecx (signed)
     emit_mov_r32_r32(e, RAX, RDX);  // High part in edx
     emit_store_guest_reg(ctx, rd, RAX);
 }
