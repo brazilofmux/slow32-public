@@ -73,6 +73,44 @@
 #define OP_NOP    0x50
 #define OP_YIELD  0x51
 #define OP_DEBUG  0x52
+#define OP_FADD_S 0x53
+#define OP_FSUB_S 0x54
+#define OP_FMUL_S 0x55
+#define OP_FDIV_S 0x56
+#define OP_FSQRT_S 0x57
+#define OP_FEQ_S  0x58
+#define OP_FLT_S  0x59
+#define OP_FLE_S  0x5A
+#define OP_FCVT_W_S  0x5B
+#define OP_FCVT_WU_S 0x5C
+#define OP_FCVT_S_W  0x5D
+#define OP_FCVT_S_WU 0x5E
+#define OP_FNEG_S 0x5F
+#define OP_FABS_S 0x60
+#define OP_FADD_D 0x61
+#define OP_FSUB_D 0x62
+#define OP_FMUL_D 0x63
+#define OP_FDIV_D 0x64
+#define OP_FSQRT_D 0x65
+#define OP_FEQ_D  0x66
+#define OP_FLT_D  0x67
+#define OP_FLE_D  0x68
+#define OP_FCVT_W_D  0x69
+#define OP_FCVT_WU_D 0x6A
+#define OP_FCVT_D_W  0x6B
+#define OP_FCVT_D_WU 0x6C
+#define OP_FCVT_D_S  0x6D
+#define OP_FCVT_S_D  0x6E
+#define OP_FNEG_D 0x6F
+#define OP_FABS_D 0x70
+#define OP_FCVT_L_S  0x71
+#define OP_FCVT_LU_S 0x72
+#define OP_FCVT_S_L  0x73
+#define OP_FCVT_S_LU 0x74
+#define OP_FCVT_L_D  0x75
+#define OP_FCVT_LU_D 0x76
+#define OP_FCVT_D_L  0x77
+#define OP_FCVT_D_LU 0x78
 #define OP_HALT   0x7F
 
 /* ========================================================================
@@ -143,6 +181,8 @@ static int num_data_secs;
 static uint32_t entry_point;
 static uint32_t mem_size;
 static uint32_t stack_base;
+static uint32_t mmio_base;
+static uint32_t header_flags;
 
 /* Basic block tracking */
 static bool *block_starts;  /* indexed by instruction index: (pc - code_base)/4 */
@@ -151,6 +191,9 @@ static bool *block_starts;  /* indexed by instruction index: (pc - code_base)/4 
 #define MAX_FUNCTIONS 4096
 static uint32_t func_entries[MAX_FUNCTIONS]; /* sorted by PC */
 static int num_funcs;
+
+/* Safety flags */
+static bool safe_mode = false;
 
 /* Temp variable counter for unique SSA names */
 static int temp_ctr;
@@ -179,6 +222,8 @@ static void load_s32x(const char *path) {
     entry_point = hdr.entry;
     mem_size = hdr.mem_size;
     stack_base = hdr.stack_base;
+    mmio_base = hdr.mmio_base;
+    header_flags = hdr.flags;
 
     /* Read section table */
     s32x_section_t *sections = malloc(hdr.nsections * sizeof(s32x_section_t));
@@ -400,15 +445,126 @@ static void write_reg(int reg, int t) {
     fprintf(out, "  store i32 %%t%d, ptr %%r%d\n", t, reg);
 }
 
-/* Emit a memory address computation: base_temp + offset → ptr */
-static int emit_mem_addr(int base_temp, int32_t offset) {
+/* Read a 32-bit float from a register */
+static int read_f32(int reg) {
+    int ti = read_reg(reg);
+    int tf = T();
+    fprintf(out, "  %%t%d = bitcast i32 %%t%d to float\n", tf, ti);
+    return tf;
+}
+
+/* Write a 32-bit float to a register */
+static void write_f32(int reg, int tf) {
+    if (reg == 0) return;
+    int ti = T();
+    fprintf(out, "  %%t%d = bitcast float %%t%d to i32\n", ti, tf);
+    write_reg(reg, ti);
+}
+
+/* Read a 64-bit double from a register pair (reg, reg+1) */
+static int read_f64(int reg) {
+    int low = read_reg(reg);
+    int high = read_reg(reg + 1);
+    int low64 = T();
+    fprintf(out, "  %%t%d = zext i32 %%t%d to i64\n", low64, low);
+    int high64 = T();
+    fprintf(out, "  %%t%d = zext i32 %%t%d to i64\n", high64, high);
+    int high_shl = T();
+    fprintf(out, "  %%t%d = shl i64 %%t%d, 32\n", high_shl, high64);
+    int val64 = T();
+    fprintf(out, "  %%t%d = or i64 %%t%d, %%t%d\n", val64, low64, high_shl);
+    int val = T();
+    fprintf(out, "  %%t%d = bitcast i64 %%t%d to double\n", val, val64);
+    return val;
+}
+
+/* Write a 64-bit double to a register pair (reg, reg+1) */
+static void write_f64(int reg, int val) {
+    if (reg == 0) return;
+    int val64 = T();
+    fprintf(out, "  %%t%d = bitcast double %%t%d to i64\n", val64, val);
+    int low64 = T();
+    fprintf(out, "  %%t%d = and i64 %%t%d, 4294967295\n", low64, val64);
+    int high64 = T();
+    fprintf(out, "  %%t%d = lshr i64 %%t%d, 32\n", high64, val64);
+    int low = T();
+    fprintf(out, "  %%t%d = trunc i64 %%t%d to i32\n", low, low64);
+    int high = T();
+    fprintf(out, "  %%t%d = trunc i64 %%t%d to i32\n", high, high64);
+    write_reg(reg, low);
+    write_reg(reg + 1, high);
+}
+
+/* Read a 64-bit integer from a register pair (reg, reg+1) */
+static int read_i64(int reg) {
+    int low = read_reg(reg);
+    int high = read_reg(reg + 1);
+    int low64 = T();
+    fprintf(out, "  %%t%d = zext i32 %%t%d to i64\n", low64, low);
+    int high64 = T();
+    fprintf(out, "  %%t%d = zext i32 %%t%d to i64\n", high64, high);
+    int high_shl = T();
+    fprintf(out, "  %%t%d = shl i64 %%t%d, 32\n", high_shl, high64);
+    int val64 = T();
+    fprintf(out, "  %%t%d = or i64 %%t%d, %%t%d\n", val64, low64, high_shl);
+    return val64;
+}
+
+/* Write a 64-bit integer to a register pair (reg, reg+1) */
+static void write_i64(int reg, int val64) {
+    if (reg == 0) return;
+    int low64 = T();
+    fprintf(out, "  %%t%d = and i64 %%t%d, 4294967295\n", low64, val64);
+    int high64 = T();
+    fprintf(out, "  %%t%d = lshr i64 %%t%d, 32\n", high64, val64);
+    int low = T();
+    fprintf(out, "  %%t%d = trunc i64 %%t%d to i32\n", low, low64);
+    int high = T();
+    fprintf(out, "  %%t%d = trunc i64 %%t%d to i32\n", high, high64);
+    write_reg(reg, low);
+    write_reg(reg + 1, high);
+}
+
+static void emit_bounds_check(int addr_temp, int size, bool is_write, uint32_t pc) {
+    if (!safe_mode) return;
+    int sp = read_reg(29);
+    fprintf(out, "  call void @s32_check_bounds(i32 %%t%d, i32 %d, i32 %d, i32 %u, i32 %%t%d)\n",
+            addr_temp, size, is_write ? 1 : 0, pc, sp);
+}
+
+/* Emit a memory address computation with optional bounds check.
+ * Returns the ptr temp.  If addr_out is non-NULL, stores the i32 address
+ * temp there (needed by stores for emit_mmio_check). */
+static int emit_mem_addr(int base_temp, int32_t offset, int size,
+                         bool is_write, uint32_t pc, int *addr_out) {
     int addr = T();
     fprintf(out, "  %%t%d = add i32 %%t%d, %d\n", addr, base_temp, offset);
+    emit_bounds_check(addr, size, is_write, pc);
     int addr64 = T();
     fprintf(out, "  %%t%d = zext i32 %%t%d to i64\n", addr64, addr);
     int ptr = T();
     fprintf(out, "  %%t%d = getelementptr i8, ptr %%mem, i64 %%t%d\n", ptr, addr64);
+    if (addr_out) *addr_out = addr;
     return ptr;
+}
+
+/* Helper to emit a call to s32_mmio_service if an address is in the MMIO trigger range.
+ * Currently triggers on REQ_HEAD (base + 0) or RESP_TAIL (base + 0x2004) writes. */
+static void emit_mmio_check(int addr_temp, uint32_t pc) {
+    if (!(header_flags & S32X_FLAG_MMIO) || mmio_base == 0) return;
+
+    int is_req_head = T();
+    fprintf(out, "  %%t%d = icmp eq i32 %%t%d, %u\n", is_req_head, addr_temp, mmio_base);
+    int is_resp_tail = T();
+    fprintf(out, "  %%t%d = icmp eq i32 %%t%d, %u\n", is_resp_tail, addr_temp, mmio_base + 0x2004);
+    int is_mmio = T();
+    fprintf(out, "  %%t%d = or i1 %%t%d, %%t%d\n", is_mmio, is_req_head, is_resp_tail);
+    fprintf(out, "  br i1 %%t%d, label %%mmio_trigger_%x, label %%mmio_done_%x\n",
+            is_mmio, pc, pc);
+    fprintf(out, "\nmmio_trigger_%x:\n", pc);
+    fprintf(out, "  call void @s32_mmio_service()\n");
+    fprintf(out, "  br label %%mmio_done_%x\n", pc);
+    fprintf(out, "\nmmio_done_%x:\n", pc);
 }
 
 /* Flush local allocas (r1-r31) to @regs global */
@@ -556,6 +712,298 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
 
+    /* ---- f32 arithmetic ---- */
+    case OP_FADD_S: {
+        int a = read_f32(rs1), b = read_f32(rs2);
+        int t = T();
+        fprintf(out, "  %%t%d = fadd float %%t%d, %%t%d\n", t, a, b);
+        write_f32(rd, t);
+        return false;
+    }
+    case OP_FSUB_S: {
+        int a = read_f32(rs1), b = read_f32(rs2);
+        int t = T();
+        fprintf(out, "  %%t%d = fsub float %%t%d, %%t%d\n", t, a, b);
+        write_f32(rd, t);
+        return false;
+    }
+    case OP_FMUL_S: {
+        int a = read_f32(rs1), b = read_f32(rs2);
+        int t = T();
+        fprintf(out, "  %%t%d = fmul float %%t%d, %%t%d\n", t, a, b);
+        write_f32(rd, t);
+        return false;
+    }
+    case OP_FDIV_S: {
+        int a = read_f32(rs1), b = read_f32(rs2);
+        int t = T();
+        fprintf(out, "  %%t%d = fdiv float %%t%d, %%t%d\n", t, a, b);
+        write_f32(rd, t);
+        return false;
+    }
+    case OP_FSQRT_S: {
+        int a = read_f32(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = call float @llvm.sqrt.f32(float %%t%d)\n", t, a);
+        write_f32(rd, t);
+        return false;
+    }
+
+    /* ---- f32 comparison ---- */
+    case OP_FEQ_S: {
+        int a = read_f32(rs1), b = read_f32(rs2);
+        int c = T();
+        fprintf(out, "  %%t%d = fcmp oeq float %%t%d, %%t%d\n", c, a, b);
+        int t = T();
+        fprintf(out, "  %%t%d = zext i1 %%t%d to i32\n", t, c);
+        write_reg(rd, t);
+        return false;
+    }
+    case OP_FLT_S: {
+        int a = read_f32(rs1), b = read_f32(rs2);
+        int c = T();
+        fprintf(out, "  %%t%d = fcmp olt float %%t%d, %%t%d\n", c, a, b);
+        int t = T();
+        fprintf(out, "  %%t%d = zext i1 %%t%d to i32\n", t, c);
+        write_reg(rd, t);
+        return false;
+    }
+    case OP_FLE_S: {
+        int a = read_f32(rs1), b = read_f32(rs2);
+        int c = T();
+        fprintf(out, "  %%t%d = fcmp ole float %%t%d, %%t%d\n", c, a, b);
+        int t = T();
+        fprintf(out, "  %%t%d = zext i1 %%t%d to i32\n", t, c);
+        write_reg(rd, t);
+        return false;
+    }
+
+    /* ---- f32 sign manipulation ---- */
+    case OP_FNEG_S: {
+        int a = read_f32(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = fneg float %%t%d\n", t, a);
+        write_f32(rd, t);
+        return false;
+    }
+    case OP_FABS_S: {
+        int a = read_f32(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = call float @llvm.fabs.f32(float %%t%d)\n", t, a);
+        write_f32(rd, t);
+        return false;
+    }
+
+    /* ---- f64 arithmetic ---- */
+    case OP_FADD_D: {
+        int a = read_f64(rs1), b = read_f64(rs2);
+        int t = T();
+        fprintf(out, "  %%t%d = fadd double %%t%d, %%t%d\n", t, a, b);
+        write_f64(rd, t);
+        return false;
+    }
+    case OP_FSUB_D: {
+        int a = read_f64(rs1), b = read_f64(rs2);
+        int t = T();
+        fprintf(out, "  %%t%d = fsub double %%t%d, %%t%d\n", t, a, b);
+        write_f64(rd, t);
+        return false;
+    }
+    case OP_FMUL_D: {
+        int a = read_f64(rs1), b = read_f64(rs2);
+        int t = T();
+        fprintf(out, "  %%t%d = fmul double %%t%d, %%t%d\n", t, a, b);
+        write_f64(rd, t);
+        return false;
+    }
+    case OP_FDIV_D: {
+        int a = read_f64(rs1), b = read_f64(rs2);
+        int t = T();
+        fprintf(out, "  %%t%d = fdiv double %%t%d, %%t%d\n", t, a, b);
+        write_f64(rd, t);
+        return false;
+    }
+    case OP_FSQRT_D: {
+        int a = read_f64(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = call double @llvm.sqrt.f64(double %%t%d)\n", t, a);
+        write_f64(rd, t);
+        return false;
+    }
+
+    /* ---- f64 comparison ---- */
+    case OP_FEQ_D: {
+        int a = read_f64(rs1), b = read_f64(rs2);
+        int c = T();
+        fprintf(out, "  %%t%d = fcmp oeq double %%t%d, %%t%d\n", c, a, b);
+        int t = T();
+        fprintf(out, "  %%t%d = zext i1 %%t%d to i32\n", t, c);
+        write_reg(rd, t);
+        return false;
+    }
+    case OP_FLT_D: {
+        int a = read_f64(rs1), b = read_f64(rs2);
+        int c = T();
+        fprintf(out, "  %%t%d = fcmp olt double %%t%d, %%t%d\n", c, a, b);
+        int t = T();
+        fprintf(out, "  %%t%d = zext i1 %%t%d to i32\n", t, c);
+        write_reg(rd, t);
+        return false;
+    }
+    case OP_FLE_D: {
+        int a = read_f64(rs1), b = read_f64(rs2);
+        int c = T();
+        fprintf(out, "  %%t%d = fcmp ole double %%t%d, %%t%d\n", c, a, b);
+        int t = T();
+        fprintf(out, "  %%t%d = zext i1 %%t%d to i32\n", t, c);
+        write_reg(rd, t);
+        return false;
+    }
+
+    /* ---- f64 sign manipulation ---- */
+    case OP_FNEG_D: {
+        int a = read_f64(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = fneg double %%t%d\n", t, a);
+        write_f64(rd, t);
+        return false;
+    }
+    case OP_FABS_D: {
+        int a = read_f64(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = call double @llvm.fabs.f64(double %%t%d)\n", t, a);
+        write_f64(rd, t);
+        return false;
+    }
+
+    /* ---- Conversions ---- */
+    case OP_FCVT_W_S: {
+        int a = read_f32(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = fptosi float %%t%d to i32\n", t, a);
+        write_reg(rd, t);
+        return false;
+    }
+    case OP_FCVT_WU_S: {
+        int a = read_f32(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = fptoui float %%t%d to i32\n", t, a);
+        write_reg(rd, t);
+        return false;
+    }
+    case OP_FCVT_S_W: {
+        int a = read_reg(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = sitofp i32 %%t%d to float\n", t, a);
+        write_f32(rd, t);
+        return false;
+    }
+    case OP_FCVT_S_WU: {
+        int a = read_reg(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = uitofp i32 %%t%d to float\n", t, a);
+        write_f32(rd, t);
+        return false;
+    }
+    case OP_FCVT_W_D: {
+        int a = read_f64(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = fptosi double %%t%d to i32\n", t, a);
+        write_reg(rd, t);
+        return false;
+    }
+    case OP_FCVT_WU_D: {
+        int a = read_f64(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = fptoui double %%t%d to i32\n", t, a);
+        write_reg(rd, t);
+        return false;
+    }
+    case OP_FCVT_D_W: {
+        int a = read_reg(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = sitofp i32 %%t%d to double\n", t, a);
+        write_f64(rd, t);
+        return false;
+    }
+    case OP_FCVT_D_WU: {
+        int a = read_reg(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = uitofp i32 %%t%d to double\n", t, a);
+        write_f64(rd, t);
+        return false;
+    }
+    case OP_FCVT_D_S: {
+        int a = read_f32(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = fpext float %%t%d to double\n", t, a);
+        write_f64(rd, t);
+        return false;
+    }
+    case OP_FCVT_S_D: {
+        int a = read_f64(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = fptrunc double %%t%d to float\n", t, a);
+        write_f32(rd, t);
+        return false;
+    }
+    case OP_FCVT_L_S: {
+        int a = read_f32(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = fptosi float %%t%d to i64\n", t, a);
+        write_i64(rd, t);
+        return false;
+    }
+    case OP_FCVT_LU_S: {
+        int a = read_f32(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = fptoui float %%t%d to i64\n", t, a);
+        write_i64(rd, t);
+        return false;
+    }
+    case OP_FCVT_S_L: {
+        int a = read_i64(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = sitofp i64 %%t%d to float\n", t, a);
+        write_f32(rd, t);
+        return false;
+    }
+    case OP_FCVT_S_LU: {
+        int a = read_i64(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = uitofp i64 %%t%d to float\n", t, a);
+        write_f32(rd, t);
+        return false;
+    }
+    case OP_FCVT_L_D: {
+        int a = read_f64(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = fptosi double %%t%d to i64\n", t, a);
+        write_i64(rd, t);
+        return false;
+    }
+    case OP_FCVT_LU_D: {
+        int a = read_f64(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = fptoui double %%t%d to i64\n", t, a);
+        write_i64(rd, t);
+        return false;
+    }
+    case OP_FCVT_D_L: {
+        int a = read_i64(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = sitofp i64 %%t%d to double\n", t, a);
+        write_f64(rd, t);
+        return false;
+    }
+    case OP_FCVT_D_LU: {
+        int a = read_i64(rs1);
+        int t = T();
+        fprintf(out, "  %%t%d = uitofp i64 %%t%d to double\n", t, a);
+        write_f64(rd, t);
+        return false;
+    }
+
     /* ---- R-type comparisons ---- */
     case OP_SLT: case OP_SLTU: case OP_SEQ: case OP_SNE:
     case OP_SGT: case OP_SGTU: case OP_SLE: case OP_SLEU:
@@ -667,7 +1115,7 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
     /* ---- Loads ---- */
     case OP_LDW: {
         int base = read_reg(rs1);
-        int ptr = emit_mem_addr(base, imm_i(inst));
+        int ptr = emit_mem_addr(base, imm_i(inst), 4, false, pc, NULL);
         int val = T();
         fprintf(out, "  %%t%d = load i32, ptr %%t%d, align 1\n", val, ptr);
         write_reg(rd, val);
@@ -675,7 +1123,7 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
     }
     case OP_LDH: {
         int base = read_reg(rs1);
-        int ptr = emit_mem_addr(base, imm_i(inst));
+        int ptr = emit_mem_addr(base, imm_i(inst), 2, false, pc, NULL);
         int half = T();
         fprintf(out, "  %%t%d = load i16, ptr %%t%d, align 1\n", half, ptr);
         int val = T();
@@ -685,7 +1133,7 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
     }
     case OP_LDB: {
         int base = read_reg(rs1);
-        int ptr = emit_mem_addr(base, imm_i(inst));
+        int ptr = emit_mem_addr(base, imm_i(inst), 1, false, pc, NULL);
         int byte_val = T();
         fprintf(out, "  %%t%d = load i8, ptr %%t%d, align 1\n", byte_val, ptr);
         int val = T();
@@ -695,7 +1143,7 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
     }
     case OP_LDHU: {
         int base = read_reg(rs1);
-        int ptr = emit_mem_addr(base, imm_i(inst));
+        int ptr = emit_mem_addr(base, imm_i(inst), 2, false, pc, NULL);
         int half = T();
         fprintf(out, "  %%t%d = load i16, ptr %%t%d, align 1\n", half, ptr);
         int val = T();
@@ -705,7 +1153,7 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
     }
     case OP_LDBU: {
         int base = read_reg(rs1);
-        int ptr = emit_mem_addr(base, imm_i(inst));
+        int ptr = emit_mem_addr(base, imm_i(inst), 1, false, pc, NULL);
         int byte_val = T();
         fprintf(out, "  %%t%d = load i8, ptr %%t%d, align 1\n", byte_val, ptr);
         int val = T();
@@ -718,26 +1166,32 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
     case OP_STW: {
         int base = read_reg(rs1);
         int val = read_reg(rs2);
-        int ptr = emit_mem_addr(base, imm_s(inst));
+        int addr;
+        int ptr = emit_mem_addr(base, imm_s(inst), 4, true, pc, &addr);
         fprintf(out, "  store i32 %%t%d, ptr %%t%d, align 1\n", val, ptr);
+        emit_mmio_check(addr, pc);
         return false;
     }
     case OP_STH: {
         int base = read_reg(rs1);
         int val = read_reg(rs2);
-        int ptr = emit_mem_addr(base, imm_s(inst));
+        int addr;
+        int ptr = emit_mem_addr(base, imm_s(inst), 2, true, pc, &addr);
         int half = T();
         fprintf(out, "  %%t%d = trunc i32 %%t%d to i16\n", half, val);
         fprintf(out, "  store i16 %%t%d, ptr %%t%d, align 1\n", half, ptr);
+        emit_mmio_check(addr, pc);
         return false;
     }
     case OP_STB: {
         int base = read_reg(rs1);
         int val = read_reg(rs2);
-        int ptr = emit_mem_addr(base, imm_s(inst));
+        int addr;
+        int ptr = emit_mem_addr(base, imm_s(inst), 1, true, pc, &addr);
         int byte_val = T();
         fprintf(out, "  %%t%d = trunc i32 %%t%d to i8\n", byte_val, val);
         fprintf(out, "  store i8 %%t%d, ptr %%t%d, align 1\n", byte_val, ptr);
+        emit_mmio_check(addr, pc);
         return false;
     }
 
@@ -878,7 +1332,9 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
 
     /* ---- NOP / YIELD ---- */
     case OP_NOP:
+        return false;
     case OP_YIELD:
+        fprintf(out, "  call void @s32_mmio_service()\n");
         return false;
 
     /* ---- DEBUG ---- */
@@ -890,7 +1346,11 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
 
     /* ---- HALT ---- */
     case OP_HALT:
-        fprintf(out, "  call void @s32_halt()\n");
+        fprintf(out, "  call void @s32_mmio_service()\n");
+        {
+            int code = read_reg(1);
+            fprintf(out, "  call void @s32_halt(i32 %%t%d)\n", code);
+        }
         fprintf(out, "  unreachable\n");
         return true;
 
@@ -916,19 +1376,26 @@ static void emit_header(void) {
 
     /* Runtime function declarations */
     fprintf(out, "declare void @s32_debug(i32)\n");
-    fprintf(out, "declare void @s32_halt()\n");
+    fprintf(out, "declare void @s32_halt(i32)\n");
+    fprintf(out, "declare void @s32_mmio_service()\n");
+    fprintf(out, "declare void @s32_check_bounds(i32, i32, i32, i32, i32)\n");
     fprintf(out, "declare void @s32_dispatch_fail(i32)\n");
     fprintf(out, "declare void @llvm.trap() nounwind noreturn\n");
     fprintf(out, "declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)\n");
+    fprintf(out, "declare float @llvm.sqrt.f32(float)\n");
+    fprintf(out, "declare double @llvm.sqrt.f64(double)\n");
+    fprintf(out, "declare float @llvm.fabs.f32(float)\n");
+    fprintf(out, "declare double @llvm.fabs.f64(double)\n");
     fprintf(out, "\n");
 
     /* Memory layout constants */
     fprintf(out, "@__s32_mem_size = global i32 %u\n", mem_size);
     fprintf(out, "@__s32_stack_base = global i32 %u\n", stack_base);
+    fprintf(out, "@__s32_mmio_base = global i32 %u\n", mmio_base);
     fprintf(out, "\n");
 
     /* Global register file for inter-function communication */
-    fprintf(out, "@regs = internal global [32 x i32] zeroinitializer\n\n");
+    fprintf(out, "@regs = global [32 x i32] zeroinitializer\n\n");
 }
 
 static void emit_data_constants(void) {
@@ -1080,8 +1547,9 @@ static void emit_entry_wrapper(void) {
  * ======================================================================== */
 
 static void usage(const char *prog) {
-    fprintf(stderr, "Usage: %s input.s32x [-o output.ll]\n", prog);
+    fprintf(stderr, "Usage: %s input.s32x [-o output.ll] [-safe]\n", prog);
     fprintf(stderr, "  Lifts a SLOW-32 binary to LLVM IR\n");
+    fprintf(stderr, "  -safe: Enable runtime bounds checking\n");
     exit(1);
 }
 
@@ -1092,6 +1560,8 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
             output = argv[++i];
+        } else if (strcmp(argv[i], "-safe") == 0) {
+            safe_mode = true;
         } else if (argv[i][0] == '-') {
             usage(argv[0]);
         } else {
