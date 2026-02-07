@@ -219,17 +219,31 @@ xt_find:
 
 # FIND ( c-addr -- xt flag | 0 0 )
 # flag = 1 if the word is IMMEDIATE, 0 otherwise
+# Searches all wordlists in the search order
 find_word:
     ldw r4, r28, 0     # r4 = search string address
     addi r28, r28, 4   # pop input
-    
-    # Load LATEST
-    lui r5, %hi(var_latest)
-    addi r5, r5, %lo(var_latest)
-    ldw r5, r5, 0      # r5 = current dictionary head
+
+    # Set up search order iteration
+    lui r20, %hi(search_order)
+    addi r20, r20, %lo(search_order)   # r20 = search_order base
+    add r21, r0, r0                    # r21 = index (0)
+    lui r22, %hi(search_order_count)
+    addi r22, r22, %lo(search_order_count)
+    ldw r22, r22, 0                    # r22 = count
+
+find_search_next_wl:
+    bge r21, r22, find_fail            # all wordlists exhausted
+
+    # Load head of current wordlist
+    add r23, r21, r21
+    add r23, r23, r23                  # r23 = index * 4
+    add r23, r20, r23                  # r23 = &search_order[index]
+    ldw r5, r23, 0                     # r5 = wid (pointer to head cell)
+    ldw r5, r5, 0                      # r5 = head of wordlist
 
 find_loop:
-    beq r5, r0, find_fail
+    beq r5, r0, find_wl_exhausted
 
     # Compare length (mask out IMMEDIATE bit)
     ldbu r6, r5, 4     # dict len/raw flags
@@ -242,15 +256,15 @@ find_loop:
     add r9, r0, r0     # i = 0
 find_str_loop:
     bge r9, r8, find_match
-    
+
     add r10, r5, r9
     ldbu r10, r10, 5     # dict char (offset 5 + i)
-    
+
     add r11, r4, r9
     ldbu r11, r11, 1     # search char (offset 1 + i)
-    
+
     bne r10, r11, find_next
-    
+
     addi r9, r9, 1
     jal r0, find_str_loop
 
@@ -258,18 +272,22 @@ find_next:
     ldw r5, r5, 0      # Load link
     jal r0, find_loop
 
+find_wl_exhausted:
+    addi r21, r21, 1   # next wordlist
+    jal r0, find_search_next_wl
+
 find_match:
     # Found. Calculate XT address.
     # XT is at header + aligned(5 + len)
     addi r5, r5, 5
     add r5, r5, r8     # r5 = end of name string
-    
+
     # Align r5 to 4 bytes
     # mask = -4 (0xFFFFFFFC)
     addi r10, r0, -4
     addi r5, r5, 3
     and r5, r5, r10
-    
+
     # Push xt pointer and immediate flag
     addi r28, r28, -4
     stw r28, r5, 0     # xt
@@ -687,8 +705,9 @@ head_latest:
 xt_latest:
     .word latest_word
 latest_word:
-    lui r1, %hi(var_latest)
-    addi r1, r1, %lo(var_latest)
+    lui r1, %hi(var_compilation_wid)
+    addi r1, r1, %lo(var_compilation_wid)
+    ldw r1, r1, 0      # r1 = current compilation wid
     addi r28, r28, -4
     stw r28, r1, 0
     jal r0, next
@@ -1469,9 +1488,10 @@ head_immediate:
 xt_immediate:
     .word immediate_word
 immediate_word:
-    lui r1, %hi(var_latest)
-    addi r1, r1, %lo(var_latest)
-    ldw r2, r1, 0      # latest header
+    lui r1, %hi(var_compilation_wid)
+    addi r1, r1, %lo(var_compilation_wid)
+    ldw r1, r1, 0      # r1 = wid (pointer to head cell)
+    ldw r2, r1, 0      # latest header in compilation wordlist
     beq r2, r0, immediate_done
     addi r2, r2, 4     # len byte
     ldbu r3, r2, 0
@@ -1586,10 +1606,11 @@ colon_copy_done:
     ldw r4, r3, 0       # r4 = HERE
     add r12, r4, r0     # remember header start
 
-    # Link
-    lui r5, %hi(var_latest)
-    addi r5, r5, %lo(var_latest)
-    ldw r6, r5, 0       # previous latest
+    # Link — use compilation wordlist indirection
+    lui r5, %hi(var_compilation_wid)
+    addi r5, r5, %lo(var_compilation_wid)
+    ldw r5, r5, 0       # r5 = wid (pointer to head cell)
+    ldw r6, r5, 0       # previous head of compilation wordlist
     stw r4, r6, 0
     addi r4, r4, 4
 
@@ -1623,9 +1644,9 @@ colon_header_done:
     stw r4, r11, 0
     addi r4, r4, 4
 
-    # Update HERE and LATEST
+    # Update HERE and compilation wordlist head
     stw r3, r4, 0       # HERE = body start
-    stw r5, r12, 0      # LATEST = new header
+    stw r5, r12, 0      # [wid] = new header
 
     # Enter compile state
     lui r13, %hi(var_state)
@@ -2301,10 +2322,11 @@ prompts_on_word:
 xt_does_runtime:
     .word does_runtime_word
 does_runtime_word:
-    # Find LATEST word's XT address
-    lui r1, %hi(var_latest)
-    addi r1, r1, %lo(var_latest)
-    ldw r2, r1, 0          # r2 = LATEST header
+    # Find latest word's XT address (via compilation wordlist)
+    lui r1, %hi(var_compilation_wid)
+    addi r1, r1, %lo(var_compilation_wid)
+    ldw r1, r1, 0          # r1 = wid (pointer to head cell)
+    ldw r2, r1, 0          # r2 = latest header in compilation wordlist
     ldbu r3, r2, 4         # length byte (with possible IMMEDIATE flag)
     addi r4, r0, 0x7F
     and r3, r3, r4         # mask off IMMEDIATE bit
@@ -2723,10 +2745,11 @@ create_copy_done:
     addi r3, r3, %lo(var_here)
     ldw r4, r3, 0
     add r12, r4, r0        # remember header start
-    # Link
-    lui r5, %hi(var_latest)
-    addi r5, r5, %lo(var_latest)
-    ldw r6, r5, 0
+    # Link — use compilation wordlist indirection
+    lui r5, %hi(var_compilation_wid)
+    addi r5, r5, %lo(var_compilation_wid)
+    ldw r5, r5, 0          # r5 = wid (pointer to head cell)
+    ldw r6, r5, 0          # previous head
     stw r4, r6, 0
     addi r4, r4, 4
     # Length byte
@@ -2759,9 +2782,9 @@ create_header_done:
     # Reserve does-cell (initialized to 0)
     stw r4, r0, 0
     addi r4, r4, 4
-    # Update HERE and LATEST (no compile state change)
+    # Update HERE and compilation wordlist head (no compile state change)
     stw r3, r4, 0          # HERE = after does-cell
-    stw r5, r12, 0         # LATEST = new header
+    stw r5, r12, 0         # [wid] = new header
 create_done:
     jal r0, next
 
@@ -3622,6 +3645,19 @@ abort_word:
     lui r1, %hi(var_catch_frame)
     addi r1, r1, %lo(var_catch_frame)
     stw r1, r0, 0              # var_catch_frame = 0
+    # Reset search order to defaults
+    lui r1, %hi(var_latest)
+    addi r1, r1, %lo(var_latest)
+    lui r2, %hi(var_compilation_wid)
+    addi r2, r2, %lo(var_compilation_wid)
+    stw r2, r1, 0              # var_compilation_wid = &var_latest
+    lui r2, %hi(search_order)
+    addi r2, r2, %lo(search_order)
+    stw r2, r1, 0              # search_order[0] = &var_latest
+    lui r2, %hi(search_order_count)
+    addi r2, r2, %lo(search_order_count)
+    addi r3, r0, 1
+    stw r2, r3, 0              # search_order_count = 1
     lui r26, %hi(cold_loop)
     addi r26, r26, %lo(cold_loop)
     jal r0, next
@@ -4736,6 +4772,258 @@ throw_no_catch:
     # No catch frame — ABORT
     jal r0, abort_word
 
+# ======================================================================
+# Search-Order Word Set
+# ======================================================================
+
+# Word: FORTH-WORDLIST ( -- wid )
+# Returns the wid for the standard FORTH wordlist (= &var_latest)
+.text
+    .align 2
+head_forth_wl:
+    .word head_throw
+    .byte 14
+    .ascii "FORTH-WORDLIST"
+    .align 2
+xt_forth_wl:
+    .word forth_wl_word
+forth_wl_word:
+    lui r1, %hi(var_latest)
+    addi r1, r1, %lo(var_latest)
+    addi r28, r28, -4
+    stw r28, r1, 0
+    jal r0, next
+
+# Word: GET-CURRENT ( -- wid )
+# Return the compilation wordlist identifier
+.text
+    .align 2
+head_get_current:
+    .word head_forth_wl
+    .byte 11
+    .ascii "GET-CURRENT"
+    .align 2
+xt_get_current:
+    .word get_current_word
+get_current_word:
+    lui r1, %hi(var_compilation_wid)
+    addi r1, r1, %lo(var_compilation_wid)
+    ldw r1, r1, 0
+    addi r28, r28, -4
+    stw r28, r1, 0
+    jal r0, next
+
+# Word: SET-CURRENT ( wid -- )
+# Set the compilation wordlist
+.text
+    .align 2
+head_set_current:
+    .word head_get_current
+    .byte 11
+    .ascii "SET-CURRENT"
+    .align 2
+xt_set_current:
+    .word set_current_word
+set_current_word:
+    ldw r1, r28, 0
+    addi r28, r28, 4
+    lui r2, %hi(var_compilation_wid)
+    addi r2, r2, %lo(var_compilation_wid)
+    stw r2, r1, 0
+    jal r0, next
+
+# Word: GET-ORDER ( -- widn ... wid1 n )
+# Return the current search order
+.text
+    .align 2
+head_get_order:
+    .word head_set_current
+    .byte 9
+    .ascii "GET-ORDER"
+    .align 2
+xt_get_order:
+    .word get_order_word
+get_order_word:
+    lui r1, %hi(search_order)
+    addi r1, r1, %lo(search_order)
+    lui r2, %hi(search_order_count)
+    addi r2, r2, %lo(search_order_count)
+    ldw r2, r2, 0          # r2 = count
+    # Push entries in reverse order: search_order[count-1] first, [0] last
+    add r3, r2, r0         # r3 = i = count
+get_order_loop:
+    beq r3, r0, get_order_done
+    addi r3, r3, -1
+    add r4, r3, r3
+    add r4, r4, r4         # r4 = i * 4
+    add r4, r1, r4         # r4 = &search_order[i]
+    ldw r5, r4, 0          # r5 = wid
+    addi r28, r28, -4
+    stw r28, r5, 0
+    jal r0, get_order_loop
+get_order_done:
+    # Push count
+    addi r28, r28, -4
+    stw r28, r2, 0
+    jal r0, next
+
+# Word: SET-ORDER ( widn ... wid1 n -- )
+# Set the search order. If n = -1, set default (FORTH-WORDLIST only).
+.text
+    .align 2
+head_set_order:
+    .word head_get_order
+    .byte 9
+    .ascii "SET-ORDER"
+    .align 2
+xt_set_order:
+    .word set_order_word
+set_order_word:
+    ldw r1, r28, 0         # r1 = n
+    addi r28, r28, 4
+    # Check for n = -1 (minimum search order)
+    addi r2, r0, -1
+    bne r1, r2, set_order_normal
+    # n = -1: set default order [FORTH-WORDLIST]
+    lui r2, %hi(search_order)
+    addi r2, r2, %lo(search_order)
+    lui r3, %hi(var_latest)
+    addi r3, r3, %lo(var_latest)
+    stw r2, r3, 0          # search_order[0] = &var_latest
+    lui r2, %hi(search_order_count)
+    addi r2, r2, %lo(search_order_count)
+    addi r3, r0, 1
+    stw r2, r3, 0          # count = 1
+    jal r0, next
+set_order_normal:
+    # Pop n wids from stack into search_order[0..n-1]
+    # Stack has: wid1 (top) ... widn (deepest). wid1 goes to [0].
+    lui r2, %hi(search_order)
+    addi r2, r2, %lo(search_order)
+    add r3, r0, r0         # i = 0
+set_order_loop:
+    bge r3, r1, set_order_done
+    ldw r4, r28, 0         # pop wid
+    addi r28, r28, 4
+    add r5, r3, r3
+    add r5, r5, r5         # i * 4
+    add r5, r2, r5
+    stw r5, r4, 0          # search_order[i] = wid
+    addi r3, r3, 1
+    jal r0, set_order_loop
+set_order_done:
+    lui r2, %hi(search_order_count)
+    addi r2, r2, %lo(search_order_count)
+    stw r2, r1, 0          # count = n
+    jal r0, next
+
+# Word: SEARCH-WORDLIST ( c-addr u wid -- 0 | xt 1 | xt -1 )
+# Search a single wordlist for name c-addr/u
+.text
+    .align 2
+head_search_wl:
+    .word head_set_order
+    .byte 15
+    .ascii "SEARCH-WORDLIST"
+    .align 2
+xt_search_wl:
+    .word search_wl_word
+search_wl_word:
+    ldw r1, r28, 0         # r1 = wid
+    ldw r2, r28, 4         # r2 = u (length)
+    ldw r3, r28, 8         # r3 = c-addr
+    addi r28, r28, 12      # pop 3 items
+
+    ldw r5, r1, 0          # r5 = head of wordlist
+
+search_wl_loop:
+    beq r5, r0, search_wl_fail
+
+    # Compare length (mask out IMMEDIATE bit)
+    ldbu r6, r5, 4         # dict len/flags byte
+    addi r7, r0, 0x7F
+    and r8, r6, r7         # dict_len = len & 0x7F
+    bne r8, r2, search_wl_next
+
+    # Compare bytes
+    add r9, r0, r0         # i = 0
+search_wl_str_loop:
+    bge r9, r8, search_wl_match
+
+    add r10, r5, r9
+    ldbu r10, r10, 5       # dict char (offset 5 + i, already uppercase)
+
+    add r11, r3, r9
+    ldbu r11, r11, 0       # search char
+    # Uppercase the search char for case-insensitive compare
+    addi r12, r0, 97       # 'a'
+    blt r11, r12, search_wl_no_upper
+    addi r12, r0, 122      # 'z'
+    bgt r11, r12, search_wl_no_upper
+    addi r11, r11, -32
+search_wl_no_upper:
+
+    bne r10, r11, search_wl_next
+
+    addi r9, r9, 1
+    jal r0, search_wl_str_loop
+
+search_wl_next:
+    ldw r5, r5, 0          # follow link
+    jal r0, search_wl_loop
+
+search_wl_match:
+    # Calculate XT address
+    addi r5, r5, 5
+    add r5, r5, r8
+    addi r5, r5, 3
+    addi r10, r0, -4
+    and r5, r5, r10        # r5 = XT (aligned)
+
+    # Push xt
+    addi r28, r28, -4
+    stw r28, r5, 0
+
+    # Determine flag: 1 if IMMEDIATE, -1 if normal
+    addi r10, r0, 0x80
+    and r6, r6, r10
+    beq r6, r0, search_wl_not_imm
+    addi r6, r0, 1         # IMMEDIATE
+    jal r0, search_wl_push_flag
+search_wl_not_imm:
+    addi r6, r0, -1        # normal (non-immediate)
+search_wl_push_flag:
+    addi r28, r28, -4
+    stw r28, r6, 0
+    jal r0, next
+
+search_wl_fail:
+    addi r28, r28, -4
+    stw r28, r0, 0         # push 0 (not found)
+    jal r0, next
+
+# Word: WORDLIST ( -- wid )
+# Create a new empty wordlist. Allocates a cell at HERE, inits to 0.
+.text
+    .align 2
+head_wordlist:
+    .word head_search_wl
+    .byte 8
+    .ascii "WORDLIST"
+    .align 2
+xt_wordlist:
+    .word wordlist_word
+wordlist_word:
+    lui r1, %hi(var_here)
+    addi r1, r1, %lo(var_here)
+    ldw r2, r1, 0          # r2 = HERE
+    stw r2, r0, 0          # [HERE] = 0 (empty wordlist)
+    addi r3, r2, 4
+    stw r1, r3, 0          # HERE += 4
+    addi r28, r28, -4
+    stw r28, r2, 0         # push wid (= old HERE)
+    jal r0, next
+
 # ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
@@ -4745,7 +5033,7 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_throw               # Point to last defined word
+    .word head_wordlist            # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_len: .word 0
@@ -4753,6 +5041,16 @@ var_prompt_enabled: .word 0        # 0 = suppress prompts (prelude), 1 = show pr
 var_leave_list:     .word 0        # compile-time leave-list head for DO...LOOP
 var_hld:            .word 0            # Pictured numeric output pointer into PAD
 var_catch_frame:    .word 0            # Exception frame pointer (0 = none)
+var_compilation_wid: .word var_latest   # Current compilation wordlist (initially FORTH-WORDLIST)
+search_order_count: .word 1            # Number of active search order entries
+search_order:       .word var_latest   # Search order slot 0 (FORTH-WORDLIST)
+                    .word 0            # Search order slot 1
+                    .word 0            # Search order slot 2
+                    .word 0            # Search order slot 3
+                    .word 0            # Search order slot 4
+                    .word 0            # Search order slot 5
+                    .word 0            # Search order slot 6
+                    .word 0            # Search order slot 7
 
     .align 2
 interp_exec_thread:

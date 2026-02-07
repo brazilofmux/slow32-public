@@ -286,6 +286,15 @@
 
 : BLANK  ( addr u -- )  BL FILL ;
 
+\ --- Search-Order Words ---
+: DEFINITIONS  ( -- )  GET-ORDER OVER SET-CURRENT 0 ?DO DROP LOOP ;
+: ALSO         ( -- )  GET-ORDER OVER SWAP 1+ SET-ORDER ;
+: PREVIOUS     ( -- )  GET-ORDER SWAP DROP 1- SET-ORDER ;
+: FORTH        ( -- )  GET-ORDER NIP FORTH-WORDLIST SWAP SET-ORDER ;
+: ONLY         ( -- )  -1 SET-ORDER ;
+: ORDER        ( -- )  ." Search:" GET-ORDER 0 ?DO SPACE . LOOP
+                       ."  Comp:" SPACE GET-CURRENT . CR ;
+
 \ --- Missing Core / Utility Words ---
 
 : WORDS

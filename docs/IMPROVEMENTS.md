@@ -27,10 +27,13 @@ This document consolidates feedback and improvement suggestions for the SLOW-32 
 8. **Shared Loader** ✅ — Callback-based `s32x_loader.h` used by all emulators.
 9. **IEEE 754 Floating-Point** ✅ — Native f32/f64 instructions across entire toolchain.
 
+### Runtime Libraries (all resolved)
+1. **String-float conversions** ✅ — dtoa/strtod implemented.
+2. **Math library transcendentals** ✅ — sin, cos, exp, log, etc. implemented via DBT/QEMU runtime interception.
+
 ## Open Items
 
-1. **String-float conversions** (dtoa/strtod) — Not yet implemented. Significant effort (~6-7K lines). Low priority until needed.
-2. **Math library transcendentals** (sin, cos, exp, log, etc.) — Stubs satisfy the linker; dbt/QEMU intercept at runtime. No soft-float implementations planned.
+None at this time.
 
 ## Testing Recommendations
 

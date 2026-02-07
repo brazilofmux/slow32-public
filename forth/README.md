@@ -28,6 +28,7 @@ Stage 4: Bootstrap Prelude. Self-extending Forth with ~50 standard vocabulary wo
 - **Strings**: `COUNT`
 - **Pictured Output**: `<#`, `HOLD`, `#>`
 - **Exception**: `CATCH`, `THROW`
+- **Search-Order**: `FORTH-WORDLIST`, `GET-CURRENT`, `SET-CURRENT`, `GET-ORDER`, `SET-ORDER`, `SEARCH-WORDLIST`, `WORDLIST`
 - **System**: `ABORT`, `EVALUATE`
 - **Other**: `HELLO`, `PROMPTS-ON`
 
@@ -52,6 +53,7 @@ Loaded automatically from `prelude.fth` at startup:
 - **Stack**: `ROLL`
 - **I/O**: `.(` (immediate display)
 - **Compiler**: `[DEFINED]`, `[UNDEFINED]`
+- **Search-Order**: `DEFINITIONS`, `ALSO`, `PREVIOUS`, `FORTH`, `ONLY`, `ORDER`
 - **Comments**: `\` (backslash line comment), `(` (paren comment)
 
 ## Dictionary Structure
