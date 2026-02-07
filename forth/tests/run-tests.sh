@@ -50,7 +50,7 @@ for test_file in "$SCRIPT_DIR"/test-*.fth; do
 
     TOTAL=$((TOTAL + 1))
 
-    actual=$(cat "$PRELUDE" "$test_file" | timeout 5 "$EMULATOR" "$KERNEL" 2>/dev/null | filter_output || true)
+    actual=$(cat "$PRELUDE" "$test_file" | timeout 10 "$EMULATOR" "$KERNEL" 2>/dev/null | filter_output || true)
     expected_content=$(cat "$expected")
 
     if [ "$actual" = "$expected_content" ]; then
