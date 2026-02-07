@@ -26,6 +26,7 @@ Stage 4: Bootstrap Prelude. Self-extending Forth with ~35 standard vocabulary wo
 - **Variables**: `STATE`, `BASE`, `BASE!`, `LATEST`, `HERE`, `TIB`, `TOIN`, `NTIB`
 - **Parser**: `WORD`, `FIND`, `NUMBER`, `PARSE-WORD`, `INTERPRET`
 - **Strings**: `COUNT`
+- **Pictured Output**: `<#`, `HOLD`, `#>`
 - **Other**: `HELLO`, `PROMPTS-ON`
 
 ## Prelude Words (Forth)
@@ -41,6 +42,7 @@ Loaded automatically from `prelude.fth` at startup:
 - **Compiler**: `LITERAL`
 - **Defining**: `VARIABLE`, `CONSTANT`, `VALUE`, `TO`, `DEFER`, `IS`, `ACTION-OF`
 - **Control flow**: `CASE`, `OF`, `ENDOF`, `ENDCASE`
+- **Pictured Output**: `#`, `#S`, `SIGN`, `U.`, `.R`, `U.R`
 - **Comments**: `\` (backslash line comment), `(` (paren comment)
 
 ## Dictionary Structure

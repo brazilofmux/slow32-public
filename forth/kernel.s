@@ -3158,6 +3158,69 @@ ult_push:
     stw r28, r3, 0
     jal r0, next
 
+# Word: <# ( -- ) Begin pictured numeric output
+.text
+    .align 2
+head_less_sharp:
+    .word head_ult
+    .byte 2
+    .ascii "<#"
+    .align 2
+xt_less_sharp:
+    .word less_sharp_word
+less_sharp_word:
+    lui r1, %hi(pad)
+    addi r1, r1, %lo(pad)
+    addi r1, r1, 128          # pad + 128 (one past end)
+    lui r2, %hi(var_hld)
+    addi r2, r2, %lo(var_hld)
+    stw r2, r1, 0             # HLD = pad + 128
+    jal r0, next
+
+# Word: HOLD ( char -- ) Prepend char to pictured output buffer
+.text
+    .align 2
+head_hold:
+    .word head_less_sharp
+    .byte 4
+    .ascii "HOLD"
+    .align 2
+xt_hold:
+    .word hold_word
+hold_word:
+    ldw r1, r28, 0            # char
+    addi r28, r28, 4          # pop
+    lui r2, %hi(var_hld)
+    addi r2, r2, %lo(var_hld)
+    ldw r3, r2, 0             # HLD
+    addi r3, r3, -1           # --HLD
+    stb r3, r1, 0             # *HLD = char
+    stw r2, r3, 0             # save updated HLD
+    jal r0, next
+
+# Word: #> ( u -- addr len ) End pictured numeric output
+.text
+    .align 2
+head_sharp_greater:
+    .word head_hold
+    .byte 2
+    .ascii "#>"
+    .align 2
+xt_sharp_greater:
+    .word sharp_greater_word
+sharp_greater_word:
+    lui r2, %hi(var_hld)
+    addi r2, r2, %lo(var_hld)
+    ldw r3, r2, 0             # HLD = start addr
+    lui r4, %hi(pad)
+    addi r4, r4, %lo(pad)
+    addi r4, r4, 128          # pad + 128 = end
+    sub r5, r4, r3            # len = end - HLD
+    stw r28, r3, 0            # replace TOS (was u) with addr
+    addi r28, r28, -4         # push
+    stw r28, r5, 0            # TOS = len
+    jal r0, next
+
 # ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
@@ -3167,12 +3230,13 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_ult             # Point to last defined word
+    .word head_sharp_greater   # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_len: .word 0
 var_prompt_enabled: .word 0        # 0 = suppress prompts (prelude), 1 = show prompts
 var_leave_list:     .word 0        # compile-time leave-list head for DO...LOOP
+var_hld:            .word 0            # Pictured numeric output pointer into PAD
 
     .align 2
 interp_exec_thread:

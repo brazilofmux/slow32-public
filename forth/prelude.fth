@@ -98,5 +98,28 @@
     R> 0 DO  OVER I + C@  OVER I + C!  LOOP
   THEN 2DROP ;
 
+\ --- Pictured Numeric Output ---
+: #  ( u -- u' )
+  BASE @ /MOD SWAP
+  DUP 10 < IF 48 + ELSE 10 - 65 + THEN
+  HOLD ;
+
+: #S  ( u -- 0 )
+  BEGIN # DUP 0= UNTIL ;
+
+: SIGN  ( n -- )
+  0< IF 45 HOLD THEN ;
+
+: U.  ( u -- )
+  <# #S #> TYPE SPACE ;
+
+: .R  ( n width -- )
+  SWAP DUP >R ABS
+  <# #S R> SIGN #>
+  ROT OVER - SPACES TYPE ;
+
+: U.R  ( u width -- )
+  >R <# #S #> R> OVER - SPACES TYPE ;
+
 \ Enable interactive prompts
 PROMPTS-ON
