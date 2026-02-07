@@ -272,6 +272,9 @@
 
 : BLANK  ( addr u -- )  BL FILL ;
 
+: THROW ( ior -- )
+  ?DUP IF ." Error ior=" . CR ABORT THEN ;
+
 \ --- Missing Core / Utility Words ---
 
 : WORDS
@@ -287,6 +290,62 @@
 
 : UNUSED ( -- u )
   LIMIT HERE - ;
+
+\ --- File-Access Constants ---
+
+1 CONSTANT R/O
+2 CONSTANT W/O
+3 CONSTANT R/W
+6 CONSTANT W/O-APPEND
+10 CONSTANT W/O-CREATE
+11 CONSTANT R/W-CREATE
+18 CONSTANT W/O-TRUNC
+
+\ --- File-Access High-level Words ---
+
+: READ-LINE ( c-addr u1 fileid -- u2 flag ior )
+  ROT 2SWAP ( fileid c-addr u1 )
+  >R OVER R> ( fileid c-addr c-addr u1 )
+  0 ( fileid c-addr u1 count )
+  -ROT 0 DO
+    ( fileid c-addr count )
+    2 PICK OVER + ( fileid c-addr count target-addr )
+    1 4 PICK READ-FILE IF ( ior )
+       2DROP NIP 0 0 ROT EXIT
+    THEN
+    0= IF ( EOF )
+       NIP NIP 0 0 EXIT
+    THEN
+    ( fileid c-addr count )
+    2 PICK OVER + C@ ( char )
+    DUP 10 = IF ( LF )
+      DROP NIP NIP 1 TRUE 0 EXIT
+    THEN
+    13 = IF ( CR )
+      ( skip )
+    ELSE
+      1+
+    THEN
+  LOOP
+  NIP NIP 0 TRUE 0 ( Buffer overflow ) ;
+
+VARIABLE SOURCE-BUF 128 BUFFER: SOURCE-BUF-DATA
+
+: INCLUDE-FILE ( fileid -- )
+  SOURCE-ID >R
+  DUP TO SOURCE-ID
+  BEGIN
+    SOURCE-BUF-DATA 128 3 PICK READ-LINE IF ." READ-LINE error" CR ABORT THEN
+  WHILE
+    SOURCE-BUF-DATA SWAP EVALUATE
+  REPEAT
+  2DROP
+  CLOSE-FILE IF ." CLOSE-FILE error" CR ABORT THEN
+  R> TO SOURCE-ID ;
+
+: INCLUDED ( c-addr u -- )
+  R/O OPEN-FILE IF ." OPEN-FILE error" CR ABORT THEN
+  INCLUDE-FILE ;
 
 : ENVIRONMENT? ( c-addr u -- false | i*x true )
   2DUP S" /COUNTED-STRING" COMPARE 0= IF 2DROP 255 TRUE EXIT THEN

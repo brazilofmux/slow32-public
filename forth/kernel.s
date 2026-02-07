@@ -3867,6 +3867,380 @@ limit_word:
     stw r28, r1, 0
     jal r0, next
 
+# Word: BIN ( fam1 -- fam2 ) Standard: no-op for us as flags are already binary
+.text
+    .align 2
+head_bin:
+    .word head_limit
+    .byte 3
+    .ascii "BIN"
+    .align 2
+xt_bin:
+    .word bin_word
+bin_word:
+    jal r0, next
+
+# Word: OPEN-FILE ( c-addr u fam -- fileid ior )
+.text
+    .align 2
+head_open_file:
+    .word head_bin
+    .byte 9
+    .ascii "OPEN-FILE"
+    .align 2
+xt_open_file:
+    .word open_file_word
+open_file_word:
+    ldw r6, r28, 0     # r6 = fam (flags)
+    ldw r4, r28, 4     # r4 = u (len)
+    ldw r5, r28, 8     # r5 = c-addr (path)
+    addi r28, r28, 12  # pop 3
+
+    addi r7, r0, 512
+    bgeu r4, r7, open_file_err
+
+    lui r8, %hi(file_path_buf)
+    addi r8, r8, %lo(file_path_buf)
+    add r9, r0, r0
+open_file_copy:
+    bgeu r9, r4, open_file_done
+    add r10, r5, r9
+    ldbu r11, r10, 0
+    add r10, r8, r9
+    stb r10, r11, 0
+    addi r9, r9, 1
+    jal r0, open_file_copy
+open_file_done:
+    add r10, r8, r4
+    stb r10, r0, 0
+
+    add r4, r8, r0     # pathname
+    add r5, r6, r0     # flags
+    jal open
+
+    add r2, r0, r0     # ior = 0
+    blt r1, r0, open_file_fail
+    jal r0, open_file_push
+open_file_fail:
+    addi r2, r0, -1
+    add r1, r0, r0     # fileid = 0 on error
+    jal r0, open_file_push
+open_file_err:
+    add r1, r0, r0
+    addi r2, r0, -1
+open_file_push:
+    addi r28, r28, -4
+    stw r28, r1, 0     # fileid
+    addi r28, r28, -4
+    stw r28, r2, 0     # ior
+    jal r0, next
+
+# Word: READ-FILE ( c-addr u fileid -- u2 ior )
+.text
+    .align 2
+head_read_file:
+    .word head_open_file
+    .byte 9
+    .ascii "READ-FILE"
+    .align 2
+xt_read_file:
+    .word read_file_word
+read_file_word:
+    ldw r4, r28, 0     # r4 = fileid
+    ldw r6, r28, 4     # r6 = u (len)
+    ldw r5, r28, 8     # r5 = c-addr (buf)
+    addi r28, r28, 12  # pop 3
+
+    jal read
+
+    add r2, r0, r0     # ior = 0
+    blt r1, r0, read_file_fail
+    add r3, r1, r0     # u2
+    jal r0, read_file_push
+read_file_fail:
+    add r3, r0, r0
+    addi r2, r0, -1
+read_file_push:
+    addi r28, r28, -4
+    stw r28, r3, 0     # u2
+    addi r28, r28, -4
+    stw r28, r2, 0     # ior
+    jal r0, next
+
+# Word: WRITE-FILE ( c-addr u fileid -- ior )
+.text
+    .align 2
+head_write_file:
+    .word head_read_file
+    .byte 10
+    .ascii "WRITE-FILE"
+    .align 2
+xt_write_file:
+    .word write_file_word
+write_file_word:
+    ldw r4, r28, 0     # r4 = fileid
+    ldw r6, r28, 4     # r6 = u (len)
+    ldw r5, r28, 8     # r5 = c-addr (buf)
+    addi r28, r28, 12  # pop 3
+
+    jal write
+
+    add r2, r0, r0     # ior = 0
+    blt r1, r0, write_file_fail
+    bne r1, r6, write_file_fail
+    jal r0, write_file_push
+write_file_fail:
+    addi r2, r0, -1
+write_file_push:
+    addi r28, r28, -4
+    stw r28, r2, 0
+    jal r0, next
+
+# Word: CLOSE-FILE ( fileid -- ior )
+.text
+    .align 2
+head_close_file:
+    .word head_write_file
+    .byte 10
+    .ascii "CLOSE-FILE"
+    .align 2
+xt_close_file:
+    .word close_file_word
+close_file_word:
+    ldw r4, r28, 0
+    addi r28, r28, 4
+    jal close
+
+    add r2, r0, r0
+    blt r1, r0, close_file_fail
+    jal r0, close_file_push
+close_file_fail:
+    addi r2, r0, -1
+close_file_push:
+    addi r28, r28, -4
+    stw r28, r2, 0
+    jal r0, next
+
+# Word: FILE-SIZE ( fileid -- ud ior )
+.text
+    .align 2
+head_file_size:
+    .word head_close_file
+    .byte 9
+    .ascii "FILE-SIZE"
+    .align 2
+xt_file_size:
+    .word file_size_word
+file_size_word:
+    ldw r4, r28, 0     # r4 = fileid
+    addi r28, r28, 4
+
+    lui r5, %hi(file_stat_buf)
+    addi r5, r5, %lo(file_stat_buf)
+    jal fstat
+
+    add r2, r0, r0     # ior = 0
+    bne r1, r0, file_size_fail
+    ldw r3, r5, 40     # st_size lo
+    ldw r4, r5, 44     # st_size hi
+    jal r0, file_size_push
+file_size_fail:
+    add r3, r0, r0
+    add r4, r0, r0
+    addi r2, r0, -1
+file_size_push:
+    addi r28, r28, -4
+    stw r28, r3, 0     # lo
+    addi r28, r28, -4
+    stw r28, r4, 0     # hi
+    addi r28, r28, -4
+    stw r28, r2, 0     # ior
+    jal r0, next
+
+# Word: REPOSITION-FILE ( ud fileid -- ior )
+.text
+    .align 2
+head_reposition_file:
+    .word head_file_size
+    .byte 15
+    .ascii "REPOSITION-FILE"
+    .align 2
+xt_reposition_file:
+    .word reposition_file_word
+reposition_file_word:
+    ldw r4, r28, 0     # fileid
+    ldw r6, r28, 4     # hi
+    ldw r5, r28, 8     # lo
+    addi r28, r28, 12
+
+    bne r6, r0, reposition_file_fail
+    add r6, r0, r0     # SEEK_SET = 0
+    jal lseek
+
+    add r2, r0, r0
+    blt r1, r0, reposition_file_fail
+    jal r0, reposition_file_push
+reposition_file_fail:
+    addi r2, r0, -1
+reposition_file_push:
+    addi r28, r28, -4
+    stw r28, r2, 0
+    jal r0, next
+
+# Word: FILE-POSITION ( fileid -- ud ior )
+.text
+    .align 2
+head_file_position:
+    .word head_reposition_file
+    .byte 13
+    .ascii "FILE-POSITION"
+    .align 2
+xt_file_position:
+    .word file_position_word
+file_position_word:
+    ldw r4, r28, 0
+    addi r28, r28, 4
+
+    add r5, r0, r0     # offset = 0
+    addi r6, r0, 1     # SEEK_CUR
+    jal lseek
+
+    add r2, r0, r0
+    blt r1, r0, file_position_fail
+    add r3, r1, r0     # lo
+    add r4, r0, r0     # hi
+    jal r0, file_position_push
+file_position_fail:
+    add r3, r0, r0
+    add r4, r0, r0
+    addi r2, r0, -1
+file_position_push:
+    addi r28, r28, -4
+    stw r28, r3, 0
+    addi r28, r28, -4
+    stw r28, r4, 0
+    addi r28, r28, -4
+    stw r28, r2, 0
+    jal r0, next
+
+# Word: DELETE-FILE ( c-addr u -- ior )
+.text
+    .align 2
+head_delete_file:
+    .word head_file_position
+    .byte 11
+    .ascii "DELETE-FILE"
+    .align 2
+xt_delete_file:
+    .word delete_file_word
+delete_file_word:
+    ldw r4, r28, 0     # u (len)
+    ldw r5, r28, 4     # c-addr
+    addi r28, r28, 8
+
+    addi r7, r0, 512
+    bgeu r4, r7, delete_file_err
+
+    lui r8, %hi(file_path_buf)
+    addi r8, r8, %lo(file_path_buf)
+    add r9, r0, r0
+delete_file_copy:
+    bgeu r9, r4, delete_file_done
+    add r10, r5, r9
+    ldbu r11, r10, 0
+    add r10, r8, r9
+    stb r10, r11, 0
+    addi r9, r9, 1
+    jal r0, delete_file_copy
+delete_file_done:
+    add r10, r8, r4
+    stb r10, r0, 0
+
+    add r4, r8, r0
+    jal unlink
+
+    add r2, r0, r0
+    blt r1, r0, delete_file_fail
+    jal r0, delete_file_push
+delete_file_fail:
+    addi r2, r0, -1
+    jal r0, delete_file_push
+delete_file_err:
+    addi r2, r0, -1
+delete_file_push:
+    addi r28, r28, -4
+    stw r28, r2, 0
+    jal r0, next
+
+# Word: RENAME-FILE ( c-addr1 u1 c-addr2 u2 -- ior )
+.text
+    .align 2
+head_rename_file:
+    .word head_delete_file
+    .byte 11
+    .ascii "RENAME-FILE"
+    .align 2
+xt_rename_file:
+    .word rename_file_word
+rename_file_word:
+    ldw r7, r28, 0     # u2
+    ldw r6, r28, 4     # c-addr2
+    ldw r5, r28, 8     # u1
+    ldw r4, r28, 12    # c-addr1
+    addi r28, r28, 16
+
+    addi r9, r0, 512
+    bgeu r5, r9, rename_file_err
+    bgeu r7, r9, rename_file_err
+
+    lui r8, %hi(file_path_buf)
+    addi r8, r8, %lo(file_path_buf)
+    lui r10, %hi(file_path_buf2)
+    addi r10, r10, %lo(file_path_buf2)
+
+    add r11, r0, r0
+rename_file_copy1:
+    bgeu r11, r5, rename_file_done1
+    add r12, r4, r11
+    ldbu r13, r12, 0
+    add r12, r8, r11
+    stb r12, r13, 0
+    addi r11, r11, 1
+    jal r0, rename_file_copy1
+rename_file_done1:
+    add r12, r8, r5
+    stb r12, r0, 0
+
+    add r11, r0, r0
+rename_file_copy2:
+    bgeu r11, r7, rename_file_done2
+    add r12, r6, r11
+    ldbu r13, r12, 0
+    add r12, r10, r11
+    stb r12, r13, 0
+    addi r11, r11, 1
+    jal r0, rename_file_copy2
+rename_file_done2:
+    add r12, r10, r7
+    stb r12, r0, 0
+
+    add r4, r8, r0
+    add r5, r10, r0
+    jal rename
+
+    add r2, r0, r0
+    blt r1, r0, rename_file_fail
+    jal r0, rename_file_push
+rename_file_fail:
+    addi r2, r0, -1
+    jal r0, rename_file_push
+rename_file_err:
+    addi r2, r0, -1
+rename_file_push:
+    addi r28, r28, -4
+    stw r28, r2, 0
+    jal r0, next
+
 # ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
@@ -3876,7 +4250,7 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_limit         # Point to last defined word
+    .word head_rename_file         # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_len: .word 0
@@ -3900,6 +4274,9 @@ tib:            .space 128         # Terminal Input Buffer
 user_dictionary: .space 65536      # Space for new words
 user_dictionary_end:
 pad:            .space 128         # Scratch pad for strings/numbers
+file_path_buf:   .space 512        # Temporary path buffer
+file_path_buf2:  .space 512        # Secondary path buffer (rename)
+file_stat_buf:   .space 128        # struct stat scratch buffer
 
 
 # ----------------------------------------------------------------------

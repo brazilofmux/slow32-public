@@ -24,6 +24,92 @@ int close(int fd) {
     return s32_mmio_request(S32_MMIO_OP_CLOSE, 0u, 0u, (unsigned int)fd);
 }
 
+int read(int fd, void *buf, size_t count) {
+    if (fd < 0 || !buf) return -1;
+    if (count == 0) return 0;
+
+    volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
+    unsigned char *dst = (unsigned char *)buf;
+    size_t total = 0;
+
+    while (total < count) {
+        size_t chunk = count - total;
+        if (chunk > S32_MMIO_DATA_CAPACITY) {
+            chunk = S32_MMIO_DATA_CAPACITY;
+        }
+
+        unsigned int result = (unsigned int)s32_mmio_request(
+            S32_MMIO_OP_READ, (unsigned int)chunk, 0u, (unsigned int)fd);
+
+        if (result == S32_MMIO_STATUS_ERR || result == S32_MMIO_STATUS_EINTR) {
+            return (total > 0) ? (int)total : -1;
+        }
+
+        if (result == 0) {
+            break;
+        }
+
+        memcpy(dst + total, (const void *)data_buffer, result);
+        total += result;
+
+        if (result < chunk) {
+            break;
+        }
+    }
+
+    return (int)total;
+}
+
+int write(int fd, const void *buf, size_t count) {
+    if (fd < 0 || !buf) return -1;
+    if (count == 0) return 0;
+
+    volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
+    const unsigned char *src = (const unsigned char *)buf;
+    size_t total = 0;
+
+    while (total < count) {
+        size_t chunk = count - total;
+        if (chunk > S32_MMIO_DATA_CAPACITY) {
+            chunk = S32_MMIO_DATA_CAPACITY;
+        }
+
+        memcpy((void *)data_buffer, src + total, chunk);
+
+        unsigned int result = (unsigned int)s32_mmio_request(
+            S32_MMIO_OP_WRITE, (unsigned int)chunk, 0u, (unsigned int)fd);
+
+        if (result == S32_MMIO_STATUS_ERR || result == S32_MMIO_STATUS_EINTR) {
+            return (total > 0) ? (int)total : -1;
+        }
+
+        total += result;
+
+        if (result < chunk) {
+            break;
+        }
+    }
+
+    return (int)total;
+}
+
+int lseek(int fd, int offset, int whence) {
+    if (fd < 0) {
+        return -1;
+    }
+
+    volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
+    data_buffer[0] = (unsigned char)whence;
+    *(int *)(void *)(data_buffer + 4) = offset;
+
+    int result = s32_mmio_request(S32_MMIO_OP_SEEK, 8u, 0u, (unsigned int)fd);
+    if (result < 0) {
+        return -1;
+    }
+
+    return result;
+}
+
 // Helper to copy result into stat struct (shared with stat_mmio.c via inline)
 static int copy_lstat_result(struct stat *dst) {
     s32_mmio_stat_result_t result = {0};
