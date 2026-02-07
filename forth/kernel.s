@@ -3799,7 +3799,6 @@ xt_source_id:
 source_id_word:
     lui r1, %hi(var_source_id)
     addi r1, r1, %lo(var_source_id)
-    ldw r1, r1, 0      # Load the value
     addi r28, r28, -4
     stw r28, r1, 0
     jal r0, next

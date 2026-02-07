@@ -44,7 +44,7 @@ Loaded automatically from `prelude.fth` at startup:
 - **Defining**: `VARIABLE`, `CONSTANT`, `2VARIABLE`, `2CONSTANT`, `VALUE`, `TO`, `DEFER`, `IS`, `ACTION-OF`, `MARKER`, `BUFFER:`
 - **Control flow**: `CASE`, `OF`, `ENDOF`, `ENDCASE`
 - **Pictured Output**: `MU/MOD`, `#`, `#S`, `SIGN`, `U.`, `.R`, `U.R`, `HOLDS`
-- **Core Arithmetic**: `SM/REM`, `FM/MOD`, `*/MOD`, `*/`
+- **Core Arithmetic**: `SM/REM`, `FM/MOD`, `*/MOD`, `*/`, `>NUMBER`
 - **Double-Number**: `D>S`, `DNEGATE`, `DABS`, `D0=`, `D0<`, `D=`, `D<`, `M+`, `D.`, `D.R`
 - **Strings**: `CMOVE`, `CMOVE>`, `/STRING`, `COMPARE`, `SEARCH`, `PLACE`, `-TRAILING`
 - **System**: `>BODY`, `SOURCE`, `WITHIN`, `ALIGNED`, `ALIGN`, `ABORT"`, `>IN`, `PAD`, `REFILL`, `NOOP`

@@ -91,4 +91,31 @@ CREATE BLKBUF 4 ALLOT
 BLKBUF 4 BLANK
 BLKBUF C@ . BLKBUF 1+ C@ . BLKBUF 2 + C@ . BLKBUF 3 + C@ . CR
 
+\ --- >NUMBER ---
+\ Must use colon defs because S" is compile-only
+\ Print: remaining-count result-lo
+: TN1  0 0 S" 42" >NUMBER . 2DROP . CR ;
+TN1
+
+: TN2  0 0 S" 123abc" >NUMBER . 2DROP . CR ;
+TN2
+
+: TN3  0 0 S" 0" >NUMBER . 2DROP . CR ;
+TN3
+
+: TN4  0 0 S" " >NUMBER . 2DROP . CR ;
+TN4
+
+HEX : TN5  0 0 S" FF" >NUMBER . 2DROP . CR ; TN5 DECIMAL
+
+: TN6  0 0 S" 99X" >NUMBER . 2DROP . CR ;
+TN6
+
+: TN7  0 0 S" abc" >NUMBER . 2DROP . CR ;
+TN7
+
+\ --- SOURCE-ID ---
+: TN8  SOURCE-ID @ . CR ;
+TN8
+
 BYE
