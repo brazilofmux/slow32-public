@@ -371,8 +371,9 @@ error_t eval_expr(env_t *env, expr_t *e, value_t *out) {
                     value_t iv;
                     error_t err = eval_expr(env, e->call.args[i], &iv);
                     if (err != ERR_NONE) return err;
-                    val_to_integer(&iv, &indices[i]);
+                    err = val_to_integer(&iv, &indices[i]);
                     val_clear(&iv);
+                    if (err != ERR_NONE) return err;
                 }
                 value_t *elem;
                 error_t err = array_get(e->call.name, indices,
@@ -395,8 +396,9 @@ error_t eval_expr(env_t *env, expr_t *e, value_t *out) {
                 if (e->call.nargs >= 2) {
                     value_t dv;
                     EVAL_CHECK(eval_expr(env, e->call.args[1], &dv));
-                    val_to_integer(&dv, &dim);
+                    error_t err = val_to_integer(&dv, &dim);
                     val_clear(&dv);
+                    if (err != ERR_NONE) return err;
                 }
                 sb_array_t *a = array_find(arrname);
                 if (!a) return ERR_UNDEFINED_VAR;
@@ -630,8 +632,8 @@ static error_t exec_print(env_t *env, stmt_t *s) {
                 if (arg_idx < s->print.nitems && s->print.items[arg_idx].expr) {
                     value_t v;
                     EVAL_CHECK(eval_expr(env, s->print.items[arg_idx].expr, &v));
-                    double d;
-                    val_to_double(&v, &d);
+                    double d = 0.0;
+                    val_to_double(&v, &d);  /* best-effort; strings → 0 */
                     val_clear(&v);
                     int consumed = format_using_num(fmt, d);
                     if (consumed > 0) { fmt += consumed; arg_idx++; continue; }
@@ -818,12 +820,13 @@ static error_t exec_for(env_t *env, stmt_t *s) {
     }
 
     double counter, limit, step;
-    val_to_double(&start_val, &counter);
-    val_to_double(&end_val, &limit);
-    val_to_double(&step_val, &step);
+    error_t cerr = val_to_double(&start_val, &counter);
+    if (cerr == ERR_NONE) cerr = val_to_double(&end_val, &limit);
+    if (cerr == ERR_NONE) cerr = val_to_double(&step_val, &step);
     val_clear(&start_val);
     val_clear(&end_val);
     val_clear(&step_val);
+    if (cerr != ERR_NONE) return cerr;
 
     if (step == 0.0) return ERR_ILLEGAL_FUNCTION_CALL;
 
@@ -929,10 +932,12 @@ static error_t exec_select(env_t *env, stmt_t *s) {
                 err = eval_expr(env, m->expr2, &hi);
                 if (err != ERR_NONE) { val_clear(&lo); val_clear(&test); return err; }
                 int cmp_lo, cmp_hi;
-                val_compare(&test, &lo, &cmp_lo);
-                val_compare(&test, &hi, &cmp_hi);
+                err = val_compare(&test, &lo, &cmp_lo);
+                if (err == ERR_NONE)
+                    err = val_compare(&test, &hi, &cmp_hi);
                 val_clear(&lo);
                 val_clear(&hi);
+                if (err != ERR_NONE) { val_clear(&test); return err; }
                 if (cmp_lo >= 0 && cmp_hi <= 0) found = 1;
             } else if (m->match_type == 2) {
                 value_t v;
@@ -1460,8 +1465,9 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             if (s->randomize.seed) {
                 value_t v;
                 EVAL_CHECK(eval_expr(env, s->randomize.seed, &v));
-                val_to_integer(&v, &seed);
+                error_t cerr = val_to_integer(&v, &seed);
                 val_clear(&v);
+                if (cerr != ERR_NONE) return cerr;
             }
             builtin_randomize(seed);
             return ERR_NONE;
@@ -1501,8 +1507,9 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             value_t v;
             EVAL_CHECK(eval_expr(env, s->error_raise.errnum, &v));
             int code;
-            val_to_integer(&v, &code);
+            error_t cerr = val_to_integer(&v, &code);
             val_clear(&v);
+            if (cerr != ERR_NONE) return cerr;
             on_error_err_code = code;
             on_error_err_line = s->line;
             return ERR_ON_ERROR_GOTO;
@@ -1522,8 +1529,9 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             value_t v;
             EVAL_CHECK(eval_expr(env, s->on_branch.index, &v));
             int idx;
-            val_to_integer(&v, &idx);
+            error_t cerr = val_to_integer(&v, &idx);
             val_clear(&v);
+            if (cerr != ERR_NONE) return cerr;
             if (idx < 1 || idx > s->on_branch.nlabels)
                 return ERR_NONE; /* out of range: just continue */
             int target = find_label(s->on_branch.labels[idx - 1]);
@@ -1536,8 +1544,9 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             value_t v;
             EVAL_CHECK(eval_expr(env, s->on_branch.index, &v));
             int idx;
-            val_to_integer(&v, &idx);
+            error_t cerr = val_to_integer(&v, &idx);
             val_clear(&v);
+            if (cerr != ERR_NONE) return cerr;
             if (idx < 1 || idx > s->on_branch.nlabels)
                 return ERR_NONE; /* out of range: just continue */
             int target = find_label(s->on_branch.labels[idx - 1]);

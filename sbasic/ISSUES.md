@@ -56,4 +56,4 @@ The `type_instances` table is global and flat.
 ## Architectural Improvements
 
 ### 10. `EVAL_CHECK` in Blocks
-Ensure that every block execution (like `SELECT CASE`) is wrapped in logic that can propagate signals. While most have been audited, any new Stage 6 features should be double-checked for "silent" error swallowing.
+- **Status**: **FIXED**. Audited all `eval_expr`/`eval_stmts` call sites and `val_to_integer`/`val_to_double`/`val_compare` return values. Fixed 8 unchecked coercion calls: array index coercion, LBOUND/UBOUND dimension, FOR loop bounds, RANDOMIZE seed, ERROR n code, ON...GOTO/GOSUB index, and SELECT CASE range comparisons. All block handlers (IF, FOR, WHILE, DO, SELECT, call_proc) correctly propagate error signals.
