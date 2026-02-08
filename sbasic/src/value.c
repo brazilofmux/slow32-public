@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 
 /* --- String refcounting --- */
 
@@ -230,44 +231,22 @@ error_t val_mod(const value_t *a, const value_t *b, value_t *result) {
     return ERR_NONE;
 }
 
-/* Simple double power for integer exponents */
-static double dpow(double base, double exp) {
-    if (exp == 0.0) return 1.0;
-    if (base == 0.0) return 0.0;
-    if (exp == (double)(int)exp) {
-        int n = (int)exp;
-        int neg = 0;
-        if (n < 0) { neg = 1; n = -n; }
-        double r = 1.0;
-        double b = base;
-        while (n > 0) {
-            if (n & 1) r *= b;
-            b *= b;
-            n >>= 1;
-        }
-        return neg ? 1.0 / r : r;
-    }
-    return 0.0; /* non-integer exponents need log/exp (Stage 4) */
-}
-
 error_t val_pow(const value_t *a, const value_t *b, value_t *result) {
     if (a->type == VAL_STRING || b->type == VAL_STRING)
         return ERR_TYPE_MISMATCH;
-    double da = val_as_double(a);
-    double db = val_as_double(b);
     /* Integer power for integer^positive-integer */
     if (a->type == VAL_INTEGER && b->type == VAL_INTEGER && b->ival >= 0) {
         int base = a->ival;
-        int exp = b->ival;
+        int e = b->ival;
         int r = 1;
-        while (exp > 0) {
-            if (exp & 1) r *= base;
+        while (e > 0) {
+            if (e & 1) r *= base;
             base *= base;
-            exp >>= 1;
+            e >>= 1;
         }
         *result = val_integer(r);
     } else {
-        *result = val_double(dpow(da, db));
+        *result = val_double(pow(val_as_double(a), val_as_double(b)));
     }
     return ERR_NONE;
 }

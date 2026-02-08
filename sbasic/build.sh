@@ -8,7 +8,7 @@ LLC=$LLVM_BIN/llc
 ASM=../tools/assembler/slow32asm
 LD=../tools/linker/s32-ld
 TARGET=slow32-unknown-none
-CFLAGS="-target $TARGET -S -emit-llvm -nostdinc -I../runtime/include"
+CFLAGS="-target $TARGET -S -emit-llvm -nostdinc -fno-builtin -I../runtime/include"
 
 # Optimization level
 OPT="${OPT:--O1}"

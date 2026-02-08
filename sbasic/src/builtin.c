@@ -3,179 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
-
-/* ================================================================
- * Inline math helpers for SLOW-32
- * (libc math stubs HALT on slow32/slow32-fast)
- * ================================================================ */
-
-static double sb_floor(double x) {
-    int i = (int)x;
-    if (x < 0.0 && (double)i != x) return (double)(i - 1);
-    return (double)i;
-}
-
-static double sb_fabs(double x) {
-    return x < 0.0 ? -x : x;
-}
-
-static double sb_fmod(double x, double y) {
-    if (y == 0.0) return 0.0;
-    return x - sb_floor(x / y) * y;
-}
-
-static double sb_sqrt(double x) {
-    if (x <= 0.0) return 0.0;
-    double guess = x;
-    for (int i = 0; i < 30; i++)
-        guess = (guess + x / guess) * 0.5;
-    return guess;
-}
-
-/* exp(x) via Taylor series with range reduction:
-   exp(x) = 2^k * exp(r) where r = x - k*ln(2) and |r| < 0.5*ln(2) */
-static double sb_exp(double x) {
-    if (x > 700.0) return 1e308;
-    if (x < -700.0) return 0.0;
-    /* Range reduce: x = k*ln(2) + r */
-    double ln2 = 0.6931471805599453;
-    int k = (int)(x / ln2 + (x >= 0.0 ? 0.5 : -0.5));
-    double r = x - (double)k * ln2;
-    /* Taylor series for exp(r), |r| < 0.35 */
-    double term = 1.0;
-    double sum = 1.0;
-    for (int i = 1; i <= 25; i++) {
-        term *= r / (double)i;
-        sum += term;
-        if (sb_fabs(term) < 1e-16 * sb_fabs(sum)) break;
-    }
-    /* Multiply by 2^k */
-    while (k > 0) { sum *= 2.0; k--; }
-    while (k < 0) { sum *= 0.5; k++; }
-    return sum;
-}
-
-/* log(x) via Newton-Raphson: find y such that exp(y) = x */
-static double sb_log(double x) {
-    if (x <= 0.0) return -1e308; /* -infinity */
-    /* Initial guess: decompose x = m * 2^e, guess = e * ln(2) */
-    double ln2 = 0.6931471805599453;
-    double y = 0.0;
-    double t = x;
-    while (t > 2.0) { t *= 0.5; y += ln2; }
-    while (t < 0.5) { t *= 2.0; y -= ln2; }
-    /* Now t is in [0.5, 2.0], refine with series: log(t) = 2*atanh((t-1)/(t+1)) */
-    double u = (t - 1.0) / (t + 1.0);
-    double u2 = u * u;
-    double sum = 0.0;
-    double term = u;
-    for (int i = 0; i < 30; i++) {
-        sum += term / (double)(2 * i + 1);
-        term *= u2;
-    }
-    return y + 2.0 * sum;
-}
-
-static double sb_log10(double x) {
-    return sb_log(x) / 2.302585092994046;
-}
-
-static double sb_pow(double base, double exp_val) {
-    if (exp_val == 0.0) return 1.0;
-    if (base == 0.0) return 0.0;
-    /* Integer exponent fast path */
-    if (exp_val == (double)(int)exp_val && exp_val > 0 && exp_val < 100) {
-        int n = (int)exp_val;
-        double r = 1.0, b = base;
-        while (n > 0) {
-            if (n & 1) r *= b;
-            b *= b;
-            n >>= 1;
-        }
-        return r;
-    }
-    if (exp_val == (double)(int)exp_val && exp_val < 0 && exp_val > -100)
-        return 1.0 / sb_pow(base, -exp_val);
-    /* General case: base^exp = exp(exp * log(base)) */
-    if (base < 0.0) return 0.0; /* negative base with fractional exp = error */
-    return sb_exp(exp_val * sb_log(base));
-}
-
-/* sin(x) via Taylor series with range reduction to [-pi, pi] */
-#define SB_PI 3.14159265358979323846
-#define SB_TWO_PI 6.28318530717958647692
-#define SB_HALF_PI 1.57079632679489661923
-
-static double sb_sin(double x) {
-    /* Range reduce to [-pi, pi] */
-    x = sb_fmod(x, SB_TWO_PI);
-    if (x > SB_PI) x -= SB_TWO_PI;
-    if (x < -SB_PI) x += SB_TWO_PI;
-    /* Taylor series: sin(x) = x - x^3/3! + x^5/5! - ... */
-    double term = x;
-    double sum = x;
-    double x2 = x * x;
-    for (int i = 1; i <= 15; i++) {
-        term *= -x2 / (double)(2 * i * (2 * i + 1));
-        sum += term;
-    }
-    return sum;
-}
-
-static double sb_cos(double x) {
-    return sb_sin(x + SB_HALF_PI);
-}
-
-static double sb_tan(double x) {
-    double c = sb_cos(x);
-    if (sb_fabs(c) < 1e-15) return (sb_sin(x) > 0) ? 1e15 : -1e15;
-    return sb_sin(x) / c;
-}
-
-/* atan(x) via series with range reduction */
-static double sb_atan(double x) {
-    int neg = 0, recip = 0, shift = 0;
-    if (x < 0.0) { neg = 1; x = -x; }
-    if (x > 1.0) { recip = 1; x = 1.0 / x; }
-    /* Further reduce: if x > tan(pi/12) ~ 0.2679, use atan(x) = pi/6 + atan((x-1/sqrt(3))/(1+x/sqrt(3))) */
-    double result;
-    if (x > 0.2679) {
-        double sqrt3 = 1.7320508075688772;
-        double t = (x * sqrt3 - 1.0) / (sqrt3 + x);
-        double t2 = t * t;
-        double sum = t;
-        double term = t;
-        for (int i = 1; i <= 20; i++) {
-            term *= -t2;
-            sum += term / (double)(2 * i + 1);
-        }
-        result = 0.5235987755982988 + sum; /* pi/6 + atan(t) */
-    } else {
-        double x2 = x * x;
-        double sum = x;
-        double term = x;
-        for (int i = 1; i <= 20; i++) {
-            term *= -x2;
-            sum += term / (double)(2 * i + 1);
-        }
-        result = sum;
-    }
-    if (recip) result = SB_HALF_PI - result;
-    if (neg) result = -result;
-    return result;
-}
-
-static double sb_atan2(double y, double x) {
-    if (x > 0.0) return sb_atan(y / x);
-    if (x < 0.0) {
-        if (y >= 0.0) return sb_atan(y / x) + SB_PI;
-        return sb_atan(y / x) - SB_PI;
-    }
-    /* x == 0 */
-    if (y > 0.0) return SB_HALF_PI;
-    if (y < 0.0) return -SB_HALF_PI;
-    return 0.0;
-}
+#include <math.h>
 
 /* Simple LCG random number generator */
 static unsigned int rng_state = 12345;
@@ -216,7 +44,7 @@ static error_t fn_abs(value_t *args, int nargs, value_t *out) {
 static error_t fn_int(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     double v; EVAL_CHECK(get_num(&args[0], &v));
-    *out = val_integer((int)sb_floor(v));
+    *out = val_integer((int)floor(v));
     return ERR_NONE;
 }
 
@@ -233,7 +61,7 @@ static error_t fn_sqr(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     double v; EVAL_CHECK(get_num(&args[0], &v));
     if (v < 0) return ERR_ILLEGAL_FUNCTION_CALL;
-    *out = val_double(sb_sqrt(v));
+    *out = val_double(sqrt(v));
     return ERR_NONE;
 }
 
@@ -263,28 +91,28 @@ static error_t fn_cdbl(value_t *args, int nargs, value_t *out) {
 static error_t fn_sin(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     double v; EVAL_CHECK(get_num(&args[0], &v));
-    *out = val_double(sb_sin(v));
+    *out = val_double(sin(v));
     return ERR_NONE;
 }
 
 static error_t fn_cos(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     double v; EVAL_CHECK(get_num(&args[0], &v));
-    *out = val_double(sb_cos(v));
+    *out = val_double(cos(v));
     return ERR_NONE;
 }
 
 static error_t fn_tan(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     double v; EVAL_CHECK(get_num(&args[0], &v));
-    *out = val_double(sb_tan(v));
+    *out = val_double(tan(v));
     return ERR_NONE;
 }
 
 static error_t fn_atn(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     double v; EVAL_CHECK(get_num(&args[0], &v));
-    *out = val_double(sb_atan(v));
+    *out = val_double(atan(v));
     return ERR_NONE;
 }
 
@@ -293,14 +121,14 @@ static error_t fn_atn2(value_t *args, int nargs, value_t *out) {
     double y, x;
     EVAL_CHECK(get_num(&args[0], &y));
     EVAL_CHECK(get_num(&args[1], &x));
-    *out = val_double(sb_atan2(y, x));
+    *out = val_double(atan2(y, x));
     return ERR_NONE;
 }
 
 static error_t fn_exp(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     double v; EVAL_CHECK(get_num(&args[0], &v));
-    *out = val_double(sb_exp(v));
+    *out = val_double(exp(v));
     return ERR_NONE;
 }
 
@@ -308,7 +136,7 @@ static error_t fn_log(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     double v; EVAL_CHECK(get_num(&args[0], &v));
     if (v <= 0.0) return ERR_ILLEGAL_FUNCTION_CALL;
-    *out = val_double(sb_log(v));
+    *out = val_double(log(v));
     return ERR_NONE;
 }
 
@@ -316,7 +144,7 @@ static error_t fn_log10(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     double v; EVAL_CHECK(get_num(&args[0], &v));
     if (v <= 0.0) return ERR_ILLEGAL_FUNCTION_CALL;
-    *out = val_double(sb_log10(v));
+    *out = val_double(log10(v));
     return ERR_NONE;
 }
 
