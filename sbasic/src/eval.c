@@ -46,9 +46,8 @@ static value_t data_pool[MAX_DATA_VALUES];
 static int data_pool_count = 0;
 static int data_read_ptr = 0;
 
-/* TYPE record definitions and instances */
+/* TYPE record definitions */
 #define MAX_TYPE_DEFS 32
-#define MAX_TYPE_INSTANCES 128
 
 typedef struct {
     char name[64];
@@ -57,18 +56,8 @@ typedef struct {
     int nfields;
 } type_def_t;
 
-typedef struct {
-    char name[64];           /* variable name */
-    char type_name[64];      /* TYPE name */
-    int type_idx;            /* index into type_defs */
-    value_t fields[32];      /* field values */
-} type_instance_t;
-
 static type_def_t type_defs[MAX_TYPE_DEFS];
 static int type_def_count = 0;
-
-static type_instance_t type_instances[MAX_TYPE_INSTANCES];
-static int type_instance_count = 0;
 
 /* ON ERROR state */
 static int on_error_label_idx = -1;  /* -1 = no handler */
@@ -118,15 +107,6 @@ static int find_type_def(const char *name) {
     return -1;
 }
 
-/* Find a TYPE instance by variable name */
-static type_instance_t *find_type_instance(const char *name) {
-    for (int i = 0; i < type_instance_count; i++) {
-        if (strcmp(type_instances[i].name, name) == 0)
-            return &type_instances[i];
-    }
-    return NULL;
-}
-
 /* Find field index in a type def */
 static int find_field_index(type_def_t *td, const char *field) {
     for (int i = 0; i < td->nfields; i++) {
@@ -134,15 +114,6 @@ static int find_field_index(type_def_t *td, const char *field) {
             return i;
     }
     return -1;
-}
-
-static void type_instances_clear(void) {
-    for (int i = 0; i < type_instance_count; i++) {
-        type_def_t *td = &type_defs[type_instances[i].type_idx];
-        for (int j = 0; j < td->nfields; j++)
-            val_clear(&type_instances[i].fields[j]);
-    }
-    type_instance_count = 0;
 }
 
 /* --- Lookup helpers --- */
@@ -441,12 +412,12 @@ error_t eval_expr(env_t *env, expr_t *e, value_t *out) {
         }
 
         case EXPR_FIELD_ACCESS: {
-            type_instance_t *inst = find_type_instance(e->field.var_name);
-            if (!inst) return ERR_UNDEFINED_VAR;
-            type_def_t *td = &type_defs[inst->type_idx];
+            value_t *v = env_get(env, e->field.var_name);
+            if (!v || v->type != VAL_RECORD) return ERR_UNDEFINED_VAR;
+            type_def_t *td = &type_defs[v->rval->type_idx];
             int fi = find_field_index(td, e->field.field_name);
             if (fi < 0) return ERR_UNDEFINED_FIELD;
-            *out = val_copy(&inst->fields[fi]);
+            *out = val_copy(&v->rval->fields[fi]);
             return ERR_NONE;
         }
     }
@@ -659,6 +630,8 @@ static error_t exec_print(env_t *env, stmt_t *s) {
                     break;
                 case VAL_STRING:
                     printf("%s", v.sval->data);
+                    break;
+                case VAL_RECORD:
                     break;
             }
             val_clear(&v);
@@ -1144,6 +1117,8 @@ static error_t exec_print_file(env_t *env, stmt_t *s) {
                 case VAL_STRING:
                     fprintf(fp, "%s", v.sval->data);
                     break;
+                case VAL_RECORD:
+                    break;
             }
             val_clear(&v);
         }
@@ -1175,6 +1150,7 @@ static error_t exec_write_file(env_t *env, stmt_t *s) {
                 case VAL_INTEGER: fprintf(fp, "%d", v.ival); break;
                 case VAL_DOUBLE: fprintf(fp, "%g", v.dval); break;
                 case VAL_STRING: fprintf(fp, "\"%s\"", v.sval->data); break;
+                case VAL_RECORD: break;
             }
             val_clear(&v);
         }
@@ -1300,25 +1276,28 @@ static error_t exec_type_def(stmt_t *s) {
     return ERR_NONE;
 }
 
-static error_t exec_dim_as_type(stmt_t *s) {
+static error_t exec_dim_as_type(env_t *env, stmt_t *s) {
     int ti = find_type_def(s->dim_as_type.type_name);
     if (ti < 0) return ERR_UNDEFINED_TYPE;
-    if (type_instance_count >= MAX_TYPE_INSTANCES)
-        return ERR_OUT_OF_MEMORY;
-    type_instance_t *inst = &type_instances[type_instance_count++];
-    strncpy(inst->name, s->dim_as_type.name, 63);
-    strncpy(inst->type_name, s->dim_as_type.type_name, 63);
-    inst->type_idx = ti;
     type_def_t *td = &type_defs[ti];
-    for (int i = 0; i < td->nfields; i++)
-        inst->fields[i] = val_default(td->field_types[i]);
+    sb_record_t *rec = record_alloc(ti, td->nfields);
+    if (!rec) return ERR_OUT_OF_MEMORY;
+    for (int i = 0; i < td->nfields; i++) {
+        val_clear(&rec->fields[i]);
+        rec->fields[i] = val_default(td->field_types[i]);
+    }
+    value_t val;
+    val.type = VAL_RECORD;
+    val.rval = rec;
+    env_set(env, s->dim_as_type.name, &val);
+    val_clear(&val);
     return ERR_NONE;
 }
 
 static error_t exec_field_assign(env_t *env, stmt_t *s) {
-    type_instance_t *inst = find_type_instance(s->field_assign.var_name);
-    if (!inst) return ERR_UNDEFINED_VAR;
-    type_def_t *td = &type_defs[inst->type_idx];
+    value_t *inst = env_get(env, s->field_assign.var_name);
+    if (!inst || inst->type != VAL_RECORD) return ERR_UNDEFINED_VAR;
+    type_def_t *td = &type_defs[inst->rval->type_idx];
     int fi = find_field_index(td, s->field_assign.field_name);
     if (fi < 0) return ERR_UNDEFINED_FIELD;
     value_t v;
@@ -1337,7 +1316,7 @@ static error_t exec_field_assign(env_t *env, stmt_t *s) {
         if (err != ERR_NONE) return err;
         v = val_string_cstr(buf);
     }
-    val_assign(&inst->fields[fi], &v);
+    val_assign(&inst->rval->fields[fi], &v);
     val_clear(&v);
     return ERR_NONE;
 }
@@ -1444,7 +1423,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_NAME:         return exec_name(env, s);
 
         case STMT_TYPE_DEF:     return exec_type_def(s);
-        case STMT_DIM_AS_TYPE:  return exec_dim_as_type(s);
+        case STMT_DIM_AS_TYPE:  return exec_dim_as_type(env, s);
         case STMT_FIELD_ASSIGN: return exec_field_assign(env, s);
 
         case STMT_ON_ERROR: {
@@ -1558,7 +1537,6 @@ error_t eval_program(env_t *env, stmt_t *program) {
     fileio_init();
     deftype_init();
     type_def_count = 0;
-    type_instances_clear();
     on_error_label_idx = -1;
     on_error_active = 0;
     on_error_err_code = 0;
@@ -1685,7 +1663,6 @@ error_t eval_program(env_t *env, stmt_t *program) {
     fileio_close_all();
     data_pool_clear();
     array_clear_all();
-    type_instances_clear();
     free(stmts);
     return result;
 }

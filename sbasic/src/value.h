@@ -10,7 +10,8 @@
 typedef enum {
     VAL_INTEGER,
     VAL_DOUBLE,
-    VAL_STRING
+    VAL_STRING,
+    VAL_RECORD
 } val_type_t;
 
 /* Reference-counted string */
@@ -20,6 +21,9 @@ typedef struct sb_string {
     char data[1]; /* flexible array */
 } sb_string_t;
 
+/* Forward-declare sb_record_t (defined after value_t) */
+typedef struct sb_record sb_record_t;
+
 /* Value union */
 typedef struct value {
     val_type_t type;
@@ -27,14 +31,28 @@ typedef struct value {
         int ival;
         double dval;
         sb_string_t *sval;
+        sb_record_t *rval;
     };
 } value_t;
+
+/* Reference-counted record (TYPE instance) */
+struct sb_record {
+    int refcount;
+    int type_idx;    /* index into type_defs[] */
+    int nfields;
+    value_t fields[32];
+};
 
 /* String allocation / refcounting */
 sb_string_t *string_alloc(const char *s, int len);
 sb_string_t *string_alloc_cstr(const char *s);
 void string_ref(sb_string_t *s);
 void string_unref(sb_string_t *s);
+
+/* Record allocation / refcounting */
+sb_record_t *record_alloc(int type_idx, int nfields);
+void record_ref(sb_record_t *r);
+void record_unref(sb_record_t *r);
 
 /* Value constructors */
 value_t val_integer(int v);
