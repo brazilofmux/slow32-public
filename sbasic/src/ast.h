@@ -324,10 +324,8 @@ typedef struct stmt {
 
         /* STMT_SWAP */
         struct {
-            char name1[64];
-            val_type_t type1;
-            char name2[64];
-            val_type_t type2;
+            expr_t *lhs;
+            expr_t *rhs;
         } swap_stmt;
 
         /* STMT_RANDOMIZE */
@@ -495,8 +493,7 @@ void stmt_read_add_var(stmt_t *s, const char *name, val_type_t type);
 stmt_t *stmt_restore(const char *label, int line);
 
 /* Stage 4 constructors */
-stmt_t *stmt_swap(const char *n1, val_type_t t1,
-                  const char *n2, val_type_t t2, int line);
+stmt_t *stmt_swap(expr_t *lhs, expr_t *rhs, int line);
 stmt_t *stmt_randomize(expr_t *seed, int line);
 
 /* Stage 5 constructors */

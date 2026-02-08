@@ -32,8 +32,8 @@ The parser used `stmt_append` which walked the entire statement chain to find th
 
 ### 6. `SWAP` Restricted to Simple Variables
 The `STMT_SWAP` implementation and `stmt_swap` constructor only accept variable names.
-- **Problem**: Standard BASIC allows `SWAP A(i), A(j)`, but the current implementation cannot handle array elements or record fields.
-- **Recommendation**: Refactor `stmt_swap` to take two `expr_t*` nodes (specifically restricted to L-values) instead of string names.
+- **Status**: **FIXED**. Refactored `stmt_swap` to take two `expr_t*` lvalue nodes. Added `resolve_lvalue()` helper in `eval.c` that resolves variable, array element, and record field expressions to `value_t*` pointers. Parser uses `parse_primary()` for each operand.
+- **Verification**: `swap.bas` tests all lvalue forms: simple variables, string variables, array elements, mixed array/variable, 2D arrays, record fields, mixed field/variable.
 
 ### 7. Fixed-Size Table Overflows (Silent)
 The `eval_program` first pass collects labels, procs, and DATA values into fixed-size tables (`MAX_LABELS`, `MAX_PROCS`, `MAX_DATA_VALUES`).

@@ -28,6 +28,8 @@ filter_output() {
         -e "^Wall time:" \
         -e "^Performance:" \
         -e "instructions/second" \
+        -e "^Error: Read out of bounds" \
+        -e "^Error: Write out of bounds" \
         || true
 }
 

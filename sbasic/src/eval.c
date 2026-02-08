@@ -747,6 +747,48 @@ static error_t exec_input(env_t *env, stmt_t *s) {
     return ERR_NONE;
 }
 
+/* Resolve an lvalue expression to a pointer to its storage.
+   Supports: simple variable, array element, record field. */
+static error_t resolve_lvalue(env_t *env, expr_t *e, value_t **out) {
+    switch (e->type) {
+    case EXPR_VARIABLE: {
+        value_t *v = env_get(env, e->var.name);
+        if (!v) {
+            /* Auto-create with default type */
+            value_t def = {.type = e->var.var_type};
+            env_set(env, e->var.name, &def);
+            v = env_get(env, e->var.name);
+        }
+        *out = v;
+        return ERR_NONE;
+    }
+    case EXPR_CALL: {
+        /* Array element access */
+        int indices[MAX_ARRAY_DIMS];
+        for (int i = 0; i < e->call.nargs; i++) {
+            value_t iv;
+            error_t err = eval_expr(env, e->call.args[i], &iv);
+            if (err != ERR_NONE) return err;
+            err = val_to_integer(&iv, &indices[i]);
+            val_clear(&iv);
+            if (err != ERR_NONE) return err;
+        }
+        return array_get(e->call.name, indices, e->call.nargs, out);
+    }
+    case EXPR_FIELD_ACCESS: {
+        value_t *v = env_get(env, e->field.var_name);
+        if (!v || v->type != VAL_RECORD) return ERR_UNDEFINED_VAR;
+        type_def_t *td = &type_defs[v->rval->type_idx];
+        int fi = find_field_index(td, e->field.field_name);
+        if (fi < 0) return ERR_UNDEFINED_FIELD;
+        *out = &v->rval->fields[fi];
+        return ERR_NONE;
+    }
+    default:
+        return ERR_TYPE_MISMATCH;
+    }
+}
+
 static error_t exec_assign(env_t *env, stmt_t *s) {
     if (env_is_const(env, s->assign.name))
         return ERR_CONST_REASSIGN;
@@ -1431,18 +1473,11 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             return ERR_RETURN;
 
         case STMT_SWAP: {
-            value_t *v1 = env_get(env, s->swap_stmt.name1);
-            value_t *v2 = env_get(env, s->swap_stmt.name2);
-            if (!v1) {
-                env_set(env, s->swap_stmt.name1,
-                        &(value_t){.type = s->swap_stmt.type1});
-                v1 = env_get(env, s->swap_stmt.name1);
-            }
-            if (!v2) {
-                env_set(env, s->swap_stmt.name2,
-                        &(value_t){.type = s->swap_stmt.type2});
-                v2 = env_get(env, s->swap_stmt.name2);
-            }
+            value_t *v1, *v2;
+            error_t e1 = resolve_lvalue(env, s->swap_stmt.lhs, &v1);
+            if (e1 != ERR_NONE) return e1;
+            error_t e2 = resolve_lvalue(env, s->swap_stmt.rhs, &v2);
+            if (e2 != ERR_NONE) return e2;
             value_t tmp = *v1;
             *v1 = *v2;
             *v2 = tmp;

@@ -428,6 +428,8 @@ void stmt_free(stmt_t *s) {
             case STMT_READ:
             case STMT_RESTORE:
             case STMT_SWAP:
+                expr_free(s->swap_stmt.lhs);
+                expr_free(s->swap_stmt.rhs);
                 break;
             case STMT_RANDOMIZE:
                 if (s->randomize.seed) expr_free(s->randomize.seed);
@@ -561,14 +563,11 @@ stmt_t *stmt_restore(const char *label, int line) {
 }
 
 /* Stage 4 */
-stmt_t *stmt_swap(const char *n1, val_type_t t1,
-                  const char *n2, val_type_t t2, int line) {
+stmt_t *stmt_swap(expr_t *lhs, expr_t *rhs, int line) {
     stmt_t *s = stmt_alloc(STMT_SWAP, line);
     if (!s) return NULL;
-    name_copy(s->swap_stmt.name1, n1);
-    s->swap_stmt.type1 = t1;
-    name_copy(s->swap_stmt.name2, n2);
-    s->swap_stmt.type2 = t2;
+    s->swap_stmt.lhs = lhs;
+    s->swap_stmt.rhs = rhs;
     return s;
 }
 

@@ -1350,19 +1350,15 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_SWAP: {
             int line = tok->line;
             lexer_next(&p->lex);
-            if (!lexer_check(&p->lex, TOK_IDENT)) {
-                parser_error(p, ERR_SYNTAX); return NULL;
-            }
-            token_t v1 = lexer_next(&p->lex);
+            expr_t *lhs = parse_primary(p);
+            if (!lhs) return NULL;
             if (!lexer_match(&p->lex, TOK_COMMA)) {
+                expr_free(lhs);
                 parser_error(p, ERR_SYNTAX); return NULL;
             }
-            if (!lexer_check(&p->lex, TOK_IDENT)) {
-                parser_error(p, ERR_SYNTAX); return NULL;
-            }
-            token_t v2 = lexer_next(&p->lex);
-            return stmt_swap(v1.text, var_type_from_name(v1.text),
-                             v2.text, var_type_from_name(v2.text), line);
+            expr_t *rhs = parse_primary(p);
+            if (!rhs) { expr_free(lhs); return NULL; }
+            return stmt_swap(lhs, rhs, line);
         }
 
         case TOK_RANDOMIZE: {
