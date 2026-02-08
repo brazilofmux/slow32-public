@@ -717,6 +717,8 @@ static error_t exec_input(env_t *env, stmt_t *s) {
 
     const char *p = line;
     for (int i = 0; i < s->input.nvars; i++) {
+        if (env_is_const(env, s->input.varnames[i]))
+            return ERR_CONST_REASSIGN;
         while (*p == ' ') p++;
 
         if (s->input.vartypes[i] == VAL_STRING) {
@@ -789,6 +791,15 @@ static error_t resolve_lvalue(env_t *env, expr_t *e, value_t **out) {
     }
 }
 
+/* Check if an lvalue expression refers to a CONST variable */
+static int lvalue_is_const(env_t *env, expr_t *e) {
+    if (e->type == EXPR_VARIABLE)
+        return env_is_const(env, e->var.name);
+    if (e->type == EXPR_FIELD_ACCESS)
+        return env_is_const(env, e->field.var_name);
+    return 0;
+}
+
 static error_t exec_assign(env_t *env, stmt_t *s) {
     if (env_is_const(env, s->assign.name))
         return ERR_CONST_REASSIGN;
@@ -833,6 +844,9 @@ static error_t exec_if(env_t *env, stmt_t *s) {
 }
 
 static error_t exec_for(env_t *env, stmt_t *s) {
+    if (env_is_const(env, s->for_stmt.var_name))
+        return ERR_CONST_REASSIGN;
+
     value_t start_val, end_val, step_val;
     EVAL_CHECK(eval_expr(env, s->for_stmt.start, &start_val));
 
@@ -1114,6 +1128,8 @@ static error_t exec_erase(env_t *env, stmt_t *s) {
 
 static error_t exec_read(env_t *env, stmt_t *s) {
     for (int i = 0; i < s->read_stmt.nvars; i++) {
+        if (env_is_const(env, s->read_stmt.varnames[i]))
+            return ERR_CONST_REASSIGN;
         if (data_read_ptr >= data_pool_count)
             return ERR_OUT_OF_DATA;
 
@@ -1260,6 +1276,8 @@ static error_t exec_input_file(env_t *env, stmt_t *s) {
     if (!fp) return ERR_FILE_NOT_OPEN;
 
     for (int i = 0; i < s->input_file.nvars; i++) {
+        if (env_is_const(env, s->input_file.varnames[i]))
+            return ERR_CONST_REASSIGN;
         /* Read value from file: skip whitespace, read until comma or newline */
         char buf[1024];
         int pos = 0;
@@ -1321,6 +1339,8 @@ static error_t exec_line_input(env_t *env, stmt_t *s) {
     if (pos == 0 && ch == -1) return ERR_INPUT_PAST_END;
 
     if (s->input_file.nvars > 0) {
+        if (env_is_const(env, s->input_file.varnames[0]))
+            return ERR_CONST_REASSIGN;
         value_t val = val_string_cstr(buf);
         env_set(env, s->input_file.varnames[0], &val);
         val_clear(&val);
@@ -1385,6 +1405,8 @@ static error_t exec_dim_as_type(env_t *env, stmt_t *s) {
 }
 
 static error_t exec_field_assign(env_t *env, stmt_t *s) {
+    if (env_is_const(env, s->field_assign.var_name))
+        return ERR_CONST_REASSIGN;
     value_t *inst = env_get(env, s->field_assign.var_name);
     if (!inst || inst->type != VAL_RECORD) return ERR_UNDEFINED_VAR;
     type_def_t *td = &type_defs[inst->rval->type_idx];
@@ -1473,6 +1495,10 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             return ERR_RETURN;
 
         case STMT_SWAP: {
+            if (lvalue_is_const(env, s->swap_stmt.lhs))
+                return ERR_CONST_REASSIGN;
+            if (lvalue_is_const(env, s->swap_stmt.rhs))
+                return ERR_CONST_REASSIGN;
             value_t *v1, *v2;
             error_t e1 = resolve_lvalue(env, s->swap_stmt.lhs, &v1);
             if (e1 != ERR_NONE) return e1;
