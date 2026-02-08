@@ -77,32 +77,34 @@ void expr_call_add_arg(expr_t *call, expr_t *arg) {
 }
 
 void expr_free(expr_t *e) {
-    if (!e) return;
-    switch (e->type) {
+    while (e) {
+        expr_t *next = NULL;  /* for tail-call elimination */
+        switch (e->type) {
         case EXPR_LITERAL:
             val_clear(&e->literal);
             break;
         case EXPR_VARIABLE:
+        case EXPR_FIELD_ACCESS:
             break;
         case EXPR_UNARY:
-            expr_free(e->unary.operand);
+            next = e->unary.operand;  /* iterate instead of recurse */
             break;
         case EXPR_BINARY:
-            expr_free(e->binary.left);
-            expr_free(e->binary.right);
+            expr_free(e->binary.right);  /* recurse on short side */
+            next = e->binary.left;       /* iterate on deep side */
             break;
         case EXPR_COMPARE:
-            expr_free(e->compare.left);
             expr_free(e->compare.right);
+            next = e->compare.left;
             break;
         case EXPR_CALL:
             for (int i = 0; i < e->call.nargs; i++)
                 expr_free(e->call.args[i]);
             break;
-        case EXPR_FIELD_ACCESS:
-            break;
+        }
+        free(e);
+        e = next;
     }
-    free(e);
 }
 
 /* --- Statement constructors --- */

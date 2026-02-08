@@ -69,6 +69,10 @@ static int on_error_resume_pc = 0;   /* PC to RESUME to */
 static int on_error_resume_next_pc = 0; /* PC for RESUME NEXT */
 static int resume_is_next = 0;       /* set by RESUME stmt for eval_program */
 
+/* Recursion depth limit (guards against C stack overflow) */
+#define MAX_EVAL_DEPTH 32
+static int eval_depth = 0;
+
 /* Is this a real error (trappable by ON ERROR) or a flow-control signal? */
 static int is_trappable_error(error_t err) {
     switch (err) {
@@ -191,14 +195,13 @@ static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
         val_clear(&arg_vals[i]);
     }
 
-    /* Collect and copy-in SHARED variables */
-    char shared_names[32][64];
+    /* Collect and copy-in SHARED variables (pointers into AST, no copy) */
+    const char *shared_names[32];
     int nshared = 0;
     for (stmt_t *s = def->proc_def.body; s && nshared < 32; s = s->next) {
         if (s->type == STMT_SHARED) {
             for (int i = 0; i < s->shared.nvars && nshared < 32; i++) {
-                strncpy(shared_names[nshared], s->shared.varnames[i], 63);
-                shared_names[nshared][63] = '\0';
+                shared_names[nshared] = s->shared.varnames[i];
                 nshared++;
             }
         }
@@ -234,7 +237,19 @@ static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
 
 /* --- Expression evaluation --- */
 
+static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out);
+
 error_t eval_expr(env_t *env, expr_t *e, value_t *out) {
+    if (++eval_depth > MAX_EVAL_DEPTH) {
+        eval_depth--;
+        return ERR_OUT_OF_MEMORY;
+    }
+    error_t err = eval_expr_impl(env, e, out);
+    eval_depth--;
+    return err;
+}
+
+static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
     if (!e) return ERR_INTERNAL;
 
     switch (e->type) {
@@ -1534,12 +1549,17 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
 }
 
 error_t eval_stmts(env_t *env, stmt_t *stmts) {
+    if (++eval_depth > MAX_EVAL_DEPTH) {
+        eval_depth--;
+        return ERR_OUT_OF_MEMORY;
+    }
     stmt_t *s = stmts;
     while (s) {
         error_t err = eval_stmt(env, s);
-        if (err != ERR_NONE) return err;
+        if (err != ERR_NONE) { eval_depth--; return err; }
         s = s->next;
     }
+    eval_depth--;
     return ERR_NONE;
 }
 
@@ -1575,6 +1595,7 @@ error_t eval_program(env_t *env, stmt_t *program) {
     deftype_init();
     type_def_count = 0;
     print_col = 0;
+    eval_depth = 0;
     on_error_label_idx = -1;
     on_error_active = 0;
     on_error_err_code = 0;

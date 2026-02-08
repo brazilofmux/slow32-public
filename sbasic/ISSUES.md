@@ -18,9 +18,9 @@ Multiple constructors in `ast.c` used `strncpy(dst, src, 63)` without explicit n
 - **Status**: **FIXED**. Added `name_copy()` helper that wraps `strncpy` + explicit `dst[63] = '\0'`. All 31 call sites replaced.
 
 ### 4. Stack Overflow Risks (C Recursion)
-Deeply nested BASIC programs (or very complex expressions) can cause a C stack overflow.
-- **Problem**: `stmt_free`, `expr_free`, `eval_stmt`, and `eval_expr` use native C recursion without any depth checks.
-- **Recommendation**: Implement a `recursion_depth` counter and limit (e.g., 256) in `eval_expr` and `eval_stmt`. Convert `stmt_free` to use an iterative approach for the `next` chain.
+Deeply nested BASIC programs (or very complex expressions) could cause a C stack overflow.
+- **Status**: **FIXED**. Added `eval_depth` counter (limit 32) checked in `eval_expr` and `eval_stmts`. Returns trappable `ERR_OUT_OF_MEMORY` on overflow. Converted `expr_free` to iterative left-spine traversal. Reduced `call_proc` stack usage by 2KB/frame (shared_names uses pointers instead of copies).
+- **Verification**: `depth.bas` tests normal recursion and trappable overflow error.
 
 ---
 
