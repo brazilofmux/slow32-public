@@ -1,0 +1,75 @@
+#ifndef SBASIC_LEXER_H
+#define SBASIC_LEXER_H
+
+typedef enum {
+    /* Literals */
+    TOK_INTEGER_LIT,    /* 42 */
+    TOK_DOUBLE_LIT,     /* 3.14 */
+    TOK_STRING_LIT,     /* "hello" */
+    TOK_IDENT,          /* variable or function name (with suffix) */
+
+    /* Operators */
+    TOK_PLUS, TOK_MINUS, TOK_STAR, TOK_SLASH,
+    TOK_BACKSLASH,      /* \ integer division */
+    TOK_CARET,          /* ^ power */
+    TOK_EQ, TOK_NE,     /* = <> */
+    TOK_LT, TOK_GT, TOK_LE, TOK_GE,
+    TOK_LPAREN, TOK_RPAREN,
+    TOK_COMMA, TOK_SEMICOLON, TOK_COLON,
+
+    /* Keywords */
+    TOK_PRINT, TOK_INPUT, TOK_LET,
+    TOK_IF, TOK_THEN, TOK_ELSE, TOK_END,
+    TOK_FOR, TOK_TO, TOK_STEP, TOK_NEXT,
+    TOK_WHILE, TOK_WEND,
+    TOK_AND, TOK_OR, TOK_NOT, TOK_MOD,
+    TOK_REM,
+    TOK_DIM,
+
+    /* REPL commands */
+    TOK_RUN, TOK_LIST, TOK_NEW, TOK_LOAD, TOK_SAVE, TOK_BYE,
+
+    /* Control */
+    TOK_EOL,            /* end of line */
+    TOK_EOF,            /* end of input */
+} token_type_t;
+
+typedef struct {
+    token_type_t type;
+    int line;
+    /* For literals/identifiers */
+    union {
+        int ival;
+        double dval;
+    };
+    char text[256];     /* original text (for idents, strings) */
+    char suffix;        /* type suffix: '%', '#', '$', or '\0' */
+} token_t;
+
+typedef struct {
+    const char *src;    /* source text */
+    int pos;            /* current position */
+    int line;           /* current line number */
+    token_t cur;        /* current (peeked) token */
+    int has_cur;        /* whether cur is valid */
+} lexer_t;
+
+/* Initialize lexer with source text */
+void lexer_init(lexer_t *lex, const char *src, int start_line);
+
+/* Peek at current token without consuming */
+token_t *lexer_peek(lexer_t *lex);
+
+/* Consume and return current token */
+token_t lexer_next(lexer_t *lex);
+
+/* Check if current token matches type (without consuming) */
+int lexer_check(lexer_t *lex, token_type_t type);
+
+/* Consume token if it matches type, return 1; else return 0 */
+int lexer_match(lexer_t *lex, token_type_t type);
+
+/* Return the keyword name for a token type (or NULL) */
+const char *token_type_name(token_type_t type);
+
+#endif
