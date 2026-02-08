@@ -22,6 +22,23 @@ typedef enum {
     ERR_INPUT_PAST_END,
     ERR_BREAK,
     ERR_EXIT,
+    /* Flow control (not real errors — used to unwind the call stack) */
+    ERR_EXIT_FOR,
+    ERR_EXIT_WHILE,
+    ERR_EXIT_DO,
+    ERR_EXIT_SUB,
+    ERR_EXIT_FUNCTION,
+    ERR_GOTO,
+    ERR_GOSUB,
+    ERR_RETURN,
+    ERR_RETURN_WITHOUT_GOSUB,
+    ERR_UNDEFINED_LABEL,
+    ERR_UNDEFINED_PROC,
+    ERR_DUPLICATE_LABEL,
+    ERR_LOOP_WITHOUT_DO,
+    ERR_DO_WITHOUT_LOOP,
+    ERR_END_SELECT_EXPECTED,
+    ERR_CONST_REASSIGN,
     ERR_INTERNAL,
     ERR_COUNT
 } error_t;

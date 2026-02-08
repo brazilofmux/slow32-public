@@ -26,6 +26,15 @@ typedef enum {
     TOK_REM,
     TOK_DIM,
 
+    /* Stage 2 keywords */
+    TOK_SUB, TOK_FUNCTION, TOK_CALL,
+    TOK_GOTO, TOK_GOSUB, TOK_RETURN,
+    TOK_DO, TOK_LOOP, TOK_UNTIL,
+    TOK_SELECT, TOK_CASE,
+    TOK_EXIT,
+    TOK_CONST, TOK_SHARED, TOK_DECLARE,
+    TOK_AS, TOK_IS,
+
     /* REPL commands */
     TOK_RUN, TOK_LIST, TOK_NEW, TOK_LOAD, TOK_SAVE, TOK_BYE,
 

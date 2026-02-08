@@ -98,7 +98,7 @@ static void cmd_run(void) {
     }
 
     /* Execute */
-    error_t err = eval_stmts(global_env, program);
+    error_t err = eval_program(global_env, program);
     if (err != ERR_NONE && err != ERR_EXIT)
         error_print(err, 0);
 

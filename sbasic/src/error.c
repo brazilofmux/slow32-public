@@ -22,6 +22,22 @@ static const char *error_messages[ERR_COUNT] = {
     "Input past end",
     "Break",
     "Exit",
+    "EXIT FOR",
+    "EXIT WHILE",
+    "EXIT DO",
+    "EXIT SUB",
+    "EXIT FUNCTION",
+    "GOTO",
+    "GOSUB",
+    "RETURN",
+    "RETURN without GOSUB",
+    "Undefined label",
+    "Undefined SUB/FUNCTION",
+    "Duplicate label",
+    "LOOP without DO",
+    "DO without LOOP",
+    "Expected END SELECT",
+    "Cannot reassign CONST",
     "Internal error",
 };
 
@@ -32,7 +48,8 @@ const char *error_message(error_t err) {
 }
 
 void error_print(error_t err, int line) {
-    if (err == ERR_NONE || err == ERR_EXIT)
+    if (err == ERR_NONE || err == ERR_EXIT ||
+        (err >= ERR_EXIT_FOR && err <= ERR_RETURN))
         return;
     if (line > 0)
         printf("Error in line %d: %s\n", line, error_message(err));

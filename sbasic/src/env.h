@@ -8,6 +8,7 @@
 typedef struct var_entry {
     char name[64];
     value_t value;
+    int is_const;           /* 1 if CONST variable */
     struct var_entry *next;
 } var_entry_t;
 
@@ -35,5 +36,11 @@ void env_set_global(env_t *env, const char *name, const value_t *val);
 
 /* Check if variable exists in this scope (not parent) */
 int env_has_local(env_t *env, const char *name);
+
+/* Set variable as const (creates and marks const) */
+void env_set_const(env_t *env, const char *name, const value_t *val);
+
+/* Check if a variable is const (searches scope chain) */
+int env_is_const(env_t *env, const char *name);
 
 #endif

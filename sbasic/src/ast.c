@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* --- Expression constructors --- */
+/* --- Expression constructors (unchanged from Stage 1) --- */
 
 expr_t *expr_literal(value_t val, int line) {
     expr_t *e = calloc(1, sizeof(expr_t));
@@ -70,8 +70,6 @@ void expr_call_add_arg(expr_t *call, expr_t *arg) {
         call->call.args[call->call.nargs++] = arg;
 }
 
-/* --- Expression destructor --- */
-
 void expr_free(expr_t *e) {
     if (!e) return;
     switch (e->type) {
@@ -106,16 +104,11 @@ stmt_t *stmt_alloc(stmt_type_t type, int line) {
     if (!s) return NULL;
     s->type = type;
     s->line = line;
-    s->next = NULL;
     return s;
 }
 
 stmt_t *stmt_print(int line) {
-    stmt_t *s = stmt_alloc(STMT_PRINT, line);
-    if (!s) return NULL;
-    s->print.items = NULL;
-    s->print.nitems = 0;
-    return s;
+    return stmt_alloc(STMT_PRINT, line);
 }
 
 void stmt_print_add(stmt_t *s, expr_t *expr, char sep) {
@@ -130,7 +123,6 @@ stmt_t *stmt_input(const char *prompt, int line) {
     stmt_t *s = stmt_alloc(STMT_INPUT, line);
     if (!s) return NULL;
     s->input.prompt = prompt ? strdup(prompt) : NULL;
-    s->input.nvars = 0;
     return s;
 }
 
@@ -186,6 +178,164 @@ stmt_t *stmt_end(int line) {
     return stmt_alloc(STMT_END, line);
 }
 
+/* --- Stage 2 constructors --- */
+
+stmt_t *stmt_do_loop(expr_t *pre_cond, int pre_until,
+                     expr_t *post_cond, int post_until,
+                     stmt_t *body, int line) {
+    stmt_t *s = stmt_alloc(STMT_DO_LOOP, line);
+    if (!s) return NULL;
+    s->do_loop.pre_cond = pre_cond;
+    s->do_loop.pre_until = pre_until;
+    s->do_loop.post_cond = post_cond;
+    s->do_loop.post_until = post_until;
+    s->do_loop.body = body;
+    return s;
+}
+
+stmt_t *stmt_select(expr_t *test, case_clause_t *clauses, int line) {
+    stmt_t *s = stmt_alloc(STMT_SELECT, line);
+    if (!s) return NULL;
+    s->select_stmt.test_expr = test;
+    s->select_stmt.clauses = clauses;
+    return s;
+}
+
+stmt_t *stmt_goto(const char *label, int line) {
+    stmt_t *s = stmt_alloc(STMT_GOTO, line);
+    if (!s) return NULL;
+    strncpy(s->goto_stmt.label, label, 63);
+    return s;
+}
+
+stmt_t *stmt_gosub(const char *label, int line) {
+    stmt_t *s = stmt_alloc(STMT_GOSUB, line);
+    if (!s) return NULL;
+    strncpy(s->goto_stmt.label, label, 63);
+    return s;
+}
+
+stmt_t *stmt_return(int line) {
+    return stmt_alloc(STMT_RETURN, line);
+}
+
+stmt_t *stmt_label(const char *name, int line) {
+    stmt_t *s = stmt_alloc(STMT_LABEL, line);
+    if (!s) return NULL;
+    strncpy(s->label.name, name, 63);
+    return s;
+}
+
+stmt_t *stmt_proc_def(stmt_type_t type, const char *name, int line) {
+    stmt_t *s = stmt_alloc(type, line);
+    if (!s) return NULL;
+    strncpy(s->proc_def.name, name, 63);
+    s->proc_def.nparams = 0;
+    s->proc_def.return_type = VAL_DOUBLE;
+    return s;
+}
+
+void stmt_proc_add_param(stmt_t *s, const char *name, val_type_t type) {
+    int n = s->proc_def.nparams;
+    if (n >= 16) return;
+    strncpy(s->proc_def.params[n], name, 63);
+    s->proc_def.param_types[n] = type;
+    s->proc_def.nparams = n + 1;
+}
+
+void stmt_proc_set_body(stmt_t *s, stmt_t *body) {
+    s->proc_def.body = body;
+}
+
+stmt_t *stmt_call(const char *name, int line) {
+    stmt_t *s = stmt_alloc(STMT_CALL, line);
+    if (!s) return NULL;
+    strncpy(s->call_stmt.name, name, 63);
+    s->call_stmt.nargs = 0;
+    return s;
+}
+
+void stmt_call_add_arg(stmt_t *s, expr_t *arg) {
+    if (s->call_stmt.nargs < 16)
+        s->call_stmt.args[s->call_stmt.nargs++] = arg;
+}
+
+stmt_t *stmt_exit(exit_type_t what, int line) {
+    stmt_t *s = stmt_alloc(STMT_EXIT, line);
+    if (!s) return NULL;
+    s->exit_stmt.what = what;
+    return s;
+}
+
+stmt_t *stmt_const(const char *name, val_type_t type, expr_t *value, int line) {
+    stmt_t *s = stmt_alloc(STMT_CONST, line);
+    if (!s) return NULL;
+    strncpy(s->const_stmt.name, name, 63);
+    s->const_stmt.var_type = type;
+    s->const_stmt.value = value;
+    return s;
+}
+
+stmt_t *stmt_shared(int line) {
+    stmt_t *s = stmt_alloc(STMT_SHARED, line);
+    return s;
+}
+
+void stmt_shared_add(stmt_t *s, const char *name) {
+    int n = s->shared.nvars;
+    if (n >= 16) return;
+    strncpy(s->shared.varnames[n], name, 63);
+    s->shared.nvars = n + 1;
+}
+
+/* --- Case clause --- */
+
+case_clause_t *case_clause_alloc(void) {
+    return calloc(1, sizeof(case_clause_t));
+}
+
+void case_clause_add_value(case_clause_t *c, expr_t *val) {
+    int n = c->nmatches;
+    c->matches = realloc(c->matches, (n + 1) * sizeof(case_match_t));
+    c->matches[n].match_type = 0;
+    c->matches[n].expr1 = val;
+    c->matches[n].expr2 = NULL;
+    c->nmatches = n + 1;
+}
+
+void case_clause_add_range(case_clause_t *c, expr_t *lo, expr_t *hi) {
+    int n = c->nmatches;
+    c->matches = realloc(c->matches, (n + 1) * sizeof(case_match_t));
+    c->matches[n].match_type = 1;
+    c->matches[n].expr1 = lo;
+    c->matches[n].expr2 = hi;
+    c->nmatches = n + 1;
+}
+
+void case_clause_add_is(case_clause_t *c, cmpop_t op, expr_t *val) {
+    int n = c->nmatches;
+    c->matches = realloc(c->matches, (n + 1) * sizeof(case_match_t));
+    c->matches[n].match_type = 2;
+    c->matches[n].is_op = op;
+    c->matches[n].expr1 = val;
+    c->matches[n].expr2 = NULL;
+    c->nmatches = n + 1;
+}
+
+void case_clause_free(case_clause_t *c) {
+    while (c) {
+        case_clause_t *next = c->next;
+        for (int i = 0; i < c->nmatches; i++) {
+            expr_free(c->matches[i].expr1);
+            expr_free(c->matches[i].expr2);
+        }
+        free(c->matches);
+        stmt_free(c->body);
+        free(c);
+        c = next;
+    }
+}
+
 /* --- Statement destructor --- */
 
 void stmt_free(stmt_t *s) {
@@ -218,8 +368,35 @@ void stmt_free(stmt_t *s) {
                 expr_free(s->while_stmt.condition);
                 stmt_free(s->while_stmt.body);
                 break;
+            case STMT_DO_LOOP:
+                expr_free(s->do_loop.pre_cond);
+                expr_free(s->do_loop.post_cond);
+                stmt_free(s->do_loop.body);
+                break;
+            case STMT_SELECT:
+                expr_free(s->select_stmt.test_expr);
+                case_clause_free(s->select_stmt.clauses);
+                break;
+            case STMT_GOTO:
+            case STMT_GOSUB:
+            case STMT_RETURN:
+            case STMT_LABEL:
             case STMT_END:
             case STMT_REM:
+            case STMT_EXIT:
+            case STMT_SHARED:
+            case STMT_DECLARE:
+                break;
+            case STMT_SUB_DEF:
+            case STMT_FUNC_DEF:
+                stmt_free(s->proc_def.body);
+                break;
+            case STMT_CALL:
+                for (int i = 0; i < s->call_stmt.nargs; i++)
+                    expr_free(s->call_stmt.args[i]);
+                break;
+            case STMT_CONST:
+                expr_free(s->const_stmt.value);
                 break;
         }
         free(s);

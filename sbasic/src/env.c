@@ -94,3 +94,23 @@ void env_set_global(env_t *env, const char *name, const value_t *val) {
 int env_has_local(env_t *env, const char *name) {
     return find_entry(env, name) != NULL;
 }
+
+void env_set_const(env_t *env, const char *name, const value_t *val) {
+    var_entry_t *e = find_entry(env, name);
+    if (!e)
+        e = create_entry(env, name);
+    if (e) {
+        val_assign(&e->value, val);
+        e->is_const = 1;
+    }
+}
+
+int env_is_const(env_t *env, const char *name) {
+    env_t *scope = env;
+    while (scope) {
+        var_entry_t *e = find_entry(scope, name);
+        if (e) return e->is_const;
+        scope = scope->parent;
+    }
+    return 0;
+}

@@ -8,10 +8,15 @@
 /* Evaluate an expression, storing result in *out */
 error_t eval_expr(env_t *env, expr_t *e, value_t *out);
 
-/* Execute a statement chain */
-error_t eval_stmts(env_t *env, stmt_t *stmts);
-
 /* Execute a single statement */
 error_t eval_stmt(env_t *env, stmt_t *s);
+
+/* Execute a statement chain (linked list traversal) */
+error_t eval_stmts(env_t *env, stmt_t *stmts);
+
+/* Execute a program with GOTO/GOSUB/SUB/FUNCTION support.
+   Flattens the statement list to an array for indexed jumps.
+   First pass collects labels and procedure definitions. */
+error_t eval_program(env_t *env, stmt_t *program);
 
 #endif
