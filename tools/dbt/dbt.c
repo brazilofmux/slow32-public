@@ -172,6 +172,9 @@ static inline void mmio_sync_to_guest(dbt_cpu_state_t *cpu) {
 }
 
 // Handle YIELD instruction - process MMIO ring buffers
+static uint32_t yield_spin_count = 0;
+static uint32_t last_req_head = 0, last_req_tail = 0;
+
 static void dbt_handle_yield(dbt_cpu_state_t *cpu) {
     if (!cpu->mmio_enabled) return;
 
@@ -179,6 +182,28 @@ static void dbt_handle_yield(dbt_cpu_state_t *cpu) {
 
     // Sync indices from guest memory
     mmio_sync_from_guest(cpu);
+
+    // Detect spin (no new requests)
+    if (mmio_state.req_head == last_req_head && mmio_state.req_tail == last_req_tail) {
+        yield_spin_count++;
+        if (yield_spin_count == 3) {
+            uint32_t *mmio_mem = (uint32_t*)(cpu->mem_base + cpu->mmio_base);
+            fprintf(stderr, "DBT: YIELD spin detected! (3 yields with no new requests)\n");
+            fprintf(stderr, "  host:  req h=%u t=%u, resp h=%u t=%u\n",
+                    mmio_state.req_head, mmio_state.req_tail,
+                    mmio_state.resp_head, mmio_state.resp_tail);
+            fprintf(stderr, "  guest: req h=%u t=%u, resp h=%u t=%u\n",
+                    mmio_mem[S32_MMIO_REQ_HEAD_OFFSET / 4],
+                    mmio_mem[S32_MMIO_REQ_TAIL_OFFSET / 4],
+                    mmio_mem[S32_MMIO_RESP_HEAD_OFFSET / 4],
+                    mmio_mem[S32_MMIO_RESP_TAIL_OFFSET / 4]);
+            fprintf(stderr, "  guest PC=0x%08x\n", cpu->pc);
+        }
+    } else {
+        yield_spin_count = 0;
+        last_req_head = mmio_state.req_head;
+        last_req_tail = mmio_state.req_tail;
+    }
 
     // Process pending requests
     mmio_cpu_iface_t iface = {

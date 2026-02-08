@@ -587,10 +587,17 @@ static void flush_cached_host_regs(translate_ctx_t *ctx, x64_reg_t r1, x64_reg_t
     if (!ctx->reg_cache_enabled) return;
     emit_ctx_t *e = &ctx->emit;
     for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
-        if (!ctx->reg_alloc[i].allocated || !ctx->reg_alloc[i].dirty) continue;
+        if (!ctx->reg_alloc[i].allocated) continue;
         if (reg_alloc_hosts[i] == r1 || reg_alloc_hosts[i] == r2) {
-            emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg),
-                             reg_alloc_hosts[i]);
+            if (ctx->reg_alloc[i].dirty) {
+                emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg),
+                                 reg_alloc_hosts[i]);
+            }
+            // Fully evict from cache so the host register can be reused as scratch.
+            // Without this, emit_store_guest_reg may still target this host register,
+            // clobbering the scratch value (e.g., JALR target saved in R8).
+            ctx->reg_alloc_map[ctx->reg_alloc[i].guest_reg] = -1;
+            ctx->reg_alloc[i].allocated = false;
             ctx->reg_alloc[i].dirty = false;
         }
     }
