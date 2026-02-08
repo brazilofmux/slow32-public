@@ -454,7 +454,8 @@ error_t eval_expr(env_t *env, expr_t *e, value_t *out) {
 
 /* PRINT USING format engine:
    Returns number of format chars consumed. Output goes to stdout.
-   Avoids %*.*f (broken on SLOW-32 varargs) — formats manually. */
+   Uses snprintf with embedded precision (e.g. "%.2f") instead of %*.*f
+   which has varargs issues on SLOW-32. */
 
 /* --- Print column tracking --- */
 
@@ -487,51 +488,24 @@ static void col_printf(const char *fmt, ...) {
 static double fmt_fabs(double x) { return x < 0.0 ? -x : x; }
 
 /* Format double into buf with exactly 'dec' decimal places, right-justified
-   in 'width' characters. Returns strlen of result. */
+   in 'width' characters. Returns strlen of result.
+   Uses snprintf internally — handles any magnitude correctly. */
 static int fmt_fixed(char *buf, int bufsz, double val, int width, int dec) {
-    int neg = (val < 0.0);
-    double av = fmt_fabs(val);
-    /* Round to 'dec' decimal places */
-    double rnd = 0.5;
-    for (int i = 0; i < dec; i++) rnd /= 10.0;
-    av += rnd;
-    /* Extract integer part */
-    unsigned int ipart = (unsigned int)av;
-    double frac = av - (double)ipart;
-    /* Build integer part string (reversed) */
-    char ibuf[32];
-    int ilen = 0;
-    if (ipart == 0) {
-        ibuf[ilen++] = '0';
-    } else {
-        while (ipart > 0) {
-            ibuf[ilen++] = '0' + (ipart % 10);
-            ipart /= 10;
-        }
-    }
-    /* Build decimal part string */
-    char dbuf[32];
-    int dlen = 0;
-    for (int i = 0; i < dec; i++) {
-        frac *= 10.0;
-        int d = (int)frac;
-        if (d > 9) d = 9;
-        dbuf[dlen++] = '0' + d;
-        frac -= (double)d;
-    }
-    /* Total needed: sign + ilen + '.' + dlen */
-    int needed = (neg ? 1 : 0) + ilen + (dec > 0 ? 1 : 0) + dlen;
+    char tmp[512];
+    char fmtstr[16];
+    /* Build "%.Xf" format string (avoids %*.*f varargs issues on SLOW-32) */
+    if (dec < 0) dec = 0;
+    if (dec > 20) dec = 20;
+    snprintf(fmtstr, sizeof(fmtstr), "%%.%df", dec);
+    int len = snprintf(tmp, sizeof(tmp), fmtstr, val);
+    if (len < 0) len = 0;
+    if (len >= (int)sizeof(tmp)) len = (int)sizeof(tmp) - 1;
     /* Right-justify in width */
-    int pos = 0;
-    int padding = width - needed;
+    int padding = width - len;
     if (padding < 0) padding = 0;
+    int pos = 0;
     for (int i = 0; i < padding && pos < bufsz - 1; i++) buf[pos++] = ' ';
-    if (neg && pos < bufsz - 1) buf[pos++] = '-';
-    for (int i = ilen - 1; i >= 0 && pos < bufsz - 1; i--) buf[pos++] = ibuf[i];
-    if (dec > 0 && pos < bufsz - 1) {
-        buf[pos++] = '.';
-        for (int i = 0; i < dlen && pos < bufsz - 1; i++) buf[pos++] = dbuf[i];
-    }
+    for (int i = 0; i < len && pos < bufsz - 1; i++) buf[pos++] = tmp[i];
     buf[pos] = '\0';
     return pos;
 }
@@ -553,7 +527,7 @@ static int format_using_num(const char *fmt, double val) {
 
     if (width == 0) return 0;
 
-    char buf[128];
+    char buf[512];
     if (has_exp) {
         /* Scientific notation: manually format */
         int neg = (val < 0.0);

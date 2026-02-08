@@ -24,3 +24,11 @@ PRINT USING "Value: ###.## units"; 42.5
 REM Integer value in numeric format
 PRINT USING "###"; 42
 PRINT USING "###"; 7
+
+REM Large numbers (exceed unsigned 32-bit range)
+PRINT USING "##############.##"; 5000000000.0
+PRINT USING "##############.##"; -5000000000.0
+
+REM Scientific notation
+PRINT USING "##.##^^^^"; 12345.6
+PRINT USING "##.##^^^^"; 0.00789
