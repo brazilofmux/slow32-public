@@ -2,16 +2,16 @@
 
 ## Context
 
-MY-BASIC (basic/) served its purpose — it found the JALR eviction bug — but it's someone else's dialect. The user wants a custom BASIC that feels like the BASICs they grew up with (CoCo, GWBASIC, QuickBASIC, Business BASIC): recursive-descent parser, no line numbers, labels, real SUB/FUNCTION, optional LET, DATA/READ, stronger typing. SLOW-32 can't do SOUND/COLOR/DRAW, but it has full file I/O, software FP, and plenty of memory for an interpreter.
+MY-BASIC (basic/) served its purpose — it found the JALR eviction bug — but it's someone else's dialect. I wanted a custom BASIC that feels like the BASICs they grew up with (CoCo, GWBASIC, QuickBASIC, Business BASIC): recursive-descent parser, no line numbers, labels, real SUB/FUNCTION, optional LET, DATA/READ, stronger typing. SLOW-32 can't do SOUND/COLOR/DRAW, but it has full file I/O, floating-point, and plenty of memory for an interpreter.
 
 **Name**: SLOW BASIC
-**Directory**: `sbasic/` (parallel to `basic/` and `forth/`)
+**Directory**: `sbasic/` (parallel to `forth/`)
 
 ## Core Design Decisions
 
 - **Parser**: Recursive-descent. Optional LET works because when the parser sees an identifier followed by `=`, it knows it's assignment.
 - **Execution**: Tree-walk interpreter (parse → AST → evaluate). Simple, debuggable, sufficient for BASIC on an emulator.
-- **Types**: INTEGER (32-bit), DOUBLE (64-bit IEEE soft-float), STRING (heap-allocated). Type suffixes: `%`=int, `#`=double, `$`=string. Bare names default to double.
+- **Types**: INTEGER (32-bit), DOUBLE (64-bit IEEE float), STRING (heap-allocated). Type suffixes: `%`=int, `#`=double, `$`=string. Bare names default to double.
 - **Strings**: Reference-counted. No circular refs possible in BASIC, so refcount is sufficient — no mark-sweep needed.
 - **Scope**: Local by default in SUB/FUNCTION. `SHARED` keyword to access globals. Variables auto-create with default values (0 or "").
 - **Errors**: No setjmp/longjmp on SLOW-32. Every eval function returns an error code, checked via `EVAL_CHECK()` macro.
