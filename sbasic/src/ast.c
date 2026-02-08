@@ -138,7 +138,12 @@ stmt_t *stmt_input(const char *prompt, int line) {
 
 void stmt_input_add_var(stmt_t *s, const char *name, val_type_t type) {
     int n = s->input.nvars;
-    if (n >= 8) return;
+    if (n >= s->input.var_cap) {
+        int newcap = s->input.var_cap ? s->input.var_cap * 2 : 4;
+        s->input.varnames = realloc(s->input.varnames, newcap * sizeof(s->input.varnames[0]));
+        s->input.vartypes = realloc(s->input.vartypes, newcap * sizeof(s->input.vartypes[0]));
+        s->input.var_cap = newcap;
+    }
     name_copy(s->input.varnames[n], name);
     s->input.vartypes[n] = type;
     s->input.nvars = n + 1;
@@ -360,6 +365,8 @@ void stmt_free(stmt_t *s) {
                 break;
             case STMT_INPUT:
                 free(s->input.prompt);
+                free(s->input.varnames);
+                free(s->input.vartypes);
                 break;
             case STMT_ASSIGN:
                 expr_free(s->assign.value);
@@ -425,8 +432,11 @@ void stmt_free(stmt_t *s) {
                 break;
             case STMT_OPTION_BASE:
             case STMT_ERASE:
-            case STMT_READ:
             case STMT_RESTORE:
+            case STMT_READ:
+                free(s->read_stmt.varnames);
+                free(s->read_stmt.vartypes);
+                break;
             case STMT_SWAP:
                 expr_free(s->swap_stmt.lhs);
                 expr_free(s->swap_stmt.rhs);
@@ -451,6 +461,8 @@ void stmt_free(stmt_t *s) {
             case STMT_INPUT_FILE:
             case STMT_LINE_INPUT:
                 expr_free(s->input_file.handle_num);
+                free(s->input_file.varnames);
+                free(s->input_file.vartypes);
                 break;
             case STMT_KILL:
                 expr_free(s->kill_stmt.filename);
@@ -548,7 +560,12 @@ stmt_t *stmt_read(int line) {
 
 void stmt_read_add_var(stmt_t *s, const char *name, val_type_t type) {
     int n = s->read_stmt.nvars;
-    if (n >= 8) return;
+    if (n >= s->read_stmt.var_cap) {
+        int newcap = s->read_stmt.var_cap ? s->read_stmt.var_cap * 2 : 4;
+        s->read_stmt.varnames = realloc(s->read_stmt.varnames, newcap * sizeof(s->read_stmt.varnames[0]));
+        s->read_stmt.vartypes = realloc(s->read_stmt.vartypes, newcap * sizeof(s->read_stmt.vartypes[0]));
+        s->read_stmt.var_cap = newcap;
+    }
     name_copy(s->read_stmt.varnames[n], name);
     s->read_stmt.vartypes[n] = type;
     s->read_stmt.nvars = n + 1;
@@ -636,7 +653,12 @@ stmt_t *stmt_input_file(expr_t *handle, int line) {
 
 void stmt_input_file_add_var(stmt_t *s, const char *name, val_type_t type) {
     int n = s->input_file.nvars;
-    if (n >= 8) return;
+    if (n >= s->input_file.var_cap) {
+        int newcap = s->input_file.var_cap ? s->input_file.var_cap * 2 : 4;
+        s->input_file.varnames = realloc(s->input_file.varnames, newcap * sizeof(s->input_file.varnames[0]));
+        s->input_file.vartypes = realloc(s->input_file.vartypes, newcap * sizeof(s->input_file.vartypes[0]));
+        s->input_file.var_cap = newcap;
+    }
     name_copy(s->input_file.varnames[n], name);
     s->input_file.vartypes[n] = type;
     s->input_file.nvars = n + 1;

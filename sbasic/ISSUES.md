@@ -45,8 +45,7 @@ The `eval_program` first pass collects labels, procs, and DATA values into fixed
 
 ### 8. `INPUT` and `READ` Variable Limits
 `STMT_INPUT`, `STMT_READ`, and `STMT_INPUT_FILE` use fixed-size arrays of 8 variables.
-- **Problem**: Programs attempting to read or input more than 8 variables in a single statement will have the extra variables ignored.
-- **Recommendation**: Use a dynamically allocated array for variable names in these statements, similar to how `STMT_PRINT` handles items.
+- **Status**: **FIXED**. All three statement types now use dynamically allocated `varnames`/`vartypes` arrays that grow via `realloc` in their `_add_var` functions. No arbitrary limit. Destructors updated to free the arrays.
 
 ### 9. Lack of `GOSUB` Depth Check on Entry
 While `eval_program` has a `MAX_GOSUB_DEPTH` (64) check, it is only checked during execution.

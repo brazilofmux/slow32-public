@@ -179,9 +179,10 @@ typedef struct stmt {
         /* STMT_INPUT */
         struct {
             char *prompt;
-            char varnames[8][64];
-            val_type_t vartypes[8];
+            char (*varnames)[64];
+            val_type_t *vartypes;
             int nvars;
+            int var_cap;
         } input;
 
         /* STMT_ASSIGN */
@@ -312,9 +313,10 @@ typedef struct stmt {
 
         /* STMT_READ */
         struct {
-            char varnames[8][64];
-            val_type_t vartypes[8];
+            char (*varnames)[64];
+            val_type_t *vartypes;
             int nvars;
+            int var_cap;
         } read_stmt;
 
         /* STMT_RESTORE */
@@ -355,9 +357,10 @@ typedef struct stmt {
         /* STMT_INPUT_FILE / STMT_LINE_INPUT */
         struct {
             struct expr *handle_num;
-            char varnames[8][64];
-            val_type_t vartypes[8];
+            char (*varnames)[64];
+            val_type_t *vartypes;
             int nvars;
+            int var_cap;
         } input_file;
 
         /* STMT_KILL */
