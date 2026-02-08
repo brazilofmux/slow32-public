@@ -26,7 +26,7 @@ void env_destroy(env_t *env) {
         var_entry_t *e = env->table[i];
         while (e) {
             var_entry_t *next = e->next;
-            val_clear(&e->value);
+            if (!e->link) val_clear(&e->value);
             free(e);
             e = next;
         }
@@ -74,7 +74,7 @@ value_t *env_get(env_t *env, const char *name) {
     env_t *scope = env;
     while (scope) {
         var_entry_t *e = find_entry(scope, name);
-        if (e) return &e->value;
+        if (e) return e->link ? e->link : &e->value;
         scope = scope->parent;
     }
     /* Auto-create in current (innermost) scope */
@@ -86,8 +86,10 @@ void env_set(env_t *env, const char *name, const value_t *val) {
     var_entry_t *e = find_entry(env, name);
     if (!e)
         e = create_entry(env, name);
-    if (e)
-        val_assign(&e->value, val);
+    if (e) {
+        if (e->link) val_assign(e->link, val);
+        else val_assign(&e->value, val);
+    }
 }
 
 void env_set_global(env_t *env, const char *name, const value_t *val) {
@@ -106,7 +108,8 @@ void env_set_const(env_t *env, const char *name, const value_t *val) {
     if (!e)
         e = create_entry(env, name);
     if (e) {
-        val_assign(&e->value, val);
+        if (e->link) val_assign(e->link, val);
+        else val_assign(&e->value, val);
         e->is_const = 1;
     }
 }
@@ -119,4 +122,10 @@ int env_is_const(env_t *env, const char *name) {
         scope = scope->parent;
     }
     return 0;
+}
+
+void env_link(env_t *env, const char *name, value_t *target) {
+    var_entry_t *e = find_entry(env, name);
+    if (!e) e = create_entry(env, name);
+    if (e) e->link = target;
 }

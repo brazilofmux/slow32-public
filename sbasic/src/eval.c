@@ -208,7 +208,7 @@ static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
     }
     for (int i = 0; i < nshared; i++) {
         value_t *gv = env_get(program_global_env, shared_names[i]);
-        if (gv) env_set(local, shared_names[i], gv);
+        if (gv) env_link(local, shared_names[i], gv);
     }
 
     error_t err = eval_stmts(local, def->proc_def.body);
@@ -224,11 +224,6 @@ static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
             else
                 *out = val_double(0.0);
         }
-    }
-
-    for (int i = 0; i < nshared; i++) {
-        value_t *lv = env_get(local, shared_names[i]);
-        if (lv) env_set(program_global_env, shared_names[i], lv);
     }
 
     env_destroy(local);

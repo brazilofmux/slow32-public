@@ -9,6 +9,7 @@ typedef struct var_entry {
     char name[64];
     value_t value;
     int is_const;           /* 1 if CONST variable */
+    value_t *link;          /* non-NULL → reads/writes go through this pointer (SHARED) */
     struct var_entry *next;
 } var_entry_t;
 
@@ -46,5 +47,8 @@ void env_set_const(env_t *env, const char *name, const value_t *val);
 
 /* Check if a variable is const (searches scope chain) */
 int env_is_const(env_t *env, const char *name);
+
+/* Link a local variable to an external value (for SHARED) */
+void env_link(env_t *env, const char *name, value_t *target);
 
 #endif

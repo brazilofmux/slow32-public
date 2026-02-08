@@ -13,10 +13,8 @@ Added per-file column tracking via `active_print_col` indirection pointer. Each 
 ### 3. ~~Missing Integer Overflow Checks~~ **FIXED**
 Integer arithmetic now uses `long long` intermediates. If the result exceeds INT32 range, it auto-promotes to `VAL_DOUBLE`. Applies to `val_add`, `val_sub`, `val_mul`, `val_pow`, and `val_neg` (INT_MIN negation).
 
-### 4. `SHARED` Variable "Copy-in/Copy-out" Race Condition
-`SHARED` variables are copied to local scope on `SUB` entry and back to global on exit.
-- **Problem**: If a global variable is modified while a `SUB` is active (e.g., by a nested call or an `ON ERROR` handler that modifies global state), the `SUB`'s local copy will overwrite the updated global value when the `SUB` returns. This is not true "shared" storage.
-- **Recommendation**: Implement true variable linking in `env.c` where a local `var_entry_t` can point to the storage of a global entry.
+### 4. ~~`SHARED` Variable "Copy-in/Copy-out" Race Condition~~ **FIXED**
+Added `link` pointer to `var_entry_t`. `SHARED` variables now use `env_link()` to point the local entry directly at the global's `value_t` storage. All reads/writes through `env_get`/`env_set` follow the link. No copy-in or copy-out needed — nested SUB calls see changes immediately.
 
 ### 5. `MID$` Statement (L-Value) is Missing
 Standard BASIC supports `MID$(A$, start [, length]) = "newtext"`.
