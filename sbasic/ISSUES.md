@@ -37,8 +37,7 @@ The `STMT_SWAP` implementation and `stmt_swap` constructor only accept variable 
 
 ### 7. Fixed-Size Table Overflows (Silent)
 The `eval_program` first pass collects labels, procs, and DATA values into fixed-size tables (`MAX_LABELS`, `MAX_PROCS`, `MAX_DATA_VALUES`).
-- **Problem**: If these limits are exceeded, the parser/evaluator silently ignores the overflow (it just stops adding to the table).
-- **Recommendation**: Return a specific error (e.g., `ERR_OUT_OF_MEMORY` or `ERR_TABLE_FULL`) when these limits are reached.
+- **Status**: **FIXED**. All three table-fill loops now return `ERR_OUT_OF_MEMORY` when their limit is exceeded, instead of silently dropping entries.
 
 ---
 

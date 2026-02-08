@@ -1643,31 +1643,30 @@ error_t eval_program(env_t *env, stmt_t *program) {
 
     for (i = 0; i < count; i++) {
         if (stmts[i]->type == STMT_LABEL) {
-            if (label_count < MAX_LABELS) {
-                strncpy(label_table[label_count].name,
-                        stmts[i]->label.name, 63);
-                label_table[label_count].name[63] = '\0';
-                label_table[label_count].index = i;
-                label_table[label_count].data_offset = data_pool_count;
-                label_count++;
-            }
+            if (label_count >= MAX_LABELS) return ERR_OUT_OF_MEMORY;
+            strncpy(label_table[label_count].name,
+                    stmts[i]->label.name, 63);
+            label_table[label_count].name[63] = '\0';
+            label_table[label_count].index = i;
+            label_table[label_count].data_offset = data_pool_count;
+            label_count++;
         }
         if (stmts[i]->type == STMT_DATA) {
             for (int j = 0; j < stmts[i]->data_stmt.nvalues; j++) {
-                if (data_pool_count < MAX_DATA_VALUES)
-                    data_pool[data_pool_count++] =
-                        val_copy(&stmts[i]->data_stmt.values[j]);
+                if (data_pool_count >= MAX_DATA_VALUES)
+                    return ERR_OUT_OF_MEMORY;
+                data_pool[data_pool_count++] =
+                    val_copy(&stmts[i]->data_stmt.values[j]);
             }
         }
         if (stmts[i]->type == STMT_SUB_DEF ||
             stmts[i]->type == STMT_FUNC_DEF) {
-            if (proc_count < MAX_PROCS) {
-                strncpy(proc_table[proc_count].name,
-                        stmts[i]->proc_def.name, 63);
-                proc_table[proc_count].name[63] = '\0';
-                proc_table[proc_count].def = stmts[i];
-                proc_count++;
-            }
+            if (proc_count >= MAX_PROCS) return ERR_OUT_OF_MEMORY;
+            strncpy(proc_table[proc_count].name,
+                    stmts[i]->proc_def.name, 63);
+            proc_table[proc_count].name[63] = '\0';
+            proc_table[proc_count].def = stmts[i];
+            proc_count++;
         }
     }
 
