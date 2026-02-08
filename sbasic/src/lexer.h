@@ -35,6 +35,10 @@ typedef enum {
     TOK_CONST, TOK_SHARED, TOK_DECLARE,
     TOK_AS, TOK_IS,
 
+    /* Stage 3 keywords */
+    TOK_DATA, TOK_READ, TOK_RESTORE,
+    TOK_ERASE, TOK_REDIM,
+
     /* REPL commands */
     TOK_RUN, TOK_LIST, TOK_NEW, TOK_LOAD, TOK_SAVE, TOK_BYE,
 

@@ -1,5 +1,6 @@
 #include "eval.h"
 #include "builtin.h"
+#include "array.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -9,6 +10,7 @@
 #define MAX_PROCS 128
 #define MAX_LABELS 256
 #define MAX_GOSUB_DEPTH 64
+#define MAX_DATA_VALUES 1024
 
 typedef struct {
     char name[64];
@@ -17,7 +19,8 @@ typedef struct {
 
 typedef struct {
     char name[64];
-    int index;
+    int index;          /* statement index for GOTO */
+    int data_offset;    /* data pool offset for RESTORE */
 } label_entry_t;
 
 static proc_entry_t proc_table[MAX_PROCS];
@@ -33,6 +36,14 @@ static int goto_target = -1;
 
 /* Pointer to global env for SHARED variable access */
 static env_t *program_global_env = NULL;
+
+/* OPTION BASE setting */
+static int option_base = 0;
+
+/* DATA pool */
+static value_t data_pool[MAX_DATA_VALUES];
+static int data_pool_count = 0;
+static int data_read_ptr = 0;
 
 /* --- Lookup helpers --- */
 
@@ -52,6 +63,14 @@ static int find_label(const char *name) {
     return -1;
 }
 
+static int find_label_data_offset(const char *name) {
+    for (int i = 0; i < label_count; i++) {
+        if (strcmp(label_table[i].name, name) == 0)
+            return label_table[i].data_offset;
+    }
+    return -1;
+}
+
 /* --- User-defined procedure call --- */
 
 static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
@@ -59,11 +78,9 @@ static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
     stmt_t *def = proc->def;
     int is_function = (def->type == STMT_FUNC_DEF);
 
-    /* Check argument count */
     if (nargs != def->proc_def.nparams)
         return ERR_ILLEGAL_FUNCTION_CALL;
 
-    /* Evaluate arguments in caller's scope */
     value_t arg_vals[16];
     for (int i = 0; i < nargs; i++) {
         error_t err = eval_expr(caller_env, arg_exprs[i], &arg_vals[i]);
@@ -73,16 +90,14 @@ static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
         }
     }
 
-    /* Create isolated local env (no parent chain) */
     env_t *local = env_create(NULL);
 
-    /* Bind parameters */
     for (int i = 0; i < nargs; i++) {
         env_set(local, def->proc_def.params[i], &arg_vals[i]);
         val_clear(&arg_vals[i]);
     }
 
-    /* Collect SHARED variable names from body (top-level scan) */
+    /* Collect and copy-in SHARED variables */
     char shared_names[32][64];
     int nshared = 0;
     for (stmt_t *s = def->proc_def.body; s && nshared < 32; s = s->next) {
@@ -94,21 +109,16 @@ static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
             }
         }
     }
-
-    /* Copy-in SHARED variables from global */
     for (int i = 0; i < nshared; i++) {
         value_t *gv = env_get(program_global_env, shared_names[i]);
         if (gv) env_set(local, shared_names[i], gv);
     }
 
-    /* Execute body */
     error_t err = eval_stmts(local, def->proc_def.body);
 
-    /* Handle EXIT SUB/FUNCTION */
     if (err == ERR_EXIT_SUB && !is_function) err = ERR_NONE;
     if (err == ERR_EXIT_FUNCTION && is_function) err = ERR_NONE;
 
-    /* For FUNCTION: retrieve return value from function-name variable */
     if (is_function && out) {
         if (err == ERR_NONE) {
             value_t *retval = env_get(local, def->proc_def.name);
@@ -119,7 +129,6 @@ static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
         }
     }
 
-    /* Copy-out SHARED variables back to global */
     for (int i = 0; i < nshared; i++) {
         value_t *lv = env_get(local, shared_names[i]);
         if (lv) env_set(program_global_env, shared_names[i], lv);
@@ -152,7 +161,7 @@ error_t eval_expr(env_t *env, expr_t *e, value_t *out) {
             error_t err;
             if (e->unary.op == OP_NEG) {
                 err = val_neg(&operand, out);
-            } else { /* OP_NOT */
+            } else {
                 *out = val_integer(val_is_true(&operand) ? 0 : -1);
                 err = ERR_NONE;
             }
@@ -161,7 +170,6 @@ error_t eval_expr(env_t *env, expr_t *e, value_t *out) {
         }
 
         case EXPR_BINARY: {
-            /* Short-circuit for AND/OR */
             if (e->binary.op == OP_AND) {
                 value_t left;
                 EVAL_CHECK(eval_expr(env, e->binary.left, &left));
@@ -245,13 +253,60 @@ error_t eval_expr(env_t *env, expr_t *e, value_t *out) {
         }
 
         case EXPR_CALL: {
-            /* Check for user-defined function first */
+            /* 1. Check for user-defined function */
             proc_entry_t *proc = find_proc(e->call.name);
-            if (proc && proc->def->type == STMT_FUNC_DEF) {
+            if (proc && proc->def->type == STMT_FUNC_DEF)
                 return call_proc(env, proc, e->call.args, e->call.nargs, out);
+
+            /* 2. Check for array element access */
+            sb_array_t *arr = array_find(e->call.name);
+            if (arr) {
+                int indices[MAX_ARRAY_DIMS];
+                if (e->call.nargs != arr->ndims)
+                    return ERR_SUBSCRIPT_OUT_OF_RANGE;
+                for (int i = 0; i < e->call.nargs; i++) {
+                    value_t iv;
+                    error_t err = eval_expr(env, e->call.args[i], &iv);
+                    if (err != ERR_NONE) return err;
+                    val_to_integer(&iv, &indices[i]);
+                    val_clear(&iv);
+                }
+                value_t *elem;
+                error_t err = array_get(e->call.name, indices,
+                                        e->call.nargs, &elem);
+                if (err != ERR_NONE) return err;
+                *out = val_copy(elem);
+                return ERR_NONE;
             }
 
-            /* Fall back to built-in functions */
+            /* 3. LBOUND / UBOUND special handling */
+            if (strcmp(e->call.name, "LBOUND") == 0 ||
+                strcmp(e->call.name, "UBOUND") == 0) {
+                if (e->call.nargs < 1) return ERR_ILLEGAL_FUNCTION_CALL;
+                const char *arrname;
+                if (e->call.args[0]->type == EXPR_VARIABLE)
+                    arrname = e->call.args[0]->var.name;
+                else
+                    return ERR_ILLEGAL_FUNCTION_CALL;
+                int dim = 1;
+                if (e->call.nargs >= 2) {
+                    value_t dv;
+                    EVAL_CHECK(eval_expr(env, e->call.args[1], &dv));
+                    val_to_integer(&dv, &dim);
+                    val_clear(&dv);
+                }
+                sb_array_t *a = array_find(arrname);
+                if (!a) return ERR_UNDEFINED_VAR;
+                if (dim < 1 || dim > a->ndims)
+                    return ERR_ILLEGAL_FUNCTION_CALL;
+                if (strcmp(e->call.name, "LBOUND") == 0)
+                    *out = val_integer(a->base);
+                else
+                    *out = val_integer(a->base + a->dims[dim - 1] - 1);
+                return ERR_NONE;
+            }
+
+            /* 4. Built-in functions */
             value_t args[8];
             int nargs = e->call.nargs;
             for (int i = 0; i < nargs; i++) {
@@ -365,14 +420,12 @@ static error_t exec_input(env_t *env, stmt_t *s) {
 }
 
 static error_t exec_assign(env_t *env, stmt_t *s) {
-    /* Check for CONST reassignment */
     if (env_is_const(env, s->assign.name))
         return ERR_CONST_REASSIGN;
 
     value_t v;
     EVAL_CHECK(eval_expr(env, s->assign.value, &v));
 
-    /* Coerce to variable type if needed */
     if (s->assign.var_type == VAL_INTEGER && v.type != VAL_INTEGER) {
         int iv;
         error_t err = val_to_integer(&v, &iv);
@@ -479,7 +532,6 @@ static error_t exec_while(env_t *env, stmt_t *s) {
 
 static error_t exec_do_loop(env_t *env, stmt_t *s) {
     while (1) {
-        /* Pre-condition: DO WHILE/UNTIL expr */
         if (s->do_loop.pre_cond) {
             value_t cond;
             EVAL_CHECK(eval_expr(env, s->do_loop.pre_cond, &cond));
@@ -489,14 +541,12 @@ static error_t exec_do_loop(env_t *env, stmt_t *s) {
             if (!is_true) break;
         }
 
-        /* Body */
         if (s->do_loop.body) {
             error_t err = eval_stmts(env, s->do_loop.body);
             if (err == ERR_EXIT_DO) break;
             if (err != ERR_NONE) return err;
         }
 
-        /* Post-condition: LOOP WHILE/UNTIL expr */
         if (s->do_loop.post_cond) {
             value_t cond;
             EVAL_CHECK(eval_expr(env, s->do_loop.post_cond, &cond));
@@ -505,8 +555,6 @@ static error_t exec_do_loop(env_t *env, stmt_t *s) {
             if (s->do_loop.post_until) is_true = !is_true;
             if (!is_true) break;
         }
-
-        /* Infinite loop if no conditions (DO ... LOOP) */
     }
     return ERR_NONE;
 }
@@ -528,7 +576,6 @@ static error_t exec_select(env_t *env, stmt_t *s) {
         for (int i = 0; i < c->nmatches && !found; i++) {
             case_match_t *m = &c->matches[i];
             if (m->match_type == 0) {
-                /* Value match */
                 value_t v;
                 error_t err = eval_expr(env, m->expr1, &v);
                 if (err != ERR_NONE) { val_clear(&test); return err; }
@@ -538,7 +585,6 @@ static error_t exec_select(env_t *env, stmt_t *s) {
                 if (err != ERR_NONE) { val_clear(&test); return err; }
                 if (cmp == 0) found = 1;
             } else if (m->match_type == 1) {
-                /* Range match: val1 TO val2 */
                 value_t lo, hi;
                 error_t err = eval_expr(env, m->expr1, &lo);
                 if (err != ERR_NONE) { val_clear(&test); return err; }
@@ -551,7 +597,6 @@ static error_t exec_select(env_t *env, stmt_t *s) {
                 val_clear(&hi);
                 if (cmp_lo >= 0 && cmp_hi <= 0) found = 1;
             } else if (m->match_type == 2) {
-                /* IS comparison */
                 value_t v;
                 error_t err = eval_expr(env, m->expr1, &v);
                 if (err != ERR_NONE) { val_clear(&test); return err; }
@@ -577,12 +622,9 @@ static error_t exec_select(env_t *env, stmt_t *s) {
     }
 
     val_clear(&test);
-
     if (!matched) matched = else_clause;
-
     if (matched && matched->body)
         return eval_stmts(env, matched->body);
-
     return ERR_NONE;
 }
 
@@ -590,7 +632,6 @@ static error_t exec_const(env_t *env, stmt_t *s) {
     value_t v;
     EVAL_CHECK(eval_expr(env, s->const_stmt.value, &v));
 
-    /* Coerce to declared type */
     if (s->const_stmt.var_type == VAL_INTEGER && v.type != VAL_INTEGER) {
         int iv;
         error_t err = val_to_integer(&v, &iv);
@@ -616,7 +657,6 @@ static error_t exec_call_stmt(env_t *env, stmt_t *s) {
         return ERR_UNDEFINED_PROC;
 
     if (proc->def->type == STMT_FUNC_DEF) {
-        /* Calling a FUNCTION as a statement — discard return value */
         value_t result;
         error_t err = call_proc(env, proc, s->call_stmt.args,
                                 s->call_stmt.nargs, &result);
@@ -628,29 +668,147 @@ static error_t exec_call_stmt(env_t *env, stmt_t *s) {
                      s->call_stmt.nargs, NULL);
 }
 
+/* --- Stage 3 statement handlers --- */
+
+static error_t exec_dim(env_t *env, stmt_t *s) {
+    int sizes[MAX_ARRAY_DIMS];
+    for (int i = 0; i < s->dim_stmt.ndims; i++) {
+        value_t dv;
+        EVAL_CHECK(eval_expr(env, s->dim_stmt.dims[i], &dv));
+        int upper;
+        error_t err = val_to_integer(&dv, &upper);
+        val_clear(&dv);
+        if (err != ERR_NONE) return err;
+        sizes[i] = upper - option_base + 1;
+        if (sizes[i] <= 0) return ERR_ILLEGAL_FUNCTION_CALL;
+    }
+
+    if (s->dim_stmt.is_redim)
+        return array_redim(s->dim_stmt.name, s->dim_stmt.elem_type,
+                           sizes, s->dim_stmt.ndims, option_base,
+                           s->dim_stmt.preserve);
+    else
+        return array_dim(s->dim_stmt.name, s->dim_stmt.elem_type,
+                         sizes, s->dim_stmt.ndims, option_base);
+}
+
+static error_t exec_array_assign(env_t *env, stmt_t *s) {
+    int indices[MAX_ARRAY_DIMS];
+    for (int i = 0; i < s->array_assign.nindices; i++) {
+        value_t iv;
+        EVAL_CHECK(eval_expr(env, s->array_assign.indices[i], &iv));
+        error_t err = val_to_integer(&iv, &indices[i]);
+        val_clear(&iv);
+        if (err != ERR_NONE) return err;
+    }
+
+    value_t v;
+    EVAL_CHECK(eval_expr(env, s->array_assign.value, &v));
+
+    /* Coerce to array element type */
+    sb_array_t *arr = array_find(s->array_assign.name);
+    if (!arr) {
+        val_clear(&v);
+        return ERR_UNDEFINED_VAR;
+    }
+
+    if (arr->elem_type == VAL_INTEGER && v.type != VAL_INTEGER) {
+        int iv;
+        error_t err = val_to_integer(&v, &iv);
+        val_clear(&v);
+        if (err != ERR_NONE) return err;
+        v = val_integer(iv);
+    } else if (arr->elem_type == VAL_STRING && v.type != VAL_STRING) {
+        char buf[256];
+        error_t err = val_to_string(&v, buf, sizeof(buf));
+        val_clear(&v);
+        if (err != ERR_NONE) return err;
+        v = val_string_cstr(buf);
+    }
+
+    error_t err = array_set(s->array_assign.name, indices,
+                            s->array_assign.nindices, &v);
+    val_clear(&v);
+    return err;
+}
+
+static error_t exec_erase(env_t *env, stmt_t *s) {
+    for (int i = 0; i < s->erase_stmt.nnames; i++)
+        array_erase(s->erase_stmt.names[i]);
+    return ERR_NONE;
+}
+
+static error_t exec_read(env_t *env, stmt_t *s) {
+    for (int i = 0; i < s->read_stmt.nvars; i++) {
+        if (data_read_ptr >= data_pool_count)
+            return ERR_OUT_OF_DATA;
+
+        value_t v = val_copy(&data_pool[data_read_ptr++]);
+
+        if (s->read_stmt.vartypes[i] == VAL_INTEGER && v.type != VAL_INTEGER) {
+            int iv;
+            error_t err = val_to_integer(&v, &iv);
+            val_clear(&v);
+            if (err != ERR_NONE) return err;
+            v = val_integer(iv);
+        } else if (s->read_stmt.vartypes[i] == VAL_STRING && v.type != VAL_STRING) {
+            char buf[256];
+            error_t err = val_to_string(&v, buf, sizeof(buf));
+            val_clear(&v);
+            if (err != ERR_NONE) return err;
+            v = val_string_cstr(buf);
+        }
+
+        env_set(env, s->read_stmt.varnames[i], &v);
+        val_clear(&v);
+    }
+    return ERR_NONE;
+}
+
+static error_t exec_restore(stmt_t *s) {
+    if (s->restore_stmt.label[0] == '\0') {
+        data_read_ptr = 0;
+    } else {
+        int offset = find_label_data_offset(s->restore_stmt.label);
+        if (offset < 0) return ERR_UNDEFINED_LABEL;
+        data_read_ptr = offset;
+    }
+    return ERR_NONE;
+}
+
 /* --- Statement dispatch --- */
 
 error_t eval_stmt(env_t *env, stmt_t *s) {
     switch (s->type) {
-        case STMT_PRINT:    return exec_print(env, s);
-        case STMT_INPUT:    return exec_input(env, s);
-        case STMT_ASSIGN:   return exec_assign(env, s);
-        case STMT_IF:       return exec_if(env, s);
-        case STMT_FOR:      return exec_for(env, s);
-        case STMT_WHILE:    return exec_while(env, s);
-        case STMT_DO_LOOP:  return exec_do_loop(env, s);
-        case STMT_SELECT:   return exec_select(env, s);
-        case STMT_CALL:     return exec_call_stmt(env, s);
-        case STMT_CONST:    return exec_const(env, s);
-        case STMT_END:      return ERR_EXIT;
-        case STMT_REM:      return ERR_NONE;
-        case STMT_LABEL:    return ERR_NONE;
-        case STMT_DECLARE:  return ERR_NONE;
-        case STMT_SHARED:   return ERR_NONE; /* handled by call_proc */
+        case STMT_PRINT:        return exec_print(env, s);
+        case STMT_INPUT:        return exec_input(env, s);
+        case STMT_ASSIGN:       return exec_assign(env, s);
+        case STMT_IF:           return exec_if(env, s);
+        case STMT_FOR:          return exec_for(env, s);
+        case STMT_WHILE:        return exec_while(env, s);
+        case STMT_DO_LOOP:      return exec_do_loop(env, s);
+        case STMT_SELECT:       return exec_select(env, s);
+        case STMT_CALL:         return exec_call_stmt(env, s);
+        case STMT_CONST:        return exec_const(env, s);
+        case STMT_DIM:          return exec_dim(env, s);
+        case STMT_ARRAY_ASSIGN: return exec_array_assign(env, s);
+        case STMT_ERASE:        return exec_erase(env, s);
+        case STMT_READ:         return exec_read(env, s);
+        case STMT_RESTORE:      return exec_restore(s);
+        case STMT_END:          return ERR_EXIT;
+        case STMT_REM:          return ERR_NONE;
+        case STMT_LABEL:        return ERR_NONE;
+        case STMT_DECLARE:      return ERR_NONE;
+        case STMT_SHARED:       return ERR_NONE;
+        case STMT_DATA:         return ERR_NONE;
+
+        case STMT_OPTION_BASE:
+            option_base = s->option_base.base;
+            return ERR_NONE;
 
         case STMT_SUB_DEF:
         case STMT_FUNC_DEF:
-            return ERR_NONE; /* definitions collected in first pass */
+            return ERR_NONE;
 
         case STMT_EXIT:
             switch (s->exit_stmt.what) {
@@ -695,8 +853,14 @@ error_t eval_stmts(env_t *env, stmt_t *stmts) {
 
 /* --- Program execution with GOTO/GOSUB/SUB/FUNCTION support --- */
 
+static void data_pool_clear(void) {
+    for (int i = 0; i < data_pool_count; i++)
+        val_clear(&data_pool[i]);
+    data_pool_count = 0;
+    data_read_ptr = 0;
+}
+
 error_t eval_program(env_t *env, stmt_t *program) {
-    /* Flatten linked list to array for indexed access */
     int count = 0;
     for (stmt_t *s = program; s; s = s->next)
         count++;
@@ -710,10 +874,13 @@ error_t eval_program(env_t *env, stmt_t *program) {
     for (stmt_t *s = program; s; s = s->next)
         stmts[i++] = s;
 
-    /* Save global env reference for SHARED access */
+    /* Initialize program state */
     program_global_env = env;
+    option_base = 0;
+    array_clear_all();
+    data_pool_clear();
 
-    /* First pass: collect labels and procedure definitions */
+    /* First pass: collect labels, proc definitions, and DATA values */
     proc_count = 0;
     label_count = 0;
 
@@ -724,10 +891,19 @@ error_t eval_program(env_t *env, stmt_t *program) {
                         stmts[i]->label.name, 63);
                 label_table[label_count].name[63] = '\0';
                 label_table[label_count].index = i;
+                label_table[label_count].data_offset = data_pool_count;
                 label_count++;
             }
         }
-        if (stmts[i]->type == STMT_SUB_DEF || stmts[i]->type == STMT_FUNC_DEF) {
+        if (stmts[i]->type == STMT_DATA) {
+            for (int j = 0; j < stmts[i]->data_stmt.nvalues; j++) {
+                if (data_pool_count < MAX_DATA_VALUES)
+                    data_pool[data_pool_count++] =
+                        val_copy(&stmts[i]->data_stmt.values[j]);
+            }
+        }
+        if (stmts[i]->type == STMT_SUB_DEF ||
+            stmts[i]->type == STMT_FUNC_DEF) {
             if (proc_count < MAX_PROCS) {
                 strncpy(proc_table[proc_count].name,
                         stmts[i]->proc_def.name, 63);
@@ -744,7 +920,6 @@ error_t eval_program(env_t *env, stmt_t *program) {
     error_t result = ERR_NONE;
 
     while (pc < count) {
-        /* Skip SUB/FUNCTION definitions during main flow */
         if (stmts[pc]->type == STMT_SUB_DEF ||
             stmts[pc]->type == STMT_FUNC_DEF) {
             pc++;
@@ -758,9 +933,8 @@ error_t eval_program(env_t *env, stmt_t *program) {
             continue;
         }
 
-        if (err == ERR_EXIT) {
+        if (err == ERR_EXIT)
             break;
-        }
 
         if (err == ERR_GOTO) {
             pc = goto_target;
@@ -786,11 +960,13 @@ error_t eval_program(env_t *env, stmt_t *program) {
             continue;
         }
 
-        /* Any other error is a real error */
         result = err;
         break;
     }
 
+    /* Clean up */
+    data_pool_clear();
+    array_clear_all();
     free(stmts);
     return result;
 }

@@ -742,6 +742,232 @@ static stmt_t *parse_implicit_call(parser_t *p, const char *name, int line) {
     return s;
 }
 
+/* --- Stage 3 parsing --- */
+
+static stmt_t *parse_dim_or_redim(parser_t *p, int is_redim) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume DIM or REDIM */
+
+    int preserve = 0;
+    if (is_redim && lexer_check(&p->lex, TOK_IDENT)) {
+        /* Check for PRESERVE (not a keyword, context-sensitive) */
+        if (strcmp(lexer_peek(&p->lex)->text, "PRESERVE") == 0) {
+            lexer_next(&p->lex);
+            preserve = 1;
+        }
+    }
+
+    if (!lexer_check(&p->lex, TOK_IDENT)) {
+        parser_error(p, ERR_SYNTAX); return NULL;
+    }
+    token_t name = lexer_next(&p->lex);
+
+    if (!expect(p, TOK_LPAREN)) return NULL;
+
+    expr_t *dims[8];
+    int ndims = 0;
+    dims[0] = parse_expr(p);
+    if (!dims[0]) return NULL;
+    ndims = 1;
+    while (lexer_match(&p->lex, TOK_COMMA)) {
+        if (ndims >= 8) {
+            parser_error(p, ERR_SYNTAX);
+            for (int i = 0; i < ndims; i++) expr_free(dims[i]);
+            return NULL;
+        }
+        dims[ndims] = parse_expr(p);
+        if (!dims[ndims]) {
+            for (int i = 0; i < ndims; i++) expr_free(dims[i]);
+            return NULL;
+        }
+        ndims++;
+    }
+
+    if (!expect(p, TOK_RPAREN)) {
+        for (int i = 0; i < ndims; i++) expr_free(dims[i]);
+        return NULL;
+    }
+
+    /* Default type from name suffix */
+    val_type_t type = var_type_from_name(name.text);
+
+    /* Optional AS INTEGER/DOUBLE/STRING */
+    if (lexer_match(&p->lex, TOK_AS)) {
+        if (!lexer_check(&p->lex, TOK_IDENT)) {
+            parser_error(p, ERR_SYNTAX);
+            for (int i = 0; i < ndims; i++) expr_free(dims[i]);
+            return NULL;
+        }
+        token_t tn = lexer_next(&p->lex);
+        if (strcmp(tn.text, "INTEGER") == 0) type = VAL_INTEGER;
+        else if (strcmp(tn.text, "DOUBLE") == 0) type = VAL_DOUBLE;
+        else if (strcmp(tn.text, "STRING") == 0) type = VAL_STRING;
+        else {
+            parser_error(p, ERR_SYNTAX);
+            for (int i = 0; i < ndims; i++) expr_free(dims[i]);
+            return NULL;
+        }
+    }
+
+    return stmt_dim(name.text, type, dims, ndims, is_redim, preserve, line);
+}
+
+static stmt_t *parse_erase(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume ERASE */
+    stmt_t *s = stmt_erase(line);
+    if (!lexer_check(&p->lex, TOK_IDENT)) {
+        parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+    }
+    token_t t = lexer_next(&p->lex);
+    stmt_erase_add(s, t.text);
+    while (lexer_match(&p->lex, TOK_COMMA)) {
+        if (!lexer_check(&p->lex, TOK_IDENT)) {
+            parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+        }
+        t = lexer_next(&p->lex);
+        stmt_erase_add(s, t.text);
+    }
+    return s;
+}
+
+static stmt_t *parse_data(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume DATA */
+    stmt_t *s = stmt_data(line);
+
+    while (1) {
+        if (lexer_check(&p->lex, TOK_STRING_LIT)) {
+            token_t t = lexer_next(&p->lex);
+            value_t v = val_string_cstr(t.text);
+            stmt_data_add(s, v);
+            val_clear(&v);
+        } else if (lexer_check(&p->lex, TOK_MINUS)) {
+            lexer_next(&p->lex);
+            if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
+                token_t t = lexer_next(&p->lex);
+                value_t v = val_integer(-t.ival);
+                stmt_data_add(s, v);
+            } else if (lexer_check(&p->lex, TOK_DOUBLE_LIT)) {
+                token_t t = lexer_next(&p->lex);
+                value_t v = val_double(-t.dval);
+                stmt_data_add(s, v);
+            } else {
+                parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+            }
+        } else if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
+            token_t t = lexer_next(&p->lex);
+            value_t v = val_integer(t.ival);
+            stmt_data_add(s, v);
+        } else if (lexer_check(&p->lex, TOK_DOUBLE_LIT)) {
+            token_t t = lexer_next(&p->lex);
+            value_t v = val_double(t.dval);
+            stmt_data_add(s, v);
+        } else {
+            break;
+        }
+        if (!lexer_match(&p->lex, TOK_COMMA)) break;
+    }
+    return s;
+}
+
+static stmt_t *parse_read(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume READ */
+    stmt_t *s = stmt_read(line);
+    if (!lexer_check(&p->lex, TOK_IDENT)) {
+        parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+    }
+    token_t t = lexer_next(&p->lex);
+    stmt_read_add_var(s, t.text, var_type_from_name(t.text));
+    while (lexer_match(&p->lex, TOK_COMMA)) {
+        if (!lexer_check(&p->lex, TOK_IDENT)) {
+            parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+        }
+        t = lexer_next(&p->lex);
+        stmt_read_add_var(s, t.text, var_type_from_name(t.text));
+    }
+    return s;
+}
+
+static stmt_t *parse_restore(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume RESTORE */
+    char label[64] = "";
+    if (lexer_check(&p->lex, TOK_IDENT)) {
+        token_t t = lexer_next(&p->lex);
+        strncpy(label, t.text, 63);
+    }
+    return stmt_restore(label, line);
+}
+
+/* Handle ident(...) which could be array assignment or call */
+static stmt_t *parse_paren_dispatch(parser_t *p, const char *name, int line) {
+    lexer_next(&p->lex); /* consume ( */
+
+    expr_t *args[16];
+    int nargs = 0;
+
+    if (!lexer_check(&p->lex, TOK_RPAREN)) {
+        args[0] = parse_expr(p);
+        if (!args[0]) return NULL;
+        nargs = 1;
+        while (lexer_match(&p->lex, TOK_COMMA)) {
+            if (nargs >= 16) {
+                parser_error(p, ERR_SYNTAX);
+                for (int i = 0; i < nargs; i++) expr_free(args[i]);
+                return NULL;
+            }
+            args[nargs] = parse_expr(p);
+            if (!args[nargs]) {
+                for (int i = 0; i < nargs; i++) expr_free(args[i]);
+                return NULL;
+            }
+            nargs++;
+        }
+    }
+
+    if (!expect(p, TOK_RPAREN)) {
+        for (int i = 0; i < nargs; i++) expr_free(args[i]);
+        return NULL;
+    }
+
+    /* Array assignment: ident(indices) = expr */
+    if (lexer_check(&p->lex, TOK_EQ)) {
+        lexer_next(&p->lex);
+        expr_t *value = parse_expr(p);
+        if (!value) {
+            for (int i = 0; i < nargs; i++) expr_free(args[i]);
+            return NULL;
+        }
+        return stmt_array_assign(name, var_type_from_name(name),
+                                 args, nargs, value, line);
+    }
+
+    /* Otherwise it's a call with parens */
+    stmt_t *s = stmt_call(name, line);
+    for (int i = 0; i < nargs; i++)
+        stmt_call_add_arg(s, args[i]);
+    return s;
+}
+
+static stmt_t *parse_option(parser_t *p, int line) {
+    /* Already consumed "OPTION" as an ident. Expect BASE 0/1 */
+    if (!lexer_check(&p->lex, TOK_IDENT) ||
+        strcmp(lexer_peek(&p->lex)->text, "BASE") != 0) {
+        parser_error(p, ERR_SYNTAX); return NULL;
+    }
+    lexer_next(&p->lex); /* consume BASE */
+    if (!lexer_check(&p->lex, TOK_INTEGER_LIT)) {
+        parser_error(p, ERR_SYNTAX); return NULL;
+    }
+    token_t t = lexer_next(&p->lex);
+    if (t.ival != 0 && t.ival != 1) {
+        parser_error(p, ERR_ILLEGAL_FUNCTION_CALL); return NULL;
+    }
+    return stmt_option_base(t.ival, line);
+}
+
 /* --- Main statement dispatch --- */
 
 static stmt_t *parse_stmt(parser_t *p) {
@@ -763,6 +989,12 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_FUNCTION: return parse_function(p);
         case TOK_CALL:     return parse_call(p);
         case TOK_DECLARE:  return parse_declare(p);
+        case TOK_DIM:      return parse_dim_or_redim(p, 0);
+        case TOK_REDIM:    return parse_dim_or_redim(p, 1);
+        case TOK_ERASE:    return parse_erase(p);
+        case TOK_DATA:     return parse_data(p);
+        case TOK_READ:     return parse_read(p);
+        case TOK_RESTORE:  return parse_restore(p);
 
         case TOK_GOTO: {
             int line = tok->line;
@@ -828,13 +1060,15 @@ static stmt_t *parse_stmt(parser_t *p) {
                 lexer_next(&p->lex);
                 return stmt_label(var.text, var.line);
             }
+            /* Array assignment or paren call: ident(...) */
+            if (lexer_check(&p->lex, TOK_LPAREN))
+                return parse_paren_dispatch(p, var.text, var.line);
+            /* OPTION BASE */
+            if (strcmp(var.text, "OPTION") == 0)
+                return parse_option(p, var.line);
             /* Implicit call: ident [args] */
             return parse_implicit_call(p, var.text, var.line);
         }
-
-        case TOK_DIM:
-            parser_error(p, ERR_SYNTAX);
-            return NULL;
 
         default:
             if (tok->type == TOK_EOF) return NULL;

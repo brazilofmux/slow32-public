@@ -96,6 +96,14 @@ typedef enum {
     STMT_CONST,
     STMT_SHARED,
     STMT_DECLARE,
+    /* Stage 3 */
+    STMT_DIM,
+    STMT_ARRAY_ASSIGN,
+    STMT_OPTION_BASE,
+    STMT_ERASE,
+    STMT_DATA,
+    STMT_READ,
+    STMT_RESTORE,
 } stmt_type_t;
 
 /* Print item: expression + separator */
@@ -235,6 +243,54 @@ typedef struct stmt {
             char varnames[16][64];
             int nvars;
         } shared;
+
+        /* STMT_DIM / STMT_REDIM */
+        struct {
+            char name[64];
+            val_type_t elem_type;
+            int ndims;
+            struct expr *dims[8];   /* upper bound per dimension */
+            int is_redim;
+            int preserve;
+        } dim_stmt;
+
+        /* STMT_ARRAY_ASSIGN */
+        struct {
+            char name[64];
+            val_type_t var_type;
+            int nindices;
+            struct expr *indices[8];
+            struct expr *value;
+        } array_assign;
+
+        /* STMT_OPTION_BASE */
+        struct {
+            int base;
+        } option_base;
+
+        /* STMT_ERASE */
+        struct {
+            char names[8][64];
+            int nnames;
+        } erase_stmt;
+
+        /* STMT_DATA */
+        struct {
+            value_t *values;
+            int nvalues;
+        } data_stmt;
+
+        /* STMT_READ */
+        struct {
+            char varnames[8][64];
+            val_type_t vartypes[8];
+            int nvars;
+        } read_stmt;
+
+        /* STMT_RESTORE */
+        struct {
+            char label[64];
+        } restore_stmt;
     };
 } stmt_t;
 
@@ -290,6 +346,22 @@ void case_clause_free(case_clause_t *c);
 
 /* Statement destructor (frees entire chain) */
 void stmt_free(stmt_t *s);
+
+/* Stage 3 constructors */
+stmt_t *stmt_dim(const char *name, val_type_t type,
+                 expr_t **dims, int ndims,
+                 int is_redim, int preserve, int line);
+stmt_t *stmt_array_assign(const char *name, val_type_t type,
+                          expr_t **indices, int nindices,
+                          expr_t *value, int line);
+stmt_t *stmt_option_base(int base, int line);
+stmt_t *stmt_erase(int line);
+void stmt_erase_add(stmt_t *s, const char *name);
+stmt_t *stmt_data(int line);
+void stmt_data_add(stmt_t *s, value_t val);
+stmt_t *stmt_read(int line);
+void stmt_read_add_var(stmt_t *s, const char *name, val_type_t type);
+stmt_t *stmt_restore(const char *label, int line);
 
 /* Append statement to end of chain */
 void stmt_append(stmt_t **head, stmt_t *s);

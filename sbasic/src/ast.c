@@ -398,10 +398,110 @@ void stmt_free(stmt_t *s) {
             case STMT_CONST:
                 expr_free(s->const_stmt.value);
                 break;
+            case STMT_DIM:
+                for (int i = 0; i < s->dim_stmt.ndims; i++)
+                    expr_free(s->dim_stmt.dims[i]);
+                break;
+            case STMT_ARRAY_ASSIGN:
+                for (int i = 0; i < s->array_assign.nindices; i++)
+                    expr_free(s->array_assign.indices[i]);
+                expr_free(s->array_assign.value);
+                break;
+            case STMT_DATA:
+                for (int i = 0; i < s->data_stmt.nvalues; i++)
+                    val_clear(&s->data_stmt.values[i]);
+                free(s->data_stmt.values);
+                break;
+            case STMT_OPTION_BASE:
+            case STMT_ERASE:
+            case STMT_READ:
+            case STMT_RESTORE:
+                break;
         }
         free(s);
         s = next;
     }
+}
+
+/* --- Stage 3 constructors --- */
+
+stmt_t *stmt_dim(const char *name, val_type_t type,
+                 expr_t **dims, int ndims,
+                 int is_redim, int preserve, int line) {
+    stmt_t *s = stmt_alloc(STMT_DIM, line);
+    if (!s) return NULL;
+    strncpy(s->dim_stmt.name, name, 63);
+    s->dim_stmt.elem_type = type;
+    s->dim_stmt.ndims = ndims;
+    for (int i = 0; i < ndims; i++)
+        s->dim_stmt.dims[i] = dims[i];
+    s->dim_stmt.is_redim = is_redim;
+    s->dim_stmt.preserve = preserve;
+    return s;
+}
+
+stmt_t *stmt_array_assign(const char *name, val_type_t type,
+                          expr_t **indices, int nindices,
+                          expr_t *value, int line) {
+    stmt_t *s = stmt_alloc(STMT_ARRAY_ASSIGN, line);
+    if (!s) return NULL;
+    strncpy(s->array_assign.name, name, 63);
+    s->array_assign.var_type = type;
+    s->array_assign.nindices = nindices;
+    for (int i = 0; i < nindices; i++)
+        s->array_assign.indices[i] = indices[i];
+    s->array_assign.value = value;
+    return s;
+}
+
+stmt_t *stmt_option_base(int base, int line) {
+    stmt_t *s = stmt_alloc(STMT_OPTION_BASE, line);
+    if (!s) return NULL;
+    s->option_base.base = base;
+    return s;
+}
+
+stmt_t *stmt_erase(int line) {
+    stmt_t *s = stmt_alloc(STMT_ERASE, line);
+    return s;
+}
+
+void stmt_erase_add(stmt_t *s, const char *name) {
+    int n = s->erase_stmt.nnames;
+    if (n >= 8) return;
+    strncpy(s->erase_stmt.names[n], name, 63);
+    s->erase_stmt.nnames = n + 1;
+}
+
+stmt_t *stmt_data(int line) {
+    return stmt_alloc(STMT_DATA, line);
+}
+
+void stmt_data_add(stmt_t *s, value_t val) {
+    int n = s->data_stmt.nvalues;
+    s->data_stmt.values = realloc(s->data_stmt.values, (n + 1) * sizeof(value_t));
+    s->data_stmt.values[n] = val_copy(&val);
+    s->data_stmt.nvalues = n + 1;
+}
+
+stmt_t *stmt_read(int line) {
+    return stmt_alloc(STMT_READ, line);
+}
+
+void stmt_read_add_var(stmt_t *s, const char *name, val_type_t type) {
+    int n = s->read_stmt.nvars;
+    if (n >= 8) return;
+    strncpy(s->read_stmt.varnames[n], name, 63);
+    s->read_stmt.vartypes[n] = type;
+    s->read_stmt.nvars = n + 1;
+}
+
+stmt_t *stmt_restore(const char *label, int line) {
+    stmt_t *s = stmt_alloc(STMT_RESTORE, line);
+    if (!s) return NULL;
+    if (label && label[0])
+        strncpy(s->restore_stmt.label, label, 63);
+    return s;
 }
 
 void stmt_append(stmt_t **head, stmt_t *s) {

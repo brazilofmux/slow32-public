@@ -38,6 +38,9 @@ static const char *error_messages[ERR_COUNT] = {
     "DO without LOOP",
     "Expected END SELECT",
     "Cannot reassign CONST",
+    "Subscript out of range",
+    "Array already dimensioned",
+    "Out of DATA",
     "Internal error",
 };
 
