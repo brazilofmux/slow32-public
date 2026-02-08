@@ -475,6 +475,20 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
 /* --- Print column tracking --- */
 
 int print_col = 0;
+int *active_print_col = &print_col;
+
+/* Update a column counter by scanning a string (same logic as col_puts) */
+static void update_col(int *col, const char *s) {
+    while (*s) {
+        if (*s == '\n' || *s == '\r')
+            *col = 0;
+        else if (*s == '\t')
+            *col = (*col + 8) & ~7;
+        else
+            (*col)++;
+        s++;
+    }
+}
 
 /* Print a string to stdout and update print_col */
 static void col_puts(const char *s) {
@@ -1205,34 +1219,57 @@ static error_t exec_print_file(env_t *env, stmt_t *s) {
     FILE *fp = fileio_get(handle);
     if (!fp) return ERR_FILE_NOT_OPEN;
 
+    /* Redirect active_print_col to this file's column counter */
+    int *file_col = fileio_get_col_ptr(handle);
+    int *saved_col = active_print_col;
+    if (file_col) active_print_col = file_col;
+
+    char buf[1024];
     int needs_newline = 1;
     for (int i = 0; i < s->print_file.nitems; i++) {
         print_item_t *item = &s->print_file.items[i];
         if (item->expr) {
             value_t v;
-            EVAL_CHECK(eval_expr(env, item->expr, &v));
+            err = eval_expr(env, item->expr, &v);
+            if (err != ERR_NONE) { active_print_col = saved_col; return err; }
             switch (v.type) {
                 case VAL_INTEGER:
-                    if (v.ival >= 0) fprintf(fp, " %d", v.ival);
-                    else fprintf(fp, "%d", v.ival);
+                    if (v.ival >= 0) snprintf(buf, sizeof(buf), " %d", v.ival);
+                    else snprintf(buf, sizeof(buf), "%d", v.ival);
+                    fprintf(fp, "%s", buf);
+                    update_col(active_print_col, buf);
                     break;
                 case VAL_DOUBLE:
-                    if (v.dval >= 0) fprintf(fp, " %g", v.dval);
-                    else fprintf(fp, "%g", v.dval);
+                    if (v.dval >= 0) snprintf(buf, sizeof(buf), " %g", v.dval);
+                    else snprintf(buf, sizeof(buf), "%g", v.dval);
+                    fprintf(fp, "%s", buf);
+                    update_col(active_print_col, buf);
                     break;
                 case VAL_STRING:
                     fprintf(fp, "%s", v.sval->data);
+                    update_col(active_print_col, v.sval->data);
                     break;
                 case VAL_RECORD:
                     break;
             }
             val_clear(&v);
         }
-        if (item->sep == ';') needs_newline = 0;
-        else if (item->sep == ',') { fprintf(fp, "\t"); needs_newline = 0; }
-        else needs_newline = 1;
+        if (item->sep == ';') {
+            needs_newline = 0;
+        } else if (item->sep == ',') {
+            fprintf(fp, "\t");
+            update_col(active_print_col, "\t");
+            needs_newline = 0;
+        } else {
+            needs_newline = 1;
+        }
     }
-    if (needs_newline) fprintf(fp, "\n");
+    if (needs_newline) {
+        fprintf(fp, "\n");
+        update_col(active_print_col, "\n");
+    }
+
+    active_print_col = saved_col;
     return ERR_NONE;
 }
 

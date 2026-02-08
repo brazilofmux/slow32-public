@@ -22,4 +22,7 @@ error_t eval_program(env_t *env, stmt_t *program);
 /* Current print column (0-based), for TAB() */
 extern int print_col;
 
+/* Points to the active column counter (stdout or file) for TAB() */
+extern int *active_print_col;
+
 #endif

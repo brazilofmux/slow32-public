@@ -121,32 +121,43 @@ stmt_t *stmt_print(int line) {
     return stmt_alloc(STMT_PRINT, line);
 }
 
-void stmt_print_add(stmt_t *s, expr_t *expr, char sep) {
+int stmt_print_add(stmt_t *s, expr_t *expr, char sep) {
     int n = s->print.nitems;
-    s->print.items = realloc(s->print.items, (n + 1) * sizeof(print_item_t));
+    print_item_t *tmp = realloc(s->print.items, (n + 1) * sizeof(print_item_t));
+    if (!tmp) return -1;
+    s->print.items = tmp;
     s->print.items[n].expr = expr;
     s->print.items[n].sep = sep;
     s->print.nitems = n + 1;
+    return 0;
 }
 
 stmt_t *stmt_input(const char *prompt, int line) {
     stmt_t *s = stmt_alloc(STMT_INPUT, line);
     if (!s) return NULL;
-    s->input.prompt = prompt ? strdup(prompt) : NULL;
+    if (prompt) {
+        s->input.prompt = strdup(prompt);
+        if (!s->input.prompt) { free(s); return NULL; }
+    }
     return s;
 }
 
-void stmt_input_add_var(stmt_t *s, const char *name, val_type_t type) {
+int stmt_input_add_var(stmt_t *s, const char *name, val_type_t type) {
     int n = s->input.nvars;
     if (n >= s->input.var_cap) {
         int newcap = s->input.var_cap ? s->input.var_cap * 2 : 4;
-        s->input.varnames = realloc(s->input.varnames, newcap * sizeof(s->input.varnames[0]));
-        s->input.vartypes = realloc(s->input.vartypes, newcap * sizeof(s->input.vartypes[0]));
+        void *tmp1 = realloc(s->input.varnames, newcap * sizeof(s->input.varnames[0]));
+        if (!tmp1) return -1;
+        s->input.varnames = tmp1;
+        void *tmp2 = realloc(s->input.vartypes, newcap * sizeof(s->input.vartypes[0]));
+        if (!tmp2) return -1;
+        s->input.vartypes = tmp2;
         s->input.var_cap = newcap;
     }
     name_copy(s->input.varnames[n], name);
     s->input.vartypes[n] = type;
     s->input.nvars = n + 1;
+    return 0;
 }
 
 stmt_t *stmt_assign(const char *name, val_type_t type, expr_t *value, int line) {
@@ -309,32 +320,41 @@ case_clause_t *case_clause_alloc(void) {
     return calloc(1, sizeof(case_clause_t));
 }
 
-void case_clause_add_value(case_clause_t *c, expr_t *val) {
+int case_clause_add_value(case_clause_t *c, expr_t *val) {
     int n = c->nmatches;
-    c->matches = realloc(c->matches, (n + 1) * sizeof(case_match_t));
+    case_match_t *tmp = realloc(c->matches, (n + 1) * sizeof(case_match_t));
+    if (!tmp) return -1;
+    c->matches = tmp;
     c->matches[n].match_type = 0;
     c->matches[n].expr1 = val;
     c->matches[n].expr2 = NULL;
     c->nmatches = n + 1;
+    return 0;
 }
 
-void case_clause_add_range(case_clause_t *c, expr_t *lo, expr_t *hi) {
+int case_clause_add_range(case_clause_t *c, expr_t *lo, expr_t *hi) {
     int n = c->nmatches;
-    c->matches = realloc(c->matches, (n + 1) * sizeof(case_match_t));
+    case_match_t *tmp = realloc(c->matches, (n + 1) * sizeof(case_match_t));
+    if (!tmp) return -1;
+    c->matches = tmp;
     c->matches[n].match_type = 1;
     c->matches[n].expr1 = lo;
     c->matches[n].expr2 = hi;
     c->nmatches = n + 1;
+    return 0;
 }
 
-void case_clause_add_is(case_clause_t *c, cmpop_t op, expr_t *val) {
+int case_clause_add_is(case_clause_t *c, cmpop_t op, expr_t *val) {
     int n = c->nmatches;
-    c->matches = realloc(c->matches, (n + 1) * sizeof(case_match_t));
+    case_match_t *tmp = realloc(c->matches, (n + 1) * sizeof(case_match_t));
+    if (!tmp) return -1;
+    c->matches = tmp;
     c->matches[n].match_type = 2;
     c->matches[n].is_op = op;
     c->matches[n].expr1 = val;
     c->matches[n].expr2 = NULL;
     c->nmatches = n + 1;
+    return 0;
 }
 
 void case_clause_free(case_clause_t *c) {
@@ -547,28 +567,36 @@ stmt_t *stmt_data(int line) {
     return stmt_alloc(STMT_DATA, line);
 }
 
-void stmt_data_add(stmt_t *s, value_t val) {
+int stmt_data_add(stmt_t *s, value_t val) {
     int n = s->data_stmt.nvalues;
-    s->data_stmt.values = realloc(s->data_stmt.values, (n + 1) * sizeof(value_t));
+    value_t *tmp = realloc(s->data_stmt.values, (n + 1) * sizeof(value_t));
+    if (!tmp) return -1;
+    s->data_stmt.values = tmp;
     s->data_stmt.values[n] = val_copy(&val);
     s->data_stmt.nvalues = n + 1;
+    return 0;
 }
 
 stmt_t *stmt_read(int line) {
     return stmt_alloc(STMT_READ, line);
 }
 
-void stmt_read_add_var(stmt_t *s, const char *name, val_type_t type) {
+int stmt_read_add_var(stmt_t *s, const char *name, val_type_t type) {
     int n = s->read_stmt.nvars;
     if (n >= s->read_stmt.var_cap) {
         int newcap = s->read_stmt.var_cap ? s->read_stmt.var_cap * 2 : 4;
-        s->read_stmt.varnames = realloc(s->read_stmt.varnames, newcap * sizeof(s->read_stmt.varnames[0]));
-        s->read_stmt.vartypes = realloc(s->read_stmt.vartypes, newcap * sizeof(s->read_stmt.vartypes[0]));
+        void *tmp1 = realloc(s->read_stmt.varnames, newcap * sizeof(s->read_stmt.varnames[0]));
+        if (!tmp1) return -1;
+        s->read_stmt.varnames = tmp1;
+        void *tmp2 = realloc(s->read_stmt.vartypes, newcap * sizeof(s->read_stmt.vartypes[0]));
+        if (!tmp2) return -1;
+        s->read_stmt.vartypes = tmp2;
         s->read_stmt.var_cap = newcap;
     }
     name_copy(s->read_stmt.varnames[n], name);
     s->read_stmt.vartypes[n] = type;
     s->read_stmt.nvars = n + 1;
+    return 0;
 }
 
 stmt_t *stmt_restore(const char *label, int line) {
@@ -621,13 +649,16 @@ stmt_t *stmt_print_file(expr_t *handle, int line) {
     return s;
 }
 
-void stmt_print_file_add(stmt_t *s, expr_t *expr, char sep) {
+int stmt_print_file_add(stmt_t *s, expr_t *expr, char sep) {
     int n = s->print_file.nitems;
-    s->print_file.items = realloc(s->print_file.items,
-                                   (n + 1) * sizeof(print_item_t));
+    print_item_t *tmp = realloc(s->print_file.items,
+                                 (n + 1) * sizeof(print_item_t));
+    if (!tmp) return -1;
+    s->print_file.items = tmp;
     s->print_file.items[n].expr = expr;
     s->print_file.items[n].sep = sep;
     s->print_file.nitems = n + 1;
+    return 0;
 }
 
 stmt_t *stmt_write_file(expr_t *handle, int line) {
@@ -639,8 +670,8 @@ stmt_t *stmt_write_file(expr_t *handle, int line) {
     return s;
 }
 
-void stmt_write_file_add(stmt_t *s, expr_t *expr, char sep) {
-    stmt_print_file_add(s, expr, sep); /* same layout */
+int stmt_write_file_add(stmt_t *s, expr_t *expr, char sep) {
+    return stmt_print_file_add(s, expr, sep); /* same layout */
 }
 
 stmt_t *stmt_input_file(expr_t *handle, int line) {
@@ -651,17 +682,22 @@ stmt_t *stmt_input_file(expr_t *handle, int line) {
     return s;
 }
 
-void stmt_input_file_add_var(stmt_t *s, const char *name, val_type_t type) {
+int stmt_input_file_add_var(stmt_t *s, const char *name, val_type_t type) {
     int n = s->input_file.nvars;
     if (n >= s->input_file.var_cap) {
         int newcap = s->input_file.var_cap ? s->input_file.var_cap * 2 : 4;
-        s->input_file.varnames = realloc(s->input_file.varnames, newcap * sizeof(s->input_file.varnames[0]));
-        s->input_file.vartypes = realloc(s->input_file.vartypes, newcap * sizeof(s->input_file.vartypes[0]));
+        void *tmp1 = realloc(s->input_file.varnames, newcap * sizeof(s->input_file.varnames[0]));
+        if (!tmp1) return -1;
+        s->input_file.varnames = tmp1;
+        void *tmp2 = realloc(s->input_file.vartypes, newcap * sizeof(s->input_file.vartypes[0]));
+        if (!tmp2) return -1;
+        s->input_file.vartypes = tmp2;
         s->input_file.var_cap = newcap;
     }
     name_copy(s->input_file.varnames[n], name);
     s->input_file.vartypes[n] = type;
     s->input_file.nvars = n + 1;
+    return 0;
 }
 
 stmt_t *stmt_line_input(expr_t *handle, int line) {

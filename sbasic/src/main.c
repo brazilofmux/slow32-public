@@ -43,6 +43,7 @@ static void program_add_line(const char *line) {
         program_capacity = newcap;
     }
     program_lines[program_count] = strdup(line);
+    if (!program_lines[program_count]) { printf("Out of memory\n"); return; }
     program_count++;
 }
 

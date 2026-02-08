@@ -7,10 +7,8 @@ This document tracks bugs and architectural limitations identified in the third 
 ### 1. ~~Constants are mutable via non-assignment statements~~ **FIXED**
 Added `env_is_const()` checks to all mutation paths: `INPUT`, `FOR`, `READ`, `INPUT#`, `LINE INPUT#`, `FIELD_ASSIGN`, and `SWAP`. All return `ERR_CONST_REASSIGN` on attempt to modify a `CONST` variable.
 
-### 2. `TAB(n)` and `print_col` are Global to `stdout`
-The `print_col` variable is a single global integer.
-- **Problem**: When using `PRINT #1, TAB(10); "text"`, the interpreter uses the cursor position of the console (`stdout`) to calculate the required spaces for the file. This results in incorrect formatting in files.
-- **Recommendation**: Move `print_col` into the `file_handle_t` structure so each file (and `stdout`) tracks its own column position.
+### 2. ~~`TAB(n)` and `print_col` are Global to `stdout`~~ **FIXED**
+Added per-file column tracking via `active_print_col` indirection pointer. Each `file_handle_t` now has a `col` field. `exec_print_file` redirects `active_print_col` to the file's counter during output, and `fn_tab` reads through the pointer. Stdout column tracking is unchanged.
 
 ### 3. Missing Integer Overflow Checks
 Integer arithmetic (`VAL_INTEGER`) uses native C operators.

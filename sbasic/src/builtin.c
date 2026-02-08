@@ -304,6 +304,7 @@ static error_t fn_ucase(value_t *args, int nargs, value_t *out) {
     if (nargs != 1 || args[0].type != VAL_STRING) return ERR_TYPE_MISMATCH;
     int len = args[0].sval->len;
     char *buf = malloc(len + 1);
+    if (!buf) return ERR_OUT_OF_MEMORY;
     for (int i = 0; i < len; i++)
         buf[i] = toupper((unsigned char)args[0].sval->data[i]);
     buf[len] = '\0';
@@ -317,6 +318,7 @@ static error_t fn_lcase(value_t *args, int nargs, value_t *out) {
     if (nargs != 1 || args[0].type != VAL_STRING) return ERR_TYPE_MISMATCH;
     int len = args[0].sval->len;
     char *buf = malloc(len + 1);
+    if (!buf) return ERR_OUT_OF_MEMORY;
     for (int i = 0; i < len; i++)
         buf[i] = tolower((unsigned char)args[0].sval->data[i]);
     buf[len] = '\0';
@@ -366,6 +368,7 @@ static error_t fn_space(value_t *args, int nargs, value_t *out) {
     if (n < 0) return ERR_ILLEGAL_FUNCTION_CALL;
     if (n > MAX_STRING_LEN) n = MAX_STRING_LEN;
     char *buf = malloc(n + 1);
+    if (!buf) return ERR_OUT_OF_MEMORY;
     memset(buf, ' ', n);
     buf[n] = '\0';
     *out = val_string(buf, n);
@@ -391,6 +394,7 @@ static error_t fn_string(value_t *args, int nargs, value_t *out) {
         ch = (char)code;
     }
     char *buf = malloc(n + 1);
+    if (!buf) return ERR_OUT_OF_MEMORY;
     memset(buf, ch, n);
     buf[n] = '\0';
     *out = val_string(buf, n);
@@ -499,10 +503,11 @@ static error_t fn_tab(value_t *args, int nargs, value_t *out) {
     int n;
     EVAL_CHECK(val_to_integer(&args[0], &n));
     n--;  /* convert 1-based column to 0-based */
-    int spaces = n - print_col;
+    int spaces = n - *active_print_col;
     if (spaces < 0) spaces = 0;
     if (spaces > MAX_STRING_LEN) spaces = MAX_STRING_LEN;
     char *buf = malloc(spaces + 1);
+    if (!buf) return ERR_OUT_OF_MEMORY;
     memset(buf, ' ', spaces);
     buf[spaces] = '\0';
     *out = val_string(buf, spaces);
@@ -534,6 +539,7 @@ static error_t fn_spc(value_t *args, int nargs, value_t *out) {
     if (n < 0) n = 0;
     if (n > MAX_STRING_LEN) n = MAX_STRING_LEN;
     char *buf = malloc(n + 1);
+    if (!buf) return ERR_OUT_OF_MEMORY;
     memset(buf, ' ', n);
     buf[n] = '\0';
     *out = val_string(buf, n);

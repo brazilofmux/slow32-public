@@ -38,6 +38,7 @@ error_t fileio_open(const char *filename, file_mode_t mode, int handle) {
     handles[handle].fp = fp;
     handles[handle].mode = mode;
     handles[handle].in_use = 1;
+    handles[handle].col = 0;
     return ERR_NONE;
 }
 
@@ -57,6 +58,7 @@ error_t fileio_close(int handle) {
     }
     handles[handle].in_use = 0;
     handles[handle].mode = FMODE_NONE;
+    handles[handle].col = 0;
     return ERR_NONE;
 }
 
@@ -85,6 +87,11 @@ int fileio_freefile(void) {
             return i;
     }
     return 0; /* no free handles */
+}
+
+int *fileio_get_col_ptr(int handle) {
+    if (handle < 1 || handle > MAX_FILE_HANDLES) return NULL;
+    return &handles[handle].col;
 }
 
 error_t fileio_rename(const char *oldname, const char *newname) {

@@ -17,6 +17,7 @@ typedef struct {
     FILE *fp;
     file_mode_t mode;
     int in_use;
+    int col;        /* current column position (0-based) for TAB */
 } file_handle_t;
 
 /* Initialize file handle table */
@@ -45,6 +46,9 @@ int fileio_freefile(void);
 
 /* NAME old$ AS new$ */
 error_t fileio_rename(const char *oldname, const char *newname);
+
+/* Get pointer to column counter for a handle (for TAB tracking) */
+int *fileio_get_col_ptr(int handle);
 
 /* KILL file$ */
 error_t fileio_kill(const char *filename);

@@ -335,6 +335,9 @@ static stmt_t *parse_print(parser_t *p) {
         }
         token_t fmt = lexer_next(&p->lex);
         s->print.using_fmt = strdup(fmt.text);
+        if (!s->print.using_fmt) {
+            parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
+        }
         if (!lexer_match(&p->lex, TOK_SEMICOLON)) {
             parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
         }
@@ -350,7 +353,9 @@ static stmt_t *parse_print(parser_t *p) {
         } else if (lexer_check(&p->lex, TOK_COMMA)) {
             lexer_next(&p->lex); sep = ',';
         }
-        stmt_print_add(s, e, sep);
+        if (stmt_print_add(s, e, sep) < 0) {
+            parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
+        }
         if (sep == '\0' || at_stmt_end(p)) break;
     }
     return s;
@@ -366,6 +371,9 @@ static stmt_t *parse_input(parser_t *p) {
     if (lexer_check(&p->lex, TOK_STRING_LIT)) {
         token_t t = lexer_next(&p->lex);
         prompt = strdup(t.text);
+        if (!prompt) {
+            parser_error(p, ERR_OUT_OF_MEMORY); return NULL;
+        }
         if (!lexer_match(&p->lex, TOK_SEMICOLON))
             lexer_match(&p->lex, TOK_COMMA);
     }
@@ -375,13 +383,17 @@ static stmt_t *parse_input(parser_t *p) {
         parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
     }
     token_t t = lexer_next(&p->lex);
-    stmt_input_add_var(s, t.text, var_type_from_name(t.text));
+    if (stmt_input_add_var(s, t.text, var_type_from_name(t.text)) < 0) {
+        parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
+    }
     while (lexer_match(&p->lex, TOK_COMMA)) {
         if (!lexer_check(&p->lex, TOK_IDENT)) {
             parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
         }
         t = lexer_next(&p->lex);
-        stmt_input_add_var(s, t.text, var_type_from_name(t.text));
+        if (stmt_input_add_var(s, t.text, var_type_from_name(t.text)) < 0) {
+            parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
+        }
     }
     return s;
 }
@@ -575,7 +587,11 @@ static stmt_t *parse_select(parser_t *p) {
                     case_clause_free(cc); expr_free(test);
                     case_clause_free(clauses); return NULL;
                 }
-                case_clause_add_is(cc, op, val);
+                if (case_clause_add_is(cc, op, val) < 0) {
+                    parser_error(p, ERR_OUT_OF_MEMORY);
+                    case_clause_free(cc); expr_free(test);
+                    case_clause_free(clauses); return NULL;
+                }
             } else {
                 /* CASE expr [TO expr] */
                 expr_t *val = parse_expr(p);
@@ -590,9 +606,17 @@ static stmt_t *parse_select(parser_t *p) {
                         expr_free(test); case_clause_free(clauses);
                         return NULL;
                     }
-                    case_clause_add_range(cc, val, hi);
+                    if (case_clause_add_range(cc, val, hi) < 0) {
+                        parser_error(p, ERR_OUT_OF_MEMORY);
+                        case_clause_free(cc); expr_free(test);
+                        case_clause_free(clauses); return NULL;
+                    }
                 } else {
-                    case_clause_add_value(cc, val);
+                    if (case_clause_add_value(cc, val) < 0) {
+                        parser_error(p, ERR_OUT_OF_MEMORY);
+                        case_clause_free(cc); expr_free(test);
+                        case_clause_free(clauses); return NULL;
+                    }
                 }
             }
             if (!lexer_match(&p->lex, TOK_COMMA)) break;
@@ -886,34 +910,38 @@ static stmt_t *parse_data(parser_t *p) {
     stmt_t *s = stmt_data(line);
 
     while (1) {
+        int rc = 0;
         if (lexer_check(&p->lex, TOK_STRING_LIT)) {
             token_t t = lexer_next(&p->lex);
             value_t v = val_string_cstr(t.text);
-            stmt_data_add(s, v);
+            rc = stmt_data_add(s, v);
             val_clear(&v);
         } else if (lexer_check(&p->lex, TOK_MINUS)) {
             lexer_next(&p->lex);
             if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
                 token_t t = lexer_next(&p->lex);
                 value_t v = val_integer(-t.ival);
-                stmt_data_add(s, v);
+                rc = stmt_data_add(s, v);
             } else if (lexer_check(&p->lex, TOK_DOUBLE_LIT)) {
                 token_t t = lexer_next(&p->lex);
                 value_t v = val_double(-t.dval);
-                stmt_data_add(s, v);
+                rc = stmt_data_add(s, v);
             } else {
                 parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
             }
         } else if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
             token_t t = lexer_next(&p->lex);
             value_t v = val_integer(t.ival);
-            stmt_data_add(s, v);
+            rc = stmt_data_add(s, v);
         } else if (lexer_check(&p->lex, TOK_DOUBLE_LIT)) {
             token_t t = lexer_next(&p->lex);
             value_t v = val_double(t.dval);
-            stmt_data_add(s, v);
+            rc = stmt_data_add(s, v);
         } else {
             break;
+        }
+        if (rc < 0) {
+            parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
         }
         if (!lexer_match(&p->lex, TOK_COMMA)) break;
     }
@@ -928,13 +956,17 @@ static stmt_t *parse_read(parser_t *p) {
         parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
     }
     token_t t = lexer_next(&p->lex);
-    stmt_read_add_var(s, t.text, var_type_from_name(t.text));
+    if (stmt_read_add_var(s, t.text, var_type_from_name(t.text)) < 0) {
+        parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
+    }
     while (lexer_match(&p->lex, TOK_COMMA)) {
         if (!lexer_check(&p->lex, TOK_IDENT)) {
             parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
         }
         t = lexer_next(&p->lex);
-        stmt_read_add_var(s, t.text, var_type_from_name(t.text));
+        if (stmt_read_add_var(s, t.text, var_type_from_name(t.text)) < 0) {
+            parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
+        }
     }
     return s;
 }
@@ -1013,7 +1045,9 @@ static stmt_t *parse_print_file(parser_t *p) {
         char sep = '\0';
         if (lexer_check(&p->lex, TOK_SEMICOLON)) { lexer_next(&p->lex); sep = ';'; }
         else if (lexer_check(&p->lex, TOK_COMMA)) { lexer_next(&p->lex); sep = ','; }
-        stmt_print_file_add(s, e, sep);
+        if (stmt_print_file_add(s, e, sep) < 0) {
+            parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
+        }
         if (sep == '\0' || at_stmt_end(p)) break;
     }
     return s;
@@ -1035,7 +1069,9 @@ static stmt_t *parse_write_file(parser_t *p) {
         char sep = ',';
         if (lexer_check(&p->lex, TOK_COMMA)) lexer_next(&p->lex);
         else sep = '\0';
-        stmt_write_file_add(s, e, sep);
+        if (stmt_write_file_add(s, e, sep) < 0) {
+            parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
+        }
         if (sep == '\0' || at_stmt_end(p)) break;
     }
     return s;
@@ -1053,13 +1089,17 @@ static stmt_t *parse_input_file(parser_t *p) {
         parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
     }
     token_t t = lexer_next(&p->lex);
-    stmt_input_file_add_var(s, t.text, var_type_from_name(t.text));
+    if (stmt_input_file_add_var(s, t.text, var_type_from_name(t.text)) < 0) {
+        parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
+    }
     while (lexer_match(&p->lex, TOK_COMMA)) {
         if (!lexer_check(&p->lex, TOK_IDENT)) {
             parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
         }
         t = lexer_next(&p->lex);
-        stmt_input_file_add_var(s, t.text, var_type_from_name(t.text));
+        if (stmt_input_file_add_var(s, t.text, var_type_from_name(t.text)) < 0) {
+            parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
+        }
     }
     return s;
 }
@@ -1079,7 +1119,9 @@ static stmt_t *parse_line_input(parser_t *p) {
         parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
     }
     token_t t = lexer_next(&p->lex);
-    stmt_input_file_add_var(s, t.text, var_type_from_name(t.text));
+    if (stmt_input_file_add_var(s, t.text, var_type_from_name(t.text)) < 0) {
+        parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
+    }
     return s;
 }
 

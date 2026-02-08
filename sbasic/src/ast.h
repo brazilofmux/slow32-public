@@ -439,9 +439,9 @@ void expr_free(expr_t *e);
 /* Statement constructors */
 stmt_t *stmt_alloc(stmt_type_t type, int line);
 stmt_t *stmt_print(int line);
-void stmt_print_add(stmt_t *s, expr_t *expr, char sep);
+int stmt_print_add(stmt_t *s, expr_t *expr, char sep);
 stmt_t *stmt_input(const char *prompt, int line);
-void stmt_input_add_var(stmt_t *s, const char *name, val_type_t type);
+int stmt_input_add_var(stmt_t *s, const char *name, val_type_t type);
 stmt_t *stmt_assign(const char *name, val_type_t type, expr_t *value, int line);
 stmt_t *stmt_if(expr_t *cond, stmt_t *then_body, stmt_t *else_body, int line);
 stmt_t *stmt_for(const char *var, val_type_t type,
@@ -471,9 +471,9 @@ void stmt_shared_add(stmt_t *s, const char *name);
 
 /* Case clause constructors */
 case_clause_t *case_clause_alloc(void);
-void case_clause_add_value(case_clause_t *c, expr_t *val);
-void case_clause_add_range(case_clause_t *c, expr_t *lo, expr_t *hi);
-void case_clause_add_is(case_clause_t *c, cmpop_t op, expr_t *val);
+int case_clause_add_value(case_clause_t *c, expr_t *val);
+int case_clause_add_range(case_clause_t *c, expr_t *lo, expr_t *hi);
+int case_clause_add_is(case_clause_t *c, cmpop_t op, expr_t *val);
 void case_clause_free(case_clause_t *c);
 
 /* Statement destructor (frees entire chain) */
@@ -490,9 +490,9 @@ stmt_t *stmt_option_base(int base, int line);
 stmt_t *stmt_erase(int line);
 void stmt_erase_add(stmt_t *s, const char *name);
 stmt_t *stmt_data(int line);
-void stmt_data_add(stmt_t *s, value_t val);
+int stmt_data_add(stmt_t *s, value_t val);
 stmt_t *stmt_read(int line);
-void stmt_read_add_var(stmt_t *s, const char *name, val_type_t type);
+int stmt_read_add_var(stmt_t *s, const char *name, val_type_t type);
 stmt_t *stmt_restore(const char *label, int line);
 
 /* Stage 4 constructors */
@@ -503,11 +503,11 @@ stmt_t *stmt_randomize(expr_t *seed, int line);
 stmt_t *stmt_open(expr_t *filename, int mode, expr_t *handle, int line);
 stmt_t *stmt_close(expr_t *handle, int line);
 stmt_t *stmt_print_file(expr_t *handle, int line);
-void stmt_print_file_add(stmt_t *s, expr_t *expr, char sep);
+int stmt_print_file_add(stmt_t *s, expr_t *expr, char sep);
 stmt_t *stmt_write_file(expr_t *handle, int line);
-void stmt_write_file_add(stmt_t *s, expr_t *expr, char sep);
+int stmt_write_file_add(stmt_t *s, expr_t *expr, char sep);
 stmt_t *stmt_input_file(expr_t *handle, int line);
-void stmt_input_file_add_var(stmt_t *s, const char *name, val_type_t type);
+int stmt_input_file_add_var(stmt_t *s, const char *name, val_type_t type);
 stmt_t *stmt_line_input(expr_t *handle, int line);
 stmt_t *stmt_kill(expr_t *filename, int line);
 stmt_t *stmt_name(expr_t *oldname, expr_t *newname, int line);
