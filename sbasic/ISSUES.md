@@ -10,14 +10,12 @@ The `fmt_fixed` helper (used by `PRINT USING`) used `unsigned int` for the integ
 - **Verification**: `printusing.bas` tests values > 2^32 (5 billion) and scientific notation.
 
 ### 2. Case-Sensitive Identifiers
-The lexer and environment currently treat identifiers as case-sensitive (e.g., `Variable` vs `VARIABLE`).
-- **Problem**: This contradicts standard BASIC dialects (like GW-BASIC or QBasic) which are case-insensitive. It can lead to hard-to-find bugs for users accustomed to BASIC.
-- **Recommendation**: Normalize all identifiers to uppercase in the lexer (specifically in the `TOK_IDENT` scanning block).
+The reviewer flagged identifiers as case-sensitive.
+- **Status**: **NOT A BUG**. The lexer already normalizes all identifiers to uppercase (line 308: `strcpy(tok.text, upper)`). Variables, SUB/FUNCTION names, TYPE names, and field names are all case-insensitive. Verified with mixed-case tests.
 
 ### 3. Null-Termination Risks in Fixed-Size Buffers
-Multiple constructors in `ast.c` (e.g., `expr_variable`, `stmt_assign`, `stmt_dim`) use `strncpy(dst, src, 63)`.
-- **Problem**: If the source identifier is 63 or 64 characters long, `strncpy` will not null-terminate the destination buffer. While `token_t.text` is 256 bytes, identifiers in the AST are capped at 64.
-- **Recommendation**: Always manually null-terminate: `strncpy(dst, src, 63); dst[63] = '\0';` or use a safer wrapper.
+Multiple constructors in `ast.c` used `strncpy(dst, src, 63)` without explicit null-termination.
+- **Status**: **FIXED**. Added `name_copy()` helper that wraps `strncpy` + explicit `dst[63] = '\0'`. All 31 call sites replaced.
 
 ### 4. Stack Overflow Risks (C Recursion)
 Deeply nested BASIC programs (or very complex expressions) can cause a C stack overflow.

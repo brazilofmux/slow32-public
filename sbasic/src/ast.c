@@ -2,6 +2,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Safe copy into 64-byte AST name field (always null-terminates) */
+static void name_copy(char *dst, const char *src) {
+    strncpy(dst, src, 63);
+    dst[63] = '\0';
+}
+
 /* --- Expression constructors (unchanged from Stage 1) --- */
 
 expr_t *expr_literal(value_t val, int line) {
@@ -18,7 +24,7 @@ expr_t *expr_variable(const char *name, val_type_t type, int line) {
     if (!e) return NULL;
     e->type = EXPR_VARIABLE;
     e->line = line;
-    strncpy(e->var.name, name, 63);
+    name_copy(e->var.name, name);
     e->var.var_type = type;
     return e;
 }
@@ -60,7 +66,7 @@ expr_t *expr_call(const char *name, int line) {
     if (!e) return NULL;
     e->type = EXPR_CALL;
     e->line = line;
-    strncpy(e->call.name, name, 63);
+    name_copy(e->call.name, name);
     e->call.nargs = 0;
     return e;
 }
@@ -131,7 +137,7 @@ stmt_t *stmt_input(const char *prompt, int line) {
 void stmt_input_add_var(stmt_t *s, const char *name, val_type_t type) {
     int n = s->input.nvars;
     if (n >= 8) return;
-    strncpy(s->input.varnames[n], name, 63);
+    name_copy(s->input.varnames[n], name);
     s->input.vartypes[n] = type;
     s->input.nvars = n + 1;
 }
@@ -139,7 +145,7 @@ void stmt_input_add_var(stmt_t *s, const char *name, val_type_t type) {
 stmt_t *stmt_assign(const char *name, val_type_t type, expr_t *value, int line) {
     stmt_t *s = stmt_alloc(STMT_ASSIGN, line);
     if (!s) return NULL;
-    strncpy(s->assign.name, name, 63);
+    name_copy(s->assign.name, name);
     s->assign.var_type = type;
     s->assign.value = value;
     return s;
@@ -159,7 +165,7 @@ stmt_t *stmt_for(const char *var, val_type_t type,
                  stmt_t *body, int line) {
     stmt_t *s = stmt_alloc(STMT_FOR, line);
     if (!s) return NULL;
-    strncpy(s->for_stmt.var_name, var, 63);
+    name_copy(s->for_stmt.var_name, var);
     s->for_stmt.var_type = type;
     s->for_stmt.start = start;
     s->for_stmt.end = end;
@@ -206,14 +212,14 @@ stmt_t *stmt_select(expr_t *test, case_clause_t *clauses, int line) {
 stmt_t *stmt_goto(const char *label, int line) {
     stmt_t *s = stmt_alloc(STMT_GOTO, line);
     if (!s) return NULL;
-    strncpy(s->goto_stmt.label, label, 63);
+    name_copy(s->goto_stmt.label, label);
     return s;
 }
 
 stmt_t *stmt_gosub(const char *label, int line) {
     stmt_t *s = stmt_alloc(STMT_GOSUB, line);
     if (!s) return NULL;
-    strncpy(s->goto_stmt.label, label, 63);
+    name_copy(s->goto_stmt.label, label);
     return s;
 }
 
@@ -224,14 +230,14 @@ stmt_t *stmt_return(int line) {
 stmt_t *stmt_label(const char *name, int line) {
     stmt_t *s = stmt_alloc(STMT_LABEL, line);
     if (!s) return NULL;
-    strncpy(s->label.name, name, 63);
+    name_copy(s->label.name, name);
     return s;
 }
 
 stmt_t *stmt_proc_def(stmt_type_t type, const char *name, int line) {
     stmt_t *s = stmt_alloc(type, line);
     if (!s) return NULL;
-    strncpy(s->proc_def.name, name, 63);
+    name_copy(s->proc_def.name, name);
     s->proc_def.nparams = 0;
     s->proc_def.return_type = VAL_DOUBLE;
     return s;
@@ -240,7 +246,7 @@ stmt_t *stmt_proc_def(stmt_type_t type, const char *name, int line) {
 void stmt_proc_add_param(stmt_t *s, const char *name, val_type_t type) {
     int n = s->proc_def.nparams;
     if (n >= 16) return;
-    strncpy(s->proc_def.params[n], name, 63);
+    name_copy(s->proc_def.params[n], name);
     s->proc_def.param_types[n] = type;
     s->proc_def.nparams = n + 1;
 }
@@ -252,7 +258,7 @@ void stmt_proc_set_body(stmt_t *s, stmt_t *body) {
 stmt_t *stmt_call(const char *name, int line) {
     stmt_t *s = stmt_alloc(STMT_CALL, line);
     if (!s) return NULL;
-    strncpy(s->call_stmt.name, name, 63);
+    name_copy(s->call_stmt.name, name);
     s->call_stmt.nargs = 0;
     return s;
 }
@@ -272,7 +278,7 @@ stmt_t *stmt_exit(exit_type_t what, int line) {
 stmt_t *stmt_const(const char *name, val_type_t type, expr_t *value, int line) {
     stmt_t *s = stmt_alloc(STMT_CONST, line);
     if (!s) return NULL;
-    strncpy(s->const_stmt.name, name, 63);
+    name_copy(s->const_stmt.name, name);
     s->const_stmt.var_type = type;
     s->const_stmt.value = value;
     return s;
@@ -286,7 +292,7 @@ stmt_t *stmt_shared(int line) {
 void stmt_shared_add(stmt_t *s, const char *name) {
     int n = s->shared.nvars;
     if (n >= 16) return;
-    strncpy(s->shared.varnames[n], name, 63);
+    name_copy(s->shared.varnames[n], name);
     s->shared.nvars = n + 1;
 }
 
@@ -478,7 +484,7 @@ stmt_t *stmt_dim(const char *name, val_type_t type,
                  int is_redim, int preserve, int line) {
     stmt_t *s = stmt_alloc(STMT_DIM, line);
     if (!s) return NULL;
-    strncpy(s->dim_stmt.name, name, 63);
+    name_copy(s->dim_stmt.name, name);
     s->dim_stmt.elem_type = type;
     s->dim_stmt.ndims = ndims;
     for (int i = 0; i < ndims; i++)
@@ -493,7 +499,7 @@ stmt_t *stmt_array_assign(const char *name, val_type_t type,
                           expr_t *value, int line) {
     stmt_t *s = stmt_alloc(STMT_ARRAY_ASSIGN, line);
     if (!s) return NULL;
-    strncpy(s->array_assign.name, name, 63);
+    name_copy(s->array_assign.name, name);
     s->array_assign.var_type = type;
     s->array_assign.nindices = nindices;
     for (int i = 0; i < nindices; i++)
@@ -517,7 +523,7 @@ stmt_t *stmt_erase(int line) {
 void stmt_erase_add(stmt_t *s, const char *name) {
     int n = s->erase_stmt.nnames;
     if (n >= 8) return;
-    strncpy(s->erase_stmt.names[n], name, 63);
+    name_copy(s->erase_stmt.names[n], name);
     s->erase_stmt.nnames = n + 1;
 }
 
@@ -539,7 +545,7 @@ stmt_t *stmt_read(int line) {
 void stmt_read_add_var(stmt_t *s, const char *name, val_type_t type) {
     int n = s->read_stmt.nvars;
     if (n >= 8) return;
-    strncpy(s->read_stmt.varnames[n], name, 63);
+    name_copy(s->read_stmt.varnames[n], name);
     s->read_stmt.vartypes[n] = type;
     s->read_stmt.nvars = n + 1;
 }
@@ -548,7 +554,7 @@ stmt_t *stmt_restore(const char *label, int line) {
     stmt_t *s = stmt_alloc(STMT_RESTORE, line);
     if (!s) return NULL;
     if (label && label[0])
-        strncpy(s->restore_stmt.label, label, 63);
+        name_copy(s->restore_stmt.label, label);
     return s;
 }
 
@@ -557,9 +563,9 @@ stmt_t *stmt_swap(const char *n1, val_type_t t1,
                   const char *n2, val_type_t t2, int line) {
     stmt_t *s = stmt_alloc(STMT_SWAP, line);
     if (!s) return NULL;
-    strncpy(s->swap_stmt.name1, n1, 63);
+    name_copy(s->swap_stmt.name1, n1);
     s->swap_stmt.type1 = t1;
-    strncpy(s->swap_stmt.name2, n2, 63);
+    name_copy(s->swap_stmt.name2, n2);
     s->swap_stmt.type2 = t2;
     return s;
 }
@@ -630,7 +636,7 @@ stmt_t *stmt_input_file(expr_t *handle, int line) {
 void stmt_input_file_add_var(stmt_t *s, const char *name, val_type_t type) {
     int n = s->input_file.nvars;
     if (n >= 8) return;
-    strncpy(s->input_file.varnames[n], name, 63);
+    name_copy(s->input_file.varnames[n], name);
     s->input_file.vartypes[n] = type;
     s->input_file.nvars = n + 1;
 }
@@ -665,15 +671,15 @@ expr_t *expr_field_access(const char *var, const char *field, int line) {
     if (!e) return NULL;
     e->type = EXPR_FIELD_ACCESS;
     e->line = line;
-    strncpy(e->field.var_name, var, 63);
-    strncpy(e->field.field_name, field, 63);
+    name_copy(e->field.var_name, var);
+    name_copy(e->field.field_name, field);
     return e;
 }
 
 stmt_t *stmt_type_def(const char *name, int line) {
     stmt_t *s = stmt_alloc(STMT_TYPE_DEF, line);
     if (!s) return NULL;
-    strncpy(s->type_def.name, name, 63);
+    name_copy(s->type_def.name, name);
     s->type_def.nfields = 0;
     return s;
 }
@@ -681,7 +687,7 @@ stmt_t *stmt_type_def(const char *name, int line) {
 void stmt_type_def_add_field(stmt_t *s, const char *name, val_type_t type) {
     int n = s->type_def.nfields;
     if (n >= 32) return;
-    strncpy(s->type_def.field_names[n], name, 63);
+    name_copy(s->type_def.field_names[n], name);
     s->type_def.field_types[n] = type;
     s->type_def.nfields = n + 1;
 }
@@ -689,8 +695,8 @@ void stmt_type_def_add_field(stmt_t *s, const char *name, val_type_t type) {
 stmt_t *stmt_dim_as_type(const char *name, const char *type_name, int line) {
     stmt_t *s = stmt_alloc(STMT_DIM_AS_TYPE, line);
     if (!s) return NULL;
-    strncpy(s->dim_as_type.name, name, 63);
-    strncpy(s->dim_as_type.type_name, type_name, 63);
+    name_copy(s->dim_as_type.name, name);
+    name_copy(s->dim_as_type.type_name, type_name);
     return s;
 }
 
@@ -698,8 +704,8 @@ stmt_t *stmt_field_assign(const char *var, const char *field,
                           expr_t *value, int line) {
     stmt_t *s = stmt_alloc(STMT_FIELD_ASSIGN, line);
     if (!s) return NULL;
-    strncpy(s->field_assign.var_name, var, 63);
-    strncpy(s->field_assign.field_name, field, 63);
+    name_copy(s->field_assign.var_name, var);
+    name_copy(s->field_assign.field_name, field);
     s->field_assign.value = value;
     return s;
 }
@@ -708,7 +714,7 @@ stmt_t *stmt_on_error(const char *label, int line) {
     stmt_t *s = stmt_alloc(STMT_ON_ERROR, line);
     if (!s) return NULL;
     if (label)
-        strncpy(s->on_error.label, label, 63);
+        name_copy(s->on_error.label, label);
     return s;
 }
 
@@ -754,7 +760,7 @@ stmt_t *stmt_on_gosub(expr_t *index, int line) {
 void stmt_on_branch_add_label(stmt_t *s, const char *label) {
     int n = s->on_branch.nlabels;
     if (n >= 16) return;
-    strncpy(s->on_branch.labels[n], label, 63);
+    name_copy(s->on_branch.labels[n], label);
     s->on_branch.nlabels = n + 1;
 }
 
