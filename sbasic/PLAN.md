@@ -156,7 +156,7 @@ Structured programming: real procedures, richer control flow.
 
 After each stage:
 1. `cd sbasic && bash build.sh` — must compile cleanly
-2. `echo 'PRINT "hello"' | ../tools/emulator/slow32-fast sbasic.s32x` — smoke test
+2. `printf 'PRINT "hello"\nRUN\n' | ../tools/emulator/slow32-fast sbasic.s32x` — smoke test
 3. Run stage test programs: `bash tests/run-tests.sh`
 4. Compare output against `.expected` files
 5. Run previous stage tests (no regressions)

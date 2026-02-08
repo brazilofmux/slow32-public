@@ -179,10 +179,12 @@ static double sb_atan2(double y, double x) {
 
 /* Simple LCG random number generator */
 static unsigned int rng_state = 12345;
+static double last_rnd_val = 0.0;
 
 static double sb_rnd(void) {
     rng_state = rng_state * 1103515245 + 12345;
-    return (double)(rng_state & 0x7FFFFFFF) / 2147483648.0;
+    last_rnd_val = (double)(rng_state & 0x7FFFFFFF) / 2147483648.0;
+    return last_rnd_val;
 }
 
 /* ================================================================
@@ -323,9 +325,14 @@ static error_t fn_rnd(value_t *args, int nargs, value_t *out) {
     if (nargs == 1) {
         int seed;
         EVAL_CHECK(val_to_integer(&args[0], &seed));
-        if (seed < 0) rng_state = (unsigned int)(-seed);
-        else if (seed == 0) { /* return last value */ }
-        /* seed > 0: normal random */
+        if (seed < 0) {
+            rng_state = (unsigned int)(-seed);
+            *out = val_double(sb_rnd());
+            return ERR_NONE;
+        } else if (seed == 0) {
+            *out = val_double(last_rnd_val);
+            return ERR_NONE;
+        }
     }
     *out = val_double(sb_rnd());
     return ERR_NONE;

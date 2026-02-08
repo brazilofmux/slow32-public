@@ -77,6 +77,29 @@ static int on_error_err_code = 0;    /* ERR value */
 static int on_error_err_line = 0;    /* ERL value */
 static int on_error_resume_pc = 0;   /* PC to RESUME to */
 static int on_error_resume_next_pc = 0; /* PC for RESUME NEXT */
+static int resume_is_next = 0;       /* set by RESUME stmt for eval_program */
+
+/* Is this a real error (trappable by ON ERROR) or a flow-control signal? */
+static int is_trappable_error(error_t err) {
+    switch (err) {
+    case ERR_NONE:
+    case ERR_EXIT:
+    case ERR_BREAK:
+    case ERR_EXIT_FOR:
+    case ERR_EXIT_WHILE:
+    case ERR_EXIT_DO:
+    case ERR_EXIT_SUB:
+    case ERR_EXIT_FUNCTION:
+    case ERR_GOTO:
+    case ERR_GOSUB:
+    case ERR_RETURN:
+    case ERR_RESUME_WITHOUT_ERROR:
+    case ERR_ON_ERROR_GOTO:
+        return 0;
+    default:
+        return 1;
+    }
+}
 
 /* DEFTYPE letter-to-type map: 26 letters A-Z, default VAL_DOUBLE */
 static val_type_t deftype_map[26];
@@ -1438,6 +1461,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         }
 
         case STMT_RESUME:
+            resume_is_next = s->resume_stmt.resume_next;
             return ERR_RESUME_WITHOUT_ERROR; /* handled in eval_program loop */
 
         case STMT_ERROR_RAISE: {
@@ -1539,6 +1563,7 @@ error_t eval_program(env_t *env, stmt_t *program) {
     on_error_active = 0;
     on_error_err_code = 0;
     on_error_err_line = 0;
+    resume_is_next = 0;
 
     /* First pass: collect labels, proc definitions, and DATA values */
     proc_count = 0;
@@ -1622,15 +1647,12 @@ error_t eval_program(env_t *env, stmt_t *program) {
 
         /* RESUME / RESUME NEXT (from error handler) */
         if (err == ERR_RESUME_WITHOUT_ERROR && on_error_active) {
-            /* Check which RESUME variant */
-            if (stmts[pc]->type == STMT_RESUME) {
-                on_error_active = 0;
-                if (stmts[pc]->resume_stmt.resume_next)
-                    pc = on_error_resume_next_pc;
-                else
-                    pc = on_error_resume_pc;
-                continue;
-            }
+            on_error_active = 0;
+            if (resume_is_next)
+                pc = on_error_resume_next_pc;
+            else
+                pc = on_error_resume_pc;
+            continue;
         }
 
         /* ON ERROR GOTO triggered by ERROR n statement */
@@ -1645,8 +1667,7 @@ error_t eval_program(env_t *env, stmt_t *program) {
         /* Error trapping: if ON ERROR GOTO is active and this is a
            trappable error, jump to the handler */
         if (on_error_label_idx >= 0 && !on_error_active &&
-            err != ERR_ON_ERROR_GOTO &&
-            err > ERR_NONE && err < ERR_EXIT) {
+            is_trappable_error(err)) {
             on_error_err_code = (int)err;
             on_error_err_line = stmts[pc]->line;
             on_error_active = 1;
