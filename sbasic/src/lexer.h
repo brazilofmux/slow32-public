@@ -47,6 +47,11 @@ typedef enum {
     TOK_KILL, TOK_NAME, TOK_HASH,
     TOK_APPEND, TOK_OUTPUT,
 
+    /* Stage 6 keywords */
+    TOK_TYPE, TOK_STATIC, TOK_ON, TOK_ERROR,
+    TOK_RESUME, TOK_DEFINT, TOK_DEFDBL, TOK_DEFSTR,
+    TOK_DOT,
+
     /* REPL commands */
     TOK_RUN, TOK_LIST, TOK_NEW, TOK_LOAD, TOK_SAVE, TOK_BYE,
 

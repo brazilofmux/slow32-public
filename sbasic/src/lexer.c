@@ -62,6 +62,14 @@ static const keyword_t keywords[] = {
     { "NAME",   TOK_NAME },
     { "APPEND", TOK_APPEND },
     { "OUTPUT", TOK_OUTPUT },
+    { "TYPE",   TOK_TYPE },
+    { "STATIC", TOK_STATIC },
+    { "ON",     TOK_ON },
+    { "ERROR",  TOK_ERROR },
+    { "RESUME", TOK_RESUME },
+    { "DEFINT", TOK_DEFINT },
+    { "DEFDBL", TOK_DEFDBL },
+    { "DEFSTR", TOK_DEFSTR },
     { "RUN",    TOK_RUN },
     { "LIST",   TOK_LIST },
     { "NEW",    TOK_NEW },
@@ -242,6 +250,24 @@ static token_t scan_token(lexer_t *lex) {
         return tok;
     }
 
+    /* Line continuation: _ followed by optional spaces and newline */
+    if (c == '_') {
+        int save_pos = lex->pos;
+        next_char(lex); /* consume _ */
+        /* Check if only whitespace until newline */
+        while (peek_char(lex) == ' ' || peek_char(lex) == '\t')
+            next_char(lex);
+        if (peek_char(lex) == '\n' || peek_char(lex) == '\r') {
+            /* Line continuation — skip the newline and continue scanning */
+            if (peek_char(lex) == '\r') next_char(lex);
+            if (peek_char(lex) == '\n') next_char(lex);
+            lex->line++;
+            return scan_token(lex); /* recurse to get next real token */
+        }
+        /* Not a continuation — restore and fall through to identifier */
+        lex->pos = save_pos;
+    }
+
     /* Identifier or keyword */
     if (isalpha(c) || c == '_') {
         int len = 0;
@@ -307,6 +333,9 @@ static token_t scan_token(lexer_t *lex) {
         case ':': tok.type = TOK_COLON; break;
         case '=': tok.type = TOK_EQ; break;
         case '#': tok.type = TOK_HASH; break;
+        case '.':
+            /* Dot must not be followed by a digit (that's a number) */
+            tok.type = TOK_DOT; break;
         case '<':
             if (peek_char(lex) == '>') { next_char(lex); tok.type = TOK_NE; }
             else if (peek_char(lex) == '=') { next_char(lex); tok.type = TOK_LE; }

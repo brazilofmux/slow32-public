@@ -46,6 +46,11 @@ typedef enum {
     ERR_FILE_ALREADY_OPEN,
     ERR_FILE_NOT_OPEN,
     ERR_BAD_FILE_NUMBER,
+    ERR_UNDEFINED_TYPE,
+    ERR_DUPLICATE_FIELD,
+    ERR_UNDEFINED_FIELD,
+    ERR_RESUME_WITHOUT_ERROR,
+    ERR_ON_ERROR_GOTO,       /* flow control: error trapped */
     ERR_INTERNAL,
     ERR_COUNT
 } error_t;

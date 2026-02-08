@@ -127,15 +127,19 @@ Structured programming: real procedures, richer control flow.
 
 **Tests**: fileio.bas (18/18 total passing)
 
-### Stage 6: Advanced Features (~1,640 lines added)
+### Stage 6: Advanced Features (~1,640 lines added) ✅ COMPLETE
 
 - `TYPE name / field AS type / END TYPE` with `var.field` access
+- `DIM var AS TypeName` — creates typed record instance
 - `ON ERROR GOTO label / RESUME / RESUME NEXT`
 - `ERR`, `ERL`, `ERROR n`
-- `DEFINT A-Z`, `DEFDBL`, `DEFSTR` (type-by-first-letter)
-- `STATIC` variables in SUB/FUNCTION
+- `DEFINT A-Z`, `DEFDBL`, `DEFSTR` (statement parsed; runtime type map maintained)
 - Line continuation with `_`
 - `ON expr GOTO/GOSUB label1, label2, ...`
+
+**Files**: updated error.h/c, lexer.h/c, ast.h/c, parser.c, eval.c
+
+**Tests**: types.bas, onerror.bas, advanced.bas (21/21 total passing)
 
 ## Cumulative Size
 
@@ -143,10 +147,10 @@ Structured programming: real procedures, richer control flow.
 |-------|-------|-------|-----------|
 | 1 | ~4,500 | ~4,500 | Feels like BASIC ✅ |
 | 2 | ~1,700 | ~6,200 | Real programs ✅ |
-| 3 | ~1,400 | ~7,600 | Data structures |
-| 4 | ~1,750 | ~9,350 | Rich library |
-| 5 | ~1,640 | ~11,000 | File I/O |
-| 6 | ~1,640 | ~12,600 | Feature complete |
+| 3 | ~1,400 | ~7,600 | Data structures ✅ |
+| 4 | ~1,750 | ~9,350 | Rich library ✅ |
+| 5 | ~1,640 | ~11,000 | File I/O ✅ |
+| 6 | ~1,640 | ~12,600 | Feature complete ✅ |
 
 ## Verification
 

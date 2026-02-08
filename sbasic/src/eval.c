@@ -46,6 +46,82 @@ static value_t data_pool[MAX_DATA_VALUES];
 static int data_pool_count = 0;
 static int data_read_ptr = 0;
 
+/* TYPE record definitions and instances */
+#define MAX_TYPE_DEFS 32
+#define MAX_TYPE_INSTANCES 128
+
+typedef struct {
+    char name[64];
+    char field_names[32][64];
+    val_type_t field_types[32];
+    int nfields;
+} type_def_t;
+
+typedef struct {
+    char name[64];           /* variable name */
+    char type_name[64];      /* TYPE name */
+    int type_idx;            /* index into type_defs */
+    value_t fields[32];      /* field values */
+} type_instance_t;
+
+static type_def_t type_defs[MAX_TYPE_DEFS];
+static int type_def_count = 0;
+
+static type_instance_t type_instances[MAX_TYPE_INSTANCES];
+static int type_instance_count = 0;
+
+/* ON ERROR state */
+static int on_error_label_idx = -1;  /* -1 = no handler */
+static int on_error_active = 0;      /* currently handling an error? */
+static int on_error_err_code = 0;    /* ERR value */
+static int on_error_err_line = 0;    /* ERL value */
+static int on_error_resume_pc = 0;   /* PC to RESUME to */
+static int on_error_resume_next_pc = 0; /* PC for RESUME NEXT */
+
+/* DEFTYPE letter-to-type map: 26 letters A-Z, default VAL_DOUBLE */
+static val_type_t deftype_map[26];
+
+static void deftype_init(void) {
+    for (int i = 0; i < 26; i++)
+        deftype_map[i] = VAL_DOUBLE;
+}
+
+/* Find a TYPE definition by name */
+static int find_type_def(const char *name) {
+    for (int i = 0; i < type_def_count; i++) {
+        if (strcmp(type_defs[i].name, name) == 0)
+            return i;
+    }
+    return -1;
+}
+
+/* Find a TYPE instance by variable name */
+static type_instance_t *find_type_instance(const char *name) {
+    for (int i = 0; i < type_instance_count; i++) {
+        if (strcmp(type_instances[i].name, name) == 0)
+            return &type_instances[i];
+    }
+    return NULL;
+}
+
+/* Find field index in a type def */
+static int find_field_index(type_def_t *td, const char *field) {
+    for (int i = 0; i < td->nfields; i++) {
+        if (strcmp(td->field_names[i], field) == 0)
+            return i;
+    }
+    return -1;
+}
+
+static void type_instances_clear(void) {
+    for (int i = 0; i < type_instance_count; i++) {
+        type_def_t *td = &type_defs[type_instances[i].type_idx];
+        for (int j = 0; j < td->nfields; j++)
+            val_clear(&type_instances[i].fields[j]);
+    }
+    type_instance_count = 0;
+}
+
 /* --- Lookup helpers --- */
 
 static proc_entry_t *find_proc(const char *name) {
@@ -150,6 +226,15 @@ error_t eval_expr(env_t *env, expr_t *e, value_t *out) {
             return ERR_NONE;
 
         case EXPR_VARIABLE: {
+            /* ERR and ERL pseudo-variables */
+            if (strcmp(e->var.name, "ERR") == 0) {
+                *out = val_integer(on_error_err_code);
+                return ERR_NONE;
+            }
+            if (strcmp(e->var.name, "ERL") == 0) {
+                *out = val_integer(on_error_err_line);
+                return ERR_NONE;
+            }
             value_t *v = env_get(env, e->var.name);
             if (!v) return ERR_OUT_OF_MEMORY;
             *out = val_copy(v);
@@ -317,9 +402,29 @@ error_t eval_expr(env_t *env, expr_t *e, value_t *out) {
                     return err;
                 }
             }
+            /* Check for ERR and ERL pseudo-functions */
+            if (strcmp(e->call.name, "ERR") == 0 && nargs == 0) {
+                *out = val_integer(on_error_err_code);
+                return ERR_NONE;
+            }
+            if (strcmp(e->call.name, "ERL") == 0 && nargs == 0) {
+                *out = val_integer(on_error_err_line);
+                return ERR_NONE;
+            }
+
             error_t err = builtin_call(e->call.name, args, nargs, out);
             for (int i = 0; i < nargs; i++) val_clear(&args[i]);
             return err;
+        }
+
+        case EXPR_FIELD_ACCESS: {
+            type_instance_t *inst = find_type_instance(e->field.var_name);
+            if (!inst) return ERR_UNDEFINED_VAR;
+            type_def_t *td = &type_defs[inst->type_idx];
+            int fi = find_field_index(td, e->field.field_name);
+            if (fi < 0) return ERR_UNDEFINED_FIELD;
+            *out = val_copy(&inst->fields[fi]);
+            return ERR_NONE;
         }
     }
 
@@ -1156,6 +1261,64 @@ static error_t exec_name(env_t *env, stmt_t *s) {
     return err;
 }
 
+/* --- Stage 6 statement handlers --- */
+
+static error_t exec_type_def(stmt_t *s) {
+    if (type_def_count >= MAX_TYPE_DEFS)
+        return ERR_OUT_OF_MEMORY;
+    int idx = type_def_count++;
+    strncpy(type_defs[idx].name, s->type_def.name, 63);
+    type_defs[idx].nfields = s->type_def.nfields;
+    for (int i = 0; i < s->type_def.nfields; i++) {
+        strncpy(type_defs[idx].field_names[i],
+                s->type_def.field_names[i], 63);
+        type_defs[idx].field_types[i] = s->type_def.field_types[i];
+    }
+    return ERR_NONE;
+}
+
+static error_t exec_dim_as_type(stmt_t *s) {
+    int ti = find_type_def(s->dim_as_type.type_name);
+    if (ti < 0) return ERR_UNDEFINED_TYPE;
+    if (type_instance_count >= MAX_TYPE_INSTANCES)
+        return ERR_OUT_OF_MEMORY;
+    type_instance_t *inst = &type_instances[type_instance_count++];
+    strncpy(inst->name, s->dim_as_type.name, 63);
+    strncpy(inst->type_name, s->dim_as_type.type_name, 63);
+    inst->type_idx = ti;
+    type_def_t *td = &type_defs[ti];
+    for (int i = 0; i < td->nfields; i++)
+        inst->fields[i] = val_default(td->field_types[i]);
+    return ERR_NONE;
+}
+
+static error_t exec_field_assign(env_t *env, stmt_t *s) {
+    type_instance_t *inst = find_type_instance(s->field_assign.var_name);
+    if (!inst) return ERR_UNDEFINED_VAR;
+    type_def_t *td = &type_defs[inst->type_idx];
+    int fi = find_field_index(td, s->field_assign.field_name);
+    if (fi < 0) return ERR_UNDEFINED_FIELD;
+    value_t v;
+    EVAL_CHECK(eval_expr(env, s->field_assign.value, &v));
+    /* Coerce to field type */
+    if (td->field_types[fi] == VAL_INTEGER && v.type != VAL_INTEGER) {
+        int iv;
+        error_t err = val_to_integer(&v, &iv);
+        val_clear(&v);
+        if (err != ERR_NONE) return err;
+        v = val_integer(iv);
+    } else if (td->field_types[fi] == VAL_STRING && v.type != VAL_STRING) {
+        char buf[256];
+        error_t err = val_to_string(&v, buf, sizeof(buf));
+        val_clear(&v);
+        if (err != ERR_NONE) return err;
+        v = val_string_cstr(buf);
+    }
+    val_assign(&inst->fields[fi], &v);
+    val_clear(&v);
+    return ERR_NONE;
+}
+
 /* --- Statement dispatch --- */
 
 error_t eval_stmt(env_t *env, stmt_t *s) {
@@ -1256,6 +1419,75 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_LINE_INPUT:   return exec_line_input(env, s);
         case STMT_KILL:         return exec_kill(env, s);
         case STMT_NAME:         return exec_name(env, s);
+
+        case STMT_TYPE_DEF:     return exec_type_def(s);
+        case STMT_DIM_AS_TYPE:  return exec_dim_as_type(s);
+        case STMT_FIELD_ASSIGN: return exec_field_assign(env, s);
+
+        case STMT_ON_ERROR: {
+            if (s->on_error.label[0] == '\0') {
+                /* ON ERROR GOTO 0: disable error trapping */
+                on_error_label_idx = -1;
+            } else {
+                int idx = find_label(s->on_error.label);
+                if (idx < 0) return ERR_UNDEFINED_LABEL;
+                on_error_label_idx = idx;
+            }
+            on_error_active = 0;
+            return ERR_NONE;
+        }
+
+        case STMT_RESUME:
+            return ERR_RESUME_WITHOUT_ERROR; /* handled in eval_program loop */
+
+        case STMT_ERROR_RAISE: {
+            value_t v;
+            EVAL_CHECK(eval_expr(env, s->error_raise.errnum, &v));
+            int code;
+            val_to_integer(&v, &code);
+            val_clear(&v);
+            on_error_err_code = code;
+            on_error_err_line = s->line;
+            return ERR_ON_ERROR_GOTO;
+        }
+
+        case STMT_DEFTYPE: {
+            char from = s->deftype.from;
+            char to = s->deftype.to;
+            if (from >= 'A' && from <= 'Z' && to >= 'A' && to <= 'Z') {
+                for (char c = from; c <= to; c++)
+                    deftype_map[c - 'A'] = s->deftype.def_type;
+            }
+            return ERR_NONE;
+        }
+
+        case STMT_ON_GOTO: {
+            value_t v;
+            EVAL_CHECK(eval_expr(env, s->on_branch.index, &v));
+            int idx;
+            val_to_integer(&v, &idx);
+            val_clear(&v);
+            if (idx < 1 || idx > s->on_branch.nlabels)
+                return ERR_NONE; /* out of range: just continue */
+            int target = find_label(s->on_branch.labels[idx - 1]);
+            if (target < 0) return ERR_UNDEFINED_LABEL;
+            goto_target = target;
+            return ERR_GOTO;
+        }
+
+        case STMT_ON_GOSUB: {
+            value_t v;
+            EVAL_CHECK(eval_expr(env, s->on_branch.index, &v));
+            int idx;
+            val_to_integer(&v, &idx);
+            val_clear(&v);
+            if (idx < 1 || idx > s->on_branch.nlabels)
+                return ERR_NONE; /* out of range: just continue */
+            int target = find_label(s->on_branch.labels[idx - 1]);
+            if (target < 0) return ERR_UNDEFINED_LABEL;
+            goto_target = target;
+            return ERR_GOSUB;
+        }
     }
 
     return ERR_INTERNAL;
@@ -1300,6 +1532,13 @@ error_t eval_program(env_t *env, stmt_t *program) {
     array_clear_all();
     data_pool_clear();
     fileio_init();
+    deftype_init();
+    type_def_count = 0;
+    type_instances_clear();
+    on_error_label_idx = -1;
+    on_error_active = 0;
+    on_error_err_code = 0;
+    on_error_err_line = 0;
 
     /* First pass: collect labels, proc definitions, and DATA values */
     proc_count = 0;
@@ -1381,6 +1620,42 @@ error_t eval_program(env_t *env, stmt_t *program) {
             continue;
         }
 
+        /* RESUME / RESUME NEXT (from error handler) */
+        if (err == ERR_RESUME_WITHOUT_ERROR && on_error_active) {
+            /* Check which RESUME variant */
+            if (stmts[pc]->type == STMT_RESUME) {
+                on_error_active = 0;
+                if (stmts[pc]->resume_stmt.resume_next)
+                    pc = on_error_resume_next_pc;
+                else
+                    pc = on_error_resume_pc;
+                continue;
+            }
+        }
+
+        /* ON ERROR GOTO triggered by ERROR n statement */
+        if (err == ERR_ON_ERROR_GOTO && on_error_label_idx >= 0) {
+            on_error_active = 1;
+            on_error_resume_pc = pc;
+            on_error_resume_next_pc = pc + 1;
+            pc = on_error_label_idx;
+            continue;
+        }
+
+        /* Error trapping: if ON ERROR GOTO is active and this is a
+           trappable error, jump to the handler */
+        if (on_error_label_idx >= 0 && !on_error_active &&
+            err != ERR_ON_ERROR_GOTO &&
+            err > ERR_NONE && err < ERR_EXIT) {
+            on_error_err_code = (int)err;
+            on_error_err_line = stmts[pc]->line;
+            on_error_active = 1;
+            on_error_resume_pc = pc;
+            on_error_resume_next_pc = pc + 1;
+            pc = on_error_label_idx;
+            continue;
+        }
+
         result = err;
         break;
     }
@@ -1389,6 +1664,7 @@ error_t eval_program(env_t *env, stmt_t *program) {
     fileio_close_all();
     data_pool_clear();
     array_clear_all();
+    type_instances_clear();
     free(stmts);
     return result;
 }

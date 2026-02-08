@@ -75,6 +75,15 @@ static expr_t *parse_primary(parser_t *p) {
             if (!expect(p, TOK_RPAREN)) { expr_free(call); return NULL; }
             return call;
         }
+        /* Check for field access: ident.field */
+        if (lexer_check(&p->lex, TOK_DOT)) {
+            lexer_next(&p->lex); /* consume . */
+            if (!lexer_check(&p->lex, TOK_IDENT)) {
+                parser_error(p, ERR_SYNTAX); return NULL;
+            }
+            token_t field = lexer_next(&p->lex);
+            return expr_field_access(t.text, field.text, t.line);
+        }
         return expr_variable(t.text, var_type_from_name(t.text), t.line);
     }
     if (tok->type == TOK_LPAREN) {
@@ -258,6 +267,7 @@ static void consume_end_keyword(parser_t *p, token_type_t kw) {
 #define BLK_CASE     0x20
 #define BLK_END_SUB  0x40
 #define BLK_END_FUNC 0x80
+#define BLK_END_TYPE 0x100
 
 static stmt_t *parse_block(parser_t *p, int flags) {
     stmt_t *head = NULL;
@@ -783,6 +793,23 @@ static stmt_t *parse_dim_or_redim(parser_t *p, int is_redim) {
     }
     token_t name = lexer_next(&p->lex);
 
+    /* DIM var AS TypeName (no parens — user-defined type) */
+    if (lexer_check(&p->lex, TOK_AS)) {
+        lexer_next(&p->lex);
+        if (!lexer_check(&p->lex, TOK_IDENT)) {
+            parser_error(p, ERR_SYNTAX); return NULL;
+        }
+        token_t tname = lexer_next(&p->lex);
+        /* Check if it's a primitive type name */
+        if (strcmp(tname.text, "INTEGER") == 0 ||
+            strcmp(tname.text, "DOUBLE") == 0 ||
+            strcmp(tname.text, "STRING") == 0) {
+            /* Scalar declaration with type — just ignore (var gets typed by suffix) */
+            return stmt_alloc(STMT_REM, line);
+        }
+        return stmt_dim_as_type(name.text, tname.text, line);
+    }
+
     if (!expect(p, TOK_LPAREN)) return NULL;
 
     expr_t *dims[8];
@@ -1078,6 +1105,152 @@ static stmt_t *parse_name_stmt(parser_t *p) {
     return stmt_name(oldname, newname, line);
 }
 
+/* --- Stage 6: Line continuation support --- */
+
+/* After scanning a token, check if the previous line ended with _
+   We handle this in skip_eol: if the line before EOL ends with _,
+   we treat it as line continuation and skip the EOL. */
+
+/* --- Stage 6 parsing --- */
+
+/* TYPE name ... END TYPE */
+static stmt_t *parse_type_def(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume TYPE */
+    if (!lexer_check(&p->lex, TOK_IDENT)) {
+        parser_error(p, ERR_SYNTAX); return NULL;
+    }
+    token_t name = lexer_next(&p->lex);
+    stmt_t *s = stmt_type_def(name.text, line);
+
+    while (1) {
+        skip_eol(p);
+        if (lexer_check(&p->lex, TOK_EOF)) break;
+        if (check_end_keyword(p, TOK_TYPE)) {
+            consume_end_keyword(p, TOK_TYPE);
+            break;
+        }
+        /* field AS type */
+        if (!lexer_check(&p->lex, TOK_IDENT)) {
+            parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+        }
+        token_t fname = lexer_next(&p->lex);
+        if (!lexer_match(&p->lex, TOK_AS)) {
+            parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+        }
+        if (!lexer_check(&p->lex, TOK_IDENT)) {
+            parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+        }
+        token_t tname = lexer_next(&p->lex);
+        val_type_t ft;
+        if (strcmp(tname.text, "INTEGER") == 0) ft = VAL_INTEGER;
+        else if (strcmp(tname.text, "DOUBLE") == 0) ft = VAL_DOUBLE;
+        else if (strcmp(tname.text, "STRING") == 0) ft = VAL_STRING;
+        else {
+            parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+        }
+        stmt_type_def_add_field(s, fname.text, ft);
+    }
+    return s;
+}
+
+/* ON expr GOTO/GOSUB label1, label2, ... */
+/* ON ERROR GOTO label / ON ERROR GOTO 0 */
+static stmt_t *parse_on(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume ON */
+
+    /* ON ERROR GOTO label */
+    if (lexer_check(&p->lex, TOK_ERROR)) {
+        lexer_next(&p->lex);
+        if (!lexer_match(&p->lex, TOK_GOTO)) {
+            parser_error(p, ERR_SYNTAX); return NULL;
+        }
+        /* ON ERROR GOTO 0 = disable error handling */
+        if (lexer_check(&p->lex, TOK_INTEGER_LIT) &&
+            lexer_peek(&p->lex)->ival == 0) {
+            lexer_next(&p->lex);
+            return stmt_on_error("", line);
+        }
+        if (!lexer_check(&p->lex, TOK_IDENT)) {
+            parser_error(p, ERR_SYNTAX); return NULL;
+        }
+        token_t label = lexer_next(&p->lex);
+        return stmt_on_error(label.text, line);
+    }
+
+    /* ON expr GOTO/GOSUB label1, label2, ... */
+    expr_t *index = parse_expr(p);
+    if (!index) return NULL;
+
+    int is_gosub = 0;
+    if (lexer_check(&p->lex, TOK_GOTO)) {
+        lexer_next(&p->lex);
+    } else if (lexer_check(&p->lex, TOK_GOSUB)) {
+        lexer_next(&p->lex);
+        is_gosub = 1;
+    } else {
+        parser_error(p, ERR_SYNTAX); expr_free(index); return NULL;
+    }
+
+    stmt_t *s = is_gosub ? stmt_on_gosub(index, line) : stmt_on_goto(index, line);
+
+    if (!lexer_check(&p->lex, TOK_IDENT)) {
+        parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+    }
+    token_t label = lexer_next(&p->lex);
+    stmt_on_branch_add_label(s, label.text);
+    while (lexer_match(&p->lex, TOK_COMMA)) {
+        if (!lexer_check(&p->lex, TOK_IDENT)) {
+            parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+        }
+        label = lexer_next(&p->lex);
+        stmt_on_branch_add_label(s, label.text);
+    }
+    return s;
+}
+
+/* RESUME [NEXT] */
+static stmt_t *parse_resume(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume RESUME */
+    int resume_next = 0;
+    if (lexer_check(&p->lex, TOK_NEXT)) {
+        lexer_next(&p->lex);
+        resume_next = 1;
+    }
+    return stmt_resume(resume_next, line);
+}
+
+/* ERROR n */
+static stmt_t *parse_error_stmt(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume ERROR */
+    expr_t *errnum = parse_expr(p);
+    if (!errnum) return NULL;
+    return stmt_error_raise(errnum, line);
+}
+
+/* DEFINT/DEFDBL/DEFSTR A-Z */
+static stmt_t *parse_deftype(parser_t *p, val_type_t type) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume DEFINT/DEFDBL/DEFSTR */
+    if (!lexer_check(&p->lex, TOK_IDENT)) {
+        parser_error(p, ERR_SYNTAX); return NULL;
+    }
+    token_t from_tok = lexer_next(&p->lex);
+    char from = from_tok.text[0];
+    char to = from;
+    if (lexer_match(&p->lex, TOK_MINUS)) {
+        if (!lexer_check(&p->lex, TOK_IDENT)) {
+            parser_error(p, ERR_SYNTAX); return NULL;
+        }
+        token_t to_tok = lexer_next(&p->lex);
+        to = to_tok.text[0];
+    }
+    return stmt_deftype(type, from, to, line);
+}
+
 /* Handle ident(...) which could be array assignment or call */
 static stmt_t *parse_paren_dispatch(parser_t *p, const char *name, int line) {
     lexer_next(&p->lex); /* consume ( */
@@ -1207,6 +1380,14 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_KILL:     return parse_kill(p);
         case TOK_NAME:     return parse_name_stmt(p);
 
+        case TOK_TYPE:     return parse_type_def(p);
+        case TOK_ON:       return parse_on(p);
+        case TOK_RESUME:   return parse_resume(p);
+        case TOK_ERROR:    return parse_error_stmt(p);
+        case TOK_DEFINT:   return parse_deftype(p, VAL_INTEGER);
+        case TOK_DEFDBL:   return parse_deftype(p, VAL_DOUBLE);
+        case TOK_DEFSTR:   return parse_deftype(p, VAL_STRING);
+
         case TOK_GOTO: {
             int line = tok->line;
             lexer_next(&p->lex);
@@ -1266,6 +1447,18 @@ static stmt_t *parse_stmt(parser_t *p) {
             /* Assignment: ident = expr */
             if (lexer_check(&p->lex, TOK_EQ))
                 return parse_assign(p, var.text);
+            /* Field assignment: ident.field = expr */
+            if (lexer_check(&p->lex, TOK_DOT)) {
+                lexer_next(&p->lex); /* consume . */
+                if (!lexer_check(&p->lex, TOK_IDENT)) {
+                    parser_error(p, ERR_SYNTAX); return NULL;
+                }
+                token_t field = lexer_next(&p->lex);
+                if (!expect(p, TOK_EQ)) return NULL;
+                expr_t *val = parse_expr(p);
+                if (!val) return NULL;
+                return stmt_field_assign(var.text, field.text, val, var.line);
+            }
             /* Label: ident: */
             if (lexer_check(&p->lex, TOK_COLON)) {
                 lexer_next(&p->lex);
@@ -1277,6 +1470,11 @@ static stmt_t *parse_stmt(parser_t *p) {
             /* OPTION BASE */
             if (strcmp(var.text, "OPTION") == 0)
                 return parse_option(p, var.line);
+            /* STATIC keyword (context-sensitive in SUB/FUNCTION) */
+            if (strcmp(var.text, "STATIC") == 0) {
+                /* For now, treat STATIC as a declaration — just skip */
+                return stmt_alloc(STMT_REM, var.line);
+            }
             /* Implicit call: ident [args] */
             return parse_implicit_call(p, var.text, var.line);
         }

@@ -11,6 +11,7 @@ typedef enum {
     EXPR_BINARY,        /* binary op: a + b, a AND b, etc. */
     EXPR_COMPARE,       /* comparison: a = b, a < b, etc. */
     EXPR_CALL,          /* built-in or user function call: ABS(x), MyFunc(x) */
+    EXPR_FIELD_ACCESS,  /* var.field */
 } expr_type_t;
 
 /* Binary operators */
@@ -69,6 +70,12 @@ typedef struct expr {
             struct expr *args[8];
             int nargs;
         } call;
+
+        /* EXPR_FIELD_ACCESS */
+        struct {
+            char var_name[64];
+            char field_name[64];
+        } field;
     };
 } expr_t;
 
@@ -116,6 +123,16 @@ typedef enum {
     STMT_WRITE_FILE,
     STMT_KILL,
     STMT_NAME,
+    /* Stage 6 */
+    STMT_TYPE_DEF,
+    STMT_DIM_AS_TYPE,
+    STMT_FIELD_ASSIGN,
+    STMT_ON_ERROR,
+    STMT_RESUME,
+    STMT_ERROR_RAISE,
+    STMT_DEFTYPE,
+    STMT_ON_GOTO,
+    STMT_ON_GOSUB,
 } stmt_type_t;
 
 /* Print item: expression + separator */
@@ -355,6 +372,56 @@ typedef struct stmt {
             struct expr *oldname;
             struct expr *newname;
         } name_stmt;
+
+        /* STMT_TYPE_DEF */
+        struct {
+            char name[64];
+            char field_names[32][64];
+            val_type_t field_types[32];
+            int nfields;
+        } type_def;
+
+        /* STMT_DIM_AS_TYPE */
+        struct {
+            char name[64];
+            char type_name[64];
+        } dim_as_type;
+
+        /* STMT_FIELD_ASSIGN: var.field = expr */
+        struct {
+            char var_name[64];
+            char field_name[64];
+            struct expr *value;
+        } field_assign;
+
+        /* STMT_ON_ERROR */
+        struct {
+            char label[64];     /* "" = ON ERROR GOTO 0 (disable) */
+        } on_error;
+
+        /* STMT_RESUME */
+        struct {
+            int resume_next;    /* 0 = RESUME, 1 = RESUME NEXT */
+        } resume_stmt;
+
+        /* STMT_ERROR_RAISE */
+        struct {
+            struct expr *errnum;
+        } error_raise;
+
+        /* STMT_DEFTYPE */
+        struct {
+            val_type_t def_type;  /* VAL_INTEGER, VAL_DOUBLE, VAL_STRING */
+            char from;            /* first letter */
+            char to;              /* last letter */
+        } deftype;
+
+        /* STMT_ON_GOTO / STMT_ON_GOSUB */
+        struct {
+            struct expr *index;
+            char labels[16][64];
+            int nlabels;
+        } on_branch;
     };
 } stmt_t;
 
@@ -444,6 +511,21 @@ void stmt_input_file_add_var(stmt_t *s, const char *name, val_type_t type);
 stmt_t *stmt_line_input(expr_t *handle, int line);
 stmt_t *stmt_kill(expr_t *filename, int line);
 stmt_t *stmt_name(expr_t *oldname, expr_t *newname, int line);
+
+/* Stage 6 constructors */
+expr_t *expr_field_access(const char *var, const char *field, int line);
+stmt_t *stmt_type_def(const char *name, int line);
+void stmt_type_def_add_field(stmt_t *s, const char *name, val_type_t type);
+stmt_t *stmt_dim_as_type(const char *name, const char *type_name, int line);
+stmt_t *stmt_field_assign(const char *var, const char *field,
+                          expr_t *value, int line);
+stmt_t *stmt_on_error(const char *label, int line);
+stmt_t *stmt_resume(int resume_next, int line);
+stmt_t *stmt_error_raise(expr_t *errnum, int line);
+stmt_t *stmt_deftype(val_type_t type, char from, char to, int line);
+stmt_t *stmt_on_goto(expr_t *index, int line);
+stmt_t *stmt_on_gosub(expr_t *index, int line);
+void stmt_on_branch_add_label(stmt_t *s, const char *label);
 
 /* Append statement to end of chain */
 void stmt_append(stmt_t **head, stmt_t *s);

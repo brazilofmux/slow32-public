@@ -93,6 +93,8 @@ void expr_free(expr_t *e) {
             for (int i = 0; i < e->call.nargs; i++)
                 expr_free(e->call.args[i]);
             break;
+        case EXPR_FIELD_ACCESS:
+            break;
     }
     free(e);
 }
@@ -447,6 +449,22 @@ void stmt_free(stmt_t *s) {
                 expr_free(s->name_stmt.oldname);
                 expr_free(s->name_stmt.newname);
                 break;
+            case STMT_TYPE_DEF:
+            case STMT_DIM_AS_TYPE:
+            case STMT_ON_ERROR:
+            case STMT_RESUME:
+            case STMT_DEFTYPE:
+                break;
+            case STMT_FIELD_ASSIGN:
+                expr_free(s->field_assign.value);
+                break;
+            case STMT_ERROR_RAISE:
+                expr_free(s->error_raise.errnum);
+                break;
+            case STMT_ON_GOTO:
+            case STMT_ON_GOSUB:
+                expr_free(s->on_branch.index);
+                break;
         }
         free(s);
         s = next;
@@ -638,6 +656,106 @@ stmt_t *stmt_name(expr_t *oldname, expr_t *newname, int line) {
     s->name_stmt.oldname = oldname;
     s->name_stmt.newname = newname;
     return s;
+}
+
+/* Stage 6 */
+
+expr_t *expr_field_access(const char *var, const char *field, int line) {
+    expr_t *e = calloc(1, sizeof(expr_t));
+    if (!e) return NULL;
+    e->type = EXPR_FIELD_ACCESS;
+    e->line = line;
+    strncpy(e->field.var_name, var, 63);
+    strncpy(e->field.field_name, field, 63);
+    return e;
+}
+
+stmt_t *stmt_type_def(const char *name, int line) {
+    stmt_t *s = stmt_alloc(STMT_TYPE_DEF, line);
+    if (!s) return NULL;
+    strncpy(s->type_def.name, name, 63);
+    s->type_def.nfields = 0;
+    return s;
+}
+
+void stmt_type_def_add_field(stmt_t *s, const char *name, val_type_t type) {
+    int n = s->type_def.nfields;
+    if (n >= 32) return;
+    strncpy(s->type_def.field_names[n], name, 63);
+    s->type_def.field_types[n] = type;
+    s->type_def.nfields = n + 1;
+}
+
+stmt_t *stmt_dim_as_type(const char *name, const char *type_name, int line) {
+    stmt_t *s = stmt_alloc(STMT_DIM_AS_TYPE, line);
+    if (!s) return NULL;
+    strncpy(s->dim_as_type.name, name, 63);
+    strncpy(s->dim_as_type.type_name, type_name, 63);
+    return s;
+}
+
+stmt_t *stmt_field_assign(const char *var, const char *field,
+                          expr_t *value, int line) {
+    stmt_t *s = stmt_alloc(STMT_FIELD_ASSIGN, line);
+    if (!s) return NULL;
+    strncpy(s->field_assign.var_name, var, 63);
+    strncpy(s->field_assign.field_name, field, 63);
+    s->field_assign.value = value;
+    return s;
+}
+
+stmt_t *stmt_on_error(const char *label, int line) {
+    stmt_t *s = stmt_alloc(STMT_ON_ERROR, line);
+    if (!s) return NULL;
+    if (label)
+        strncpy(s->on_error.label, label, 63);
+    return s;
+}
+
+stmt_t *stmt_resume(int resume_next, int line) {
+    stmt_t *s = stmt_alloc(STMT_RESUME, line);
+    if (!s) return NULL;
+    s->resume_stmt.resume_next = resume_next;
+    return s;
+}
+
+stmt_t *stmt_error_raise(expr_t *errnum, int line) {
+    stmt_t *s = stmt_alloc(STMT_ERROR_RAISE, line);
+    if (!s) return NULL;
+    s->error_raise.errnum = errnum;
+    return s;
+}
+
+stmt_t *stmt_deftype(val_type_t type, char from, char to, int line) {
+    stmt_t *s = stmt_alloc(STMT_DEFTYPE, line);
+    if (!s) return NULL;
+    s->deftype.def_type = type;
+    s->deftype.from = from;
+    s->deftype.to = to;
+    return s;
+}
+
+stmt_t *stmt_on_goto(expr_t *index, int line) {
+    stmt_t *s = stmt_alloc(STMT_ON_GOTO, line);
+    if (!s) return NULL;
+    s->on_branch.index = index;
+    s->on_branch.nlabels = 0;
+    return s;
+}
+
+stmt_t *stmt_on_gosub(expr_t *index, int line) {
+    stmt_t *s = stmt_alloc(STMT_ON_GOSUB, line);
+    if (!s) return NULL;
+    s->on_branch.index = index;
+    s->on_branch.nlabels = 0;
+    return s;
+}
+
+void stmt_on_branch_add_label(stmt_t *s, const char *label) {
+    int n = s->on_branch.nlabels;
+    if (n >= 16) return;
+    strncpy(s->on_branch.labels[n], label, 63);
+    s->on_branch.nlabels = n + 1;
 }
 
 void stmt_append(stmt_t **head, stmt_t *s) {

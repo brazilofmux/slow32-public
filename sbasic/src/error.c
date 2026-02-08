@@ -45,6 +45,11 @@ static const char *error_messages[ERR_COUNT] = {
     "File already open",
     "File not open",
     "Bad file number",
+    "Undefined TYPE",
+    "Duplicate field name",
+    "Undefined field",
+    "RESUME without error",
+    "ON ERROR GOTO",
     "Internal error",
 };
 
