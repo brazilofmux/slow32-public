@@ -51,6 +51,7 @@ typedef enum {
     ERR_UNDEFINED_FIELD,
     ERR_RESUME_WITHOUT_ERROR,
     ERR_ON_ERROR_GOTO,       /* flow control: error trapped */
+    ERR_STACK_OVERFLOW,
     ERR_INTERNAL,
     ERR_COUNT
 } error_t;

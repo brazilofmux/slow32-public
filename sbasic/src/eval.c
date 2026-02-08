@@ -11,7 +11,7 @@
 
 #define MAX_PROCS 128
 #define MAX_LABELS 256
-#define MAX_GOSUB_DEPTH 64
+#define MAX_GOSUB_DEPTH 256
 #define MAX_DATA_VALUES 1024
 
 typedef struct {
@@ -242,7 +242,7 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out);
 error_t eval_expr(env_t *env, expr_t *e, value_t *out) {
     if (++eval_depth > MAX_EVAL_DEPTH) {
         eval_depth--;
-        return ERR_OUT_OF_MEMORY;
+        return ERR_STACK_OVERFLOW;
     }
     error_t err = eval_expr_impl(env, e, out);
     eval_depth--;
@@ -1586,7 +1586,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
 error_t eval_stmts(env_t *env, stmt_t *stmts) {
     if (++eval_depth > MAX_EVAL_DEPTH) {
         eval_depth--;
-        return ERR_OUT_OF_MEMORY;
+        return ERR_STACK_OVERFLOW;
     }
     stmt_t *s = stmts;
     while (s) {
@@ -1699,7 +1699,7 @@ error_t eval_program(env_t *env, stmt_t *program) {
 
         if (err == ERR_GOSUB) {
             if (gosub_top >= MAX_GOSUB_DEPTH) {
-                result = ERR_OUT_OF_MEMORY;
+                result = ERR_STACK_OVERFLOW;
                 break;
             }
             gosub_stack[gosub_top++] = pc + 1;

@@ -50,6 +50,7 @@ static const char *error_messages[ERR_COUNT] = {
     "Undefined field",
     "RESUME without error",
     "ON ERROR GOTO",
+    "Stack overflow",
     "Internal error",
 };
 

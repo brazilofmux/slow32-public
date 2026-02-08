@@ -49,8 +49,7 @@ The `eval_program` first pass collects labels, procs, and DATA values into fixed
 
 ### 9. Lack of `GOSUB` Depth Check on Entry
 While `eval_program` has a `MAX_GOSUB_DEPTH` (64) check, it is only checked during execution.
-- **Problem**: The parser doesn't know about this limit. While execution-time checking is standard, the limit of 64 might be tight for complex recursive BASIC logic.
-- **Recommendation**: Consider increasing the limit or making it dynamic, and ensure the error `ERR_OUT_OF_MEMORY` (used for stack overflow) is descriptive.
+- **Status**: **FIXED**. Increased `MAX_GOSUB_DEPTH` from 64 to 256. Added dedicated `ERR_STACK_OVERFLOW` error code with descriptive `"Stack overflow"` message, replacing the misleading `ERR_OUT_OF_MEMORY` at all three overflow sites (GOSUB stack, `eval_expr` depth, `eval_stmts` depth).
 
 ### 10. Unchecked Memory Allocations
 Many parts of the codebase (`ast.c`, `parser.c`, `builtin.c`, `eval.c`) call `malloc`, `calloc`, `strdup`, or `realloc` without checking for a `NULL` return value.
