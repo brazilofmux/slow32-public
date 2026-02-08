@@ -39,6 +39,9 @@ typedef enum {
     TOK_DATA, TOK_READ, TOK_RESTORE,
     TOK_ERASE, TOK_REDIM,
 
+    /* Stage 4 keywords */
+    TOK_SWAP, TOK_RANDOMIZE, TOK_USING,
+
     /* REPL commands */
     TOK_RUN, TOK_LIST, TOK_NEW, TOK_LOAD, TOK_SAVE, TOK_BYE,
 

@@ -346,6 +346,7 @@ void stmt_free(stmt_t *s) {
                 for (int i = 0; i < s->print.nitems; i++)
                     expr_free(s->print.items[i].expr);
                 free(s->print.items);
+                free(s->print.using_fmt);
                 break;
             case STMT_INPUT:
                 free(s->input.prompt);
@@ -416,6 +417,10 @@ void stmt_free(stmt_t *s) {
             case STMT_ERASE:
             case STMT_READ:
             case STMT_RESTORE:
+            case STMT_SWAP:
+                break;
+            case STMT_RANDOMIZE:
+                if (s->randomize.seed) expr_free(s->randomize.seed);
                 break;
         }
         free(s);
@@ -501,6 +506,25 @@ stmt_t *stmt_restore(const char *label, int line) {
     if (!s) return NULL;
     if (label && label[0])
         strncpy(s->restore_stmt.label, label, 63);
+    return s;
+}
+
+/* Stage 4 */
+stmt_t *stmt_swap(const char *n1, val_type_t t1,
+                  const char *n2, val_type_t t2, int line) {
+    stmt_t *s = stmt_alloc(STMT_SWAP, line);
+    if (!s) return NULL;
+    strncpy(s->swap_stmt.name1, n1, 63);
+    s->swap_stmt.type1 = t1;
+    strncpy(s->swap_stmt.name2, n2, 63);
+    s->swap_stmt.type2 = t2;
+    return s;
+}
+
+stmt_t *stmt_randomize(expr_t *seed, int line) {
+    stmt_t *s = stmt_alloc(STMT_RANDOMIZE, line);
+    if (!s) return NULL;
+    s->randomize.seed = seed;
     return s;
 }
 

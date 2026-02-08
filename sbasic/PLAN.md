@@ -102,15 +102,19 @@ Structured programming: real procedures, richer control flow.
 
 **Tests**: arrays.bas, dataread.bas (14/14 total passing)
 
-### Stage 4: Rich Standard Library (~1,750 lines added)
+### Stage 4: Rich Standard Library (~1,750 lines added) ✅ COMPLETE
 
 **String functions**: `INSTR UCASE$ LCASE$ LTRIM$ RTRIM$ TRIM$ SPACE$ STRING$ HEX$ OCT$ REPLACE$`
 
-**Math functions**: `SIN COS TAN ATN ATN2 EXP LOG LOG10 FIX CINT CDBL RND RANDOMIZE`
+**Math functions**: `SIN COS TAN ATN ATN2 EXP LOG LOG10 FIX CINT CDBL RND RANDOMIZE` (all trig/exp/log use inline Taylor series — no libc math dependency)
 
-**Formatting**: `PRINT USING "format"; expr; expr` with `# . , + - $$ ** ^^^^` for numbers, `\ \ ! &` for strings
+**Formatting**: `PRINT USING "format"; expr; expr` with `# . + - $$ ** ^^^^` for numbers, `\ \ ! &` for strings. Custom format engine avoids broken `%*.*f` varargs on SLOW-32.
 
 **Other**: `TAB(n) SPC(n) TIMER SWAP`
+
+**Files**: updated builtin.h/c, lexer.h/c, ast.h/c, parser.c, eval.c
+
+**Tests**: stringfuncs.bas, mathfuncs.bas, printusing.bas (17/17 total passing)
 
 ### Stage 5: File I/O (~1,640 lines added)
 

@@ -327,7 +327,189 @@ error_t eval_expr(env_t *env, expr_t *e, value_t *out) {
 
 /* --- Statement execution --- */
 
+/* PRINT USING format engine:
+   Returns number of format chars consumed. Output goes to stdout.
+   Avoids %*.*f (broken on SLOW-32 varargs) — formats manually. */
+
+static double fmt_fabs(double x) { return x < 0.0 ? -x : x; }
+
+/* Format double into buf with exactly 'dec' decimal places, right-justified
+   in 'width' characters. Returns strlen of result. */
+static int fmt_fixed(char *buf, int bufsz, double val, int width, int dec) {
+    int neg = (val < 0.0);
+    double av = fmt_fabs(val);
+    /* Round to 'dec' decimal places */
+    double rnd = 0.5;
+    for (int i = 0; i < dec; i++) rnd /= 10.0;
+    av += rnd;
+    /* Extract integer part */
+    unsigned int ipart = (unsigned int)av;
+    double frac = av - (double)ipart;
+    /* Build integer part string (reversed) */
+    char ibuf[32];
+    int ilen = 0;
+    if (ipart == 0) {
+        ibuf[ilen++] = '0';
+    } else {
+        while (ipart > 0) {
+            ibuf[ilen++] = '0' + (ipart % 10);
+            ipart /= 10;
+        }
+    }
+    /* Build decimal part string */
+    char dbuf[32];
+    int dlen = 0;
+    for (int i = 0; i < dec; i++) {
+        frac *= 10.0;
+        int d = (int)frac;
+        if (d > 9) d = 9;
+        dbuf[dlen++] = '0' + d;
+        frac -= (double)d;
+    }
+    /* Total needed: sign + ilen + '.' + dlen */
+    int needed = (neg ? 1 : 0) + ilen + (dec > 0 ? 1 : 0) + dlen;
+    /* Right-justify in width */
+    int pos = 0;
+    int padding = width - needed;
+    if (padding < 0) padding = 0;
+    for (int i = 0; i < padding && pos < bufsz - 1; i++) buf[pos++] = ' ';
+    if (neg && pos < bufsz - 1) buf[pos++] = '-';
+    for (int i = ilen - 1; i >= 0 && pos < bufsz - 1; i--) buf[pos++] = ibuf[i];
+    if (dec > 0 && pos < bufsz - 1) {
+        buf[pos++] = '.';
+        for (int i = 0; i < dlen && pos < bufsz - 1; i++) buf[pos++] = dbuf[i];
+    }
+    buf[pos] = '\0';
+    return pos;
+}
+
+static int format_using_num(const char *fmt, double val) {
+    const char *start = fmt;
+    int has_plus = 0, has_minus = 0, has_dollar = 0, has_stars = 0;
+    int has_dot = 0, has_exp = 0;
+    int width = 0, decimals = 0;
+
+    const char *p = fmt;
+    if (*p == '+') { has_plus = 1; p++; width++; }
+    if (p[0] == '$' && p[1] == '$') { has_dollar = 1; p += 2; width += 2; }
+    if (p[0] == '*' && p[1] == '*') { has_stars = 1; p += 2; width += 2; }
+    while (*p == '#') { width++; p++; }
+    if (*p == '.') { has_dot = 1; p++; width++; while (*p == '#') { decimals++; width++; p++; } }
+    if (*p == '-') { has_minus = 1; p++; width++; }
+    if (p[0] == '^' && p[1] == '^' && p[2] == '^' && p[3] == '^') { has_exp = 1; p += 4; width += 4; }
+
+    if (width == 0) return 0;
+
+    char buf[128];
+    if (has_exp) {
+        /* Scientific notation: manually format */
+        int neg = (val < 0.0);
+        double av = fmt_fabs(val);
+        int exp_val = 0;
+        if (av != 0.0) {
+            while (av >= 10.0) { av /= 10.0; exp_val++; }
+            while (av < 1.0) { av *= 10.0; exp_val--; }
+        }
+        if (neg) av = -av;
+        /* Format mantissa without exponent part */
+        int mw = width - 4; /* subtract ^^^^  */
+        fmt_fixed(buf, sizeof(buf), av, mw, decimals);
+        printf("%s", buf);
+        /* Exponent */
+        printf("E%c%02d", exp_val >= 0 ? '+' : '-',
+               exp_val >= 0 ? exp_val : -exp_val);
+    } else {
+        int fw = width - has_minus;
+        fmt_fixed(buf, sizeof(buf), val, fw, decimals);
+        int blen = (int)strlen(buf);
+        if (has_stars) {
+            for (int i = 0; i < blen; i++) {
+                if (buf[i] == ' ') buf[i] = '*';
+                else break;
+            }
+        }
+        if (has_dollar && blen > 0) {
+            int i = 0;
+            while (i < blen && (buf[i] == ' ' || buf[i] == '*')) i++;
+            if (i > 0) buf[i - 1] = '$';
+        }
+        printf("%s", buf);
+        if (has_minus) {
+            if (val < 0.0) printf("-");
+            else printf(" ");
+        }
+    }
+    return (int)(p - start);
+}
+
+static int format_using_str(const char *fmt, const char *str, int slen) {
+    if (*fmt == '!') {
+        /* First character only */
+        printf("%c", slen > 0 ? str[0] : ' ');
+        return 1;
+    }
+    if (*fmt == '&') {
+        /* Entire string */
+        printf("%s", str);
+        return 1;
+    }
+    if (*fmt == '\\') {
+        /* Fixed width: count chars between backslashes */
+        const char *p = fmt + 1;
+        int width = 2; /* the two backslashes count as positions */
+        while (*p && *p != '\\') { width++; p++; }
+        if (*p == '\\') p++;
+        /* Print string padded to width */
+        int printed = 0;
+        for (int i = 0; i < width && i < slen; i++) { printf("%c", str[i]); printed++; }
+        for (int i = printed; i < width; i++) printf(" ");
+        return (int)(p - fmt);
+    }
+    return 0;
+}
+
 static error_t exec_print(env_t *env, stmt_t *s) {
+    /* PRINT USING */
+    if (s->print.using_fmt) {
+        const char *fmt = s->print.using_fmt;
+        int arg_idx = 0;
+        while (*fmt) {
+            if (*fmt == '#' || *fmt == '+' || *fmt == '$' || *fmt == '*') {
+                /* Numeric format */
+                if (arg_idx < s->print.nitems && s->print.items[arg_idx].expr) {
+                    value_t v;
+                    EVAL_CHECK(eval_expr(env, s->print.items[arg_idx].expr, &v));
+                    double d;
+                    val_to_double(&v, &d);
+                    val_clear(&v);
+                    int consumed = format_using_num(fmt, d);
+                    if (consumed > 0) { fmt += consumed; arg_idx++; continue; }
+                }
+                printf("%c", *fmt++);
+            } else if (*fmt == '!' || *fmt == '&' || *fmt == '\\') {
+                /* String format */
+                if (arg_idx < s->print.nitems && s->print.items[arg_idx].expr) {
+                    value_t v;
+                    EVAL_CHECK(eval_expr(env, s->print.items[arg_idx].expr, &v));
+                    const char *str = (v.type == VAL_STRING) ? v.sval->data : "";
+                    int slen = (v.type == VAL_STRING) ? v.sval->len : 0;
+                    int consumed = format_using_str(fmt, str, slen);
+                    val_clear(&v);
+                    if (consumed > 0) { fmt += consumed; arg_idx++; continue; }
+                }
+                printf("%c", *fmt++);
+            } else if (*fmt == '_') {
+                /* Literal next character */
+                fmt++;
+                if (*fmt) printf("%c", *fmt++);
+            } else {
+                printf("%c", *fmt++);
+            }
+        }
+        printf("\n");
+        return ERR_NONE;
+    }
+
     int needs_newline = 1;
 
     for (int i = 0; i < s->print.nitems; i++) {
@@ -836,6 +1018,37 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
 
         case STMT_RETURN:
             return ERR_RETURN;
+
+        case STMT_SWAP: {
+            value_t *v1 = env_get(env, s->swap_stmt.name1);
+            value_t *v2 = env_get(env, s->swap_stmt.name2);
+            if (!v1) {
+                env_set(env, s->swap_stmt.name1,
+                        &(value_t){.type = s->swap_stmt.type1});
+                v1 = env_get(env, s->swap_stmt.name1);
+            }
+            if (!v2) {
+                env_set(env, s->swap_stmt.name2,
+                        &(value_t){.type = s->swap_stmt.type2});
+                v2 = env_get(env, s->swap_stmt.name2);
+            }
+            value_t tmp = *v1;
+            *v1 = *v2;
+            *v2 = tmp;
+            return ERR_NONE;
+        }
+
+        case STMT_RANDOMIZE: {
+            int seed = 42;
+            if (s->randomize.seed) {
+                value_t v;
+                EVAL_CHECK(eval_expr(env, s->randomize.seed, &v));
+                val_to_integer(&v, &seed);
+                val_clear(&v);
+            }
+            builtin_randomize(seed);
+            return ERR_NONE;
+        }
     }
 
     return ERR_INTERNAL;

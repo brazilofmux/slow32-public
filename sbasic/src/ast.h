@@ -104,6 +104,9 @@ typedef enum {
     STMT_DATA,
     STMT_READ,
     STMT_RESTORE,
+    /* Stage 4 */
+    STMT_SWAP,
+    STMT_RANDOMIZE,
 } stmt_type_t;
 
 /* Print item: expression + separator */
@@ -144,6 +147,7 @@ typedef struct stmt {
         struct {
             print_item_t *items;
             int nitems;
+            char *using_fmt;    /* PRINT USING format string (NULL = normal) */
         } print;
 
         /* STMT_INPUT */
@@ -291,6 +295,19 @@ typedef struct stmt {
         struct {
             char label[64];
         } restore_stmt;
+
+        /* STMT_SWAP */
+        struct {
+            char name1[64];
+            val_type_t type1;
+            char name2[64];
+            val_type_t type2;
+        } swap_stmt;
+
+        /* STMT_RANDOMIZE */
+        struct {
+            struct expr *seed;   /* NULL = use default */
+        } randomize;
     };
 } stmt_t;
 
@@ -362,6 +379,11 @@ void stmt_data_add(stmt_t *s, value_t val);
 stmt_t *stmt_read(int line);
 void stmt_read_add_var(stmt_t *s, const char *name, val_type_t type);
 stmt_t *stmt_restore(const char *label, int line);
+
+/* Stage 4 constructors */
+stmt_t *stmt_swap(const char *n1, val_type_t t1,
+                  const char *n2, val_type_t t2, int line);
+stmt_t *stmt_randomize(expr_t *seed, int line);
 
 /* Append statement to end of chain */
 void stmt_append(stmt_t **head, stmt_t *s);

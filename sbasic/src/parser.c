@@ -310,6 +310,18 @@ static stmt_t *parse_print(parser_t *p) {
     lexer_next(&p->lex);
     stmt_t *s = stmt_print(line);
     if (at_stmt_end(p)) return s;
+    /* PRINT USING "format"; expr; expr; ... */
+    if (lexer_check(&p->lex, TOK_USING)) {
+        lexer_next(&p->lex);
+        if (!lexer_check(&p->lex, TOK_STRING_LIT)) {
+            parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+        }
+        token_t fmt = lexer_next(&p->lex);
+        s->print.using_fmt = strdup(fmt.text);
+        if (!lexer_match(&p->lex, TOK_SEMICOLON)) {
+            parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+        }
+    }
     while (1) {
         expr_t *e = parse_expr(p);
         if (!e || p->error != ERR_NONE) {
@@ -995,6 +1007,33 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_DATA:     return parse_data(p);
         case TOK_READ:     return parse_read(p);
         case TOK_RESTORE:  return parse_restore(p);
+
+        case TOK_SWAP: {
+            int line = tok->line;
+            lexer_next(&p->lex);
+            if (!lexer_check(&p->lex, TOK_IDENT)) {
+                parser_error(p, ERR_SYNTAX); return NULL;
+            }
+            token_t v1 = lexer_next(&p->lex);
+            if (!lexer_match(&p->lex, TOK_COMMA)) {
+                parser_error(p, ERR_SYNTAX); return NULL;
+            }
+            if (!lexer_check(&p->lex, TOK_IDENT)) {
+                parser_error(p, ERR_SYNTAX); return NULL;
+            }
+            token_t v2 = lexer_next(&p->lex);
+            return stmt_swap(v1.text, var_type_from_name(v1.text),
+                             v2.text, var_type_from_name(v2.text), line);
+        }
+
+        case TOK_RANDOMIZE: {
+            int line = tok->line;
+            lexer_next(&p->lex);
+            expr_t *seed = NULL;
+            if (!at_stmt_end(p))
+                seed = parse_expr(p);
+            return stmt_randomize(seed, line);
+        }
 
         case TOK_GOTO: {
             int line = tok->line;
