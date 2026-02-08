@@ -42,6 +42,11 @@ typedef enum {
     /* Stage 4 keywords */
     TOK_SWAP, TOK_RANDOMIZE, TOK_USING,
 
+    /* Stage 5 keywords */
+    TOK_OPEN, TOK_CLOSE, TOK_LINE, TOK_WRITE,
+    TOK_KILL, TOK_NAME, TOK_HASH,
+    TOK_APPEND, TOK_OUTPUT,
+
     /* REPL commands */
     TOK_RUN, TOK_LIST, TOK_NEW, TOK_LOAD, TOK_SAVE, TOK_BYE,
 

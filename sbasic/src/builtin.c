@@ -1,4 +1,5 @@
 #include "builtin.h"
+#include "fileio.h"
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -671,6 +672,22 @@ static error_t fn_tab(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+/* EOF(n) - check end of file: returns -1 (true) or 0 (false) */
+static error_t fn_eof(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    int handle;
+    EVAL_CHECK(val_to_integer(&args[0], &handle));
+    *out = val_integer(fileio_eof(handle));
+    return ERR_NONE;
+}
+
+/* FREEFILE - next available file handle */
+static error_t fn_freefile(value_t *args, int nargs, value_t *out) {
+    if (nargs != 0) return ERR_ILLEGAL_FUNCTION_CALL;
+    *out = val_integer(fileio_freefile());
+    return ERR_NONE;
+}
+
 /* SPC(n) - return n spaces */
 static error_t fn_spc(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
@@ -744,6 +761,9 @@ static const builtin_entry_t builtins[] = {
     { "HEX$",     fn_hex },
     { "OCT$",     fn_oct },
     { "REPLACE$", fn_replace },
+    /* File I/O */
+    { "EOF",      fn_eof },
+    { "FREEFILE", fn_freefile },
     { NULL, NULL }
 };
 

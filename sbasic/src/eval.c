@@ -1,6 +1,7 @@
 #include "eval.h"
 #include "builtin.h"
 #include "array.h"
+#include "fileio.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -958,6 +959,203 @@ static error_t exec_restore(stmt_t *s) {
     return ERR_NONE;
 }
 
+/* --- Stage 5: File I/O handlers --- */
+
+static error_t exec_open(env_t *env, stmt_t *s) {
+    value_t fname;
+    EVAL_CHECK(eval_expr(env, s->open_stmt.filename, &fname));
+    if (fname.type != VAL_STRING) { val_clear(&fname); return ERR_TYPE_MISMATCH; }
+    value_t hv;
+    EVAL_CHECK(eval_expr(env, s->open_stmt.handle_num, &hv));
+    int handle;
+    error_t err = val_to_integer(&hv, &handle);
+    val_clear(&hv);
+    if (err != ERR_NONE) { val_clear(&fname); return err; }
+    err = fileio_open(fname.sval->data, (file_mode_t)s->open_stmt.mode, handle);
+    val_clear(&fname);
+    return err;
+}
+
+static error_t exec_close(env_t *env, stmt_t *s) {
+    if (!s->close_stmt.handle_num)
+        return fileio_close(0);
+    value_t hv;
+    EVAL_CHECK(eval_expr(env, s->close_stmt.handle_num, &hv));
+    int handle;
+    error_t err = val_to_integer(&hv, &handle);
+    val_clear(&hv);
+    if (err != ERR_NONE) return err;
+    return fileio_close(handle);
+}
+
+static error_t exec_print_file(env_t *env, stmt_t *s) {
+    value_t hv;
+    EVAL_CHECK(eval_expr(env, s->print_file.handle_num, &hv));
+    int handle;
+    error_t err = val_to_integer(&hv, &handle);
+    val_clear(&hv);
+    if (err != ERR_NONE) return err;
+    FILE *fp = fileio_get(handle);
+    if (!fp) return ERR_FILE_NOT_OPEN;
+
+    int needs_newline = 1;
+    for (int i = 0; i < s->print_file.nitems; i++) {
+        print_item_t *item = &s->print_file.items[i];
+        if (item->expr) {
+            value_t v;
+            EVAL_CHECK(eval_expr(env, item->expr, &v));
+            switch (v.type) {
+                case VAL_INTEGER:
+                    if (v.ival >= 0) fprintf(fp, " %d", v.ival);
+                    else fprintf(fp, "%d", v.ival);
+                    break;
+                case VAL_DOUBLE:
+                    if (v.dval >= 0) fprintf(fp, " %g", v.dval);
+                    else fprintf(fp, "%g", v.dval);
+                    break;
+                case VAL_STRING:
+                    fprintf(fp, "%s", v.sval->data);
+                    break;
+            }
+            val_clear(&v);
+        }
+        if (item->sep == ';') needs_newline = 0;
+        else if (item->sep == ',') { fprintf(fp, "\t"); needs_newline = 0; }
+        else needs_newline = 1;
+    }
+    if (needs_newline) fprintf(fp, "\n");
+    return ERR_NONE;
+}
+
+static error_t exec_write_file(env_t *env, stmt_t *s) {
+    value_t hv;
+    EVAL_CHECK(eval_expr(env, s->print_file.handle_num, &hv));
+    int handle;
+    error_t err = val_to_integer(&hv, &handle);
+    val_clear(&hv);
+    if (err != ERR_NONE) return err;
+    FILE *fp = fileio_get(handle);
+    if (!fp) return ERR_FILE_NOT_OPEN;
+
+    for (int i = 0; i < s->print_file.nitems; i++) {
+        if (i > 0) fprintf(fp, ",");
+        print_item_t *item = &s->print_file.items[i];
+        if (item->expr) {
+            value_t v;
+            EVAL_CHECK(eval_expr(env, item->expr, &v));
+            switch (v.type) {
+                case VAL_INTEGER: fprintf(fp, "%d", v.ival); break;
+                case VAL_DOUBLE: fprintf(fp, "%g", v.dval); break;
+                case VAL_STRING: fprintf(fp, "\"%s\"", v.sval->data); break;
+            }
+            val_clear(&v);
+        }
+    }
+    fprintf(fp, "\n");
+    return ERR_NONE;
+}
+
+static error_t exec_input_file(env_t *env, stmt_t *s) {
+    value_t hv;
+    EVAL_CHECK(eval_expr(env, s->input_file.handle_num, &hv));
+    int handle;
+    error_t err = val_to_integer(&hv, &handle);
+    val_clear(&hv);
+    if (err != ERR_NONE) return err;
+    FILE *fp = fileio_get(handle);
+    if (!fp) return ERR_FILE_NOT_OPEN;
+
+    for (int i = 0; i < s->input_file.nvars; i++) {
+        /* Read value from file: skip whitespace, read until comma or newline */
+        char buf[1024];
+        int pos = 0;
+        int ch;
+        /* Skip leading whitespace */
+        while ((ch = fgetc(fp)) != -1 && (ch == ' ' || ch == '\t'));
+        if (ch == -1) return ERR_INPUT_PAST_END;
+
+        int quoted = 0;
+        if (ch == '"') { quoted = 1; }
+        else if (ch != ',' && ch != '\n' && ch != '\r') {
+            buf[pos++] = (char)ch;
+        }
+
+        if (quoted) {
+            while ((ch = fgetc(fp)) != -1 && ch != '"' && pos < 1023)
+                buf[pos++] = (char)ch;
+            if (ch == '"') { /* skip closing quote */
+                ch = fgetc(fp); /* eat comma or newline after quote */
+            }
+        } else {
+            while ((ch = fgetc(fp)) != -1 && ch != ',' && ch != '\n' && ch != '\r' && pos < 1023)
+                buf[pos++] = (char)ch;
+        }
+        buf[pos] = '\0';
+
+        /* Assign to variable */
+        val_type_t vtype = s->input_file.vartypes[i];
+        value_t val;
+        if (vtype == VAL_STRING) {
+            val = val_string_cstr(buf);
+        } else if (vtype == VAL_INTEGER) {
+            val = val_integer(atoi(buf));
+        } else {
+            val = val_double(atof(buf));
+        }
+        env_set(env, s->input_file.varnames[i], &val);
+        val_clear(&val);
+    }
+    return ERR_NONE;
+}
+
+static error_t exec_line_input(env_t *env, stmt_t *s) {
+    value_t hv;
+    EVAL_CHECK(eval_expr(env, s->input_file.handle_num, &hv));
+    int handle;
+    error_t err = val_to_integer(&hv, &handle);
+    val_clear(&hv);
+    if (err != ERR_NONE) return err;
+    FILE *fp = fileio_get(handle);
+    if (!fp) return ERR_FILE_NOT_OPEN;
+
+    char buf[1024];
+    int pos = 0;
+    int ch;
+    while ((ch = fgetc(fp)) != -1 && ch != '\n' && pos < 1023)
+        buf[pos++] = (char)ch;
+    buf[pos] = '\0';
+    if (pos == 0 && ch == -1) return ERR_INPUT_PAST_END;
+
+    if (s->input_file.nvars > 0) {
+        value_t val = val_string_cstr(buf);
+        env_set(env, s->input_file.varnames[0], &val);
+        val_clear(&val);
+    }
+    return ERR_NONE;
+}
+
+static error_t exec_kill(env_t *env, stmt_t *s) {
+    value_t fname;
+    EVAL_CHECK(eval_expr(env, s->kill_stmt.filename, &fname));
+    if (fname.type != VAL_STRING) { val_clear(&fname); return ERR_TYPE_MISMATCH; }
+    error_t err = fileio_kill(fname.sval->data);
+    val_clear(&fname);
+    return err;
+}
+
+static error_t exec_name(env_t *env, stmt_t *s) {
+    value_t old_v, new_v;
+    EVAL_CHECK(eval_expr(env, s->name_stmt.oldname, &old_v));
+    error_t err = eval_expr(env, s->name_stmt.newname, &new_v);
+    if (err != ERR_NONE) { val_clear(&old_v); return err; }
+    if (old_v.type != VAL_STRING || new_v.type != VAL_STRING) {
+        val_clear(&old_v); val_clear(&new_v); return ERR_TYPE_MISMATCH;
+    }
+    err = fileio_rename(old_v.sval->data, new_v.sval->data);
+    val_clear(&old_v); val_clear(&new_v);
+    return err;
+}
+
 /* --- Statement dispatch --- */
 
 error_t eval_stmt(env_t *env, stmt_t *s) {
@@ -1049,6 +1247,15 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             builtin_randomize(seed);
             return ERR_NONE;
         }
+
+        case STMT_OPEN:         return exec_open(env, s);
+        case STMT_CLOSE:        return exec_close(env, s);
+        case STMT_PRINT_FILE:   return exec_print_file(env, s);
+        case STMT_WRITE_FILE:   return exec_write_file(env, s);
+        case STMT_INPUT_FILE:   return exec_input_file(env, s);
+        case STMT_LINE_INPUT:   return exec_line_input(env, s);
+        case STMT_KILL:         return exec_kill(env, s);
+        case STMT_NAME:         return exec_name(env, s);
     }
 
     return ERR_INTERNAL;
@@ -1092,6 +1299,7 @@ error_t eval_program(env_t *env, stmt_t *program) {
     option_base = 0;
     array_clear_all();
     data_pool_clear();
+    fileio_init();
 
     /* First pass: collect labels, proc definitions, and DATA values */
     proc_count = 0;
@@ -1178,6 +1386,7 @@ error_t eval_program(env_t *env, stmt_t *program) {
     }
 
     /* Clean up */
+    fileio_close_all();
     data_pool_clear();
     array_clear_all();
     free(stmts);

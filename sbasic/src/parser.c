@@ -1,4 +1,5 @@
 #include "parser.h"
+#include "fileio.h"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -6,6 +7,8 @@
 /* Forward declarations */
 static expr_t *parse_expr(parser_t *p);
 static stmt_t *parse_stmt(parser_t *p);
+static stmt_t *parse_print_file(parser_t *p);
+static stmt_t *parse_input_file(parser_t *p);
 
 static void parser_error(parser_t *p, error_t err) {
     if (p->error == ERR_NONE) {
@@ -308,6 +311,9 @@ static stmt_t *parse_block(parser_t *p, int flags) {
 static stmt_t *parse_print(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
     lexer_next(&p->lex);
+    /* PRINT #n, ... → file output */
+    if (lexer_check(&p->lex, TOK_HASH))
+        return parse_print_file(p);
     stmt_t *s = stmt_print(line);
     if (at_stmt_end(p)) return s;
     /* PRINT USING "format"; expr; expr; ... */
@@ -342,6 +348,9 @@ static stmt_t *parse_print(parser_t *p) {
 static stmt_t *parse_input(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
     lexer_next(&p->lex);
+    /* INPUT #n, var → file input */
+    if (lexer_check(&p->lex, TOK_HASH))
+        return parse_input_file(p);
     char *prompt = NULL;
     if (lexer_check(&p->lex, TOK_STRING_LIT)) {
         token_t t = lexer_next(&p->lex);
@@ -913,6 +922,162 @@ static stmt_t *parse_restore(parser_t *p) {
     return stmt_restore(label, line);
 }
 
+/* --- Stage 5: File I/O parsing --- */
+
+/* Helper: parse #n file handle expression */
+static expr_t *parse_file_handle(parser_t *p) {
+    if (!lexer_match(&p->lex, TOK_HASH)) {
+        parser_error(p, ERR_SYNTAX); return NULL;
+    }
+    return parse_expr(p);
+}
+
+/* OPEN file$ FOR INPUT|OUTPUT|APPEND AS #n */
+static stmt_t *parse_open(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume OPEN */
+    expr_t *filename = parse_expr(p);
+    if (!filename) return NULL;
+    if (!lexer_match(&p->lex, TOK_FOR)) {
+        parser_error(p, ERR_SYNTAX); expr_free(filename); return NULL;
+    }
+    int mode;
+    if (lexer_check(&p->lex, TOK_INPUT)) {
+        mode = FMODE_INPUT; lexer_next(&p->lex);
+    } else if (lexer_check(&p->lex, TOK_OUTPUT)) {
+        mode = FMODE_OUTPUT; lexer_next(&p->lex);
+    } else if (lexer_check(&p->lex, TOK_APPEND)) {
+        mode = FMODE_APPEND; lexer_next(&p->lex);
+    } else {
+        parser_error(p, ERR_SYNTAX); expr_free(filename); return NULL;
+    }
+    if (!lexer_match(&p->lex, TOK_AS)) {
+        parser_error(p, ERR_SYNTAX); expr_free(filename); return NULL;
+    }
+    expr_t *handle = parse_file_handle(p);
+    if (!handle) { expr_free(filename); return NULL; }
+    return stmt_open(filename, mode, handle, line);
+}
+
+/* CLOSE [#n [, #n ...]] */
+static stmt_t *parse_close(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume CLOSE */
+    if (at_stmt_end(p))
+        return stmt_close(NULL, line); /* close all */
+    expr_t *handle = parse_file_handle(p);
+    return stmt_close(handle, line);
+}
+
+/* PRINT #n, items... */
+static stmt_t *parse_print_file(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    /* PRINT already consumed by caller, # already peeked */
+    expr_t *handle = parse_file_handle(p);
+    if (!handle) return NULL;
+    lexer_match(&p->lex, TOK_COMMA); /* consume separator after #n */
+    stmt_t *s = stmt_print_file(handle, line);
+    while (!at_stmt_end(p)) {
+        expr_t *e = parse_expr(p);
+        if (!e || p->error != ERR_NONE) {
+            expr_free(e); stmt_free(s); return NULL;
+        }
+        char sep = '\0';
+        if (lexer_check(&p->lex, TOK_SEMICOLON)) { lexer_next(&p->lex); sep = ';'; }
+        else if (lexer_check(&p->lex, TOK_COMMA)) { lexer_next(&p->lex); sep = ','; }
+        stmt_print_file_add(s, e, sep);
+        if (sep == '\0' || at_stmt_end(p)) break;
+    }
+    return s;
+}
+
+/* WRITE #n, items... */
+static stmt_t *parse_write_file(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume WRITE */
+    expr_t *handle = parse_file_handle(p);
+    if (!handle) return NULL;
+    lexer_match(&p->lex, TOK_COMMA);
+    stmt_t *s = stmt_write_file(handle, line);
+    while (!at_stmt_end(p)) {
+        expr_t *e = parse_expr(p);
+        if (!e || p->error != ERR_NONE) {
+            expr_free(e); stmt_free(s); return NULL;
+        }
+        char sep = ',';
+        if (lexer_check(&p->lex, TOK_COMMA)) lexer_next(&p->lex);
+        else sep = '\0';
+        stmt_write_file_add(s, e, sep);
+        if (sep == '\0' || at_stmt_end(p)) break;
+    }
+    return s;
+}
+
+/* INPUT #n, var, var$, ... */
+static stmt_t *parse_input_file(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    /* INPUT already consumed by caller, # already peeked */
+    expr_t *handle = parse_file_handle(p);
+    if (!handle) return NULL;
+    lexer_match(&p->lex, TOK_COMMA);
+    stmt_t *s = stmt_input_file(handle, line);
+    if (!lexer_check(&p->lex, TOK_IDENT)) {
+        parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+    }
+    token_t t = lexer_next(&p->lex);
+    stmt_input_file_add_var(s, t.text, var_type_from_name(t.text));
+    while (lexer_match(&p->lex, TOK_COMMA)) {
+        if (!lexer_check(&p->lex, TOK_IDENT)) {
+            parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+        }
+        t = lexer_next(&p->lex);
+        stmt_input_file_add_var(s, t.text, var_type_from_name(t.text));
+    }
+    return s;
+}
+
+/* LINE INPUT #n, var$ */
+static stmt_t *parse_line_input(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume LINE */
+    if (!lexer_match(&p->lex, TOK_INPUT)) {
+        parser_error(p, ERR_SYNTAX); return NULL;
+    }
+    expr_t *handle = parse_file_handle(p);
+    if (!handle) return NULL;
+    lexer_match(&p->lex, TOK_COMMA);
+    stmt_t *s = stmt_line_input(handle, line);
+    if (!lexer_check(&p->lex, TOK_IDENT)) {
+        parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+    }
+    token_t t = lexer_next(&p->lex);
+    stmt_input_file_add_var(s, t.text, var_type_from_name(t.text));
+    return s;
+}
+
+/* KILL file$ */
+static stmt_t *parse_kill(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume KILL */
+    expr_t *filename = parse_expr(p);
+    if (!filename) return NULL;
+    return stmt_kill(filename, line);
+}
+
+/* NAME old$ AS new$ */
+static stmt_t *parse_name_stmt(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume NAME */
+    expr_t *oldname = parse_expr(p);
+    if (!oldname) return NULL;
+    if (!lexer_match(&p->lex, TOK_AS)) {
+        parser_error(p, ERR_SYNTAX); expr_free(oldname); return NULL;
+    }
+    expr_t *newname = parse_expr(p);
+    if (!newname) { expr_free(oldname); return NULL; }
+    return stmt_name(oldname, newname, line);
+}
+
 /* Handle ident(...) which could be array assignment or call */
 static stmt_t *parse_paren_dispatch(parser_t *p, const char *name, int line) {
     lexer_next(&p->lex); /* consume ( */
@@ -1034,6 +1199,13 @@ static stmt_t *parse_stmt(parser_t *p) {
                 seed = parse_expr(p);
             return stmt_randomize(seed, line);
         }
+
+        case TOK_OPEN:     return parse_open(p);
+        case TOK_CLOSE:    return parse_close(p);
+        case TOK_WRITE:    return parse_write_file(p);
+        case TOK_LINE:     return parse_line_input(p);
+        case TOK_KILL:     return parse_kill(p);
+        case TOK_NAME:     return parse_name_stmt(p);
 
         case TOK_GOTO: {
             int line = tok->line;

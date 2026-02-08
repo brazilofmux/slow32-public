@@ -54,6 +54,14 @@ static const keyword_t keywords[] = {
     { "SWAP",   TOK_SWAP },
     { "RANDOMIZE", TOK_RANDOMIZE },
     { "USING",  TOK_USING },
+    { "OPEN",   TOK_OPEN },
+    { "CLOSE",  TOK_CLOSE },
+    { "LINE",   TOK_LINE },
+    { "WRITE",  TOK_WRITE },
+    { "KILL",   TOK_KILL },
+    { "NAME",   TOK_NAME },
+    { "APPEND", TOK_APPEND },
+    { "OUTPUT", TOK_OUTPUT },
     { "RUN",    TOK_RUN },
     { "LIST",   TOK_LIST },
     { "NEW",    TOK_NEW },
@@ -298,6 +306,7 @@ static token_t scan_token(lexer_t *lex) {
         case ';': tok.type = TOK_SEMICOLON; break;
         case ':': tok.type = TOK_COLON; break;
         case '=': tok.type = TOK_EQ; break;
+        case '#': tok.type = TOK_HASH; break;
         case '<':
             if (peek_char(lex) == '>') { next_char(lex); tok.type = TOK_NE; }
             else if (peek_char(lex) == '=') { next_char(lex); tok.type = TOK_LE; }

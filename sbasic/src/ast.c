@@ -422,6 +422,31 @@ void stmt_free(stmt_t *s) {
             case STMT_RANDOMIZE:
                 if (s->randomize.seed) expr_free(s->randomize.seed);
                 break;
+            case STMT_OPEN:
+                expr_free(s->open_stmt.filename);
+                expr_free(s->open_stmt.handle_num);
+                break;
+            case STMT_CLOSE:
+                if (s->close_stmt.handle_num) expr_free(s->close_stmt.handle_num);
+                break;
+            case STMT_PRINT_FILE:
+            case STMT_WRITE_FILE:
+                expr_free(s->print_file.handle_num);
+                for (int i = 0; i < s->print_file.nitems; i++)
+                    expr_free(s->print_file.items[i].expr);
+                free(s->print_file.items);
+                break;
+            case STMT_INPUT_FILE:
+            case STMT_LINE_INPUT:
+                expr_free(s->input_file.handle_num);
+                break;
+            case STMT_KILL:
+                expr_free(s->kill_stmt.filename);
+                break;
+            case STMT_NAME:
+                expr_free(s->name_stmt.oldname);
+                expr_free(s->name_stmt.newname);
+                break;
         }
         free(s);
         s = next;
@@ -525,6 +550,93 @@ stmt_t *stmt_randomize(expr_t *seed, int line) {
     stmt_t *s = stmt_alloc(STMT_RANDOMIZE, line);
     if (!s) return NULL;
     s->randomize.seed = seed;
+    return s;
+}
+
+/* Stage 5 */
+stmt_t *stmt_open(expr_t *filename, int mode, expr_t *handle, int line) {
+    stmt_t *s = stmt_alloc(STMT_OPEN, line);
+    if (!s) return NULL;
+    s->open_stmt.filename = filename;
+    s->open_stmt.mode = mode;
+    s->open_stmt.handle_num = handle;
+    return s;
+}
+
+stmt_t *stmt_close(expr_t *handle, int line) {
+    stmt_t *s = stmt_alloc(STMT_CLOSE, line);
+    if (!s) return NULL;
+    s->close_stmt.handle_num = handle;
+    return s;
+}
+
+stmt_t *stmt_print_file(expr_t *handle, int line) {
+    stmt_t *s = stmt_alloc(STMT_PRINT_FILE, line);
+    if (!s) return NULL;
+    s->print_file.handle_num = handle;
+    s->print_file.items = NULL;
+    s->print_file.nitems = 0;
+    return s;
+}
+
+void stmt_print_file_add(stmt_t *s, expr_t *expr, char sep) {
+    int n = s->print_file.nitems;
+    s->print_file.items = realloc(s->print_file.items,
+                                   (n + 1) * sizeof(print_item_t));
+    s->print_file.items[n].expr = expr;
+    s->print_file.items[n].sep = sep;
+    s->print_file.nitems = n + 1;
+}
+
+stmt_t *stmt_write_file(expr_t *handle, int line) {
+    stmt_t *s = stmt_alloc(STMT_WRITE_FILE, line);
+    if (!s) return NULL;
+    s->print_file.handle_num = handle;
+    s->print_file.items = NULL;
+    s->print_file.nitems = 0;
+    return s;
+}
+
+void stmt_write_file_add(stmt_t *s, expr_t *expr, char sep) {
+    stmt_print_file_add(s, expr, sep); /* same layout */
+}
+
+stmt_t *stmt_input_file(expr_t *handle, int line) {
+    stmt_t *s = stmt_alloc(STMT_INPUT_FILE, line);
+    if (!s) return NULL;
+    s->input_file.handle_num = handle;
+    s->input_file.nvars = 0;
+    return s;
+}
+
+void stmt_input_file_add_var(stmt_t *s, const char *name, val_type_t type) {
+    int n = s->input_file.nvars;
+    if (n >= 8) return;
+    strncpy(s->input_file.varnames[n], name, 63);
+    s->input_file.vartypes[n] = type;
+    s->input_file.nvars = n + 1;
+}
+
+stmt_t *stmt_line_input(expr_t *handle, int line) {
+    stmt_t *s = stmt_alloc(STMT_LINE_INPUT, line);
+    if (!s) return NULL;
+    s->input_file.handle_num = handle;
+    s->input_file.nvars = 0;
+    return s;
+}
+
+stmt_t *stmt_kill(expr_t *filename, int line) {
+    stmt_t *s = stmt_alloc(STMT_KILL, line);
+    if (!s) return NULL;
+    s->kill_stmt.filename = filename;
+    return s;
+}
+
+stmt_t *stmt_name(expr_t *oldname, expr_t *newname, int line) {
+    stmt_t *s = stmt_alloc(STMT_NAME, line);
+    if (!s) return NULL;
+    s->name_stmt.oldname = oldname;
+    s->name_stmt.newname = newname;
     return s;
 }
 

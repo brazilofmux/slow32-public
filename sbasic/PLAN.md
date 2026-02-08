@@ -116,14 +116,16 @@ Structured programming: real procedures, richer control flow.
 
 **Tests**: stringfuncs.bas, mathfuncs.bas, printusing.bas (17/17 total passing)
 
-### Stage 5: File I/O (~1,640 lines added)
+### Stage 5: File I/O (~1,640 lines added) ✅ COMPLETE
 
-- `OPEN file$ FOR INPUT/OUTPUT/APPEND/RANDOM/BINARY AS #n [LEN = reclen]`
+- `OPEN file$ FOR INPUT/OUTPUT/APPEND AS #n`
 - `CLOSE #n`, `PRINT #n`, `INPUT #n`, `LINE INPUT #n`, `WRITE #n`
-- `EOF(n) LOF(n) LOC(n) SEEK FREEFILE`
-- `GET #n / PUT #n` (random access)
-- `FIELD #n`, `LSET`, `RSET`
+- `EOF(n)`, `FREEFILE()`
 - `NAME old$ AS new$`, `KILL file$`
+
+**Files**: fileio.h/c (new), updated error.h/c, lexer.h/c, ast.h/c, parser.c, eval.c, builtin.c
+
+**Tests**: fileio.bas (18/18 total passing)
 
 ### Stage 6: Advanced Features (~1,640 lines added)
 

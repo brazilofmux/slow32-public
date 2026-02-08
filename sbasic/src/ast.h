@@ -107,6 +107,15 @@ typedef enum {
     /* Stage 4 */
     STMT_SWAP,
     STMT_RANDOMIZE,
+    /* Stage 5 */
+    STMT_OPEN,
+    STMT_CLOSE,
+    STMT_PRINT_FILE,
+    STMT_INPUT_FILE,
+    STMT_LINE_INPUT,
+    STMT_WRITE_FILE,
+    STMT_KILL,
+    STMT_NAME,
 } stmt_type_t;
 
 /* Print item: expression + separator */
@@ -308,6 +317,44 @@ typedef struct stmt {
         struct {
             struct expr *seed;   /* NULL = use default */
         } randomize;
+
+        /* STMT_OPEN */
+        struct {
+            struct expr *filename;
+            int mode;            /* FMODE_INPUT, FMODE_OUTPUT, FMODE_APPEND */
+            struct expr *handle_num;
+        } open_stmt;
+
+        /* STMT_CLOSE */
+        struct {
+            struct expr *handle_num; /* NULL = close all */
+        } close_stmt;
+
+        /* STMT_PRINT_FILE / STMT_WRITE_FILE */
+        struct {
+            struct expr *handle_num;
+            print_item_t *items;
+            int nitems;
+        } print_file;
+
+        /* STMT_INPUT_FILE / STMT_LINE_INPUT */
+        struct {
+            struct expr *handle_num;
+            char varnames[8][64];
+            val_type_t vartypes[8];
+            int nvars;
+        } input_file;
+
+        /* STMT_KILL */
+        struct {
+            struct expr *filename;
+        } kill_stmt;
+
+        /* STMT_NAME */
+        struct {
+            struct expr *oldname;
+            struct expr *newname;
+        } name_stmt;
     };
 } stmt_t;
 
@@ -384,6 +431,19 @@ stmt_t *stmt_restore(const char *label, int line);
 stmt_t *stmt_swap(const char *n1, val_type_t t1,
                   const char *n2, val_type_t t2, int line);
 stmt_t *stmt_randomize(expr_t *seed, int line);
+
+/* Stage 5 constructors */
+stmt_t *stmt_open(expr_t *filename, int mode, expr_t *handle, int line);
+stmt_t *stmt_close(expr_t *handle, int line);
+stmt_t *stmt_print_file(expr_t *handle, int line);
+void stmt_print_file_add(stmt_t *s, expr_t *expr, char sep);
+stmt_t *stmt_write_file(expr_t *handle, int line);
+void stmt_write_file_add(stmt_t *s, expr_t *expr, char sep);
+stmt_t *stmt_input_file(expr_t *handle, int line);
+void stmt_input_file_add_var(stmt_t *s, const char *name, val_type_t type);
+stmt_t *stmt_line_input(expr_t *handle, int line);
+stmt_t *stmt_kill(expr_t *filename, int line);
+stmt_t *stmt_name(expr_t *oldname, expr_t *newname, int line);
 
 /* Append statement to end of chain */
 void stmt_append(stmt_t **head, stmt_t *s);

@@ -41,6 +41,10 @@ static const char *error_messages[ERR_COUNT] = {
     "Subscript out of range",
     "Array already dimensioned",
     "Out of DATA",
+    "File not found",
+    "File already open",
+    "File not open",
+    "Bad file number",
     "Internal error",
 };
 
