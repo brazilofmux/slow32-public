@@ -10,10 +10,8 @@ Added `env_is_const()` checks to all mutation paths: `INPUT`, `FOR`, `READ`, `IN
 ### 2. ~~`TAB(n)` and `print_col` are Global to `stdout`~~ **FIXED**
 Added per-file column tracking via `active_print_col` indirection pointer. Each `file_handle_t` now has a `col` field. `exec_print_file` redirects `active_print_col` to the file's counter during output, and `fn_tab` reads through the pointer. Stdout column tracking is unchanged.
 
-### 3. Missing Integer Overflow Checks
-Integer arithmetic (`VAL_INTEGER`) uses native C operators.
-- **Problem**: `val_add`, `val_sub`, `val_mul`, and `val_pow` do not check for overflow. On SLOW-32, `30000 * 30000` will overflow silently. Standard BASIC typically promotes the result to a `DOUBLE` or throws an `OVERFLOW` error.
-- **Recommendation**: Use overflow-aware arithmetic (or check bounds before operation) and either promote to `VAL_DOUBLE` or return `ERR_OVERFLOW`.
+### 3. ~~Missing Integer Overflow Checks~~ **FIXED**
+Integer arithmetic now uses `long long` intermediates. If the result exceeds INT32 range, it auto-promotes to `VAL_DOUBLE`. Applies to `val_add`, `val_sub`, `val_mul`, `val_pow`, and `val_neg` (INT_MIN negation).
 
 ### 4. `SHARED` Variable "Copy-in/Copy-out" Race Condition
 `SHARED` variables are copied to local scope on `SUB` entry and back to global on exit.

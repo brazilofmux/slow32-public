@@ -197,6 +197,8 @@ const char *val_cstr(const value_t *v) {
 
 /* --- Arithmetic --- */
 
+#define INT_RANGE(x) ((x) >= -2147483648LL && (x) <= 2147483647LL)
+
 /* Promote two numeric values to a common type for arithmetic */
 static int promote(const value_t *a, const value_t *b) {
     /* Returns 1 if either is double, 0 if both int */
@@ -224,7 +226,9 @@ error_t val_add(const value_t *a, const value_t *b, value_t *result) {
     if (promote(a, b)) {
         *result = val_double(val_as_double(a) + val_as_double(b));
     } else {
-        *result = val_integer(a->ival + b->ival);
+        long long r = (long long)a->ival + (long long)b->ival;
+        if (INT_RANGE(r)) *result = val_integer((int)r);
+        else *result = val_double((double)r);
     }
     return ERR_NONE;
 }
@@ -236,7 +240,9 @@ error_t val_sub(const value_t *a, const value_t *b, value_t *result) {
     if (promote(a, b)) {
         *result = val_double(val_as_double(a) - val_as_double(b));
     } else {
-        *result = val_integer(a->ival - b->ival);
+        long long r = (long long)a->ival - (long long)b->ival;
+        if (INT_RANGE(r)) *result = val_integer((int)r);
+        else *result = val_double((double)r);
     }
     return ERR_NONE;
 }
@@ -248,7 +254,9 @@ error_t val_mul(const value_t *a, const value_t *b, value_t *result) {
     if (promote(a, b)) {
         *result = val_double(val_as_double(a) * val_as_double(b));
     } else {
-        *result = val_integer(a->ival * b->ival);
+        long long r = (long long)a->ival * (long long)b->ival;
+        if (INT_RANGE(r)) *result = val_integer((int)r);
+        else *result = val_double((double)r);
     }
     return ERR_NONE;
 }
@@ -289,15 +297,25 @@ error_t val_pow(const value_t *a, const value_t *b, value_t *result) {
         return ERR_TYPE_MISMATCH;
     /* Integer power for integer^positive-integer */
     if (a->type == VAL_INTEGER && b->type == VAL_INTEGER && b->ival >= 0) {
-        int base = a->ival;
+        long long base = a->ival;
         int e = b->ival;
-        int r = 1;
+        long long r = 1;
+        int overflow = 0;
         while (e > 0) {
-            if (e & 1) r *= base;
-            base *= base;
+            if (e & 1) {
+                r *= base;
+                if (!INT_RANGE(r)) { overflow = 1; break; }
+            }
             e >>= 1;
+            if (e > 0) {
+                base *= base;
+                if (!INT_RANGE(base)) { overflow = 1; break; }
+            }
         }
-        *result = val_integer(r);
+        if (!overflow)
+            *result = val_integer((int)r);
+        else
+            *result = val_double(pow(val_as_double(a), val_as_double(b)));
     } else {
         *result = val_double(pow(val_as_double(a), val_as_double(b)));
     }
@@ -307,9 +325,12 @@ error_t val_pow(const value_t *a, const value_t *b, value_t *result) {
 error_t val_neg(const value_t *a, value_t *result) {
     if (a->type == VAL_STRING || a->type == VAL_RECORD)
         return ERR_TYPE_MISMATCH;
-    if (a->type == VAL_INTEGER)
-        *result = val_integer(-a->ival);
-    else
+    if (a->type == VAL_INTEGER) {
+        if (a->ival == (-2147483647 - 1))
+            *result = val_double(2147483648.0);
+        else
+            *result = val_integer(-a->ival);
+    } else
         *result = val_double(-a->dval);
     return ERR_NONE;
 }
