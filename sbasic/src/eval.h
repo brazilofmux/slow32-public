@@ -19,4 +19,7 @@ error_t eval_stmts(env_t *env, stmt_t *stmts);
    First pass collects labels and procedure definitions. */
 error_t eval_program(env_t *env, stmt_t *program);
 
+/* Current print column (0-based), for TAB() */
+extern int print_col;
+
 #endif

@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdarg.h>
 
 /* --- Procedure and label tables --- */
 
@@ -453,6 +454,34 @@ error_t eval_expr(env_t *env, expr_t *e, value_t *out) {
    Returns number of format chars consumed. Output goes to stdout.
    Avoids %*.*f (broken on SLOW-32 varargs) — formats manually. */
 
+/* --- Print column tracking --- */
+
+int print_col = 0;
+
+/* Print a string to stdout and update print_col */
+static void col_puts(const char *s) {
+    while (*s) {
+        putchar(*s);
+        if (*s == '\n' || *s == '\r')
+            print_col = 0;
+        else if (*s == '\t')
+            print_col = (print_col + 8) & ~7;  /* tab stops every 8 */
+        else
+            print_col++;
+        s++;
+    }
+}
+
+/* Printf wrapper that tracks print_col */
+static void col_printf(const char *fmt, ...) {
+    char buf[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    col_puts(buf);
+}
+
 static double fmt_fabs(double x) { return x < 0.0 ? -x : x; }
 
 /* Format double into buf with exactly 'dec' decimal places, right-justified
@@ -536,9 +565,9 @@ static int format_using_num(const char *fmt, double val) {
         /* Format mantissa without exponent part */
         int mw = width - 4; /* subtract ^^^^  */
         fmt_fixed(buf, sizeof(buf), av, mw, decimals);
-        printf("%s", buf);
+        col_puts(buf);
         /* Exponent */
-        printf("E%c%02d", exp_val >= 0 ? '+' : '-',
+        col_printf("E%c%02d", exp_val >= 0 ? '+' : '-',
                exp_val >= 0 ? exp_val : -exp_val);
     } else {
         int fw = width - has_minus;
@@ -555,10 +584,10 @@ static int format_using_num(const char *fmt, double val) {
             while (i < blen && (buf[i] == ' ' || buf[i] == '*')) i++;
             if (i > 0) buf[i - 1] = '$';
         }
-        printf("%s", buf);
+        col_puts(buf);
         if (has_minus) {
-            if (val < 0.0) printf("-");
-            else printf(" ");
+            if (val < 0.0) col_puts("-");
+            else col_puts(" ");
         }
     }
     return (int)(p - start);
@@ -567,12 +596,12 @@ static int format_using_num(const char *fmt, double val) {
 static int format_using_str(const char *fmt, const char *str, int slen) {
     if (*fmt == '!') {
         /* First character only */
-        printf("%c", slen > 0 ? str[0] : ' ');
+        col_printf("%c", slen > 0 ? str[0] : ' ');
         return 1;
     }
     if (*fmt == '&') {
         /* Entire string */
-        printf("%s", str);
+        col_puts(str);
         return 1;
     }
     if (*fmt == '\\') {
@@ -583,8 +612,8 @@ static int format_using_str(const char *fmt, const char *str, int slen) {
         if (*p == '\\') p++;
         /* Print string padded to width */
         int printed = 0;
-        for (int i = 0; i < width && i < slen; i++) { printf("%c", str[i]); printed++; }
-        for (int i = printed; i < width; i++) printf(" ");
+        for (int i = 0; i < width && i < slen; i++) { col_printf("%c", str[i]); printed++; }
+        for (int i = printed; i < width; i++) col_puts(" ");
         return (int)(p - fmt);
     }
     return 0;
@@ -607,7 +636,7 @@ static error_t exec_print(env_t *env, stmt_t *s) {
                     int consumed = format_using_num(fmt, d);
                     if (consumed > 0) { fmt += consumed; arg_idx++; continue; }
                 }
-                printf("%c", *fmt++);
+                col_printf("%c", *fmt++);
             } else if (*fmt == '!' || *fmt == '&' || *fmt == '\\') {
                 /* String format */
                 if (arg_idx < s->print.nitems && s->print.items[arg_idx].expr) {
@@ -619,16 +648,16 @@ static error_t exec_print(env_t *env, stmt_t *s) {
                     val_clear(&v);
                     if (consumed > 0) { fmt += consumed; arg_idx++; continue; }
                 }
-                printf("%c", *fmt++);
+                col_printf("%c", *fmt++);
             } else if (*fmt == '_') {
                 /* Literal next character */
                 fmt++;
-                if (*fmt) printf("%c", *fmt++);
+                if (*fmt) col_printf("%c", *fmt++);
             } else {
-                printf("%c", *fmt++);
+                col_printf("%c", *fmt++);
             }
         }
-        printf("\n");
+        col_puts("\n");
         return ERR_NONE;
     }
 
@@ -643,15 +672,15 @@ static error_t exec_print(env_t *env, stmt_t *s) {
 
             switch (v.type) {
                 case VAL_INTEGER:
-                    if (v.ival >= 0) printf(" %d", v.ival);
-                    else printf("%d", v.ival);
+                    if (v.ival >= 0) col_printf(" %d", v.ival);
+                    else col_printf("%d", v.ival);
                     break;
                 case VAL_DOUBLE:
-                    if (v.dval >= 0) printf(" %g", v.dval);
-                    else printf("%g", v.dval);
+                    if (v.dval >= 0) col_printf(" %g", v.dval);
+                    else col_printf("%g", v.dval);
                     break;
                 case VAL_STRING:
-                    printf("%s", v.sval->data);
+                    col_puts(v.sval->data);
                     break;
                 case VAL_RECORD:
                     break;
@@ -662,7 +691,7 @@ static error_t exec_print(env_t *env, stmt_t *s) {
         if (item->sep == ';') {
             needs_newline = 0;
         } else if (item->sep == ',') {
-            printf("\t");
+            col_puts("\t");
             needs_newline = 0;
         } else {
             needs_newline = 1;
@@ -670,16 +699,16 @@ static error_t exec_print(env_t *env, stmt_t *s) {
     }
 
     if (needs_newline)
-        printf("\n");
+        col_puts("\n");
 
     return ERR_NONE;
 }
 
 static error_t exec_input(env_t *env, stmt_t *s) {
     if (s->input.prompt)
-        printf("%s", s->input.prompt);
+        col_puts(s->input.prompt);
     else
-        printf("? ");
+        col_puts("? ");
 
     char line[1024];
     int pos = 0;
@@ -689,6 +718,8 @@ static error_t exec_input(env_t *env, stmt_t *s) {
             line[pos++] = (char)ch;
     }
     line[pos] = '\0';
+
+    print_col = 0; /* newline consumed by getchar */
 
     if (ch == EOF && pos == 0)
         return ERR_INPUT_PAST_END;
@@ -1560,6 +1591,7 @@ error_t eval_program(env_t *env, stmt_t *program) {
     fileio_init();
     deftype_init();
     type_def_count = 0;
+    print_col = 0;
     on_error_label_idx = -1;
     on_error_active = 0;
     on_error_err_code = 0;

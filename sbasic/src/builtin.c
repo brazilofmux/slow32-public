@@ -1,4 +1,5 @@
 #include "builtin.h"
+#include "eval.h"
 #include "fileio.h"
 #include <string.h>
 #include <stdlib.h>
@@ -492,17 +493,19 @@ static error_t fn_timer(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
-/* TAB(n) - return spaces to reach column n (simplified: just n spaces) */
+/* TAB(n) - return spaces to reach absolute column n (1-based) */
 static error_t fn_tab(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     int n;
     EVAL_CHECK(val_to_integer(&args[0], &n));
-    if (n < 0) n = 0;
-    if (n > MAX_STRING_LEN) n = MAX_STRING_LEN;
-    char *buf = malloc(n + 1);
-    memset(buf, ' ', n);
-    buf[n] = '\0';
-    *out = val_string(buf, n);
+    n--;  /* convert 1-based column to 0-based */
+    int spaces = n - print_col;
+    if (spaces < 0) spaces = 0;
+    if (spaces > MAX_STRING_LEN) spaces = MAX_STRING_LEN;
+    char *buf = malloc(spaces + 1);
+    memset(buf, ' ', spaces);
+    buf[spaces] = '\0';
+    *out = val_string(buf, spaces);
     free(buf);
     return ERR_NONE;
 }

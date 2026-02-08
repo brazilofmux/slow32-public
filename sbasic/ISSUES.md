@@ -48,8 +48,8 @@ The `type_instances` table is global and flat.
 - **Verification**: `sbasic/tests/rnd_test.bas` passes.
 
 ### 9. `TAB(n)` Implementation
-- **Problem**: Currently implemented as `SPACE$(n)`.
-- **Recommendation**: The interpreter needs to track the current cursor column (print position) and emit enough spaces to reach absolute column `n`.
+- **Status**: **FIXED**. Added `print_col` tracking (updated by `col_puts`/`col_printf` wrappers in eval.c). `TAB(n)` now emits just enough spaces to reach absolute column `n` (1-based). If already past column `n`, no spaces are emitted.
+- **Verification**: `sbasic/tests/tab.bas` tests absolute positioning, past-target no-op, and multiple TABs per line.
 
 ---
 
