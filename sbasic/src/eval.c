@@ -93,9 +93,31 @@ static int is_trappable_error(error_t err) {
 /* DEFTYPE letter-to-type map: 26 letters A-Z, default VAL_DOUBLE */
 static val_type_t deftype_map[26];
 
+static val_type_t deftype_lookup(char first_letter) {
+    if (first_letter >= 'A' && first_letter <= 'Z')
+        return deftype_map[first_letter - 'A'];
+    if (first_letter >= 'a' && first_letter <= 'z')
+        return deftype_map[first_letter - 'a'];
+    return VAL_DOUBLE;
+}
+
 static void deftype_init(void) {
     for (int i = 0; i < 26; i++)
         deftype_map[i] = VAL_DOUBLE;
+    env_deftype_hook = deftype_lookup;
+}
+
+/* Resolve the effective type for a variable name.
+   Explicit suffixes ($, %, #) take priority; bare names use deftype_map. */
+static val_type_t resolve_var_type(const char *name) {
+    int len = (int)strlen(name);
+    if (len > 0) {
+        char last = name[len - 1];
+        if (last == '$') return VAL_STRING;
+        if (last == '%') return VAL_INTEGER;
+        if (last == '#') return VAL_DOUBLE;
+    }
+    return deftype_lookup(name[0]);
 }
 
 /* Find a TYPE definition by name */
@@ -710,13 +732,14 @@ static error_t exec_assign(env_t *env, stmt_t *s) {
     value_t v;
     EVAL_CHECK(eval_expr(env, s->assign.value, &v));
 
-    if (s->assign.var_type == VAL_INTEGER && v.type != VAL_INTEGER) {
+    val_type_t vt = resolve_var_type(s->assign.name);
+    if (vt == VAL_INTEGER && v.type != VAL_INTEGER) {
         int iv;
         error_t err = val_to_integer(&v, &iv);
         val_clear(&v);
         if (err != ERR_NONE) return err;
         v = val_integer(iv);
-    } else if (s->assign.var_type == VAL_STRING && v.type != VAL_STRING) {
+    } else if (vt == VAL_STRING && v.type != VAL_STRING) {
         char buf[256];
         error_t err = val_to_string(&v, buf, sizeof(buf));
         val_clear(&v);

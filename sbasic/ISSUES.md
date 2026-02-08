@@ -15,8 +15,7 @@ The `ON ERROR GOTO` logic in `eval_program` used a range check (`err < ERR_EXIT`
 
 ### 3. Incorrect `REDIM PRESERVE` for Multi-dimensional Arrays
 In `array_redim`, the code uses a flat `val_copy` from the old data array to the new one.
-- **Problem**: This is only correct for 1D arrays. For a 2D array, if the number of columns changes, the flat index mapping of every row shifts. A `memcpy` of the old flat buffer into the new one will scramble the data.
-- **Recommendation**: Implement a coordinate-aware copy that iterates through the shared bounds of all dimensions.
+- **Status**: **FIXED**. Implemented coordinate-aware copy that iterates through shared bounds of all dimensions.
 
 ---
 
@@ -24,18 +23,15 @@ In `array_redim`, the code uses a flat `val_copy` from the old data array to the
 
 ### 4. TYPE Record Instance Leaks
 `DIM var AS TypeName` appends a new instance to the `type_instances` table in `eval.c` every time it is executed.
-- **Problem**: In recursive functions or loops, `MAX_TYPE_INSTANCES` (128) is easily exhausted.
-- **Recommendation**: Integrate record instances into the `env_t` scope system or implement slot reuse/name-lookup for re-dimensioning.
+- **Status**: **FIXED**. Records are now refcounted `VAL_RECORD` values stored in `env_t`. Heap-allocated and freed when scope exits.
 
 ### 5. Global Record Scoping
-The `type_instances` table is global and flat. 
-- **Problem**: Record variables do not follow BASIC's local scoping rules for `SUB/FUNCTION`. A record variable in a `SUB` will collide with one of the same name in another `SUB`.
-- **Recommendation**: Move record data storage into the `env_t` environment.
+The `type_instances` table is global and flat.
+- **Status**: **FIXED**. Records follow `env_t` scoping. SUB/FUNCTION TYPE vars are local. SHARED works via copy-in/copy-out with shared record pointer.
 
 ### 6. Array Table Exhaustion
 `array_erase` marks an array as inactive but `array_dim` always appends to the end of the `arrays` table (`array_count++`).
-- **Problem**: Repeatedly `DIM`ing and `ERASE`ing (common in some BASIC patterns) will eventually hit `MAX_ARRAYS` (64).
-- **Recommendation**: `array_dim` should scan for `active == 0` slots before appending.
+- **Status**: **FIXED**. `array_dim` now scans for `active == 0` slots before appending.
 
 ---
 
@@ -43,8 +39,8 @@ The `type_instances` table is global and flat.
 
 ### 7. `DEFTYPE` Initialization Gap
 `DEFINT`, `DEFDBL`, and `DEFSTR` modify a runtime map, but the parser and `env.c` initialization (`create_entry`) currently rely on hardcoded suffix checks.
-- **Problem**: `DEFINT A-Z` should make a bare variable `A` an integer, but it currently defaults to `VAL_DOUBLE`.
-- **Recommendation**: `env_get` and `create_entry` should consult the `deftype_map` when creating a variable without an explicit suffix.
+- **Status**: **FIXED**. Added `env_deftype_hook` callback so `create_entry` consults `deftype_map` for bare names (no suffix). Assignment coercion in `exec_assign` also uses `resolve_var_type()` at runtime instead of the parser's static type.
+- **Verification**: `sbasic/tests/deftype.bas` tests DEFINT/DEFSTR ranges, explicit suffix override, and coercion.
 
 ### 8. `RND(0)` and `RND(-n)` Logic
 - **Problem**: `RND(0)` was generating a new value instead of returning the last. `RND(-n)` was seeding but not returning a value.

@@ -20,6 +20,10 @@ typedef struct env {
     struct env *parent;    /* enclosing scope (NULL for global) */
 } env_t;
 
+/* Hook for DEFTYPE: if set, called to determine the default type
+   for a bare variable name (no $/%/# suffix).  First letter is passed. */
+extern val_type_t (*env_deftype_hook)(char first_letter);
+
 /* Create/destroy environment */
 env_t *env_create(env_t *parent);
 void env_destroy(env_t *env);

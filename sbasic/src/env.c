@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+val_type_t (*env_deftype_hook)(char first_letter) = NULL;
+
 static unsigned int hash_name(const char *name) {
     unsigned int h = 0;
     while (*name) {
@@ -50,12 +52,16 @@ static var_entry_t *create_entry(env_t *env, const char *name) {
     var_entry_t *e = calloc(1, sizeof(var_entry_t));
     if (!e) return NULL;
     strncpy(e->name, name, 63);
-    /* Default value based on suffix */
+    /* Default value based on suffix, or DEFTYPE for bare names */
     int len = (int)strlen(name);
     if (len > 0 && name[len - 1] == '$')
         e->value = val_string_cstr("");
     else if (len > 0 && name[len - 1] == '%')
         e->value = val_integer(0);
+    else if (len > 0 && name[len - 1] == '#')
+        e->value = val_double(0.0);
+    else if (len > 0 && env_deftype_hook)
+        e->value = val_default(env_deftype_hook(name[0]));
     else
         e->value = val_double(0.0);
     e->next = env->table[h];
