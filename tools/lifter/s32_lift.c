@@ -532,6 +532,14 @@ static void emit_bounds_check(int addr_temp, int size, bool is_write, uint32_t p
             addr_temp, size, is_write ? 1 : 0, pc, sp);
 }
 
+static void require_reg_pair(uint32_t pc, int reg, const char *op_name) {
+    if (reg >= 31) {
+        fprintf(stderr, "Error: %s requires register pair r%d/r%d at pc=0x%08x\n",
+                op_name, reg, reg + 1, pc);
+        exit(1);
+    }
+}
+
 /* Emit a memory address computation with optional bounds check.
  * Returns the ptr temp.  If addr_out is non-NULL, stores the i32 address
  * temp there (needed by stores for emit_mmio_check). */
@@ -796,6 +804,9 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
 
     /* ---- f64 arithmetic ---- */
     case OP_FADD_D: {
+        require_reg_pair(pc, rs1, "FADD.D");
+        require_reg_pair(pc, rs2, "FADD.D");
+        require_reg_pair(pc, rd, "FADD.D");
         int a = read_f64(rs1), b = read_f64(rs2);
         int t = T();
         fprintf(out, "  %%t%d = fadd double %%t%d, %%t%d\n", t, a, b);
@@ -803,6 +814,9 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FSUB_D: {
+        require_reg_pair(pc, rs1, "FSUB.D");
+        require_reg_pair(pc, rs2, "FSUB.D");
+        require_reg_pair(pc, rd, "FSUB.D");
         int a = read_f64(rs1), b = read_f64(rs2);
         int t = T();
         fprintf(out, "  %%t%d = fsub double %%t%d, %%t%d\n", t, a, b);
@@ -810,6 +824,9 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FMUL_D: {
+        require_reg_pair(pc, rs1, "FMUL.D");
+        require_reg_pair(pc, rs2, "FMUL.D");
+        require_reg_pair(pc, rd, "FMUL.D");
         int a = read_f64(rs1), b = read_f64(rs2);
         int t = T();
         fprintf(out, "  %%t%d = fmul double %%t%d, %%t%d\n", t, a, b);
@@ -817,6 +834,9 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FDIV_D: {
+        require_reg_pair(pc, rs1, "FDIV.D");
+        require_reg_pair(pc, rs2, "FDIV.D");
+        require_reg_pair(pc, rd, "FDIV.D");
         int a = read_f64(rs1), b = read_f64(rs2);
         int t = T();
         fprintf(out, "  %%t%d = fdiv double %%t%d, %%t%d\n", t, a, b);
@@ -824,6 +844,8 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FSQRT_D: {
+        require_reg_pair(pc, rs1, "FSQRT.D");
+        require_reg_pair(pc, rd, "FSQRT.D");
         int a = read_f64(rs1);
         int t = T();
         fprintf(out, "  %%t%d = call double @llvm.sqrt.f64(double %%t%d)\n", t, a);
@@ -833,6 +855,8 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
 
     /* ---- f64 comparison ---- */
     case OP_FEQ_D: {
+        require_reg_pair(pc, rs1, "FEQ.D");
+        require_reg_pair(pc, rs2, "FEQ.D");
         int a = read_f64(rs1), b = read_f64(rs2);
         int c = T();
         fprintf(out, "  %%t%d = fcmp oeq double %%t%d, %%t%d\n", c, a, b);
@@ -842,6 +866,8 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FLT_D: {
+        require_reg_pair(pc, rs1, "FLT.D");
+        require_reg_pair(pc, rs2, "FLT.D");
         int a = read_f64(rs1), b = read_f64(rs2);
         int c = T();
         fprintf(out, "  %%t%d = fcmp olt double %%t%d, %%t%d\n", c, a, b);
@@ -851,6 +877,8 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FLE_D: {
+        require_reg_pair(pc, rs1, "FLE.D");
+        require_reg_pair(pc, rs2, "FLE.D");
         int a = read_f64(rs1), b = read_f64(rs2);
         int c = T();
         fprintf(out, "  %%t%d = fcmp ole double %%t%d, %%t%d\n", c, a, b);
@@ -862,6 +890,8 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
 
     /* ---- f64 sign manipulation ---- */
     case OP_FNEG_D: {
+        require_reg_pair(pc, rs1, "FNEG.D");
+        require_reg_pair(pc, rd, "FNEG.D");
         int a = read_f64(rs1);
         int t = T();
         fprintf(out, "  %%t%d = fneg double %%t%d\n", t, a);
@@ -869,6 +899,8 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FABS_D: {
+        require_reg_pair(pc, rs1, "FABS.D");
+        require_reg_pair(pc, rd, "FABS.D");
         int a = read_f64(rs1);
         int t = T();
         fprintf(out, "  %%t%d = call double @llvm.fabs.f64(double %%t%d)\n", t, a);
@@ -906,6 +938,7 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FCVT_W_D: {
+        require_reg_pair(pc, rs1, "FCVT.W.D");
         int a = read_f64(rs1);
         int t = T();
         fprintf(out, "  %%t%d = fptosi double %%t%d to i32\n", t, a);
@@ -913,6 +946,7 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FCVT_WU_D: {
+        require_reg_pair(pc, rs1, "FCVT.WU.D");
         int a = read_f64(rs1);
         int t = T();
         fprintf(out, "  %%t%d = fptoui double %%t%d to i32\n", t, a);
@@ -920,6 +954,7 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FCVT_D_W: {
+        require_reg_pair(pc, rd, "FCVT.D.W");
         int a = read_reg(rs1);
         int t = T();
         fprintf(out, "  %%t%d = sitofp i32 %%t%d to double\n", t, a);
@@ -927,6 +962,7 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FCVT_D_WU: {
+        require_reg_pair(pc, rd, "FCVT.D.WU");
         int a = read_reg(rs1);
         int t = T();
         fprintf(out, "  %%t%d = uitofp i32 %%t%d to double\n", t, a);
@@ -934,6 +970,7 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FCVT_D_S: {
+        require_reg_pair(pc, rd, "FCVT.D.S");
         int a = read_f32(rs1);
         int t = T();
         fprintf(out, "  %%t%d = fpext float %%t%d to double\n", t, a);
@@ -941,6 +978,7 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FCVT_S_D: {
+        require_reg_pair(pc, rs1, "FCVT.S.D");
         int a = read_f64(rs1);
         int t = T();
         fprintf(out, "  %%t%d = fptrunc double %%t%d to float\n", t, a);
@@ -948,6 +986,7 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FCVT_L_S: {
+        require_reg_pair(pc, rd, "FCVT.L.S");
         int a = read_f32(rs1);
         int t = T();
         fprintf(out, "  %%t%d = fptosi float %%t%d to i64\n", t, a);
@@ -955,6 +994,7 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FCVT_LU_S: {
+        require_reg_pair(pc, rd, "FCVT.LU.S");
         int a = read_f32(rs1);
         int t = T();
         fprintf(out, "  %%t%d = fptoui float %%t%d to i64\n", t, a);
@@ -962,6 +1002,7 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FCVT_S_L: {
+        require_reg_pair(pc, rs1, "FCVT.S.L");
         int a = read_i64(rs1);
         int t = T();
         fprintf(out, "  %%t%d = sitofp i64 %%t%d to float\n", t, a);
@@ -969,6 +1010,7 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FCVT_S_LU: {
+        require_reg_pair(pc, rs1, "FCVT.S.LU");
         int a = read_i64(rs1);
         int t = T();
         fprintf(out, "  %%t%d = uitofp i64 %%t%d to float\n", t, a);
@@ -976,6 +1018,8 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FCVT_L_D: {
+        require_reg_pair(pc, rs1, "FCVT.L.D");
+        require_reg_pair(pc, rd, "FCVT.L.D");
         int a = read_f64(rs1);
         int t = T();
         fprintf(out, "  %%t%d = fptosi double %%t%d to i64\n", t, a);
@@ -983,6 +1027,8 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FCVT_LU_D: {
+        require_reg_pair(pc, rs1, "FCVT.LU.D");
+        require_reg_pair(pc, rd, "FCVT.LU.D");
         int a = read_f64(rs1);
         int t = T();
         fprintf(out, "  %%t%d = fptoui double %%t%d to i64\n", t, a);
@@ -990,6 +1036,8 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FCVT_D_L: {
+        require_reg_pair(pc, rs1, "FCVT.D.L");
+        require_reg_pair(pc, rd, "FCVT.D.L");
         int a = read_i64(rs1);
         int t = T();
         fprintf(out, "  %%t%d = sitofp i64 %%t%d to double\n", t, a);
@@ -997,6 +1045,8 @@ static bool emit_instruction(uint32_t pc, uint32_t inst) {
         return false;
     }
     case OP_FCVT_D_LU: {
+        require_reg_pair(pc, rs1, "FCVT.D.LU");
+        require_reg_pair(pc, rd, "FCVT.D.LU");
         int a = read_i64(rs1);
         int t = T();
         fprintf(out, "  %%t%d = uitofp i64 %%t%d to double\n", t, a);

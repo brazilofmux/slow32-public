@@ -50,7 +50,7 @@ for dir in ../../regression/results/*/; do
         mapfile -t args < "$test_src/args.txt"
     fi
 
-    LIFTED=$(timeout 30 ./lifted_native "test.s32x" "${args[@]}" 2>&1 || true)
+    LIFTED=$(timeout 30 ./lifted_native "${args[@]}" 2>&1 || true)
     RC=${PIPESTATUS[0]:-$?}
 
     EXPECTED=$(cat "$expected")
