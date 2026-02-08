@@ -27,9 +27,8 @@ Deeply nested BASIC programs (or very complex expressions) could cause a C stack
 ## Architectural Limitations & Performance
 
 ### 5. O(N²) Statement Appending
-The parser uses `stmt_append` which walks the entire statement chain to add a new statement to the end.
-- **Problem**: For a 1000-line BASIC program, this results in O(N²) complexity during parsing, which is significantly slower than necessary.
-- **Recommendation**: Keep a `tail` pointer in the parser or return head/tail pairs from parsing functions.
+The parser used `stmt_append` which walked the entire statement chain to find the end.
+- **Status**: **FIXED**. `stmt_append` now takes a `tail` pointer parameter for O(1) appending. Both call sites (`parse_block` and `parser_parse`) updated.
 
 ### 6. `SWAP` Restricted to Simple Variables
 The `STMT_SWAP` implementation and `stmt_swap` constructor only accept variable names.

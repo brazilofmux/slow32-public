@@ -271,6 +271,7 @@ static void consume_end_keyword(parser_t *p, token_type_t kw) {
 
 static stmt_t *parse_block(parser_t *p, int flags) {
     stmt_t *head = NULL;
+    stmt_t *tail = NULL;
 
     while (1) {
         skip_eol(p);
@@ -311,7 +312,7 @@ static stmt_t *parse_block(parser_t *p, int flags) {
             if (p->error != ERR_NONE) { stmt_free(head); return NULL; }
             break;
         }
-        stmt_append(&head, s);
+        stmt_append(&head, &tail, s);
     }
     return head;
 }
@@ -1496,6 +1497,7 @@ void parser_init(parser_t *p, const char *src, int start_line) {
 
 stmt_t *parser_parse(parser_t *p) {
     stmt_t *head = NULL;
+    stmt_t *tail = NULL;
     while (!lexer_check(&p->lex, TOK_EOF)) {
         skip_eol(p);
         if (lexer_check(&p->lex, TOK_EOF)) break;
@@ -1508,7 +1510,7 @@ stmt_t *parser_parse(parser_t *p) {
             if (p->error != ERR_NONE) { stmt_free(head); return NULL; }
             continue;
         }
-        stmt_append(&head, s);
+        stmt_append(&head, &tail, s);
     }
     return head;
 }

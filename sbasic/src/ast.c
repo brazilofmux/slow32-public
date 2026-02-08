@@ -766,13 +766,11 @@ void stmt_on_branch_add_label(stmt_t *s, const char *label) {
     s->on_branch.nlabels = n + 1;
 }
 
-void stmt_append(stmt_t **head, stmt_t *s) {
+void stmt_append(stmt_t **head, stmt_t **tail, stmt_t *s) {
     if (!*head) {
         *head = s;
     } else {
-        stmt_t *tail = *head;
-        while (tail->next)
-            tail = tail->next;
-        tail->next = s;
+        (*tail)->next = s;
     }
+    *tail = s;
 }

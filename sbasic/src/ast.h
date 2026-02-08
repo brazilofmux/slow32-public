@@ -528,6 +528,6 @@ stmt_t *stmt_on_gosub(expr_t *index, int line);
 void stmt_on_branch_add_label(stmt_t *s, const char *label);
 
 /* Append statement to end of chain */
-void stmt_append(stmt_t **head, stmt_t *s);
+void stmt_append(stmt_t **head, stmt_t **tail, stmt_t *s);
 
 #endif
