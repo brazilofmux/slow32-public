@@ -1325,6 +1325,28 @@ static stmt_t *parse_paren_dispatch(parser_t *p, const char *name, int line) {
         return NULL;
     }
 
+    /* MID$ l-value assignment: MID$(var$, start [, length]) = expr */
+    if (strcmp(name, "MID$") == 0 && lexer_check(&p->lex, TOK_EQ)) {
+        if (nargs < 2 || nargs > 3 || args[0]->type != EXPR_VARIABLE) {
+            parser_error(p, ERR_SYNTAX);
+            for (int i = 0; i < nargs; i++) expr_free(args[i]);
+            return NULL;
+        }
+        lexer_next(&p->lex); /* consume = */
+        char var_name[64];
+        strncpy(var_name, args[0]->var.name, 63);
+        var_name[63] = '\0';
+        expr_t *start = args[1];
+        expr_t *length = (nargs == 3) ? args[2] : NULL;
+        expr_free(args[0]); /* free the variable expr node */
+        expr_t *value = parse_expr(p);
+        if (!value) {
+            expr_free(start); expr_free(length);
+            return NULL;
+        }
+        return stmt_mid_assign(var_name, start, length, value, line);
+    }
+
     /* Array assignment: ident(indices) = expr */
     if (lexer_check(&p->lex, TOK_EQ)) {
         lexer_next(&p->lex);

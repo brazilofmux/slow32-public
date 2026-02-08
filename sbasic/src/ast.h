@@ -127,6 +127,7 @@ typedef enum {
     STMT_TYPE_DEF,
     STMT_DIM_AS_TYPE,
     STMT_FIELD_ASSIGN,
+    STMT_MID_ASSIGN,
     STMT_ON_ERROR,
     STMT_RESUME,
     STMT_ERROR_RAISE,
@@ -395,6 +396,14 @@ typedef struct stmt {
             struct expr *value;
         } field_assign;
 
+        /* STMT_MID_ASSIGN: MID$(var$, start [, length]) = expr */
+        struct {
+            char var_name[64];
+            struct expr *start;
+            struct expr *length;  /* NULL if omitted */
+            struct expr *value;
+        } mid_assign;
+
         /* STMT_ON_ERROR */
         struct {
             char label[64];     /* "" = ON ERROR GOTO 0 (disable) */
@@ -519,6 +528,8 @@ void stmt_type_def_add_field(stmt_t *s, const char *name, val_type_t type);
 stmt_t *stmt_dim_as_type(const char *name, const char *type_name, int line);
 stmt_t *stmt_field_assign(const char *var, const char *field,
                           expr_t *value, int line);
+stmt_t *stmt_mid_assign(const char *var, expr_t *start, expr_t *length,
+                         expr_t *value, int line);
 stmt_t *stmt_on_error(const char *label, int line);
 stmt_t *stmt_resume(int resume_next, int line);
 stmt_t *stmt_error_raise(expr_t *errnum, int line);

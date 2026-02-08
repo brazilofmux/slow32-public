@@ -16,10 +16,8 @@ Integer arithmetic now uses `long long` intermediates. If the result exceeds INT
 ### 4. ~~`SHARED` Variable "Copy-in/Copy-out" Race Condition~~ **FIXED**
 Added `link` pointer to `var_entry_t`. `SHARED` variables now use `env_link()` to point the local entry directly at the global's `value_t` storage. All reads/writes through `env_get`/`env_set` follow the link. No copy-in or copy-out needed — nested SUB calls see changes immediately.
 
-### 5. `MID$` Statement (L-Value) is Missing
-Standard BASIC supports `MID$(A$, start [, length]) = "newtext"`.
-- **Problem**: The interpreter only supports `MID$` as a function. Attempting to use it as a statement will likely be misparsed as an array assignment or a syntax error.
-- **Recommendation**: Update `parse_stmt` to recognize `MID$(` as an assignment target and implement `exec_mid_assign`.
+### 5. ~~`MID$` Statement (L-Value) is Missing~~ **FIXED**
+Added `STMT_MID_ASSIGN` AST node. `parse_paren_dispatch` intercepts `MID$` before the generic array-assignment path. `exec_mid_assign` implements QBasic-compatible semantics: `MID$(A$, start [, length]) = rep$` replaces up to `min(length, LEN(rep$))` characters starting at position `start` (1-based). Total string length is preserved.
 
 ---
 

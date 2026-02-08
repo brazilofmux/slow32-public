@@ -1465,6 +1465,64 @@ static error_t exec_field_assign(env_t *env, stmt_t *s) {
     return ERR_NONE;
 }
 
+/* --- MID$ l-value assignment --- */
+
+static error_t exec_mid_assign(env_t *env, stmt_t *s) {
+    if (env_is_const(env, s->mid_assign.var_name))
+        return ERR_CONST_REASSIGN;
+
+    value_t *sv = env_get(env, s->mid_assign.var_name);
+    if (!sv) return ERR_UNDEFINED_VAR;
+    if (sv->type != VAL_STRING) return ERR_TYPE_MISMATCH;
+
+    /* Evaluate start position (1-based) */
+    value_t start_v;
+    EVAL_CHECK(eval_expr(env, s->mid_assign.start, &start_v));
+    int start;
+    error_t err = val_to_integer(&start_v, &start);
+    val_clear(&start_v);
+    if (err != ERR_NONE) return err;
+
+    int slen = sv->sval->len;
+    start--; /* convert to 0-based */
+    if (start < 0 || start >= slen) return ERR_NONE; /* out of range: no change */
+
+    /* Evaluate optional length */
+    int maxlen = slen - start;
+    if (s->mid_assign.length) {
+        value_t len_v;
+        EVAL_CHECK(eval_expr(env, s->mid_assign.length, &len_v));
+        int length;
+        err = val_to_integer(&len_v, &length);
+        val_clear(&len_v);
+        if (err != ERR_NONE) return err;
+        if (length < 0) return ERR_ILLEGAL_FUNCTION_CALL;
+        if (length < maxlen) maxlen = length;
+    }
+
+    /* Evaluate replacement string */
+    value_t rep_v;
+    EVAL_CHECK(eval_expr(env, s->mid_assign.value, &rep_v));
+    if (rep_v.type != VAL_STRING) { val_clear(&rep_v); return ERR_TYPE_MISMATCH; }
+
+    int rep_len = rep_v.sval->len;
+    int replace_count = (rep_len < maxlen) ? rep_len : maxlen;
+
+    /* Build result: same length as original */
+    char *buf = malloc(slen + 1);
+    if (!buf) { val_clear(&rep_v); return ERR_OUT_OF_MEMORY; }
+    memcpy(buf, sv->sval->data, slen);
+    memcpy(buf + start, rep_v.sval->data, replace_count);
+    buf[slen] = '\0';
+    val_clear(&rep_v);
+
+    value_t result = val_string(buf, slen);
+    free(buf);
+    env_set(env, s->mid_assign.var_name, &result);
+    val_clear(&result);
+    return ERR_NONE;
+}
+
 /* --- Statement dispatch --- */
 
 error_t eval_stmt(env_t *env, stmt_t *s) {
@@ -1567,6 +1625,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_TYPE_DEF:     return exec_type_def(s);
         case STMT_DIM_AS_TYPE:  return exec_dim_as_type(env, s);
         case STMT_FIELD_ASSIGN: return exec_field_assign(env, s);
+        case STMT_MID_ASSIGN:   return exec_mid_assign(env, s);
 
         case STMT_ON_ERROR: {
             if (s->on_error.label[0] == '\0') {

@@ -500,6 +500,11 @@ void stmt_free(stmt_t *s) {
             case STMT_FIELD_ASSIGN:
                 expr_free(s->field_assign.value);
                 break;
+            case STMT_MID_ASSIGN:
+                expr_free(s->mid_assign.start);
+                expr_free(s->mid_assign.length);
+                expr_free(s->mid_assign.value);
+                break;
             case STMT_ERROR_RAISE:
                 expr_free(s->error_raise.errnum);
                 break;
@@ -766,6 +771,17 @@ stmt_t *stmt_field_assign(const char *var, const char *field,
     name_copy(s->field_assign.var_name, var);
     name_copy(s->field_assign.field_name, field);
     s->field_assign.value = value;
+    return s;
+}
+
+stmt_t *stmt_mid_assign(const char *var, expr_t *start, expr_t *length,
+                         expr_t *value, int line) {
+    stmt_t *s = stmt_alloc(STMT_MID_ASSIGN, line);
+    if (!s) return NULL;
+    name_copy(s->mid_assign.var_name, var);
+    s->mid_assign.start = start;
+    s->mid_assign.length = length;
+    s->mid_assign.value = value;
     return s;
 }
 
