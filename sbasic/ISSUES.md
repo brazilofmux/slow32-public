@@ -23,13 +23,11 @@ Added `STMT_MID_ASSIGN` AST node. `parse_paren_dispatch` intercepts `MID$` befor
 
 ## Language Completeness & Opportunities
 
-### 6. Lexer: Missing Hex/Octal/Binary Literals
-- **Opportunity**: Add support for `&HFF` (Hex), `&O77` (Octal), and `&B1010` (Binary). 
-- **Recommendation**: Update `scan_token` in `lexer.c` to handle the `&` prefix.
+### 6. ~~Lexer: Missing Hex/Octal/Binary Literals~~ **FIXED**
+Added `&H` (hex), `&O` (octal), and `&B` (binary) literal support in `scan_token`. Bare `&` produces integer 0 (QBasic compat). Optional `%` suffix consumed and ignored.
 
-### 7. `VAL()` doesn't recognize Hex/Octal prefixes
-- **Problem**: `VAL("&HFF")` currently returns 0 because it uses `atof`.
-- **Recommendation**: Implement a custom numeric parser for `fn_val` that understands BASIC's numeric prefixes.
+### 7. ~~`VAL()` doesn't recognize Hex/Octal prefixes~~ **FIXED**
+Updated `fn_val` to detect `&H`, `&O`, `&B` prefixes and use `strtol` with the appropriate base (16, 8, 2) before falling through to decimal parsing.
 
 ### 8. Extended File I/O: `LOC`, `LOF`, and `INPUT$`
 - **Opportunity**: Add `LOC(h)` (current position), `LOF(h)` (length of file), and `INPUT$(n, [#h])` (read $n$ characters).

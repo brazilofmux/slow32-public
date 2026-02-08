@@ -200,6 +200,40 @@ static token_t scan_token(lexer_t *lex) {
         return tok;
     }
 
+    /* Hex/Octal/Binary literal: &HFF, &O77, &B1010 */
+    if (c == '&') {
+        next_char(lex); /* consume '&' */
+        char prefix = toupper(peek_char(lex));
+        int base = 0;
+        if (prefix == 'H') { base = 16; next_char(lex); }
+        else if (prefix == 'O') { base = 8; next_char(lex); }
+        else if (prefix == 'B') { base = 2; next_char(lex); }
+
+        if (base > 0) {
+            int len = 0;
+            while (1) {
+                char d = peek_char(lex);
+                int valid = 0;
+                if (base == 16) valid = isxdigit(d);
+                else if (base == 8) valid = (d >= '0' && d <= '7');
+                else valid = (d == '0' || d == '1');
+                if (!valid) break;
+                if (len < 255) tok.text[len++] = next_char(lex);
+                else next_char(lex);
+            }
+            tok.text[len] = '\0';
+            /* Optional trailing % suffix (already integer) */
+            if (peek_char(lex) == '%') next_char(lex);
+            tok.type = TOK_INTEGER_LIT;
+            tok.ival = (len > 0) ? (int)strtol(tok.text, NULL, base) : 0;
+            return tok;
+        }
+        /* Bare '&' with no recognized prefix → integer 0 (QBasic compat) */
+        tok.type = TOK_INTEGER_LIT;
+        tok.ival = 0;
+        return tok;
+    }
+
     /* Number */
     if (isdigit(c) || (c == '.' && isdigit(lex->src[lex->pos + 1]))) {
         int len = 0;

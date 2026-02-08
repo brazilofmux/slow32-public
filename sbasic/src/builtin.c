@@ -208,6 +208,22 @@ static error_t fn_val(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     if (args[0].type != VAL_STRING) return ERR_TYPE_MISMATCH;
     const char *s = args[0].sval->data;
+    /* Skip leading whitespace */
+    while (*s == ' ' || *s == '\t') s++;
+    /* Check for &H (hex), &O (octal), &B (binary) prefixes */
+    if (s[0] == '&' && s[1]) {
+        char prefix = toupper((unsigned char)s[1]);
+        if (prefix == 'H') {
+            *out = val_integer((int)strtol(s + 2, NULL, 16));
+            return ERR_NONE;
+        } else if (prefix == 'O') {
+            *out = val_integer((int)strtol(s + 2, NULL, 8));
+            return ERR_NONE;
+        } else if (prefix == 'B') {
+            *out = val_integer((int)strtol(s + 2, NULL, 2));
+            return ERR_NONE;
+        }
+    }
     char *endp;
     long lv = strtol(s, &endp, 10);
     if (*endp == '\0' || *endp == ' ') {
