@@ -19,10 +19,10 @@
 
 #include <math.h>
 
-#ifndef DISABLE_CORDIC
-#define USE_CORDIC
-#endif
-
+/* Define USE_CORDIC to use CORDIC instead of Taylor for sin/cos/atan2/exp.
+ * Taylor is the default — it is faster and smaller on SLOW-32 despite the
+ * 32-cycle MUL, because Taylor needs ~15 iterations vs CORDIC's 53.
+ * See docs/MATH_COMPARISON.md for benchmarks. */
 #ifdef USE_CORDIC
 extern double cordic_sin(double z);
 extern double cordic_cos(double z);
