@@ -17,7 +17,7 @@ CFLAGS = $(CFLAGS_BASE) $(OPT_LEVEL)
 
 # Compiler runtime objects (always needed, linked last)
 # These provide compiler support functions like division, intrinsics
-COMPILER_RT_OBJS = intrinsics.s32o intrinsics_extra.s32o math.s32o \
+COMPILER_RT_OBJS = intrinsics.s32o intrinsics_extra.s32o math_hw.s32o math_soft.s32o \
                    builtins.s32o divsi3.s32o \
                    debug_char.s32o
 
@@ -43,8 +43,8 @@ LIBC_MMIO_EXTRA_OBJS = mmio_request.s32o time_mmio.s32o \
 LIBC_DEBUG_EXTRA_OBJS = stat_stub.s32o args_stub.s32o exit_debug.s32o \
                         envp_stub.s32o fs_stub.s32o dirent_stub.s32o
 
-# Math library: math.s32o is now in COMPILER_RT_OBJS (replaces float_intrinsics.s32o)
-# Real soft-float implementations in math.c replace the old HALT stubs.
+# Math library: math_hw + math_soft in COMPILER_RT_OBJS (replaces float_intrinsics.s32o)
+# Real soft-float implementations in math_soft.c replace the old HALT stubs.
 
 # Startup code (linked first, not in any archive)
 STARTUP_OBJ = crt0.s32o
@@ -64,7 +64,7 @@ C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_util
             exit_mmio.c exit_debug.c envp_mmio.c envp_stub.c \
             cxxabi.c time_extra.c math_int.c dtoa.c errno.c \
             fs_mmio.c fs_stub.c dirent_mmio.c dirent_stub.c \
-            math.c
+            math_hw.c math_soft.c
 
 # Default target builds everything
 all: tools $(ALL_OBJS) libs32.s32a libc_debug.s32a libc_mmio.s32a
@@ -102,8 +102,12 @@ printf_enhanced.ll: OPT_LEVEL = -O2
 printf_enhanced.ll: printf_enhanced.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) $< -o $@
 
-math.ll: OPT_LEVEL = -O2
-math.ll: math.c
+math_hw.ll: OPT_LEVEL = -O2
+math_hw.ll: math_hw.c
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) -fno-builtin -fno-math-errno $< -o $@
+
+math_soft.ll: OPT_LEVEL = -O2
+math_soft.ll: math_soft.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) -fno-builtin $< -o $@
 
 dtoa.ll: OPT_LEVEL = -O2

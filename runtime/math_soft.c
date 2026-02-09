@@ -1,16 +1,17 @@
 /*
- * SLOW-32 Software Math Library (libm)
+ * SLOW-32 Software Math Library (libm) — soft implementations
  *
- * Real implementations of all standard math functions. Replaces the HALT
- * stubs that were in float_intrinsics.s.
+ * Real implementations of standard math functions (excluding sqrt/fabs,
+ * which live in math_hw.c). Replaces the HALT stubs that were in
+ * float_intrinsics.s.
  *
  * Execution model:
  *   slow32, slow32-fast  — this code runs natively (the whole point)
  *   slow32-dbt, QEMU     — intercepted via SYMTAB, replaced with host libm
  *                           (this code never executes on those emulators)
  *
- * Algorithms: Taylor series with range reduction, Newton-Raphson,
- * and standard identities. Precision targets ~15 digits (IEEE 754 double).
+ * Algorithms: Taylor series with range reduction and standard identities.
+ * Precision targets ~15 digits (IEEE 754 double).
  *
  * MUST be compiled with -fno-builtin to prevent the compiler from
  * recognizing standard library patterns and emitting recursive calls.
@@ -62,11 +63,6 @@ int isfinite(double x) {
 /* ================================================================
  * Basic
  * ================================================================ */
-
-double fabs(double x) {
-    return __builtin_fabs(x);  /* emits FABS.D hardware instruction */
-}
-
 double copysign(double x, double y) {
     dbl_bits bx, by;
     bx.d = x;
@@ -169,26 +165,6 @@ double ldexp(double x, int n) {
     scale.u[0] = 0;
     scale.u[1] = (unsigned int)(n + 1023) << 20;
     return x * scale.d;
-}
-
-/* ================================================================
- * Square root — Newton-Raphson
- * ================================================================ */
-
-double sqrt(double x) {
-    if (x < 0.0) return mk_nan();
-    if (x == 0.0 || x != x) return x;  /* 0 or NaN passthrough */
-
-    /* Newton-Raphson: converges from any positive guess.
-     * Note: LLVM emits fsqrt.d directly for user code, so this library
-     * fallback only runs for -O0 builds or function-pointer calls. */
-    double guess = x;
-    for (int i = 0; i < 30; i++) {
-        double next = (guess + x / guess) * 0.5;
-        if (next == guess) break;
-        guess = next;
-    }
-    return guess;
 }
 
 /* ================================================================
@@ -397,8 +373,6 @@ double tanh(double x) {
  * and replaced with host libm. Here they only run on the interpreters.
  * ================================================================ */
 
-float fabsf(float x)               { return __builtin_fabsf(x); }  /* FABS.S */
-float sqrtf(float x)               { return (float)sqrt((double)x); }
 float sinf(float x)                { return (float)sin((double)x); }
 float cosf(float x)                { return (float)cos((double)x); }
 float tanf(float x)                { return (float)tan((double)x); }
