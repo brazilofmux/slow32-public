@@ -271,19 +271,21 @@ static char *format_float_alloc(double val, char spec, int precision, bool has_p
 
 // Enhanced vsnprintf with width, precision, and flags
 size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, va_list ap) {
-    if (buffer == NULL || buffer_size < 1) {
-        return 0;
+    size_t limit = 0;
+    size_t write_idx = 0;
+    size_t total_idx = 0;
+    bool can_write = (buffer != NULL && buffer_size > 0);
+    if (can_write) {
+        limit = buffer_size - 1;
     }
-
-    size_t limit = buffer_size - 1;
-    size_t out_idx = 0;
     const char *fmt = format;
 
     while (*fmt) {
         if (*fmt != '%') {
             // Ordinary character
-            if (out_idx < limit) {
-                buffer[out_idx++] = *fmt;
+            total_idx++;
+            if (can_write && write_idx < limit) {
+                buffer[write_idx++] = *fmt;
             }
             fmt++;
             continue;
@@ -594,33 +596,30 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
             padding = width - field_width;
         }
 
-        // Check if everything fits
-        size_t total_len = field_width + padding;
-        if (out_idx + total_len > limit) {
-            // Truncate output
-            total_len = limit - out_idx;
-        }
-
         // Output with padding
         char pad_char = zero_pad && !left_justify ? '0' : ' ';
 
         // For zero padding with sign, output sign first
         if (zero_pad && !left_justify) {
             if (is_negative && conv_str[0] == '-') {
-                if (out_idx < limit) {
-                    buffer[out_idx++] = '-';
+                total_idx++;
+                if (can_write && write_idx < limit) {
+                    buffer[write_idx++] = '-';
                 }
                 conv_str++;
                 conv_len--;
             }
             if (prefix_len > 0) {
-                size_t copy_len = prefix_len;
-                if (out_idx + copy_len > limit) {
-                    copy_len = limit - out_idx;
-                }
-                if (copy_len > 0) {
-                    memcpy(buffer + out_idx, prefix, copy_len);
-                    out_idx += copy_len;
+                total_idx += prefix_len;
+                if (can_write) {
+                    size_t copy_len = prefix_len;
+                    if (write_idx + copy_len > limit) {
+                        copy_len = limit - write_idx;
+                    }
+                    if (copy_len > 0) {
+                        memcpy(buffer + write_idx, prefix, copy_len);
+                        write_idx += copy_len;
+                    }
                 }
                 prefix_len = 0;
             }
@@ -629,44 +628,56 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
         // Left padding
         if (!left_justify && padding > 0) {
             size_t pad_count = padding;
-            if (out_idx + pad_count > limit) {
-                pad_count = limit - out_idx;
-            }
-            for (size_t i = 0; i < pad_count; i++) {
-                buffer[out_idx++] = pad_char;
+            total_idx += pad_count;
+            if (can_write) {
+                if (write_idx + pad_count > limit) {
+                    pad_count = limit - write_idx;
+                }
+                for (size_t i = 0; i < pad_count; i++) {
+                    buffer[write_idx++] = pad_char;
+                }
             }
         }
 
         // Prefix
         if (prefix_len > 0) {
-            size_t copy_len = prefix_len;
-            if (out_idx + copy_len > limit) {
-                copy_len = limit - out_idx;
-            }
-            if (copy_len > 0) {
-                memcpy(buffer + out_idx, prefix, copy_len);
-                out_idx += copy_len;
+            total_idx += prefix_len;
+            if (can_write) {
+                size_t copy_len = prefix_len;
+                if (write_idx + copy_len > limit) {
+                    copy_len = limit - write_idx;
+                }
+                if (copy_len > 0) {
+                    memcpy(buffer + write_idx, prefix, copy_len);
+                    write_idx += copy_len;
+                }
             }
         }
 
         // Main content
-        if (conv_len > 0 && out_idx < limit) {
-            size_t copy_len = conv_len;
-            if (out_idx + copy_len > limit) {
-                copy_len = limit - out_idx;
+        if (conv_len > 0) {
+            total_idx += conv_len;
+            if (can_write && write_idx < limit) {
+                size_t copy_len = conv_len;
+                if (write_idx + copy_len > limit) {
+                    copy_len = limit - write_idx;
+                }
+                memcpy(buffer + write_idx, conv_str, copy_len);
+                write_idx += copy_len;
             }
-            memcpy(buffer + out_idx, conv_str, copy_len);
-            out_idx += copy_len;
         }
 
         // Right padding
         if (left_justify && padding > 0) {
             size_t pad_count = padding;
-            if (out_idx + pad_count > limit) {
-                pad_count = limit - out_idx;
-            }
-            for (size_t i = 0; i < pad_count; i++) {
-                buffer[out_idx++] = ' ';
+            total_idx += pad_count;
+            if (can_write) {
+                if (write_idx + pad_count > limit) {
+                    pad_count = limit - write_idx;
+                }
+                for (size_t i = 0; i < pad_count; i++) {
+                    buffer[write_idx++] = ' ';
+                }
             }
         }
 
@@ -677,8 +688,10 @@ size_t vsnprintf_enhanced(char *buffer, size_t buffer_size, const char *format, 
         fmt++;
     }
 
-    buffer[out_idx] = '\0';
-    return out_idx;
+    if (can_write) {
+        buffer[write_idx] = '\0';
+    }
+    return total_idx;
 }
 
 // sprintf - format to buffer (no size limit)
@@ -712,10 +725,25 @@ int vsprintf(char *buffer, const char *format, va_list ap) {
 
 // printf - format and output to console
 int printf(const char *format, ...) {
-    char buffer[1024];
+    char stack_buffer[1024];
+    char *buffer = stack_buffer;
     va_list ap;
     va_start(ap, format);
-    int len = vsnprintf_enhanced(buffer, sizeof(buffer), format, ap);
+    va_list ap_copy;
+    va_copy(ap_copy, ap);
+    size_t needed = vsnprintf_enhanced(NULL, 0, format, ap_copy);
+    va_end(ap_copy);
+
+    size_t buffer_size = needed + 1;
+    if (buffer_size > sizeof(stack_buffer)) {
+        buffer = (char *)malloc(buffer_size);
+        if (!buffer) {
+            buffer = stack_buffer;
+            buffer_size = sizeof(stack_buffer);
+        }
+    }
+
+    int len = (int)vsnprintf_enhanced(buffer, buffer_size, format, ap);
     va_end(ap);
 
     // Output to console
@@ -723,32 +751,70 @@ int printf(const char *format, ...) {
         fwrite(buffer, 1, len, stdout);
     }
 
+    if (buffer != stack_buffer) {
+        free(buffer);
+    }
     return len;
 }
 
 // vprintf - format and output to console using va_list
 int vprintf(const char *format, va_list ap) {
-    char buffer[1024];
-    int len = vsnprintf_enhanced(buffer, sizeof(buffer), format, ap);
+    char stack_buffer[1024];
+    char *buffer = stack_buffer;
+    va_list ap_copy;
+    va_copy(ap_copy, ap);
+    size_t needed = vsnprintf_enhanced(NULL, 0, format, ap_copy);
+    va_end(ap_copy);
+
+    size_t buffer_size = needed + 1;
+    if (buffer_size > sizeof(stack_buffer)) {
+        buffer = (char *)malloc(buffer_size);
+        if (!buffer) {
+            buffer = stack_buffer;
+            buffer_size = sizeof(stack_buffer);
+        }
+    }
+
+    int len = (int)vsnprintf_enhanced(buffer, buffer_size, format, ap);
 
     // Output to console
     if (len > 0) {
         fwrite(buffer, 1, len, stdout);
     }
 
+    if (buffer != stack_buffer) {
+        free(buffer);
+    }
     return len;
 }
 
 // vfprintf - format and output to FILE stream using va_list
 int vfprintf(FILE *stream, const char *format, va_list ap) {
-    char buffer[1024];
-    int len = vsnprintf_enhanced(buffer, sizeof(buffer), format, ap);
+    char stack_buffer[1024];
+    char *buffer = stack_buffer;
+    va_list ap_copy;
+    va_copy(ap_copy, ap);
+    size_t needed = vsnprintf_enhanced(NULL, 0, format, ap_copy);
+    va_end(ap_copy);
+
+    size_t buffer_size = needed + 1;
+    if (buffer_size > sizeof(stack_buffer)) {
+        buffer = (char *)malloc(buffer_size);
+        if (!buffer) {
+            buffer = stack_buffer;
+            buffer_size = sizeof(stack_buffer);
+        }
+    }
+
+    int len = (int)vsnprintf_enhanced(buffer, buffer_size, format, ap);
 
     if (len > 0) {
-        if (len >= (int)sizeof(buffer)) len = sizeof(buffer) - 1;
         fwrite(buffer, 1, len, stream);
     }
 
+    if (buffer != stack_buffer) {
+        free(buffer);
+    }
     return len;
 }
 

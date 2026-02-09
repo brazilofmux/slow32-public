@@ -1,11 +1,20 @@
 #include <stdint.h>
 
+#include "errno.h"
 #include "mmio_ring.h"
 
 extern void yield(void);
 
 static unsigned int next_index(unsigned int value) {
     return (value + 1u) % S32_MMIO_RING_ENTRIES;
+}
+
+static void set_errno_for_status(unsigned int status) {
+    if (status == S32_MMIO_STATUS_EINTR) {
+        errno = EINTR;
+    } else if (status == S32_MMIO_STATUS_ERR) {
+        errno = EIO;
+    }
 }
 
 int s32_mmio_request(unsigned int opcode,
@@ -44,5 +53,6 @@ int s32_mmio_request(unsigned int opcode,
     unsigned int result = resp_ring[resp_desc + 3];
 
     S32_MMIO_RESP_TAIL = next_index(resp_tail);
+    set_errno_for_status(result);
     return (int)result;
 }
