@@ -5106,7 +5106,8 @@ cold_loop:
     # Conditional prompt: check var_prompt_enabled
     .word xt_lit, var_prompt_enabled
     .word xt_fetch
-    .word xt_0branch, 20     # skip 5 cells if prompts disabled
+    .word xt_0branch, (cold_after_prompt - .Lcp1)
+.Lcp1:
     .word xt_lit, str_prompt, xt_lit, 4, xt_type
 
 cold_after_prompt:
@@ -5116,15 +5117,20 @@ cold_after_prompt:
 
     # Check EOF: count == -1?
     .word xt_dup, xt_lit, -1, xt_equals
-    .word xt_0branch, 8   # skip 2 cells if NOT EOF
+    .word xt_0branch, (.Lcp3 - .Lcp2)
+.Lcp2:
     .word xt_drop, xt_bye  # EOF: exit
 
+.Lcp3:
     # Check blank line: count == 0?
     .word xt_dup, xt_zero_equal
-    .word xt_0branch, 12   # skip 3 cells if NOT blank
+    .word xt_0branch, (.Lcp6 - .Lcp4)
+.Lcp4:
     .word xt_drop
-    .word xt_branch, -116  # blank: loop back to cold_loop
+    .word xt_branch, (cold_loop - .Lcp5)
+.Lcp5:
 
+.Lcp6:
     # Normal line: interpret
     .word xt_num_tib   # #TIB address
     .word xt_store     # #TIB !
@@ -5132,7 +5138,8 @@ cold_after_prompt:
     .word xt_to_in
     .word xt_store     # >IN !
     .word xt_interpret
-    .word xt_branch, -152  # back to cold_loop
+    .word xt_branch, (cold_loop - .Lcp7)
+.Lcp7:
 
 
 .data

@@ -15,6 +15,7 @@
 #define MAX_DATA_SIZE (1024 * 1024)  // 1MB max data section
 #define MAX_RELOCATIONS 16384
 #define MAX_STRING_TABLE (256 * 1024) // 256KB string table
+#define MAX_LABEL_DIFFS 256
 
 // SLOW-32 assembler now only outputs object files (.s32o)
 // Binary executables are created by the linker (.s32x)
@@ -63,6 +64,8 @@ typedef struct {
     int32_t val;
     char symbol[64];
     bool has_symbol;
+    char minus_symbol[64];   // For label1 - label2 expressions
+    bool has_minus_symbol;
     bool is_hi;
     bool is_lo;
     bool is_pcrel_hi;
@@ -194,9 +197,14 @@ static bool parse_expression(scanner_t *s, expr_result_t *res) {
         else res->val -= rhs.val;
         if (rhs.has_symbol) {
             if (res->has_symbol && op == TOK_PLUS) return false;
-            if (res->has_symbol && op == TOK_MINUS) return false;
-            strcpy(res->symbol, rhs.symbol);
-            res->has_symbol = true;
+            if (res->has_symbol && op == TOK_MINUS) {
+                // label1 - label2: store as label difference
+                strcpy(res->minus_symbol, rhs.symbol);
+                res->has_minus_symbol = true;
+            } else {
+                strcpy(res->symbol, rhs.symbol);
+                res->has_symbol = true;
+            }
         }
     }
     return true;
@@ -305,6 +313,15 @@ typedef struct {
     uint32_t data_start_addr;   // Starting address of data section (0x100000)
     bool generate_object;       // True for object file, false for executable
     
+    // Label-difference fixups (resolved after all labels are defined)
+    struct {
+        int instruction_index;       // which instruction slot to patch
+        char plus_symbol[64];        // positive label
+        char minus_symbol[64];       // negative label
+        int32_t addend;              // constant addend
+    } label_diffs[MAX_LABEL_DIFFS];
+    int num_label_diffs;
+
     // String table
     char string_table[MAX_STRING_TABLE];
     uint32_t string_table_size;
@@ -874,12 +891,34 @@ static bool assemble_line(assembler_t *as, char *line) {
             }
             return true;
         } else if (strcmp(tokens[0], ".word") == 0 && num_tokens > 1) {
-            // .word - emit 32-bit words (numbers or symbols → REL_32)
+            // .word - emit 32-bit words (numbers, symbols → REL_32, or label diffs)
             for (int i = 1; i < num_tokens; i++) {
-                char sym[64]; int is_hi=0, is_lo=0; int hi_p=0, lo_p=0; int32_t addend=0; bool has_symbol=false;
-                int val = parse_immediate_or_symbol_ex(tokens[i], sym, &is_hi, &is_lo, &hi_p, &lo_p, &addend, &has_symbol);
-                if (has_symbol) {
-                    if (is_hi || is_lo) {
+                expr_result_t res = {0};
+                if (!parse_expression_all(tokens[i], &res)) {
+                    fprintf(stderr, ".word: failed to parse expression '%s'\n", tokens[i]);
+                    return false;
+                }
+                if (res.has_symbol && res.has_minus_symbol) {
+                    // Label difference: sym - minus_sym + val
+                    // Store placeholder, resolve after all labels defined
+                    if (as->num_label_diffs >= MAX_LABEL_DIFFS) {
+                        fprintf(stderr, "Too many label-difference fixups\n");
+                        return false;
+                    }
+                    ensure_instruction_capacity(as, 1);
+                    int idx = as->num_instructions;
+                    as->instructions[idx].instruction = 0;  // placeholder
+                    as->instructions[idx].address = as->current_addr;
+                    as->instructions[idx].section = as->current_section;
+                    as->instructions[idx].is_data_byte = false;
+                    as->num_instructions++;
+                    strcpy(as->label_diffs[as->num_label_diffs].plus_symbol, res.symbol);
+                    strcpy(as->label_diffs[as->num_label_diffs].minus_symbol, res.minus_symbol);
+                    as->label_diffs[as->num_label_diffs].addend = res.val;
+                    as->label_diffs[as->num_label_diffs].instruction_index = idx;
+                    as->num_label_diffs++;
+                } else if (res.has_symbol) {
+                    if (res.is_hi || res.is_lo) {
                         fprintf(stderr, ".word %%hi/%%lo not supported here; use plain symbol or split words\n");
                         return false;
                     }
@@ -890,14 +929,14 @@ static bool assemble_line(assembler_t *as, char *line) {
                     as->instructions[as->num_instructions].section = as->current_section;
                     as->instructions[as->num_instructions].is_data_byte = false;
                     as->num_instructions++;
-                    add_relocation(as, as->current_addr, sym, S32O_REL_32, addend, as->current_section);
+                    add_relocation(as, as->current_addr, res.symbol, S32O_REL_32, res.val, as->current_section);
                     if (getenv("DEBUG_RELOC")) {
                         fprintf(stderr, "Added REL_32 relocation for symbol '%s' at offset 0x%x in section %d\n",
-                                sym, as->current_addr, as->current_section);
+                                res.symbol, as->current_addr, as->current_section);
                     }
                 } else {
                     ensure_instruction_capacity(as, 1);
-                    as->instructions[as->num_instructions].instruction = (uint32_t)val;
+                    as->instructions[as->num_instructions].instruction = (uint32_t)res.val;
                     as->instructions[as->num_instructions].address = as->current_addr;
                     as->instructions[as->num_instructions].section = as->current_section;
                     as->instructions[as->num_instructions].is_data_byte = false;
@@ -1743,7 +1782,37 @@ static bool assemble_line(assembler_t *as, char *line) {
 
 
 // Write object file (.s32o format)
+static int resolve_label_diffs(assembler_t *as) {
+    for (int i = 0; i < as->num_label_diffs; i++) {
+        label_t *plus = find_label(as, as->label_diffs[i].plus_symbol);
+        label_t *minus = find_label(as, as->label_diffs[i].minus_symbol);
+        if (!plus || !plus->is_defined) {
+            fprintf(stderr, "Label difference: undefined symbol '%s'\n",
+                    as->label_diffs[i].plus_symbol);
+            return -1;
+        }
+        if (!minus || !minus->is_defined) {
+            fprintf(stderr, "Label difference: undefined symbol '%s'\n",
+                    as->label_diffs[i].minus_symbol);
+            return -1;
+        }
+        if (plus->section != minus->section) {
+            fprintf(stderr, "Label difference: '%s' and '%s' are in different sections\n",
+                    as->label_diffs[i].plus_symbol, as->label_diffs[i].minus_symbol);
+            return -1;
+        }
+        int32_t val = (int32_t)(plus->address - minus->address) + as->label_diffs[i].addend;
+        as->instructions[as->label_diffs[i].instruction_index].instruction = (uint32_t)val;
+    }
+    return 0;
+}
+
 static int write_object_file(assembler_t *as, const char *filename) {
+    // Resolve label-difference fixups before emitting
+    if (as->num_label_diffs > 0) {
+        if (resolve_label_diffs(as) != 0) return -1;
+    }
+
     FILE *f = fopen(filename, "wb");
     if (!f) {
         fprintf(stderr, "Cannot open output file: %s\n", filename);
