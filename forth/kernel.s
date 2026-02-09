@@ -1393,6 +1393,22 @@ interpret_resume:
 
 interpret_error:
     addi r28, r28, 8         # drop n and flag
+    # Print the offending word from PAD (counted string)
+    lui r1, %hi(pad)
+    addi r1, r1, %lo(pad)
+    ldbu r2, r1, 0           # r2 = length
+    addi r1, r1, 1           # r1 = first char
+    add r4, r0, r0           # r4 = index
+interpret_error_print:
+    bge r4, r2, interpret_error_done
+    add r5, r1, r4
+    ldbu r3, r5, 0
+    debug r3
+    addi r4, r4, 1
+    jal r0, interpret_error_print
+interpret_error_done:
+    addi r3, r0, 32          # space
+    debug r3
     addi r3, r0, 63          # '?'
     debug r3
     addi r3, r0, 10          # newline
