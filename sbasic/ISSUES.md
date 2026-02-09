@@ -39,9 +39,7 @@ Added `LOC(h)` (current byte position), `LOF(h)` (file length via seek), and `IN
     - `COMMAND$`: Get the command-line arguments passed to the interpreter.
 - **Context**: The SLOW-32 MMIO runtime already provides these hooks; they just need BASIC-level wrappers.
 
-### 10. `REPLACE$(str, find, rep)`
-- **Status**: **Already implemented** in `builtin.c` (`fn_replace`). Registered in the dispatch table as `REPLACE$`.
+### 10. ~~`REPLACE$(str, find, rep)`~~ **FIXED** (already implemented)
 
-### 11. High-Resolution `TIMER`
-- **Problem**: The current `TIMER` returns a hardcoded `val_integer(0)` — there is no clock implementation at all, not even `time(NULL)`.
-- **Recommendation**: Use `gettimeofday` or a cycles-based counter (if available in the emulator) to provide a meaningful timer value.
+### 11. ~~High-Resolution `TIMER`~~ **FIXED**
+`TIMER` now calls `time()` + `localtime()` via MMIO and returns seconds since midnight as a double, matching QBasic semantics.

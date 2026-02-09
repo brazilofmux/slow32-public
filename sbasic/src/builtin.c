@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <math.h>
+#include <time.h>
 
 /* Simple LCG random number generator */
 static unsigned int rng_state = 12345;
@@ -505,11 +506,13 @@ static error_t fn_replace(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
-/* TIMER - seconds since midnight (integer for simplicity on SLOW-32) */
+/* TIMER - seconds since midnight */
 static error_t fn_timer(value_t *args, int nargs, value_t *out) {
     if (nargs != 0) return ERR_ILLEGAL_FUNCTION_CALL;
-    /* No clock on SLOW-32, return 0 */
-    *out = val_integer(0);
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+    if (!tm) { *out = val_integer(0); return ERR_NONE; }
+    *out = val_double((double)(tm->tm_hour * 3600 + tm->tm_min * 60 + tm->tm_sec));
     return ERR_NONE;
 }
 
