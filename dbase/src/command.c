@@ -11,6 +11,7 @@
 #include "memvar.h"
 #include "set.h"
 #include "program.h"
+#include "screen.h"
 
 /* ---- Work area infrastructure ---- */
 #define MAX_AREAS 10
@@ -39,11 +40,16 @@ static int stage3_initialized;
 static dbf_t *area_lookup(const char *alias);
 
 /* ---- Helper: initialize expr_ctx ---- */
+static int screen_initialized;
 static void ctx_setup(void) {
     if (!stage3_initialized) {
         memvar_init(&memvar_store);
         set_init(&set_opts);
         stage3_initialized = 1;
+    }
+    if (!screen_initialized) {
+        screen_init();
+        screen_initialized = 1;
     }
     expr_ctx.db = cur_db();
     expr_ctx.vars = &memvar_store;
@@ -2196,7 +2202,16 @@ int cmd_execute(dbf_t *db, char *line) {
     }
 
     if (str_imatch(p, "SET")) {
-        set_execute(&set_opts, p + 3);
+        char *rest = skip_ws(p + 3);
+        if (str_imatch(rest, "COLOR")) {
+            rest = skip_ws(rest + 5);
+            if (str_imatch(rest, "TO"))
+                screen_set_color(skip_ws(rest + 2));
+            else
+                printf("Syntax: SET COLOR TO <color-spec>\n");
+        } else {
+            set_execute(&set_opts, rest);
+        }
         return 0;
     }
 
@@ -2232,6 +2247,22 @@ int cmd_execute(dbf_t *db, char *line) {
 
     if (str_imatch(p, "WAIT")) {
         cmd_wait(p + 4);
+        return 0;
+    }
+
+    if (str_imatch(p, "CLEAR")) {
+        screen_clear();
+        return 0;
+    }
+
+    if (str_imatch(p, "READ")) {
+        screen_read();
+        return 0;
+    }
+
+    /* @ command (screen I/O) */
+    if (p[0] == '@') {
+        screen_at_cmd(p);
         return 0;
     }
 
