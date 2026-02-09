@@ -18,7 +18,8 @@
 ...
 
 # CHECK-LABEL: name: call_direct
-# CHECK:       JAL @callee, implicit $r29, implicit-def $r1, implicit-def $r2
+# CHECK:       JAL_CALLR @callee, implicit-def $r1, implicit-def $r2
+# CHECK-SAME:  implicit $r29, implicit $r29
 # CHECK-SAME:  implicit-def $r3, implicit-def $r4, implicit-def $r5
 # CHECK-SAME:  implicit-def $r6, implicit-def $r7, implicit-def $r8
 # CHECK-SAME:  implicit-def $r9, implicit-def $r10, implicit-def $r31

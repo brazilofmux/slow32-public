@@ -1,36 +1,18 @@
 ; RUN: llc -mtriple=slow32-unknown-none < %s | FileCheck %s
 ;
-; Ensure that the custom UMUL_LOHI expansion keeps every 16-bit partial
-; product separate and feeds the carries into the high word.  The pattern below
-; captures the key masks, shifts, and adds so regressions in the multiply-high
-; logic trigger a meaningful failure.
+; Ensure that the mulhu instruction is used for unsigned 64-bit multiplication,
+; resulting in a compact 6-instruction sequence.
 
 define i64 @mul64(i64 %a, i64 %b) nounwind {
 ; CHECK-LABEL: mul64:
-; CHECK: lui [[MASKHI:[^,]+]], 16
-; CHECK: addi [[MASK:[^,]+]], [[MASKHI]], -1
-; CHECK: and [[BL:[^,]+]], {{[^,]+}}, [[MASK]]
-; CHECK: srli [[AH:[^,]+]], {{[^,]+}}, 16
-; CHECK: mul [[P2:[^,]+]], [[AH]], [[BL]]
-; CHECK: and [[P2LO:[^,]+]], [[P2]], [[MASK]]
-; CHECK: and [[AL:[^,]+]], {{[^,]+}}, [[MASK]]
-; CHECK: srli [[BH:[^,]+]], {{[^,]+}}, 16
-; CHECK: mul [[P1:[^,]+]], [[AL]], [[BH]]
-; CHECK: and [[P1LO:[^,]+]], [[P1]], [[MASK]]
-; CHECK: add [[MID:[^,]+]], [[P1LO]], [[P2LO]]
-; CHECK: mul [[P0:[^,]+]], [[AL]], [[BL]]
-; CHECK: srli [[P0HI:[^,]+]], [[P0]], 16
-; CHECK: add [[MID]], [[MID]], [[P0HI]]
-; CHECK: slli [[SHIFT:[^,]+]], [[MID]], 16
-; CHECK: and [[P0LO:[^,]+]], [[P0]], [[MASK]]
-; CHECK: or {{[^,]+}}, [[P0LO]], [[SHIFT]]
-; CHECK: srli [[MIDHI:[^,]+]], [[MID]], 16
-; CHECK: mul [[P3:[^,]+]], [[AH]], [[BH]]
-; CHECK: srli [[P1HI:[^,]+]], [[P1]], 16
-; CHECK: add [[HIACC:[^,]+]], [[P3]], [[P1HI]]
-; CHECK: srli [[P2HI:[^,]+]], [[P2]], 16
-; CHECK: add [[HIACC]], [[HIACC]], [[P2HI]]
-; CHECK: add {{[^,]+}}, [[HIACC]], [[MIDHI]]
+; CHECK:       # %bb.0:
+; CHECK-NEXT:    mul [[T1:r[0-9]+]], r3, r6
+; CHECK-NEXT:    mulhu [[H1:r[0-9]+]], r3, r5
+; CHECK-NEXT:    add [[T1]], [[H1]], [[T1]]
+; CHECK-NEXT:    mul [[T2:r[0-9]+]], r4, r5
+; CHECK-NEXT:    add r2, [[T1]], [[T2]]
+; CHECK-NEXT:    mul r1, r3, r5
+; CHECK-NEXT:    jalr r0, r31, 0
 entry:
   %p = mul i64 %a, %b
   ret i64 %p
