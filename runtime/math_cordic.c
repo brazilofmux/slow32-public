@@ -94,12 +94,12 @@ double cordic_vector_circular(double x, double y) {
     for (int i = 0; i < 52; i++) {
         double x_next;
         if (y < 0) {
-            x_next = x, x_next += y * p2;
-            y = y - x * p2;
+            x_next = x - y * p2;
+            y = y + x * p2;
             z -= atan_table[i];
         } else {
-            x_next = x, x_next -= y * p2;
-            y = y + x * p2;
+            x_next = x + y * p2;
+            y = y - x * p2;
             z += atan_table[i];
         }
         x = x_next;
@@ -194,7 +194,11 @@ double cordic_atan2(double y, double x) {
 }
 
 double cordic_exp(double z) {
+    /* Range reduction: exp(z) = 2^k * exp(r), |r| <= ln(2)/2 */
+    int k = (int)(z * (1.0 / 0.6931471805599453) + (z >= 0.0 ? 0.5 : -0.5));
+    double r = z - (double)k * 0.6931471805599453;
+
     double x = 1.0, y = 0.0;
-    cordic_rotate_hyperbolic(&x, &y, z);
-    return x + y;
+    cordic_rotate_hyperbolic(&x, &y, r);
+    return ldexp(x + y, k);
 }
