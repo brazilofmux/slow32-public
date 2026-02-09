@@ -13,12 +13,9 @@ The linker uses multiple fixed-size arrays for its core data structures:
 - **Problem**: There are insufficient bounds checks when adding to these tables (especially in `load_object_file`, `merge_sections`, and `build_symbol_table`). Exceeding these limits will cause memory corruption or crashes.
 - **Recommendation**: Switch to dynamically allocated arrays that grow as needed, or at a minimum, add strict `if (count >= MAX) { error(); }` checks to every insertion point.
 
-### 2. `strncpy` and `strcpy` Safety
-Multiple call sites use `strncpy` or `strcpy` into fixed-size buffers:
-- `symbol_entry_t.name` (256 bytes)
-- `combined_section_t.name` (64 bytes)
-- **Problem**: `strncpy(dest, src, sizeof(dest)-1)` does not guarantee null-termination if the source is too long. `strcpy` is inherently unsafe.
-- **Recommendation**: Use a helper that ensures null-termination or use `snprintf(dest, sizeof(dest), "%s", src)`.
+### 2. `strncpy` and `strcpy` Safety (Resolved)
+Multiple call sites used `strncpy` or `strcpy` into fixed-size buffers.
+- **Status**: Fixed in `e7de1d1`. Introduced `copy_string()` helper that ensures null-termination and replaced all unsafe usage sites.
 
 ### 3. Memory Leaks in `load_archive_file`
 When an archive is processed, several large buffers are allocated:
@@ -54,10 +51,9 @@ The linker assumes 4-byte alignment for most things but does not strictly honor 
 - **Problem**: This limits total memory usage and doesn't account for the actually available RAM in the emulator or the MMIO region.
 - **Recommendation**: Allow the stack base to be configurable or calculate it based on total memory.
 
-### 8. `PCREL_LO12` Implementation is Incomplete
-The code for `S32O_REL_PCREL_LO12` (lines 1548+) contains a comment "may need adjustment" and uses the symbol value directly.
-- **Problem**: PC-relative loads/stores in RISC-V/SLOW-32 are usually paired with an `AUIPC` at a specific address. The `LO12` part must be relative to the *address of the AUIPC*, not the current PC of the load/store.
-- **Recommendation**: Implement proper pairing logic where `LO12` relocations find their associated `HI20` parent to calculate the correct delta.
+### 8. `PCREL_LO12` Implementation is Incomplete (Resolved)
+The code for `S32O_REL_PCREL_LO12` previously used the symbol value directly and lacked pairing logic.
+- **Status**: Fixed in `e7de1d1`. Added `find_pcrel_hi_pc()` to find the matching `PCREL_HI20` (AUIPC) address and correctly calculate the 12-bit delta from that address.
 
 ---
 

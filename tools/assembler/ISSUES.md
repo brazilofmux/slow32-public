@@ -8,12 +8,12 @@ This document tracks bugs, architectural limitations, and potential improvements
 The assembler uses fixed-size arrays for symbols and relocations.
 - **Status**: Fixed. Symbol table in `write_object_file` is now heap-allocated via `malloc` and has bounds checks on `num_symbols` in both symbol-adding loops. Relocation table already had a bounds check in `add_relocation`.
 
-### 2. `strncpy` Null-Termination Risks
-Multiple call sites use `strncpy` with a length exactly matching the destination buffer size.
-- **Problem**: If an identifier or symbol is exactly 63 characters long, `strncpy(dst, src, 63)` will not null-terminate the buffer.
-- **Affected sites**: `add_relocation`, `assemble_line`, and `instruction_t` label/symbol references.
+### 2. `strncpy` Null-Termination Risks (Partially Resolved)
+Multiple call sites use `strncpy` or `strcpy` with lengths exactly matching the destination buffer size.
+- **Status**: Partially fixed in `af5e7d8`. Added explicit null-termination to `add_relocation`.
+- **Problem**: Other sites like `add_label` and `instruction_t` assignments still use `strcpy` or potentially unsafe `strncpy`.
 - **Mitigating factor**: The scanner limits identifiers to 63 chars, so in practice overflow cannot occur from source code input.
-- **Recommendation**: Use a safer wrapper or manually ensure null-termination: `strncpy(dst, src, 63); dst[63] = '\0';`.
+- **Recommendation**: Use a safer wrapper or manually ensure null-termination for all remaining sites.
 
 ### 3. Redundant and Duplicate Section Logic (Resolved)
 The handling of `.text`, `.data`, and `.bss` was duplicated in `assemble_line`.

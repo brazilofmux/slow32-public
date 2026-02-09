@@ -18,7 +18,7 @@ CFLAGS = $(CFLAGS_BASE) $(OPT_LEVEL)
 # Compiler runtime objects (always needed, linked last)
 # These provide compiler support functions like division, intrinsics
 COMPILER_RT_OBJS = intrinsics.s32o intrinsics_extra.s32o math_hw.s32o math_soft.s32o \
-                   builtins.s32o divsi3.s32o \
+                   math_cordic.s32o builtins.s32o divsi3.s32o \
                    debug_char.s32o
 
 # Core C library objects (common to all libc versions)
@@ -64,7 +64,7 @@ C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_util
             exit_mmio.c exit_debug.c envp_mmio.c envp_stub.c \
             cxxabi.c time_extra.c math_int.c dtoa.c errno.c \
             fs_mmio.c fs_stub.c dirent_mmio.c dirent_stub.c \
-            math_hw.c math_soft.c
+            math_hw.c math_soft.c math_cordic.c
 
 # Default target builds everything
 all: tools $(ALL_OBJS) libs32.s32a libc_debug.s32a libc_mmio.s32a
@@ -108,6 +108,10 @@ math_hw.ll: math_hw.c
 
 math_soft.ll: OPT_LEVEL = -O2
 math_soft.ll: math_soft.c
+	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) -fno-builtin $< -o $@
+
+math_cordic.ll: OPT_LEVEL = -O2
+math_cordic.ll: math_cordic.c
 	$(CLANG) $(CFLAGS_BASE) $(OPT_LEVEL) -fno-builtin $< -o $@
 
 dtoa.ll: OPT_LEVEL = -O2

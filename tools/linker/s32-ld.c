@@ -1331,6 +1331,13 @@ static void update_symbol_values(linker_state_t *ld) {
 // Apply relocations
 // Find the AUIPC PC for a matching PCREL_HI20 relocation.
 // Returns true and sets hi_pc_out on success.
+//
+// NOTE: Matches by (symbol, file, section, addend) and returns the first hit.
+// If two AUIPC instructions target the same symbol in the same section, this
+// could return the wrong one. RISC-V solves this by having LO12 reference the
+// AUIPC label rather than the target symbol. Currently not a problem since no
+// code in the toolchain uses %pcrel_hi/%pcrel_lo relocations. If PCREL is ever
+// used for real, this needs proximity-based matching or the RISC-V label approach.
 static bool find_pcrel_hi_pc(linker_state_t *ld, relocation_entry_t *rel, uint32_t *hi_pc_out) {
     for (int j = 0; j < ld->num_relocations; j++) {
         relocation_entry_t *other = &ld->relocations[j];

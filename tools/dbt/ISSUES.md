@@ -5,8 +5,8 @@ This document tracks bugs, architectural limitations, and opportunities for impr
 ## Critical Bugs & Safety Issues
 
 ### 1. Out-of-Bounds Register Access for `f64` (Resolved)
-The DBT's `load_f64_pair`/`store_f64_pair` helper functions access `regs[r]` and `regs[r+1]`.
-- **Status**: Fixed. Added validation in `load_f64_pair` and `store_f64_pair` to check that register index is even and < 31. Reports diagnostic on violation.
+The DBT's `load_f64_pair`/`store_f64_pair` and `load_u64_pair`/`store_u64_pair` helper functions access `regs[r]` and `regs[r+1]`.
+- **Status**: Fixed in `64bb59b`. All register-pair access paths in `dbt_fp_helper` (including `FNEG.D`, `FABS.D`, and all 64-bit integer conversions) now use validated helper functions that check if the register index is even and < 31.
 
 ### 2. Unchecked Memory Allocations
 Host-side allocations in `dbt_cpu_init`, `dbt_init_mmio`, and `translate_block` are often unchecked or only partially checked.

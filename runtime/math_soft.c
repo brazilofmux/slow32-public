@@ -19,6 +19,17 @@
 
 #include <math.h>
 
+#ifndef DISABLE_CORDIC
+#define USE_CORDIC
+#endif
+
+#ifdef USE_CORDIC
+extern double cordic_sin(double z);
+extern double cordic_cos(double z);
+extern double cordic_atan2(double y, double x);
+extern double cordic_exp(double z);
+#endif
+
 /* ================================================================
  * IEEE 754 bit manipulation (little-endian doubles: IEEE_8087)
  * u[0] = low 32 bits, u[1] = high 32 bits (sign | exponent | mantissa_hi)
@@ -183,12 +194,16 @@ double fmod(double x, double y) {
  * Exponential and logarithmic
  * ================================================================ */
 
-/* exp(x) via Taylor series with range reduction:
+/* exp(x) via Taylor series with range reduction (Default)
+ *              or CORDIC (if USE_CORDIC is defined)
  * exp(x) = 2^k * exp(r) where r = x - k*ln(2), |r| < ln(2)/2 */
 double exp(double x) {
     if (x > 709.0) return mk_inf();
     if (x < -709.0) return 0.0;
 
+#ifdef USE_CORDIC
+    return cordic_exp(x);
+#else
     int k = (int)(x / LN2 + (x >= 0.0 ? 0.5 : -0.5));
     double r = x - (double)k * LN2;
 
@@ -200,6 +215,7 @@ double exp(double x) {
         if (fabs(term) < 1e-16 * fabs(sum)) break;
     }
     return ldexp(sum, k);
+#endif
 }
 
 /* log(x) via atanh series after range reduction to [0.5, 2.0] */
@@ -252,12 +268,15 @@ double pow(double x, double y) {
 }
 
 /* ================================================================
- * Trigonometric — Taylor series with range reduction
+ * Trigonometric — Taylor series with range reduction (Default)
+ *              or CORDIC (if USE_CORDIC is defined)
  * ================================================================ */
 
 double sin(double x) {
     if (x != x) return x;
-
+#ifdef USE_CORDIC
+    return cordic_sin(x);
+#else
     /* Range reduce to [-pi, pi] */
     x = fmod(x, TWO_PI);
     if (x > PI) x -= TWO_PI;
@@ -271,10 +290,15 @@ double sin(double x) {
         sum += term;
     }
     return sum;
+#endif
 }
 
 double cos(double x) {
+#ifdef USE_CORDIC
+    return cordic_cos(x);
+#else
     return sin(x + HALF_PI);
+#endif
 }
 
 double tan(double x) {
@@ -291,7 +315,9 @@ double tan(double x) {
 /* atan(x) via Taylor series with range reduction */
 double atan(double x) {
     if (x != x) return x;
-
+#ifdef USE_CORDIC
+    return cordic_atan2(x, 1.0);
+#else
     int neg = 0, recip = 0;
     if (x < 0.0) { neg = 1; x = -x; }
     if (x > 1.0) { recip = 1; x = 1.0 / x; }
@@ -319,10 +345,14 @@ double atan(double x) {
     if (recip) result = HALF_PI - result;
     if (neg) result = -result;
     return result;
+#endif
 }
 
 double atan2(double y, double x) {
     if (x != x || y != y) return mk_nan();
+#ifdef USE_CORDIC
+    return cordic_atan2(y, x);
+#else
     if (x > 0.0) return atan(y / x);
     if (x < 0.0)
         return (y >= 0.0) ? atan(y / x) + PI : atan(y / x) - PI;
@@ -330,6 +360,7 @@ double atan2(double y, double x) {
     if (y > 0.0) return HALF_PI;
     if (y < 0.0) return -HALF_PI;
     return 0.0;
+#endif
 }
 
 double asin(double x) {
