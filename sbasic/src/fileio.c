@@ -29,16 +29,22 @@ error_t fileio_open(const char *filename, file_mode_t mode, int handle) {
         case FMODE_INPUT:  fmode = "r"; break;
         case FMODE_OUTPUT: fmode = "w"; break;
         case FMODE_APPEND: fmode = "a"; break;
+        case FMODE_BINARY:
+        case FMODE_RANDOM: fmode = "r+b"; break;
         default: return ERR_ILLEGAL_FUNCTION_CALL;
     }
 
     FILE *fp = fopen(filename, fmode);
+    /* BINARY/RANDOM: if file doesn't exist, create it */
+    if (!fp && (mode == FMODE_BINARY || mode == FMODE_RANDOM))
+        fp = fopen(filename, "w+b");
     if (!fp) return ERR_FILE_NOT_FOUND;
 
     handles[handle].fp = fp;
     handles[handle].mode = mode;
     handles[handle].in_use = 1;
     handles[handle].col = 0;
+    handles[handle].reclen = 0;
     return ERR_NONE;
 }
 
@@ -59,6 +65,7 @@ error_t fileio_close(int handle) {
     handles[handle].in_use = 0;
     handles[handle].mode = FMODE_NONE;
     handles[handle].col = 0;
+    handles[handle].reclen = 0;
     return ERR_NONE;
 }
 
@@ -104,4 +111,20 @@ error_t fileio_kill(const char *filename) {
     if (remove(filename) != 0)
         return ERR_FILE_NOT_FOUND;
     return ERR_NONE;
+}
+
+void fileio_set_reclen(int handle, int reclen) {
+    if (handle < 1 || handle > MAX_FILE_HANDLES) return;
+    handles[handle].reclen = reclen;
+}
+
+file_mode_t fileio_get_mode(int handle) {
+    if (handle < 1 || handle > MAX_FILE_HANDLES) return FMODE_NONE;
+    if (!handles[handle].in_use) return FMODE_NONE;
+    return handles[handle].mode;
+}
+
+int fileio_get_reclen(int handle) {
+    if (handle < 1 || handle > MAX_FILE_HANDLES) return 0;
+    return handles[handle].reclen;
 }

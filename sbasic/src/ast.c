@@ -470,6 +470,7 @@ void stmt_free(stmt_t *s) {
             case STMT_OPEN:
                 expr_free(s->open_stmt.filename);
                 expr_free(s->open_stmt.handle_num);
+                expr_free(s->open_stmt.reclen);
                 break;
             case STMT_CLOSE:
                 if (s->close_stmt.handle_num) expr_free(s->close_stmt.handle_num);
@@ -493,6 +494,15 @@ void stmt_free(stmt_t *s) {
             case STMT_NAME:
                 expr_free(s->name_stmt.oldname);
                 expr_free(s->name_stmt.newname);
+                break;
+            case STMT_GET:
+            case STMT_PUT:
+                expr_free(s->get_put_stmt.handle_num);
+                expr_free(s->get_put_stmt.position);
+                break;
+            case STMT_SEEK:
+                expr_free(s->seek_stmt.seek_handle);
+                expr_free(s->seek_stmt.seek_position);
                 break;
             case STMT_TYPE_DEF:
             case STMT_DIM_AS_TYPE:
@@ -639,12 +649,14 @@ stmt_t *stmt_sleep(expr_t *duration, int line) {
 }
 
 /* Stage 5 */
-stmt_t *stmt_open(expr_t *filename, int mode, expr_t *handle, int line) {
+stmt_t *stmt_open(expr_t *filename, int mode, expr_t *handle,
+                   expr_t *reclen, int line) {
     stmt_t *s = stmt_alloc(STMT_OPEN, line);
     if (!s) return NULL;
     s->open_stmt.filename = filename;
     s->open_stmt.mode = mode;
     s->open_stmt.handle_num = handle;
+    s->open_stmt.reclen = reclen;
     return s;
 }
 
@@ -735,6 +747,36 @@ stmt_t *stmt_name(expr_t *oldname, expr_t *newname, int line) {
     if (!s) return NULL;
     s->name_stmt.oldname = oldname;
     s->name_stmt.newname = newname;
+    return s;
+}
+
+stmt_t *stmt_get(expr_t *handle, expr_t *position,
+                 const char *varname, val_type_t vartype, int line) {
+    stmt_t *s = stmt_alloc(STMT_GET, line);
+    if (!s) return NULL;
+    s->get_put_stmt.handle_num = handle;
+    s->get_put_stmt.position = position;
+    name_copy(s->get_put_stmt.varname, varname);
+    s->get_put_stmt.vartype = vartype;
+    return s;
+}
+
+stmt_t *stmt_put(expr_t *handle, expr_t *position,
+                 const char *varname, val_type_t vartype, int line) {
+    stmt_t *s = stmt_alloc(STMT_PUT, line);
+    if (!s) return NULL;
+    s->get_put_stmt.handle_num = handle;
+    s->get_put_stmt.position = position;
+    name_copy(s->get_put_stmt.varname, varname);
+    s->get_put_stmt.vartype = vartype;
+    return s;
+}
+
+stmt_t *stmt_seek(expr_t *handle, expr_t *position, int line) {
+    stmt_t *s = stmt_alloc(STMT_SEEK, line);
+    if (!s) return NULL;
+    s->seek_stmt.seek_handle = handle;
+    s->seek_stmt.seek_position = position;
     return s;
 }
 

@@ -35,9 +35,8 @@ Bumped `shared_names` array from 32 to 64 entries.
 
 ## Language Completeness & Opportunities
 
-### 8. Binary/Random File I/O (`GET`, `PUT`, `FIELD`)
-- **Opportunity**: Support for `OPEN "file" FOR RANDOM / BINARY` and the associated `GET #h, pos, var` and `PUT #h, pos, var`.
-- **Context**: Essential for database-like applications or processing non-text files.
+### 8. ~~Binary/Random File I/O (`GET`, `PUT`)~~ **FIXED**
+Added `OPEN ... FOR BINARY` and `OPEN ... FOR RANDOM ... LEN = n` modes with typed `GET #h, [pos], var` / `PUT #h, [pos], var` and `SEEK #h, pos`. BINARY uses 1-based byte offsets; RANDOM uses 1-based record numbers. INTEGER reads/writes 4 bytes, DOUBLE 8 bytes, STRING reads/writes LEN(var$) bytes. No FIELD/LSET/RSET (architectural mismatch with refcounted strings).
 
 ### 9. `STATIC` Variables in Procedures
 - **Opportunity**: The `STATIC` keyword for `SUB/FUNCTION` variables to preserve their value between calls.

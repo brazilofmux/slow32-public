@@ -11,6 +11,8 @@ typedef enum {
     FMODE_INPUT,
     FMODE_OUTPUT,
     FMODE_APPEND,
+    FMODE_BINARY,
+    FMODE_RANDOM,
 } file_mode_t;
 
 typedef struct {
@@ -18,6 +20,7 @@ typedef struct {
     file_mode_t mode;
     int in_use;
     int col;        /* current column position (0-based) for TAB */
+    int reclen;     /* record length for RANDOM mode (0 = N/A) */
 } file_handle_t;
 
 /* Initialize file handle table */
@@ -52,5 +55,14 @@ int *fileio_get_col_ptr(int handle);
 
 /* KILL file$ */
 error_t fileio_kill(const char *filename);
+
+/* Set record length for a handle (RANDOM mode) */
+void fileio_set_reclen(int handle, int reclen);
+
+/* Get file mode for a handle */
+file_mode_t fileio_get_mode(int handle);
+
+/* Get record length for a handle */
+int fileio_get_reclen(int handle);
 
 #endif

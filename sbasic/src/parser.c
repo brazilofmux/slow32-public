@@ -994,7 +994,7 @@ static expr_t *parse_file_handle(parser_t *p) {
     return parse_expr(p);
 }
 
-/* OPEN file$ FOR INPUT|OUTPUT|APPEND AS #n */
+/* OPEN file$ FOR INPUT|OUTPUT|APPEND|BINARY|RANDOM AS #n [LEN = expr] */
 static stmt_t *parse_open(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
     lexer_next(&p->lex); /* consume OPEN */
@@ -1010,6 +1010,10 @@ static stmt_t *parse_open(parser_t *p) {
         mode = FMODE_OUTPUT; lexer_next(&p->lex);
     } else if (lexer_check(&p->lex, TOK_APPEND)) {
         mode = FMODE_APPEND; lexer_next(&p->lex);
+    } else if (lexer_check(&p->lex, TOK_BINARY)) {
+        mode = FMODE_BINARY; lexer_next(&p->lex);
+    } else if (lexer_check(&p->lex, TOK_RANDOM)) {
+        mode = FMODE_RANDOM; lexer_next(&p->lex);
     } else {
         parser_error(p, ERR_SYNTAX); expr_free(filename); return NULL;
     }
@@ -1018,7 +1022,20 @@ static stmt_t *parse_open(parser_t *p) {
     }
     expr_t *handle = parse_file_handle(p);
     if (!handle) { expr_free(filename); return NULL; }
-    return stmt_open(filename, mode, handle, line);
+
+    /* Optional LEN = expr for RANDOM mode */
+    expr_t *reclen = NULL;
+    if (lexer_check(&p->lex, TOK_IDENT) &&
+        strcmp(lexer_peek(&p->lex)->text, "LEN") == 0) {
+        lexer_next(&p->lex); /* consume LEN */
+        if (!expect(p, TOK_EQ)) {
+            expr_free(filename); expr_free(handle); return NULL;
+        }
+        reclen = parse_expr(p);
+        if (!reclen) { expr_free(filename); expr_free(handle); return NULL; }
+    }
+
+    return stmt_open(filename, mode, handle, reclen, line);
 }
 
 /* CLOSE [#n [, #n ...]] */
@@ -1148,6 +1165,52 @@ static stmt_t *parse_name_stmt(parser_t *p) {
     expr_t *newname = parse_expr(p);
     if (!newname) { expr_free(oldname); return NULL; }
     return stmt_name(oldname, newname, line);
+}
+
+/* GET #h, [pos], var / PUT #h, [pos], var */
+static stmt_t *parse_get_put(parser_t *p, int is_put) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume GET or PUT */
+    expr_t *handle = parse_file_handle(p);
+    if (!handle) return NULL;
+    if (!lexer_match(&p->lex, TOK_COMMA)) {
+        parser_error(p, ERR_SYNTAX); expr_free(handle); return NULL;
+    }
+    /* Position is optional: GET #1, , var (skip with empty between commas) */
+    expr_t *position = NULL;
+    if (!lexer_check(&p->lex, TOK_COMMA)) {
+        position = parse_expr(p);
+        if (!position) { expr_free(handle); return NULL; }
+    }
+    if (!lexer_match(&p->lex, TOK_COMMA)) {
+        parser_error(p, ERR_SYNTAX);
+        expr_free(handle); expr_free(position); return NULL;
+    }
+    /* Variable name */
+    if (!lexer_check(&p->lex, TOK_IDENT)) {
+        parser_error(p, ERR_SYNTAX);
+        expr_free(handle); expr_free(position); return NULL;
+    }
+    token_t var = lexer_next(&p->lex);
+    val_type_t vt = var_type_from_name(var.text);
+    if (is_put)
+        return stmt_put(handle, position, var.text, vt, line);
+    else
+        return stmt_get(handle, position, var.text, vt, line);
+}
+
+/* SEEK #h, pos */
+static stmt_t *parse_seek(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume SEEK */
+    expr_t *handle = parse_file_handle(p);
+    if (!handle) return NULL;
+    if (!lexer_match(&p->lex, TOK_COMMA)) {
+        parser_error(p, ERR_SYNTAX); expr_free(handle); return NULL;
+    }
+    expr_t *position = parse_expr(p);
+    if (!position) { expr_free(handle); return NULL; }
+    return stmt_seek(handle, position, line);
 }
 
 /* --- Stage 6: Line continuation support --- */
@@ -1451,6 +1514,9 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_LINE:     return parse_line_input(p);
         case TOK_KILL:     return parse_kill(p);
         case TOK_NAME:     return parse_name_stmt(p);
+        case TOK_GET:      return parse_get_put(p, 0);
+        case TOK_PUT:      return parse_get_put(p, 1);
+        case TOK_SEEK:     return parse_seek(p);
 
         case TOK_TYPE:     return parse_type_def(p);
         case TOK_ON:       return parse_on(p);

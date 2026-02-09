@@ -124,6 +124,9 @@ typedef enum {
     STMT_WRITE_FILE,
     STMT_KILL,
     STMT_NAME,
+    STMT_GET,
+    STMT_PUT,
+    STMT_SEEK,
     /* Stage 6 */
     STMT_TYPE_DEF,
     STMT_DIM_AS_TYPE,
@@ -345,8 +348,9 @@ typedef struct stmt {
         /* STMT_OPEN */
         struct {
             struct expr *filename;
-            int mode;            /* FMODE_INPUT, FMODE_OUTPUT, FMODE_APPEND */
+            int mode;            /* FMODE_INPUT, FMODE_OUTPUT, FMODE_APPEND, FMODE_BINARY, FMODE_RANDOM */
             struct expr *handle_num;
+            struct expr *reclen; /* record length for RANDOM (NULL for others) */
         } open_stmt;
 
         /* STMT_CLOSE */
@@ -380,6 +384,20 @@ typedef struct stmt {
             struct expr *oldname;
             struct expr *newname;
         } name_stmt;
+
+        /* STMT_GET / STMT_PUT */
+        struct {
+            struct expr *handle_num;
+            struct expr *position;     /* NULL = current pos */
+            char varname[64];
+            val_type_t vartype;
+        } get_put_stmt;
+
+        /* STMT_SEEK */
+        struct {
+            struct expr *seek_handle;
+            struct expr *seek_position;
+        } seek_stmt;
 
         /* STMT_TYPE_DEF */
         struct {
@@ -516,7 +534,8 @@ stmt_t *stmt_randomize(expr_t *seed, int line);
 stmt_t *stmt_sleep(expr_t *duration, int line);
 
 /* Stage 5 constructors */
-stmt_t *stmt_open(expr_t *filename, int mode, expr_t *handle, int line);
+stmt_t *stmt_open(expr_t *filename, int mode, expr_t *handle,
+                   expr_t *reclen, int line);
 stmt_t *stmt_close(expr_t *handle, int line);
 stmt_t *stmt_print_file(expr_t *handle, int line);
 int stmt_print_file_add(stmt_t *s, expr_t *expr, char sep);
@@ -527,6 +546,11 @@ int stmt_input_file_add_var(stmt_t *s, const char *name, val_type_t type);
 stmt_t *stmt_line_input(expr_t *handle, int line);
 stmt_t *stmt_kill(expr_t *filename, int line);
 stmt_t *stmt_name(expr_t *oldname, expr_t *newname, int line);
+stmt_t *stmt_get(expr_t *handle, expr_t *position,
+                 const char *varname, val_type_t vartype, int line);
+stmt_t *stmt_put(expr_t *handle, expr_t *position,
+                 const char *varname, val_type_t vartype, int line);
+stmt_t *stmt_seek(expr_t *handle, expr_t *position, int line);
 
 /* Stage 6 constructors */
 expr_t *expr_field_access(const char *var, const char *field, int line);

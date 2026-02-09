@@ -1183,14 +1183,30 @@ static error_t exec_open(env_t *env, stmt_t *s) {
     EVAL_CHECK(eval_expr(env, s->open_stmt.filename, &fname));
     if (fname.type != VAL_STRING) { val_clear(&fname); return ERR_TYPE_MISMATCH; }
     value_t hv;
-    EVAL_CHECK(eval_expr(env, s->open_stmt.handle_num, &hv));
+    error_t err = eval_expr(env, s->open_stmt.handle_num, &hv);
+    if (err != ERR_NONE) { val_clear(&fname); return err; }
     int handle;
-    error_t err = val_to_integer(&hv, &handle);
+    err = val_to_integer(&hv, &handle);
     val_clear(&hv);
     if (err != ERR_NONE) { val_clear(&fname); return err; }
     err = fileio_open(fname.sval->data, (file_mode_t)s->open_stmt.mode, handle);
     val_clear(&fname);
-    return err;
+    if (err != ERR_NONE) return err;
+
+    /* Set record length for RANDOM mode */
+    if (s->open_stmt.mode == FMODE_RANDOM) {
+        int reclen = 128; /* QBasic default */
+        if (s->open_stmt.reclen) {
+            value_t rv;
+            err = eval_expr(env, s->open_stmt.reclen, &rv);
+            if (err != ERR_NONE) return err;
+            err = val_to_integer(&rv, &reclen);
+            val_clear(&rv);
+            if (err != ERR_NONE) return err;
+        }
+        fileio_set_reclen(handle, reclen);
+    }
+    return ERR_NONE;
 }
 
 static error_t exec_close(env_t *env, stmt_t *s) {
@@ -1401,6 +1417,153 @@ static error_t exec_name(env_t *env, stmt_t *s) {
     err = fileio_rename(old_v.sval->data, new_v.sval->data);
     val_clear(&old_v); val_clear(&new_v);
     return err;
+}
+
+/* --- Binary I/O: GET, PUT, SEEK --- */
+
+static error_t exec_get(env_t *env, stmt_t *s) {
+    value_t hv;
+    EVAL_CHECK(eval_expr(env, s->get_put_stmt.handle_num, &hv));
+    int handle;
+    error_t err = val_to_integer(&hv, &handle);
+    val_clear(&hv);
+    if (err != ERR_NONE) return err;
+
+    FILE *fp = fileio_get(handle);
+    if (!fp) return ERR_FILE_NOT_OPEN;
+    file_mode_t mode = fileio_get_mode(handle);
+    if (mode != FMODE_BINARY && mode != FMODE_RANDOM)
+        return ERR_ILLEGAL_FUNCTION_CALL;
+
+    /* Seek to position if given */
+    if (s->get_put_stmt.position) {
+        value_t pv;
+        EVAL_CHECK(eval_expr(env, s->get_put_stmt.position, &pv));
+        int pos;
+        err = val_to_integer(&pv, &pos);
+        val_clear(&pv);
+        if (err != ERR_NONE) return err;
+        if (pos < 1) return ERR_ILLEGAL_FUNCTION_CALL;
+        if (mode == FMODE_RANDOM) {
+            int reclen = fileio_get_reclen(handle);
+            if (reclen <= 0) reclen = 128;
+            fseek(fp, (long)(pos - 1) * reclen, SEEK_SET);
+        } else {
+            fseek(fp, (long)(pos - 1), SEEK_SET);
+        }
+    }
+
+    /* Read based on variable type */
+    val_type_t vt = s->get_put_stmt.vartype;
+    value_t result;
+    if (vt == VAL_INTEGER) {
+        int ival = 0;
+        fread(&ival, 4, 1, fp);
+        result = val_integer(ival);
+    } else if (vt == VAL_DOUBLE) {
+        double dval = 0.0;
+        fread(&dval, 8, 1, fp);
+        result = val_double(dval);
+    } else if (vt == VAL_STRING) {
+        /* String GET: read LEN(var$) bytes */
+        value_t *sv = env_get(env, s->get_put_stmt.varname);
+        int len = 0;
+        if (sv && sv->type == VAL_STRING) len = sv->sval->len;
+        if (len <= 0) len = 1;
+        char *buf = malloc(len + 1);
+        if (!buf) return ERR_OUT_OF_MEMORY;
+        int got = fread(buf, 1, len, fp);
+        buf[got] = '\0';
+        result = val_string(buf, got);
+        free(buf);
+    } else {
+        return ERR_TYPE_MISMATCH;
+    }
+    env_set(env, s->get_put_stmt.varname, &result);
+    val_clear(&result);
+    return ERR_NONE;
+}
+
+static error_t exec_put(env_t *env, stmt_t *s) {
+    value_t hv;
+    EVAL_CHECK(eval_expr(env, s->get_put_stmt.handle_num, &hv));
+    int handle;
+    error_t err = val_to_integer(&hv, &handle);
+    val_clear(&hv);
+    if (err != ERR_NONE) return err;
+
+    FILE *fp = fileio_get(handle);
+    if (!fp) return ERR_FILE_NOT_OPEN;
+    file_mode_t mode = fileio_get_mode(handle);
+    if (mode != FMODE_BINARY && mode != FMODE_RANDOM)
+        return ERR_ILLEGAL_FUNCTION_CALL;
+
+    /* Seek to position if given */
+    if (s->get_put_stmt.position) {
+        value_t pv;
+        EVAL_CHECK(eval_expr(env, s->get_put_stmt.position, &pv));
+        int pos;
+        err = val_to_integer(&pv, &pos);
+        val_clear(&pv);
+        if (err != ERR_NONE) return err;
+        if (pos < 1) return ERR_ILLEGAL_FUNCTION_CALL;
+        if (mode == FMODE_RANDOM) {
+            int reclen = fileio_get_reclen(handle);
+            if (reclen <= 0) reclen = 128;
+            fseek(fp, (long)(pos - 1) * reclen, SEEK_SET);
+        } else {
+            fseek(fp, (long)(pos - 1), SEEK_SET);
+        }
+    }
+
+    /* Write based on variable type */
+    value_t *v = env_get(env, s->get_put_stmt.varname);
+    if (!v) return ERR_UNDEFINED_VAR;
+
+    if (v->type == VAL_INTEGER) {
+        int ival = v->ival;
+        fwrite(&ival, 4, 1, fp);
+    } else if (v->type == VAL_DOUBLE) {
+        double dval = v->dval;
+        fwrite(&dval, 8, 1, fp);
+    } else if (v->type == VAL_STRING) {
+        int len = v->sval->len;
+        fwrite(v->sval->data, 1, len, fp);
+    } else {
+        return ERR_TYPE_MISMATCH;
+    }
+    fflush(fp);
+    return ERR_NONE;
+}
+
+static error_t exec_seek(env_t *env, stmt_t *s) {
+    value_t hv;
+    EVAL_CHECK(eval_expr(env, s->seek_stmt.seek_handle, &hv));
+    int handle;
+    error_t err = val_to_integer(&hv, &handle);
+    val_clear(&hv);
+    if (err != ERR_NONE) return err;
+
+    FILE *fp = fileio_get(handle);
+    if (!fp) return ERR_FILE_NOT_OPEN;
+
+    value_t pv;
+    EVAL_CHECK(eval_expr(env, s->seek_stmt.seek_position, &pv));
+    int pos;
+    err = val_to_integer(&pv, &pos);
+    val_clear(&pv);
+    if (err != ERR_NONE) return err;
+    if (pos < 1) return ERR_ILLEGAL_FUNCTION_CALL;
+
+    file_mode_t mode = fileio_get_mode(handle);
+    if (mode == FMODE_RANDOM) {
+        int reclen = fileio_get_reclen(handle);
+        if (reclen <= 0) reclen = 128;
+        fseek(fp, (long)(pos - 1) * reclen, SEEK_SET);
+    } else {
+        fseek(fp, (long)(pos - 1), SEEK_SET);
+    }
+    return ERR_NONE;
 }
 
 /* --- Stage 6 statement handlers --- */
@@ -1638,6 +1801,9 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_LINE_INPUT:   return exec_line_input(env, s);
         case STMT_KILL:         return exec_kill(env, s);
         case STMT_NAME:         return exec_name(env, s);
+        case STMT_GET:          return exec_get(env, s);
+        case STMT_PUT:          return exec_put(env, s);
+        case STMT_SEEK:         return exec_seek(env, s);
 
         case STMT_TYPE_DEF:     return exec_type_def(s);
         case STMT_DIM_AS_TYPE:  return exec_dim_as_type(env, s);
