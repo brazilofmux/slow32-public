@@ -10,6 +10,12 @@
 #include "../../common/s32_formats.h"
 #include "../../common/s32a_format.h"
 
+static void copy_string(char *dst, size_t dst_size, const char *src) {
+    if (dst_size == 0) return;
+    strncpy(dst, src, dst_size - 1);
+    dst[dst_size - 1] = '\0';
+}
+
 // Configuration
 #define MAX_INPUT_FILES 100
 #define MAX_SECTIONS 1000
@@ -547,7 +553,7 @@ static int find_or_create_section(linker_state_t *ld, const char *name,
     }
     
     combined_section_t *sec = &ld->sections[ld->num_sections];
-    strncpy(sec->name, name, sizeof(sec->name) - 1);
+    copy_string(sec->name, sizeof(sec->name), name);
     sec->type = type;
     sec->flags = flags;
     sec->align = align;
@@ -689,9 +695,9 @@ static void build_symbol_table(linker_state_t *ld) {
                 
                 // For local symbols, create unique name to prevent collisions
                 if (isym->binding == S32O_BIND_LOCAL) {
-                    snprintf(nsym->name, sizeof(nsym->name) - 1, "%s@%d", name, f);
+                    snprintf(nsym->name, sizeof(nsym->name), "%s@%d", name, f);
                 } else {
-                    strncpy(nsym->name, name, sizeof(nsym->name) - 1);
+                    copy_string(nsym->name, sizeof(nsym->name), name);
                 }
                 nsym->type = isym->type;
                 nsym->binding = isym->binding;
@@ -1076,7 +1082,7 @@ static void inject_memory_map_symbols(linker_state_t *ld) {
         // Add new symbol if not found
         if (!found && ld->num_symbols < MAX_SYMBOLS) {
             symbol_entry_t *sym = &ld->symbols[ld->num_symbols++];
-            strcpy(sym->name, special_symbols[i].name);
+            copy_string(sym->name, sizeof(sym->name), special_symbols[i].name);
             sym->value = special_symbols[i].value;
             sym->size = 0;
             sym->type = 0;  // NOTYPE
@@ -1134,7 +1140,7 @@ static void inject_init_array_symbols(linker_state_t *ld) {
 
         if (!found && ld->num_symbols < MAX_SYMBOLS) {
             symbol_entry_t *sym = &ld->symbols[ld->num_symbols++];
-            strcpy(sym->name, init_symbols[i].name);
+            copy_string(sym->name, sizeof(sym->name), init_symbols[i].name);
             sym->value = init_symbols[i].value;
             sym->size = 0;
             sym->type = 0;
@@ -1187,8 +1193,7 @@ static void collect_relocations(linker_state_t *ld) {
                     if (inf->symbols[irel->symbol].binding == S32O_BIND_LOCAL) {
                         snprintf(lookup_name, sizeof(lookup_name), "%s@%d", sym_name, f);
                     } else {
-                        strncpy(lookup_name, sym_name, sizeof(lookup_name) - 1);
-                        lookup_name[sizeof(lookup_name) - 1] = '\0';
+                        copy_string(lookup_name, sizeof(lookup_name), sym_name);
                     }
                     
                     for (int cs = 0; cs < ld->num_symbols; cs++) {
@@ -1324,6 +1329,28 @@ static void update_symbol_values(linker_state_t *ld) {
 }
 
 // Apply relocations
+// Find the AUIPC PC for a matching PCREL_HI20 relocation.
+// Returns true and sets hi_pc_out on success.
+static bool find_pcrel_hi_pc(linker_state_t *ld, relocation_entry_t *rel, uint32_t *hi_pc_out) {
+    for (int j = 0; j < ld->num_relocations; j++) {
+        relocation_entry_t *other = &ld->relocations[j];
+        if (other->type != S32O_REL_PCREL_HI20) continue;
+        if (other->symbol_idx != rel->symbol_idx) continue;
+        if (other->file_idx != rel->file_idx) continue;
+        if (other->section_idx != rel->section_idx) continue;
+        if (other->combined_section != rel->combined_section) continue;
+        if (other->addend != rel->addend) continue;
+
+        input_file_t *inf_other = &ld->input_files[other->file_idx];
+        combined_section_t *sec_other = &ld->sections[other->combined_section];
+        uint32_t combined_offset_other = inf_other->section_base[other->section_idx] + other->offset;
+        if (combined_offset_other + 4 > sec_other->size) continue;
+        *hi_pc_out = sec_other->vaddr + combined_offset_other;
+        return true;
+    }
+    return false;
+}
+
 static void apply_relocations(linker_state_t *ld) {
     int unresolved = 0;
     
@@ -1533,9 +1560,16 @@ static void apply_relocations(linker_state_t *ld) {
             case S32O_REL_PCREL_LO12:
                 // PC-relative low 12 bits (paired with PCREL_HI20)
                 // This is tricky: it needs to reference the address of the PCREL_HI20
-                // For now, we'll use the symbol value directly (may need adjustment)
                 {
-                    uint32_t imm = value & 0xFFF;
+                    uint32_t hi_pc = 0;
+                    if (!find_pcrel_hi_pc(ld, rel, &hi_pc)) {
+                        fprintf(stderr, "Error: PCREL_LO12 missing matching PCREL_HI20 for '%s' at PC=0x%08X\n",
+                                sym->name, pc);
+                        continue;
+                    }
+
+                    int32_t offset = (int32_t)(value - hi_pc);
+                    uint32_t imm = (uint32_t)offset & 0xFFF;
                     uint32_t opcode = *target & 0x7F;
                     
                     // Different instruction formats need different handling
@@ -1554,7 +1588,8 @@ static void apply_relocations(linker_state_t *ld) {
                     }
                     
                     if (ld->verbose) {
-                        printf("  PCREL_LO12: value=0x%x, imm=0x%x\n", value, imm);
+                        printf("  PCREL_LO12: value=0x%x, hi_pc=0x%x, offset=0x%x, imm=0x%x\n",
+                               value, hi_pc, offset, imm);
                     }
                 }
                 break;
