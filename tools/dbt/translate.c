@@ -3615,11 +3615,20 @@ void translate_yield(translate_ctx_t *ctx) {
 // ============================================================================
 
 static inline void load_f64_pair(uint32_t *regs, uint8_t reg, double *out) {
+    if (reg >= 31 || (reg & 1)) {
+        fprintf(stderr, "f64 register fault: r%d is invalid (must be even, < 31)\n", reg);
+        *out = 0.0;
+        return;
+    }
     uint64_t bits = ((uint64_t)regs[reg + 1] << 32) | regs[reg];
     memcpy(out, &bits, 8);
 }
 
 static inline void store_f64_pair(uint32_t *regs, uint8_t reg, double val) {
+    if (reg >= 31 || (reg & 1)) {
+        fprintf(stderr, "f64 register fault: r%d is invalid (must be even, < 31)\n", reg);
+        return;
+    }
     uint64_t bits;
     memcpy(&bits, &val, 8);
     regs[reg] = (uint32_t)bits;
