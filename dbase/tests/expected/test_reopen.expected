@@ -1,5 +1,5 @@
 dBASE III Clone for SLOW-32
-Stage 3B: Work Areas & File Commands
+Stage 4A: Programming Language
 
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L): Width (1-254): Field name: Database PERSIST.DBF created with 1 field(s).

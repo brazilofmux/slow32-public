@@ -1,8 +1,9 @@
 dBASE III Clone for SLOW-32
 Stage 4A: Programming Language
 
-. . . . .T.
-. .F.
-. . .F.
-. .F.
-. .T.
+. . Start
+. Line 1
+Hello
+Line 3
+Hi there
+. End

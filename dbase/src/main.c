@@ -2,6 +2,7 @@
 #include <string.h>
 #include "dbf.h"
 #include "command.h"
+#include "program.h"
 #include "util.h"
 
 static dbf_t current_db;
@@ -10,9 +11,10 @@ int main(void) {
     char line[256];
 
     printf("dBASE III Clone for SLOW-32\n");
-    printf("Stage 3B: Work Areas & File Commands\n\n");
+    printf("Stage 4A: Programming Language\n\n");
 
     dbf_init(&current_db);
+    prog_init();
 
     for (;;) {
         printf(". ");
@@ -21,6 +23,10 @@ int main(void) {
         trim_right(line);
         if (line[0] == '\0')
             continue;
+
+        /* Preprocess for && comments and macros (interactive mode) */
+        prog_preprocess(line, cmd_get_memvar_store());
+
         if (cmd_execute(&current_db, line))
             break;
     }

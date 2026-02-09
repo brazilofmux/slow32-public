@@ -1,8 +1,7 @@
 dBASE III Clone for SLOW-32
 Stage 4A: Programming Language
 
-. . . . .T.
-. .F.
-. . .F.
-. .F.
-. .T.
+. Hello, World
+15
+. Back at dot prompt
+. World

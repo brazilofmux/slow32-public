@@ -1,5 +1,5 @@
 dBASE III Clone for SLOW-32
-Stage 3B: Work Areas & File Commands
+Stage 4A: Programming Language
 
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L): Width (1-254): Field name: Type (C/N/D/L): Width (1-19): Decimals: Field name: Database PEOPLE.DBF created with 2 field(s).

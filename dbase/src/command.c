@@ -10,6 +10,7 @@
 #include "util.h"
 #include "memvar.h"
 #include "set.h"
+#include "program.h"
 
 /* ---- Work area infrastructure ---- */
 #define MAX_AREAS 10
@@ -1947,6 +1948,16 @@ void cmd_close_all(void) {
     current_area = 0;
 }
 
+/* ---- Accessors for program.c ---- */
+memvar_store_t *cmd_get_memvar_store(void) {
+    return &memvar_store;
+}
+
+expr_ctx_t *cmd_get_expr_ctx(void) {
+    ctx_setup();
+    return &expr_ctx;
+}
+
 /* ---- Dispatch ---- */
 int cmd_execute(dbf_t *db, char *line) {
     char *p;
@@ -1959,7 +1970,99 @@ int cmd_execute(dbf_t *db, char *line) {
     p = skip_ws(line);
     if (*p == '\0') return 0;
 
-    if (str_imatch(p, "QUIT") || str_imatch(p, "EXIT")) {
+    /* Full-line comment (when run interactively or from program) */
+    if (*p == '*') return 0;
+    if (str_imatch(p, "NOTE")) return 0;
+
+    /* DO command: route to program subsystem for DO <file>, DO WHILE, DO CASE */
+    if (str_imatch(p, "DO")) {
+        char *rest = skip_ws(p + 2);
+        /* DO WHILE, DO CASE, DO <file/proc> all go to program.c */
+        if (str_imatch(rest, "WHILE") || str_imatch(rest, "CASE") ||
+            (*rest && !str_imatch(rest, "WHILE") && !str_imatch(rest, "CASE"))) {
+            prog_do(rest);
+            return 0;
+        }
+    }
+
+    /* Control flow commands - only valid during program execution */
+    if (str_imatch(p, "IF")) {
+        if (prog_is_running()) { prog_if(skip_ws(p + 2)); }
+        else printf("IF not allowed in interactive mode.\n");
+        return 0;
+    }
+    if (str_imatch(p, "ELSE")) {
+        if (prog_is_running()) prog_else();
+        else printf("ELSE without IF.\n");
+        return 0;
+    }
+    if (str_imatch(p, "ENDIF")) {
+        if (prog_is_running()) prog_endif();
+        else printf("ENDIF without IF.\n");
+        return 0;
+    }
+    if (str_imatch(p, "ENDDO")) {
+        if (prog_is_running()) prog_enddo();
+        else printf("ENDDO without DO WHILE.\n");
+        return 0;
+    }
+    if (str_imatch(p, "LOOP")) {
+        if (prog_is_running()) prog_loop();
+        else printf("LOOP without DO WHILE.\n");
+        return 0;
+    }
+    if (str_imatch(p, "CASE")) {
+        if (prog_is_running()) prog_case(skip_ws(p + 4));
+        else printf("CASE without DO CASE.\n");
+        return 0;
+    }
+    if (str_imatch(p, "OTHERWISE")) {
+        if (prog_is_running()) prog_otherwise();
+        else printf("OTHERWISE without DO CASE.\n");
+        return 0;
+    }
+    if (str_imatch(p, "ENDCASE")) {
+        if (prog_is_running()) prog_endcase();
+        else printf("ENDCASE without DO CASE.\n");
+        return 0;
+    }
+    if (str_imatch(p, "RETURN")) {
+        if (prog_is_running()) prog_return();
+        else printf("RETURN not in program.\n");
+        return 0;
+    }
+    if (str_imatch(p, "PROCEDURE")) {
+        if (prog_is_running()) prog_procedure(skip_ws(p + 9));
+        else printf("PROCEDURE not allowed in interactive mode.\n");
+        return 0;
+    }
+    if (str_imatch(p, "PARAMETERS")) {
+        if (prog_is_running()) prog_parameters(skip_ws(p + 10));
+        else printf("PARAMETERS not allowed in interactive mode.\n");
+        return 0;
+    }
+    if (str_imatch(p, "PRIVATE")) {
+        prog_private(skip_ws(p + 7));
+        return 0;
+    }
+    if (str_imatch(p, "PUBLIC")) {
+        prog_public(skip_ws(p + 6));
+        return 0;
+    }
+    if (str_imatch(p, "CANCEL")) {
+        if (prog_is_running()) prog_cancel();
+        return 0;
+    }
+
+    if (str_imatch(p, "QUIT")) {
+        return 1;
+    }
+    if (str_imatch(p, "EXIT")) {
+        /* EXIT in loop context = break, otherwise QUIT */
+        if (prog_is_running()) {
+            prog_exit_loop();
+            return 0;
+        }
         return 1;
     }
 
