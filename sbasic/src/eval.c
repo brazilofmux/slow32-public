@@ -1844,7 +1844,8 @@ error_t eval_program(env_t *env, stmt_t *program) {
         }
 
         /* ON ERROR GOTO triggered by ERROR n statement */
-        if (err == ERR_ON_ERROR_GOTO && on_error_label_idx >= 0) {
+        if (err == ERR_ON_ERROR_GOTO && on_error_label_idx >= 0 &&
+            !on_error_active) {
             on_error_active = 1;
             on_error_resume_pc = pc;
             on_error_resume_next_pc = pc + 1;

@@ -127,5 +127,8 @@ int env_is_const(env_t *env, const char *name) {
 void env_link(env_t *env, const char *name, value_t *target) {
     var_entry_t *e = find_entry(env, name);
     if (!e) e = create_entry(env, name);
-    if (e) e->link = target;
+    if (e) {
+        val_clear(&e->value);
+        e->link = target;
+    }
 }

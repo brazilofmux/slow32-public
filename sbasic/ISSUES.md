@@ -1,41 +1,56 @@
-# SLOW BASIC — Post-Implementation Issues (Round 3)
+# SLOW BASIC — Post-Implementation Issues (Round 4)
 
-This document tracks bugs and architectural limitations identified in the third review (post-Stage 6) of the sbasic codebase.
+This document tracks bugs and architectural limitations identified in the fourth review of the sbasic codebase.
 
 ## Critical Bugs & Logic Errors
 
-### 1. ~~Constants are mutable via non-assignment statements~~ **FIXED**
-Added `env_is_const()` checks to all mutation paths: `INPUT`, `FOR`, `READ`, `INPUT#`, `LINE INPUT#`, `FIELD_ASSIGN`, and `SWAP`. All return `ERR_CONST_REASSIGN` on attempt to modify a `CONST` variable.
+### 1. ~~Infinite Recursion in `ERROR n` Handler~~ **FIXED**
+Added `!on_error_active` guard to the `ERR_ON_ERROR_GOTO` handler in `eval_program`. `ERROR n` inside an active error handler now falls through to fatal error instead of recursing.
 
-### 2. ~~`TAB(n)` and `print_col` are Global to `stdout`~~ **FIXED**
-Added per-file column tracking via `active_print_col` indirection pointer. Each `file_handle_t` now has a `col` field. `exec_print_file` redirects `active_print_col` to the file's counter during output, and `fn_tab` reads through the pointer. Stdout column tracking is unchanged.
+### 2. ~~Memory Leak: `SHARED` String/Record Variables~~ **FIXED**
+`env_link` now calls `val_clear(&e->value)` on the local entry before setting the link pointer, preventing the auto-created default value from leaking.
 
-### 3. ~~Missing Integer Overflow Checks~~ **FIXED**
-Integer arithmetic now uses `long long` intermediates. If the result exceeds INT32 range, it auto-promotes to `VAL_DOUBLE`. Applies to `val_add`, `val_sub`, `val_mul`, `val_pow`, and `val_neg` (INT_MIN negation).
+### 3. Labels, `DATA`, and `SUB` Visibility in Blocks
+The first-pass scan in `eval_program` iterates only over the top-level `stmts` array.
+- **Problem**: `DATA` statements, line labels, and `SUB/FUNCTION` definitions located inside `IF...END IF`, `FOR...NEXT`, or other blocks are completely ignored. They are not collected into the global tables and thus cannot be used.
+- **Recommendation**: Implement a recursive scanner that walks the entire AST to collect labels, DATA, and procedures regardless of nesting level.
 
-### 4. ~~`SHARED` Variable "Copy-in/Copy-out" Race Condition~~ **FIXED**
-Added `link` pointer to `var_entry_t`. `SHARED` variables now use `env_link()` to point the local entry directly at the global's `value_t` storage. All reads/writes through `env_get`/`env_set` follow the link. No copy-in or copy-out needed — nested SUB calls see changes immediately.
+### 4. `GOTO/GOSUB` cannot target nested blocks
+The `pc` (program counter) in `eval_program` is an index into the top-level `stmts` array.
+- **Problem**: Even if labels were collected from nested blocks, the `eval_program` loop has no way to jump *into* a block (like the middle of an `IF` statement). Conversely, a `GOTO` from inside a block to a label in the *same* block will jump to the top-level `pc` target, potentially breaking the control flow.
+- **Recommendation**: This is an architectural limitation of the current "flattened top-level" execution model. While jumping *into* blocks is often discouraged, jumping *within* or *out of* blocks should work correctly.
 
-### 5. ~~`MID$` Statement (L-Value) is Missing~~ **FIXED**
-Added `STMT_MID_ASSIGN` AST node. `parse_paren_dispatch` intercepts `MID$` before the generic array-assignment path. `exec_mid_assign` implements QBasic-compatible semantics: `MID$(A$, start [, length]) = rep$` replaces up to `min(length, LEN(rep$))` characters starting at position `start` (1-based). Total string length is preserved.
+### 5. `eval_depth` (32) is too shallow
+The limit for C recursion is currently set to 32.
+- **Problem**: Since every nested block (`IF`, `FOR`, `WHILE`, `DO`, `SELECT`) and every `SUB/FUNCTION` call increments this depth, complex BASIC programs can easily hit this limit and trigger a `Stack overflow` error.
+- **Recommendation**: Increase `MAX_EVAL_DEPTH` to 128 or 256. The SLOW-32 stack is large enough to handle this.
+
+---
+
+## Architectural Limitations & Performance
+
+### 6. Missing Range Checks for `INTEGER` Conversion
+Functions like `fn_cint` and `val_to_integer` (used for array indices, `TAB`, etc.) do not check for 32-bit overflow.
+- **Problem**: Converting a very large `DOUBLE` to `INTEGER` results in silent wrapping or undefined behavior, which can lead to illegal memory access (e.g., in array indexing) or logic errors.
+- **Recommendation**: Add range checks to `val_as_int` and return `ERR_OVERFLOW` or `ERR_ILLEGAL_FUNCTION_CALL`.
+
+### 7. Fixed Limit on `SHARED` variables
+`call_proc` uses a fixed-size array `shared_names[32]` to track variables to be linked.
+- **Problem**: Procedures using more than 32 `SHARED` variables will silently fail to link the extras.
+- **Recommendation**: Use a dynamically allocated list or a higher limit (e.g. 128).
 
 ---
 
 ## Language Completeness & Opportunities
 
-### 6. ~~Lexer: Missing Hex/Octal/Binary Literals~~ **FIXED**
-Added `&H` (hex), `&O` (octal), and `&B` (binary) literal support in `scan_token`. Bare `&` produces integer 0 (QBasic compat). Optional `%` suffix consumed and ignored.
+### 8. Binary/Random File I/O (`GET`, `PUT`, `FIELD`)
+- **Opportunity**: Support for `OPEN "file" FOR RANDOM / BINARY` and the associated `GET #h, pos, var` and `PUT #h, pos, var`.
+- **Context**: Essential for database-like applications or processing non-text files.
 
-### 7. ~~`VAL()` doesn't recognize Hex/Octal prefixes~~ **FIXED**
-Updated `fn_val` to detect `&H`, `&O`, `&B` prefixes and use `strtol` with the appropriate base (16, 8, 2) before falling through to decimal parsing.
+### 9. `STATIC` Variables in Procedures
+- **Opportunity**: The `STATIC` keyword for `SUB/FUNCTION` variables to preserve their value between calls.
+- **Recommendation**: Add a `static_env` to the `proc_entry_t` that is reused across calls.
 
-### 8. ~~Extended File I/O: `LOC`, `LOF`, and `INPUT$`~~ **FIXED**
-Added `LOC(h)` (current byte position), `LOF(h)` (file length via seek), and `INPUT$(n [, #h])` (read n characters from file or stdin) as builtins. Parser updated to allow decorative `#` in function argument lists (e.g., `INPUT$(5, #1)`).
-
-### 9. ~~System Integration: `DIR$`, `ENVIRON$`, `COMMAND$`~~ **FIXED**
-Added `ENVIRON$(name$)` (reads env vars via MMIO getenv), `COMMAND$([n])` (command-line args via `__slow32_fetch_args`), and `DIR$(pattern$)` / `DIR$()` (directory listing via MMIO opendir/readdir with wildcard matching).
-
-### 10. ~~`REPLACE$(str, find, rep)`~~ **FIXED** (already implemented)
-
-### 11. ~~High-Resolution `TIMER`~~ **FIXED**
-`TIMER` now calls `time()` + `localtime()` via MMIO and returns seconds since midnight as a double, matching QBasic semantics.
+### 10. `INKEY$` and `SLEEP`
+- **Opportunity**: `INKEY$` for non-blocking keyboard input and `SLEEP [n]` for pausing.
+- **Context**: High value for interactive programs and games.
