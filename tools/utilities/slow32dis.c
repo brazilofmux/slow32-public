@@ -1,5 +1,5 @@
 // SLOW32 Disassembler
-// Simple disassembler for SLOW32 executables and object files
+// Disassembles SLOW32 executables (.s32x) and object files (.s32o)
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,7 +38,7 @@ static instruction_info_t instructions[] = {
     {"rem",   0x0D, FMT_R},
     {"seq",   0x0E, FMT_R},
     {"sne",   0x0F, FMT_R},
-    
+
     {"addi",  0x10, FMT_I},
     {"ori",   0x11, FMT_I},
     {"andi",  0x12, FMT_I},
@@ -57,29 +57,29 @@ static instruction_info_t instructions[] = {
     {"mulhu", 0x1F, FMT_R},
 
     {"lui",   0x20, FMT_U},
-    
+
     {"ldb",   0x30, FMT_I},
     {"ldh",   0x31, FMT_I},
     {"ldw",   0x32, FMT_I},
     {"ldbu",  0x33, FMT_I},
     {"ldhu",  0x34, FMT_I},
-    
+
     {"stb",   0x38, FMT_S},
     {"sth",   0x39, FMT_S},
     {"stw",   0x3A, FMT_S},
-    
+
     {"assert_eq", 0x3F, FMT_R},
-    
+
     {"jal",   0x40, FMT_J},
     {"jalr",  0x41, FMT_I},
-    
+
     {"beq",   0x48, FMT_B},
     {"bne",   0x49, FMT_B},
     {"blt",   0x4A, FMT_B},
     {"bge",   0x4B, FMT_B},
     {"bltu",  0x4C, FMT_B},
     {"bgeu",  0x4D, FMT_B},
-    
+
     {"nop",   0x50, FMT_R},
     {"yield", 0x51, FMT_R},
     {"debug", 0x52, FMT_I},
@@ -133,7 +133,41 @@ static instruction_info_t instructions[] = {
     {NULL, 0, FMT_UNKNOWN}
 };
 
-// Extract instruction fields
+// ============================================================================
+// Symbol table for label resolution
+// ============================================================================
+
+typedef struct {
+    uint32_t addr;
+    const char *name;
+} sym_entry_t;
+
+static sym_entry_t *sym_table = NULL;
+static int num_syms = 0;
+
+static int sym_cmp(const void *a, const void *b) {
+    uint32_t aa = ((const sym_entry_t *)a)->addr;
+    uint32_t bb = ((const sym_entry_t *)b)->addr;
+    return (aa > bb) - (aa < bb);
+}
+
+static const char *lookup_symbol(uint32_t addr) {
+    if (!sym_table || num_syms == 0) return NULL;
+    // Binary search
+    int lo = 0, hi = num_syms - 1;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        if (sym_table[mid].addr == addr) return sym_table[mid].name;
+        if (sym_table[mid].addr < addr) lo = mid + 1;
+        else hi = mid - 1;
+    }
+    return NULL;
+}
+
+// ============================================================================
+// Instruction field extraction
+// ============================================================================
+
 static inline uint32_t extract_opcode(uint32_t inst) {
     return inst & 0x7F;
 }
@@ -156,36 +190,30 @@ static inline int extract_imm_i(uint32_t inst) {
 }
 
 static inline int extract_imm_s(uint32_t inst) {
-    // SLOW-32 store format (matching emulator)
     int32_t imm = ((inst >> 7) & 0x1F) | (((int32_t)inst >> 25) << 5);
     return imm;
 }
 
 static inline int extract_imm_b(uint32_t inst) {
-    // SLOW-32 branch format (matching emulator)
     int32_t imm = (((inst >> 8) & 0xF) << 1) | (((inst >> 25) & 0x3F) << 5) |
                   (((inst >> 7) & 0x1) << 11) | (((int32_t)inst >> 31) << 12);
     return imm;
 }
 
 static inline int extract_imm_u(uint32_t inst) {
-    // SLOW-32 LUI format - immediate already in bits [31:12]
     return inst & 0xFFFFF000;
 }
 
 static inline int extract_imm_j(uint32_t inst) {
-    // SLOW-32 JAL format (matching emulator)
     uint32_t imm20 = (inst >> 31) & 0x1;
     uint32_t imm10_1 = (inst >> 21) & 0x3FF;
     uint32_t imm11 = (inst >> 20) & 0x1;
     uint32_t imm19_12 = (inst >> 12) & 0xFF;
     int32_t imm = (imm20 << 20) | (imm19_12 << 12) | (imm11 << 11) | (imm10_1 << 1);
-    // Sign extend from 21 bits
     if (imm & 0x100000) imm |= 0xFFE00000;
     return imm;
 }
 
-// Find instruction by opcode
 static instruction_info_t* find_instruction(uint32_t opcode) {
     for (int i = 0; instructions[i].mnemonic; i++) {
         if (instructions[i].opcode == opcode) {
@@ -195,210 +223,423 @@ static instruction_info_t* find_instruction(uint32_t opcode) {
     return NULL;
 }
 
-// Special case disassembly helpers
 static const char* get_reg_name(int reg) {
-    static char bufs[4][8];  // Rotate through 4 buffers
+    static char bufs[4][8];
     static int buf_idx = 0;
-    
+
     if (reg == 0) return "zero";
     if (reg == 29) return "sp";
     if (reg == 30) return "fp";
     if (reg == 31) return "lr";
-    
+
     char *buf = bufs[buf_idx];
     buf_idx = (buf_idx + 1) % 4;
     sprintf(buf, "r%d", reg);
     return buf;
 }
 
-// Disassemble a single instruction
+// ============================================================================
+// Disassembly
+// ============================================================================
+
 static void disassemble_instruction(uint32_t addr, uint32_t inst) {
     uint32_t opcode = extract_opcode(inst);
     instruction_info_t *info = find_instruction(opcode);
-    
-    printf("0x%08x: %08x  ", addr, inst);
-    
+
+    // Print label if this address has a symbol
+    const char *label = lookup_symbol(addr);
+    if (label) {
+        printf("\n%s:\n", label);
+    }
+
+    printf("  0x%08x: %08x  ", addr, inst);
+
     if (!info) {
         printf("unknown opcode 0x%02x\n", opcode);
         return;
     }
-    
-    printf("%s", info->mnemonic);
-    
+
+    printf("%-10s", info->mnemonic);
+
     // Special cases
     if (opcode == 0x7F) {  // HALT
         printf("\n");
         return;
     }
-    
+
     if (opcode == 0x52) {  // DEBUG
         int rs1 = extract_rs1(inst);
-        printf(" %s\n", get_reg_name(rs1));
+        printf("%s\n", get_reg_name(rs1));
         return;
     }
-    
+
     switch (info->format) {
         case FMT_R: {
             int rd = extract_rd(inst);
             int rs1 = extract_rs1(inst);
             int rs2 = extract_rs2(inst);
-            printf(" %s, %s, %s", get_reg_name(rd), get_reg_name(rs1), get_reg_name(rs2));
+            printf("%s, %s, %s", get_reg_name(rd), get_reg_name(rs1), get_reg_name(rs2));
             break;
         }
-        
+
         case FMT_I: {
             int rd = extract_rd(inst);
             int rs1 = extract_rs1(inst);
             int imm = extract_imm_i(inst);
-            
+
             if (opcode == 0x41) {  // jalr
-                printf(" %s, %s, %d", get_reg_name(rd), get_reg_name(rs1), imm);
+                printf("%s, %s, %d", get_reg_name(rd), get_reg_name(rs1), imm);
             } else if (opcode >= 0x30 && opcode <= 0x34) {  // loads
-                printf(" %s, %s+%d", get_reg_name(rd), get_reg_name(rs1), imm);
+                printf("%s, %s+%d", get_reg_name(rd), get_reg_name(rs1), imm);
             } else {
-                printf(" %s, %s, %d", get_reg_name(rd), get_reg_name(rs1), imm);
+                printf("%s, %s, %d", get_reg_name(rd), get_reg_name(rs1), imm);
             }
             break;
         }
-        
+
         case FMT_S: {
             int rs1 = extract_rs1(inst);
             int rs2 = extract_rs2(inst);
             int imm = extract_imm_s(inst);
-            printf(" %s+%d, %s", get_reg_name(rs1), imm, get_reg_name(rs2));
+            printf("%s+%d, %s", get_reg_name(rs1), imm, get_reg_name(rs2));
             break;
         }
-        
+
         case FMT_B: {
             int rs1 = extract_rs1(inst);
             int rs2 = extract_rs2(inst);
             int imm = extract_imm_b(inst);
-            // Branches are PC+4 relative in SLOW-32
-            printf(" %s, %s, 0x%x", get_reg_name(rs1), get_reg_name(rs2), addr + 4 + imm);
-            break;
-        }
-        
-        case FMT_U: {
-            int rd = extract_rd(inst);
-            int imm = extract_imm_u(inst);
-            printf(" %s, 0x%x", get_reg_name(rd), imm >> 12);  // Show upper 20 bits
-            break;
-        }
-        
-        case FMT_J: {
-            int rd = extract_rd(inst);
-            int imm = extract_imm_j(inst);
-            if (rd == 0) {
-                printf(" 0x%x", addr + imm);  // Unconditional jump
+            uint32_t target = addr + 4 + imm;
+            const char *target_sym = lookup_symbol(target);
+            if (target_sym) {
+                printf("%s, %s, %s", get_reg_name(rs1), get_reg_name(rs2), target_sym);
             } else {
-                printf(" %s, 0x%x", get_reg_name(rd), addr + imm);
+                printf("%s, %s, 0x%x", get_reg_name(rs1), get_reg_name(rs2), target);
             }
             break;
         }
-        
+
+        case FMT_U: {
+            int rd = extract_rd(inst);
+            int imm = extract_imm_u(inst);
+            printf("%s, 0x%x", get_reg_name(rd), imm >> 12);
+            break;
+        }
+
+        case FMT_J: {
+            int rd = extract_rd(inst);
+            int imm = extract_imm_j(inst);
+            uint32_t target = addr + imm;
+            const char *target_sym = lookup_symbol(target);
+            if (rd == 0) {
+                if (target_sym) {
+                    printf("%s", target_sym);
+                } else {
+                    printf("0x%x", target);
+                }
+            } else {
+                if (target_sym) {
+                    printf("%s, %s", get_reg_name(rd), target_sym);
+                } else {
+                    printf("%s, 0x%x", get_reg_name(rd), target);
+                }
+            }
+            break;
+        }
+
         default:
             break;
     }
-    
+
     printf("\n");
 }
 
+// ============================================================================
+// Symbol loading
+// ============================================================================
+
+// Load symbols from SYMTAB/STRTAB sections in a .s32x file
+static void load_symbols_s32x(FILE *f, s32x_header_t *header) {
+    // Find SYMTAB and sym_strtab sections
+    uint32_t symtab_offset = 0, symtab_size = 0;
+    uint32_t sym_strtab_offset = 0, sym_strtab_size = 0;
+
+    fseek(f, header->sec_offset, SEEK_SET);
+    for (uint32_t i = 0; i < header->nsections; i++) {
+        s32x_section_t sect;
+        if (fread(&sect, sizeof(sect), 1, f) != 1) break;
+        if (sect.type == S32_SEC_SYMTAB) {
+            symtab_offset = sect.offset;
+            symtab_size = sect.size;
+        } else if (sect.type == S32_SEC_STRTAB) {
+            sym_strtab_offset = sect.offset;
+            sym_strtab_size = sect.size;
+        }
+    }
+
+    if (!symtab_offset || !sym_strtab_size) return;
+
+    // Read sym_strtab
+    char *sym_strings = malloc(sym_strtab_size);
+    if (!sym_strings) return;
+    fseek(f, sym_strtab_offset, SEEK_SET);
+    if (fread(sym_strings, 1, sym_strtab_size, f) != sym_strtab_size) {
+        free(sym_strings);
+        return;
+    }
+
+    // Read symbol entries
+    int nsyms = symtab_size / sizeof(s32o_symbol_t);
+    s32o_symbol_t *syms = malloc(symtab_size);
+    if (!syms) { free(sym_strings); return; }
+    fseek(f, symtab_offset, SEEK_SET);
+    if (fread(syms, sizeof(s32o_symbol_t), nsyms, f) != (size_t)nsyms) {
+        free(syms);
+        free(sym_strings);
+        return;
+    }
+
+    // Build lookup table
+    sym_table = malloc(nsyms * sizeof(sym_entry_t));
+    if (!sym_table) { free(syms); free(sym_strings); return; }
+
+    num_syms = 0;
+    for (int i = 0; i < nsyms; i++) {
+        if (syms[i].name_offset < sym_strtab_size) {
+            sym_table[num_syms].addr = syms[i].value;
+            sym_table[num_syms].name = strdup(&sym_strings[syms[i].name_offset]);
+            num_syms++;
+        }
+    }
+
+    qsort(sym_table, num_syms, sizeof(sym_entry_t), sym_cmp);
+    free(syms);
+    free(sym_strings);
+}
+
+// Load symbols from .s32o object file (only code section symbols)
+static void load_symbols_s32o(FILE *f, s32o_header_t *header) {
+    if (header->nsymbols == 0) return;
+
+    // Read section table to determine which sections are code
+    s32o_section_t *sects = malloc(header->nsections * sizeof(s32o_section_t));
+    if (!sects) return;
+    fseek(f, header->sec_offset, SEEK_SET);
+    if (fread(sects, sizeof(s32o_section_t), header->nsections, f) != header->nsections) {
+        free(sects);
+        return;
+    }
+
+    // Read string table
+    char *strings = malloc(header->str_size);
+    if (!strings) { free(sects); return; }
+    fseek(f, header->str_offset, SEEK_SET);
+    if (fread(strings, 1, header->str_size, f) != header->str_size) {
+        free(strings);
+        free(sects);
+        return;
+    }
+
+    // Read symbols
+    s32o_symbol_t *syms = malloc(header->nsymbols * sizeof(s32o_symbol_t));
+    if (!syms) { free(strings); free(sects); return; }
+    fseek(f, header->sym_offset, SEEK_SET);
+    if (fread(syms, sizeof(s32o_symbol_t), header->nsymbols, f) != header->nsymbols) {
+        free(syms);
+        free(strings);
+        free(sects);
+        return;
+    }
+
+    sym_table = malloc(header->nsymbols * sizeof(sym_entry_t));
+    if (!sym_table) { free(syms); free(strings); free(sects); return; }
+
+    num_syms = 0;
+    for (uint32_t i = 0; i < header->nsymbols; i++) {
+        // Only include symbols from code sections (section index is 1-based)
+        uint16_t sec = syms[i].section;
+        if (sec == 0 || sec > header->nsections) continue;
+        if (sects[sec - 1].type != S32_SEC_CODE) continue;
+        if (syms[i].name_offset >= header->str_size) continue;
+
+        sym_table[num_syms].addr = syms[i].value;
+        sym_table[num_syms].name = strdup(&strings[syms[i].name_offset]);
+        num_syms++;
+    }
+
+    qsort(sym_table, num_syms, sizeof(sym_entry_t), sym_cmp);
+    free(syms);
+    free(strings);
+    free(sects);
+}
+
+static void free_symbols(void) {
+    for (int i = 0; i < num_syms; i++) {
+        free((void *)sym_table[i].name);
+    }
+    free(sym_table);
+    sym_table = NULL;
+    num_syms = 0;
+}
+
+// ============================================================================
+// Disassemble a code section
+// ============================================================================
+
+static void disassemble_section(FILE *f, const char *name, uint32_t vaddr,
+                                uint32_t file_offset, uint32_t size,
+                                uint32_t start_addr, uint32_t end_addr,
+                                bool have_range) {
+    printf("Section: %s at 0x%08x (%d bytes)\n", name, vaddr, size);
+    printf("----------------------------------------\n");
+
+    fseek(f, file_offset, SEEK_SET);
+    uint32_t *code = malloc(size);
+    if (!code) return;
+    fread(code, 1, size, f);
+
+    uint32_t start = 0;
+    uint32_t end = size / 4;
+
+    if (have_range) {
+        if (start_addr >= vaddr) start = (start_addr - vaddr) / 4;
+        if (end_addr >= vaddr) {
+            uint32_t new_end = (end_addr - vaddr) / 4 + 1;
+            if (new_end < end) end = new_end;
+        }
+    }
+
+    for (uint32_t j = start; j < end && j < size / 4; j++) {
+        disassemble_instruction(vaddr + j * 4, code[j]);
+    }
+
+    free(code);
+    printf("\n");
+}
+
+// ============================================================================
+// Main: auto-detect .s32x vs .s32o
+// ============================================================================
+
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <file> [start_addr] [end_addr]\n", argv[0]);
+        fprintf(stderr, "Usage: %s <file.s32x|file.s32o> [start_addr] [end_addr]\n", argv[0]);
         return 1;
     }
-    
+
     FILE *f = fopen(argv[1], "rb");
     if (!f) {
         perror("Cannot open file");
         return 1;
     }
-    
-    // Read header
-    s32x_header_t header;
-    if (fread(&header, sizeof(header), 1, f) != 1) {
-        fprintf(stderr, "Cannot read header\n");
+
+    // Read magic to detect file type
+    uint32_t magic;
+    if (fread(&magic, sizeof(magic), 1, f) != 1) {
+        fprintf(stderr, "Cannot read file header\n");
         fclose(f);
         return 1;
     }
-    
-    // Check magic
-    if (header.magic != S32X_MAGIC) {
-        fprintf(stderr, "Not a valid S32X file (magic: 0x%08x)\n", header.magic);
-        fclose(f);
-        return 1;
-    }
-    
-    printf("S32X Executable Disassembly\n");
-    printf("Entry point: 0x%08x\n", header.entry);
-    printf("Stack base:  0x%08x\n", header.stack_base);
-    printf("\n");
-    
-    // Read string table
-    char *strtab = malloc(header.str_size);
-    if (!strtab) {
-        fprintf(stderr, "Cannot allocate string table\n");
-        fclose(f);
-        return 1;
-    }
-    fseek(f, header.str_offset, SEEK_SET);
-    fread(strtab, 1, header.str_size, f);
-    
-    // Read sections
-    fseek(f, header.sec_offset, SEEK_SET);
-    for (uint32_t i = 0; i < header.nsections; i++) {
-        s32x_section_t sect;
-        if (fread(&sect, sizeof(sect), 1, f) != 1) break;
-        
-        if (sect.type == S32_SEC_CODE) {  // Code section
-            const char *name = &strtab[sect.name_offset];
-            printf("Section: %s at 0x%08x (%d bytes)\n", name, sect.vaddr, sect.mem_size);
-            printf("----------------------------------------\n");
-            
-            // Save position
-            long pos = ftell(f);
-            
-            // Read code
-            fseek(f, sect.offset, SEEK_SET);
-            uint32_t *code = malloc(sect.size);
-            if (code) {
-                fread(code, 1, sect.size, f);
-                
-                // Disassemble
-                uint32_t addr = sect.vaddr;
-                uint32_t start = 0;
-                uint32_t end = sect.size / 4;
-                
-                // Optional address range from command line
-                if (argc > 2) {
-                    uint32_t start_addr = strtoul(argv[2], NULL, 0);
-                    if (start_addr >= addr) {
-                        start = (start_addr - addr) / 4;
-                    }
-                }
-                if (argc > 3) {
-                    uint32_t end_addr = strtoul(argv[3], NULL, 0);
-                    if (end_addr >= addr) {
-                        uint32_t new_end = (end_addr - addr) / 4 + 1;
-                        if (new_end < end) end = new_end;
-                    }
-                }
-                
-                for (uint32_t j = start; j < end && j < sect.size/4; j++) {
-                    disassemble_instruction(addr + j*4, code[j]);
-                }
-                
-                free(code);
-            }
-            
-            // Restore position
-            fseek(f, pos, SEEK_SET);
-            printf("\n");
+    fseek(f, 0, SEEK_SET);
+
+    // Parse optional address range
+    bool have_range = (argc > 2);
+    uint32_t start_addr = 0, end_addr = 0xFFFFFFFF;
+    if (argc > 2) start_addr = strtoul(argv[2], NULL, 0);
+    if (argc > 3) end_addr = strtoul(argv[3], NULL, 0);
+
+    if (magic == S32X_MAGIC) {
+        // ---- .s32x executable ----
+        s32x_header_t header;
+        if (fread(&header, sizeof(header), 1, f) != 1) {
+            fprintf(stderr, "Cannot read S32X header\n");
+            fclose(f);
+            return 1;
         }
+
+        printf("S32X Executable Disassembly\n");
+        printf("Entry point: 0x%08x\n", header.entry);
+        printf("Stack base:  0x%08x\n", header.stack_base);
+        printf("\n");
+
+        // Read section string table
+        char *strtab = malloc(header.str_size);
+        if (!strtab) { fclose(f); return 1; }
+        fseek(f, header.str_offset, SEEK_SET);
+        fread(strtab, 1, header.str_size, f);
+
+        // Load symbols from SYMTAB section
+        load_symbols_s32x(f, &header);
+        if (num_syms > 0) {
+            printf("Loaded %d symbols\n\n", num_syms);
+        }
+
+        // Disassemble code sections
+        fseek(f, header.sec_offset, SEEK_SET);
+        for (uint32_t i = 0; i < header.nsections; i++) {
+            s32x_section_t sect;
+            if (fread(&sect, sizeof(sect), 1, f) != 1) break;
+
+            if (sect.type == S32_SEC_CODE) {
+                long pos = ftell(f);
+                const char *name = &strtab[sect.name_offset];
+                disassemble_section(f, name, sect.vaddr, sect.offset, sect.size,
+                                    start_addr, end_addr, have_range);
+                fseek(f, pos, SEEK_SET);
+            }
+        }
+
+        free(strtab);
+
+    } else if (magic == S32O_MAGIC) {
+        // ---- .s32o object file ----
+        s32o_header_t header;
+        if (fread(&header, sizeof(header), 1, f) != 1) {
+            fprintf(stderr, "Cannot read S32O header\n");
+            fclose(f);
+            return 1;
+        }
+
+        printf("S32O Object File Disassembly\n");
+        printf("Sections: %d, Symbols: %d\n", header.nsections, header.nsymbols);
+        printf("\n");
+
+        // Read string table
+        char *strtab = malloc(header.str_size);
+        if (!strtab) { fclose(f); return 1; }
+        fseek(f, header.str_offset, SEEK_SET);
+        fread(strtab, 1, header.str_size, f);
+
+        // Load symbols
+        load_symbols_s32o(f, &header);
+        if (num_syms > 0) {
+            printf("Loaded %d symbols\n\n", num_syms);
+        }
+
+        // Read and disassemble code sections
+        s32o_section_t *sects = malloc(header.nsections * sizeof(s32o_section_t));
+        if (!sects) { free(strtab); fclose(f); return 1; }
+        fseek(f, header.sec_offset, SEEK_SET);
+        fread(sects, sizeof(s32o_section_t), header.nsections, f);
+
+        for (uint32_t i = 0; i < header.nsections; i++) {
+            if (sects[i].type == S32_SEC_CODE && sects[i].size > 0) {
+                const char *name = &strtab[sects[i].name_offset];
+                disassemble_section(f, name, 0, sects[i].offset, sects[i].size,
+                                    start_addr, end_addr, have_range);
+            }
+        }
+
+        free(sects);
+        free(strtab);
+
+    } else {
+        fprintf(stderr, "Not a valid S32X or S32O file (magic: 0x%08x)\n", magic);
+        fclose(f);
+        return 1;
     }
-    
-    free(strtab);
+
+    free_symbols();
     fclose(f);
     return 0;
 }
