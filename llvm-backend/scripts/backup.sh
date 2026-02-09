@@ -14,6 +14,11 @@ rsync -av --delete \
     ~/llvm-project/llvm/lib/Target/SLOW32/ \
     "$BACKEND_DIR/SLOW32/"
 
+# Backup the codegen tests
+rsync -av --delete \
+    ~/llvm-project/llvm/test/CodeGen/SLOW32/ \
+    "$BACKEND_DIR/test/"
+
 # Backup the Clang target files
 rsync -av \
     ~/llvm-project/clang/lib/Basic/Targets/SLOW32.* \

@@ -22,6 +22,11 @@ rsync -av --delete \
     "$BACKEND_DIR/SLOW32/" \
     ~/llvm-project/llvm/lib/Target/SLOW32/
 
+# Restore the codegen tests
+rsync -av --delete \
+    "$BACKEND_DIR/test/" \
+    ~/llvm-project/llvm/test/CodeGen/SLOW32/
+
 # Restore the Clang target files
 rsync -av \
     "$BACKEND_DIR/clang/SLOW32."* \
