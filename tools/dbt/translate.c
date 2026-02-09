@@ -3635,6 +3635,26 @@ static inline void store_f64_pair(uint32_t *regs, uint8_t reg, double val) {
     regs[reg + 1] = (uint32_t)(bits >> 32);
 }
 
+static inline bool load_u64_pair(uint32_t *regs, uint8_t reg, uint64_t *out) {
+    if (reg >= 31 || (reg & 1)) {
+        fprintf(stderr, "f64 register fault: r%d is invalid (must be even, < 31)\n", reg);
+        *out = 0;
+        return false;
+    }
+    *out = ((uint64_t)regs[reg + 1] << 32) | regs[reg];
+    return true;
+}
+
+static inline bool store_u64_pair(uint32_t *regs, uint8_t reg, uint64_t val) {
+    if (reg >= 31 || (reg & 1)) {
+        fprintf(stderr, "f64 register fault: r%d is invalid (must be even, < 31)\n", reg);
+        return false;
+    }
+    regs[reg] = (uint32_t)val;
+    regs[reg + 1] = (uint32_t)(val >> 32);
+    return true;
+}
+
 // This function is called from JIT code via emit_call_r64.
 // RDI = cpu state pointer, ESI = opcode, EDX = rd, ECX = rs1, R8D = rs2
 void dbt_fp_helper(dbt_cpu_state_t *cpu, uint32_t opcode,
@@ -3695,18 +3715,78 @@ void dbt_fp_helper(dbt_cpu_state_t *cpu, uint32_t opcode,
     case OP_FCVT_D_WU: { store_f64_pair(r, rd, (double)r[rs1]); break; }
     case OP_FCVT_D_S: { float a; memcpy(&a, &r[rs1], 4); store_f64_pair(r, rd, (double)a); break; }
     case OP_FCVT_S_D: { double a; load_f64_pair(r, rs1, &a); float res = (float)a; memcpy(&r[rd], &res, 4); break; }
-    case OP_FNEG_D: r[rd] = r[rs1]; r[rd + 1] = r[rs1 + 1] ^ 0x80000000u; break;
-    case OP_FABS_D: r[rd] = r[rs1]; r[rd + 1] = r[rs1 + 1] & 0x7FFFFFFFu; break;
+    case OP_FNEG_D: {
+        double a;
+        load_f64_pair(r, rs1, &a);
+        uint64_t bits;
+        memcpy(&bits, &a, 8);
+        bits ^= 0x8000000000000000ull;
+        memcpy(&a, &bits, 8);
+        store_f64_pair(r, rd, a);
+        break;
+    }
+    case OP_FABS_D: {
+        double a;
+        load_f64_pair(r, rs1, &a);
+        uint64_t bits;
+        memcpy(&bits, &a, 8);
+        bits &= 0x7FFFFFFFFFFFFFFFull;
+        memcpy(&a, &bits, 8);
+        store_f64_pair(r, rd, a);
+        break;
+    }
 
     // float <-> int64
-    case OP_FCVT_L_S: { float a; memcpy(&a, &r[rs1], 4); int64_t v = (int64_t)a; r[rd] = (uint32_t)v; r[rd+1] = (uint32_t)((uint64_t)v >> 32); break; }
-    case OP_FCVT_LU_S: { float a; memcpy(&a, &r[rs1], 4); uint64_t v = (uint64_t)a; r[rd] = (uint32_t)v; r[rd+1] = (uint32_t)(v >> 32); break; }
-    case OP_FCVT_S_L: { int64_t v = (int64_t)(((uint64_t)r[rs1+1] << 32) | r[rs1]); float res = (float)v; memcpy(&r[rd], &res, 4); break; }
-    case OP_FCVT_S_LU: { uint64_t v = ((uint64_t)r[rs1+1] << 32) | r[rs1]; float res = (float)v; memcpy(&r[rd], &res, 4); break; }
-    case OP_FCVT_L_D: { double a; load_f64_pair(r, rs1, &a); int64_t v = (int64_t)a; r[rd] = (uint32_t)v; r[rd+1] = (uint32_t)((uint64_t)v >> 32); break; }
-    case OP_FCVT_LU_D: { double a; load_f64_pair(r, rs1, &a); uint64_t v = (uint64_t)a; r[rd] = (uint32_t)v; r[rd+1] = (uint32_t)(v >> 32); break; }
-    case OP_FCVT_D_L: { int64_t v = (int64_t)(((uint64_t)r[rs1+1] << 32) | r[rs1]); store_f64_pair(r, rd, (double)v); break; }
-    case OP_FCVT_D_LU: { uint64_t v = ((uint64_t)r[rs1+1] << 32) | r[rs1]; store_f64_pair(r, rd, (double)v); break; }
+    case OP_FCVT_L_S: {
+        float a; memcpy(&a, &r[rs1], 4);
+        int64_t v = (int64_t)a;
+        store_u64_pair(r, rd, (uint64_t)v);
+        break;
+    }
+    case OP_FCVT_LU_S: {
+        float a; memcpy(&a, &r[rs1], 4);
+        uint64_t v = (uint64_t)a;
+        store_u64_pair(r, rd, v);
+        break;
+    }
+    case OP_FCVT_S_L: {
+        uint64_t v;
+        if (!load_u64_pair(r, rs1, &v)) break;
+        float res = (float)(int64_t)v;
+        memcpy(&r[rd], &res, 4);
+        break;
+    }
+    case OP_FCVT_S_LU: {
+        uint64_t v;
+        if (!load_u64_pair(r, rs1, &v)) break;
+        float res = (float)v;
+        memcpy(&r[rd], &res, 4);
+        break;
+    }
+    case OP_FCVT_L_D: {
+        double a; load_f64_pair(r, rs1, &a);
+        int64_t v = (int64_t)a;
+        store_u64_pair(r, rd, (uint64_t)v);
+        break;
+    }
+    case OP_FCVT_LU_D: {
+        double a; load_f64_pair(r, rs1, &a);
+        uint64_t v = (uint64_t)a;
+        store_u64_pair(r, rd, v);
+        break;
+    }
+    case OP_FCVT_D_L: {
+        uint64_t v;
+        if (!load_u64_pair(r, rs1, &v)) break;
+        store_f64_pair(r, rd, (double)(int64_t)v);
+        break;
+    }
+    case OP_FCVT_D_LU: {
+        uint64_t v;
+        if (!load_u64_pair(r, rs1, &v)) break;
+        store_f64_pair(r, rd, (double)v);
+        break;
+    }
     }
 
     r[0] = 0;  // Ensure r0 stays 0
