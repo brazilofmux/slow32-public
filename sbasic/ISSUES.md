@@ -32,12 +32,8 @@ Updated `fn_val` to detect `&H`, `&O`, `&B` prefixes and use `strtol` with the a
 ### 8. ~~Extended File I/O: `LOC`, `LOF`, and `INPUT$`~~ **FIXED**
 Added `LOC(h)` (current byte position), `LOF(h)` (file length via seek), and `INPUT$(n [, #h])` (read n characters from file or stdin) as builtins. Parser updated to allow decorative `#` in function argument lists (e.g., `INPUT$(5, #1)`).
 
-### 9. System Integration: `FILES`, `ENVIRON$`, `COMMAND$`
-- **Opportunity**: 
-    - `FILES` (or `DIR$`): List files in the current directory.
-    - `ENVIRON$(name)`: Read environment variables.
-    - `COMMAND$`: Get the command-line arguments passed to the interpreter.
-- **Context**: The SLOW-32 MMIO runtime already provides these hooks; they just need BASIC-level wrappers.
+### 9. ~~System Integration: `DIR$`, `ENVIRON$`, `COMMAND$`~~ **FIXED**
+Added `ENVIRON$(name$)` (reads env vars via MMIO getenv), `COMMAND$([n])` (command-line args via `__slow32_fetch_args`), and `DIR$(pattern$)` / `DIR$()` (directory listing via MMIO opendir/readdir with wildcard matching).
 
 ### 10. ~~`REPLACE$(str, find, rep)`~~ **FIXED** (already implemented)
 

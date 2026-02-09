@@ -6,6 +6,8 @@
 #include <ctype.h>
 #include <math.h>
 #include <time.h>
+#include <dirent.h>
+#include <slow32_args.h>
 
 /* Simple LCG random number generator */
 static unsigned int rng_state = 12345;
@@ -627,6 +629,138 @@ static error_t fn_spc(value_t *args, int nargs, value_t *out) {
 }
 
 /* ================================================================
+ * System integration builtins
+ * ================================================================ */
+
+/* ENVIRON$(name$) - get environment variable */
+static error_t fn_environ(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    if (args[0].type != VAL_STRING) return ERR_TYPE_MISMATCH;
+    const char *val = getenv(args[0].sval->data);
+    if (val)
+        *out = val_string_cstr(val);
+    else
+        *out = val_string_cstr("");
+    return ERR_NONE;
+}
+
+/* COMMAND$([n]) - get command-line arguments */
+static error_t fn_command(value_t *args, int nargs, value_t *out) {
+    if (nargs > 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    int argc = 0;
+    char **argv = NULL;
+    if (__slow32_fetch_args(&argc, &argv) != 0 || argc == 0) {
+        *out = val_string_cstr("");
+        return ERR_NONE;
+    }
+    if (nargs == 1) {
+        /* COMMAND$(n) - return nth argument (1-based, 0 = program name) */
+        int n;
+        EVAL_CHECK(val_to_integer(&args[0], &n));
+        if (n >= 0 && n < argc)
+            *out = val_string_cstr(argv[n]);
+        else
+            *out = val_string_cstr("");
+        return ERR_NONE;
+    }
+    /* COMMAND$() - return all args after program name as one string */
+    char buf[MAX_STRING_LEN + 1];
+    int pos = 0;
+    for (int i = 1; i < argc && pos < MAX_STRING_LEN; i++) {
+        if (i > 1 && pos < MAX_STRING_LEN) buf[pos++] = ' ';
+        int len = (int)strlen(argv[i]);
+        if (pos + len > MAX_STRING_LEN) len = MAX_STRING_LEN - pos;
+        memcpy(buf + pos, argv[i], len);
+        pos += len;
+    }
+    buf[pos] = '\0';
+    *out = val_string(buf, pos);
+    return ERR_NONE;
+}
+
+/* DIR$([pattern$]) - directory listing with simple wildcard matching */
+static DIR *dir_handle = NULL;
+static char dir_pattern[256] = "";
+static char dir_path[256] = ".";
+
+/* Simple wildcard match: * matches any chars, ? matches one char */
+static int wildmatch(const char *pattern, const char *str) {
+    while (*pattern) {
+        if (*pattern == '*') {
+            pattern++;
+            if (*pattern == '\0') return 1;
+            while (*str) {
+                if (wildmatch(pattern, str)) return 1;
+                str++;
+            }
+            return 0;
+        } else if (*pattern == '?') {
+            if (*str == '\0') return 0;
+            pattern++; str++;
+        } else {
+            if (toupper((unsigned char)*pattern) != toupper((unsigned char)*str))
+                return 0;
+            pattern++; str++;
+        }
+    }
+    return *str == '\0';
+}
+
+static error_t fn_dir(value_t *args, int nargs, value_t *out) {
+    if (nargs > 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    if (nargs == 1) {
+        /* DIR$(pattern$) - start new search */
+        if (args[0].type != VAL_STRING) return ERR_TYPE_MISMATCH;
+        if (dir_handle) { closedir(dir_handle); dir_handle = NULL; }
+
+        const char *spec = args[0].sval->data;
+        /* Split into path and pattern at last / */
+        const char *last_slash = NULL;
+        for (const char *p = spec; *p; p++)
+            if (*p == '/') last_slash = p;
+
+        if (last_slash) {
+            int plen = (int)(last_slash - spec);
+            if (plen >= (int)sizeof(dir_path)) plen = sizeof(dir_path) - 1;
+            memcpy(dir_path, spec, plen);
+            dir_path[plen] = '\0';
+            strncpy(dir_pattern, last_slash + 1, sizeof(dir_pattern) - 1);
+            dir_pattern[sizeof(dir_pattern) - 1] = '\0';
+        } else {
+            strcpy(dir_path, ".");
+            strncpy(dir_pattern, spec, sizeof(dir_pattern) - 1);
+            dir_pattern[sizeof(dir_pattern) - 1] = '\0';
+        }
+        if (dir_pattern[0] == '\0') strcpy(dir_pattern, "*");
+
+        dir_handle = opendir(dir_path);
+        if (!dir_handle) {
+            *out = val_string_cstr("");
+            return ERR_NONE;
+        }
+    }
+    /* Return next matching entry */
+    if (!dir_handle) {
+        *out = val_string_cstr("");
+        return ERR_NONE;
+    }
+    struct dirent *ent;
+    while ((ent = readdir(dir_handle)) != NULL) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
+            continue;
+        if (wildmatch(dir_pattern, ent->d_name)) {
+            *out = val_string_cstr(ent->d_name);
+            return ERR_NONE;
+        }
+    }
+    /* End of directory */
+    closedir(dir_handle);
+    dir_handle = NULL;
+    *out = val_string_cstr("");
+    return ERR_NONE;
+}
+
+/* ================================================================
  * RANDOMIZE support (called from eval, not dispatch table)
  * ================================================================ */
 
@@ -690,6 +824,10 @@ static const builtin_entry_t builtins[] = {
     { "LOC",      fn_loc },
     { "LOF",      fn_lof },
     { "INPUT$",   fn_input_str },
+    /* System */
+    { "ENVIRON$", fn_environ },
+    { "COMMAND$", fn_command },
+    { "DIR$",     fn_dir },
     { NULL, NULL }
 };
 
