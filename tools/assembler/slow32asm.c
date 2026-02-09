@@ -599,6 +599,7 @@ static void add_relocation(assembler_t *as, uint32_t offset, const char *symbol,
     relocation_t *rel = &as->relocations[as->num_relocations++];
     rel->offset = offset;
     strncpy(rel->symbol, symbol, sizeof(rel->symbol) - 1);
+    rel->symbol[sizeof(rel->symbol) - 1] = '\0';
     rel->type = type;
     rel->addend = addend;
     rel->section = section;
