@@ -22,10 +22,10 @@ Opcodes like `S32_MMIO_OP_OPEN`, `S32_MMIO_OP_STAT`, and `S32_MMIO_OP_GETENV` ca
 The `process_request` function uses `req->offset % S32_MMIO_DATA_CAPACITY`.
 - **Status**: Already validated. All MMIO operations check `offset + length <= S32_MMIO_DATA_CAPACITY` and return `S32_MMIO_STATUS_ERR` on overflow.
 
-### 5. Loader: Implicit BSS Zeroing
-The `.s32x` loader assumes that the emulator has already zeroed all memory.
-- **Problem**: While `mmap(MAP_ANONYMOUS)` typically provides zeroed pages, relying on this is fragile and may not hold for all memory management strategies or future extensions.
-- **Recommendation**: Explicitly zero the difference between `mem_size` and `size` for each section in `load_s32x_file`.
+### 5. Loader: Implicit BSS Zeroing (Not a Bug)
+The `.s32x` loader currently assumes memory starts zeroed, which happens today because the emulator uses `mmap(MAP_ANONYMOUS)` or `calloc`.
+- **Status**: Not a bug. The contract is that the guest runtime must zero its own `.bss` (like real hardware), and `crt0.s` already clears `.bss` via `memset`.
+- **Note**: Emulator zeroed memory is a convenience, not a required guarantee.
 
 ---
 
