@@ -3475,14 +3475,7 @@ um_star_word:
     ldw r2, r28, 0        # u2
     ldw r1, r28, 4        # u1
     mul r3, r1, r2         # lo = low 32 bits
-    mulh r4, r1, r2        # hi = signed high
-    # Convert signed high to unsigned: hi += (u1<0 ? u2 : 0) + (u2<0 ? u1 : 0)
-    slt r5, r1, r0         # 1 if u1 has bit 31 set
-    mul r6, r5, r2         # u2 if u1 "negative", else 0
-    add r4, r4, r6
-    slt r5, r2, r0         # 1 if u2 has bit 31 set
-    mul r6, r5, r1         # u1 if u2 "negative", else 0
-    add r4, r4, r6
+    mulhu r4, r1, r2       # hi = unsigned high
     stw r28, r4, 0         # hi (TOS)
     stw r28, r3, 4         # lo (NOS)
     jal r0, next
