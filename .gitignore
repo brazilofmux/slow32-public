@@ -66,10 +66,19 @@ runtime/envp_stub.s
 runtime/cxxabi.s
 runtime/time_util.s
 runtime/math_int.s
+runtime/math_soft_cordic.s
 runtime/fs_mmio.s
 runtime/fs_stub.s
 runtime/dirent_mmio.s
 runtime/dirent_stub.s
+
+# Generated assembly from C sources in examples/
+# (hand-written examples like hello_clean.s, test_comparisons.s are still tracked)
+examples/cordic_debug.s
+examples/math_shootout.s
+
+# Generated assembly from C sources in sbasic/
+sbasic/src/*.s
 
 # Temporary LLVM files
 *.ll.tmp
