@@ -160,6 +160,11 @@ static int val_as_int(const value_t *v) {
 error_t val_to_integer(const value_t *v, int *out) {
     if (v->type == VAL_STRING || v->type == VAL_RECORD)
         return ERR_TYPE_MISMATCH;
+    if (v->type == VAL_DOUBLE) {
+        double d = v->dval;
+        if (d > 2147483647.0 || d < -2147483648.0)
+            return ERR_OVERFLOW;
+    }
     *out = val_as_int(v);
     return ERR_NONE;
 }

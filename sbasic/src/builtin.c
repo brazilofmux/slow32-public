@@ -80,7 +80,10 @@ static error_t fn_cint(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     double v; EVAL_CHECK(get_num(&args[0], &v));
     /* Round to nearest integer (banker's rounding not needed for BASIC) */
-    *out = val_integer((int)(v + (v >= 0.0 ? 0.5 : -0.5)));
+    double rounded = v + (v >= 0.0 ? 0.5 : -0.5);
+    if (rounded > 2147483647.0 || rounded < -2147483648.0)
+        return ERR_OVERFLOW;
+    *out = val_integer((int)rounded);
     return ERR_NONE;
 }
 

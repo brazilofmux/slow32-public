@@ -27,10 +27,8 @@ Bumped `MAX_EVAL_DEPTH` from 32 to 48 and stack size from 64KB to 128KB (via `--
 
 ## Architectural Limitations & Performance
 
-### 6. Missing Range Checks for `INTEGER` Conversion
-Functions like `fn_cint` and `val_to_integer` (used for array indices, `TAB`, etc.) do not check for 32-bit overflow.
-- **Problem**: Converting a very large `DOUBLE` to `INTEGER` results in silent wrapping or undefined behavior, which can lead to illegal memory access (e.g., in array indexing) or logic errors.
-- **Recommendation**: Add range checks to `val_as_int` and return `ERR_OVERFLOW` or `ERR_ILLEGAL_FUNCTION_CALL`.
+### 6. ~~Missing Range Checks for `INTEGER` Conversion~~ **FIXED**
+`val_to_integer` now checks doubles against INT32 range before truncating, returning `ERR_OVERFLOW` if out of bounds. `fn_cint` similarly checks after rounding.
 
 ### 7. ~~Fixed Limit on `SHARED` variables~~ **FIXED**
 Bumped `shared_names` array from 32 to 64 entries.
