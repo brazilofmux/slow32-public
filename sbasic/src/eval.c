@@ -18,6 +18,7 @@
 typedef struct {
     char name[64];
     stmt_t *def;
+    env_t *static_env;  /* persistent env for STATIC variables */
 } proc_entry_t;
 
 typedef struct {
@@ -210,6 +211,27 @@ static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
     for (int i = 0; i < nshared; i++) {
         value_t *gv = env_get(program_global_env, shared_names[i]);
         if (gv) env_link(local, shared_names[i], gv);
+    }
+
+    /* Collect STATIC variables and link to persistent env */
+    const char *static_names[64];
+    int nstatic = 0;
+    for (stmt_t *s = def->proc_def.body; s && nstatic < 64; s = s->next) {
+        if (s->type == STMT_STATIC) {
+            for (int i = 0; i < s->shared.nvars && nstatic < 64; i++) {
+                static_names[nstatic] = s->shared.varnames[i];
+                nstatic++;
+            }
+        }
+    }
+    if (nstatic > 0) {
+        if (!proc->static_env)
+            proc->static_env = env_create(NULL);
+        for (int i = 0; i < nstatic; i++) {
+            /* env_get auto-creates with default on first access */
+            value_t *sv = env_get(proc->static_env, static_names[i]);
+            if (sv) env_link(local, static_names[i], sv);
+        }
     }
 
     error_t err = eval_stmts(local, def->proc_def.body);
@@ -1711,6 +1733,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_LABEL:        return ERR_NONE;
         case STMT_DECLARE:      return ERR_NONE;
         case STMT_SHARED:       return ERR_NONE;
+        case STMT_STATIC:       return ERR_NONE;
         case STMT_DATA:         return ERR_NONE;
 
         case STMT_OPTION_BASE:
@@ -1933,6 +1956,7 @@ static error_t scan_one_stmt(stmt_t *s, int top_idx) {
         strncpy(proc_table[proc_count].name, s->proc_def.name, 63);
         proc_table[proc_count].name[63] = '\0';
         proc_table[proc_count].def = s;
+        proc_table[proc_count].static_env = NULL;
         proc_count++;
     }
     /* Recurse into block bodies */
@@ -2104,6 +2128,12 @@ error_t eval_program(env_t *env, stmt_t *program) {
     fileio_close_all();
     data_pool_clear();
     array_clear_all();
+    for (i = 0; i < proc_count; i++) {
+        if (proc_table[i].static_env) {
+            env_destroy(proc_table[i].static_env);
+            proc_table[i].static_env = NULL;
+        }
+    }
     free(stmts);
     return result;
 }

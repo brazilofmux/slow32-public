@@ -102,6 +102,7 @@ typedef enum {
     STMT_EXIT,
     STMT_CONST,
     STMT_SHARED,
+    STMT_STATIC,
     STMT_DECLARE,
     /* Stage 3 */
     STMT_DIM,
@@ -501,6 +502,8 @@ stmt_t *stmt_exit(exit_type_t what, int line);
 stmt_t *stmt_const(const char *name, val_type_t type, expr_t *value, int line);
 stmt_t *stmt_shared(int line);
 void stmt_shared_add(stmt_t *s, const char *name);
+stmt_t *stmt_static_decl(int line);
+void stmt_static_add(stmt_t *s, const char *name);
 
 /* Case clause constructors */
 case_clause_t *case_clause_alloc(void);

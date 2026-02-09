@@ -314,6 +314,17 @@ void stmt_shared_add(stmt_t *s, const char *name) {
     s->shared.nvars = n + 1;
 }
 
+stmt_t *stmt_static_decl(int line) {
+    return stmt_alloc(STMT_STATIC, line);
+}
+
+void stmt_static_add(stmt_t *s, const char *name) {
+    int n = s->shared.nvars;
+    if (n >= 16) return;
+    name_copy(s->shared.varnames[n], name);
+    s->shared.nvars = n + 1;
+}
+
 /* --- Case clause --- */
 
 case_clause_t *case_clause_alloc(void) {
@@ -423,6 +434,7 @@ void stmt_free(stmt_t *s) {
             case STMT_REM:
             case STMT_EXIT:
             case STMT_SHARED:
+            case STMT_STATIC:
             case STMT_DECLARE:
                 break;
             case STMT_SUB_DEF:

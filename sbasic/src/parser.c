@@ -1465,6 +1465,24 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_EXIT:     return parse_exit(p);
         case TOK_CONST:    return parse_const(p);
         case TOK_SHARED:   return parse_shared(p);
+        case TOK_STATIC: {
+            int line = tok->line;
+            lexer_next(&p->lex); /* consume STATIC */
+            stmt_t *s = stmt_static_decl(line);
+            if (!lexer_check(&p->lex, TOK_IDENT)) {
+                parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+            }
+            token_t t = lexer_next(&p->lex);
+            stmt_static_add(s, t.text);
+            while (lexer_match(&p->lex, TOK_COMMA)) {
+                if (!lexer_check(&p->lex, TOK_IDENT)) {
+                    parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+                }
+                t = lexer_next(&p->lex);
+                stmt_static_add(s, t.text);
+            }
+            return s;
+        }
         case TOK_SUB:      return parse_sub(p);
         case TOK_FUNCTION: return parse_function(p);
         case TOK_CALL:     return parse_call(p);
@@ -1608,11 +1626,6 @@ static stmt_t *parse_stmt(parser_t *p) {
             /* OPTION BASE */
             if (strcmp(var.text, "OPTION") == 0)
                 return parse_option(p, var.line);
-            /* STATIC keyword (context-sensitive in SUB/FUNCTION) */
-            if (strcmp(var.text, "STATIC") == 0) {
-                /* For now, treat STATIC as a declaration — just skip */
-                return stmt_alloc(STMT_REM, var.line);
-            }
             /* Implicit call: ident [args] */
             return parse_implicit_call(p, var.text, var.line);
         }

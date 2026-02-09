@@ -38,9 +38,8 @@ Bumped `shared_names` array from 32 to 64 entries.
 ### 8. ~~Binary/Random File I/O (`GET`, `PUT`)~~ **FIXED**
 Added `OPEN ... FOR BINARY` and `OPEN ... FOR RANDOM ... LEN = n` modes with typed `GET #h, [pos], var` / `PUT #h, [pos], var` and `SEEK #h, pos`. BINARY uses 1-based byte offsets; RANDOM uses 1-based record numbers. INTEGER reads/writes 4 bytes, DOUBLE 8 bytes, STRING reads/writes LEN(var$) bytes. No FIELD/LSET/RSET (architectural mismatch with refcounted strings).
 
-### 9. `STATIC` Variables in Procedures
-- **Opportunity**: The `STATIC` keyword for `SUB/FUNCTION` variables to preserve their value between calls.
-- **Recommendation**: Add a `static_env` to the `proc_entry_t` that is reused across calls.
+### 9. ~~`STATIC` Variables in Procedures~~ **FIXED**
+Added `STATIC var1, var2, ...` inside SUB/FUNCTION to declare variables that persist between calls. Each procedure gets a `static_env` that survives across invocations; STATIC variables are linked from the local env to this persistent env.
 
 ### 10. `INKEY$` and ~~`SLEEP`~~
 - **`SLEEP [n]`**: **FIXED** — `SLEEP n` pauses execution for n seconds (uses MMIO `sleep()`). `SLEEP` or `SLEEP 0` is a no-op.
