@@ -414,7 +414,7 @@ accept_reset_in:
 # Word: PARSE-WORD ( -- c-addr u )
 # Skips leading delimiters (space=32)
 # Parses until next delimiter
-# Returns string address (in TIB) and length
+# Returns string address (in SOURCE) and length
 # Updates >IN
 .text
     .align 2
@@ -427,9 +427,10 @@ xt_parse_word:
     .word parse_word_word
 
 parse_word_word:
-    # Load TIB, #TIB, >IN
-    lui r1, %hi(tib)
-    addi r1, r1, %lo(tib)   # r1 = TIB base
+    # Load SOURCE base, #TIB, >IN
+    lui r1, %hi(var_source_ptr)
+    addi r1, r1, %lo(var_source_ptr)
+    ldw r1, r1, 0           # r1 = SOURCE base
     
     lui r2, %hi(var_source_len)
     addi r2, r2, %lo(var_source_len)
@@ -746,11 +747,28 @@ tib_word:
     stw r28, r1, 0
     jal r0, next
 
+# Word: SOURCE-PTR ( -- a-addr )
+.text
+    .align 2
+head_source_ptr:
+    .word head_tib
+    .byte 10
+    .ascii "SOURCE-PTR"
+    .align 2
+xt_source_ptr:
+    .word source_ptr_word
+source_ptr_word:
+    lui r1, %hi(var_source_ptr)
+    addi r1, r1, %lo(var_source_ptr)
+    addi r28, r28, -4
+    stw r28, r1, 0
+    jal r0, next
+
 # Word: TOIN ( -- a-addr )
 .text
     .align 2
 head_to_in:
-    .word head_tib
+    .word head_source_ptr
     .byte 4
     .ascii "TOIN"
     .align 2
@@ -1097,9 +1115,10 @@ head_word:
 xt_word:
     .word word_word
 word_word:
-    # Load TIB base, #TIB, >IN
-    lui r1, %hi(tib)
-    addi r1, r1, %lo(tib)   # r1 = TIB base
+    # Load SOURCE base, #TIB, >IN
+    lui r1, %hi(var_source_ptr)
+    addi r1, r1, %lo(var_source_ptr)
+    ldw r1, r1, 0           # r1 = SOURCE base
     lui r2, %hi(var_source_len)
     addi r2, r2, %lo(var_source_len)
     ldw r2, r2, 0           # r2 = #TIB
@@ -1435,10 +1454,15 @@ comma_word:
     lui r2, %hi(var_here)
     addi r2, r2, %lo(var_here)
     ldw r3, r2, 0      # HERE
+    addi r4, r3, 4
+    lui r5, %hi(user_dictionary_end)
+    addi r5, r5, %lo(user_dictionary_end)
+    bltu r5, r4, comma_overflow
     stw r3, r1, 0
-    addi r3, r3, 4
-    stw r2, r3, 0      # HERE += 4
+    stw r2, r4, 0      # HERE += 4
     jal r0, next
+comma_overflow:
+    jal r0, abort_word
 
 # Word: ALLOT ( n -- )  adjust HERE by n bytes
 .text
@@ -1457,8 +1481,13 @@ allot_word:
     addi r2, r2, %lo(var_here)
     ldw r3, r2, 0
     add r3, r3, r1     # HERE += n
+    lui r4, %hi(user_dictionary_end)
+    addi r4, r4, %lo(user_dictionary_end)
+    bltu r4, r3, allot_overflow
     stw r2, r3, 0
     jal r0, next
+allot_overflow:
+    jal r0, abort_word
 
 # Word: [ ( -- )  enter interpret state (IMMEDIATE)
 .text
@@ -1556,8 +1585,9 @@ xt_colon:
     .word colon_word
 colon_word:
     # Parse next name directly (similar to WORD but no stack effect)
-    lui r1, %hi(tib)
-    addi r1, r1, %lo(tib)   # r1 = TIB base
+    lui r1, %hi(var_source_ptr)
+    addi r1, r1, %lo(var_source_ptr)
+    ldw r1, r1, 0           # r1 = SOURCE base
     lui r2, %hi(var_source_len)
     addi r2, r2, %lo(var_source_len)
     ldw r2, r2, 0           # #TIB
@@ -1616,6 +1646,21 @@ colon_no_upper:
     jal r0, colon_copy_loop
 
 colon_copy_done:
+    # Bounds check for header + codeword
+    lui r20, %hi(var_here)
+    addi r20, r20, %lo(var_here)
+    ldw r21, r20, 0         # start HERE
+    addi r22, r21, 4        # link cell
+    addi r22, r22, 1        # length byte
+    add r22, r22, r13       # name bytes
+    addi r23, r22, 3
+    addi r24, r0, -4
+    and r22, r23, r24       # align to 4
+    addi r22, r22, 4        # codeword
+    lui r25, %hi(user_dictionary_end)
+    addi r25, r25, %lo(user_dictionary_end)
+    bltu r25, r22, colon_overflow
+
     # HERE pointer
     lui r3, %hi(var_here)
     addi r3, r3, %lo(var_here)
@@ -1672,6 +1717,8 @@ colon_header_done:
 
 colon_done:
     jal r0, next
+colon_overflow:
+    jal r0, abort_word
 
 # Word: IF ( -- patch ) IMMEDIATE
 .text
@@ -2703,8 +2750,9 @@ xt_create:
     .word create_word
 create_word:
     # Parse next name (same logic as colon_word)
-    lui r1, %hi(tib)
-    addi r1, r1, %lo(tib)
+    lui r1, %hi(var_source_ptr)
+    addi r1, r1, %lo(var_source_ptr)
+    ldw r1, r1, 0
     lui r2, %hi(var_source_len)
     addi r2, r2, %lo(var_source_len)
     ldw r2, r2, 0
@@ -2756,6 +2804,21 @@ create_no_upper:
     addi r17, r17, 1
     jal r0, create_copy_loop
 create_copy_done:
+    # Bounds check for header + codeword + does-cell
+    lui r20, %hi(var_here)
+    addi r20, r20, %lo(var_here)
+    ldw r21, r20, 0         # start HERE
+    addi r22, r21, 4        # link cell
+    addi r22, r22, 1        # length byte
+    add r22, r22, r13       # name bytes
+    addi r23, r22, 3
+    addi r24, r0, -4
+    and r22, r23, r24       # align to 4
+    addi r22, r22, 8        # codeword + does-cell
+    lui r25, %hi(user_dictionary_end)
+    addi r25, r25, %lo(user_dictionary_end)
+    bltu r25, r22, create_overflow
+
     # HERE pointer
     lui r3, %hi(var_here)
     addi r3, r3, %lo(var_here)
@@ -2803,6 +2866,8 @@ create_header_done:
     stw r5, r12, 0         # [wid] = new header
 create_done:
     jal r0, next
+create_overflow:
+    jal r0, abort_word
 
 # Word: DOES> ( -- ) IMMEDIATE compile-time
 # Compiles (DOES>) runtime token into current definition
@@ -2879,9 +2944,10 @@ squote_word:
     add r16, r15, r0       # r16 = address where length will go (fill later)
     addi r15, r15, 4       # skip length cell (will fill after parsing)
 
-    # Parse from TIB: skip one leading space, then copy chars until "
-    lui r1, %hi(tib)
-    addi r1, r1, %lo(tib)
+    # Parse from SOURCE: skip one leading space, then copy chars until "
+    lui r1, %hi(var_source_ptr)
+    addi r1, r1, %lo(var_source_ptr)
+    ldw r1, r1, 0
     lui r2, %hi(var_source_len)
     addi r2, r2, %lo(var_source_len)
     ldw r2, r2, 0          # r2 = #TIB
@@ -2961,9 +3027,10 @@ dotquote_word:
     add r16, r15, r0       # r16 = length cell address
     addi r15, r15, 4       # skip length cell
 
-    # Parse from TIB: skip one leading space, then copy chars until "
-    lui r1, %hi(tib)
-    addi r1, r1, %lo(tib)
+    # Parse from SOURCE: skip one leading space, then copy chars until "
+    lui r1, %hi(var_source_ptr)
+    addi r1, r1, %lo(var_source_ptr)
+    ldw r1, r1, 0
     lui r2, %hi(var_source_len)
     addi r2, r2, %lo(var_source_len)
     ldw r2, r2, 0
@@ -3169,10 +3236,15 @@ ccomma_word:
     lui r2, %hi(var_here)
     addi r2, r2, %lo(var_here)
     ldw r3, r2, 0          # HERE
+    addi r4, r3, 1
+    lui r5, %hi(user_dictionary_end)
+    addi r5, r5, %lo(user_dictionary_end)
+    bltu r5, r4, ccomma_overflow
     stb r3, r1, 0          # store byte
-    addi r3, r3, 1         # HERE += 1
-    stw r2, r3, 0          # update HERE
+    stw r2, r4, 0          # update HERE
     jal r0, next
+ccomma_overflow:
+    jal r0, abort_word
 
 # Word: U< ( u1 u2 -- flag ) unsigned less-than
 .text
@@ -3516,7 +3588,7 @@ m_star_word:
     jal r0, next
 
 # Word: EVALUATE ( addr u -- ) Interpret a string
-# Saves/restores >IN, #TIB, interp_saved_ip, interp_resume_target
+# Saves/restores >IN, SOURCE-PTR, #TIB, interp_saved_ip, interp_resume_target
 .text
     .align 2
 head_evaluate:
@@ -3552,6 +3624,12 @@ evaluate_word:
     addi r27, r27, -4
     stw r27, r2, 0             # push #TIB
 
+    lui r1, %hi(var_source_ptr)
+    addi r1, r1, %lo(var_source_ptr)
+    ldw r2, r1, 0
+    addi r27, r27, -4
+    stw r27, r2, 0             # push SOURCE-PTR
+
     # Pop ( addr u ) from data stack
     ldw r9, r28, 0             # u = length
     ldw r8, r28, 4             # addr = source
@@ -3562,19 +3640,10 @@ evaluate_word:
     addi r1, r1, %lo(var_source_len)
     stw r1, r9, 0
 
-    # Copy string to TIB
-    lui r10, %hi(tib)
-    addi r10, r10, %lo(tib)
-    add r11, r0, r0            # i = 0
-evaluate_copy:
-    bge r11, r9, evaluate_copy_done
-    add r12, r8, r11
-    ldbu r13, r12, 0
-    add r14, r10, r11
-    stb r14, r13, 0
-    addi r11, r11, 1
-    jal r0, evaluate_copy
-evaluate_copy_done:
+    # Set SOURCE-PTR = addr
+    lui r1, %hi(var_source_ptr)
+    addi r1, r1, %lo(var_source_ptr)
+    stw r1, r8, 0
 
     # Set >IN = 0
     lui r1, %hi(var_to_in)
@@ -3602,6 +3671,13 @@ evaluate_resume:
     # Restore IP
     ldw r26, r27, 0
     addi r27, r27, 4
+
+    # Restore SOURCE-PTR
+    ldw r2, r27, 0
+    addi r27, r27, 4
+    lui r1, %hi(var_source_ptr)
+    addi r1, r1, %lo(var_source_ptr)
+    stw r1, r2, 0
 
     # Restore #TIB
     ldw r2, r27, 0
@@ -3768,9 +3844,10 @@ parse_impl_word:
     ldw r8, r28, 0             # r8 = delimiter char
     addi r28, r28, 4           # pop delimiter
 
-    # Load TIB base
-    lui r1, %hi(tib)
-    addi r1, r1, %lo(tib)
+    # Load SOURCE base
+    lui r1, %hi(var_source_ptr)
+    addi r1, r1, %lo(var_source_ptr)
+    ldw r1, r1, 0
 
     # Load #TIB
     lui r2, %hi(var_source_len)
@@ -4360,9 +4437,10 @@ cquote_word:
     add r16, r15, r0           # r16 = address of count byte (fill later)
     addi r15, r15, 1           # skip past count byte, chars start here
 
-    # Parse from TIB: skip one leading space, then copy chars until "
-    lui r1, %hi(tib)
-    addi r1, r1, %lo(tib)
+    # Parse from SOURCE: skip one leading space, then copy chars until "
+    lui r1, %hi(var_source_ptr)
+    addi r1, r1, %lo(var_source_ptr)
+    ldw r1, r1, 0
     lui r2, %hi(var_source_len)
     addi r2, r2, %lo(var_source_len)
     ldw r2, r2, 0              # r2 = #TIB
@@ -4443,9 +4521,10 @@ squote_escape_word:
     add r16, r15, r0           # r16 = address of length cell (fill later)
     addi r15, r15, 4           # skip length cell, chars start here
 
-    # Parse from TIB: skip one leading space, then copy chars with escape processing
-    lui r1, %hi(tib)
-    addi r1, r1, %lo(tib)
+    # Parse from SOURCE: skip one leading space, then copy chars with escape processing
+    lui r1, %hi(var_source_ptr)
+    addi r1, r1, %lo(var_source_ptr)
+    ldw r1, r1, 0
     lui r2, %hi(var_source_len)
     addi r2, r2, %lo(var_source_len)
     ldw r2, r2, 0              # r2 = #TIB
@@ -5065,6 +5144,7 @@ var_latest:
     .word head_move                # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
+var_source_ptr: .word tib
 var_source_len: .word 0
 var_prompt_enabled: .word 0        # 0 = suppress prompts (prelude), 1 = show prompts
 var_leave_list:     .word 0        # compile-time leave-list head for DO...LOOP

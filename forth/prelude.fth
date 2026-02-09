@@ -213,7 +213,7 @@
 
 : >BODY  ( xt -- addr )  8 + ;
 
-: SOURCE  ( -- addr u )  TIB NTIB @ ;
+: SOURCE  ( -- addr u )  SOURCE-PTR @ NTIB @ ;
 
 : WITHIN  ( n lo hi -- flag )  OVER - >R - R> U< ;
 
