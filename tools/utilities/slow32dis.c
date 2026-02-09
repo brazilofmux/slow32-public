@@ -224,7 +224,7 @@ static instruction_info_t* find_instruction(uint32_t opcode) {
 }
 
 static const char* get_reg_name(int reg) {
-    static char bufs[4][8];
+    static char bufs[4][16];
     static int buf_idx = 0;
 
     if (reg == 0) return "zero";
@@ -234,7 +234,7 @@ static const char* get_reg_name(int reg) {
 
     char *buf = bufs[buf_idx];
     buf_idx = (buf_idx + 1) % 4;
-    sprintf(buf, "r%d", reg);
+    snprintf(buf, sizeof(bufs[0]), "r%d", reg);
     return buf;
 }
 
@@ -493,10 +493,24 @@ static void disassemble_section(FILE *f, const char *name, uint32_t vaddr,
     printf("Section: %s at 0x%08x (%d bytes)\n", name, vaddr, size);
     printf("----------------------------------------\n");
 
+    if (size == 0 || (size % 4) != 0) {
+        fprintf(stderr, "Error: Invalid section size %u for '%s'\n", size, name);
+        return;
+    }
+
+    if (size > (16u * 1024u * 1024u)) {
+        fprintf(stderr, "Error: Section '%s' too large (%u bytes)\n", name, size);
+        return;
+    }
+
     fseek(f, file_offset, SEEK_SET);
     uint32_t *code = malloc(size);
     if (!code) return;
-    fread(code, 1, size, f);
+    if (fread(code, 1, size, f) != size) {
+        fprintf(stderr, "Error: Failed to read section '%s'\n", name);
+        free(code);
+        return;
+    }
 
     uint32_t start = 0;
     uint32_t end = size / 4;
