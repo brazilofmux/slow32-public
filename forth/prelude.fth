@@ -89,17 +89,7 @@
 
 : ERASE  ( addr u -- )  0 FILL ;
 
-: MOVE  ( src dest u -- )
-  DUP 0= IF DROP 2DROP EXIT THEN
-  >R 2DUP U< IF
-    \ src < dest: copy backward (high to low) for overlap safety
-    R> 1-  BEGIN  DUP 0< 0= WHILE
-      >R  OVER R@ + C@  OVER R@ + C!  R> 1-
-    REPEAT DROP
-  ELSE
-    \ dest <= src: copy forward (low to high)
-    R> 0 DO  OVER I + C@  OVER I + C!  LOOP
-  THEN 2DROP ;
+\ MOVE is now a kernel primitive (calls memmove)
 
 \ --- Pictured Numeric Output (double-cell) ---
 : MU/MOD  ( ud u -- rem udquot )

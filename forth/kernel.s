@@ -5033,6 +5033,26 @@ wordlist_word:
     stw r28, r2, 0         # push wid (= old HERE)
     jal r0, next
 
+# Word: MOVE ( src dest u -- ) Copy u bytes; handles overlapping regions
+.text
+    .align 2
+head_move:
+    .word head_wordlist
+    .byte 4
+    .ascii "MOVE"
+    .align 2
+xt_move:
+    .word move_word
+move_word:
+    ldw r5, r28, 0        # r5 = u (count)
+    ldw r3, r28, 4        # r3 = dest
+    ldw r4, r28, 8        # r4 = src
+    addi r28, r28, 12     # pop 3 items
+    beq r5, r0, .Lmove_done
+    jal memmove            # memmove(dest, src, n)
+.Lmove_done:
+    jal r0, next
+
 # ----------------------------------------------------------------------
 # Variables
 # ----------------------------------------------------------------------
@@ -5042,7 +5062,7 @@ var_state:      .word 0
 var_base:       .word 10
 var_here:       .word user_dictionary
 var_latest:
-    .word head_wordlist            # Point to last defined word
+    .word head_move                # Point to last defined word
 var_to_in:      .word 0
 var_source_id:  .word 0            # 0 = Console
 var_source_len: .word 0
