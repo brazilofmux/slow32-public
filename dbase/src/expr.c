@@ -2,6 +2,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include "expr.h"
+#include "memvar.h"
+#include "set.h"
 #include "date.h"
 #include "util.h"
 
@@ -127,15 +129,6 @@ static int match_dot_keyword(const char *p, const char *kw) {
     return len + 2; /* total chars consumed */
 }
 
-/* ---- Helper: identifier chars ---- */
-static int is_ident_start(char c) {
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
-}
-
-static int is_ident_char(char c) {
-    return is_ident_start(c) || (c >= '0' && c <= '9');
-}
-
 /* ---- Parser ---- */
 
 /* expr → or_expr */
@@ -251,7 +244,10 @@ static int parse_compare(expr_ctx_t *ctx, const char **pp, value_t *result) {
             double d = result->num - right.num;
             cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;
         } else if (result->type == VAL_CHAR && right.type == VAL_CHAR) {
-            cmp = str_icmp(result->str, right.str);
+            if (ctx->opts && !((set_options_t *)ctx->opts)->exact)
+                cmp = str_nicmp(result->str, right.str, strlen(right.str));
+            else
+                cmp = str_icmp(result->str, right.str);
         } else if (result->type == VAL_DATE && right.type == VAL_DATE) {
             int32_t d = result->date - right.date;
             cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;
@@ -536,7 +532,16 @@ static int parse_primary(expr_ctx_t *ctx, const char **pp, value_t *result) {
             }
         }
 
-        /* Unknown identifier — try as function with no args wasn't matched, so error */
+        /* Try memory variable lookup */
+        if (ctx->vars) {
+            value_t mv;
+            if (memvar_find(ctx->vars, name, &mv) == 0) {
+                *result = mv;
+                return 0;
+            }
+        }
+
+        /* Unknown identifier */
         {
             static char errbuf[80];
             snprintf(errbuf, sizeof(errbuf), "Variable not found: %s", name);

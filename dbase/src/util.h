@@ -22,4 +22,11 @@ int read_line(char *buf, int size);
 /* strncpy that always NUL-terminates */
 void str_copy(char *dst, const char *src, int n);
 
+/* Case-insensitive strncmp (compares up to n chars) */
+int str_nicmp(const char *a, const char *b, int n);
+
+/* Identifier character tests */
+int is_ident_start(char c);
+int is_ident_char(char c);
+
 #endif

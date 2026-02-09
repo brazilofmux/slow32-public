@@ -8,6 +8,8 @@
 #include "func.h"
 #include "date.h"
 #include "util.h"
+#include "memvar.h"
+#include "set.h"
 
 /* Persistent expression context */
 static expr_ctx_t expr_ctx;
@@ -16,9 +18,21 @@ static expr_ctx_t expr_ctx;
 static char locate_condition[256];
 static uint32_t locate_last_rec;
 
+/* Stage 3 state */
+static memvar_store_t memvar_store;
+static set_options_t set_opts;
+static int stage3_initialized;
+
 /* ---- Helper: initialize expr_ctx for a db ---- */
 static void ctx_setup(dbf_t *db) {
+    if (!stage3_initialized) {
+        memvar_init(&memvar_store);
+        set_init(&set_opts);
+        stage3_initialized = 1;
+    }
     expr_ctx.db = db;
+    expr_ctx.vars = &memvar_store;
+    expr_ctx.opts = (struct set_options *)&set_opts;
     /* found, bof_flag, eof_flag persist across commands */
 }
 
@@ -378,10 +392,74 @@ static void cmd_skip(dbf_t *db, const char *arg) {
     expr_ctx.bof_flag = 0;
 }
 
-/* ---- LOCATE FOR ---- */
+/* ---- Scope infrastructure ---- */
+typedef enum { SCOPE_ALL, SCOPE_NEXT, SCOPE_RECORD, SCOPE_REST } scope_type_t;
+typedef struct { scope_type_t type; uint32_t count; } scope_t;
+
+static scope_t parse_scope(const char **pp) {
+    scope_t s;
+    const char *p = skip_ws(*pp);
+    s.type = SCOPE_ALL;
+    s.count = 0;
+
+    if (str_imatch(p, "ALL")) {
+        s.type = SCOPE_ALL;
+        *pp = skip_ws(p + 3);
+    } else if (str_imatch(p, "REST")) {
+        s.type = SCOPE_REST;
+        *pp = skip_ws(p + 4);
+    } else if (str_imatch(p, "RECORD")) {
+        s.type = SCOPE_RECORD;
+        p = skip_ws(p + 6);
+        s.count = atoi(p);
+        while (*p >= '0' && *p <= '9') p++;
+        *pp = skip_ws(p);
+    } else if (str_imatch(p, "NEXT")) {
+        s.type = SCOPE_NEXT;
+        p = skip_ws(p + 4);
+        s.count = atoi(p);
+        if (s.count == 0) s.count = 1;
+        while (*p >= '0' && *p <= '9') p++;
+        *pp = skip_ws(p);
+    }
+
+    return s;
+}
+
+static int scope_bounds(dbf_t *db, const scope_t *s, uint32_t *start, uint32_t *end) {
+    switch (s->type) {
+    case SCOPE_ALL:
+        *start = 1;
+        *end = db->record_count;
+        break;
+    case SCOPE_REST:
+        *start = (db->current_record > 0) ? db->current_record : 1;
+        *end = db->record_count;
+        break;
+    case SCOPE_RECORD:
+        if (s->count < 1 || s->count > db->record_count) return -1;
+        *start = s->count;
+        *end = s->count;
+        break;
+    case SCOPE_NEXT:
+        *start = (db->current_record > 0) ? db->current_record : 1;
+        *end = *start + s->count - 1;
+        if (*end > db->record_count) *end = db->record_count;
+        break;
+    }
+    return 0;
+}
+
+/* ---- Helper: check if record should be skipped (SET DELETED) ---- */
+static int skip_deleted(const char *rec_buf) {
+    return (rec_buf[0] == '*' && set_opts.deleted);
+}
+
+/* ---- LOCATE [scope] FOR ---- */
 static void cmd_locate(dbf_t *db, const char *arg) {
     const char *p;
-    uint32_t i;
+    scope_t scope;
+    uint32_t start, end, i;
 
     if (!dbf_is_open(db)) {
         printf("No database in use.\n");
@@ -389,8 +467,10 @@ static void cmd_locate(dbf_t *db, const char *arg) {
     }
 
     p = skip_ws(arg);
+    scope = parse_scope(&p);
+
     if (!str_imatch(p, "FOR")) {
-        printf("Syntax: LOCATE FOR <condition>\n");
+        printf("Syntax: LOCATE [scope] FOR <condition>\n");
         return;
     }
     p = skip_ws(p + 3);
@@ -398,12 +478,17 @@ static void cmd_locate(dbf_t *db, const char *arg) {
     /* Save condition for CONTINUE */
     str_copy(locate_condition, p, sizeof(locate_condition));
 
+    if (scope_bounds(db, &scope, &start, &end) < 0) {
+        printf("Invalid scope.\n");
+        return;
+    }
+
     expr_ctx.found = 0;
 
-    for (i = 1; i <= db->record_count; i++) {
+    for (i = start; i <= end; i++) {
         value_t cond;
         dbf_read_record(db, i);
-        if (db->record_buf[0] == '*') continue; /* skip deleted */
+        if (skip_deleted(db->record_buf)) continue;
 
         if (expr_eval_str(&expr_ctx, locate_condition, &cond) != 0) {
             if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
@@ -414,7 +499,7 @@ static void cmd_locate(dbf_t *db, const char *arg) {
             expr_ctx.found = 1;
             expr_ctx.eof_flag = 0;
             locate_last_rec = i;
-            printf("Record = %d\n", (int)i);
+            if (set_opts.talk) printf("Record = %d\n", (int)i);
             return;
         }
     }
@@ -423,7 +508,7 @@ static void cmd_locate(dbf_t *db, const char *arg) {
     expr_ctx.found = 0;
     expr_ctx.eof_flag = 1;
     locate_last_rec = 0;
-    printf("End of LOCATE scope\n");
+    if (set_opts.talk) printf("End of LOCATE scope\n");
 }
 
 /* ---- CONTINUE ---- */
@@ -443,7 +528,7 @@ static void cmd_continue(dbf_t *db) {
     for (i = locate_last_rec + 1; i <= db->record_count; i++) {
         value_t cond;
         dbf_read_record(db, i);
-        if (db->record_buf[0] == '*') continue;
+        if (skip_deleted(db->record_buf)) continue;
 
         if (expr_eval_str(&expr_ctx, locate_condition, &cond) != 0) {
             if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
@@ -454,21 +539,22 @@ static void cmd_continue(dbf_t *db) {
             expr_ctx.found = 1;
             expr_ctx.eof_flag = 0;
             locate_last_rec = i;
-            printf("Record = %d\n", (int)i);
+            if (set_opts.talk) printf("Record = %d\n", (int)i);
             return;
         }
     }
 
     expr_ctx.found = 0;
     expr_ctx.eof_flag = 1;
-    printf("End of LOCATE scope\n");
+    if (set_opts.talk) printf("End of LOCATE scope\n");
 }
 
-/* ---- COUNT ---- */
+/* ---- COUNT [scope] [FOR cond] ---- */
 static void cmd_count(dbf_t *db, const char *arg) {
     const char *p;
     const char *cond_str = NULL;
-    uint32_t i;
+    scope_t scope;
+    uint32_t start, end, i;
     int count = 0;
 
     if (!dbf_is_open(db)) {
@@ -477,13 +563,20 @@ static void cmd_count(dbf_t *db, const char *arg) {
     }
 
     p = skip_ws(arg);
+    scope = parse_scope(&p);
+
     if (str_imatch(p, "FOR")) {
         cond_str = skip_ws(p + 3);
     }
 
-    for (i = 1; i <= db->record_count; i++) {
+    if (scope_bounds(db, &scope, &start, &end) < 0) {
+        printf("Invalid scope.\n");
+        return;
+    }
+
+    for (i = start; i <= end; i++) {
         dbf_read_record(db, i);
-        if (db->record_buf[0] == '*') continue;
+        if (skip_deleted(db->record_buf)) continue;
 
         if (cond_str) {
             value_t cond;
@@ -499,12 +592,13 @@ static void cmd_count(dbf_t *db, const char *arg) {
     printf("%d record(s)\n", count);
 }
 
-/* ---- SUM ---- */
+/* ---- SUM [scope] expr [FOR cond] ---- */
 static void cmd_sum(dbf_t *db, const char *arg) {
     const char *p;
     char expr_str[256];
     const char *cond_str = NULL;
-    uint32_t i;
+    scope_t scope;
+    uint32_t start, end, i;
     double total = 0.0;
     int count = 0;
 
@@ -519,7 +613,7 @@ static void cmd_sum(dbf_t *db, const char *arg) {
         return;
     }
 
-    /* Extract expression (everything before FOR) */
+    /* Extract expression (everything before FOR, after any scope) */
     {
         const char *f = p;
         const char *for_pos = NULL;
@@ -540,10 +634,27 @@ static void cmd_sum(dbf_t *db, const char *arg) {
         }
     }
 
-    for (i = 1; i <= db->record_count; i++) {
+    /* Parse scope from expression string if present (SUM ALL expr...) */
+    {
+        const char *sp = expr_str;
+        scope = parse_scope(&sp);
+        /* If scope consumed some text, shift expr_str */
+        if (sp != expr_str) {
+            const char *rest = skip_ws(sp);
+            int len = strlen(rest);
+            memmove(expr_str, rest, len + 1);
+        }
+    }
+
+    if (scope_bounds(db, &scope, &start, &end) < 0) {
+        printf("Invalid scope.\n");
+        return;
+    }
+
+    for (i = start; i <= end; i++) {
         value_t val;
         dbf_read_record(db, i);
-        if (db->record_buf[0] == '*') continue;
+        if (skip_deleted(db->record_buf)) continue;
 
         if (cond_str) {
             value_t cond;
@@ -575,12 +686,13 @@ static void cmd_sum(dbf_t *db, const char *arg) {
     }
 }
 
-/* ---- AVERAGE ---- */
+/* ---- AVERAGE [scope] expr [FOR cond] ---- */
 static void cmd_average(dbf_t *db, const char *arg) {
     const char *p;
     char expr_str[256];
     const char *cond_str = NULL;
-    uint32_t i;
+    scope_t scope;
+    uint32_t start, end, i;
     double total = 0.0;
     int count = 0;
 
@@ -615,10 +727,26 @@ static void cmd_average(dbf_t *db, const char *arg) {
         }
     }
 
-    for (i = 1; i <= db->record_count; i++) {
+    /* Parse scope from expression string if present */
+    {
+        const char *sp = expr_str;
+        scope = parse_scope(&sp);
+        if (sp != expr_str) {
+            const char *rest = skip_ws(sp);
+            int len = strlen(rest);
+            memmove(expr_str, rest, len + 1);
+        }
+    }
+
+    if (scope_bounds(db, &scope, &start, &end) < 0) {
+        printf("Invalid scope.\n");
+        return;
+    }
+
+    for (i = start; i <= end; i++) {
         value_t val;
         dbf_read_record(db, i);
-        if (db->record_buf[0] == '*') continue;
+        if (skip_deleted(db->record_buf)) continue;
 
         if (cond_str) {
             value_t cond;
@@ -752,7 +880,7 @@ static void cmd_replace(dbf_t *db, const char *arg) {
     dbf_flush_record(db);
 }
 
-/* ---- LIST (enhanced with field list + FOR clause) ---- */
+/* ---- LIST [scope] [field_list] [FOR clause] ---- */
 static void cmd_list(dbf_t *db, const char *arg) {
     uint32_t i;
     int f;
@@ -762,6 +890,8 @@ static void cmd_list(dbf_t *db, const char *arg) {
     const char *rest;
     const char *cond_str = NULL;
     int use_all_fields;
+    scope_t scope;
+    uint32_t start, end;
 
     if (!dbf_is_open(db)) {
         printf("No database in use.\n");
@@ -774,6 +904,9 @@ static void cmd_list(dbf_t *db, const char *arg) {
     }
 
     rest = skip_ws(arg);
+
+    /* Parse scope first */
+    scope = parse_scope(&rest);
 
     /* Check if there's a FOR clause directly */
     if (str_imatch(rest, "FOR")) {
@@ -791,26 +924,33 @@ static void cmd_list(dbf_t *db, const char *arg) {
 
     use_all_fields = (nfields == 0);
 
-    /* Print header */
-    printf("Record#");
-    if (use_all_fields) {
-        for (f = 0; f < db->field_count; f++) {
-            int w = field_display_width(db, f);
-            printf(" %-*s", w, db->fields[f].name);
-        }
-    } else {
-        for (f = 0; f < nfields; f++) {
-            int idx = field_indices[f];
-            int w = field_display_width(db, idx);
-            printf(" %-*s", w, db->fields[idx].name);
-        }
+    if (scope_bounds(db, &scope, &start, &end) < 0) {
+        printf("Invalid scope.\n");
+        return;
     }
-    printf("\n");
+
+    /* Print header */
+    if (set_opts.heading) {
+        printf("Record#");
+        if (use_all_fields) {
+            for (f = 0; f < db->field_count; f++) {
+                int w = field_display_width(db, f);
+                printf(" %-*s", w, db->fields[f].name);
+            }
+        } else {
+            for (f = 0; f < nfields; f++) {
+                int idx = field_indices[f];
+                int w = field_display_width(db, idx);
+                printf(" %-*s", w, db->fields[idx].name);
+            }
+        }
+        printf("\n");
+    }
 
     /* Print records */
-    for (i = 1; i <= db->record_count; i++) {
+    for (i = start; i <= end; i++) {
         if (dbf_read_record(db, i) < 0) continue;
-        if (db->record_buf[0] == '*') continue;
+        if (skip_deleted(db->record_buf)) continue;
 
         if (cond_str) {
             value_t cond;
@@ -898,6 +1038,407 @@ static void cmd_display_structure(dbf_t *db) {
                db->fields[i].decimals);
     }
     printf("** Total **               %5d\n", (int)db->record_size);
+}
+
+/* ---- STORE expr TO var ---- */
+static void cmd_store(dbf_t *db, const char *arg) {
+    const char *p = skip_ws(arg);
+    char expr_str[256];
+    value_t val;
+    const char *to_pos;
+    char name[MEMVAR_NAMELEN];
+    int i;
+
+    (void)db;
+
+    /* Find TO keyword — scan for it */
+    {
+        const char *f = p;
+        to_pos = NULL;
+        while (*f) {
+            if (str_imatch(f, "TO")) { to_pos = f; break; }
+            f++;
+        }
+    }
+
+    if (!to_pos) {
+        printf("Syntax: STORE <expr> TO <variable>\n");
+        return;
+    }
+
+    /* Extract expression before TO */
+    {
+        int len = (int)(to_pos - p);
+        if (len > (int)sizeof(expr_str) - 1) len = (int)sizeof(expr_str) - 1;
+        memcpy(expr_str, p, len);
+        expr_str[len] = '\0';
+        trim_right(expr_str);
+    }
+
+    if (expr_eval_str(&expr_ctx, expr_str, &val) != 0) {
+        if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+        return;
+    }
+
+    /* Parse variable name after TO */
+    p = skip_ws(to_pos + 2);
+    i = 0;
+    while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1)
+        name[i++] = *p++;
+    name[i] = '\0';
+
+    if (name[0] == '\0') {
+        printf("Syntax: STORE <expr> TO <variable>\n");
+        return;
+    }
+
+    memvar_set(&memvar_store, name, &val);
+}
+
+/* ---- RELEASE ---- */
+static void cmd_release(const char *arg) {
+    const char *p = skip_ws(arg);
+    char name[MEMVAR_NAMELEN];
+    int i;
+
+    if (str_imatch(p, "ALL")) {
+        memvar_release_all(&memvar_store);
+        return;
+    }
+
+    while (*p) {
+        i = 0;
+        while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1)
+            name[i++] = *p++;
+        name[i] = '\0';
+
+        if (name[0] != '\0') {
+            if (memvar_release(&memvar_store, name) < 0)
+                printf("Variable not found: %s\n", name);
+        }
+
+        p = skip_ws(p);
+        if (*p == ',') { p++; p = skip_ws(p); }
+        else break;
+    }
+}
+
+/* ---- DELETE [scope] [FOR cond] ---- */
+static void cmd_delete(dbf_t *db, const char *arg) {
+    const char *p = skip_ws(arg);
+    scope_t scope;
+    uint32_t start, end, i;
+    const char *cond_str = NULL;
+    int count = 0;
+
+    if (!dbf_is_open(db)) {
+        printf("No database in use.\n");
+        return;
+    }
+
+    /* Bare DELETE = delete current record */
+    if (*p == '\0') {
+        if (db->current_record == 0 || expr_ctx.eof_flag) {
+            printf("No current record.\n");
+            return;
+        }
+        db->record_buf[0] = '*';
+        db->record_dirty = 1;
+        dbf_flush_record(db);
+        printf("1 record deleted.\n");
+        return;
+    }
+
+    scope = parse_scope(&p);
+    if (str_imatch(p, "FOR"))
+        cond_str = skip_ws(p + 3);
+
+    if (scope_bounds(db, &scope, &start, &end) < 0) {
+        printf("Invalid scope.\n");
+        return;
+    }
+
+    for (i = start; i <= end; i++) {
+        dbf_read_record(db, i);
+        if (db->record_buf[0] == '*') continue;
+
+        if (cond_str) {
+            value_t cond;
+            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
+                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                return;
+            }
+            if (cond.type != VAL_LOGIC || !cond.logic) continue;
+        }
+
+        db->record_buf[0] = '*';
+        db->record_dirty = 1;
+        dbf_flush_record(db);
+        count++;
+    }
+
+    printf("%d record(s) deleted.\n", count);
+}
+
+/* ---- RECALL [scope] [FOR cond] ---- */
+static void cmd_recall(dbf_t *db, const char *arg) {
+    const char *p = skip_ws(arg);
+    scope_t scope;
+    uint32_t start, end, i;
+    const char *cond_str = NULL;
+    int count = 0;
+
+    if (!dbf_is_open(db)) {
+        printf("No database in use.\n");
+        return;
+    }
+
+    /* Bare RECALL = recall current record */
+    if (*p == '\0') {
+        if (db->current_record == 0 || expr_ctx.eof_flag) {
+            printf("No current record.\n");
+            return;
+        }
+        if (db->record_buf[0] == '*') {
+            db->record_buf[0] = ' ';
+            db->record_dirty = 1;
+            dbf_flush_record(db);
+        }
+        printf("1 record recalled.\n");
+        return;
+    }
+
+    scope = parse_scope(&p);
+    if (str_imatch(p, "FOR"))
+        cond_str = skip_ws(p + 3);
+
+    if (scope_bounds(db, &scope, &start, &end) < 0) {
+        printf("Invalid scope.\n");
+        return;
+    }
+
+    for (i = start; i <= end; i++) {
+        dbf_read_record(db, i);
+        if (db->record_buf[0] != '*') continue;
+
+        if (cond_str) {
+            value_t cond;
+            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
+                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                return;
+            }
+            if (cond.type != VAL_LOGIC || !cond.logic) continue;
+        }
+
+        db->record_buf[0] = ' ';
+        db->record_dirty = 1;
+        dbf_flush_record(db);
+        count++;
+    }
+
+    printf("%d record(s) recalled.\n", count);
+}
+
+/* ---- PACK ---- */
+static void cmd_pack(dbf_t *db) {
+    uint32_t src, dst;
+    int rec_size;
+
+    if (!dbf_is_open(db)) {
+        printf("No database in use.\n");
+        return;
+    }
+
+    rec_size = db->record_size;
+    dst = 0;
+
+    for (src = 1; src <= db->record_count; src++) {
+        dbf_read_record(db, src);
+        if (db->record_buf[0] == '*') continue;
+        dst++;
+        if (dst != src) {
+            /* Write record at dst position */
+            long pos = db->header_size + (long)(dst - 1) * rec_size;
+            fseek(db->fp, pos, 0);
+            fwrite(db->record_buf, 1, rec_size, db->fp);
+        }
+    }
+
+    db->record_count = dst;
+    dbf_write_header_counts(db);
+    fflush(db->fp);
+
+    /* Reposition to first record if any remain */
+    if (dst > 0) {
+        dbf_read_record(db, 1);
+        expr_ctx.eof_flag = 0;
+    } else {
+        db->current_record = 0;
+        expr_ctx.eof_flag = 1;
+    }
+
+    printf("%d record(s) remaining.\n", (int)dst);
+}
+
+/* ---- ZAP ---- */
+static void cmd_zap(dbf_t *db) {
+    if (!dbf_is_open(db)) {
+        printf("No database in use.\n");
+        return;
+    }
+
+    db->record_count = 0;
+    db->current_record = 0;
+    db->record_dirty = 0;
+    dbf_write_header_counts(db);
+    expr_ctx.eof_flag = 1;
+    printf("Zap complete.\n");
+}
+
+/* ---- ACCEPT ---- */
+static void cmd_accept(const char *arg) {
+    const char *p = skip_ws(arg);
+    char line[256];
+    char name[MEMVAR_NAMELEN];
+    int i;
+    value_t val;
+
+    /* Optional prompt string */
+    if (*p == '"' || *p == '\'') {
+        char quote = *p++;
+        while (*p && *p != quote) {
+            putchar(*p);
+            p++;
+        }
+        if (*p == quote) p++;
+    }
+
+    /* TO keyword */
+    p = skip_ws(p);
+    if (!str_imatch(p, "TO")) {
+        printf("Syntax: ACCEPT [\"prompt\"] TO <variable>\n");
+        return;
+    }
+    p = skip_ws(p + 2);
+
+    /* Variable name */
+    i = 0;
+    while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1)
+        name[i++] = *p++;
+    name[i] = '\0';
+
+    if (name[0] == '\0') {
+        printf("Syntax: ACCEPT [\"prompt\"] TO <variable>\n");
+        return;
+    }
+
+    /* Read line from stdin */
+    if (read_line(line, sizeof(line)) < 0)
+        line[0] = '\0';
+
+    val = val_str(line);
+    memvar_set(&memvar_store, name, &val);
+}
+
+/* ---- INPUT ---- */
+static void cmd_input(dbf_t *db, const char *arg) {
+    const char *p = skip_ws(arg);
+    char line[256];
+    char name[MEMVAR_NAMELEN];
+    int i;
+    value_t val;
+
+    /* Optional prompt string */
+    if (*p == '"' || *p == '\'') {
+        char quote = *p++;
+        while (*p && *p != quote) {
+            putchar(*p);
+            p++;
+        }
+        if (*p == quote) p++;
+    }
+
+    /* TO keyword */
+    p = skip_ws(p);
+    if (!str_imatch(p, "TO")) {
+        printf("Syntax: INPUT [\"prompt\"] TO <variable>\n");
+        return;
+    }
+    p = skip_ws(p + 2);
+
+    /* Variable name */
+    i = 0;
+    while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1)
+        name[i++] = *p++;
+    name[i] = '\0';
+
+    if (name[0] == '\0') {
+        printf("Syntax: INPUT [\"prompt\"] TO <variable>\n");
+        return;
+    }
+
+    /* Read line from stdin and evaluate as expression */
+    if (read_line(line, sizeof(line)) < 0)
+        line[0] = '\0';
+
+    ctx_setup(db);
+    if (expr_eval_str(&expr_ctx, line, &val) != 0) {
+        if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+        val = val_num(0);
+    }
+
+    memvar_set(&memvar_store, name, &val);
+}
+
+/* ---- WAIT ---- */
+static void cmd_wait(const char *arg) {
+    const char *p = skip_ws(arg);
+    char name[MEMVAR_NAMELEN];
+    int has_to = 0;
+    int c;
+
+    /* Optional prompt string */
+    if (*p == '"' || *p == '\'') {
+        char quote = *p++;
+        while (*p && *p != quote) {
+            putchar(*p);
+            p++;
+        }
+        if (*p == quote) p++;
+        p = skip_ws(p);
+    } else if (*p == '\0' || str_imatch(p, "TO")) {
+        printf("Press any key to continue...");
+    }
+
+    /* Check for TO var */
+    if (str_imatch(p, "TO")) {
+        int i;
+        p = skip_ws(p + 2);
+        i = 0;
+        while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1)
+            name[i++] = *p++;
+        name[i] = '\0';
+        has_to = (name[0] != '\0');
+    }
+
+    /* Read one character */
+    c = getchar();
+    if (c == -1) c = 0;
+    /* Skip the newline if present */
+    if (c != '\n') {
+        int next = getchar();
+        (void)next;
+    }
+
+    if (has_to) {
+        char ch[2];
+        value_t val;
+        ch[0] = (c == '\n') ? ' ' : (char)c;
+        ch[1] = '\0';
+        val = val_str(ch);
+        memvar_set(&memvar_store, name, &val);
+    }
+    printf("\n");
 }
 
 /* ---- ? / ?? (print expressions) ---- */
@@ -1022,11 +1563,13 @@ int cmd_execute(dbf_t *db, char *line) {
         return 0;
     }
 
-    /* DISPLAY STRUCTURE must be checked before plain DISPLAY */
+    /* DISPLAY STRUCTURE / DISPLAY MEMORY must be checked before plain DISPLAY */
     if (str_imatch(p, "DISPLAY")) {
         char *rest = skip_ws(p + 7);
         if (str_imatch(rest, "STRUCTURE")) {
             cmd_display_structure(db);
+        } else if (str_imatch(rest, "MEMORY")) {
+            memvar_display(&memvar_store);
         } else {
             cmd_display(db, rest);
         }
@@ -1035,6 +1578,56 @@ int cmd_execute(dbf_t *db, char *line) {
 
     if (str_imatch(p, "LIST")) {
         cmd_list(db, p + 4);
+        return 0;
+    }
+
+    if (str_imatch(p, "STORE")) {
+        cmd_store(db, p + 5);
+        return 0;
+    }
+
+    if (str_imatch(p, "RELEASE")) {
+        cmd_release(p + 7);
+        return 0;
+    }
+
+    if (str_imatch(p, "SET")) {
+        set_execute(&set_opts, p + 3);
+        return 0;
+    }
+
+    if (str_imatch(p, "DELETE")) {
+        cmd_delete(db, p + 6);
+        return 0;
+    }
+
+    if (str_imatch(p, "RECALL")) {
+        cmd_recall(db, p + 6);
+        return 0;
+    }
+
+    if (str_imatch(p, "PACK")) {
+        cmd_pack(db);
+        return 0;
+    }
+
+    if (str_imatch(p, "ZAP")) {
+        cmd_zap(db);
+        return 0;
+    }
+
+    if (str_imatch(p, "ACCEPT")) {
+        cmd_accept(p + 6);
+        return 0;
+    }
+
+    if (str_imatch(p, "INPUT")) {
+        cmd_input(db, p + 5);
+        return 0;
+    }
+
+    if (str_imatch(p, "WAIT")) {
+        cmd_wait(p + 4);
         return 0;
     }
 
@@ -1047,6 +1640,27 @@ int cmd_execute(dbf_t *db, char *line) {
     if (p[0] == '?') {
         cmd_print_expr(db, p + 1, 1);
         return 0;
+    }
+
+    /* Variable assignment: identifier = expr */
+    if (is_ident_start(p[0])) {
+        const char *q = p;
+        char name[MEMVAR_NAMELEN];
+        int i = 0;
+        while (is_ident_char(*q) && i < MEMVAR_NAMELEN - 1)
+            name[i++] = *q++;
+        name[i] = '\0';
+        q = skip_ws(q);
+        if (*q == '=') {
+            value_t val;
+            q++;
+            if (expr_eval_str(&expr_ctx, q, &val) != 0) {
+                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                return 0;
+            }
+            memvar_set(&memvar_store, name, &val);
+            return 0;
+        }
     }
 
     printf("Unrecognized command.\n");

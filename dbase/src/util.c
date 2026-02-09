@@ -74,3 +74,23 @@ void str_copy(char *dst, const char *src, int n) {
         dst[i] = src[i];
     dst[i] = '\0';
 }
+
+int str_nicmp(const char *a, const char *b, int n) {
+    int i;
+    for (i = 0; i < n && *a && *b; i++, a++, b++) {
+        int ca = *a, cb = *b;
+        if (ca >= 'a' && ca <= 'z') ca -= 32;
+        if (cb >= 'a' && cb <= 'z') cb -= 32;
+        if (ca != cb) return ca - cb;
+    }
+    if (i == n) return 0;
+    return (unsigned char)*a - (unsigned char)*b;
+}
+
+int is_ident_start(char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
+}
+
+int is_ident_char(char c) {
+    return is_ident_start(c) || (c >= '0' && c <= '9');
+}

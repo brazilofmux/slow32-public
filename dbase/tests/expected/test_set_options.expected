@@ -1,0 +1,33 @@
+dBASE III Clone for SLOW-32
+Stage 3: Variables & Commands
+
+. TALK      = ON
+DELETED   = OFF
+EXACT     = OFF
+HEADING   = ON
+CONFIRM   = OFF
+BELL      = ON
+SAFETY    = ON
+CONSOLE   = ON
+DECIMALS  = 2
+DATE      = AMERICAN
+. . . . . . . . . . . TALK      = OFF
+DELETED   = ON
+EXACT     = ON
+HEADING   = OFF
+CONFIRM   = ON
+BELL      = OFF
+SAFETY    = OFF
+CONSOLE   = OFF
+DECIMALS  = 4
+DATE      = ANSI
+. . . . . . . . . . . TALK      = ON
+DELETED   = OFF
+EXACT     = OFF
+HEADING   = ON
+CONFIRM   = OFF
+BELL      = ON
+SAFETY    = ON
+CONSOLE   = ON
+DECIMALS  = 2
+DATE      = AMERICAN

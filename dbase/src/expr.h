@@ -15,8 +15,13 @@ typedef struct {
     };
 } value_t;
 
+struct memvar_store;
+struct set_options;
+
 typedef struct {
     dbf_t *db;
+    struct memvar_store *vars;
+    struct set_options *opts;
     int found;      /* last LOCATE result */
     int bof_flag;   /* set when SKIP goes before record 1 */
     int eof_flag;   /* set when SKIP goes past last record */
