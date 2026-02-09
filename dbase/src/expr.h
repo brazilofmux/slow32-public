@@ -22,6 +22,7 @@ typedef struct {
     dbf_t *db;
     struct memvar_store *vars;
     struct set_options *opts;
+    dbf_t *(*area_lookup)(const char *alias);  /* resolve alias→dbf */
     int found;      /* last LOCATE result */
     int bof_flag;   /* set when SKIP goes before record 1 */
     int eof_flag;   /* set when SKIP goes past last record */

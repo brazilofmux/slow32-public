@@ -459,7 +459,7 @@ static int parse_primary(expr_ctx_t *ctx, const char **pp, value_t *result) {
         return 0;
     }
 
-    /* Identifier: function call or field reference */
+    /* Identifier: function call, alias->field, or field reference */
     if (is_ident_start(*p)) {
         char name[64];
         int i = 0;
@@ -470,7 +470,50 @@ static int parse_primary(expr_ctx_t *ctx, const char **pp, value_t *result) {
         name[i] = '\0';
         after_name = p;
 
-        p = skip(p);
+        /* Check for alias->field reference */
+        p = skip(after_name);
+        if (p[0] == '-' && p[1] == '>') {
+            char field_name[64];
+            int fi = 0;
+            p += 2;
+            while (is_ident_char(*p) && fi < (int)sizeof(field_name) - 1)
+                field_name[fi++] = *p++;
+            field_name[fi] = '\0';
+            *pp = p;
+
+            if (ctx->area_lookup && field_name[0]) {
+                dbf_t *adb = ctx->area_lookup(name);
+                if (adb && dbf_is_open(adb) && adb->current_record != 0) {
+                    int idx = dbf_find_field(adb, field_name);
+                    if (idx >= 0) {
+                        char raw[256];
+                        dbf_get_field_raw(adb, idx, raw, sizeof(raw));
+                        switch (adb->fields[idx].type) {
+                        case 'C':
+                            *result = val_str(raw);
+                            return 0;
+                        case 'N':
+                            *result = val_num(atof(raw));
+                            return 0;
+                        case 'D':
+                            *result = val_date(date_from_dbf(raw));
+                            return 0;
+                        case 'L':
+                            *result = val_logic(raw[0] == 'T' || raw[0] == 't');
+                            return 0;
+                        }
+                    }
+                }
+            }
+            {
+                static char errbuf[80];
+                snprintf(errbuf, sizeof(errbuf), "Cannot resolve %s->%s", name, field_name);
+                ctx->error = errbuf;
+            }
+            return -1;
+        }
+
+        p = skip(after_name);
 
         /* Function call: name( */
         if (*p == '(') {

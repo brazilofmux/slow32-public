@@ -10,7 +10,7 @@ int main(void) {
     char line[256];
 
     printf("dBASE III Clone for SLOW-32\n");
-    printf("Stage 3: Variables & Commands\n\n");
+    printf("Stage 3B: Work Areas & File Commands\n\n");
 
     dbf_init(&current_db);
 
@@ -25,8 +25,7 @@ int main(void) {
             break;
     }
 
-    if (dbf_is_open(&current_db))
-        dbf_close(&current_db);
+    cmd_close_all();
 
     return 0;
 }

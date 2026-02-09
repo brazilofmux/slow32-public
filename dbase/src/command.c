@@ -11,33 +11,63 @@
 #include "memvar.h"
 #include "set.h"
 
+/* ---- Work area infrastructure ---- */
+#define MAX_AREAS 10
+
+typedef struct {
+    dbf_t db;
+    char alias[DBF_MAX_FIELD_NAME];
+    char locate_cond[256];
+    uint32_t locate_last_rec;
+} work_area_t;
+
+static work_area_t areas[MAX_AREAS];
+static int current_area;
+
+static dbf_t *cur_db(void) { return &areas[current_area].db; }
+
 /* Persistent expression context */
 static expr_ctx_t expr_ctx;
-
-/* LOCATE state */
-static char locate_condition[256];
-static uint32_t locate_last_rec;
 
 /* Stage 3 state */
 static memvar_store_t memvar_store;
 static set_options_t set_opts;
 static int stage3_initialized;
 
-/* ---- Helper: initialize expr_ctx for a db ---- */
-static void ctx_setup(dbf_t *db) {
+/* Forward declarations */
+static dbf_t *area_lookup(const char *alias);
+
+/* ---- Helper: initialize expr_ctx ---- */
+static void ctx_setup(void) {
     if (!stage3_initialized) {
         memvar_init(&memvar_store);
         set_init(&set_opts);
         stage3_initialized = 1;
     }
-    expr_ctx.db = db;
+    expr_ctx.db = cur_db();
     expr_ctx.vars = &memvar_store;
     expr_ctx.opts = (struct set_options *)&set_opts;
-    /* found, bof_flag, eof_flag persist across commands */
+    expr_ctx.area_lookup = area_lookup;
+}
+
+/* ---- Area lookup callback for expr.c ---- */
+static dbf_t *area_lookup(const char *alias) {
+    int i;
+    char c;
+    /* Try single letter A-J */
+    c = alias[0];
+    if (c >= 'a' && c <= 'z') c -= 32;
+    if (c >= 'A' && c <= 'J' && alias[1] == '\0')
+        return &areas[c - 'A'].db;
+    /* Try name alias */
+    for (i = 0; i < MAX_AREAS; i++) {
+        if (areas[i].alias[0] && str_icmp(areas[i].alias, alias) == 0)
+            return &areas[i].db;
+    }
+    return NULL;
 }
 
 /* ---- Helper: check FOR clause ---- */
-/* Returns pointer past "FOR" keyword, or NULL if no FOR clause present */
 static const char *find_for_clause(const char *p) {
     const char *s = p;
     while (*s) {
@@ -51,8 +81,6 @@ static const char *find_for_clause(const char *p) {
 }
 
 /* ---- Helper: parse field list before FOR clause ---- */
-/* Parse comma-separated field names. Returns count, fills indices[].
-   Sets *rest to point past the field list. */
 static int parse_field_list(dbf_t *db, const char *arg, int *indices, int max_fields, const char **rest) {
     const char *p = skip_ws(arg);
     int count = 0;
@@ -63,10 +91,11 @@ static int parse_field_list(dbf_t *db, const char *arg, int *indices, int max_fi
     while (*p && count < max_fields) {
         int i, idx;
 
-        /* Check if we hit FOR keyword */
         if (str_imatch(p, "FOR")) break;
+        /* Also stop at scope keywords that might appear in COPY TO context */
+        if (str_imatch(p, "ALL") || str_imatch(p, "REST") ||
+            str_imatch(p, "NEXT") || str_imatch(p, "RECORD")) break;
 
-        /* Parse field name */
         i = 0;
         while (*p && *p != ',' && *p != ' ' && *p != '\t' && i < DBF_MAX_FIELD_NAME - 1)
             name[i++] = *p++;
@@ -146,6 +175,36 @@ static int field_display_width(dbf_t *db, int f) {
     return w;
 }
 
+/* ---- Helper: extract filename stem (without .DBF extension) ---- */
+static void filename_stem(const char *filename, char *stem, int size) {
+    int len;
+    str_copy(stem, filename, size);
+    len = strlen(stem);
+    if (len >= 4 && str_icmp(stem + len - 4, ".DBF") == 0)
+        stem[len - 4] = '\0';
+}
+
+/* ---- Helper: ensure filename has .DBF extension ---- */
+static void ensure_dbf_ext(char *filename, int size) {
+    str_upper(filename);
+    trim_right(filename);
+    if (strlen(filename) < 5 || str_icmp(filename + strlen(filename) - 4, ".DBF") != 0) {
+        if ((int)strlen(filename) + 4 < size)
+            strcat(filename, ".DBF");
+    }
+}
+
+/* ---- Helper: parse filename from arg ---- */
+static const char *parse_filename(const char *arg, char *filename, int size) {
+    const char *p = skip_ws(arg);
+    int i = 0;
+    while (*p && *p != ' ' && *p != '\t' && i < size - 1)
+        filename[i++] = *p++;
+    filename[i] = '\0';
+    ensure_dbf_ext(filename, size);
+    return p;
+}
+
 /* ---- CREATE ---- */
 static void cmd_create(dbf_t *db, const char *arg) {
     char filename[64];
@@ -164,12 +223,7 @@ static void cmd_create(dbf_t *db, const char *arg) {
     }
 
     str_copy(filename, arg, sizeof(filename));
-    trim_right(filename);
-    str_upper(filename);
-    if (strlen(filename) < 5 || str_icmp(filename + strlen(filename) - 4, ".DBF") != 0) {
-        if (strlen(filename) + 4 < sizeof(filename))
-            strcat(filename, ".DBF");
-    }
+    ensure_dbf_ext(filename, sizeof(filename));
 
     printf("Enter field definitions (blank name to finish):\n");
 
@@ -229,6 +283,45 @@ static void cmd_create(dbf_t *db, const char *arg) {
     printf("Database %s created with %d field(s).\n", filename, nfields);
 }
 
+/* ---- SELECT ---- */
+static void cmd_select(const char *arg) {
+    const char *p = skip_ws(arg);
+    int area;
+    char c;
+    int i;
+
+    if (*p == '\0') {
+        printf("Current work area: %d\n", current_area + 1);
+        return;
+    }
+
+    /* Try numeric 1-10 */
+    if (*p >= '1' && *p <= '9') {
+        area = atoi(p) - 1;
+        if (area >= 0 && area < MAX_AREAS) {
+            current_area = area;
+            return;
+        }
+    }
+
+    /* Try letter A-J */
+    c = *p;
+    if (c >= 'a' && c <= 'z') c -= 32;
+    if (c >= 'A' && c <= 'J' && (p[1] == '\0' || p[1] == ' ' || p[1] == '\t')) {
+        current_area = c - 'A';
+        return;
+    }
+
+    /* Try alias name */
+    for (i = 0; i < MAX_AREAS; i++) {
+        if (areas[i].alias[0] && str_icmp(areas[i].alias, p) == 0) {
+            current_area = i;
+            return;
+        }
+    }
+    printf("Invalid work area.\n");
+}
+
 /* ---- USE ---- */
 static void cmd_use(dbf_t *db, const char *arg) {
     char filename[64];
@@ -238,33 +331,36 @@ static void cmd_use(dbf_t *db, const char *arg) {
     if (*arg == '\0') {
         if (dbf_is_open(db)) {
             dbf_close(db);
+            areas[current_area].alias[0] = '\0';
+            areas[current_area].locate_cond[0] = '\0';
+            areas[current_area].locate_last_rec = 0;
             printf("Database closed.\n");
         }
         return;
     }
 
-    if (dbf_is_open(db))
+    if (dbf_is_open(db)) {
         dbf_close(db);
+        areas[current_area].alias[0] = '\0';
+    }
 
     str_copy(filename, arg, sizeof(filename));
-    trim_right(filename);
-    str_upper(filename);
-    if (strlen(filename) < 5 || str_icmp(filename + strlen(filename) - 4, ".DBF") != 0) {
-        if (strlen(filename) + 4 < sizeof(filename))
-            strcat(filename, ".DBF");
-    }
+    ensure_dbf_ext(filename, sizeof(filename));
 
     if (dbf_open(db, filename) < 0) {
         printf("File not found: %s\n", filename);
         return;
     }
 
+    /* Set alias to filename stem */
+    filename_stem(filename, areas[current_area].alias, sizeof(areas[current_area].alias));
+
     /* Reset navigation state */
     expr_ctx.eof_flag = 0;
     expr_ctx.bof_flag = 0;
     expr_ctx.found = 0;
-    locate_condition[0] = '\0';
-    locate_last_rec = 0;
+    areas[current_area].locate_cond[0] = '\0';
+    areas[current_area].locate_last_rec = 0;
 
     printf("Database %s opened with %d record(s).\n",
            db->filename, (int)db->record_count);
@@ -355,7 +451,6 @@ static void cmd_skip(dbf_t *db, const char *arg) {
         n = atoi(p);
 
     if (db->current_record == 0) {
-        /* No current record — go to first */
         if (db->record_count == 0) {
             expr_ctx.eof_flag = 1;
             return;
@@ -363,7 +458,7 @@ static void cmd_skip(dbf_t *db, const char *arg) {
         dbf_read_record(db, 1);
         expr_ctx.eof_flag = 0;
         expr_ctx.bof_flag = 0;
-        if (n > 0) n--; /* already moved forward 1 */
+        if (n > 0) n--;
         if (n == 0) return;
     }
 
@@ -377,12 +472,8 @@ static void cmd_skip(dbf_t *db, const char *arg) {
     }
 
     if ((uint32_t)target > db->record_count) {
-        /* Move past EOF — stay at record_count but set eof_flag.
-           dBase III behavior: current_record = record_count + 1 conceptually,
-           but we keep it at record_count and set the flag. */
         expr_ctx.eof_flag = 1;
         expr_ctx.bof_flag = 0;
-        /* Keep current_record at last record; some dBase impls set it to count+1 */
         db->current_record = db->record_count + 1;
         return;
     }
@@ -475,8 +566,8 @@ static void cmd_locate(dbf_t *db, const char *arg) {
     }
     p = skip_ws(p + 3);
 
-    /* Save condition for CONTINUE */
-    str_copy(locate_condition, p, sizeof(locate_condition));
+    /* Save condition for CONTINUE (per-area) */
+    str_copy(areas[current_area].locate_cond, p, sizeof(areas[current_area].locate_cond));
 
     if (scope_bounds(db, &scope, &start, &end) < 0) {
         printf("Invalid scope.\n");
@@ -490,7 +581,7 @@ static void cmd_locate(dbf_t *db, const char *arg) {
         dbf_read_record(db, i);
         if (skip_deleted(db->record_buf)) continue;
 
-        if (expr_eval_str(&expr_ctx, locate_condition, &cond) != 0) {
+        if (expr_eval_str(&expr_ctx, areas[current_area].locate_cond, &cond) != 0) {
             if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
             return;
         }
@@ -498,16 +589,15 @@ static void cmd_locate(dbf_t *db, const char *arg) {
         if (cond.type == VAL_LOGIC && cond.logic) {
             expr_ctx.found = 1;
             expr_ctx.eof_flag = 0;
-            locate_last_rec = i;
+            areas[current_area].locate_last_rec = i;
             if (set_opts.talk) printf("Record = %d\n", (int)i);
             return;
         }
     }
 
-    /* Not found */
     expr_ctx.found = 0;
     expr_ctx.eof_flag = 1;
-    locate_last_rec = 0;
+    areas[current_area].locate_last_rec = 0;
     if (set_opts.talk) printf("End of LOCATE scope\n");
 }
 
@@ -520,17 +610,17 @@ static void cmd_continue(dbf_t *db) {
         return;
     }
 
-    if (locate_condition[0] == '\0') {
+    if (areas[current_area].locate_cond[0] == '\0') {
         printf("No LOCATE active.\n");
         return;
     }
 
-    for (i = locate_last_rec + 1; i <= db->record_count; i++) {
+    for (i = areas[current_area].locate_last_rec + 1; i <= db->record_count; i++) {
         value_t cond;
         dbf_read_record(db, i);
         if (skip_deleted(db->record_buf)) continue;
 
-        if (expr_eval_str(&expr_ctx, locate_condition, &cond) != 0) {
+        if (expr_eval_str(&expr_ctx, areas[current_area].locate_cond, &cond) != 0) {
             if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
             return;
         }
@@ -538,7 +628,7 @@ static void cmd_continue(dbf_t *db) {
         if (cond.type == VAL_LOGIC && cond.logic) {
             expr_ctx.found = 1;
             expr_ctx.eof_flag = 0;
-            locate_last_rec = i;
+            areas[current_area].locate_last_rec = i;
             if (set_opts.talk) printf("Record = %d\n", (int)i);
             return;
         }
@@ -613,7 +703,6 @@ static void cmd_sum(dbf_t *db, const char *arg) {
         return;
     }
 
-    /* Extract expression (everything before FOR, after any scope) */
     {
         const char *f = p;
         const char *for_pos = NULL;
@@ -634,11 +723,9 @@ static void cmd_sum(dbf_t *db, const char *arg) {
         }
     }
 
-    /* Parse scope from expression string if present (SUM ALL expr...) */
     {
         const char *sp = expr_str;
         scope = parse_scope(&sp);
-        /* If scope consumed some text, shift expr_str */
         if (sp != expr_str) {
             const char *rest = skip_ws(sp);
             int len = strlen(rest);
@@ -727,7 +814,6 @@ static void cmd_average(dbf_t *db, const char *arg) {
         }
     }
 
-    /* Parse scope from expression string if present */
     {
         const char *sp = expr_str;
         scope = parse_scope(&sp);
@@ -805,7 +891,6 @@ static void cmd_replace(dbf_t *db, const char *arg) {
         value_t val;
         char valbuf[256];
 
-        /* Parse field name */
         {
             int i = 0;
             while (*p && *p != ' ' && *p != '\t' && i < DBF_MAX_FIELD_NAME - 1)
@@ -820,20 +905,17 @@ static void cmd_replace(dbf_t *db, const char *arg) {
             return;
         }
 
-        /* Skip "WITH" */
         p = skip_ws(p);
         if (str_imatch(p, "WITH")) {
             p += 4;
             p = skip_ws(p);
         }
 
-        /* Evaluate expression for value */
         if (expr_eval(&expr_ctx, &p, &val) != 0) {
             if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
             return;
         }
 
-        /* Convert value to field format */
         val_to_string(&val, valbuf, sizeof(valbuf));
 
         switch (db->fields[idx].type) {
@@ -869,7 +951,6 @@ static void cmd_replace(dbf_t *db, const char *arg) {
 
         dbf_set_field_raw(db, idx, formatted);
 
-        /* Skip comma separator */
         p = skip_ws(p);
         if (*p == ',') {
             p++;
@@ -905,17 +986,14 @@ static void cmd_list(dbf_t *db, const char *arg) {
 
     rest = skip_ws(arg);
 
-    /* Parse scope first */
     scope = parse_scope(&rest);
 
-    /* Check if there's a FOR clause directly */
     if (str_imatch(rest, "FOR")) {
         cond_str = skip_ws(rest + 3);
         nfields = 0;
     } else if (*rest != '\0') {
-        /* Try to parse a field list */
         nfields = parse_field_list(db, rest, field_indices, DBF_MAX_FIELDS, &rest);
-        if (nfields < 0) return; /* error already printed */
+        if (nfields < 0) return;
         rest = skip_ws(rest);
         if (str_imatch(rest, "FOR")) {
             cond_str = skip_ws(rest + 3);
@@ -929,7 +1007,6 @@ static void cmd_list(dbf_t *db, const char *arg) {
         return;
     }
 
-    /* Print header */
     if (set_opts.heading) {
         printf("Record#");
         if (use_all_fields) {
@@ -947,7 +1024,6 @@ static void cmd_list(dbf_t *db, const char *arg) {
         printf("\n");
     }
 
-    /* Print records */
     for (i = start; i <= end; i++) {
         if (dbf_read_record(db, i) < 0) continue;
         if (skip_deleted(db->record_buf)) continue;
@@ -1051,7 +1127,6 @@ static void cmd_store(dbf_t *db, const char *arg) {
 
     (void)db;
 
-    /* Find TO keyword — scan for it */
     {
         const char *f = p;
         to_pos = NULL;
@@ -1066,7 +1141,6 @@ static void cmd_store(dbf_t *db, const char *arg) {
         return;
     }
 
-    /* Extract expression before TO */
     {
         int len = (int)(to_pos - p);
         if (len > (int)sizeof(expr_str) - 1) len = (int)sizeof(expr_str) - 1;
@@ -1080,7 +1154,6 @@ static void cmd_store(dbf_t *db, const char *arg) {
         return;
     }
 
-    /* Parse variable name after TO */
     p = skip_ws(to_pos + 2);
     i = 0;
     while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1)
@@ -1136,7 +1209,6 @@ static void cmd_delete(dbf_t *db, const char *arg) {
         return;
     }
 
-    /* Bare DELETE = delete current record */
     if (*p == '\0') {
         if (db->current_record == 0 || expr_ctx.eof_flag) {
             printf("No current record.\n");
@@ -1193,7 +1265,6 @@ static void cmd_recall(dbf_t *db, const char *arg) {
         return;
     }
 
-    /* Bare RECALL = recall current record */
     if (*p == '\0') {
         if (db->current_record == 0 || expr_ctx.eof_flag) {
             printf("No current record.\n");
@@ -1257,7 +1328,6 @@ static void cmd_pack(dbf_t *db) {
         if (db->record_buf[0] == '*') continue;
         dst++;
         if (dst != src) {
-            /* Write record at dst position */
             long pos = db->header_size + (long)(dst - 1) * rec_size;
             fseek(db->fp, pos, 0);
             fwrite(db->record_buf, 1, rec_size, db->fp);
@@ -1268,7 +1338,6 @@ static void cmd_pack(dbf_t *db) {
     dbf_write_header_counts(db);
     fflush(db->fp);
 
-    /* Reposition to first record if any remain */
     if (dst > 0) {
         dbf_read_record(db, 1);
         expr_ctx.eof_flag = 0;
@@ -1303,7 +1372,6 @@ static void cmd_accept(const char *arg) {
     int i;
     value_t val;
 
-    /* Optional prompt string */
     if (*p == '"' || *p == '\'') {
         char quote = *p++;
         while (*p && *p != quote) {
@@ -1313,7 +1381,6 @@ static void cmd_accept(const char *arg) {
         if (*p == quote) p++;
     }
 
-    /* TO keyword */
     p = skip_ws(p);
     if (!str_imatch(p, "TO")) {
         printf("Syntax: ACCEPT [\"prompt\"] TO <variable>\n");
@@ -1321,7 +1388,6 @@ static void cmd_accept(const char *arg) {
     }
     p = skip_ws(p + 2);
 
-    /* Variable name */
     i = 0;
     while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1)
         name[i++] = *p++;
@@ -1332,7 +1398,6 @@ static void cmd_accept(const char *arg) {
         return;
     }
 
-    /* Read line from stdin */
     if (read_line(line, sizeof(line)) < 0)
         line[0] = '\0';
 
@@ -1341,14 +1406,13 @@ static void cmd_accept(const char *arg) {
 }
 
 /* ---- INPUT ---- */
-static void cmd_input(dbf_t *db, const char *arg) {
+static void cmd_input(const char *arg) {
     const char *p = skip_ws(arg);
     char line[256];
     char name[MEMVAR_NAMELEN];
     int i;
     value_t val;
 
-    /* Optional prompt string */
     if (*p == '"' || *p == '\'') {
         char quote = *p++;
         while (*p && *p != quote) {
@@ -1358,7 +1422,6 @@ static void cmd_input(dbf_t *db, const char *arg) {
         if (*p == quote) p++;
     }
 
-    /* TO keyword */
     p = skip_ws(p);
     if (!str_imatch(p, "TO")) {
         printf("Syntax: INPUT [\"prompt\"] TO <variable>\n");
@@ -1366,7 +1429,6 @@ static void cmd_input(dbf_t *db, const char *arg) {
     }
     p = skip_ws(p + 2);
 
-    /* Variable name */
     i = 0;
     while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1)
         name[i++] = *p++;
@@ -1377,11 +1439,10 @@ static void cmd_input(dbf_t *db, const char *arg) {
         return;
     }
 
-    /* Read line from stdin and evaluate as expression */
     if (read_line(line, sizeof(line)) < 0)
         line[0] = '\0';
 
-    ctx_setup(db);
+    ctx_setup();
     if (expr_eval_str(&expr_ctx, line, &val) != 0) {
         if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
         val = val_num(0);
@@ -1397,7 +1458,6 @@ static void cmd_wait(const char *arg) {
     int has_to = 0;
     int c;
 
-    /* Optional prompt string */
     if (*p == '"' || *p == '\'') {
         char quote = *p++;
         while (*p && *p != quote) {
@@ -1410,7 +1470,6 @@ static void cmd_wait(const char *arg) {
         printf("Press any key to continue...");
     }
 
-    /* Check for TO var */
     if (str_imatch(p, "TO")) {
         int i;
         p = skip_ws(p + 2);
@@ -1421,10 +1480,8 @@ static void cmd_wait(const char *arg) {
         has_to = (name[0] != '\0');
     }
 
-    /* Read one character */
     c = getchar();
     if (c == -1) c = 0;
-    /* Skip the newline if present */
     if (c != '\n') {
         int next = getchar();
         (void)next;
@@ -1442,22 +1499,17 @@ static void cmd_wait(const char *arg) {
 }
 
 /* ---- ? / ?? (print expressions) ---- */
-static void cmd_print_expr(dbf_t *db, const char *arg, int newline) {
+static void cmd_print_expr(const char *arg, int newline) {
     const char *p;
     int first = 1;
-
-    (void)db;
-    ctx_setup(db);
 
     p = skip_ws(arg);
 
     if (*p == '\0') {
-        /* Bare ? — just print newline */
         if (newline) printf("\n");
         return;
     }
 
-    /* Evaluate comma-separated expressions */
     while (*p) {
         value_t val;
         char buf[256];
@@ -1484,11 +1536,425 @@ static void cmd_print_expr(dbf_t *db, const char *arg, int newline) {
     if (newline) printf("\n");
 }
 
+/* ---- COPY TO [FIELDS ...] [scope] [FOR cond] ---- */
+static void cmd_copy_to(dbf_t *db, const char *arg) {
+    char filename[64];
+    const char *p;
+    int field_indices[DBF_MAX_FIELDS];
+    int nfields = 0;
+    int use_all_fields;
+    scope_t scope;
+    const char *cond_str = NULL;
+    uint32_t start, end, i;
+    dbf_t dest;
+    dbf_field_t dest_fields[DBF_MAX_FIELDS];
+    int dest_nfields;
+    int count = 0;
+    int f;
+
+    if (!dbf_is_open(db)) {
+        printf("No database in use.\n");
+        return;
+    }
+
+    p = parse_filename(arg, filename, sizeof(filename));
+
+    if (filename[0] == '\0' || str_icmp(filename, ".DBF") == 0) {
+        printf("Syntax: COPY TO <filename> [FIELDS f1,f2,...] [scope] [FOR cond]\n");
+        return;
+    }
+
+    p = skip_ws(p);
+
+    /* Parse optional FIELDS clause */
+    if (str_imatch(p, "FIELDS")) {
+        p = skip_ws(p + 6);
+        nfields = parse_field_list(db, p, field_indices, DBF_MAX_FIELDS, &p);
+        if (nfields < 0) return;
+        p = skip_ws(p);
+    }
+
+    /* Parse scope */
+    scope = parse_scope(&p);
+
+    /* Parse FOR */
+    if (str_imatch(p, "FOR")) {
+        cond_str = skip_ws(p + 3);
+    }
+
+    use_all_fields = (nfields == 0);
+
+    /* Build dest field list */
+    if (use_all_fields) {
+        dest_nfields = db->field_count;
+        for (f = 0; f < dest_nfields; f++)
+            dest_fields[f] = db->fields[f];
+    } else {
+        dest_nfields = nfields;
+        for (f = 0; f < nfields; f++)
+            dest_fields[f] = db->fields[field_indices[f]];
+    }
+
+    /* Recompute offsets for dest */
+    {
+        uint16_t off = 0;
+        for (f = 0; f < dest_nfields; f++) {
+            dest_fields[f].offset = off;
+            off += dest_fields[f].length;
+        }
+    }
+
+    if (dbf_create(filename, dest_fields, dest_nfields) < 0) {
+        printf("Error creating %s\n", filename);
+        return;
+    }
+
+    dbf_init(&dest);
+    if (dbf_open(&dest, filename) < 0) {
+        printf("Error opening %s\n", filename);
+        return;
+    }
+
+    if (scope_bounds(db, &scope, &start, &end) < 0) {
+        printf("Invalid scope.\n");
+        dbf_close(&dest);
+        return;
+    }
+
+    for (i = start; i <= end; i++) {
+        char raw[256];
+        dbf_read_record(db, i);
+        if (skip_deleted(db->record_buf)) continue;
+
+        if (cond_str) {
+            value_t cond;
+            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
+                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                dbf_close(&dest);
+                return;
+            }
+            if (cond.type != VAL_LOGIC || !cond.logic) continue;
+        }
+
+        dbf_append_blank(&dest);
+
+        if (use_all_fields) {
+            for (f = 0; f < db->field_count; f++) {
+                dbf_get_field_raw(db, f, raw, sizeof(raw));
+                dbf_set_field_raw(&dest, f, raw);
+            }
+        } else {
+            for (f = 0; f < nfields; f++) {
+                dbf_get_field_raw(db, field_indices[f], raw, sizeof(raw));
+                dbf_set_field_raw(&dest, f, raw);
+            }
+        }
+        dbf_flush_record(&dest);
+        count++;
+    }
+
+    dbf_close(&dest);
+    printf("%d record(s) copied.\n", count);
+}
+
+/* ---- COPY STRUCTURE TO ---- */
+static void cmd_copy_structure(dbf_t *db, const char *arg) {
+    char filename[64];
+
+    if (!dbf_is_open(db)) {
+        printf("No database in use.\n");
+        return;
+    }
+
+    parse_filename(arg, filename, sizeof(filename));
+
+    if (filename[0] == '\0' || str_icmp(filename, ".DBF") == 0) {
+        printf("Syntax: COPY STRUCTURE TO <filename>\n");
+        return;
+    }
+
+    /* Recompute offsets for create */
+    {
+        dbf_field_t fields[DBF_MAX_FIELDS];
+        int f;
+        uint16_t off = 0;
+        for (f = 0; f < db->field_count; f++) {
+            fields[f] = db->fields[f];
+            fields[f].offset = off;
+            off += fields[f].length;
+        }
+        if (dbf_create(filename, fields, db->field_count) < 0) {
+            printf("Error creating %s\n", filename);
+            return;
+        }
+    }
+
+    printf("Structure copied to %s.\n", filename);
+}
+
+/* ---- APPEND FROM [FOR cond] ---- */
+static void cmd_append_from(dbf_t *db, const char *arg) {
+    char filename[64];
+    const char *p;
+    const char *cond_str = NULL;
+    dbf_t source;
+    uint32_t i;
+    int count = 0;
+    dbf_t *saved_db;
+
+    if (!dbf_is_open(db)) {
+        printf("No database in use.\n");
+        return;
+    }
+
+    p = parse_filename(arg, filename, sizeof(filename));
+
+    if (filename[0] == '\0' || str_icmp(filename, ".DBF") == 0) {
+        printf("Syntax: APPEND FROM <filename> [FOR cond]\n");
+        return;
+    }
+
+    p = skip_ws(p);
+    if (str_imatch(p, "FOR")) {
+        cond_str = skip_ws(p + 3);
+    }
+
+    dbf_init(&source);
+    if (dbf_open(&source, filename) < 0) {
+        printf("File not found: %s\n", filename);
+        return;
+    }
+
+    /* FOR evaluates against source records */
+    saved_db = expr_ctx.db;
+
+    for (i = 1; i <= source.record_count; i++) {
+        int f;
+        char raw[256];
+
+        dbf_read_record(&source, i);
+        if (source.record_buf[0] == '*') continue;
+
+        if (cond_str) {
+            value_t cond;
+            expr_ctx.db = &source;
+            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
+                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                expr_ctx.db = saved_db;
+                dbf_close(&source);
+                return;
+            }
+            expr_ctx.db = saved_db;
+            if (cond.type != VAL_LOGIC || !cond.logic) continue;
+        }
+
+        dbf_append_blank(db);
+
+        /* Copy matching fields by name */
+        for (f = 0; f < source.field_count; f++) {
+            int didx = dbf_find_field(db, source.fields[f].name);
+            if (didx < 0) continue;
+            /* Re-read source record since append_blank may have flushed db */
+            dbf_read_record(&source, i);
+            dbf_get_field_raw(&source, f, raw, sizeof(raw));
+            dbf_set_field_raw(db, didx, raw);
+        }
+        dbf_flush_record(db);
+        count++;
+    }
+
+    dbf_close(&source);
+    printf("%d record(s) appended.\n", count);
+}
+
+/* ---- SORT TO file ON field [/A][/D][/C] [scope] [FOR cond] ---- */
+
+typedef struct {
+    uint32_t recno;
+    char key[256];
+} sort_entry_t;
+
+#define MAX_SORT_ENTRIES 2000
+static sort_entry_t sort_entries[MAX_SORT_ENTRIES];
+
+static int sort_ascending;
+static int sort_case_insensitive;
+
+static int sort_compare(const void *a, const void *b) {
+    const sort_entry_t *sa = (const sort_entry_t *)a;
+    const sort_entry_t *sb = (const sort_entry_t *)b;
+    int cmp;
+    if (sort_case_insensitive)
+        cmp = str_icmp(sa->key, sb->key);
+    else
+        cmp = strcmp(sa->key, sb->key);
+    return sort_ascending ? cmp : -cmp;
+}
+
+static void cmd_sort(dbf_t *db, const char *arg) {
+    char filename[64];
+    char field_name[DBF_MAX_FIELD_NAME];
+    const char *p;
+    int field_idx;
+    int nentries = 0;
+    scope_t scope;
+    const char *cond_str = NULL;
+    uint32_t start, end, i;
+    dbf_t dest;
+    int count = 0;
+    int f;
+
+    if (!dbf_is_open(db)) {
+        printf("No database in use.\n");
+        return;
+    }
+
+    /* Parse: SORT TO <filename> ON <field> [/A][/D][/C] [scope] [FOR cond] */
+    p = parse_filename(arg, filename, sizeof(filename));
+
+    if (filename[0] == '\0' || str_icmp(filename, ".DBF") == 0) {
+        printf("Syntax: SORT TO <filename> ON <field> [/A][/D][/C]\n");
+        return;
+    }
+
+    p = skip_ws(p);
+    if (!str_imatch(p, "ON")) {
+        printf("Syntax: SORT TO <filename> ON <field> [/A][/D][/C]\n");
+        return;
+    }
+    p = skip_ws(p + 2);
+
+    /* Parse field name */
+    {
+        int fi = 0;
+        while (is_ident_char(*p) && fi < DBF_MAX_FIELD_NAME - 1)
+            field_name[fi++] = *p++;
+        field_name[fi] = '\0';
+    }
+    str_upper(field_name);
+
+    field_idx = dbf_find_field(db, field_name);
+    if (field_idx < 0) {
+        printf("Field not found: %s\n", field_name);
+        return;
+    }
+
+    /* Parse flags */
+    sort_ascending = 1;
+    sort_case_insensitive = 0;
+    p = skip_ws(p);
+    while (*p == '/') {
+        p++;
+        char fc = *p;
+        if (fc >= 'a' && fc <= 'z') fc -= 32;
+        if (fc == 'A') sort_ascending = 1;
+        else if (fc == 'D') sort_ascending = 0;
+        else if (fc == 'C') sort_case_insensitive = 1;
+        p++;
+        p = skip_ws(p);
+    }
+
+    /* Parse scope */
+    scope = parse_scope(&p);
+
+    /* Parse FOR */
+    if (str_imatch(p, "FOR")) {
+        cond_str = skip_ws(p + 3);
+    }
+
+    if (scope_bounds(db, &scope, &start, &end) < 0) {
+        printf("Invalid scope.\n");
+        return;
+    }
+
+    /* Collect qualifying records */
+    for (i = start; i <= end && nentries < MAX_SORT_ENTRIES; i++) {
+        char raw[256];
+        dbf_read_record(db, i);
+        if (skip_deleted(db->record_buf)) continue;
+
+        if (cond_str) {
+            value_t cond;
+            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
+                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                return;
+            }
+            if (cond.type != VAL_LOGIC || !cond.logic) continue;
+        }
+
+        sort_entries[nentries].recno = i;
+        dbf_get_field_raw(db, field_idx, raw, sizeof(raw));
+        str_copy(sort_entries[nentries].key, raw, sizeof(sort_entries[nentries].key));
+        nentries++;
+    }
+
+    if (nentries == 0) {
+        printf("No records to sort.\n");
+        return;
+    }
+
+    /* Sort */
+    qsort(sort_entries, nentries, sizeof(sort_entry_t), sort_compare);
+
+    /* Create dest with same structure */
+    {
+        dbf_field_t fields[DBF_MAX_FIELDS];
+        uint16_t off = 0;
+        for (f = 0; f < db->field_count; f++) {
+            fields[f] = db->fields[f];
+            fields[f].offset = off;
+            off += fields[f].length;
+        }
+        if (dbf_create(filename, fields, db->field_count) < 0) {
+            printf("Error creating %s\n", filename);
+            return;
+        }
+    }
+
+    dbf_init(&dest);
+    if (dbf_open(&dest, filename) < 0) {
+        printf("Error opening %s\n", filename);
+        return;
+    }
+
+    /* Write records in sorted order */
+    for (i = 0; i < (uint32_t)nentries; i++) {
+        char raw[256];
+        dbf_read_record(db, sort_entries[i].recno);
+        dbf_append_blank(&dest);
+        for (f = 0; f < db->field_count; f++) {
+            dbf_get_field_raw(db, f, raw, sizeof(raw));
+            dbf_set_field_raw(&dest, f, raw);
+        }
+        dbf_flush_record(&dest);
+        count++;
+    }
+
+    dbf_close(&dest);
+    printf("%d record(s) sorted.\n", count);
+}
+
+/* ---- Close all work areas ---- */
+void cmd_close_all(void) {
+    int i;
+    for (i = 0; i < MAX_AREAS; i++) {
+        if (dbf_is_open(&areas[i].db))
+            dbf_close(&areas[i].db);
+        areas[i].alias[0] = '\0';
+        areas[i].locate_cond[0] = '\0';
+        areas[i].locate_last_rec = 0;
+    }
+    current_area = 0;
+}
+
 /* ---- Dispatch ---- */
 int cmd_execute(dbf_t *db, char *line) {
     char *p;
+    dbf_t *cdb;
 
-    ctx_setup(db);
+    (void)db;
+    ctx_setup();
+    cdb = cur_db();
 
     p = skip_ws(line);
     if (*p == '\0') return 0;
@@ -1497,69 +1963,104 @@ int cmd_execute(dbf_t *db, char *line) {
         return 1;
     }
 
+    if (str_imatch(p, "SELECT")) {
+        cmd_select(p + 6);
+        return 0;
+    }
+
     if (str_imatch(p, "CREATE")) {
-        cmd_create(db, p + 6);
+        cmd_create(cdb, p + 6);
         return 0;
     }
 
     if (str_imatch(p, "USE")) {
-        cmd_use(db, p + 3);
+        cmd_use(cdb, p + 3);
         return 0;
     }
 
-    /* APPEND BLANK */
+    /* COPY TO / COPY STRUCTURE TO */
+    if (str_imatch(p, "COPY")) {
+        char *rest = skip_ws(p + 4);
+        if (str_imatch(rest, "STRUCTURE")) {
+            rest = skip_ws(rest + 9);
+            if (str_imatch(rest, "TO")) {
+                cmd_copy_structure(cdb, rest + 2);
+            } else {
+                printf("Syntax: COPY STRUCTURE TO <filename>\n");
+            }
+        } else if (str_imatch(rest, "TO")) {
+            cmd_copy_to(cdb, rest + 2);
+        } else {
+            printf("Syntax: COPY TO <filename> | COPY STRUCTURE TO <filename>\n");
+        }
+        return 0;
+    }
+
+    /* APPEND BLANK / APPEND FROM */
     if (str_imatch(p, "APPEND")) {
         char *rest = skip_ws(p + 6);
         if (str_imatch(rest, "BLANK")) {
-            cmd_append_blank(db);
+            cmd_append_blank(cdb);
+        } else if (str_imatch(rest, "FROM")) {
+            cmd_append_from(cdb, rest + 4);
         } else {
-            printf("Syntax: APPEND BLANK\n");
+            printf("Syntax: APPEND BLANK | APPEND FROM <filename>\n");
+        }
+        return 0;
+    }
+
+    if (str_imatch(p, "SORT")) {
+        char *rest = skip_ws(p + 4);
+        if (str_imatch(rest, "TO")) {
+            cmd_sort(cdb, rest + 2);
+        } else {
+            printf("Syntax: SORT TO <filename> ON <field> [/A][/D][/C]\n");
         }
         return 0;
     }
 
     if (str_imatch(p, "REPLACE")) {
-        cmd_replace(db, p + 7);
+        cmd_replace(cdb, p + 7);
         return 0;
     }
 
     /* GO / GOTO */
     if (str_imatch(p, "GOTO")) {
-        cmd_go(db, p + 4);
+        cmd_go(cdb, p + 4);
         return 0;
     }
     if (str_imatch(p, "GO")) {
-        cmd_go(db, p + 2);
+        cmd_go(cdb, p + 2);
         return 0;
     }
 
     if (str_imatch(p, "SKIP")) {
-        cmd_skip(db, p + 4);
+        cmd_skip(cdb, p + 4);
         return 0;
     }
 
     if (str_imatch(p, "LOCATE")) {
-        cmd_locate(db, p + 6);
+        cmd_locate(cdb, p + 6);
         return 0;
     }
 
     if (str_imatch(p, "CONTINUE")) {
-        cmd_continue(db);
+        cmd_continue(cdb);
         return 0;
     }
 
     if (str_imatch(p, "COUNT")) {
-        cmd_count(db, p + 5);
+        cmd_count(cdb, p + 5);
         return 0;
     }
 
     if (str_imatch(p, "SUM")) {
-        cmd_sum(db, p + 3);
+        cmd_sum(cdb, p + 3);
         return 0;
     }
 
     if (str_imatch(p, "AVERAGE")) {
-        cmd_average(db, p + 7);
+        cmd_average(cdb, p + 7);
         return 0;
     }
 
@@ -1567,22 +2068,22 @@ int cmd_execute(dbf_t *db, char *line) {
     if (str_imatch(p, "DISPLAY")) {
         char *rest = skip_ws(p + 7);
         if (str_imatch(rest, "STRUCTURE")) {
-            cmd_display_structure(db);
+            cmd_display_structure(cdb);
         } else if (str_imatch(rest, "MEMORY")) {
             memvar_display(&memvar_store);
         } else {
-            cmd_display(db, rest);
+            cmd_display(cdb, rest);
         }
         return 0;
     }
 
     if (str_imatch(p, "LIST")) {
-        cmd_list(db, p + 4);
+        cmd_list(cdb, p + 4);
         return 0;
     }
 
     if (str_imatch(p, "STORE")) {
-        cmd_store(db, p + 5);
+        cmd_store(cdb, p + 5);
         return 0;
     }
 
@@ -1597,22 +2098,22 @@ int cmd_execute(dbf_t *db, char *line) {
     }
 
     if (str_imatch(p, "DELETE")) {
-        cmd_delete(db, p + 6);
+        cmd_delete(cdb, p + 6);
         return 0;
     }
 
     if (str_imatch(p, "RECALL")) {
-        cmd_recall(db, p + 6);
+        cmd_recall(cdb, p + 6);
         return 0;
     }
 
     if (str_imatch(p, "PACK")) {
-        cmd_pack(db);
+        cmd_pack(cdb);
         return 0;
     }
 
     if (str_imatch(p, "ZAP")) {
-        cmd_zap(db);
+        cmd_zap(cdb);
         return 0;
     }
 
@@ -1622,7 +2123,7 @@ int cmd_execute(dbf_t *db, char *line) {
     }
 
     if (str_imatch(p, "INPUT")) {
-        cmd_input(db, p + 5);
+        cmd_input(p + 5);
         return 0;
     }
 
@@ -1633,12 +2134,12 @@ int cmd_execute(dbf_t *db, char *line) {
 
     /* ?? (no newline) must be checked before ? */
     if (p[0] == '?' && p[1] == '?') {
-        cmd_print_expr(db, p + 2, 0);
+        cmd_print_expr(p + 2, 0);
         return 0;
     }
 
     if (p[0] == '?') {
-        cmd_print_expr(db, p + 1, 1);
+        cmd_print_expr(p + 1, 1);
         return 0;
     }
 
