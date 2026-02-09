@@ -24,6 +24,14 @@
 #define S32_TRAP_ON_UNALIGNED 0
 #endif
 
+// Enable to trap on odd/out-of-range register numbers for f64 operations.
+// Disabled by default: x86-64 won't crash, but regs[31+1] silently corrupts PC.
+#ifdef S32_STRICT_ALIGNMENT
+#define S32_CHECK_F64_REGS 1
+#else
+#define S32_CHECK_F64_REGS 0
+#endif
+
 #define S32_MMIO_WINDOW_SIZE \
     (S32_MMIO_DATA_BUFFER_OFFSET + S32_MMIO_DATA_CAPACITY)
 #define S32_MMIO_REGION_SIZE 0x00010000u
@@ -791,11 +799,27 @@ static void op_fabs_s(fast_cpu_state_t *cpu, decoded_inst_t *inst, uint32_t *nex
 // ============================================================
 
 static inline void load_f64(fast_cpu_state_t *cpu, uint8_t reg, double *out) {
+#if S32_CHECK_F64_REGS
+    if (reg >= 31 || (reg & 1)) {
+        fprintf(stderr, "f64 register fault: r%d is invalid (must be even, < 31) at PC=0x%08X\n",
+                reg, cpu->pc);
+        cpu->halted = true;
+        return;
+    }
+#endif
     uint64_t bits = ((uint64_t)cpu->regs[reg + 1] << 32) | cpu->regs[reg];
     memcpy(out, &bits, 8);
 }
 
 static inline void store_f64(fast_cpu_state_t *cpu, uint8_t reg, double val) {
+#if S32_CHECK_F64_REGS
+    if (reg >= 31 || (reg & 1)) {
+        fprintf(stderr, "f64 register fault: r%d is invalid (must be even, < 31) at PC=0x%08X\n",
+                reg, cpu->pc);
+        cpu->halted = true;
+        return;
+    }
+#endif
     uint64_t bits;
     memcpy(&bits, &val, 8);
     cpu->regs[reg] = (uint32_t)bits;

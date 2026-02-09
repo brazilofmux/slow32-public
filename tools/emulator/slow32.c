@@ -17,6 +17,13 @@
 #define S32_TRAP_ON_UNALIGNED 1
 #endif
 
+// Enable to trap on odd register numbers for f64 operations.
+// The ISA requires even-numbered registers for double-precision pairs.
+// x86-64 won't crash on regs[31+1], but it silently corrupts the PC field.
+#ifndef S32_CHECK_F64_REGS
+#define S32_CHECK_F64_REGS 1
+#endif
+
 // CPU state is now defined in slow32.h with memory_manager_t
 
 // Initialize MMIO on first YIELD
@@ -290,7 +297,8 @@ static uint32_t cpu_load(cpu_state_t *cpu, uint32_t addr, int size) {
     }
     
     if (mm_read(&cpu->mm, addr, &value, size) < 0) {
-        fprintf(stderr, "Memory fault: Failed to read %d bytes at 0x%08X\n", size, addr);
+        fprintf(stderr, "Memory fault: Failed to read %d bytes at 0x%08X (PC=0x%08X SP=0x%08X)\n",
+                size, addr, cpu->pc, cpu->regs[REG_SP]);
         cpu->halted = true;
         return 0;
     }
@@ -762,7 +770,21 @@ void cpu_step(cpu_state_t *cpu) {
         // ============================================================
         // f64 (double-precision float) instructions -- register pairs
         // ============================================================
+        #if S32_CHECK_F64_REGS
+        #define CHECK_F64_REG(reg) do { \
+            if ((reg) >= 31 || ((reg) & 1)) { \
+                fprintf(stderr, "f64 register fault: r%d is invalid (must be even, < 31) at PC=0x%08X\n", \
+                        (reg), cpu->pc); \
+                cpu->halted = true; \
+                break; \
+            } \
+        } while(0)
+        #else
+        #define CHECK_F64_REG(reg) ((void)0)
+        #endif
+
         #define LOAD_F64(reg, var) do { \
+            CHECK_F64_REG(reg); \
             uint32_t lo_ = cpu->regs[(reg)]; \
             uint32_t hi_ = cpu->regs[(reg) + 1]; \
             uint64_t bits_ = ((uint64_t)hi_ << 32) | lo_; \
@@ -770,6 +792,7 @@ void cpu_step(cpu_state_t *cpu) {
         } while(0)
 
         #define STORE_F64(reg, var) do { \
+            CHECK_F64_REG(reg); \
             uint64_t bits_; \
             memcpy(&bits_, &(var), 8); \
             cpu->regs[(reg)] = (uint32_t)bits_; \
