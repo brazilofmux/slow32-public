@@ -64,7 +64,7 @@ int isfinite(double x) {
  * ================================================================ */
 
 double fabs(double x) {
-    return x < 0.0 ? -x : x;
+    return __builtin_fabs(x);  /* emits FABS.D hardware instruction */
 }
 
 double copysign(double x, double y) {
@@ -179,7 +179,9 @@ double sqrt(double x) {
     if (x < 0.0) return mk_nan();
     if (x == 0.0 || x != x) return x;  /* 0 or NaN passthrough */
 
-    /* Newton-Raphson: converges from any positive guess */
+    /* Newton-Raphson: converges from any positive guess.
+     * Note: LLVM emits fsqrt.d directly for user code, so this library
+     * fallback only runs for -O0 builds or function-pointer calls. */
     double guess = x;
     for (int i = 0; i < 30; i++) {
         double next = (guess + x / guess) * 0.5;
@@ -255,7 +257,7 @@ double pow(double x, double y) {
     if (x == 1.0) return 1.0;
 
     /* Integer exponent fast path: binary exponentiation */
-    if (y == (double)(int)y && y > 0.0 && y < 100.0) {
+    if (y == (double)(int)y && y > 0.0) {
         int n = (int)y;
         double r = 1.0, b = x;
         while (n > 0) {
@@ -265,7 +267,7 @@ double pow(double x, double y) {
         }
         return r;
     }
-    if (y == (double)(int)y && y < 0.0 && y > -100.0)
+    if (y == (double)(int)y && y < 0.0)
         return 1.0 / pow(x, -y);
 
     /* General: x^y = exp(y * log(x)) */
@@ -395,7 +397,7 @@ double tanh(double x) {
  * and replaced with host libm. Here they only run on the interpreters.
  * ================================================================ */
 
-float fabsf(float x)               { return (float)fabs((double)x); }
+float fabsf(float x)               { return __builtin_fabsf(x); }  /* FABS.S */
 float sqrtf(float x)               { return (float)sqrt((double)x); }
 float sinf(float x)                { return (float)sin((double)x); }
 float cosf(float x)                { return (float)cos((double)x); }

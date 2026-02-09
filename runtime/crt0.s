@@ -8,17 +8,15 @@ _start:
     # Just reserve space for main's return
     addi sp, sp, -16
 
-    # Zero .bss (embedded convention: data already loaded, bss cleared)
-    lui  r1, %hi(__bss_start)
-    addi r1, r1, %lo(__bss_start)  # r1 = bss cursor
-    lui  r2, %hi(__bss_end)
-    addi r2, r2, %lo(__bss_end)    # r2 = bss end
-.L_bss_clear:
-    beq  r1, r2, .L_bss_done
-    # Use legacy form (base, data, imm) to avoid 0(base) ambiguity in assembler.
-    stb  r1, r0, 0
-    addi r1, r1, 1
-    jal  r0, .L_bss_clear
+    # Zero .bss via memset (fast on all emulators: dbt/QEMU intercept memset)
+    lui  r3, %hi(__bss_start)
+    addi r3, r3, %lo(__bss_start)  # r3 = dest (arg 1)
+    add  r4, r0, r0                # r4 = 0 (arg 2)
+    lui  r5, %hi(__bss_end)
+    addi r5, r5, %lo(__bss_end)
+    sub  r5, r5, r3                # r5 = length (arg 3)
+    beq  r5, r0, .L_bss_done
+    jal  memset
 .L_bss_done:
     
     # Clear frame pointer
