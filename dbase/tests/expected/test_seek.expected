@@ -6,13 +6,16 @@ Field name: Type (C/N/D/L): Width (1-254): Field name: Type (C/N/D/L): Width (1-
 . Database PEOPLE.DBF opened with 0 record(s).
 . Record 1 added.
 . . Record 2 added.
-. . . Enter field definitions (blank name to finish):
-Field name: Type (C/N/D/L): Width (1-254): Field name: Type (C/N/D/L): Width (1-19): Decimals: Field name: Database ITEMS.DBF created with 2 field(s).
-. Database ITEMS.DBF opened with 0 record(s).
-. Record 1 added.
-. . . . Alice
-. Widget
-. . Widget
-. Alice
-. . Alice
+. . Record 3 added.
+. . Record 4 added.
+. . 4 record(s) indexed.
+. . .T.
+. Bob 35
+. Not found.
+. .F.
+. . .T.
+. Alice 25
+. . .T.
+. David 28
+. Database closed.
 

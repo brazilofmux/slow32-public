@@ -12,6 +12,7 @@
 #include "set.h"
 #include "program.h"
 #include "screen.h"
+#include "index.h"
 
 /* ---- Work area infrastructure ---- */
 #define MAX_AREAS 10
@@ -21,6 +22,7 @@ typedef struct {
     char alias[DBF_MAX_FIELD_NAME];
     char locate_cond[256];
     uint32_t locate_last_rec;
+    index_t index;
 } work_area_t;
 
 static work_area_t areas[MAX_AREAS];
@@ -338,6 +340,8 @@ static void cmd_use(dbf_t *db, const char *arg) {
     if (*arg == '\0') {
         if (dbf_is_open(db)) {
             dbf_close(db);
+            if (areas[current_area].index.active)
+                index_close(&areas[current_area].index);
             areas[current_area].alias[0] = '\0';
             areas[current_area].locate_cond[0] = '\0';
             areas[current_area].locate_last_rec = 0;
@@ -348,6 +352,8 @@ static void cmd_use(dbf_t *db, const char *arg) {
 
     if (dbf_is_open(db)) {
         dbf_close(db);
+        if (areas[current_area].index.active)
+            index_close(&areas[current_area].index);
         areas[current_area].alias[0] = '\0';
     }
 
@@ -408,7 +414,14 @@ static void cmd_go(dbf_t *db, const char *arg) {
             printf("No records.\n");
             return;
         }
-        dbf_read_record(db, 1);
+        if (areas[current_area].index.active) {
+            uint32_t rec;
+            index_top(&areas[current_area].index);
+            rec = index_current_recno(&areas[current_area].index);
+            if (rec > 0) dbf_read_record(db, rec);
+        } else {
+            dbf_read_record(db, 1);
+        }
         expr_ctx.eof_flag = 0;
         expr_ctx.bof_flag = 0;
         return;
@@ -421,7 +434,14 @@ static void cmd_go(dbf_t *db, const char *arg) {
             printf("No records.\n");
             return;
         }
-        dbf_read_record(db, db->record_count);
+        if (areas[current_area].index.active) {
+            uint32_t rec;
+            index_bottom(&areas[current_area].index);
+            rec = index_current_recno(&areas[current_area].index);
+            if (rec > 0) dbf_read_record(db, rec);
+        } else {
+            dbf_read_record(db, db->record_count);
+        }
         expr_ctx.eof_flag = 0;
         expr_ctx.bof_flag = 0;
         return;
@@ -444,7 +464,6 @@ static void cmd_go(dbf_t *db, const char *arg) {
 static void cmd_skip(dbf_t *db, const char *arg) {
     const char *p;
     int n;
-    int32_t target;
 
     if (!dbf_is_open(db)) {
         printf("No database in use.\n");
@@ -457,37 +476,80 @@ static void cmd_skip(dbf_t *db, const char *arg) {
     else
         n = atoi(p);
 
-    if (db->current_record == 0) {
-        if (db->record_count == 0) {
-            expr_ctx.eof_flag = 1;
+    /* Index-ordered skip */
+    if (areas[current_area].index.active) {
+        index_t *idx = &areas[current_area].index;
+        int i;
+        uint32_t rec;
+
+        if (n > 0) {
+            for (i = 0; i < n; i++) {
+                if (index_next(idx) < 0) {
+                    expr_ctx.eof_flag = 1;
+                    expr_ctx.bof_flag = 0;
+                    db->current_record = db->record_count + 1;
+                    return;
+                }
+            }
+        } else if (n < 0) {
+            for (i = 0; i < -n; i++) {
+                if (index_prev(idx) < 0) {
+                    /* BOF - position at first */
+                    index_top(idx);
+                    rec = index_current_recno(idx);
+                    if (rec > 0) dbf_read_record(db, rec);
+                    expr_ctx.bof_flag = 1;
+                    expr_ctx.eof_flag = 0;
+                    return;
+                }
+            }
+        }
+
+        rec = index_current_recno(idx);
+        if (rec > 0) {
+            dbf_read_record(db, rec);
+            expr_ctx.eof_flag = 0;
+            expr_ctx.bof_flag = 0;
+        }
+        return;
+    }
+
+    /* Physical order skip */
+    {
+        int32_t target;
+
+        if (db->current_record == 0) {
+            if (db->record_count == 0) {
+                expr_ctx.eof_flag = 1;
+                return;
+            }
+            dbf_read_record(db, 1);
+            expr_ctx.eof_flag = 0;
+            expr_ctx.bof_flag = 0;
+            if (n > 0) n--;
+            if (n == 0) return;
+        }
+
+        target = (int32_t)db->current_record + n;
+
+        if (target < 1) {
+            dbf_read_record(db, 1);
+            expr_ctx.bof_flag = 1;
+            expr_ctx.eof_flag = 0;
             return;
         }
-        dbf_read_record(db, 1);
+
+        if ((uint32_t)target > db->record_count) {
+            expr_ctx.eof_flag = 1;
+            expr_ctx.bof_flag = 0;
+            db->current_record = db->record_count + 1;
+            return;
+        }
+
+        dbf_read_record(db, (uint32_t)target);
         expr_ctx.eof_flag = 0;
         expr_ctx.bof_flag = 0;
-        if (n > 0) n--;
-        if (n == 0) return;
     }
-
-    target = (int32_t)db->current_record + n;
-
-    if (target < 1) {
-        dbf_read_record(db, 1);
-        expr_ctx.bof_flag = 1;
-        expr_ctx.eof_flag = 0;
-        return;
-    }
-
-    if ((uint32_t)target > db->record_count) {
-        expr_ctx.eof_flag = 1;
-        expr_ctx.bof_flag = 0;
-        db->current_record = db->record_count + 1;
-        return;
-    }
-
-    dbf_read_record(db, (uint32_t)target);
-    expr_ctx.eof_flag = 0;
-    expr_ctx.bof_flag = 0;
 }
 
 /* ---- Scope infrastructure ---- */
@@ -1941,12 +2003,277 @@ static void cmd_sort(dbf_t *db, const char *arg) {
     printf("%d record(s) sorted.\n", count);
 }
 
+/* ---- Helper: ensure filename has .NDX extension ---- */
+static void ensure_ndx_ext(char *filename, int size) {
+    str_upper(filename);
+    trim_right(filename);
+    if (strlen(filename) < 5 || str_icmp(filename + strlen(filename) - 4, ".NDX") != 0) {
+        if ((int)strlen(filename) + 4 < size)
+            strcat(filename, ".NDX");
+    }
+}
+
+/* ---- INDEX ON <expr> TO <file> ---- */
+static void cmd_index_on(dbf_t *db, const char *arg) {
+    const char *p = skip_ws(arg);
+    char key_expr[256];
+    char filename[64];
+    const char *to_pos = NULL;
+    const char *f;
+
+    if (!dbf_is_open(db)) {
+        printf("No database in use.\n");
+        return;
+    }
+
+    /* Find TO keyword */
+    f = p;
+    while (*f) {
+        if (str_imatch(f, "TO")) { to_pos = f; break; }
+        f++;
+    }
+
+    if (!to_pos) {
+        printf("Syntax: INDEX ON <expr> TO <filename>\n");
+        return;
+    }
+
+    {
+        int len = (int)(to_pos - p);
+        if (len > (int)sizeof(key_expr) - 1) len = (int)sizeof(key_expr) - 1;
+        memcpy(key_expr, p, len);
+        key_expr[len] = '\0';
+        trim_right(key_expr);
+    }
+
+    f = skip_ws(to_pos + 2);
+    {
+        int i = 0;
+        while (*f && *f != ' ' && *f != '\t' && i < 63)
+            filename[i++] = *f++;
+        filename[i] = '\0';
+    }
+    ensure_ndx_ext(filename, sizeof(filename));
+
+    if (filename[0] == '\0' || str_icmp(filename, ".NDX") == 0) {
+        printf("Syntax: INDEX ON <expr> TO <filename>\n");
+        return;
+    }
+
+    /* Build the index */
+    if (index_build(&areas[current_area].index, db, &expr_ctx, key_expr, filename) < 0) {
+        printf("Error building index.\n");
+        return;
+    }
+
+    /* Write to file */
+    if (index_write(&areas[current_area].index) < 0) {
+        printf("Error writing index file.\n");
+        return;
+    }
+
+    /* Position to first indexed record */
+    if (areas[current_area].index.nentries > 0) {
+        uint32_t rec;
+        index_top(&areas[current_area].index);
+        rec = index_current_recno(&areas[current_area].index);
+        if (rec > 0) dbf_read_record(db, rec);
+        expr_ctx.eof_flag = 0;
+        expr_ctx.bof_flag = 0;
+    }
+
+    printf("%d record(s) indexed.\n", areas[current_area].index.nentries);
+}
+
+/* ---- SET INDEX TO [file] ---- */
+static void cmd_set_index(dbf_t *db, const char *arg) {
+    const char *p = skip_ws(arg);
+    char filename[64];
+
+    if (!dbf_is_open(db)) {
+        printf("No database in use.\n");
+        return;
+    }
+
+    if (*p == '\0') {
+        /* Close index */
+        if (areas[current_area].index.active) {
+            index_close(&areas[current_area].index);
+            printf("Index closed.\n");
+        }
+        return;
+    }
+
+    {
+        int i = 0;
+        while (*p && *p != ' ' && *p != '\t' && i < 63)
+            filename[i++] = *p++;
+        filename[i] = '\0';
+    }
+    ensure_ndx_ext(filename, sizeof(filename));
+
+    if (areas[current_area].index.active)
+        index_close(&areas[current_area].index);
+
+    if (index_read(&areas[current_area].index, filename) < 0) {
+        printf("Cannot open index: %s\n", filename);
+        return;
+    }
+
+    /* Position to first indexed record */
+    if (areas[current_area].index.nentries > 0) {
+        uint32_t rec;
+        index_top(&areas[current_area].index);
+        rec = index_current_recno(&areas[current_area].index);
+        if (rec > 0) dbf_read_record(db, rec);
+        expr_ctx.eof_flag = 0;
+        expr_ctx.bof_flag = 0;
+    }
+
+    printf("Index %s opened (%d entries).\n", filename, areas[current_area].index.nentries);
+}
+
+/* ---- SEEK <expr> ---- */
+static void cmd_seek(dbf_t *db, const char *arg) {
+    const char *p = skip_ws(arg);
+    value_t val;
+    char key[MAX_INDEX_KEY];
+
+    if (!dbf_is_open(db)) {
+        printf("No database in use.\n");
+        return;
+    }
+
+    if (!areas[current_area].index.active) {
+        printf("No index active.\n");
+        return;
+    }
+
+    if (expr_eval_str(&expr_ctx, p, &val) != 0) {
+        if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+        return;
+    }
+
+    val_to_string(&val, key, sizeof(key));
+    trim_right(key);
+
+    if (index_seek(&areas[current_area].index, key)) {
+        uint32_t rec = index_current_recno(&areas[current_area].index);
+        expr_ctx.found = 1;
+        if (rec > 0) {
+            dbf_read_record(db, rec);
+            expr_ctx.eof_flag = 0;
+            expr_ctx.bof_flag = 0;
+        }
+    } else {
+        expr_ctx.found = 0;
+        /* Position to next higher or EOF */
+        {
+            uint32_t rec = index_current_recno(&areas[current_area].index);
+            if (rec > 0) {
+                dbf_read_record(db, rec);
+                expr_ctx.eof_flag = 0;
+            } else {
+                expr_ctx.eof_flag = 1;
+            }
+        }
+        if (set_opts.talk) printf("Not found.\n");
+    }
+}
+
+/* ---- FIND <literal> ---- */
+static void cmd_find(dbf_t *db, const char *arg) {
+    const char *p = skip_ws(arg);
+    char key[MAX_INDEX_KEY];
+
+    if (!dbf_is_open(db)) {
+        printf("No database in use.\n");
+        return;
+    }
+
+    if (!areas[current_area].index.active) {
+        printf("No index active.\n");
+        return;
+    }
+
+    str_copy(key, p, sizeof(key));
+    trim_right(key);
+
+    if (index_seek(&areas[current_area].index, key)) {
+        uint32_t rec = index_current_recno(&areas[current_area].index);
+        expr_ctx.found = 1;
+        if (rec > 0) {
+            dbf_read_record(db, rec);
+            expr_ctx.eof_flag = 0;
+            expr_ctx.bof_flag = 0;
+        }
+    } else {
+        expr_ctx.found = 0;
+        {
+            uint32_t rec = index_current_recno(&areas[current_area].index);
+            if (rec > 0) {
+                dbf_read_record(db, rec);
+                expr_ctx.eof_flag = 0;
+            } else {
+                expr_ctx.eof_flag = 1;
+            }
+        }
+        if (set_opts.talk) printf("Not found.\n");
+    }
+}
+
+/* ---- REINDEX ---- */
+static void cmd_reindex(dbf_t *db) {
+    index_t *idx = &areas[current_area].index;
+
+    if (!dbf_is_open(db)) {
+        printf("No database in use.\n");
+        return;
+    }
+
+    if (!idx->active) {
+        printf("No index active.\n");
+        return;
+    }
+
+    {
+        char key_expr[256];
+        char filename[64];
+        str_copy(key_expr, idx->key_expr, sizeof(key_expr));
+        str_copy(filename, idx->filename, sizeof(filename));
+
+        if (index_build(idx, db, &expr_ctx, key_expr, filename) < 0) {
+            printf("Error rebuilding index.\n");
+            return;
+        }
+
+        if (index_write(idx) < 0) {
+            printf("Error writing index file.\n");
+            return;
+        }
+    }
+
+    /* Position to first */
+    if (idx->nentries > 0) {
+        uint32_t rec;
+        index_top(idx);
+        rec = index_current_recno(idx);
+        if (rec > 0) dbf_read_record(db, rec);
+        expr_ctx.eof_flag = 0;
+        expr_ctx.bof_flag = 0;
+    }
+
+    printf("%d record(s) reindexed.\n", idx->nentries);
+}
+
 /* ---- Close all work areas ---- */
 void cmd_close_all(void) {
     int i;
     for (i = 0; i < MAX_AREAS; i++) {
         if (dbf_is_open(&areas[i].db))
             dbf_close(&areas[i].db);
+        if (areas[i].index.active)
+            index_close(&areas[i].index);
         areas[i].alias[0] = '\0';
         areas[i].locate_cond[0] = '\0';
         areas[i].locate_last_rec = 0;
@@ -2209,9 +2536,41 @@ int cmd_execute(dbf_t *db, char *line) {
                 screen_set_color(skip_ws(rest + 2));
             else
                 printf("Syntax: SET COLOR TO <color-spec>\n");
+        } else if (str_imatch(rest, "INDEX")) {
+            rest = skip_ws(rest + 5);
+            if (str_imatch(rest, "TO"))
+                cmd_set_index(cdb, skip_ws(rest + 2));
+            else
+                printf("Syntax: SET INDEX TO [filename]\n");
         } else {
             set_execute(&set_opts, rest);
         }
+        return 0;
+    }
+
+    /* INDEX ON <expr> TO <file> */
+    if (str_imatch(p, "INDEX")) {
+        char *rest = skip_ws(p + 5);
+        if (str_imatch(rest, "ON")) {
+            cmd_index_on(cdb, rest + 2);
+        } else {
+            printf("Syntax: INDEX ON <expr> TO <filename>\n");
+        }
+        return 0;
+    }
+
+    if (str_imatch(p, "SEEK")) {
+        cmd_seek(cdb, p + 4);
+        return 0;
+    }
+
+    if (str_imatch(p, "FIND")) {
+        cmd_find(cdb, p + 4);
+        return 0;
+    }
+
+    if (str_imatch(p, "REINDEX")) {
+        cmd_reindex(cdb);
         return 0;
     }
 
