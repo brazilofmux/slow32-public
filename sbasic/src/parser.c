@@ -1436,6 +1436,15 @@ static stmt_t *parse_stmt(parser_t *p) {
             return stmt_randomize(seed, line);
         }
 
+        case TOK_SLEEP: {
+            int line = tok->line;
+            lexer_next(&p->lex);
+            expr_t *dur = NULL;
+            if (!at_stmt_end(p))
+                dur = parse_expr(p);
+            return stmt_sleep(dur, line);
+        }
+
         case TOK_OPEN:     return parse_open(p);
         case TOK_CLOSE:    return parse_close(p);
         case TOK_WRITE:    return parse_write_file(p);

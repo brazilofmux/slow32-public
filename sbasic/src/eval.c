@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <unistd.h>
 
 /* --- Procedure and label tables --- */
 
@@ -1613,6 +1614,22 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             return ERR_NONE;
         }
 
+        case STMT_SLEEP: {
+            unsigned int secs = 0;
+            if (s->sleep_stmt.duration) {
+                value_t v;
+                EVAL_CHECK(eval_expr(env, s->sleep_stmt.duration, &v));
+                int isecs;
+                error_t cerr = val_to_integer(&v, &isecs);
+                val_clear(&v);
+                if (cerr != ERR_NONE) return cerr;
+                if (isecs < 0) return ERR_ILLEGAL_FUNCTION_CALL;
+                secs = (unsigned int)isecs;
+            }
+            if (secs > 0) sleep(secs);
+            return ERR_NONE;
+        }
+
         case STMT_OPEN:         return exec_open(env, s);
         case STMT_CLOSE:        return exec_close(env, s);
         case STMT_PRINT_FILE:   return exec_print_file(env, s);
@@ -1724,6 +1741,77 @@ static void data_pool_clear(void) {
     data_read_ptr = 0;
 }
 
+/* Recursively scan a statement list for labels, DATA, and SUB/FUNCTION defs.
+ * top_idx is the top-level stmts[] index (used for label GOTO targets). */
+static error_t scan_stmt_list(stmt_t *s, int top_idx);
+
+static error_t scan_one_stmt(stmt_t *s, int top_idx) {
+    if (s->type == STMT_LABEL) {
+        if (label_count >= MAX_LABELS) return ERR_OUT_OF_MEMORY;
+        strncpy(label_table[label_count].name, s->label.name, 63);
+        label_table[label_count].name[63] = '\0';
+        label_table[label_count].index = top_idx;
+        label_table[label_count].data_offset = data_pool_count;
+        label_count++;
+    }
+    if (s->type == STMT_DATA) {
+        for (int j = 0; j < s->data_stmt.nvalues; j++) {
+            if (data_pool_count >= MAX_DATA_VALUES)
+                return ERR_OUT_OF_MEMORY;
+            data_pool[data_pool_count++] =
+                val_copy(&s->data_stmt.values[j]);
+        }
+    }
+    if (s->type == STMT_SUB_DEF || s->type == STMT_FUNC_DEF) {
+        if (proc_count >= MAX_PROCS) return ERR_OUT_OF_MEMORY;
+        strncpy(proc_table[proc_count].name, s->proc_def.name, 63);
+        proc_table[proc_count].name[63] = '\0';
+        proc_table[proc_count].def = s;
+        proc_count++;
+    }
+    /* Recurse into block bodies */
+    error_t err;
+    switch (s->type) {
+        case STMT_IF:
+            err = scan_stmt_list(s->if_stmt.then_body, top_idx);
+            if (err != ERR_NONE) return err;
+            if (s->if_stmt.else_body) {
+                err = scan_stmt_list(s->if_stmt.else_body, top_idx);
+                if (err != ERR_NONE) return err;
+            }
+            break;
+        case STMT_FOR:
+            err = scan_stmt_list(s->for_stmt.body, top_idx);
+            if (err != ERR_NONE) return err;
+            break;
+        case STMT_WHILE:
+            err = scan_stmt_list(s->while_stmt.body, top_idx);
+            if (err != ERR_NONE) return err;
+            break;
+        case STMT_DO_LOOP:
+            err = scan_stmt_list(s->do_loop.body, top_idx);
+            if (err != ERR_NONE) return err;
+            break;
+        case STMT_SELECT:
+            for (case_clause_t *c = s->select_stmt.clauses; c; c = c->next) {
+                err = scan_stmt_list(c->body, top_idx);
+                if (err != ERR_NONE) return err;
+            }
+            break;
+        default:
+            break;
+    }
+    return ERR_NONE;
+}
+
+static error_t scan_stmt_list(stmt_t *s, int top_idx) {
+    for (; s; s = s->next) {
+        error_t err = scan_one_stmt(s, top_idx);
+        if (err != ERR_NONE) return err;
+    }
+    return ERR_NONE;
+}
+
 error_t eval_program(env_t *env, stmt_t *program) {
     int count = 0;
     for (stmt_t *s = program; s; s = s->next)
@@ -1759,32 +1847,8 @@ error_t eval_program(env_t *env, stmt_t *program) {
     label_count = 0;
 
     for (i = 0; i < count; i++) {
-        if (stmts[i]->type == STMT_LABEL) {
-            if (label_count >= MAX_LABELS) return ERR_OUT_OF_MEMORY;
-            strncpy(label_table[label_count].name,
-                    stmts[i]->label.name, 63);
-            label_table[label_count].name[63] = '\0';
-            label_table[label_count].index = i;
-            label_table[label_count].data_offset = data_pool_count;
-            label_count++;
-        }
-        if (stmts[i]->type == STMT_DATA) {
-            for (int j = 0; j < stmts[i]->data_stmt.nvalues; j++) {
-                if (data_pool_count >= MAX_DATA_VALUES)
-                    return ERR_OUT_OF_MEMORY;
-                data_pool[data_pool_count++] =
-                    val_copy(&stmts[i]->data_stmt.values[j]);
-            }
-        }
-        if (stmts[i]->type == STMT_SUB_DEF ||
-            stmts[i]->type == STMT_FUNC_DEF) {
-            if (proc_count >= MAX_PROCS) return ERR_OUT_OF_MEMORY;
-            strncpy(proc_table[proc_count].name,
-                    stmts[i]->proc_def.name, 63);
-            proc_table[proc_count].name[63] = '\0';
-            proc_table[proc_count].def = stmts[i];
-            proc_count++;
-        }
+        error_t serr = scan_one_stmt(stmts[i], i);
+        if (serr != ERR_NONE) return serr;
     }
 
     /* Execute with program counter */

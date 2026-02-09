@@ -114,6 +114,7 @@ typedef enum {
     /* Stage 4 */
     STMT_SWAP,
     STMT_RANDOMIZE,
+    STMT_SLEEP,
     /* Stage 5 */
     STMT_OPEN,
     STMT_CLOSE,
@@ -336,6 +337,11 @@ typedef struct stmt {
             struct expr *seed;   /* NULL = use default */
         } randomize;
 
+        /* STMT_SLEEP */
+        struct {
+            struct expr *duration;  /* NULL = SLEEP 0 */
+        } sleep_stmt;
+
         /* STMT_OPEN */
         struct {
             struct expr *filename;
@@ -507,6 +513,7 @@ stmt_t *stmt_restore(const char *label, int line);
 /* Stage 4 constructors */
 stmt_t *stmt_swap(expr_t *lhs, expr_t *rhs, int line);
 stmt_t *stmt_randomize(expr_t *seed, int line);
+stmt_t *stmt_sleep(expr_t *duration, int line);
 
 /* Stage 5 constructors */
 stmt_t *stmt_open(expr_t *filename, int mode, expr_t *handle, int line);

@@ -40,7 +40,7 @@ typedef enum {
     TOK_ERASE, TOK_REDIM,
 
     /* Stage 4 keywords */
-    TOK_SWAP, TOK_RANDOMIZE, TOK_USING,
+    TOK_SWAP, TOK_RANDOMIZE, TOK_USING, TOK_SLEEP,
 
     /* Stage 5 keywords */
     TOK_OPEN, TOK_CLOSE, TOK_LINE, TOK_WRITE,

@@ -10,10 +10,8 @@ Added `!on_error_active` guard to the `ERR_ON_ERROR_GOTO` handler in `eval_progr
 ### 2. ~~Memory Leak: `SHARED` String/Record Variables~~ **FIXED**
 `env_link` now calls `val_clear(&e->value)` on the local entry before setting the link pointer, preventing the auto-created default value from leaking.
 
-### 3. Labels, `DATA`, and `SUB` Visibility in Blocks
-The first-pass scan in `eval_program` iterates only over the top-level `stmts` array.
-- **Problem**: `DATA` statements, line labels, and `SUB/FUNCTION` definitions located inside `IF...END IF`, `FOR...NEXT`, or other blocks are completely ignored. They are not collected into the global tables and thus cannot be used.
-- **Recommendation**: Implement a recursive scanner that walks the entire AST to collect labels, DATA, and procedures regardless of nesting level.
+### 3. ~~Labels, `DATA`, and `SUB` Visibility in Blocks~~ **FIXED**
+Replaced the flat top-level scan with a recursive AST walker (`scan_one_stmt`/`scan_stmt_list`) that descends into IF, FOR, WHILE, DO, and SELECT blocks to collect labels, DATA values, and SUB/FUNCTION definitions regardless of nesting level.
 
 ### 4. `GOTO/GOSUB` cannot target nested blocks
 The `pc` (program counter) in `eval_program` is an index into the top-level `stmts` array.
@@ -45,6 +43,6 @@ Bumped `shared_names` array from 32 to 64 entries.
 - **Opportunity**: The `STATIC` keyword for `SUB/FUNCTION` variables to preserve their value between calls.
 - **Recommendation**: Add a `static_env` to the `proc_entry_t` that is reused across calls.
 
-### 10. `INKEY$` and `SLEEP`
-- **Opportunity**: `INKEY$` for non-blocking keyboard input and `SLEEP [n]` for pausing.
-- **Context**: High value for interactive programs and games.
+### 10. `INKEY$` and ~~`SLEEP`~~
+- **`SLEEP [n]`**: **FIXED** — `SLEEP n` pauses execution for n seconds (uses MMIO `sleep()`). `SLEEP` or `SLEEP 0` is a no-op.
+- **`INKEY$`**: Requires non-blocking stdin input and terminal raw mode — needs new MMIO opcode support.

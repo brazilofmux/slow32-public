@@ -54,6 +54,7 @@ static const keyword_t keywords[] = {
     { "SWAP",   TOK_SWAP },
     { "RANDOMIZE", TOK_RANDOMIZE },
     { "USING",  TOK_USING },
+    { "SLEEP",  TOK_SLEEP },
     { "OPEN",   TOK_OPEN },
     { "CLOSE",  TOK_CLOSE },
     { "LINE",   TOK_LINE },

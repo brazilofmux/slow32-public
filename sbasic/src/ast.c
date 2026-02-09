@@ -464,6 +464,9 @@ void stmt_free(stmt_t *s) {
             case STMT_RANDOMIZE:
                 if (s->randomize.seed) expr_free(s->randomize.seed);
                 break;
+            case STMT_SLEEP:
+                if (s->sleep_stmt.duration) expr_free(s->sleep_stmt.duration);
+                break;
             case STMT_OPEN:
                 expr_free(s->open_stmt.filename);
                 expr_free(s->open_stmt.handle_num);
@@ -625,6 +628,13 @@ stmt_t *stmt_randomize(expr_t *seed, int line) {
     stmt_t *s = stmt_alloc(STMT_RANDOMIZE, line);
     if (!s) return NULL;
     s->randomize.seed = seed;
+    return s;
+}
+
+stmt_t *stmt_sleep(expr_t *duration, int line) {
+    stmt_t *s = stmt_alloc(STMT_SLEEP, line);
+    if (!s) return NULL;
+    s->sleep_stmt.duration = duration;
     return s;
 }
 
