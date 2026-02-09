@@ -531,6 +531,66 @@ static error_t fn_tab(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+/* LOC(n) - current byte position in file */
+static error_t fn_loc(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    int handle;
+    EVAL_CHECK(val_to_integer(&args[0], &handle));
+    FILE *fp = fileio_get(handle);
+    if (!fp) { *out = val_integer(0); return ERR_NONE; }
+    long pos = ftell(fp);
+    *out = val_integer(pos < 0 ? 0 : (int)pos);
+    return ERR_NONE;
+}
+
+/* LOF(n) - length of file in bytes */
+static error_t fn_lof(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    int handle;
+    EVAL_CHECK(val_to_integer(&args[0], &handle));
+    FILE *fp = fileio_get(handle);
+    if (!fp) { *out = val_integer(0); return ERR_NONE; }
+    long saved = ftell(fp);
+    fseek(fp, 0, SEEK_END);
+    long size = ftell(fp);
+    fseek(fp, saved, SEEK_SET);
+    *out = val_integer(size < 0 ? 0 : (int)size);
+    return ERR_NONE;
+}
+
+/* INPUT$(n [, #handle]) - read n characters from file or stdin */
+static error_t fn_input_str(value_t *args, int nargs, value_t *out) {
+    if (nargs < 1 || nargs > 2) return ERR_ILLEGAL_FUNCTION_CALL;
+    int n;
+    EVAL_CHECK(val_to_integer(&args[0], &n));
+    if (n < 0) return ERR_ILLEGAL_FUNCTION_CALL;
+    if (n > MAX_STRING_LEN) n = MAX_STRING_LEN;
+    char *buf = malloc(n + 1);
+    if (!buf) return ERR_OUT_OF_MEMORY;
+    int count = 0;
+    if (nargs == 2) {
+        int handle;
+        EVAL_CHECK(val_to_integer(&args[1], &handle));
+        FILE *fp = fileio_get(handle);
+        if (!fp) { free(buf); return ERR_BAD_FILE_NUMBER; }
+        while (count < n) {
+            int ch = fgetc(fp);
+            if (ch == EOF) break;
+            buf[count++] = (char)ch;
+        }
+    } else {
+        while (count < n) {
+            int ch = getchar();
+            if (ch == EOF) break;
+            buf[count++] = (char)ch;
+        }
+    }
+    buf[count] = '\0';
+    *out = val_string(buf, count);
+    free(buf);
+    return ERR_NONE;
+}
+
 /* EOF(n) - check end of file: returns -1 (true) or 0 (false) */
 static error_t fn_eof(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
@@ -624,6 +684,9 @@ static const builtin_entry_t builtins[] = {
     /* File I/O */
     { "EOF",      fn_eof },
     { "FREEFILE", fn_freefile },
+    { "LOC",      fn_loc },
+    { "LOF",      fn_lof },
+    { "INPUT$",   fn_input_str },
     { NULL, NULL }
 };
 

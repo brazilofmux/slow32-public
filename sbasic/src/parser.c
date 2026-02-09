@@ -63,10 +63,12 @@ static expr_t *parse_primary(parser_t *p) {
             lexer_next(&p->lex);
             expr_t *call = expr_call(t.text, t.line);
             if (!lexer_check(&p->lex, TOK_RPAREN)) {
+                lexer_match(&p->lex, TOK_HASH); /* skip decorative # */
                 expr_t *arg = parse_expr(p);
                 if (!arg) { expr_free(call); return NULL; }
                 expr_call_add_arg(call, arg);
                 while (lexer_match(&p->lex, TOK_COMMA)) {
+                    lexer_match(&p->lex, TOK_HASH); /* skip decorative # */
                     arg = parse_expr(p);
                     if (!arg) { expr_free(call); return NULL; }
                     expr_call_add_arg(call, arg);

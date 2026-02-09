@@ -29,9 +29,8 @@ Added `&H` (hex), `&O` (octal), and `&B` (binary) literal support in `scan_token
 ### 7. ~~`VAL()` doesn't recognize Hex/Octal prefixes~~ **FIXED**
 Updated `fn_val` to detect `&H`, `&O`, `&B` prefixes and use `strtol` with the appropriate base (16, 8, 2) before falling through to decimal parsing.
 
-### 8. Extended File I/O: `LOC`, `LOF`, and `INPUT$`
-- **Opportunity**: Add `LOC(h)` (current position), `LOF(h)` (length of file), and `INPUT$(n, [#h])` (read $n$ characters).
-- **Context**: These are essential for robust binary file processing and structured data handling.
+### 8. ~~Extended File I/O: `LOC`, `LOF`, and `INPUT$`~~ **FIXED**
+Added `LOC(h)` (current byte position), `LOF(h)` (file length via seek), and `INPUT$(n [, #h])` (read n characters from file or stdin) as builtins. Parser updated to allow decorative `#` in function argument lists (e.g., `INPUT$(5, #1)`).
 
 ### 9. System Integration: `FILES`, `ENVIRON$`, `COMMAND$`
 - **Opportunity**: 
