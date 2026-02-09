@@ -232,6 +232,22 @@ static int scan_enddo(program_t *prog, int from) {
     return -1;
 }
 
+/* Scan from line `from` for matching NEXT */
+static int scan_next(program_t *prog, int from) {
+    int depth = 1;
+    int i;
+    for (i = from + 1; i < prog->nlines; i++) {
+        char *p = skip_ws(prog->lines[i]);
+        if (str_imatch(p, "FOR"))
+            depth++;
+        else if (str_imatch(p, "NEXT")) {
+            depth--;
+            if (depth == 0) return i;
+        }
+    }
+    return -1;
+}
+
 /* Scan for ENDCASE from current position */
 static int scan_endcase(program_t *prog, int from) {
     int depth = 1;
@@ -520,6 +536,7 @@ void prog_do(const char *arg) {
                 return;
             }
             state.loop_stack[state.loop_depth].start_line = state.pc;
+            state.loop_stack[state.loop_depth].is_for = 0;
             str_copy(state.loop_stack[state.loop_depth].condition, cond,
                      sizeof(state.loop_stack[state.loop_depth].condition));
             state.loop_depth++;
@@ -543,16 +560,36 @@ void prog_do(const char *arg) {
         return;
     }
 
-    /* DO <file> or DO <procedure> */
+    /* DO <file> or DO <procedure> [WITH arg1, arg2, ...] */
     {
         char name[64];
         int i = 0;
         program_t *prog;
         int proc_line;
+        value_t with_args[16];
+        int with_argc = 0;
 
         while (*p && *p != ' ' && *p != '\t' && i < 63)
             name[i++] = *p++;
         name[i] = '\0';
+
+        /* Parse optional WITH clause */
+        p = skip_ws(p);
+        if (str_imatch(p, "WITH")) {
+            expr_ctx_t *ctx = cmd_get_expr_ctx();
+            p = skip_ws(p + 4);
+            while (*p && with_argc < 16) {
+                value_t val;
+                if (expr_eval(ctx, &p, &val) != 0) {
+                    if (ctx->error) printf("Error: %s\n", ctx->error);
+                    break;
+                }
+                with_args[with_argc++] = val;
+                p = skip_ws(p);
+                if (*p == ',') { p++; p = skip_ws(p); }
+                else break;
+            }
+        }
 
         /* First check if it's a procedure in the current program */
         if (state.running && state.current_prog) {
@@ -561,7 +598,12 @@ void prog_do(const char *arg) {
                 /* Call procedure within same program */
                 if (push_frame(state.current_prog, proc_line + 1) < 0)
                     return;
-                /* Don't advance PC since push_frame set it */
+                /* Store WITH args in the new frame */
+                if (with_argc > 0 && state.call_depth > 0) {
+                    call_frame_t *frame = &state.call_stack[state.call_depth - 1];
+                    frame->with_argc = with_argc;
+                    memcpy(frame->with_args, with_args, with_argc * sizeof(value_t));
+                }
                 return;
             }
         }
@@ -576,8 +618,14 @@ void prog_do(const char *arg) {
                 prog_free(prog);
                 return;
             }
+            /* Store WITH args in the new frame */
+            if (with_argc > 0 && state.call_depth > 0) {
+                call_frame_t *frame = &state.call_stack[state.call_depth - 1];
+                frame->with_argc = with_argc;
+                memcpy(frame->with_args, with_args, with_argc * sizeof(value_t));
+            }
         } else {
-            /* Interactive DO - start execution */
+            /* Interactive DO - push a frame so PARAMETERS can find WITH args */
             state.current_prog = prog;
             state.pc = 0;
             state.call_depth = 0;
@@ -587,6 +635,15 @@ void prog_do(const char *arg) {
             case_active = 0;
             case_done = 0;
             case_skip = 0;
+            if (with_argc > 0) {
+                /* Push a frame at depth 0 for the interactive DO */
+                if (push_frame(prog, 0) == 0) {
+                    call_frame_t *frame = &state.call_stack[state.call_depth - 1];
+                    frame->with_argc = with_argc;
+                    memcpy(frame->with_args, with_args, with_argc * sizeof(value_t));
+                    frame->caller_prog = NULL;
+                }
+            }
             prog_run();
         }
     }
@@ -768,42 +825,198 @@ void prog_enddo(void) {
 
 /* ---- LOOP ---- */
 void prog_loop(void) {
+    loop_entry_t *loop;
+
     if (!state.running || state.loop_depth <= 0) {
-        printf("LOOP without DO WHILE.\n");
+        printf("LOOP without DO WHILE/FOR.\n");
         return;
     }
 
-    /* Jump back to line after DO WHILE (re-evaluation happens at ENDDO,
-       but LOOP goes to start of loop body which is after DO WHILE line) */
-    state.pc = state.loop_stack[state.loop_depth - 1].start_line;
-    /* Actually, in dBase III, LOOP re-evaluates the condition.
-       Let's jump to the DO WHILE line so it gets re-evaluated. */
-    /* Wait - the DO WHILE line will push another loop entry. Let's handle
-       this by jumping to start_line (the DO WHILE line) and popping
-       the current loop entry, so DO WHILE will re-push it. */
-    state.loop_depth--;
-    state.pc = state.loop_stack[state.loop_depth].start_line;
+    loop = &state.loop_stack[state.loop_depth - 1];
+
+    if (loop->is_for) {
+        /* FOR loop: jump to the NEXT line so it handles increment/check */
+        int target = scan_next(state.current_prog, loop->start_line);
+        if (target >= 0) {
+            state.pc = target;
+        } else {
+            printf("NEXT not found.\n");
+            state.pc++;
+        }
+    } else {
+        /* DO WHILE loop: pop and re-evaluate at DO WHILE line */
+        state.loop_depth--;
+        state.pc = state.loop_stack[state.loop_depth].start_line;
+    }
 }
 
 /* ---- EXIT (from loop) ---- */
 void prog_exit_loop(void) {
+    loop_entry_t *loop;
     int target;
 
     if (!state.running || state.loop_depth <= 0) {
-        printf("EXIT without DO WHILE.\n");
+        printf("EXIT without DO WHILE/FOR.\n");
         return;
     }
 
-    /* Find ENDDO and jump past it */
-    target = scan_enddo(state.current_prog,
-                        state.loop_stack[state.loop_depth - 1].start_line);
+    loop = &state.loop_stack[state.loop_depth - 1];
+
+    if (loop->is_for) {
+        target = scan_next(state.current_prog, loop->start_line);
+    } else {
+        target = scan_enddo(state.current_prog, loop->start_line);
+    }
     state.loop_depth--;
 
     if (target >= 0) {
         state.pc = target + 1;
     } else {
-        printf("ENDDO not found.\n");
+        printf("%s not found.\n", loop->is_for ? "NEXT" : "ENDDO");
         state.pc++;
+    }
+}
+
+/* ---- FOR ---- */
+void prog_for(const char *arg) {
+    const char *p = skip_ws(arg);
+    char varname[MEMVAR_NAMELEN];
+    value_t start_val, end_val, step_val;
+    expr_ctx_t *ctx = cmd_get_expr_ctx();
+    memvar_store_t *store = cmd_get_memvar_store();
+    int i = 0;
+
+    if (!state.running) {
+        printf("FOR not allowed in interactive mode.\n");
+        return;
+    }
+
+    /* Parse variable name */
+    while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1)
+        varname[i++] = *p++;
+    varname[i] = '\0';
+
+    p = skip_ws(p);
+    if (*p != '=') {
+        printf("Syntax error in FOR.\n");
+        state.pc++;
+        return;
+    }
+    p++;
+
+    /* Parse start expression */
+    p = skip_ws(p);
+    if (expr_eval(ctx, &p, &start_val) != 0 || start_val.type != VAL_NUM) {
+        printf("FOR requires numeric expressions.\n");
+        state.pc++;
+        return;
+    }
+
+    /* Expect TO */
+    p = skip_ws(p);
+    if (!str_imatch(p, "TO")) {
+        printf("Missing TO in FOR.\n");
+        state.pc++;
+        return;
+    }
+    p = skip_ws(p + 2);
+
+    /* Parse end expression */
+    if (expr_eval(ctx, &p, &end_val) != 0 || end_val.type != VAL_NUM) {
+        printf("FOR requires numeric expressions.\n");
+        state.pc++;
+        return;
+    }
+
+    /* Optional STEP */
+    step_val = val_num(1.0);
+    p = skip_ws(p);
+    if (str_imatch(p, "STEP")) {
+        p = skip_ws(p + 4);
+        if (expr_eval(ctx, &p, &step_val) != 0 || step_val.type != VAL_NUM) {
+            printf("STEP requires numeric expression.\n");
+            state.pc++;
+            return;
+        }
+    }
+
+    /* Set loop variable to start value */
+    memvar_set(store, varname, &start_val);
+
+    /* Check if loop should execute at all */
+    if ((step_val.num > 0 && start_val.num > end_val.num) ||
+        (step_val.num < 0 && start_val.num < end_val.num)) {
+        int target = scan_next(state.current_prog, state.pc);
+        if (target < 0) {
+            printf("NEXT not found.\n");
+            state.pc++;
+            return;
+        }
+        state.pc = target + 1;
+        return;
+    }
+
+    /* Push loop entry */
+    if (state.loop_depth >= MAX_LOOP_DEPTH) {
+        printf("Loop nesting too deep.\n");
+        state.pc++;
+        return;
+    }
+
+    state.loop_stack[state.loop_depth].start_line = state.pc;
+    state.loop_stack[state.loop_depth].is_for = 1;
+    state.loop_stack[state.loop_depth].condition[0] = '\0';
+    str_copy(state.loop_stack[state.loop_depth].varname, varname, MEMVAR_NAMELEN);
+    state.loop_stack[state.loop_depth].end_val = end_val.num;
+    state.loop_stack[state.loop_depth].step_val = step_val.num;
+    state.loop_depth++;
+    state.pc++;
+}
+
+/* ---- NEXT ---- */
+void prog_next(void) {
+    loop_entry_t *loop;
+    memvar_store_t *store;
+    value_t val;
+    int done;
+
+    if (!state.running || state.loop_depth <= 0) {
+        printf("NEXT without FOR.\n");
+        if (state.running) state.pc++;
+        return;
+    }
+
+    loop = &state.loop_stack[state.loop_depth - 1];
+    if (!loop->is_for) {
+        printf("NEXT without FOR.\n");
+        state.pc++;
+        return;
+    }
+
+    /* Increment variable */
+    store = cmd_get_memvar_store();
+    if (memvar_find(store, loop->varname, &val) != 0 || val.type != VAL_NUM) {
+        state.loop_depth--;
+        state.pc++;
+        return;
+    }
+
+    val.num += loop->step_val;
+    memvar_set(store, loop->varname, &val);
+
+    /* Check termination */
+    if (loop->step_val > 0)
+        done = (val.num > loop->end_val);
+    else if (loop->step_val < 0)
+        done = (val.num < loop->end_val);
+    else
+        done = 0; /* STEP 0 = infinite loop */
+
+    if (done) {
+        state.loop_depth--;
+        state.pc++;
+    } else {
+        state.pc = loop->start_line + 1;
     }
 }
 
@@ -842,19 +1055,16 @@ void prog_procedure(const char *arg) {
 void prog_parameters(const char *arg) {
     const char *p = skip_ws(arg);
     memvar_store_t *store = cmd_get_memvar_store();
+    call_frame_t *frame = (state.call_depth > 0) ?
+        &state.call_stack[state.call_depth - 1] : NULL;
     char name[MEMVAR_NAMELEN];
-    int i;
+    int i, param_idx = 0;
 
     if (!state.running) {
         printf("PARAMETERS not allowed in interactive mode.\n");
         return;
     }
 
-    /* Bind parameter values from caller's WITH clause */
-    /* For now, PARAMETERS just declares the variable names as PRIVATE.
-       The DO <proc> WITH <args> form would pass values, but basic
-       dBase III uses PARAMETERS to name vars that get values from DO WITH.
-       For simplicity, just create them as empty PRIVATE vars. */
     while (*p) {
         i = 0;
         while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1)
@@ -862,18 +1072,18 @@ void prog_parameters(const char *arg) {
         name[i] = '\0';
 
         if (name[0] != '\0') {
-            /* Save as PRIVATE */
-            if (state.call_depth > 0) {
-                save_private(&state.call_stack[state.call_depth - 1], name);
+            /* Save current value as PRIVATE */
+            if (frame) {
+                save_private(frame, name);
             }
-            /* Create fresh variable with NIL value (unless already set by WITH) */
-            {
-                value_t existing;
-                if (memvar_find(store, name, &existing) != 0) {
-                    value_t nil = val_nil();
-                    memvar_set(store, name, &nil);
-                }
+            /* Bind from WITH argument if available, otherwise NIL */
+            if (frame && param_idx < frame->with_argc) {
+                memvar_set(store, name, &frame->with_args[param_idx]);
+            } else {
+                value_t nil = val_nil();
+                memvar_set(store, name, &nil);
             }
+            param_idx++;
         }
 
         p = skip_ws(p);
@@ -995,6 +1205,16 @@ int prog_execute_line(char *line) {
 
     if (str_imatch(p, "ENDDO")) {
         prog_enddo();
+        return 0;
+    }
+
+    if (str_imatch(p, "FOR")) {
+        prog_for(skip_ws(p + 3));
+        return 0;
+    }
+
+    if (str_imatch(p, "NEXT")) {
+        prog_next();
         return 0;
     }
 

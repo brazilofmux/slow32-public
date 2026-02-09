@@ -27,12 +27,20 @@ typedef struct {
     int private_count;
     value_t saved_vals[64];
     int saved_valid[64];
+    /* DO ... WITH arguments */
+    value_t with_args[16];
+    int with_argc;
 } call_frame_t;
 
-/* Loop stack entry (DO WHILE / ENDDO) */
+/* Loop stack entry (DO WHILE / ENDDO / FOR / NEXT) */
 typedef struct {
     int start_line;
-    char condition[256];
+    int is_for;             /* 0 = DO WHILE, 1 = FOR */
+    char condition[256];    /* DO WHILE condition string */
+    /* FOR loop fields */
+    char varname[MEMVAR_NAMELEN];
+    double end_val;
+    double step_val;
 } loop_entry_t;
 
 /* Program execution state */
@@ -71,6 +79,8 @@ void prog_procedure(const char *arg);
 void prog_parameters(const char *arg);
 void prog_private(const char *arg);
 void prog_public(const char *arg);
+void prog_for(const char *arg);
+void prog_next(void);
 void prog_cancel(void);
 
 /* Check if program is running */
