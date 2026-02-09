@@ -1697,8 +1697,12 @@ static void write_executable(linker_state_t *ld) {
     ld->string_table[0] = '\0';
     ld->string_table_size = 1;
 
-    // Build symbol string table and symbol array
-    char sym_strtab[STRING_TABLE_SIZE];
+    // Build symbol string table and symbol array (heap-allocated, 256KB)
+    char *sym_strtab = malloc(STRING_TABLE_SIZE);
+    if (!sym_strtab) {
+        fprintf(stderr, "Error: Memory allocation failed for symbol string table\n");
+        return;
+    }
     sym_strtab[0] = '\0';
     uint32_t sym_strtab_size = 1;
     int num_emit_syms = 0;
@@ -1899,6 +1903,8 @@ static void write_executable(linker_state_t *ld) {
             printf("  Symbols: %d global\n", num_emit_syms);
         }
     }
+
+    free(sym_strtab);
 }
 
 // Clean up resources
