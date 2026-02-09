@@ -20,10 +20,8 @@ The `pc` (program counter) in `eval_program` is an index into the top-level `stm
 - **Problem**: Even if labels were collected from nested blocks, the `eval_program` loop has no way to jump *into* a block (like the middle of an `IF` statement). Conversely, a `GOTO` from inside a block to a label in the *same* block will jump to the top-level `pc` target, potentially breaking the control flow.
 - **Recommendation**: This is an architectural limitation of the current "flattened top-level" execution model. While jumping *into* blocks is often discouraged, jumping *within* or *out of* blocks should work correctly.
 
-### 5. `eval_depth` (32) is too shallow
-The limit for C recursion is currently set to 32.
-- **Problem**: Since every nested block (`IF`, `FOR`, `WHILE`, `DO`, `SELECT`) and every `SUB/FUNCTION` call increments this depth, complex BASIC programs can easily hit this limit and trigger a `Stack overflow` error.
-- **Recommendation**: Increase `MAX_EVAL_DEPTH` to 128 or 256. The SLOW-32 stack is large enough to handle this.
+### 5. ~~`eval_depth` (32) is too shallow~~ **FIXED**
+Bumped `MAX_EVAL_DEPTH` from 32 to 48 and stack size from 64KB to 128KB (via `--stack-size 128K` linker flag). Each recursion level uses ~2KB of C stack, so 48 levels needs ~96KB — safely within 128KB.
 
 ---
 
@@ -34,10 +32,8 @@ Functions like `fn_cint` and `val_to_integer` (used for array indices, `TAB`, et
 - **Problem**: Converting a very large `DOUBLE` to `INTEGER` results in silent wrapping or undefined behavior, which can lead to illegal memory access (e.g., in array indexing) or logic errors.
 - **Recommendation**: Add range checks to `val_as_int` and return `ERR_OVERFLOW` or `ERR_ILLEGAL_FUNCTION_CALL`.
 
-### 7. Fixed Limit on `SHARED` variables
-`call_proc` uses a fixed-size array `shared_names[32]` to track variables to be linked.
-- **Problem**: Procedures using more than 32 `SHARED` variables will silently fail to link the extras.
-- **Recommendation**: Use a dynamically allocated list or a higher limit (e.g. 128).
+### 7. ~~Fixed Limit on `SHARED` variables~~ **FIXED**
+Bumped `shared_names` array from 32 to 64 entries.
 
 ---
 

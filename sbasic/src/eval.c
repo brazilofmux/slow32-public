@@ -70,7 +70,7 @@ static int on_error_resume_next_pc = 0; /* PC for RESUME NEXT */
 static int resume_is_next = 0;       /* set by RESUME stmt for eval_program */
 
 /* Recursion depth limit (guards against C stack overflow) */
-#define MAX_EVAL_DEPTH 32
+#define MAX_EVAL_DEPTH 48
 static int eval_depth = 0;
 
 /* Is this a real error (trappable by ON ERROR) or a flow-control signal? */
@@ -196,11 +196,11 @@ static error_t call_proc(env_t *caller_env, proc_entry_t *proc,
     }
 
     /* Collect and copy-in SHARED variables (pointers into AST, no copy) */
-    const char *shared_names[32];
+    const char *shared_names[64];
     int nshared = 0;
-    for (stmt_t *s = def->proc_def.body; s && nshared < 32; s = s->next) {
+    for (stmt_t *s = def->proc_def.body; s && nshared < 64; s = s->next) {
         if (s->type == STMT_SHARED) {
-            for (int i = 0; i < s->shared.nvars && nshared < 32; i++) {
+            for (int i = 0; i < s->shared.nvars && nshared < 64; i++) {
                 shared_names[nshared] = s->shared.varnames[i];
                 nshared++;
             }

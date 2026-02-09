@@ -36,7 +36,7 @@ done
 
 # Link with MMIO libc
 echo -n "  Linking... "
-$LD --mmio 64K -o sbasic.s32x \
+$LD --mmio 64K --stack-size 128K -o sbasic.s32x \
     ../runtime/crt0.s32o \
     $OBJECTS \
     ../runtime/libc_mmio.s32a \
