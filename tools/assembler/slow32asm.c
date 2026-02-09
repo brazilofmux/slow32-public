@@ -219,21 +219,6 @@ static bool parse_expression_all(const char *str, expr_result_t *res) {
     return true;
 }
 
-static int parse_immediate_or_symbol_ex(const char *str, char *symbol_out, int *is_hi, int *is_lo, 
-                                        int *is_pcrel_hi, int *is_pcrel_lo, int32_t *addend_out,
-                                        bool *has_symbol_out) {
-    expr_result_t res;
-    if (!parse_expression_all(str, &res)) return 0;
-    strcpy(symbol_out, res.symbol);
-    *is_hi = res.is_hi; *is_lo = res.is_lo;
-    *is_pcrel_hi = res.is_pcrel_hi; *is_pcrel_lo = res.is_pcrel_lo;
-    *addend_out = res.val;
-    if (has_symbol_out) {
-        *has_symbol_out = res.has_symbol;
-    }
-    return res.val;
-}
-
 static int parse_immediate(const char *str) {
     expr_result_t res;
     if (!parse_expression_all(str, &res)) return 0;
@@ -890,8 +875,8 @@ static bool assemble_line(assembler_t *as, char *line) {
                 }
             }
             return true;
-        } else if (strcmp(tokens[0], ".word") == 0 && num_tokens > 1) {
-            // .word - emit 32-bit words (numbers, symbols → REL_32, or label diffs)
+        } else if ((strcmp(tokens[0], ".word") == 0 || strcmp(tokens[0], ".long") == 0) && num_tokens > 1) {
+            // .word/.long - emit 32-bit words (numbers, symbols → REL_32, or label diffs)
             for (int i = 1; i < num_tokens; i++) {
                 expr_result_t res = {0};
                 if (!parse_expression_all(tokens[i], &res)) {
@@ -1077,37 +1062,6 @@ static bool assemble_line(assembler_t *as, char *line) {
                 bump_size(as, as->current_section, 1);
             }
             return true;
-        } else if (strcmp(tokens[0], ".long") == 0 && num_tokens > 1) {
-            // .long - alias for .word (emit 32-bit values)
-            // Reuse .word logic
-            for (int i = 1; i < num_tokens; i++) {
-                char sym[64]; int is_hi=0, is_lo=0; int hi_p=0, lo_p=0; int32_t addend=0; bool has_symbol=false;
-                int val = parse_immediate_or_symbol_ex(tokens[i], sym, &is_hi, &is_lo, &hi_p, &lo_p, &addend, &has_symbol);
-                if (has_symbol) {
-                    if (is_hi || is_lo) {
-                        fprintf(stderr, ".long %%hi/%%lo not supported here; use plain symbol\n");
-                        return false;
-                    }
-                    // placeholder + relocation
-                    ensure_instruction_capacity(as, 1);
-                    as->instructions[as->num_instructions].instruction = 0;
-                    as->instructions[as->num_instructions].address = as->current_addr;
-                    as->instructions[as->num_instructions].section = as->current_section;
-                    as->instructions[as->num_instructions].is_data_byte = false;
-                    as->num_instructions++;
-                    add_relocation(as, as->current_addr, sym, S32O_REL_32, addend, as->current_section);
-                } else {
-                    ensure_instruction_capacity(as, 1);
-                    as->instructions[as->num_instructions].instruction = (uint32_t)val;
-                    as->instructions[as->num_instructions].address = as->current_addr;
-                    as->instructions[as->num_instructions].section = as->current_section;
-                    as->instructions[as->num_instructions].is_data_byte = false;
-                    as->num_instructions++;
-                }
-                as->current_addr += 4;
-                bump_size(as, as->current_section, 4);
-            }
-            return true;
         } else if (strcmp(tokens[0], ".quad") == 0 && num_tokens > 1) {
             // .quad - emit 64-bit values (as two 32-bit words, little-endian)
             for (int i = 1; i < num_tokens; i++) {
@@ -1139,21 +1093,6 @@ static bool assemble_line(assembler_t *as, char *line) {
                 as->current_addr += 4;
                 bump_size(as, as->current_section, 4);
             }
-            return true;
-        } else if (strcmp(tokens[0], ".text") == 0) {
-            // .text - switch to code section
-            as->current_section = SECTION_CODE;
-            as->current_addr = as->code_size;
-            return true;
-        } else if (strcmp(tokens[0], ".data") == 0) {
-            // .data - switch to data section
-            as->current_section = SECTION_DATA;
-            as->current_addr = as->data_size;
-            return true;
-        } else if (strcmp(tokens[0], ".bss") == 0) {
-            // .bss - switch to BSS section
-            as->current_section = SECTION_BSS;
-            as->current_addr = as->bss_size;
             return true;
         } else if ((strcmp(tokens[0], ".equ") == 0 || strcmp(tokens[0], ".set") == 0) && num_tokens >= 3) {
             // .equ/.set symbol, value - define a constant
@@ -1870,14 +1809,25 @@ static int write_object_file(assembler_t *as, const char *filename) {
     if (as->bss_size > 0) section_map[SECTION_BSS] = output_section_idx++;
     if (as->init_array_size > 0) section_map[SECTION_INIT_ARRAY] = output_section_idx++;
     
-    // Build symbol table
+    // Build symbol table (heap-allocated to avoid ~640KB stack usage)
     int num_symbols = 0;
-    s32o_symbol_t symbols[MAX_LABELS];
-    
+    s32o_symbol_t *symbols = malloc(MAX_LABELS * sizeof(s32o_symbol_t));
+    if (!symbols) {
+        fprintf(stderr, "Memory allocation failed for symbol table\n");
+        fclose(f);
+        return -1;
+    }
+
     // 1) Add all global labels
     for (int i = 0; i < as->num_labels; i++) {
         if (!as->labels[i].is_global) continue;
-        
+        if (num_symbols >= MAX_LABELS) {
+            fprintf(stderr, "Too many symbols (max %d)\n", MAX_LABELS);
+            free(symbols);
+            fclose(f);
+            return -1;
+        }
+
         symbols[num_symbols].name_offset = add_string(as, as->labels[i].name);
         symbols[num_symbols].value = as->labels[i].address;
         symbols[num_symbols].section = section_map[as->labels[i].section];
@@ -1905,11 +1855,16 @@ static int write_object_file(assembler_t *as, const char *filename) {
         }
         if (present) continue;
         
+        if (num_symbols >= MAX_LABELS) {
+            fprintf(stderr, "Too many symbols (max %d)\n", MAX_LABELS);
+            free(symbols);
+            fclose(f);
+            return -1;
+        }
+
         // Is it a defined label in this object (likely a local .L*)?
         int lbl = find_label_index(as, sym);
-        //fprintf(stderr, "DEBUG: Looking for symbol '%s', lbl=%d\n", sym, lbl);
         if (lbl >= 0 && as->labels[lbl].is_defined) {
-            //fprintf(stderr, "DEBUG: Adding local symbol '%s' at section %d\n", sym, section_map[as->labels[lbl].section]);
             symbols[num_symbols].name_offset = add_string(as, sym);
             symbols[num_symbols].value = as->labels[lbl].address;
             symbols[num_symbols].section = section_map[as->labels[lbl].section];
@@ -2181,11 +2136,12 @@ static int write_object_file(assembler_t *as, const char *filename) {
     // BSS has no data to write
     
     fclose(f);
-    
+    free(symbols);
+
     printf("Generated object file: %s\n", filename);
     printf("  Sections: %d\n", num_sections);
     printf("  Symbols: %d (global only)\n", num_symbols);
-    
+
     return 0;
 }
 
@@ -2291,16 +2247,17 @@ int main(int argc, char *argv[]) {
     }
     
     // Process all label references
-    for (int i = 0; i < as.num_instructions; i++) {
+    bool label_error = false;
+    for (int i = 0; i < as.num_instructions && !label_error; i++) {
         instruction_t *inst = &as.instructions[i];
         if (!inst->has_label_ref) continue;
-        
+
         int label_idx = find_label_index(&as, inst->label_ref);
-        
+
         if (label_idx >= 0) {
             // Local label - resolve it (PC-relative within section is stable)
             uint32_t label_addr = as.labels[label_idx].address;
-            
+
             instruction_def_t *inst_def = NULL;
             for (int j = 0; instruction_table[j].mnemonic; j++) {
                 if (instruction_table[j].opcode == inst->opcode) {
@@ -2308,9 +2265,9 @@ int main(int argc, char *argv[]) {
                     break;
                 }
             }
-            
+
             if (!inst_def) continue;
-            
+
             int32_t offset;
             switch (inst_def->format) {
                 case FMT_B:
@@ -2322,7 +2279,8 @@ int main(int argc, char *argv[]) {
                         fprintf(stderr, "       Target label '%s' at 0x%08X is %d bytes away\n",
                                 inst->label_ref, label_addr, offset);
                         fprintf(stderr, "       Branch instructions can only reach +/-4096 bytes\n");
-                        exit(1);
+                        label_error = true;
+                        break;
                     }
                     inst->instruction = (inst->instruction & 0x01FFF07F) |
                         (encode_b(0, 0, 0, offset) & 0xFE000F80);
@@ -2336,7 +2294,8 @@ int main(int argc, char *argv[]) {
                         fprintf(stderr, "       Target label '%s' at 0x%08X is %d bytes away\n",
                                 inst->label_ref, label_addr, offset);
                         fprintf(stderr, "       JAL instructions can only reach +/-1MB\n");
-                        exit(1);
+                        label_error = true;
+                        break;
                     }
                     inst->instruction = (inst->instruction & 0x00000FFF) |
                         (encode_j(0, 0, offset) & 0xFFFFF000);
@@ -2371,6 +2330,11 @@ int main(int argc, char *argv[]) {
         }
     }
     
+    if (label_error) {
+        free(as.instructions);
+        return 1;
+    }
+
     int result = write_object_file(&as, output_file);
     free(as.instructions);
     return result;
