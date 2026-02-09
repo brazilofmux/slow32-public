@@ -25,9 +25,9 @@ static inline void cpu_init_with_mmio(cpu_state_ext_t *cpu) {
 }
 
 // Enable MMIO for the CPU
-static inline bool cpu_enable_mmio(cpu_state_ext_t *cpu, uint32_t heap_base, uint32_t heap_size) {
+static inline bool cpu_enable_mmio(cpu_state_ext_t *cpu) {
     // Initialize MMIO state
-    mmio_ring_init(&cpu->mmio, heap_base, heap_size);
+    mmio_ring_init(&cpu->mmio);
     
     // Map MMIO memory
     cpu->mmio_mem = mmio_ring_map(&cpu->mmio);

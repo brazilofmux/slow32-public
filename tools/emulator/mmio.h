@@ -40,7 +40,6 @@
 #define SYS_READ   3
 #define SYS_WRITE  4
 #define SYS_LSEEK  5
-#define SYS_BRK    6
 #define SYS_IOCTL  7
 #define SYS_FSTAT  8
 
@@ -61,13 +60,10 @@ typedef struct {
     bool console_has_input;
     uint8_t console_input_char;
     
-    // Memory management for brk()
-    uint32_t brk_current;
-    uint32_t brk_max;
 } mmio_state_t;
 
 // Initialize MMIO devices
-void mmio_init(mmio_state_t *mmio, uint32_t heap_base, uint32_t heap_size);
+void mmio_init(mmio_state_t *mmio);
 
 // MMIO read/write handlers
 uint32_t mmio_read(mmio_state_t *mmio, uint32_t addr, int size);

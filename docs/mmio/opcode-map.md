@@ -4,7 +4,7 @@ The ring descriptors double as Linux-style syscall packets. To keep them memorab
 
 | Range (hex) | Purpose                         | Notes |
 |-------------|---------------------------------|-------|
-| `0x00–0x0F` | Core process + stdio syscalls   | Current ops: `NOP`, `PUTCHAR`, `GETCHAR`, `WRITE`, `READ`, `OPEN`, `CLOSE`, `SEEK`, `BRK`, `EXIT`, `STAT`, `FLUSH`. |
+| `0x00–0x0F` | Core process + stdio syscalls   | Current ops: `NOP`, `PUTCHAR`, `GETCHAR`, `WRITE`, `READ`, `OPEN`, `CLOSE`, `SEEK`, `EXIT`, `STAT`, `FLUSH`. `0x08` reserved. |
 | `0x10–0x1F` | Memory / process management     | Reserved for `MMAP`, `MUNMAP`, `SPAWN`, etc. |
 | `0x20–0x2F` | Filesystem metadata & tooling   | Reserved for `FSTAT`, `UNLINK`, `DUP`, etc. |
 | `0x30–0x3F` | Time, timers, and wait APIs     | Implemented: `GETTIME`, `SLEEP`. Planned: `TIMER_START`, `TIMER_CANCEL`, `POLL`. |

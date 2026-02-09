@@ -98,10 +98,7 @@ static void cpu_init_mmio(fast_cpu_state_t *cpu) {
         return;
     }
 
-    // Initialize MMIO ring with heap information
-    uint32_t heap_base = (cpu->data_limit + 0xFFFu) & ~0xFFFu;  // Page align after data
-    uint32_t heap_size = 0x01000000u;  // 16MB default heap window
-    mmio_ring_init(cpu->mmio.state, heap_base, heap_size);
+    mmio_ring_init(cpu->mmio.state);
 
     // Map MMIO window into host memory and register with the memory manager
     cpu->mmio.mem = mmio_ring_map(cpu->mmio.state);

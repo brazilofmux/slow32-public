@@ -88,7 +88,7 @@ Guest code should YIELD whenever it waits for responses; the emulator drains the
 1. Implement syscall interface via MMIO
 2. Add write() system call first (for printf)
 3. Add read() for input
-4. Add brk() for malloc
+4. ~~Add brk() for malloc~~ (removed — heap is statically allocated by linker)
 
 ### Phase 3: stdio Library
 1. Implement proper FILE structure

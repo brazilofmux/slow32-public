@@ -78,10 +78,6 @@ struct mmio_ring_state {
     io_descriptor_t *resp_ring;
     uint8_t *data_buffer;
 
-    // Heap management
-    uint32_t brk_current;
-    uint32_t brk_max;
-
     // Statistics
     uint64_t total_requests;
     uint64_t total_responses;
@@ -124,7 +120,7 @@ typedef struct {
 } mmio_cpu_iface_t;
 
 // Initialize MMIO ring buffers
-void mmio_ring_init(mmio_ring_state_t *mmio, uint32_t heap_base, uint32_t heap_size);
+void mmio_ring_init(mmio_ring_state_t *mmio);
 
 // Map MMIO memory region
 void* mmio_ring_map(mmio_ring_state_t *mmio);

@@ -49,7 +49,7 @@ The MMIO bridge mirrors the Linux user/kernel ABI. Treat every descriptor as a c
 | `0x06`       | `OP_CLOSE`               | `close(2)`     | `status`: fd                                           | Returns 0 or `-errno`.                   |
 | `0x07`       | `OP_SEEK`                | `lseek(2)`     | `status`: fd, `DATA_BUFFER`: packed `off_t` + `whence` | Returns new offset or `-errno`.          |
 | `0x0A`       | `OP_STAT`                | `stat(2)`/`fstat(2)` | `status`: fd or `STAT_PATH_SENTINEL`; optional pathname bytes at `DATA_BUFFER[offset]` | Writes packed metadata struct + OK/ERR.  |
-| `0x08/0x09`  | `OP_BRK` / `OP_EXIT`     | `brk(2)`/`_exit(2)` | `status`: new break / exit code                       | Returns new program break or halts instance. |
+| `0x09`       | `OP_EXIT`                | `_exit(2)`           | `status`: exit code                                    | Halts instance.                              |
 | `0x0B`       | `OP_FLUSH`               | `fsync(2)` lite| `status`: fd (stdout/stderr)                           | Returns 0 or `-errno`.                   |
 | `0x30`       | `OP_GETTIME`             | `clock_gettime(2)` | `length` ≥ 16, `offset`: destination for `s32_mmio_timepair64_t` | Writes 16 bytes and returns OK/ERR.      |
 | `0x31`       | `OP_SLEEP`              | `nanosleep(2)` | `length = 16`, buffer holds `s32_mmio_timepair64_t` on input and remainder on output | `resp.status = OK/EINTR/ERR`.            |

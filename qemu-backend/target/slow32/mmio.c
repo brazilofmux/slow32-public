@@ -47,7 +47,7 @@
 #define S32_MMIO_OP_OPEN      0x05
 #define S32_MMIO_OP_CLOSE     0x06
 #define S32_MMIO_OP_SEEK      0x07
-#define S32_MMIO_OP_BRK       0x08
+/* 0x08 reserved (was BRK, removed — heap is statically allocated by linker) */
 #define S32_MMIO_OP_EXIT      0x09
 #define S32_MMIO_OP_STAT      0x0A
 #define S32_MMIO_OP_FLUSH     0x0B
@@ -153,8 +153,6 @@ struct Slow32MMIOContext {
     bool enabled;
     uint32_t req_tail;
     uint32_t resp_head;
-    uint32_t brk_current;
-    uint32_t brk_limit;
     uint32_t args_argc;
     uint32_t args_total_bytes;
     GByteArray *args_blob;
@@ -453,12 +451,6 @@ static void slow32_mmio_apply_reset(Slow32CPU *cpu, bool clear_window_first)
 
     ctx->req_tail = 0;
     ctx->resp_head = 0;
-    ctx->brk_current = slow32_mmio_initial_brk(env);
-    ctx->brk_limit = ctx->brk_current + S32_MMIO_DEFAULT_HEAP_SIZE;
-    if (env->mem_size && ctx->brk_limit > env->mem_size) {
-        ctx->brk_limit = env->mem_size;
-    }
-
     slow32_mmio_reset_fd_table(ctx);
 
     slow32_mmio_writel(env, S32_MMIO_REQ_HEAD_OFFSET, 0);
@@ -556,29 +548,6 @@ static void slow32_mmio_request_exit(Slow32CPU *cpu)
     cpu->env.halted = 1;
     slow32_cpu_complete_halt(cpu);
     cpu_exit(cs);
-}
-
-static void slow32_mmio_handle_brk(Slow32MMIOContext *ctx,
-                                   const Slow32MMIODesc *req,
-                                   Slow32MMIODesc *resp)
-{
-    uint32_t requested = req->status;
-
-    if (requested == 0) {
-        resp->status = ctx->brk_current;
-        resp->length = 0;
-        return;
-    }
-
-    if (requested < ctx->brk_current || requested > ctx->brk_limit) {
-        resp->status = ctx->brk_current;
-        resp->length = ENOMEM;
-        return;
-    }
-
-    ctx->brk_current = requested;
-    resp->status = ctx->brk_current;
-    resp->length = 0;
 }
 
 static void slow32_mmio_handle_args_info(Slow32MMIOContext *ctx,
@@ -1028,10 +997,6 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
 
     case S32_MMIO_OP_ARGS_DATA:
         slow32_mmio_handle_args_data(ctx, env, req, resp);
-        break;
-
-    case S32_MMIO_OP_BRK:
-        slow32_mmio_handle_brk(ctx, req, resp);
         break;
 
     case S32_MMIO_OP_EXIT:

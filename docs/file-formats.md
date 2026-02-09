@@ -51,7 +51,7 @@ typedef struct {
     uint32_t data_limit;   // 0x28: End of data region (e.g., 0x10000000)
     uint32_t stack_base;   // 0x2C: Initial stack pointer (e.g., 0x0FFFFFF0)
     uint32_t mem_size;     // 0x30: Total memory to allocate (0 = use data_limit)
-    uint32_t heap_base;    // 0x34: Start of heap (0 = no heap, use sbrk)
+    uint32_t heap_base;    // 0x34: Start of heap (0 = no heap)
     uint32_t checksum;     // 0x38: CRC32 of all sections (0 = no checksum)
     uint32_t mmio_base;    // 0x3C: MMIO region base (if S32X_FLAG_MMIO set)
 } s32x_header_t;

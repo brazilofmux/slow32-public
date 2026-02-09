@@ -38,10 +38,7 @@ static void cpu_init_mmio(cpu_state_t *cpu) {
         return;
     }
 
-    // Initialize with heap after data limit
-    uint32_t heap_base = (cpu->data_limit + 0xFFF) & ~0xFFF;  // Page align
-    uint32_t heap_size = 0x01000000;  // 16MB heap by default
-    mmio_ring_init(cpu->mmio.state, heap_base, heap_size);
+    mmio_ring_init(cpu->mmio.state);
 
     // Map MMIO memory
     cpu->mmio.mem = mmio_ring_map(cpu->mmio.state);

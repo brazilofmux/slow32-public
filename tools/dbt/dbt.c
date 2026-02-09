@@ -115,16 +115,7 @@ static void dbt_init_mmio(dbt_cpu_state_t *cpu) {
         return;
     }
 
-    // Initialize MMIO state with heap after data limit
-    uint32_t heap_base = (cpu->data_limit + 0xFFF) & ~0xFFF;
-    uint32_t heap_size = 0;
-    if (heap_base <= cpu->mmio_base) {
-        heap_size = cpu->mmio_base - heap_base;  // Heap up to MMIO
-    } else {
-        fprintf(stderr, "DBT: MMIO heap base 0x%08X exceeds MMIO base 0x%08X\n",
-                heap_base, cpu->mmio_base);
-    }
-    mmio_ring_init(&mmio_state, heap_base, heap_size);
+    mmio_ring_init(&mmio_state);
 
     // Configure direct access to guest memory (for zero-copy I/O)
     mmio_state.guest_mem_base = cpu->mem_base;

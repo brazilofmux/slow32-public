@@ -10,15 +10,11 @@
 #include <errno.h>
 
 // Initialize MMIO devices
-void mmio_init(mmio_state_t *mmio, uint32_t heap_base, uint32_t heap_size) {
+void mmio_init(mmio_state_t *mmio) {
     memset(mmio, 0, sizeof(mmio_state_t));
-    
+
     // Console starts ready to transmit
     mmio->console_status = CONSOLE_TX_READY;
-    
-    // Initialize brk for malloc
-    mmio->brk_current = heap_base;
-    mmio->brk_max = heap_base + heap_size;
 }
 
 // Handle system calls
@@ -82,25 +78,6 @@ static void handle_syscall(mmio_state_t *mmio, cpu_state_t *cpu) {
             } else {
                 mmio->syscall_result = -1;
                 mmio->syscall_errno = EBADF;
-            }
-            break;
-        }
-        
-        case SYS_BRK: {
-            // brk(addr) - set program break
-            uint32_t requested = mmio->syscall_args[0];
-            
-            if (requested == 0) {
-                // Return current break
-                mmio->syscall_result = mmio->brk_current;
-            } else if (requested >= mmio->brk_current && requested <= mmio->brk_max) {
-                // Expand heap
-                mmio->brk_current = requested;
-                mmio->syscall_result = requested;
-            } else {
-                // Failed to expand
-                mmio->syscall_result = mmio->brk_current;
-                mmio->syscall_errno = ENOMEM;
             }
             break;
         }

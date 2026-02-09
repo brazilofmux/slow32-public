@@ -350,12 +350,12 @@ static const char *legacy_opcode_service(uint32_t opcode) {
     if (opcode >= 0x30 && opcode <= 0x3F) return "time";
     if (opcode >= 0x40 && opcode <= 0x4F) return "net";
     if (opcode >= 0x60 && opcode <= 0x6F) return "env";
-    // 0x01 (PUTCHAR), 0x02 (GETCHAR), 0x08 (BRK), 0x09 (EXIT) always allowed
+    // 0x01 (PUTCHAR), 0x02 (GETCHAR), 0x09 (EXIT) always allowed
     return NULL;
 }
 
 // Initialize MMIO ring buffers
-void mmio_ring_init(mmio_ring_state_t *mmio, uint32_t heap_base, uint32_t heap_size) {
+void mmio_ring_init(mmio_ring_state_t *mmio) {
     maybe_init_trace_flag();
     memset(mmio, 0, sizeof(mmio_ring_state_t));
     
@@ -368,10 +368,6 @@ void mmio_ring_init(mmio_ring_state_t *mmio, uint32_t heap_base, uint32_t heap_s
     
     mmio->guest_mem_base = NULL;
     mmio->guest_mem_size = 0;
-
-    // Initialize heap
-    mmio->brk_current = heap_base;
-    mmio->brk_max = heap_base + heap_size;
 
     mmio->args_blob = NULL;
     mmio->args_argc = 0;
@@ -916,26 +912,6 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             } else {
                 resp.length = 0;
                 resp.status = EOF;
-            }
-            break;
-        }
-        
-        case S32_MMIO_OP_BRK: {
-            uint32_t requested = req->status;  // New break value in status
-            
-            if (requested == 0) {
-                // Return current break
-                resp.status = mmio->brk_current;
-                resp.length = 0;
-            } else if (requested >= mmio->brk_current && requested <= mmio->brk_max) {
-                // Expand heap
-                mmio->brk_current = requested;
-                resp.status = requested;
-                resp.length = 0;
-            } else {
-                // Failed to expand
-                resp.status = mmio->brk_current;
-                resp.length = ENOMEM;
             }
             break;
         }

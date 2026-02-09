@@ -16,7 +16,7 @@ MMIO is now functional in both `slow32` and `slow32-fast` emulators with linker-
 - **Memory Layout**: MMIO at `0x10000000`, 64KB region
 - **Ring Buffers**: Request/response queues for host-guest communication
 - **Guest Symbols**: Linker creates `__mmio_base` and `__mmio_end` symbols
-- **Linux-Compatible ABI**: Ring descriptors carry Linux-style syscalls (open/read/write/seek/stat/brk/exit, etc.)
+- **Linux-Compatible ABI**: Ring descriptors carry Linux-style syscalls (open/read/write/seek/stat/exit, etc.)
 - **Opcode Registry**: Stable IDs captured in `docs/mmio/opcode-map.md` (now includes `GETTIME` at `0x30`)
 
 ### Test Programs

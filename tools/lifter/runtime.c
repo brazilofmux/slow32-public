@@ -109,7 +109,7 @@ int main(int argc, char **argv) {
 
     /* Initialize MMIO if enabled */
     if (__s32_mmio_base != 0) {
-        mmio_ring_init(&mmio_state, 0x04000000, 0x00800000); // 64MB heap start, 8MB size
+        mmio_ring_init(&mmio_state);
         mmio_state.base_addr = __s32_mmio_base;
         mmio_state.req_ring = (io_descriptor_t*)(mem + __s32_mmio_base + S32_MMIO_REQ_RING_OFFSET);
         mmio_state.resp_ring = (io_descriptor_t*)(mem + __s32_mmio_base + S32_MMIO_RESP_RING_OFFSET);
