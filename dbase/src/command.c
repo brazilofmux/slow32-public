@@ -4,7 +4,133 @@
 #include "command.h"
 #include "dbf.h"
 #include "field.h"
+#include "expr.h"
+#include "func.h"
+#include "date.h"
 #include "util.h"
+
+/* Persistent expression context */
+static expr_ctx_t expr_ctx;
+
+/* LOCATE state */
+static char locate_condition[256];
+static uint32_t locate_last_rec;
+
+/* ---- Helper: initialize expr_ctx for a db ---- */
+static void ctx_setup(dbf_t *db) {
+    expr_ctx.db = db;
+    /* found, bof_flag, eof_flag persist across commands */
+}
+
+/* ---- Helper: check FOR clause ---- */
+/* Returns pointer past "FOR" keyword, or NULL if no FOR clause present */
+static const char *find_for_clause(const char *p) {
+    const char *s = p;
+    while (*s) {
+        s = skip_ws(s);
+        if (str_imatch(s, "FOR")) {
+            return skip_ws(s + 3);
+        }
+        s++;
+    }
+    return NULL;
+}
+
+/* ---- Helper: parse field list before FOR clause ---- */
+/* Parse comma-separated field names. Returns count, fills indices[].
+   Sets *rest to point past the field list. */
+static int parse_field_list(dbf_t *db, const char *arg, int *indices, int max_fields, const char **rest) {
+    const char *p = skip_ws(arg);
+    int count = 0;
+    char name[DBF_MAX_FIELD_NAME];
+
+    *rest = p;
+
+    while (*p && count < max_fields) {
+        int i, idx;
+
+        /* Check if we hit FOR keyword */
+        if (str_imatch(p, "FOR")) break;
+
+        /* Parse field name */
+        i = 0;
+        while (*p && *p != ',' && *p != ' ' && *p != '\t' && i < DBF_MAX_FIELD_NAME - 1)
+            name[i++] = *p++;
+        name[i] = '\0';
+
+        if (name[0] == '\0') break;
+
+        idx = dbf_find_field(db, name);
+        if (idx < 0) {
+            printf("Field not found: %s\n", name);
+            return -1;
+        }
+        indices[count++] = idx;
+
+        p = skip_ws(p);
+        if (*p == ',') { p++; p = skip_ws(p); }
+    }
+
+    *rest = p;
+    return count;
+}
+
+/* ---- Helper: display one field value ---- */
+static void print_field_value(dbf_t *db, int f, char *raw, char *display, int for_list, int width) {
+    dbf_get_field_raw(db, f, raw, 256);
+    switch (db->fields[f].type) {
+    case 'C':
+        field_display_char(display, raw, db->fields[f].length);
+        if (for_list) {
+            trim_right(display);
+            printf(" %-*s", width, display);
+        } else {
+            trim_right(display);
+            printf("%10s: %s\n", db->fields[f].name, display);
+        }
+        break;
+    case 'N':
+        field_display_numeric(display, raw, db->fields[f].length);
+        if (for_list)
+            printf(" %*s", width, display);
+        else
+            printf("%10s: %s\n", db->fields[f].name, display);
+        break;
+    case 'D':
+        field_display_date(display, raw);
+        if (for_list)
+            printf(" %-8s", display);
+        else
+            printf("%10s: %s\n", db->fields[f].name, display);
+        break;
+    case 'L':
+        field_display_logical(display, raw);
+        if (for_list)
+            printf(" %-3s", display);
+        else
+            printf("%10s: %s\n", db->fields[f].name, display);
+        break;
+    default:
+        field_display_char(display, raw, db->fields[f].length);
+        if (for_list) {
+            trim_right(display);
+            printf(" %-*s", width, display);
+        } else {
+            trim_right(display);
+            printf("%10s: %s\n", db->fields[f].name, display);
+        }
+        break;
+    }
+}
+
+static int field_display_width(dbf_t *db, int f) {
+    int w = db->fields[f].length;
+    int nlen = strlen(db->fields[f].name);
+    if (w < nlen) w = nlen;
+    if (db->fields[f].type == 'D') w = 8;
+    if (db->fields[f].type == 'L') w = 3;
+    return w;
+}
 
 /* ---- CREATE ---- */
 static void cmd_create(dbf_t *db, const char *arg) {
@@ -16,13 +142,13 @@ static void cmd_create(dbf_t *db, const char *arg) {
     char width_line[16];
     char dec_line[16];
 
+    (void)db;
     arg = skip_ws(arg);
     if (*arg == '\0') {
         printf("Syntax: CREATE <filename>\n");
         return;
     }
 
-    /* Copy filename, uppercase, append .DBF if needed */
     str_copy(filename, arg, sizeof(filename));
     trim_right(filename);
     str_upper(filename);
@@ -72,7 +198,7 @@ static void cmd_create(dbf_t *db, const char *arg) {
             }
         }
 
-        fields[nfields].offset = 0; /* will be computed by dbf_create/open */
+        fields[nfields].offset = 0;
         nfields++;
     }
 
@@ -95,7 +221,6 @@ static void cmd_use(dbf_t *db, const char *arg) {
 
     arg = skip_ws(arg);
 
-    /* USE with no argument closes current db */
     if (*arg == '\0') {
         if (dbf_is_open(db)) {
             dbf_close(db);
@@ -104,7 +229,6 @@ static void cmd_use(dbf_t *db, const char *arg) {
         return;
     }
 
-    /* Close current if open */
     if (dbf_is_open(db))
         dbf_close(db);
 
@@ -120,6 +244,13 @@ static void cmd_use(dbf_t *db, const char *arg) {
         printf("File not found: %s\n", filename);
         return;
     }
+
+    /* Reset navigation state */
+    expr_ctx.eof_flag = 0;
+    expr_ctx.bof_flag = 0;
+    expr_ctx.found = 0;
+    locate_condition[0] = '\0';
+    locate_last_rec = 0;
 
     printf("Database %s opened with %d record(s).\n",
            db->filename, (int)db->record_count);
@@ -137,13 +268,396 @@ static void cmd_append_blank(dbf_t *db) {
         return;
     }
 
+    expr_ctx.eof_flag = 0;
+    expr_ctx.bof_flag = 0;
     printf("Record %d added.\n", (int)db->record_count);
 }
 
-/* ---- REPLACE ---- */
+/* ---- GO / GOTO ---- */
+static void cmd_go(dbf_t *db, const char *arg) {
+    const char *p;
+
+    if (!dbf_is_open(db)) {
+        printf("No database in use.\n");
+        return;
+    }
+
+    p = skip_ws(arg);
+
+    if (str_imatch(p, "TOP")) {
+        if (db->record_count == 0) {
+            expr_ctx.eof_flag = 1;
+            expr_ctx.bof_flag = 1;
+            printf("No records.\n");
+            return;
+        }
+        dbf_read_record(db, 1);
+        expr_ctx.eof_flag = 0;
+        expr_ctx.bof_flag = 0;
+        return;
+    }
+
+    if (str_imatch(p, "BOTTOM")) {
+        if (db->record_count == 0) {
+            expr_ctx.eof_flag = 1;
+            expr_ctx.bof_flag = 1;
+            printf("No records.\n");
+            return;
+        }
+        dbf_read_record(db, db->record_count);
+        expr_ctx.eof_flag = 0;
+        expr_ctx.bof_flag = 0;
+        return;
+    }
+
+    /* GO n */
+    {
+        int n = atoi(p);
+        if (n < 1 || (uint32_t)n > db->record_count) {
+            printf("Record out of range.\n");
+            return;
+        }
+        dbf_read_record(db, (uint32_t)n);
+        expr_ctx.eof_flag = 0;
+        expr_ctx.bof_flag = 0;
+    }
+}
+
+/* ---- SKIP ---- */
+static void cmd_skip(dbf_t *db, const char *arg) {
+    const char *p;
+    int n;
+    int32_t target;
+
+    if (!dbf_is_open(db)) {
+        printf("No database in use.\n");
+        return;
+    }
+
+    p = skip_ws(arg);
+    if (*p == '\0')
+        n = 1;
+    else
+        n = atoi(p);
+
+    if (db->current_record == 0) {
+        /* No current record — go to first */
+        if (db->record_count == 0) {
+            expr_ctx.eof_flag = 1;
+            return;
+        }
+        dbf_read_record(db, 1);
+        expr_ctx.eof_flag = 0;
+        expr_ctx.bof_flag = 0;
+        if (n > 0) n--; /* already moved forward 1 */
+        if (n == 0) return;
+    }
+
+    target = (int32_t)db->current_record + n;
+
+    if (target < 1) {
+        dbf_read_record(db, 1);
+        expr_ctx.bof_flag = 1;
+        expr_ctx.eof_flag = 0;
+        return;
+    }
+
+    if ((uint32_t)target > db->record_count) {
+        /* Move past EOF — stay at record_count but set eof_flag.
+           dBase III behavior: current_record = record_count + 1 conceptually,
+           but we keep it at record_count and set the flag. */
+        expr_ctx.eof_flag = 1;
+        expr_ctx.bof_flag = 0;
+        /* Keep current_record at last record; some dBase impls set it to count+1 */
+        db->current_record = db->record_count + 1;
+        return;
+    }
+
+    dbf_read_record(db, (uint32_t)target);
+    expr_ctx.eof_flag = 0;
+    expr_ctx.bof_flag = 0;
+}
+
+/* ---- LOCATE FOR ---- */
+static void cmd_locate(dbf_t *db, const char *arg) {
+    const char *p;
+    uint32_t i;
+
+    if (!dbf_is_open(db)) {
+        printf("No database in use.\n");
+        return;
+    }
+
+    p = skip_ws(arg);
+    if (!str_imatch(p, "FOR")) {
+        printf("Syntax: LOCATE FOR <condition>\n");
+        return;
+    }
+    p = skip_ws(p + 3);
+
+    /* Save condition for CONTINUE */
+    str_copy(locate_condition, p, sizeof(locate_condition));
+
+    expr_ctx.found = 0;
+
+    for (i = 1; i <= db->record_count; i++) {
+        value_t cond;
+        dbf_read_record(db, i);
+        if (db->record_buf[0] == '*') continue; /* skip deleted */
+
+        if (expr_eval_str(&expr_ctx, locate_condition, &cond) != 0) {
+            if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+            return;
+        }
+
+        if (cond.type == VAL_LOGIC && cond.logic) {
+            expr_ctx.found = 1;
+            expr_ctx.eof_flag = 0;
+            locate_last_rec = i;
+            printf("Record = %d\n", (int)i);
+            return;
+        }
+    }
+
+    /* Not found */
+    expr_ctx.found = 0;
+    expr_ctx.eof_flag = 1;
+    locate_last_rec = 0;
+    printf("End of LOCATE scope\n");
+}
+
+/* ---- CONTINUE ---- */
+static void cmd_continue(dbf_t *db) {
+    uint32_t i;
+
+    if (!dbf_is_open(db)) {
+        printf("No database in use.\n");
+        return;
+    }
+
+    if (locate_condition[0] == '\0') {
+        printf("No LOCATE active.\n");
+        return;
+    }
+
+    for (i = locate_last_rec + 1; i <= db->record_count; i++) {
+        value_t cond;
+        dbf_read_record(db, i);
+        if (db->record_buf[0] == '*') continue;
+
+        if (expr_eval_str(&expr_ctx, locate_condition, &cond) != 0) {
+            if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+            return;
+        }
+
+        if (cond.type == VAL_LOGIC && cond.logic) {
+            expr_ctx.found = 1;
+            expr_ctx.eof_flag = 0;
+            locate_last_rec = i;
+            printf("Record = %d\n", (int)i);
+            return;
+        }
+    }
+
+    expr_ctx.found = 0;
+    expr_ctx.eof_flag = 1;
+    printf("End of LOCATE scope\n");
+}
+
+/* ---- COUNT ---- */
+static void cmd_count(dbf_t *db, const char *arg) {
+    const char *p;
+    const char *cond_str = NULL;
+    uint32_t i;
+    int count = 0;
+
+    if (!dbf_is_open(db)) {
+        printf("No database in use.\n");
+        return;
+    }
+
+    p = skip_ws(arg);
+    if (str_imatch(p, "FOR")) {
+        cond_str = skip_ws(p + 3);
+    }
+
+    for (i = 1; i <= db->record_count; i++) {
+        dbf_read_record(db, i);
+        if (db->record_buf[0] == '*') continue;
+
+        if (cond_str) {
+            value_t cond;
+            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
+                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                return;
+            }
+            if (cond.type != VAL_LOGIC || !cond.logic) continue;
+        }
+        count++;
+    }
+
+    printf("%d record(s)\n", count);
+}
+
+/* ---- SUM ---- */
+static void cmd_sum(dbf_t *db, const char *arg) {
+    const char *p;
+    char expr_str[256];
+    const char *cond_str = NULL;
+    uint32_t i;
+    double total = 0.0;
+    int count = 0;
+
+    if (!dbf_is_open(db)) {
+        printf("No database in use.\n");
+        return;
+    }
+
+    p = skip_ws(arg);
+    if (*p == '\0') {
+        printf("Syntax: SUM <expr> [FOR <condition>]\n");
+        return;
+    }
+
+    /* Extract expression (everything before FOR) */
+    {
+        const char *f = p;
+        const char *for_pos = NULL;
+        while (*f) {
+            if (str_imatch(f, "FOR")) { for_pos = f; break; }
+            f++;
+        }
+        if (for_pos) {
+            int len = (int)(for_pos - p);
+            if (len > (int)sizeof(expr_str) - 1) len = (int)sizeof(expr_str) - 1;
+            memcpy(expr_str, p, len);
+            expr_str[len] = '\0';
+            trim_right(expr_str);
+            cond_str = skip_ws(for_pos + 3);
+        } else {
+            str_copy(expr_str, p, sizeof(expr_str));
+            trim_right(expr_str);
+        }
+    }
+
+    for (i = 1; i <= db->record_count; i++) {
+        value_t val;
+        dbf_read_record(db, i);
+        if (db->record_buf[0] == '*') continue;
+
+        if (cond_str) {
+            value_t cond;
+            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
+                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                return;
+            }
+            if (cond.type != VAL_LOGIC || !cond.logic) continue;
+        }
+
+        if (expr_eval_str(&expr_ctx, expr_str, &val) != 0) {
+            if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+            return;
+        }
+        if (val.type != VAL_NUM) {
+            printf("SUM requires numeric expression.\n");
+            return;
+        }
+        total += val.num;
+        count++;
+    }
+
+    {
+        value_t v = val_num(total);
+        char buf[64];
+        val_to_string(&v, buf, sizeof(buf));
+        printf("%d record(s) summed\n", count);
+        printf("      SUM: %s\n", buf);
+    }
+}
+
+/* ---- AVERAGE ---- */
+static void cmd_average(dbf_t *db, const char *arg) {
+    const char *p;
+    char expr_str[256];
+    const char *cond_str = NULL;
+    uint32_t i;
+    double total = 0.0;
+    int count = 0;
+
+    if (!dbf_is_open(db)) {
+        printf("No database in use.\n");
+        return;
+    }
+
+    p = skip_ws(arg);
+    if (*p == '\0') {
+        printf("Syntax: AVERAGE <expr> [FOR <condition>]\n");
+        return;
+    }
+
+    {
+        const char *f = p;
+        const char *for_pos = NULL;
+        while (*f) {
+            if (str_imatch(f, "FOR")) { for_pos = f; break; }
+            f++;
+        }
+        if (for_pos) {
+            int len = (int)(for_pos - p);
+            if (len > (int)sizeof(expr_str) - 1) len = (int)sizeof(expr_str) - 1;
+            memcpy(expr_str, p, len);
+            expr_str[len] = '\0';
+            trim_right(expr_str);
+            cond_str = skip_ws(for_pos + 3);
+        } else {
+            str_copy(expr_str, p, sizeof(expr_str));
+            trim_right(expr_str);
+        }
+    }
+
+    for (i = 1; i <= db->record_count; i++) {
+        value_t val;
+        dbf_read_record(db, i);
+        if (db->record_buf[0] == '*') continue;
+
+        if (cond_str) {
+            value_t cond;
+            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
+                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                return;
+            }
+            if (cond.type != VAL_LOGIC || !cond.logic) continue;
+        }
+
+        if (expr_eval_str(&expr_ctx, expr_str, &val) != 0) {
+            if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+            return;
+        }
+        if (val.type != VAL_NUM) {
+            printf("AVERAGE requires numeric expression.\n");
+            return;
+        }
+        total += val.num;
+        count++;
+    }
+
+    if (count == 0) {
+        printf("No records.\n");
+        return;
+    }
+
+    {
+        value_t v = val_num(total / count);
+        char buf[64];
+        val_to_string(&v, buf, sizeof(buf));
+        printf("%d record(s) averaged\n", count);
+        printf("  AVERAGE: %s\n", buf);
+    }
+}
+
+/* ---- REPLACE (enhanced with expr_eval) ---- */
 static void cmd_replace(dbf_t *db, const char *arg) {
     char field_name[DBF_MAX_FIELD_NAME];
-    char value[256];
     char formatted[256];
     int idx;
     const char *p;
@@ -152,7 +666,7 @@ static void cmd_replace(dbf_t *db, const char *arg) {
         printf("No database in use.\n");
         return;
     }
-    if (db->current_record == 0) {
+    if (db->current_record == 0 || expr_ctx.eof_flag) {
         printf("No current record. Use APPEND BLANK or GO first.\n");
         return;
     }
@@ -160,12 +674,14 @@ static void cmd_replace(dbf_t *db, const char *arg) {
     p = skip_ws(arg);
 
     while (*p) {
+        value_t val;
+        char valbuf[256];
+
         /* Parse field name */
         {
             int i = 0;
-            while (*p && *p != ' ' && *p != '\t' && i < DBF_MAX_FIELD_NAME - 1) {
+            while (*p && *p != ' ' && *p != '\t' && i < DBF_MAX_FIELD_NAME - 1)
                 field_name[i++] = *p++;
-            }
             field_name[i] = '\0';
         }
         str_upper(field_name);
@@ -183,60 +699,49 @@ static void cmd_replace(dbf_t *db, const char *arg) {
             p = skip_ws(p);
         }
 
-        /* Parse value */
-        if (*p == '"' || *p == '\'') {
-            /* String literal */
-            char quote = *p++;
-            int i = 0;
-            while (*p && *p != quote && i < (int)sizeof(value) - 1)
-                value[i++] = *p++;
-            value[i] = '\0';
-            if (*p == quote) p++;
-        } else if (*p == '{') {
-            /* Date literal */
-            int i = 0;
-            p++; /* skip { */
-            while (*p && *p != '}' && i < (int)sizeof(value) - 1)
-                value[i++] = *p++;
-            value[i] = '\0';
-            if (*p == '}') p++;
-        } else if (*p == '.') {
-            /* Logical: .T. or .F. */
-            int i = 0;
-            while (*p && *p != ' ' && *p != ',' && i < (int)sizeof(value) - 1)
-                value[i++] = *p++;
-            value[i] = '\0';
-        } else {
-            /* Numeric or other */
-            int i = 0;
-            while (*p && *p != ' ' && *p != ',' && *p != '\t' && i < (int)sizeof(value) - 1)
-                value[i++] = *p++;
-            value[i] = '\0';
+        /* Evaluate expression for value */
+        if (expr_eval(&expr_ctx, &p, &val) != 0) {
+            if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+            return;
         }
 
-        /* Format and store */
+        /* Convert value to field format */
+        val_to_string(&val, valbuf, sizeof(valbuf));
+
         switch (db->fields[idx].type) {
         case 'C':
-            field_format_char(formatted, db->fields[idx].length, value);
+            if (val.type == VAL_CHAR)
+                field_format_char(formatted, db->fields[idx].length, val.str);
+            else
+                field_format_char(formatted, db->fields[idx].length, valbuf);
             break;
         case 'N':
             field_format_numeric(formatted, db->fields[idx].length,
-                                 db->fields[idx].decimals, value);
+                                 db->fields[idx].decimals, valbuf);
             break;
         case 'D':
-            field_format_date(formatted, value);
+            if (val.type == VAL_DATE) {
+                date_to_dbf(val.date, formatted);
+            } else {
+                field_format_date(formatted, valbuf);
+            }
             break;
         case 'L':
-            field_format_logical(formatted, value);
+            if (val.type == VAL_LOGIC) {
+                formatted[0] = val.logic ? 'T' : 'F';
+                formatted[1] = '\0';
+            } else {
+                field_format_logical(formatted, valbuf);
+            }
             break;
         default:
-            field_format_char(formatted, db->fields[idx].length, value);
+            field_format_char(formatted, db->fields[idx].length, valbuf);
             break;
         }
 
         dbf_set_field_raw(db, idx, formatted);
 
-        /* Skip comma separator if present */
+        /* Skip comma separator */
         p = skip_ws(p);
         if (*p == ',') {
             p++;
@@ -247,11 +752,16 @@ static void cmd_replace(dbf_t *db, const char *arg) {
     dbf_flush_record(db);
 }
 
-/* ---- LIST ---- */
-static void cmd_list(dbf_t *db) {
+/* ---- LIST (enhanced with field list + FOR clause) ---- */
+static void cmd_list(dbf_t *db, const char *arg) {
     uint32_t i;
     int f;
     char raw[256], display[256];
+    int field_indices[DBF_MAX_FIELDS];
+    int nfields = 0;
+    const char *rest;
+    const char *cond_str = NULL;
+    int use_all_fields;
 
     if (!dbf_is_open(db)) {
         printf("No database in use.\n");
@@ -263,96 +773,105 @@ static void cmd_list(dbf_t *db) {
         return;
     }
 
+    rest = skip_ws(arg);
+
+    /* Check if there's a FOR clause directly */
+    if (str_imatch(rest, "FOR")) {
+        cond_str = skip_ws(rest + 3);
+        nfields = 0;
+    } else if (*rest != '\0') {
+        /* Try to parse a field list */
+        nfields = parse_field_list(db, rest, field_indices, DBF_MAX_FIELDS, &rest);
+        if (nfields < 0) return; /* error already printed */
+        rest = skip_ws(rest);
+        if (str_imatch(rest, "FOR")) {
+            cond_str = skip_ws(rest + 3);
+        }
+    }
+
+    use_all_fields = (nfields == 0);
+
     /* Print header */
     printf("Record#");
-    for (f = 0; f < db->field_count; f++) {
-        int w = db->fields[f].length;
-        int nlen = strlen(db->fields[f].name);
-        if (w < nlen) w = nlen;
-        if (db->fields[f].type == 'D') w = 8; /* MM/DD/YY */
-        if (db->fields[f].type == 'L') w = 3; /* .T. */
-        printf(" %-*s", w, db->fields[f].name);
+    if (use_all_fields) {
+        for (f = 0; f < db->field_count; f++) {
+            int w = field_display_width(db, f);
+            printf(" %-*s", w, db->fields[f].name);
+        }
+    } else {
+        for (f = 0; f < nfields; f++) {
+            int idx = field_indices[f];
+            int w = field_display_width(db, idx);
+            printf(" %-*s", w, db->fields[idx].name);
+        }
     }
     printf("\n");
 
     /* Print records */
     for (i = 1; i <= db->record_count; i++) {
         if (dbf_read_record(db, i) < 0) continue;
-
-        /* Skip deleted records */
         if (db->record_buf[0] == '*') continue;
 
-        printf("%7d", (int)i);
-        for (f = 0; f < db->field_count; f++) {
-            int w = db->fields[f].length;
-            int nlen = strlen(db->fields[f].name);
-            if (w < nlen) w = nlen;
+        if (cond_str) {
+            value_t cond;
+            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
+                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                return;
+            }
+            if (cond.type != VAL_LOGIC || !cond.logic) continue;
+        }
 
-            dbf_get_field_raw(db, f, raw, sizeof(raw));
-            switch (db->fields[f].type) {
-            case 'C':
-                field_display_char(display, raw, db->fields[f].length);
-                trim_right(display);
-                printf(" %-*s", w, display);
-                break;
-            case 'N':
-                field_display_numeric(display, raw, db->fields[f].length);
-                printf(" %*s", w, display);
-                break;
-            case 'D':
-                field_display_date(display, raw);
-                printf(" %-8s", display);
-                break;
-            case 'L':
-                field_display_logical(display, raw);
-                printf(" %-3s", display);
-                break;
-            default:
-                field_display_char(display, raw, db->fields[f].length);
-                printf(" %-*s", w, display);
-                break;
+        printf("%7d", (int)i);
+
+        if (use_all_fields) {
+            for (f = 0; f < db->field_count; f++) {
+                int w = field_display_width(db, f);
+                print_field_value(db, f, raw, display, 1, w);
+            }
+        } else {
+            for (f = 0; f < nfields; f++) {
+                int idx = field_indices[f];
+                int w = field_display_width(db, idx);
+                print_field_value(db, idx, raw, display, 1, w);
             }
         }
         printf("\n");
     }
 }
 
-/* ---- DISPLAY ---- */
-static void cmd_display(dbf_t *db) {
+/* ---- DISPLAY (enhanced with field list) ---- */
+static void cmd_display(dbf_t *db, const char *arg) {
     int f;
     char raw[256], display[256];
+    int field_indices[DBF_MAX_FIELDS];
+    int nfields = 0;
+    const char *rest;
+    int use_all_fields;
 
     if (!dbf_is_open(db)) {
         printf("No database in use.\n");
         return;
     }
-    if (db->current_record == 0) {
+    if (db->current_record == 0 || expr_ctx.eof_flag) {
         printf("No current record.\n");
         return;
     }
 
+    rest = skip_ws(arg);
+    if (*rest != '\0') {
+        nfields = parse_field_list(db, rest, field_indices, DBF_MAX_FIELDS, &rest);
+        if (nfields < 0) return;
+    }
+
+    use_all_fields = (nfields == 0);
+
     printf("Record# %d\n", (int)db->current_record);
-    for (f = 0; f < db->field_count; f++) {
-        dbf_get_field_raw(db, f, raw, sizeof(raw));
-        switch (db->fields[f].type) {
-        case 'C':
-            field_display_char(display, raw, db->fields[f].length);
-            trim_right(display);
-            break;
-        case 'N':
-            field_display_numeric(display, raw, db->fields[f].length);
-            break;
-        case 'D':
-            field_display_date(display, raw);
-            break;
-        case 'L':
-            field_display_logical(display, raw);
-            break;
-        default:
-            field_display_char(display, raw, db->fields[f].length);
-            break;
-        }
-        printf("%10s: %s\n", db->fields[f].name, display);
+    if (use_all_fields) {
+        for (f = 0; f < db->field_count; f++)
+            print_field_value(db, f, raw, display, 0, 0);
+    } else {
+        for (f = 0; f < nfields; f++)
+            print_field_value(db, field_indices[f], raw, display, 0, 0);
     }
 }
 
@@ -381,80 +900,54 @@ static void cmd_display_structure(dbf_t *db) {
     printf("** Total **               %5d\n", (int)db->record_size);
 }
 
-/* ---- ? (print expression) ---- */
-static void cmd_print_expr(dbf_t *db, const char *arg) {
-    char name_buf[DBF_MAX_FIELD_NAME];
-    int idx;
-    char raw[256], display[256];
+/* ---- ? / ?? (print expressions) ---- */
+static void cmd_print_expr(dbf_t *db, const char *arg, int newline) {
     const char *p;
+    int first = 1;
+
+    (void)db;
+    ctx_setup(db);
 
     p = skip_ws(arg);
 
-    /* Check if it's a string literal */
-    if (*p == '"' || *p == '\'') {
-        char quote = *p++;
-        while (*p && *p != quote)
-            putchar(*p++);
-        printf("\n");
+    if (*p == '\0') {
+        /* Bare ? — just print newline */
+        if (newline) printf("\n");
         return;
     }
 
-    /* Check if it's a number */
-    if ((*p >= '0' && *p <= '9') || *p == '-' || *p == '+') {
-        while (*p && *p != ' ' && *p != '\t')
-            putchar(*p++);
-        printf("\n");
-        return;
+    /* Evaluate comma-separated expressions */
+    while (*p) {
+        value_t val;
+        char buf[256];
+
+        p = skip_ws(p);
+        if (*p == '\0') break;
+
+        if (expr_eval(&expr_ctx, &p, &val) != 0) {
+            if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+            return;
+        }
+
+        val_to_string(&val, buf, sizeof(buf));
+        if (!first) printf(" ");
+        printf("%s", buf);
+        first = 0;
+
+        p = skip_ws(p);
+        if (*p == ',') {
+            p++;
+        }
     }
 
-    /* Try field name */
-    if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
-        return;
-    }
-    if (db->current_record == 0) {
-        printf("No current record.\n");
-        return;
-    }
-
-    {
-        int i = 0;
-        while (*p && *p != ' ' && *p != '\t' && i < DBF_MAX_FIELD_NAME - 1)
-            name_buf[i++] = *p++;
-        name_buf[i] = '\0';
-    }
-
-    idx = dbf_find_field(db, name_buf);
-    if (idx < 0) {
-        printf("Variable not found: %s\n", name_buf);
-        return;
-    }
-
-    dbf_get_field_raw(db, idx, raw, sizeof(raw));
-    switch (db->fields[idx].type) {
-    case 'C':
-        field_display_char(display, raw, db->fields[idx].length);
-        trim_right(display);
-        break;
-    case 'N':
-        field_display_numeric(display, raw, db->fields[idx].length);
-        break;
-    case 'D':
-        field_display_date(display, raw);
-        break;
-    case 'L':
-        field_display_logical(display, raw);
-        break;
-    default:
-        field_display_char(display, raw, db->fields[idx].length);
-        break;
-    }
-    printf("%s\n", display);
+    if (newline) printf("\n");
 }
 
 /* ---- Dispatch ---- */
 int cmd_execute(dbf_t *db, char *line) {
     char *p;
+
+    ctx_setup(db);
 
     p = skip_ws(line);
     if (*p == '\0') return 0;
@@ -473,7 +966,7 @@ int cmd_execute(dbf_t *db, char *line) {
         return 0;
     }
 
-    /* APPEND BLANK must be checked before a standalone APPEND */
+    /* APPEND BLANK */
     if (str_imatch(p, "APPEND")) {
         char *rest = skip_ws(p + 6);
         if (str_imatch(rest, "BLANK")) {
@@ -489,24 +982,70 @@ int cmd_execute(dbf_t *db, char *line) {
         return 0;
     }
 
+    /* GO / GOTO */
+    if (str_imatch(p, "GOTO")) {
+        cmd_go(db, p + 4);
+        return 0;
+    }
+    if (str_imatch(p, "GO")) {
+        cmd_go(db, p + 2);
+        return 0;
+    }
+
+    if (str_imatch(p, "SKIP")) {
+        cmd_skip(db, p + 4);
+        return 0;
+    }
+
+    if (str_imatch(p, "LOCATE")) {
+        cmd_locate(db, p + 6);
+        return 0;
+    }
+
+    if (str_imatch(p, "CONTINUE")) {
+        cmd_continue(db);
+        return 0;
+    }
+
+    if (str_imatch(p, "COUNT")) {
+        cmd_count(db, p + 5);
+        return 0;
+    }
+
+    if (str_imatch(p, "SUM")) {
+        cmd_sum(db, p + 3);
+        return 0;
+    }
+
+    if (str_imatch(p, "AVERAGE")) {
+        cmd_average(db, p + 7);
+        return 0;
+    }
+
     /* DISPLAY STRUCTURE must be checked before plain DISPLAY */
     if (str_imatch(p, "DISPLAY")) {
         char *rest = skip_ws(p + 7);
         if (str_imatch(rest, "STRUCTURE")) {
             cmd_display_structure(db);
         } else {
-            cmd_display(db);
+            cmd_display(db, rest);
         }
         return 0;
     }
 
     if (str_imatch(p, "LIST")) {
-        cmd_list(db);
+        cmd_list(db, p + 4);
         return 0;
     }
 
-    if (*p == '?') {
-        cmd_print_expr(db, p + 1);
+    /* ?? (no newline) must be checked before ? */
+    if (p[0] == '?' && p[1] == '?') {
+        cmd_print_expr(db, p + 2, 0);
+        return 0;
+    }
+
+    if (p[0] == '?') {
+        cmd_print_expr(db, p + 1, 1);
         return 0;
     }
 

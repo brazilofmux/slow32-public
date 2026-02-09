@@ -10,7 +10,7 @@ int main(void) {
     char line[256];
 
     printf("dBASE III Clone for SLOW-32\n");
-    printf("Stage 1: DBF Engine + Minimal REPL\n\n");
+    printf("Stage 2: Navigation & Expressions\n\n");
 
     dbf_init(&current_db);
 
