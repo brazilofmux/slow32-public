@@ -10,6 +10,10 @@
 
 #define S32_MMIO_MAX_FDS 128
 
+// Service negotiation limits
+#define S32_MAX_SERVICES     16
+#define S32_MAX_SVC_NAME     32
+
 // File descriptor type tracking
 typedef enum {
     S32_FD_TYPE_FILE = 0,
@@ -27,11 +31,35 @@ typedef struct {
 // Operation codes for I/O (prefixed to avoid conflicts)
 typedef enum s32_mmio_opcode io_opcode_t;
 
-// Forward declaration
+// Forward declarations
 struct cpu_state;
+typedef struct mmio_ring_state mmio_ring_state_t;
+
+// Service session (one per granted service)
+typedef struct {
+    bool active;
+    char name[S32_MAX_SVC_NAME];
+    uint32_t base_opcode;
+    uint32_t opcode_count;
+    uint32_t version;
+    void *state;
+    void (*cleanup)(void *state);
+    void (*handle)(void *state, mmio_ring_state_t *mmio,
+                   uint32_t sub_opcode, io_descriptor_t *req,
+                   io_descriptor_t *resp);
+} svc_session_t;
+
+// Policy engine
+typedef struct {
+    bool default_allow;
+    char allow_list[S32_MAX_SERVICES][S32_MAX_SVC_NAME];
+    int allow_count;
+    char deny_list[S32_MAX_SERVICES][S32_MAX_SVC_NAME];
+    int deny_count;
+} svc_policy_t;
 
 // MMIO ring buffer state
-typedef struct {
+struct mmio_ring_state {
     // Ring indices
     uint32_t req_head;      // Request producer (CPU writes)
     uint32_t req_tail;      // Request consumer (device reads)
@@ -40,7 +68,7 @@ typedef struct {
 
     // Base address of the MMIO window in guest memory
     uint32_t base_addr;
-    
+
     // Guest memory range for Direct I/O (optional)
     void *guest_mem_base;
     uint32_t guest_mem_size;
@@ -49,11 +77,11 @@ typedef struct {
     io_descriptor_t *req_ring;
     io_descriptor_t *resp_ring;
     uint8_t *data_buffer;
-    
+
     // Heap management
     uint32_t brk_current;
     uint32_t brk_max;
-    
+
     // Statistics
     uint64_t total_requests;
     uint64_t total_responses;
@@ -72,7 +100,13 @@ typedef struct {
     bool host_fd_owned[S32_MMIO_MAX_FDS];
     s32_fd_type_t fd_types[S32_MMIO_MAX_FDS];
     DIR *host_dirs[S32_MMIO_MAX_FDS];
-} mmio_ring_state_t;
+
+    // Service negotiation
+    svc_session_t services[S32_MAX_SERVICES];
+    int num_services;
+    svc_policy_t policy;
+    uint32_t next_dynamic_opcode;  // Next available opcode for service allocation
+};
 
 // Common MMIO configuration shared by both emulators
 typedef struct {
@@ -132,5 +166,10 @@ int mmio_ring_set_envp(mmio_ring_state_t *mmio,
                        char *const *envp);
 
 void mmio_ring_clear_envp(mmio_ring_state_t *mmio);
+
+// Service negotiation / policy
+void mmio_set_policy(mmio_ring_state_t *mmio, const svc_policy_t *policy);
+void mmio_cleanup_services(mmio_ring_state_t *mmio);
+bool mmio_policy_allows(mmio_ring_state_t *mmio, const char *service_name);
 
 #endif // MMIO_RING_H

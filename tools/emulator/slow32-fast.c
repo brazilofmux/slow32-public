@@ -1216,12 +1216,45 @@ static inline void cpu_step_fast(fast_cpu_state_t *cpu) {
     cpu->inst_count++;
 }
 
+static void parse_service_list(const char *list, char names[][S32_MAX_SVC_NAME], int *count, int max) {
+    char buf[256];
+    strncpy(buf, list, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+    char *saveptr = NULL;
+    char *tok = strtok_r(buf, ",", &saveptr);
+    while (tok && *count < max) {
+        strncpy(names[*count], tok, S32_MAX_SVC_NAME - 1);
+        names[*count][S32_MAX_SVC_NAME - 1] = '\0';
+        (*count)++;
+        tok = strtok_r(NULL, ",", &saveptr);
+    }
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <binary> [-- <args...>]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [options] <binary> [-- <args...>]\n", argv[0]);
+        fprintf(stderr, "Options:\n");
+        fprintf(stderr, "  --allow <list>  Only allow these services (comma-separated)\n");
+        fprintf(stderr, "  --deny <list>   Deny these services (comma-separated)\n");
         return 1;
     }
-    
+
+    // Pre-scan for --allow/--deny
+    svc_policy_t policy = { .default_allow = true };
+    for (int i = 1; i < argc - 1; i++) {
+        if (strcmp(argv[i], "--allow") == 0) {
+            parse_service_list(argv[i + 1], policy.allow_list, &policy.allow_count, S32_MAX_SERVICES);
+            memmove(&argv[i], &argv[i + 2], (argc - i - 2) * sizeof(char *));
+            argc -= 2;
+            i--;
+        } else if (strcmp(argv[i], "--deny") == 0) {
+            parse_service_list(argv[i + 1], policy.deny_list, &policy.deny_count, S32_MAX_SERVICES);
+            memmove(&argv[i], &argv[i + 2], (argc - i - 2) * sizeof(char *));
+            argc -= 2;
+            i--;
+        }
+    }
+
     fast_cpu_state_t cpu = {0};
     mm_init(&cpu.mm, false);  // Initialize memory manager
 
@@ -1296,6 +1329,11 @@ int main(int argc, char **argv) {
         cpu_init_mmio(&cpu);
     }
 
+    // Apply service policy
+    if (cpu.mmio.enabled && cpu.mmio.state && (policy.allow_count > 0 || policy.deny_count > 0)) {
+        mmio_set_policy(cpu.mmio.state, &policy);
+    }
+
     if (cpu.mmio.enabled && cpu.mmio.state) {
         if (mmio_ring_set_args(cpu.mmio.state, (uint32_t)guest_argc, guest_argv) != 0) {
             fprintf(stderr, "Error: unable to stage guest arguments (too many bytes?)\n");
@@ -1361,6 +1399,9 @@ int main(int argc, char **argv) {
     }
     
     // Cleanup
+    if (cpu.mmio.state) {
+        mmio_cleanup_services(cpu.mmio.state);
+    }
     if (cpu.mmio.mem) {
         munmap(cpu.mmio.mem, S32_MMIO_WINDOW_SIZE);
     }

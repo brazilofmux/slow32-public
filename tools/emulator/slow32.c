@@ -175,6 +175,10 @@ void cpu_init(cpu_state_t *cpu) {
 }
 
 void cpu_destroy(cpu_state_t *cpu) {
+    // Clean up services
+    if (cpu->mmio.state) {
+        mmio_cleanup_services(cpu->mmio.state);
+    }
     // Clean up MMIO if initialized
     if (cpu->mmio.mem) {
         munmap(cpu->mmio.mem, 0x10000);
@@ -266,6 +270,13 @@ bool cpu_load_binary(cpu_state_t *cpu, const char *filename) {
     }
 
     return true;
+}
+
+// Apply service policy - called from main after load
+static void cpu_set_policy(cpu_state_t *cpu, const svc_policy_t *policy) {
+    if (cpu->mmio.state) {
+        mmio_set_policy(cpu->mmio.state, policy);
+    }
 }
 
 // Memory access functions using memory manager
@@ -1008,6 +1019,20 @@ void cpu_run(cpu_state_t *cpu) {
     }
 }
 
+static void parse_service_list(const char *list, char names[][S32_MAX_SVC_NAME], int *count, int max) {
+    char buf[256];
+    strncpy(buf, list, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+    char *saveptr = NULL;
+    char *tok = strtok_r(buf, ",", &saveptr);
+    while (tok && *count < max) {
+        strncpy(names[*count], tok, S32_MAX_SVC_NAME - 1);
+        names[*count][S32_MAX_SVC_NAME - 1] = '\0';
+        (*count)++;
+        tok = strtok_r(NULL, ",", &saveptr);
+    }
+}
+
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         fprintf(stderr, "Usage: %s [options] <program.s32x> [-- <args...>]\n", argv[0]);
@@ -1018,12 +1043,31 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "  -c <cycles>     Limit execution cycles\n");
         fprintf(stderr, "  -b <addr>       Set breakpoint\n");
         fprintf(stderr, "  -w <start-end>  Watch memory range\n");
+        fprintf(stderr, "  --allow <list>  Only allow these services (comma-separated)\n");
+        fprintf(stderr, "  --deny <list>   Deny these services (comma-separated)\n");
         return 1;
     }
-    
+
+    // Pre-scan for --allow/--deny (before getopt)
+    svc_policy_t policy = { .default_allow = true };
+    for (int i = 1; i < argc - 1; i++) {
+        if (strcmp(argv[i], "--allow") == 0) {
+            parse_service_list(argv[i + 1], policy.allow_list, &policy.allow_count, S32_MAX_SERVICES);
+            // Remove from argv
+            memmove(&argv[i], &argv[i + 2], (argc - i - 2) * sizeof(char *));
+            argc -= 2;
+            i--;
+        } else if (strcmp(argv[i], "--deny") == 0) {
+            parse_service_list(argv[i + 1], policy.deny_list, &policy.deny_count, S32_MAX_SERVICES);
+            memmove(&argv[i], &argv[i + 2], (argc - i - 2) * sizeof(char *));
+            argc -= 2;
+            i--;
+        }
+    }
+
     cpu_state_t cpu;
     cpu_init(&cpu);
-    
+
     // Parse command line options
     int opt;
     while ((opt = getopt(argc, argv, "strc:b:w:")) != -1) {
@@ -1074,6 +1118,11 @@ int main(int argc, char *argv[]) {
     if (!cpu_load_binary(&cpu, argv[optind])) {
         cpu_destroy(&cpu);
         return 1;
+    }
+
+    // Apply service policy
+    if (policy.allow_count > 0 || policy.deny_count > 0) {
+        cpu_set_policy(&cpu, &policy);
     }
 
     int guest_argc = argc - optind;

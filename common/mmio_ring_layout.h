@@ -96,6 +96,13 @@ enum s32_mmio_opcode {
     S32_MMIO_OP_ENVP_INFO   = 0x62,  // Query envc/total-bytes for guest environ[]
     S32_MMIO_OP_ENVP_DATA   = 0x63,  // Copy flattened envp blob from host
     S32_MMIO_OP_GETENV      = 0x64,  // Lookup single env var by name (returns value)
+
+    // 0xF0 - 0xFF : Service negotiation protocol
+    S32_MMIO_OP_SVC_REQUEST  = 0xF0,  // Request a named service (allocates opcode range)
+    S32_MMIO_OP_SVC_RELEASE  = 0xF1,  // Release a previously granted service
+    S32_MMIO_OP_SVC_QUERY    = 0xF2,  // Query if a service is available (without requesting)
+    S32_MMIO_OP_SVC_LIST     = 0xF3,  // List all available services
+    S32_MMIO_OP_SVC_VERSION  = 0xF4,  // Query protocol version
 };
 
 #pragma pack(push, 1)
@@ -159,6 +166,31 @@ typedef struct s32_mmio_envp_info {
 #pragma pack(pop)
 
 #define S32_MMIO_ENVP_MAX_BYTES (128u * 1024u)  // Safety cap for envp blob transfers
+
+// Service negotiation response codes (written to data buffer by host)
+#define S32_SVC_OK          0x00  // Service granted
+#define S32_SVC_DENIED      0x01  // Service denied by policy
+#define S32_SVC_UNKNOWN     0x02  // Service name not recognized
+#define S32_SVC_CONFLICT    0x03  // Opcode range conflict
+#define S32_SVC_LIMIT       0x04  // Too many active services
+#define S32_SVC_VERSION_ERR 0x05  // Protocol version mismatch
+
+// Service negotiation protocol version
+#define S32_SVC_PROTOCOL_VERSION 1
+
+// Maximum service name length (including NUL)
+#define S32_SVC_MAX_NAME_LEN 32
+
+// Term service opcode offsets (relative to negotiated base)
+#define S32_TERM_SET_MODE     0   // Set raw/cooked mode
+#define S32_TERM_GET_SIZE     1   // Get terminal rows/cols
+#define S32_TERM_MOVE_CURSOR  2   // Move cursor to row,col
+#define S32_TERM_CLEAR        3   // Clear screen/line/to-end
+#define S32_TERM_SET_ATTR     4   // Set text attribute (normal/bold/reverse)
+#define S32_TERM_READ_KEY     5   // Blocking key read
+#define S32_TERM_KEY_AVAIL    6   // Non-blocking key poll
+#define S32_TERM_SET_COLOR    7   // Set fg/bg color
+#define S32_TERM_OPCODE_COUNT 8   // Total opcodes for term service
 
 // Access mode constants for S32_MMIO_OP_ACCESS
 #define S32_MMIO_F_OK 0  // File exists

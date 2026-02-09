@@ -10,6 +10,9 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/ioctl.h>
+#include <termios.h>
+#include <poll.h>
 #include <time.h>
 
 #if defined(__APPLE__)
@@ -121,6 +124,236 @@ static inline void maybe_init_trace_flag(void) {
     }
 }
 
+// ========== Service negotiation infrastructure ==========
+
+void mmio_set_policy(mmio_ring_state_t *mmio, const svc_policy_t *policy) {
+    memcpy(&mmio->policy, policy, sizeof(svc_policy_t));
+}
+
+bool mmio_policy_allows(mmio_ring_state_t *mmio, const char *name) {
+    // Check deny list first
+    for (int i = 0; i < mmio->policy.deny_count; i++) {
+        if (strcmp(mmio->policy.deny_list[i], name) == 0) return false;
+    }
+    // If there's an explicit allow list, only allow listed services
+    if (mmio->policy.allow_count > 0) {
+        for (int i = 0; i < mmio->policy.allow_count; i++) {
+            if (strcmp(mmio->policy.allow_list[i], name) == 0) return true;
+        }
+        return false;
+    }
+    return mmio->policy.default_allow;
+}
+
+void mmio_cleanup_services(mmio_ring_state_t *mmio) {
+    for (int i = 0; i < mmio->num_services; i++) {
+        svc_session_t *svc = &mmio->services[i];
+        if (svc->active && svc->cleanup && svc->state) {
+            svc->cleanup(svc->state);
+        }
+        svc->active = false;
+        svc->state = NULL;
+    }
+    mmio->num_services = 0;
+}
+
+// ========== Term service implementation ==========
+
+typedef struct {
+    struct termios saved_termios;
+    bool raw_mode;
+    bool termios_saved;
+} term_state_t;
+
+static void *term_create(void) {
+    term_state_t *ts = calloc(1, sizeof(term_state_t));
+    if (!ts) return NULL;
+    if (isatty(STDIN_FILENO) && tcgetattr(STDIN_FILENO, &ts->saved_termios) == 0) {
+        ts->termios_saved = true;
+    }
+    return ts;
+}
+
+static void term_cleanup(void *state) {
+    term_state_t *ts = (term_state_t *)state;
+    if (!ts) return;
+    if (ts->raw_mode && ts->termios_saved) {
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &ts->saved_termios);
+    }
+    free(ts);
+}
+
+static void term_handle(void *state, mmio_ring_state_t *mmio,
+                         uint32_t sub_opcode, io_descriptor_t *req,
+                         io_descriptor_t *resp) {
+    term_state_t *ts = (term_state_t *)state;
+    uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+
+    switch (sub_opcode) {
+        case S32_TERM_SET_MODE: {
+            // status field: 1 = raw, 0 = cooked
+            if (!isatty(STDIN_FILENO)) {
+                resp->status = S32_MMIO_STATUS_ERR;
+                break;
+            }
+            if (req->status) {
+                // Enter raw mode
+                struct termios raw;
+                if (ts->termios_saved) {
+                    raw = ts->saved_termios;
+                } else {
+                    tcgetattr(STDIN_FILENO, &raw);
+                }
+                raw.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
+                raw.c_iflag &= ~(IXON | ICRNL | BRKINT | INPCK | ISTRIP);
+                raw.c_oflag &= ~(OPOST);
+                raw.c_cc[VMIN] = 1;
+                raw.c_cc[VTIME] = 0;
+                tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+                ts->raw_mode = true;
+            } else {
+                // Restore cooked mode
+                if (ts->termios_saved) {
+                    tcsetattr(STDIN_FILENO, TCSAFLUSH, &ts->saved_termios);
+                }
+                ts->raw_mode = false;
+            }
+            resp->status = S32_MMIO_STATUS_OK;
+            break;
+        }
+        case S32_TERM_GET_SIZE: {
+            struct winsize ws;
+            if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) {
+                // Default fallback
+                ws.ws_row = 24;
+                ws.ws_col = 80;
+            }
+            // Write rows and cols to data buffer as two uint32_t
+            if (offset + 8 > S32_MMIO_DATA_CAPACITY) {
+                resp->status = S32_MMIO_STATUS_ERR;
+                break;
+            }
+            uint32_t rows = ws.ws_row;
+            uint32_t cols = ws.ws_col;
+            memcpy(mmio->data_buffer + offset, &rows, 4);
+            memcpy(mmio->data_buffer + offset + 4, &cols, 4);
+            resp->length = 8;
+            resp->status = S32_MMIO_STATUS_OK;
+            break;
+        }
+        case S32_TERM_MOVE_CURSOR: {
+            // status = (row << 16) | col  (1-based)
+            uint32_t row = (req->status >> 16) & 0xFFFF;
+            uint32_t col = req->status & 0xFFFF;
+            fprintf(stdout, "\033[%u;%uH", row, col);
+            fflush(stdout);
+            resp->status = S32_MMIO_STATUS_OK;
+            break;
+        }
+        case S32_TERM_CLEAR: {
+            // status: 0 = full screen, 1 = to end of line, 2 = to end of screen
+            switch (req->status) {
+                case 0: fprintf(stdout, "\033[2J\033[H"); break;
+                case 1: fprintf(stdout, "\033[K"); break;
+                case 2: fprintf(stdout, "\033[J"); break;
+                default: fprintf(stdout, "\033[2J\033[H"); break;
+            }
+            fflush(stdout);
+            resp->status = S32_MMIO_STATUS_OK;
+            break;
+        }
+        case S32_TERM_SET_ATTR: {
+            // status: 0 = normal, 1 = bold, 7 = reverse
+            fprintf(stdout, "\033[%um", req->status);
+            fflush(stdout);
+            resp->status = S32_MMIO_STATUS_OK;
+            break;
+        }
+        case S32_TERM_READ_KEY: {
+            // Blocking read of one byte
+            unsigned char ch;
+            ssize_t n = read(STDIN_FILENO, &ch, 1);
+            if (n == 1) {
+                mmio->data_buffer[offset] = ch;
+                resp->length = 1;
+                resp->status = (uint32_t)ch;
+            } else {
+                resp->status = S32_MMIO_STATUS_EOF;
+                resp->length = 0;
+            }
+            break;
+        }
+        case S32_TERM_KEY_AVAIL: {
+            // Non-blocking poll: returns 1 if key available, 0 if not
+            struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN };
+            int ret = poll(&pfd, 1, 0);
+            resp->status = (ret > 0 && (pfd.revents & POLLIN)) ? 1 : 0;
+            break;
+        }
+        case S32_TERM_SET_COLOR: {
+            // status = (fg << 8) | bg  (ANSI color 0-7)
+            uint32_t fg = (req->status >> 8) & 0xFF;
+            uint32_t bg = req->status & 0xFF;
+            fprintf(stdout, "\033[3%u;4%um", fg, bg);
+            fflush(stdout);
+            resp->status = S32_MMIO_STATUS_OK;
+            break;
+        }
+        default:
+            resp->status = S32_MMIO_STATUS_ERR;
+            break;
+    }
+}
+
+// ========== Built-in service table ==========
+
+typedef struct {
+    const char *name;
+    uint32_t opcode_count;
+    uint32_t version;
+    void *(*create)(void);
+    void (*cleanup)(void *state);
+    void (*handle)(void *state, mmio_ring_state_t *mmio,
+                   uint32_t sub_opcode, io_descriptor_t *req,
+                   io_descriptor_t *resp);
+} builtin_service_t;
+
+static const builtin_service_t builtin_services[] = {
+    {
+        .name = "term",
+        .opcode_count = S32_TERM_OPCODE_COUNT,
+        .version = 1,
+        .create = term_create,
+        .cleanup = term_cleanup,
+        .handle = term_handle,
+    },
+};
+
+#define NUM_BUILTIN_SERVICES (sizeof(builtin_services) / sizeof(builtin_services[0]))
+
+static const builtin_service_t *find_builtin_service(const char *name) {
+    for (size_t i = 0; i < NUM_BUILTIN_SERVICES; i++) {
+        if (strcmp(builtin_services[i].name, name) == 0) {
+            return &builtin_services[i];
+        }
+    }
+    return NULL;
+}
+
+// Map legacy opcodes to service names for policy enforcement
+static const char *legacy_opcode_service(uint32_t opcode) {
+    if (opcode >= 0x03 && opcode <= 0x07) return "fs";  // WRITE..SEEK
+    if (opcode == 0x0A) return "fs";   // STAT
+    if (opcode == 0x0B) return "fs";   // FLUSH (file flush)
+    if (opcode == 0x0C) return "fs";   // READ_DIRECT
+    if (opcode >= 0x20 && opcode <= 0x2A) return "fs";  // FS metadata
+    if (opcode >= 0x30 && opcode <= 0x3F) return "time";
+    if (opcode >= 0x40 && opcode <= 0x4F) return "net";
+    if (opcode >= 0x60 && opcode <= 0x6F) return "env";
+    // 0x01 (PUTCHAR), 0x02 (GETCHAR), 0x08 (BRK), 0x09 (EXIT) always allowed
+    return NULL;
+}
+
 // Initialize MMIO ring buffers
 void mmio_ring_init(mmio_ring_state_t *mmio, uint32_t heap_base, uint32_t heap_size) {
     maybe_init_trace_flag();
@@ -147,6 +380,14 @@ void mmio_ring_init(mmio_ring_state_t *mmio, uint32_t heap_base, uint32_t heap_s
     mmio->envp_blob = NULL;
     mmio->envp_envc = 0;
     mmio->envp_total_bytes = 0;
+
+    // Service negotiation defaults
+    mmio->num_services = 0;
+    mmio->next_dynamic_opcode = 0x80;  // Start dynamic services at 0x80
+    memset(mmio->services, 0, sizeof(mmio->services));
+    mmio->policy.default_allow = true;
+    mmio->policy.allow_count = 0;
+    mmio->policy.deny_count = 0;
 
     reset_fd_table(mmio);
 }
@@ -396,7 +637,14 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
     io_descriptor_t resp = {0};
     resp.opcode = req->opcode;
     resp.offset = req->offset;
-    
+
+    // Policy gate: check legacy opcode against policy
+    const char *legacy_svc = legacy_opcode_service(req->opcode);
+    if (legacy_svc && !mmio_policy_allows(mmio, legacy_svc)) {
+        resp.status = S32_MMIO_STATUS_ERR;
+        goto write_response;
+    }
+
     switch (req->opcode) {
         case S32_MMIO_OP_NOP:
             resp.status = 0;
@@ -1546,11 +1794,212 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             break;
         }
 
-        default:
-            resp.status = S32_MMIO_STATUS_ERR;  // Not implemented
+        // ========== Service negotiation opcodes (0xF0-0xF4) ==========
+
+        case S32_MMIO_OP_SVC_REQUEST: {
+            // Request: service name in data buffer, length = name len (incl NUL)
+            // Response: status in data buffer [0]=result, [4]=base_opcode, [8]=count, [12]=version
+            if (req->length == 0 || req->length > S32_SVC_MAX_NAME_LEN) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                break;
+            }
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (offset + req->length > S32_MMIO_DATA_CAPACITY) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                break;
+            }
+            char svc_name[S32_SVC_MAX_NAME_LEN];
+            memcpy(svc_name, mmio->data_buffer + offset, req->length);
+            svc_name[req->length - 1] = '\0';
+
+            // Policy check
+            if (!mmio_policy_allows(mmio, svc_name)) {
+                uint32_t svc_result = S32_SVC_DENIED;
+                memcpy(mmio->data_buffer + offset, &svc_result, 4);
+                resp.length = 4;
+                resp.status = S32_MMIO_STATUS_OK;
+                break;
+            }
+
+            // Check if already active
+            for (int i = 0; i < mmio->num_services; i++) {
+                if (mmio->services[i].active && strcmp(mmio->services[i].name, svc_name) == 0) {
+                    uint32_t svc_result = S32_SVC_CONFLICT;
+                    memcpy(mmio->data_buffer + offset, &svc_result, 4);
+                    resp.length = 4;
+                    resp.status = S32_MMIO_STATUS_OK;
+                    break;
+                }
+            }
+
+            // Find builtin service
+            const builtin_service_t *builtin = find_builtin_service(svc_name);
+            if (!builtin) {
+                uint32_t svc_result = S32_SVC_UNKNOWN;
+                memcpy(mmio->data_buffer + offset, &svc_result, 4);
+                resp.length = 4;
+                resp.status = S32_MMIO_STATUS_OK;
+                break;
+            }
+
+            // Check session limit
+            if (mmio->num_services >= S32_MAX_SERVICES) {
+                uint32_t svc_result = S32_SVC_LIMIT;
+                memcpy(mmio->data_buffer + offset, &svc_result, 4);
+                resp.length = 4;
+                resp.status = S32_MMIO_STATUS_OK;
+                break;
+            }
+
+            // Allocate opcode range
+            uint32_t base = mmio->next_dynamic_opcode;
+            if (base + builtin->opcode_count > 0xF0) {
+                uint32_t svc_result = S32_SVC_LIMIT;
+                memcpy(mmio->data_buffer + offset, &svc_result, 4);
+                resp.length = 4;
+                resp.status = S32_MMIO_STATUS_OK;
+                break;
+            }
+
+            // Create service state
+            void *svc_state = builtin->create ? builtin->create() : NULL;
+
+            // Register session
+            svc_session_t *session = &mmio->services[mmio->num_services++];
+            session->active = true;
+            strncpy(session->name, svc_name, S32_MAX_SVC_NAME - 1);
+            session->name[S32_MAX_SVC_NAME - 1] = '\0';
+            session->base_opcode = base;
+            session->opcode_count = builtin->opcode_count;
+            session->version = builtin->version;
+            session->state = svc_state;
+            session->cleanup = builtin->cleanup;
+            session->handle = builtin->handle;
+
+            mmio->next_dynamic_opcode = base + builtin->opcode_count;
+
+            // Write response: [0]=OK, [4]=base, [8]=count, [12]=version
+            uint32_t reply[4];
+            reply[0] = S32_SVC_OK;
+            reply[1] = base;
+            reply[2] = builtin->opcode_count;
+            reply[3] = builtin->version;
+            if (offset + 16 <= S32_MMIO_DATA_CAPACITY) {
+                memcpy(mmio->data_buffer + offset, reply, 16);
+                resp.length = 16;
+            }
+            resp.status = S32_MMIO_STATUS_OK;
             break;
+        }
+
+        case S32_MMIO_OP_SVC_RELEASE: {
+            // Request: service name in data buffer
+            if (req->length == 0 || req->length > S32_SVC_MAX_NAME_LEN) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                break;
+            }
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (offset + req->length > S32_MMIO_DATA_CAPACITY) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                break;
+            }
+            char svc_name[S32_SVC_MAX_NAME_LEN];
+            memcpy(svc_name, mmio->data_buffer + offset, req->length);
+            svc_name[req->length - 1] = '\0';
+
+            bool found = false;
+            for (int i = 0; i < mmio->num_services; i++) {
+                svc_session_t *svc = &mmio->services[i];
+                if (svc->active && strcmp(svc->name, svc_name) == 0) {
+                    if (svc->cleanup && svc->state) {
+                        svc->cleanup(svc->state);
+                    }
+                    svc->active = false;
+                    svc->state = NULL;
+                    found = true;
+                    break;
+                }
+            }
+            resp.status = found ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+            break;
+        }
+
+        case S32_MMIO_OP_SVC_QUERY: {
+            // Request: service name in data buffer
+            // Response: [0]=result code (OK if available, DENIED if policy blocks, UNKNOWN)
+            if (req->length == 0 || req->length > S32_SVC_MAX_NAME_LEN) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                break;
+            }
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (offset + req->length > S32_MMIO_DATA_CAPACITY) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                break;
+            }
+            char svc_name[S32_SVC_MAX_NAME_LEN];
+            memcpy(svc_name, mmio->data_buffer + offset, req->length);
+            svc_name[req->length - 1] = '\0';
+
+            uint32_t svc_result;
+            const builtin_service_t *builtin = find_builtin_service(svc_name);
+            if (!builtin) {
+                svc_result = S32_SVC_UNKNOWN;
+            } else if (!mmio_policy_allows(mmio, svc_name)) {
+                svc_result = S32_SVC_DENIED;
+            } else {
+                svc_result = S32_SVC_OK;
+            }
+            if (offset + 4 <= S32_MMIO_DATA_CAPACITY) {
+                memcpy(mmio->data_buffer + offset, &svc_result, 4);
+                resp.length = 4;
+            }
+            resp.status = S32_MMIO_STATUS_OK;
+            break;
+        }
+
+        case S32_MMIO_OP_SVC_LIST: {
+            // Response: NUL-separated list of available service names
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            uint32_t pos = 0;
+            for (size_t i = 0; i < NUM_BUILTIN_SERVICES; i++) {
+                size_t len = strlen(builtin_services[i].name) + 1;
+                if (offset + pos + len > S32_MMIO_DATA_CAPACITY) break;
+                memcpy(mmio->data_buffer + offset + pos, builtin_services[i].name, len);
+                pos += len;
+            }
+            resp.length = pos;
+            resp.status = S32_MMIO_STATUS_OK;
+            break;
+        }
+
+        case S32_MMIO_OP_SVC_VERSION: {
+            // Response: protocol version in status field
+            resp.status = S32_SVC_PROTOCOL_VERSION;
+            break;
+        }
+
+        default: {
+            // Check if opcode falls in a registered service range
+            bool handled = false;
+            for (int i = 0; i < mmio->num_services; i++) {
+                svc_session_t *svc = &mmio->services[i];
+                if (svc->active &&
+                    req->opcode >= svc->base_opcode &&
+                    req->opcode < svc->base_opcode + svc->opcode_count) {
+                    uint32_t sub = req->opcode - svc->base_opcode;
+                    svc->handle(svc->state, mmio, sub, req, &resp);
+                    handled = true;
+                    break;
+                }
+            }
+            if (!handled) {
+                resp.status = S32_MMIO_STATUS_ERR;
+            }
+            break;
+        }
     }
-    
+
+write_response:
     // Write response
     if (!ring_full(mmio->resp_head, mmio->resp_tail)) {
         if (trace_io_enabled) {
