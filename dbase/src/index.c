@@ -4,6 +4,9 @@
 #include "index.h"
 #include "util.h"
 
+static void page_free(ndx_page_t *p);
+static int page_flush(index_t *idx, int page_no);
+
 /* ---- Key comparison ---- */
 static int key_cmp(const char *a, const char *b, int key_len) {
     return memcmp(a, b, key_len);
@@ -11,6 +14,50 @@ static int key_cmp(const char *a, const char *b, int key_len) {
 
 static char *page_key(index_t *idx, ndx_page_t *page, int i) {
     return page->keys + i * idx->key_len;
+}
+
+/* ---- LRU cache helpers ---- */
+static void cache_remove(index_t *idx, ndx_page_t *p) {
+    if (!p) return;
+    if (p->lru_prev) p->lru_prev->lru_next = p->lru_next;
+    if (p->lru_next) p->lru_next->lru_prev = p->lru_prev;
+    if (idx->lru_head == p) idx->lru_head = p->lru_next;
+    if (idx->lru_tail == p) idx->lru_tail = p->lru_prev;
+    p->lru_prev = NULL;
+    p->lru_next = NULL;
+    if (idx->cache_size > 0) idx->cache_size--;
+}
+
+static void cache_add(index_t *idx, ndx_page_t *p) {
+    if (!p) return;
+    p->lru_prev = NULL;
+    p->lru_next = idx->lru_head;
+    if (idx->lru_head) idx->lru_head->lru_prev = p;
+    idx->lru_head = p;
+    if (!idx->lru_tail) idx->lru_tail = p;
+    idx->cache_size++;
+}
+
+static void cache_touch(index_t *idx, ndx_page_t *p) {
+    if (!p || idx->lru_head == p) return;
+    cache_remove(idx, p);
+    cache_add(idx, p);
+}
+
+static void cache_evict(index_t *idx) {
+    ndx_page_t *p;
+    if (!idx->fp) return; /* don't evict if we can't flush */
+    while (idx->cache_size > idx->cache_capacity && idx->lru_tail) {
+        p = idx->lru_tail;
+        while (p && p->pin_count > 0)
+            p = p->lru_prev;
+        if (!p) return; /* all pages pinned */
+        if (p->dirty) page_flush(idx, p->page_no);
+        cache_remove(idx, p);
+        if (p->page_no >= 0 && p->page_no < idx->num_pages)
+            idx->pages[p->page_no] = NULL;
+        page_free(p);
+    }
 }
 
 /* ---- Page allocation ---- */
@@ -40,6 +87,9 @@ static ndx_page_t *page_new(index_t *idx, int type) {
     p->dirty = 1;
     p->next_leaf = 0;
     p->prev_leaf = 0;
+    p->pin_count = 1;
+    p->lru_prev = NULL;
+    p->lru_next = NULL;
 
     if (type == PAGE_LEAF) {
         max_keys = idx->max_keys_leaf;
@@ -56,6 +106,8 @@ static ndx_page_t *page_new(index_t *idx, int type) {
     }
 
     idx->pages[pg_no] = p;
+    cache_add(idx, p);
+    cache_evict(idx);
     return p;
 }
 
@@ -74,8 +126,8 @@ static int page_flush(index_t *idx, int page_no) {
     int i, off;
 
     if (!idx->fp) return -1;
-    p = idx->pages[page_no];
-    if (!p) return -1;
+    p = (page_no >= 0 && page_no < idx->num_pages) ? idx->pages[page_no] : NULL;
+    if (page_no != 0 && !p) return -1;
 
     memset(buf, 0, NDX_PAGE_SIZE);
 
@@ -132,12 +184,12 @@ static int page_flush(index_t *idx, int page_no) {
     return 0;
 }
 
-static int page_read(index_t *idx, int page_no, unsigned char *buf) {
+static ndx_page_t *page_read(index_t *idx, int page_no, unsigned char *buf) {
     ndx_page_t *p;
     uint16_t t16;
     int i, off;
 
-    if (page_no == 0) return 0; /* header page handled separately */
+    if (page_no == 0) return NULL; /* header page handled separately */
 
     memcpy(&t16, buf + 0, 2);
 
@@ -191,8 +243,40 @@ static int page_read(index_t *idx, int page_no, unsigned char *buf) {
         }
     }
 
+    return p;
+}
+
+static ndx_page_t *page_get(index_t *idx, int page_no) {
+    ndx_page_t *p;
+    unsigned char buf[NDX_PAGE_SIZE];
+
+    if (page_no < 0 || page_no >= idx->num_pages) return NULL;
+    if (page_no == 0) return idx->pages[0];
+    p = idx->pages[page_no];
+    if (p) {
+        p->pin_count++;
+        cache_touch(idx, p);
+        return p;
+    }
+
+    if (!idx->fp) return NULL;
+
+    fseek(idx->fp, (long)page_no * NDX_PAGE_SIZE, SEEK_SET);
+    if (fread(buf, NDX_PAGE_SIZE, 1, idx->fp) != 1)
+        return NULL;
+
+    p = page_read(idx, page_no, buf);
+    if (!p) return NULL;
+    p->pin_count = 1;
     idx->pages[page_no] = p;
-    return 0;
+    cache_add(idx, p);
+    cache_evict(idx);
+    return p;
+}
+
+static void page_put(ndx_page_t *p) {
+    if (!p) return;
+    if (p->pin_count > 0) p->pin_count--;
 }
 
 /* ---- Free all tree pages ---- */
@@ -210,6 +294,9 @@ static void free_all_pages(index_t *idx) {
     }
     idx->num_pages = 0;
     idx->pages_capacity = 0;
+    idx->cache_size = 0;
+    idx->lru_head = NULL;
+    idx->lru_tail = NULL;
 }
 
 /* ---- Init ---- */
@@ -217,6 +304,7 @@ void index_init(index_t *idx) {
     memset(idx, 0, sizeof(index_t));
     idx->iter_page = -1;
     idx->iter_pos = -1;
+    idx->cache_capacity = 64;
 }
 
 /* ---- Close ---- */
@@ -283,13 +371,15 @@ static int page_upper_bound(index_t *idx, ndx_page_t *page, const char *key) {
 static ndx_page_t *bt_find_leaf(index_t *idx, const char *key) {
     ndx_page_t *node;
     if (idx->num_pages <= 1) return NULL;
-    node = idx->pages[idx->root_page];
+    node = page_get(idx, idx->root_page);
     while (node && node->type == PAGE_INTERNAL) {
         int pos = page_upper_bound(idx, node, key);
+        int child_no = node->children[pos];
+        page_put(node);
         /* descend to children[pos] */
-        node = idx->pages[node->children[pos]];
+        node = page_get(idx, child_no);
     }
-    return node;
+    return node; /* pinned */
 }
 
 /* ---- Seek ---- */
@@ -324,24 +414,32 @@ int index_seek(index_t *idx, const char *key) {
     if (pos < leaf->nkeys) {
         idx->iter_page = leaf->page_no;
         idx->iter_pos = pos;
-        if (key_cmp(page_key(idx, leaf, pos), padded, idx->key_len) == 0)
+        if (key_cmp(page_key(idx, leaf, pos), padded, idx->key_len) == 0) {
+            page_put(leaf);
             return 1; /* exact match */
+        }
+        page_put(leaf);
         return 0;
     }
 
     /* Past end of this leaf -- try next leaf */
     if (leaf->next_leaf) {
-        ndx_page_t *next = idx->pages[leaf->next_leaf];
+        ndx_page_t *next = page_get(idx, leaf->next_leaf);
         idx->iter_page = leaf->next_leaf;
         idx->iter_pos = 0;
         if (next && next->nkeys > 0 &&
-            key_cmp(page_key(idx, next, 0), padded, idx->key_len) == 0)
+            key_cmp(page_key(idx, next, 0), padded, idx->key_len) == 0) {
+            page_put(next);
+            page_put(leaf);
             return 1; /* exact match at boundary */
+        }
+        page_put(next);
     } else {
         /* Past end of entire index */
         idx->iter_page = leaf->page_no;
         idx->iter_pos = leaf->nkeys;
     }
+    page_put(leaf);
     return 0;
 }
 
@@ -350,12 +448,21 @@ uint32_t index_current_recno(const index_t *idx) {
     ndx_page_t *page;
     if (idx->iter_page < 0 || idx->iter_page >= idx->num_pages)
         return 0;
-    page = idx->pages[idx->iter_page];
-    if (!page || page->type != PAGE_LEAF)
+    page = page_get((index_t *)idx, idx->iter_page);
+    if (!page || page->type != PAGE_LEAF) {
+        if (page) page_put(page);
         return 0;
+    }
     if (idx->iter_pos < 0 || idx->iter_pos >= page->nkeys)
+    {
+        page_put(page);
         return 0;
-    return page->recnos[idx->iter_pos];
+    }
+    {
+        uint32_t rec = page->recnos[idx->iter_pos];
+        page_put(page);
+        return rec;
+    }
 }
 
 /* ---- Navigation ---- */
@@ -378,26 +485,40 @@ void index_bottom(index_t *idx) {
     }
     /* Follow leaf chain to last leaf */
     pg = idx->first_leaf;
-    while (idx->pages[pg]->next_leaf)
-        pg = idx->pages[pg]->next_leaf;
-    idx->iter_page = pg;
-    idx->iter_pos = idx->pages[pg]->nkeys - 1;
+    for (;;) {
+        ndx_page_t *page = page_get(idx, pg);
+        if (!page) break;
+        if (!page->next_leaf) {
+            idx->iter_page = pg;
+            idx->iter_pos = page->nkeys - 1;
+            page_put(page);
+            return;
+        }
+        pg = page->next_leaf;
+        page_put(page);
+    }
 }
 
 int index_next(index_t *idx) {
     ndx_page_t *page;
     if (idx->iter_page < 0 || idx->iter_page >= idx->num_pages)
         return -1;
-    page = idx->pages[idx->iter_page];
-    if (!page || page->type != PAGE_LEAF)
+    page = page_get(idx, idx->iter_page);
+    if (!page || page->type != PAGE_LEAF) {
+        if (page) page_put(page);
         return -1;
+    }
 
     idx->iter_pos++;
     if (idx->iter_pos >= page->nkeys) {
-        if (!page->next_leaf) return -1; /* EOF */
+        if (!page->next_leaf) {
+            page_put(page);
+            return -1; /* EOF */
+        }
         idx->iter_page = page->next_leaf;
         idx->iter_pos = 0;
     }
+    page_put(page);
     return 0;
 }
 
@@ -405,16 +526,30 @@ int index_prev(index_t *idx) {
     ndx_page_t *page;
     if (idx->iter_page < 0 || idx->iter_page >= idx->num_pages)
         return -1;
-    page = idx->pages[idx->iter_page];
-    if (!page || page->type != PAGE_LEAF)
+    page = page_get(idx, idx->iter_page);
+    if (!page || page->type != PAGE_LEAF) {
+        if (page) page_put(page);
         return -1;
+    }
 
     idx->iter_pos--;
     if (idx->iter_pos < 0) {
-        if (!page->prev_leaf) return -1; /* BOF */
+        if (!page->prev_leaf) {
+            page_put(page);
+            return -1; /* BOF */
+        }
         idx->iter_page = page->prev_leaf;
-        idx->iter_pos = idx->pages[idx->iter_page]->nkeys - 1;
+        {
+            ndx_page_t *prev = page_get(idx, idx->iter_page);
+            if (!prev) {
+                page_put(page);
+                return -1;
+            }
+            idx->iter_pos = prev->nkeys - 1;
+            page_put(prev);
+        }
     }
+    page_put(page);
     return 0;
 }
 
@@ -458,8 +593,12 @@ static ndx_page_t *leaf_split(index_t *idx, ndx_page_t *leaf, char *split_key) {
     right->prev_leaf = leaf->page_no;
     leaf->next_leaf = right->page_no;
     if (right->next_leaf) {
-        idx->pages[right->next_leaf]->prev_leaf = right->page_no;
-        idx->pages[right->next_leaf]->dirty = 1;
+        ndx_page_t *next = page_get(idx, right->next_leaf);
+        if (next) {
+            next->prev_leaf = right->page_no;
+            next->dirty = 1;
+            page_put(next);
+        }
     }
 
     leaf->dirty = 1;
@@ -545,17 +684,22 @@ int index_insert(index_t *idx, const char *key, uint32_t recno) {
         idx->root_page = leaf->page_no;
         idx->first_leaf = leaf->page_no;
         idx->nentries = 1;
+        page_put(leaf);
         return 0;
     }
 
     /* Walk down tree to find leaf */
-    node = idx->pages[idx->root_page];
+    node = page_get(idx, idx->root_page);
     while (node->type == PAGE_INTERNAL) {
         pos = page_upper_bound(idx, node, padded);
         path[depth] = node->page_no;
         path_pos[depth] = pos;
         depth++;
-        node = idx->pages[node->children[pos]];
+        {
+            int child_no = node->children[pos];
+            page_put(node);
+            node = page_get(idx, child_no);
+        }
     }
 
     /* node is now a leaf. Insert into it. */
@@ -581,27 +725,42 @@ int index_insert(index_t *idx, const char *key, uint32_t recno) {
             new_root->children[0] = node->page_no;
             internal_insert_at(idx, new_root, 0, split_key, right->page_no);
             idx->root_page = new_root->page_no;
+            page_put(new_root);
+            page_put(right);
+            page_put(node);
+            node = NULL;
             break;
         }
 
         /* Insert split_key into parent */
         depth--;
-        node = idx->pages[path[depth]];
+        {
+            ndx_page_t *parent = page_get(idx, path[depth]);
+            page_put(node);
+            node = parent;
+        }
         internal_insert_at(idx, node, path_pos[depth], split_key, right->page_no);
+        page_put(right);
         /* Loop continues if parent also overflows */
     }
 
     /* Update first_leaf if needed */
     {
-        ndx_page_t *fl = idx->pages[idx->first_leaf];
-        if (fl->prev_leaf) {
+        ndx_page_t *fl = (idx->first_leaf > 0) ? page_get(idx, idx->first_leaf) : NULL;
+        if (fl && fl->prev_leaf) {
             /* first_leaf is wrong; walk back */
-            while (fl->prev_leaf)
-                fl = idx->pages[fl->prev_leaf];
-            idx->first_leaf = fl->page_no;
+            while (fl->prev_leaf) {
+                int prev_no = fl->prev_leaf;
+                page_put(fl);
+                fl = page_get(idx, prev_no);
+                if (!fl) break;
+            }
+            if (fl) idx->first_leaf = fl->page_no;
         }
+        page_put(fl);
     }
 
+    if (node) page_put(node);
     return 0;
 }
 
@@ -660,18 +819,23 @@ int index_remove(index_t *idx, const char *key, uint32_t recno) {
     }
     if (found < 0) {
         /* Key might be in next leaf if it was at boundary */
-        ndx_page_t *next = leaf->next_leaf ? idx->pages[leaf->next_leaf] : NULL;
+        ndx_page_t *next = leaf->next_leaf ? page_get(idx, leaf->next_leaf) : NULL;
         if (next) {
             for (i = 0; i < next->nkeys; i++) {
                 if (key_cmp(page_key(idx, next, i), padded, idx->key_len) == 0 &&
                     next->recnos[i] == recno) {
+                    page_put(leaf);
                     leaf = next;
                     found = i;
                     break;
                 }
             }
+            if (found < 0) page_put(next);
         }
-        if (found < 0) return -1;
+        if (found < 0) {
+            page_put(leaf);
+            return -1;
+        }
     }
 
     leaf_remove_at(idx, leaf, found);
@@ -681,12 +845,20 @@ int index_remove(index_t *idx, const char *key, uint32_t recno) {
     if (leaf->nkeys == 0 && idx->nentries > 0) {
         /* Unlink from leaf chain */
         if (leaf->prev_leaf) {
-            idx->pages[leaf->prev_leaf]->next_leaf = leaf->next_leaf;
-            idx->pages[leaf->prev_leaf]->dirty = 1;
+            ndx_page_t *prev = page_get(idx, leaf->prev_leaf);
+            if (prev) {
+                prev->next_leaf = leaf->next_leaf;
+                prev->dirty = 1;
+                page_put(prev);
+            }
         }
         if (leaf->next_leaf) {
-            idx->pages[leaf->next_leaf]->prev_leaf = leaf->prev_leaf;
-            idx->pages[leaf->next_leaf]->dirty = 1;
+            ndx_page_t *next = page_get(idx, leaf->next_leaf);
+            if (next) {
+                next->prev_leaf = leaf->prev_leaf;
+                next->dirty = 1;
+                page_put(next);
+            }
         }
         if (idx->first_leaf == leaf->page_no) {
             idx->first_leaf = leaf->next_leaf;
@@ -710,6 +882,7 @@ int index_remove(index_t *idx, const char *key, uint32_t recno) {
             idx->pages_capacity = 1;
             hdr = (ndx_page_t *)calloc(1, sizeof(ndx_page_t));
             hdr->page_no = 0;
+            hdr->pin_count = 1;
             idx->pages[0] = hdr;
             idx->num_pages = 1;
         }
@@ -717,6 +890,7 @@ int index_remove(index_t *idx, const char *key, uint32_t recno) {
         idx->first_leaf = 0;
     }
 
+    page_put(leaf);
     return 0;
 }
 
@@ -730,6 +904,7 @@ void index_clear(index_t *idx) {
     {
         ndx_page_t *hdr = (ndx_page_t *)calloc(1, sizeof(ndx_page_t));
         hdr->page_no = 0;
+        hdr->pin_count = 1;
         idx->pages[0] = hdr;
     }
     idx->num_pages = 1;
@@ -806,6 +981,7 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
         idx->pages_capacity = 1;
         hdr = (ndx_page_t *)calloc(1, sizeof(ndx_page_t));
         hdr->page_no = 0;
+        hdr->pin_count = 1;
         idx->pages[0] = hdr;
         idx->num_pages = 1;
     }
@@ -878,16 +1054,16 @@ int index_write(index_t *idx) {
 
 /* ---- Public: Flush dirty pages to disk ---- */
 void index_flush(index_t *idx) {
-    int i;
+    ndx_page_t *p;
     if (!idx->fp) {
         idx->fp = fopen(idx->filename, "r+b");
         if (!idx->fp) return;
     }
     /* Always write header */
     page_flush(idx, 0);
-    for (i = 1; i < idx->num_pages; i++) {
-        if (idx->pages[i] && idx->pages[i]->dirty)
-            page_flush(idx, i);
+    for (p = idx->lru_head; p; p = p->lru_next) {
+        if (p->dirty)
+            page_flush(idx, p->page_no);
     }
     fflush(idx->fp);
 }
@@ -896,7 +1072,6 @@ void index_flush(index_t *idx) {
 static int read_ndx2(index_t *idx, FILE *fp) {
     unsigned char buf[NDX_PAGE_SIZE];
     uint32_t tmp;
-    int i;
 
     /* Parse header (already read first 4 bytes for magic) */
     fseek(fp, 0, SEEK_SET);
@@ -918,18 +1093,16 @@ static int read_ndx2(index_t *idx, FILE *fp) {
     idx->pages_capacity = idx->num_pages;
     idx->pages = (ndx_page_t **)calloc(idx->pages_capacity, sizeof(ndx_page_t *));
     if (!idx->pages) return -1;
+    idx->cache_size = 0;
+    idx->lru_head = NULL;
+    idx->lru_tail = NULL;
 
     /* Page 0 = header (dummy) */
     {
         ndx_page_t *hdr = (ndx_page_t *)calloc(1, sizeof(ndx_page_t));
         hdr->page_no = 0;
+        hdr->pin_count = 1;
         idx->pages[0] = hdr;
-    }
-
-    /* Read remaining pages */
-    for (i = 1; i < idx->num_pages; i++) {
-        if (fread(buf, NDX_PAGE_SIZE, 1, fp) != 1) return -1;
-        if (page_read(idx, i, buf) < 0) return -1;
     }
 
     return 0;
@@ -977,9 +1150,13 @@ static int read_ndx1(index_t *idx, FILE *fp) {
     /* Initialize empty tree */
     idx->pages = (ndx_page_t **)calloc(1, sizeof(ndx_page_t *));
     idx->pages_capacity = 1;
+    idx->cache_size = 0;
+    idx->lru_head = NULL;
+    idx->lru_tail = NULL;
     {
         ndx_page_t *hdr = (ndx_page_t *)calloc(1, sizeof(ndx_page_t));
         hdr->page_no = 0;
+        hdr->pin_count = 1;
         idx->pages[0] = hdr;
     }
     idx->num_pages = 1;

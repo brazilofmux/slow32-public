@@ -20,6 +20,7 @@ typedef struct {
     int type;           /* PAGE_INTERNAL or PAGE_LEAF */
     int nkeys;          /* number of keys in this page */
     int dirty;          /* needs writing to disk */
+    int pin_count;      /* in-use pin count (not evictable if >0) */
 
     /* Internal node: child page numbers */
     int *children;      /* malloc'd [max_keys+1] -- internal only */
@@ -31,6 +32,10 @@ typedef struct {
     /* Common: keys and record numbers */
     uint32_t *recnos;   /* malloc'd [max_keys] -- leaf only */
     char *keys;         /* malloc'd [max_keys * key_len] */
+
+    /* LRU cache links */
+    struct ndx_page *lru_prev;
+    struct ndx_page *lru_next;
 } ndx_page_t;
 
 typedef struct {
@@ -47,9 +52,13 @@ typedef struct {
     int num_pages;          /* total pages in file */
     int nentries;           /* total entries */
 
-    /* Page cache -- all pages in memory */
+    /* Page table + LRU cache (pages array is sparse) */
     ndx_page_t **pages;     /* array of page pointers [num_pages] */
     int pages_capacity;     /* allocated size of pages array */
+    int cache_capacity;     /* max pages to keep in memory */
+    int cache_size;         /* current cached pages */
+    ndx_page_t *lru_head;   /* most recently used */
+    ndx_page_t *lru_tail;   /* least recently used */
 
     /* File handle for incremental page writes */
     FILE *fp;               /* open file, or NULL if not yet opened */
