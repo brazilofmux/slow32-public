@@ -86,6 +86,31 @@ void prog_cancel(void);
 /* Check if program is running */
 int prog_is_running(void);
 
+/* Error handling */
+#define ERR_FILE_NOT_FOUND  1
+#define ERR_FILE_IO         3
+#define ERR_RECORD_RANGE    5
+#define ERR_VAR_NOT_FOUND  12
+#define ERR_SYNTAX         14
+#define ERR_TYPE_MISMATCH  15
+#define ERR_UNRECOGNIZED   17
+#define ERR_DIV_ZERO       21
+#define ERR_NO_DATABASE    36
+
+void prog_error(int code, const char *message);
+int prog_get_error_code(void);
+const char *prog_get_error_message(void);
+int prog_get_lineno(void);
+const char *prog_get_program_name(void);
+
+/* ON ERROR DO / RETRY */
+void prog_on_error(const char *procname);
+void prog_retry(void);
+
+/* SUSPEND / RESUME */
+void prog_suspend(void);
+void prog_resume(void);
+
 /* SET PROCEDURE TO file */
 void prog_set_procedure(const char *filename);
 

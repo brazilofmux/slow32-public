@@ -4,6 +4,7 @@
 #include "func.h"
 #include "date.h"
 #include "screen.h"
+#include "program.h"
 #include "util.h"
 
 extern double floor(double x);
@@ -741,25 +742,25 @@ static int fn_readkey(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
 /* ---- ERROR / MESSAGE / LINENO / PROGRAM ---- */
 static int fn_error(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx; (void)args; (void)nargs;
-    *result = val_num(0);  /* no error */
+    *result = val_num((double)prog_get_error_code());
     return 0;
 }
 
 static int fn_message(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx; (void)args; (void)nargs;
-    *result = val_str("");
+    *result = val_str(prog_get_error_message());
     return 0;
 }
 
 static int fn_lineno(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx; (void)args; (void)nargs;
-    *result = val_num(0);
+    *result = val_num((double)prog_get_lineno());
     return 0;
 }
 
 static int fn_program(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx; (void)args; (void)nargs;
-    *result = val_str("");
+    *result = val_str(prog_get_program_name());
     return 0;
 }
 

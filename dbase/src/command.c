@@ -13,6 +13,8 @@
 #include "program.h"
 #include "screen.h"
 #include "index.h"
+#include "report.h"
+#include "label.h"
 
 /* ---- Work area infrastructure ---- */
 #define MAX_AREAS 10
@@ -396,6 +398,28 @@ static void cmd_select(const char *arg) {
     printf("Invalid work area.\n");
 }
 
+/* ---- Helper: report file-not-found error ---- */
+static void file_not_found(const char *filename) {
+    char buf[128];
+    snprintf(buf, sizeof(buf), "File not found: %s", filename);
+    prog_error(ERR_FILE_NOT_FOUND, buf);
+}
+
+/* ---- Helper: map expression error string to error code ---- */
+static int expr_error_code(const char *msg) {
+    if (!msg) return ERR_SYNTAX;
+    if (strstr(msg, "ivision by zero")) return ERR_DIV_ZERO;
+    if (strstr(msg, "ype mismatch")) return ERR_TYPE_MISMATCH;
+    return ERR_SYNTAX;
+}
+
+/* ---- Helper: report expression error via prog_error ---- */
+static void report_expr_error(void) {
+    if (expr_ctx.error) {
+        prog_error(expr_error_code(expr_ctx.error), expr_ctx.error);
+    }
+}
+
 /* ---- Helper: check if record should be skipped (SET DELETED) ---- */
 static int skip_deleted(const char *rec_buf) {
     return (rec_buf[0] == '*' && set_opts.deleted);
@@ -448,7 +472,7 @@ static void cmd_use(dbf_t *db, const char *arg) {
     ensure_dbf_ext(filename, sizeof(filename));
 
     if (dbf_open(db, filename) < 0) {
-        printf("File not found: %s\n", filename);
+        file_not_found(filename);
         return;
     }
 
@@ -512,12 +536,12 @@ static void cmd_use(dbf_t *db, const char *arg) {
 /* ---- APPEND BLANK ---- */
 static void cmd_append_blank(dbf_t *db) {
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
     if (dbf_append_blank(db) < 0) {
-        printf("Error appending record.\n");
+        prog_error(ERR_FILE_IO, "Error appending record");
         return;
     }
 
@@ -531,7 +555,7 @@ static void cmd_go(dbf_t *db, const char *arg) {
     const char *p;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -628,7 +652,7 @@ static void cmd_go(dbf_t *db, const char *arg) {
     {
         int n = atoi(p);
         if (n < 1 || (uint32_t)n > db->record_count) {
-            printf("Record out of range.\n");
+            prog_error(ERR_RECORD_RANGE, "Record out of range");
             return;
         }
         dbf_read_record(db, (uint32_t)n);
@@ -643,7 +667,7 @@ static void cmd_skip(dbf_t *db, const char *arg) {
     int n;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -815,7 +839,7 @@ static void cmd_locate(dbf_t *db, const char *arg) {
     uint32_t start, end, i;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -844,7 +868,7 @@ static void cmd_locate(dbf_t *db, const char *arg) {
         if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
 
         if (expr_eval_str(&expr_ctx, areas[current_area].locate_cond, &cond) != 0) {
-            if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+            report_expr_error();
             return;
         }
 
@@ -868,7 +892,7 @@ static void cmd_continue(dbf_t *db) {
     uint32_t i;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -883,7 +907,7 @@ static void cmd_continue(dbf_t *db) {
         if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
 
         if (expr_eval_str(&expr_ctx, areas[current_area].locate_cond, &cond) != 0) {
-            if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+            report_expr_error();
             return;
         }
 
@@ -910,7 +934,7 @@ static void cmd_count(dbf_t *db, const char *arg) {
     int count = 0;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -933,7 +957,7 @@ static void cmd_count(dbf_t *db, const char *arg) {
         if (cond_str) {
             value_t cond;
             if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
-                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                report_expr_error();
                 return;
             }
             if (cond.type != VAL_LOGIC || !cond.logic) continue;
@@ -955,7 +979,7 @@ static void cmd_sum(dbf_t *db, const char *arg) {
     int count = 0;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -1008,14 +1032,14 @@ static void cmd_sum(dbf_t *db, const char *arg) {
         if (cond_str) {
             value_t cond;
             if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
-                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                report_expr_error();
                 return;
             }
             if (cond.type != VAL_LOGIC || !cond.logic) continue;
         }
 
         if (expr_eval_str(&expr_ctx, expr_str, &val) != 0) {
-            if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+            report_expr_error();
             return;
         }
         if (val.type != VAL_NUM) {
@@ -1046,7 +1070,7 @@ static void cmd_average(dbf_t *db, const char *arg) {
     int count = 0;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -1099,14 +1123,14 @@ static void cmd_average(dbf_t *db, const char *arg) {
         if (cond_str) {
             value_t cond;
             if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
-                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                report_expr_error();
                 return;
             }
             if (cond.type != VAL_LOGIC || !cond.logic) continue;
         }
 
         if (expr_eval_str(&expr_ctx, expr_str, &val) != 0) {
-            if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+            report_expr_error();
             return;
         }
         if (val.type != VAL_NUM) {
@@ -1139,7 +1163,7 @@ static void cmd_replace(dbf_t *db, const char *arg) {
     const char *p;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
     if (db->current_record == 0 || expr_ctx.eof_flag) {
@@ -1174,7 +1198,7 @@ static void cmd_replace(dbf_t *db, const char *arg) {
         }
 
         if (expr_eval(&expr_ctx, &p, &val) != 0) {
-            if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+            report_expr_error();
             return;
         }
 
@@ -1239,7 +1263,7 @@ static void cmd_list(dbf_t *db, const char *arg) {
     uint32_t start, end;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -1317,7 +1341,7 @@ static void cmd_list(dbf_t *db, const char *arg) {
         if (cond_str) {
             value_t cond;
             if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
-                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                report_expr_error();
                 return;
             }
             if (cond.type != VAL_LOGIC || !cond.logic) continue;
@@ -1353,7 +1377,7 @@ static void cmd_display(dbf_t *db, const char *arg) {
     int use_all_fields;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
     if (db->current_record == 0 || expr_ctx.eof_flag) {
@@ -1384,7 +1408,7 @@ static void cmd_display_structure(dbf_t *db) {
     int i;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -1438,7 +1462,7 @@ static void cmd_store(dbf_t *db, const char *arg) {
     }
 
     if (expr_eval_str(&expr_ctx, expr_str, &val) != 0) {
-        if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+        report_expr_error();
         return;
     }
 
@@ -1514,7 +1538,7 @@ static void cmd_delete(dbf_t *db, const char *arg) {
     int count = 0;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -1546,7 +1570,7 @@ static void cmd_delete(dbf_t *db, const char *arg) {
         if (cond_str) {
             value_t cond;
             if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
-                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                report_expr_error();
                 return;
             }
             if (cond.type != VAL_LOGIC || !cond.logic) continue;
@@ -1570,7 +1594,7 @@ static void cmd_recall(dbf_t *db, const char *arg) {
     int count = 0;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -1604,7 +1628,7 @@ static void cmd_recall(dbf_t *db, const char *arg) {
         if (cond_str) {
             value_t cond;
             if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
-                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                report_expr_error();
                 return;
             }
             if (cond.type != VAL_LOGIC || !cond.logic) continue;
@@ -1625,7 +1649,7 @@ static void cmd_pack(dbf_t *db) {
     int rec_size;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -1661,7 +1685,7 @@ static void cmd_pack(dbf_t *db) {
 /* ---- ZAP ---- */
 static void cmd_zap(dbf_t *db) {
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -1753,7 +1777,7 @@ static void cmd_input(const char *arg) {
 
     ctx_setup();
     if (expr_eval_str(&expr_ctx, line, &val) != 0) {
-        if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+        report_expr_error();
         val = val_num(0);
     }
 
@@ -1827,7 +1851,7 @@ static void cmd_print_expr(const char *arg, int newline) {
         if (*p == '\0') break;
 
         if (expr_eval(&expr_ctx, &p, &val) != 0) {
-            if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+            report_expr_error();
             return;
         }
 
@@ -1862,7 +1886,7 @@ static void cmd_copy_to(dbf_t *db, const char *arg) {
     int f;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -1938,7 +1962,7 @@ static void cmd_copy_to(dbf_t *db, const char *arg) {
         if (cond_str) {
             value_t cond;
             if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
-                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                report_expr_error();
                 dbf_close(&dest);
                 return;
             }
@@ -1971,7 +1995,7 @@ static void cmd_copy_structure(dbf_t *db, const char *arg) {
     char filename[64];
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -2012,7 +2036,7 @@ static void cmd_append_from(dbf_t *db, const char *arg) {
     dbf_t *saved_db;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -2030,7 +2054,7 @@ static void cmd_append_from(dbf_t *db, const char *arg) {
 
     dbf_init(&source);
     if (dbf_open(&source, filename) < 0) {
-        printf("File not found: %s\n", filename);
+        file_not_found(filename);
         return;
     }
 
@@ -2048,7 +2072,7 @@ static void cmd_append_from(dbf_t *db, const char *arg) {
             value_t cond;
             expr_ctx.db = &source;
             if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
-                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                report_expr_error();
                 expr_ctx.db = saved_db;
                 dbf_close(&source);
                 return;
@@ -2114,7 +2138,7 @@ static void cmd_sort(dbf_t *db, const char *arg) {
     int f;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -2185,7 +2209,7 @@ static void cmd_sort(dbf_t *db, const char *arg) {
         if (cond_str) {
             value_t cond;
             if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
-                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                report_expr_error();
                 return;
             }
             if (cond.type != VAL_LOGIC || !cond.logic) continue;
@@ -2256,7 +2280,7 @@ static void cmd_erase(const char *arg) {
         return;
     }
     if (remove(filename) != 0) {
-        printf("File not found: %s\n", filename);
+        file_not_found(filename);
     } else {
         printf("File erased.\n");
     }
@@ -2288,7 +2312,7 @@ static void cmd_rename(const char *arg) {
     if (rename(oldname, newname) != 0) {
         FILE *fin = fopen(oldname, "rb");
         if (!fin) {
-            printf("File not found: %s\n", oldname);
+            file_not_found(oldname);
             return;
         }
         {
@@ -2340,7 +2364,7 @@ static void cmd_copy_file(const char *arg) {
     }
     fin = fopen(src, "rb");
     if (!fin) {
-        printf("File not found: %s\n", src);
+        file_not_found(src);
         return;
     }
     fout = fopen(dst, "wb");
@@ -2365,7 +2389,7 @@ static void cmd_index_on(dbf_t *db, const char *arg) {
     const char *f;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -2408,13 +2432,13 @@ static void cmd_index_on(dbf_t *db, const char *arg) {
 
     /* Build the index in slot 0 */
     if (index_build(&areas[current_area].indexes[0], db, &expr_ctx, key_expr, filename) < 0) {
-        printf("Error building index.\n");
+        prog_error(ERR_FILE_IO, "Error building index");
         return;
     }
 
     /* Write to file */
     if (index_write(&areas[current_area].indexes[0]) < 0) {
-        printf("Error writing index file.\n");
+        prog_error(ERR_FILE_IO, "Error writing index file");
         return;
     }
 
@@ -2439,7 +2463,7 @@ static void cmd_set_index(dbf_t *db, const char *arg) {
     const char *p = skip_ws(arg);
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -2503,7 +2527,7 @@ static void cmd_seek(dbf_t *db, const char *arg) {
     index_t *idx;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -2514,7 +2538,7 @@ static void cmd_seek(dbf_t *db, const char *arg) {
     }
 
     if (expr_eval_str(&expr_ctx, p, &val) != 0) {
-        if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+        report_expr_error();
         return;
     }
 
@@ -2551,7 +2575,7 @@ static void cmd_find(dbf_t *db, const char *arg) {
     index_t *idx;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -2593,7 +2617,7 @@ static void cmd_reindex(dbf_t *db) {
     int i, total = 0;
 
     if (!dbf_is_open(db)) {
-        printf("No database in use.\n");
+        prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
@@ -2652,6 +2676,434 @@ void cmd_close_all(void) {
         areas[i].relation_target = -1;
     }
     current_area = 0;
+}
+
+/* ---- Helper: ensure filename has .FRM extension ---- */
+static void ensure_frm_ext(char *filename, int size) {
+    str_upper(filename);
+    trim_right(filename);
+    if (strlen(filename) < 5 || str_icmp(filename + strlen(filename) - 4, ".FRM") != 0) {
+        if ((int)strlen(filename) + 4 < size)
+            strcat(filename, ".FRM");
+    }
+}
+
+/* ---- Helper: ensure filename has .LBL extension ---- */
+static void ensure_lbl_ext(char *filename, int size) {
+    str_upper(filename);
+    trim_right(filename);
+    if (strlen(filename) < 5 || str_icmp(filename + strlen(filename) - 4, ".LBL") != 0) {
+        if ((int)strlen(filename) + 4 < size)
+            strcat(filename, ".LBL");
+    }
+}
+
+/* ---- CREATE REPORT ---- */
+static void cmd_create_report(const char *arg) {
+    char filename[64];
+    char line[256];
+    frm_def_t def;
+
+    arg = skip_ws(arg);
+    if (*arg == '\0') {
+        printf("Syntax: CREATE REPORT <filename>\n");
+        return;
+    }
+
+    str_copy(filename, arg, sizeof(filename));
+    ensure_frm_ext(filename, sizeof(filename));
+
+    frm_init(&def);
+
+    /* Page title */
+    printf("Page title? ");
+    if (read_line(line, sizeof(line)) < 0) return;
+    trim_right(line);
+    str_copy(def.title, line, sizeof(def.title));
+
+    /* Page width */
+    printf("Page width (80)? ");
+    if (read_line(line, sizeof(line)) < 0) return;
+    trim_right(line);
+    if (line[0]) def.page_width = atoi(line);
+
+    /* Left margin */
+    printf("Left margin (8)? ");
+    if (read_line(line, sizeof(line)) < 0) return;
+    trim_right(line);
+    if (line[0]) def.left_margin = atoi(line);
+
+    /* Right margin */
+    printf("Right margin (0)? ");
+    if (read_line(line, sizeof(line)) < 0) return;
+    trim_right(line);
+    if (line[0]) def.right_margin = atoi(line);
+
+    /* Lines per page */
+    printf("Lines per page (58)? ");
+    if (read_line(line, sizeof(line)) < 0) return;
+    trim_right(line);
+    if (line[0]) def.lines_per_page = atoi(line);
+
+    /* Double space */
+    printf("Double space report? (Y/N) ");
+    if (read_line(line, sizeof(line)) < 0) return;
+    trim_right(line);
+    str_upper(line);
+    def.double_space = (line[0] == 'Y') ? 1 : 0;
+
+    /* Group on */
+    printf("Group on expression? ");
+    if (read_line(line, sizeof(line)) < 0) return;
+    trim_right(line);
+    str_copy(def.group_expr, line, sizeof(def.group_expr));
+
+    if (def.group_expr[0]) {
+        printf("Group heading? ");
+        if (read_line(line, sizeof(line)) < 0) return;
+        trim_right(line);
+        str_copy(def.group_header, line, sizeof(def.group_header));
+    }
+
+    /* Sub-group on */
+    printf("Sub-group on expression? ");
+    if (read_line(line, sizeof(line)) < 0) return;
+    trim_right(line);
+    str_copy(def.subgroup_expr, line, sizeof(def.subgroup_expr));
+
+    if (def.subgroup_expr[0]) {
+        printf("Sub-group heading? ");
+        if (read_line(line, sizeof(line)) < 0) return;
+        trim_right(line);
+        str_copy(def.subgroup_header, line, sizeof(def.subgroup_header));
+    }
+
+    /* Summary only */
+    printf("Summary report only? (Y/N) ");
+    if (read_line(line, sizeof(line)) < 0) return;
+    trim_right(line);
+    str_upper(line);
+    def.summary_only = (line[0] == 'Y') ? 1 : 0;
+
+    /* Eject after */
+    printf("Page eject after report? (Y/N) ");
+    if (read_line(line, sizeof(line)) < 0) return;
+    trim_right(line);
+    str_upper(line);
+    def.eject_after = (line[0] == 'Y') ? 1 : 0;
+
+    /* Columns */
+    while (def.num_columns < FRM_MAX_COLUMNS) {
+        int col = def.num_columns;
+
+        printf("Col %2d:\n", col + 1);
+        printf("  Contents? ");
+        if (read_line(line, sizeof(line)) < 0) break;
+        trim_right(line);
+        if (line[0] == '\0') break;
+        str_copy(def.columns[col].content, line, sizeof(def.columns[col].content));
+
+        printf("  Heading? ");
+        if (read_line(line, sizeof(line)) < 0) break;
+        trim_right(line);
+        str_copy(def.columns[col].header, line, sizeof(def.columns[col].header));
+
+        printf("  Width? ");
+        if (read_line(line, sizeof(line)) < 0) break;
+        trim_right(line);
+        def.columns[col].width = atoi(line);
+        if (def.columns[col].width < 1) def.columns[col].width = 10;
+
+        printf("  Decimal places? ");
+        if (read_line(line, sizeof(line)) < 0) break;
+        trim_right(line);
+        def.columns[col].decimals = atoi(line);
+
+        if (def.columns[col].decimals > 0) {
+            printf("  Totals? (Y/N) ");
+            if (read_line(line, sizeof(line)) < 0) break;
+            trim_right(line);
+            str_upper(line);
+            def.columns[col].totals = (line[0] == 'Y') ? 1 : 0;
+        }
+
+        def.num_columns++;
+    }
+
+    if (def.num_columns == 0) {
+        printf("No columns defined.\n");
+        return;
+    }
+
+    if (frm_write(filename, &def) < 0) {
+        printf("Error creating %s\n", filename);
+        return;
+    }
+    printf("Report definition %s created.\n", filename);
+}
+
+/* ---- REPORT FORM ---- */
+static void cmd_report_form(dbf_t *db, const char *arg) {
+    char filename[64];
+    const char *p;
+    const char *for_cond = NULL;
+    const char *heading_text = NULL;
+    int plain = 0, summary = 0, noeject = 0;
+    int to_print = 0;
+    FILE *outfile = NULL;
+    frm_def_t def;
+    int i;
+
+    if (!dbf_is_open(db)) {
+        prog_error(ERR_NO_DATABASE, "No database in use");
+        return;
+    }
+
+    p = skip_ws(arg);
+    /* Parse filename */
+    i = 0;
+    while (*p && *p != ' ' && *p != '\t' && i < 63)
+        filename[i++] = *p++;
+    filename[i] = '\0';
+    ensure_frm_ext(filename, sizeof(filename));
+
+    /* Parse optional clauses */
+    while (*p) {
+        p = skip_ws(p);
+        if (*p == '\0') break;
+
+        if (str_imatch(p, "FOR")) {
+            for_cond = skip_ws(p + 3);
+            break;  /* FOR consumes rest of line */
+        }
+        if (str_imatch(p, "HEADING")) {
+            p = skip_ws(p + 7);
+            heading_text = p;
+            /* Heading consumes rest until another keyword */
+            break;
+        }
+        if (str_imatch(p, "PLAIN")) {
+            plain = 1;
+            p += 5;
+            continue;
+        }
+        if (str_imatch(p, "SUMMARY")) {
+            summary = 1;
+            p += 7;
+            continue;
+        }
+        if (str_imatch(p, "NOEJECT")) {
+            noeject = 1;
+            p += 7;
+            continue;
+        }
+        if (str_imatch(p, "TO")) {
+            p = skip_ws(p + 2);
+            if (str_imatch(p, "PRINT")) {
+                to_print = 1;
+                p += 5;
+                continue;
+            }
+            if (str_imatch(p, "FILE")) {
+                char fname[128];
+                int fi = 0;
+                p = skip_ws(p + 4);
+                while (*p && *p != ' ' && fi < 127) fname[fi++] = *p++;
+                fname[fi] = '\0';
+                outfile = fopen(fname, "w");
+                if (!outfile) {
+                    printf("Cannot create %s\n", fname);
+                    return;
+                }
+                continue;
+            }
+        }
+        /* Skip unrecognized word */
+        while (*p && *p != ' ' && *p != '\t') p++;
+    }
+
+    /* Read the .FRM file */
+    if (frm_read(filename, &def) < 0) {
+        file_not_found(filename);
+        if (outfile) fclose(outfile);
+        return;
+    }
+
+    /* Determine output destination */
+    if (!outfile)
+        outfile = stdout;
+
+    ctx_setup();
+    report_generate(&def, db, &expr_ctx, for_cond, heading_text,
+                    plain, summary, noeject, outfile);
+
+    if (outfile != stdout)
+        fclose(outfile);
+}
+
+/* ---- CREATE LABEL ---- */
+static void cmd_create_label(const char *arg) {
+    char filename[64];
+    char line[256];
+    lbl_def_t def;
+    int i;
+
+    arg = skip_ws(arg);
+    if (*arg == '\0') {
+        printf("Syntax: CREATE LABEL <filename>\n");
+        return;
+    }
+
+    str_copy(filename, arg, sizeof(filename));
+    ensure_lbl_ext(filename, sizeof(filename));
+
+    lbl_init(&def);
+
+    /* Remark */
+    printf("Label remark? ");
+    if (read_line(line, sizeof(line)) < 0) return;
+    trim_right(line);
+    str_copy(def.remark, line, sizeof(def.remark));
+
+    /* Height */
+    printf("Label height (5)? ");
+    if (read_line(line, sizeof(line)) < 0) return;
+    trim_right(line);
+    if (line[0]) def.height = atoi(line);
+    if (def.height < 1) def.height = 1;
+    if (def.height > LBL_MAX_LINES) def.height = LBL_MAX_LINES;
+
+    /* Width */
+    printf("Label width (35)? ");
+    if (read_line(line, sizeof(line)) < 0) return;
+    trim_right(line);
+    if (line[0]) def.width = atoi(line);
+    if (def.width < 1) def.width = 1;
+
+    /* Left margin */
+    printf("Left margin (0)? ");
+    if (read_line(line, sizeof(line)) < 0) return;
+    trim_right(line);
+    if (line[0]) def.left_margin = atoi(line);
+
+    /* Lines between */
+    printf("Lines between labels (1)? ");
+    if (read_line(line, sizeof(line)) < 0) return;
+    trim_right(line);
+    if (line[0]) def.lines_between = atoi(line);
+
+    /* Spaces between */
+    printf("Spaces between labels (0)? ");
+    if (read_line(line, sizeof(line)) < 0) return;
+    trim_right(line);
+    if (line[0]) def.spaces_between = atoi(line);
+
+    /* Labels across */
+    printf("Labels across (1)? ");
+    if (read_line(line, sizeof(line)) < 0) return;
+    trim_right(line);
+    if (line[0]) def.across = atoi(line);
+    if (def.across < 1) def.across = 1;
+
+    /* Content lines */
+    def.num_lines = 0;
+    for (i = 0; i < def.height; i++) {
+        printf("Line %d contents? ", i + 1);
+        if (read_line(line, sizeof(line)) < 0) break;
+        trim_right(line);
+        if (line[0] == '\0') break;
+        str_copy(def.lines[i], line, LBL_EXPR_SIZE + 1);
+        def.num_lines++;
+    }
+
+    if (def.num_lines == 0) {
+        printf("No label lines defined.\n");
+        return;
+    }
+
+    if (lbl_write(filename, &def) < 0) {
+        printf("Error creating %s\n", filename);
+        return;
+    }
+    printf("Label definition %s created.\n", filename);
+}
+
+/* ---- LABEL FORM ---- */
+static void cmd_label_form(dbf_t *db, const char *arg) {
+    char filename[64];
+    const char *p;
+    const char *for_cond = NULL;
+    int sample = 0;
+    FILE *outfile = NULL;
+    lbl_def_t def;
+    int i;
+
+    if (!dbf_is_open(db)) {
+        prog_error(ERR_NO_DATABASE, "No database in use");
+        return;
+    }
+
+    p = skip_ws(arg);
+    /* Parse filename */
+    i = 0;
+    while (*p && *p != ' ' && *p != '\t' && i < 63)
+        filename[i++] = *p++;
+    filename[i] = '\0';
+    ensure_lbl_ext(filename, sizeof(filename));
+
+    /* Parse optional clauses */
+    while (*p) {
+        p = skip_ws(p);
+        if (*p == '\0') break;
+
+        if (str_imatch(p, "FOR")) {
+            for_cond = skip_ws(p + 3);
+            break;  /* FOR consumes rest of line */
+        }
+        if (str_imatch(p, "SAMPLE")) {
+            sample = 1;
+            p += 6;
+            continue;
+        }
+        if (str_imatch(p, "TO")) {
+            p = skip_ws(p + 2);
+            if (str_imatch(p, "PRINT")) {
+                p += 5;
+                continue;
+            }
+            if (str_imatch(p, "FILE")) {
+                char fname[128];
+                int fi = 0;
+                p = skip_ws(p + 4);
+                while (*p && *p != ' ' && fi < 127) fname[fi++] = *p++;
+                fname[fi] = '\0';
+                outfile = fopen(fname, "w");
+                if (!outfile) {
+                    printf("Cannot create %s\n", fname);
+                    return;
+                }
+                continue;
+            }
+        }
+        /* Skip unrecognized word */
+        while (*p && *p != ' ' && *p != '\t') p++;
+    }
+
+    /* Read the .LBL file */
+    if (lbl_read(filename, &def) < 0) {
+        file_not_found(filename);
+        if (outfile) fclose(outfile);
+        return;
+    }
+
+    if (!outfile)
+        outfile = stdout;
+
+    ctx_setup();
+    label_generate(&def, db, &expr_ctx, for_cond, sample, outfile);
+
+    if (outfile != stdout)
+        fclose(outfile);
 }
 
 /* ---- Accessors for program.c / screen.c ---- */
@@ -2768,6 +3220,41 @@ int cmd_execute(dbf_t *db, char *line) {
         return 0;
     }
 
+    /* ON ERROR DO <proc> / ON ERROR */
+    if (str_imatch(p, "ON") && str_imatch(skip_ws(p + 2), "ERROR")) {
+        char *rest = skip_ws(skip_ws(p + 2) + 5);
+        if (str_imatch(rest, "DO")) {
+            rest = skip_ws(rest + 2);
+            {
+                char procname[64];
+                int i = 0;
+                while (is_ident_char(*rest) && i < 63)
+                    procname[i++] = *rest++;
+                procname[i] = '\0';
+                prog_on_error(procname);
+            }
+        } else {
+            prog_on_error(NULL);
+        }
+        return 0;
+    }
+
+    if (str_imatch(p, "RETRY")) {
+        prog_retry();
+        return 0;
+    }
+
+    if (str_imatch(p, "SUSPEND")) {
+        if (prog_is_running()) prog_suspend();
+        else printf("Not in program.\n");
+        return 0;
+    }
+
+    if (str_imatch(p, "RESUME")) {
+        prog_resume();
+        return 0;
+    }
+
     if (str_imatch(p, "EJECT")) {
         screen_eject();
         return 0;
@@ -2833,7 +3320,7 @@ int cmd_execute(dbf_t *db, char *line) {
                 if (strlen(fname) < 4 || str_icmp(fname + strlen(fname) - 4, ".MEM") != 0)
                     strcat(fname, ".MEM");
                 fp = fopen(fname, "rb");
-                if (!fp) { printf("File not found: %s\n", fname); return 0; }
+                if (!fp) { file_not_found(fname); return 0; }
                 if (!additive) memvar_release_all(&memvar_store);
                 {
                     int nv = 0, j;
@@ -2873,6 +3360,29 @@ int cmd_execute(dbf_t *db, char *line) {
         return 0;
     }
 
+    /* REPORT FORM */
+    if (str_imatch(p, "REPORT") && str_imatch(skip_ws(p + 6), "FORM")) {
+        cmd_report_form(cdb, skip_ws(skip_ws(p + 6) + 4));
+        return 0;
+    }
+
+    /* LABEL FORM */
+    if (str_imatch(p, "LABEL") && str_imatch(skip_ws(p + 5), "FORM")) {
+        cmd_label_form(cdb, skip_ws(skip_ws(p + 5) + 4));
+        return 0;
+    }
+
+    /* MODIFY REPORT / MODIFY LABEL — not implemented yet */
+    if (str_imatch(p, "MODIFY")) {
+        char *rest = skip_ws(p + 6);
+        if (str_imatch(rest, "REPORT") || str_imatch(rest, "LABEL")) {
+            printf("MODIFY %s not implemented. Use CREATE %s.\n",
+                   str_imatch(rest, "REPORT") ? "REPORT" : "LABEL",
+                   str_imatch(rest, "REPORT") ? "REPORT" : "LABEL");
+            return 0;
+        }
+    }
+
     /* TOTAL ON, JOIN WITH, UPDATE ON — stubs */
     if (str_imatch(p, "TOTAL") && str_imatch(skip_ws(p + 5), "ON")) {
         printf("TOTAL ON not implemented.\n");
@@ -2905,7 +3415,14 @@ int cmd_execute(dbf_t *db, char *line) {
     }
 
     if (str_imatch(p, "CREATE")) {
-        cmd_create(cdb, p + 6);
+        char *rest = skip_ws(p + 6);
+        if (str_imatch(rest, "REPORT")) {
+            cmd_create_report(skip_ws(rest + 6));
+        } else if (str_imatch(rest, "LABEL")) {
+            cmd_create_label(skip_ws(rest + 5));
+        } else {
+            cmd_create(cdb, p + 6);
+        }
         return 0;
     }
 
@@ -3300,7 +3817,7 @@ int cmd_execute(dbf_t *db, char *line) {
             value_t val;
             q++;
             if (expr_eval_str(&expr_ctx, q, &val) != 0) {
-                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                report_expr_error();
                 return 0;
             }
             memvar_set(&memvar_store, name, &val);
@@ -3308,6 +3825,6 @@ int cmd_execute(dbf_t *db, char *line) {
         }
     }
 
-    printf("Unrecognized command.\n");
+    prog_error(ERR_UNRECOGNIZED, "Unrecognized command");
     return 0;
 }

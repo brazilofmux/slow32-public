@@ -193,44 +193,55 @@ Pet but part of the dBase III spec.
 
 ---
 
-## Phase 5: Error Handling & Robustness
+## Phase 5: Error Handling & Robustness --- DONE
 
 **Goal**: Programs survive bad data and user mistakes gracefully.
-**Effort**: Medium.
+**Effort**: Medium. **COMPLETE** (49/49 tests).
 
-### 5a. ON ERROR DO <procedure>
+### 5a. Error state infrastructure
 
-Install an error handler. When a command fails (file not found,
-type mismatch, etc.), instead of printing an error and aborting,
-call the error procedure. That procedure can use ERROR(), MESSAGE(),
-LINENO(), PROGRAM() to decide what to do.
+Global error state tracks code, message, lineno, program name.
+`prog_error()` stores state and invokes ON ERROR handler if set,
+otherwise prints `*** <message>` with file/line context when in a program.
+Error codes match real dBase III (1=file not found, 15=type mismatch,
+21=div by zero, 36=no database, etc.).
 
-### 5b. Improved error messages
+### 5b. Error message conversion
 
-Current errors are terse. Add file/line context when executing programs.
-Example: `Error in TPPG.PRG line 42: Variable not found: T_FOO`
+~30 printf error calls in command.c converted to `prog_error()` with
+appropriate error codes. Expression errors mapped from message text
+(division by zero → 21, type mismatch → 15, default → 14 syntax).
 
-### 5c. SUSPEND / RESUME
+### 5c. ON ERROR DO / RETRY
 
-SUSPEND pauses program execution and drops to the dot prompt for
-debugging. RESUME continues from where we left off. Useful for
-development but not critical for Teacher's Pet.
+`ON ERROR DO <procedure>` installs an error handler. When an error occurs,
+the handler is called instead of printing the error. The handler can use
+`ERROR()`, `MESSAGE()`, `LINENO()`, `PROGRAM()` to inspect the error.
+`RETRY` re-executes the failed line (only valid inside error handler).
+`ON ERROR` with no arguments clears the handler.
+
+### 5d. SUSPEND / RESUME
+
+`SUSPEND` pauses program execution and drops to the dot prompt.
+Program state (IF/ELSE nesting, DO CASE state) is preserved.
+`RESUME` continues from where execution was paused.
+
+### 5e. Function wiring
+
+`ERROR()`, `MESSAGE()`, `LINENO()`, `PROGRAM()` wired to real
+error state accessors (were previously stubs returning 0/"").
 
 ---
 
-## Phase 6: Report & Label Generators
+## Phase 6: Report & Label Generators --- DONE
 
 **Goal**: REPORT FORM and LABEL FORM commands.
-**Effort**: Large.
+**Effort**: Large. **COMPLETE** (51/51 tests).
 
-These parse binary .FRM and .LBL definition files and generate
-formatted output. Teacher's Pet's tp.prg has a `REPORT FORM` call
-but doesn't appear to depend on it for core functionality.
-
-This is the largest remaining feature and could be deferred until
-all other phases are complete. An alternative is to implement a
-simplified report command that works with a text-based format
-definition rather than the binary .FRM format.
+Binary .FRM and .LBL format support. CREATE REPORT/LABEL for interactive
+definition. REPORT FORM with PLAIN, SUMMARY, HEADING, NOEJECT, TO FILE,
+TO PRINT, FOR clause. LABEL FORM with SAMPLE, TO FILE, TO PRINT, FOR clause.
+Group/subgroup subtotals, multi-line column headers, grand totals.
 
 ---
 
@@ -280,6 +291,6 @@ hitting an unimplemented feature?
 | 2 | Screen/output | Menus and reports must display | After 1 |
 | 3 | Functions | IIF, FILE, DTOS commonly needed | After 2 |
 | 4 | Data commands | SET RELATION, JOIN (less common) | After 3 |
-| 5 | Error handling | ON ERROR for robustness | After 4 |
-| 6 | Reports | REPORT FORM (binary format) | After 5 |
+| 5 | Error handling | ON ERROR for robustness | **DONE** |
+| 6 | Reports | REPORT FORM (binary format) | **DONE** |
 | 7 | B-tree | Performance for large databases | After 6 |

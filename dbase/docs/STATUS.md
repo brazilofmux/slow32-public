@@ -1,6 +1,6 @@
 # dBase III Clone — Implementation Status
 
-Current as of February 2026. 48/48 tests passing.
+Current as of February 2026. 51/51 tests passing.
 
 ## Architecture
 
@@ -17,6 +17,8 @@ src/set.c        — SET option management
 src/program.c    — PRG file execution, control flow, procedures, functions
 src/screen.c     — @SAY/@GET/READ, boxes, CLEAR, SET COLOR
 src/index.c      — NDX index files (sorted array, binary search)
+src/report.c     — FRM report definitions and report generation
+src/label.c      — LBL label definitions and label generation
 src/date.c       — Date arithmetic and formatting
 src/util.c       — String helpers (str_imatch, trim, skip_ws)
 ```
@@ -30,6 +32,8 @@ Test:  `bash tests/run-tests.sh`
 | Command | Syntax |
 |---------|--------|
 | CREATE | `CREATE <file>` (interactive field definition) |
+| CREATE REPORT | `CREATE REPORT <file>` (interactive report definition) |
+| CREATE LABEL | `CREATE LABEL <file>` (interactive label definition) |
 | USE | `USE [<file>] [INDEX <ndx1>[,<ndx2>...]] [ALIAS <name>]` |
 | CLOSE | `CLOSE [DATABASES\|ALL\|INDEX\|PROCEDURE]` |
 | SELECT | `SELECT <n>` or `SELECT <alias>` (work areas 1-10) |
@@ -71,6 +75,8 @@ Test:  `bash tests/run-tests.sh`
 | ? | `? [<expr> [,<expr>...]]` |
 | ?? | `?? <expr> [,<expr>...]` (no newline) |
 | EJECT | `EJECT` (form feed / reset printer position) |
+| REPORT FORM | `REPORT FORM <file> [<scope>] [FOR <cond>] [TO PRINT\|FILE <f>] [HEADING <text>] [PLAIN] [SUMMARY] [NOEJECT]` |
+| LABEL FORM | `LABEL FORM <file> [<scope>] [FOR <cond>] [TO PRINT\|FILE <f>] [SAMPLE]` |
 
 ### Aggregate Commands
 | Command | Syntax |
@@ -135,6 +141,10 @@ Test:  `bash tests/run-tests.sh`
 | RETURN | `RETURN [<expr>]` |
 | SET PROCEDURE TO | `SET PROCEDURE TO [<file>]` |
 | CANCEL | `CANCEL` |
+| ON ERROR | `ON ERROR DO <procedure>` or `ON ERROR` (clear) |
+| RETRY | `RETRY` (re-execute failed line, in error handler only) |
+| SUSPEND | `SUSPEND` (pause program, return to dot prompt) |
+| RESUME | `RESUME` (continue after SUSPEND) |
 | QUIT | `QUIT` |
 
 ### Comments & Preprocessing
@@ -179,7 +189,7 @@ Test:  `bash tests/run-tests.sh`
 ### Keyboard (3)
 `INKEY([secs])`, `LASTKEY()`, `READKEY()`
 
-### Debug (4)
+### Debug (4) — fully wired
 `ERROR()`, `MESSAGE()`, `LINENO()`, `PROGRAM()`
 
 ## SET Options (14 active + 14 no-op)
@@ -253,9 +263,11 @@ RANGE validation on @GET fields. EJECT resets printer position.
 
 ## Test Suite
 
-48 tests covering: CREATE, navigation, expressions, functions, memory
+51 tests covering: CREATE, navigation, expressions, functions, memory
 variables, SET options, work areas, file operations, screen I/O,
 programming constructs, procedures, functions, indexing, multi-index,
 filters, scope clauses, comments, print device routing, exponentiation,
 exact equality, string manipulation, SAVE/RESTORE, SET RELATION,
-LIST OFF/TO, and more.
+LIST OFF/TO, error handling (ON ERROR, SUSPEND/RESUME), report generation
+(CREATE REPORT, REPORT FORM PLAIN/SUMMARY), label generation (CREATE LABEL,
+LABEL FORM), and more.

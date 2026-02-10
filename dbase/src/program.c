@@ -11,6 +11,17 @@ static prog_state_t state;
 /* SET PROCEDURE TO file — resident procedure library */
 static program_t *procedure_file;
 
+/* ---- Error state ---- */
+static struct {
+    int code;               /* last error number (0 = none) */
+    char message[256];      /* last error message text */
+    int lineno;             /* line where error occurred (1-based, 0=interactive) */
+    char program[64];       /* program filename, ""=interactive */
+    char on_error_proc[64]; /* ON ERROR handler procedure name, ""=none */
+    int in_handler;         /* 1 = currently inside error handler */
+    int retry;              /* set by RETRY command inside handler */
+} error_state;
+
 /* User-defined FUNCTION support */
 static int udf_active;          /* >0 when executing a UDF call */
 static value_t udf_return_val;  /* return value from FUNCTION */
@@ -28,14 +39,147 @@ static int case_active;         /* inside DO CASE block */
 static int case_done;           /* a CASE branch has been taken */
 static int case_skip;           /* skipping until matching CASE/OTHERWISE/ENDCASE */
 
+/* ---- Suspended state for SUSPEND/RESUME ---- */
+static struct {
+    int if_skip, if_depth;
+    int if_done[MAX_IF_DEPTH];
+    int case_active, case_done, case_skip;
+    int valid;  /* 1 = suspended state exists */
+} suspended;
+
 void prog_init(void) {
     memset(&state, 0, sizeof(state));
+    memset(&error_state, 0, sizeof(error_state));
+    memset(&suspended, 0, sizeof(suspended));
     if_skip = 0;
     if_depth = 0;
     case_active = 0;
     case_done = 0;
     case_skip = 0;
     func_set_udf_callback(prog_udf_call);
+}
+
+/* Forward declarations needed by error handling */
+static void prog_run(void);
+
+/* Helper: map expression error string to error code */
+static int expr_error_code(const char *msg) {
+    if (!msg) return ERR_SYNTAX;
+    if (strstr(msg, "ivision by zero")) return ERR_DIV_ZERO;
+    if (strstr(msg, "ype mismatch")) return ERR_TYPE_MISMATCH;
+    return ERR_SYNTAX;
+}
+
+/* ---- Error handling ---- */
+
+void prog_error(int code, const char *message) {
+    error_state.code = code;
+    str_copy(error_state.message, message, sizeof(error_state.message));
+
+    /* Capture line number and program name */
+    if (state.running && state.current_prog) {
+        error_state.lineno = state.pc + 1;  /* 1-based */
+        str_copy(error_state.program, state.current_prog->filename,
+                 sizeof(error_state.program));
+    } else {
+        error_state.lineno = 0;
+        error_state.program[0] = '\0';
+    }
+
+    /* If ON ERROR handler is set and we're not already in it, invoke it */
+    if (error_state.on_error_proc[0] && !error_state.in_handler) {
+        error_state.in_handler = 1;
+        error_state.retry = 0;
+        prog_do(error_state.on_error_proc);
+        if (error_state.retry && state.running) {
+            /* Decrement PC so the failed line re-executes */
+            if (state.pc > 0) state.pc--;
+        }
+        error_state.in_handler = 0;
+        error_state.retry = 0;
+        return;
+    }
+
+    /* No handler — print error with context */
+    if (error_state.lineno > 0 && error_state.program[0]) {
+        printf("*** %s in %s line %d\n", message,
+               error_state.program, error_state.lineno);
+    } else {
+        printf("*** %s\n", message);
+    }
+}
+
+int prog_get_error_code(void) {
+    return error_state.code;
+}
+
+const char *prog_get_error_message(void) {
+    return error_state.message;
+}
+
+int prog_get_lineno(void) {
+    return error_state.lineno;
+}
+
+const char *prog_get_program_name(void) {
+    return error_state.program;
+}
+
+void prog_on_error(const char *procname) {
+    if (procname && procname[0]) {
+        str_copy(error_state.on_error_proc, procname,
+                 sizeof(error_state.on_error_proc));
+    } else {
+        error_state.on_error_proc[0] = '\0';
+    }
+}
+
+void prog_retry(void) {
+    if (!error_state.in_handler) {
+        printf("*** RETRY not in error handler\n");
+        return;
+    }
+    error_state.retry = 1;
+}
+
+/* ---- SUSPEND / RESUME ---- */
+
+void prog_suspend(void) {
+    if (!state.running) {
+        printf("*** Not in program\n");
+        return;
+    }
+    /* Save skip state */
+    suspended.if_skip = if_skip;
+    suspended.if_depth = if_depth;
+    memcpy(suspended.if_done, if_done, sizeof(if_done));
+    suspended.case_active = case_active;
+    suspended.case_done = case_done;
+    suspended.case_skip = case_skip;
+    suspended.valid = 1;
+
+    /* Pause execution — prog_run() exits when running == 0 */
+    state.running = 0;
+    printf("Suspended.\n");
+}
+
+void prog_resume(void) {
+    if (!suspended.valid) {
+        printf("*** Nothing suspended\n");
+        return;
+    }
+    /* Restore skip state */
+    if_skip = suspended.if_skip;
+    if_depth = suspended.if_depth;
+    memcpy(if_done, suspended.if_done, sizeof(if_done));
+    case_active = suspended.case_active;
+    case_done = suspended.case_done;
+    case_skip = suspended.case_skip;
+    suspended.valid = 0;
+
+    /* Continue execution */
+    state.running = 1;
+    prog_run();
 }
 
 int prog_is_running(void) {
@@ -126,7 +270,11 @@ static program_t *prog_load(const char *filename) {
         fp = fopen(path, "r");
     }
     if (!fp) {
-        printf("File not found: %s\n", path);
+        {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "File not found: %s", path);
+            prog_error(ERR_FILE_NOT_FOUND, buf);
+        }
         return NULL;
     }
 
@@ -640,7 +788,7 @@ void prog_do(const char *arg) {
 
         /* Evaluate condition */
         if (expr_eval_str(ctx, cond, &val) != 0) {
-            if (ctx->error) printf("Error: %s\n", ctx->error);
+            if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
             state.pc++;
             return;
         }
@@ -698,7 +846,7 @@ void prog_do(const char *arg) {
             while (*p && with_argc < 16) {
                 value_t val;
                 if (expr_eval(ctx, &p, &val) != 0) {
-                    if (ctx->error) printf("Error: %s\n", ctx->error);
+                    if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
                     break;
                 }
                 with_args[with_argc++] = val;
@@ -792,7 +940,7 @@ void prog_if(const char *arg) {
     }
 
     if (expr_eval_str(ctx, arg, &val) != 0) {
-        if (ctx->error) printf("Error: %s\n", ctx->error);
+        if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
         state.pc++;
         return;
     }
@@ -875,7 +1023,7 @@ void prog_case(const char *arg) {
         value_t val;
         expr_ctx_t *ctx = cmd_get_expr_ctx();
         if (expr_eval_str(ctx, arg, &val) != 0) {
-            if (ctx->error) printf("Error: %s\n", ctx->error);
+            if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
             state.pc++;
             return;
         }
@@ -939,7 +1087,7 @@ void prog_enddo(void) {
     /* Re-evaluate condition */
     ctx = cmd_get_expr_ctx();
     if (expr_eval_str(ctx, state.loop_stack[state.loop_depth - 1].condition, &val) != 0) {
-        if (ctx->error) printf("Error: %s\n", ctx->error);
+        if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
         state.loop_depth--;
         state.pc++;
         return;
@@ -1412,6 +1560,36 @@ int prog_execute_line(char *line) {
 
     if (str_imatch(p, "CANCEL")) {
         prog_cancel();
+        return 0;
+    }
+
+    /* ON ERROR DO <proc> / ON ERROR */
+    if (str_imatch(p, "ON") && str_imatch(skip_ws(p + 2), "ERROR")) {
+        char *rest = skip_ws(skip_ws(p + 2) + 5);
+        if (str_imatch(rest, "DO")) {
+            rest = skip_ws(rest + 2);
+            char procname[64];
+            int i = 0;
+            while (is_ident_char(*rest) && i < 63)
+                procname[i++] = *rest++;
+            procname[i] = '\0';
+            prog_on_error(procname);
+        } else {
+            prog_on_error(NULL);
+        }
+        state.pc++;
+        return 0;
+    }
+
+    if (str_imatch(p, "RETRY")) {
+        prog_retry();
+        state.pc++;
+        return 0;
+    }
+
+    if (str_imatch(p, "SUSPEND")) {
+        state.pc++;  /* advance past SUSPEND before pausing */
+        prog_suspend();
         return 0;
     }
 

@@ -11,7 +11,7 @@ int main(void) {
     char line[256];
 
     printf("dBASE III Clone for SLOW-32\n");
-    printf("Stage 4C: Programming, Screen I/O & Indexing\n\n");
+    printf("Stage 6: Report & Label Generators\n\n");
 
     dbf_init(&current_db);
     prog_init();
