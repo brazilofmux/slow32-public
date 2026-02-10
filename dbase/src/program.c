@@ -113,14 +113,18 @@ static program_t *prog_load(const char *filename) {
     int capacity = 128;
 
     str_copy(path, filename, sizeof(path));
-    str_upper(path);
     /* Add .PRG extension if not present */
     if (strlen(path) < 4 || str_icmp(path + strlen(path) - 4, ".PRG") != 0) {
         if (strlen(path) + 4 < sizeof(path))
             strcat(path, ".PRG");
     }
 
+    /* Try original case first (Linux), then uppercase (DOS compat) */
     fp = fopen(path, "r");
+    if (!fp) {
+        str_upper(path);
+        fp = fopen(path, "r");
+    }
     if (!fp) {
         printf("File not found: %s\n", path);
         return NULL;

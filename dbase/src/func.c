@@ -593,6 +593,18 @@ static int fn_col(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     return 0;
 }
 
+static int fn_prow(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_num((double)screen_get_prow());
+    return 0;
+}
+
+static int fn_pcol(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_num((double)screen_get_pcol());
+    return 0;
+}
+
 /* ---- Dispatch table ---- */
 
 typedef int (*func_impl_t)(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
@@ -650,6 +662,8 @@ static const func_entry_t func_table[] = {
     /* Screen */
     { "ROW",       fn_row },
     { "COL",       fn_col },
+    { "PROW",      fn_prow },
+    { "PCOL",      fn_pcol },
     /* Misc */
     { "IIF",       fn_iif },
     { "FILE",      fn_file },

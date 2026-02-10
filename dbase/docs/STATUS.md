@@ -1,6 +1,6 @@
 # dBase III Clone — Implementation Status
 
-Current as of February 2026. 44/44 tests passing.
+Current as of February 2026. 46/46 tests passing.
 
 ## Architecture
 
@@ -31,7 +31,7 @@ Test:  `bash tests/run-tests.sh`
 |---------|--------|
 | CREATE | `CREATE <file>` (interactive field definition) |
 | USE | `USE [<file>] [INDEX <ndx1>[,<ndx2>...]] [ALIAS <name>]` |
-| CLOSE | `CLOSE` |
+| CLOSE | `CLOSE [DATABASES\|ALL\|INDEX\|PROCEDURE]` |
 | SELECT | `SELECT <n>` or `SELECT <alias>` (work areas 1-10) |
 | ERASE | `ERASE <file>` |
 | RENAME | `RENAME <old> TO <new>` |
@@ -69,7 +69,8 @@ Test:  `bash tests/run-tests.sh`
 | DISPLAY STRUCTURE | `DISPLAY STRUCTURE` |
 | DISPLAY MEMORY | `DISPLAY MEMORY` |
 | ? | `? [<expr> [,<expr>...]]` |
-| ?? | `?? <expr> [,<expr>...]` |
+| ?? | `?? <expr> [,<expr>...]` (no newline) |
+| EJECT | `EJECT` (form feed / reset printer position) |
 
 ### Aggregate Commands
 | Command | Syntax |
@@ -92,7 +93,7 @@ Test:  `bash tests/run-tests.sh`
 | STORE | `STORE <expr> TO <var>` |
 | (assignment) | `<var> = <expr>` |
 | RELEASE | `RELEASE <var>[,<var>...]` |
-| RELEASE ALL | `RELEASE ALL` |
+| RELEASE ALL | `RELEASE ALL [LIKE <pattern>\|EXCEPT <pattern>]` |
 | PRIVATE | `PRIVATE <var>[,<var>...]` |
 | PUBLIC | `PUBLIC <var>[,<var>...]` |
 
@@ -107,7 +108,7 @@ Test:  `bash tests/run-tests.sh`
 | Command | Syntax |
 |---------|--------|
 | @ SAY | `@ <row>,<col> SAY <expr> [PICTURE <mask>]` |
-| @ GET | `@ <row>,<col> GET <var> [PICTURE <mask>]` |
+| @ GET | `@ <row>,<col> GET <var> [PICTURE <mask>] [RANGE <lo>,<hi>]` |
 | @ CLEAR TO | `@ <r1>,<c1> CLEAR TO <r2>,<c2>` |
 | @ TO | `@ <r1>,<c1> TO <r2>,<c2> [DOUBLE]` |
 | READ | `READ` |
@@ -141,7 +142,7 @@ Test:  `bash tests/run-tests.sh`
 | Line continuation | `;` at end of line |
 | Macro substitution | `&varname` or `&varname.` |
 
-## Built-in Functions (39)
+## Built-in Functions (44)
 
 ### Status (6)
 `EOF()`, `BOF()`, `RECNO()`, `RECCOUNT()`, `DELETED()`, `FOUND()`
@@ -157,24 +158,43 @@ Test:  `bash tests/run-tests.sh`
 
 ### Date (9)
 `DATE()`, `DTOC(d)`, `CTOD(s)`, `DAY(d)`, `MONTH(d)`, `YEAR(d)`,
-`DOW(d)`, `CDOW(d)`, `CMONTH(d)`
+`DOW(d)`, `CDOW(d)`, `CMONTH(d)`, `DTOS(d)`
 
-## SET Options (13)
-| Option | Values | Default |
-|--------|--------|---------|
-| TALK | ON/OFF | ON |
-| DELETED | ON/OFF | OFF |
-| EXACT | ON/OFF | OFF |
-| HEADING | ON/OFF | ON |
-| CONFIRM | ON/OFF | OFF |
-| BELL | ON/OFF | ON |
-| SAFETY | ON/OFF | ON |
-| CONSOLE | ON/OFF | ON |
-| DECIMALS | 0-18 | 2 |
-| DATE | AMERICAN/ANSI/BRITISH/FRENCH/GERMAN/ITALIAN/JAPAN | AMERICAN |
-| FILTER | expression or empty | (none) |
-| ORDER | 0-7 | 1 |
-| PROCEDURE | filename or empty | (none) |
+### Screen (4)
+`ROW()`, `COL()`, `PROW()`, `PCOL()`
+
+### Misc (2)
+`IIF(cond,true,false)`, `FILE(filename)`
+
+## SET Options (14 active + 14 no-op)
+| Option | Values | Default | Notes |
+|--------|--------|---------|-------|
+| TALK | ON/OFF | ON | |
+| DELETED | ON/OFF | OFF | |
+| EXACT | ON/OFF | OFF | |
+| HEADING | ON/OFF | ON | |
+| CONFIRM | ON/OFF | OFF | |
+| BELL | ON/OFF | ON | |
+| SAFETY | ON/OFF | ON | |
+| CONSOLE | ON/OFF | ON | |
+| DECIMALS | 0-18 | 2 | |
+| DATE | AMERICAN/ANSI/BRITISH/... | AMERICAN | |
+| FILTER | expression | (none) | |
+| ORDER | 0-7 | 1 | |
+| PROCEDURE | filename | (none) | |
+| DEVICE | SCREEN/PRINT | SCREEN | Routes @SAY output |
+| ECHO | ON/OFF | ON | No-op |
+| MENU(S) | ON/OFF | ON | No-op |
+| STATUS | ON/OFF | OFF | No-op |
+| SCOREBOARD | ON/OFF | ON | No-op |
+| ESCAPE | ON/OFF | ON | No-op |
+| INTENSITY | ON/OFF | ON | No-op |
+| UNIQUE | ON/OFF | OFF | No-op |
+| FUNCTION | n TO str | — | No-op |
+| PRINT | ON/OFF | OFF | No-op |
+| HELP | ON/OFF | ON | No-op |
+| CENTURY | ON/OFF | OFF | No-op |
+| PATH | dir | — | No-op |
 
 ## Expression Operators
 
@@ -211,11 +231,13 @@ SET ORDER TO selects controlling index. REINDEX rebuilds from current data.
 Uses terminal service negotiation (term.h API). Falls back to line-mode
 output when terminal service is unavailable. PICTURE masks support:
 `9` (digit), `A` (alpha), `X` (any), `!` (uppercase), `#` (digit/space/sign).
-Box drawing with single/double line characters.
+Box drawing with single/double line characters. SET DEVICE TO PRINT
+routes @SAY to sequential output with printer position tracking.
+RANGE validation on @GET fields. EJECT resets printer position.
 
 ## Test Suite
 
-44 tests covering: CREATE, navigation, expressions, functions, memory
+46 tests covering: CREATE, navigation, expressions, functions, memory
 variables, SET options, work areas, file operations, screen I/O,
 programming constructs, procedures, functions, indexing, multi-index,
-filters, scope clauses, comments, and more.
+filters, scope clauses, comments, print device routing, and more.

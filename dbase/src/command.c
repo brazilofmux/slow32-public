@@ -2592,7 +2592,7 @@ void cmd_close_all(void) {
     current_area = 0;
 }
 
-/* ---- Accessors for program.c ---- */
+/* ---- Accessors for program.c / screen.c ---- */
 memvar_store_t *cmd_get_memvar_store(void) {
     return &memvar_store;
 }
@@ -2600,6 +2600,14 @@ memvar_store_t *cmd_get_memvar_store(void) {
 expr_ctx_t *cmd_get_expr_ctx(void) {
     ctx_setup();
     return &expr_ctx;
+}
+
+int cmd_get_device(void) {
+    return set_opts.device;
+}
+
+int cmd_get_console(void) {
+    return set_opts.console;
 }
 
 /* ---- Dispatch ---- */
@@ -2695,6 +2703,11 @@ int cmd_execute(dbf_t *db, char *line) {
     }
     if (str_imatch(p, "CANCEL")) {
         if (prog_is_running()) prog_cancel();
+        return 0;
+    }
+
+    if (str_imatch(p, "EJECT")) {
+        screen_eject();
         return 0;
     }
 

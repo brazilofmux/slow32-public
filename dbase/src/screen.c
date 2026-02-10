@@ -15,6 +15,7 @@
 #endif
 
 static screen_state_t scr;
+static int print_row, print_col;   /* printer position tracking */
 
 void screen_init(void) {
     memset(&scr, 0, sizeof(scr));
@@ -110,14 +111,31 @@ void screen_say(int row, int col, const char *expr_str, const char *picture) {
         str_copy(formatted, buf, sizeof(formatted));
     }
 
-    goto_pos(row, col);
-    printf("%s", formatted);
+    if (cmd_get_device() == 1) {
+        /* PRINT mode: advance with newlines/spaces to requested position */
+        while (print_row < row) {
+            printf("\n");
+            print_row++;
+            print_col = 0;
+        }
+        while (print_col < col) {
+            putchar(' ');
+            print_col++;
+        }
+        printf("%s", formatted);
+        print_col += strlen(formatted);
+        /* Console echo controlled by SET CONSOLE */
+    } else {
+        goto_pos(row, col);
+        printf("%s", formatted);
+    }
     scr.last_row = row;
     scr.last_col = col + strlen(formatted);
 }
 
 /* ---- @GET ---- */
-void screen_get(int row, int col, const char *varname, const char *picture) {
+void screen_get(int row, int col, const char *varname, const char *picture,
+                const value_t *range_lo, const value_t *range_hi) {
     memvar_store_t *store = cmd_get_memvar_store();
     value_t val;
 
@@ -133,6 +151,14 @@ void screen_get(int row, int col, const char *varname, const char *picture) {
         str_copy(scr.gets[scr.ngets].picture, picture, sizeof(scr.gets[scr.ngets].picture));
     else
         scr.gets[scr.ngets].picture[0] = '\0';
+
+    if (range_lo && range_hi) {
+        scr.gets[scr.ngets].has_range = 1;
+        scr.gets[scr.ngets].range_lo = *range_lo;
+        scr.gets[scr.ngets].range_hi = *range_hi;
+    } else {
+        scr.gets[scr.ngets].has_range = 0;
+    }
 
     /* Get current value for display */
     if (memvar_find(store, varname, &val) == 0) {
@@ -252,6 +278,18 @@ void screen_read(void) {
             } else {
                 v = val_str(line);
             }
+
+            /* RANGE validation */
+            if (scr.gets[i].has_range && v.type == VAL_NUM) {
+                double n = v.num;
+                double lo = scr.gets[i].range_lo.num;
+                double hi = scr.gets[i].range_hi.num;
+                if (n < lo || n > hi) {
+                    printf("Range: %g to %g\n", lo, hi);
+                    continue;  /* reject, keep current value */
+                }
+            }
+
             memvar_set(store, scr.gets[i].varname, &v);
         }
     }
@@ -464,6 +502,8 @@ void screen_at_cmd(const char *line) {
         char varname[MEMVAR_NAMELEN];
         char picture[64] = "";
         int i = 0;
+        int has_range = 0;
+        value_t range_lo, range_hi;
 
         p = skip_ws(p + 3);
 
@@ -481,10 +521,27 @@ void screen_at_cmd(const char *line) {
                 while (*p && *p != q && i < 63)
                     picture[i++] = *p++;
                 picture[i] = '\0';
+                if (*p) p++;  /* skip closing quote */
             }
         }
 
-        screen_get(row, col, varname, picture);
+        p = skip_ws(p);
+        if (str_imatch(p, "RANGE")) {
+            expr_ctx_t *ctx = cmd_get_expr_ctx();
+            p = skip_ws(p + 5);
+            if (expr_eval(ctx, &p, &range_lo) == 0) {
+                p = skip_ws(p);
+                if (*p == ',') p++;
+                p = skip_ws(p);
+                if (expr_eval(ctx, &p, &range_hi) == 0) {
+                    has_range = 1;
+                }
+            }
+        }
+
+        screen_get(row, col, varname, picture,
+                   has_range ? &range_lo : NULL,
+                   has_range ? &range_hi : NULL);
 
     } else if (str_imatch(p, "CLEAR")) {
         int r2 = 24, c2 = 79;
@@ -522,3 +579,11 @@ void screen_at_cmd(const char *line) {
 
 int screen_get_row(void) { return scr.last_row; }
 int screen_get_col(void) { return scr.last_col; }
+int screen_get_prow(void) { return print_row; }
+int screen_get_pcol(void) { return print_col; }
+
+void screen_eject(void) {
+    printf("\n--- PAGE ---\n");
+    print_row = 0;
+    print_col = 0;
+}

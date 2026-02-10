@@ -13,6 +13,8 @@ typedef struct {
     int width;
     val_type_t type;
     char initial[256];
+    int has_range;
+    value_t range_lo, range_hi;
 } get_entry_t;
 
 typedef struct {
@@ -29,8 +31,9 @@ void screen_init(void);
 /* @SAY command */
 void screen_say(int row, int col, const char *expr_str, const char *picture);
 
-/* @GET command */
-void screen_get(int row, int col, const char *varname, const char *picture);
+/* @GET command (range_lo/range_hi = NULL if no RANGE) */
+void screen_get(int row, int col, const char *varname, const char *picture,
+                const value_t *range_lo, const value_t *range_hi);
 
 /* @CLEAR TO command */
 void screen_clear_region(int r1, int c1, int r2, int c2);
@@ -56,5 +59,12 @@ void screen_at_cmd(const char *line);
 /* Cursor position tracking (for ROW()/COL() functions) */
 int screen_get_row(void);
 int screen_get_col(void);
+
+/* Printer position tracking (for PROW()/PCOL() functions) */
+int screen_get_prow(void);
+int screen_get_pcol(void);
+
+/* EJECT command (form feed / reset printer position) */
+void screen_eject(void);
 
 #endif

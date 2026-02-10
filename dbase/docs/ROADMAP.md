@@ -3,10 +3,10 @@
 Prioritized work plan organized into phases. Each phase is independently
 committable and testable.
 
-## Phase 1: Teacher's Pet Unblocking
+## Phase 1: Teacher's Pet Unblocking --- DONE
 
 **Goal**: Get sane.prg and tp.prg to run without errors.
-**Effort**: Small (1 session).
+**Effort**: Small (1 session). **COMPLETE** (45/45 tests).
 
 ### 1a. Accept missing SET options as no-ops
 
@@ -54,10 +54,10 @@ Also verify: date + number = date, date - number = date.
 
 ---
 
-## Phase 2: Screen & Output Completeness
+## Phase 2: Screen & Output Completeness --- DONE
 
 **Goal**: Teacher's Pet menus and reports display correctly.
-**Effort**: Medium (1-2 sessions).
+**Effort**: Medium (1-2 sessions). **COMPLETE** (46/46 tests).
 
 ### 2a. SET DEVICE TO SCREEN/PRINT
 
