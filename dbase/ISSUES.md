@@ -1,49 +1,67 @@
 # dBase III Clone: Code Review Issues & Opportunities
 
-This document tracks identified bugs, architectural inconsistencies, and performance opportunities. Organized by theme, with observations from recent implementation phases.
+This document tracks identified bugs, architectural inconsistencies, and performance opportunities.
 
 ## 1. Architectural Inconsistencies
 
-### 1.1 Lexer Integration (Medium Priority)
-While `src/expr.c` correctly uses the new Lexer for expression parsing, `src/command.c` still relies on manual string scanning and `str_imatch`.
-- **Observation**: Commands are not consistently parsed across the system. The "4-character rule" is implemented in `lex.c` but not utilized for command dispatch in `command.c`.
-- **Note**: `program.c` recently adopted specialized identifier scanning (`line_is_kw`) for control-flow robustness, which is a step toward consistency without the full overhead of the Lexer for every line scan.
-- **Opportunity**: Refactor `cmd_execute` to use the Lexer. This will simplify parsing of complex commands (e.g., `REPORT FORM` or `COPY TO`) which have multiple optional clauses.
+### 1.1 Lexer Integration (Ongoing)
+- **Success**: `cmd_execute` in `src/command.c` now utilizes the Lexer for primary command dispatch.
+- **Observation**: Many sub-handlers (e.g., `cmd_list`, `cmd_replace`, `cmd_report_form`) still perform manual string scanning for clauses (`FOR`, `WHILE`, `TO PRINT`).
+- **Opportunity**: Fully transition sub-handlers to use the Lexer. This will resolve "keyword swallowing" bugs where a clause like `FOR` consumes the rest of the line, preventing subsequent clauses.
 
 ### 1.2 Unified Macro Handling
-Macro expansion (`&var`) is currently handled in a pre-processing stage (`prog_preprocess`).
-- **Issue**: This can lead to double-tokenization issues or failures in complex nested expressions.
-- **Opportunity**: Integrate macro expansion directly into `lex.c` so that the Lexer can transparently expand macros as it tokenizes.
+- **Issue**: Macro expansion (`&var`) is handled by `prog_preprocess` before the Lexer sees the line.
+- **Limitation**: This prevents the Lexer from handling nested macros or macros that expand into partial tokens.
+- **Opportunity**: Integrate macro expansion directly into `lex.c`. When the Lexer encounters `&`, it should look up the variable and continue tokenizing from the expanded string.
+
+### 1.3 Procedure Search Robustness
+- **Issue**: `find_procedure` in `program.c` uses `str_imatch` on raw source lines.
+- **Bug**: It can incorrectly identify a `PROCEDURE` keyword inside a comment or a string literal.
+- **Opportunity**: Update `find_procedure` to use `line_is_kw` (which pre-processes the line) to ensure only valid code is matched.
 
 ## 2. Performance & Scaling
 
-### 2.1 B+ Tree Memory Residency
-The Phase 7 implementation correctly moved the system to a professional **B+ Tree (NDX2 format)** with 4KB pages.
-- **Success**: Incremental maintenance during `APPEND`, `REPLACE`, `PACK`, and `ZAP` is excellent.
-- **Observation**: Currently, all pages are loaded into memory (`pages` array). For extremely large databases, this will consume significant RAM.
-- **Strategy**: The current memory-resident approach is ideal for "giving the structure a workout" on the SLOW-32 platform. A future pass should implement a true **LRU Page Cache** (e.g., 16–64 pages) to support multi-gigabyte indexes.
+### 2.1 B+ Tree LRU Page Cache
+- **Success**: Implementation of a 64-page LRU cache with pinning logic.
+- **Observation**: The `pages` array in `index_t` is still sized to the total number of pages in the file. While pointers are NULL for non-resident pages, this array grows with the file size.
+- **Opportunity**: Transition to a fixed-size hash table or a more sparse structure for the page table to support multi-gigabyte indexes with minimal overhead.
 
-### 2.2 Record Buffering
-`src/dbf.c` reads records one at a time directly from disk into a single buffer per work area.
-- **Limitation**: Sequential scans (LIST, COUNT, etc.) are bottlenecked by disk I/O latency.
-- **Opportunity**: Implement a simple LRU record cache or read-ahead buffering.
+### 2.2 DBF Cache Coherence
+- **Issue**: Each `dbf_t` handle has its own 32-record read-ahead cache.
+- **Bug**: If the same DBF file is opened in two work areas, writing to one does not invalidate the cache of the other.
+- **Strategy**: Implement a shared global record cache indexed by file inode/device, or document this as a known limitation of the multi-area implementation.
+
+### 2.3 SORT Memory Limitation
+- **Limitation**: `cmd_sort` is hard-coded to a maximum of 2000 records.
+- **Opportunity**: Implement an external merge sort (sorting chunks to temporary files and merging) to support sorting databases of any size.
 
 ## 3. Correctness & Compatibility
 
 ### 3.1 Wildcard Matching
-`memvar.c`'s `pattern_match` currently only supports trailing `*` (e.g., `T_*`).
-- **Issue**: Standard dBase III patterns like `?` or mid-string `*` are not fully supported.
-- **Opportunity**: Implement a robust `str_like` function in `util.c`.
+- **Issue**: `memvar.c`'s `pattern_match` currently only supports trailing `*` (e.g., `T_*`).
+- **Opportunity**: Implement a robust `str_like` function in `util.c` that handles `?` and internal `*` for full dBase III compatibility.
 
-### 3.2 Printer Logic in @SAY
-`src/screen.c` `@SAY` in `PRINT` mode advances `print_row` using `\n`.
-- **Issue**: If a report attempts to print at a row *less* than the current `print_row`, it currently does nothing.
-- **Note**: Authentic dBase behavior varies (some issue a Form Feed, others ignore). This should be verified against Teacher's Pet requirements.
+### 3.2 Terminal Mode RANGE Validation
+- **Bug**: `screen_read` correctly validates `RANGE` in fallback line-mode but **ignores it** in full-screen terminal mode.
+- **Impact**: User input in terminal mode can bypass range constraints defined in `@ GET`.
+
+### 3.3 Screen Position Synchronization
+- **Issue**: `screen_say` and `screen_get` update `scr.last_row/col` manually.
+- **Concern**: If the terminal service issues its own wraps or scrolling, the internal tracking will drift.
+- **Opportunity**: Query the terminal service for actual cursor position if the API supports it, or implement strict bounds checking.
+
+### 3.4 Numeric Formatting in STR()
+- **Issue**: `fn_str` in `func.c` currently truncates fractional values to `int` when decimals are not specified.
+- **Correction**: Standard dBase `STR()` behavior is to round to the nearest integer if no decimal count is provided.
+
+### 3.5 Fractional Exponents
+- **Limitation**: `my_pow` in `expr.c` only supports integer exponents.
+- **Opportunity**: Use `pow()` from the runtime library or implement a series-based approximation to support fractional powers (e.g., `x ** 0.5`).
 
 ## 4. Completed Milestone Successes
 
-- **Phase 5 (Error Handling)**: Successfully transitioned from `printf` errors to a robust `prog_error()` system with typed codes and `ON ERROR` recovery.
-- **Phase 6 (Binary Compatibility)**: `.FRM` and `.LBL` formats are precisely implemented at the binary level, matching legacy specifications.
-- **Phase 7 (B+ Tree)**: Moved from O(N) to O(log N) indexing with a stable, persistent tree structure and backward-compatible NDX1 loader.
-- **Commit 4fe3f75**: Fixed `SAVE TO` variable iteration (skipping unused slots) and implemented a keyword-aware parser for `REPORT FORM` to allow clauses after `FOR/HEADING`.
-- **Commit 05639a9/40bcb2e**: Integrated identifier-aware scanning for control flow keywords (`IF`, `ENDDO`, etc.), preventing confusion from keywords embedded in strings or comments.
+- **Phase 5 (Error Handling)**: Robust `prog_error()` system with `ON ERROR` and `RETRY` support.
+- **Phase 6 (Binary Compatibility)**: Precise `.FRM` and `.LBL` binary support.
+- **Phase 7 (B+ Tree)**: Persistent NDX2 format with O(log N) performance and incremental maintenance.
+- **Record Cache**: 32-record read-ahead window in `dbf.c` for sequential scan acceleration.
+- **Lexer Dispatch**: Consistent command identification using the 4-character rule in `command.c`.
