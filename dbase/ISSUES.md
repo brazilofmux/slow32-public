@@ -5,8 +5,8 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 ## 1. Architectural Inconsistencies
 
 ### 1.1 Lexer Integration (Ongoing)
-- **Status**: Major sub-handlers (`LIST`, `DISPLAY`, `REPLACE`, `REPORT FORM`) have been refactored to use the Lexer and a unified `clause_t` structure.
-- **Opportunity**: Continue transitioning remaining sub-handlers (e.g., `COUNT`, `SUM`, `AVERAGE`, `DELETE`, `RECALL`, `LOCATE`) to the Lexer for full consistency.
+- **Status**: Major sub-handlers (`LIST`, `DISPLAY`, `REPLACE`, `REPORT FORM`, `COUNT`, `SUM`, `AVERAGE`, `DELETE`, `RECALL`, `LOCATE`, `CONTINUE`) have been refactored to use the Lexer and a unified `clause_t` structure.
+- **Opportunity**: Transition remaining command dispatchers (e.g., `STORE`, `RELEASE`, `SET`) to the Lexer for 100% architectural consistency.
 
 ### 1.2 Unified Macro Handling
 - **Issue**: Macro expansion (`&var`) is handled by `prog_preprocess` before the Lexer sees the line.
@@ -63,14 +63,9 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 
 ## 4. Completed Milestone Successes
 
-- **Phase 5 (Error Handling)**: Robust `prog_error()` system with `ON ERROR` and `RETRY` support.
-- **Phase 6 (Binary Compatibility)**: Precise `.FRM` and `.LBL` binary support.
+- **Lexer Clause Refactor**: Migrated all record-level sequential commands to a unified Lexer-based parser and a generic `process_records` engine. This resolved character-level formatting bugs, fixed default scope issues, and added robust support for `TO FILE`, `FOR`, and `WHILE` clauses across the entire suite.
+- **Work Area Registry**: Centralized work area management in `area.c` with robust, token-aware alias resolution (A-J, 1-10) across all commands, including `SET RELATION`.
 - **Phase 7 (B+ Tree)**: Persistent NDX2 format with O(log N) performance and incremental maintenance.
 - **Record Cache**: 32-record read-ahead window in `dbf.c` for sequential scan acceleration.
-- **Lexer Dispatch**: Consistent command identification using the 4-character rule in `command.c`.
-- **Work Area Registry**: Centralized work area management in `area.c` with robust, token-aware alias resolution (A-J, 1-10) across all commands, including `SET RELATION`.
-- **Lexer Clause Parsing**: Sub-handlers for `LIST`, `DISPLAY`, `REPLACE`, and `REPORT FORM` now use the central Lexer and a unified `clause_t` structure, resolving keyword swallowing bugs and supporting arbitrary clause ordering.
-- **Commit eb41794**: Implemented `RANGE` validation in full-screen terminal mode, ensuring data integrity during user input.
-- **Commit f9bc96c**: Enhanced screen cursor tracking (`ROW()`/`COL()`) to correctly handle 80-column line wrapping.
-- **Commit 81a0d85**: Corrected `STR()` behavior to round values to the nearest integer when no decimal count is specified.
-- **Commit d33019e**: Implemented robust, non-trailing wildcard matching (`*` and `?`) for memory variable patterns and general string utility.
+- **Commit 97a8b75**: Resolved regressions in `LIST`/`DISPLAY` output redirection (`TO FILE`), added robust filename parsing for quoted paths, and ensured proper restoration of record pointers.
+- **Commit eb41794**: Implemented `RANGE` validation in full-screen terminal mode.

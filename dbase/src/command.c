@@ -34,6 +34,17 @@ static void cmd_display(dbf_t *db, lexer_t *l);
 static void cmd_display_structure(dbf_t *db);
 static void cmd_replace(dbf_t *db, lexer_t *l);
 static void cmd_report_form(dbf_t *db, lexer_t *l);
+static void cmd_count(dbf_t *db, lexer_t *l);
+static void cmd_sum(dbf_t *db, lexer_t *l);
+static void cmd_average(dbf_t *db, lexer_t *l);
+static void cmd_delete(dbf_t *db, lexer_t *l);
+static void cmd_recall(dbf_t *db, lexer_t *l);
+static void cmd_locate(dbf_t *db, lexer_t *l);
+static void cmd_continue(dbf_t *db);
+
+static void report_expr_error(void);
+static int skip_deleted(const char *rec_buf);
+static int check_filter(dbf_t *db);
 
 static work_area_t *cur_wa(void) { return area_get_current(); }
 static dbf_t *cur_db(void) { return &area_get_current()->db; }
@@ -872,7 +883,7 @@ static void cmd_skip(dbf_t *db, const char *arg) {
 }
 
 /* ---- Scope infrastructure ---- */
-typedef enum { SCOPE_ALL, SCOPE_NEXT, SCOPE_RECORD, SCOPE_REST } scope_type_t;
+typedef enum { SCOPE_DEFAULT, SCOPE_ALL_DEFAULT, SCOPE_ALL, SCOPE_NEXT, SCOPE_RECORD, SCOPE_REST } scope_type_t;
 typedef struct { scope_type_t type; uint32_t count; } scope_t;
 
 typedef struct {
@@ -891,7 +902,7 @@ typedef struct {
 
 static void clause_init(clause_t *c) {
     memset(c, 0, sizeof(*c));
-    c->scope.type = SCOPE_ALL;
+    c->scope.type = SCOPE_DEFAULT;
     c->has_scope = 0;
 }
 
@@ -1010,6 +1021,121 @@ static int parse_clauses(lexer_t *l, clause_t *c) {
     return 0;
 }
 
+typedef int (*record_callback_t)(dbf_t *db, uint32_t recno, void *userdata);
+
+typedef enum {
+    REC_CONTINUE = 0,
+    REC_STOP = 1,
+    REC_ERROR = -1
+} record_result_t;
+
+#define PROC_USE_FILTER        0x01
+#define PROC_SKIP_DELETED_SET  0x02
+#define PROC_SKIP_DELETED_ANY  0x04
+#define PROC_REQUIRE_DELETED   0x08
+#define PROC_LEAVE_ON_MATCH    0x10
+
+/* Generic record processor for commands with scope/FOR/WHILE.
+   Handles index traversal if active. Returns number of records processed. */
+static int process_records(dbf_t *db, clause_t *c, int flags, record_callback_t cb, void *userdata) {
+    index_t *idx = controlling_index();
+    uint32_t remaining = 0xFFFFFFFF;
+    int has_limit = 0;
+    int count = 0;
+    uint32_t last_matched = 0;
+
+    /* Default scope logic:
+       If no explicit scope was parsed, but a FOR was present, dBase defaults to ALL.
+       Otherwise, use the command-provided default (usually provided in c->scope before parse_clauses).
+    */
+    if (!c->has_scope) {
+        if (c->for_cond[0]) c->scope.type = SCOPE_ALL;
+        else if (c->scope.type == SCOPE_ALL_DEFAULT) c->scope.type = SCOPE_ALL;
+        else if (c->scope.type == SCOPE_DEFAULT) {
+            /* If no scope, no FOR, and still DEFAULT, fall back to NEXT 1 */
+            c->scope.type = SCOPE_NEXT;
+            c->scope.count = 1;
+        }
+    }
+
+    /* Initial positioning */
+    if (c->scope.type == SCOPE_ALL) {
+        if (idx) index_top(idx);
+        else dbf_read_record(db, 1);
+        expr_ctx.eof_flag = 0;
+        expr_ctx.bof_flag = 0;
+    } else if (c->scope.type == SCOPE_RECORD) {
+        dbf_read_record(db, c->scope.count);
+        remaining = 1;
+        has_limit = 1;
+        expr_ctx.eof_flag = 0;
+    } else if (c->scope.type == SCOPE_NEXT) {
+        remaining = c->scope.count;
+        has_limit = 1;
+    }
+
+    while (!expr_ctx.eof_flag && (!has_limit || remaining > 0)) {
+        uint32_t current_rec = idx ? index_current_recno(idx) : db->current_record;
+        if (current_rec == 0 || current_rec > db->record_count) break;
+
+        dbf_read_record(db, current_rec);
+
+        int matched = 1;
+        if (flags & PROC_SKIP_DELETED_ANY) {
+            if (db->record_buf[0] == '*') matched = 0;
+        } else if (flags & PROC_SKIP_DELETED_SET) {
+            if (skip_deleted(db->record_buf)) matched = 0;
+        }
+        if (matched && (flags & PROC_REQUIRE_DELETED)) {
+            if (db->record_buf[0] != '*') matched = 0;
+        }
+        if (matched && (flags & PROC_USE_FILTER)) {
+            if (!check_filter(db)) matched = 0;
+        }
+
+        if (matched && c->for_cond[0]) {
+            value_t cond;
+            if (expr_eval_str(&expr_ctx, c->for_cond, &cond) != 0) { report_expr_error(); return -1; }
+            if (cond.type != VAL_LOGIC || !cond.logic) matched = 0;
+        }
+
+        if (matched && c->while_cond[0]) {
+            value_t cond;
+            if (expr_eval_str(&expr_ctx, c->while_cond, &cond) != 0) { report_expr_error(); return -1; }
+            if (cond.type != VAL_LOGIC || !cond.logic) break;
+        }
+
+        if (matched) {
+            int cb_result;
+            last_matched = current_rec;
+            cb_result = cb(db, current_rec, userdata);
+            if (cb_result == REC_ERROR) return -1;
+            count++;
+            if (has_limit) remaining--;
+            if (cb_result == REC_STOP) break;
+        }
+
+        /* Advance */
+        if (idx) {
+            if (index_next(idx) < 0) expr_ctx.eof_flag = 1;
+        } else {
+            if (current_rec >= db->record_count) expr_ctx.eof_flag = 1;
+            else dbf_read_record(db, current_rec + 1);
+        }
+        if (c->scope.type == SCOPE_RECORD) break;
+    }
+
+    /* If we matched anything, leave pointer on last record processed (dBase rule for DELETE/REPLACE) */
+    if ((flags & PROC_LEAVE_ON_MATCH) && last_matched > 0) {
+        dbf_read_record(db, last_matched);
+        /* If it was SCOPE_NEXT 1 (default), we might want to preserve EOF?
+           Actually dBase leaves it on the record. */
+        expr_ctx.eof_flag = 0;
+    }
+
+    return count;
+}
+
 static scope_t parse_scope(const char **pp) {
     scope_t s;
     const char *p = skip_ws(*pp);
@@ -1042,6 +1168,14 @@ static scope_t parse_scope(const char **pp) {
 
 static int scope_bounds(dbf_t *db, const scope_t *s, uint32_t *start, uint32_t *end) {
     switch (s->type) {
+    case SCOPE_DEFAULT:
+        *start = (db->current_record > 0) ? db->current_record : 1;
+        *end = *start;
+        break;
+    case SCOPE_ALL_DEFAULT:
+        *start = 1;
+        *end = db->record_count;
+        break;
     case SCOPE_ALL:
         *start = 1;
         *end = db->record_count;
@@ -1064,64 +1198,51 @@ static int scope_bounds(dbf_t *db, const scope_t *s, uint32_t *start, uint32_t *
     return 0;
 }
 
+static int locate_cb(dbf_t *db, uint32_t recno, void *userdata) {
+    (void)db;
+    cur_wa()->locate_last_rec = recno;
+    expr_ctx.found = 1;
+    if (set_opts.talk) printf("Record = %d\n", (int)recno);
+    return REC_STOP; /* Stop after first match */
+}
+
 /* ---- LOCATE [scope] FOR ---- */
-static void cmd_locate(dbf_t *db, const char *arg) {
-    const char *p;
-    scope_t scope;
-    uint32_t start, end, i;
+static void cmd_locate(dbf_t *db, lexer_t *l) {
+    clause_t c;
+    int count;
 
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
-    p = skip_ws(arg);
-    scope = parse_scope(&p);
+    clause_init(&c);
+    c.scope.type = SCOPE_ALL_DEFAULT;
+    if (parse_clauses(l, &c) < 0) return;
 
-    if (!str_imatch(p, "FOR")) {
+    if (c.for_cond[0] == '\0') {
         printf("Syntax: LOCATE [scope] FOR <condition>\n");
         return;
     }
-    p = skip_ws(p + 3);
 
-    /* Save condition for CONTINUE (per-area) */
-    str_copy(cur_wa()->locate_cond, p, sizeof(cur_wa()->locate_cond));
-
-    if (scope_bounds(db, &scope, &start, &end) < 0) {
-        printf("Invalid scope.\n");
-        return;
-    }
-
+    /* Save for CONTINUE */
+    str_copy(cur_wa()->locate_cond, c.for_cond, sizeof(cur_wa()->locate_cond));
     expr_ctx.found = 0;
 
-    for (i = start; i <= end; i++) {
-        value_t cond;
-        dbf_read_record(db, i);
-        if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
-
-        if (expr_eval_str(&expr_ctx, cur_wa()->locate_cond, &cond) != 0) {
-            report_expr_error();
-            return;
-        }
-
-        if (cond.type == VAL_LOGIC && cond.logic) {
-            expr_ctx.found = 1;
-            expr_ctx.eof_flag = 0;
-            cur_wa()->locate_last_rec = i;
-            if (set_opts.talk) printf("Record = %d\n", (int)i);
-            return;
-        }
+    count = process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET | PROC_LEAVE_ON_MATCH, locate_cb, NULL);
+    if (count < 0) return;
+    if (count == 0) {
+        expr_ctx.found = 0;
+        expr_ctx.eof_flag = 1;
+        cur_wa()->locate_last_rec = 0;
+        if (set_opts.talk) printf("End of LOCATE scope\n");
     }
-
-    expr_ctx.found = 0;
-    expr_ctx.eof_flag = 1;
-    cur_wa()->locate_last_rec = 0;
-    if (set_opts.talk) printf("End of LOCATE scope\n");
 }
 
 /* ---- CONTINUE ---- */
 static void cmd_continue(dbf_t *db) {
-    uint32_t i;
+    clause_t c;
+    int count;
 
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
@@ -1133,157 +1254,133 @@ static void cmd_continue(dbf_t *db) {
         return;
     }
 
-    for (i = cur_wa()->locate_last_rec + 1; i <= db->record_count; i++) {
-        value_t cond;
-        dbf_read_record(db, i);
-        if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
+    clause_init(&c);
+    c.scope.type = SCOPE_REST;
+    c.has_scope = 1;
+    str_copy(c.for_cond, cur_wa()->locate_cond, sizeof(c.for_cond));
 
-        if (expr_eval_str(&expr_ctx, cur_wa()->locate_cond, &cond) != 0) {
-            report_expr_error();
-            return;
-        }
-
-        if (cond.type == VAL_LOGIC && cond.logic) {
-            expr_ctx.found = 1;
-            expr_ctx.eof_flag = 0;
-            cur_wa()->locate_last_rec = i;
-            if (set_opts.talk) printf("Record = %d\n", (int)i);
-            return;
-        }
+    /* CONTINUE starts from NEXT record */
+    if (db->current_record < db->record_count) {
+        dbf_read_record(db, db->current_record + 1);
+    } else {
+        expr_ctx.eof_flag = 1;
+        expr_ctx.found = 0;
+        if (set_opts.talk) printf("End of LOCATE scope\n");
+        return;
     }
 
     expr_ctx.found = 0;
-    expr_ctx.eof_flag = 1;
-    if (set_opts.talk) printf("End of LOCATE scope\n");
+    count = process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET | PROC_LEAVE_ON_MATCH, locate_cb, NULL);
+    if (count < 0) return;
+    if (count == 0) {
+        expr_ctx.found = 0;
+        expr_ctx.eof_flag = 1;
+        if (set_opts.talk) printf("End of LOCATE scope\n");
+    }
 }
 
 /* ---- COUNT [scope] [FOR cond] ---- */
-static void cmd_count(dbf_t *db, const char *arg) {
-    const char *p;
-    const char *cond_str = NULL;
-    scope_t scope;
-    uint32_t start, end, i;
-    int count = 0;
+static int count_cb(dbf_t *db, uint32_t recno, void *userdata) {
+    (void)db; (void)recno; (void)userdata;
+    return REC_CONTINUE; /* Just counting matches */
+}
+
+static void cmd_count(dbf_t *db, lexer_t *l) {
+    clause_t c;
+    int count;
 
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
-    p = skip_ws(arg);
-    scope = parse_scope(&p);
+    clause_init(&c);
+    c.scope.type = SCOPE_ALL_DEFAULT;
+    if (parse_clauses(l, &c) < 0) return;
 
-    if (str_imatch(p, "FOR")) {
-        cond_str = skip_ws(p + 3);
-    }
-
-    if (scope_bounds(db, &scope, &start, &end) < 0) {
-        printf("Invalid scope.\n");
-        return;
-    }
-
-    for (i = start; i <= end; i++) {
-        dbf_read_record(db, i);
-        if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
-
-        if (cond_str) {
-            value_t cond;
-            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
-                report_expr_error();
-                return;
-            }
-            if (cond.type != VAL_LOGIC || !cond.logic) continue;
-        }
-        count++;
-    }
-
+    count = process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET, count_cb, NULL);
+    if (count < 0) return;
     printf("%d record(s)\n", count);
 }
 
-/* ---- SUM [scope] expr [FOR cond] ---- */
-static void cmd_sum(dbf_t *db, const char *arg) {
-    const char *p;
-    char expr_str[256];
-    const char *cond_str = NULL;
-    scope_t scope;
-    uint32_t start, end, i;
-    double total = 0.0;
-    int count = 0;
+typedef struct {
+    char expr[256];
+    double total;
+} agg_ctx_t;
+
+static int sum_cb(dbf_t *db, uint32_t recno, void *userdata) {
+    agg_ctx_t *ctx = (agg_ctx_t *)userdata;
+    value_t val;
+    (void)db; (void)recno;
+
+    if (expr_eval_str(&expr_ctx, ctx->expr, &val) != 0) {
+        report_expr_error();
+        return REC_ERROR;
+    }
+    if (val.type != VAL_NUM) {
+        printf("SUM requires numeric expression.\n");
+        return REC_ERROR;
+    }
+    ctx->total += val.num;
+    return REC_CONTINUE;
+}
+
+static void cmd_sum(dbf_t *db, lexer_t *l) {
+    clause_t c;
+    agg_ctx_t actx;
+    int count;
 
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
-    p = skip_ws(arg);
-    if (*p == '\0') {
-        printf("Syntax: SUM <expr> [FOR <condition>]\n");
+    clause_init(&c);
+    c.scope.type = SCOPE_ALL_DEFAULT;
+
+    if (l->current.type == TOK_EOF) {
+        printf("Syntax: SUM <expr> [scope] [FOR <cond>] [WHILE <cond>]\n");
         return;
     }
 
+    /* Optional leading scope (ALL/NEXT/RECORD/REST) */
+    if (cmd_kw(l, "ALL") || cmd_kw(l, "NEXT") || cmd_kw(l, "RECORD") || cmd_kw(l, "REST")) {
+        if (parse_clauses(l, &c) < 0) return;
+    }
+
+    /* Parse expression, then trailing clauses (FOR/WHILE/scope) */
     {
-        const char *f = p;
-        const char *for_pos = NULL;
-        while (*f) {
-            if (str_imatch(f, "FOR")) { for_pos = f; break; }
-            f++;
-        }
-        if (for_pos) {
-            int len = (int)(for_pos - p);
-            if (len > (int)sizeof(expr_str) - 1) len = (int)sizeof(expr_str) - 1;
-            memcpy(expr_str, p, len);
-            expr_str[len] = '\0';
-            trim_right(expr_str);
-            cond_str = skip_ws(for_pos + 3);
-        } else {
-            str_copy(expr_str, p, sizeof(expr_str));
-            trim_right(expr_str);
-        }
-    }
-
-    {
-        const char *sp = expr_str;
-        scope = parse_scope(&sp);
-        if (sp != expr_str) {
-            const char *rest = skip_ws(sp);
-            int len = strlen(rest);
-            memmove(expr_str, rest, len + 1);
-        }
-    }
-
-    if (scope_bounds(db, &scope, &start, &end) < 0) {
-        printf("Invalid scope.\n");
-        return;
-    }
-
-    for (i = start; i <= end; i++) {
-        value_t val;
-        dbf_read_record(db, i);
-        if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
-
-        if (cond_str) {
-            value_t cond;
-            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
-                report_expr_error();
-                return;
+        const char *expr_start = l->token_start;
+        lexer_t tmp = *l;
+        while (tmp.current.type != TOK_EOF) {
+            if (cmd_kw(&tmp, "FOR") || cmd_kw(&tmp, "WHILE") ||
+                cmd_kw(&tmp, "ALL") || cmd_kw(&tmp, "NEXT") ||
+                cmd_kw(&tmp, "RECORD") || cmd_kw(&tmp, "REST")) {
+                break;
             }
-            if (cond.type != VAL_LOGIC || !cond.logic) continue;
+            lex_next(&tmp);
         }
-
-        if (expr_eval_str(&expr_ctx, expr_str, &val) != 0) {
-            report_expr_error();
+        {
+            int len = (int)(tmp.token_start - expr_start);
+            if (len >= (int)sizeof(actx.expr)) len = (int)sizeof(actx.expr) - 1;
+            memcpy(actx.expr, expr_start, len);
+            actx.expr[len] = '\0';
+            trim_right(actx.expr);
+        }
+        if (actx.expr[0] == '\0') {
+            printf("Syntax: SUM <expr> [scope] [FOR <cond>] [WHILE <cond>]\n");
             return;
         }
-        if (val.type != VAL_NUM) {
-            printf("SUM requires numeric expression.\n");
-            return;
-        }
-        total += val.num;
-        count++;
+        lexer_init(l, tmp.token_start);
+        if (parse_clauses(l, &c) < 0) return;
     }
 
-    {
-        value_t v = val_num(total);
+    actx.total = 0.0;
+
+    count = process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET, sum_cb, &actx);
+    if (count < 0) return;
+    if (count >= 0) {
+        value_t v = val_num(actx.total);
         char buf[64];
         val_to_string(&v, buf, sizeof(buf));
         printf("%d record(s) summed\n", count);
@@ -1291,99 +1388,68 @@ static void cmd_sum(dbf_t *db, const char *arg) {
     }
 }
 
-/* ---- AVERAGE [scope] expr [FOR cond] ---- */
-static void cmd_average(dbf_t *db, const char *arg) {
-    const char *p;
-    char expr_str[256];
-    const char *cond_str = NULL;
-    scope_t scope;
-    uint32_t start, end, i;
-    double total = 0.0;
-    int count = 0;
+static void cmd_average(dbf_t *db, lexer_t *l) {
+    clause_t c;
+    agg_ctx_t actx;
+    int count;
 
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
-    p = skip_ws(arg);
-    if (*p == '\0') {
-        printf("Syntax: AVERAGE <expr> [FOR <condition>]\n");
+    clause_init(&c);
+    c.scope.type = SCOPE_ALL_DEFAULT;
+
+    if (l->current.type == TOK_EOF) {
+        printf("Syntax: AVERAGE <expr> [scope] [FOR <cond>] [WHILE <cond>]\n");
         return;
     }
 
+    /* Optional leading scope (ALL/NEXT/RECORD/REST) */
+    if (cmd_kw(l, "ALL") || cmd_kw(l, "NEXT") || cmd_kw(l, "RECORD") || cmd_kw(l, "REST")) {
+        if (parse_clauses(l, &c) < 0) return;
+    }
+
+    /* Parse expression, then trailing clauses */
     {
-        const char *f = p;
-        const char *for_pos = NULL;
-        while (*f) {
-            if (str_imatch(f, "FOR")) { for_pos = f; break; }
-            f++;
-        }
-        if (for_pos) {
-            int len = (int)(for_pos - p);
-            if (len > (int)sizeof(expr_str) - 1) len = (int)sizeof(expr_str) - 1;
-            memcpy(expr_str, p, len);
-            expr_str[len] = '\0';
-            trim_right(expr_str);
-            cond_str = skip_ws(for_pos + 3);
-        } else {
-            str_copy(expr_str, p, sizeof(expr_str));
-            trim_right(expr_str);
-        }
-    }
-
-    {
-        const char *sp = expr_str;
-        scope = parse_scope(&sp);
-        if (sp != expr_str) {
-            const char *rest = skip_ws(sp);
-            int len = strlen(rest);
-            memmove(expr_str, rest, len + 1);
-        }
-    }
-
-    if (scope_bounds(db, &scope, &start, &end) < 0) {
-        printf("Invalid scope.\n");
-        return;
-    }
-
-    for (i = start; i <= end; i++) {
-        value_t val;
-        dbf_read_record(db, i);
-        if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
-
-        if (cond_str) {
-            value_t cond;
-            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
-                report_expr_error();
-                return;
+        const char *expr_start = l->token_start;
+        lexer_t tmp = *l;
+        while (tmp.current.type != TOK_EOF) {
+            if (cmd_kw(&tmp, "FOR") || cmd_kw(&tmp, "WHILE") ||
+                cmd_kw(&tmp, "ALL") || cmd_kw(&tmp, "NEXT") ||
+                cmd_kw(&tmp, "RECORD") || cmd_kw(&tmp, "REST")) {
+                break;
             }
-            if (cond.type != VAL_LOGIC || !cond.logic) continue;
+            lex_next(&tmp);
         }
-
-        if (expr_eval_str(&expr_ctx, expr_str, &val) != 0) {
-            report_expr_error();
+        {
+            int len = (int)(tmp.token_start - expr_start);
+            if (len >= (int)sizeof(actx.expr)) len = (int)sizeof(actx.expr) - 1;
+            memcpy(actx.expr, expr_start, len);
+            actx.expr[len] = '\0';
+            trim_right(actx.expr);
+        }
+        if (actx.expr[0] == '\0') {
+            printf("Syntax: AVERAGE <expr> [scope] [FOR <cond>] [WHILE <cond>]\n");
             return;
         }
-        if (val.type != VAL_NUM) {
-            printf("AVERAGE requires numeric expression.\n");
-            return;
-        }
-        total += val.num;
-        count++;
+        lexer_init(l, tmp.token_start);
+        if (parse_clauses(l, &c) < 0) return;
     }
 
-    if (count == 0) {
-        printf("No records.\n");
-        return;
-    }
+    actx.total = 0.0;
 
-    {
-        value_t v = val_num(total / count);
+    count = process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET, sum_cb, &actx);
+    if (count < 0) return;
+    if (count > 0) {
+        value_t v = val_num(actx.total / count);
         char buf[64];
         val_to_string(&v, buf, sizeof(buf));
         printf("%d record(s) averaged\n", count);
         printf("  AVERAGE: %s\n", buf);
+    } else if (count == 0) {
+        printf("No records.\n");
     }
 }
 
@@ -1583,12 +1649,18 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
             c.scope.type = SCOPE_NEXT;
             c.scope.count = 1;
         } else {
-            c.scope.type = SCOPE_ALL;
+            c.scope.type = SCOPE_ALL_DEFAULT;
         }
     }
 
     if (c.for_cond[0] && !c.has_scope) {
+        c.scope.type = SCOPE_ALL_DEFAULT;
+    }
+    if (c.scope.type == SCOPE_ALL_DEFAULT) {
         c.scope.type = SCOPE_ALL;
+    } else if (c.scope.type == SCOPE_DEFAULT) {
+        c.scope.type = SCOPE_NEXT;
+        c.scope.count = 1;
     }
 
     if (c.to_file[0]) {
@@ -1840,19 +1912,32 @@ static void cmd_release(const char *arg) {
 }
 
 /* ---- DELETE [scope] [FOR cond] ---- */
-static void cmd_delete(dbf_t *db, const char *arg) {
-    const char *p = skip_ws(arg);
-    scope_t scope;
-    uint32_t start, end, i;
-    const char *cond_str = NULL;
-    int count = 0;
+static int delete_cb(dbf_t *db, uint32_t recno, void *userdata) {
+    (void)recno; (void)userdata;
+    db->record_buf[0] = '*';
+    db->record_dirty = 1;
+    dbf_flush_record(db);
+    return REC_CONTINUE;
+}
+
+static int recall_cb(dbf_t *db, uint32_t recno, void *userdata) {
+    (void)recno; (void)userdata;
+    db->record_buf[0] = ' ';
+    db->record_dirty = 1;
+    dbf_flush_record(db);
+    return REC_CONTINUE;
+}
+
+static void cmd_delete(dbf_t *db, lexer_t *l) {
+    clause_t c;
+    int count;
 
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
-    if (*p == '\0') {
+    if (l->current.type == TOK_EOF) {
         if (db->current_record == 0 || expr_ctx.eof_flag) {
             printf("No current record.\n");
             return;
@@ -1864,51 +1949,26 @@ static void cmd_delete(dbf_t *db, const char *arg) {
         return;
     }
 
-    scope = parse_scope(&p);
-    if (str_imatch(p, "FOR"))
-        cond_str = skip_ws(p + 3);
+    clause_init(&c);
+    c.scope.type = SCOPE_DEFAULT;
+    if (parse_clauses(l, &c) < 0) return;
 
-    if (scope_bounds(db, &scope, &start, &end) < 0) {
-        printf("Invalid scope.\n");
-        return;
-    }
-
-    for (i = start; i <= end; i++) {
-        dbf_read_record(db, i);
-        if (db->record_buf[0] == '*') continue;
-
-        if (cond_str) {
-            value_t cond;
-            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
-                report_expr_error();
-                return;
-            }
-            if (cond.type != VAL_LOGIC || !cond.logic) continue;
-        }
-
-        db->record_buf[0] = '*';
-        db->record_dirty = 1;
-        dbf_flush_record(db);
-        count++;
-    }
-
-    printf("%d record(s) deleted.\n", count);
+    count = process_records(db, &c, PROC_SKIP_DELETED_ANY | PROC_LEAVE_ON_MATCH, delete_cb, NULL);
+    if (count < 0) return;
+    if (count == 1) printf("1 record deleted.\n");
+    else printf("%d record(s) deleted.\n", count);
 }
 
-/* ---- RECALL [scope] [FOR cond] ---- */
-static void cmd_recall(dbf_t *db, const char *arg) {
-    const char *p = skip_ws(arg);
-    scope_t scope;
-    uint32_t start, end, i;
-    const char *cond_str = NULL;
-    int count = 0;
+static void cmd_recall(dbf_t *db, lexer_t *l) {
+    clause_t c;
+    int count;
 
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
-    if (*p == '\0') {
+    if (l->current.type == TOK_EOF) {
         if (db->current_record == 0 || expr_ctx.eof_flag) {
             printf("No current record.\n");
             return;
@@ -1922,35 +1982,15 @@ static void cmd_recall(dbf_t *db, const char *arg) {
         return;
     }
 
-    scope = parse_scope(&p);
-    if (str_imatch(p, "FOR"))
-        cond_str = skip_ws(p + 3);
+    clause_init(&c);
+    c.scope.type = SCOPE_DEFAULT;
+    if (parse_clauses(l, &c) < 0) return;
 
-    if (scope_bounds(db, &scope, &start, &end) < 0) {
-        printf("Invalid scope.\n");
-        return;
-    }
+    count = process_records(db, &c, PROC_REQUIRE_DELETED | PROC_LEAVE_ON_MATCH, recall_cb, NULL);
+    if (count < 0) return;
 
-    for (i = start; i <= end; i++) {
-        dbf_read_record(db, i);
-        if (db->record_buf[0] != '*') continue;
-
-        if (cond_str) {
-            value_t cond;
-            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
-                report_expr_error();
-                return;
-            }
-            if (cond.type != VAL_LOGIC || !cond.logic) continue;
-        }
-
-        db->record_buf[0] = ' ';
-        db->record_dirty = 1;
-        dbf_flush_record(db);
-        count++;
-    }
-
-    printf("%d record(s) recalled.\n", count);
+    if (count == 1) printf("1 record recalled.\n");
+    else printf("%d record(s) recalled.\n", count);
 }
 
 /* ---- PACK ---- */
@@ -3847,7 +3887,8 @@ int cmd_execute(dbf_t *db, char *line) {
     }
 
     if (cmd_kw(&l, "LOCATE")) {
-        cmd_locate(cdb, (char *)cmd_after(&l));
+        lex_next(&l);
+        cmd_locate(cdb, &l);
         follow_relations();
         return 0;
     }
@@ -3859,17 +3900,20 @@ int cmd_execute(dbf_t *db, char *line) {
     }
 
     if (cmd_kw(&l, "COUNT")) {
-        cmd_count(cdb, (char *)cmd_after(&l));
+        lex_next(&l);
+        cmd_count(cdb, &l);
         return 0;
     }
 
     if (cmd_kw(&l, "SUM")) {
-        cmd_sum(cdb, (char *)cmd_after(&l));
+        lex_next(&l);
+        cmd_sum(cdb, &l);
         return 0;
     }
 
     if (cmd_kw(&l, "AVERAGE")) {
-        cmd_average(cdb, (char *)cmd_after(&l));
+        lex_next(&l);
+        cmd_average(cdb, &l);
         return 0;
     }
 
@@ -4035,12 +4079,14 @@ int cmd_execute(dbf_t *db, char *line) {
     }
 
     if (cmd_kw(&l, "DELETE")) {
-        cmd_delete(cdb, (char *)cmd_after(&l));
+        lex_next(&l);
+        cmd_delete(cdb, &l);
         return 0;
     }
 
     if (cmd_kw(&l, "RECALL")) {
-        cmd_recall(cdb, (char *)cmd_after(&l));
+        lex_next(&l);
+        cmd_recall(cdb, &l);
         return 0;
     }
 
