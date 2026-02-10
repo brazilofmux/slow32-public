@@ -2972,9 +2972,35 @@ static void cmd_create_report(const char *arg) {
     printf("Report definition %s created.\n", filename);
 }
 
+static int report_kw_boundary(const char *p, const char *kw) {
+    int n = (int)strlen(kw);
+    if (!str_imatch(p, kw)) return 0;
+    if (p[n] == '\0' || p[n] == ' ' || p[n] == '\t') return 1;
+    return 0;
+}
+
+static char *report_find_next_kw(char *p) {
+    char *s = p;
+    while (*s) {
+        if (s == p || s[-1] == ' ' || s[-1] == '\t') {
+            if (report_kw_boundary(s, "FOR") ||
+                report_kw_boundary(s, "HEADING") ||
+                report_kw_boundary(s, "PLAIN") ||
+                report_kw_boundary(s, "SUMMARY") ||
+                report_kw_boundary(s, "NOEJECT") ||
+                report_kw_boundary(s, "TO")) {
+                return s;
+            }
+        }
+        s++;
+    }
+    return NULL;
+}
+
 /* ---- REPORT FORM ---- */
 static void cmd_report_form(dbf_t *db, const char *arg) {
     char filename[64];
+    char argbuf[512];
     const char *p;
     const char *for_cond = NULL;
     const char *heading_text = NULL;
@@ -2989,7 +3015,8 @@ static void cmd_report_form(dbf_t *db, const char *arg) {
         return;
     }
 
-    p = skip_ws(arg);
+    str_copy(argbuf, arg, sizeof(argbuf));
+    p = skip_ws(argbuf);
     /* Parse filename */
     i = 0;
     while (*p && *p != ' ' && *p != '\t' && i < 63)
@@ -3002,32 +3029,46 @@ static void cmd_report_form(dbf_t *db, const char *arg) {
         p = skip_ws(p);
         if (*p == '\0') break;
 
-        if (str_imatch(p, "FOR")) {
-            for_cond = skip_ws(p + 3);
-            break;  /* FOR consumes rest of line */
+        if (report_kw_boundary(p, "FOR")) {
+            char *start = skip_ws(p + 3);
+            char *next = report_find_next_kw(start);
+            for_cond = start;
+            if (next) {
+                *next = '\0';
+                p = next;
+            } else {
+                p = start + strlen(start);
+            }
+            continue;
         }
-        if (str_imatch(p, "HEADING")) {
-            p = skip_ws(p + 7);
-            heading_text = p;
-            /* Heading consumes rest until another keyword */
-            break;
+        if (report_kw_boundary(p, "HEADING")) {
+            char *start = skip_ws(p + 7);
+            char *next = report_find_next_kw(start);
+            heading_text = start;
+            if (next) {
+                *next = '\0';
+                p = next;
+            } else {
+                p = start + strlen(start);
+            }
+            continue;
         }
-        if (str_imatch(p, "PLAIN")) {
+        if (report_kw_boundary(p, "PLAIN")) {
             plain = 1;
             p += 5;
             continue;
         }
-        if (str_imatch(p, "SUMMARY")) {
+        if (report_kw_boundary(p, "SUMMARY")) {
             summary = 1;
             p += 7;
             continue;
         }
-        if (str_imatch(p, "NOEJECT")) {
+        if (report_kw_boundary(p, "NOEJECT")) {
             noeject = 1;
             p += 7;
             continue;
         }
-        if (str_imatch(p, "TO")) {
+        if (report_kw_boundary(p, "TO")) {
             p = skip_ws(p + 2);
             if (str_imatch(p, "PRINT")) {
                 to_print = 1;
@@ -3407,10 +3448,16 @@ int cmd_execute(dbf_t *db, char *line) {
                 fp = fopen(fname, "wb");
                 if (!fp) { printf("Cannot create %s\n", fname); return 0; }
                 {
-                    int nv = memvar_store.count;
+                    int nv = 0;
                     int j;
+                    for (j = 0; j < MEMVAR_MAX; j++) {
+                        if (memvar_store.vars[j].used)
+                            nv++;
+                    }
                     fwrite(&nv, 4, 1, fp);
-                    for (j = 0; j < nv; j++) {
+                    for (j = 0; j < MEMVAR_MAX; j++) {
+                        if (!memvar_store.vars[j].used)
+                            continue;
                         fwrite(memvar_store.vars[j].name, MEMVAR_NAMELEN, 1, fp);
                         fwrite(&memvar_store.vars[j].val.type, 4, 1, fp);
                         if (memvar_store.vars[j].val.type == VAL_NUM) {
