@@ -1,6 +1,6 @@
 # dBase III Clone — Implementation Status
 
-Current as of February 2026. 51/51 tests passing.
+Current as of February 2026. 52/52 tests passing.
 
 ## Architecture
 
@@ -16,7 +16,7 @@ src/memvar.c     — Memory variable store (256 vars)
 src/set.c        — SET option management
 src/program.c    — PRG file execution, control flow, procedures, functions
 src/screen.c     — @SAY/@GET/READ, boxes, CLEAR, SET COLOR
-src/index.c      — NDX index files (sorted array, binary search)
+src/index.c      — NDX index files (B+ tree, 4KB pages, NDX2 format)
 src/report.c     — FRM report definitions and report generation
 src/label.c      — LBL label definitions and label generation
 src/date.c       — Date arithmetic and formatting
@@ -248,9 +248,14 @@ Cross-area field access: `alias->fieldname`.
 
 ## Index System
 
-Flat sorted-array implementation (not B-tree). Binary search for SEEK/FIND.
-Multiple indexes per work area via SET INDEX TO or USE...INDEX.
-SET ORDER TO selects controlling index. REINDEX rebuilds from current data.
+B+ tree implementation with 4KB pages (NDX2 format). Leaf pages are
+doubly-linked for efficient sequential traversal. Variable fanout adapts to
+key length (e.g., 170 keys/page for 20-byte keys). Incremental index
+maintenance: APPEND, REPLACE, PACK, ZAP, and APPEND FROM all update active
+indexes automatically without requiring REINDEX. Backward-compatible reader
+for old NDX1 flat-array format. Multiple indexes per work area via SET INDEX
+TO or USE...INDEX. SET ORDER TO selects controlling index. REINDEX rebuilds
+from current data.
 
 ## Screen I/O
 
@@ -263,11 +268,12 @@ RANGE validation on @GET fields. EJECT resets printer position.
 
 ## Test Suite
 
-51 tests covering: CREATE, navigation, expressions, functions, memory
+52 tests covering: CREATE, navigation, expressions, functions, memory
 variables, SET options, work areas, file operations, screen I/O,
 programming constructs, procedures, functions, indexing, multi-index,
 filters, scope clauses, comments, print device routing, exponentiation,
 exact equality, string manipulation, SAVE/RESTORE, SET RELATION,
 LIST OFF/TO, error handling (ON ERROR, SUSPEND/RESUME), report generation
 (CREATE REPORT, REPORT FORM PLAIN/SUMMARY), label generation (CREATE LABEL,
-LABEL FORM), and more.
+LABEL FORM), B+ tree indexing (incremental insert/update, ZAP, PACK,
+APPEND FROM with index), and more.

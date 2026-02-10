@@ -1,5 +1,5 @@
 dBASE III Clone for SLOW-32
-Stage 6: Report & Label Generators
+Stage 7: B-Tree Indexing
 
 . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L): Width (1-254): Field name: Type (C/N/D/L): Width (1-19): Decimals: Field name: Type (C/N/D/L): Width (1-19): Decimals: Field name: Database SALES.DBF created with 3 field(s).

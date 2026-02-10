@@ -102,6 +102,110 @@ static void close_all_indexes(work_area_t *wa) {
     wa->order = 0;
 }
 
+/* ---- Index maintenance helpers ---- */
+
+/* Evaluate key expression for current record, store in keybuf (space-padded to key_len) */
+static int eval_index_key(index_t *idx, char *keybuf) {
+    value_t val;
+    char tmp[MAX_INDEX_KEY + 1];
+
+    if (expr_eval_str(&expr_ctx, idx->key_expr, &val) != 0)
+        return -1;
+    val_to_string(&val, tmp, sizeof(tmp));
+    /* Pad to key_len with spaces */
+    {
+        int len = strlen(tmp);
+        if (len > idx->key_len) len = idx->key_len;
+        memcpy(keybuf, tmp, len);
+        if (len < idx->key_len)
+            memset(keybuf + len, ' ', idx->key_len - len);
+        keybuf[idx->key_len] = '\0';
+    }
+    return 0;
+}
+
+/* Insert current record into all active indexes for current work area */
+static void indexes_insert_current(dbf_t *db) {
+    work_area_t *wa = &areas[current_area];
+    int i;
+    ctx_setup();
+    for (i = 0; i < wa->num_indexes; i++) {
+        index_t *idx = &wa->indexes[i];
+        if (idx->active) {
+            char keybuf[MAX_INDEX_KEY + 1];
+            if (eval_index_key(idx, keybuf) == 0) {
+                index_insert(idx, keybuf, db->current_record);
+                index_flush(idx);
+            }
+        }
+    }
+}
+
+/* Capture current keys for all active indexes (before REPLACE modifies fields) */
+static void indexes_capture_keys(dbf_t *db, char keys[][MAX_INDEX_KEY + 1]) {
+    work_area_t *wa = &areas[current_area];
+    int i;
+    (void)db;
+    ctx_setup();
+    for (i = 0; i < wa->num_indexes; i++) {
+        index_t *idx = &wa->indexes[i];
+        keys[i][0] = '\0';
+        if (idx->active) {
+            eval_index_key(idx, keys[i]);
+        }
+    }
+}
+
+/* Update all active indexes after REPLACE (remove old key, insert new key) */
+static void indexes_update_current(dbf_t *db, char old_keys[][MAX_INDEX_KEY + 1]) {
+    work_area_t *wa = &areas[current_area];
+    int i;
+    ctx_setup();
+    for (i = 0; i < wa->num_indexes; i++) {
+        index_t *idx = &wa->indexes[i];
+        if (idx->active) {
+            char new_key[MAX_INDEX_KEY + 1];
+            if (eval_index_key(idx, new_key) == 0) {
+                if (memcmp(old_keys[i], new_key, idx->key_len) != 0) {
+                    index_remove(idx, old_keys[i], db->current_record);
+                    index_insert(idx, new_key, db->current_record);
+                    index_flush(idx);
+                }
+            }
+        }
+    }
+}
+
+/* Rebuild all active indexes (after PACK changes record numbers) */
+static void indexes_rebuild_all(dbf_t *db) {
+    work_area_t *wa = &areas[current_area];
+    int i;
+    ctx_setup();
+    for (i = 0; i < wa->num_indexes; i++) {
+        index_t *idx = &wa->indexes[i];
+        if (idx->active) {
+            char key_expr[256], filename[64];
+            str_copy(key_expr, idx->key_expr, sizeof(key_expr));
+            str_copy(filename, idx->filename, sizeof(filename));
+            index_build(idx, db, &expr_ctx, key_expr, filename);
+            index_write(idx);
+        }
+    }
+}
+
+/* Clear all active indexes (after ZAP) */
+static void indexes_clear_all(void) {
+    work_area_t *wa = &areas[current_area];
+    int i;
+    for (i = 0; i < wa->num_indexes; i++) {
+        index_t *idx = &wa->indexes[i];
+        if (idx->active) {
+            index_clear(idx);
+            index_write(idx);
+        }
+    }
+}
+
 /* ---- SET RELATION: follow child area ---- */
 static void follow_relations(void) {
     work_area_t *wa = &areas[current_area];
@@ -122,10 +226,13 @@ static void follow_relations(void) {
                     idx = &child->indexes[child->order - 1];
                 if (idx && idx->active) {
                     index_seek(idx, buf);
-                    if (idx->current >= 0 && idx->current < idx->nentries)
-                        dbf_read_record(&child->db, idx->entries[idx->current].recno);
-                    else
-                        child->db.current_record = child->db.record_count + 1;
+                    {
+                        uint32_t rec = index_current_recno(idx);
+                        if (rec > 0)
+                            dbf_read_record(&child->db, rec);
+                        else
+                            child->db.current_record = child->db.record_count + 1;
+                    }
                 }
             }
         }
@@ -544,6 +651,8 @@ static void cmd_append_blank(dbf_t *db) {
         prog_error(ERR_FILE_IO, "Error appending record");
         return;
     }
+
+    indexes_insert_current(db);
 
     expr_ctx.eof_flag = 0;
     expr_ctx.bof_flag = 0;
@@ -1161,6 +1270,8 @@ static void cmd_replace(dbf_t *db, const char *arg) {
     char formatted[256];
     int idx;
     const char *p;
+    char old_keys[MAX_INDEXES][MAX_INDEX_KEY + 1];
+    int has_indexes;
 
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
@@ -1170,6 +1281,11 @@ static void cmd_replace(dbf_t *db, const char *arg) {
         printf("No current record. Use APPEND BLANK or GO first.\n");
         return;
     }
+
+    /* Capture keys before modification */
+    has_indexes = (areas[current_area].num_indexes > 0);
+    if (has_indexes)
+        indexes_capture_keys(db, old_keys);
 
     p = skip_ws(arg);
 
@@ -1245,6 +1361,10 @@ static void cmd_replace(dbf_t *db, const char *arg) {
     }
 
     dbf_flush_record(db);
+
+    /* Update indexes after field modification */
+    if (has_indexes)
+        indexes_update_current(db, old_keys);
 }
 
 /* ---- LIST [scope] [field_list] [FOR clause] ---- */
@@ -1679,6 +1799,10 @@ static void cmd_pack(dbf_t *db) {
         expr_ctx.eof_flag = 1;
     }
 
+    /* Rebuild all indexes with new record numbers */
+    if (areas[current_area].num_indexes > 0)
+        indexes_rebuild_all(db);
+
     printf("%d record(s) remaining.\n", (int)dst);
 }
 
@@ -1694,6 +1818,11 @@ static void cmd_zap(dbf_t *db) {
     db->record_dirty = 0;
     dbf_write_header_counts(db);
     expr_ctx.eof_flag = 1;
+
+    /* Clear all active indexes */
+    if (areas[current_area].num_indexes > 0)
+        indexes_clear_all();
+
     printf("Zap complete.\n");
 }
 
@@ -2093,6 +2222,7 @@ static void cmd_append_from(dbf_t *db, const char *arg) {
             dbf_set_field_raw(db, didx, raw);
         }
         dbf_flush_record(db);
+        indexes_insert_current(db);
         count++;
     }
 

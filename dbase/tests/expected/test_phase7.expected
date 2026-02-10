@@ -1,0 +1,61 @@
+dBASE III Clone for SLOW-32
+Stage 7: B-Tree Indexing
+
+. . . . Enter field definitions (blank name to finish):
+Field name: Type (C/N/D/L): Width (1-254): Field name: Type (C/N/D/L): Width (1-19): Decimals: Field name: Database PEOPLE.DBF created with 2 field(s).
+. Database PEOPLE.DBF opened with 0 record(s).
+. Record 1 added.
+. . Record 2 added.
+. . Record 3 added.
+. . 3 record(s) indexed.
+. T1: INDEX ON
+. . Alice 25
+. . Bob 35
+. . Charlie 30
+. . . Record 4 added.
+. . T2: INCREMENTAL INSERT
+. . Aaron 20
+. . .T. Aaron 20
+. . . . . T3: Before REPLACE: Alice
+. . T3: After REPLACE: Zara
+. . T3: New top: Aaron
+. . T3: New bottom: Zara
+. . . . T4: SEEK Charlie: .T. Charlie 30
+. . T4: SEEK Aaron: .T. Aaron 20
+. . T4: SEEK Zara: .T. Zara 25
+. . T4: SEEK NotThere: .F.
+. . . T5: Full index order:
+. . Aaron
+. . Bob
+. . Charlie
+. . Zara
+. . . Zap complete.
+. T6: ZAP EOF: .T.
+. Record 1 added.
+. . . T6: After re-add: NewGuy 99
+. . . Record 2 added.
+. . Record 3 added.
+. . . 1 record deleted.
+. 2 record(s) remaining.
+. T7: PACK remaining:
+. . KeepMe
+. . NewGuy
+. . . Database closed.
+. Database PEOPLE.DBF opened with 2 record(s).
+. T8: REOPEN
+. Record 3 added.
+. . . T8: SEEK Delta: .T. Delta
+. . . Enter field definitions (blank name to finish):
+Field name: Type (C/N/D/L): Width (1-254): Field name: Type (C/N/D/L): Width (1-19): Decimals: Field name: Database EXTRA.DBF created with 2 field(s).
+. Database EXTRA.DBF opened with 0 record(s).
+. Record 1 added.
+. . Record 2 added.
+. . Database closed.
+. Database PEOPLE.DBF opened with 3 record(s).
+. 2 record(s) appended.
+. T9: APPEND FROM
+. . T9: SEEK Eve: .T. Eve
+. . T9: SEEK Frank: .T. Frank
+. T9: Total: 5
+. . Database closed.
+

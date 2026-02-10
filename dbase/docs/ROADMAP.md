@@ -245,18 +245,16 @@ Group/subgroup subtotals, multi-line column headers, grand totals.
 
 ---
 
-## Phase 7: B-Tree Indexing (Performance)
+## Phase 7: B-Tree Indexing --- DONE
 
-**Goal**: Replace sorted-array indexes with on-disk B-tree.
-**Effort**: Large.
+**Goal**: Replace sorted-array indexes with B+ tree.
+**Effort**: Large. **COMPLETE** (52/52 tests).
 
-The current in-memory sorted array works fine for Teacher's Pet
-workloads (hundreds of records). B-tree only becomes necessary for
-databases with thousands of records or for NDX file format
-compatibility with real dBase III.
-
-This is a performance optimization, not a correctness issue. Defer
-until Teacher's Pet is fully functional.
+B+ tree with 4KB pages (NDX2 format). Doubly-linked leaf chain for
+efficient sequential traversal. Variable fanout adapts to key length.
+Incremental index maintenance: APPEND, REPLACE, PACK, ZAP, and
+APPEND FROM all update active indexes automatically. Backward-compatible
+reader for old NDX1 flat-array format.
 
 ---
 
@@ -293,4 +291,4 @@ hitting an unimplemented feature?
 | 4 | Data commands | SET RELATION, JOIN (less common) | After 3 |
 | 5 | Error handling | ON ERROR for robustness | **DONE** |
 | 6 | Reports | REPORT FORM (binary format) | **DONE** |
-| 7 | B-tree | Performance for large databases | After 6 |
+| 7 | B+ tree | Incremental index maintenance | **DONE** |
