@@ -7,167 +7,271 @@
 #include "date.h"
 
 void lexer_init(lexer_t *l, const char *input) {
+    lexer_init_ext(l, input, NULL);
+}
+
+void lexer_init_ext(lexer_t *l, const char *input, memvar_store_t *store) {
+    memset(l, 0, sizeof(*l));
     l->input = input;
     l->p = input;
+    l->store = store;
     l->error = NULL;
     lex_next(l); /* prime the first token */
 }
 
-int is_keyword(const char *ident, const char *kw) {
-    int ident_len = strlen(ident);
-    int kw_len = strlen(kw);
-    int min_len = (kw_len < 4) ? kw_len : 4;
-    
-    if (ident_len < min_len) return 0;
-    if (ident_len > kw_len) return 0;
+/* Internal helper: get next char, handling macro expansion stack */
+static char lex_get_char(lexer_t *l);
+static char lex_peek_char(lexer_t *l);
+static void lex_unget_char(lexer_t *l, char c);
+static int lex_push_macro(lexer_t *l, const char *text);
+static void macro_expand_into(const char *src, memvar_store_t *store,
+                              char *dst, int size, int depth);
 
-    return str_nicmp(ident, kw, ident_len) == 0;
+void lex_get_remaining(lexer_t *l, char *out_buf, int size) {
+    const char *start = l->token_start ? l->token_start : "";
+    if (l->store) {
+        macro_expand_into(start, l->store, out_buf, size, 0);
+    } else {
+        str_copy(out_buf, start, size);
+    }
+    l->current.type = TOK_EOF;
 }
 
-static int match_dot_keyword(const char *p, const char *kw, int *consumed) {
-    int i = 0;
-    if (p[i] != '.') return 0;
-    i++;
-    while (p[i] && p[i] != '.') {
-        i++;
-    }
-    if (p[i] != '.') return 0;
-    
-    /* We have .something. - check 'something' against kw */
-    {
-        int len = i - 1;
-        char buf[32];
-        if (len >= (int)sizeof(buf)) len = sizeof(buf) - 1;
-        memcpy(buf, p + 1, len);
-        buf[len] = '\0';
-        if (str_icmp(buf, kw) == 0) {
-            *consumed = i + 1;
-            return 1;
+static char lex_get_char(lexer_t *l) {
+    for (;;) {
+        char c;
+
+        while (l->macro_depth > 0) {
+            c = *l->macro_stack[l->macro_depth - 1].p;
+            if (c != '\0') {
+                l->macro_stack[l->macro_depth - 1].p++;
+                break;
+            }
+            /* End of current macro level */
+            l->macro_depth--;
         }
+        if (l->macro_depth == 0) {
+            c = *l->p;
+            if (c != '\0') l->p++;
+        }
+
+        if (c == '\0') return '\0';
+
+        /* Macro expansion: &name -> memvar string (supports nesting) */
+        if (c == '&' && l->store && lex_peek_char(l) != '&') {
+            char name[MEMVAR_NAMELEN];
+            value_t val;
+            int ni = 0;
+            char n = lex_peek_char(l);
+
+            if (!is_ident_start(n)) {
+                return c;
+            }
+
+            while (is_ident_char(n = lex_get_char(l)) && ni < MEMVAR_NAMELEN - 1) {
+                name[ni++] = n;
+            }
+            name[ni] = '\0';
+
+            if (n != '.') {
+                lex_unget_char(l, n);
+            }
+
+            if (memvar_find(l->store, name, &val) == 0 && val.type == VAL_CHAR) {
+                if (lex_push_macro(l, val.str) < 0) {
+                    l->error = "Macro nesting overflow";
+                    return '\0';
+                }
+                continue; /* pull from expanded macro */
+            }
+            /* If not found or not string, expand to nothing */
+            continue;
+        }
+
+        return c;
     }
+}
+
+/* Internal helper: peek next char without consuming */
+static char lex_peek_char(lexer_t *l) {
+    if (l->macro_depth > 0) {
+        return *l->macro_stack[l->macro_depth - 1].p;
+    }
+    return *l->p;
+}
+
+/* Internal helper: "unget" char (only works within current level) */
+static void lex_unget_char(lexer_t *l, char c) {
+    if (c == '\0') return;
+    if (l->macro_depth > 0) {
+        if (l->macro_stack[l->macro_depth - 1].p > l->macro_stack[l->macro_depth - 1].buf)
+            l->macro_stack[l->macro_depth - 1].p--;
+    } else {
+        if (l->p > l->input) l->p--;
+    }
+}
+
+static int lex_push_macro(lexer_t *l, const char *text) {
+    if (!text || text[0] == '\0') return 0;
+    if (l->macro_depth >= MAX_MACRO_NESTING) return -1;
+    str_copy(l->macro_stack[l->macro_depth].buf, text,
+             sizeof(l->macro_stack[l->macro_depth].buf));
+    l->macro_stack[l->macro_depth].p = l->macro_stack[l->macro_depth].buf;
+    l->macro_depth++;
     return 0;
 }
 
+static void macro_expand_into(const char *src, memvar_store_t *store,
+                              char *dst, int size, int depth) {
+    const char *s = src;
+    char *d = dst;
+    char *end = dst + size - 1;
+
+    if (!store || depth >= MAX_MACRO_NESTING) {
+        str_copy(dst, src, size);
+        return;
+    }
+
+    while (*s && d < end) {
+        if (*s == '&' && s[1] != '&' && is_ident_start(s[1])) {
+            char name[MEMVAR_NAMELEN];
+            value_t val;
+            int i = 0;
+            s++; /* skip & */
+            while (is_ident_char(*s) && i < MEMVAR_NAMELEN - 1)
+                name[i++] = *s++;
+            name[i] = '\0';
+            if (*s == '.') s++; /* optional delimiter */
+
+            if (memvar_find(store, name, &val) == 0 && val.type == VAL_CHAR) {
+                char expanded[256];
+                macro_expand_into(val.str, store, expanded, sizeof(expanded), depth + 1);
+                {
+                    int len = strlen(expanded);
+                    if (d + len > end) len = (int)(end - d);
+                    memcpy(d, expanded, len);
+                    d += len;
+                }
+            }
+            /* If not found or not string, substitute nothing */
+            continue;
+        }
+        *d++ = *s++;
+    }
+    *d = '\0';
+}
 token_type_t lex_next(lexer_t *l) {
-    const char *p = l->p;
+    char c;
     token_t *t = &l->current;
 
     /* Skip whitespace */
-    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
-
-    l->token_start = p;
-
-    if (*p == '\0') {
-        t->type = TOK_EOF;
-        t->text[0] = '\0';
-        l->p = p;
-        return t->type;
+    for (;;) {
+        c = lex_get_char(l);
+        if (c == '\0') {
+            l->token_start = l->p;
+            t->type = TOK_EOF;
+            t->text[0] = '\0';
+            return t->type;
+        }
+        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
     }
 
-    t->text[0] = *p;
+    l->token_start = (l->macro_depth > 0) ? l->macro_stack[l->macro_depth - 1].p - 1 : l->p - 1;
+
+    t->text[0] = c;
     t->text[1] = '\0';
 
     /* Identifiers and potential Keywords */
-    if (is_ident_start(*p)) {
+    if (is_ident_start(c)) {
         int i = 0;
-        while (is_ident_char(*p) && i < (int)sizeof(t->text) - 1) {
-            t->text[i++] = *p++;
+        t->text[i++] = c;
+        while (is_ident_char(c = lex_get_char(l)) && i < (int)sizeof(t->text) - 1) {
+            t->text[i++] = c;
         }
         t->text[i] = '\0';
+        lex_unget_char(l, c);
         t->type = TOK_IDENT;
-        l->p = p;
         return t->type;
     }
 
     /* Numbers */
-    if (isdigit(*p) || (*p == '.' && isdigit(p[1]))) {
+    if (isdigit((unsigned char)c) || (c == '.' && isdigit((unsigned char)lex_peek_char(l)))) {
         int i = 0;
-        while ((isdigit(*p) || *p == '.') && i < (int)sizeof(t->text) - 1) {
-            t->text[i++] = *p++;
+        t->text[i++] = c;
+        while ((isdigit((unsigned char)(c = lex_get_char(l))) || c == '.') && i < (int)sizeof(t->text) - 1) {
+            t->text[i++] = c;
         }
         t->text[i] = '\0';
+        lex_unget_char(l, c);
         t->num_val = atof(t->text);
         t->type = TOK_NUMBER;
-        l->p = p;
         return t->type;
     }
 
     /* String literals */
-    if (*p == '"' || *p == '\'') {
-        char quote = *p++;
+    if (c == '"' || c == '\'') {
+        char quote = c;
         int i = 0;
-        while (*p && *p != quote && i < (int)sizeof(t->text) - 1) {
-            t->text[i++] = *p++;
+        while ((c = lex_get_char(l)) != '\0' && c != quote && i < (int)sizeof(t->text) - 1) {
+            t->text[i++] = c;
         }
         t->text[i] = '\0';
-        if (*p == quote) p++;
         t->type = TOK_STRING;
-        l->p = p;
         return t->type;
     }
 
     /* Logical literals or Dot Keywords */
-    if (*p == '.') {
-        int consumed = 0;
-        if (match_dot_keyword(p, "AND", &consumed)) {
-            t->type = TOK_AND;
-            l->p = p + consumed;
-            return t->type;
+    if (c == '.') {
+        char buf[32];
+        int i = 0;
+        while (is_ident_char(c = lex_get_char(l)) && i < (int)sizeof(buf) - 1) {
+            buf[i++] = c;
         }
-        if (match_dot_keyword(p, "OR", &consumed)) {
-            t->type = TOK_OR;
-            l->p = p + consumed;
-            return t->type;
+        buf[i] = '\0';
+        if (c == '.') {
+            if (str_icmp(buf, "AND") == 0) { t->type = TOK_AND; return t->type; }
+            if (str_icmp(buf, "OR") == 0) { t->type = TOK_OR; return t->type; }
+            if (str_icmp(buf, "NOT") == 0) { t->type = TOK_NOT; return t->type; }
+            if (str_icmp(buf, "T") == 0) { t->type = TOK_LOGIC; t->logic_val = 1; return t->type; }
+            if (str_icmp(buf, "F") == 0) { t->type = TOK_LOGIC; t->logic_val = 0; return t->type; }
         }
-        if (match_dot_keyword(p, "NOT", &consumed)) {
-            t->type = TOK_NOT;
-            l->p = p + consumed;
-            return t->type;
-        }
-        /* Check for .T. and .F. */
-        if (toupper((unsigned char)p[1]) == 'T' && p[2] == '.') {
-            t->type = TOK_LOGIC;
-            t->logic_val = 1;
-            l->p = p + 3;
-            return t->type;
-        }
-        if (toupper((unsigned char)p[1]) == 'F' && p[2] == '.') {
-            t->type = TOK_LOGIC;
-            t->logic_val = 0;
-            l->p = p + 3;
-            return t->type;
-        }
+        /* Backtrack if not a dot keyword */
+        while (i > 0) lex_unget_char(l, buf[--i]);
+        lex_unget_char(l, c);
+        c = '.'; /* restore c */
     }
 
     /* Date literals {MM/DD/YY} */
-    if (*p == '{') {
-        const char *start = p;
-        p++;
-        while (*p && *p != '}') p++;
-        if (*p == '}') {
-            int len = p - start - 1;
-            char buf[64];
-            if (len >= (int)sizeof(buf)) len = sizeof(buf) - 1;
-            memcpy(buf, start + 1, len);
-            buf[len] = '\0';
+    if (c == '{') {
+        char buf[64];
+        int i = 0;
+        while ((c = lex_get_char(l)) != '\0' && c != '}' && i < (int)sizeof(buf) - 1) {
+            buf[i++] = c;
+        }
+        if (c == '}') {
+            buf[i] = '\0';
             t->date_val = date_from_mdy(buf);
             t->type = TOK_DATE;
-            l->p = p + 1;
             return t->type;
         }
-        p = start; /* backtrack if no closing brace */
+        /* backtrack if not a proper date literal */
+        while (i > 0) lex_unget_char(l, buf[--i]);
+        lex_unget_char(l, c);
+        c = '{';
     }
 
     /* Multi-character operators */
-    if (p[0] == '<' && p[1] == '>') { t->type = TOK_NE; l->p = p + 2; return t->type; }
-    if (p[0] == '<' && p[1] == '=') { t->type = TOK_LE; l->p = p + 2; return t->type; }
-    if (p[0] == '>' && p[1] == '=') { t->type = TOK_GE; l->p = p + 2; return t->type; }
-    if (p[0] == '-' && p[1] == '>') { t->type = TOK_ARROW; l->p = p + 2; return t->type; }
-    if (p[0] == '*' && p[1] == '*') { t->type = TOK_POWER; l->p = p + 2; return t->type; }
-    if (p[0] == '=' && p[1] == '=') { t->type = TOK_EXACT_EQ; l->p = p + 2; return t->type; }
+    char next = lex_get_char(l);
+    if (c == '<' && next == '>') { t->type = TOK_NE; return t->type; }
+    if (c == '<' && next == '=') { t->type = TOK_LE; return t->type; }
+    if (c == '>' && next == '=') { t->type = TOK_GE; return t->type; }
+    if (c == '-' && next == '>') { t->type = TOK_ARROW; return t->type; }
+    if (c == '*' && next == '*') { t->type = TOK_POWER; return t->type; }
+    if (c == '=' && next == '=') { t->type = TOK_EXACT_EQ; return t->type; }
+    lex_unget_char(l, next);
 
     /* Single character operators */
-    switch (*p) {
+    switch (c) {
         case '+': t->type = TOK_PLUS; break;
         case '-': t->type = TOK_MINUS; break;
         case '*': t->type = TOK_MUL; break;
@@ -189,10 +293,18 @@ token_type_t lex_next(lexer_t *l) {
             break;
     }
     
-    l->p = p + 1;
     return t->type;
 }
 
 token_type_t lex_peek(lexer_t *l) {
     return l->current.type;
+}
+
+int is_keyword(const char *ident, const char *kw) {
+    int ident_len = strlen(ident);
+    int kw_len = strlen(kw);
+    int min_len = (kw_len < 4) ? kw_len : 4;
+    if (ident_len < min_len) return 0;
+    if (ident_len > kw_len) return 0;
+    return str_nicmp(ident, kw, ident_len) == 0;
 }

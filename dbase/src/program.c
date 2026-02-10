@@ -190,9 +190,10 @@ memvar_store_t *prog_get_memvar_store(void) {
     return cmd_get_memvar_store();
 }
 
-/* ---- Preprocessing: comments, &&, macro substitution ---- */
+/* ---- Preprocessing: comments, && ---- */
 void prog_preprocess(char *line, memvar_store_t *store) {
     char *p;
+    (void)store;
 
     /* Strip && inline comments */
     p = line;
@@ -210,41 +211,6 @@ void prog_preprocess(char *line, memvar_store_t *store) {
             continue;
         }
         p++;
-    }
-
-    /* Macro substitution: &varname -> value of varname */
-    if (store) {
-        char buf[MAX_LINE_LEN];
-        char *src = line;
-        char *dst = buf;
-        char *end = buf + MAX_LINE_LEN - 1;
-
-        while (*src && dst < end) {
-            if (*src == '&' && *(src + 1) != '&' && is_ident_start(*(src + 1))) {
-                char name[MEMVAR_NAMELEN];
-                value_t val;
-                int i = 0;
-                src++; /* skip & */
-                while (is_ident_char(*src) && i < MEMVAR_NAMELEN - 1)
-                    name[i++] = *src++;
-                name[i] = '\0';
-                /* Optional trailing . delimiter */
-                if (*src == '.') src++;
-
-                if (memvar_find(store, name, &val) == 0 && val.type == VAL_CHAR) {
-                    int len = strlen(val.str);
-                    if (dst + len < end) {
-                        memcpy(dst, val.str, len);
-                        dst += len;
-                    }
-                }
-                /* If var not found or not string, silently substitute nothing */
-            } else {
-                *dst++ = *src++;
-            }
-        }
-        *dst = '\0';
-        str_copy(line, buf, MAX_LINE_LEN);
     }
 }
 

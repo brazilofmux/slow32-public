@@ -2,7 +2,8 @@
 #define LEX_H
 
 #include <stdint.h>
-#include "expr.h" /* for value_t if needed, or we can define token values separately */
+#include "expr.h" 
+#include "memvar.h"
 
 typedef enum {
     TOK_EOF = 0,
@@ -53,17 +54,32 @@ typedef struct {
     int32_t date_val;
 } token_t;
 
+#define MAX_MACRO_NESTING 8
+
 typedef struct {
     const char *input;
     const char *p;
     const char *token_start;
     token_t current;
     const char *error;
+
+    /* Macro expansion state */
+    memvar_store_t *store;
+    struct {
+        char buf[256];
+        const char *p;
+    } macro_stack[MAX_MACRO_NESTING];
+    int macro_depth;
 } lexer_t;
 
 void lexer_init(lexer_t *l, const char *input);
+void lexer_init_ext(lexer_t *l, const char *input, memvar_store_t *store);
 token_type_t lex_next(lexer_t *l);
 token_type_t lex_peek(lexer_t *l);
+
+/* Return remaining unconsumed input, expanding macros if necessary.
+   Result is stored in out_buf. */
+void lex_get_remaining(lexer_t *l, char *out_buf, int size);
 
 /* Helper to check for keywords with 4-char rule */
 int is_keyword(const char *ident, const char *kw);

@@ -41,6 +41,7 @@ static void cmd_delete(dbf_t *db, lexer_t *l);
 static void cmd_recall(dbf_t *db, lexer_t *l);
 static void cmd_locate(dbf_t *db, lexer_t *l);
 static void cmd_continue(dbf_t *db);
+static void cmd_store(dbf_t *db, lexer_t *l);
 
 static void report_expr_error(void);
 static int skip_deleted(const char *rec_buf);
@@ -85,7 +86,7 @@ static const char *cmd_after(const lexer_t *l) {
 
 static int cmd_kw_at(const char *text, const char *kw, const char **after) {
     lexer_t t;
-    lexer_init(&t, text);
+    lexer_init_ext(&t, text, expr_ctx.vars);
     if (cmd_kw(&t, kw)) {
         if (after) *after = cmd_after(&t);
         return 1;
@@ -931,7 +932,7 @@ static int consume_filename(lexer_t *l, char *out, int size) {
     memcpy(out, start, len);
     out[len] = '\0';
 
-    lexer_init(l, p);
+    lexer_init_ext(l, p, l->store);
     return 0;
 }
 
@@ -948,7 +949,7 @@ static int parse_clauses(lexer_t *l, clause_t *c) {
             if (len > (int)sizeof(c->for_cond) - 1) len = sizeof(c->for_cond) - 1;
             memcpy(c->for_cond, l->token_start, len);
             c->for_cond[len] = '\0';
-            lexer_init(l, start);
+            lexer_init_ext(l, start, l->store);
         } else if (cmd_kw(l, "WHILE")) {
             lex_next(l);
             const char *start = l->token_start;
@@ -958,7 +959,7 @@ static int parse_clauses(lexer_t *l, clause_t *c) {
             if (len > (int)sizeof(c->while_cond) - 1) len = sizeof(c->while_cond) - 1;
             memcpy(c->while_cond, l->token_start, len);
             c->while_cond[len] = '\0';
-            lexer_init(l, start);
+            lexer_init_ext(l, start, l->store);
         } else if (cmd_kw(l, "TO")) {
             lex_next(l);
             if (cmd_kw(l, "PRINT")) {
@@ -1371,7 +1372,7 @@ static void cmd_sum(dbf_t *db, lexer_t *l) {
             printf("Syntax: SUM <expr> [scope] [FOR <cond>] [WHILE <cond>]\n");
             return;
         }
-        lexer_init(l, tmp.token_start);
+        lexer_init_ext(l, tmp.token_start, l->store);
         if (parse_clauses(l, &c) < 0) return;
     }
 
@@ -1434,7 +1435,7 @@ static void cmd_average(dbf_t *db, lexer_t *l) {
             printf("Syntax: AVERAGE <expr> [scope] [FOR <cond>] [WHILE <cond>]\n");
             return;
         }
-        lexer_init(l, tmp.token_start);
+        lexer_init_ext(l, tmp.token_start, l->store);
         if (parse_clauses(l, &c) < 0) return;
     }
 
@@ -1511,7 +1512,7 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
 
         /* Re-parse the field list for each record (brute force for now) */
         lexer_t replace_l;
-        lexer_init(&replace_l, body_start);
+        lexer_init_ext(&replace_l, body_start, expr_ctx.vars);
 
         /* Capture keys before modification */
         has_indexes = (cur_wa()->num_indexes > 0);
@@ -1546,7 +1547,7 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
                 report_expr_error();
                 return;
             }
-            lexer_init(&replace_l, replace_l.token_start);
+            lexer_init_ext(&replace_l, replace_l.token_start, expr_ctx.vars);
 
             val_to_string(&val, valbuf, sizeof(valbuf));
 
@@ -1639,7 +1640,7 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
         const char *p = l->token_start;
         nfields = parse_field_list(db, p, field_indices, DBF_MAX_FIELDS, &p);
         if (nfields < 0) return;
-        lexer_init(l, p);
+        lexer_init_ext(l, p, l->store);
     }
 
     if (parse_clauses(l, &c) < 0) return;
@@ -1811,55 +1812,45 @@ static void cmd_display_structure(dbf_t *db) {
 }
 
 /* ---- STORE expr TO var ---- */
-static void cmd_store(dbf_t *db, const char *arg) {
-    const char *p = skip_ws(arg);
+static void cmd_store(dbf_t *db, lexer_t *l) {
     char expr_str[256];
     value_t val;
-    const char *to_pos;
     char name[MEMVAR_NAMELEN];
-    int i;
 
     (void)db;
 
-    {
-        const char *f = p;
-        to_pos = NULL;
-        while (*f) {
-            if (str_imatch(f, "TO")) { to_pos = f; break; }
-            f++;
-        }
-    }
-
-    if (!to_pos) {
+    /* Expression start */
+    const char *expr_start = l->token_start;
+    lexer_t tmp = *l;
+    while (tmp.current.type != TOK_EOF && !cmd_kw(&tmp, "TO"))
+        lex_next(&tmp);
+    
+    if (!cmd_kw(&tmp, "TO")) {
         printf("Syntax: STORE <expr> TO <variable>\n");
         return;
     }
 
-    {
-        int len = (int)(to_pos - p);
-        if (len > (int)sizeof(expr_str) - 1) len = (int)sizeof(expr_str) - 1;
-        memcpy(expr_str, p, len);
-        expr_str[len] = '\0';
-        trim_right(expr_str);
-    }
+    int len = (int)(tmp.token_start - expr_start);
+    if (len >= (int)sizeof(expr_str)) len = (int)sizeof(expr_str) - 1;
+    memcpy(expr_str, expr_start, len);
+    expr_str[len] = '\0';
+    trim_right(expr_str);
 
     if (expr_eval_str(&expr_ctx, expr_str, &val) != 0) {
         report_expr_error();
         return;
     }
 
-    p = skip_ws(to_pos + 2);
-    i = 0;
-    while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1)
-        name[i++] = *p++;
-    name[i] = '\0';
-
-    if (name[0] == '\0') {
+    lex_next(&tmp); /* skip TO */
+    if (tmp.current.type != TOK_IDENT) {
         printf("Syntax: STORE <expr> TO <variable>\n");
         return;
     }
+    str_copy(name, tmp.current.text, sizeof(name));
+    str_upper(name);
 
     memvar_set(&memvar_store, name, &val);
+    /* No need to advance original l, we're at EOL anyway */
 }
 
 /* ---- RELEASE ---- */
@@ -3481,18 +3472,26 @@ int cmd_execute(dbf_t *db, char *line) {
 
     /* Full-line comment (when run interactively or from program) */
     if (*p == '*') return 0;
-    lexer_init(&l, p);
+    lexer_init_ext(&l, p, expr_ctx.vars);
     if (cmd_kw(&l, "NOTE")) return 0;
 
     /* DO command: route to program subsystem for DO <file>, DO WHILE, DO CASE */
     if (cmd_kw(&l, "DO")) {
-        prog_do((char *)cmd_after(&l));
+        char arg[256];
+        lex_next(&l);
+        lex_get_remaining(&l, arg, sizeof(arg));
+        prog_do(arg);
         return 0;
     }
 
     /* Control flow commands - only valid during program execution */
     if (cmd_kw(&l, "IF")) {
-        if (prog_is_running()) { prog_if((char *)cmd_after(&l)); }
+        if (prog_is_running()) { {
+        char arg[256];
+        lex_next(&l);
+        lex_get_remaining(&l, arg, sizeof(arg));
+        prog_if(arg);
+    } }
         else printf("IF not allowed in interactive mode.\n");
         return 0;
     }
@@ -3517,7 +3516,12 @@ int cmd_execute(dbf_t *db, char *line) {
         return 0;
     }
     if (cmd_kw(&l, "CASE")) {
-        if (prog_is_running()) prog_case((char *)cmd_after(&l));
+        if (prog_is_running()) {
+        char arg[256];
+        lex_next(&l);
+        lex_get_remaining(&l, arg, sizeof(arg));
+        prog_case(arg);
+    }
         else printf("CASE without DO CASE.\n");
         return 0;
     }
@@ -3532,26 +3536,51 @@ int cmd_execute(dbf_t *db, char *line) {
         return 0;
     }
     if (cmd_kw(&l, "RETURN")) {
-        if (prog_is_running()) prog_return((char *)cmd_after(&l));
+        if (prog_is_running()) {
+        char arg[256];
+        lex_next(&l);
+        lex_get_remaining(&l, arg, sizeof(arg));
+        prog_return(arg);
+    }
         else printf("RETURN not in program.\n");
         return 0;
     }
     if (cmd_kw(&l, "PROCEDURE")) {
-        if (prog_is_running()) prog_procedure((char *)cmd_after(&l));
+        if (prog_is_running()) {
+        char arg[256];
+        lex_next(&l);
+        lex_get_remaining(&l, arg, sizeof(arg));
+        prog_procedure(arg);
+    }
         else printf("PROCEDURE not allowed in interactive mode.\n");
         return 0;
     }
     if (cmd_kw(&l, "PARAMETERS")) {
-        if (prog_is_running()) prog_parameters((char *)cmd_after(&l));
+        if (prog_is_running()) {
+        char arg[256];
+        lex_next(&l);
+        lex_get_remaining(&l, arg, sizeof(arg));
+        prog_parameters(arg);
+    }
         else printf("PARAMETERS not allowed in interactive mode.\n");
         return 0;
     }
     if (cmd_kw(&l, "PRIVATE")) {
-        prog_private((char *)cmd_after(&l));
+        {
+        char arg[256];
+        lex_next(&l);
+        lex_get_remaining(&l, arg, sizeof(arg));
+        prog_private(arg);
+    }
         return 0;
     }
     if (cmd_kw(&l, "PUBLIC")) {
-        prog_public((char *)cmd_after(&l));
+        {
+        char arg[256];
+        lex_next(&l);
+        lex_get_remaining(&l, arg, sizeof(arg));
+        prog_public(arg);
+    }
         return 0;
     }
     if (cmd_kw(&l, "CANCEL")) {
@@ -3721,10 +3750,12 @@ int cmd_execute(dbf_t *db, char *line) {
 
     /* LABEL FORM */
     if (cmd_kw(&l, "LABEL")) {
-        lexer_t t = l;
-        lex_next(&t);
-        if (cmd_kw(&t, "FORM")) {
-            cmd_label_form(cdb, (char *)cmd_after(&t));
+        lex_next(&l);
+        if (cmd_kw(&l, "FORM")) {
+            char arg[256];
+            lex_next(&l);
+            lex_get_remaining(&l, arg, sizeof(arg));
+            cmd_label_form(cdb, arg);
             return 0;
         }
     }
@@ -3768,25 +3799,40 @@ int cmd_execute(dbf_t *db, char *line) {
     }
 
     if (cmd_kw(&l, "SELECT")) {
-        cmd_select((char *)cmd_after(&l));
+        char arg[256];
+        lex_next(&l);
+        lex_get_remaining(&l, arg, sizeof(arg));
+        cmd_select(arg);
         return 0;
     }
 
     if (cmd_kw(&l, "CREATE")) {
-        lexer_t t = l;
-        lex_next(&t);
-        if (cmd_kw(&t, "REPORT")) {
-            cmd_create_report((char *)cmd_after(&t));
-        } else if (cmd_kw(&t, "LABEL")) {
-            cmd_create_label((char *)cmd_after(&t));
+        lex_next(&l);
+        if (cmd_kw(&l, "REPORT")) {
+            char arg[256];
+            lex_next(&l);
+            lex_get_remaining(&l, arg, sizeof(arg));
+            cmd_create_report(arg);
+        } else if (cmd_kw(&l, "LABEL")) {
+            char arg[256];
+            lex_next(&l);
+            lex_get_remaining(&l, arg, sizeof(arg));
+            cmd_create_label(arg);
         } else {
-            cmd_create(cdb, (char *)cmd_after(&l));
+            char arg[256];
+            lex_get_remaining(&l, arg, sizeof(arg));
+            cmd_create(cdb, arg);
         }
         return 0;
     }
 
     if (cmd_kw(&l, "USE")) {
-        cmd_use(cdb, (char *)cmd_after(&l));
+        {
+        char arg[256];
+        lex_next(&l);
+        lex_get_remaining(&l, arg, sizeof(arg));
+        cmd_use(cdb, arg);
+    }
         return 0;
     }
 
@@ -3818,19 +3864,27 @@ int cmd_execute(dbf_t *db, char *line) {
 
     /* COPY TO / COPY STRUCTURE TO */
     if (cmd_kw(&l, "COPY")) {
-        lexer_t t = l;
-        lex_next(&t);
-        if (cmd_kw(&t, "STRUCTURE")) {
-            lex_next(&t);
-            if (cmd_kw(&t, "TO")) {
-                cmd_copy_structure(cdb, (char *)cmd_after(&t));
+        lex_next(&l);
+        if (cmd_kw(&l, "STRUCTURE")) {
+            lex_next(&l);
+            if (cmd_kw(&l, "TO")) {
+                char arg[256];
+                lex_next(&l);
+                lex_get_remaining(&l, arg, sizeof(arg));
+                cmd_copy_structure(cdb, arg);
             } else {
                 printf("Syntax: COPY STRUCTURE TO <filename>\n");
             }
-        } else if (cmd_kw(&t, "FILE")) {
-            cmd_copy_file((char *)cmd_after(&t));
-        } else if (cmd_kw(&t, "TO")) {
-            cmd_copy_to(cdb, (char *)cmd_after(&t));
+        } else if (cmd_kw(&l, "FILE")) {
+            char arg[256];
+            lex_next(&l);
+            lex_get_remaining(&l, arg, sizeof(arg));
+            cmd_copy_file(arg);
+        } else if (cmd_kw(&l, "TO")) {
+            char arg[256];
+            lex_next(&l);
+            lex_get_remaining(&l, arg, sizeof(arg));
+            cmd_copy_to(cdb, arg);
         } else {
             printf("Syntax: COPY TO <filename> | COPY FILE <src> TO <dst> | COPY STRUCTURE TO <filename>\n");
         }
@@ -3839,12 +3893,14 @@ int cmd_execute(dbf_t *db, char *line) {
 
     /* APPEND BLANK / APPEND FROM */
     if (cmd_kw(&l, "APPEND")) {
-        lexer_t t = l;
-        lex_next(&t);
-        if (cmd_kw(&t, "BLANK")) {
+        lex_next(&l);
+        if (cmd_kw(&l, "BLANK")) {
             cmd_append_blank(cdb);
-        } else if (cmd_kw(&t, "FROM")) {
-            cmd_append_from(cdb, (char *)cmd_after(&t));
+        } else if (cmd_kw(&l, "FROM")) {
+            char arg[256];
+            lex_next(&l);
+            lex_get_remaining(&l, arg, sizeof(arg));
+            cmd_append_from(cdb, arg);
         } else {
             printf("Syntax: APPEND BLANK | APPEND FROM <filename>\n");
         }
@@ -3852,10 +3908,12 @@ int cmd_execute(dbf_t *db, char *line) {
     }
 
     if (cmd_kw(&l, "SORT")) {
-        lexer_t t = l;
-        lex_next(&t);
-        if (cmd_kw(&t, "TO")) {
-            cmd_sort(cdb, (char *)cmd_after(&t));
+        lex_next(&l);
+        if (cmd_kw(&l, "TO")) {
+            char arg[256];
+            lex_next(&l);
+            lex_get_remaining(&l, arg, sizeof(arg));
+            cmd_sort(cdb, arg);
         } else {
             printf("Syntax: SORT TO <filename> ON <field> [/A][/D][/C]\n");
         }
@@ -3870,18 +3928,33 @@ int cmd_execute(dbf_t *db, char *line) {
 
     /* GO / GOTO */
     if (cmd_kw(&l, "GOTO")) {
-        cmd_go(cdb, (char *)cmd_after(&l));
+        {
+        char arg[256];
+        lex_next(&l);
+        lex_get_remaining(&l, arg, sizeof(arg));
+        cmd_go(cdb, arg);
+    }
         follow_relations();
         return 0;
     }
     if (cmd_kw(&l, "GO")) {
-        cmd_go(cdb, (char *)cmd_after(&l));
+        {
+        char arg[256];
+        lex_next(&l);
+        lex_get_remaining(&l, arg, sizeof(arg));
+        cmd_go(cdb, arg);
+    }
         follow_relations();
         return 0;
     }
 
     if (cmd_kw(&l, "SKIP")) {
-        cmd_skip(cdb, (char *)cmd_after(&l));
+        {
+        char arg[256];
+        lex_next(&l);
+        lex_get_remaining(&l, arg, sizeof(arg));
+        cmd_skip(cdb, arg);
+    }
         follow_relations();
         return 0;
     }
@@ -3938,7 +4011,8 @@ int cmd_execute(dbf_t *db, char *line) {
     }
 
     if (cmd_kw(&l, "STORE")) {
-        cmd_store(cdb, (char *)cmd_after(&l));
+        lex_next(&l);
+        cmd_store(cdb, &l);
         return 0;
     }
 
@@ -4064,12 +4138,22 @@ int cmd_execute(dbf_t *db, char *line) {
     }
 
     if (cmd_kw(&l, "SEEK")) {
-        cmd_seek(cdb, (char *)cmd_after(&l));
+        {
+        char arg[256];
+        lex_next(&l);
+        lex_get_remaining(&l, arg, sizeof(arg));
+        cmd_seek(cdb, arg);
+    }
         return 0;
     }
 
     if (cmd_kw(&l, "FIND")) {
-        cmd_find(cdb, (char *)cmd_after(&l));
+        {
+        char arg[256];
+        lex_next(&l);
+        lex_get_remaining(&l, arg, sizeof(arg));
+        cmd_find(cdb, arg);
+    }
         return 0;
     }
 
