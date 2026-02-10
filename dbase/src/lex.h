@@ -33,11 +33,13 @@ typedef enum {
     TOK_LE,         /* <= */
     TOK_GE,         /* >= */
     TOK_SUBSTR,     /* $ */
-    
+    TOK_EXACT_EQ,   /* == */
+    TOK_POWER,      /* ** or ^ */
+
     /* Logical Keywords (delimited by dots) */
     TOK_AND,        /* .AND. */
     TOK_OR,         /* .OR. */
-    TOK_NOT,        /* .NOT. */
+    TOK_NOT,        /* .NOT. or ! */
     
     /* Macro */
     TOK_MACRO       /* & */

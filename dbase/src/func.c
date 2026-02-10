@@ -605,6 +605,164 @@ static int fn_pcol(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     return 0;
 }
 
+/* ---- STUFF(str, start, delete, insert) ---- */
+static int fn_stuff(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char buf[512];
+    const char *s;
+    int start, del, slen, ilen;
+    (void)ctx;
+    if (nargs < 4 || args[0].type != VAL_CHAR || args[3].type != VAL_CHAR) {
+        *result = val_str("");
+        return 0;
+    }
+    s = args[0].str;
+    start = (int)args[1].num;
+    del = (int)args[2].num;
+    slen = strlen(s);
+    ilen = strlen(args[3].str);
+    if (start < 1) start = 1;
+    if (start > slen + 1) start = slen + 1;
+    if (del < 0) del = 0;
+    if (start - 1 + del > slen) del = slen - (start - 1);
+    /* Copy prefix */
+    if (start - 1 > 0 && start - 1 < (int)sizeof(buf))
+        memcpy(buf, s, start - 1);
+    /* Copy insert string */
+    if (start - 1 + ilen < (int)sizeof(buf))
+        memcpy(buf + start - 1, args[3].str, ilen);
+    /* Copy suffix */
+    {
+        int suffix_start = start - 1 + del;
+        int suffix_len = slen - suffix_start;
+        if (suffix_len > 0 && start - 1 + ilen + suffix_len < (int)sizeof(buf))
+            memcpy(buf + start - 1 + ilen, s + suffix_start, suffix_len);
+        buf[start - 1 + ilen + (suffix_len > 0 ? suffix_len : 0)] = '\0';
+    }
+    *result = val_str(buf);
+    return 0;
+}
+
+/* ---- TRANSFORM(expr, picture) ---- */
+static int fn_transform(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char buf[256], formatted[256];
+    (void)ctx;
+    if (nargs < 2) { *result = val_str(""); return 0; }
+    val_to_string(&args[0], buf, sizeof(buf));
+    /* Reuse apply_picture logic inline */
+    {
+        const char *value = buf;
+        const char *picture = (args[1].type == VAL_CHAR) ? args[1].str : "";
+        int plen = strlen(picture);
+        int vlen = strlen(value);
+        int vi = 0, i;
+        if (plen == 0) {
+            *result = val_str(buf);
+            return 0;
+        }
+        for (i = 0; i < plen && i < (int)sizeof(formatted) - 1; i++) {
+            char pc = picture[i];
+            char vc = (vi < vlen) ? value[vi] : ' ';
+            switch (pc) {
+            case '!': if (vc >= 'a' && vc <= 'z') vc -= 32; formatted[i] = vc; vi++; break;
+            case '9': formatted[i] = (vc >= '0' && vc <= '9') ? vc : ' '; vi++; break;
+            case 'A': formatted[i] = ((vc >= 'A' && vc <= 'Z') || (vc >= 'a' && vc <= 'z')) ? vc : ' '; vi++; break;
+            case 'X': formatted[i] = vc; vi++; break;
+            case '#': formatted[i] = (vc >= '0' && vc <= '9' || vc == ' ' || vc == '+' || vc == '-') ? vc : ' '; vi++; break;
+            default: formatted[i] = pc; break;
+            }
+        }
+        formatted[i] = '\0';
+    }
+    *result = val_str(formatted);
+    return 0;
+}
+
+/* ---- ISALPHA / ISUPPER / ISLOWER ---- */
+static int fn_isalpha(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_CHAR || args[0].str[0] == '\0') {
+        *result = val_logic(0); return 0;
+    }
+    { char c = args[0].str[0];
+      *result = val_logic((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')); }
+    return 0;
+}
+
+static int fn_isupper(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_CHAR || args[0].str[0] == '\0') {
+        *result = val_logic(0); return 0;
+    }
+    { char c = args[0].str[0]; *result = val_logic(c >= 'A' && c <= 'Z'); }
+    return 0;
+}
+
+static int fn_islower(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_CHAR || args[0].str[0] == '\0') {
+        *result = val_logic(0); return 0;
+    }
+    { char c = args[0].str[0]; *result = val_logic(c >= 'a' && c <= 'z'); }
+    return 0;
+}
+
+/* ---- VERSION / OS ---- */
+static int fn_version(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_str("dBASE III Clone");
+    return 0;
+}
+
+static int fn_os(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_str("SLOW-32");
+    return 0;
+}
+
+/* ---- INKEY / LASTKEY / READKEY ---- */
+static int fn_inkey(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_num(0);  /* no key available */
+    return 0;
+}
+
+static int fn_lastkey(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_num(13);  /* Enter */
+    return 0;
+}
+
+static int fn_readkey(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_num(13);  /* Enter */
+    return 0;
+}
+
+/* ---- ERROR / MESSAGE / LINENO / PROGRAM ---- */
+static int fn_error(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_num(0);  /* no error */
+    return 0;
+}
+
+static int fn_message(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_str("");
+    return 0;
+}
+
+static int fn_lineno(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_num(0);
+    return 0;
+}
+
+static int fn_program(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_str("");
+    return 0;
+}
+
 /* ---- Dispatch table ---- */
 
 typedef int (*func_impl_t)(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
@@ -664,9 +822,27 @@ static const func_entry_t func_table[] = {
     { "COL",       fn_col },
     { "PROW",      fn_prow },
     { "PCOL",      fn_pcol },
+    /* String manipulation */
+    { "STUFF",     fn_stuff },
+    { "TRANSFORM", fn_transform },
+    { "ISALPHA",   fn_isalpha },
+    { "ISUPPER",   fn_isupper },
+    { "ISLOWER",   fn_islower },
     /* Misc */
     { "IIF",       fn_iif },
     { "FILE",      fn_file },
+    /* System */
+    { "VERSION",   fn_version },
+    { "OS",        fn_os },
+    /* Keyboard */
+    { "INKEY",     fn_inkey },
+    { "LASTKEY",   fn_lastkey },
+    { "READKEY",   fn_readkey },
+    /* Debug */
+    { "ERROR",     fn_error },
+    { "MESSAGE",   fn_message },
+    { "LINENO",    fn_lineno },
+    { "PROGRAM",   fn_program },
     { NULL, NULL }
 };
 

@@ -18,6 +18,7 @@ static int parse_not(expr_ctx_t *ctx, lexer_t *l, value_t *result);
 static int parse_compare(expr_ctx_t *ctx, lexer_t *l, value_t *result);
 static int parse_add(expr_ctx_t *ctx, lexer_t *l, value_t *result);
 static int parse_mul(expr_ctx_t *ctx, lexer_t *l, value_t *result);
+static int parse_power(expr_ctx_t *ctx, lexer_t *l, value_t *result);
 static int parse_unary(expr_ctx_t *ctx, lexer_t *l, value_t *result);
 static int parse_primary(expr_ctx_t *ctx, lexer_t *l, value_t *result);
 
@@ -171,7 +172,7 @@ static int parse_compare(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
     if (parse_add(ctx, l, result) != 0) return -1;
 
     op = lex_peek(l);
-    if (op == TOK_EQ || op == TOK_NE || op == TOK_LT || op == TOK_GT || 
+    if (op == TOK_EQ || op == TOK_EXACT_EQ || op == TOK_NE || op == TOK_LT || op == TOK_GT ||
         op == TOK_LE || op == TOK_GE || op == TOK_SUBSTR) {
         
         lex_next(l);
@@ -194,7 +195,9 @@ static int parse_compare(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
                 double d = result->num - right.num;
                 cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;
             } else if (result->type == VAL_CHAR && right.type == VAL_CHAR) {
-                if (ctx->opts && !((set_options_t *)ctx->opts)->exact)
+                if (op == TOK_EXACT_EQ)
+                    cmp = str_icmp(result->str, right.str);  /* always exact */
+                else if (ctx->opts && !((set_options_t *)ctx->opts)->exact)
                     cmp = str_nicmp(result->str, right.str, strlen(right.str));
                 else
                     cmp = str_icmp(result->str, right.str);
@@ -208,7 +211,7 @@ static int parse_compare(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
                 return -1;
             }
 
-            if (op == TOK_EQ) *result = val_logic(cmp == 0);
+            if (op == TOK_EQ || op == TOK_EXACT_EQ) *result = val_logic(cmp == 0);
             else if (op == TOK_NE) *result = val_logic(cmp != 0);
             else if (op == TOK_LE) *result = val_logic(cmp <= 0);
             else if (op == TOK_GE) *result = val_logic(cmp >= 0);
@@ -276,9 +279,9 @@ static int parse_add(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
     return 0;
 }
 
-/* mul_expr → unary [ (* | /) unary ]* */
+/* mul_expr → power_expr [ (* | /) power_expr ]* */
 static int parse_mul(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
-    if (parse_unary(ctx, l, result) != 0) return -1;
+    if (parse_power(ctx, l, result) != 0) return -1;
 
     for (;;) {
         token_type_t op = lex_peek(l);
@@ -287,7 +290,7 @@ static int parse_mul(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
 
         {
             value_t right;
-            if (parse_unary(ctx, l, &right) != 0) return -1;
+            if (parse_power(ctx, l, &right) != 0) return -1;
 
             if (result->type != VAL_NUM || right.type != VAL_NUM) {
                 ctx->error = "Type mismatch in * or /";
@@ -304,6 +307,49 @@ static int parse_mul(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
                 result->num /= right.num;
             }
         }
+    }
+    return 0;
+}
+
+/* Simple integer power (for common cases) */
+static double my_pow(double base, double exp) {
+    double result;
+    int i, n;
+    if (exp == 0.0) return 1.0;
+    if (base == 0.0) return 0.0;
+    if (exp == 1.0) return base;
+    if (exp == 2.0) return base * base;
+    /* Integer exponents */
+    n = (int)exp;
+    if ((double)n == exp && n > 0 && n <= 100) {
+        result = 1.0;
+        for (i = 0; i < n; i++) result *= base;
+        return result;
+    }
+    if ((double)n == exp && n < 0 && n >= -100) {
+        result = 1.0;
+        n = -n;
+        for (i = 0; i < n; i++) result *= base;
+        return 1.0 / result;
+    }
+    /* Fallback: for fractional exponents, approximate with exp/log */
+    /* For now, only support integer exponents */
+    return 0.0;
+}
+
+/* power_expr → unary [ (** | ^) unary ] */
+static int parse_power(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
+    if (parse_unary(ctx, l, result) != 0) return -1;
+
+    if (lex_peek(l) == TOK_POWER) {
+        value_t right;
+        lex_next(l);
+        if (parse_unary(ctx, l, &right) != 0) return -1;
+        if (result->type != VAL_NUM || right.type != VAL_NUM) {
+            ctx->error = "Type mismatch in **";
+            return -1;
+        }
+        result->num = my_pow(result->num, right.num);
     }
     return 0;
 }

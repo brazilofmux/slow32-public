@@ -163,6 +163,8 @@ token_type_t lex_next(lexer_t *l) {
     if (p[0] == '<' && p[1] == '=') { t->type = TOK_LE; l->p = p + 2; return t->type; }
     if (p[0] == '>' && p[1] == '=') { t->type = TOK_GE; l->p = p + 2; return t->type; }
     if (p[0] == '-' && p[1] == '>') { t->type = TOK_ARROW; l->p = p + 2; return t->type; }
+    if (p[0] == '*' && p[1] == '*') { t->type = TOK_POWER; l->p = p + 2; return t->type; }
+    if (p[0] == '=' && p[1] == '=') { t->type = TOK_EXACT_EQ; l->p = p + 2; return t->type; }
 
     /* Single character operators */
     switch (*p) {
@@ -179,6 +181,8 @@ token_type_t lex_next(lexer_t *l) {
         case '#': t->type = TOK_NE; break;
         case '$': t->type = TOK_SUBSTR; break;
         case '&': t->type = TOK_MACRO; break;
+        case '^': t->type = TOK_POWER; break;
+        case '!': t->type = TOK_NOT; break;
         default:
             t->type = TOK_ERROR;
             l->error = "Unexpected character";

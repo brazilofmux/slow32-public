@@ -1,6 +1,6 @@
 # dBase III Clone — Implementation Status
 
-Current as of February 2026. 46/46 tests passing.
+Current as of February 2026. 47/47 tests passing.
 
 ## Architecture
 
@@ -142,7 +142,7 @@ Test:  `bash tests/run-tests.sh`
 | Line continuation | `;` at end of line |
 | Macro substitution | `&varname` or `&varname.` |
 
-## Built-in Functions (44)
+## Built-in Functions (57)
 
 ### Status (6)
 `EOF()`, `BOF()`, `RECNO()`, `RECCOUNT()`, `DELETED()`, `FOUND()`
@@ -163,8 +163,21 @@ Test:  `bash tests/run-tests.sh`
 ### Screen (4)
 `ROW()`, `COL()`, `PROW()`, `PCOL()`
 
+### String Manipulation (3)
+`STUFF(s,start,del,ins)`, `TRANSFORM(expr,pic)`, `ISALPHA(s)`,
+`ISUPPER(s)`, `ISLOWER(s)`
+
 ### Misc (2)
 `IIF(cond,true,false)`, `FILE(filename)`
+
+### System (2)
+`VERSION()`, `OS()`
+
+### Keyboard (3)
+`INKEY([secs])`, `LASTKEY()`, `READKEY()`
+
+### Debug (4)
+`ERROR()`, `MESSAGE()`, `LINENO()`, `PROGRAM()`
 
 ## SET Options (14 active + 14 no-op)
 | Option | Values | Default | Notes |
@@ -200,10 +213,10 @@ Test:  `bash tests/run-tests.sh`
 
 | Category | Operators |
 |----------|-----------|
-| Arithmetic | `+`, `-`, `*`, `/`, unary `-` |
-| String | `+` (concat), `$` (substring test) |
-| Comparison | `=`, `<>`, `#`, `<`, `>`, `<=`, `>=` |
-| Logical | `.AND.`, `.OR.`, `.NOT.` |
+| Arithmetic | `+`, `-`, `*`, `/`, `**`/`^` (power), unary `-` |
+| String | `+` (concat), `-` (trim-concat), `$` (substring test) |
+| Comparison | `=`, `==` (exact), `<>`, `#`, `<`, `>`, `<=`, `>=` |
+| Logical | `.AND.`, `.OR.`, `.NOT.`, `!` (.NOT. shorthand) |
 | Logical literals | `.T.`, `.F.` |
 | Field alias | `->` (e.g., `B->FNAME`) |
 | Macro | `&varname` |
@@ -237,7 +250,8 @@ RANGE validation on @GET fields. EJECT resets printer position.
 
 ## Test Suite
 
-46 tests covering: CREATE, navigation, expressions, functions, memory
+47 tests covering: CREATE, navigation, expressions, functions, memory
 variables, SET options, work areas, file operations, screen I/O,
 programming constructs, procedures, functions, indexing, multi-index,
-filters, scope clauses, comments, print device routing, and more.
+filters, scope clauses, comments, print device routing, exponentiation,
+exact equality, string manipulation, and more.

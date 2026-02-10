@@ -114,10 +114,10 @@ Implementation: Track in set/screen state, return from func.c.
 
 ---
 
-## Phase 3: Remaining dBase III Functions
+## Phase 3: Remaining dBase III Functions --- DONE
 
 **Goal**: Complete function library for broad compatibility.
-**Effort**: Small-Medium (1 session).
+**Effort**: Small-Medium (1 session). **COMPLETE** (47/47 tests).
 
 ### Missing functions needed for general compatibility
 
