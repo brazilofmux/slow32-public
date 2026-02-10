@@ -628,6 +628,15 @@ void screen_print_newline(void) {
 
 void screen_print_text(const char *s) {
     if (!s) return;
-    printf("%s", s);
-    print_col += strlen(s);
+    while (*s) {
+        if (*s == '\n') {
+            printf("\n");
+            print_row++;
+            print_col = 0;
+            s++;
+            continue;
+        }
+        putchar(*s++);
+        print_col++;
+    }
 }
