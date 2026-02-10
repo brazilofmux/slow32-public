@@ -312,3 +312,17 @@ int is_keyword(const char *ident, const char *kw) {
     if (ident_len > kw_len) return 0;
     return str_nicmp(ident, kw, ident_len) == 0;
 }
+
+int lex_is_reserved(const char *ident) {
+    static const char *reserved[] = {
+        "PROCEDURE", "FUNCTION", "IF", "ELSE", "ENDIF",
+        "DO", "WHILE", "ENDDO", "FOR", "NEXT", "RETURN",
+        "PARAMETERS", "PRIVATE", "PUBLIC", "CASE", "OTHERWISE",
+        "ENDCASE", "LOOP", "EXIT", "QUIT", "CANCEL", NULL
+    };
+    int i;
+    for (i = 0; reserved[i]; i++) {
+        if (is_keyword(ident, reserved[i])) return 1;
+    }
+    return 0;
+}

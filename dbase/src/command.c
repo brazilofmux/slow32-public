@@ -1849,6 +1849,13 @@ static void cmd_store(dbf_t *db, lexer_t *l) {
     str_copy(name, tmp.current.text, sizeof(name));
     str_upper(name);
 
+    if (lex_is_reserved(name)) {
+        char err[128];
+        snprintf(err, sizeof(err), "%s is a reserved keyword", name);
+        prog_error(ERR_SYNTAX, err);
+        return;
+    }
+
     memvar_set(&memvar_store, name, &val);
     /* No need to advance original l, we're at EOL anyway */
 }
@@ -4236,6 +4243,12 @@ int cmd_execute(dbf_t *db, char *line) {
         name[i] = '\0';
         q = skip_ws(q);
         if (*q == '=') {
+            if (lex_is_reserved(name)) {
+                char err[128];
+                snprintf(err, sizeof(err), "%s is a reserved keyword", name);
+                prog_error(ERR_SYNTAX, err);
+                return 0;
+            }
             value_t val;
             q++;
             if (expr_eval_str(&expr_ctx, q, &val) != 0) {

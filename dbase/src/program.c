@@ -448,7 +448,17 @@ static int line_is_kw(const char *line, const char *kw) {
     while (is_ident_char(*p) && i < (int)sizeof(tok) - 1)
         tok[i++] = *p++;
     tok[i] = '\0';
-    return str_imatch(tok, kw) != 0;
+    if (str_imatch(tok, kw) == 0) return 0;
+
+    /* If keyword is PROCEDURE or FUNCTION, it must be followed by an identifier (name)
+       to be considered a definition line. This avoids confusion with assignments like
+       PROCEDURE = "something" */
+    if (str_imatch(tok, "PROCEDURE") || str_imatch(tok, "FUNCTION")) {
+        p = skip_ws(p);
+        if (!is_ident_start(*p)) return 0;
+    }
+
+    return 1;
 }
 
 static int line_is_do_kw(const char *line, const char *kw) {
@@ -1559,13 +1569,13 @@ int prog_execute_line(char *line) {
         return 0;
     }
 
-    if (str_imatch(p, "FUNCTION")) {
+    if (line_is_kw(p, "FUNCTION")) {
         /* FUNCTION treated same as PROCEDURE during execution — skip body */
         prog_procedure(skip_ws(p + 8));
         return 0;
     }
 
-    if (str_imatch(p, "PROCEDURE")) {
+    if (line_is_kw(p, "PROCEDURE")) {
         prog_procedure(skip_ws(p + 9));
         return 0;
     }

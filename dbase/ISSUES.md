@@ -9,14 +9,12 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 - **Opportunity**: Transition remaining command dispatchers (e.g., `STORE`, `RELEASE`, `SET`) to the Lexer for 100% architectural consistency.
 
 ### 1.2 Unified Macro Handling
-- **Issue**: Macro expansion (`&var`) is handled by `prog_preprocess` before the Lexer sees the line.
-- **Limitation**: This prevents the Lexer from handling nested macros or macros that expand into partial tokens.
-- **Opportunity**: Integrate macro expansion directly into `lex.c`. When the Lexer encounters `&`, it should look up the variable and continue tokenizing from the expanded string.
+- **Status**: Transparent, multi-level macro expansion (`&var`) has been integrated directly into the Lexer and the `process_records` engine. This replaces the brittle pre-processing stage.
+- **Milestone**: Supports nested macros and robust argument expansion across all commands.
 
 ### 1.3 Procedure Search Robustness
-- **Issue**: `find_procedure` in `program.c` uses `str_imatch` on raw source lines.
-- **Bug**: It can incorrectly identify a `PROCEDURE` keyword inside a comment or a string literal.
-- **Opportunity**: Update `find_procedure` to use `line_is_kw` (which pre-processes the line) to ensure only valid code is matched.
+- **Status**: Core keywords (`PROCEDURE`, `FUNCTION`, `IF`, `DO`, etc.) are now reserved words. Assignments to these names are rejected.
+- **Milestone**: `find_procedure` is now 100% robust against false positives in assignments, while `prog_preprocess` continues to handle comments and strings.
 
 ### 1.4 Function Argument Scaling
 - **Limitation**: `parse_primary` uses a fixed-size `args[8]` array for function calls.
@@ -63,9 +61,9 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 
 ## 4. Completed Milestone Successes
 
-- **Lexer Clause Refactor**: Migrated all record-level sequential commands to a unified Lexer-based parser and a generic `process_records` engine. This resolved character-level formatting bugs, fixed default scope issues, and added robust support for `TO FILE`, `FOR`, and `WHILE` clauses across the entire suite.
+- **Reserved Keywords**: Established a core reserved keyword list. Assignments to command names are now caught at parse-time, ensuring unambiguous procedure and control-flow detection.
+- **Transparent Macro Expansion**: Integrated a robust, multi-level macro expansion engine directly into the Lexer via a recursive character-streaming stack.
+- **Lexer Clause Refactor**: Migrated all record-level sequential commands to a unified Lexer-based parser and a generic `process_records` engine.
 - **Work Area Registry**: Centralized work area management in `area.c` with robust, token-aware alias resolution (A-J, 1-10) across all commands, including `SET RELATION`.
-- **Phase 7 (B+ Tree)**: Persistent NDX2 format with O(log N) performance and incremental maintenance.
-- **Record Cache**: 32-record read-ahead window in `dbf.c` for sequential scan acceleration.
 - **Commit 97a8b75**: Resolved regressions in `LIST`/`DISPLAY` output redirection (`TO FILE`), added robust filename parsing for quoted paths, and ensured proper restoration of record pointers.
 - **Commit eb41794**: Implemented `RANGE` validation in full-screen terminal mode.

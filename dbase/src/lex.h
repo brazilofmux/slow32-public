@@ -85,4 +85,7 @@ void lex_get_remaining(lexer_t *l, char *out_buf, int size);
 int is_keyword(const char *ident, const char *kw);
 #define IS_KW(ident, kw) is_keyword(ident, kw)
 
+/* Check if an identifier is a core reserved keyword */
+int lex_is_reserved(const char *ident);
+
 #endif
