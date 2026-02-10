@@ -49,8 +49,8 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 - **Milestone**: Printer state is tracked accurately across all output commands, ensuring correct pagination and alignment in reports.
 
 ### 3.2 Fractional Exponents
-- **Limitation**: `my_pow` in `expr.c` only supports integer exponents.
-- **Opportunity**: Use `pow()` from the runtime library or implement a series-based approximation to support fractional powers (e.g., `x ** 0.5`).
+- **Status**: Exponentiation (`**` and `^`) now uses the standard library `pow()` function.
+- **Milestone**: Supports fractional powers (e.g., `9 ^ 0.5` = 3), expanding the engine's mathematical capabilities beyond simple integers.
 
 ### 3.3 Error Message Thread Safety
 - **Issue**: `expr.c` and `program.c` frequently use `static char errbuf[]` for error messages.
@@ -58,6 +58,7 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 
 ## 4. Completed Milestone Successes
 
+- **Fractional Exponents**: Refactored the expression engine to use standard `pow()`. This provides full support for non-integer powers, fulfilling a key requirement for financial and scientific dBase applications.
 - **Printer Logic Refactor**: Standardized printer state tracking. Implemented automatic `EJECT` on "backward" printing in `@SAY` and ensured `?`/`??` update `PROW()` and `PCOL()`. Fixed regressions in `test_phase2` to reflect accurate coordinate tracking.
 - **DBF Cache Coherence**: Implemented a global cache invalidation mechanism. By tracking open filenames across all work areas and triggering invalidations on write, we've guaranteed that the high-performance read-ahead cache remains coherent even in complex multi-area scenarios.
 - **Function Argument Scaling**: Increased the maximum number of arguments for function calls and UDFs to 32. This allows for much more complex programming patterns and data-entry helpers.

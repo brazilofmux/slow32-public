@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 #include "expr.h"
 #include "memvar.h"
 #include "set.h"
@@ -311,32 +312,6 @@ static int parse_mul(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
     return 0;
 }
 
-/* Simple integer power (for common cases) */
-static double my_pow(double base, double exp) {
-    double result;
-    int i, n;
-    if (exp == 0.0) return 1.0;
-    if (base == 0.0) return 0.0;
-    if (exp == 1.0) return base;
-    if (exp == 2.0) return base * base;
-    /* Integer exponents */
-    n = (int)exp;
-    if ((double)n == exp && n > 0 && n <= 100) {
-        result = 1.0;
-        for (i = 0; i < n; i++) result *= base;
-        return result;
-    }
-    if ((double)n == exp && n < 0 && n >= -100) {
-        result = 1.0;
-        n = -n;
-        for (i = 0; i < n; i++) result *= base;
-        return 1.0 / result;
-    }
-    /* Fallback: for fractional exponents, approximate with exp/log */
-    /* For now, only support integer exponents */
-    return 0.0;
-}
-
 /* power_expr → unary [ (** | ^) unary ] */
 static int parse_power(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
     if (parse_unary(ctx, l, result) != 0) return -1;
@@ -349,7 +324,7 @@ static int parse_power(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
             ctx->error = "Type mismatch in **";
             return -1;
         }
-        result->num = my_pow(result->num, right.num);
+        result->num = pow(result->num, right.num);
     }
     return 0;
 }
