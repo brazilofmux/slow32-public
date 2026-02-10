@@ -2214,11 +2214,15 @@ static void cmd_wait(const char *arg) {
 static void cmd_print_expr(const char *arg, int newline) {
     const char *p;
     int first = 1;
+    int is_print = (cmd_get_device() == 1);
 
     p = skip_ws(arg);
 
     if (*p == '\0') {
-        if (newline) printf("\n");
+        if (newline) {
+            if (is_print) screen_print_newline();
+            else printf("\n");
+        }
         return;
     }
 
@@ -2235,8 +2239,12 @@ static void cmd_print_expr(const char *arg, int newline) {
         }
 
         val_to_string(&val, buf, sizeof(buf));
-        if (!first) printf(" ");
-        printf("%s", buf);
+        if (!first) {
+            if (is_print) screen_print_text(" ");
+            else printf(" ");
+        }
+        if (is_print) screen_print_text(buf);
+        else printf("%s", buf);
         first = 0;
 
         p = skip_ws(p);
@@ -2245,7 +2253,10 @@ static void cmd_print_expr(const char *arg, int newline) {
         }
     }
 
-    if (newline) printf("\n");
+    if (newline) {
+        if (is_print) screen_print_newline();
+        else printf("\n");
+    }
 }
 
 /* ---- COPY TO [FIELDS ...] [scope] [FOR cond] ---- */

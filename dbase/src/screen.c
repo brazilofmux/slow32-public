@@ -132,6 +132,9 @@ void screen_say(int row, int col, const char *expr_str, const char *picture) {
 
     if (cmd_get_device() == 1) {
         /* PRINT mode: advance with newlines/spaces to requested position */
+        if (row < print_row) {
+            screen_eject();
+        }
         while (print_row < row) {
             printf("\n");
             print_row++;
@@ -615,4 +618,16 @@ void screen_eject(void) {
     printf("\n--- PAGE ---\n");
     print_row = 0;
     print_col = 0;
+}
+
+void screen_print_newline(void) {
+    printf("\n");
+    print_row++;
+    print_col = 0;
+}
+
+void screen_print_text(const char *s) {
+    if (!s) return;
+    printf("%s", s);
+    print_col += strlen(s);
 }

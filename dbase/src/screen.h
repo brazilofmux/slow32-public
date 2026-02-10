@@ -67,4 +67,8 @@ int screen_get_pcol(void);
 /* EJECT command (form feed / reset printer position) */
 void screen_eject(void);
 
+/* Printer output helpers that track PROW()/PCOL() */
+void screen_print_newline(void);
+void screen_print_text(const char *s);
+
 #endif

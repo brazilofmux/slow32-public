@@ -44,10 +44,9 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 
 ## 3. Correctness & Fidelity
 
-### 3.1 Printer Logic in @SAY
-- **Issue**: `src/screen.c` `@SAY` in `PRINT` mode advances `print_row` using `\n`.
-- **Observation**: If a report attempts to print at a row *less* than the current `print_row`, it currently does nothing.
-- **Note**: Authentic dBase behavior varies (some issue a Form Feed, others ignore). This should be verified against Teacher's Pet requirements.
+### 3.1 Printer Logic & PROW()/PCOL()
+- **Status**: Automatic page eject is now implemented in `@SAY` (when requested row < `PROW()`). `?` and `??` now correctly update printer coordinates.
+- **Milestone**: Printer state is tracked accurately across all output commands, ensuring correct pagination and alignment in reports.
 
 ### 3.2 Fractional Exponents
 - **Limitation**: `my_pow` in `expr.c` only supports integer exponents.
@@ -59,6 +58,7 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 
 ## 4. Completed Milestone Successes
 
+- **Printer Logic Refactor**: Standardized printer state tracking. Implemented automatic `EJECT` on "backward" printing in `@SAY` and ensured `?`/`??` update `PROW()` and `PCOL()`. Fixed regressions in `test_phase2` to reflect accurate coordinate tracking.
 - **DBF Cache Coherence**: Implemented a global cache invalidation mechanism. By tracking open filenames across all work areas and triggering invalidations on write, we've guaranteed that the high-performance read-ahead cache remains coherent even in complex multi-area scenarios.
 - **Function Argument Scaling**: Increased the maximum number of arguments for function calls and UDFs to 32. This allows for much more complex programming patterns and data-entry helpers.
 - **External Merge Sort**: Refactored `SORT` to use a multi-pass external merge sort algorithm. It sorts data in manageable chunks, writes them to disk, and merges them using a K-way merge. This allows the system to sort databases far larger than the available RAM.
