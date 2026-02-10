@@ -3486,13 +3486,12 @@ int cmd_execute(dbf_t *db, char *line) {
 
     /* Control flow commands - only valid during program execution */
     if (cmd_kw(&l, "IF")) {
-        if (prog_is_running()) { {
-        char arg[256];
-        lex_next(&l);
-        lex_get_remaining(&l, arg, sizeof(arg));
-        prog_if(arg);
-    } }
-        else printf("IF not allowed in interactive mode.\n");
+        if (prog_is_running()) {
+            char arg[256];
+            lex_next(&l);
+            lex_get_remaining(&l, arg, sizeof(arg));
+            prog_if(arg);
+        } else printf("IF not allowed in interactive mode.\n");
         return 0;
     }
     if (cmd_kw(&l, "ELSE")) {
@@ -3517,12 +3516,11 @@ int cmd_execute(dbf_t *db, char *line) {
     }
     if (cmd_kw(&l, "CASE")) {
         if (prog_is_running()) {
-        char arg[256];
-        lex_next(&l);
-        lex_get_remaining(&l, arg, sizeof(arg));
-        prog_case(arg);
-    }
-        else printf("CASE without DO CASE.\n");
+            char arg[256];
+            lex_next(&l);
+            lex_get_remaining(&l, arg, sizeof(arg));
+            prog_case(arg);
+        } else printf("CASE without DO CASE.\n");
         return 0;
     }
     if (cmd_kw(&l, "OTHERWISE")) {
@@ -3537,50 +3535,43 @@ int cmd_execute(dbf_t *db, char *line) {
     }
     if (cmd_kw(&l, "RETURN")) {
         if (prog_is_running()) {
-        char arg[256];
-        lex_next(&l);
-        lex_get_remaining(&l, arg, sizeof(arg));
-        prog_return(arg);
-    }
-        else printf("RETURN not in program.\n");
+            char arg[256];
+            lex_next(&l);
+            lex_get_remaining(&l, arg, sizeof(arg));
+            prog_return(arg);
+        } else printf("RETURN not in program.\n");
         return 0;
     }
     if (cmd_kw(&l, "PROCEDURE")) {
         if (prog_is_running()) {
-        char arg[256];
-        lex_next(&l);
-        lex_get_remaining(&l, arg, sizeof(arg));
-        prog_procedure(arg);
-    }
-        else printf("PROCEDURE not allowed in interactive mode.\n");
+            char arg[256];
+            lex_next(&l);
+            lex_get_remaining(&l, arg, sizeof(arg));
+            prog_procedure(arg);
+        } else printf("PROCEDURE not allowed in interactive mode.\n");
         return 0;
     }
     if (cmd_kw(&l, "PARAMETERS")) {
         if (prog_is_running()) {
-        char arg[256];
-        lex_next(&l);
-        lex_get_remaining(&l, arg, sizeof(arg));
-        prog_parameters(arg);
-    }
-        else printf("PARAMETERS not allowed in interactive mode.\n");
+            char arg[256];
+            lex_next(&l);
+            lex_get_remaining(&l, arg, sizeof(arg));
+            prog_parameters(arg);
+        } else printf("PARAMETERS not allowed in interactive mode.\n");
         return 0;
     }
     if (cmd_kw(&l, "PRIVATE")) {
-        {
         char arg[256];
         lex_next(&l);
         lex_get_remaining(&l, arg, sizeof(arg));
         prog_private(arg);
-    }
         return 0;
     }
     if (cmd_kw(&l, "PUBLIC")) {
-        {
         char arg[256];
         lex_next(&l);
         lex_get_remaining(&l, arg, sizeof(arg));
         prog_public(arg);
-    }
         return 0;
     }
     if (cmd_kw(&l, "CANCEL")) {
@@ -3827,12 +3818,10 @@ int cmd_execute(dbf_t *db, char *line) {
     }
 
     if (cmd_kw(&l, "USE")) {
-        {
         char arg[256];
         lex_next(&l);
         lex_get_remaining(&l, arg, sizeof(arg));
         cmd_use(cdb, arg);
-    }
         return 0;
     }
 
@@ -3928,33 +3917,27 @@ int cmd_execute(dbf_t *db, char *line) {
 
     /* GO / GOTO */
     if (cmd_kw(&l, "GOTO")) {
-        {
         char arg[256];
         lex_next(&l);
         lex_get_remaining(&l, arg, sizeof(arg));
         cmd_go(cdb, arg);
-    }
         follow_relations();
         return 0;
     }
     if (cmd_kw(&l, "GO")) {
-        {
         char arg[256];
         lex_next(&l);
         lex_get_remaining(&l, arg, sizeof(arg));
         cmd_go(cdb, arg);
-    }
         follow_relations();
         return 0;
     }
 
     if (cmd_kw(&l, "SKIP")) {
-        {
         char arg[256];
         lex_next(&l);
         lex_get_remaining(&l, arg, sizeof(arg));
         cmd_skip(cdb, arg);
-    }
         follow_relations();
         return 0;
     }
@@ -4138,22 +4121,18 @@ int cmd_execute(dbf_t *db, char *line) {
     }
 
     if (cmd_kw(&l, "SEEK")) {
-        {
         char arg[256];
         lex_next(&l);
         lex_get_remaining(&l, arg, sizeof(arg));
         cmd_seek(cdb, arg);
-    }
         return 0;
     }
 
     if (cmd_kw(&l, "FIND")) {
-        {
         char arg[256];
         lex_next(&l);
         lex_get_remaining(&l, arg, sizeof(arg));
         cmd_find(cdb, arg);
-    }
         return 0;
     }
 

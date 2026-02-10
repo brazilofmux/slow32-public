@@ -176,6 +176,10 @@ token_type_t lex_next(lexer_t *l) {
         if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
     }
 
+    /* NOTE: When inside a macro expansion, token_start points into the macro
+       stack buffer, not the original input.  Callers that capture token_start
+       (e.g., FOR/WHILE condition strings) must memcpy immediately before the
+       lexer advances or the stack is reused. */
     l->token_start = (l->macro_depth > 0) ? l->macro_stack[l->macro_depth - 1].p - 1 : l->p - 1;
 
     t->text[0] = c;

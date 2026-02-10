@@ -528,35 +528,19 @@ static int parse_primary(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
 /* ---- Public API ---- */
 
 int expr_eval(expr_ctx_t *ctx, const char **pp, value_t *result) {
-
     lexer_t l;
-
     lexer_init_ext(&l, *pp, ctx->vars);
-
     ctx->error = NULL;
-
     *result = val_nil();
-
     int res = parse_expr(ctx, &l, result);
-
     *pp = l.token_start;
-
     return res;
-
 }
 
-
-
 int expr_eval_str(expr_ctx_t *ctx, const char *str, value_t *result) {
-
     lexer_t l;
-
     lexer_init_ext(&l, str, ctx->vars);
-
     ctx->error = NULL;
-
     *result = val_nil();
-
     return parse_expr(ctx, &l, result);
-
 }
