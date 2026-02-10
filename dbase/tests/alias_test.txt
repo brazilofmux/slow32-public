@@ -32,11 +32,15 @@ REPLACE ID WITH 2, INFO WITH "DETAIL 2"
 SELECT 1
 SET RELATION TO ID INTO B
 GO TOP
-? "Master ID: ", ID
-? "Detail Info (via B): ", B->INFO
+? "Master ID:", ID
+? "Detail Info (via B):", RTRIM(B->INFO)
 SKIP
-? "Master ID: ", ID
-? "Detail Info (via B): ", B->INFO
+? "Master ID:", ID
+? "Detail Info (via B):", RTRIM(B->INFO)
+
+SELECT A && trailing comment should be accepted
+SELECT 1FOO
+CLOSE DATABASES
 
 CLOSE DATABASES
 QUIT

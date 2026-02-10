@@ -38,30 +38,50 @@ work_area_t *area_get_current(void) {
     return &areas[current_area_idx];
 }
 
+static int alias_token_len(const char *alias) {
+    int len = 0;
+    if (!alias) return 0;
+    while (alias[len] && is_ident_char(alias[len])) len++;
+    return len;
+}
+
 int area_resolve_alias(const char *alias) {
     int i;
+    int len;
     char c;
 
-    if (!alias || !alias[0]) return -1;
+    len = alias_token_len(alias);
+    if (len == 0) return -1;
 
-    /* 1. Try numeric 1-10 */
-    if (alias[0] >= '1' && alias[0] <= '9') {
-        int val = atoi(alias);
+    /* 1. Try numeric 1-10 (token must be all digits) */
+    if (alias[0] >= '0' && alias[0] <= '9') {
+        int val = 0;
+        for (i = 0; i < len; i++) {
+            if (alias[i] < '0' || alias[i] > '9') {
+                val = -1;
+                break;
+            }
+            val = val * 10 + (alias[i] - '0');
+        }
         if (val >= 1 && val <= MAX_AREAS)
             return val - 1;
     }
-    if (strcmp(alias, "10") == 0) return 9;
 
     /* 2. Try single letter A-J */
-    c = alias[0];
-    if (c >= 'a' && c <= 'z') c -= 32;
-    if (c >= 'A' && c <= 'J' && alias[1] == '\0')
-        return c - 'A';
+    if (len == 1) {
+        c = alias[0];
+        if (c >= 'a' && c <= 'z') c -= 32;
+        if (c >= 'A' && c <= 'J')
+            return c - 'A';
+    }
 
-    /* 3. Try named alias */
+    /* 3. Try named alias (token length must match) */
     for (i = 0; i < MAX_AREAS; i++) {
-        if (areas[i].alias[0] && str_icmp(areas[i].alias, alias) == 0)
-            return i;
+        if (areas[i].alias[0]) {
+            int alen = (int)strlen(areas[i].alias);
+            if (alen == len && str_nicmp(areas[i].alias, alias, len) == 0)
+                return i;
+        }
     }
 
     return -1;
