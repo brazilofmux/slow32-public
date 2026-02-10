@@ -930,12 +930,26 @@ void index_clear(index_t *idx) {
     idx->iter_pos = -1;
 }
 
+typedef struct {
+    char key[MAX_INDEX_KEY];
+    uint32_t recno;
+} key_entry_t;
+
+static int key_entry_cmp(const void *a, const void *b, void *userdata) {
+    index_t *idx = (index_t *)userdata;
+    const key_entry_t *ka = (const key_entry_t *)a;
+    const key_entry_t *kb = (const key_entry_t *)b;
+    return key_cmp(ka->key, kb->key, idx->key_len);
+}
+
 /* ---- Build index from database ---- */
 int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, const char *filename) {
     uint32_t i;
     dbf_t *saved_db;
     int max_len = 0;
     int key_type_set = 0;
+    key_entry_t *entries;
+    int nentries = 0;
 
     if (!dbf_is_open(db)) return -1;
 
@@ -946,59 +960,19 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
     str_copy(idx->key_expr, key_expr, sizeof(idx->key_expr));
     str_copy(idx->filename, filename, sizeof(idx->filename));
 
-    /* Determine key length by scanning records */
+    /* First pass: Determine key length and collect entries */
     idx->key_len = 10; /* default */
     idx->key_type = 0; /* char */
 
     saved_db = ctx->db;
     ctx->db = db;
 
-    if (db->record_count > 0) {
-        for (i = 1; i <= db->record_count; i++) {
-            value_t val;
-            char keybuf[MAX_INDEX_KEY + 1];
-
-            dbf_read_record(db, i);
-            if (db->record_buf[0] == '*') continue;
-
-            if (expr_eval_str(ctx, key_expr, &val) != 0) continue;
-
-            val_to_string(&val, keybuf, sizeof(keybuf));
-            {
-                int len = strlen(keybuf);
-                if (len > max_len) max_len = len;
-            }
-            if (!key_type_set) {
-                if (val.type == VAL_NUM) idx->key_type = 1;
-                else if (val.type == VAL_DATE) idx->key_type = 2;
-                else idx->key_type = 0;
-                key_type_set = 1;
-            }
-        }
-        if (max_len < 1) max_len = 1;
-        if (max_len > MAX_INDEX_KEY) max_len = MAX_INDEX_KEY;
-        idx->key_len = max_len;
+    entries = (key_entry_t *)malloc(db->record_count * sizeof(key_entry_t));
+    if (!entries && db->record_count > 0) {
+        ctx->db = saved_db;
+        return -1;
     }
 
-    compute_fanout(idx);
-
-    /* Initialize with header placeholder (page 0) */
-    idx->num_pages = 0;
-    idx->nentries = 0;
-    idx->root_page = 0;
-    idx->first_leaf = 0;
-    {
-        /* Page 0 = header (not a tree node) */
-        ndx_page_t *hdr = (ndx_page_t *)calloc(1, sizeof(ndx_page_t));
-        hdr->page_no = 0;
-        hdr->pin_count = 1;
-        hash_add(idx, hdr);
-        idx->num_pages = 1;
-    }
-
-    idx->active = 1;
-
-    /* Insert each non-deleted record */
     for (i = 1; i <= db->record_count; i++) {
         value_t val;
         char keybuf[MAX_INDEX_KEY + 1];
@@ -1006,23 +980,137 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
         dbf_read_record(db, i);
         if (db->record_buf[0] == '*') continue;
 
-        if (expr_eval_str(ctx, key_expr, &val) != 0) {
-            if (ctx->error) printf("Index key error at record %d: %s\n", (int)i, ctx->error);
-            continue;
-        }
+        if (expr_eval_str(ctx, key_expr, &val) != 0) continue;
 
         val_to_string(&val, keybuf, sizeof(keybuf));
-        /* Pad to key_len with spaces */
-        {
-            int len = strlen(keybuf);
-            if (len < idx->key_len)
-                memset(keybuf + len, ' ', idx->key_len - len);
-            keybuf[idx->key_len] = '\0';
+        int len = strlen(keybuf);
+        if (len > max_len) max_len = len;
+
+        if (!key_type_set) {
+            if (val.type == VAL_NUM) idx->key_type = 1;
+            else if (val.type == VAL_DATE) idx->key_type = 2;
+            else idx->key_type = 0;
+            key_type_set = 1;
         }
 
-        index_insert(idx, keybuf, i);
+        /* Store entry for sorting */
+        memset(entries[nentries].key, ' ', MAX_INDEX_KEY);
+        if (len > MAX_INDEX_KEY) len = MAX_INDEX_KEY;
+        memcpy(entries[nentries].key, keybuf, len);
+        entries[nentries].recno = i;
+        nentries++;
     }
 
+    if (max_len < 1) max_len = 1;
+    if (max_len > MAX_INDEX_KEY) max_len = MAX_INDEX_KEY;
+    idx->key_len = max_len;
+
+    compute_fanout(idx);
+
+    /* Sort entries */
+    if (nentries > 0) {
+        qsort_r(entries, nentries, sizeof(key_entry_t), key_entry_cmp, idx);
+    }
+
+    /* Second pass: Pack into leaf pages and build tree bottom-up */
+    idx->num_pages = 0;
+    idx->nentries = 0;
+    idx->root_page = 0;
+    idx->first_leaf = 0;
+
+    /* Initialize header page (0) */
+    {
+        ndx_page_t *hdr = (ndx_page_t *)calloc(1, sizeof(ndx_page_t));
+        hdr->page_no = 0;
+        hdr->pin_count = 1;
+        hash_add(idx, hdr);
+        idx->num_pages = 1;
+    }
+
+    if (nentries > 0) {
+        int n_leaf_pages = (nentries + idx->max_keys_leaf - 1) / idx->max_keys_leaf;
+        ndx_page_t **leaf_pages = (ndx_page_t **)malloc(n_leaf_pages * sizeof(ndx_page_t *));
+        int current_entry = 0;
+
+        for (i = 0; i < (uint32_t)n_leaf_pages; i++) {
+            ndx_page_t *leaf = page_new(idx, PAGE_LEAF);
+            leaf_pages[i] = leaf;
+            if (i == 0) idx->first_leaf = leaf->page_no;
+            
+            int count_in_page = idx->max_keys_leaf;
+            if (current_entry + count_in_page > nentries)
+                count_in_page = nentries - current_entry;
+
+            for (int j = 0; j < count_in_page; j++) {
+                memcpy(page_key(idx, leaf, j), entries[current_entry].key, idx->key_len);
+                leaf->recnos[j] = entries[current_entry].recno;
+                current_entry++;
+            }
+            leaf->nkeys = count_in_page;
+            leaf->dirty = 1;
+            idx->nentries += count_in_page;
+
+            if (i > 0) {
+                leaf->prev_leaf = leaf_pages[i-1]->page_no;
+                leaf_pages[i-1]->next_leaf = leaf->page_no;
+            }
+        }
+
+        /* Build internal levels on top of leaves */
+        ndx_page_t **current_level = leaf_pages;
+        int current_level_size = n_leaf_pages;
+
+        while (current_level_size > 1) {
+            int parent_level_size = (current_level_size + idx->max_keys_internal) / (idx->max_keys_internal + 1);
+            if (parent_level_size < 1) parent_level_size = 1;
+            ndx_page_t **parent_level = (ndx_page_t **)malloc(parent_level_size * sizeof(ndx_page_t *));
+            int child_idx = 0;
+
+            for (i = 0; i < (uint32_t)parent_level_size; i++) {
+                ndx_page_t *parent = page_new(idx, PAGE_INTERNAL);
+                parent_level[i] = parent;
+
+                int children_for_this_parent = idx->max_keys_internal + 1;
+                if (child_idx + children_for_this_parent > current_level_size)
+                    children_for_this_parent = current_level_size - child_idx;
+
+                parent->children[0] = current_level[child_idx]->page_no;
+                for (int j = 0; j < children_for_this_parent - 1; j++) {
+                    /* Key in parent is the first key of the right sibling subtree */
+                    ndx_page_t *right_child = current_level[child_idx + j + 1];
+                    /* Find first leaf key in right_child subtree */
+                    ndx_page_t *curr = right_child;
+                    while (curr->type == PAGE_INTERNAL) {
+                        curr = hash_lookup(idx, curr->children[0]);
+                    }
+                    memcpy(page_key(idx, parent, j), page_key(idx, curr, 0), idx->key_len);
+                    parent->children[j + 1] = right_child->page_no;
+                    parent->nkeys++;
+                }
+                parent->dirty = 1;
+                child_idx += children_for_this_parent;
+            }
+
+            for (int k = 0; k < current_level_size; k++) {
+                page_put(current_level[k]);
+            }
+            free(current_level);
+            current_level = parent_level;
+            current_level_size = parent_level_size;
+        }
+
+        idx->root_page = current_level[0]->page_no;
+        page_put(current_level[0]);
+        free(current_level);
+    } else {
+        /* Empty index - already has header, but needs a root leaf */
+        ndx_page_t *leaf = page_new(idx, PAGE_LEAF);
+        idx->root_page = leaf->page_no;
+        idx->first_leaf = leaf->page_no;
+        page_put(leaf);
+    }
+
+    free(entries);
     ctx->db = saved_db;
 
     /* Position at first entry */

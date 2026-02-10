@@ -36,8 +36,8 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 - **Opportunity**: Implement an external merge sort (sorting chunks to temporary files and merging) to support sorting databases of any size.
 
 ### 2.4 Index Build Performance
-- **Issue**: `index_build` is O(N log N) because it performs individual `index_insert` calls for every record.
-- **Opportunity**: Implement a bottom-up build strategy (sort keys first, then pack leaves) to achieve O(N) build time.
+- **Status**: `index_build` now uses a bottom-up strategy. Keys are collected, sorted via library `qsort_r`, and packed into leaves.
+- **Milestone**: Achieves O(N) build time (excluding sort), producing perfectly packed B+ trees with minimal I/O.
 
 ### 2.5 B+ Tree Maintenance (Fragmentation)
 - **Issue**: `index_remove` unlinks empty pages but does not perform underflow merging or redistribution.
@@ -60,6 +60,8 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 
 ## 4. Completed Milestone Successes
 
+- **O(N) Index Build**: Implemented bottom-up index construction. By sorting keys in memory first and packing the B+ tree from the leaves up, we eliminate the O(N log N) individual insertion overhead and produce perfectly balanced, highly efficient index files.
+- **qsort_r in Runtime**: Extended the SLOW-32 C runtime library with `qsort_r` (reentrant quicksort), enabling context-aware sorting across the entire platform.
 - **Sparse Page Table**: Refactored the B+ Tree engine to use a hash-based sparse page table. This eliminates the O(N) memory scaling of metadata, making the indexer capable of handling extremely large datasets without proportional RAM growth.
 - **Reserved Keywords**: Established a core reserved keyword list. Assignments to command names are now caught at parse-time, ensuring unambiguous procedure and control-flow detection.
 - **Transparent Macro Expansion**: Integrated a robust, multi-level macro expansion engine directly into the Lexer via a recursive character-streaming stack.

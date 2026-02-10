@@ -9,14 +9,15 @@ static void swap(void *a, void *b, size_t size) {
     memswap(a, b, size);
 }
 
-static void *partition(void *base, size_t num, size_t size, 
-                      int (*compar)(const void *, const void *)) {
+static void *partition_r(void *base, size_t num, size_t size, 
+                        int (*compar)(const void *, const void *, void *),
+                        void *arg) {
     char *array = (char *)base;
     char *pivot = array + (num - 1) * size;
     size_t i = 0;
     
     for (size_t j = 0; j < num - 1; j++) {
-        if (compar(array + j * size, pivot) <= 0) {
+        if (compar(array + j * size, pivot, arg) <= 0) {
             swap(array + i * size, array + j * size, size);
             i++;
         }
@@ -25,24 +26,37 @@ static void *partition(void *base, size_t num, size_t size,
     return array + i * size;
 }
 
-static void qsort_recursive(void *base, size_t num, size_t size,
-                           int (*compar)(const void *, const void *)) {
+static void qsort_r_recursive(void *base, size_t num, size_t size,
+                             int (*compar)(const void *, const void *, void *),
+                             void *arg) {
     if (num <= 1) return;
     
-    char *pivot = (char *)partition(base, num, size, compar);
+    char *pivot = (char *)partition_r(base, num, size, compar, arg);
     size_t left_size = (pivot - (char *)base) / size;
     size_t right_size = num - left_size - 1;
     
-    qsort_recursive(base, left_size, size, compar);
-    qsort_recursive(pivot + size, right_size, size, compar);
+    qsort_r_recursive(base, left_size, size, compar, arg);
+    qsort_r_recursive(pivot + size, right_size, size, compar, arg);
+}
+
+void qsort_r(void *base, size_t nmemb, size_t size,
+             int (*compar)(const void *, const void *, void *),
+             void *arg) {
+    if (base == NULL || nmemb == 0 || size == 0 || compar == NULL) {
+        return;
+    }
+    qsort_r_recursive(base, nmemb, size, compar, arg);
+}
+
+// Compatibility wrapper for standard qsort
+static int qsort_compat_compar(const void *a, const void *b, void *arg) {
+    int (*compar)(const void *, const void *) = (int (*)(const void *, const void *))arg;
+    return compar(a, b);
 }
 
 void qsort(void *base, size_t nmemb, size_t size,
            int (*compar)(const void *, const void *)) {
-    if (base == NULL || nmemb == 0 || size == 0 || compar == NULL) {
-        return;
-    }
-    qsort_recursive(base, nmemb, size, compar);
+    qsort_r(base, nmemb, size, qsort_compat_compar, (void *)compar);
 }
 
 // Binary search implementation
