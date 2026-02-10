@@ -15,7 +15,7 @@
 #define PAGE_INTERNAL   0x01
 #define PAGE_LEAF       0x02
 
-typedef struct {
+typedef struct ndx_page {
     int page_no;        /* page number in file */
     int type;           /* PAGE_INTERNAL or PAGE_LEAF */
     int nkeys;          /* number of keys in this page */
