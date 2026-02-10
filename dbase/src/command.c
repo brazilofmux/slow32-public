@@ -26,6 +26,9 @@ typedef struct {
     index_t indexes[MAX_INDEXES];
     int num_indexes;
     int order;          /* controlling index: 0=natural, 1-N=index number */
+    /* SET RELATION TO */
+    char relation_expr[256];    /* expression string (empty = no relation) */
+    int relation_target;        /* target work area index (-1 = none) */
 } work_area_t;
 
 static work_area_t areas[MAX_AREAS];
@@ -95,6 +98,37 @@ static void close_all_indexes(work_area_t *wa) {
     }
     wa->num_indexes = 0;
     wa->order = 0;
+}
+
+/* ---- SET RELATION: follow child area ---- */
+static void follow_relations(void) {
+    work_area_t *wa = &areas[current_area];
+    if (wa->relation_expr[0] && wa->relation_target >= 0) {
+        int saved_area = current_area;
+        value_t key;
+        /* Evaluate relation expression in parent context */
+        ctx_setup();
+        if (expr_eval_str(&expr_ctx, wa->relation_expr, &key) == 0) {
+            char buf[256];
+            val_to_string(&key, buf, sizeof(buf));
+            /* Switch to child, seek */
+            current_area = wa->relation_target;
+            {
+                work_area_t *child = &areas[current_area];
+                index_t *idx = NULL;
+                if (child->order > 0 && child->order <= child->num_indexes)
+                    idx = &child->indexes[child->order - 1];
+                if (idx && idx->active) {
+                    index_seek(idx, buf);
+                    if (idx->current >= 0 && idx->current < idx->nentries)
+                        dbf_read_record(&child->db, idx->entries[idx->current].recno);
+                    else
+                        child->db.current_record = child->db.record_count + 1;
+                }
+            }
+        }
+        current_area = saved_area;
+    }
 }
 
 /* ---- Helper: check FOR clause ---- */
@@ -1199,6 +1233,8 @@ static void cmd_list(dbf_t *db, const char *arg) {
     const char *rest;
     const char *cond_str = NULL;
     int use_all_fields;
+    int show_recno = 1;     /* OFF suppresses record numbers */
+    FILE *to_file = NULL;
     scope_t scope;
     uint32_t start, end;
 
@@ -1216,6 +1252,23 @@ static void cmd_list(dbf_t *db, const char *arg) {
 
     scope = parse_scope(&rest);
 
+    /* Check for OFF before field parsing */
+    if (str_imatch(rest, "OFF")) {
+        show_recno = 0;
+        rest = skip_ws(rest + 3);
+    }
+    /* Check for TO PRINT / TO FILE */
+    if (str_imatch(rest, "TO") && str_imatch(skip_ws(rest + 2), "PRINT")) {
+        rest = skip_ws(skip_ws(rest + 2) + 5);
+    } else if (str_imatch(rest, "TO") && str_imatch(skip_ws(rest + 2), "FILE")) {
+        const char *t = skip_ws(skip_ws(rest + 2) + 4);
+        char fname[128]; int fi = 0;
+        while (*t && *t != ' ' && fi < 127) fname[fi++] = *t++;
+        fname[fi] = '\0';
+        to_file = fopen(fname, "w");
+        rest = skip_ws(t);
+    }
+
     if (str_imatch(rest, "FOR")) {
         cond_str = skip_ws(rest + 3);
         nfields = 0;
@@ -1223,6 +1276,11 @@ static void cmd_list(dbf_t *db, const char *arg) {
         nfields = parse_field_list(db, rest, field_indices, DBF_MAX_FIELDS, &rest);
         if (nfields < 0) return;
         rest = skip_ws(rest);
+        /* Check for OFF/TO after field list */
+        if (str_imatch(rest, "OFF")) {
+            show_recno = 0;
+            rest = skip_ws(rest + 3);
+        }
         if (str_imatch(rest, "FOR")) {
             cond_str = skip_ws(rest + 3);
         }
@@ -1236,7 +1294,7 @@ static void cmd_list(dbf_t *db, const char *arg) {
     }
 
     if (set_opts.heading) {
-        printf("Record#");
+        if (show_recno) printf("Record#");
         if (use_all_fields) {
             for (f = 0; f < db->field_count; f++) {
                 int w = field_display_width(db, f);
@@ -1265,7 +1323,7 @@ static void cmd_list(dbf_t *db, const char *arg) {
             if (cond.type != VAL_LOGIC || !cond.logic) continue;
         }
 
-        printf("%7d", (int)i);
+        if (show_recno) printf("%7d", (int)i);
 
         if (use_all_fields) {
             for (f = 0; f < db->field_count; f++) {
@@ -1281,6 +1339,8 @@ static void cmd_list(dbf_t *db, const char *arg) {
         }
         printf("\n");
     }
+
+    if (to_file) fclose(to_file);
 }
 
 /* ---- DISPLAY (enhanced with field list) ---- */
@@ -2588,6 +2648,8 @@ void cmd_close_all(void) {
         areas[i].locate_cond[0] = '\0';
         areas[i].locate_last_rec = 0;
         areas[i].filter_cond[0] = '\0';
+        areas[i].relation_expr[0] = '\0';
+        areas[i].relation_target = -1;
     }
     current_area = 0;
 }
@@ -2711,6 +2773,120 @@ int cmd_execute(dbf_t *db, char *line) {
         return 0;
     }
 
+    /* SAVE TO <file> [ALL LIKE/EXCEPT <pattern>] */
+    if (str_imatch(p, "SAVE")) {
+        char *rest = skip_ws(p + 4);
+        if (str_imatch(rest, "TO")) {
+            rest = skip_ws(rest + 2);
+            {
+                char fname[128];
+                int i = 0;
+                FILE *fp;
+                while (*rest && *rest != ' ' && i < 127) fname[i++] = *rest++;
+                fname[i] = '\0';
+                str_upper(fname);
+                if (strlen(fname) < 4 || str_icmp(fname + strlen(fname) - 4, ".MEM") != 0)
+                    strcat(fname, ".MEM");
+                fp = fopen(fname, "wb");
+                if (!fp) { printf("Cannot create %s\n", fname); return 0; }
+                {
+                    int nv = memvar_store.count;
+                    int j;
+                    fwrite(&nv, 4, 1, fp);
+                    for (j = 0; j < nv; j++) {
+                        fwrite(memvar_store.vars[j].name, MEMVAR_NAMELEN, 1, fp);
+                        fwrite(&memvar_store.vars[j].val.type, 4, 1, fp);
+                        if (memvar_store.vars[j].val.type == VAL_NUM) {
+                            fwrite(&memvar_store.vars[j].val.num, 8, 1, fp);
+                        } else if (memvar_store.vars[j].val.type == VAL_CHAR) {
+                            int len = strlen(memvar_store.vars[j].val.str);
+                            fwrite(&len, 4, 1, fp);
+                            fwrite(memvar_store.vars[j].val.str, len, 1, fp);
+                        } else if (memvar_store.vars[j].val.type == VAL_DATE) {
+                            fwrite(&memvar_store.vars[j].val.date, 4, 1, fp);
+                        } else if (memvar_store.vars[j].val.type == VAL_LOGIC) {
+                            fwrite(&memvar_store.vars[j].val.logic, 4, 1, fp);
+                        }
+                    }
+                }
+                fclose(fp);
+            }
+        }
+        return 0;
+    }
+
+    /* RESTORE FROM <file> [ADDITIVE] */
+    if (str_imatch(p, "RESTORE")) {
+        char *rest = skip_ws(p + 7);
+        if (str_imatch(rest, "FROM")) {
+            rest = skip_ws(rest + 4);
+            {
+                char fname[128];
+                int additive = 0;
+                int i = 0;
+                FILE *fp;
+                while (*rest && *rest != ' ' && i < 127) fname[i++] = *rest++;
+                fname[i] = '\0';
+                rest = skip_ws(rest);
+                if (str_imatch(rest, "ADDITIVE")) additive = 1;
+                str_upper(fname);
+                if (strlen(fname) < 4 || str_icmp(fname + strlen(fname) - 4, ".MEM") != 0)
+                    strcat(fname, ".MEM");
+                fp = fopen(fname, "rb");
+                if (!fp) { printf("File not found: %s\n", fname); return 0; }
+                if (!additive) memvar_release_all(&memvar_store);
+                {
+                    int nv = 0, j;
+                    fread(&nv, 4, 1, fp);
+                    for (j = 0; j < nv; j++) {
+                        char name[MEMVAR_NAMELEN];
+                        int type;
+                        value_t v;
+                        fread(name, MEMVAR_NAMELEN, 1, fp);
+                        fread(&type, 4, 1, fp);
+                        v.type = type;
+                        if (type == VAL_NUM) {
+                            fread(&v.num, 8, 1, fp);
+                        } else if (type == VAL_CHAR) {
+                            int len = 0;
+                            fread(&len, 4, 1, fp);
+                            if (len >= (int)sizeof(v.str)) len = sizeof(v.str) - 1;
+                            fread(v.str, len, 1, fp);
+                            v.str[len] = '\0';
+                        } else if (type == VAL_DATE) {
+                            fread(&v.date, 4, 1, fp);
+                        } else if (type == VAL_LOGIC) {
+                            fread(&v.logic, 4, 1, fp);
+                        }
+                        memvar_set(&memvar_store, name, &v);
+                    }
+                }
+                fclose(fp);
+            }
+        }
+        return 0;
+    }
+
+    /* RUN / ! command — not supported on SLOW-32 */
+    if (str_imatch(p, "RUN")) {
+        printf("RUN not supported.\n");
+        return 0;
+    }
+
+    /* TOTAL ON, JOIN WITH, UPDATE ON — stubs */
+    if (str_imatch(p, "TOTAL") && str_imatch(skip_ws(p + 5), "ON")) {
+        printf("TOTAL ON not implemented.\n");
+        return 0;
+    }
+    if (str_imatch(p, "JOIN") && str_imatch(skip_ws(p + 4), "WITH")) {
+        printf("JOIN WITH not implemented.\n");
+        return 0;
+    }
+    if (str_imatch(p, "UPDATE") && str_imatch(skip_ws(p + 6), "ON")) {
+        printf("UPDATE ON not implemented.\n");
+        return 0;
+    }
+
     if (str_imatch(p, "QUIT")) {
         return 1;
     }
@@ -2815,25 +2991,30 @@ int cmd_execute(dbf_t *db, char *line) {
     /* GO / GOTO */
     if (str_imatch(p, "GOTO")) {
         cmd_go(cdb, p + 4);
+        follow_relations();
         return 0;
     }
     if (str_imatch(p, "GO")) {
         cmd_go(cdb, p + 2);
+        follow_relations();
         return 0;
     }
 
     if (str_imatch(p, "SKIP")) {
         cmd_skip(cdb, p + 4);
+        follow_relations();
         return 0;
     }
 
     if (str_imatch(p, "LOCATE")) {
         cmd_locate(cdb, p + 6);
+        follow_relations();
         return 0;
     }
 
     if (str_imatch(p, "CONTINUE")) {
         cmd_continue(cdb);
+        follow_relations();
         return 0;
     }
 
@@ -2939,6 +3120,57 @@ int cmd_execute(dbf_t *db, char *line) {
                 }
             } else {
                 printf("Syntax: SET ORDER TO <n>\n");
+            }
+        } else if (str_imatch(rest, "RELATION")) {
+            rest = skip_ws(rest + 8);
+            if (str_imatch(rest, "TO")) {
+                rest = skip_ws(rest + 2);
+                if (*rest == '\0') {
+                    /* Clear relation */
+                    areas[current_area].relation_expr[0] = '\0';
+                    areas[current_area].relation_target = -1;
+                } else {
+                    /* SET RELATION TO <expr> INTO <alias> */
+                    const char *into_pos = rest;
+                    const char *f = rest;
+                    while (*f) {
+                        if (str_imatch(f, "INTO")) break;
+                        f++;
+                    }
+                    if (*f && str_imatch(f, "INTO")) {
+                        int len = (int)(f - rest);
+                        char expr_buf[256];
+                        char alias_buf[32];
+                        int ai, i;
+                        if (len > (int)sizeof(expr_buf) - 1) len = sizeof(expr_buf) - 1;
+                        memcpy(expr_buf, rest, len);
+                        expr_buf[len] = '\0';
+                        trim_right(expr_buf);
+                        f = skip_ws(f + 4);
+                        i = 0;
+                        while (is_ident_char(*f) && i < 31) alias_buf[i++] = *f++;
+                        alias_buf[i] = '\0';
+                        str_upper(alias_buf);
+                        /* Find target area */
+                        ai = -1;
+                        for (i = 0; i < MAX_AREAS; i++) {
+                            if (areas[i].alias[0] && str_icmp(areas[i].alias, alias_buf) == 0) {
+                                ai = i; break;
+                            }
+                        }
+                        if (ai < 0) {
+                            printf("Alias not found: %s\n", alias_buf);
+                        } else {
+                            str_copy(areas[current_area].relation_expr, expr_buf,
+                                     sizeof(areas[current_area].relation_expr));
+                            areas[current_area].relation_target = ai;
+                        }
+                    } else {
+                        printf("Syntax: SET RELATION TO <expr> INTO <alias>\n");
+                    }
+                }
+            } else {
+                printf("Syntax: SET RELATION TO [<expr> INTO <alias>]\n");
             }
         } else {
             set_execute(&set_opts, rest);

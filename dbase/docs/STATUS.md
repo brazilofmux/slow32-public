@@ -1,6 +1,6 @@
 # dBase III Clone — Implementation Status
 
-Current as of February 2026. 47/47 tests passing.
+Current as of February 2026. 48/48 tests passing.
 
 ## Architecture
 
@@ -64,7 +64,7 @@ Test:  `bash tests/run-tests.sh`
 ### Display & Output
 | Command | Syntax |
 |---------|--------|
-| LIST | `LIST [<scope>] [FIELDS <list>] [FOR <cond>] [OFF]` |
+| LIST | `LIST [<scope>] [FIELDS <list>] [FOR <cond>] [OFF] [TO PRINT\|TO FILE <f>]` |
 | DISPLAY | `DISPLAY [<scope>] [FIELDS <list>] [FOR <cond>] [OFF]` |
 | DISPLAY STRUCTURE | `DISPLAY STRUCTURE` |
 | DISPLAY MEMORY | `DISPLAY MEMORY` |
@@ -86,6 +86,7 @@ Test:  `bash tests/run-tests.sh`
 | SET INDEX TO | `SET INDEX TO [<file1>[,<file2>...]]` |
 | REINDEX | `REINDEX` |
 | SET ORDER TO | `SET ORDER TO [<n>]` (0=natural, 1+=index) |
+| SET RELATION TO | `SET RELATION TO <expr> INTO <alias>` |
 
 ### Memory Variables
 | Command | Syntax |
@@ -96,6 +97,8 @@ Test:  `bash tests/run-tests.sh`
 | RELEASE ALL | `RELEASE ALL [LIKE <pattern>\|EXCEPT <pattern>]` |
 | PRIVATE | `PRIVATE <var>[,<var>...]` |
 | PUBLIC | `PUBLIC <var>[,<var>...]` |
+| SAVE TO | `SAVE TO <file> [ALL LIKE/EXCEPT <pattern>]` |
+| RESTORE FROM | `RESTORE FROM <file> [ADDITIVE]` |
 
 ### User Input
 | Command | Syntax |
@@ -250,8 +253,9 @@ RANGE validation on @GET fields. EJECT resets printer position.
 
 ## Test Suite
 
-47 tests covering: CREATE, navigation, expressions, functions, memory
+48 tests covering: CREATE, navigation, expressions, functions, memory
 variables, SET options, work areas, file operations, screen I/O,
 programming constructs, procedures, functions, indexing, multi-index,
 filters, scope clauses, comments, print device routing, exponentiation,
-exact equality, string manipulation, and more.
+exact equality, string manipulation, SAVE/RESTORE, SET RELATION,
+LIST OFF/TO, and more.

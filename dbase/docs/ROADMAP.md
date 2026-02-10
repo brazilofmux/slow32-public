@@ -150,10 +150,10 @@ Implementation: Track in set/screen state, return from func.c.
 
 ---
 
-## Phase 4: Data Commands
+## Phase 4: Data Commands --- DONE
 
 **Goal**: Complete the data manipulation command set.
-**Effort**: Medium (1-2 sessions).
+**Effort**: Medium (1-2 sessions). **COMPLETE** (48/48 tests).
 
 ### 4a. SET RELATION TO
 
