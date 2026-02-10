@@ -74,7 +74,7 @@ void prog_endcase(void);
 void prog_enddo(void);
 void prog_loop(void);
 void prog_exit_loop(void);
-void prog_return(void);
+void prog_return(const char *arg);
 void prog_procedure(const char *arg);
 void prog_parameters(const char *arg);
 void prog_private(const char *arg);
@@ -85,6 +85,9 @@ void prog_cancel(void);
 
 /* Check if program is running */
 int prog_is_running(void);
+
+/* SET PROCEDURE TO file */
+void prog_set_procedure(const char *filename);
 
 /* Get memvar store (for program.c to access command.c's store) */
 memvar_store_t *prog_get_memvar_store(void);

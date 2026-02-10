@@ -574,6 +574,12 @@ static const func_entry_t func_table[] = {
     { NULL, NULL }
 };
 
+static udf_callback_t udf_callback;
+
+void func_set_udf_callback(udf_callback_t cb) {
+    udf_callback = cb;
+}
+
 int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value_t *result) {
     const func_entry_t *e;
     char upper[64];
@@ -591,6 +597,10 @@ int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value
         if (strcmp(upper, e->name) == 0)
             return e->fn(ctx, args, nargs, result);
     }
+
+    /* Try user-defined function */
+    if (udf_callback && udf_callback(upper, args, nargs, result) == 0)
+        return 0;
 
     {
         static char errbuf[80];

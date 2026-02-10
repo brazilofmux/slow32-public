@@ -3,9 +3,19 @@
 #include <string.h>
 #include "program.h"
 #include "command.h"
+#include "func.h"
 #include "util.h"
 
 static prog_state_t state;
+
+/* SET PROCEDURE TO file — resident procedure library */
+static program_t *procedure_file;
+
+/* User-defined FUNCTION support */
+static int udf_active;          /* >0 when executing a UDF call */
+static value_t udf_return_val;  /* return value from FUNCTION */
+static int udf_depth;           /* call_depth at UDF entry */
+static int prog_udf_call(const char *name, value_t *args, int nargs, value_t *result);
 
 /* IF/ELSE/ENDIF nesting for skip mode */
 #define MAX_IF_DEPTH 32
@@ -25,6 +35,7 @@ void prog_init(void) {
     case_active = 0;
     case_done = 0;
     case_skip = 0;
+    func_set_udf_callback(prog_udf_call);
 }
 
 int prog_is_running(void) {
@@ -175,13 +186,115 @@ static void prog_free(program_t *prog) {
     free(prog);
 }
 
-/* ---- Find PROCEDURE <name> in program ---- */
+void prog_set_procedure(const char *filename) {
+    if (procedure_file) {
+        prog_free(procedure_file);
+        procedure_file = NULL;
+    }
+    if (filename && filename[0]) {
+        procedure_file = prog_load(filename);
+        if (procedure_file)
+            printf("Procedure file: %s\n", procedure_file->filename);
+    } else {
+        printf("Procedure file released.\n");
+    }
+}
+
+/* Forward declarations for UDF support */
+static int push_frame(program_t *new_prog, int start_line);
+static void pop_frame(void);
+static void prog_run(void);
+static int find_procedure(program_t *prog, const char *name);
+
+/* ---- User-defined function callback (called from expr evaluator) ---- */
+static int prog_udf_call(const char *name, value_t *args, int nargs, value_t *result) {
+    program_t *target_prog = NULL;
+    int func_line = -1;
+    /* Save lightweight state (avoid copying 700KB call stack) */
+    program_t *saved_prog = state.current_prog;
+    int saved_pc = state.pc;
+    int saved_call_depth = state.call_depth;
+    int saved_loop_depth = state.loop_depth;
+    int saved_running = state.running;
+    int saved_if_skip = if_skip;
+    int saved_if_depth = if_depth;
+    int saved_case_active = case_active;
+    int saved_case_done = case_done;
+    int saved_case_skip = case_skip;
+    int saved_udf_active = udf_active;
+    int saved_udf_depth = udf_depth;
+    value_t saved_udf_return = udf_return_val;
+
+    /* Search current program, then procedure file */
+    if (state.running && state.current_prog) {
+        func_line = find_procedure(state.current_prog, name);
+        if (func_line >= 0)
+            target_prog = state.current_prog;
+    }
+    if (func_line < 0 && procedure_file) {
+        func_line = find_procedure(procedure_file, name);
+        if (func_line >= 0)
+            target_prog = procedure_file;
+    }
+    if (func_line < 0)
+        return -1;  /* not a UDF, let caller report error */
+
+    /* Set up UDF execution */
+    udf_return_val = val_nil();
+    udf_active = 1;
+    if_skip = 0;
+    if_depth = 0;
+    case_active = 0;
+    case_done = 0;
+    case_skip = 0;
+
+    /* Push frame for the function (uses existing call stack in-place) */
+    if (push_frame(target_prog, func_line + 1) < 0) {
+        return -1;
+    }
+    udf_depth = state.call_depth;
+
+    /* Store args for PARAMETERS */
+    {
+        call_frame_t *frame = &state.call_stack[state.call_depth - 1];
+        int i;
+        frame->with_argc = nargs;
+        for (i = 0; i < nargs && i < 16; i++)
+            frame->with_args[i] = args[i];
+    }
+
+    /* Execute the function body — prog_run will stop when RETURN sets running=0 */
+    prog_run();
+
+    /* Capture return value */
+    *result = udf_return_val;
+
+    /* Restore lightweight state — pop_frame already restored call stack properly */
+    state.current_prog = saved_prog;
+    state.pc = saved_pc;
+    state.call_depth = saved_call_depth;
+    state.loop_depth = saved_loop_depth;
+    state.running = saved_running;
+    if_skip = saved_if_skip;
+    if_depth = saved_if_depth;
+    case_active = saved_case_active;
+    case_done = saved_case_done;
+    case_skip = saved_case_skip;
+    udf_active = saved_udf_active;
+    udf_depth = saved_udf_depth;
+    udf_return_val = saved_udf_return;
+
+    return 0;
+}
+
+/* ---- Find PROCEDURE or FUNCTION <name> in program ---- */
 static int find_procedure(program_t *prog, const char *name) {
     int i;
     for (i = 0; i < prog->nlines; i++) {
         char *p = skip_ws(prog->lines[i]);
-        if (str_imatch(p, "PROCEDURE")) {
-            char *rest = skip_ws(p + 9);
+        if (str_imatch(p, "PROCEDURE") || str_imatch(p, "FUNCTION")) {
+            int kwlen = str_imatch(p, "FUNCTION") ? 8 : 9;
+            char *rest = skip_ws(p + kwlen);
             char pname[64];
             int j = 0;
             while (is_ident_char(*rest) && j < 63)
@@ -384,13 +497,13 @@ static void prog_run(void) {
             continue;
         }
 
-        /* Skip PROCEDURE definitions during normal execution */
-        if (str_imatch(p, "PROCEDURE")) {
-            /* Skip to next PROCEDURE or end of file */
+        /* Skip PROCEDURE/FUNCTION definitions during normal execution */
+        if (str_imatch(p, "PROCEDURE") || str_imatch(p, "FUNCTION")) {
+            /* Skip to next PROCEDURE/FUNCTION or end of file */
             int i;
             for (i = state.pc + 1; i < state.current_prog->nlines; i++) {
                 char *lp = skip_ws(state.current_prog->lines[i]);
-                if (str_imatch(lp, "PROCEDURE"))
+                if (str_imatch(lp, "PROCEDURE") || str_imatch(lp, "FUNCTION"))
                     break;
             }
             /* If we hit another PROCEDURE, stop there.
@@ -599,6 +712,21 @@ void prog_do(const char *arg) {
                 if (push_frame(state.current_prog, proc_line + 1) < 0)
                     return;
                 /* Store WITH args in the new frame */
+                if (with_argc > 0 && state.call_depth > 0) {
+                    call_frame_t *frame = &state.call_stack[state.call_depth - 1];
+                    frame->with_argc = with_argc;
+                    memcpy(frame->with_args, with_args, with_argc * sizeof(value_t));
+                }
+                return;
+            }
+        }
+
+        /* Check SET PROCEDURE TO file */
+        if (procedure_file) {
+            proc_line = find_procedure(procedure_file, name);
+            if (proc_line >= 0) {
+                if (push_frame(procedure_file, proc_line + 1) < 0)
+                    return;
                 if (with_argc > 0 && state.call_depth > 0) {
                     call_frame_t *frame = &state.call_stack[state.call_depth - 1];
                     frame->with_argc = with_argc;
@@ -1021,13 +1149,28 @@ void prog_next(void) {
 }
 
 /* ---- RETURN ---- */
-void prog_return(void) {
+void prog_return(const char *arg) {
     if (!state.running) {
         printf("RETURN not in program.\n");
         return;
     }
 
+    /* RETURN <expr> for FUNCTION — evaluate the return value */
+    if (arg && *arg) {
+        expr_ctx_t *ctx = cmd_get_expr_ctx();
+        value_t val;
+        if (expr_eval_str(ctx, arg, &val) == 0) {
+            udf_return_val = val;
+        }
+    }
+
     if (state.call_depth > 0) {
+        /* If this is a UDF call returning to the UDF entry depth, stop */
+        if (udf_active && state.call_depth <= udf_depth) {
+            pop_frame();
+            state.running = 0;
+            return;
+        }
         pop_frame();
     } else {
         /* Top-level RETURN = end program */
@@ -1233,7 +1376,13 @@ int prog_execute_line(char *line) {
     }
 
     if (str_imatch(p, "RETURN")) {
-        prog_return();
+        prog_return(skip_ws(p + 6));
+        return 0;
+    }
+
+    if (str_imatch(p, "FUNCTION")) {
+        /* FUNCTION treated same as PROCEDURE during execution — skip body */
+        prog_procedure(skip_ws(p + 8));
         return 0;
     }
 

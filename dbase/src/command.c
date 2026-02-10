@@ -22,6 +22,7 @@ typedef struct {
     char alias[DBF_MAX_FIELD_NAME];
     char locate_cond[256];
     uint32_t locate_last_rec;
+    char filter_cond[256];      /* SET FILTER TO condition */
     index_t indexes[MAX_INDEXES];
     int num_indexes;
     int order;          /* controlling index: 0=natural, 1-N=index number */
@@ -361,6 +362,22 @@ static void cmd_select(const char *arg) {
     printf("Invalid work area.\n");
 }
 
+/* ---- Helper: check if record should be skipped (SET DELETED) ---- */
+static int skip_deleted(const char *rec_buf) {
+    return (rec_buf[0] == '*' && set_opts.deleted);
+}
+
+/* ---- Helper: check if current record passes SET FILTER ---- */
+/* Returns 1 if record passes (or no filter set), 0 if filtered out */
+static int check_filter(dbf_t *db) {
+    value_t cond;
+    if (areas[current_area].filter_cond[0] == '\0')
+        return 1;
+    if (expr_eval_str(&expr_ctx, areas[current_area].filter_cond, &cond) != 0)
+        return 1;  /* on error, pass through */
+    return (cond.type == VAL_LOGIC && cond.logic);
+}
+
 /* ---- USE ---- */
 static void cmd_use(dbf_t *db, const char *arg) {
     char filename[64];
@@ -376,6 +393,7 @@ static void cmd_use(dbf_t *db, const char *arg) {
             areas[current_area].alias[0] = '\0';
             areas[current_area].locate_cond[0] = '\0';
             areas[current_area].locate_last_rec = 0;
+            areas[current_area].filter_cond[0] = '\0';
             printf("Database closed.\n");
         }
         return;
@@ -499,8 +517,30 @@ static void cmd_go(dbf_t *db, const char *arg) {
                 index_top(idx);
                 rec = index_current_recno(idx);
                 if (rec > 0) dbf_read_record(db, rec);
+                /* Advance past filtered records */
+                while (rec > 0 && (!check_filter(db) || skip_deleted(db->record_buf))) {
+                    if (index_next(idx) < 0) {
+                        expr_ctx.eof_flag = 1;
+                        db->current_record = db->record_count + 1;
+                        return;
+                    }
+                    rec = index_current_recno(idx);
+                    if (rec > 0) dbf_read_record(db, rec);
+                }
             } else {
+                uint32_t r;
                 dbf_read_record(db, 1);
+                /* Advance past filtered records */
+                for (r = 1; r <= db->record_count; r++) {
+                    dbf_read_record(db, r);
+                    if (!skip_deleted(db->record_buf) && check_filter(db))
+                        break;
+                }
+                if (r > db->record_count) {
+                    expr_ctx.eof_flag = 1;
+                    db->current_record = db->record_count + 1;
+                    return;
+                }
             }
         }
         expr_ctx.eof_flag = 0;
@@ -522,8 +562,27 @@ static void cmd_go(dbf_t *db, const char *arg) {
                 index_bottom(idx);
                 rec = index_current_recno(idx);
                 if (rec > 0) dbf_read_record(db, rec);
+                /* Back up past filtered records */
+                while (rec > 0 && (!check_filter(db) || skip_deleted(db->record_buf))) {
+                    if (index_prev(idx) < 0) {
+                        expr_ctx.bof_flag = 1;
+                        return;
+                    }
+                    rec = index_current_recno(idx);
+                    if (rec > 0) dbf_read_record(db, rec);
+                }
             } else {
-                dbf_read_record(db, db->record_count);
+                uint32_t r;
+                /* Scan backward for last matching record */
+                for (r = db->record_count; r >= 1; r--) {
+                    dbf_read_record(db, r);
+                    if (!skip_deleted(db->record_buf) && check_filter(db))
+                        break;
+                }
+                if (r < 1) {
+                    expr_ctx.bof_flag = 1;
+                    return;
+                }
             }
         }
         expr_ctx.eof_flag = 0;
@@ -564,28 +623,41 @@ static void cmd_skip(dbf_t *db, const char *arg) {
     {
         index_t *idx = controlling_index();
     if (idx) {
-        int i;
+        int i, found;
         uint32_t rec;
 
         if (n > 0) {
             for (i = 0; i < n; i++) {
-                if (index_next(idx) < 0) {
-                    expr_ctx.eof_flag = 1;
-                    expr_ctx.bof_flag = 0;
-                    db->current_record = db->record_count + 1;
-                    return;
+                found = 0;
+                while (!found) {
+                    if (index_next(idx) < 0) {
+                        expr_ctx.eof_flag = 1;
+                        expr_ctx.bof_flag = 0;
+                        db->current_record = db->record_count + 1;
+                        return;
+                    }
+                    rec = index_current_recno(idx);
+                    if (rec > 0) dbf_read_record(db, rec);
+                    if (!skip_deleted(db->record_buf) && check_filter(db))
+                        found = 1;
                 }
             }
         } else if (n < 0) {
             for (i = 0; i < -n; i++) {
-                if (index_prev(idx) < 0) {
-                    /* BOF - position at first */
-                    index_top(idx);
+                found = 0;
+                while (!found) {
+                    if (index_prev(idx) < 0) {
+                        index_top(idx);
+                        rec = index_current_recno(idx);
+                        if (rec > 0) dbf_read_record(db, rec);
+                        expr_ctx.bof_flag = 1;
+                        expr_ctx.eof_flag = 0;
+                        return;
+                    }
                     rec = index_current_recno(idx);
                     if (rec > 0) dbf_read_record(db, rec);
-                    expr_ctx.bof_flag = 1;
-                    expr_ctx.eof_flag = 0;
-                    return;
+                    if (!skip_deleted(db->record_buf) && check_filter(db))
+                        found = 1;
                 }
             }
         }
@@ -603,6 +675,8 @@ static void cmd_skip(dbf_t *db, const char *arg) {
     /* Physical order skip */
     {
         int32_t target;
+        int dir = (n > 0) ? 1 : -1;
+        int remaining = (n > 0) ? n : -n;
 
         if (db->current_record == 0) {
             if (db->record_count == 0) {
@@ -612,27 +686,31 @@ static void cmd_skip(dbf_t *db, const char *arg) {
             dbf_read_record(db, 1);
             expr_ctx.eof_flag = 0;
             expr_ctx.bof_flag = 0;
-            if (n > 0) n--;
-            if (n == 0) return;
+            if (n > 0 && !skip_deleted(db->record_buf) && check_filter(db)) {
+                remaining--;
+            }
+            if (remaining == 0) return;
         }
 
-        target = (int32_t)db->current_record + n;
-
-        if (target < 1) {
-            dbf_read_record(db, 1);
-            expr_ctx.bof_flag = 1;
-            expr_ctx.eof_flag = 0;
-            return;
+        target = (int32_t)db->current_record;
+        while (remaining > 0) {
+            target += dir;
+            if (target < 1) {
+                dbf_read_record(db, 1);
+                expr_ctx.bof_flag = 1;
+                expr_ctx.eof_flag = 0;
+                return;
+            }
+            if ((uint32_t)target > db->record_count) {
+                expr_ctx.eof_flag = 1;
+                expr_ctx.bof_flag = 0;
+                db->current_record = db->record_count + 1;
+                return;
+            }
+            dbf_read_record(db, (uint32_t)target);
+            if (!skip_deleted(db->record_buf) && check_filter(db))
+                remaining--;
         }
-
-        if ((uint32_t)target > db->record_count) {
-            expr_ctx.eof_flag = 1;
-            expr_ctx.bof_flag = 0;
-            db->current_record = db->record_count + 1;
-            return;
-        }
-
-        dbf_read_record(db, (uint32_t)target);
         expr_ctx.eof_flag = 0;
         expr_ctx.bof_flag = 0;
     }
@@ -696,11 +774,6 @@ static int scope_bounds(dbf_t *db, const scope_t *s, uint32_t *start, uint32_t *
     return 0;
 }
 
-/* ---- Helper: check if record should be skipped (SET DELETED) ---- */
-static int skip_deleted(const char *rec_buf) {
-    return (rec_buf[0] == '*' && set_opts.deleted);
-}
-
 /* ---- LOCATE [scope] FOR ---- */
 static void cmd_locate(dbf_t *db, const char *arg) {
     const char *p;
@@ -734,7 +807,7 @@ static void cmd_locate(dbf_t *db, const char *arg) {
     for (i = start; i <= end; i++) {
         value_t cond;
         dbf_read_record(db, i);
-        if (skip_deleted(db->record_buf)) continue;
+        if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
 
         if (expr_eval_str(&expr_ctx, areas[current_area].locate_cond, &cond) != 0) {
             if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
@@ -773,7 +846,7 @@ static void cmd_continue(dbf_t *db) {
     for (i = areas[current_area].locate_last_rec + 1; i <= db->record_count; i++) {
         value_t cond;
         dbf_read_record(db, i);
-        if (skip_deleted(db->record_buf)) continue;
+        if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
 
         if (expr_eval_str(&expr_ctx, areas[current_area].locate_cond, &cond) != 0) {
             if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
@@ -821,7 +894,7 @@ static void cmd_count(dbf_t *db, const char *arg) {
 
     for (i = start; i <= end; i++) {
         dbf_read_record(db, i);
-        if (skip_deleted(db->record_buf)) continue;
+        if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
 
         if (cond_str) {
             value_t cond;
@@ -896,7 +969,7 @@ static void cmd_sum(dbf_t *db, const char *arg) {
     for (i = start; i <= end; i++) {
         value_t val;
         dbf_read_record(db, i);
-        if (skip_deleted(db->record_buf)) continue;
+        if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
 
         if (cond_str) {
             value_t cond;
@@ -987,7 +1060,7 @@ static void cmd_average(dbf_t *db, const char *arg) {
     for (i = start; i <= end; i++) {
         value_t val;
         dbf_read_record(db, i);
-        if (skip_deleted(db->record_buf)) continue;
+        if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
 
         if (cond_str) {
             value_t cond;
@@ -1181,7 +1254,7 @@ static void cmd_list(dbf_t *db, const char *arg) {
 
     for (i = start; i <= end; i++) {
         if (dbf_read_record(db, i) < 0) continue;
-        if (skip_deleted(db->record_buf)) continue;
+        if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
 
         if (cond_str) {
             value_t cond;
@@ -1779,7 +1852,7 @@ static void cmd_copy_to(dbf_t *db, const char *arg) {
     for (i = start; i <= end; i++) {
         char raw[256];
         dbf_read_record(db, i);
-        if (skip_deleted(db->record_buf)) continue;
+        if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
 
         if (cond_str) {
             value_t cond;
@@ -2026,7 +2099,7 @@ static void cmd_sort(dbf_t *db, const char *arg) {
     for (i = start; i <= end && nentries < MAX_SORT_ENTRIES; i++) {
         char raw[256];
         dbf_read_record(db, i);
-        if (skip_deleted(db->record_buf)) continue;
+        if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
 
         if (cond_str) {
             value_t cond;
@@ -2087,6 +2160,119 @@ static void cmd_sort(dbf_t *db, const char *arg) {
 
     dbf_close(&dest);
     printf("%d record(s) sorted.\n", count);
+}
+
+/* ---- ERASE <file> ---- */
+static void cmd_erase(const char *arg) {
+    char filename[64];
+    const char *p = skip_ws(arg);
+    int i = 0;
+    while (*p && *p != ' ' && *p != '\t' && i < 63)
+        filename[i++] = *p++;
+    filename[i] = '\0';
+    if (filename[0] == '\0') {
+        printf("Syntax: ERASE <filename>\n");
+        return;
+    }
+    if (remove(filename) != 0) {
+        printf("File not found: %s\n", filename);
+    } else {
+        printf("File erased.\n");
+    }
+}
+
+/* ---- RENAME <old> TO <new> ---- */
+static void cmd_rename(const char *arg) {
+    char oldname[64], newname[64];
+    const char *p = skip_ws(arg);
+    int i = 0;
+    while (*p && *p != ' ' && *p != '\t' && i < 63)
+        oldname[i++] = *p++;
+    oldname[i] = '\0';
+    p = skip_ws(p);
+    if (!str_imatch(p, "TO")) {
+        printf("Syntax: RENAME <oldfile> TO <newfile>\n");
+        return;
+    }
+    p = skip_ws(p + 2);
+    i = 0;
+    while (*p && *p != ' ' && *p != '\t' && i < 63)
+        newname[i++] = *p++;
+    newname[i] = '\0';
+    if (oldname[0] == '\0' || newname[0] == '\0') {
+        printf("Syntax: RENAME <oldfile> TO <newfile>\n");
+        return;
+    }
+    /* Try native rename first, fall back to copy+delete */
+    if (rename(oldname, newname) != 0) {
+        FILE *fin = fopen(oldname, "rb");
+        if (!fin) {
+            printf("File not found: %s\n", oldname);
+            return;
+        }
+        {
+            FILE *fout = fopen(newname, "wb");
+            char buf[512];
+            int n;
+            if (!fout) {
+                fclose(fin);
+                printf("Cannot create: %s\n", newname);
+                return;
+            }
+            while ((n = fread(buf, 1, sizeof(buf), fin)) > 0)
+                fwrite(buf, 1, n, fout);
+            fclose(fin);
+            fclose(fout);
+            remove(oldname);
+        }
+        printf("File renamed.\n");
+    } else {
+        printf("File renamed.\n");
+    }
+}
+
+/* ---- COPY FILE <src> TO <dest> ---- */
+static void cmd_copy_file(const char *arg) {
+    char src[64], dst[64];
+    const char *p = skip_ws(arg);
+    int i = 0;
+    FILE *fin, *fout;
+    char buf[512];
+    int n;
+
+    while (*p && *p != ' ' && *p != '\t' && i < 63)
+        src[i++] = *p++;
+    src[i] = '\0';
+    p = skip_ws(p);
+    if (!str_imatch(p, "TO")) {
+        printf("Syntax: COPY FILE <source> TO <destination>\n");
+        return;
+    }
+    p = skip_ws(p + 2);
+    i = 0;
+    while (*p && *p != ' ' && *p != '\t' && i < 63)
+        dst[i++] = *p++;
+    dst[i] = '\0';
+    if (src[0] == '\0' || dst[0] == '\0') {
+        printf("Syntax: COPY FILE <source> TO <destination>\n");
+        return;
+    }
+    fin = fopen(src, "rb");
+    if (!fin) {
+        printf("File not found: %s\n", src);
+        return;
+    }
+    fout = fopen(dst, "wb");
+    if (!fout) {
+        fclose(fin);
+        printf("Cannot create: %s\n", dst);
+        return;
+    }
+    while ((n = fread(buf, 1, sizeof(buf), fin)) > 0)
+        fwrite(buf, 1, n, fout);
+    fclose(fin);
+    fclose(fout);
+    printf("File copied.\n");
 }
 
 /* ---- INDEX ON <expr> TO <file> ---- */
@@ -2380,6 +2566,7 @@ void cmd_close_all(void) {
         areas[i].alias[0] = '\0';
         areas[i].locate_cond[0] = '\0';
         areas[i].locate_last_rec = 0;
+        areas[i].filter_cond[0] = '\0';
     }
     current_area = 0;
 }
@@ -2463,7 +2650,7 @@ int cmd_execute(dbf_t *db, char *line) {
         return 0;
     }
     if (str_imatch(p, "RETURN")) {
-        if (prog_is_running()) prog_return();
+        if (prog_is_running()) prog_return(skip_ws(p + 6));
         else printf("RETURN not in program.\n");
         return 0;
     }
@@ -2527,10 +2714,12 @@ int cmd_execute(dbf_t *db, char *line) {
             } else {
                 printf("Syntax: COPY STRUCTURE TO <filename>\n");
             }
+        } else if (str_imatch(rest, "FILE")) {
+            cmd_copy_file(rest + 4);
         } else if (str_imatch(rest, "TO")) {
             cmd_copy_to(cdb, rest + 2);
         } else {
-            printf("Syntax: COPY TO <filename> | COPY STRUCTURE TO <filename>\n");
+            printf("Syntax: COPY TO <filename> | COPY FILE <src> TO <dst> | COPY STRUCTURE TO <filename>\n");
         }
         return 0;
     }
@@ -2645,6 +2834,28 @@ int cmd_execute(dbf_t *db, char *line) {
                 cmd_set_index(cdb, skip_ws(rest + 2));
             else
                 printf("Syntax: SET INDEX TO [filename]\n");
+        } else if (str_imatch(rest, "PROCEDURE")) {
+            rest = skip_ws(rest + 9);
+            if (str_imatch(rest, "TO")) {
+                prog_set_procedure(skip_ws(rest + 2));
+            } else {
+                printf("Syntax: SET PROCEDURE TO [filename]\n");
+            }
+        } else if (str_imatch(rest, "FILTER")) {
+            rest = skip_ws(rest + 6);
+            if (str_imatch(rest, "TO")) {
+                rest = skip_ws(rest + 2);
+                if (*rest == '\0') {
+                    areas[current_area].filter_cond[0] = '\0';
+                    printf("Filter removed.\n");
+                } else {
+                    str_copy(areas[current_area].filter_cond, rest,
+                             sizeof(areas[current_area].filter_cond));
+                    printf("Filter: %s\n", areas[current_area].filter_cond);
+                }
+            } else {
+                printf("Syntax: SET FILTER TO [condition]\n");
+            }
         } else if (str_imatch(rest, "ORDER")) {
             rest = skip_ws(rest + 5);
             if (str_imatch(rest, "TO")) {
@@ -2718,6 +2929,16 @@ int cmd_execute(dbf_t *db, char *line) {
 
     if (str_imatch(p, "ZAP")) {
         cmd_zap(cdb);
+        return 0;
+    }
+
+    if (str_imatch(p, "ERASE")) {
+        cmd_erase(p + 5);
+        return 0;
+    }
+
+    if (str_imatch(p, "RENAME")) {
+        cmd_rename(p + 6);
         return 0;
     }
 
