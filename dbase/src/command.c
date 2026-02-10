@@ -28,6 +28,12 @@ static int stage3_initialized;
 
 /* Forward declarations */
 /* area_lookup_dbf from area.h is used as callback */
+static void common_list_display(dbf_t *db, lexer_t *l, int is_display);
+static void cmd_list(dbf_t *db, lexer_t *l);
+static void cmd_display(dbf_t *db, lexer_t *l);
+static void cmd_display_structure(dbf_t *db);
+static void cmd_replace(dbf_t *db, lexer_t *l);
+static void cmd_report_form(dbf_t *db, lexer_t *l);
 
 static work_area_t *cur_wa(void) { return area_get_current(); }
 static dbf_t *cur_db(void) { return &area_get_current()->db; }
@@ -291,48 +297,50 @@ static int parse_field_list(dbf_t *db, const char *arg, int *indices, int max_fi
 }
 
 /* ---- Helper: display one field value ---- */
-static void print_field_value(dbf_t *db, int f, char *raw, char *display, int for_list, int width) {
+#define PRINT_TO(f, ...) do { printf(__VA_ARGS__); if (f) fprintf(f, __VA_ARGS__); } while(0)
+
+static void print_field_value(dbf_t *db, int f, char *raw, char *display, FILE *to_file, int for_list, int width) {
     dbf_get_field_raw(db, f, raw, 256);
     switch (db->fields[f].type) {
     case 'C':
         field_display_char(display, raw, db->fields[f].length);
         if (for_list) {
             trim_right(display);
-            printf(" %-*s", width, display);
+            PRINT_TO(to_file, " %-*s", width, display);
         } else {
             trim_right(display);
-            printf("%10s: %s\n", db->fields[f].name, display);
+            PRINT_TO(to_file, "%10s: %s\n", db->fields[f].name, display);
         }
         break;
     case 'N':
         field_display_numeric(display, raw, db->fields[f].length);
         if (for_list)
-            printf(" %*s", width, display);
+            PRINT_TO(to_file, " %*s", width, display);
         else
-            printf("%10s: %s\n", db->fields[f].name, display);
+            PRINT_TO(to_file, "%10s: %s\n", db->fields[f].name, display);
         break;
     case 'D':
         field_display_date(display, raw);
         if (for_list)
-            printf(" %-8s", display);
+            PRINT_TO(to_file, " %-8s", display);
         else
-            printf("%10s: %s\n", db->fields[f].name, display);
+            PRINT_TO(to_file, "%10s: %s\n", db->fields[f].name, display);
         break;
     case 'L':
         field_display_logical(display, raw);
         if (for_list)
-            printf(" %-3s", display);
+            PRINT_TO(to_file, " %-3s", display);
         else
-            printf("%10s: %s\n", db->fields[f].name, display);
+            PRINT_TO(to_file, "%10s: %s\n", db->fields[f].name, display);
         break;
     default:
         field_display_char(display, raw, db->fields[f].length);
         if (for_list) {
             trim_right(display);
-            printf(" %-*s", width, display);
+            PRINT_TO(to_file, " %-*s", width, display);
         } else {
             trim_right(display);
-            printf("%10s: %s\n", db->fields[f].name, display);
+            PRINT_TO(to_file, "%10s: %s\n", db->fields[f].name, display);
         }
         break;
     }
@@ -867,6 +875,114 @@ static void cmd_skip(dbf_t *db, const char *arg) {
 typedef enum { SCOPE_ALL, SCOPE_NEXT, SCOPE_RECORD, SCOPE_REST } scope_type_t;
 typedef struct { scope_type_t type; uint32_t count; } scope_t;
 
+typedef struct {
+    scope_t scope;
+    int has_scope;
+    char for_cond[256];
+    char while_cond[256];
+    int to_print;
+    char to_file[64];
+    int off;            /* OFF keyword (suppress recno) */
+    char heading[256];  /* HEADING keyword */
+    int summary;        /* SUMMARY keyword */
+    int plain;          /* PLAIN keyword */
+    int noeject;        /* NOEJECT keyword */
+} clause_t;
+
+static void clause_init(clause_t *c) {
+    memset(c, 0, sizeof(*c));
+    c->scope.type = SCOPE_ALL;
+    c->has_scope = 0;
+}
+
+/* Parse common dBase clauses (FOR, WHILE, TO PRINT, TO FILE, OFF, etc.)
+   Returns 0 on success. Consumes tokens until end of line or unknown keyword. */
+static int parse_clauses(lexer_t *l, clause_t *c) {
+    while (l->current.type != TOK_EOF) {
+        if (cmd_kw(l, "FOR")) {
+            lex_next(l);
+            const char *start = l->token_start;
+            value_t dummy;
+            expr_eval(&expr_ctx, &start, &dummy);
+            int len = (int)(start - l->token_start);
+            if (len > (int)sizeof(c->for_cond) - 1) len = sizeof(c->for_cond) - 1;
+            memcpy(c->for_cond, l->token_start, len);
+            c->for_cond[len] = '\0';
+            lexer_init(l, start);
+        } else if (cmd_kw(l, "WHILE")) {
+            lex_next(l);
+            const char *start = l->token_start;
+            value_t dummy;
+            expr_eval(&expr_ctx, &start, &dummy);
+            int len = (int)(start - l->token_start);
+            if (len > (int)sizeof(c->while_cond) - 1) len = sizeof(c->while_cond) - 1;
+            memcpy(c->while_cond, l->token_start, len);
+            c->while_cond[len] = '\0';
+            lexer_init(l, start);
+        } else if (cmd_kw(l, "TO")) {
+            lex_next(l);
+            if (cmd_kw(l, "PRINT")) {
+                c->to_print = 1;
+                lex_next(l);
+            } else if (cmd_kw(l, "FILE")) {
+                lex_next(l);
+                if (l->current.type == TOK_IDENT) {
+                    str_copy(c->to_file, l->current.text, sizeof(c->to_file));
+                    lex_next(l);
+                }
+            } else {
+                return -1; /* Unknown TO clause */
+            }
+        } else if (cmd_kw(l, "OFF")) {
+            c->off = 1;
+            lex_next(l);
+        } else if (cmd_kw(l, "PLAIN")) {
+            c->plain = 1;
+            lex_next(l);
+        } else if (cmd_kw(l, "SUMMARY")) {
+            c->summary = 1;
+            lex_next(l);
+        } else if (cmd_kw(l, "NOEJECT")) {
+            c->noeject = 1;
+            lex_next(l);
+        } else if (cmd_kw(l, "HEADING")) {
+            lex_next(l);
+            if (l->current.type == TOK_STRING) {
+                str_copy(c->heading, l->current.text, sizeof(c->heading));
+                lex_next(l);
+            }
+        } else if (cmd_kw(l, "ALL")) {
+            c->scope.type = SCOPE_ALL;
+            c->has_scope = 1;
+            lex_next(l);
+        } else if (cmd_kw(l, "NEXT")) {
+            lex_next(l);
+            if (l->current.type == TOK_NUMBER) {
+                c->scope.type = SCOPE_NEXT;
+                c->scope.count = (uint32_t)l->current.num_val;
+                c->has_scope = 1;
+                lex_next(l);
+            }
+        } else if (cmd_kw(l, "RECORD")) {
+            lex_next(l);
+            if (l->current.type == TOK_NUMBER) {
+                c->scope.type = SCOPE_RECORD;
+                c->scope.count = (uint32_t)l->current.num_val;
+                c->has_scope = 1;
+                lex_next(l);
+            }
+        } else if (cmd_kw(l, "REST")) {
+            c->scope.type = SCOPE_REST;
+            c->has_scope = 1;
+            lex_next(l);
+        } else {
+            /* Unknown token - might be field list or syntax error */
+            return 0;
+        }
+    }
+    return 0;
+}
+
 static scope_t parse_scope(const char **pp) {
     scope_t s;
     const char *p = skip_ws(*pp);
@@ -1245,122 +1361,156 @@ static void cmd_average(dbf_t *db, const char *arg) {
 }
 
 /* ---- REPLACE (enhanced with expr_eval) ---- */
-static void cmd_replace(dbf_t *db, const char *arg) {
+static void cmd_replace(dbf_t *db, lexer_t *l) {
     char field_name[DBF_MAX_FIELD_NAME];
     char formatted[256];
     int idx;
-    const char *p;
     char old_keys[MAX_INDEXES][MAX_INDEX_KEY + 1];
     int has_indexes;
+    clause_t c;
+    uint32_t start, end, i;
 
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
-    if (db->current_record == 0 || expr_ctx.eof_flag) {
-        printf("No current record. Use APPEND BLANK or GO first.\n");
+
+    clause_init(&c);
+    /* dBase default for REPLACE is current record only (NEXT 1) if no clauses */
+    c.scope.type = SCOPE_NEXT;
+    c.scope.count = 1;
+
+    /* For REPLACE, the field list/expression must come first, before clauses */
+    const char *body_start = l->token_start;
+
+    /* To find the end of the field list, we need to scan ahead for FOR/WHILE/ALL/NEXT etc. */
+    lexer_t temp_l = *l;
+    while (temp_l.current.type != TOK_EOF) {
+        if (cmd_kw(&temp_l, "FOR") || cmd_kw(&temp_l, "WHILE") ||
+            cmd_kw(&temp_l, "ALL") || cmd_kw(&temp_l, "NEXT") ||
+            cmd_kw(&temp_l, "RECORD") || cmd_kw(&temp_l, "REST")) {
+            break;
+        }
+        lex_next(&temp_l);
+    }
+    
+    if (parse_clauses(&temp_l, &c) < 0) return;
+
+    if (scope_bounds(db, &c.scope, &start, &end) < 0) {
+        printf("Invalid scope.\n");
         return;
     }
 
-    /* Capture keys before modification */
-    has_indexes = (cur_wa()->num_indexes > 0);
-    if (has_indexes)
-        indexes_capture_keys(db, old_keys);
+    for (i = start; i <= end; i++) {
+        if (dbf_read_record(db, i) < 0) continue;
+        if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
 
-    p = skip_ws(arg);
-
-    while (*p) {
-        value_t val;
-        char valbuf[256];
-
-        {
-            int i = 0;
-            while (*p && *p != ' ' && *p != '\t' && i < DBF_MAX_FIELD_NAME - 1)
-                field_name[i++] = *p++;
-            field_name[i] = '\0';
+        if (c.for_cond[0]) {
+            value_t cond;
+            if (expr_eval_str(&expr_ctx, c.for_cond, &cond) != 0) { report_expr_error(); return; }
+            if (cond.type != VAL_LOGIC || !cond.logic) continue;
         }
-        str_upper(field_name);
-
-        idx = dbf_find_field(db, field_name);
-        if (idx < 0) {
-            printf("Field not found: %s\n", field_name);
-            return;
+        if (c.while_cond[0]) {
+            value_t cond;
+            if (expr_eval_str(&expr_ctx, c.while_cond, &cond) != 0) { report_expr_error(); return; }
+            if (cond.type != VAL_LOGIC || !cond.logic) break;
         }
 
-        p = skip_ws(p);
-        if (str_imatch(p, "WITH")) {
-            p += 4;
-            p = skip_ws(p);
-        }
+        /* Re-parse the field list for each record (brute force for now) */
+        lexer_t replace_l;
+        lexer_init(&replace_l, body_start);
 
-        if (expr_eval(&expr_ctx, &p, &val) != 0) {
-            report_expr_error();
-            return;
-        }
+        /* Capture keys before modification */
+        has_indexes = (cur_wa()->num_indexes > 0);
+        if (has_indexes)
+            indexes_capture_keys(db, old_keys);
 
-        val_to_string(&val, valbuf, sizeof(valbuf));
+        while (replace_l.current.type == TOK_IDENT &&
+               !is_keyword(replace_l.current.text, "FOR") &&
+               !is_keyword(replace_l.current.text, "WHILE") &&
+               !is_keyword(replace_l.current.text, "ALL") &&
+               !is_keyword(replace_l.current.text, "NEXT") &&
+               !is_keyword(replace_l.current.text, "RECORD") &&
+               !is_keyword(replace_l.current.text, "REST")) {
 
-        switch (db->fields[idx].type) {
-        case 'C':
-            if (val.type == VAL_CHAR)
-                field_format_char(formatted, db->fields[idx].length, val.str);
-            else
+            str_copy(field_name, replace_l.current.text, sizeof(field_name));
+            str_upper(field_name);
+            lex_next(&replace_l);
+
+            idx = dbf_find_field(db, field_name);
+            if (idx < 0) {
+                printf("Field not found: %s\n", field_name);
+                return;
+            }
+
+            if (cmd_kw(&replace_l, "WITH")) {
+                lex_next(&replace_l);
+            }
+
+            value_t val;
+            char valbuf[256];
+            if (expr_eval(&expr_ctx, &replace_l.token_start, &val) != 0) {
+                report_expr_error();
+                return;
+            }
+            lexer_init(&replace_l, replace_l.token_start);
+
+            val_to_string(&val, valbuf, sizeof(valbuf));
+
+            switch (db->fields[idx].type) {
+            case 'C':
+                if (val.type == VAL_CHAR)
+                    field_format_char(formatted, db->fields[idx].length, val.str);
+                else
+                    field_format_char(formatted, db->fields[idx].length, valbuf);
+                break;
+            case 'N':
+                field_format_numeric(formatted, db->fields[idx].length,
+                                     db->fields[idx].decimals, valbuf);
+                break;
+            case 'D':
+                if (val.type == VAL_DATE) date_to_dbf(val.date, formatted);
+                else field_format_date(formatted, valbuf);
+                break;
+            case 'L':
+                if (val.type == VAL_LOGIC) {
+                    formatted[0] = val.logic ? 'T' : 'F';
+                    formatted[1] = '\0';
+                } else field_format_logical(formatted, valbuf);
+                break;
+            default:
                 field_format_char(formatted, db->fields[idx].length, valbuf);
-            break;
-        case 'N':
-            field_format_numeric(formatted, db->fields[idx].length,
-                                 db->fields[idx].decimals, valbuf);
-            break;
-        case 'D':
-            if (val.type == VAL_DATE) {
-                date_to_dbf(val.date, formatted);
-            } else {
-                field_format_date(formatted, valbuf);
+                break;
             }
-            break;
-        case 'L':
-            if (val.type == VAL_LOGIC) {
-                formatted[0] = val.logic ? 'T' : 'F';
-                formatted[1] = '\0';
-            } else {
-                field_format_logical(formatted, valbuf);
+
+            dbf_set_field_raw(db, idx, formatted);
+
+            if (replace_l.current.type == TOK_COMMA) {
+                lex_next(&replace_l);
             }
-            break;
-        default:
-            field_format_char(formatted, db->fields[idx].length, valbuf);
-            break;
         }
 
-        dbf_set_field_raw(db, idx, formatted);
+        dbf_flush_record(db);
 
-        p = skip_ws(p);
-        if (*p == ',') {
-            p++;
-            p = skip_ws(p);
-        }
+        /* Update indexes after field modification */
+        if (has_indexes)
+            indexes_update_current(db, old_keys);
     }
-
-    dbf_flush_record(db);
-
-    /* Update indexes after field modification */
-    if (has_indexes)
-        indexes_update_current(db, old_keys);
 }
 
-/* ---- LIST [scope] [field_list] [FOR clause] ---- */
-static void cmd_list(dbf_t *db, const char *arg) {
-    uint32_t i;
+/* ---- DISPLAY (enhanced with field list) ---- */
+static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
     int f;
     char raw[256], display[256];
     int field_indices[DBF_MAX_FIELDS];
     int nfields = 0;
-    const char *rest;
-    const char *cond_str = NULL;
     int use_all_fields;
-    int show_recno = 1;     /* OFF suppresses record numbers */
     FILE *to_file = NULL;
-    scope_t scope;
-    uint32_t start, end;
+    clause_t c;
+    int row_count = 0;
+    index_t *idx = controlling_index();
+    uint32_t remaining = 0xFFFFFFFF;
+    int has_limit = 0;
 
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
@@ -1372,53 +1522,67 @@ static void cmd_list(dbf_t *db, const char *arg) {
         return;
     }
 
-    rest = skip_ws(arg);
+    clause_init(&c);
 
-    scope = parse_scope(&rest);
+    /* Check if there's a field list before clauses */
+    if (l->current.type == TOK_IDENT &&
+        !is_keyword(l->current.text, "FOR") &&
+        !is_keyword(l->current.text, "WHILE") &&
+        !is_keyword(l->current.text, "TO") &&
+        !is_keyword(l->current.text, "OFF") &&
+        !is_keyword(l->current.text, "ALL") &&
+        !is_keyword(l->current.text, "NEXT") &&
+        !is_keyword(l->current.text, "RECORD") &&
+        !is_keyword(l->current.text, "REST")) {
 
-    /* Check for OFF before field parsing */
-    if (str_imatch(rest, "OFF")) {
-        show_recno = 0;
-        rest = skip_ws(rest + 3);
-    }
-    /* Check for TO PRINT / TO FILE */
-    if (str_imatch(rest, "TO") && str_imatch(skip_ws(rest + 2), "PRINT")) {
-        rest = skip_ws(skip_ws(rest + 2) + 5);
-    } else if (str_imatch(rest, "TO") && str_imatch(skip_ws(rest + 2), "FILE")) {
-        const char *t = skip_ws(skip_ws(rest + 2) + 4);
-        char fname[128]; int fi = 0;
-        while (*t && *t != ' ' && fi < 127) fname[fi++] = *t++;
-        fname[fi] = '\0';
-        to_file = fopen(fname, "w");
-        rest = skip_ws(t);
-    }
-
-    if (str_imatch(rest, "FOR")) {
-        cond_str = skip_ws(rest + 3);
-        nfields = 0;
-    } else if (*rest != '\0') {
-        nfields = parse_field_list(db, rest, field_indices, DBF_MAX_FIELDS, &rest);
+        const char *p = l->token_start;
+        nfields = parse_field_list(db, p, field_indices, DBF_MAX_FIELDS, &p);
         if (nfields < 0) return;
-        rest = skip_ws(rest);
-        /* Check for OFF/TO after field list */
-        if (str_imatch(rest, "OFF")) {
-            show_recno = 0;
-            rest = skip_ws(rest + 3);
+        lexer_init(l, p);
+    }
+
+    if (parse_clauses(l, &c) < 0) return;
+
+    if (!c.has_scope) {
+        if (is_display) {
+            c.scope.type = SCOPE_NEXT;
+            c.scope.count = 1;
+        } else {
+            c.scope.type = SCOPE_ALL;
         }
-        if (str_imatch(rest, "FOR")) {
-            cond_str = skip_ws(rest + 3);
-        }
+    }
+
+    if (c.for_cond[0] && !c.has_scope) {
+        c.scope.type = SCOPE_ALL;
+    }
+
+    if (c.to_file[0]) {
+        to_file = fopen(c.to_file, "w");
     }
 
     use_all_fields = (nfields == 0);
 
-    if (scope_bounds(db, &scope, &start, &end) < 0) {
-        printf("Invalid scope.\n");
-        return;
+    /* Positioning based on scope */
+    if (c.scope.type == SCOPE_ALL) {
+        if (idx) index_top(idx);
+        else dbf_read_record(db, 1);
+    } else if (c.scope.type == SCOPE_RECORD) {
+        if (idx) {
+            /* This is inefficient but correctly follows index if RECORD N is used?
+               Actually dBase RECORD N always uses physical record. */
+            dbf_read_record(db, c.scope.count);
+        } else {
+            dbf_read_record(db, c.scope.count);
+        }
+        remaining = 1;
+        has_limit = 1;
+    } else if (c.scope.type == SCOPE_NEXT) {
+        remaining = c.scope.count;
+        has_limit = 1;
     }
 
-    if (set_opts.heading) {
-        if (show_recno) printf("Record#");
+    if (set_opts.heading && !(is_display && use_all_fields)) {
+        if (!c.off) printf("Record#");
         if (use_all_fields) {
             for (f = 0; f < db->field_count; f++) {
                 int w = field_display_width(db, f);
@@ -1426,81 +1590,86 @@ static void cmd_list(dbf_t *db, const char *arg) {
             }
         } else {
             for (f = 0; f < nfields; f++) {
-                int idx = field_indices[f];
-                int w = field_display_width(db, idx);
-                printf(" %-*s", w, db->fields[idx].name);
+                int idx_f = field_indices[f];
+                int w = field_display_width(db, idx_f);
+                printf(" %-*s", w, db->fields[idx_f].name);
             }
         }
         printf("\n");
     }
 
-    for (i = start; i <= end; i++) {
-        if (dbf_read_record(db, i) < 0) continue;
-        if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
+    expr_ctx.eof_flag = 0;
+    while (!expr_ctx.eof_flag && (!has_limit || remaining > 0)) {
+        uint32_t current_rec = idx ? index_current_recno(idx) : db->current_record;
+        if (current_rec == 0 || current_rec > db->record_count) break;
 
-        if (cond_str) {
+        dbf_read_record(db, current_rec);
+
+        int matched = 1;
+        if (skip_deleted(db->record_buf) || !check_filter(db)) matched = 0;
+
+        if (matched && c.for_cond[0]) {
             value_t cond;
-            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
-                report_expr_error();
-                return;
-            }
-            if (cond.type != VAL_LOGIC || !cond.logic) continue;
+            if (expr_eval_str(&expr_ctx, c.for_cond, &cond) != 0) { report_expr_error(); break; }
+            if (cond.type != VAL_LOGIC || !cond.logic) matched = 0;
         }
 
-        if (show_recno) printf("%7d", (int)i);
+        if (matched && c.while_cond[0]) {
+            value_t cond;
+            if (expr_eval_str(&expr_ctx, c.while_cond, &cond) != 0) { report_expr_error(); break; }
+            if (cond.type != VAL_LOGIC || !cond.logic) break;
+        }
 
-        if (use_all_fields) {
-            for (f = 0; f < db->field_count; f++) {
-                int w = field_display_width(db, f);
-                print_field_value(db, f, raw, display, 1, w);
+        if (matched) {
+            if (is_display && row_count > 0 && (row_count % 20) == 0) {
+                printf("Press any key to continue...");
+                getchar();
+                printf("\r                           \r");
             }
+
+            if (is_display && use_all_fields) {
+                printf("Record# %d\n", (int)current_rec);
+                for (f = 0; f < db->field_count; f++)
+                    print_field_value(db, f, raw, display, to_file, 0, 0);
+            } else {
+                if (!c.off) PRINT_TO(to_file, "%7d", (int)current_rec);
+                if (use_all_fields) {
+                    for (f = 0; f < db->field_count; f++) {
+                        int w = field_display_width(db, f);
+                        print_field_value(db, f, raw, display, to_file, 1, w);
+                    }
+                } else {
+                    for (f = 0; f < nfields; f++) {
+                        int idx_f = field_indices[f];
+                        int w = field_display_width(db, idx_f);
+                        print_field_value(db, idx_f, raw, display, to_file, 1, w);
+                    }
+                }
+                PRINT_TO(to_file, "\n");
+            }
+            row_count++;
+            if (has_limit) remaining--;
+        }
+
+        /* Advance */
+        if (idx) {
+            if (index_next(idx) < 0) expr_ctx.eof_flag = 1;
         } else {
-            for (f = 0; f < nfields; f++) {
-                int idx = field_indices[f];
-                int w = field_display_width(db, idx);
-                print_field_value(db, idx, raw, display, 1, w);
-            }
+            if (db->current_record >= db->record_count) expr_ctx.eof_flag = 1;
+            else dbf_read_record(db, db->current_record + 1);
         }
-        printf("\n");
+        if (c.scope.type == SCOPE_RECORD) break;
     }
 
     if (to_file) fclose(to_file);
 }
 
-/* ---- DISPLAY (enhanced with field list) ---- */
-static void cmd_display(dbf_t *db, const char *arg) {
-    int f;
-    char raw[256], display[256];
-    int field_indices[DBF_MAX_FIELDS];
-    int nfields = 0;
-    const char *rest;
-    int use_all_fields;
+static void cmd_list(dbf_t *db, lexer_t *l) {
+    common_list_display(db, l, 0);
+}
 
-    if (!dbf_is_open(db)) {
-        prog_error(ERR_NO_DATABASE, "No database in use");
-        return;
-    }
-    if (db->current_record == 0 || expr_ctx.eof_flag) {
-        printf("No current record.\n");
-        return;
-    }
-
-    rest = skip_ws(arg);
-    if (*rest != '\0') {
-        nfields = parse_field_list(db, rest, field_indices, DBF_MAX_FIELDS, &rest);
-        if (nfields < 0) return;
-    }
-
-    use_all_fields = (nfields == 0);
-
-    printf("Record# %d\n", (int)db->current_record);
-    if (use_all_fields) {
-        for (f = 0; f < db->field_count; f++)
-            print_field_value(db, f, raw, display, 0, 0);
-    } else {
-        for (f = 0; f < nfields; f++)
-            print_field_value(db, field_indices[f], raw, display, 0, 0);
-    }
+static void cmd_display(dbf_t *db, lexer_t *l) {
+    common_list_display(db, l, 1);
 }
 
 /* ---- DISPLAY STRUCTURE ---- */
@@ -1518,14 +1687,11 @@ static void cmd_display_structure(dbf_t *db) {
     printf("Record size: %d\n", (int)db->record_size);
     printf("Field  Name        Type  Width  Dec\n");
     for (i = 0; i < db->field_count; i++) {
-        printf("%5d  %-10s  %c     %3d    %3d\n",
-               i + 1,
-               db->fields[i].name,
-               db->fields[i].type,
-               db->fields[i].length,
-               db->fields[i].decimals);
+        printf("%5d  %-10s  %c      %2d      %d\n",
+               i + 1, db->fields[i].name, db->fields[i].type,
+               db->fields[i].length, db->fields[i].decimals);
     }
-    printf("** Total **               %5d\n", (int)db->record_size);
+    printf("** Total **                  %2d\n", (int)db->record_size);
 }
 
 /* ---- STORE expr TO var ---- */
@@ -2981,99 +3147,35 @@ static char *report_find_next_kw(char *p) {
 }
 
 /* ---- REPORT FORM ---- */
-static void cmd_report_form(dbf_t *db, const char *arg) {
+static void cmd_report_form(dbf_t *db, lexer_t *l) {
     char filename[64];
-    char argbuf[512];
-    const char *p;
-    const char *for_cond = NULL;
-    const char *heading_text = NULL;
-    int plain = 0, summary = 0, noeject = 0;
-    int to_print = 0;
     FILE *outfile = NULL;
     frm_def_t def;
-    int i;
+    clause_t c;
 
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
-    str_copy(argbuf, arg, sizeof(argbuf));
-    p = skip_ws(argbuf);
-    /* Parse filename */
-    i = 0;
-    while (*p && *p != ' ' && *p != '\t' && i < 63)
-        filename[i++] = *p++;
-    filename[i] = '\0';
+    if (l->current.type != TOK_IDENT) {
+        printf("Syntax: REPORT FORM <filename> [scope] [FOR <cond>] [WHILE <cond>] [HEADING <expr>] [PLAIN] [SUMMARY] [NOEJECT] [TO PRINT] [TO FILE <file>]\n");
+        return;
+    }
+
+    str_copy(filename, l->current.text, sizeof(filename));
     ensure_frm_ext(filename, sizeof(filename));
+    lex_next(l);
 
-    /* Parse optional clauses */
-    while (*p) {
-        p = skip_ws(p);
-        if (*p == '\0') break;
+    clause_init(&c);
+    if (parse_clauses(l, &c) < 0) return;
 
-        if (report_kw_boundary(p, "FOR")) {
-            char *start = skip_ws(p + 3);
-            char *next = report_find_next_kw(start);
-            for_cond = start;
-            if (next) {
-                *next = '\0';
-                p = next;
-            } else {
-                p = start + strlen(start);
-            }
-            continue;
+    if (c.to_file[0]) {
+        outfile = fopen(c.to_file, "w");
+        if (!outfile) {
+            printf("Cannot create %s\n", c.to_file);
+            return;
         }
-        if (report_kw_boundary(p, "HEADING")) {
-            char *start = skip_ws(p + 7);
-            char *next = report_find_next_kw(start);
-            heading_text = start;
-            if (next) {
-                *next = '\0';
-                p = next;
-            } else {
-                p = start + strlen(start);
-            }
-            continue;
-        }
-        if (report_kw_boundary(p, "PLAIN")) {
-            plain = 1;
-            p += 5;
-            continue;
-        }
-        if (report_kw_boundary(p, "SUMMARY")) {
-            summary = 1;
-            p += 7;
-            continue;
-        }
-        if (report_kw_boundary(p, "NOEJECT")) {
-            noeject = 1;
-            p += 7;
-            continue;
-        }
-        if (report_kw_boundary(p, "TO")) {
-            p = skip_ws(p + 2);
-            if (str_imatch(p, "PRINT")) {
-                to_print = 1;
-                p += 5;
-                continue;
-            }
-            if (str_imatch(p, "FILE")) {
-                char fname[128];
-                int fi = 0;
-                p = skip_ws(p + 4);
-                while (*p && *p != ' ' && fi < 127) fname[fi++] = *p++;
-                fname[fi] = '\0';
-                outfile = fopen(fname, "w");
-                if (!outfile) {
-                    printf("Cannot create %s\n", fname);
-                    return;
-                }
-                continue;
-            }
-        }
-        /* Skip unrecognized word */
-        while (*p && *p != ' ' && *p != '\t') p++;
     }
 
     /* Read the .FRM file */
@@ -3088,8 +3190,10 @@ static void cmd_report_form(dbf_t *db, const char *arg) {
         outfile = stdout;
 
     ctx_setup();
-    report_generate(&def, db, &expr_ctx, for_cond, heading_text,
-                    plain, summary, noeject, outfile);
+    /* Note: currently report_generate ignores WHILE/scope, passing them would require signature change */
+    report_generate(&def, db, &expr_ctx, c.for_cond[0] ? c.for_cond : NULL,
+                    c.heading[0] ? c.heading : NULL,
+                    c.plain, c.summary, c.noeject, outfile);
 
     if (outfile != stdout)
         fclose(outfile);
@@ -3525,7 +3629,8 @@ int cmd_execute(dbf_t *db, char *line) {
         lexer_t t = l;
         lex_next(&t);
         if (cmd_kw(&t, "FORM")) {
-            cmd_report_form(cdb, (char *)cmd_after(&t));
+            lex_next(&t);
+            cmd_report_form(cdb, &t);
             return 0;
         }
     }
@@ -3674,7 +3779,8 @@ int cmd_execute(dbf_t *db, char *line) {
     }
 
     if (cmd_kw(&l, "REPLACE")) {
-        cmd_replace(cdb, (char *)cmd_after(&l));
+        lex_next(&l);
+        cmd_replace(cdb, &l);
         return 0;
     }
 
@@ -3731,13 +3837,15 @@ int cmd_execute(dbf_t *db, char *line) {
         } else if (cmd_kw_at(rest, "MEMORY", NULL)) {
             memvar_display(&memvar_store);
         } else {
-            cmd_display(cdb, (char *)rest);
+            lex_next(&l);
+            cmd_display(cdb, &l);
         }
         return 0;
     }
 
     if (cmd_kw(&l, "LIST")) {
-        cmd_list(cdb, (char *)cmd_after(&l));
+        lex_next(&l);
+        cmd_list(cdb, &l);
         return 0;
     }
 

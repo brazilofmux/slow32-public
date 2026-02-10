@@ -5,9 +5,8 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 ## 1. Architectural Inconsistencies
 
 ### 1.1 Lexer Integration (Ongoing)
-- **Success**: `cmd_execute` in `src/command.c` now utilizes the Lexer for primary command dispatch.
-- **Observation**: Many sub-handlers (e.g., `cmd_list`, `cmd_replace`, `cmd_report_form`) still perform manual string scanning for clauses (`FOR`, `WHILE`, `TO PRINT`).
-- **Opportunity**: Fully transition sub-handlers to use the Lexer. This will resolve "keyword swallowing" bugs where a clause like `FOR` consumes the rest of the line, preventing subsequent clauses.
+- **Status**: Major sub-handlers (`LIST`, `DISPLAY`, `REPLACE`, `REPORT FORM`) have been refactored to use the Lexer and a unified `clause_t` structure.
+- **Opportunity**: Continue transitioning remaining sub-handlers (e.g., `COUNT`, `SUM`, `AVERAGE`, `DELETE`, `RECALL`, `LOCATE`) to the Lexer for full consistency.
 
 ### 1.2 Unified Macro Handling
 - **Issue**: Macro expansion (`&var`) is handled by `prog_preprocess` before the Lexer sees the line.
@@ -69,7 +68,8 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 - **Phase 7 (B+ Tree)**: Persistent NDX2 format with O(log N) performance and incremental maintenance.
 - **Record Cache**: 32-record read-ahead window in `dbf.c` for sequential scan acceleration.
 - **Lexer Dispatch**: Consistent command identification using the 4-character rule in `command.c`.
-- **Work Area Registry**: Centralized work area management in `area.c` with robust alias resolution (A-J, 1-10) across all commands, including `SET RELATION`.
+- **Work Area Registry**: Centralized work area management in `area.c` with robust, token-aware alias resolution (A-J, 1-10) across all commands, including `SET RELATION`.
+- **Lexer Clause Parsing**: Sub-handlers for `LIST`, `DISPLAY`, `REPLACE`, and `REPORT FORM` now use the central Lexer and a unified `clause_t` structure, resolving keyword swallowing bugs and supporting arbitrary clause ordering.
 - **Commit eb41794**: Implemented `RANGE` validation in full-screen terminal mode, ensuring data integrity during user input.
 - **Commit f9bc96c**: Enhanced screen cursor tracking (`ROW()`/`COL()`) to correctly handle 80-column line wrapping.
 - **Commit 81a0d85**: Corrected `STR()` behavior to round values to the nearest integer when no decimal count is specified.
