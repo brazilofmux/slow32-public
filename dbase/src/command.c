@@ -2653,7 +2653,7 @@ static void cmd_set_index(dbf_t *db, const char *arg) {
 static void cmd_seek(dbf_t *db, const char *arg) {
     const char *p = skip_ws(arg);
     value_t val;
-    char key[MAX_INDEX_KEY];
+    char key[MAX_INDEX_KEY + 1];
     index_t *idx;
 
     if (!dbf_is_open(db)) {
@@ -2701,7 +2701,7 @@ static void cmd_seek(dbf_t *db, const char *arg) {
 /* ---- FIND <literal> ---- */
 static void cmd_find(dbf_t *db, const char *arg) {
     const char *p = skip_ws(arg);
-    char key[MAX_INDEX_KEY];
+    char key[MAX_INDEX_KEY + 1];
     index_t *idx;
 
     if (!dbf_is_open(db)) {

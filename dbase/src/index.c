@@ -43,13 +43,15 @@ static ndx_page_t *page_new(index_t *idx, int type) {
 
     if (type == PAGE_LEAF) {
         max_keys = idx->max_keys_leaf;
-        p->keys = (char *)calloc(max_keys, idx->key_len);
-        p->recnos = (uint32_t *)calloc(max_keys, sizeof(uint32_t));
+        /* +1 to allow temporary overflow before split */
+        p->keys = (char *)calloc(max_keys + 1, idx->key_len);
+        p->recnos = (uint32_t *)calloc(max_keys + 1, sizeof(uint32_t));
         p->children = NULL;
     } else {
         max_keys = idx->max_keys_internal;
-        p->keys = (char *)calloc(max_keys, idx->key_len);
-        p->children = (int *)calloc(max_keys + 1, sizeof(int));
+        /* +1 keys and +2 children for temporary overflow before split */
+        p->keys = (char *)calloc(max_keys + 1, idx->key_len);
+        p->children = (int *)calloc(max_keys + 2, sizeof(int));
         p->recnos = NULL;
     }
 
@@ -146,8 +148,9 @@ static int page_read(index_t *idx, int page_no, unsigned char *buf) {
         p->type = PAGE_INTERNAL;
         memcpy(&t16, buf + 2, 2);
         p->nkeys = t16;
-        p->keys = (char *)calloc(max_keys, idx->key_len);
-        p->children = (int *)calloc(max_keys + 1, sizeof(int));
+        /* +1 keys and +2 children for temporary overflow before split */
+        p->keys = (char *)calloc(max_keys + 1, idx->key_len);
+        p->children = (int *)calloc(max_keys + 2, sizeof(int));
         p->recnos = NULL;
         p->dirty = 0;
 
@@ -173,8 +176,9 @@ static int page_read(index_t *idx, int page_no, unsigned char *buf) {
         p->nkeys = t16;
         memcpy(&t32, buf + 4, 4); p->next_leaf = (int)t32;
         memcpy(&t32, buf + 8, 4); p->prev_leaf = (int)t32;
-        p->keys = (char *)calloc(max_keys, idx->key_len);
-        p->recnos = (uint32_t *)calloc(max_keys, sizeof(uint32_t));
+        /* +1 to allow temporary overflow before split */
+        p->keys = (char *)calloc(max_keys + 1, idx->key_len);
+        p->recnos = (uint32_t *)calloc(max_keys + 1, sizeof(uint32_t));
         p->children = NULL;
         p->dirty = 0;
 
@@ -261,13 +265,27 @@ static int page_lower_bound(index_t *idx, ndx_page_t *page, const char *key) {
     return lo;
 }
 
+/* ---- Binary search: upper bound ---- */
+/* Returns index of first key > search_key (for internal routing) */
+static int page_upper_bound(index_t *idx, ndx_page_t *page, const char *key) {
+    int lo = 0, hi = page->nkeys;
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        if (key_cmp(page_key(idx, page, mid), key, idx->key_len) <= 0)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo;
+}
+
 /* ---- Search: find leaf and position for key ---- */
 static ndx_page_t *bt_find_leaf(index_t *idx, const char *key) {
     ndx_page_t *node;
     if (idx->num_pages <= 1) return NULL;
     node = idx->pages[idx->root_page];
     while (node && node->type == PAGE_INTERNAL) {
-        int pos = page_lower_bound(idx, node, key);
+        int pos = page_upper_bound(idx, node, key);
         /* descend to children[pos] */
         node = idx->pages[node->children[pos]];
     }
@@ -313,8 +331,12 @@ int index_seek(index_t *idx, const char *key) {
 
     /* Past end of this leaf -- try next leaf */
     if (leaf->next_leaf) {
+        ndx_page_t *next = idx->pages[leaf->next_leaf];
         idx->iter_page = leaf->next_leaf;
         idx->iter_pos = 0;
+        if (next && next->nkeys > 0 &&
+            key_cmp(page_key(idx, next, 0), padded, idx->key_len) == 0)
+            return 1; /* exact match at boundary */
     } else {
         /* Past end of entire index */
         idx->iter_page = leaf->page_no;
@@ -529,7 +551,7 @@ int index_insert(index_t *idx, const char *key, uint32_t recno) {
     /* Walk down tree to find leaf */
     node = idx->pages[idx->root_page];
     while (node->type == PAGE_INTERNAL) {
-        pos = page_lower_bound(idx, node, padded);
+        pos = page_upper_bound(idx, node, padded);
         path[depth] = node->page_no;
         path_pos[depth] = pos;
         depth++;
@@ -722,6 +744,8 @@ void index_clear(index_t *idx) {
 int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, const char *filename) {
     uint32_t i;
     dbf_t *saved_db;
+    int max_len = 0;
+    int key_type_set = 0;
 
     if (!dbf_is_open(db)) return -1;
 
@@ -732,7 +756,7 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
     str_copy(idx->key_expr, key_expr, sizeof(idx->key_expr));
     str_copy(idx->filename, filename, sizeof(idx->filename));
 
-    /* Determine key length by evaluating expression for first record */
+    /* Determine key length by scanning records */
     idx->key_len = 10; /* default */
     idx->key_type = 0; /* char */
 
@@ -740,18 +764,30 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
     ctx->db = db;
 
     if (db->record_count > 0) {
-        value_t val;
-        char keybuf[MAX_INDEX_KEY + 1];
-        dbf_read_record(db, 1);
-        if (expr_eval_str(ctx, key_expr, &val) == 0) {
+        for (i = 1; i <= db->record_count; i++) {
+            value_t val;
+            char keybuf[MAX_INDEX_KEY + 1];
+
+            dbf_read_record(db, i);
+            if (db->record_buf[0] == '*') continue;
+
+            if (expr_eval_str(ctx, key_expr, &val) != 0) continue;
+
             val_to_string(&val, keybuf, sizeof(keybuf));
-            /* Don't trim -- measure natural width */
-            idx->key_len = strlen(keybuf);
-            if (idx->key_len < 1) idx->key_len = 1;
-            if (idx->key_len > MAX_INDEX_KEY) idx->key_len = MAX_INDEX_KEY;
-            if (val.type == VAL_NUM) idx->key_type = 1;
-            else if (val.type == VAL_DATE) idx->key_type = 2;
+            {
+                int len = strlen(keybuf);
+                if (len > max_len) max_len = len;
+            }
+            if (!key_type_set) {
+                if (val.type == VAL_NUM) idx->key_type = 1;
+                else if (val.type == VAL_DATE) idx->key_type = 2;
+                else idx->key_type = 0;
+                key_type_set = 1;
+            }
         }
+        if (max_len < 1) max_len = 1;
+        if (max_len > MAX_INDEX_KEY) max_len = MAX_INDEX_KEY;
+        idx->key_len = max_len;
     }
 
     compute_fanout(idx);
