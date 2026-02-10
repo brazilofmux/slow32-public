@@ -948,8 +948,10 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
     dbf_t *saved_db;
     int max_len = 0;
     int key_type_set = 0;
-    key_entry_t *entries;
+    key_entry_t *entries = NULL;
     int nentries = 0;
+    ndx_page_t **leaf_pages = NULL;
+    ndx_page_t **current_level = NULL;
 
     if (!dbf_is_open(db)) return -1;
 
@@ -967,7 +969,9 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
     saved_db = ctx->db;
     ctx->db = db;
 
-    entries = (key_entry_t *)malloc(db->record_count * sizeof(key_entry_t));
+    if (db->record_count > 0) {
+        entries = (key_entry_t *)malloc(db->record_count * sizeof(key_entry_t));
+    }
     if (!entries && db->record_count > 0) {
         ctx->db = saved_db;
         return -1;
@@ -1029,11 +1033,13 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
 
     if (nentries > 0) {
         int n_leaf_pages = (nentries + idx->max_keys_leaf - 1) / idx->max_keys_leaf;
-        ndx_page_t **leaf_pages = (ndx_page_t **)malloc(n_leaf_pages * sizeof(ndx_page_t *));
+        leaf_pages = (ndx_page_t **)malloc(n_leaf_pages * sizeof(ndx_page_t *));
         int current_entry = 0;
+        if (!leaf_pages) goto fail;
 
         for (i = 0; i < (uint32_t)n_leaf_pages; i++) {
             ndx_page_t *leaf = page_new(idx, PAGE_LEAF);
+            if (!leaf) goto fail;
             leaf_pages[i] = leaf;
             if (i == 0) idx->first_leaf = leaf->page_no;
             
@@ -1057,7 +1063,7 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
         }
 
         /* Build internal levels on top of leaves */
-        ndx_page_t **current_level = leaf_pages;
+        current_level = leaf_pages;
         int current_level_size = n_leaf_pages;
 
         while (current_level_size > 1) {
@@ -1065,9 +1071,14 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
             if (parent_level_size < 1) parent_level_size = 1;
             ndx_page_t **parent_level = (ndx_page_t **)malloc(parent_level_size * sizeof(ndx_page_t *));
             int child_idx = 0;
+            if (!parent_level) goto fail;
 
             for (i = 0; i < (uint32_t)parent_level_size; i++) {
                 ndx_page_t *parent = page_new(idx, PAGE_INTERNAL);
+                if (!parent) {
+                    free(parent_level);
+                    goto fail;
+                }
                 parent_level[i] = parent;
 
                 int children_for_this_parent = idx->max_keys_internal + 1;
@@ -1082,6 +1093,10 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
                     ndx_page_t *curr = right_child;
                     while (curr->type == PAGE_INTERNAL) {
                         curr = hash_lookup(idx, curr->children[0]);
+                        if (!curr) {
+                            free(parent_level);
+                            goto fail;
+                        }
                     }
                     memcpy(page_key(idx, parent, j), page_key(idx, curr, 0), idx->key_len);
                     parent->children[j + 1] = right_child->page_no;
@@ -1102,6 +1117,7 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
         idx->root_page = current_level[0]->page_no;
         page_put(current_level[0]);
         free(current_level);
+        current_level = NULL;
     } else {
         /* Empty index - already has header, but needs a root leaf */
         ndx_page_t *leaf = page_new(idx, PAGE_LEAF);
@@ -1110,7 +1126,7 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
         page_put(leaf);
     }
 
-    free(entries);
+    if (entries) free(entries);
     ctx->db = saved_db;
 
     /* Position at first entry */
@@ -1123,6 +1139,14 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
 
     idx->active = 1;
     return 0;
+
+fail:
+    if (entries) free(entries);
+    if (current_level && current_level != leaf_pages) free(current_level);
+    if (leaf_pages) free(leaf_pages);
+    free_all_pages(idx);
+    ctx->db = saved_db;
+    return -1;
 }
 
 /* ---- Write index to file ---- */
