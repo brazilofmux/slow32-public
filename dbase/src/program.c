@@ -4,7 +4,6 @@
 #include "program.h"
 #include "command.h"
 #include "func.h"
-#include "lex.h"
 #include "util.h"
 
 static prog_state_t state;
@@ -461,22 +460,32 @@ static int find_procedure(program_t *prog, const char *name) {
 }
 
 static int line_is_kw(const char *line, const char *kw) {
-    lexer_t l;
-    lexer_init(&l, line);
-    if (l.current.type == TOK_IDENT && str_imatch(l.current.text, kw))
-        return 1;
-    return 0;
+    char tok[32];
+    int i = 0;
+    const char *p = skip_ws(line);
+    if (!is_ident_start(*p)) return 0;
+    while (is_ident_char(*p) && i < (int)sizeof(tok) - 1)
+        tok[i++] = *p++;
+    tok[i] = '\0';
+    return str_imatch(tok, kw) != 0;
 }
 
 static int line_is_do_kw(const char *line, const char *kw) {
-    lexer_t l;
-    lexer_init(&l, line);
-    if (l.current.type != TOK_IDENT || !str_imatch(l.current.text, "DO"))
-        return 0;
-    lex_next(&l);
-    if (l.current.type == TOK_IDENT && str_imatch(l.current.text, kw))
-        return 1;
-    return 0;
+    char tok[32];
+    int i = 0;
+    const char *p = skip_ws(line);
+    if (!is_ident_start(*p)) return 0;
+    while (is_ident_char(*p) && i < (int)sizeof(tok) - 1)
+        tok[i++] = *p++;
+    tok[i] = '\0';
+    if (!str_imatch(tok, "DO")) return 0;
+    p = skip_ws(p);
+    if (!is_ident_start(*p)) return 0;
+    i = 0;
+    while (is_ident_char(*p) && i < (int)sizeof(tok) - 1)
+        tok[i++] = *p++;
+    tok[i] = '\0';
+    return str_imatch(tok, kw) != 0;
 }
 
 /* ---- Scan forward for matching control structure ---- */
@@ -513,7 +522,7 @@ static int scan_enddo(program_t *prog, int from) {
         prog_preprocess(line, cmd_get_memvar_store());
         p = skip_ws(line);
         if (line_is_do_kw(p, "WHILE")) {
-                depth++;
+            depth++;
         } else if (line_is_kw(p, "ENDDO")) {
             depth--;
             if (depth == 0) return i;
@@ -683,12 +692,16 @@ static void prog_run(void) {
         }
 
         /* Skip PROCEDURE/FUNCTION definitions during normal execution */
-        if (str_imatch(p, "PROCEDURE") || str_imatch(p, "FUNCTION")) {
+        if (line_is_kw(p, "PROCEDURE") || line_is_kw(p, "FUNCTION")) {
             /* Skip to next PROCEDURE/FUNCTION or end of file */
             int i;
             for (i = state.pc + 1; i < state.current_prog->nlines; i++) {
-                char *lp = skip_ws(state.current_prog->lines[i]);
-                if (str_imatch(lp, "PROCEDURE") || str_imatch(lp, "FUNCTION"))
+                char line2[MAX_LINE_LEN];
+                char *lp;
+                str_copy(line2, state.current_prog->lines[i], MAX_LINE_LEN);
+                prog_preprocess(line2, cmd_get_memvar_store());
+                lp = skip_ws(line2);
+                if (line_is_kw(lp, "PROCEDURE") || line_is_kw(lp, "FUNCTION"))
                     break;
             }
             /* If we hit another PROCEDURE, stop there.
