@@ -15,6 +15,9 @@
 #define PAGE_INTERNAL   0x01
 #define PAGE_LEAF       0x02
 
+#define ND_MAX_PAGES    1000000     /* Reasonable limit for 4GB index */
+#define PAGE_HASH_SIZE  1024
+
 typedef struct ndx_page {
     int page_no;        /* page number in file */
     int type;           /* PAGE_INTERNAL or PAGE_LEAF */
@@ -36,6 +39,9 @@ typedef struct ndx_page {
     /* LRU cache links */
     struct ndx_page *lru_prev;
     struct ndx_page *lru_next;
+
+    /* Hash table links (sparse page table) */
+    struct ndx_page *hash_next;
 } ndx_page_t;
 
 typedef struct {
@@ -52,9 +58,8 @@ typedef struct {
     int num_pages;          /* total pages in file */
     int nentries;           /* total entries */
 
-    /* Page table + LRU cache (pages array is sparse) */
-    ndx_page_t **pages;     /* array of page pointers [num_pages] */
-    int pages_capacity;     /* allocated size of pages array */
+    /* Page table (Hash) + LRU cache */
+    ndx_page_t *page_hash[PAGE_HASH_SIZE];
     int cache_capacity;     /* max pages to keep in memory */
     int cache_size;         /* current cached pages */
     ndx_page_t *lru_head;   /* most recently used */

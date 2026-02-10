@@ -6,6 +6,9 @@
 
 static void page_free(ndx_page_t *p);
 static int page_flush(index_t *idx, int page_no);
+static void hash_add(index_t *idx, ndx_page_t *p);
+static void hash_remove(index_t *idx, ndx_page_t *p);
+static ndx_page_t *hash_lookup(index_t *idx, int page_no);
 
 /* ---- Key comparison ---- */
 static int key_cmp(const char *a, const char *b, int key_len) {
@@ -54,9 +57,42 @@ static void cache_evict(index_t *idx) {
         if (!p) return; /* all pages pinned */
         if (p->dirty) page_flush(idx, p->page_no);
         cache_remove(idx, p);
-        if (p->page_no >= 0 && p->page_no < idx->num_pages)
-            idx->pages[p->page_no] = NULL;
+        hash_remove(idx, p);
         page_free(p);
+    }
+}
+
+/* ---- Page Hash Table (Sparse Page Table) ---- */
+static int page_hash_idx(int page_no) {
+    return (unsigned int)page_no % PAGE_HASH_SIZE;
+}
+
+static ndx_page_t *hash_lookup(index_t *idx, int page_no) {
+    int h = page_hash_idx(page_no);
+    ndx_page_t *p = idx->page_hash[h];
+    while (p) {
+        if (p->page_no == page_no) return p;
+        p = p->hash_next;
+    }
+    return NULL;
+}
+
+static void hash_add(index_t *idx, ndx_page_t *p) {
+    int h = page_hash_idx(p->page_no);
+    p->hash_next = idx->page_hash[h];
+    idx->page_hash[h] = p;
+}
+
+static void hash_remove(index_t *idx, ndx_page_t *p) {
+    int h = page_hash_idx(p->page_no);
+    ndx_page_t **curr = &idx->page_hash[h];
+    while (*curr) {
+        if (*curr == p) {
+            *curr = p->hash_next;
+            p->hash_next = NULL;
+            return;
+        }
+        curr = &(*curr)->hash_next;
     }
 }
 
@@ -65,15 +101,6 @@ static ndx_page_t *page_new(index_t *idx, int type) {
     ndx_page_t *p;
     int max_keys;
     int pg_no;
-
-    /* Grow pages array if needed */
-    if (idx->num_pages >= idx->pages_capacity) {
-        int newcap = idx->pages_capacity ? idx->pages_capacity * 2 : 16;
-        ndx_page_t **newarr = (ndx_page_t **)realloc(idx->pages, newcap * sizeof(ndx_page_t *));
-        if (!newarr) return NULL;
-        idx->pages = newarr;
-        idx->pages_capacity = newcap;
-    }
 
     pg_no = idx->num_pages;
     idx->num_pages++;
@@ -105,7 +132,7 @@ static ndx_page_t *page_new(index_t *idx, int type) {
         p->recnos = NULL;
     }
 
-    idx->pages[pg_no] = p;
+    hash_add(idx, p);
     cache_add(idx, p);
     cache_evict(idx);
     return p;
@@ -126,7 +153,7 @@ static int page_flush(index_t *idx, int page_no) {
     int i, off;
 
     if (!idx->fp) return -1;
-    p = (page_no >= 0 && page_no < idx->num_pages) ? idx->pages[page_no] : NULL;
+    p = hash_lookup(idx, page_no);
     if (page_no != 0 && !p) return -1;
 
     memset(buf, 0, NDX_PAGE_SIZE);
@@ -251,8 +278,7 @@ static ndx_page_t *page_get(index_t *idx, int page_no) {
     unsigned char buf[NDX_PAGE_SIZE];
 
     if (page_no < 0 || page_no >= idx->num_pages) return NULL;
-    if (page_no == 0) return idx->pages[0];
-    p = idx->pages[page_no];
+    p = hash_lookup(idx, page_no);
     if (p) {
         p->pin_count++;
         cache_touch(idx, p);
@@ -268,7 +294,7 @@ static ndx_page_t *page_get(index_t *idx, int page_no) {
     p = page_read(idx, page_no, buf);
     if (!p) return NULL;
     p->pin_count = 1;
-    idx->pages[page_no] = p;
+    hash_add(idx, p);
     cache_add(idx, p);
     cache_evict(idx);
     return p;
@@ -282,18 +308,16 @@ static void page_put(ndx_page_t *p) {
 /* ---- Free all tree pages ---- */
 static void free_all_pages(index_t *idx) {
     int i;
-    if (idx->pages) {
-        for (i = 0; i < idx->num_pages; i++) {
-            if (idx->pages[i]) {
-                page_free(idx->pages[i]);
-                idx->pages[i] = NULL;
-            }
+    for (i = 0; i < PAGE_HASH_SIZE; i++) {
+        ndx_page_t *p = idx->page_hash[i];
+        while (p) {
+            ndx_page_t *next = p->hash_next;
+            page_free(p);
+            p = next;
         }
-        free(idx->pages);
-        idx->pages = NULL;
+        idx->page_hash[i] = NULL;
     }
     idx->num_pages = 0;
-    idx->pages_capacity = 0;
     idx->cache_size = 0;
     idx->lru_head = NULL;
     idx->lru_tail = NULL;
@@ -872,18 +896,11 @@ int index_remove(index_t *idx, const char *key, uint32_t recno) {
     if (idx->nentries == 0) {
         free_all_pages(idx);
         /* Reinitialize with just header placeholder */
-        idx->pages = NULL;
-        idx->pages_capacity = 0;
-        idx->num_pages = 0;
-        /* Allocate header page placeholder */
         {
-            ndx_page_t *hdr;
-            idx->pages = (ndx_page_t **)calloc(1, sizeof(ndx_page_t *));
-            idx->pages_capacity = 1;
-            hdr = (ndx_page_t *)calloc(1, sizeof(ndx_page_t));
+            ndx_page_t *hdr = (ndx_page_t *)calloc(1, sizeof(ndx_page_t));
             hdr->page_no = 0;
             hdr->pin_count = 1;
-            idx->pages[0] = hdr;
+            hash_add(idx, hdr);
             idx->num_pages = 1;
         }
         idx->root_page = 0;
@@ -899,13 +916,11 @@ void index_clear(index_t *idx) {
     free_all_pages(idx);
 
     /* Reinitialize with header placeholder */
-    idx->pages = (ndx_page_t **)calloc(1, sizeof(ndx_page_t *));
-    idx->pages_capacity = 1;
     {
         ndx_page_t *hdr = (ndx_page_t *)calloc(1, sizeof(ndx_page_t));
         hdr->page_no = 0;
         hdr->pin_count = 1;
-        idx->pages[0] = hdr;
+        hash_add(idx, hdr);
     }
     idx->num_pages = 1;
     idx->root_page = 0;
@@ -968,21 +983,16 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
     compute_fanout(idx);
 
     /* Initialize with header placeholder (page 0) */
-    idx->pages = NULL;
-    idx->pages_capacity = 0;
     idx->num_pages = 0;
     idx->nentries = 0;
     idx->root_page = 0;
     idx->first_leaf = 0;
     {
         /* Page 0 = header (not a tree node) */
-        ndx_page_t *hdr;
-        idx->pages = (ndx_page_t **)calloc(1, sizeof(ndx_page_t *));
-        idx->pages_capacity = 1;
-        hdr = (ndx_page_t *)calloc(1, sizeof(ndx_page_t));
+        ndx_page_t *hdr = (ndx_page_t *)calloc(1, sizeof(ndx_page_t));
         hdr->page_no = 0;
         hdr->pin_count = 1;
-        idx->pages[0] = hdr;
+        hash_add(idx, hdr);
         idx->num_pages = 1;
     }
 
@@ -1089,20 +1099,12 @@ static int read_ndx2(index_t *idx, FILE *fp) {
 
     compute_fanout(idx);
 
-    /* Allocate page cache */
-    idx->pages_capacity = idx->num_pages;
-    idx->pages = (ndx_page_t **)calloc(idx->pages_capacity, sizeof(ndx_page_t *));
-    if (!idx->pages) return -1;
-    idx->cache_size = 0;
-    idx->lru_head = NULL;
-    idx->lru_tail = NULL;
-
     /* Page 0 = header (dummy) */
     {
         ndx_page_t *hdr = (ndx_page_t *)calloc(1, sizeof(ndx_page_t));
         hdr->page_no = 0;
         hdr->pin_count = 1;
-        idx->pages[0] = hdr;
+        hash_add(idx, hdr);
     }
 
     return 0;
@@ -1148,16 +1150,11 @@ static int read_ndx1(index_t *idx, FILE *fp) {
     compute_fanout(idx);
 
     /* Initialize empty tree */
-    idx->pages = (ndx_page_t **)calloc(1, sizeof(ndx_page_t *));
-    idx->pages_capacity = 1;
-    idx->cache_size = 0;
-    idx->lru_head = NULL;
-    idx->lru_tail = NULL;
     {
         ndx_page_t *hdr = (ndx_page_t *)calloc(1, sizeof(ndx_page_t));
         hdr->page_no = 0;
         hdr->pin_count = 1;
-        idx->pages[0] = hdr;
+        hash_add(idx, hdr);
     }
     idx->num_pages = 1;
     idx->root_page = 0;

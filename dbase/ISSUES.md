@@ -15,9 +15,6 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 ### 1.3 Procedure Search Robustness
 - **Status**: Core keywords (`PROCEDURE`, `FUNCTION`, `IF`, `DO`, etc.) are now reserved words. Assignments to these names are rejected.
 - **Milestone**: `find_procedure` is now 100% robust against false positives in assignments, while `prog_preprocess` continues to handle comments and strings.
-### 1.3a Reserved Keyword Enforcement Coverage
-- **Status**: Reserved keyword checks are now enforced in `STORE`, direct assignments, `PARAMETERS`, `PRIVATE`, `PUBLIC`, and interactive `ACCEPT`/`INPUT`/`WAIT` targets.
-- **Note**: This keeps dBase III/Clipper behavior tight without introducing additional macro indirection.
 
 ### 1.4 Function Argument Scaling
 - **Limitation**: `parse_primary` uses a fixed-size `args[8]` array for function calls.
@@ -25,10 +22,9 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 
 ## 2. Performance & Scaling
 
-### 2.1 B+ Tree LRU Page Cache
-- **Success**: Implementation of a 64-page LRU cache with pinning logic.
-- **Observation**: The `pages` array in `index_t` is still sized to the total number of pages in the file. While pointers are NULL for non-resident pages, this array grows with the file size.
-- **Opportunity**: Transition to a fixed-size hash table or a more sparse structure for the page table to support multi-gigabyte indexes with minimal overhead.
+### 2.1 B+ Tree Sparse Page Table
+- **Status**: The linear `pages` array has been replaced with a fixed-size hash table (`page_hash`).
+- **Milestone**: Metadata overhead no longer scales with index file size. Supports multi-gigabyte indexes with constant-time lookup and minimal RAM footprint.
 
 ### 2.2 DBF Cache Coherence
 - **Issue**: Each `dbf_t` handle has its own 32-record read-ahead cache.
@@ -64,9 +60,9 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 
 ## 4. Completed Milestone Successes
 
+- **Sparse Page Table**: Refactored the B+ Tree engine to use a hash-based sparse page table. This eliminates the O(N) memory scaling of metadata, making the indexer capable of handling extremely large datasets without proportional RAM growth.
 - **Reserved Keywords**: Established a core reserved keyword list. Assignments to command names are now caught at parse-time, ensuring unambiguous procedure and control-flow detection.
 - **Transparent Macro Expansion**: Integrated a robust, multi-level macro expansion engine directly into the Lexer via a recursive character-streaming stack.
 - **Lexer Clause Refactor**: Migrated all record-level sequential commands to a unified Lexer-based parser and a generic `process_records` engine.
 - **Work Area Registry**: Centralized work area management in `area.c` with robust, token-aware alias resolution (A-J, 1-10) across all commands, including `SET RELATION`.
-- **Commit 97a8b75**: Resolved regressions in `LIST`/`DISPLAY` output redirection (`TO FILE`), added robust filename parsing for quoted paths, and ensured proper restoration of record pointers.
 - **Commit eb41794**: Implemented `RANGE` validation in full-screen terminal mode.
