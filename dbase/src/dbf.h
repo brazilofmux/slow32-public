@@ -27,6 +27,12 @@ typedef struct {
     uint32_t current_record;         /* 1-based; 0 = no current record */
     char record_buf[DBF_MAX_RECORD_SIZE];
     int record_dirty;
+
+    /* Record cache (read-ahead window) */
+    char *cache_buf;                 /* raw records buffer */
+    uint32_t cache_start;            /* first record number in cache */
+    int cache_count;                 /* number of records cached */
+    int cache_capacity;              /* max records to cache */
 } dbf_t;
 
 void dbf_init(dbf_t *db);
@@ -41,5 +47,6 @@ int  dbf_find_field(const dbf_t *db, const char *name);
 int  dbf_get_field_raw(const dbf_t *db, int idx, char *buf, int bufsize);
 int  dbf_set_field_raw(dbf_t *db, int idx, const char *value);
 int  dbf_write_header_counts(dbf_t *db);
+void dbf_cache_invalidate(dbf_t *db);
 
 #endif

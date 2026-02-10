@@ -4,8 +4,42 @@
 #include "dbf.h"
 #include "util.h"
 
+#define DBF_CACHE_RECORDS 32
+
 void dbf_init(dbf_t *db) {
     memset(db, 0, sizeof(*db));
+}
+
+void dbf_cache_invalidate(dbf_t *db) {
+    db->cache_start = 0;
+    db->cache_count = 0;
+}
+
+static void dbf_cache_free(dbf_t *db) {
+    if (db->cache_buf) {
+        free(db->cache_buf);
+        db->cache_buf = NULL;
+    }
+    db->cache_capacity = 0;
+    dbf_cache_invalidate(db);
+}
+
+static void dbf_cache_init(dbf_t *db) {
+    size_t bytes;
+
+    dbf_cache_free(db);
+
+    if (db->record_size == 0)
+        return;
+
+    db->cache_capacity = DBF_CACHE_RECORDS;
+    bytes = (size_t)db->record_size * (size_t)db->cache_capacity;
+    db->cache_buf = (char *)malloc(bytes);
+    if (!db->cache_buf) {
+        db->cache_capacity = 0;
+        return;
+    }
+    dbf_cache_invalidate(db);
 }
 
 static void write_le16(unsigned char *p, uint16_t v) {
@@ -127,6 +161,7 @@ int dbf_open(dbf_t *db, const char *filename) {
 
     db->current_record = 0;
     db->record_dirty = 0;
+    dbf_cache_init(db);
     return 0;
 }
 
@@ -140,6 +175,7 @@ void dbf_close(dbf_t *db) {
     db->filename[0] = '\0';
     db->current_record = 0;
     db->record_dirty = 0;
+    dbf_cache_free(db);
 }
 
 int dbf_is_open(const dbf_t *db) {
@@ -172,11 +208,16 @@ int dbf_append_blank(dbf_t *db) {
     dbf_write_header_counts(db);
 
     db->record_dirty = 0;
+    dbf_cache_invalidate(db);
     return 0;
 }
 
 int dbf_read_record(dbf_t *db, uint32_t recno) {
     long pos;
+    uint32_t start;
+    uint32_t available;
+    int to_read;
+    size_t bytes;
 
     if (!db->fp) return -1;
     if (recno < 1 || recno > db->record_count) return -1;
@@ -185,10 +226,35 @@ int dbf_read_record(dbf_t *db, uint32_t recno) {
     if (db->record_dirty)
         dbf_flush_record(db);
 
-    pos = db->header_size + (long)(recno - 1) * db->record_size;
-    fseek(db->fp, pos, 0);
-    if (fread(db->record_buf, 1, db->record_size, db->fp) != db->record_size)
-        return -1;
+    if (db->cache_buf && db->cache_count > 0 &&
+        recno >= db->cache_start &&
+        recno < db->cache_start + (uint32_t)db->cache_count) {
+        int idx = (int)(recno - db->cache_start);
+        memcpy(db->record_buf, db->cache_buf + idx * db->record_size, db->record_size);
+        db->record_buf[db->record_size] = '\0';
+    } else if (db->cache_buf && db->cache_capacity > 0) {
+        start = recno;
+        available = db->record_count - start + 1;
+        to_read = db->cache_capacity;
+        if (to_read > (int)available) to_read = (int)available;
+        bytes = (size_t)db->record_size * (size_t)to_read;
+
+        pos = db->header_size + (long)(start - 1) * db->record_size;
+        fseek(db->fp, pos, 0);
+        if (fread(db->cache_buf, 1, bytes, db->fp) != bytes)
+            return -1;
+        db->cache_start = start;
+        db->cache_count = to_read;
+
+        memcpy(db->record_buf, db->cache_buf, db->record_size);
+        db->record_buf[db->record_size] = '\0';
+    } else {
+        pos = db->header_size + (long)(recno - 1) * db->record_size;
+        fseek(db->fp, pos, 0);
+        if (fread(db->record_buf, 1, db->record_size, db->fp) != db->record_size)
+            return -1;
+        db->record_buf[db->record_size] = '\0';
+    }
 
     db->current_record = recno;
     db->record_dirty = 0;
@@ -206,6 +272,7 @@ int dbf_flush_record(dbf_t *db) {
     fwrite(db->record_buf, 1, db->record_size, db->fp);
     fflush(db->fp);
     db->record_dirty = 0;
+    dbf_cache_invalidate(db);
     return 0;
 }
 
@@ -249,6 +316,7 @@ int dbf_set_field_raw(dbf_t *db, int idx, const char *value) {
         memset(db->record_buf + 1 + db->fields[idx].offset + vlen, ' ', len - vlen);
 
     db->record_dirty = 1;
+    dbf_cache_invalidate(db);
     return 0;
 }
 

@@ -1790,6 +1790,7 @@ static void cmd_pack(dbf_t *db) {
     db->record_count = dst;
     dbf_write_header_counts(db);
     fflush(db->fp);
+    dbf_cache_invalidate(db);
 
     if (dst > 0) {
         dbf_read_record(db, 1);
@@ -1817,6 +1818,7 @@ static void cmd_zap(dbf_t *db) {
     db->current_record = 0;
     db->record_dirty = 0;
     dbf_write_header_counts(db);
+    dbf_cache_invalidate(db);
     expr_ctx.eof_flag = 1;
 
     /* Clear all active indexes */
