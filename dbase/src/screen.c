@@ -17,6 +17,9 @@
 static screen_state_t scr;
 static int print_row, print_col;   /* printer position tracking */
 
+/* Assume 80-column screen for cursor tracking */
+#define SCREEN_COLS 80
+
 void screen_init(void) {
     memset(&scr, 0, sizeof(scr));
     scr.fg_color = 7; /* white */
@@ -91,6 +94,22 @@ static void goto_pos(int row, int col) {
     }
 }
 
+static void screen_update_pos(int row, int col, int len) {
+    int end;
+    if (col < 1) col = 1;
+    if (len < 0) len = 0;
+    end = col + len;
+    if (end <= 1) {
+        scr.last_row = row;
+        scr.last_col = col;
+        return;
+    }
+    row += (end - 2) / SCREEN_COLS;
+    col = ((end - 2) % SCREEN_COLS) + 1;
+    scr.last_row = row;
+    scr.last_col = col;
+}
+
 /* ---- @SAY ---- */
 void screen_say(int row, int col, const char *expr_str, const char *picture) {
     expr_ctx_t *ctx = cmd_get_expr_ctx();
@@ -129,8 +148,7 @@ void screen_say(int row, int col, const char *expr_str, const char *picture) {
         goto_pos(row, col);
         printf("%s", formatted);
     }
-    scr.last_row = row;
-    scr.last_col = col + strlen(formatted);
+    screen_update_pos(row, col, (int)strlen(formatted));
 }
 
 /* ---- @GET ---- */
@@ -175,8 +193,7 @@ void screen_get(int row, int col, const char *varname, const char *picture,
     /* Display the field */
     goto_pos(row, col);
     printf("%s", scr.gets[scr.ngets].initial);
-    scr.last_row = row;
-    scr.last_col = col + strlen(scr.gets[scr.ngets].initial);
+    screen_update_pos(row, col, (int)strlen(scr.gets[scr.ngets].initial));
 
     scr.ngets++;
 }
