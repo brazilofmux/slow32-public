@@ -297,7 +297,7 @@ static int parse_field_list(dbf_t *db, const char *arg, int *indices, int max_fi
 }
 
 /* ---- Helper: display one field value ---- */
-#define PRINT_TO(f, ...) do { printf(__VA_ARGS__); if (f) fprintf(f, __VA_ARGS__); } while(0)
+#define PRINT_TO(f, ...) do { if (f) fprintf(f, __VA_ARGS__); else printf(__VA_ARGS__); } while(0)
 
 static void print_field_value(dbf_t *db, int f, char *raw, char *display, FILE *to_file, int for_list, int width) {
     dbf_get_field_raw(db, f, raw, 256);
@@ -895,6 +895,35 @@ static void clause_init(clause_t *c) {
     c->has_scope = 0;
 }
 
+static int consume_filename(lexer_t *l, char *out, int size) {
+    const char *p = l->token_start;
+    const char *start;
+    int len = 0;
+    char quote;
+
+    p = skip_ws(p);
+    if (*p == '\0') return -1;
+
+    if (*p == '"' || *p == '\'') {
+        quote = *p++;
+        start = p;
+        while (*p && *p != quote) p++;
+        len = (int)(p - start);
+        if (*p == quote) p++;
+    } else {
+        start = p;
+        while (*p && *p != ' ' && *p != '\t') p++;
+        len = (int)(p - start);
+    }
+
+    if (len >= size) len = size - 1;
+    memcpy(out, start, len);
+    out[len] = '\0';
+
+    lexer_init(l, p);
+    return 0;
+}
+
 /* Parse common dBase clauses (FOR, WHILE, TO PRINT, TO FILE, OFF, etc.)
    Returns 0 on success. Consumes tokens until end of line or unknown keyword. */
 static int parse_clauses(lexer_t *l, clause_t *c) {
@@ -926,10 +955,8 @@ static int parse_clauses(lexer_t *l, clause_t *c) {
                 lex_next(l);
             } else if (cmd_kw(l, "FILE")) {
                 lex_next(l);
-                if (l->current.type == TOK_IDENT) {
-                    str_copy(c->to_file, l->current.text, sizeof(c->to_file));
-                    lex_next(l);
-                }
+                if (consume_filename(l, c->to_file, sizeof(c->to_file)) < 0)
+                    return -1;
             } else {
                 return -1; /* Unknown TO clause */
             }
@@ -1511,9 +1538,17 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
     index_t *idx = controlling_index();
     uint32_t remaining = 0xFFFFFFFF;
     int has_limit = 0;
+    uint32_t orig_rec = db->current_record;
+    int orig_eof = expr_ctx.eof_flag;
+    int orig_bof = expr_ctx.bof_flag;
+    uint32_t last_rec = 0;
 
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
+        return;
+    }
+    if (is_display && (db->current_record == 0 || expr_ctx.eof_flag)) {
+        printf("No current record.\n");
         return;
     }
 
@@ -1582,20 +1617,20 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
     }
 
     if (set_opts.heading && !(is_display && use_all_fields)) {
-        if (!c.off) printf("Record#");
+        if (!c.off) PRINT_TO(to_file, "Record#");
         if (use_all_fields) {
             for (f = 0; f < db->field_count; f++) {
                 int w = field_display_width(db, f);
-                printf(" %-*s", w, db->fields[f].name);
+                PRINT_TO(to_file, " %-*s", w, db->fields[f].name);
             }
         } else {
             for (f = 0; f < nfields; f++) {
                 int idx_f = field_indices[f];
                 int w = field_display_width(db, idx_f);
-                printf(" %-*s", w, db->fields[idx_f].name);
+                PRINT_TO(to_file, " %-*s", w, db->fields[idx_f].name);
             }
         }
-        printf("\n");
+        PRINT_TO(to_file, "\n");
     }
 
     expr_ctx.eof_flag = 0;
@@ -1621,14 +1656,14 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
         }
 
         if (matched) {
-            if (is_display && row_count > 0 && (row_count % 20) == 0) {
+            if (is_display && !to_file && row_count > 0 && (row_count % 20) == 0) {
                 printf("Press any key to continue...");
                 getchar();
                 printf("\r                           \r");
             }
 
             if (is_display && use_all_fields) {
-                printf("Record# %d\n", (int)current_rec);
+                PRINT_TO(to_file, "Record# %d\n", (int)current_rec);
                 for (f = 0; f < db->field_count; f++)
                     print_field_value(db, f, raw, display, to_file, 0, 0);
             } else {
@@ -1647,6 +1682,7 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
                 }
                 PRINT_TO(to_file, "\n");
             }
+            last_rec = current_rec;
             row_count++;
             if (has_limit) remaining--;
         }
@@ -1662,6 +1698,14 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
     }
 
     if (to_file) fclose(to_file);
+
+    /* Restore current record to last displayed, preserving pre-list flags. */
+    if (last_rec > 0)
+        dbf_read_record(db, last_rec);
+    else if (orig_rec > 0)
+        dbf_read_record(db, orig_rec);
+    expr_ctx.eof_flag = orig_eof;
+    expr_ctx.bof_flag = orig_bof;
 }
 
 static void cmd_list(dbf_t *db, lexer_t *l) {
