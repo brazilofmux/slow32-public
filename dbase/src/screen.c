@@ -250,6 +250,18 @@ void screen_read(void) {
                 } else {
                     v = val_str(buf);
                 }
+                /* RANGE validation (match line-mode behavior) */
+                if (scr.gets[i].has_range && v.type == VAL_NUM) {
+                    double n = v.num;
+                    double lo = scr.gets[i].range_lo.num;
+                    double hi = scr.gets[i].range_hi.num;
+                    if (n < lo || n > hi) {
+                        term_set_raw(0);
+                        printf("Range: %g to %g\n", lo, hi);
+                        term_set_raw(1);
+                        continue;  /* reject, keep current value */
+                    }
+                }
                 memvar_set(store, scr.gets[i].varname, &v);
             }
         }
