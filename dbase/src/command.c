@@ -13,7 +13,6 @@
 #include "program.h"
 #include "screen.h"
 #include "index.h"
-#include "lex.h"
 
 /* ---- Work area infrastructure ---- */
 #define MAX_AREAS 10
@@ -2584,136 +2583,104 @@ expr_ctx_t *cmd_get_expr_ctx(void) {
 
 /* ---- Dispatch ---- */
 int cmd_execute(dbf_t *db, char *line) {
-    lexer_t l;
+    char *p;
     dbf_t *cdb;
-    const char *p;
-    char cmd[256];
 
     (void)db;
     ctx_setup();
     cdb = cur_db();
 
-    lexer_init(&l, line);
-    if (l.current.type == TOK_EOF) return 0;
-    if (l.current.type == TOK_MUL) return 0; /* * comment */
+    p = skip_ws(line);
+    if (*p == '\0') return 0;
 
-    if (l.current.type != TOK_IDENT) {
-        /* Check for special non-ident commands like ?, ??, @ */
-        p = l.token_start;
-        if (p[0] == '@') {
-            screen_at_cmd(p);
-            return 0;
-        }
-        if (p[0] == '?' && p[1] == '?') {
-            cmd_print_expr(p + 2, 0);
-            return 0;
-        }
-        if (p[0] == '?') {
-            cmd_print_expr(p + 1, 1);
-            return 0;
-        }
-        printf("Syntax error.\n");
-        return 0;
-    }
+    /* Full-line comment (when run interactively or from program) */
+    if (*p == '*') return 0;
+    if (str_imatch(p, "NOTE")) return 0;
 
-    str_copy(cmd, l.current.text, sizeof(cmd));
-    p = skip_ws(l.p); /* Pointer to rest of line after command token */
-
-    if (IS_KW(cmd, "NOTE")) return 0;
-
-    if (IS_KW(cmd, "DO")) {
-        prog_do(p);
-        return 0;
-    }
-
-    /* Check for assignment early if it's an ident followed by = */
-    {
-        lexer_t la = l;
-        lex_next(&la);
-        if (la.current.type == TOK_EQ) {
-            value_t val;
-            if (expr_eval_str(&expr_ctx, la.p, &val) != 0) {
-                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
-                return 0;
-            }
-            memvar_set(&memvar_store, cmd, &val);
+    /* DO command: route to program subsystem for DO <file>, DO WHILE, DO CASE */
+    if (str_imatch(p, "DO")) {
+        char *rest = skip_ws(p + 2);
+        /* DO WHILE, DO CASE, DO <file/proc> all go to program.c */
+        if (str_imatch(rest, "WHILE") || str_imatch(rest, "CASE") ||
+            (*rest && !str_imatch(rest, "WHILE") && !str_imatch(rest, "CASE"))) {
+            prog_do(rest);
             return 0;
         }
     }
 
     /* Control flow commands - only valid during program execution */
-    if (IS_KW(cmd, "IF")) {
-        if (prog_is_running()) { prog_if(p); }
+    if (str_imatch(p, "IF")) {
+        if (prog_is_running()) { prog_if(skip_ws(p + 2)); }
         else printf("IF not allowed in interactive mode.\n");
         return 0;
     }
-    if (IS_KW(cmd, "ELSE")) {
+    if (str_imatch(p, "ELSE")) {
         if (prog_is_running()) prog_else();
         else printf("ELSE without IF.\n");
         return 0;
     }
-    if (IS_KW(cmd, "ENDIF")) {
+    if (str_imatch(p, "ENDIF")) {
         if (prog_is_running()) prog_endif();
         else printf("ENDIF without IF.\n");
         return 0;
     }
-    if (IS_KW(cmd, "ENDDO")) {
+    if (str_imatch(p, "ENDDO")) {
         if (prog_is_running()) prog_enddo();
         else printf("ENDDO without DO WHILE.\n");
         return 0;
     }
-    if (IS_KW(cmd, "LOOP")) {
+    if (str_imatch(p, "LOOP")) {
         if (prog_is_running()) prog_loop();
         else printf("LOOP without DO WHILE.\n");
         return 0;
     }
-    if (IS_KW(cmd, "CASE")) {
-        if (prog_is_running()) prog_case(p);
+    if (str_imatch(p, "CASE")) {
+        if (prog_is_running()) prog_case(skip_ws(p + 4));
         else printf("CASE without DO CASE.\n");
         return 0;
     }
-    if (IS_KW(cmd, "OTHERWISE")) {
+    if (str_imatch(p, "OTHERWISE")) {
         if (prog_is_running()) prog_otherwise();
         else printf("OTHERWISE without DO CASE.\n");
         return 0;
     }
-    if (IS_KW(cmd, "ENDCASE")) {
+    if (str_imatch(p, "ENDCASE")) {
         if (prog_is_running()) prog_endcase();
         else printf("ENDCASE without DO CASE.\n");
         return 0;
     }
-    if (IS_KW(cmd, "RETURN")) {
-        if (prog_is_running()) prog_return(p);
+    if (str_imatch(p, "RETURN")) {
+        if (prog_is_running()) prog_return(skip_ws(p + 6));
         else printf("RETURN not in program.\n");
         return 0;
     }
-    if (IS_KW(cmd, "PROCEDURE")) {
-        if (prog_is_running()) prog_procedure(p);
+    if (str_imatch(p, "PROCEDURE")) {
+        if (prog_is_running()) prog_procedure(skip_ws(p + 9));
         else printf("PROCEDURE not allowed in interactive mode.\n");
         return 0;
     }
-    if (IS_KW(cmd, "PARAMETERS")) {
-        if (prog_is_running()) prog_parameters(p);
+    if (str_imatch(p, "PARAMETERS")) {
+        if (prog_is_running()) prog_parameters(skip_ws(p + 10));
         else printf("PARAMETERS not allowed in interactive mode.\n");
         return 0;
     }
-    if (IS_KW(cmd, "PRIVATE")) {
-        prog_private(p);
+    if (str_imatch(p, "PRIVATE")) {
+        prog_private(skip_ws(p + 7));
         return 0;
     }
-    if (IS_KW(cmd, "PUBLIC")) {
-        prog_public(p);
+    if (str_imatch(p, "PUBLIC")) {
+        prog_public(skip_ws(p + 6));
         return 0;
     }
-    if (IS_KW(cmd, "CANCEL")) {
+    if (str_imatch(p, "CANCEL")) {
         if (prog_is_running()) prog_cancel();
         return 0;
     }
 
-    if (IS_KW(cmd, "QUIT")) {
+    if (str_imatch(p, "QUIT")) {
         return 1;
     }
-    if (IS_KW(cmd, "EXIT")) {
+    if (str_imatch(p, "EXIT")) {
         /* EXIT in loop context = break, otherwise QUIT */
         if (prog_is_running()) {
             prog_exit_loop();
@@ -2722,40 +2689,35 @@ int cmd_execute(dbf_t *db, char *line) {
         return 1;
     }
 
-    if (IS_KW(cmd, "SELECT")) {
-        cmd_select(p);
+    if (str_imatch(p, "SELECT")) {
+        cmd_select(p + 6);
         return 0;
     }
 
-    if (IS_KW(cmd, "CREATE")) {
-        cmd_create(cdb, p);
+    if (str_imatch(p, "CREATE")) {
+        cmd_create(cdb, p + 6);
         return 0;
     }
 
-    if (IS_KW(cmd, "USE")) {
-        cmd_use(cdb, p);
+    if (str_imatch(p, "USE")) {
+        cmd_use(cdb, p + 3);
         return 0;
     }
 
     /* COPY TO / COPY STRUCTURE TO */
-    if (IS_KW(cmd, "COPY")) {
-        lexer_t l2;
-        lexer_init(&l2, p);
-        if (l2.current.type == TOK_IDENT) {
-            if (IS_KW(l2.current.text, "STRUCTURE")) {
-                lex_next(&l2);
-                if (l2.current.type == TOK_IDENT && IS_KW(l2.current.text, "TO")) {
-                    cmd_copy_structure(cdb, skip_ws(l2.p));
-                } else {
-                    printf("Syntax: COPY STRUCTURE TO <filename>\n");
-                }
-            } else if (IS_KW(l2.current.text, "FILE")) {
-                cmd_copy_file(skip_ws(l2.p));
-            } else if (IS_KW(l2.current.text, "TO")) {
-                cmd_copy_to(cdb, skip_ws(l2.p));
+    if (str_imatch(p, "COPY")) {
+        char *rest = skip_ws(p + 4);
+        if (str_imatch(rest, "STRUCTURE")) {
+            rest = skip_ws(rest + 9);
+            if (str_imatch(rest, "TO")) {
+                cmd_copy_structure(cdb, rest + 2);
             } else {
-                printf("Syntax: COPY TO <filename> | COPY FILE <src> TO <dst> | COPY STRUCTURE TO <filename>\n");
+                printf("Syntax: COPY STRUCTURE TO <filename>\n");
             }
+        } else if (str_imatch(rest, "FILE")) {
+            cmd_copy_file(rest + 4);
+        } else if (str_imatch(rest, "TO")) {
+            cmd_copy_to(cdb, rest + 2);
         } else {
             printf("Syntax: COPY TO <filename> | COPY FILE <src> TO <dst> | COPY STRUCTURE TO <filename>\n");
         }
@@ -2763,267 +2725,286 @@ int cmd_execute(dbf_t *db, char *line) {
     }
 
     /* APPEND BLANK / APPEND FROM */
-    if (IS_KW(cmd, "APPEND")) {
-        lexer_t l2;
-        lexer_init(&l2, p);
-        if (l2.current.type == TOK_IDENT) {
-            if (IS_KW(l2.current.text, "BLANK")) {
-                cmd_append_blank(cdb);
-            } else if (IS_KW(l2.current.text, "FROM")) {
-                cmd_append_from(cdb, skip_ws(l2.p));
-            } else {
-                printf("Syntax: APPEND BLANK | APPEND FROM <filename>\n");
-            }
+    if (str_imatch(p, "APPEND")) {
+        char *rest = skip_ws(p + 6);
+        if (str_imatch(rest, "BLANK")) {
+            cmd_append_blank(cdb);
+        } else if (str_imatch(rest, "FROM")) {
+            cmd_append_from(cdb, rest + 4);
         } else {
             printf("Syntax: APPEND BLANK | APPEND FROM <filename>\n");
         }
         return 0;
     }
 
-    if (IS_KW(cmd, "SORT")) {
-        lexer_t l2;
-        lexer_init(&l2, p);
-        if (l2.current.type == TOK_IDENT && IS_KW(l2.current.text, "TO")) {
-            cmd_sort(cdb, skip_ws(l2.p));
+    if (str_imatch(p, "SORT")) {
+        char *rest = skip_ws(p + 4);
+        if (str_imatch(rest, "TO")) {
+            cmd_sort(cdb, rest + 2);
         } else {
             printf("Syntax: SORT TO <filename> ON <field> [/A][/D][/C]\n");
         }
         return 0;
     }
 
-    if (IS_KW(cmd, "REPLACE")) {
-        cmd_replace(cdb, p);
+    if (str_imatch(p, "REPLACE")) {
+        cmd_replace(cdb, p + 7);
         return 0;
     }
 
     /* GO / GOTO */
-    if (IS_KW(cmd, "GOTO") || IS_KW(cmd, "GO")) {
-        cmd_go(cdb, p);
+    if (str_imatch(p, "GOTO")) {
+        cmd_go(cdb, p + 4);
+        return 0;
+    }
+    if (str_imatch(p, "GO")) {
+        cmd_go(cdb, p + 2);
         return 0;
     }
 
-    if (IS_KW(cmd, "SKIP")) {
-        cmd_skip(cdb, p);
+    if (str_imatch(p, "SKIP")) {
+        cmd_skip(cdb, p + 4);
         return 0;
     }
 
-    if (IS_KW(cmd, "LOCATE")) {
-        cmd_locate(cdb, p);
+    if (str_imatch(p, "LOCATE")) {
+        cmd_locate(cdb, p + 6);
         return 0;
     }
 
-    if (IS_KW(cmd, "CONTINUE")) {
+    if (str_imatch(p, "CONTINUE")) {
         cmd_continue(cdb);
         return 0;
     }
 
-    if (IS_KW(cmd, "COUNT")) {
-        cmd_count(cdb, p);
+    if (str_imatch(p, "COUNT")) {
+        cmd_count(cdb, p + 5);
         return 0;
     }
 
-    if (IS_KW(cmd, "SUM")) {
-        cmd_sum(cdb, p);
+    if (str_imatch(p, "SUM")) {
+        cmd_sum(cdb, p + 3);
         return 0;
     }
 
-    if (IS_KW(cmd, "AVERAGE")) {
-        cmd_average(cdb, p);
+    if (str_imatch(p, "AVERAGE")) {
+        cmd_average(cdb, p + 7);
         return 0;
     }
 
     /* DISPLAY STRUCTURE / DISPLAY MEMORY must be checked before plain DISPLAY */
-    if (IS_KW(cmd, "DISPLAY")) {
-        lexer_t l2;
-        lexer_init(&l2, p);
-        if (l2.current.type == TOK_IDENT) {
-            if (IS_KW(l2.current.text, "STRUCTURE")) {
-                cmd_display_structure(cdb);
-            } else if (IS_KW(l2.current.text, "MEMORY")) {
-                memvar_display(&memvar_store);
-            } else {
-                cmd_display(cdb, p);
-            }
+    if (str_imatch(p, "DISPLAY")) {
+        char *rest = skip_ws(p + 7);
+        if (str_imatch(rest, "STRUCTURE")) {
+            cmd_display_structure(cdb);
+        } else if (str_imatch(rest, "MEMORY")) {
+            memvar_display(&memvar_store);
         } else {
-            cmd_display(cdb, p);
+            cmd_display(cdb, rest);
         }
         return 0;
     }
 
-    if (IS_KW(cmd, "LIST")) {
-        cmd_list(cdb, p);
+    if (str_imatch(p, "LIST")) {
+        cmd_list(cdb, p + 4);
         return 0;
     }
 
-    if (IS_KW(cmd, "STORE")) {
-        cmd_store(cdb, p);
+    if (str_imatch(p, "STORE")) {
+        cmd_store(cdb, p + 5);
         return 0;
     }
 
-    if (IS_KW(cmd, "RELEASE")) {
-        cmd_release(p);
+    if (str_imatch(p, "RELEASE")) {
+        cmd_release(p + 7);
         return 0;
     }
 
-    if (IS_KW(cmd, "SET")) {
-        lexer_t l2;
-        lexer_init(&l2, p);
-        if (l2.current.type == TOK_IDENT) {
-            char set_cmd[64];
-            str_copy(set_cmd, l2.current.text, sizeof(set_cmd));
-            if (IS_KW(set_cmd, "COLOR")) {
-                lex_next(&l2);
-                if (l2.current.type == TOK_IDENT && IS_KW(l2.current.text, "TO"))
-                    screen_set_color(skip_ws(l2.p));
-                else
-                    printf("Syntax: SET COLOR TO <color-spec>\n");
-            } else if (IS_KW(set_cmd, "INDEX")) {
-                lex_next(&l2);
-                if (l2.current.type == TOK_IDENT && IS_KW(l2.current.text, "TO"))
-                    cmd_set_index(cdb, skip_ws(l2.p));
-                else
-                    printf("Syntax: SET INDEX TO [filename]\n");
-            } else if (IS_KW(set_cmd, "PROCEDURE")) {
-                lex_next(&l2);
-                if (l2.current.type == TOK_IDENT && IS_KW(l2.current.text, "TO")) {
-                    prog_set_procedure(skip_ws(l2.p));
+    if (str_imatch(p, "SET")) {
+        char *rest = skip_ws(p + 3);
+        if (str_imatch(rest, "COLOR")) {
+            rest = skip_ws(rest + 5);
+            if (str_imatch(rest, "TO"))
+                screen_set_color(skip_ws(rest + 2));
+            else
+                printf("Syntax: SET COLOR TO <color-spec>\n");
+        } else if (str_imatch(rest, "INDEX")) {
+            rest = skip_ws(rest + 5);
+            if (str_imatch(rest, "TO"))
+                cmd_set_index(cdb, skip_ws(rest + 2));
+            else
+                printf("Syntax: SET INDEX TO [filename]\n");
+        } else if (str_imatch(rest, "PROCEDURE")) {
+            rest = skip_ws(rest + 9);
+            if (str_imatch(rest, "TO")) {
+                prog_set_procedure(skip_ws(rest + 2));
+            } else {
+                printf("Syntax: SET PROCEDURE TO [filename]\n");
+            }
+        } else if (str_imatch(rest, "FILTER")) {
+            rest = skip_ws(rest + 6);
+            if (str_imatch(rest, "TO")) {
+                rest = skip_ws(rest + 2);
+                if (*rest == '\0') {
+                    areas[current_area].filter_cond[0] = '\0';
+                    printf("Filter removed.\n");
                 } else {
-                    printf("Syntax: SET PROCEDURE TO [filename]\n");
-                }
-            } else if (IS_KW(set_cmd, "FILTER")) {
-                lex_next(&l2);
-                if (l2.current.type == TOK_IDENT && IS_KW(l2.current.text, "TO")) {
-                    const char *rest = skip_ws(l2.p);
-                    if (*rest == '\0') {
-                        areas[current_area].filter_cond[0] = '\0';
-                        printf("Filter removed.\n");
-                    } else {
-                        str_copy(areas[current_area].filter_cond, rest,
-                                 sizeof(areas[current_area].filter_cond));
-                        printf("Filter: %s\n", areas[current_area].filter_cond);
-                    }
-                } else {
-                    printf("Syntax: SET FILTER TO [condition]\n");
-                }
-            } else if (IS_KW(set_cmd, "ORDER")) {
-                lex_next(&l2);
-                if (l2.current.type == TOK_IDENT && IS_KW(l2.current.text, "TO")) {
-                    lex_next(&l2);
-                    if (l2.current.type == TOK_EOF) {
-                        areas[current_area].order = 0;
-                        printf("Natural record order.\n");
-                    } else if (l2.current.type == TOK_NUMBER) {
-                        int n = (int)l2.current.num_val;
-                        if (n < 0 || n > areas[current_area].num_indexes) {
-                            printf("Index number out of range (0-%d).\n", areas[current_area].num_indexes);
-                        } else {
-                            areas[current_area].order = n;
-                            if (n > 0) {
-                                index_t *idx = &areas[current_area].indexes[n - 1];
-                                printf("Order set to %d (%s).\n", n, idx->filename);
-                            } else {
-                                printf("Natural record order.\n");
-                            }
-                        }
-                    } else {
-                        printf("Syntax: SET ORDER TO <n>\n");
-                    }
-                } else {
-                    printf("Syntax: SET ORDER TO <n>\n");
+                    str_copy(areas[current_area].filter_cond, rest,
+                             sizeof(areas[current_area].filter_cond));
+                    printf("Filter: %s\n", areas[current_area].filter_cond);
                 }
             } else {
-                set_execute(&set_opts, p);
+                printf("Syntax: SET FILTER TO [condition]\n");
+            }
+        } else if (str_imatch(rest, "ORDER")) {
+            rest = skip_ws(rest + 5);
+            if (str_imatch(rest, "TO")) {
+                rest = skip_ws(rest + 2);
+                if (*rest == '\0' || *rest == '0') {
+                    areas[current_area].order = 0;
+                    printf("Natural record order.\n");
+                } else {
+                    int n = atoi(rest);
+                    if (n < 0 || n > areas[current_area].num_indexes) {
+                        printf("Index number out of range (0-%d).\n", areas[current_area].num_indexes);
+                    } else {
+                        areas[current_area].order = n;
+                        if (n > 0) {
+                            index_t *idx = &areas[current_area].indexes[n - 1];
+                            printf("Order set to %d (%s).\n", n, idx->filename);
+                        } else {
+                            printf("Natural record order.\n");
+                        }
+                    }
+                }
+            } else {
+                printf("Syntax: SET ORDER TO <n>\n");
             }
         } else {
-            set_execute(&set_opts, p);
+            set_execute(&set_opts, rest);
         }
         return 0;
     }
 
     /* INDEX ON <expr> TO <file> */
-    if (IS_KW(cmd, "INDEX")) {
-        lexer_t l2;
-        lexer_init(&l2, p);
-        if (l2.current.type == TOK_IDENT && IS_KW(l2.current.text, "ON")) {
-            cmd_index_on(cdb, skip_ws(l2.p));
+    if (str_imatch(p, "INDEX")) {
+        char *rest = skip_ws(p + 5);
+        if (str_imatch(rest, "ON")) {
+            cmd_index_on(cdb, rest + 2);
         } else {
             printf("Syntax: INDEX ON <expr> TO <filename>\n");
         }
         return 0;
     }
 
-    if (IS_KW(cmd, "SEEK")) {
-        cmd_seek(cdb, p);
+    if (str_imatch(p, "SEEK")) {
+        cmd_seek(cdb, p + 4);
         return 0;
     }
 
-    if (IS_KW(cmd, "FIND")) {
-        cmd_find(cdb, p);
+    if (str_imatch(p, "FIND")) {
+        cmd_find(cdb, p + 4);
         return 0;
     }
 
-    if (IS_KW(cmd, "REINDEX")) {
+    if (str_imatch(p, "REINDEX")) {
         cmd_reindex(cdb);
         return 0;
     }
 
-    if (IS_KW(cmd, "DELETE")) {
-        cmd_delete(cdb, p);
+    if (str_imatch(p, "DELETE")) {
+        cmd_delete(cdb, p + 6);
         return 0;
     }
 
-    if (IS_KW(cmd, "RECALL")) {
-        cmd_recall(cdb, p);
+    if (str_imatch(p, "RECALL")) {
+        cmd_recall(cdb, p + 6);
         return 0;
     }
 
-    if (IS_KW(cmd, "PACK")) {
+    if (str_imatch(p, "PACK")) {
         cmd_pack(cdb);
         return 0;
     }
 
-    if (IS_KW(cmd, "ZAP")) {
+    if (str_imatch(p, "ZAP")) {
         cmd_zap(cdb);
         return 0;
     }
 
-    if (IS_KW(cmd, "ERASE")) {
-        cmd_erase(p);
+    if (str_imatch(p, "ERASE")) {
+        cmd_erase(p + 5);
         return 0;
     }
 
-    if (IS_KW(cmd, "RENAME")) {
-        cmd_rename(p);
+    if (str_imatch(p, "RENAME")) {
+        cmd_rename(p + 6);
         return 0;
     }
 
-    if (IS_KW(cmd, "ACCEPT")) {
-        cmd_accept(p);
+    if (str_imatch(p, "ACCEPT")) {
+        cmd_accept(p + 6);
         return 0;
     }
 
-    if (IS_KW(cmd, "INPUT")) {
-        cmd_input(p);
+    if (str_imatch(p, "INPUT")) {
+        cmd_input(p + 5);
         return 0;
     }
 
-    if (IS_KW(cmd, "WAIT")) {
-        cmd_wait(p);
+    if (str_imatch(p, "WAIT")) {
+        cmd_wait(p + 4);
         return 0;
     }
 
-    if (IS_KW(cmd, "CLEAR")) {
+    if (str_imatch(p, "CLEAR")) {
         screen_clear();
         return 0;
     }
 
-    if (IS_KW(cmd, "READ")) {
+    if (str_imatch(p, "READ")) {
         screen_read();
         return 0;
     }
 
-    /* Variable assignment: moved to top of dispatch */
+    /* @ command (screen I/O) */
+    if (p[0] == '@') {
+        screen_at_cmd(p);
+        return 0;
+    }
 
-    printf("Unknown command: %s\n", cmd);
+    /* ?? (no newline) must be checked before ? */
+    if (p[0] == '?' && p[1] == '?') {
+        cmd_print_expr(p + 2, 0);
+        return 0;
+    }
+
+    if (p[0] == '?') {
+        cmd_print_expr(p + 1, 1);
+        return 0;
+    }
+
+    /* Variable assignment: identifier = expr */
+    if (is_ident_start(p[0])) {
+        const char *q = p;
+        char name[MEMVAR_NAMELEN];
+        int i = 0;
+        while (is_ident_char(*q) && i < MEMVAR_NAMELEN - 1)
+            name[i++] = *q++;
+        name[i] = '\0';
+        q = skip_ws(q);
+        if (*q == '=') {
+            value_t val;
+            q++;
+            if (expr_eval_str(&expr_ctx, q, &val) != 0) {
+                if (expr_ctx.error) printf("Error: %s\n", expr_ctx.error);
+                return 0;
+            }
+            memvar_set(&memvar_store, name, &val);
+            return 0;
+        }
+    }
+
+    printf("Unrecognized command.\n");
     return 0;
 }
