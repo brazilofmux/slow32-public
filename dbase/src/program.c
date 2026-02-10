@@ -5,6 +5,7 @@
 #include "command.h"
 #include "func.h"
 #include "util.h"
+#include "lex.h"
 
 static prog_state_t state;
 
@@ -1404,6 +1405,12 @@ void prog_parameters(const char *arg) {
         name[i] = '\0';
 
         if (name[0] != '\0') {
+            if (lex_is_reserved(name)) {
+                char err[128];
+                snprintf(err, sizeof(err), "%s is a reserved keyword", name);
+                prog_error(ERR_SYNTAX, err);
+                return;
+            }
             /* Save current value as PRIVATE */
             if (frame) {
                 save_private(frame, name);
@@ -1445,6 +1452,12 @@ void prog_private(const char *arg) {
         name[i] = '\0';
 
         if (name[0] != '\0') {
+            if (lex_is_reserved(name)) {
+                char err[128];
+                snprintf(err, sizeof(err), "%s is a reserved keyword", name);
+                prog_error(ERR_SYNTAX, err);
+                return;
+            }
             save_private(&state.call_stack[state.call_depth - 1], name);
             /* Release the current value - create fresh */
             memvar_release(store, name);
@@ -1473,6 +1486,12 @@ void prog_public(const char *arg) {
         name[i] = '\0';
 
         if (name[0] != '\0') {
+            if (lex_is_reserved(name)) {
+                char err[128];
+                snprintf(err, sizeof(err), "%s is a reserved keyword", name);
+                prog_error(ERR_SYNTAX, err);
+                return;
+            }
             /* Create variable if it doesn't exist */
             if (memvar_find(store, name, &existing) != 0) {
                 value_t v = val_logic(0); /* PUBLIC vars default to .F. */

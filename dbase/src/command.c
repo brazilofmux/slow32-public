@@ -2089,6 +2089,12 @@ static void cmd_accept(const char *arg) {
         printf("Syntax: ACCEPT [\"prompt\"] TO <variable>\n");
         return;
     }
+    if (lex_is_reserved(name)) {
+        char err[128];
+        snprintf(err, sizeof(err), "%s is a reserved keyword", name);
+        prog_error(ERR_SYNTAX, err);
+        return;
+    }
 
     if (read_line(line, sizeof(line)) < 0)
         line[0] = '\0';
@@ -2130,6 +2136,12 @@ static void cmd_input(const char *arg) {
         printf("Syntax: INPUT [\"prompt\"] TO <variable>\n");
         return;
     }
+    if (lex_is_reserved(name)) {
+        char err[128];
+        snprintf(err, sizeof(err), "%s is a reserved keyword", name);
+        prog_error(ERR_SYNTAX, err);
+        return;
+    }
 
     if (read_line(line, sizeof(line)) < 0)
         line[0] = '\0';
@@ -2169,7 +2181,15 @@ static void cmd_wait(const char *arg) {
         while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1)
             name[i++] = *p++;
         name[i] = '\0';
-        has_to = (name[0] != '\0');
+        if (name[0] != '\0') {
+            if (lex_is_reserved(name)) {
+                char err[128];
+                snprintf(err, sizeof(err), "%s is a reserved keyword", name);
+                prog_error(ERR_SYNTAX, err);
+                return;
+            }
+            has_to = 1;
+        }
     }
 
     c = getchar();

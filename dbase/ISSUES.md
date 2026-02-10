@@ -15,6 +15,9 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 ### 1.3 Procedure Search Robustness
 - **Status**: Core keywords (`PROCEDURE`, `FUNCTION`, `IF`, `DO`, etc.) are now reserved words. Assignments to these names are rejected.
 - **Milestone**: `find_procedure` is now 100% robust against false positives in assignments, while `prog_preprocess` continues to handle comments and strings.
+### 1.3a Reserved Keyword Enforcement Coverage
+- **Status**: Reserved keyword checks are now enforced in `STORE`, direct assignments, `PARAMETERS`, `PRIVATE`, `PUBLIC`, and interactive `ACCEPT`/`INPUT`/`WAIT` targets.
+- **Note**: This keeps dBase III/Clipper behavior tight without introducing additional macro indirection.
 
 ### 1.4 Function Argument Scaling
 - **Limitation**: `parse_primary` uses a fixed-size `args[8]` array for function calls.
