@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "dbf.h"
+#include "area.h"
 #include "util.h"
 
 #define DBF_CACHE_RECORDS 32
@@ -208,7 +209,7 @@ int dbf_append_blank(dbf_t *db) {
     dbf_write_header_counts(db);
 
     db->record_dirty = 0;
-    dbf_cache_invalidate(db);
+    area_invalidate_all(db->filename);
     return 0;
 }
 
@@ -272,7 +273,7 @@ int dbf_flush_record(dbf_t *db) {
     fwrite(db->record_buf, 1, db->record_size, db->fp);
     fflush(db->fp);
     db->record_dirty = 0;
-    dbf_cache_invalidate(db);
+    area_invalidate_all(db->filename);
     return 0;
 }
 

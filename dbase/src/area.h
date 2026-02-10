@@ -31,4 +31,7 @@ int area_resolve_alias(const char *alias);
 /* Resolve alias to dbf pointer. Returns NULL if not found. */
 dbf_t *area_lookup_dbf(const char *alias);
 
+/* Invalidate cache for all work areas using specified filename */
+void area_invalidate_all(const char *filename);
+
 #endif

@@ -27,9 +27,8 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 - **Milestone**: Metadata overhead no longer scales with index file size. Supports multi-gigabyte indexes with constant-time lookup and minimal RAM footprint.
 
 ### 2.2 DBF Cache Coherence
-- **Issue**: Each `dbf_t` handle has its own 32-record read-ahead cache.
-- **Bug**: If the same DBF file is opened in two work areas, writing to one does not invalidate the cache of the other.
-- **Strategy**: Implement a shared global record cache indexed by file inode/device, or document this as a known limitation of the multi-area implementation.
+- **Status**: Global cache invalidation is now implemented across all work areas.
+- **Milestone**: Writing to a DBF in one work area automatically invalidates the read-ahead cache of any other work areas that have the same file open, ensuring data consistency.
 
 ### 2.3 SORT External Merge Sort
 - **Status**: `cmd_sort` has been refactored into a multi-pass external merge sort.
@@ -60,6 +59,7 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 
 ## 4. Completed Milestone Successes
 
+- **DBF Cache Coherence**: Implemented a global cache invalidation mechanism. By tracking open filenames across all work areas and triggering invalidations on write, we've guaranteed that the high-performance read-ahead cache remains coherent even in complex multi-area scenarios.
 - **Function Argument Scaling**: Increased the maximum number of arguments for function calls and UDFs to 32. This allows for much more complex programming patterns and data-entry helpers.
 - **External Merge Sort**: Refactored `SORT` to use a multi-pass external merge sort algorithm. It sorts data in manageable chunks, writes them to disk, and merges them using a K-way merge. This allows the system to sort databases far larger than the available RAM.
 - **O(N) Index Build**: Implemented bottom-up index construction. By sorting keys in memory first and packing the B+ tree from the leaves up, we eliminate the O(N log N) individual insertion overhead and produce perfectly balanced, highly efficient index files.

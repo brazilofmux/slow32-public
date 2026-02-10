@@ -92,3 +92,13 @@ dbf_t *area_lookup_dbf(const char *alias) {
     if (idx >= 0) return &areas[idx].db;
     return NULL;
 }
+
+void area_invalidate_all(const char *filename) {
+    int i;
+    for (i = 0; i < MAX_AREAS; i++) {
+        dbf_t *db = &areas[i].db;
+        if (dbf_is_open(db) && str_icmp(db->filename, filename) == 0) {
+            dbf_cache_invalidate(db);
+        }
+    }
+}
