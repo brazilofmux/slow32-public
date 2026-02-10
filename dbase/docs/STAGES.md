@@ -1,6 +1,38 @@
-# dBase III Implementation Stages
+# dBase III Clone for SLOW-32
 
-A dBase III clone for SLOW-32, built in C against the MMIO runtime.
+A dBase III Plus compatible database management system, built in C
+against the MMIO runtime. Target: run real 1986 dBase III programs.
+
+## Current Status
+
+**44/44 tests passing.** Core engine is solid. See [STATUS.md](STATUS.md)
+for the complete feature inventory.
+
+What works today:
+- DBF file format (CREATE, USE, read/write records)
+- 75+ commands (navigation, editing, display, file ops, bulk ops)
+- 39 built-in functions (string, numeric, date, status)
+- 13 SET options
+- Expression evaluator with lexer-based recursive descent
+- 10 work areas with cross-area field references
+- Memory variables with PRIVATE/PUBLIC scoping
+- Programming language (PRG files, IF/ELSE, DO WHILE, DO CASE, FOR/NEXT)
+- Procedures and user-defined FUNCTION with parameters
+- Screen I/O (@SAY, @GET, READ, CLEAR, box drawing)
+- Index files (INDEX ON, SEEK, FIND, multi-index, SET ORDER)
+- Macro substitution (&varname)
+- SET FILTER, SET PROCEDURE, scope clauses
+
+## What's Next
+
+See [ROADMAP.md](ROADMAP.md) for the prioritized work plan.
+See [TEACHERS-PET-ANALYSIS.md](TEACHERS-PET-ANALYSIS.md) for the
+feature gap analysis against the akron/ legacy application.
+
+Short version: ~8 small gaps block Teacher's Pet from running.
+Phase 1 (no-op SETs, CLOSE DATABASES, RELEASE ALL LIKE) is a
+single session of work. Phase 2 (SET DEVICE, RANGE, ROW/COL)
+is another 1-2 sessions.
 
 ## Architecture
 
@@ -10,8 +42,8 @@ dBase III is a database management system with:
 - **Expression evaluator** for queries and computed fields
 - **Full-screen terminal UI** for data entry (`@...SAY...GET`)
 - A **programming language** (`.PRG` files with control flow)
-- **B-tree indexes** (`.NDX` files) for fast lookups
-- **Report/label generators**
+- **Index files** (`.NDX`) for fast lookups
+- **Report/label generators** (not yet implemented)
 
 ## Data Types
 
@@ -24,35 +56,40 @@ dBase III is a database management system with:
 | Memo | M | 10-byte block number | (deferred) |
 
 All field data is stored as printable ASCII text in fixed-width fields.
-This makes the format human-readable and simplifies I/O.
 
-## Stages
+## Implementation History
 
-| Stage | Name | Focus | Key Deliverables |
-|-------|------|-------|-----------------|
-| 1 | [DBF Engine](STAGE1-dbf-engine.md) | File format + minimal REPL | CREATE, USE, APPEND, REPLACE, LIST, QUIT |
-| 2 | [Navigation & Expressions](STAGE2-navigation-expressions.md) | Record movement + expression evaluator | GO, SKIP, LOCATE, EOF(), string/numeric/date functions |
-| 3 | [Variables & Commands](STAGE3-variables-commands.md) | Memory variables + bulk operations | STORE, SET, COPY TO, APPEND FROM, DELETE/PACK, work areas |
-| 4 | [Terminal UI](STAGE4-terminal-ui.md) | Full-screen data entry | @...SAY...GET, READ, PICTURE, CLEAR, BROWSE |
-| 5 | [Programming Language](STAGE5-programming.md) | PRG execution + control flow | DO, IF/ENDIF, DO WHILE/ENDDO, CASE, procedures |
-| 6 | [Indexing & Reports](STAGE6-indexing-reports.md) | B-tree indexes + report generator | INDEX ON, SEEK, REPORT FORM, LABEL FORM |
-| 7 | [Optimization & Completion](OPTIMIZATION-AND-COMPLETENESS.md) | Robustness + Legacy Support | Proper Lexer, B-tree, Teacher's Pet Compatibility |
+| Stage | Focus | Status |
+|-------|-------|--------|
+| 1 | [DBF Engine](STAGE1-dbf-engine.md) — file format + REPL | Complete |
+| 2 | [Navigation & Expressions](STAGE2-navigation-expressions.md) — movement + evaluator | Complete |
+| 3 | [Variables & Commands](STAGE3-variables-commands.md) — vars, SETs, work areas, bulk ops | Complete |
+| 4A | Programming — PRG files, control flow, procedures, functions | Complete |
+| 4B | Screen I/O — @SAY/@GET/READ, CLEAR, box drawing, colors | Complete |
+| 4C | Indexing — INDEX ON, SEEK, FIND, multi-index, SET ORDER | Complete |
+| 5+ | [Roadmap](ROADMAP.md) — Teacher's Pet compatibility | In progress |
 
-Each stage produces a working, testable binary. Stage 1 is a usable
-(if primitive) database tool; each subsequent stage adds capability.
+The original stage 4-6-7 plan was reorganized during implementation.
+Programming, screen I/O, and indexing were delivered as 4A/4B/4C
+sub-stages. The original stage docs (STAGE4-6, OPTIMIZATION) are
+preserved as historical reference but are superseded by the new
+ROADMAP.md and STATUS.md.
 
-## Future Roadmap (Post-Stage 6)
+## Build & Test
 
-- **SQL Subset**: A layer on top of DBF to allow SQL SELECT queries.
-- **Network Support**: File locking for multi-user access (if supported by OS).
-- **C Extensions**: API for adding new functions in C.
-
-## Build Pattern
-
-Same as `sbasic/` and `basic/`:
 ```bash
 cd dbase && bash build.sh
-(cat commands.txt; echo "QUIT") | ../tools/emulator/slow32-fast dbase.s32x
+bash tests/run-tests.sh
+```
+
+Run interactively:
+```bash
+echo 'QUIT' | ../tools/emulator/slow32-fast dbase.s32x
+```
+
+Run a program:
+```bash
+(echo 'DO myprogram'; echo 'QUIT') | ../tools/emulator/slow32-fast dbase.s32x
 ```
 
 ## DBF File Format (Quick Reference)
