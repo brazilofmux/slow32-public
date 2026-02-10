@@ -6,19 +6,20 @@
 #include "set.h"
 #include "date.h"
 #include "util.h"
+#include "lex.h"
 
 /* Forward declarations for func.c */
 int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value_t *result);
 
 /* Forward declarations for recursive descent */
-static int parse_or(expr_ctx_t *ctx, const char **pp, value_t *result);
-static int parse_and(expr_ctx_t *ctx, const char **pp, value_t *result);
-static int parse_not(expr_ctx_t *ctx, const char **pp, value_t *result);
-static int parse_compare(expr_ctx_t *ctx, const char **pp, value_t *result);
-static int parse_add(expr_ctx_t *ctx, const char **pp, value_t *result);
-static int parse_mul(expr_ctx_t *ctx, const char **pp, value_t *result);
-static int parse_unary(expr_ctx_t *ctx, const char **pp, value_t *result);
-static int parse_primary(expr_ctx_t *ctx, const char **pp, value_t *result);
+static int parse_or(expr_ctx_t *ctx, lexer_t *l, value_t *result);
+static int parse_and(expr_ctx_t *ctx, lexer_t *l, value_t *result);
+static int parse_not(expr_ctx_t *ctx, lexer_t *l, value_t *result);
+static int parse_compare(expr_ctx_t *ctx, lexer_t *l, value_t *result);
+static int parse_add(expr_ctx_t *ctx, lexer_t *l, value_t *result);
+static int parse_mul(expr_ctx_t *ctx, lexer_t *l, value_t *result);
+static int parse_unary(expr_ctx_t *ctx, lexer_t *l, value_t *result);
+static int parse_primary(expr_ctx_t *ctx, lexer_t *l, value_t *result);
 
 /* ---- Value constructors ---- */
 
@@ -64,7 +65,6 @@ void val_to_string(const value_t *v, char *buf, int size) {
     case VAL_NUM: {
         /* Print integer if no fractional part, else strip trailing zeros */
         double n = v->num;
-        double intpart;
         /* Check if it's an integer value */
         if (n >= -2147483647.0 && n <= 2147483647.0) {
             int i = (int)n;
@@ -107,93 +107,52 @@ void val_to_string(const value_t *v, char *buf, int size) {
     }
 }
 
-/* ---- Helper: skip whitespace ---- */
-static const char *skip(const char *p) {
-    while (*p == ' ' || *p == '\t') p++;
-    return p;
-}
-
-/* ---- Helper: check for .AND. / .OR. / .NOT. keywords ---- */
-static int match_dot_keyword(const char *p, const char *kw) {
-    /* Match .KW. case-insensitively */
-    int len = strlen(kw);
-    int i;
-    if (*p != '.') return 0;
-    p++;
-    for (i = 0; i < len; i++) {
-        char c = p[i];
-        if (c >= 'a' && c <= 'z') c -= 32;
-        if (c != kw[i]) return 0;
-    }
-    if (p[len] != '.') return 0;
-    return len + 2; /* total chars consumed */
-}
-
 /* ---- Parser ---- */
 
 /* expr → or_expr */
-static int parse_expr(expr_ctx_t *ctx, const char **pp, value_t *result) {
-    return parse_or(ctx, pp, result);
+static int parse_expr(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
+    return parse_or(ctx, l, result);
 }
 
 /* or_expr → and_expr [ .OR. and_expr ]* */
-static int parse_or(expr_ctx_t *ctx, const char **pp, value_t *result) {
-    const char *p;
-    int n;
+static int parse_or(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
+    if (parse_and(ctx, l, result) != 0) return -1;
 
-    if (parse_and(ctx, pp, result) != 0) return -1;
-
-    for (;;) {
-        p = skip(*pp);
-        n = match_dot_keyword(p, "OR");
-        if (n == 0) break;
-        {
-            value_t right;
-            *pp = p + n;
-            if (parse_and(ctx, pp, &right) != 0) return -1;
-            if (result->type != VAL_LOGIC || right.type != VAL_LOGIC) {
-                ctx->error = "Type mismatch in .OR.";
-                return -1;
-            }
-            result->logic = result->logic || right.logic;
+    while (lex_peek(l) == TOK_OR) {
+        value_t right;
+        lex_next(l);
+        if (parse_and(ctx, l, &right) != 0) return -1;
+        if (result->type != VAL_LOGIC || right.type != VAL_LOGIC) {
+            ctx->error = "Type mismatch in .OR.";
+            return -1;
         }
+        result->logic = result->logic || right.logic;
     }
     return 0;
 }
 
 /* and_expr → not_expr [ .AND. not_expr ]* */
-static int parse_and(expr_ctx_t *ctx, const char **pp, value_t *result) {
-    const char *p;
-    int n;
+static int parse_and(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
+    if (parse_not(ctx, l, result) != 0) return -1;
 
-    if (parse_not(ctx, pp, result) != 0) return -1;
-
-    for (;;) {
-        p = skip(*pp);
-        n = match_dot_keyword(p, "AND");
-        if (n == 0) break;
-        {
-            value_t right;
-            *pp = p + n;
-            if (parse_not(ctx, pp, &right) != 0) return -1;
-            if (result->type != VAL_LOGIC || right.type != VAL_LOGIC) {
-                ctx->error = "Type mismatch in .AND.";
-                return -1;
-            }
-            result->logic = result->logic && right.logic;
+    while (lex_peek(l) == TOK_AND) {
+        value_t right;
+        lex_next(l);
+        if (parse_not(ctx, l, &right) != 0) return -1;
+        if (result->type != VAL_LOGIC || right.type != VAL_LOGIC) {
+            ctx->error = "Type mismatch in .AND.";
+            return -1;
         }
+        result->logic = result->logic && right.logic;
     }
     return 0;
 }
 
 /* not_expr → [.NOT.] compare */
-static int parse_not(expr_ctx_t *ctx, const char **pp, value_t *result) {
-    const char *p = skip(*pp);
-    int n = match_dot_keyword(p, "NOT");
-
-    if (n > 0) {
-        *pp = p + n;
-        if (parse_compare(ctx, pp, result) != 0) return -1;
+static int parse_not(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
+    if (lex_peek(l) == TOK_NOT) {
+        lex_next(l);
+        if (parse_compare(ctx, l, result) != 0) return -1;
         if (result->type != VAL_LOGIC) {
             ctx->error = "Type mismatch in .NOT.";
             return -1;
@@ -201,93 +160,82 @@ static int parse_not(expr_ctx_t *ctx, const char **pp, value_t *result) {
         result->logic = !result->logic;
         return 0;
     }
-    return parse_compare(ctx, pp, result);
+    return parse_compare(ctx, l, result);
 }
 
 /* compare → add_expr [ (= | <> | # | < | > | <= | >= | $) add_expr ] */
-static int parse_compare(expr_ctx_t *ctx, const char **pp, value_t *result) {
-    const char *p;
-    char op[3];
+static int parse_compare(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
+    token_type_t op;
     value_t right;
 
-    if (parse_add(ctx, pp, result) != 0) return -1;
+    if (parse_add(ctx, l, result) != 0) return -1;
 
-    p = skip(*pp);
-    op[0] = op[1] = op[2] = '\0';
+    op = lex_peek(l);
+    if (op == TOK_EQ || op == TOK_NE || op == TOK_LT || op == TOK_GT || 
+        op == TOK_LE || op == TOK_GE || op == TOK_SUBSTR) {
+        
+        lex_next(l);
+        if (parse_add(ctx, l, &right) != 0) return -1;
 
-    if (p[0] == '<' && p[1] == '>') { op[0] = '<'; op[1] = '>'; *pp = p + 2; }
-    else if (p[0] == '<' && p[1] == '=') { op[0] = '<'; op[1] = '='; *pp = p + 2; }
-    else if (p[0] == '>' && p[1] == '=') { op[0] = '>'; op[1] = '='; *pp = p + 2; }
-    else if (p[0] == '<') { op[0] = '<'; *pp = p + 1; }
-    else if (p[0] == '>') { op[0] = '>'; *pp = p + 1; }
-    else if (p[0] == '=' && p[1] != '=') { op[0] = '='; *pp = p + 1; }
-    else if (p[0] == '#') { op[0] = '#'; *pp = p + 1; }
-    else if (p[0] == '$') { op[0] = '$'; *pp = p + 1; }
-    else return 0; /* no comparison operator */
-
-    if (parse_add(ctx, pp, &right) != 0) return -1;
-
-    /* $ = substring test */
-    if (op[0] == '$') {
-        if (result->type != VAL_CHAR || right.type != VAL_CHAR) {
-            ctx->error = "$ requires strings";
-            return -1;
+        /* $ = substring test */
+        if (op == TOK_SUBSTR) {
+            if (result->type != VAL_CHAR || right.type != VAL_CHAR) {
+                ctx->error = "$ requires strings";
+                return -1;
+            }
+            *result = val_logic(strstr(right.str, result->str) != NULL);
+            return 0;
         }
-        *result = val_logic(strstr(right.str, result->str) != NULL);
+
+        /* Comparison by type */
+        {
+            int cmp = 0;
+            if (result->type == VAL_NUM && right.type == VAL_NUM) {
+                double d = result->num - right.num;
+                cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;
+            } else if (result->type == VAL_CHAR && right.type == VAL_CHAR) {
+                if (ctx->opts && !((set_options_t *)ctx->opts)->exact)
+                    cmp = str_nicmp(result->str, right.str, strlen(right.str));
+                else
+                    cmp = str_icmp(result->str, right.str);
+            } else if (result->type == VAL_DATE && right.type == VAL_DATE) {
+                int32_t d = result->date - right.date;
+                cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;
+            } else if (result->type == VAL_LOGIC && right.type == VAL_LOGIC) {
+                cmp = result->logic - right.logic;
+            } else {
+                ctx->error = "Type mismatch in comparison";
+                return -1;
+            }
+
+            if (op == TOK_EQ) *result = val_logic(cmp == 0);
+            else if (op == TOK_NE) *result = val_logic(cmp != 0);
+            else if (op == TOK_LE) *result = val_logic(cmp <= 0);
+            else if (op == TOK_GE) *result = val_logic(cmp >= 0);
+            else if (op == TOK_LT) *result = val_logic(cmp < 0);
+            else if (op == TOK_GT) *result = val_logic(cmp > 0);
+        }
         return 0;
-    }
-
-    /* Comparison by type */
-    {
-        int cmp = 0;
-        if (result->type == VAL_NUM && right.type == VAL_NUM) {
-            double d = result->num - right.num;
-            cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;
-        } else if (result->type == VAL_CHAR && right.type == VAL_CHAR) {
-            if (ctx->opts && !((set_options_t *)ctx->opts)->exact)
-                cmp = str_nicmp(result->str, right.str, strlen(right.str));
-            else
-                cmp = str_icmp(result->str, right.str);
-        } else if (result->type == VAL_DATE && right.type == VAL_DATE) {
-            int32_t d = result->date - right.date;
-            cmp = (d < 0) ? -1 : (d > 0) ? 1 : 0;
-        } else if (result->type == VAL_LOGIC && right.type == VAL_LOGIC) {
-            cmp = result->logic - right.logic;
-        } else {
-            ctx->error = "Type mismatch in comparison";
-            return -1;
-        }
-
-        if (op[0] == '=' && op[1] == '\0') *result = val_logic(cmp == 0);
-        else if (op[0] == '<' && op[1] == '>') *result = val_logic(cmp != 0);
-        else if (op[0] == '#') *result = val_logic(cmp != 0);
-        else if (op[0] == '<' && op[1] == '=') *result = val_logic(cmp <= 0);
-        else if (op[0] == '>' && op[1] == '=') *result = val_logic(cmp >= 0);
-        else if (op[0] == '<') *result = val_logic(cmp < 0);
-        else if (op[0] == '>') *result = val_logic(cmp > 0);
     }
 
     return 0;
 }
 
 /* add_expr → mul_expr [ (+ | -) mul_expr ]* */
-static int parse_add(expr_ctx_t *ctx, const char **pp, value_t *result) {
-    if (parse_mul(ctx, pp, result) != 0) return -1;
+static int parse_add(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
+    if (parse_mul(ctx, l, result) != 0) return -1;
 
     for (;;) {
-        const char *p = skip(*pp);
-        char op = *p;
+        token_type_t op = lex_peek(l);
+        if (op != TOK_PLUS && op != TOK_MINUS) break;
 
-        /* Don't consume + or - if this is part of .AND./.OR./.NOT. or end of expression */
-        if (op != '+' && op != '-') break;
-
-        *pp = p + 1;
+        lex_next(l);
 
         {
             value_t right;
-            if (parse_mul(ctx, pp, &right) != 0) return -1;
+            if (parse_mul(ctx, l, &right) != 0) return -1;
 
-            if (op == '+') {
+            if (op == TOK_PLUS) {
                 if (result->type == VAL_NUM && right.type == VAL_NUM) {
                     result->num += right.num;
                 } else if (result->type == VAL_CHAR && right.type == VAL_CHAR) {
@@ -329,26 +277,24 @@ static int parse_add(expr_ctx_t *ctx, const char **pp, value_t *result) {
 }
 
 /* mul_expr → unary [ (* | /) unary ]* */
-static int parse_mul(expr_ctx_t *ctx, const char **pp, value_t *result) {
-    if (parse_unary(ctx, pp, result) != 0) return -1;
+static int parse_mul(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
+    if (parse_unary(ctx, l, result) != 0) return -1;
 
     for (;;) {
-        const char *p = skip(*pp);
-        char op = *p;
-
-        if (op != '*' && op != '/') break;
-        *pp = p + 1;
+        token_type_t op = lex_peek(l);
+        if (op != TOK_MUL && op != TOK_DIV) break;
+        lex_next(l);
 
         {
             value_t right;
-            if (parse_unary(ctx, pp, &right) != 0) return -1;
+            if (parse_unary(ctx, l, &right) != 0) return -1;
 
             if (result->type != VAL_NUM || right.type != VAL_NUM) {
                 ctx->error = "Type mismatch in * or /";
                 return -1;
             }
 
-            if (op == '*')
+            if (op == TOK_MUL)
                 result->num *= right.num;
             else {
                 if (right.num == 0.0) {
@@ -363,12 +309,12 @@ static int parse_mul(expr_ctx_t *ctx, const char **pp, value_t *result) {
 }
 
 /* unary → [-] primary */
-static int parse_unary(expr_ctx_t *ctx, const char **pp, value_t *result) {
-    const char *p = skip(*pp);
+static int parse_unary(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
+    token_type_t op = lex_peek(l);
 
-    if (*p == '-') {
-        *pp = p + 1;
-        if (parse_primary(ctx, pp, result) != 0) return -1;
+    if (op == TOK_MINUS) {
+        lex_next(l);
+        if (parse_primary(ctx, l, result) != 0) return -1;
         if (result->type != VAL_NUM) {
             ctx->error = "Unary minus requires number";
             return -1;
@@ -377,109 +323,63 @@ static int parse_unary(expr_ctx_t *ctx, const char **pp, value_t *result) {
         return 0;
     }
 
-    if (*p == '+') {
-        *pp = p + 1;
+    if (op == TOK_PLUS) {
+        lex_next(l);
     }
 
-    return parse_primary(ctx, pp, result);
+    return parse_primary(ctx, l, result);
 }
 
 /* primary → number | string | .T./.F. | {date} | (expr) | func(args) | field_ref */
-static int parse_primary(expr_ctx_t *ctx, const char **pp, value_t *result) {
-    const char *p = skip(*pp);
+static int parse_primary(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
+    token_t t = l->current;
 
-    /* Number literal */
-    if ((*p >= '0' && *p <= '9') || (*p == '.' && p[1] >= '0' && p[1] <= '9')) {
-        char numbuf[64];
-        int i = 0;
-        while ((*p >= '0' && *p <= '9') || *p == '.') {
-            if (i < (int)sizeof(numbuf) - 1) numbuf[i++] = *p;
-            p++;
-        }
-        numbuf[i] = '\0';
-        *result = val_num(atof(numbuf));
-        *pp = p;
+    switch (t.type) {
+    case TOK_NUMBER:
+        *result = val_num(t.num_val);
+        lex_next(l);
         return 0;
-    }
 
-    /* String literal */
-    if (*p == '"' || *p == '\'') {
-        char quote = *p++;
-        int i = 0;
-        char strbuf[256];
-        while (*p && *p != quote && i < (int)sizeof(strbuf) - 1)
-            strbuf[i++] = *p++;
-        strbuf[i] = '\0';
-        if (*p == quote) p++;
-        *result = val_str(strbuf);
-        *pp = p;
+    case TOK_STRING:
+        *result = val_str(t.text);
+        lex_next(l);
         return 0;
-    }
 
-    /* Logical literal .T. / .F. */
-    if (*p == '.') {
-        char c = p[1];
-        if (c >= 'a' && c <= 'z') c -= 32;
-        if ((c == 'T' || c == 'F') && p[2] == '.') {
-            *result = val_logic(c == 'T');
-            *pp = p + 3;
-            return 0;
-        }
-        /* Could be .NOT. — fall through handled by parse_not caller */
-    }
-
-    /* Date literal {MM/DD/YY} */
-    if (*p == '{') {
-        const char *start = p;
-        p++;
-        while (*p && *p != '}') p++;
-        {
-            char datebuf[32];
-            int len = (int)(p - start - 1);
-            if (len > (int)sizeof(datebuf) - 1) len = (int)sizeof(datebuf) - 1;
-            memcpy(datebuf, start + 1, len);
-            datebuf[len] = '\0';
-            if (*p == '}') p++;
-            *result = val_date(date_from_mdy(datebuf));
-        }
-        *pp = p;
+    case TOK_LOGIC:
+        *result = val_logic(t.logic_val);
+        lex_next(l);
         return 0;
-    }
 
-    /* Parenthesized expression */
-    if (*p == '(') {
-        *pp = p + 1;
-        if (parse_expr(ctx, pp, result) != 0) return -1;
-        p = skip(*pp);
-        if (*p != ')') {
+    case TOK_DATE:
+        *result = val_date(t.date_val);
+        lex_next(l);
+        return 0;
+
+    case TOK_LPAREN:
+        lex_next(l);
+        if (parse_expr(ctx, l, result) != 0) return -1;
+        if (lex_peek(l) != TOK_RPAREN) {
             ctx->error = "Missing closing parenthesis";
             return -1;
         }
-        *pp = p + 1;
+        lex_next(l);
         return 0;
-    }
 
-    /* Identifier: function call, alias->field, or field reference */
-    if (is_ident_start(*p)) {
+    case TOK_IDENT: {
         char name[64];
-        int i = 0;
-        const char *after_name;
-
-        while (is_ident_char(*p) && i < (int)sizeof(name) - 1)
-            name[i++] = *p++;
-        name[i] = '\0';
-        after_name = p;
+        str_copy(name, t.text, sizeof(name));
+        lex_next(l);
 
         /* Check for alias->field reference */
-        p = skip(after_name);
-        if (p[0] == '-' && p[1] == '>') {
+        if (lex_peek(l) == TOK_ARROW) {
+            lex_next(l);
+            if (lex_peek(l) != TOK_IDENT) {
+                ctx->error = "Expected field name after ->";
+                return -1;
+            }
             char field_name[64];
-            int fi = 0;
-            p += 2;
-            while (is_ident_char(*p) && fi < (int)sizeof(field_name) - 1)
-                field_name[fi++] = *p++;
-            field_name[fi] = '\0';
-            *pp = p;
+            str_copy(field_name, l->current.text, sizeof(field_name));
+            lex_next(l);
 
             if (ctx->area_lookup && field_name[0]) {
                 dbf_t *adb = ctx->area_lookup(name);
@@ -489,88 +389,64 @@ static int parse_primary(expr_ctx_t *ctx, const char **pp, value_t *result) {
                         char raw[256];
                         dbf_get_field_raw(adb, idx, raw, sizeof(raw));
                         switch (adb->fields[idx].type) {
-                        case 'C':
-                            *result = val_str(raw);
-                            return 0;
-                        case 'N':
-                            *result = val_num(atof(raw));
-                            return 0;
-                        case 'D':
-                            *result = val_date(date_from_dbf(raw));
-                            return 0;
-                        case 'L':
-                            *result = val_logic(raw[0] == 'T' || raw[0] == 't');
-                            return 0;
+                        case 'C': *result = val_str(raw); return 0;
+                        case 'N': *result = val_num(atof(raw)); return 0;
+                        case 'D': *result = val_date(date_from_dbf(raw)); return 0;
+                        case 'L': *result = val_logic(raw[0] == 'T' || raw[0] == 't'); return 0;
                         }
                     }
                 }
             }
             {
-                static char errbuf[80];
+                static char errbuf[128];
                 snprintf(errbuf, sizeof(errbuf), "Cannot resolve %s->%s", name, field_name);
                 ctx->error = errbuf;
             }
             return -1;
         }
 
-        p = skip(after_name);
-
         /* Function call: name( */
-        if (*p == '(') {
+        if (lex_peek(l) == TOK_LPAREN) {
             value_t args[8];
             int nargs = 0;
-            p++; /* skip ( */
-            p = skip(p);
+            lex_next(l); /* skip ( */
 
-            if (*p != ')') {
+            if (lex_peek(l) != TOK_RPAREN) {
                 for (;;) {
-                    const char *q = p;
                     if (nargs >= 8) {
                         ctx->error = "Too many function arguments";
                         return -1;
                     }
-                    *pp = q;
-                    if (parse_expr(ctx, pp, &args[nargs]) != 0) return -1;
+                    if (parse_expr(ctx, l, &args[nargs]) != 0) return -1;
                     nargs++;
-                    p = skip(*pp);
-                    if (*p == ',') { p++; p = skip(p); continue; }
+                    if (lex_peek(l) == TOK_COMMA) {
+                        lex_next(l);
+                        continue;
+                    }
                     break;
                 }
             }
 
-            p = skip(p);
-            if (*p != ')') {
+            if (lex_peek(l) != TOK_RPAREN) {
                 ctx->error = "Missing ) in function call";
                 return -1;
             }
-            p++;
-            *pp = p;
+            lex_next(l);
 
             return func_call(ctx, name, args, nargs, result);
         }
 
         /* Field reference */
-        *pp = after_name;
         if (ctx->db && dbf_is_open(ctx->db) && ctx->db->current_record != 0) {
             int idx = dbf_find_field(ctx->db, name);
             if (idx >= 0) {
                 char raw[256];
                 dbf_get_field_raw(ctx->db, idx, raw, sizeof(raw));
                 switch (ctx->db->fields[idx].type) {
-                case 'C': {
-                    /* Preserve full field width including trailing spaces */
-                    *result = val_str(raw);
-                    return 0;
-                }
-                case 'N':
-                    *result = val_num(atof(raw));
-                    return 0;
-                case 'D':
-                    *result = val_date(date_from_dbf(raw));
-                    return 0;
-                case 'L':
-                    *result = val_logic(raw[0] == 'T' || raw[0] == 't');
-                    return 0;
+                case 'C': *result = val_str(raw); return 0;
+                case 'N': *result = val_num(atof(raw)); return 0;
+                case 'D': *result = val_date(date_from_dbf(raw)); return 0;
+                case 'L': *result = val_logic(raw[0] == 'T' || raw[0] == 't'); return 0;
                 }
             }
         }
@@ -593,21 +469,28 @@ static int parse_primary(expr_ctx_t *ctx, const char **pp, value_t *result) {
         return -1;
     }
 
-    ctx->error = "Unexpected character in expression";
-    return -1;
+    default:
+        ctx->error = "Unexpected token in expression";
+        return -1;
+    }
 }
 
 /* ---- Public API ---- */
 
 int expr_eval(expr_ctx_t *ctx, const char **pp, value_t *result) {
+    lexer_t l;
+    lexer_init(&l, *pp);
     ctx->error = NULL;
     *result = val_nil();
-    return parse_expr(ctx, pp, result);
+    int res = parse_expr(ctx, &l, result);
+    *pp = l.token_start;
+    return res;
 }
 
 int expr_eval_str(expr_ctx_t *ctx, const char *str, value_t *result) {
-    const char *p = str;
+    lexer_t l;
+    lexer_init(&l, str);
     ctx->error = NULL;
     *result = val_nil();
-    return parse_expr(ctx, &p, result);
+    return parse_expr(ctx, &l, result);
 }

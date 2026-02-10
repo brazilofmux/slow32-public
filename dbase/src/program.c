@@ -5,6 +5,7 @@
 #include "command.h"
 #include "func.h"
 #include "util.h"
+#include "lex.h"
 
 static prog_state_t state;
 
@@ -587,19 +588,19 @@ static void prog_run(void) {
         }
 
         /* Normal execution */
+        int old_pc = state.pc;
+        program_t *old_prog = state.current_prog;
         quit = prog_execute_line(line);
         if (quit) {
             state.running = 0;
             return;
         }
 
-        /* If prog_execute_line didn't change PC (control flow commands set it),
-           advance to next line. For normal commands, we need to advance. */
-        /* Control flow commands will set state.pc themselves, but normal
-           commands return and we need to advance. We handle this by noting
-           that control flow commands set state.pc, and we only advance here
-           if the line was a normal command. Actually, let's just always
-           let the control flow code manage PC and advance for non-control. */
+        /* If prog_execute_line didn't change PC or program (control flow
+           commands set PC themselves; DO pushes a new program), advance. */
+        if (state.pc == old_pc && state.current_prog == old_prog) {
+            state.pc++;
+        }
     }
 
     /* End of program - pop frame if needed */
@@ -1322,52 +1323,71 @@ void prog_cancel(void) {
 
 /* ---- Execute one line in program context ---- */
 int prog_execute_line(char *line) {
-    char *p = skip_ws(line);
+    lexer_t l;
     int result;
+    const char *p;
+    char cmd[256];
+
+    lexer_init(&l, line);
+    if (l.current.type == TOK_EOF) return 0;
+    if (l.current.type == TOK_MUL) {
+        state.pc++;
+        return 0;
+    }
+
+    if (l.current.type != TOK_IDENT) {
+        /* Special cases like ?, ??, @ handled by cmd_execute */
+        result = cmd_execute(NULL, line);
+        state.pc++;
+        return result;
+    }
+
+    str_copy(cmd, l.current.text, sizeof(cmd));
+    p = skip_ws(l.p);
 
     /* Check for program-specific commands first */
-    if (str_imatch(p, "DO")) {
-        prog_do(p + 2);
+    if (IS_KW(cmd, "DO")) {
+        prog_do(p);
         return 0;
     }
 
-    if (str_imatch(p, "IF")) {
-        prog_if(skip_ws(p + 2));
+    if (IS_KW(cmd, "IF")) {
+        prog_if(p);
         return 0;
     }
 
-    if (str_imatch(p, "ELSE")) {
+    if (IS_KW(cmd, "ELSE")) {
         prog_else();
         return 0;
     }
 
-    if (str_imatch(p, "ENDIF")) {
+    if (IS_KW(cmd, "ENDIF")) {
         prog_endif();
         return 0;
     }
 
-    if (str_imatch(p, "ENDDO")) {
+    if (IS_KW(cmd, "ENDDO")) {
         prog_enddo();
         return 0;
     }
 
-    if (str_imatch(p, "FOR")) {
-        prog_for(skip_ws(p + 3));
+    if (IS_KW(cmd, "FOR")) {
+        prog_for(p);
         return 0;
     }
 
-    if (str_imatch(p, "NEXT")) {
+    if (IS_KW(cmd, "NEXT")) {
         prog_next();
         return 0;
     }
 
-    if (str_imatch(p, "LOOP")) {
+    if (IS_KW(cmd, "LOOP")) {
         prog_loop();
         return 0;
     }
 
     /* EXIT in loop context */
-    if (str_imatch(p, "EXIT")) {
+    if (IS_KW(cmd, "EXIT")) {
         if (state.loop_depth > 0) {
             prog_exit_loop();
             return 0;
@@ -1375,65 +1395,59 @@ int prog_execute_line(char *line) {
         /* Otherwise fall through to cmd_execute (QUIT/EXIT) */
     }
 
-    if (str_imatch(p, "RETURN")) {
-        prog_return(skip_ws(p + 6));
+    if (IS_KW(cmd, "RETURN")) {
+        prog_return(p);
         return 0;
     }
 
-    if (str_imatch(p, "FUNCTION")) {
+    if (IS_KW(cmd, "FUNCTION")) {
         /* FUNCTION treated same as PROCEDURE during execution — skip body */
-        prog_procedure(skip_ws(p + 8));
+        prog_procedure(p);
         return 0;
     }
 
-    if (str_imatch(p, "PROCEDURE")) {
-        prog_procedure(skip_ws(p + 9));
+    if (IS_KW(cmd, "PROCEDURE")) {
+        prog_procedure(p);
         return 0;
     }
 
-    if (str_imatch(p, "PARAMETERS")) {
-        prog_parameters(skip_ws(p + 10));
+    if (IS_KW(cmd, "PARAMETERS")) {
+        prog_parameters(p);
         return 0;
     }
 
-    if (str_imatch(p, "PRIVATE")) {
-        prog_private(skip_ws(p + 7));
+    if (IS_KW(cmd, "PRIVATE")) {
+        prog_private(p);
         return 0;
     }
 
-    if (str_imatch(p, "PUBLIC")) {
-        prog_public(skip_ws(p + 6));
+    if (IS_KW(cmd, "PUBLIC")) {
+        prog_public(p);
         return 0;
     }
 
-    if (str_imatch(p, "CANCEL")) {
+    if (IS_KW(cmd, "CANCEL")) {
         prog_cancel();
         return 0;
     }
 
-    if (str_imatch(p, "CASE")) {
-        prog_case(skip_ws(p + 4));
+    if (IS_KW(cmd, "CASE")) {
+        prog_case(p);
         return 0;
     }
 
-    if (str_imatch(p, "OTHERWISE")) {
+    if (IS_KW(cmd, "OTHERWISE")) {
         prog_otherwise();
         return 0;
     }
 
-    if (str_imatch(p, "ENDCASE")) {
+    if (IS_KW(cmd, "ENDCASE")) {
         prog_endcase();
         return 0;
     }
 
     /* NOTE comment */
-    if (str_imatch(p, "NOTE")) {
-        state.pc++;
-        return 0;
-    }
-
-    /* Full-line comment */
-    if (*p == '*') {
+    if (IS_KW(cmd, "NOTE")) {
         state.pc++;
         return 0;
     }
