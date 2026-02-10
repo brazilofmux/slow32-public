@@ -16,28 +16,7 @@
 #include "report.h"
 #include "label.h"
 #include "lex.h"
-
-/* ---- Work area infrastructure ---- */
-#define MAX_AREAS 10
-
-typedef struct {
-    dbf_t db;
-    char alias[DBF_MAX_FIELD_NAME];
-    char locate_cond[256];
-    uint32_t locate_last_rec;
-    char filter_cond[256];      /* SET FILTER TO condition */
-    index_t indexes[MAX_INDEXES];
-    int num_indexes;
-    int order;          /* controlling index: 0=natural, 1-N=index number */
-    /* SET RELATION TO */
-    char relation_expr[256];    /* expression string (empty = no relation) */
-    int relation_target;        /* target work area index (-1 = none) */
-} work_area_t;
-
-static work_area_t areas[MAX_AREAS];
-static int current_area;
-
-static dbf_t *cur_db(void) { return &areas[current_area].db; }
+#include "area.h"
 
 /* Persistent expression context */
 static expr_ctx_t expr_ctx;
@@ -48,12 +27,16 @@ static set_options_t set_opts;
 static int stage3_initialized;
 
 /* Forward declarations */
-static dbf_t *area_lookup(const char *alias);
+/* area_lookup_dbf from area.h is used as callback */
+
+static work_area_t *cur_wa(void) { return area_get_current(); }
+static dbf_t *cur_db(void) { return &area_get_current()->db; }
 
 /* ---- Helper: initialize expr_ctx ---- */
 static int screen_initialized;
 static void ctx_setup(void) {
     if (!stage3_initialized) {
+        area_init_all();
         memvar_init(&memvar_store);
         set_init(&set_opts);
         stage3_initialized = 1;
@@ -62,27 +45,10 @@ static void ctx_setup(void) {
         screen_init();
         screen_initialized = 1;
     }
-    expr_ctx.db = cur_db();
+    expr_ctx.db = &area_get_current()->db;
     expr_ctx.vars = &memvar_store;
     expr_ctx.opts = (struct set_options *)&set_opts;
-    expr_ctx.area_lookup = area_lookup;
-}
-
-/* ---- Area lookup callback for expr.c ---- */
-static dbf_t *area_lookup(const char *alias) {
-    int i;
-    char c;
-    /* Try single letter A-J */
-    c = alias[0];
-    if (c >= 'a' && c <= 'z') c -= 32;
-    if (c >= 'A' && c <= 'J' && alias[1] == '\0')
-        return &areas[c - 'A'].db;
-    /* Try name alias */
-    for (i = 0; i < MAX_AREAS; i++) {
-        if (areas[i].alias[0] && str_icmp(areas[i].alias, alias) == 0)
-            return &areas[i].db;
-    }
-    return NULL;
+    expr_ctx.area_lookup = area_lookup_dbf;
 }
 
 /* ---- Command lex helpers ---- */
@@ -112,7 +78,7 @@ static int cmd_kw_at(const char *text, const char *kw, const char **after) {
 
 /* ---- Index helpers ---- */
 static index_t *controlling_index(void) {
-    work_area_t *wa = &areas[current_area];
+    work_area_t *wa = cur_wa();
     if (wa->order > 0 && wa->order <= wa->num_indexes)
         return &wa->indexes[wa->order - 1];
     return NULL;
@@ -152,7 +118,7 @@ static int eval_index_key(index_t *idx, char *keybuf) {
 
 /* Insert current record into all active indexes for current work area */
 static void indexes_insert_current(dbf_t *db) {
-    work_area_t *wa = &areas[current_area];
+    work_area_t *wa = cur_wa();
     int i;
     ctx_setup();
     for (i = 0; i < wa->num_indexes; i++) {
@@ -169,7 +135,7 @@ static void indexes_insert_current(dbf_t *db) {
 
 /* Capture current keys for all active indexes (before REPLACE modifies fields) */
 static void indexes_capture_keys(dbf_t *db, char keys[][MAX_INDEX_KEY + 1]) {
-    work_area_t *wa = &areas[current_area];
+    work_area_t *wa = cur_wa();
     int i;
     (void)db;
     ctx_setup();
@@ -184,7 +150,7 @@ static void indexes_capture_keys(dbf_t *db, char keys[][MAX_INDEX_KEY + 1]) {
 
 /* Update all active indexes after REPLACE (remove old key, insert new key) */
 static void indexes_update_current(dbf_t *db, char old_keys[][MAX_INDEX_KEY + 1]) {
-    work_area_t *wa = &areas[current_area];
+    work_area_t *wa = cur_wa();
     int i;
     ctx_setup();
     for (i = 0; i < wa->num_indexes; i++) {
@@ -204,7 +170,7 @@ static void indexes_update_current(dbf_t *db, char old_keys[][MAX_INDEX_KEY + 1]
 
 /* Rebuild all active indexes (after PACK changes record numbers) */
 static void indexes_rebuild_all(dbf_t *db) {
-    work_area_t *wa = &areas[current_area];
+    work_area_t *wa = cur_wa();
     int i;
     ctx_setup();
     for (i = 0; i < wa->num_indexes; i++) {
@@ -221,7 +187,7 @@ static void indexes_rebuild_all(dbf_t *db) {
 
 /* Clear all active indexes (after ZAP) */
 static void indexes_clear_all(void) {
-    work_area_t *wa = &areas[current_area];
+    work_area_t *wa = cur_wa();
     int i;
     for (i = 0; i < wa->num_indexes; i++) {
         index_t *idx = &wa->indexes[i];
@@ -234,9 +200,9 @@ static void indexes_clear_all(void) {
 
 /* ---- SET RELATION: follow child area ---- */
 static void follow_relations(void) {
-    work_area_t *wa = &areas[current_area];
+    work_area_t *wa = cur_wa();
     if (wa->relation_expr[0] && wa->relation_target >= 0) {
-        int saved_area = current_area;
+        int saved_area = area_get_current_idx();
         value_t key;
         /* Evaluate relation expression in parent context */
         ctx_setup();
@@ -244,9 +210,9 @@ static void follow_relations(void) {
             char buf[256];
             val_to_string(&key, buf, sizeof(buf));
             /* Switch to child, seek */
-            current_area = wa->relation_target;
+            area_set_current_idx(wa->relation_target);
             {
-                work_area_t *child = &areas[current_area];
+                work_area_t *child = cur_wa();
                 index_t *idx = NULL;
                 if (child->order > 0 && child->order <= child->num_indexes)
                     idx = &child->indexes[child->order - 1];
@@ -259,10 +225,17 @@ static void follow_relations(void) {
                         else
                             child->db.current_record = child->db.record_count + 1;
                     }
+                } else {
+                    /* No index: record number search */
+                    uint32_t rec = (uint32_t)atoi(buf); 
+                    if (rec >= 1 && rec <= child->db.record_count)
+                        dbf_read_record(&child->db, rec);
+                    else
+                        child->db.current_record = child->db.record_count + 1;
                 }
             }
         }
-        current_area = saved_area;
+        area_set_current_idx(saved_area);
     }
 }
 
@@ -495,39 +468,19 @@ static void cmd_create(dbf_t *db, const char *arg) {
 /* ---- SELECT ---- */
 static void cmd_select(const char *arg) {
     const char *p = skip_ws(arg);
-    int area;
-    char c;
-    int i;
+    int idx;
 
     if (*p == '\0') {
-        printf("Current work area: %d\n", current_area + 1);
+        printf("Current work area: %d\n", area_get_current_idx() + 1);
         return;
     }
 
-    /* Try numeric 1-10 */
-    if (*p >= '1' && *p <= '9') {
-        area = atoi(p) - 1;
-        if (area >= 0 && area < MAX_AREAS) {
-            current_area = area;
-            return;
-        }
-    }
-
-    /* Try letter A-J */
-    c = *p;
-    if (c >= 'a' && c <= 'z') c -= 32;
-    if (c >= 'A' && c <= 'J' && (p[1] == '\0' || p[1] == ' ' || p[1] == '\t')) {
-        current_area = c - 'A';
+    idx = area_resolve_alias(p);
+    if (idx >= 0) {
+        area_set_current_idx(idx);
         return;
     }
 
-    /* Try alias name */
-    for (i = 0; i < MAX_AREAS; i++) {
-        if (areas[i].alias[0] && str_icmp(areas[i].alias, p) == 0) {
-            current_area = i;
-            return;
-        }
-    }
     printf("Invalid work area.\n");
 }
 
@@ -562,9 +515,9 @@ static int skip_deleted(const char *rec_buf) {
 /* Returns 1 if record passes (or no filter set), 0 if filtered out */
 static int check_filter(dbf_t *db) {
     value_t cond;
-    if (areas[current_area].filter_cond[0] == '\0')
+    if (cur_wa()->filter_cond[0] == '\0')
         return 1;
-    if (expr_eval_str(&expr_ctx, areas[current_area].filter_cond, &cond) != 0)
+    if (expr_eval_str(&expr_ctx, cur_wa()->filter_cond, &cond) != 0)
         return 1;  /* on error, pass through */
     return (cond.type == VAL_LOGIC && cond.logic);
 }
@@ -574,17 +527,18 @@ static void cmd_use(dbf_t *db, const char *arg) {
     char filename[64];
     const char *p;
     int i;
+    work_area_t *wa = cur_wa();
 
     arg = skip_ws(arg);
 
     if (*arg == '\0') {
         if (dbf_is_open(db)) {
             dbf_close(db);
-            close_all_indexes(&areas[current_area]);
-            areas[current_area].alias[0] = '\0';
-            areas[current_area].locate_cond[0] = '\0';
-            areas[current_area].locate_last_rec = 0;
-            areas[current_area].filter_cond[0] = '\0';
+            close_all_indexes(wa);
+            wa->alias[0] = '\0';
+            wa->locate_cond[0] = '\0';
+            wa->locate_last_rec = 0;
+            wa->filter_cond[0] = '\0';
             printf("Database closed.\n");
         }
         return;
@@ -592,8 +546,8 @@ static void cmd_use(dbf_t *db, const char *arg) {
 
     if (dbf_is_open(db)) {
         dbf_close(db);
-        close_all_indexes(&areas[current_area]);
-        areas[current_area].alias[0] = '\0';
+        close_all_indexes(wa);
+        wa->alias[0] = '\0';
     }
 
     /* Parse filename (up to whitespace) */
@@ -610,13 +564,13 @@ static void cmd_use(dbf_t *db, const char *arg) {
     }
 
     /* Set alias to filename stem */
-    filename_stem(filename, areas[current_area].alias, sizeof(areas[current_area].alias));
+    filename_stem(filename, wa->alias, sizeof(wa->alias));
 
     /* Parse optional INDEX clause */
     p = skip_ws(p);
     if (str_imatch(p, "INDEX")) {
         p = skip_ws(p + 5);
-        while (*p && !str_imatch(p, "ALIAS") && areas[current_area].num_indexes < MAX_INDEXES) {
+        while (*p && !str_imatch(p, "ALIAS") && wa->num_indexes < MAX_INDEXES) {
             char ndxfile[64];
             i = 0;
             while (*p && *p != ' ' && *p != '\t' && *p != ',' && i < 63)
@@ -626,9 +580,9 @@ static void cmd_use(dbf_t *db, const char *arg) {
             if (ndxfile[0]) {
                 ensure_ndx_ext(ndxfile, sizeof(ndxfile));
                 {
-                    int slot = areas[current_area].num_indexes;
-                    if (index_read(&areas[current_area].indexes[slot], ndxfile) == 0) {
-                        areas[current_area].num_indexes++;
+                    int slot = wa->num_indexes;
+                    if (index_read(&wa->indexes[slot], ndxfile) == 0) {
+                        wa->num_indexes++;
                     } else {
                         printf("Cannot open index: %s\n", ndxfile);
                     }
@@ -640,8 +594,8 @@ static void cmd_use(dbf_t *db, const char *arg) {
             else break;
         }
 
-        if (areas[current_area].num_indexes > 0)
-            areas[current_area].order = 1;
+        if (wa->num_indexes > 0)
+            wa->order = 1;
     }
 
     /* Parse optional ALIAS clause */
@@ -650,17 +604,17 @@ static void cmd_use(dbf_t *db, const char *arg) {
         p = skip_ws(p + 5);
         i = 0;
         while (*p && *p != ' ' && *p != '\t' && i < DBF_MAX_FIELD_NAME - 1)
-            areas[current_area].alias[i++] = *p++;
-        areas[current_area].alias[i] = '\0';
-        str_upper(areas[current_area].alias);
+            wa->alias[i++] = *p++;
+        wa->alias[i] = '\0';
+        str_upper(wa->alias);
     }
 
     /* Reset navigation state */
     expr_ctx.eof_flag = 0;
     expr_ctx.bof_flag = 0;
     expr_ctx.found = 0;
-    areas[current_area].locate_cond[0] = '\0';
-    areas[current_area].locate_last_rec = 0;
+    wa->locate_cond[0] = '\0';
+    wa->locate_last_rec = 0;
 
     printf("Database %s opened with %d record(s).\n",
            db->filename, (int)db->record_count);
@@ -988,7 +942,7 @@ static void cmd_locate(dbf_t *db, const char *arg) {
     p = skip_ws(p + 3);
 
     /* Save condition for CONTINUE (per-area) */
-    str_copy(areas[current_area].locate_cond, p, sizeof(areas[current_area].locate_cond));
+    str_copy(cur_wa()->locate_cond, p, sizeof(cur_wa()->locate_cond));
 
     if (scope_bounds(db, &scope, &start, &end) < 0) {
         printf("Invalid scope.\n");
@@ -1002,7 +956,7 @@ static void cmd_locate(dbf_t *db, const char *arg) {
         dbf_read_record(db, i);
         if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
 
-        if (expr_eval_str(&expr_ctx, areas[current_area].locate_cond, &cond) != 0) {
+        if (expr_eval_str(&expr_ctx, cur_wa()->locate_cond, &cond) != 0) {
             report_expr_error();
             return;
         }
@@ -1010,7 +964,7 @@ static void cmd_locate(dbf_t *db, const char *arg) {
         if (cond.type == VAL_LOGIC && cond.logic) {
             expr_ctx.found = 1;
             expr_ctx.eof_flag = 0;
-            areas[current_area].locate_last_rec = i;
+            cur_wa()->locate_last_rec = i;
             if (set_opts.talk) printf("Record = %d\n", (int)i);
             return;
         }
@@ -1018,7 +972,7 @@ static void cmd_locate(dbf_t *db, const char *arg) {
 
     expr_ctx.found = 0;
     expr_ctx.eof_flag = 1;
-    areas[current_area].locate_last_rec = 0;
+    cur_wa()->locate_last_rec = 0;
     if (set_opts.talk) printf("End of LOCATE scope\n");
 }
 
@@ -1031,17 +985,17 @@ static void cmd_continue(dbf_t *db) {
         return;
     }
 
-    if (areas[current_area].locate_cond[0] == '\0') {
+    if (cur_wa()->locate_cond[0] == '\0') {
         printf("No LOCATE active.\n");
         return;
     }
 
-    for (i = areas[current_area].locate_last_rec + 1; i <= db->record_count; i++) {
+    for (i = cur_wa()->locate_last_rec + 1; i <= db->record_count; i++) {
         value_t cond;
         dbf_read_record(db, i);
         if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
 
-        if (expr_eval_str(&expr_ctx, areas[current_area].locate_cond, &cond) != 0) {
+        if (expr_eval_str(&expr_ctx, cur_wa()->locate_cond, &cond) != 0) {
             report_expr_error();
             return;
         }
@@ -1049,7 +1003,7 @@ static void cmd_continue(dbf_t *db) {
         if (cond.type == VAL_LOGIC && cond.logic) {
             expr_ctx.found = 1;
             expr_ctx.eof_flag = 0;
-            areas[current_area].locate_last_rec = i;
+            cur_wa()->locate_last_rec = i;
             if (set_opts.talk) printf("Record = %d\n", (int)i);
             return;
         }
@@ -1309,7 +1263,7 @@ static void cmd_replace(dbf_t *db, const char *arg) {
     }
 
     /* Capture keys before modification */
-    has_indexes = (areas[current_area].num_indexes > 0);
+    has_indexes = (cur_wa()->num_indexes > 0);
     if (has_indexes)
         indexes_capture_keys(db, old_keys);
 
@@ -1827,7 +1781,7 @@ static void cmd_pack(dbf_t *db) {
     }
 
     /* Rebuild all indexes with new record numbers */
-    if (areas[current_area].num_indexes > 0)
+    if (cur_wa()->num_indexes > 0)
         indexes_rebuild_all(db);
 
     printf("%d record(s) remaining.\n", (int)dst);
@@ -1848,7 +1802,7 @@ static void cmd_zap(dbf_t *db) {
     expr_ctx.eof_flag = 1;
 
     /* Clear all active indexes */
-    if (areas[current_area].num_indexes > 0)
+    if (cur_wa()->num_indexes > 0)
         indexes_clear_all();
 
     printf("Zap complete.\n");
@@ -2586,34 +2540,34 @@ static void cmd_index_on(dbf_t *db, const char *arg) {
     }
 
     /* Close all existing indexes and build fresh */
-    close_all_indexes(&areas[current_area]);
+    close_all_indexes(cur_wa());
 
     /* Build the index in slot 0 */
-    if (index_build(&areas[current_area].indexes[0], db, &expr_ctx, key_expr, filename) < 0) {
+    if (index_build(&cur_wa()->indexes[0], db, &expr_ctx, key_expr, filename) < 0) {
         prog_error(ERR_FILE_IO, "Error building index");
         return;
     }
 
     /* Write to file */
-    if (index_write(&areas[current_area].indexes[0]) < 0) {
+    if (index_write(&cur_wa()->indexes[0]) < 0) {
         prog_error(ERR_FILE_IO, "Error writing index file");
         return;
     }
 
-    areas[current_area].num_indexes = 1;
-    areas[current_area].order = 1;
+    cur_wa()->num_indexes = 1;
+    cur_wa()->order = 1;
 
     /* Position to first indexed record */
-    if (areas[current_area].indexes[0].nentries > 0) {
+    if (cur_wa()->indexes[0].nentries > 0) {
         uint32_t rec;
-        index_top(&areas[current_area].indexes[0]);
-        rec = index_current_recno(&areas[current_area].indexes[0]);
+        index_top(&cur_wa()->indexes[0]);
+        rec = index_current_recno(&cur_wa()->indexes[0]);
         if (rec > 0) dbf_read_record(db, rec);
         expr_ctx.eof_flag = 0;
         expr_ctx.bof_flag = 0;
     }
 
-    printf("%d record(s) indexed.\n", areas[current_area].indexes[0].nentries);
+    printf("%d record(s) indexed.\n", cur_wa()->indexes[0].nentries);
 }
 
 /* ---- SET INDEX TO [file1 [, file2 ...]] ---- */
@@ -2626,7 +2580,7 @@ static void cmd_set_index(dbf_t *db, const char *arg) {
     }
 
     /* Close all existing indexes */
-    close_all_indexes(&areas[current_area]);
+    close_all_indexes(cur_wa());
 
     if (*p == '\0') {
         /* SET INDEX TO with no args = close all */
@@ -2635,7 +2589,7 @@ static void cmd_set_index(dbf_t *db, const char *arg) {
     }
 
     /* Parse comma-separated index files */
-    while (*p && areas[current_area].num_indexes < MAX_INDEXES) {
+    while (*p && cur_wa()->num_indexes < MAX_INDEXES) {
         char filename[64];
         int i = 0;
         while (*p && *p != ' ' && *p != '\t' && *p != ',' && i < 63)
@@ -2643,12 +2597,12 @@ static void cmd_set_index(dbf_t *db, const char *arg) {
         filename[i] = '\0';
 
         if (filename[0]) {
-            int slot = areas[current_area].num_indexes;
+            int slot = cur_wa()->num_indexes;
             ensure_ndx_ext(filename, sizeof(filename));
-            if (index_read(&areas[current_area].indexes[slot], filename) == 0) {
-                areas[current_area].num_indexes++;
+            if (index_read(&cur_wa()->indexes[slot], filename) == 0) {
+                cur_wa()->num_indexes++;
                 printf("Index %s opened (%d entries).\n", filename,
-                       areas[current_area].indexes[slot].nentries);
+                       cur_wa()->indexes[slot].nentries);
             } else {
                 printf("Cannot open index: %s\n", filename);
             }
@@ -2660,10 +2614,10 @@ static void cmd_set_index(dbf_t *db, const char *arg) {
     }
 
     /* Set controlling index to first one */
-    if (areas[current_area].num_indexes > 0) {
+    if (cur_wa()->num_indexes > 0) {
         index_t *idx;
         uint32_t rec;
-        areas[current_area].order = 1;
+        cur_wa()->order = 1;
 
         /* Position to first indexed record */
         idx = controlling_index();
@@ -2771,7 +2725,7 @@ static void cmd_find(dbf_t *db, const char *arg) {
 
 /* ---- REINDEX ---- */
 static void cmd_reindex(dbf_t *db) {
-    work_area_t *wa = &areas[current_area];
+    work_area_t *wa = cur_wa();
     int i, total = 0;
 
     if (!dbf_is_open(db)) {
@@ -2823,17 +2777,18 @@ static void cmd_reindex(dbf_t *db) {
 void cmd_close_all(void) {
     int i;
     for (i = 0; i < MAX_AREAS; i++) {
-        if (dbf_is_open(&areas[i].db))
-            dbf_close(&areas[i].db);
-        close_all_indexes(&areas[i]);
-        areas[i].alias[0] = '\0';
-        areas[i].locate_cond[0] = '\0';
-        areas[i].locate_last_rec = 0;
-        areas[i].filter_cond[0] = '\0';
-        areas[i].relation_expr[0] = '\0';
-        areas[i].relation_target = -1;
+        work_area_t *wa = area_get(i);
+        if (dbf_is_open(&wa->db))
+            dbf_close(&wa->db);
+        close_all_indexes(wa);
+        wa->alias[0] = '\0';
+        wa->locate_cond[0] = '\0';
+        wa->locate_last_rec = 0;
+        wa->filter_cond[0] = '\0';
+        wa->relation_expr[0] = '\0';
+        wa->relation_target = -1;
     }
-    current_area = 0;
+    area_set_current_idx(0);
 }
 
 /* ---- Helper: ensure filename has .FRM extension ---- */
@@ -3655,18 +3610,18 @@ int cmd_execute(dbf_t *db, char *line) {
             memvar_release_all(&memvar_store);
             prog_set_procedure(NULL);
         } else if (cmd_kw_at(rest, "INDEX", NULL)) {
-            close_all_indexes(&areas[current_area]);
+            close_all_indexes(cur_wa());
         } else if (cmd_kw_at(rest, "PROCEDURE", NULL)) {
             prog_set_procedure(NULL);
         } else {
             /* bare CLOSE = close current database */
             if (dbf_is_open(cdb)) {
                 dbf_close(cdb);
-                close_all_indexes(&areas[current_area]);
-                areas[current_area].alias[0] = '\0';
-                areas[current_area].filter_cond[0] = '\0';
-                areas[current_area].order = 0;
-                areas[current_area].num_indexes = 0;
+                close_all_indexes(cur_wa());
+                cur_wa()->alias[0] = '\0';
+                cur_wa()->filter_cond[0] = '\0';
+                cur_wa()->order = 0;
+                cur_wa()->num_indexes = 0;
             }
         }
         return 0;
@@ -3818,12 +3773,12 @@ int cmd_execute(dbf_t *db, char *line) {
         } else if (cmd_kw_at(rest, "FILTER", &after)) {
             if (cmd_kw_at(after, "TO", &after)) {
                 if (*after == '\0') {
-                    areas[current_area].filter_cond[0] = '\0';
+                    cur_wa()->filter_cond[0] = '\0';
                     printf("Filter removed.\n");
                 } else {
-                    str_copy(areas[current_area].filter_cond, after,
-                             sizeof(areas[current_area].filter_cond));
-                    printf("Filter: %s\n", areas[current_area].filter_cond);
+                    str_copy(cur_wa()->filter_cond, after,
+                             sizeof(cur_wa()->filter_cond));
+                    printf("Filter: %s\n", cur_wa()->filter_cond);
                 }
             } else {
                 printf("Syntax: SET FILTER TO [condition]\n");
@@ -3831,16 +3786,16 @@ int cmd_execute(dbf_t *db, char *line) {
         } else if (cmd_kw_at(rest, "ORDER", &after)) {
             if (cmd_kw_at(after, "TO", &after)) {
                 if (*after == '\0' || *after == '0') {
-                    areas[current_area].order = 0;
+                    cur_wa()->order = 0;
                     printf("Natural record order.\n");
                 } else {
                     int n = atoi(after);
-                    if (n < 0 || n > areas[current_area].num_indexes) {
-                        printf("Index number out of range (0-%d).\n", areas[current_area].num_indexes);
+                    if (n < 0 || n > cur_wa()->num_indexes) {
+                        printf("Index number out of range (0-%d).\n", cur_wa()->num_indexes);
                     } else {
-                        areas[current_area].order = n;
+                        cur_wa()->order = n;
                         if (n > 0) {
-                            index_t *idx = &areas[current_area].indexes[n - 1];
+                            index_t *idx = &cur_wa()->indexes[n - 1];
                             printf("Order set to %d (%s).\n", n, idx->filename);
                         } else {
                             printf("Natural record order.\n");
@@ -3854,8 +3809,8 @@ int cmd_execute(dbf_t *db, char *line) {
             if (cmd_kw_at(after, "TO", &after)) {
                 if (*after == '\0') {
                     /* Clear relation */
-                    areas[current_area].relation_expr[0] = '\0';
-                    areas[current_area].relation_target = -1;
+                    cur_wa()->relation_expr[0] = '\0';
+                    cur_wa()->relation_target = -1;
                 } else {
                     /* SET RELATION TO <expr> INTO <alias> */
                     const char *into_pos = after;
@@ -3879,18 +3834,13 @@ int cmd_execute(dbf_t *db, char *line) {
                         alias_buf[i] = '\0';
                         str_upper(alias_buf);
                         /* Find target area */
-                        ai = -1;
-                        for (i = 0; i < MAX_AREAS; i++) {
-                            if (areas[i].alias[0] && str_icmp(areas[i].alias, alias_buf) == 0) {
-                                ai = i; break;
-                            }
-                        }
+                        ai = area_resolve_alias(alias_buf);
                         if (ai < 0) {
                             printf("Alias not found: %s\n", alias_buf);
                         } else {
-                            str_copy(areas[current_area].relation_expr, expr_buf,
-                                     sizeof(areas[current_area].relation_expr));
-                            areas[current_area].relation_target = ai;
+                            str_copy(cur_wa()->relation_expr, expr_buf,
+                                     sizeof(cur_wa()->relation_expr));
+                            cur_wa()->relation_target = ai;
                         }
                     } else {
                         printf("Syntax: SET RELATION TO <expr> INTO <alias>\n");
