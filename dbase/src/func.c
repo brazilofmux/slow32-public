@@ -282,8 +282,11 @@ static int fn_str(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         if (width > (int)sizeof(buf) - 1) width = (int)sizeof(buf) - 1;
         if (dec > 0)
             snprintf(buf, sizeof(buf), "%*.*f", width, dec, args[0].num);
-        else
-            snprintf(buf, sizeof(buf), "%*d", width, (int)args[0].num);
+        else {
+            double n = args[0].num;
+            int rounded = (n >= 0.0) ? (int)(n + 0.5) : (int)(n - 0.5);
+            snprintf(buf, sizeof(buf), "%*d", width, rounded);
+        }
     }
     *result = val_str(buf);
     return 0;
