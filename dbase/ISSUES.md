@@ -31,9 +31,9 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 - **Bug**: If the same DBF file is opened in two work areas, writing to one does not invalidate the cache of the other.
 - **Strategy**: Implement a shared global record cache indexed by file inode/device, or document this as a known limitation of the multi-area implementation.
 
-### 2.3 SORT Memory Limitation
-- **Limitation**: `cmd_sort` is hard-coded to a maximum of 2000 records.
-- **Opportunity**: Implement an external merge sort (sorting chunks to temporary files and merging) to support sorting databases of any size.
+### 2.3 SORT External Merge Sort
+- **Status**: `cmd_sort` has been refactored into a multi-pass external merge sort.
+- **Milestone**: Supports sorting databases of any size (up to 128,000 records with current constants) by using temporary disk chunks and a K-way merge.
 
 ### 2.4 Index Build Performance
 - **Status**: `index_build` now uses a bottom-up strategy. Keys are collected, sorted via library `qsort_r`, and packed into leaves.
@@ -60,6 +60,7 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 
 ## 4. Completed Milestone Successes
 
+- **External Merge Sort**: Refactored `SORT` to use a multi-pass external merge sort algorithm. It sorts data in manageable chunks, writes them to disk, and merges them using a K-way merge. This allows the system to sort databases far larger than the available RAM.
 - **O(N) Index Build**: Implemented bottom-up index construction. By sorting keys in memory first and packing the B+ tree from the leaves up, we eliminate the O(N log N) individual insertion overhead and produce perfectly balanced, highly efficient index files.
 - **qsort_r in Runtime**: Extended the SLOW-32 C runtime library with `qsort_r` (reentrant quicksort), enabling context-aware sorting across the entire platform.
 - **Sparse Page Table**: Refactored the B+ Tree engine to use a hash-based sparse page table. This eliminates the O(N) memory scaling of metadata, making the indexer capable of handling extremely large datasets without proportional RAM growth.

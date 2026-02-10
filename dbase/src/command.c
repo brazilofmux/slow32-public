@@ -2482,27 +2482,32 @@ static void cmd_append_from(dbf_t *db, const char *arg) {
 
 /* ---- SORT TO file ON field [/A][/D][/C] [scope] [FOR cond] ---- */
 
+/* ---- SORT TO file ON field [/A][/D][/C] [scope] [FOR cond] ---- */
+
 typedef struct {
     uint32_t recno;
     char key[256];
 } sort_entry_t;
 
-#define MAX_SORT_ENTRIES 2000
-static sort_entry_t sort_entries[MAX_SORT_ENTRIES];
+typedef struct {
+    int ascending;
+    int case_insensitive;
+} sort_ctx_t;
 
-static int sort_ascending;
-static int sort_case_insensitive;
-
-static int sort_compare(const void *a, const void *b) {
+static int sort_compare_r(const void *a, const void *b, void *arg) {
     const sort_entry_t *sa = (const sort_entry_t *)a;
     const sort_entry_t *sb = (const sort_entry_t *)b;
+    sort_ctx_t *ctx = (sort_ctx_t *)arg;
     int cmp;
-    if (sort_case_insensitive)
+    if (ctx->case_insensitive)
         cmp = str_icmp(sa->key, sb->key);
     else
         cmp = strcmp(sa->key, sb->key);
-    return sort_ascending ? cmp : -cmp;
+    return ctx->ascending ? cmp : -cmp;
 }
+
+#define MAX_SORT_ENTRIES 2000
+#define MAX_SORT_CHUNKS 64
 
 static void cmd_sort(dbf_t *db, const char *arg) {
     char filename[64];
@@ -2516,6 +2521,10 @@ static void cmd_sort(dbf_t *db, const char *arg) {
     dbf_t dest;
     int count = 0;
     int f;
+    sort_ctx_t ctx;
+    sort_entry_t *sort_entries;
+    int nchunks = 0;
+    char chunk_names[MAX_SORT_CHUNKS][64];
 
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
@@ -2553,16 +2562,16 @@ static void cmd_sort(dbf_t *db, const char *arg) {
     }
 
     /* Parse flags */
-    sort_ascending = 1;
-    sort_case_insensitive = 0;
+    ctx.ascending = 1;
+    ctx.case_insensitive = 0;
     p = skip_ws(p);
     while (*p == '/') {
         p++;
         char fc = *p;
         if (fc >= 'a' && fc <= 'z') fc -= 32;
-        if (fc == 'A') sort_ascending = 1;
-        else if (fc == 'D') sort_ascending = 0;
-        else if (fc == 'C') sort_case_insensitive = 1;
+        if (fc == 'A') ctx.ascending = 1;
+        else if (fc == 'D') ctx.ascending = 0;
+        else if (fc == 'C') ctx.case_insensitive = 1;
         p++;
         p = skip_ws(p);
     }
@@ -2580,8 +2589,14 @@ static void cmd_sort(dbf_t *db, const char *arg) {
         return;
     }
 
-    /* Collect qualifying records */
-    for (i = start; i <= end && nentries < MAX_SORT_ENTRIES; i++) {
+    sort_entries = (sort_entry_t *)malloc(MAX_SORT_ENTRIES * sizeof(sort_entry_t));
+    if (!sort_entries) {
+        printf("Out of memory for sort buffer.\n");
+        return;
+    }
+
+    /* Phase 1: Create sorted chunks */
+    for (i = start; i <= end; i++) {
         char raw[256];
         dbf_read_record(db, i);
         if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
@@ -2590,6 +2605,7 @@ static void cmd_sort(dbf_t *db, const char *arg) {
             value_t cond;
             if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
                 report_expr_error();
+                free(sort_entries);
                 return;
             }
             if (cond.type != VAL_LOGIC || !cond.logic) continue;
@@ -2599,17 +2615,43 @@ static void cmd_sort(dbf_t *db, const char *arg) {
         dbf_get_field_raw(db, field_idx, raw, sizeof(raw));
         str_copy(sort_entries[nentries].key, raw, sizeof(sort_entries[nentries].key));
         nentries++;
+
+        if (nentries == MAX_SORT_ENTRIES) {
+            /* Sort and write chunk */
+            qsort_r(sort_entries, nentries, sizeof(sort_entry_t), sort_compare_r, &ctx);
+            sprintf(chunk_names[nchunks], "sort%d.tmp", nchunks);
+            FILE *tf = fopen(chunk_names[nchunks], "wb");
+            if (tf) {
+                fwrite(sort_entries, sizeof(sort_entry_t), nentries, tf);
+                fclose(tf);
+                nchunks++;
+                nentries = 0;
+                if (nchunks >= MAX_SORT_CHUNKS) {
+                    printf("Too many sort chunks.\n");
+                    break;
+                }
+            }
+        }
     }
 
-    if (nentries == 0) {
-        printf("No records to sort.\n");
-        return;
+    /* Final chunk */
+    if (nentries > 0) {
+        qsort_r(sort_entries, nentries, sizeof(sort_entry_t), sort_compare_r, &ctx);
+        if (nchunks == 0) {
+            /* All fit in memory, proceed directly to write phase below */
+        } else {
+            sprintf(chunk_names[nchunks], "sort%d.tmp", nchunks);
+            FILE *tf = fopen(chunk_names[nchunks], "wb");
+            if (tf) {
+                fwrite(sort_entries, sizeof(sort_entry_t), nentries, tf);
+                fclose(tf);
+                nchunks++;
+            }
+            nentries = 0;
+        }
     }
 
-    /* Sort */
-    qsort(sort_entries, nentries, sizeof(sort_entry_t), sort_compare);
-
-    /* Create dest with same structure */
+    /* Phase 2: Create destination file */
     {
         dbf_field_t fields[DBF_MAX_FIELDS];
         uint16_t off = 0;
@@ -2620,6 +2662,7 @@ static void cmd_sort(dbf_t *db, const char *arg) {
         }
         if (dbf_create(filename, fields, db->field_count) < 0) {
             printf("Error creating %s\n", filename);
+            free(sort_entries);
             return;
         }
     }
@@ -2627,23 +2670,75 @@ static void cmd_sort(dbf_t *db, const char *arg) {
     dbf_init(&dest);
     if (dbf_open(&dest, filename) < 0) {
         printf("Error opening %s\n", filename);
+        free(sort_entries);
         return;
     }
 
-    /* Write records in sorted order */
-    for (i = 0; i < (uint32_t)nentries; i++) {
-        char raw[256];
-        dbf_read_record(db, sort_entries[i].recno);
-        dbf_append_blank(&dest);
-        for (f = 0; f < db->field_count; f++) {
-            dbf_get_field_raw(db, f, raw, sizeof(raw));
-            dbf_set_field_raw(&dest, f, raw);
+    if (nchunks == 0) {
+        /* In-memory sort result */
+        for (i = 0; i < (uint32_t)nentries; i++) {
+            char raw[256];
+            dbf_read_record(db, sort_entries[i].recno);
+            dbf_append_blank(&dest);
+            for (f = 0; f < db->field_count; f++) {
+                dbf_get_field_raw(db, f, raw, sizeof(raw));
+                dbf_set_field_raw(&dest, f, raw);
+            }
+            dbf_flush_record(&dest);
+            count++;
         }
-        dbf_flush_record(&dest);
-        count++;
+    } else {
+        /* Phase 3: K-way Merge */
+        FILE *tfs[MAX_SORT_CHUNKS];
+        sort_entry_t current[MAX_SORT_CHUNKS];
+        int active[MAX_SORT_CHUNKS];
+        int active_count = 0;
+
+        for (int j = 0; j < nchunks; j++) {
+            tfs[j] = fopen(chunk_names[j], "rb");
+            if (tfs[j] && fread(&current[j], sizeof(sort_entry_t), 1, tfs[j]) == 1) {
+                active[j] = 1;
+                active_count++;
+            } else {
+                active[j] = 0;
+                if (tfs[j]) fclose(tfs[j]);
+            }
+        }
+
+        while (active_count > 0) {
+            int best = -1;
+            for (int j = 0; j < nchunks; j++) {
+                if (!active[j]) continue;
+                if (best == -1 || sort_compare_r(&current[j], &current[best], &ctx) < 0) {
+                    best = j;
+                }
+            }
+
+            if (best != -1) {
+                /* Write best record to dest */
+                char raw[256];
+                dbf_read_record(db, current[best].recno);
+                dbf_append_blank(&dest);
+                for (f = 0; f < db->field_count; f++) {
+                    dbf_get_field_raw(db, f, raw, sizeof(raw));
+                    dbf_set_field_raw(&dest, f, raw);
+                }
+                dbf_flush_record(&dest);
+                count++;
+
+                /* Read next from that chunk */
+                if (fread(&current[best], sizeof(sort_entry_t), 1, tfs[best]) != 1) {
+                    active[best] = 0;
+                    active_count--;
+                    fclose(tfs[best]);
+                    remove(chunk_names[best]);
+                }
+            }
+        }
     }
 
     dbf_close(&dest);
+    free(sort_entries);
     printf("%d record(s) sorted.\n", count);
 }
 
