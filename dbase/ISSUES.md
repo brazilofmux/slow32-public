@@ -58,7 +58,25 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 - **Limitation**: `my_pow` in `expr.c` only supports integer exponents.
 - **Opportunity**: Use `pow()` from the runtime library or implement a series-based approximation to support fractional powers (e.g., `x ** 0.5`).
 
-## 4. Completed Milestone Successes
+### 1.4 Single-Letter Work Area Aliases
+- **Issue**: dBase III supports single-letter aliases `A` through `J` for work areas 1-10.
+- **Observation**: `parse_primary` in `expr.c` correctly handles `alias->field` but doesn't explicitly resolve `A->field` unless the area has been specifically named "A".
+
+### 1.5 Function Argument Scaling
+- **Limitation**: `parse_primary` uses a fixed-size `args[8]` array for function calls.
+- **Opportunity**: Transition to dynamic allocation or a larger buffer to support functions with more than 8 arguments.
+
+### 2.4 Index Build Performance
+- **Issue**: `index_build` is O(N log N) because it performs individual `index_insert` calls for every record.
+- **Opportunity**: Implement a bottom-up build strategy (sort keys first, then pack leaves) to achieve O(N) build time.
+
+### 2.5 B+ Tree Maintenance (Fragmentation)
+- **Issue**: `index_remove` unlinks empty pages but does not perform underflow merging or redistribution.
+- **Impact**: Heavy deletion activity results in index fragmentation ("dead space") that is only recoverable via `REINDEX`.
+
+### 3.6 Error Message Thread Safety
+- **Issue**: `expr.c` and `program.c` frequently use `static char errbuf[]` for error messages.
+- **Concern**: While the current platform is single-threaded, this pattern is brittle and can lead to message corruption if an error handler itself triggers another error.
 
 - **Phase 5 (Error Handling)**: Robust `prog_error()` system with `ON ERROR` and `RETRY` support.
 - **Phase 6 (Binary Compatibility)**: Precise `.FRM` and `.LBL` binary support.
