@@ -133,3 +133,7 @@ stringutil.h
 
 # Akron
 ./dbase/akron
+
+# dBase test artifacts
+dbase/*.DBF
+dbase/src/*.s
