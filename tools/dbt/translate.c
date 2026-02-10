@@ -286,6 +286,8 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
     // Dead temporary elimination: backward liveness scan
     // For each instruction that writes a register, determine if the value
     // has at most 1 read before the next write (making store skippable).
+    // Safe with superblocks because pending writes are captured in the
+    // deferred side exit snapshot and flushed correctly in cold stubs.
     {
         int read_count_before_write[32];
         for (int r = 0; r < 32; r++)
@@ -567,15 +569,21 @@ static void reg_cache_flush(translate_ctx_t *ctx) {
     }
 }
 
-// Flush using a dirty-bit snapshot (for deferred side exits)
-static void reg_alloc_flush_snapshot(translate_ctx_t *ctx, const bool *dirty_snapshot) {
-    flush_pending_write(ctx);
+// Flush using a full allocation snapshot (for deferred side exits)
+// Uses the snapshotted guest_reg mapping, NOT the current ctx->reg_alloc,
+// because superblock continuation may have evicted/reassigned slots since
+// the snapshot was captured.
+// NOTE: Caller must handle pending write flush separately using the snapshot.
+static void reg_alloc_flush_snapshot(translate_ctx_t *ctx,
+                                      const bool *dirty_snapshot,
+                                      const bool *allocated_snapshot,
+                                      const uint8_t *guest_reg_snapshot) {
     emit_ctx_t *e = &ctx->emit;
     for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
-        if (!ctx->reg_alloc[i].allocated || !dirty_snapshot[i]) {
+        if (!allocated_snapshot[i] || !dirty_snapshot[i]) {
             continue;
         }
-        emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg),
+        emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(guest_reg_snapshot[i]),
                          reg_alloc_hosts[i]);
     }
 }
@@ -2202,9 +2210,19 @@ static void emit_deferred_side_exits(translate_ctx_t *ctx) {
         size_t cold_offset = emit_offset(e);
         emit_patch_rel32(e, ctx->deferred_exits[i].jmp_patch_offset, cold_offset);
 
-        // Flush allocated registers using dirty snapshot from branch point
+        // Flush state from branch point snapshot (not current translation state)
         if (ctx->reg_cache_enabled) {
-            reg_alloc_flush_snapshot(ctx, ctx->deferred_exits[i].dirty_snapshot);
+            // Flush snapshotted pending write for non-cached registers
+            if (ctx->deferred_exits[i].pending_write_valid) {
+                emit_mov_m32_r32(e, RBP,
+                    GUEST_REG_OFFSET(ctx->deferred_exits[i].pending_write_guest_reg),
+                    ctx->deferred_exits[i].pending_write_host_reg);
+            }
+            // Flush dirty cached registers using full allocation snapshot
+            reg_alloc_flush_snapshot(ctx,
+                ctx->deferred_exits[i].dirty_snapshot,
+                ctx->deferred_exits[i].allocated_snapshot,
+                ctx->deferred_exits[i].guest_reg_snapshot);
         }
 
         // Record branch_pc on block exit
@@ -2709,10 +2727,19 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
             ctx->deferred_exits[di].target_pc = taken_pc;
             ctx->deferred_exits[di].exit_idx = ctx->exit_idx;
             ctx->deferred_exits[di].branch_pc = branch_pc;
-            // Snapshot dirty bits for flushing in cold stub
+            // Snapshot full allocation state for flushing in cold stub
+            // (must capture guest_reg mapping because superblock continuation
+            // may evict/reassign slots before cold stubs are emitted)
             for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
                 ctx->deferred_exits[di].dirty_snapshot[s] = ctx->reg_alloc[s].dirty;
+                ctx->deferred_exits[di].allocated_snapshot[s] = ctx->reg_alloc[s].allocated;
+                ctx->deferred_exits[di].guest_reg_snapshot[s] = ctx->reg_alloc[s].guest_reg;
             }
+            // Snapshot pending write state (non-cached register deferred store)
+            ctx->deferred_exits[di].pending_write_valid = ctx->pending_write.valid;
+            ctx->deferred_exits[di].pending_write_guest_reg = ctx->pending_write.guest_reg;
+            ctx->deferred_exits[di].pending_write_host_reg = ctx->pending_write.host_reg;
+
         }
 
         if (ctx->side_exit_emitted < MAX_BLOCK_EXITS) {
@@ -2760,8 +2787,10 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
         // so they are correctly flushed if a side exit is taken after iterating.
         for (int di = 0; di < ctx->deferred_exit_count; di++) {
             for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
-                if (ctx->reg_alloc[s].allocated) {
-                    uint8_t guest_reg = ctx->reg_alloc[s].guest_reg;
+                // Use the snapshotted allocation (not current), since slots
+                // may have been reassigned since the side exit was captured
+                if (ctx->deferred_exits[di].allocated_snapshot[s]) {
+                    uint8_t guest_reg = ctx->deferred_exits[di].guest_reg_snapshot[s];
                     if (ctx->loop_written_regs & (1u << guest_reg)) {
                         ctx->deferred_exits[di].dirty_snapshot[s] = true;
                     }
@@ -3917,6 +3946,18 @@ void translate_fp_r_type(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8
 
     // Flush pending write before calling helper (clobbers everything)
     flush_pending_write(ctx);
+
+    // Invalidate constant propagation for rd (and rd+1 for register-pair results).
+    // The helper writes to cpu->regs directly, bypassing emit_store_guest_reg,
+    // so we must manually invalidate the stale compile-time constants.
+    if (rd != 0) {
+        ctx->reg_constants[rd].valid = false;
+        bounds_elim_invalidate(ctx, rd);
+        if (rd + 1 < 32) {
+            ctx->reg_constants[rd + 1].valid = false;
+            bounds_elim_invalidate(ctx, rd + 1);
+        }
+    }
 
     // Flush ALL cached registers before calling helper - it reads from memory!
     // Must flush ALL, not just dirty, because helper reads rs1/rs2 from memory.

@@ -129,8 +129,15 @@ typedef struct {
         uint32_t target_pc;         // guest PC for this side exit
         int exit_idx;               // exit index for chaining
         uint32_t branch_pc;         // guest PC of the branch instruction
-        // Snapshot of dirty bits at the point of the branch (for flushing in cold stub)
+        // Snapshot of register allocation at the point of the branch
+        // (needed because superblock continuation may reassign slots)
         bool dirty_snapshot[REG_ALLOC_SLOTS];
+        bool allocated_snapshot[REG_ALLOC_SLOTS];
+        uint8_t guest_reg_snapshot[REG_ALLOC_SLOTS];
+        // Snapshot of pending write at the point of the branch
+        bool pending_write_valid;
+        uint8_t pending_write_guest_reg;
+        x64_reg_t pending_write_host_reg;
     } deferred_exits[MAX_BLOCK_EXITS];
 } translate_ctx_t;
 
