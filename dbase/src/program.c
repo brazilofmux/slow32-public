@@ -4,6 +4,7 @@
 #include "program.h"
 #include "command.h"
 #include "func.h"
+#include "lex.h"
 #include "util.h"
 
 static prog_state_t state;
@@ -459,19 +460,42 @@ static int find_procedure(program_t *prog, const char *name) {
     return -1;
 }
 
+static int line_is_kw(const char *line, const char *kw) {
+    lexer_t l;
+    lexer_init(&l, line);
+    if (l.current.type == TOK_IDENT && str_imatch(l.current.text, kw))
+        return 1;
+    return 0;
+}
+
+static int line_is_do_kw(const char *line, const char *kw) {
+    lexer_t l;
+    lexer_init(&l, line);
+    if (l.current.type != TOK_IDENT || !str_imatch(l.current.text, "DO"))
+        return 0;
+    lex_next(&l);
+    if (l.current.type == TOK_IDENT && str_imatch(l.current.text, kw))
+        return 1;
+    return 0;
+}
+
 /* ---- Scan forward for matching control structure ---- */
 /* Scan from line `from` for matching ELSE/ENDIF at the same nesting level */
 static int scan_if(program_t *prog, int from, int want_else) {
     int depth = 1;
     int i;
     for (i = from + 1; i < prog->nlines; i++) {
-        char *p = skip_ws(prog->lines[i]);
-        if (str_imatch(p, "IF")) {
+        char line[MAX_LINE_LEN];
+        char *p;
+        str_copy(line, prog->lines[i], MAX_LINE_LEN);
+        prog_preprocess(line, cmd_get_memvar_store());
+        p = skip_ws(line);
+        if (line_is_kw(p, "IF")) {
             depth++;
-        } else if (str_imatch(p, "ENDIF")) {
+        } else if (line_is_kw(p, "ENDIF")) {
             depth--;
             if (depth == 0) return i;
-        } else if (depth == 1 && want_else && str_imatch(p, "ELSE")) {
+        } else if (depth == 1 && want_else && line_is_kw(p, "ELSE")) {
             return i;
         }
     }
@@ -483,13 +507,14 @@ static int scan_enddo(program_t *prog, int from) {
     int depth = 1;
     int i;
     for (i = from + 1; i < prog->nlines; i++) {
-        char *p = skip_ws(prog->lines[i]);
-        if (str_imatch(p, "DO") && !str_imatch(skip_ws(p + 2), "CASE")) {
-            /* Could be DO WHILE (nesting) or DO <file> - check for WHILE */
-            char *rest = skip_ws(p + 2);
-            if (str_imatch(rest, "WHILE"))
+        char line[MAX_LINE_LEN];
+        char *p;
+        str_copy(line, prog->lines[i], MAX_LINE_LEN);
+        prog_preprocess(line, cmd_get_memvar_store());
+        p = skip_ws(line);
+        if (line_is_do_kw(p, "WHILE")) {
                 depth++;
-        } else if (str_imatch(p, "ENDDO")) {
+        } else if (line_is_kw(p, "ENDDO")) {
             depth--;
             if (depth == 0) return i;
         }
@@ -502,10 +527,14 @@ static int scan_next(program_t *prog, int from) {
     int depth = 1;
     int i;
     for (i = from + 1; i < prog->nlines; i++) {
-        char *p = skip_ws(prog->lines[i]);
-        if (str_imatch(p, "FOR"))
+        char line[MAX_LINE_LEN];
+        char *p;
+        str_copy(line, prog->lines[i], MAX_LINE_LEN);
+        prog_preprocess(line, cmd_get_memvar_store());
+        p = skip_ws(line);
+        if (line_is_kw(p, "FOR"))
             depth++;
-        else if (str_imatch(p, "NEXT")) {
+        else if (line_is_kw(p, "NEXT")) {
             depth--;
             if (depth == 0) return i;
         }
@@ -518,10 +547,14 @@ static int scan_endcase(program_t *prog, int from) {
     int depth = 1;
     int i;
     for (i = from + 1; i < prog->nlines; i++) {
-        char *p = skip_ws(prog->lines[i]);
-        if (str_imatch(p, "DO") && str_imatch(skip_ws(p + 2), "CASE"))
+        char line[MAX_LINE_LEN];
+        char *p;
+        str_copy(line, prog->lines[i], MAX_LINE_LEN);
+        prog_preprocess(line, cmd_get_memvar_store());
+        p = skip_ws(line);
+        if (line_is_do_kw(p, "CASE"))
             depth++;
-        else if (str_imatch(p, "ENDCASE")) {
+        else if (line_is_kw(p, "ENDCASE")) {
             depth--;
             if (depth == 0) return i;
         }
@@ -676,15 +709,15 @@ static void prog_run(void) {
         /* Handle IF/ELSE/ENDIF/DO CASE/CASE/OTHERWISE/ENDCASE skip mode */
         if (if_skip > 0) {
             /* Counting nesting while skipping */
-            if (str_imatch(p, "IF")) {
+            if (line_is_kw(p, "IF")) {
                 if_skip++;
-            } else if (str_imatch(p, "ENDIF")) {
+            } else if (line_is_kw(p, "ENDIF")) {
                 if_skip--;
                 if (if_skip == 0) {
                     /* We've found matching ENDIF */
                     if (if_depth > 0) if_depth--;
                 }
-            } else if (if_skip == 1 && str_imatch(p, "ELSE")) {
+            } else if (if_skip == 1 && line_is_kw(p, "ELSE")) {
                 /* At our nesting level, found ELSE */
                 if (if_depth > 0 && !if_done[if_depth - 1]) {
                     if_skip = 0; /* start executing ELSE branch */
@@ -697,14 +730,14 @@ static void prog_run(void) {
 
         if (case_skip) {
             /* Inside DO CASE, skipping to next CASE/OTHERWISE/ENDCASE */
-            if (str_imatch(p, "DO") && str_imatch(skip_ws(p + 2), "CASE")) {
+            if (line_is_do_kw(p, "CASE")) {
                 /* nested DO CASE - skip the whole thing */
                 int target = scan_endcase(state.current_prog, state.pc);
                 if (target >= 0) {
                     state.pc = target + 1;
                     continue;
                 }
-            } else if (str_imatch(p, "CASE")) {
+            } else if (line_is_kw(p, "CASE")) {
                 if (!case_done) {
                     /* Evaluate this CASE condition */
                     char *cond = skip_ws(p + 4);
@@ -720,14 +753,14 @@ static void prog_run(void) {
                 }
                 state.pc++;
                 continue;
-            } else if (str_imatch(p, "OTHERWISE")) {
+            } else if (line_is_kw(p, "OTHERWISE")) {
                 if (!case_done) {
                     case_skip = 0;
                     case_done = 1;
                 }
                 state.pc++;
                 continue;
-            } else if (str_imatch(p, "ENDCASE")) {
+            } else if (line_is_kw(p, "ENDCASE")) {
                 case_skip = 0;
                 case_active = 0;
                 case_done = 0;
