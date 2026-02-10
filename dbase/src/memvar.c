@@ -70,21 +70,9 @@ void memvar_release_all(memvar_store_t *store) {
     store->count = 0;
 }
 
-/* Simple pattern match: * at end matches any suffix, ? matches one char */
+/* Case-insensitive wildcard match: '*' and '?' */
 static int pattern_match(const char *name, const char *pat) {
-    while (*pat && *name) {
-        if (*pat == '*') return 1; /* trailing * matches rest */
-        if (*pat == '?') { pat++; name++; continue; }
-        /* case-insensitive compare */
-        char pc = *pat, nc = *name;
-        if (pc >= 'a' && pc <= 'z') pc -= 32;
-        if (nc >= 'a' && nc <= 'z') nc -= 32;
-        if (pc != nc) return 0;
-        pat++;
-        name++;
-    }
-    if (*pat == '*') return 1;
-    return (*pat == '\0' && *name == '\0');
+    return str_like(name, pat);
 }
 
 int memvar_release_matching(memvar_store_t *store, const char *pattern, int like) {

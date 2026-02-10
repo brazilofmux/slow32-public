@@ -29,4 +29,7 @@ int str_nicmp(const char *a, const char *b, int n);
 int is_ident_start(char c);
 int is_ident_char(char c);
 
+/* Case-insensitive wildcard match: '*' and '?' */
+int str_like(const char *text, const char *pattern);
+
 #endif

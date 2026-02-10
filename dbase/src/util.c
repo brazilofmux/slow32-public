@@ -94,3 +94,53 @@ int is_ident_start(char c) {
 int is_ident_char(char c) {
     return is_ident_start(c) || (c >= '0' && c <= '9');
 }
+
+/* Case-insensitive wildcard match: '*' matches any sequence, '?' matches any char */
+int str_like(const char *text, const char *pattern) {
+    const char *t = text;
+    const char *p = pattern;
+    const char *star = NULL;
+    const char *star_text = NULL;
+
+    for (;;) {
+        char pc, tc;
+        if (*p == '*') {
+            while (*p == '*') p++;
+            if (*p == '\0') return 1;
+            star = p;
+            star_text = t;
+            continue;
+        }
+
+        if (*p == '\0') return *t == '\0';
+
+        if (*t == '\0') {
+            if (star) {
+                star_text++;
+                t = star_text;
+                p = star;
+                continue;
+            }
+            return 0;
+        }
+
+        pc = *p;
+        tc = *t;
+        if (pc >= 'a' && pc <= 'z') pc -= 32;
+        if (tc >= 'a' && tc <= 'z') tc -= 32;
+
+        if (pc == '?' || pc == tc) {
+            p++;
+            t++;
+            continue;
+        }
+
+        if (star) {
+            star_text++;
+            t = star_text;
+            p = star;
+            continue;
+        }
+        return 0;
+    }
+}
