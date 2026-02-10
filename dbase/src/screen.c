@@ -112,6 +112,8 @@ void screen_say(int row, int col, const char *expr_str, const char *picture) {
 
     goto_pos(row, col);
     printf("%s", formatted);
+    scr.last_row = row;
+    scr.last_col = col + strlen(formatted);
 }
 
 /* ---- @GET ---- */
@@ -147,6 +149,8 @@ void screen_get(int row, int col, const char *varname, const char *picture) {
     /* Display the field */
     goto_pos(row, col);
     printf("%s", scr.gets[scr.ngets].initial);
+    scr.last_row = row;
+    scr.last_col = col + strlen(scr.gets[scr.ngets].initial);
 
     scr.ngets++;
 }
@@ -330,6 +334,13 @@ void screen_clear(void) {
         int i;
         for (i = 0; i < 24; i++) printf("\n");
     }
+    scr.last_row = 0;
+    scr.last_col = 0;
+}
+
+/* ---- CLEAR GETS ---- */
+void screen_clear_gets(void) {
+    scr.ngets = 0;
 }
 
 /* ---- SET COLOR TO ---- */
@@ -508,3 +519,6 @@ void screen_at_cmd(const char *line) {
         printf("Syntax: @ row,col SAY|GET|CLEAR TO|TO ...\n");
     }
 }
+
+int screen_get_row(void) { return scr.last_row; }
+int screen_get_col(void) { return scr.last_col; }

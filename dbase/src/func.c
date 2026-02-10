@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include "func.h"
 #include "date.h"
+#include "screen.h"
 #include "util.h"
 
 extern double floor(double x);
@@ -518,6 +519,80 @@ static int fn_cmonth(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
     return 0;
 }
 
+/* ---- IIF (inline if) ---- */
+
+static int fn_iif(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    if (nargs < 3) {
+        ctx->error = "IIF requires (cond, true_val, false_val)";
+        return -1;
+    }
+    /* Evaluate condition: numeric non-zero or logical true */
+    int cond = 0;
+    if (args[0].type == VAL_LOGIC) cond = args[0].logic;
+    else if (args[0].type == VAL_NUM) cond = (args[0].num != 0.0);
+    *result = cond ? args[1] : args[2];
+    return 0;
+}
+
+/* ---- FILE (test file existence) ---- */
+
+static int fn_file(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_CHAR) {
+        ctx->error = "FILE requires (filename)";
+        return -1;
+    }
+    {
+        FILE *f = fopen(args[0].str, "r");
+        if (f) {
+            fclose(f);
+            *result = val_logic(1);
+        } else {
+            *result = val_logic(0);
+        }
+    }
+    return 0;
+}
+
+/* ---- DTOS (date to string YYYYMMDD for indexing) ---- */
+
+static int fn_dtos(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    int y, m, d;
+    char buf[16];
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_DATE) {
+        ctx->error = "DTOS requires (date)";
+        return -1;
+    }
+    date_from_jdn(args[0].date, &y, &m, &d);
+    buf[0] = '0' + (y / 1000) % 10;
+    buf[1] = '0' + (y / 100) % 10;
+    buf[2] = '0' + (y / 10) % 10;
+    buf[3] = '0' + y % 10;
+    buf[4] = '0' + (m / 10);
+    buf[5] = '0' + (m % 10);
+    buf[6] = '0' + (d / 10);
+    buf[7] = '0' + (d % 10);
+    buf[8] = '\0';
+    *result = val_str(buf);
+    return 0;
+}
+
+/* ---- Screen position ---- */
+
+static int fn_row(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_num((double)screen_get_row());
+    return 0;
+}
+
+static int fn_col(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_num((double)screen_get_col());
+    return 0;
+}
+
 /* ---- Dispatch table ---- */
 
 typedef int (*func_impl_t)(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
@@ -571,6 +646,13 @@ static const func_entry_t func_table[] = {
     { "DOW",       fn_dow },
     { "CDOW",      fn_cdow },
     { "CMONTH",    fn_cmonth },
+    { "DTOS",      fn_dtos },
+    /* Screen */
+    { "ROW",       fn_row },
+    { "COL",       fn_col },
+    /* Misc */
+    { "IIF",       fn_iif },
+    { "FILE",      fn_file },
     { NULL, NULL }
 };
 

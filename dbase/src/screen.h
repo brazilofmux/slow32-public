@@ -20,6 +20,7 @@ typedef struct {
     int ngets;
     int term_available;
     int fg_color, bg_color;
+    int last_row, last_col;  /* cursor position tracking */
 } screen_state_t;
 
 /* Initialize screen subsystem */
@@ -43,10 +44,17 @@ void screen_read(void);
 /* CLEAR command */
 void screen_clear(void);
 
+/* CLEAR GETS command */
+void screen_clear_gets(void);
+
 /* SET COLOR TO command */
 void screen_set_color(const char *spec);
 
 /* Parse and execute @ command */
 void screen_at_cmd(const char *line);
+
+/* Cursor position tracking (for ROW()/COL() functions) */
+int screen_get_row(void);
+int screen_get_col(void);
 
 #endif

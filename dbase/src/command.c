@@ -1403,7 +1403,28 @@ static void cmd_release(const char *arg) {
     int i;
 
     if (str_imatch(p, "ALL")) {
-        memvar_release_all(&memvar_store);
+        const char *q = skip_ws(p + 3);
+        if (str_imatch(q, "LIKE")) {
+            q = skip_ws(q + 4);
+            char pat[MEMVAR_NAMELEN];
+            int pi = 0;
+            while (*q && *q != ' ' && *q != '\t' && pi < MEMVAR_NAMELEN - 1)
+                pat[pi++] = *q++;
+            pat[pi] = '\0';
+            str_upper(pat);
+            memvar_release_matching(&memvar_store, pat, 1);
+        } else if (str_imatch(q, "EXCEPT")) {
+            q = skip_ws(q + 6);
+            char pat[MEMVAR_NAMELEN];
+            int pi = 0;
+            while (*q && *q != ' ' && *q != '\t' && pi < MEMVAR_NAMELEN - 1)
+                pat[pi++] = *q++;
+            pat[pi] = '\0';
+            str_upper(pat);
+            memvar_release_matching(&memvar_store, pat, 0);
+        } else {
+            memvar_release_all(&memvar_store);
+        }
         return;
     }
 
@@ -2704,6 +2725,32 @@ int cmd_execute(dbf_t *db, char *line) {
         return 0;
     }
 
+    if (str_imatch(p, "CLOSE")) {
+        char *rest = skip_ws(p + 5);
+        if (str_imatch(rest, "DATABASES") || str_imatch(rest, "DATA")) {
+            cmd_close_all();
+        } else if (str_imatch(rest, "ALL")) {
+            cmd_close_all();
+            memvar_release_all(&memvar_store);
+            prog_set_procedure(NULL);
+        } else if (str_imatch(rest, "INDEX")) {
+            close_all_indexes(&areas[current_area]);
+        } else if (str_imatch(rest, "PROCEDURE")) {
+            prog_set_procedure(NULL);
+        } else {
+            /* bare CLOSE = close current database */
+            if (dbf_is_open(cdb)) {
+                dbf_close(cdb);
+                close_all_indexes(&areas[current_area]);
+                areas[current_area].alias[0] = '\0';
+                areas[current_area].filter_cond[0] = '\0';
+                areas[current_area].order = 0;
+                areas[current_area].num_indexes = 0;
+            }
+        }
+        return 0;
+    }
+
     /* COPY TO / COPY STRUCTURE TO */
     if (str_imatch(p, "COPY")) {
         char *rest = skip_ws(p + 4);
@@ -2958,7 +3005,18 @@ int cmd_execute(dbf_t *db, char *line) {
     }
 
     if (str_imatch(p, "CLEAR")) {
-        screen_clear();
+        char *rest = skip_ws(p + 5);
+        if (str_imatch(rest, "ALL")) {
+            cmd_close_all();
+            memvar_release_all(&memvar_store);
+            prog_set_procedure(NULL);
+        } else if (str_imatch(rest, "MEMORY")) {
+            memvar_release_all(&memvar_store);
+        } else if (str_imatch(rest, "GETS")) {
+            screen_clear_gets();
+        } else {
+            screen_clear();
+        }
         return 0;
     }
 

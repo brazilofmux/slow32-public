@@ -15,6 +15,7 @@ void set_init(set_options_t *opts) {
     opts->console = 1;
     opts->decimals = 2;
     opts->date_format = DATE_AMERICAN;
+    opts->device = 0;  /* SCREEN */
 }
 
 static int parse_on_off(const char *p) {
@@ -48,6 +49,7 @@ void set_display(const set_options_t *opts) {
     printf("CONSOLE   = %s\n", opts->console ? "ON" : "OFF");
     printf("DECIMALS  = %d\n", opts->decimals);
     printf("DATE      = %s\n", format_name(opts->date_format));
+    printf("DEVICE    = %s\n", opts->device ? "PRINT" : "SCREEN");
 }
 
 void set_execute(set_options_t *opts, const char *arg) {
@@ -128,6 +130,69 @@ void set_execute(set_options_t *opts, const char *arg) {
         else if (str_imatch(p, "ITALIAN")) opts->date_format = DATE_ITALIAN;
         else if (str_imatch(p, "JAPAN"))   opts->date_format = DATE_JAPAN;
         else printf("Unknown date format.\n");
+        return;
+    }
+
+    /* No-op SET options: accepted silently for compatibility */
+    if (str_imatch(p, "ECHO")) {
+        parse_on_off(p + 4); /* consume ON/OFF, ignore */
+        return;
+    }
+    if (str_imatch(p, "MENU")) {
+        /* SET MENU or SET MENUS */
+        const char *q = p + 4;
+        if (*q == 'S' || *q == 's') q++;
+        parse_on_off(q);
+        return;
+    }
+    if (str_imatch(p, "STATUS")) {
+        parse_on_off(p + 6);
+        return;
+    }
+    if (str_imatch(p, "SCOREBOARD")) {
+        parse_on_off(p + 10);
+        return;
+    }
+    if (str_imatch(p, "ESCAPE")) {
+        parse_on_off(p + 6);
+        return;
+    }
+    if (str_imatch(p, "INTENSITY")) {
+        parse_on_off(p + 9);
+        return;
+    }
+    if (str_imatch(p, "UNIQUE")) {
+        parse_on_off(p + 6);
+        return;
+    }
+    if (str_imatch(p, "FUNCTION")) {
+        /* SET FUNCTION <n> TO <string> — just skip */
+        return;
+    }
+    if (str_imatch(p, "PRINT")) {
+        parse_on_off(p + 5);
+        return;
+    }
+    if (str_imatch(p, "HELP")) {
+        parse_on_off(p + 4);
+        return;
+    }
+    if (str_imatch(p, "CENTURY")) {
+        parse_on_off(p + 7);
+        return;
+    }
+    if (str_imatch(p, "PATH")) {
+        /* SET PATH TO <path> — skip */
+        return;
+    }
+    if (str_imatch(p, "DEVICE")) {
+        /* SET DEVICE TO SCREEN/PRINT */
+        p = skip_ws(p + 6);
+        if (str_imatch(p, "TO")) p = skip_ws(p + 2);
+        if (str_imatch(p, "SCREEN"))
+            opts->device = 0;
+        else if (str_imatch(p, "PRINT"))
+            opts->device = 1;
         return;
     }
 

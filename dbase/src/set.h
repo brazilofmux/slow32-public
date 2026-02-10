@@ -22,6 +22,7 @@ typedef struct set_options {
     int console;
     int decimals;
     date_format_t date_format;
+    int device;       /* 0 = SCREEN, 1 = PRINT */
 } set_options_t;
 
 void set_init(set_options_t *opts);

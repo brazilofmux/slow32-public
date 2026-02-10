@@ -22,6 +22,7 @@ int  memvar_find(const memvar_store_t *store, const char *name, value_t *val);
 int  memvar_set(memvar_store_t *store, const char *name, const value_t *val);
 int  memvar_release(memvar_store_t *store, const char *name);
 void memvar_release_all(memvar_store_t *store);
+int  memvar_release_matching(memvar_store_t *store, const char *pattern, int like);
 void memvar_display(const memvar_store_t *store);
 
 #endif
