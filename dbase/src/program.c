@@ -378,7 +378,7 @@ static int prog_udf_call(const char *name, value_t *args, int nargs, value_t *re
         call_frame_t *frame = &state.call_stack[state.call_depth - 1];
         int i;
         frame->with_argc = nargs;
-        for (i = 0; i < nargs && i < 16; i++)
+        for (i = 0; i < nargs && i < MAX_FUNC_ARGS; i++)
             frame->with_args[i] = args[i];
     }
 
@@ -869,7 +869,7 @@ void prog_do(const char *arg) {
         int i = 0;
         program_t *prog;
         int proc_line;
-        value_t with_args[16];
+        value_t with_args[MAX_FUNC_ARGS];
         int with_argc = 0;
 
         while (*p && *p != ' ' && *p != '\t' && i < 63)
@@ -881,7 +881,7 @@ void prog_do(const char *arg) {
         if (str_imatch(p, "WITH")) {
             expr_ctx_t *ctx = cmd_get_expr_ctx();
             p = skip_ws(p + 4);
-            while (*p && with_argc < 16) {
+            while (*p && with_argc < MAX_FUNC_ARGS) {
                 value_t val;
                 if (expr_eval(ctx, &p, &val) != 0) {
                     if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);

@@ -457,13 +457,13 @@ static int parse_primary(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
 
         /* Function call: name( */
         if (lex_peek(l) == TOK_LPAREN) {
-            value_t args[8];
+            value_t args[MAX_FUNC_ARGS];
             int nargs = 0;
             lex_next(l); /* skip ( */
 
             if (lex_peek(l) != TOK_RPAREN) {
                 for (;;) {
-                    if (nargs >= 8) {
+                    if (nargs >= MAX_FUNC_ARGS) {
                         ctx->error = "Too many function arguments";
                         return -1;
                     }

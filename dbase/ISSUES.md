@@ -17,8 +17,8 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 - **Milestone**: `find_procedure` is now 100% robust against false positives in assignments, while `prog_preprocess` continues to handle comments and strings.
 
 ### 1.4 Function Argument Scaling
-- **Limitation**: `parse_primary` uses a fixed-size `args[8]` array for function calls.
-- **Opportunity**: Transition to dynamic allocation or a larger buffer to support functions with more than 8 arguments.
+- **Status**: `MAX_FUNC_ARGS` constant (32) has been implemented and unified across `expr.c` and `program.c`.
+- **Milestone**: UDFs and built-in functions can now accept up to 32 arguments, removing the previous limit of 8/16.
 
 ## 2. Performance & Scaling
 
@@ -60,6 +60,7 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 
 ## 4. Completed Milestone Successes
 
+- **Function Argument Scaling**: Increased the maximum number of arguments for function calls and UDFs to 32. This allows for much more complex programming patterns and data-entry helpers.
 - **External Merge Sort**: Refactored `SORT` to use a multi-pass external merge sort algorithm. It sorts data in manageable chunks, writes them to disk, and merges them using a K-way merge. This allows the system to sort databases far larger than the available RAM.
 - **O(N) Index Build**: Implemented bottom-up index construction. By sorting keys in memory first and packing the B+ tree from the leaves up, we eliminate the O(N log N) individual insertion overhead and produce perfectly balanced, highly efficient index files.
 - **qsort_r in Runtime**: Extended the SLOW-32 C runtime library with `qsort_r` (reentrant quicksort), enabling context-aware sorting across the entire platform.

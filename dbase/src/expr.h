@@ -29,6 +29,8 @@ typedef struct {
     const char *error;
 } expr_ctx_t;
 
+#define MAX_FUNC_ARGS 32
+
 /* Evaluate expression, advance *pp past consumed input. Returns 0 on success. */
 int expr_eval(expr_ctx_t *ctx, const char **pp, value_t *result);
 

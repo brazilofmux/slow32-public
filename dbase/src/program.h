@@ -28,7 +28,7 @@ typedef struct {
     value_t saved_vals[64];
     int saved_valid[64];
     /* DO ... WITH arguments */
-    value_t with_args[16];
+    value_t with_args[MAX_FUNC_ARGS];
     int with_argc;
 } call_frame_t;
 
