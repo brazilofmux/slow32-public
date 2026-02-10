@@ -22,7 +22,9 @@ typedef struct {
     char alias[DBF_MAX_FIELD_NAME];
     char locate_cond[256];
     uint32_t locate_last_rec;
-    index_t index;
+    index_t indexes[MAX_INDEXES];
+    int num_indexes;
+    int order;          /* controlling index: 0=natural, 1-N=index number */
 } work_area_t;
 
 static work_area_t areas[MAX_AREAS];
@@ -74,6 +76,24 @@ static dbf_t *area_lookup(const char *alias) {
             return &areas[i].db;
     }
     return NULL;
+}
+
+/* ---- Index helpers ---- */
+static index_t *controlling_index(void) {
+    work_area_t *wa = &areas[current_area];
+    if (wa->order > 0 && wa->order <= wa->num_indexes)
+        return &wa->indexes[wa->order - 1];
+    return NULL;
+}
+
+static void close_all_indexes(work_area_t *wa) {
+    int i;
+    for (i = 0; i < wa->num_indexes; i++) {
+        if (wa->indexes[i].active)
+            index_close(&wa->indexes[i]);
+    }
+    wa->num_indexes = 0;
+    wa->order = 0;
 }
 
 /* ---- Helper: check FOR clause ---- */
@@ -200,6 +220,16 @@ static void ensure_dbf_ext(char *filename, int size) {
     if (strlen(filename) < 5 || str_icmp(filename + strlen(filename) - 4, ".DBF") != 0) {
         if ((int)strlen(filename) + 4 < size)
             strcat(filename, ".DBF");
+    }
+}
+
+/* ---- Helper: ensure filename has .NDX extension ---- */
+static void ensure_ndx_ext(char *filename, int size) {
+    str_upper(filename);
+    trim_right(filename);
+    if (strlen(filename) < 5 || str_icmp(filename + strlen(filename) - 4, ".NDX") != 0) {
+        if ((int)strlen(filename) + 4 < size)
+            strcat(filename, ".NDX");
     }
 }
 
@@ -334,14 +364,15 @@ static void cmd_select(const char *arg) {
 /* ---- USE ---- */
 static void cmd_use(dbf_t *db, const char *arg) {
     char filename[64];
+    const char *p;
+    int i;
 
     arg = skip_ws(arg);
 
     if (*arg == '\0') {
         if (dbf_is_open(db)) {
             dbf_close(db);
-            if (areas[current_area].index.active)
-                index_close(&areas[current_area].index);
+            close_all_indexes(&areas[current_area]);
             areas[current_area].alias[0] = '\0';
             areas[current_area].locate_cond[0] = '\0';
             areas[current_area].locate_last_rec = 0;
@@ -352,12 +383,16 @@ static void cmd_use(dbf_t *db, const char *arg) {
 
     if (dbf_is_open(db)) {
         dbf_close(db);
-        if (areas[current_area].index.active)
-            index_close(&areas[current_area].index);
+        close_all_indexes(&areas[current_area]);
         areas[current_area].alias[0] = '\0';
     }
 
-    str_copy(filename, arg, sizeof(filename));
+    /* Parse filename (up to whitespace) */
+    p = arg;
+    i = 0;
+    while (*p && *p != ' ' && *p != '\t' && i < 63)
+        filename[i++] = *p++;
+    filename[i] = '\0';
     ensure_dbf_ext(filename, sizeof(filename));
 
     if (dbf_open(db, filename) < 0) {
@@ -367,6 +402,49 @@ static void cmd_use(dbf_t *db, const char *arg) {
 
     /* Set alias to filename stem */
     filename_stem(filename, areas[current_area].alias, sizeof(areas[current_area].alias));
+
+    /* Parse optional INDEX clause */
+    p = skip_ws(p);
+    if (str_imatch(p, "INDEX")) {
+        p = skip_ws(p + 5);
+        while (*p && !str_imatch(p, "ALIAS") && areas[current_area].num_indexes < MAX_INDEXES) {
+            char ndxfile[64];
+            i = 0;
+            while (*p && *p != ' ' && *p != '\t' && *p != ',' && i < 63)
+                ndxfile[i++] = *p++;
+            ndxfile[i] = '\0';
+
+            if (ndxfile[0]) {
+                ensure_ndx_ext(ndxfile, sizeof(ndxfile));
+                {
+                    int slot = areas[current_area].num_indexes;
+                    if (index_read(&areas[current_area].indexes[slot], ndxfile) == 0) {
+                        areas[current_area].num_indexes++;
+                    } else {
+                        printf("Cannot open index: %s\n", ndxfile);
+                    }
+                }
+            }
+
+            p = skip_ws(p);
+            if (*p == ',') { p++; p = skip_ws(p); }
+            else break;
+        }
+
+        if (areas[current_area].num_indexes > 0)
+            areas[current_area].order = 1;
+    }
+
+    /* Parse optional ALIAS clause */
+    p = skip_ws(p);
+    if (str_imatch(p, "ALIAS")) {
+        p = skip_ws(p + 5);
+        i = 0;
+        while (*p && *p != ' ' && *p != '\t' && i < DBF_MAX_FIELD_NAME - 1)
+            areas[current_area].alias[i++] = *p++;
+        areas[current_area].alias[i] = '\0';
+        str_upper(areas[current_area].alias);
+    }
 
     /* Reset navigation state */
     expr_ctx.eof_flag = 0;
@@ -414,13 +492,16 @@ static void cmd_go(dbf_t *db, const char *arg) {
             printf("No records.\n");
             return;
         }
-        if (areas[current_area].index.active) {
-            uint32_t rec;
-            index_top(&areas[current_area].index);
-            rec = index_current_recno(&areas[current_area].index);
-            if (rec > 0) dbf_read_record(db, rec);
-        } else {
-            dbf_read_record(db, 1);
+        {
+            index_t *idx = controlling_index();
+            if (idx) {
+                uint32_t rec;
+                index_top(idx);
+                rec = index_current_recno(idx);
+                if (rec > 0) dbf_read_record(db, rec);
+            } else {
+                dbf_read_record(db, 1);
+            }
         }
         expr_ctx.eof_flag = 0;
         expr_ctx.bof_flag = 0;
@@ -434,13 +515,16 @@ static void cmd_go(dbf_t *db, const char *arg) {
             printf("No records.\n");
             return;
         }
-        if (areas[current_area].index.active) {
-            uint32_t rec;
-            index_bottom(&areas[current_area].index);
-            rec = index_current_recno(&areas[current_area].index);
-            if (rec > 0) dbf_read_record(db, rec);
-        } else {
-            dbf_read_record(db, db->record_count);
+        {
+            index_t *idx = controlling_index();
+            if (idx) {
+                uint32_t rec;
+                index_bottom(idx);
+                rec = index_current_recno(idx);
+                if (rec > 0) dbf_read_record(db, rec);
+            } else {
+                dbf_read_record(db, db->record_count);
+            }
         }
         expr_ctx.eof_flag = 0;
         expr_ctx.bof_flag = 0;
@@ -477,8 +561,9 @@ static void cmd_skip(dbf_t *db, const char *arg) {
         n = atoi(p);
 
     /* Index-ordered skip */
-    if (areas[current_area].index.active) {
-        index_t *idx = &areas[current_area].index;
+    {
+        index_t *idx = controlling_index();
+    if (idx) {
         int i;
         uint32_t rec;
 
@@ -512,6 +597,7 @@ static void cmd_skip(dbf_t *db, const char *arg) {
             expr_ctx.bof_flag = 0;
         }
         return;
+    }
     }
 
     /* Physical order skip */
@@ -2003,16 +2089,6 @@ static void cmd_sort(dbf_t *db, const char *arg) {
     printf("%d record(s) sorted.\n", count);
 }
 
-/* ---- Helper: ensure filename has .NDX extension ---- */
-static void ensure_ndx_ext(char *filename, int size) {
-    str_upper(filename);
-    trim_right(filename);
-    if (strlen(filename) < 5 || str_icmp(filename + strlen(filename) - 4, ".NDX") != 0) {
-        if ((int)strlen(filename) + 4 < size)
-            strcat(filename, ".NDX");
-    }
-}
-
 /* ---- INDEX ON <expr> TO <file> ---- */
 static void cmd_index_on(dbf_t *db, const char *arg) {
     const char *p = skip_ws(arg);
@@ -2060,77 +2136,96 @@ static void cmd_index_on(dbf_t *db, const char *arg) {
         return;
     }
 
-    /* Build the index */
-    if (index_build(&areas[current_area].index, db, &expr_ctx, key_expr, filename) < 0) {
+    /* Close all existing indexes and build fresh */
+    close_all_indexes(&areas[current_area]);
+
+    /* Build the index in slot 0 */
+    if (index_build(&areas[current_area].indexes[0], db, &expr_ctx, key_expr, filename) < 0) {
         printf("Error building index.\n");
         return;
     }
 
     /* Write to file */
-    if (index_write(&areas[current_area].index) < 0) {
+    if (index_write(&areas[current_area].indexes[0]) < 0) {
         printf("Error writing index file.\n");
         return;
     }
 
+    areas[current_area].num_indexes = 1;
+    areas[current_area].order = 1;
+
     /* Position to first indexed record */
-    if (areas[current_area].index.nentries > 0) {
+    if (areas[current_area].indexes[0].nentries > 0) {
         uint32_t rec;
-        index_top(&areas[current_area].index);
-        rec = index_current_recno(&areas[current_area].index);
+        index_top(&areas[current_area].indexes[0]);
+        rec = index_current_recno(&areas[current_area].indexes[0]);
         if (rec > 0) dbf_read_record(db, rec);
         expr_ctx.eof_flag = 0;
         expr_ctx.bof_flag = 0;
     }
 
-    printf("%d record(s) indexed.\n", areas[current_area].index.nentries);
+    printf("%d record(s) indexed.\n", areas[current_area].indexes[0].nentries);
 }
 
-/* ---- SET INDEX TO [file] ---- */
+/* ---- SET INDEX TO [file1 [, file2 ...]] ---- */
 static void cmd_set_index(dbf_t *db, const char *arg) {
     const char *p = skip_ws(arg);
-    char filename[64];
 
     if (!dbf_is_open(db)) {
         printf("No database in use.\n");
         return;
     }
 
+    /* Close all existing indexes */
+    close_all_indexes(&areas[current_area]);
+
     if (*p == '\0') {
-        /* Close index */
-        if (areas[current_area].index.active) {
-            index_close(&areas[current_area].index);
-            printf("Index closed.\n");
-        }
+        /* SET INDEX TO with no args = close all */
+        printf("Index closed.\n");
         return;
     }
 
-    {
+    /* Parse comma-separated index files */
+    while (*p && areas[current_area].num_indexes < MAX_INDEXES) {
+        char filename[64];
         int i = 0;
-        while (*p && *p != ' ' && *p != '\t' && i < 63)
+        while (*p && *p != ' ' && *p != '\t' && *p != ',' && i < 63)
             filename[i++] = *p++;
         filename[i] = '\0';
+
+        if (filename[0]) {
+            int slot = areas[current_area].num_indexes;
+            ensure_ndx_ext(filename, sizeof(filename));
+            if (index_read(&areas[current_area].indexes[slot], filename) == 0) {
+                areas[current_area].num_indexes++;
+                printf("Index %s opened (%d entries).\n", filename,
+                       areas[current_area].indexes[slot].nentries);
+            } else {
+                printf("Cannot open index: %s\n", filename);
+            }
+        }
+
+        p = skip_ws(p);
+        if (*p == ',') { p++; p = skip_ws(p); }
+        else break;
     }
-    ensure_ndx_ext(filename, sizeof(filename));
 
-    if (areas[current_area].index.active)
-        index_close(&areas[current_area].index);
-
-    if (index_read(&areas[current_area].index, filename) < 0) {
-        printf("Cannot open index: %s\n", filename);
-        return;
-    }
-
-    /* Position to first indexed record */
-    if (areas[current_area].index.nentries > 0) {
+    /* Set controlling index to first one */
+    if (areas[current_area].num_indexes > 0) {
+        index_t *idx;
         uint32_t rec;
-        index_top(&areas[current_area].index);
-        rec = index_current_recno(&areas[current_area].index);
-        if (rec > 0) dbf_read_record(db, rec);
-        expr_ctx.eof_flag = 0;
-        expr_ctx.bof_flag = 0;
-    }
+        areas[current_area].order = 1;
 
-    printf("Index %s opened (%d entries).\n", filename, areas[current_area].index.nentries);
+        /* Position to first indexed record */
+        idx = controlling_index();
+        if (idx && idx->nentries > 0) {
+            index_top(idx);
+            rec = index_current_recno(idx);
+            if (rec > 0) dbf_read_record(db, rec);
+            expr_ctx.eof_flag = 0;
+            expr_ctx.bof_flag = 0;
+        }
+    }
 }
 
 /* ---- SEEK <expr> ---- */
@@ -2138,13 +2233,15 @@ static void cmd_seek(dbf_t *db, const char *arg) {
     const char *p = skip_ws(arg);
     value_t val;
     char key[MAX_INDEX_KEY];
+    index_t *idx;
 
     if (!dbf_is_open(db)) {
         printf("No database in use.\n");
         return;
     }
 
-    if (!areas[current_area].index.active) {
+    idx = controlling_index();
+    if (!idx) {
         printf("No index active.\n");
         return;
     }
@@ -2157,8 +2254,8 @@ static void cmd_seek(dbf_t *db, const char *arg) {
     val_to_string(&val, key, sizeof(key));
     trim_right(key);
 
-    if (index_seek(&areas[current_area].index, key)) {
-        uint32_t rec = index_current_recno(&areas[current_area].index);
+    if (index_seek(idx, key)) {
+        uint32_t rec = index_current_recno(idx);
         expr_ctx.found = 1;
         if (rec > 0) {
             dbf_read_record(db, rec);
@@ -2167,9 +2264,8 @@ static void cmd_seek(dbf_t *db, const char *arg) {
         }
     } else {
         expr_ctx.found = 0;
-        /* Position to next higher or EOF */
         {
-            uint32_t rec = index_current_recno(&areas[current_area].index);
+            uint32_t rec = index_current_recno(idx);
             if (rec > 0) {
                 dbf_read_record(db, rec);
                 expr_ctx.eof_flag = 0;
@@ -2185,13 +2281,15 @@ static void cmd_seek(dbf_t *db, const char *arg) {
 static void cmd_find(dbf_t *db, const char *arg) {
     const char *p = skip_ws(arg);
     char key[MAX_INDEX_KEY];
+    index_t *idx;
 
     if (!dbf_is_open(db)) {
         printf("No database in use.\n");
         return;
     }
 
-    if (!areas[current_area].index.active) {
+    idx = controlling_index();
+    if (!idx) {
         printf("No index active.\n");
         return;
     }
@@ -2199,8 +2297,8 @@ static void cmd_find(dbf_t *db, const char *arg) {
     str_copy(key, p, sizeof(key));
     trim_right(key);
 
-    if (index_seek(&areas[current_area].index, key)) {
-        uint32_t rec = index_current_recno(&areas[current_area].index);
+    if (index_seek(idx, key)) {
+        uint32_t rec = index_current_recno(idx);
         expr_ctx.found = 1;
         if (rec > 0) {
             dbf_read_record(db, rec);
@@ -2210,7 +2308,7 @@ static void cmd_find(dbf_t *db, const char *arg) {
     } else {
         expr_ctx.found = 0;
         {
-            uint32_t rec = index_current_recno(&areas[current_area].index);
+            uint32_t rec = index_current_recno(idx);
             if (rec > 0) {
                 dbf_read_record(db, rec);
                 expr_ctx.eof_flag = 0;
@@ -2224,46 +2322,52 @@ static void cmd_find(dbf_t *db, const char *arg) {
 
 /* ---- REINDEX ---- */
 static void cmd_reindex(dbf_t *db) {
-    index_t *idx = &areas[current_area].index;
+    work_area_t *wa = &areas[current_area];
+    int i, total = 0;
 
     if (!dbf_is_open(db)) {
         printf("No database in use.\n");
         return;
     }
 
-    if (!idx->active) {
+    if (wa->num_indexes == 0) {
         printf("No index active.\n");
         return;
     }
 
-    {
+    for (i = 0; i < wa->num_indexes; i++) {
+        index_t *idx = &wa->indexes[i];
         char key_expr[256];
         char filename[64];
         str_copy(key_expr, idx->key_expr, sizeof(key_expr));
         str_copy(filename, idx->filename, sizeof(filename));
 
         if (index_build(idx, db, &expr_ctx, key_expr, filename) < 0) {
-            printf("Error rebuilding index.\n");
+            printf("Error rebuilding index %s.\n", filename);
             return;
         }
 
         if (index_write(idx) < 0) {
-            printf("Error writing index file.\n");
+            printf("Error writing index file %s.\n", filename);
             return;
+        }
+        total += idx->nentries;
+    }
+
+    /* Position to first entry in controlling index */
+    {
+        index_t *ctrl = controlling_index();
+        if (ctrl && ctrl->nentries > 0) {
+            uint32_t rec;
+            index_top(ctrl);
+            rec = index_current_recno(ctrl);
+            if (rec > 0) dbf_read_record(db, rec);
+            expr_ctx.eof_flag = 0;
+            expr_ctx.bof_flag = 0;
         }
     }
 
-    /* Position to first */
-    if (idx->nentries > 0) {
-        uint32_t rec;
-        index_top(idx);
-        rec = index_current_recno(idx);
-        if (rec > 0) dbf_read_record(db, rec);
-        expr_ctx.eof_flag = 0;
-        expr_ctx.bof_flag = 0;
-    }
-
-    printf("%d record(s) reindexed.\n", idx->nentries);
+    printf("%d record(s) reindexed.\n", total);
 }
 
 /* ---- Close all work areas ---- */
@@ -2272,8 +2376,7 @@ void cmd_close_all(void) {
     for (i = 0; i < MAX_AREAS; i++) {
         if (dbf_is_open(&areas[i].db))
             dbf_close(&areas[i].db);
-        if (areas[i].index.active)
-            index_close(&areas[i].index);
+        close_all_indexes(&areas[i]);
         areas[i].alias[0] = '\0';
         areas[i].locate_cond[0] = '\0';
         areas[i].locate_last_rec = 0;
@@ -2542,6 +2645,30 @@ int cmd_execute(dbf_t *db, char *line) {
                 cmd_set_index(cdb, skip_ws(rest + 2));
             else
                 printf("Syntax: SET INDEX TO [filename]\n");
+        } else if (str_imatch(rest, "ORDER")) {
+            rest = skip_ws(rest + 5);
+            if (str_imatch(rest, "TO")) {
+                rest = skip_ws(rest + 2);
+                if (*rest == '\0' || *rest == '0') {
+                    areas[current_area].order = 0;
+                    printf("Natural record order.\n");
+                } else {
+                    int n = atoi(rest);
+                    if (n < 0 || n > areas[current_area].num_indexes) {
+                        printf("Index number out of range (0-%d).\n", areas[current_area].num_indexes);
+                    } else {
+                        areas[current_area].order = n;
+                        if (n > 0) {
+                            index_t *idx = &areas[current_area].indexes[n - 1];
+                            printf("Order set to %d (%s).\n", n, idx->filename);
+                        } else {
+                            printf("Natural record order.\n");
+                        }
+                    }
+                }
+            } else {
+                printf("Syntax: SET ORDER TO <n>\n");
+            }
         } else {
             set_execute(&set_opts, rest);
         }

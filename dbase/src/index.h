@@ -7,6 +7,7 @@
 
 #define MAX_INDEX_KEY     100
 #define MAX_INDEX_ENTRIES 4000
+#define MAX_INDEXES       7     /* max open indexes per work area */
 
 typedef struct {
     char key[MAX_INDEX_KEY];
