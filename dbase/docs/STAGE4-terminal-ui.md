@@ -17,7 +17,7 @@ just a command-line tool.
 | Command | Syntax | Description |
 |---------|--------|-------------|
 | @ SAY | `@ <row>,<col> SAY <expr>` | Output at position |
-| @ GET | `@ <row>,<col> GET <var> [PICTURE <mask>]` | Input field at position |
+| @ GET | `@ <row>,<col> GET <var> [PICTURE <mask>] [RANGE <low>,<high>] [VALID <expr>]` | Input field at position |
 | @ SAY GET | `@ <r>,<c> SAY <e> GET <v> [PICTURE <m>]` | Combined |
 | READ | `READ` | Activate all pending GETs |
 | CLEAR | `CLEAR` | Clear screen |

@@ -36,9 +36,16 @@ This makes the format human-readable and simplifies I/O.
 | 4 | [Terminal UI](STAGE4-terminal-ui.md) | Full-screen data entry | @...SAY...GET, READ, PICTURE, CLEAR, BROWSE |
 | 5 | [Programming Language](STAGE5-programming.md) | PRG execution + control flow | DO, IF/ENDIF, DO WHILE/ENDDO, CASE, procedures |
 | 6 | [Indexing & Reports](STAGE6-indexing-reports.md) | B-tree indexes + report generator | INDEX ON, SEEK, REPORT FORM, LABEL FORM |
+| 7 | [Optimization & Completion](OPTIMIZATION-AND-COMPLETENESS.md) | Robustness + Legacy Support | Proper Lexer, B-tree, Teacher's Pet Compatibility |
 
 Each stage produces a working, testable binary. Stage 1 is a usable
 (if primitive) database tool; each subsequent stage adds capability.
+
+## Future Roadmap (Post-Stage 6)
+
+- **SQL Subset**: A layer on top of DBF to allow SQL SELECT queries.
+- **Network Support**: File locking for multi-user access (if supported by OS).
+- **C Extensions**: API for adding new functions in C.
 
 ## Build Pattern
 

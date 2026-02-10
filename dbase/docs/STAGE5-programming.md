@@ -15,6 +15,7 @@ into a programmable application platform.
 | Command | Syntax | Description |
 |---------|--------|-------------|
 | DO | `DO <program>` | Execute .PRG file |
+| SET PROCEDURE TO | `SET PROCEDURE TO <file>` | Load procedure library |
 | CANCEL | `CANCEL` | Abort program, return to dot prompt |
 | RETURN | `RETURN [<expr>]` | Return from procedure/program |
 | SUSPEND | `SUSPEND` | Pause program, enter dot prompt |

@@ -24,7 +24,7 @@ typedef struct {
 |---------|--------|-------------|
 | STORE | `STORE <expr> TO <var>` | Assign variable |
 | = | `<var> = <expr>` | Shorthand assign |
-| RELEASE | `RELEASE <var> [, ...]` / `RELEASE ALL` | Free variables |
+| RELEASE | `RELEASE <var> [, ...]` / `RELEASE ALL [LIKE/EXCEPT <skel>]` | Free variables |
 | DISPLAY MEMORY | `DISPLAY MEMORY` | Show all variables |
 | SAVE TO | `SAVE TO <file> [ALL LIKE/EXCEPT <skel>]` | Save vars to .MEM |
 | RESTORE FROM | `RESTORE FROM <file> [ADDITIVE]` | Load vars from .MEM |

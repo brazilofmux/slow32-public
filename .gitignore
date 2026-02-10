@@ -130,3 +130,6 @@ vgcore.*
 feedback
 stringutil.cpp
 stringutil.h
+
+# Akron
+./dbase/akron
