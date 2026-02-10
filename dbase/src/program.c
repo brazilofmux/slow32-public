@@ -440,21 +440,36 @@ static int prog_udf_call(const char *name, value_t *args, int nargs, value_t *re
 }
 
 /* ---- Find PROCEDURE or FUNCTION <name> in program ---- */
+static int line_is_kw(const char *line, const char *kw);
+
 static int find_procedure(program_t *prog, const char *name) {
     int i;
     for (i = 0; i < prog->nlines; i++) {
-        char *p = skip_ws(prog->lines[i]);
-        if (str_imatch(p, "PROCEDURE") || str_imatch(p, "FUNCTION")) {
-            int kwlen = str_imatch(p, "FUNCTION") ? 8 : 9;
-            char *rest = skip_ws(p + kwlen);
-            char pname[64];
-            int j = 0;
-            while (is_ident_char(*rest) && j < 63)
-                pname[j++] = *rest++;
-            pname[j] = '\0';
-            if (str_icmp(pname, name) == 0)
-                return i;
-        }
+        char line[MAX_LINE_LEN];
+        char *p;
+        char *rest;
+        char pname[64];
+        int j;
+        int is_func = 0;
+
+        str_copy(line, prog->lines[i], MAX_LINE_LEN);
+        prog_preprocess(line, cmd_get_memvar_store());
+        p = skip_ws(line);
+
+        if (line_is_kw(p, "PROCEDURE"))
+            is_func = 0;
+        else if (line_is_kw(p, "FUNCTION"))
+            is_func = 1;
+        else
+            continue;
+
+        rest = skip_ws(p + (is_func ? 8 : 9));
+        j = 0;
+        while (is_ident_char(*rest) && j < 63)
+            pname[j++] = *rest++;
+        pname[j] = '\0';
+        if (str_icmp(pname, name) == 0)
+            return i;
     }
     return -1;
 }
