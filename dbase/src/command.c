@@ -2509,6 +2509,13 @@ static int sort_compare_r(const void *a, const void *b, void *arg) {
 #define MAX_SORT_ENTRIES 2000
 #define MAX_SORT_CHUNKS 64
 
+static void cleanup_sort_chunks(char chunk_names[][64], int nchunks) {
+    int j;
+    for (j = 0; j < nchunks; j++) {
+        remove(chunk_names[j]);
+    }
+}
+
 static void cmd_sort(dbf_t *db, const char *arg) {
     char filename[64];
     char field_name[DBF_MAX_FIELD_NAME];
@@ -2525,6 +2532,7 @@ static void cmd_sort(dbf_t *db, const char *arg) {
     sort_entry_t *sort_entries;
     int nchunks = 0;
     char chunk_names[MAX_SORT_CHUNKS][64];
+    int chunk_overflow = 0;
 
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
@@ -2628,10 +2636,20 @@ static void cmd_sort(dbf_t *db, const char *arg) {
                 nentries = 0;
                 if (nchunks >= MAX_SORT_CHUNKS) {
                     printf("Too many sort chunks.\n");
+                    chunk_overflow = 1;
                     break;
                 }
+            } else {
+                printf("Error creating sort chunk.\n");
+                chunk_overflow = 1;
+                break;
             }
         }
+    }
+    if (chunk_overflow) {
+        free(sort_entries);
+        cleanup_sort_chunks(chunk_names, nchunks);
+        return;
     }
 
     /* Final chunk */
@@ -2642,13 +2660,23 @@ static void cmd_sort(dbf_t *db, const char *arg) {
         } else {
             sprintf(chunk_names[nchunks], "sort%d.tmp", nchunks);
             FILE *tf = fopen(chunk_names[nchunks], "wb");
-            if (tf) {
-                fwrite(sort_entries, sizeof(sort_entry_t), nentries, tf);
-                fclose(tf);
-                nchunks++;
+            if (!tf) {
+                printf("Error creating sort chunk.\n");
+                free(sort_entries);
+                cleanup_sort_chunks(chunk_names, nchunks);
+                return;
             }
+            fwrite(sort_entries, sizeof(sort_entry_t), nentries, tf);
+            fclose(tf);
+            nchunks++;
             nentries = 0;
         }
+    }
+
+    if (nchunks == 0 && nentries == 0) {
+        printf("No records to sort.\n");
+        free(sort_entries);
+        return;
     }
 
     /* Phase 2: Create destination file */
@@ -2663,6 +2691,7 @@ static void cmd_sort(dbf_t *db, const char *arg) {
         if (dbf_create(filename, fields, db->field_count) < 0) {
             printf("Error creating %s\n", filename);
             free(sort_entries);
+            cleanup_sort_chunks(chunk_names, nchunks);
             return;
         }
     }
@@ -2671,6 +2700,7 @@ static void cmd_sort(dbf_t *db, const char *arg) {
     if (dbf_open(&dest, filename) < 0) {
         printf("Error opening %s\n", filename);
         free(sort_entries);
+        cleanup_sort_chunks(chunk_names, nchunks);
         return;
     }
 
@@ -2735,6 +2765,8 @@ static void cmd_sort(dbf_t *db, const char *arg) {
                 }
             }
         }
+        /* Cleanup any unopened/empty chunks */
+        cleanup_sort_chunks(chunk_names, nchunks);
     }
 
     dbf_close(&dest);
