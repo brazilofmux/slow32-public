@@ -1588,8 +1588,8 @@ void prog_return(const char *arg) {
 }
 
 /* ---- PROCEDURE ---- */
-void prog_procedure(const char *arg) {
-    (void)arg;
+void prog_procedure(lexer_t *l) {
+    (void)l;
     /* During normal execution, skip past procedure body to next PROCEDURE or EOF */
     if (!state.running) {
         printf("PROCEDURE not allowed in interactive mode.\n");
@@ -1600,123 +1600,116 @@ void prog_procedure(const char *arg) {
 }
 
 /* ---- PARAMETERS ---- */
-void prog_parameters(const char *arg) {
-    const char *p = skip_ws(arg);
+void prog_parameters(lexer_t *l) {
     memvar_store_t *store = cmd_get_memvar_store();
     call_frame_t *frame = (state.call_depth > 0) ?
         &state.call_stack[state.call_depth - 1] : NULL;
     char name[MEMVAR_NAMELEN];
-    int i, param_idx = 0;
+    int param_idx = 0;
 
     if (!state.running) {
         printf("PARAMETERS not allowed in interactive mode.\n");
         return;
     }
 
-    while (*p) {
-        i = 0;
-        while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1)
-            name[i++] = *p++;
-        name[i] = '\0';
+    while (l->current.type == TOK_IDENT) {
+        str_copy(name, l->current.text, sizeof(name));
+        str_upper(name);
 
-        if (name[0] != '\0') {
-            if (lex_is_reserved(name)) {
-                char err[128];
-                snprintf(err, sizeof(err), "%s is a reserved keyword", name);
-                prog_error(ERR_SYNTAX, err);
-                return;
-            }
-            /* Save current value as PRIVATE */
-            if (frame) {
-                save_private(frame, name);
-            }
-            /* Bind from WITH argument if available, otherwise NIL */
-            if (frame && param_idx < frame->with_argc) {
-                memvar_set(store, name, &frame->with_args[param_idx]);
-            } else {
-                value_t nil = val_nil();
-                memvar_set(store, name, &nil);
-            }
-            param_idx++;
+        if (lex_is_reserved(name)) {
+            char err[128];
+            snprintf(err, sizeof(err), "%s is a reserved keyword", name);
+            prog_error(ERR_SYNTAX, err);
+            return;
         }
+        /* Save current value as PRIVATE */
+        if (frame) {
+            save_private(frame, name);
+        }
+        /* Bind from WITH argument if available, otherwise NIL */
+        if (frame && param_idx < frame->with_argc) {
+            memvar_set(store, name, &frame->with_args[param_idx]);
+        } else {
+            value_t nil = val_nil();
+            memvar_set(store, name, &nil);
+        }
+        param_idx++;
 
-        p = skip_ws(p);
-        if (*p == ',') { p++; p = skip_ws(p); }
-        else break;
+        lex_next(l);
+        if (l->current.type == TOK_COMMA) {
+            lex_next(l);
+        } else {
+            break;
+        }
     }
 
     state.pc++;
 }
 
 /* ---- PRIVATE ---- */
-void prog_private(const char *arg) {
-    const char *p = skip_ws(arg);
+void prog_private(lexer_t *l) {
     memvar_store_t *store = cmd_get_memvar_store();
     char name[MEMVAR_NAMELEN];
-    int i;
 
     if (!state.running || state.call_depth <= 0) {
         /* In interactive mode or top level, PRIVATE is ignored */
+        while (l->current.type != TOK_EOF) lex_next(l);
         return;
     }
 
-    while (*p) {
-        i = 0;
-        while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1)
-            name[i++] = *p++;
-        name[i] = '\0';
+    while (l->current.type == TOK_IDENT) {
+        str_copy(name, l->current.text, sizeof(name));
+        str_upper(name);
 
-        if (name[0] != '\0') {
-            if (lex_is_reserved(name)) {
-                char err[128];
-                snprintf(err, sizeof(err), "%s is a reserved keyword", name);
-                prog_error(ERR_SYNTAX, err);
-                return;
-            }
-            save_private(&state.call_stack[state.call_depth - 1], name);
-            /* Release the current value - create fresh */
-            memvar_release(store, name);
+        if (lex_is_reserved(name)) {
+            char err[128];
+            snprintf(err, sizeof(err), "%s is a reserved keyword", name);
+            prog_error(ERR_SYNTAX, err);
+            return;
         }
+        save_private(&state.call_stack[state.call_depth - 1], name);
+        /* Release the current value - create fresh */
+        memvar_release(store, name);
 
-        p = skip_ws(p);
-        if (*p == ',') { p++; p = skip_ws(p); }
-        else break;
+        lex_next(l);
+        if (l->current.type == TOK_COMMA) {
+            lex_next(l);
+        } else {
+            break;
+        }
     }
 
     state.pc++;
 }
 
 /* ---- PUBLIC ---- */
-void prog_public(const char *arg) {
-    const char *p = skip_ws(arg);
+void prog_public(lexer_t *l) {
     memvar_store_t *store = cmd_get_memvar_store();
     char name[MEMVAR_NAMELEN];
-    int i;
 
-    while (*p) {
+    while (l->current.type == TOK_IDENT) {
         value_t existing;
-        i = 0;
-        while (is_ident_char(*p) && i < MEMVAR_NAMELEN - 1)
-            name[i++] = *p++;
-        name[i] = '\0';
+        str_copy(name, l->current.text, sizeof(name));
+        str_upper(name);
 
-        if (name[0] != '\0') {
-            if (lex_is_reserved(name)) {
-                char err[128];
-                snprintf(err, sizeof(err), "%s is a reserved keyword", name);
-                prog_error(ERR_SYNTAX, err);
-                return;
-            }
-            /* Create variable if it doesn't exist */
-            if (memvar_find(store, name, &existing) != 0) {
-                value_t v = val_logic(0); /* PUBLIC vars default to .F. */
-                memvar_set(store, name, &v);
-            }
+        if (lex_is_reserved(name)) {
+            char err[128];
+            snprintf(err, sizeof(err), "%s is a reserved keyword", name);
+            prog_error(ERR_SYNTAX, err);
+            return;
+        }
+        /* Create variable if it doesn't exist */
+        if (memvar_find(store, name, &existing) != 0) {
+            value_t v = val_logic(0); /* PUBLIC vars default to .F. */
+            memvar_set(store, name, &v);
         }
 
-        p = skip_ws(p);
-        if (*p == ',') { p++; p = skip_ws(p); }
-        else break;
+        lex_next(l);
+        if (l->current.type == TOK_COMMA) {
+            lex_next(l);
+        } else {
+            break;
+        }
     }
 
     if (state.running) state.pc++;
@@ -1815,27 +1808,37 @@ int prog_execute_line(char *line) {
 
     if (line_is_kw(p, "FUNCTION")) {
         /* FUNCTION treated same as PROCEDURE during execution — skip body */
-        prog_procedure(skip_ws(p + 8));
+        lexer_t l;
+        lexer_init_ext(&l, skip_ws(p + 8), cmd_get_memvar_store());
+        prog_procedure(&l);
         return 0;
     }
 
     if (line_is_kw(p, "PROCEDURE")) {
-        prog_procedure(skip_ws(p + 9));
+        lexer_t l;
+        lexer_init_ext(&l, skip_ws(p + 9), cmd_get_memvar_store());
+        prog_procedure(&l);
         return 0;
     }
 
     if (str_imatch(p, "PARAMETERS")) {
-        prog_parameters(skip_ws(p + 10));
+        lexer_t l;
+        lexer_init_ext(&l, skip_ws(p + 10), cmd_get_memvar_store());
+        prog_parameters(&l);
         return 0;
     }
 
     if (str_imatch(p, "PRIVATE")) {
-        prog_private(skip_ws(p + 7));
+        lexer_t l;
+        lexer_init_ext(&l, skip_ws(p + 7), cmd_get_memvar_store());
+        prog_private(&l);
         return 0;
     }
 
     if (str_imatch(p, "PUBLIC")) {
-        prog_public(skip_ws(p + 6));
+        lexer_t l;
+        lexer_init_ext(&l, skip_ws(p + 6), cmd_get_memvar_store());
+        prog_public(&l);
         return 0;
     }
 

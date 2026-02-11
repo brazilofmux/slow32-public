@@ -5,6 +5,8 @@
 #include "memvar.h"
 #include "clause.h"
 
+struct lexer;
+
 #define MAX_PROGRAM_LINES 2000
 #define MAX_LINE_LEN      256
 #define MAX_CALL_DEPTH     32
@@ -82,10 +84,10 @@ void prog_exit_loop(void);
 void prog_scan(const char *arg);
 void prog_endscan(void);
 void prog_return(const char *arg);
-void prog_procedure(const char *arg);
-void prog_parameters(const char *arg);
-void prog_private(const char *arg);
-void prog_public(const char *arg);
+void prog_procedure(struct lexer *l);
+void prog_parameters(struct lexer *l);
+void prog_private(struct lexer *l);
+void prog_public(struct lexer *l);
 void prog_for(const char *arg);
 void prog_next(void);
 void prog_cancel(void);

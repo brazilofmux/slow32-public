@@ -3666,10 +3666,10 @@ static void h_case(dbf_t *db, lexer_t *l) { (void)db; if (prog_is_running()) { c
 static void h_otherwise(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_otherwise(); else printf("OTHERWISE without DO CASE.\n"); }
 static void h_endcase(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_endcase(); else printf("ENDCASE without DO CASE.\n"); }
 static void h_return(dbf_t *db, lexer_t *l) { (void)db; if (prog_is_running()) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); prog_return(arg); } else printf("RETURN not in program.\n"); }
-static void h_procedure(dbf_t *db, lexer_t *l) { (void)db; if (prog_is_running()) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); prog_procedure(arg); } else printf("PROCEDURE not allowed in interactive mode.\n"); }
-static void h_parameters(dbf_t *db, lexer_t *l) { (void)db; if (prog_is_running()) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); prog_parameters(arg); } else printf("PARAMETERS not allowed in interactive mode.\n"); }
-static void h_private(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); prog_private(arg); }
-static void h_public(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); prog_public(arg); }
+static void h_procedure(dbf_t *db, lexer_t *l) { (void)db; if (prog_is_running()) { lex_next(l); prog_procedure(l); } else printf("PROCEDURE not allowed in interactive mode.\n"); }
+static void h_parameters(dbf_t *db, lexer_t *l) { (void)db; if (prog_is_running()) { lex_next(l); prog_parameters(l); } else printf("PARAMETERS not allowed in interactive mode.\n"); }
+static void h_private(dbf_t *db, lexer_t *l) { (void)db; lex_next(l); prog_private(l); }
+static void h_public(dbf_t *db, lexer_t *l) { (void)db; lex_next(l); prog_public(l); }
 static void h_cancel(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_cancel(); }
 static void h_retry(dbf_t *db, lexer_t *l) { (void)db; (void)l; prog_retry(); }
 static void h_suspend(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_suspend(); else printf("Not in program.\n"); }

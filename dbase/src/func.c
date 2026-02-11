@@ -141,6 +141,25 @@ static int fn_ltrim(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     return 0;
 }
 
+static int fn_alltrim(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char buf[256];
+    int len;
+    const char *p;
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_CHAR) {
+        ctx->error = "ALLTRIM requires (string)";
+        return -1;
+    }
+    p = args[0].str;
+    while (*p == ' ') p++;
+    str_copy(buf, p, sizeof(buf));
+    len = strlen(buf);
+    while (len > 0 && buf[len - 1] == ' ') len--;
+    buf[len] = '\0';
+    *result = val_str(buf);
+    return 0;
+}
+
 static int fn_upper(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     char buf[256];
     (void)ctx;
@@ -224,6 +243,89 @@ static int fn_replicate(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resu
         pos += slen;
     }
     buf[pos] = '\0';
+    *result = val_str(buf);
+    return 0;
+}
+
+static int fn_padr(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char buf[256];
+    int width, slen, i;
+    char pad = ' ';
+    (void)ctx;
+    if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_NUM) {
+        ctx->error = "PADR requires (string, width [, char])";
+        return -1;
+    }
+    width = (int)args[1].num;
+    if (width > (int)sizeof(buf) - 1) width = (int)sizeof(buf) - 1;
+    if (nargs >= 3 && args[2].type == VAL_CHAR && args[2].str[0]) pad = args[2].str[0];
+
+    slen = strlen(args[0].str);
+    if (slen >= width) {
+        memcpy(buf, args[0].str, width);
+        buf[width] = '\0';
+    } else {
+        memcpy(buf, args[0].str, slen);
+        for (i = slen; i < width; i++) buf[i] = pad;
+        buf[width] = '\0';
+    }
+    *result = val_str(buf);
+    return 0;
+}
+
+static int fn_padl(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char buf[256];
+    int width, slen, i, padlen;
+    char pad = ' ';
+    (void)ctx;
+    if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_NUM) {
+        ctx->error = "PADL requires (string, width [, char])";
+        return -1;
+    }
+    width = (int)args[1].num;
+    if (width > (int)sizeof(buf) - 1) width = (int)sizeof(buf) - 1;
+    if (nargs >= 3 && args[2].type == VAL_CHAR && args[2].str[0]) pad = args[2].str[0];
+
+    slen = strlen(args[0].str);
+    if (slen >= width) {
+        memcpy(buf, args[0].str + (slen - width), width);
+        buf[width] = '\0';
+    } else {
+        padlen = width - slen;
+        for (i = 0; i < padlen; i++) buf[i] = pad;
+        memcpy(buf + padlen, args[0].str, slen);
+        buf[width] = '\0';
+    }
+    *result = val_str(buf);
+    return 0;
+}
+
+static int fn_padc(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char buf[256];
+    int width, slen, i, lpad, rpad;
+    char pad = ' ';
+    (void)ctx;
+    if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_NUM) {
+        ctx->error = "PADC requires (string, width [, char])";
+        return -1;
+    }
+    width = (int)args[1].num;
+    if (width > (int)sizeof(buf) - 1) width = (int)sizeof(buf) - 1;
+    if (nargs >= 3 && args[2].type == VAL_CHAR && args[2].str[0]) pad = args[2].str[0];
+
+    slen = strlen(args[0].str);
+    if (slen >= width) {
+        lpad = (slen - width) / 2;
+        memcpy(buf, args[0].str + lpad, width);
+        buf[width] = '\0';
+    } else {
+        lpad = (width - slen) / 2;
+        rpad = width - slen - lpad;
+        for (i = 0; i < lpad; i++) buf[i] = pad;
+        memcpy(buf + lpad, args[0].str, slen);
+        for (i = 0; i < rpad; i++) buf[lpad + slen + i] = pad;
+        buf[width] = '\0';
+    }
     *result = val_str(buf);
     return 0;
 }

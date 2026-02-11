@@ -1,0 +1,22 @@
+dBASE III Clone for SLOW-32
+Stage 7: B-Tree Indexing
+
+. --- ALLTRIM ---
+. >hello<
+. --- EMPTY ---
+. .T.
+. .T.
+. .T.
+. .T.
+. .F.
+. .F.
+. .F.
+. .F.
+. .F.
+. --- PADL/PADR/PADC ---
+. >     hello<
+. >hello     <
+. >  hello   <
+. >*****hello<
+. >hello*****<
+. >**hello***<
