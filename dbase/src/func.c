@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
 #include "func.h"
 #include "date.h"
 #include "screen.h"
@@ -9,6 +10,165 @@
 
 extern double floor(double x);
 extern double fmod(double x, double y);
+
+/* ---- Low-level File I/O (Clipper/FoxPro) ---- */
+#define MAX_LL_FILES 16
+static FILE *ll_files[MAX_LL_FILES];
+static int ll_error = 0;
+
+static int fn_fcreate(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_CHAR) {
+        ctx->error = "FCREATE requires (filename)";
+        return -1;
+    }
+    for (int i = 0; i < MAX_LL_FILES; i++) {
+        if (!ll_files[i]) {
+            ll_files[i] = fopen(args[0].str, "wb+");
+            if (ll_files[i]) {
+                ll_error = 0;
+                *result = val_num((double)i + 1);
+            } else {
+                ll_error = errno;
+                *result = val_num(-1);
+            }
+            return 0;
+        }
+    }
+    *result = val_num(-1);
+    return 0;
+}
+
+static int fn_fopen(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_CHAR) {
+        ctx->error = "FOPEN requires (filename [, mode])";
+        return -1;
+    }
+    const char *mode = "rb+";
+    if (nargs >= 2 && args[1].type == VAL_NUM) {
+        int m = (int)args[1].num;
+        if (m == 0) mode = "rb";
+        else if (m == 1) mode = "wb";
+        else if (m == 2) mode = "rb+";
+    }
+    for (int i = 0; i < MAX_LL_FILES; i++) {
+        if (!ll_files[i]) {
+            ll_files[i] = fopen(args[0].str, mode);
+            if (ll_files[i]) {
+                ll_error = 0;
+                *result = val_num((double)i + 1);
+            } else {
+                ll_error = errno;
+                *result = val_num(-1);
+            }
+            return 0;
+        }
+    }
+    *result = val_num(-1);
+    return 0;
+}
+
+static int fn_fclose(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_NUM) {
+        ctx->error = "FCLOSE requires (handle)";
+        return -1;
+    }
+    int h = (int)args[0].num - 1;
+    if (h >= 0 && h < MAX_LL_FILES && ll_files[h]) {
+        fclose(ll_files[h]);
+        ll_files[h] = NULL;
+        ll_error = 0;
+        *result = val_logic(1);
+    } else {
+        *result = val_logic(0);
+    }
+    return 0;
+}
+
+static int fn_fread(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    if (nargs < 2 || args[0].type != VAL_NUM || args[1].type != VAL_NUM) {
+        ctx->error = "FREAD requires (handle, count)";
+        return -1;
+    }
+    int h = (int)args[0].num - 1;
+    int count = (int)args[1].num;
+    if (h >= 0 && h < MAX_LL_FILES && ll_files[h] && count > 0) {
+        char *buf = (char *)malloc(count + 1);
+        if (!buf) { *result = val_str(""); return 0; }
+        size_t n = fread(buf, 1, count, ll_files[h]);
+        buf[n] = '\0';
+        *result = val_str(buf);
+        free(buf);
+        ll_error = ferror(ll_files[h]) ? 1 : 0;
+    } else {
+        *result = val_str("");
+    }
+    return 0;
+}
+
+static int fn_fwrite(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    if (nargs < 2 || args[0].type != VAL_NUM || args[1].type != VAL_CHAR) {
+        ctx->error = "FWRITE requires (handle, string [, count])";
+        return -1;
+    }
+    int h = (int)args[0].num - 1;
+    int count = (int)strlen(args[1].str);
+    if (nargs >= 3 && args[2].type == VAL_NUM) {
+        int req = (int)args[2].num;
+        if (req < count) count = req;
+    }
+    if (h >= 0 && h < MAX_LL_FILES && ll_files[h]) {
+        size_t n = fwrite(args[1].str, 1, count, ll_files[h]);
+        *result = val_num((double)n);
+        ll_error = (n < (size_t)count) ? 1 : 0;
+    } else {
+        *result = val_num(0);
+    }
+    return 0;
+}
+
+static int fn_fseek(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    if (nargs < 2 || args[0].type != VAL_NUM || args[1].type != VAL_NUM) {
+        ctx->error = "FSEEK requires (handle, offset [, origin])";
+        return -1;
+    }
+    int h = (int)args[0].num - 1;
+    long offset = (long)args[1].num;
+    int origin = SEEK_SET;
+    if (nargs >= 3 && args[2].type == VAL_NUM) {
+        int o = (int)args[2].num;
+        if (o == 1) origin = SEEK_CUR;
+        else if (o == 2) origin = SEEK_END;
+    }
+    if (h >= 0 && h < MAX_LL_FILES && ll_files[h]) {
+        fseek(ll_files[h], offset, origin);
+        *result = val_num((double)ftell(ll_files[h]));
+        ll_error = 0;
+    } else {
+        *result = val_num(-1);
+    }
+    return 0;
+}
+
+static int fn_ferror(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_num((double)ll_error);
+    return 0;
+}
+
+void ll_close_all(void) {
+    for (int i = 0; i < MAX_LL_FILES; i++) {
+        if (ll_files[i]) {
+            fclose(ll_files[i]);
+            ll_files[i] = NULL;
+        }
+    }
+}
 
 /* ---- Inline sqrt via Newton's method (hardware sqrt HALTs on slow32) ---- */
 static double my_sqrt(double x) {
@@ -970,6 +1130,14 @@ static const func_entry_t func_table[] = {
     { "ISALPHA",   fn_isalpha },
     { "ISUPPER",   fn_isupper },
     { "ISLOWER",   fn_islower },
+    /* Low-level File I/O */
+    { "FOPEN",     fn_fopen },
+    { "FCREATE",   fn_fcreate },
+    { "FCLOSE",    fn_fclose },
+    { "FREAD",     fn_fread },
+    { "FWRITE",    fn_fwrite },
+    { "FSEEK",     fn_fseek },
+    { "FERROR",    fn_ferror },
     /* Misc */
     { "EMPTY",     fn_empty },
     { "IIF",       fn_iif },

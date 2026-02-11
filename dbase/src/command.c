@@ -3285,6 +3285,7 @@ void cmd_close_all(void) {
         wa->relation_target = -1;
     }
     area_set_current_idx(0);
+    ll_close_all();
 }
 
 /* ---- Helper: ensure filename has .FRM extension ---- */
