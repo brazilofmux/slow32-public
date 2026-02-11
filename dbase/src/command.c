@@ -34,6 +34,7 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display);
 static void cmd_list(dbf_t *db, lexer_t *l);
 static void cmd_display(dbf_t *db, lexer_t *l);
 static void cmd_display_structure(dbf_t *db);
+static void cmd_display_status(void);
 static void cmd_replace(dbf_t *db, lexer_t *l);
 static void cmd_report_form(dbf_t *db, lexer_t *l);
 static void cmd_count(dbf_t *db, lexer_t *l);
@@ -2090,6 +2091,66 @@ static void cmd_display_structure(dbf_t *db) {
     printf("** Total **                  %2d\n", (int)db->record_size);
 }
 
+/* ---- DISPLAY STATUS ---- */
+static void cmd_display_status(void) {
+    int i, any_open = 0;
+
+    printf("Currently selected database:\n");
+    for (i = 0; i < MAX_AREAS; i++) {
+        work_area_t *wa = area_get(i);
+        if (!dbf_is_open(&wa->db)) continue;
+        any_open = 1;
+
+        printf("  Select area: %d, Database in use: %s",
+               i + 1, wa->db.filename);
+        if (wa->alias[0])
+            printf("  Alias: %s", wa->alias);
+        printf("\n");
+
+        /* Show indexes */
+        if (wa->num_indexes > 0) {
+            int j;
+            /* Show controlling index first */
+            if (wa->order > 0 && wa->order <= wa->num_indexes) {
+                index_t *idx = &wa->indexes[wa->order - 1];
+                printf("    Master index file: %s  Key: %s\n",
+                       idx->filename, idx->key_expr);
+            }
+            /* Show remaining indexes */
+            for (j = 0; j < wa->num_indexes; j++) {
+                if (j + 1 == wa->order) continue; /* skip master, already shown */
+                printf("    Index file: %s  Key: %s\n",
+                       wa->indexes[j].filename, wa->indexes[j].key_expr);
+            }
+        }
+
+        /* Show filter */
+        if (wa->filter_cond[0])
+            printf("    Filter: %s\n", wa->filter_cond);
+
+        /* Show relation */
+        if (wa->relation_expr[0])
+            printf("    Relation: %s into area %d\n",
+                   wa->relation_expr, wa->relation_target + 1);
+    }
+
+    if (!any_open)
+        printf("  No database is in use\n");
+
+    printf("\nFile search path:\n  (none)\n");
+    printf("\nDefault disk drive: .\n");
+
+    /* Procedure file */
+    {
+        const char *proc = prog_get_procedure_name();
+        if (proc)
+            printf("\nProcedure file: %s\n", proc);
+    }
+
+    printf("\n");
+    set_display(&set_opts);
+}
+
 /* ---- STORE expr TO var ---- */
 static void cmd_store(dbf_t *db, lexer_t *l) {
     char expr_str[256];
@@ -4067,6 +4128,26 @@ int cmd_get_confirm(void) {
     return set_opts.confirm;
 }
 
+int cmd_get_century(void) {
+    return set_opts.century;
+}
+
+int cmd_get_escape(void) {
+    return set_opts.escape;
+}
+
+int cmd_get_echo(void) {
+    return set_opts.echo;
+}
+
+int cmd_get_margin(void) {
+    return set_opts.margin;
+}
+
+date_format_t cmd_get_date_format(void) {
+    return set_opts.date_format;
+}
+
 /* ---- Dispatch ---- */
 /* ---- Command Dispatch Table ---- */
 
@@ -4156,6 +4237,10 @@ static void h_display(dbf_t *db, lexer_t *l) {
         lex_next(l); /* skip DISPLAY */
         lex_next(l); /* skip MEMORY */
         memvar_display(&memvar_store);
+    } else if (cmd_peek_kw(l, "STATUS")) {
+        lex_next(l); /* skip DISPLAY */
+        lex_next(l); /* skip STATUS */
+        cmd_display_status();
     } else {
         lex_next(l);
         cmd_display(db, l);

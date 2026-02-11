@@ -2,6 +2,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include "field.h"
+#include "date.h"
+#include "command.h"
 
 int field_format_char(char *buf, int field_len, const char *value) {
     int i, vlen;
@@ -50,28 +52,9 @@ int field_format_numeric(char *buf, int field_len, int decimals, const char *val
 }
 
 int field_format_date(char *buf, const char *value) {
-    /* Input: MM/DD/YY or MM/DD/YYYY, Output: YYYYMMDD (8 bytes) */
-    int mm = 0, dd = 0, yy = 0;
-    const char *p = value;
-    char tmp[16];
-
-    /* Skip leading { if present */
-    if (*p == '{') p++;
-
-    mm = atoi(p);
-    while (*p && *p != '/') p++;
-    if (*p == '/') p++;
-    dd = atoi(p);
-    while (*p && *p != '/' && *p != '}') p++;
-    if (*p == '/') p++;
-    yy = atoi(p);
-
-    if (yy < 50) yy += 2000;
-    else if (yy < 100) yy += 1900;
-
-    snprintf(tmp, sizeof(tmp), "%04d%02d%02d", yy, mm, dd);
-    memcpy(buf, tmp, 8);
-    buf[8] = '\0';
+    /* Input: date string in current SET DATE format, Output: YYYYMMDD (8 bytes) */
+    int32_t jdn = date_from_display(value, cmd_get_date_format());
+    date_to_dbf(jdn, buf);
     return 0;
 }
 
@@ -97,17 +80,9 @@ void field_display_numeric(char *buf, const char *raw, int field_len) {
 }
 
 void field_display_date(char *buf, const char *raw) {
-    /* Input: YYYYMMDD, Output: MM/DD/YY */
-    if (raw[0] == ' ' || raw[0] == '\0') {
-        strcpy(buf, "  /  /  ");
-        return;
-    }
-    buf[0] = raw[4]; buf[1] = raw[5]; /* MM */
-    buf[2] = '/';
-    buf[3] = raw[6]; buf[4] = raw[7]; /* DD */
-    buf[5] = '/';
-    buf[6] = raw[2]; buf[7] = raw[3]; /* YY (last 2 digits of year) */
-    buf[8] = '\0';
+    /* Input: YYYYMMDD, Output: format-aware date string */
+    int32_t jdn = date_from_dbf(raw);
+    date_to_display(jdn, buf, cmd_get_date_format(), cmd_get_century());
 }
 
 void field_display_logical(char *buf, const char *raw) {

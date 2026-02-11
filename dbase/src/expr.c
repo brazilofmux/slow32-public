@@ -7,6 +7,7 @@
 #include "memvar.h"
 #include "set.h"
 #include "date.h"
+#include "command.h"
 #include "util.h"
 #include "lex.h"
 
@@ -97,7 +98,7 @@ void val_to_string(const value_t *v, char *buf, int size) {
         break;
     case VAL_DATE: {
         char mdy[16];
-        date_to_mdy(v->date, mdy);
+        date_to_display(v->date, mdy, cmd_get_date_format(), cmd_get_century());
         str_copy(buf, mdy, size);
         break;
     }

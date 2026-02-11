@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include "date.h"
+#include "set.h"
 
 /* Standard astronomical Julian Day Number formula */
 int32_t date_to_jdn(int year, int month, int day) {
@@ -103,6 +104,171 @@ void date_to_mdy(int32_t jdn, char *buf) {
     buf[6] = '0' + (y / 10) % 10;
     buf[7] = '0' + y % 10;
     buf[8] = '\0';
+}
+
+/* ---- Format-aware date display ---- */
+static void fmt_2digit(char *p, int val) {
+    p[0] = '0' + (val / 10) % 10;
+    p[1] = '0' + val % 10;
+}
+
+void date_to_display(int32_t jdn, char *buf, date_format_t fmt, int century) {
+    int y, m, d;
+    char sep;
+
+    if (jdn == 0) {
+        /* Blank date: use appropriate separator and width */
+        int w = century ? 10 : 8;
+        int i;
+        for (i = 0; i < w; i++) buf[i] = ' ';
+        buf[w] = '\0';
+        return;
+    }
+
+    date_from_jdn(jdn, &y, &m, &d);
+
+    switch (fmt) {
+    case DATE_AMERICAN: /* MM/DD/YY or MM/DD/YYYY */
+        sep = '/';
+        fmt_2digit(buf, m); buf[2] = sep;
+        fmt_2digit(buf + 3, d); buf[5] = sep;
+        if (century) {
+            fmt_2digit(buf + 6, y / 100);
+            fmt_2digit(buf + 8, y % 100);
+            buf[10] = '\0';
+        } else {
+            fmt_2digit(buf + 6, y % 100);
+            buf[8] = '\0';
+        }
+        break;
+    case DATE_ANSI: /* YY.MM.DD or YYYY.MM.DD */
+        sep = '.';
+        if (century) {
+            fmt_2digit(buf, y / 100);
+            fmt_2digit(buf + 2, y % 100);
+            buf[4] = sep;
+            fmt_2digit(buf + 5, m); buf[7] = sep;
+            fmt_2digit(buf + 8, d);
+            buf[10] = '\0';
+        } else {
+            fmt_2digit(buf, y % 100);
+            buf[2] = sep;
+            fmt_2digit(buf + 3, m); buf[5] = sep;
+            fmt_2digit(buf + 6, d);
+            buf[8] = '\0';
+        }
+        break;
+    case DATE_BRITISH: /* DD/MM/YY or DD/MM/YYYY */
+    case DATE_FRENCH:
+        sep = '/';
+        fmt_2digit(buf, d); buf[2] = sep;
+        fmt_2digit(buf + 3, m); buf[5] = sep;
+        if (century) {
+            fmt_2digit(buf + 6, y / 100);
+            fmt_2digit(buf + 8, y % 100);
+            buf[10] = '\0';
+        } else {
+            fmt_2digit(buf + 6, y % 100);
+            buf[8] = '\0';
+        }
+        break;
+    case DATE_GERMAN: /* DD.MM.YY or DD.MM.YYYY */
+        sep = '.';
+        fmt_2digit(buf, d); buf[2] = sep;
+        fmt_2digit(buf + 3, m); buf[5] = sep;
+        if (century) {
+            fmt_2digit(buf + 6, y / 100);
+            fmt_2digit(buf + 8, y % 100);
+            buf[10] = '\0';
+        } else {
+            fmt_2digit(buf + 6, y % 100);
+            buf[8] = '\0';
+        }
+        break;
+    case DATE_ITALIAN: /* DD-MM-YY or DD-MM-YYYY */
+        sep = '-';
+        fmt_2digit(buf, d); buf[2] = sep;
+        fmt_2digit(buf + 3, m); buf[5] = sep;
+        if (century) {
+            fmt_2digit(buf + 6, y / 100);
+            fmt_2digit(buf + 8, y % 100);
+            buf[10] = '\0';
+        } else {
+            fmt_2digit(buf + 6, y % 100);
+            buf[8] = '\0';
+        }
+        break;
+    case DATE_JAPAN: /* YY/MM/DD or YYYY/MM/DD */
+        sep = '/';
+        if (century) {
+            fmt_2digit(buf, y / 100);
+            fmt_2digit(buf + 2, y % 100);
+            buf[4] = sep;
+            fmt_2digit(buf + 5, m); buf[7] = sep;
+            fmt_2digit(buf + 8, d);
+            buf[10] = '\0';
+        } else {
+            fmt_2digit(buf, y % 100);
+            buf[2] = sep;
+            fmt_2digit(buf + 3, m); buf[5] = sep;
+            fmt_2digit(buf + 6, d);
+            buf[8] = '\0';
+        }
+        break;
+    }
+}
+
+/* Parse a number from string, advancing pointer past digits */
+static int parse_num(const char **pp) {
+    int n = 0;
+    while (**pp >= '0' && **pp <= '9') {
+        n = n * 10 + (**pp - '0');
+        (*pp)++;
+    }
+    return n;
+}
+
+/* Skip one separator character (any of / . -) */
+static void skip_sep(const char **pp) {
+    if (**pp == '/' || **pp == '.' || **pp == '-') (*pp)++;
+}
+
+int32_t date_from_display(const char *s, date_format_t fmt) {
+    const char *p = s;
+    int a, b, c;
+    int yy, mm, dd;
+
+    /* Skip leading { if present */
+    if (*p == '{') p++;
+    while (*p == ' ') p++;
+
+    /* Parse three numeric components separated by / . or - */
+    a = parse_num(&p); skip_sep(&p);
+    b = parse_num(&p); skip_sep(&p);
+    c = parse_num(&p);
+
+    /* Assign to yy/mm/dd based on format */
+    switch (fmt) {
+    case DATE_AMERICAN:             /* MM/DD/YY */
+        mm = a; dd = b; yy = c; break;
+    case DATE_ANSI:                 /* YY.MM.DD */
+    case DATE_JAPAN:                /* YY/MM/DD */
+        yy = a; mm = b; dd = c; break;
+    case DATE_BRITISH:              /* DD/MM/YY */
+    case DATE_FRENCH:
+    case DATE_GERMAN:               /* DD.MM.YY */
+    case DATE_ITALIAN:              /* DD-MM-YY */
+        dd = a; mm = b; yy = c; break;
+    default:
+        mm = a; dd = b; yy = c; break;
+    }
+
+    /* 2-digit year windowing */
+    if (yy < 50) yy += 2000;
+    else if (yy >= 50 && yy < 100) yy += 1900;
+
+    if (mm == 0 && dd == 0 && yy == 0) return 0;
+    return date_to_jdn(yy, mm, dd);
 }
 
 int date_dow(int32_t jdn) {

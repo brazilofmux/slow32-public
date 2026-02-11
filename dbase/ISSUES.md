@@ -93,21 +93,21 @@ Both support `FIELDS field1,field2,...` to limit which fields are transferred,
 and accept optional `MEMVAR`/`FROM MEMVAR` keywords for dBase III compatibility.
 All field types handled: C, N, D, L, M.
 
-### 2.6 SET Commands — Missing Options
-Several commonly-used SET options are not implemented:
+### ~~2.6 SET Commands — Missing Options~~ FIXED
+All commonly-used SET options are now implemented:
 
-| SET | Purpose | Priority |
-|-----|---------|----------|
-| SET TALK ON/OFF | Suppress/show command feedback (record counts, etc.) | High |
-| SET ECHO ON/OFF | Show/hide command lines during DO | Medium |
-| SET HEADING ON/OFF | Column headers in LIST/DISPLAY | Medium |
-| SET SAFETY ON/OFF | Prompt before overwriting files | Medium |
-| SET BELL ON/OFF | Beep on input errors | Low |
-| SET CENTURY ON/OFF | 2-digit vs 4-digit year display | Medium |
-| SET DATE | Date display format (AMERICAN, BRITISH, etc.) | Medium |
-| SET DECIMALS | Default decimal places | Medium |
-| SET MARGIN | Left margin for printer output | Low |
-| SET ESCAPE ON/OFF | Allow Esc to interrupt programs | Medium |
+| SET | Status |
+|-----|--------|
+| SET TALK ON/OFF | Done (original) |
+| SET HEADING ON/OFF | Done (original) |
+| SET SAFETY ON/OFF | Done (original) |
+| SET BELL ON/OFF | Done (original) |
+| SET DATE | Done (original) |
+| SET DECIMALS | Done (original) |
+| SET ECHO ON/OFF | Done — echoes `[file:line] cmd` during DO |
+| SET CENTURY ON/OFF | Done — 2/4-digit year in all date formats |
+| SET ESCAPE ON/OFF | Done — Esc interrupts programs (requires term) |
+| SET MARGIN TO n | Done — stored (0-254), used by printer output |
 
 ### 2.7 ON KEY — Event-Driven Key Handling
 `ON KEY = <key> <command>` triggers a command when a specific key is pressed.
@@ -227,13 +227,14 @@ Resolved by 1.4 fix. `str_like()` now supports `*`/`?` glob patterns natively.
 - No `ERROR()` code for UNIQUE violations, file handle exhaustion, etc.
 - No `RETRY` support for recoverable errors in data entry
 
-### 5.3 DISPLAY MEMORY
+### ~~5.3 DISPLAY MEMORY~~ FIXED
 `DISPLAY MEMORY` shows all active memory variables, their types, values, and
-scope (PUBLIC/PRIVATE). Essential for debugging. Currently not implemented.
+scope (PUBLIC/PRIVATE). Implemented via `memvar_display()`.
 
-### 5.4 DISPLAY STATUS
-`DISPLAY STATUS` shows open databases, active indexes, relations, filter
-expressions, and SET options. The dBase programmer's "what's going on?" command.
+### ~~5.4 DISPLAY STATUS~~ FIXED
+`DISPLAY STATUS` shows open databases (with aliases), active indexes (master
+and secondary), filter expressions, relations, procedure file, and all SET
+options. Iterates all 10 work areas.
 
 ### 5.5 LIST STRUCTURE TO filename
 `LIST STRUCTURE` (or `COPY STRUCTURE EXTENDED`) creates a DBF containing the

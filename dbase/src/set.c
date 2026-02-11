@@ -16,6 +16,10 @@ void set_init(set_options_t *opts) {
     opts->decimals = 2;
     opts->date_format = DATE_AMERICAN;
     opts->device = 0;  /* SCREEN */
+    opts->century = 0;
+    opts->escape = 1;
+    opts->echo = 0;
+    opts->margin = 0;
 }
 
 static int parse_on_off(const char *p) {
@@ -50,6 +54,10 @@ void set_display(const set_options_t *opts) {
     printf("DECIMALS  = %d\n", opts->decimals);
     printf("DATE      = %s\n", format_name(opts->date_format));
     printf("DEVICE    = %s\n", opts->device ? "PRINT" : "SCREEN");
+    printf("CENTURY   = %s\n", opts->century ? "ON" : "OFF");
+    printf("ESCAPE    = %s\n", opts->escape ? "ON" : "OFF");
+    printf("ECHO      = %s\n", opts->echo ? "ON" : "OFF");
+    printf("MARGIN    = %d\n", opts->margin);
 }
 
 void set_execute(set_options_t *opts, const char *arg) {
@@ -135,7 +143,8 @@ void set_execute(set_options_t *opts, const char *arg) {
 
     /* No-op SET options: accepted silently for compatibility */
     if (str_imatch(p, "ECHO")) {
-        parse_on_off(p + 4); /* consume ON/OFF, ignore */
+        val = parse_on_off(p + 4);
+        if (val >= 0) opts->echo = val;
         return;
     }
     if (str_imatch(p, "MENU")) {
@@ -154,7 +163,8 @@ void set_execute(set_options_t *opts, const char *arg) {
         return;
     }
     if (str_imatch(p, "ESCAPE")) {
-        parse_on_off(p + 6);
+        val = parse_on_off(p + 6);
+        if (val >= 0) opts->escape = val;
         return;
     }
     if (str_imatch(p, "INTENSITY")) {
@@ -178,11 +188,22 @@ void set_execute(set_options_t *opts, const char *arg) {
         return;
     }
     if (str_imatch(p, "CENTURY")) {
-        parse_on_off(p + 7);
+        val = parse_on_off(p + 7);
+        if (val >= 0) opts->century = val;
         return;
     }
     if (str_imatch(p, "PATH")) {
         /* SET PATH TO <path> — skip */
+        return;
+    }
+    if (str_imatch(p, "MARGIN")) {
+        p = skip_ws(p + 6);
+        if (str_imatch(p, "TO")) p = skip_ws(p + 2);
+        val = atoi(p);
+        if (val >= 0 && val <= 254)
+            opts->margin = val;
+        else
+            printf("MARGIN must be 0-254.\n");
         return;
     }
     if (str_imatch(p, "DEVICE")) {

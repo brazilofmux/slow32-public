@@ -1048,3 +1048,16 @@ int screen_readkey(void) {
 void screen_set_lastkey(int key) {
     last_key = key;
 }
+
+int screen_check_escape(void) {
+#if HAS_TERM
+    if (scr.term_available) {
+        if (term_kbhit()) {
+            int ch = term_getkey();
+            if (ch == 27) return 1;
+            /* Not Esc — discard (can't push back) */
+        }
+    }
+#endif
+    return 0;
+}

@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include "func.h"
 #include "date.h"
+#include "command.h"
 #include "screen.h"
 #include "program.h"
 #include "util.h"
@@ -706,12 +707,11 @@ static int fn_date(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
 
 static int fn_dtoc(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     char buf[16];
-    (void)ctx;
     if (nargs < 1 || args[0].type != VAL_DATE) {
         ctx->error = "DTOC requires (date)";
         return -1;
     }
-    date_to_mdy(args[0].date, buf);
+    date_to_display(args[0].date, buf, cmd_get_date_format(), cmd_get_century());
     *result = val_str(buf);
     return 0;
 }
@@ -722,7 +722,7 @@ static int fn_ctod(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "CTOD requires (string)";
         return -1;
     }
-    *result = val_date(date_from_mdy(args[0].str));
+    *result = val_date(date_from_display(args[0].str, cmd_get_date_format()));
     return 0;
 }
 

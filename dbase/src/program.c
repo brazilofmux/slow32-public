@@ -9,6 +9,7 @@
 #include "area.h"
 #include "set.h"
 #include "ast.h"
+#include "screen.h"
 
 static prog_state_t state;
 
@@ -313,6 +314,12 @@ static void prog_free(program_t *prog) {
         free(prog->lines);
     }
     free(prog);
+}
+
+const char *prog_get_procedure_name(void) {
+    if (procedure_file && procedure_file->filename[0])
+        return procedure_file->filename;
+    return NULL;
 }
 
 void prog_set_procedure(const char *filename) {
@@ -758,6 +765,17 @@ static void prog_run(void) {
         prog_preprocess(line, cmd_get_memvar_store());
 
         p = skip_ws(line);
+
+        /* SET ESCAPE: check for Esc keypress */
+        if (cmd_get_escape() && screen_check_escape()) {
+            printf("*** Interrupted\n");
+            state.running = 0;
+            break;
+        }
+
+        /* SET ECHO: show command line during program execution */
+        if (cmd_get_echo() && *p != '\0' && *p != '*')
+            printf("[%s:%d] %s\n", state.current_prog->filename, state.pc + 1, p);
 
         /* Full-line comment: * or NOTE */
         if (*p == '*' || str_imatch(p, "NOTE")) {

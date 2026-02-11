@@ -89,4 +89,7 @@ int  screen_lastkey(void);          /* LASTKEY(): last key from INKEY/READ/WAIT 
 int  screen_readkey(void);          /* READKEY(): how user exited last READ */
 void screen_set_lastkey(int key);   /* Set lastkey (for WAIT, ACCEPT, etc.) */
 
+/* Check for Esc keypress (non-blocking). Returns 1 if Esc pressed, 0 otherwise. */
+int screen_check_escape(void);
+
 #endif

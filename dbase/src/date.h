@@ -11,9 +11,14 @@ void    date_from_jdn(int32_t jdn, int *year, int *month, int *day);
 int32_t date_from_dbf(const char *raw);
 void    date_to_dbf(int32_t jdn, char *buf);
 
-/* Display format: "MM/DD/YY" */
+/* Display format: "MM/DD/YY" (backward compat wrappers) */
 int32_t date_from_mdy(const char *s);
 void    date_to_mdy(int32_t jdn, char *buf);
+
+/* Format-aware display: uses SET DATE and SET CENTURY settings */
+#include "set.h"
+void    date_to_display(int32_t jdn, char *buf, date_format_t fmt, int century);
+int32_t date_from_display(const char *s, date_format_t fmt);
 
 /* Day of week: 1=Sun..7=Sat */
 int     date_dow(int32_t jdn);

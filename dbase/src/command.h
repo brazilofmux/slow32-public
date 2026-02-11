@@ -5,6 +5,7 @@
 #include "memvar.h"
 #include "expr.h"
 #include "clause.h"
+#include "set.h"
 
 /* Execute a command line. Returns 1 if QUIT, 0 otherwise. */
 int cmd_execute(dbf_t *db, char *line);
@@ -27,5 +28,10 @@ int cmd_get_device(void);     /* 0=SCREEN, 1=PRINT */
 int cmd_get_console(void);    /* SET CONSOLE ON/OFF */
 int cmd_get_talk(void);       /* SET TALK ON/OFF */
 int cmd_get_confirm(void);    /* SET CONFIRM ON/OFF */
+int cmd_get_century(void);    /* SET CENTURY ON/OFF */
+int cmd_get_escape(void);     /* SET ESCAPE ON/OFF */
+int cmd_get_echo(void);       /* SET ECHO ON/OFF */
+int cmd_get_margin(void);     /* SET MARGIN TO n */
+date_format_t cmd_get_date_format(void);  /* SET DATE format */
 
 #endif

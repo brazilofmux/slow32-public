@@ -23,6 +23,10 @@ typedef struct set_options {
     int decimals;
     date_format_t date_format;
     int device;       /* 0 = SCREEN, 1 = PRINT */
+    int century;      /* 0=OFF (2-digit year), 1=ON (4-digit year) */
+    int escape;       /* 1=ON (Esc interrupts programs) */
+    int echo;         /* 1=ON (echo lines during DO) */
+    int margin;       /* left margin for printer output (0-254) */
 } set_options_t;
 
 void set_init(set_options_t *opts);

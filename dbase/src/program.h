@@ -124,6 +124,9 @@ void prog_resume(void);
 /* SET PROCEDURE TO file */
 void prog_set_procedure(const char *filename);
 
+/* Get name of loaded procedure file (NULL if none) */
+const char *prog_get_procedure_name(void);
+
 /* Get memvar store (for program.c to access command.c's store) */
 memvar_store_t *prog_get_memvar_store(void);
 
