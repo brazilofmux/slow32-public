@@ -136,9 +136,16 @@ static ndx_page_t *page_new(index_t *idx, int type) {
             /* If it was a leaf but now internal, or vice versa, we might need to fix arrays.
                Actually NdxPage uses fixed max of internal/leaf for allocations to be safe?
                No, page_new allocated them specifically. Let's make sure they are right. */
+            if (type == PAGE_LEAF && !p->keys) {
+                p->keys = (char *)calloc(idx->max_keys_leaf + 1, idx->key_len);
+            }
             if (type == PAGE_LEAF && !p->recnos) {
                 p->recnos = (uint32_t *)calloc(idx->max_keys_leaf + 1, sizeof(uint32_t));
-            } else if (type == PAGE_INTERNAL && !p->children) {
+            }
+            if (type == PAGE_INTERNAL && !p->keys) {
+                p->keys = (char *)calloc(idx->max_keys_internal + 1, idx->key_len);
+            }
+            if (type == PAGE_INTERNAL && !p->children) {
                 p->children = (int *)calloc(idx->max_keys_internal + 2, sizeof(int));
             }
             return p;
@@ -214,6 +221,12 @@ static int page_flush(index_t *idx, int page_no) {
         tmp = idx->key_type;        memcpy(buf + 28, &tmp, 4);
         tmp = idx->free_page_head;  memcpy(buf + 32, &tmp, 4);
         memcpy(buf + 36, idx->key_expr, 256);
+    } else if (p->type == PAGE_FREE) {
+        uint16_t t16;
+        uint32_t t32;
+        t16 = PAGE_FREE;        memcpy(buf + 0, &t16, 2);
+        t16 = 0;                memcpy(buf + 2, &t16, 2);
+        t32 = (uint32_t)p->children[0]; memcpy(buf + 4, &t32, 4);
     } else if (p->type == PAGE_INTERNAL) {
         uint16_t t16;
         t16 = PAGE_INTERNAL;    memcpy(buf + 0, &t16, 2);
@@ -264,7 +277,19 @@ static ndx_page_t *page_read(index_t *idx, int page_no, unsigned char *buf) {
 
     memcpy(&t16, buf + 0, 2);
 
-    if (t16 == PAGE_INTERNAL) {
+    if (t16 == PAGE_FREE) {
+        uint32_t t32;
+        p = (ndx_page_t *)calloc(1, sizeof(ndx_page_t));
+        p->page_no = page_no;
+        p->type = PAGE_FREE;
+        p->nkeys = 0;
+        p->keys = NULL;
+        p->recnos = NULL;
+        p->children = (int *)calloc(idx->max_keys_internal + 2, sizeof(int));
+        memcpy(&t32, buf + 4, 4);
+        p->children[0] = (int)t32;
+        p->dirty = 0;
+    } else if (t16 == PAGE_INTERNAL) {
         int max_keys = idx->max_keys_internal;
         p = (ndx_page_t *)calloc(1, sizeof(ndx_page_t));
         p->page_no = page_no;
