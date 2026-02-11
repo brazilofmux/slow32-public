@@ -67,8 +67,8 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 - **Benefit**: Dramatically increases the power of reports and data updates. Requires careful handling of the call stack during expression evaluation.
 
 ### 4.3 [Feature] Low-Level File I/O (Clipper Parity)
-- **Opportunity**: Implement `FOPEN()`, `FREAD()`, `FWRITE()`, `FSEEK()`, and `FCLOSE()`.
-- **Benefit**: Allows dBase programs to manipulate non-DBF files (logs, exports, etc.), a major feature of professional Clipper and FoxPro applications.
+- **Status**: **Completed.** Implemented `FCREATE()`, `FOPEN()`, `FREAD()`, `FWRITE()`, `FSEEK()`, `FCLOSE()`, and `FERROR()` with a fixed handle table.
+- **Milestone**: `FILEIO.PRG` regression coverage verifies basic create/open/read/write/seek/close flows and error reporting.
 
 ### 4.4 [Feature] Standard Function Parity
 - **Opportunity**: Implement missing core dBase functions: `DTOC()`, `CTOD()`, `TRANSFORM()`.
@@ -82,8 +82,8 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 - **Program Command Lexing**: Refactored `PARAMETERS`, `PRIVATE`, `PUBLIC`, and `PROCEDURE` to use the Lexer.
 - **Date Arithmetic**: Added date addition/subtraction in the expression engine.
 - **Directory Services**: Implemented `ADIR()`, `FILE()`, and `CURDIR()`.
+- **Low-Level File I/O**: Implemented `FCREATE()`, `FOPEN()`, `FREAD()`, `FWRITE()`, `FSEEK()`, `FCLOSE()`, and `FERROR()`.
 - **Standard Function Expansion**: Implemented `LEFT()`, `RIGHT()`, `ALLTRIM()`, `EMPTY()`, and the `PADx()` family.
 - **Cross-Platform Paths**: Normalized path separators in file operations and index/dbf I/O.
-
 
 
