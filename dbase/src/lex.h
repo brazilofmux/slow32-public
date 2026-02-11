@@ -65,6 +65,7 @@ typedef struct lexer {
     const char *p;
     const char *token_start;
     token_t current;
+    token_type_t prev_type;  /* previous token type (for context-sensitive '[') */
     const char *error;
 
     /* Macro expansion state */

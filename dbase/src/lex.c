@@ -163,6 +163,8 @@ static void macro_expand_into(const char *src, memvar_store_t *store,
 token_type_t lex_next(lexer_t *l) {
     char c;
     token_t *t = &l->current;
+    token_type_t prev = t->type;
+    l->prev_type = prev;
 
     /* Skip whitespace */
     for (;;) {
@@ -282,7 +284,18 @@ token_type_t lex_next(lexer_t *l) {
         case '/': t->type = TOK_DIV; break;
         case '(': t->type = TOK_LPAREN; break;
         case ')': t->type = TOK_RPAREN; break;
-        case '[': t->type = TOK_LBRACKET; break;
+        case '[':
+            /* After identifier/rparen/rbracket: array index. Otherwise: string literal. */
+            if (prev == TOK_IDENT || prev == TOK_RPAREN || prev == TOK_RBRACKET) {
+                t->type = TOK_LBRACKET;
+            } else {
+                int i = 0;
+                while ((c = lex_get_char(l)) != '\0' && c != ']' && i < (int)sizeof(t->text) - 1)
+                    t->text[i++] = c;
+                t->text[i] = '\0';
+                t->type = TOK_STRING;
+            }
+            break;
         case ']': t->type = TOK_RBRACKET; break;
         case ',': t->type = TOK_COMMA; break;
         case '=': t->type = TOK_EQ; break;
