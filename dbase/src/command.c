@@ -706,8 +706,9 @@ static void cmd_use(dbf_t *db, const char *arg) {
     wa->locate_cond[0] = '\0';
     wa->locate_last_rec = 0;
 
-    printf("Database %s opened with %d record(s).\n",
-           db->filename, (int)db->record_count);
+    if (set_opts.talk)
+        printf("Database %s opened with %d record(s).\n",
+               db->filename, (int)db->record_count);
 }
 
 /* ---- APPEND BLANK ---- */
@@ -726,7 +727,8 @@ static void cmd_append_blank(dbf_t *db) {
 
     expr_ctx.eof_flag = 0;
     expr_ctx.bof_flag = 0;
-    printf("Record %d added.\n", (int)db->record_count);
+    if (set_opts.talk)
+        printf("Record %d added.\n", (int)db->record_count);
 }
 
 /* ---- GO / GOTO ---- */
@@ -3875,6 +3877,10 @@ int cmd_get_device(void) {
 
 int cmd_get_console(void) {
     return set_opts.console;
+}
+
+int cmd_get_talk(void) {
+    return set_opts.talk;
 }
 
 /* ---- Dispatch ---- */

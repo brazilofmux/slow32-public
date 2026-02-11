@@ -25,11 +25,23 @@ void screen_init(void) {
     memset(&scr, 0, sizeof(scr));
     scr.fg_color = 7; /* white */
     scr.bg_color = 0; /* black */
-    /* Start in fallback mode. Full terminal mode can be enabled
-       later if needed (term service code compiles in but isn't
-       activated by default — interactive @GET/READ with terminal
-       requires explicit term_init). */
+    scr.last_col = 1;
+#if HAS_TERM
+    /* Try to negotiate terminal service. If denied (e.g. --deny term),
+     * fall back to console mode (newlines + spaces). */
+    scr.term_available = (term_init() == 0) ? 1 : 0;
+#else
     scr.term_available = 0;
+#endif
+}
+
+void screen_shutdown(void) {
+#if HAS_TERM
+    if (scr.term_available) {
+        term_cleanup();
+        scr.term_available = 0;
+    }
+#endif
 }
 
 /* ---- Apply PICTURE mask to a string ---- */
@@ -83,32 +95,52 @@ static void apply_picture(char *out, const char *value, const char *picture, int
 static void goto_pos(int row, int col) {
 #if HAS_TERM
     if (scr.term_available) {
+        fflush(stdout);  /* drain stdio before moving cursor via MMIO */
         term_gotoxy(row, col);
         return;
     }
 #endif
-    /* Fallback: print newline then spaces */
-    printf("\n");
+    /* Fallback: track last SAY/GET row to merge same-row output.
+     * We can't track absolute cursor position because other printf
+     * calls (dot prompt, ? output, etc.) move the cursor without
+     * updating our tracking. So: same row = stay on line, different
+     * row = emit newlines proportional to the row gap. */
+    if (row == scr.last_row && scr.last_col > 0) {
+        /* Same row as last SAY/GET — pad with spaces from current pos */
+        if (col < scr.last_col) {
+            /* Need to go back — carriage return and re-pad */
+            putchar('\r');
+            scr.last_col = 1;
+        }
+    } else {
+        /* Different row — emit newlines for row gap */
+        int gap = row - scr.last_row;
+        int r;
+        if (gap < 1) gap = 1;
+        for (r = 0; r < gap; r++) putchar('\n');
+        scr.last_col = 1;
+    }
+    /* Pad to target column */
     {
         int i;
-        for (i = 1; i < col; i++) putchar(' ');
+        for (i = scr.last_col; i < col; i++) putchar(' ');
     }
 }
 
 static void screen_update_pos(int row, int col, int len) {
-    int end;
+    /* Track cursor position after outputting len chars starting at (row, col).
+     * col is 1-based. After output, cursor is at col+len (1-based). */
+    int end_col;
     if (col < 1) col = 1;
     if (len < 0) len = 0;
-    end = col + len;
-    if (end <= 1) {
-        scr.last_row = row;
-        scr.last_col = col;
-        return;
+    end_col = col + len;
+    /* Handle wrap past SCREEN_COLS */
+    if (end_col > SCREEN_COLS + 1) {
+        row += (end_col - 1) / SCREEN_COLS;
+        end_col = ((end_col - 1) % SCREEN_COLS) + 1;
     }
-    row += (end - 2) / SCREEN_COLS;
-    col = ((end - 2) % SCREEN_COLS) + 1;
     scr.last_row = row;
-    scr.last_col = col;
+    scr.last_col = end_col;  /* 1-based: cursor is AT this column */
 }
 
 /* ---- @SAY ---- */
@@ -231,6 +263,7 @@ void screen_read(void) {
 #if HAS_TERM
     if (scr.term_available) {
         /* Full-screen READ with terminal support */
+        fflush(stdout);  /* flush all pending SAY/GET output before raw mode */
         term_set_raw(1);
 
         for (i = 0; i < scr.ngets; i++) {
@@ -251,13 +284,25 @@ void screen_read(void) {
             }
 
             for (;;) {
-            str_copy(buf, scr.gets[i].initial, sizeof(buf));
-            len = strlen(buf);
-            pos = len;
+            int fwidth = scr.gets[i].width;
+            /* PICTURE length determines field width if available */
+            if (scr.gets[i].picture[0]) {
+                int plen = strlen(scr.gets[i].picture);
+                if (plen > 0) fwidth = plen;
+            }
 
+            str_copy(buf, scr.gets[i].initial, sizeof(buf));
+            /* Pad to field width */
+            len = strlen(buf);
+            while (len < fwidth && len < 255) { buf[len++] = ' '; }
+            buf[len] = '\0';
+            pos = 0;  /* cursor at start of field (dBase convention) */
+
+            fflush(stdout);
             term_gotoxy(scr.gets[i].row, scr.gets[i].col);
-            printf("%-*s", scr.gets[i].width, buf);
-            term_gotoxy(scr.gets[i].row, scr.gets[i].col + pos);
+            printf("%-*s", fwidth, buf);
+            fflush(stdout);
+            term_gotoxy(scr.gets[i].row, scr.gets[i].col);
 
             for (;;) {
                 key = term_getkey();
@@ -269,16 +314,15 @@ void screen_read(void) {
                 if (key == 8 || key == 127) { /* Backspace */
                     if (pos > 0) {
                         pos--;
-                        memmove(buf + pos, buf + pos + 1, len - pos);
-                        len--;
-                        buf[len] = '\0';
-                        term_gotoxy(scr.gets[i].row, scr.gets[i].col);
-                        printf("%-*s", scr.gets[i].width, buf);
+                        buf[pos] = ' ';
+                        term_gotoxy(scr.gets[i].row, scr.gets[i].col + pos);
+                        putchar(' ');
+                        fflush(stdout);
                         term_gotoxy(scr.gets[i].row, scr.gets[i].col + pos);
                     }
                     continue;
                 }
-                if (key >= 32 && key < 127 && len < 255) {
+                if (key >= 32 && key < 127 && pos < fwidth) {
                     /* Apply PICTURE mask if any */
                     if (scr.gets[i].picture[0] && pos < (int)strlen(scr.gets[i].picture)) {
                         char pc = scr.gets[i].picture[pos];
@@ -286,14 +330,15 @@ void screen_read(void) {
                         if (pc == 'A' && !((key >= 'A' && key <= 'Z') || (key >= 'a' && key <= 'z'))) continue;
                         if (pc == '!' && key >= 'a' && key <= 'z') key -= 32;
                     }
-                    memmove(buf + pos + 1, buf + pos, len - pos + 1);
+                    /* Overwrite mode */
                     buf[pos] = (char)key;
+                    putchar((char)key);
+                    fflush(stdout);
                     pos++;
-                    len++;
-                    buf[len] = '\0';
-                    term_gotoxy(scr.gets[i].row, scr.gets[i].col);
-                    printf("%-*s", scr.gets[i].width, buf);
-                    term_gotoxy(scr.gets[i].row, scr.gets[i].col + pos);
+                    if (pos >= fwidth) {
+                        /* Field full — position at end */
+                        term_gotoxy(scr.gets[i].row, scr.gets[i].col + fwidth - 1);
+                    }
                 }
             }
 
@@ -368,9 +413,10 @@ void screen_read(void) {
             }
 
             for (;;) {
-                printf("%s=", scr.gets[i].varname);
-                if (scr.gets[i].initial[0])
-                    printf("[%s] ", scr.gets[i].initial);
+                /* Position cursor at GET location */
+                goto_pos(scr.gets[i].row, scr.gets[i].col);
+                scr.last_row = scr.gets[i].row;
+                scr.last_col = scr.gets[i].col;
 
                 if (read_line(line, sizeof(line)) < 0) break;
                 
@@ -499,6 +545,7 @@ void screen_box(int r1, int c1, int r2, int c2, int dbl) {
 void screen_clear(void) {
 #if HAS_TERM
     if (scr.term_available) {
+        fflush(stdout);
         term_clear(0);
         term_gotoxy(1, 1);
         return;
@@ -510,7 +557,7 @@ void screen_clear(void) {
         for (i = 0; i < 24; i++) printf("\n");
     }
     scr.last_row = 0;
-    scr.last_col = 0;
+    scr.last_col = 1;
 }
 
 /* ---- CLEAR GETS ---- */

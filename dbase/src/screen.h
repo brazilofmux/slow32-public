@@ -34,6 +34,9 @@ typedef struct {
 /* Initialize screen subsystem */
 void screen_init(void);
 
+/* Shutdown screen subsystem (release terminal service) */
+void screen_shutdown(void);
+
 /* @SAY command */
 void screen_say(int row, int col, const char *expr_str, const char *picture);
 

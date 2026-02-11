@@ -4,6 +4,7 @@ set -e
 
 BASDIR="$(cd "$(dirname "$0")/.." && pwd)"
 EMU="${EMU:-$BASDIR/../tools/emulator/slow32-fast}"
+EMU_ARGS="--deny term"
 DBASE="$BASDIR/dbase.s32x"
 
 if [ ! -f "$DBASE" ]; then
@@ -48,7 +49,7 @@ for testfile in "$BASDIR"/tests/*.txt; do
         "$BASDIR"/tests/testfile.txt
 
     # Run test from tests/ directory so .DBF files are created there
-    actual=$( cd "$BASDIR/tests" && cat "$testfile" | "$EMU" "$DBASE" 2>&1 | filter_output )
+    actual=$( cd "$BASDIR/tests" && cat "$testfile" | "$EMU" $EMU_ARGS "$DBASE" 2>&1 | filter_output )
 
     if [ -f "$expected" ]; then
         exp=$(cat "$expected")

@@ -3,6 +3,7 @@
 #include "dbf.h"
 #include "command.h"
 #include "program.h"
+#include "screen.h"
 #include "util.h"
 
 static dbf_t current_db;
@@ -32,6 +33,7 @@ int main(void) {
     }
 
     cmd_close_all();
+    screen_shutdown();
 
     return 0;
 }

@@ -25,5 +25,6 @@ memvar_store_t *cmd_get_memvar_store(void);
 expr_ctx_t *cmd_get_expr_ctx(void);
 int cmd_get_device(void);     /* 0=SCREEN, 1=PRINT */
 int cmd_get_console(void);    /* SET CONSOLE ON/OFF */
+int cmd_get_talk(void);       /* SET TALK ON/OFF */
 
 #endif

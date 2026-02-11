@@ -233,10 +233,17 @@ static program_t *prog_load(const char *filename) {
             strcat(path, ".PRG");
     }
 
-    /* Try original case first (Linux), then uppercase (DOS compat) */
+    /* Try original case first, then uppercase, then all lowercase */
     fp = fopen(path, "r");
     if (!fp) {
         str_upper(path);
+        fp = fopen(path, "r");
+    }
+    if (!fp) {
+        /* Try all lowercase (common on Linux) */
+        int pi;
+        for (pi = 0; path[pi]; pi++)
+            if (path[pi] >= 'A' && path[pi] <= 'Z') path[pi] += 32;
         fp = fopen(path, "r");
     }
     if (!fp) {
@@ -315,10 +322,11 @@ void prog_set_procedure(const char *filename) {
     }
     if (filename && filename[0]) {
         procedure_file = prog_load(filename);
-        if (procedure_file)
+        if (procedure_file && cmd_get_talk())
             printf("Procedure file: %s\n", procedure_file->filename);
     } else {
-        printf("Procedure file released.\n");
+        if (cmd_get_talk())
+            printf("Procedure file released.\n");
     }
 }
 
@@ -763,8 +771,31 @@ static void prog_run(void) {
             continue;
         }
 
-        /* Skip PROCEDURE/FUNCTION definitions during normal execution */
+        /* Skip PROCEDURE/FUNCTION definitions during normal execution.
+           Exception: if this is the first executable line in the file
+           (Clipper convention — first PROCEDURE is the entry point),
+           just skip the declaration line and execute the body. */
         if (line_is_kw(p, "PROCEDURE") || line_is_kw(p, "FUNCTION")) {
+            if (state.call_depth == 0) {
+                /* Check if all prior lines were comments/blank */
+                int all_comments = 1;
+                int j;
+                for (j = 0; j < state.pc; j++) {
+                    char prev[MAX_LINE_LEN];
+                    char *pp;
+                    str_copy(prev, state.current_prog->lines[j], MAX_LINE_LEN);
+                    pp = skip_ws(prev);
+                    if (*pp != '\0' && *pp != '*' && !str_imatch(pp, "NOTE")) {
+                        all_comments = 0;
+                        break;
+                    }
+                }
+                if (all_comments) {
+                    /* Entry point — skip PROCEDURE line, execute body */
+                    state.pc++;
+                    continue;
+                }
+            }
             /* Skip to next PROCEDURE/FUNCTION or end of file */
             int i;
             for (i = state.pc + 1; i < state.current_prog->nlines; i++) {
