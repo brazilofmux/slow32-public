@@ -4215,7 +4215,7 @@ static void h_retry(dbf_t *db, lexer_t *l) { (void)db; (void)l; prog_retry(); }
 static void h_suspend(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_suspend(); else printf("Not in program.\n"); }
 static void h_resume(dbf_t *db, lexer_t *l) { (void)db; (void)l; prog_resume(); }
 static void h_eject(dbf_t *db, lexer_t *l) { (void)db; (void)l; screen_eject(); }
-static void h_run(dbf_t *db, lexer_t *l) { (void)db; (void)l; printf("RUN not supported.\n"); }
+static void h_run(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); prog_do(arg); }
 static void h_select(dbf_t *db, lexer_t *l) {
     (void)db;
     char arg[256];

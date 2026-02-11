@@ -16,7 +16,7 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Database TEST.DBF creat
  Bob       
 .  NAME      
  Bob       
-. . . RUN not supported.
+. . . *** File not found: dir.prg
 . . . TOTAL ON not implemented.
 . JOIN WITH not implemented.
 . . . File erased.

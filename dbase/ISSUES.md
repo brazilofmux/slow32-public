@@ -313,11 +313,11 @@ and field width. `screen_read()` writes accepted values back to the database
 via `dbf_set_field_raw()` + `dbf_flush_record()`. RANGE/VALID rejection
 messages now display on row 24 in term-mode with keypress acknowledgment.
 
-### 8.6 RUN command
-`RUN TPBP` and `RUN TPPACK` shell out to execute compiled dBase programs. On
-SLOW-32, true exec is impossible. Options: (a) redirect to `DO file.PRG` if the
-.PRG source exists; (b) stub with warning; (c) skip — these are utility programs
-(backup, pack) that aren't core to the interactive workflow.
+### ~~8.6 RUN command~~ FIXED
+`RUN <program>` now redirects to `DO <program>`, executing the `.PRG` source
+file instead of shelling out. True exec is impossible on SLOW-32, but since
+Teacher's Pet only uses `RUN TPBP` and `RUN TPPACK` to invoke other dBase
+programs, the redirect produces identical behavior.
 
 ---
 
