@@ -728,9 +728,10 @@ static void pop_frame(void) {
     }
 
     /* If the program we returned from was the top-level DO and no caller,
-       free it */
+       free it (but not the shared procedure library) */
     if (state.call_depth == 0 && !frame->caller_prog) {
-        prog_free(frame->prog);
+        if (frame->prog != procedure_file)
+            prog_free(frame->prog);
     }
 }
 
@@ -881,7 +882,9 @@ static void prog_run(void) {
         } else {
             state.running = 0;
             if (state.current_prog) {
-                prog_free(state.current_prog);
+                /* Don't free the procedure library — it's shared */
+                if (state.current_prog != procedure_file)
+                    prog_free(state.current_prog);
                 state.current_prog = NULL;
             }
         }
@@ -1011,13 +1014,36 @@ void prog_do(const char *arg) {
         if (procedure_file) {
             proc_line = find_procedure(procedure_file, name);
             if (proc_line >= 0) {
-                if (push_frame(procedure_file, proc_line + 1) < 0)
+                if (state.running) {
+                    /* Nested call from within a running program */
+                    if (push_frame(procedure_file, proc_line + 1) < 0)
+                        return;
+                    if (with_argc > 0 && state.call_depth > 0) {
+                        call_frame_t *frame = &state.call_stack[state.call_depth - 1];
+                        frame->with_argc = with_argc;
+                        memcpy(frame->with_args, with_args, with_argc * sizeof(value_t));
+                    }
                     return;
-                if (with_argc > 0 && state.call_depth > 0) {
-                    call_frame_t *frame = &state.call_stack[state.call_depth - 1];
-                    frame->with_argc = with_argc;
-                    memcpy(frame->with_args, with_args, with_argc * sizeof(value_t));
                 }
+                /* Interactive DO — start execution at the procedure */
+                state.current_prog = procedure_file;
+                state.pc = proc_line + 1;
+                state.call_depth = 0;
+                state.loop_depth = 0;
+                if_skip = 0;
+                if_depth = 0;
+                case_active = 0;
+                case_done = 0;
+                case_skip = 0;
+                if (with_argc > 0) {
+                    if (push_frame(procedure_file, proc_line + 1) == 0) {
+                        call_frame_t *frame = &state.call_stack[state.call_depth - 1];
+                        frame->with_argc = with_argc;
+                        memcpy(frame->with_args, with_args, with_argc * sizeof(value_t));
+                        frame->caller_prog = NULL;
+                    }
+                }
+                prog_run();
                 return;
             }
         }
@@ -1660,7 +1686,8 @@ void prog_return(const char *arg) {
         /* Top-level RETURN = end program */
         state.running = 0;
         if (state.current_prog) {
-            prog_free(state.current_prog);
+            if (state.current_prog != procedure_file)
+                prog_free(state.current_prog);
             state.current_prog = NULL;
         }
     }

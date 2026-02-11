@@ -266,6 +266,40 @@ that overlay the main display and then restore it.
 
 ---
 
+## 8. Teacher's Pet Compatibility (akron/src_dbase3/)
+
+Real-world 1986 dBase III+ gradebook application — 18 .prg files, 9 databases,
+multi-index navigation, procedure library, @SAY/@GET screens with PICTURE/RANGE.
+
+### Already working
+SET TALK/BELL/SAFETY/CONSOLE/DEVICE, SET ECHO/MENU/STATUS/SCOREBOARD/HELP/
+FUNCTION (stubbed), EXIT, LOOP, CLEAR ALL, $ operator, RELEASE ALL LIKE, PUBLIC,
+CLOSE DATABASES, PICTURE (!,9,#,A,X) + RANGE, DOW(), CTOD(), DTOC(),
+REPORT FORM TO PRINT, DO WITH parameters, SELECT 1-9, USE...INDEX...ALIAS,
+SEEK, LOCATE/CONTINUE, DELETE FOR, COPY TO FOR, SORT ON FOR, PACK, ZAP, ERASE,
+COPY FILE, multiple indexes per database.
+
+### ~~8.1 SET ORDER TO n~~ ALREADY IMPLEMENTED
+Was already in `command.c` — `h_set()` handles ORDER TO, sets `cur_wa()->order`,
+and `controlling_index()` returns the active index. All navigation commands
+(SKIP, GO TOP, SEEK, LIST, etc.) use it automatically.
+
+### ~~8.2 SET PROCEDURE TO file~~ FIXED
+Was already implemented but had a bug: interactive `DO procname` from procedure
+file pushed a frame and returned without calling `prog_run()`, so the procedure
+body never executed. Also, `pop_frame()` freed the shared procedure library on
+return. Fixed both: interactive path now enters `prog_run()` at the procedure
+start line, and all three free-on-return paths guard against freeing the
+procedure library.
+
+### 8.3 RUN command
+`RUN TPBP` and `RUN TPPACK` shell out to execute compiled dBase programs. On
+SLOW-32, true exec is impossible. Options: (a) redirect to `DO file.PRG` if the
+.PRG source exists; (b) stub with warning; (c) skip — these are utility programs
+(backup, pack) that aren't core to the interactive workflow.
+
+---
+
 ## 7. Review Notes (9136b895..HEAD)
 
 These are preserved code review observations from the AST + lexer integration
