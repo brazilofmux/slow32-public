@@ -86,11 +86,12 @@ line verbatim (no preprocessing, no macro expansion) until ENDTEXT. Correctly
 skipped inside false IF/ELSE branches and non-matching CASE blocks. Program-only
 construct (not available in interactive mode).
 
-### 2.5 SCATTER/GATHER — Record-to-Memvar Transfer
-`SCATTER` copies the current record's fields into memory variables (one per
-field, named after the field). `GATHER` writes them back. This is the standard
-pattern for editing a record in a form and then committing changes. Without it,
-users must write individual `REPLACE` commands for every field.
+### ~~2.5 SCATTER/GATHER — Record-to-Memvar Transfer~~ FIXED
+`SCATTER` copies current record's fields into memory variables (one per field,
+named after the field). `GATHER` writes them back with proper index maintenance.
+Both support `FIELDS field1,field2,...` to limit which fields are transferred,
+and accept optional `MEMVAR`/`FROM MEMVAR` keywords for dBase III compatibility.
+All field types handled: C, N, D, L, M.
 
 ### 2.6 SET Commands — Missing Options
 Several commonly-used SET options are not implemented:

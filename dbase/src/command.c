@@ -1692,6 +1692,185 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
     }
 }
 
+/* ---- SCATTER / GATHER ---- */
+
+/* Parse optional FIELDS field1,field2,... list into indices array.
+ * Returns number of fields, or -1 on error.  If no FIELDS clause,
+ * returns all fields. */
+static int scatter_parse_fields(dbf_t *db, lexer_t *l,
+                                int *indices, int max_fields) {
+    int n = 0;
+    if (cmd_kw(l, "FIELDS")) {
+        lex_next(l);
+        while (l->current.type == TOK_IDENT && n < max_fields) {
+            char name[DBF_MAX_FIELD_NAME];
+            str_copy(name, l->current.text, sizeof(name));
+            str_upper(name);
+            int idx = dbf_find_field(db, name);
+            if (idx < 0) {
+                printf("Field not found: %s\n", name);
+                return -1;
+            }
+            indices[n++] = idx;
+            lex_next(l);
+            if (l->current.type == TOK_COMMA)
+                lex_next(l);
+        }
+    } else {
+        /* All fields */
+        for (int i = 0; i < db->field_count && n < max_fields; i++)
+            indices[n++] = i;
+    }
+    return n;
+}
+
+static void cmd_scatter(dbf_t *db, lexer_t *l) {
+    int field_indices[DBF_MAX_FIELDS];
+    int nfields;
+    char raw[256];
+
+    if (!dbf_is_open(db)) {
+        prog_error(ERR_NO_DATABASE, "No database in use");
+        return;
+    }
+    if (db->current_record == 0) {
+        prog_error(ERR_NO_DATABASE, "No current record");
+        return;
+    }
+
+    /* Optional MEMVAR keyword (ignored — always scatters to memvars) */
+    if (cmd_kw(l, "MEMVAR"))
+        lex_next(l);
+
+    nfields = scatter_parse_fields(db, l, field_indices, DBF_MAX_FIELDS);
+    if (nfields < 0) return;
+
+    for (int i = 0; i < nfields; i++) {
+        int fi = field_indices[i];
+        dbf_get_field_raw(db, fi, raw, sizeof(raw));
+        value_t val;
+        switch (db->fields[fi].type) {
+        case 'C':
+            trim_right(raw);
+            val = val_str(raw);
+            break;
+        case 'N':
+            val = val_num(atof(raw));
+            break;
+        case 'D':
+            val = val_date(date_from_dbf(raw));
+            break;
+        case 'L':
+            val = val_logic(raw[0] == 'T' || raw[0] == 't');
+            break;
+        case 'M': {
+            int blk = atoi(raw);
+            char memo[256];
+            if (blk > 0 && dbf_memo_read(db, blk, memo, sizeof(memo)) == 0)
+                val = val_str(memo);
+            else
+                val = val_str("");
+            break;
+        }
+        default:
+            trim_right(raw);
+            val = val_str(raw);
+            break;
+        }
+        memvar_set(expr_ctx.vars, db->fields[fi].name, &val);
+    }
+}
+
+static void cmd_gather(dbf_t *db, lexer_t *l) {
+    int field_indices[DBF_MAX_FIELDS];
+    int nfields;
+    char formatted[256];
+    char old_keys[MAX_INDEXES][MAX_INDEX_KEY + 1];
+    int has_indexes;
+
+    if (!dbf_is_open(db)) {
+        prog_error(ERR_NO_DATABASE, "No database in use");
+        return;
+    }
+    if (db->current_record == 0) {
+        prog_error(ERR_NO_DATABASE, "No current record");
+        return;
+    }
+
+    /* Optional FROM MEMVAR (ignored — always gathers from memvars) */
+    if (cmd_kw(l, "FROM"))
+        lex_next(l);
+    if (cmd_kw(l, "MEMVAR"))
+        lex_next(l);
+
+    nfields = scatter_parse_fields(db, l, field_indices, DBF_MAX_FIELDS);
+    if (nfields < 0) return;
+
+    /* Capture keys before modification */
+    has_indexes = (cur_wa()->num_indexes > 0);
+    if (has_indexes)
+        indexes_capture_keys(db, old_keys);
+
+    for (int i = 0; i < nfields; i++) {
+        int fi = field_indices[i];
+        value_t val;
+        if (memvar_find(expr_ctx.vars, db->fields[fi].name, &val) != 0)
+            continue;  /* No matching memvar — skip field */
+
+        char valbuf[256];
+        val_to_string(&val, valbuf, sizeof(valbuf));
+
+        switch (db->fields[fi].type) {
+        case 'C':
+            if (val.type == VAL_CHAR)
+                field_format_char(formatted, db->fields[fi].length, val.str);
+            else
+                field_format_char(formatted, db->fields[fi].length, valbuf);
+            break;
+        case 'N':
+            field_format_numeric(formatted, db->fields[fi].length,
+                                 db->fields[fi].decimals, valbuf);
+            break;
+        case 'D':
+            if (val.type == VAL_DATE) date_to_dbf(val.date, formatted);
+            else field_format_date(formatted, valbuf);
+            break;
+        case 'L':
+            if (val.type == VAL_LOGIC) {
+                formatted[0] = val.logic ? 'T' : 'F';
+                formatted[1] = '\0';
+            } else field_format_logical(formatted, valbuf);
+            break;
+        case 'M': {
+            const char *memo_text = (val.type == VAL_CHAR) ? val.str : valbuf;
+            int nb = dbf_memo_write(db, memo_text, strlen(memo_text));
+            if (nb > 0)
+                snprintf(formatted, sizeof(formatted), "%10d", nb);
+            else
+                memset(formatted, ' ', 10);
+            formatted[10] = '\0';
+            break;
+        }
+        default:
+            field_format_char(formatted, db->fields[fi].length, valbuf);
+            break;
+        }
+
+        dbf_set_field_raw(db, fi, formatted);
+    }
+
+    /* Update indexes */
+    if (has_indexes) {
+        if (indexes_update_current(db, old_keys) != 0) {
+            db->record_dirty = 0;
+            dbf_read_record(db, db->current_record);
+            return;
+        }
+    }
+
+    dbf_flush_record(db);
+}
+
 /* ---- DISPLAY (enhanced with field list) ---- */
 static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
     int f;
@@ -3965,6 +4144,8 @@ static void h_select(dbf_t *db, lexer_t *l) {
 }
 static void h_use(dbf_t *db, lexer_t *l) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_use(db, arg); }
 static void h_replace(dbf_t *db, lexer_t *l) { lex_next(l); cmd_replace(db, l); }
+static void h_scatter(dbf_t *db, lexer_t *l) { lex_next(l); cmd_scatter(db, l); }
+static void h_gather(dbf_t *db, lexer_t *l) { lex_next(l); cmd_gather(db, l); }
 static void h_list(dbf_t *db, lexer_t *l) { lex_next(l); cmd_list(db, l); }
 static void h_display(dbf_t *db, lexer_t *l) {
     if (cmd_peek_kw(l, "STRUCTURE")) {
@@ -4347,7 +4528,7 @@ static cmd_entry_t cmd_table[] = {
     { "ENDCASE", h_endcase }, { "ENDDO", h_enddo },
     { "ENDIF", h_endif }, { "ENDSCAN", h_endscan },
     { "ERASE", h_erase }, { "FIND", h_find },
-    { "GO", h_go }, { "GOTO", h_go },
+    { "GATHER", h_gather }, { "GO", h_go }, { "GOTO", h_go },
     { "IF", h_if }, { "INDEX", h_index },
     { "INPUT", h_input }, { "JOIN", h_join },
     { "LABEL", h_label }, { "LIST", h_list },
@@ -4363,7 +4544,7 @@ static cmd_entry_t cmd_table[] = {
     { "RESTORE", h_restore }, { "RESUME", h_resume },
     { "RETRY", h_retry }, { "RETURN", h_return },
     { "RUN", h_run }, { "SAVE", h_save },
-    { "SCAN", h_scan }, { "SEEK", h_seek },
+    { "SCAN", h_scan }, { "SCATTER", h_scatter }, { "SEEK", h_seek },
     { "SELECT", h_select }, { "SET", h_set },
     { "SKIP", h_skip }, { "SORT", h_sort },
     { "STORE", h_store }, { "SUM", h_sum },
