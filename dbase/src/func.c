@@ -10,6 +10,7 @@
 #include "screen.h"
 #include "program.h"
 #include "util.h"
+#include "menu.h"
 
 extern double floor(double x);
 extern double fmod(double x, double y);
@@ -915,6 +916,19 @@ static int fn_pcol(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     return 0;
 }
 
+/* ---- BAR() / PROMPT() — popup menu result ---- */
+static int fn_bar(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_num((double)menu_last_bar());
+    return 0;
+}
+
+static int fn_prompt_func(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_str(menu_last_prompt());
+    return 0;
+}
+
 /* ---- STUFF(str, start, delete, insert) ---- */
 static int fn_stuff(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     char buf[512];
@@ -1187,6 +1201,9 @@ static const func_entry_t func_table[] = {
     { "COL",       fn_col },
     { "PROW",      fn_prow },
     { "PCOL",      fn_pcol },
+    /* Popup menu */
+    { "BAR",       fn_bar },
+    { "PROMPT",    fn_prompt_func },
     /* String manipulation */
     { "STUFF",     fn_stuff },
     { "TRANSFORM", fn_transform },

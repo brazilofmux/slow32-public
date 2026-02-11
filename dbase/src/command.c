@@ -20,6 +20,7 @@
 #include "area.h"
 #include "ast.h"
 #include "browse.h"
+#include "menu.h"
 
 /* Persistent expression context */
 static expr_ctx_t expr_ctx;
@@ -65,6 +66,7 @@ static void ctx_setup(void) {
     }
     if (!screen_initialized) {
         screen_init();
+        menu_init();
         screen_initialized = 1;
     }
     expr_ctx.db = &area_get_current()->db;
@@ -4476,7 +4478,30 @@ static void h_display(dbf_t *db, lexer_t *l) {
     }
 }
 static void h_store(dbf_t *db, lexer_t *l) { lex_next(l); cmd_store(db, l); }
-static void h_release(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_release(arg); }
+static void h_release(dbf_t *db, lexer_t *l) {
+    (void)db;
+    lex_next(l); /* skip RELEASE */
+    if (cmd_kw(l, "POPUPS")) {
+        menu_release_all();
+        return;
+    }
+    if (cmd_kw(l, "POPUP")) {
+        char name[32];
+        lex_next(l); /* skip POPUP */
+        if (l->current.type != TOK_IDENT) {
+            printf("Syntax: RELEASE POPUP <name>\n");
+            return;
+        }
+        str_copy(name, l->current.text, sizeof(name));
+        menu_release_popup(name);
+        return;
+    }
+    {
+        char arg[256];
+        lex_get_remaining(l, arg, sizeof(arg));
+        cmd_release(arg);
+    }
+}
 static void h_skip(dbf_t *db, lexer_t *l) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_skip(db, arg); follow_relations(); }
 static void h_locate(dbf_t *db, lexer_t *l) { lex_next(l); cmd_locate(db, l); follow_relations(); }
 static void h_continue(dbf_t *db, lexer_t *l) { (void)l; cmd_continue(db); follow_relations(); }
@@ -4902,15 +4927,168 @@ void cmd_indexes_insert_current(dbf_t *db) { indexes_insert_current(db); }
 void cmd_ctx_setup(void)                { ctx_setup(); }
 int cmd_get_deleted(void)               { return set_opts.deleted; }
 
+/* ---- DEFINE POPUP / DEFINE BAR ---- */
+static void h_define(dbf_t *db, lexer_t *l) {
+    (void)db;
+    lex_next(l); /* skip DEFINE */
+    if (cmd_kw(l, "POPUP")) {
+        char name[32];
+        int r1, c1, r2 = 0, c2 = 0;
+        lex_next(l); /* skip POPUP */
+        if (l->current.type != TOK_IDENT) {
+            printf("Syntax: DEFINE POPUP <name> FROM r1,c1 [TO r2,c2]\n");
+            return;
+        }
+        str_copy(name, l->current.text, sizeof(name));
+        lex_next(l); /* skip name */
+        if (!cmd_kw(l, "FROM")) {
+            printf("Syntax: DEFINE POPUP <name> FROM r1,c1 [TO r2,c2]\n");
+            return;
+        }
+        lex_next(l); /* skip FROM */
+        /* Parse r1 */
+        if (l->current.type != TOK_NUMBER) {
+            printf("Expected row number after FROM.\n");
+            return;
+        }
+        r1 = (int)l->current.num_val;
+        lex_next(l); /* skip r1 */
+        /* Expect comma */
+        if (l->current.type == TOK_COMMA) lex_next(l);
+        /* Parse c1 */
+        if (l->current.type != TOK_NUMBER) {
+            printf("Expected column number.\n");
+            return;
+        }
+        c1 = (int)l->current.num_val;
+        lex_next(l); /* skip c1 */
+        /* Optional TO r2,c2 */
+        if (cmd_kw(l, "TO")) {
+            lex_next(l); /* skip TO */
+            if (l->current.type != TOK_NUMBER) {
+                printf("Expected row number after TO.\n");
+                return;
+            }
+            r2 = (int)l->current.num_val;
+            lex_next(l); /* skip r2 */
+            if (l->current.type == TOK_COMMA) lex_next(l);
+            if (l->current.type != TOK_NUMBER) {
+                printf("Expected column number.\n");
+                return;
+            }
+            c2 = (int)l->current.num_val;
+        }
+        menu_define_popup(name, r1, c1, r2, c2);
+    } else if (cmd_kw(l, "BAR")) {
+        int bar_num;
+        char popup_name[32];
+        char prompt[80] = "";
+        char message[160] = "";
+        char skip_expr[256] = "";
+        lex_next(l); /* skip BAR */
+        /* Parse bar number */
+        if (l->current.type != TOK_NUMBER) {
+            printf("Syntax: DEFINE BAR <n> OF <popup> PROMPT \"text\"\n");
+            return;
+        }
+        bar_num = (int)l->current.num_val;
+        lex_next(l); /* skip number */
+        if (!cmd_kw(l, "OF")) {
+            printf("Expected OF after bar number.\n");
+            return;
+        }
+        lex_next(l); /* skip OF */
+        if (l->current.type != TOK_IDENT) {
+            printf("Expected popup name after OF.\n");
+            return;
+        }
+        str_copy(popup_name, l->current.text, sizeof(popup_name));
+        lex_next(l); /* skip popup name */
+        if (!cmd_kw(l, "PROMPT")) {
+            printf("Expected PROMPT keyword.\n");
+            return;
+        }
+        lex_next(l); /* skip PROMPT */
+        if (l->current.type == TOK_STRING) {
+            str_copy(prompt, l->current.text, sizeof(prompt));
+            lex_next(l);
+        } else {
+            /* Evaluate expression for prompt text */
+            value_t pv;
+            const char *ep = l->token_start;
+            if (ep && expr_eval(cmd_get_expr_ctx(), &ep, &pv) == 0) {
+                val_to_string(&pv, prompt, sizeof(prompt));
+                trim_right(prompt);
+                lexer_init_ext(l, ep, l->store);
+            }
+        }
+        /* Optional MESSAGE */
+        if (cmd_kw(l, "MESSAGE")) {
+            lex_next(l); /* skip MESSAGE */
+            if (l->current.type == TOK_STRING) {
+                str_copy(message, l->current.text, sizeof(message));
+                lex_next(l);
+            }
+        }
+        /* Optional SKIP [FOR <expr>] */
+        if (cmd_kw(l, "SKIP")) {
+            lex_next(l); /* skip SKIP */
+            if (cmd_kw(l, "FOR")) {
+                lex_next(l); /* skip FOR */
+                /* Remainder is the skip expression */
+                lex_get_remaining(l, skip_expr, sizeof(skip_expr));
+            } else {
+                /* bare SKIP = always skip */
+                str_copy(skip_expr, ".T.", sizeof(skip_expr));
+            }
+        }
+        menu_define_bar(popup_name, bar_num, prompt, message, skip_expr);
+    } else {
+        printf("Syntax: DEFINE POPUP|BAR ...\n");
+    }
+}
+
+/* ---- ACTIVATE POPUP ---- */
+static void h_activate(dbf_t *db, lexer_t *l) {
+    (void)db;
+    lex_next(l); /* skip ACTIVATE */
+    if (cmd_kw(l, "POPUP")) {
+        char name[32];
+        lex_next(l); /* skip POPUP */
+        if (l->current.type != TOK_IDENT) {
+            printf("Syntax: ACTIVATE POPUP <name>\n");
+            return;
+        }
+        str_copy(name, l->current.text, sizeof(name));
+        menu_activate_popup(name);
+    } else {
+        printf("Syntax: ACTIVATE POPUP <name>\n");
+    }
+}
+
+/* ---- DEACTIVATE POPUP ---- */
+static void h_deactivate(dbf_t *db, lexer_t *l) {
+    (void)db;
+    lex_next(l); /* skip DEACTIVATE */
+    if (cmd_kw(l, "POPUP")) {
+        menu_deactivate_popup();
+    } else {
+        printf("Syntax: DEACTIVATE POPUP\n");
+    }
+}
+
 static cmd_entry_t cmd_table[] = {
-    { "ACCEPT", h_accept }, { "APPEND", h_append },
+    { "ACCEPT", h_accept }, { "ACTIVATE", h_activate },
+    { "APPEND", h_append },
     { "AVERAGE", h_average }, { "BROWSE", h_browse },
     { "CALCULATE", h_calculate },
     { "CANCEL", h_cancel }, { "CASE", h_case },
     { "CHANGE", h_edit }, { "CLEAR", h_clear },
     { "CLOSE", h_close }, { "CONTINUE", h_continue },
     { "COPY", h_copy }, { "COUNT", h_count },
-    { "CREATE", h_create }, { "DECLARE", h_declare },
+    { "CREATE", h_create },
+    { "DEACTIVATE", h_deactivate }, { "DECLARE", h_declare },
+    { "DEFINE", h_define },
     { "DELETE", h_delete }, { "DIMENSION", h_declare },
     { "DISPLAY", h_display }, { "DO", h_do },
     { "EDIT", h_edit }, { "EJECT", h_eject }, { "ELSE", h_else },
