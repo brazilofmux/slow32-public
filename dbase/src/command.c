@@ -3623,10 +3623,413 @@ int cmd_get_console(void) {
 }
 
 /* ---- Dispatch ---- */
+/* ---- Command Dispatch Table ---- */
+
+typedef void (*cmd_func_t)(dbf_t *db, lexer_t *l);
+
+typedef struct {
+    const char *name;
+    cmd_func_t func;
+} cmd_entry_t;
+
+/* Wrappers for legacy or complex-parsing commands */
+static void h_do(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); prog_do(arg); }
+static void h_if(dbf_t *db, lexer_t *l) { (void)db; if (prog_is_running()) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); prog_if(arg); } else printf("IF not allowed in interactive mode.\n"); }
+static void h_else(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_else(); else printf("ELSE without IF.\n"); }
+static void h_endif(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_endif(); else printf("ENDIF without IF.\n"); }
+static void h_enddo(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_enddo(); else printf("ENDDO without DO WHILE.\n"); }
+static void h_loop(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_loop(); else printf("LOOP without DO WHILE.\n"); }
+static void h_case(dbf_t *db, lexer_t *l) { (void)db; if (prog_is_running()) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); prog_case(arg); } else printf("CASE without DO CASE.\n"); }
+static void h_otherwise(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_otherwise(); else printf("OTHERWISE without DO CASE.\n"); }
+static void h_endcase(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_endcase(); else printf("ENDCASE without DO CASE.\n"); }
+static void h_return(dbf_t *db, lexer_t *l) { (void)db; if (prog_is_running()) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); prog_return(arg); } else printf("RETURN not in program.\n"); }
+static void h_procedure(dbf_t *db, lexer_t *l) { (void)db; if (prog_is_running()) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); prog_procedure(arg); } else printf("PROCEDURE not allowed in interactive mode.\n"); }
+static void h_parameters(dbf_t *db, lexer_t *l) { (void)db; if (prog_is_running()) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); prog_parameters(arg); } else printf("PARAMETERS not allowed in interactive mode.\n"); }
+static void h_private(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); prog_private(arg); }
+static void h_public(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); prog_public(arg); }
+static void h_cancel(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_cancel(); }
+static void h_retry(dbf_t *db, lexer_t *l) { (void)db; (void)l; prog_retry(); }
+static void h_suspend(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_suspend(); else printf("Not in program.\n"); }
+static void h_resume(dbf_t *db, lexer_t *l) { (void)db; (void)l; prog_resume(); }
+static void h_eject(dbf_t *db, lexer_t *l) { (void)db; (void)l; screen_eject(); }
+static void h_run(dbf_t *db, lexer_t *l) { (void)db; (void)l; printf("RUN not supported.\n"); }
+static void h_select(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_select(arg); }
+static void h_use(dbf_t *db, lexer_t *l) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_use(db, arg); }
+static void h_replace(dbf_t *db, lexer_t *l) { lex_next(l); cmd_replace(db, l); }
+static void h_list(dbf_t *db, lexer_t *l) { lex_next(l); cmd_list(db, l); }
+static void h_display(dbf_t *db, lexer_t *l) {
+    const char *rest = cmd_after(l);
+    if (cmd_kw_at(rest, "STRUCTURE", NULL)) cmd_display_structure(db);
+    else if (cmd_kw_at(rest, "MEMORY", NULL)) memvar_display(&memvar_store);
+    else { lex_next(l); cmd_display(db, l); }
+}
+static void h_store(dbf_t *db, lexer_t *l) { lex_next(l); cmd_store(db, l); }
+static void h_release(dbf_t *db, lexer_t *l) { (void)db; cmd_release((char *)cmd_after(l)); }
+static void h_skip(dbf_t *db, lexer_t *l) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_skip(db, arg); follow_relations(); }
+static void h_locate(dbf_t *db, lexer_t *l) { lex_next(l); cmd_locate(db, l); follow_relations(); }
+static void h_continue(dbf_t *db, lexer_t *l) { (void)l; cmd_continue(db); follow_relations(); }
+static void h_count(dbf_t *db, lexer_t *l) { lex_next(l); cmd_count(db, l); }
+static void h_sum(dbf_t *db, lexer_t *l) { lex_next(l); cmd_sum(db, l); }
+static void h_average(dbf_t *db, lexer_t *l) { lex_next(l); cmd_average(db, l); }
+static void h_reindex(dbf_t *db, lexer_t *l) { (void)l; cmd_reindex(db); }
+static void h_delete(dbf_t *db, lexer_t *l) { lex_next(l); cmd_delete(db, l); }
+static void h_recall(dbf_t *db, lexer_t *l) { lex_next(l); cmd_recall(db, l); }
+static void h_pack(dbf_t *db, lexer_t *l) { (void)l; cmd_pack(db); }
+static void h_zap(dbf_t *db, lexer_t *l) { (void)l; cmd_zap(db); }
+static void h_erase(dbf_t *db, lexer_t *l) { (void)db; cmd_erase((char *)cmd_after(l)); }
+static void h_rename(dbf_t *db, lexer_t *l) { (void)db; cmd_rename((char *)cmd_after(l)); }
+static void h_accept(dbf_t *db, lexer_t *l) { (void)db; cmd_accept((char *)cmd_after(l)); }
+static void h_input(dbf_t *db, lexer_t *l) { (void)db; cmd_input((char *)cmd_after(l)); }
+static void h_wait(dbf_t *db, lexer_t *l) { (void)db; cmd_wait((char *)cmd_after(l)); }
+static void h_read(dbf_t *db, lexer_t *l) { (void)db; (void)l; screen_read(); }
+
+static void h_go(dbf_t *db, lexer_t *l) {
+    char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg));
+    cmd_go(db, arg); follow_relations();
+}
+
+static void h_on(dbf_t *db, lexer_t *l) {
+    (void)db;
+    lexer_t t = *l; lex_next(&t);
+    if (cmd_kw(&t, "ERROR")) {
+        lex_next(&t);
+        if (cmd_kw(&t, "DO")) {
+            lex_next(&t);
+            if (t.current.type == TOK_IDENT) prog_on_error(t.current.text);
+            else prog_on_error(NULL);
+        } else prog_on_error(NULL);
+    }
+}
+
+static void h_report(dbf_t *db, lexer_t *l) {
+    lexer_t t = *l; lex_next(&t);
+    if (cmd_kw(&t, "FORM")) { lex_next(&t); cmd_report_form(db, &t); }
+}
+
+static void h_label(dbf_t *db, lexer_t *l) {
+    lexer_t t = *l; lex_next(&t);
+    if (cmd_kw(&t, "FORM")) {
+        char arg[256]; lex_next(&t); lex_get_remaining(&t, arg, sizeof(arg));
+        cmd_label_form(db, arg);
+    }
+}
+
+static void h_create(dbf_t *db, lexer_t *l) {
+    lexer_t t = *l; lex_next(&t);
+    if (cmd_kw(&t, "REPORT")) {
+        char arg[256]; lex_next(&t); lex_get_remaining(&t, arg, sizeof(arg));
+        cmd_create_report(arg);
+    } else if (cmd_kw(&t, "LABEL")) {
+        char arg[256]; lex_next(&t); lex_get_remaining(&t, arg, sizeof(arg));
+        cmd_create_label(arg);
+    } else {
+        char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg));
+        cmd_create(db, arg);
+    }
+}
+
+static void h_append(dbf_t *db, lexer_t *l) {
+    lexer_t t = *l; lex_next(&t);
+    if (cmd_kw(&t, "BLANK")) cmd_append_blank(db);
+    else if (cmd_kw(&t, "FROM")) {
+        char arg[256]; lex_next(&t); lex_get_remaining(&t, arg, sizeof(arg));
+        cmd_append_from(db, arg);
+    } else printf("Syntax: APPEND BLANK | APPEND FROM <filename>\n");
+}
+
+static void h_copy(dbf_t *db, lexer_t *l) {
+    lexer_t t = *l; lex_next(&t);
+    if (cmd_kw(&t, "STRUCTURE")) {
+        lex_next(&t);
+        if (cmd_kw(&t, "TO")) {
+            char arg[256]; lex_next(&t); lex_get_remaining(&t, arg, sizeof(arg));
+            cmd_copy_structure(db, arg);
+        } else printf("Syntax: COPY STRUCTURE TO <filename>\n");
+    } else if (cmd_kw(&t, "FILE")) {
+        char arg[256]; lex_next(&t); lex_get_remaining(&t, arg, sizeof(arg));
+        cmd_copy_file(arg);
+    } else if (cmd_kw(&t, "TO")) {
+        char arg[256]; lex_next(&t); lex_get_remaining(&t, arg, sizeof(arg));
+        cmd_copy_to(db, arg);
+    }
+}
+
+static void h_sort(dbf_t *db, lexer_t *l) {
+    lexer_t t = *l; lex_next(&t);
+    if (cmd_kw(&t, "TO")) {
+        char arg[256]; lex_next(&t); lex_get_remaining(&t, arg, sizeof(arg));
+        cmd_sort(db, arg);
+    } else printf("Syntax: SORT TO <filename> ON <field> [/A][/D][/C]\n");
+}
+
+static void h_index(dbf_t *db, lexer_t *l) {
+    const char *rest = cmd_after(l);
+    const char *after = NULL;
+    if (cmd_kw_at(rest, "ON", &after)) cmd_index_on(db, (char *)after);
+    else printf("Syntax: INDEX ON <expr> TO <filename>\n");
+}
+
+static void h_seek(dbf_t *db, lexer_t *l) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_seek(db, arg); }
+static void h_find(dbf_t *db, lexer_t *l) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_find(db, arg); }
+
+static void h_close(dbf_t *db, lexer_t *l) {
+    const char *rest = cmd_after(l);
+    if (cmd_kw_at(rest, "DATABASES", NULL) || cmd_kw_at(rest, "DATA", NULL)) cmd_close_all();
+    else if (cmd_kw_at(rest, "ALL", NULL)) { cmd_close_all(); memvar_release_all(&memvar_store); prog_set_procedure(NULL); }
+    else if (cmd_kw_at(rest, "INDEX", NULL)) close_all_indexes(cur_wa());
+    else if (cmd_kw_at(rest, "PROCEDURE", NULL)) prog_set_procedure(NULL);
+    else if (dbf_is_open(db)) { dbf_close(db); close_all_indexes(cur_wa()); cur_wa()->alias[0] = '\0'; cur_wa()->filter_cond[0] = '\0'; cur_wa()->order = 0; cur_wa()->num_indexes = 0; }
+}
+
+static void h_clear(dbf_t *db, lexer_t *l) {
+    const char *rest = cmd_after(l);
+    if (cmd_kw_at(rest, "ALL", NULL)) { cmd_close_all(); memvar_release_all(&memvar_store); prog_set_procedure(NULL); }
+    else if (cmd_kw_at(rest, "MEMORY", NULL)) memvar_release_all(&memvar_store);
+    else if (cmd_kw_at(rest, "GETS", NULL)) screen_clear_gets();
+    else screen_clear();
+}
+
+static void h_set(dbf_t *db, lexer_t *l) {
+    const char *rest = cmd_after(l);
+    const char *after = NULL;
+    if (cmd_kw_at(rest, "COLOR", &after)) { if (cmd_kw_at(after, "TO", &after)) screen_set_color((char *)after); }
+    else if (cmd_kw_at(rest, "INDEX", &after)) { if (cmd_kw_at(after, "TO", &after)) cmd_set_index(db, (char *)after); }
+    else if (cmd_kw_at(rest, "PROCEDURE", &after)) { if (cmd_kw_at(after, "TO", &after)) prog_set_procedure((char *)after); }
+    else if (cmd_kw_at(rest, "FILTER", &after)) {
+        if (cmd_kw_at(after, "TO", &after)) {
+            if (*after == '\0') {
+                cur_wa()->filter_cond[0] = '\0';
+                printf("Filter removed.\n");
+            } else {
+                char buf[256];
+                str_copy(cur_wa()->filter_cond, after, sizeof(cur_wa()->filter_cond));
+                str_copy(buf, after, sizeof(buf));
+                trim_right(buf);
+                printf("Filter: %s\n", buf);
+            }
+        }
+    }
+    else if (cmd_kw_at(rest, "ORDER", &after)) {
+        if (cmd_kw_at(after, "TO", &after)) {
+            int n = atoi(after);
+            if (n >= 0 && n <= cur_wa()->num_indexes) {
+                cur_wa()->order = n;
+                if (n == 0) {
+                    printf("Natural record order.\n");
+                } else {
+                    index_t *idx = &cur_wa()->indexes[n - 1];
+                    printf("Order set to %d (%s).\n", n, idx->filename);
+                }
+            }
+        }
+    }
+    else if (cmd_kw_at(rest, "RELATION", &after)) {
+        if (cmd_kw_at(after, "TO", &after)) {
+            if (*after == '\0') {
+                cur_wa()->relation_expr[0] = '\0';
+                cur_wa()->relation_target = -1;
+            } else {
+                lexer_t t;
+                const char *expr_start = after;
+                lexer_init_ext(&t, after, expr_ctx.vars);
+                while (t.current.type != TOK_EOF && !cmd_kw(&t, "INTO"))
+                    lex_next(&t);
+                if (t.current.type == TOK_EOF) {
+                    printf("Syntax: SET RELATION TO <expr> INTO <alias>\n");
+                    return;
+                }
+                {
+                    int len = (int)(t.token_start - expr_start);
+                    if (len >= (int)sizeof(cur_wa()->relation_expr))
+                        len = sizeof(cur_wa()->relation_expr) - 1;
+                    memcpy(cur_wa()->relation_expr, expr_start, len);
+                    cur_wa()->relation_expr[len] = '\0';
+                    trim_right(cur_wa()->relation_expr);
+                }
+                lex_next(&t);
+                if (t.current.type != TOK_IDENT) {
+                    printf("Invalid work area.\n");
+                    return;
+                }
+                cur_wa()->relation_target = area_resolve_alias(t.current.text);
+                if (cur_wa()->relation_target < 0) {
+                    printf("Invalid work area.\n");
+                    return;
+                }
+            }
+        }
+    }
+    else set_execute(&set_opts, rest);
+}
+
+static void h_modify(dbf_t *db, lexer_t *l) {
+    lexer_t t = *l; lex_next(&t);
+    if (cmd_kw(&t, "REPORT") || cmd_kw(&t, "LABEL")) printf("MODIFY not implemented.\n");
+}
+
+static void h_save(dbf_t *db, lexer_t *l) {
+    (void)db; lexer_t t = *l; lex_next(&t);
+    if (cmd_kw(&t, "TO")) {
+        char *rest = (char *)cmd_after(&t);
+        char fname[128]; int i = 0; FILE *fp;
+        while (*rest && *rest != ' ' && i < 127) fname[i++] = *rest++;
+        fname[i] = '\0'; str_upper(fname);
+        if (strlen(fname) < 4 || str_icmp(fname + strlen(fname) - 4, ".MEM") != 0) strcat(fname, ".MEM");
+        fp = fopen(fname, "wb");
+        if (!fp) { printf("Cannot create %s\n", fname); return; }
+        {
+            int nv = 0, j;
+            for (j = 0; j < MEMVAR_MAX; j++) { if (memvar_store.vars[j].used) nv++; }
+            fwrite(&nv, 4, 1, fp);
+            for (j = 0; j < MEMVAR_MAX; j++) {
+                if (!memvar_store.vars[j].used) continue;
+                fwrite(memvar_store.vars[j].name, MEMVAR_NAMELEN, 1, fp);
+                fwrite(&memvar_store.vars[j].val.type, 4, 1, fp);
+                if (memvar_store.vars[j].val.type == VAL_NUM) fwrite(&memvar_store.vars[j].val.num, 8, 1, fp);
+                else if (memvar_store.vars[j].val.type == VAL_CHAR) {
+                    int len = strlen(memvar_store.vars[j].val.str);
+                    fwrite(&len, 4, 1, fp); fwrite(memvar_store.vars[j].val.str, len, 1, fp);
+                } else if (memvar_store.vars[j].val.type == VAL_DATE) fwrite(&memvar_store.vars[j].val.date, 4, 1, fp);
+                else if (memvar_store.vars[j].val.type == VAL_LOGIC) fwrite(&memvar_store.vars[j].val.logic, 4, 1, fp);
+            }
+        }
+        fclose(fp);
+    }
+}
+
+static void h_restore(dbf_t *db, lexer_t *l) {
+    (void)db; lexer_t t = *l; lex_next(&t);
+    if (cmd_kw(&t, "FROM")) {
+        char *rest = (char *)cmd_after(&t);
+        char fname[128]; int additive = 0, i = 0; FILE *fp;
+        while (*rest && *rest != ' ' && i < 127) fname[i++] = *rest++;
+        fname[i] = '\0'; rest = skip_ws(rest);
+        if (str_imatch(rest, "ADDITIVE")) additive = 1;
+        str_upper(fname);
+        if (strlen(fname) < 4 || str_icmp(fname + strlen(fname) - 4, ".MEM") != 0) strcat(fname, ".MEM");
+        fp = fopen(fname, "rb");
+        if (!fp) { file_not_found(fname); return; }
+        if (!additive) memvar_release_all(&memvar_store);
+        {
+            int nv = 0, j; fread(&nv, 4, 1, fp);
+            for (j = 0; j < nv; j++) {
+                char name[MEMVAR_NAMELEN]; int type; value_t v;
+                fread(name, MEMVAR_NAMELEN, 1, fp); fread(&type, 4, 1, fp);
+                v.type = type;
+                if (type == VAL_NUM) fread(&v.num, 8, 1, fp);
+                else if (type == VAL_CHAR) {
+                    int len = 0; fread(&len, 4, 1, fp);
+                    if (len >= (int)sizeof(v.str)) len = sizeof(v.str) - 1;
+                    fread(v.str, len, 1, fp); v.str[len] = '\0';
+                } else if (type == VAL_DATE) fread(&v.date, 4, 1, fp);
+                else if (type == VAL_LOGIC) fread(&v.logic, 4, 1, fp);
+                memvar_set(&memvar_store, name, &v);
+            }
+        }
+        fclose(fp);
+    }
+}
+
+static void h_total(dbf_t *db, lexer_t *l) { (void)db; (void)l; printf("TOTAL ON not implemented.\n"); }
+static void h_join(dbf_t *db, lexer_t *l) { (void)db; (void)l; printf("JOIN WITH not implemented.\n"); }
+static void h_update(dbf_t *db, lexer_t *l) { (void)db; (void)l; printf("UPDATE ON not implemented.\n"); }
+static void h_exit_loop(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_exit_loop(); }
+static void h_quit(dbf_t *db, lexer_t *l) { (void)db; (void)l; /* Handled by caller returning 1 */ }
+static void h_stub(dbf_t *db, lexer_t *l) { (void)db; (void)l; printf("Command not implemented.\n"); }
+
+static cmd_entry_t cmd_table[] = {
+    { "ACCEPT", h_accept }, { "APPEND", h_append },
+    { "AVERAGE", h_average }, { "CANCEL", h_cancel },
+    { "CASE", h_case }, { "CLEAR", h_clear },
+    { "CLOSE", h_close }, { "CONTINUE", h_continue },
+    { "COPY", h_copy }, { "COUNT", h_count },
+    { "CREATE", h_create }, { "DELETE", h_delete },
+    { "DISPLAY", h_display }, { "DO", h_do },
+    { "EJECT", h_eject }, { "ELSE", h_else },
+    { "ENDCASE", h_endcase }, { "ENDDO", h_enddo },
+    { "ENDIF", h_endif }, { "ERASE", h_erase },
+    { "EXIT", h_exit_loop }, { "FIND", h_find },
+    { "GO", h_go }, { "GOTO", h_go },
+    { "IF", h_if }, { "INDEX", h_index },
+    { "INPUT", h_input }, { "JOIN", h_join },
+    { "LABEL", h_label }, { "LIST", h_list },
+    { "LOCATE", h_locate }, { "LOOP", h_loop },
+    { "MODIFY", h_modify }, { "ON", h_on },
+    { "OTHERWISE", h_otherwise }, { "PACK", h_pack },
+    { "PARAMETERS", h_parameters }, { "PRIVATE", h_private },
+    { "PROCEDURE", h_procedure }, { "PUBLIC", h_public },
+    { "QUIT", h_quit }, { "READ", h_read },
+    { "RECALL", h_recall }, { "REINDEX", h_reindex },
+    { "RELEASE", h_release }, { "RENAME", h_rename },
+    { "REPLACE", h_replace }, { "REPORT", h_report },
+    { "RESTORE", h_restore }, { "RESUME", h_resume },
+    { "RETRY", h_retry }, { "RETURN", h_return },
+    { "RUN", h_run }, { "SAVE", h_save },
+    { "SCAN", h_stub }, { "SEEK", h_seek },
+    { "SELECT", h_select }, { "SET", h_set },
+    { "SKIP", h_skip }, { "SORT", h_sort },
+    { "STORE", h_store }, { "SUM", h_sum },
+    { "SUSPEND", h_suspend }, { "TOTAL", h_total },
+    { "UPDATE", h_update }, { "USE", h_use },
+    { "WAIT", h_wait }, { "ZAP", h_zap },
+    { NULL, NULL }
+};
+
+/* ---- Command dispatch helpers ---- */
+static int cmd_table_count(void) {
+    int i = 0;
+    while (cmd_table[i].name) i++;
+    return i;
+}
+
+static int cmd_table_exact(const char *ident) {
+    int lo = 0;
+    int hi = cmd_table_count();
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        int cmp = str_icmp(cmd_table[mid].name, ident);
+        if (cmp == 0) return mid;
+        if (cmp < 0) lo = mid + 1;
+        else hi = mid;
+    }
+    return -1;
+}
+
+static int cmd_table_abbrev(const char *ident, int *ambiguous) {
+    int ident_len = (int)strlen(ident);
+    int lo = 0;
+    int hi = cmd_table_count();
+    int i;
+    int match = -1;
+
+    *ambiguous = 0;
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        int cmp = str_icmp(cmd_table[mid].name, ident);
+        if (cmp < 0) lo = mid + 1;
+        else hi = mid;
+    }
+
+    for (i = lo; cmd_table[i].name; i++) {
+        int name_len = (int)strlen(cmd_table[i].name);
+        int min_len = (name_len < 4) ? name_len : 4;
+        if (str_nicmp(cmd_table[i].name, ident, ident_len) != 0) break;
+        if (ident_len < min_len || ident_len > name_len) continue;
+        if (match >= 0) {
+            *ambiguous = 1;
+            return -1;
+        }
+        match = i;
+    }
+    return match;
+}
+
 int cmd_execute(dbf_t *db, char *line) {
     char *p;
     dbf_t *cdb;
     lexer_t l;
+    int idx;
+    int ambiguous;
 
     (void)db;
     ctx_setup();
@@ -3634,760 +4037,16 @@ int cmd_execute(dbf_t *db, char *line) {
 
     p = skip_ws(line);
     if (*p == '\0') return 0;
-
-    /* Full-line comment (when run interactively or from program) */
     if (*p == '*') return 0;
+
     lexer_init_ext(&l, p, expr_ctx.vars);
     if (cmd_kw(&l, "NOTE")) return 0;
 
-    /* DO command: route to program subsystem for DO <file>, DO WHILE, DO CASE */
-    if (cmd_kw(&l, "DO")) {
-        char arg[256];
-        lex_next(&l);
-        lex_get_remaining(&l, arg, sizeof(arg));
-        prog_do(arg);
-        return 0;
-    }
-
-    /* Control flow commands - only valid during program execution */
-    if (cmd_kw(&l, "IF")) {
-        if (prog_is_running()) {
-            char arg[256];
-            lex_next(&l);
-            lex_get_remaining(&l, arg, sizeof(arg));
-            prog_if(arg);
-        } else printf("IF not allowed in interactive mode.\n");
-        return 0;
-    }
-    if (cmd_kw(&l, "ELSE")) {
-        if (prog_is_running()) prog_else();
-        else printf("ELSE without IF.\n");
-        return 0;
-    }
-    if (cmd_kw(&l, "ENDIF")) {
-        if (prog_is_running()) prog_endif();
-        else printf("ENDIF without IF.\n");
-        return 0;
-    }
-    if (cmd_kw(&l, "ENDDO")) {
-        if (prog_is_running()) prog_enddo();
-        else printf("ENDDO without DO WHILE.\n");
-        return 0;
-    }
-    if (cmd_kw(&l, "LOOP")) {
-        if (prog_is_running()) prog_loop();
-        else printf("LOOP without DO WHILE.\n");
-        return 0;
-    }
-    if (cmd_kw(&l, "CASE")) {
-        if (prog_is_running()) {
-            char arg[256];
-            lex_next(&l);
-            lex_get_remaining(&l, arg, sizeof(arg));
-            prog_case(arg);
-        } else printf("CASE without DO CASE.\n");
-        return 0;
-    }
-    if (cmd_kw(&l, "OTHERWISE")) {
-        if (prog_is_running()) prog_otherwise();
-        else printf("OTHERWISE without DO CASE.\n");
-        return 0;
-    }
-    if (cmd_kw(&l, "ENDCASE")) {
-        if (prog_is_running()) prog_endcase();
-        else printf("ENDCASE without DO CASE.\n");
-        return 0;
-    }
-    if (cmd_kw(&l, "RETURN")) {
-        if (prog_is_running()) {
-            char arg[256];
-            lex_next(&l);
-            lex_get_remaining(&l, arg, sizeof(arg));
-            prog_return(arg);
-        } else printf("RETURN not in program.\n");
-        return 0;
-    }
-    if (cmd_kw(&l, "PROCEDURE")) {
-        if (prog_is_running()) {
-            char arg[256];
-            lex_next(&l);
-            lex_get_remaining(&l, arg, sizeof(arg));
-            prog_procedure(arg);
-        } else printf("PROCEDURE not allowed in interactive mode.\n");
-        return 0;
-    }
-    if (cmd_kw(&l, "PARAMETERS")) {
-        if (prog_is_running()) {
-            char arg[256];
-            lex_next(&l);
-            lex_get_remaining(&l, arg, sizeof(arg));
-            prog_parameters(arg);
-        } else printf("PARAMETERS not allowed in interactive mode.\n");
-        return 0;
-    }
-    if (cmd_kw(&l, "PRIVATE")) {
-        char arg[256];
-        lex_next(&l);
-        lex_get_remaining(&l, arg, sizeof(arg));
-        prog_private(arg);
-        return 0;
-    }
-    if (cmd_kw(&l, "PUBLIC")) {
-        char arg[256];
-        lex_next(&l);
-        lex_get_remaining(&l, arg, sizeof(arg));
-        prog_public(arg);
-        return 0;
-    }
-    if (cmd_kw(&l, "CANCEL")) {
-        if (prog_is_running()) prog_cancel();
-        return 0;
-    }
-
-    /* ON ERROR DO <proc> / ON ERROR */
-    if (cmd_kw(&l, "ON")) {
-        lexer_t t = l;
-        lex_next(&t);
-        if (cmd_kw(&t, "ERROR")) {
-            lex_next(&t);
-            if (cmd_kw(&t, "DO")) {
-                lex_next(&t);
-                if (t.current.type == TOK_IDENT) {
-                    prog_on_error(t.current.text);
-                } else {
-                    prog_on_error(NULL);
-                }
-            } else {
-                prog_on_error(NULL);
-            }
-            return 0;
-        }
-    }
-
-    if (cmd_kw(&l, "RETRY")) {
-        prog_retry();
-        return 0;
-    }
-
-    if (cmd_kw(&l, "SUSPEND")) {
-        if (prog_is_running()) prog_suspend();
-        else printf("Not in program.\n");
-        return 0;
-    }
-
-    if (cmd_kw(&l, "RESUME")) {
-        prog_resume();
-        return 0;
-    }
-
-    if (cmd_kw(&l, "EJECT")) {
-        screen_eject();
-        return 0;
-    }
-
-    /* SAVE TO <file> [ALL LIKE/EXCEPT <pattern>] */
-    if (cmd_kw(&l, "SAVE")) {
-        lexer_t t = l;
-        lex_next(&t);
-        if (cmd_kw(&t, "TO")) {
-            char *rest = (char *)cmd_after(&t);
-            {
-                char fname[128];
-                int i = 0;
-                FILE *fp;
-                while (*rest && *rest != ' ' && i < 127) fname[i++] = *rest++;
-                fname[i] = '\0';
-                str_upper(fname);
-                if (strlen(fname) < 4 || str_icmp(fname + strlen(fname) - 4, ".MEM") != 0)
-                    strcat(fname, ".MEM");
-                fp = fopen(fname, "wb");
-                if (!fp) { printf("Cannot create %s\n", fname); return 0; }
-                {
-                    int nv = 0;
-                    int j;
-                    for (j = 0; j < MEMVAR_MAX; j++) {
-                        if (memvar_store.vars[j].used)
-                            nv++;
-                    }
-                    fwrite(&nv, 4, 1, fp);
-                    for (j = 0; j < MEMVAR_MAX; j++) {
-                        if (!memvar_store.vars[j].used)
-                            continue;
-                        fwrite(memvar_store.vars[j].name, MEMVAR_NAMELEN, 1, fp);
-                        fwrite(&memvar_store.vars[j].val.type, 4, 1, fp);
-                        if (memvar_store.vars[j].val.type == VAL_NUM) {
-                            fwrite(&memvar_store.vars[j].val.num, 8, 1, fp);
-                        } else if (memvar_store.vars[j].val.type == VAL_CHAR) {
-                            int len = strlen(memvar_store.vars[j].val.str);
-                            fwrite(&len, 4, 1, fp);
-                            fwrite(memvar_store.vars[j].val.str, len, 1, fp);
-                        } else if (memvar_store.vars[j].val.type == VAL_DATE) {
-                            fwrite(&memvar_store.vars[j].val.date, 4, 1, fp);
-                        } else if (memvar_store.vars[j].val.type == VAL_LOGIC) {
-                            fwrite(&memvar_store.vars[j].val.logic, 4, 1, fp);
-                        }
-                    }
-                }
-                fclose(fp);
-            }
-        }
-        return 0;
-    }
-
-    /* RESTORE FROM <file> [ADDITIVE] */
-    if (cmd_kw(&l, "RESTORE")) {
-        lexer_t t = l;
-        lex_next(&t);
-        if (cmd_kw(&t, "FROM")) {
-            char *rest = (char *)cmd_after(&t);
-            {
-                char fname[128];
-                int additive = 0;
-                int i = 0;
-                FILE *fp;
-                while (*rest && *rest != ' ' && i < 127) fname[i++] = *rest++;
-                fname[i] = '\0';
-                rest = skip_ws(rest);
-                if (str_imatch(rest, "ADDITIVE")) additive = 1;
-                str_upper(fname);
-                if (strlen(fname) < 4 || str_icmp(fname + strlen(fname) - 4, ".MEM") != 0)
-                    strcat(fname, ".MEM");
-                fp = fopen(fname, "rb");
-                if (!fp) { file_not_found(fname); return 0; }
-                if (!additive) memvar_release_all(&memvar_store);
-                {
-                    int nv = 0, j;
-                    fread(&nv, 4, 1, fp);
-                    for (j = 0; j < nv; j++) {
-                        char name[MEMVAR_NAMELEN];
-                        int type;
-                        value_t v;
-                        fread(name, MEMVAR_NAMELEN, 1, fp);
-                        fread(&type, 4, 1, fp);
-                        v.type = type;
-                        if (type == VAL_NUM) {
-                            fread(&v.num, 8, 1, fp);
-                        } else if (type == VAL_CHAR) {
-                            int len = 0;
-                            fread(&len, 4, 1, fp);
-                            if (len >= (int)sizeof(v.str)) len = sizeof(v.str) - 1;
-                            fread(v.str, len, 1, fp);
-                            v.str[len] = '\0';
-                        } else if (type == VAL_DATE) {
-                            fread(&v.date, 4, 1, fp);
-                        } else if (type == VAL_LOGIC) {
-                            fread(&v.logic, 4, 1, fp);
-                        }
-                        memvar_set(&memvar_store, name, &v);
-                    }
-                }
-                fclose(fp);
-            }
-        }
-        return 0;
-    }
-
-    /* RUN / ! command — not supported on SLOW-32 */
-    if (cmd_kw(&l, "RUN")) {
-        printf("RUN not supported.\n");
-        return 0;
-    }
-
-    /* REPORT FORM */
-    if (cmd_kw(&l, "REPORT")) {
-        lexer_t t = l;
-        lex_next(&t);
-        if (cmd_kw(&t, "FORM")) {
-            lex_next(&t);
-            cmd_report_form(cdb, &t);
-            return 0;
-        }
-    }
-
-    /* LABEL FORM */
-    if (cmd_kw(&l, "LABEL")) {
-        lex_next(&l);
-        if (cmd_kw(&l, "FORM")) {
-            char arg[256];
-            lex_next(&l);
-            lex_get_remaining(&l, arg, sizeof(arg));
-            cmd_label_form(cdb, arg);
-            return 0;
-        }
-    }
-
-    /* MODIFY REPORT / MODIFY LABEL — not implemented yet */
-    if (cmd_kw(&l, "MODIFY")) {
-        lexer_t t = l;
-        lex_next(&t);
-        if (cmd_kw(&t, "REPORT") || cmd_kw(&t, "LABEL")) {
-            printf("MODIFY %s not implemented. Use CREATE %s.\n",
-                   cmd_kw(&t, "REPORT") ? "REPORT" : "LABEL",
-                   cmd_kw(&t, "REPORT") ? "REPORT" : "LABEL");
-            return 0;
-        }
-    }
-
-    /* TOTAL ON, JOIN WITH, UPDATE ON — stubs */
-    if (cmd_kw(&l, "TOTAL") && cmd_peek_kw(&l, "ON")) {
-        printf("TOTAL ON not implemented.\n");
-        return 0;
-    }
-    if (cmd_kw(&l, "JOIN") && cmd_peek_kw(&l, "WITH")) {
-        printf("JOIN WITH not implemented.\n");
-        return 0;
-    }
-    if (cmd_kw(&l, "UPDATE") && cmd_peek_kw(&l, "ON")) {
-        printf("UPDATE ON not implemented.\n");
-        return 0;
-    }
-
-    if (cmd_kw(&l, "QUIT")) {
-        return 1;
-    }
-    if (cmd_kw(&l, "EXIT")) {
-        /* EXIT in loop context = break, otherwise QUIT */
-        if (prog_is_running()) {
-            prog_exit_loop();
-            return 0;
-        }
-        return 1;
-    }
-
-    if (cmd_kw(&l, "SELECT")) {
-        char arg[256];
-        lex_next(&l);
-        lex_get_remaining(&l, arg, sizeof(arg));
-        cmd_select(arg);
-        return 0;
-    }
-
-    if (cmd_kw(&l, "CREATE")) {
-        lex_next(&l);
-        if (cmd_kw(&l, "REPORT")) {
-            char arg[256];
-            lex_next(&l);
-            lex_get_remaining(&l, arg, sizeof(arg));
-            cmd_create_report(arg);
-        } else if (cmd_kw(&l, "LABEL")) {
-            char arg[256];
-            lex_next(&l);
-            lex_get_remaining(&l, arg, sizeof(arg));
-            cmd_create_label(arg);
-        } else {
-            char arg[256];
-            lex_get_remaining(&l, arg, sizeof(arg));
-            cmd_create(cdb, arg);
-        }
-        return 0;
-    }
-
-    if (cmd_kw(&l, "USE")) {
-        char arg[256];
-        lex_next(&l);
-        lex_get_remaining(&l, arg, sizeof(arg));
-        cmd_use(cdb, arg);
-        return 0;
-    }
-
-    if (cmd_kw(&l, "CLOSE")) {
-        const char *rest = cmd_after(&l);
-        if (cmd_kw_at(rest, "DATABASES", NULL) || cmd_kw_at(rest, "DATA", NULL)) {
-            cmd_close_all();
-        } else if (cmd_kw_at(rest, "ALL", NULL)) {
-            cmd_close_all();
-            memvar_release_all(&memvar_store);
-            prog_set_procedure(NULL);
-        } else if (cmd_kw_at(rest, "INDEX", NULL)) {
-            close_all_indexes(cur_wa());
-        } else if (cmd_kw_at(rest, "PROCEDURE", NULL)) {
-            prog_set_procedure(NULL);
-        } else {
-            /* bare CLOSE = close current database */
-            if (dbf_is_open(cdb)) {
-                dbf_close(cdb);
-                close_all_indexes(cur_wa());
-                cur_wa()->alias[0] = '\0';
-                cur_wa()->filter_cond[0] = '\0';
-                cur_wa()->order = 0;
-                cur_wa()->num_indexes = 0;
-            }
-        }
-        return 0;
-    }
-
-    /* COPY TO / COPY STRUCTURE TO */
-    if (cmd_kw(&l, "COPY")) {
-        lex_next(&l);
-        if (cmd_kw(&l, "STRUCTURE")) {
-            lex_next(&l);
-            if (cmd_kw(&l, "TO")) {
-                char arg[256];
-                lex_next(&l);
-                lex_get_remaining(&l, arg, sizeof(arg));
-                cmd_copy_structure(cdb, arg);
-            } else {
-                printf("Syntax: COPY STRUCTURE TO <filename>\n");
-            }
-        } else if (cmd_kw(&l, "FILE")) {
-            char arg[256];
-            lex_next(&l);
-            lex_get_remaining(&l, arg, sizeof(arg));
-            cmd_copy_file(arg);
-        } else if (cmd_kw(&l, "TO")) {
-            char arg[256];
-            lex_next(&l);
-            lex_get_remaining(&l, arg, sizeof(arg));
-            cmd_copy_to(cdb, arg);
-        } else {
-            printf("Syntax: COPY TO <filename> | COPY FILE <src> TO <dst> | COPY STRUCTURE TO <filename>\n");
-        }
-        return 0;
-    }
-
-    /* APPEND BLANK / APPEND FROM */
-    if (cmd_kw(&l, "APPEND")) {
-        lex_next(&l);
-        if (cmd_kw(&l, "BLANK")) {
-            cmd_append_blank(cdb);
-        } else if (cmd_kw(&l, "FROM")) {
-            char arg[256];
-            lex_next(&l);
-            lex_get_remaining(&l, arg, sizeof(arg));
-            cmd_append_from(cdb, arg);
-        } else {
-            printf("Syntax: APPEND BLANK | APPEND FROM <filename>\n");
-        }
-        return 0;
-    }
-
-    if (cmd_kw(&l, "SORT")) {
-        lex_next(&l);
-        if (cmd_kw(&l, "TO")) {
-            char arg[256];
-            lex_next(&l);
-            lex_get_remaining(&l, arg, sizeof(arg));
-            cmd_sort(cdb, arg);
-        } else {
-            printf("Syntax: SORT TO <filename> ON <field> [/A][/D][/C]\n");
-        }
-        return 0;
-    }
-
-    if (cmd_kw(&l, "REPLACE")) {
-        lex_next(&l);
-        cmd_replace(cdb, &l);
-        return 0;
-    }
-
-    /* GO / GOTO */
-    if (cmd_kw(&l, "GOTO")) {
-        char arg[256];
-        lex_next(&l);
-        lex_get_remaining(&l, arg, sizeof(arg));
-        cmd_go(cdb, arg);
-        follow_relations();
-        return 0;
-    }
-    if (cmd_kw(&l, "GO")) {
-        char arg[256];
-        lex_next(&l);
-        lex_get_remaining(&l, arg, sizeof(arg));
-        cmd_go(cdb, arg);
-        follow_relations();
-        return 0;
-    }
-
-    if (cmd_kw(&l, "SKIP")) {
-        char arg[256];
-        lex_next(&l);
-        lex_get_remaining(&l, arg, sizeof(arg));
-        cmd_skip(cdb, arg);
-        follow_relations();
-        return 0;
-    }
-
-    if (cmd_kw(&l, "LOCATE")) {
-        lex_next(&l);
-        cmd_locate(cdb, &l);
-        follow_relations();
-        return 0;
-    }
-
-    if (cmd_kw(&l, "CONTINUE")) {
-        cmd_continue(cdb);
-        follow_relations();
-        return 0;
-    }
-
-    if (cmd_kw(&l, "COUNT")) {
-        lex_next(&l);
-        cmd_count(cdb, &l);
-        return 0;
-    }
-
-    if (cmd_kw(&l, "SUM")) {
-        lex_next(&l);
-        cmd_sum(cdb, &l);
-        return 0;
-    }
-
-    if (cmd_kw(&l, "AVERAGE")) {
-        lex_next(&l);
-        cmd_average(cdb, &l);
-        return 0;
-    }
-
-    /* DISPLAY STRUCTURE / DISPLAY MEMORY must be checked before plain DISPLAY */
-    if (cmd_kw(&l, "DISPLAY")) {
-        const char *rest = cmd_after(&l);
-        if (cmd_kw_at(rest, "STRUCTURE", NULL)) {
-            cmd_display_structure(cdb);
-        } else if (cmd_kw_at(rest, "MEMORY", NULL)) {
-            memvar_display(&memvar_store);
-        } else {
-            lex_next(&l);
-            cmd_display(cdb, &l);
-        }
-        return 0;
-    }
-
-    if (cmd_kw(&l, "LIST")) {
-        lex_next(&l);
-        cmd_list(cdb, &l);
-        return 0;
-    }
-
-    if (cmd_kw(&l, "STORE")) {
-        lex_next(&l);
-        cmd_store(cdb, &l);
-        return 0;
-    }
-
-    if (cmd_kw(&l, "RELEASE")) {
-        cmd_release((char *)cmd_after(&l));
-        return 0;
-    }
-
-    if (cmd_kw(&l, "SET")) {
-        const char *rest = cmd_after(&l);
-        const char *after = NULL;
-        if (cmd_kw_at(rest, "COLOR", &after)) {
-            if (cmd_kw_at(after, "TO", &after))
-                screen_set_color((char *)after);
-            else
-                printf("Syntax: SET COLOR TO <color-spec>\n");
-        } else if (cmd_kw_at(rest, "INDEX", &after)) {
-            if (cmd_kw_at(after, "TO", &after))
-                cmd_set_index(cdb, (char *)after);
-            else
-                printf("Syntax: SET INDEX TO [filename]\n");
-        } else if (cmd_kw_at(rest, "PROCEDURE", &after)) {
-            if (cmd_kw_at(after, "TO", &after)) {
-                prog_set_procedure((char *)after);
-            } else {
-                printf("Syntax: SET PROCEDURE TO [filename]\n");
-            }
-        } else if (cmd_kw_at(rest, "FILTER", &after)) {
-            if (cmd_kw_at(after, "TO", &after)) {
-                if (*after == '\0') {
-                    cur_wa()->filter_cond[0] = '\0';
-                    printf("Filter removed.\n");
-                } else {
-                    str_copy(cur_wa()->filter_cond, after,
-                             sizeof(cur_wa()->filter_cond));
-                    printf("Filter: %s\n", cur_wa()->filter_cond);
-                }
-            } else {
-                printf("Syntax: SET FILTER TO [condition]\n");
-            }
-        } else if (cmd_kw_at(rest, "ORDER", &after)) {
-            if (cmd_kw_at(after, "TO", &after)) {
-                if (*after == '\0' || *after == '0') {
-                    cur_wa()->order = 0;
-                    printf("Natural record order.\n");
-                } else {
-                    int n = atoi(after);
-                    if (n < 0 || n > cur_wa()->num_indexes) {
-                        printf("Index number out of range (0-%d).\n", cur_wa()->num_indexes);
-                    } else {
-                        cur_wa()->order = n;
-                        if (n > 0) {
-                            index_t *idx = &cur_wa()->indexes[n - 1];
-                            printf("Order set to %d (%s).\n", n, idx->filename);
-                        } else {
-                            printf("Natural record order.\n");
-                        }
-                    }
-                }
-            } else {
-                printf("Syntax: SET ORDER TO <n>\n");
-            }
-        } else if (cmd_kw_at(rest, "RELATION", &after)) {
-            if (cmd_kw_at(after, "TO", &after)) {
-                if (*after == '\0') {
-                    /* Clear relation */
-                    cur_wa()->relation_expr[0] = '\0';
-                    cur_wa()->relation_target = -1;
-                } else {
-                    /* SET RELATION TO <expr> INTO <alias> */
-                    const char *into_pos = after;
-                    const char *f = after;
-                    while (*f) {
-                        if (str_imatch(f, "INTO")) break;
-                        f++;
-                    }
-                    if (*f && str_imatch(f, "INTO")) {
-                        int len = (int)(f - after);
-                        char expr_buf[256];
-                        char alias_buf[32];
-                        int ai, i;
-                        if (len > (int)sizeof(expr_buf) - 1) len = sizeof(expr_buf) - 1;
-                        memcpy(expr_buf, after, len);
-                        expr_buf[len] = '\0';
-                        trim_right(expr_buf);
-                        f = skip_ws(f + 4);
-                        i = 0;
-                        while (is_ident_char(*f) && i < 31) alias_buf[i++] = *f++;
-                        alias_buf[i] = '\0';
-                        str_upper(alias_buf);
-                        /* Find target area */
-                        ai = area_resolve_alias(alias_buf);
-                        if (ai < 0) {
-                            printf("Alias not found: %s\n", alias_buf);
-                        } else {
-                            str_copy(cur_wa()->relation_expr, expr_buf,
-                                     sizeof(cur_wa()->relation_expr));
-                            cur_wa()->relation_target = ai;
-                        }
-                    } else {
-                        printf("Syntax: SET RELATION TO <expr> INTO <alias>\n");
-                    }
-                }
-            } else {
-                printf("Syntax: SET RELATION TO [<expr> INTO <alias>]\n");
-            }
-        } else {
-            set_execute(&set_opts, rest);
-        }
-        return 0;
-    }
-
-    /* INDEX ON <expr> TO <file> */
-    if (cmd_kw(&l, "INDEX")) {
-        const char *rest = cmd_after(&l);
-        const char *after = NULL;
-        if (cmd_kw_at(rest, "ON", &after)) {
-            cmd_index_on(cdb, (char *)after);
-        } else {
-            printf("Syntax: INDEX ON <expr> TO <filename>\n");
-        }
-        return 0;
-    }
-
-    if (cmd_kw(&l, "SEEK")) {
-        char arg[256];
-        lex_next(&l);
-        lex_get_remaining(&l, arg, sizeof(arg));
-        cmd_seek(cdb, arg);
-        return 0;
-    }
-
-    if (cmd_kw(&l, "FIND")) {
-        char arg[256];
-        lex_next(&l);
-        lex_get_remaining(&l, arg, sizeof(arg));
-        cmd_find(cdb, arg);
-        return 0;
-    }
-
-    if (cmd_kw(&l, "REINDEX")) {
-        cmd_reindex(cdb);
-        return 0;
-    }
-
-    if (cmd_kw(&l, "DELETE")) {
-        lex_next(&l);
-        cmd_delete(cdb, &l);
-        return 0;
-    }
-
-    if (cmd_kw(&l, "RECALL")) {
-        lex_next(&l);
-        cmd_recall(cdb, &l);
-        return 0;
-    }
-
-    if (cmd_kw(&l, "PACK")) {
-        cmd_pack(cdb);
-        return 0;
-    }
-
-    if (cmd_kw(&l, "ZAP")) {
-        cmd_zap(cdb);
-        return 0;
-    }
-
-    if (cmd_kw(&l, "ERASE")) {
-        cmd_erase((char *)cmd_after(&l));
-        return 0;
-    }
-
-    if (cmd_kw(&l, "RENAME")) {
-        cmd_rename((char *)cmd_after(&l));
-        return 0;
-    }
-
-    if (cmd_kw(&l, "ACCEPT")) {
-        cmd_accept((char *)cmd_after(&l));
-        return 0;
-    }
-
-    if (cmd_kw(&l, "INPUT")) {
-        cmd_input((char *)cmd_after(&l));
-        return 0;
-    }
-
-    if (cmd_kw(&l, "WAIT")) {
-        cmd_wait((char *)cmd_after(&l));
-        return 0;
-    }
-
-    if (cmd_kw(&l, "CLEAR")) {
-        const char *rest = cmd_after(&l);
-        if (cmd_kw_at(rest, "ALL", NULL)) {
-            cmd_close_all();
-            memvar_release_all(&memvar_store);
-            prog_set_procedure(NULL);
-        } else if (cmd_kw_at(rest, "MEMORY", NULL)) {
-            memvar_release_all(&memvar_store);
-        } else if (cmd_kw_at(rest, "GETS", NULL)) {
-            screen_clear_gets();
-        } else {
-            screen_clear();
-        }
-        return 0;
-    }
-
-    if (cmd_kw(&l, "READ")) {
-        screen_read();
-        return 0;
-    }
-
-    /* @ command (screen I/O) */
-    if (p[0] == '@') {
-        screen_at_cmd(p);
-        return 0;
-    }
-
-    /* ?? (no newline) must be checked before ? */
-    if (p[0] == '?' && p[1] == '?') {
-        cmd_print_expr(p + 2, 0);
-        return 0;
-    }
-
+    /* Handle specific non-keyword prefix commands */
+    if (p[0] == '@') { screen_at_cmd(p); return 0; }
     if (p[0] == '?') {
-        cmd_print_expr(p + 1, 1);
+        if (p[1] == '?') cmd_print_expr(p + 2, 0);
+        else cmd_print_expr(p + 1, 1);
         return 0;
     }
 
@@ -4395,10 +4054,10 @@ int cmd_execute(dbf_t *db, char *line) {
     if (is_ident_start(p[0])) {
         const char *q = p;
         char name[MEMVAR_NAMELEN];
-        int i = 0;
-        while (is_ident_char(*q) && i < MEMVAR_NAMELEN - 1)
-            name[i++] = *q++;
-        name[i] = '\0';
+        int j = 0;
+        while (is_ident_char(*q) && j < MEMVAR_NAMELEN - 1)
+            name[j++] = *q++;
+        name[j] = '\0';
         q = skip_ws(q);
         if (*q == '=') {
             if (lex_is_reserved(name)) {
@@ -4417,6 +4076,28 @@ int cmd_execute(dbf_t *db, char *line) {
             return 0;
         }
     }
+
+    /* Standard command dispatch (exact match, then unique abbreviation) */
+    if (l.current.type == TOK_IDENT) {
+        idx = cmd_table_exact(l.current.text);
+        if (idx >= 0) {
+            cmd_table[idx].func(cdb, &l);
+            return 0;
+        }
+        idx = cmd_table_abbrev(l.current.text, &ambiguous);
+        if (idx >= 0) {
+            cmd_table[idx].func(cdb, &l);
+            return 0;
+        }
+        if (ambiguous) {
+            prog_error(ERR_SYNTAX, "Ambiguous command");
+            return 0;
+        }
+    }
+
+    /* Check for QUIT/EXIT (which return 1) */
+    if (cmd_kw(&l, "QUIT")) return 1;
+    if (cmd_kw(&l, "EXIT") && !prog_is_running()) return 1;
 
     prog_error(ERR_UNRECOGNIZED, "Unrecognized command");
     return 0;
