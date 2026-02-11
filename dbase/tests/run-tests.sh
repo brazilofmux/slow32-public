@@ -33,8 +33,9 @@ filter_output() {
         || true
 }
 
-# Clean up any leftover .DBF files from previous runs
-rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX
+# Clean up any leftover files from previous runs
+rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
+    "$BASDIR"/tests/testfile.txt
 
 for testfile in "$BASDIR"/tests/*.txt; do
     [ -f "$testfile" ] || continue
@@ -42,8 +43,9 @@ for testfile in "$BASDIR"/tests/*.txt; do
     expected="$BASDIR/tests/expected/$name.expected"
     TOTAL=$((TOTAL + 1))
 
-    # Clean .DBF files before each test
-    rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX
+    # Clean files before each test
+    rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
+        "$BASDIR"/tests/testfile.txt
 
     # Run test from tests/ directory so .DBF files are created there
     actual=$( cd "$BASDIR/tests" && cat "$testfile" | "$EMU" "$DBASE" 2>&1 | filter_output )
@@ -75,7 +77,8 @@ for testfile in "$BASDIR"/tests/*.txt; do
 done
 
 # Final cleanup
-rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX
+rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
+    "$BASDIR"/tests/testfile.txt
 
 echo ""
 echo "$PASS/$TOTAL passed, $FAIL failed"
