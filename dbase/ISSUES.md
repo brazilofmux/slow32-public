@@ -292,7 +292,26 @@ return. Fixed both: interactive path now enters `prog_run()` at the procedure
 start line, and all three free-on-return paths guard against freeing the
 procedure library.
 
-### 8.3 RUN command
+### ~~8.3 SET COLOR TO — highlight and underline~~ FIXED
+`screen_set_color()` now parses `U` (underline, ANSI attr 4), `I` (inverse,
+ANSI attr 7), `+` (bold, ANSI attr 1), and `*` (blink, treated as bold).
+Attributes applied via `term_set_attr()` before `term_set_color()`.
+
+### ~~8.4 READ auto-completion on filled field~~ FIXED
+Term-mode READ now auto-advances to the next GET when a field fills to its
+PICTURE width and SET CONFIRM is OFF (the default). `cmd_get_confirm()`
+accessor added to expose the SET CONFIRM setting.
+
+### ~~8.5 RANGE validation loop in TPSO.PRG~~ FIXED
+Root cause: `@GET` with database field names (e.g. `SY_CONDUCT` from TPSY.DBF)
+fell through to empty-string default because `memvar_find()` failed. Now
+`screen_get()` tries `dbf_find_field()` when memvar lookup fails, initializing
+the GET with the field's current value, correct type (VAL_NUM for 'N' fields),
+and field width. `screen_read()` writes accepted values back to the database
+via `dbf_set_field_raw()` + `dbf_flush_record()`. RANGE/VALID rejection
+messages now display on row 24 in term-mode with keypress acknowledgment.
+
+### 8.6 RUN command
 `RUN TPBP` and `RUN TPPACK` shell out to execute compiled dBase programs. On
 SLOW-32, true exec is impossible. Options: (a) redirect to `DO file.PRG` if the
 .PRG source exists; (b) stub with warning; (c) skip — these are utility programs

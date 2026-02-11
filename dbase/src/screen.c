@@ -235,6 +235,9 @@ void screen_get(int row, int col, const char *varname, const char *picture,
         scr.gets[scr.ngets].when_ast = ast_compile(scr.gets[scr.ngets].when_expr, store, &ast_err);
     }
 
+    scr.gets[scr.ngets].is_field = 0;
+    scr.gets[scr.ngets].field_index = -1;
+
     /* Get current value for display */
     if (memvar_find(store, varname, &val) == 0) {
         val_to_string(&val, scr.gets[scr.ngets].initial, sizeof(scr.gets[scr.ngets].initial));
@@ -242,9 +245,35 @@ void screen_get(int row, int col, const char *varname, const char *picture,
         scr.gets[scr.ngets].width = strlen(scr.gets[scr.ngets].initial);
         if (scr.gets[scr.ngets].width < 10) scr.gets[scr.ngets].width = 10;
     } else {
-        scr.gets[scr.ngets].initial[0] = '\0';
-        scr.gets[scr.ngets].type = VAL_CHAR;
-        scr.gets[scr.ngets].width = 10;
+        /* Try database field */
+        expr_ctx_t *ctx = cmd_get_expr_ctx();
+        dbf_t *db = ctx->db;
+        int fi = -1;
+        if (db && dbf_is_open(db))
+            fi = dbf_find_field(db, varname);
+        if (fi >= 0) {
+            char raw[256];
+            dbf_get_field_raw(db, fi, raw, sizeof(raw));
+            trim_right(raw);
+            scr.gets[scr.ngets].is_field = 1;
+            scr.gets[scr.ngets].field_index = fi;
+            if (db->fields[fi].type == 'N') {
+                double nv = atof(raw);
+                scr.gets[scr.ngets].type = VAL_NUM;
+                val_to_string(&(value_t){.type=VAL_NUM,.num=nv},
+                              scr.gets[scr.ngets].initial,
+                              sizeof(scr.gets[scr.ngets].initial));
+            } else {
+                scr.gets[scr.ngets].type = VAL_CHAR;
+                str_copy(scr.gets[scr.ngets].initial, raw,
+                         sizeof(scr.gets[scr.ngets].initial));
+            }
+            scr.gets[scr.ngets].width = db->fields[fi].length;
+        } else {
+            scr.gets[scr.ngets].initial[0] = '\0';
+            scr.gets[scr.ngets].type = VAL_CHAR;
+            scr.gets[scr.ngets].width = 10;
+        }
     }
 
     /* Display the field */
@@ -336,6 +365,9 @@ void screen_read(void) {
                     fflush(stdout);
                     pos++;
                     if (pos >= fwidth) {
+                        if (!cmd_get_confirm()) {
+                            break;  /* auto-advance: field full, CONFIRM OFF */
+                        }
                         /* Field full — position at end */
                         term_gotoxy(scr.gets[i].row, scr.gets[i].col + fwidth - 1);
                     }
@@ -357,9 +389,14 @@ void screen_read(void) {
                     double lo = scr.gets[i].range_lo.num;
                     double hi = scr.gets[i].range_hi.num;
                     if (n < lo || n > hi) {
-                        term_set_raw(0);
-                        printf("Range: %g to %g\n", lo, hi);
-                        term_set_raw(1);
+                        fflush(stdout);
+                        term_gotoxy(24, 1);
+                        printf("Range: %g to %g", lo, hi);
+                        fflush(stdout);
+                        term_getkey();  /* wait for acknowledgment */
+                        term_gotoxy(24, 1);
+                        printf("%-40s", "");
+                        fflush(stdout);
                         continue;  /* reject, keep current value */
                     }
                 }
@@ -377,13 +414,29 @@ void screen_read(void) {
                               res.type == VAL_LOGIC && res.logic);
                     if (!ok) {
                         if (had_old) memvar_set(store, scr.gets[i].varname, &old_val);
-                        term_set_raw(0);
-                        printf("Invalid entry.\n");
-                        term_set_raw(1);
+                        fflush(stdout);
+                        term_gotoxy(24, 1);
+                        printf("Invalid entry.");
+                        fflush(stdout);
+                        term_getkey();  /* wait for acknowledgment */
+                        term_gotoxy(24, 1);
+                        printf("%-40s", "");
+                        fflush(stdout);
                         continue;  /* re-edit field */
                     }
                 } else {
                     memvar_set(store, scr.gets[i].varname, &v);
+                }
+                /* Write back to database field if applicable */
+                if (scr.gets[i].is_field) {
+                    expr_ctx_t *fctx = cmd_get_expr_ctx();
+                    dbf_t *fdb = fctx->db;
+                    if (fdb && dbf_is_open(fdb)) {
+                        char fraw[256];
+                        val_to_string(&v, fraw, sizeof(fraw));
+                        dbf_set_field_raw(fdb, scr.gets[i].field_index, fraw);
+                        dbf_flush_record(fdb);
+                    }
                 }
                 break;  /* accepted */
             }
@@ -460,6 +513,17 @@ void screen_read(void) {
                     }
                 } else {
                     memvar_set(store, scr.gets[i].varname, &v);
+                }
+                /* Write back to database field if applicable */
+                if (scr.gets[i].is_field) {
+                    expr_ctx_t *fctx = cmd_get_expr_ctx();
+                    dbf_t *fdb = fctx->db;
+                    if (fdb && dbf_is_open(fdb)) {
+                        char fraw[256];
+                        val_to_string(&v, fraw, sizeof(fraw));
+                        dbf_set_field_raw(fdb, scr.gets[i].field_index, fraw);
+                        dbf_flush_record(fdb);
+                    }
                 }
                 printf("\n");
                 break;
@@ -577,22 +641,31 @@ void screen_set_color(const char *spec) {
     /* Parse color spec: "fg/bg" or "fg"
        Colors: W(hite), N(black), R(ed), G(reen), B(lue),
                GR(gray), BG(bright green), etc.
-       For simplicity, map single-letter codes to ANSI colors. */
+       Attributes: U=underline, I=inverse, +=bold, *=blink (treated as bold) */
     const char *p = skip_ws(spec);
     int fg = 7, bg = 0;
+    int bold = 0, underline = 0, inverse = 0;
 
-    /* Parse foreground */
-    switch (*p) {
-    case 'N': case 'n': fg = 0; p++; break; /* black */
-    case 'B': case 'b': fg = 4; p++; break; /* blue */
-    case 'G': case 'g': fg = 2; p++; break; /* green */
-    case 'R': case 'r': fg = 1; p++; break; /* red */
-    case 'W': case 'w': fg = 7; p++; break; /* white */
-    default: p++; break;
+    /* Check for attribute-only foreground specifiers */
+    if (*p == 'U' || *p == 'u') {
+        underline = 1; fg = 7; p++;
+    } else if (*p == 'I' || *p == 'i') {
+        inverse = 1; fg = 7; p++;
+    } else {
+        /* Parse foreground color */
+        switch (*p) {
+        case 'N': case 'n': fg = 0; p++; break; /* black */
+        case 'B': case 'b': fg = 4; p++; break; /* blue */
+        case 'G': case 'g': fg = 2; p++; break; /* green */
+        case 'R': case 'r': fg = 1; p++; break; /* red */
+        case 'W': case 'w': fg = 7; p++; break; /* white */
+        default: if (*p && *p != '/' && *p != '+' && *p != '*') p++; break;
+        }
     }
 
-    /* Check for '+' (high intensity - just bump by 8 conceptually) */
-    if (*p == '+') p++;
+    /* Check for '+' (bold/high intensity) or '*' (blink, treated as bold) */
+    if (*p == '+') { bold = 1; p++; }
+    else if (*p == '*') { bold = 1; p++; }
 
     /* Parse background after '/' */
     if (*p == '/') {
@@ -603,7 +676,7 @@ void screen_set_color(const char *spec) {
         case 'G': case 'g': bg = 2; p++; break;
         case 'R': case 'r': bg = 1; p++; break;
         case 'W': case 'w': bg = 7; p++; break;
-        default: p++; break;
+        default: if (*p) p++; break;
         }
     }
 
@@ -611,8 +684,13 @@ void screen_set_color(const char *spec) {
     scr.bg_color = bg;
 
 #if HAS_TERM
-    if (scr.term_available)
+    if (scr.term_available) {
+        term_set_attr(0);  /* reset all attributes */
+        if (bold) term_set_attr(1);
+        if (underline) term_set_attr(4);
+        if (inverse) term_set_attr(7);
         term_set_color(fg, bg);
+    }
 #endif
     (void)p;
 }

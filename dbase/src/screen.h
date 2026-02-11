@@ -21,6 +21,8 @@ typedef struct {
     char when_expr[256];
     struct ast_node *valid_ast;
     struct ast_node *when_ast;
+    int is_field;    /* 1 if variable is a database field */
+    int field_index; /* field index in db (valid when is_field=1) */
 } get_entry_t;
 
 typedef struct {

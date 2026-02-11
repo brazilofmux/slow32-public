@@ -3883,6 +3883,10 @@ int cmd_get_talk(void) {
     return set_opts.talk;
 }
 
+int cmd_get_confirm(void) {
+    return set_opts.confirm;
+}
+
 /* ---- Dispatch ---- */
 /* ---- Command Dispatch Table ---- */
 
