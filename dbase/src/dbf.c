@@ -4,6 +4,7 @@
 #include "dbf.h"
 #include "area.h"
 #include "util.h"
+#include "util.h"
 
 #define DBF_CACHE_RECORDS 32
 
@@ -71,10 +72,14 @@ int dbf_create(const char *filename, const dbf_field_t *fields, int nfields) {
     unsigned char term;
     int i;
     uint16_t hdr_size, rec_size;
+    char norm_path[64];
+
+    str_copy(norm_path, filename, sizeof(norm_path));
+    path_normalize(norm_path);
 
     if (nfields < 1 || nfields > DBF_MAX_FIELDS) return -1;
 
-    fp = fopen(filename, "w+b");
+    fp = fopen(norm_path, "w+b");
     if (!fp) return -1;
 
     hdr_size = 32 + nfields * 32 + 1;
@@ -116,13 +121,17 @@ int dbf_open(dbf_t *db, const char *filename) {
     unsigned char fdesc[32];
     int i, nfields;
     uint16_t offset;
+    char norm_path[64];
+
+    str_copy(norm_path, filename, sizeof(norm_path));
+    path_normalize(norm_path);
 
     if (db->fp) dbf_close(db);
 
-    db->fp = fopen(filename, "r+b");
+    db->fp = fopen(norm_path, "r+b");
     if (!db->fp) return -1;
 
-    str_copy(db->filename, filename, sizeof(db->filename));
+    str_copy(db->filename, norm_path, sizeof(db->filename));
 
     /* Read header */
     if (fread(hdr, 1, 32, db->fp) != 32) {

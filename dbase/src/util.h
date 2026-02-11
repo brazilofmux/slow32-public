@@ -16,6 +16,9 @@ char *skip_ws(const char *s);
 /* Trim trailing whitespace in place */
 void trim_right(char *s);
 
+/* Normalize path separators (backslash to forward slash) */
+void path_normalize(char *s);
+
 /* Read line from stdin, strip CR/LF. Returns length or -1 on EOF */
 int read_line(char *buf, int size);
 

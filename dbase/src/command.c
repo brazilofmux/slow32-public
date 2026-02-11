@@ -422,6 +422,7 @@ static const char *parse_filename(const char *arg, char *filename, int size) {
     while (*p && *p != ' ' && *p != '\t' && i < size - 1)
         filename[i++] = *p++;
     filename[i] = '\0';
+    path_normalize(filename);
     ensure_dbf_ext(filename, size);
     return p;
 }
@@ -444,6 +445,8 @@ static void cmd_create(dbf_t *db, const char *arg) {
     }
 
     str_copy(filename, arg, sizeof(filename));
+    path_normalize(filename);
+    path_normalize(filename);
     ensure_dbf_ext(filename, sizeof(filename));
 
     printf("Enter field definitions (blank name to finish):\n");
@@ -2870,6 +2873,7 @@ static void cmd_erase(const char *arg) {
         printf("Syntax: ERASE <filename>\n");
         return;
     }
+    path_normalize(filename);
     if (remove(filename) != 0) {
         file_not_found(filename);
     } else {
@@ -2885,6 +2889,7 @@ static void cmd_rename(const char *arg) {
     while (*p && *p != ' ' && *p != '\t' && i < 63)
         oldname[i++] = *p++;
     oldname[i] = '\0';
+    path_normalize(oldname);
     p = skip_ws(p);
     if (!str_imatch(p, "TO")) {
         printf("Syntax: RENAME <oldfile> TO <newfile>\n");
@@ -2895,6 +2900,7 @@ static void cmd_rename(const char *arg) {
     while (*p && *p != ' ' && *p != '\t' && i < 63)
         newname[i++] = *p++;
     newname[i] = '\0';
+    path_normalize(newname);
     if (oldname[0] == '\0' || newname[0] == '\0') {
         printf("Syntax: RENAME <oldfile> TO <newfile>\n");
         return;
@@ -2939,6 +2945,7 @@ static void cmd_copy_file(const char *arg) {
     while (*p && *p != ' ' && *p != '\t' && i < 63)
         src[i++] = *p++;
     src[i] = '\0';
+    path_normalize(src);
     p = skip_ws(p);
     if (!str_imatch(p, "TO")) {
         printf("Syntax: COPY FILE <source> TO <destination>\n");
@@ -2949,6 +2956,7 @@ static void cmd_copy_file(const char *arg) {
     while (*p && *p != ' ' && *p != '\t' && i < 63)
         dst[i++] = *p++;
     dst[i] = '\0';
+    path_normalize(dst);
     if (src[0] == '\0' || dst[0] == '\0') {
         printf("Syntax: COPY FILE <source> TO <destination>\n");
         return;
@@ -3094,6 +3102,7 @@ static void cmd_set_index(dbf_t *db, const char *arg) {
 
         if (filename[0]) {
             int slot = cur_wa()->num_indexes;
+            path_normalize(filename);
             ensure_ndx_ext(filename, sizeof(filename));
             if (index_read(&cur_wa()->indexes[slot], filename) == 0) {
                 cur_wa()->num_indexes++;

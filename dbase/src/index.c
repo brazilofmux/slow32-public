@@ -1159,8 +1159,12 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
     free_all_pages(idx);
     if (idx->fp) { fclose(idx->fp); idx->fp = NULL; }
 
+    char norm_path[64];
+    str_copy(norm_path, filename, sizeof(norm_path));
+    path_normalize(norm_path);
+
     str_copy(idx->key_expr, key_expr, sizeof(idx->key_expr));
-    str_copy(idx->filename, filename, sizeof(idx->filename));
+    str_copy(idx->filename, norm_path, sizeof(idx->filename));
 
     /* First pass: Determine key length and collect entries */
     idx->key_len = 10; /* default */
@@ -1513,8 +1517,12 @@ static int read_ndx1(index_t *idx, FILE *fp) {
 int index_read(index_t *idx, const char *filename) {
     FILE *fp;
     uint32_t magic;
+    char norm_path[64];
 
-    fp = fopen(filename, "rb");
+    str_copy(norm_path, filename, sizeof(norm_path));
+    path_normalize(norm_path);
+
+    fp = fopen(norm_path, "rb");
     if (!fp) return -1;
 
     if (fread(&magic, 4, 1, fp) != 1) {
@@ -1522,7 +1530,7 @@ int index_read(index_t *idx, const char *filename) {
         return -1;
     }
 
-    str_copy(idx->filename, filename, sizeof(idx->filename));
+    str_copy(idx->filename, norm_path, sizeof(idx->filename));
 
     if (magic == NDX2_MAGIC) {
         if (read_ndx2(idx, fp) < 0) {

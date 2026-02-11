@@ -75,6 +75,13 @@ void str_copy(char *dst, const char *src, int n) {
     dst[i] = '\0';
 }
 
+void path_normalize(char *s) {
+    while (*s) {
+        if (*s == '\\') *s = '/';
+        s++;
+    }
+}
+
 int str_nicmp(const char *a, const char *b, int n) {
     int i;
     for (i = 0; i < n && *a && *b; i++, a++, b++) {
