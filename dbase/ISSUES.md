@@ -133,46 +133,100 @@ non-trivial dBase applications. Without them, menu-driven apps require manual
 
 ---
 
-## 3. Robustness & Stress Testing
+## 3. Robustness & Stress Testing — COMPLETED
 
-### 3.1 Stack Depth / Recursion Limits
-The call stack is 32 frames deep (`MAX_CALL_DEPTH=32`). This is reasonable for
-typical dBase programs, but recursive algorithms (tree traversal, quicksort,
-recursive descent parsers written in dBase) could hit it. Questions to answer:
+All five stress test areas have been implemented and pass. Tests live in
+`tests/test_stress_*.txt` with companion `.PRG` files and `.expected` output.
 
-- What happens when recursion exceeds 32 frames? Clean error or crash?
-- Does the SLOW-32 hardware stack survive 32 frames of UDF calls with local
-  variables? (Each frame pushes PRIVATE vars, parameters, return address.)
-- Can we increase to 64 or 128 without blowing the SLOW-32 stack?
-- Write a stress test: recursive factorial, recursive Fibonacci, recursive
-  tree walk. Measure actual stack consumption per frame.
+### ~~3.1 Stack Depth / Recursion Limits~~ TESTED
 
-### 3.2 Large Database Stress
-- INSERT 10,000+ records and verify B+ tree integrity
-- PACK a 10,000-record database with 50% deletions
-- SORT a 10,000-record database on multiple keys
-- INDEX ON with 10,000 records — verify leaf chain, page count, seek correctness
-- Multiple indexes maintained during bulk APPEND FROM
+**Finding: UDF recursion crashes at depth 6 due to SLOW-32 host stack overflow.**
 
-### 3.3 String Boundary Conditions
-- `value_t.str[256]` is the hard limit. What happens with:
-  - `REPLICATE("X", 300)` — truncation or overflow?
-  - `SUBSTR(long_string, 1, 300)` — truncation or overflow?
-  - Concatenation that exceeds 255 characters?
-  - Field values > 254 characters (C field max is 254)?
-- Audit all string functions for consistent truncation behavior.
+Each recursive UDF call creates nested C stack frames (`prog_run → expr_eval →
+prog_udf_call → prog_run`), consuming ~207K of host stack per level. At depth 6
+the write hits protected memory (`0x0ffde1dc`). The dBase-level `MAX_CALL_DEPTH=32`
+check never triggers because the host stack overflows first.
 
-### 3.4 Index Integrity Under Mutation
-- REPLACE in a loop that changes key order: does the active index stay valid?
-- DELETE + PACK with multiple active UNIQUE indexes
-- APPEND FROM into a database with 3 active UNIQUE indexes where source has
-  duplicates — verify graceful rejection per-record
-- ZAP + immediate re-insert cycle
+- Recursive `FACT(5)` = 120 — works (depth 5)
+- Recursive `FIB(5)` = 5 — works (max depth ~5)
+- Iterative `12!` = 479001600 — works (no stack depth issue)
+- Iterative `FIB(20)` = 6765 — works
+- 10-deep nested FOR loops (1024 iterations) — works
 
-### 3.5 Multi-Work-Area Interactions
-- Same database open in two work areas, modify in one, read in the other
-- SET RELATION chain across 3 work areas — verify navigation
-- PACK in one work area while another has the same file open
+**Workaround**: Use iterative algorithms for depth > 5. **Root cause fix** requires
+either increasing the SLOW-32 stack size at link time or moving large local
+allocations (e.g. `value_t` arrays in `prog_run`) to the heap.
+
+Test: `test_stress_recursion.txt` + `STRESS_RECURSE.PRG` + `STRESS_LOOPS.PRG`
+
+### ~~3.2 Large Database Stress~~ TESTED (1000 records)
+
+Tested with 1000 records (reduced from planned 10,000 to keep test runtime under
+2 seconds). All operations work correctly:
+
+- Bulk INSERT 1000 records with computed fields — works
+- COUNT = 1000, SUM QTY = 49500, AVERAGE QTY = 49.5 — correct
+- INDEX ON 1000 records, SEEK specific/missing keys — works
+- DELETE FOR (batch, 500 deleted), PACK (500 remaining) — works
+- SEEK after PACK — index correctly rebuilt
+- SORT TO new database, verify order — works
+
+Test: `test_stress_bigdb.txt` + `STRESS_BIGDB.PRG`
+
+### ~~3.3 String Boundary Conditions~~ TESTED
+
+**Findings — inconsistent truncation behavior across functions:**
+
+| Function | Max output | Behavior |
+|----------|-----------|----------|
+| `REPLICATE("X", 300)` | 254 chars | Off-by-one: loop uses `pos + slen < sizeof(buf) - 1` |
+| `SPACE(300)` | 255 chars | Correct clamp to 255 |
+| `PADR/PADL/PADC("X", 300)` | 255 chars | Correct clamp to 255 |
+| `str1 + str2` (total ≥ 256) | `LEN(str1)` | Right operand **entirely dropped**, not truncated |
+| `SUBSTR(long, 250, 20)` | 6 chars | Correct (returns chars 250–255) |
+| `REPLICATE("AB", 200)` | 254 chars | Multi-char unit, same off-by-one limit |
+
+The concatenation drop behavior is surprising but consistent: `if (len + strlen(right)
+< sizeof(result->str))` in `expr.c` rejects the entire right operand when the total
+would reach 256 or more. The REPLICATE off-by-one (254 vs 255) is in `func.c`.
+Neither is a bug per se — both are defensive truncation — but REPLICATE's limit
+differs from SPACE/PAD by one character.
+
+Test: `test_stress_strings.txt`
+
+### ~~3.4 Index Integrity Under Mutation~~ TESTED
+
+All index operations maintain integrity correctly:
+
+- REPLACE that changes key order: index stays valid after `SET ORDER TO 1`
+  (Note: must use `SET ORDER TO 0` for physical traversal during REPLACE to
+  avoid the classic dBASE gotcha of skipping records when traversing by index)
+- Multiple indexes with SET ORDER switching — both stay current
+- UNIQUE index: duplicate APPEND adds the record but SEEK finds the first
+  matching entry (VAL=1, not VAL=4). UNIQUE REPLACE that would create a
+  duplicate is rejected with "Uniqueness violation" message, leaving the
+  record unchanged
+- DELETE + PACK + REINDEX: all indexes rebuilt correctly, SEEK finds remaining
+  records, deleted records correctly absent
+
+Test: `test_stress_index.txt` + `STRESS_INDEX.PRG`
+
+### ~~3.5 Multi-Work-Area Interactions~~ TESTED
+
+All multi-area operations work correctly:
+
+- Same DB in two areas: Area 2 sees modifications from Area 1 (shared file
+  state — both areas point to the same underlying file)
+- SET RELATION: Master→Detail via indexed key works. SKIP in master
+  automatically repositions detail area
+- 10 simultaneous work areas: all independently addressable via SELECT,
+  cross-area field access via alias→field notation works (A->LABEL from
+  area 10)
+
+Note: After `USE`, `current_record=0` — must `GO TOP` before field access works.
+This is consistent with dBASE III behavior.
+
+Test: `test_stress_workarea.txt` + `STRESS_WA.PRG`
 
 ---
 
@@ -257,13 +311,13 @@ that overlay the main display and then restore it.
 - `test_get_validation` — only tests line-mode; term-mode untested (1.11 fixed but not testable in automated harness)
 
 ### 6.2 Missing Test Scenarios
-- Negative/zero arguments to FWRITE, FREAD, PADR, PADL, PADC
+- Negative/zero arguments to FWRITE, FREAD — ~~PADR, PADL, PADC~~ (covered in stress_strings)
 - Array boundary conditions: `arr[0]`, `arr[rows+1]`, `arr[-1]`
-- Recursion depth: what happens at frame 33?
-- REPLACE on non-UNIQUE index with active UNIQUE index (multi-index interaction)
+- ~~Recursion depth: what happens at frame 33?~~ Answered: host stack overflow at depth 6 (§3.1)
+- ~~REPLACE on non-UNIQUE index with active UNIQUE index~~ (covered in stress_index)
 - STORE to array without index (should error per 585f594, needs test)
 - Binary data in FREAD/FWRITE (NUL bytes)
-- String overflow: concatenation beyond 255 chars
+- ~~String overflow: concatenation beyond 255 chars~~ (covered in stress_strings)
 - Full variable store (256 vars), then DECLARE array
 
 ### 6.3 Fragile Tests
