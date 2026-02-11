@@ -4947,10 +4947,10 @@ static bool emit_native_math_i32_f64(translate_ctx_t *ctx, translated_block_t *b
     emit_byte(e, 0x48); emit_byte(e, 0x09); emit_byte(e, 0xD0);
     emit_byte(e, 0x66); emit_byte(e, 0x48); emit_byte(e, 0x0F); emit_byte(e, 0x6E); emit_byte(e, 0xC0);
 
-    emit_push_r64(e, RAX);
+    emit_push_r64(e, RCX);  // align stack (use RCX, not RAX — return value is in EAX)
     emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)host_fn);
     emit_call_r64(e, RAX);
-    emit_pop_r64(e, RAX);
+    emit_pop_r64(e, RCX);  // restore stack alignment
 
     // Result is in eax (int), store to guest r1
     emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
