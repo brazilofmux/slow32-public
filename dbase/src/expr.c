@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include <errno.h>
 #include "expr.h"
 #include "memvar.h"
 #include "set.h"
@@ -324,7 +325,16 @@ static int parse_power(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
             ctx->error = "Type mismatch in **";
             return -1;
         }
-        result->num = pow(result->num, right.num);
+        {
+            double base = result->num;
+            double exp = right.num;
+            errno = 0;
+            result->num = pow(base, exp);
+            if (!isfinite(result->num) || errno != 0) {
+                ctx->error = "Invalid exponentiation";
+                return -1;
+            }
+        }
     }
     return 0;
 }
