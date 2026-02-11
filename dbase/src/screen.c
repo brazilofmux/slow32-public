@@ -144,9 +144,7 @@ void screen_say(int row, int col, const char *expr_str, const char *picture) {
             putchar(' ');
             print_col++;
         }
-        printf("%s", formatted);
-        print_col += strlen(formatted);
-        /* Console echo controlled by SET CONSOLE */
+        screen_print_text(formatted);
     } else {
         goto_pos(row, col);
         printf("%s", formatted);

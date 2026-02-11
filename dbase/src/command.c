@@ -2024,7 +2024,7 @@ static void cmd_pack(dbf_t *db) {
     db->record_count = dst;
     dbf_write_header_counts(db);
     fflush(db->fp);
-    dbf_cache_invalidate(db);
+    area_invalidate_all(db->filename);
 
     if (dst > 0) {
         dbf_read_record(db, 1);
@@ -2052,7 +2052,7 @@ static void cmd_zap(dbf_t *db) {
     db->current_record = 0;
     db->record_dirty = 0;
     dbf_write_header_counts(db);
-    dbf_cache_invalidate(db);
+    area_invalidate_all(db->filename);
     expr_ctx.eof_flag = 1;
 
     /* Clear all active indexes */
@@ -4058,8 +4058,9 @@ static void h_restore(dbf_t *db, lexer_t *l) {
 static void h_total(dbf_t *db, lexer_t *l) { (void)db; (void)l; printf("TOTAL ON not implemented.\n"); }
 static void h_join(dbf_t *db, lexer_t *l) { (void)db; (void)l; printf("JOIN WITH not implemented.\n"); }
 static void h_update(dbf_t *db, lexer_t *l) { (void)db; (void)l; printf("UPDATE ON not implemented.\n"); }
-static void h_exit_loop(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_exit_loop(); }
-static void h_quit(dbf_t *db, lexer_t *l) { (void)db; (void)l; /* Handled by caller returning 1 */ }
+/* QUIT and EXIT are handled directly in cmd_execute() because they
+   must return 1 to signal the interpreter to exit.  They are NOT in
+   the dispatch table. */
 static void h_stub(dbf_t *db, lexer_t *l) { (void)db; (void)l; printf("Command not implemented.\n"); }
 
 static cmd_entry_t cmd_table[] = {
@@ -4073,7 +4074,7 @@ static cmd_entry_t cmd_table[] = {
     { "EJECT", h_eject }, { "ELSE", h_else },
     { "ENDCASE", h_endcase }, { "ENDDO", h_enddo },
     { "ENDIF", h_endif }, { "ERASE", h_erase },
-    { "EXIT", h_exit_loop }, { "FIND", h_find },
+    { "FIND", h_find },
     { "GO", h_go }, { "GOTO", h_go },
     { "IF", h_if }, { "INDEX", h_index },
     { "INPUT", h_input }, { "JOIN", h_join },
@@ -4083,7 +4084,7 @@ static cmd_entry_t cmd_table[] = {
     { "OTHERWISE", h_otherwise }, { "PACK", h_pack },
     { "PARAMETERS", h_parameters }, { "PRIVATE", h_private },
     { "PROCEDURE", h_procedure }, { "PUBLIC", h_public },
-    { "QUIT", h_quit }, { "READ", h_read },
+    { "READ", h_read },
     { "RECALL", h_recall }, { "REINDEX", h_reindex },
     { "RELEASE", h_release }, { "RENAME", h_rename },
     { "REPLACE", h_replace }, { "REPORT", h_report },
@@ -4220,9 +4221,13 @@ int cmd_execute(dbf_t *db, char *line) {
         }
     }
 
-    /* Check for QUIT/EXIT (which return 1) */
+    /* QUIT/EXIT return 1 to exit the interpreter.
+       EXIT inside a program exits the current DO WHILE loop instead. */
     if (cmd_kw(&l, "QUIT")) return 1;
-    if (cmd_kw(&l, "EXIT") && !prog_is_running()) return 1;
+    if (cmd_kw(&l, "EXIT")) {
+        if (prog_is_running()) { prog_exit_loop(); return 0; }
+        return 1;
+    }
 
     prog_error(ERR_UNRECOGNIZED, "Unrecognized command");
     return 0;

@@ -327,9 +327,9 @@ static int parse_power(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
         }
         {
             double base = result->num;
-            double exp = right.num;
+            double exponent = right.num;
             errno = 0;
-            result->num = pow(base, exp);
+            result->num = pow(base, exponent);
             if (!isfinite(result->num) || errno != 0) {
                 ctx->error = "Invalid exponentiation";
                 return -1;

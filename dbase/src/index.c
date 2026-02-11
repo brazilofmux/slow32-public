@@ -122,30 +122,23 @@ static ndx_page_t *page_new(index_t *idx, int type) {
         p = page_get(idx, pg_no);
         if (p) {
             idx->free_page_head = p->children[0];
-            /* Re-initialize reuse page */
+            /* Re-initialize reuse page.  Free all arrays and reallocate
+               for the target type to avoid buffer size mismatches when a
+               leaf page is recycled as internal (or vice versa). */
             p->type = type;
             p->nkeys = 0;
             p->dirty = 1;
             p->next_leaf = 0;
             p->prev_leaf = 0;
-            /* p->keys and p->recnos/p->children already allocated, just zero them */
-            if (p->keys) memset(p->keys, 0, (idx->max_keys_leaf + 1) * idx->key_len);
-            if (p->recnos) memset(p->recnos, 0, (idx->max_keys_leaf + 1) * sizeof(uint32_t));
-            if (p->children) memset(p->children, 0, (idx->max_keys_internal + 2) * sizeof(int));
+            free(p->keys);      p->keys = NULL;
+            free(p->recnos);    p->recnos = NULL;
+            free(p->children);  p->children = NULL;
 
-            /* If it was a leaf but now internal, or vice versa, we might need to fix arrays.
-               Actually NdxPage uses fixed max of internal/leaf for allocations to be safe?
-               No, page_new allocated them specifically. Let's make sure they are right. */
-            if (type == PAGE_LEAF && !p->keys) {
+            if (type == PAGE_LEAF) {
                 p->keys = (char *)calloc(idx->max_keys_leaf + 1, idx->key_len);
-            }
-            if (type == PAGE_LEAF && !p->recnos) {
                 p->recnos = (uint32_t *)calloc(idx->max_keys_leaf + 1, sizeof(uint32_t));
-            }
-            if (type == PAGE_INTERNAL && !p->keys) {
+            } else {
                 p->keys = (char *)calloc(idx->max_keys_internal + 1, idx->key_len);
-            }
-            if (type == PAGE_INTERNAL && !p->children) {
                 p->children = (int *)calloc(idx->max_keys_internal + 2, sizeof(int));
             }
             return p;
