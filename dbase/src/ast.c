@@ -480,6 +480,15 @@ static int eval_field_from_db(dbf_t *db, const char *name, value_t *result) {
         case 'N': *result = val_num(atof(raw)); return 0;
         case 'D': *result = val_date(date_from_dbf(raw)); return 0;
         case 'L': *result = val_logic(raw[0] == 'T' || raw[0] == 't'); return 0;
+        case 'M': {
+            int blk = atoi(raw);
+            char memo[256];
+            if (blk > 0 && dbf_memo_read(db, blk, memo, sizeof(memo)) == 0)
+                *result = val_str(memo);
+            else
+                *result = val_str("");
+            return 0;
+        }
         }
     }
     return -1;

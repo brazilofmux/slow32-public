@@ -33,6 +33,11 @@ typedef struct {
     uint32_t cache_start;            /* first record number in cache */
     int cache_count;                 /* number of records cached */
     int cache_capacity;              /* max records to cache */
+
+    /* Memo (.DBT) support */
+    FILE *memo_fp;                   /* .DBT file handle (NULL if none) */
+    uint32_t next_memo_block;        /* next available block number */
+    int has_memo;                    /* 1 if any field is type 'M' */
 } dbf_t;
 
 void dbf_init(dbf_t *db);
@@ -48,5 +53,12 @@ int  dbf_get_field_raw(const dbf_t *db, int idx, char *buf, int bufsize);
 int  dbf_set_field_raw(dbf_t *db, int idx, const char *value);
 int  dbf_write_header_counts(dbf_t *db);
 void dbf_cache_invalidate(dbf_t *db);
+
+/* Memo (.DBT) functions */
+int  dbf_memo_create(const char *dbf_filename);
+int  dbf_memo_open(dbf_t *db);
+void dbf_memo_close(dbf_t *db);
+int  dbf_memo_read(dbf_t *db, int block, char *buf, int bufsize);
+int  dbf_memo_write(dbf_t *db, const char *text, int len);
 
 #endif

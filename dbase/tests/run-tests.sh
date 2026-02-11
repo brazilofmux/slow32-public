@@ -34,7 +34,7 @@ filter_output() {
 }
 
 # Clean up any leftover files from previous runs
-rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
+rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.DBT "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
     "$BASDIR"/tests/testfile.txt
 
 for testfile in "$BASDIR"/tests/*.txt; do
@@ -77,7 +77,7 @@ for testfile in "$BASDIR"/tests/*.txt; do
 done
 
 # Final cleanup
-rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
+rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.DBT "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
     "$BASDIR"/tests/testfile.txt
 
 echo ""

@@ -53,16 +53,13 @@ directory components.
 
 These are features a dBase III/Clipper/FoxPro programmer would expect.
 
-### 2.1 Memo Fields (.DBT)
-The `M` field type (variable-length text stored in a companion `.DBT` file) is
-not supported. This is the single biggest format gap. Memo fields are used for
-notes, descriptions, long text — any field > 254 characters. Without memo
-support, importing real-world `.DBF` files with memo fields will fail or lose
-data.
-
-- dBase III: 512-byte block-based `.DBT` file
-- FoxPro: variable-block `.FPT` file
-- At minimum, support read-only access to memo fields in existing files
+### ~~2.1 Memo Fields (.DBT)~~ FIXED
+Full read-write memo support implemented. 512-byte block `.DBT` files. CREATE
+with type 'M', REPLACE writes memo text, LIST shows "memo" marker, DISPLAY and
+expressions read full text. COPY TO / APPEND FROM / SORT copy memo data to new
+`.DBT` with fresh block numbers. ZAP resets `.DBT` header. Memo text truncated
+to 255 chars on read (`value_t.str[256]`). Grow-only writes (matches real dBase
+III). Missing `.DBT` on open warns and returns empty strings.
 
 ### 2.2 EDIT/BROWSE — Full-Screen Record Editor
 `EDIT` and `BROWSE` are the primary interactive data entry commands in dBase.
@@ -266,3 +263,32 @@ that overlay the main display and then restore it.
 ### 6.3 Fragile Tests
 - `test_dir_services` embeds absolute path and file count — breaks if repo moves
   or files are added/removed. Should be restructured to test relative behavior.
+
+---
+
+## 7. Review Notes (9136b895..HEAD)
+
+These are preserved code review observations from the AST + lexer integration
+work. They are not necessarily bugs, but highlight behavior shifts that should
+be confirmed against dBase III expectations.
+
+### 7.1 Macro Expansion Timing Regression
+`ast_compile()` uses `lexer_init_ext()` and the current memvar store, which
+expands `&var` during compilation. Previously, `expr_eval_str()` expanded
+macros on each evaluation. This means `SET FILTER TO &expr` or `FOR &cond`
+may no longer reflect updated macro variables after the AST is compiled.
+
+### 7.2 Array Access Resolution Time
+AST parsing treats `name(...)` as array access only if the memvar store already
+contains an array at compile time. In the prior evaluator, array vs function
+resolution happened at eval time. This can change behavior if arrays are
+declared after a filter/loop expression is compiled.
+
+### 7.3 Unbounded AST Function Argument Parsing
+`ast_parse_primary` grows the args list without a compile-time `MAX_FUNC_ARGS`
+check. Errors are deferred to evaluation, and very long argument lists can
+consume memory before failing.
+
+### 7.4 realloc Failure Handling
+The argument list growth path in `ast_parse_primary` does not handle a
+`realloc` failure; a `NULL` return would be dereferenced, causing a crash.

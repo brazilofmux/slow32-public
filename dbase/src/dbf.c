@@ -10,6 +10,9 @@
 
 void dbf_init(dbf_t *db) {
     memset(db, 0, sizeof(*db));
+    db->memo_fp = NULL;
+    db->next_memo_block = 0;
+    db->has_memo = 0;
 }
 
 void dbf_cache_invalidate(dbf_t *db) {
@@ -87,9 +90,16 @@ int dbf_create(const char *filename, const dbf_field_t *fields, int nfields) {
     for (i = 0; i < nfields; i++)
         rec_size += fields[i].length;
 
-    /* Write header */
-    memset(hdr, 0, 32);
-    hdr[0] = 0x03; /* version: dBase III */
+    /* Check for memo fields */
+    {
+        int has_memo = 0;
+        for (i = 0; i < nfields; i++)
+            if (fields[i].type == 'M') has_memo = 1;
+
+        /* Write header */
+        memset(hdr, 0, 32);
+        hdr[0] = has_memo ? 0x83 : 0x03; /* 0x83 = dBase III with memo */
+    }
     hdr[1] = 26;   /* year (2026 - 1900) */
     hdr[2] = 2;    /* month */
     hdr[3] = 9;    /* day */
@@ -172,6 +182,18 @@ int dbf_open(dbf_t *db, const char *filename) {
     db->current_record = 0;
     db->record_dirty = 0;
     dbf_cache_init(db);
+
+    /* Check for memo fields */
+    db->has_memo = 0;
+    for (i = 0; i < nfields; i++) {
+        if (db->fields[i].type == 'M') {
+            db->has_memo = 1;
+            break;
+        }
+    }
+    if (db->has_memo)
+        dbf_memo_open(db);
+
     return 0;
 }
 
@@ -180,6 +202,7 @@ void dbf_close(dbf_t *db) {
     if (db->record_dirty)
         dbf_flush_record(db);
     dbf_write_header_counts(db);
+    dbf_memo_close(db);
     fclose(db->fp);
     db->fp = NULL;
     db->filename[0] = '\0';
@@ -340,4 +363,153 @@ int dbf_write_header_counts(dbf_t *db) {
     fwrite(buf, 1, 4, db->fp);
     fflush(db->fp);
     return 0;
+}
+
+/* ---- Memo (.DBT) support ---- */
+
+#define MEMO_BLOCK_SIZE 512
+
+static void derive_dbt_name(const char *dbf_name, char *dbt_name, int size) {
+    int len;
+    str_copy(dbt_name, dbf_name, size);
+    len = strlen(dbt_name);
+    if (len >= 4 && (str_icmp(dbt_name + len - 4, ".DBF") == 0)) {
+        dbt_name[len - 3] = 'D';
+        dbt_name[len - 2] = 'B';
+        dbt_name[len - 1] = 'T';
+    }
+}
+
+int dbf_memo_create(const char *dbf_filename) {
+    char dbt_name[64];
+    FILE *fp;
+    unsigned char header[MEMO_BLOCK_SIZE];
+
+    derive_dbt_name(dbf_filename, dbt_name, sizeof(dbt_name));
+
+    fp = fopen(dbt_name, "w+b");
+    if (!fp) return -1;
+
+    memset(header, 0, MEMO_BLOCK_SIZE);
+    /* Next available block = 1 (block 0 is the header) */
+    write_le32(header, 1);
+    fwrite(header, 1, MEMO_BLOCK_SIZE, fp);
+    fclose(fp);
+    return 0;
+}
+
+int dbf_memo_open(dbf_t *db) {
+    char dbt_name[64];
+    unsigned char hdr[4];
+
+    derive_dbt_name(db->filename, dbt_name, sizeof(dbt_name));
+
+    db->memo_fp = fopen(dbt_name, "r+b");
+    if (!db->memo_fp) {
+        printf("Warning: memo file %s not found. Memo fields will be empty.\n", dbt_name);
+        return -1;
+    }
+
+    if (fread(hdr, 1, 4, db->memo_fp) != 4) {
+        fclose(db->memo_fp);
+        db->memo_fp = NULL;
+        return -1;
+    }
+
+    db->next_memo_block = read_le32(hdr);
+    return 0;
+}
+
+void dbf_memo_close(dbf_t *db) {
+    if (!db->memo_fp) return;
+
+    /* Write back next_memo_block to header */
+    {
+        unsigned char hdr[4];
+        fseek(db->memo_fp, 0, 0);
+        write_le32(hdr, db->next_memo_block);
+        fwrite(hdr, 1, 4, db->memo_fp);
+        fflush(db->memo_fp);
+    }
+
+    fclose(db->memo_fp);
+    db->memo_fp = NULL;
+}
+
+int dbf_memo_read(dbf_t *db, int block, char *buf, int bufsize) {
+    int pos, n, i;
+    unsigned char chunk[MEMO_BLOCK_SIZE];
+
+    if (block <= 0 || !db->memo_fp) {
+        buf[0] = '\0';
+        return 0;
+    }
+
+    n = 0;
+    pos = block * MEMO_BLOCK_SIZE;
+    fseek(db->memo_fp, pos, 0);
+
+    for (;;) {
+        int bytes_read = fread(chunk, 1, MEMO_BLOCK_SIZE, db->memo_fp);
+        if (bytes_read <= 0) break;
+
+        for (i = 0; i < bytes_read; i++) {
+            /* Check for 0x1A terminator (single or double) */
+            if (chunk[i] == 0x1A) {
+                buf[n] = '\0';
+                return 0;
+            }
+            /* Convert soft CR (0x8D) to regular CR (0x0D) */
+            if (n < bufsize - 1) {
+                buf[n++] = (chunk[i] == 0x8D) ? 0x0D : chunk[i];
+            }
+        }
+    }
+
+    buf[n] = '\0';
+    return 0;
+}
+
+int dbf_memo_write(dbf_t *db, const char *text, int len) {
+    int start_block;
+    int total, blocks_used;
+    unsigned char pad[MEMO_BLOCK_SIZE];
+    int remainder;
+
+    if (!db->memo_fp) return -1;
+
+    start_block = db->next_memo_block;
+
+    /* Seek to write position */
+    fseek(db->memo_fp, (long)start_block * MEMO_BLOCK_SIZE, 0);
+
+    /* Write text */
+    fwrite(text, 1, len, db->memo_fp);
+
+    /* Write 0x1A 0x1A terminator */
+    fwrite("\x1A\x1A", 1, 2, db->memo_fp);
+
+    /* Zero-pad to block boundary */
+    total = len + 2;
+    remainder = total % MEMO_BLOCK_SIZE;
+    if (remainder != 0) {
+        int pad_len = MEMO_BLOCK_SIZE - remainder;
+        memset(pad, 0, pad_len);
+        fwrite(pad, 1, pad_len, db->memo_fp);
+    }
+
+    /* Compute blocks used */
+    blocks_used = (total + MEMO_BLOCK_SIZE - 1) / MEMO_BLOCK_SIZE;
+    db->next_memo_block = start_block + blocks_used;
+
+    /* Flush header with updated next_memo_block */
+    {
+        unsigned char hdr[4];
+        fseek(db->memo_fp, 0, 0);
+        write_le32(hdr, db->next_memo_block);
+        fwrite(hdr, 1, 4, db->memo_fp);
+        fflush(db->memo_fp);
+    }
+
+    return start_block;
 }

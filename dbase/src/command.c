@@ -365,6 +365,21 @@ static void print_field_value(dbf_t *db, int f, char *raw, char *display, FILE *
         else
             PRINT_TO(to_file, "%10s: %s\n", db->fields[f].name, display);
         break;
+    case 'M': {
+        int blk = atoi(raw);
+        if (for_list) {
+            PRINT_TO(to_file, " %-*s", width, blk > 0 ? "memo" : "");
+        } else {
+            if (blk > 0) {
+                char memo[256];
+                dbf_memo_read(db, blk, memo, sizeof(memo));
+                PRINT_TO(to_file, "%10s: %s\n", db->fields[f].name, memo);
+            } else {
+                PRINT_TO(to_file, "%10s:\n", db->fields[f].name);
+            }
+        }
+        break;
+    }
     default:
         field_display_char(display, raw, db->fields[f].length);
         if (for_list) {
@@ -384,6 +399,7 @@ static int field_display_width(dbf_t *db, int f) {
     if (w < nlen) w = nlen;
     if (db->fields[f].type == 'D') w = 8;
     if (db->fields[f].type == 'L') w = 3;
+    if (db->fields[f].type == 'M') { w = 4; if (nlen > w) w = nlen; }
     return w;
 }
 
@@ -467,7 +483,7 @@ static void cmd_create(dbf_t *db, const char *arg) {
         str_upper(line);
         str_copy(fields[nfields].name, line, DBF_MAX_FIELD_NAME);
 
-        printf("Type (C/N/D/L): ");
+        printf("Type (C/N/D/L/M): ");
         if (read_line(type_line, sizeof(type_line)) < 0) break;
         trim_right(type_line);
         str_upper(type_line);
@@ -475,7 +491,9 @@ static void cmd_create(dbf_t *db, const char *arg) {
         fields[nfields].type = type_line[0];
         fields[nfields].decimals = 0;
 
-        if (type_line[0] == 'D') {
+        if (type_line[0] == 'M') {
+            fields[nfields].length = 10;
+        } else if (type_line[0] == 'D') {
             fields[nfields].length = 8;
         } else if (type_line[0] == 'L') {
             fields[nfields].length = 1;
@@ -509,6 +527,17 @@ static void cmd_create(dbf_t *db, const char *arg) {
     if (dbf_create(filename, fields, nfields) < 0) {
         printf("Error creating %s\n", filename);
         return;
+    }
+
+    /* Create .DBT memo file if any memo fields */
+    {
+        int mi;
+        for (mi = 0; mi < nfields; mi++) {
+            if (fields[mi].type == 'M') {
+                dbf_memo_create(filename);
+                break;
+            }
+        }
     }
 
     printf("Database %s created with %d field(s).\n", filename, nfields);
@@ -1625,6 +1654,16 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
                     formatted[1] = '\0';
                 } else field_format_logical(formatted, valbuf);
                 break;
+            case 'M': {
+                const char *memo_text = (val.type == VAL_CHAR) ? val.str : valbuf;
+                int nb = dbf_memo_write(db, memo_text, strlen(memo_text));
+                if (nb > 0)
+                    snprintf(formatted, sizeof(formatted), "%10d", nb);
+                else
+                    memset(formatted, ' ', 10);
+                formatted[10] = '\0';
+                break;
+            }
             default:
                 field_format_char(formatted, db->fields[idx].length, valbuf);
                 break;
@@ -2151,6 +2190,11 @@ static void cmd_zap(dbf_t *db) {
     if (cur_wa()->num_indexes > 0)
         indexes_clear_all();
 
+    /* Reset .DBT memo file header */
+    if (db->memo_fp) {
+        db->next_memo_block = 1;
+    }
+
     printf("Zap complete.\n");
 }
 
@@ -2357,6 +2401,22 @@ static void cmd_print_expr(const char *arg, int newline) {
     }
 }
 
+/* ---- Helper: copy memo field from source to dest ---- */
+static void copy_memo_field(dbf_t *src, int si, dbf_t *dest, int di) {
+    char raw[16], memo[256];
+    int blk;
+    dbf_get_field_raw(src, si, raw, sizeof(raw));
+    blk = atoi(raw);
+    if (blk > 0 && dbf_memo_read(src, blk, memo, sizeof(memo)) == 0) {
+        int nb = dbf_memo_write(dest, memo, strlen(memo));
+        if (nb > 0) {
+            char bs[16];
+            snprintf(bs, sizeof(bs), "%10d", nb);
+            dbf_set_field_raw(dest, di, bs);
+        }
+    }
+}
+
 /* ---- COPY TO [FIELDS ...] [scope] [FOR cond] ---- */
 static void cmd_copy_to(dbf_t *db, const char *arg) {
     char filename[64];
@@ -2430,6 +2490,17 @@ static void cmd_copy_to(dbf_t *db, const char *arg) {
         return;
     }
 
+    /* Create .DBT if destination has memo fields */
+    {
+        int mi;
+        for (mi = 0; mi < dest_nfields; mi++) {
+            if (dest_fields[mi].type == 'M') {
+                dbf_memo_create(filename);
+                break;
+            }
+        }
+    }
+
     dbf_init(&dest);
     if (dbf_open(&dest, filename) < 0) {
         printf("Error opening %s\n", filename);
@@ -2461,13 +2532,21 @@ static void cmd_copy_to(dbf_t *db, const char *arg) {
 
         if (use_all_fields) {
             for (f = 0; f < db->field_count; f++) {
-                dbf_get_field_raw(db, f, raw, sizeof(raw));
-                dbf_set_field_raw(&dest, f, raw);
+                if (db->fields[f].type == 'M')
+                    copy_memo_field(db, f, &dest, f);
+                else {
+                    dbf_get_field_raw(db, f, raw, sizeof(raw));
+                    dbf_set_field_raw(&dest, f, raw);
+                }
             }
         } else {
             for (f = 0; f < nfields; f++) {
-                dbf_get_field_raw(db, field_indices[f], raw, sizeof(raw));
-                dbf_set_field_raw(&dest, f, raw);
+                if (db->fields[field_indices[f]].type == 'M')
+                    copy_memo_field(db, field_indices[f], &dest, f);
+                else {
+                    dbf_get_field_raw(db, field_indices[f], raw, sizeof(raw));
+                    dbf_set_field_raw(&dest, f, raw);
+                }
             }
         }
         dbf_flush_record(&dest);
@@ -2507,6 +2586,14 @@ static void cmd_copy_structure(dbf_t *db, const char *arg) {
         if (dbf_create(filename, fields, db->field_count) < 0) {
             printf("Error creating %s\n", filename);
             return;
+        }
+
+        /* Create .DBT if any memo fields */
+        for (f = 0; f < db->field_count; f++) {
+            if (fields[f].type == 'M') {
+                dbf_memo_create(filename);
+                break;
+            }
         }
     }
 
@@ -2577,8 +2664,12 @@ static void cmd_append_from(dbf_t *db, const char *arg) {
             if (didx < 0) continue;
             /* Re-read source record since append_blank may have flushed db */
             dbf_read_record(&source, i);
-            dbf_get_field_raw(&source, f, raw, sizeof(raw));
-            dbf_set_field_raw(db, didx, raw);
+            if (source.fields[f].type == 'M' && db->fields[didx].type == 'M')
+                copy_memo_field(&source, f, db, didx);
+            else {
+                dbf_get_field_raw(&source, f, raw, sizeof(raw));
+                dbf_set_field_raw(db, didx, raw);
+            }
         }
         dbf_flush_record(db);
         indexes_insert_current(db);
@@ -2828,6 +2919,14 @@ static void cmd_sort(dbf_t *db, const char *arg) {
             cleanup_sort_chunks(chunk_names, nchunks);
             return;
         }
+
+        /* Create .DBT if any memo fields */
+        for (f = 0; f < db->field_count; f++) {
+            if (fields[f].type == 'M') {
+                dbf_memo_create(filename);
+                break;
+            }
+        }
     }
 
     dbf_init(&dest);
@@ -2845,8 +2944,12 @@ static void cmd_sort(dbf_t *db, const char *arg) {
             dbf_read_record(db, sort_entries[i].recno);
             dbf_append_blank(&dest);
             for (f = 0; f < db->field_count; f++) {
-                dbf_get_field_raw(db, f, raw, sizeof(raw));
-                dbf_set_field_raw(&dest, f, raw);
+                if (db->fields[f].type == 'M')
+                    copy_memo_field(db, f, &dest, f);
+                else {
+                    dbf_get_field_raw(db, f, raw, sizeof(raw));
+                    dbf_set_field_raw(&dest, f, raw);
+                }
             }
             dbf_flush_record(&dest);
             count++;
@@ -2884,8 +2987,12 @@ static void cmd_sort(dbf_t *db, const char *arg) {
                 dbf_read_record(db, current[best].recno);
                 dbf_append_blank(&dest);
                 for (f = 0; f < db->field_count; f++) {
-                    dbf_get_field_raw(db, f, raw, sizeof(raw));
-                    dbf_set_field_raw(&dest, f, raw);
+                    if (db->fields[f].type == 'M')
+                        copy_memo_field(db, f, &dest, f);
+                    else {
+                        dbf_get_field_raw(db, f, raw, sizeof(raw));
+                        dbf_set_field_raw(&dest, f, raw);
+                    }
                 }
                 dbf_flush_record(&dest);
                 count++;
