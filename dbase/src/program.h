@@ -3,6 +3,7 @@
 
 #include "expr.h"
 #include "memvar.h"
+#include "clause.h"
 
 #define MAX_PROGRAM_LINES 2000
 #define MAX_LINE_LEN      256
@@ -32,15 +33,19 @@ typedef struct {
     int with_argc;
 } call_frame_t;
 
-/* Loop stack entry (DO WHILE / ENDDO / FOR / NEXT) */
+/* Loop stack entry (DO WHILE / ENDDO / FOR / NEXT / SCAN / ENDSCAN) */
 typedef struct {
     int start_line;
-    int is_for;             /* 0 = DO WHILE, 1 = FOR */
+    int type;               /* 0 = DO WHILE, 1 = FOR, 2 = SCAN */
     char condition[256];    /* DO WHILE condition string */
     /* FOR loop fields */
     char varname[MEMVAR_NAMELEN];
     double end_val;
     double step_val;
+    /* SCAN loop fields */
+    clause_t scan_clause;
+    uint32_t scan_current;
+    uint32_t scan_end;
 } loop_entry_t;
 
 /* Program execution state */
@@ -74,6 +79,8 @@ void prog_endcase(void);
 void prog_enddo(void);
 void prog_loop(void);
 void prog_exit_loop(void);
+void prog_scan(const char *arg);
+void prog_endscan(void);
 void prog_return(const char *arg);
 void prog_procedure(const char *arg);
 void prog_parameters(const char *arg);

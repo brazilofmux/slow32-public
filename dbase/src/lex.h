@@ -58,7 +58,7 @@ typedef struct {
 
 #define MAX_MACRO_NESTING 8
 
-typedef struct {
+typedef struct lexer {
     const char *input;
     const char *p;
     const char *token_start;

@@ -890,24 +890,8 @@ static void cmd_skip(dbf_t *db, const char *arg) {
 }
 
 /* ---- Scope infrastructure ---- */
-typedef enum { SCOPE_DEFAULT, SCOPE_ALL_DEFAULT, SCOPE_ALL, SCOPE_NEXT, SCOPE_RECORD, SCOPE_REST } scope_type_t;
-typedef struct { scope_type_t type; uint32_t count; } scope_t;
 
-typedef struct {
-    scope_t scope;
-    int has_scope;
-    char for_cond[256];
-    char while_cond[256];
-    int to_print;
-    char to_file[64];
-    int off;            /* OFF keyword (suppress recno) */
-    char heading[256];  /* HEADING keyword */
-    int summary;        /* SUMMARY keyword */
-    int plain;          /* PLAIN keyword */
-    int noeject;        /* NOEJECT keyword */
-} clause_t;
-
-static void clause_init(clause_t *c) {
+void clause_init(clause_t *c) {
     memset(c, 0, sizeof(*c));
     c->scope.type = SCOPE_DEFAULT;
     c->has_scope = 0;
@@ -944,7 +928,7 @@ static int consume_filename(lexer_t *l, char *out, int size) {
 
 /* Parse common dBase clauses (FOR, WHILE, TO PRINT, TO FILE, OFF, etc.)
    Returns 0 on success. Consumes tokens until end of line or unknown keyword. */
-static int parse_clauses(lexer_t *l, clause_t *c) {
+int parse_clauses(lexer_t *l, clause_t *c) {
     while (l->current.type != TOK_EOF) {
         if (cmd_kw(l, "FOR")) {
             lex_next(l);
@@ -1173,7 +1157,7 @@ static scope_t parse_scope(const char **pp) {
     return s;
 }
 
-static int scope_bounds(dbf_t *db, const scope_t *s, uint32_t *start, uint32_t *end) {
+int scope_bounds(dbf_t *db, const scope_t *s, uint32_t *start, uint32_t *end) {
     switch (s->type) {
     case SCOPE_DEFAULT:
         *start = (db->current_record > 0) ? db->current_record : 1;
@@ -3676,6 +3660,8 @@ static void h_else(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_runni
 static void h_endif(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_endif(); else printf("ENDIF without IF.\n"); }
 static void h_enddo(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_enddo(); else printf("ENDDO without DO WHILE.\n"); }
 static void h_loop(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_loop(); else printf("LOOP without DO WHILE.\n"); }
+static void h_scan(dbf_t *db, lexer_t *l) { (void)db; if (prog_is_running()) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); prog_scan(arg); } else printf("SCAN not allowed in interactive mode.\n"); }
+static void h_endscan(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_endscan(); else printf("ENDSCAN without SCAN.\n"); }
 static void h_case(dbf_t *db, lexer_t *l) { (void)db; if (prog_is_running()) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); prog_case(arg); } else printf("CASE without DO CASE.\n"); }
 static void h_otherwise(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_otherwise(); else printf("OTHERWISE without DO CASE.\n"); }
 static void h_endcase(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_endcase(); else printf("ENDCASE without DO CASE.\n"); }
@@ -4073,8 +4059,8 @@ static cmd_entry_t cmd_table[] = {
     { "DISPLAY", h_display }, { "DO", h_do },
     { "EJECT", h_eject }, { "ELSE", h_else },
     { "ENDCASE", h_endcase }, { "ENDDO", h_enddo },
-    { "ENDIF", h_endif }, { "ERASE", h_erase },
-    { "FIND", h_find },
+    { "ENDIF", h_endif }, { "ENDSCAN", h_endscan },
+    { "ERASE", h_erase }, { "FIND", h_find },
     { "GO", h_go }, { "GOTO", h_go },
     { "IF", h_if }, { "INDEX", h_index },
     { "INPUT", h_input }, { "JOIN", h_join },
@@ -4091,7 +4077,7 @@ static cmd_entry_t cmd_table[] = {
     { "RESTORE", h_restore }, { "RESUME", h_resume },
     { "RETRY", h_retry }, { "RETURN", h_return },
     { "RUN", h_run }, { "SAVE", h_save },
-    { "SCAN", h_stub }, { "SEEK", h_seek },
+    { "SCAN", h_scan }, { "SEEK", h_seek },
     { "SELECT", h_select }, { "SET", h_set },
     { "SKIP", h_skip }, { "SORT", h_sort },
     { "STORE", h_store }, { "SUM", h_sum },

@@ -4,12 +4,19 @@
 #include "dbf.h"
 #include "memvar.h"
 #include "expr.h"
+#include "clause.h"
 
 /* Execute a command line. Returns 1 if QUIT, 0 otherwise. */
 int cmd_execute(dbf_t *db, char *line);
 
 /* Close all open work areas */
 void cmd_close_all(void);
+
+/* Clause and scope utilities */
+struct lexer;
+void clause_init(clause_t *c);
+int  parse_clauses(struct lexer *l, clause_t *c);
+int  scope_bounds(dbf_t *db, const scope_t *s, uint32_t *start, uint32_t *end);
 
 /* Access to shared state (for program.c, screen.c) */
 memvar_store_t *cmd_get_memvar_store(void);

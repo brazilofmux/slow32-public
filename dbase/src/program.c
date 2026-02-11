@@ -6,6 +6,8 @@
 #include "func.h"
 #include "util.h"
 #include "lex.h"
+#include "area.h"
+#include "set.h"
 
 static prog_state_t state;
 
@@ -563,6 +565,65 @@ static int scan_endcase(program_t *prog, int from) {
     return -1;
 }
 
+static int eval_logical(expr_ctx_t *ctx, const char *expr, int *result) {
+    value_t res;
+    if (expr_eval_str(ctx, expr, &res) != 0) {
+        if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
+        return -1;
+    }
+    *result = (res.type == VAL_LOGIC && res.logic);
+    return 0;
+}
+
+static int scan_record_matches(loop_entry_t *loop, dbf_t *db, int *stop_scan) {
+    expr_ctx_t *ctx = cmd_get_expr_ctx();
+    int ok;
+
+    *stop_scan = 0;
+
+    if (db->record_buf[0] == '*' && ctx->opts->deleted) return 0;
+
+    if (area_get_current()->filter_cond[0]) {
+        if (eval_logical(ctx, area_get_current()->filter_cond, &ok) < 0) return -1;
+        if (!ok) return 0;
+    }
+
+    if (loop->scan_clause.while_cond[0]) {
+        if (eval_logical(ctx, loop->scan_clause.while_cond, &ok) < 0) return -1;
+        if (!ok) {
+            *stop_scan = 1;
+            return 0;
+        }
+    }
+
+    if (loop->scan_clause.for_cond[0]) {
+        if (eval_logical(ctx, loop->scan_clause.for_cond, &ok) < 0) return -1;
+        if (!ok) return 0;
+    }
+
+    return 1;
+}
+
+/* Scan for ENDSCAN from current position */
+static int scan_endscan(program_t *prog, int from) {
+    int depth = 1;
+    int i;
+    for (i = from + 1; i < prog->nlines; i++) {
+        char line[MAX_LINE_LEN];
+        char *p;
+        str_copy(line, prog->lines[i], MAX_LINE_LEN);
+        prog_preprocess(line, cmd_get_memvar_store());
+        p = skip_ws(line);
+        if (line_is_kw(p, "SCAN"))
+            depth++;
+        else if (line_is_kw(p, "ENDSCAN")) {
+            depth--;
+            if (depth == 0) return i;
+        }
+    }
+    return -1;
+}
+
 /* ---- Save PRIVATE variables ---- */
 static void save_private(call_frame_t *frame, const char *name) {
     memvar_store_t *store = cmd_get_memvar_store();
@@ -839,7 +900,7 @@ void prog_do(const char *arg) {
                 return;
             }
             state.loop_stack[state.loop_depth].start_line = state.pc;
-            state.loop_stack[state.loop_depth].is_for = 0;
+            state.loop_stack[state.loop_depth].type = 0; /* DO WHILE */
             str_copy(state.loop_stack[state.loop_depth].condition, cond,
                      sizeof(state.loop_stack[state.loop_depth].condition));
             state.loop_depth++;
@@ -1152,13 +1213,22 @@ void prog_loop(void) {
 
     loop = &state.loop_stack[state.loop_depth - 1];
 
-    if (loop->is_for) {
+    if (loop->type == 1) {
         /* FOR loop: jump to the NEXT line so it handles increment/check */
         int target = scan_next(state.current_prog, loop->start_line);
         if (target >= 0) {
             state.pc = target;
         } else {
             printf("NEXT not found.\n");
+            state.pc++;
+        }
+    } else if (loop->type == 2) {
+        /* SCAN loop: jump to ENDSCAN */
+        int target = scan_endscan(state.current_prog, loop->start_line);
+        if (target >= 0) {
+            state.pc = target;
+        } else {
+            printf("ENDSCAN not found.\n");
             state.pc++;
         }
     } else {
@@ -1180,8 +1250,10 @@ void prog_exit_loop(void) {
 
     loop = &state.loop_stack[state.loop_depth - 1];
 
-    if (loop->is_for) {
+    if (loop->type == 1) {
         target = scan_next(state.current_prog, loop->start_line);
+    } else if (loop->type == 2) {
+        target = scan_endscan(state.current_prog, loop->start_line);
     } else {
         target = scan_enddo(state.current_prog, loop->start_line);
     }
@@ -1190,7 +1262,10 @@ void prog_exit_loop(void) {
     if (target >= 0) {
         state.pc = target + 1;
     } else {
-        printf("%s not found.\n", loop->is_for ? "NEXT" : "ENDDO");
+        const char *name = "ENDDO";
+        if (loop->type == 1) name = "NEXT";
+        else if (loop->type == 2) name = "ENDSCAN";
+        printf("%s not found.\n", name);
         state.pc++;
     }
 }
@@ -1282,7 +1357,7 @@ void prog_for(const char *arg) {
     }
 
     state.loop_stack[state.loop_depth].start_line = state.pc;
-    state.loop_stack[state.loop_depth].is_for = 1;
+    state.loop_stack[state.loop_depth].type = 1; /* FOR */
     state.loop_stack[state.loop_depth].condition[0] = '\0';
     str_copy(state.loop_stack[state.loop_depth].varname, varname, MEMVAR_NAMELEN);
     state.loop_stack[state.loop_depth].end_val = end_val.num;
@@ -1305,7 +1380,7 @@ void prog_next(void) {
     }
 
     loop = &state.loop_stack[state.loop_depth - 1];
-    if (!loop->is_for) {
+    if (loop->type != 1) {
         printf("NEXT without FOR.\n");
         state.pc++;
         return;
@@ -1335,6 +1410,146 @@ void prog_next(void) {
         state.pc++;
     } else {
         state.pc = loop->start_line + 1;
+    }
+}
+
+/* ---- SCAN [scope] [FOR cond] [WHILE cond] ---- */
+void prog_scan(const char *arg) {
+    clause_t c;
+    lexer_t l;
+    uint32_t start, end;
+    dbf_t *db = area_get_current() ? &area_get_current()->db : NULL;
+
+    if (!db || !dbf_is_open(db)) {
+        prog_error(ERR_NO_DATABASE, "No database in use");
+        return;
+    }
+
+    clause_init(&c);
+    c.scope.type = SCOPE_ALL_DEFAULT; /* SCAN default is ALL */
+    lexer_init_ext(&l, arg, cmd_get_memvar_store());
+    if (parse_clauses(&l, &c) < 0) return;
+
+    if (!c.has_scope) {
+        if (c.for_cond[0]) c.scope.type = SCOPE_ALL;
+        else if (c.scope.type == SCOPE_ALL_DEFAULT) c.scope.type = SCOPE_ALL;
+        else if (c.scope.type == SCOPE_DEFAULT) {
+            c.scope.type = SCOPE_NEXT;
+            c.scope.count = 1;
+        }
+    }
+
+    if (scope_bounds(db, &c.scope, &start, &end) < 0) {
+        prog_error(ERR_SYNTAX, "Invalid scope");
+        return;
+    }
+
+    if (state.loop_depth >= MAX_LOOP_DEPTH) {
+        prog_error(ERR_SYNTAX, "Loop nesting overflow");
+        return;
+    }
+
+    loop_entry_t *loop = &state.loop_stack[state.loop_depth++];
+    loop->start_line = state.pc;
+    loop->type = 2; /* SCAN */
+    loop->scan_clause = c;
+    loop->scan_end = end;
+    
+    /* Position to start of scan */
+    if (start < 1 || start > end || start > db->record_count) {
+        state.loop_depth--; /* Exit SCAN */
+        int target = scan_endscan(state.current_prog, state.pc);
+        if (target >= 0) state.pc = target + 1;
+        else state.pc++;
+        return;
+    }
+    dbf_read_record(db, start);
+    loop->scan_current = start;
+
+    /* Advance to first matching record */
+    while (loop->scan_current <= loop->scan_end) {
+        int stop_scan = 0;
+        int matched = scan_record_matches(loop, db, &stop_scan);
+        if (matched < 0) {
+            state.loop_depth--;
+            {
+                int target = scan_endscan(state.current_prog, state.pc);
+                if (target >= 0) state.pc = target + 1;
+                else state.pc++;
+            }
+            return;
+        }
+        if (stop_scan) {
+            state.loop_depth--; /* Exit SCAN */
+            int target = scan_endscan(state.current_prog, state.pc);
+            if (target >= 0) state.pc = target + 1;
+            else state.pc++;
+            return;
+        }
+        if (matched) break;
+
+        loop->scan_current++;
+        if (loop->scan_current <= loop->scan_end)
+            dbf_read_record(db, loop->scan_current);
+    }
+
+    if (loop->scan_current > loop->scan_end || loop->scan_current > db->record_count) {
+        state.loop_depth--; /* Exit SCAN */
+        int target = scan_endscan(state.current_prog, state.pc);
+        if (target >= 0) state.pc = target + 1;
+        else state.pc++;
+    } else {
+        state.pc++;
+    }
+}
+
+void prog_endscan(void) {
+    if (state.loop_depth == 0 || state.loop_stack[state.loop_depth - 1].type != 2) {
+        /* ENDSCAN without SCAN - just advance */
+        state.pc++;
+        return;
+    }
+
+    loop_entry_t *loop = &state.loop_stack[state.loop_depth - 1];
+    dbf_t *db = area_get_current() ? &area_get_current()->db : NULL;
+
+    if (!db || !dbf_is_open(db)) {
+        state.loop_depth--;
+        state.pc++;
+        return;
+    }
+
+    /* Advance to next record */
+    loop->scan_current++;
+    if (loop->scan_current <= loop->scan_end)
+        dbf_read_record(db, loop->scan_current);
+
+    /* Search for next matching record */
+    while (loop->scan_current <= loop->scan_end) {
+        int stop_scan = 0;
+        int matched = scan_record_matches(loop, db, &stop_scan);
+        if (matched < 0) {
+            state.loop_depth--;
+            state.pc++;
+            return;
+        }
+        if (stop_scan) {
+            state.loop_depth--;
+            state.pc++;
+            return;
+        }
+        if (matched) break;
+
+        loop->scan_current++;
+        if (loop->scan_current <= loop->scan_end)
+            dbf_read_record(db, loop->scan_current);
+    }
+
+    if (loop->scan_current > loop->scan_end || loop->scan_current > db->record_count) {
+        state.loop_depth--; /* Exit SCAN */
+        state.pc++;
+    } else {
+        state.pc = loop->start_line + 1; /* Back to first line of body */
     }
 }
 
