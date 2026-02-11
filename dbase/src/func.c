@@ -2,6 +2,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <dirent.h>
+#include <unistd.h>
 #include "func.h"
 #include "date.h"
 #include "screen.h"
@@ -843,6 +845,12 @@ static int fn_file(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     }
     {
         FILE *f = fopen(args[0].str, "r");
+        if (!f) {
+            char up[256];
+            str_copy(up, args[0].str, sizeof(up));
+            str_upper(up);
+            f = fopen(up, "r");
+        }
         if (f) {
             fclose(f);
             *result = val_logic(1);
@@ -1005,6 +1013,51 @@ static int fn_islower(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
 }
 
 /* ---- VERSION / OS ---- */
+static int fn_curdir(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char buf[256];
+    (void)ctx; (void)args; (void)nargs;
+    if (getcwd(buf, sizeof(buf))) {
+        *result = val_str(buf);
+    } else {
+        *result = val_str("");
+    }
+    return 0;
+}
+
+static int fn_adir(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    int count = 0;
+    DIR *dir;
+    struct dirent *ent;
+    const char *path = ".";
+    const char *pattern = NULL;
+
+    (void)ctx;
+    if (nargs >= 1 && args[0].type == VAL_CHAR) pattern = args[0].str;
+
+    dir = opendir(path);
+    if (!dir) {
+        *result = val_num(0);
+        return 0;
+    }
+
+    while ((ent = readdir(dir)) != NULL) {
+        if (pattern) {
+            char up_ent[256], up_pat[256];
+            str_copy(up_ent, ent->d_name, sizeof(up_ent));
+            str_upper(up_ent);
+            str_copy(up_pat, pattern, sizeof(up_pat));
+            str_upper(up_pat);
+            if (str_like(up_ent, up_pat)) count++;
+        } else {
+            count++;
+        }
+    }
+    closedir(dir);
+
+    *result = val_num((double)count);
+    return 0;
+}
+
 static int fn_version(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx; (void)args; (void)nargs;
     *result = val_str("dBASE III Clone");
@@ -1130,6 +1183,10 @@ static const func_entry_t func_table[] = {
     { "ISALPHA",   fn_isalpha },
     { "ISUPPER",   fn_isupper },
     { "ISLOWER",   fn_islower },
+    /* Directory and File Services */
+    { "ADIR",      fn_adir },
+    { "CURDIR",    fn_curdir },
+    { "FILE",      fn_file },
     /* Low-level File I/O */
     { "FOPEN",     fn_fopen },
     { "FCREATE",   fn_fcreate },

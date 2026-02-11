@@ -1,0 +1,7 @@
+? "--- Directory Services ---"
+? "Current Dir: ", CURDIR()
+? "Checking if SCAN_TEST.PRG exists: ", FILE("SCAN_TEST.PRG")
+? "Checking if NOFILE.DBF exists: ", FILE("NOFILE.DBF")
+? "Total files in current dir: ", ADIR()
+? "Count of .PRG files: ", ADIR("*.PRG")
+QUIT
