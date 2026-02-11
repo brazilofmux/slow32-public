@@ -167,8 +167,9 @@ static void indexes_capture_keys(dbf_t *db, char keys[][MAX_INDEX_KEY + 1]) {
     }
 }
 
-/* Update all active indexes after REPLACE (remove old key, insert new key) */
-static void indexes_update_current(dbf_t *db, char old_keys[][MAX_INDEX_KEY + 1]) {
+/* Update all active indexes after REPLACE (remove old key, insert new key).
+   Returns 0 on success, -1 if a UNIQUE constraint was violated. */
+static int indexes_update_current(dbf_t *db, char old_keys[][MAX_INDEX_KEY + 1]) {
     work_area_t *wa = cur_wa();
     int i;
     ctx_setup();
@@ -179,12 +180,19 @@ static void indexes_update_current(dbf_t *db, char old_keys[][MAX_INDEX_KEY + 1]
             if (eval_index_key(idx, new_key) == 0) {
                 if (memcmp(old_keys[i], new_key, idx->key_len) != 0) {
                     index_remove(idx, old_keys[i], db->current_record);
-                    index_insert(idx, new_key, db->current_record);
+                    if (index_insert(idx, new_key, db->current_record) == 1) {
+                        /* UNIQUE violation — re-insert old key to undo the remove */
+                        index_insert(idx, old_keys[i], db->current_record);
+                        index_flush(idx);
+                        printf("Uniqueness violation on index %s\n", idx->filename);
+                        return -1;
+                    }
                     index_flush(idx);
                 }
             }
         }
     }
+    return 0;
 }
 
 /* Rebuild all active indexes (after PACK changes record numbers) */
@@ -1574,11 +1582,17 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
             }
         }
 
-        dbf_flush_record(db);
+        /* Update indexes before flush — if UNIQUE violated, discard changes */
+        if (has_indexes) {
+            if (indexes_update_current(db, old_keys) != 0) {
+                /* Reload original record from disk, discarding in-memory changes */
+                db->record_dirty = 0;
+                dbf_read_record(db, db->current_record);
+                continue;
+            }
+        }
 
-        /* Update indexes after field modification */
-        if (has_indexes)
-            indexes_update_current(db, old_keys);
+        dbf_flush_record(db);
     }
 }
 

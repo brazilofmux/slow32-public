@@ -794,9 +794,9 @@ int index_insert(index_t *idx, const char *key, uint32_t recno) {
     if (idx->unique) {
         if (pos < node->nkeys &&
             key_cmp(page_key(idx, node, pos), padded, idx->key_len) == 0) {
-            /* Duplicate key in unique index - skip insertion (Standard dBase behavior) */
+            /* Duplicate key in unique index - reject */
             page_put(node);
-            return 0;
+            return 1;
         }
         if (pos == 0 && node->prev_leaf) {
             ndx_page_t *prev = page_get(idx, node->prev_leaf);

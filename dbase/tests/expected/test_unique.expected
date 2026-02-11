@@ -18,3 +18,11 @@ Field name: Type (C/N/D/L): Width (1-254): Field name: Type (C/N/D/L): Width (1-
 . Record# NAME                
       1 Alice               
       3 Bob                 
+. . --- REPLACE rejection ---
+. . Alice                25
+. Uniqueness violation on index UNIQ.NDX
+. Alice                25
+. Record# NAME                
+      1 Alice               
+      3 Bob                 
+

@@ -107,7 +107,8 @@ int index_prev(index_t *idx);
 void index_top(index_t *idx);
 void index_bottom(index_t *idx);
 
-/* Insert a key+recno into the index */
+/* Insert a key+recno into the index.
+   Returns 0 on success, 1 if rejected (UNIQUE duplicate), -1 on error. */
 int index_insert(index_t *idx, const char *key, uint32_t recno);
 
 /* Remove a key+recno from the index */
