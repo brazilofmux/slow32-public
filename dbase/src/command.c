@@ -1539,6 +1539,225 @@ static void cmd_average(dbf_t *db, lexer_t *l) {
     }
 }
 
+/* ---- CALCULATE ---- */
+enum { AGG_SUM, AGG_AVG, AGG_MIN, AGG_MAX, AGG_CNT };
+#define MAX_CALC_AGGS 16
+
+typedef struct {
+    int naggs;
+    struct {
+        int type;
+        char expr[256];
+        double total;
+        double minval, maxval;
+        int has_value;
+    } aggs[MAX_CALC_AGGS];
+    char to_vars[MAX_CALC_AGGS][MEMVAR_NAMELEN];
+    int nto;
+} calc_ctx_t;
+
+static int calculate_cb(dbf_t *db, uint32_t recno, void *userdata) {
+    calc_ctx_t *ctx = (calc_ctx_t *)userdata;
+    int i;
+    (void)db; (void)recno;
+
+    for (i = 0; i < ctx->naggs; i++) {
+        value_t val;
+        double v;
+        if (ctx->aggs[i].type == AGG_CNT)
+            continue;
+        if (expr_eval_str(&expr_ctx, ctx->aggs[i].expr, &val) != 0) {
+            report_expr_error();
+            return REC_ERROR;
+        }
+        if (val.type != VAL_NUM) {
+            printf("CALCULATE requires numeric expression.\n");
+            return REC_ERROR;
+        }
+        v = val.num;
+        switch (ctx->aggs[i].type) {
+        case AGG_SUM: case AGG_AVG:
+            ctx->aggs[i].total += v;
+            break;
+        case AGG_MIN:
+            if (!ctx->aggs[i].has_value || v < ctx->aggs[i].minval)
+                ctx->aggs[i].minval = v;
+            ctx->aggs[i].has_value = 1;
+            break;
+        case AGG_MAX:
+            if (!ctx->aggs[i].has_value || v > ctx->aggs[i].maxval)
+                ctx->aggs[i].maxval = v;
+            ctx->aggs[i].has_value = 1;
+            break;
+        }
+    }
+    return REC_CONTINUE;
+}
+
+static void cmd_calculate(dbf_t *db, lexer_t *l) {
+    clause_t c;
+    calc_ctx_t ctx;
+    int count, i;
+
+    if (!dbf_is_open(db)) {
+        prog_error(ERR_NO_DATABASE, "No database in use");
+        return;
+    }
+
+    if (l->current.type == TOK_EOF) {
+        printf("Syntax: CALCULATE <agg>(expr), ... TO <var>, ...\n");
+        return;
+    }
+
+    memset(&ctx, 0, sizeof(ctx));
+
+    /* Parse aggregate list: SUM(expr), AVG(expr), MIN(expr), MAX(expr), CNT() */
+    for (;;) {
+        int agg_type;
+        if (l->current.type != TOK_IDENT) {
+            printf("Expected aggregate function name.\n");
+            return;
+        }
+        if (is_keyword(l->current.text, "SUM"))       agg_type = AGG_SUM;
+        else if (is_keyword(l->current.text, "AVG") ||
+                 is_keyword(l->current.text, "AVERAGE")) agg_type = AGG_AVG;
+        else if (is_keyword(l->current.text, "MIN"))   agg_type = AGG_MIN;
+        else if (is_keyword(l->current.text, "MAX"))   agg_type = AGG_MAX;
+        else if (is_keyword(l->current.text, "CNT") ||
+                 is_keyword(l->current.text, "COUNT"))  agg_type = AGG_CNT;
+        else {
+            printf("Unknown aggregate function: %s\n", l->current.text);
+            return;
+        }
+
+        if (ctx.naggs >= MAX_CALC_AGGS) {
+            printf("Too many aggregate expressions (max %d).\n", MAX_CALC_AGGS);
+            return;
+        }
+
+        lex_next(l); /* consume function name */
+        if (l->current.type != TOK_LPAREN) {
+            printf("Expected '(' after aggregate function.\n");
+            return;
+        }
+        lex_next(l); /* consume '(' */
+
+        /* Extract inner expression up to matching ')' */
+        {
+            const char *start = l->token_start;
+            int depth = 1;
+            while (l->current.type != TOK_EOF && depth > 0) {
+                if (l->current.type == TOK_LPAREN) depth++;
+                else if (l->current.type == TOK_RPAREN) {
+                    depth--;
+                    if (depth == 0) break;
+                }
+                lex_next(l);
+            }
+            if (depth != 0) {
+                printf("Mismatched parentheses.\n");
+                return;
+            }
+            {
+                int len = (int)(l->token_start - start);
+                if (len >= (int)sizeof(ctx.aggs[0].expr))
+                    len = (int)sizeof(ctx.aggs[0].expr) - 1;
+                memcpy(ctx.aggs[ctx.naggs].expr, start, len);
+                ctx.aggs[ctx.naggs].expr[len] = '\0';
+                trim_right(ctx.aggs[ctx.naggs].expr);
+            }
+        }
+
+        if (agg_type != AGG_CNT && ctx.aggs[ctx.naggs].expr[0] == '\0') {
+            printf("%s requires an expression.\n",
+                   agg_type == AGG_SUM ? "SUM" :
+                   agg_type == AGG_AVG ? "AVG" :
+                   agg_type == AGG_MIN ? "MIN" : "MAX");
+            return;
+        }
+
+        ctx.aggs[ctx.naggs].type = agg_type;
+        ctx.naggs++;
+
+        lex_next(l); /* consume ')' */
+
+        if (l->current.type == TOK_COMMA) {
+            lex_next(l); /* consume ',' */
+        } else {
+            break;
+        }
+    }
+
+    /* Expect TO keyword */
+    if (!cmd_kw(l, "TO")) {
+        printf("Expected TO after aggregate list.\n");
+        return;
+    }
+    lex_next(l); /* consume TO */
+
+    /* Parse comma-separated variable names */
+    ctx.nto = 0;
+    for (;;) {
+        if (l->current.type != TOK_IDENT || cmd_kw(l, "FOR") || cmd_kw(l, "WHILE") ||
+            cmd_kw(l, "ALL") || cmd_kw(l, "NEXT") || cmd_kw(l, "RECORD") || cmd_kw(l, "REST")) {
+            break;
+        }
+        if (ctx.nto >= MAX_CALC_AGGS) {
+            printf("Too many TO variables.\n");
+            return;
+        }
+        str_copy(ctx.to_vars[ctx.nto], l->current.text, MEMVAR_NAMELEN);
+        ctx.nto++;
+        lex_next(l);
+        if (l->current.type == TOK_COMMA) {
+            lex_next(l);
+        } else {
+            break;
+        }
+    }
+
+    if (ctx.nto != ctx.naggs) {
+        printf("Number of TO variables (%d) must match number of aggregates (%d).\n",
+               ctx.nto, ctx.naggs);
+        return;
+    }
+
+    /* Parse remaining clauses (FOR/WHILE/scope) */
+    clause_init(&c);
+    c.scope.type = SCOPE_ALL_DEFAULT;
+    if (parse_clauses(l, &c) < 0) return;
+
+    count = process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET, calculate_cb, &ctx);
+    if (count < 0) return;
+
+    /* Store results in memory variables */
+    for (i = 0; i < ctx.naggs; i++) {
+        value_t v;
+        switch (ctx.aggs[i].type) {
+        case AGG_SUM:
+            v = val_num(ctx.aggs[i].total);
+            break;
+        case AGG_AVG:
+            v = val_num(count > 0 ? ctx.aggs[i].total / count : 0.0);
+            break;
+        case AGG_MIN:
+            v = val_num(ctx.aggs[i].has_value ? ctx.aggs[i].minval : 0.0);
+            break;
+        case AGG_MAX:
+            v = val_num(ctx.aggs[i].has_value ? ctx.aggs[i].maxval : 0.0);
+            break;
+        case AGG_CNT:
+            v = val_num((double)count);
+            break;
+        default:
+            v = val_num(0.0);
+            break;
+        }
+        memvar_set(&memvar_store, ctx.to_vars[i], &v);
+    }
+    printf("%d record(s)\n", count);
+}
+
 /* ---- REPLACE (enhanced with expr_eval) ---- */
 static void cmd_replace(dbf_t *db, lexer_t *l) {
     char field_name[DBF_MAX_FIELD_NAME];
@@ -4255,6 +4474,7 @@ static void h_continue(dbf_t *db, lexer_t *l) { (void)l; cmd_continue(db); follo
 static void h_count(dbf_t *db, lexer_t *l) { lex_next(l); cmd_count(db, l); }
 static void h_sum(dbf_t *db, lexer_t *l) { lex_next(l); cmd_sum(db, l); }
 static void h_average(dbf_t *db, lexer_t *l) { lex_next(l); cmd_average(db, l); }
+static void h_calculate(dbf_t *db, lexer_t *l) { lex_next(l); cmd_calculate(db, l); }
 static void h_reindex(dbf_t *db, lexer_t *l) { (void)l; cmd_reindex(db); }
 static void h_delete(dbf_t *db, lexer_t *l) { lex_next(l); cmd_delete(db, l); }
 static void h_recall(dbf_t *db, lexer_t *l) { lex_next(l); cmd_recall(db, l); }
@@ -4629,8 +4849,8 @@ static void h_stub(dbf_t *db, lexer_t *l) { (void)db; (void)l; printf("Command n
 
 static cmd_entry_t cmd_table[] = {
     { "ACCEPT", h_accept }, { "APPEND", h_append },
-    { "AVERAGE", h_average }, { "CANCEL", h_cancel },
-    { "CASE", h_case }, { "CLEAR", h_clear },
+    { "AVERAGE", h_average }, { "CALCULATE", h_calculate },
+    { "CANCEL", h_cancel }, { "CASE", h_case }, { "CLEAR", h_clear },
     { "CLOSE", h_close }, { "CONTINUE", h_continue },
     { "COPY", h_copy }, { "COUNT", h_count },
     { "CREATE", h_create }, { "DECLARE", h_declare },

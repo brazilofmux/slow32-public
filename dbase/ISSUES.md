@@ -115,12 +115,15 @@ that key is pressed during WAIT/READ/INKEY. `SET KEY <n> TO` (no procedure)
 clears a single handler. `ON KEY` clears all handlers. Re-entrancy guard
 prevents recursive handler invocation. Up to 32 simultaneous key handlers.
 
-### 2.8 CALCULATE — Aggregate Expressions
-`CALCULATE` computes multiple aggregate values in a single pass:
+### ~~2.8 CALCULATE — Aggregate Expressions~~ FIXED
+`CALCULATE` computes multiple aggregate values in a single pass, storing results
+in memory variables. Supports SUM(), AVG(), MIN(), MAX(), CNT()/COUNT() with
+arbitrary expressions inside parentheses. Accepts FOR/WHILE/scope clauses after
+the TO variable list.
 ```
 CALCULATE AVG(salary), MAX(salary), MIN(salary), CNT() TO avg_s, max_s, min_s, cnt
+CALCULATE SUM(qty*price) TO total FOR category="A"
 ```
-More flexible than individual SUM/AVERAGE/COUNT commands.
 
 ### 2.9 DEFINE/ACTIVATE MENU — Menu System
 Clipper's menu system (`DEFINE MENU`, `DEFINE PAD`, `ACTIVATE MENU`) and popup
