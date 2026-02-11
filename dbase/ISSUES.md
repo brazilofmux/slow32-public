@@ -56,21 +56,110 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 - **Status**: **Completed.** `expr_ctx_t` now features a dedicated `err_msg` buffer. Formatted errors in `expr.c` and `func.c` no longer use static buffers, preventing corruption during nested execution.
 - **Milestone**: Achieved robust, re-entrant error reporting across the entire expression and function engine.
 
-## 4. Completed Milestone Successes
+## 5. Future Opportunities
 
-- **B+ Tree Maintenance**: Implemented full deletion logic including redistribution and merging, with a persistent free list to reclaim and reuse empty pages.
-- **Lexer Dispatch Refactor**: Refactored the entire command dispatch system to be token-driven, eliminating raw string parsing in all primary commands.
-- **Error Buffer Unification**: Unified error reporting using context-local buffers, ensuring thread safety and preventing message clobbering.
-- **Fractional Exponents**: Refactored the expression engine to use standard `pow()`. This provides full support for non-integer powers, fulfilling a key requirement for financial and scientific dBase applications.
-- **Printer Logic Refactor**: Standardized printer state tracking. Implemented automatic `EJECT` on "backward" printing in `@SAY` and ensured `?`/`??` update `PROW()` and `PCOL()`. Fixed regressions in `test_phase2` to reflect accurate coordinate tracking.
-- **DBF Cache Coherence**: Implemented a global cache invalidation mechanism. By tracking open filenames across all work areas and triggering invalidations on write, we've guaranteed that the high-performance read-ahead cache remains coherent even in complex multi-area scenarios.
-- **Function Argument Scaling**: Increased the maximum number of arguments for function calls and UDFs to 32. This allows for much more complex programming patterns and data-entry helpers.
-- **External Merge Sort**: Refactored `SORT` to use a multi-pass external merge sort algorithm. It sorts data in manageable chunks, writes them to disk, and merges them using a K-way merge. This allows the system to sort databases far larger than the available RAM.
-- **O(N) Index Build**: Implemented bottom-up index construction. By sorting keys in memory first and packing the B+ tree from the leaves up, we eliminate the O(N log N) individual insertion overhead and produce perfectly balanced, highly efficient index files.
-- **qsort_r in Runtime**: Extended the SLOW-32 C runtime library with `qsort_r` (reentrant quicksort), enabling context-aware sorting across the entire platform.
-- **Sparse Page Table**: Refactored the B+ Tree engine to use a hash-based sparse page table. This eliminates the O(N) memory scaling of metadata, making the indexer capable of handling extremely large datasets without proportional RAM growth.
-- **Reserved Keywords**: Established a core reserved keyword list. Assignments to command names are now caught at parse-time, ensuring unambiguous procedure and control-flow detection.
-- **Transparent Macro Expansion**: Integrated a robust, multi-level macro expansion engine directly into the Lexer via a recursive character-streaming stack.
-- **Lexer Clause Refactor**: Migrated all record-level sequential commands to a unified Lexer-based parser and a generic `process_records` engine.
-- **Work Area Registry**: Centralized work area management in `area.c` with robust, token-aware alias resolution (A-J, 1-10) across all commands, including `SET RELATION`.
-- **Commit eb41794**: Implemented `RANGE` validation in full-screen terminal mode.
+### 5.1 [Feature] SCAN / ENDSCAN Iteration
+- **Opportunity**: Implement the `SCAN [scope] [FOR cond] [WHILE cond]` command. 
+- **Benefit**: Provides a much faster and more idiomatic way to iterate over records compared to manual `DO WHILE .NOT. EOF()` loops. It automatically handles record pointer advancement and restoration.
+
+### 5.2 [Feature] Memory Variable Arrays
+- **Opportunity**: Extend `memvar.c` and the Lexer to support one and two-dimensional arrays (e.g., `DECLARE arr[10]`, `STORE "val" TO arr[5]`).
+- **Benefit**: Essential for complex data manipulation and parity with Clipper/FoxPro. Requires updating `memvar_store_t` to handle indexed lookups.
+
+### 5.3 [Architecture] Nested UDF Calls in Expressions
+- **Opportunity**: Enhance `expr.c` and `func.c` to allow User-Defined Functions defined in `.PRG` files to be called directly within expressions (e.g., `LIST name, MyBonus(salary)`).
+- **Benefit**: Dramatically increases the power of reports and data updates. Requires careful handling of the call stack during expression evaluation.
+
+### 5.4 [Harden] @ ... GET Validation (VALID/WHEN)
+
+- **Opportunity**: Implement `VALID <expr>` and `WHEN <expr>` clauses for the `@ ... GET` command in `screen.c`.
+
+- **Benefit**: Enables proactive data integrity checks and conditional field entry in full-screen modes, fulfilling a core requirement for professional dBase applications.
+
+
+
+### 5.5 [Feature] UNIQUE Indexes
+
+- **Opportunity**: Add support for the `UNIQUE` keyword in the `INDEX ON` command.
+
+- **Benefit**: Essential for data integrity and standard dBase compatibility. Requires adding a `unique` flag to `index_t` and updating `index_insert` to handle duplicates correctly.
+
+
+
+### 5.6 [Feature] Low-Level File I/O (Clipper Parity)
+
+- **Opportunity**: Implement `FOPEN()`, `FREAD()`, `FWRITE()`, `FSEEK()`, and `FCLOSE()`.
+
+- **Benefit**: Allows dBase programs to manipulate non-DBF files (logs, exports, etc.), a major feature of professional Clipper and FoxPro applications.
+
+
+
+### 5.7 [Correctness] Date Arithmetic Parity
+
+- **Opportunity**: Fully implement date addition/subtraction (e.g., `DATE() + 30`, `d1 - d2`).
+
+- **Benefit**: Core requirement for business logic. Requires updating the expression engine's `TOK_PLUS` and `TOK_MINUS` handlers to detect date types.
+
+
+
+### 5.8 [Feature] ADIR() and Directory Services
+
+
+
+- **Opportunity**: Add `ADIR()`, `FILE()`, and `CURDIR()` functions.
+
+
+
+- **Benefit**: Allows programs to be file-system aware, which is necessary for robust application installers and data importers.
+
+
+
+
+
+
+
+### 5.9 [Feature] Standard Function Parity
+
+
+
+- **Opportunity**: Implement missing core dBase functions: `LEFT()`, `RIGHT()`, `DTOC()`, `CTOD()`, `TRANSFORM()`, `EMPTY()`, and `SPACE()`.
+
+
+
+- **Benefit**: Essential for string manipulation and data formatting parity with Clipper and FoxPro.
+
+
+
+
+
+
+
+### 5.10 [Architecture] Lexer Integration (Program commands)
+
+
+
+- **Opportunity**: Transition `PARAMETERS`, `PRIVATE`, `PUBLIC`, and `PROCEDURE` handlers in `program.c` to use the Lexer.
+
+
+
+- **Benefit**: Removes remaining brittle string-parsing logic and ensures consistent macro expansion and tokenization across the entire engine.
+
+
+
+
+
+
+
+### 5.11 [Harden] Cross-Platform Path Handling
+
+
+
+- **Opportunity**: Normalize paths in `dbf_open` and `index_read` (e.g., converting backslashes to forward slashes).
+
+
+
+- **Benefit**: Improves compatibility when running legacy dBase programs that hardcode DOS-style paths.
+
+
+
+
