@@ -81,10 +81,11 @@ READ, and `READKEY()` to determine how the user left the last field.
 - Key codes: 27=Esc, 13=Enter, 5=Up, 24=Down, 19=Left, 4=Right, etc.
 - Terminal key reading infrastructure already exists in `term.h`
 
-### 2.4 TEXT...ENDTEXT — Block Text Output
-Outputs literal text without interpretation. Used for report headers, help
-screens, boilerplate. Every line between `TEXT` and `ENDTEXT` is printed
-verbatim. Simple to implement but frequently used.
+### ~~2.4 TEXT...ENDTEXT — Block Text Output~~ FIXED
+Implemented in `program.c:prog_execute_line()`. TEXT outputs every subsequent
+line verbatim (no preprocessing, no macro expansion) until ENDTEXT. Correctly
+skipped inside false IF/ELSE branches and non-matching CASE blocks. Program-only
+construct (not available in interactive mode).
 
 ### 2.5 SCATTER/GATHER — Record-to-Memvar Transfer
 `SCATTER` copies the current record's fields into memory variables (one per

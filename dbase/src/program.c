@@ -839,6 +839,14 @@ static void prog_run(void) {
                     if_skip = 0; /* start executing ELSE branch */
                     if_done[if_depth - 1] = 1;
                 }
+            } else if (str_imatch(p, "TEXT")) {
+                /* Skip TEXT...ENDTEXT block */
+                state.pc++;
+                while (state.pc < state.current_prog->nlines) {
+                    char *tp = skip_ws(state.current_prog->lines[state.pc]);
+                    if (str_imatch(tp, "ENDTEXT")) break;
+                    state.pc++;
+                }
             }
             state.pc++;
             continue;
@@ -853,6 +861,16 @@ static void prog_run(void) {
                     state.pc = target + 1;
                     continue;
                 }
+            } else if (str_imatch(p, "TEXT")) {
+                /* Skip TEXT...ENDTEXT block */
+                state.pc++;
+                while (state.pc < state.current_prog->nlines) {
+                    char *tp = skip_ws(state.current_prog->lines[state.pc]);
+                    if (str_imatch(tp, "ENDTEXT")) break;
+                    state.pc++;
+                }
+                state.pc++;
+                continue;
             } else if (line_is_kw(p, "CASE")) {
                 if (!case_done) {
                     /* Evaluate this CASE condition */
@@ -1981,6 +1999,23 @@ int prog_execute_line(char *line) {
 
     if (str_imatch(p, "CANCEL")) {
         prog_cancel();
+        return 0;
+    }
+
+    /* TEXT...ENDTEXT — output lines verbatim until ENDTEXT */
+    if (str_imatch(p, "TEXT")) {
+        state.pc++;
+        while (state.running && state.current_prog &&
+               state.pc < state.current_prog->nlines) {
+            char *raw = state.current_prog->lines[state.pc];
+            char *tp = skip_ws(raw);
+            if (str_imatch(tp, "ENDTEXT")) {
+                state.pc++;
+                break;
+            }
+            printf("%s\n", raw);
+            state.pc++;
+        }
         return 0;
     }
 
