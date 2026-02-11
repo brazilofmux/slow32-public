@@ -33,6 +33,9 @@ typedef struct {
     /* DO ... WITH arguments */
     value_t with_args[MAX_FUNC_ARGS];
     int with_argc;
+    /* Pass-by-reference tracking for DO...WITH */
+    char with_ref_names[MAX_FUNC_ARGS][MEMVAR_NAMELEN]; /* caller var name (empty=by-value) */
+    char param_names[MAX_FUNC_ARGS][MEMVAR_NAMELEN];    /* procedure param name */
 } call_frame_t;
 
 /* Loop stack entry (DO WHILE / ENDDO / FOR / NEXT / SCAN / ENDSCAN) */

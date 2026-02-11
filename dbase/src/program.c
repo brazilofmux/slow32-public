@@ -724,14 +724,31 @@ static int push_frame(program_t *new_prog, int start_line) {
 /* ---- Pop call frame ---- */
 static void pop_frame(void) {
     call_frame_t *frame;
+    memvar_store_t *store = cmd_get_memvar_store();
 
     if (state.call_depth <= 0) return;
 
     state.call_depth--;
     frame = &state.call_stack[state.call_depth];
 
+    /* Snapshot by-reference parameter values before restore clobbers them */
+    value_t ref_vals[MAX_FUNC_ARGS];
+    int i;
+    for (i = 0; i < frame->with_argc; i++) {
+        if (frame->with_ref_names[i][0] && frame->param_names[i][0]) {
+            memvar_find(store, frame->param_names[i], &ref_vals[i]);
+        }
+    }
+
     /* Restore PRIVATE variables */
     restore_privates(frame);
+
+    /* Write back by-reference parameters to caller's variables */
+    for (i = 0; i < frame->with_argc; i++) {
+        if (frame->with_ref_names[i][0] && frame->param_names[i][0]) {
+            memvar_set(store, frame->with_ref_names[i], &ref_vals[i]);
+        }
+    }
 
     if (frame->caller_prog) {
         state.current_prog = frame->caller_prog;
@@ -1044,11 +1061,31 @@ void prog_do(const char *arg) {
 
         /* Parse optional WITH clause */
         p = skip_ws(p);
+        char ref_names[MAX_FUNC_ARGS][MEMVAR_NAMELEN];
+        memset(ref_names, 0, sizeof(ref_names));
         if (str_imatch(p, "WITH")) {
             expr_ctx_t *ctx = cmd_get_expr_ctx();
             p = skip_ws(p + 4);
             while (*p && with_argc < MAX_FUNC_ARGS) {
                 value_t val;
+                /* Detect simple variable names for pass-by-reference.
+                   In dBase III, DO proc WITH varname passes by reference,
+                   while DO proc WITH (expr) or literals pass by value. */
+                const char *ap = p;
+                if ((*ap >= 'A' && *ap <= 'Z') || (*ap >= 'a' && *ap <= 'z') || *ap == '_') {
+                    const char *q = ap;
+                    while ((*q >= 'A' && *q <= 'Z') || (*q >= 'a' && *q <= 'z') ||
+                           (*q >= '0' && *q <= '9') || *q == '_') q++;
+                    const char *after = skip_ws(q);
+                    if (*after == ',' || *after == '\0') {
+                        /* Simple identifier — pass by reference */
+                        int len = (int)(q - ap);
+                        if (len >= MEMVAR_NAMELEN) len = MEMVAR_NAMELEN - 1;
+                        memcpy(ref_names[with_argc], ap, len);
+                        ref_names[with_argc][len] = '\0';
+                        str_upper(ref_names[with_argc]);
+                    }
+                }
                 if (expr_eval(ctx, &p, &val) != 0) {
                     if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
                     break;
@@ -1072,6 +1109,7 @@ void prog_do(const char *arg) {
                     call_frame_t *frame = &state.call_stack[state.call_depth - 1];
                     frame->with_argc = with_argc;
                     memcpy(frame->with_args, with_args, with_argc * sizeof(value_t));
+                    memcpy(frame->with_ref_names, ref_names, sizeof(ref_names));
                 }
                 return;
             }
@@ -1089,6 +1127,7 @@ void prog_do(const char *arg) {
                         call_frame_t *frame = &state.call_stack[state.call_depth - 1];
                         frame->with_argc = with_argc;
                         memcpy(frame->with_args, with_args, with_argc * sizeof(value_t));
+                        memcpy(frame->with_ref_names, ref_names, sizeof(ref_names));
                     }
                     return;
                 }
@@ -1107,6 +1146,7 @@ void prog_do(const char *arg) {
                         call_frame_t *frame = &state.call_stack[state.call_depth - 1];
                         frame->with_argc = with_argc;
                         memcpy(frame->with_args, with_args, with_argc * sizeof(value_t));
+                        memcpy(frame->with_ref_names, ref_names, sizeof(ref_names));
                         frame->caller_prog = NULL;
                     }
                 }
@@ -1130,6 +1170,7 @@ void prog_do(const char *arg) {
                 call_frame_t *frame = &state.call_stack[state.call_depth - 1];
                 frame->with_argc = with_argc;
                 memcpy(frame->with_args, with_args, with_argc * sizeof(value_t));
+                memcpy(frame->with_ref_names, ref_names, sizeof(ref_names));
             }
         } else {
             /* Interactive DO - push a frame so PARAMETERS can find WITH args */
@@ -1148,6 +1189,7 @@ void prog_do(const char *arg) {
                     call_frame_t *frame = &state.call_stack[state.call_depth - 1];
                     frame->with_argc = with_argc;
                     memcpy(frame->with_args, with_args, with_argc * sizeof(value_t));
+                    memcpy(frame->with_ref_names, ref_names, sizeof(ref_names));
                     frame->caller_prog = NULL;
                 }
             }
@@ -1795,6 +1837,9 @@ void prog_parameters(lexer_t *l) {
             prog_error(ERR_SYNTAX, err);
             return;
         }
+        /* Record param name for by-reference writeback */
+        if (frame && param_idx < MAX_FUNC_ARGS)
+            str_copy(frame->param_names[param_idx], name, MEMVAR_NAMELEN);
         /* Save current value as PRIVATE */
         if (frame) {
             save_private(frame, name);
