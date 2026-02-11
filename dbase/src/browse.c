@@ -29,6 +29,17 @@
 #define DBASE_KEY_DEL    7
 
 /* ------------------------------------------------------------------ */
+/*  Terminal helpers: flush stdout before every term_ call so that     */
+/*  buffered stdio output arrives before cursor/attribute changes.     */
+/* ------------------------------------------------------------------ */
+
+#if HAS_TERM
+static void tgoto(int row, int col)   { fflush(stdout); term_gotoxy(row, col); }
+static void tattr(int attr)           { fflush(stdout); term_set_attr(attr); }
+static void tclear(int mode)          { fflush(stdout); term_clear(mode); }
+#endif
+
+/* ------------------------------------------------------------------ */
 /*  Shared helpers                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -187,8 +198,8 @@ static int edit_cell(browse_state_t *bs, int field_idx,
         int key;
         /* Draw field value in reverse video */
         len = strlen(buf);
-        term_gotoxy(screen_row, screen_col);
-        term_set_attr(7);
+        tgoto(screen_row, screen_col);
+        tattr(7);
         {
             int i;
             for (i = 0; i < width; i++) {
@@ -197,7 +208,7 @@ static int edit_cell(browse_state_t *bs, int field_idx,
             }
         }
         /* Position cursor */
-        term_gotoxy(screen_row, screen_col + pos);
+        tgoto(screen_row, screen_col + pos);
         fflush(stdout);
 
         key = read_dbase_key();
@@ -207,8 +218,8 @@ static int edit_cell(browse_state_t *bs, int field_idx,
             str_copy(buf, original, sizeof(buf));
             /* Redraw original */
             len = strlen(buf);
-            term_gotoxy(screen_row, screen_col);
-            term_set_attr(0);
+            tgoto(screen_row, screen_col);
+            tattr(0);
             {
                 int i;
                 for (i = 0; i < width; i++) {
@@ -339,8 +350,8 @@ static void edit_paint_header(browse_state_t *bs)
 {
     dbf_t *db = bs->db;
     int is_del = (db->record_buf[0] == '*');
-    term_gotoxy(1, 1);
-    term_set_attr(7);
+    tgoto(1, 1);
+    tattr(7);
     {
         char hdr[128];
         int i, len;
@@ -351,20 +362,20 @@ static void edit_paint_header(browse_state_t *bs)
         printf("%s", hdr);
         for (i = len; i < bs->screen_cols; i++) putchar(' ');
     }
-    term_set_attr(0);
+    tattr(0);
 }
 
 static void edit_paint_help(browse_state_t *bs)
 {
-    term_gotoxy(bs->screen_rows, 1);
-    term_set_attr(7);
+    tgoto(bs->screen_rows, 1);
+    tattr(7);
     {
         const char *help = " ^W=Save  Esc=Exit  PgUp/PgDn=Record  ^U=Del";
         int i, len = strlen(help);
         printf("%s", help);
         for (i = len; i < bs->screen_cols; i++) putchar(' ');
     }
-    term_set_attr(0);
+    tattr(0);
 }
 
 static void edit_paint_record(browse_state_t *bs)
@@ -389,12 +400,12 @@ static void edit_paint_record(browse_state_t *bs)
         trim_right(display);
         w = cmd_field_display_width(db, fi);
 
-        term_gotoxy(r + 3, 1);
-        term_clear(1);  /* clear to end of line */
+        tgoto(r + 3, 1);
+        tclear(1);  /* clear to end of line */
         printf("%*s: ", max_name_w, db->fields[fi].name);
 
         if (r == bs->cur_field)
-            term_set_attr(7);
+            tattr(7);
         {
             int dlen = strlen(display);
             int j;
@@ -404,12 +415,12 @@ static void edit_paint_record(browse_state_t *bs)
             }
         }
         if (r == bs->cur_field)
-            term_set_attr(0);
+            tattr(0);
     }
     /* Clear remaining data rows */
     for (; r < bs->data_rows; r++) {
-        term_gotoxy(r + 3, 1);
-        term_clear(1);
+        tgoto(r + 3, 1);
+        tclear(1);
     }
 }
 
@@ -448,7 +459,7 @@ static void cmd_edit_impl(dbf_t *db, const char *args)
     cmd_follow_relations();
 
     term_set_raw(1);
-    term_clear(0);
+    tclear(0);
 
     nf = total_fields(&bs);
 
@@ -504,10 +515,11 @@ static void cmd_edit_impl(dbf_t *db, const char *args)
         }
     }
 
-    term_set_attr(0);
+    tattr(0);
+    fflush(stdout);
     term_set_raw(0);
-    term_clear(0);
-    term_gotoxy(1, 1);
+    tclear(0);
+    tgoto(1, 1);
     fflush(stdout);
 }
 #endif /* HAS_TERM */
@@ -588,21 +600,21 @@ static void browse_paint_headers(browse_state_t *bs)
 {
     int c;
     /* Row 1: field names */
-    term_gotoxy(1, 1);
-    term_set_attr(7);
+    tgoto(1, 1);
+    tattr(7);
     {
         int i;
         for (i = 0; i < bs->screen_cols; i++) putchar(' ');
     }
     for (c = 0; c < bs->num_visible_cols; c++) {
         int fi = get_field_index(bs, bs->first_field + c);
-        term_gotoxy(1, bs->col_x[c]);
+        tgoto(1, bs->col_x[c]);
         printf("%-*.*s", bs->col_w[c], bs->col_w[c], bs->db->fields[fi].name);
     }
-    term_set_attr(0);
+    tattr(0);
 
     /* Row 2: separator line */
-    term_gotoxy(2, 1);
+    tgoto(2, 1);
     {
         int i;
         for (i = 0; i < bs->screen_cols; i++) putchar('-');
@@ -614,8 +626,8 @@ static void browse_paint_row(browse_state_t *bs, int row, int highlight_col)
     int c;
     int screen_row = row + 3;
 
-    term_gotoxy(screen_row, 1);
-    term_clear(1);
+    tgoto(screen_row, 1);
+    tclear(1);
 
     if (row >= bs->visible_count) return;
 
@@ -630,9 +642,9 @@ static void browse_paint_row(browse_state_t *bs, int row, int highlight_col)
         trim_right(display);
         dlen = strlen(display);
 
-        term_gotoxy(screen_row, bs->col_x[c]);
+        tgoto(screen_row, bs->col_x[c]);
         if (row == bs->cur_row && c == (bs->cur_field - bs->first_field))
-            term_set_attr(7);
+            tattr(7);
 
         for (j = 0; j < bs->col_w[c]; j++) {
             if (j < dlen) putchar(display[j]);
@@ -640,7 +652,7 @@ static void browse_paint_row(browse_state_t *bs, int row, int highlight_col)
         }
 
         if (row == bs->cur_row && c == (bs->cur_field - bs->first_field))
-            term_set_attr(0);
+            tattr(0);
     }
     (void)highlight_col;
 }
@@ -672,12 +684,12 @@ static void browse_paint_status(browse_state_t *bs)
              db->fields[fi].name,
              is_del ? "  *Del*" : "");
 
-    term_gotoxy(bs->screen_rows, 1);
-    term_set_attr(7);
+    tgoto(bs->screen_rows, 1);
+    tattr(7);
     len = strlen(status);
     printf("%s", status);
     for (i = len; i < bs->screen_cols; i++) putchar(' ');
-    term_set_attr(0);
+    tattr(0);
 }
 
 static void browse_refill_at_top(browse_state_t *bs)
@@ -761,7 +773,7 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
     compute_columns(&bs);
 
     term_set_raw(1);
-    term_clear(0);
+    tclear(0);
     browse_paint_headers(&bs);
     browse_paint_all_rows(&bs);
     browse_paint_status(&bs);
@@ -986,10 +998,11 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
     if (bs.visible_count > 0)
         dbf_read_record(db, bs.visible_recnos[bs.cur_row]);
 
-    term_set_attr(0);
+    tattr(0);
+    fflush(stdout);
     term_set_raw(0);
-    term_clear(0);
-    term_gotoxy(1, 1);
+    tclear(0);
+    tgoto(1, 1);
     fflush(stdout);
 }
 #endif /* HAS_TERM */
