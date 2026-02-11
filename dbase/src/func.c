@@ -1045,13 +1045,11 @@ static int fn_adir(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     }
 
     while ((ent = readdir(dir)) != NULL) {
+        if (ent->d_name[0] == '.' && (ent->d_name[1] == '\0' ||
+            (ent->d_name[1] == '.' && ent->d_name[2] == '\0')))
+            continue;  /* skip . and .. */
         if (pattern) {
-            char up_ent[256], up_pat[256];
-            str_copy(up_ent, ent->d_name, sizeof(up_ent));
-            str_upper(up_ent);
-            str_copy(up_pat, pattern, sizeof(up_pat));
-            str_upper(up_pat);
-            if (str_like(up_ent, up_pat)) count++;
+            if (str_like(ent->d_name, pattern)) count++;
         } else {
             count++;
         }

@@ -122,13 +122,9 @@ int str_like(const char *text, const char *pattern) {
         if (*p == '\0') return *t == '\0';
 
         if (*t == '\0') {
-            if (star) {
-                star_text++;
-                t = star_text;
-                p = star;
-                continue;
-            }
-            return 0;
+            /* Remaining pattern must be all '*' to match */
+            while (*p == '*') p++;
+            return *p == '\0';
         }
 
         pc = *p;
