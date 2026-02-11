@@ -92,4 +92,9 @@ void screen_set_lastkey(int key);   /* Set lastkey (for WAIT, ACCEPT, etc.) */
 /* Check for Esc keypress (non-blocking). Returns 1 if Esc pressed, 0 otherwise. */
 int screen_check_escape(void);
 
+/* Key handler support (SET KEY / ON KEY) */
+void screen_set_key_handler(int keycode, const char *procname);
+void screen_clear_key_handlers(void);
+int  screen_check_key_handler(int keycode);  /* returns 1 if handler fired */
+
 #endif

@@ -109,10 +109,11 @@ All commonly-used SET options are now implemented:
 | SET ESCAPE ON/OFF | Done — Esc interrupts programs (requires term) |
 | SET MARGIN TO n | Done — stored (0-254), used by printer output |
 
-### 2.7 ON KEY — Event-Driven Key Handling
-`ON KEY = <key> <command>` triggers a command when a specific key is pressed.
-Used for function-key menus and hotkeys. Clipper extended this with `SET KEY`
-and code blocks.
+### ~~2.7 ON KEY — Event-Driven Key Handling~~ FIXED
+`SET KEY <keycode> TO <procedure>` registers a handler procedure called when
+that key is pressed during WAIT/READ/INKEY. `SET KEY <n> TO` (no procedure)
+clears a single handler. `ON KEY` clears all handlers. Re-entrancy guard
+prevents recursive handler invocation. Up to 32 simultaneous key handlers.
 
 ### 2.8 CALCULATE — Aggregate Expressions
 `CALCULATE` computes multiple aggregate values in a single pass:

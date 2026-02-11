@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include "screen.h"
 #include "command.h"
+#include "program.h"
 #include "util.h"
 #include "memvar.h"
 #include "expr.h"
@@ -19,6 +20,15 @@ static screen_state_t scr;
 static int print_row, print_col;   /* printer position tracking */
 static int last_key;               /* last key from INKEY/READ/WAIT */
 static int read_exit_key;          /* how user exited last READ */
+
+/* Key handler state (SET KEY / ON KEY) */
+#define MAX_KEY_HANDLERS 32
+static struct {
+    int keycode;
+    char procedure[64];
+} key_handlers[MAX_KEY_HANDLERS];
+static int key_handler_count;
+static int in_key_handler;  /* re-entrancy guard */
 
 /* Assume 80-column screen for cursor tracking */
 #define SCREEN_COLS 80
@@ -354,6 +364,7 @@ void screen_read(void) {
 
             for (;;) {
                 key = read_dbase_key();
+                if (key > 0 && screen_check_key_handler(key)) continue;
                 if (key == '\r' || key == '\n' || key == -1) {
                     last_key = 13;
                     break;
@@ -1030,7 +1041,10 @@ int screen_inkey(double timeout) {
         }
 
         term_set_raw(0);
-        if (key > 0) last_key = key;
+        if (key > 0) {
+            last_key = key;
+            if (screen_check_key_handler(key)) return 0;
+        }
         return (key < 0) ? 0 : key;
     }
 #endif
@@ -1041,6 +1055,7 @@ int screen_inkey(double timeout) {
         if (c < 0) return 0;
         if (c == '\n') c = 13;
         last_key = c;
+        if (screen_check_key_handler(c)) return 0;
         return c;
     }
 }
@@ -1055,6 +1070,53 @@ int screen_readkey(void) {
 
 void screen_set_lastkey(int key) {
     last_key = key;
+}
+
+/* ---- Key handler support (SET KEY / ON KEY) ---- */
+
+void screen_set_key_handler(int keycode, const char *procname) {
+    int i;
+    if (!procname || !procname[0]) {
+        /* Remove handler for this keycode */
+        for (i = 0; i < key_handler_count; i++) {
+            if (key_handlers[i].keycode == keycode) {
+                key_handlers[i] = key_handlers[--key_handler_count];
+                return;
+            }
+        }
+        return;
+    }
+    /* Replace existing or add new */
+    for (i = 0; i < key_handler_count; i++) {
+        if (key_handlers[i].keycode == keycode) {
+            str_copy(key_handlers[i].procedure, procname, sizeof(key_handlers[i].procedure));
+            return;
+        }
+    }
+    if (key_handler_count < MAX_KEY_HANDLERS) {
+        key_handlers[key_handler_count].keycode = keycode;
+        str_copy(key_handlers[key_handler_count].procedure, procname,
+                 sizeof(key_handlers[key_handler_count].procedure));
+        key_handler_count++;
+    }
+}
+
+void screen_clear_key_handlers(void) {
+    key_handler_count = 0;
+}
+
+int screen_check_key_handler(int keycode) {
+    int i;
+    if (in_key_handler) return 0;
+    for (i = 0; i < key_handler_count; i++) {
+        if (key_handlers[i].keycode == keycode) {
+            in_key_handler = 1;
+            prog_do(key_handlers[i].procedure);
+            in_key_handler = 0;
+            return 1;
+        }
+    }
+    return 0;
 }
 
 int screen_check_escape(void) {

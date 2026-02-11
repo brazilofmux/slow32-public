@@ -2583,6 +2583,7 @@ static void cmd_wait(const char *arg) {
         (void)next;
     }
     screen_set_lastkey((c == '\n') ? 13 : c);
+    screen_check_key_handler((c == '\n') ? 13 : c);
 
     if (has_to) {
         char ch[2];
@@ -4283,6 +4284,9 @@ static void h_on(dbf_t *db, lexer_t *l) {
                 lex_next(l);
             } else prog_on_error(NULL);
         } else prog_on_error(NULL);
+    } else if (cmd_kw(l, "KEY")) {
+        /* ON KEY — clear all key handlers */
+        screen_clear_key_handlers();
     }
 }
 
@@ -4464,6 +4468,29 @@ static void h_set(dbf_t *db, lexer_t *l) {
                     else printf("Order set to %d (%s).\n", n, cur_wa()->indexes[n - 1].filename);
                 }
                 lex_next(l);
+            }
+        }
+    } else if (cmd_kw(l, "KEY")) {
+        /* SET KEY <keycode> TO [<procedure>] */
+        lex_next(l);
+        if (l->current.type == TOK_NUMBER || l->current.type == TOK_MINUS) {
+            int neg = 0;
+            int keycode;
+            if (l->current.type == TOK_MINUS) {
+                neg = 1;
+                lex_next(l);
+            }
+            keycode = (l->current.type == TOK_NUMBER) ? (int)l->current.num_val : 0;
+            if (neg) keycode = -keycode;
+            lex_next(l);
+            if (cmd_kw(l, "TO")) {
+                lex_next(l);
+                if (l->current.type == TOK_IDENT) {
+                    screen_set_key_handler(keycode, l->current.text);
+                    lex_next(l);
+                } else {
+                    screen_set_key_handler(keycode, NULL);
+                }
             }
         }
     } else if (cmd_kw(l, "RELATION")) {
