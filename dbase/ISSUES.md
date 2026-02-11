@@ -124,11 +124,55 @@ CALCULATE AVG(salary), MAX(salary), MIN(salary), CNT() TO avg_s, max_s, min_s, c
 CALCULATE SUM(qty*price) TO total FOR category="A"
 ```
 
-### 2.9 DEFINE/ACTIVATE MENU — Menu System
-Clipper's menu system (`DEFINE MENU`, `DEFINE PAD`, `ACTIVATE MENU`) and popup
-menus (`DEFINE POPUP`, `DEFINE BAR`) are the standard UI framework for
-non-trivial dBase applications. Without them, menu-driven apps require manual
-`@SAY`/`INKEY()` loops.
+### 2.9 Menu System
+
+The Clipper/dBase IV menu system, broken into four pieces:
+
+#### 2.9a `@...PROMPT` + `MENU TO` (classic dBase III+) — SIMPLEST
+The original lightbar menu. Define prompts at screen positions, then `MENU TO`
+runs selection and stores the result (1-based index, 0 for Escape).
+```
+@ 10,20 PROMPT "File"     MESSAGE "File operations"
+@ 11,20 PROMPT "Edit"     MESSAGE "Edit records"
+@ 12,20 PROMPT "Quit"     MESSAGE "Exit program"
+MENU TO choice
+```
+Follows the existing `@GET`/`READ` pattern: a pending prompt list, then a
+command that activates the UI. Needs `SET MESSAGE TO <row>` and `SET WRAP ON/OFF`.
+
+#### 2.9b `DEFINE POPUP` / `DEFINE BAR` / `ACTIVATE POPUP`
+Standalone popup menus — a bordered box with a list of choices:
+```
+DEFINE POPUP fileMenu FROM 5,10 TO 15,30
+DEFINE BAR 1 OF fileMenu PROMPT "Open"
+DEFINE BAR 2 OF fileMenu PROMPT "--------"   && separator
+DEFINE BAR 3 OF fileMenu PROMPT "Quit"
+ACTIVATE POPUP fileMenu
+? BAR(), PROMPT()
+DEACTIVATE POPUP / RELEASE POPUP
+```
+Needs a popup name registry, bar list, bordered rendering, separator skipping.
+`BAR()` and `PROMPT()` functions return last selection.
+
+#### 2.9c `DEFINE MENU` / `DEFINE PAD` / `ACTIVATE MENU`
+Horizontal menu bar with attached dropdown popups:
+```
+DEFINE MENU mainBar
+DEFINE PAD pFile OF mainBar PROMPT "File" AT 0,0
+DEFINE PAD pEdit OF mainBar PROMPT "Edit" AT 0,10
+ON PAD pFile OF mainBar ACTIVATE POPUP fileMenu
+ON PAD pEdit OF mainBar ACTIVATE POPUP editMenu
+ACTIVATE MENU mainBar
+RELEASE MENU mainBar
+```
+Two-level navigation: horizontal lightbar on pads, Enter/Down opens attached
+popup, Left/Right switches pads. Most complex piece.
+
+#### 2.9d Ancillary menu commands
+- `ON SELECTION POPUP/PAD ... DO <proc>` — callback on selection
+- `BAR()`, `PROMPT()`, `PAD()`, `POPUP()` — functions returning last selection
+- `RELEASE MENU/POPUP` — cleanup
+- `SAVE SCREEN` / `RESTORE SCREEN` — needed for clean popup overlay (see 5.6)
 
 ---
 

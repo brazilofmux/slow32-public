@@ -666,6 +666,7 @@ void screen_clear(void) {
     }
     scr.last_row = 0;
     scr.last_col = 1;
+    scr.nprompts = 0;
 }
 
 /* ---- CLEAR GETS ---- */
@@ -678,6 +679,160 @@ void screen_clear_gets(void) {
         scr.gets[i].when_ast = NULL;
     }
     scr.ngets = 0;
+}
+
+/* ---- @PROMPT ---- */
+void screen_prompt(int row, int col, const char *text, const char *message) {
+    if (scr.nprompts >= MAX_PROMPTS) {
+        printf("Too many PROMPTs.\n");
+        return;
+    }
+
+    scr.prompts[scr.nprompts].row = row;
+    scr.prompts[scr.nprompts].col = col;
+    str_copy(scr.prompts[scr.nprompts].text, text, sizeof(scr.prompts[0].text));
+    if (message)
+        str_copy(scr.prompts[scr.nprompts].message, message, sizeof(scr.prompts[0].message));
+    else
+        scr.prompts[scr.nprompts].message[0] = '\0';
+
+    /* Display the prompt text at the specified position */
+    goto_pos(row, col);
+    printf("%s", text);
+    screen_update_pos(row, col, (int)strlen(text));
+
+    scr.nprompts++;
+}
+
+void screen_clear_prompts(void) {
+    scr.nprompts = 0;
+}
+
+/* ---- MENU TO ---- */
+int screen_menu_to(void) {
+    int cur = 0;  /* 0-based index of current selection */
+    int n = scr.nprompts;
+    int msg_row = cmd_get_message_row();
+    int wrap = cmd_get_wrap();
+    int key;
+    int i;
+
+    if (n == 0) return 0;
+
+#if HAS_TERM
+    if (scr.term_available) {
+        fflush(stdout);  /* flush pending SAY/PROMPT output before raw mode */
+        term_set_raw(1);
+
+        for (;;) {
+            /* Redraw all prompts: current in reverse, others normal */
+            for (i = 0; i < n; i++) {
+                term_gotoxy(scr.prompts[i].row, scr.prompts[i].col);
+                if (i == cur)
+                    term_set_attr(7);  /* reverse */
+                else
+                    term_set_attr(0);  /* normal */
+                term_puts(scr.prompts[i].text);
+            }
+
+            /* Show MESSAGE for current selection if SET MESSAGE is active */
+            if (msg_row >= 0) {
+                char blank[81];
+                int len;
+                term_gotoxy(msg_row, 0);
+                term_set_attr(0);
+                /* Clear the message row */
+                len = 80;
+                if (len > (int)sizeof(blank) - 1) len = (int)sizeof(blank) - 1;
+                memset(blank, ' ', len);
+                blank[len] = '\0';
+                term_puts(blank);
+                /* Display current message centered */
+                if (scr.prompts[cur].message[0]) {
+                    int mlen = (int)strlen(scr.prompts[cur].message);
+                    int mcol = (80 - mlen) / 2;
+                    if (mcol < 0) mcol = 0;
+                    term_gotoxy(msg_row, mcol);
+                    term_puts(scr.prompts[cur].message);
+                }
+            }
+
+            key = read_dbase_key();
+            if (key > 0 && screen_check_key_handler(key)) continue;
+
+            if (key == '\r' || key == '\n') {
+                last_key = 13;
+                break;
+            }
+            if (key == 27) {  /* Escape */
+                last_key = 27;
+                cur = -1;
+                break;
+            }
+            if (key == DBASE_KEY_UP) {
+                if (cur > 0) {
+                    cur--;
+                } else if (wrap) {
+                    cur = n - 1;
+                }
+            } else if (key == DBASE_KEY_DOWN) {
+                if (cur < n - 1) {
+                    cur++;
+                } else if (wrap) {
+                    cur = 0;
+                }
+            } else if (key == DBASE_KEY_HOME) {
+                cur = 0;
+            } else if (key == DBASE_KEY_END) {
+                cur = n - 1;
+            } else if (key == DBASE_KEY_LEFT) {
+                if (cur > 0) {
+                    cur--;
+                } else if (wrap) {
+                    cur = n - 1;
+                }
+            } else if (key == DBASE_KEY_RIGHT) {
+                if (cur < n - 1) {
+                    cur++;
+                } else if (wrap) {
+                    cur = 0;
+                }
+            }
+        }
+
+        /* Restore normal display for all prompts */
+        term_set_attr(0);
+        for (i = 0; i < n; i++) {
+            term_gotoxy(scr.prompts[i].row, scr.prompts[i].col);
+            term_puts(scr.prompts[i].text);
+        }
+
+        /* Clear message row */
+        if (msg_row >= 0) {
+            char blank[81];
+            int len = 80;
+            if (len > (int)sizeof(blank) - 1) len = (int)sizeof(blank) - 1;
+            memset(blank, ' ', len);
+            blank[len] = '\0';
+            term_gotoxy(msg_row, 0);
+            term_puts(blank);
+        }
+
+        term_set_raw(0);
+    } else
+#endif
+    {
+        /* Non-terminal fallback: just pick first option */
+        printf("Menu: ");
+        for (i = 0; i < n; i++) {
+            printf("%d. %s  ", i + 1, scr.prompts[i].text);
+        }
+        printf("\n");
+        cur = 0;
+    }
+
+    scr.nprompts = 0;  /* consume prompts after MENU TO */
+    return (cur >= 0) ? cur + 1 : 0;  /* 1-based, 0 = Esc */
 }
 
 /* ---- SET COLOR TO ---- */
@@ -928,8 +1083,42 @@ void screen_at_cmd(const char *line) {
         if (str_imatch(p, "DOUBLE")) dbl = 1;
         screen_box(row, col, r2, c2, dbl);
 
+    } else if (str_imatch(p, "PROMPT")) {
+        char text[80] = "";
+        char message[160] = "";
+        int i = 0;
+        p = skip_ws(p + 6);
+
+        /* Parse prompt text (quoted string) */
+        if (*p == '"' || *p == '\'') {
+            char q = *p++;
+            while (*p && *p != q && i < 79)
+                text[i++] = *p++;
+            text[i] = '\0';
+            if (*p) p++;
+        } else {
+            printf("Syntax: @ row,col PROMPT \"text\" [MESSAGE \"help\"]\n");
+            return;
+        }
+
+        /* Parse optional MESSAGE clause */
+        p = skip_ws(p);
+        if (str_imatch(p, "MESSAGE")) {
+            p = skip_ws(p + 7);
+            if (*p == '"' || *p == '\'') {
+                char q = *p++;
+                i = 0;
+                while (*p && *p != q && i < 159)
+                    message[i++] = *p++;
+                message[i] = '\0';
+                if (*p) p++;
+            }
+        }
+
+        screen_prompt(row, col, text, message);
+
     } else {
-        printf("Syntax: @ row,col SAY|GET|CLEAR TO|TO ...\n");
+        printf("Syntax: @ row,col SAY|GET|PROMPT|CLEAR TO|TO ...\n");
     }
 }
 

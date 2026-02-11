@@ -20,6 +20,8 @@ void set_init(set_options_t *opts) {
     opts->escape = 1;
     opts->echo = 0;
     opts->margin = 0;
+    opts->message_row = -1;  /* disabled by default */
+    opts->wrap = 0;
 }
 
 static int parse_on_off(const char *p) {
@@ -58,6 +60,11 @@ void set_display(const set_options_t *opts) {
     printf("ESCAPE    = %s\n", opts->escape ? "ON" : "OFF");
     printf("ECHO      = %s\n", opts->echo ? "ON" : "OFF");
     printf("MARGIN    = %d\n", opts->margin);
+    if (opts->message_row >= 0)
+        printf("MESSAGE   = %d\n", opts->message_row);
+    else
+        printf("MESSAGE   = (off)\n");
+    printf("WRAP      = %s\n", opts->wrap ? "ON" : "OFF");
 }
 
 void set_execute(set_options_t *opts, const char *arg) {
@@ -204,6 +211,27 @@ void set_execute(set_options_t *opts, const char *arg) {
             opts->margin = val;
         else
             printf("MARGIN must be 0-254.\n");
+        return;
+    }
+    if (str_imatch(p, "MESSAGE")) {
+        /* SET MESSAGE TO <row> or SET MESSAGE TO (disable) */
+        p = skip_ws(p + 7);
+        if (str_imatch(p, "TO")) p = skip_ws(p + 2);
+        if (*p >= '0' && *p <= '9') {
+            val = atoi(p);
+            if (val >= 0 && val <= 24)
+                opts->message_row = val;
+            else
+                printf("MESSAGE row must be 0-24.\n");
+        } else {
+            opts->message_row = -1;  /* disable */
+        }
+        return;
+    }
+    if (str_imatch(p, "WRAP")) {
+        val = parse_on_off(p + 4);
+        if (val >= 0) opts->wrap = val;
+        else printf("Syntax: SET WRAP ON/OFF\n");
         return;
     }
     if (str_imatch(p, "DEVICE")) {

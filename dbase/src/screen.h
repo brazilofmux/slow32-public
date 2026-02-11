@@ -7,6 +7,7 @@
 struct ast_node;
 
 #define MAX_GETS 64
+#define MAX_PROMPTS 20
 
 typedef struct {
     int row, col;
@@ -26,8 +27,16 @@ typedef struct {
 } get_entry_t;
 
 typedef struct {
+    int row, col;
+    char text[80];
+    char message[160];
+} prompt_entry_t;
+
+typedef struct {
     get_entry_t gets[MAX_GETS];
     int ngets;
+    prompt_entry_t prompts[MAX_PROMPTS];
+    int nprompts;
     int term_available;
     int fg_color, bg_color;
     int last_row, last_col;  /* cursor position tracking */
@@ -61,6 +70,15 @@ void screen_clear(void);
 
 /* CLEAR GETS command */
 void screen_clear_gets(void);
+
+/* @PROMPT command */
+void screen_prompt(int row, int col, const char *text, const char *message);
+
+/* MENU TO command — returns 1-based selection (0 if Esc) */
+int screen_menu_to(void);
+
+/* CLEAR prompts */
+void screen_clear_prompts(void);
 
 /* SET COLOR TO command */
 void screen_set_color(const char *spec);

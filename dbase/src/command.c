@@ -4365,6 +4365,14 @@ int cmd_get_margin(void) {
     return set_opts.margin;
 }
 
+int cmd_get_message_row(void) {
+    return set_opts.message_row;
+}
+
+int cmd_get_wrap(void) {
+    return set_opts.wrap;
+}
+
 date_format_t cmd_get_date_format(void) {
     return set_opts.date_format;
 }
@@ -4487,6 +4495,27 @@ static void h_accept(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(
 static void h_input(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_input(arg); }
 static void h_wait(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_wait(arg); }
 static void h_read(dbf_t *db, lexer_t *l) { (void)db; (void)l; screen_read(); }
+
+static void h_menu(dbf_t *db, lexer_t *l) {
+    char varname[MEMVAR_NAMELEN];
+    (void)db;
+    lex_next(l);  /* skip MENU */
+    if (!cmd_kw(l, "TO")) {
+        printf("Syntax: MENU TO <memvar>\n");
+        return;
+    }
+    lex_next(l);  /* skip TO */
+    if (l->current.type != TOK_IDENT) {
+        printf("Syntax: MENU TO <memvar>\n");
+        return;
+    }
+    str_copy(varname, l->current.text, sizeof(varname));
+    {
+        int result = screen_menu_to();
+        value_t v = val_num((double)result);
+        memvar_set(cmd_get_memvar_store(), varname, &v);
+    }
+}
 
 static void h_go(dbf_t *db, lexer_t *l) {
     char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg));
@@ -4893,7 +4922,7 @@ static cmd_entry_t cmd_table[] = {
     { "INPUT", h_input }, { "JOIN", h_join },
     { "LABEL", h_label }, { "LIST", h_list },
     { "LOCATE", h_locate }, { "LOOP", h_loop },
-    { "MODIFY", h_modify }, { "ON", h_on },
+    { "MENU", h_menu }, { "MODIFY", h_modify }, { "ON", h_on },
     { "OTHERWISE", h_otherwise }, { "PACK", h_pack },
     { "PARAMETERS", h_parameters }, { "PRIVATE", h_private },
     { "PROCEDURE", h_procedure }, { "PUBLIC", h_public },

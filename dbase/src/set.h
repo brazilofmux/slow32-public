@@ -27,6 +27,8 @@ typedef struct set_options {
     int escape;       /* 1=ON (Esc interrupts programs) */
     int echo;         /* 1=ON (echo lines during DO) */
     int margin;       /* left margin for printer output (0-254) */
+    int message_row;  /* row for PROMPT MESSAGE display (-1=disabled) */
+    int wrap;         /* 1=ON (MENU TO wraps around) */
 } set_options_t;
 
 void set_init(set_options_t *opts);

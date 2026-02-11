@@ -1,7 +1,39 @@
 dBASE III Clone for SLOW-32
 Stage 9: AST Expressions
 
-. TALK      = ON
+. . . . . TALK      = OFF
+DELETED   = OFF
+EXACT     = OFF
+HEADING   = ON
+CONFIRM   = OFF
+BELL      = ON
+SAFETY    = ON
+CONSOLE   = ON
+DECIMALS  = 2
+DATE      = AMERICAN
+DEVICE    = SCREEN
+CENTURY   = OFF
+ESCAPE    = ON
+ECHO      = OFF
+MARGIN    = 0
+MESSAGE   = 24
+WRAP      = ON
+. . 
+
+
+
+
+         Option A. 
+         Option B. 
+         Option C. . Menu: 1. Option A  2. Option B  3. Option C  
+. Choice: 1
+. . 
+
+
+    Alpha. 
+    Beta. Menu: 1. Alpha  2. Beta  
+. Pick: 1
+. . . . TALK      = OFF
 DELETED   = OFF
 EXACT     = OFF
 HEADING   = ON
@@ -18,37 +50,4 @@ ECHO      = OFF
 MARGIN    = 0
 MESSAGE   = (off)
 WRAP      = OFF
-. . . . . . . . . . . . . . . TALK      = OFF
-DELETED   = ON
-EXACT     = ON
-HEADING   = OFF
-CONFIRM   = ON
-BELL      = OFF
-SAFETY    = OFF
-CONSOLE   = OFF
-DECIMALS  = 4
-DATE      = ANSI
-DEVICE    = SCREEN
-CENTURY   = ON
-ESCAPE    = OFF
-ECHO      = ON
-MARGIN    = 10
-MESSAGE   = (off)
-WRAP      = OFF
-. . . . . . . . . . . . . . . TALK      = ON
-DELETED   = OFF
-EXACT     = OFF
-HEADING   = ON
-CONFIRM   = OFF
-BELL      = ON
-SAFETY    = ON
-CONSOLE   = ON
-DECIMALS  = 2
-DATE      = AMERICAN
-DEVICE    = SCREEN
-CENTURY   = OFF
-ESCAPE    = ON
-ECHO      = OFF
-MARGIN    = 0
-MESSAGE   = (off)
-WRAP      = OFF
+

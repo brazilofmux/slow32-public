@@ -33,6 +33,8 @@ int cmd_get_century(void);    /* SET CENTURY ON/OFF */
 int cmd_get_escape(void);     /* SET ESCAPE ON/OFF */
 int cmd_get_echo(void);       /* SET ECHO ON/OFF */
 int cmd_get_margin(void);     /* SET MARGIN TO n */
+int cmd_get_message_row(void); /* SET MESSAGE TO row (-1=disabled) */
+int cmd_get_wrap(void);       /* SET WRAP ON/OFF */
 date_format_t cmd_get_date_format(void);  /* SET DATE format */
 
 /* Public wrappers for browse.c */
