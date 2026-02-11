@@ -11,7 +11,7 @@ int main(void) {
     char line[256];
 
     printf("dBASE III Clone for SLOW-32\n");
-    printf("Stage 7: B-Tree Indexing\n\n");
+    printf("Stage 8: Advanced Language Features\n\n");
 
     dbf_init(&current_db);
     prog_init();

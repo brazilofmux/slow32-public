@@ -625,6 +625,35 @@ static int fn_cmonth(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
     return 0;
 }
 
+static int fn_empty(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    if (nargs < 1) {
+        *result = val_logic(1);
+        return 0;
+    }
+    switch (args[0].type) {
+    case VAL_CHAR: {
+        const char *p = args[0].str;
+        while (*p == ' ') p++;
+        *result = val_logic(*p == '\0');
+        break;
+    }
+    case VAL_NUM:
+        *result = val_logic(args[0].num == 0.0);
+        break;
+    case VAL_LOGIC:
+        *result = val_logic(args[0].logic == 0);
+        break;
+    case VAL_DATE:
+        *result = val_logic(args[0].date == 0);
+        break;
+    default:
+        *result = val_logic(1);
+        break;
+    }
+    return 0;
+}
+
 /* ---- IIF (inline if) ---- */
 
 static int fn_iif(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
@@ -891,12 +920,16 @@ static const func_entry_t func_table[] = {
     { "TRIM",      fn_trim },
     { "RTRIM",     fn_trim },     /* alias */
     { "LTRIM",     fn_ltrim },
+    { "ALLTRIM",   fn_alltrim },
     { "UPPER",     fn_upper },
     { "LOWER",     fn_lower },
     { "AT",        fn_at },
     { "LEN",       fn_len },
     { "SPACE",     fn_space },
     { "REPLICATE", fn_replicate },
+    { "PADL",      fn_padl },
+    { "PADR",      fn_padr },
+    { "PADC",      fn_padc },
     { "LEFT",      fn_left },
     { "RIGHT",     fn_right },
     { "STR",       fn_str },
@@ -935,6 +968,7 @@ static const func_entry_t func_table[] = {
     { "ISUPPER",   fn_isupper },
     { "ISLOWER",   fn_islower },
     /* Misc */
+    { "EMPTY",     fn_empty },
     { "IIF",       fn_iif },
     { "FILE",      fn_file },
     /* System */
