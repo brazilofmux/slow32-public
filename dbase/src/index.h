@@ -75,6 +75,7 @@ typedef struct {
     int iter_pos;           /* position within leaf */
 
     int active;
+    int unique;             /* 1 = unique index */
 } index_t;
 
 /* Initialize an index structure */

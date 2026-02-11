@@ -213,7 +213,8 @@ static int page_flush(index_t *idx, int page_no) {
         tmp = idx->key_len;         memcpy(buf + 24, &tmp, 4);
         tmp = idx->key_type;        memcpy(buf + 28, &tmp, 4);
         tmp = idx->free_page_head;  memcpy(buf + 32, &tmp, 4);
-        memcpy(buf + 36, idx->key_expr, 256);
+        tmp = idx->unique;          memcpy(buf + 36, &tmp, 4);
+        memcpy(buf + 40, idx->key_expr, 256);
     } else if (p->type == PAGE_FREE) {
         uint16_t t16;
         uint32_t t32;
@@ -790,6 +791,24 @@ int index_insert(index_t *idx, const char *key, uint32_t recno) {
 
     /* node is now a leaf. Insert into it. */
     pos = page_lower_bound(idx, node, padded);
+    if (idx->unique) {
+        if (pos < node->nkeys &&
+            key_cmp(page_key(idx, node, pos), padded, idx->key_len) == 0) {
+            /* Duplicate key in unique index - skip insertion (Standard dBase behavior) */
+            page_put(node);
+            return 0;
+        }
+        if (pos == 0 && node->prev_leaf) {
+            ndx_page_t *prev = page_get(idx, node->prev_leaf);
+            if (prev && prev->nkeys > 0 &&
+                key_cmp(page_key(idx, prev, prev->nkeys - 1), padded, idx->key_len) == 0) {
+                page_put(prev);
+                page_put(node);
+                return 0;
+            }
+            if (prev) page_put(prev);
+        }
+    }
     leaf_insert_at(idx, node, pos, padded, recno);
     idx->nentries++;
 
@@ -1166,6 +1185,25 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
         qsort_r(entries, nentries, sizeof(key_entry_t), key_entry_cmp, idx);
     }
 
+    if (idx->unique && nentries > 1) {
+        int out = 0;
+        int j;
+        for (i = 0; i < (uint32_t)nentries;) {
+            uint32_t recno = entries[i].recno;
+            j = (int)i + 1;
+            while (j < nentries &&
+                   key_cmp(entries[i].key, entries[j].key, idx->key_len) == 0) {
+                if (entries[j].recno < recno) recno = entries[j].recno;
+                j++;
+            }
+            if (out != (int)i) memcpy(&entries[out], &entries[i], sizeof(entries[0]));
+            entries[out].recno = recno;
+            out++;
+            i = (uint32_t)j;
+        }
+        nentries = out;
+    }
+
     /* Second pass: Pack into leaf pages and build tree bottom-up */
     idx->num_pages = 0;
     idx->nentries = 0;
@@ -1357,7 +1395,8 @@ static int read_ndx2(index_t *idx, FILE *fp) {
     memcpy(&tmp, buf + 24, 4); idx->key_len = (int)tmp;
     memcpy(&tmp, buf + 28, 4); idx->key_type = (int)tmp;
     memcpy(&tmp, buf + 32, 4); idx->free_page_head = (int)tmp;
-    memcpy(idx->key_expr, buf + 36, 256);
+    memcpy(&tmp, buf + 36, 4); idx->unique = (int)tmp;
+    memcpy(idx->key_expr, buf + 40, 256);
     idx->key_expr[255] = '\0';
 
     compute_fanout(idx);
@@ -1410,6 +1449,7 @@ static int read_ndx1(index_t *idx, FILE *fp) {
     idx->key_len = (int)keylen;
     if (idx->key_len > MAX_INDEX_KEY) idx->key_len = MAX_INDEX_KEY;
     idx->key_type = 0;
+    idx->unique = 0;
     compute_fanout(idx);
 
     /* Initialize empty tree */

@@ -2913,56 +2913,66 @@ static void cmd_copy_file(const char *arg) {
     printf("File copied.\n");
 }
 
-/* ---- INDEX ON <expr> TO <file> ---- */
-static void cmd_index_on(dbf_t *db, const char *arg) {
-    const char *p = skip_ws(arg);
+/* ---- INDEX [UNIQUE] ON <expr> TO <file> [UNIQUE] ---- */
+static void cmd_index_on(dbf_t *db, lexer_t *l) {
     char key_expr[256];
     char filename[64];
-    const char *to_pos = NULL;
-    const char *f;
+    int is_unique = 0;
 
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
-    /* Allow optional leading ON (when called with remaining input) */
-    if (str_imatch(p, "ON")) {
-        p = skip_ws(p + 2);
+    if (cmd_kw(l, "UNIQUE")) {
+        is_unique = 1;
+        lex_next(l);
     }
 
-    /* Find TO keyword */
-    f = p;
-    while (*f) {
-        if (str_imatch(f, "TO")) { to_pos = f; break; }
-        f++;
+    if (!cmd_kw(l, "ON")) {
+        printf("Syntax: INDEX [UNIQUE] ON <expr> TO <filename> [UNIQUE]\n");
+        return;
     }
+    lex_next(l); /* skip ON */
 
-    if (!to_pos) {
-        printf("Syntax: INDEX ON <expr> TO <filename>\n");
+    /* Find TO keyword or end */
+    const char *expr_start = l->token_start;
+    while (l->current.type != TOK_EOF && !cmd_kw(l, "TO"))
+        lex_next(l);
+
+    if (l->current.type == TOK_EOF) {
+        printf("Syntax: INDEX [UNIQUE] ON <expr> TO <filename> [UNIQUE]\n");
         return;
     }
 
     {
-        int len = (int)(to_pos - p);
+        int len = (int)(l->token_start - expr_start);
         if (len > (int)sizeof(key_expr) - 1) len = (int)sizeof(key_expr) - 1;
-        memcpy(key_expr, p, len);
+        memcpy(key_expr, expr_start, len);
         key_expr[len] = '\0';
         trim_right(key_expr);
     }
 
-    f = skip_ws(to_pos + 2);
-    {
-        int i = 0;
-        while (*f && *f != ' ' && *f != '\t' && i < 63)
-            filename[i++] = *f++;
-        filename[i] = '\0';
+    if (!cmd_kw(l, "TO")) {
+        printf("Syntax: INDEX [UNIQUE] ON <expr> TO <filename> [UNIQUE]\n");
+        return;
+    }
+    lex_next(l); /* skip TO */
+
+    if (consume_filename(l, filename, sizeof(filename)) < 0) {
+        printf("Syntax: INDEX [UNIQUE] ON <expr> TO <filename> [UNIQUE]\n");
+        return;
+    }
+
+    if (cmd_kw(l, "UNIQUE")) {
+        is_unique = 1;
+        lex_next(l);
     }
 
     ensure_ndx_ext(filename, sizeof(filename));
 
     if (filename[0] == '\0' || str_icmp(filename, ".NDX") == 0) {
-        printf("Syntax: INDEX ON <expr> TO <filename>\n");
+        printf("Syntax: INDEX [UNIQUE] ON <expr> TO <filename> [UNIQUE]\n");
         return;
     }
 
@@ -2970,6 +2980,7 @@ static void cmd_index_on(dbf_t *db, const char *arg) {
     close_all_indexes(cur_wa());
 
     /* Build the index in slot 0 */
+    cur_wa()->indexes[0].unique = is_unique;
     if (index_build(&cur_wa()->indexes[0], db, &expr_ctx, key_expr, filename) < 0) {
         prog_error(ERR_FILE_IO, "Error building index");
         return;
@@ -3814,7 +3825,7 @@ static void h_sort(dbf_t *db, lexer_t *l) {
     } else printf("Syntax: SORT TO <filename> ON <field> [/A][/D][/C]\n");
 }
 
-static void h_index(dbf_t *db, lexer_t *l) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_index_on(db, arg); }
+static void h_index(dbf_t *db, lexer_t *l) { lex_next(l); cmd_index_on(db, l); }
 
 static void h_seek(dbf_t *db, lexer_t *l) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_seek(db, arg); }
 static void h_find(dbf_t *db, lexer_t *l) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_find(db, arg); }
