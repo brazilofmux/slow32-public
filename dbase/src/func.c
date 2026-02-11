@@ -1074,20 +1074,28 @@ static int fn_os(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
 
 /* ---- INKEY / LASTKEY / READKEY ---- */
 static int fn_inkey(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
-    (void)ctx; (void)args; (void)nargs;
-    *result = val_num(0);  /* no key available */
+    double timeout;
+    (void)ctx;
+    /* INKEY() = poll, INKEY(0) = wait forever, INKEY(n) = wait n seconds */
+    if (nargs >= 1 && args[0].type == VAL_NUM) {
+        timeout = args[0].num;
+        if (timeout == 0.0) timeout = -1.0;  /* dBase: INKEY(0) = wait forever */
+    } else {
+        timeout = 0.0;  /* INKEY() with no args = poll */
+    }
+    *result = val_num((double)screen_inkey(timeout));
     return 0;
 }
 
 static int fn_lastkey(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx; (void)args; (void)nargs;
-    *result = val_num(13);  /* Enter */
+    *result = val_num((double)screen_lastkey());
     return 0;
 }
 
 static int fn_readkey(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     (void)ctx; (void)args; (void)nargs;
-    *result = val_num(13);  /* Enter */
+    *result = val_num((double)screen_readkey());
     return 0;
 }
 

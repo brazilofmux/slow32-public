@@ -71,15 +71,14 @@ hundred lines), but it's the command most dBase users reach for first.
 - Core operations: scroll up/down, edit field in place, append, delete
 - Clipper extended BROWSE with code blocks for custom behavior
 
-### 2.3 INKEY()/LASTKEY()/READKEY() — Keyboard Input
-Currently stubbed to return 0 or 13. Real dBase programs use `INKEY()` to wait
-for a keypress (with optional timeout), `LASTKEY()` to check what key exited a
-READ, and `READKEY()` to determine how the user left the last field.
-
-- Essential for menu-driven applications
-- `INKEY(0)` = wait forever; `INKEY(5)` = wait 5 seconds; `INKEY()` = poll
-- Key codes: 27=Esc, 13=Enter, 5=Up, 24=Down, 19=Left, 4=Right, etc.
-- Terminal key reading infrastructure already exists in `term.h`
+### ~~2.3 INKEY()/LASTKEY()/READKEY() — Keyboard Input~~ FIXED
+Fully implemented with terminal support. `INKEY()` polls, `INKEY(0)` waits
+forever, `INKEY(n)` waits n seconds. Arrow keys and special keys translated
+from ANSI escape sequences to dBase key codes (Up=5, Down=24, Left=19,
+Right=4, PgUp=18, PgDn=3, Home=1, End=6, Ins=22, Del=7). `LASTKEY()` tracks
+the last key from INKEY/READ/WAIT. `READKEY()` returns 12 (normal exit) or
+36 (Escape). READ Escape now exits the entire READ (skips remaining GETs).
+Falls back to `getchar()` when terminal service is unavailable.
 
 ### ~~2.4 TEXT...ENDTEXT — Block Text Output~~ FIXED
 Implemented in `program.c:prog_execute_line()`. TEXT outputs every subsequent

@@ -83,4 +83,10 @@ void screen_eject(void);
 void screen_print_newline(void);
 void screen_print_text(const char *s);
 
+/* Keyboard functions */
+int  screen_inkey(double timeout);  /* INKEY(): <0=wait forever, 0=poll, >0=timeout secs */
+int  screen_lastkey(void);          /* LASTKEY(): last key from INKEY/READ/WAIT */
+int  screen_readkey(void);          /* READKEY(): how user exited last READ */
+void screen_set_lastkey(int key);   /* Set lastkey (for WAIT, ACCEPT, etc.) */
+
 #endif

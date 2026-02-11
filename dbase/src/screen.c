@@ -17,9 +17,23 @@
 
 static screen_state_t scr;
 static int print_row, print_col;   /* printer position tracking */
+static int last_key;               /* last key from INKEY/READ/WAIT */
+static int read_exit_key;          /* how user exited last READ */
 
 /* Assume 80-column screen for cursor tracking */
 #define SCREEN_COLS 80
+
+/* dBase III key codes for special keys */
+#define DBASE_KEY_UP     5
+#define DBASE_KEY_DOWN  24
+#define DBASE_KEY_LEFT  19
+#define DBASE_KEY_RIGHT  4
+#define DBASE_KEY_PGUP  18
+#define DBASE_KEY_PGDN   3
+#define DBASE_KEY_HOME   1
+#define DBASE_KEY_END    6
+#define DBASE_KEY_INS   22
+#define DBASE_KEY_DEL    7
 
 void screen_init(void) {
     memset(&scr, 0, sizeof(scr));
@@ -284,6 +298,10 @@ void screen_get(int row, int col, const char *varname, const char *picture,
     scr.ngets++;
 }
 
+#if HAS_TERM
+static int read_dbase_key(void);
+#endif
+
 /* ---- READ ---- */
 void screen_read(void) {
     memvar_store_t *store = cmd_get_memvar_store();
@@ -292,10 +310,11 @@ void screen_read(void) {
 #if HAS_TERM
     if (scr.term_available) {
         /* Full-screen READ with terminal support */
+        int escaped = 0;
         fflush(stdout);  /* flush all pending SAY/GET output before raw mode */
         term_set_raw(1);
 
-        for (i = 0; i < scr.ngets; i++) {
+        for (i = 0; i < scr.ngets && !escaped; i++) {
             char buf[256];
             int pos, len, key;
 
@@ -334,9 +353,14 @@ void screen_read(void) {
             term_gotoxy(scr.gets[i].row, scr.gets[i].col);
 
             for (;;) {
-                key = term_getkey();
-                if (key == '\r' || key == '\n' || key == -1) break;
-                if (key == 27) { /* Escape - cancel */
+                key = read_dbase_key();
+                if (key == '\r' || key == '\n' || key == -1) {
+                    last_key = 13;
+                    break;
+                }
+                if (key == 27) { /* Escape - cancel READ */
+                    last_key = 27;
+                    escaped = 1;
                     str_copy(buf, scr.gets[i].initial, sizeof(buf));
                     break;
                 }
@@ -366,6 +390,7 @@ void screen_read(void) {
                     pos++;
                     if (pos >= fwidth) {
                         if (!cmd_get_confirm()) {
+                            last_key = 13;
                             break;  /* auto-advance: field full, CONFIRM OFF */
                         }
                         /* Field full — position at end */
@@ -373,6 +398,8 @@ void screen_read(void) {
                     }
                 }
             }
+
+            if (escaped) break;  /* Escape exits READ without storing */
 
             /* Store value back */
             {
@@ -444,6 +471,8 @@ void screen_read(void) {
         }
 
         term_set_raw(0);
+        /* Set READKEY() value based on how READ was exited */
+        read_exit_key = (last_key == 27) ? 36 : 12;
     } else
 #endif
     {
@@ -529,6 +558,8 @@ void screen_read(void) {
                 break;
             }
         }
+        last_key = 13;
+        read_exit_key = 12;
     }
 
     /* Free ASTs */
@@ -911,4 +942,109 @@ void screen_print_text(const char *s) {
         putchar(*s++);
         print_col++;
     }
+}
+
+/* ---- Keyboard functions ---- */
+
+/* Translate a raw key (possibly an escape sequence) to dBase key code.
+ * In raw terminal mode, arrow keys arrive as ESC [ A/B/C/D sequences.
+ * term_getkey() reads one byte at a time, so we must read the sequence. */
+#if HAS_TERM
+static int read_dbase_key(void) {
+    int ch = term_getkey();
+    if (ch < 0) return -1;
+    if (ch == 27) {
+        /* Possible escape sequence — check if more bytes follow */
+        if (!term_kbhit()) return 27;  /* bare Escape */
+        int ch2 = term_getkey();
+        if (ch2 == '[') {
+            int ch3 = term_getkey();
+            switch (ch3) {
+            case 'A': return DBASE_KEY_UP;
+            case 'B': return DBASE_KEY_DOWN;
+            case 'C': return DBASE_KEY_RIGHT;
+            case 'D': return DBASE_KEY_LEFT;
+            case 'H': return DBASE_KEY_HOME;
+            case 'F': return DBASE_KEY_END;
+            case '5':  /* PgUp: ESC [ 5 ~ */
+                if (term_kbhit()) term_getkey(); /* consume ~ */
+                return DBASE_KEY_PGUP;
+            case '6':  /* PgDn: ESC [ 6 ~ */
+                if (term_kbhit()) term_getkey();
+                return DBASE_KEY_PGDN;
+            case '2':  /* Ins: ESC [ 2 ~ */
+                if (term_kbhit()) term_getkey();
+                return DBASE_KEY_INS;
+            case '3':  /* Del: ESC [ 3 ~ */
+                if (term_kbhit()) term_getkey();
+                return DBASE_KEY_DEL;
+            default: return ch3; /* unknown sequence — return last byte */
+            }
+        }
+        return ch2; /* ESC + something else */
+    }
+    /* Map backspace variants */
+    if (ch == 127) return 8;  /* normalize DEL to BS */
+    return ch;
+}
+#endif
+
+int screen_inkey(double timeout) {
+#if HAS_TERM
+    if (scr.term_available) {
+        int key;
+        fflush(stdout);
+        term_set_raw(1);
+
+        if (timeout == 0.0) {
+            /* Poll — non-blocking */
+            if (!term_kbhit()) {
+                term_set_raw(0);
+                return 0;
+            }
+            key = read_dbase_key();
+        } else if (timeout < 0.0) {
+            /* Wait forever (INKEY(0) in dBase = wait forever) */
+            key = read_dbase_key();
+        } else {
+            /* Wait up to timeout seconds.
+             * We poll in a loop since we don't have select/alarm. */
+            int ticks = (int)(timeout * 100); /* ~10ms granularity */
+            int i;
+            key = 0;
+            for (i = 0; i < ticks; i++) {
+                if (term_kbhit()) {
+                    key = read_dbase_key();
+                    break;
+                }
+                /* Small busy-wait — no usleep available on SLOW-32 */
+            }
+        }
+
+        term_set_raw(0);
+        if (key > 0) last_key = key;
+        return (key < 0) ? 0 : key;
+    }
+#endif
+    /* Fallback: use getchar (blocking only, no timeout) */
+    if (timeout == 0.0) return 0;  /* can't poll without terminal */
+    {
+        int c = getchar();
+        if (c < 0) return 0;
+        if (c == '\n') c = 13;
+        last_key = c;
+        return c;
+    }
+}
+
+int screen_lastkey(void) {
+    return last_key;
+}
+
+int screen_readkey(void) {
+    return read_exit_key;
+}
+
+void screen_set_lastkey(int key) {
+    last_key = key;
 }

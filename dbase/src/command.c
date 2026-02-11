@@ -2342,6 +2342,7 @@ static void cmd_wait(const char *arg) {
         int next = getchar();
         (void)next;
     }
+    screen_set_lastkey((c == '\n') ? 13 : c);
 
     if (has_to) {
         char ch[2];
