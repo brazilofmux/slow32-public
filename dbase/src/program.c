@@ -1779,6 +1779,16 @@ int prog_execute_line(char *line) {
         return 0;
     }
 
+    if (str_imatch(p, "SCAN")) {
+        prog_scan(skip_ws(p + 4));
+        return 0;
+    }
+
+    if (str_imatch(p, "ENDSCAN")) {
+        prog_endscan();
+        return 0;
+    }
+
     if (str_imatch(p, "NEXT")) {
         prog_next();
         return 0;
