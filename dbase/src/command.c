@@ -4496,6 +4496,21 @@ static void h_release(dbf_t *db, lexer_t *l) {
         menu_release_popup(name);
         return;
     }
+    if (cmd_kw(l, "MENUS")) {
+        menu_release_all_menus();
+        return;
+    }
+    if (cmd_kw(l, "MENU")) {
+        char name[32];
+        lex_next(l); /* skip MENU */
+        if (l->current.type != TOK_IDENT) {
+            printf("Syntax: RELEASE MENU <name>\n");
+            return;
+        }
+        str_copy(name, l->current.text, sizeof(name));
+        menu_release_menu(name);
+        return;
+    }
     {
         char arg[256];
         lex_get_remaining(l, arg, sizeof(arg));
@@ -4562,6 +4577,43 @@ static void h_on(dbf_t *db, lexer_t *l) {
     } else if (cmd_kw(l, "KEY")) {
         /* ON KEY — clear all key handlers */
         screen_clear_key_handlers();
+    } else if (cmd_kw(l, "PAD")) {
+        /* ON PAD <padname> OF <menu> ACTIVATE POPUP <popup> */
+        char pad_name[32], menu_name[32], popup_name[32];
+        lex_next(l); /* skip PAD */
+        if (l->current.type != TOK_IDENT) {
+            printf("Syntax: ON PAD <pad> OF <menu> ACTIVATE POPUP <popup>\n");
+            return;
+        }
+        str_copy(pad_name, l->current.text, sizeof(pad_name));
+        lex_next(l); /* skip pad name */
+        if (!cmd_kw(l, "OF")) {
+            printf("Expected OF after pad name.\n");
+            return;
+        }
+        lex_next(l); /* skip OF */
+        if (l->current.type != TOK_IDENT) {
+            printf("Expected menu name after OF.\n");
+            return;
+        }
+        str_copy(menu_name, l->current.text, sizeof(menu_name));
+        lex_next(l); /* skip menu name */
+        if (!cmd_kw(l, "ACTIVATE")) {
+            printf("Expected ACTIVATE POPUP after menu name.\n");
+            return;
+        }
+        lex_next(l); /* skip ACTIVATE */
+        if (!cmd_kw(l, "POPUP")) {
+            printf("Expected POPUP after ACTIVATE.\n");
+            return;
+        }
+        lex_next(l); /* skip POPUP */
+        if (l->current.type != TOK_IDENT) {
+            printf("Expected popup name.\n");
+            return;
+        }
+        str_copy(popup_name, l->current.text, sizeof(popup_name));
+        menu_set_pad_popup(menu_name, pad_name, popup_name);
     }
 }
 
@@ -5043,12 +5095,83 @@ static void h_define(dbf_t *db, lexer_t *l) {
             }
         }
         menu_define_bar(popup_name, bar_num, prompt, message, skip_expr);
+    } else if (cmd_kw(l, "MENU")) {
+        char name[32];
+        lex_next(l); /* skip MENU */
+        if (l->current.type != TOK_IDENT) {
+            printf("Syntax: DEFINE MENU <name>\n");
+            return;
+        }
+        str_copy(name, l->current.text, sizeof(name));
+        menu_define_menu(name);
+    } else if (cmd_kw(l, "PAD")) {
+        char pad_name[32], menu_name[32];
+        char prompt[80] = "";
+        char message[160] = "";
+        int row = -1, col = -1;
+        lex_next(l); /* skip PAD */
+        if (l->current.type != TOK_IDENT) {
+            printf("Syntax: DEFINE PAD <name> OF <menu> PROMPT \"text\"\n");
+            return;
+        }
+        str_copy(pad_name, l->current.text, sizeof(pad_name));
+        lex_next(l); /* skip pad name */
+        if (!cmd_kw(l, "OF")) {
+            printf("Expected OF after pad name.\n");
+            return;
+        }
+        lex_next(l); /* skip OF */
+        if (l->current.type != TOK_IDENT) {
+            printf("Expected menu name after OF.\n");
+            return;
+        }
+        str_copy(menu_name, l->current.text, sizeof(menu_name));
+        lex_next(l); /* skip menu name */
+        if (!cmd_kw(l, "PROMPT")) {
+            printf("Expected PROMPT keyword.\n");
+            return;
+        }
+        lex_next(l); /* skip PROMPT */
+        if (l->current.type == TOK_STRING) {
+            str_copy(prompt, l->current.text, sizeof(prompt));
+            lex_next(l);
+        } else {
+            value_t pv;
+            const char *ep = l->token_start;
+            if (ep && expr_eval(cmd_get_expr_ctx(), &ep, &pv) == 0) {
+                val_to_string(&pv, prompt, sizeof(prompt));
+                trim_right(prompt);
+                lexer_init_ext(l, ep, l->store);
+            }
+        }
+        /* Optional AT row,col */
+        if (cmd_kw(l, "AT")) {
+            lex_next(l); /* skip AT */
+            if (l->current.type == TOK_NUMBER) {
+                row = (int)l->current.num_val;
+                lex_next(l);
+                if (l->current.type == TOK_COMMA) lex_next(l);
+                if (l->current.type == TOK_NUMBER) {
+                    col = (int)l->current.num_val;
+                    lex_next(l);
+                }
+            }
+        }
+        /* Optional MESSAGE */
+        if (cmd_kw(l, "MESSAGE")) {
+            lex_next(l); /* skip MESSAGE */
+            if (l->current.type == TOK_STRING) {
+                str_copy(message, l->current.text, sizeof(message));
+                lex_next(l);
+            }
+        }
+        menu_define_pad(menu_name, pad_name, prompt, row, col, message);
     } else {
-        printf("Syntax: DEFINE POPUP|BAR ...\n");
+        printf("Syntax: DEFINE POPUP|BAR|MENU|PAD ...\n");
     }
 }
 
-/* ---- ACTIVATE POPUP ---- */
+/* ---- ACTIVATE POPUP / ACTIVATE MENU ---- */
 static void h_activate(dbf_t *db, lexer_t *l) {
     (void)db;
     lex_next(l); /* skip ACTIVATE */
@@ -5061,19 +5184,30 @@ static void h_activate(dbf_t *db, lexer_t *l) {
         }
         str_copy(name, l->current.text, sizeof(name));
         menu_activate_popup(name);
+    } else if (cmd_kw(l, "MENU")) {
+        char name[32];
+        lex_next(l); /* skip MENU */
+        if (l->current.type != TOK_IDENT) {
+            printf("Syntax: ACTIVATE MENU <name>\n");
+            return;
+        }
+        str_copy(name, l->current.text, sizeof(name));
+        menu_activate_menu(name);
     } else {
-        printf("Syntax: ACTIVATE POPUP <name>\n");
+        printf("Syntax: ACTIVATE POPUP|MENU <name>\n");
     }
 }
 
-/* ---- DEACTIVATE POPUP ---- */
+/* ---- DEACTIVATE POPUP / DEACTIVATE MENU ---- */
 static void h_deactivate(dbf_t *db, lexer_t *l) {
     (void)db;
     lex_next(l); /* skip DEACTIVATE */
     if (cmd_kw(l, "POPUP")) {
         menu_deactivate_popup();
+    } else if (cmd_kw(l, "MENU")) {
+        menu_deactivate_menu();
     } else {
-        printf("Syntax: DEACTIVATE POPUP\n");
+        printf("Syntax: DEACTIVATE POPUP|MENU\n");
     }
 }
 

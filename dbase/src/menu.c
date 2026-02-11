@@ -16,22 +16,35 @@
 /* Key codes — same as screen.c / browse.c */
 #define DBASE_KEY_UP     5
 #define DBASE_KEY_DOWN  24
+#define DBASE_KEY_LEFT  19
+#define DBASE_KEY_RIGHT  4
 #define DBASE_KEY_HOME   1
 #define DBASE_KEY_END    6
 
-/* ---- Registry ---- */
+/* ---- Popup Registry ---- */
 static popup_t popups[MAX_POPUPS];
 static int last_bar_num;
 static char last_prompt_text[80];
 static int deactivate_flag;
 
+/* ---- Menu Bar Registry ---- */
+static menu_t menus[MAX_MENUS];
+static char last_pad_name[32];
+static char last_popup_name[32];
+static int menu_deactivate_flag;
+
 void menu_init(void) {
     int i;
     for (i = 0; i < MAX_POPUPS; i++)
         popups[i].defined = 0;
+    for (i = 0; i < MAX_MENUS; i++)
+        menus[i].defined = 0;
     last_bar_num = 0;
     last_prompt_text[0] = '\0';
+    last_pad_name[0] = '\0';
+    last_popup_name[0] = '\0';
     deactivate_flag = 0;
+    menu_deactivate_flag = 0;
 }
 
 static popup_t *find_popup(const char *name) {
@@ -149,7 +162,7 @@ static int last_selectable(const popup_t *p) {
     return -1;
 }
 
-int menu_activate_popup(const char *name) {
+int menu_activate_popup_ex(const char *name, int from_menubar) {
     popup_t *p = find_popup(name);
     int cur, i;
     int msg_row, wrap;
@@ -263,6 +276,34 @@ int menu_activate_popup(const char *name) {
             } else if (key == DBASE_KEY_END) {
                 int l = last_selectable(p);
                 if (l >= 0) cur = l;
+            } else if (from_menubar && key == DBASE_KEY_LEFT) {
+                /* Close popup, return -1 = move left in menu bar */
+                term_set_attr(0);
+                if (msg_row >= 0) {
+                    char blank[81];
+                    int len = 80;
+                    memset(blank, ' ', len);
+                    blank[len] = '\0';
+                    term_gotoxy(msg_row, 0);
+                    term_puts(blank);
+                }
+                term_set_raw(0);
+                screen_clear_region(r1, c1, r2, c2);
+                return -1;
+            } else if (from_menubar && key == DBASE_KEY_RIGHT) {
+                /* Close popup, return -2 = move right in menu bar */
+                term_set_attr(0);
+                if (msg_row >= 0) {
+                    char blank[81];
+                    int len = 80;
+                    memset(blank, ' ', len);
+                    blank[len] = '\0';
+                    term_gotoxy(msg_row, 0);
+                    term_puts(blank);
+                }
+                term_set_raw(0);
+                screen_clear_region(r1, c1, r2, c2);
+                return -2;
             }
         }
 
@@ -309,6 +350,10 @@ int menu_activate_popup(const char *name) {
     return last_bar_num;
 }
 
+int menu_activate_popup(const char *name) {
+    return menu_activate_popup_ex(name, 0);
+}
+
 void menu_deactivate_popup(void) {
     deactivate_flag = 1;
 }
@@ -334,4 +379,351 @@ int menu_last_bar(void) {
 
 const char *menu_last_prompt(void) {
     return last_prompt_text;
+}
+
+/* ================================================================ */
+/* ---- Menu Bar (horizontal) implementation ---- */
+/* ================================================================ */
+
+static menu_t *find_menu(const char *name) {
+    char upper[32];
+    int i;
+    str_copy(upper, name, sizeof(upper));
+    str_upper(upper);
+    for (i = 0; i < MAX_MENUS; i++) {
+        if (menus[i].defined && str_icmp(menus[i].name, upper) == 0)
+            return &menus[i];
+    }
+    return NULL;
+}
+
+static menu_t *alloc_menu(void) {
+    int i;
+    for (i = 0; i < MAX_MENUS; i++) {
+        if (!menus[i].defined)
+            return &menus[i];
+    }
+    return NULL;
+}
+
+menu_t *menu_define_menu(const char *name) {
+    menu_t *m = find_menu(name);
+    if (!m) {
+        m = alloc_menu();
+        if (!m) {
+            printf("Too many menus defined.\n");
+            return NULL;
+        }
+    }
+    str_copy(m->name, name, sizeof(m->name));
+    str_upper(m->name);
+    m->defined = 1;
+    m->npad = 0;
+    return m;
+}
+
+int menu_define_pad(const char *menu_name, const char *pad_name,
+                    const char *prompt, int row, int col, const char *message) {
+    menu_t *m = find_menu(menu_name);
+    pad_entry_t *pad;
+    if (!m) {
+        printf("Menu not defined: %s\n", menu_name);
+        return -1;
+    }
+    if (m->npad >= MAX_PADS) {
+        printf("Too many pads in menu %s.\n", m->name);
+        return -1;
+    }
+    pad = &m->pads[m->npad];
+    str_copy(pad->name, pad_name, sizeof(pad->name));
+    str_upper(pad->name);
+    str_copy(pad->prompt, prompt, sizeof(pad->prompt));
+    str_copy(pad->message, message ? message : "", sizeof(pad->message));
+    pad->row = row;
+    pad->col = col;
+    pad->popup_name[0] = '\0';
+    m->npad++;
+    return 0;
+}
+
+int menu_set_pad_popup(const char *menu_name, const char *pad_name,
+                       const char *popup_name) {
+    menu_t *m = find_menu(menu_name);
+    char upper[32];
+    int i;
+    if (!m) {
+        printf("Menu not defined: %s\n", menu_name);
+        return -1;
+    }
+    str_copy(upper, pad_name, sizeof(upper));
+    str_upper(upper);
+    for (i = 0; i < m->npad; i++) {
+        if (str_icmp(m->pads[i].name, upper) == 0) {
+            str_copy(m->pads[i].popup_name, popup_name,
+                     sizeof(m->pads[i].popup_name));
+            str_upper(m->pads[i].popup_name);
+            return 0;
+        }
+    }
+    printf("Pad not defined: %s OF %s\n", pad_name, m->name);
+    return -1;
+}
+
+/* Compute auto-positions for pads that have row/col == -1 */
+static void compute_pad_positions(menu_t *m) {
+    int next_col = 0;
+    int i;
+    for (i = 0; i < m->npad; i++) {
+        if (m->pads[i].row < 0 || m->pads[i].col < 0) {
+            m->pads[i].row = 0;
+            m->pads[i].col = next_col;
+        }
+        next_col = m->pads[i].col + (int)strlen(m->pads[i].prompt) + 2;
+    }
+}
+
+int menu_activate_menu(const char *name) {
+    menu_t *m = find_menu(name);
+    int cur, i;
+    int msg_row;
+
+    if (!m) {
+        printf("Menu not defined: %s\n", name);
+        return 0;
+    }
+    if (m->npad == 0) {
+        printf("Menu %s has no pads.\n", m->name);
+        return 0;
+    }
+
+    compute_pad_positions(m);
+    menu_deactivate_flag = 0;
+    cur = 0;
+    msg_row = cmd_get_message_row();
+
+#if HAS_TERM
+    if (screen_term_available()) {
+        int key;
+        fflush(stdout);
+        term_set_raw(1);
+
+        for (;;) {
+            /* Draw pad bar */
+            for (i = 0; i < m->npad; i++) {
+                term_gotoxy(m->pads[i].row, m->pads[i].col);
+                if (i == cur)
+                    term_set_attr(7);  /* reverse */
+                else
+                    term_set_attr(0);
+                term_putc(' ');
+                term_puts(m->pads[i].prompt);
+                term_putc(' ');
+            }
+            term_set_attr(0);
+
+            /* Show MESSAGE for current pad */
+            if (msg_row >= 0) {
+                char blank[81];
+                int len = 80;
+                memset(blank, ' ', len);
+                blank[len] = '\0';
+                term_gotoxy(msg_row, 0);
+                term_puts(blank);
+                if (m->pads[cur].message[0]) {
+                    int mlen = (int)strlen(m->pads[cur].message);
+                    int mcol = (80 - mlen) / 2;
+                    if (mcol < 0) mcol = 0;
+                    term_gotoxy(msg_row, mcol);
+                    term_puts(m->pads[cur].message);
+                }
+            }
+
+            key = read_dbase_key();
+            if (screen_check_key_handler(key)) continue;
+
+            if (menu_deactivate_flag) break;
+
+            if (key == 27) {  /* Escape */
+                screen_set_lastkey(27);
+                break;
+            }
+            if (key == DBASE_KEY_LEFT) {
+                cur = (cur - 1 + m->npad) % m->npad;
+            } else if (key == DBASE_KEY_RIGHT) {
+                cur = (cur + 1) % m->npad;
+            } else if (key == '\r' || key == '\n' || key == DBASE_KEY_DOWN) {
+                /* Open attached popup */
+                if (m->pads[cur].popup_name[0]) {
+                    int result;
+                    term_set_raw(0);
+                    result = menu_activate_popup_ex(m->pads[cur].popup_name, 1);
+                    term_set_raw(1);
+                    if (result > 0) {
+                        /* Bar selected — store pad/popup and exit */
+                        str_copy(last_pad_name, m->pads[cur].name,
+                                 sizeof(last_pad_name));
+                        str_copy(last_popup_name, m->pads[cur].popup_name,
+                                 sizeof(last_popup_name));
+                        goto done_term;
+                    } else if (result == -1) {
+                        /* Left from popup — move to previous pad and open */
+                        cur = (cur - 1 + m->npad) % m->npad;
+                        if (m->pads[cur].popup_name[0]) {
+                            for (;;) {
+                                term_set_raw(0);
+                                /* Redraw pad bar before opening next popup */
+                                {
+                                    int j;
+                                    for (j = 0; j < m->npad; j++) {
+                                        term_gotoxy(m->pads[j].row, m->pads[j].col);
+                                        if (j == cur)
+                                            term_set_attr(7);
+                                        else
+                                            term_set_attr(0);
+                                        term_putc(' ');
+                                        term_puts(m->pads[j].prompt);
+                                        term_putc(' ');
+                                    }
+                                    term_set_attr(0);
+                                }
+                                result = menu_activate_popup_ex(
+                                    m->pads[cur].popup_name, 1);
+                                term_set_raw(1);
+                                if (result > 0) {
+                                    str_copy(last_pad_name, m->pads[cur].name,
+                                             sizeof(last_pad_name));
+                                    str_copy(last_popup_name,
+                                             m->pads[cur].popup_name,
+                                             sizeof(last_popup_name));
+                                    goto done_term;
+                                } else if (result == 0) {
+                                    break;  /* Esc — back to pad nav */
+                                } else if (result == -1) {
+                                    cur = (cur - 1 + m->npad) % m->npad;
+                                    if (!m->pads[cur].popup_name[0]) break;
+                                } else if (result == -2) {
+                                    cur = (cur + 1) % m->npad;
+                                    if (!m->pads[cur].popup_name[0]) break;
+                                }
+                            }
+                        }
+                    } else if (result == -2) {
+                        /* Right from popup — move to next pad and open */
+                        cur = (cur + 1) % m->npad;
+                        if (m->pads[cur].popup_name[0]) {
+                            for (;;) {
+                                term_set_raw(0);
+                                {
+                                    int j;
+                                    for (j = 0; j < m->npad; j++) {
+                                        term_gotoxy(m->pads[j].row, m->pads[j].col);
+                                        if (j == cur)
+                                            term_set_attr(7);
+                                        else
+                                            term_set_attr(0);
+                                        term_putc(' ');
+                                        term_puts(m->pads[j].prompt);
+                                        term_putc(' ');
+                                    }
+                                    term_set_attr(0);
+                                }
+                                result = menu_activate_popup_ex(
+                                    m->pads[cur].popup_name, 1);
+                                term_set_raw(1);
+                                if (result > 0) {
+                                    str_copy(last_pad_name, m->pads[cur].name,
+                                             sizeof(last_pad_name));
+                                    str_copy(last_popup_name,
+                                             m->pads[cur].popup_name,
+                                             sizeof(last_popup_name));
+                                    goto done_term;
+                                } else if (result == 0) {
+                                    break;
+                                } else if (result == -1) {
+                                    cur = (cur - 1 + m->npad) % m->npad;
+                                    if (!m->pads[cur].popup_name[0]) break;
+                                } else if (result == -2) {
+                                    cur = (cur + 1) % m->npad;
+                                    if (!m->pads[cur].popup_name[0]) break;
+                                }
+                            }
+                        }
+                    }
+                    /* result == 0 (Esc from popup) → back to pad nav */
+                }
+            }
+        }
+
+done_term:
+        /* Restore */
+        term_set_attr(0);
+        if (msg_row >= 0) {
+            char blank[81];
+            int len = 80;
+            memset(blank, ' ', len);
+            blank[len] = '\0';
+            term_gotoxy(msg_row, 0);
+            term_puts(blank);
+        }
+        /* Clear pad bar region */
+        for (i = 0; i < m->npad; i++) {
+            int plen = (int)strlen(m->pads[i].prompt) + 2;
+            int j;
+            term_gotoxy(m->pads[i].row, m->pads[i].col);
+            for (j = 0; j < plen; j++)
+                term_putc(' ');
+        }
+        term_set_raw(0);
+    } else
+#endif
+    {
+        /* Non-terminal fallback: print pads, pick first, open its popup */
+        printf("Menu %s:\n", m->name);
+        for (i = 0; i < m->npad; i++) {
+            printf("  %s", m->pads[i].prompt);
+            if (m->pads[i].popup_name[0])
+                printf(" -> %s", m->pads[i].popup_name);
+            printf("\n");
+        }
+        /* Auto-select first pad */
+        str_copy(last_pad_name, m->pads[0].name, sizeof(last_pad_name));
+        if (m->pads[0].popup_name[0]) {
+            str_copy(last_popup_name, m->pads[0].popup_name,
+                     sizeof(last_popup_name));
+            menu_activate_popup(m->pads[0].popup_name);
+        } else {
+            last_popup_name[0] = '\0';
+        }
+    }
+
+    return 0;
+}
+
+void menu_deactivate_menu(void) {
+    menu_deactivate_flag = 1;
+    /* Also deactivate any active popup */
+    menu_deactivate_popup();
+}
+
+void menu_release_menu(const char *name) {
+    menu_t *m = find_menu(name);
+    if (m) {
+        m->defined = 0;
+    } else {
+        printf("Menu not defined: %s\n", name);
+    }
+}
+
+void menu_release_all_menus(void) {
+    int i;
+    for (i = 0; i < MAX_MENUS; i++)
+        menus[i].defined = 0;
+}
+
+const char *menu_last_pad(void) {
+    return last_pad_name;
+}
+
+const char *menu_last_popup(void) {
+    return last_popup_name;
 }

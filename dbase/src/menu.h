@@ -31,7 +31,11 @@ popup_t *menu_define_popup(const char *name, int r1, int c1, int r2, int c2);
 int menu_define_bar(const char *popup_name, int bar_num, const char *prompt,
                     const char *message, const char *skip_expr);
 
-/* Activate (display and run lightbar) a named popup. Returns bar# or 0=Esc. */
+/* Activate (display and run lightbar) a named popup.
+   Returns bar# or 0=Esc.  When from_menubar=1, Left/Right return -1/-2. */
+int menu_activate_popup_ex(const char *name, int from_menubar);
+
+/* Convenience wrapper: standalone popup (from_menubar=0). */
 int menu_activate_popup(const char *name);
 
 /* Deactivate the currently active popup (exit from ON SELECTION handler). */
@@ -48,5 +52,36 @@ int menu_last_bar(void);
 
 /* Last selected prompt text (empty string if none). */
 const char *menu_last_prompt(void);
+
+/* ---- Menu bar (horizontal) ---- */
+#define MAX_MENUS 8
+#define MAX_PADS  16
+
+typedef struct {
+    char name[32];        /* pad name (uppercased) */
+    char prompt[80];
+    char message[160];
+    int row, col;         /* AT position (-1,-1 = auto-position) */
+    char popup_name[32];  /* attached popup (empty = none) */
+} pad_entry_t;
+
+typedef struct {
+    char name[32];        /* menu name (uppercased) */
+    int defined;
+    pad_entry_t pads[MAX_PADS];
+    int npad;
+} menu_t;
+
+menu_t *menu_define_menu(const char *name);
+int  menu_define_pad(const char *menu_name, const char *pad_name,
+                     const char *prompt, int row, int col, const char *message);
+int  menu_set_pad_popup(const char *menu_name, const char *pad_name,
+                        const char *popup_name);
+int  menu_activate_menu(const char *name);
+void menu_deactivate_menu(void);
+void menu_release_menu(const char *name);
+void menu_release_all_menus(void);
+const char *menu_last_pad(void);
+const char *menu_last_popup(void);
 
 #endif

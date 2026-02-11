@@ -929,6 +929,18 @@ static int fn_prompt_func(expr_ctx_t *ctx, value_t *args, int nargs, value_t *re
     return 0;
 }
 
+static int fn_pad(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_str(menu_last_pad());
+    return 0;
+}
+
+static int fn_popup_func(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_str(menu_last_popup());
+    return 0;
+}
+
 /* ---- STUFF(str, start, delete, insert) ---- */
 static int fn_stuff(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
     char buf[512];
@@ -1204,6 +1216,9 @@ static const func_entry_t func_table[] = {
     /* Popup menu */
     { "BAR",       fn_bar },
     { "PROMPT",    fn_prompt_func },
+    /* Menu bar */
+    { "PAD",       fn_pad },
+    { "POPUP",     fn_popup_func },
     /* String manipulation */
     { "STUFF",     fn_stuff },
     { "TRANSFORM", fn_transform },

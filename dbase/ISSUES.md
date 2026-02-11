@@ -128,7 +128,7 @@ CALCULATE SUM(qty*price) TO total FOR category="A"
 
 The Clipper/dBase IV menu system, broken into four pieces:
 
-#### 2.9a `@...PROMPT` + `MENU TO` (classic dBase III+) — SIMPLEST
+#### ~~2.9a `@...PROMPT` + `MENU TO` (classic dBase III+)~~ DONE
 The original lightbar menu. Define prompts at screen positions, then `MENU TO`
 runs selection and stores the result (1-based index, 0 for Escape).
 ```
@@ -140,7 +140,7 @@ MENU TO choice
 Follows the existing `@GET`/`READ` pattern: a pending prompt list, then a
 command that activates the UI. Needs `SET MESSAGE TO <row>` and `SET WRAP ON/OFF`.
 
-#### 2.9b `DEFINE POPUP` / `DEFINE BAR` / `ACTIVATE POPUP`
+#### ~~2.9b `DEFINE POPUP` / `DEFINE BAR` / `ACTIVATE POPUP`~~ DONE
 Standalone popup menus — a bordered box with a list of choices:
 ```
 DEFINE POPUP fileMenu FROM 5,10 TO 15,30
@@ -154,7 +154,7 @@ DEACTIVATE POPUP / RELEASE POPUP
 Needs a popup name registry, bar list, bordered rendering, separator skipping.
 `BAR()` and `PROMPT()` functions return last selection.
 
-#### 2.9c `DEFINE MENU` / `DEFINE PAD` / `ACTIVATE MENU`
+#### ~~2.9c `DEFINE MENU` / `DEFINE PAD` / `ACTIVATE MENU`~~ DONE
 Horizontal menu bar with attached dropdown popups:
 ```
 DEFINE MENU mainBar
@@ -170,8 +170,8 @@ popup, Left/Right switches pads. Most complex piece.
 
 #### 2.9d Ancillary menu commands
 - `ON SELECTION POPUP/PAD ... DO <proc>` — callback on selection
-- `BAR()`, `PROMPT()`, `PAD()`, `POPUP()` — functions returning last selection
-- `RELEASE MENU/POPUP` — cleanup
+- ~~`BAR()`, `PROMPT()`, `PAD()`, `POPUP()` — functions returning last selection~~ DONE (in 2.9b/2.9c)
+- ~~`RELEASE MENU/POPUP` — cleanup~~ DONE (in 2.9b/2.9c)
 - `SAVE SCREEN` / `RESTORE SCREEN` — needed for clean popup overlay (see 5.6)
 
 ---
