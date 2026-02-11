@@ -56,110 +56,34 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 - **Status**: **Completed.** `expr_ctx_t` now features a dedicated `err_msg` buffer. Formatted errors in `expr.c` and `func.c` no longer use static buffers, preventing corruption during nested execution.
 - **Milestone**: Achieved robust, re-entrant error reporting across the entire expression and function engine.
 
-## 5. Future Opportunities
+## 4. Future Opportunities
 
-### 5.1 [Feature] SCAN / ENDSCAN Iteration
-- **Opportunity**: Implement the `SCAN [scope] [FOR cond] [WHILE cond]` command. 
-- **Benefit**: Provides a much faster and more idiomatic way to iterate over records compared to manual `DO WHILE .NOT. EOF()` loops. It automatically handles record pointer advancement and restoration.
-
-### 5.2 [Feature] Memory Variable Arrays
+### 4.1 [Feature] Memory Variable Arrays
 - **Opportunity**: Extend `memvar.c` and the Lexer to support one and two-dimensional arrays (e.g., `DECLARE arr[10]`, `STORE "val" TO arr[5]`).
 - **Benefit**: Essential for complex data manipulation and parity with Clipper/FoxPro. Requires updating `memvar_store_t` to handle indexed lookups.
 
-### 5.3 [Architecture] Nested UDF Calls in Expressions
+### 4.2 [Architecture] Nested UDF Calls in Expressions
 - **Opportunity**: Enhance `expr.c` and `func.c` to allow User-Defined Functions defined in `.PRG` files to be called directly within expressions (e.g., `LIST name, MyBonus(salary)`).
 - **Benefit**: Dramatically increases the power of reports and data updates. Requires careful handling of the call stack during expression evaluation.
 
-### 5.4 [Harden] @ ... GET Validation (VALID/WHEN)
-
-- **Opportunity**: Implement `VALID <expr>` and `WHEN <expr>` clauses for the `@ ... GET` command in `screen.c`.
-
-- **Benefit**: Enables proactive data integrity checks and conditional field entry in full-screen modes, fulfilling a core requirement for professional dBase applications.
-
-
-
-### 5.5 [Feature] UNIQUE Indexes
-
-- **Opportunity**: Add support for the `UNIQUE` keyword in the `INDEX ON` command.
-
-- **Benefit**: Essential for data integrity and standard dBase compatibility. Requires adding a `unique` flag to `index_t` and updating `index_insert` to handle duplicates correctly.
-
-
-
-### 5.6 [Feature] Low-Level File I/O (Clipper Parity)
-
+### 4.3 [Feature] Low-Level File I/O (Clipper Parity)
 - **Opportunity**: Implement `FOPEN()`, `FREAD()`, `FWRITE()`, `FSEEK()`, and `FCLOSE()`.
-
 - **Benefit**: Allows dBase programs to manipulate non-DBF files (logs, exports, etc.), a major feature of professional Clipper and FoxPro applications.
 
-
-
-### 5.7 [Correctness] Date Arithmetic Parity
-
-- **Opportunity**: Fully implement date addition/subtraction (e.g., `DATE() + 30`, `d1 - d2`).
-
-- **Benefit**: Core requirement for business logic. Requires updating the expression engine's `TOK_PLUS` and `TOK_MINUS` handlers to detect date types.
-
-
-
-### 5.8 [Feature] ADIR() and Directory Services
-
-
-
-- **Opportunity**: Add `ADIR()`, `FILE()`, and `CURDIR()` functions.
-
-
-
-- **Benefit**: Allows programs to be file-system aware, which is necessary for robust application installers and data importers.
-
-
-
-
-
-
-
-### 5.9 [Feature] Standard Function Parity
-
-
-
-- **Opportunity**: Implement missing core dBase functions: `LEFT()`, `RIGHT()`, `DTOC()`, `CTOD()`, `TRANSFORM()`, `EMPTY()`, and `SPACE()`.
-
-
-
+### 4.4 [Feature] Standard Function Parity
+- **Opportunity**: Implement missing core dBase functions: `DTOC()`, `CTOD()`, `TRANSFORM()`.
 - **Benefit**: Essential for string manipulation and data formatting parity with Clipper and FoxPro.
 
+## 5. Completed Milestone Successes
 
-
-
-
-
-
-### 5.10 [Architecture] Lexer Integration (Program commands)
-
-
-
-- **Opportunity**: Transition `PARAMETERS`, `PRIVATE`, `PUBLIC`, and `PROCEDURE` handlers in `program.c` to use the Lexer.
-
-
-
-- **Benefit**: Removes remaining brittle string-parsing logic and ensures consistent macro expansion and tokenization across the entire engine.
-
-
-
-
-
-
-
-### 5.11 [Harden] Cross-Platform Path Handling
-
-
-
-- **Opportunity**: Normalize paths in `dbf_open` and `index_read` (e.g., converting backslashes to forward slashes).
-
-
-
-- **Benefit**: Improves compatibility when running legacy dBase programs that hardcode DOS-style paths.
-
+- **SCAN / ENDSCAN**: Implemented record iteration with `FOR`, `WHILE`, and scope clauses.
+- **UNIQUE Indexes**: Added `UNIQUE` indexes and enforced constraints on `REPLACE`.
+- **GET Validation**: Implemented `VALID` and `WHEN` clauses for `@ ... GET`.
+- **Program Command Lexing**: Refactored `PARAMETERS`, `PRIVATE`, `PUBLIC`, and `PROCEDURE` to use the Lexer.
+- **Date Arithmetic**: Added date addition/subtraction in the expression engine.
+- **Directory Services**: Implemented `ADIR()`, `FILE()`, and `CURDIR()`.
+- **Standard Function Expansion**: Implemented `LEFT()`, `RIGHT()`, `ALLTRIM()`, `EMPTY()`, and the `PADx()` family.
+- **Cross-Platform Paths**: Normalized path separators in file operations and index/dbf I/O.
 
 
 
