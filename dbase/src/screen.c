@@ -237,6 +237,20 @@ void screen_read(void) {
             char buf[256];
             int pos, len, key;
 
+            /* WHEN — skip field if false */
+            if (scr.gets[i].when_ast) {
+                value_t res;
+                if (ast_eval(scr.gets[i].when_ast, cmd_get_expr_ctx(), &res) != 0 ||
+                    (res.type == VAL_LOGIC && !res.logic))
+                    continue;
+            } else if (scr.gets[i].when_expr[0]) {
+                value_t res;
+                if (expr_eval_str(cmd_get_expr_ctx(), scr.gets[i].when_expr, &res) != 0 ||
+                    (res.type == VAL_LOGIC && !res.logic))
+                    continue;
+            }
+
+            for (;;) {
             str_copy(buf, scr.gets[i].initial, sizeof(buf));
             len = strlen(buf);
             pos = len;
@@ -304,8 +318,31 @@ void screen_read(void) {
                         continue;  /* reject, keep current value */
                     }
                 }
-                memvar_set(store, scr.gets[i].varname, &v);
+                /* VALID validation — set memvar temporarily, restore on failure */
+                if (scr.gets[i].valid_ast || scr.gets[i].valid_expr[0]) {
+                    value_t old_val, res;
+                    int had_old = (memvar_find(store, scr.gets[i].varname, &old_val) == 0);
+                    int ok;
+                    memvar_set(store, scr.gets[i].varname, &v);
+                    if (scr.gets[i].valid_ast)
+                        ok = (ast_eval(scr.gets[i].valid_ast, cmd_get_expr_ctx(), &res) == 0 &&
+                              res.type == VAL_LOGIC && res.logic);
+                    else
+                        ok = (expr_eval_str(cmd_get_expr_ctx(), scr.gets[i].valid_expr, &res) == 0 &&
+                              res.type == VAL_LOGIC && res.logic);
+                    if (!ok) {
+                        if (had_old) memvar_set(store, scr.gets[i].varname, &old_val);
+                        term_set_raw(0);
+                        printf("Invalid entry.\n");
+                        term_set_raw(1);
+                        continue;  /* re-edit field */
+                    }
+                } else {
+                    memvar_set(store, scr.gets[i].varname, &v);
+                }
+                break;  /* accepted */
             }
+            } /* for (;;) */
         }
 
         term_set_raw(0);

@@ -2,77 +2,50 @@
 
 ## 1. Known Bugs
 
-### 1.1 FWRITE negative count: out-of-bounds read
-`func.c` — `FWRITE(h, "hello", -1)` passes negative `count` to `fwrite()`,
-which casts to a huge `size_t` and reads far past the string buffer. Fix: clamp
-`count` to zero if negative.
+### ~~1.1 FWRITE negative count~~ FIXED
+`func.c` — Negative `count` now clamped to zero.
 
-### 1.2 Array dimension overflow
-`memvar.c` — `DECLARE arr[100000, 100000]` overflows `rows * cols` on 32-bit
-int. The `calloc` allocates a tiny buffer but dimension metadata stays large,
-so element access overwrites random memory. Fix: cap total elements (e.g., 8192)
-and reject oversized declarations.
+### ~~1.2 Array dimension overflow~~ FIXED
+`memvar.c` — Dimensions capped at 8192 total elements; oversized rejected.
 
-### 1.3 VALID rejection leaves dirty memvar
-`screen.c` — When VALID evaluates to `.F.`, the code has already written the
-rejected value into the memvar store before checking. On re-prompt or user
-abort, the invalid value persists. Fix: save the old value before the set and
-restore it on VALID failure.
+### ~~1.3 VALID rejection leaves dirty memvar~~ FIXED
+`screen.c` — Old value saved before set, restored on VALID failure.
 
-### 1.4 ADIR pattern filter non-functional
-`func.c` — `ADIR("*.PRG")` returns the same count as `ADIR()` with no
-filter. The `str_like` function uses SQL-style `%`/`_` wildcards, but users
-pass DOS-style `*`/`?` patterns. The test expected-output was updated to match
-the broken count, masking the bug. Fix: either translate `*`/`?` to `%`/`_`
-before calling `str_like`, or add a proper glob matcher.
+### ~~1.4 ADIR pattern filter~~ FIXED
+`util.c` — `str_like()` rewritten as a proper glob matcher supporting `*`/`?`.
 
-### 1.5 FREAD silently truncates to 255 bytes
-`func.c` — `FREAD(h, 1000)` reads 1000 bytes into a malloc'd buffer, but
-`val_str()` copies into `value_t.str[256]`. Data is silently truncated. Fix:
-cap the read count at 255 (sizeof `value_t.str` - 1).
+### ~~1.5 FREAD truncation~~ FIXED
+`func.c` — Read count capped at 255 (sizeof `value_t.str` - 1).
 
-### 1.6 Memory leak on full variable store
-`memvar.c` — `memvar_declare_array` allocates the array struct and elements
-via `calloc`, then calls `memvar_set`. If the store is full, `memvar_set`
-returns -1 but the allocations are never freed. `h_declare` in command.c
-doesn't check the return value either.
+### ~~1.6 Memory leak on full variable store~~ FIXED
+`memvar.c` — `memvar_declare_array` frees allocations if `memvar_set` fails.
 
-### 1.7 FOPEN/FCREATE don't set ll_error when handle table full
-`func.c` — When all 16 file handle slots are occupied, `FOPEN()`/`FCREATE()`
-return -1 but don't set `ll_error`. `FERROR()` may report 0 (success).
+### ~~1.7 FOPEN/FCREATE ll_error~~ FIXED
+`func.c` — Both now set `ll_error = -1` when handle table full.
 
-### 1.8 Duplicate FILE entry in func_table
-`func.c` — `{ "FILE", fn_file }` appears twice (directory services section and
-misc section). The second is dead code. Remove the duplicate.
+### ~~1.8 Duplicate FILE entry~~ FIXED
+`func.c` — Duplicate removed; single entry remains.
 
-### ~~1.9 VALID/WHEN expressions evaluated at parse time~~ FIXED
-`screen.c` — ~~To capture the expression text for later evaluation, the parser
-evaluates the expression into a dummy result just to advance the pointer. Side
-effects (function calls, record navigation) fire at `@GET` time instead of
-READ time.~~ Fixed: `ast_compile_adv()` now parses without evaluating, advancing
-the pointer with zero side effects. VALID/WHEN ASTs are compiled in `screen_get`
-and evaluated during `screen_read`.
+### ~~1.9 VALID/WHEN parse-time side effects~~ FIXED
+`screen.c` — `ast_compile_adv()` now parses without evaluating, advancing the
+pointer with zero side effects. VALID/WHEN ASTs compiled in `screen_get`,
+evaluated during `screen_read`.
 
-### 1.10 WHEN/VALID silently pass on eval errors
-`screen.c` — If `expr_eval_str` returns non-zero (expression syntax error) or
-the result is not `VAL_LOGIC` (e.g., returns a number), validation is silently
-skipped. A typo in a VALID expression effectively disables the constraint.
+### ~~1.10 WHEN/VALID eval errors~~ FIXED
+`screen.c` — AST eval checks both return value and `VAL_LOGIC` type; validation
+rejects on eval failure or non-logical result.
 
-### 1.11 Term-mode READ ignores VALID and WHEN
-`screen.c` — The `#if HAS_TERM` full-screen READ path only checks RANGE. The
-VALID and WHEN clauses are only honored in the fallback line-mode path.
+### ~~1.11 Term-mode READ ignores VALID and WHEN~~ FIXED
+`screen.c` — Term-mode READ now checks WHEN (skip field) and VALID (save/restore
+on failure) matching line-mode behavior.
 
-### 1.12 Bracket string syntax broken
-`lex.c` — `[` is now tokenized as `TOK_LBRACKET` for array indexing. In
-dBase III, `[Hello]` is an alternative string literal (equivalent to `"Hello"`).
-Any code using bracket-delimited strings breaks silently. Need context-sensitive
-lexing: `[` after an identifier = array index; `[` at expression start = string.
+### ~~1.12 Bracket string syntax~~ FIXED
+`lex.c` — Context-sensitive lexing: `[` after identifier/`)`/`]` = array index;
+`[` at expression start = string literal.
 
-### 1.13 ensure_dbf_ext uppercases directory path
-`command.c` — `ensure_dbf_ext()` calls `str_upper()` on the entire path,
-including directory components. On case-sensitive Linux filesystems,
-`data/myfile` becomes `DATA/MYFILE.DBF`, which won't open. Should uppercase
-only the filename portion.
+### ~~1.13 ensure_dbf_ext path case~~ FIXED
+`command.c` — `upper_basename()` uppercases only the filename portion, not
+directory components.
 
 ---
 
@@ -247,9 +220,8 @@ unlikely to produce measurable speedup for real workloads.
 
 ## 5. Polish & Completeness
 
-### 5.1 ADIR() with DOS-style Wildcards
-Currently broken (see 1.4). Once fixed, should support standard patterns:
-`*.DBF`, `REP*.FRM`, `?DATA.DBF`. This is table stakes for directory operations.
+### ~~5.1 ADIR() with DOS-style Wildcards~~ FIXED
+Resolved by 1.4 fix. `str_like()` now supports `*`/`?` glob patterns natively.
 
 ### 5.2 Error Handling Completeness
 - `ON ERROR` handler exists but some error paths bypass it (e.g., UNIQUE
@@ -278,8 +250,8 @@ that overlay the main display and then restore it.
 ## 6. Test Coverage Gaps
 
 ### 6.1 Tests That Mask Bugs
-- `test_dir_services.expected` — ADIR pattern count matches broken output (1.4)
-- `test_get_validation` — only tests line-mode; term-mode untested (1.11)
+- ~~`test_dir_services.expected` — ADIR pattern count matches broken output (1.4)~~ FIXED
+- `test_get_validation` — only tests line-mode; term-mode untested (1.11 fixed but not testable in automated harness)
 
 ### 6.2 Missing Test Scenarios
 - Negative/zero arguments to FWRITE, FREAD, PADR, PADL, PADC
