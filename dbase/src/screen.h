@@ -15,6 +15,8 @@ typedef struct {
     char initial[256];
     int has_range;
     value_t range_lo, range_hi;
+    char valid_expr[256];
+    char when_expr[256];
 } get_entry_t;
 
 typedef struct {
@@ -33,7 +35,8 @@ void screen_say(int row, int col, const char *expr_str, const char *picture);
 
 /* @GET command (range_lo/range_hi = NULL if no RANGE) */
 void screen_get(int row, int col, const char *varname, const char *picture,
-                const value_t *range_lo, const value_t *range_hi);
+                const value_t *range_lo, const value_t *range_hi,
+                const char *valid_expr, const char *when_expr);
 
 /* @CLEAR TO command */
 void screen_clear_region(int r1, int c1, int r2, int c2);

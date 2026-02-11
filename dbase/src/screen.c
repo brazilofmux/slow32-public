@@ -154,7 +154,8 @@ void screen_say(int row, int col, const char *expr_str, const char *picture) {
 
 /* ---- @GET ---- */
 void screen_get(int row, int col, const char *varname, const char *picture,
-                const value_t *range_lo, const value_t *range_hi) {
+                const value_t *range_lo, const value_t *range_hi,
+                const char *valid_expr, const char *when_expr) {
     memvar_store_t *store = cmd_get_memvar_store();
     value_t val;
 
@@ -178,6 +179,16 @@ void screen_get(int row, int col, const char *varname, const char *picture,
     } else {
         scr.gets[scr.ngets].has_range = 0;
     }
+
+    if (valid_expr)
+        str_copy(scr.gets[scr.ngets].valid_expr, valid_expr, sizeof(scr.gets[scr.ngets].valid_expr));
+    else
+        scr.gets[scr.ngets].valid_expr[0] = '\0';
+
+    if (when_expr)
+        str_copy(scr.gets[scr.ngets].when_expr, when_expr, sizeof(scr.gets[scr.ngets].when_expr));
+    else
+        scr.gets[scr.ngets].when_expr[0] = '\0';
 
     /* Get current value for display */
     if (memvar_find(store, varname, &val) == 0) {
@@ -293,34 +304,58 @@ void screen_read(void) {
             char line[256];
             value_t v;
 
-            printf("%s=", scr.gets[i].varname);
-            if (scr.gets[i].initial[0])
-                printf("[%s] ", scr.gets[i].initial);
-
-            if (read_line(line, sizeof(line)) < 0 || line[0] == '\0') {
-                /* Keep current value */
-                continue;
-            }
-
-            trim_right(line);
-            if (scr.gets[i].type == VAL_NUM) {
-                v = val_num(atof(line));
-            } else {
-                v = val_str(line);
-            }
-
-            /* RANGE validation */
-            if (scr.gets[i].has_range && v.type == VAL_NUM) {
-                double n = v.num;
-                double lo = scr.gets[i].range_lo.num;
-                double hi = scr.gets[i].range_hi.num;
-                if (n < lo || n > hi) {
-                    printf("Range: %g to %g\n", lo, hi);
-                    continue;  /* reject, keep current value */
+            /* Check WHEN condition */
+            if (scr.gets[i].when_expr[0]) {
+                value_t res;
+                if (expr_eval_str(cmd_get_expr_ctx(), scr.gets[i].when_expr, &res) == 0) {
+                    if (res.type == VAL_LOGIC && !res.logic) continue;
                 }
             }
 
-            memvar_set(store, scr.gets[i].varname, &v);
+            for (;;) {
+                printf("%s=", scr.gets[i].varname);
+                if (scr.gets[i].initial[0])
+                    printf("[%s] ", scr.gets[i].initial);
+
+                if (read_line(line, sizeof(line)) < 0) break;
+                
+                if (line[0] == '\0') {
+                    /* Keep current value */
+                    if (scr.gets[i].type == VAL_NUM) v = val_num(atof(scr.gets[i].initial));
+                    else v = val_str(scr.gets[i].initial);
+                } else {
+                    trim_right(line);
+                    if (scr.gets[i].type == VAL_NUM) v = val_num(atof(line));
+                    else v = val_str(line);
+                }
+
+                /* RANGE validation */
+                if (scr.gets[i].has_range && v.type == VAL_NUM) {
+                    double n = v.num;
+                    double lo = scr.gets[i].range_lo.num;
+                    double hi = scr.gets[i].range_hi.num;
+                    if (n < lo || n > hi) {
+                        printf("\nRange: %g to %g\n", lo, hi);
+                        continue;
+                    }
+                }
+
+                /* Temporarily set memvar so VALID expr can see it */
+                memvar_set(store, scr.gets[i].varname, &v);
+
+                /* VALID validation */
+                if (scr.gets[i].valid_expr[0]) {
+                    value_t res;
+                    if (expr_eval_str(cmd_get_expr_ctx(), scr.gets[i].valid_expr, &res) == 0) {
+                        if (res.type == VAL_LOGIC && !res.logic) {
+                            printf("\nInvalid entry.\n");
+                            continue;
+                        }
+                    }
+                }
+                printf("\n");
+                break;
+            }
         }
     }
 
@@ -531,6 +566,8 @@ void screen_at_cmd(const char *line) {
     } else if (str_imatch(p, "GET")) {
         char varname[MEMVAR_NAMELEN];
         char picture[64] = "";
+        char valid_expr[256] = "";
+        char when_expr[256] = "";
         int i = 0;
         int has_range = 0;
         value_t range_lo, range_hi;
@@ -542,36 +579,57 @@ void screen_at_cmd(const char *line) {
             varname[i++] = *p++;
         varname[i] = '\0';
 
-        p = skip_ws(p);
-        if (str_imatch(p, "PICTURE")) {
-            p = skip_ws(p + 7);
-            if (*p == '"' || *p == '\'') {
-                char q = *p++;
-                i = 0;
-                while (*p && *p != q && i < 63)
-                    picture[i++] = *p++;
-                picture[i] = '\0';
-                if (*p) p++;  /* skip closing quote */
-            }
-        }
-
-        p = skip_ws(p);
-        if (str_imatch(p, "RANGE")) {
-            expr_ctx_t *ctx = cmd_get_expr_ctx();
-            p = skip_ws(p + 5);
-            if (expr_eval(ctx, &p, &range_lo) == 0) {
-                p = skip_ws(p);
-                if (*p == ',') p++;
-                p = skip_ws(p);
-                if (expr_eval(ctx, &p, &range_hi) == 0) {
-                    has_range = 1;
+        /* Parse optional clauses */
+        for (;;) {
+            p = skip_ws(p);
+            if (str_imatch(p, "PICTURE")) {
+                p = skip_ws(p + 7);
+                if (*p == '"' || *p == '\'') {
+                    char q = *p++;
+                    i = 0;
+                    while (*p && *p != q && i < 63)
+                        picture[i++] = *p++;
+                    picture[i] = '\0';
+                    if (*p) p++;
                 }
+            } else if (str_imatch(p, "RANGE")) {
+                expr_ctx_t *ctx = cmd_get_expr_ctx();
+                p = skip_ws(p + 5);
+                if (expr_eval(ctx, &p, &range_lo) == 0) {
+                    p = skip_ws(p);
+                    if (*p == ',') p++;
+                    p = skip_ws(p);
+                    if (expr_eval(ctx, &p, &range_hi) == 0) {
+                        has_range = 1;
+                    }
+                }
+            } else if (str_imatch(p, "VALID")) {
+                p = skip_ws(p + 5);
+                const char *start = p;
+                value_t dummy;
+                expr_eval(cmd_get_expr_ctx(), &p, &dummy);
+                int len = (int)(p - start);
+                if (len > 255) len = 255;
+                memcpy(valid_expr, start, len);
+                valid_expr[len] = '\0';
+            } else if (str_imatch(p, "WHEN")) {
+                p = skip_ws(p + 4);
+                const char *start = p;
+                value_t dummy;
+                expr_eval(cmd_get_expr_ctx(), &p, &dummy);
+                int len = (int)(p - start);
+                if (len > 255) len = 255;
+                memcpy(when_expr, start, len);
+                when_expr[len] = '\0';
+            } else {
+                break;
             }
         }
 
         screen_get(row, col, varname, picture,
                    has_range ? &range_lo : NULL,
-                   has_range ? &range_hi : NULL);
+                   has_range ? &range_hi : NULL,
+                   valid_expr, when_expr);
 
     } else if (str_imatch(p, "CLEAR")) {
         int r2 = 24, c2 = 79;
