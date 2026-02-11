@@ -736,17 +736,25 @@ void screen_at_cmd(const char *line) {
     p++;
     p = skip_ws(p);
 
-    /* Parse row */
-    row = atoi(p);
-    while (*p >= '0' && *p <= '9') p++;
-    p = skip_ws(p);
-    if (*p == ',') p++;
-    p = skip_ws(p);
-
-    /* Parse col */
-    col = atoi(p);
-    while (*p >= '0' && *p <= '9') p++;
-    p = skip_ws(p);
+    /* Parse row (expression) */
+    {
+        expr_ctx_t *ctx = cmd_get_expr_ctx();
+        value_t v;
+        if (expr_eval(ctx, &p, &v) != 0 || v.type != VAL_NUM) {
+            printf("Syntax: @ row,col SAY|GET|CLEAR TO|TO ...\n");
+            return;
+        }
+        row = (int)v.num;
+        p = skip_ws(p);
+        if (*p == ',') p++;
+        p = skip_ws(p);
+        if (expr_eval(ctx, &p, &v) != 0 || v.type != VAL_NUM) {
+            printf("Syntax: @ row,col SAY|GET|CLEAR TO|TO ...\n");
+            return;
+        }
+        col = (int)v.num;
+        p = skip_ws(p);
+    }
 
     /* Sub-command */
     if (str_imatch(p, "SAY")) {
