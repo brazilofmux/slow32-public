@@ -257,6 +257,7 @@ static int fn_padr(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         return -1;
     }
     width = (int)args[1].num;
+    if (width < 0) width = 0;
     if (width > (int)sizeof(buf) - 1) width = (int)sizeof(buf) - 1;
     if (nargs >= 3 && args[2].type == VAL_CHAR && args[2].str[0]) pad = args[2].str[0];
 
@@ -283,6 +284,7 @@ static int fn_padl(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         return -1;
     }
     width = (int)args[1].num;
+    if (width < 0) width = 0;
     if (width > (int)sizeof(buf) - 1) width = (int)sizeof(buf) - 1;
     if (nargs >= 3 && args[2].type == VAL_CHAR && args[2].str[0]) pad = args[2].str[0];
 
@@ -310,6 +312,7 @@ static int fn_padc(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         return -1;
     }
     width = (int)args[1].num;
+    if (width < 0) width = 0;
     if (width > (int)sizeof(buf) - 1) width = (int)sizeof(buf) - 1;
     if (nargs >= 3 && args[2].type == VAL_CHAR && args[2].str[0]) pad = args[2].str[0];
 
