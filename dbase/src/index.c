@@ -469,6 +469,37 @@ static ndx_page_t *bt_find_leaf(index_t *idx, const char *key) {
     return node; /* pinned */
 }
 
+/* ---- Key existence check (for UNIQUE validation) ---- */
+int index_key_exists(index_t *idx, const char *key, uint32_t exclude_recno) {
+    char padded[MAX_INDEX_KEY];
+    ndx_page_t *leaf;
+    int pos;
+
+    if (!idx->active || idx->nentries == 0) return 0;
+
+    memset(padded, ' ', idx->key_len);
+    {
+        int len = strlen(key);
+        if (len > idx->key_len) len = idx->key_len;
+        memcpy(padded, key, len);
+    }
+
+    leaf = bt_find_leaf(idx, padded);
+    if (!leaf) return 0;
+
+    pos = page_lower_bound(idx, leaf, padded);
+    while (pos < leaf->nkeys &&
+           key_cmp(page_key(idx, leaf, pos), padded, idx->key_len) == 0) {
+        if (leaf->recnos[pos] != exclude_recno) {
+            page_put(leaf);
+            return 1; /* duplicate exists */
+        }
+        pos++;
+    }
+    page_put(leaf);
+    return 0;
+}
+
 /* ---- Seek ---- */
 int index_seek(index_t *idx, const char *key) {
     ndx_page_t *leaf;

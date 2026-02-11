@@ -168,28 +168,38 @@ static void indexes_capture_keys(dbf_t *db, char keys[][MAX_INDEX_KEY + 1]) {
 }
 
 /* Update all active indexes after REPLACE (remove old key, insert new key).
+   Two-phase: validate all UNIQUE constraints first, then mutate.
    Returns 0 on success, -1 if a UNIQUE constraint was violated. */
 static int indexes_update_current(dbf_t *db, char old_keys[][MAX_INDEX_KEY + 1]) {
     work_area_t *wa = cur_wa();
+    char new_keys[MAX_INDEXES][MAX_INDEX_KEY + 1];
+    int changed[MAX_INDEXES];
     int i;
     ctx_setup();
+
+    /* Phase 1: evaluate new keys and check UNIQUE constraints */
     for (i = 0; i < wa->num_indexes; i++) {
+        changed[i] = 0;
         index_t *idx = &wa->indexes[i];
-        if (idx->active) {
-            char new_key[MAX_INDEX_KEY + 1];
-            if (eval_index_key(idx, new_key) == 0) {
-                if (memcmp(old_keys[i], new_key, idx->key_len) != 0) {
-                    index_remove(idx, old_keys[i], db->current_record);
-                    if (index_insert(idx, new_key, db->current_record) == 1) {
-                        /* UNIQUE violation — re-insert old key to undo the remove */
-                        index_insert(idx, old_keys[i], db->current_record);
-                        index_flush(idx);
-                        printf("Uniqueness violation on index %s\n", idx->filename);
-                        return -1;
-                    }
-                    index_flush(idx);
+        if (idx->active && eval_index_key(idx, new_keys[i]) == 0) {
+            if (memcmp(old_keys[i], new_keys[i], idx->key_len) != 0) {
+                changed[i] = 1;
+                if (idx->unique &&
+                    index_key_exists(idx, new_keys[i], db->current_record)) {
+                    printf("Uniqueness violation on index %s\n", idx->filename);
+                    return -1;
                 }
             }
+        }
+    }
+
+    /* Phase 2: all checks passed — apply mutations */
+    for (i = 0; i < wa->num_indexes; i++) {
+        if (changed[i]) {
+            index_t *idx = &wa->indexes[i];
+            index_remove(idx, old_keys[i], db->current_record);
+            index_insert(idx, new_keys[i], db->current_record);
+            index_flush(idx);
         }
     }
     return 0;
