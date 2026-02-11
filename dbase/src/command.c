@@ -1863,6 +1863,41 @@ static void cmd_store(dbf_t *db, lexer_t *l) {
     str_copy(name, tmp.current.text, sizeof(name));
     str_upper(name);
 
+    lex_next(&tmp);
+    int is_array = 0;
+    value_t mv;
+    if (memvar_find(&memvar_store, name, &mv) == 0 && mv.type == VAL_ARRAY)
+        is_array = 1;
+
+    if ((is_array && (tmp.current.type == TOK_LPAREN || tmp.current.type == TOK_LBRACKET)) ||
+        (tmp.current.type == TOK_LBRACKET)) {
+        token_type_t end_type = (tmp.current.type == TOK_LPAREN) ? TOK_RPAREN : TOK_RBRACKET;
+        const char *next_p = tmp.token_start + 1; /* skip [ or ( */
+        value_t row_v, col_v;
+        int row = 0, col = 1;
+        if (expr_eval(&expr_ctx, &next_p, &row_v) == 0 && row_v.type == VAL_NUM) {
+            row = (int)row_v.num;
+            lexer_init_ext(&tmp, next_p, expr_ctx.vars);
+            if (tmp.current.type == TOK_COMMA) {
+                next_p = tmp.token_start + 1; /* skip , */
+                if (expr_eval(&expr_ctx, &next_p, &col_v) == 0 && col_v.type == VAL_NUM) {
+                    col = (int)col_v.num;
+                    lexer_init_ext(&tmp, next_p, expr_ctx.vars);
+                }
+            }
+            if (tmp.current.type == end_type) {
+                lex_next(&tmp);
+            }
+            int res = memvar_set_elem(&memvar_store, name, row, col, &val);
+            if (res == -2) {
+                prog_error(ERR_RECORD_RANGE, "Array index out of bounds");
+            } else if (res == -1) {
+                prog_error(ERR_SYNTAX, "Variable is not an array");
+            }
+            return;
+        }
+    }
+
     if (lex_is_reserved(name)) {
         char err[128];
         snprintf(err, sizeof(err), "%s is a reserved keyword", name);
@@ -1871,7 +1906,6 @@ static void cmd_store(dbf_t *db, lexer_t *l) {
     }
 
     memvar_set(&memvar_store, name, &val);
-    /* No need to advance original l, we're at EOL anyway */
 }
 
 /* ---- RELEASE ---- */
@@ -3700,6 +3734,41 @@ static void h_endscan(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_ru
 static void h_case(dbf_t *db, lexer_t *l) { (void)db; if (prog_is_running()) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); prog_case(arg); } else printf("CASE without DO CASE.\n"); }
 static void h_otherwise(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_otherwise(); else printf("OTHERWISE without DO CASE.\n"); }
 static void h_endcase(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_running()) prog_endcase(); else printf("ENDCASE without DO CASE.\n"); }
+static void h_declare(dbf_t *db, lexer_t *l) {
+    (void)db;
+    lex_next(l); /* skip DECLARE */
+    while (l->current.type == TOK_IDENT) {
+        char name[MEMVAR_NAMELEN];
+        int rows = 0, cols = 1;
+        str_copy(name, l->current.text, sizeof(name));
+        lex_next(l);
+        if (l->current.type == TOK_LPAREN || l->current.type == TOK_LBRACKET) {
+            token_type_t end_type = (l->current.type == TOK_LPAREN) ? TOK_RPAREN : TOK_RBRACKET;
+            lex_next(l);
+            if (l->current.type == TOK_NUMBER) {
+                rows = (int)l->current.num_val;
+                lex_next(l);
+                if (l->current.type == TOK_COMMA) {
+                    lex_next(l);
+                    if (l->current.type == TOK_NUMBER) {
+                        cols = (int)l->current.num_val;
+                        lex_next(l);
+                    }
+                }
+            }
+            if (l->current.type == end_type) {
+                lex_next(l);
+            }
+        }
+        if (rows > 0) {
+            memvar_declare_array(&memvar_store, name, rows, cols);
+        } else {
+            printf("Invalid array dimensions for %s\n", name);
+        }
+        if (l->current.type == TOK_COMMA) lex_next(l);
+        else break;
+    }
+}
 static void h_return(dbf_t *db, lexer_t *l) { (void)db; if (prog_is_running()) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); prog_return(arg); } else printf("RETURN not in program.\n"); }
 static void h_procedure(dbf_t *db, lexer_t *l) { (void)db; if (prog_is_running()) { lex_next(l); prog_procedure(l); } else printf("PROCEDURE not allowed in interactive mode.\n"); }
 static void h_parameters(dbf_t *db, lexer_t *l) { (void)db; if (prog_is_running()) { lex_next(l); prog_parameters(l); } else printf("PARAMETERS not allowed in interactive mode.\n"); }
@@ -4090,7 +4159,8 @@ static cmd_entry_t cmd_table[] = {
     { "CASE", h_case }, { "CLEAR", h_clear },
     { "CLOSE", h_close }, { "CONTINUE", h_continue },
     { "COPY", h_copy }, { "COUNT", h_count },
-    { "CREATE", h_create }, { "DELETE", h_delete },
+    { "CREATE", h_create }, { "DECLARE", h_declare },
+    { "DELETE", h_delete }, { "DIMENSION", h_declare },
     { "DISPLAY", h_display }, { "DO", h_do },
     { "EJECT", h_eject }, { "ELSE", h_else },
     { "ENDCASE", h_endcase }, { "ENDDO", h_enddo },
@@ -4197,30 +4267,65 @@ int cmd_execute(dbf_t *db, char *line) {
         return 0;
     }
 
-    /* Variable assignment: identifier = expr */
+    /* Variable assignment: identifier[idx] = expr */
     if (is_ident_start(p[0])) {
-        const char *q = p;
-        char name[MEMVAR_NAMELEN];
-        int j = 0;
-        while (is_ident_char(*q) && j < MEMVAR_NAMELEN - 1)
-            name[j++] = *q++;
-        name[j] = '\0';
-        q = skip_ws(q);
-        if (*q == '=') {
-            if (lex_is_reserved(name)) {
-                char err[128];
-                snprintf(err, sizeof(err), "%s is a reserved keyword", name);
-                prog_error(ERR_SYNTAX, err);
+        lexer_t al;
+        lexer_init_ext(&al, p, expr_ctx.vars);
+        if (al.current.type == TOK_IDENT) {
+            char name[MEMVAR_NAMELEN];
+            str_copy(name, al.current.text, sizeof(name));
+            lex_next(&al);
+            int is_indexed = 0;
+            int row = 0, col = 1;
+
+            int is_array = 0;
+            value_t mv;
+            if (memvar_find(&memvar_store, name, &mv) == 0 && mv.type == VAL_ARRAY)
+                is_array = 1;
+
+            if ((is_array && (al.current.type == TOK_LPAREN || al.current.type == TOK_LBRACKET)) ||
+                (al.current.type == TOK_LBRACKET)) {
+                token_type_t end_type = (al.current.type == TOK_LPAREN) ? TOK_RPAREN : TOK_RBRACKET;
+                const char *next_p = al.token_start + 1; /* skip [ or ( */
+                value_t row_v, col_v;
+                if (expr_eval(&expr_ctx, &next_p, &row_v) == 0 && row_v.type == VAL_NUM) {
+                    row = (int)row_v.num;
+                    lexer_init_ext(&al, next_p, expr_ctx.vars);
+                    if (al.current.type == TOK_COMMA) {
+                        next_p = al.token_start + 1; /* skip , */
+                        if (expr_eval(&expr_ctx, &next_p, &col_v) == 0 && col_v.type == VAL_NUM) {
+                            col = (int)col_v.num;
+                            lexer_init_ext(&al, next_p, expr_ctx.vars);
+                        }
+                    }
+                    if (al.current.type == end_type) {
+                        lex_next(&al);
+                    }
+                    is_indexed = 1;
+                }
+            }
+            if (al.current.type == TOK_EQ) {
+                if (lex_is_reserved(name)) {
+                    char err[128];
+                    snprintf(err, sizeof(err), "%s is a reserved keyword", name);
+                    prog_error(ERR_SYNTAX, err);
+                    return 0;
+                }
+                value_t val;
+                const char *next_p = al.token_start + 1; /* skip = */
+                if (expr_eval(&expr_ctx, &next_p, &val) != 0) {
+                    report_expr_error();
+                    return 0;
+                }
+                if (is_indexed) {
+                    if (memvar_set_elem(&memvar_store, name, row, col, &val) == -2) {
+                        prog_error(ERR_RECORD_RANGE, "Array index out of bounds");
+                    }
+                } else {
+                    memvar_set(&memvar_store, name, &val);
+                }
                 return 0;
             }
-            value_t val;
-            q++;
-            if (expr_eval_str(&expr_ctx, q, &val) != 0) {
-                report_expr_error();
-                return 0;
-            }
-            memvar_set(&memvar_store, name, &val);
-            return 0;
         }
     }
 

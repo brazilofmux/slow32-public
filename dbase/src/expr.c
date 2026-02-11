@@ -405,6 +405,45 @@ static int parse_primary(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
         str_copy(name, t.text, sizeof(name));
         lex_next(l);
 
+        /* Check for array indexed access: name[i] or name(i) or name[i,j] */
+        int is_array = 0;
+        if (ctx->vars) {
+            value_t mv;
+            if (memvar_find(ctx->vars, name, &mv) == 0 && mv.type == VAL_ARRAY)
+                is_array = 1;
+        }
+
+        if ((is_array && (l->current.type == TOK_LPAREN || l->current.type == TOK_LBRACKET)) ||
+            (l->current.type == TOK_LBRACKET)) {
+            token_type_t end_type = (l->current.type == TOK_LPAREN) ? TOK_RPAREN : TOK_RBRACKET;
+            const char *next_p = l->token_start + 1; /* skip [ or ( */
+            value_t row_v, col_v;
+            int row = 0, col = 1;
+
+            if (expr_eval(ctx, &next_p, &row_v) != 0) return -1;
+            if (row_v.type != VAL_NUM) { ctx->error = "Array index must be numeric"; return -1; }
+            row = (int)row_v.num;
+            lexer_init_ext(l, next_p, ctx->vars);
+
+            if (l->current.type == TOK_COMMA) {
+                next_p = l->token_start + 1; /* skip , */
+                if (expr_eval(ctx, &next_p, &col_v) != 0) return -1;
+                if (col_v.type != VAL_NUM) { ctx->error = "Array index must be numeric"; return -1; }
+                col = (int)col_v.num;
+                lexer_init_ext(l, next_p, ctx->vars);
+            }
+
+            if (l->current.type == end_type) {
+                lex_next(l);
+            }
+
+            int res = memvar_get_elem(ctx->vars, name, row, col, result);
+            if (res == 0) return 0;
+            if (res == -2) { ctx->error = "Array index out of bounds"; return -1; }
+            ctx->error = "Variable is not an array";
+            return -1;
+        }
+
         /* Check for alias->field reference */
         if (lex_peek(l) == TOK_ARROW) {
             lex_next(l);

@@ -1,7 +1,14 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "memvar.h"
 #include "util.h"
+
+static void array_free(array_t *arr) {
+    if (!arr) return;
+    if (arr->elements) free(arr->elements);
+    free(arr);
+}
 
 void memvar_init(memvar_store_t *store) {
     int i;
@@ -31,6 +38,8 @@ int memvar_set(memvar_store_t *store, const char *name, const value_t *val) {
     /* Update existing */
     for (i = 0; i < MEMVAR_MAX; i++) {
         if (store->vars[i].used && str_icmp(store->vars[i].name, uname) == 0) {
+            if (store->vars[i].val.type == VAL_ARRAY)
+                array_free(store->vars[i].val.array);
             store->vars[i].val = *val;
             return 0;
         }
@@ -55,6 +64,8 @@ int memvar_release(memvar_store_t *store, const char *name) {
     int i;
     for (i = 0; i < MEMVAR_MAX; i++) {
         if (store->vars[i].used && str_icmp(store->vars[i].name, name) == 0) {
+            if (store->vars[i].val.type == VAL_ARRAY)
+                array_free(store->vars[i].val.array);
             store->vars[i].used = 0;
             store->count--;
             return 0;
@@ -65,8 +76,11 @@ int memvar_release(memvar_store_t *store, const char *name) {
 
 void memvar_release_all(memvar_store_t *store) {
     int i;
-    for (i = 0; i < MEMVAR_MAX; i++)
+    for (i = 0; i < MEMVAR_MAX; i++) {
+        if (store->vars[i].used && store->vars[i].val.type == VAL_ARRAY)
+            array_free(store->vars[i].val.array);
         store->vars[i].used = 0;
+    }
     store->count = 0;
 }
 
@@ -81,12 +95,67 @@ int memvar_release_matching(memvar_store_t *store, const char *pattern, int like
         if (!store->vars[i].used) continue;
         int matches = pattern_match(store->vars[i].name, pattern);
         if ((like && matches) || (!like && !matches)) {
+            if (store->vars[i].val.type == VAL_ARRAY)
+                array_free(store->vars[i].val.array);
             store->vars[i].used = 0;
             store->count--;
             count++;
         }
     }
     return count;
+}
+
+int memvar_declare_array(memvar_store_t *store, const char *name, int rows, int cols) {
+    value_t v;
+    int i, size;
+    array_t *arr = (array_t *)calloc(1, sizeof(array_t));
+    if (!arr) return -1;
+
+    if (cols < 1) cols = 1;
+    size = rows * cols;
+    arr->rows = rows;
+    arr->cols = cols;
+    arr->elements = (value_t *)calloc(size, sizeof(value_t));
+    if (!arr->elements) { free(arr); return -1; }
+
+    for (i = 0; i < size; i++) arr->elements[i] = val_nil();
+
+    v.type = VAL_ARRAY;
+    v.array = arr;
+    return memvar_set(store, name, &v);
+}
+
+int memvar_set_elem(memvar_store_t *store, const char *name, int row, int col, const value_t *val) {
+    int i;
+    for (i = 0; i < MEMVAR_MAX; i++) {
+        if (store->vars[i].used && str_icmp(store->vars[i].name, name) == 0) {
+            if (store->vars[i].val.type != VAL_ARRAY) return -1;
+            array_t *arr = store->vars[i].val.array;
+            /* 1-based indexing in dBase */
+            int r = row - 1;
+            int c = col - 1;
+            if (r < 0 || r >= arr->rows || c < 0 || c >= arr->cols) return -2;
+            arr->elements[r * arr->cols + c] = *val;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+int memvar_get_elem(const memvar_store_t *store, const char *name, int row, int col, value_t *val) {
+    int i;
+    for (i = 0; i < MEMVAR_MAX; i++) {
+        if (store->vars[i].used && str_icmp(store->vars[i].name, name) == 0) {
+            if (store->vars[i].val.type != VAL_ARRAY) return -1;
+            array_t *arr = store->vars[i].val.array;
+            int r = row - 1;
+            int c = col - 1;
+            if (r < 0 || r >= arr->rows || c < 0 || c >= arr->cols) return -2;
+            *val = arr->elements[r * arr->cols + c];
+            return 0;
+        }
+    }
+    return -1;
 }
 
 void memvar_display(const memvar_store_t *store) {
@@ -110,6 +179,14 @@ void memvar_display(const memvar_store_t *store) {
         case VAL_LOGIC:
             printf("%-10s  L  %s\n", store->vars[i].name, buf);
             break;
+        case VAL_ARRAY: {
+            array_t *arr = store->vars[i].val.array;
+            if (arr->cols > 1)
+                printf("%-10s  A  [%d,%d]\n", store->vars[i].name, arr->rows, arr->cols);
+            else
+                printf("%-10s  A  [%d]\n", store->vars[i].name, arr->rows);
+            break;
+        }
         default:
             printf("%-10s  U  %s\n", store->vars[i].name, buf);
             break;

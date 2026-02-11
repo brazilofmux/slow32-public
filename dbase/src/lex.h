@@ -23,6 +23,8 @@ typedef enum {
     TOK_DIV,        /* / */
     TOK_LPAREN,     /* ( */
     TOK_RPAREN,     /* ) */
+    TOK_LBRACKET,   /* [ */
+    TOK_RBRACKET,   /* ] */
     TOK_COMMA,      /* , */
     TOK_ARROW,      /* -> */
     
