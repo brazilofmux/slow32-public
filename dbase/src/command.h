@@ -6,6 +6,7 @@
 #include "expr.h"
 #include "clause.h"
 #include "set.h"
+#include "index.h"
 
 /* Execute a command line. Returns 1 if QUIT, 0 otherwise. */
 int cmd_execute(dbf_t *db, char *line);
@@ -33,5 +34,17 @@ int cmd_get_escape(void);     /* SET ESCAPE ON/OFF */
 int cmd_get_echo(void);       /* SET ECHO ON/OFF */
 int cmd_get_margin(void);     /* SET MARGIN TO n */
 date_format_t cmd_get_date_format(void);  /* SET DATE format */
+
+/* Public wrappers for browse.c */
+index_t *cmd_controlling_index(void);
+int cmd_skip_deleted(const char *buf);
+int cmd_check_filter(dbf_t *db);
+void cmd_follow_relations(void);
+int cmd_field_display_width(dbf_t *db, int f);
+void cmd_indexes_capture_keys(dbf_t *db, char keys[][MAX_INDEX_KEY+1]);
+int cmd_indexes_update_current(dbf_t *db, char keys[][MAX_INDEX_KEY+1]);
+void cmd_indexes_insert_current(dbf_t *db);
+void cmd_ctx_setup(void);
+int cmd_get_deleted(void);
 
 #endif

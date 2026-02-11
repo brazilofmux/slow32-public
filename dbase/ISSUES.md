@@ -61,15 +61,14 @@ expressions read full text. COPY TO / APPEND FROM / SORT copy memo data to new
 to 255 chars on read (`value_t.str[256]`). Grow-only writes (matches real dBase
 III). Missing `.DBT` on open warns and returns empty strings.
 
-### 2.2 EDIT/BROWSE — Full-Screen Record Editor
-`EDIT` and `BROWSE` are the primary interactive data entry commands in dBase.
-`BROWSE` displays a spreadsheet-style grid of records with scrolling,
-field-by-field editing, and insert/delete. This is a large feature (several
-hundred lines), but it's the command most dBase users reach for first.
-
-- Requires terminal mode (already available via `term.h`)
-- Core operations: scroll up/down, edit field in place, append, delete
-- Clipper extended BROWSE with code blocks for custom behavior
+### ~~2.2 EDIT/BROWSE — Full-Screen Record Editor~~ FIXED
+`EDIT` displays one record at a time vertically; `BROWSE` shows a spreadsheet-
+style grid (fields as columns, records as rows). Both support in-place field
+editing with cursor navigation, delete/recall toggle (Ctrl-U), index-aware
+navigation, and SET DELETED/FILTER awareness. `BROWSE` supports FIELDS clause,
+horizontal scrolling, PgUp/PgDn paging, and Ctrl-N append. `CHANGE` is an
+alias for `EDIT`. Falls back gracefully ("requires terminal mode") when the
+terminal service is unavailable.
 
 ### ~~2.3 INKEY()/LASTKEY()/READKEY() — Keyboard Input~~ FIXED
 Fully implemented with terminal support. `INKEY()` polls, `INKEY(0)` waits

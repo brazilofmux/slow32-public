@@ -68,6 +68,8 @@ void screen_shutdown(void) {
 #endif
 }
 
+int screen_term_available(void) { return scr.term_available; }
+
 /* ---- Apply PICTURE mask to a string ---- */
 static void apply_picture(char *out, const char *value, const char *picture, int outsize) {
     int i;
@@ -309,7 +311,7 @@ void screen_get(int row, int col, const char *varname, const char *picture,
 }
 
 #if HAS_TERM
-static int read_dbase_key(void);
+int read_dbase_key(void);
 #endif
 
 /* ---- READ ---- */
@@ -969,7 +971,7 @@ void screen_print_text(const char *s) {
  * In raw terminal mode, arrow keys arrive as ESC [ A/B/C/D sequences.
  * term_getkey() reads one byte at a time, so we must read the sequence. */
 #if HAS_TERM
-static int read_dbase_key(void) {
+int read_dbase_key(void) {
     int ch = term_getkey();
     if (ch < 0) return -1;
     if (ch == 27) {

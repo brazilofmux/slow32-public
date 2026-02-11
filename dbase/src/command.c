@@ -19,6 +19,7 @@
 #include "lex.h"
 #include "area.h"
 #include "ast.h"
+#include "browse.h"
 
 /* Persistent expression context */
 static expr_ctx_t expr_ctx;
@@ -4847,16 +4848,43 @@ static void h_update(dbf_t *db, lexer_t *l) { (void)db; (void)l; printf("UPDATE 
    the dispatch table. */
 static void h_stub(dbf_t *db, lexer_t *l) { (void)db; (void)l; printf("Command not implemented.\n"); }
 
+static void h_browse(dbf_t *db, lexer_t *l) {
+    char arg[256];
+    lex_next(l);
+    lex_get_remaining(l, arg, sizeof(arg));
+    cmd_browse(db, arg);
+}
+static void h_edit(dbf_t *db, lexer_t *l) {
+    char arg[256];
+    lex_next(l);
+    lex_get_remaining(l, arg, sizeof(arg));
+    cmd_edit(db, arg);
+}
+
+/* ---- Public wrappers for browse.c ---- */
+index_t *cmd_controlling_index(void)    { return controlling_index(); }
+int cmd_skip_deleted(const char *buf)   { return skip_deleted(buf); }
+int cmd_check_filter(dbf_t *db)         { return check_filter(db); }
+void cmd_follow_relations(void)         { follow_relations(); }
+int cmd_field_display_width(dbf_t *db, int f) { return field_display_width(db, f); }
+void cmd_indexes_capture_keys(dbf_t *db, char keys[][MAX_INDEX_KEY+1])  { indexes_capture_keys(db, keys); }
+int cmd_indexes_update_current(dbf_t *db, char keys[][MAX_INDEX_KEY+1]) { return indexes_update_current(db, keys); }
+void cmd_indexes_insert_current(dbf_t *db) { indexes_insert_current(db); }
+void cmd_ctx_setup(void)                { ctx_setup(); }
+int cmd_get_deleted(void)               { return set_opts.deleted; }
+
 static cmd_entry_t cmd_table[] = {
     { "ACCEPT", h_accept }, { "APPEND", h_append },
-    { "AVERAGE", h_average }, { "CALCULATE", h_calculate },
-    { "CANCEL", h_cancel }, { "CASE", h_case }, { "CLEAR", h_clear },
+    { "AVERAGE", h_average }, { "BROWSE", h_browse },
+    { "CALCULATE", h_calculate },
+    { "CANCEL", h_cancel }, { "CASE", h_case },
+    { "CHANGE", h_edit }, { "CLEAR", h_clear },
     { "CLOSE", h_close }, { "CONTINUE", h_continue },
     { "COPY", h_copy }, { "COUNT", h_count },
     { "CREATE", h_create }, { "DECLARE", h_declare },
     { "DELETE", h_delete }, { "DIMENSION", h_declare },
     { "DISPLAY", h_display }, { "DO", h_do },
-    { "EJECT", h_eject }, { "ELSE", h_else },
+    { "EDIT", h_edit }, { "EJECT", h_eject }, { "ELSE", h_else },
     { "ENDCASE", h_endcase }, { "ENDDO", h_enddo },
     { "ENDIF", h_endif }, { "ENDSCAN", h_endscan },
     { "ERASE", h_erase }, { "FIND", h_find },
