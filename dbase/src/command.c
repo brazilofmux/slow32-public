@@ -576,6 +576,11 @@ static void cmd_use(dbf_t *db, const char *arg) {
     while (*p && *p != ' ' && *p != '\t' && i < 63)
         filename[i++] = *p++;
     filename[i] = '\0';
+    if (filename[0] == '\0') {
+        printf("Syntax: USE [filename] [INDEX idx] [ALIAS alias]\n");
+        return;
+    }
+
     ensure_dbf_ext(filename, sizeof(filename));
 
     if (dbf_open(db, filename) < 0) {
@@ -2911,6 +2916,11 @@ static void cmd_index_on(dbf_t *db, const char *arg) {
         return;
     }
 
+    /* Allow optional leading ON (when called with remaining input) */
+    if (str_imatch(p, "ON")) {
+        p = skip_ws(p + 2);
+    }
+
     /* Find TO keyword */
     f = p;
     while (*f) {
@@ -2938,6 +2948,7 @@ static void cmd_index_on(dbf_t *db, const char *arg) {
             filename[i++] = *f++;
         filename[i] = '\0';
     }
+
     ensure_ndx_ext(filename, sizeof(filename));
 
     if (filename[0] == '\0' || str_icmp(filename, ".NDX") == 0) {
@@ -3653,18 +3664,32 @@ static void h_suspend(dbf_t *db, lexer_t *l) { (void)db; (void)l; if (prog_is_ru
 static void h_resume(dbf_t *db, lexer_t *l) { (void)db; (void)l; prog_resume(); }
 static void h_eject(dbf_t *db, lexer_t *l) { (void)db; (void)l; screen_eject(); }
 static void h_run(dbf_t *db, lexer_t *l) { (void)db; (void)l; printf("RUN not supported.\n"); }
-static void h_select(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_select(arg); }
+static void h_select(dbf_t *db, lexer_t *l) {
+    (void)db;
+    char arg[256];
+    lex_next(l); /* skip SELECT */
+    lex_get_remaining(l, arg, sizeof(arg));
+    cmd_select(arg);
+}
 static void h_use(dbf_t *db, lexer_t *l) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_use(db, arg); }
 static void h_replace(dbf_t *db, lexer_t *l) { lex_next(l); cmd_replace(db, l); }
 static void h_list(dbf_t *db, lexer_t *l) { lex_next(l); cmd_list(db, l); }
 static void h_display(dbf_t *db, lexer_t *l) {
-    const char *rest = cmd_after(l);
-    if (cmd_kw_at(rest, "STRUCTURE", NULL)) cmd_display_structure(db);
-    else if (cmd_kw_at(rest, "MEMORY", NULL)) memvar_display(&memvar_store);
-    else { lex_next(l); cmd_display(db, l); }
+    if (cmd_peek_kw(l, "STRUCTURE")) {
+        lex_next(l); /* skip DISPLAY */
+        lex_next(l); /* skip STRUCTURE */
+        cmd_display_structure(db);
+    } else if (cmd_peek_kw(l, "MEMORY")) {
+        lex_next(l); /* skip DISPLAY */
+        lex_next(l); /* skip MEMORY */
+        memvar_display(&memvar_store);
+    } else {
+        lex_next(l);
+        cmd_display(db, l);
+    }
 }
 static void h_store(dbf_t *db, lexer_t *l) { lex_next(l); cmd_store(db, l); }
-static void h_release(dbf_t *db, lexer_t *l) { (void)db; cmd_release((char *)cmd_after(l)); }
+static void h_release(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_release(arg); }
 static void h_skip(dbf_t *db, lexer_t *l) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_skip(db, arg); follow_relations(); }
 static void h_locate(dbf_t *db, lexer_t *l) { lex_next(l); cmd_locate(db, l); follow_relations(); }
 static void h_continue(dbf_t *db, lexer_t *l) { (void)l; cmd_continue(db); follow_relations(); }
@@ -3676,11 +3701,11 @@ static void h_delete(dbf_t *db, lexer_t *l) { lex_next(l); cmd_delete(db, l); }
 static void h_recall(dbf_t *db, lexer_t *l) { lex_next(l); cmd_recall(db, l); }
 static void h_pack(dbf_t *db, lexer_t *l) { (void)l; cmd_pack(db); }
 static void h_zap(dbf_t *db, lexer_t *l) { (void)l; cmd_zap(db); }
-static void h_erase(dbf_t *db, lexer_t *l) { (void)db; cmd_erase((char *)cmd_after(l)); }
-static void h_rename(dbf_t *db, lexer_t *l) { (void)db; cmd_rename((char *)cmd_after(l)); }
-static void h_accept(dbf_t *db, lexer_t *l) { (void)db; cmd_accept((char *)cmd_after(l)); }
-static void h_input(dbf_t *db, lexer_t *l) { (void)db; cmd_input((char *)cmd_after(l)); }
-static void h_wait(dbf_t *db, lexer_t *l) { (void)db; cmd_wait((char *)cmd_after(l)); }
+static void h_erase(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_erase(arg); }
+static void h_rename(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_rename(arg); }
+static void h_accept(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_accept(arg); }
+static void h_input(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_input(arg); }
+static void h_wait(dbf_t *db, lexer_t *l) { (void)db; char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_wait(arg); }
 static void h_read(dbf_t *db, lexer_t *l) { (void)db; (void)l; screen_read(); }
 
 static void h_go(dbf_t *db, lexer_t *l) {
@@ -3690,176 +3715,235 @@ static void h_go(dbf_t *db, lexer_t *l) {
 
 static void h_on(dbf_t *db, lexer_t *l) {
     (void)db;
-    lexer_t t = *l; lex_next(&t);
-    if (cmd_kw(&t, "ERROR")) {
-        lex_next(&t);
-        if (cmd_kw(&t, "DO")) {
-            lex_next(&t);
-            if (t.current.type == TOK_IDENT) prog_on_error(t.current.text);
-            else prog_on_error(NULL);
+    lex_next(l); /* skip ON */
+    if (cmd_kw(l, "ERROR")) {
+        lex_next(l);
+        if (cmd_kw(l, "DO")) {
+            lex_next(l);
+            if (l->current.type == TOK_IDENT) {
+                prog_on_error(l->current.text);
+                lex_next(l);
+            } else prog_on_error(NULL);
         } else prog_on_error(NULL);
     }
 }
 
 static void h_report(dbf_t *db, lexer_t *l) {
-    lexer_t t = *l; lex_next(&t);
-    if (cmd_kw(&t, "FORM")) { lex_next(&t); cmd_report_form(db, &t); }
+    lex_next(l); /* skip REPORT */
+    if (cmd_kw(l, "FORM")) {
+        lex_next(l);
+        cmd_report_form(db, l);
+    }
 }
 
 static void h_label(dbf_t *db, lexer_t *l) {
-    lexer_t t = *l; lex_next(&t);
-    if (cmd_kw(&t, "FORM")) {
-        char arg[256]; lex_next(&t); lex_get_remaining(&t, arg, sizeof(arg));
+    lex_next(l); /* skip LABEL */
+    if (cmd_kw(l, "FORM")) {
+        lex_next(l);
+        char arg[256]; lex_get_remaining(l, arg, sizeof(arg));
         cmd_label_form(db, arg);
     }
 }
 
 static void h_create(dbf_t *db, lexer_t *l) {
-    lexer_t t = *l; lex_next(&t);
-    if (cmd_kw(&t, "REPORT")) {
-        char arg[256]; lex_next(&t); lex_get_remaining(&t, arg, sizeof(arg));
+    lex_next(l); /* skip CREATE */
+    if (cmd_kw(l, "REPORT")) {
+        lex_next(l);
+        char arg[256]; lex_get_remaining(l, arg, sizeof(arg));
         cmd_create_report(arg);
-    } else if (cmd_kw(&t, "LABEL")) {
-        char arg[256]; lex_next(&t); lex_get_remaining(&t, arg, sizeof(arg));
+    } else if (cmd_kw(l, "LABEL")) {
+        lex_next(l);
+        char arg[256]; lex_get_remaining(l, arg, sizeof(arg));
         cmd_create_label(arg);
     } else {
-        char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg));
+        char arg[256]; lex_get_remaining(l, arg, sizeof(arg));
         cmd_create(db, arg);
     }
 }
 
 static void h_append(dbf_t *db, lexer_t *l) {
-    lexer_t t = *l; lex_next(&t);
-    if (cmd_kw(&t, "BLANK")) cmd_append_blank(db);
-    else if (cmd_kw(&t, "FROM")) {
-        char arg[256]; lex_next(&t); lex_get_remaining(&t, arg, sizeof(arg));
+    lex_next(l); /* skip APPEND */
+    if (cmd_kw(l, "BLANK")) {
+        cmd_append_blank(db);
+        lex_next(l);
+    } else if (cmd_kw(l, "FROM")) {
+        lex_next(l);
+        char arg[256]; lex_get_remaining(l, arg, sizeof(arg));
         cmd_append_from(db, arg);
     } else printf("Syntax: APPEND BLANK | APPEND FROM <filename>\n");
 }
 
 static void h_copy(dbf_t *db, lexer_t *l) {
-    lexer_t t = *l; lex_next(&t);
-    if (cmd_kw(&t, "STRUCTURE")) {
-        lex_next(&t);
-        if (cmd_kw(&t, "TO")) {
-            char arg[256]; lex_next(&t); lex_get_remaining(&t, arg, sizeof(arg));
+    lex_next(l); /* skip COPY */
+    if (cmd_kw(l, "STRUCTURE")) {
+        lex_next(l);
+        if (cmd_kw(l, "TO")) {
+            lex_next(l);
+            char arg[256]; lex_get_remaining(l, arg, sizeof(arg));
             cmd_copy_structure(db, arg);
         } else printf("Syntax: COPY STRUCTURE TO <filename>\n");
-    } else if (cmd_kw(&t, "FILE")) {
-        char arg[256]; lex_next(&t); lex_get_remaining(&t, arg, sizeof(arg));
+    } else if (cmd_kw(l, "FILE")) {
+        lex_next(l);
+        char arg[256]; lex_get_remaining(l, arg, sizeof(arg));
         cmd_copy_file(arg);
-    } else if (cmd_kw(&t, "TO")) {
-        char arg[256]; lex_next(&t); lex_get_remaining(&t, arg, sizeof(arg));
+    } else if (cmd_kw(l, "TO")) {
+        lex_next(l);
+        char arg[256]; lex_get_remaining(l, arg, sizeof(arg));
         cmd_copy_to(db, arg);
     }
 }
 
 static void h_sort(dbf_t *db, lexer_t *l) {
-    lexer_t t = *l; lex_next(&t);
-    if (cmd_kw(&t, "TO")) {
-        char arg[256]; lex_next(&t); lex_get_remaining(&t, arg, sizeof(arg));
+    lex_next(l); /* skip SORT */
+    if (cmd_kw(l, "TO")) {
+        lex_next(l);
+        char arg[256]; lex_get_remaining(l, arg, sizeof(arg));
         cmd_sort(db, arg);
     } else printf("Syntax: SORT TO <filename> ON <field> [/A][/D][/C]\n");
 }
 
-static void h_index(dbf_t *db, lexer_t *l) {
-    const char *rest = cmd_after(l);
-    const char *after = NULL;
-    if (cmd_kw_at(rest, "ON", &after)) cmd_index_on(db, (char *)after);
-    else printf("Syntax: INDEX ON <expr> TO <filename>\n");
-}
+static void h_index(dbf_t *db, lexer_t *l) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_index_on(db, arg); }
 
 static void h_seek(dbf_t *db, lexer_t *l) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_seek(db, arg); }
 static void h_find(dbf_t *db, lexer_t *l) { char arg[256]; lex_next(l); lex_get_remaining(l, arg, sizeof(arg)); cmd_find(db, arg); }
 
 static void h_close(dbf_t *db, lexer_t *l) {
-    const char *rest = cmd_after(l);
-    if (cmd_kw_at(rest, "DATABASES", NULL) || cmd_kw_at(rest, "DATA", NULL)) cmd_close_all();
-    else if (cmd_kw_at(rest, "ALL", NULL)) { cmd_close_all(); memvar_release_all(&memvar_store); prog_set_procedure(NULL); }
-    else if (cmd_kw_at(rest, "INDEX", NULL)) close_all_indexes(cur_wa());
-    else if (cmd_kw_at(rest, "PROCEDURE", NULL)) prog_set_procedure(NULL);
-    else if (dbf_is_open(db)) { dbf_close(db); close_all_indexes(cur_wa()); cur_wa()->alias[0] = '\0'; cur_wa()->filter_cond[0] = '\0'; cur_wa()->order = 0; cur_wa()->num_indexes = 0; }
+    lex_next(l); /* skip CLOSE */
+    if (cmd_kw(l, "DATABASES") || cmd_kw(l, "DATA")) {
+        cmd_close_all();
+        lex_next(l);
+    } else if (cmd_kw(l, "ALL")) {
+        cmd_close_all();
+        memvar_release_all(&memvar_store);
+        prog_set_procedure(NULL);
+        lex_next(l);
+    } else if (cmd_kw(l, "INDEX")) {
+        close_all_indexes(cur_wa());
+        lex_next(l);
+    } else if (cmd_kw(l, "PROCEDURE")) {
+        prog_set_procedure(NULL);
+        lex_next(l);
+    } else if (dbf_is_open(db)) {
+        dbf_close(db);
+        close_all_indexes(cur_wa());
+        cur_wa()->alias[0] = '\0';
+        cur_wa()->filter_cond[0] = '\0';
+        cur_wa()->order = 0;
+        cur_wa()->num_indexes = 0;
+    }
 }
 
 static void h_clear(dbf_t *db, lexer_t *l) {
-    const char *rest = cmd_after(l);
-    if (cmd_kw_at(rest, "ALL", NULL)) { cmd_close_all(); memvar_release_all(&memvar_store); prog_set_procedure(NULL); }
-    else if (cmd_kw_at(rest, "MEMORY", NULL)) memvar_release_all(&memvar_store);
-    else if (cmd_kw_at(rest, "GETS", NULL)) screen_clear_gets();
-    else screen_clear();
+    lex_next(l); /* skip CLEAR */
+    if (cmd_kw(l, "ALL")) {
+        cmd_close_all();
+        memvar_release_all(&memvar_store);
+        prog_set_procedure(NULL);
+        lex_next(l);
+    } else if (cmd_kw(l, "MEMORY")) {
+        memvar_release_all(&memvar_store);
+        lex_next(l);
+    } else if (cmd_kw(l, "GETS")) {
+        screen_clear_gets();
+        lex_next(l);
+    } else {
+        screen_clear();
+    }
 }
 
 static void h_set(dbf_t *db, lexer_t *l) {
-    const char *rest = cmd_after(l);
-    const char *after = NULL;
-    if (cmd_kw_at(rest, "COLOR", &after)) { if (cmd_kw_at(after, "TO", &after)) screen_set_color((char *)after); }
-    else if (cmd_kw_at(rest, "INDEX", &after)) { if (cmd_kw_at(after, "TO", &after)) cmd_set_index(db, (char *)after); }
-    else if (cmd_kw_at(rest, "PROCEDURE", &after)) { if (cmd_kw_at(after, "TO", &after)) prog_set_procedure((char *)after); }
-    else if (cmd_kw_at(rest, "FILTER", &after)) {
-        if (cmd_kw_at(after, "TO", &after)) {
-            if (*after == '\0') {
+    lex_next(l); /* skip SET */
+    if (cmd_kw(l, "COLOR")) {
+        lex_next(l);
+        if (cmd_kw(l, "TO")) {
+            lex_next(l);
+            char arg[256]; lex_get_remaining(l, arg, sizeof(arg));
+            screen_set_color(arg);
+        }
+    } else if (cmd_kw(l, "INDEX")) {
+        lex_next(l);
+        if (cmd_kw(l, "TO")) {
+            lex_next(l);
+            char arg[256];
+            lex_get_remaining(l, arg, sizeof(arg));
+            cmd_set_index(db, arg);
+        }
+    } else if (cmd_kw(l, "PROCEDURE")) {
+        lex_next(l);
+        if (cmd_kw(l, "TO")) {
+            lex_next(l);
+            char arg[256]; lex_get_remaining(l, arg, sizeof(arg));
+            prog_set_procedure(arg);
+        }
+    } else if (cmd_kw(l, "FILTER")) {
+        lex_next(l);
+        if (cmd_kw(l, "TO")) {
+            lex_next(l);
+            char arg[256]; lex_get_remaining(l, arg, sizeof(arg));
+            if (arg[0] == '\0') {
                 cur_wa()->filter_cond[0] = '\0';
                 printf("Filter removed.\n");
             } else {
-                char buf[256];
-                str_copy(cur_wa()->filter_cond, after, sizeof(cur_wa()->filter_cond));
-                str_copy(buf, after, sizeof(buf));
-                trim_right(buf);
-                printf("Filter: %s\n", buf);
+                str_copy(cur_wa()->filter_cond, arg, sizeof(cur_wa()->filter_cond));
+                trim_right(arg);
+                printf("Filter: %s\n", arg);
             }
         }
-    }
-    else if (cmd_kw_at(rest, "ORDER", &after)) {
-        if (cmd_kw_at(after, "TO", &after)) {
-            int n = atoi(after);
-            if (n >= 0 && n <= cur_wa()->num_indexes) {
-                cur_wa()->order = n;
-                if (n == 0) {
-                    printf("Natural record order.\n");
-                } else {
-                    index_t *idx = &cur_wa()->indexes[n - 1];
-                    printf("Order set to %d (%s).\n", n, idx->filename);
+    } else if (cmd_kw(l, "ORDER")) {
+        lex_next(l);
+        if (cmd_kw(l, "TO")) {
+            lex_next(l);
+            if (l->current.type == TOK_NUMBER) {
+                int n = (int)l->current.num_val;
+                if (n >= 0 && n <= cur_wa()->num_indexes) {
+                    cur_wa()->order = n;
+                    if (n == 0) printf("Natural record order.\n");
+                    else printf("Order set to %d (%s).\n", n, cur_wa()->indexes[n - 1].filename);
                 }
+                lex_next(l);
             }
         }
-    }
-    else if (cmd_kw_at(rest, "RELATION", &after)) {
-        if (cmd_kw_at(after, "TO", &after)) {
-            if (*after == '\0') {
+    } else if (cmd_kw(l, "RELATION")) {
+        lex_next(l);
+        if (cmd_kw(l, "TO")) {
+            lex_next(l);
+            if (l->current.type == TOK_EOF) {
                 cur_wa()->relation_expr[0] = '\0';
                 cur_wa()->relation_target = -1;
             } else {
-                lexer_t t;
-                const char *expr_start = after;
-                lexer_init_ext(&t, after, expr_ctx.vars);
-                while (t.current.type != TOK_EOF && !cmd_kw(&t, "INTO"))
-                    lex_next(&t);
-                if (t.current.type == TOK_EOF) {
+                const char *expr_start = l->token_start;
+                while (l->current.type != TOK_EOF && !cmd_kw(l, "INTO"))
+                    lex_next(l);
+                
+                if (l->current.type == TOK_EOF) {
                     printf("Syntax: SET RELATION TO <expr> INTO <alias>\n");
                     return;
                 }
-                {
-                    int len = (int)(t.token_start - expr_start);
-                    if (len >= (int)sizeof(cur_wa()->relation_expr))
-                        len = sizeof(cur_wa()->relation_expr) - 1;
-                    memcpy(cur_wa()->relation_expr, expr_start, len);
-                    cur_wa()->relation_expr[len] = '\0';
-                    trim_right(cur_wa()->relation_expr);
-                }
-                lex_next(&t);
-                if (t.current.type != TOK_IDENT) {
+                
+                int len = (int)(l->token_start - expr_start);
+                if (len >= (int)sizeof(cur_wa()->relation_expr))
+                    len = sizeof(cur_wa()->relation_expr) - 1;
+                memcpy(cur_wa()->relation_expr, expr_start, len);
+                cur_wa()->relation_expr[len] = '\0';
+                trim_right(cur_wa()->relation_expr);
+                
+                lex_next(l); /* skip INTO */
+                if (l->current.type != TOK_IDENT) {
                     printf("Invalid work area.\n");
                     return;
                 }
-                cur_wa()->relation_target = area_resolve_alias(t.current.text);
+                cur_wa()->relation_target = area_resolve_alias(l->current.text);
                 if (cur_wa()->relation_target < 0) {
                     printf("Invalid work area.\n");
-                    return;
                 }
+                lex_next(l);
             }
         }
+    } else {
+        char arg[256];
+        lex_get_remaining(l, arg, sizeof(arg));
+        set_execute(&set_opts, arg);
     }
-    else set_execute(&set_opts, rest);
 }
 
 static void h_modify(dbf_t *db, lexer_t *l) {
@@ -3868,12 +3952,18 @@ static void h_modify(dbf_t *db, lexer_t *l) {
 }
 
 static void h_save(dbf_t *db, lexer_t *l) {
-    (void)db; lexer_t t = *l; lex_next(&t);
-    if (cmd_kw(&t, "TO")) {
-        char *rest = (char *)cmd_after(&t);
-        char fname[128]; int i = 0; FILE *fp;
-        while (*rest && *rest != ' ' && i < 127) fname[i++] = *rest++;
-        fname[i] = '\0'; str_upper(fname);
+    (void)db;
+    lex_next(l); /* skip SAVE */
+    if (cmd_kw(l, "TO")) {
+        lex_next(l);
+        char fname[128];
+        FILE *fp;
+        fname[0] = '\0';
+        while (l->current.type != TOK_EOF && !cmd_kw(l, "ALL")) {
+            strncat(fname, l->current.text, sizeof(fname) - strlen(fname) - 1);
+            lex_next(l);
+        }
+        str_upper(fname);
         if (strlen(fname) < 4 || str_icmp(fname + strlen(fname) - 4, ".MEM") != 0) strcat(fname, ".MEM");
         fp = fopen(fname, "wb");
         if (!fp) { printf("Cannot create %s\n", fname); return; }
@@ -3898,13 +3988,22 @@ static void h_save(dbf_t *db, lexer_t *l) {
 }
 
 static void h_restore(dbf_t *db, lexer_t *l) {
-    (void)db; lexer_t t = *l; lex_next(&t);
-    if (cmd_kw(&t, "FROM")) {
-        char *rest = (char *)cmd_after(&t);
-        char fname[128]; int additive = 0, i = 0; FILE *fp;
-        while (*rest && *rest != ' ' && i < 127) fname[i++] = *rest++;
-        fname[i] = '\0'; rest = skip_ws(rest);
-        if (str_imatch(rest, "ADDITIVE")) additive = 1;
+    (void)db;
+    lex_next(l); /* skip RESTORE */
+    if (cmd_kw(l, "FROM")) {
+        lex_next(l);
+        char fname[128];
+        int additive = 0;
+        FILE *fp;
+        fname[0] = '\0';
+        while (l->current.type != TOK_EOF && !cmd_kw(l, "ADDITIVE")) {
+            strncat(fname, l->current.text, sizeof(fname) - strlen(fname) - 1);
+            lex_next(l);
+        }
+        if (cmd_kw(l, "ADDITIVE")) {
+            additive = 1;
+            lex_next(l);
+        }
         str_upper(fname);
         if (strlen(fname) < 4 || str_icmp(fname + strlen(fname) - 4, ".MEM") != 0) strcat(fname, ".MEM");
         fp = fopen(fname, "rb");

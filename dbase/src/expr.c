@@ -433,9 +433,8 @@ static int parse_primary(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
                 }
             }
             {
-                static char errbuf[128];
-                snprintf(errbuf, sizeof(errbuf), "Cannot resolve %s->%s", name, field_name);
-                ctx->error = errbuf;
+                snprintf(ctx->err_msg, sizeof(ctx->err_msg), "Cannot resolve %s->%s", name, field_name);
+                ctx->error = ctx->err_msg;
             }
             return -1;
         }
@@ -497,9 +496,8 @@ static int parse_primary(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
 
         /* Unknown identifier */
         {
-            static char errbuf[80];
-            snprintf(errbuf, sizeof(errbuf), "Variable not found: %s", name);
-            ctx->error = errbuf;
+            snprintf(ctx->err_msg, sizeof(ctx->err_msg), "Variable not found: %s", name);
+            ctx->error = ctx->err_msg;
         }
         return -1;
     }

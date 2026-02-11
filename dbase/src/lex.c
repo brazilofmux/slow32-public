@@ -291,9 +291,9 @@ token_type_t lex_next(lexer_t *l) {
         case '&': t->type = TOK_MACRO; break;
         case '^': t->type = TOK_POWER; break;
         case '!': t->type = TOK_NOT; break;
+        case '.': t->type = TOK_DOT; break;
         default:
-            t->type = TOK_ERROR;
-            l->error = "Unexpected character";
+            t->type = TOK_UNKNOWN;
             break;
     }
     

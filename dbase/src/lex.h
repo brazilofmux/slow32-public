@@ -43,7 +43,9 @@ typedef enum {
     TOK_NOT,        /* .NOT. or ! */
     
     /* Macro */
-    TOK_MACRO       /* & */
+    TOK_MACRO,      /* & */
+    TOK_DOT,        /* . */
+    TOK_UNKNOWN
 } token_type_t;
 
 typedef struct {

@@ -879,9 +879,8 @@ int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value
         return 0;
 
     {
-        static char errbuf[80];
-        snprintf(errbuf, sizeof(errbuf), "Unknown function: %s", name);
-        ctx->error = errbuf;
+        snprintf(ctx->err_msg, sizeof(ctx->err_msg), "Unknown function: %s", name);
+        ctx->error = ctx->err_msg;
     }
     return -1;
 }

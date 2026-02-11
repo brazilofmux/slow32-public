@@ -27,6 +27,7 @@ typedef struct {
     int bof_flag;   /* set when SKIP goes before record 1 */
     int eof_flag;   /* set when SKIP goes past last record */
     const char *error;
+    char err_msg[128]; /* persistent buffer for formatted errors */
 } expr_ctx_t;
 
 #define MAX_FUNC_ARGS 32
