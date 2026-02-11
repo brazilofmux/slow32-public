@@ -718,6 +718,9 @@ static int push_frame(program_t *new_prog, int start_line) {
     state.current_prog = new_prog;
     state.pc = start_line;
 
+    /* Update memvar scope depth so new variables are tagged to this frame */
+    cmd_get_memvar_store()->current_depth = state.call_depth;
+
     return 0;
 }
 
@@ -742,6 +745,9 @@ static void pop_frame(void) {
 
     /* Restore PRIVATE variables */
     restore_privates(frame);
+
+    /* Restore memvar scope depth to caller's level */
+    store->current_depth = state.call_depth;
 
     /* Write back by-reference parameters to caller's variables */
     for (i = 0; i < frame->with_argc; i++) {

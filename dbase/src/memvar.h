@@ -16,11 +16,13 @@ typedef struct {
     char name[MEMVAR_NAMELEN];
     value_t val;
     int used;
+    int scope_depth;    /* call_depth at which this var was created */
 } memvar_t;
 
 typedef struct memvar_store {
     memvar_t vars[MEMVAR_MAX];
     int count;
+    int current_depth;  /* updated on push/pop frame */
 } memvar_store_t;
 
 void memvar_init(memvar_store_t *store);

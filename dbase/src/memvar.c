@@ -51,6 +51,7 @@ int memvar_set(memvar_store_t *store, const char *name, const value_t *val) {
             str_copy(store->vars[i].name, uname, MEMVAR_NAMELEN);
             store->vars[i].val = *val;
             store->vars[i].used = 1;
+            store->vars[i].scope_depth = store->current_depth;
             store->count++;
             return 0;
         }
@@ -77,11 +78,14 @@ int memvar_release(memvar_store_t *store, const char *name) {
 void memvar_release_all(memvar_store_t *store) {
     int i;
     for (i = 0; i < MEMVAR_MAX; i++) {
-        if (store->vars[i].used && store->vars[i].val.type == VAL_ARRAY)
+        if (!store->vars[i].used) continue;
+        /* Only release variables created at or below current scope */
+        if (store->vars[i].scope_depth < store->current_depth) continue;
+        if (store->vars[i].val.type == VAL_ARRAY)
             array_free(store->vars[i].val.array);
         store->vars[i].used = 0;
+        store->count--;
     }
-    store->count = 0;
 }
 
 /* Case-insensitive wildcard match: '*' and '?' */
@@ -93,6 +97,8 @@ int memvar_release_matching(memvar_store_t *store, const char *pattern, int like
     int i, count = 0;
     for (i = 0; i < MEMVAR_MAX; i++) {
         if (!store->vars[i].used) continue;
+        /* Only release variables created at or below current scope */
+        if (store->vars[i].scope_depth < store->current_depth) continue;
         int matches = pattern_match(store->vars[i].name, pattern);
         if ((like && matches) || (!like && !matches)) {
             if (store->vars[i].val.type == VAL_ARRAY)
