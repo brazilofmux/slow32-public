@@ -9,6 +9,8 @@ static int page_flush(index_t *idx, int page_no);
 static void hash_add(index_t *idx, ndx_page_t *p);
 static void hash_remove(index_t *idx, ndx_page_t *p);
 static ndx_page_t *hash_lookup(index_t *idx, int page_no);
+static ndx_page_t *page_get(index_t *idx, int page_no);
+static void page_put(ndx_page_t *p);
 
 /* ---- Key comparison ---- */
 static int key_cmp(const char *a, const char *b, int key_len) {
@@ -96,11 +98,52 @@ static void hash_remove(index_t *idx, ndx_page_t *p) {
     }
 }
 
+static void page_reclaim(index_t *idx, ndx_page_t *p) {
+    p->type = PAGE_FREE;
+    p->nkeys = 0;
+    if (p->children) {
+        memset(p->children, 0, (idx->max_keys_internal + 2) * sizeof(int));
+    } else {
+        p->children = (int *)calloc(idx->max_keys_internal + 2, sizeof(int));
+    }
+    p->children[0] = idx->free_page_head;
+    idx->free_page_head = p->page_no;
+    p->dirty = 1;
+}
+
 /* ---- Page allocation ---- */
 static ndx_page_t *page_new(index_t *idx, int type) {
     ndx_page_t *p;
     int max_keys;
     int pg_no;
+
+    if (idx->free_page_head > 0) {
+        pg_no = idx->free_page_head;
+        p = page_get(idx, pg_no);
+        if (p) {
+            idx->free_page_head = p->children[0];
+            /* Re-initialize reuse page */
+            p->type = type;
+            p->nkeys = 0;
+            p->dirty = 1;
+            p->next_leaf = 0;
+            p->prev_leaf = 0;
+            /* p->keys and p->recnos/p->children already allocated, just zero them */
+            if (p->keys) memset(p->keys, 0, (idx->max_keys_leaf + 1) * idx->key_len);
+            if (p->recnos) memset(p->recnos, 0, (idx->max_keys_leaf + 1) * sizeof(uint32_t));
+            if (p->children) memset(p->children, 0, (idx->max_keys_internal + 2) * sizeof(int));
+
+            /* If it was a leaf but now internal, or vice versa, we might need to fix arrays.
+               Actually NdxPage uses fixed max of internal/leaf for allocations to be safe?
+               No, page_new allocated them specifically. Let's make sure they are right. */
+            if (type == PAGE_LEAF && !p->recnos) {
+                p->recnos = (uint32_t *)calloc(idx->max_keys_leaf + 1, sizeof(uint32_t));
+            } else if (type == PAGE_INTERNAL && !p->children) {
+                p->children = (int *)calloc(idx->max_keys_internal + 2, sizeof(int));
+            }
+            return p;
+        }
+    }
 
     pg_no = idx->num_pages;
     idx->num_pages++;
@@ -161,15 +204,16 @@ static int page_flush(index_t *idx, int page_no) {
     if (page_no == 0) {
         /* Header page */
         uint32_t tmp;
-        tmp = NDX2_MAGIC;        memcpy(buf + 0, &tmp, 4);
-        tmp = 1;                 memcpy(buf + 4, &tmp, 4);  /* version */
-        tmp = idx->root_page;    memcpy(buf + 8, &tmp, 4);
-        tmp = idx->first_leaf;   memcpy(buf + 12, &tmp, 4);
-        tmp = idx->num_pages;    memcpy(buf + 16, &tmp, 4);
-        tmp = idx->nentries;     memcpy(buf + 20, &tmp, 4);
-        tmp = idx->key_len;      memcpy(buf + 24, &tmp, 4);
-        tmp = idx->key_type;     memcpy(buf + 28, &tmp, 4);
-        memcpy(buf + 32, idx->key_expr, 256);
+        tmp = NDX2_MAGIC;           memcpy(buf + 0, &tmp, 4);
+        tmp = 1;                    memcpy(buf + 4, &tmp, 4);  /* version */
+        tmp = idx->root_page;       memcpy(buf + 8, &tmp, 4);
+        tmp = idx->first_leaf;      memcpy(buf + 12, &tmp, 4);
+        tmp = idx->num_pages;       memcpy(buf + 16, &tmp, 4);
+        tmp = idx->nentries;        memcpy(buf + 20, &tmp, 4);
+        tmp = idx->key_len;         memcpy(buf + 24, &tmp, 4);
+        tmp = idx->key_type;        memcpy(buf + 28, &tmp, 4);
+        tmp = idx->free_page_head;  memcpy(buf + 32, &tmp, 4);
+        memcpy(buf + 36, idx->key_expr, 256);
     } else if (p->type == PAGE_INTERNAL) {
         uint16_t t16;
         t16 = PAGE_INTERNAL;    memcpy(buf + 0, &t16, 2);
@@ -801,26 +845,163 @@ static void leaf_remove_at(index_t *idx, ndx_page_t *leaf, int pos) {
     leaf->dirty = 1;
 }
 
-/* Find the position of key+recno in an internal node's key array for update purposes */
-/* Update the separator key in an internal node if needed */
-static void update_separator(index_t *idx, int *path, int *path_pos, int depth, ndx_page_t *leaf) {
-    /* After removal/merge, update parent separators if the first key changed.
-       For simplicity, we only update if the leaf chain is intact. */
-    (void)idx; (void)path; (void)path_pos; (void)depth; (void)leaf;
-    /* B+ tree separators are just routing hints -- they don't need to exactly
-       match leaf keys. A stale separator still routes correctly as long as
-       the tree structure is valid. We only need to handle the case where
-       a merge collapses a level. */
+static void internal_remove_at(index_t *idx, ndx_page_t *node, int pos) {
+    int i;
+    for (i = pos; i < node->nkeys - 1; i++) {
+        memcpy(page_key(idx, node, i), page_key(idx, node, i + 1), idx->key_len);
+        node->children[i + 1] = node->children[i + 2];
+    }
+    node->nkeys--;
+    node->dirty = 1;
+}
+
+static void bt_remove(index_t *idx, int page_no, const char *key, uint32_t recno, int *path, int *path_pos, int depth) {
+    ndx_page_t *node = page_get(idx, page_no);
+    if (!node) return;
+
+    if (node->type == PAGE_INTERNAL) {
+        int pos = page_upper_bound(idx, node, key);
+        path[depth] = page_no;
+        path_pos[depth] = pos;
+        bt_remove(idx, node->children[pos], key, recno, path, path_pos, depth + 1);
+        
+        /* Check for underflow in the child we just returned from */
+        ndx_page_t *child = page_get(idx, node->children[pos]);
+        int min_keys = (child->type == PAGE_LEAF) ? (idx->max_keys_leaf / 2) : (idx->max_keys_internal / 2);
+        
+        if (child->nkeys < min_keys && child->page_no != idx->root_page) {
+            /* Try to borrow from siblings */
+            ndx_page_t *left = NULL, *right = NULL;
+            if (pos > 0) left = page_get(idx, node->children[pos-1]);
+            if (pos < node->nkeys) right = page_get(idx, node->children[pos+1]);
+
+            if (left && left->nkeys > min_keys) {
+                /* Borrow from left */
+                if (child->type == PAGE_LEAF) {
+                    leaf_insert_at(idx, child, 0, page_key(idx, left, left->nkeys - 1), left->recnos[left->nkeys - 1]);
+                    left->nkeys--;
+                    left->dirty = 1;
+                    /* Update parent separator */
+                    memcpy(page_key(idx, node, pos - 1), page_key(idx, child, 0), idx->key_len);
+                    node->dirty = 1;
+                } else {
+                    /* Internal borrow: rotate through parent */
+                    for (int i = child->nkeys; i > 0; i--) {
+                        memcpy(page_key(idx, child, i), page_key(idx, child, i - 1), idx->key_len);
+                        child->children[i + 1] = child->children[i];
+                    }
+                    child->children[1] = child->children[0];
+                    memcpy(page_key(idx, child, 0), page_key(idx, node, pos - 1), idx->key_len);
+                    child->children[0] = left->children[left->nkeys];
+                    child->nkeys++;
+                    child->dirty = 1;
+                    memcpy(page_key(idx, node, pos - 1), page_key(idx, left, left->nkeys - 1), idx->key_len);
+                    left->nkeys--;
+                    left->dirty = 1;
+                    node->dirty = 1;
+                }
+            } else if (right && right->nkeys > min_keys) {
+                /* Borrow from right */
+                if (child->type == PAGE_LEAF) {
+                    leaf_insert_at(idx, child, child->nkeys, page_key(idx, right, 0), right->recnos[0]);
+                    leaf_remove_at(idx, right, 0);
+                    /* Update parent separator */
+                    memcpy(page_key(idx, node, pos), page_key(idx, right, 0), idx->key_len);
+                    node->dirty = 1;
+                } else {
+                    /* Internal borrow: rotate through parent */
+                    memcpy(page_key(idx, child, child->nkeys), page_key(idx, node, pos), idx->key_len);
+                    child->children[child->nkeys + 1] = right->children[0];
+                    child->nkeys++;
+                    child->dirty = 1;
+                    memcpy(page_key(idx, node, pos), page_key(idx, right, 0), idx->key_len);
+                    right->children[0] = right->children[1];
+                    internal_remove_at(idx, right, 0);
+                    node->dirty = 1;
+                }
+            } else {
+                /* Must merge */
+                if (left) {
+                    /* Merge child into left */
+                    if (child->type == PAGE_LEAF) {
+                        for (int i = 0; i < child->nkeys; i++) {
+                            leaf_insert_at(idx, left, left->nkeys, page_key(idx, child, i), child->recnos[i]);
+                        }
+                        if (idx->first_leaf == child->page_no) idx->first_leaf = left->page_no;
+                        left->next_leaf = child->next_leaf;
+                        if (child->next_leaf) {
+                            ndx_page_t *next = page_get(idx, child->next_leaf);
+                            if (next) { next->prev_leaf = left->page_no; next->dirty = 1; page_put(next); }
+                        }
+                    } else {
+                        /* Internal merge: pull down parent separator */
+                        memcpy(page_key(idx, left, left->nkeys), page_key(idx, node, pos - 1), idx->key_len);
+                        left->children[left->nkeys + 1] = child->children[0];
+                        left->nkeys++;
+                        for (int i = 0; i < child->nkeys; i++) {
+                            memcpy(page_key(idx, left, left->nkeys), page_key(idx, child, i), idx->key_len);
+                            left->children[left->nkeys + 1] = child->children[i + 1];
+                            left->nkeys++;
+                        }
+                    }
+                    left->dirty = 1;
+                    internal_remove_at(idx, node, pos - 1);
+                    page_reclaim(idx, child);
+                } else if (right) {
+                    /* Merge right into child */
+                    if (child->type == PAGE_LEAF) {
+                        for (int i = 0; i < right->nkeys; i++) {
+                            leaf_insert_at(idx, child, child->nkeys, page_key(idx, right, i), right->recnos[i]);
+                        }
+                        if (idx->first_leaf == right->page_no) idx->first_leaf = child->page_no;
+                        child->next_leaf = right->next_leaf;
+                        if (right->next_leaf) {
+                            ndx_page_t *next = page_get(idx, right->next_leaf);
+                            if (next) { next->prev_leaf = child->page_no; next->dirty = 1; page_put(next); }
+                        }
+                    } else {
+                        /* Internal merge: pull down parent separator */
+                        memcpy(page_key(idx, child, child->nkeys), page_key(idx, node, pos), idx->key_len);
+                        child->children[child->nkeys + 1] = right->children[0];
+                        child->nkeys++;
+                        for (int i = 0; i < right->nkeys; i++) {
+                            memcpy(page_key(idx, child, child->nkeys), page_key(idx, right, i), idx->key_len);
+                            child->children[child->nkeys + 1] = right->children[i + 1];
+                            child->nkeys++;
+                        }
+                    }
+                    child->dirty = 1;
+                    internal_remove_at(idx, node, pos);
+                    page_reclaim(idx, right);
+                }
+            }
+            if (left) page_put(left);
+            if (right) page_put(right);
+        }
+        page_put(child);
+    } else {
+        /* Leaf: find exact key+recno and remove */
+        int found = -1;
+        for (int i = 0; i < node->nkeys; i++) {
+            if (key_cmp(page_key(idx, node, i), key, idx->key_len) == 0 && node->recnos[i] == recno) {
+                found = i;
+                break;
+            }
+        }
+        if (found >= 0) {
+            leaf_remove_at(idx, node, found);
+            idx->nentries--;
+        }
+    }
+    page_put(node);
 }
 
 int index_remove(index_t *idx, const char *key, uint32_t recno) {
     char padded[MAX_INDEX_KEY];
-    ndx_page_t *leaf;
-    int i, found;
+    int path[64], path_pos[64];
 
     if (!idx->active || idx->nentries == 0) return -1;
 
-    /* Pad key */
     memset(padded, ' ', idx->key_len);
     {
         int len = strlen(key);
@@ -828,86 +1009,29 @@ int index_remove(index_t *idx, const char *key, uint32_t recno) {
         memcpy(padded, key, len);
     }
 
-    /* Find the leaf */
-    leaf = bt_find_leaf(idx, padded);
-    if (!leaf) return -1;
+    bt_remove(idx, idx->root_page, padded, recno, path, path_pos, 0);
 
-    /* Find exact key+recno */
-    found = -1;
-    for (i = 0; i < leaf->nkeys; i++) {
-        if (key_cmp(page_key(idx, leaf, i), padded, idx->key_len) == 0 &&
-            leaf->recnos[i] == recno) {
-            found = i;
-            break;
-        }
+    /* Check if root needs to be collapsed */
+    ndx_page_t *root = page_get(idx, idx->root_page);
+    if (root && root->type == PAGE_INTERNAL && root->nkeys == 0) {
+        int new_root = root->children[0];
+        page_reclaim(idx, root);
+        idx->root_page = new_root;
+        /* Also update first_leaf if we collapsed to nothing */
+        if (idx->nentries == 0) idx->first_leaf = 0;
     }
-    if (found < 0) {
-        /* Key might be in next leaf if it was at boundary */
-        ndx_page_t *next = leaf->next_leaf ? page_get(idx, leaf->next_leaf) : NULL;
-        if (next) {
-            for (i = 0; i < next->nkeys; i++) {
-                if (key_cmp(page_key(idx, next, i), padded, idx->key_len) == 0 &&
-                    next->recnos[i] == recno) {
-                    page_put(leaf);
-                    leaf = next;
-                    found = i;
-                    break;
-                }
-            }
-            if (found < 0) page_put(next);
+    if (root) page_put(root);
+
+    if (idx->nentries == 0 && idx->root_page != 0) {
+        /* Tree is entirely empty, but might have a single leaf left as root */
+        ndx_page_t *r = page_get(idx, idx->root_page);
+        if (r && r->nkeys == 0) {
+            /* Keep it as empty leaf root or just let it be. 
+               Standard dBase behavior is often to keep an empty root page. */
         }
-        if (found < 0) {
-            page_put(leaf);
-            return -1;
-        }
+        if (r) page_put(r);
     }
 
-    leaf_remove_at(idx, leaf, found);
-    idx->nentries--;
-
-    /* Handle empty leaf */
-    if (leaf->nkeys == 0 && idx->nentries > 0) {
-        /* Unlink from leaf chain */
-        if (leaf->prev_leaf) {
-            ndx_page_t *prev = page_get(idx, leaf->prev_leaf);
-            if (prev) {
-                prev->next_leaf = leaf->next_leaf;
-                prev->dirty = 1;
-                page_put(prev);
-            }
-        }
-        if (leaf->next_leaf) {
-            ndx_page_t *next = page_get(idx, leaf->next_leaf);
-            if (next) {
-                next->prev_leaf = leaf->prev_leaf;
-                next->dirty = 1;
-                page_put(next);
-            }
-        }
-        if (idx->first_leaf == leaf->page_no) {
-            idx->first_leaf = leaf->next_leaf;
-        }
-        /* Note: We don't actually remove the page from the array or update
-           parent internal nodes. The empty page becomes dead space.
-           For dBase workloads this is fine -- REINDEX cleans up. */
-    }
-
-    /* Handle completely empty tree */
-    if (idx->nentries == 0) {
-        free_all_pages(idx);
-        /* Reinitialize with just header placeholder */
-        {
-            ndx_page_t *hdr = (ndx_page_t *)calloc(1, sizeof(ndx_page_t));
-            hdr->page_no = 0;
-            hdr->pin_count = 1;
-            hash_add(idx, hdr);
-            idx->num_pages = 1;
-        }
-        idx->root_page = 0;
-        idx->first_leaf = 0;
-    }
-
-    page_put(leaf);
     return 0;
 }
 
@@ -1206,7 +1330,8 @@ static int read_ndx2(index_t *idx, FILE *fp) {
     memcpy(&tmp, buf + 20, 4); idx->nentries = (int)tmp;
     memcpy(&tmp, buf + 24, 4); idx->key_len = (int)tmp;
     memcpy(&tmp, buf + 28, 4); idx->key_type = (int)tmp;
-    memcpy(idx->key_expr, buf + 32, 256);
+    memcpy(&tmp, buf + 32, 4); idx->free_page_head = (int)tmp;
+    memcpy(idx->key_expr, buf + 36, 256);
     idx->key_expr[255] = '\0';
 
     compute_fanout(idx);

@@ -4,9 +4,9 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 
 ## 1. Architectural Inconsistencies
 
-### 1.1 Lexer Integration (Ongoing)
-- **Status**: Major sub-handlers (`LIST`, `DISPLAY`, `REPLACE`, `REPORT FORM`, `COUNT`, `SUM`, `AVERAGE`, `DELETE`, `RECALL`, `LOCATE`, `CONTINUE`) have been refactored to use the Lexer and a unified `clause_t` structure.
-- **Opportunity**: Transition remaining command dispatchers (e.g., `STORE`, `RELEASE`, `SET`) to the Lexer for 100% architectural consistency.
+### 1.1 Lexer Integration
+- **Status**: **Completed.** All primary command dispatchers (`STORE`, `RELEASE`, `SET`, `USE`, `ERASE`, `RENAME`, `ACCEPT`, `INPUT`, `WAIT`, `SAVE`, `RESTORE`, etc.) and major sequential sub-handlers have been refactored to use the Lexer and a unified architecture.
+- **Milestone**: Achieved 100% architectural consistency for command parsing.
 
 ### 1.2 Unified Macro Handling
 - **Status**: Transparent, multi-level macro expansion (`&var`) has been integrated directly into the Lexer and the `process_records` engine. This replaces the brittle pre-processing stage.
@@ -38,9 +38,9 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 - **Status**: `index_build` now uses a bottom-up strategy. Keys are collected, sorted via library `qsort_r`, and packed into leaves.
 - **Milestone**: Achieves O(N) build time (excluding sort), producing perfectly packed B+ trees with minimal I/O.
 
-### 2.5 B+ Tree Maintenance (Fragmentation)
-- **Issue**: `index_remove` unlinks empty pages but does not perform underflow merging or redistribution.
-- **Impact**: Heavy deletion activity results in index fragmentation ("dead space") that is only recoverable via `REINDEX`.
+### 2.5 B+ Tree Maintenance (Free List & Merging)
+- **Status**: **Completed.** `index_remove` now implements full B+ tree underflow handling (borrowing from and merging with siblings) and page reclamation via a persistent free list in the NDX2 header.
+- **Milestone**: Indices remain compact and efficient even after heavy deletion activity. Space from deleted nodes is immediately reusable.
 
 ## 3. Correctness & Fidelity
 
@@ -53,11 +53,14 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 - **Milestone**: Supports fractional powers (e.g., `9 ^ 0.5` = 3), expanding the engine's mathematical capabilities beyond simple integers.
 
 ### 3.3 Error Message Thread Safety
-- **Issue**: `expr.c` and `program.c` frequently use `static char errbuf[]` for error messages.
-- **Concern**: While the current platform is single-threaded, this pattern is brittle and can lead to message corruption if an error handler itself triggers another error.
+- **Status**: **Completed.** `expr_ctx_t` now features a dedicated `err_msg` buffer. Formatted errors in `expr.c` and `func.c` no longer use static buffers, preventing corruption during nested execution.
+- **Milestone**: Achieved robust, re-entrant error reporting across the entire expression and function engine.
 
 ## 4. Completed Milestone Successes
 
+- **B+ Tree Maintenance**: Implemented full deletion logic including redistribution and merging, with a persistent free list to reclaim and reuse empty pages.
+- **Lexer Dispatch Refactor**: Refactored the entire command dispatch system to be token-driven, eliminating raw string parsing in all primary commands.
+- **Error Buffer Unification**: Unified error reporting using context-local buffers, ensuring thread safety and preventing message clobbering.
 - **Fractional Exponents**: Refactored the expression engine to use standard `pow()`. This provides full support for non-integer powers, fulfilling a key requirement for financial and scientific dBase applications.
 - **Printer Logic Refactor**: Standardized printer state tracking. Implemented automatic `EJECT` on "backward" printing in `@SAY` and ensured `?`/`??` update `PROW()` and `PCOL()`. Fixed regressions in `test_phase2` to reflect accurate coordinate tracking.
 - **DBF Cache Coherence**: Implemented a global cache invalidation mechanism. By tracking open filenames across all work areas and triggering invalidations on write, we've guaranteed that the high-performance read-ahead cache remains coherent even in complex multi-area scenarios.

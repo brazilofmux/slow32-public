@@ -14,6 +14,7 @@
 
 #define PAGE_INTERNAL   0x01
 #define PAGE_LEAF       0x02
+#define PAGE_FREE       0x00
 
 #define ND_MAX_PAGES    1000000     /* Reasonable limit for 4GB index */
 #define PAGE_HASH_SIZE  1024
@@ -55,6 +56,7 @@ typedef struct {
     /* Tree structure */
     int root_page;          /* page number of root */
     int first_leaf;         /* page number of first leaf (for GO TOP) */
+    int free_page_head;     /* head of free page list (0 = none) */
     int num_pages;          /* total pages in file */
     int nentries;           /* total entries */
 
