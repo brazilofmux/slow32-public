@@ -71,8 +71,8 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 - **Milestone**: `FILEIO.PRG` regression coverage verifies basic create/open/read/write/seek/close flows and error reporting.
 
 ### 4.4 [Feature] Standard Function Parity
-- **Opportunity**: Implement missing core dBase functions: `DTOC()`, `CTOD()`, `TRANSFORM()`.
-- **Benefit**: Essential for string manipulation and data formatting parity with Clipper and FoxPro.
+- **Status**: **Completed.** Implemented `DTOC()`, `CTOD()`, and `TRANSFORM()`, with regression coverage in Phase 1/3 tests.
+- **Milestone**: Date conversion and picture formatting functions are now available for expression and report parity.
 
 ## 5. Completed Milestone Successes
 
@@ -84,6 +84,6 @@ This document tracks identified bugs, architectural inconsistencies, and perform
 - **Directory Services**: Implemented `ADIR()`, `FILE()`, and `CURDIR()`.
 - **Low-Level File I/O**: Implemented `FCREATE()`, `FOPEN()`, `FREAD()`, `FWRITE()`, `FSEEK()`, `FCLOSE()`, and `FERROR()`.
 - **Standard Function Expansion**: Implemented `LEFT()`, `RIGHT()`, `ALLTRIM()`, `EMPTY()`, and the `PADx()` family.
+- **Standard Function Parity**: Implemented `DTOC()`, `CTOD()`, and `TRANSFORM()`.
 - **Cross-Platform Paths**: Normalized path separators in file operations and index/dbf I/O.
-
 
