@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include "include/term.h"
 
 int term_init(void) {
@@ -40,4 +41,12 @@ int term_kbhit(void) {
 void term_set_color(int fg, int bg) {
     (void)fg;
     (void)bg;
+}
+
+void term_putc(int ch) {
+    putchar(ch);
+}
+
+void term_puts(const char *s) {
+    fputs(s, stdout);
 }

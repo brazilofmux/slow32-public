@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "mmio_ring.h"
@@ -109,4 +110,20 @@ void term_set_color(int fg, int bg) {
     if (!term_initialized) return;
     uint32_t packed = ((uint32_t)(fg & 0xFF) << 8) | ((uint32_t)(bg & 0xFF));
     s32_mmio_request(term_base_opcode + 7, 0, 0, packed);
+}
+
+void term_putc(int ch) {
+    if (!term_initialized) { putchar(ch); return; }
+    s32_mmio_request(term_base_opcode + 8, 0, 0, (unsigned int)(ch & 0xFF));
+}
+
+void term_puts(const char *s) {
+    if (!term_initialized) { fputs(s, stdout); return; }
+    volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
+    unsigned int len = 0;
+    while (s[len]) len++;
+    if (len == 0) return;
+    if (len > S32_MMIO_DATA_CAPACITY) len = S32_MMIO_DATA_CAPACITY;
+    memcpy((void *)data_buffer, s, len);
+    s32_mmio_request(term_base_opcode + 9, len, 0, 0);
 }

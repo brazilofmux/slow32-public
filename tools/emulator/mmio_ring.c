@@ -299,6 +299,24 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
             resp->status = S32_MMIO_STATUS_OK;
             break;
         }
+        case S32_TERM_PUTC: {
+            int ch = (int)(req->status & 0xFF);
+            fputc(ch, stdout);
+            fflush(stdout);
+            resp->status = S32_MMIO_STATUS_OK;
+            break;
+        }
+        case S32_TERM_PUTS: {
+            uint32_t off = req->offset % S32_MMIO_DATA_CAPACITY;
+            uint32_t len = req->length;
+            if (len > S32_MMIO_DATA_CAPACITY - off)
+                len = S32_MMIO_DATA_CAPACITY - off;
+            if (len > 0)
+                fwrite(mmio->data_buffer + off, 1, len, stdout);
+            fflush(stdout);
+            resp->status = S32_MMIO_STATUS_OK;
+            break;
+        }
         default:
             resp->status = S32_MMIO_STATUS_ERR;
             break;

@@ -33,4 +33,10 @@ int  term_kbhit(void);
 /* Set foreground and background color (ANSI 0-7). */
 void term_set_color(int fg, int bg);
 
+/* Output a single character at the cursor position. */
+void term_putc(int ch);
+
+/* Output a string at the cursor position. */
+void term_puts(const char *s);
+
 #endif /* _TERM_H */

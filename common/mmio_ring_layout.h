@@ -190,7 +190,9 @@ typedef struct s32_mmio_envp_info {
 #define S32_TERM_READ_KEY     5   // Blocking key read
 #define S32_TERM_KEY_AVAIL    6   // Non-blocking key poll
 #define S32_TERM_SET_COLOR    7   // Set fg/bg color
-#define S32_TERM_OPCODE_COUNT 8   // Total opcodes for term service
+#define S32_TERM_PUTC         8   // Output single character at cursor
+#define S32_TERM_PUTS         9   // Output string at cursor (data in buffer)
+#define S32_TERM_OPCODE_COUNT 10  // Total opcodes for term service
 
 // Access mode constants for S32_MMIO_OP_ACCESS
 #define S32_MMIO_F_OK 0  // File exists
