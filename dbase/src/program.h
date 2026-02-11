@@ -40,6 +40,7 @@ typedef struct {
     int start_line;
     int type;               /* 0 = DO WHILE, 1 = FOR, 2 = SCAN */
     char condition[256];    /* DO WHILE condition string */
+    struct ast_node *condition_ast;
     /* FOR loop fields */
     char varname[MEMVAR_NAMELEN];
     double end_val;

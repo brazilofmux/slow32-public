@@ -18,6 +18,7 @@
 #include "label.h"
 #include "lex.h"
 #include "area.h"
+#include "ast.h"
 
 /* Persistent expression context */
 static expr_ctx_t expr_ctx;
@@ -563,10 +564,16 @@ static int skip_deleted(const char *rec_buf) {
 /* Returns 1 if record passes (or no filter set), 0 if filtered out */
 static int check_filter(dbf_t *db) {
     value_t cond;
+    (void)db;
     if (cur_wa()->filter_cond[0] == '\0')
         return 1;
-    if (expr_eval_str(&expr_ctx, cur_wa()->filter_cond, &cond) != 0)
-        return 1;  /* on error, pass through */
+    if (cur_wa()->filter_ast) {
+        if (ast_eval(cur_wa()->filter_ast, &expr_ctx, &cond) != 0)
+            return 1;  /* on error, pass through */
+    } else {
+        if (expr_eval_str(&expr_ctx, cur_wa()->filter_cond, &cond) != 0)
+            return 1;  /* on error, pass through */
+    }
     return (cond.type == VAL_LOGIC && cond.logic);
 }
 
@@ -587,6 +594,7 @@ static void cmd_use(dbf_t *db, const char *arg) {
             wa->locate_cond[0] = '\0';
             wa->locate_last_rec = 0;
             wa->filter_cond[0] = '\0';
+            if (wa->filter_ast) { ast_free(wa->filter_ast); wa->filter_ast = NULL; }
             printf("Database closed.\n");
         }
         return;
@@ -924,6 +932,21 @@ void clause_init(clause_t *c) {
     c->has_scope = 0;
 }
 
+void clause_compile(clause_t *c, memvar_store_t *store) {
+    const char *error;
+    if (c->for_cond[0] && !c->for_ast) {
+        c->for_ast = ast_compile(c->for_cond, store, &error);
+    }
+    if (c->while_cond[0] && !c->while_ast) {
+        c->while_ast = ast_compile(c->while_cond, store, &error);
+    }
+}
+
+void clause_free_ast(clause_t *c) {
+    if (c->for_ast) { ast_free(c->for_ast); c->for_ast = NULL; }
+    if (c->while_ast) { ast_free(c->while_ast); c->while_ast = NULL; }
+}
+
 static int consume_filename(lexer_t *l, char *out, int size) {
     const char *p = l->token_start;
     const char *start;
@@ -1062,6 +1085,9 @@ static int process_records(dbf_t *db, clause_t *c, int flags, record_callback_t 
     int count = 0;
     uint32_t last_matched = 0;
 
+    /* Compile clause ASTs (parse once, evaluate many) */
+    clause_compile(c, &memvar_store);
+
     /* Default scope logic:
        If no explicit scope was parsed, but a FOR was present, dBase defaults to ALL.
        Otherwise, use the command-provided default (usually provided in c->scope before parse_clauses).
@@ -1111,15 +1137,23 @@ static int process_records(dbf_t *db, clause_t *c, int flags, record_callback_t 
             if (!check_filter(db)) matched = 0;
         }
 
-        if (matched && c->for_cond[0]) {
+        if (matched && c->for_ast) {
             value_t cond;
-            if (expr_eval_str(&expr_ctx, c->for_cond, &cond) != 0) { report_expr_error(); return -1; }
+            if (ast_eval(c->for_ast, &expr_ctx, &cond) != 0) { report_expr_error(); count = -1; goto cleanup; }
+            if (cond.type != VAL_LOGIC || !cond.logic) matched = 0;
+        } else if (matched && c->for_cond[0]) {
+            value_t cond;
+            if (expr_eval_str(&expr_ctx, c->for_cond, &cond) != 0) { report_expr_error(); count = -1; goto cleanup; }
             if (cond.type != VAL_LOGIC || !cond.logic) matched = 0;
         }
 
-        if (matched && c->while_cond[0]) {
+        if (matched && c->while_ast) {
             value_t cond;
-            if (expr_eval_str(&expr_ctx, c->while_cond, &cond) != 0) { report_expr_error(); return -1; }
+            if (ast_eval(c->while_ast, &expr_ctx, &cond) != 0) { report_expr_error(); count = -1; goto cleanup; }
+            if (cond.type != VAL_LOGIC || !cond.logic) break;
+        } else if (matched && c->while_cond[0]) {
+            value_t cond;
+            if (expr_eval_str(&expr_ctx, c->while_cond, &cond) != 0) { report_expr_error(); count = -1; goto cleanup; }
             if (cond.type != VAL_LOGIC || !cond.logic) break;
         }
 
@@ -1127,7 +1161,7 @@ static int process_records(dbf_t *db, clause_t *c, int flags, record_callback_t 
             int cb_result;
             last_matched = current_rec;
             cb_result = cb(db, current_rec, userdata);
-            if (cb_result == REC_ERROR) return -1;
+            if (cb_result == REC_ERROR) { count = -1; goto cleanup; }
             count++;
             if (has_limit) remaining--;
             if (cb_result == REC_STOP) break;
@@ -1151,6 +1185,8 @@ static int process_records(dbf_t *db, clause_t *c, int flags, record_callback_t 
         expr_ctx.eof_flag = 0;
     }
 
+cleanup:
+    clause_free_ast(c);
     return count;
 }
 
@@ -3301,6 +3337,7 @@ void cmd_close_all(void) {
         wa->locate_cond[0] = '\0';
         wa->locate_last_rec = 0;
         wa->filter_cond[0] = '\0';
+        if (wa->filter_ast) { ast_free(wa->filter_ast); wa->filter_ast = NULL; }
         wa->relation_expr[0] = '\0';
         wa->relation_target = -1;
     }
@@ -3965,6 +4002,7 @@ static void h_close(dbf_t *db, lexer_t *l) {
         close_all_indexes(cur_wa());
         cur_wa()->alias[0] = '\0';
         cur_wa()->filter_cond[0] = '\0';
+        if (cur_wa()->filter_ast) { ast_free(cur_wa()->filter_ast); cur_wa()->filter_ast = NULL; }
         cur_wa()->order = 0;
         cur_wa()->num_indexes = 0;
     }
@@ -4019,9 +4057,13 @@ static void h_set(dbf_t *db, lexer_t *l) {
             char arg[256]; lex_get_remaining(l, arg, sizeof(arg));
             if (arg[0] == '\0') {
                 cur_wa()->filter_cond[0] = '\0';
+                if (cur_wa()->filter_ast) { ast_free(cur_wa()->filter_ast); cur_wa()->filter_ast = NULL; }
                 printf("Filter removed.\n");
             } else {
+                const char *ast_err;
                 str_copy(cur_wa()->filter_cond, arg, sizeof(cur_wa()->filter_cond));
+                if (cur_wa()->filter_ast) { ast_free(cur_wa()->filter_ast); cur_wa()->filter_ast = NULL; }
+                cur_wa()->filter_ast = ast_compile(cur_wa()->filter_cond, &memvar_store, &ast_err);
                 trim_right(arg);
                 printf("Filter: %s\n", arg);
             }

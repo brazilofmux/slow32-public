@@ -4,6 +4,8 @@
 #include "dbf.h"
 #include "index.h"
 
+struct ast_node;
+
 #define MAX_AREAS 10
 
 typedef struct {
@@ -12,6 +14,7 @@ typedef struct {
     char locate_cond[256];
     uint32_t locate_last_rec;
     char filter_cond[256];
+    struct ast_node *filter_ast;
     index_t indexes[MAX_INDEXES];
     int num_indexes;
     int order;

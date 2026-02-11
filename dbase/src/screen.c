@@ -6,6 +6,7 @@
 #include "util.h"
 #include "memvar.h"
 #include "expr.h"
+#include "ast.h"
 
 #ifdef __slow32__
 #include <term.h>
@@ -190,6 +191,18 @@ void screen_get(int row, int col, const char *varname, const char *picture,
     else
         scr.gets[scr.ngets].when_expr[0] = '\0';
 
+    /* Compile VALID/WHEN ASTs */
+    scr.gets[scr.ngets].valid_ast = NULL;
+    scr.gets[scr.ngets].when_ast = NULL;
+    if (scr.gets[scr.ngets].valid_expr[0]) {
+        const char *ast_err;
+        scr.gets[scr.ngets].valid_ast = ast_compile(scr.gets[scr.ngets].valid_expr, store, &ast_err);
+    }
+    if (scr.gets[scr.ngets].when_expr[0]) {
+        const char *ast_err;
+        scr.gets[scr.ngets].when_ast = ast_compile(scr.gets[scr.ngets].when_expr, store, &ast_err);
+    }
+
     /* Get current value for display */
     if (memvar_find(store, varname, &val) == 0) {
         val_to_string(&val, scr.gets[scr.ngets].initial, sizeof(scr.gets[scr.ngets].initial));
@@ -305,7 +318,12 @@ void screen_read(void) {
             value_t v;
 
             /* Check WHEN condition — skip field if false or eval error */
-            if (scr.gets[i].when_expr[0]) {
+            if (scr.gets[i].when_ast) {
+                value_t res;
+                if (ast_eval(scr.gets[i].when_ast, cmd_get_expr_ctx(), &res) != 0 ||
+                    (res.type == VAL_LOGIC && !res.logic))
+                    continue;
+            } else if (scr.gets[i].when_expr[0]) {
                 value_t res;
                 if (expr_eval_str(cmd_get_expr_ctx(), scr.gets[i].when_expr, &res) != 0 ||
                     (res.type == VAL_LOGIC && !res.logic))
@@ -341,11 +359,16 @@ void screen_read(void) {
                 }
 
                 /* VALID validation — set memvar temporarily, restore on failure */
-                if (scr.gets[i].valid_expr[0]) {
+                if (scr.gets[i].valid_ast || scr.gets[i].valid_expr[0]) {
                     value_t old_val, res;
                     int had_old = (memvar_find(store, scr.gets[i].varname, &old_val) == 0);
+                    int ok;
                     memvar_set(store, scr.gets[i].varname, &v);
-                    int ok = (expr_eval_str(cmd_get_expr_ctx(), scr.gets[i].valid_expr, &res) == 0 &&
+                    if (scr.gets[i].valid_ast)
+                        ok = (ast_eval(scr.gets[i].valid_ast, cmd_get_expr_ctx(), &res) == 0 &&
+                              res.type == VAL_LOGIC && res.logic);
+                    else
+                        ok = (expr_eval_str(cmd_get_expr_ctx(), scr.gets[i].valid_expr, &res) == 0 &&
                               res.type == VAL_LOGIC && res.logic);
                     if (!ok) {
                         if (had_old) memvar_set(store, scr.gets[i].varname, &old_val);
@@ -361,6 +384,16 @@ void screen_read(void) {
         }
     }
 
+    /* Free ASTs */
+    {
+        int j;
+        for (j = 0; j < scr.ngets; j++) {
+            ast_free(scr.gets[j].valid_ast);
+            ast_free(scr.gets[j].when_ast);
+            scr.gets[j].valid_ast = NULL;
+            scr.gets[j].when_ast = NULL;
+        }
+    }
     scr.ngets = 0;
 }
 
@@ -445,6 +478,13 @@ void screen_clear(void) {
 
 /* ---- CLEAR GETS ---- */
 void screen_clear_gets(void) {
+    int i;
+    for (i = 0; i < scr.ngets; i++) {
+        ast_free(scr.gets[i].valid_ast);
+        ast_free(scr.gets[i].when_ast);
+        scr.gets[i].valid_ast = NULL;
+        scr.gets[i].when_ast = NULL;
+    }
     scr.ngets = 0;
 }
 
@@ -606,23 +646,35 @@ void screen_at_cmd(const char *line) {
                     }
                 }
             } else if (str_imatch(p, "VALID")) {
+                const char *ast_err;
+                ast_node_t *tmp;
                 p = skip_ws(p + 5);
+                {
                 const char *start = p;
-                value_t dummy;
-                expr_eval(cmd_get_expr_ctx(), &p, &dummy);
+                tmp = ast_compile_adv(&p, cmd_get_memvar_store(), &ast_err);
+                ast_free(tmp);  /* only needed to advance p */
+                {
                 int len = (int)(p - start);
                 if (len > 255) len = 255;
                 memcpy(valid_expr, start, len);
                 valid_expr[len] = '\0';
+                }
+                }
             } else if (str_imatch(p, "WHEN")) {
+                const char *ast_err;
+                ast_node_t *tmp;
                 p = skip_ws(p + 4);
+                {
                 const char *start = p;
-                value_t dummy;
-                expr_eval(cmd_get_expr_ctx(), &p, &dummy);
+                tmp = ast_compile_adv(&p, cmd_get_memvar_store(), &ast_err);
+                ast_free(tmp);  /* only needed to advance p */
+                {
                 int len = (int)(p - start);
                 if (len > 255) len = 255;
                 memcpy(when_expr, start, len);
                 when_expr[len] = '\0';
+                }
+                }
             } else {
                 break;
             }

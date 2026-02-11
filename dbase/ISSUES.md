@@ -45,12 +45,13 @@ return -1 but don't set `ll_error`. `FERROR()` may report 0 (success).
 `func.c` — `{ "FILE", fn_file }` appears twice (directory services section and
 misc section). The second is dead code. Remove the duplicate.
 
-### 1.9 VALID/WHEN expressions evaluated at parse time
-`screen.c` — To capture the expression text for later evaluation, the parser
+### ~~1.9 VALID/WHEN expressions evaluated at parse time~~ FIXED
+`screen.c` — ~~To capture the expression text for later evaluation, the parser
 evaluates the expression into a dummy result just to advance the pointer. Side
 effects (function calls, record navigation) fire at `@GET` time instead of
-READ time. If the eval fails, the captured expression is empty/truncated,
-silently disabling validation.
+READ time.~~ Fixed: `ast_compile_adv()` now parses without evaluating, advancing
+the pointer with zero side effects. VALID/WHEN ASTs are compiled in `screen_get`
+and evaluated during `screen_read`.
 
 ### 1.10 WHEN/VALID silently pass on eval errors
 `screen.c` — If `expr_eval_str` returns non-zero (expression syntax error) or
@@ -202,25 +203,21 @@ recursive descent parsers written in dBase) could hit it. Questions to answer:
 
 ## 4. Architecture Exploration
 
-### 4.1 Abstract Syntax Tree (AST)
-Currently, expressions are parsed and evaluated in a single recursive-descent
-pass. An AST would separate parsing from evaluation, enabling:
+### ~~4.1 Abstract Syntax Tree (AST)~~ IMPLEMENTED
+Expressions are now compiled to an AST once and evaluated by tree-walk on each
+iteration. `ast.h`/`ast.c` (~580 lines) provide `ast_compile`, `ast_eval`, and
+`ast_free`. Integrated into:
 
-- **Repeated evaluation without re-parsing**: FOR/WHILE conditions, VALID/WHEN
-  expressions, and index key expressions are all re-evaluated per-record. Today,
-  each evaluation re-lexes and re-parses the expression string. An AST would
-  parse once and walk the tree on each evaluation.
-- **Better error messages**: AST nodes can carry source positions.
-- **Foundation for optimization**: constant folding, common subexpression
-  elimination, dead branch pruning.
+- **`process_records`** — FOR/WHILE clause ASTs compiled at entry, evaluated
+  per-record, freed at exit.
+- **DO WHILE** — Condition AST compiled in `prog_do`, evaluated in `prog_enddo`.
+- **SCAN FOR/WHILE** — Clause ASTs compiled in `prog_scan`, evaluated in
+  `scan_record_matches`.
+- **SET FILTER** — Filter AST stored in work area, evaluated in `check_filter`.
+- **VALID/WHEN** — ASTs compiled in `screen_get`, evaluated in `screen_read`.
+  Fixes bug 1.9 (no parse-time side effects).
 
-**Trade-offs**: Adds ~300-500 lines of AST node types and tree-walk evaluator.
-Increases memory usage (one AST per live expression). On SLOW-32, the parsing
-overhead may be small relative to I/O. Profile before committing.
-
-**Verdict**: Worth it for correctness (eliminates the VALID/WHEN parse-time
-side-effect bug from 1.9) and for index key evaluation performance on large
-databases. Not urgent for small workloads.
+String-based `expr_eval_str` retained as fallback for graceful degradation.
 
 ### 4.2 Constant Folding
 Evaluate constant subexpressions at parse time: `2 + 3` becomes `5`,

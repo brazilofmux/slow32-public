@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+struct ast_node;
+
 typedef enum { 
     SCOPE_DEFAULT, 
     SCOPE_ALL_DEFAULT, 
@@ -29,6 +31,8 @@ typedef struct {
     int summary;        /* SUMMARY keyword */
     int plain;          /* PLAIN keyword */
     int noeject;        /* NOEJECT keyword */
+    struct ast_node *for_ast;
+    struct ast_node *while_ast;
 } clause_t;
 
 #endif

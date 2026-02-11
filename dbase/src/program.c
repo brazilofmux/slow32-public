@@ -8,6 +8,7 @@
 #include "lex.h"
 #include "area.h"
 #include "set.h"
+#include "ast.h"
 
 static prog_state_t state;
 
@@ -575,6 +576,16 @@ static int eval_logical(expr_ctx_t *ctx, const char *expr, int *result) {
     return 0;
 }
 
+static int eval_ast_logical(expr_ctx_t *ctx, ast_node_t *ast, int *result) {
+    value_t res;
+    if (ast_eval(ast, ctx, &res) != 0) {
+        if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
+        return -1;
+    }
+    *result = (res.type == VAL_LOGIC && res.logic);
+    return 0;
+}
+
 static int scan_record_matches(loop_entry_t *loop, dbf_t *db, int *stop_scan) {
     expr_ctx_t *ctx = cmd_get_expr_ctx();
     int ok;
@@ -584,19 +595,26 @@ static int scan_record_matches(loop_entry_t *loop, dbf_t *db, int *stop_scan) {
     if (db->record_buf[0] == '*' && ctx->opts->deleted) return 0;
 
     if (area_get_current()->filter_cond[0]) {
-        if (eval_logical(ctx, area_get_current()->filter_cond, &ok) < 0) return -1;
+        if (area_get_current()->filter_ast) {
+            if (eval_ast_logical(ctx, area_get_current()->filter_ast, &ok) < 0) return -1;
+        } else {
+            if (eval_logical(ctx, area_get_current()->filter_cond, &ok) < 0) return -1;
+        }
         if (!ok) return 0;
     }
 
-    if (loop->scan_clause.while_cond[0]) {
+    if (loop->scan_clause.while_ast) {
+        if (eval_ast_logical(ctx, loop->scan_clause.while_ast, &ok) < 0) return -1;
+        if (!ok) { *stop_scan = 1; return 0; }
+    } else if (loop->scan_clause.while_cond[0]) {
         if (eval_logical(ctx, loop->scan_clause.while_cond, &ok) < 0) return -1;
-        if (!ok) {
-            *stop_scan = 1;
-            return 0;
-        }
+        if (!ok) { *stop_scan = 1; return 0; }
     }
 
-    if (loop->scan_clause.for_cond[0]) {
+    if (loop->scan_clause.for_ast) {
+        if (eval_ast_logical(ctx, loop->scan_clause.for_ast, &ok) < 0) return -1;
+        if (!ok) return 0;
+    } else if (loop->scan_clause.for_cond[0]) {
         if (eval_logical(ctx, loop->scan_clause.for_cond, &ok) < 0) return -1;
         if (!ok) return 0;
     }
@@ -879,23 +897,38 @@ void prog_do(const char *arg) {
         char *cond = skip_ws(p + 5);
         value_t val;
         expr_ctx_t *ctx = cmd_get_expr_ctx();
+        const char *ast_err;
+        ast_node_t *cond_ast;
 
         if (!state.running) {
             printf("DO WHILE not allowed in interactive mode.\n");
             return;
         }
 
-        /* Evaluate condition */
-        if (expr_eval_str(ctx, cond, &val) != 0) {
-            if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
-            state.pc++;
-            return;
+        /* Compile condition to AST */
+        cond_ast = ast_compile(cond, cmd_get_memvar_store(), &ast_err);
+
+        /* Evaluate condition (use AST if available) */
+        if (cond_ast) {
+            if (ast_eval(cond_ast, ctx, &val) != 0) {
+                if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
+                ast_free(cond_ast);
+                state.pc++;
+                return;
+            }
+        } else {
+            if (expr_eval_str(ctx, cond, &val) != 0) {
+                if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
+                state.pc++;
+                return;
+            }
         }
 
         if (val.type == VAL_LOGIC && val.logic) {
             /* Push loop entry */
             if (state.loop_depth >= MAX_LOOP_DEPTH) {
                 printf("Loop nesting too deep.\n");
+                ast_free(cond_ast);
                 state.pc++;
                 return;
             }
@@ -903,11 +936,13 @@ void prog_do(const char *arg) {
             state.loop_stack[state.loop_depth].type = 0; /* DO WHILE */
             str_copy(state.loop_stack[state.loop_depth].condition, cond,
                      sizeof(state.loop_stack[state.loop_depth].condition));
+            state.loop_stack[state.loop_depth].condition_ast = cond_ast;
             state.loop_depth++;
             state.pc++;
         } else {
             /* Skip to matching ENDDO */
             int target = scan_enddo(state.current_prog, state.pc);
+            ast_free(cond_ast);
             if (target < 0) {
                 printf("ENDDO not found.\n");
                 state.pc++;
@@ -1183,20 +1218,35 @@ void prog_enddo(void) {
         return;
     }
 
-    /* Re-evaluate condition */
+    /* Re-evaluate condition (use AST if available) */
     ctx = cmd_get_expr_ctx();
-    if (expr_eval_str(ctx, state.loop_stack[state.loop_depth - 1].condition, &val) != 0) {
-        if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
-        state.loop_depth--;
-        state.pc++;
-        return;
+    {
+        loop_entry_t *loop = &state.loop_stack[state.loop_depth - 1];
+        int eval_ok;
+        if (loop->condition_ast)
+            eval_ok = (ast_eval(loop->condition_ast, ctx, &val) == 0);
+        else
+            eval_ok = (expr_eval_str(ctx, loop->condition, &val) == 0);
+
+        if (!eval_ok) {
+            if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
+            ast_free(loop->condition_ast);
+            loop->condition_ast = NULL;
+            state.loop_depth--;
+            state.pc++;
+            return;
+        }
     }
 
     if (val.type == VAL_LOGIC && val.logic) {
         /* Loop back to start (line after DO WHILE) */
         state.pc = state.loop_stack[state.loop_depth - 1].start_line + 1;
     } else {
-        /* Exit loop */
+        /* Exit loop — free AST */
+        loop_entry_t *loop = &state.loop_stack[state.loop_depth - 1];
+        ast_free(loop->condition_ast);
+        loop->condition_ast = NULL;
+        clause_free_ast(&loop->scan_clause);
         state.loop_depth--;
         state.pc++;
     }
@@ -1257,6 +1307,12 @@ void prog_exit_loop(void) {
     } else {
         target = scan_enddo(state.current_prog, loop->start_line);
     }
+
+    /* Free ASTs when exiting loop */
+    ast_free(loop->condition_ast);
+    loop->condition_ast = NULL;
+    clause_free_ast(&loop->scan_clause);
+
     state.loop_depth--;
 
     if (target >= 0) {
@@ -1430,6 +1486,9 @@ void prog_scan(const char *arg) {
     lexer_init_ext(&l, arg, cmd_get_memvar_store());
     if (parse_clauses(&l, &c) < 0) return;
 
+    /* Compile clause ASTs for scan loop */
+    clause_compile(&c, cmd_get_memvar_store());
+
     if (!c.has_scope) {
         if (c.for_cond[0]) c.scope.type = SCOPE_ALL;
         else if (c.scope.type == SCOPE_ALL_DEFAULT) c.scope.type = SCOPE_ALL;
@@ -1440,27 +1499,33 @@ void prog_scan(const char *arg) {
     }
 
     if (scope_bounds(db, &c.scope, &start, &end) < 0) {
+        clause_free_ast(&c);
         prog_error(ERR_SYNTAX, "Invalid scope");
         return;
     }
 
     if (state.loop_depth >= MAX_LOOP_DEPTH) {
+        clause_free_ast(&c);
         prog_error(ERR_SYNTAX, "Loop nesting overflow");
         return;
     }
 
+    {
     loop_entry_t *loop = &state.loop_stack[state.loop_depth++];
     loop->start_line = state.pc;
     loop->type = 2; /* SCAN */
     loop->scan_clause = c;
     loop->scan_end = end;
-    
+
     /* Position to start of scan */
     if (start < 1 || start > end || start > db->record_count) {
+        clause_free_ast(&loop->scan_clause);
         state.loop_depth--; /* Exit SCAN */
+        {
         int target = scan_endscan(state.current_prog, state.pc);
         if (target >= 0) state.pc = target + 1;
         else state.pc++;
+        }
         return;
     }
     dbf_read_record(db, start);
@@ -1471,6 +1536,7 @@ void prog_scan(const char *arg) {
         int stop_scan = 0;
         int matched = scan_record_matches(loop, db, &stop_scan);
         if (matched < 0) {
+            clause_free_ast(&loop->scan_clause);
             state.loop_depth--;
             {
                 int target = scan_endscan(state.current_prog, state.pc);
@@ -1480,10 +1546,13 @@ void prog_scan(const char *arg) {
             return;
         }
         if (stop_scan) {
+            clause_free_ast(&loop->scan_clause);
             state.loop_depth--; /* Exit SCAN */
+            {
             int target = scan_endscan(state.current_prog, state.pc);
             if (target >= 0) state.pc = target + 1;
             else state.pc++;
+            }
             return;
         }
         if (matched) break;
@@ -1494,12 +1563,16 @@ void prog_scan(const char *arg) {
     }
 
     if (loop->scan_current > loop->scan_end || loop->scan_current > db->record_count) {
+        clause_free_ast(&loop->scan_clause);
         state.loop_depth--; /* Exit SCAN */
+        {
         int target = scan_endscan(state.current_prog, state.pc);
         if (target >= 0) state.pc = target + 1;
         else state.pc++;
+        }
     } else {
         state.pc++;
+    }
     }
 }
 
@@ -1510,46 +1583,52 @@ void prog_endscan(void) {
         return;
     }
 
-    loop_entry_t *loop = &state.loop_stack[state.loop_depth - 1];
-    dbf_t *db = area_get_current() ? &area_get_current()->db : NULL;
+    {
+        loop_entry_t *loop = &state.loop_stack[state.loop_depth - 1];
+        dbf_t *db = area_get_current() ? &area_get_current()->db : NULL;
 
-    if (!db || !dbf_is_open(db)) {
-        state.loop_depth--;
-        state.pc++;
-        return;
-    }
-
-    /* Advance to next record */
-    loop->scan_current++;
-    if (loop->scan_current <= loop->scan_end)
-        dbf_read_record(db, loop->scan_current);
-
-    /* Search for next matching record */
-    while (loop->scan_current <= loop->scan_end) {
-        int stop_scan = 0;
-        int matched = scan_record_matches(loop, db, &stop_scan);
-        if (matched < 0) {
+        if (!db || !dbf_is_open(db)) {
+            clause_free_ast(&loop->scan_clause);
             state.loop_depth--;
             state.pc++;
             return;
         }
-        if (stop_scan) {
-            state.loop_depth--;
-            state.pc++;
-            return;
-        }
-        if (matched) break;
 
+        /* Advance to next record */
         loop->scan_current++;
         if (loop->scan_current <= loop->scan_end)
             dbf_read_record(db, loop->scan_current);
-    }
 
-    if (loop->scan_current > loop->scan_end || loop->scan_current > db->record_count) {
-        state.loop_depth--; /* Exit SCAN */
-        state.pc++;
-    } else {
-        state.pc = loop->start_line + 1; /* Back to first line of body */
+        /* Search for next matching record */
+        while (loop->scan_current <= loop->scan_end) {
+            int stop_scan = 0;
+            int matched = scan_record_matches(loop, db, &stop_scan);
+            if (matched < 0) {
+                clause_free_ast(&loop->scan_clause);
+                state.loop_depth--;
+                state.pc++;
+                return;
+            }
+            if (stop_scan) {
+                clause_free_ast(&loop->scan_clause);
+                state.loop_depth--;
+                state.pc++;
+                return;
+            }
+            if (matched) break;
+
+            loop->scan_current++;
+            if (loop->scan_current <= loop->scan_end)
+                dbf_read_record(db, loop->scan_current);
+        }
+
+        if (loop->scan_current > loop->scan_end || loop->scan_current > db->record_count) {
+            clause_free_ast(&loop->scan_clause);
+            state.loop_depth--; /* Exit SCAN */
+            state.pc++;
+        } else {
+            state.pc = loop->start_line + 1; /* Back to first line of body */
+        }
     }
 }
 

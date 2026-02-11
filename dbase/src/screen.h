@@ -4,6 +4,8 @@
 #include "expr.h"
 #include "memvar.h"
 
+struct ast_node;
+
 #define MAX_GETS 64
 
 typedef struct {
@@ -17,6 +19,8 @@ typedef struct {
     value_t range_lo, range_hi;
     char valid_expr[256];
     char when_expr[256];
+    struct ast_node *valid_ast;
+    struct ast_node *when_ast;
 } get_entry_t;
 
 typedef struct {

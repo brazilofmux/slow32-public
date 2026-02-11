@@ -17,6 +17,8 @@ struct lexer;
 void clause_init(clause_t *c);
 int  parse_clauses(struct lexer *l, clause_t *c);
 int  scope_bounds(dbf_t *db, const scope_t *s, uint32_t *start, uint32_t *end);
+void clause_compile(clause_t *c, memvar_store_t *store);
+void clause_free_ast(clause_t *c);
 
 /* Access to shared state (for program.c, screen.c) */
 memvar_store_t *cmd_get_memvar_store(void);
