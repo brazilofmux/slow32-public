@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 #include "command.h"
 #include "dbf.h"
 #include "field.h"
@@ -2525,6 +2526,21 @@ static int sort_compare_r(const void *a, const void *b, void *arg) {
 #define MAX_SORT_ENTRIES 2000
 #define MAX_SORT_CHUNKS 64
 
+static int make_sort_chunk_name(char *out, size_t out_size) {
+    static unsigned counter;
+    unsigned attempt = 0;
+    unsigned seed = (unsigned)time(NULL);
+    while (attempt < 1000) {
+        unsigned id = seed + counter++;
+        snprintf(out, out_size, "sort_%08x.tmp", id);
+        FILE *tf = fopen(out, "rb");
+        if (!tf) return 1;
+        fclose(tf);
+        attempt++;
+    }
+    return 0;
+}
+
 static void cleanup_sort_chunks(char chunk_names[][64], int nchunks) {
     int j;
     for (j = 0; j < nchunks; j++) {
@@ -2630,6 +2646,7 @@ static void cmd_sort(dbf_t *db, const char *arg) {
             if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
                 report_expr_error();
                 free(sort_entries);
+                cleanup_sort_chunks(chunk_names, nchunks);
                 return;
             }
             if (cond.type != VAL_LOGIC || !cond.logic) continue;
@@ -2643,7 +2660,11 @@ static void cmd_sort(dbf_t *db, const char *arg) {
         if (nentries == MAX_SORT_ENTRIES) {
             /* Sort and write chunk */
             qsort_r(sort_entries, nentries, sizeof(sort_entry_t), sort_compare_r, &ctx);
-            sprintf(chunk_names[nchunks], "sort%d.tmp", nchunks);
+            if (!make_sort_chunk_name(chunk_names[nchunks], sizeof(chunk_names[nchunks]))) {
+                printf("Error creating sort chunk.\n");
+                chunk_overflow = 1;
+                break;
+            }
             FILE *tf = fopen(chunk_names[nchunks], "wb");
             if (tf) {
                 fwrite(sort_entries, sizeof(sort_entry_t), nentries, tf);
@@ -2674,7 +2695,12 @@ static void cmd_sort(dbf_t *db, const char *arg) {
         if (nchunks == 0) {
             /* All fit in memory, proceed directly to write phase below */
         } else {
-            sprintf(chunk_names[nchunks], "sort%d.tmp", nchunks);
+            if (!make_sort_chunk_name(chunk_names[nchunks], sizeof(chunk_names[nchunks]))) {
+                printf("Error creating sort chunk.\n");
+                free(sort_entries);
+                cleanup_sort_chunks(chunk_names, nchunks);
+                return;
+            }
             FILE *tf = fopen(chunk_names[nchunks], "wb");
             if (!tf) {
                 printf("Error creating sort chunk.\n");

@@ -880,19 +880,21 @@ static void internal_remove_at(index_t *idx, ndx_page_t *node, int pos) {
     node->dirty = 1;
 }
 
-static void bt_remove(index_t *idx, int page_no, const char *key, uint32_t recno, int *path, int *path_pos, int depth) {
+static int bt_remove(index_t *idx, int page_no, const char *key, uint32_t recno) {
     ndx_page_t *node = page_get(idx, page_no);
-    if (!node) return;
+    if (!node) return 0;
 
     if (node->type == PAGE_INTERNAL) {
         int pos = page_upper_bound(idx, node, key);
-        path[depth] = page_no;
-        path_pos[depth] = pos;
-        bt_remove(idx, node->children[pos], key, recno, path, path_pos, depth + 1);
+        int removed = bt_remove(idx, node->children[pos], key, recno);
+        if (!removed) {
+            page_put(node);
+            return 0;
+        }
         
         /* Check for underflow in the child we just returned from */
         ndx_page_t *child = page_get(idx, node->children[pos]);
-        int min_keys = (child->type == PAGE_LEAF) ? (idx->max_keys_leaf / 2) : (idx->max_keys_internal / 2);
+        int min_keys = (child->type == PAGE_LEAF) ? ((idx->max_keys_leaf + 1) / 2) : ((idx->max_keys_internal + 1) / 2);
         
         if (child->nkeys < min_keys && child->page_no != idx->root_page) {
             /* Try to borrow from siblings */
@@ -1004,6 +1006,8 @@ static void bt_remove(index_t *idx, int page_no, const char *key, uint32_t recno
             if (right) page_put(right);
         }
         page_put(child);
+        page_put(node);
+        return 1;
     } else {
         /* Leaf: find exact key+recno and remove */
         int found = -1;
@@ -1016,14 +1020,17 @@ static void bt_remove(index_t *idx, int page_no, const char *key, uint32_t recno
         if (found >= 0) {
             leaf_remove_at(idx, node, found);
             idx->nentries--;
+            page_put(node);
+            return 1;
         }
     }
     page_put(node);
+    return 0;
 }
 
 int index_remove(index_t *idx, const char *key, uint32_t recno) {
     char padded[MAX_INDEX_KEY];
-    int path[64], path_pos[64];
+    int removed;
 
     if (!idx->active || idx->nentries == 0) return -1;
 
@@ -1034,7 +1041,8 @@ int index_remove(index_t *idx, const char *key, uint32_t recno) {
         memcpy(padded, key, len);
     }
 
-    bt_remove(idx, idx->root_page, padded, recno, path, path_pos, 0);
+    removed = bt_remove(idx, idx->root_page, padded, recno);
+    if (!removed) return -1;
 
     /* Check if root needs to be collapsed */
     ndx_page_t *root = page_get(idx, idx->root_page);

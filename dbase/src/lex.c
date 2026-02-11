@@ -293,7 +293,8 @@ token_type_t lex_next(lexer_t *l) {
         case '!': t->type = TOK_NOT; break;
         case '.': t->type = TOK_DOT; break;
         default:
-            t->type = TOK_UNKNOWN;
+            t->type = TOK_ERROR;
+            l->error = "Unexpected character";
             break;
     }
     
