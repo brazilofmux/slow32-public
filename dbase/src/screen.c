@@ -304,12 +304,12 @@ void screen_read(void) {
             char line[256];
             value_t v;
 
-            /* Check WHEN condition */
+            /* Check WHEN condition — skip field if false or eval error */
             if (scr.gets[i].when_expr[0]) {
                 value_t res;
-                if (expr_eval_str(cmd_get_expr_ctx(), scr.gets[i].when_expr, &res) == 0) {
-                    if (res.type == VAL_LOGIC && !res.logic) continue;
-                }
+                if (expr_eval_str(cmd_get_expr_ctx(), scr.gets[i].when_expr, &res) != 0 ||
+                    (res.type == VAL_LOGIC && !res.logic))
+                    continue;
             }
 
             for (;;) {
@@ -340,18 +340,20 @@ void screen_read(void) {
                     }
                 }
 
-                /* Temporarily set memvar so VALID expr can see it */
-                memvar_set(store, scr.gets[i].varname, &v);
-
-                /* VALID validation */
+                /* VALID validation — set memvar temporarily, restore on failure */
                 if (scr.gets[i].valid_expr[0]) {
-                    value_t res;
-                    if (expr_eval_str(cmd_get_expr_ctx(), scr.gets[i].valid_expr, &res) == 0) {
-                        if (res.type == VAL_LOGIC && !res.logic) {
-                            printf("\nInvalid entry.\n");
-                            continue;
-                        }
+                    value_t old_val, res;
+                    int had_old = (memvar_find(store, scr.gets[i].varname, &old_val) == 0);
+                    memvar_set(store, scr.gets[i].varname, &v);
+                    int ok = (expr_eval_str(cmd_get_expr_ctx(), scr.gets[i].valid_expr, &res) == 0 &&
+                              res.type == VAL_LOGIC && res.logic);
+                    if (!ok) {
+                        if (had_old) memvar_set(store, scr.gets[i].varname, &old_val);
+                        printf("\nInvalid entry.\n");
+                        continue;
                     }
+                } else {
+                    memvar_set(store, scr.gets[i].varname, &v);
                 }
                 printf("\n");
                 break;

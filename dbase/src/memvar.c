@@ -108,11 +108,15 @@ int memvar_release_matching(memvar_store_t *store, const char *pattern, int like
 int memvar_declare_array(memvar_store_t *store, const char *name, int rows, int cols) {
     value_t v;
     int i, size;
-    array_t *arr = (array_t *)calloc(1, sizeof(array_t));
-    if (!arr) return -1;
+    array_t *arr;
 
     if (cols < 1) cols = 1;
+    if (rows < 1 || rows > 8192 || cols > 8192) return -1;
     size = rows * cols;
+    if (size > 8192) return -1;
+
+    arr = (array_t *)calloc(1, sizeof(array_t));
+    if (!arr) return -1;
     arr->rows = rows;
     arr->cols = cols;
     arr->elements = (value_t *)calloc(size, sizeof(value_t));
@@ -122,7 +126,12 @@ int memvar_declare_array(memvar_store_t *store, const char *name, int rows, int 
 
     v.type = VAL_ARRAY;
     v.array = arr;
-    return memvar_set(store, name, &v);
+    if (memvar_set(store, name, &v) < 0) {
+        free(arr->elements);
+        free(arr);
+        return -1;
+    }
+    return 0;
 }
 
 int memvar_set_elem(memvar_store_t *store, const char *name, int row, int col, const value_t *val) {

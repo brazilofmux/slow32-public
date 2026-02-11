@@ -37,6 +37,7 @@ static int fn_fcreate(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
             return 0;
         }
     }
+    ll_error = -1;
     *result = val_num(-1);
     return 0;
 }
@@ -67,6 +68,7 @@ static int fn_fopen(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
             return 0;
         }
     }
+    ll_error = -1;
     *result = val_num(-1);
     return 0;
 }
@@ -97,6 +99,7 @@ static int fn_fread(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) 
     }
     int h = (int)args[0].num - 1;
     int count = (int)args[1].num;
+    if (count > 255) count = 255;
     if (h >= 0 && h < MAX_LL_FILES && ll_files[h] && count > 0) {
         char *buf = (char *)malloc(count + 1);
         if (!buf) { *result = val_str(""); return 0; }
@@ -123,6 +126,7 @@ static int fn_fwrite(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result)
         int req = (int)args[2].num;
         if (req < count) count = req;
     }
+    if (count < 0) count = 0;
     if (h >= 0 && h < MAX_LL_FILES && ll_files[h]) {
         size_t n = fwrite(args[1].str, 1, count, ll_files[h]);
         *result = val_num((double)n);
@@ -1198,7 +1202,6 @@ static const func_entry_t func_table[] = {
     /* Misc */
     { "EMPTY",     fn_empty },
     { "IIF",       fn_iif },
-    { "FILE",      fn_file },
     /* System */
     { "VERSION",   fn_version },
     { "OS",        fn_os },

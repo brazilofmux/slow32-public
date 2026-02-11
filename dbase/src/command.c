@@ -395,9 +395,15 @@ static void filename_stem(const char *filename, char *stem, int size) {
         stem[len - 4] = '\0';
 }
 
+/* Uppercase only the filename portion (after last slash), not directory components */
+static void upper_basename(char *path) {
+    char *base = strrchr(path, '/');
+    str_upper(base ? base + 1 : path);
+}
+
 /* ---- Helper: ensure filename has .DBF extension ---- */
 static void ensure_dbf_ext(char *filename, int size) {
-    str_upper(filename);
+    upper_basename(filename);
     trim_right(filename);
     if (strlen(filename) < 5 || str_icmp(filename + strlen(filename) - 4, ".DBF") != 0) {
         if ((int)strlen(filename) + 4 < size)
@@ -407,7 +413,7 @@ static void ensure_dbf_ext(char *filename, int size) {
 
 /* ---- Helper: ensure filename has .NDX extension ---- */
 static void ensure_ndx_ext(char *filename, int size) {
-    str_upper(filename);
+    upper_basename(filename);
     trim_right(filename);
     if (strlen(filename) < 5 || str_icmp(filename + strlen(filename) - 4, ".NDX") != 0) {
         if ((int)strlen(filename) + 4 < size)
