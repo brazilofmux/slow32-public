@@ -513,3 +513,40 @@ int dbf_memo_write(dbf_t *db, const char *text, int len) {
 
     return start_block;
 }
+
+int dbf_memo_snapshot(dbf_t *db, memo_snapshot_t *snap) {
+    long size;
+    if (!snap) return -1;
+    snap->valid = 0;
+    if (!db || !db->memo_fp) return -1;
+    fflush(db->memo_fp);
+    fseek(db->memo_fp, 0, SEEK_END);
+    size = ftell(db->memo_fp);
+    if (size < 0) return -1;
+    snap->file_size = size;
+    snap->next_block = db->next_memo_block;
+    snap->valid = 1;
+    return 0;
+}
+
+int dbf_memo_restore(dbf_t *db, const memo_snapshot_t *snap) {
+    unsigned char hdr[4];
+    if (!db || !db->memo_fp || !snap || !snap->valid) return -1;
+    fflush(db->memo_fp);
+#ifndef __slow32__
+    {
+        int fd = fileno(db->memo_fp);
+        if (fd >= 0) {
+            if (ftruncate(fd, snap->file_size) != 0) return -1;
+        }
+    }
+#else
+    (void)snap;
+#endif
+    db->next_memo_block = snap->next_block;
+    fseek(db->memo_fp, 0, 0);
+    write_le32(hdr, db->next_memo_block);
+    fwrite(hdr, 1, 4, db->memo_fp);
+    fflush(db->memo_fp);
+    return 0;
+}

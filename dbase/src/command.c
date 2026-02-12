@@ -1826,6 +1826,9 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
         if (has_indexes)
             indexes_capture_keys(db, old_keys);
 
+        memo_snapshot_t memo_snap;
+        memo_snap.valid = 0;
+
         while (replace_l.current.type == TOK_IDENT &&
                !is_keyword(replace_l.current.text, "FOR") &&
                !is_keyword(replace_l.current.text, "WHILE") &&
@@ -1881,6 +1884,8 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
                 break;
             case 'M': {
                 const char *memo_text = (val.type == VAL_CHAR) ? val.str : valbuf;
+                if (!memo_snap.valid)
+                    dbf_memo_snapshot(db, &memo_snap);
                 int nb = dbf_memo_write(db, memo_text, strlen(memo_text));
                 if (nb > 0)
                     snprintf(formatted, sizeof(formatted), "%10d", nb);
@@ -1905,6 +1910,8 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
         if (has_indexes) {
             if (indexes_update_current(db, old_keys) != 0) {
                 /* Reload original record from disk, discarding in-memory changes */
+                if (memo_snap.valid)
+                    dbf_memo_restore(db, &memo_snap);
                 db->record_dirty = 0;
                 dbf_read_record(db, db->current_record);
                 continue;
@@ -2034,6 +2041,9 @@ static void cmd_gather(dbf_t *db, lexer_t *l) {
     if (has_indexes)
         indexes_capture_keys(db, old_keys);
 
+    memo_snapshot_t memo_snap;
+    memo_snap.valid = 0;
+
     for (int i = 0; i < nfields; i++) {
         int fi = field_indices[i];
         value_t val;
@@ -2066,6 +2076,8 @@ static void cmd_gather(dbf_t *db, lexer_t *l) {
             break;
         case 'M': {
             const char *memo_text = (val.type == VAL_CHAR) ? val.str : valbuf;
+            if (!memo_snap.valid)
+                dbf_memo_snapshot(db, &memo_snap);
             int nb = dbf_memo_write(db, memo_text, strlen(memo_text));
             if (nb > 0)
                 snprintf(formatted, sizeof(formatted), "%10d", nb);
@@ -2085,6 +2097,8 @@ static void cmd_gather(dbf_t *db, lexer_t *l) {
     /* Update indexes */
     if (has_indexes) {
         if (indexes_update_current(db, old_keys) != 0) {
+            if (memo_snap.valid)
+                dbf_memo_restore(db, &memo_snap);
             db->record_dirty = 0;
             dbf_read_record(db, db->current_record);
             return;

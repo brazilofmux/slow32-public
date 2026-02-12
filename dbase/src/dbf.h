@@ -40,6 +40,12 @@ typedef struct {
     int has_memo;                    /* 1 if any field is type 'M' */
 } dbf_t;
 
+typedef struct {
+    long file_size;
+    uint32_t next_block;
+    int valid;
+} memo_snapshot_t;
+
 void dbf_init(dbf_t *db);
 int  dbf_create(const char *filename, const dbf_field_t *fields, int nfields);
 int  dbf_open(dbf_t *db, const char *filename);
@@ -60,5 +66,7 @@ int  dbf_memo_open(dbf_t *db);
 void dbf_memo_close(dbf_t *db);
 int  dbf_memo_read(dbf_t *db, int block, char *buf, int bufsize);
 int  dbf_memo_write(dbf_t *db, const char *text, int len);
+int  dbf_memo_snapshot(dbf_t *db, memo_snapshot_t *snap);
+int  dbf_memo_restore(dbf_t *db, const memo_snapshot_t *snap);
 
 #endif

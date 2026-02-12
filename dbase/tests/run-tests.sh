@@ -45,7 +45,7 @@ for testfile in "$BASDIR"/tests/*.txt; do
     TOTAL=$((TOTAL + 1))
 
     # Clean files before each test
-    rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
+    rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.DBT "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
         "$BASDIR"/tests/testfile.txt
 
     # Run test from tests/ directory so .DBF files are created there
