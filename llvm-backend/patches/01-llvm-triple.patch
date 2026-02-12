@@ -1,5 +1,5 @@
 diff --git a/llvm/include/llvm/TargetParser/Triple.h b/llvm/include/llvm/TargetParser/Triple.h
-index afbf464310..ee668113b8 100644
+index a940236c6..b6f99d4f8 100644
 --- a/llvm/include/llvm/TargetParser/Triple.h
 +++ b/llvm/include/llvm/TargetParser/Triple.h
 @@ -79,6 +79,7 @@ public:
@@ -10,7 +10,7 @@ index afbf464310..ee668113b8 100644
      sparc,       // Sparc: sparc
      sparcv9,     // Sparcv9: Sparcv9
      sparcel,     // Sparc: (endianness = little). NB: 'Sparcle' is a CPU variant
-@@ -1128,6 +1129,9 @@ public:
+@@ -1130,6 +1131,9 @@ public:
    /// Tests whether the target is RISC-V (32- and 64-bit).
    bool isRISCV() const { return isRISCV32() || isRISCV64(); }
  
@@ -21,7 +21,7 @@ index afbf464310..ee668113b8 100644
    bool isSPARC32() const {
      return getArch() == Triple::sparc || getArch() == Triple::sparcel;
 diff --git a/llvm/lib/TargetParser/Triple.cpp b/llvm/lib/TargetParser/Triple.cpp
-index a3ea5d8230..aace61a072 100644
+index 0a775fda7..f990227d1 100644
 --- a/llvm/lib/TargetParser/Triple.cpp
 +++ b/llvm/lib/TargetParser/Triple.cpp
 @@ -67,6 +67,7 @@ StringRef Triple::getArchTypeName(ArchType Kind) {
