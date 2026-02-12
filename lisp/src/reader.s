@@ -68,35 +68,35 @@ lisp_read_expr:                         # @lisp_read_expr
 	stw fp+-76, lr
 	add r12, r3, r0
 	jal r31, skip_whitespace_and_comments
-	lui r16, %hi(has_peek)
-	addi r16, r16, %lo(has_peek)
-	ldbu r1, r16+0
+	lui r19, %hi(has_peek)
+	addi r19, r19, %lo(has_peek)
+	ldbu r1, r19+0
 	addi r11, r0, 0
-	lui r17, %hi(peek_ch)
-	addi r17, r17, %lo(peek_ch)
+	lui r20, %hi(peek_ch)
+	addi r20, r20, %lo(peek_ch)
 	bne r1, r11, .LBB2_2
 .LBB2_1:
 	jal r31, getchar
-	stw r17+0, r1
+	stw r20+0, r1
 	addi r1, r0, 1
-	stb r16+0, r1
+	stb r19+0, r1
 .LBB2_2:
-	ldw r1, r17+0
-	addi r19, r0, -1
-	ble r1, r19, .LBB2_5
+	ldw r1, r20+0
+	addi r22, r0, -1
+	ble r1, r22, .LBB2_5
 .LBB2_3:
-	ldbu r3, r16+0
-	addi r18, r0, 1
-	bne r3, r18, .LBB2_7
+	ldbu r3, r19+0
+	addi r21, r0, 1
+	bne r3, r21, .LBB2_7
 .LBB2_4:
 	addi r3, r0, 0
-	stb r16+0, r3
+	stb r19+0, r3
 	jal r0, .LBB2_8
 .LBB2_5:
 	addi r1, r0, 1
 	stw r12+0, r1
 .LBB2_6:
-	addi r15, r0, 0
+	addi r18, r0, 0
 	jal r0, .LBB2_113
 .LBB2_7:
 	jal r31, getchar
@@ -115,9 +115,9 @@ lisp_read_expr:                         # @lisp_read_expr
 	addi r13, r0, 0
 	addi r14, r0, 34
 	addi r15, r0, 92
-	addi r20, r0, 10
-	addi r21, r0, 110
-	addi r22, r0, 116
+	addi r16, r0, 10
+	addi r17, r0, 110
+	addi r18, r0, 116
 	addi r23, r0, 9
 	addi r24, r0, 1022
 	addi r11, fp, -1100
@@ -126,37 +126,37 @@ lisp_read_expr:                         # @lisp_read_expr
 .LBB2_11:
 	beq r25, r13, .LBB2_27
 .LBB2_12:
-	ldbu r1, r16+0
-	bne r1, r18, .LBB2_14
+	ldbu r1, r19+0
+	bne r1, r21, .LBB2_14
 .LBB2_13:
-	stb r16+0, r13
-	ldw r1, r17+0
+	stb r19+0, r13
+	ldw r1, r20+0
 	jal r0, .LBB2_15
 .LBB2_14:
 	jal r31, getchar
 .LBB2_15:
-	sgt r3, r1, r19
+	sgt r3, r1, r22
 	sne r4, r1, r14
 	and r25, r3, r4
-	bne r25, r18, .LBB2_11
+	bne r25, r21, .LBB2_11
 .LBB2_16:
 	bne r1, r15, .LBB2_22
 .LBB2_17:
-	ldbu r1, r16+0
-	bne r1, r18, .LBB2_19
+	ldbu r1, r19+0
+	bne r1, r21, .LBB2_19
 .LBB2_18:
-	stb r16+0, r13
-	ldw r3, r17+0
-	add r1, r20, r0
-	bne r3, r21, .LBB2_20
+	stb r19+0, r13
+	ldw r3, r20+0
+	add r1, r16, r0
+	bne r3, r17, .LBB2_20
 	jal r0, .LBB2_22
 .LBB2_19:
 	jal r31, getchar
 	add r3, r1, r0
-	add r1, r20, r0
-	beq r3, r21, .LBB2_22
+	add r1, r16, r0
+	beq r3, r17, .LBB2_22
 .LBB2_20:
-	bne r3, r22, .LBB2_24
+	bne r3, r18, .LBB2_24
 .LBB2_21:
 	add r1, r23, r0
 .LBB2_22:
@@ -172,31 +172,25 @@ lisp_read_expr:                         # @lisp_read_expr
 	ble r12, r24, .LBB2_23
 	jal r0, .LBB2_11
 .LBB2_25:
-	addi r15, r0, 0
-	addi r13, fp, -1100
-	stw r13+0, r15
-	lui r11, %hi(root_sp)
-	addi r11, r11, %lo(root_sp)
-	ldw r1, r11+0
-	addi r3, r1, 1
-	stw r11+0, r3
-	slli r1, r1, 2
-	lui r12, %hi(root_stack)
-	addi r12, r12, %lo(root_stack)
-	add r1, r1, r12
-	stw r1+0, r13
+	addi r18, r0, 0
+	addi r11, fp, -1100
+	stw r11+0, r18
+	add r3, r11, r0
+	jal r31, push_root_checked
 	addi r3, fp, -1104
-	stw r3+0, r15
+	stw r3+0, r18
 	jal r31, lisp_read_expr
-	stw r13+0, r1
+	stw r11+0, r1
 	lui r1, %hi(g_error)
 	addi r1, r1, %lo(g_error)
 	ldw r1, r1+0
-	beq r1, r15, .LBB2_95
+	beq r1, r18, .LBB2_95
 .LBB2_26:
-	ldw r1, r11+0
-	addi r1, r1, -1
-	stw r11+0, r1
+	lui r1, %hi(root_sp)
+	addi r1, r1, %lo(root_sp)
+	ldw r3, r1+0
+	addi r3, r3, -1
+	stw r1+0, r3
 	jal r0, .LBB2_113
 .LBB2_27:
 	add r1, r11, r12
@@ -205,148 +199,138 @@ lisp_read_expr:                         # @lisp_read_expr
 	add r3, r11, r0
 	add r4, r12, r0
 	jal r31, string_alloc
-	add r15, r1, r0
+	add r18, r1, r0
 	jal r0, .LBB2_113
 .LBB2_28:
-	ldbu r1, r16+0
-	bne r1, r18, .LBB2_87
+	ldbu r1, r19+0
+	bne r1, r21, .LBB2_87
 .LBB2_29:
 	addi r1, r0, 0
-	stb r16+0, r1
-	ldw r1, r17+0
+	stb r19+0, r1
+	ldw r1, r20+0
 	addi r3, r0, 116
 	beq r1, r3, .LBB2_88
 .LBB2_30:
 	addi r3, r0, 102
 	bne r1, r3, .LBB2_97
 .LBB2_31:
-	addi r15, r0, 0
-	ldbu r1, r16+0
-	bne r1, r15, .LBB2_36
+	addi r18, r0, 0
+	ldbu r1, r19+0
+	bne r1, r18, .LBB2_36
 	jal r0, .LBB2_34
 .LBB2_32:
-	ldbu r1, r16+0
-	bne r1, r18, .LBB2_35
+	ldbu r1, r19+0
+	bne r1, r21, .LBB2_35
 .LBB2_33:
-	stb r16+0, r15
-	ldbu r1, r16+0
-	bne r1, r15, .LBB2_36
+	stb r19+0, r18
+	ldbu r1, r19+0
+	bne r1, r18, .LBB2_36
 .LBB2_34:
 	jal r31, getchar
-	stw r17+0, r1
-	stb r16+0, r18
+	stw r20+0, r1
+	stb r19+0, r21
 	jal r0, .LBB2_36
 .LBB2_35:
 	jal r31, getchar
-	ldbu r1, r16+0
-	beq r1, r15, .LBB2_34
+	ldbu r1, r19+0
+	beq r1, r18, .LBB2_34
 .LBB2_36:
-	ldw r3, r17+0
+	ldw r3, r20+0
 	jal r31, is_symbol_char
-	bne r1, r15, .LBB2_32
+	bne r1, r18, .LBB2_32
 	jal r0, .LBB2_113
 .LBB2_37:
-	addi r20, fp, -1100
-	stw r20+0, r11
-	addi r21, fp, -1104
-	stw r21+0, r11
-	lui r22, %hi(root_sp)
-	addi r22, r22, %lo(root_sp)
-	ldw r1, r22+0
-	addi r3, r1, 1
-	stw r22+0, r3
-	slli r4, r1, 2
-	lui r5, %hi(root_stack)
-	addi r5, r5, %lo(root_stack)
-	add r4, r4, r5
-	stw r4+0, r20
-	addi r1, r1, 2
-	stw r22+0, r1
-	slli r1, r3, 2
-	stw fp+-1116, r5
-	add r1, r1, r5
-	stw r1+0, r21
-	lui r12, %hi(.L.str.3)
-	addi r12, r12, %lo(.L.str.3)
+	addi r12, fp, -1100
+	stw r12+0, r11
+	addi r13, fp, -1104
+	stw r13+0, r11
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r13, r0
+	jal r31, push_root_checked
+	lui r14, %hi(.L.str.3)
+	addi r14, r14, %lo(.L.str.3)
+	lui r23, %hi(root_sp)
+	addi r23, r23, %lo(root_sp)
 	addi r24, r0, 46
 	addi r25, r0, 32
 	lui r1, %hi(.L.str.4)
 	addi r1, r1, %lo(.L.str.4)
-	stw fp+-1120, r1
+	stw fp+-1116, r1
 	lui r26, %hi(.LJTI2_1)
 	addi r26, r26, %lo(.LJTI2_1)
-	addi r14, fp, -1108
+	addi r16, fp, -1108
 	lui r27, %hi(g_error)
 	addi r27, r27, %lo(g_error)
 	addi r28, r0, 41
-	addi r13, fp, -1112
-                                        # implicit-def: $r15
+	addi r17, fp, -1112
+                                        # implicit-def: $r18
 	jal r0, .LBB2_40
 .LBB2_38:
 	jal r31, getchar
 .LBB2_39:
-	ldw r1, r22+0
+	ldw r1, r23+0
 	addi r1, r1, -2
-	stw r22+0, r1
-	ldw r15, r20+0
+	stw r23+0, r1
+	ldw r18, r12+0
 	beq r11, r11, .LBB2_113
 .LBB2_40:
 	jal r31, skip_whitespace_and_comments
-	ldbu r1, r16+0
+	ldbu r1, r19+0
 	bne r1, r11, .LBB2_42
 .LBB2_41:
 	jal r31, getchar
-	stw r17+0, r1
-	stb r16+0, r18
+	stw r20+0, r1
+	stb r19+0, r21
 .LBB2_42:
-	ldw r1, r17+0
-	ble r1, r19, .LBB2_47
+	ldw r1, r20+0
+	ble r1, r22, .LBB2_47
 .LBB2_43:
 	beq r1, r24, .LBB2_49
 .LBB2_44:
 	bne r1, r28, .LBB2_51
 .LBB2_45:
-	ldbu r1, r16+0
-	bne r1, r18, .LBB2_38
+	ldbu r1, r19+0
+	bne r1, r21, .LBB2_38
 .LBB2_46:
-	stb r16+0, r11
+	stb r19+0, r11
 	jal r0, .LBB2_39
 .LBB2_47:
-	add r3, r12, r0
+	add r3, r14, r0
 .LBB2_48:
 	jal r31, lisp_error
 	jal r0, .LBB2_58
 .LBB2_49:
-	ldbu r1, r16+0
-	bne r1, r18, .LBB2_53
+	ldbu r1, r19+0
+	bne r1, r21, .LBB2_53
 .LBB2_50:
-	stb r16+0, r11
-	ldbu r1, r16+0
+	stb r19+0, r11
+	ldbu r1, r19+0
 	beq r1, r11, .LBB2_54
 	jal r0, .LBB2_55
 .LBB2_51:
-	stw r14+0, r11
-	add r3, r14, r0
+	stw r16+0, r11
+	add r3, r16, r0
 	jal r31, lisp_read_expr
-	stw r13+0, r1
-	ldw r23, r27+0
-	ldw r3, r22+0
-	beq r23, r11, .LBB2_59
+	stw r17+0, r1
+	ldw r15, r27+0
+	beq r15, r11, .LBB2_59
 .LBB2_52:
-	addi r1, r3, -2
-	stw r22+0, r1
-	add r15, r11, r0
+	ldw r1, r23+0
+	addi r1, r1, -2
+	stw r23+0, r1
+	add r18, r11, r0
 	jal r0, .LBB2_66
 .LBB2_53:
 	jal r31, getchar
-	ldbu r1, r16+0
+	ldbu r1, r19+0
 	bne r1, r11, .LBB2_55
 .LBB2_54:
 	jal r31, getchar
-	stw r17+0, r1
-	stb r16+0, r18
+	stw r20+0, r1
+	stb r19+0, r21
 .LBB2_55:
-	ldw r1, r17+0
+	ldw r1, r20+0
 	addi r1, r1, -9
 	bgtu r1, r25, .LBB2_63
 .LBB2_56:
@@ -355,66 +339,62 @@ lisp_read_expr:                         # @lisp_read_expr
 	ldw r1, r1+0
 	jalr r0, r1, 0
 .LBB2_57:
-	stw r14+0, r11
-	add r3, r14, r0
+	stw r16+0, r11
+	add r3, r16, r0
 	jal r31, lisp_read_expr
 	ldw r3, r27+0
 	beq r3, r11, .LBB2_61
 .LBB2_58:
-	ldw r1, r22+0
+	ldw r1, r23+0
 	addi r1, r1, -2
-	stw r22+0, r1
-	add r15, r11, r0
+	stw r23+0, r1
+	add r18, r11, r0
 	bne r11, r11, .LBB2_40
 	jal r0, .LBB2_113
 .LBB2_59:
-	addi r4, r3, 1
-	stw r22+0, r4
-	slli r3, r3, 2
-	ldw r4, fp+-1116
-	add r3, r3, r4
-	stw r3+0, r13
-	add r3, r1, r0
+	add r3, r17, r0
+	jal r31, push_root_checked
+	ldw r3, r17+0
 	add r4, r11, r0
 	jal r31, cons_alloc
-	ldw r3, r22+0
+	ldw r3, r23+0
 	addi r3, r3, -1
-	stw r22+0, r3
-	ldw r3, r20+0
+	stw r23+0, r3
+	ldw r3, r12+0
 	beq r3, r11, .LBB2_64
 .LBB2_60:
-	ldw r3, r21+0
+	ldw r3, r13+0
 	stw r3+16, r1
 	jal r0, .LBB2_65
 .LBB2_61:
-	ldw r3, r21+0
+	ldw r3, r13+0
 	beq r3, r11, .LBB2_67
 .LBB2_62:
 	stw r3+16, r1
 	jal r0, .LBB2_68
 .LBB2_63:
-	ldw r3, fp+-1120
+	ldw r3, fp+-1116
 	jal r0, .LBB2_48
 .LBB2_64:
-	stw r20+0, r1
+	stw r12+0, r1
 .LBB2_65:
-	stw r21+0, r1
+	stw r13+0, r1
 .LBB2_66:
-	seq r1, r23, r11
+	seq r1, r15, r11
 	bne r1, r11, .LBB2_40
 	jal r0, .LBB2_113
 .LBB2_67:
-	stw r20+0, r1
+	stw r12+0, r1
 .LBB2_68:
 	jal r31, skip_whitespace_and_comments
-	ldbu r1, r16+0
+	ldbu r1, r19+0
 	bne r1, r11, .LBB2_70
 .LBB2_69:
 	jal r31, getchar
-	stw r17+0, r1
-	stb r16+0, r18
+	stw r20+0, r1
+	stb r19+0, r21
 .LBB2_70:
-	ldw r1, r17+0
+	ldw r1, r20+0
 	bne r1, r28, .LBB2_39
 	jal r0, .LBB2_45
 .LBB2_71:
@@ -427,35 +407,35 @@ lisp_read_expr:                         # @lisp_read_expr
 	addi r12, fp, -1100
 	stb r12+0, r11
 	addi r15, r0, 254
-	add r13, r18, r0
+	add r13, r21, r0
 	jal r0, .LBB2_74
 .LBB2_73:
 	jal r31, getchar
 .LBB2_74:
-	ldbu r1, r16+0
+	ldbu r1, r19+0
 	bne r1, r14, .LBB2_76
 .LBB2_75:
 	jal r31, getchar
-	stw r17+0, r1
-	stb r16+0, r18
+	stw r20+0, r1
+	stb r19+0, r21
 .LBB2_76:
-	ldw r11, r17+0
+	ldw r11, r20+0
 	add r3, r11, r0
 	jal r31, is_symbol_char
 	beq r1, r14, .LBB2_84
 .LBB2_77:
-	ldbu r1, r16+0
+	ldbu r1, r19+0
 	andi r1, r1, 1
 	bleu r13, r15, .LBB2_80
 .LBB2_78:
 	beq r1, r14, .LBB2_73
 .LBB2_79:
-	stb r16+0, r14
+	stb r19+0, r14
 	jal r0, .LBB2_74
 .LBB2_80:
 	beq r1, r14, .LBB2_82
 .LBB2_81:
-	stb r16+0, r14
+	stb r19+0, r14
 	jal r0, .LBB2_83
 .LBB2_82:
 	jal r31, getchar
@@ -486,64 +466,58 @@ lisp_read_expr:                         # @lisp_read_expr
 	bne r1, r3, .LBB2_30
 .LBB2_88:
 	addi r11, r0, 0
-	ldbu r1, r16+0
+	ldbu r1, r19+0
 	bne r1, r11, .LBB2_93
 	jal r0, .LBB2_91
 .LBB2_89:
-	ldbu r1, r16+0
-	bne r1, r18, .LBB2_92
+	ldbu r1, r19+0
+	bne r1, r21, .LBB2_92
 .LBB2_90:
-	stb r16+0, r11
-	ldbu r1, r16+0
+	stb r19+0, r11
+	ldbu r1, r19+0
 	bne r1, r11, .LBB2_93
 .LBB2_91:
 	jal r31, getchar
-	stw r17+0, r1
-	stb r16+0, r18
+	stw r20+0, r1
+	stb r19+0, r21
 	jal r0, .LBB2_93
 .LBB2_92:
 	jal r31, getchar
-	ldbu r1, r16+0
+	ldbu r1, r19+0
 	beq r1, r11, .LBB2_91
 .LBB2_93:
-	ldw r3, r17+0
+	ldw r3, r20+0
 	jal r31, is_symbol_char
 	bne r1, r11, .LBB2_89
 .LBB2_94:
 	lui r1, %hi(sym_true)
 	addi r1, r1, %lo(sym_true)
-	ldw r15, r1+0
+	ldw r18, r1+0
 	jal r0, .LBB2_113
 .LBB2_95:
 	lui r3, %hi(.L.str)
 	addi r3, r3, %lo(.L.str)
 	jal r31, symbol_intern
-	addi r14, fp, -1108
-	stw r14+0, r1
-	ldw r1, r11+0
-	addi r3, r1, 1
-	stw r11+0, r3
-	slli r1, r1, 2
-	add r1, r1, r12
-	stw r1+0, r14
-	ldw r3, r13+0
+	addi r12, fp, -1108
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	ldw r3, r11+0
 	addi r4, r0, 0
 	jal r31, cons_alloc
-	addi r3, fp, -1112
-	stw r3+0, r1
-	ldw r4, r11+0
-	addi r5, r4, 1
-	stw r11+0, r5
-	slli r4, r4, 2
-	add r4, r4, r12
-	stw r4+0, r3
-	ldw r3, r14+0
-	add r4, r1, r0
-	jal r31, cons_alloc
-	add r15, r1, r0
-	ldw r1, r11+0
-	addi r1, r1, -3
+	addi r11, fp, -1112
 	stw r11+0, r1
+	add r3, r11, r0
+	jal r31, push_root_checked
+	ldw r3, r12+0
+	ldw r4, r11+0
+	jal r31, cons_alloc
+	add r18, r1, r0
+	lui r1, %hi(root_sp)
+	addi r1, r1, %lo(root_sp)
+	ldw r3, r1+0
+	addi r3, r3, -3
+	stw r1+0, r3
 	jal r0, .LBB2_113
 .LBB2_96:
 	lui r3, %hi(.L.str.2)
@@ -587,7 +561,7 @@ lisp_read_expr:                         # @lisp_read_expr
 .LBB2_108:
 	addi r3, fp, -1100
 	jal r31, symbol_intern
-	add r15, r1, r0
+	add r18, r1, r0
 	jal r0, .LBB2_113
 .LBB2_109:
 	seq r3, r1, r3
@@ -614,9 +588,9 @@ lisp_read_expr:                         # @lisp_read_expr
 	and r1, r1, r3
 	xor r1, r5, r1
 	slli r1, r1, 1
-	addi r15, r1, 1
+	addi r18, r1, 1
 .LBB2_113:
-	add r1, r15, r0
+	add r1, r18, r0
 	ldw lr, fp+-76
 	ldw r28, fp+-72
 	ldw r27, fp+-68

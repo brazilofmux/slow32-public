@@ -8,7 +8,8 @@
 extern val_t *root_stack[ROOT_STACK_SIZE];
 extern int root_sp;
 
-#define PUSH_ROOT(v) (root_stack[root_sp++] = &(v))
+void push_root_checked(val_t *p);
+#define PUSH_ROOT(v) push_root_checked(&(v))
 #define POP_ROOTS(n) (root_sp -= (n))
 
 void heap_init(void);

@@ -5,1315 +5,989 @@
 	.type	builtins_register,@function
 builtins_register:                      # @builtins_register
 # %bb.0:
-	addi sp, sp, -56
+	addi sp, sp, -40
 	stw sp+4, fp
 	stw sp+0, lr
 	add fp, sp, r0
-	addi fp, fp, 56
+	addi fp, fp, 40
 	stw fp+-4, r11
 	stw fp+-8, r12
 	stw fp+-12, r13
 	stw fp+-16, r14
 	stw fp+-20, r15
-	stw fp+-24, r16
-	stw fp+-28, lr
-	add r11, r3, r0
-	addi r13, fp, -32
-	stw r13+0, r3
-	lui r12, %hi(.L.str)
-	addi r12, r12, %lo(.L.str)
-	add r3, r12, r0
+	stw fp+-24, lr
+	add r13, r3, r0
+	addi r11, fp, -28
+	stw r11+0, r3
+	lui r14, %hi(.L.str)
+	addi r14, r14, %lo(.L.str)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	addi r14, fp, -36
-	stw r14+0, r1
-	lui r15, %hi(root_sp)
-	addi r15, r15, %lo(root_sp)
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	lui r16, %hi(root_stack)
-	addi r16, r16, %lo(root_stack)
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	addi r12, fp, -32
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_add)
 	addi r4, r4, %lo(bi_add)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
+	lui r15, %hi(root_sp)
+	addi r15, r15, %lo(root_sp)
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.1)
-	addi r12, r12, %lo(.L.str.1)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.1)
+	addi r14, r14, %lo(.L.str.1)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_sub)
 	addi r4, r4, %lo(bi_sub)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.2)
-	addi r12, r12, %lo(.L.str.2)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.2)
+	addi r14, r14, %lo(.L.str.2)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_mul)
 	addi r4, r4, %lo(bi_mul)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.3)
-	addi r12, r12, %lo(.L.str.3)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.3)
+	addi r14, r14, %lo(.L.str.3)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_div)
 	addi r4, r4, %lo(bi_div)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.4)
-	addi r12, r12, %lo(.L.str.4)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.4)
+	addi r14, r14, %lo(.L.str.4)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_modulo)
 	addi r4, r4, %lo(bi_modulo)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.5)
-	addi r12, r12, %lo(.L.str.5)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.5)
+	addi r14, r14, %lo(.L.str.5)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_abs)
 	addi r4, r4, %lo(bi_abs)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.6)
-	addi r12, r12, %lo(.L.str.6)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.6)
+	addi r14, r14, %lo(.L.str.6)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_min)
 	addi r4, r4, %lo(bi_min)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.7)
-	addi r12, r12, %lo(.L.str.7)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.7)
+	addi r14, r14, %lo(.L.str.7)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_max)
 	addi r4, r4, %lo(bi_max)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.8)
-	addi r12, r12, %lo(.L.str.8)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.8)
+	addi r14, r14, %lo(.L.str.8)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_num_eq)
 	addi r4, r4, %lo(bi_num_eq)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.9)
-	addi r12, r12, %lo(.L.str.9)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.9)
+	addi r14, r14, %lo(.L.str.9)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_lt)
 	addi r4, r4, %lo(bi_lt)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.10)
-	addi r12, r12, %lo(.L.str.10)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.10)
+	addi r14, r14, %lo(.L.str.10)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_gt)
 	addi r4, r4, %lo(bi_gt)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.11)
-	addi r12, r12, %lo(.L.str.11)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.11)
+	addi r14, r14, %lo(.L.str.11)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_le)
 	addi r4, r4, %lo(bi_le)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.12)
-	addi r12, r12, %lo(.L.str.12)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.12)
+	addi r14, r14, %lo(.L.str.12)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_ge)
 	addi r4, r4, %lo(bi_ge)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.13)
-	addi r12, r12, %lo(.L.str.13)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.13)
+	addi r14, r14, %lo(.L.str.13)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_null)
 	addi r4, r4, %lo(bi_null)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.14)
-	addi r12, r12, %lo(.L.str.14)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.14)
+	addi r14, r14, %lo(.L.str.14)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_pair)
 	addi r4, r4, %lo(bi_pair)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.15)
-	addi r12, r12, %lo(.L.str.15)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.15)
+	addi r14, r14, %lo(.L.str.15)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_number)
 	addi r4, r4, %lo(bi_number)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.16)
-	addi r12, r12, %lo(.L.str.16)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.16)
+	addi r14, r14, %lo(.L.str.16)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_symbol)
 	addi r4, r4, %lo(bi_symbol)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.17)
-	addi r12, r12, %lo(.L.str.17)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.17)
+	addi r14, r14, %lo(.L.str.17)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_string_p)
 	addi r4, r4, %lo(bi_string_p)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.18)
-	addi r12, r12, %lo(.L.str.18)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.18)
+	addi r14, r14, %lo(.L.str.18)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_procedure)
 	addi r4, r4, %lo(bi_procedure)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.19)
-	addi r12, r12, %lo(.L.str.19)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.19)
+	addi r14, r14, %lo(.L.str.19)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_zero)
 	addi r4, r4, %lo(bi_zero)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.20)
-	addi r12, r12, %lo(.L.str.20)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.20)
+	addi r14, r14, %lo(.L.str.20)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_positive)
 	addi r4, r4, %lo(bi_positive)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.21)
-	addi r12, r12, %lo(.L.str.21)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.21)
+	addi r14, r14, %lo(.L.str.21)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_negative)
 	addi r4, r4, %lo(bi_negative)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.22)
-	addi r12, r12, %lo(.L.str.22)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.22)
+	addi r14, r14, %lo(.L.str.22)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_not)
 	addi r4, r4, %lo(bi_not)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.23)
-	addi r12, r12, %lo(.L.str.23)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.23)
+	addi r14, r14, %lo(.L.str.23)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_boolean)
 	addi r4, r4, %lo(bi_boolean)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.24)
-	addi r12, r12, %lo(.L.str.24)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.24)
+	addi r14, r14, %lo(.L.str.24)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_eq)
 	addi r4, r4, %lo(bi_eq)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.25)
-	addi r12, r12, %lo(.L.str.25)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.25)
+	addi r14, r14, %lo(.L.str.25)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_equal)
 	addi r4, r4, %lo(bi_equal)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.26)
-	addi r12, r12, %lo(.L.str.26)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.26)
+	addi r14, r14, %lo(.L.str.26)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_cons)
 	addi r4, r4, %lo(bi_cons)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.27)
-	addi r12, r12, %lo(.L.str.27)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.27)
+	addi r14, r14, %lo(.L.str.27)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_car)
 	addi r4, r4, %lo(bi_car)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.28)
-	addi r12, r12, %lo(.L.str.28)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.28)
+	addi r14, r14, %lo(.L.str.28)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_cdr)
 	addi r4, r4, %lo(bi_cdr)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.29)
-	addi r12, r12, %lo(.L.str.29)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.29)
+	addi r14, r14, %lo(.L.str.29)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_set_car)
 	addi r4, r4, %lo(bi_set_car)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.30)
-	addi r12, r12, %lo(.L.str.30)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.30)
+	addi r14, r14, %lo(.L.str.30)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_set_cdr)
 	addi r4, r4, %lo(bi_set_cdr)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.31)
-	addi r12, r12, %lo(.L.str.31)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.31)
+	addi r14, r14, %lo(.L.str.31)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_list)
 	addi r4, r4, %lo(bi_list)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.32)
-	addi r12, r12, %lo(.L.str.32)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.32)
+	addi r14, r14, %lo(.L.str.32)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_length)
 	addi r4, r4, %lo(bi_length)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.33)
-	addi r12, r12, %lo(.L.str.33)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.33)
+	addi r14, r14, %lo(.L.str.33)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_append)
 	addi r4, r4, %lo(bi_append)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.34)
-	addi r12, r12, %lo(.L.str.34)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.34)
+	addi r14, r14, %lo(.L.str.34)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_reverse)
 	addi r4, r4, %lo(bi_reverse)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.35)
-	addi r12, r12, %lo(.L.str.35)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.35)
+	addi r14, r14, %lo(.L.str.35)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_map)
 	addi r4, r4, %lo(bi_map)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.36)
-	addi r12, r12, %lo(.L.str.36)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.36)
+	addi r14, r14, %lo(.L.str.36)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_string_length)
 	addi r4, r4, %lo(bi_string_length)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.37)
-	addi r12, r12, %lo(.L.str.37)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.37)
+	addi r14, r14, %lo(.L.str.37)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_string_append)
 	addi r4, r4, %lo(bi_string_append)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.38)
-	addi r12, r12, %lo(.L.str.38)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.38)
+	addi r14, r14, %lo(.L.str.38)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_substring)
 	addi r4, r4, %lo(bi_substring)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.39)
-	addi r12, r12, %lo(.L.str.39)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.39)
+	addi r14, r14, %lo(.L.str.39)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_string_to_number)
 	addi r4, r4, %lo(bi_string_to_number)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.40)
-	addi r12, r12, %lo(.L.str.40)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.40)
+	addi r14, r14, %lo(.L.str.40)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_number_to_string)
 	addi r4, r4, %lo(bi_number_to_string)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.41)
-	addi r12, r12, %lo(.L.str.41)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.41)
+	addi r14, r14, %lo(.L.str.41)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_display)
 	addi r4, r4, %lo(bi_display)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.42)
-	addi r12, r12, %lo(.L.str.42)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.42)
+	addi r14, r14, %lo(.L.str.42)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_newline)
 	addi r4, r4, %lo(bi_newline)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.43)
-	addi r12, r12, %lo(.L.str.43)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.43)
+	addi r14, r14, %lo(.L.str.43)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_read)
 	addi r4, r4, %lo(bi_read)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r12, %hi(.L.str.44)
-	addi r12, r12, %lo(.L.str.44)
-	add r3, r12, r0
+	stw r11+0, r13
+	lui r14, %hi(.L.str.44)
+	addi r14, r14, %lo(.L.str.44)
+	add r3, r14, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_apply)
 	addi r4, r4, %lo(bi_apply)
-	add r3, r12, r0
+	add r3, r14, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	stw r13+0, r11
-	lui r11, %hi(.L.str.45)
-	addi r11, r11, %lo(.L.str.45)
-	add r3, r11, r0
+	stw r11+0, r13
+	lui r13, %hi(.L.str.45)
+	addi r13, r13, %lo(.L.str.45)
+	add r3, r13, r0
 	jal r31, symbol_intern
-	stw r14+0, r1
-	ldw r1, r15+0
-	addi r3, r1, 1
-	stw r15+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r1, r1, 2
-	stw r15+0, r1
-	slli r1, r3, 2
-	add r1, r1, r16
-	stw r1+0, r13
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r11, r0
+	jal r31, push_root_checked
 	lui r4, %hi(bi_error)
 	addi r4, r4, %lo(bi_error)
-	add r3, r11, r0
+	add r3, r13, r0
 	jal r31, builtin_alloc
 	ldw r3, r15+0
 	addi r3, r3, -2
 	stw r15+0, r3
-	ldw r3, r13+0
-	ldw r4, r14+0
+	ldw r3, r11+0
+	ldw r4, r12+0
 	add r5, r1, r0
 	jal r31, env_define
-	ldw lr, fp+-28
-	ldw r16, fp+-24
+	ldw lr, fp+-24
 	ldw r15, fp+-20
 	ldw r14, fp+-16
 	ldw r13, fp+-12
@@ -1321,7 +995,7 @@ builtins_register:                      # @builtins_register
 	ldw r11, fp+-4
 	ldw lr, sp+0
 	ldw fp, sp+4
-	addi sp, sp, 56
+	addi sp, sp, 40
 	jalr r0, r31, 0
 .Lfunc_end0:
 	.size	builtins_register, .Lfunc_end0-builtins_register
@@ -2580,114 +2254,97 @@ bi_append:                              # @bi_append
 	stw fp+-16, r14
 	stw fp+-20, r15
 	stw fp+-24, r16
-	stw fp+-28, r17
-	stw fp+-32, lr
+	stw fp+-28, lr
 	addi r1, r0, 0
 	beq r3, r1, .LBB34_17
 .LBB34_1:
-	ldw r4, r3+16
-	addi r1, r0, 0
-	beq r4, r1, .LBB34_13
+	ldw r1, r3+16
+	addi r4, r0, 0
+	beq r1, r4, .LBB34_13
 .LBB34_2:
 	ldw r5, r3+12
-	addi r15, fp, -36
-	stw r15+0, r5
-	ldw r5, r4+12
-	addi r13, fp, -40
-	stw r13+0, r5
-	ldw r4, r4+16
-	lui r12, %hi(root_sp)
-	addi r12, r12, %lo(root_sp)
-	lui r16, %hi(root_stack)
-	addi r16, r16, %lo(root_stack)
-	beq r4, r1, .LBB34_5
+	addi r16, fp, -32
+	stw r16+0, r5
+	ldw r5, r1+12
+	addi r11, fp, -36
+	stw r11+0, r5
+	ldw r1, r1+16
+	lui r15, %hi(root_sp)
+	addi r15, r15, %lo(root_sp)
+	beq r1, r4, .LBB34_5
 .LBB34_3:
-	ldw r4, r12+0
-	addi r5, r4, 1
-	stw r12+0, r5
-	slli r4, r4, 2
-	add r4, r4, r16
-	stw r4+0, r15
-	ldw r3, r3+16
-	add r11, r1, r0
+	addi r1, fp, -32
+	add r13, r3, r0
+	add r3, r1, r0
+	add r12, r4, r0
+	jal r31, push_root_checked
+	ldw r3, r13+16
 	jal r31, bi_append
 	add r3, r1, r0
-	add r1, r11, r0
-	ldw r4, r12+0
+	add r1, r12, r0
+	ldw r4, r15+0
 	addi r4, r4, -1
-	stw r12+0, r4
+	stw r15+0, r4
 	lui r4, %hi(g_error)
 	addi r4, r4, %lo(g_error)
 	ldw r4, r4+0
-	bne r4, r11, .LBB34_17
+	bne r4, r12, .LBB34_17
 .LBB34_4:
-	stw r13+0, r3
+	stw r11+0, r3
 .LBB34_5:
-	ldw r1, r15+0
-	addi r11, r0, 0
-	beq r1, r11, .LBB34_14
+	ldw r1, r16+0
+	addi r12, r0, 0
+	beq r1, r12, .LBB34_16
 .LBB34_6:
-	addi r14, fp, -44
-	stw r14+0, r11
-	addi r17, fp, -48
-	stw r17+0, r11
-	ldw r1, r12+0
-	addi r3, r1, 1
-	stw r12+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r14
-	addi r4, r1, 2
-	stw r12+0, r4
-	slli r3, r3, 2
-	add r3, r3, r16
-	stw r3+0, r17
-	addi r1, r1, 3
-	stw r12+0, r1
-	slli r1, r4, 2
-	add r1, r1, r16
-	stw r1+0, r13
-	ldw r15, r15+0
-	bne r15, r11, .LBB34_11
+	addi r11, fp, -40
+	stw r11+0, r12
+	addi r13, fp, -44
+	stw r13+0, r12
+	add r3, r11, r0
+	jal r31, push_root_checked
+	add r3, r13, r0
+	jal r31, push_root_checked
+	addi r14, fp, -36
+	add r3, r14, r0
+	jal r31, push_root_checked
+	ldw r16, r16+0
+	bne r16, r12, .LBB34_11
 .LBB34_7:
-	ldw r3, r17+0
-	ldw r1, r13+0
-	beq r3, r11, .LBB34_15
+	ldw r3, r13+0
+	ldw r1, r14+0
+	beq r3, r12, .LBB34_14
 .LBB34_8:
 	stw r3+16, r1
-	jal r0, .LBB34_16
+	jal r0, .LBB34_15
 .LBB34_9:
-	ldw r3, r17+0
+	ldw r3, r13+0
 	stw r3+16, r1
 .LBB34_10:
-	stw r17+0, r1
-	ldw r15, r15+16
-	beq r15, r11, .LBB34_7
+	stw r13+0, r1
+	ldw r16, r16+16
+	beq r16, r12, .LBB34_7
 .LBB34_11:
-	ldw r3, r15+12
-	add r4, r11, r0
+	ldw r3, r16+12
+	add r4, r12, r0
 	jal r31, cons_alloc
-	ldw r3, r14+0
-	bne r3, r11, .LBB34_9
+	ldw r3, r11+0
+	bne r3, r12, .LBB34_9
 .LBB34_12:
-	stw r14+0, r1
+	stw r11+0, r1
 	jal r0, .LBB34_10
 .LBB34_13:
 	ldw r1, r3+12
 	jal r0, .LBB34_17
 .LBB34_14:
-	ldw r1, r13+0
-	jal r0, .LBB34_17
+	stw r11+0, r1
 .LBB34_15:
-	stw r14+0, r1
-.LBB34_16:
-	ldw r1, r12+0
+	ldw r1, r15+0
 	addi r1, r1, -3
-	stw r12+0, r1
-	ldw r1, r14+0
+	stw r15+0, r1
+.LBB34_16:
+	ldw r1, r11+0
 .LBB34_17:
-	ldw lr, fp+-32
-	ldw r17, fp+-28
+	ldw lr, fp+-28
 	ldw r16, fp+-24
 	ldw r15, fp+-20
 	ldw r14, fp+-16
@@ -2713,37 +2370,29 @@ bi_reverse:                             # @bi_reverse
 	stw fp+-4, r11
 	stw fp+-8, r12
 	stw fp+-12, r13
-	stw fp+-16, r14
-	stw fp+-20, lr
+	stw fp+-16, lr
 	ldw r12, r3+12
-	addi r14, r0, 0
-	addi r11, fp, -24
-	stw r11+0, r14
-	lui r13, %hi(root_sp)
-	addi r13, r13, %lo(root_sp)
-	ldw r1, r13+0
-	addi r3, r1, 1
-	stw r13+0, r3
-	slli r1, r1, 2
-	lui r3, %hi(root_stack)
-	addi r3, r3, %lo(root_stack)
-	add r1, r1, r3
-	stw r1+0, r11
-	beq r12, r14, .LBB35_2
+	addi r13, r0, 0
+	addi r11, fp, -20
+	stw r11+0, r13
+	add r3, r11, r0
+	jal r31, push_root_checked
+	beq r12, r13, .LBB35_2
 .LBB35_1:
 	ldw r3, r12+12
 	ldw r4, r11+0
 	jal r31, cons_alloc
 	stw r11+0, r1
 	ldw r12, r12+16
-	bne r12, r14, .LBB35_1
+	bne r12, r13, .LBB35_1
 .LBB35_2:
-	ldw r1, r13+0
-	addi r1, r1, -1
-	stw r13+0, r1
+	lui r1, %hi(root_sp)
+	addi r1, r1, %lo(root_sp)
+	ldw r3, r1+0
+	addi r3, r3, -1
+	stw r1+0, r3
 	ldw r1, r11+0
-	ldw lr, fp+-20
-	ldw r14, fp+-16
+	ldw lr, fp+-16
 	ldw r13, fp+-12
 	ldw r12, fp+-8
 	ldw r11, fp+-4
@@ -2758,11 +2407,11 @@ bi_reverse:                             # @bi_reverse
 	.type	bi_map,@function
 bi_map:                                 # @bi_map
 # %bb.0:
-	addi sp, sp, -104
+	addi sp, sp, -88
 	stw sp+4, fp
 	stw sp+0, lr
 	add fp, sp, r0
-	addi fp, fp, 104
+	addi fp, fp, 88
 	stw fp+-4, r11
 	stw fp+-8, r12
 	stw fp+-12, r13
@@ -2776,147 +2425,125 @@ bi_map:                                 # @bi_map
 	stw fp+-44, r21
 	stw fp+-48, r22
 	stw fp+-52, r23
-	stw fp+-56, r24
-	stw fp+-60, lr
+	stw fp+-56, lr
 	ldw r1, r3+12
-	addi r12, fp, -64
+	addi r12, fp, -60
 	stw r12+0, r1
 	ldw r1, r3+16
 	ldw r1, r1+12
-	addi r15, fp, -68
-	stw r15+0, r1
-	addi r11, r0, 0
-	addi r13, fp, -72
-	stw r13+0, r11
-	addi r16, fp, -76
-	stw r16+0, r11
-	lui r14, %hi(root_sp)
-	addi r14, r14, %lo(root_sp)
-	ldw r1, r14+0
-	addi r3, r1, 1
-	stw r14+0, r3
-	slli r4, r1, 2
-	lui r17, %hi(root_stack)
-	addi r17, r17, %lo(root_stack)
-	add r4, r4, r17
-	stw r4+0, r12
-	addi r4, r1, 2
-	stw r14+0, r4
-	slli r3, r3, 2
-	add r3, r3, r17
-	stw r3+0, r15
-	addi r3, r1, 3
-	stw r14+0, r3
-	slli r4, r4, 2
-	add r4, r4, r17
-	stw r4+0, r13
-	addi r1, r1, 4
+	addi r14, fp, -64
 	stw r14+0, r1
-	slli r1, r3, 2
-	add r1, r1, r17
-	stw r1+0, r16
-	ldw r1, r15+0
+	addi r11, r0, 0
+	addi r13, fp, -68
+	stw r13+0, r11
+	addi r15, fp, -72
+	stw r15+0, r11
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r14, r0
+	jal r31, push_root_checked
+	add r3, r13, r0
+	jal r31, push_root_checked
+	add r3, r15, r0
+	jal r31, push_root_checked
+	ldw r1, r14+0
+	lui r18, %hi(root_sp)
+	addi r18, r18, %lo(root_sp)
 	beq r1, r11, .LBB36_13
 .LBB36_1:
-	addi r18, fp, -80
+	addi r16, fp, -76
 	addi r19, r0, 3
 	lui r20, %hi(g_error)
 	addi r20, r20, %lo(g_error)
-	addi r21, fp, -84
-	addi r22, r0, 4
+	addi r17, fp, -80
+	addi r21, r0, 4
 	jal r0, .LBB36_4
 .LBB36_2:
-	ldw r3, r16+0
+	ldw r3, r15+0
 	stw r3+16, r1
 .LBB36_3:
-	stw r16+0, r1
-	ldw r1, r15+0
-	ldw r1, r1+16
 	stw r15+0, r1
+	ldw r1, r14+0
+	ldw r1, r1+16
+	stw r14+0, r1
 	beq r1, r11, .LBB36_13
 .LBB36_4:
 	ldw r3, r1+12
 	add r4, r11, r0
 	jal r31, cons_alloc
-	stw r18+0, r1
-	ldw r3, r14+0
-	addi r4, r3, 1
-	stw r14+0, r4
-	slli r4, r3, 2
-	add r4, r4, r17
-	stw r4+0, r18
-	ldw r23, r12+0
-	ldw r4, r23+0
-	beq r4, r19, .LBB36_7
+	stw r16+0, r1
+	add r3, r16, r0
+	jal r31, push_root_checked
+	ldw r22, r12+0
+	ldw r1, r22+0
+	beq r1, r19, .LBB36_7
 .LBB36_5:
-	bne r4, r22, .LBB36_15
+	bne r1, r21, .LBB36_15
 .LBB36_6:
-	ldw r4, r23+16
-	add r3, r1, r0
-	jalr lr, r4, 0
-	stw r21+0, r1
+	ldw r1, r22+16
+	ldw r3, r16+0
+	jalr lr, r1, 0
+	stw r17+0, r1
 	jal r0, .LBB36_10
 .LBB36_7:
-	ldw r3, r23+20
-	ldw r4, r23+12
-	add r5, r1, r0
+	ldw r3, r22+20
+	ldw r4, r22+12
+	ldw r5, r16+0
 	jal r31, env_extend
-	ldw r24, r20+0
-	beq r24, r11, .LBB36_9
+	ldw r23, r20+0
+	beq r23, r11, .LBB36_9
 .LBB36_8:
-	ldw r1, r14+0
+	ldw r1, r18+0
 	addi r1, r1, -5
-	stw r14+0, r1
-	beq r24, r11, .LBB36_10
+	stw r18+0, r1
+	beq r23, r11, .LBB36_10
 	jal r0, .LBB36_16
 .LBB36_9:
-	ldw r3, r23+16
+	ldw r3, r22+16
 	add r4, r1, r0
 	jal r31, eval
-	stw r21+0, r1
-	bne r24, r11, .LBB36_16
+	stw r17+0, r1
+	bne r23, r11, .LBB36_16
 .LBB36_10:
-	ldw r1, r14+0
+	ldw r1, r18+0
 	addi r3, r1, -1
-	stw r14+0, r3
-	ldw r4, r20+0
-	bne r4, r11, .LBB36_14
+	stw r18+0, r3
+	ldw r3, r20+0
+	bne r3, r11, .LBB36_14
 .LBB36_11:
-	stw r14+0, r1
-	slli r1, r3, 2
-	add r1, r1, r17
-	stw r1+0, r21
-	ldw r3, r21+0
+	add r3, r17, r0
+	jal r31, push_root_checked
+	ldw r3, r17+0
 	add r4, r11, r0
 	jal r31, cons_alloc
-	ldw r3, r14+0
+	ldw r3, r18+0
 	addi r3, r3, -1
-	stw r14+0, r3
+	stw r18+0, r3
 	ldw r3, r13+0
 	bne r3, r11, .LBB36_2
 .LBB36_12:
 	stw r13+0, r1
 	jal r0, .LBB36_3
 .LBB36_13:
-	ldw r1, r14+0
+	ldw r1, r18+0
 	addi r1, r1, -4
-	stw r14+0, r1
+	stw r18+0, r1
 	ldw r11, r13+0
 	jal r0, .LBB36_16
 .LBB36_14:
 	addi r1, r1, -5
-	stw r14+0, r1
+	stw r18+0, r1
 	jal r0, .LBB36_16
 .LBB36_15:
-	addi r1, r3, -4
-	stw r14+0, r1
+	ldw r1, r18+0
+	addi r1, r1, -5
+	stw r18+0, r1
 	lui r3, %hi(.L.str.71)
 	addi r3, r3, %lo(.L.str.71)
 	jal r31, lisp_error
 .LBB36_16:
 	add r1, r11, r0
-	ldw lr, fp+-60
-	ldw r24, fp+-56
+	ldw lr, fp+-56
 	ldw r23, fp+-52
 	ldw r22, fp+-48
 	ldw r21, fp+-44
@@ -2932,7 +2559,7 @@ bi_map:                                 # @bi_map
 	ldw r11, fp+-4
 	ldw lr, sp+0
 	ldw fp, sp+4
-	addi sp, sp, 104
+	addi sp, sp, 88
 	jalr r0, r31, 0
 .Lfunc_end36:
 	.size	bi_map, .Lfunc_end36-bi_map

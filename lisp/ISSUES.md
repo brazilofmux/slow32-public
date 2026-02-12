@@ -1,16 +1,14 @@
 # Lisp Interpreter Issues
 
-## 1) GC Root Stack Overflow (High)
-- File: `lisp/src/heap.h`
-- Problem: `PUSH_ROOT(v)` increments `root_sp` with no bounds check.
-- Risk: Deep recursion or nested evaluation can write past `root_stack`, causing memory corruption.
-- Suggested fix: Replace macro-only push with a checked helper (`push_root_checked`) that errors hard on overflow.
+## 1) GC Root Stack Overflow (High) — RESOLVED
+- File: `lisp/src/heap.h`, `lisp/src/heap.c`
+- Problem: `PUSH_ROOT(v)` incremented `root_sp` with no bounds check.
+- Fix: `PUSH_ROOT` now calls `push_root_checked()` which fatals on overflow.
 
-## 2) GC Mark Stack Overflow Drops Reachable Objects (High)
+## 2) GC Mark Stack Overflow Drops Reachable Objects (High) — RESOLVED
 - File: `lisp/src/heap.c`
-- Problem: `mark_push` silently ignores pushes when `MARK_STACK_SIZE` is exceeded.
-- Risk: Reachable objects can remain unmarked and be swept, leading to use-after-free/corruption.
-- Suggested fix: Treat overflow as fatal GC error, or make mark stack dynamically grow.
+- Problem: `mark_push` silently ignored pushes when `MARK_STACK_SIZE` was exceeded.
+- Fix: `mark_push` now fatals on overflow instead of silently dropping reachable objects.
 
 ## 3) `number->string` Undefined Behavior on `INT_MIN` (Medium)
 - File: `lisp/src/builtin.c`
@@ -27,3 +25,27 @@
 ## Regression Tests To Add
 - `number->string` with minimum integer value.
 - Deep recursion / nested call stress test to exercise root stack and mark stack limits.
+
+---
+
+## February 2026 Review Findings
+
+### 5) Fixed-Size Buffers in Reader (Medium)
+- `read_string` in `reader.c` uses a fixed 1024-byte buffer. Strings exceeding this length will be truncated without error.
+- `read_symbol_or_number` uses a 256-byte buffer for identifiers.
+
+### 6) Symbol Table Capacity (Low)
+- `MAX_SYMBOLS` is currently set to 512. Larger programs or extensive libraries may reach this limit, causing an "out of memory" or "too many symbols" error.
+
+### 7) Reader Dotted Pair Naming Constraint (Low)
+- `.` is not allowed within symbols, preventing naming conventions like `pkg.func`.
+
+### 8) Architectural Strengths (Observation)
+- **Iterative Mark Phase:** The mark phase is iterative rather than recursive, preventing host C stack issues during GC.
+- **Comprehensive TCO:** Explicit `goto tail` in `eval` for control structures and lambda applications allows for infinite tail recursion.
+- **Tagged Value System:** Efficient 31-bit fixnum representation using bit 0 tagging.
+
+### 9) Optimization & Expansion Opportunities
+- **Bytecode VM:** Compiling to stack-based bytecode would likely improve performance over the recursive-descent `eval`.
+- **Heap Growth:** Replacing the current `malloc`-per-object strategy with a block-based allocator would reduce overhead.
+- **Library Prelude:** Implementing a `prelude.scm` for high-level functions (`filter`, `fold`, etc.) would improve usability.

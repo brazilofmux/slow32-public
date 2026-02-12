@@ -28,6 +28,17 @@ void lisp_error2(const char *msg, const char *detail) {
 val_t *root_stack[ROOT_STACK_SIZE];
 int root_sp;
 
+void push_root_checked(val_t *p) {
+    if (root_sp >= ROOT_STACK_SIZE) {
+        /* Fatal: can't recover from root stack overflow */
+        extern int printf(const char *, ...);
+        extern void exit(int);
+        printf("Fatal: GC root stack overflow (%d)\n", ROOT_STACK_SIZE);
+        exit(1);
+    }
+    root_stack[root_sp++] = p;
+}
+
 /* GC state */
 static object_t *gc_list;   /* head of all-objects list */
 static int obj_count;
@@ -65,9 +76,14 @@ static val_t mark_stack[MARK_STACK_SIZE];
 static int mark_sp;
 
 static void mark_push(val_t v) {
-    if (IS_PTR(v) && mark_sp < MARK_STACK_SIZE) {
-        mark_stack[mark_sp++] = v;
+    if (!IS_PTR(v)) return;
+    if (mark_sp >= MARK_STACK_SIZE) {
+        extern int printf(const char *, ...);
+        extern void exit(int);
+        printf("Fatal: GC mark stack overflow (%d)\n", MARK_STACK_SIZE);
+        exit(1);
     }
+    mark_stack[mark_sp++] = v;
 }
 
 static void mark_val(val_t v) {

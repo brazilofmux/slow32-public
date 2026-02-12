@@ -93,48 +93,32 @@ env_define:                             # @env_define
 	stw fp+-16, lr
 	addi r11, fp, -20
 	stw r11+0, r3
-	addi r1, fp, -24
-	stw r1+0, r4
-	addi r3, fp, -28
-	stw r3+0, r5
-	lui r12, %hi(root_sp)
-	addi r12, r12, %lo(root_sp)
-	ldw r6, r12+0
-	addi r7, r6, 1
-	stw r12+0, r7
-	slli r8, r6, 2
-	lui r13, %hi(root_stack)
-	addi r13, r13, %lo(root_stack)
-	add r8, r8, r13
-	stw r8+0, r11
-	addi r8, r6, 2
-	stw r12+0, r8
-	slli r7, r7, 2
-	add r7, r7, r13
-	stw r7+0, r1
-	addi r1, r6, 3
-	stw r12+0, r1
-	slli r1, r8, 2
-	add r1, r1, r13
-	stw r1+0, r3
-	add r3, r4, r0
-	add r4, r5, r0
-	jal r31, cons_alloc
-	addi r3, fp, -32
-	stw r3+0, r1
-	ldw r4, r12+0
-	addi r5, r4, 1
-	stw r12+0, r5
-	slli r4, r4, 2
-	add r4, r4, r13
-	stw r4+0, r3
-	ldw r3, r11+0
-	ldw r4, r3+12
-	add r3, r1, r0
-	jal r31, cons_alloc
+	addi r12, fp, -24
+	stw r12+0, r4
+	addi r13, fp, -28
+	stw r13+0, r5
+	add r3, r11, r0
+	jal r31, push_root_checked
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r13, r0
+	jal r31, push_root_checked
 	ldw r3, r12+0
-	addi r3, r3, -4
-	stw r12+0, r3
+	ldw r4, r13+0
+	jal r31, cons_alloc
+	addi r12, fp, -32
+	stw r12+0, r1
+	add r3, r12, r0
+	jal r31, push_root_checked
+	ldw r3, r12+0
+	ldw r1, r11+0
+	ldw r4, r1+12
+	jal r31, cons_alloc
+	lui r3, %hi(root_sp)
+	addi r3, r3, %lo(root_sp)
+	ldw r4, r3+0
+	addi r4, r4, -4
+	stw r3+0, r4
 	ldw r3, r11+0
 	stw r3+12, r1
 	ldw lr, fp+-16
@@ -207,162 +191,117 @@ env_extend:                             # @env_extend
 	stw fp+-32, r18
 	stw fp+-36, r19
 	stw fp+-40, r20
-	stw fp+-44, r21
-	stw fp+-48, lr
-	add r1, r3, r0
-	addi r3, fp, -68
-	stw r3+0, r1
-	addi r12, fp, -72
+	stw fp+-44, lr
+	addi r11, fp, -64
+	stw r11+0, r3
+	addi r12, fp, -68
 	stw r12+0, r4
-	addi r13, fp, -76
-	stw r13+0, r5
-	lui r14, %hi(root_sp)
-	addi r14, r14, %lo(root_sp)
-	ldw r4, r14+0
-	addi r5, r4, 1
-	stw r14+0, r5
-	slli r6, r4, 2
-	lui r16, %hi(root_stack)
-	addi r16, r16, %lo(root_stack)
-	add r6, r6, r16
-	stw r6+0, r3
-	addi r3, r4, 2
-	stw r14+0, r3
-	slli r5, r5, 2
-	add r5, r5, r16
-	stw r5+0, r12
-	addi r4, r4, 3
-	stw r14+0, r4
-	slli r3, r3, 2
-	add r3, r3, r16
-	stw r3+0, r13
-	addi r11, r0, 0
+	addi r17, fp, -72
+	stw r17+0, r5
 	add r3, r11, r0
-	add r4, r1, r0
+	jal r31, push_root_checked
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r17, r0
+	jal r31, push_root_checked
+	ldw r4, r11+0
+	addi r13, r0, 0
+	add r3, r13, r0
 	jal r31, cons_alloc
-	addi r15, fp, -80
-	stw r15+0, r1
-	ldw r1, r14+0
-	addi r3, r1, 1
-	stw r14+0, r3
-	slli r1, r1, 2
-	add r1, r1, r16
-	stw r1+0, r15
-	ldw r12, r12+0
-	beq r12, r11, .LBB4_7
+	addi r11, fp, -76
+	stw r11+0, r1
+	add r3, r11, r0
+	jal r31, push_root_checked
+	ldw r19, r12+0
+	lui r18, %hi(root_sp)
+	addi r18, r18, %lo(root_sp)
+	beq r19, r13, .LBB4_7
 .LBB4_1:
-	andi r1, r12, 1
-	bne r1, r11, .LBB4_7
+	andi r1, r19, 1
+	bne r1, r13, .LBB4_7
 .LBB4_2:
-	addi r21, r0, 1
-	addi r17, fp, -52
-	addi r20, fp, -56
-	addi r19, fp, -60
-	addi r18, fp, -64
+	addi r20, r0, 1
+	addi r12, fp, -48
+	addi r15, fp, -52
+	addi r16, fp, -56
+	addi r14, fp, -60
 .LBB4_3:
-	ldw r13, r13+0
-	ldw r1, r12+0
-	beq r1, r21, .LBB4_8
+	ldw r17, r17+0
+	ldw r1, r19+0
+	beq r1, r20, .LBB4_8
 .LBB4_4:
-	beq r13, r11, .LBB4_11
+	beq r17, r13, .LBB4_11
 .LBB4_5:
-	ldw r1, r15+0
-	ldw r3, r12+12
-	ldw r4, r13+12
-	stw r17+0, r1
-	stw r20+0, r3
-	stw r19+0, r4
-	ldw r1, r14+0
-	addi r5, r1, 1
-	stw r14+0, r5
-	slli r6, r1, 2
-	add r6, r6, r16
-	stw r6+0, r17
-	addi r6, r1, 2
-	stw r14+0, r6
-	slli r5, r5, 2
-	add r5, r5, r16
-	stw r5+0, r20
-	addi r1, r1, 3
+	ldw r1, r11+0
+	ldw r3, r19+12
+	ldw r4, r17+12
+	stw r12+0, r1
+	stw r15+0, r3
+	stw r16+0, r4
+	add r3, r12, r0
+	jal r31, push_root_checked
+	add r3, r15, r0
+	jal r31, push_root_checked
+	add r3, r16, r0
+	jal r31, push_root_checked
+	ldw r3, r15+0
+	ldw r4, r16+0
+	jal r31, cons_alloc
 	stw r14+0, r1
-	slli r1, r6, 2
-	add r1, r1, r16
-	stw r1+0, r19
-	jal r31, cons_alloc
-	stw r18+0, r1
+	add r3, r14, r0
+	jal r31, push_root_checked
 	ldw r3, r14+0
-	addi r4, r3, 1
-	stw r14+0, r4
-	slli r3, r3, 2
-	add r3, r3, r16
-	stw r3+0, r18
-	ldw r3, r17+0
-	ldw r4, r3+12
-	add r3, r1, r0
+	ldw r1, r12+0
+	ldw r4, r1+12
 	jal r31, cons_alloc
-	ldw r3, r14+0
+	ldw r3, r18+0
 	addi r3, r3, -4
-	stw r14+0, r3
-	ldw r3, r17+0
+	stw r18+0, r3
+	ldw r3, r12+0
 	stw r3+12, r1
-	ldw r12, r12+16
-	beq r12, r11, .LBB4_7
+	ldw r19, r19+16
+	beq r19, r13, .LBB4_7
 .LBB4_6:
-	addi r13, r13, 16
-	andi r1, r12, 1
-	beq r1, r11, .LBB4_3
+	addi r17, r17, 16
+	andi r1, r19, 1
+	beq r1, r13, .LBB4_3
 .LBB4_7:
-	ldw r1, r14+0
+	ldw r1, r18+0
 	addi r1, r1, -4
 	jal r0, .LBB4_9
 .LBB4_8:
-	ldw r1, r15+0
-	stw r17+0, r1
-	stw r20+0, r12
-	stw r19+0, r13
-	ldw r1, r14+0
-	addi r3, r1, 1
-	stw r14+0, r3
-	slli r4, r1, 2
-	add r4, r4, r16
-	stw r4+0, r17
-	addi r4, r1, 2
-	stw r14+0, r4
-	slli r3, r3, 2
-	add r3, r3, r16
-	stw r3+0, r20
-	addi r1, r1, 3
-	stw r14+0, r1
-	slli r1, r4, 2
-	add r1, r1, r16
-	stw r1+0, r19
+	ldw r1, r11+0
+	stw r12+0, r1
+	stw r15+0, r19
+	stw r16+0, r17
 	add r3, r12, r0
-	add r4, r13, r0
+	jal r31, push_root_checked
+	add r3, r15, r0
+	jal r31, push_root_checked
+	add r3, r16, r0
+	jal r31, push_root_checked
+	ldw r3, r15+0
+	ldw r4, r16+0
 	jal r31, cons_alloc
-	stw r18+0, r1
+	stw r14+0, r1
+	add r3, r14, r0
+	jal r31, push_root_checked
 	ldw r3, r14+0
-	addi r4, r3, 1
-	stw r14+0, r4
-	slli r3, r3, 2
-	add r3, r3, r16
-	stw r3+0, r18
-	ldw r3, r17+0
-	ldw r4, r3+12
-	add r3, r1, r0
+	ldw r1, r12+0
+	ldw r4, r1+12
 	jal r31, cons_alloc
-	ldw r3, r14+0
+	ldw r3, r18+0
 	addi r4, r3, -4
-	stw r14+0, r4
-	ldw r4, r17+0
+	stw r18+0, r4
+	ldw r4, r12+0
 	stw r4+12, r1
 	addi r1, r3, -8
 .LBB4_9:
-	stw r14+0, r1
-	ldw r11, r15+0
+	stw r18+0, r1
+	ldw r13, r11+0
 .LBB4_10:
-	add r1, r11, r0
-	ldw lr, fp+-48
-	ldw r21, fp+-44
+	add r1, r13, r0
+	ldw lr, fp+-44
 	ldw r20, fp+-40
 	ldw r19, fp+-36
 	ldw r18, fp+-32
@@ -381,9 +320,9 @@ env_extend:                             # @env_extend
 	lui r3, %hi(.L.str.1)
 	addi r3, r3, %lo(.L.str.1)
 	jal r31, lisp_error
-	ldw r1, r14+0
+	ldw r1, r18+0
 	addi r1, r1, -4
-	stw r14+0, r1
+	stw r18+0, r1
 	jal r0, .LBB4_10
 .Lfunc_end4:
 	.size	env_extend, .Lfunc_end4-env_extend
