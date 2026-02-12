@@ -100,6 +100,46 @@ Real dBase expressions are nearly all field/variable references and function
 calls. Pure constant subexpressions are extremely rare in practice. The
 significant win (compile once, evaluate many) was already captured in 2.4.
 
+---
+
+## 6. February 2026 Review II: Problems & Opportunities
+
+### 6.1 Broken Numeric Indexes (Problem)
+`INDEX ON` numeric fields uses `val_to_string` which produces variable-length
+non-padded strings (e.g., "10", "2"). `memcmp` based sorting in `index.c`
+consequently orders "10" < "2", breaking numeric index integrity.
+
+### 6.2 Broken Negative Number Sorting (Problem)
+`SORT` uses raw DBF string data for keys. While right-aligned, the ASCII
+order (space < dash < digits) causes negative numbers to sort incorrectly
+relative to positive numbers (e.g., " 1" < "-1" < "10").
+
+### 6.3 UDF Host Stack Recursion (Problem)
+While `DO` calls are now iterative, UDF calls still cause host C stack
+recursion because `prog_udf_call` invokes `prog_run` synchronously from
+within `expr_eval`. Deeply nested or recursive UDFs will still hit the
+host stack limit.
+
+### 6.4 String Concatenation `-` Deviation (Problem)
+The `-` operator between strings trims trailing spaces from the left operand
+but does not append them to the end of the result. Standard dBase III
+semantics require preserving total length (e.g., "A  " - "B  " -> "AB    ").
+
+### 6.5 Index Key Volatility (Problem)
+Date index keys are generated via `date_to_display`, which depends on the
+current `SET DATE` format. Changing the date format between `INDEX` and
+`SEEK` will result in key mismatches and incorrect ordering.
+
+### 6.6 Index AST Caching (Opportunity)
+Index key expressions are parsed and evaluated as strings for every index
+operation (`SEEK`, `INSERT`, `REINDEX`). Pre-compiling these to AST once
+when the index is opened would significantly improve performance.
+
+### 6.7 Standard-Compliant Index Keys (Opportunity)
+Numeric index keys should use a fixed-width, right-aligned, zero-padded (or
+binary) format. Date index keys should always use `DTOS()` (YYYYMMDD) format
+internally to ensure format independence and chronological order.
+
 ## 4. Test Coverage Gaps
 
 ### 4.1 Missing scenarios — MOSTLY RESOLVED
