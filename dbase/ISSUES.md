@@ -104,16 +104,16 @@ significant win (compile once, evaluate many) was already captured in 2.4.
 
 ## 6. February 2026 Review II: Problems & Opportunities
 
-### 6.1 Broken Numeric Indexes (Problem)
-`INDEX ON` numeric fields uses `val_to_string` which produces variable-length
-non-padded strings (e.g., "10", "2"). `memcmp` based sorting in `index.c`
-consequently orders "10" < "2", breaking numeric index integrity.
+### 6.1 ~~Broken Numeric Indexes~~ — RESOLVED
+Fixed: numeric index keys are now canonicalized to a fixed-width sortable
+encoding (transformed IEEE-754 hex) instead of variable-length display strings.
+This restores correct numeric ordering under `memcmp` and keeps key width stable.
 
-### 6.2 Incorrect Numeric Semantics in `SORT` (Problem)
-`SORT` uses raw DBF string data for keys. While right-aligned, ASCII
-ordering (space < dash < digits) can produce non-numeric ordering across
-sign boundaries (e.g., `" 1" < "-1" < "10"`). This is a command-level
-sorting semantics issue, not index structure corruption.
+### 6.2 ~~Incorrect Numeric Semantics in `SORT`~~ — RESOLVED
+Fixed: `SORT` now derives type-aware keys for numeric/date fields using the
+same canonical key formatter as indexing. Numeric sorts are now true numeric
+order across sign boundaries (e.g., `-10 < -1 < 1 < 10`) rather than raw
+ASCII field-text order.
 
 ### 6.3 UDF Host Stack Recursion (Problem)
 While `DO` calls are now iterative, UDF calls still cause host C stack
@@ -127,10 +127,10 @@ but does not append them to the end of the result. This likely differs from
 classic xBase behavior, but the exact target semantics should be confirmed
 against the intended dBase III / Clipper / FoxPro compatibility baseline.
 
-### 6.5 Index Key Volatility (Problem)
-Date index keys are generated via `date_to_display`, which depends on the
-current `SET DATE` format. Changing the date format between `INDEX` and
-`SEEK` will result in key mismatches and incorrect ordering.
+### 6.5 ~~Index Key Volatility~~ — RESOLVED
+Fixed: date index keys now use canonical DBF format (`YYYYMMDD`) internally
+for both index build/maintenance and `SEEK` key generation. Index behavior is
+now independent of `SET DATE` display format.
 
 ### 6.6 Index AST Caching (Opportunity)
 Index key expressions are parsed and evaluated as strings for every index

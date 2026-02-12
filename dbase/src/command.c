@@ -3363,6 +3363,7 @@ typedef struct {
 typedef struct {
     int ascending;
     int case_insensitive;
+    int key_type; /* 0=char/default, 1=numeric, 2=date */
 } sort_ctx_t;
 
 static int sort_compare_r(const void *a, const void *b, void *arg) {
@@ -3370,7 +3371,7 @@ static int sort_compare_r(const void *a, const void *b, void *arg) {
     const sort_entry_t *sb = (const sort_entry_t *)b;
     sort_ctx_t *ctx = (sort_ctx_t *)arg;
     int cmp;
-    if (ctx->case_insensitive)
+    if (ctx->key_type == 0 && ctx->case_insensitive)
         cmp = str_icmp(sa->key, sb->key);
     else
         cmp = strcmp(sa->key, sb->key);
@@ -3458,6 +3459,9 @@ static void cmd_sort(dbf_t *db, const char *arg) {
     /* Parse flags */
     ctx.ascending = 1;
     ctx.case_insensitive = 0;
+    ctx.key_type = 0;
+    if (db->fields[field_idx].type == 'N') ctx.key_type = 1;
+    else if (db->fields[field_idx].type == 'D') ctx.key_type = 2;
     p = skip_ws(p);
     while (*p == '/') {
         p++;
@@ -3508,7 +3512,17 @@ static void cmd_sort(dbf_t *db, const char *arg) {
 
         sort_entries[nentries].recno = i;
         dbf_get_field_raw(db, field_idx, raw, sizeof(raw));
-        str_copy(sort_entries[nentries].key, raw, sizeof(sort_entries[nentries].key));
+        if (ctx.key_type == 1) {
+            value_t v = val_num(atof(raw));
+            index_format_key_value(1, &v, sort_entries[nentries].key,
+                                   sizeof(sort_entries[nentries].key));
+        } else if (ctx.key_type == 2) {
+            value_t v = val_date(date_from_dbf(raw));
+            index_format_key_value(2, &v, sort_entries[nentries].key,
+                                   sizeof(sort_entries[nentries].key));
+        } else {
+            str_copy(sort_entries[nentries].key, raw, sizeof(sort_entries[nentries].key));
+        }
         nentries++;
 
         if (nentries == MAX_SORT_ENTRIES) {
