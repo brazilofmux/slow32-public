@@ -29,9 +29,9 @@
 
 ## February 2026 Review Findings
 
-### 5) Fixed-Size Buffers in Reader (Medium)
-- `read_string` in `reader.c` uses a fixed 1024-byte buffer. Strings exceeding this length will be truncated without error.
-- `read_symbol_or_number` uses a 256-byte buffer for identifiers.
+### 5) Fixed-Size Buffers in Reader (Medium) — RESOLVED
+- `read_string` now uses a dynamically-grown malloc'd buffer (starts at 256, doubles as needed).
+- `read_symbol_or_number` now errors on symbols exceeding 255 chars instead of silently truncating.
 
 ### 6) Symbol Table Capacity (Low)
 - `MAX_SYMBOLS` is currently set to 512. Larger programs or extensive libraries may reach this limit, causing an "out of memory" or "too many symbols" error.

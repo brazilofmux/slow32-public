@@ -1,6 +1,7 @@
 #include "reader.h"
 #include "heap.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int peek_ch;
@@ -59,8 +60,10 @@ static int is_symbol_char(int c) {
 /* (read_number removed - read_symbol_or_number handles all number parsing) */
 
 static val_t read_string(void) {
-    char buf[1024];
+    int cap = 256;
     int len = 0;
+    char *buf = (char *)malloc(cap);
+    if (!buf) { lisp_error("out of memory"); return NIL; }
     for (;;) {
         int c = read_char();
         if (c < 0 || c == '"') break;
@@ -71,12 +74,18 @@ static val_t read_string(void) {
             else if (c == '\\') c = '\\';
             else if (c == '"') c = '"';
         }
-        if (len < 1023) {
-            buf[len++] = c;
+        if (len + 1 >= cap) {
+            cap *= 2;
+            char *nb = (char *)realloc(buf, cap);
+            if (!nb) { free(buf); lisp_error("out of memory"); return NIL; }
+            buf = nb;
         }
+        buf[len++] = c;
     }
     buf[len] = 0;
-    return string_alloc(buf, len);
+    val_t result = string_alloc(buf, len);
+    free(buf);
+    return result;
 }
 
 static val_t read_symbol_or_number(int first) {
@@ -84,11 +93,11 @@ static val_t read_symbol_or_number(int first) {
     int len = 0;
     buf[len++] = first;
     while (is_symbol_char(peek())) {
-        if (len < 255) {
-            buf[len++] = read_char();
-        } else {
-            read_char();
+        if (len >= 255) {
+            lisp_error("symbol too long");
+            return NIL;
         }
+        buf[len++] = read_char();
     }
     buf[len] = 0;
 
