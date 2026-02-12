@@ -71,6 +71,10 @@ void prog_init(void);
 /* Execute a DO command (file or WHILE) */
 void prog_do(const char *arg);
 
+/* Call a procedure synchronously (safe from command handlers like menus).
+   The procedure runs to completion before this function returns. */
+void prog_call_sync(const char *procname);
+
 /* Program-aware command execution - returns 1 if QUIT */
 int prog_execute_line(char *line);
 

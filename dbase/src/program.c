@@ -52,6 +52,12 @@ static struct {
     int valid;  /* 1 = suspended state exists */
 } suspended;
 
+/* ---- Synchronous procedure call support ---- */
+/* When prog_call_sync is active, pop_frame stops execution when
+   call_depth returns to the target level. */
+static int sync_call_active;
+static int sync_call_depth;
+
 void prog_init(void) {
     memset(&state, 0, sizeof(state));
     memset(&error_state, 0, sizeof(error_state));
@@ -61,6 +67,8 @@ void prog_init(void) {
     case_active = 0;
     case_done = 0;
     case_skip = 0;
+    sync_call_active = 0;
+    sync_call_depth = 0;
     func_set_udf_callback(prog_udf_call);
 }
 
@@ -771,6 +779,11 @@ static void pop_frame(void) {
         if (frame->prog != procedure_file)
             prog_free(frame->prog);
     }
+
+    /* Synchronous call: stop prog_run when we return to the target depth */
+    if (sync_call_active && state.call_depth <= sync_call_depth) {
+        state.running = 0;
+    }
 }
 
 /* ---- Execute program lines ---- */
@@ -1202,6 +1215,33 @@ void prog_do(const char *arg) {
             prog_run();
         }
     }
+}
+
+/* ---- Synchronous procedure call (safe from command handlers) ---- */
+void prog_call_sync(const char *procname) {
+    int saved_call_depth = state.call_depth;
+    int saved_pc = state.pc;
+    program_t *saved_prog = state.current_prog;
+    int saved_running = state.running;
+    int saved_sync_active = sync_call_active;
+    int saved_sync_depth = sync_call_depth;
+
+    sync_call_active = 1;
+    sync_call_depth = saved_call_depth;
+
+    prog_do(procname);
+
+    /* If prog_do pushed a frame, run the procedure to completion */
+    if (state.call_depth > saved_call_depth && state.running) {
+        prog_run();
+    }
+
+    /* Restore caller's execution state */
+    state.pc = saved_pc;
+    state.current_prog = saved_prog;
+    state.running = saved_running;
+    sync_call_active = saved_sync_active;
+    sync_call_depth = saved_sync_depth;
 }
 
 /* ---- IF ---- */

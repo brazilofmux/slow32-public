@@ -4614,6 +4614,63 @@ static void h_on(dbf_t *db, lexer_t *l) {
         }
         str_copy(popup_name, l->current.text, sizeof(popup_name));
         menu_set_pad_popup(menu_name, pad_name, popup_name);
+    } else if (cmd_kw(l, "SELECTION")) {
+        lex_next(l); /* skip SELECTION */
+        if (cmd_kw(l, "POPUP")) {
+            char popup_name[32], procname[64];
+            lex_next(l); /* skip POPUP */
+            if (l->current.type != TOK_IDENT) {
+                printf("Expected popup name.\n");
+                return;
+            }
+            str_copy(popup_name, l->current.text, sizeof(popup_name));
+            lex_next(l); /* skip popup name */
+            if (!cmd_kw(l, "DO")) {
+                printf("Expected DO.\n");
+                return;
+            }
+            lex_next(l); /* skip DO */
+            if (l->current.type != TOK_IDENT) {
+                printf("Expected procedure name.\n");
+                return;
+            }
+            str_copy(procname, l->current.text, sizeof(procname));
+            menu_set_on_selection_popup(popup_name, procname);
+        } else if (cmd_kw(l, "PAD")) {
+            char pad_name[32], menu_name[32], procname[64];
+            lex_next(l); /* skip PAD */
+            if (l->current.type != TOK_IDENT) {
+                printf("Expected pad name.\n");
+                return;
+            }
+            str_copy(pad_name, l->current.text, sizeof(pad_name));
+            lex_next(l); /* skip pad name */
+            if (!cmd_kw(l, "OF")) {
+                printf("Expected OF after pad name.\n");
+                return;
+            }
+            lex_next(l); /* skip OF */
+            if (l->current.type != TOK_IDENT) {
+                printf("Expected menu name after OF.\n");
+                return;
+            }
+            str_copy(menu_name, l->current.text, sizeof(menu_name));
+            lex_next(l); /* skip menu name */
+            if (!cmd_kw(l, "DO")) {
+                printf("Expected DO.\n");
+                return;
+            }
+            lex_next(l); /* skip DO */
+            if (l->current.type != TOK_IDENT) {
+                printf("Expected procedure name.\n");
+                return;
+            }
+            str_copy(procname, l->current.text, sizeof(procname));
+            menu_set_on_selection_pad(menu_name, pad_name, procname);
+        } else {
+            printf("Syntax: ON SELECTION POPUP <name> DO <proc>\n");
+            printf("    or: ON SELECTION PAD <pad> OF <menu> DO <proc>\n");
+        }
     }
 }
 

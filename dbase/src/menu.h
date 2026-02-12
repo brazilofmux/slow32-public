@@ -19,6 +19,7 @@ typedef struct {
     int defined;
     bar_entry_t bars[MAX_BARS];
     int nbar;
+    char on_selection_proc[64]; /* ON SELECTION callback (empty = none) */
 } popup_t;
 
 /* Initialize popup subsystem */
@@ -63,6 +64,7 @@ typedef struct {
     char message[160];
     int row, col;         /* AT position (-1,-1 = auto-position) */
     char popup_name[32];  /* attached popup (empty = none) */
+    char on_selection_proc[64]; /* ON SELECTION callback (empty = none) */
 } pad_entry_t;
 
 typedef struct {
@@ -83,5 +85,10 @@ void menu_release_menu(const char *name);
 void menu_release_all_menus(void);
 const char *menu_last_pad(void);
 const char *menu_last_popup(void);
+
+/* ON SELECTION callbacks */
+void menu_set_on_selection_popup(const char *popup_name, const char *procname);
+void menu_set_on_selection_pad(const char *menu_name, const char *pad_name,
+                               const char *procname);
 
 #endif

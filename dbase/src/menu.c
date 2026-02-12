@@ -5,6 +5,7 @@
 #include "command.h"
 #include "expr.h"
 #include "util.h"
+#include "program.h"
 
 #ifdef __slow32__
 #include <term.h>
@@ -85,6 +86,7 @@ popup_t *menu_define_popup(const char *name, int r1, int c1, int r2, int c2) {
     p->to_col = c2;
     p->defined = 1;
     p->nbar = 0;
+    p->on_selection_proc[0] = '\0';
     return p;
 }
 
@@ -259,6 +261,17 @@ int menu_activate_popup_ex(const char *name, int from_menubar) {
 
             if (key == '\r' || key == '\n') {
                 screen_set_lastkey(13);
+                /* Store result before callback so BAR()/PROMPT() work */
+                last_bar_num = p->bars[cur].number;
+                str_copy(last_prompt_text, p->bars[cur].prompt,
+                         sizeof(last_prompt_text));
+                if (p->on_selection_proc[0]) {
+                    term_set_raw(0);
+                    prog_call_sync(p->on_selection_proc);
+                    term_set_raw(1);
+                    if (deactivate_flag) { cur = -1; break; }
+                    continue;  /* loop back to redraw */
+                }
                 break;
             }
             if (key == 27) {  /* Escape */
@@ -342,6 +355,10 @@ int menu_activate_popup_ex(const char *name, int from_menubar) {
     if (cur >= 0) {
         last_bar_num = p->bars[cur].number;
         str_copy(last_prompt_text, p->bars[cur].prompt, sizeof(last_prompt_text));
+        /* Non-terminal callback: fire once and return */
+        if (p->on_selection_proc[0]) {
+            prog_call_sync(p->on_selection_proc);
+        }
     } else {
         last_bar_num = 0;
         last_prompt_text[0] = '\0';
@@ -442,6 +459,7 @@ int menu_define_pad(const char *menu_name, const char *pad_name,
     pad->row = row;
     pad->col = col;
     pad->popup_name[0] = '\0';
+    pad->on_selection_proc[0] = '\0';
     m->npad++;
     return 0;
 }
@@ -559,11 +577,18 @@ int menu_activate_menu(const char *name) {
                     result = menu_activate_popup_ex(m->pads[cur].popup_name, 1);
                     term_set_raw(1);
                     if (result > 0) {
-                        /* Bar selected — store pad/popup and exit */
+                        /* Bar selected — store pad/popup */
                         str_copy(last_pad_name, m->pads[cur].name,
                                  sizeof(last_pad_name));
                         str_copy(last_popup_name, m->pads[cur].popup_name,
                                  sizeof(last_popup_name));
+                        if (m->pads[cur].on_selection_proc[0]) {
+                            term_set_raw(0);
+                            prog_call_sync(m->pads[cur].on_selection_proc);
+                            term_set_raw(1);
+                            if (menu_deactivate_flag) goto done_term;
+                            continue;  /* re-open popup */
+                        }
                         goto done_term;
                     } else if (result == -1) {
                         /* Left from popup — move to previous pad and open */
@@ -595,6 +620,13 @@ int menu_activate_menu(const char *name) {
                                     str_copy(last_popup_name,
                                              m->pads[cur].popup_name,
                                              sizeof(last_popup_name));
+                                    if (m->pads[cur].on_selection_proc[0]) {
+                                        term_set_raw(0);
+                                        prog_call_sync(m->pads[cur].on_selection_proc);
+                                        term_set_raw(1);
+                                        if (menu_deactivate_flag) goto done_term;
+                                        continue;
+                                    }
                                     goto done_term;
                                 } else if (result == 0) {
                                     break;  /* Esc — back to pad nav */
@@ -636,6 +668,13 @@ int menu_activate_menu(const char *name) {
                                     str_copy(last_popup_name,
                                              m->pads[cur].popup_name,
                                              sizeof(last_popup_name));
+                                    if (m->pads[cur].on_selection_proc[0]) {
+                                        term_set_raw(0);
+                                        prog_call_sync(m->pads[cur].on_selection_proc);
+                                        term_set_raw(1);
+                                        if (menu_deactivate_flag) goto done_term;
+                                        continue;
+                                    }
                                     goto done_term;
                                 } else if (result == 0) {
                                     break;
@@ -691,6 +730,9 @@ done_term:
             str_copy(last_popup_name, m->pads[0].popup_name,
                      sizeof(last_popup_name));
             menu_activate_popup(m->pads[0].popup_name);
+            if (m->pads[0].on_selection_proc[0]) {
+                prog_call_sync(m->pads[0].on_selection_proc);
+            }
         } else {
             last_popup_name[0] = '\0';
         }
@@ -726,4 +768,34 @@ const char *menu_last_pad(void) {
 
 const char *menu_last_popup(void) {
     return last_popup_name;
+}
+
+void menu_set_on_selection_popup(const char *popup_name, const char *procname) {
+    popup_t *p = find_popup(popup_name);
+    if (!p) {
+        printf("Popup not defined: %s\n", popup_name);
+        return;
+    }
+    str_copy(p->on_selection_proc, procname, sizeof(p->on_selection_proc));
+}
+
+void menu_set_on_selection_pad(const char *menu_name, const char *pad_name,
+                               const char *procname) {
+    menu_t *m = find_menu(menu_name);
+    char upper[32];
+    int i;
+    if (!m) {
+        printf("Menu not defined: %s\n", menu_name);
+        return;
+    }
+    str_copy(upper, pad_name, sizeof(upper));
+    str_upper(upper);
+    for (i = 0; i < m->npad; i++) {
+        if (str_icmp(m->pads[i].name, upper) == 0) {
+            str_copy(m->pads[i].on_selection_proc, procname,
+                     sizeof(m->pads[i].on_selection_proc));
+            return;
+        }
+    }
+    printf("Pad not defined: %s OF %s\n", pad_name, m->name);
 }

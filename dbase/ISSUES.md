@@ -124,7 +124,7 @@ CALCULATE AVG(salary), MAX(salary), MIN(salary), CNT() TO avg_s, max_s, min_s, c
 CALCULATE SUM(qty*price) TO total FOR category="A"
 ```
 
-### 2.9 Menu System
+### ~~2.9 Menu System~~ DONE
 
 The Clipper/dBase IV menu system, broken into four pieces:
 
@@ -168,11 +168,11 @@ RELEASE MENU mainBar
 Two-level navigation: horizontal lightbar on pads, Enter/Down opens attached
 popup, Left/Right switches pads. Most complex piece.
 
-#### 2.9d Ancillary menu commands
-- `ON SELECTION POPUP/PAD ... DO <proc>` — callback on selection
+#### ~~2.9d Ancillary menu commands~~ DONE
+- ~~`ON SELECTION POPUP/PAD ... DO <proc>` — callback on selection~~ DONE
 - ~~`BAR()`, `PROMPT()`, `PAD()`, `POPUP()` — functions returning last selection~~ DONE (in 2.9b/2.9c)
 - ~~`RELEASE MENU/POPUP` — cleanup~~ DONE (in 2.9b/2.9c)
-- `SAVE SCREEN` / `RESTORE SCREEN` — needed for clean popup overlay (see 5.6)
+- `SAVE SCREEN` / `RESTORE SCREEN` — deferred to 5.6 (separate infrastructure)
 
 ---
 
