@@ -1644,34 +1644,54 @@ static void cmd_calculate(dbf_t *db, lexer_t *l) {
             return;
         }
 
-        /* Extract inner expression up to matching ')' */
+        /* Extract inner expression text from original input, then advance
+           lexer past the matching ')'.
+           We scan the raw string (not the lexer) because the multi-char
+           operator lookahead in lex_next can trigger macro expansion as
+           a side effect, making l->p unreliable for text capture. */
         {
-            /* Save original-input position after '(' — l->p doesn't advance
-               during macro expansion, so this is always in the stable input
-               buffer even if the expression contains &macros. */
-            const char *orig_start = l->p;
-            int depth = 1;
-            lex_next(l); /* consume '(' — reads first inner token */
-            while (l->current.type != TOK_EOF && depth > 0) {
-                if (l->current.type == TOK_LPAREN) depth++;
-                else if (l->current.type == TOK_RPAREN) {
-                    depth--;
-                    if (depth == 0) break;
+            /* token_start points to '(' in the original input */
+            const char *raw = l->token_start + 1;
+            int rdepth = 1;
+            while (*raw && rdepth > 0) {
+                if (*raw == '(') rdepth++;
+                else if (*raw == ')') { rdepth--; if (rdepth == 0) break; }
+                else if (*raw == '"' || *raw == '\'') {
+                    char q = *raw++;
+                    while (*raw && *raw != q) raw++;
                 }
-                lex_next(l);
+                else if (*raw == '[') {
+                    raw++;
+                    while (*raw && *raw != ']') raw++;
+                }
+                if (*raw) raw++;
             }
-            if (depth != 0) {
-                printf("Mismatched parentheses.\n");
-                return;
-            }
+            /* raw now points to matching ')' or '\0' */
             {
-                int len = (int)(l->token_start - orig_start);
-                if (len < 0) len = 0;
+                int len = (int)(raw - (l->token_start + 1));
                 if (len >= (int)sizeof(ctx.aggs[0].expr))
                     len = (int)sizeof(ctx.aggs[0].expr) - 1;
-                memcpy(ctx.aggs[ctx.naggs].expr, orig_start, len);
+                memcpy(ctx.aggs[ctx.naggs].expr, l->token_start + 1, len);
                 ctx.aggs[ctx.naggs].expr[len] = '\0';
                 trim_right(ctx.aggs[ctx.naggs].expr);
+            }
+
+            /* Advance lexer past the expression tokens to ')' */
+            {
+                int depth = 1;
+                lex_next(l); /* consume '(' — reads first inner token */
+                while (l->current.type != TOK_EOF && depth > 0) {
+                    if (l->current.type == TOK_LPAREN) depth++;
+                    else if (l->current.type == TOK_RPAREN) {
+                        depth--;
+                        if (depth == 0) break;
+                    }
+                    lex_next(l);
+                }
+                if (depth != 0) {
+                    printf("Mismatched parentheses.\n");
+                    return;
+                }
             }
         }
 

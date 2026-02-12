@@ -5,8 +5,10 @@ This is a *living* planning document. Completed items are summarized at the end.
 ## 1. Open Bugs (Correctness)
 
 ### 1.1 ~~CALCULATE expression capture breaks with macro expansion~~ — RESOLVED
-Fixed: expression text is now captured from the stable original-input pointer
-(`l->p`) instead of `token_start`, which can point into ephemeral macro buffers.
+Fixed: expression text is now captured by scanning the raw original input string
+(paren-balanced from `token_start+1` to matching `)`) instead of using pointer
+arithmetic on `token_start`/`l->p`, which break when the multi-character operator
+lookahead in `lex_next` triggers macro expansion as a side effect.
 The callback also uses `ast_eval_dynamic()` for consistent macro re-expansion.
 
 ## 2. Behavior Regressions / Architecture Follow-ups
@@ -22,12 +24,9 @@ evaluation via `ast_eval_dynamic()`, matching dBase III/FoxPro semantics.
 `name(...)` becomes array access *only if* the array exists at compile time.
 If the array is declared later, the AST remains a function call.
 
-### 2.3 AST function-arg parsing limits
-`ast_parse_primary()` defers `MAX_FUNC_ARGS` enforcement to eval-time and lacks
-`realloc` failure handling. Very long arg lists can consume memory or crash.
-
-**Suggested fix:** Enforce `MAX_FUNC_ARGS` at compile time and handle `realloc`
-failure by reporting "Out of memory" and freeing partial args.
+### 2.3 ~~AST function-arg parsing limits~~ — RESOLVED
+`ast_parse_primary()` now enforces `MAX_FUNC_ARGS` at compile time and handles
+`realloc` failure with proper cleanup and "Out of memory" error.
 
 ## 3. Polish & Completeness (Open)
 
@@ -46,13 +45,13 @@ Save and restore terminal contents. Used for popup dialogs and help screens.
 
 ## 4. Test Coverage Gaps
 
-### 4.1 Missing scenarios
-- Negative/zero args to FWRITE/FREAD
-- Array boundary conditions: `arr[0]`, `arr[rows+1]`, `arr[-1]`
-- STORE to array without index (should error per 585f594)
-- Binary data in FREAD/FWRITE (NUL bytes)
-- Full variable store (256 vars), then DECLARE array
-- CALCULATE with `&macro` expression input
+### 4.1 Missing scenarios — MOSTLY RESOLVED
+Added tests: `test_edge_fio` (FWRITE/FREAD zero/negative/invalid),
+`test_edge_arrays` (boundary conditions, STORE without index),
+`test_edge_varstore` (full store + DECLARE), `test_edge_calc_macro`
+(CALCULATE with `&macro` expressions, nested parens).
+Remaining: binary data in FREAD/FWRITE (NUL bytes truncate due to string
+representation — known limitation, not testable via dBase strings).
 
 ### 4.2 Fragile tests
 - `test_dir_services` embeds absolute path and file count — breaks if repo moves

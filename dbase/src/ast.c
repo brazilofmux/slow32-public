@@ -410,9 +410,27 @@ static ast_node_t *ast_parse_primary(lexer_t *l, memvar_store_t *store, const ch
                         free(args);
                         return NULL;
                     }
+                    if (nargs >= MAX_FUNC_ARGS) {
+                        int j;
+                        *error = "Too many function arguments";
+                        for (j = 0; j < nargs; j++) ast_free(args[j]);
+                        free(args);
+                        ast_free(arg);
+                        return NULL;
+                    }
                     if (nargs >= capacity) {
+                        ast_node_t **new_args;
                         capacity = capacity ? capacity * 2 : 4;
-                        args = realloc(args, capacity * sizeof(ast_node_t *));
+                        new_args = realloc(args, capacity * sizeof(ast_node_t *));
+                        if (!new_args) {
+                            int j;
+                            *error = "Out of memory";
+                            for (j = 0; j < nargs; j++) ast_free(args[j]);
+                            free(args);
+                            ast_free(arg);
+                            return NULL;
+                        }
+                        args = new_args;
                     }
                     args[nargs++] = arg;
                     if (lex_peek(l) == TOK_COMMA) { lex_next(l); continue; }
