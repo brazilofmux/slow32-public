@@ -32,7 +32,9 @@ static struct {
 static int udf_active;          /* >0 when executing a UDF call */
 static value_t udf_return_val;  /* return value from FUNCTION */
 static int udf_depth;           /* call_depth at UDF entry */
+static int udf_call_nesting;    /* host C recursion depth through UDF callbacks */
 static int prog_udf_call(const char *name, value_t *args, int nargs, value_t *result);
+#define MAX_UDF_CALL_NESTING 8
 
 /* IF/ELSE/ENDIF nesting for skip mode */
 #define MAX_IF_DEPTH 32
@@ -58,6 +60,28 @@ static struct {
    call_depth returns to the target level. */
 static int sync_call_active;
 static int sync_call_depth;
+
+typedef struct {
+    program_t *saved_prog;
+    int saved_pc;
+    int saved_call_depth;
+    int saved_loop_depth;
+    int saved_running;
+    int saved_if_skip;
+    int saved_if_depth;
+    int saved_case_active;
+    int saved_case_done;
+    int saved_case_skip;
+    int saved_udf_active;
+    int saved_udf_depth;
+    value_t saved_udf_return;
+} udf_saved_state_t;
+
+/* Recursion-resistant scratch/state storage keyed by call depth. */
+static udf_saved_state_t udf_saved_stack[MAX_CALL_DEPTH + 2];
+static char run_line_buf[MAX_CALL_DEPTH + 2][MAX_LINE_LEN];
+static char run_prev_buf[MAX_CALL_DEPTH + 2][MAX_LINE_LEN];
+static char run_line2_buf[MAX_CALL_DEPTH + 2][MAX_LINE_LEN];
 
 void prog_init(void) {
     memset(&state, 0, sizeof(state));
@@ -369,20 +393,27 @@ static int find_procedure(program_t *prog, const char *name);
 static int prog_udf_call(const char *name, value_t *args, int nargs, value_t *result) {
     program_t *target_prog = NULL;
     int func_line = -1;
+    int slot = state.call_depth;
+    udf_saved_state_t *sv;
+
+    if (slot < 0) slot = 0;
+    if (slot >= MAX_CALL_DEPTH + 2) slot = MAX_CALL_DEPTH + 1;
+    sv = &udf_saved_stack[slot];
+
     /* Save lightweight state (avoid copying 700KB call stack) */
-    program_t *saved_prog = state.current_prog;
-    int saved_pc = state.pc;
-    int saved_call_depth = state.call_depth;
-    int saved_loop_depth = state.loop_depth;
-    int saved_running = state.running;
-    int saved_if_skip = if_skip;
-    int saved_if_depth = if_depth;
-    int saved_case_active = case_active;
-    int saved_case_done = case_done;
-    int saved_case_skip = case_skip;
-    int saved_udf_active = udf_active;
-    int saved_udf_depth = udf_depth;
-    value_t saved_udf_return = udf_return_val;
+    sv->saved_prog = state.current_prog;
+    sv->saved_pc = state.pc;
+    sv->saved_call_depth = state.call_depth;
+    sv->saved_loop_depth = state.loop_depth;
+    sv->saved_running = state.running;
+    sv->saved_if_skip = if_skip;
+    sv->saved_if_depth = if_depth;
+    sv->saved_case_active = case_active;
+    sv->saved_case_done = case_done;
+    sv->saved_case_skip = case_skip;
+    sv->saved_udf_active = udf_active;
+    sv->saved_udf_depth = udf_depth;
+    sv->saved_udf_return = udf_return_val;
 
     /* Search current program, then procedure file */
     if (state.running && state.current_prog) {
@@ -396,7 +427,13 @@ static int prog_udf_call(const char *name, value_t *args, int nargs, value_t *re
             target_prog = procedure_file;
     }
     if (func_line < 0)
-        return -1;  /* not a UDF, let caller report error */
+        return 1;  /* not a UDF, let caller report unknown function */
+
+    if (udf_call_nesting >= MAX_UDF_CALL_NESTING) {
+        prog_error(ERR_STACK_OVERFLOW, "UDF recursion overflow");
+        if (result) *result = val_nil();
+        return -1;
+    }
 
     /* Set up UDF execution */
     udf_return_val = val_nil();
@@ -408,9 +445,8 @@ static int prog_udf_call(const char *name, value_t *args, int nargs, value_t *re
     case_skip = 0;
 
     /* Push frame for the function (uses existing call stack in-place) */
-    if (push_frame(target_prog, func_line + 1) < 0) {
-        return -1;
-    }
+    if (push_frame(target_prog, func_line + 1) < 0)
+        goto restore_error;
     udf_depth = state.call_depth;
 
     /* Store args for PARAMETERS */
@@ -423,27 +459,47 @@ static int prog_udf_call(const char *name, value_t *args, int nargs, value_t *re
     }
 
     /* Execute the function body — prog_run will stop when RETURN sets running=0 */
+    udf_call_nesting++;
     prog_run();
+    udf_call_nesting--;
 
     /* Capture return value */
     *result = udf_return_val;
 
     /* Restore lightweight state — pop_frame already restored call stack properly */
-    state.current_prog = saved_prog;
-    state.pc = saved_pc;
-    state.call_depth = saved_call_depth;
-    state.loop_depth = saved_loop_depth;
-    state.running = saved_running;
-    if_skip = saved_if_skip;
-    if_depth = saved_if_depth;
-    case_active = saved_case_active;
-    case_done = saved_case_done;
-    case_skip = saved_case_skip;
-    udf_active = saved_udf_active;
-    udf_depth = saved_udf_depth;
-    udf_return_val = saved_udf_return;
+    state.current_prog = sv->saved_prog;
+    state.pc = sv->saved_pc;
+    state.call_depth = sv->saved_call_depth;
+    state.loop_depth = sv->saved_loop_depth;
+    state.running = sv->saved_running;
+    if_skip = sv->saved_if_skip;
+    if_depth = sv->saved_if_depth;
+    case_active = sv->saved_case_active;
+    case_done = sv->saved_case_done;
+    case_skip = sv->saved_case_skip;
+    udf_active = sv->saved_udf_active;
+    udf_depth = sv->saved_udf_depth;
+    udf_return_val = sv->saved_udf_return;
 
     return 0;
+
+restore_error:
+    /* Restore state on failed UDF setup (e.g. stack overflow) */
+    state.current_prog = sv->saved_prog;
+    state.pc = sv->saved_pc;
+    state.call_depth = sv->saved_call_depth;
+    state.loop_depth = sv->saved_loop_depth;
+    state.running = sv->saved_running;
+    if_skip = sv->saved_if_skip;
+    if_depth = sv->saved_if_depth;
+    case_active = sv->saved_case_active;
+    case_done = sv->saved_case_done;
+    case_skip = sv->saved_case_skip;
+    udf_active = sv->saved_udf_active;
+    udf_depth = sv->saved_udf_depth;
+    udf_return_val = sv->saved_udf_return;
+    if (result) *result = val_nil();
+    return -1;
 }
 
 /* ---- Find PROCEDURE or FUNCTION <name> in program ---- */
@@ -812,11 +868,21 @@ static void pop_frame(void) {
 
 /* ---- Execute program lines ---- */
 static void prog_run(void) {
+    int run_slot = state.call_depth;
+    char *line;
+    char *prev;
+    char *line2;
+
+    if (run_slot < 0) run_slot = 0;
+    if (run_slot >= MAX_CALL_DEPTH + 2) run_slot = MAX_CALL_DEPTH + 1;
+    line = run_line_buf[run_slot];
+    prev = run_prev_buf[run_slot];
+    line2 = run_line2_buf[run_slot];
+
     state.running = 1;
 
     for (;;) {
     while (state.running && state.current_prog && state.pc < state.current_prog->nlines) {
-        char line[MAX_LINE_LEN];
         char *p;
         int quit;
 
@@ -860,7 +926,6 @@ static void prog_run(void) {
                 int all_comments = 1;
                 int j;
                 for (j = 0; j < state.pc; j++) {
-                    char prev[MAX_LINE_LEN];
                     char *pp;
                     str_copy(prev, state.current_prog->lines[j], MAX_LINE_LEN);
                     pp = skip_ws(prev);
@@ -878,7 +943,6 @@ static void prog_run(void) {
             /* Skip to next PROCEDURE/FUNCTION or end of file */
             int i;
             for (i = state.pc + 1; i < state.current_prog->nlines; i++) {
-                char line2[MAX_LINE_LEN];
                 char *lp;
                 str_copy(line2, state.current_prog->lines[i], MAX_LINE_LEN);
                 prog_preprocess(line2, cmd_get_memvar_store());

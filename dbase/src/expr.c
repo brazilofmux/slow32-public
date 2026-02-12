@@ -500,17 +500,28 @@ static int parse_primary(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
 
         /* Function call: name( */
         if (lex_peek(l) == TOK_LPAREN) {
-            value_t args[MAX_FUNC_ARGS];
+            value_t *args = NULL;
             int nargs = 0;
+            int rc;
+
+            args = (value_t *)malloc(MAX_FUNC_ARGS * sizeof(value_t));
+            if (!args) {
+                ctx->error = "Out of memory";
+                return -1;
+            }
             lex_next(l); /* skip ( */
 
             if (lex_peek(l) != TOK_RPAREN) {
                 for (;;) {
                     if (nargs >= MAX_FUNC_ARGS) {
+                        free(args);
                         ctx->error = "Too many function arguments";
                         return -1;
                     }
-                    if (parse_expr(ctx, l, &args[nargs]) != 0) return -1;
+                    if (parse_expr(ctx, l, &args[nargs]) != 0) {
+                        free(args);
+                        return -1;
+                    }
                     nargs++;
                     if (lex_peek(l) == TOK_COMMA) {
                         lex_next(l);
@@ -521,12 +532,15 @@ static int parse_primary(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
             }
 
             if (lex_peek(l) != TOK_RPAREN) {
+                free(args);
                 ctx->error = "Missing ) in function call";
                 return -1;
             }
             lex_next(l);
 
-            return func_call(ctx, name, args, nargs, result);
+            rc = func_call(ctx, name, args, nargs, result);
+            free(args);
+            return rc;
         }
 
         /* Field reference */

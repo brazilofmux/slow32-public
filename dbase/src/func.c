@@ -1279,9 +1279,19 @@ int func_call(expr_ctx_t *ctx, const char *name, value_t *args, int nargs, value
             return e->fn(ctx, args, nargs, result);
     }
 
-    /* Try user-defined function */
-    if (udf_callback && udf_callback(upper, args, nargs, result) == 0)
-        return 0;
+    /* Try user-defined function.
+       Callback returns: 0=handled, >0=not found, <0=execution error. */
+    if (udf_callback) {
+        int urc = udf_callback(upper, args, nargs, result);
+        if (urc == 0)
+            return 0;
+        if (urc < 0) {
+            const char *msg = prog_get_error_message();
+            if (msg && msg[0]) ctx->error = msg;
+            else ctx->error = "User-defined function failed";
+            return -1;
+        }
+    }
 
     {
         snprintf(ctx->err_msg, sizeof(ctx->err_msg), "Unknown function: %s", name);

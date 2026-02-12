@@ -573,17 +573,30 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
     }
 
     case AST_FUNC_CALL: {
-        value_t args[MAX_FUNC_ARGS];
+        value_t *args = NULL;
         int i;
+        int rc;
 
         if (node->call.nargs > MAX_FUNC_ARGS) {
             ctx->error = "Too many function arguments";
             return -1;
         }
-        for (i = 0; i < node->call.nargs; i++) {
-            if (ast_eval(node->call.args[i], ctx, &args[i]) != 0) return -1;
+        if (node->call.nargs > 0) {
+            args = (value_t *)malloc(node->call.nargs * sizeof(value_t));
+            if (!args) {
+                ctx->error = "Out of memory";
+                return -1;
+            }
         }
-        return func_call(ctx, node->call.name, args, node->call.nargs, result);
+        for (i = 0; i < node->call.nargs; i++) {
+            if (ast_eval(node->call.args[i], ctx, &args[i]) != 0) {
+                if (args) free(args);
+                return -1;
+            }
+        }
+        rc = func_call(ctx, node->call.name, args, node->call.nargs, result);
+        if (args) free(args);
+        return rc;
     }
 
     case AST_UNOP: {

@@ -115,11 +115,19 @@ same canonical key formatter as indexing. Numeric sorts are now true numeric
 order across sign boundaries (e.g., `-10 < -1 < 1 < 10`) rather than raw
 ASCII field-text order.
 
-### 6.3 UDF Host Stack Recursion (Problem)
-While `DO` calls are now iterative, UDF calls still cause host C stack
-recursion because `prog_udf_call` invokes `prog_run` synchronously from
-within `expr_eval`. Deeply nested or recursive UDFs will still hit the
-host stack limit.
+### 6.3 ~~UDF Host Stack Recursion~~ — MITIGATED
+Fixed hard-failure path: recursive UDF calls now fail with a controlled
+`ERR_STACK_OVERFLOW` (`*** UDF recursion overflow ...`) instead of crashing
+the VM stack. Added `test_udf_overflow` regression coverage.
+
+Additional hardening:
+- moved function-call argument arrays in `expr.c` / `ast.c` from stack to heap
+- restored UDF state cleanly on callback setup failure (no leaked UDF state)
+- improved UDF callback error propagation so execution errors are not reported
+  as `Unknown function`
+
+Current behavior: recursion is bounded by a conservative UDF callback nesting
+guard to stay within SLOW-32 stack constraints.
 
 ### 6.4 String Concatenation `-` Compatibility Candidate (Needs Baseline)
 The `-` operator between strings trims trailing spaces from the left operand
