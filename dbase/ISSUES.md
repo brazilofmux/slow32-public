@@ -11,6 +11,15 @@ arithmetic on `token_start`/`l->p`, which break when the multi-character operato
 lookahead in `lex_next` triggers macro expansion as a side effect.
 The callback also uses `ast_eval_dynamic()` for consistent macro re-expansion.
 
+### 1.2 String Concatenation Drop
+`expr.c` — When string concatenation (`+` or `-`) results in a string longer
+than 255 chars, the right operand is currently dropped entirely. It should
+be truncated to fill the remaining space in the 256-byte `value_t.str` buffer.
+
+### 1.3 Hardcoded Date in dbf_create
+`dbf.c` — `dbf_create()` hardcodes the file creation year to 26 (2026). It
+should use the system `time()` to provide accurate metadata.
+
 ## 2. Behavior Regressions / Architecture Follow-ups
 
 These are potential behavior shifts introduced by AST-based evaluation and
@@ -28,6 +37,23 @@ This matches dBase III behavior, which resolves array references at compile time
 ### 2.3 ~~AST function-arg parsing limits~~ — RESOLVED
 `ast_parse_primary()` now enforces `MAX_FUNC_ARGS` at compile time and handles
 `realloc` failure with proper cleanup and "Out of memory" error.
+
+### 2.4 REPLACE Performance & Parsing
+`command.c` — `cmd_replace()` re-initializes a lexer and re-parses the field list
+and expression for *every single record* in the loop. For large databases, this
+is a massive overhead. It should be refactored to parse once into a list of
+field/AST pairs before the loop.
+
+### 2.5 REPLACE Index Inconsistency
+`command.c` — `cmd_replace()` uses a manual physical record loop instead of
+`process_records()`. This makes it ignore the controlling index, which differs
+from other record-oriented commands like `COUNT`, `SUM`, or `LOCATE`.
+
+### 2.6 Recursive prog_run
+`program.c` — `prog_run()` contains a recursive call to itself when popping a
+frame to continue caller execution. This contributes to stack depth issues
+unnecessarily. It should be refactored into a single execution loop with a
+`goto` or `while` structure.
 
 ## 3. Polish & Completeness (Open)
 
@@ -51,6 +77,28 @@ one record per source field. Used for dynamic schema operations.
 
 ### 3.3 SAVE SCREEN / RESTORE SCREEN
 Save and restore terminal contents. Used for popup dialogs and help screens.
+
+### 3.4 REPLICATE Off-by-one
+`func.c` — `fn_replicate` limits the total length to 254 characters due to a
+strict `pos + slen < sizeof(buf) - 1` check. It should allow up to 255
+characters (`pos + slen < sizeof(buf)`).
+
+### 3.5 dbf_memo_read Wasteful I/O
+`dbf.c` — `dbf_memo_read()` reads the entire memo until a terminator (0x1A),
+even if the destination buffer is small (typically 256 bytes). For large
+memos, this results in wasted disk I/O. It should stop reading once the
+buffer is full.
+
+### 3.6 Large Stack Allocations (REPORT FORM)
+`command.c` — `cmd_report_form` allocates a 14KB `frm_def_t` on the stack.
+While safe for shallow calls, this significantly reduces the headroom for
+recursive UDFs. Large definition structs should be moved to the heap or
+static memory.
+
+### 3.7 AST Constant Folding
+`ast.c` — The `ast_eval()` engine currently evaluates all nodes at runtime.
+Adding a simple constant folding pass to `ast_compile()` would improve
+performance for expressions like `2 + 3` or `YEAR({02/11/26})`.
 
 ## 4. Test Coverage Gaps
 
