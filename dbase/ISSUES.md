@@ -149,12 +149,12 @@ through `ast_eval` when cached, falling back to dynamic string evaluation for
 macroized expressions. Cached AST is refreshed on index rebuild/open and freed
 on close.
 
-### 6.7 Standard-Compliant Index Keys (Opportunity)
-Numeric index keys should use a fixed-width, right-aligned, zero-padded (or
-binary) format. Date index keys should always use `DTOS()` (YYYYMMDD) format
-internally to ensure format independence and chronological order. This is the
-architectural fix path for 6.1 (numeric index ordering) and 6.5 (date key
-volatility across `SET DATE` formats).
+### 6.7 ~~Standard-Compliant Index Keys~~ — RESOLVED (Superseded)
+Resolved by the 6.1/6.5 fixes:
+- Numeric index keys now use a fixed-width sortable binary-safe encoding
+  (transformed IEEE-754), preserving numeric order under `memcmp`.
+- Date index keys now use canonical `YYYYMMDD` internally (equivalent ordering
+  behavior to `DTOS()`), independent of `SET DATE`.
 
 ## 4. Test Coverage Gaps
 
