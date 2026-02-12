@@ -177,7 +177,7 @@ void screen_say(int row, int col, const char *expr_str, const char *picture) {
     char formatted[256];
 
     if (expr_eval_str(ctx, expr_str, &val) != 0) {
-        if (ctx->error) printf("Error: %s\n", ctx->error);
+        if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
         return;
     }
 
@@ -219,7 +219,7 @@ void screen_get(int row, int col, const char *varname, const char *picture,
     value_t val;
 
     if (scr.ngets >= MAX_GETS) {
-        printf("Too many GETs.\n");
+        prog_error(ERR_SYNTAX, "Too many GETs");
         return;
     }
 

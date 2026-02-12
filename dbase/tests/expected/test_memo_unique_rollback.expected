@@ -10,11 +10,11 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Field
 . . . . DBT size before: 1536
 . FERROR: 0
 . FCLOSE: .T.
-. . . Uniqueness violation on index MUNIQ.NDX
+. . . *** Uniqueness violation on index MUNIQ.NDX
 . After REPLACE: B         
 . . . . DBT size after: 1536
 . FCLOSE: .T.
-. . Uniqueness violation on index MUNIQ.NDX
+. . *** Uniqueness violation on index MUNIQ.NDX
 . After 2nd REPLACE: B         
 . . . . DBT size after 2nd: 1536
 . Size unchanged: .T.

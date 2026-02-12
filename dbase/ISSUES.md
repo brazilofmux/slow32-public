@@ -20,9 +20,10 @@ lexer changes. Confirm against dBase III expectations.
 Expressions containing `&` now skip AST caching and recompile fresh on every
 evaluation via `ast_eval_dynamic()`, matching dBase III/FoxPro semantics.
 
-### 2.2 Array access resolution time
+### 2.2 Array access resolution time — WON'T FIX
 `name(...)` becomes array access *only if* the array exists at compile time.
 If the array is declared later, the AST remains a function call.
+This matches dBase III behavior, which resolves array references at compile time.
 
 ### 2.3 ~~AST function-arg parsing limits~~ — RESOLVED
 `ast_parse_primary()` now enforces `MAX_FUNC_ARGS` at compile time and handles
@@ -30,11 +31,17 @@ If the array is declared later, the AST remains a function call.
 
 ## 3. Polish & Completeness (Open)
 
-### 3.1 Error handling completeness
-- `ON ERROR` handler exists but some error paths bypass it (e.g., UNIQUE
-  violations print directly to stdout)
-- No `ERROR()` code for UNIQUE violations, file handle exhaustion, etc.
-- No `RETRY` support for recoverable errors in data entry
+### 3.1 ~~Error handling completeness~~ — MOSTLY RESOLVED
+~40 runtime error sites converted from bare `printf()` to `prog_error()` /
+`prog_error_fmt()`, routing through the ON ERROR handler. Added standard
+dBase III error codes: ERR_UNIQUE (143), ERR_CANNOT_CREATE (110),
+ERR_CANNOT_OPEN (111), ERR_ALIAS_NOT_FOUND (128), ERR_TOO_MANY_VARS (18),
+ERR_OUT_OF_MEMORY (22), ERR_STACK_OVERFLOW (24). Fixed ON ERROR handler to
+run synchronously via `prog_call_sync()`. UNIQUE violations, file I/O
+failures, record-range errors, and division by zero are all now catchable.
+Remaining: syntax/parsing errors, interactive-mode restrictions, SET
+validation, and menu/popup definition errors still use direct `printf()`
+(these are not catchable in real dBase III either).
 
 ### 3.2 LIST STRUCTURE TO filename
 `LIST STRUCTURE` (or `COPY STRUCTURE EXTENDED`) creates a DBF containing the

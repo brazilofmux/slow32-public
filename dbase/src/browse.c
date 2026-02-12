@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include "browse.h"
 #include "command.h"
+#include "program.h"
 #include "screen.h"
 #include "field.h"
 #include "util.h"
@@ -445,7 +446,7 @@ static void cmd_edit_impl(dbf_t *db, const char *args)
     /* Position at first valid record if needed */
     if (db->current_record == 0 || db->record_count == 0) {
         if (nav_top(&bs) != 0) {
-            printf("No records.\n");
+            prog_error(ERR_RECORD_RANGE, "No records");
             return;
         }
     }
@@ -752,7 +753,7 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
     /* Position at first record */
     if (db->current_record == 0) {
         if (nav_top(&bs) != 0) {
-            printf("No records.\n");
+            prog_error(ERR_RECORD_RANGE, "No records");
             return;
         }
     }
@@ -761,7 +762,7 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
     /* Fill initial page */
     fill_page_forward(&bs, bs.data_rows);
     if (bs.visible_count == 0) {
-        printf("No records.\n");
+        prog_error(ERR_RECORD_RANGE, "No records");
         return;
     }
 

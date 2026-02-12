@@ -191,7 +191,7 @@ static int indexes_update_current(dbf_t *db, char old_keys[][MAX_INDEX_KEY + 1])
                 changed[i] = 1;
                 if (idx->unique &&
                     index_key_exists(idx, new_keys[i], db->current_record)) {
-                    printf("Uniqueness violation on index %s\n", idx->filename);
+                    prog_error_fmt(ERR_UNIQUE, "Uniqueness violation on index %s", idx->filename);
                     return -1;
                 }
             }
@@ -319,7 +319,7 @@ static int parse_field_list(dbf_t *db, const char *arg, int *indices, int max_fi
 
         idx = dbf_find_field(db, name);
         if (idx < 0) {
-            printf("Field not found: %s\n", name);
+            prog_error_fmt(ERR_SYNTAX, "Field not found: %s", name);
             return -1;
         }
         indices[count++] = idx;
@@ -529,7 +529,7 @@ static void cmd_create(dbf_t *db, const char *arg) {
     }
 
     if (dbf_create(filename, fields, nfields) < 0) {
-        printf("Error creating %s\n", filename);
+        prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", filename);
         return;
     }
 
@@ -563,7 +563,7 @@ static void cmd_select(const char *arg) {
         return;
     }
 
-    printf("Invalid work area.\n");
+    prog_error(ERR_ALIAS_NOT_FOUND, "Invalid work area");
 }
 
 /* ---- Helper: report file-not-found error ---- */
@@ -571,14 +571,6 @@ static void file_not_found(const char *filename) {
     char buf[128];
     snprintf(buf, sizeof(buf), "File not found: %s", filename);
     prog_error(ERR_FILE_NOT_FOUND, buf);
-}
-
-/* ---- Helper: map expression error string to error code ---- */
-static int expr_error_code(const char *msg) {
-    if (!msg) return ERR_SYNTAX;
-    if (strstr(msg, "ivision by zero")) return ERR_DIV_ZERO;
-    if (strstr(msg, "ype mismatch")) return ERR_TYPE_MISMATCH;
-    return ERR_SYNTAX;
 }
 
 /* ---- Helper: report expression error via prog_error ---- */
@@ -678,7 +670,7 @@ static void cmd_use(dbf_t *db, const char *arg) {
                     if (index_read(&wa->indexes[slot], ndxfile) == 0) {
                         wa->num_indexes++;
                     } else {
-                        printf("Cannot open index: %s\n", ndxfile);
+                        prog_error_fmt(ERR_CANNOT_OPEN, "Cannot open index: %s", ndxfile);
                     }
                 }
             }
@@ -750,7 +742,7 @@ static void cmd_go(dbf_t *db, const char *arg) {
         if (db->record_count == 0) {
             expr_ctx.eof_flag = 1;
             expr_ctx.bof_flag = 1;
-            printf("No records.\n");
+            prog_error(ERR_RECORD_RANGE, "No records");
             return;
         }
         {
@@ -795,7 +787,7 @@ static void cmd_go(dbf_t *db, const char *arg) {
         if (db->record_count == 0) {
             expr_ctx.eof_flag = 1;
             expr_ctx.bof_flag = 1;
-            printf("No records.\n");
+            prog_error(ERR_RECORD_RANGE, "No records");
             return;
         }
         {
@@ -1538,7 +1530,7 @@ static void cmd_average(dbf_t *db, lexer_t *l) {
         printf("%d record(s) averaged\n", count);
         printf("  AVERAGE: %s\n", buf);
     } else if (count == 0) {
-        printf("No records.\n");
+        prog_error(ERR_RECORD_RANGE, "No records");
     }
 }
 
@@ -1822,7 +1814,7 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
     if (parse_clauses(&temp_l, &c) < 0) return;
 
     if (scope_bounds(db, &c.scope, &start, &end) < 0) {
-        printf("Invalid scope.\n");
+        prog_error(ERR_RECORD_RANGE, "Invalid scope");
         return;
     }
 
@@ -1867,7 +1859,7 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
 
             idx = dbf_find_field(db, field_name);
             if (idx < 0) {
-                printf("Field not found: %s\n", field_name);
+                prog_error_fmt(ERR_SYNTAX, "Field not found: %s", field_name);
                 return;
             }
 
@@ -1962,7 +1954,7 @@ static int scatter_parse_fields(dbf_t *db, lexer_t *l,
             str_upper(name);
             int idx = dbf_find_field(db, name);
             if (idx < 0) {
-                printf("Field not found: %s\n", name);
+                prog_error_fmt(ERR_SYNTAX, "Field not found: %s", name);
                 return -1;
             }
             indices[n++] = idx;
@@ -2155,12 +2147,12 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
         return;
     }
     if (is_display && (db->current_record == 0 || expr_ctx.eof_flag)) {
-        printf("No current record.\n");
+        prog_error(ERR_RECORD_RANGE, "No current record");
         return;
     }
 
     if (db->record_count == 0) {
-        printf("No records.\n");
+        prog_error(ERR_RECORD_RANGE, "No records");
         return;
     }
 
@@ -2539,7 +2531,7 @@ static void cmd_release(const char *arg) {
 
         if (name[0] != '\0') {
             if (memvar_release(&memvar_store, name) < 0)
-                printf("Variable not found: %s\n", name);
+                prog_error_fmt(ERR_VAR_NOT_FOUND, "Variable not found: %s", name);
         }
 
         p = skip_ws(p);
@@ -2576,7 +2568,7 @@ static void cmd_delete(dbf_t *db, lexer_t *l) {
 
     if (l->current.type == TOK_EOF) {
         if (db->current_record == 0 || expr_ctx.eof_flag) {
-            printf("No current record.\n");
+            prog_error(ERR_RECORD_RANGE, "No current record");
             return;
         }
         db->record_buf[0] = '*';
@@ -2607,7 +2599,7 @@ static void cmd_recall(dbf_t *db, lexer_t *l) {
 
     if (l->current.type == TOK_EOF) {
         if (db->current_record == 0 || expr_ctx.eof_flag) {
-            printf("No current record.\n");
+            prog_error(ERR_RECORD_RANGE, "No current record");
             return;
         }
         if (db->record_buf[0] == '*') {
@@ -2990,7 +2982,7 @@ static void cmd_copy_to(dbf_t *db, const char *arg) {
     }
 
     if (dbf_create(filename, dest_fields, dest_nfields) < 0) {
-        printf("Error creating %s\n", filename);
+        prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", filename);
         return;
     }
 
@@ -3007,12 +2999,12 @@ static void cmd_copy_to(dbf_t *db, const char *arg) {
 
     dbf_init(&dest);
     if (dbf_open(&dest, filename) < 0) {
-        printf("Error opening %s\n", filename);
+        prog_error_fmt(ERR_CANNOT_OPEN, "Error opening %s", filename);
         return;
     }
 
     if (scope_bounds(db, &scope, &start, &end) < 0) {
-        printf("Invalid scope.\n");
+        prog_error(ERR_RECORD_RANGE, "Invalid scope");
         dbf_close(&dest);
         return;
     }
@@ -3088,7 +3080,7 @@ static void cmd_copy_structure(dbf_t *db, const char *arg) {
             off += fields[f].length;
         }
         if (dbf_create(filename, fields, db->field_count) < 0) {
-            printf("Error creating %s\n", filename);
+            prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", filename);
             return;
         }
 
@@ -3284,7 +3276,7 @@ static void cmd_sort(dbf_t *db, const char *arg) {
 
     field_idx = dbf_find_field(db, field_name);
     if (field_idx < 0) {
-        printf("Field not found: %s\n", field_name);
+        prog_error_fmt(ERR_SYNTAX, "Field not found: %s", field_name);
         return;
     }
 
@@ -3312,13 +3304,13 @@ static void cmd_sort(dbf_t *db, const char *arg) {
     }
 
     if (scope_bounds(db, &scope, &start, &end) < 0) {
-        printf("Invalid scope.\n");
+        prog_error(ERR_RECORD_RANGE, "Invalid scope");
         return;
     }
 
     sort_entries = (sort_entry_t *)malloc(MAX_SORT_ENTRIES * sizeof(sort_entry_t));
     if (!sort_entries) {
-        printf("Out of memory for sort buffer.\n");
+        prog_error(ERR_OUT_OF_MEMORY, "Out of memory for sort buffer");
         return;
     }
 
@@ -3348,7 +3340,7 @@ static void cmd_sort(dbf_t *db, const char *arg) {
             /* Sort and write chunk */
             qsort_r(sort_entries, nentries, sizeof(sort_entry_t), sort_compare_r, &ctx);
             if (!make_sort_chunk_name(chunk_names[nchunks], sizeof(chunk_names[nchunks]))) {
-                printf("Error creating sort chunk.\n");
+                prog_error(ERR_FILE_IO, "Error creating sort chunk");
                 chunk_overflow = 1;
                 break;
             }
@@ -3359,12 +3351,12 @@ static void cmd_sort(dbf_t *db, const char *arg) {
                 nchunks++;
                 nentries = 0;
                 if (nchunks >= MAX_SORT_CHUNKS) {
-                    printf("Too many sort chunks.\n");
+                    prog_error(ERR_FILE_IO, "Too many sort chunks");
                     chunk_overflow = 1;
                     break;
                 }
             } else {
-                printf("Error creating sort chunk.\n");
+                prog_error(ERR_FILE_IO, "Error creating sort chunk");
                 chunk_overflow = 1;
                 break;
             }
@@ -3383,14 +3375,14 @@ static void cmd_sort(dbf_t *db, const char *arg) {
             /* All fit in memory, proceed directly to write phase below */
         } else {
             if (!make_sort_chunk_name(chunk_names[nchunks], sizeof(chunk_names[nchunks]))) {
-                printf("Error creating sort chunk.\n");
+                prog_error(ERR_FILE_IO, "Error creating sort chunk");
                 free(sort_entries);
                 cleanup_sort_chunks(chunk_names, nchunks);
                 return;
             }
             FILE *tf = fopen(chunk_names[nchunks], "wb");
             if (!tf) {
-                printf("Error creating sort chunk.\n");
+                prog_error(ERR_FILE_IO, "Error creating sort chunk");
                 free(sort_entries);
                 cleanup_sort_chunks(chunk_names, nchunks);
                 return;
@@ -3403,7 +3395,7 @@ static void cmd_sort(dbf_t *db, const char *arg) {
     }
 
     if (nchunks == 0 && nentries == 0) {
-        printf("No records to sort.\n");
+        prog_error(ERR_RECORD_RANGE, "No records to sort");
         free(sort_entries);
         return;
     }
@@ -3418,7 +3410,7 @@ static void cmd_sort(dbf_t *db, const char *arg) {
             off += fields[f].length;
         }
         if (dbf_create(filename, fields, db->field_count) < 0) {
-            printf("Error creating %s\n", filename);
+            prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", filename);
             free(sort_entries);
             cleanup_sort_chunks(chunk_names, nchunks);
             return;
@@ -3435,7 +3427,7 @@ static void cmd_sort(dbf_t *db, const char *arg) {
 
     dbf_init(&dest);
     if (dbf_open(&dest, filename) < 0) {
-        printf("Error opening %s\n", filename);
+        prog_error_fmt(ERR_CANNOT_OPEN, "Error opening %s", filename);
         free(sort_entries);
         cleanup_sort_chunks(chunk_names, nchunks);
         return;
@@ -3576,7 +3568,7 @@ static void cmd_rename(const char *arg) {
             int n;
             if (!fout) {
                 fclose(fin);
-                printf("Cannot create: %s\n", newname);
+                prog_error_fmt(ERR_CANNOT_CREATE, "Cannot create: %s", newname);
                 return;
             }
             while ((n = fread(buf, 1, sizeof(buf), fin)) > 0)
@@ -3627,7 +3619,7 @@ static void cmd_copy_file(const char *arg) {
     fout = fopen(dst, "wb");
     if (!fout) {
         fclose(fin);
-        printf("Cannot create: %s\n", dst);
+        prog_error_fmt(ERR_CANNOT_CREATE, "Cannot create: %s", dst);
         return;
     }
     while ((n = fread(buf, 1, sizeof(buf), fin)) > 0)
@@ -3767,7 +3759,7 @@ static void cmd_set_index(dbf_t *db, const char *arg) {
                 printf("Index %s opened (%d entries).\n", filename,
                        cur_wa()->indexes[slot].nentries);
             } else {
-                printf("Cannot open index: %s\n", filename);
+                prog_error_fmt(ERR_CANNOT_OPEN, "Cannot open index: %s", filename);
             }
         }
 
@@ -3909,12 +3901,12 @@ static void cmd_reindex(dbf_t *db) {
         str_copy(filename, idx->filename, sizeof(filename));
 
         if (index_build(idx, db, &expr_ctx, key_expr, filename) < 0) {
-            printf("Error rebuilding index %s.\n", filename);
+            prog_error_fmt(ERR_FILE_IO, "Error rebuilding index %s", filename);
             return;
         }
 
         if (index_write(idx) < 0) {
-            printf("Error writing index file %s.\n", filename);
+            prog_error_fmt(ERR_FILE_IO, "Error writing index file %s", filename);
             return;
         }
         total += idx->nentries;
@@ -4114,7 +4106,7 @@ static void cmd_create_report(const char *arg) {
     }
 
     if (frm_write(filename, &def) < 0) {
-        printf("Error creating %s\n", filename);
+        prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", filename);
         return;
     }
     printf("Report definition %s created.\n", filename);
@@ -4172,7 +4164,7 @@ static void cmd_report_form(dbf_t *db, lexer_t *l) {
     if (c.to_file[0]) {
         outfile = fopen(c.to_file, "w");
         if (!outfile) {
-            printf("Cannot create %s\n", c.to_file);
+            prog_error_fmt(ERR_CANNOT_CREATE, "Cannot create %s", c.to_file);
             return;
         }
     }
@@ -4279,7 +4271,7 @@ static void cmd_create_label(const char *arg) {
     }
 
     if (lbl_write(filename, &def) < 0) {
-        printf("Error creating %s\n", filename);
+        prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", filename);
         return;
     }
     printf("Label definition %s created.\n", filename);
@@ -4336,7 +4328,7 @@ static void cmd_label_form(dbf_t *db, const char *arg) {
                 fname[fi] = '\0';
                 outfile = fopen(fname, "w");
                 if (!outfile) {
-                    printf("Cannot create %s\n", fname);
+                    prog_error_fmt(ERR_CANNOT_CREATE, "Cannot create %s", fname);
                     return;
                 }
                 continue;
@@ -4468,7 +4460,7 @@ static void h_declare(dbf_t *db, lexer_t *l) {
         if (rows > 0) {
             memvar_declare_array(&memvar_store, name, rows, cols);
         } else {
-            printf("Invalid array dimensions for %s\n", name);
+            prog_error_fmt(ERR_SYNTAX, "Invalid array dimensions for %s", name);
         }
         if (l->current.type == TOK_COMMA) lex_next(l);
         else break;
@@ -4942,12 +4934,12 @@ static void h_set(dbf_t *db, lexer_t *l) {
                 
                 lex_next(l); /* skip INTO */
                 if (l->current.type != TOK_IDENT) {
-                    printf("Invalid work area.\n");
+                    prog_error(ERR_ALIAS_NOT_FOUND, "Invalid work area");
                     return;
                 }
                 cur_wa()->relation_target = area_resolve_alias(l->current.text);
                 if (cur_wa()->relation_target < 0) {
-                    printf("Invalid work area.\n");
+                    prog_error(ERR_ALIAS_NOT_FOUND, "Invalid work area");
                 }
                 lex_next(l);
             }
@@ -4979,7 +4971,7 @@ static void h_save(dbf_t *db, lexer_t *l) {
         str_upper(fname);
         if (strlen(fname) < 4 || str_icmp(fname + strlen(fname) - 4, ".MEM") != 0) strcat(fname, ".MEM");
         fp = fopen(fname, "wb");
-        if (!fp) { printf("Cannot create %s\n", fname); return; }
+        if (!fp) { prog_error_fmt(ERR_CANNOT_CREATE, "Cannot create %s", fname); return; }
         {
             int nv = 0, j;
             for (j = 0; j < MEMVAR_MAX; j++) { if (memvar_store.vars[j].used) nv++; }

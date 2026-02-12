@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "memvar.h"
+#include "program.h"
 #include "util.h"
 
 static void array_free(array_t *arr) {
@@ -57,7 +58,7 @@ int memvar_set(memvar_store_t *store, const char *name, const value_t *val) {
         }
     }
 
-    printf("Too many memory variables.\n");
+    prog_error(ERR_TOO_MANY_VARS, "Too many memory variables");
     return -1;
 }
 

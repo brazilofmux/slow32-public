@@ -26,12 +26,12 @@ Database closed.
 Zap complete.
 3 record(s) indexed.
 Count: 3
-Uniqueness violation on index UNIQIDX.NDX
+*** Uniqueness violation on index UNIQIDX.NDX in STRESS_INDEX.PRG line 60
 After dup: 4
 AAA val: .T. 1
 --- Unique REPLACE ---
 Before: BBB 2
-Uniqueness violation on index UNIQIDX.NDX
+*** Uniqueness violation on index UNIQIDX.NDX in STRESS_INDEX.PRG line 70
 After: BBB 2
 --- Delete pack reindex ---
 1 record deleted.
@@ -42,3 +42,4 @@ AAA: .T. 1
 CCC: .T. 3
 BBB: .F.
 Database closed.
+

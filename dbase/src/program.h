@@ -111,10 +111,19 @@ int prog_is_running(void);
 #define ERR_SYNTAX         14
 #define ERR_TYPE_MISMATCH  15
 #define ERR_UNRECOGNIZED   17
+#define ERR_TOO_MANY_VARS  18
 #define ERR_DIV_ZERO       21
+#define ERR_OUT_OF_MEMORY  22
+#define ERR_STACK_OVERFLOW 24
 #define ERR_NO_DATABASE    36
+#define ERR_CANNOT_CREATE 110
+#define ERR_CANNOT_OPEN   111
+#define ERR_ALIAS_NOT_FOUND 128
+#define ERR_UNIQUE        143
 
 void prog_error(int code, const char *message);
+void prog_error_fmt(int code, const char *fmt, ...);
+int expr_error_code(const char *msg);
 int prog_get_error_code(void);
 const char *prog_get_error_message(void);
 int prog_get_lineno(void);

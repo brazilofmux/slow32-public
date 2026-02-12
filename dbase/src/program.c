@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include "program.h"
 #include "command.h"
 #include "func.h"
@@ -76,7 +77,7 @@ void prog_init(void) {
 static void prog_run(void);
 
 /* Helper: map expression error string to error code */
-static int expr_error_code(const char *msg) {
+int expr_error_code(const char *msg) {
     if (!msg) return ERR_SYNTAX;
     if (strstr(msg, "ivision by zero")) return ERR_DIV_ZERO;
     if (strstr(msg, "ype mismatch")) return ERR_TYPE_MISMATCH;
@@ -99,11 +100,15 @@ void prog_error(int code, const char *message) {
         error_state.program[0] = '\0';
     }
 
-    /* If ON ERROR handler is set and we're not already in it, invoke it */
+    /* If ON ERROR handler is set and we're not already in it, invoke it.
+       Use prog_call_sync so the handler runs to completion before we
+       check RETRY — prog_do alone only pushes a frame and relies on
+       the caller's prog_run loop, which doesn't work when prog_error
+       is called from deep inside a command handler (e.g. REPLACE). */
     if (error_state.on_error_proc[0] && !error_state.in_handler) {
         error_state.in_handler = 1;
         error_state.retry = 0;
-        prog_do(error_state.on_error_proc);
+        prog_call_sync(error_state.on_error_proc);
         if (error_state.retry && state.running) {
             /* Decrement PC so the failed line re-executes */
             if (state.pc > 0) state.pc--;
@@ -120,6 +125,15 @@ void prog_error(int code, const char *message) {
     } else {
         printf("*** %s\n", message);
     }
+}
+
+void prog_error_fmt(int code, const char *fmt, ...) {
+    char buf[256];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    prog_error(code, buf);
 }
 
 int prog_get_error_code(void) {
@@ -720,7 +734,7 @@ static int push_frame(program_t *new_prog, int start_line) {
     call_frame_t *frame;
 
     if (state.call_depth >= MAX_CALL_DEPTH) {
-        printf("Call stack overflow.\n");
+        prog_error(ERR_STACK_OVERFLOW, "Call stack overflow");
         return -1;
     }
 
@@ -1930,6 +1944,7 @@ void prog_private(lexer_t *l) {
     if (!state.running || state.call_depth <= 0) {
         /* In interactive mode or top level, PRIVATE is ignored */
         while (l->current.type != TOK_EOF) lex_next(l);
+        if (state.running) state.pc++;
         return;
     }
 

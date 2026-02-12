@@ -20,7 +20,7 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
       3 Bob                 
 . . --- REPLACE rejection ---
 . . Alice                25
-. Uniqueness violation on index UNIQ.NDX
+. *** Uniqueness violation on index UNIQ.NDX
 . Alice                25
 . Record# NAME                
       1 Alice               
@@ -33,7 +33,7 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
       2 Alice                 30
       3 Bob                   35
 . . Alice                25
-. Uniqueness violation on index UAGE.NDX
+. *** Uniqueness violation on index UAGE.NDX
 . Alice                25
 . Order set to 1 (UAGE.NDX).
 . Record# NAME                 AGE
