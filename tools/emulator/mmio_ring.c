@@ -159,10 +159,38 @@ void mmio_cleanup_services(mmio_ring_state_t *mmio) {
 
 // ========== Term service implementation ==========
 
+#define TERM_MAX_ROWS 256
+#define TERM_MAX_COLS 256
+#define TERM_MAX_SAVE_DEPTH 8
+
+typedef struct {
+    uint8_t ch;
+    uint8_t attr;   // 0=normal, 1=bold, 7=reverse, etc.
+    uint8_t fg;     // ANSI 0-7
+    uint8_t bg;     // ANSI 0-7
+} term_cell_t;
+
+typedef struct {
+    term_cell_t *cells;    // rows * cols cells
+    int rows, cols;
+    int cur_row, cur_col;  // 0-based
+    int cur_attr;
+    int cur_fg, cur_bg;
+} term_screen_save_t;
+
 typedef struct {
     struct termios saved_termios;
     bool raw_mode;
     bool termios_saved;
+    // Shadow screen buffer
+    int rows, cols;
+    int cur_row, cur_col;  // 0-based
+    int cur_attr;
+    int cur_fg, cur_bg;
+    term_cell_t *cells;    // rows * cols, heap-allocated
+    // Save stack
+    term_screen_save_t save_stack[TERM_MAX_SAVE_DEPTH];
+    int save_depth;
 } term_state_t;
 
 static void *term_create(void) {
@@ -171,6 +199,28 @@ static void *term_create(void) {
     if (isatty(STDIN_FILENO) && tcgetattr(STDIN_FILENO, &ts->saved_termios) == 0) {
         ts->termios_saved = true;
     }
+    // Initialize shadow screen buffer
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) {
+        ts->rows = 24;
+        ts->cols = 80;
+    } else {
+        ts->rows = (ws.ws_row > TERM_MAX_ROWS) ? TERM_MAX_ROWS : ws.ws_row;
+        ts->cols = (ws.ws_col > TERM_MAX_COLS) ? TERM_MAX_COLS : ws.ws_col;
+    }
+    if (ts->rows < 1) ts->rows = 24;
+    if (ts->cols < 1) ts->cols = 80;
+    ts->cells = calloc((size_t)ts->rows * ts->cols, sizeof(term_cell_t));
+    if (ts->cells) {
+        // Fill with spaces
+        for (int i = 0; i < ts->rows * ts->cols; i++) {
+            ts->cells[i].ch = ' ';
+            ts->cells[i].fg = 7;  // default white
+        }
+    }
+    ts->cur_fg = 7;
+    ts->cur_bg = 0;
+    ts->save_depth = 0;
     return ts;
 }
 
@@ -180,7 +230,87 @@ static void term_cleanup(void *state) {
     if (ts->raw_mode && ts->termios_saved) {
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &ts->saved_termios);
     }
+    for (int i = 0; i < ts->save_depth; i++) {
+        free(ts->save_stack[i].cells);
+    }
+    free(ts->cells);
     free(ts);
+}
+
+// Shadow buffer helpers
+static inline term_cell_t *term_cell_at(term_state_t *ts, int row, int col) {
+    if (!ts->cells || row < 0 || row >= ts->rows || col < 0 || col >= ts->cols)
+        return NULL;
+    return &ts->cells[row * ts->cols + col];
+}
+
+static void term_shadow_putc(term_state_t *ts, int ch) {
+    if (!ts->cells) return;
+    if (ch == '\n') {
+        ts->cur_row++;
+        ts->cur_col = 0;
+        return;
+    }
+    if (ch == '\r') {
+        ts->cur_col = 0;
+        return;
+    }
+    if (ch == '\t') {
+        ts->cur_col = (ts->cur_col + 8) & ~7;
+        if (ts->cur_col >= ts->cols) {
+            ts->cur_col = 0;
+            ts->cur_row++;
+        }
+        return;
+    }
+    if (ch < 0x20) return;  // skip other control chars
+    term_cell_t *c = term_cell_at(ts, ts->cur_row, ts->cur_col);
+    if (c) {
+        c->ch = (uint8_t)ch;
+        c->attr = (uint8_t)ts->cur_attr;
+        c->fg = (uint8_t)ts->cur_fg;
+        c->bg = (uint8_t)ts->cur_bg;
+    }
+    ts->cur_col++;
+    if (ts->cur_col >= ts->cols) {
+        ts->cur_col = 0;
+        ts->cur_row++;
+    }
+}
+
+static void term_shadow_clear(term_state_t *ts, int mode) {
+    if (!ts->cells) return;
+    int start, end;
+    switch (mode) {
+        case 0: // full screen
+            start = 0;
+            end = ts->rows * ts->cols;
+            ts->cur_row = 0;
+            ts->cur_col = 0;
+            break;
+        case 1: // to end of line
+            start = ts->cur_row * ts->cols + ts->cur_col;
+            end = (ts->cur_row + 1) * ts->cols;
+            break;
+        case 2: // to end of screen
+            start = ts->cur_row * ts->cols + ts->cur_col;
+            end = ts->rows * ts->cols;
+            break;
+        default:
+            start = 0;
+            end = ts->rows * ts->cols;
+            ts->cur_row = 0;
+            ts->cur_col = 0;
+            break;
+    }
+    if (start < 0) start = 0;
+    if (end > ts->rows * ts->cols) end = ts->rows * ts->cols;
+    for (int i = start; i < end; i++) {
+        ts->cells[i].ch = ' ';
+        ts->cells[i].attr = 0;
+        ts->cells[i].fg = 7;
+        ts->cells[i].bg = 0;
+    }
 }
 
 static void term_handle(void *state, mmio_ring_state_t *mmio,
@@ -247,6 +377,8 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
             uint32_t col = req->status & 0xFFFF;
             fprintf(stdout, "\033[%u;%uH", row, col);
             fflush(stdout);
+            ts->cur_row = (int)row - 1;  // shadow: 0-based
+            ts->cur_col = (int)col - 1;
             resp->status = S32_MMIO_STATUS_OK;
             break;
         }
@@ -259,6 +391,7 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
                 default: fprintf(stdout, "\033[2J\033[H"); break;
             }
             fflush(stdout);
+            term_shadow_clear(ts, (int)req->status);
             resp->status = S32_MMIO_STATUS_OK;
             break;
         }
@@ -266,6 +399,7 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
             // status: 0 = normal, 1 = bold, 7 = reverse
             fprintf(stdout, "\033[%um", req->status);
             fflush(stdout);
+            ts->cur_attr = (int)req->status;
             resp->status = S32_MMIO_STATUS_OK;
             break;
         }
@@ -296,6 +430,8 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
             uint32_t bg = req->status & 0xFF;
             fprintf(stdout, "\033[3%u;4%um", fg, bg);
             fflush(stdout);
+            ts->cur_fg = (int)fg;
+            ts->cur_bg = (int)bg;
             resp->status = S32_MMIO_STATUS_OK;
             break;
         }
@@ -303,6 +439,7 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
             int ch = (int)(req->status & 0xFF);
             fputc(ch, stdout);
             fflush(stdout);
+            term_shadow_putc(ts, ch);
             resp->status = S32_MMIO_STATUS_OK;
             break;
         }
@@ -311,9 +448,109 @@ static void term_handle(void *state, mmio_ring_state_t *mmio,
             uint32_t len = req->length;
             if (len > S32_MMIO_DATA_CAPACITY - off)
                 len = S32_MMIO_DATA_CAPACITY - off;
-            if (len > 0)
+            if (len > 0) {
                 fwrite(mmio->data_buffer + off, 1, len, stdout);
+                for (uint32_t i = 0; i < len; i++)
+                    term_shadow_putc(ts, mmio->data_buffer[off + i]);
+            }
             fflush(stdout);
+            resp->status = S32_MMIO_STATUS_OK;
+            break;
+        }
+        case S32_TERM_SAVE_SCREEN: {
+            if (!ts->cells || ts->save_depth >= TERM_MAX_SAVE_DEPTH) {
+                resp->status = S32_MMIO_STATUS_ERR;
+                break;
+            }
+            size_t ncells = (size_t)ts->rows * ts->cols;
+            term_cell_t *snap = malloc(ncells * sizeof(term_cell_t));
+            if (!snap) {
+                resp->status = S32_MMIO_STATUS_ERR;
+                break;
+            }
+            memcpy(snap, ts->cells, ncells * sizeof(term_cell_t));
+            term_screen_save_t *s = &ts->save_stack[ts->save_depth++];
+            s->cells = snap;
+            s->rows = ts->rows;
+            s->cols = ts->cols;
+            s->cur_row = ts->cur_row;
+            s->cur_col = ts->cur_col;
+            s->cur_attr = ts->cur_attr;
+            s->cur_fg = ts->cur_fg;
+            s->cur_bg = ts->cur_bg;
+            resp->status = S32_MMIO_STATUS_OK;
+            break;
+        }
+        case S32_TERM_RESTORE_SCREEN: {
+            if (ts->save_depth <= 0) {
+                resp->status = S32_MMIO_STATUS_ERR;
+                break;
+            }
+            term_screen_save_t *s = &ts->save_stack[--ts->save_depth];
+            // Repaint: clear screen, then redraw all cells
+            fprintf(stdout, "\033[0m\033[2J\033[H");
+            int prev_attr = 0, prev_fg = 7, prev_bg = 0;
+            int paint_rows = (s->rows < ts->rows) ? s->rows : ts->rows;
+            int paint_cols = (s->cols < ts->cols) ? s->cols : ts->cols;
+            for (int r = 0; r < paint_rows; r++) {
+                // Move to start of row
+                fprintf(stdout, "\033[%d;1H", r + 1);
+                int last_written_col = -1;
+                for (int c = 0; c < paint_cols; c++) {
+                    term_cell_t *cell = &s->cells[r * s->cols + c];
+                    // Skip trailing spaces with default attributes
+                    if (cell->ch == ' ' && cell->attr == 0 &&
+                        cell->fg == 7 && cell->bg == 0)
+                        continue;
+                    // Position cursor if we skipped columns
+                    if (c != last_written_col + 1)
+                        fprintf(stdout, "\033[%d;%dH", r + 1, c + 1);
+                    // Set attributes if changed
+                    if (cell->attr != prev_attr) {
+                        fprintf(stdout, "\033[%um", (unsigned)cell->attr);
+                        prev_attr = cell->attr;
+                    }
+                    if (cell->fg != prev_fg || cell->bg != prev_bg) {
+                        fprintf(stdout, "\033[3%u;4%um",
+                                (unsigned)cell->fg, (unsigned)cell->bg);
+                        prev_fg = cell->fg;
+                        prev_bg = cell->bg;
+                    }
+                    fputc(cell->ch, stdout);
+                    last_written_col = c;
+                }
+            }
+            // Restore shadow buffer from saved state
+            size_t ncells = (size_t)ts->rows * ts->cols;
+            if (s->rows == ts->rows && s->cols == ts->cols) {
+                memcpy(ts->cells, s->cells, ncells * sizeof(term_cell_t));
+            } else {
+                // Dimension mismatch: clear and copy what fits
+                for (size_t i = 0; i < ncells; i++) {
+                    ts->cells[i].ch = ' ';
+                    ts->cells[i].attr = 0;
+                    ts->cells[i].fg = 7;
+                    ts->cells[i].bg = 0;
+                }
+                for (int r = 0; r < paint_rows; r++)
+                    memcpy(&ts->cells[r * ts->cols],
+                           &s->cells[r * s->cols],
+                           (size_t)paint_cols * sizeof(term_cell_t));
+            }
+            ts->cur_row = s->cur_row;
+            ts->cur_col = s->cur_col;
+            ts->cur_attr = s->cur_attr;
+            ts->cur_fg = s->cur_fg;
+            ts->cur_bg = s->cur_bg;
+            // Restore cursor position and attributes on terminal
+            fprintf(stdout, "\033[%um", (unsigned)ts->cur_attr);
+            fprintf(stdout, "\033[3%u;4%um",
+                    (unsigned)ts->cur_fg, (unsigned)ts->cur_bg);
+            fprintf(stdout, "\033[%d;%dH",
+                    ts->cur_row + 1, ts->cur_col + 1);
+            fflush(stdout);
+            free(s->cells);
+            s->cells = NULL;
             resp->status = S32_MMIO_STATUS_OK;
             break;
         }

@@ -75,8 +75,13 @@ validation, and menu/popup definition errors still use direct `printf()`
 FIELD_NAME (C,10), FIELD_TYPE (C,1), FIELD_LEN (N,3,0), FIELD_DEC (N,3,0),
 one record per source field. Used for dynamic schema operations.
 
-### 3.3 SAVE SCREEN / RESTORE SCREEN
-Save and restore terminal contents. Used for popup dialogs and help screens.
+### 3.3 ~~SAVE SCREEN / RESTORE SCREEN~~ — RESOLVED
+Implemented via host-side screen buffer stack in the term service. Two new
+term opcodes (`SAVE_SCREEN`, `RESTORE_SCREEN`) push/pop screen snapshots
+in the emulator. The emulator maintains a shadow buffer tracking all
+`PUTC`/`PUTS`/`CLEAR`/`MOVE_CURSOR`/`SET_ATTR`/`SET_COLOR` operations.
+Supports up to 8 levels of nesting. Restore repaints via ANSI escapes with
+minimal redundancy (skips default-attribute spaces, batches attribute changes).
 
 ### 3.4 REPLICATE Off-by-one
 `func.c` — `fn_replicate` limits the total length to 254 characters due to a

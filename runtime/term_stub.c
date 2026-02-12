@@ -50,3 +50,11 @@ void term_putc(int ch) {
 void term_puts(const char *s) {
     fputs(s, stdout);
 }
+
+int term_save_screen(void) {
+    return -1;
+}
+
+int term_restore_screen(void) {
+    return -1;
+}

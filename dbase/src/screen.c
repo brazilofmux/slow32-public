@@ -68,6 +68,22 @@ void screen_shutdown(void) {
 #endif
 }
 
+void screen_save(void) {
+#if HAS_TERM
+    if (scr.term_available) {
+        term_save_screen();
+    }
+#endif
+}
+
+void screen_restore(void) {
+#if HAS_TERM
+    if (scr.term_available) {
+        term_restore_screen();
+    }
+#endif
+}
+
 int screen_term_available(void) { return scr.term_available; }
 
 /* ---- Apply PICTURE mask to a string ---- */

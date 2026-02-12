@@ -39,4 +39,10 @@ void term_putc(int ch);
 /* Output a string at the cursor position. */
 void term_puts(const char *s);
 
+/* Save screen contents (push onto emulator-side stack). Returns 0 on success. */
+int term_save_screen(void);
+
+/* Restore screen contents (pop from emulator-side stack). Returns 0 on success. */
+int term_restore_screen(void);
+
 #endif /* _TERM_H */

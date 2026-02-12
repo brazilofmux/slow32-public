@@ -114,6 +114,10 @@ int screen_check_escape(void);
    Returns dBase key code. Only available when HAS_TERM is 1. */
 int read_dbase_key(void);
 
+/* SAVE SCREEN / RESTORE SCREEN */
+void screen_save(void);
+void screen_restore(void);
+
 /* Check if terminal service is available */
 int screen_term_available(void);
 

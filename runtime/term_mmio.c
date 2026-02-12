@@ -127,3 +127,15 @@ void term_puts(const char *s) {
     memcpy((void *)data_buffer, s, len);
     s32_mmio_request(term_base_opcode + 9, len, 0, 0);
 }
+
+int term_save_screen(void) {
+    if (!term_initialized) return -1;
+    int result = s32_mmio_request(term_base_opcode + 10, 0, 0, 0);
+    return (result == (int)S32_MMIO_STATUS_OK) ? 0 : -1;
+}
+
+int term_restore_screen(void) {
+    if (!term_initialized) return -1;
+    int result = s32_mmio_request(term_base_opcode + 11, 0, 0, 0);
+    return (result == (int)S32_MMIO_STATUS_OK) ? 0 : -1;
+}

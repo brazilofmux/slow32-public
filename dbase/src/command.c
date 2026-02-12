@@ -5047,6 +5047,10 @@ static void h_modify(dbf_t *db, lexer_t *l) {
 static void h_save(dbf_t *db, lexer_t *l) {
     (void)db;
     lex_next(l); /* skip SAVE */
+    if (cmd_kw(l, "SCREEN")) {
+        screen_save();
+        return;
+    }
     if (cmd_kw(l, "TO")) {
         lex_next(l);
         char fname[128];
@@ -5083,6 +5087,10 @@ static void h_save(dbf_t *db, lexer_t *l) {
 static void h_restore(dbf_t *db, lexer_t *l) {
     (void)db;
     lex_next(l); /* skip RESTORE */
+    if (cmd_kw(l, "SCREEN")) {
+        screen_restore();
+        return;
+    }
     if (cmd_kw(l, "FROM")) {
         lex_next(l);
         char fname[128];
