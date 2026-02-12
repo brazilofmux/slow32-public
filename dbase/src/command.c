@@ -1791,6 +1791,55 @@ typedef struct {
     int npairs;
 } replace_ctx_t;
 
+static int replace_capture_expr(lexer_t *l, char *out, int out_size) {
+    const char *expr_start;
+    int depth = 0;
+    int expr_len;
+
+    if (l->current.type == TOK_EOF) {
+        prog_error(ERR_SYNTAX, "Expected expression after WITH");
+        return -1;
+    }
+
+    expr_start = l->token_start;
+
+    while (l->current.type != TOK_EOF) {
+        if (depth == 0) {
+            if (l->current.type == TOK_COMMA)
+                break;
+            if (l->current.type == TOK_IDENT &&
+                (is_keyword(l->current.text, "FOR") ||
+                 is_keyword(l->current.text, "WHILE") ||
+                 is_keyword(l->current.text, "ALL") ||
+                 is_keyword(l->current.text, "NEXT") ||
+                 is_keyword(l->current.text, "RECORD") ||
+                 is_keyword(l->current.text, "REST"))) {
+                break;
+            }
+        }
+
+        if (l->current.type == TOK_LPAREN) depth++;
+        else if (l->current.type == TOK_RPAREN && depth > 0) depth--;
+        lex_next(l);
+    }
+
+    expr_len = (int)(l->token_start - expr_start);
+    while (expr_len > 0 &&
+           (expr_start[expr_len - 1] == ' ' || expr_start[expr_len - 1] == '\t'))
+        expr_len--;
+
+    if (expr_len <= 0) {
+        prog_error(ERR_SYNTAX, "Expected expression after WITH");
+        return -1;
+    }
+
+    if (expr_len >= out_size)
+        expr_len = out_size - 1;
+    memcpy(out, expr_start, expr_len);
+    out[expr_len] = '\0';
+    return 0;
+}
+
 static int replace_cb(dbf_t *db, uint32_t recno, void *userdata) {
     replace_ctx_t *rctx = userdata;
     char formatted[256];
@@ -1925,7 +1974,7 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
 
             if (npairs >= MAX_REPLACE_PAIRS) {
                 prog_error(ERR_SYNTAX, "Too many REPLACE fields");
-                return;
+                goto cleanup;
             }
 
             /* Field name lookup (once) */
@@ -1937,23 +1986,16 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
             pairs[npairs].field_idx = dbf_find_field(db, field_name);
             if (pairs[npairs].field_idx < 0) {
                 prog_error_fmt(ERR_SYNTAX, "Field not found: %s", field_name);
-                return;
+                goto cleanup;
             }
 
             if (cmd_kw(&parse_l, "WITH")) lex_next(&parse_l);
 
-            /* Capture expression string using expr_eval to find boundaries */
-            const char *expr_start = parse_l.token_start;
-            value_t dummy;
-            if (expr_eval(&expr_ctx, &parse_l.token_start, &dummy) != 0) {
-                report_expr_error();
-                return;
+            /* Capture expression boundaries without evaluating side effects. */
+            if (replace_capture_expr(&parse_l, pairs[npairs].expr,
+                                     sizeof(pairs[npairs].expr)) != 0) {
+                goto cleanup;
             }
-            int elen = (int)(parse_l.token_start - expr_start);
-            if (elen >= (int)sizeof(pairs[npairs].expr))
-                elen = (int)sizeof(pairs[npairs].expr) - 1;
-            memcpy(pairs[npairs].expr, expr_start, elen);
-            pairs[npairs].expr[elen] = '\0';
 
             /* Pre-compile AST if no macros */
             pairs[npairs].ast = NULL;
@@ -1984,6 +2026,12 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
         }
     }
 
+    for (int p = 0; p < npairs; p++) {
+        if (pairs[p].ast) ast_free(pairs[p].ast);
+    }
+    return;
+
+cleanup:
     for (int p = 0; p < npairs; p++) {
         if (pairs[p].ast) ast_free(pairs[p].ast);
     }
