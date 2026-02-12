@@ -11,7 +11,7 @@ function show_help() {
     echo "SLOW-32 Emulator Runner"
     echo "Usage: s32run [options] program.s32x [args...]"
     echo ""
-    echo "Emulator Selection (default: slow32-dbt -4):"
+    echo "Emulator Selection (default: slow32-dbt):"
     echo "  -f, --fast        Use optimized C++ emulator (slow32-fast)"
     echo "  -d, --dbt         Use dynamic binary translator (slow32-dbt) [default]"
     echo "  -i, --interp      Use C++ interpreter (slow32)"
@@ -131,8 +131,8 @@ elif [ "$EMULATOR" = "slow32-fast" ]; then
     # slow32-fast doesn't support debug options, just program and args
     exec $EMULATOR "$PROGRAM" "${PROGRAM_ARGS[@]}"
 elif [ "$EMULATOR" = "slow32-dbt" ]; then
-    # slow32-dbt: default to Stage 4 + register allocation
-    exec $EMULATOR -4 $DEBUG_OPTS "$PROGRAM" "${PROGRAM_ARGS[@]}"
+    # slow32-dbt: Stage 4 is the default
+    exec $EMULATOR $DEBUG_OPTS "$PROGRAM" "${PROGRAM_ARGS[@]}"
 else
     # slow32 supports debug options
     exec $EMULATOR $DEBUG_OPTS "$PROGRAM" "${PROGRAM_ARGS[@]}"
