@@ -3,6 +3,7 @@
 #include <string.h>
 #include "index.h"
 #include "util.h"
+#include "date.h"
 
 static void page_free(ndx_page_t *p);
 static int page_flush(index_t *idx, int page_no);
@@ -11,6 +12,55 @@ static void hash_remove(index_t *idx, ndx_page_t *p);
 static ndx_page_t *hash_lookup(index_t *idx, int page_no);
 static ndx_page_t *page_get(index_t *idx, int page_no);
 static void page_put(ndx_page_t *p);
+
+static void encode_sortable_double(double n, char *out) {
+    static const char hex[] = "0123456789ABCDEF";
+    uint64_t bits;
+    int i;
+
+    /* Normalize NaN to zero for deterministic key generation. */
+    if (n != n) n = 0.0;
+
+    memcpy(&bits, &n, sizeof(bits));
+    if (bits & 0x8000000000000000ULL)
+        bits = ~bits;
+    else
+        bits ^= 0x8000000000000000ULL;
+
+    for (i = 15; i >= 0; i--) {
+        out[i] = hex[bits & 0x0F];
+        bits >>= 4;
+    }
+    out[16] = '\0';
+}
+
+void index_format_key_value(int key_type, const value_t *val, char *buf, int size) {
+    if (size <= 0) return;
+    buf[0] = '\0';
+
+    if (key_type == 1) {
+        char tmp[17];
+        double n = 0.0;
+        if (val->type == VAL_NUM) n = val->num;
+        else if (val->type == VAL_CHAR) n = atof(val->str);
+        encode_sortable_double(n, tmp);
+        str_copy(buf, tmp, size);
+        return;
+    }
+
+    if (key_type == 2) {
+        char tmp[9];
+        int32_t d = 0;
+        if (val->type == VAL_DATE) d = val->date;
+        else if (val->type == VAL_NUM) d = (int32_t)val->num;
+        else if (val->type == VAL_CHAR && strlen(val->str) == 8) d = date_from_dbf(val->str);
+        date_to_dbf(d, tmp);  /* canonical YYYYMMDD for index keys */
+        str_copy(buf, tmp, size);
+        return;
+    }
+
+    val_to_string(val, buf, size);
+}
 
 /* ---- Key comparison ---- */
 static int key_cmp(const char *a, const char *b, int key_len) {
@@ -1190,16 +1240,16 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
 
         if (expr_eval_str(ctx, key_expr, &val) != 0) continue;
 
-        val_to_string(&val, keybuf, sizeof(keybuf));
-        int len = strlen(keybuf);
-        if (len > max_len) max_len = len;
-
         if (!key_type_set) {
             if (val.type == VAL_NUM) idx->key_type = 1;
             else if (val.type == VAL_DATE) idx->key_type = 2;
             else idx->key_type = 0;
             key_type_set = 1;
         }
+
+        index_format_key_value(idx->key_type, &val, keybuf, sizeof(keybuf));
+        int len = strlen(keybuf);
+        if (idx->key_type == 0 && len > max_len) max_len = len;
 
         /* Store entry for sorting */
         memset(entries[nentries].key, ' ', MAX_INDEX_KEY);
@@ -1209,9 +1259,18 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
         nentries++;
     }
 
-    if (max_len < 1) max_len = 1;
-    if (max_len > MAX_INDEX_KEY) max_len = MAX_INDEX_KEY;
-    idx->key_len = max_len;
+    if (!key_type_set) {
+        idx->key_type = 0;
+        idx->key_len = 1;
+    } else if (idx->key_type == 1) {
+        idx->key_len = 16; /* sortable transformed IEEE-754 hex */
+    } else if (idx->key_type == 2) {
+        idx->key_len = 8;  /* canonical YYYYMMDD */
+    } else {
+        if (max_len < 1) max_len = 1;
+        if (max_len > MAX_INDEX_KEY) max_len = MAX_INDEX_KEY;
+        idx->key_len = max_len;
+    }
 
     compute_fanout(idx);
 

@@ -127,7 +127,7 @@ static int eval_index_key(index_t *idx, char *keybuf) {
 
     if (expr_eval_str(&expr_ctx, idx->key_expr, &val) != 0)
         return -1;
-    val_to_string(&val, tmp, sizeof(tmp));
+    index_format_key_value(idx->key_type, &val, tmp, sizeof(tmp));
     /* Pad to key_len with spaces */
     {
         int len = strlen(tmp);
@@ -259,6 +259,7 @@ static void follow_relations(void) {
                 if (child->order > 0 && child->order <= child->num_indexes)
                     idx = &child->indexes[child->order - 1];
                 if (idx && idx->active) {
+                    index_format_key_value(idx->key_type, &key, buf, sizeof(buf));
                     index_seek(idx, buf);
                     {
                         uint32_t rec = index_current_recno(idx);
@@ -3983,8 +3984,9 @@ static void cmd_seek(dbf_t *db, const char *arg) {
         return;
     }
 
-    val_to_string(&val, key, sizeof(key));
-    trim_right(key);
+    index_format_key_value(idx->key_type, &val, key, sizeof(key));
+    if (idx->key_type == 0)
+        trim_right(key);
 
     if (index_seek(idx, key)) {
         uint32_t rec = index_current_recno(idx);

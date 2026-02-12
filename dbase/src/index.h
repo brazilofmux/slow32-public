@@ -84,6 +84,10 @@ void index_init(index_t *idx);
 /* Build index from database using key expression */
 int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, const char *filename);
 
+/* Format an evaluated expression value into a canonical index key string
+   for the given key type (0=char, 1=numeric, 2=date). */
+void index_format_key_value(int key_type, const value_t *val, char *buf, int size);
+
 /* Write index to .NDX file */
 int index_write(index_t *idx);
 

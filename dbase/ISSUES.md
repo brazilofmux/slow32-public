@@ -109,10 +109,11 @@ significant win (compile once, evaluate many) was already captured in 2.4.
 non-padded strings (e.g., "10", "2"). `memcmp` based sorting in `index.c`
 consequently orders "10" < "2", breaking numeric index integrity.
 
-### 6.2 Broken Negative Number Sorting (Problem)
-`SORT` uses raw DBF string data for keys. While right-aligned, the ASCII
-order (space < dash < digits) causes negative numbers to sort incorrectly
-relative to positive numbers (e.g., " 1" < "-1" < "10").
+### 6.2 Incorrect Numeric Semantics in `SORT` (Problem)
+`SORT` uses raw DBF string data for keys. While right-aligned, ASCII
+ordering (space < dash < digits) can produce non-numeric ordering across
+sign boundaries (e.g., `" 1" < "-1" < "10"`). This is a command-level
+sorting semantics issue, not index structure corruption.
 
 ### 6.3 UDF Host Stack Recursion (Problem)
 While `DO` calls are now iterative, UDF calls still cause host C stack
@@ -120,10 +121,11 @@ recursion because `prog_udf_call` invokes `prog_run` synchronously from
 within `expr_eval`. Deeply nested or recursive UDFs will still hit the
 host stack limit.
 
-### 6.4 String Concatenation `-` Deviation (Problem)
+### 6.4 String Concatenation `-` Compatibility Candidate (Needs Baseline)
 The `-` operator between strings trims trailing spaces from the left operand
-but does not append them to the end of the result. Standard dBase III
-semantics require preserving total length (e.g., "A  " - "B  " -> "AB    ").
+but does not append them to the end of the result. This likely differs from
+classic xBase behavior, but the exact target semantics should be confirmed
+against the intended dBase III / Clipper / FoxPro compatibility baseline.
 
 ### 6.5 Index Key Volatility (Problem)
 Date index keys are generated via `date_to_display`, which depends on the
@@ -138,7 +140,9 @@ when the index is opened would significantly improve performance.
 ### 6.7 Standard-Compliant Index Keys (Opportunity)
 Numeric index keys should use a fixed-width, right-aligned, zero-padded (or
 binary) format. Date index keys should always use `DTOS()` (YYYYMMDD) format
-internally to ensure format independence and chronological order.
+internally to ensure format independence and chronological order. This is the
+architectural fix path for 6.1 (numeric index ordering) and 6.5 (date key
+volatility across `SET DATE` formats).
 
 ## 4. Test Coverage Gaps
 
@@ -175,4 +179,3 @@ Major completed areas (not exhaustive):
 - UNIQUE indexes and two-phase constraint checking
 - Date arithmetic, path normalization, cross-area cache invalidation
 - Stress test suite (strings, recursion, big DB, indexes, work areas)
-
