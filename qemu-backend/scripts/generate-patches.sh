@@ -84,6 +84,18 @@ else
     echo "" > "$PATCHES_DIR/05-gitignore.patch"
 fi
 
+# 6. QAPI machine enum (SysEmuTarget registration)
+echo "6. Generating QAPI machine enum patch..."
+git diff $BASE_COMMIT $CURRENT_COMMIT -- qapi/machine.json > "$PATCHES_DIR/06-qapi-machine.patch" 2>/dev/null || true
+
+if [ -s "$PATCHES_DIR/06-qapi-machine.patch" ]; then
+    lines=$(wc -l < "$PATCHES_DIR/06-qapi-machine.patch")
+    echo "   Created: 06-qapi-machine.patch ($lines lines)"
+else
+    echo "   No changes in qapi/machine.json"
+    echo "" > "$PATCHES_DIR/06-qapi-machine.patch"
+fi
+
 # Summary
 echo ""
 echo "Patch generation complete!"
