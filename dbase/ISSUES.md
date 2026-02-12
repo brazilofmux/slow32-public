@@ -95,10 +95,10 @@ full instead of continuing to scan for the 0x1A terminator.
 Fixed: `cmd_report_form` now heap-allocates `frm_def_t` (~14KB) instead of
 placing it on the stack.
 
-### 3.7 AST Constant Folding
-`ast.c` — The `ast_eval()` engine currently evaluates all nodes at runtime.
-Adding a simple constant folding pass to `ast_compile()` would improve
-performance for expressions like `2 + 3` or `YEAR({02/11/26})`.
+### 3.7 AST Constant Folding — WON'T FIX
+Real dBase expressions are nearly all field/variable references and function
+calls. Pure constant subexpressions are extremely rare in practice. The
+significant win (compile once, evaluate many) was already captured in 2.4.
 
 ## 4. Test Coverage Gaps
 
