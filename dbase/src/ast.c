@@ -616,13 +616,18 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
             if (left.type == VAL_NUM && right.type == VAL_NUM) {
                 *result = val_num(left.num + right.num);
             } else if (left.type == VAL_CHAR && right.type == VAL_CHAR) {
-                /* String concatenation */
+                /* String concatenation (truncate if too long) */
                 char buf[256];
                 str_copy(buf, left.str, sizeof(buf));
                 {
                     int len = strlen(buf);
-                    if (len + (int)strlen(right.str) < (int)sizeof(buf))
-                        strcat(buf, right.str);
+                    int rlen = strlen(right.str);
+                    int avail = (int)sizeof(buf) - 1 - len;
+                    if (avail > 0) {
+                        if (rlen > avail) rlen = avail;
+                        memcpy(buf + len, right.str, rlen);
+                        buf[len + rlen] = '\0';
+                    }
                 }
                 *result = val_str(buf);
             } else if (left.type == VAL_DATE && right.type == VAL_NUM) {
@@ -649,8 +654,15 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
                 len = strlen(buf);
                 while (len > 0 && buf[len - 1] == ' ') len--;
                 buf[len] = '\0';
-                if (len + (int)strlen(right.str) < (int)sizeof(buf))
-                    strcat(buf, right.str);
+                {
+                    int rlen = strlen(right.str);
+                    int avail = (int)sizeof(buf) - 1 - len;
+                    if (avail > 0) {
+                        if (rlen > avail) rlen = avail;
+                        memcpy(buf + len, right.str, rlen);
+                        buf[len + rlen] = '\0';
+                    }
+                }
                 *result = val_str(buf);
             } else {
                 ctx->error = "Type mismatch in -"; return -1;
