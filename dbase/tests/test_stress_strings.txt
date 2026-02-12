@@ -7,15 +7,15 @@
 ? LEN(PADR("X", 300))
 ? LEN(PADL("X", 300))
 ? LEN(PADC("X", 300))
-* Concatenation: 200+200=400 >= 256, right dropped
+* Concatenation: 200+200=400 > 255, truncated to 255
 s1 = REPLICATE("A", 200)
 s2 = REPLICATE("B", 200)
 ? LEN(s1 + s2)
 ? LEN(s1)
-* Concatenation: 200+55=255 < 256, fits
+* Concatenation: 200+55=255, fits exactly
 s3 = REPLICATE("C", 55)
 ? LEN(s1 + s3)
-* Concatenation: 200+56=256 NOT < 256, right dropped
+* Concatenation: 200+56=256 > 255, truncated to 255
 s4 = REPLICATE("D", 56)
 ? LEN(s1 + s4)
 * SUBSTR on max-length string

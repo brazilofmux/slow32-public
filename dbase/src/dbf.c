@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <time.h>
 #include "dbf.h"
 #include "area.h"
 #include "util.h"
@@ -101,9 +102,13 @@ int dbf_create(const char *filename, const dbf_field_t *fields, int nfields) {
         memset(hdr, 0, 32);
         hdr[0] = has_memo ? 0x83 : 0x03; /* 0x83 = dBase III with memo */
     }
-    hdr[1] = 26;   /* year (2026 - 1900) */
-    hdr[2] = 2;    /* month */
-    hdr[3] = 9;    /* day */
+    {
+        time_t now = time(NULL);
+        struct tm *t = localtime(&now);
+        hdr[1] = (unsigned char)(t ? t->tm_year : 126);  /* year - 1900 */
+        hdr[2] = (unsigned char)(t ? t->tm_mon + 1 : 1); /* month 1-12 */
+        hdr[3] = (unsigned char)(t ? t->tm_mday : 1);    /* day 1-31 */
+    }
     write_le32(hdr + 4, 0);          /* record count = 0 */
     write_le16(hdr + 8, hdr_size);
     write_le16(hdr + 10, rec_size);

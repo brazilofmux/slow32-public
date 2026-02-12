@@ -245,10 +245,15 @@ static int parse_add(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
                 if (result->type == VAL_NUM && right.type == VAL_NUM) {
                     result->num += right.num;
                 } else if (result->type == VAL_CHAR && right.type == VAL_CHAR) {
-                    /* String concatenation */
+                    /* String concatenation (truncate if too long) */
                     int len = strlen(result->str);
-                    if (len + (int)strlen(right.str) < (int)sizeof(result->str))
-                        strcat(result->str, right.str);
+                    int rlen = strlen(right.str);
+                    int avail = (int)sizeof(result->str) - 1 - len;
+                    if (avail > 0) {
+                        if (rlen > avail) rlen = avail;
+                        memcpy(result->str + len, right.str, rlen);
+                        result->str[len + rlen] = '\0';
+                    }
                 } else if (result->type == VAL_DATE && right.type == VAL_NUM) {
                     result->date += (int32_t)right.num;
                 } else if (result->type == VAL_NUM && right.type == VAL_DATE) {
@@ -270,8 +275,13 @@ static int parse_add(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
                     int len = strlen(result->str);
                     while (len > 0 && result->str[len-1] == ' ') len--;
                     result->str[len] = '\0';
-                    if (len + (int)strlen(right.str) < (int)sizeof(result->str))
-                        strcat(result->str, right.str);
+                    int rlen = strlen(right.str);
+                    int avail = (int)sizeof(result->str) - 1 - len;
+                    if (avail > 0) {
+                        if (rlen > avail) rlen = avail;
+                        memcpy(result->str + len, right.str, rlen);
+                        result->str[len + rlen] = '\0';
+                    }
                 } else {
                     ctx->error = "Type mismatch in -";
                     return -1;

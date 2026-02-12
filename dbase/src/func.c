@@ -406,7 +406,7 @@ static int fn_replicate(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resu
     n = (int)args[1].num;
     slen = strlen(args[0].str);
     pos = 0;
-    for (i = 0; i < n && pos + slen < (int)sizeof(buf) - 1; i++) {
+    for (i = 0; i < n && pos + slen < (int)sizeof(buf); i++) {
         memcpy(buf + pos, args[0].str, slen);
         pos += slen;
     }

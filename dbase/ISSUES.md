@@ -11,14 +11,12 @@ arithmetic on `token_start`/`l->p`, which break when the multi-character operato
 lookahead in `lex_next` triggers macro expansion as a side effect.
 The callback also uses `ast_eval_dynamic()` for consistent macro re-expansion.
 
-### 1.2 String Concatenation Drop
-`expr.c` — When string concatenation (`+` or `-`) results in a string longer
-than 255 chars, the right operand is currently dropped entirely. It should
-be truncated to fill the remaining space in the 256-byte `value_t.str` buffer.
+### 1.2 ~~String Concatenation Drop~~ — RESOLVED
+Fixed: string concatenation (`+` and `-`) now truncates to fill the 255-byte
+buffer instead of dropping the right operand entirely.
 
-### 1.3 Hardcoded Date in dbf_create
-`dbf.c` — `dbf_create()` hardcodes the file creation year to 26 (2026). It
-should use the system `time()` to provide accurate metadata.
+### 1.3 ~~Hardcoded Date in dbf_create~~ — RESOLVED
+Fixed: `dbf_create()` now uses `time()`/`localtime()` for the file header date.
 
 ## 2. Behavior Regressions / Architecture Follow-ups
 
@@ -83,10 +81,9 @@ in the emulator. The emulator maintains a shadow buffer tracking all
 Supports up to 8 levels of nesting. Restore repaints via ANSI escapes with
 minimal redundancy (skips default-attribute spaces, batches attribute changes).
 
-### 3.4 REPLICATE Off-by-one
-`func.c` — `fn_replicate` limits the total length to 254 characters due to a
-strict `pos + slen < sizeof(buf) - 1` check. It should allow up to 255
-characters (`pos + slen < sizeof(buf)`).
+### 3.4 ~~REPLICATE Off-by-one~~ — RESOLVED
+Fixed: `fn_replicate` now allows up to 255 characters (was 254 due to
+off-by-one in buffer size check).
 
 ### 3.5 dbf_memo_read Wasteful I/O
 `dbf.c` — `dbf_memo_read()` reads the entire memo until a terminator (0x1A),
