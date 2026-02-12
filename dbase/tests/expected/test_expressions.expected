@@ -9,7 +9,7 @@ Stage 9: AST Expressions
 . 20
 . 5
 . Hello World
-. HelloWorld
+. HelloWorld   
 . .T.
 . .F.
 . .T.
@@ -25,4 +25,3 @@ Stage 9: AST Expressions
 . .T.
 . .F.
 . 7
-

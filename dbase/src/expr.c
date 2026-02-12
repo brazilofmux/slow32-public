@@ -271,17 +271,33 @@ static int parse_add(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
                 } else if (result->type == VAL_DATE && right.type == VAL_NUM) {
                     result->date -= (int32_t)right.num;
                 } else if (result->type == VAL_CHAR && right.type == VAL_CHAR) {
-                    /* Trim-concatenate: trim trailing spaces from left, then concat */
-                    int len = strlen(result->str);
-                    while (len > 0 && result->str[len-1] == ' ') len--;
-                    result->str[len] = '\0';
+                    /* Clipper/FoxPro-style trim-concat:
+                       trim trailing spaces from left, append right,
+                       then append trimmed spaces to preserve total length. */
+                    int left_len = strlen(result->str);
+                    int len = left_len;
+                    int trimmed_spaces;
                     int rlen = strlen(right.str);
-                    int avail = (int)sizeof(result->str) - 1 - len;
+                    int avail;
+                    while (len > 0 && result->str[len-1] == ' ') len--;
+                    trimmed_spaces = left_len - len;
+                    result->str[len] = '\0';
+
+                    avail = (int)sizeof(result->str) - 1 - len;
                     if (avail > 0) {
                         if (rlen > avail) rlen = avail;
                         memcpy(result->str + len, right.str, rlen);
-                        result->str[len + rlen] = '\0';
+                        len += rlen;
                     }
+
+                    avail = (int)sizeof(result->str) - 1 - len;
+                    if (avail > 0 && trimmed_spaces > 0) {
+                        int add_spaces = trimmed_spaces;
+                        if (add_spaces > avail) add_spaces = avail;
+                        memset(result->str + len, ' ', add_spaces);
+                        len += add_spaces;
+                    }
+                    result->str[len] = '\0';
                 } else {
                     ctx->error = "Type mismatch in -";
                     return -1;

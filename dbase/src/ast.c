@@ -660,12 +660,18 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
             } else if (left.type == VAL_DATE && right.type == VAL_NUM) {
                 *result = val_date(left.date - (int32_t)right.num);
             } else if (left.type == VAL_CHAR && right.type == VAL_CHAR) {
-                /* Trim-concatenate */
+                /* Clipper/FoxPro-style trim-concat:
+                   trim trailing spaces from left, append right,
+                   then append trimmed spaces to preserve total length. */
                 char buf[256];
                 int len;
+                int left_len;
+                int trimmed_spaces;
                 str_copy(buf, left.str, sizeof(buf));
-                len = strlen(buf);
+                left_len = strlen(buf);
+                len = left_len;
                 while (len > 0 && buf[len - 1] == ' ') len--;
+                trimmed_spaces = left_len - len;
                 buf[len] = '\0';
                 {
                     int rlen = strlen(right.str);
@@ -673,9 +679,19 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
                     if (avail > 0) {
                         if (rlen > avail) rlen = avail;
                         memcpy(buf + len, right.str, rlen);
-                        buf[len + rlen] = '\0';
+                        len += rlen;
                     }
                 }
+                {
+                    int avail = (int)sizeof(buf) - 1 - len;
+                    if (avail > 0 && trimmed_spaces > 0) {
+                        int add_spaces = trimmed_spaces;
+                        if (add_spaces > avail) add_spaces = avail;
+                        memset(buf + len, ' ', add_spaces);
+                        len += add_spaces;
+                    }
+                }
+                buf[len] = '\0';
                 *result = val_str(buf);
             } else {
                 ctx->error = "Type mismatch in -"; return -1;

@@ -129,11 +129,13 @@ Additional hardening:
 Current behavior: recursion is bounded by a conservative UDF callback nesting
 guard to stay within SLOW-32 stack constraints.
 
-### 6.4 String Concatenation `-` Compatibility Candidate (Needs Baseline)
-The `-` operator between strings trims trailing spaces from the left operand
-but does not append them to the end of the result. This likely differs from
-classic xBase behavior, but the exact target semantics should be confirmed
-against the intended dBase III / Clipper / FoxPro compatibility baseline.
+### 6.4 ~~String Concatenation `-` Compatibility Candidate~~ — RESOLVED
+Fixed: string `-` now uses Clipper/FoxPro-leaning trim-concat semantics:
+trim trailing spaces from the left operand, append the right operand, then
+append the trimmed spaces to preserve total width (subject to 255-byte cap).
+Implemented in both expression evaluators (`expr.c` and `ast.c`) with
+regression coverage (`test_string_minus_ast`) and updated expression expected
+output.
 
 ### 6.5 ~~Index Key Volatility~~ — RESOLVED
 Fixed: date index keys now use canonical DBF format (`YYYYMMDD`) internally
