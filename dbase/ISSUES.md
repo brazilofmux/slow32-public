@@ -4,13 +4,10 @@ This is a *living* planning document. Completed items are summarized at the end.
 
 ## 1. Open Bugs (Correctness)
 
-### 1.1 CALCULATE expression capture breaks with macro expansion
-`command.c` — `cmd_calculate()` captures expression text via `token_start` while
-the lexer advances. With macro expansion, `token_start` can point into the macro
-stack buffer and be invalidated, leading to corrupted or truncated expressions.
-
-**Suggested fix:** Copy the raw expression text into a stable buffer before the
-lexer advances, or parse into AST directly.
+### 1.1 ~~CALCULATE expression capture breaks with macro expansion~~ — RESOLVED
+Fixed: expression text is now captured from the stable original-input pointer
+(`l->p`) instead of `token_start`, which can point into ephemeral macro buffers.
+The callback also uses `ast_eval_dynamic()` for consistent macro re-expansion.
 
 ## 2. Behavior Regressions / Architecture Follow-ups
 

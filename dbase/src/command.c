@@ -1569,7 +1569,7 @@ static int calculate_cb(dbf_t *db, uint32_t recno, void *userdata) {
         double v;
         if (ctx->aggs[i].type == AGG_CNT)
             continue;
-        if (expr_eval_str(&expr_ctx, ctx->aggs[i].expr, &val) != 0) {
+        if (ast_eval_dynamic(ctx->aggs[i].expr, &expr_ctx, &val) != 0) {
             report_expr_error();
             return REC_ERROR;
         }
@@ -1643,12 +1643,15 @@ static void cmd_calculate(dbf_t *db, lexer_t *l) {
             printf("Expected '(' after aggregate function.\n");
             return;
         }
-        lex_next(l); /* consume '(' */
 
         /* Extract inner expression up to matching ')' */
         {
-            const char *start = l->token_start;
+            /* Save original-input position after '(' — l->p doesn't advance
+               during macro expansion, so this is always in the stable input
+               buffer even if the expression contains &macros. */
+            const char *orig_start = l->p;
             int depth = 1;
+            lex_next(l); /* consume '(' — reads first inner token */
             while (l->current.type != TOK_EOF && depth > 0) {
                 if (l->current.type == TOK_LPAREN) depth++;
                 else if (l->current.type == TOK_RPAREN) {
@@ -1662,10 +1665,11 @@ static void cmd_calculate(dbf_t *db, lexer_t *l) {
                 return;
             }
             {
-                int len = (int)(l->token_start - start);
+                int len = (int)(l->token_start - orig_start);
+                if (len < 0) len = 0;
                 if (len >= (int)sizeof(ctx.aggs[0].expr))
                     len = (int)sizeof(ctx.aggs[0].expr) - 1;
-                memcpy(ctx.aggs[ctx.naggs].expr, start, len);
+                memcpy(ctx.aggs[ctx.naggs].expr, orig_start, len);
                 ctx.aggs[ctx.naggs].expr[len] = '\0';
                 trim_right(ctx.aggs[ctx.naggs].expr);
             }
