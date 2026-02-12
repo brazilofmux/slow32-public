@@ -558,7 +558,7 @@ symbol_intern:                          # @symbol_intern
 	addi r16, r16, 4
 	blt r17, r1, .LBB6_2
 .LBB6_6:
-	addi r3, r0, 512
+	addi r3, r0, 1024
 	blt r1, r3, .LBB6_8
 .LBB6_7:
 	lui r1, %hi(g_error)
@@ -1196,7 +1196,7 @@ root_stack:
 	.comm	sym_count,4,4
 	.type	sym_table,@object               # @sym_table
 	.local	sym_table
-	.comm	sym_table,2048,4
+	.comm	sym_table,4096,4
 	.type	gc_list,@object                 # @gc_list
 	.local	gc_list
 	.comm	gc_list,4,4

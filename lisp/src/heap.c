@@ -45,7 +45,7 @@ static int obj_count;
 static int gc_threshold = 256;
 
 /* Symbol intern table */
-#define MAX_SYMBOLS 512
+#define MAX_SYMBOLS 1024
 static val_t sym_table[MAX_SYMBOLS];
 static int sym_count;
 

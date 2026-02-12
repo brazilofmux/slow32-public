@@ -15,11 +15,10 @@
 - Problem: Conversion path negated signed `int` (`n = -n`) for negative values.
 - Fix: Convert through unsigned math (`-(n+1) + 1u`). Regression test `16-minint` added.
 
-## 4) `env_lookup` Error Path Assumes Symbol Type (Low)
+## 4) `env_lookup` Error Path Assumes Symbol Type (Low) — RESOLVED
 - File: `lisp/src/env.c`
-- Problem: Unbound-variable message dereferences `AS_OBJ(sym)->symbol.name` without validating type.
-- Risk: Malformed call paths can crash while reporting the original error.
-- Suggested fix: Guard with symbol type check and use generic message for non-symbol values.
+- Problem: Unbound-variable message dereferenced `AS_OBJ(sym)->symbol.name` without validating type.
+- Fix: Guard with `IS_PTR` + type check; falls back to generic message for non-symbol values.
 
 ## Regression Tests To Add
 - `number->string` with minimum integer value.
@@ -33,8 +32,8 @@
 - `read_string` now uses a dynamically-grown malloc'd buffer (starts at 256, doubles as needed).
 - `read_symbol_or_number` now errors on symbols exceeding 255 chars instead of silently truncating.
 
-### 6) Symbol Table Capacity (Low)
-- `MAX_SYMBOLS` is currently set to 512. Larger programs or extensive libraries may reach this limit, causing an "out of memory" or "too many symbols" error.
+### 6) Symbol Table Capacity (Low) — RESOLVED
+- `MAX_SYMBOLS` bumped from 512 to 1024, doubling headroom for larger programs and a future prelude.
 
 ### 7) Reader Dotted Pair Naming Constraint (Low)
 - `.` is not allowed within symbols, preventing naming conventions like `pkg.func`.

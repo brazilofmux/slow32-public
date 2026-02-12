@@ -22,7 +22,10 @@ val_t env_lookup(val_t env, val_t sym) {
         }
         e = CDR(e);
     }
-    lisp_error2("unbound variable", AS_OBJ(sym)->symbol.name);
+    if (IS_PTR(sym) && AS_OBJ(sym)->type == OBJ_SYMBOL)
+        lisp_error2("unbound variable", AS_OBJ(sym)->symbol.name);
+    else
+        lisp_error("unbound variable");
     return NIL;
 }
 

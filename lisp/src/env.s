@@ -33,42 +33,60 @@ env_lookup:                             # @env_lookup
 	add fp, sp, r0
 	addi fp, fp, 24
 	stw fp+-4, r11
-	stw fp+-8, lr
-	addi r11, r0, 0
-                                        # implicit-def: $r1
+	stw fp+-8, r12
+	stw fp+-12, lr
+	addi r12, r0, 0
+                                        # implicit-def: $r11
 	jal r0, .LBB1_3
 .LBB1_1:
 	ldw r3, r3+16
 .LBB1_2:
-	bne r5, r11, .LBB1_10
+	bne r1, r12, .LBB1_14
 .LBB1_3:
-	beq r3, r11, .LBB1_9
+	beq r3, r12, .LBB1_9
 .LBB1_4:
-	ldw r7, r3+12
+	ldw r6, r3+12
 	jal r0, .LBB1_6
 .LBB1_5:
-	ldw r1, r7+16
-	add r7, r5, r0
-	beq r6, r4, .LBB1_2
+	ldw r11, r6+16
+	add r6, r1, r0
+	beq r5, r4, .LBB1_2
 .LBB1_6:
-	add r5, r7, r0
-	beq r7, r11, .LBB1_1
+	add r1, r6, r0
+	beq r6, r12, .LBB1_1
 .LBB1_7:
-	ldw r7, r5+12
-	ldw r6, r7+12
-	beq r6, r4, .LBB1_5
+	ldw r6, r1+12
+	ldw r5, r6+12
+	beq r5, r4, .LBB1_5
 .LBB1_8:
-	ldw r7, r5+16
-	bne r6, r4, .LBB1_6
+	ldw r6, r1+16
+	bne r5, r4, .LBB1_6
 	jal r0, .LBB1_2
 .LBB1_9:
+	beq r4, r12, .LBB1_13
+.LBB1_10:
+	andi r1, r4, 1
+	addi r11, r0, 0
+	bne r1, r11, .LBB1_13
+.LBB1_11:
+	ldw r1, r4+0
+	addi r3, r0, 1
+	bne r1, r3, .LBB1_13
+.LBB1_12:
 	ldw r4, r4+12
 	lui r3, %hi(.L.str)
 	addi r3, r3, %lo(.L.str)
 	jal r31, lisp_error2
+	jal r0, .LBB1_14
+.LBB1_13:
+	lui r3, %hi(.L.str)
+	addi r3, r3, %lo(.L.str)
+	jal r31, lisp_error
+	add r11, r12, r0
+.LBB1_14:
 	add r1, r11, r0
-.LBB1_10:
-	ldw lr, fp+-8
+	ldw lr, fp+-12
+	ldw r12, fp+-8
 	ldw r11, fp+-4
 	ldw lr, sp+0
 	ldw fp, sp+4
