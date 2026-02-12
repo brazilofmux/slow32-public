@@ -986,8 +986,24 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -2        Use Stage 2 mode (block cache + chaining)\n");
     fprintf(stderr, "  -3        Use Stage 3 mode (inline indirect lookup)\n");
     fprintf(stderr, "  -4        Use Stage 4 mode (superblock extension, default)\n");
+    fprintf(stderr, "  --allow <list>  Only allow these MMIO services (comma-separated)\n");
+    fprintf(stderr, "  --deny <list>   Deny these MMIO services (comma-separated)\n");
     fprintf(stderr, "\nEnvironment:\n");
     fprintf(stderr, "  SLOW32_DBT_ALIGN_TRAP=1  Trap on unaligned LD/ST/fetch\n");
+}
+
+static void parse_service_list(const char *list, char names[][S32_MAX_SVC_NAME], int *count, int max) {
+    char buf[256];
+    strncpy(buf, list, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+    char *saveptr = NULL;
+    char *tok = strtok_r(buf, ",", &saveptr);
+    while (tok && *count < max) {
+        strncpy(names[*count], tok, S32_MAX_SVC_NAME - 1);
+        names[*count][S32_MAX_SVC_NAME - 1] = '\0';
+        (*count)++;
+        tok = strtok_r(NULL, ",", &saveptr);
+    }
 }
 
 int main(int argc, char **argv) {
@@ -1010,6 +1026,22 @@ int main(int argc, char **argv) {
     uint32_t emit_trace_pc = 0;
     if (trace_pc_env && trace_pc_env[0] != '\0') {
         emit_trace_pc = (uint32_t)strtoul(trace_pc_env, NULL, 0);
+    }
+
+    // Pre-scan for --allow/--deny (strip before single-char parser)
+    svc_policy_t svc_policy = { .default_allow = true };
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--allow") == 0 && i + 1 < argc) {
+            parse_service_list(argv[i + 1], svc_policy.allow_list, &svc_policy.allow_count, S32_MAX_SERVICES);
+            memmove(&argv[i], &argv[i + 2], (argc - i - 2) * sizeof(char *));
+            argc -= 2;
+            i--;
+        } else if (strcmp(argv[i], "--deny") == 0 && i + 1 < argc) {
+            parse_service_list(argv[i + 1], svc_policy.deny_list, &svc_policy.deny_count, S32_MAX_SERVICES);
+            memmove(&argv[i], &argv[i + 2], (argc - i - 2) * sizeof(char *));
+            argc -= 2;
+            i--;
+        }
     }
 
     // Parse arguments
@@ -1131,6 +1163,12 @@ int main(int argc, char **argv) {
     if (!dbt_load_s32x(&cpu, filename)) {
         dbt_cpu_destroy(&cpu);
         return 1;
+    }
+
+    // Apply service policy
+    if (cpu.mmio_enabled && mmio_initialized &&
+        (svc_policy.allow_count > 0 || svc_policy.deny_count > 0)) {
+        mmio_set_policy(&mmio_state, &svc_policy);
     }
 
     if (verbose) {

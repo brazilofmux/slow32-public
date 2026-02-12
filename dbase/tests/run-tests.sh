@@ -4,7 +4,7 @@ set -e
 
 BASDIR="$(cd "$(dirname "$0")/.." && pwd)"
 EMU="${EMU:-$BASDIR/../tools/emulator/slow32-fast}"
-EMU_ARGS="--deny term"
+EMU_ARGS="${EMU_ARGS---deny term}"
 DBASE="$BASDIR/dbase.s32x"
 
 if [ ! -f "$DBASE" ]; then
