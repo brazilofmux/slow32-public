@@ -1786,12 +1786,101 @@ typedef struct {
     ast_node_t *ast;     /* pre-compiled AST, NULL if contains &macro */
 } replace_pair_t;
 
-static void cmd_replace(dbf_t *db, lexer_t *l) {
+typedef struct {
+    replace_pair_t *pairs;
+    int npairs;
+} replace_ctx_t;
+
+static int replace_cb(dbf_t *db, uint32_t recno, void *userdata) {
+    replace_ctx_t *rctx = userdata;
     char formatted[256];
     char old_keys[MAX_INDEXES][MAX_INDEX_KEY + 1];
-    int has_indexes;
+    (void)recno;
+
+    int has_indexes = (cur_wa()->num_indexes > 0);
+    if (has_indexes)
+        indexes_capture_keys(db, old_keys);
+
+    memo_snapshot_t memo_snap;
+    memo_snap.valid = 0;
+
+    for (int p = 0; p < rctx->npairs; p++) {
+        value_t val;
+        char valbuf[256];
+
+        if (rctx->pairs[p].ast) {
+            if (ast_eval(rctx->pairs[p].ast, &expr_ctx, &val) != 0) {
+                report_expr_error();
+                return REC_ERROR;
+            }
+        } else {
+            if (ast_eval_dynamic(rctx->pairs[p].expr, &expr_ctx, &val) != 0) {
+                report_expr_error();
+                return REC_ERROR;
+            }
+        }
+
+        val_to_string(&val, valbuf, sizeof(valbuf));
+        int idx = rctx->pairs[p].field_idx;
+
+        switch (db->fields[idx].type) {
+        case 'C':
+            if (val.type == VAL_CHAR)
+                field_format_char(formatted, db->fields[idx].length, val.str);
+            else
+                field_format_char(formatted, db->fields[idx].length, valbuf);
+            break;
+        case 'N':
+            field_format_numeric(formatted, db->fields[idx].length,
+                                 db->fields[idx].decimals, valbuf);
+            break;
+        case 'D':
+            if (val.type == VAL_DATE) date_to_dbf(val.date, formatted);
+            else field_format_date(formatted, valbuf);
+            break;
+        case 'L':
+            if (val.type == VAL_LOGIC) {
+                formatted[0] = val.logic ? 'T' : 'F';
+                formatted[1] = '\0';
+            } else field_format_logical(formatted, valbuf);
+            break;
+        case 'M': {
+            const char *memo_text = (val.type == VAL_CHAR) ? val.str : valbuf;
+            if (!memo_snap.valid)
+                dbf_memo_snapshot(db, &memo_snap);
+            int nb = dbf_memo_write(db, memo_text, strlen(memo_text));
+            if (nb > 0)
+                snprintf(formatted, sizeof(formatted), "%10d", nb);
+            else
+                memset(formatted, ' ', 10);
+            formatted[10] = '\0';
+            break;
+        }
+        default:
+            field_format_char(formatted, db->fields[idx].length, valbuf);
+            break;
+        }
+
+        dbf_set_field_raw(db, idx, formatted);
+    }
+
+    /* Update indexes before flush — if UNIQUE violated, discard changes */
+    if (has_indexes) {
+        if (indexes_update_current(db, old_keys) != 0) {
+            if (memo_snap.valid)
+                dbf_memo_restore(db, &memo_snap);
+            db->record_dirty = 0;
+            dbf_read_record(db, db->current_record);
+            return REC_CONTINUE;  /* skip, not fatal */
+        }
+    }
+
+    dbf_flush_record(db);
+    return REC_CONTINUE;
+}
+
+static void cmd_replace(dbf_t *db, lexer_t *l) {
     clause_t c;
-    uint32_t start, end, i;
     replace_pair_t pairs[MAX_REPLACE_PAIRS];
     int npairs = 0;
 
@@ -1820,11 +1909,6 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
     }
 
     if (parse_clauses(&temp_l, &c) < 0) return;
-
-    if (scope_bounds(db, &c.scope, &start, &end) < 0) {
-        prog_error(ERR_RECORD_RANGE, "Invalid scope");
-        return;
-    }
 
     /* --- Pre-parse field/expression pairs (parse once) --- */
     {
@@ -1885,122 +1969,24 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
         }
     }
 
-    /* Compile clause ASTs (parse once, evaluate many) */
-    clause_compile(&c, &memvar_store);
+    replace_ctx_t rctx = { pairs, npairs };
 
-    /* --- Record loop (evaluate pre-parsed pairs) --- */
-    for (i = start; i <= end; i++) {
-        if (dbf_read_record(db, i) < 0) continue;
-        if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
-
-        if (c.for_ast) {
-            value_t cond;
-            if (ast_eval(c.for_ast, &expr_ctx, &cond) != 0) { report_expr_error(); goto cleanup; }
-            if (cond.type != VAL_LOGIC || !cond.logic) continue;
-        } else if (c.for_cond[0]) {
-            value_t cond;
-            if (ast_eval_dynamic(c.for_cond, &expr_ctx, &cond) != 0) { report_expr_error(); goto cleanup; }
-            if (cond.type != VAL_LOGIC || !cond.logic) continue;
+    if (c.has_scope || c.for_cond[0] || c.while_cond[0]) {
+        /* Explicit scope or conditions: use process_records for index traversal */
+        process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET,
+                        replace_cb, &rctx);
+    } else {
+        /* Default NEXT 1: replace current physical record directly */
+        if (db->current_record > 0 && db->current_record <= db->record_count) {
+            dbf_read_record(db, db->current_record);
+            if (!skip_deleted(db->record_buf) && check_filter(db))
+                replace_cb(db, db->current_record, &rctx);
         }
-        if (c.while_ast) {
-            value_t cond;
-            if (ast_eval(c.while_ast, &expr_ctx, &cond) != 0) { report_expr_error(); goto cleanup; }
-            if (cond.type != VAL_LOGIC || !cond.logic) break;
-        } else if (c.while_cond[0]) {
-            value_t cond;
-            if (ast_eval_dynamic(c.while_cond, &expr_ctx, &cond) != 0) { report_expr_error(); goto cleanup; }
-            if (cond.type != VAL_LOGIC || !cond.logic) break;
-        }
-
-        /* Capture keys before modification */
-        has_indexes = (cur_wa()->num_indexes > 0);
-        if (has_indexes)
-            indexes_capture_keys(db, old_keys);
-
-        memo_snapshot_t memo_snap;
-        memo_snap.valid = 0;
-
-        for (int p = 0; p < npairs; p++) {
-            value_t val;
-            char valbuf[256];
-
-            /* Evaluate expression */
-            if (pairs[p].ast) {
-                if (ast_eval(pairs[p].ast, &expr_ctx, &val) != 0) {
-                    report_expr_error();
-                    goto cleanup;
-                }
-            } else {
-                if (ast_eval_dynamic(pairs[p].expr, &expr_ctx, &val) != 0) {
-                    report_expr_error();
-                    goto cleanup;
-                }
-            }
-
-            val_to_string(&val, valbuf, sizeof(valbuf));
-            int idx = pairs[p].field_idx;
-
-            switch (db->fields[idx].type) {
-            case 'C':
-                if (val.type == VAL_CHAR)
-                    field_format_char(formatted, db->fields[idx].length, val.str);
-                else
-                    field_format_char(formatted, db->fields[idx].length, valbuf);
-                break;
-            case 'N':
-                field_format_numeric(formatted, db->fields[idx].length,
-                                     db->fields[idx].decimals, valbuf);
-                break;
-            case 'D':
-                if (val.type == VAL_DATE) date_to_dbf(val.date, formatted);
-                else field_format_date(formatted, valbuf);
-                break;
-            case 'L':
-                if (val.type == VAL_LOGIC) {
-                    formatted[0] = val.logic ? 'T' : 'F';
-                    formatted[1] = '\0';
-                } else field_format_logical(formatted, valbuf);
-                break;
-            case 'M': {
-                const char *memo_text = (val.type == VAL_CHAR) ? val.str : valbuf;
-                if (!memo_snap.valid)
-                    dbf_memo_snapshot(db, &memo_snap);
-                int nb = dbf_memo_write(db, memo_text, strlen(memo_text));
-                if (nb > 0)
-                    snprintf(formatted, sizeof(formatted), "%10d", nb);
-                else
-                    memset(formatted, ' ', 10);
-                formatted[10] = '\0';
-                break;
-            }
-            default:
-                field_format_char(formatted, db->fields[idx].length, valbuf);
-                break;
-            }
-
-            dbf_set_field_raw(db, idx, formatted);
-        }
-
-        /* Update indexes before flush — if UNIQUE violated, discard changes */
-        if (has_indexes) {
-            if (indexes_update_current(db, old_keys) != 0) {
-                /* Reload original record from disk, discarding in-memory changes */
-                if (memo_snap.valid)
-                    dbf_memo_restore(db, &memo_snap);
-                db->record_dirty = 0;
-                dbf_read_record(db, db->current_record);
-                continue;
-            }
-        }
-
-        dbf_flush_record(db);
     }
 
-cleanup:
     for (int p = 0; p < npairs; p++) {
         if (pairs[p].ast) ast_free(pairs[p].ast);
     }
-    clause_free_ast(&c);
 }
 
 /* ---- SCATTER / GATHER ---- */

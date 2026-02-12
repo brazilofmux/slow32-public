@@ -42,10 +42,13 @@ loop. Expressions pre-compiled to AST (unless they contain `&` macros). Evaluati
 inside the loop uses `ast_eval` or `ast_eval_dynamic`. FOR/WHILE clauses also
 pre-compiled via `clause_compile()`.
 
-### 2.5 REPLACE Index Inconsistency
-`command.c` — `cmd_replace()` uses a manual physical record loop instead of
-`process_records()`. This makes it ignore the controlling index, which differs
-from other record-oriented commands like `COUNT`, `SUM`, or `LOCATE`.
+### 2.5 REPLACE Index Inconsistency — RESOLVED
+Refactored `cmd_replace()` to use `process_records()` with a `replace_cb`
+callback when an explicit scope or FOR/WHILE clause is present. This makes
+REPLACE traverse via `controlling_index()` like `COUNT`, `SUM`, `DELETE`, etc.
+The default case (implicit NEXT 1, no conditions) still replaces the current
+physical record directly, since after `APPEND BLANK` the index cursor and
+physical cursor may diverge.
 
 ### 2.6 Recursive prog_run
 `program.c` — `prog_run()` contains a recursive call to itself when popping a
