@@ -609,6 +609,16 @@ static int eval_ast_logical(expr_ctx_t *ctx, ast_node_t *ast, int *result) {
     return 0;
 }
 
+static int eval_dynamic_logical(expr_ctx_t *ctx, const char *expr, int *result) {
+    value_t res;
+    if (ast_eval_dynamic(expr, ctx, &res) != 0) {
+        if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
+        return -1;
+    }
+    *result = (res.type == VAL_LOGIC && res.logic);
+    return 0;
+}
+
 static int scan_record_matches(loop_entry_t *loop, dbf_t *db, int *stop_scan) {
     expr_ctx_t *ctx = cmd_get_expr_ctx();
     int ok;
@@ -621,7 +631,7 @@ static int scan_record_matches(loop_entry_t *loop, dbf_t *db, int *stop_scan) {
         if (area_get_current()->filter_ast) {
             if (eval_ast_logical(ctx, area_get_current()->filter_ast, &ok) < 0) return -1;
         } else {
-            if (eval_logical(ctx, area_get_current()->filter_cond, &ok) < 0) return -1;
+            if (eval_dynamic_logical(ctx, area_get_current()->filter_cond, &ok) < 0) return -1;
         }
         if (!ok) return 0;
     }
@@ -630,7 +640,7 @@ static int scan_record_matches(loop_entry_t *loop, dbf_t *db, int *stop_scan) {
         if (eval_ast_logical(ctx, loop->scan_clause.while_ast, &ok) < 0) return -1;
         if (!ok) { *stop_scan = 1; return 0; }
     } else if (loop->scan_clause.while_cond[0]) {
-        if (eval_logical(ctx, loop->scan_clause.while_cond, &ok) < 0) return -1;
+        if (eval_dynamic_logical(ctx, loop->scan_clause.while_cond, &ok) < 0) return -1;
         if (!ok) { *stop_scan = 1; return 0; }
     }
 
@@ -638,7 +648,7 @@ static int scan_record_matches(loop_entry_t *loop, dbf_t *db, int *stop_scan) {
         if (eval_ast_logical(ctx, loop->scan_clause.for_ast, &ok) < 0) return -1;
         if (!ok) return 0;
     } else if (loop->scan_clause.for_cond[0]) {
-        if (eval_logical(ctx, loop->scan_clause.for_cond, &ok) < 0) return -1;
+        if (eval_dynamic_logical(ctx, loop->scan_clause.for_cond, &ok) < 0) return -1;
         if (!ok) return 0;
     }
 
@@ -1011,8 +1021,10 @@ void prog_do(const char *arg) {
             return;
         }
 
-        /* Compile condition to AST */
-        cond_ast = ast_compile(cond, cmd_get_memvar_store(), &ast_err);
+        /* Compile condition to AST (skip caching for macro expressions) */
+        cond_ast = NULL;
+        if (!strchr(cond, '&'))
+            cond_ast = ast_compile(cond, cmd_get_memvar_store(), &ast_err);
 
         /* Evaluate condition (use AST if available) */
         if (cond_ast) {
@@ -1023,7 +1035,7 @@ void prog_do(const char *arg) {
                 return;
             }
         } else {
-            if (expr_eval_str(ctx, cond, &val) != 0) {
+            if (ast_eval_dynamic(cond, ctx, &val) != 0) {
                 if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);
                 state.pc++;
                 return;
@@ -1407,7 +1419,7 @@ void prog_enddo(void) {
         if (loop->condition_ast)
             eval_ok = (ast_eval(loop->condition_ast, ctx, &val) == 0);
         else
-            eval_ok = (expr_eval_str(ctx, loop->condition, &val) == 0);
+            eval_ok = (ast_eval_dynamic(loop->condition, ctx, &val) == 0);
 
         if (!eval_ok) {
             if (ctx->error) prog_error(expr_error_code(ctx->error), ctx->error);

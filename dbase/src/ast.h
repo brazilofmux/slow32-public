@@ -52,6 +52,10 @@ ast_node_t *ast_compile_adv(const char **pp, memvar_store_t *store, const char *
 /* Evaluate AST.  Returns 0 on success, -1 on error. */
 int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result);
 
+/* Compile, evaluate, and free a fresh AST in one shot.
+   Used for expressions containing &macros that must re-expand each time. */
+int ast_eval_dynamic(const char *expr, expr_ctx_t *ctx, value_t *result);
+
 /* Free AST recursively.  Safe to call with NULL. */
 void ast_free(ast_node_t *node);
 

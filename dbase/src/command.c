@@ -604,7 +604,7 @@ static int check_filter(dbf_t *db) {
         if (ast_eval(cur_wa()->filter_ast, &expr_ctx, &cond) != 0)
             return 1;  /* on error, pass through */
     } else {
-        if (expr_eval_str(&expr_ctx, cur_wa()->filter_cond, &cond) != 0)
+        if (ast_eval_dynamic(cur_wa()->filter_cond, &expr_ctx, &cond) != 0)
             return 1;  /* on error, pass through */
     }
     return (cond.type == VAL_LOGIC && cond.logic);
@@ -969,10 +969,10 @@ void clause_init(clause_t *c) {
 
 void clause_compile(clause_t *c, memvar_store_t *store) {
     const char *error;
-    if (c->for_cond[0] && !c->for_ast) {
+    if (c->for_cond[0] && !c->for_ast && !strchr(c->for_cond, '&')) {
         c->for_ast = ast_compile(c->for_cond, store, &error);
     }
-    if (c->while_cond[0] && !c->while_ast) {
+    if (c->while_cond[0] && !c->while_ast && !strchr(c->while_cond, '&')) {
         c->while_ast = ast_compile(c->while_cond, store, &error);
     }
 }
@@ -1178,7 +1178,7 @@ static int process_records(dbf_t *db, clause_t *c, int flags, record_callback_t 
             if (cond.type != VAL_LOGIC || !cond.logic) matched = 0;
         } else if (matched && c->for_cond[0]) {
             value_t cond;
-            if (expr_eval_str(&expr_ctx, c->for_cond, &cond) != 0) { report_expr_error(); count = -1; goto cleanup; }
+            if (ast_eval_dynamic(c->for_cond, &expr_ctx, &cond) != 0) { report_expr_error(); count = -1; goto cleanup; }
             if (cond.type != VAL_LOGIC || !cond.logic) matched = 0;
         }
 
@@ -1188,7 +1188,7 @@ static int process_records(dbf_t *db, clause_t *c, int flags, record_callback_t 
             if (cond.type != VAL_LOGIC || !cond.logic) break;
         } else if (matched && c->while_cond[0]) {
             value_t cond;
-            if (expr_eval_str(&expr_ctx, c->while_cond, &cond) != 0) { report_expr_error(); count = -1; goto cleanup; }
+            if (ast_eval_dynamic(c->while_cond, &expr_ctx, &cond) != 0) { report_expr_error(); count = -1; goto cleanup; }
             if (cond.type != VAL_LOGIC || !cond.logic) break;
         }
 
@@ -4849,7 +4849,8 @@ static void h_set(dbf_t *db, lexer_t *l) {
                 const char *ast_err;
                 str_copy(cur_wa()->filter_cond, arg, sizeof(cur_wa()->filter_cond));
                 if (cur_wa()->filter_ast) { ast_free(cur_wa()->filter_ast); cur_wa()->filter_ast = NULL; }
-                cur_wa()->filter_ast = ast_compile(cur_wa()->filter_cond, &memvar_store, &ast_err);
+                if (!strchr(cur_wa()->filter_cond, '&'))
+                    cur_wa()->filter_ast = ast_compile(cur_wa()->filter_cond, &memvar_store, &ast_err);
                 trim_right(arg);
                 printf("Filter: %s\n", arg);
             }

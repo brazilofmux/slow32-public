@@ -252,11 +252,11 @@ void screen_get(int row, int col, const char *varname, const char *picture,
     /* Compile VALID/WHEN ASTs */
     scr.gets[scr.ngets].valid_ast = NULL;
     scr.gets[scr.ngets].when_ast = NULL;
-    if (scr.gets[scr.ngets].valid_expr[0]) {
+    if (scr.gets[scr.ngets].valid_expr[0] && !strchr(scr.gets[scr.ngets].valid_expr, '&')) {
         const char *ast_err;
         scr.gets[scr.ngets].valid_ast = ast_compile(scr.gets[scr.ngets].valid_expr, store, &ast_err);
     }
-    if (scr.gets[scr.ngets].when_expr[0]) {
+    if (scr.gets[scr.ngets].when_expr[0] && !strchr(scr.gets[scr.ngets].when_expr, '&')) {
         const char *ast_err;
         scr.gets[scr.ngets].when_ast = ast_compile(scr.gets[scr.ngets].when_expr, store, &ast_err);
     }
@@ -338,7 +338,7 @@ void screen_read(void) {
                     continue;
             } else if (scr.gets[i].when_expr[0]) {
                 value_t res;
-                if (expr_eval_str(cmd_get_expr_ctx(), scr.gets[i].when_expr, &res) != 0 ||
+                if (ast_eval_dynamic(scr.gets[i].when_expr, cmd_get_expr_ctx(), &res) != 0 ||
                     (res.type == VAL_LOGIC && !res.logic))
                     continue;
             }
@@ -450,7 +450,7 @@ void screen_read(void) {
                         ok = (ast_eval(scr.gets[i].valid_ast, cmd_get_expr_ctx(), &res) == 0 &&
                               res.type == VAL_LOGIC && res.logic);
                     else
-                        ok = (expr_eval_str(cmd_get_expr_ctx(), scr.gets[i].valid_expr, &res) == 0 &&
+                        ok = (ast_eval_dynamic(scr.gets[i].valid_expr, cmd_get_expr_ctx(), &res) == 0 &&
                               res.type == VAL_LOGIC && res.logic);
                     if (!ok) {
                         if (had_old) memvar_set(store, scr.gets[i].varname, &old_val);
@@ -502,7 +502,7 @@ void screen_read(void) {
                     continue;
             } else if (scr.gets[i].when_expr[0]) {
                 value_t res;
-                if (expr_eval_str(cmd_get_expr_ctx(), scr.gets[i].when_expr, &res) != 0 ||
+                if (ast_eval_dynamic(scr.gets[i].when_expr, cmd_get_expr_ctx(), &res) != 0 ||
                     (res.type == VAL_LOGIC && !res.logic))
                     continue;
             }
@@ -546,7 +546,7 @@ void screen_read(void) {
                         ok = (ast_eval(scr.gets[i].valid_ast, cmd_get_expr_ctx(), &res) == 0 &&
                               res.type == VAL_LOGIC && res.logic);
                     else
-                        ok = (expr_eval_str(cmd_get_expr_ctx(), scr.gets[i].valid_expr, &res) == 0 &&
+                        ok = (ast_eval_dynamic(scr.gets[i].valid_expr, cmd_get_expr_ctx(), &res) == 0 &&
                               res.type == VAL_LOGIC && res.logic);
                     if (!ok) {
                         if (had_old) memvar_set(store, scr.gets[i].varname, &old_val);

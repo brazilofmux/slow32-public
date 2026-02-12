@@ -739,3 +739,12 @@ int ast_eval(ast_node_t *node, expr_ctx_t *ctx, value_t *result) {
     ctx->error = "Unknown AST node type";
     return -1;
 }
+
+int ast_eval_dynamic(const char *expr, expr_ctx_t *ctx, value_t *result) {
+    const char *error;
+    ast_node_t *ast = ast_compile(expr, ctx->vars, &error);
+    if (!ast) return expr_eval_str(ctx, expr, result);
+    int rc = ast_eval(ast, ctx, result);
+    ast_free(ast);
+    return rc;
+}

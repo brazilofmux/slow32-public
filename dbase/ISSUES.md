@@ -17,10 +17,9 @@ lexer advances, or parse into AST directly.
 These are potential behavior shifts introduced by AST-based evaluation and
 lexer changes. Confirm against dBase III expectations.
 
-### 2.1 Macro expansion timing (AST compile-time vs eval-time)
-`ast_compile()` expands `&var` during compile. Previously expansion happened at
-evaluation time. `SET FILTER TO &expr` / `SCAN FOR &cond` may no longer reflect
-changes to macro variables after compilation.
+### 2.1 ~~Macro expansion timing~~ — RESOLVED
+Expressions containing `&` now skip AST caching and recompile fresh on every
+evaluation via `ast_eval_dynamic()`, matching dBase III/FoxPro semantics.
 
 ### 2.2 Array access resolution time
 `name(...)` becomes array access *only if* the array exists at compile time.
@@ -77,6 +76,7 @@ Major completed areas (not exhaustive):
 - Menu system: @PROMPT/MENU TO, DEFINE POPUP/BAR, DEFINE MENU/PAD, ACTIVATE,
   ON SELECTION callbacks
 - AST-based expression parsing/evaluation (FOR/WHILE/FILTER/VALID/WHEN)
+- Eval-time macro expansion for `&var` expressions (detect-and-recompile)
 - ADIR wildcard globbing
 - UNIQUE indexes and two-phase constraint checking
 - Date arithmetic, path normalization, cross-area cache invalidation
