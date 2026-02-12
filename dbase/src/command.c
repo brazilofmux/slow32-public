@@ -1650,7 +1650,9 @@ static void cmd_calculate(dbf_t *db, lexer_t *l) {
            operator lookahead in lex_next can trigger macro expansion as
            a side effect, making l->p unreliable for text capture. */
         {
-            /* token_start points to '(' in the original input */
+            /* token_start points to '(' in the original input.
+               Scan the raw string (not the lexer) to find the matching ')'.
+               This avoids desync if macro expansion injects parentheses. */
             const char *raw = l->token_start + 1;
             int rdepth = 1;
             while (*raw && rdepth > 0) {
@@ -1658,7 +1660,13 @@ static void cmd_calculate(dbf_t *db, lexer_t *l) {
                 else if (*raw == ')') { rdepth--; if (rdepth == 0) break; }
                 else if (*raw == '"' || *raw == '\'') {
                     char q = *raw++;
-                    while (*raw && *raw != q) raw++;
+                    while (*raw) {
+                        if (*raw == q) {
+                            if (*(raw + 1) == q) { raw += 2; continue; }
+                            break; /* closing quote */
+                        }
+                        raw++;
+                    }
                 }
                 else if (*raw == '[') {
                     raw++;
@@ -1667,6 +1675,10 @@ static void cmd_calculate(dbf_t *db, lexer_t *l) {
                 if (*raw) raw++;
             }
             /* raw now points to matching ')' or '\0' */
+            if (!*raw) {
+                printf("Mismatched parentheses.\n");
+                return;
+            }
             {
                 int len = (int)(raw - (l->token_start + 1));
                 if (len >= (int)sizeof(ctx.aggs[0].expr))
@@ -1676,23 +1688,11 @@ static void cmd_calculate(dbf_t *db, lexer_t *l) {
                 trim_right(ctx.aggs[ctx.naggs].expr);
             }
 
-            /* Advance lexer past the expression tokens to ')' */
-            {
-                int depth = 1;
-                lex_next(l); /* consume '(' — reads first inner token */
-                while (l->current.type != TOK_EOF && depth > 0) {
-                    if (l->current.type == TOK_LPAREN) depth++;
-                    else if (l->current.type == TOK_RPAREN) {
-                        depth--;
-                        if (depth == 0) break;
-                    }
-                    lex_next(l);
-                }
-                if (depth != 0) {
-                    printf("Mismatched parentheses.\n");
-                    return;
-                }
-            }
+            /* Reposition lexer past ')' in original input.
+               This bypasses macro expansion entirely, avoiding
+               desync if macros inject or remove parentheses. */
+            l->p = raw + 1;
+            l->macro_depth = 0;
         }
 
         if (agg_type != AGG_CNT && ctx.aggs[ctx.naggs].expr[0] == '\0') {
