@@ -36,11 +36,11 @@ This matches dBase III behavior, which resolves array references at compile time
 `ast_parse_primary()` now enforces `MAX_FUNC_ARGS` at compile time and handles
 `realloc` failure with proper cleanup and "Out of memory" error.
 
-### 2.4 REPLACE Performance & Parsing
-`command.c` — `cmd_replace()` re-initializes a lexer and re-parses the field list
-and expression for *every single record* in the loop. For large databases, this
-is a massive overhead. It should be refactored to parse once into a list of
-field/AST pairs before the loop.
+### 2.4 REPLACE Performance & Parsing — RESOLVED
+Refactored `cmd_replace()` to parse field/expression pairs once before the record
+loop. Expressions pre-compiled to AST (unless they contain `&` macros). Evaluation
+inside the loop uses `ast_eval` or `ast_eval_dynamic`. FOR/WHILE clauses also
+pre-compiled via `clause_compile()`.
 
 ### 2.5 REPLACE Index Inconsistency
 `command.c` — `cmd_replace()` uses a manual physical record loop instead of

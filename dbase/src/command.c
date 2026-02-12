@@ -1778,14 +1778,22 @@ static void cmd_calculate(dbf_t *db, lexer_t *l) {
 }
 
 /* ---- REPLACE (enhanced with expr_eval) ---- */
+
+#define MAX_REPLACE_PAIRS 32
+typedef struct {
+    int field_idx;
+    char expr[256];      /* captured expression string */
+    ast_node_t *ast;     /* pre-compiled AST, NULL if contains &macro */
+} replace_pair_t;
+
 static void cmd_replace(dbf_t *db, lexer_t *l) {
-    char field_name[DBF_MAX_FIELD_NAME];
     char formatted[256];
-    int idx;
     char old_keys[MAX_INDEXES][MAX_INDEX_KEY + 1];
     int has_indexes;
     clause_t c;
     uint32_t start, end, i;
+    replace_pair_t pairs[MAX_REPLACE_PAIRS];
+    int npairs = 0;
 
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
@@ -1810,7 +1818,7 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
         }
         lex_next(&temp_l);
     }
-    
+
     if (parse_clauses(&temp_l, &c) < 0) return;
 
     if (scope_bounds(db, &c.scope, &start, &end) < 0) {
@@ -1818,24 +1826,91 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
         return;
     }
 
+    /* --- Pre-parse field/expression pairs (parse once) --- */
+    {
+        lexer_t parse_l;
+        lexer_init_ext(&parse_l, body_start, expr_ctx.vars);
+
+        while (parse_l.current.type == TOK_IDENT &&
+               !is_keyword(parse_l.current.text, "FOR") &&
+               !is_keyword(parse_l.current.text, "WHILE") &&
+               !is_keyword(parse_l.current.text, "ALL") &&
+               !is_keyword(parse_l.current.text, "NEXT") &&
+               !is_keyword(parse_l.current.text, "RECORD") &&
+               !is_keyword(parse_l.current.text, "REST")) {
+
+            if (npairs >= MAX_REPLACE_PAIRS) {
+                prog_error(ERR_SYNTAX, "Too many REPLACE fields");
+                return;
+            }
+
+            /* Field name lookup (once) */
+            char field_name[DBF_MAX_FIELD_NAME];
+            str_copy(field_name, parse_l.current.text, sizeof(field_name));
+            str_upper(field_name);
+            lex_next(&parse_l);
+
+            pairs[npairs].field_idx = dbf_find_field(db, field_name);
+            if (pairs[npairs].field_idx < 0) {
+                prog_error_fmt(ERR_SYNTAX, "Field not found: %s", field_name);
+                return;
+            }
+
+            if (cmd_kw(&parse_l, "WITH")) lex_next(&parse_l);
+
+            /* Capture expression string using expr_eval to find boundaries */
+            const char *expr_start = parse_l.token_start;
+            value_t dummy;
+            if (expr_eval(&expr_ctx, &parse_l.token_start, &dummy) != 0) {
+                report_expr_error();
+                return;
+            }
+            int elen = (int)(parse_l.token_start - expr_start);
+            if (elen >= (int)sizeof(pairs[npairs].expr))
+                elen = (int)sizeof(pairs[npairs].expr) - 1;
+            memcpy(pairs[npairs].expr, expr_start, elen);
+            pairs[npairs].expr[elen] = '\0';
+
+            /* Pre-compile AST if no macros */
+            pairs[npairs].ast = NULL;
+            if (!strchr(pairs[npairs].expr, '&')) {
+                const char *error;
+                pairs[npairs].ast = ast_compile(pairs[npairs].expr,
+                                                expr_ctx.vars, &error);
+            }
+
+            lexer_init_ext(&parse_l, parse_l.token_start, expr_ctx.vars);
+            if (parse_l.current.type == TOK_COMMA) lex_next(&parse_l);
+            npairs++;
+        }
+    }
+
+    /* Compile clause ASTs (parse once, evaluate many) */
+    clause_compile(&c, &memvar_store);
+
+    /* --- Record loop (evaluate pre-parsed pairs) --- */
     for (i = start; i <= end; i++) {
         if (dbf_read_record(db, i) < 0) continue;
         if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
 
-        if (c.for_cond[0]) {
+        if (c.for_ast) {
             value_t cond;
-            if (expr_eval_str(&expr_ctx, c.for_cond, &cond) != 0) { report_expr_error(); return; }
+            if (ast_eval(c.for_ast, &expr_ctx, &cond) != 0) { report_expr_error(); goto cleanup; }
+            if (cond.type != VAL_LOGIC || !cond.logic) continue;
+        } else if (c.for_cond[0]) {
+            value_t cond;
+            if (ast_eval_dynamic(c.for_cond, &expr_ctx, &cond) != 0) { report_expr_error(); goto cleanup; }
             if (cond.type != VAL_LOGIC || !cond.logic) continue;
         }
-        if (c.while_cond[0]) {
+        if (c.while_ast) {
             value_t cond;
-            if (expr_eval_str(&expr_ctx, c.while_cond, &cond) != 0) { report_expr_error(); return; }
+            if (ast_eval(c.while_ast, &expr_ctx, &cond) != 0) { report_expr_error(); goto cleanup; }
+            if (cond.type != VAL_LOGIC || !cond.logic) break;
+        } else if (c.while_cond[0]) {
+            value_t cond;
+            if (ast_eval_dynamic(c.while_cond, &expr_ctx, &cond) != 0) { report_expr_error(); goto cleanup; }
             if (cond.type != VAL_LOGIC || !cond.logic) break;
         }
-
-        /* Re-parse the field list for each record (brute force for now) */
-        lexer_t replace_l;
-        lexer_init_ext(&replace_l, body_start, expr_ctx.vars);
 
         /* Capture keys before modification */
         has_indexes = (cur_wa()->num_indexes > 0);
@@ -1845,37 +1920,25 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
         memo_snapshot_t memo_snap;
         memo_snap.valid = 0;
 
-        while (replace_l.current.type == TOK_IDENT &&
-               !is_keyword(replace_l.current.text, "FOR") &&
-               !is_keyword(replace_l.current.text, "WHILE") &&
-               !is_keyword(replace_l.current.text, "ALL") &&
-               !is_keyword(replace_l.current.text, "NEXT") &&
-               !is_keyword(replace_l.current.text, "RECORD") &&
-               !is_keyword(replace_l.current.text, "REST")) {
-
-            str_copy(field_name, replace_l.current.text, sizeof(field_name));
-            str_upper(field_name);
-            lex_next(&replace_l);
-
-            idx = dbf_find_field(db, field_name);
-            if (idx < 0) {
-                prog_error_fmt(ERR_SYNTAX, "Field not found: %s", field_name);
-                return;
-            }
-
-            if (cmd_kw(&replace_l, "WITH")) {
-                lex_next(&replace_l);
-            }
-
+        for (int p = 0; p < npairs; p++) {
             value_t val;
             char valbuf[256];
-            if (expr_eval(&expr_ctx, &replace_l.token_start, &val) != 0) {
-                report_expr_error();
-                return;
+
+            /* Evaluate expression */
+            if (pairs[p].ast) {
+                if (ast_eval(pairs[p].ast, &expr_ctx, &val) != 0) {
+                    report_expr_error();
+                    goto cleanup;
+                }
+            } else {
+                if (ast_eval_dynamic(pairs[p].expr, &expr_ctx, &val) != 0) {
+                    report_expr_error();
+                    goto cleanup;
+                }
             }
-            lexer_init_ext(&replace_l, replace_l.token_start, expr_ctx.vars);
 
             val_to_string(&val, valbuf, sizeof(valbuf));
+            int idx = pairs[p].field_idx;
 
             switch (db->fields[idx].type) {
             case 'C':
@@ -1916,10 +1979,6 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
             }
 
             dbf_set_field_raw(db, idx, formatted);
-
-            if (replace_l.current.type == TOK_COMMA) {
-                lex_next(&replace_l);
-            }
         }
 
         /* Update indexes before flush — if UNIQUE violated, discard changes */
@@ -1936,6 +1995,12 @@ static void cmd_replace(dbf_t *db, lexer_t *l) {
 
         dbf_flush_record(db);
     }
+
+cleanup:
+    for (int p = 0; p < npairs; p++) {
+        if (pairs[p].ast) ast_free(pairs[p].ast);
+    }
+    clause_free_ast(&c);
 }
 
 /* ---- SCATTER / GATHER ---- */
