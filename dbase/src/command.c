@@ -1793,7 +1793,8 @@ typedef struct {
 
 static int replace_capture_expr(lexer_t *l, char *out, int out_size) {
     const char *expr_start;
-    int depth = 0;
+    int paren_depth = 0;
+    int bracket_depth = 0;
     int expr_len;
 
     if (l->current.type == TOK_EOF) {
@@ -1804,7 +1805,7 @@ static int replace_capture_expr(lexer_t *l, char *out, int out_size) {
     expr_start = l->token_start;
 
     while (l->current.type != TOK_EOF) {
-        if (depth == 0) {
+        if (paren_depth == 0 && bracket_depth == 0) {
             if (l->current.type == TOK_COMMA)
                 break;
             if (l->current.type == TOK_IDENT &&
@@ -1818,8 +1819,10 @@ static int replace_capture_expr(lexer_t *l, char *out, int out_size) {
             }
         }
 
-        if (l->current.type == TOK_LPAREN) depth++;
-        else if (l->current.type == TOK_RPAREN && depth > 0) depth--;
+        if (l->current.type == TOK_LPAREN) paren_depth++;
+        else if (l->current.type == TOK_RPAREN && paren_depth > 0) paren_depth--;
+        else if (l->current.type == TOK_LBRACKET) bracket_depth++;
+        else if (l->current.type == TOK_RBRACKET && bracket_depth > 0) bracket_depth--;
         lex_next(l);
     }
 
