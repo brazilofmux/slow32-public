@@ -4,14 +4,18 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <poll.h>
 #include <stdio.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "exec/cpu-common.h"
 #include "hw/core/cpu.h"
 #include "qemu/bswap.h"
+#include "qemu/cutils.h"
 #include "qemu/log.h"
 #include "qemu/units.h"
 #include "system/runstate.h"
@@ -52,7 +56,7 @@
 #define S32_MMIO_OP_STAT      0x0A
 #define S32_MMIO_OP_FLUSH     0x0B
 #define S32_MMIO_OP_READ_DIRECT 0x0C
-#define S32_MMIO_OP_FTRUNCATE 0x0D
+#define S32_MMIO_OP_FTRUNCATE   0x0D
 
 #define S32_MMIO_OP_UNLINK    0x20
 #define S32_MMIO_OP_RENAME    0x21
@@ -74,6 +78,39 @@
 #define S32_MMIO_OP_ENVP_INFO 0x62
 #define S32_MMIO_OP_ENVP_DATA 0x63
 #define S32_MMIO_OP_GETENV    0x64
+
+/* Service negotiation opcodes (0xF0-0xF4) */
+#define S32_MMIO_OP_SVC_REQUEST  0xF0
+#define S32_MMIO_OP_SVC_RELEASE  0xF1
+#define S32_MMIO_OP_SVC_QUERY    0xF2
+#define S32_MMIO_OP_SVC_LIST     0xF3
+#define S32_MMIO_OP_SVC_VERSION  0xF4
+
+/* Service negotiation result codes */
+#define S32_SVC_OK          0x00
+#define S32_SVC_DENIED      0x01
+#define S32_SVC_UNKNOWN     0x02
+#define S32_SVC_CONFLICT    0x03
+#define S32_SVC_LIMIT       0x04
+#define S32_SVC_VERSION_ERR 0x05
+
+#define S32_SVC_PROTOCOL_VERSION 1
+#define S32_SVC_MAX_NAME_LEN     32
+#define S32_MAX_SERVICES         16
+#define S32_MAX_SVC_NAME         32
+
+/* Term service opcode offsets (relative to negotiated base) */
+#define S32_TERM_SET_MODE     0
+#define S32_TERM_GET_SIZE     1
+#define S32_TERM_MOVE_CURSOR  2
+#define S32_TERM_CLEAR        3
+#define S32_TERM_SET_ATTR     4
+#define S32_TERM_READ_KEY     5
+#define S32_TERM_KEY_AVAIL    6
+#define S32_TERM_SET_COLOR    7
+#define S32_TERM_PUTC         8
+#define S32_TERM_PUTS         9
+#define S32_TERM_OPCODE_COUNT 10
 
 typedef struct Slow32MMIODesc {
     uint32_t opcode;
@@ -151,6 +188,33 @@ typedef struct QEMU_PACKED s32_mmio_dirent {
 
 #define S32_MMIO_DIRENT_SIZE sizeof(s32_mmio_dirent_t)
 
+/* Forward declaration for service session handler */
+typedef struct Slow32MMIOContext Slow32MMIOCtx;
+
+/* Service session (one per granted service) */
+typedef struct {
+    bool active;
+    char name[S32_MAX_SVC_NAME];
+    uint32_t base_opcode;
+    uint32_t opcode_count;
+    uint32_t version;
+    void *state;
+    void (*cleanup)(void *state);
+    void (*handle)(void *state, Slow32MMIOCtx *ctx,
+                   const CPUSlow32State *env,
+                   uint32_t sub_opcode, const Slow32MMIODesc *req,
+                   Slow32MMIODesc *resp);
+} Slow32SvcSession;
+
+/* Policy engine */
+typedef struct {
+    bool default_allow;
+    char allow_list[S32_MAX_SERVICES][S32_MAX_SVC_NAME];
+    int allow_count;
+    char deny_list[S32_MAX_SERVICES][S32_MAX_SVC_NAME];
+    int deny_count;
+} Slow32SvcPolicy;
+
 struct Slow32MMIOContext {
     bool enabled;
     uint32_t req_tail;
@@ -166,6 +230,12 @@ struct Slow32MMIOContext {
     Slow32FdType fd_types[S32_MMIO_MAX_FDS];
     DIR *host_dirs[S32_MMIO_MAX_FDS];
     uint8_t scratch[S32_MMIO_DATA_CAPACITY];
+
+    /* Service negotiation */
+    Slow32SvcSession services[S32_MAX_SERVICES];
+    int num_services;
+    Slow32SvcPolicy policy;
+    uint32_t next_dynamic_opcode;
 };
 
 static inline bool slow32_mmio_is_enabled(const CPUSlow32State *env)
@@ -319,6 +389,265 @@ static int slow32_mmio_translate_open_flags(uint32_t guest_flags,
     return (int)guest_flags;
 }
 
+/* Forward declarations for copy helpers used by service handlers */
+static void slow32_mmio_copy_from_guest(const CPUSlow32State *env,
+                                        uint32_t offset, uint8_t *dst,
+                                        uint32_t length);
+static void slow32_mmio_copy_to_guest(const CPUSlow32State *env,
+                                      uint32_t offset, const uint8_t *src,
+                                      uint32_t length);
+
+/* ========== Policy engine ========== */
+
+static bool slow32_mmio_policy_allows(Slow32MMIOContext *ctx, const char *name)
+{
+    /* Check deny list first */
+    for (int i = 0; i < ctx->policy.deny_count; i++) {
+        if (strcmp(ctx->policy.deny_list[i], name) == 0) {
+            return false;
+        }
+    }
+    /* If there's an explicit allow list, only allow listed services */
+    if (ctx->policy.allow_count > 0) {
+        for (int i = 0; i < ctx->policy.allow_count; i++) {
+            if (strcmp(ctx->policy.allow_list[i], name) == 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+    return ctx->policy.default_allow;
+}
+
+static void slow32_mmio_cleanup_services(Slow32MMIOContext *ctx)
+{
+    for (int i = 0; i < ctx->num_services; i++) {
+        Slow32SvcSession *svc = &ctx->services[i];
+        if (svc->active && svc->cleanup && svc->state) {
+            svc->cleanup(svc->state);
+        }
+        svc->active = false;
+        svc->state = NULL;
+    }
+    ctx->num_services = 0;
+}
+
+/* ========== Term service implementation ========== */
+
+typedef struct {
+    struct termios saved_termios;
+    bool raw_mode;
+    bool termios_saved;
+} Slow32TermState;
+
+static void *slow32_term_create(void)
+{
+    Slow32TermState *ts = g_new0(Slow32TermState, 1);
+    if (isatty(STDIN_FILENO) &&
+        tcgetattr(STDIN_FILENO, &ts->saved_termios) == 0) {
+        ts->termios_saved = true;
+    }
+    return ts;
+}
+
+static void slow32_term_cleanup(void *state)
+{
+    Slow32TermState *ts = state;
+    if (!ts) {
+        return;
+    }
+    if (ts->raw_mode && ts->termios_saved) {
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &ts->saved_termios);
+    }
+    g_free(ts);
+}
+
+static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
+                                const CPUSlow32State *env,
+                                uint32_t sub_opcode,
+                                const Slow32MMIODesc *req,
+                                Slow32MMIODesc *resp)
+{
+    Slow32TermState *ts = state;
+
+    switch (sub_opcode) {
+    case S32_TERM_SET_MODE: {
+        if (!isatty(STDIN_FILENO)) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            break;
+        }
+        if (req->status) {
+            /* Enter raw mode */
+            struct termios raw;
+            if (ts->termios_saved) {
+                raw = ts->saved_termios;
+            } else {
+                tcgetattr(STDIN_FILENO, &raw);
+            }
+            raw.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
+            raw.c_iflag &= ~(IXON | ICRNL | BRKINT | INPCK | ISTRIP);
+            raw.c_oflag &= ~(OPOST);
+            raw.c_cc[VMIN] = 1;
+            raw.c_cc[VTIME] = 0;
+            tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+            ts->raw_mode = true;
+        } else {
+            /* Restore cooked mode */
+            if (ts->termios_saved) {
+                tcsetattr(STDIN_FILENO, TCSAFLUSH, &ts->saved_termios);
+            }
+            ts->raw_mode = false;
+        }
+        resp->status = S32_MMIO_STATUS_OK;
+        break;
+    }
+
+    case S32_TERM_GET_SIZE: {
+        struct winsize ws;
+        if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) {
+            ws.ws_row = 24;
+            ws.ws_col = 80;
+        }
+        uint32_t buf[2];
+        buf[0] = ws.ws_row;
+        buf[1] = ws.ws_col;
+        slow32_mmio_copy_to_guest(env, req->offset,
+                                  (const uint8_t *)buf, sizeof(buf));
+        resp->length = 8;
+        resp->status = S32_MMIO_STATUS_OK;
+        break;
+    }
+
+    case S32_TERM_MOVE_CURSOR: {
+        uint32_t row = (req->status >> 16) & 0xFFFF;
+        uint32_t col = req->status & 0xFFFF;
+        fprintf(stdout, "\033[%u;%uH", row, col);
+        fflush(stdout);
+        resp->status = S32_MMIO_STATUS_OK;
+        break;
+    }
+
+    case S32_TERM_CLEAR: {
+        switch (req->status) {
+        case 0:
+            fprintf(stdout, "\033[2J\033[H");
+            break;
+        case 1:
+            fprintf(stdout, "\033[K");
+            break;
+        case 2:
+            fprintf(stdout, "\033[J");
+            break;
+        default:
+            fprintf(stdout, "\033[2J\033[H");
+            break;
+        }
+        fflush(stdout);
+        resp->status = S32_MMIO_STATUS_OK;
+        break;
+    }
+
+    case S32_TERM_SET_ATTR:
+        fprintf(stdout, "\033[%um", req->status);
+        fflush(stdout);
+        resp->status = S32_MMIO_STATUS_OK;
+        break;
+
+    case S32_TERM_READ_KEY: {
+        unsigned char ch;
+        ssize_t n = read(STDIN_FILENO, &ch, 1);
+        if (n == 1) {
+            slow32_mmio_copy_to_guest(env, req->offset, &ch, 1);
+            resp->length = 1;
+            resp->status = (uint32_t)ch;
+        } else {
+            resp->status = S32_MMIO_STATUS_EOF;
+            resp->length = 0;
+        }
+        break;
+    }
+
+    case S32_TERM_KEY_AVAIL: {
+        struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN };
+        int ret = poll(&pfd, 1, 0);
+        resp->status = (ret > 0 && (pfd.revents & POLLIN)) ? 1 : 0;
+        break;
+    }
+
+    case S32_TERM_SET_COLOR: {
+        uint32_t fg = (req->status >> 8) & 0xFF;
+        uint32_t bg = req->status & 0xFF;
+        fprintf(stdout, "\033[3%u;4%um", fg, bg);
+        fflush(stdout);
+        resp->status = S32_MMIO_STATUS_OK;
+        break;
+    }
+
+    case S32_TERM_PUTC: {
+        int ch = (int)(req->status & 0xFF);
+        fputc(ch, stdout);
+        fflush(stdout);
+        resp->status = S32_MMIO_STATUS_OK;
+        break;
+    }
+
+    case S32_TERM_PUTS: {
+        uint32_t len = req->length;
+        if (len > S32_MMIO_DATA_CAPACITY) {
+            len = S32_MMIO_DATA_CAPACITY;
+        }
+        if (len > 0) {
+            slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, len);
+            fwrite(ctx->scratch, 1, len, stdout);
+        }
+        fflush(stdout);
+        resp->status = S32_MMIO_STATUS_OK;
+        break;
+    }
+
+    default:
+        resp->status = S32_MMIO_STATUS_ERR;
+        break;
+    }
+}
+
+/* ========== Built-in service table ========== */
+
+typedef struct {
+    const char *name;
+    uint32_t opcode_count;
+    uint32_t version;
+    void *(*create)(void);
+    void (*cleanup)(void *state);
+    void (*handle)(void *state, Slow32MMIOCtx *ctx,
+                   const CPUSlow32State *env,
+                   uint32_t sub_opcode, const Slow32MMIODesc *req,
+                   Slow32MMIODesc *resp);
+} Slow32BuiltinService;
+
+static const Slow32BuiltinService builtin_services[] = {
+    {
+        .name = "term",
+        .opcode_count = S32_TERM_OPCODE_COUNT,
+        .version = 1,
+        .create = slow32_term_create,
+        .cleanup = slow32_term_cleanup,
+        .handle = slow32_term_handle,
+    },
+};
+
+#define NUM_BUILTIN_SERVICES ARRAY_SIZE(builtin_services)
+
+static const Slow32BuiltinService *slow32_find_builtin_service(const char *name)
+{
+    for (size_t i = 0; i < NUM_BUILTIN_SERVICES; i++) {
+        if (strcmp(builtin_services[i].name, name) == 0) {
+            return &builtin_services[i];
+        }
+    }
+    return NULL;
+}
+
 static void slow32_mmio_init_default_args(Slow32MMIOContext *ctx)
 {
     ctx->args_argc = 1;
@@ -403,6 +732,13 @@ void slow32_mmio_context_init(Slow32CPU *cpu)
     cpu->mmio->envp_blob = g_byte_array_sized_new(16);
     slow32_mmio_init_default_args(cpu->mmio);
     slow32_mmio_init_default_envp(cpu->mmio);
+
+    /* Service negotiation defaults */
+    cpu->mmio->num_services = 0;
+    cpu->mmio->next_dynamic_opcode = 0x80;
+    cpu->mmio->policy.default_allow = true;
+    cpu->mmio->policy.allow_count = 0;
+    cpu->mmio->policy.deny_count = 0;
 }
 
 void slow32_mmio_context_destroy(Slow32CPU *cpu)
@@ -410,6 +746,7 @@ void slow32_mmio_context_destroy(Slow32CPU *cpu)
     if (!cpu->mmio) {
         return;
     }
+    slow32_mmio_cleanup_services(cpu->mmio);
     if (cpu->mmio->args_blob) {
         g_byte_array_unref(cpu->mmio->args_blob);
         cpu->mmio->args_blob = NULL;
@@ -420,15 +757,6 @@ void slow32_mmio_context_destroy(Slow32CPU *cpu)
     }
     g_free(cpu->mmio);
     cpu->mmio = NULL;
-}
-
-static uint32_t slow32_mmio_initial_brk(const CPUSlow32State *env)
-{
-    if (env->heap_base) {
-        return env->heap_base;
-    }
-    uint32_t limit = env->data_limit ? env->data_limit : env->stack_top;
-    return QEMU_ALIGN_UP(limit, S32_MMIO_PAGE_SIZE);
 }
 
 static void slow32_mmio_apply_reset(Slow32CPU *cpu, bool clear_window_first)
@@ -454,6 +782,8 @@ static void slow32_mmio_apply_reset(Slow32CPU *cpu, bool clear_window_first)
     ctx->req_tail = 0;
     ctx->resp_head = 0;
     slow32_mmio_reset_fd_table(ctx);
+    slow32_mmio_cleanup_services(ctx);
+    ctx->next_dynamic_opcode = 0x80;
 
     slow32_mmio_writel(env, S32_MMIO_REQ_HEAD_OFFSET, 0);
     slow32_mmio_writel(env, S32_MMIO_REQ_TAIL_OFFSET, 0);
@@ -919,24 +1249,6 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
         break;
     }
 
-    case S32_MMIO_OP_FTRUNCATE: {
-        int host_fd = slow32_mmio_host_fd_for_guest(ctx, req->status);
-        if (host_fd < 0 || req->length < 4u) {
-            resp->status = S32_MMIO_STATUS_ERR;
-            resp->length = 0;
-            break;
-        }
-
-        slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, 4);
-        uint32_t new_length = 0;
-        memcpy(&new_length, ctx->scratch, sizeof(uint32_t));
-
-        int rc = ftruncate(host_fd, (off_t)new_length);
-        resp->status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
-        resp->length = 0;
-        break;
-    }
-
     case S32_MMIO_OP_STAT: {
         struct stat host_stat;
         int rc = -1;
@@ -1010,6 +1322,91 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
         resp->status = S32_MMIO_STATUS_OK;
         resp->length = 0;
         break;
+
+    case S32_MMIO_OP_READ_DIRECT: {
+        /*
+         * Direct read into guest memory (zero-copy path).
+         * Request: status=guest_fd, offset=guest_addr, length=count
+         * Response: status=bytes_read or ERR
+         */
+        if (req->length == 0) {
+            resp->length = 0;
+            resp->status = 0;
+            break;
+        }
+
+        int host_fd = slow32_mmio_host_fd_for_guest(ctx, req->status);
+        if (host_fd < 0) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        uint32_t guest_addr = req->offset;
+        uint32_t count = req->length;
+
+        /* Validate guest address range */
+        if (env->mem_size == 0 ||
+            guest_addr >= env->mem_size ||
+            (uint64_t)guest_addr + count > env->mem_size) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        /*
+         * Read in chunks through the scratch buffer, writing each
+         * chunk directly into guest physical memory.
+         */
+        uint32_t total_read = 0;
+        bool read_error = false;
+
+        while (total_read < count) {
+            uint32_t chunk = MIN(count - total_read,
+                                 (uint32_t)S32_MMIO_DATA_CAPACITY);
+            ssize_t nread = read(host_fd, ctx->scratch, chunk);
+            if (nread < 0) {
+                read_error = true;
+                break;
+            }
+            if (nread == 0) {
+                break; /* EOF */
+            }
+            cpu_physical_memory_write((hwaddr)(guest_addr + total_read),
+                                      ctx->scratch, (uint32_t)nread);
+            total_read += (uint32_t)nread;
+            if ((uint32_t)nread < chunk) {
+                break; /* Short read */
+            }
+        }
+
+        if (read_error && total_read == 0) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+        } else {
+            resp->status = total_read;
+            resp->length = total_read;
+        }
+        break;
+    }
+
+    case S32_MMIO_OP_FTRUNCATE: {
+        int host_fd = slow32_mmio_host_fd_for_guest(ctx, req->status);
+        if (host_fd < 0 || req->length < 4u) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, 4);
+        uint32_t new_length = 0;
+        memcpy(&new_length, ctx->scratch, sizeof(uint32_t));
+
+        int rc = ftruncate(host_fd, (off_t)new_length);
+        resp->status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+        resp->length = 0;
+        break;
+    }
 
     case S32_MMIO_OP_ARGS_INFO:
         slow32_mmio_handle_args_info(ctx, env, req, resp);
@@ -1334,11 +1731,204 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
         break;
     }
 
-    default:
-        resp->status = S32_MMIO_STATUS_ERR;
-        resp->length = 0;
+    /* ========== Service negotiation opcodes (0xF0-0xF4) ========== */
+
+    case S32_MMIO_OP_SVC_REQUEST: {
+        if (req->length == 0 || req->length > S32_SVC_MAX_NAME_LEN) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            break;
+        }
+
+        slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, req->length);
+        ctx->scratch[req->length - 1] = '\0';
+        const char *svc_name = (const char *)ctx->scratch;
+
+        /* Policy check */
+        if (!slow32_mmio_policy_allows(ctx, svc_name)) {
+            uint32_t svc_result = S32_SVC_DENIED;
+            slow32_mmio_copy_to_guest(env, req->offset,
+                                      (const uint8_t *)&svc_result, 4);
+            resp->length = 4;
+            resp->status = S32_MMIO_STATUS_OK;
+            break;
+        }
+
+        /* Check if already active */
+        for (int i = 0; i < ctx->num_services; i++) {
+            if (ctx->services[i].active &&
+                strcmp(ctx->services[i].name, svc_name) == 0) {
+                uint32_t svc_result = S32_SVC_CONFLICT;
+                slow32_mmio_copy_to_guest(env, req->offset,
+                                          (const uint8_t *)&svc_result, 4);
+                resp->length = 4;
+                resp->status = S32_MMIO_STATUS_OK;
+                goto done;
+            }
+        }
+
+        /* Find builtin service */
+        const Slow32BuiltinService *builtin =
+            slow32_find_builtin_service(svc_name);
+        if (!builtin) {
+            uint32_t svc_result = S32_SVC_UNKNOWN;
+            slow32_mmio_copy_to_guest(env, req->offset,
+                                      (const uint8_t *)&svc_result, 4);
+            resp->length = 4;
+            resp->status = S32_MMIO_STATUS_OK;
+            break;
+        }
+
+        /* Check session limit */
+        if (ctx->num_services >= S32_MAX_SERVICES) {
+            uint32_t svc_result = S32_SVC_LIMIT;
+            slow32_mmio_copy_to_guest(env, req->offset,
+                                      (const uint8_t *)&svc_result, 4);
+            resp->length = 4;
+            resp->status = S32_MMIO_STATUS_OK;
+            break;
+        }
+
+        /* Allocate opcode range */
+        uint32_t base = ctx->next_dynamic_opcode;
+        if (base + builtin->opcode_count > 0xF0) {
+            uint32_t svc_result = S32_SVC_LIMIT;
+            slow32_mmio_copy_to_guest(env, req->offset,
+                                      (const uint8_t *)&svc_result, 4);
+            resp->length = 4;
+            resp->status = S32_MMIO_STATUS_OK;
+            break;
+        }
+
+        /* Create service state */
+        void *svc_state = builtin->create ? builtin->create() : NULL;
+
+        /* Register session */
+        Slow32SvcSession *session = &ctx->services[ctx->num_services++];
+        session->active = true;
+        pstrcpy(session->name, S32_MAX_SVC_NAME, svc_name);
+        session->base_opcode = base;
+        session->opcode_count = builtin->opcode_count;
+        session->version = builtin->version;
+        session->state = svc_state;
+        session->cleanup = builtin->cleanup;
+        session->handle = builtin->handle;
+
+        ctx->next_dynamic_opcode = base + builtin->opcode_count;
+
+        /* Write response: [0]=OK, [4]=base, [8]=count, [12]=version */
+        uint32_t reply[4];
+        reply[0] = S32_SVC_OK;
+        reply[1] = base;
+        reply[2] = builtin->opcode_count;
+        reply[3] = builtin->version;
+        slow32_mmio_copy_to_guest(env, req->offset,
+                                  (const uint8_t *)reply, sizeof(reply));
+        resp->length = 16;
+        resp->status = S32_MMIO_STATUS_OK;
         break;
     }
+
+    case S32_MMIO_OP_SVC_RELEASE: {
+        if (req->length == 0 || req->length > S32_SVC_MAX_NAME_LEN) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            break;
+        }
+
+        slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, req->length);
+        ctx->scratch[req->length - 1] = '\0';
+        const char *svc_name = (const char *)ctx->scratch;
+
+        bool found = false;
+        for (int i = 0; i < ctx->num_services; i++) {
+            Slow32SvcSession *svc = &ctx->services[i];
+            if (svc->active && strcmp(svc->name, svc_name) == 0) {
+                if (svc->cleanup && svc->state) {
+                    svc->cleanup(svc->state);
+                }
+                svc->active = false;
+                svc->state = NULL;
+                found = true;
+                break;
+            }
+        }
+        resp->status = found ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+        break;
+    }
+
+    case S32_MMIO_OP_SVC_QUERY: {
+        if (req->length == 0 || req->length > S32_SVC_MAX_NAME_LEN) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            break;
+        }
+
+        slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, req->length);
+        ctx->scratch[req->length - 1] = '\0';
+        const char *svc_name = (const char *)ctx->scratch;
+
+        uint32_t svc_result;
+        const Slow32BuiltinService *builtin =
+            slow32_find_builtin_service(svc_name);
+        if (!builtin) {
+            svc_result = S32_SVC_UNKNOWN;
+        } else if (!slow32_mmio_policy_allows(ctx, svc_name)) {
+            svc_result = S32_SVC_DENIED;
+        } else {
+            svc_result = S32_SVC_OK;
+        }
+        slow32_mmio_copy_to_guest(env, req->offset,
+                                  (const uint8_t *)&svc_result, 4);
+        resp->length = 4;
+        resp->status = S32_MMIO_STATUS_OK;
+        break;
+    }
+
+    case S32_MMIO_OP_SVC_LIST: {
+        /* NUL-separated list of available service names */
+        uint32_t pos = 0;
+        for (size_t i = 0; i < NUM_BUILTIN_SERVICES; i++) {
+            size_t len = strlen(builtin_services[i].name) + 1;
+            if (pos + len > S32_MMIO_DATA_CAPACITY) {
+                break;
+            }
+            memcpy(ctx->scratch + pos, builtin_services[i].name, len);
+            pos += len;
+        }
+        if (pos > 0) {
+            slow32_mmio_copy_to_guest(env, req->offset, ctx->scratch, pos);
+        }
+        resp->length = pos;
+        resp->status = S32_MMIO_STATUS_OK;
+        break;
+    }
+
+    case S32_MMIO_OP_SVC_VERSION:
+        resp->status = S32_SVC_PROTOCOL_VERSION;
+        break;
+
+    default: {
+        /* Check if opcode falls in a registered service range */
+        bool handled = false;
+        for (int i = 0; i < ctx->num_services; i++) {
+            Slow32SvcSession *svc = &ctx->services[i];
+            if (svc->active &&
+                req->opcode >= svc->base_opcode &&
+                req->opcode < svc->base_opcode + svc->opcode_count) {
+                uint32_t sub = req->opcode - svc->base_opcode;
+                svc->handle(svc->state, ctx, env, sub, req, resp);
+                handled = true;
+                break;
+            }
+        }
+        if (!handled) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+        }
+        break;
+    }
+    }
+
+done:
+    ; /* label at end of function for early-exit from nested loops */
 }
 
 static bool slow32_mmio_write_response(Slow32MMIOContext *ctx,

@@ -57,9 +57,7 @@ This file was a truncated copy of `slow32.c` and was not part of the build proce
 Read fault messages lacked PC and SP context that write faults already included.
 - **Status**: Fixed. Read faults in `slow32.c` now include `PC=` and `SP=` to match write fault format.
 
-### 11. QEMU Backend Missing `READ_DIRECT` (0x0C)
-`qemu-backend/target/slow32/mmio.c` defines opcodes up through `FLUSH` (0x0B) but
-does not implement `READ_DIRECT` (0x0C). Guest programs that rely on direct-read
-I/O will fall through to the default error handler.
-- **Status**: Open. The C emulators (`slow32`, `slow32-fast`, `slow32-dbt`) all
-  support `READ_DIRECT`. Add a matching case in `slow32_mmio_dispatch()`.
+### 11. QEMU Backend Missing `READ_DIRECT` (0x0C) (Resolved)
+`qemu-backend/target/slow32/mmio.c` was missing `READ_DIRECT` (0x0C).
+- **Status**: Fixed. Added in the same commit that brought FTRUNCATE, service
+  negotiation, and the term service to the QEMU backend.
