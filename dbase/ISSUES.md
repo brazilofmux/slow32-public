@@ -47,6 +47,16 @@ on failure) matching line-mode behavior.
 `command.c` — `upper_basename()` uppercases only the filename portion, not
 directory components.
 
+### 1.14 Memo leak on failed UNIQUE/index update
+`command.c` — `REPLACE` and `GATHER` write new memo blocks before uniqueness
+checks. If `indexes_update_current()` fails, the record is reverted but the
+new memo blocks remain appended in the `.DBT`, causing file growth over time.
+
+### 1.15 CALCULATE expression capture breaks with macro expansion
+`command.c` — `cmd_calculate()` captures expression text via `token_start` while
+the lexer advances. With macro expansion, `token_start` can point into the macro
+stack buffer and be invalidated, leading to corrupted or truncated expressions.
+
 ---
 
 ## 2. Compatibility Gaps
@@ -362,6 +372,8 @@ that overlay the main display and then restore it.
 - Binary data in FREAD/FWRITE (NUL bytes)
 - ~~String overflow: concatenation beyond 255 chars~~ (covered in stress_strings)
 - Full variable store (256 vars), then DECLARE array
+- CALCULATE with `&macro` expression input
+- Memo fields with UNIQUE/index rollback (ensure no `.DBT` growth)
 
 ### 6.3 Fragile Tests
 - `test_dir_services` embeds absolute path and file count — breaks if repo moves
