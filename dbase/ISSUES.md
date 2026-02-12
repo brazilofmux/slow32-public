@@ -142,10 +142,12 @@ Fixed: date index keys now use canonical DBF format (`YYYYMMDD`) internally
 for both index build/maintenance and `SEEK` key generation. Index behavior is
 now independent of `SET DATE` display format.
 
-### 6.6 Index AST Caching (Opportunity)
-Index key expressions are parsed and evaluated as strings for every index
-operation (`SEEK`, `INSERT`, `REINDEX`). Pre-compiling these to AST once
-when the index is opened would significantly improve performance.
+### 6.6 ~~Index AST Caching~~ — RESOLVED
+Implemented: each index now caches a compiled key-expression AST when safe
+(no `&` macro in expression). Index build and key-maintenance paths evaluate
+through `ast_eval` when cached, falling back to dynamic string evaluation for
+macroized expressions. Cached AST is refreshed on index rebuild/open and freed
+on close.
 
 ### 6.7 Standard-Compliant Index Keys (Opportunity)
 Numeric index keys should use a fixed-width, right-aligned, zero-padded (or

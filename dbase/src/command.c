@@ -125,8 +125,13 @@ static int eval_index_key(index_t *idx, char *keybuf) {
     value_t val;
     char tmp[MAX_INDEX_KEY + 1];
 
-    if (expr_eval_str(&expr_ctx, idx->key_expr, &val) != 0)
-        return -1;
+    if (idx->key_ast) {
+        if (ast_eval(idx->key_ast, &expr_ctx, &val) != 0)
+            return -1;
+    } else {
+        if (expr_eval_str(&expr_ctx, idx->key_expr, &val) != 0)
+            return -1;
+    }
     index_format_key_value(idx->key_type, &val, tmp, sizeof(tmp));
     /* Pad to key_len with spaces */
     {
@@ -669,6 +674,7 @@ static void cmd_use(dbf_t *db, const char *arg) {
                 {
                     int slot = wa->num_indexes;
                     if (index_read(&wa->indexes[slot], ndxfile) == 0) {
+                        index_compile_key_ast(&wa->indexes[slot], &memvar_store);
                         wa->num_indexes++;
                     } else {
                         prog_error_fmt(ERR_CANNOT_OPEN, "Cannot open index: %s", ndxfile);
@@ -3944,6 +3950,7 @@ static void cmd_set_index(dbf_t *db, const char *arg) {
             path_normalize(filename);
             ensure_ndx_ext(filename, sizeof(filename));
             if (index_read(&cur_wa()->indexes[slot], filename) == 0) {
+                index_compile_key_ast(&cur_wa()->indexes[slot], &memvar_store);
                 cur_wa()->num_indexes++;
                 printf("Index %s opened (%d entries).\n", filename,
                        cur_wa()->indexes[slot].nentries);

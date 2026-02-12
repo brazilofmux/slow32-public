@@ -4,6 +4,7 @@
 #include "index.h"
 #include "util.h"
 #include "date.h"
+#include "ast.h"
 
 static void page_free(ndx_page_t *p);
 static int page_flush(index_t *idx, int page_no);
@@ -12,6 +13,23 @@ static void hash_remove(index_t *idx, ndx_page_t *p);
 static ndx_page_t *hash_lookup(index_t *idx, int page_no);
 static ndx_page_t *page_get(index_t *idx, int page_no);
 static void page_put(ndx_page_t *p);
+
+void index_clear_key_ast(index_t *idx) {
+    if (idx->key_ast) {
+        ast_free(idx->key_ast);
+        idx->key_ast = NULL;
+    }
+}
+
+int index_compile_key_ast(index_t *idx, struct memvar_store *store) {
+    const char *err = NULL;
+    index_clear_key_ast(idx);
+    idx->key_has_macro = (strchr(idx->key_expr, '&') != NULL);
+    if (idx->key_has_macro || !idx->key_expr[0])
+        return 0;
+    idx->key_ast = ast_compile(idx->key_expr, store, &err);
+    return idx->key_ast ? 0 : -1;
+}
 
 static void encode_sortable_double(double n, char *out) {
     static const char hex[] = "0123456789ABCDEF";
@@ -442,11 +460,14 @@ void index_init(index_t *idx) {
     idx->iter_page = -1;
     idx->iter_pos = -1;
     idx->cache_capacity = 64;
+    idx->key_ast = NULL;
+    idx->key_has_macro = 0;
 }
 
 /* ---- Close ---- */
 void index_close(index_t *idx) {
     free_all_pages(idx);
+    index_clear_key_ast(idx);
     if (idx->fp) {
         fclose(idx->fp);
         idx->fp = NULL;
@@ -459,6 +480,7 @@ void index_close(index_t *idx) {
     idx->active = 0;
     idx->filename[0] = '\0';
     idx->key_expr[0] = '\0';
+    idx->key_has_macro = 0;
 }
 
 /* ---- Compute max keys from key_len ---- */
@@ -1215,6 +1237,10 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
 
     str_copy(idx->key_expr, key_expr, sizeof(idx->key_expr));
     str_copy(idx->filename, norm_path, sizeof(idx->filename));
+    if (index_compile_key_ast(idx, ctx->vars) < 0) {
+        /* Keep dynamic fallback if AST compile fails. */
+        idx->key_ast = NULL;
+    }
 
     /* First pass: Determine key length and collect entries */
     idx->key_len = 10; /* default */
@@ -1238,7 +1264,11 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
         dbf_read_record(db, i);
         if (db->record_buf[0] == '*') continue;
 
-        if (expr_eval_str(ctx, key_expr, &val) != 0) continue;
+        if (idx->key_ast) {
+            if (ast_eval(idx->key_ast, ctx, &val) != 0) continue;
+        } else {
+            if (expr_eval_str(ctx, key_expr, &val) != 0) continue;
+        }
 
         if (!key_type_set) {
             if (val.type == VAL_NUM) idx->key_type = 1;
@@ -1423,6 +1453,7 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
     return 0;
 
 fail:
+    index_clear_key_ast(idx);
     if (entries) free(entries);
     if (current_level && current_level != leaf_pages) free(current_level);
     if (leaf_pages) free(leaf_pages);

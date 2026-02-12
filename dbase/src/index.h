@@ -48,6 +48,8 @@ typedef struct ndx_page {
 typedef struct {
     char filename[64];
     char key_expr[256];
+    struct ast_node *key_ast; /* cached key expression AST (NULL if dynamic) */
+    int key_has_macro;        /* expression contains &macro; must eval dynamically */
     int key_len;            /* actual key length for this index */
     int key_type;           /* 0=char, 1=numeric, 2=date */
     int max_keys_leaf;      /* max keys per leaf page */
@@ -127,5 +129,9 @@ void index_clear(index_t *idx);
 
 /* Flush dirty pages to disk */
 void index_flush(index_t *idx);
+
+/* Compile/clear cached key AST for index key_expr. */
+int index_compile_key_ast(index_t *idx, struct memvar_store *store);
+void index_clear_key_ast(index_t *idx);
 
 #endif
