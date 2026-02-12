@@ -10,11 +10,10 @@
 - Problem: `mark_push` silently ignored pushes when `MARK_STACK_SIZE` was exceeded.
 - Fix: `mark_push` now fatals on overflow instead of silently dropping reachable objects.
 
-## 3) `number->string` Undefined Behavior on `INT_MIN` (Medium)
+## 3) `number->string` Undefined Behavior on `INT_MIN` (Medium) — RESOLVED
 - File: `lisp/src/builtin.c`
-- Problem: Conversion path negates signed `int` (`n = -n`) for negative values.
-- Risk: `INT_MIN` cannot be represented as positive `int`, causing signed overflow (UB).
-- Suggested fix: Convert through unsigned math or `long long`, and add regression for minimum integer.
+- Problem: Conversion path negated signed `int` (`n = -n`) for negative values.
+- Fix: Convert through unsigned math (`-(n+1) + 1u`). Regression test `16-minint` added.
 
 ## 4) `env_lookup` Error Path Assumes Symbol Type (Low)
 - File: `lisp/src/env.c`

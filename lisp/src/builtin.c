@@ -472,14 +472,15 @@ static val_t bi_number_to_string(val_t args) {
     if (!IS_FIXNUM(v)) { lisp_error("number->string: not a number"); return NIL; }
     char buf[32];
     int n = UNFIXNUM(v);
-    /* Manual int-to-string since snprintf might be heavy */
     int neg = 0;
-    if (n < 0) { neg = 1; n = -n; }
+    unsigned int u;
+    if (n < 0) { neg = 1; u = (unsigned int)(-(n + 1)) + 1u; }
+    else { u = (unsigned int)n; }
     int pos = 31;
     buf[pos] = 0;
-    if (n == 0) { buf[--pos] = '0'; }
+    if (u == 0) { buf[--pos] = '0'; }
     else {
-        while (n > 0) { buf[--pos] = '0' + (n % 10); n /= 10; }
+        while (u > 0) { buf[--pos] = '0' + (u % 10); u /= 10; }
     }
     if (neg) buf[--pos] = '-';
     return string_alloc(buf + pos, 31 - pos);
