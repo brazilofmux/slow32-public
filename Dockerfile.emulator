@@ -29,9 +29,15 @@ RUN apk add --no-cache \
     alsa-lib-dev \
     libslirp-dev
 
-# Clone QEMU source code (shallow clone for minimal size)
+# Clone QEMU source code pinned to a known-good commit
+# This is the upstream commit our patches are generated against.
+# Update this hash (and regenerate patches) when syncing with upstream.
 WORKDIR /build
-RUN git clone --depth 1 --branch master https://gitlab.com/qemu-project/qemu.git qemu
+ENV QEMU_COMMIT=44dba5a0c86fff68fdd013c29bba81d5a1e32825
+RUN git init qemu && cd qemu && \
+    git remote add origin https://gitlab.com/qemu-project/qemu.git && \
+    git fetch --depth 1 origin $QEMU_COMMIT && \
+    git checkout FETCH_HEAD
 
 # Copy SLOW-32 specific files from build context
 WORKDIR /build/qemu

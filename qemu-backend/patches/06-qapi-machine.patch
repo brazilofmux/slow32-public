@@ -1,22 +1,8 @@
 diff --git a/qapi/machine.json b/qapi/machine.json
-index 907cb25f75..c2e62d859d 100644
+index ef8575b6eb..c2e62d859d 100644
 --- a/qapi/machine.json
 +++ b/qapi/machine.json
-@@ -28,6 +28,8 @@
- #
- # @loongarch64: since 7.1
- #
-+# @hexagon: since 11.0
-+#
- # .. note:: The resulting QMP strings can be appended to the
- #    "qemu-system-" prefix to produce the corresponding QEMU
- #    executable name.  This is true even for "qemu-system-x86_64".
-@@ -35,11 +37,11 @@
- # Since: 3.0
- ##
- { 'enum' : 'SysEmuTarget',
--  'data' : [ 'aarch64', 'alpha', 'arm', 'avr', 'hppa', 'i386',
-+  'data' : [ 'aarch64', 'alpha', 'arm', 'avr', 'hexagon', 'hppa', 'i386',
+@@ -41,7 +41,7 @@
               'loongarch64', 'm68k', 'microblaze', 'microblazeel', 'mips', 'mips64',
               'mips64el', 'mipsel', 'or1k', 'ppc',
               'ppc64', 'riscv32', 'riscv64', 'rx', 's390x', 'sh4',

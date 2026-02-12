@@ -1,16 +1,7 @@
 diff --git a/include/system/arch_init.h b/include/system/arch_init.h
-index 51e24c3091..3c050b0a83 100644
+index f2f909d540..3c050b0a83 100644
 --- a/include/system/arch_init.h
 +++ b/include/system/arch_init.h
-@@ -15,7 +15,7 @@ enum {
-     QEMU_ARCH_SH4 = (1 << 10),
-     QEMU_ARCH_SPARC = (1 << 11),
-     QEMU_ARCH_XTENSA = (1 << 12),
--    QEMU_ARCH_OPENRISC = (1 << 13),
-+    QEMU_ARCH_OR1K = (1 << 13),
-     QEMU_ARCH_TRICORE = (1 << 16),
-     QEMU_ARCH_HPPA = (1 << 18),
-     QEMU_ARCH_RISCV = (1 << 19),
 @@ -23,6 +23,7 @@ enum {
      QEMU_ARCH_AVR = (1 << 21),
      QEMU_ARCH_HEXAGON = (1 << 22),

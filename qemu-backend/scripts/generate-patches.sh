@@ -18,7 +18,11 @@ mkdir -p "$PATCHES_DIR"
 cd "$QEMU_DIR"
 
 # Get the base commit (before our SLOW-32 changes)
-BASE_COMMIT="9febfa94b6"  # Last upstream commit before our work
+# WARNING: The local QEMU repo may contain upstream renames (e.g., openrisc -> or1k)
+# that occurred AFTER this base commit. The generated patches will include those
+# renames, which will BREAK Docker builds pinned to $BASE_COMMIT.
+# After generating, manually review and edit patches to contain ONLY slow32 additions.
+BASE_COMMIT="44dba5a0c8"  # Last upstream commit before our work — also pinned in Dockerfile.emulator
 CURRENT_COMMIT="HEAD"
 
 echo "Using commit $BASE_COMMIT as base for patch generation..."
