@@ -468,6 +468,10 @@ int dbf_memo_read(dbf_t *db, int block, char *buf, int bufsize) {
             /* Convert soft CR (0x8D) to regular CR (0x0D) */
             if (n < bufsize - 1) {
                 buf[n++] = (chunk[i] == 0x8D) ? 0x0D : chunk[i];
+            } else {
+                /* Buffer full — stop reading */
+                buf[n] = '\0';
+                return 0;
             }
         }
     }

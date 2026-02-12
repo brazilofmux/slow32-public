@@ -4213,7 +4213,7 @@ static char *report_find_next_kw(char *p) {
 static void cmd_report_form(dbf_t *db, lexer_t *l) {
     char filename[64];
     FILE *outfile = NULL;
-    frm_def_t def;
+    frm_def_t *def;
     clause_t c;
 
     if (!dbf_is_open(db)) {
@@ -4241,9 +4241,17 @@ static void cmd_report_form(dbf_t *db, lexer_t *l) {
         }
     }
 
+    def = malloc(sizeof(frm_def_t));
+    if (!def) {
+        prog_error(ERR_OUT_OF_MEMORY, "Out of memory");
+        if (outfile) fclose(outfile);
+        return;
+    }
+
     /* Read the .FRM file */
-    if (frm_read(filename, &def) < 0) {
+    if (frm_read(filename, def) < 0) {
         file_not_found(filename);
+        free(def);
         if (outfile) fclose(outfile);
         return;
     }
@@ -4254,10 +4262,11 @@ static void cmd_report_form(dbf_t *db, lexer_t *l) {
 
     ctx_setup();
     /* Note: currently report_generate ignores WHILE/scope, passing them would require signature change */
-    report_generate(&def, db, &expr_ctx, c.for_cond[0] ? c.for_cond : NULL,
+    report_generate(def, db, &expr_ctx, c.for_cond[0] ? c.for_cond : NULL,
                     c.heading[0] ? c.heading : NULL,
                     c.plain, c.summary, c.noeject, outfile);
 
+    free(def);
     if (outfile != stdout)
         fclose(outfile);
 }

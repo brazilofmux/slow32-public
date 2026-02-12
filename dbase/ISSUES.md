@@ -85,17 +85,13 @@ minimal redundancy (skips default-attribute spaces, batches attribute changes).
 Fixed: `fn_replicate` now allows up to 255 characters (was 254 due to
 off-by-one in buffer size check).
 
-### 3.5 dbf_memo_read Wasteful I/O
-`dbf.c` — `dbf_memo_read()` reads the entire memo until a terminator (0x1A),
-even if the destination buffer is small (typically 256 bytes). For large
-memos, this results in wasted disk I/O. It should stop reading once the
-buffer is full.
+### 3.5 ~~dbf_memo_read Wasteful I/O~~ — RESOLVED
+Fixed: `dbf_memo_read()` now stops reading once the destination buffer is
+full instead of continuing to scan for the 0x1A terminator.
 
-### 3.6 Large Stack Allocations (REPORT FORM)
-`command.c` — `cmd_report_form` allocates a 14KB `frm_def_t` on the stack.
-While safe for shallow calls, this significantly reduces the headroom for
-recursive UDFs. Large definition structs should be moved to the heap or
-static memory.
+### 3.6 ~~Large Stack Allocations (REPORT FORM)~~ — RESOLVED
+Fixed: `cmd_report_form` now heap-allocates `frm_def_t` (~14KB) instead of
+placing it on the stack.
 
 ### 3.7 AST Constant Folding
 `ast.c` — The `ast_eval()` engine currently evaluates all nodes at runtime.
@@ -112,9 +108,10 @@ Added tests: `test_edge_fio` (FWRITE/FREAD zero/negative/invalid),
 Remaining: binary data in FREAD/FWRITE (NUL bytes truncate due to string
 representation — known limitation, not testable via dBase strings).
 
-### 4.2 Fragile tests
-- `test_dir_services` embeds absolute path and file count — breaks if repo moves
-  or files are added/removed. Should be restructured to test relative behavior.
+### 4.2 ~~Fragile tests~~ — NOT AN ISSUE
+`test_dir_services` already uses relative comparisons (`ADIR() > ADIR("*.PRG")`,
+`ADIR("*.PRG") > 0`, `ADIR("*.ZZZ") = 0`) and committed test fixtures. No
+absolute paths or brittle file counts.
 
 ---
 
