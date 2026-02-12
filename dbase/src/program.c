@@ -83,6 +83,22 @@ static char run_line_buf[MAX_CALL_DEPTH + 2][MAX_LINE_LEN];
 static char run_prev_buf[MAX_CALL_DEPTH + 2][MAX_LINE_LEN];
 static char run_line2_buf[MAX_CALL_DEPTH + 2][MAX_LINE_LEN];
 
+static void udf_restore_state(const udf_saved_state_t *sv) {
+    state.current_prog = sv->saved_prog;
+    state.pc = sv->saved_pc;
+    state.call_depth = sv->saved_call_depth;
+    state.loop_depth = sv->saved_loop_depth;
+    state.running = sv->saved_running;
+    if_skip = sv->saved_if_skip;
+    if_depth = sv->saved_if_depth;
+    case_active = sv->saved_case_active;
+    case_done = sv->saved_case_done;
+    case_skip = sv->saved_case_skip;
+    udf_active = sv->saved_udf_active;
+    udf_depth = sv->saved_udf_depth;
+    udf_return_val = sv->saved_udf_return;
+}
+
 void prog_init(void) {
     memset(&state, 0, sizeof(state));
     memset(&error_state, 0, sizeof(error_state));
@@ -467,37 +483,13 @@ static int prog_udf_call(const char *name, value_t *args, int nargs, value_t *re
     *result = udf_return_val;
 
     /* Restore lightweight state — pop_frame already restored call stack properly */
-    state.current_prog = sv->saved_prog;
-    state.pc = sv->saved_pc;
-    state.call_depth = sv->saved_call_depth;
-    state.loop_depth = sv->saved_loop_depth;
-    state.running = sv->saved_running;
-    if_skip = sv->saved_if_skip;
-    if_depth = sv->saved_if_depth;
-    case_active = sv->saved_case_active;
-    case_done = sv->saved_case_done;
-    case_skip = sv->saved_case_skip;
-    udf_active = sv->saved_udf_active;
-    udf_depth = sv->saved_udf_depth;
-    udf_return_val = sv->saved_udf_return;
+    udf_restore_state(sv);
 
     return 0;
 
 restore_error:
     /* Restore state on failed UDF setup (e.g. stack overflow) */
-    state.current_prog = sv->saved_prog;
-    state.pc = sv->saved_pc;
-    state.call_depth = sv->saved_call_depth;
-    state.loop_depth = sv->saved_loop_depth;
-    state.running = sv->saved_running;
-    if_skip = sv->saved_if_skip;
-    if_depth = sv->saved_if_depth;
-    case_active = sv->saved_case_active;
-    case_done = sv->saved_case_done;
-    case_skip = sv->saved_case_skip;
-    udf_active = sv->saved_udf_active;
-    udf_depth = sv->saved_udf_depth;
-    udf_return_val = sv->saved_udf_return;
+    udf_restore_state(sv);
     if (result) *result = val_nil();
     return -1;
 }
