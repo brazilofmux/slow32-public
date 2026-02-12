@@ -460,3 +460,58 @@ consume memory before failing.
 ### 7.4 realloc Failure Handling
 The argument list growth path in `ast_parse_primary` does not handle a
 `realloc` failure; a `NULL` return would be dereferenced, causing a crash.
+
+---
+
+## 9. February 2026 Code Review
+
+### 9.1 REPLACE Performance & Parsing
+`cmd_replace` in `command.c` re-initializes a lexer and re-parses the field list
+and expression for *every single record* in the loop. For large databases, this
+is a massive overhead. It should be refactored to parse once into a list of
+field/AST pairs before the loop.
+
+### 9.2 REPLACE Index Inconsistency
+`cmd_replace` uses a manual physical record loop instead of `process_records()`.
+This makes it ignore the controlling index, which differs from other record-
+oriented commands like `COUNT`, `SUM`, or `LOCATE`.
+
+### 9.3 Hardcoded Date in dbf_create
+`dbf_create()` in `dbf.c` hardcodes the file creation year to 26 (2026). It
+should use the system `time()` to provide accurate metadata.
+
+### 9.4 dbf_memo_read Wasteful I/O
+`dbf_memo_read()` reads the entire memo until a terminator (0x1A), even if the
+destination buffer is small (typically 256 bytes). For large memos, this
+results in wasted disk I/O. It should stop reading once the buffer is full.
+
+### 9.5 String Concatenation Drop (expr.c)
+When string concatenation (`+` or `-`) results in a string longer than 255
+chars, the right operand is currently dropped entirely. It should be truncated
+to fill the remaining space in the 256-byte `value_t.str` buffer.
+
+### 9.6 REPLICATE Off-by-one (func.c)
+`fn_replicate` limits the total length to 254 characters due to a strict
+`pos + slen < sizeof(buf) - 1` check. It should allow up to 255 characters
+(`pos + slen < sizeof(buf)`).
+
+### 9.7 Recursive prog_run
+`prog_run()` in `program.c` contains a recursive call to itself when popping
+a frame to continue caller execution. This contributes to stack depth issues
+unnecessarily. It should be refactored into a single execution loop with a
+`goto` or `while` structure.
+
+### 9.8 Unique Violation ON ERROR Bypass
+`indexes_update_current` in `command.c` prints a "Uniqueness violation"
+message directly to `stdout` instead of using `prog_error()`. This prevents
+user programs from trapping the error with `ON ERROR`.
+
+### 9.9 Large Stack Allocations (REPORT FORM)
+`cmd_report_form` allocates a 14KB `frm_def_t` on the stack. While safe for
+shallow calls, this significantly reduces the headroom for recursive UDFs.
+Large definition structs should be moved to the heap or static memory.
+
+### 9.10 AST Constant Folding
+The `ast_eval()` engine in `ast.c` currently evaluates all nodes at runtime.
+Adding a simple constant folding pass to `ast_compile()` would improve
+performance for expressions like `2 + 3` or `YEAR({02/11/26})`.
