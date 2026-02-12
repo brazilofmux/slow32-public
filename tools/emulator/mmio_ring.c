@@ -364,6 +364,7 @@ static const char *legacy_opcode_service(uint32_t opcode) {
     if (opcode == 0x0A) return "fs";   // STAT
     if (opcode == 0x0B) return "fs";   // FLUSH (file flush)
     if (opcode == 0x0C) return "fs";   // READ_DIRECT
+    if (opcode == 0x0D) return "fs";   // FTRUNCATE
     if (opcode >= 0x20 && opcode <= 0x2A) return "fs";  // FS metadata
     if (opcode >= 0x30 && opcode <= 0x3F) return "time";
     if (opcode >= 0x40 && opcode <= 0x4F) return "net";
@@ -921,6 +922,30 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
             break;
         }
         
+        case S32_MMIO_OP_FTRUNCATE: {
+            int host_fd = host_fd_for_guest(mmio, req->status);
+            if (host_fd < 0 || req->length < 4u) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t offset = req->offset % S32_MMIO_DATA_CAPACITY;
+            if (offset > (S32_MMIO_DATA_CAPACITY - 4u)) {
+                resp.status = S32_MMIO_STATUS_ERR;
+                resp.length = 0;
+                break;
+            }
+
+            uint32_t new_length = 0;
+            memcpy(&new_length, mmio->data_buffer + offset, sizeof(uint32_t));
+
+            int rc = ftruncate(host_fd, (off_t)new_length);
+            resp.status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+            resp.length = 0;
+            break;
+        }
+
         case S32_MMIO_OP_GETCHAR: {
             int ch = fgetc(stdin);
             if (ch != EOF) {

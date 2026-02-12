@@ -434,6 +434,11 @@ void clearerr(FILE *stream) {
     }
 }
 
+int fileno(FILE *stream) {
+    if (!stream) return -1;
+    return stream->fd;
+}
+
 void perror(const char *s) {
     if (s && *s) {
         fputs(s, stderr);

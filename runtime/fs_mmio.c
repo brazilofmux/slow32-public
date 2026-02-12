@@ -110,6 +110,14 @@ int lseek(int fd, int offset, int whence) {
     return result;
 }
 
+int ftruncate(int fd, int length) {
+    if (fd < 0) return -1;
+    volatile unsigned char *data_buffer = S32_MMIO_DATA_BUFFER;
+    *(int *)(void *)data_buffer = length;
+    int result = s32_mmio_request(S32_MMIO_OP_FTRUNCATE, 4u, 0u, (unsigned int)fd);
+    return (result == 0) ? 0 : -1;
+}
+
 // Helper to copy result into stat struct (shared with stat_mmio.c via inline)
 static int copy_lstat_result(struct stat *dst) {
     s32_mmio_stat_result_t result = {0};

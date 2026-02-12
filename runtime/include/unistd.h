@@ -29,6 +29,7 @@ int close(int fd);
 int read(int fd, void *buf, size_t count);
 int write(int fd, const void *buf, size_t count);
 int lseek(int fd, int offset, int whence);
+int ftruncate(int fd, int length);
 
 #ifdef __cplusplus
 }

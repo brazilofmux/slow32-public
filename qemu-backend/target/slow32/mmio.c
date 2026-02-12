@@ -51,6 +51,8 @@
 #define S32_MMIO_OP_EXIT      0x09
 #define S32_MMIO_OP_STAT      0x0A
 #define S32_MMIO_OP_FLUSH     0x0B
+#define S32_MMIO_OP_READ_DIRECT 0x0C
+#define S32_MMIO_OP_FTRUNCATE 0x0D
 
 #define S32_MMIO_OP_UNLINK    0x20
 #define S32_MMIO_OP_RENAME    0x21
@@ -914,6 +916,24 @@ static void slow32_mmio_dispatch(Slow32MMIOContext *ctx, Slow32CPU *cpu,
             resp->status = (uint32_t)new_pos;
             resp->length = 0;
         }
+        break;
+    }
+
+    case S32_MMIO_OP_FTRUNCATE: {
+        int host_fd = slow32_mmio_host_fd_for_guest(ctx, req->status);
+        if (host_fd < 0 || req->length < 4u) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            resp->length = 0;
+            break;
+        }
+
+        slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, 4);
+        uint32_t new_length = 0;
+        memcpy(&new_length, ctx->scratch, sizeof(uint32_t));
+
+        int rc = ftruncate(host_fd, (off_t)new_length);
+        resp->status = (rc == 0) ? S32_MMIO_STATUS_OK : S32_MMIO_STATUS_ERR;
+        resp->length = 0;
         break;
     }
 

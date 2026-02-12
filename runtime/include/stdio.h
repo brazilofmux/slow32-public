@@ -66,6 +66,7 @@ int ferror(FILE *stream);
 void clearerr(FILE *stream);
 int fflush(FILE *stream);
 void perror(const char *s);
+int fileno(FILE *stream);
 int remove(const char *pathname);
 int rename(const char *oldpath, const char *newpath);
 

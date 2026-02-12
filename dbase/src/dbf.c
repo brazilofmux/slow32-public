@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include "dbf.h"
 #include "area.h"
 #include "util.h"
@@ -533,16 +534,12 @@ int dbf_memo_restore(dbf_t *db, const memo_snapshot_t *snap) {
     unsigned char hdr[4];
     if (!db || !db->memo_fp || !snap || !snap->valid) return -1;
     fflush(db->memo_fp);
-#ifndef __slow32__
     {
         int fd = fileno(db->memo_fp);
         if (fd >= 0) {
             if (ftruncate(fd, snap->file_size) != 0) return -1;
         }
     }
-#else
-    (void)snap;
-#endif
     db->next_memo_block = snap->next_block;
     fseek(db->memo_fp, 0, 0);
     write_le32(hdr, db->next_memo_block);

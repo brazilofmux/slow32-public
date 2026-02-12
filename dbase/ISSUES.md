@@ -4,15 +4,7 @@ This is a *living* planning document. Completed items are summarized at the end.
 
 ## 1. Open Bugs (Correctness)
 
-### 1.1 Memo leak on failed UNIQUE/index update
-`command.c` — `REPLACE` and `GATHER` write new memo blocks before uniqueness
-checks. If `indexes_update_current()` fails, the record is reverted but the new
-memo blocks remain appended in the `.DBT`, causing file growth over time.
-
-**Suggested fix:** Stage memo writes and only commit on successful index update,
-or implement a memo free-list / rollback path for failed mutations.
-
-### 1.2 CALCULATE expression capture breaks with macro expansion
+### 1.1 CALCULATE expression capture breaks with macro expansion
 `command.c` — `cmd_calculate()` captures expression text via `token_start` while
 the lexer advances. With macro expansion, `token_start` can point into the macro
 stack buffer and be invalidated, leading to corrupted or truncated expressions.
@@ -65,7 +57,6 @@ Save and restore terminal contents. Used for popup dialogs and help screens.
 - Binary data in FREAD/FWRITE (NUL bytes)
 - Full variable store (256 vars), then DECLARE array
 - CALCULATE with `&macro` expression input
-- Memo fields with UNIQUE/index rollback (ensure no `.DBT` growth)
 
 ### 4.2 Fragile tests
 - `test_dir_services` embeds absolute path and file count — breaks if repo moves
