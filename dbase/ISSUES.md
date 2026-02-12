@@ -50,11 +50,10 @@ The default case (implicit NEXT 1, no conditions) still replaces the current
 physical record directly, since after `APPEND BLANK` the index cursor and
 physical cursor may diverge.
 
-### 2.6 Recursive prog_run
-`program.c` — `prog_run()` contains a recursive call to itself when popping a
-frame to continue caller execution. This contributes to stack depth issues
-unnecessarily. It should be refactored into a single execution loop with a
-`goto` or `while` structure.
+### 2.6 Recursive prog_run — RESOLVED
+Wrapped the main while loop in `for(;;)` and replaced the recursive tail call
+after `pop_frame()` with `continue`. Deep DO call chains no longer accumulate
+host C stack frames.
 
 ## 3. Polish & Completeness (Open)
 

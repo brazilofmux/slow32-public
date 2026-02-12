@@ -814,6 +814,7 @@ static void pop_frame(void) {
 static void prog_run(void) {
     state.running = 1;
 
+    for (;;) {
     while (state.running && state.current_prog && state.pc < state.current_prog->nlines) {
         char line[MAX_LINE_LEN];
         char *p;
@@ -1005,7 +1006,7 @@ static void prog_run(void) {
         if (state.call_depth > 0) {
             pop_frame();
             if (state.running && state.current_prog)
-                prog_run(); /* continue with caller (recursive tail) */
+                continue; /* continue with caller (was recursive tail call) */
         } else {
             state.running = 0;
             if (state.current_prog) {
@@ -1016,6 +1017,8 @@ static void prog_run(void) {
             }
         }
     }
+    break;
+    } /* for (;;) */
 }
 
 /* ---- DO command: DO <file> or DO WHILE <cond> ---- */
