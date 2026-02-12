@@ -43,9 +43,11 @@ Remaining: syntax/parsing errors, interactive-mode restrictions, SET
 validation, and menu/popup definition errors still use direct `printf()`
 (these are not catchable in real dBase III either).
 
-### 3.2 LIST STRUCTURE TO filename
-`LIST STRUCTURE` (or `COPY STRUCTURE EXTENDED`) creates a DBF containing the
-field definitions of the current database. Used for dynamic schema operations.
+### 3.2 ~~LIST STRUCTURE / COPY STRUCTURE EXTENDED~~ — RESOLVED
+`LIST STRUCTURE` now works (same output as `DISPLAY STRUCTURE`).
+`COPY STRUCTURE EXTENDED TO <filename>` creates a DBF with fields
+FIELD_NAME (C,10), FIELD_TYPE (C,1), FIELD_LEN (N,3,0), FIELD_DEC (N,3,0),
+one record per source field. Used for dynamic schema operations.
 
 ### 3.3 SAVE SCREEN / RESTORE SCREEN
 Save and restore terminal contents. Used for popup dialogs and help screens.

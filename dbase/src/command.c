@@ -3096,6 +3096,78 @@ static void cmd_copy_structure(dbf_t *db, const char *arg) {
     printf("Structure copied to %s.\n", filename);
 }
 
+/* ---- COPY STRUCTURE EXTENDED TO ---- */
+static void cmd_copy_structure_extended(dbf_t *db, const char *arg) {
+    char filename[64];
+    dbf_field_t ext_fields[4];
+    dbf_t dest;
+    int i;
+
+    if (!dbf_is_open(db)) {
+        prog_error(ERR_NO_DATABASE, "No database in use");
+        return;
+    }
+
+    parse_filename(arg, filename, sizeof(filename));
+    if (filename[0] == '\0' || str_icmp(filename, ".DBF") == 0) {
+        printf("Syntax: COPY STRUCTURE EXTENDED TO <filename>\n");
+        return;
+    }
+
+    /* Define the extended structure: 4 fields */
+    memset(ext_fields, 0, sizeof(ext_fields));
+
+    strcpy(ext_fields[0].name, "FIELD_NAME");
+    ext_fields[0].type = 'C';
+    ext_fields[0].length = 10;
+    ext_fields[0].offset = 0;
+
+    strcpy(ext_fields[1].name, "FIELD_TYPE");
+    ext_fields[1].type = 'C';
+    ext_fields[1].length = 1;
+    ext_fields[1].offset = 10;
+
+    strcpy(ext_fields[2].name, "FIELD_LEN");
+    ext_fields[2].type = 'N';
+    ext_fields[2].length = 3;
+    ext_fields[2].decimals = 0;
+    ext_fields[2].offset = 11;
+
+    strcpy(ext_fields[3].name, "FIELD_DEC");
+    ext_fields[3].type = 'N';
+    ext_fields[3].length = 3;
+    ext_fields[3].decimals = 0;
+    ext_fields[3].offset = 14;
+
+    if (dbf_create(filename, ext_fields, 4) < 0) {
+        prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", filename);
+        return;
+    }
+
+    dbf_init(&dest);
+    if (dbf_open(&dest, filename) < 0) {
+        prog_error_fmt(ERR_CANNOT_OPEN, "Error opening %s", filename);
+        return;
+    }
+
+    for (i = 0; i < db->field_count; i++) {
+        char numbuf[8];
+        dbf_append_blank(&dest);
+        dbf_set_field_raw(&dest, 0, db->fields[i].name);
+        numbuf[0] = db->fields[i].type;
+        numbuf[1] = '\0';
+        dbf_set_field_raw(&dest, 1, numbuf);
+        snprintf(numbuf, sizeof(numbuf), "%d", db->fields[i].length);
+        dbf_set_field_raw(&dest, 2, numbuf);
+        snprintf(numbuf, sizeof(numbuf), "%d", db->fields[i].decimals);
+        dbf_set_field_raw(&dest, 3, numbuf);
+        dbf_flush_record(&dest);
+    }
+
+    dbf_close(&dest);
+    printf("%d field(s) copied to %s.\n", db->field_count, filename);
+}
+
 /* ---- APPEND FROM [FOR cond] ---- */
 static void cmd_append_from(dbf_t *db, const char *arg) {
     char filename[64];
@@ -4488,7 +4560,16 @@ static void h_use(dbf_t *db, lexer_t *l) { char arg[256]; lex_next(l); lex_get_r
 static void h_replace(dbf_t *db, lexer_t *l) { lex_next(l); cmd_replace(db, l); }
 static void h_scatter(dbf_t *db, lexer_t *l) { lex_next(l); cmd_scatter(db, l); }
 static void h_gather(dbf_t *db, lexer_t *l) { lex_next(l); cmd_gather(db, l); }
-static void h_list(dbf_t *db, lexer_t *l) { lex_next(l); cmd_list(db, l); }
+static void h_list(dbf_t *db, lexer_t *l) {
+    if (cmd_peek_kw(l, "STRUCTURE")) {
+        lex_next(l); /* skip LIST */
+        lex_next(l); /* skip STRUCTURE */
+        cmd_display_structure(db);
+    } else {
+        lex_next(l);
+        cmd_list(db, l);
+    }
+}
 static void h_display(dbf_t *db, lexer_t *l) {
     if (cmd_peek_kw(l, "STRUCTURE")) {
         lex_next(l); /* skip DISPLAY */
@@ -4753,7 +4834,14 @@ static void h_copy(dbf_t *db, lexer_t *l) {
     lex_next(l); /* skip COPY */
     if (cmd_kw(l, "STRUCTURE")) {
         lex_next(l);
-        if (cmd_kw(l, "TO")) {
+        if (cmd_kw(l, "EXTENDED")) {
+            lex_next(l);
+            if (cmd_kw(l, "TO")) {
+                lex_next(l);
+                char arg[256]; lex_get_remaining(l, arg, sizeof(arg));
+                cmd_copy_structure_extended(db, arg);
+            } else printf("Syntax: COPY STRUCTURE EXTENDED TO <filename>\n");
+        } else if (cmd_kw(l, "TO")) {
             lex_next(l);
             char arg[256]; lex_get_remaining(l, arg, sizeof(arg));
             cmd_copy_structure(db, arg);
