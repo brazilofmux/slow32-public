@@ -90,8 +90,13 @@ RUN for p in /build/fpc-patches/*.patch; do \
       git apply "$p" || patch -p1 < "$p"; \
     done
 
-# Build ppcs32 (SLOW-32 cross-compiler)
+# Generate message include files (msgtxt.inc, msgidx.inc)
 WORKDIR /fpc-src/compiler
+RUN /opt/fpc/bin/ppcx64 -Fu/opt/fpc/units/x86_64-linux/rtl \
+      -FE. utils/msg2inc.pp && \
+    ./msg2inc msg/errore.msg msg msg
+
+# Build ppcs32 (SLOW-32 cross-compiler)
 RUN /opt/fpc/bin/ppcx64 -dslow32 -Fuslow32 -Fusystems -Fislow32 \
       -Fu/opt/fpc/units/x86_64-linux/rtl -oppcs32 pp.pas
 
