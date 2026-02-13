@@ -183,7 +183,7 @@ static term_t parse_list_tail(void) {
 
 static term_t parse_args(int functor_atom) {
     /* Already consumed '(' */
-    term_t args[32];
+    term_t args[PROLOG_MAX_ARITY];
     int arity = 0;
 
     args[arity++] = parse_expr(999);
@@ -191,9 +191,9 @@ static term_t parse_args(int functor_atom) {
 
     while (cur_tok.type == TOK_COMMA) {
         next_token();
-        if (arity >= 32) {
+        if (arity >= PROLOG_MAX_ARITY) {
             g_error = 1;
-            snprintf(g_errmsg, sizeof(g_errmsg), "too many arguments");
+            snprintf(g_errmsg, sizeof(g_errmsg), "too many arguments (max %d)", PROLOG_MAX_ARITY);
             return TERM_NIL;
         }
         args[arity++] = parse_expr(999);

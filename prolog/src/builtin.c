@@ -309,13 +309,18 @@ int try_builtin(term_t goal, int functor, int arity) {
             a = deref(a);
             if (TAG(a) != TAG_INT) return -1;
             int ar = UN_INT(a);
+            if (ar < 0 || ar > PROLOG_MAX_ARITY) {
+                g_error = 1;
+                snprintf(g_errmsg, sizeof(g_errmsg), "functor/3: arity out of range");
+                return -1;
+            }
             if (ar == 0) {
                 return unify(t, f) ? 1 : -1;
             }
             if (TAG(f) != TAG_ATOM) return -1;
-            term_t args[32];
+            term_t args[PROLOG_MAX_ARITY];
             int i;
-            for (i = 0; i < ar && i < 32; i++)
+            for (i = 0; i < ar; i++)
                 args[i] = fresh_var();
             term_t compound = make_compound(UN_ATOM(f), ar, args);
             return unify(t, compound) ? 1 : -1;
@@ -375,10 +380,15 @@ int try_builtin(term_t goal, int functor, int arity) {
             }
 
             if (TAG(head) != TAG_ATOM) return -1;
-            term_t args[32];
+            if (count < 0 || count > PROLOG_MAX_ARITY) {
+                g_error = 1;
+                snprintf(g_errmsg, sizeof(g_errmsg), "=../2: arity out of range");
+                return -1;
+            }
+            term_t args[PROLOG_MAX_ARITY];
             r = rest;
             int i;
-            for (i = 0; i < count && i < 32; i++) {
+            for (i = 0; i < count; i++) {
                 args[i] = compound_arg(r, 0);
                 r = deref(compound_arg(r, 1));
             }

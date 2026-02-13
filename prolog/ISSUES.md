@@ -2,66 +2,64 @@
 
 Review date: February 12, 2026.
 
-Current test status from `prolog/tests/run-tests.sh`: 9/15 passing.
-Failing tests: `cut`, `findall`, `hanoi`, `lists`, `recursion`, `term-manip`.
+Current test status: 16/16 passing (Stabilized core + arity guards).
 
-## 1) `findall/3` stores invalid term pointers (High)
-- File: `prolog/src/builtin.c`
-- Problem: `findall/3` stores copied templates in `results[256]`, then restores `hp = saved_hp` before building the output list.
-- Risk: Stored result terms can point into reclaimed working heap space, causing corrupted structures and non-deterministic output.
-- Evidence: `findall` test currently produces giant malformed nested output.
-- Suggested fix: Persist each captured template into stable storage (code heap or dedicated findall heap/list) before heap rewind.
+## 1) `findall/3` and `\+/1` Corrupt Engine State (Critical)
+- **Problem:** Both predicates run nested solve loops that overwrite the global `goal_stack` and `choices` arrays. While they save and restore the stack pointers (`goal_sp`, `choice_top`), they do not save the actual content of the stacks (or only save a truncated 64-entry snapshot in the case of negation).
+- **Risk:** Any goals or choice points from the parent query that were deeper in the stack than the maximum depth reached by the nested query are destroyed. This causes non-deterministic crashes or incorrect behavior when backtracking into a parent query after a `findall` or negation.
+- **Evidence:** `Negation as failure` block in `engine.c` and `findall/3` in `builtin.c` use global arrays without full preservation.
+- **Suggested Fix:** Nested queries must use an isolated engine state or fully snapshot the parent state. Given the SLOW-32 environment, moving `goal_stack` and `choices` to the heap and using a linked-list of frames (like a WAM) would be safer.
 
-## 2) Recursion/backtracking regression in solver path (High)
-- Files: `prolog/src/engine.c`, `prolog/src/builtin.c`
-- Problem: Recursive workloads currently fail (`lists`, `recursion`, `hanoi`), returning `false.` where success is expected.
-- Risk: Core Prolog behavior for recursive rules is broken.
-- Suggested fix: Audit continuation and choice-point restore logic, then add targeted regression tests for recursive conjunction/backtracking patterns.
+## 2) OOB Read/Write in Term Copying (Resolved)
+- **Previous Problem:** `persist_term()` and `copy_term_impl()` used fixed-size `args[32]` buffers and could call constructors with larger arity.
+- **Fix:** Added explicit `PROLOG_MAX_ARITY` guards in parser, constructors, `copy_term_impl()`, `persist_term()`, `functor/3`, and `=../2`.
+- **Regression:** `tests/arity-limits.*` covers runtime arity overflow paths (`functor/3`, `=../2`).
 
-## 3) Hardcoded arity buffers still unsafe (High)
-- Files: `prolog/src/engine.c`, `prolog/src/term.c`, `prolog/src/builtin.c`, `prolog/src/parser.c`
-- Problem: Multiple sites use `term_t args[32]` while still constructing terms with larger arity.
-- Risk: Uninitialized arguments and memory safety bugs for arity > 32.
-- Suggested fix: Allocate argument vectors based on runtime arity, or reject oversized arity uniformly before term construction.
+## 3) Unification has no occurs-check (High)
+- **Problem:** `unify()` binds variables without checking whether the variable appears inside the target term (`X = f(X)`).
+- **Risk:** Cyclic terms can break traversal/printing and cause non-termination in recursive walkers.
+- **Suggested Fix:** Add `occurs_check(var_id, term)` before variable binding.
 
-## 4) Unification has no occurs-check (High)
-- File: `prolog/src/unify.c`
-- Problem: `unify()` binds variables without checking whether the variable appears inside the target term (`X = f(X)`).
-- Risk: Cyclic terms can trigger non-termination or printer blowups.
-- Suggested fix: Add `occurs_check(var_id, term)` before variable binding.
+## 4) Hardcoded Arity Limit in Parser (Low / Design Limit)
+- **Current Behavior:** Parser enforces `PROLOG_MAX_ARITY` (currently 32) and reports a clear error when exceeded.
+- **Risk:** High-arity source terms are rejected by design.
+- **Suggested Fix (optional):** Raise `PROLOG_MAX_ARITY` (e.g., 255) or move to growable argument vectors.
 
-## 5) `copy_term` can corrupt `var_count` on overflow path (Medium)
-- File: `prolog/src/engine.c`
-- Problem: `copy_term()` increments `var_count` before bounds failure returns.
-- Risk: State drift after overflow errors; later allocations can behave unpredictably.
-- Suggested fix: Check capacity before incrementing `var_count`.
+## 5) Atom Store Overflow Aliases Atom 0 (Resolved)
+- **Previous Problem:** `store_string()` returned `atom_names[0]` fallback when full.
+- **Fix:** Overflow now sets error and fails allocation path instead of aliasing atom identity.
 
-## 6) Variable safety checks are incomplete (Medium)
-- File: `prolog/src/engine.c`
-- Problem: `deref()` validates only `id < MAX_VARS`; `bind()` does not validate `var_id`.
-- Risk: Malformed terms can read/write outside active variable range.
-- Suggested fix: Validate against both `MAX_VARS` and current `var_count` in `deref()` and `bind()`.
+## 6) Deep recursion still relies on C stack (Low)
+- **Problem:** Parser, arithmetic evaluator, term copy/persist, and writer still recurse on host C stack.
+- **Risk:** Stack overflow with deep terms/programs.
+- **Suggested Fix:** Move recursive paths to explicit iterative stacks.
 
-## 7) Negation snapshots truncate engine state at 64 entries (Medium)
-- File: `prolog/src/engine.c`
-- Problem: `\+/1` saves only first 64 goals and 64 choice points, but restores `goal_sp`/`choice_top` to full previous counts.
-- Risk: State corruption when negation is used with deeper stacks.
-- Suggested fix: Save full stacks (bounded by compile-time limits), or reject with explicit error when limits are exceeded.
+## 7) `findall/3` Hard-Limits Results to 256 (Medium)
+- **Problem:** `findall/3` stores matches in a fixed-size `persisted[256]` array.
+- **Risk:** Result sets larger than 256 are silently truncated.
+- **Suggested Fix:** Build the output list incrementally on heap/code-heap, or use growable temporary storage.
 
-## 8) `findall/3` hard limit of 256 results (Medium)
-- File: `prolog/src/builtin.c`
-- Problem: `term_t results[256]` limits collected answers.
-- Risk: Silent truncation of valid result sets.
-- Suggested fix: Build result list incrementally on heap or use growable storage.
+---
 
-## 9) Atom store overflow aliases atom 0 (Low)
-- File: `prolog/src/term.c`
-- Problem: `store_string()` returns `atom_names[0]` when full.
-- Risk: Distinct atoms collapse to the same name, causing misleading behavior.
-- Suggested fix: Hard fail on atom store exhaustion instead of alias fallback.
+## February 2026 Additional Review Findings
 
-## 10) Deep recursion still relies on C stack (Low)
-- Files: `prolog/src/parser.c`, `prolog/src/builtin.c`, `prolog/src/print.c`, `prolog/src/term.c`, `prolog/src/engine.c`
-- Problem: Parser, arithmetic evaluator, term copy/persist, and writer still recurse on host C stack.
-- Risk: Stack overflow with deep terms/programs.
-- Suggested fix: Move critical paths (`copy_term`, `persist_term`, writer) to explicit iterative stacks.
+### 8) `persist_term` Recursion Depth Risk (Opportunity)
+- **Problem:** `persist_term` in `term.c` recurses for every argument of a compound term.
+- **Risk:** Deeply nested terms can drive C stack growth in conversion paths.
+- **Suggested Fix:** Optional iterative rewrite with an explicit term stack.
+
+### 9) `atom_intern` Search Performance (Opportunity)
+- **Problem:** `atom_intern` uses a linear search over `atom_names`.
+- **Risk:** Performance will degrade as the number of atoms grows toward `MAX_ATOMS (2048)`.
+- **Suggested Fix:** Implement a simple hash table for atom lookups.
+
+---
+
+## Completed / Fixed Items
+
+- **~~findall/3 stored invalid term pointers~~** — FIXED: Now uses `persist_term()` to move results to code heap.
+- **~~Recursion/backtracking regression~~** — FIXED: Solver stabilized, all 15 regression tests pass.
+- **~~copy_term could corrupt var_count~~** — FIXED: Added bounds checks before increment.
+- **~~Variable safety checks incomplete~~** — FIXED: `deref()` and `bind()` now validate against `var_count`.
+- **~~OOB in term copying for arity > 32~~** — FIXED: Global arity guards now prevent unsafe construction/copy.
+- **~~Atom store overflow alias fallback~~** — FIXED: overflow now errors instead of aliasing atom 0.

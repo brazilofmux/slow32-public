@@ -250,9 +250,8 @@ copy_term_impl:                         # @copy_term_impl
 	stw fp+-32, r18
 	stw fp+-36, r19
 	stw fp+-40, r20
-	stw fp+-44, r21
-	stw fp+-48, lr
-	add r13, r6, r0
+	stw fp+-44, lr
+	add r14, r6, r0
 	add r12, r5, r0
 	add r11, r4, r0
 	addi r1, r0, 0
@@ -266,11 +265,11 @@ copy_term_impl:                         # @copy_term_impl
 	addi r6, r6, -1
 	lui r7, %hi(var_binding)
 	addi r7, r7, %lo(var_binding)
-                                        # implicit-def: $r14
+                                        # implicit-def: $r13
 	jal r0, .LBB5_3
 .LBB5_2:
 	add r8, r1, r0
-	add r14, r3, r0
+	add r13, r3, r0
 	beq r8, r1, .LBB5_8
 .LBB5_3:
 	andi r8, r3, 3
@@ -289,112 +288,22 @@ copy_term_impl:                         # @copy_term_impl
 	sub r10, r1, r8
 	and r9, r9, r10
 	xor r9, r3, r9
-	xor r14, r14, r3
-	and r10, r14, r10
-	xor r14, r3, r10
+	xor r13, r13, r3
+	and r10, r13, r10
+	xor r13, r3, r10
 	add r3, r9, r0
 	bne r8, r1, .LBB5_3
 	jal r0, .LBB5_8
 .LBB5_7:
-	add r14, r3, r0
+	add r13, r3, r0
 .LBB5_8:
-	andi r3, r14, 3
+	andi r3, r13, 3
 	addi r1, r3, -1
 	addi r4, r0, 2
 	bgeu r1, r4, .LBB5_10
 .LBB5_9:
-	add r15, r14, r0
-	jal r0, .LBB5_24
-.LBB5_10:
-	addi r1, r0, 0
-	bne r3, r1, .LBB5_18
-.LBB5_11:
-	addi r15, r0, 0
-	beq r14, r15, .LBB5_24
-.LBB5_12:
-	add r3, r14, r0
-	jal r31, compound_functor
-	add r16, r1, r0
-	add r3, r14, r0
-	jal r31, compound_arity
-	add r17, r1, r0
-	addi r1, r0, 1
-	blt r17, r1, .LBB5_16
-.LBB5_13:
-	addi r1, r0, 32
-	slt r1, r17, r1
-	addi r15, r0, 0
-	sub r1, r15, r1
-	xori r3, r17, 32
-	and r1, r3, r1
-	xori r19, r1, 32
-	addi r20, fp, -176
-	lui r21, %hi(g_error)
-	addi r21, r21, %lo(g_error)
-	add r18, r15, r0
-.LBB5_14:
-	add r3, r14, r0
-	add r4, r18, r0
-	jal r31, compound_arg
-	add r3, r1, r0
-	add r4, r11, r0
-	add r5, r12, r0
-	add r6, r13, r0
-	jal r31, copy_term_impl
-	stw r20+0, r1
-	ldw r1, r21+0
-	bne r1, r15, .LBB5_24
-.LBB5_15:
-	addi r18, r18, 1
-	addi r20, r20, 4
-	bne r19, r18, .LBB5_14
-.LBB5_16:
-	addi r5, fp, -176
-	add r3, r16, r0
-	add r4, r17, r0
-	jal r31, make_compound
-.LBB5_17:
-	add r15, r1, r0
-	jal r0, .LBB5_24
-.LBB5_18:
-	srli r3, r14, 2
-	add r15, r14, r0
-	bge r3, r12, .LBB5_24
-.LBB5_19:
-	slli r3, r3, 2
-	add r3, r11, r3
-	ldw r4, r3+0
-	addi r5, r0, -1
-	bne r4, r5, .LBB5_23
-.LBB5_20:
-	lui r5, %hi(var_count)
-	addi r5, r5, %lo(var_count)
-	ldw r4, r5+0
-	lui r6, 8
-	blt r4, r6, .LBB5_22
-.LBB5_21:
-	lui r3, %hi(g_error)
-	addi r3, r3, %lo(g_error)
-	addi r4, r0, 1
-	stw r3+0, r4
-	jal r0, .LBB5_17
-.LBB5_22:
-	addi r6, r4, 1
-	stw r5+0, r6
-	stw r3+0, r4
-	slli r4, r4, 2
-	lui r5, %hi(var_binding)
-	addi r5, r5, %lo(var_binding)
-	add r4, r4, r5
-	stw r4+0, r1
-.LBB5_23:
-	ldw r1, r3+0
-	slli r1, r1, 2
-	addi r15, r1, 3
-.LBB5_24:
-	add r1, r15, r0
-	ldw lr, fp+-48
-	ldw r21, fp+-44
+	add r1, r13, r0
+	ldw lr, fp+-44
 	ldw r20, fp+-40
 	ldw r19, fp+-36
 	ldw r18, fp+-32
@@ -409,6 +318,107 @@ copy_term_impl:                         # @copy_term_impl
 	ldw fp, sp+4
 	addi sp, sp, 184
 	jalr r0, r31, 0
+.LBB5_10:
+	addi r1, r0, 0
+	bne r3, r1, .LBB5_14
+.LBB5_11:
+	addi r17, r0, 0
+	beq r13, r17, .LBB5_18
+.LBB5_12:
+	add r3, r13, r0
+	jal r31, compound_functor
+	add r15, r1, r0
+	add r3, r13, r0
+	jal r31, compound_arity
+	add r16, r1, r0
+	addi r1, r0, 33
+	bltu r16, r1, .LBB5_19
+.LBB5_13:
+	lui r1, %hi(g_error)
+	addi r1, r1, %lo(g_error)
+	addi r3, r0, 1
+	stw r1+0, r3
+	lui r3, %hi(g_errmsg)
+	addi r3, r3, %lo(g_errmsg)
+	lui r5, %hi(.L.str.4)
+	addi r5, r5, %lo(.L.str.4)
+	addi r4, r0, 256
+	jal r31, snprintf
+	add r13, r17, r0
+	jal r0, .LBB5_9
+.LBB5_14:
+	srli r3, r13, 2
+	bge r3, r12, .LBB5_9
+.LBB5_15:
+	slli r3, r3, 2
+	add r3, r11, r3
+	ldw r4, r3+0
+	addi r5, r0, -1
+	bne r4, r5, .LBB5_27
+.LBB5_16:
+	lui r5, %hi(var_count)
+	addi r5, r5, %lo(var_count)
+	ldw r4, r5+0
+	lui r6, 8
+	blt r4, r6, .LBB5_26
+.LBB5_17:
+	lui r3, %hi(g_error)
+	addi r3, r3, %lo(g_error)
+	addi r4, r0, 1
+	stw r3+0, r4
+	jal r0, .LBB5_24
+.LBB5_18:
+	add r13, r17, r0
+	jal r0, .LBB5_9
+.LBB5_19:
+	addi r18, r0, 0
+	beq r16, r18, .LBB5_23
+.LBB5_20:
+	addi r19, fp, -172
+	lui r20, %hi(g_error)
+	addi r20, r20, %lo(g_error)
+	add r17, r18, r0
+.LBB5_21:
+	add r3, r13, r0
+	add r4, r17, r0
+	jal r31, compound_arg
+	add r3, r1, r0
+	add r4, r11, r0
+	add r5, r12, r0
+	add r6, r14, r0
+	jal r31, copy_term_impl
+	stw r19+0, r1
+	ldw r1, r20+0
+	bne r1, r18, .LBB5_25
+.LBB5_22:
+	addi r17, r17, 1
+	addi r19, r19, 4
+	bne r16, r17, .LBB5_21
+.LBB5_23:
+	addi r5, fp, -172
+	add r3, r15, r0
+	add r4, r16, r0
+	jal r31, make_compound
+.LBB5_24:
+	add r13, r1, r0
+	jal r0, .LBB5_9
+.LBB5_25:
+	add r13, r18, r0
+	jal r0, .LBB5_9
+.LBB5_26:
+	addi r6, r4, 1
+	stw r5+0, r6
+	stw r3+0, r4
+	slli r4, r4, 2
+	lui r5, %hi(var_binding)
+	addi r5, r5, %lo(var_binding)
+	add r4, r4, r5
+	stw r4+0, r1
+.LBB5_27:
+	ldw r1, r3+0
+	slli r1, r1, 2
+	addi r13, r1, 3
+	jal r0, .LBB5_9
 .Lfunc_end5:
 	.size	copy_term_impl, .Lfunc_end5-copy_term_impl
                                         # -- End function
@@ -1867,6 +1877,12 @@ goal_stack:
 choices:
 	.zero	57344
 	.size	choices, 57344
+
+	.type	.L.str.4,@object                # @.str.4
+	.section	.rodata.str1.1,"aMS",@progbits,1
+.L.str.4:
+	.asciz	"arity overflow"
+	.size	.L.str.4, 15
 
 	.ident	"clang version 23.0.0git (https://github.com/llvm/llvm-project.git 0c27e7716b1b351bd93e1a7d5c7965bde4656ae9)"
 	.section	".note.GNU-stack","",@progbits

@@ -45,13 +45,13 @@ try_builtin:                            # @try_builtin
 .LBB0_3:
 	lui r24, %hi(ATOM_FAIL)
 	addi r24, r24, %lo(ATOM_FAIL)
-	addi r19, r0, -1
+	addi r20, r0, -1
 	bne r5, r1, .LBB0_6
 .LBB0_4:
 	ldw r6, r24+0
 	bne r4, r6, .LBB0_6
 .LBB0_5:
-	add r1, r19, r0
+	add r1, r20, r0
 	jal r0, .LBB0_20
 .LBB0_6:
 	lui r6, %hi(ATOM_HALT)
@@ -216,7 +216,7 @@ try_builtin:                            # @try_builtin
 .LBB0_36:
 	add r3, r11, r0
 	jal r31, trail_undo
-	add r1, r19, r0
+	add r1, r20, r0
 	jal r0, .LBB0_20
 .LBB0_37:
 	bne r5, r11, .LBB0_40
@@ -283,7 +283,7 @@ try_builtin:                            # @try_builtin
 	add r4, r13, r0
 	jal r31, eval_arith
 	bne r1, r11, .LBB0_46
-	jal r0, .LBB0_308
+	jal r0, .LBB0_313
 .LBB0_46:
 	ldw r1, r13+0
 	slli r1, r1, 2
@@ -599,7 +599,7 @@ try_builtin:                            # @try_builtin
 	sne r1, r1, r11
 	sub r1, r11, r1
 	sub r3, r11, r3
-	jal r0, .LBB0_128
+	jal r0, .LBB0_125
 .LBB0_99:
 	bne r5, r12, .LBB0_108
 .LBB0_100:
@@ -616,9 +616,9 @@ try_builtin:                            # @try_builtin
 	jal r31, deref
 	add r13, r1, r0
 	andi r1, r1, 3
-	beq r13, r12, .LBB0_127
+	beq r13, r12, .LBB0_124
 .LBB0_102:
-	bne r1, r12, .LBB0_127
+	bne r1, r12, .LBB0_124
 .LBB0_103:
 	lui r15, %hi(ATOM_DOT)
 	addi r15, r15, %lo(ATOM_DOT)
@@ -627,11 +627,11 @@ try_builtin:                            # @try_builtin
 	add r3, r13, r0
 	jal r31, compound_functor
 	ldw r3, r15+0
-	bne r1, r3, .LBB0_126
+	bne r1, r3, .LBB0_123
 .LBB0_105:
 	add r3, r13, r0
 	jal r31, compound_arity
-	bne r1, r11, .LBB0_126
+	bne r1, r11, .LBB0_123
 .LBB0_106:
 	add r3, r13, r0
 	add r4, r14, r0
@@ -640,18 +640,18 @@ try_builtin:                            # @try_builtin
 	jal r31, deref
 	add r13, r1, r0
 	andi r1, r1, 3
-	beq r13, r12, .LBB0_127
+	beq r13, r12, .LBB0_124
 .LBB0_107:
 	beq r1, r12, .LBB0_104
-	jal r0, .LBB0_127
+	jal r0, .LBB0_124
 .LBB0_108:
 	addi r17, r0, 3
-	bne r5, r17, .LBB0_118
+	bne r5, r17, .LBB0_115
 .LBB0_109:
 	lui r3, %hi(ATOM_FUNCTOR)
 	addi r3, r3, %lo(ATOM_FUNCTOR)
 	ldw r3, r3+0
-	bne r4, r3, .LBB0_118
+	bne r4, r3, .LBB0_115
 .LBB0_110:
 	addi r11, r0, 0
 	add r3, r13, r0
@@ -671,7 +671,7 @@ try_builtin:                            # @try_builtin
 	jal r31, compound_arg
 	add r13, r1, r0
 	andi r1, r12, 3
-	bne r1, r17, .LBB0_129
+	bne r1, r17, .LBB0_126
 .LBB0_111:
 	add r3, r14, r0
 	jal r31, deref
@@ -682,42 +682,29 @@ try_builtin:                            # @try_builtin
 	bne r3, r15, .LBB0_5
 .LBB0_112:
 	srai r13, r1, 2
-	beq r13, r11, .LBB0_165
+	addi r1, r0, 33
+	bltu r13, r1, .LBB0_153
 .LBB0_113:
-	andi r3, r14, 3
-	add r1, r19, r0
-	bne r3, r16, .LBB0_20
+	lui r1, %hi(g_error)
+	addi r1, r1, %lo(g_error)
+	stw r1+0, r15
+	lui r3, %hi(g_errmsg)
+	addi r3, r3, %lo(g_errmsg)
+	lui r5, %hi(.L.str)
+	addi r5, r5, %lo(.L.str)
 .LBB0_114:
-	blt r13, r15, .LBB0_117
+	addi r4, r0, 256
+	jal r31, snprintf
+	add r1, r20, r0
+	jal r0, .LBB0_20
 .LBB0_115:
-	addi r1, r0, 32
-	slt r1, r13, r1
-	sub r1, r11, r1
-	xori r3, r13, 32
-	and r1, r3, r1
-	xori r15, r1, 32
-	addi r16, fp, -1100
+	bne r5, r17, .LBB0_129
 .LBB0_116:
-	jal r31, fresh_var
-	stw r16+0, r1
-	addi r15, r15, -1
-	addi r16, r16, 4
-	bne r15, r11, .LBB0_116
-.LBB0_117:
-	srli r3, r14, 2
-	addi r5, fp, -1100
-	add r4, r13, r0
-	jal r31, make_compound
-	add r3, r12, r0
-	jal r0, .LBB0_29
-.LBB0_118:
-	bne r5, r17, .LBB0_132
-.LBB0_119:
 	lui r3, %hi(ATOM_ARG)
 	addi r3, r3, %lo(ATOM_ARG)
 	ldw r3, r3+0
-	bne r4, r3, .LBB0_132
-.LBB0_120:
+	bne r4, r3, .LBB0_129
+.LBB0_117:
 	addi r11, r0, 0
 	add r14, r13, r0
 	add r3, r13, r0
@@ -739,29 +726,29 @@ try_builtin:                            # @try_builtin
 	add r14, r1, r0
 	andi r1, r15, 3
 	bne r1, r13, .LBB0_5
-.LBB0_121:
+.LBB0_118:
 	beq r12, r11, .LBB0_5
-.LBB0_122:
+.LBB0_119:
 	andi r1, r12, 3
 	bne r1, r11, .LBB0_5
-.LBB0_123:
+.LBB0_120:
 	srai r15, r15, 2
 	add r3, r12, r0
 	jal r31, compound_arity
 	blt r15, r13, .LBB0_5
-.LBB0_124:
+.LBB0_121:
 	add r3, r1, r0
-	add r1, r19, r0
+	add r1, r20, r0
 	bgt r15, r3, .LBB0_20
-.LBB0_125:
+.LBB0_122:
 	addi r4, r15, -1
 	add r3, r12, r0
 	jal r31, compound_arg
 	add r3, r14, r0
 	jal r0, .LBB0_29
-.LBB0_126:
+.LBB0_123:
 	add r1, r12, r0
-.LBB0_127:
+.LBB0_124:
 	seq r1, r1, r11
 	srli r3, r13, 2
 	lui r4, %hi(ATOM_NIL_LIST)
@@ -770,12 +757,12 @@ try_builtin:                            # @try_builtin
 	seq r3, r3, r4
 	sub r1, r12, r1
 	sub r3, r12, r3
-.LBB0_128:
+.LBB0_125:
 	and r1, r3, r1
 	addi r3, r0, -1
 	xor r1, r1, r3
 	jal r0, .LBB0_32
-.LBB0_129:
+.LBB0_126:
 	add r3, r12, r0
 	jal r31, term_functor
 	add r16, r1, r0
@@ -784,8 +771,8 @@ try_builtin:                            # @try_builtin
 	add r15, r1, r0
 	addi r1, r0, -1
 	add r17, r1, r0
-	ble r16, r1, .LBB0_155
-.LBB0_130:
+	ble r16, r1, .LBB0_151
+.LBB0_127:
 	slli r1, r16, 2
 	addi r4, r1, 2
 	add r3, r14, r0
@@ -793,19 +780,19 @@ try_builtin:                            # @try_builtin
 	add r3, r1, r0
 	add r1, r17, r0
 	beq r3, r11, .LBB0_20
-.LBB0_131:
+.LBB0_128:
 	slli r1, r15, 2
 	addi r4, r1, 1
 	add r3, r13, r0
 	jal r0, .LBB0_30
-.LBB0_132:
-	bne r5, r11, .LBB0_152
-.LBB0_133:
+.LBB0_129:
+	bne r5, r11, .LBB0_148
+.LBB0_130:
 	lui r3, %hi(ATOM_UNIV)
 	addi r3, r3, %lo(ATOM_UNIV)
 	ldw r3, r3+0
-	bne r4, r3, .LBB0_152
-.LBB0_134:
+	bne r4, r3, .LBB0_148
+.LBB0_131:
 	addi r14, r0, 0
 	add r3, r13, r0
 	add r4, r14, r0
@@ -819,23 +806,23 @@ try_builtin:                            # @try_builtin
 	jal r31, compound_arg
 	add r13, r1, r0
 	andi r1, r12, 3
-	bne r1, r17, .LBB0_157
-.LBB0_135:
+	bne r1, r17, .LBB0_159
+.LBB0_132:
 	add r3, r13, r0
 	jal r31, deref
 	beq r1, r14, .LBB0_5
-.LBB0_136:
+.LBB0_133:
 	add r15, r1, r0
 	andi r1, r1, 3
 	bne r1, r14, .LBB0_5
-.LBB0_137:
+.LBB0_134:
 	add r3, r15, r0
 	jal r31, compound_functor
-	lui r20, %hi(ATOM_DOT)
-	addi r20, r20, %lo(ATOM_DOT)
-	ldw r3, r20+0
+	lui r21, %hi(ATOM_DOT)
+	addi r21, r21, %lo(ATOM_DOT)
+	ldw r3, r21+0
 	bne r1, r3, .LBB0_5
-.LBB0_138:
+.LBB0_135:
 	addi r16, r0, 0
 	add r3, r15, r0
 	add r4, r16, r0
@@ -843,100 +830,78 @@ try_builtin:                            # @try_builtin
 	add r3, r1, r0
 	jal r31, deref
 	add r13, r1, r0
-	addi r4, r0, 1
+	addi r17, r0, 1
 	add r3, r15, r0
+	add r4, r17, r0
 	jal r31, compound_arg
 	add r3, r1, r0
 	jal r31, deref
 	add r14, r1, r0
-	andi r21, r13, 3
-	bne r21, r11, .LBB0_140
-.LBB0_139:
+	andi r22, r13, 3
+	bne r22, r11, .LBB0_137
+.LBB0_136:
 	srli r1, r13, 2
 	lui r3, %hi(ATOM_NIL_LIST)
 	addi r3, r3, %lo(ATOM_NIL_LIST)
 	ldw r3, r3+0
 	beq r1, r3, .LBB0_5
-.LBB0_140:
+.LBB0_137:
 	add r15, r16, r0
-	beq r14, r16, .LBB0_147
-.LBB0_141:
+	beq r14, r16, .LBB0_144
+.LBB0_138:
 	andi r1, r14, 3
-	addi r22, r0, 0
+	addi r23, r0, 0
 	add r15, r16, r0
-	bne r1, r22, .LBB0_147
-.LBB0_142:
-	addi r17, r0, 1
-	add r15, r22, r0
-	add r18, r14, r0
-.LBB0_143:
-	add r3, r18, r0
+	bne r1, r23, .LBB0_144
+.LBB0_139:
+	addi r18, r0, 1
+	add r15, r23, r0
+	add r19, r14, r0
+.LBB0_140:
+	add r3, r19, r0
 	jal r31, compound_functor
-	ldw r3, r20+0
-	bne r1, r3, .LBB0_147
-.LBB0_144:
-	add r3, r18, r0
+	ldw r3, r21+0
+	bne r1, r3, .LBB0_144
+.LBB0_141:
+	add r3, r19, r0
 	jal r31, compound_arity
-	bne r1, r11, .LBB0_147
-.LBB0_145:
+	bne r1, r11, .LBB0_144
+.LBB0_142:
 	addi r15, r15, 1
-	add r3, r18, r0
-	add r4, r17, r0
+	add r3, r19, r0
+	add r4, r18, r0
 	jal r31, compound_arg
 	add r3, r1, r0
 	jal r31, deref
-	beq r1, r22, .LBB0_147
-.LBB0_146:
-	add r18, r1, r0
+	beq r1, r23, .LBB0_144
+.LBB0_143:
+	add r19, r1, r0
 	andi r1, r1, 3
-	beq r1, r22, .LBB0_143
+	beq r1, r23, .LBB0_140
+.LBB0_144:
+	beq r15, r16, .LBB0_256
+.LBB0_145:
+	bne r22, r11, .LBB0_5
+.LBB0_146:
+	addi r1, r0, 33
+	bltu r15, r1, .LBB0_273
 .LBB0_147:
-	beq r15, r16, .LBB0_254
+	lui r1, %hi(g_error)
+	addi r1, r1, %lo(g_error)
+	stw r1+0, r17
+	lui r3, %hi(g_errmsg)
+	addi r3, r3, %lo(g_errmsg)
+	lui r5, %hi(.L.str.1)
+	addi r5, r5, %lo(.L.str.1)
+	jal r0, .LBB0_114
 .LBB0_148:
-	add r1, r19, r0
-	bne r21, r11, .LBB0_20
+	bne r5, r11, .LBB0_165
 .LBB0_149:
-	addi r1, r0, 32
-	sltu r1, r15, r1
-	addi r11, r0, 0
-	sub r1, r11, r1
-	xori r3, r15, 32
-	and r1, r3, r1
-	xori r1, r1, 32
-	slli r17, r1, 2
-	addi r18, fp, -1100
-	addi r16, r0, 1
-	add r19, r11, r0
-.LBB0_150:
-	add r3, r14, r0
-	add r4, r11, r0
-	jal r31, compound_arg
-	add r3, r18, r19
-	stw r3+0, r1
-	add r3, r14, r0
-	add r4, r16, r0
-	jal r31, compound_arg
-	add r3, r1, r0
-	jal r31, deref
-	add r14, r1, r0
-	addi r19, r19, 4
-	bne r17, r19, .LBB0_150
-.LBB0_151:
-	srli r3, r13, 2
-	addi r5, fp, -1100
-	add r4, r15, r0
-	jal r31, make_compound
-	add r3, r12, r0
-	add r4, r1, r0
-	jal r0, .LBB0_255
-.LBB0_152:
-	bne r5, r11, .LBB0_163
-.LBB0_153:
 	lui r3, %hi(ATOM_COPY_TERM)
 	addi r3, r3, %lo(ATOM_COPY_TERM)
 	ldw r3, r3+0
-	bne r4, r3, .LBB0_163
-.LBB0_154:
+	bne r4, r3, .LBB0_165
+.LBB0_150:
 	addi r11, r0, 0
 	add r3, r13, r0
 	add r4, r11, r0
@@ -956,22 +921,45 @@ try_builtin:                            # @try_builtin
 	add r4, r14, r0
 	jal r31, copy_term
 	jal r0, .LBB0_28
-.LBB0_155:
+.LBB0_151:
 	add r3, r14, r0
 	add r4, r12, r0
 	jal r31, unify
 	add r3, r1, r0
 	add r1, r17, r0
 	beq r3, r11, .LBB0_20
-.LBB0_156:
+.LBB0_152:
 	addi r4, r0, 1
 	add r3, r13, r0
 	jal r0, .LBB0_30
+.LBB0_153:
+	beq r13, r11, .LBB0_187
+.LBB0_154:
+	andi r3, r14, 3
+	add r1, r20, r0
+	bne r3, r16, .LBB0_20
+.LBB0_155:
+	addi r15, fp, -1100
+	add r16, r13, r0
+.LBB0_156:
+	jal r31, fresh_var
+	stw r15+0, r1
+	addi r16, r16, -1
+	addi r15, r15, 4
+	bne r16, r11, .LBB0_156
 .LBB0_157:
-	beq r12, r14, .LBB0_166
+	srli r3, r14, 2
+	addi r5, fp, -1100
+	add r4, r13, r0
 .LBB0_158:
-	bne r1, r14, .LBB0_166
+	jal r31, make_compound
+	add r3, r12, r0
+	jal r0, .LBB0_29
 .LBB0_159:
+	beq r12, r14, .LBB0_167
+.LBB0_160:
+	bne r1, r14, .LBB0_167
+.LBB0_161:
 	add r3, r12, r0
 	jal r31, compound_functor
 	add r11, r1, r0
@@ -982,10 +970,10 @@ try_builtin:                            # @try_builtin
 	ldw r3, r3+0
 	slli r3, r3, 2
 	addi r16, r3, 2
-	blt r1, r15, .LBB0_162
-.LBB0_160:
+	blt r1, r15, .LBB0_164
+.LBB0_162:
 	addi r17, r1, 1
-.LBB0_161:
+.LBB0_163:
 	addi r4, r17, -2
 	add r3, r12, r0
 	jal r31, compound_arg
@@ -994,33 +982,29 @@ try_builtin:                            # @try_builtin
 	jal r31, make_list_cons
 	add r16, r1, r0
 	addi r17, r17, -1
-	bgt r17, r15, .LBB0_161
-.LBB0_162:
+	bgt r17, r15, .LBB0_163
+.LBB0_164:
 	slli r1, r11, 2
 	addi r3, r1, 2
 	add r4, r16, r0
-	jal r0, .LBB0_167
-.LBB0_163:
+	jal r0, .LBB0_168
+.LBB0_165:
 	lui r3, %hi(ATOM_ASSERT)
 	addi r3, r3, %lo(ATOM_ASSERT)
 	ldw r3, r3+0
-	bne r4, r3, .LBB0_168
-.LBB0_164:
-	addi r3, r0, 1
-	beq r5, r3, .LBB0_170
-	jal r0, .LBB0_175
-.LBB0_165:
-	add r3, r12, r0
-	add r4, r14, r0
-	jal r0, .LBB0_30
+	bne r4, r3, .LBB0_169
 .LBB0_166:
+	addi r3, r0, 1
+	beq r5, r3, .LBB0_171
+	jal r0, .LBB0_176
+.LBB0_167:
 	lui r1, %hi(ATOM_NIL_LIST)
 	addi r1, r1, %lo(ATOM_NIL_LIST)
 	ldw r1, r1+0
 	slli r1, r1, 2
 	addi r4, r1, 2
 	add r3, r12, r0
-.LBB0_167:
+.LBB0_168:
 	jal r31, make_list_cons
 	add r3, r13, r0
 	add r4, r1, r0
@@ -1028,14 +1012,14 @@ try_builtin:                            # @try_builtin
 	seq r1, r1, r14
 	sub r1, r14, r1
 	jal r0, .LBB0_32
-.LBB0_168:
-	bne r5, r12, .LBB0_175
 .LBB0_169:
+	bne r5, r12, .LBB0_176
+.LBB0_170:
 	lui r3, %hi(ATOM_ASSERTZ)
 	addi r3, r3, %lo(ATOM_ASSERTZ)
 	ldw r3, r3+0
-	bne r4, r3, .LBB0_175
-.LBB0_170:
+	bne r4, r3, .LBB0_176
+.LBB0_171:
 	addi r12, r0, 0
 	add r3, r13, r0
 	add r4, r12, r0
@@ -1043,23 +1027,23 @@ try_builtin:                            # @try_builtin
 	add r3, r1, r0
 	jal r31, deref
 	add r13, r1, r0
-	beq r1, r12, .LBB0_182
-.LBB0_171:
+	beq r1, r12, .LBB0_183
+.LBB0_172:
 	andi r1, r13, 3
 	addi r3, r0, 0
-	bne r1, r3, .LBB0_182
-.LBB0_172:
+	bne r1, r3, .LBB0_183
+.LBB0_173:
 	add r3, r13, r0
 	jal r31, compound_functor
 	lui r3, %hi(ATOM_CLAUSE)
 	addi r3, r3, %lo(ATOM_CLAUSE)
 	ldw r3, r3+0
-	bne r1, r3, .LBB0_182
-.LBB0_173:
+	bne r1, r3, .LBB0_183
+.LBB0_174:
 	add r3, r13, r0
 	jal r31, compound_arity
-	bne r1, r11, .LBB0_182
-.LBB0_174:
+	bne r1, r11, .LBB0_183
+.LBB0_175:
 	addi r4, r0, 0
 	add r3, r13, r0
 	jal r31, compound_arg
@@ -1073,15 +1057,15 @@ try_builtin:                            # @try_builtin
 	jal r31, deref
 	add r15, r1, r0
 	add r13, r11, r0
-	jal r0, .LBB0_183
-.LBB0_175:
-	bne r5, r12, .LBB0_186
+	jal r0, .LBB0_184
 .LBB0_176:
+	bne r5, r12, .LBB0_188
+.LBB0_177:
 	lui r3, %hi(ATOM_ASSERTA)
 	addi r3, r3, %lo(ATOM_ASSERTA)
 	ldw r3, r3+0
-	bne r4, r3, .LBB0_186
-.LBB0_177:
+	bne r4, r3, .LBB0_188
+.LBB0_178:
 	addi r12, r0, 0
 	add r3, r13, r0
 	add r4, r12, r0
@@ -1089,23 +1073,23 @@ try_builtin:                            # @try_builtin
 	add r3, r1, r0
 	jal r31, deref
 	add r13, r1, r0
-	beq r1, r12, .LBB0_193
-.LBB0_178:
+	beq r1, r12, .LBB0_195
+.LBB0_179:
 	andi r1, r13, 3
 	addi r3, r0, 0
-	bne r1, r3, .LBB0_193
-.LBB0_179:
+	bne r1, r3, .LBB0_195
+.LBB0_180:
 	add r3, r13, r0
 	jal r31, compound_functor
 	lui r3, %hi(ATOM_CLAUSE)
 	addi r3, r3, %lo(ATOM_CLAUSE)
 	ldw r3, r3+0
-	bne r1, r3, .LBB0_193
-.LBB0_180:
+	bne r1, r3, .LBB0_195
+.LBB0_181:
 	add r3, r13, r0
 	jal r31, compound_arity
-	bne r1, r11, .LBB0_193
-.LBB0_181:
+	bne r1, r11, .LBB0_195
+.LBB0_182:
 	addi r4, r0, 0
 	add r3, r13, r0
 	jal r31, compound_arg
@@ -1119,12 +1103,12 @@ try_builtin:                            # @try_builtin
 	jal r31, deref
 	add r15, r1, r0
 	add r13, r11, r0
-	jal r0, .LBB0_194
-.LBB0_182:
+	jal r0, .LBB0_196
+.LBB0_183:
 	ldw r1, r23+0
 	slli r1, r1, 2
 	addi r15, r1, 2
-.LBB0_183:
+.LBB0_184:
 	addi r11, fp, -1100
 	addi r4, r0, -1
 	addi r14, r0, 1024
@@ -1143,7 +1127,7 @@ try_builtin:                            # @try_builtin
 	jal r31, copy_term_code
 	add r3, r12, r0
 	add r5, r12, r0
-.LBB0_184:
+.LBB0_185:
 	add r4, r11, r3
 	ldw r4, r4+0
 	addi r6, r4, 1
@@ -1158,21 +1142,25 @@ try_builtin:                            # @try_builtin
 	and r5, r5, r7
 	xor r5, r4, r5
 	addi r3, r3, 4
-	bne r3, r14, .LBB0_184
-.LBB0_185:
+	bne r3, r14, .LBB0_185
+.LBB0_186:
 	addi r6, r0, 0
 	add r3, r13, r0
 	add r4, r1, r0
 	jal r31, db_add_clause
 	jal r0, .LBB0_19
-.LBB0_186:
-	bne r5, r12, .LBB0_197
 .LBB0_187:
+	add r3, r12, r0
+	add r4, r14, r0
+	jal r0, .LBB0_30
+.LBB0_188:
+	bne r5, r12, .LBB0_199
+.LBB0_189:
 	lui r3, %hi(ATOM_RETRACT)
 	addi r3, r3, %lo(ATOM_RETRACT)
 	ldw r3, r3+0
-	bne r4, r3, .LBB0_197
-.LBB0_188:
+	bne r4, r3, .LBB0_199
+.LBB0_190:
 	addi r12, r0, 0
 	add r3, r13, r0
 	add r4, r12, r0
@@ -1180,23 +1168,23 @@ try_builtin:                            # @try_builtin
 	add r3, r1, r0
 	jal r31, deref
 	add r13, r1, r0
-	beq r1, r12, .LBB0_256
-.LBB0_189:
+	beq r1, r12, .LBB0_258
+.LBB0_191:
 	andi r1, r13, 3
 	addi r14, r0, 0
-	bne r1, r14, .LBB0_256
-.LBB0_190:
+	bne r1, r14, .LBB0_258
+.LBB0_192:
 	add r3, r13, r0
 	jal r31, compound_functor
 	lui r3, %hi(ATOM_CLAUSE)
 	addi r3, r3, %lo(ATOM_CLAUSE)
 	ldw r3, r3+0
-	bne r1, r3, .LBB0_257
-.LBB0_191:
+	bne r1, r3, .LBB0_259
+.LBB0_193:
 	add r3, r13, r0
 	jal r31, compound_arity
-	bne r1, r11, .LBB0_257
-.LBB0_192:
+	bne r1, r11, .LBB0_259
+.LBB0_194:
 	addi r4, r0, 0
 	add r3, r13, r0
 	jal r31, compound_arg
@@ -1209,12 +1197,12 @@ try_builtin:                            # @try_builtin
 	add r3, r1, r0
 	jal r31, deref
 	add r14, r1, r0
-	jal r0, .LBB0_258
-.LBB0_193:
+	jal r0, .LBB0_260
+.LBB0_195:
 	ldw r1, r23+0
 	slli r1, r1, 2
 	addi r15, r1, 2
-.LBB0_194:
+.LBB0_196:
 	addi r11, fp, -1100
 	addi r4, r0, -1
 	addi r14, r0, 1024
@@ -1233,7 +1221,7 @@ try_builtin:                            # @try_builtin
 	jal r31, copy_term_code
 	add r3, r12, r0
 	add r5, r12, r0
-.LBB0_195:
+.LBB0_197:
 	add r4, r11, r3
 	ldw r4, r4+0
 	addi r6, r4, 1
@@ -1248,8 +1236,8 @@ try_builtin:                            # @try_builtin
 	and r5, r5, r7
 	xor r5, r4, r5
 	addi r3, r3, 4
-	bne r3, r14, .LBB0_195
-.LBB0_196:
+	bne r3, r14, .LBB0_197
+.LBB0_198:
 	addi r11, r0, 1
 	add r3, r13, r0
 	add r4, r1, r0
@@ -1257,14 +1245,14 @@ try_builtin:                            # @try_builtin
 	jal r31, db_add_clause
 	add r1, r11, r0
 	jal r0, .LBB0_20
-.LBB0_197:
-	bne r5, r17, .LBB0_260
-.LBB0_198:
+.LBB0_199:
+	bne r5, r17, .LBB0_262
+.LBB0_200:
 	lui r3, %hi(ATOM_FINDALL)
 	addi r3, r3, %lo(ATOM_FINDALL)
 	ldw r3, r3+0
-	bne r4, r3, .LBB0_260
-.LBB0_199:
+	bne r4, r3, .LBB0_262
+.LBB0_201:
 	addi r15, r0, 0
 	add r3, r13, r0
 	add r4, r15, r0
@@ -1362,8 +1350,8 @@ try_builtin:                            # @try_builtin
 	add r3, fp, r0
 	addi r3, r3, -2048
 	stw r3+-132, r1
-	lui r1, %hi(.L.str)
-	addi r1, r1, %lo(.L.str)
+	lui r1, %hi(.L.str.2)
+	addi r1, r1, %lo(.L.str.2)
 	add r3, fp, r0
 	addi r3, r3, -2048
 	stw r3+-136, r1
@@ -1386,15 +1374,15 @@ try_builtin:                            # @try_builtin
 	stw r1+-108, r15
 	lui r25, %hi(choices)
 	addi r25, r25, %lo(choices)
-	jal r0, .LBB0_201
-.LBB0_200:
+	jal r0, .LBB0_203
+.LBB0_202:
 	ldw r1, r13+0
 	addi r3, r1, 1
 	stw r13+0, r3
 	slli r1, r1, 2
 	add r1, r1, r19
 	stw r1+0, r20
-.LBB0_201:
+.LBB0_203:
 	ldw r1, r13+0
 	lui r3, %hi(choices+8)
 	addi r3, r3, %lo(choices+8)
@@ -1416,8 +1404,8 @@ try_builtin:                            # @try_builtin
 	add r4, fp, r0
 	addi r4, r4, -2048
 	stw r4+-84, r3
-	blt r1, r12, .LBB0_236
-.LBB0_202:
+	blt r1, r12, .LBB0_238
+.LBB0_204:
 	addi r1, r1, -1
 	stw r13+0, r1
 	slli r1, r1, 2
@@ -1425,42 +1413,42 @@ try_builtin:                            # @try_builtin
 	ldw r3, r1+0
 	jal r31, deref
 	add r16, r17, r0
-	beq r1, r15, .LBB0_234
-.LBB0_203:
+	beq r1, r15, .LBB0_236
+.LBB0_205:
 	add r20, r1, r0
 	andi r1, r1, 3
-	beq r1, r15, .LBB0_207
-.LBB0_204:
-	bne r1, r11, .LBB0_211
-.LBB0_205:
+	beq r1, r15, .LBB0_209
+.LBB0_206:
+	bne r1, r11, .LBB0_213
+.LBB0_207:
 	srli r1, r20, 2
 	ldw r3, r23+0
 	add r16, r17, r0
-	beq r1, r3, .LBB0_234
-.LBB0_206:
+	beq r1, r3, .LBB0_236
+.LBB0_208:
 	ldw r3, r24+0
 	add r16, r26, r0
-	beq r1, r3, .LBB0_234
-	jal r0, .LBB0_211
-.LBB0_207:
+	beq r1, r3, .LBB0_236
+	jal r0, .LBB0_213
+.LBB0_209:
 	add r3, r20, r0
 	jal r31, compound_functor
 	add r4, fp, r0
 	addi r4, r4, -2048
 	ldw r3, r4+-100
 	ldw r3, r3+0
-	bne r1, r3, .LBB0_211
-.LBB0_208:
+	bne r1, r3, .LBB0_213
+.LBB0_210:
 	add r3, r20, r0
 	jal r31, compound_arity
-	bne r1, r11, .LBB0_211
-.LBB0_209:
+	bne r1, r11, .LBB0_213
+.LBB0_211:
 	ldw r1, r13+0
 	add r4, fp, r0
 	addi r4, r4, -2048
 	ldw r3, r4+-124
-	blt r1, r3, .LBB0_221
-.LBB0_210:
+	blt r1, r3, .LBB0_223
+.LBB0_212:
 	add r3, fp, r0
 	addi r3, r3, -2048
 	ldw r1, r3+-80
@@ -1480,7 +1468,7 @@ try_builtin:                            # @try_builtin
 	ldw r1, r3+-144
 	ldw r1, r1+0
 	jalr r0, r1, 0
-.LBB0_211:
+.LBB0_213:
 	add r3, r20, r0
 	jal r31, term_functor
 	add r21, r1, r0
@@ -1492,20 +1480,20 @@ try_builtin:                            # @try_builtin
 	jal r31, try_builtin
 	add r3, r15, r0
 	add r16, r17, r0
-	beq r1, r12, .LBB0_215
-.LBB0_212:
+	beq r1, r12, .LBB0_217
+.LBB0_214:
 	addi r3, r0, -1
-	bne r1, r3, .LBB0_214
-.LBB0_213:
+	bne r1, r3, .LBB0_216
+.LBB0_215:
 	addi r16, r0, 25
 	add r3, r15, r0
-	jal r0, .LBB0_215
-.LBB0_214:
+	jal r0, .LBB0_217
+.LBB0_216:
 	addi r16, r0, 0
 	add r3, r12, r0
-.LBB0_215:
-	beq r3, r15, .LBB0_234
-.LBB0_216:
+.LBB0_217:
+	beq r3, r15, .LBB0_236
+.LBB0_218:
 	add r3, r20, r0
 	jal r31, term_functor
 	add r21, r1, r0
@@ -1515,21 +1503,21 @@ try_builtin:                            # @try_builtin
 	add r4, r1, r0
 	jal r31, db_lookup
 	add r16, r26, r0
-	beq r1, r15, .LBB0_234
-.LBB0_217:
+	beq r1, r15, .LBB0_236
+.LBB0_219:
 	ldw r27, r1+8
 	addi r21, r0, 0
 	add r16, r26, r0
-	beq r27, r21, .LBB0_234
-.LBB0_218:
+	beq r27, r21, .LBB0_236
+.LBB0_220:
 	ldw r1, r27+12
-	beq r1, r21, .LBB0_223
-.LBB0_219:
+	beq r1, r21, .LBB0_225
+.LBB0_221:
 	ldw r3, r28+0
 	lui r4, 1
 	addi r4, r4, -2048
-	blt r3, r4, .LBB0_222
-.LBB0_220:
+	blt r3, r4, .LBB0_224
+.LBB0_222:
 	addi r1, r0, 1
 	add r4, fp, r0
 	addi r4, r4, -2048
@@ -1537,8 +1525,8 @@ try_builtin:                            # @try_builtin
 	stw r3+0, r1
 	lui r3, %hi(g_errmsg)
 	addi r3, r3, %lo(g_errmsg)
-	lui r5, %hi(.L.str.1)
-	addi r5, r5, %lo(.L.str.1)
+	lui r5, %hi(.L.str.3)
+	addi r5, r5, %lo(.L.str.3)
 	addi r4, r0, 256
 	jal r31, snprintf
 	addi r1, r0, 26
@@ -1546,7 +1534,7 @@ try_builtin:                            # @try_builtin
 	add r1, r18, r1
 	ldw r1, r1+0
 	jalr r0, r1, 0
-.LBB0_221:
+.LBB0_223:
 	add r3, r20, r0
 	add r4, r12, r0
 	jal r31, compound_arg
@@ -1569,7 +1557,7 @@ try_builtin:                            # @try_builtin
 	add r1, r18, r1
 	ldw r1, r1+0
 	jalr r0, r1, 0
-.LBB0_222:
+.LBB0_224:
 	addi r4, r3, 1
 	stw r28+0, r4
 	addi r4, r0, 28
@@ -1621,7 +1609,7 @@ try_builtin:                            # @try_builtin
 	ldw r3, r4+-84
 	add r3, r14, r3
 	stw r3+0, r1
-.LBB0_223:
+.LBB0_225:
 	add r1, fp, r0
 	addi r1, r1, -2048
 	addi r14, r1, -76
@@ -1636,43 +1624,43 @@ try_builtin:                            # @try_builtin
 	add r22, r1, r0
 	ldw r3, r27+4
 	add r14, r21, r0
-	beq r3, r21, .LBB0_225
-.LBB0_224:
+	beq r3, r21, .LBB0_227
+.LBB0_226:
 	add r1, fp, r0
 	addi r1, r1, -2048
 	addi r4, r1, -76
 	addi r5, r0, 256
 	jal r31, copy_term_code
 	add r14, r1, r0
-.LBB0_225:
+.LBB0_227:
 	add r3, fp, r0
 	addi r3, r3, -2048
 	ldw r1, r3+-80
 	ldw r1, r1+0
 	addi r16, r0, 25
-	bne r1, r21, .LBB0_234
-.LBB0_226:
+	bne r1, r21, .LBB0_236
+.LBB0_228:
 	add r3, r20, r0
 	add r4, r22, r0
 	jal r31, unify
 	addi r3, r0, 0
-	beq r1, r3, .LBB0_234
-.LBB0_227:
-	beq r14, r3, .LBB0_233
-.LBB0_228:
-	andi r1, r14, 3
-	bne r1, r11, .LBB0_230
+	beq r1, r3, .LBB0_236
 .LBB0_229:
+	beq r14, r3, .LBB0_235
+.LBB0_230:
+	andi r1, r14, 3
+	bne r1, r11, .LBB0_232
+.LBB0_231:
 	srli r1, r14, 2
 	ldw r4, r23+0
-	beq r1, r4, .LBB0_233
-.LBB0_230:
+	beq r1, r4, .LBB0_235
+.LBB0_232:
 	ldw r1, r13+0
 	add r5, fp, r0
 	addi r5, r5, -2048
 	ldw r4, r5+-172
-	blt r1, r4, .LBB0_232
-.LBB0_231:
+	blt r1, r4, .LBB0_234
+.LBB0_233:
 	addi r1, r0, 1
 	add r4, fp, r0
 	addi r4, r4, -2048
@@ -1680,37 +1668,37 @@ try_builtin:                            # @try_builtin
 	stw r3+0, r1
 	lui r3, %hi(g_errmsg)
 	addi r3, r3, %lo(g_errmsg)
-	lui r5, %hi(.L.str)
-	addi r5, r5, %lo(.L.str)
+	lui r5, %hi(.L.str.2)
+	addi r5, r5, %lo(.L.str.2)
 	addi r4, r0, 256
 	jal r31, snprintf
 	add r1, fp, r0
 	addi r1, r1, -2048
 	ldw r16, r1+-180
-	jal r0, .LBB0_234
-.LBB0_232:
+	jal r0, .LBB0_236
+.LBB0_234:
 	addi r4, r1, 1
 	stw r13+0, r4
 	slli r1, r1, 2
 	add r1, r1, r19
 	stw r1+0, r14
-.LBB0_233:
+.LBB0_235:
 	add r16, r3, r0
-.LBB0_234:
+.LBB0_236:
 	slli r1, r16, 2
 	add r1, r18, r1
 	ldw r1, r1+0
 	jalr r0, r1, 0
-.LBB0_235:
+.LBB0_237:
 	ldw r1, r13+0
-	bgt r1, r15, .LBB0_202
-.LBB0_236:
+	bgt r1, r15, .LBB0_204
+.LBB0_238:
 	addi r1, r0, 255
 	add r4, fp, r0
 	addi r4, r4, -2048
 	ldw r3, r4+-108
-	bgt r3, r1, .LBB0_238
-.LBB0_237:
+	bgt r3, r1, .LBB0_240
+.LBB0_239:
 	add r1, fp, r0
 	addi r1, r1, -2048
 	addi r20, r1, -76
@@ -1742,11 +1730,11 @@ try_builtin:                            # @try_builtin
 	add r4, fp, r0
 	addi r4, r4, -2048
 	stw r4+-108, r14
-	bne r1, r3, .LBB0_307
-.LBB0_238:
+	bne r1, r3, .LBB0_312
+.LBB0_240:
 	ldw r1, r28+0
-	blt r1, r12, .LBB0_306
-.LBB0_239:
+	blt r1, r12, .LBB0_311
+.LBB0_241:
 	addi r1, r1, -1
 	stw r28+0, r1
 	addi r14, r0, 28
@@ -1788,23 +1776,23 @@ try_builtin:                            # @try_builtin
 	ldw r4, r5+-88
 	add r4, r20, r4
 	ldw r4, r4+0
-	beq r4, r21, .LBB0_241
-.LBB0_240:
+	beq r4, r21, .LBB0_243
+.LBB0_242:
 	stw r13+0, r12
 	stw r19+0, r4
-.LBB0_241:
+.LBB0_243:
 	ldw r27, r16+12
 	ldw r20, r16+16
-	beq r27, r21, .LBB0_200
-.LBB0_242:
+	beq r27, r21, .LBB0_202
+.LBB0_244:
 	ldw r4, r27+12
-	beq r4, r21, .LBB0_245
-.LBB0_243:
+	beq r4, r21, .LBB0_247
+.LBB0_245:
 	ldw r5, r28+0
 	lui r6, 1
 	addi r6, r6, -2048
-	bge r5, r6, .LBB0_304
-.LBB0_244:
+	bge r5, r6, .LBB0_309
+.LBB0_246:
 	addi r6, r5, 1
 	stw r28+0, r6
 	mul r14, r5, r14
@@ -1847,7 +1835,7 @@ try_builtin:                            # @try_builtin
 	ldw r3, r4+-84
 	add r3, r14, r3
 	stw r3+0, r1
-.LBB0_245:
+.LBB0_247:
 	add r1, fp, r0
 	addi r1, r1, -2048
 	addi r14, r1, -76
@@ -1862,77 +1850,77 @@ try_builtin:                            # @try_builtin
 	add r22, r1, r0
 	ldw r3, r27+4
 	add r14, r21, r0
-	beq r3, r21, .LBB0_247
-.LBB0_246:
+	beq r3, r21, .LBB0_249
+.LBB0_248:
 	add r1, fp, r0
 	addi r1, r1, -2048
 	addi r4, r1, -76
 	addi r5, r0, 256
 	jal r31, copy_term_code
 	add r14, r1, r0
-.LBB0_247:
+.LBB0_249:
 	add r3, fp, r0
 	addi r3, r3, -2048
 	ldw r1, r3+-80
 	ldw r1, r1+0
-	bne r1, r21, .LBB0_201
-.LBB0_248:
+	bne r1, r21, .LBB0_203
+.LBB0_250:
 	add r3, r20, r0
 	add r4, r22, r0
 	jal r31, unify
 	addi r3, r0, 0
-	beq r1, r3, .LBB0_201
-.LBB0_249:
-	beq r14, r3, .LBB0_201
-.LBB0_250:
-	andi r1, r14, 3
-	bne r1, r11, .LBB0_252
+	beq r1, r3, .LBB0_203
 .LBB0_251:
+	beq r14, r3, .LBB0_203
+.LBB0_252:
+	andi r1, r14, 3
+	bne r1, r11, .LBB0_254
+.LBB0_253:
 	srli r1, r14, 2
 	ldw r3, r23+0
-	beq r1, r3, .LBB0_201
-.LBB0_252:
+	beq r1, r3, .LBB0_203
+.LBB0_254:
 	ldw r1, r13+0
 	add r4, fp, r0
 	addi r4, r4, -2048
 	ldw r3, r4+-172
-	bge r1, r3, .LBB0_323
-.LBB0_253:
+	bge r1, r3, .LBB0_328
+.LBB0_255:
 	addi r3, r1, 1
 	stw r13+0, r3
 	slli r1, r1, 2
 	add r1, r1, r19
 	stw r1+0, r14
-	jal r0, .LBB0_201
-.LBB0_254:
+	jal r0, .LBB0_203
+.LBB0_256:
 	add r3, r12, r0
 	add r4, r13, r0
-.LBB0_255:
+.LBB0_257:
 	jal r31, unify
 	addi r3, r0, 0
 	seq r1, r1, r3
 	sub r1, r3, r1
 	jal r0, .LBB0_32
-.LBB0_256:
-	add r14, r12, r0
-.LBB0_257:
-	add r11, r13, r0
 .LBB0_258:
+	add r14, r12, r0
+.LBB0_259:
+	add r11, r13, r0
+.LBB0_260:
 	add r3, r11, r0
 	add r4, r14, r0
 	jal r31, db_retract
-.LBB0_259:
+.LBB0_261:
 	seq r1, r1, r12
 	sub r1, r12, r1
 	jal r0, .LBB0_32
-.LBB0_260:
-	bne r5, r11, .LBB0_264
-.LBB0_261:
+.LBB0_262:
+	bne r5, r11, .LBB0_266
+.LBB0_263:
 	lui r3, %hi(ATOM_ATOM_LENGTH)
 	addi r3, r3, %lo(ATOM_ATOM_LENGTH)
 	ldw r3, r3+0
-	bne r4, r3, .LBB0_264
-.LBB0_262:
+	bne r4, r3, .LBB0_266
+.LBB0_264:
 	addi r12, r0, 0
 	add r3, r13, r0
 	add r4, r12, r0
@@ -1945,25 +1933,25 @@ try_builtin:                            # @try_builtin
 	jal r31, compound_arg
 	add r13, r1, r0
 	andi r3, r14, 3
-	add r1, r19, r0
-	beq r3, r11, .LBB0_263
+	add r1, r20, r0
+	beq r3, r11, .LBB0_265
 	jal r0, .LBB0_20
-.LBB0_263:
+.LBB0_265:
 	srli r3, r14, 2
 	jal r31, atom_name
 	add r3, r1, r0
 	jal r31, strlen
 	slli r1, r1, 2
 	addi r4, r1, 1
-	jal r0, .LBB0_297
-.LBB0_264:
-	bne r5, r11, .LBB0_271
-.LBB0_265:
+	jal r0, .LBB0_302
+.LBB0_266:
+	bne r5, r11, .LBB0_276
+.LBB0_267:
 	lui r3, %hi(ATOM_ATOM_CHARS)
 	addi r3, r3, %lo(ATOM_ATOM_CHARS)
 	ldw r3, r3+0
-	bne r4, r3, .LBB0_271
-.LBB0_266:
+	bne r4, r3, .LBB0_276
+.LBB0_268:
 	addi r12, r0, 0
 	add r14, r13, r0
 	add r3, r13, r0
@@ -1978,8 +1966,8 @@ try_builtin:                            # @try_builtin
 	jal r31, compound_arg
 	add r14, r1, r0
 	andi r1, r13, 3
-	bne r1, r11, .LBB0_275
-.LBB0_267:
+	bne r1, r11, .LBB0_280
+.LBB0_269:
 	srli r3, r13, 2
 	jal r31, atom_name
 	add r13, r1, r0
@@ -1990,14 +1978,14 @@ try_builtin:                            # @try_builtin
 	addi r11, r1, 2
 	add r3, r13, r0
 	jal r31, strlen
-	blt r1, r15, .LBB0_270
-.LBB0_268:
+	blt r1, r15, .LBB0_272
+.LBB0_270:
 	add r12, r1, r0
 	addi r16, r13, -1
 	addi r13, fp, -1100
 	addi r17, r13, 1
 	addi r18, r0, 0
-.LBB0_269:
+.LBB0_271:
 	add r19, r12, r0
 	addi r12, r12, -1
 	add r1, r16, r19
@@ -2011,19 +1999,43 @@ try_builtin:                            # @try_builtin
 	add r4, r11, r0
 	jal r31, make_list_cons
 	add r11, r1, r0
-	bgt r19, r15, .LBB0_269
-.LBB0_270:
+	bgt r19, r15, .LBB0_271
+.LBB0_272:
 	add r3, r14, r0
 	add r4, r11, r0
-	jal r0, .LBB0_255
-.LBB0_271:
-	bne r5, r11, .LBB0_286
-.LBB0_272:
+	jal r0, .LBB0_257
+.LBB0_273:
+	addi r17, fp, -1100
+	addi r11, r0, 0
+	addi r16, r0, 1
+	add r18, r15, r0
+.LBB0_274:
+	add r3, r14, r0
+	add r4, r11, r0
+	jal r31, compound_arg
+	stw r17+0, r1
+	add r3, r14, r0
+	add r4, r16, r0
+	jal r31, compound_arg
+	add r3, r1, r0
+	jal r31, deref
+	add r14, r1, r0
+	addi r18, r18, -1
+	addi r17, r17, 4
+	bne r18, r11, .LBB0_274
+.LBB0_275:
+	srli r3, r13, 2
+	addi r5, fp, -1100
+	add r4, r15, r0
+	jal r0, .LBB0_158
+.LBB0_276:
+	bne r5, r11, .LBB0_291
+.LBB0_277:
 	lui r3, %hi(ATOM_CHAR_CODE)
 	addi r3, r3, %lo(ATOM_CHAR_CODE)
 	ldw r3, r3+0
-	bne r4, r3, .LBB0_286
-.LBB0_273:
+	bne r4, r3, .LBB0_291
+.LBB0_278:
 	addi r12, r0, 0
 	add r14, r13, r0
 	add r3, r13, r0
@@ -2038,53 +2050,53 @@ try_builtin:                            # @try_builtin
 	jal r31, compound_arg
 	add r14, r1, r0
 	andi r1, r13, 3
-	bne r1, r11, .LBB0_293
-.LBB0_274:
+	bne r1, r11, .LBB0_298
+.LBB0_279:
 	srli r3, r13, 2
 	jal r31, atom_name
 	ldb r1, r1+0
 	slli r1, r1, 2
 	addi r4, r1, 1
 	add r3, r14, r0
-	jal r0, .LBB0_298
-.LBB0_275:
+	jal r0, .LBB0_303
+.LBB0_280:
 	add r3, r14, r0
 	jal r31, deref
 	add r17, r12, r0
-	beq r1, r12, .LBB0_285
-.LBB0_276:
+	beq r1, r12, .LBB0_290
+.LBB0_281:
 	add r15, r1, r0
 	andi r1, r1, 3
 	addi r14, r0, 0
 	add r17, r12, r0
-	bne r1, r14, .LBB0_285
-.LBB0_277:
+	bne r1, r14, .LBB0_290
+.LBB0_282:
 	lui r18, %hi(ATOM_DOT)
 	addi r18, r18, %lo(ATOM_DOT)
 	addi r19, r0, 254
 	addi r20, fp, -1100
 	addi r16, r0, 1
 	add r17, r14, r0
-.LBB0_278:
+.LBB0_283:
 	add r3, r15, r0
 	jal r31, compound_functor
 	ldw r3, r18+0
-	bne r1, r3, .LBB0_285
-.LBB0_279:
+	bne r1, r3, .LBB0_290
+.LBB0_284:
 	add r3, r15, r0
 	jal r31, compound_arity
-	bne r1, r11, .LBB0_285
-.LBB0_280:
-	bgt r17, r19, .LBB0_285
-.LBB0_281:
+	bne r1, r11, .LBB0_290
+.LBB0_285:
+	bgt r17, r19, .LBB0_290
+.LBB0_286:
 	add r3, r15, r0
 	add r4, r14, r0
 	jal r31, compound_arg
 	add r3, r1, r0
 	jal r31, deref
 	andi r3, r1, 3
-	bne r3, r11, .LBB0_283
-.LBB0_282:
+	bne r3, r11, .LBB0_288
+.LBB0_287:
 	srli r3, r1, 2
 	jal r31, atom_name
 	ldbu r1, r1+0
@@ -2092,29 +2104,29 @@ try_builtin:                            # @try_builtin
 	add r4, r20, r17
 	stb r4+0, r1
 	add r17, r3, r0
-.LBB0_283:
+.LBB0_288:
 	add r3, r15, r0
 	add r4, r16, r0
 	jal r31, compound_arg
 	add r3, r1, r0
 	jal r31, deref
-	beq r1, r14, .LBB0_285
-.LBB0_284:
+	beq r1, r14, .LBB0_290
+.LBB0_289:
 	add r15, r1, r0
 	andi r1, r1, 3
-	beq r1, r14, .LBB0_278
-.LBB0_285:
+	beq r1, r14, .LBB0_283
+.LBB0_290:
 	addi r3, fp, -1100
 	add r1, r3, r17
-	jal r0, .LBB0_295
-.LBB0_286:
-	bne r5, r11, .LBB0_299
-.LBB0_287:
+	jal r0, .LBB0_300
+.LBB0_291:
+	bne r5, r11, .LBB0_304
+.LBB0_292:
 	lui r3, %hi(ATOM_NUMBER_CHARS)
 	addi r3, r3, %lo(ATOM_NUMBER_CHARS)
 	ldw r3, r3+0
-	bne r4, r3, .LBB0_299
-.LBB0_288:
+	bne r4, r3, .LBB0_304
+.LBB0_293:
 	addi r11, r0, 0
 	add r3, r13, r0
 	add r4, r11, r0
@@ -2127,13 +2139,13 @@ try_builtin:                            # @try_builtin
 	jal r31, compound_arg
 	add r13, r1, r0
 	andi r3, r14, 3
-	add r1, r19, r0
-	beq r3, r12, .LBB0_289
+	add r1, r20, r0
+	beq r3, r12, .LBB0_294
 	jal r0, .LBB0_20
-.LBB0_289:
+.LBB0_294:
 	srai r6, r14, 2
-	lui r5, %hi(.L.str.2)
-	addi r5, r5, %lo(.L.str.2)
+	lui r5, %hi(.L.str.4)
+	addi r5, r5, %lo(.L.str.4)
 	addi r16, fp, -1100
 	addi r4, r0, 32
 	add r3, r16, r0
@@ -2145,15 +2157,15 @@ try_builtin:                            # @try_builtin
 	addi r14, r1, 2
 	add r3, r16, r0
 	jal r31, strlen
-	blt r1, r12, .LBB0_292
-.LBB0_290:
+	blt r1, r12, .LBB0_297
+.LBB0_295:
 	add r15, r1, r0
 	addi r17, r16, -1
 	add r1, fp, r0
 	addi r1, r1, -2048
 	addi r16, r1, -76
 	addi r18, r16, 1
-.LBB0_291:
+.LBB0_296:
 	add r19, r15, r0
 	addi r15, r15, -1
 	add r1, r17, r19
@@ -2167,44 +2179,44 @@ try_builtin:                            # @try_builtin
 	add r4, r14, r0
 	jal r31, make_list_cons
 	add r14, r1, r0
-	bgt r19, r12, .LBB0_291
-.LBB0_292:
+	bgt r19, r12, .LBB0_296
+.LBB0_297:
 	add r3, r13, r0
 	add r4, r14, r0
 	jal r0, .LBB0_30
-.LBB0_293:
+.LBB0_298:
 	add r3, r14, r0
 	jal r31, deref
 	andi r3, r1, 3
-	add r1, r19, r0
-	beq r3, r15, .LBB0_294
+	add r1, r20, r0
+	beq r3, r15, .LBB0_299
 	jal r0, .LBB0_20
-.LBB0_294:
+.LBB0_299:
 	add r3, r14, r0
 	jal r31, deref
 	srli r1, r1, 2
 	addi r3, fp, -1100
 	stb r3+0, r1
 	addi r1, r3, 1
-.LBB0_295:
+.LBB0_300:
 	stb r1+0, r12
-.LBB0_296:
+.LBB0_301:
 	jal r31, atom_intern
 	slli r1, r1, 2
 	addi r4, r1, 2
-.LBB0_297:
+.LBB0_302:
 	add r3, r13, r0
-.LBB0_298:
+.LBB0_303:
 	jal r31, unify
-	jal r0, .LBB0_259
-.LBB0_299:
-	bne r5, r17, .LBB0_313
-.LBB0_300:
+	jal r0, .LBB0_261
+.LBB0_304:
+	bne r5, r17, .LBB0_318
+.LBB0_305:
 	lui r3, %hi(ATOM_ATOM_CONCAT)
 	addi r3, r3, %lo(ATOM_ATOM_CONCAT)
 	ldw r3, r3+0
-	bne r4, r3, .LBB0_313
-.LBB0_301:
+	bne r4, r3, .LBB0_318
+.LBB0_306:
 	addi r12, r0, 0
 	add r3, r13, r0
 	add r4, r12, r0
@@ -2223,21 +2235,21 @@ try_builtin:                            # @try_builtin
 	jal r31, compound_arg
 	add r13, r1, r0
 	andi r1, r14, 3
-	beq r1, r11, .LBB0_302
+	beq r1, r11, .LBB0_307
 	jal r0, .LBB0_5
-.LBB0_302:
+.LBB0_307:
 	andi r3, r15, 3
-	add r1, r19, r0
-	beq r3, r11, .LBB0_303
+	add r1, r20, r0
+	beq r3, r11, .LBB0_308
 	jal r0, .LBB0_20
-.LBB0_303:
+.LBB0_308:
 	srli r3, r14, 2
 	jal r31, atom_name
 	add r11, r1, r0
 	srli r3, r15, 2
 	jal r31, atom_name
-	lui r5, %hi(.L.str.3)
-	addi r5, r5, %lo(.L.str.3)
+	lui r5, %hi(.L.str.5)
+	addi r5, r5, %lo(.L.str.5)
 	addi r14, fp, -1100
 	addi r4, r0, 512
 	add r3, r14, r0
@@ -2245,24 +2257,24 @@ try_builtin:                            # @try_builtin
 	add r7, r1, r0
 	jal r31, snprintf
 	add r3, r14, r0
-	jal r0, .LBB0_296
-.LBB0_304:
+	jal r0, .LBB0_301
+.LBB0_309:
 	add r3, fp, r0
 	addi r3, r3, -2048
 	ldw r1, r3+-80
 	stw r1+0, r12
 	lui r3, %hi(g_errmsg)
 	addi r3, r3, %lo(g_errmsg)
-	lui r5, %hi(.L.str.1)
-	addi r5, r5, %lo(.L.str.1)
-.LBB0_305:
+	lui r5, %hi(.L.str.3)
+	addi r5, r5, %lo(.L.str.3)
+.LBB0_310:
 	addi r4, r0, 256
 	jal r31, snprintf
-.LBB0_306:
+.LBB0_311:
 	add r1, fp, r0
 	addi r1, r1, -2048
 	ldw r14, r1+-108
-.LBB0_307:
+.LBB0_312:
 	add r1, fp, r0
 	addi r1, r1, -2048
 	ldw r3, r1+-152
@@ -2301,43 +2313,43 @@ try_builtin:                            # @try_builtin
 	ldw r1, r3+-80
 	ldw r1, r1+0
 	addi r11, r0, 0
-	beq r1, r11, .LBB0_309
-.LBB0_308:
+	beq r1, r11, .LBB0_314
+.LBB0_313:
 	addi r1, r0, -1
 	jal r0, .LBB0_20
-.LBB0_309:
+.LBB0_314:
 	lui r1, %hi(ATOM_NIL_LIST)
 	addi r1, r1, %lo(ATOM_NIL_LIST)
 	ldw r1, r1+0
 	slli r1, r1, 2
 	addi r1, r1, 2
-	blt r14, r12, .LBB0_312
-.LBB0_310:
+	blt r14, r12, .LBB0_317
+.LBB0_315:
 	addi r13, r14, 1
 	slli r3, r14, 2
 	addi r4, fp, -1100
 	add r3, r3, r4
 	addi r14, r3, -4
-.LBB0_311:
+.LBB0_316:
 	ldw r3, r14+0
 	add r4, r1, r0
 	jal r31, make_list_cons
 	addi r13, r13, -1
 	addi r14, r14, -4
-	bgt r13, r12, .LBB0_311
-.LBB0_312:
+	bgt r13, r12, .LBB0_316
+.LBB0_317:
 	add r4, fp, r0
 	addi r4, r4, -2048
 	ldw r3, r4+-176
 	jal r0, .LBB0_29
-.LBB0_313:
-	bne r5, r11, .LBB0_318
-.LBB0_314:
+.LBB0_318:
+	bne r5, r11, .LBB0_323
+.LBB0_319:
 	lui r3, %hi(ATOM_SUCC)
 	addi r3, r3, %lo(ATOM_SUCC)
 	ldw r3, r3+0
-	bne r4, r3, .LBB0_318
-.LBB0_315:
+	bne r4, r3, .LBB0_323
+.LBB0_320:
 	addi r11, r0, 0
 	add r14, r13, r0
 	add r3, r13, r0
@@ -2351,24 +2363,24 @@ try_builtin:                            # @try_builtin
 	jal r31, compound_arg
 	add r3, r1, r0
 	andi r1, r13, 3
-	bne r1, r12, .LBB0_324
-.LBB0_316:
-	add r1, r19, r0
-	bge r13, r11, .LBB0_317
+	bne r1, r12, .LBB0_329
+.LBB0_321:
+	add r1, r20, r0
+	bge r13, r11, .LBB0_322
 	jal r0, .LBB0_20
-.LBB0_317:
+.LBB0_322:
 	addi r4, r13, 4
 	jal r0, .LBB0_30
-.LBB0_318:
-	beq r5, r17, .LBB0_319
+.LBB0_323:
+	beq r5, r17, .LBB0_324
 	jal r0, .LBB0_20
-.LBB0_319:
+.LBB0_324:
 	lui r3, %hi(ATOM_PLUS2)
 	addi r3, r3, %lo(ATOM_PLUS2)
 	ldw r3, r3+0
-	beq r4, r3, .LBB0_320
+	beq r4, r3, .LBB0_325
 	jal r0, .LBB0_20
-.LBB0_320:
+.LBB0_325:
 	addi r11, r0, 0
 	add r15, r13, r0
 	add r3, r13, r0
@@ -2388,76 +2400,76 @@ try_builtin:                            # @try_builtin
 	jal r31, compound_arg
 	add r3, r1, r0
 	andi r1, r13, 3
-	beq r1, r12, .LBB0_321
+	beq r1, r12, .LBB0_326
 	jal r0, .LBB0_5
-.LBB0_321:
+.LBB0_326:
 	andi r4, r14, 3
-	add r1, r19, r0
-	beq r4, r12, .LBB0_322
+	add r1, r20, r0
+	beq r4, r12, .LBB0_327
 	jal r0, .LBB0_20
-.LBB0_322:
+.LBB0_327:
 	addi r1, r0, -4
 	and r1, r13, r1
 	add r4, r14, r1
 	jal r0, .LBB0_30
-.LBB0_323:
+.LBB0_328:
 	add r3, fp, r0
 	addi r3, r3, -2048
 	ldw r1, r3+-80
 	stw r1+0, r12
 	lui r3, %hi(g_errmsg)
 	addi r3, r3, %lo(g_errmsg)
-	lui r5, %hi(.L.str)
-	addi r5, r5, %lo(.L.str)
-	jal r0, .LBB0_305
-.LBB0_324:
+	lui r5, %hi(.L.str.2)
+	addi r5, r5, %lo(.L.str.2)
+	jal r0, .LBB0_310
+.LBB0_329:
 	jal r31, deref
 	add r3, r1, r0
 	addi r1, r0, 4
-	bge r3, r1, .LBB0_325
+	bge r3, r1, .LBB0_330
 	jal r0, .LBB0_5
-.LBB0_325:
+.LBB0_330:
 	andi r4, r3, 3
-	add r1, r19, r0
-	beq r4, r12, .LBB0_326
+	add r1, r20, r0
+	beq r4, r12, .LBB0_331
 	jal r0, .LBB0_20
-.LBB0_326:
+.LBB0_331:
 	addi r4, r3, -4
 	add r3, r13, r0
 	jal r0, .LBB0_30
-.LBB0_327:
+.LBB0_332:
 .Lfunc_end0:
 	.size	try_builtin, .Lfunc_end0-try_builtin
 	.section	.rodata,"a",@progbits
 	.p2align	2, 0x0
 .LJTI0_0:
-	.word	.LBB0_235
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_327
-	.word	.LBB0_235
-	.word	.LBB0_327
-	.word	.LBB0_238
-	.word	.LBB0_306
+	.word	.LBB0_237
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_332
+	.word	.LBB0_237
+	.word	.LBB0_332
+	.word	.LBB0_240
+	.word	.LBB0_311
                                         # -- End function
 	.text
 	.p2align	2                               # -- Begin function eval_arith
@@ -2499,8 +2511,8 @@ eval_arith:                             # @eval_arith
 	jal r31, atom_name
 	lui r3, %hi(g_errmsg)
 	addi r3, r3, %lo(g_errmsg)
-	lui r5, %hi(.L.str.4)
-	addi r5, r5, %lo(.L.str.4)
+	lui r5, %hi(.L.str.6)
+	addi r5, r5, %lo(.L.str.6)
 	addi r4, r0, 256
 	add r6, r1, r0
 	jal r31, snprintf
@@ -2551,8 +2563,8 @@ eval_arith:                             # @eval_arith
 	stw r1+0, r16
 	lui r3, %hi(g_errmsg)
 	addi r3, r3, %lo(g_errmsg)
-	lui r5, %hi(.L.str.5)
-	addi r5, r5, %lo(.L.str.5)
+	lui r5, %hi(.L.str.7)
+	addi r5, r5, %lo(.L.str.7)
 	addi r4, r0, 256
 	add r11, r6, r0
 .LBB1_12:
@@ -2598,8 +2610,8 @@ eval_arith:                             # @eval_arith
 	stw r1+0, r16
 	lui r3, %hi(g_errmsg)
 	addi r3, r3, %lo(g_errmsg)
-	lui r5, %hi(.L.str.9)
-	addi r5, r5, %lo(.L.str.9)
+	lui r5, %hi(.L.str.11)
+	addi r5, r5, %lo(.L.str.11)
 	addi r4, r0, 256
 .LBB1_18:
 	jal r31, snprintf
@@ -2653,8 +2665,8 @@ eval_arith:                             # @eval_arith
 	jal r31, atom_name
 	lui r3, %hi(g_errmsg)
 	addi r3, r3, %lo(g_errmsg)
-	lui r5, %hi(.L.str.6)
-	addi r5, r5, %lo(.L.str.6)
+	lui r5, %hi(.L.str.8)
+	addi r5, r5, %lo(.L.str.8)
 	addi r4, r0, 256
 	add r6, r1, r0
 	jal r0, .LBB1_12
@@ -2704,8 +2716,8 @@ eval_arith:                             # @eval_arith
 	stw r1+0, r3
 	lui r3, %hi(g_errmsg)
 	addi r3, r3, %lo(g_errmsg)
-	lui r5, %hi(.L.str.7)
-	addi r5, r5, %lo(.L.str.7)
+	lui r5, %hi(.L.str.9)
+	addi r5, r5, %lo(.L.str.9)
 	addi r4, r0, 256
 	jal r31, snprintf
 	add r1, r12, r0
@@ -2746,8 +2758,8 @@ eval_arith:                             # @eval_arith
 	jal r31, atom_name
 	lui r3, %hi(g_errmsg)
 	addi r3, r3, %lo(g_errmsg)
-	lui r5, %hi(.L.str.8)
-	addi r5, r5, %lo(.L.str.8)
+	lui r5, %hi(.L.str.10)
+	addi r5, r5, %lo(.L.str.10)
 	addi r4, r0, 256
 	add r6, r1, r0
 	jal r0, .LBB1_18
@@ -2822,53 +2834,63 @@ build_continuation_from_stack:          # @build_continuation_from_stack
 	.type	.L.str,@object                  # @.str
 	.section	.rodata.str1.1,"aMS",@progbits,1
 .L.str:
-	.asciz	"goal stack overflow"
-	.size	.L.str, 20
+	.asciz	"functor/3: arity out of range"
+	.size	.L.str, 30
 
 	.type	.L.str.1,@object                # @.str.1
 .L.str.1:
-	.asciz	"choice stack overflow"
-	.size	.L.str.1, 22
+	.asciz	"=../2: arity out of range"
+	.size	.L.str.1, 26
 
 	.type	.L.str.2,@object                # @.str.2
 .L.str.2:
-	.asciz	"%d"
-	.size	.L.str.2, 3
+	.asciz	"goal stack overflow"
+	.size	.L.str.2, 20
 
 	.type	.L.str.3,@object                # @.str.3
 .L.str.3:
-	.asciz	"%s%s"
-	.size	.L.str.3, 5
+	.asciz	"choice stack overflow"
+	.size	.L.str.3, 22
 
 	.type	.L.str.4,@object                # @.str.4
 .L.str.4:
-	.asciz	"arithmetic: not evaluable: %s/0"
-	.size	.L.str.4, 32
+	.asciz	"%d"
+	.size	.L.str.4, 3
 
 	.type	.L.str.5,@object                # @.str.5
 .L.str.5:
-	.asciz	"arithmetic: invalid expression"
-	.size	.L.str.5, 31
+	.asciz	"%s%s"
+	.size	.L.str.5, 5
 
 	.type	.L.str.6,@object                # @.str.6
 .L.str.6:
-	.asciz	"arithmetic: unknown op %s/1"
-	.size	.L.str.6, 28
+	.asciz	"arithmetic: not evaluable: %s/0"
+	.size	.L.str.6, 32
 
 	.type	.L.str.7,@object                # @.str.7
 .L.str.7:
-	.asciz	"arithmetic: division by zero"
-	.size	.L.str.7, 29
+	.asciz	"arithmetic: invalid expression"
+	.size	.L.str.7, 31
 
 	.type	.L.str.8,@object                # @.str.8
 .L.str.8:
-	.asciz	"arithmetic: unknown op %s/2"
+	.asciz	"arithmetic: unknown op %s/1"
 	.size	.L.str.8, 28
 
 	.type	.L.str.9,@object                # @.str.9
 .L.str.9:
+	.asciz	"arithmetic: division by zero"
+	.size	.L.str.9, 29
+
+	.type	.L.str.10,@object               # @.str.10
+.L.str.10:
+	.asciz	"arithmetic: unknown op %s/2"
+	.size	.L.str.10, 28
+
+	.type	.L.str.11,@object               # @.str.11
+.L.str.11:
 	.asciz	"arithmetic: bad expression"
-	.size	.L.str.9, 27
+	.size	.L.str.11, 27
 
 	.ident	"clang version 23.0.0git (https://github.com/llvm/llvm-project.git 0c27e7716b1b351bd93e1a7d5c7965bde4656ae9)"
 	.section	".note.GNU-stack","",@progbits

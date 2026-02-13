@@ -18,28 +18,28 @@ atom_intern:                            # @atom_intern
 	stw fp+-24, r16
 	stw fp+-28, r17
 	stw fp+-32, lr
-	add r11, r3, r0
-	lui r14, %hi(atom_count)
-	addi r14, r14, %lo(atom_count)
-	ldw r1, r14+0
+	add r12, r3, r0
+	lui r15, %hi(atom_count)
+	addi r15, r15, %lo(atom_count)
+	ldw r1, r15+0
 	addi r13, r0, 1
-	lui r15, %hi(atom_names)
-	addi r15, r15, %lo(atom_names)
+	lui r16, %hi(atom_names)
+	addi r16, r16, %lo(atom_names)
 	blt r1, r13, .LBB0_6
 .LBB0_1:
-	addi r16, r0, 0
-	add r17, r15, r0
-	add r12, r16, r0
+	addi r14, r0, 0
+	add r17, r16, r0
+	add r11, r14, r0
 .LBB0_2:
 	ldw r3, r17+0
-	add r4, r11, r0
+	add r4, r12, r0
 	jal r31, strcmp
-	beq r1, r16, .LBB0_10
+	beq r1, r14, .LBB0_11
 .LBB0_3:
-	addi r12, r12, 1
-	ldw r1, r14+0
+	addi r11, r11, 1
+	ldw r1, r15+0
 	addi r17, r17, 4
-	blt r12, r1, .LBB0_2
+	blt r11, r1, .LBB0_2
 .LBB0_4:
 	lui r3, 1
 	addi r3, r3, -2048
@@ -54,16 +54,17 @@ atom_intern:                            # @atom_intern
 	addi r5, r5, %lo(.L.str)
 	addi r4, r0, 256
 	jal r31, snprintf
-	addi r12, r0, 0
-	jal r0, .LBB0_10
+	addi r11, r0, 0
+	jal r0, .LBB0_11
 .LBB0_6:
-	add r3, r11, r0
+	addi r11, r0, 0
+	add r3, r12, r0
 	jal r31, strlen
-	addi r12, r1, 1
-	lui r16, %hi(atom_store_pos)
-	addi r16, r16, %lo(atom_store_pos)
-	ldw r1, r16+0
-	add r3, r1, r12
+	addi r14, r1, 1
+	lui r17, %hi(atom_store_pos)
+	addi r17, r17, %lo(atom_store_pos)
+	ldw r1, r17+0
+	add r3, r1, r14
 	lui r4, 8
 	addi r4, r4, 1
 	blt r3, r4, .LBB0_8
@@ -73,32 +74,35 @@ atom_intern:                            # @atom_intern
 	stw r1+0, r13
 	lui r3, %hi(g_errmsg)
 	addi r3, r3, %lo(g_errmsg)
-	lui r5, %hi(.L.str.67)
-	addi r5, r5, %lo(.L.str.67)
+	lui r5, %hi(.L.str.68)
+	addi r5, r5, %lo(.L.str.68)
 	addi r4, r0, 256
 	jal r31, snprintf
-	ldw r13, r15+0
+	addi r13, r0, 0
 	jal r0, .LBB0_9
 .LBB0_8:
 	lui r3, %hi(atom_store)
 	addi r3, r3, %lo(atom_store)
 	add r13, r1, r3
 	add r3, r13, r0
-	add r4, r11, r0
-	add r5, r12, r0
+	add r4, r12, r0
+	add r5, r14, r0
 	jal r31, memcpy
-	ldw r1, r16+0
-	add r1, r1, r12
-	stw r16+0, r1
+	ldw r1, r17+0
+	add r1, r1, r14
+	stw r17+0, r1
 .LBB0_9:
-	ldw r12, r14+0
-	slli r1, r12, 2
-	add r1, r1, r15
-	stw r1+0, r13
-	addi r1, r12, 1
-	stw r14+0, r1
+	ldw r1, r15+0
+	slli r3, r1, 2
+	add r3, r3, r16
+	stw r3+0, r13
+	beq r13, r11, .LBB0_11
 .LBB0_10:
-	add r1, r12, r0
+	addi r3, r1, 1
+	stw r15+0, r3
+	add r11, r1, r0
+.LBB0_11:
+	add r1, r11, r0
 	ldw lr, fp+-32
 	ldw r17, fp+-28
 	ldw r16, fp+-24
@@ -642,63 +646,90 @@ make_compound:                          # @make_compound
 	stw fp+-12, r13
 	stw fp+-16, r14
 	stw fp+-20, lr
-	add r11, r5, r0
-	add r12, r4, r0
-	add r13, r3, r0
-	lui r1, %hi(hp)
-	addi r1, r1, %lo(hp)
-	ldw r3, r1+0
-	add r4, r4, r3
-	addi r4, r4, 2
-	lui r5, 64
-	addi r5, r5, 1
-	lui r14, %hi(g_error)
-	addi r14, r14, %lo(g_error)
-	blt r4, r5, .LBB5_2
+	addi r1, r0, 33
+	bltu r4, r1, .LBB5_2
 .LBB5_1:
-	addi r1, r0, 1
-	stw r14+0, r1
+	lui r1, %hi(g_error)
+	addi r1, r1, %lo(g_error)
+	addi r3, r0, 1
+	stw r1+0, r3
 	lui r3, %hi(g_errmsg)
 	addi r3, r3, %lo(g_errmsg)
-	lui r5, %hi(.L.str.65)
-	addi r5, r5, %lo(.L.str.65)
+	lui r5, %hi(.L.str.67)
+	addi r5, r5, %lo(.L.str.67)
 	addi r4, r0, 256
 	jal r31, snprintf
-	addi r3, r0, 0
-	jal r0, .LBB5_3
-.LBB5_2:
-	stw r1+0, r4
-.LBB5_3:
-	ldw r4, r14+0
 	addi r1, r0, 0
-	bne r4, r1, .LBB5_7
+	jal r0, .LBB5_9
+.LBB5_2:
+	lui r1, %hi(hp)
+	addi r1, r1, %lo(hp)
+	ldw r6, r1+0
+	add r7, r4, r6
+	addi r7, r7, 2
+	lui r8, 64
+	addi r8, r8, 1
+	lui r11, %hi(g_error)
+	addi r11, r11, %lo(g_error)
+	blt r7, r8, .LBB5_4
+.LBB5_3:
+	addi r1, r0, 1
+	stw r11+0, r1
+	lui r1, %hi(g_errmsg)
+	addi r1, r1, %lo(g_errmsg)
+	lui r6, %hi(.L.str.65)
+	addi r6, r6, %lo(.L.str.65)
+	addi r7, r0, 256
+	add r12, r3, r0
+	add r3, r1, r0
+	add r13, r4, r0
+	add r4, r7, r0
+	add r14, r5, r0
+	add r5, r6, r0
+	jal r31, snprintf
+	add r3, r12, r0
+	add r4, r13, r0
+	add r5, r14, r0
+	addi r6, r0, 0
+	jal r0, .LBB5_5
 .LBB5_4:
-	slli r1, r13, 2
-	addi r4, r1, 2
-	slli r1, r3, 2
-	lui r3, %hi(heap)
-	addi r3, r3, %lo(heap)
-	add r3, r1, r3
-	stw r3+0, r4
-	slli r4, r12, 2
-	addi r4, r4, 1
-	lui r5, %hi(heap+4)
-	addi r5, r5, %lo(heap+4)
-	add r5, r1, r5
-	stw r5+0, r4
-	addi r4, r0, 1
-	blt r12, r4, .LBB5_7
+	stw r1+0, r7
 .LBB5_5:
-	addi r3, r3, 8
-	addi r4, r0, 0
+	ldw r7, r11+0
+	addi r1, r0, 0
+	bne r7, r1, .LBB5_9
 .LBB5_6:
-	ldw r5, r11+0
-	stw r3+0, r5
-	addi r12, r12, -1
-	addi r3, r3, 4
-	addi r11, r11, 4
-	bne r12, r4, .LBB5_6
+	slli r1, r3, 2
+	addi r3, r1, 2
+	slli r1, r6, 2
+	lui r6, %hi(heap)
+	addi r6, r6, %lo(heap)
+	add r6, r1, r6
+	stw r6+0, r3
+	slli r3, r4, 2
+	addi r3, r3, 1
+	lui r7, %hi(heap+4)
+	addi r7, r7, %lo(heap+4)
+	add r7, r1, r7
+	stw r7+0, r3
+	addi r3, r0, 0
+	beq r4, r3, .LBB5_9
 .LBB5_7:
+	addi r6, r6, 8
+	addi r7, r0, 1
+	sgt r7, r4, r7
+	sub r7, r3, r7
+	xori r4, r4, 1
+	and r4, r4, r7
+	xori r4, r4, 1
+.LBB5_8:
+	ldw r7, r5+0
+	stw r6+0, r7
+	addi r4, r4, -1
+	addi r6, r6, 4
+	addi r5, r5, 4
+	bne r4, r3, .LBB5_8
+.LBB5_9:
 	ldw lr, fp+-20
 	ldw r14, fp+-16
 	ldw r13, fp+-12
@@ -726,66 +757,93 @@ make_compound_on_code:                  # @make_compound_on_code
 	stw fp+-12, r13
 	stw fp+-16, r14
 	stw fp+-20, lr
-	add r11, r5, r0
-	add r12, r4, r0
-	add r13, r3, r0
-	lui r1, %hi(code_hp)
-	addi r1, r1, %lo(code_hp)
-	ldw r3, r1+0
-	add r4, r4, r3
-	addi r4, r4, 2
-	lui r5, 32
-	addi r5, r5, 1
-	lui r14, %hi(g_error)
-	addi r14, r14, %lo(g_error)
-	blt r4, r5, .LBB6_2
+	addi r1, r0, 33
+	bltu r4, r1, .LBB6_2
 .LBB6_1:
-	addi r1, r0, 1
-	stw r14+0, r1
+	lui r1, %hi(g_error)
+	addi r1, r1, %lo(g_error)
+	addi r3, r0, 1
+	stw r1+0, r3
 	lui r3, %hi(g_errmsg)
 	addi r3, r3, %lo(g_errmsg)
-	lui r5, %hi(.L.str.66)
-	addi r5, r5, %lo(.L.str.66)
+	lui r5, %hi(.L.str.67)
+	addi r5, r5, %lo(.L.str.67)
 	addi r4, r0, 256
 	jal r31, snprintf
-	addi r3, r0, 0
-	jal r0, .LBB6_3
-.LBB6_2:
-	stw r1+0, r4
-.LBB6_3:
-	ldw r4, r14+0
 	addi r1, r0, 0
-	bne r4, r1, .LBB6_8
+	jal r0, .LBB6_10
+.LBB6_2:
+	lui r1, %hi(code_hp)
+	addi r1, r1, %lo(code_hp)
+	ldw r6, r1+0
+	add r7, r4, r6
+	addi r7, r7, 2
+	lui r8, 32
+	addi r8, r8, 1
+	lui r11, %hi(g_error)
+	addi r11, r11, %lo(g_error)
+	blt r7, r8, .LBB6_4
+.LBB6_3:
+	addi r1, r0, 1
+	stw r11+0, r1
+	lui r1, %hi(g_errmsg)
+	addi r1, r1, %lo(g_errmsg)
+	lui r6, %hi(.L.str.66)
+	addi r6, r6, %lo(.L.str.66)
+	addi r7, r0, 256
+	add r12, r3, r0
+	add r3, r1, r0
+	add r13, r4, r0
+	add r4, r7, r0
+	add r14, r5, r0
+	add r5, r6, r0
+	jal r31, snprintf
+	add r3, r12, r0
+	add r4, r13, r0
+	add r5, r14, r0
+	addi r6, r0, 0
+	jal r0, .LBB6_5
 .LBB6_4:
-	slli r1, r13, 2
-	addi r4, r1, 2
-	slli r1, r3, 2
-	lui r3, %hi(code_heap)
-	addi r3, r3, %lo(code_heap)
-	add r3, r1, r3
-	stw r3+0, r4
-	slli r4, r12, 2
-	addi r4, r4, 1
-	lui r5, %hi(code_heap+4)
-	addi r5, r5, %lo(code_heap+4)
-	add r5, r1, r5
-	stw r5+0, r4
-	addi r4, r0, 1
-	blt r12, r4, .LBB6_7
+	stw r1+0, r7
 .LBB6_5:
-	addi r3, r3, 8
-	addi r4, r0, 0
+	ldw r7, r11+0
+	addi r1, r0, 0
+	bne r7, r1, .LBB6_10
 .LBB6_6:
-	ldw r5, r11+0
-	stw r3+0, r5
-	addi r12, r12, -1
-	addi r3, r3, 4
-	addi r11, r11, 4
-	bne r12, r4, .LBB6_6
+	slli r1, r3, 2
+	addi r3, r1, 2
+	slli r1, r6, 2
+	lui r6, %hi(code_heap)
+	addi r6, r6, %lo(code_heap)
+	add r6, r1, r6
+	stw r6+0, r3
+	slli r3, r4, 2
+	addi r3, r3, 1
+	lui r7, %hi(code_heap+4)
+	addi r7, r7, %lo(code_heap+4)
+	add r7, r1, r7
+	stw r7+0, r3
+	addi r3, r0, 0
+	beq r4, r3, .LBB6_9
 .LBB6_7:
+	addi r6, r6, 8
+	addi r7, r0, 1
+	sgt r7, r4, r7
+	sub r7, r3, r7
+	xori r4, r4, 1
+	and r4, r4, r7
+	xori r4, r4, 1
+.LBB6_8:
+	ldw r7, r5+0
+	stw r6+0, r7
+	addi r4, r4, -1
+	addi r6, r6, 4
+	addi r5, r5, 4
+	bne r4, r3, .LBB6_8
+.LBB6_9:
 	lui r3, 256
 	add r1, r1, r3
-.LBB6_8:
+.LBB6_10:
 	ldw lr, fp+-20
 	ldw r14, fp+-16
 	ldw r13, fp+-12
@@ -1083,14 +1141,12 @@ persist_term:                           # @persist_term
 	stw fp+-24, r16
 	stw fp+-28, r17
 	stw fp+-32, r18
-	stw fp+-36, r19
-	stw fp+-40, r20
-	stw fp+-44, lr
+	stw fp+-36, lr
 	addi r11, r0, 0
-	beq r3, r11, .LBB14_7
+	beq r3, r11, .LBB14_4
 .LBB14_1:
 	andi r1, r3, 3
-	bne r1, r11, .LBB14_7
+	bne r1, r11, .LBB14_4
 .LBB14_2:
 	lui r12, 256
 	addi r1, r12, -4
@@ -1104,93 +1160,28 @@ persist_term:                           # @persist_term
 	and r1, r5, r1
 	xor r1, r1, r4
 	add r1, r3, r1
-	ldw r16, r1+0
-	ldw r15, r1+4
-	srai r13, r15, 2
-	addi r14, r0, 1
-	blt r13, r14, .LBB14_5
+	ldw r14, r1+4
+	srai r13, r14, 2
+	addi r3, r0, 33
+	bltu r13, r3, .LBB14_6
 .LBB14_3:
-	addi r3, r0, 32
-	slt r3, r13, r3
-	sub r3, r11, r3
-	xori r4, r13, 32
-	and r3, r4, r3
-	xori r17, r3, 32
-	addi r18, r1, 8
-	addi r19, fp, -172
-	addi r20, r0, 0
-.LBB14_4:
-	ldw r3, r18+0
-	jal r31, persist_term
-	stw r19+0, r1
-	addi r17, r17, -1
-	addi r19, r19, 4
-	addi r18, r18, 4
-	bne r17, r20, .LBB14_4
-.LBB14_5:
-	lui r3, %hi(code_hp)
-	addi r3, r3, %lo(code_hp)
-	ldw r1, r3+0
-	add r4, r13, r1
-	addi r4, r4, 2
-	lui r5, 32
-	addi r5, r5, 1
-	lui r17, %hi(g_error)
-	addi r17, r17, %lo(g_error)
-	blt r4, r5, .LBB14_8
-.LBB14_6:
-	stw r17+0, r14
+	lui r1, %hi(g_error)
+	addi r1, r1, %lo(g_error)
+	addi r3, r0, 1
+	stw r1+0, r3
 	lui r3, %hi(g_errmsg)
 	addi r3, r3, %lo(g_errmsg)
-	lui r5, %hi(.L.str.66)
-	addi r5, r5, %lo(.L.str.66)
+	lui r5, %hi(.L.str.67)
+	addi r5, r5, %lo(.L.str.67)
 	addi r4, r0, 256
 	jal r31, snprintf
-	addi r1, r0, 0
-	ldw r3, r17+0
-	bne r3, r11, .LBB14_13
-	jal r0, .LBB14_9
-.LBB14_7:
+	addi r11, r0, 0
+	jal r0, .LBB14_5
+.LBB14_4:
 	add r11, r3, r0
-	jal r0, .LBB14_13
-.LBB14_8:
-	stw r3+0, r4
-	ldw r3, r17+0
-	bne r3, r11, .LBB14_13
-.LBB14_9:
-	addi r4, r0, -4
-	and r3, r16, r4
-	addi r5, r3, 2
-	slli r1, r1, 2
-	lui r3, %hi(code_heap)
-	addi r3, r3, %lo(code_heap)
-	add r3, r1, r3
-	stw r3+0, r5
-	and r4, r15, r4
-	addi r4, r4, 1
-	lui r5, %hi(code_heap+4)
-	addi r5, r5, %lo(code_heap+4)
-	add r5, r1, r5
-	stw r5+0, r4
-	blt r13, r14, .LBB14_12
-.LBB14_10:
-	addi r3, r3, 8
-	addi r4, fp, -172
-	addi r5, r0, 0
-.LBB14_11:
-	ldw r6, r4+0
-	stw r3+0, r6
-	addi r13, r13, -1
-	addi r3, r3, 4
-	addi r4, r4, 4
-	bne r13, r5, .LBB14_11
-.LBB14_12:
-	add r11, r1, r12
-.LBB14_13:
+.LBB14_5:
 	add r1, r11, r0
-	ldw lr, fp+-44
-	ldw r20, fp+-40
-	ldw r19, fp+-36
+	ldw lr, fp+-36
 	ldw r18, fp+-32
 	ldw r17, fp+-28
 	ldw r16, fp+-24
@@ -1203,6 +1194,85 @@ persist_term:                           # @persist_term
 	ldw fp, sp+4
 	addi sp, sp, 184
 	jalr r0, r31, 0
+.LBB14_6:
+	ldw r15, r1+0
+	beq r13, r11, .LBB14_9
+.LBB14_7:
+	addi r16, r1, 8
+	addi r17, fp, -164
+	add r18, r13, r0
+.LBB14_8:
+	ldw r3, r16+0
+	jal r31, persist_term
+	stw r17+0, r1
+	addi r18, r18, -1
+	addi r17, r17, 4
+	addi r16, r16, 4
+	bne r18, r11, .LBB14_8
+.LBB14_9:
+	lui r3, %hi(code_hp)
+	addi r3, r3, %lo(code_hp)
+	ldw r1, r3+0
+	add r4, r13, r1
+	addi r4, r4, 2
+	lui r5, 32
+	addi r5, r5, 1
+	lui r16, %hi(g_error)
+	addi r16, r16, %lo(g_error)
+	blt r4, r5, .LBB14_11
+.LBB14_10:
+	addi r1, r0, 1
+	stw r16+0, r1
+	lui r3, %hi(g_errmsg)
+	addi r3, r3, %lo(g_errmsg)
+	lui r5, %hi(.L.str.66)
+	addi r5, r5, %lo(.L.str.66)
+	addi r4, r0, 256
+	jal r31, snprintf
+	addi r1, r0, 0
+	ldw r3, r16+0
+	bne r3, r11, .LBB14_5
+	jal r0, .LBB14_12
+.LBB14_11:
+	stw r3+0, r4
+	ldw r3, r16+0
+	bne r3, r11, .LBB14_5
+.LBB14_12:
+	addi r3, r0, -4
+	and r4, r15, r3
+	addi r5, r4, 2
+	slli r1, r1, 2
+	lui r4, %hi(code_heap)
+	addi r4, r4, %lo(code_heap)
+	add r4, r1, r4
+	stw r4+0, r5
+	and r3, r14, r3
+	addi r3, r3, 1
+	lui r5, %hi(code_heap+4)
+	addi r5, r5, %lo(code_heap+4)
+	add r5, r1, r5
+	stw r5+0, r3
+	addi r3, r0, 0
+	beq r13, r3, .LBB14_15
+.LBB14_13:
+	addi r4, r4, 8
+	addi r5, r0, 1
+	sgt r5, r13, r5
+	sub r5, r3, r5
+	xori r6, r13, 1
+	and r5, r6, r5
+	xori r5, r5, 1
+	addi r6, fp, -164
+.LBB14_14:
+	ldw r7, r6+0
+	stw r4+0, r7
+	addi r5, r5, -1
+	addi r4, r4, 4
+	addi r6, r6, 4
+	bne r5, r3, .LBB14_14
+.LBB14_15:
+	add r11, r1, r12
+	jal r0, .LBB14_5
 .Lfunc_end14:
 	.size	persist_term, .Lfunc_end14-persist_term
                                         # -- End function
@@ -2155,6 +2225,11 @@ ATOM_BETWEEN:
 	.asciz	"code heap overflow"
 	.size	.L.str.66, 19
 
+	.type	.L.str.67,@object               # @.str.67
+.L.str.67:
+	.asciz	"arity overflow"
+	.size	.L.str.67, 15
+
 	.type	heap,@object                    # @heap
 	.bss
 	.globl	heap
@@ -2170,11 +2245,11 @@ code_heap:
 	.zero	524288
 	.size	code_heap, 524288
 
-	.type	.L.str.67,@object               # @.str.67
+	.type	.L.str.68,@object               # @.str.68
 	.section	.rodata.str1.1,"aMS",@progbits,1
-.L.str.67:
+.L.str.68:
 	.asciz	"atom store full"
-	.size	.L.str.67, 16
+	.size	.L.str.68, 16
 
 	.type	atom_store,@object              # @atom_store
 	.local	atom_store

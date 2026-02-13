@@ -48,7 +48,7 @@ static char *store_string(const char *s) {
     if (atom_store_pos + len > ATOM_STORE_SIZE) {
         g_error = 1;
         snprintf(g_errmsg, sizeof(g_errmsg), "atom store full");
-        return atom_names[0]; /* fallback */
+        return 0;
     }
     char *p = &atom_store[atom_store_pos];
     memcpy(p, s, len);
@@ -68,6 +68,7 @@ int atom_intern(const char *name) {
         return 0;
     }
     atom_names[atom_count] = store_string(name);
+    if (!atom_names[atom_count]) return 0;
     return atom_count++;
 }
 
@@ -168,6 +169,11 @@ term_t code_heap_alloc(int n) {
 }
 
 term_t make_compound(int functor_atom, int arity, term_t *args) {
+    if (arity < 0 || arity > PROLOG_MAX_ARITY) {
+        g_error = 1;
+        snprintf(g_errmsg, sizeof(g_errmsg), "arity overflow");
+        return TERM_NIL;
+    }
     int p = heap_alloc(2 + arity);
     if (g_error) return TERM_NIL;
     heap[p] = MK_ATOM(functor_atom);
@@ -179,6 +185,11 @@ term_t make_compound(int functor_atom, int arity, term_t *args) {
 }
 
 term_t make_compound_on_code(int functor_atom, int arity, term_t *args) {
+    if (arity < 0 || arity > PROLOG_MAX_ARITY) {
+        g_error = 1;
+        snprintf(g_errmsg, sizeof(g_errmsg), "arity overflow");
+        return TERM_NIL;
+    }
     int p = code_heap_alloc(2 + arity);
     if (g_error) return TERM_NIL;
     code_heap[p] = MK_ATOM(functor_atom);
@@ -255,9 +266,14 @@ term_t persist_term(term_t t) {
         {
             int func = compound_functor(t);
             int arity = compound_arity(t);
-            term_t args[32];
+            if (arity < 0 || arity > PROLOG_MAX_ARITY) {
+                g_error = 1;
+                snprintf(g_errmsg, sizeof(g_errmsg), "arity overflow");
+                return TERM_NIL;
+            }
+            term_t args[PROLOG_MAX_ARITY];
             int i;
-            for (i = 0; i < arity && i < 32; i++)
+            for (i = 0; i < arity; i++)
                 args[i] = persist_term(compound_arg(t, i));
             return make_compound_on_code(func, arity, args);
         }

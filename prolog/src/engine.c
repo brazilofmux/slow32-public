@@ -94,9 +94,14 @@ static term_t copy_term_impl(term_t t, int *var_map, int map_size, int follow_bi
         {
             int func = compound_functor(t);
             int arity = compound_arity(t);
-            term_t args[32];
+            if (arity < 0 || arity > PROLOG_MAX_ARITY) {
+                g_error = 1;
+                snprintf(g_errmsg, sizeof(g_errmsg), "arity overflow");
+                return TERM_NIL;
+            }
+            term_t args[PROLOG_MAX_ARITY];
             int i;
-            for (i = 0; i < arity && i < 32; i++) {
+            for (i = 0; i < arity; i++) {
                 args[i] = copy_term_impl(compound_arg(t, i), var_map, map_size, follow_bindings);
                 if (g_error) return TERM_NIL;
             }

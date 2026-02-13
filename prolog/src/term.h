@@ -6,6 +6,9 @@
 /* Tagged 32-bit term representation */
 typedef int32_t term_t;
 
+/* Current implementation-wide arity cap for compound terms. */
+#define PROLOG_MAX_ARITY 32
+
 #define TAG(t)       ((t) & 3)
 #define TAG_PTR  0
 #define TAG_INT  1

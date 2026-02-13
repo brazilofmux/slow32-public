@@ -958,7 +958,7 @@ parse_expr:                             # @parse_expr
 	bne r1, r20, .LBB3_72
 .LBB3_63:
 	jal r31, next_token
-	beq r15, r21, .LBB3_80
+	beq r15, r21, .LBB3_81
 .LBB3_64:
 	add r3, r16, r0
 	jal r31, parse_expr
@@ -1049,7 +1049,7 @@ parse_expr:                             # @parse_expr
 	addi r3, r3, %lo(g_errmsg)
 	lui r5, %hi(.L.str.24)
 	addi r5, r5, %lo(.L.str.24)
-	jal r0, .LBB3_81
+	jal r0, .LBB3_80
 .LBB3_76:
 	add r13, r1, r0
 	jal r31, next_token
@@ -1077,16 +1077,19 @@ parse_expr:                             # @parse_expr
 	addi r3, r3, %lo(g_errmsg)
 	lui r5, %hi(.L.str.27)
 	addi r5, r5, %lo(.L.str.27)
-	jal r0, .LBB3_81
 .LBB3_80:
+	addi r4, r0, 256
+	jal r31, snprintf
+	jal r0, .LBB3_1
+.LBB3_81:
 	addi r1, r0, 1
 	stw r18+0, r1
 	lui r3, %hi(g_errmsg)
 	addi r3, r3, %lo(g_errmsg)
 	lui r5, %hi(.L.str.31)
 	addi r5, r5, %lo(.L.str.31)
-.LBB3_81:
 	addi r4, r0, 256
+	addi r6, r0, 32
 	jal r31, snprintf
 	jal r0, .LBB3_1
 .LBB3_82:
@@ -1096,7 +1099,7 @@ parse_expr:                             # @parse_expr
 	addi r3, r3, %lo(g_errmsg)
 	lui r5, %hi(.L.str.26)
 	addi r5, r5, %lo(.L.str.26)
-	jal r0, .LBB3_81
+	jal r0, .LBB3_80
 .Lfunc_end3:
 	.size	parse_expr, .Lfunc_end3-parse_expr
 	.section	.rodata,"a",@progbits
@@ -1406,8 +1409,8 @@ clause_vars:
 
 	.type	.L.str.31,@object               # @.str.31
 .L.str.31:
-	.asciz	"too many arguments"
-	.size	.L.str.31, 19
+	.asciz	"too many arguments (max %d)"
+	.size	.L.str.31, 28
 
 	.ident	"clang version 23.0.0git (https://github.com/llvm/llvm-project.git 0c27e7716b1b351bd93e1a7d5c7965bde4656ae9)"
 	.section	".note.GNU-stack","",@progbits
