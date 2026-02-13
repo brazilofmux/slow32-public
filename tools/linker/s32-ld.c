@@ -528,11 +528,31 @@ static bool load_object_file(linker_state_t *ld, const char *filename) {
 }
 
 // Find or create a combined section
-static int find_or_create_section(linker_state_t *ld, const char *name, 
+// Get the canonical (base) section name for subsection merging.
+// ELF convention: ".text.foo" merges into ".text", ".bss.bar" into ".bss", etc.
+static const char *canonical_section_name(const char *name) {
+    static const char *const bases[] = {
+        ".text.", ".data.", ".bss.", ".rodata.",
+    };
+    static const char *const canonical[] = {
+        ".text",  ".data",  ".bss",  ".rodata",
+    };
+    for (int i = 0; i < (int)(sizeof(bases) / sizeof(bases[0])); i++) {
+        if (strncmp(name, bases[i], strlen(bases[i])) == 0) {
+            return canonical[i];
+        }
+    }
+    return name;  // No subsection prefix — use as-is
+}
+
+static int find_or_create_section(linker_state_t *ld, const char *name,
                                    uint32_t type, uint32_t flags, uint32_t align) {
-    // Look for existing section with same name
+    // Merge subsections: ".bss.n_foo" -> ".bss", ".text.n_bar" -> ".text", etc.
+    const char *merged_name = canonical_section_name(name);
+
+    // Look for existing section with same (canonical) name
     for (int i = 0; i < ld->num_sections; i++) {
-        if (strcmp(ld->sections[i].name, name) == 0) {
+        if (strcmp(ld->sections[i].name, merged_name) == 0) {
             // Verify compatible type and flags
             if (ld->sections[i].type != type) {
                 fprintf(stderr, "Error: Section '%s' has conflicting types\n", name);
@@ -545,22 +565,22 @@ static int find_or_create_section(linker_state_t *ld, const char *name,
             return i;
         }
     }
-    
-    // Create new section
+
+    // Create new section using the canonical name
     if (ld->num_sections >= MAX_SECTIONS) {
         fprintf(stderr, "Error: Too many sections\n");
         exit(1);
     }
-    
+
     combined_section_t *sec = &ld->sections[ld->num_sections];
-    copy_string(sec->name, sizeof(sec->name), name);
+    copy_string(sec->name, sizeof(sec->name), merged_name);
     sec->type = type;
     sec->flags = flags;
     sec->align = align;
     sec->size = 0;
     sec->num_parts = 0;
     sec->data = NULL;
-    
+
     return ld->num_sections++;
 }
 
@@ -671,10 +691,10 @@ static void build_symbol_table(linker_state_t *ld) {
                         esym->type = isym->type;
                         esym->is_weak = (isym->binding == S32O_BIND_WEAK);
                         
-                        // Find combined section
+                        // Find combined section (use canonical name for subsection merging)
                         if (isym->section > 0 && isym->section <= inf->header.nsections) {
-                            const char *sec_name = &inf->string_table[
-                                inf->sections[isym->section - 1].name_offset];
+                            const char *sec_name = canonical_section_name(&inf->string_table[
+                                inf->sections[isym->section - 1].name_offset]);
                             for (int cs = 0; cs < ld->num_sections; cs++) {
                                 if (strcmp(ld->sections[cs].name, sec_name) == 0) {
                                     esym->section_idx = cs;
@@ -719,10 +739,10 @@ static void build_symbol_table(linker_state_t *ld) {
                     }
                     nsym->value = isym->value + inf->section_base[isym->section - 1];
                     
-                    // Find combined section
+                    // Find combined section (use canonical name for subsection merging)
                     if (isym->section <= inf->header.nsections) {
-                        const char *sec_name = &inf->string_table[
-                            inf->sections[isym->section - 1].name_offset];
+                        const char *sec_name = canonical_section_name(&inf->string_table[
+                            inf->sections[isym->section - 1].name_offset]);
                         if (ld->verbose) {
                             printf("  Symbol section %d -> section name '%s'\n", isym->section, sec_name);
                         }

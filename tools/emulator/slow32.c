@@ -358,6 +358,12 @@ static void cpu_store(cpu_state_t *cpu, uint32_t addr, uint32_t value, int size)
         data &= 0xFFFF;
     }
     
+    // Debug watchpoint: catch writes to heap area
+    if (cpu->debug.watch_enabled && addr >= cpu->debug.watch_start && addr < cpu->debug.watch_end) {
+        fprintf(stderr, "[WATCH] PC=0x%08X cycle=%u: write %d bytes to 0x%08X value=0x%08X\n",
+                cpu->pc, (unsigned)cpu->cycle_count, size, addr, data);
+    }
+
     if (mm_write(&cpu->mm, addr, &data, size) < 0) {
         fprintf(stderr, "Memory fault: Failed to write %d bytes at 0x%08X (PC=0x%08X SP=0x%08X)\n",
                 size, addr, cpu->pc, cpu->regs[REG_SP]);

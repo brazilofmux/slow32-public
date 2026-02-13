@@ -1282,10 +1282,13 @@ static bool assemble_line(assembler_t *as, char *line) {
             as->current_addr += 4;
             bump_size(as, as->current_section, 4);
         } else {
-            // Large immediate or symbol - use LUI + ORI
-            uint32_t upper = ((uint32_t)imm >> 12) & 0xFFFFF;
+            // Large immediate or symbol - use LUI + ADDI
+            // ADDI sign-extends the low 12 bits, so compensate in the upper:
+            // if bit 11 of the low part is set, add 1 to upper to cancel
+            // the sign extension.
             uint32_t lower = imm & 0xFFF;
-            
+            uint32_t upper = (((uint32_t)imm + 0x800) >> 12) & 0xFFFFF;
+
             // LUI rd, upper
             ensure_instruction_capacity(as, 2);
             instruction_t *inst1 = &as->instructions[as->num_instructions];
@@ -1302,10 +1305,10 @@ static bool assemble_line(assembler_t *as, char *line) {
             as->num_instructions++;
             as->current_addr += 4;
             bump_size(as, as->current_section, 4);
-            
-            // ORI rd, rd, lower
+
+            // ADDI rd, rd, lower (sign-extended, compensated by upper)
             instruction_t *inst2 = &as->instructions[as->num_instructions];
-            inst2->opcode = 0x11;  // ORI
+            inst2->opcode = 0x10;  // ADDI
             inst2->address = as->current_addr;
             inst2->section = as->current_section;
             if (is_symbol) {
@@ -1314,7 +1317,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                 strcpy(inst2->symbol_ref, res.symbol);
                 inst2->symbol_addend = res.val;
             }
-            inst2->instruction = encode_i(0x11, rd, rd, lower);
+            inst2->instruction = encode_i(0x10, rd, rd, lower);
             as->num_instructions++;
             as->current_addr += 4;
             bump_size(as, as->current_section, 4);
@@ -1539,16 +1542,16 @@ static bool assemble_line(assembler_t *as, char *line) {
         as->current_addr += 4;
         bump_size(as, as->current_section, 4);
         
-        // ORI rd, rd, %lo(symbol)
+        // ADDI rd, rd, %lo(symbol) (sign-extended, compensated by HI20)
         instruction_t *inst2 = &as->instructions[as->num_instructions];
-        inst2->opcode = 0x11;  // ORI
+        inst2->opcode = 0x10;  // ADDI
         inst2->address = as->current_addr;
         inst2->section = as->current_section;
         inst2->has_symbol_ref = true;
         inst2->symbol_is_lo = true;
         strcpy(inst2->symbol_ref, res.symbol);
         inst2->symbol_addend = res.val;
-        inst2->instruction = encode_i(0x11, rd, rd, 0);
+        inst2->instruction = encode_i(0x10, rd, rd, 0);
         as->num_instructions++;
         as->current_addr += 4;
         bump_size(as, as->current_section, 4);

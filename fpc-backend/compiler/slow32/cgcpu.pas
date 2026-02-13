@@ -510,7 +510,12 @@ unit cgcpu;
           ovloc.loc:=LOC_VOID;
         if op=OP_NOT then
           begin
-            list.concat(taicpu.op_reg_reg_const(A_XORI,dst,src1,-1));
+            { SLOW-32 XORI uses zero-extended 12-bit immediates, so
+              xori reg, reg, -1 only XORs with 0x00000FFF (not 0xFFFFFFFF).
+              Use addi tmp, r0, -1 (sign-extended to 0xFFFFFFFF) + xor instead. }
+            tmpreg1:=getintregister(list,size);
+            list.concat(taicpu.op_reg_reg_const(A_ADDI,tmpreg1,NR_R0,-1));
+            list.concat(taicpu.op_reg_reg_reg(A_XOR,dst,src1,tmpreg1));
             maybeadjustresult(list,op,size,dst);
           end
         else if op=OP_NEG then
