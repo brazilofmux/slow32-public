@@ -219,6 +219,7 @@ unit cgcpu;
           reference_reset_symbol(href,current_asmdata.WeakRefAsmSymbol(s,AT_FUNCTION),0,0,[]);
 
         { SLOW-32: Use CALL pseudo-instruction which the assembler will expand }
+        href.refaddr:=addr_full;
         list.concat(taicpu.op_ref(A_CALL,href));
 
         { not assigned while generating external wrappers }

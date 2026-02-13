@@ -52,7 +52,57 @@ RUN cmake -G Ninja \
 
 RUN ninja && ninja install
 
-# Stage 2: Build SLOW-32 native tools and create final image
+# Stage 2: Build FPC cross-compiler for SLOW-32
+FROM alpine:3.19 AS fpc-builder
+
+RUN apk add --no-cache build-base git bash tar
+
+# Install host FPC 3.2.2 (statically-linked ppcx64 — works on Alpine/musl)
+WORKDIR /build
+ARG FPC_VERSION=3.2.2
+RUN wget -q "https://sourceforge.net/projects/freepascal/files/Linux/${FPC_VERSION}/fpc-${FPC_VERSION}.x86_64-linux.tar/download" -O fpc-host.tar && \
+    tar xf fpc-host.tar && \
+    cd fpc-${FPC_VERSION}.x86_64-linux && \
+    tar xf binary.x86_64-linux.tar.gz && \
+    tar xf units.x86_64-linux.tar.gz && \
+    mkdir -p /opt/fpc/bin /opt/fpc/units && \
+    cp base.x86_64-linux/usr/lib/fpc/${FPC_VERSION}/ppcx64 /opt/fpc/bin/ && \
+    chmod +x /opt/fpc/bin/ppcx64 && \
+    cp -r units.x86_64-linux/usr/lib/fpc/${FPC_VERSION}/units/x86_64-linux /opt/fpc/units/ && \
+    rm -rf /build/fpc-*
+
+# Clone FPC source at pinned commit
+ARG FPC_COMMIT=e479ec2031b5c68910c289d3da12440e32c4814a
+RUN git init /fpc-src && cd /fpc-src && \
+    git remote add origin https://gitlab.com/freepascal.org/fpc/source.git && \
+    git fetch --depth=1 origin ${FPC_COMMIT} && \
+    git checkout FETCH_HEAD
+
+# Copy SLOW-32 backend and apply patches
+COPY fpc-backend/compiler/slow32 /fpc-src/compiler/slow32
+COPY fpc-backend/rtl/slow32 /fpc-src/rtl/slow32
+COPY fpc-backend/rtl/embedded/slow32 /fpc-src/rtl/embedded/slow32
+COPY fpc-backend/patches /build/fpc-patches
+
+WORKDIR /fpc-src
+RUN for p in /build/fpc-patches/*.patch; do \
+      echo "Applying $(basename $p)..." && \
+      git apply "$p" || patch -p1 < "$p"; \
+    done
+
+# Build ppcs32 (SLOW-32 cross-compiler)
+WORKDIR /fpc-src/compiler
+RUN /opt/fpc/bin/ppcx64 -dslow32 -Fuslow32 -Fusystems -Fislow32 \
+      -Fu/opt/fpc/units/x86_64-linux -oppcs32 pp.pas
+
+# Build system unit (RTL)
+RUN mkdir -p /opt/fpc/slow32-rtl && \
+    ./ppcs32 -Tembedded -Us -s -n -Sg \
+      -Fi../rtl/embedded -Fi../rtl/embedded/slow32 -Fi../rtl/inc \
+      -Fi../rtl/inc/innr -Fi../rtl/slow32 -Fu../rtl/inc \
+      -FE/opt/fpc/slow32-rtl ../rtl/embedded/system.pp
+
+# Stage 3: Build SLOW-32 native tools and create final image
 FROM alpine:3.19
 
 # Install runtime dependencies
@@ -100,6 +150,13 @@ RUN cp tools/assembler/slow32asm /opt/slow32/bin/ && \
 RUN cp runtime/*.s32o /opt/slow32/lib/ && \
     cp runtime/*.s32a /opt/slow32/lib/ && \
     cp -r runtime/include/* /opt/slow32/include/ 2>/dev/null || true
+
+# Install FPC cross-compiler and RTL
+RUN mkdir -p /opt/slow32/lib/fpc
+COPY --from=fpc-builder /fpc-src/compiler/ppcs32 /opt/slow32/bin/
+COPY --from=fpc-builder /opt/fpc/slow32-rtl/system.ppu /opt/slow32/lib/fpc/
+COPY --from=fpc-builder /opt/fpc/slow32-rtl/system.s /opt/slow32/lib/fpc/
+COPY fpc-backend/runtime/fpc_startup.s /opt/slow32/lib/fpc/
 
 # Set up environment
 ENV PATH="/opt/llvm/bin:/opt/slow32/bin:${PATH}"
@@ -177,6 +234,47 @@ s32-ld -o "$OUTPUT" \\\n\
     ${SLOW32_LIB}/libs32.s32a || exit 1\n\
 \n\
 echo "Successfully created $OUTPUT"\n' > /opt/slow32/bin/s32c++ && chmod +x /opt/slow32/bin/s32c++
+
+# Create a helper script for Pascal compilation
+RUN printf '#!/bin/bash\n\
+# SLOW-32 Pascal Compilation Helper\n\
+# Usage: s32pc input.pas [output.s32x]\n\
+\n\
+if [ $# -lt 1 ]; then\n\
+    echo "Usage: s32pc input.pas [output.s32x]"\n\
+    exit 1\n\
+fi\n\
+\n\
+INPUT="$1"\n\
+OUTPUT="${2:-${INPUT%%.pas}.s32x}"\n\
+BASE="$(basename "${INPUT}" .pas)"\n\
+FPCRTL="${SLOW32_HOME}/lib/fpc"\n\
+TMPDIR="/tmp/s32pc_$$"\n\
+mkdir -p "$TMPDIR"\n\
+\n\
+echo "Compiling $INPUT to $OUTPUT..."\n\
+\n\
+# Compile Pascal to assembly\n\
+ppcs32 -Tembedded -s -n -Fu"$FPCRTL" -FE"$TMPDIR" "$INPUT" || exit 1\n\
+\n\
+# Assemble program\n\
+slow32asm "$TMPDIR/${BASE}.s" "$TMPDIR/${BASE}.s32o" || exit 1\n\
+\n\
+# Assemble system unit and startup shim (cached)\n\
+[ -f /tmp/s32pc_system.s32o ] || slow32asm "$FPCRTL/system.s" /tmp/s32pc_system.s32o || exit 1\n\
+[ -f /tmp/s32pc_startup.s32o ] || slow32asm "$FPCRTL/fpc_startup.s" /tmp/s32pc_startup.s32o || exit 1\n\
+\n\
+# Link\n\
+s32-ld --mmio 64K -o "$OUTPUT" \\\n\
+    ${SLOW32_LIB}/crt0.s32o \\\n\
+    /tmp/s32pc_startup.s32o \\\n\
+    /tmp/s32pc_system.s32o \\\n\
+    "$TMPDIR/${BASE}.s32o" \\\n\
+    ${SLOW32_LIB}/libc_mmio.s32a \\\n\
+    ${SLOW32_LIB}/libs32.s32a || exit 1\n\
+\n\
+rm -rf "$TMPDIR"\n\
+echo "Successfully created $OUTPUT"\n' > /opt/slow32/bin/s32pc && chmod +x /opt/slow32/bin/s32pc
 
 # Container is ephemeral - expects input/output via /data mount
 # Default: compile all .c files in /data
