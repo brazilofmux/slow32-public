@@ -53,7 +53,7 @@ static char *read_all_stdin(size_t *out_len) {
 
 int main(int argc, char **argv) {
     lua_State *L;
-    int status;
+    int status = LUA_OK;
 
     (void)argc; (void)argv;
 
@@ -94,13 +94,14 @@ int main(int argc, char **argv) {
                             luaL_checkstack(L, LUA_MINSTACK, "too many results");
                             lua_getglobal(L, "print");
                             lua_insert(L, 1);
-                            lua_pcall(L, n, 0, 0);
+                            status = lua_pcall(L, n, 0, 0);
+                            report(L, status);
                         }
                         free(expr_buf);
                         free(input);
                         fflush(stdout);
                         lua_close(L);
-                        return EXIT_SUCCESS;
+                        return (status == LUA_OK) ? EXIT_SUCCESS : EXIT_FAILURE;
                     }
                 }
                 free(expr_buf);
