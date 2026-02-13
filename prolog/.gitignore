@@ -1,0 +1,6 @@
+prolog.s32x
+prolog_debug
+prolog_debug2
+prolog_debug3
+prolog_native
+trace_*
