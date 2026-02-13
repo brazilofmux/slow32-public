@@ -1,0 +1,99 @@
+diff --git a/compiler/entfile.pas b/compiler/entfile.pas
+index de4238e0cb..7fca928aa3 100644
+--- a/compiler/entfile.pas
++++ b/compiler/entfile.pas
+@@ -168,7 +168,8 @@ interface
+     { 22 } 16 {'z80'},
+     { 23 } 64 {'mips64'},
+     { 24 } 64 {'mips64el'},
+-    { 25 } 64 {'loongarch64'}
++    { 25 } 64 {'loongarch64'},
++    { 26 } 32 {'slow32'}
+     );
+   CpuAluBitSize : array[tsystemcpu] of longint =
+     (
+@@ -197,7 +198,8 @@ interface
+     { 22 }  8 {'z80'},
+     { 23 } 64 {'mips64'},
+     { 24 } 64 {'mips64el'},
+-    { 25 } 64 {'loongarch64'}
++    { 25 } 64 {'loongarch64'},
++    { 26 } 32 {'slow32'}
+     );
+ {$endif generic_cpu}
+ 
+diff --git a/compiler/systems.inc b/compiler/systems.inc
+index 86e5772820..2a067ebec7 100644
+--- a/compiler/systems.inc
++++ b/compiler/systems.inc
+@@ -59,7 +59,8 @@
+              cpu_z80,                      { 22 }
+              cpu_mips64,                   { 23 }
+              cpu_mips64el,                 { 24 }
+-             cpu_loongarch64               { 25 }
++             cpu_loongarch64,              { 25 }
++             cpu_slow32                    { 26 }
+        );
+ 
+        tasmmode= (asmmode_none
+@@ -218,7 +219,8 @@
+              system_mipsel_ps1,         { 123 }
+              system_wasm32_wasip1threads,{ 124 }
+              system_wasm32_wasip2,      { 125 }
+-             system_powerpc64_freebsd   { 126 }
++             system_powerpc64_freebsd,  { 126 }
++             system_slow32_embedded     { 127 }
+        );
+ 
+      type
+@@ -411,6 +413,7 @@
+             ,abi_loongarch_lp32s
+             ,abi_loongarch_lp32f
+             ,abi_loongarch_lp32d
++            ,abi_slow32_ilp32
+        );
+ 
+        tcgbackend = (
+diff --git a/compiler/systems.pas b/compiler/systems.pas
+index f864b75163..5963b2b5ae 100644
+--- a/compiler/systems.pas
++++ b/compiler/systems.pas
+@@ -315,7 +315,7 @@     tabiinfo = record
+                            system_jvm_java32,system_mipseb_embedded,system_mipsel_embedded,
+                            system_i8086_embedded,system_riscv32_embedded,system_riscv64_embedded,
+                            system_xtensa_embedded,system_z80_embedded,system_wasm32_embedded,
+-                           system_aarch64_embedded];
++                           system_aarch64_embedded,system_slow32_embedded];
+ 
+        { all FreeRTOS systems }
+        systems_freertos = [system_xtensa_freertos,system_arm_freertos,system_riscv32_freertos];
+@@ -492,7 +492,7 @@     tabiinfo = record
+             ('','i386','m68k','alpha','powerpc','sparc','vm','ia64','x86_64',
+              'mips','arm', 'powerpc64', 'avr', 'mipsel','jvm', 'i8086',
+              'aarch64', 'wasm32', 'sparc64', 'riscv32', 'riscv64', 'xtensa',
+-             'z80', 'mips64', 'mips64el', 'loongarch64');
++             'z80', 'mips64', 'mips64el', 'loongarch64', 'slow32');
+ 
+        abiinfo : array[tabi] of tabiinfo = (
+          (name: 'DEFAULT'; supported: true),
+@@ -525,7 +525,8 @@     tabiinfo = record
+          (name: 'LP64D'; supported:{$if defined(loongarch64)}true{$else}false{$endif}),
+          (name: 'LP32S'; supported:{$if defined(loongarch32)}true{$else}false{$endif}),
+          (name: 'LP32F'; supported:{$if defined(loongarch32)}true{$else}false{$endif}),
+-         (name: 'LP32D'; supported:{$if defined(loongarch32)}true{$else}false{$endif})
++         (name: 'LP32D'; supported:{$if defined(loongarch32)}true{$else}false{$endif}),
++         (name: 'ILP32'; supported:{$if defined(slow32)}true{$else}false{$endif})
+        );
+ 
+        cgbackend2str: array[tcgbackend] of ansistring = (
+@@ -1236,6 +1237,10 @@ procedure InitSystems;
+ {$ifdef loongarch64}
+   default_target(system_loongarch64_linux);
+ {$endif loongarch64}
++
++{$ifdef slow32}
++  default_target(system_slow32_embedded);
++{$endif slow32}
+ end;
+ 
+ 

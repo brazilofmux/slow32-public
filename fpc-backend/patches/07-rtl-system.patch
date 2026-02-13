@@ -1,0 +1,48 @@
+diff --git a/rtl/inc/system.inc b/rtl/inc/system.inc
+index e7b5a19991..d438d2830e 100644
+--- a/rtl/inc/system.inc
++++ b/rtl/inc/system.inc
+@@ -366,6 +366,14 @@ function do_isdevice(handle:thandle):boolean;forward;
+   {$define SYSPROCDEFINED}
+ {$endif cpuloongarch64}
+ 
++{$ifdef cpuslow32}
++  {$ifdef SYSPROCDEFINED}
++    {$Error Can't determine processor type !}
++  {$endif}
++  {$i slow32.inc}
++  {$define SYSPROCDEFINED}
++{$endif cpuslow32}
++
+ {$ifndef SYSPROCDEFINED}
+   {$Error Can't determine processor type !}
+ {$endif}
+diff --git a/rtl/inc/systemh.inc b/rtl/inc/systemh.inc
+index 2ec99647b6..19b1c41ef9 100644
+--- a/rtl/inc/systemh.inc
++++ b/rtl/inc/systemh.inc
+@@ -429,6 +429,24 @@
+   ValReal = Double;
+ {$endif CPULOONGARCH64}
+ 
++{$ifdef CPUSLOW32}
++  {$define DEFAULT_DOUBLE}
++
++  {$define FPC_INCLUDE_SOFTWARE_MOD_DIV}
++  {$define FPC_INCLUDE_SOFTWARE_MUL}
++  {$define FPC_INCLUDE_SOFTWARE_SHIFT_INT64}
++  {$define FPC_INCLUDE_SOFTWARE_INT64_TO_DOUBLE}
++
++  {$ifndef FPUNONE}
++    {$define SUPPORT_SINGLE}
++    {$define SUPPORT_DOUBLE}
++
++    {$define FPC_INCLUDE_SOFTWARE_INT64_TO_DOUBLE}
++
++    ValReal = Double;
++  {$endif}
++{$endif CPUSLOW32}
++
+ 
+ { By default enable a simple implementation of Random for 8/16 bit CPUs }
+ {$if (defined(CPU16) or defined(CPU8)) and not defined(FPC_NO_SIMPLE_RANDOM)}

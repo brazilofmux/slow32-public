@@ -1,0 +1,103 @@
+diff --git a/compiler/systems/i_embed.pas b/compiler/systems/i_embed.pas
+index 8ec19c5e88..797c97837d 100644
+--- a/compiler/systems/i_embed.pas
++++ b/compiler/systems/i_embed.pas
+@@ -922,6 +922,73 @@
+             llvmdatalayout : 'todo';
+           );
+ 
++       system_slow32_embedded_info : tsysteminfo =
++          (
++            system       : system_slow32_embedded;
++            name         : 'Embedded';
++            shortname    : 'Embedded';
++            flags        : [tf_needs_symbol_size,tf_files_case_sensitive,tf_requires_proper_alignment,
++                            tf_smartlink_sections,tf_init_final_units_by_calls];
++            cpu          : cpu_slow32;
++            unit_env     : '';
++            extradefines : '';
++            exeext       : '';
++            defext       : '.def';
++            scriptext    : '.sh';
++            smartext     : '.sl';
++            unitext      : '.ppu';
++            unitlibext   : '.ppl';
++            asmext       : '.s';
++            objext       : '.o';
++            resext       : '.res';
++            resobjext    : '.or';
++            sharedlibext : '.so';
++            staticlibext : '.a';
++            staticlibprefix : 'libp';
++            sharedlibprefix : 'lib';
++            sharedClibext : '.so';
++            staticClibext : '.a';
++            staticClibprefix : 'lib';
++            sharedClibprefix : 'lib';
++            importlibprefix : 'libimp';
++            importlibext : '.a';
++            Cprefix      : '';
++            newline      : #10;
++            dirsep       : '/';
++            assem        : as_gas;
++            assemextern  : as_gas;
++            link         : ld_none;
++            linkextern   : ld_embedded;
++            ar           : ar_gnu_ar;
++            res          : res_none;
++            dbg          : dbg_dwarf2;
++            script       : script_unix;
++            endian       : endian_little;
++            alignment    :
++              (
++                procalign       : 4;
++                loopalign       : 4;
++                jumpalign       : 0;
++                jumpalignskipmax    : 0;
++                coalescealign   : 0;
++                coalescealignskipmax: 0;
++                constalignmin   : 0;
++                constalignmax   : 4;
++                varalignmin     : 0;
++                varalignmax     : 4;
++                localalignmin   : 4;
++                localalignmax   : 4;
++                recordalignmin  : 0;
++                recordalignmax  : 4;
++                maxCrecordalign : 4
++              );
++            first_parm_offset : 8;
++            stacksize    : 262144;
++            stackalign   : 4;
++            abi : abi_slow32_ilp32;
++            llvmdatalayout : 'e-p:32:32:32-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v64:64:64-v128:64:128-a0:0:64-n32-S32';
++          );
++
+  implementation
+ 
+ initialization
+@@ -985,5 +1052,10 @@ initialization
+     set_source_info(system_z80_embedded_info);
+   {$endif embedded}
+ {$endif CPUZ80}
++{$ifdef cpuslow32}
++  {$ifdef embedded}
++    set_source_info(system_slow32_embedded_info);
++  {$endif embedded}
++{$endif cpuslow32}
+ end.
+ 
+diff --git a/compiler/systems/t_embed.pas b/compiler/systems/t_embed.pas
+index adaaa90e0a..93c405b1e6 100644
+--- a/compiler/systems/t_embed.pas
++++ b/compiler/systems/t_embed.pas
+@@ -2379,4 +2379,9 @@ initialization
+   RegisterExport(system_wasm32_embedded, texportlibwasi);
+   RegisterLinker(ld_embedded, TLinkerEmbedded_Wasm);
+ {$endif wasm32}
++
++{$ifdef slow32}
++  RegisterLinker(ld_embedded,TLinkerEmbedded);
++  RegisterTarget(system_slow32_embedded_info);
++{$endif slow32}
+ end.
