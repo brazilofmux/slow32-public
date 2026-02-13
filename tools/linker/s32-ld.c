@@ -18,10 +18,10 @@ static void copy_string(char *dst, size_t dst_size, const char *src) {
 
 // Configuration
 #define MAX_INPUT_FILES 100
-#define MAX_SECTIONS 1000
-#define MAX_SYMBOLS 32000
-#define MAX_RELOCATIONS 32000
-#define STRING_TABLE_SIZE (256 * 1024)
+#define MAX_SECTIONS 2000
+#define MAX_SYMBOLS 65536
+#define MAX_RELOCATIONS 65536
+#define STRING_TABLE_SIZE (512 * 1024)
 #define MAX_LIB_PATHS 32
 
 // Default memory layout

@@ -54,7 +54,7 @@ unit ras32gas;
       { parser }
       procinfo,
       rabase,rautils,
-      cgbase,cgobj
+      cgbase,cgobj,cgutils
       ;
 
 
@@ -665,10 +665,62 @@ unit ras32gas;
     procedure ts32gasreader.handleopcode;
       var
         instr : ts32instruction;
+        op: tasmop;
+        src, dst, base: tregister;
+        offset: aint;
+        ref: treference;
       begin
         instr:=ts32instruction.Create(ts32operand);
         BuildOpcode(instr);
         instr.condition := actcondition;
+
+        { Transform 3-operand store/load to internal 2-operand (reg, ref) format.
+          Assembly Store: st[bhw] base, src, offset -> Internal: op src, ref(base, offset)
+          Assembly Load:  ld[bhw][u] dest, base, offset -> Internal: op dest, ref(base, offset) }
+        op := instr.opcode;
+        if (op in [A_STB, A_STH, A_STW]) and (instr.ops = 3) then
+          begin
+            { stw base, src, offset -> internal: op src, ref(base, offset) }
+            if (instr.Operands[1].opr.typ = OPR_REGISTER) and
+               (instr.Operands[2].opr.typ = OPR_REGISTER) and
+               (instr.Operands[3].opr.typ = OPR_CONSTANT) then
+              begin
+                base := instr.Operands[1].opr.reg;
+                src := instr.Operands[2].opr.reg;
+                offset := instr.Operands[3].opr.val;
+
+                reference_reset(ref, 4, []);
+                ref.base := base;
+                ref.offset := offset;
+
+                instr.Ops := 2;
+                instr.Operands[1].opr.reg := src;
+                instr.Operands[2].InitRef;
+                instr.Operands[2].opr.ref := ref;
+              end;
+          end
+        else if (op in [A_LDB, A_LDBU, A_LDH, A_LDHU, A_LDW]) and (instr.ops = 3) then
+          begin
+            { ldw dest, base, offset -> internal: op dest, ref(base, offset) }
+            if (instr.Operands[1].opr.typ = OPR_REGISTER) and
+               (instr.Operands[2].opr.typ = OPR_REGISTER) and
+               (instr.Operands[3].opr.typ = OPR_CONSTANT) then
+              begin
+                dst := instr.Operands[1].opr.reg;
+                base := instr.Operands[2].opr.reg;
+                offset := instr.Operands[3].opr.val;
+
+                reference_reset(ref, 4, []);
+                ref.base := base;
+                ref.offset := offset;
+
+                instr.Ops := 2;
+                instr.Operands[1].opr.reg := dst;
+                instr.Operands[2].InitRef;
+                instr.Operands[2].opr.ref := ref;
+              end;
+          end;
+
         instr.ConcatInstruction(curlist);
         instr.Free;
       end;

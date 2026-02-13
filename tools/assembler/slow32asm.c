@@ -10,12 +10,12 @@
 #define MAX_LINE 65536
 #define MAX_TOKENS 8
 #define MAX_TOKEN_LEN 16384
-#define MAX_LABELS 32768
+#define MAX_LABELS 65536
 #define INITIAL_INSTRUCTION_CAPACITY 65536
 #define MAX_DATA_SIZE (1024 * 1024)  // 1MB max data section
-#define MAX_RELOCATIONS 16384
-#define MAX_STRING_TABLE (256 * 1024) // 256KB string table
-#define MAX_LABEL_DIFFS 4096
+#define MAX_RELOCATIONS 65536
+#define MAX_STRING_TABLE (512 * 1024) // 512KB string table
+#define MAX_LABEL_DIFFS 8192
 #define MAX_SYMBOL_LEN 256
 
 // SLOW-32 assembler now only outputs object files (.s32o)
@@ -1716,22 +1716,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                 scanner_next(&s_op);
                 // Peek: register => legacy base,data,imm. Otherwise data, imm(base).
                 int reg2 = parse_register_scanner(&s_op);
-                if (reg2 >= 0 && (s_op.curr.type == TOK_PLUS || s_op.curr.type == TOK_MINUS)) {
-                    // FPC form: data, base+imm (e.g., stw r31,r29+0)
-                    rs2 = reg1;  // first reg is value
-                    rs1 = reg2;  // second reg is base
-                    if (!parse_operand_scanner(&s_op, &res)) return false;
-                    if (res.has_symbol) {
-                        inst->has_symbol_ref = true;
-                        strcpy(inst->symbol_ref, res.symbol);
-                        inst->symbol_is_lo = res.is_lo;
-                        inst->symbol_is_pcrel_lo = res.is_pcrel_lo;
-                        inst->symbol_addend = res.val;
-                        imm = 0;
-                    } else {
-                        imm = res.val;
-                    }
-                } else if (reg2 >= 0) {
+                if (reg2 >= 0) {
                     // legacy: base, data, imm
                     rs1 = reg1;
                     rs2 = reg2;

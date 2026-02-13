@@ -169,15 +169,44 @@ unit ags32gas;
     var s: string;
         i: byte;
         sep: string[3];
+        p: taicpu;
     begin
-      s:=#9+gas_op2str[taicpu(hp).opcode];
+      p := taicpu(hp);
 
-      if taicpu(hp).ops<>0 then
+      { SLOW-32 store instructions use 3-operand syntax:
+          st[bhw] base, src, offset
+        Internal representation is 2-operand: op reg(src), ref(base, offset) }
+      if p.opcode in [A_STB,A_STH,A_STW] then
+        begin
+          s:=#9+gas_op2str[p.opcode];
+          s:=s+#9+gas_regname(p.oper[1]^.ref^.base)+',';
+          s:=s+gas_regname(p.oper[0]^.reg)+',';
+          s:=s+tostr(p.oper[1]^.ref^.offset);
+          owner.writer.AsmWriteLn(s);
+          exit;
+        end;
+
+      { SLOW-32 load instructions use 3-operand syntax:
+          ld[bhw][u] dest, base, offset
+        Internal representation is 2-operand: op reg(dest), ref(base, offset) }
+      if p.opcode in [A_LDB,A_LDBU,A_LDH,A_LDHU,A_LDW] then
+        begin
+          s:=#9+gas_op2str[p.opcode];
+          s:=s+#9+gas_regname(p.oper[0]^.reg)+',';
+          s:=s+gas_regname(p.oper[1]^.ref^.base)+',';
+          s:=s+tostr(p.oper[1]^.ref^.offset);
+          owner.writer.AsmWriteLn(s);
+          exit;
+        end;
+
+      s:=#9+gas_op2str[p.opcode];
+
+      if p.ops<>0 then
         begin
           sep:=#9;
-          for i:=0 to taicpu(hp).ops-1 do
+          for i:=0 to p.ops-1 do
             begin
-               s:=s+sep+getopstr(owner.asminfo,taicpu(hp).oper[i]^);
+               s:=s+sep+getopstr(owner.asminfo,p.oper[i]^);
                sep:=',';
             end;
         end;

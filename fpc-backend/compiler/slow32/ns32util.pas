@@ -63,7 +63,7 @@ implementation
         // addi sp,sp,-16
         list.Concat(taicpu.op_reg_reg_const(A_ADDI,NR_STACK_POINTER_REG,NR_STACK_POINTER_REG,-16));
 
-        // stw lr,12(sp)
+        // stw sp, lr, 12
         reference_reset(ref,4,[]);
         ref.base:=NR_STACK_POINTER_REG;
         ref.offset:=12;
@@ -74,7 +74,7 @@ implementation
       var
         ref: treference;
       begin
-        // ldw lr,12(sp)
+        // ldw lr, sp, 12
         reference_reset(ref,4,[]);
         ref.base:=NR_STACK_POINTER_REG;
         ref.offset:=12;

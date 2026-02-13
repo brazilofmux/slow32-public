@@ -93,7 +93,7 @@ procedure WriteBarrier;{$if defined(SYSTEMINLINE)}inline;{$endif}
 function get_caller_addr(framebp:pointer;addr:pointer=nil):pointer;assembler;
   asm
     { return address is at framebp - 4 }
-    ldw r3, -4(r3)
+    ldw r3, r3, -4
   end;
 
 
@@ -101,7 +101,7 @@ function get_caller_addr(framebp:pointer;addr:pointer=nil):pointer;assembler;
 function get_caller_frame(framebp:pointer;addr:pointer=nil):pointer;assembler;
   asm
     { previous frame pointer is at framebp - 8 }
-    ldw r3, -8(r3)
+    ldw r3, r3, -8
   end;
 
 
@@ -115,9 +115,9 @@ function get_caller_frame(framebp:pointer;addr:pointer=nil):pointer;assembler;
 {$define FPC_SYSTEM_HAS_ATOMIC_DEC_32}
 function fpc_atomic_dec_32 (var Target: longint) : longint; assembler; nostackframe;
   asm
-    ldw r4, 0(r3)
+    ldw r4, r3, 0
     addi r4, r4, -1
-    stw r4, 0(r3)
+    stw r3, r4, 0
     addi r3, r4, 0
   end;
 
@@ -125,9 +125,9 @@ function fpc_atomic_dec_32 (var Target: longint) : longint; assembler; nostackfr
 {$define FPC_SYSTEM_HAS_ATOMIC_INC_32}
 function fpc_atomic_inc_32 (var Target: longint) : longint; assembler; nostackframe;
   asm
-    ldw r4, 0(r3)
+    ldw r4, r3, 0
     addi r4, r4, 1
-    stw r4, 0(r3)
+    stw r3, r4, 0
     addi r3, r4, 0
   end;
 
@@ -135,8 +135,8 @@ function fpc_atomic_inc_32 (var Target: longint) : longint; assembler; nostackfr
 {$define FPC_SYSTEM_HAS_ATOMIC_XCHG_32}
 function fpc_atomic_xchg_32 (var Target: longint;Source : longint) : longint; assembler; nostackframe;
   asm
-    ldw r5, 0(r3)
-    stw r4, 0(r3)
+    ldw r5, r3, 0
+    stw r3, r4, 0
     addi r3, r5, 0
   end;
 
@@ -144,9 +144,9 @@ function fpc_atomic_xchg_32 (var Target: longint;Source : longint) : longint; as
 {$define FPC_SYSTEM_HAS_ATOMIC_CMP_XCHG_32}
 function fpc_atomic_cmp_xchg_32 (var Target: longint; NewValue: longint; Comparand: longint) : longint; [public,alias:'FPC_ATOMIC_CMP_XCHG_32']; assembler; nostackframe;
   asm
-    ldw r6, 0(r3)
+    ldw r6, r3, 0
     bne r6, r5, .LFail
-    stw r4, 0(r3)
+    stw r3, r4, 0
   .LFail:
     addi r3, r6, 0
   end;
@@ -155,9 +155,9 @@ function fpc_atomic_cmp_xchg_32 (var Target: longint; NewValue: longint; Compara
 {$define FPC_SYSTEM_HAS_ATOMIC_ADD_32}
 function fpc_atomic_add_32 (var Target: longint;Value: longint) : longint; assembler; nostackframe;
   asm
-    ldw r5, 0(r3)
+    ldw r5, r3, 0
     add r5, r5, r4
-    stw r5, 0(r3)
+    stw r3, r5, 0
     addi r3, r5, 0
   end;
 
