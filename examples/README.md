@@ -8,3 +8,9 @@
 - Other source files are small sanity programs that exercise pieces of the
   toolchain (hello world variants, arithmetic tests, etc.). Use them as
   references when wiring up new inputs.
+
+- `validatejson.c` — strict JSON validator (RFC 8259-focused) with UTF-8
+  and escape validation. Build with:
+  `./slow32cc --libc=mmio -O2 examples/validatejson.c -o validatejson.s32x`
+  and run:
+  `./tools/emulator/slow32-fast --mmio 0x10000 validatejson.s32x file.json`.

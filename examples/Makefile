@@ -5,12 +5,17 @@ MMIO_SIZE ?= 0x10000
 
 BIN := validatecsv_ragel.s32x
 SRC := validatecsv_ragel.c
+JSON_BIN := validatejson.s32x
+JSON_SRC := validatejson.c
 
-.PHONY: all clean regen run
+.PHONY: all clean regen run run-json
 
-all: $(BIN)
+all: $(BIN) $(JSON_BIN)
 
 $(BIN): $(SRC)
+	$(SLOW32CC) --libc=mmio -O2 $< -o $@
+
+$(JSON_BIN): $(JSON_SRC)
 	$(SLOW32CC) --libc=mmio -O2 $< -o $@
 
 # Rebuild the generated parser if ragel is installed.
@@ -22,5 +27,8 @@ regen:
 run: $(BIN)
 	$(EMULATOR) --mmio $(MMIO_SIZE) $(BIN) $(ARGS)
 
+run-json: $(JSON_BIN)
+	$(EMULATOR) --mmio $(MMIO_SIZE) $(JSON_BIN) $(ARGS)
+
 clean:
-	rm -f $(BIN)
+	rm -f $(BIN) $(JSON_BIN)
