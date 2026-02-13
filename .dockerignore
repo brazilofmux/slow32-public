@@ -9,6 +9,7 @@
 
 # Toolchain build needs:
 !llvm-backend/
+!fpc-backend/
 !tools/assembler/
 !tools/linker/
 !tools/utilities/
