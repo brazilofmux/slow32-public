@@ -15,7 +15,8 @@
 #define MAX_DATA_SIZE (1024 * 1024)  // 1MB max data section
 #define MAX_RELOCATIONS 16384
 #define MAX_STRING_TABLE (256 * 1024) // 256KB string table
-#define MAX_LABEL_DIFFS 256
+#define MAX_LABEL_DIFFS 4096
+#define MAX_SYMBOL_LEN 256
 
 // SLOW-32 assembler now only outputs object files (.s32o)
 // Binary executables are created by the linker (.s32x)
@@ -29,7 +30,7 @@ typedef enum {
 } section_t;
 
 typedef struct {
-    char name[64];
+    char name[MAX_SYMBOL_LEN];
     uint32_t address;
     section_t section;
     bool is_global;
@@ -38,7 +39,7 @@ typedef struct {
 
 typedef struct {
     uint32_t offset;      // Offset in section
-    char symbol[64];      // Symbol name
+    char symbol[MAX_SYMBOL_LEN];  // Symbol name
     uint32_t type;        // Relocation type
     int32_t addend;       // Addend
     section_t section;    // Which section this relocation is in
@@ -62,9 +63,9 @@ typedef struct {
 
 typedef struct {
     int32_t val;
-    char symbol[64];
+    char symbol[MAX_SYMBOL_LEN];
     bool has_symbol;
-    char minus_symbol[64];   // For label1 - label2 expressions
+    char minus_symbol[MAX_SYMBOL_LEN];   // For label1 - label2 expressions
     bool has_minus_symbol;
     bool is_hi;
     bool is_lo;
@@ -114,12 +115,12 @@ static void scanner_next(scanner_t *s) {
                 s->p = end;
                 return;
             }
-            if (isalpha(c) || c == '_' || c == '.') {
+            if (isalpha(c) || c == '_' || c == '.' || c == '$') {
                 s->curr.type = TOK_IDENTIFIER;
                 int i = 0;
                 s->curr.sval[i++] = c;
-                while (isalnum(*s->p) || *s->p == '_' || *s->p == '.') {
-                    if (i < 63) s->curr.sval[i++] = *s->p;
+                while (isalnum(*s->p) || *s->p == '_' || *s->p == '.' || *s->p == '$') {
+                    if (i < (int)sizeof(s->curr.sval) - 1) s->curr.sval[i++] = *s->p;
                     s->p++;
                 }
                 s->curr.sval[i] = '\0';
@@ -136,8 +137,8 @@ static bool parse_factor(scanner_t *s, expr_result_t *res) {
         res->val = s->curr.val;
         scanner_next(s);
     } else if (s->curr.type == TOK_IDENTIFIER) {
-        strncpy(res->symbol, s->curr.sval, 63);
-        res->symbol[63] = '\0';
+        strncpy(res->symbol, s->curr.sval, MAX_SYMBOL_LEN - 1);
+        res->symbol[MAX_SYMBOL_LEN - 1] = '\0';
         res->has_symbol = true;
         scanner_next(s);
     } else if (s->curr.type == TOK_LPAREN) {
@@ -266,10 +267,10 @@ typedef struct {
     uint32_t instruction;
     uint32_t address;
     bool has_label_ref;
-    char label_ref[64];
+    char label_ref[MAX_SYMBOL_LEN];
     int label_offset;
     bool has_symbol_ref;    // True if this references a global symbol
-    char symbol_ref[64];    // Symbol name for %hi()/%lo()/%pcrel_hi()/%pcrel_lo()
+    char symbol_ref[MAX_SYMBOL_LEN];  // Symbol name for %hi()/%lo()/%pcrel_hi()/%pcrel_lo()
     bool symbol_is_hi;      // True if this is %hi(symbol)
     bool symbol_is_lo;      // True if this is %lo(symbol)
     bool symbol_is_pcrel_hi;// True if this is %pcrel_hi(symbol)
@@ -301,8 +302,8 @@ typedef struct {
     // Label-difference fixups (resolved after all labels are defined)
     struct {
         int instruction_index;       // which instruction slot to patch
-        char plus_symbol[64];        // positive label
-        char minus_symbol[64];       // negative label
+        char plus_symbol[MAX_SYMBOL_LEN];    // positive label
+        char minus_symbol[MAX_SYMBOL_LEN];   // negative label
         int32_t addend;              // constant addend
     } label_diffs[MAX_LABEL_DIFFS];
     int num_label_diffs;
@@ -959,6 +960,36 @@ static bool assemble_line(assembler_t *as, char *line) {
                 bump_size(as, as->current_section, 2);
             }
             return true;
+        } else if (strcmp(tokens[0], ".balign") == 0) {
+            // .balign N[,fill] - align to N-byte boundary (N is byte count)
+            int align_bytes = 4;  // Default to word alignment
+            if (num_tokens > 1) {
+                align_bytes = parse_immediate(tokens[1]);
+            }
+            int fill_byte = 0;
+            if (num_tokens > 2) {
+                fill_byte = parse_immediate(tokens[2]);
+            }
+            int align_mask = align_bytes - 1;
+
+            // Calculate padding needed
+            int padding = 0;
+            if (as->current_addr & align_mask) {
+                padding = align_bytes - (as->current_addr & align_mask);
+            }
+
+            // Add padding bytes
+            ensure_instruction_capacity(as, padding);
+            for (int p = 0; p < padding; p++) {
+                as->instructions[as->num_instructions].instruction = (uint32_t)fill_byte | 0x80000000;
+                as->instructions[as->num_instructions].address = as->current_addr;
+                as->instructions[as->num_instructions].section = as->current_section;
+                as->instructions[as->num_instructions].is_data_byte = true;
+                as->num_instructions++;
+                as->current_addr += 1;
+                bump_size(as, as->current_section, 1);
+            }
+            return true;
         } else if (strcmp(tokens[0], ".align") == 0) {
             // .align N - align to 2^N boundary (default 2 = word alignment)
             int align_power = 2;  // Default to word alignment
@@ -1008,6 +1039,44 @@ static bool assemble_line(assembler_t *as, char *line) {
                     as->current_addr += 1;
                     bump_size(as, as->current_section, 1);
                 }
+            }
+            return true;
+        } else if (strcmp(tokens[0], ".uleb128") == 0 && num_tokens > 1) {
+            // .uleb128 - emit unsigned LEB128 encoded value
+            uint32_t val = (uint32_t)parse_immediate(tokens[1]);
+            do {
+                uint8_t byte = val & 0x7F;
+                val >>= 7;
+                if (val != 0) byte |= 0x80;
+                ensure_instruction_capacity(as, 1);
+                as->instructions[as->num_instructions].instruction = byte | 0x80000000;
+                as->instructions[as->num_instructions].address = as->current_addr;
+                as->instructions[as->num_instructions].section = as->current_section;
+                as->instructions[as->num_instructions].is_data_byte = true;
+                as->num_instructions++;
+                as->current_addr += 1;
+                bump_size(as, as->current_section, 1);
+            } while (val != 0);
+            return true;
+        } else if (strcmp(tokens[0], ".sleb128") == 0 && num_tokens > 1) {
+            // .sleb128 - emit signed LEB128 encoded value
+            int32_t val = parse_immediate(tokens[1]);
+            bool more = true;
+            while (more) {
+                uint8_t byte = val & 0x7F;
+                val >>= 7;
+                if ((val == 0 && !(byte & 0x40)) || (val == -1 && (byte & 0x40)))
+                    more = false;
+                else
+                    byte |= 0x80;
+                ensure_instruction_capacity(as, 1);
+                as->instructions[as->num_instructions].instruction = byte | 0x80000000;
+                as->instructions[as->num_instructions].address = as->current_addr;
+                as->instructions[as->num_instructions].section = as->current_section;
+                as->instructions[as->num_instructions].is_data_byte = true;
+                as->num_instructions++;
+                as->current_addr += 1;
+                bump_size(as, as->current_section, 1);
             }
             return true;
         } else if ((strcmp(tokens[0], ".string") == 0 || strcmp(tokens[0], ".asciz") == 0) && num_tokens > 1) {
@@ -1311,6 +1380,31 @@ static bool assemble_line(assembler_t *as, char *line) {
             expr_result_t res;
             parse_operand_scanner(&s_op, &res);
             inst->instruction = encode_j(0x40, 31, res.val);
+        }
+        as->num_instructions++;
+        as->current_addr += 4;
+        bump_size(as, as->current_section, 4);
+        return true;
+    } else if (strcmp(tokens[0], "tail") == 0) {
+        // tail label - tail call (jal r0, label) - jump without saving return address
+        scanner_t s_op = { .p = line };
+        scanner_next(&s_op); // skip 'tail'
+        scanner_next(&s_op);
+
+        ensure_instruction_capacity(as, 1);
+        instruction_t *inst = &as->instructions[as->num_instructions];
+        inst->opcode = 0x40;  // JAL
+        inst->address = as->current_addr;
+        inst->section = as->current_section;
+
+        if (s_op.curr.type == TOK_IDENTIFIER) {
+            inst->has_label_ref = true;
+            strcpy(inst->label_ref, s_op.curr.sval);
+            inst->instruction = encode_j(0x40, 0, 0);
+        } else {
+            expr_result_t res;
+            parse_operand_scanner(&s_op, &res);
+            inst->instruction = encode_j(0x40, 0, res.val);
         }
         as->num_instructions++;
         as->current_addr += 4;
@@ -2201,11 +2295,18 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    assembler_t as = {0};
+    assembler_t *asp = calloc(1, sizeof(assembler_t));
+    if (!asp) {
+        fprintf(stderr, "Memory allocation failed\n");
+        return 1;
+    }
+    assembler_t *as_ptr = asp;  // for cleanup
+    #define as (*asp)
     as.instructions_capacity = INITIAL_INSTRUCTION_CAPACITY;
     as.instructions = calloc(as.instructions_capacity, sizeof(instruction_t));
     if (!as.instructions) {
         fprintf(stderr, "Memory allocation failed\n");
+        free(asp);
         return 1;
     }
     as.current_section = SECTION_CODE;  // Start in code section
@@ -2337,10 +2438,13 @@ int main(int argc, char *argv[]) {
     
     if (label_error) {
         free(as.instructions);
+        free(as_ptr);
         return 1;
     }
 
     int result = write_object_file(&as, output_file);
     free(as.instructions);
+    free(as_ptr);
+    #undef as
     return result;
 }

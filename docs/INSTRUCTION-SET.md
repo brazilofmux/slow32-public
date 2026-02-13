@@ -261,6 +261,7 @@ The SLOW-32 assembler supports several pseudo-instructions that expand into one 
 | jal lbl    | jal r31, lbl | Jump and link (call) shorthand |
 | ret        | jalr r0, lr, 0 | Return from function |
 | call lbl   | jal r31, lbl | Call function |
+| tail lbl   | jal r0, lbl | Tail call (jump without link) |
 | nop        | add r0, r0, r0 | No operation |
 | bgt rs1, rs2, imm | blt rs2, rs1, imm | Branch if greater than |
 | ble rs1, rs2, imm | bge rs2, rs1, imm | Branch if less or equal |
@@ -291,6 +292,10 @@ selection, data definition, and symbol control.
 | .long <expr>[, ...] | Alias for .word |
 | .quad <expr>[, ...] | Emit 64-bit values (little-endian pair of words) |
 | .align <pow2> | Align to 2^pow2 boundary (default 2 = 4 bytes) |
+| .balign <bytes>[, <fill>] | Align to byte boundary (e.g., .balign 4 = 4-byte align) |
+| .uleb128 <val> | Emit unsigned LEB128 encoded value |
+| .sleb128 <val> | Emit signed LEB128 encoded value |
+| .short <expr>[, ...] | Alias for .half |
 | .equ / .set <sym>, <expr> | Define absolute symbol constant |
 | .comm <sym>, <size>[, <align>] | Reserve common symbol in BSS |
 
