@@ -93,7 +93,7 @@ RUN for p in /build/fpc-patches/*.patch; do \
 # Build ppcs32 (SLOW-32 cross-compiler)
 WORKDIR /fpc-src/compiler
 RUN /opt/fpc/bin/ppcx64 -dslow32 -Fuslow32 -Fusystems -Fislow32 \
-      -Fu/opt/fpc/units/x86_64-linux -oppcs32 pp.pas
+      -Fu/opt/fpc/units/x86_64-linux/rtl -oppcs32 pp.pas
 
 # Build system unit (RTL)
 RUN mkdir -p /opt/fpc/slow32-rtl && \
