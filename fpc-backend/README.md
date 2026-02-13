@@ -9,8 +9,10 @@ fpc-backend/
 ├── compiler/slow32/    # Backend source (code gen, register alloc, asm writer, etc.)
 ├── rtl/slow32/         # CPU-specific RTL (setjmp, atomics, stack intrinsics)
 ├── rtl/embedded/slow32/# Embedded startup code
+├── runtime/            # SLOW-32 startup shim (fpc_startup.s)
+├── examples/           # Example Pascal programs
 ├── patches/            # Integration patches for existing FPC files
-├── scripts/            # Backup, restore, and patch management
+├── scripts/            # Backup, restore, patch management, build-example.sh
 └── README.md
 ```
 
@@ -64,21 +66,37 @@ This compiles the system unit, producing:
 
 Output: `/tmp/slow32out/program.s`
 
-### 5. Assemble and link (with the SLOW-32 toolchain)
+### 5. Assemble, link, and run
+
+The easiest way is to use the build script (RTL artifacts are checked into the repo):
 
 ```bash
-# Assemble
-~/slow-32/tools/assembler/slow32asm /tmp/slow32out/program.s program.s32o
-
-# Link (with system unit and startup code)
-~/slow-32/tools/linker/s32-ld -o program.s32x \
-  crt0.s32o system.s32o program.s32o
-
-# Run
-~/slow-32/tools/emulator/slow32 program.s32x
+cd ~/slow-32/fpc-backend/scripts
+./build-example.sh ../examples/hello2.pas --run
 ```
 
-> **Note:** The assembly-to-executable pipeline is still being validated. The `.s` output uses standard GAS directives and SLOW-32 mnemonics.
+Or manually:
+
+```bash
+FPC_RT=~/slow-32/fpc-backend/runtime
+RT=~/slow-32/runtime
+
+# Assemble startup shim and program (system.s32o is pre-assembled in-tree)
+~/slow-32/tools/assembler/slow32asm $FPC_RT/fpc_startup.s fpc_startup.s32o
+~/slow-32/tools/assembler/slow32asm /tmp/slow32out/program.s program.s32o
+
+# Link (crt0 + FPC startup + system unit + program + MMIO libc + runtime)
+~/slow-32/tools/linker/s32-ld --mmio 64K -o program.s32x \
+  $RT/crt0.s32o fpc_startup.s32o $FPC_RT/system.s32o program.s32o \
+  $RT/libc_mmio.s32a $RT/libs32.s32a
+
+# Run
+~/slow-32/tools/emulator/slow32-fast program.s32x
+```
+
+The link order matters: crt0 must be first (provides `_start`), then the FPC startup shim (provides `_haltproc`), then the system unit and program, then the C libraries.
+
+> **Note:** The RTL artifacts (`system.s`, `system.ppu`, `system.s32o`) are checked into `fpc-backend/runtime/`. To rebuild them after modifying the FPC RTL source, re-run step 3 and copy the outputs back.
 
 ## Compiler Flags Reference
 
@@ -176,7 +194,8 @@ cd ~/slow-32/fpc-backend/scripts
 - System unit (embedded RTL) compiles to .s + .ppu
 - User programs compile to .s assembly output
 - Generated assembly uses correct SLOW-32 instructions and conventions
-- Assembly-to-executable pipeline not yet validated end-to-end
+- Full pipeline validated: Pascal -> ppcs32 -> slow32asm -> s32-ld -> slow32-fast
+- "Hello, Pascal" test program runs correctly with exit code 0
 - Soft-float only (no hardware FPU)
 
 ## Files Modified in FPC
