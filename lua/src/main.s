@@ -83,8 +83,8 @@ main:                                   # @main
 	lui r4, %hi(.L.str)
 	addi r4, r4, %lo(.L.str)
 	jal r31, fprintf
-	addi r15, r0, 1
-	jal r0, .LBB0_33
+	addi r1, r0, 1
+	jal r0, .LBB0_38
 .LBB0_12:
 	add r13, r18, r0
 	add r12, r18, r0
@@ -100,8 +100,9 @@ main:                                   # @main
 	jal r31, luaL_openlibs
 	beq r12, r18, .LBB0_24
 .LBB0_16:
-	addi r15, r0, 0
-	beq r13, r15, .LBB0_32
+	addi r19, r0, 0
+	add r15, r19, r0
+	beq r13, r19, .LBB0_37
 .LBB0_17:
 	addi r15, r0, 10
 	add r3, r12, r0
@@ -113,23 +114,27 @@ main:                                   # @main
 	addi r4, r0, 10
 	add r3, r12, r0
 	jal r31, strchr
-	add r3, r12, r13
-	addi r3, r3, -1
-	bne r1, r3, .LBB0_29
+	add r3, r1, r0
+	add r1, r12, r13
+	addi r4, r1, -1
+	add r1, r14, r0
+	bne r3, r4, .LBB0_30
 .LBB0_19:
 	addi r17, r13, 16
 	add r3, r17, r0
 	jal r31, malloc
-	addi r18, r0, 0
-	beq r1, r18, .LBB0_29
+	addi r20, r0, 0
+	addi r18, r0, 1
+	beq r1, r20, .LBB0_29
 .LBB0_20:
 	add r16, r1, r0
 	addi r1, r0, 13
+	addi r21, r0, 0
 	add r6, r13, r0
 	jal r0, .LBB0_22
 .LBB0_21:
 	addi r6, r6, -1
-	beq r6, r18, .LBB0_25
+	beq r6, r21, .LBB0_25
 .LBB0_22:
 	add r3, r12, r6
 	ldbu r3, r3+-1
@@ -146,10 +151,10 @@ main:                                   # @main
 	jal r31, fprintf
 	add r3, r11, r0
 	jal r31, lua_close
-	addi r15, r0, 1
-	jal r0, .LBB0_33
+	addi r1, r0, 1
+	jal r0, .LBB0_38
 .LBB0_25:
-	add r6, r18, r0
+	add r6, r21, r0
 .LBB0_26:
 	lui r5, %hi(.L.str.2)
 	addi r5, r5, %lo(.L.str.2)
@@ -160,24 +165,36 @@ main:                                   # @main
 	add r3, r11, r0
 	add r4, r16, r0
 	jal r31, luaL_loadstring
-	bne r1, r18, .LBB0_28
+	bne r1, r21, .LBB0_28
 .LBB0_27:
 	addi r5, r0, -1
-	addi r15, r0, 0
+	addi r17, r0, 0
 	add r3, r11, r0
-	add r4, r15, r0
-	add r6, r15, r0
-	add r7, r15, r0
-	add r8, r15, r0
+	add r4, r17, r0
+	add r6, r17, r0
+	add r7, r17, r0
+	add r8, r17, r0
 	jal r31, lua_pcallk
-	beq r1, r15, .LBB0_35
+	beq r1, r17, .LBB0_39
 .LBB0_28:
+	add r15, r1, r0
 	add r3, r16, r0
 	jal r31, free
-	addi r4, r0, 0
+	addi r16, r0, 0
 	add r3, r11, r0
+	add r4, r16, r0
 	jal r31, lua_settop
+	add r1, r16, r0
+	add r17, r18, r0
+	bne r17, r20, .LBB0_30
+	jal r0, .LBB0_36
 .LBB0_29:
+	add r17, r18, r0
+	add r15, r20, r0
+	add r1, r20, r0
+	beq r17, r20, .LBB0_36
+.LBB0_30:
+	add r16, r1, r0
 	lui r6, %hi(.L.str.5)
 	addi r6, r6, %lo(.L.str.5)
 	add r3, r11, r0
@@ -185,26 +202,32 @@ main:                                   # @main
 	add r5, r13, r0
 	add r7, r14, r0
 	jal r31, luaL_loadbufferx
-	bne r1, r14, .LBB0_31
-.LBB0_30:
-	add r3, r11, r0
-	add r4, r14, r0
-	add r5, r14, r0
-	add r6, r14, r0
-	add r7, r14, r0
-	add r8, r14, r0
-	jal r31, lua_pcallk
-	beq r1, r14, .LBB0_34
+	add r15, r1, r0
+	bne r1, r14, .LBB0_32
 .LBB0_31:
-	addi r4, r0, -1
+	addi r4, r0, 0
 	add r3, r11, r0
-	add r5, r14, r0
+	add r5, r4, r0
+	add r6, r4, r0
+	add r7, r4, r0
+	add r8, r4, r0
+	jal r31, lua_pcallk
+	add r15, r1, r0
+.LBB0_32:
+	addi r1, r0, 0
+	addi r20, r0, 1
+	beq r15, r1, .LBB0_34
+.LBB0_33:
+	addi r4, r0, -1
+	addi r13, r0, 0
+	add r3, r11, r0
+	add r5, r13, r0
 	jal r31, lua_tolstring
-	seq r3, r1, r14
+	seq r3, r1, r13
 	lui r4, %hi(.L.str.6)
 	addi r4, r4, %lo(.L.str.6)
 	xor r4, r1, r4
-	sub r3, r14, r3
+	sub r3, r13, r3
 	and r3, r4, r3
 	xor r5, r1, r3
 	lui r1, %hi(stderr)
@@ -216,8 +239,15 @@ main:                                   # @main
 	addi r4, r0, -2
 	add r3, r11, r0
 	jal r31, lua_settop
-	addi r15, r0, 1
-.LBB0_32:
+	jal r0, .LBB0_35
+.LBB0_34:
+	add r15, r1, r0
+.LBB0_35:
+	add r1, r16, r0
+.LBB0_36:
+	addi r3, r0, 0
+	beq r20, r3, .LBB0_38
+.LBB0_37:
 	add r3, r12, r0
 	jal r31, free
 	lui r1, %hi(stdout)
@@ -226,8 +256,8 @@ main:                                   # @main
 	jal r31, fflush
 	add r3, r11, r0
 	jal r31, lua_close
-.LBB0_33:
-	add r1, r15, r0
+	sne r1, r15, r19
+.LBB0_38:
 	ldw lr, fp+-52
 	ldw r22, fp+-48
 	ldw r21, fp+-44
@@ -245,16 +275,14 @@ main:                                   # @main
 	ldw fp, sp+4
 	addi sp, sp, 72
 	jalr r0, r31, 0
-.LBB0_34:
-	add r15, r14, r0
-	jal r0, .LBB0_32
-.LBB0_35:
+.LBB0_39:
 	add r3, r11, r0
 	jal r31, lua_gettop
-	add r13, r1, r0
+	add r18, r1, r0
 	addi r1, r0, 1
-	blt r13, r1, .LBB0_37
-.LBB0_36:
+	add r15, r17, r0
+	blt r18, r1, .LBB0_41
+.LBB0_40:
 	lui r5, %hi(.L.str.3)
 	addi r5, r5, %lo(.L.str.3)
 	addi r4, r0, 20
@@ -270,17 +298,81 @@ main:                                   # @main
 	jal r31, lua_rotate
 	addi r5, r0, 0
 	add r3, r11, r0
-	add r4, r13, r0
+	add r4, r18, r0
 	add r6, r5, r0
 	add r7, r5, r0
 	add r8, r5, r0
 	jal r31, lua_pcallk
-.LBB0_37:
+	add r15, r1, r0
+	add r3, r11, r0
+	add r4, r1, r0
+	jal r31, report
+.LBB0_41:
 	add r3, r16, r0
 	jal r31, free
-	jal r0, .LBB0_32
+	add r3, r12, r0
+	jal r31, free
+	lui r1, %hi(stdout)
+	addi r1, r1, %lo(stdout)
+	ldw r3, r1+0
+	jal r31, fflush
+	add r3, r11, r0
+	jal r31, lua_close
+	sne r1, r15, r17
+	bne r17, r20, .LBB0_30
+	jal r0, .LBB0_36
 .Lfunc_end0:
 	.size	main, .Lfunc_end0-main
+                                        # -- End function
+	.p2align	2                               # -- Begin function report
+	.type	report,@function
+report:                                 # @report
+# %bb.0:
+	addi sp, sp, -24
+	stw sp+4, fp
+	stw sp+0, lr
+	add fp, sp, r0
+	addi fp, fp, 24
+	stw fp+-4, r11
+	stw fp+-8, r12
+	stw fp+-12, r13
+	stw fp+-16, lr
+	add r11, r4, r0
+	addi r12, r0, 0
+	beq r4, r12, .LBB1_2
+.LBB1_1:
+	addi r4, r0, -1
+	add r13, r3, r0
+	add r5, r12, r0
+	jal r31, lua_tolstring
+	seq r3, r1, r12
+	lui r4, %hi(.L.str.6)
+	addi r4, r4, %lo(.L.str.6)
+	xor r4, r1, r4
+	sub r3, r12, r3
+	and r3, r4, r3
+	xor r5, r1, r3
+	lui r1, %hi(stderr)
+	addi r1, r1, %lo(stderr)
+	ldw r3, r1+0
+	lui r4, %hi(.L.str.7)
+	addi r4, r4, %lo(.L.str.7)
+	jal r31, fprintf
+	addi r4, r0, -2
+	add r3, r13, r0
+	jal r31, lua_settop
+.LBB1_2:
+	add r1, r11, r0
+	ldw lr, fp+-16
+	ldw r13, fp+-12
+	ldw r12, fp+-8
+	ldw r11, fp+-4
+	ldw lr, sp+0
+	ldw fp, sp+4
+	addi sp, sp, 24
+	jalr r0, r31, 0
+.Lfunc_end1:
+	.size	report, .Lfunc_end1-report
                                         # -- End function
 	.type	.L.str,@object                  # @.str
 	.section	.rodata.str1.1,"aMS",@progbits,1

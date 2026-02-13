@@ -507,20 +507,22 @@ os_remove:                              # @os_remove
 	addi fp, fp, 24
 	stw fp+-4, r11
 	stw fp+-8, r12
-	stw fp+-12, lr
+	stw fp+-12, r13
+	stw fp+-16, lr
 	add r11, r3, r0
 	addi r4, r0, 1
 	addi r12, r0, 0
 	add r5, r12, r0
 	jal r31, luaL_checklstring
-	lui r3, %hi(errno)
-	addi r3, r3, %lo(errno)
-	stw r3+0, r12
+	add r13, r1, r0
+	add r3, r1, r0
+	jal r31, remove
+	seq r4, r1, r12
 	add r3, r11, r0
-	add r4, r12, r0
-	add r5, r1, r0
+	add r5, r13, r0
 	jal r31, luaL_fileresult
-	ldw lr, fp+-12
+	ldw lr, fp+-16
+	ldw r13, fp+-12
 	ldw r12, fp+-8
 	ldw r11, fp+-4
 	ldw lr, sp+0
@@ -541,24 +543,27 @@ os_rename:                              # @os_rename
 	addi fp, fp, 24
 	stw fp+-4, r11
 	stw fp+-8, r12
-	stw fp+-12, lr
+	stw fp+-12, r13
+	stw fp+-16, lr
 	add r11, r3, r0
 	addi r4, r0, 1
 	addi r12, r0, 0
 	add r5, r12, r0
 	jal r31, luaL_checklstring
+	add r13, r1, r0
 	addi r4, r0, 2
 	add r3, r11, r0
 	add r5, r12, r0
 	jal r31, luaL_checklstring
-	lui r1, %hi(errno)
-	addi r1, r1, %lo(errno)
-	stw r1+0, r12
+	add r3, r13, r0
+	add r4, r1, r0
+	jal r31, rename
+	seq r4, r1, r12
 	add r3, r11, r0
-	add r4, r12, r0
 	add r5, r12, r0
 	jal r31, luaL_fileresult
-	ldw lr, fp+-12
+	ldw lr, fp+-16
+	ldw r13, fp+-12
 	ldw r12, fp+-8
 	ldw r11, fp+-4
 	ldw lr, sp+0
