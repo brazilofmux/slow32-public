@@ -849,22 +849,50 @@ static bool assemble_line(assembler_t *as, char *line) {
             return true;
         } else if (strcmp(tokens[0], ".section") == 0) {
             // Handle .section directive with arguments
-            // Example: .section .rodata.str1.1,"aMS",@progbits,1
-            // Example: .section .init_array,"aw",@init_array
+            // Supports both LLVM-style (.rodata.str1.1) and FPC-style (.data.n_SYMBOL)
             if (num_tokens > 1) {
-                // Check if it's a rodata variant
+                if (strncmp(tokens[1], ".text", 5) == 0) {
+                    as->current_section = SECTION_CODE;
+                    as->current_addr = as->code_size;
+                    return true;
+                }
                 if (strncmp(tokens[1], ".rodata", 7) == 0) {
                     as->current_section = SECTION_RODATA;
                     as->current_addr = as->rodata_size;
                     return true;
                 }
-                // Check if it's .init_array (C++ global constructors)
+                if (strncmp(tokens[1], ".data", 5) == 0) {
+                    as->current_section = SECTION_DATA;
+                    as->current_addr = as->data_size;
+                    return true;
+                }
+                if (strncmp(tokens[1], ".bss", 4) == 0) {
+                    as->current_section = SECTION_BSS;
+                    as->current_addr = as->bss_size;
+                    return true;
+                }
                 if (strncmp(tokens[1], ".init_array", 11) == 0) {
                     as->current_section = SECTION_INIT_ARRAY;
                     as->current_addr = as->init_array_size;
                     return true;
                 }
-                // Ignore other sections for now (like .note.GNU-stack)
+                if (strncmp(tokens[1], ".fpc", 4) == 0) {
+                    as->current_section = SECTION_RODATA;
+                    as->current_addr = as->rodata_size;
+                    return true;
+                }
+                if (strncmp(tokens[1], ".debug", 6) == 0) {
+                    // Debug sections go to rodata (non-writable)
+                    as->current_section = SECTION_RODATA;
+                    as->current_addr = as->rodata_size;
+                    return true;
+                }
+                // Reject unrecognized sections instead of silently ignoring
+                if (tokens[1][0] == '.') {
+                    fprintf(stderr, "Error: Unrecognized section '%s'\n", tokens[1]);
+                    fprintf(stderr, "  Known sections: .text*, .data*, .bss*, .rodata*, .init_array*, .fpc*, .debug*\n");
+                    return false;
+                }
             }
             return true;
         } else if (strcmp(tokens[0], ".global") == 0 || strcmp(tokens[0], ".globl") == 0) {
@@ -1688,7 +1716,22 @@ static bool assemble_line(assembler_t *as, char *line) {
                 scanner_next(&s_op);
                 // Peek: register => legacy base,data,imm. Otherwise data, imm(base).
                 int reg2 = parse_register_scanner(&s_op);
-                if (reg2 >= 0) {
+                if (reg2 >= 0 && (s_op.curr.type == TOK_PLUS || s_op.curr.type == TOK_MINUS)) {
+                    // FPC form: data, base+imm (e.g., stw r31,r29+0)
+                    rs2 = reg1;  // first reg is value
+                    rs1 = reg2;  // second reg is base
+                    if (!parse_operand_scanner(&s_op, &res)) return false;
+                    if (res.has_symbol) {
+                        inst->has_symbol_ref = true;
+                        strcpy(inst->symbol_ref, res.symbol);
+                        inst->symbol_is_lo = res.is_lo;
+                        inst->symbol_is_pcrel_lo = res.is_pcrel_lo;
+                        inst->symbol_addend = res.val;
+                        imm = 0;
+                    } else {
+                        imm = res.val;
+                    }
+                } else if (reg2 >= 0) {
                     // legacy: base, data, imm
                     rs1 = reg1;
                     rs2 = reg2;
