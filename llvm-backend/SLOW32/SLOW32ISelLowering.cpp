@@ -325,6 +325,7 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   setOperationAction(ISD::ExternalSymbol, MVT::i32, Custom);
   setOperationAction(ISD::JumpTable, MVT::i32, Custom);
   setOperationAction(ISD::ConstantPool, MVT::i32, Custom);
+  setOperationAction(ISD::BlockAddress, MVT::i32, Custom);
 
   // Varargs support - follow RISC-V pattern
   setOperationAction(ISD::VASTART, MVT::Other, Custom);
@@ -461,6 +462,7 @@ SDValue SLOW32TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) cons
     case ISD::ExternalSymbol: return LowerExternalSymbol(Op, DAG);
     case ISD::JumpTable:      return LowerJumpTable(Op, DAG);
     case ISD::ConstantPool:   return LowerConstantPool(Op, DAG);
+    case ISD::BlockAddress:   return LowerBlockAddress(Op, DAG);
     case ISD::LOAD:           return LowerLOAD(Op, DAG);
     case ISD::STORE:          return LowerSTORE(Op, DAG);
     case ISD::VASTART:        return LowerVASTART(Op, DAG);
@@ -520,6 +522,18 @@ SDValue SLOW32TargetLowering::LowerGlobalAddress(SDValue Op, SelectionDAG &DAG) 
   SDValue TargetGA = DAG.getTargetGlobalAddress(GV, DL, VT, Offset,
                                                 GA->getTargetFlags());
   SDNode *Mov = DAG.getMachineNode(SLOW32::LOAD_ADDR, DL, VT, TargetGA);
+  return SDValue(Mov, 0);
+}
+
+SDValue SLOW32TargetLowering::LowerBlockAddress(SDValue Op,
+                                                 SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  BlockAddressSDNode *BA = cast<BlockAddressSDNode>(Op);
+  EVT VT = Op.getValueType();
+
+  SDValue TargetBA = DAG.getTargetBlockAddress(BA->getBlockAddress(), VT,
+                                                BA->getOffset());
+  SDNode *Mov = DAG.getMachineNode(SLOW32::LOAD_ADDR, DL, VT, TargetBA);
   return SDValue(Mov, 0);
 }
 

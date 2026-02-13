@@ -16,19 +16,26 @@ void SLOW32AsmPrinter::emitInstruction(const MachineInstr *MI) {
 }
 
 void SLOW32AsmPrinter::emitBasicBlockStart(const MachineBasicBlock &MBB) {
-  // SLOW32: Override to ensure we always emit proper labels for branch targets
+  // SLOW32: Override to ensure we always emit proper labels for branch targets.
   // The default implementation sometimes only emits comments like "# %bb.N:"
-  // We need actual labels like ".LBBN_M:" for the assembler to resolve branches
-  
-  // Don't call parent - we'll handle it ourselves to avoid duplicate labels
-  
+  // We need actual labels like ".LBBN_M:" for the assembler to resolve branches.
+
+  // Emit blockaddress symbols (.Ltmp0 etc.) for blocks whose address is taken
+  // via blockaddress() in the IR.  These are the symbols that computed-goto
+  // dispatch tables reference and must appear before the MBB label.
+  if (MBB.isIRBlockAddressTaken()) {
+    if (isVerbose())
+      OutStreamer->AddComment("Block address taken");
+    BasicBlock *BB = MBB.getAddressTakenIRBlock();
+    for (MCSymbol *Sym : getAddrLabelSymbolToEmit(BB))
+      OutStreamer->emitLabel(Sym);
+  }
+
   // Always emit the label if this block has predecessors (is a branch target)
-  // or if it's explicitly marked as having its address taken
+  // or if it's explicitly marked as having its address taken.
   if (!MBB.pred_empty() || MBB.hasAddressTaken()) {
-    // Emit the label
     OutStreamer->emitLabel(MBB.getSymbol());
   } else if (isVerbose()) {
-    // Only emit a comment for blocks that aren't branch targets
     OutStreamer->emitRawComment(" %bb." + Twine(MBB.getNumber()) + ":",
                                 /*TabPrefix=*/false);
   }
