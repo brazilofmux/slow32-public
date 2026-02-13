@@ -188,12 +188,23 @@ int strncasecmp(const char *s1, const char *s2, size_t n) {
 void *memrchr(const void *s, int c, size_t n) {
     const unsigned char *p = (const unsigned char *)s + n;
     unsigned char ch = (unsigned char)c;
-    
+
     while (n--) {
         if (*--p == ch) {
             return (void *)p;
         }
     }
-    
+
     return NULL;
+}
+
+// strcoll - locale-aware string comparison (no locale support, same as strcmp)
+int strcoll(const char *s1, const char *s2) {
+    return strcmp(s1, s2);
+}
+
+// strerror - return string describing error number
+char *strerror(int errnum) {
+    (void)errnum;
+    return "error";
 }

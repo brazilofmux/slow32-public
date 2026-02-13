@@ -1,6 +1,8 @@
 #ifndef SLOW32_TIME_H
 #define SLOW32_TIME_H
 
+#include <stddef.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -26,6 +28,12 @@ struct tm {
 
 #define CLOCK_REALTIME 0
 
+typedef unsigned long clock_t;
+#define CLOCKS_PER_SEC ((clock_t)1000000)
+
+// Clock
+clock_t clock(void);
+
 // Time retrieval
 int clock_gettime(int clock_id, struct timespec *ts);
 time_t time(time_t *t);
@@ -41,10 +49,10 @@ time_t mktime(struct tm *tm);
 // Time formatting
 char *asctime(const struct tm *tm);
 char *ctime(const time_t *timer);
+size_t strftime(char *s, size_t maxsize, const char *format, const struct tm *tm);
 
 // Time arithmetic
-// Note: Returns long long instead of double (SLOW-32 has no FPU)
-long long difftime(time_t time1, time_t time0);
+double difftime(time_t time1, time_t time0);
 
 #ifdef __cplusplus
 }

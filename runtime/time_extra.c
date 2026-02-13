@@ -149,6 +149,6 @@ char *ctime(const time_t *timer) {
     return asctime(localtime(timer));
 }
 
-long long difftime(time_t time1, time_t time0) {
-    return (long long)time1 - (long long)time0;
+double difftime(time_t time1, time_t time0) {
+    return (double)((long long)time1 - (long long)time0);
 }

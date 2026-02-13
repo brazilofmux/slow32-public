@@ -23,6 +23,11 @@
 #define M_SQRT2    1.41421356237309504880
 #define M_SQRT1_2  0.70710678118654752440
 
+#define HUGE_VAL   (__builtin_huge_val())
+#define HUGE_VALF  (__builtin_huge_valf())
+#define INFINITY   (__builtin_inff())
+#define NAN        (__builtin_nanf(""))
+
 double fabs(double x);
 float fabsf(float x);
 
@@ -40,6 +45,9 @@ float logf(float x);
 
 double log10(double x);
 float log10f(float x);
+
+double log2(double x);
+float log2f(float x);
 
 double sin(double x);
 float sinf(float x);

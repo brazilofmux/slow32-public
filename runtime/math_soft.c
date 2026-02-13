@@ -243,6 +243,14 @@ double log10(double x) {
     return log(x) * LOG10E;
 }
 
+double log2(double x) {
+    return log(x) * (1.0 / LN2);  /* == log(x) * LOG2E */
+}
+
+float log2f(float x) {
+    return (float)log2((double)x);
+}
+
 double pow(double x, double y) {
     if (y == 0.0) return 1.0;
     if (x == 0.0) return 0.0;

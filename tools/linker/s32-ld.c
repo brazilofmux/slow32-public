@@ -1360,7 +1360,7 @@ static bool find_pcrel_hi_pc(linker_state_t *ld, relocation_entry_t *rel, uint32
 
 static void apply_relocations(linker_state_t *ld) {
     int unresolved = 0;
-    
+
     for (int i = 0; i < ld->num_relocations; i++) {
         relocation_entry_t *rel = &ld->relocations[i];
         symbol_entry_t *sym = &ld->symbols[rel->symbol_idx];

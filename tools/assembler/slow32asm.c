@@ -655,9 +655,13 @@ static int process_string_literal(assembler_t *as, const char *str) {
                 }
             } else {
                 switch (*p) {
-                    case 'n': byte = '\n'; break;
-                    case 't': byte = '\t'; break;
-                    case 'r': byte = '\r'; break;
+                    case 'a': byte = '\a'; break;  // alert/bell
+                    case 'b': byte = '\b'; break;  // backspace
+                    case 'f': byte = '\f'; break;  // form feed
+                    case 'n': byte = '\n'; break;  // newline
+                    case 'r': byte = '\r'; break;  // carriage return
+                    case 't': byte = '\t'; break;  // tab
+                    case 'v': byte = '\v'; break;  // vertical tab
                     case '\\': byte = '\\'; break;
                     case '"': byte = '"'; break;
                     default:

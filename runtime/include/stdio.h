@@ -12,6 +12,12 @@
 #define SEEK_CUR 1
 #define SEEK_END 2
 
+#define _IOFBF 0
+#define _IOLBF 1
+#define _IONBF 2
+
+#define L_tmpnam 20
+
 typedef struct FILE {
     // Fields used by stdio_buffered.c (line-buffered output via flush callback)
     char *buffer;
@@ -35,6 +41,7 @@ extern FILE *stdout;
 extern FILE *stderr;
 
 FILE *fopen(const char *pathname, const char *mode);
+FILE *freopen(const char *pathname, const char *mode, FILE *stream);
 int fclose(FILE *stream);
 size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
 size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
@@ -69,5 +76,9 @@ void perror(const char *s);
 int fileno(FILE *stream);
 int remove(const char *pathname);
 int rename(const char *oldpath, const char *newpath);
+
+int ungetc(int c, FILE *stream);
+int setvbuf(FILE *stream, char *buf, int mode, size_t size);
+FILE *tmpfile(void);
 
 #endif

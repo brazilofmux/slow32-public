@@ -116,6 +116,18 @@ FILE *fopen(const char *pathname, const char *mode) {
     return f;
 }
 
+FILE *freopen(const char *pathname, const char *mode, FILE *stream) {
+    if (stream && stream != stdin && stream != stdout && stream != stderr) {
+        fclose(stream);
+    }
+    if (pathname == NULL) {
+        /* Per C standard, pathname==NULL means change mode of existing stream.
+           On bare metal, just return the stream unchanged. */
+        return stream;
+    }
+    return fopen(pathname, mode);
+}
+
 size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
     if (!stream || !ptr) return 0;
     size_t total_bytes = size * nmemb;
@@ -445,4 +457,19 @@ void perror(const char *s) {
         fputs(": ", stderr);
     }
     fputs("error\n", stderr);
+}
+
+int ungetc(int c, FILE *stream) {
+    /* Minimal stub: not fully implemented */
+    (void)stream;
+    return c;
+}
+
+int setvbuf(FILE *stream, char *buf, int mode, size_t size) {
+    (void)stream; (void)buf; (void)mode; (void)size;
+    return 0; /* pretend success */
+}
+
+FILE *tmpfile(void) {
+    return NULL; /* not supported */
 }
