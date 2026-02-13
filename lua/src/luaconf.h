@@ -802,13 +802,6 @@
 #undef lua_getlocaledecpoint
 #define lua_getlocaledecpoint()  '.'
 
-/* Disable computed goto dispatch: clang defines __GNUC__ which enables
-** LUA_USE_JUMPTABLE, but LLVM's blockaddress/indirectbr lowering for
-** SLOW-32 collapses all label-address targets to dead blocks at the
-** same address. Use standard switch dispatch instead. */
-#undef LUA_USE_JUMPTABLE
-#define LUA_USE_JUMPTABLE  0
-
 /* Reduce max stack for embedded environment */
 #undef LUAI_MAXSTACK
 #define LUAI_MAXSTACK  15000
