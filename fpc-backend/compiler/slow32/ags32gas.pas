@@ -170,35 +170,56 @@ unit ags32gas;
         i: byte;
         sep: string[3];
         p: taicpu;
+        ref: preference;
     begin
       p := taicpu(hp);
 
       { SLOW-32 store instructions use 3-operand syntax:
           st[bhw] base, src, offset
-        Internal representation is 2-operand: op reg(src), ref(base, offset) }
-      if p.opcode in [A_STB,A_STH,A_STW] then
+        Internal representation is 2-operand: op reg(src), ref(base, offset)
+        Only apply when operands are in the expected normalized form
+        (reg + plain base/offset ref without symbols). }
+      if (p.opcode in [A_STB,A_STH,A_STW]) and
+         (p.ops=2) and
+         (p.oper[0]^.typ=top_reg) and
+         (p.oper[1]^.typ=top_ref) then
         begin
-          s:=#9+gas_op2str[p.opcode];
-          s:=s+#9+gas_regname(p.oper[1]^.ref^.base)+',';
-          s:=s+gas_regname(p.oper[0]^.reg)+',';
-          s:=s+tostr(p.oper[1]^.ref^.offset);
-          owner.writer.AsmWriteLn(s);
-          exit;
+          ref:=p.oper[1]^.ref;
+          if (ref^.refaddr=addr_no) and
+             not assigned(ref^.symbol) then
+            begin
+              s:=#9+gas_op2str[p.opcode];
+              s:=s+#9+gas_regname(ref^.base)+',';
+              s:=s+gas_regname(p.oper[0]^.reg)+',';
+              s:=s+tostr(ref^.offset);
+              owner.writer.AsmWriteLn(s);
+              exit;
+            end;
         end;
 
       { SLOW-32 load instructions use 3-operand syntax:
           ld[bhw][u] dest, base, offset
         Internal representation is 2-operand: op reg(dest), ref(base, offset) }
-      if p.opcode in [A_LDB,A_LDBU,A_LDH,A_LDHU,A_LDW] then
+      if (p.opcode in [A_LDB,A_LDBU,A_LDH,A_LDHU,A_LDW]) and
+         (p.ops=2) and
+         (p.oper[0]^.typ=top_reg) and
+         (p.oper[1]^.typ=top_ref) then
         begin
-          s:=#9+gas_op2str[p.opcode];
-          s:=s+#9+gas_regname(p.oper[0]^.reg)+',';
-          s:=s+gas_regname(p.oper[1]^.ref^.base)+',';
-          s:=s+tostr(p.oper[1]^.ref^.offset);
-          owner.writer.AsmWriteLn(s);
-          exit;
+          ref:=p.oper[1]^.ref;
+          if (ref^.refaddr=addr_no) and
+             not assigned(ref^.symbol) then
+            begin
+              s:=#9+gas_op2str[p.opcode];
+              s:=s+#9+gas_regname(p.oper[0]^.reg)+',';
+              s:=s+gas_regname(ref^.base)+',';
+              s:=s+tostr(ref^.offset);
+              owner.writer.AsmWriteLn(s);
+              exit;
+            end;
         end;
 
+      { Generic fallback for all other instructions and non-normalized
+        load/store forms (e.g. symbol refs, unusual inline asm). }
       s:=#9+gas_op2str[p.opcode];
 
       if p.ops<>0 then
