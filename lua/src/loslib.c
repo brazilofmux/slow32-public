@@ -129,18 +129,14 @@ static int os_execute (lua_State *L) {
 
 static int os_remove (lua_State *L) {
   const char *filename = luaL_checkstring(L, 1);
-  (void)filename;
-  errno = 0;
-  return luaL_fileresult(L, 0, filename);  /* always fails */
+  return luaL_fileresult(L, remove(filename) == 0, filename);
 }
 
 
 static int os_rename (lua_State *L) {
   const char *fromname = luaL_checkstring(L, 1);
   const char *toname = luaL_checkstring(L, 2);
-  (void)fromname; (void)toname;
-  errno = 0;
-  return luaL_fileresult(L, 0, NULL);  /* always fails */
+  return luaL_fileresult(L, rename(fromname, toname) == 0, NULL);
 }
 
 
