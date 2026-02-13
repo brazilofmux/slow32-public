@@ -63,12 +63,12 @@ ARG FPC_VERSION=3.2.2
 RUN wget -q "https://sourceforge.net/projects/freepascal/files/Linux/${FPC_VERSION}/fpc-${FPC_VERSION}.x86_64-linux.tar/download" -O fpc-host.tar && \
     tar xf fpc-host.tar && \
     cd fpc-${FPC_VERSION}.x86_64-linux && \
-    tar xf binary.x86_64-linux.tar.gz && \
-    tar xf units.x86_64-linux.tar.gz && \
+    tar xf binary.x86_64-linux.tar && \
+    tar xzf base.x86_64-linux.tar.gz && \
     mkdir -p /opt/fpc/bin /opt/fpc/units && \
-    cp base.x86_64-linux/usr/lib/fpc/${FPC_VERSION}/ppcx64 /opt/fpc/bin/ && \
+    cp lib/fpc/${FPC_VERSION}/ppcx64 /opt/fpc/bin/ && \
     chmod +x /opt/fpc/bin/ppcx64 && \
-    cp -r units.x86_64-linux/usr/lib/fpc/${FPC_VERSION}/units/x86_64-linux /opt/fpc/units/ && \
+    cp -r lib/fpc/${FPC_VERSION}/units/x86_64-linux /opt/fpc/units/ && \
     rm -rf /build/fpc-*
 
 # Clone FPC source at pinned commit
