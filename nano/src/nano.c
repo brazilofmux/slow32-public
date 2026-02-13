@@ -64,6 +64,10 @@ typedef struct {
 
 static editor_t E;
 
+/* Forward declarations */
+static void editor_set_message(const char *msg);
+static void editor_prompt(const char *prompt, char *buf, int bufsize);
+
 /* ---- Line Memory Management ---- */
 
 static void line_init(line_t *l) {
@@ -228,8 +232,14 @@ static int editor_save(void) {
     int i;
 
     if (E.filename[0] == '\0') {
-        snprintf(E.message, MAX_MESSAGE, "No filename");
-        return -1;
+        char namebuf[MAX_FILENAME] = "";
+        editor_prompt("Filename: ", namebuf, MAX_FILENAME);
+        if (namebuf[0] == '\0') {
+            editor_set_message("Save cancelled");
+            return -1;
+        }
+        strncpy(E.filename, namebuf, MAX_FILENAME - 1);
+        E.filename[MAX_FILENAME - 1] = '\0';
     }
 
     f = fopen(E.filename, "w");
