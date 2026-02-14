@@ -331,6 +331,7 @@ VARIABLE tmp-type
 VARIABLE tmp-name-off
 VARIABLE tmp-name-len
 VARIABLE tmp-idx
+VARIABLE fld-offset     \ running offset during struct body parsing
 
 \ Statement-level label variables (separate from tmp-* used by expressions)
 VARIABLE sl-a   \ label A (loop start, if-else label, etc.)
@@ -1782,14 +1783,13 @@ VARIABLE mexp-scratch-len
                         \ Forward reference — create empty struct
                         tok-buf tok-len @ ST-ADD
                     THEN
-                    TY-STRUCT OR 16 LSHIFT
+                    16 LSHIFT TY-STRUCT OR
                     tmp-type @ MASK-BYTE INVERT AND OR tmp-type !
                     1 tmp-a !
                     CC-TOKEN
                     \ Check for struct definition { ... }
                     tok-type @ TK-PUNCT = tok-val @ P-LBRACE = AND IF
-                        \ Parse struct body — handled later
-                        UNGET-TOKEN
+                        \ Body present — tok stays as {, caller will handle
                     THEN
                     TRUE
                 ENDOF
@@ -2699,6 +2699,10 @@ VARIABLE ret-label
         PARSE-EXPR
         LVAL-TO-RVAL
     THEN
+    \ Pop switch expression values if returning from inside switch(es)
+    switch-sp @ 0 ?DO
+        S" addi r29, r29, 4" EMIT-INSN
+    LOOP
     ret-label @ EMIT-JUMP
     EXPECT-SEMI CC-TOKEN ;
 
@@ -2775,6 +2779,7 @@ VARIABLE ret-label
     PARSE-EXPR
     LVAL-TO-RVAL
     EXPECT-RPAREN
+    CC-TOKEN  \ advance past )
     sl-a @ EMIT-BNE-ZERO
     EXPECT-SEMI CC-TOKEN
     sl-b @ EMIT-LABEL
@@ -2889,6 +2894,7 @@ VARIABLE ret-label
     EXPECT-RPAREN CC-TOKEN
     \ Save switch value in a temp location on stack
     EMIT-PUSH-R1
+    1 switch-sp +!
     NEW-LABEL sl-a !  \ end label
     sl-a @ break-stk break-sp @ CELLS + !
     1 break-sp +!
@@ -2937,10 +2943,11 @@ VARIABLE ret-label
     REPEAT
     CC-TOKEN  \ skip }
     sl-d @ 0<> IF sl-d @ EMIT-LABEL THEN
-    \ Pop switch value from stack
-    S" addi r29, r29, 4" EMIT-INSN
+    \ End label first, then pop — so break jumps here and pops
     sl-a @ EMIT-LABEL
+    S" addi r29, r29, 4" EMIT-INSN  \ pop switch value
     -1 break-sp +!
+    -1 switch-sp +!
     sl-e ! sl-d ! sl-c ! sl-b ! sl-a !  \ restore
 ;
 
@@ -3090,7 +3097,7 @@ VARIABLE ret-label
 : PARSE-STRUCT-BODY ( struct-idx -- )
     >R
     CC-TOKEN  \ skip {
-    0 tmp-a !  \ current offset
+    0 fld-offset !  \ current offset (dedicated var — tmp-a clobbered by PARSE-BASE-TYPE)
     BEGIN
         tok-type @ TK-PUNCT = tok-val @ P-RBRACE = AND 0=
     WHILE
@@ -3103,11 +3110,11 @@ VARIABLE ret-label
                 DUP TYPE-SIZE tmp-b !
                 DUP TYPE-ALIGN tmp-c !
                 \ Align current offset
-                tmp-a @ tmp-c @ ALIGN-UP tmp-a !
+                fld-offset @ tmp-c @ ALIGN-UP fld-offset !
                 \ Add field
-                R@ tmp-name-off @ tmp-name-len @ 2 PICK tmp-a @ FLD-ADD
+                R@ tmp-name-off @ tmp-name-len @ 3 PICK fld-offset @ FLD-ADD
                 DROP  \ drop type
-                tmp-a @ tmp-b @ + tmp-a !  \ advance offset
+                fld-offset @ tmp-b @ + fld-offset !  \ advance offset
                 tok-type @ TK-PUNCT = tok-val @ P-COMMA = AND IF
                     CC-TOKEN TRUE
                 ELSE FALSE THEN
@@ -3118,7 +3125,7 @@ VARIABLE ret-label
     REPEAT
     CC-TOKEN  \ skip }
     \ Set struct size (aligned to 4)
-    tmp-a @ 4 ALIGN-UP R@ CELLS st-size + !
+    fld-offset @ 4 ALIGN-UP R@ CELLS st-size + !
     R> DROP ;
 
 \ Parse enum body { NAME = val, NAME, ... }
@@ -3371,9 +3378,9 @@ VARIABLE decl-name-len
     THEN
     PARSE-DECLARATOR  \ type name-addr name-len
     DUP 0= IF 2DROP S" missing typedef name" CC-ERR DROP EXPECT-SEMI CC-TOKEN EXIT THEN
-    \ Add typedef
-    2DUP TD-ADD DROP
-    2DROP DROP  \ drop name and type
+    \ Add typedef: stack is ( type name-addr name-len )
+    \ TD-ADD expects ( addr u type )
+    ROT TD-ADD
     EXPECT-SEMI CC-TOKEN ;
 
 \ Parse struct definition at top level
@@ -3421,7 +3428,7 @@ VARIABLE decl-name-len
         \ Fall through to declarator parsing
         OVER PARSE-DECLARATOR
         DUP 0= IF
-            2DROP 2DROP 2DROP EXPECT-SEMI CC-TOKEN EXIT
+            2DROP DROP 2DROP EXPECT-SEMI CC-TOKEN EXIT
         THEN
         \ Check if function definition
         tok-type @ TK-PUNCT = tok-val @ P-LPAREN = AND IF
