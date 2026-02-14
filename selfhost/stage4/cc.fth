@@ -3270,21 +3270,23 @@ VARIABLE ret-label
     \ Now emit increment
     sl-c @ EMIT-LABEL   \ continue label
     for-inc-len @ 0> IF
-        \ Inject saved increment text into input stream
-        inp-len @ inp-pos @ - tmp-a !           \ remaining bytes
-        for-inc-len @ 3 + tmp-a @ + tmp-b !     \ new total size at pos
+        \ Inject saved increment text before current token (tok-start).
+        \ After loop body parse, tok already holds the next token.
+        inp-len @ tok-start @ - tmp-a !             \ remaining bytes incl current token
+        for-inc-len @ 3 + tmp-a @ + tmp-b !         \ new total size at insertion point
         \ Move remaining input to make room
-        inp-buf inp-pos @ +                      \ src
-        inp-buf inp-pos @ + for-inc-len @ + 3 +  \ dst
-        tmp-a @                                   \ count
-        MOVE                                      \ overlap-safe
-        \ Copy increment text at current position
-        for-inc-buf inp-buf inp-pos @ + for-inc-len @ CMOVE
+        inp-buf tok-start @ +                          \ src
+        inp-buf tok-start @ + for-inc-len @ + 3 +     \ dst
+        tmp-a @                                        \ count
+        MOVE                                           \ overlap-safe
+        \ Copy increment text at insertion point
+        for-inc-buf inp-buf tok-start @ + for-inc-len @ CMOVE
         \ Add sentinel: space + ) + space
-        32 inp-buf inp-pos @ for-inc-len @ + + C!
-        41 inp-buf inp-pos @ for-inc-len @ + 1+ + C!
-        32 inp-buf inp-pos @ for-inc-len @ + 2 + + C!
+        32 inp-buf tok-start @ for-inc-len @ + + C!
+        41 inp-buf tok-start @ for-inc-len @ + 1+ + C!
+        32 inp-buf tok-start @ for-inc-len @ + 2 + + C!
         inp-len @ for-inc-len @ + 3 + inp-len !
+        tok-start @ inp-pos !   \ re-lex from injected text
         0 has-peek !
         \ Parse injected increment expression
         CC-TOKEN
@@ -3959,19 +3961,19 @@ VARIABLE decl-name-len
 \ Emit all string literals as .rodata
 : EMIT-STRINGS ( -- )
     str-count @ 0= IF EXIT THEN
-    S" .rodata" EMIT-LINE
+    \ Stage 2 assembler currently supports .data/.text, not .rodata.
+    S" .data" EMIT-LINE
     str-count @ 0 ?DO
         EMIT-INDENT S" .align 4" OUT-STR OUT-NL
         S" .Lstr_" OUT-STR I OUT-NUM 58 OUT-CHAR OUT-NL
         \ Emit string bytes
         I CELLS strlit-off + @ tmp-a !
         I CELLS strlit-len + @ tmp-b !  \ includes NUL
-        EMIT-INDENT S" .byte " OUT-STR
         tmp-b @ 0 ?DO
-            I 0<> IF 44 OUT-CHAR 32 OUT-CHAR THEN
+            EMIT-INDENT S" .byte " OUT-STR
             str-pool tmp-a @ + I + C@ OUT-NUM
+            OUT-NL
         LOOP
-        OUT-NL
     LOOP
     S" .text" EMIT-LINE ;
 
@@ -4051,4 +4053,3 @@ VARIABLE decl-name-len
         ." Compilation failed with " cc-errors @ . ." errors" CR
         2R> 2DROP
     THEN ;
-
