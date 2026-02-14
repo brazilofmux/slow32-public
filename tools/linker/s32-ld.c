@@ -173,6 +173,16 @@ static uint32_t add_string(linker_state_t *ld, const char *str) {
     return new_offset;
 }
 
+// Safe string table access — returns "" for out-of-bounds offsets
+static const char *safe_string(const input_file_t *inf, uint32_t offset) {
+    if (offset >= inf->header.str_size) {
+        fprintf(stderr, "Error: string table offset %u out of bounds (size %u) in '%s'\n",
+                offset, inf->header.str_size, inf->filename);
+        return "";
+    }
+    return &inf->string_table[offset];
+}
+
 // Forward declaration
 static bool load_object_file(linker_state_t *ld, const char *filename);
 
@@ -203,29 +213,42 @@ static bool load_object_from_memory(linker_state_t *ld, const char *filename,
         return false;
     }
     
+    // Validate header offsets against member size
+    uint32_t sec_end = inf->header.sec_offset + inf->header.nsections * sizeof(s32o_section_t);
+    uint32_t sym_end = inf->header.sym_offset + inf->header.nsymbols * sizeof(s32o_symbol_t);
+    uint32_t str_end = inf->header.str_offset + inf->header.str_size;
+    if (sec_end > size || sym_end > size || str_end > size) {
+        fprintf(stderr, "Error: Archive member '%s' has out-of-bounds header offsets\n", filename);
+        return false;
+    }
+
     // Allocate and copy sections
     inf->sections = calloc(inf->header.nsections, sizeof(s32o_section_t));
-    memcpy(inf->sections, data + inf->header.sec_offset, 
+    memcpy(inf->sections, data + inf->header.sec_offset,
            inf->header.nsections * sizeof(s32o_section_t));
-    
+
     // Allocate and copy symbols
     inf->symbols = calloc(inf->header.nsymbols, sizeof(s32o_symbol_t));
     memcpy(inf->symbols, data + inf->header.sym_offset,
            inf->header.nsymbols * sizeof(s32o_symbol_t));
-    
+
     // Copy string table
     inf->string_table = malloc(inf->header.str_size);
     memcpy(inf->string_table, data + inf->header.str_offset, inf->header.str_size);
-    
+
     // Store section data for archive members
     inf->section_data = calloc(inf->header.nsections, sizeof(uint8_t*));
     for (uint32_t i = 0; i < inf->header.nsections; i++) {
         if (inf->sections[i].size > 0 && inf->sections[i].offset > 0) {
+            if (inf->sections[i].offset + inf->sections[i].size > size) {
+                fprintf(stderr, "Error: Archive member '%s' section %u data out of bounds\n", filename, i);
+                return false;
+            }
             inf->section_data[i] = malloc(inf->sections[i].size);
             memcpy(inf->section_data[i], data + inf->sections[i].offset, inf->sections[i].size);
         }
     }
-    
+
     // Count and copy relocations
     uint32_t total_relocs = 0;
     for (uint32_t i = 0; i < inf->header.nsections; i++) {
@@ -236,7 +259,13 @@ static bool load_object_from_memory(linker_state_t *ld, const char *filename,
         uint32_t reloc_idx = 0;
         for (uint32_t i = 0; i < inf->header.nsections; i++) {
             if (inf->sections[i].nrelocs > 0) {
-                memcpy(&inf->relocations[reloc_idx], 
+                uint32_t reloc_end = inf->sections[i].reloc_offset +
+                                     inf->sections[i].nrelocs * sizeof(s32o_reloc_t);
+                if (reloc_end > size) {
+                    fprintf(stderr, "Error: Archive member '%s' section %u relocations out of bounds\n", filename, i);
+                    return false;
+                }
+                memcpy(&inf->relocations[reloc_idx],
                        data + inf->sections[i].reloc_offset,
                        inf->sections[i].nrelocs * sizeof(s32o_reloc_t));
                 reloc_idx += inf->sections[i].nrelocs;
@@ -261,7 +290,7 @@ static bool is_symbol_undefined(linker_state_t *ld, const char *symbol_name) {
         for (uint32_t j = 0; j < inf->header.nsymbols; j++) {
             if (inf->symbols[j].binding == S32O_BIND_GLOBAL && 
                 inf->symbols[j].section == 0) {
-                const char *name = inf->string_table + inf->symbols[j].name_offset;
+                const char *name = safe_string(inf, inf->symbols[j].name_offset);
                 if (strcmp(name, symbol_name) == 0) {
                     // Check if it's defined elsewhere
                     bool defined = false;
@@ -270,7 +299,7 @@ static bool is_symbol_undefined(linker_state_t *ld, const char *symbol_name) {
                         for (uint32_t l = 0; l < inf2->header.nsymbols; l++) {
                             if (inf2->symbols[l].binding == S32O_BIND_GLOBAL && 
                                 inf2->symbols[l].section != 0) {
-                                const char *name2 = inf2->string_table + inf2->symbols[l].name_offset;
+                                const char *name2 = safe_string(inf2, inf2->symbols[l].name_offset);
                                 if (strcmp(name2, symbol_name) == 0) {
                                     defined = true;
                                     break;
@@ -595,8 +624,8 @@ static void merge_sections(linker_state_t *ld) {
             // Skip empty sections
             if (isec->size == 0 && isec->type != S32_SEC_BSS) continue;
             
-            const char *name = &inf->string_table[isec->name_offset];
-            int combined_idx = find_or_create_section(ld, name, isec->type, 
+            const char *name = safe_string(inf, isec->name_offset);
+            int combined_idx = find_or_create_section(ld, name, isec->type,
                                                        isec->flags, isec->align);
             combined_section_t *csec = &ld->sections[combined_idx];
             
@@ -609,13 +638,16 @@ static void merge_sections(linker_state_t *ld) {
             inf->section_base[s] = aligned_offset;
             
             // Add to combined section
-            if (csec->num_parts < MAX_INPUT_FILES) {
-                csec->parts[csec->num_parts].file_idx = f;
-                csec->parts[csec->num_parts].section_idx = s;
-                csec->parts[csec->num_parts].offset = aligned_offset;
-                csec->parts[csec->num_parts].size = isec->size;
-                csec->num_parts++;
+            if (csec->num_parts >= MAX_INPUT_FILES) {
+                fprintf(stderr, "Error: Too many parts in section '%s' (max %d)\n",
+                        csec->name, MAX_INPUT_FILES);
+                exit(1);
             }
+            csec->parts[csec->num_parts].file_idx = f;
+            csec->parts[csec->num_parts].section_idx = s;
+            csec->parts[csec->num_parts].offset = aligned_offset;
+            csec->parts[csec->num_parts].size = isec->size;
+            csec->num_parts++;
             
             // Update size
             csec->size = aligned_offset + isec->size;
@@ -645,7 +677,7 @@ static void build_symbol_table(linker_state_t *ld) {
         
         for (uint32_t s = 0; s < inf->header.nsymbols; s++) {
             s32o_symbol_t *isym = &inf->symbols[s];
-            const char *name = &inf->string_table[isym->name_offset];
+            const char *name = safe_string(inf, isym->name_offset);
             
             // Keep LOCAL symbols if they are referenced by any relocation, even with -s
             if (isym->binding == S32O_BIND_LOCAL && ld->strip_symbols) {
@@ -693,8 +725,8 @@ static void build_symbol_table(linker_state_t *ld) {
                         
                         // Find combined section (use canonical name for subsection merging)
                         if (isym->section > 0 && isym->section <= inf->header.nsections) {
-                            const char *sec_name = canonical_section_name(&inf->string_table[
-                                inf->sections[isym->section - 1].name_offset]);
+                            const char *sec_name = canonical_section_name(
+                                safe_string(inf, inf->sections[isym->section - 1].name_offset));
                             for (int cs = 0; cs < ld->num_sections; cs++) {
                                 if (strcmp(ld->sections[cs].name, sec_name) == 0) {
                                     esym->section_idx = cs;
@@ -741,8 +773,8 @@ static void build_symbol_table(linker_state_t *ld) {
                     
                     // Find combined section (use canonical name for subsection merging)
                     if (isym->section <= inf->header.nsections) {
-                        const char *sec_name = canonical_section_name(&inf->string_table[
-                            inf->sections[isym->section - 1].name_offset]);
+                        const char *sec_name = canonical_section_name(
+                            safe_string(inf, inf->sections[isym->section - 1].name_offset));
                         if (ld->verbose) {
                             printf("  Symbol section %d -> section name '%s'\n", isym->section, sec_name);
                         }
@@ -1022,6 +1054,23 @@ static void layout_sections(linker_state_t *ld) {
         }
     }
     
+    // Section overlap detection — verify no two allocated sections overlap
+    for (int i = 0; i < ld->num_sections; i++) {
+        combined_section_t *a = &ld->sections[i];
+        if (a->size == 0) continue;
+        for (int j = i + 1; j < ld->num_sections; j++) {
+            combined_section_t *b = &ld->sections[j];
+            if (b->size == 0) continue;
+            uint32_t a_end = a->vaddr + a->size;
+            uint32_t b_end = b->vaddr + b->size;
+            if (a->vaddr < b_end && b->vaddr < a_end) {
+                fprintf(stderr, "Error: Sections '%s' [0x%08X-0x%08X] and '%s' [0x%08X-0x%08X] overlap\n",
+                        a->name, a->vaddr, a_end, b->name, b->vaddr, b_end);
+                exit(1);
+            }
+        }
+    }
+
     if (ld->verbose) {
         printf("Memory layout:\n");
         printf("  Code:   0x%08X - 0x%08X\n", ld->code_base, ld->code_limit);
@@ -1205,8 +1254,8 @@ static void collect_relocations(linker_state_t *ld) {
                 // Find symbol in combined table
                 rel->symbol_idx = UINT32_MAX; // sentinel
                 if (irel->symbol < inf->header.nsymbols) {
-                    const char *sym_name = &inf->string_table[
-                        inf->symbols[irel->symbol].name_offset];
+                    const char *sym_name = safe_string(inf,
+                        inf->symbols[irel->symbol].name_offset);
                     
                     // For local symbols, create the same unique name used in build_symbol_table
                     char lookup_name[256];
@@ -1245,7 +1294,7 @@ static void collect_relocations(linker_state_t *ld) {
                         } else {
                             nsym->defined_in_file = f;
                             nsym->value = isym->value + inf->section_base[isym->section - 1];
-                            const char *sec_name = &inf->string_table[inf->sections[isym->section - 1].name_offset];
+                            const char *sec_name = safe_string(inf, inf->sections[isym->section - 1].name_offset);
                             nsym->section_idx = find_combined_section_index_by_name(ld->sections, ld->num_sections, sec_name);
                         }
                         rel->symbol_idx = ld->num_symbols++;
@@ -1255,13 +1304,13 @@ static void collect_relocations(linker_state_t *ld) {
                     fprintf(stderr, "Error: relocation in %s refers to unknown symbol idx=%u ('%s')\n",
                             inf->filename, irel->symbol,
                             (irel->symbol < inf->header.nsymbols)
-                                ? &inf->string_table[inf->symbols[irel->symbol].name_offset]
+                                ? safe_string(inf, inf->symbols[irel->symbol].name_offset)
                                 : "<out-of-range>");
                     exit(1);
                 }
                 
                 // Find combined section
-                const char *sec_name = &inf->string_table[isec->name_offset];
+                const char *sec_name = safe_string(inf, isec->name_offset);
                 rel->combined_section = -1;
                 for (int cs = 0; cs < ld->num_sections; cs++) {
                     if (strcmp(ld->sections[cs].name, sec_name) == 0) {
@@ -1336,6 +1385,11 @@ static void update_symbol_values(linker_state_t *ld) {
     for (int i = 0; i < ld->num_symbols; i++) {
         symbol_entry_t *sym = &ld->symbols[i];
         if (sym->defined_in_file >= 0 && sym->section_idx >= 0) {
+            if (sym->section_idx >= ld->num_sections) {
+                fprintf(stderr, "Error: Symbol '%s' has out-of-bounds section_idx %d (max %d)\n",
+                        sym->name, sym->section_idx, ld->num_sections - 1);
+                exit(1);
+            }
             // Symbol value is currently section-relative, convert to absolute
             combined_section_t *sec = &ld->sections[sym->section_idx];
             uint32_t old_value = sym->value;
@@ -1401,7 +1455,9 @@ static void apply_relocations(linker_state_t *ld) {
         uint32_t combined_offset = inf->section_base[rel->section_idx] + rel->offset;
         
         if (combined_offset + 4 > sec->size) {
-            fprintf(stderr, "Error: Relocation offset out of bounds\n");
+            fprintf(stderr, "Error: Relocation offset 0x%X out of bounds (section '%s' size 0x%X) in %s\n",
+                    combined_offset, sec->name, sec->size, inf->filename);
+            unresolved++;
             continue;
         }
         
@@ -1622,7 +1678,9 @@ static void apply_relocations(linker_state_t *ld) {
                 break;
                 
             default:
-                fprintf(stderr, "Warning: Unknown relocation type %d\n", rel->type);
+                fprintf(stderr, "Error: Unknown relocation type %d at PC=0x%08X in %s\n",
+                        rel->type, pc, ld->input_files[rel->file_idx].filename);
+                unresolved++;
                 break;
         }
     }
@@ -1644,10 +1702,16 @@ static uint32_t find_entry_point(linker_state_t *ld) {
                 fprintf(stderr, "Error: Entry point '%s' is undefined\n", entry_name);
                 exit(1);
             }
-            if (ld->verbose) {
-                printf("Entry point: %s at 0x%08X\n", entry_name, ld->symbols[i].value);
+            uint32_t ep = ld->symbols[i].value;
+            // Verify entry point is within the code section
+            if (ep < ld->code_base || ep >= ld->code_limit) {
+                fprintf(stderr, "Warning: Entry point '%s' at 0x%08X is outside code section [0x%08X-0x%08X]\n",
+                        entry_name, ep, ld->code_base, ld->code_limit);
             }
-            return ld->symbols[i].value;
+            if (ld->verbose) {
+                printf("Entry point: %s at 0x%08X\n", entry_name, ep);
+            }
+            return ep;
         }
     }
     

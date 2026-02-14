@@ -18,6 +18,22 @@
 #define MAX_LABEL_DIFFS 8192
 #define MAX_SYMBOL_LEN 256
 
+static void copy_string(char *dst, size_t dst_size, const char *src) {
+    if (dst_size == 0) return;
+    size_t len = strlen(src);
+    if (len >= dst_size) len = dst_size - 1;
+    memcpy(dst, src, len);
+    dst[len] = '\0';
+}
+
+static bool check_register(int reg, const char *context) {
+    if (reg < 0 || reg > 31) {
+        fprintf(stderr, "Error: invalid register %d in %s\n", reg, context);
+        return false;
+    }
+    return true;
+}
+
 // SLOW-32 assembler now only outputs object files (.s32o)
 // Binary executables are created by the linker (.s32x)
 
@@ -181,7 +197,13 @@ static bool parse_term(scanner_t *s, expr_result_t *res) {
         expr_result_t rhs = {0};
         if (!parse_factor(s, &rhs)) return false;
         if (op == TOK_MUL) res->val *= rhs.val;
-        else if (rhs.val != 0) res->val /= rhs.val;
+        else {
+            if (rhs.val == 0) {
+                fprintf(stderr, "Error: division by zero in expression\n");
+                return false;
+            }
+            res->val /= rhs.val;
+        }
         if (rhs.has_symbol) return false;
     }
     return true;
@@ -200,10 +222,10 @@ static bool parse_expression(scanner_t *s, expr_result_t *res) {
             if (res->has_symbol && op == TOK_PLUS) return false;
             if (res->has_symbol && op == TOK_MINUS) {
                 // label1 - label2: store as label difference
-                strcpy(res->minus_symbol, rhs.symbol);
+                copy_string(res->minus_symbol, sizeof(res->minus_symbol), rhs.symbol);
                 res->has_minus_symbol = true;
             } else {
-                strcpy(res->symbol, rhs.symbol);
+                copy_string(res->symbol, sizeof(res->symbol), rhs.symbol);
                 res->has_symbol = true;
             }
         }
@@ -228,7 +250,12 @@ static int parse_immediate(const char *str) {
 
 static int parse_register(const char *str) {
     if (str[0] == 'r' || str[0] == 'R') {
-        return atoi(str + 1);
+        int reg = atoi(str + 1);
+        if (reg < 0 || reg > 31) {
+            fprintf(stderr, "Error: register r%d out of range (must be r0-r31)\n", reg);
+            return -1;
+        }
+        return reg;
     }
     // case-insensitive names
     char tmp[8]; int i=0;
@@ -535,15 +562,16 @@ static int tokenize(char *line, char tokens[][MAX_TOKEN_LEN]) {
         }
     }
 
-    // Warn if tokens were silently dropped
+    // Error if tokens were silently dropped
     if (count >= MAX_TOKENS && *p) {
         // Check if there's actual content remaining (not just whitespace/commas)
         const char *remaining = p;
         while (*remaining && (*remaining == ' ' || *remaining == '\t' || *remaining == ','))
             remaining++;
         if (*remaining) {
-            fprintf(stderr, "ERROR: line has more than %d tokens; data truncated (first dropped: \"%.40s%s\")\n",
+            fprintf(stderr, "Error: line has more than %d tokens; data truncated (first dropped: \"%.40s%s\")\n",
                     MAX_TOKENS, remaining, strlen(remaining) > 40 ? "..." : "");
+            return -1;
         }
     }
 
@@ -561,10 +589,15 @@ static instruction_def_t *find_instruction(const char *mnemonic) {
 
 static void add_label(assembler_t *as, const char *name, uint32_t addr) {
     if (as->num_labels >= MAX_LABELS) {
-        fprintf(stderr, "Too many labels\n");
+        fprintf(stderr, "Error: too many labels (max %d)\n", MAX_LABELS);
         exit(1);
     }
-    strcpy(as->labels[as->num_labels].name, name);
+    if (strlen(name) >= MAX_SYMBOL_LEN) {
+        fprintf(stderr, "Error: symbol name too long (%zu bytes, max %d): '%.40s...'\n",
+                strlen(name), MAX_SYMBOL_LEN - 1, name);
+        exit(1);
+    }
+    copy_string(as->labels[as->num_labels].name, MAX_SYMBOL_LEN, name);
     as->labels[as->num_labels].address = addr;
     as->labels[as->num_labels].section = as->current_section;
     as->labels[as->num_labels].is_global = false;  // Default to local
@@ -590,8 +623,8 @@ static uint32_t add_string(assembler_t *as, const char *str) {
     // Add new string
     size_t len = strlen(str) + 1;
     if (as->string_table_size + len > MAX_STRING_TABLE) {
-        fprintf(stderr, "String table overflow\n");
-        return 0;
+        fprintf(stderr, "Error: string table overflow (max %d bytes)\n", MAX_STRING_TABLE);
+        exit(1);
     }
     
     offset = as->string_table_size;
@@ -602,11 +635,11 @@ static uint32_t add_string(assembler_t *as, const char *str) {
 }
 
 // Add a relocation
-static void add_relocation(assembler_t *as, uint32_t offset, const char *symbol, 
+static void add_relocation(assembler_t *as, uint32_t offset, const char *symbol,
                            uint32_t type, int32_t addend, section_t section) {
     if (as->num_relocations >= MAX_RELOCATIONS) {
-        fprintf(stderr, "Too many relocations\n");
-        return;
+        fprintf(stderr, "Error: too many relocations (max %d)\n", MAX_RELOCATIONS);
+        exit(1);
     }
     
     relocation_t *rel = &as->relocations[as->num_relocations++];
@@ -709,10 +742,16 @@ static uint32_t encode_r(uint32_t op, int rd, int rs1, int rs2) {
 }
 
 static uint32_t encode_i(uint32_t op, int rd, int rs1, int imm) {
+    if (imm < -2048 || imm > 2047) {
+        fprintf(stderr, "Warning: I-type immediate %d (0x%X) truncated to 12-bit signed range\n", imm, imm);
+    }
     return op | (rd << 7) | (rs1 << 15) | ((imm & 0xFFF) << 20);
 }
 
 static uint32_t encode_s(uint32_t op, int rs1, int rs2, int imm) {
+    if (imm < -2048 || imm > 2047) {
+        fprintf(stderr, "Warning: S-type immediate %d (0x%X) truncated to 12-bit signed range\n", imm, imm);
+    }
     int imm_11_5 = (imm >> 5) & 0x7F;
     int imm_4_0 = imm & 0x1F;
     return op | (imm_4_0 << 7) | (rs1 << 15) | (rs2 << 20) | (imm_11_5 << 25);
@@ -793,6 +832,7 @@ static bool assemble_line(assembler_t *as, char *line) {
     
     static char tokens[MAX_TOKENS][MAX_TOKEN_LEN];
     int num_tokens = tokenize(line, tokens);
+    if (num_tokens < 0) return false;  // tokenizer overflow
     if (num_tokens == 0) return true;
     
     // Lowercase only mnemonic/directive (tokens[0]); keep operand/symbol case
@@ -943,8 +983,8 @@ static bool assemble_line(assembler_t *as, char *line) {
                     as->instructions[idx].section = as->current_section;
                     as->instructions[idx].is_data_byte = false;
                     as->num_instructions++;
-                    strcpy(as->label_diffs[as->num_label_diffs].plus_symbol, res.symbol);
-                    strcpy(as->label_diffs[as->num_label_diffs].minus_symbol, res.minus_symbol);
+                    copy_string(as->label_diffs[as->num_label_diffs].plus_symbol, MAX_SYMBOL_LEN, res.symbol);
+                    copy_string(as->label_diffs[as->num_label_diffs].minus_symbol, MAX_SYMBOL_LEN, res.minus_symbol);
                     as->label_diffs[as->num_label_diffs].addend = res.val;
                     as->label_diffs[as->num_label_diffs].instruction_index = idx;
                     as->num_label_diffs++;
@@ -1263,8 +1303,32 @@ static bool assemble_line(assembler_t *as, char *line) {
             as->current_addr = saved_addr;
             return true;
         }
-        // Ignore other directives
-        return true;
+        // Known-harmless directives emitted by LLVM/FPC that we can safely ignore
+        if (strcmp(tokens[0], ".file") == 0 ||
+            strcmp(tokens[0], ".type") == 0 ||
+            strcmp(tokens[0], ".size") == 0 ||
+            strcmp(tokens[0], ".ident") == 0 ||
+            strcmp(tokens[0], ".addrsig") == 0 ||
+            strcmp(tokens[0], ".addrsig_sym") == 0 ||
+            strcmp(tokens[0], ".weak") == 0 ||
+            strcmp(tokens[0], ".local") == 0 ||
+            strcmp(tokens[0], ".hidden") == 0 ||
+            strcmp(tokens[0], ".protected") == 0 ||
+            strcmp(tokens[0], ".internal") == 0 ||
+            strcmp(tokens[0], ".p2align") == 0 ||
+            strcmp(tokens[0], ".loc") == 0 ||
+            strcmp(tokens[0], ".attribute") == 0 ||
+            strcmp(tokens[0], ".option") == 0 ||
+            strcmp(tokens[0], ".stabs") == 0 ||
+            strcmp(tokens[0], ".stabn") == 0 ||
+            strcmp(tokens[0], ".stabd") == 0 ||
+            strcmp(tokens[0], ".reference") == 0 ||
+            strncmp(tokens[0], ".cfi_", 5) == 0 ||
+            strncmp(tokens[0], ".cv_", 4) == 0) {
+            return true;
+        }
+        fprintf(stderr, "Error: unknown directive '%s'\n", tokens[0]);
+        return false;
     }
     
     // Handle pseudo-instructions before real instructions
@@ -1273,6 +1337,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         scanner_next(&s_op); // skip 'li' (mnemonic)
         scanner_next(&s_op); // load first operand
         int rd = parse_register_scanner(&s_op);
+        if (!check_register(rd, "li")) return false;
         if (s_op.curr.type == TOK_COMMA) scanner_next(&s_op);
         
         expr_result_t res;
@@ -1310,7 +1375,7 @@ static bool assemble_line(assembler_t *as, char *line) {
             if (is_symbol) {
                 inst1->has_symbol_ref = true;
                 inst1->symbol_is_hi = true;
-                strcpy(inst1->symbol_ref, res.symbol);
+                copy_string(inst1->symbol_ref, sizeof(inst1->symbol_ref), res.symbol);
                 inst1->symbol_addend = res.val;
             }
             inst1->instruction = encode_u(0x20, rd, upper);
@@ -1326,7 +1391,7 @@ static bool assemble_line(assembler_t *as, char *line) {
             if (is_symbol) {
                 inst2->has_symbol_ref = true;
                 inst2->symbol_is_lo = true;
-                strcpy(inst2->symbol_ref, res.symbol);
+                copy_string(inst2->symbol_ref, sizeof(inst2->symbol_ref), res.symbol);
                 inst2->symbol_addend = res.val;
             }
             inst2->instruction = encode_i(0x10, rd, rd, lower);
@@ -1355,6 +1420,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         int rd = parse_register_scanner(&s_op);
         if (s_op.curr.type == TOK_COMMA) scanner_next(&s_op);
         int rs = parse_register_scanner(&s_op);
+        if (!check_register(rd, "mv") || !check_register(rs, "mv")) return false;
         
         ensure_instruction_capacity(as, 1);
         instruction_t *inst = &as->instructions[as->num_instructions];
@@ -1392,7 +1458,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         
         if (s_op.curr.type == TOK_IDENTIFIER) {
             inst->has_label_ref = true;
-            strcpy(inst->label_ref, s_op.curr.sval);
+            copy_string(inst->label_ref, sizeof(inst->label_ref), s_op.curr.sval);
             inst->instruction = encode_j(0x40, 0, 0);
         } else {
             expr_result_t res;
@@ -1408,16 +1474,16 @@ static bool assemble_line(assembler_t *as, char *line) {
         scanner_t s_op = { .p = line };
         scanner_next(&s_op); // skip 'call'
         scanner_next(&s_op);
-        
+
         ensure_instruction_capacity(as, 1);
         instruction_t *inst = &as->instructions[as->num_instructions];
         inst->opcode = 0x40;  // JAL
         inst->address = as->current_addr;
         inst->section = as->current_section;
-        
+
         if (s_op.curr.type == TOK_IDENTIFIER) {
             inst->has_label_ref = true;
-            strcpy(inst->label_ref, s_op.curr.sval);
+            copy_string(inst->label_ref, sizeof(inst->label_ref), s_op.curr.sval);
             inst->instruction = encode_j(0x40, 31, 0);
         } else {
             expr_result_t res;
@@ -1442,7 +1508,7 @@ static bool assemble_line(assembler_t *as, char *line) {
 
         if (s_op.curr.type == TOK_IDENTIFIER) {
             inst->has_label_ref = true;
-            strcpy(inst->label_ref, s_op.curr.sval);
+            copy_string(inst->label_ref, sizeof(inst->label_ref), s_op.curr.sval);
             inst->instruction = encode_j(0x40, 0, 0);
         } else {
             expr_result_t res;
@@ -1461,6 +1527,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         int rd = parse_register_scanner(&s_op);
         if (s_op.curr.type == TOK_COMMA) scanner_next(&s_op);
         int rs = parse_register_scanner(&s_op);
+        if (!check_register(rd, "not") || !check_register(rs, "not")) return false;
         
         ensure_instruction_capacity(as, 1);
         instruction_t *inst = &as->instructions[as->num_instructions];
@@ -1480,6 +1547,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         int rd = parse_register_scanner(&s_op);
         if (s_op.curr.type == TOK_COMMA) scanner_next(&s_op);
         int rs = parse_register_scanner(&s_op);
+        if (!check_register(rd, "neg") || !check_register(rs, "neg")) return false;
         
         ensure_instruction_capacity(as, 1);
         instruction_t *inst = &as->instructions[as->num_instructions];
@@ -1499,7 +1567,8 @@ static bool assemble_line(assembler_t *as, char *line) {
         int rd = parse_register_scanner(&s_op);
         if (s_op.curr.type == TOK_COMMA) scanner_next(&s_op);
         int rs = parse_register_scanner(&s_op);
-        
+        if (!check_register(rd, "seqz") || !check_register(rs, "seqz")) return false;
+
         ensure_instruction_capacity(as, 1);
         instruction_t *inst = &as->instructions[as->num_instructions];
         inst->opcode = 0x0E;  // SEQ
@@ -1518,7 +1587,8 @@ static bool assemble_line(assembler_t *as, char *line) {
         int rd = parse_register_scanner(&s_op);
         if (s_op.curr.type == TOK_COMMA) scanner_next(&s_op);
         int rs = parse_register_scanner(&s_op);
-        
+        if (!check_register(rd, "snez") || !check_register(rs, "snez")) return false;
+
         ensure_instruction_capacity(as, 1);
         instruction_t *inst = &as->instructions[as->num_instructions];
         inst->opcode = 0x0F;  // SNE
@@ -1534,6 +1604,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         scanner_next(&s_op); // skip 'la' (mnemonic)
         scanner_next(&s_op); // load first operand
         int rd = parse_register_scanner(&s_op);
+        if (!check_register(rd, "la")) return false;
         if (s_op.curr.type == TOK_COMMA) scanner_next(&s_op);
         
         expr_result_t res;
@@ -1547,13 +1618,13 @@ static bool assemble_line(assembler_t *as, char *line) {
         inst1->section = as->current_section;
         inst1->has_symbol_ref = true;
         inst1->symbol_is_hi = true;
-        strcpy(inst1->symbol_ref, res.symbol);
+        copy_string(inst1->symbol_ref, sizeof(inst1->symbol_ref), res.symbol);
         inst1->symbol_addend = res.val;
         inst1->instruction = encode_u(0x20, rd, 0);
         as->num_instructions++;
         as->current_addr += 4;
         bump_size(as, as->current_section, 4);
-        
+
         // ADDI rd, rd, %lo(symbol) (sign-extended, compensated by HI20)
         instruction_t *inst2 = &as->instructions[as->num_instructions];
         inst2->opcode = 0x10;  // ADDI
@@ -1561,7 +1632,7 @@ static bool assemble_line(assembler_t *as, char *line) {
         inst2->section = as->current_section;
         inst2->has_symbol_ref = true;
         inst2->symbol_is_lo = true;
-        strcpy(inst2->symbol_ref, res.symbol);
+        copy_string(inst2->symbol_ref, sizeof(inst2->symbol_ref), res.symbol);
         inst2->symbol_addend = res.val;
         inst2->instruction = encode_i(0x10, rd, rd, 0);
         as->num_instructions++;
@@ -1614,18 +1685,25 @@ static bool assemble_line(assembler_t *as, char *line) {
         case FMT_R: {
             if (inst->opcode == 0x51 || inst->opcode == 0x52) { // YIELD, DEBUG
                 int rs1 = parse_register_scanner(&s_op);
+                if (!check_register(rs1, tokens[0])) return false;
                 inst->instruction = encode_r(inst->opcode, 0, rs1, 0);
             } else if (inst->opcode == 0x3F) { // ASSERT_EQ
                 int rs1 = parse_register_scanner(&s_op);
                 if (s_op.curr.type == TOK_COMMA) scanner_next(&s_op);
                 int rs2 = parse_register_scanner(&s_op);
+                if (!check_register(rs1, tokens[0]) || !check_register(rs2, tokens[0])) return false;
                 inst->instruction = encode_r(inst->opcode, 0, rs1, rs2);
             } else {
                 int rd = parse_register_scanner(&s_op);
                 if (s_op.curr.type == TOK_COMMA) scanner_next(&s_op);
                 int rs1 = parse_register_scanner(&s_op);
-                if (s_op.curr.type == TOK_COMMA) scanner_next(&s_op);
-                int rs2 = parse_register_scanner(&s_op);
+                int rs2 = 0;
+                if (s_op.curr.type == TOK_COMMA) {
+                    scanner_next(&s_op);
+                    rs2 = parse_register_scanner(&s_op);
+                    if (!check_register(rs2, tokens[0])) return false;
+                }
+                if (!check_register(rd, tokens[0]) || !check_register(rs1, tokens[0])) return false;
                 inst->instruction = encode_r(inst->opcode, rd, rs1, rs2);
             }
             break;
@@ -1633,19 +1711,14 @@ static bool assemble_line(assembler_t *as, char *line) {
         
         case FMT_I: {
             int rd = parse_register_scanner(&s_op);
+            if (!check_register(rd, tokens[0])) return false;
             if (s_op.curr.type == TOK_COMMA) scanner_next(&s_op);
-            
+
             int rs1 = 0;
             int imm = 0;
-            
+
             // Check if next token is register (for ALU ops like addi r1, r2, 4)
             // or if it's immediate/symbol (for Load like ldw r1, 4(r2))
-            
-            // We need to peek or try parsing
-            // parse_register_scanner consumes if match.
-            // If it fails, it returns -1 and doesn't consume (except looking at current).
-            // Actually my parse_register_scanner implementation checks s->curr.type.
-            
             int potential_rs1 = -1;
             if (s_op.curr.type == TOK_NUMBER && s_op.curr.val == 0) {
                 scanner_t peek = s_op;
@@ -1656,18 +1729,18 @@ static bool assemble_line(assembler_t *as, char *line) {
             } else {
                 potential_rs1 = parse_register_scanner(&s_op);
             }
-            
+
             if (potential_rs1 >= 0) {
                 // It was a register. Format: rd, rs1, imm
                 rs1 = potential_rs1;
                 if (s_op.curr.type == TOK_COMMA) scanner_next(&s_op);
-                
+
                 expr_result_t res;
                 if (parse_operand_scanner(&s_op, &res)) {
                     imm = res.val;
                     if (res.has_symbol) {
                         inst->has_symbol_ref = true;
-                        strcpy(inst->symbol_ref, res.symbol);
+                        copy_string(inst->symbol_ref, sizeof(inst->symbol_ref), res.symbol);
                         inst->symbol_is_lo = res.is_lo;
                         inst->symbol_is_pcrel_lo = res.is_pcrel_lo;
                         inst->symbol_addend = res.val;
@@ -1681,17 +1754,18 @@ static bool assemble_line(assembler_t *as, char *line) {
                     imm = res.val;
                     if (res.has_symbol) {
                         inst->has_symbol_ref = true;
-                        strcpy(inst->symbol_ref, res.symbol);
+                        copy_string(inst->symbol_ref, sizeof(inst->symbol_ref), res.symbol);
                         inst->symbol_is_lo = res.is_lo;
                         inst->symbol_is_pcrel_lo = res.is_pcrel_lo;
                         inst->symbol_addend = res.val;
                         imm = 0;
                     }
                 }
-                
+
                 if (s_op.curr.type == TOK_LPAREN) {
                     scanner_next(&s_op);
                     rs1 = parse_register_scanner(&s_op);
+                    if (!check_register(rs1, tokens[0])) return false;
                     if (s_op.curr.type == TOK_RPAREN) scanner_next(&s_op);
                 }
             }
@@ -1708,15 +1782,15 @@ static bool assemble_line(assembler_t *as, char *line) {
             expr_result_t res;
             
             int reg1 = parse_register_scanner(&s_op);
-            if (reg1 < 0) return false;
-            
+            if (!check_register(reg1, tokens[0])) return false;
+
             if (s_op.curr.type == TOK_PLUS || s_op.curr.type == TOK_MINUS) {
                 // base+imm, data
                 if (!parse_operand_scanner(&s_op, &res)) return false;
                 rs1 = reg1;
                 if (res.has_symbol) {
                     inst->has_symbol_ref = true;
-                    strcpy(inst->symbol_ref, res.symbol);
+                    copy_string(inst->symbol_ref, sizeof(inst->symbol_ref), res.symbol);
                     inst->symbol_is_lo = res.is_lo;
                     inst->symbol_is_pcrel_lo = res.is_pcrel_lo;
                     inst->symbol_addend = res.val;
@@ -1726,7 +1800,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                 }
                 if (s_op.curr.type == TOK_COMMA) scanner_next(&s_op);
                 rs2 = parse_register_scanner(&s_op);
-                if (rs2 < 0) return false;
+                if (!check_register(rs2, tokens[0])) return false;
             } else if (s_op.curr.type == TOK_COMMA) {
                 scanner_next(&s_op);
                 // Peek: register => legacy base,data,imm. Otherwise data, imm(base).
@@ -1739,7 +1813,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                     if (parse_operand_scanner(&s_op, &res)) {
                         if (res.has_symbol) {
                             inst->has_symbol_ref = true;
-                            strcpy(inst->symbol_ref, res.symbol);
+                            copy_string(inst->symbol_ref, sizeof(inst->symbol_ref), res.symbol);
                             inst->symbol_is_lo = res.is_lo;
                             inst->symbol_is_pcrel_lo = res.is_pcrel_lo;
                             inst->symbol_addend = res.val;
@@ -1754,7 +1828,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                     if (!parse_operand_scanner(&s_op, &res)) return false;
                     if (res.has_symbol) {
                         inst->has_symbol_ref = true;
-                        strcpy(inst->symbol_ref, res.symbol);
+                        copy_string(inst->symbol_ref, sizeof(inst->symbol_ref), res.symbol);
                         inst->symbol_is_lo = res.is_lo;
                         inst->symbol_is_pcrel_lo = res.is_pcrel_lo;
                         inst->symbol_addend = res.val;
@@ -1765,6 +1839,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                     if (s_op.curr.type == TOK_LPAREN) {
                         scanner_next(&s_op);
                         rs1 = parse_register_scanner(&s_op);
+                        if (!check_register(rs1, tokens[0])) return false;
                         if (s_op.curr.type == TOK_RPAREN) scanner_next(&s_op);
                     } else {
                         return false;
@@ -1782,16 +1857,17 @@ static bool assemble_line(assembler_t *as, char *line) {
             int rs1 = parse_register_scanner(&s_op);
             if (s_op.curr.type == TOK_COMMA) scanner_next(&s_op);
             int rs2 = parse_register_scanner(&s_op);
+            if (!check_register(rs1, tokens[0]) || !check_register(rs2, tokens[0])) return false;
             if (s_op.curr.type == TOK_COMMA) scanner_next(&s_op);
             if (swap_branch_regs) {
                 int tmp = rs1;
                 rs1 = rs2;
                 rs2 = tmp;
             }
-            
+
             if (s_op.curr.type == TOK_IDENTIFIER) {
                 inst->has_label_ref = true;
-                strcpy(inst->label_ref, s_op.curr.sval);
+                copy_string(inst->label_ref, sizeof(inst->label_ref), s_op.curr.sval);
                 inst->label_offset = 0;
                 inst->instruction = encode_b(inst->opcode, rs1, rs2, 0);
                 scanner_next(&s_op);
@@ -1802,17 +1878,18 @@ static bool assemble_line(assembler_t *as, char *line) {
             }
             break;
         }
-        
+
         case FMT_U: {
             int rd = parse_register_scanner(&s_op);
+            if (!check_register(rd, tokens[0])) return false;
             if (s_op.curr.type == TOK_COMMA) scanner_next(&s_op);
-            
+
             expr_result_t res;
             parse_operand_scanner(&s_op, &res);
-            
+
             if (res.has_symbol) {
                 inst->has_symbol_ref = true;
-                strcpy(inst->symbol_ref, res.symbol);
+                copy_string(inst->symbol_ref, sizeof(inst->symbol_ref), res.symbol);
                 inst->symbol_is_hi = res.is_hi;
                 inst->symbol_is_pcrel_hi = res.is_pcrel_hi;
                 inst->symbol_addend = res.val;
@@ -1822,7 +1899,7 @@ static bool assemble_line(assembler_t *as, char *line) {
             }
             break;
         }
-        
+
         case FMT_J: {
             int rd = 31;
             // JAL can be `jal label` (rd=ra) or `jal rd, label`
@@ -1834,10 +1911,10 @@ static bool assemble_line(assembler_t *as, char *line) {
                 s_op = s_peek;
                 scanner_next(&s_op);
             }
-            
+
             if (s_op.curr.type == TOK_IDENTIFIER) {
                 inst->has_label_ref = true;
-                strcpy(inst->label_ref, s_op.curr.sval);
+                copy_string(inst->label_ref, sizeof(inst->label_ref), s_op.curr.sval);
                 inst->label_offset = 0;
                 inst->instruction = encode_j(inst->opcode, rd, 0);
                 scanner_next(&s_op);
