@@ -32,7 +32,7 @@ The goal of self-hosting is to break this dependency: produce a SLOW-32 toolchai
 - Host-native emulators (`slow32`, `slow32-fast`)
 - DBT (dynamic binary translator)
 - Free Pascal backend
-- The Forth kernel, MY-BASIC, SLOW BASIC (already self-contained)
+- The Forth kernel, SLOW BASIC (already self-contained)
 
 ## Two Bootstrap Paths
 

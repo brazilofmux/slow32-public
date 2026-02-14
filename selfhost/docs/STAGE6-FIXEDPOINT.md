@@ -151,6 +151,6 @@ The bootstrap is complete when:
 
 1. Gen2 == Gen3 (fixed point reached)
 2. All regression tests pass with self-hosted toolchain
-3. The self-hosted toolchain can build the Forth kernel, MY-BASIC, SLOW BASIC, and all examples
+3. The self-hosted toolchain can build the Forth kernel, SLOW BASIC, and all examples
 4. Every stage's source code is available and auditable
 5. The entire bootstrap can be reproduced from scratch on any machine with a C compiler (for the emulator)
