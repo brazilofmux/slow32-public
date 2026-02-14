@@ -369,6 +369,9 @@ VARIABLE sl-c   \ label C (continue target, etc.)
 VARIABLE sl-d   \ saved input position
 VARIABLE sl-e   \ saved line number
 
+CREATE for-inc-buf 1024 ALLOT   \ saved for-loop increment text
+VARIABLE for-inc-len            \ length of saved increment text
+
 \ Current expression type tracking
 VARIABLE expr-type          \ type of last expression result
 
@@ -1362,6 +1365,18 @@ VARIABLE pp-line-len
         1 pp-line-len +!
         CC-SKIP
     REPEAT DROP
+    \ Strip // comments from pp-line
+    0 BEGIN
+        DUP pp-line-len @ 1- < IF
+            pp-line OVER + C@ 47 = IF     \ '/'
+                pp-line OVER + 1+ C@ 47 = IF  \ '//'
+                    DUP pp-line-len !
+                    DROP pp-line-len @   \ force exit
+                ELSE 1+ THEN
+            ELSE 1+ THEN
+        ELSE DROP pp-line-len @ THEN
+        DUP pp-line-len @ >=
+    UNTIL DROP
     \ Trim trailing whitespace
     BEGIN
         pp-line-len @ 0> IF
@@ -1952,14 +1967,20 @@ VARIABLE mexp-scratch-len
     REPEAT ;
 
 \ Inject mexp-scratch content into input buffer for re-lexing
+\ Uses overlap-safe MOVE within inp-buf (old code overflowed mexp-scratch)
 : INJECT-EXPANSION ( -- )
     32 mexp-scratch mexp-scratch-len @ + C!
     1 mexp-scratch-len +!
-    inp-len @ inp-pos @ - tmp-a !  \ remaining bytes
-    inp-buf inp-pos @ + mexp-scratch mexp-scratch-len @ + tmp-a @ CMOVE
-    tmp-a @ mexp-scratch-len +!
+    inp-len @ inp-pos @ - tmp-a !      \ remaining bytes after macro
+    \ Move remaining input within inp-buf to just after expansion position
+    inp-buf inp-pos @ +                 \ src: remaining data in inp-buf
+    inp-buf mexp-scratch-len @ +        \ dst: after expansion text
+    tmp-a @                             \ count
+    MOVE                                \ overlap-safe (memmove)
+    \ Copy expansion text from mexp-scratch to start of inp-buf
     mexp-scratch inp-buf mexp-scratch-len @ CMOVE
-    mexp-scratch-len @ inp-len !
+    \ Update input state
+    mexp-scratch-len @ tmp-a @ + inp-len !
     0 inp-pos ! ;
 
 : TRY-EXPAND-MACRO ( -- flag )  \ flag = true if expanded
@@ -3185,8 +3206,8 @@ VARIABLE ret-label
             PARSE-DECLARATOR  \ type name-addr name-len
             tmp-name-len ! tmp-name-off !
             \ Allocate local
-            TYPE-SIZE tmp-a !
-            TYPE-ALIGN tmp-b !
+            DUP TYPE-SIZE tmp-a !
+            DUP TYPE-ALIGN tmp-b !
             local-offset @ NEGATE tmp-b @ ALIGN-UP NEGATE local-offset !
             local-offset @ tmp-a @ - local-offset !
             tmp-name-off @ tmp-name-len @
@@ -3224,10 +3245,10 @@ VARIABLE ret-label
         sl-b @ EMIT-BEQ-ZERO
     THEN
     EXPECT-SEMI
-    \ Save increment expression position for replay after body
+    \ Save increment expression start position (for text capture)
     inp-pos @ sl-d !
     cc-line @ sl-e !
-    \ Skip increment expression
+    \ Skip increment expression by scanning tokens
     CC-TOKEN
     0 tmp-idx !  \ paren depth
     BEGIN
@@ -3238,28 +3259,44 @@ VARIABLE ret-label
             tok-type @ TK-EOF = IF FALSE ELSE CC-TOKEN TRUE THEN
         THEN
     WHILE REPEAT
+    \ Save the increment text (from sl-d to tok-start, before the ")")
+    tok-start @ sl-d @ - for-inc-len !
+    for-inc-len @ 0> IF
+        inp-buf sl-d @ + for-inc-buf for-inc-len @ CMOVE
+    THEN
     CC-TOKEN  \ skip )
     \ Parse body
     PARSE-STATEMENT
     \ Now emit increment
     sl-c @ EMIT-LABEL   \ continue label
-    \ Save position before current token (so we can re-lex after restore)
-    tok-start @ >R
-    cc-line @ >R
-    inp-len @ >R
-    \ Go back to increment position
-    sl-d @ inp-pos !
-    sl-e @ cc-line !
-    CC-TOKEN
-    tok-type @ TK-PUNCT <> tok-val @ P-RPAREN <> OR IF
-        PARSE-EXPR
-        LVAL-TO-RVAL
+    for-inc-len @ 0> IF
+        \ Inject saved increment text into input stream
+        inp-len @ inp-pos @ - tmp-a !           \ remaining bytes
+        for-inc-len @ 3 + tmp-a @ + tmp-b !     \ new total size at pos
+        \ Move remaining input to make room
+        inp-buf inp-pos @ +                      \ src
+        inp-buf inp-pos @ + for-inc-len @ + 3 +  \ dst
+        tmp-a @                                   \ count
+        MOVE                                      \ overlap-safe
+        \ Copy increment text at current position
+        for-inc-buf inp-buf inp-pos @ + for-inc-len @ CMOVE
+        \ Add sentinel: space + ) + space
+        32 inp-buf inp-pos @ for-inc-len @ + + C!
+        41 inp-buf inp-pos @ for-inc-len @ + 1+ + C!
+        32 inp-buf inp-pos @ for-inc-len @ + 2 + + C!
+        inp-len @ for-inc-len @ + 3 + inp-len !
+        0 has-peek !
+        \ Parse injected increment expression
+        CC-TOKEN
+        tok-type @ TK-PUNCT = tok-val @ P-RPAREN = AND 0= IF
+            PARSE-EXPR
+            LVAL-TO-RVAL
+        THEN
+        \ Skip sentinel )
+        tok-type @ TK-PUNCT = tok-val @ P-RPAREN = AND IF
+            CC-TOKEN
+        THEN
     THEN
-    \ Restore to before the post-body token, then re-lex it
-    R> inp-len !
-    R> cc-line !
-    R> inp-pos !      \ restore to before the token
-    CC-TOKEN          \ re-lex the post-body token
     sl-a @ EMIT-JUMP
     sl-b @ EMIT-LABEL
     -1 break-sp +!
