@@ -55,12 +55,14 @@ make
 ✅ Jump tables for switch statements (assembler, linker, LLVM backend all support)  
 ✅ Advanced relocations: %hi(symbol+offset), %lo(symbol+offset), %pcrel_hi, %pcrel_lo  
 ✅ 64-bit integers: FULLY COMPLETE including:
+
   - ADD/SUB with carry/borrow
   - MUL via UMUL_LOHI/SMUL_LOHI custom lowering
   - DIV/REM via compiler-rt libcalls (__divdi3, __udivdi3, __moddi3, __umoddi3)
   - All logical operations (AND, OR, XOR, shifts)
   - All comparison operations (EQ, NE, LT, GT, LE, GE for both signed/unsigned)
   - Comprehensive regression test coverage
+
 ✅ Native Clang target: `-target slow32-unknown-none` (note: single dash)  
 ✅ XORI instruction (opcode 0x1E) for XOR immediate operations
 ✅ LLVM backend updated for latest LLVM API (Sep 2025)
@@ -114,6 +116,7 @@ int sum_to_n(int n) {
 ## Docker Support
 
 Docker containers provide a clean baseline for testing. Two containers available:
+
 - `slow32-toolchain`: Full development environment with LLVM 22
 - `slow32-emulator`: Lightweight runtime for testing executables (includes slow32, slow32-fast, qemu-system-slow32)
 
@@ -166,6 +169,7 @@ time ./tools/emulator/slow32-fast program.s32x  # Optimized version
 ## Regression Testing
 
 **CRITICAL:** Before committing any LLVM backend changes:
+
 1. Run the regression suite: `cd ~/slow-32/regression && ./run-tests.sh`
 2. Check that no previously passing tests now fail
 3. Document any intentional behavior changes

@@ -12,6 +12,7 @@
     - Two I/O modes: `DEBUG` instruction (char output) and MMIO ring buffer.
 
 ## Architecture Details
+
 - **Registers:** 32 registers (`r0` hardwired to 0).
     - `r0`: Zero
     - `r1-r2`: Return values
@@ -74,23 +75,27 @@ The standard flow is C -> LLVM IR -> ASM -> Object -> Executable.
 ```
 
 ### Testing
-*   **Quick Test:** `make test`
-*   **Regression Suite (Critical):** `regression/run-tests.sh` (Must pass before committing backend changes).
-*   **Docker:** `scripts/run-in-docker.sh` is available for isolated execution.
+
+-   **Quick Test:** `make test`
+-   **Regression Suite (Critical):** `regression/run-tests.sh` (Must pass before committing backend changes).
+-   **Docker:** `scripts/run-in-docker.sh` is available for isolated execution.
 
 ## Development Conventions
-*   **Code Style:** Standard C style (4-space indent, snake_case).
-*   **Commits:** Imperative mood, clear descriptions.
-*   **Testing:** Always run regression tests after touching `llvm-backend` or `runtime`.
-*   **I/O:** Default is `DEBUG` instruction (simple). Use `LIBC=mmio` for MMIO-based high-performance I/O.
+
+-   **Code Style:** Standard C style (4-space indent, snake_case).
+-   **Commits:** Imperative mood, clear descriptions.
+-   **Testing:** Always run regression tests after touching `llvm-backend` or `runtime`.
+-   **I/O:** Default is `DEBUG` instruction (simple). Use `LIBC=mmio` for MMIO-based high-performance I/O.
 
 ## Key Files
-*   `README.md`: General project info.
-*   `CLAUDE.md`: Quick reference for commands and status.
-*   `docs/IMPROVEMENTS.md`: Known issues and roadmap.
-*   `Makefile`: Main build script.
+
+-   `README.md`: General project info.
+-   `CLAUDE.md`: Quick reference for commands and status.
+-   `docs/IMPROVEMENTS.md`: Known issues and roadmap.
+-   `Makefile`: Main build script.
 
 ## Gemini Added Memories
+
 - The SLOW-32 assembler syntax for the `stw` instruction is `stw base, src, offset`, which differs from the standard RISC-V `sw src, offset(base)`.
 - The slow32asm assembler seems to crash (segfault) when encountering .byte sequences for strings that contain certain characters or in specific contexts, or perhaps it's a general issue with my extensive editing of the assembly file. It crashed after I replaced .ascii strings with .byte sequences.
 - The `rs` directory contains a native C++ Reed-Solomon toolchain that is for reference only. It is ignored by `.gitignore` and is not a primary part of the project's build process.

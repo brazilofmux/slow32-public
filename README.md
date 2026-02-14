@@ -35,9 +35,10 @@ make
 - **Single-ported memory** (deliberately slow!)
 - **DEBUG instruction** for character output; **MMIO ring buffers** for full I/O
 - **Sparse memory allocation** - Only allocates touched pages (99.4% memory savings!)
-- **Performance**: ~45 MIPS (slow32), ~220 MIPS (slow32-fast), ~5.8 BIPS (slow32-dbt)
+- **Performance**: ~45 MIPS (slow32), ~220 MIPS (slow32-fast)
 
 ### Register Convention
+
 - `r0`: Always zero
 - `r1-r2`: Return values
 - `r3-r10`: Function arguments
@@ -49,11 +50,13 @@ make
 ## Instruction Set
 
 ### Arithmetic (R-type)
+
 - `add`, `sub`, `and`, `or`, `xor` - Basic arithmetic/logic
 - `sll`, `srl`, `sra` - Shifts
 - `mul`, `mulh`, `div`, `rem` - Multiplication/division
 
 ### Comparison (R-type)
+
 - `slt`, `sltu` - Set less than (signed/unsigned)
 - `seq` - Set equal (rd = rs1 == rs2 ? 1 : 0)
 - `sne` - Set not equal (rd = rs1 != rs2 ? 1 : 0)
@@ -62,33 +65,28 @@ make
 - `sge`, `sgeu` - Set greater or equal (signed/unsigned)
 
 ### Immediate (I-type)
+
 - `addi`, `ori`, `andi` - Immediate operations
 - `slli`, `srli`, `srai` - Immediate shifts
 - `slti`, `sltiu` - Set less than immediate
 - `lui` - Load upper immediate
 
 ### Memory Operations
+
 - `ldb`, `ldh`, `ldw` - Load byte/half/word (signed)
 - `ldbu`, `ldhu` - Load byte/half (unsigned)
 - `stb`, `sth`, `stw` - Store byte/half/word
 
 ### Control Flow
+
 - `jal` - Jump and link
 - `jalr` - Jump and link register
 - `beq`, `bne` - Branch equal/not equal
 - `blt`, `bge` - Branch less than/greater or equal
 - `bltu`, `bgeu` - Branch unsigned comparisons
 
-### Floating-Point (R-type, values in GPRs)
-- `fadd.s`, `fsub.s`, `fmul.s`, `fdiv.s`, `fsqrt.s` - f32 arithmetic
-- `feq.s`, `flt.s`, `fle.s` - f32 comparisons
-- `fcvt.w.s`, `fcvt.wu.s`, `fcvt.s.w`, `fcvt.s.wu` - f32 ↔ int conversions
-- `fadd.d`, `fsub.d`, `fmul.d`, `fdiv.d`, `fsqrt.d` - f64 arithmetic (register pairs)
-- `feq.d`, `flt.d`, `fle.d` - f64 comparisons
-- `fcvt.w.d`, `fcvt.wu.d`, `fcvt.d.w`, `fcvt.d.wu` - f64 ↔ int conversions
-- `fcvt.s.d`, `fcvt.d.s` - f32 ↔ f64 conversions
-
 ### Special Instructions
+
 - `nop` - No operation
 - `yield` - Waste cycles
 - `debug` - Output character in rs1
@@ -111,6 +109,7 @@ Following RISC-V/GNU conventions:
 
 ### Automatic Compact Mode
 The linker automatically detects small programs and creates ultra-compact layouts:
+
 - **Tiny programs**: As small as 9KB total (4KB code + 4KB heap + 1KB stack)
 - **Page-aligned**: 4KB boundaries for hardware memory protection
 - **Configurable**: Full control with `--code-size`, `--stack-size`, etc.
@@ -192,20 +191,20 @@ int main() {
 
 ## Current Status
 
-- ✅ **Complete toolchain** - C → LLVM IR → Assembly → Object → Linked Executable
-- ✅ **Native Clang target** - `-target slow32-unknown-none` (single dash)
-- ✅ **All optimization levels** - -O0, -O1, -O2 fully working
-- ✅ **CPU emulator** - ~350M inst/sec (interpreter), ~5.8B inst/sec (DBT) with W^X protection
-- ✅ **Assembler** - Two-pass with labels, relocations, standard directives
-- ✅ **Linker** - Symbol resolution, HI20/LO12 relocations, proper archives
-- ✅ **LLVM backend** - PHI nodes, intrinsics, varargs, jump tables, 64-bit integers
-- ✅ **Runtime** - crt0, printf with varargs, memcpy/memset, 64-bit builtins
-- ✅ **IEEE 754 floating-point** - f32 and f64 via hardware FP instructions + software dtoa/printf(%f/%e/%g)
-- ✅ **Regression tests** - All 46/46 passing
-- ✅ **Tools** - objdump for object files, exedump for executables  
+✅ **Complete toolchain** - C → LLVM IR → Assembly → Object → Linked Executable
+✅ **Native Clang target** - `-target slow32-unknown-none` (single dash)
+✅ **All optimization levels** - -O0, -O1, -O2 fully working
+✅ **CPU emulator** - ~350M instructions/second with W^X protection
+✅ **Assembler** - Two-pass with labels, relocations, standard directives
+✅ **Linker** - Symbol resolution, HI20/LO12 relocations, proper archives
+✅ **LLVM backend** - PHI nodes, intrinsics, varargs, jump tables, 64-bit integers
+✅ **Runtime** - crt0, printf with varargs, memcpy/memset, 64-bit builtins
+✅ **Regression tests** - All 23/23 passing
+✅ **Tools** - objdump for object files, exedump for executables  
 
 ## Known Limitations
 
+- No floating point support (soft-float not implemented)
 - No scanf/sscanf (declared but not implemented)
 - See `docs/IMPROVEMENTS.md` for detailed issues and fixes
 
