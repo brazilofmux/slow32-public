@@ -6,16 +6,13 @@
 #include <stdbool.h>
 #include <getopt.h>
 #include "../../common/s32_formats.h"
+#include "../../common/s32_hashtable.h"
 
 #define MAX_LINE 65536
 #define MAX_TOKENS 512
 #define MAX_TOKEN_LEN 16384
-#define MAX_LABELS 65536
 #define INITIAL_INSTRUCTION_CAPACITY 65536
 #define MAX_DATA_SIZE (1024 * 1024)  // 1MB max data section
-#define MAX_RELOCATIONS 65536
-#define MAX_STRING_TABLE (512 * 1024) // 512KB string table
-#define MAX_LABEL_DIFFS 8192
 #define MAX_SYMBOL_LEN 256
 
 static void copy_string(char *dst, size_t dst_size, const char *src) {
@@ -309,13 +306,22 @@ typedef struct {
 } instruction_t;
 
 typedef struct {
-    label_t labels[MAX_LABELS];
+    int instruction_index;
+    char plus_symbol[MAX_SYMBOL_LEN];
+    char minus_symbol[MAX_SYMBOL_LEN];
+    int32_t addend;
+} label_diff_t;
+
+typedef struct {
+    label_t *labels;
     int num_labels;
+    int labels_cap;
     instruction_t *instructions;  // Dynamically allocated
     int instructions_capacity;    // Current capacity
     int num_instructions;
-    relocation_t relocations[MAX_RELOCATIONS];
+    relocation_t *relocations;
     int num_relocations;
+    int relocations_cap;
     uint32_t current_addr;
     section_t current_section;  // Track current section during assembly
     uint32_t code_size;         // Size of code section
@@ -325,19 +331,20 @@ typedef struct {
     uint32_t init_array_size;   // Size of init_array section
     uint32_t data_start_addr;   // Starting address of data section (0x100000)
     bool generate_object;       // True for object file, false for executable
-    
+
     // Label-difference fixups (resolved after all labels are defined)
-    struct {
-        int instruction_index;       // which instruction slot to patch
-        char plus_symbol[MAX_SYMBOL_LEN];    // positive label
-        char minus_symbol[MAX_SYMBOL_LEN];   // negative label
-        int32_t addend;              // constant addend
-    } label_diffs[MAX_LABEL_DIFFS];
+    label_diff_t *label_diffs;
     int num_label_diffs;
+    int label_diffs_cap;
 
     // String table
-    char string_table[MAX_STRING_TABLE];
+    char *string_table;
     uint32_t string_table_size;
+    uint32_t string_table_cap;
+
+    // Hash tables for O(1) lookups
+    s32_hashmap_t label_map;
+    s32_hashmap_t string_map;
 } assembler_t;
 
 typedef enum {
@@ -588,20 +595,25 @@ static instruction_def_t *find_instruction(const char *mnemonic) {
 }
 
 static void add_label(assembler_t *as, const char *name, uint32_t addr) {
-    if (as->num_labels >= MAX_LABELS) {
-        fprintf(stderr, "Error: too many labels (max %d)\n", MAX_LABELS);
-        exit(1);
-    }
     if (strlen(name) >= MAX_SYMBOL_LEN) {
         fprintf(stderr, "Error: symbol name too long (%zu bytes, max %d): '%.40s...'\n",
                 strlen(name), MAX_SYMBOL_LEN - 1, name);
         exit(1);
+    }
+    void *old = as->labels;
+    DARR_PUSH(as->labels, as->num_labels, as->labels_cap, label_t);
+    if (as->labels != old) {
+        // Buffer moved — rebuild hashmap with new pointers
+        s32_hashmap_clear(&as->label_map);
+        for (int i = 0; i < as->num_labels; i++)
+            s32_hashmap_put(&as->label_map, as->labels[i].name, i);
     }
     copy_string(as->labels[as->num_labels].name, MAX_SYMBOL_LEN, name);
     as->labels[as->num_labels].address = addr;
     as->labels[as->num_labels].section = as->current_section;
     as->labels[as->num_labels].is_global = false;  // Default to local
     as->labels[as->num_labels].is_defined = true;
+    s32_hashmap_put(&as->label_map, as->labels[as->num_labels].name, as->num_labels);
     as->num_labels++;
 }
 
@@ -610,38 +622,42 @@ static uint32_t add_string(assembler_t *as, const char *str) {
     if (str == NULL || *str == '\0') {
         return 0;  // Empty string at offset 0
     }
-    
-    // Check if string already exists
-    uint32_t offset = 1;  // Skip null at beginning
-    while (offset < as->string_table_size) {
-        if (strcmp(&as->string_table[offset], str) == 0) {
-            return offset;
-        }
-        offset += strlen(&as->string_table[offset]) + 1;
-    }
-    
-    // Add new string
+
+    // Check if string already exists via hashmap
+    int existing = s32_hashmap_get(&as->string_map, str);
+    if (existing >= 0) return (uint32_t)existing;
+
+    // Add new string — grow buffer if needed
     size_t len = strlen(str) + 1;
-    if (as->string_table_size + len > MAX_STRING_TABLE) {
-        fprintf(stderr, "Error: string table overflow (max %d bytes)\n", MAX_STRING_TABLE);
-        exit(1);
+    while (as->string_table_size + len > as->string_table_cap) {
+        uint32_t new_cap = as->string_table_cap ? as->string_table_cap * 2 : 4096;
+        char *old = as->string_table;
+        as->string_table = (char *)realloc(as->string_table, new_cap);
+        as->string_table_cap = new_cap;
+        if (as->string_table != old) {
+            // Buffer moved — rebuild string_map with new pointers
+            s32_hashmap_clear(&as->string_map);
+            uint32_t off = 1;
+            while (off < as->string_table_size) {
+                s32_hashmap_put(&as->string_map, &as->string_table[off], (int)off);
+                off += strlen(&as->string_table[off]) + 1;
+            }
+        }
     }
-    
-    offset = as->string_table_size;
-    strcpy(&as->string_table[offset], str);
-    as->string_table_size += len;
-    
+
+    uint32_t offset = as->string_table_size;
+    memcpy(&as->string_table[offset], str, len);
+    as->string_table_size += (uint32_t)len;
+    s32_hashmap_put(&as->string_map, &as->string_table[offset], (int)offset);
+
     return offset;
 }
 
 // Add a relocation
 static void add_relocation(assembler_t *as, uint32_t offset, const char *symbol,
                            uint32_t type, int32_t addend, section_t section) {
-    if (as->num_relocations >= MAX_RELOCATIONS) {
-        fprintf(stderr, "Error: too many relocations (max %d)\n", MAX_RELOCATIONS);
-        exit(1);
-    }
-    
+    DARR_PUSH(as->relocations, as->num_relocations, as->relocations_cap, relocation_t);
+
     relocation_t *rel = &as->relocations[as->num_relocations++];
     rel->offset = offset;
     strncpy(rel->symbol, symbol, sizeof(rel->symbol) - 1);
@@ -652,12 +668,7 @@ static void add_relocation(assembler_t *as, uint32_t offset, const char *symbol,
 }
 
 static int find_label_index(assembler_t *as, const char *name) {
-    for (int i = 0; i < as->num_labels; i++) {
-        if (strcmp(as->labels[i].name, name) == 0) {
-            return i;
-        }
-    }
-    return -1;
+    return s32_hashmap_get(&as->label_map, name);
 }
 
 static label_t *find_label(assembler_t *as, const char *name) {
@@ -972,10 +983,7 @@ static bool assemble_line(assembler_t *as, char *line) {
                 if (res.has_symbol && res.has_minus_symbol) {
                     // Label difference: sym - minus_sym + val
                     // Store placeholder, resolve after all labels defined
-                    if (as->num_label_diffs >= MAX_LABEL_DIFFS) {
-                        fprintf(stderr, "Too many label-difference fixups\n");
-                        return false;
-                    }
+                    DARR_PUSH(as->label_diffs, as->num_label_diffs, as->label_diffs_cap, label_diff_t);
                     ensure_instruction_capacity(as, 1);
                     int idx = as->num_instructions;
                     as->instructions[idx].instruction = 0;  // placeholder
@@ -1980,6 +1988,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
     // Initialize string table with empty string at offset 0
     as->string_table[0] = '\0';
     as->string_table_size = 1;
+    s32_hashmap_clear(&as->string_map);
     
     // Count sections and add section names to string table
     int num_sections = 0;
@@ -2028,58 +2037,39 @@ static int write_object_file(assembler_t *as, const char *filename) {
     if (as->bss_size > 0) section_map[SECTION_BSS] = output_section_idx++;
     if (as->init_array_size > 0) section_map[SECTION_INIT_ARRAY] = output_section_idx++;
     
-    // Build symbol table (heap-allocated to avoid ~640KB stack usage)
+    // Build symbol table (dynamically grown)
     int num_symbols = 0;
-    s32o_symbol_t *symbols = malloc(MAX_LABELS * sizeof(s32o_symbol_t));
-    if (!symbols) {
-        fprintf(stderr, "Memory allocation failed for symbol table\n");
-        fclose(f);
-        return -1;
-    }
+    int symbols_cap = 0;
+    s32o_symbol_t *symbols = NULL;
+    s32_hashmap_t sym_dedup;
+    s32_hashmap_init(&sym_dedup, 256);
 
     // 1) Add all global labels
     for (int i = 0; i < as->num_labels; i++) {
         if (!as->labels[i].is_global) continue;
-        if (num_symbols >= MAX_LABELS) {
-            fprintf(stderr, "Too many symbols (max %d)\n", MAX_LABELS);
-            free(symbols);
-            fclose(f);
-            return -1;
-        }
 
+        DARR_PUSH(symbols, num_symbols, symbols_cap, s32o_symbol_t);
         symbols[num_symbols].name_offset = add_string(as, as->labels[i].name);
         symbols[num_symbols].value = as->labels[i].address;
         symbols[num_symbols].section = section_map[as->labels[i].section];
         symbols[num_symbols].type = S32O_SYM_NOTYPE;
         symbols[num_symbols].binding = S32O_BIND_GLOBAL;
         symbols[num_symbols].size = 0;
+        s32_hashmap_put(&sym_dedup, as->labels[i].name, num_symbols);
         num_symbols++;
     }
-    
+
     // 2) Ensure every relocation target has a symtab entry:
     //    - if it's a defined local label in this file -> add as LOCAL/defined
     //    - otherwise -> add as GLOBAL/undefined (linker will resolve)
     for (int i = 0; i < as->num_relocations; i++) {
         const char *sym = as->relocations[i].symbol;
         if (!sym || !sym[0]) continue;
-        
+
         // Already present?
-        bool present = false;
-        for (int j = 0; j < num_symbols; j++) {
-            const char *sym_name = &as->string_table[symbols[j].name_offset];
-            if (strcmp(sym_name, sym) == 0) {
-                present = true;
-                break;
-            }
-        }
-        if (present) continue;
-        
-        if (num_symbols >= MAX_LABELS) {
-            fprintf(stderr, "Too many symbols (max %d)\n", MAX_LABELS);
-            free(symbols);
-            fclose(f);
-            return -1;
-        }
+        if (s32_hashmap_get(&sym_dedup, sym) >= 0) continue;
+
+        DARR_PUSH(symbols, num_symbols, symbols_cap, s32o_symbol_t);
 
         // Is it a defined label in this object (likely a local .L*)?
         int lbl = find_label_index(as, sym);
@@ -2090,7 +2080,6 @@ static int write_object_file(assembler_t *as, const char *filename) {
             symbols[num_symbols].type = S32O_SYM_NOTYPE;
             symbols[num_symbols].binding = S32O_BIND_LOCAL;
             symbols[num_symbols].size = 0;
-            num_symbols++;
         } else {
             // treat as undefined, let the linker resolve from other objects
             symbols[num_symbols].name_offset = add_string(as, sym);
@@ -2099,8 +2088,9 @@ static int write_object_file(assembler_t *as, const char *filename) {
             symbols[num_symbols].type = S32O_SYM_NOTYPE;
             symbols[num_symbols].binding = S32O_BIND_GLOBAL;
             symbols[num_symbols].size = 0;
-            num_symbols++;
         }
+        s32_hashmap_put(&sym_dedup, sym, num_symbols);
+        num_symbols++;
     }
     
     // Calculate file layout
@@ -2266,14 +2256,8 @@ static int write_object_file(assembler_t *as, const char *filename) {
             reloc.addend = as->relocations[i].addend;
             
             // Find symbol index
-            reloc.symbol = 0;
-            for (int j = 0; j < num_symbols; j++) {
-                const char *sym_name = &as->string_table[symbols[j].name_offset];
-                if (strcmp(sym_name, as->relocations[i].symbol) == 0) {
-                    reloc.symbol = j;
-                    break;
-                }
-            }
+            int sym_idx = s32_hashmap_get(&sym_dedup, as->relocations[i].symbol);
+            reloc.symbol = (sym_idx >= 0) ? (uint32_t)sym_idx : 0;
             
             fwrite(&reloc, sizeof(reloc), 1, f);
         }
@@ -2356,6 +2340,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
     
     fclose(f);
     free(symbols);
+    s32_hashmap_free(&sym_dedup);
 
     printf("Generated object file: %s\n", filename);
     printf("  Sections: %d\n", num_sections);
@@ -2429,6 +2414,12 @@ int main(int argc, char *argv[]) {
         free(asp);
         return 1;
     }
+    // Init dynamic string table
+    as.string_table_cap = 4096;
+    as.string_table = (char *)calloc(1, as.string_table_cap);
+    // Init hashmaps
+    s32_hashmap_init(&as.label_map, 256);
+    s32_hashmap_init(&as.string_map, 256);
     as.current_section = SECTION_CODE;  // Start in code section
     // Object files use section-relative addresses
     as.data_start_addr = 0;
@@ -2558,12 +2549,24 @@ int main(int argc, char *argv[]) {
     
     if (label_error) {
         free(as.instructions);
+        free(as.labels);
+        free(as.relocations);
+        free(as.label_diffs);
+        free(as.string_table);
+        s32_hashmap_free(&as.label_map);
+        s32_hashmap_free(&as.string_map);
         free(as_ptr);
         return 1;
     }
 
     int result = write_object_file(&as, output_file);
     free(as.instructions);
+    free(as.labels);
+    free(as.relocations);
+    free(as.label_diffs);
+    free(as.string_table);
+    s32_hashmap_free(&as.label_map);
+    s32_hashmap_free(&as.string_map);
     free(as_ptr);
     #undef as
     return result;

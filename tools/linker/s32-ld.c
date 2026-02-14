@@ -9,6 +9,7 @@
 #include <assert.h>
 #include "../../common/s32_formats.h"
 #include "../../common/s32a_format.h"
+#include "../../common/s32_hashtable.h"
 
 static void copy_string(char *dst, size_t dst_size, const char *src) {
     if (dst_size == 0) return;
@@ -17,12 +18,8 @@ static void copy_string(char *dst, size_t dst_size, const char *src) {
 }
 
 // Configuration
-#define MAX_INPUT_FILES 100
-#define MAX_SECTIONS 2000
-#define MAX_SYMBOLS 65536
-#define MAX_RELOCATIONS 65536
-#define STRING_TABLE_SIZE (512 * 1024)
 #define MAX_LIB_PATHS 32
+#define LINKER_DEFINED_FILE (-2)
 
 // Default memory layout
 #define DEFAULT_CODE_BASE    0x00000000
@@ -46,9 +43,17 @@ typedef struct {
     s32o_symbol_t *symbols;
     s32o_reloc_t *relocations;
     char *string_table;
-    uint32_t section_base[MAX_SECTIONS];  // Where each section gets placed
+    uint32_t *section_base;  // Where each section gets placed (allocated per file)
     uint8_t **section_data;  // Section data for archive members (NULL for regular files)
 } input_file_t;
+
+// Section part (contribution from one input file)
+typedef struct {
+    int file_idx;
+    int section_idx;
+    uint32_t offset;  // Offset within combined section
+    uint32_t size;
+} section_part_t;
 
 // Combined section information
 typedef struct {
@@ -59,15 +64,11 @@ typedef struct {
     uint32_t size;       // Total size
     uint32_t align;      // Required alignment
     uint8_t *data;       // Combined section data
-    
+
     // Track which parts come from which files
-    struct {
-        int file_idx;
-        int section_idx;
-        uint32_t offset;  // Offset within combined section
-        uint32_t size;
-    } parts[MAX_INPUT_FILES];
+    section_part_t *parts;
     int num_parts;
+    int parts_cap;
 } combined_section_t;
 
 // Symbol table entry
@@ -96,21 +97,31 @@ typedef struct {
 
 // Linker state
 typedef struct {
-    input_file_t input_files[MAX_INPUT_FILES];
+    input_file_t *input_files;
     int num_input_files;
-    
-    combined_section_t sections[MAX_SECTIONS];
+    int input_files_cap;
+
+    combined_section_t *sections;
     int num_sections;
-    
-    symbol_entry_t symbols[MAX_SYMBOLS];
+    int sections_cap;
+
+    symbol_entry_t *symbols;
     int num_symbols;
-    
-    relocation_entry_t relocations[MAX_RELOCATIONS];
+    int symbols_cap;
+
+    relocation_entry_t *relocations;
     int num_relocations;
-    
-    char string_table[STRING_TABLE_SIZE];
+    int relocations_cap;
+
+    char *string_table;
     uint32_t string_table_size;
-    
+    uint32_t string_table_cap;
+
+    // Hash tables for O(1) lookups
+    s32_hashmap_t symbol_map;
+    s32_hashmap_t section_map;
+    s32_hashmap_t string_dedup_map;
+
     // Memory layout
     uint32_t entry_point;
     uint32_t code_base;
@@ -130,7 +141,7 @@ typedef struct {
     uint32_t heap_size;     // Optional heap size before MMIO
     uint32_t mmio_base;
     uint32_t mmio_size;
-    
+
     // Options
     bool verbose;
     bool strip_symbols;
@@ -141,7 +152,7 @@ typedef struct {
     const char *output_file;
     const char *entry_symbol;
     const char *map_file;   // Memory map output file
-    
+
     // Library search paths
     const char *lib_paths[MAX_LIB_PATHS];
     int num_lib_paths;
@@ -150,26 +161,33 @@ typedef struct {
 // String table management
 static uint32_t add_string(linker_state_t *ld, const char *str) {
     if (!str || !*str) return 0;
-    
-    // Check if string already exists
-    uint32_t offset = 1;
-    while (offset < ld->string_table_size) {
-        if (strcmp(&ld->string_table[offset], str) == 0) {
-            return offset;
-        }
-        offset += strlen(&ld->string_table[offset]) + 1;
-    }
-    
-    // Add new string
-    uint32_t new_offset = ld->string_table_size;
+
+    // Check if string already exists via hashmap
+    int existing = s32_hashmap_get(&ld->string_dedup_map, str);
+    if (existing >= 0) return (uint32_t)existing;
+
+    // Add new string — grow buffer if needed
     size_t len = strlen(str) + 1;
-    if (new_offset + len > STRING_TABLE_SIZE) {
-        fprintf(stderr, "Error: String table overflow\n");
-        exit(1);
+    while (ld->string_table_size + len > ld->string_table_cap) {
+        uint32_t new_cap = ld->string_table_cap ? ld->string_table_cap * 2 : 4096;
+        char *old = ld->string_table;
+        ld->string_table = (char *)realloc(ld->string_table, new_cap);
+        ld->string_table_cap = new_cap;
+        if (ld->string_table != old) {
+            // Buffer moved — rebuild string_dedup_map with new pointers
+            s32_hashmap_clear(&ld->string_dedup_map);
+            uint32_t off = 1;
+            while (off < ld->string_table_size) {
+                s32_hashmap_put(&ld->string_dedup_map, &ld->string_table[off], (int)off);
+                off += strlen(&ld->string_table[off]) + 1;
+            }
+        }
     }
-    
-    strcpy(&ld->string_table[new_offset], str);
-    ld->string_table_size += len;
+
+    uint32_t new_offset = ld->string_table_size;
+    memcpy(&ld->string_table[new_offset], str, len);
+    ld->string_table_size += (uint32_t)len;
+    s32_hashmap_put(&ld->string_dedup_map, &ld->string_table[new_offset], (int)new_offset);
     return new_offset;
 }
 
@@ -187,13 +205,10 @@ static const char *safe_string(const input_file_t *inf, uint32_t offset) {
 static bool load_object_file(linker_state_t *ld, const char *filename);
 
 // Load an object file from memory (for archive members)
-static bool load_object_from_memory(linker_state_t *ld, const char *filename, 
+static bool load_object_from_memory(linker_state_t *ld, const char *filename,
                                    uint8_t *data, size_t size) {
-    if (ld->num_input_files >= MAX_INPUT_FILES) {
-        fprintf(stderr, "Error: Too many input files\n");
-        return false;
-    }
-    
+    DARR_PUSH(ld->input_files, ld->num_input_files, ld->input_files_cap, input_file_t);
+
     input_file_t *inf = &ld->input_files[ld->num_input_files];
     inf->filename = strdup(filename);
     inf->file = NULL;  // No file handle for archive members
@@ -226,6 +241,9 @@ static bool load_object_from_memory(linker_state_t *ld, const char *filename,
     inf->sections = calloc(inf->header.nsections, sizeof(s32o_section_t));
     memcpy(inf->sections, data + inf->header.sec_offset,
            inf->header.nsections * sizeof(s32o_section_t));
+
+    // Allocate section_base array (sized to this file's sections)
+    inf->section_base = calloc(inf->header.nsections, sizeof(uint32_t));
 
     // Allocate and copy symbols
     inf->symbols = calloc(inf->header.nsymbols, sizeof(s32o_symbol_t));
@@ -471,11 +489,8 @@ static bool load_archive_file(linker_state_t *ld, const char *filename) {
 
 // Load a single object file
 static bool load_object_file(linker_state_t *ld, const char *filename) {
-    if (ld->num_input_files >= MAX_INPUT_FILES) {
-        fprintf(stderr, "Error: Too many input files\n");
-        return false;
-    }
-    
+    DARR_PUSH(ld->input_files, ld->num_input_files, ld->input_files_cap, input_file_t);
+
     input_file_t *inf = &ld->input_files[ld->num_input_files];
     inf->filename = filename;
     
@@ -506,7 +521,10 @@ static bool load_object_file(linker_state_t *ld, const char *filename) {
         fprintf(stderr, "Error: Failed to read sections from %s\n", filename);
         return false;
     }
-    
+
+    // Allocate section_base array (sized to this file's sections)
+    inf->section_base = calloc(inf->header.nsections, sizeof(uint32_t));
+
     // Allocate and read symbols
     inf->symbols = calloc(inf->header.nsymbols, sizeof(s32o_symbol_t));
     fseek(inf->file, inf->header.sym_offset, SEEK_SET);
@@ -579,26 +597,29 @@ static int find_or_create_section(linker_state_t *ld, const char *name,
     // Merge subsections: ".bss.n_foo" -> ".bss", ".text.n_bar" -> ".text", etc.
     const char *merged_name = canonical_section_name(name);
 
-    // Look for existing section with same (canonical) name
-    for (int i = 0; i < ld->num_sections; i++) {
-        if (strcmp(ld->sections[i].name, merged_name) == 0) {
-            // Verify compatible type and flags
-            if (ld->sections[i].type != type) {
-                fprintf(stderr, "Error: Section '%s' has conflicting types\n", name);
-                exit(1);
-            }
-            // Update alignment to maximum required
-            if (align > ld->sections[i].align) {
-                ld->sections[i].align = align;
-            }
-            return i;
+    // Look for existing section via hashmap
+    int existing = s32_hashmap_get(&ld->section_map, merged_name);
+    if (existing >= 0) {
+        // Verify compatible type and flags
+        if (ld->sections[existing].type != type) {
+            fprintf(stderr, "Error: Section '%s' has conflicting types\n", name);
+            exit(1);
         }
+        // Update alignment to maximum required
+        if (align > ld->sections[existing].align) {
+            ld->sections[existing].align = align;
+        }
+        return existing;
     }
 
     // Create new section using the canonical name
-    if (ld->num_sections >= MAX_SECTIONS) {
-        fprintf(stderr, "Error: Too many sections\n");
-        exit(1);
+    void *old = ld->sections;
+    DARR_PUSH(ld->sections, ld->num_sections, ld->sections_cap, combined_section_t);
+    if (ld->sections != old) {
+        // Buffer moved — rebuild section_map with new name pointers
+        s32_hashmap_clear(&ld->section_map);
+        for (int i = 0; i < ld->num_sections; i++)
+            s32_hashmap_put(&ld->section_map, ld->sections[i].name, i);
     }
 
     combined_section_t *sec = &ld->sections[ld->num_sections];
@@ -608,8 +629,11 @@ static int find_or_create_section(linker_state_t *ld, const char *name,
     sec->align = align;
     sec->size = 0;
     sec->num_parts = 0;
+    sec->parts_cap = 0;
+    sec->parts = NULL;
     sec->data = NULL;
 
+    s32_hashmap_put(&ld->section_map, sec->name, ld->num_sections);
     return ld->num_sections++;
 }
 
@@ -636,13 +660,9 @@ static void merge_sections(linker_state_t *ld) {
             
             // Record where this input section goes
             inf->section_base[s] = aligned_offset;
-            
+
             // Add to combined section
-            if (csec->num_parts >= MAX_INPUT_FILES) {
-                fprintf(stderr, "Error: Too many parts in section '%s' (max %d)\n",
-                        csec->name, MAX_INPUT_FILES);
-                exit(1);
-            }
+            DARR_PUSH(csec->parts, csec->num_parts, csec->parts_cap, section_part_t);
             csec->parts[csec->num_parts].file_idx = f;
             csec->parts[csec->num_parts].section_idx = s;
             csec->parts[csec->num_parts].offset = aligned_offset;
@@ -666,7 +686,6 @@ static void merge_sections(linker_state_t *ld) {
 
 // Forward declarations for helper functions
 static bool symbol_referenced_in_file(const input_file_t *inf, uint32_t sym_index);
-static int find_combined_section_index_by_name(combined_section_t *sections, int nsecs, const char *name);
 static int find_reloc_at(linker_state_t *ld, int file_idx, int section_idx, uint32_t offset);
 
 // Build combined symbol table
@@ -686,14 +705,8 @@ static void build_symbol_table(linker_state_t *ld) {
                 }
             }
             
-            // Look for existing symbol
-            int existing = -1;
-            for (int i = 0; i < ld->num_symbols; i++) {
-                if (strcmp(ld->symbols[i].name, name) == 0) {
-                    existing = i;
-                    break;
-                }
-            }
+            // Look for existing symbol via hashmap
+            int existing = s32_hashmap_get(&ld->symbol_map, name);
             
             if (existing >= 0) {
                 // Symbol already exists - check for conflicts
@@ -727,24 +740,24 @@ static void build_symbol_table(linker_state_t *ld) {
                         if (isym->section > 0 && isym->section <= inf->header.nsections) {
                             const char *sec_name = canonical_section_name(
                                 safe_string(inf, inf->sections[isym->section - 1].name_offset));
-                            for (int cs = 0; cs < ld->num_sections; cs++) {
-                                if (strcmp(ld->sections[cs].name, sec_name) == 0) {
-                                    esym->section_idx = cs;
-                                    break;
-                                }
-                            }
+                            int cs = s32_hashmap_get(&ld->section_map, sec_name);
+                            if (cs >= 0) esym->section_idx = cs;
                         }
                     }
                 }
             } else {
                 // New symbol
-                if (ld->num_symbols >= MAX_SYMBOLS) {
-                    fprintf(stderr, "Error: Too many symbols\n");
-                    exit(1);
+                void *old_syms = ld->symbols;
+                DARR_PUSH(ld->symbols, ld->num_symbols, ld->symbols_cap, symbol_entry_t);
+                if (ld->symbols != old_syms) {
+                    // Buffer moved — rebuild symbol_map
+                    s32_hashmap_clear(&ld->symbol_map);
+                    for (int si = 0; si < ld->num_symbols; si++)
+                        s32_hashmap_put(&ld->symbol_map, ld->symbols[si].name, si);
                 }
-                
+
                 symbol_entry_t *nsym = &ld->symbols[ld->num_symbols];
-                
+
                 // For local symbols, create unique name to prevent collisions
                 if (isym->binding == S32O_BIND_LOCAL) {
                     snprintf(nsym->name, sizeof(nsym->name), "%s@%d", name, f);
@@ -755,7 +768,7 @@ static void build_symbol_table(linker_state_t *ld) {
                 nsym->binding = isym->binding;
                 nsym->size = isym->size;
                 nsym->is_weak = (isym->binding == S32O_BIND_WEAK);
-                
+
                 if (isym->section == 0) {
                     // Undefined symbol
                     nsym->defined_in_file = -1;
@@ -770,7 +783,7 @@ static void build_symbol_table(linker_state_t *ld) {
                                isym->value + inf->section_base[isym->section - 1]);
                     }
                     nsym->value = isym->value + inf->section_base[isym->section - 1];
-                    
+
                     // Find combined section (use canonical name for subsection merging)
                     if (isym->section <= inf->header.nsections) {
                         const char *sec_name = canonical_section_name(
@@ -778,18 +791,17 @@ static void build_symbol_table(linker_state_t *ld) {
                         if (ld->verbose) {
                             printf("  Symbol section %d -> section name '%s'\n", isym->section, sec_name);
                         }
-                        for (int cs = 0; cs < ld->num_sections; cs++) {
-                            if (strcmp(ld->sections[cs].name, sec_name) == 0) {
-                                nsym->section_idx = cs;
-                                if (ld->verbose) {
-                                    printf("  -> combined section %d\n", cs);
-                                }
-                                break;
+                        int cs = s32_hashmap_get(&ld->section_map, sec_name);
+                        if (cs >= 0) {
+                            nsym->section_idx = cs;
+                            if (ld->verbose) {
+                                printf("  -> combined section %d\n", cs);
                             }
                         }
                     }
                 }
-                
+
+                s32_hashmap_put(&ld->symbol_map, nsym->name, ld->num_symbols);
                 ld->num_symbols++;
             }
         }
@@ -799,7 +811,7 @@ static void build_symbol_table(linker_state_t *ld) {
         printf("Symbol table: %d symbols\n", ld->num_symbols);
         int undefined = 0;
         for (int i = 0; i < ld->num_symbols; i++) {
-            if (ld->symbols[i].defined_in_file < 0) undefined++;
+            if (ld->symbols[i].defined_in_file == -1) undefined++;
         }
         if (undefined > 0) {
             printf("  Warning: %d undefined symbols\n", undefined);
@@ -1133,33 +1145,36 @@ static void inject_memory_map_symbols(linker_state_t *ld) {
     
     for (int i = 0; special_symbols[i].name != NULL; i++) {
         // Check if symbol already exists (user might have defined it)
-        bool found = false;
-        for (int s = 0; s < ld->num_symbols; s++) {
-            if (strcmp(ld->symbols[s].name, special_symbols[i].name) == 0) {
-                // Update existing symbol if it was undefined
-                if (ld->symbols[s].defined_in_file < 0) {
-                    ld->symbols[s].value = special_symbols[i].value;
-                    ld->symbols[s].defined_in_file = MAX_INPUT_FILES;  // Special marker for linker-defined
-                    ld->symbols[s].type = 0;  // NOTYPE
-                    ld->symbols[s].binding = 1;  // GLOBAL
-                }
-                found = true;
-                break;
+        int s = s32_hashmap_get(&ld->symbol_map, special_symbols[i].name);
+        if (s >= 0) {
+            // Update existing symbol if it was undefined
+            if (ld->symbols[s].defined_in_file < 0) {
+                ld->symbols[s].value = special_symbols[i].value;
+                ld->symbols[s].defined_in_file = LINKER_DEFINED_FILE;
+                ld->symbols[s].type = 0;  // NOTYPE
+                ld->symbols[s].binding = 1;  // GLOBAL
             }
-        }
-        
-        // Add new symbol if not found
-        if (!found && ld->num_symbols < MAX_SYMBOLS) {
-            symbol_entry_t *sym = &ld->symbols[ld->num_symbols++];
+        } else {
+            // Add new symbol
+            void *old_syms = ld->symbols;
+            DARR_PUSH(ld->symbols, ld->num_symbols, ld->symbols_cap, symbol_entry_t);
+            if (ld->symbols != old_syms) {
+                s32_hashmap_clear(&ld->symbol_map);
+                for (int si = 0; si < ld->num_symbols; si++)
+                    s32_hashmap_put(&ld->symbol_map, ld->symbols[si].name, si);
+            }
+            symbol_entry_t *sym = &ld->symbols[ld->num_symbols];
             copy_string(sym->name, sizeof(sym->name), special_symbols[i].name);
             sym->value = special_symbols[i].value;
             sym->size = 0;
             sym->type = 0;  // NOTYPE
             sym->binding = 1;  // GLOBAL
-            sym->defined_in_file = MAX_INPUT_FILES;  // Linker-defined
+            sym->defined_in_file = LINKER_DEFINED_FILE;
             sym->section_idx = -1;
             sym->is_weak = false;
-            sym->is_used = false;  // Will be set true if referenced
+            sym->is_used = false;
+            s32_hashmap_put(&ld->symbol_map, sym->name, ld->num_symbols);
+            ld->num_symbols++;
         }
     }
     
@@ -1193,31 +1208,34 @@ static void inject_init_array_symbols(linker_state_t *ld) {
     };
 
     for (int i = 0; init_symbols[i].name != NULL; i++) {
-        bool found = false;
-        for (int s = 0; s < ld->num_symbols; s++) {
-            if (strcmp(ld->symbols[s].name, init_symbols[i].name) == 0) {
-                if (ld->symbols[s].defined_in_file < 0) {
-                    ld->symbols[s].value = init_symbols[i].value;
-                    ld->symbols[s].defined_in_file = MAX_INPUT_FILES;
-                    ld->symbols[s].type = 0;
-                    ld->symbols[s].binding = 1;
-                }
-                found = true;
-                break;
+        int s = s32_hashmap_get(&ld->symbol_map, init_symbols[i].name);
+        if (s >= 0) {
+            if (ld->symbols[s].defined_in_file < 0) {
+                ld->symbols[s].value = init_symbols[i].value;
+                ld->symbols[s].defined_in_file = LINKER_DEFINED_FILE;
+                ld->symbols[s].type = 0;
+                ld->symbols[s].binding = 1;
             }
-        }
-
-        if (!found && ld->num_symbols < MAX_SYMBOLS) {
-            symbol_entry_t *sym = &ld->symbols[ld->num_symbols++];
+        } else {
+            void *old_syms = ld->symbols;
+            DARR_PUSH(ld->symbols, ld->num_symbols, ld->symbols_cap, symbol_entry_t);
+            if (ld->symbols != old_syms) {
+                s32_hashmap_clear(&ld->symbol_map);
+                for (int si = 0; si < ld->num_symbols; si++)
+                    s32_hashmap_put(&ld->symbol_map, ld->symbols[si].name, si);
+            }
+            symbol_entry_t *sym = &ld->symbols[ld->num_symbols];
             copy_string(sym->name, sizeof(sym->name), init_symbols[i].name);
             sym->value = init_symbols[i].value;
             sym->size = 0;
             sym->type = 0;
             sym->binding = 1;
-            sym->defined_in_file = MAX_INPUT_FILES;
+            sym->defined_in_file = LINKER_DEFINED_FILE;
             sym->section_idx = -1;
             sym->is_weak = false;
             sym->is_used = false;
+            s32_hashmap_put(&ld->symbol_map, sym->name, ld->num_symbols);
+            ld->num_symbols++;
         }
     }
 
@@ -1237,26 +1255,23 @@ static void collect_relocations(linker_state_t *ld) {
             s32o_section_t *isec = &inf->sections[s];
             
             for (uint32_t r = 0; r < isec->nrelocs; r++) {
-                if (ld->num_relocations >= MAX_RELOCATIONS) {
-                    fprintf(stderr, "Error: Too many relocations\n");
-                    exit(1);
-                }
-                
+                DARR_PUSH(ld->relocations, ld->num_relocations, ld->relocations_cap, relocation_entry_t);
+
                 relocation_entry_t *rel = &ld->relocations[ld->num_relocations];
                 s32o_reloc_t *irel = &inf->relocations[reloc_idx++];
-                
+
                 rel->file_idx = f;
                 rel->section_idx = s;
                 rel->offset = irel->offset;
                 rel->type = irel->type;
                 rel->addend = irel->addend;
-                
+
                 // Find symbol in combined table
                 rel->symbol_idx = UINT32_MAX; // sentinel
                 if (irel->symbol < inf->header.nsymbols) {
                     const char *sym_name = safe_string(inf,
                         inf->symbols[irel->symbol].name_offset);
-                    
+
                     // For local symbols, create the same unique name used in build_symbol_table
                     char lookup_name[256];
                     if (inf->symbols[irel->symbol].binding == S32O_BIND_LOCAL) {
@@ -1264,20 +1279,21 @@ static void collect_relocations(linker_state_t *ld) {
                     } else {
                         copy_string(lookup_name, sizeof(lookup_name), sym_name);
                     }
-                    
-                    for (int cs = 0; cs < ld->num_symbols; cs++) {
-                        if (strcmp(ld->symbols[cs].name, lookup_name) == 0) {
-                            rel->symbol_idx = cs;
-                            ld->symbols[cs].is_used = true;
-                            break;
-                        }
+
+                    int cs = s32_hashmap_get(&ld->symbol_map, lookup_name);
+                    if (cs >= 0) {
+                        rel->symbol_idx = (uint32_t)cs;
+                        ld->symbols[cs].is_used = true;
                     }
-                    
+
                     // If not found (e.g., stripped local), synthesize a combined symbol
                     if (rel->symbol_idx == UINT32_MAX) {
-                        if (ld->num_symbols >= MAX_SYMBOLS) {
-                            fprintf(stderr, "Error: Too many symbols (while synthesizing '%s')\n", sym_name);
-                            exit(1);
+                        void *old_syms = ld->symbols;
+                        DARR_PUSH(ld->symbols, ld->num_symbols, ld->symbols_cap, symbol_entry_t);
+                        if (ld->symbols != old_syms) {
+                            s32_hashmap_clear(&ld->symbol_map);
+                            for (int si = 0; si < ld->num_symbols; si++)
+                                s32_hashmap_put(&ld->symbol_map, ld->symbols[si].name, si);
                         }
                         s32o_symbol_t *isym = &inf->symbols[irel->symbol];
                         symbol_entry_t *nsym = &ld->symbols[ld->num_symbols];
@@ -1294,9 +1310,10 @@ static void collect_relocations(linker_state_t *ld) {
                         } else {
                             nsym->defined_in_file = f;
                             nsym->value = isym->value + inf->section_base[isym->section - 1];
-                            const char *sec_name = safe_string(inf, inf->sections[isym->section - 1].name_offset);
-                            nsym->section_idx = find_combined_section_index_by_name(ld->sections, ld->num_sections, sec_name);
+                            const char *sec_nm = safe_string(inf, inf->sections[isym->section - 1].name_offset);
+                            nsym->section_idx = s32_hashmap_get(&ld->section_map, sec_nm);
                         }
+                        s32_hashmap_put(&ld->symbol_map, nsym->name, ld->num_symbols);
                         rel->symbol_idx = ld->num_symbols++;
                     }
                 }
@@ -1308,16 +1325,10 @@ static void collect_relocations(linker_state_t *ld) {
                                 : "<out-of-range>");
                     exit(1);
                 }
-                
+
                 // Find combined section
-                const char *sec_name = safe_string(inf, isec->name_offset);
-                rel->combined_section = -1;
-                for (int cs = 0; cs < ld->num_sections; cs++) {
-                    if (strcmp(ld->sections[cs].name, sec_name) == 0) {
-                        rel->combined_section = cs;
-                        break;
-                    }
-                }
+                const char *sec_name = canonical_section_name(safe_string(inf, isec->name_offset));
+                rel->combined_section = s32_hashmap_get(&ld->section_map, sec_name);
                 if (rel->combined_section < 0) {
                     fprintf(stderr, "Error: could not map input section '%s' to a combined section (file %s)\n",
                             sec_name, inf->filename);
@@ -1439,8 +1450,8 @@ static void apply_relocations(linker_state_t *ld) {
         relocation_entry_t *rel = &ld->relocations[i];
         symbol_entry_t *sym = &ld->symbols[rel->symbol_idx];
         
-        // Check if symbol is resolved
-        if (sym->defined_in_file < 0) {
+        // Check if symbol is resolved (-1 = undefined; LINKER_DEFINED_FILE is valid)
+        if (sym->defined_in_file == -1) {
             fprintf(stderr, "Error: Undefined symbol '%s'\n", sym->name);
             unresolved++;
             continue;
@@ -1695,24 +1706,23 @@ static void apply_relocations(linker_state_t *ld) {
 static uint32_t find_entry_point(linker_state_t *ld) {
     // Look for entry symbol (default: _start)
     const char *entry_name = ld->entry_symbol ? ld->entry_symbol : "_start";
-    
-    for (int i = 0; i < ld->num_symbols; i++) {
-        if (strcmp(ld->symbols[i].name, entry_name) == 0) {
-            if (ld->symbols[i].defined_in_file < 0) {
-                fprintf(stderr, "Error: Entry point '%s' is undefined\n", entry_name);
-                exit(1);
-            }
-            uint32_t ep = ld->symbols[i].value;
-            // Verify entry point is within the code section
-            if (ep < ld->code_base || ep >= ld->code_limit) {
-                fprintf(stderr, "Warning: Entry point '%s' at 0x%08X is outside code section [0x%08X-0x%08X]\n",
-                        entry_name, ep, ld->code_base, ld->code_limit);
-            }
-            if (ld->verbose) {
-                printf("Entry point: %s at 0x%08X\n", entry_name, ep);
-            }
-            return ep;
+
+    int i = s32_hashmap_get(&ld->symbol_map, entry_name);
+    if (i >= 0) {
+        if (ld->symbols[i].defined_in_file == -1) {
+            fprintf(stderr, "Error: Entry point '%s' is undefined\n", entry_name);
+            exit(1);
         }
+        uint32_t ep = ld->symbols[i].value;
+        // Verify entry point is within the code section
+        if (ep < ld->code_base || ep >= ld->code_limit) {
+            fprintf(stderr, "Warning: Entry point '%s' at 0x%08X is outside code section [0x%08X-0x%08X]\n",
+                    entry_name, ep, ld->code_base, ld->code_limit);
+        }
+        if (ld->verbose) {
+            printf("Entry point: %s at 0x%08X\n", entry_name, ep);
+        }
+        return ep;
     }
     
     // If no symbol found, use start of code section
@@ -1819,12 +1829,14 @@ static void write_executable(linker_state_t *ld) {
         exit(1);
     }
 
-    // Initialize string table
+    // Initialize string table for output
     ld->string_table[0] = '\0';
     ld->string_table_size = 1;
+    s32_hashmap_clear(&ld->string_dedup_map);
 
-    // Build symbol string table and symbol array (heap-allocated, 256KB)
-    char *sym_strtab = malloc(STRING_TABLE_SIZE);
+    // Build symbol string table and symbol array
+    uint32_t sym_strtab_cap = 4096;
+    char *sym_strtab = malloc(sym_strtab_cap);
     if (!sym_strtab) {
         fprintf(stderr, "Error: Memory allocation failed for symbol string table\n");
         return;
@@ -1837,7 +1849,7 @@ static void write_executable(linker_state_t *ld) {
     if (!ld->strip_symbols) {
         for (int i = 0; i < ld->num_symbols; i++) {
             symbol_entry_t *sym = &ld->symbols[i];
-            if (sym->binding == S32O_BIND_GLOBAL && sym->defined_in_file >= 0) {
+            if (sym->binding == S32O_BIND_GLOBAL && sym->defined_in_file != -1) {
                 max_emit_syms++;
             }
         }
@@ -1847,13 +1859,14 @@ static void write_executable(linker_state_t *ld) {
         int si = 0;
         for (int i = 0; i < ld->num_symbols; i++) {
             symbol_entry_t *sym = &ld->symbols[i];
-            if (sym->binding != S32O_BIND_GLOBAL || sym->defined_in_file < 0)
+            if (sym->binding != S32O_BIND_GLOBAL || sym->defined_in_file == -1)
                 continue;
             // Add name to sym strtab
             uint32_t name_off = sym_strtab_size;
             size_t nlen = strlen(sym->name) + 1;
-            if (name_off + nlen > STRING_TABLE_SIZE) {
-                continue;
+            while (name_off + nlen > sym_strtab_cap) {
+                sym_strtab_cap *= 2;
+                sym_strtab = realloc(sym_strtab, sym_strtab_cap);
             }
             memcpy(&sym_strtab[name_off], sym->name, nlen);
             sym_strtab_size += (uint32_t)nlen;
@@ -1877,7 +1890,7 @@ static void write_executable(linker_state_t *ld) {
     }
 
     // Add section names to string table
-    uint32_t section_name_offsets[MAX_SECTIONS + 2];
+    uint32_t *section_name_offsets = malloc((size_t)(ld->num_sections + 2) * sizeof(uint32_t));
     for (int i = 0; i < ld->num_sections; i++) {
         section_name_offsets[i] = add_string(ld, ld->sections[i].name);
     }
@@ -1898,7 +1911,7 @@ static void write_executable(linker_state_t *ld) {
     offset = (offset + 15) & ~15;
 
     // Assign file offsets to regular sections
-    uint32_t section_offsets[MAX_SECTIONS + 2];
+    uint32_t *section_offsets = malloc((size_t)(ld->num_sections + 2) * sizeof(uint32_t));
     for (int i = 0; i < ld->num_sections; i++) {
         if (ld->sections[i].type == S32_SEC_BSS) {
             section_offsets[i] = 0;  // BSS has no file data
@@ -2031,6 +2044,8 @@ static void write_executable(linker_state_t *ld) {
     }
 
     free(sym_strtab);
+    free(section_name_offsets);
+    free(section_offsets);
 }
 
 // Clean up resources
@@ -2042,11 +2057,28 @@ static void cleanup(linker_state_t *ld) {
         if (inf->symbols) free(inf->symbols);
         if (inf->relocations) free(inf->relocations);
         if (inf->string_table) free(inf->string_table);
+        if (inf->section_base) free(inf->section_base);
+        if (inf->section_data) {
+            for (uint32_t j = 0; j < inf->header.nsections; j++) {
+                if (inf->section_data[j]) free(inf->section_data[j]);
+            }
+            free(inf->section_data);
+        }
     }
-    
+    free(ld->input_files);
+
     for (int i = 0; i < ld->num_sections; i++) {
         if (ld->sections[i].data) free(ld->sections[i].data);
+        if (ld->sections[i].parts) free(ld->sections[i].parts);
     }
+    free(ld->sections);
+    free(ld->symbols);
+    free(ld->relocations);
+    free(ld->string_table);
+
+    s32_hashmap_free(&ld->symbol_map);
+    s32_hashmap_free(&ld->section_map);
+    s32_hashmap_free(&ld->string_dedup_map);
 }
 
 // Parse size with optional K/M suffix
@@ -2092,7 +2124,7 @@ static void print_usage(const char *prog) {
 int main(int argc, char *argv[]) {
     static linker_state_t ld;
     memset(&ld, 0, sizeof(ld));
-    
+
     // Initialize defaults
     ld.code_base = DEFAULT_CODE_BASE;
     ld.code_size = DEFAULT_CODE_SIZE;
@@ -2101,10 +2133,20 @@ int main(int argc, char *argv[]) {
     ld.stack_size = DEFAULT_STACK_SIZE;
     ld.stack_base = DEFAULT_STACK_BASE;
     ld.enable_wxorx = true;  // Default to secure
-    
-    // Parse command line
+
+    // Initialize dynamic string table
+    ld.string_table_cap = 4096;
+    ld.string_table = (char *)calloc(1, ld.string_table_cap);
+
+    // Initialize hashmaps
+    s32_hashmap_init(&ld.symbol_map, 256);
+    s32_hashmap_init(&ld.section_map, 64);
+    s32_hashmap_init(&ld.string_dedup_map, 256);
+
+    // Parse command line — collect input file names in a dynamic array
     int num_input_files = 0;
-    const char *input_files[MAX_INPUT_FILES];
+    int input_files_cap = 0;
+    const char **input_files = NULL;
     
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
@@ -2132,10 +2174,7 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "Error: -l requires a library name\n");
                 return 1;
             }
-            if (num_input_files >= MAX_INPUT_FILES) {
-                fprintf(stderr, "Error: Too many input files\n");
-                return 1;
-            }
+            DARR_PUSH(input_files, num_input_files, input_files_cap, const char *);
             input_files[num_input_files++] = libname;
         } else if (strcmp(argv[i], "-s") == 0) {
             ld.strip_symbols = true;
@@ -2172,10 +2211,7 @@ int main(int argc, char *argv[]) {
             print_usage(argv[0]);
             return 1;
         } else {
-            if (num_input_files >= MAX_INPUT_FILES) {
-                fprintf(stderr, "Error: Too many input files\n");
-                return 1;
-            }
+            DARR_PUSH(input_files, num_input_files, input_files_cap, const char *);
             input_files[num_input_files++] = argv[i];
         }
     }
@@ -2222,7 +2258,8 @@ int main(int argc, char *argv[]) {
     
     // Clean up
     cleanup(&ld);
-    
+    free(input_files);
+
     return 0;
 }
 
@@ -2238,14 +2275,6 @@ static bool symbol_referenced_in_file(const input_file_t *inf, uint32_t sym_inde
         }
     }
     return false;
-}
-
-// Find combined section index by name
-static int find_combined_section_index_by_name(combined_section_t *secs, int nsecs, const char *name) {
-    for (int i = 0; i < nsecs; i++) {
-        if (strcmp(secs[i].name, name) == 0) return i;
-    }
-    return -1;
 }
 
 // Linear lookup (small N): find relocation index for (file,section,offset)
