@@ -1,44 +1,6 @@
-{ linkedlist.pas - Linked list with static node pool on SLOW-32
-  Demonstrates records, pointers, and list manipulation.
-  Uses a static pool since the embedded RTL has no heap manager. }
+{ linkedlist.pas - Linked list with dynamic allocation on SLOW-32
+  Demonstrates records, pointers, and list manipulation using New/Dispose. }
 program linkedlist;
-
-procedure putchar(c: Char); external name 'putchar';
-
-procedure write_ln;
-begin
-  putchar(Chr(10));
-end;
-
-procedure write_str(const s: ShortString);
-var
-  i: Integer;
-begin
-  for i := 1 to Length(s) do
-    putchar(s[i]);
-end;
-
-procedure write_int(n: LongInt);
-var
-  buf: array[0..11] of Char;
-  i, len: Integer;
-  u: LongWord;
-begin
-  if n = 0 then begin putchar('0'); exit; end;
-  if n < 0 then begin putchar('-'); u := LongWord(-n); end
-  else u := LongWord(n);
-  len := 0;
-  while u > 0 do begin
-    buf[len] := Chr(Ord('0') + (u mod 10));
-    u := u div 10;
-    Inc(len);
-  end;
-  for i := len - 1 downto 0 do
-    putchar(buf[i]);
-end;
-
-const
-  POOL_SIZE = 32;
 
 type
   PNode = ^TNode;
@@ -48,29 +10,13 @@ type
   end;
 
 var
-  pool: array[0..POOL_SIZE-1] of TNode;
-  pool_used: Integer;
   head: PNode;
-
-function alloc_node: PNode;
-begin
-  if pool_used >= POOL_SIZE then
-  begin
-    write_str('ERROR: node pool exhausted');
-    write_ln;
-    alloc_node := nil;
-    exit;
-  end;
-  alloc_node := @pool[pool_used];
-  Inc(pool_used);
-end;
 
 procedure list_push(var h: PNode; v: LongInt);
 var
   n: PNode;
 begin
-  n := alloc_node;
-  if n = nil then exit;
+  New(n);
   n^.value := v;
   n^.next := h;
   h := n;
@@ -80,8 +26,7 @@ procedure list_append(var h: PNode; v: LongInt);
 var
   n, p: PNode;
 begin
-  n := alloc_node;
-  if n = nil then exit;
+  New(n);
   n^.value := v;
   n^.next := nil;
   if h = nil then
@@ -128,8 +73,8 @@ begin
   first := True;
   while h <> nil do
   begin
-    if not first then write_str(' -> ');
-    write_int(h^.value);
+    if not first then Write(' -> ');
+    Write(h^.value);
     first := False;
     h := h^.next;
   end;
@@ -151,51 +96,57 @@ begin
   h := prev;
 end;
 
+procedure list_free(var h: PNode);
+var
+  tmp: PNode;
+begin
+  while h <> nil do
+  begin
+    tmp := h;
+    h := h^.next;
+    Dispose(tmp);
+  end;
+end;
+
 var
   i: Integer;
 begin
-  pool_used := 0;
   head := nil;
 
-  write_str('Building list by appending 1..10:');
-  write_ln;
+  WriteLn('Building list by appending 1..10:');
   for i := 1 to 10 do
     list_append(head, i);
 
-  write_str('  ');
+  Write('  ');
   list_print(head);
-  write_ln;
+  WriteLn;
 
-  write_str('  Length: ');
-  write_int(list_length(head));
-  write_ln;
+  Write('  Length: ');
+  WriteLn(list_length(head));
 
-  write_str('  Sum: ');
-  write_int(list_sum(head));
-  write_ln;
+  Write('  Sum: ');
+  WriteLn(list_sum(head));
 
-  write_ln;
-  write_str('Reversing:');
-  write_ln;
+  WriteLn;
+  WriteLn('Reversing:');
   list_reverse(head);
-  write_str('  ');
+  Write('  ');
   list_print(head);
-  write_ln;
+  WriteLn;
 
-  write_ln;
-  write_str('Pushing 99 and 42 to front:');
-  write_ln;
+  WriteLn;
+  WriteLn('Pushing 99 and 42 to front:');
   list_push(head, 99);
   list_push(head, 42);
-  write_str('  ');
+  Write('  ');
   list_print(head);
-  write_ln;
+  WriteLn;
 
-  write_str('  Length: ');
-  write_int(list_length(head));
-  write_ln;
+  Write('  Length: ');
+  WriteLn(list_length(head));
 
-  write_str('  Sum: ');
-  write_int(list_sum(head));
-  write_ln;
+  Write('  Sum: ');
+  WriteLn(list_sum(head));
+
+  list_free(head);
 end.

@@ -259,7 +259,16 @@ implementation
         if set_common_funcretloc_info(p,forcetempdef,retcgsize,result) then
           exit;
 
-        init_values(nextintreg,nextfloatreg,nextmmreg,stack_offset);
+        { C calling conventions (cdecl, etc.) return in R1/R2;
+          FPC's register convention returns in R3 (first arg register) }
+        if p.proccalloption in [pocall_cdecl, pocall_cppdecl, pocall_stdcall,
+                                pocall_syscall, pocall_mwpascal] then
+          nextintreg := RS_R1
+        else
+          nextintreg := RS_R3;
+        nextfloatreg := RS_NO;
+        nextmmreg := RS_NO;
+        stack_offset := 0;
         create_paraloc_for_def(result,vs_value,result.def,nextfloatreg,nextintreg,stack_offset,false,false,side,p);
       end;
 

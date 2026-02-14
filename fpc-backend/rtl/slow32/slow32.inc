@@ -183,10 +183,10 @@ function fpc_atomic_add_32 (var Target: longint;Value: longint) : longint; assem
 {$ifdef FPC_HAS_FEATURE_HEAP}
 {$define FPC_SYSTEM_HAS_SYSINITMEMORYMANAGER}
 
-function c_malloc(size: ptruint): pointer; external name 'malloc';
-procedure c_free(p: pointer); external name 'free';
-function c_realloc(p: pointer; size: ptruint): pointer; external name 'realloc';
-function c_calloc(unitsize, unitcount: ptruint): pointer; external name 'calloc';
+function c_malloc(size: ptruint): pointer; cdecl; external name 'malloc';
+procedure c_free(p: pointer); cdecl; external name 'free';
+function c_realloc(p: pointer; size: ptruint): pointer; cdecl; external name 'realloc';
+function c_calloc(unitsize, unitcount: ptruint): pointer; cdecl; external name 'calloc';
 
 const
   heap_headersize = sizeof(ptruint);
@@ -305,14 +305,14 @@ end;
 {$define FPC_SYSTEM_HAS_SYSINITSTDIO}
 
 { C library functions from libc_mmio.s32a }
-function c_open(pathname: PAnsiChar; flags: longint): longint; external name 'open';
-function c_close(fd: longint): longint; external name 'close';
-function c_read(fd: longint; buf: pointer; count: longint): longint; external name 'read';
-function c_write(fd: longint; buf: pointer; count: longint): longint; external name 'write';
-function c_lseek(fd: longint; offset: longint; whence: longint): longint; external name 'lseek';
-function c_unlink(pathname: PAnsiChar): longint; external name 'unlink';
-function c_rename(oldpath: PAnsiChar; newpath: PAnsiChar): longint; external name 'rename';
-function c_ftruncate(fd: longint; length: longint): longint; external name 'ftruncate';
+function c_open(pathname: PAnsiChar; flags: longint): longint; cdecl; external name 'open';
+function c_close(fd: longint): longint; cdecl; external name 'close';
+function c_read(fd: longint; buf: pointer; count: longint): longint; cdecl; external name 'read';
+function c_write(fd: longint; buf: pointer; count: longint): longint; cdecl; external name 'write';
+function c_lseek(fd: longint; offset: longint; whence: longint): longint; cdecl; external name 'lseek';
+function c_unlink(pathname: PAnsiChar): longint; cdecl; external name 'unlink';
+function c_rename(oldpath: PAnsiChar; newpath: PAnsiChar): longint; cdecl; external name 'rename';
+function c_ftruncate(fd: longint; length: longint): longint; cdecl; external name 'ftruncate';
 
 const
   { SLOW-32 open flags (from fcntl.h) }

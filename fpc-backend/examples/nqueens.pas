@@ -3,40 +3,6 @@
   and formatted board output. }
 program nqueens;
 
-procedure putchar(c: Char); external name 'putchar';
-
-procedure write_ln;
-begin
-  putchar(Chr(10));
-end;
-
-procedure write_str(const s: ShortString);
-var
-  i: Integer;
-begin
-  for i := 1 to Length(s) do
-    putchar(s[i]);
-end;
-
-procedure write_int(n: LongInt);
-var
-  buf: array[0..11] of Char;
-  i, len: Integer;
-  u: LongWord;
-begin
-  if n = 0 then begin putchar('0'); exit; end;
-  if n < 0 then begin putchar('-'); u := LongWord(-n); end
-  else u := LongWord(n);
-  len := 0;
-  while u > 0 do begin
-    buf[len] := Chr(Ord('0') + (u mod 10));
-    u := u div 10;
-    Inc(len);
-  end;
-  for i := len - 1 downto 0 do
-    putchar(buf[i]);
-end;
-
 const
   MAX_N = 12;
 
@@ -98,49 +64,42 @@ var
   r, c: Integer;
 begin
   { Top border }
-  write_str('  +');
+  Write('  +');
   for c := 0 to n - 1 do
-    write_str('---+');
-  write_ln;
+    Write('---+');
+  WriteLn;
 
   for r := 0 to n - 1 do
   begin
-    write_int(r + 1);
-    write_str(' |');
+    Write(r + 1, ' |');
     for c := 0 to n - 1 do
     begin
       if q[r] = c then
-        write_str(' Q |')
+        Write(' Q |')
       else
-        write_str('   |');
+        Write('   |');
     end;
-    write_ln;
+    WriteLn;
 
-    write_str('  +');
+    Write('  +');
     for c := 0 to n - 1 do
-      write_str('---+');
-    write_ln;
+      Write('---+');
+    WriteLn;
   end;
 
   { Column labels }
-  write_str('   ');
+  Write('   ');
   for c := 0 to n - 1 do
-  begin
-    putchar(' ');
-    putchar(Chr(Ord('a') + c));
-    write_str('  ');
-  end;
-  write_ln;
+    Write(' ', Chr(Ord('a') + c), '  ');
+  WriteLn;
 end;
 
 var
   n: Integer;
 begin
-  write_str('N-Queens Solver');
-  write_ln;
-  write_str('===============');
-  write_ln;
-  write_ln;
+  WriteLn('N-Queens Solver');
+  WriteLn('===============');
+  WriteLn;
 
   for n := 1 to 10 do
   begin
@@ -149,19 +108,14 @@ begin
     found_first := False;
     solve(0);
 
-    write_str('  N=');
-    write_int(n);
-    write_str(': ');
-    write_int(solutions);
-    write_str(' solution');
-    if solutions <> 1 then putchar('s');
-    write_ln;
+    Write('  N=', n, ': ', solutions, ' solution');
+    if solutions <> 1 then Write('s');
+    WriteLn;
   end;
 
   { Show the first 8-Queens solution }
-  write_ln;
-  write_str('First 8-Queens solution:');
-  write_ln;
+  WriteLn;
+  WriteLn('First 8-Queens solution:');
   board_size := 8;
   solutions := 0;
   found_first := False;
