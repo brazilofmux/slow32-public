@@ -23,6 +23,7 @@ FF    CONSTANT MASK8
 F00   CONSTANT BITS-8-11
 FFFFF0FF CONSTANT CLR-PTR-MASK   \ clear bits 8-11
 FFFF  CONSTANT MASK16
+3FFFFF CONSTANT CLR-ARR-MASK    \ keep bits 0-21, clear array count (bits 22-31)
 800   CONSTANT SIGN12            \ sign bit of 12-bit value
 FFFFF000 CONSTANT SIGN12-EXT    \ sign extension mask
 1000  CONSTANT UNSIGNED-BIT      \ bit 12 = unsigned flag
@@ -454,7 +455,7 @@ VARIABLE is-lvalue          \ 1 if last expr result is an lvalue address in r1
 : TYPE-BASE ( type -- base )     255 AND ;
 : TYPE-PTR  ( type -- depth )    8 RSHIFT 15 AND ;
 : TYPE-IS-UNSIGNED ( type -- f ) 12 RSHIFT 1 AND ;
-: TYPE-ARRAY-COUNT ( type -- n ) 16 RSHIFT ;
+: TYPE-ARRAY-COUNT ( type -- n ) 22 RSHIFT ;
 
 : MAKE-TYPE ( base ptr unsigned -- type )
     12 LSHIFT >R
@@ -473,8 +474,8 @@ VARIABLE is-lvalue          \ 1 if last expr result is an lvalue address in r1
     OR ;
 
 : TYPE-SET-ARRAY ( type count -- type' )
-    16 LSHIFT
-    SWAP MASK16 AND     \ clear upper 16 bits
+    22 LSHIFT
+    SWAP CLR-ARR-MASK AND     \ clear bits 22-31 (array count)
     OR ;
 
 : TYPE-IS-PTR ( type -- f )  TYPE-PTR 0> ;
@@ -506,17 +507,12 @@ VARIABLE is-lvalue          \ 1 if last expr result is an lvalue address in r1
     DUP TYPE-IS-PTR IF DROP 4 EXIT THEN
     DUP TYPE-IS-ARRAY IF
         DUP TYPE-ARRAY-COUNT >R  \ save count
-        \ Element type: same type but without array count
-        MASK16 AND   \ clear bits 16-31
+        \ Element type: strip array count (bits 22-31), keep struct index (bits 14-21)
+        CLR-ARR-MASK AND
         DUP TYPE-BASE TY-STRUCT = IF
-            \ struct index was in bits 16-31, but we just cleared them!
-            \ For struct arrays, we need the struct index stored elsewhere.
-            \ Actually, our type encoding has a conflict: bits 16-31 are used for
-            \ BOTH array count AND struct index. This is a design flaw.
-            \ Fix: for struct types, the struct index goes in bits 16-31,
-            \ and array count must be stored separately.
-            \ For now: struct arrays use TYPE-SIZE of the struct without array.
-            DROP 4 R> * EXIT  \ rough fallback
+            14 RSHIFT 255 AND  \ extract struct index
+            DUP MAX-STRUCT < IF CELLS st-size + @ ELSE DROP 4 THEN
+            R> * EXIT
         THEN
         DUP TYPE-BASE CASE
             TY-VOID   OF DROP 1 ENDOF
@@ -535,7 +531,7 @@ VARIABLE is-lvalue          \ 1 if last expr result is an lvalue address in r1
         TY-SHORT  OF DROP 2 ENDOF
         TY-INT    OF DROP 4 ENDOF
         TY-LONG   OF DROP 4 ENDOF
-        TY-STRUCT OF DROP 16 RSHIFT  \ struct index in bits 16-31
+        TY-STRUCT OF DROP 14 RSHIFT 255 AND  \ struct index in bits 14-21
                      DUP MAX-STRUCT < IF CELLS st-size + @
                      ELSE DROP 4 THEN ENDOF
         TY-ENUM   OF DROP 4 ENDOF
@@ -546,7 +542,7 @@ VARIABLE is-lvalue          \ 1 if last expr result is an lvalue address in r1
 : TYPE-DEREF-SIZE ( type -- n )
     DUP TYPE-IS-ARRAY IF
         \ Array: element size = base type size (strip array count)
-        MASK16 AND TYPE-SIZE EXIT
+        CLR-ARR-MASK AND TYPE-SIZE EXIT
     THEN
     TYPE-REMOVE-PTR TYPE-SIZE ;
 
@@ -1447,7 +1443,7 @@ VARIABLE inc-fname-len
 \ For "file.h" — try current directory first, then include path
 \ For <file.h> — try selfhost/stage4/include/ then runtime/include/
 : PP-RESOLVE-INCLUDE ( -- )
-    0 tmp-d !
+    \ tmp-d is already past "include" from PP-DIRECTIVE
     PP-SKIP-WS
     tmp-d @ pp-line-len @ >= IF S" missing include filename" CC-ERR EXIT THEN
     pp-line tmp-d @ + C@ DUP 34 = IF   \ "file.h"
@@ -2073,7 +2069,7 @@ VARIABLE mexp-scratch-len
                         \ Forward reference — create empty struct
                         tok-buf tok-len @ ST-ADD
                     THEN
-                    16 LSHIFT TY-STRUCT OR
+                    14 LSHIFT TY-STRUCT OR
                     tmp-type @ MASK-BYTE INVERT AND OR tmp-type !
                     1 tmp-a !
                     CC-TOKEN
@@ -2581,7 +2577,7 @@ VARIABLE call-sp
                     CC-TOKEN  \ skip .
                     \ Get field name
                     expr-type @ TYPE-BASE TY-STRUCT = IF
-                        expr-type @ 16 RSHIFT  \ struct index
+                        expr-type @ 14 RSHIFT 255 AND  \ struct index
                         tok-buf tok-len @ FLD-FIND DUP -1 <> IF
                             DUP CELLS fld-off + @ tmp-a !   \ field offset
                             CELLS fld-type + @ expr-type !
@@ -2602,7 +2598,7 @@ VARIABLE call-sp
                     CC-TOKEN  \ skip ->
                     expr-type @ TYPE-REMOVE-PTR tmp-type !
                     tmp-type @ TYPE-BASE TY-STRUCT = IF
-                        tmp-type @ 16 RSHIFT  \ struct index
+                        tmp-type @ 14 RSHIFT 255 AND  \ struct index
                         tok-buf tok-len @ FLD-FIND DUP -1 <> IF
                             DUP CELLS fld-off + @ tmp-a !
                             CELLS fld-type + @ expr-type !
@@ -2786,7 +2782,8 @@ VARIABLE call-sp
                 0 is-lvalue !
                 EXIT
             ENDOF
-            DROP
+            \ default: not a unary operator, fall through to PARSE-POSTFIX
+            \ ENDCASE drops the selector
         ENDCASE
     THEN
     tok-type @ TK-KW = tok-val @ KW-SIZEOF = AND IF
@@ -2977,26 +2974,30 @@ VARIABLE binop-saved-ltype
     R> DROP ;  \ drop min-prec
 
 \ --- Ternary expression ---
+\ Labels kept on data stack to survive recursive calls (tmp vars get clobbered)
 : PARSE-TERNARY ( -- )
     2 PARSE-BINARY
     tok-type @ TK-PUNCT = tok-val @ P-QMARK = AND IF
         LVAL-TO-RVAL
-        NEW-LABEL tmp-a !  \ false label
-        NEW-LABEL tmp-b !  \ end label
-        tmp-a @ EMIT-BEQ-ZERO
+        NEW-LABEL           \ ( false-lbl )
+        NEW-LABEL           \ ( false-lbl end-lbl )
+        OVER EMIT-BEQ-ZERO  \ branch to false
         CC-TOKEN  \ skip ?
         PARSE-ASSIGN-EXPR
         LVAL-TO-RVAL
-        tmp-b @ EMIT-JUMP
-        tmp-a @ EMIT-LABEL
+        DUP EMIT-JUMP        \ jump to end
+        SWAP EMIT-LABEL      \ emit false label
         P-COLON EXPECT-PUNCT
         CC-TOKEN
         PARSE-TERNARY
         LVAL-TO-RVAL
-        tmp-b @ EMIT-LABEL
+        EMIT-LABEL            \ emit end label
     THEN ;
 
 \ --- Assignment expression ---
+VARIABLE assign-saved-op
+VARIABLE assign-saved-type
+
 : IS-ASSIGN-OP ( -- f )
     tok-type @ TK-PUNCT <> IF FALSE EXIT THEN
     tok-val @ DUP P-ASSIGN = OVER P-PLUSEQ = OR OVER P-MINUSEQ = OR
@@ -3009,29 +3010,29 @@ VARIABLE binop-saved-ltype
     IS-ASSIGN-OP IF
         \ r1 = address of lvalue
         is-lvalue @ 0= IF S" assignment requires lvalue" CC-ERR THEN
-        expr-type @ tmp-type !
-        tok-val @ tmp-a !   \ save operator
+        expr-type @ assign-saved-type !
+        tok-val @ assign-saved-op !   \ save operator (survives PARSE-ASSIGN-EXPR)
         EMIT-PUSH-R1        \ save lvalue address
         CC-TOKEN             \ skip operator
         PARSE-ASSIGN-EXPR   \ parse right side (right-associative)
         LVAL-TO-RVAL
         \ r1 = right value, stack = lvalue address
-        tmp-a @ P-ASSIGN = IF
+        assign-saved-op @ P-ASSIGN = IF
             \ Simple assignment
             EMIT-POP-R2      \ r2 = address
-            tmp-type @ EMIT-STORE-DEREF
+            assign-saved-type @ EMIT-STORE-DEREF
             \ Leave assigned value in r1
         ELSE
             \ Compound assignment: load old value, operate, store
             EMIT-PUSH-R1     \ save right value
             S" ldw r1, r29, 4" EMIT-INSN  \ load lvalue address (below right value)
-            tmp-type @ EMIT-LOAD-DEREF     \ r1 = old value
+            assign-saved-type @ EMIT-LOAD-DEREF     \ r1 = old value
             EMIT-POP-R2      \ r2 = right value
             \ r1=old(left), r2=right. Swap to r2=left, r1=right for binop.
             S" addi r3, r1, 0" EMIT-INSN   \ save old in r3
             S" addi r1, r2, 0" EMIT-INSN   \ r1 = right
             S" addi r2, r3, 0" EMIT-INSN   \ r2 = old (left)
-            tmp-a @ CASE
+            assign-saved-op @ CASE
                 P-PLUSEQ    OF S" add r1, r2, r1" EMIT-INSN ENDOF
                 P-MINUSEQ   OF S" sub r1, r2, r1" EMIT-INSN ENDOF
                 P-STAREQ    OF S" mul r1, r2, r1" EMIT-INSN ENDOF
@@ -3045,12 +3046,10 @@ VARIABLE binop-saved-ltype
             ENDCASE
             \ Store result
             EMIT-POP-R2      \ r2 = address (was below right value on stack)
-            \ Wait — we had: push(addr), push(right). Then popped right into r2.
-            \ So stack still has addr. Now we pop addr.
-            tmp-type @ EMIT-STORE-DEREF
+            assign-saved-type @ EMIT-STORE-DEREF
         THEN
         0 is-lvalue !
-        tmp-type @ expr-type !
+        assign-saved-type @ expr-type !
     THEN ;
 
 \ Comma expression (lowest precedence)
@@ -3786,7 +3785,7 @@ VARIABLE decl-name-len
         tmp-idx @ PARSE-STRUCT-BODY
     THEN
     \ Return type word
-    TY-STRUCT tmp-idx @ 16 LSHIFT OR ;
+    TY-STRUCT tmp-idx @ 14 LSHIFT OR ;
 
 \ Parse top-level declaration
 : PARSE-TOP-LEVEL ( -- )
@@ -3806,7 +3805,7 @@ VARIABLE decl-name-len
         tok-type @ TK-PUNCT = tok-val @ P-LBRACE = AND IF
             \ struct with body + declarator
             OVER TYPE-BASE TY-STRUCT = IF
-                OVER 16 RSHIFT PARSE-STRUCT-BODY
+                OVER 14 RSHIFT 255 AND PARSE-STRUCT-BODY
             THEN
         THEN
         \ Fall through to declarator parsing
@@ -3847,7 +3846,7 @@ VARIABLE decl-name-len
     \ Check for struct body inline
     DUP TYPE-BASE TY-STRUCT = IF
         tok-type @ TK-PUNCT = tok-val @ P-LBRACE = AND IF
-            DUP 16 RSHIFT PARSE-STRUCT-BODY
+            DUP 14 RSHIFT 255 AND PARSE-STRUCT-BODY
         THEN
     THEN
     DUP PARSE-DECLARATOR  \ ( type type' name-addr name-len )
