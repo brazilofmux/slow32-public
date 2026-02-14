@@ -851,17 +851,25 @@ VARIABLE li-rd
 : DO-BSS    2 asm-sect ! ;
 
 : DO-WORD
-    GET-TOK
-    2DUP PARSE-NUM IF
-        NIP NIP EMIT-W32
-    ELSE
-        \ Symbol reference — record REL-32 reloc, emit placeholder
-        imm-sym-len ! imm-sym-addr !
-        CUR-OFF @ REL-32 0 imm-sym-addr @ imm-sym-len @ ADD-RELOC
-        0 EMIT-W32
-    THEN ;
+    BEGIN
+        GET-TOK DUP 0=
+        IF 2DROP EXIT THEN
+        2DUP PARSE-NUM IF
+            NIP NIP EMIT-W32
+        ELSE
+            \ Symbol reference — record REL-32 reloc, emit placeholder
+            imm-sym-len ! imm-sym-addr !
+            CUR-OFF @ REL-32 0 imm-sym-addr @ imm-sym-len @ ADD-RELOC
+            0 EMIT-W32
+        THEN
+    AGAIN ;
 
-: DO-BYTE   GET-TOK PARSE-IMM 255 AND EMIT-B ;
+: DO-BYTE
+    BEGIN
+        GET-TOK DUP 0=
+        IF 2DROP EXIT THEN
+        PARSE-IMM 255 AND EMIT-B
+    AGAIN ;
 
 : DO-HALF
     GET-TOK PARSE-IMM

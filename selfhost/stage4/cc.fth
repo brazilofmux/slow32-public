@@ -2084,16 +2084,21 @@ VARIABLE mexp-scratch-len
                 KW-SHORT    OF TY-SHORT tmp-type @ MASK-BYTE INVERT AND OR tmp-type ! 1 tmp-a ! CC-TOKEN TRUE ENDOF
                 KW-BOOL     OF TY-INT tmp-type @ MASK-BYTE INVERT AND OR tmp-type ! 1 tmp-a ! CC-TOKEN TRUE ENDOF
                 KW-STRUCT   OF
-                    CC-TOKEN  \ get struct name
-                    tok-buf tok-len @ ST-FIND DUP -1 = IF
-                        DROP
-                        \ Forward reference — create empty struct
-                        tok-buf tok-len @ ST-ADD
+                    CC-TOKEN  \ named: struct Name ... ; anonymous: struct { ... }
+                    tok-type @ TK-IDENT = IF
+                        tok-buf tok-len @ ST-FIND DUP -1 = IF
+                            DROP
+                            \ Forward reference — create empty struct
+                            tok-buf tok-len @ ST-ADD
+                        THEN
+                        CC-TOKEN  \ consume struct name
+                    ELSE
+                        \ Anonymous struct type (e.g. typedef struct { ... } T;)
+                        tok-buf 0 ST-ADD
                     THEN
                     14 LSHIFT TY-STRUCT OR
                     tmp-type @ MASK-BYTE INVERT AND OR tmp-type !
                     1 tmp-a !
-                    CC-TOKEN
                     \ Check for struct definition { ... }
                     tok-type @ TK-PUNCT = tok-val @ P-LBRACE = AND IF
                         \ Body present — tok stays as {, caller will handle
@@ -3817,7 +3822,7 @@ VARIABLE decl-name-len
         CC-TOKEN
     ELSE
         \ Anonymous struct
-        S" _anon" 0 ST-ADD tmp-idx !
+        S" _anon" ST-ADD tmp-idx !
     THEN
     \ Check for body
     tok-type @ TK-PUNCT = tok-val @ P-LBRACE = AND IF
@@ -3966,14 +3971,15 @@ VARIABLE decl-name-len
     str-count @ 0 ?DO
         EMIT-INDENT S" .align 4" OUT-STR OUT-NL
         S" .Lstr_" OUT-STR I OUT-NUM 58 OUT-CHAR OUT-NL
-        \ Emit string bytes
+        \ Emit string bytes on one .byte line (Stage 2 now supports comma lists)
         I CELLS strlit-off + @ tmp-a !
         I CELLS strlit-len + @ tmp-b !  \ includes NUL
+        EMIT-INDENT S" .byte " OUT-STR
         tmp-b @ 0 ?DO
-            EMIT-INDENT S" .byte " OUT-STR
+            I 0<> IF 44 OUT-CHAR 32 OUT-CHAR THEN
             str-pool tmp-a @ + I + C@ OUT-NUM
-            OUT-NL
         LOOP
+        OUT-NL
     LOOP
     S" .text" EMIT-LINE ;
 
