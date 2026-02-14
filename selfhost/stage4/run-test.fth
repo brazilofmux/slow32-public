@@ -2,6 +2,6 @@
 : RUN-TEST ( addr u addr2 u2 -- )
     COMPILE-FILE ;
 
-: TEST4 S" selfhost/stage4/tests/test4.c" S" /tmp/test4.s" RUN-TEST ;
-TEST4
+: TEST7 S" selfhost/stage4/tests/test7.c" S" /tmp/test7.s" RUN-TEST ;
+TEST7
 BYE
