@@ -4038,8 +4038,8 @@ open_file_done:
     add r10, r8, r4
     stb r10, r0, 0
 
-    add r4, r8, r0     # pathname
-    add r5, r6, r0     # flags
+    add r3, r8, r0     # pathname
+    add r4, r6, r0     # flags
     jal open
 
     add r2, r0, r0     # ior = 0
@@ -4070,9 +4070,9 @@ head_read_file:
 xt_read_file:
     .word read_file_word
 read_file_word:
-    ldw r4, r28, 0     # r4 = fileid
-    ldw r6, r28, 4     # r6 = u (len)
-    ldw r5, r28, 8     # r5 = c-addr (buf)
+    ldw r3, r28, 0     # r3 = fileid
+    ldw r5, r28, 4     # r5 = u (len)
+    ldw r4, r28, 8     # r4 = c-addr (buf)
     addi r28, r28, 12  # pop 3
 
     jal read
@@ -4102,16 +4102,17 @@ head_write_file:
 xt_write_file:
     .word write_file_word
 write_file_word:
-    ldw r4, r28, 0     # r4 = fileid
-    ldw r6, r28, 4     # r6 = u (len)
-    ldw r5, r28, 8     # r5 = c-addr (buf)
+    ldw r3, r28, 0     # r3 = fileid
+    ldw r5, r28, 4     # r5 = u (len)
+    ldw r4, r28, 8     # r4 = c-addr (buf)
     addi r28, r28, 12  # pop 3
 
+    add r14, r5, r0    # save len in callee-saved r14
     jal write
 
     add r2, r0, r0     # ior = 0
     blt r1, r0, write_file_fail
-    bne r1, r6, write_file_fail
+    bne r1, r14, write_file_fail
     jal r0, write_file_push
 write_file_fail:
     addi r2, r0, -1
@@ -4131,7 +4132,7 @@ head_close_file:
 xt_close_file:
     .word close_file_word
 close_file_word:
-    ldw r4, r28, 0
+    ldw r3, r28, 0
     addi r28, r28, 4
     jal close
 
@@ -4156,17 +4157,17 @@ head_file_size:
 xt_file_size:
     .word file_size_word
 file_size_word:
-    ldw r4, r28, 0     # r4 = fileid
+    ldw r3, r28, 0     # r3 = fileid
     addi r28, r28, 4
 
-    lui r5, %hi(file_stat_buf)
-    addi r5, r5, %lo(file_stat_buf)
+    lui r4, %hi(file_stat_buf)
+    addi r4, r4, %lo(file_stat_buf)
     jal fstat
 
     add r2, r0, r0     # ior = 0
     bne r1, r0, file_size_fail
-    ldw r3, r5, 40     # st_size lo
-    ldw r4, r5, 44     # st_size hi
+    ldw r3, r4, 40     # st_size lo
+    ldw r4, r4, 44     # st_size hi
     jal r0, file_size_push
 file_size_fail:
     add r3, r0, r0
@@ -4192,13 +4193,13 @@ head_reposition_file:
 xt_reposition_file:
     .word reposition_file_word
 reposition_file_word:
-    ldw r4, r28, 0     # fileid
+    ldw r3, r28, 0     # fileid
     ldw r6, r28, 4     # hi
-    ldw r5, r28, 8     # lo
+    ldw r4, r28, 8     # lo
     addi r28, r28, 12
 
     bne r6, r0, reposition_file_fail
-    add r6, r0, r0     # SEEK_SET = 0
+    add r5, r0, r0     # SEEK_SET = 0
     jal lseek
 
     add r2, r0, r0
@@ -4222,11 +4223,11 @@ head_file_position:
 xt_file_position:
     .word file_position_word
 file_position_word:
-    ldw r4, r28, 0
+    ldw r3, r28, 0
     addi r28, r28, 4
 
-    add r5, r0, r0     # offset = 0
-    addi r6, r0, 1     # SEEK_CUR
+    add r4, r0, r0     # offset = 0
+    addi r5, r0, 1     # SEEK_CUR
     jal lseek
 
     add r2, r0, r0
@@ -4280,7 +4281,7 @@ delete_file_done:
     add r10, r8, r4
     stb r10, r0, 0
 
-    add r4, r8, r0
+    add r3, r8, r0
     jal unlink
 
     add r2, r0, r0
@@ -4348,8 +4349,8 @@ rename_file_done2:
     add r12, r10, r7
     stb r12, r0, 0
 
-    add r4, r8, r0
-    add r5, r10, r0
+    add r3, r8, r0
+    add r4, r10, r0
     jal rename
 
     add r2, r0, r0
@@ -5172,9 +5173,11 @@ interp_resume_target: .word interpret_loop
 interp_resume_xt:
     .word interpret_resume
 
+# Zero-filled buffers go in .bss to avoid bloating the binary
+.bss
     .align 2
 tib:            .space 128         # Terminal Input Buffer
-user_dictionary: .space 65536      # Space for new words
+user_dictionary: .space 1048576    # 1MB space for new words (was 64KB)
 user_dictionary_end:
 pad:            .space 128         # Scratch pad for strings/numbers
 file_path_buf:   .space 512        # Temporary path buffer
@@ -5245,10 +5248,10 @@ cold_after_prompt:
 .data
     .align 2
 dstack_bottom:
-    .space 1024
+    .space 4096
 dstack_top:
 
     .align 2
 rstack_bottom:
-    .space 1024
+    .space 4096
 rstack_top:

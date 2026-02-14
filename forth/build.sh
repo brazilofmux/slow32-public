@@ -12,7 +12,7 @@ $ASM kernel.s kernel.s32o
 
 # Link with MMIO libc
 echo "Linking..."
-$LD --mmio 64K -o kernel.s32x ../runtime/crt0.s32o kernel.s32o ../runtime/libc_mmio.s32a ../runtime/libs32.s32a
+$LD --mmio 64K --data-size 2M -o kernel.s32x ../runtime/crt0.s32o kernel.s32o ../runtime/libc_mmio.s32a ../runtime/libs32.s32a
 
 # Run (pipe prelude then interactive stdin)
 echo "Running..."
