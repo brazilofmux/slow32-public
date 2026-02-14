@@ -2131,6 +2131,66 @@ VARIABLE mexp-scratch-len
 \ Returns: type name-addr name-len
 : PARSE-DECLARATOR ( base-type -- type name-addr name-len )
     PARSE-POINTERS
+    \ Check for function pointer: (*name)(params...)
+    tok-type @ TK-PUNCT = tok-val @ P-LPAREN = AND IF
+        CC-TOKEN  \ skip (
+        tok-type @ TK-PUNCT = tok-val @ P-STAR = AND IF
+            CC-TOKEN  \ skip *
+            \ Get name
+            tok-type @ TK-IDENT = IF
+                tok-buf func-name-buf tok-len @ CMOVE
+                tok-len @ tmp-name-off !
+                CC-TOKEN  \ skip name
+                P-RPAREN EXPECT-PUNCT CC-TOKEN  \ skip )
+                \ Skip parameter list (...)
+                tok-type @ TK-PUNCT = tok-val @ P-LPAREN = AND IF
+                    CC-TOKEN  \ skip (
+                    0  \ paren depth
+                    BEGIN
+                        tok-type @ TK-PUNCT = tok-val @ P-RPAREN = AND IF
+                            DUP 0= IF DROP CC-TOKEN TRUE ELSE 1- FALSE THEN
+                        ELSE
+                            tok-type @ TK-PUNCT = tok-val @ P-LPAREN = AND IF 1+ THEN
+                            CC-TOKEN FALSE
+                        THEN
+                    UNTIL
+                THEN
+                \ Treat as pointer (void*)
+                DROP TY-INT TYPE-ADD-PTR
+                func-name-buf tmp-name-off @
+                EXIT
+            ELSE
+                \ (*)(params) — abstract function pointer
+                P-RPAREN EXPECT-PUNCT CC-TOKEN
+                tok-type @ TK-PUNCT = tok-val @ P-LPAREN = AND IF
+                    CC-TOKEN
+                    0 BEGIN
+                        tok-type @ TK-PUNCT = tok-val @ P-RPAREN = AND IF
+                            DUP 0= IF DROP CC-TOKEN TRUE ELSE 1- FALSE THEN
+                        ELSE
+                            tok-type @ TK-PUNCT = tok-val @ P-LPAREN = AND IF 1+ THEN
+                            CC-TOKEN FALSE
+                        THEN
+                    UNTIL
+                THEN
+                DROP TY-INT TYPE-ADD-PTR
+                0 0 EXIT
+            THEN
+        ELSE
+            \ Not a function pointer — backtrack
+            \ This is a parenthesized declarator, e.g. int (x)
+            \ For simplicity, just try to parse name inside parens
+            tok-type @ TK-IDENT = IF
+                tok-buf func-name-buf tok-len @ CMOVE
+                tok-len @ tmp-name-off !
+                CC-TOKEN P-RPAREN EXPECT-PUNCT CC-TOKEN
+                func-name-buf tmp-name-off @ EXIT
+            ELSE
+                \ Couldn't parse — return no name
+                0 0 EXIT
+            THEN
+        THEN
+    THEN
     \ Get name
     tok-type @ TK-IDENT = IF
         tok-buf tok-len @ tmp-name-off ! tmp-name-len !
@@ -2383,15 +2443,16 @@ VARIABLE call-sp
                     DUP CELLS gsym-kind + @ 1 = IF  \ function
                         \ Check if followed by ( — function call
                         DUP CELLS gsym-type + @ expr-type !
-                        DROP
                         CC-TOKEN  \ get next token
                         tok-type @ TK-PUNCT = tok-val @ P-LPAREN = AND IF
+                            DROP
                             PARSE-CALL EXIT
                         ELSE
                             \ Function name as value (function pointer)
                             UNGET-TOKEN
-                            \ Load function address
-                            call-name call-name-len @
+                            \ Load function address from gsym table
+                            DUP CELLS gsym-name + @ gsym-nbuf +
+                            SWAP CELLS gsym-nlen + @
                             EMIT-GLOBAL-ADDR
                             S" addi r1, r2, 0" EMIT-INSN
                             0 is-lvalue !
@@ -2555,6 +2616,46 @@ VARIABLE call-sp
                         THEN
                     ELSE S" -> used on non-pointer-to-struct" CC-ERR THEN
                     CC-TOKEN
+                    TRUE
+                ENDOF
+                P-LPAREN OF \ indirect function call: fptr(args)
+                    LVAL-TO-RVAL   \ r1 = function address
+                    EMIT-PUSH-R1  \ save fn addr
+                    CC-TOKEN  \ skip (
+                    0  \ arg count
+                    tok-type @ TK-PUNCT = tok-val @ P-RPAREN = AND 0= IF
+                        BEGIN
+                            DUP 0> IF EMIT-PUSH-R1 THEN
+                            CALL-SAVE
+                            PARSE-ASSIGN-EXPR
+                            LVAL-TO-RVAL
+                            CALL-RESTORE
+                            1+
+                            tok-type @ TK-PUNCT = tok-val @ P-COMMA = AND
+                        WHILE
+                            CC-TOKEN
+                        REPEAT
+                    THEN
+                    P-RPAREN EXPECT-PUNCT CC-TOKEN
+                    \ Assign args to registers (same as PARSE-CALL)
+                    CASE
+                        0 OF ENDOF
+                        1 OF S" addi r3, r1, 0" EMIT-INSN ENDOF
+                        2 OF S" addi r4, r1, 0" EMIT-INSN
+                             EMIT-POP-R2 S" addi r3, r2, 0" EMIT-INSN ENDOF
+                        3 OF S" addi r5, r1, 0" EMIT-INSN
+                             EMIT-POP-R2 S" addi r4, r2, 0" EMIT-INSN
+                             EMIT-POP-R2 S" addi r3, r2, 0" EMIT-INSN ENDOF
+                        4 OF S" addi r6, r1, 0" EMIT-INSN
+                             EMIT-POP-R2 S" addi r5, r2, 0" EMIT-INSN
+                             EMIT-POP-R2 S" addi r4, r2, 0" EMIT-INSN
+                             EMIT-POP-R2 S" addi r3, r2, 0" EMIT-INSN ENDOF
+                    ENDCASE
+                    \ Pop fn address and call indirectly
+                    EMIT-POP-R2  \ r2 = function address
+                    S" jalr r31, r2, 0" EMIT-INSN
+                    TY-INT expr-type !
+                    0 is-lvalue !
                     TRUE
                 ENDOF
                 P-INC OF    \ postfix x++
@@ -2888,7 +2989,7 @@ VARIABLE binop-saved-ltype
         LVAL-TO-RVAL
         tmp-b @ EMIT-JUMP
         tmp-a @ EMIT-LABEL
-        NEXT-TOKEN P-COLON EXPECT-PUNCT
+        P-COLON EXPECT-PUNCT
         CC-TOKEN
         PARSE-TERNARY
         LVAL-TO-RVAL
@@ -2926,15 +3027,8 @@ VARIABLE binop-saved-ltype
             S" ldw r1, r29, 4" EMIT-INSN  \ load lvalue address (below right value)
             tmp-type @ EMIT-LOAD-DEREF     \ r1 = old value
             EMIT-POP-R2      \ r2 = right value
-            \ Now r1=old, r2=right. Swap for standard op (r2=left, r1=right)
-            S" addi r2, r1, 0" EMIT-INSN   \ Oops, overwrites r2 with r1
-            \ Need: left in r2, right in r1
-            \ r1 has old value, r2 has right value after pop
-            \ Actually after POP-R2: r2=right. r1 was old value. But we loaded r1 just before.
-            \ Let me redo. After the ldw and LOAD-DEREF, r1 = old value.
-            \ Then EMIT-POP-R2 pops right value into r2.
-            \ So r1=old(left), r2=new(right). Need r2=left, r1=right for our binop convention.
-            S" addi r3, r1, 0" EMIT-INSN   \ save old in r3 temporarily
+            \ r1=old(left), r2=right. Swap to r2=left, r1=right for binop.
+            S" addi r3, r1, 0" EMIT-INSN   \ save old in r3
             S" addi r1, r2, 0" EMIT-INSN   \ r1 = right
             S" addi r2, r3, 0" EMIT-INSN   \ r2 = old (left)
             tmp-a @ CASE
@@ -3579,7 +3673,7 @@ VARIABLE decl-name-len
         decl-name-len !                          \ Stack: ( type type' name-addr )
         decl-name decl-name-len @ CMOVE         \ Stack: ( type type' )
         \ Register global
-        decl-name decl-name-len @ OVER 0 R@ 1 AND GSYM-ADD DROP
+        decl-name decl-name-len @ 2 PICK 0 R@ 1 AND GSYM-ADD DROP
         DROP  \ drop type' from PARSE-DECLARATOR
         \ Emit in .data or .bss section
         tok-type @ TK-PUNCT = tok-val @ P-ASSIGN = AND IF
@@ -3780,7 +3874,7 @@ VARIABLE decl-name-len
     decl-name decl-name-len @ CMOVE         \ copy name to decl-name
     DROP  \ drop type' — use base type for global. Stack: ( type )
     \ Register this first variable as global
-    decl-name decl-name-len @ OVER 0 tmp-b @ 1 AND GSYM-ADD DROP
+    decl-name decl-name-len @ 2 PICK 0 tmp-b @ 1 AND GSYM-ADD DROP
     \ Emit .bss or check for initializer
     tok-type @ TK-PUNCT = tok-val @ P-ASSIGN = AND IF
         \ Initialized global
