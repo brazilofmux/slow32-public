@@ -3,10 +3,10 @@
 \ ============================================================
 \
 \ A two-pass assembler that reads .s source files and produces
-\ .s32x executable binaries.
+\ .s32o object files (linkable with s32-ld).
 \
 \ Usage:
-\   S" input.s" S" output.s32x" ASSEMBLE
+\   S" input.s" S" output.s32o" ASSEMBLE
 \
 \ Runs inside the Forth kernel on the Stage 0 emulator.
 \ Requires prelude.fth (for /STRING, CASE, R/O, W/O-TRUNC).
@@ -25,10 +25,18 @@ FFFFF    CONSTANT MASK20
 800      CONSTANT HALF12
 80       CONSTANT FLAG-MMIO
 53333258 CONSTANT S32X-MAGIC
+5333324F CONSTANT S32O-MAGIC
 FEFFF0   CONSTANT DEFAULT-STACK
 1000000  CONSTANT DEFAULT-MEMSZ
 FF0000   CONSTANT DEFAULT-MMIO
+D        CONSTANT SF-XRA       \ EXEC|READ|ALLOC
+E        CONSTANT SF-WRA       \ WRITE|READ|ALLOC
 DECIMAL
+
+\ Relocation types (decimal)
+1 CONSTANT REL-32
+2 CONSTANT REL-HI20
+3 CONSTANT REL-LO12
 
 \ === Configuration ===
 262144 CONSTANT INP-SZ      \ 256KB input buffer
@@ -50,6 +58,80 @@ CREATE sym-off  MAX-SYM CELLS ALLOT   \ offset within section
 VARIABLE sym-cnt
 CREATE sname-buf SNAME-SZ ALLOT
 VARIABLE sname-ptr
+
+\ Relocation table (parallel arrays)
+4096 CONSTANT MAX-RELOC
+CREATE reloc-off MAX-RELOC CELLS ALLOT   \ offset in section
+CREATE reloc-sec MAX-RELOC CELLS ALLOT   \ section (0=text,1=data)
+CREATE reloc-typ MAX-RELOC CELLS ALLOT   \ type (REL-HI20, REL-LO12, REL-32)
+CREATE reloc-add MAX-RELOC CELLS ALLOT   \ addend
+CREATE reloc-sym MAX-RELOC CELLS ALLOT   \ offset into rname-buf
+CREATE reloc-sln MAX-RELOC CELLS ALLOT   \ name length
+VARIABLE reloc-cnt
+16384 CONSTANT RNAME-SZ
+CREATE rname-buf RNAME-SZ ALLOT
+VARIABLE rname-ptr
+
+\ Global label tracking
+256 CONSTANT MAX-GLOBAL
+CREATE gname-off MAX-GLOBAL CELLS ALLOT  \ offset into gname-buf
+CREATE gname-len MAX-GLOBAL CELLS ALLOT  \ name length
+VARIABLE gname-cnt
+4096 CONSTANT GNAME-SZ
+CREATE gname-buf GNAME-SZ ALLOT
+VARIABLE gname-ptr
+
+\ String table for .s32o output
+8192 CONSTANT STRTAB-SZ
+CREATE strtab STRTAB-SZ ALLOT
+VARIABLE strtab-sz
+
+\ Output symbol table
+256 CONSTANT MAX-OUT-SYM
+CREATE osym-stridx MAX-OUT-SYM CELLS ALLOT  \ string table index
+CREATE osym-value  MAX-OUT-SYM CELLS ALLOT  \ symbol value
+CREATE osym-sec    MAX-OUT-SYM CELLS ALLOT  \ output section index (1-based)
+CREATE osym-bind   MAX-OUT-SYM CELLS ALLOT  \ binding (0=local, 1=global)
+CREATE osym-nmbuf  MAX-OUT-SYM CELLS ALLOT  \ name pointer
+CREATE osym-nmlen  MAX-OUT-SYM CELLS ALLOT  \ name length
+VARIABLE osym-cnt
+
+\ File handle and layout variables
+VARIABLE out-fh
+VARIABLE out-nsec
+VARIABLE text-out-idx
+VARIABLE data-out-idx
+VARIABLE bss-out-idx
+VARIABLE text-str-idx
+VARIABLE data-str-idx
+VARIABLE bss-str-idx
+VARIABLE text-nreloc
+VARIABLE data-nreloc
+VARIABLE bss-nreloc
+VARIABLE off-sections
+VARIABLE off-symbols
+VARIABLE off-relocs
+VARIABLE off-strtab
+VARIABLE off-secdata
+
+\ Temp variables for helpers
+VARIABLE imm-sym-addr
+VARIABLE imm-sym-len
+VARIABLE r-off
+VARIABLE r-typ
+VARIABLE r-add
+VARIABLE r-naddr
+VARIABLE r-nlen
+VARIABLE sa-addr
+VARIABLE sa-len
+VARIABLE sa-off
+VARIABLE bg-addr
+VARIABLE bg-len
+VARIABLE br-addr
+VARIABLE br-len
+
+\ Write buffer for binary output
+CREATE wb-buf 64 ALLOT
 
 \ === Assembler State ===
 VARIABLE asm-pass       \ 1 or 2
@@ -138,6 +220,223 @@ VARIABLE str-idx
         2 OF bss-va  ENDOF
     ENDCASE @
     SWAP CELLS sym-off + @ + ;
+
+\ === .s32o Helper Words ===
+
+\ String table management
+: STRTAB-INIT  0 strtab C! 1 strtab-sz ! ;
+
+: STRTAB-ADD ( addr u -- offset )
+    sa-len ! sa-addr !
+    strtab-sz @ sa-off !
+    sa-addr @ strtab sa-off @ + sa-len @ CMOVE
+    0 strtab sa-off @ sa-len @ + + C!
+    sa-off @ sa-len @ + 1+ strtab-sz !
+    sa-off @ ;
+
+\ Output symbol table management
+: OSYM-FIND ( addr u -- index | -1 )
+    osym-cnt @ 0 ?DO
+        2DUP
+        I CELLS osym-nmbuf + @
+        I CELLS osym-nmlen + @
+        COMPARE 0= IF 2DROP I UNLOOP EXIT THEN
+    LOOP
+    2DROP -1 ;
+
+: OSYM-ADD ( stridx value sec bind c-addr u -- )
+    osym-cnt @ MAX-OUT-SYM >= IF 2DROP 2DROP 2DROP EXIT THEN
+    osym-cnt @ >R
+    R@ CELLS osym-nmlen + !
+    R@ CELLS osym-nmbuf + !
+    R@ CELLS osym-bind + !
+    R@ CELLS osym-sec + !
+    R@ CELLS osym-value + !
+    R@ CELLS osym-stridx + !
+    R> 1+ osym-cnt ! ;
+
+\ Record a relocation entry (pass 2 only)
+: ADD-RELOC ( offset type addend c-addr u -- )
+    asm-pass @ 2 <> IF 2DROP DROP DROP DROP EXIT THEN
+    r-nlen ! r-naddr !
+    r-add ! r-typ ! r-off !
+    reloc-cnt @ MAX-RELOC >= IF S" reloc table full" ASM-ERR EXIT THEN
+    reloc-cnt @ >R
+    r-off @     R@ CELLS reloc-off + !
+    asm-sect @  R@ CELLS reloc-sec + !
+    r-typ @     R@ CELLS reloc-typ + !
+    r-add @     R@ CELLS reloc-add + !
+    \ Copy symbol name to rname-buf
+    r-naddr @ rname-buf rname-ptr @ + r-nlen @ CMOVE
+    rname-ptr @ R@ CELLS reloc-sym + !
+    r-nlen @    R@ CELLS reloc-sln + !
+    r-nlen @    rname-ptr +!
+    R> 1+ reloc-cnt ! ;
+
+\ Map internal section (0/1/2) to 1-based output index
+: SEC-TO-OUT-IDX ( sec -- idx )
+    CASE
+        0 OF text-out-idx @ ENDOF
+        1 OF data-out-idx @ ENDOF
+        2 OF bss-out-idx @  ENDOF
+    ENDCASE ;
+
+\ Write buffer helpers
+: WB-INIT  wb-buf 64 0 FILL ;
+
+: WB! ( value offset -- )
+    wb-buf +
+    OVER         255 AND OVER     C!
+    OVER 8  RSHIFT 255 AND OVER 1+ C!
+    OVER 16 RSHIFT 255 AND OVER 2 + C!
+    SWAP 24 RSHIFT 255 AND SWAP 3 + C! ;
+
+: WB16! ( value offset -- )
+    wb-buf +
+    OVER 255 AND OVER C!
+    SWAP 8 RSHIFT 255 AND SWAP 1+ C! ;
+
+: WB8! ( value offset -- ) wb-buf + C! ;
+
+: WB-WRITE ( count -- ) wb-buf SWAP out-fh @ WRITE-FILE THROW ;
+
+\ Build output symbol table from .global declarations
+: BUILD-GLOBALS
+    gname-cnt @ 0 ?DO
+        I CELLS gname-off + @ gname-buf + bg-addr !
+        I CELLS gname-len + @ bg-len !
+        bg-addr @ bg-len @ SYM-FIND DUP -1 <> IF
+            >R
+            bg-addr @ bg-len @ STRTAB-ADD
+            R@ CELLS sym-off + @
+            R> CELLS sym-sec + @ SEC-TO-OUT-IDX
+            1
+            bg-addr @ bg-len @
+            OSYM-ADD
+        ELSE
+            DROP
+            bg-addr @ bg-len @ STRTAB-ADD
+            0 0 1 bg-addr @ bg-len @
+            OSYM-ADD
+        THEN
+    LOOP ;
+
+\ Build output symbols from relocation references
+: BUILD-RELOC-SYMS
+    reloc-cnt @ 0 ?DO
+        I CELLS reloc-sym + @ rname-buf + br-addr !
+        I CELLS reloc-sln + @ br-len !
+        br-addr @ br-len @ OSYM-FIND -1 = IF
+            br-addr @ br-len @ SYM-FIND DUP -1 <> IF
+                >R
+                br-addr @ br-len @ STRTAB-ADD
+                R@ CELLS sym-off + @
+                R> CELLS sym-sec + @ SEC-TO-OUT-IDX
+                0
+                br-addr @ br-len @
+                OSYM-ADD
+            ELSE
+                DROP
+                br-addr @ br-len @ STRTAB-ADD
+                0 0 1 br-addr @ br-len @
+                OSYM-ADD
+            THEN
+        THEN
+    LOOP ;
+
+\ Count per-section relocations
+: COUNT-RELOCS
+    0 text-nreloc !  0 data-nreloc !  0 bss-nreloc !
+    reloc-cnt @ 0 ?DO
+        I CELLS reloc-sec + @ CASE
+            0 OF 1 text-nreloc +! ENDOF
+            1 OF 1 data-nreloc +! ENDOF
+            2 OF 1 bss-nreloc  +! ENDOF
+        ENDCASE
+    LOOP ;
+
+\ Write section table entries
+: WRITE-SEC-ENTRIES
+    asm-tsz @ 0> IF
+        WB-INIT
+        text-str-idx @ 0 WB!
+        1              4 WB!
+        SF-XRA         8 WB!
+        asm-tsz @     12 WB!
+        off-secdata @ 16 WB!
+        4             20 WB!
+        text-nreloc @ 24 WB!
+        text-nreloc @ 0> IF off-relocs @ ELSE 0 THEN 28 WB!
+        32 WB-WRITE
+    THEN
+    asm-dsz @ 0> IF
+        WB-INIT
+        data-str-idx @ 0 WB!
+        2              4 WB!
+        SF-WRA         8 WB!
+        asm-dsz @     12 WB!
+        off-secdata @ asm-tsz @ + 16 WB!
+        4             20 WB!
+        data-nreloc @ 24 WB!
+        data-nreloc @ 0> IF
+            off-relocs @ text-nreloc @ 16 * +
+        ELSE 0 THEN 28 WB!
+        32 WB-WRITE
+    THEN
+    asm-bsz @ 0> IF
+        WB-INIT
+        bss-str-idx @  0 WB!
+        3              4 WB!
+        SF-WRA         8 WB!
+        asm-bsz @     12 WB!
+        0             16 WB!
+        4             20 WB!
+        bss-nreloc @  24 WB!
+        0             28 WB!
+        32 WB-WRITE
+    THEN ;
+
+\ Write symbol table entries
+: WRITE-SYM-ENTRIES
+    osym-cnt @ 0 ?DO
+        WB-INIT
+        I CELLS osym-stridx + @ 0 WB!
+        I CELLS osym-value + @  4 WB!
+        I CELLS osym-sec + @    8 WB16!
+        0                      10 WB8!
+        I CELLS osym-bind + @  11 WB8!
+        0                      12 WB!
+        16 WB-WRITE
+    LOOP ;
+
+\ Write relocation entries (text first, then data, then bss)
+: WRITE-RELOC-ENTRIES
+    \ .text relocations
+    reloc-cnt @ 0 ?DO
+        I CELLS reloc-sec + @ 0 = IF
+            WB-INIT
+            I CELLS reloc-off + @  0 WB!
+            I CELLS reloc-sym + @ rname-buf +
+            I CELLS reloc-sln + @
+            OSYM-FIND              4 WB!
+            I CELLS reloc-typ + @  8 WB!
+            I CELLS reloc-add + @ 12 WB!
+            16 WB-WRITE
+        THEN
+    LOOP
+    \ .data relocations
+    reloc-cnt @ 0 ?DO
+        I CELLS reloc-sec + @ 1 = IF
+            WB-INIT
+            I CELLS reloc-off + @  0 WB!
+            I CELLS reloc-sym + @ rname-buf +
+            I CELLS reloc-sln + @
+            OSYM-FIND              4 WB!
+            I CELLS reloc-typ + @  8 WB!
+            I CELLS reloc-add + @ 12 WB!
+            16 WB-WRITE
+        THEN
+    LOOP ;
 
 \ === Input / Line Handling ===
 : LOAD-INPUT ( c-addr u -- )
@@ -308,15 +607,19 @@ VARIABLE find-ch-val
 : PARSE-IMM ( addr u -- value )
     \ Try plain number
     2DUP PARSE-NUM IF NIP NIP EXIT THEN
-    \ Try %hi(sym)
+    \ Try %hi(sym) — emit reloc, return 0
     2DUP IS-HI IF
-        2SWAP 2DROP RESOLVE
-        HALF12 + 12 RSHIFT EXIT
+        2SWAP 2DROP
+        imm-sym-len ! imm-sym-addr !
+        CUR-OFF @ REL-HI20 0 imm-sym-addr @ imm-sym-len @ ADD-RELOC
+        0 EXIT
     THEN
-    \ Try %lo(sym)
+    \ Try %lo(sym) — emit reloc, return 0
     2DUP IS-LO IF
-        2SWAP 2DROP RESOLVE
-        MASK12 AND EXIT
+        2SWAP 2DROP
+        imm-sym-len ! imm-sym-addr !
+        CUR-OFF @ REL-LO12 0 imm-sym-addr @ imm-sym-len @ ADD-RELOC
+        0 EXIT
     THEN
     \ Bare symbol (absolute address)
     RESOLVE ;
@@ -465,11 +768,11 @@ VARIABLE find-ch-val
 \ nop = add r0, r0, r0 (opcode 0)
 : DO-NOP  0 0 0 0 ENC-R EMIT-W32 ;
 
-\ mv rd, rs = addi rd, rs, 0 (opcode 16)
+\ mv rd, rs = add rd, rs, r0 (opcode 0)
 : DO-MV
     GET-TOK PARSE-REG 0= IF DROP S" bad rd" ASM-ERR EXIT THEN >R
     GET-TOK PARSE-REG 0= IF DROP S" bad rs" ASM-ERR R> DROP EXIT THEN
-    16 R> ROT 0 ENC-I EMIT-W32 ;
+    0 R> ROT 0 ENC-R EMIT-W32 ;
 
 \ li rd, imm
 VARIABLE li-rd
@@ -488,15 +791,18 @@ VARIABLE li-rd
         >R 16 li-rd @ DUP R> ENC-I EMIT-W32  \ addi rd, rd, lower
     THEN ;
 
-\ la rd, symbol = lui rd, %hi(sym) + addi rd, rd, %lo(sym)
+\ la rd, symbol = lui rd, 0 + addi rd, rd, 0 (with HI20/LO12 relocs)
 : DO-LA
     GET-TOK PARSE-REG 0= IF DROP S" bad rd" ASM-ERR EXIT THEN
     li-rd !
-    GET-TOK RESOLVE
-    DUP HALF12 + 12 RSHIFT
-    >R 32 li-rd @ R> ENC-U EMIT-W32          \ lui rd, upper
-    MASK12 AND
-    >R 16 li-rd @ DUP R> ENC-I EMIT-W32 ;    \ addi rd, rd, lower
+    GET-TOK
+    imm-sym-len ! imm-sym-addr !
+    \ HI20 reloc at current offset, emit lui rd, 0
+    CUR-OFF @ REL-HI20 0 imm-sym-addr @ imm-sym-len @ ADD-RELOC
+    32 li-rd @ 0 ENC-U EMIT-W32
+    \ LO12 reloc at current offset, emit addi rd, rd, 0
+    CUR-OFF @ REL-LO12 0 imm-sym-addr @ imm-sym-len @ ADD-RELOC
+    16 li-rd @ DUP 0 ENC-I EMIT-W32 ;
 
 \ j target = jal r0, target (opcode 64)
 : DO-J-PSEUDO
@@ -514,13 +820,14 @@ VARIABLE li-rd
 \ ret = jalr r0, r31, 0
 : DO-RET  65 0 31 0 ENC-I EMIT-W32 ;
 
-\ call target = lui r2, %hi(target) + jalr r31, r2, %lo(target)
+\ call target = lui r2, 0 + jalr r31, r2, 0 (with HI20/LO12 relocs)
 : DO-CALL
-    GET-TOK RESOLVE
-    DUP HALF12 + 12 RSHIFT
-    >R 32 2 R> ENC-U EMIT-W32           \ lui r2, upper
-    MASK12 AND
-    >R 65 31 2 R> ENC-I EMIT-W32 ;      \ jalr r31, r2, lower
+    GET-TOK
+    imm-sym-len ! imm-sym-addr !
+    CUR-OFF @ REL-HI20 0 imm-sym-addr @ imm-sym-len @ ADD-RELOC
+    32 2 0 ENC-U EMIT-W32               \ lui r2, 0
+    CUR-OFF @ REL-LO12 0 imm-sym-addr @ imm-sym-len @ ADD-RELOC
+    65 31 2 0 ENC-I EMIT-W32 ;          \ jalr r31, r2, 0
 
 \ neg rd, rs = sub rd, r0, rs (opcode 1)
 : DO-NEG
@@ -543,7 +850,16 @@ VARIABLE li-rd
 : DO-DATA   1 asm-sect ! ;
 : DO-BSS    2 asm-sect ! ;
 
-: DO-WORD   GET-TOK PARSE-IMM EMIT-W32 ;
+: DO-WORD
+    GET-TOK
+    2DUP PARSE-NUM IF
+        NIP NIP EMIT-W32
+    ELSE
+        \ Symbol reference — record REL-32 reloc, emit placeholder
+        imm-sym-len ! imm-sym-addr !
+        CUR-OFF @ REL-32 0 imm-sym-addr @ imm-sym-len @ ADD-RELOC
+        0 EMIT-W32
+    THEN ;
 
 : DO-BYTE   GET-TOK PARSE-IMM 255 AND EMIT-B ;
 
@@ -646,7 +962,19 @@ VARIABLE li-rd
     DROP ;
 
 : DO-GLOBAL
-    GET-TOK 2DROP ;  \ just consume the token for now
+    asm-pass @ 1 = IF
+        GET-TOK
+        DUP 0= IF 2DROP EXIT THEN
+        gname-cnt @ MAX-GLOBAL >= IF 2DROP S" too many globals" ASM-ERR EXIT THEN
+        gname-cnt @ >R
+        gname-ptr @ R@ CELLS gname-off + !
+        DUP R@ CELLS gname-len + !
+        gname-ptr @ gname-buf + SWAP CMOVE
+        R@ CELLS gname-len + @ gname-ptr +!
+        R> 1+ gname-cnt !
+    ELSE
+        GET-TOK 2DROP
+    THEN ;
 
 : DO-TYPE   GET-TOK 2DROP GET-TOK 2DROP ;
 : DO-SIZE   GET-TOK 2DROP GET-TOK 2DROP ;
@@ -845,7 +1173,7 @@ VARIABLE li-rd
         PROCESS-LINE
     REPEAT ;
 
-\ === .s32x Output ===
+\ === .s32o Output ===
 CREATE hdr-buf 256 ALLOT
 
 : H! ( value offset -- )
@@ -855,74 +1183,79 @@ CREATE hdr-buf 256 ALLOT
     OVER 16 RSHIFT 255 AND OVER 2 + C!
     SWAP 24 RSHIFT 255 AND SWAP 3 + C! ;
 
-: WRITE-S32X ( c-addr u -- )
-    \ Compute virtual addresses
-    0 text-va !
-    asm-tsz @ ALIGN4 data-va !
-    data-va @ asm-dsz @ ALIGN4 + bss-va !
-
+: WRITE-S32O ( c-addr u -- )
     \ Open output file
-    26 OPEN-FILE THROW >R          \ 26 = write+create+trunc
+    26 OPEN-FILE THROW out-fh !
 
-    \ Build header (256 bytes, zero-filled)
-    hdr-buf 256 0 FILL
-    S32X-MAGIC     0 H!       \ magic "S32X"
-    1         4 hdr-buf + C!   \ version = 1 (uint16 LE low byte)
-    0         5 hdr-buf + C!   \ version high byte = 0
-    1         6 hdr-buf + C!   \ endian = little
-    50        7 hdr-buf + C!   \ machine = 0x32 = SLOW-32
-    0              8 H!        \ entry = 0
-    3             12 H!        \ nsections
-    64            16 H!        \ sec_offset
-    0             20 H!        \ str_offset
-    0             24 H!        \ str_size
-    FLAG-MMIO     28 H!        \ flags = MMIO
-    asm-tsz @     32 H!        \ code_limit
-    0             36 H!        \ rodata_limit
-    data-va @ asm-dsz @ + 40 H!  \ data_limit
-    DEFAULT-STACK 44 H!        \ stack_base
-    DEFAULT-MEMSZ 48 H!        \ mem_size = 16MB
-    bss-va @ asm-bsz @ + ALIGN4 52 H!  \ heap_base
-    0             56 H!        \ stack_end
-    DEFAULT-MMIO  60 H!        \ mmio_base
+    \ Initialize string table
+    STRTAB-INIT
 
-    \ Section 0: .text (at offset 64, 28 bytes each)
-    0             64 H!        \ name_offset
-    1             68 H!        \ type = CODE
-    0             72 H!        \ vaddr = 0
-    148           76 H!        \ file offset = 64 + 3*28 = 148
-    asm-tsz @     80 H!        \ size
-    asm-tsz @     84 H!        \ mem_size
-    1             88 H!        \ flags = EXEC
+    \ Count output sections and assign 1-based indices
+    0 out-nsec !
+    asm-tsz @ 0> IF out-nsec @ 1+ DUP out-nsec ! text-out-idx ! ELSE 0 text-out-idx ! THEN
+    asm-dsz @ 0> IF out-nsec @ 1+ DUP out-nsec ! data-out-idx ! ELSE 0 data-out-idx ! THEN
+    asm-bsz @ 0> IF out-nsec @ 1+ DUP out-nsec ! bss-out-idx !  ELSE 0 bss-out-idx !  THEN
 
-    \ Section 1: .data (at offset 92)
-    0             92 H!        \ name_offset
-    2             96 H!        \ type = DATA
-    data-va @    100 H!        \ vaddr
-    148 asm-tsz @ + 104 H!     \ file offset
-    asm-dsz @    108 H!        \ size
-    asm-dsz @    112 H!        \ mem_size
-    2            116 H!        \ flags = WRITE
+    \ Add section names to string table
+    asm-tsz @ 0> IF S" .text" STRTAB-ADD text-str-idx ! THEN
+    asm-dsz @ 0> IF S" .data" STRTAB-ADD data-str-idx ! THEN
+    asm-bsz @ 0> IF S" .bss"  STRTAB-ADD bss-str-idx !  THEN
 
-    \ Section 2: .bss (at offset 120)
-    0            120 H!        \ name_offset
-    3            124 H!        \ type = BSS
-    bss-va @     128 H!        \ vaddr
-    0            132 H!        \ file offset = 0
-    0            136 H!        \ size = 0
-    asm-bsz @    140 H!        \ mem_size
-    2            144 H!        \ flags = WRITE
+    \ Build output symbol table
+    0 osym-cnt !
+    BUILD-GLOBALS
+    BUILD-RELOC-SYMS
 
-    \ Write header + section table (148 bytes)
-    hdr-buf 148 R@ WRITE-FILE THROW
+    \ Count per-section relocations
+    COUNT-RELOCS
 
-    \ Write .text data
-    code-buf asm-tsz @ R@ WRITE-FILE THROW
+    \ Calculate file layout offsets
+    40                                      off-sections !
+    40 out-nsec @ 32 * +                    off-symbols !
+    off-symbols @ osym-cnt @ 16 * +         off-relocs !
+    off-relocs @ reloc-cnt @ 16 * +         off-strtab !
+    off-strtab @ strtab-sz @ + ALIGN4       off-secdata !
 
-    \ Write .data data
-    data-buf asm-dsz @ R@ WRITE-FILE THROW
+    \ Write 40-byte header
+    WB-INIT
+    S32O-MAGIC      0 WB!
+    1               4 WB16!
+    1               6 WB8!
+    50              7 WB8!        \ machine = 0x32
+    0               8 WB!        \ flags
+    out-nsec @     12 WB!        \ nsections
+    off-sections @ 16 WB!        \ sec_offset
+    osym-cnt @     20 WB!        \ nsymbols
+    off-symbols @  24 WB!        \ sym_offset
+    off-strtab @   28 WB!        \ str_offset
+    strtab-sz @    32 WB!        \ str_size
+    0              36 WB!        \ checksum
+    40 WB-WRITE
 
-    R> CLOSE-FILE THROW ;
+    \ Write section table entries
+    WRITE-SEC-ENTRIES
+
+    \ Write symbol table entries
+    WRITE-SYM-ENTRIES
+
+    \ Write relocation entries
+    WRITE-RELOC-ENTRIES
+
+    \ Write string table
+    strtab strtab-sz @ out-fh @ WRITE-FILE THROW
+
+    \ Write padding to align to 4
+    off-secdata @ off-strtab @ strtab-sz @ + - DUP 0> IF
+        wb-buf OVER 0 FILL
+        wb-buf SWAP out-fh @ WRITE-FILE THROW
+    ELSE DROP THEN
+
+    \ Write section data
+    asm-tsz @ 0> IF code-buf asm-tsz @ out-fh @ WRITE-FILE THROW THEN
+    asm-dsz @ 0> IF data-buf asm-dsz @ out-fh @ WRITE-FILE THROW THEN
+
+    \ Close file
+    out-fh @ CLOSE-FILE THROW ;
 
 \ === Main Entry Point ===
 : ASSEMBLE ( input-addr input-u output-addr output-u -- )
@@ -930,6 +1263,8 @@ CREATE hdr-buf 256 ALLOT
     \ Initialize
     0 sym-cnt !  0 sname-ptr !
     0 asm-errs !
+    0 reloc-cnt !  0 rname-ptr !
+    0 gname-cnt !  0 gname-ptr !
 
     \ Load input file
     2DUP LOAD-INPUT
@@ -941,15 +1276,13 @@ CREATE hdr-buf 256 ALLOT
     ." Pass 1: text=" asm-tsz @ . ." data=" asm-dsz @ . ." bss=" asm-bsz @ .
     ." syms=" sym-cnt @ . CR
 
-    \ Compute virtual addresses for pass 2 symbol resolution
-    0 text-va !
-    asm-tsz @ ALIGN4 data-va !
-    data-va @ asm-dsz @ ALIGN4 + bss-va !
+    \ For .s32o, all sections start at offset 0
+    0 text-va !  0 data-va !  0 bss-va !
 
     \ Pass 2: emit code
     ." Pass 2..." CR
     2 RUN-PASS
-    ." Pass 2 done." CR
+    ." Pass 2 done. relocs=" reloc-cnt @ . CR
 
     \ Check for errors
     asm-errs @ 0<> IF
@@ -959,5 +1292,5 @@ CREATE hdr-buf 256 ALLOT
 
     \ Write output
     ." Writing..." CR
-    WRITE-S32X
+    WRITE-S32O
     ." Done." CR ;
