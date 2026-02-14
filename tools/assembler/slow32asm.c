@@ -8,7 +8,7 @@
 #include "../../common/s32_formats.h"
 
 #define MAX_LINE 65536
-#define MAX_TOKENS 8
+#define MAX_TOKENS 512
 #define MAX_TOKEN_LEN 16384
 #define MAX_LABELS 65536
 #define INITIAL_INSTRUCTION_CAPACITY 65536
@@ -534,7 +534,19 @@ static int tokenize(char *line, char tokens[][MAX_TOKEN_LEN]) {
             count++;
         }
     }
-    
+
+    // Warn if tokens were silently dropped
+    if (count >= MAX_TOKENS && *p) {
+        // Check if there's actual content remaining (not just whitespace/commas)
+        const char *remaining = p;
+        while (*remaining && (*remaining == ' ' || *remaining == '\t' || *remaining == ','))
+            remaining++;
+        if (*remaining) {
+            fprintf(stderr, "ERROR: line has more than %d tokens; data truncated (first dropped: \"%.40s%s\")\n",
+                    MAX_TOKENS, remaining, strlen(remaining) > 40 ? "..." : "");
+        }
+    }
+
     return count;
 }
 
@@ -779,7 +791,7 @@ static bool assemble_line(assembler_t *as, char *line) {
     line = trim(line);
     if (strlen(line) == 0) return true;
     
-    char tokens[MAX_TOKENS][MAX_TOKEN_LEN];
+    static char tokens[MAX_TOKENS][MAX_TOKEN_LEN];
     int num_tokens = tokenize(line, tokens);
     if (num_tokens == 0) return true;
     

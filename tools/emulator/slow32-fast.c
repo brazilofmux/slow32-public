@@ -1227,18 +1227,28 @@ static void parse_service_list(const char *list, char names[][S32_MAX_SVC_NAME],
     }
 }
 
+static void print_usage(const char *progname) {
+    fprintf(stderr, "Usage: %s [options] <binary> [-- <args...>]\n", progname);
+    fprintf(stderr, "Options:\n");
+    fprintf(stderr, "  -h, --help      Show this help message\n");
+    fprintf(stderr, "  --allow <list>  Only allow these services (comma-separated)\n");
+    fprintf(stderr, "  --deny <list>   Deny these services (comma-separated)\n");
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s [options] <binary> [-- <args...>]\n", argv[0]);
-        fprintf(stderr, "Options:\n");
-        fprintf(stderr, "  --allow <list>  Only allow these services (comma-separated)\n");
-        fprintf(stderr, "  --deny <list>   Deny these services (comma-separated)\n");
+        print_usage(argv[0]);
         return 1;
     }
 
-    // Pre-scan for --allow/--deny
+    // Pre-scan for --help/--allow/--deny
     svc_policy_t policy = { .default_allow = true };
-    for (int i = 1; i < argc - 1; i++) {
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            print_usage(argv[0]);
+            return 0;
+        }
+        if (i >= argc - 1) break;
         if (strcmp(argv[i], "--allow") == 0) {
             parse_service_list(argv[i + 1], policy.allow_list, &policy.allow_count, S32_MAX_SERVICES);
             memmove(&argv[i], &argv[i + 2], (argc - i - 2) * sizeof(char *));
