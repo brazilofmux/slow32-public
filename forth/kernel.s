@@ -418,8 +418,16 @@ accept_reset_in:
 # Updates >IN
 .text
     .align 2
-head_parse_word:
+head_parse_name:
     .word head_accept
+    .byte 10
+    .ascii "PARSE-NAME"
+    .align 2
+xt_parse_name:
+    .word parse_word_word
+
+head_parse_word:
+    .word head_parse_name
     .byte 10
     .ascii "PARSE-WORD"
     .align 2
@@ -1191,6 +1199,7 @@ word_empty:
     jal r0, next
 
 # Word: NUMBER ( c-addr -- n flag ) convert counted string using BASE
+# Supports prefixes: $hex, #decimal, %binary, 'c' character literal
 .text
     .align 2
 head_number:
@@ -1208,19 +1217,71 @@ number_word:
 
     lui r13, %hi(var_base)
     addi r13, r13, %lo(var_base)
-    ldw r13, r13, 0     # base
+    ldw r13, r13, 0     # r13 = base (may be overridden by prefix)
 
     addi r6, r4, 1      # ptr to chars
-    add r7, r0, r0      # i
+    add r7, r0, r0      # i = 0
     add r10, r0, r0     # accumulator
     add r11, r0, r0     # sign flag
 
+    # Check for leading sign
     ldbu r8, r6, 0
     addi r9, r0, 45     # '-'
-    bne r8, r9, number_loop
+    bne r8, r9, number_check_prefix
     addi r11, r0, 1     # negative
     addi r7, r7, 1
     addi r6, r6, 1
+
+number_check_prefix:
+    # Must have at least one more char after sign
+    bge r7, r5, number_fail
+    ldbu r8, r6, 0
+
+    # $hex prefix
+    addi r9, r0, 36     # '$'
+    beq r8, r9, number_hex_prefix
+    # #decimal prefix
+    addi r9, r0, 35     # '#'
+    beq r8, r9, number_dec_prefix
+    # %binary prefix
+    addi r9, r0, 37     # '%'
+    beq r8, r9, number_bin_prefix
+    # 'c' character literal
+    addi r9, r0, 39     # single quote
+    beq r8, r9, number_char_literal
+    # No prefix: use current BASE
+    jal r0, number_loop
+
+number_hex_prefix:
+    addi r13, r0, 16
+    addi r6, r6, 1
+    addi r7, r7, 1
+    jal r0, number_loop
+
+number_dec_prefix:
+    addi r13, r0, 10
+    addi r6, r6, 1
+    addi r7, r7, 1
+    jal r0, number_loop
+
+number_bin_prefix:
+    addi r13, r0, 2
+    addi r6, r6, 1
+    addi r7, r7, 1
+    jal r0, number_loop
+
+number_char_literal:
+    # Expected form: 'c' (3 remaining chars: quote, char, quote)
+    sub r8, r5, r7         # remaining = len - consumed
+    addi r9, r0, 3
+    bne r8, r9, number_fail
+    # Check closing quote at r6+2
+    ldbu r8, r6, 2
+    addi r9, r0, 39        # '''
+    bne r8, r9, number_fail
+    # Get character value
+    ldbu r10, r6, 1        # char between quotes
+    jal r0, number_done
 
 number_loop:
     bge r7, r5, number_done
@@ -1231,6 +1292,13 @@ number_loop:
     bgt r8, r9, number_no_upper
     addi r8, r8, -32        # uppercase
 number_no_upper:
+    # Check for underscore separator (skip it)
+    addi r9, r0, 95         # '_'
+    bne r8, r9, number_not_sep
+    addi r6, r6, 1
+    addi r7, r7, 1
+    jal r0, number_loop
+number_not_sep:
     addi r9, r0, 58         # '9'+1
     blt r8, r9, number_digit
     addi r9, r0, 65         # 'A'
@@ -2915,8 +2983,9 @@ count_word:
     stw r28, r2, 0         # push length (new TOS)
     jal r0, next
 
-# Word: S" ( -- c-addr u ) IMMEDIATE compile-time
-# Parses to closing ", compiles xt_sliteral + length + string data (padded)
+# Word: S" ( -- c-addr u ) IMMEDIATE
+# Compile mode: compiles xt_sliteral + length + string data (padded)
+# Interpret mode: parses into transient buffer, pushes addr+len
 .text
     .align 2
 head_squote:
@@ -2927,12 +2996,12 @@ head_squote:
 xt_squote:
     .word squote_word
 squote_word:
-    # Only works in compile mode
     lui r8, %hi(var_state)
     addi r8, r8, %lo(var_state)
     ldw r8, r8, 0
-    beq r8, r0, squote_done
+    beq r8, r0, squote_interpret
 
+    # === Compile mode ===
     # Compile xt_sliteral at HERE
     lui r14, %hi(var_here)
     addi r14, r14, %lo(var_here)
@@ -2994,12 +3063,69 @@ squote_end_parse:
 
     # Update HERE
     stw r14, r15, 0
-
-squote_done:
     jal r0, next
 
-# Word: ." ( -- ) IMMEDIATE compile-time
-# Like S" but also compiles xt_type after the string data
+    # === Interpret mode ===
+squote_interpret:
+    # Select transient buffer (alternating between two)
+    lui r14, %hi(squote_iwhich)
+    addi r14, r14, %lo(squote_iwhich)
+    ldw r8, r14, 0
+    addi r9, r0, 1
+    xor r9, r8, r9         # toggle 0<->1
+    stw r14, r9, 0
+    # Select buffer based on r8
+    lui r15, %hi(squote_ibuf0)
+    addi r15, r15, %lo(squote_ibuf0)
+    beq r8, r0, squote_i_buf_ok
+    lui r15, %hi(squote_ibuf1)
+    addi r15, r15, %lo(squote_ibuf1)
+squote_i_buf_ok:
+    add r16, r15, r0       # r16 = buffer start
+
+    # Parse from SOURCE
+    lui r1, %hi(var_source_ptr)
+    addi r1, r1, %lo(var_source_ptr)
+    ldw r1, r1, 0
+    lui r2, %hi(var_source_len)
+    addi r2, r2, %lo(var_source_len)
+    ldw r2, r2, 0
+    lui r3, %hi(var_to_in)
+    addi r3, r3, %lo(var_to_in)
+    ldw r4, r3, 0
+
+    # Skip one leading space
+    bge r4, r2, squote_i_end
+    add r5, r1, r4
+    ldbu r6, r5, 0
+    addi r7, r0, 32
+    bne r6, r7, squote_i_loop
+    addi r4, r4, 1
+squote_i_loop:
+    bge r4, r2, squote_i_end
+    add r5, r1, r4
+    ldbu r6, r5, 0
+    addi r7, r0, 34        # '"'
+    beq r6, r7, squote_i_quote
+    stb r15, r6, 0
+    addi r15, r15, 1
+    addi r4, r4, 1
+    jal r0, squote_i_loop
+squote_i_quote:
+    addi r4, r4, 1         # skip past "
+squote_i_end:
+    stw r3, r4, 0          # update >IN
+    sub r1, r15, r16       # r1 = length
+    # Push ( c-addr u )
+    addi r28, r28, -4
+    stw r28, r16, 0        # push c-addr
+    addi r28, r28, -4
+    stw r28, r1, 0         # push length
+    jal r0, next
+
+# Word: ." ( -- ) IMMEDIATE
+# Compile mode: like S" but also compiles xt_type after the string data
+# Interpret mode: parse and emit characters immediately
 .text
     .align 2
 head_dotquote:
@@ -3010,12 +3136,12 @@ head_dotquote:
 xt_dotquote:
     .word dotquote_word
 dotquote_word:
-    # Only works in compile mode
     lui r8, %hi(var_state)
     addi r8, r8, %lo(var_state)
     ldw r8, r8, 0
-    beq r8, r0, dotquote_done
+    beq r8, r0, dotquote_interpret
 
+    # === Compile mode ===
     # Compile xt_sliteral at HERE
     lui r14, %hi(var_here)
     addi r14, r14, %lo(var_here)
@@ -3081,8 +3207,40 @@ dotquote_end_parse:
 
     # Update HERE
     stw r14, r15, 0
+    jal r0, next
 
-dotquote_done:
+    # === Interpret mode: parse and emit immediately ===
+dotquote_interpret:
+    lui r1, %hi(var_source_ptr)
+    addi r1, r1, %lo(var_source_ptr)
+    ldw r1, r1, 0
+    lui r2, %hi(var_source_len)
+    addi r2, r2, %lo(var_source_len)
+    ldw r2, r2, 0
+    lui r12, %hi(var_to_in)
+    addi r12, r12, %lo(var_to_in)
+    ldw r4, r12, 0         # r12 = ptr to >IN, r4 = >IN value
+    # Skip one leading space
+    bge r4, r2, dotquote_i_end
+    add r5, r1, r4
+    ldbu r6, r5, 0
+    addi r7, r0, 32
+    bne r6, r7, dotquote_i_loop
+    addi r4, r4, 1
+dotquote_i_loop:
+    bge r4, r2, dotquote_i_end
+    add r5, r1, r4
+    ldbu r6, r5, 0
+    addi r7, r0, 34        # '"'
+    beq r6, r7, dotquote_i_quote
+    add r3, r6, r0         # r3 = char to emit
+    debug r3
+    addi r4, r4, 1
+    jal r0, dotquote_i_loop
+dotquote_i_quote:
+    addi r4, r4, 1         # skip past "
+dotquote_i_end:
+    stw r12, r4, 0         # update >IN (r12 = ptr to var_to_in)
     jal r0, next
 
 # Word: ' ( "name" -- xt )
@@ -3122,7 +3280,7 @@ xt_bracket_tick:
     .word xt_exit
 
 # Word: CHAR ( "name" -- char )
-# Parse the next word and push its first character
+# Parse the next word and push its first character (case-preserving)
 .text
     .align 2
 head_char:
@@ -3132,9 +3290,9 @@ head_char:
     .align 2
 xt_char:
     .word docol_word
-    .word xt_word
-    .word xt_one_plus
-    .word xt_cfetch
+    .word xt_parse_word    # ( addr u ) - case-preserving, no uppercase
+    .word xt_drop          # ( addr )
+    .word xt_cfetch        # ( char )
     .word xt_exit
 
 # Word: [CHAR] ( "name" -- ) IMMEDIATE compile-time
@@ -3148,9 +3306,9 @@ head_bracket_char:
     .align 2
 xt_bracket_char:
     .word docol_word
-    .word xt_word
-    .word xt_one_plus
-    .word xt_cfetch
+    .word xt_parse_word    # ( addr u ) - case-preserving
+    .word xt_drop          # ( addr )
+    .word xt_cfetch        # ( char )
     .word xt_lit
     .word xt_lit           # pushes xt_lit itself
     .word xt_comma         # compile xt_lit at HERE
@@ -4505,11 +4663,13 @@ head_squote_escape:
 xt_squote_escape:
     .word squote_escape_word
 squote_escape_word:
-    # Only works in compile mode
     lui r8, %hi(var_state)
     addi r8, r8, %lo(var_state)
     ldw r8, r8, 0
-    beq r8, r0, se_done
+    beq r8, r0, se_interpret
+
+    # === Compile mode (r12=0) ===
+    add r12, r0, r0            # r12 = 0 = compile mode flag
 
     # Compile xt_sliteral at HERE
     lui r14, %hi(var_here)
@@ -4521,7 +4681,27 @@ squote_escape_word:
     addi r15, r15, 4           # advance past xt
     add r16, r15, r0           # r16 = address of length cell (fill later)
     addi r15, r15, 4           # skip length cell, chars start here
+    jal r0, se_load_source
 
+    # === Interpret mode (r12=1) ===
+se_interpret:
+    addi r12, r0, 1            # r12 = 1 = interpret mode flag
+    # Select transient buffer (alternating)
+    lui r14, %hi(squote_iwhich)
+    addi r14, r14, %lo(squote_iwhich)
+    ldw r8, r14, 0
+    addi r9, r0, 1
+    xor r9, r8, r9             # toggle 0<->1
+    stw r14, r9, 0
+    lui r15, %hi(squote_ibuf0)
+    addi r15, r15, %lo(squote_ibuf0)
+    beq r8, r0, se_i_buf_ok
+    lui r15, %hi(squote_ibuf1)
+    addi r15, r15, %lo(squote_ibuf1)
+se_i_buf_ok:
+    add r16, r15, r0           # r16 = buffer start
+
+se_load_source:
     # Parse from SOURCE: skip one leading space, then copy chars with escape processing
     lui r1, %hi(var_source_ptr)
     addi r1, r1, %lo(var_source_ptr)
@@ -4719,6 +4899,10 @@ se_end_parse:
     # Update >IN
     stw r3, r4, 0
 
+    # Branch on mode flag (r12: 0=compile, 1=interpret)
+    bne r12, r0, se_interpret_finish
+
+    # === Compile mode finalization ===
     # Calculate string length and store in length cell
     sub r1, r15, r16
     addi r1, r1, -4            # r1 = string length (subtract length cell)
@@ -4731,8 +4915,16 @@ se_end_parse:
 
     # Update HERE
     stw r14, r15, 0
+    jal r0, next
 
-se_done:
+    # === Interpret mode finalization ===
+se_interpret_finish:
+    sub r1, r15, r16           # r1 = length
+    # Push ( c-addr u )
+    addi r28, r28, -4
+    stw r28, r16, 0            # push c-addr
+    addi r28, r28, -4
+    stw r28, r1, 0             # push length
     jal r0, next
 
 # Word: CATCH ( i*x xt -- j*x 0 | i*x n )
@@ -5176,13 +5368,16 @@ interp_resume_xt:
 # Zero-filled buffers go in .bss to avoid bloating the binary
 .bss
     .align 2
-tib:            .space 128         # Terminal Input Buffer
+tib:            .space 256         # Terminal Input Buffer
 user_dictionary: .space 1048576    # 1MB space for new words (was 64KB)
 user_dictionary_end:
 pad:            .space 128         # Scratch pad for strings/numbers
 file_path_buf:   .space 512        # Temporary path buffer
 file_path_buf2:  .space 512        # Secondary path buffer (rename)
 file_stat_buf:   .space 128        # struct stat scratch buffer
+squote_ibuf0:    .space 256        # S" interpret-mode transient buffer 0
+squote_ibuf1:    .space 256        # S" interpret-mode transient buffer 1
+squote_iwhich:   .space 4          # Toggle: which transient buffer to use next
 
 
 # ----------------------------------------------------------------------
@@ -5215,7 +5410,7 @@ cold_loop:
 
 cold_after_prompt:
     .word xt_tib       # TIB address
-    .word xt_lit, 128  # Max length
+    .word xt_lit, 256  # Max length
     .word xt_accept    # Returns count (-1 = EOF)
 
     # Check EOF: count == -1?
