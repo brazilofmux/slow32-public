@@ -3,6 +3,7 @@
 ## Decision: RISC-V Approach
 
 Use RISC-V's proven method:
+
 1. LUI loads 20-bit immediate into bits [31:12]
 2. ADDI adds 12-bit sign-extended immediate to complete the 32-bit value
 3. When bit 11 of the lower part is set, increment the LUI value to compensate for sign extension
@@ -30,11 +31,13 @@ Result:
 ### 1. LLVM Backend (/ztank/secret/sdennis/llvm-project/llvm/lib/Target/SLOW32/)
 
 **SLOW32ISelDAGToDAG.cpp - materializeImmediate()**
+
 - Currently generates LUI (16-bit) + ORI
 - Change to generate LUI (20-bit) + ADDI with proper adjustment
 - When lower 12 bits have bit 11 set, increment upper 20 bits
 
 **SLOW32InstrInfo.td**
+
 - Ensure LUI handles 20-bit immediates correctly
 - Use ADDI instead of ORI for constant materialization
 - May need custom pattern for immediate loading
@@ -42,14 +45,17 @@ Result:
 ### 2. Assembler (/ztank/secret/sdennis/slow-32/assembler/slow32asm.c)
 
 **encode_u() function**
+
 - Currently: `((imm << 16) & 0xFFFF0000)` - WRONG!
 - Change to: `(imm & 0xFFFFF) << 12` - Put 20 bits in [31:12]
 
 **LUI parsing**
+
 - Accept 20-bit immediates (0-0xFFFFF)
 - Remove the 16-bit shift hack
 
 ### 3. Emulator - NO CHANGES NEEDED
+
 - Already correctly implements RISC-V style:
   - LUI: `inst.imm = raw & 0xFFFFF000;`
   - Puts immediate directly in register
@@ -58,6 +64,7 @@ Result:
 ### 4. Test Cases
 
 Create test that loads multiple constants:
+
 - 0xDEADBEEF (tests bit 11 adjustment)
 - 0x12345678 (no adjustment needed)
 - 0x80000000 (sign bit)

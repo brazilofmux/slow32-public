@@ -35,12 +35,14 @@ This is terrible! The guest spins, the host checks constantly, nobody wins.
 ## Real Hardware Solutions
 
 ### How NICs Actually Work
+
 1. **DMA**: Hardware fetches descriptors independently
 2. **Interrupts**: NIC interrupts CPU when done
 3. **Doorbell**: CPU writes special register to notify NIC
 4. **Coalescing**: Batch multiple operations before interrupt
 
 ### How We're Different
+
 - No true parallelism (emulator is single-threaded)
 - No real DMA (emulator controls all memory)
 - No interrupts (yet)
@@ -49,17 +51,20 @@ This is terrible! The guest spins, the host checks constantly, nobody wins.
 ## Potential Solutions
 
 ### Option 1: Check on Memory Barriers (Pragmatic)
+
 - Check rings only on special instructions (FENCE, YIELD)
 - Guest explicitly yields when waiting
 - Pro: Simple, deterministic
 - Con: Requires guest cooperation
 
 ### Option 2: Check Every N Instructions (Simple)
+
 - Process rings every 100/1000 instructions
 - Pro: No guest changes needed
 - Con: Latency, arbitrary constant
 
 ### Option 3: Check on Ring Head Write (Smart)
+
 - Trap writes to REQ_HEAD specifically
 - Process immediately when guest submits
 - Pro: Low latency, natural trigger
@@ -69,12 +74,14 @@ This is terrible! The guest spins, the host checks constantly, nobody wins.
 ```asm
 MMIO rs1, rs2, rd  # New instruction
 ```
+
 - Explicit MMIO operation
 - Emulator handles immediately
 - Pro: Clean separation, no polling
 - Con: ISA change
 
 ### Option 5: Use YIELD as Doorbell (Hybrid)
+
 - YIELD instruction triggers ring processing
 - Guest yields when waiting for response
 - Pro: Uses existing ISA, natural points
@@ -83,17 +90,20 @@ MMIO rs1, rs2, rd  # New instruction
 ## Recommended Approach
 
 **Phase 1: Option 3 + 5 Hybrid**
+
 1. Trap writes to REQ_HEAD (doorbell)
 2. Process requests immediately
 3. Guest uses YIELD when waiting
 4. YIELD also processes rings
 
 **Phase 2: Add Interrupts**
+
 1. Add interrupt support to ISA
 2. Device interrupts on completion
 3. Guest can sleep instead of poll
 
 **Phase 3: Threading (Optional)**
+
 1. Separate I/O thread for devices
 2. Real async processing
 3. Lock-free ring buffers shine
@@ -133,16 +143,19 @@ void submit_request() {
 ## Performance Analysis
 
 ### Current (Polling Everywhere)
+
 - Guest: Wastes cycles spinning
 - Host: Checks every instruction
 - Overhead: Massive
 
 ### Proposed (Doorbell + Yield)
+
 - Guest: Yields instead of spinning
 - Host: Processes on doorbell + yield
 - Overhead: Minimal
 
 ### Future (Interrupts)
+
 - Guest: Blocks on WFI (wait for interrupt)
 - Host: Signals completion
 - Overhead: Near zero

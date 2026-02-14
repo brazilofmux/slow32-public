@@ -85,6 +85,7 @@ The bug is likely in one of these files in `llvm/lib/Target/SLOW32/`:
 3. **SLOW32ISelLowering.cpp** - Lowering of `ISD::VASTART` or frame index operations
 
 Search for:
+
 - Code that handles `FrameIndex` with small offsets
 - Vararg register spilling logic
 - Any use of `ORI` or `ISD::OR` for address computation
@@ -96,6 +97,7 @@ The pattern to find: anywhere that uses OR to "add" a small power-of-2 constant 
 Replace the instruction selection pattern that generates `ORI reg, 4` (or similar small constants) for frame offset calculations with `ADDI reg, 4`.
 
 This might be:
+
 1. A peephole optimization that incorrectly assumes alignment
 2. An instruction selection pattern that matches `(add frameindex, 4)` but emits `ori`
 3. Frame lowering code that manually constructs the wrong instruction

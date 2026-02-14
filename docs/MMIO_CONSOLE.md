@@ -21,6 +21,7 @@ Console I/O is implemented via MMIO ring buffers at address `0x10000000`. Progra
 ## I/O Operations
 
 ### Supported Operations
+
 - `IO_OP_PUTCHAR` (0x01) - Output single character
 - `IO_OP_GETCHAR` (0x02) - Input single character
 - `IO_OP_WRITE` (0x03) - Write buffer to file descriptor
@@ -112,6 +113,7 @@ Programs linked without `--mmio` will get memory protection faults when accessin
 ## Implementation Details
 
 ### Processing Model
+
 - MMIO operations are processed only on YIELD instructions
 - Guest writes requests to ring buffer
 - YIELD triggers host processing
@@ -119,12 +121,14 @@ Programs linked without `--mmio` will get memory protection faults when accessin
 - Responses are written back to response ring
 
 ### Ring Buffer Management
+
 - Ring size: 256 descriptors
 - Head incremented by producer
 - Tail incremented by consumer
 - Full/empty detection via head/tail comparison
 
 ### Data Buffer
+
 - 56KB shared data area
 - Offsets specified in descriptors
 - Used for both input and output data

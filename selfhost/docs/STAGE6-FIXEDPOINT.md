@@ -72,6 +72,7 @@ If all comparisons pass, the toolchain has reached a fixed point.
 ## Why Gen1 != Gen2
 
 The bootstrap compiler and the self-hosted compiler may generate different code for the same source because:
+
 - Different register allocation strategies
 - Different instruction selection
 - Different optimization levels

@@ -94,8 +94,11 @@ Cold stub for side exit A (emitted at instruction 30):
 ```
 
 When side exit A fires at runtime:
+
 1. The conditional jump goes directly to the cold stub (the superblock code
+
    after instruction 15 does NOT execute)
+
 2. Host register R8 contains guest r9's value (0) from the side exit point
 3. The cold stub writes R8 to **r22's** memory location instead of r9's
 4. r9's memory location retains its stale value from before the block
@@ -124,10 +127,15 @@ longer superblock chains with more register pressure.
 ## Why Only Stage 4
 
 - Superblocks alone (Stage 3, `-S`): No register cache, so no slots to corrupt.
+
   All register values live in memory. Correct.
+
 - Register cache alone (`-R`): No superblocks, so no deferred side exits. Every
+
   block boundary does a full flush with the current (correct) allocation. Correct.
+
 - Both together (Stage 4, default): Deferred side exits + register cache = the
+
   snapshot uses stale allocation data. **Broken.**
 
 ## The Manifestation
@@ -148,21 +156,36 @@ conversion got a spurious space prefix.
 ### What We Ruled Out (in order)
 
 1. **f64 const_prop invalidation** (Session 1) - Found and fixed a real but
+
    separate bug. Improved results from 15/53 to 24/53.
+
 2. **Dead temporary elimination** - Guarded with `if (!ctx->superblock_enabled)`.
+
    Not the root cause. Guard was unnecessary and later removed.
+
 3. **Pending write snapshot** (Session 2) - Added pending write capture to
+
    deferred exits. Necessary but not sufficient.
+
 4. **Force-all-dirty in snapshots** - Changed `dirty_snapshot[s] = dirty` to
+
    `dirty_snapshot[s] = allocated`. Bug persisted. Dirty flags were not the issue.
+
 5. **r13/space_sign flag corruption** - Forced r13=0 at initialization. Bug
+
    persisted. The flag itself was fine.
+
 6. **All flag register initialization** - Forced r21, r9, r13, r4, r20 = 0.
+
    Bug persisted. The initialization block was correct.
+
 7. **Printf code differences** - Compared byte-for-byte between test and dBase
+
    binaries. Identical. Not a code generation issue.
+
 8. **MMIO libc differences** - Built test with same libc. No bug. Same library.
 9. **Block structure analysis** - Mapped every block in the printf code path,
+
    every side exit, every register allocation. This revealed that register
    allocations *differed between blocks* but didn't immediately reveal the
    snapshot was using end-of-block state.
@@ -244,20 +267,24 @@ Speedup: 4.6x
 ## Lessons
 
 1. **Snapshot everything you dereference later.** If a deferred operation reads
+
    state that can change between capture and use, the snapshot must include all
    of that state. Capturing the dirty flags but not the register mapping is
    like remembering that you need to mail a letter but forgetting the address.
 
 2. **Bugs that require two features to interact are the hardest to find.** Neither
+
    superblocks nor register caching was broken in isolation. The bug only existed
    in the four lines of code where they met: the deferred side exit flush.
 
 3. **Large binaries find bugs that small tests cannot.** The printf code was
+
    identical. The bug was in how the JIT *compiled* that code in the context of
    a large binary with high register pressure. Unit tests for the JIT's
    individual features would never trigger this.
 
 4. **When the same code produces different results at different addresses, the
+
    bug is in the translator, not the translated code.** This was the key clue:
    identical guest instructions, identical memory layout, different output. The
    only variable was the surrounding binary's effect on superblock length and

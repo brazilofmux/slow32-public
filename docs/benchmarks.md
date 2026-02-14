@@ -108,20 +108,25 @@
 ## Observations
 
 1. **The DBT is extraordinarily fast.** At ~6 GIPS on compute-bound code, it approaches
+
    native execution speed on a 3.6 GHz processor. The JIT-compiled superblocks with
    register caching and peephole optimization produce highly efficient x86-64 code.
 
 2. **QEMU TCG is respectable but not competitive.** At ~1.16 GIPS it's a solid general-purpose
+
    emulator, but the custom DBT is 3-5x faster due to architecture-specific optimizations.
 
 3. **Bounds checks are nearly free.** The safe vs unsafe DBT difference is only 2-8%,
+
    meaning the W^X and bounds checking overhead is negligible.
 
 4. **I/O-bound workloads narrow the gap.** validatecsv shows lower MIPS across all emulators
+
    (3,486 vs 5,938 for DBT) because time is spent in emulated file I/O syscalls, not just
    compute. Even so, the DBT processes CSV data at 326-351 MB/s.
 
 5. **Within striking distance of native.** The DBT running a SLOW-32 binary processes CSV
+
    at 351 MB/s vs native fread at 513 MB/s — the emulated program runs at **68% of native
    speed** on a real-world I/O workload.
 

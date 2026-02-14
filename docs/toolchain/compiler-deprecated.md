@@ -5,11 +5,13 @@ The `tools/compiler-deprecated/` directory contains the original standalone SLOW
 ## Why It's Deprecated
 
 This compiler was a valiant effort that implemented:
+
 - SSA/PHI node handling
 - Register allocation and spilling
 - Basic instruction translation
 
 However, it had fundamental limitations:
+
 - **Varargs support was impossible** - The x86 ABI assumptions in the IR couldn't be properly translated
 - Architecture-specific assumptions in the IR made correct translation increasingly difficult
 - It was essentially fighting against LLVM rather than working with it
@@ -17,6 +19,7 @@ However, it had fundamental limitations:
 ## The Solution
 
 This led to developing a proper LLVM backend for SLOW-32, which:
+
 - Generates correct SLOW-32 code directly from LLVM
 - Properly handles all C features including varargs
 - Integrates with clang as a native target: `-target slow32-unknown-none`

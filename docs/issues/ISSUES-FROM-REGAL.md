@@ -10,6 +10,7 @@ These issues were discovered while porting the Regal accounting system to SLOW-3
 The LLVM backend generates incorrect code for tight loops with switch statements at `-O2`. The compiler appears to incorrectly cache values across loop iterations, causing state machine logic to fail.
 
 ### Symptoms
+
 - CSV parser state machine fails silently
 - Adding `printf()` debug statements makes the code work (classic Heisenbug)
 - The loop appears to exit early or skip iterations
@@ -50,12 +51,14 @@ for (size_t i = 0; i < len; i++) {
 ```
 
 ### Investigation Notes
+
 - The bug manifests only at `-O2`; we couldn't test `-O1` because LLC crashes
 - Volatile variables alone don't fix it
 - The issue appears related to how the optimizer handles the loop iterator, character read, and state variable together
 - Possibly related to loop-invariant code motion or value caching optimizations
 
 ### Files for Reproduction
+
 - `/ztank/secret/sdennis/regal/src/regal/csv.c` - The CSV parser that exhibits the bug
 - Test by building regal for SLOW-32 and running `regal stats`
 
@@ -74,12 +77,14 @@ ld->mmio_base = ld->heap_base + 0x100000;  // 1MB heap space by default
 
 ### Problem
 When `--mmio` is specified (required for file I/O):
+
 1. `__heap_start` is set to `heap_base` (after BSS)
 2. `__heap_end` is set to `mmio_base` (line 990)
 3. `mmio_base` is calculated as `heap_base + 0x100000` (1MB)
 4. Result: Only 1MB available for malloc, regardless of 200+ MB physical memory available
 
 ### Symptoms
+
 - `malloc(1434891)` fails even with 200MB+ available memory
 - Larger CSV files fail to load
 - The executable header shows correct memory layout, but runtime heap is limited

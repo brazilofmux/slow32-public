@@ -6,11 +6,13 @@ Stage 2 established caching and direct branch chaining. Stage 3 optimizes the re
 
 **Current Problem:**
 Every `JALR` (indirect jump/call/return) returns to the C dispatcher, which:
+
 1. Does a full hash table lookup via C code
 2. Has function call overhead
 3. Breaks the native execution flow
 
 **Stage 3 Goals:**
+
 1. **Inline Hash Lookup** - Probe the block cache directly in generated code
 2. **Return Address Stack (RAS)** - Predict return addresses for call/return pairs
 3. **Statistics & Tuning** - Better profiling to guide optimizations
@@ -194,6 +196,7 @@ void emit_indirect_lookup(translate_ctx_t *ctx, x64_reg_t target_reg) {
 #### Code Size
 
 Inline lookup adds ~40-50 bytes per JALR. Trade-off:
+
 - More code buffer usage
 - But avoids dispatcher overhead on hits
 
@@ -476,6 +479,7 @@ tools/dbt/
 ## Implementation Order
 
 ### Phase 1: Inline Hash Lookup (Core Feature)
+
 1. Add `lookup_table` pointer to `dbt_cpu_state_t`
 2. Update `execute_translated()` to pass lookup table in R15
 3. Add necessary emit primitives for SIB addressing
@@ -484,6 +488,7 @@ tools/dbt/
 6. Test: Function-heavy programs should show improvement
 
 ### Phase 2: Return Address Stack (Optimization)
+
 1. Add `return_stack_t` to `dbt_cpu_state_t`
 2. Implement `emit_ras_push()` and `emit_ras_predict()`
 3. Update `translate_jal()` to push RAS on calls
@@ -491,6 +496,7 @@ tools/dbt/
 5. Test: Deep call stacks should show additional improvement
 
 ### Phase 3: Statistics & Tuning
+
 1. Add Stage 3 statistics
 2. Add `-3` command-line flag
 3. Profile and tune hash table size, RAS size
@@ -501,6 +507,7 @@ tools/dbt/
 ## Testing Strategy
 
 ### Correctness
+
 - All Stage 2 regression tests must pass
 - Differential testing against interpreter
 
@@ -514,6 +521,7 @@ tools/dbt/
 | Tight loop (no calls) | ~Y MIPS | ~Y MIPS (unchanged) |
 
 ### New Test Cases
+
 1. **Deep recursion** - Tests RAS depth handling
 2. **Indirect call table** - Tests inline lookup (not RAS)
 3. **Longjmp/setjmp-like** - Non-local returns, RAS misprediction
@@ -534,16 +542,19 @@ tools/dbt/
 ## Alternative Approaches Considered
 
 ### 1. Polymorphic Inline Caches (PICs)
+
 - Cache last N targets at each call site
 - More complex, better for highly polymorphic calls
 - **Deferred:** SLOW-32 programs don't have polymorphic dispatch
 
 ### 2. Return Address Buffer (RAB) like x86
+
 - Hardware-style return prediction
 - Requires more state management
 - **Using RAS instead:** Simpler software equivalent
 
 ### 3. Trace Compilation
+
 - Build superblocks across multiple BBs
 - More complex, better for very hot paths
 - **Deferred to Stage 4:** Focus on indirect branches first
@@ -555,6 +566,7 @@ tools/dbt/
 ### Phase 1: Inline Hash Lookup - COMPLETE
 
 **Implemented:**
+
 - ✅ New emit primitives: `emit_mov_r64_m64`, `emit_mov_r64_m64_sib`, `emit_cmp_m32_r32`, `emit_test_r64_r64`
 - ✅ CPU state extended with `lookup_table` and `lookup_mask` pointers
 - ✅ `emit_indirect_lookup()` generates inline hash probe for JALR
@@ -562,18 +574,21 @@ tools/dbt/
 - ✅ All 17 regression tests pass
 
 **Results:**
+
 - Inline lookup reduces dispatcher calls (e.g., 1056 → 734 for printf test)
 - Code size increase: ~60 bytes per JALR instruction
 - Performance: Mixed results on small tests (overhead vs savings trade-off)
 - Benefits expected on larger programs with hot indirect branches
 
 **Known Limitations:**
+
 - Instruction count may be inaccurate when inline lookup succeeds (count only updates on dispatcher return)
 - No linear probing on collision (single-probe, falls back to dispatcher on miss)
 
 ### Phase 2: Return Address Stack - COMPLETE
 
 **Implemented:**
+
 - ✅ RAS data structure in cpu_state.h (32-entry circular buffer)
 - ✅ `emit_mov_r32_m32_sib` and `emit_mov_m32_r32_sib` for array access
 - ✅ `emit_ras_push()` for JAL r31 (call) sites
@@ -583,6 +598,7 @@ tools/dbt/
 - ✅ All 17 regression tests pass
 
 **How it works:**
+
 - At call sites (JAL r31), the return address is pushed onto the RAS
 - At return sites (JALR r0, r31, 0), RAS predicts the return address
 - If prediction matches actual: inline lookup for predicted address (fast path)

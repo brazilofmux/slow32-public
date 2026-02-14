@@ -229,17 +229,20 @@ void main_loop() {
 ### Per-Queue Strategies
 
 **High Priority Queue**
+
 - Small (64KB typical)
 - Never blocks sender
 - Drops connection if truly overwhelmed
 - Used for control messages only
 
 **Normal Priority Queue**
+
 - Medium (128KB typical)
 - Applies backpressure to sender
 - Standard flow control via queue fill level
 
 **Bulk Queue**
+
 - Large (512KB+) or streaming
 - Can be paused entirely under pressure
 - Separate flow control from other queues
@@ -247,21 +250,25 @@ void main_loop() {
 ## Implementation Phases
 
 ### Phase 1: Basic TRAP Interface
+
 1. Replace DEBUG with TRAP instruction
 2. Implement basic TRAP handlers (putchar, yield)
 3. Update runtime to use TRAPs
 
 ### Phase 2: Queue Infrastructure
+
 1. Add MMIO region to memory map
 2. Implement ring buffer structures
 3. Add queue-based messaging
 
 ### Phase 3: Multi-Instance Support
+
 1. Instance isolation
 2. Per-instance MMIO regions
 3. Host scheduler for instances
 
 ### Phase 4: Network Services
+
 1. Socket TRAPs
 2. Packet queuing
 3. Example: echo server
@@ -270,16 +277,19 @@ void main_loop() {
 ## Performance Considerations
 
 ### Cache Line Separation
+
 - Producer (head) and consumer (tail) on different cache lines
 - Prevents false sharing between host and SLOW-32
 - 64-byte cache line alignment assumed
 
 ### Batch Operations
+
 - Dequeue multiple messages per iteration
 - Amortize synchronization overhead
 - Reduce TRAP frequency
 
 ### Zero-Copy Possibilities
+
 - Large messages stay in queue memory
 - Pass pointers instead of copying
 - Requires careful memory management
@@ -287,16 +297,19 @@ void main_loop() {
 ## Security Considerations
 
 ### Queue Validation
+
 - Validate all pointers before access
 - Check message sizes against queue capacity
 - Sanitize message types and flags
 
 ### Instance Isolation  
+
 - Each instance has separate MMIO region
 - No shared memory between instances
 - Host enforces isolation
 
 ### Resource Limits
+
 - Per-instance memory limits
 - Queue size limits
 - Message rate limiting
@@ -328,16 +341,19 @@ int main() {
 ## Future Extensions
 
 ### DMA-Style Operations
+
 - Host pre-processes data
 - Places results directly in SLOW-32 memory
 - Notification via queue message
 
 ### Event Aggregation
+
 - Batch multiple events into single message
 - Reduce message overhead
 - Improve throughput
 
 ### Shared Memory Regions
+
 - Read-only shared data between instances
 - Copy-on-write semantics
 - Careful synchronization required
@@ -420,6 +436,7 @@ void handle_segv(int sig, siginfo_t* info, void* context) {
 ```
 
 **Benefits:**
+
 - Hardware-enforced W^X (zero overhead in fast path)
 - MMU does the checking at memory speed
 - Failed instance can't crash the host
@@ -433,6 +450,7 @@ void handle_segv(int sig, siginfo_t* info, void* context) {
 - Trivial to debug (each instance is independent)
 
 **Communication:**
+
 - Message passing only
 - Host-managed queues
 - No shared memory, ever
@@ -447,6 +465,7 @@ If you need real threading with shared memory, use native code. SLOW-32 is for o
 ## Summary
 
 This design provides:
+
 - Clean separation between compute (SLOW-32) and I/O (host)
 - Efficient queue-based communication
 - Natural priority handling

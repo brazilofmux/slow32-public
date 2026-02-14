@@ -3,6 +3,7 @@
 ## The Core Insight
 
 TRAP, YIELD, and HALT are all **synchronization points** where the emulator can:
+
 1. Process outgoing requests from guest
 2. Deliver incoming data to guest  
 3. Decide whether to continue execution

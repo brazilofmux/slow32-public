@@ -15,6 +15,7 @@ Test 7: Zero padding         ✅ Works correctly
 ```
 
 ## Features Supported
+
 1. **%d / %i** - Signed decimal integers (32-bit and 64-bit with `ll`)
 2. **%u** - Unsigned decimal integers (32-bit and 64-bit with `ll`)
 3. **%x / %X** - Hexadecimal (32-bit and 64-bit with `ll`)
@@ -27,6 +28,7 @@ Test 7: Zero padding         ✅ Works correctly
 10. **Flags** - `-` (left justify), `0` (zero padding), `+` (show sign), `#` (alt form)
 
 ## Implementation Details
+
 - Located in: `runtime/printf_enhanced.c`
 - Performance optimized using a 2-digit lookup table (`Digits100`) for fast decimal conversion.
 - 64-bit conversions use base-100 chunks and `__udivdi3` libcalls.
@@ -37,5 +39,6 @@ The garbled ">>>>>>" output reported in earlier versions was caused by incorrect
 
 ## Usage
 `printf` is part of standard `libc`.
+
 - For MMIO-based high performance: link with `libc_mmio.s32a`.
 - For simple debug output: link with `libc_debug.s32a`.

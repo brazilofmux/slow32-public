@@ -8,6 +8,7 @@
 The SLOW32 LLVM backend miscompiles 64-bit `/` and `%` operations when the divisor is a constant (e.g., 10). Instead of emitting a call to `__udivdi3`/`__umoddi3`, the SelectionDAG legalization step replaces the operation with a multiply-by-magic-constant sequence. The expanded sequence assumes a working 64-bit multiply-high implementation, but the current SLOW32 lowering (`UMUL_LOHI` split into 16-bit parts) produces incorrect results. As a result, `uint64_t` division/modulo return wrong values across all optimization levels.
 
 ### Symptoms
+
 - `printf("%llu", val)` prints garbage (because `printf` uses `/ 10` and `% 10`).
 - `uint64_t` division by constant returns incorrect values.
 - `__udivdi3` is NOT called even when `-O2` is used.
@@ -20,9 +21,11 @@ SLOW32 does not have a 64-bit multiply instruction, nor a `mulh` instruction. Th
 **The Bug:** The manual 16-bit split implementation of `UMUL_LOHI` was incorrect, specifically in how it handled carries between the partial products.
 
 ### Affected Versions
+
 - All versions prior to the fix.
 
 ### Workaround
+
 1.  **Disable Optimization**: Compile with `-O0` (though the backend might still try to optimize DAGs).
 2.  **Force Libcalls**: Use `__udivdi3(a, b)` explicitly in C code and ensure it is marked `optnone` or compiled separately.
 3.  **Volatile**: Make the divisor `volatile` to force a real division instruction (which lowers to a libcall).

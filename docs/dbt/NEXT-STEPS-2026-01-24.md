@@ -14,6 +14,7 @@ as we continue iterating on slow32-dbt.
 ## Highest ROI Ideas (ordered)
 
 1) Fix Stage 3 inline-lookup collision behavior
+
    - Spec expects single-probe, but cache uses linear probing.
    - Result: displaced entries miss inline lookup and fall back to dispatcher.
    - Options:
@@ -21,20 +22,24 @@ as we continue iterating on slow32-dbt.
      - Or change cache layout to direct-mapped / small set-associative to match single probe.
 
 2) Pin lookup_table in a host register
+
    - Stage 3 spec says R15 holds lookup_table to avoid loads from cpu state.
    - Inline lookup still loads CPU_LOOKUP_TABLE_OFFSET each time.
    - Pinning R15 trims hot-path loads; consider pinning lookup_mask too if useful.
 
 3) Small register cache (not full allocator)
+
    - Keep 4-6 host regs live within a block/superblock.
    - Lazy writeback at block end + side exits.
    - Goal: avoid load/op/store per instruction in hot loops.
 
 4) Chaining scalability
+
    - Current chaining scans all blocks to patch incoming edges (O(n)).
    - Keep per-target incoming lists to make chaining O(#incoming).
 
 5) Instruction count correctness
+
    - Inline lookup bypasses dispatcher so instr_count can lie.
    - Either increment in generated code or track blocks-executed separately.
 

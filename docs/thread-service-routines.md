@@ -20,6 +20,7 @@ struct slow32_header {
 ```
 
 This means:
+
 - No memory access to fetch vectors (fast!)
 - No wasted memory space for vector tables
 - Vectors are program metadata, not runtime state
@@ -131,6 +132,7 @@ tsr_exit:
 ## Future Considerations
 
 This model could evolve into:
+
 - Full hardware threading (multiple main threads)
 - Asymmetric multiprocessing (big main thread, small TSRs)
 - Event-driven architecture (TSRs for all I/O)

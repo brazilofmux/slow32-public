@@ -6,6 +6,7 @@ Stage 1 established correctness: translate a block, execute it, return to dispat
 Stage 2 adds performance: cache translated blocks and chain them together.
 
 **Goals:**
+
 1. **Block Cache** - Avoid re-translating the same guest code
 2. **Direct Chaining** - Avoid returning to dispatcher for known branches
 3. **Indirect Branch Lookup** - Fast hash lookup for computed jumps
@@ -13,6 +14,7 @@ Stage 2 adds performance: cache translated blocks and chain them together.
 ## Performance Analysis
 
 Stage 1 bottleneck: Every block returns to C dispatcher, which:
+
 1. Looks at exit_reason
 2. Calls translate_block() (re-decodes even if seen before)
 3. Calls execute_translated() (inline asm overhead)
@@ -110,6 +112,7 @@ void cache_insert(block_cache_t *cache, translated_block_t *block) {
 ### Concept
 
 When Block A ends with `BEQ r1, r2, BlockB`:
+
 - Stage 1: Generate code that sets `exit_reason = EXIT_BRANCH`, `pc = BlockB`, then `ret`
 - Stage 2: Generate a `jmp <placeholder>`, later patch to jump directly to BlockB's host code
 
@@ -190,6 +193,7 @@ dispatcher_stub:
 ```
 
 The C dispatcher then:
+
 1. Looks up or translates the target block
 2. Patches the original exit if found
 3. Executes the target block
@@ -207,6 +211,7 @@ Same as Stage 1 - just set `exit_reason = EXIT_INDIRECT` and return.
 ### Option B: Inline Hash Lookup (Faster)
 
 Generate inline code that:
+
 1. Computes hash of target PC
 2. Probes the hash table
 3. On hit: jumps directly to host code
@@ -278,14 +283,17 @@ uint8_t *code_buffer_alloc(block_cache_t *cache, uint32_t size) {
 When buffer fills up:
 
 **Option A: Flush Everything**
+
 - Clear cache, reset buffer pointer
 - Simple, but loses all translations
 
 **Option B: Multiple Buffers**
+
 - Allocate new buffer, keep old one read-only
 - More complex memory management
 
 **Option C: LRU Eviction**
+
 - Track access times, evict least-recently-used blocks
 - Complex, probably not worth it for Stage 2
 
@@ -440,6 +448,7 @@ Avg chain length        1           >10
 Stage 2 has been implemented with the following results:
 
 ### Implemented Features:
+
 - ✅ Block cache with hash table lookup
 - ✅ Block metadata pool
 - ✅ 4MB code buffer for translated blocks
@@ -448,15 +457,18 @@ Stage 2 has been implemented with the following results:
 - ✅ Cache statistics and profiling
 
 ### Test Results:
+
 - ✅ All 17 regression tests pass (1 skipped: MMIO)
 - ✅ Exit codes match interpreter
 
 ### Performance Observations:
+
 - Small tests (~200-1000 instructions): Similar MIPS to Stage 1
 - Cache overhead roughly equals translation savings for small programs
 - Real benefits expected in larger programs with hot loops
 
 ### Files Changed:
+
 - `block_cache.h` - Cache data structures and API
 - `block_cache.c` - Cache implementation
 - `translate.h/c` - Added chaining support

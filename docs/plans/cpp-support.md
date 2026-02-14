@@ -37,22 +37,26 @@ Most C++ features are handled entirely by the Clang frontend and should
 **Goal**: Confirm what already works with minimal flags.
 
 **Tasks**:
+
 1. Create `examples/cpp/` directory with test programs
 2. Build simple C++ program with current toolchain:
    ```bash
    clang++ -target slow32-unknown-none -fno-exceptions -fno-rtti \
            -ffreestanding -nostdinc++ -O2 -S -emit-llvm test.cpp
    ```
+
 3. Identify first failures (likely missing runtime symbols)
 4. Document which LLVM IR constructs appear that C code never generated
 
 **Test programs** (in order of complexity):
+
 - `class_basic.cpp` - Simple class with constructor/destructor
 - `class_virtual.cpp` - Virtual functions, vtables
 - `template_basic.cpp` - Function and class templates
 - `stl_minimal.cpp` - std::array or hand-rolled container
 
 **Expected blockers**:
+
 - Missing `__cxa_pure_virtual`
 - Missing `operator new` / `operator delete`
 - No global constructor execution
@@ -236,6 +240,7 @@ Call `__cxa_finalize(0)` from `exit()` or at end of `__slow32_start`.
 **Goal**: Function-local static variables initialize correctly.
 
 The compiler emits guard variables and calls to:
+
 - `__cxa_guard_acquire`
 - `__cxa_guard_release`
 - `__cxa_guard_abort`
@@ -279,6 +284,7 @@ This phase is **optional** - many embedded projects use `-fno-rtti` permanently.
 #### 4.1 Type Info Structures
 
 The compiler emits `std::type_info` objects. Need:
+
 - `std::type_info` class definition
 - Comparison operators for type matching
 - Mangled type name strings
@@ -286,6 +292,7 @@ The compiler emits `std::type_info` objects. Need:
 #### 4.2 `dynamic_cast` Support
 
 The compiler calls `__dynamic_cast()` from libcxxabi. This requires:
+
 - Understanding class hierarchy at runtime
 - Walking vtables to find correct subobject
 
@@ -302,6 +309,7 @@ This is the largest piece of work and is **optional** for many use cases.
 #### 5.1 DWARF Unwind Tables
 
 The compiler emits `.eh_frame` sections with unwind info. Need:
+
 - Linker support for `.eh_frame` and `.eh_frame_hdr`
 - DWARF CFI (Call Frame Information) interpretation
 - Unwind table format for SLOW32 calling convention
@@ -309,11 +317,13 @@ The compiler emits `.eh_frame` sections with unwind info. Need:
 #### 5.2 libunwind Port
 
 Options:
+
 1. Port LLVM's libunwind to SLOW32
 2. Write minimal custom unwinder
 3. Use a simplified unwinding scheme
 
 Minimum required functions:
+
 - `_Unwind_RaiseException`
 - `_Unwind_Resume`
 - `_Unwind_GetIP`
@@ -326,6 +336,7 @@ Minimum required functions:
 #### 5.3 C++ ABI Exception Functions
 
 From libcxxabi:
+
 - `__cxa_allocate_exception`
 - `__cxa_throw`
 - `__cxa_begin_catch`
@@ -338,6 +349,7 @@ From libcxxabi:
 
 The compiler emits landing pad blocks for catch clauses. The personality
 routine must:
+
 1. Parse LSDA (Language-Specific Data Area)
 2. Match thrown exception to catch handlers
 3. Direct unwinder to correct landing pad
@@ -354,6 +366,7 @@ For embedded use, a full libstdc++ or libc++ is unnecessary. Consider:
 ### Option A: No Standard Library
 
 Use `-nostdinc++` and `-nostdlib++`. Provide only:
+
 - `<cstdint>`, `<cstddef>` (just typedefs)
 - `<new>` (placement new)
 - `<type_traits>` (compile-time only)
@@ -361,6 +374,7 @@ Use `-nostdinc++` and `-nostdlib++`. Provide only:
 ### Option B: Freestanding Headers
 
 Many "freestanding" headers require no runtime:
+
 - `<array>`
 - `<tuple>`
 - `<utility>` (std::move, std::forward)
@@ -380,6 +394,7 @@ Cherry-pick needed components.
 ### Unit Tests
 
 Create `regression/cpp/` with tests for:
+
 - [ ] Basic class instantiation
 - [ ] Virtual function dispatch
 - [ ] Single inheritance
@@ -446,18 +461,22 @@ Create `regression/cpp/` with tests for:
 ## Appendix: Key Files to Modify
 
 ### Backend (if needed)
+
 - `llvm/lib/Target/SLOW32/SLOW32ISelLowering.cpp` - New SDNode types
 - `llvm/lib/Target/SLOW32/SLOW32AsmPrinter.cpp` - Section emission
 
 ### Runtime
+
 - `runtime/cxxabi.c` (new) - C++ ABI functions
 - `runtime/start.c` - Constructor/destructor calls
 - `runtime/Makefile` - Build C++ runtime
 
 ### Linker
+
 - Linker script updates for `.init_array`, `.fini_array`, `.eh_frame`
 
 ### Toolchain Wrapper
+
 - `slow32cc` - Detect `.cpp` and add appropriate flags/libraries
 
 ---

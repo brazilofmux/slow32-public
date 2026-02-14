@@ -300,6 +300,7 @@ The translator takes a guest PC, fetches instructions until a branch/jump, and e
 ### Basic Block Definition
 
 A basic block ends at:
+
 - Any branch instruction (BEQ, BNE, BLT, BGE, BLTU, BGEU)
 - Any jump instruction (JAL, JALR)
 - HALT, DEBUG, YIELD, ASSERT_EQ
@@ -897,6 +898,7 @@ Stage 1 may actually be *slower* than the interpreter! That's fine. The goal is 
 ## Development Roadmap
 
 ### Week 1: Emitter + Basic Instructions
+
 - [ ] `emit_x64.c` with all needed instructions
 - [ ] Unit tests for emitter
 - [ ] Translate: ADD, SUB, AND, OR, XOR, ADDI
@@ -904,17 +906,20 @@ Stage 1 may actually be *slower* than the interpreter! That's fine. The goal is 
 - [ ] Translate: SLL, SRL, SRA (reg and imm forms)
 
 ### Week 2: Comparisons + Memory
+
 - [ ] Translate: SLT, SLTU, SEQ, SNE, SGT, SGE, SLE, etc.
 - [ ] Translate: LDW, STW (word only first)
 - [ ] Translate: LDB, LDH, LDBU, LDHU, STB, STH
 
 ### Week 3: Control Flow
+
 - [ ] Translate: JAL
 - [ ] Translate: JALR
 - [ ] Translate: BEQ, BNE, BLT, BGE, BLTU, BGEU
 - [ ] Main dispatch loop
 
 ### Week 4: Special + Polish
+
 - [ ] Translate: MUL, MULH, DIV, REM
 - [ ] Translate: DEBUG, YIELD, HALT, NOP, ASSERT_EQ
 - [ ] s32x loader integration

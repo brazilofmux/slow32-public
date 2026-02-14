@@ -63,6 +63,7 @@ Future services (sockets, timers, `poll`, `gettimeofday`, etc.) can follow the s
 > **Note:** Until errno plumbing lands, the emulator signals errors with `resp.status = 0xFFFFFFFF` (a `-1` sentinel). Success paths continue to return positive byte counts/fds/etc. in `resp.status`.
 
 ### Operation Flow
+
 1. **CPU submits request**:
    - Write data to DATA_BUFFER
    - Fill descriptor at REQUEST_RING[head]

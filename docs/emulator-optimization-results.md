@@ -15,6 +15,7 @@ Implemented ChatGPT 5's suggested optimizations: predecode + dispatch table for 
 | slow32-fast | -O3 + predecode | ~236-238 MIPS | Our optimization |
 
 ### Speedup Analysis
+
 - **3.6x faster** than unoptimized (-O0)
 - **Similar speed** to -O2 optimized regular emulator
 - **Slightly slower** than -O2 regular (due to function pointer overhead)
@@ -22,6 +23,7 @@ Implemented ChatGPT 5's suggested optimizations: predecode + dispatch table for 
 ## Implementation Details
 
 ### Key Optimizations
+
 1. **Pre-decode at load time**: All instruction fields extracted once
    - Eliminates shift/mask operations from hot path
    - Pre-computes branch targets (PC+4+imm for branches, PC+imm for JAL)
@@ -59,12 +61,14 @@ while (!cpu.halted) {
 ## Why Not Faster Than -O2?
 
 The -O2 optimized regular emulator is already very efficient:
+
 - GCC inlines the decode function
 - Switch becomes an efficient jump table
 - Modern CPUs predict the patterns well
 - Simple instruction format = minimal decode cost
 
 The predecode version trades:
+
 - ✅ Eliminates decode overhead
 - ❌ Adds memory indirection (decoded array access)
 - ❌ Function pointers less efficient than jump tables
@@ -94,6 +98,7 @@ As noted: "Those function calls can sometimes be like little cache bombs."
 ## Future Optimizations
 
 From ChatGPT 5's roadmap:
+
 - Basic block linking (cache next block pointer)
 - Superinstructions (fuse common patterns)
 - Threaded code (computed goto)

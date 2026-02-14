@@ -5,6 +5,7 @@ This document consolidates feedback and improvement suggestions for the SLOW-32 
 ## Resolved Issues
 
 ### Assembler (all resolved)
+
 - **Register names**: Case-insensitive via `tolower()` in `parse_register()` ✅
 - **`.word symbol`**: REL_32 relocations for jump tables/data pointers ✅
 - **Auto-align in `.text`**: `bump_size()` for uniform section accounting ✅
@@ -12,11 +13,13 @@ This document consolidates feedback and improvement suggestions for the SLOW-32 
 - **`%lo(symbol)`**: Correctly marked and applied in loads/stores ✅
 
 ### LLVM Backend (all resolved)
+
 - **Switch/jump tables**: Custom `LowerJumpTable()`, assembler REL_32, linker support ✅
 - **Address formation / GEP scaling**: `SelectAddr()` handles global+offset, 12-bit constraints ✅
 - **Long branches**: R2 reserved for materialization, pseudo instructions expanded ✅
 
 ### Toolchain (all resolved)
+
 1. **64-bit Division** ✅ — `UMUL_LOHI` custom lowering verified correct.
 2. **Linker Error Handling** ✅ — Hard errors on unresolved symbols (exit code 1).
 3. **REL_CALL Implementation** ✅ — Implemented in `s32-ld.c`.
@@ -28,6 +31,7 @@ This document consolidates feedback and improvement suggestions for the SLOW-32 
 9. **IEEE 754 Floating-Point** ✅ — Native f32/f64 instructions across entire toolchain.
 
 ### Runtime Libraries (all resolved)
+
 1. **String-float conversions** ✅ — dtoa/strtod implemented.
 2. **Math library transcendentals** ✅ — sin, cos, exp, log, etc. implemented via DBT/QEMU runtime interception.
 

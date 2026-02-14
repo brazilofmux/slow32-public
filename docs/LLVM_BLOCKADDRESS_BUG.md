@@ -38,6 +38,7 @@ The result is that all `blockaddress(@fn, %label)` values resolve to the same
 (wrong) address.
 
 Meanwhile, the MC layer *does* handle `MO_BlockAddress` correctly:
+
 - `SLOW32MCInstLowering.cpp` (line ~110): `GetBlockAddressSymbol()` + offset
 - `SLOW32LoadAddrOpt.cpp`: `isBlockAddress()` recognized in operand adjustment
 
@@ -117,6 +118,7 @@ After implementing the fix:
 2. Verify each label gets a distinct address in the generated assembly.
 
 3. Re-enable `LUA_USE_JUMPTABLE` in Lua and verify all 10 tests still pass.
+
    The computed goto dispatch is measurably faster than switch dispatch in
    interpreters, so this is worth enabling.
 
@@ -124,6 +126,7 @@ After implementing the fix:
 
 - `llvm-backend/SLOW32/SLOW32ISelLowering.h` — add declaration
 - `llvm-backend/SLOW32/SLOW32ISelLowering.cpp` — add `LowerBlockAddress()`,
+
   register `ISD::BlockAddress`, add case to `LowerOperation()`
 
 ## Related

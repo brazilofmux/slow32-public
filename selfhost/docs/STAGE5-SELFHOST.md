@@ -19,6 +19,7 @@ runtime/libs32 sources (.c) → .s → .s32o         (stage 4 compiler + stage 2
 ```
 
 Key libc components needed:
+
 - `malloc.c` / `free.c` — dynamic memory
 - `printf.c` / `fprintf.c` — formatted output
 - `string.c` — string functions (strlen, strcmp, etc.)

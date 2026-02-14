@@ -57,6 +57,7 @@ sum:
 The function should preserve r3 (containing `count` parameter) before using it for the llvm.lifetime.start call.
 
 ### Actual Behavior
+
 - r3 is overwritten with 24 (size for lifetime intrinsic)
 - Original `count` value is lost
 - Function uses 24 instead of actual count
@@ -202,6 +203,7 @@ get_counter.counter: .word 0
 ```
 
 ### Actual Behavior
+
 - References to static variables are generated using %hi/%lo
 - No .data or .bss sections created
 - Linker fails with undefined symbol errors
@@ -321,6 +323,7 @@ stw r13+0, r18      # Store incremented pointer
 ```
 
 ### Impact
+
 - String operations broken (can't iterate through strings)
 - Array indexing broken (can't access array[i] for i > 0)
 - Struct field access likely broken

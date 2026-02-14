@@ -206,6 +206,7 @@ The relocation types match those in `common/s32_formats.h`:
 ## What Stage 2 Provides to Stage 3
 
 The assembler enables:
+
 - Building `.s32o` object files from assembly source
 - Assembling the runtime (`crt0.s`, libc assembly stubs)
 - Assembling output from the stage 4 C compiler

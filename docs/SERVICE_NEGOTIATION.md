@@ -6,10 +6,15 @@ SLOW-32's MMIO layer currently hard-codes a fixed set of host services (stdio, f
 time, etc.) at fixed opcode numbers. This works, but doesn't scale:
 
 - **New services** (terminal control, crypto, compression) require editing the opcode
+
   map, rebuilding emulators, and coordinating guest/host updates.
+
 - **Sandboxing** is all-or-nothing. There's no way to say "this guest gets file I/O
+
   but not networking."
+
 - **Portability** suffers. A binary that assumes networking is available crashes on
+
   a host that doesn't provide it, rather than degrading gracefully.
 
 The service negotiation protocol solves these by making services **discoverable,
@@ -18,22 +23,27 @@ optional, and policy-controlled**.
 ## Design Principles
 
 1. **MMIO is the syscall layer.** Code that makes sense as guest code (libc, math,
+
    string handling) gets compiled to SLOW-32. Code that needs host capabilities or
    would be impractical to port (crypto, terminal control, compression, networking)
    is exposed as MMIO services. The guest calls the API; the emulator does the work.
 
 2. **One fixed thing: the negotiation channel.** Everything else is dynamic. The
+
    guest discovers services at runtime, not compile time.
 
 3. **Capability-based.** The guest requests services. The host grants or denies
+
    based on policy. Denial is not an error — it's expected. Guests degrade gracefully.
 
 4. **Stateful sessions with deterministic cleanup.** Each granted service creates a
+
    session with state (open files, terminal mode, buffers). When the guest exits —
    normally or abnormally — the host walks all sessions and calls cleanup. Terminal
    restored, files closed, no leaks.
 
 5. **Guest-driven addressing.** The guest tells the host where to map each service
+
    in the MMIO region. The guest manages its own address space. No hard-coded offsets.
 
 ## Architecture
@@ -318,13 +328,20 @@ control. Migration is therefore a security requirement, not a convenience.
 
 1. **Now**: Fixed opcodes are all that exist. They work.
 2. **Negotiation lands**: New services (`term`) use negotiation. Old services
+
    still work at their fixed opcodes.
+
 3. **Policy gate**: Fixed opcodes get routed through the same policy engine.
+
    `--deny fs` blocks fixed-opcode `OPEN`/`READ`/`WRITE` too. This is the
    critical step — the sandbox becomes real.
+
 4. **Negotiated alternatives**: `fs`, `time`, `env` become requestable through
+
    negotiation. Internally, both paths converge to the same service implementation.
+
 5. **Deprecate fixed opcodes**: Guest runtime libraries switch to negotiated
+
    services. Fixed opcodes remain as a thin redirect but are no longer the
    primary path. Can be removed when no binaries depend on them.
 
@@ -333,7 +350,9 @@ Step 3 can and should ship the same day as step 2.
 ## Relationship to Other Docs
 
 - `docs/host-interface-design.md` — Low-level MMIO architecture, ring buffers,
+
   queue design, multi-instance model
+
 - `docs/mmio/opcode-map.md` — Current fixed opcode assignments
 - `docs/mmio/ring-design.md` — Ring buffer protocol details
 - `docs/CALLING_CONVENTION.md` — Guest-side ABI (unrelated but often referenced)

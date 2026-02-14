@@ -5,12 +5,14 @@
 Stages 1-3 established a working DBT with block caching, direct chaining, and indirect branch optimization. Stage 4 explores **trace compilation** - building longer sequences of translated code that follow hot execution paths across multiple basic blocks.
 
 **Current State (Stage 3):**
+
 - Translation unit: Single basic block
 - Block boundaries: Every branch ends a block
 - Chaining: Direct jumps patched between blocks
 - Overhead: Block transitions still have some cost
 
 **Stage 4 Goal:**
+
 - Translation unit: Traces spanning multiple basic blocks
 - Fewer transitions, better code locality, more optimization opportunity
 
@@ -362,6 +364,7 @@ side_exit_2:
 ```
 
 Side exits must:
+
 1. Writeback any dirty cached registers
 2. Store the correct guest PC
 3. Return to dispatcher (or chain to target block)
@@ -453,18 +456,21 @@ void matrix_add(int *c, int *a, int *b, int n) {
 ## Implementation Order (If Proceeding)
 
 ### Phase 1: Superblock Extension (Low-hanging fruit)
+
 - Extend blocks past forward conditional branches
 - Simple side exits
 - Minimal change to existing code
 - Test: loops with exit conditions
 
 ### Phase 2: Register Caching (Medium effort)
+
 - Track registers across trace
 - Lazy writeback at side exits
 - Significant code generation changes
 - Test: loops with accumulator variables
 
 ### Phase 3: Loop Optimization (Higher effort)
+
 - Loop detection
 - Optional unrolling
 - Loop-back optimization
@@ -477,6 +483,7 @@ void matrix_add(int *c, int *a, int *b, int n) {
 ### Phase 1: Superblock Extension - COMPLETE
 
 **Implemented:**
+
 - ✅ Added `superblock_enabled` and `superblock_depth` to `translate_ctx_t`
 - ✅ Added `MAX_SUPERBLOCK_DEPTH` (4) and `MAX_SUPERBLOCK_EXITS` (8) limits
 - ✅ Modified `translate_branch_common()` to extend past forward branches
@@ -487,6 +494,7 @@ void matrix_add(int *c, int *a, int *b, int n) {
 - ✅ All 17 regression tests pass
 
 **How it works:**
+
 - Forward conditional branches (imm > 0) are extended rather than ending the block
 - The "taken" path becomes a side exit (inline exit code)
 - The "fall-through" path continues inline in the superblock
@@ -523,6 +531,7 @@ The best next step might be: **Create larger benchmarks and measure before commi
 Stage 4 trace compilation offers modest performance gains at significant implementation cost. For SLOW-32's educational/testing purpose, it may be over-engineering.
 
 **Recommendation:**
+
 - Implement Phase 1 (superblock extension) as a low-risk experiment
 - Measure actual impact on benchmarks
 - Decide whether to continue based on results

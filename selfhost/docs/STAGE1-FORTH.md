@@ -7,6 +7,7 @@ A working Forth REPL as a .s32x binary, assembled entirely by hand (no assembler
 ## Approach: Use the Existing Kernel
 
 The existing Forth kernel (`forth/kernel.s`) is already a complete, tested implementation:
+
 - 5,254 lines of SLOW-32 assembly
 - ~150 words (all assembly-defined primitives)
 - Direct Threaded Code (DTC) architecture
@@ -22,38 +23,47 @@ A minimal kernel needs ~35 primitives and ~500-800 machine instructions:
 ### Essential Primitives (~35 words)
 
 **Inner interpreter (3):**
+
 - `EXIT` — return from colon definition
 - `DOCOL` — enter colon definition (sets up IP)
 - `LIT` — push inline literal to data stack
 
 **Execution (1):**
+
 - `EXECUTE` — call execution token
 
 **Stack manipulation (6):**
+
 - `DUP`, `DROP`, `SWAP`, `OVER` — basic stack ops
 - `>R`, `R>` — return stack transfer
 
 **Arithmetic (5):**
+
 - `+`, `-`, `*` — basic math
 - `AND`, `OR` — bitwise (XOR can be defined later)
 
 **Comparison (3):**
+
 - `=`, `<`, `>` — comparisons (others derived from these)
 
 **Memory (4):**
+
 - `@`, `!` — word fetch/store
 - `C@`, `C!` — byte fetch/store
 
 **I/O (3):**
+
 - `EMIT` — output character (via DEBUG instruction)
 - `KEY` — input character (via GETCHAR MMIO)
 - `TYPE` — output string (can be Forth-defined from EMIT)
 
 **Control flow (2):**
+
 - `BRANCH` — unconditional branch (offset follows in thread)
 - `0BRANCH` — conditional branch (if TOS == 0)
 
 **Compiler (8):**
+
 - `:` — start definition
 - `;` — end definition
 - `COMMA` (`,`) — compile cell to dictionary
@@ -63,17 +73,20 @@ A minimal kernel needs ~35 primitives and ~500-800 machine instructions:
 - `CREATE` — make new dictionary entry
 
 **Parser (4):**
+
 - `WORD` — parse next token
 - `FIND` — look up word in dictionary
 - `NUMBER` — convert string to number
 - `INTERPRET` — the outer interpreter loop
 
 **Variables (4):**
+
 - `STATE`, `BASE`, `HERE`, `LATEST`
 
 ### Not Needed for Minimal Bootstrap
 
 These are in the existing kernel but can be added later via Forth definitions or deferred:
+
 - `PICK`, `DEPTH`, `DSP@` — advanced stack inspection
 - `/`, `MOD`, `/MOD` — division (can use shift-subtract algorithm in Forth)
 - `LSHIFT`, `RSHIFT` — can defer until assembler needs them
@@ -219,6 +232,7 @@ The minimal kernel is much smaller — ~2 KB of code, ~1 KB of data.
 ## What Stage 1 Provides to Stage 2
 
 The Forth kernel gives stage 2 (the assembler) everything it needs:
+
 - An interactive REPL for development and testing
 - `CREATE` / `DOES>` for defining assembler word syntax
 - `,` (comma) for emitting binary data

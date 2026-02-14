@@ -3,6 +3,7 @@
 ## Immediate Wins (Low Risk, High Impact)
 
 ### 1. Speed Optimization: Predecode + Dispatch Table ✓
+
 - Pre-decode all instructions at load time into flat array
 - Store decoded fields AND function pointer per instruction
 - Eliminates ALL decode overhead from hot path
@@ -11,12 +12,14 @@
 
 ### 2. Minimal Linker (`ld-lite`)
 Support just two relocations for LUI/ORI pairs:
+
 - `R_ABS_HI20(sym)`: Upper 20 bits for LUI
 - `R_ABS_LO12(sym)`: Lower 12 bits for ORI
 - Enables multi-file builds without complexity
 - Simple format: concatenate .text + .data, patch relocations
 
 ### 3. Basic Dev Tools
+
 - `nm-lite`: Print symbol table
 - `objdump-lite`: Disassemble using predecode structs
 - Reuse existing decoder infrastructure
@@ -43,10 +46,12 @@ struct RingBuffer {
     uint8_t data[];
 };
 ```
+
 - RX ring: host → guest (stdin, network)
 - TX ring: guest → host (stdout, network)
 
 ### 6. FENCE Instruction
+
 - No-op in emulator (already ordered)
 - Semantic memory barrier for documentation
 - Marks synchronization points
@@ -55,6 +60,7 @@ struct RingBuffer {
 
 ### 7. Essential Intrinsics
 Already implemented in assembly (runtime/intrinsics.s):
+
 - ✓ `llvm.memcpy.*`
 - ✓ `llvm.memset.*`
 - ✓ `llvm.lifetime.*`
@@ -62,6 +68,7 @@ Already implemented in assembly (runtime/intrinsics.s):
 
 ### 8. Compiler Intrinsic Lowering
 Instead of calling assembly functions, emit inline code:
+
 - memcpy → word/byte copy loop
 - memset → word/byte set loop
 - Eliminates function call overhead
@@ -74,6 +81,7 @@ RDTIME rd  # Returns monotonic cycle count
            # Low 32 bits in rd
            # High 32 bits in rd+1 (or MMIO)
 ```
+
 - Deterministic (cycle count, not wall clock)
 - Useful for benchmarking and delays
 
@@ -87,23 +95,27 @@ struct VCPU {
     // Each VCPU is a separate context
 };
 ```
+
 - Host scheduler multiplexes VCPUs
 - `YIELD(reason=switch, r2=tid)`
 - No interrupt controller needed initially
 
 ### 11. Basic Block Linking
+
 - Cache pointers between decoded blocks
 - Skip dispatch at block boundaries
 - Further reduces overhead
 
 ### 12. Superinstructions
 Combine common patterns in predecode:
+
 - `addi + beq` → single operation
 - `load + use` → fused load-op
 - Pattern match during predecode phase
 
 ### 13. Full Interrupt Support (Later)
 For running Xinu or other RTOS:
+
 - Timer interrupt source
 - Simple interrupt controller
 - Trap/exception vectors

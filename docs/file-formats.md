@@ -3,6 +3,7 @@
 ## Overview
 
 This document defines the binary file formats used by the SLOW-32 architecture:
+
 - **`.s32x`** - SLOW-32 eXecutable format (fully linked executable)
 - **`.s32o`** - SLOW-32 Object format (relocatable object file)
 
@@ -65,6 +66,7 @@ If an Exception Vector Table exists with a RESET handler, that takes precedence.
 map within constraints. The emulator enforces these boundaries for protection.
 
 **Note on Memory Allocation**: 
+
 - `mem_size` specifies total physical memory to allocate (0 means use data_limit as size)
 - For a 64KB program, set mem_size=0x10000 to allocate only 64KB
 - The emulator allocates `mem_size` bytes (or data_limit if mem_size=0)
@@ -72,24 +74,28 @@ map within constraints. The emulator enforces these boundaries for protection.
 - This enables efficient sandboxing with minimal memory footprint
 
 **Note on Heap**:
+
 - `heap_base` marks the start of the heap (grows up toward stack)
 - If heap_base=0, no heap is pre-allocated (program must use syscalls)
 - Stack grows down from stack_base, heap grows up from heap_base
 - Collision between heap and stack triggers exception
 
 **Note on Endianness**:
+
 - All SLOW-32 files are **little-endian** (endian field = 0x01)
 - Big-endian (0x02) is defined but not currently supported
 - This matches x86/ARM defaults and simplifies implementation
 - Future emulators MAY support big-endian but MUST support little-endian
 
 **Note on Checksum**:
+
 - CRC32 checksum covers all section data (not headers)
 - Checksum=0 means no integrity checking
 - Computed after compression (if any)
 - Helps detect corruption in storage/transmission
 
 **Note on Memory Limits**:
+
 - Architecture supports full 32-bit addressing (4GB)
 - Default configurations use 256MB for compatibility
 - mem_size can specify up to 4GB if needed
@@ -123,6 +129,7 @@ typedef struct {
 ```
 
 **Note on Compression**:
+
 - If S32X_FLAG_COMPRESSED is set, sections may be compressed
 - `size` = compressed size in file, `mem_size` = uncompressed size
 - Compression format: zlib (deflate) for simplicity and availability
@@ -196,6 +203,7 @@ typedef struct {
 ### Exception Handling
 
 When an exception occurs:
+
 1. Save PC to a designated register (e.g., r31 or exception-specific)
 2. Save processor state if needed
 3. Look up handler address from EVT
@@ -316,6 +324,7 @@ heap_base    = 0x00040000  // Small heap
 The loader/emulator MUST validate:
 
 **Memory Layout:**
+
 1. `code_limit >= MIN_CODE_SIZE`
 2. `rodata_limit >= code_limit` (can be equal if no rodata)
 3. `data_limit > rodata_limit + MIN_DATA_SIZE`
@@ -324,18 +333,21 @@ The loader/emulator MUST validate:
 6. `data_limit <= 0x10000000` (MMIO boundary)
 
 **Section Placement:**
+
 1. All code sections must load entirely within `[0, code_limit)`
 2. All rodata sections must load within `[code_limit, rodata_limit)`
 3. All data/bss sections must load within `[rodata_limit, data_limit)`
 4. No sections may overlap
 
 **Entry Points and Vectors:**
+
 1. Entry point must be within code region `[0, code_limit)`
 2. All exception handlers in EVT must point within code region
 3. All TSR handlers must point within code region
 4. Symbol addresses must be within appropriate regions (code symbols in code, etc.)
 
 **Security Checks:**
+
 1. No writable section may load into code region
 2. No executable section may load into data region
 3. Section permissions must match region permissions
@@ -465,6 +477,7 @@ typedef struct {
 ### Common Section Names
 
 Object files typically contain these sections:
+
 - `.text` - Code (type=S32X_SEC_CODE, flags=R+X)
 - `.rodata` - Read-only data (type=S32X_SEC_RODATA, flags=R)
 - `.data` - Initialized data (type=S32X_SEC_DATA, flags=R+W)
@@ -504,6 +517,7 @@ The linker assigns addresses based on the memory layout configuration:
 5. Stack starts at stack_base (configured in header, default 0x0FFFFFF0)
 
 The linker can choose memory boundaries based on:
+
 - Total size of each section type
 - Alignment requirements
 - Security preferences (gaps between regions)
@@ -525,16 +539,19 @@ breaking the format (version bump if needed).
 ## Migration Path
 
 ### Phase 1: Executable Format
+
 1. Update emulator to support .s32x format
 2. Keep backward compatibility with old .bin format
 3. Update assembler to generate .s32x directly for now
 
 ### Phase 2: Object Files
+
 1. Update assembler to generate .s32o files
 2. Implement linker to combine .s32o → .s32x
 3. Update slow32cc to use assembler + linker
 
 ### Phase 3: Advanced Features
+
 1. Add debug information support
 2. Implement dynamic linking capabilities
 3. Add compression for sections

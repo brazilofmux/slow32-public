@@ -6,6 +6,7 @@ The bug has been resolved by splitting JAL/JALR into separate opcodes for calls 
 allowing proper call-clobber modeling without affecting regular branch semantics.
 
 **Verification:** regal stats now works correctly without the memory barrier workaround:
+
 - 51356 lines loaded
 - 22764 transactions
 - Books balanced
@@ -115,6 +116,7 @@ The standalone `test_csv_nodebug.c` works correctly even without the barrier. Th
 ## Investigation hints
 
 The barrier forces the compiler to:
+
 1. Not hoist the state load out of the loop
 2. Not cache values across iterations
 3. Reload memory after each character is processed
@@ -148,12 +150,15 @@ may have made assumptions about register liveness that don't hold.
 ### Possible Root Causes
 
 1. **Register allocation bug**: r1 is used for both state and intermediate values.
+
    The optimizer may assume r1 holds state when it actually holds something else.
 
 2. **Loop-invariant code motion**: The optimizer might be treating p->state as 
+
    loop-invariant in some code paths, even though it changes each iteration.
 
 3. **Phi node miscompilation**: The phi nodes at the loop header may not be 
+
    correctly merging all incoming values for the state.
 
 4. **Dead code elimination**: Some state stores might be incorrectly eliminated.
@@ -209,6 +214,7 @@ Without it, stale register values get used after function calls.
 ## Fix Attempts (as of 2026-01-19)
 
 ### Fix #1: Add regmask to CALL instructions
+
 - Added `CSR_SLOW32_RegMask` in TableGen
 - `getRegMasks()` now returns the mask
 - Regmask preserved in CALL selection
@@ -216,6 +222,7 @@ Without it, stale register values get used after function calls.
 - **Status**: PARTIAL - regmask generated but bug persists
 
 ### Fix #2: Strip explicit argument operands from expanded CALL
+
 - When expanding `JAL_CALL`/`JALR_CALL` pseudo-instructions to real `JAL`/`JALR`
 - Drop explicit argument registers ($r3/$r4/$r5/$r6)
 - Keep only: target/rs1, regmask, implicit defs/uses

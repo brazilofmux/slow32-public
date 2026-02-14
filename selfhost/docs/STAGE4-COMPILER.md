@@ -9,6 +9,7 @@ A C compiler capable of compiling the SLOW-32 toolchain sources (~7,000 lines of
 Analysis of the toolchain sources (see [C-SUBSET.md](C-SUBSET.md)) reveals a manageable subset:
 
 **Required:**
+
 - Basic types: `int`, `char`, `uint8_t`/`uint16_t`/`uint32_t`, `int32_t`, `long`, `size_t`
 - `struct` (nested, with pointers)
 - `enum` (named and anonymous)
@@ -28,6 +29,7 @@ Analysis of the toolchain sources (see [C-SUBSET.md](C-SUBSET.md)) reveals a man
 - `sizeof`
 
 **Not required:**
+
 - Floating point (`float`, `double`)
 - `va_list` / varargs
 - Function pointers
@@ -87,6 +89,7 @@ A minimal preprocessor handling:
 ### Lexer
 
 Standard C tokenizer producing:
+
 - Keywords: `int`, `char`, `void`, `struct`, `enum`, `typedef`, `if`, `else`, `while`, `for`, `do`, `switch`, `case`, `default`, `break`, `continue`, `return`, `static`, `const`, `sizeof`, `unsigned`, `signed`, `long`, `short`
 - Identifiers
 - Integer literals (decimal, hex `0x`, octal `0`)
@@ -154,21 +157,25 @@ Two options:
 ### Option A: Written in Forth (~3,000-5,000 lines)
 
 Pros:
+
 - Can be loaded directly into the stage 1 kernel
 - Forth is well-suited to parsing tasks
 - No chicken-and-egg problem
 
 Cons:
+
 - Writing a C compiler in Forth is unconventional
 - Debugging is harder without a debugger
 
 ### Option B: Written in SLOW-32 Assembly (~5,000-8,000 lines)
 
 Pros:
+
 - Full control over generated code
 - Assembled by stage 2
 
 Cons:
+
 - Much more verbose
 - Harder to modify and debug
 
@@ -179,12 +186,14 @@ Cons:
 The compiler must emit calls to these libc functions, which must be available as linkable object files:
 
 ### Memory (4 functions)
+
 - `malloc(size)` → pointer
 - `calloc(count, size)` → pointer
 - `realloc(ptr, size)` → pointer
 - `free(ptr)`
 
 ### String (10 functions)
+
 - `strlen`, `strcmp`, `strncmp`
 - `strcpy`, `strncpy`
 - `snprintf`
@@ -193,6 +202,7 @@ The compiler must emit calls to these libc functions, which must be available as
 - `memcpy`, `memset`
 
 ### I/O (9 functions)
+
 - `fopen`, `fclose`
 - `fread`, `fwrite`
 - `fseek`, `ftell`
@@ -200,15 +210,18 @@ The compiler must emit calls to these libc functions, which must be available as
 - `perror`
 
 ### Character (6 functions)
+
 - `isspace`, `isdigit`, `isalpha`, `isalnum`, `isprint`
 - `tolower`
 
 ### Numeric (5 functions)
+
 - `atoi`
 - `strtol`, `strtoul`
 - `strtoll`, `strtoull`
 
 ### Other (3 functions)
+
 - `qsort`
 - `exit`
 - `access` (used by archiver only — can be stubbed)
@@ -230,6 +243,7 @@ Total: ~37 libc functions. All of these are already implemented in the SLOW-32 r
 | **Total** | **~3,600** | |
 
 For reference, well-known minimal C compilers:
+
 - **cc500**: ~500 lines (extremely minimal subset)
 - **chibicc**: ~5,000 lines (nearly complete C11)
 - **tcc**: ~30,000 lines (full C99 + extensions)

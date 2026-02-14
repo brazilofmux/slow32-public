@@ -13,10 +13,12 @@ For ADDI instructions with 12-bit signed immediates, negative values need to be 
 
 ## Specific Example
 When compiling division-by-10 optimization code at -O1 or -O2, LLVM generates:
+
 - `addi r8, r1, 3277` (should be `addi r8, r1, -819`)
 - `addi r17, r1, 3276` (should be `addi r17, r1, -820`)
 
 These are magic constants for division optimization:
+
 - 3277 (0xccd) is the low 12 bits of -819 (0xfffffccd)
 - 3276 (0xccc) is the low 12 bits of -820 (0xfffffccc)
 

@@ -51,6 +51,7 @@ Offset  Size  Field          Description
 ```
 
 **Loading procedure:**
+
 1. Read 64-byte header, verify magic = 0x53333258
 2. Allocate `header.mem_size` bytes of memory (zeroed)
 3. Seek to `header.sec_offset`, read each section
@@ -61,11 +62,13 @@ Offset  Size  Field          Description
 ## Required Instructions (34)
 
 ### Arithmetic (3)
+
 - `ADD` (0x00) — R-type: rd = rs1 + rs2
 - `SUB` (0x01) — R-type: rd = rs1 - rs2
 - `MUL` (0x0A) — R-type: rd = (rs1 * rs2) & 0xFFFFFFFF
 
 ### Logical (6)
+
 - `XOR` (0x02) — R-type: rd = rs1 ^ rs2
 - `OR` (0x03) — R-type: rd = rs1 | rs2
 - `AND` (0x04) — R-type: rd = rs1 & rs2
@@ -74,6 +77,7 @@ Offset  Size  Field          Description
 - `SRA` (0x07) — R-type: rd = (int32_t)rs1 >> (rs2 & 31)
 
 ### Comparison (6)
+
 - `SLT` (0x08) — R-type: rd = ((int32_t)rs1 < (int32_t)rs2) ? 1 : 0
 - `SLTU` (0x09) — R-type: rd = (rs1 < rs2) ? 1 : 0 (unsigned)
 - `SEQ` (0x0E) — R-type: rd = (rs1 == rs2) ? 1 : 0
@@ -82,6 +86,7 @@ Offset  Size  Field          Description
 - `SGTU` (0x19) — R-type: rd = (rs1 > rs2) ? 1 : 0 (unsigned)
 
 ### Immediate (7)
+
 - `ADDI` (0x10) — I-type: rd = rs1 + sext(imm12)
 - `ORI` (0x11) — I-type: rd = rs1 | zext(imm12)
 - `ANDI` (0x12) — I-type: rd = rs1 & zext(imm12)
@@ -91,9 +96,11 @@ Offset  Size  Field          Description
 - `XORI` (0x1E) — I-type: rd = rs1 ^ zext(imm12)
 
 ### Upper Immediate (1)
+
 - `LUI` (0x20) — U-type: rd = imm << 12
 
 ### Memory (5)
+
 - `LDB` (0x30) — I-type: rd = sext(mem8[rs1 + sext(imm)])
 - `LDW` (0x32) — I-type: rd = mem32[rs1 + sext(imm)]
 - `LDBU` (0x33) — I-type: rd = zext(mem8[rs1 + sext(imm)])
@@ -101,6 +108,7 @@ Offset  Size  Field          Description
 - `STW` (0x3A) — S-type: mem32[rs1 + sext(imm)] = rs2
 
 ### Control (6)
+
 - `JAL` (0x40) — J-type: rd = PC + 4; PC += sext(imm)
 - `JALR` (0x41) — I-type: rd = PC + 4; PC = rs1 + sext(imm)
 - `BEQ` (0x48) — B-type: if (rs1 == rs2) PC += sext(imm)
@@ -189,6 +197,7 @@ void run(void) {
 ## Verification
 
 The bootstrap emulator should produce identical output to `tools/emulator/slow32` for any program using only the 34 essential instructions. Test with:
+
 - The Forth kernel: `forth/kernel.s32x` with basic prelude
 - Simple regression tests that don't use floating point or MMIO file I/O
 

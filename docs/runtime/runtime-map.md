@@ -1,6 +1,7 @@
 # SLOW-32 Runtime Library Map
 
 ## Core Assembly Files (Hand-written, must stay as .s)
+
 - `crt0.s` - Startup code, provides _start entry point
 - `divsi3.s` - Hand-optimized division routines (__udivsi3, __divsi3)
 - `intrinsics.s` - LLVM intrinsics (memcpy, memset, lifetime markers)
@@ -8,6 +9,7 @@
 - `stdlib.s` - putint function for integer output
 
 ## C Source Files (Compiled to .s then .s32o)
+
 - `builtins.c` - 64-bit arithmetic builtins (__udivdi3, __divdi3, etc.)
 - `convert_extra.c` - String conversion functions (itoa, utoa, ltoa, ultoa)
 - `ctype.c` - Character classification (isalpha, isdigit, etc.)
@@ -28,8 +30,10 @@
 - `yield.c` - YIELD and HALT instructions (inline assembly)
 
 ## Archives Built
+
 - `libs32.s32a` - Compiler runtime (intrinsics, division, builtins)
   - Contains: intrinsics.s32o, intrinsics_extra.s32o, builtins.s32o, 
+
               divsi3.s32o, debug_char.s32o, yield.s32o
 
 - `libc_debug.s32a` - C library using DEBUG instruction for I/O
@@ -48,4 +52,5 @@ crt0.s32o user.s32o libc_mmio.s32a libs32.s32a
 ```
 
 ## Known Issues
+
 - printf() enters infinite loop - needs debugging/rewrite

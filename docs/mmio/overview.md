@@ -21,6 +21,7 @@ Replace the DEBUG instruction hack with proper memory-mapped I/O devices, enabli
 ```
 
 ### Operation
+
 - **Write**: Check TX ready bit, write to DATA register
 - **Read**: Check RX available bit, read from DATA register
 - **Polling mode** initially (no interrupts)
@@ -79,24 +80,28 @@ Guest code should YIELD whenever it waits for responses; the emulator drains the
 ## Implementation Plan
 
 ### Phase 1: Console Device
+
 1. Add MMIO region to memory_manager
 2. Implement console device registers
 3. Create `putchar()` and `getchar()` using MMIO
 4. Replace DEBUG instruction usage with console writes
 
 ### Phase 2: System Calls
+
 1. Implement syscall interface via MMIO
 2. Add write() system call first (for printf)
 3. Add read() for input
 4. ~~Add brk() for malloc~~ (removed — heap is statically allocated by linker)
 
 ### Phase 3: stdio Library
+
 1. Implement proper FILE structure
 2. Build fopen/fclose/fread/fwrite on syscalls
 3. Update printf to use FILE* stdout
 4. Add scanf, gets, puts
 
 ## Benefits
+
 - **Real I/O**: Not just debug hacks
 - **Extensible**: Easy to add devices
 - **Standard**: Follows typical embedded patterns
@@ -132,6 +137,7 @@ int main() {
 ```
 
 ## Testing Strategy
+
 1. Start with simple putchar via MMIO
 2. Verify DEBUG instruction still works (compatibility)
 3. Build up to full printf

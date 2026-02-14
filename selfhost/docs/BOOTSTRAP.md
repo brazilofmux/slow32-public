@@ -5,6 +5,7 @@
 SLOW-32 has a complete toolchain — assembler, linker, archiver, disassembler, dump utility — all written in C and cross-compiled via LLVM. The runtime libraries (libc, crt0, libs32) are likewise compiled with clang targeting `slow32-unknown-none`.
 
 This means building anything for SLOW-32 requires:
+
 1. A full LLVM build (~2 GB) with the custom SLOW-32 backend
 2. A host machine capable of running LLVM
 
@@ -13,6 +14,7 @@ The goal of self-hosting is to break this dependency: produce a SLOW-32 toolchai
 ## What's In Scope
 
 **Must compile and run on SLOW-32:**
+
 - `slow32asm.c` — Assembler (2,573 lines)
 - `s32-ld.c` — Linker (2,289 lines)
 - `s32-ar.c` — Archiver (672 lines)

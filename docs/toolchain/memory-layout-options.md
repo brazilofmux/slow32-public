@@ -2,6 +2,7 @@
 
 ## Current State
 The linker currently has hardcoded memory layout with limited options:
+
 - Fixed regions: code (1MB), rodata (1MB), data (1MB)
 - Stack at 0x0FFFFFF0
 - Options: --mmio SIZE, --wxorx/--no-wxorx, -e SYMBOL
@@ -70,18 +71,21 @@ SECTIONS {
 ## Implementation Priority
 
 ### Phase 1 (Immediate)
+
 - [ ] --stack-size option
 - [ ] --code-size, --rodata-size, --data-size options
 - [ ] --print-map to generate .map file
 - [ ] --pack-sections for tighter packing
 
 ### Phase 2 (Next)
+
 - [ ] --gc-sections (dead code elimination)
 - [ ] --page-align for mmap efficiency
 - [ ] Base address configuration options
 - [ ] Guard page support
 
 ### Phase 3 (Future)
+
 - [ ] Linker script support
 - [ ] Overlay support
 - [ ] Dynamic section placement

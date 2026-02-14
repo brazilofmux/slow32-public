@@ -6,11 +6,13 @@ The SLOW-32 standard library is now largely functional, supporting both simple D
 ## Completed Components
 
 ### String Library (string.h) - WORKING ✅
+
 - `strlen`, `strcpy`, `strncpy`, `strcmp`, `strncmp`, `strcat`, `strncat`, `strchr`, `strrchr`, `strstr` - PASS
 - `memset`, `memcpy`, `memmove`, `memcmp`, `memchr` - PASS
 - `memmove` correctly handles overlapping buffers.
 
 ### Standard Library (stdlib.h) - WORKING ✅
+
 - `malloc`, `free`, `calloc`, `realloc` - Fully functional with MMIO-based heap.
 - `abs`, `labs`, `atoi`, `atol` - PASS
 - `rand`, `srand` - PASS
@@ -20,12 +22,14 @@ The SLOW-32 standard library is now largely functional, supporting both simple D
 - `div`, `ldiv` - PASS (Division operations fully supported)
 
 ### Standard I/O (stdio.h) - WORKING ✅
+
 - `printf`, `sprintf`, `snprintf`, `vsnprintf` - PASS (Full implementation with width/precision)
 - `puts`, `putchar` - PASS
 - `fopen`, `fclose`, `fread`, `fwrite` - PASS (MMIO-based file I/O)
 - `stat`, `fstat` - PASS (MMIO-based file metadata)
 
 ### Math Library (math.h) - INTEGER ONLY ⚠️
+
 - Integer math functions available in `math_int.c` (`iabs`, `imin`, `imax`, `isqrt`, `ipow`).
 - **NO FLOATING POINT SUPPORT**: The LLVM backend crashes on float/double operations. All standard FP functions in `math.h` are commented out.
 - Native 32-bit `mul`, `div`, `rem` instructions used for integer performance.
@@ -33,6 +37,7 @@ The SLOW-32 standard library is now largely functional, supporting both simple D
 ## Resolved LLVM Backend Issues
 
 ### Fixed (2025-09-08)
+
 1. **UDIV/SDIV/UREM/SREM Support** ✅
    - Custom lowering added to generate libcalls to `__udivsi3`/`__umodsi3`.
    - Now supports all division and modulo operations in C.

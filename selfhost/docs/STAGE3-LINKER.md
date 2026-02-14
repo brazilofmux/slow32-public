@@ -75,6 +75,7 @@ The `+0x800` in HI20 compensates for ADDI sign-extension. When bit 11 of the low
 S-type stores split the immediate across two bit fields ([31:25] and [11:7]). The linker must detect whether the target instruction is an I-type (ADDI, loads) or S-type (stores) and patch the appropriate fields.
 
 Detection: check `opcode & 0x7F`:
+
 - 0x38, 0x39, 0x3A → S-type (STB, STH, STW)
 - Everything else with LO12 → I-type
 
@@ -185,6 +186,7 @@ The real linker supports `.s32a` archive files (collections of `.s32o` with an i
 ## What Stage 3 Provides to Stage 4
 
 With assembler + linker, the bootstrap can:
+
 - Build complete programs from assembly source
 - Link multiple object files with proper symbol resolution
 - Produce working `.s32x` executables

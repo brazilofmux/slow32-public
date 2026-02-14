@@ -9,6 +9,7 @@
 ## Changes Ready for Public Release
 
 ### Core Features Added
+
 1. **XORI Instruction** (opcode 0x1E)
    - Files: `assembler/slow32asm.c`, `emulator/slow32.c`, `emulator/slow32.h`, `emulator/slow32-fast.c`
    - Adds XOR immediate operation support
@@ -51,19 +52,23 @@
 
 ### LLVM Backend Changes
 The LLVM backend changes in `llvm-backend/SLOW32/` should be synchronized with the main LLVM project repository, not the SLOW32 public repository. These include:
+
 - `SLOW32ISelLowering.cpp` - libcall implementation mappings
 - `SLOW32ISelLowering.h` - Header updates
 
 ### LLVM Backend Fixes
+
 - Added explicit libcall mappings in `SLOW32ISelLowering.cpp`
 - Ensured backend generates correct calls to compiler-rt builtins for i64 div/rem
 
 ### Build Infrastructure
+
 - Created `runtime/Makefile` for automated runtime builds
 - Updated top-level `Makefile` to include the runtime target
 - Added `tools/compile-c.sh` helper script for streamlined compilation
 
 ### Testing Before Release
+
 1. Clean build: `make clean && make all`
 2. Compile sample: `./tools/compile-c.sh tests/test_64bit_div_args.c`
 3. Run via emulator: `./emulator/slow32 tests/test_64bit_div_args.s32x` (expect "RUN")
@@ -86,6 +91,7 @@ git commit -m "Add complete 64-bit integer support
 Push when ready: `git push origin main`
 
 ## Notes
+
 - LLVM backend changes live in `~/llvm-project` and are mirrored in `llvm-backend/`
 - Release is backward compatible; existing code paths continue to compile and run
 - Keep `CLAUDE.md` in sync with public docs after publishing

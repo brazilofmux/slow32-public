@@ -44,8 +44,11 @@ no alignment gaps:
 
 - **i32, f32**: one register
 - **i64**: type legalization splits this to 2x i32 before CC analysis,
+
   so it naturally takes two consecutive registers with no special handling
+
 - **f64**: a custom CC handler (`CC_SLOW32_VarArg_F64`) allocates two
+
   consecutive individual registers. If only one register remains, the f64
   **splits**: lo half in the last register, hi half at the start of the
   stack overflow area
@@ -56,17 +59,22 @@ After the format string in R3, this gives 7 vararg register slots
 ### Callee Behavior
 
 The callee (e.g. printf):
+
 1. Processes fixed params (fmt string) via `CC_SLOW32_VarArg`
 2. Saves all remaining arg registers (R4-R10 typically) into a
+
    fixed-size save area at negative offsets from FP
+
 3. Sets `VarArgsFrameIndex` to the start of this save area
 4. `va_arg` reads sequentially from the save area, then continues
+
    into the caller's stack arguments
 
 ### The Register/Stack Boundary Split
 
 When an f64 straddles the register/stack boundary (e.g. R10 is the last
 available register), the caller:
+
 - Puts the lo 32 bits in R10
 - Puts the hi 32 bits at stack offset 0
 
@@ -95,6 +103,7 @@ stack[4..7] = 4.0 hi
 ```
 
 Callee saves R4-R10 → 7 slots, all meaningful. va_arg walks:
+
 - "X" (4B) — R4
 - 1.0 (8B) — R5:R6
 - 2.0 (8B) — R7:R8
@@ -158,16 +167,22 @@ argument type mix.
 Three calling conventions in `SLOW32CallingConv.td`:
 
 - **`CC_SLOW32`**: Standard calls. Pair-aligned f64/i64 (R3:R4, R5:R6,
+
   R7:R8, R9:R10). Used for both caller and callee sides.
+
 - **`CC_SLOW32_VarArg`**: Callee-side varargs. Only processes fixed
+
   params. Uses consecutive-pair shadow for f64 (since fixed params have
   known types, pair allocation is safe here).
+
 - **`CC_SLOW32_VarArgCall`**: Caller-side varargs. Uses
+
   `CCCustom<"CC_SLOW32_VarArg_F64">` for f64 sequential packing. i32/f32
   use individual registers. i64 rules are absent because type legalization
   splits i64 to 2x i32 before CC analysis (dead code was removed).
 
 The custom handler `CC_SLOW32_VarArg_F64` in `SLOW32ISelLowering.cpp`:
+
 - Allocates two registers individually from R3-R10
 - Both available → normal `getReg` assignment
 - Only one available → `getCustomReg` + `getCustomMem` (split)

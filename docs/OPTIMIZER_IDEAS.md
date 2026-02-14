@@ -70,13 +70,16 @@ out and adjust relative jumps. Currently NOPs waste icache space.
 ## Non-Peephole Optimization Ideas
 
 ### Register cache improvements
+
 - Profile which guest regs are hottest per block and prioritize those
 - Spill less aggressively at block exits that chain to known targets
 
 ### Memory access optimization
+
 - Constant-fold bounds checks when address is a known constant
 - Hoist repeated bounds checks out of inner loops (would need loop detection)
 
 ### Branch optimization
+
 - Convert `jcc rel32` to `jcc rel8` when target is within ±127 bytes
 - This is a post-peephole pass since peephole may shorten the code

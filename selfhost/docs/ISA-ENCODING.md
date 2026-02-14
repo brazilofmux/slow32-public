@@ -200,12 +200,14 @@ These are sufficient for a complete bootstrap toolchain:
 ### Sign-Extension vs Zero-Extension
 
 **Sign-extended** (12-bit value fills upper 20 bits with sign bit):
+
 - ADDI, SLTI, SLTIU
 - All loads (LDB, LDH, LDW, LDBU, LDHU)
 - All stores (STB, STH, STW) — the immediate offset
 - JALR
 
 **Zero-extended** (12-bit value, upper 20 bits are zero):
+
 - ORI, ANDI, XORI
 - SLLI, SRLI, SRAI
 
