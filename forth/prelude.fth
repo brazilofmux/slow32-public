@@ -141,7 +141,7 @@
     LOOP
   ELSE DROP THEN
   2DROP
-  R> DUP IF 0< IF DROP -1 ELSE DROP 1 THEN THEN ;
+  R> DUP IF 0< IF -1 ELSE 1 THEN THEN ;
 
 : (STREQ)  ( a1 a2 u -- flag )
   DUP 0 > IF

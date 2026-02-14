@@ -352,10 +352,10 @@ VARIABLE find-ch-val
 
 \ S-type: op[6:0] | imm[4:0]<<7 | rs1[19:15] | rs2[24:20] | imm[11:5]<<25
 : ENC-S ( op base val imm -- word )
-    >R >R
-    20 LSHIFT >R       \ val << 20
-    15 LSHIFT OR       \ base << 15 | opcode
-    R> OR              \ | val
+    >R                 \ save imm; stack: op base val
+    20 LSHIFT >R       \ val << 20 saved; stack: op base
+    15 LSHIFT OR       \ op | base<<15; stack: result
+    R> OR              \ | val<<20
     R>                 \ imm
     DUP MASK5 AND 7 LSHIFT ROT OR SWAP
     5 RSHIFT MASK7 AND 25 LSHIFT OR ;
@@ -417,6 +417,14 @@ VARIABLE find-ch-val
     GET-TOK PARSE-REG 0= IF DROP S" bad rs2" ASM-ERR R> DROP EXIT THEN >R
     GET-TOK PARSE-BTARGET
     R> R> SWAP ROT
+    ENC-B EMIT-W32 ;
+
+\ Reversed branch: bgt rs1,rs2,target = blt rs2,rs1,target (swap regs)
+: DO-B-REV ( opcode -- )
+    GET-TOK PARSE-REG 0= IF DROP S" bad rs1" ASM-ERR EXIT THEN >R
+    GET-TOK PARSE-REG 0= IF DROP S" bad rs2" ASM-ERR R> DROP EXIT THEN >R
+    GET-TOK PARSE-BTARGET
+    R> R> ROT           \ ( opcode rs2 rs1 imm ) -- note: NOT swapped
     ENC-B EMIT-W32 ;
 
 \ Parse U-type: lui rd, imm
@@ -681,6 +689,7 @@ VARIABLE li-rd
     2DUP S" sleu"  STREQI IF 2DROP 27 DO-R TRUE EXIT THEN
     2DUP S" sge"   STREQI IF 2DROP 28 DO-R TRUE EXIT THEN
     2DUP S" sgeu"  STREQI IF 2DROP 29 DO-R TRUE EXIT THEN
+    2DUP S" mulhu" STREQI IF 2DROP 31 DO-R TRUE EXIT THEN
     2DUP S" divu"  STREQI IF 2DROP 44 DO-R TRUE EXIT THEN
     2DUP S" remu"  STREQI IF 2DROP 45 DO-R TRUE EXIT THEN
 
@@ -727,7 +736,7 @@ VARIABLE li-rd
             64 R> ROT ENC-J EMIT-W32
         ELSE
             \ jal target (shorthand for jal r31, target)
-            DROP PARSE-TARGET
+            PARSE-TARGET
             64 31 ROT ENC-J EMIT-W32
         THEN
         TRUE EXIT
@@ -752,6 +761,11 @@ VARIABLE li-rd
     2DUP S" call"  STREQI IF 2DROP DO-CALL  TRUE EXIT THEN
     2DUP S" neg"   STREQI IF 2DROP DO-NEG   TRUE EXIT THEN
     2DUP S" not"   STREQI IF 2DROP DO-NOT   TRUE EXIT THEN
+    \ Reversed branches: bgt=blt(swapped), ble=bge(swapped), etc.
+    2DUP S" bgt"   STREQI IF 2DROP 74 DO-B-REV TRUE EXIT THEN
+    2DUP S" ble"   STREQI IF 2DROP 75 DO-B-REV TRUE EXIT THEN
+    2DUP S" bgtu"  STREQI IF 2DROP 76 DO-B-REV TRUE EXIT THEN
+    2DUP S" bleu"  STREQI IF 2DROP 77 DO-B-REV TRUE EXIT THEN
 
     2DROP FALSE ;
 
@@ -825,6 +839,9 @@ VARIABLE li-rd
         NEXT-LINE
     WHILE
         1 asm-lno +!
+        asm-lno @ 500 MOD 0= IF
+            ." line " asm-lno @ . CR
+        THEN
         PROCESS-LINE
     REPEAT ;
 
