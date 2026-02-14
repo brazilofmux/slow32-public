@@ -4324,6 +4324,8 @@ file_size_word:
 
     add r2, r0, r0     # ior = 0
     bne r1, r0, file_size_fail
+    lui r4, %hi(file_stat_buf)    # reload r4 (clobbered by fstat call)
+    addi r4, r4, %lo(file_stat_buf)
     ldw r3, r4, 40     # st_size lo
     ldw r4, r4, 44     # st_size hi
     jal r0, file_size_push
