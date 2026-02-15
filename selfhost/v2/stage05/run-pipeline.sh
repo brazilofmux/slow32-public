@@ -10,6 +10,7 @@ fi
 EMU="${SELFHOST_EMU:-$ROOT_DIR/tools/emulator/slow32}"
 KERNEL="${SELFHOST_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${SELFHOST_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
+EMU_EXPLICIT=0
 
 CC_FTH="${SELFHOST_CC_FTH:-$ROOT_DIR/selfhost/v2/stage04/cc.fth}"
 ASM_FTH="${SELFHOST_ASM_FTH:-$ROOT_DIR/selfhost/v2/stage01/asm.fth}"
@@ -59,6 +60,7 @@ while [[ $# -gt 0 ]]; do
             shift
             [[ $# -gt 0 ]] || { echo "--emu requires a path" >&2; exit 2; }
             EMU="$1"
+            EMU_EXPLICIT=1
             ;;
         --keep-artifacts) KEEP_ARTIFACTS=1 ;;
         -h|--help) usage; exit 0 ;;
@@ -70,6 +72,12 @@ while [[ $# -gt 0 ]]; do
     esac
     shift
 done
+
+if [[ "$MODE" == "stage6-utility-smoke" && "$EMU_EXPLICIT" -eq 0 && -z "${SELFHOST_EMU:-}" ]]; then
+    if [[ -x "$ROOT_DIR/tools/emulator/slow32-fast" ]]; then
+        EMU="$ROOT_DIR/tools/emulator/slow32-fast"
+    fi
+fi
 
 case "$MODE" in
     baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage6-ar-smoke|stage6-ar-scan-smoke|stage6-ar-asm-diff|stage6-utility-smoke) ;;
@@ -455,4 +463,5 @@ elif [[ "$MODE" == "stage6-ar-asm-diff" ]]; then
 elif [[ "$MODE" == "stage6-utility-smoke" ]]; then
     echo "Utility smoke: runtime output parity"
 fi
+echo "Emulator: $EMU"
 echo "Artifacts: $WORKDIR"
