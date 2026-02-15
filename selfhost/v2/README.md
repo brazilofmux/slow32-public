@@ -13,3 +13,18 @@ Stage directories:
 Primary tracking docs:
 - `selfhost/V2-REORG-PLAN.md`
 - `selfhost/V2-MIGRATION-MAP.tsv`
+
+## Ordered Stage Walk
+
+For a clean checkout sanity pass (stage00 -> stage04):
+
+```bash
+selfhost/v2/run-stages.sh
+```
+
+Manual per-stage entry points:
+- `stage00`: `make -C selfhost/v2/stage00 && make -C selfhost/v2/stage00 test`
+- `stage01`: `selfhost/v2/stage01/run-regression.sh test1`
+- `stage02`: `selfhost/v2/stage02/run-regression.sh test3`
+- `stage03`: `selfhost/v2/stage03/run-regression.sh test3` and `... archive`
+- `stage04`: `selfhost/v2/stage04/run-regression.sh`
