@@ -17,6 +17,7 @@
 \   S" /tmp/new.s32a" AR-R-BEGIN
 \   S" runtime/builtins.s32o" AR-ADD
 \   S" divsi3.s32o" AR-D
+\   S" builtins.s32o" AR-M
 \   AR-R-END
 \
 \ Runs inside the Forth kernel on the Stage 0 emulator.
@@ -218,6 +219,33 @@ VARIABLE sym-midx
         t-size @ CELLS m-out-noff + @ t-off @ CELLS m-out-noff + !
     THEN
     m-cnt @ 1- m-cnt !
+    TRUE ;
+
+: MEMBER-MOVE-TO-END ( idx -- ok? )
+    DUP 0< IF DROP FALSE EXIT THEN
+    DUP m-cnt @ >= IF DROP FALSE EXIT THEN
+    DUP m-cnt @ 1- = IF DROP TRUE EXIT THEN
+    t-off !
+    t-off @ CELLS m-noff + @ m-tmp-nameoff !
+    t-off @ CELLS m-nlen + @ m-tmp-size !
+    t-off @ CELLS m-doff + @ m-add-off !
+    t-off @ CELLS m-size + @ m-add-size !
+    t-off @ CELLS m-out-noff + @ m-tmp-off !
+    t-off @ 1+ m-tmp-pos !
+    BEGIN m-tmp-pos @ m-cnt @ < WHILE
+        m-tmp-pos @ CELLS m-noff + @ m-tmp-pos @ 1- CELLS m-noff + !
+        m-tmp-pos @ CELLS m-nlen + @ m-tmp-pos @ 1- CELLS m-nlen + !
+        m-tmp-pos @ CELLS m-doff + @ m-tmp-pos @ 1- CELLS m-doff + !
+        m-tmp-pos @ CELLS m-size + @ m-tmp-pos @ 1- CELLS m-size + !
+        m-tmp-pos @ CELLS m-out-noff + @ m-tmp-pos @ 1- CELLS m-out-noff + !
+        m-tmp-pos @ 1+ m-tmp-pos !
+    REPEAT
+    m-cnt @ 1- m-tmp-pos !
+    m-tmp-nameoff @ m-tmp-pos @ CELLS m-noff + !
+    m-tmp-size @ m-tmp-pos @ CELLS m-nlen + !
+    m-add-off @ m-tmp-pos @ CELLS m-doff + !
+    m-add-size @ m-tmp-pos @ CELLS m-size + !
+    m-tmp-off @ m-tmp-pos @ CELLS m-out-noff + !
     TRUE ;
 
 : DATA-ALLOC ( size -- off ok? )
@@ -691,9 +719,17 @@ VARIABLE sym-midx
     MEMBER-REMOVE-IDX DROP
     ." d - " t-addr @ t-len @ TYPE CR ;
 
+: AR-M ( name-addr name-len -- )
+    BASENAME t-len ! t-addr !
+    t-addr @ t-len @ MEMBER-FIND DUP 0< IF
+        DROP ." m? - " t-addr @ t-len @ TYPE CR EXIT
+    THEN
+    MEMBER-MOVE-TO-END DROP
+    ." m - " t-addr @ t-len @ TYPE CR ;
+
 : AR-C-END ( -- ) WRITE-ARCHIVE ;
 : AR-R-END ( -- ) WRITE-ARCHIVE ;
 
 0 ar-is-open !
 
-." Stage 3 archiver spike loaded (AR-T/AR-V/AR-X/AR-P/AR-C/AR-R/AR-D)." CR
+." Stage 3 archiver spike loaded (AR-T/AR-V/AR-X/AR-P/AR-C/AR-R/AR-D/AR-M)." CR
