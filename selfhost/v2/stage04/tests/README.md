@@ -15,6 +15,11 @@ Buckets:
 - `reloc-bisect-lo12-pack`: focused LO12 pack-shape corpus (`reloc_bisect03a[1-3].c`)
 - `reloc-bisect-lo12-rdwr`: LO12 minimal read/write-shape corpus (`reloc_bisect03a{00,9,...}.c`)
 
+Current narrow boundary in `reloc-bisect-lo12-rdwr`:
+- `reloc_bisect03a00.c` passes
+- `reloc_bisect03a9.c` fails when the LO12 branch includes
+  a block-local temp with self-add using `0u` (`out_inst = out_inst + 0u;`)
+
 The full bisect corpus is tracked as fixtures in this directory.
 
 Use `manifests/*.lst` to consume bucket membership from scripts.
