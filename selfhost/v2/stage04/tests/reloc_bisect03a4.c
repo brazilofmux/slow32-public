@@ -1,4 +1,7 @@
-#define REL_BISECT_LEVEL 4
+#define REL_BISECT_LEVEL 3
+#define REL_BISECT_LO12_SCAN 0
+#define REL_BISECT_LO12_PACK 0
+#define REL_BISECT_LO12_STYLE 4
 /*
  * Stage07 bootstrap linker spike
  *
@@ -587,12 +590,20 @@ int main(int argc, char **argv) {
 #if REL_BISECT_LEVEL >= 3 || REL_BISECT_FAKE_LO12_CASE
             } else if (rel->type == S32O_REL_LO12) {
 #if REL_BISECT_LEVEL >= 3
+ #if REL_BISECT_LO12_STYLE == 5
                 uint32_t out_inst;
- #if REL_BISECT_LO12_STYLE == 2
                 out_inst = rd32(g_out + sec_out + rel->offset);
+                patched = out_inst;
+ #elif REL_BISECT_LO12_STYLE == 4
+                wr32(g_out + sec_out + rel->offset, patched);
+ #elif REL_BISECT_LO12_STYLE == 2
+                patched = patched;
  #elif REL_BISECT_LO12_STYLE == 0
+                uint32_t out_inst;
                 out_inst = rd32(g_out + sec_out + rel->offset);
+                wr32(g_out + sec_out + rel->offset, out_inst);
  #else
+                uint32_t out_inst;
                 uint32_t inst;
                 uint32_t opcode;
                 uint32_t imm;
@@ -642,8 +653,8 @@ int main(int argc, char **argv) {
                 patched = patched;
 #endif
                 out_inst = inst;
-#endif
                 wr32(g_out + sec_out + rel->offset, out_inst);
+ #endif
  #endif
 #endif
 #if REL_BISECT_LEVEL >= 4

@@ -1,4 +1,7 @@
-#define REL_BISECT_LEVEL 4
+#define REL_BISECT_LEVEL 3
+#define REL_BISECT_LO12_SCAN 0
+#define REL_BISECT_LO12_PACK 1
+#define REL_BISECT_LO12_PACK_MODE 2
 /*
  * Stage07 bootstrap linker spike
  *

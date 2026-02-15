@@ -1,4 +1,6 @@
-#define REL_BISECT_LEVEL 4
+#define REL_BISECT_LEVEL 3
+#define REL_BISECT_LO12_SCAN 0
+#define REL_BISECT_LO12_PACK 1
 /*
  * Stage07 bootstrap linker spike
  *
@@ -23,18 +25,6 @@
 
 #ifndef REL_BISECT_LO12_PACK
 #define REL_BISECT_LO12_PACK 1
-#endif
-
-#ifndef REL_BISECT_LO12_PACK_MODE
-#define REL_BISECT_LO12_PACK_MODE 2
-#endif
-
-#ifndef REL_BISECT_LO12_STYLE
-#define REL_BISECT_LO12_STYLE 1
-#endif
-
-#ifndef REL_BISECT_FAKE_LO12_CASE
-#define REL_BISECT_FAKE_LO12_CASE 0
 #endif
 
 #define S32O_MAGIC 0x5333324FU
@@ -584,15 +574,8 @@ int main(int argc, char **argv) {
                 inst = (inst & 0x00000FFFu) | (hi20 << 12);
                 wr32(g_out + sec_out + rel->offset, inst);
 #endif
-#if REL_BISECT_LEVEL >= 3 || REL_BISECT_FAKE_LO12_CASE
-            } else if (rel->type == S32O_REL_LO12) {
 #if REL_BISECT_LEVEL >= 3
-                uint32_t out_inst;
- #if REL_BISECT_LO12_STYLE == 2
-                out_inst = rd32(g_out + sec_out + rel->offset);
- #elif REL_BISECT_LO12_STYLE == 0
-                out_inst = rd32(g_out + sec_out + rel->offset);
- #else
+            } else if (rel->type == S32O_REL_LO12) {
                 uint32_t inst;
                 uint32_t opcode;
                 uint32_t imm;
@@ -623,13 +606,6 @@ int main(int argc, char **argv) {
                 paired = 1;
 #endif
 #if REL_BISECT_LO12_PACK
- #if REL_BISECT_LO12_PACK_MODE == 1
-                inst = (inst & 0x000FFFFFu) | (imm << 20);
- #elif REL_BISECT_LO12_PACK_MODE == 3
-                inst = (inst & 0xFE000F80u)
-                    | ((imm & 0x1Fu) << 7)
-                    | (((imm >> 5) & 0x7Fu) << 25);
- #else
                 if (opcode == 0x38u || opcode == 0x39u || opcode == 0x3Au) {
                     inst = (inst & 0xFE000F80u)
                         | ((imm & 0x1Fu) << 7)
@@ -637,14 +613,8 @@ int main(int argc, char **argv) {
                 } else {
                     inst = (inst & 0x000FFFFFu) | (imm << 20);
                 }
- #endif
-#else
-                patched = patched;
 #endif
-                out_inst = inst;
-#endif
-                wr32(g_out + sec_out + rel->offset, out_inst);
- #endif
+                wr32(g_out + sec_out + rel->offset, inst);
 #endif
 #if REL_BISECT_LEVEL >= 4
             } else if (rel->type == S32O_REL_BRANCH) {

@@ -12,8 +12,11 @@ case "$BUCKET" in
   as-bisect) MAN="$SCRIPT_DIR/manifests/as-bisect.lst" ;;
   ar-bisect) MAN="$SCRIPT_DIR/manifests/ar-bisect.lst" ;;
   reloc-bisect) MAN="$SCRIPT_DIR/manifests/reloc-bisect.lst" ;;
+  reloc-bisect-lo12) MAN="$SCRIPT_DIR/manifests/reloc-bisect-lo12.lst" ;;
+  reloc-bisect-lo12-pack) MAN="$SCRIPT_DIR/manifests/reloc-bisect-lo12-pack.lst" ;;
+  reloc-bisect-lo12-rdwr) MAN="$SCRIPT_DIR/manifests/reloc-bisect-lo12-rdwr.lst" ;;
   *)
-    echo "Usage: $0 {baseline|subset|subset-idioms|subset-known-gaps|as-bisect|ar-bisect|reloc-bisect}" >&2
+    echo "Usage: $0 {baseline|subset|subset-idioms|subset-known-gaps|as-bisect|ar-bisect|reloc-bisect|reloc-bisect-lo12|reloc-bisect-lo12-pack|reloc-bisect-lo12-rdwr}" >&2
     exit 2
     ;;
 esac
