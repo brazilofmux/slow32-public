@@ -471,35 +471,43 @@ The subset C toolchain is functional but limited. Real-world C programs use vara
 
 ### Stage 10: Full Emulator
 
-Before extending the compiler, ensure the execution environment is adequate for more complex programs.
+The Stage 0 emulator is deliberately minimal — enough for Forth and subset C toolchain work. But real-world C programs need more. Try porting SLOW BASIC to the minimal emulator and you'll feel every missing piece.
 
 - **You need:**
 
   - Stages 0-9 (working subset C toolchain).
 
+- **What the full emulator adds over Stage 0:**
+
+  - **Floating point instructions.** Software float routines in libc (`strtod`, `dtoa`, math functions) are pure integer code, but the compiler may need to handle `float`/`double` types, and programs like SLOW BASIC use floating point pervasively. The emulator needs to execute any FP instructions the compiler emits (even if they're just "move bits around" operations for soft-float calling conventions).
+  - **Complete MMIO ring buffer coverage.** Stage 0 handles the basics (open, read, write, close, stat, brk, exit). Full programs need the complete set: seek, truncate, rename, unlink, mkdir, getcwd, environment access, and correct edge-case behavior (partial reads, error returns, etc.).
+  - **Service negotiation protocol.** Dynamic MMIO service registration (opcodes 0xF0-0xF4). Needed for terminal services and any future extensions.
+  - **Larger memory and robust bounds checking.** The subset toolchain fits comfortably in default memory. A full C compiler compiling large programs (MY-BASIC is ~10K lines) needs more heap, more stack, and the emulator should catch out-of-bounds accesses instead of silently corrupting.
+  - **Debugging features.** Trace mode, breakpoints, register display, memory watchpoints. Not strictly required for self-hosting, but debugging full C programs without them is painful.
+
 - **You produce:**
 
-  - An emulator that handles everything the full C toolchain will need:
-    - Complete MMIO ring buffer protocol (all opcodes).
-    - All instruction variants (including any the subset toolchain didn't exercise).
-    - Sufficient memory for larger programs.
-    - Optionally: service negotiation, debugging features.
+  - An emulator capable of running any SLOW-32 program — not just toolchain components, but real applications.
 
 - **Two paths:**
 
-  1. **Enhance Stage 0 on the host.** Edit `s32-emu.c` by hand. Simplest approach. The emulator stays a host-native program.
-  2. **Build a new emulator with the subset C toolchain.** Write an emulator in subset C, compile it, run it on Stage 0. This proves the toolchain handles a non-trivial program. The result is a SLOW-32 binary that emulates SLOW-32 (metacircular, slow, but auditable).
+  1. **Enhance Stage 0 on the host.** Edit `s32-emu.c` by hand. Simplest approach. The emulator stays a host-native program. Grows from ~780 to perhaps ~1,500 lines.
+  2. **Build an emulator with the subset C toolchain.** Write it in subset C, compile it, run it on Stage 0. Proves the toolchain handles a non-trivial program. The result is a SLOW-32 binary that emulates SLOW-32 (metacircular, slow, but auditable).
 
   Path 1 is practical. Path 2 is pedagogically interesting. Either works. Both can be done.
 
+  There's also a **Path 3** to dream about: a self-hosted DBT. A SLOW-32 dynamic binary translator, written in C, compiled by the self-hosted toolchain, running on Stage 0. It wouldn't translate SLOW-32 to x86 (it's running on SLOW-32), but it could do block-level optimization: trace hot paths, eliminate redundant loads/stores, inline dispatch. A SLOW-32-to-SLOW-32 JIT. Absurd and wonderful. And a serious validation that the full C compiler can handle the kind of pointer-heavy, bit-twiddling code a DBT requires.
+
 - **You can now:**
 
-  - Run more complex SLOW-32 programs with confidence.
+  - Run full C programs: SLOW BASIC, MY-BASIC, or anything that uses floats, complex I/O, or larger memory.
+  - Develop and debug the full C compiler (Stage 11) in a capable environment.
 
 - **Verification:**
 
-  - Run the full regression suite on the enhanced emulator.
-  - Compare behavior with reference emulators.
+  - Run the full regression suite (all 23+ tests).
+  - Run SLOW BASIC test suite (29 tests) or equivalent complex workload.
+  - Compare behavior with reference emulators (`slow32`, `slow32-fast`).
 
 
 ### Stage 11: Full C Compiler
@@ -748,11 +756,11 @@ Option 3 is probably the right balance. The exact split depends on what the subs
 
 ### On the Full Emulator
 
-"Full emulator" is about capability, not about self-hosting the emulator. The question is: does the Stage 0 emulator handle everything the full C toolchain needs? It probably does — the Stage 0 emulator already has MMIO ring buffers, file I/O, and all integer instructions. Stage 10 may reduce to "verify Stage 0 is sufficient" rather than "build a new emulator."
+The Stage 0 emulator is deliberately austere — enough for Forth and the subset C toolchain, nothing more. Full C programs (SLOW BASIC, MY-BASIC, anything with floating point or complex I/O) need a real emulator: complete MMIO coverage, floating point instruction support, robust memory management, debugging features. Stage 10 is a genuine build step, not just a verification gate.
 
-If enhancements are needed, they're applied to `s32-emu.c` on the host — still a small, auditable C program.
+The simplest path is enhancing `s32-emu.c` on the host. It grows from ~780 to ~1,500 lines but remains auditable.
 
-Building a SLOW-32 emulator that runs ON SLOW-32 (metacircular emulation) is an interesting exercise but not required for the bootstrap. It would prove the toolchain can handle a non-trivial program, but the emulated-on-emulated performance would be painful.
+The ambitious path is building a SLOW-32 emulator in C, compiled by the self-hosted toolchain, running on Stage 0 (metacircular emulation). Slow, but it proves the toolchain handles non-trivial code. And if the full C toolchain can compile a DBT (dynamic binary translator) — SLOW-32 translating SLOW-32 blocks to... SLOW-32 blocks with optimized dispatch — that's a serious validation of the compiler's capability, even if the performance story is ironic.
 
 ### On Three vs. Two Self-Hosting Layers
 
