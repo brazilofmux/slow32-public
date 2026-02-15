@@ -1,1 +1,1 @@
-../v2/stage03/ar.fth
+../v2/stage02/ar.fth

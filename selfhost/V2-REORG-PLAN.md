@@ -65,6 +65,8 @@ Progress (2026-02-15):
   - `selfhost/v2/stage04/run-regression.sh`
 - Stage2 relocated to `selfhost/v2/stage01/` with legacy compat symlinks in `selfhost/stage2/`.
 - Stage3 relocated to `selfhost/v2/stage03/` with legacy compat symlinks in `selfhost/stage3/`.
+- Stage0 tracked sources relocated to `selfhost/v2/stage00/` with legacy compat symlinks in `selfhost/stage0/`.
+- Stage2 archiver split to canonical `selfhost/v2/stage02/ar.fth` with compatibility links from stage3 paths.
 
 ## Phase 4: Stage 5/6 Integration Tracks
 
@@ -91,6 +93,6 @@ Validation gate:
 
 ## Immediate Next Tasks
 
-1. Implement Phase 2 test bucketing with zero behavior change.
-2. Add stage2/stage3 wrapper scripts with the same path-override pattern now used by stage4.
-3. Start Phase 3 move for Stage 4 first (highest active development area), then Stage 2/3.
+1. Resolve Stage4 bisect corpus tracking policy (promote selected `as_bisect*` files to tracked fixtures or archive/remove them).
+2. Start Phase 4 progressive pipeline scripting (baseline Forth vs C replacements for Stage5/6).
+3. Add initial CI stage-gate checks for relocated canonical paths under `selfhost/v2/`.

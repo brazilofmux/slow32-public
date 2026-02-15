@@ -1,11 +1,11 @@
 v2_stage	v2_target	current_paths	category	status	notes
-0	selfhost/v2/stage00	selfhost/stage0/s32-emu.c,selfhost/stage0/Makefile	code+build	planned	Keep stage0 binary/output behavior unchanged during move.
+0	selfhost/v2/stage00	selfhost/v2/stage00/* (canonical),selfhost/stage0/* (compat symlinks for tracked sources)	code+build	completed	Stage0 sources relocated; legacy stage0 tracked files now compat links.
 1	selfhost/v2/stage01	selfhost/v2/stage01/* (canonical),selfhost/stage2/* (compat symlinks)	code+tests	completed	Stage2 relocated; stage2 regression green from both legacy and v2 entry points.
-2	selfhost/v2/stage02	selfhost/stage3/ar.fth	code	planned	Forth archiver already functionally expanded (AR-X/R/C/D/V/P/M).
+2	selfhost/v2/stage02	selfhost/v2/stage02/ar.fth (canonical),selfhost/stage3/ar.fth and selfhost/v2/stage03/ar.fth (compat links)	code	completed	Stage2 archiver split completed with compatibility links retained.
 3	selfhost/v2/stage03	selfhost/v2/stage03/* (canonical),selfhost/stage3/* (compat symlinks)	code+tests	completed	Stage3 relocated; stage3 runner interface verified from both legacy and v2 entry points.
 4	selfhost/v2/stage04	selfhost/v2/stage04/* (canonical),selfhost/stage4/* (compat symlinks)	code+tests+infra	completed	Stage4 relocated; regression green from both legacy and v2 entry points.
-5	selfhost/v2/stage05	selfhost/stage4/validation/s32-as.c	code+validation	in_progress	Spike proven end-to-end; replacement hardening remains.
-6	selfhost/v2/stage06	selfhost/stage4/validation/s32-ar.c	code+validation	in_progress	Spike exists; integrate into replacement pipeline later.
+5	selfhost/v2/stage05	selfhost/v2/stage04/validation/s32-as.c (canonical),selfhost/stage4/validation/s32-as.c (compat)	code+validation	in_progress	Spike proven end-to-end; replacement hardening remains.
+6	selfhost/v2/stage06	selfhost/v2/stage04/validation/s32-ar.c (canonical),selfhost/stage4/validation/s32-ar.c (compat)	code+validation	in_progress	Spike exists; integrate into replacement pipeline later.
 7	selfhost/v2/stage07	(placeholder for s32-ld.c subset implementation)	code	not_started	Will replace stage3 linker in progressive chain.
 8	selfhost/v2/stage08	(placeholder for cc.c subset implementation)	code	not_started	Subset C compiler rewritten in C.
 9	selfhost/v2/stage09	(fixed-point harness)	validation+infra	not_started	Gen2==Gen3 for subset toolchain.
