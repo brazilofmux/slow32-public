@@ -2,6 +2,10 @@
 
 This document covers the instruction encoding needed for hand-assembly of SLOW-32 programs. All instructions are 32 bits wide, little-endian.
 
+Stage00 decoder model (matches `selfhost/v2/stage00/s32-emu.c`):
+- Opcode is always bits `[6:0]` and uniquely selects the instruction.
+- `funct3`/`funct7` bit positions exist in the bit layout, but are not used to distinguish operations in the selfhost ISA subset.
+
 ## Register Map
 
 | Reg | ABI Name | Purpose | Caller-Saved |
@@ -115,9 +119,9 @@ opcode
 
 Range: -1048576 to +1048574 (PC-relative, byte units).
 
-## Essential Instruction Set (34 Instructions)
+## Bootstrap Core Instruction Set (34 Instructions)
 
-These are sufficient for a complete bootstrap toolchain:
+These are sufficient for a complete bootstrap toolchain. The Stage00 emulator implements additional opcodes beyond this core (listed below).
 
 ### Arithmetic (R-Type)
 
@@ -194,6 +198,37 @@ These are sufficient for a complete bootstrap toolchain:
 |----------|:------:|:------:|-----------|
 | `DEBUG rs1` | 0x52 | R | Output character in rs1 |
 | `HALT` | 0x7F | - | Stop execution |
+
+## Additional Opcodes Implemented By Stage00 Emulator
+
+These opcodes are implemented in `selfhost/v2/stage00/s32-emu.c` even though they are not required for the minimal 34-instruction bootstrap core.
+
+### Arithmetic / Comparison Extensions
+
+| Mnemonic | Opcode | Operation |
+|----------|:------:|-----------|
+| `MULH rd, rs1, rs2` | 0x0B | high 32 bits of signed multiply |
+| `DIV rd, rs1, rs2` | 0x0C | signed divide |
+| `REM rd, rs1, rs2` | 0x0D | signed remainder |
+| `SLTI rd, rs1, imm` | 0x16 | signed less-than immediate |
+| `SLTIU rd, rs1, imm` | 0x17 | unsigned less-than immediate |
+| `SLE rd, rs1, rs2` | 0x1A | signed less-or-equal |
+| `SLEU rd, rs1, rs2` | 0x1B | unsigned less-or-equal |
+| `SGE rd, rs1, rs2` | 0x1C | signed greater-or-equal |
+| `SGEU rd, rs1, rs2` | 0x1D | unsigned greater-or-equal |
+| `MULHU rd, rs1, rs2` | 0x1F | high 32 bits of unsigned multiply |
+
+### Memory / Control Extensions
+
+| Mnemonic | Opcode | Format | Operation |
+|----------|:------:|:------:|-----------|
+| `LDH rd, rs1, imm` | 0x31 | I | rd = sext(mem16[rs1 + sext(imm)]) |
+| `LDHU rd, rs1, imm` | 0x34 | I | rd = zext(mem16[rs1 + sext(imm)]) |
+| `STH rs1, rs2, imm` | 0x39 | S | mem16[rs1 + sext(imm)] = rs2[15:0] |
+| `BLTU rs1, rs2, offset` | 0x4C | B | if (rs1 < rs2) PC += offset (unsigned) |
+| `BGEU rs1, rs2, offset` | 0x4D | B | if (rs1 >= rs2) PC += offset (unsigned) |
+| `NOP` | 0x50 | - | no side effects |
+| `YIELD` | 0x51 | - | process MMIO request/response rings |
 
 ## Immediate Encoding Gotchas
 

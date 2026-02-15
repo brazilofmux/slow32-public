@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <limits.h>
 
 /* ======================================================================
  * Constants
@@ -94,6 +95,11 @@ static inline void wr32(uint8_t *m, uint32_t a, uint32_t v) {
 }
 static inline void wr16(uint8_t *m, uint32_t a, uint16_t v) {
     memcpy(m + a, &v, 2);
+}
+
+static bool range_ok_u32(uint32_t base, uint32_t size, uint32_t total) {
+    if (size > total) return false;
+    return base <= (total - size);
 }
 
 /* ======================================================================
@@ -181,10 +187,34 @@ static bool load_s32x(emu_t *e, const char *path) {
     uint32_t mmio_base  = rd32(hdr, 0x3C);
     bool     has_mmio   = (flags & S32X_FLAG_MMIO) != 0;
 
-    /* Compute total memory needed */
-    uint32_t total = mem_size;
-    if (has_mmio && mmio_base + MMIO_WINDOW_SIZE > total)
-        total = mmio_base + MMIO_WINDOW_SIZE;
+    /* Compute total memory needed (overflow-safe) */
+    uint64_t total64 = mem_size;
+    if (has_mmio) {
+        uint64_t mmio_end = (uint64_t)mmio_base + (uint64_t)MMIO_WINDOW_SIZE;
+        if (mmio_end > total64)
+            total64 = mmio_end;
+    }
+    if (total64 == 0 || total64 > UINT32_MAX || total64 > SIZE_MAX) {
+        fprintf(stderr, "%s: invalid memory size\n", path);
+        fclose(f); return false;
+    }
+    uint32_t total = (uint32_t)total64;
+
+    if (code_limit > total) {
+        fprintf(stderr, "%s: code_limit out of range (0x%X > 0x%X)\n",
+                path, code_limit, total);
+        fclose(f); return false;
+    }
+    if (entry >= code_limit) {
+        fprintf(stderr, "%s: entry out of code range (entry=0x%X code_limit=0x%X)\n",
+                path, entry, code_limit);
+        fclose(f); return false;
+    }
+    if (stack_base > total) {
+        fprintf(stderr, "%s: stack_base out of range (0x%X > 0x%X)\n",
+                path, stack_base, total);
+        fclose(f); return false;
+    }
 
     e->mem = calloc(1, total);
     if (!e->mem) {
@@ -214,7 +244,7 @@ static bool load_s32x(emu_t *e, const char *path) {
         if (type != SEC_CODE && type != SEC_DATA && type != SEC_RODATA)
             continue;
         if (size == 0) continue;
-        if (vaddr + size > total) {
+        if (!range_ok_u32(vaddr, size, total)) {
             fprintf(stderr, "%s: section %u overflows memory (vaddr=0x%X size=0x%X)\n",
                     path, i, vaddr, size);
             continue;
@@ -271,14 +301,32 @@ static void mmio_process(emu_t *e) {
 
     uint8_t *m  = e->mem;
     uint32_t mb = e->mmio_base;
+
+    if (!range_ok_u32(mb, MMIO_WINDOW_SIZE, e->mem_total)) {
+        fprintf(stderr, "MMIO fault: window out of bounds (base=0x%08X size=0x%X total=0x%X)\n",
+                mb, MMIO_WINDOW_SIZE, e->mem_total);
+        e->halted = true;
+        return;
+    }
     uint8_t *data = m + mb + MMIO_DATA_BUF;
 
     uint32_t req_head = rd32(m, mb + MMIO_REQ_HEAD);
     uint32_t req_tail = rd32(m, mb + MMIO_REQ_TAIL);
+    if (req_head >= MMIO_RING_ENTRIES || req_tail >= MMIO_RING_ENTRIES) {
+        fprintf(stderr, "MMIO fault: invalid ring pointers (head=%u tail=%u)\n",
+                req_head, req_tail);
+        e->halted = true;
+        return;
+    }
 
     while (req_head != req_tail) {
         /* Read request descriptor */
         uint32_t da = mb + MMIO_REQ_RING + req_tail * MMIO_DESC_SIZE;
+        if (!range_ok_u32(da, MMIO_DESC_SIZE, e->mem_total)) {
+            fprintf(stderr, "MMIO fault: request descriptor out of bounds\n");
+            e->halted = true;
+            return;
+        }
         uint32_t opcode = rd32(m, da + 0);
         uint32_t length = rd32(m, da + 4);
         uint32_t offset = rd32(m, da + 8);
@@ -345,9 +393,12 @@ static void mmio_process(emu_t *e) {
                 r_status = MMIO_STATUS_ERR; break;
             }
             uint32_t off = offset % MMIO_DATA_CAP;
+            uint32_t max = MMIO_DATA_CAP - off;
             /* Extract path (NUL-terminated in data buffer) */
             char path_buf[4096];
-            uint32_t plen = (length < sizeof(path_buf)) ? length : sizeof(path_buf) - 1;
+            uint32_t plen = (length < max) ? length : max;
+            if (plen >= sizeof(path_buf))
+                plen = sizeof(path_buf) - 1;
             memcpy(path_buf, data + off, plen);
             path_buf[plen] = '\0';
 
@@ -388,6 +439,9 @@ static void mmio_process(emu_t *e) {
                 r_status = MMIO_STATUS_ERR; break;
             }
             uint32_t off = offset % MMIO_DATA_CAP;
+            if (off + 8 > MMIO_DATA_CAP) {
+                r_status = MMIO_STATUS_ERR; break;
+            }
             uint8_t whence = data[off];
             int32_t dist;
             memcpy(&dist, data + off + 4, 4);
@@ -410,7 +464,10 @@ static void mmio_process(emu_t *e) {
             if (status == 0xFFFFFFFFu) {
                 /* Path-based stat */
                 char path_buf[4096];
-                uint32_t plen = (length < sizeof(path_buf)) ? length : sizeof(path_buf) - 1;
+                uint32_t max = MMIO_DATA_CAP - off;
+                uint32_t plen = (length < max) ? length : max;
+                if (plen >= sizeof(path_buf))
+                    plen = sizeof(path_buf) - 1;
                 memcpy(path_buf, data + off, plen);
                 path_buf[plen] = '\0';
                 rc = stat(path_buf, &st);
@@ -447,6 +504,9 @@ static void mmio_process(emu_t *e) {
             /* ctime */
             tmp = (uint64_t)st.st_ctim.tv_sec;  memcpy(buf + 96, &tmp, 8);
             t32 = (uint32_t)st.st_ctim.tv_nsec; memcpy(buf + 104, &t32, 4);
+            if (off + sizeof(buf) > MMIO_DATA_CAP) {
+                r_status = MMIO_STATUS_ERR; break;
+            }
             memcpy(data + off, buf, sizeof(buf));
             r_length = sizeof(buf);
             break;
@@ -459,6 +519,9 @@ static void mmio_process(emu_t *e) {
 
         case OP_MMIO_ARGS_INFO: {
             uint32_t off = offset % MMIO_DATA_CAP;
+            if (off + 16 > MMIO_DATA_CAP) {
+                r_status = MMIO_STATUS_ERR; break;
+            }
             /* Write s32_mmio_args_info_t: argc, total_bytes, flags, reserved */
             wr32(data, off + 0, e->args_argc);
             wr32(data, off + 4, e->args_total);
@@ -471,12 +534,14 @@ static void mmio_process(emu_t *e) {
         case OP_MMIO_ARGS_DATA: {
             if (length == 0) break;
             uint32_t off = offset % MMIO_DATA_CAP;
+            uint32_t max = MMIO_DATA_CAP - off;
             uint32_t src_off = status;  /* Source offset into args blob */
             if (src_off > e->args_total) {
                 r_status = MMIO_STATUS_ERR; break;
             }
             uint32_t remaining = e->args_total - src_off;
             uint32_t cnt = (length < remaining) ? length : remaining;
+            if (cnt > max) cnt = max;
             if (cnt > 0 && e->args_blob)
                 memcpy(data + off, e->args_blob + src_off, cnt);
             r_length = cnt;
@@ -494,6 +559,11 @@ static void mmio_process(emu_t *e) {
         uint32_t next_head = (resp_head + 1) % MMIO_RING_ENTRIES;
         if (next_head != resp_tail) {  /* Not full */
             uint32_t ra = mb + MMIO_RESP_RING + resp_head * MMIO_DESC_SIZE;
+            if (!range_ok_u32(ra, MMIO_DESC_SIZE, e->mem_total)) {
+                fprintf(stderr, "MMIO fault: response descriptor out of bounds\n");
+                e->halted = true;
+                return;
+            }
             wr32(m, ra + 0,  r_opcode);
             wr32(m, ra + 4,  r_length);
             wr32(m, ra + 8,  r_offset);
@@ -512,8 +582,25 @@ static void mmio_process(emu_t *e) {
  * ====================================================================== */
 
 static void step(emu_t *e) {
+    #define MEM_FAULT(what, addr, size) do { \
+        fprintf(stderr, what " fault: addr=0x%08X size=%u total=0x%08X PC=0x%08X\n", \
+                (uint32_t)(addr), (uint32_t)(size), e->mem_total, e->pc); \
+        e->halted = true; \
+        return; \
+    } while (0)
+    #define CHECK_MEM(what, addr, size) do { \
+        if (!range_ok_u32((uint32_t)(addr), (uint32_t)(size), e->mem_total)) \
+            MEM_FAULT(what, addr, size); \
+    } while (0)
+
     /* Bounds check PC */
-    if (e->pc + 4 > e->code_limit) {
+    if (!range_ok_u32(e->pc, 4, e->mem_total)) {
+        fprintf(stderr, "Execute fault: PC=0x%08X out of memory (total=0x%08X)\n",
+                e->pc, e->mem_total);
+        e->halted = true;
+        return;
+    }
+    if (e->pc > e->code_limit || e->code_limit - e->pc < 4) {
         fprintf(stderr, "Execute fault: PC=0x%08X past code_limit=0x%08X\n",
                 e->pc, e->code_limit);
         e->halted = true;
@@ -605,26 +692,31 @@ static void step(emu_t *e) {
     /* ---- Load instructions (0x30-0x34) ---- */
     case 0x30: { /* LDB (sign-extend) */
         uint32_t a = r[rs1] + imm_i;
+        CHECK_MEM("Load", a, 1);
         r[rd] = (int32_t)(int8_t)m[a];
         break;
     }
     case 0x31: { /* LDH (sign-extend) */
         uint32_t a = r[rs1] + imm_i;
+        CHECK_MEM("Load", a, 2);
         r[rd] = (int32_t)(int16_t)rd16(m, a);
         break;
     }
     case 0x32: { /* LDW */
         uint32_t a = r[rs1] + imm_i;
+        CHECK_MEM("Load", a, 4);
         r[rd] = rd32(m, a);
         break;
     }
     case 0x33: { /* LDBU (zero-extend) */
         uint32_t a = r[rs1] + imm_i;
+        CHECK_MEM("Load", a, 1);
         r[rd] = m[a];
         break;
     }
     case 0x34: { /* LDHU (zero-extend) */
         uint32_t a = r[rs1] + imm_i;
+        CHECK_MEM("Load", a, 2);
         r[rd] = rd16(m, a);
         break;
     }
@@ -632,16 +724,19 @@ static void step(emu_t *e) {
     /* ---- Store instructions (0x38-0x3A) ---- */
     case 0x38: { /* STB */
         uint32_t a = r[rs1] + imm_s;
+        CHECK_MEM("Store", a, 1);
         m[a] = (uint8_t)r[rs2];
         break;
     }
     case 0x39: { /* STH */
         uint32_t a = r[rs1] + imm_s;
+        CHECK_MEM("Store", a, 2);
         wr16(m, a, (uint16_t)r[rs2]);
         break;
     }
     case 0x3A: { /* STW */
         uint32_t a = r[rs1] + imm_s;
+        CHECK_MEM("Store", a, 4);
         wr32(m, a, r[rs2]);
         break;
     }
@@ -697,6 +792,9 @@ static void step(emu_t *e) {
 
     r[0] = 0;       /* r0 is always zero */
     e->pc = next_pc;
+
+    #undef CHECK_MEM
+    #undef MEM_FAULT
 }
 
 /* ======================================================================

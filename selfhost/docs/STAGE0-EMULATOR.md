@@ -188,13 +188,9 @@ void run(void) {
 
 ## What Can Be Deferred
 
-- **Half-word operations** (LDH, LDHU, STH) — not needed by Forth kernel
-- **DIV/REM** — the C compiler uses libcalls (`__divsi3` etc.)
-- **MULH/MULHU** — only needed for 64-bit multiply
 - **Floating point** — not used by any bootstrap stage
-- **BLTU/BGEU** — can work around with SLTU + BNE
 - **W^X enforcement** — useful but not required for correctness
-- **Full MMIO ring protocol** — needed only for stage 5 (C toolchain with file I/O)
+- **Service negotiation opcodes** — needed only for later full-emulator feature work
 
 ## Verification
 
