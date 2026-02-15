@@ -29,3 +29,8 @@ Policy:
 
 Current known gap:
 - 32-bit little-endian decode idioms (byte-to-word recomposition) are tracked but not yet part of the required green manifest.
+- `char*` parameter indexing (`p[i]`) is tracked as a known gap for Stage4 codegen.
+
+Known-gap tracking:
+- Manifest: `selfhost/v2/stage04/tests/manifests/subset-known-gaps.lst`
+- Scanner: `selfhost/v2/stage04/run-subset-gap-scan.sh`

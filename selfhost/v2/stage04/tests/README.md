@@ -6,6 +6,7 @@ Buckets:
 - `baseline`: canonical stage4 regression cases (`test1.c`..`test9.c`)
 - `subset`: Stage4 Subset-C conformance litmus corpus (`tests/subset/subset*.c`)
 - `subset-idioms`: Stage5 utility idioms proven as standalone subset-C litmus tests
+- `subset-known-gaps`: tracked failing subset idioms (not gating)
 - `as-bisect`: assembler spike bisect/repro corpus (`as_bisect*.c`)
 - `ar-bisect`: archiver spike bisect/repro corpus (`ar_bisect*.c`)
 
