@@ -1339,11 +1339,17 @@ VARIABLE asm-sec
 
 \ Emit conditional branch (branch if r1 == 0 to label)
 : EMIT-BEQ-ZERO ( label -- )
-    EMIT-INDENT S" beq r1, r0, .L" OUT-STR OUT-NUM OUT-NL ;
+    NEW-LABEL >R
+    EMIT-INDENT S" bne r1, r0, .L" OUT-STR R@ OUT-NUM OUT-NL
+    EMIT-INDENT S" jal r0, .L" OUT-STR OUT-NUM OUT-NL
+    R> EMIT-LABEL ;
 
 \ Emit conditional branch (branch if r1 != 0 to label)
 : EMIT-BNE-ZERO ( label -- )
-    EMIT-INDENT S" bne r1, r0, .L" OUT-STR OUT-NUM OUT-NL ;
+    NEW-LABEL >R
+    EMIT-INDENT S" beq r1, r0, .L" OUT-STR R@ OUT-NUM OUT-NL
+    EMIT-INDENT S" jal r0, .L" OUT-STR OUT-NUM OUT-NL
+    R> EMIT-LABEL ;
 
 \ Emit unconditional jump to label
 : EMIT-JUMP ( label -- )
