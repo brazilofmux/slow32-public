@@ -2877,6 +2877,14 @@ VARIABLE index-base-type
 \ Saved state for binary expression
 VARIABLE binop-saved-op
 VARIABLE binop-saved-ltype
+VARIABLE binop-saved-rtype
+
+: BINOP-USES-UNSIGNED ( -- f )
+    binop-saved-ltype @ TYPE-IS-UNSIGNED
+    binop-saved-rtype @ TYPE-IS-UNSIGNED OR ;
+
+: BINOP-RESULT-INT-TYPE ( -- type )
+    BINOP-USES-UNSIGNED IF TY-INT 0 1 MAKE-TYPE ELSE TY-INT 0 0 MAKE-TYPE THEN ;
 
 \ Get precedence of an operator by ID
 : OP-PREC ( op-id -- prec )
@@ -2926,6 +2934,7 @@ VARIABLE binop-saved-ltype
         R> binop-saved-ltype !
         R> binop-saved-op !
         LVAL-TO-RVAL
+        expr-type @ binop-saved-rtype !
         EMIT-POP-R2  \ r2 = left, r1 = right
         \ Generate code for the operation
         binop-saved-op @ CASE
@@ -2952,6 +2961,8 @@ VARIABLE binop-saved-ltype
                 S" add r1, r2, r1" EMIT-INSN
                 binop-saved-ltype @ TYPE-IS-PTR IF
                     binop-saved-ltype @ expr-type !
+                ELSE
+                    BINOP-RESULT-INT-TYPE expr-type !
                 THEN
             ENDOF
             P-MINUS OF
@@ -2976,47 +2987,51 @@ VARIABLE binop-saved-ltype
                         S" sub r1, r2, r1" EMIT-INSN
                         binop-saved-ltype @ expr-type !
                     THEN
-                ELSE S" sub r1, r2, r1" EMIT-INSN THEN
+                ELSE
+                    S" sub r1, r2, r1" EMIT-INSN
+                    BINOP-RESULT-INT-TYPE expr-type !
+                THEN
             ENDOF
-            P-STAR    OF S" mul r1, r2, r1" EMIT-INSN ENDOF
-            P-SLASH   OF S" div r1, r2, r1" EMIT-INSN ENDOF
-            P-PERCENT OF S" rem r1, r2, r1" EMIT-INSN ENDOF
-            P-AMP     OF S" and r1, r2, r1" EMIT-INSN ENDOF
-            P-PIPE    OF S" or r1, r2, r1"  EMIT-INSN ENDOF
-            P-CARET   OF S" xor r1, r2, r1" EMIT-INSN ENDOF
-            P-LSHIFT  OF S" sll r1, r2, r1" EMIT-INSN ENDOF
+            P-STAR    OF S" mul r1, r2, r1" EMIT-INSN BINOP-RESULT-INT-TYPE expr-type ! ENDOF
+            P-SLASH   OF S" div r1, r2, r1" EMIT-INSN BINOP-RESULT-INT-TYPE expr-type ! ENDOF
+            P-PERCENT OF S" rem r1, r2, r1" EMIT-INSN BINOP-RESULT-INT-TYPE expr-type ! ENDOF
+            P-AMP     OF S" and r1, r2, r1" EMIT-INSN BINOP-RESULT-INT-TYPE expr-type ! ENDOF
+            P-PIPE    OF S" or r1, r2, r1"  EMIT-INSN BINOP-RESULT-INT-TYPE expr-type ! ENDOF
+            P-CARET   OF S" xor r1, r2, r1" EMIT-INSN BINOP-RESULT-INT-TYPE expr-type ! ENDOF
+            P-LSHIFT  OF S" sll r1, r2, r1" EMIT-INSN BINOP-RESULT-INT-TYPE expr-type ! ENDOF
             P-RSHIFT  OF
-                binop-saved-ltype @ TYPE-IS-UNSIGNED IF
+                BINOP-USES-UNSIGNED IF
                     S" srl r1, r2, r1" EMIT-INSN
                 ELSE
                     S" sra r1, r2, r1" EMIT-INSN
                 THEN
+                BINOP-RESULT-INT-TYPE expr-type !
             ENDOF
             P-EQ      OF S" seq r1, r2, r1" EMIT-INSN ENDOF
             P-NE      OF S" sne r1, r2, r1" EMIT-INSN ENDOF
             P-LT      OF
-                binop-saved-ltype @ TYPE-IS-UNSIGNED IF
+                BINOP-USES-UNSIGNED IF
                     S" sltu r1, r2, r1" EMIT-INSN
                 ELSE
                     S" slt r1, r2, r1" EMIT-INSN
                 THEN
             ENDOF
             P-GT      OF
-                binop-saved-ltype @ TYPE-IS-UNSIGNED IF
+                BINOP-USES-UNSIGNED IF
                     S" sgtu r1, r2, r1" EMIT-INSN
                 ELSE
                     S" sgt r1, r2, r1" EMIT-INSN
                 THEN
             ENDOF
             P-LE      OF
-                binop-saved-ltype @ TYPE-IS-UNSIGNED IF
+                BINOP-USES-UNSIGNED IF
                     S" sleu r1, r2, r1" EMIT-INSN
                 ELSE
                     S" sle r1, r2, r1" EMIT-INSN
                 THEN
             ENDOF
             P-GE      OF
-                binop-saved-ltype @ TYPE-IS-UNSIGNED IF
+                BINOP-USES-UNSIGNED IF
                     S" sgeu r1, r2, r1" EMIT-INSN
                 ELSE
                     S" sge r1, r2, r1" EMIT-INSN
