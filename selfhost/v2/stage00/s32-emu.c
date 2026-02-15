@@ -102,6 +102,12 @@ static bool range_ok_u32(uint32_t base, uint32_t size, uint32_t total) {
     return base <= (total - size);
 }
 
+static inline int32_t sign_extend_u32(uint32_t v, unsigned bits) {
+    uint32_t m = 1u << (bits - 1u);
+    v &= (bits == 32u) ? 0xFFFFFFFFu : ((1u << bits) - 1u);
+    return (int32_t)((v ^ m) - m);
+}
+
 /* ======================================================================
  * Emulator state
  * ====================================================================== */
@@ -614,20 +620,24 @@ static void step(emu_t *e) {
     uint32_t rs2 = (raw >> 20) & 0x1F;
 
     /* Pre-compute all immediate formats (only one used per instruction) */
-    int32_t  imm_i  = ((int32_t)raw) >> 20;                   /* Sign-extended */
-    uint32_t imm_iz = (raw >> 20) & 0xFFF;                    /* Zero-extended */
-    int32_t  imm_s  = ((raw >> 7) & 0x1F) | (((int32_t)raw >> 25) << 5);
-    int32_t  imm_b  = (((raw >> 8) & 0xF) << 1)
-                    | (((raw >> 25) & 0x3F) << 5)
-                    | (((raw >> 7) & 0x1) << 11)
-                    | (((int32_t)raw >> 31) << 12);
+    int32_t  imm_i  = sign_extend_u32((raw >> 20) & 0xFFFu, 12);   /* Sign-extended */
+    uint32_t imm_iz = (raw >> 20) & 0xFFFu;                         /* Zero-extended */
+    int32_t  imm_s  = sign_extend_u32(
+                        ((raw >> 7) & 0x1Fu) |
+                        (((raw >> 25) & 0x7Fu) << 5),
+                        12);
+    int32_t  imm_b  = sign_extend_u32(
+                        (((raw >> 8) & 0xFu) << 1) |
+                        (((raw >> 25) & 0x3Fu) << 5) |
+                        (((raw >> 7) & 0x1u) << 11) |
+                        (((raw >> 31) & 0x1u) << 12),
+                        13);
     uint32_t imm_u  = raw & 0xFFFFF000u;
     uint32_t jbits  = (((raw >> 31) & 1) << 20)
                     | (((raw >> 12) & 0xFF) << 12)
                     | (((raw >> 20) & 1) << 11)
                     | (((raw >> 21) & 0x3FF) << 1);
-    int32_t  imm_j  = (jbits & 0x100000) ? (int32_t)(jbits | 0xFFE00000u)
-                                          : (int32_t)jbits;
+    int32_t  imm_j  = sign_extend_u32(jbits, 21);
 
     uint32_t next_pc = e->pc + 4;
     uint32_t *r = e->r;
