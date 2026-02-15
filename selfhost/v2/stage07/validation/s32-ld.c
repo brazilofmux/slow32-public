@@ -4,7 +4,7 @@
  * Bounded linker for one .s32o input and one .s32x output.
  * Current scope:
  *   - Supports .text/.data/.rodata/.bss merge from a single object
- *   - Rejects any relocation records (must be fully resolved input)
+ *   - Supports bounded REL_32 relocations within a single object
  *   - Ignores archives for now (next widening step)
  */
 
@@ -29,6 +29,7 @@
 #define S32_SEC_FLAG_ALLOC 0x0008
 
 #define S32X_FLAG_W_XOR_X 0x0001
+#define S32O_REL_32 0x0001
 
 #define MAX_OBJ_SIZE 262144
 #define MAX_SECTIONS 16
@@ -71,6 +72,13 @@ typedef struct {
 } s32o_symbol_t;
 
 typedef struct {
+    uint32_t offset;
+    uint32_t symbol;
+    uint32_t type;
+    int32_t addend;
+} s32o_reloc_t;
+
+typedef struct {
     uint32_t magic;
     uint16_t version;
     uint8_t endian;
@@ -103,6 +111,7 @@ typedef struct {
 
 typedef struct {
     int present;
+    uint32_t idx;
     uint32_t size;
     uint32_t offset;
 } in_sec_t;
@@ -120,6 +129,13 @@ static uint32_t align16(uint32_t n) {
 
 static uint32_t page_align(uint32_t n) {
     return (n + 4095U) & ~4095U;
+}
+
+static void wr32(uint8_t *p, uint32_t v) {
+    p[0] = (uint8_t)(v & 255u);
+    p[1] = (uint8_t)((v >> 8) & 255u);
+    p[2] = (uint8_t)((v >> 16) & 255u);
+    p[3] = (uint8_t)((v >> 24) & 255u);
 }
 
 static int read_file(const char *path, uint8_t *buf, uint32_t max_size, uint32_t *out_size) {
@@ -196,6 +212,9 @@ int main(int argc, char **argv) {
     uint32_t out_str_size;
     uint32_t out_nsec;
     uint32_t out_data_off;
+    uint32_t text_out_off;
+    uint32_t data_out_off;
+    uint32_t rodata_out_off;
     uint32_t cur;
     uint32_t out_size;
 
@@ -242,23 +261,31 @@ int main(int argc, char **argv) {
     ostr = (const char *)(g_obj + oh->str_offset);
 
     text.present = 0;
+    text.idx = 0;
     text.size = 0;
     text.offset = 0;
     data.present = 0;
+    data.idx = 0;
     data.size = 0;
     data.offset = 0;
     rodata.present = 0;
+    rodata.idx = 0;
     rodata.size = 0;
     rodata.offset = 0;
     bss.present = 0;
+    bss.idx = 0;
     bss.size = 0;
     bss.offset = 0;
 
     for (i = 0; i < oh->nsections; i = i + 1) {
         s32o_section_t *s = &osec[i];
-        if (s->nrelocs != 0) {
-            fprintf(stderr, "error: relocations not yet supported (section %u)\n", i);
-            return 1;
+        if (s->nrelocs > 0) {
+            if (!in_bounds(s->reloc_offset,
+                           s->nrelocs * (uint32_t)sizeof(s32o_reloc_t),
+                           obj_size)) {
+                fprintf(stderr, "error: relocation table out of bounds (section %u)\n", i);
+                return 1;
+            }
         }
 
         if (s->type == S32_SEC_CODE) {
@@ -271,6 +298,7 @@ int main(int argc, char **argv) {
                 return 1;
             }
             text.present = 1;
+            text.idx = i;
             text.size = s->size;
             text.offset = s->offset;
         } else if (s->type == S32_SEC_DATA) {
@@ -283,6 +311,7 @@ int main(int argc, char **argv) {
                 return 1;
             }
             data.present = 1;
+            data.idx = i;
             data.size = s->size;
             data.offset = s->offset;
         } else if (s->type == S32_SEC_RODATA) {
@@ -295,6 +324,7 @@ int main(int argc, char **argv) {
                 return 1;
             }
             rodata.present = 1;
+            rodata.idx = i;
             rodata.size = s->size;
             rodata.offset = s->offset;
         } else if (s->type == S32_SEC_BSS) {
@@ -303,6 +333,7 @@ int main(int argc, char **argv) {
                 return 1;
             }
             bss.present = 1;
+            bss.idx = i;
             bss.size = s->size;
             bss.offset = 0;
         }
@@ -385,6 +416,7 @@ int main(int argc, char **argv) {
     memcpy(g_out + xh->str_offset, ".text\0.data\0.bss\0.rodata\0", out_str_size);
 
     cur = out_data_off;
+    text_out_off = cur;
 
     xsec[0].name_offset = 0;
     xsec[0].type = S32_SEC_CODE;
@@ -397,7 +429,9 @@ int main(int argc, char **argv) {
     cur = cur + text.size;
 
     i = 1;
+    data_out_off = 0;
     if (data.size > 0) {
+        data_out_off = cur;
         xsec[i].name_offset = 6;
         xsec[i].type = S32_SEC_DATA;
         xsec[i].vaddr = data_va;
@@ -419,7 +453,9 @@ int main(int argc, char **argv) {
         xsec[i].flags = S32_SEC_FLAG_READ | S32_SEC_FLAG_WRITE | S32_SEC_FLAG_ALLOC;
         i = i + 1;
     }
+    rodata_out_off = 0;
     if (rodata.size > 0) {
+        rodata_out_off = cur;
         xsec[i].name_offset = 17;
         xsec[i].type = S32_SEC_RODATA;
         xsec[i].vaddr = rodata_va;
@@ -429,6 +465,79 @@ int main(int argc, char **argv) {
         xsec[i].flags = S32_SEC_FLAG_READ | S32_SEC_FLAG_ALLOC;
         memcpy(g_out + cur, g_obj + rodata.offset, rodata.size);
         cur = cur + rodata.size;
+    }
+
+    for (i = 0; i < oh->nsections; i = i + 1) {
+        s32o_section_t *s = &osec[i];
+        uint32_t sec_va;
+        uint32_t sec_out;
+        uint32_t sec_size;
+        uint32_t r;
+
+        if (s->nrelocs == 0) continue;
+
+        if (i == text.idx) {
+            sec_va = text_va;
+            sec_out = text_out_off;
+            sec_size = text.size;
+        } else if (data.present && i == data.idx) {
+            sec_va = data_va;
+            sec_out = data_out_off;
+            sec_size = data.size;
+        } else if (rodata.present && i == rodata.idx) {
+            sec_va = rodata_va;
+            sec_out = rodata_out_off;
+            sec_size = rodata.size;
+        } else {
+            fprintf(stderr, "error: relocations in unsupported section %u\n", i);
+            return 1;
+        }
+
+        for (r = 0; r < s->nrelocs; r = r + 1) {
+            s32o_reloc_t *rel;
+            uint32_t sym_sec;
+            uint32_t sym_abs;
+            uint32_t patched;
+
+            rel = (s32o_reloc_t *)(g_obj + s->reloc_offset + r * (uint32_t)sizeof(s32o_reloc_t));
+            if (rel->type != S32O_REL_32) {
+                fprintf(stderr, "error: relocation type %u not yet supported\n", rel->type);
+                return 1;
+            }
+            if (rel->symbol >= oh->nsymbols) {
+                fprintf(stderr, "error: relocation symbol index out of range\n");
+                return 1;
+            }
+            if (rel->offset + 4u > sec_size) {
+                fprintf(stderr, "error: relocation offset out of section bounds\n");
+                return 1;
+            }
+            sym_sec = osym[rel->symbol].section;
+            if (sym_sec == 0 || sym_sec > oh->nsections) {
+                fprintf(stderr, "error: unresolved symbol in relocation\n");
+                return 1;
+            }
+            sym_sec = sym_sec - 1u;
+            if (sym_sec == text.idx) {
+                if (osym[rel->symbol].value > text.size) return 1;
+                sym_abs = text_va + osym[rel->symbol].value;
+            } else if (data.present && sym_sec == data.idx) {
+                if (osym[rel->symbol].value > data.size) return 1;
+                sym_abs = data_va + osym[rel->symbol].value;
+            } else if (rodata.present && sym_sec == rodata.idx) {
+                if (osym[rel->symbol].value > rodata.size) return 1;
+                sym_abs = rodata_va + osym[rel->symbol].value;
+            } else if (bss.present && sym_sec == bss.idx) {
+                if (osym[rel->symbol].value > bss.size) return 1;
+                sym_abs = bss_va + osym[rel->symbol].value;
+            } else {
+                fprintf(stderr, "error: symbol section unsupported in relocation\n");
+                return 1;
+            }
+
+            patched = sym_abs + (uint32_t)rel->addend;
+            wr32(g_out + sec_out + rel->offset, patched);
+        }
     }
 
     if (!write_file(argv[2], g_out, cur)) {

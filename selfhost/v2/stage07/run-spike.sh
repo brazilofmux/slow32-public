@@ -15,10 +15,11 @@ ASM_FTH="${STAGE7_ASM:-$ROOT_DIR/selfhost/v2/stage01/asm.fth}"
 LINK_FTH="${STAGE7_LINK:-$ROOT_DIR/selfhost/v2/stage03/link.fth}"
 SRC="${STAGE7_SRC:-$SCRIPT_DIR/validation/s32-ld.c}"
 KEEP_ARTIFACTS=0
+WITH_RELOC_SPIKE=0
 
 usage() {
     cat <<USAGE
-Usage: $0 [--emu <path>] [--keep-artifacts]
+Usage: $0 [--emu <path>] [--keep-artifacts] [--with-reloc-spike]
 
 Builds and spikes Stage07 linker candidate with current selfhost pipeline:
   stage04 cc.fth -> stage01 asm.fth -> stage03 link.fth
@@ -35,6 +36,9 @@ while [[ $# -gt 0 ]]; do
             ;;
         --keep-artifacts)
             KEEP_ARTIFACTS=1
+            ;;
+        --with-reloc-spike)
+            WITH_RELOC_SPIKE=1
             ;;
         -h|--help)
             usage
@@ -176,10 +180,45 @@ run_exe "$STAGE7_EXE" "$WORKDIR/s32-ld.run.log" "$MINI_OBJ" "$MINI_EXE"
 [[ -s "$MINI_EXE" ]] || { echo "stage07 linker produced no output" >&2; exit 1; }
 run_exe "$MINI_EXE" "$WORKDIR/main_halt.run.log"
 
+if [[ "$WITH_RELOC_SPIKE" -eq 1 ]]; then
+    cat > "$WORKDIR/reloc_spike.s" <<'ASM'
+.data
+.global value
+value:
+    .word 7
+
+.text
+.global main
+main:
+    jal r1, helper
+    halt
+
+helper:
+    la r2, value
+    ldw r3, r2, 0
+    beq r3, r3, done
+    halt
+done:
+    halt
+ASM
+
+    RELOC_OBJ="$WORKDIR/reloc_spike.s32o"
+    RELOC_EXE="$WORKDIR/reloc_spike.s32x"
+
+    assemble_forth "$WORKDIR/reloc_spike.s" "$RELOC_OBJ" "$WORKDIR/reloc_spike.as.log"
+    run_exe "$STAGE7_EXE" "$WORKDIR/s32-ld.reloc.run.log" "$RELOC_OBJ" "$RELOC_EXE"
+    [[ -s "$RELOC_EXE" ]] || { echo "stage07 linker produced no relocation-spike output" >&2; exit 1; }
+    run_exe "$RELOC_EXE" "$WORKDIR/reloc_spike.run.log"
+fi
+
 echo "OK: stage07 linker spike"
 echo "Linker source: $SRC"
 echo "Linker exe: $STAGE7_EXE"
 echo "Spike object: $MINI_OBJ"
 echo "Spike output: $MINI_EXE"
+if [[ "$WITH_RELOC_SPIKE" -eq 1 ]]; then
+    echo "Reloc spike object: $RELOC_OBJ"
+    echo "Reloc spike output: $RELOC_EXE"
+fi
 echo "Emulator: $EMU"
 echo "Artifacts: $WORKDIR"

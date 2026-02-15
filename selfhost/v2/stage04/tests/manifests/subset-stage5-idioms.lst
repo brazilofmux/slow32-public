@@ -25,3 +25,6 @@ selfhost/v2/stage04/tests/subset-idioms/idiom24_pp_macro_arg_deep_paren.c
 selfhost/v2/stage04/tests/subset-idioms/idiom25_stage5_many_bss_globals.c
 selfhost/v2/stage04/tests/subset-idioms/idiom26_nested_for_increment_state.c
 selfhost/v2/stage04/tests/subset-idioms/idiom27_nested_for_outer_progress.c
+selfhost/v2/stage04/tests/subset-idioms/idiom28_section_dispatch_chain.c
+selfhost/v2/stage04/tests/subset-idioms/idiom29_reloc_patch_bitpack.c
+selfhost/v2/stage04/tests/subset-idioms/idiom30_nested_reloc_pair_scan.c
