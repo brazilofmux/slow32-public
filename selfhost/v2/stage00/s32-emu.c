@@ -350,7 +350,6 @@ static void mmio_process(emu_t *e) {
             uint32_t plen = (length < sizeof(path_buf)) ? length : sizeof(path_buf) - 1;
             memcpy(path_buf, data + off, plen);
             path_buf[plen] = '\0';
-            if (plen > 0) path_buf[plen - 1] = '\0';
 
             /* Translate guest flags to POSIX */
             int flags = O_RDONLY;
@@ -414,7 +413,6 @@ static void mmio_process(emu_t *e) {
                 uint32_t plen = (length < sizeof(path_buf)) ? length : sizeof(path_buf) - 1;
                 memcpy(path_buf, data + off, plen);
                 path_buf[plen] = '\0';
-                if (plen > 0) path_buf[plen - 1] = '\0';
                 rc = stat(path_buf, &st);
             } else {
                 int hfd = (status < MAX_FDS) ? e->host_fds[status] : -1;
