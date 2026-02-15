@@ -1,8 +1,15 @@
 # Docker ignore - supports both toolchain and emulator builds
 # Keep the build context minimal
+#
+# NOTE: In .dockerignore, the LAST matching pattern wins!
+# So exclusions of specific files must come AFTER directory includes.
 
 # Ignore everything by default
 *
+
+# ============================================================
+# Include directories needed by both toolchain and emulator
+# ============================================================
 
 # Common files (needed by both)
 !common/
@@ -25,3 +32,25 @@
 !qemu-backend/configs/devices/slow32-softmmu/
 !qemu-backend/patches/
 !scripts/s32run
+
+# ============================================================
+# EXCLUDE pre-built binaries (must come AFTER includes!)
+# These must be compiled fresh inside the container for musl/Alpine
+# ============================================================
+
+# Assembler/linker/utilities (toolchain)
+tools/assembler/slow32asm
+tools/linker/s32-ld
+tools/utilities/slow32dump
+tools/utilities/slow32dis
+tools/utilities/s32-ar
+
+# Emulators (emulator image)
+tools/emulator/slow32
+tools/emulator/slow32-fast
+tools/dbt/slow32-dbt
+
+# Pre-built runtime artifacts (must be rebuilt with container's clang/llc)
+runtime/*.s32o
+runtime/*.s32a
+runtime/*.llc.s
