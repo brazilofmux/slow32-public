@@ -12,6 +12,7 @@ Modes:
 - `progressive-as-ar-scan`: same as `progressive-as-ar` but runs Stage6 with opt-in `s` archive scan flag (`cmd=cs`)
 - `stage6-ar-smoke`: focused Stage6 smoke using stable Stage1 assembler for Stage6 binary build
 - `stage6-ar-rc-smoke`: focused Stage6 replace-on-existing smoke (`cmd=rc`) with extract+byte-compare verification
+- `stage6-ar-tx-smoke`: focused Stage6 list/extract smoke (`cmd=t/x`) with extract byte-compare verification
 - `stage6-ar-scan-smoke`: focused Stage6 scan smoke using `s32-ar-scan.c` and `cmd=cs`
 
 Examples:
@@ -21,4 +22,5 @@ Examples:
 - `selfhost/v2/stage05/run-pipeline.sh --mode progressive-as-ar-scan --test test3`
 - `selfhost/v2/stage05/run-pipeline.sh --mode stage6-ar-smoke`
 - `selfhost/v2/stage05/run-pipeline.sh --mode stage6-ar-rc-smoke`
+- `selfhost/v2/stage05/run-pipeline.sh --mode stage6-ar-tx-smoke`
 - `selfhost/v2/stage05/run-pipeline.sh --mode stage6-ar-scan-smoke`
