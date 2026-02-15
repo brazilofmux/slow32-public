@@ -27,22 +27,22 @@ EMU_DEFAULT="$(choose_default_emu)"
 EMU="$EMU_DEFAULT"
 
 FROM="stage00"
-TO="stage05"
+TO="stage06"
 SKIP_SELFHOST_KERNEL=0
 
 usage() {
     cat <<USAGE
-Usage: $0 [--from stage00] [--to stage05] [--emu <path>] [--skip-selfhost-kernel]
+Usage: $0 [--from stage00] [--to stage06] [--emu <path>] [--skip-selfhost-kernel]
 
 Runs ordered V2 stage checks so a clean checkout can be validated end-to-end.
 
 Default sequence:
-  stage00 -> stage01 -> stage02 -> stage03 -> stage04 -> stage05
+  stage00 -> stage01 -> stage02 -> stage03 -> stage04 -> stage05 -> stage06
 
 Options:
-  --from stageNN   Start stage (stage00..stage05)
-  --to stageNN     End stage (stage00..stage05)
-  --emu path       Emulator for stage01..stage05 (default: slow32-fast, then stage00 s32-emu, then slow32)
+  --from stageNN   Start stage (stage00..stage06)
+  --to stageNN     End stage (stage00..stage06)
+  --emu path       Emulator for stage01..stage06 (default: slow32-fast, then stage00 s32-emu, then slow32)
   --skip-selfhost-kernel
                    Skip stage03 selfhost-kernel regeneration/boot gate (dev fast-path)
 USAGE
@@ -93,6 +93,7 @@ stage_num() {
         stage03) echo 3 ;;
         stage04) echo 4 ;;
         stage05) echo 5 ;;
+        stage06) echo 6 ;;
         *) return 1 ;;
     esac
 }
@@ -153,7 +154,14 @@ run_stage05() {
     "$ROOT_DIR/selfhost/v2/stage05/run-pipeline.sh" --mode progressive-as --test test3 --emu "$EMU" >/tmp/v2-stage05-test3.log 2>&1
 }
 
-for st in stage00 stage01 stage02 stage03 stage04 stage05; do
+run_stage06() {
+    echo "[stage06] c-archiver replacement smoke (c/rc/t/x)"
+    "$ROOT_DIR/selfhost/v2/stage05/run-pipeline.sh" --mode stage6-ar-smoke --emu "$EMU" >/tmp/v2-stage06-smoke.log 2>&1
+    "$ROOT_DIR/selfhost/v2/stage05/run-pipeline.sh" --mode stage6-ar-rc-smoke --emu "$EMU" >/tmp/v2-stage06-rc.log 2>&1
+    "$ROOT_DIR/selfhost/v2/stage05/run-pipeline.sh" --mode stage6-ar-tx-smoke --emu "$EMU" >/tmp/v2-stage06-tx.log 2>&1
+}
+
+for st in stage00 stage01 stage02 stage03 stage04 stage05 stage06; do
     N="$(stage_num "$st")"
     if (( N < FROM_N || N > TO_N )); then
         continue
