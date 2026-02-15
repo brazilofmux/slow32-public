@@ -3,6 +3,14 @@
 ## Overview
 This document tracks the implementation status of SLOW-32 instructions across all toolchain components. SLOW-32 is a 32-bit RISC ISA inspired by RISC-V, featuring 32 general-purpose registers and fixed-width 32-bit instructions.
 
+### Stage00 (Selfhost Minimal Emulator) Scope
+
+`selfhost/v2/stage00/s32-emu.c` intentionally implements an integer/MMIO subset of this ISA for bootstrap.
+
+- Implemented in Stage00: integer ALU, compare, branch/jump, loads/stores, `LUI`, `ASSERT_EQ`, `NOP`, `YIELD`, `DEBUG`, `HALT`.
+- Not implemented in Stage00: floating-point opcodes (`0x53` and above).
+- Canonical Stage00 subset reference: `selfhost/docs/ISA-ENCODING.md`.
+
 ## Instruction Format
 
 SLOW-32 instructions are 32 bits wide, little-endian. The opcode is always in bits [6:0].
