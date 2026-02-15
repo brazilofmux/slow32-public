@@ -449,10 +449,8 @@ int main(int argc, char *argv[]) {
                 }
             }
         } else {
-            if (filename) {
-                fprintf(stderr, "Error: Multiple files specified\n");
-                return 1;
-            }
+            // In bootstrap mode (stage0 emulator argv bridge), duplicate/spurious
+            // positional args can appear. Use the last positional arg as input.
             filename = argv[i];
         }
     }

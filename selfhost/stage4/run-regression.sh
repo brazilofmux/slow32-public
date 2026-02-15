@@ -23,6 +23,8 @@ Runs Stage 4 compiler regression in a staged work-up:
   Stage B: test3.c, test4.c, test5.c, test6.c
   Stage C: test7.c, test8.c, test9.c
   Stage D (optional): validation/slow32dump.c
+    - on minimal emulator (selfhost/stage0/s32-emu): smoke-run (--help)
+    - on full emulators: disassemble test3.s32x and validate output
 
 Defaults:
   Emulator: \$STAGE4_EMU or $ROOT_DIR/tools/emulator/slow32
@@ -187,12 +189,20 @@ if [[ "$SLOW32DUMP" -eq 1 ]]; then
     compile_c "$slow_src" "$slow_asm" "$WORKDIR/slow32dump.cc.log"
     assemble_s "$slow_asm" "$slow_obj" "$WORKDIR/slow32dump.as.log"
     link_obj "$slow_obj" "$slow_exe" "$WORKDIR/slow32dump.ld.log"
-    run_exe "$slow_exe" "$WORKDIR/slow32dump.run.log" "$WORKDIR/test3.s32x"
-
-    if ! grep -q "file format s32x-slow32" "$WORKDIR/slow32dump.run.log"; then
-        echo "slow32dump ran but output validation failed" >&2
-        tail -n 40 "$WORKDIR/slow32dump.run.log" >&2
-        exit 1
+    if [[ "$EMU" == *"/selfhost/stage0/s32-emu" ]]; then
+        run_exe "$slow_exe" "$WORKDIR/slow32dump.run.log" "--help"
+        if ! grep -q "Usage:" "$WORKDIR/slow32dump.run.log"; then
+            echo "slow32dump minimal-emulator smoke validation failed" >&2
+            tail -n 40 "$WORKDIR/slow32dump.run.log" >&2
+            exit 1
+        fi
+    else
+        run_exe "$slow_exe" "$WORKDIR/slow32dump.run.log" "$WORKDIR/test3.s32x"
+        if ! grep -q "file format s32x-slow32" "$WORKDIR/slow32dump.run.log"; then
+            echo "slow32dump ran but output validation failed" >&2
+            tail -n 40 "$WORKDIR/slow32dump.run.log" >&2
+            exit 1
+        fi
     fi
 fi
 
