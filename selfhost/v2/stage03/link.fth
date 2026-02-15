@@ -49,6 +49,10 @@ FE000F80 CONSTANT S-MASK
 FFFFF000 CONSTANT PG-MASK
 DECIMAL
 
+0 CONSTANT LINK-DEBUG
+: LINK-DBG ( c-addr u -- )
+    LINK-DEBUG IF TYPE CR ELSE 2DROP THEN ;
+
 \ Decimal constants
 65536  CONSTANT STACK-SIZE-DEF    \ 0x10000
 
@@ -210,6 +214,7 @@ VARIABLE ar-gsym
 VARIABLE ar-val
 VARIABLE ar-tgt
 VARIABLE ar-pc
+VARIABLE ar-rel-idx
 
 \ Output layout variables
 VARIABLE out-fh
@@ -418,6 +423,13 @@ VARIABLE sex-ch
     R@ CELLS gsym-bind + !
     R@ CELLS gsym-val  + !
     R@ CELLS gsym-sec  + !
+    DUP gsym-nptr @ + GSYM-NBUF-SZ > IF
+        ." Error: gsym name buffer overflow" CR
+        DROP
+        1 link-error !
+        R> DROP
+        -1 EXIT
+    THEN
     \ Store name in gsym-nbuf
     DUP R@ CELLS gsym-nlen + !
     gsym-nptr @ R@ CELLS gsym-noff + !
@@ -538,6 +550,12 @@ VARIABLE sex-ch
 
 \ === Merge symbols from current .s32o ===
 : MERGE-SYMBOLS ( -- )
+    obj-nsym @ MAX-FILE-SYM > IF
+        ." Error: object symbol table too large (" obj-nsym @ .
+        ." > " MAX-FILE-SYM . ." )" CR
+        1 link-error !
+        EXIT
+    THEN
     obj-nsym @ 0 ?DO
         I 16 * obj-sym-off @ + file-buf + >R
         R@ RD32 sy-noff !
@@ -902,7 +920,16 @@ VARIABLE sex-ch
 : IS-STORE? ( opcode -- flag )
     DUP OP-STB = OVER OP-STH = OR SWAP OP-STW = OR ;
 
+: REL-TGT-IN-RANGE? ( sec off -- flag )
+    >R
+    R@ 0< IF DROP R> DROP FALSE EXIT THEN
+    DUP SEC-BSS = IF DROP R> DROP FALSE EXIT THEN
+    DUP SEC-BUF 0= IF DROP R> DROP FALSE EXIT THEN
+    SEC-SZ-VAR @ DUP 4 < IF DROP R> DROP FALSE EXIT THEN
+    4 - R> SWAP <= ;
+
 : APPLY-REL ( idx -- )
+    DUP ar-rel-idx !
     >R
     R@ CELLS grel-off + @ ar-off !
     R@ CELLS grel-sec + @ ar-sec !
@@ -924,6 +951,16 @@ VARIABLE sex-ch
         CR
         1 link-error !
         0 ar-val !
+    THEN
+
+    ar-sec @ ar-off @ REL-TGT-IN-RANGE? 0= IF
+        ." Error: reloc target out of range idx=" ar-rel-idx @ .
+        ." sec=" ar-sec @ .
+        ." off=" ar-off @ .
+        ." secsz=" ar-sec @ SEC-SZ-VAR @ .
+        CR
+        1 link-error !
+        EXIT
     THEN
 
     \ Target buffer address
@@ -1137,11 +1174,16 @@ VARIABLE sex-ch
     out-fname SWAP CMOVE
     ." Writing: " out-fname out-fname-len @ TYPE CR
 
+    S" [link] layout" LINK-DBG
     LAYOUT-SECTIONS
+    S" [link] inject-syms" LINK-DBG
     INJECT-LINKER-SYMBOLS
+    S" [link] apply-relocs" LINK-DBG
     APPLY-RELOCATIONS
+    S" [link] find-entry" LINK-DBG
     FIND-ENTRY
 
+    S" [link] build-strtab" LINK-DBG
     COUNT-SECTIONS out-nsec !
     BUILD-STRTAB
 
@@ -1175,6 +1217,7 @@ VARIABLE sex-ch
     DROP
 
     \ Open output file (use saved filename)
+    S" [link] open-output" LINK-DBG
     out-fname out-fname-len @ WO-CREATE OPEN-FILE THROW out-fh !
     0 file-pos !
 

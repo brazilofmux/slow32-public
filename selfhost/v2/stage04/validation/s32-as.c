@@ -555,6 +555,7 @@ static int resolve_local_text_relocs(void) {
                 uint32_t inst = rd32(g_text + off);
                 int rs1 = (int)((inst >> 15) & 31u);
                 int rs2 = (int)((inst >> 20) & 31u);
+                disp -= 4;
                 uint32_t patched = enc_b(0, rs1, rs2, disp);
                 /* Preserve original branch opcode bits. */
                 patched |= (inst & 0x7Fu);
@@ -753,6 +754,11 @@ int main(int argc, char **argv) {
     }
     fclose(g_in);
     g_in = 0;
+
+    if (resolve_local_text_relocs() != 0) {
+        fprintf(stderr, "resolve local text relocations failed\n");
+        return 1;
+    }
 
     if (write_obj(argv[2]) != 0) {
         fprintf(stderr, "write object failed\n");
