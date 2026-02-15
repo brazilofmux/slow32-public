@@ -23,6 +23,22 @@ MODE="baseline"
 TEST_NAME="test3"
 KEEP_ARTIFACTS=0
 
+choose_default_emu() {
+    if [[ -x "$ROOT_DIR/tools/emulator/slow32-fast" ]]; then
+        printf '%s\n' "$ROOT_DIR/tools/emulator/slow32-fast"
+        return
+    fi
+    if [[ -x "$ROOT_DIR/selfhost/v2/stage00/s32-emu" ]]; then
+        printf '%s\n' "$ROOT_DIR/selfhost/v2/stage00/s32-emu"
+        return
+    fi
+    if [[ -x "$ROOT_DIR/tools/emulator/slow32" ]]; then
+        printf '%s\n' "$ROOT_DIR/tools/emulator/slow32"
+        return
+    fi
+    printf '%s\n' "$ROOT_DIR/tools/emulator/slow32"
+}
+
 usage() {
     cat <<USAGE
 Usage: $0 [--mode baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage6-ar-smoke|stage6-ar-scan-smoke|stage6-ar-asm-diff|stage6-utility-smoke] [--test <name>] [--emu <path>] [--keep-artifacts]
@@ -74,9 +90,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "$MODE" == "stage6-utility-smoke" && "$EMU_EXPLICIT" -eq 0 && -z "${SELFHOST_EMU:-}" ]]; then
-    if [[ -x "$ROOT_DIR/tools/emulator/slow32-fast" ]]; then
-        EMU="$ROOT_DIR/tools/emulator/slow32-fast"
-    fi
+    EMU="$(choose_default_emu)"
 fi
 
 case "$MODE" in

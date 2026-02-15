@@ -7,10 +7,23 @@ if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
     ROOT_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 fi
 
-EMU_DEFAULT="$ROOT_DIR/tools/emulator/slow32"
-if [[ -x "$ROOT_DIR/tools/emulator/slow32-fast" ]]; then
-    EMU_DEFAULT="$ROOT_DIR/tools/emulator/slow32-fast"
-fi
+choose_default_emu() {
+    if [[ -x "$ROOT_DIR/tools/emulator/slow32-fast" ]]; then
+        printf '%s\n' "$ROOT_DIR/tools/emulator/slow32-fast"
+        return
+    fi
+    if [[ -x "$ROOT_DIR/selfhost/v2/stage00/s32-emu" ]]; then
+        printf '%s\n' "$ROOT_DIR/selfhost/v2/stage00/s32-emu"
+        return
+    fi
+    if [[ -x "$ROOT_DIR/tools/emulator/slow32" ]]; then
+        printf '%s\n' "$ROOT_DIR/tools/emulator/slow32"
+        return
+    fi
+    printf '%s\n' "$ROOT_DIR/tools/emulator/slow32"
+}
+
+EMU_DEFAULT="$(choose_default_emu)"
 EMU="$EMU_DEFAULT"
 
 FROM="stage00"
@@ -28,7 +41,7 @@ Default sequence:
 Options:
   --from stageNN   Start stage (stage00..stage05)
   --to stageNN     End stage (stage00..stage05)
-  --emu path       Emulator for stage01..stage04 (default prefers slow32-fast)
+  --emu path       Emulator for stage01..stage05 (default: slow32-fast, then stage00 s32-emu, then slow32)
 USAGE
 }
 
