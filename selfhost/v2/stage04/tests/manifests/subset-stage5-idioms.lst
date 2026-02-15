@@ -10,3 +10,9 @@ selfhost/v2/stage04/tests/subset-idioms/idiom09_cast_index_sum.c
 selfhost/v2/stage04/tests/subset-idioms/idiom10_cast_index_var.c
 selfhost/v2/stage04/tests/subset-idioms/idiom11_ptradd_then_index.c
 selfhost/v2/stage04/tests/subset-idioms/idiom12_voidptr_cast_index.c
+selfhost/v2/stage04/tests/subset-idioms/idiom13_pp_if_elif_chain.c
+selfhost/v2/stage04/tests/subset-idioms/idiom14_pp_skip_invalid_branch.c
+selfhost/v2/stage04/tests/subset-idioms/idiom15_pp_macro_ternary_arg.c
+selfhost/v2/stage04/tests/subset-idioms/idiom16_pp_nested_fn_macro.c
+selfhost/v2/stage04/tests/subset-idioms/idiom17_pp_undef_redefine.c
+selfhost/v2/stage04/tests/subset-idioms/idiom18_pp_defined_no_paren.c
