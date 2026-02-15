@@ -97,7 +97,7 @@ run_stage00() {
 
 run_stage01() {
     echo "[stage01] assembler regression"
-    STAGE2_EMU="$EMU" "$ROOT_DIR/selfhost/v2/stage01/run-regression.sh" test1 >/tmp/v2-stage01.log 2>&1
+    STAGE01_EMU="$EMU" "$ROOT_DIR/selfhost/v2/stage01/run-regression.sh" test1 >/tmp/v2-stage01.log 2>&1
 }
 
 run_stage02() {
