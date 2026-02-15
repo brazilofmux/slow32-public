@@ -114,7 +114,7 @@ run_exe() {
     shift 2
 
     set +e
-    timeout 60 "$EMU" "$exe" "$@" >"$log" 2>&1
+    timeout "${EXEC_TIMEOUT:-60}" "$EMU" "$exe" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -eq 124 ]]; then
@@ -140,7 +140,7 @@ run_exe_any_rc() {
     shift 2
 
     set +e
-    timeout 60 "$EMU" "$exe" "$@" >"$log" 2>&1
+    timeout "${EXEC_TIMEOUT:-60}" "$EMU" "$exe" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -eq 124 ]]; then
@@ -333,6 +333,7 @@ case "$MODE" in
         TARGET_FORTH_EXE="$WORKDIR/utility.forth.s32x"
         UTILITY_ARGS_RAW="${UTILITY_ARGS:--h}"
         read -r -a UTILITY_ARGS_VEC <<<"$UTILITY_ARGS_RAW"
+        EXEC_TIMEOUT="${UTILITY_TIMEOUT:-60}"
         if [[ -n "${UTILITY_INPUT:-}" ]]; then
             TARGET_INPUT="$UTILITY_INPUT"
             [[ -f "$TARGET_INPUT" ]] || { echo "Missing utility input: $TARGET_INPUT" >&2; exit 1; }
@@ -354,12 +355,13 @@ case "$MODE" in
             exit 1
         fi
 
-        set +e
-        run_exe_any_rc "$TARGET_STAGE5_EXE" "$WORKDIR/utility.stage5.run.log" "${UTILITY_ARGS_VEC[@]}"
-        RC_STAGE5=$?
-        run_exe_any_rc "$TARGET_FORTH_EXE" "$WORKDIR/utility.forth.run.log" "${UTILITY_ARGS_VEC[@]}"
-        RC_FORTH=$?
-        set -e
+        TARGET_RUN_EXE="$WORKDIR/utility.run.s32x"
+        cp "$TARGET_STAGE5_EXE" "$TARGET_RUN_EXE"
+        RC_STAGE5=0
+        run_exe_any_rc "$TARGET_RUN_EXE" "$WORKDIR/utility.stage5.run.log" "${UTILITY_ARGS_VEC[@]}" || RC_STAGE5=$?
+        cp "$TARGET_FORTH_EXE" "$TARGET_RUN_EXE"
+        RC_FORTH=0
+        run_exe_any_rc "$TARGET_RUN_EXE" "$WORKDIR/utility.forth.run.log" "${UTILITY_ARGS_VEC[@]}" || RC_FORTH=$?
         if [[ "$RC_STAGE5" -eq 124 || "$RC_STAGE5" -eq 125 || "$RC_FORTH" -eq 124 || "$RC_FORTH" -eq 125 ]]; then
             echo "FAIL: utility runtime fault/timeout" >&2
             exit 1
@@ -368,7 +370,11 @@ case "$MODE" in
             echo "FAIL: utility exit code differs (stage5=$RC_STAGE5 forth=$RC_FORTH)" >&2
             exit 1
         fi
-        if ! cmp -s "$WORKDIR/utility.forth.run.log" "$WORKDIR/utility.stage5.run.log"; then
+        sed -E '/^Wall time: /d;/^Performance: /d;/instructions\/second$/d' \
+            "$WORKDIR/utility.stage5.run.log" > "$WORKDIR/utility.stage5.run.norm.log"
+        sed -E '/^Wall time: /d;/^Performance: /d;/instructions\/second$/d' \
+            "$WORKDIR/utility.forth.run.log" > "$WORKDIR/utility.forth.run.norm.log"
+        if ! cmp -s "$WORKDIR/utility.forth.run.norm.log" "$WORKDIR/utility.stage5.run.norm.log"; then
             echo "FAIL: utility runtime output differs"
             exit 1
         fi
