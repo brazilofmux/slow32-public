@@ -548,15 +548,24 @@ VARIABLE sex-ch
         sy-noff @ OBJ-STR ( c-addr u )
 
         sy-sec @ 0= IF
-            \ Undefined symbol
-            GSYM-ADD-UNDEF
+            \ Undefined symbol (locals should not be unresolved across files)
+            sy-bind @ BIND-LOCAL = IF
+                2DROP -1
+            ELSE
+                GSYM-ADD-UNDEF
+            THEN
         ELSE
             \ Defined: get section type from section table
             sy-sec @ 1- 32 * obj-sec-off @ + file-buf + 4 + RD32 sy-sectype !
             \ Adjust value by section base offset
             sy-sectype @ CELLS sec-base + @ sy-val @ + sy-val !
-            \ Add/update in gsym
-            sy-sectype @ sy-val @ sy-bind @ GSYM-UPSERT
+            \ Locals are file-scoped; do not global-name-upsert (.L* collisions).
+            sy-bind @ BIND-LOCAL = IF
+                sy-sectype @ sy-val @ sy-bind @ 1 GSYM-ADD-NEW
+            ELSE
+                \ Add/update in global symbol table
+                sy-sectype @ sy-val @ sy-bind @ GSYM-UPSERT
+            THEN
         THEN
         I CELLS sym-map + !
     LOOP ;
