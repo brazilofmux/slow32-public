@@ -22,15 +22,11 @@ static member_t g_members[MAX_MEMBERS];
 static symbol_t g_symbols[1];
 static uint8_t g_strtab[MAX_STRTAB];
 
-static uint16_t rd16le(const uint8_t *p) {
-    return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
-}
-
 static uint32_t rd32le(const uint8_t *p) {
     return (uint32_t)p[0]
-        | ((uint32_t)p[1] << 8)
-        | ((uint32_t)p[2] << 16)
-        | ((uint32_t)p[3] << 24);
+        + (uint32_t)p[1] * 256u
+        + (uint32_t)p[2] * 65536u
+        + (uint32_t)p[3] * 16777216u;
 }
 
 static void w16(FILE *f, uint16_t v) {
@@ -129,7 +125,7 @@ static int scan_member_symbol(const char *path, uint32_t *nsymbols, uint32_t *st
     uint32_t str_off;
     uint32_t str_sz;
     uint32_t name_off;
-    uint16_t sec_idx;
+    uint32_t sec_idx;
     uint8_t bind;
     uint32_t i;
 
@@ -162,7 +158,7 @@ static int scan_member_symbol(const char *path, uint32_t *nsymbols, uint32_t *st
     }
 
     name_off = rd32le(sym + 0);
-    sec_idx = rd16le(sym + 8);
+    sec_idx = (uint32_t)sym[8] + (uint32_t)sym[9] * 256u;
     bind = sym[11];
     if (sec_idx == 0 || bind == 0 || name_off >= str_sz) {
         fclose(f);
