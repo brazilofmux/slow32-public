@@ -7,7 +7,9 @@
 \ Usage:
 \   S" runtime/libc_mmio.s32a" AR-T
 \   S" runtime/libs32.s32a" AR-LIST
+\   S" runtime/libs32.s32a" AR-V
 \   S" runtime/libs32.s32a" AR-X
+\   S" runtime/libs32.s32a" S" debug_char.s32o" AR-P1
 \   S" runtime/libc_mmio.s32a" S" dtoa.s32o" AR-X1
 \   S" /tmp/new.s32a" AR-C-BEGIN
 \   S" runtime/divsi3.s32o" AR-ADD
@@ -318,28 +320,36 @@ VARIABLE sym-midx
     DUP ar-str-sz @ >= IF DROP S" <bad-name>" EXIT THEN
     ar-strtab + DUP STR-LEN0 ;
 
-: AR-LIST-ONE ( idx -- ok? )
+: AR-READ-MEMBER ( idx -- ok? )
     DUP MEM-ENT-SZ * ar-mem-off @ + >R
     io-buf MEM-ENT-SZ R@ AR-READ-AT 0= IF
         ." Error: cannot read member entry" CR R> DROP FALSE EXIT
     THEN
     R> DROP
 
-    io-buf RD32 >R                 \ name_offset
-    io-buf 4 + RD32                \ file offset
-    io-buf 8 + RD32                \ size
+    io-buf RD32 ar-me-nameoff !
+    io-buf 4 + RD32 ar-me-off !
+    io-buf 8 + RD32 ar-me-size !
 
-    OVER OVER + ar-fsize @ > IF
-        2DROP R> DROP
+    ar-me-off @ ar-me-size @ + ar-fsize @ > IF
         ." Error: member payload out of bounds" CR
         FALSE EXIT
     THEN
-
-    NIP                            \ drop file offset; keep size
-    DUP . 32 EMIT                  \ print size + space
-    DROP
-    R> AR-STR TYPE CR
     TRUE ;
+
+: AR-LIST-ONE ( idx -- ok? )
+    AR-READ-MEMBER 0= IF FALSE EXIT THEN
+    ar-me-size @ . 32 EMIT
+    ar-me-nameoff @ AR-STR TYPE CR
+    TRUE ;
+
+: AR-LIST-ONE-V ( idx -- ok? )
+    DUP AR-READ-MEMBER 0= IF DROP FALSE EXIT THEN
+    ." idx=" DUP . 32 EMIT
+    ." off=" ar-me-off @ . 32 EMIT
+    ." size=" ar-me-size @ . 32 EMIT
+    ." name=" ar-me-nameoff @ AR-STR TYPE CR
+    DROP TRUE ;
 
 : AR-OPEN ( c-addr u -- ok? )
     AR-CLOSE
@@ -373,25 +383,23 @@ VARIABLE sym-midx
 
 : AR-T ( c-addr u -- ) AR-LIST ;
 
+: AR-LIST-V ( c-addr u -- )
+    AR-OPEN 0= IF EXIT THEN
+    ." members=" ar-nmembers @ .
+    ." symbols=" ar-nsymbols @ . CR
+    ar-nmembers @ 0 ?DO
+        I AR-LIST-ONE-V 0= IF LEAVE THEN
+    LOOP
+    AR-CLOSE ;
+
+: AR-V ( c-addr u -- ) AR-LIST-V ;
+
 : AR-MATCH-TARGET? ( name-addr name-len -- flag )
     ar-x-target-len @ 0= IF 2DROP TRUE EXIT THEN
     ar-x-target-addr @ ar-x-target-len @ STR= ;
 
 : AR-EXTRACT-ONE ( idx -- ok? )
-    DUP MEM-ENT-SZ * ar-mem-off @ + >R
-    io-buf MEM-ENT-SZ R@ AR-READ-AT 0= IF
-        ." Error: cannot read member entry" CR R> DROP FALSE EXIT
-    THEN
-    R> DROP
-
-    io-buf RD32 ar-me-nameoff !
-    io-buf 4 + RD32 ar-me-off !
-    io-buf 8 + RD32 ar-me-size !
-
-    ar-me-off @ ar-me-size @ AR-BOUNDS? 0= IF
-        ." Error: member payload out of bounds" CR
-        FALSE EXIT
-    THEN
+    AR-READ-MEMBER 0= IF FALSE EXIT THEN
 
     ar-me-nameoff @ AR-STR AR-MATCH-TARGET? 0= IF
         TRUE EXIT
@@ -427,6 +435,27 @@ VARIABLE sym-midx
     1 ar-x-found !
     TRUE ;
 
+: AR-PRINT-ONE ( idx -- ok? )
+    AR-READ-MEMBER 0= IF FALSE EXIT THEN
+    ar-me-nameoff @ AR-STR AR-MATCH-TARGET? 0= IF
+        TRUE EXIT
+    THEN
+    ." p - " ar-me-nameoff @ AR-STR TYPE CR
+    BEGIN ar-me-size @ 0> WHILE
+        ar-me-size @ 128 MIN DUP >R
+        io-buf R@ ar-me-off @ AR-READ-AT 0= IF
+            ." Error: cannot read member payload" CR
+            R> DROP
+            FALSE EXIT
+        THEN
+        io-buf R@ TYPE
+        ar-me-off @ R@ + ar-me-off !
+        ar-me-size @ R> - ar-me-size !
+    REPEAT
+    CR
+    1 ar-x-found !
+    TRUE ;
+
 : AR-EXTRACT ( arc-addr arc-len target-addr target-len -- )
     ar-x-target-len !
     ar-x-target-addr !
@@ -444,6 +473,23 @@ VARIABLE sym-midx
 
 : AR-X ( c-addr u -- ) 0 0 AR-EXTRACT ;
 : AR-X1 ( arc-addr arc-len name-addr name-len -- ) AR-EXTRACT ;
+
+: AR-PRINT ( arc-addr arc-len target-addr target-len -- )
+    ar-x-target-len !
+    ar-x-target-addr !
+    0 ar-x-found !
+    AR-OPEN 0= IF EXIT THEN
+    ar-nmembers @ 0 ?DO
+        I AR-PRINT-ONE 0= IF LEAVE THEN
+    LOOP
+    ar-x-target-len @ 0> ar-x-found @ 0= AND IF
+        ." Error: member not found: "
+        ar-x-target-addr @ ar-x-target-len @ TYPE CR
+    THEN
+    AR-CLOSE ;
+
+: AR-P ( c-addr u -- ) 0 0 AR-PRINT ;
+: AR-P1 ( arc-addr arc-len name-addr name-len -- ) AR-PRINT ;
 
 : M-RD32 ( midx off -- u )
     SWAP CELLS m-doff + @ mdata-buf + + RD32 ;
@@ -650,4 +696,4 @@ VARIABLE sym-midx
 
 0 ar-is-open !
 
-." Stage 3 archiver spike loaded (AR-T/AR-X/AR-C/AR-R/AR-D)." CR
+." Stage 3 archiver spike loaded (AR-T/AR-V/AR-X/AR-P/AR-C/AR-R/AR-D)." CR
