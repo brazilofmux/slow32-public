@@ -1,10 +1,19 @@
 # Stage 6: Verification and Fixed-Point Proof
 
 > **V2 cross-reference:** V2 has three fixed-point stages: **Stage 9** (Subset C), **Stage 13** (Full C), and **Stage 16** (Optimized) in [BOOTSTRAP-V2.md](BOOTSTRAP-V2.md). Each layer proves Gen2 == Gen3 independently.
+>
+> **Status:** This document is a legacy V1-style explanation. For active milestone tracking and sequencing, use `BOOTSTRAP-V2.md`.
 
 ## Goal
 
 Prove that the self-hosted toolchain is correct by demonstrating a **fixed point**: the toolchain can compile itself and produce an identical binary.
+
+## Current Status
+
+As of 2026-02-15:
+
+- Fixed-point verification has not started for the V2 Subset-C layer (Stage 9).
+- Current work is still in V2 Stage 5/6 replacement spikes.
 
 ## The Fixed-Point Test
 
@@ -138,7 +147,7 @@ cc_AA == cc_BA                        (fixed point from different seeds)
 
 Ken Thompson's "Reflections on Trusting Trust" (1984) showed that a compiler can contain a self-reproducing backdoor invisible in source code. The bootstrap chain addresses this:
 
-1. **Stage 0 (emulator)**: ~300 lines of C, fully auditable
+1. **Stage 0 (emulator)**: ~780 lines of C, fully auditable
 2. **Stage 1 (Forth kernel)**: Hand-assembled machine code, fully auditable
 3. **Stage 2 (assembler)**: Forth source, fully auditable
 4. **Stage 3 (linker)**: Forth source, fully auditable

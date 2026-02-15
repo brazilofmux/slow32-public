@@ -4,7 +4,18 @@
 
 ## Goal
 
-A C compiler capable of compiling the SLOW-32 toolchain sources (~7,000 lines of C). This is the largest and most complex bootstrap stage. It reads C source and emits SLOW-32 assembly text (which the stage 2 assembler then converts to object files).
+A Forth-hosted C subset compiler (`selfhost/stage4/cc.fth`) that emits SLOW-32 assembly text (`.s`) suitable for Stage 1 assembler + Stage 3 linker. This stage proves end-to-end C compilation under the minimal bootstrap chain and feeds Stages 5-8 tool replacement work.
+
+## Current Checkpoint
+
+As of 2026-02-15:
+
+- `selfhost/stage4/cc.fth` passes `selfhost/stage4/run-regression.sh` (Stage A/B/C).
+- Validation spikes are active under `selfhost/stage4/validation/`:
+  - `s32-as.c` (Stage 5 spike) compiles, links, runs, and emits `.s32o`.
+  - `s32-ar.c` (Stage 6 spike) exists and is under iterative hardening.
+  - `slow32dump.c` / `slow32dis.c` are retained as additional stress targets.
+- Stage 4 is considered stable enough to continue Stage 5/6 replacement work, but not yet a full replacement for host toolchain compilation workloads.
 
 ## Target: The C Subset Actually Used
 
@@ -183,7 +194,9 @@ Cons:
 
 **Recommendation:** Option A (Forth). The existing Forth kernel has all the infrastructure needed — file I/O, string handling, dictionary for symbol tables.
 
-## libc Functions Required
+## libc Functions Required (Later Milestones)
+
+The list below applies to later Stage 5-8 and full-toolchain milestones. Stage 4 validation spikes intentionally use a smaller runtime surface where possible.
 
 The compiler must emit calls to these libc functions, which must be available as linkable object files:
 

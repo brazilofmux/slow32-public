@@ -6,6 +6,14 @@
 
 A minimal linker written in Forth that takes `.s32o` object files, resolves symbols, applies relocations, and emits a `.s32x` executable. This replaces the cross-compiled `s32-ld` for bootstrap purposes.
 
+## Current Checkpoint
+
+As of 2026-02-15:
+
+- `selfhost/stage3/link.fth` is the active Stage 3 (V2) linker.
+- `selfhost/stage3/ar.fth` is split as the Stage 2 (V2) archiver and is no longer bundled here.
+- Linker behavior is stable for Stage 4 regression and validation pipelines.
+
 ## What the Linker Does
 
 1. **Load object files** — read `.s32o` headers, sections, symbols, relocations
@@ -156,17 +164,14 @@ CREATE combined-data 1024 CELLS ALLOT   \ merged .data buffer
 
 ## Size Estimate
 
-| Component | Forth Lines |
-|-----------|:-----------:|
-| .s32o reader | ~80 |
-| Section merging | ~50 |
-| Symbol resolution | ~60 |
-| Relocation application | ~100 |
-| .s32x writer | ~70 |
-| Memory layout computation | ~40 |
-| Command-line parsing | ~20 |
-| Error handling | ~30 |
-| **Total** | **~450-550** |
+| Component | Forth Lines (est.) |
+|-----------|:-------------------:|
+| Object/archive loading | ~250 |
+| Merge + layout | ~200 |
+| Symbol resolution | ~200 |
+| Relocation application | ~250 |
+| Emitter + diagnostics | ~200 |
+| **Total (`link.fth`)** | **~1,100** |
 
 ## Archive Support (Optional)
 

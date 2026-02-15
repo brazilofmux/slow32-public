@@ -720,7 +720,7 @@ An alternative approach is to build ALL C tools using the Forth toolchain and th
 
 ## Directory Mapping
 
-The V2 stage numbers differ from the current source directory layout (which uses V1 numbering). The code directories will be restructured later, once the other agent reaches a good stopping point.
+The V2 stage numbers differ from the current source directory layout (which still reflects older V1 naming). Directory restructuring is intentionally deferred until the V2 stage boundaries are stable in code, tests, and CI scripts.
 
 | V2 Stage | Current Directory | Key Files | Status |
 |----------|-------------------|-----------|--------|

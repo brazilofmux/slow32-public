@@ -1,10 +1,20 @@
 # Stage 5: Compiling the Real Toolchain
 
 > **V2 cross-reference:** This material is spread across **Stages 5-9** (Subset C tools + fixed-point) and **Stages 11-12** (Full C tools) in [BOOTSTRAP-V2.md](BOOTSTRAP-V2.md). V2 breaks the single "self-host" stage into individual tool-replacement stages.
+>
+> **Status:** This document is a legacy V1 playbook. For current sequencing and checkpoint status, treat `BOOTSTRAP-V2.md` as authoritative.
 
 ## Goal
 
 Use the stage 4 C compiler (running on SLOW-32 under emulation) to compile the real toolchain sources, then assemble and link them into working SLOW-32 executables. At the end of this stage, the full toolchain runs on SLOW-32.
+
+## Current Status
+
+As of 2026-02-15:
+
+- Work is intentionally split across V2 Stages 5-9, not executed as one monolithic stage.
+- Current concrete progress is Stage 5/6 spike work in `selfhost/stage4/validation/`.
+- The full pipeline in this document remains a target end-state description.
 
 ## Build Sequence
 

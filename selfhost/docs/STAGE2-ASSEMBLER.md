@@ -6,6 +6,14 @@
 
 A SLOW-32 assembler written in Forth, loaded as a prelude file into the stage 1 kernel. It reads `.s` assembly source and produces `.s32o` object files (or `.s32x` executables directly for simplicity).
 
+## Current Checkpoint
+
+As of 2026-02-15:
+
+- `selfhost/stage2/asm.fth` is the active Stage 1 (V2) assembler.
+- It is stable enough for Stage 4 regression and validation pipelines.
+- Multi-value `.byte` lines are supported (for example, `.byte 1, 2, 3`), which is required by current stage4-generated assembly output.
+
 ## Design
 
 Classic Forth assembler pattern: each mnemonic is a Forth word that encodes an instruction and writes it to the output buffer.
@@ -181,17 +189,14 @@ The relocation types match those in `common/s32_formats.h`:
 
 ## Size Estimate
 
-| Component | Forth Lines |
-|-----------|:-----------:|
-| Encoding helpers (R/I/S/B/U/J) | ~40 |
-| Instruction words (~40 mnemonics) | ~80 |
-| Register parser | ~20 |
-| Label management | ~40 |
-| Directive handling | ~50 |
-| Line reader + tokenizer | ~40 |
-| .s32x output | ~50 |
-| .s32o output (optional) | ~80 |
-| **Total** | **~320-400** |
+| Component | Forth Lines (est.) |
+|-----------|:-------------------:|
+| Tokenization + parser | ~250 |
+| Instruction encoding | ~250 |
+| Symbols + relocations | ~300 |
+| Object writer | ~250 |
+| Utilities + diagnostics | ~250 |
+| **Total (`asm.fth`)** | **~1,300** |
 
 ## Testing
 

@@ -6,6 +6,8 @@
 
 The SLOW-32 toolchain comprises 5 tools totaling ~6,993 lines of C plus ~286 lines of shared headers. This document catalogs the exact C features and libc functions required by a bootstrap compiler.
 
+This is the target language surface for V2 Stages 5-9. Early Stage 4 validation spikes may intentionally use a narrower subset while bringing individual replacement tools online.
+
 ## Source Inventory
 
 | File | Lines | Purpose |

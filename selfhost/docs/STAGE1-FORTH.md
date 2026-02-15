@@ -6,6 +6,13 @@
 
 A working Forth REPL as a .s32x binary, assembled entirely by hand (no assembler tool needed). This provides the interactive programming environment for stages 2-4.
 
+## Current Checkpoint
+
+As of 2026-02-15:
+
+- The bootstrap flow uses a prebuilt `forth/kernel.s32x` as the execution substrate.
+- Stage 1 in the V2 model is the Forth assembler (`selfhost/stage2/asm.fth`); this document remains the kernel-level prerequisite specification.
+
 ## Approach: Use the Existing Kernel
 
 The existing Forth kernel (`forth/kernel.s`) is already a complete, tested implementation:
