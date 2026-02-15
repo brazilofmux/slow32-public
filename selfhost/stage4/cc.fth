@@ -3958,7 +3958,7 @@ VARIABLE decl-name-len
     \ Stack: ( type type' name-addr name-len )
     decl-name-len !                          \ save name-len
     decl-name decl-name-len @ CMOVE         \ copy name to decl-name
-    DROP  \ drop type' — use base type for global. Stack: ( type )
+    NIP   \ keep declared type' (arrays/pointers), drop base type. Stack: ( type )
     \ Register this first variable as global
     decl-name decl-name-len @ 2 PICK 0 tmp-b @ 1 AND GSYM-ADD DROP
     \ Emit .bss or check for initializer
