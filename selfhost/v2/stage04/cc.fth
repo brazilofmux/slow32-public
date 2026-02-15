@@ -154,6 +154,7 @@ DECIMAL
 128    CONSTANT MAX-TYPEDEF \ max typedefs
 256    CONSTANT MAX-ENUM    \ max enum values
 64     CONSTANT MAX-MPARAM  \ max macro parameters
+0      CONSTANT DBG-LONG-BRANCH  \ 1 = print long-branch lowering stats
 
 \ === Buffers ===
 CREATE inp-buf INP-SZ ALLOT
@@ -318,6 +319,7 @@ VARIABLE func-nargs         \ number of args in current function
 VARIABLE local-offset       \ next local variable offset (grows negative from FP)
 256 CONSTANT FUNC-FRAME-SZ  \ fixed stage4 frame size
 VARIABLE in-function        \ are we inside a function?
+VARIABLE long-branch-lowered \ count of lowered conditional long branches
 
 \ Break/continue label stacks
 CREATE break-stk  MAX-BREAK CELLS ALLOT
@@ -1339,6 +1341,7 @@ VARIABLE asm-sec
 
 \ Emit conditional branch (branch if r1 == 0 to label)
 : EMIT-BEQ-ZERO ( label -- )
+    1 long-branch-lowered +!
     NEW-LABEL >R
     EMIT-INDENT S" bne r1, r0, .L" OUT-STR R@ OUT-NUM OUT-NL
     EMIT-INDENT S" jal r0, .L" OUT-STR OUT-NUM OUT-NL
@@ -1346,6 +1349,7 @@ VARIABLE asm-sec
 
 \ Emit conditional branch (branch if r1 != 0 to label)
 : EMIT-BNE-ZERO ( label -- )
+    1 long-branch-lowered +!
     NEW-LABEL >R
     EMIT-INDENT S" beq r1, r0, .L" OUT-STR R@ OUT-NUM OUT-NL
     EMIT-INDENT S" jal r0, .L" OUT-STR OUT-NUM OUT-NL
@@ -4114,6 +4118,7 @@ VARIABLE decl-name-len
     0 label-cnt !
     0 frame-size ! 0 func-nargs !
     0 local-offset ! 0 in-function !
+    0 long-branch-lowered !
     0 break-sp ! 0 cont-sp ! 0 switch-sp !
     0 has-peek !
     0 pp-skip ! 0 pp-nest ! 0 pp-sp !
@@ -4163,6 +4168,9 @@ VARIABLE decl-name-len
     \ Emit string literals
     EMIT-STRINGS
     \ Report results
+    DBG-LONG-BRANCH IF
+        ." [CC] Long branches lowered: " long-branch-lowered @ . CR
+    THEN
     cc-errors @ 0= IF
         ." Compilation successful." CR
         ." Output: " out-len @ . ." bytes of assembly" CR
