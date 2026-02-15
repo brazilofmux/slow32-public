@@ -19,7 +19,7 @@ clean:
 # Smoke test: run the Forth kernel and feed it a simple expression
 test: $(TARGET)
 	@echo "=== Stage 0 bootstrap emulator smoke test ==="
-	@echo "1 2 + . CR BYE" | ./$(TARGET) ../../forth/kernel.s32x 2>/dev/null | grep -q "3" && \
+	@echo "1 2 + . CR BYE" | ./$(TARGET) ../../../forth/kernel.s32x 2>/dev/null | grep -q "3" && \
 		echo "PASS: Forth kernel runs, 1+2=3" || \
 		echo "FAIL: Forth kernel did not produce expected output"
 
