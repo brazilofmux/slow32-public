@@ -56,6 +56,14 @@ Validation gate:
 - Stage4 regression green using both legacy and v2 paths.
 - Stage4 validation `s32-as.c` pipeline green.
 
+Progress (2026-02-15):
+
+- Stage4 code has been relocated to `selfhost/v2/stage04/`.
+- Legacy `selfhost/stage4/` now provides compatibility symlinks to the v2 location.
+- Regression verified from both entry points:
+  - `selfhost/stage4/run-regression.sh`
+  - `selfhost/v2/stage04/run-regression.sh`
+
 ## Phase 4: Stage 5/6 Integration Tracks
 
 Actions:
