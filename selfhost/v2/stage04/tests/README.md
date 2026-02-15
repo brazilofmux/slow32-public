@@ -7,6 +7,7 @@ Buckets:
 - `subset`: Stage4 Subset-C conformance litmus corpus (`tests/subset/subset*.c`)
 - `subset-idioms`: Stage5 utility idioms proven as standalone subset-C litmus tests
 - `subset-known-gaps`: tracked non-gating subset idioms (currently empty)
+- `subset-stage5-as-known-gaps`: tracked non-gating idioms that fail only on Stage5 assembler path
 - `as-bisect`: assembler spike bisect/repro corpus (`as_bisect*.c`)
 - `ar-bisect`: archiver spike bisect/repro corpus (`ar_bisect*.c`)
 

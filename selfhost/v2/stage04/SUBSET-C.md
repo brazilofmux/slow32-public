@@ -33,3 +33,5 @@ Current known gap:
 Known-gap tracking:
 - Manifest: `selfhost/v2/stage04/tests/manifests/subset-known-gaps.lst`
 - Scanner: `selfhost/v2/stage04/run-subset-gap-scan.sh`
+- Stage5-assembler-path manifest: `selfhost/v2/stage04/tests/manifests/subset-stage5-as-known-gaps.lst`
+- Stage5-assembler-path scan: `selfhost/v2/stage04/run-subset-gap-scan.sh --mode progressive-as --manifest ...`
