@@ -924,8 +924,7 @@ VARIABLE li-rd
 : DO-DATA   1 asm-sect ! ;
 : DO-BSS    2 asm-sect ! ;
 
-: DO-WORD
-    GET-TOK
+: EMIT-WORD-TOK ( addr u -- )
     2DUP PARSE-NUM IF
         NIP NIP EMIT-W32
     ELSE
@@ -935,8 +934,19 @@ VARIABLE li-rd
         0 EMIT-W32
     THEN ;
 
+: DO-WORD
+    BEGIN
+        GET-TOK
+        DUP 0= IF 2DROP EXIT THEN
+        EMIT-WORD-TOK
+    AGAIN ;
+
 : DO-BYTE
-    GET-TOK PARSE-IMM 255 AND EMIT-B ;
+    BEGIN
+        GET-TOK
+        DUP 0= IF 2DROP EXIT THEN
+        PARSE-IMM 255 AND EMIT-B
+    AGAIN ;
 
 : DO-HALF
     GET-TOK PARSE-IMM
