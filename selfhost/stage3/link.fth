@@ -78,9 +78,9 @@ DECIMAL
 \ === Buffer sizes ===
 \ Total ALLOT must fit within 1MB kernel dictionary.
 \ Reduced from initial design to avoid overflow.
-131072 CONSTANT TEXT-BUFSZ
-65536  CONSTANT DATA-BUFSZ
-8192   CONSTANT RODATA-BUFSZ
+196608 CONSTANT TEXT-BUFSZ
+98304  CONSTANT DATA-BUFSZ
+65536  CONSTANT RODATA-BUFSZ
 1024   CONSTANT MAX-GSYM
 4096   CONSTANT MAX-GREL
 32768  CONSTANT GSYM-NBUF-SZ
@@ -154,9 +154,12 @@ CREATE sec-base 8 CELLS ALLOT
 CREATE sym-map MAX-FILE-SYM CELLS ALLOT
 
 \ Archive buffers
-CREATE ar-symtab 16384 ALLOT
-CREATE ar-memtab 12288 ALLOT
-CREATE ar-strtab 16384 ALLOT
+16384  CONSTANT AR-SYMTAB-SZ
+12288  CONSTANT AR-MEMTAB-SZ
+16384  CONSTANT AR-STRTAB-SZ
+CREATE ar-symtab AR-SYMTAB-SZ ALLOT
+CREATE ar-memtab AR-MEMTAB-SZ ALLOT
+CREATE ar-strtab AR-STRTAB-SZ ALLOT
 VARIABLE ar-nmembers
 VARIABLE ar-mem-off
 VARIABLE ar-nsymbols
@@ -165,6 +168,7 @@ VARIABLE ar-str-off
 VARIABLE ar-str-sz
 VARIABLE ar-fh
 CREATE mem-loaded MAX-MEMBERS ALLOT
+VARIABLE link-error
 
 \ Per-object file parsing state
 VARIABLE obj-nsec
@@ -311,6 +315,7 @@ VARIABLE osa-len
     0 text-va !  0 rodata-va !  0 data-va !  0 bss-va !
     0 bss-end-va !  0 heap-va !
     0 mmio-sz !  0 mmio-va !  0 entry-pt !
+    0 link-error !
     sec-base 8 CELLS 0 FILL
     OSTRTAB-INIT
     ." Linker initialized" CR ;
@@ -385,6 +390,14 @@ VARIABLE osa-len
         0 SWAP
     ENDCASE ;
 
+: SEC-CAP ( sec-type -- size )
+    CASE
+        SEC-CODE   OF TEXT-BUFSZ   ENDOF
+        SEC-DATA   OF DATA-BUFSZ   ENDOF
+        SEC-RODATA OF RODATA-BUFSZ ENDOF
+        0 SWAP
+    ENDCASE ;
+
 : SEC-SZ-VAR ( sec-type -- var-addr )
     CASE
         SEC-CODE   OF text-sz   ENDOF
@@ -429,6 +442,13 @@ VARIABLE osa-len
             \ Copy data (skip BSS)
             ms-type @ SEC-BSS <> IF
                 ms-size @ 0> ms-file-off @ 0> AND IF
+                    ms-base @ ms-size @ + ms-type @ SEC-CAP > IF
+                        ." Error: section buffer overflow type=" ms-type @ .
+                        ." need=" ms-base @ ms-size @ + .
+                        ." cap=" ms-type @ SEC-CAP . CR
+                        1 link-error !
+                        LEAVE
+                    THEN
                     file-buf ms-file-off @ +
                     ms-type @ SEC-BUF ms-base @ +
                     ms-size @ CMOVE
@@ -519,7 +539,9 @@ VARIABLE osa-len
     PARSE-OBJ-HEADER 0= IF EXIT THEN
     sym-map MAX-FILE-SYM CELLS 0 FILL
     MERGE-SECTIONS
+    link-error @ IF EXIT THEN
     MERGE-SYMBOLS
+    link-error @ IF EXIT THEN
     MERGE-RELOCS
     ."   text=" text-sz @ .
     ." data=" data-sz @ .
@@ -532,6 +554,7 @@ VARIABLE osa-len
 
 : AR-SYM-NAME ( idx -- c-addr u )
     8 * ar-symtab + RD32
+    DUP ar-str-sz @ >= IF DROP ar-strtab 0 EXIT THEN
     ar-strtab +
     DUP 0 BEGIN OVER OVER + C@ 0<> WHILE 1+ REPEAT NIP ;
 
@@ -549,6 +572,7 @@ VARIABLE osa-len
     CELLS gsym-def + @ 0= ;
 
 : LOAD-AR-MEMBER ( member-idx -- )
+    DUP ar-nmembers @ >= IF DROP EXIT THEN
     DUP mem-loaded + C@ IF DROP EXIT THEN
     DUP mem-loaded + 1 SWAP C!
     DUP AR-MEM-SIZE SWAP AR-MEM-OFFSET
@@ -560,7 +584,9 @@ VARIABLE osa-len
     PARSE-OBJ-HEADER 0= IF EXIT THEN
     sym-map MAX-FILE-SYM CELLS 0 FILL
     MERGE-SECTIONS
+    link-error @ IF EXIT THEN
     MERGE-SYMBOLS
+    link-error @ IF EXIT THEN
     MERGE-RELOCS ;
 
 : LINK-ARCHIVE ( c-addr u -- )
@@ -585,6 +611,23 @@ VARIABLE osa-len
     ."   members=" ar-nmembers @ .
     ." symbols=" ar-nsymbols @ . CR
 
+    ar-nmembers @ MAX-MEMBERS > IF
+        ." Error: archive member table too large" CR
+        1 link-error ! ar-fh @ CLOSE-FILE DROP EXIT
+    THEN
+    ar-nsymbols @ 8 * AR-SYMTAB-SZ > IF
+        ." Error: archive symbol table too large" CR
+        1 link-error ! ar-fh @ CLOSE-FILE DROP EXIT
+    THEN
+    ar-nmembers @ 24 * AR-MEMTAB-SZ > IF
+        ." Error: archive member metadata too large" CR
+        1 link-error ! ar-fh @ CLOSE-FILE DROP EXIT
+    THEN
+    ar-str-sz @ AR-STRTAB-SZ > IF
+        ." Error: archive string table too large" CR
+        1 link-error ! ar-fh @ CLOSE-FILE DROP EXIT
+    THEN
+
     \ Read symbol index
     ar-sym-off @ S>D ar-fh @ REPOSITION-FILE DROP
     ar-symtab ar-nsymbols @ 8 * ar-fh @ READ-FILE DROP DROP
@@ -605,17 +648,23 @@ VARIABLE osa-len
         FALSE ( added-any )
         ar-nsymbols @ 0 ?DO
             I AR-SYM-MEMBER
-            DUP mem-loaded + C@ 0= IF
-                I AR-SYM-NAME SYM-UNDEFINED? IF
-                    LOAD-AR-MEMBER
-                    DROP TRUE
+            DUP ar-nmembers @ < IF
+                DUP mem-loaded + C@ 0= IF
+                    I AR-SYM-NAME SYM-UNDEFINED? IF
+                        LOAD-AR-MEMBER
+                        DROP TRUE
+                    ELSE
+                        DROP
+                    THEN
                 ELSE
                     DROP
                 THEN
             ELSE
                 DROP
             THEN
+            link-error @ IF LEAVE THEN
         LOOP
+        link-error @ IF DROP FALSE THEN
     0= UNTIL
 
     ar-fh @ CLOSE-FILE DROP
