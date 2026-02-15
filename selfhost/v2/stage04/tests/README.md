@@ -10,6 +10,7 @@ Buckets:
 - `subset-stage5-as-known-gaps`: tracked non-gating idioms that fail only on Stage5 assembler path
 - `as-bisect`: assembler spike bisect/repro corpus (`as_bisect*.c`)
 - `ar-bisect`: archiver spike bisect/repro corpus (`ar_bisect*.c`)
+- `reloc-bisect`: stage07 relocation-linker source bisect corpus (`reloc_bisect*.c`)
 
 The full bisect corpus is tracked as fixtures in this directory.
 

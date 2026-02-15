@@ -11,8 +11,9 @@ case "$BUCKET" in
   subset-known-gaps) MAN="$SCRIPT_DIR/manifests/subset-known-gaps.lst" ;;
   as-bisect) MAN="$SCRIPT_DIR/manifests/as-bisect.lst" ;;
   ar-bisect) MAN="$SCRIPT_DIR/manifests/ar-bisect.lst" ;;
+  reloc-bisect) MAN="$SCRIPT_DIR/manifests/reloc-bisect.lst" ;;
   *)
-    echo "Usage: $0 {baseline|subset|subset-idioms|subset-known-gaps|as-bisect|ar-bisect}" >&2
+    echo "Usage: $0 {baseline|subset|subset-idioms|subset-known-gaps|as-bisect|ar-bisect|reloc-bisect}" >&2
     exit 2
     ;;
 esac
