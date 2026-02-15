@@ -38,3 +38,4 @@ Manual per-stage entry points:
 - `stage04`: `selfhost/v2/stage04/run-regression.sh`
 - `stage05`: `selfhost/v2/stage05/run-pipeline.sh --mode progressive-as --test test1`
 - `stage06`: `selfhost/v2/stage05/run-pipeline.sh --mode stage6-ar-smoke` and `... stage6-ar-rc-smoke` and `... stage6-ar-tx-smoke`
+- `stage07` (spike): `selfhost/v2/stage07/run-spike.sh --emu ./tools/emulator/slow32-fast`

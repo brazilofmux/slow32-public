@@ -32,7 +32,7 @@ SKIP_SELFHOST_KERNEL=0
 
 usage() {
     cat <<USAGE
-Usage: $0 [--from stage00] [--to stage06] [--emu <path>] [--skip-selfhost-kernel]
+Usage: $0 [--from stage00] [--to stage07] [--emu <path>] [--skip-selfhost-kernel]
 
 Runs ordered V2 stage checks so a clean checkout can be validated end-to-end.
 
@@ -40,8 +40,8 @@ Default sequence:
   stage00 -> stage01 -> stage02 -> stage03 -> stage04 -> stage05 -> stage06
 
 Options:
-  --from stageNN   Start stage (stage00..stage06)
-  --to stageNN     End stage (stage00..stage06)
+  --from stageNN   Start stage (stage00..stage07)
+  --to stageNN     End stage (stage00..stage07)
   --emu path       Emulator for stage01..stage06 (default: slow32-fast, then stage00 s32-emu, then slow32)
   --skip-selfhost-kernel
                    Skip stage03 selfhost-kernel regeneration/boot gate (dev fast-path)
@@ -94,6 +94,7 @@ stage_num() {
         stage04) echo 4 ;;
         stage05) echo 5 ;;
         stage06) echo 6 ;;
+        stage07) echo 7 ;;
         *) return 1 ;;
     esac
 }
@@ -161,7 +162,12 @@ run_stage06() {
     "$ROOT_DIR/selfhost/v2/stage05/run-pipeline.sh" --mode stage6-ar-tx-smoke --emu "$EMU" >/tmp/v2-stage06-tx.log 2>&1
 }
 
-for st in stage00 stage01 stage02 stage03 stage04 stage05 stage06; do
+run_stage07() {
+    echo "[stage07] c-linker replacement spike"
+    "$ROOT_DIR/selfhost/v2/stage07/run-spike.sh" --emu "$EMU" >/tmp/v2-stage07.log 2>&1
+}
+
+for st in stage00 stage01 stage02 stage03 stage04 stage05 stage06 stage07; do
     N="$(stage_num "$st")"
     if (( N < FROM_N || N > TO_N )); then
         continue
