@@ -17,7 +17,7 @@ Primary tracking docs:
 
 ## Ordered Stage Walk
 
-For a clean checkout sanity pass (stage00 -> stage04):
+For a clean checkout sanity pass (stage00 -> stage05):
 
 ```bash
 selfhost/v2/run-stages.sh
@@ -28,4 +28,6 @@ Manual per-stage entry points:
 - `stage01`: `selfhost/v2/stage01/run-regression.sh test1`
 - `stage02`: `selfhost/v2/stage02/run-regression.sh test3`
 - `stage03`: `selfhost/v2/stage03/run-regression.sh test3` and `... archive`
+- `stage03` (kernel regen gate): `SELFHOST_EMU=./tools/emulator/slow32-fast selfhost/v2/stage03/run-selfhost-kernel.sh`
 - `stage04`: `selfhost/v2/stage04/run-regression.sh`
+- `stage05`: `selfhost/v2/stage05/run-pipeline.sh --mode progressive-as --test test1`

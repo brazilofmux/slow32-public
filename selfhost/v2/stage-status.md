@@ -7,7 +7,7 @@ This file is the quick orientation map for bootstrap work.
 | `stage00` | Minimal bootstrap emulator (`.s32x` runner) | `make -C selfhost/v2/stage00 && make -C selfhost/v2/stage00 test` | completed | none |
 | `stage01` | Forth assembler (`.s -> .s32o`) | `selfhost/v2/stage01/run-regression.sh test1` | completed | none |
 | `stage02` | Forth archiver (`.s32o -> .s32a`) | `selfhost/v2/stage02/run-regression.sh test3` | completed | expand corpus beyond `test3` fixture path |
-| `stage03` | Forth linker (`.s32o + .s32a -> .s32x`) | `selfhost/v2/stage03/run-regression.sh test3` and `... archive` | completed | add stricter output equivalence checks (optional) |
+| `stage03` | Forth linker (`.s32o + .s32a -> .s32x`) | `selfhost/v2/stage03/run-regression.sh test3` and `... archive`; `SELFHOST_EMU=./tools/emulator/slow32-fast selfhost/v2/stage03/run-selfhost-kernel.sh` | completed (kernel regen gate enabled in stage walk) | add stricter output equivalence checks (optional) |
 | `stage04` | Forth-hosted subset C compiler (`.c -> .s`) | `selfhost/v2/stage04/run-regression.sh` | completed (stage gate) | maintain stability while Stage5/6 replace tools |
 | `stage05` | Subset-C assembler replacement (`.s -> .s32o`) | `selfhost/v2/stage05/run-pipeline.sh --mode progressive-as --test test1` | in progress (green on `test1..test3`) | extend green set to full stage04 regression corpus |
 | `stage06` | Subset-C archiver replacement (`.s32o -> .s32a`) | `selfhost/v2/stage05/run-pipeline.sh --mode progressive-as-ar --test test1` | in progress (create+replace+list/extract smoke paths implemented: `c/rc/t/x`) | widen coverage to `d/m/v/p` parity and unblock Stage5 self-assembly reliability for `s32-ar*.c` |

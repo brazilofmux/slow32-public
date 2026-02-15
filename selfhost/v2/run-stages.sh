@@ -122,6 +122,7 @@ run_stage03() {
     echo "[stage03] linker regression"
     STAGE3_EMU="$EMU" "$ROOT_DIR/selfhost/v2/stage03/run-regression.sh" test3 >/tmp/v2-stage03-test3.log 2>&1
     STAGE3_EMU="$EMU" "$ROOT_DIR/selfhost/v2/stage03/run-regression.sh" archive >/tmp/v2-stage03-archive.log 2>&1
+    SELFHOST_EMU="$EMU" "$ROOT_DIR/selfhost/v2/stage03/run-selfhost-kernel.sh" >/tmp/v2-stage03-selfhost-kernel.log 2>&1
 }
 
 run_stage04() {
