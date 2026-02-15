@@ -728,14 +728,18 @@ The V2 stage numbers differ from the current source directory layout (which uses
 | 1 | `selfhost/stage2/` | `asm.fth` | Done |
 | 2 | `selfhost/stage3/` | `ar.fth` | Done |
 | 3 | `selfhost/stage3/` | `link.fth` | Done |
-| 4 | `selfhost/stage4/` | `cc.fth` | Done (string bug) |
-| 5 | `selfhost/stage4/validation/` | `s32-as.c` (spike) | In progress |
-| 6 | `selfhost/stage4/validation/` | `s32-ar.c` (spike) | In progress |
-| 7 | — | — | Not started |
-| 8 | — | — | Not started |
+| 4 | `selfhost/stage4/` | `cc.fth` | Done (regression passing) |
+| 5 | `selfhost/stage4/validation/` | `s32-as.c` | Spike proven end-to-end; replacement hardening in progress |
+| 6 | `selfhost/stage4/validation/` | `s32-ar.c` | Spike started; replacement hardening in progress |
+| 7 | `selfhost/stage4/validation/` | `s32-ld.c` (planned) | Not started |
+| 8 | `selfhost/stage4/validation/` | `cc.c` (planned) | Not started |
 | 9-16 | — | — | Not started |
 
-**Known issue in Stage 4:** The Forth C compiler emits string literals as comma-separated `.byte` values (e.g., `.byte 72, 101, 108`), but the Forth assembler only processes the first value on each `.byte` line. This truncates all string literals to one character. Fix is in the Stage 1 assembler (`.byte` must handle comma-separated values).
+**Current Stage 0-4 checkpoint (2026-02-15):**
+- Forth bootstrap chain is stable: `asm.fth`, `ar.fth`, and `link.fth` produce runnable outputs.
+- Stage 4 `cc.fth` passes `selfhost/stage4/run-regression.sh` on full emulator (`slow32-fast`).
+- Stage 5 assembler spike is functional: stage4-built `s32-as.c` compiles, links, runs, and emits `.s32o`.
+- Stage 6 archiver spike exists (`s32-ar.c`), but is not yet the default replacement in the bootstrap pipeline.
 
 
 ---
