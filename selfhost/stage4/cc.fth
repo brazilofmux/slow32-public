@@ -3000,24 +3000,31 @@ VARIABLE binop-saved-ltype
     R> DROP ;  \ drop min-prec
 
 \ --- Ternary expression ---
-\ Labels kept on data stack to survive recursive calls (tmp vars get clobbered)
+\ Keep ternary labels in dedicated vars and save/restore across recursion.
+VARIABLE tern-false
+VARIABLE tern-end
+
 : PARSE-TERNARY ( -- )
     2 PARSE-BINARY
     tok-type @ TK-PUNCT = tok-val @ P-QMARK = AND IF
+        tern-false @ >R
+        tern-end @ >R
         LVAL-TO-RVAL
-        NEW-LABEL           \ ( false-lbl )
-        NEW-LABEL           \ ( false-lbl end-lbl )
-        OVER EMIT-BEQ-ZERO  \ branch to false
+        NEW-LABEL tern-false !
+        NEW-LABEL tern-end !
+        tern-false @ EMIT-BEQ-ZERO  \ branch to false
         CC-TOKEN  \ skip ?
         PARSE-ASSIGN-EXPR
         LVAL-TO-RVAL
-        DUP EMIT-JUMP        \ jump to end
-        SWAP EMIT-LABEL      \ emit false label
+        tern-end @ EMIT-JUMP        \ jump to end
+        tern-false @ EMIT-LABEL     \ emit false label
         P-COLON EXPECT-PUNCT
         CC-TOKEN
         PARSE-TERNARY
         LVAL-TO-RVAL
-        EMIT-LABEL            \ emit end label
+        tern-end @ EMIT-LABEL       \ emit end label
+        R> tern-end !
+        R> tern-false !
     THEN ;
 
 \ --- Assignment expression ---
@@ -3117,7 +3124,8 @@ VARIABLE ret-label
 
 : PARSE-IF-STMT ( -- )
     CC-TOKEN  \ skip 'if'
-    sl-a @ sl-b @  \ save for nesting
+    sl-a @ >R
+    sl-b @ >R
     P-LPAREN EXPECT-PUNCT
     CC-TOKEN
     PARSE-EXPR
@@ -3137,12 +3145,14 @@ VARIABLE ret-label
     ELSE
         sl-a @ EMIT-LABEL
     THEN
-    sl-b ! sl-a !  \ restore
+    R> sl-b !
+    R> sl-a !
 ;
 
 : PARSE-WHILE-STMT ( -- )
     CC-TOKEN  \ skip 'while'
-    sl-a @ sl-b @  \ save for nesting
+    sl-a @ >R
+    sl-b @ >R
     NEW-LABEL sl-a !  \ loop start
     NEW-LABEL sl-b !  \ loop end
     \ Push break/continue targets
@@ -3163,12 +3173,15 @@ VARIABLE ret-label
     \ Pop break/continue
     -1 break-sp +!
     -1 cont-sp +!
-    sl-b ! sl-a !  \ restore
+    R> sl-b !
+    R> sl-a !
 ;
 
 : PARSE-DO-STMT ( -- )
     CC-TOKEN  \ skip 'do'
-    sl-a @ sl-b @ sl-c @  \ save for nesting
+    sl-a @ >R
+    sl-b @ >R
+    sl-c @ >R
     NEW-LABEL sl-a !  \ loop start
     NEW-LABEL sl-b !  \ loop end
     NEW-LABEL sl-c !  \ continue target (before condition)
@@ -3194,12 +3207,18 @@ VARIABLE ret-label
     sl-b @ EMIT-LABEL
     -1 break-sp +!
     -1 cont-sp +!
-    sl-c ! sl-b ! sl-a !  \ restore
+    R> sl-c !
+    R> sl-b !
+    R> sl-a !
 ;
 
 : PARSE-FOR-STMT ( -- )
     CC-TOKEN  \ skip 'for'
-    sl-a @ sl-b @ sl-c @ sl-d @ sl-e @  \ save for nesting
+    sl-a @ >R
+    sl-b @ >R
+    sl-c @ >R
+    sl-d @ >R
+    sl-e @ >R
     P-LPAREN EXPECT-PUNCT
     CC-TOKEN
     \ Init expression (or declaration)
@@ -3308,12 +3327,20 @@ VARIABLE ret-label
     sl-b @ EMIT-LABEL
     -1 break-sp +!
     -1 cont-sp +!
-    sl-e ! sl-d ! sl-c ! sl-b ! sl-a !  \ restore
+    R> sl-e !
+    R> sl-d !
+    R> sl-c !
+    R> sl-b !
+    R> sl-a !
 ;
 
 : PARSE-SWITCH-STMT ( -- )
     CC-TOKEN  \ skip 'switch'
-    sl-a @ sl-b @ sl-c @ sl-d @ sl-e @  \ save for nesting
+    sl-a @ >R
+    sl-b @ >R
+    sl-c @ >R
+    sl-d @ >R
+    sl-e @ >R
     P-LPAREN EXPECT-PUNCT
     CC-TOKEN
     PARSE-EXPR
@@ -3375,7 +3402,11 @@ VARIABLE ret-label
     S" addi r29, r29, 4" EMIT-INSN  \ pop switch value
     -1 break-sp +!
     -1 switch-sp +!
-    sl-e ! sl-d ! sl-c ! sl-b ! sl-a !  \ restore
+    R> sl-e !
+    R> sl-d !
+    R> sl-c !
+    R> sl-b !
+    R> sl-a !
 ;
 
 : PARSE-BREAK-STMT ( -- )

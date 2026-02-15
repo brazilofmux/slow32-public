@@ -150,9 +150,11 @@ VARIABLE data-va        \ after .text, aligned
 VARIABLE bss-va         \ after .data, aligned
 
 \ Line parsing
-CREATE lbuf 256 ALLOT
+8192 CONSTANT LBUF-SZ
+CREATE lbuf LBUF-SZ ALLOT
 VARIABLE lbuf-len
 VARIABLE lpos           \ current parse position
+VARIABLE lbuf-trunc
 
 \ Temp for string emit
 VARIABLE str-idx
@@ -449,14 +451,23 @@ VARIABLE str-idx
 : NEXT-LINE ( -- flag )
     asm-inp-pos @ asm-inp-len @ >= IF FALSE EXIT THEN
     0 lbuf-len !
+    0 lbuf-trunc !
     BEGIN
         asm-inp-pos @ asm-inp-len @ >= IF TRUE EXIT THEN
         inp-buf asm-inp-pos @ + C@
         1 asm-inp-pos +!
         DUP 10 = IF DROP TRUE EXIT THEN
         DUP 13 = IF DROP ELSE
-            lbuf lbuf-len @ + C!
-            1 lbuf-len +!
+            lbuf-len @ LBUF-SZ < IF
+                lbuf lbuf-len @ + C!
+                1 lbuf-len +!
+            ELSE
+                DROP
+                lbuf-trunc @ 0= IF
+                    S" line too long (truncated)" ASM-ERR
+                    1 lbuf-trunc !
+                THEN
+            THEN
         THEN
     AGAIN ;
 
@@ -1046,6 +1057,12 @@ VARIABLE li-rd
     2DUP S" ldw"   STREQI IF 2DROP 50 DO-I TRUE EXIT THEN
     2DUP S" ldbu"  STREQI IF 2DROP 51 DO-I TRUE EXIT THEN
     2DUP S" ldhu"  STREQI IF 2DROP 52 DO-I TRUE EXIT THEN
+    \ RISC-V style aliases used by stage4 output
+    2DUP S" lb"    STREQI IF 2DROP 48 DO-I TRUE EXIT THEN
+    2DUP S" lh"    STREQI IF 2DROP 49 DO-I TRUE EXIT THEN
+    2DUP S" lw"    STREQI IF 2DROP 50 DO-I TRUE EXIT THEN
+    2DUP S" lbu"   STREQI IF 2DROP 51 DO-I TRUE EXIT THEN
+    2DUP S" lhu"   STREQI IF 2DROP 52 DO-I TRUE EXIT THEN
 
     \ Store instructions (S-type)
     2DUP S" stb"   STREQI IF 2DROP 56 DO-S3 TRUE EXIT THEN
