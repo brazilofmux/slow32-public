@@ -31,6 +31,9 @@ typedef struct {
     size_t str_capacity;
 } string_table_t;
 
+#define MAX_STAGE4_AR_MEMBERS 64
+static member_t g_fixed_members[MAX_STAGE4_AR_MEMBERS];
+
 static uint32_t add_string(string_table_t *table, const char *str) {
     size_t len = strlen(str) + 1;
     
@@ -45,8 +48,8 @@ static uint32_t add_string(string_table_t *table, const char *str) {
     
     // Add new string
     if (table->str_size + len > table->str_capacity) {
-        table->str_capacity = (table->str_capacity + len) * 2;
-        table->strings = realloc(table->strings, table->str_capacity);
+        fprintf(stderr, "Error: archive string table overflow\n");
+        return 0;
     }
     
     uint32_t result = table->str_size;
@@ -73,6 +76,14 @@ static bool read_fully(void *dst, size_t size, FILE *f) {
     return fread(dst, 1, size, f) == size;
 }
 
+static char *dup_cstr(const char *s) {
+    size_t n = strlen(s) + 1;
+    char *p = malloc(n);
+    if (!p) return NULL;
+    memcpy(p, s, n);
+    return p;
+}
+
 static long file_size_for(FILE *f) {
     long pos = ftell(f);
     if (pos < 0) return -1;
@@ -89,13 +100,39 @@ static bool file_exists(const char *path) {
     return true;
 }
 
+#define S32A_HDR_SZ 32
+#define S32A_SYM_SZ 8
+#define S32A_MEM_SZ 24
+
+static uint16_t rd16le(const uint8_t *p) {
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
+static uint32_t rd32le(const uint8_t *p) {
+    return (uint32_t)p[0]
+        | ((uint32_t)p[1] << 8)
+        | ((uint32_t)p[2] << 16)
+        | ((uint32_t)p[3] << 24);
+}
+
+static void write_u16le(FILE *f, uint16_t v) {
+    fputc((int)(v & 0xFF), f);
+    fputc((int)((v >> 8) & 0xFF), f);
+}
+
+static void write_u32le(FILE *f, uint32_t v) {
+    fputc((int)(v & 0xFF), f);
+    fputc((int)((v >> 8) & 0xFF), f);
+    fputc((int)((v >> 16) & 0xFF), f);
+    fputc((int)((v >> 24) & 0xFF), f);
+}
+
 static bool validate_s32o(const char *name, uint8_t *data, size_t size) {
     if (size < sizeof(s32o_header_t)) {
         fprintf(stderr, "Error: '%s' is too small to be a valid object file\n", name);
         return false;
     }
-    s32o_header_t *hdr = (s32o_header_t *)data;
-    if (hdr->magic != S32O_MAGIC) {
+    if (!(data[0] == 'O' && data[1] == '2' && data[2] == '3' && data[3] == 'S')) {
         fprintf(stderr, "Error: '%s' is not a valid SLOW-32 object file\n", name);
         return false;
     }
@@ -116,12 +153,18 @@ static bool add_member_data(archive_state_t *state, const char *name, uint8_t *d
     }
     
     if (state->nmembers >= state->members_capacity) {
-        state->members_capacity = state->members_capacity * 2 + 1;
-        state->members = realloc(state->members, state->members_capacity * sizeof(member_t));
+        fprintf(stderr, "Error: too many archive members (max %d)\n", MAX_STAGE4_AR_MEMBERS);
+        free(data);
+        return false;
     }
     
     member_t *member = &state->members[state->nmembers];
-    member->name = strdup(name);
+    member->name = dup_cstr(name);
+    if (!member->name) {
+        fprintf(stderr, "Error: Out of memory\n");
+        free(data);
+        return false;
+    }
     member->data = data;
     member->size = size;
     member->timestamp = ts;
@@ -168,7 +211,12 @@ static bool add_or_replace_member(archive_state_t *state, const char *filename) 
         member_t *member = &state->members[existing];
         free(member->data);
         free(member->name);
-        member->name = strdup(base);
+        member->name = dup_cstr(base);
+        if (!member->name) {
+            free(data);
+            fprintf(stderr, "Error: Out of memory\n");
+            return false;
+        }
         member->data = data;
         member->size = (size_t)fsize;
         member->timestamp = 0;
@@ -188,7 +236,8 @@ static symbol_entry_t *build_symbol_index(archive_state_t *state, size_t *out_co
         if (!member->data || member->size < sizeof(s32o_header_t)) continue;
         s32o_header_t hdr;
         memcpy(&hdr, member->data, sizeof(hdr));
-        if (hdr.magic != S32O_MAGIC) continue;
+        if (!(member->data[0] == 'O' && member->data[1] == '2' &&
+              member->data[2] == '3' && member->data[3] == 'S')) continue;
         if (hdr.sym_offset + hdr.nsymbols * sizeof(s32o_symbol_t) > member->size) continue;
         if (hdr.str_offset + hdr.str_size > member->size) continue;
         
@@ -201,7 +250,11 @@ static symbol_entry_t *build_symbol_index(archive_state_t *state, size_t *out_co
                     cap = cap * 2 + 1;
                     symbols = realloc(symbols, cap * sizeof(symbol_entry_t));
                 }
-                symbols[count].name = strdup(obj_strings + symbols_in[i].name_offset);
+                symbols[count].name = dup_cstr(obj_strings + symbols_in[i].name_offset);
+                if (!symbols[count].name) {
+                    *out_count = count;
+                    return symbols;
+                }
                 symbols[count].member_idx = (uint32_t)m;
                 count++;
             }
@@ -219,71 +272,80 @@ static bool load_archive_members(const char *filename, archive_state_t *state) {
     }
     
     long archive_size = file_size_for(f);
-    if (archive_size < (long)sizeof(s32a_header_t)) {
+    if (archive_size < S32A_HDR_SZ) {
         fclose(f);
         fprintf(stderr, "Error: '%s' is not a valid SLOW-32 archive\n", filename);
         return false;
     }
-    
-    s32a_header_t hdr;
-    if (!read_fully(&hdr, sizeof(hdr), f)) {
+
+    uint8_t hbuf[S32A_HDR_SZ];
+    if (!read_fully(hbuf, S32A_HDR_SZ, f)) {
         fclose(f);
         fprintf(stderr, "Error: Cannot read archive header\n");
         return false;
     }
-    
-    if (hdr.magic != S32A_MAGIC) {
+
+    uint32_t nmembers = rd32le(hbuf + 8);
+    uint32_t mem_offset = rd32le(hbuf + 12);
+    uint32_t str_offset = rd32le(hbuf + 24);
+    uint32_t str_size = rd32le(hbuf + 28);
+
+    if (!(hbuf[0] == 'A' && hbuf[1] == '2' && hbuf[2] == '3' && hbuf[3] == 'S')) {
         fclose(f);
         fprintf(stderr, "Error: '%s' is not a valid SLOW-32 archive\n", filename);
         return false;
     }
-    
-    if (hdr.str_offset + hdr.str_size > (uint32_t)archive_size) {
+
+    if (str_offset + str_size > (uint32_t)archive_size) {
         fclose(f);
         fprintf(stderr, "Error: Archive string table out of bounds\n");
         return false;
     }
-    if (hdr.mem_offset + hdr.nmembers * sizeof(s32a_member_t) > (uint32_t)archive_size) {
+    if (mem_offset + nmembers * S32A_MEM_SZ > (uint32_t)archive_size) {
         fclose(f);
         fprintf(stderr, "Error: Archive member table out of bounds\n");
         return false;
     }
-    
-    char *strings = malloc(hdr.str_size);
-    fseek(f, hdr.str_offset, SEEK_SET);
-    if (!read_fully(strings, hdr.str_size, f)) {
+
+    char *strings = malloc(str_size);
+    fseek(f, str_offset, SEEK_SET);
+    if (!read_fully(strings, str_size, f)) {
         free(strings);
         fclose(f);
         fprintf(stderr, "Error: Cannot read archive string table\n");
         return false;
     }
-    
-    fseek(f, hdr.mem_offset, SEEK_SET);
-    for (uint32_t i = 0; i < hdr.nmembers; i++) {
-        s32a_member_t mem;
-        if (!read_fully(&mem, sizeof(mem), f)) {
+
+    fseek(f, mem_offset, SEEK_SET);
+    for (uint32_t i = 0; i < nmembers; i++) {
+        uint8_t mbuf[S32A_MEM_SZ];
+        if (!read_fully(mbuf, S32A_MEM_SZ, f)) {
             free(strings);
             fclose(f);
             fprintf(stderr, "Error: Cannot read archive member table\n");
             return false;
         }
-        if (mem.name_offset >= hdr.str_size) {
+        uint32_t name_offset = rd32le(mbuf + 0);
+        uint32_t member_offset = rd32le(mbuf + 4);
+        uint32_t member_size = rd32le(mbuf + 8);
+        uint32_t member_ts = rd32le(mbuf + 12);
+        if (name_offset >= str_size) {
             free(strings);
             fclose(f);
             fprintf(stderr, "Error: Invalid member name offset\n");
             return false;
         }
-        if (mem.offset + mem.size > (uint32_t)archive_size) {
+        if (member_offset + member_size > (uint32_t)archive_size) {
             free(strings);
             fclose(f);
             fprintf(stderr, "Error: Archive member data out of bounds\n");
             return false;
         }
-        
-        uint8_t *data = malloc(mem.size);
+
+        uint8_t *data = malloc(member_size);
         long saved_pos = ftell(f);
-        fseek(f, mem.offset, SEEK_SET);
-        if (!read_fully(data, mem.size, f)) {
+        fseek(f, member_offset, SEEK_SET);
+        if (!read_fully(data, member_size, f)) {
             free(data);
             free(strings);
             fclose(f);
@@ -291,10 +353,10 @@ static bool load_archive_members(const char *filename, archive_state_t *state) {
             return false;
         }
         fseek(f, saved_pos, SEEK_SET);
-        
-        const char *raw_name = strings + mem.name_offset;
+
+        const char *raw_name = strings + name_offset;
         const char *safe_name = basename_simple(raw_name);
-        if (!add_member_data(state, safe_name, data, mem.size, mem.timestamp)) {
+        if (!add_member_data(state, safe_name, data, member_size, member_ts)) {
             free(strings);
             fclose(f);
             return false;
@@ -314,7 +376,10 @@ static void write_archive(archive_state_t *state, const char *output) {
     }
     
     // Build string table for archive
-    string_table_t archive_strings = {0};
+    string_table_t archive_strings;
+    archive_strings.strings = NULL;
+    archive_strings.str_size = 0;
+    archive_strings.str_capacity = 0;
     archive_strings.strings = malloc(4096);
     archive_strings.str_capacity = 4096;
     
@@ -337,11 +402,11 @@ static void write_archive(archive_state_t *state, const char *output) {
     }
     
     // Calculate offsets
-    uint32_t offset = sizeof(s32a_header_t);
+    uint32_t offset = S32A_HDR_SZ;
     uint32_t sym_offset = offset;
-    offset += nsymbols * sizeof(s32a_symbol_t);
+    offset += nsymbols * S32A_SYM_SZ;
     uint32_t mem_offset = offset;
-    offset += state->nmembers * sizeof(s32a_member_t);
+    offset += state->nmembers * S32A_MEM_SZ;
     uint32_t str_offset = offset;
     offset += archive_strings.str_size;
     
@@ -357,37 +422,34 @@ static void write_archive(archive_state_t *state, const char *output) {
     }
     
     // Write header
-    s32a_header_t hdr;
-    hdr.magic = S32A_MAGIC;
-    hdr.version = 1;
-    hdr.endian = 0x01;
-    hdr.reserved = 0;
-    hdr.nmembers = state->nmembers;
-    hdr.mem_offset = mem_offset;
-    hdr.nsymbols = nsymbols;
-    hdr.sym_offset = sym_offset;
-    hdr.str_offset = str_offset;
-    hdr.str_size = archive_strings.str_size;
-    fwrite(&hdr, sizeof(hdr), 1, f);
+    fputc('A', f);
+    fputc('2', f);
+    fputc('3', f);
+    fputc('S', f);
+    write_u16le(f, 1);
+    fputc(1, f);
+    fputc(0, f);
+    write_u32le(f, state->nmembers);
+    write_u32le(f, mem_offset);
+    write_u32le(f, nsymbols);
+    write_u32le(f, sym_offset);
+    write_u32le(f, str_offset);
+    write_u32le(f, archive_strings.str_size);
     
     // Write symbol index
     for (size_t i = 0; i < nsymbols; i++) {
-        s32a_symbol_t sym;
-        sym.name_offset = symbol_name_offsets[i];
-        sym.member_index = symbols[i].member_idx;
-        fwrite(&sym, sizeof(sym), 1, f);
+        write_u32le(f, symbol_name_offsets[i]);
+        write_u32le(f, symbols[i].member_idx);
     }
     
     // Write member table
     for (size_t i = 0; i < state->nmembers; i++) {
-        s32a_member_t mem;
-        mem.name_offset = member_name_offsets[i];
-        mem.offset = member_offsets[i];
-        mem.size = state->members[i].size;
-        mem.timestamp = state->members[i].timestamp;
-        mem.uid = 0;
-        mem.gid = 0;
-        fwrite(&mem, sizeof(mem), 1, f);
+        write_u32le(f, member_name_offsets[i]);
+        write_u32le(f, member_offsets[i]);
+        write_u32le(f, state->members[i].size);
+        write_u32le(f, state->members[i].timestamp);
+        write_u32le(f, 0);
+        write_u32le(f, 0);
     }
     
     // Write string table
@@ -436,30 +498,35 @@ static void list_archive(const char *filename) {
 
     long archive_size = file_size_for(f);
     
-    s32a_header_t hdr;
-    if (!read_fully(&hdr, sizeof(hdr), f)) {
+    uint8_t hbuf[S32A_HDR_SZ];
+    if (!read_fully(hbuf, S32A_HDR_SZ, f)) {
         fprintf(stderr, "Error: Cannot read archive header\n");
         fclose(f);
         return;
     }
-    
-    if (hdr.magic != S32A_MAGIC) {
+
+    uint32_t nmembers = rd32le(hbuf + 8);
+    uint32_t mem_offset = rd32le(hbuf + 12);
+    uint32_t str_offset = rd32le(hbuf + 24);
+    uint32_t str_size = rd32le(hbuf + 28);
+
+    if (!(hbuf[0] == 'A' && hbuf[1] == '2' && hbuf[2] == '3' && hbuf[3] == 'S')) {
         fprintf(stderr, "Error: '%s' is not a valid SLOW-32 archive\n", filename);
         fclose(f);
         return;
     }
-    
-    if (hdr.str_offset + hdr.str_size > (uint32_t)archive_size ||
-        hdr.mem_offset + hdr.nmembers * sizeof(s32a_member_t) > (uint32_t)archive_size) {
+
+    if (str_offset + str_size > (uint32_t)archive_size ||
+        mem_offset + nmembers * S32A_MEM_SZ > (uint32_t)archive_size) {
         fprintf(stderr, "Error: Archive table out of bounds\n");
         fclose(f);
         return;
     }
 
     // Read string table
-    char *strings = malloc(hdr.str_size);
-    fseek(f, hdr.str_offset, SEEK_SET);
-    if (!read_fully(strings, hdr.str_size, f)) {
+    char *strings = malloc(str_size);
+    fseek(f, str_offset, SEEK_SET);
+    if (!read_fully(strings, str_size, f)) {
         fprintf(stderr, "Error: Cannot read archive string table\n");
         free(strings);
         fclose(f);
@@ -467,24 +534,27 @@ static void list_archive(const char *filename) {
     }
     
     // Read and display members
-    fseek(f, hdr.mem_offset, SEEK_SET);
-    for (uint32_t i = 0; i < hdr.nmembers; i++) {
-        s32a_member_t mem;
-        if (!read_fully(&mem, sizeof(mem), f)) {
+    fseek(f, mem_offset, SEEK_SET);
+    for (uint32_t i = 0; i < nmembers; i++) {
+        uint8_t mbuf[S32A_MEM_SZ];
+        if (!read_fully(mbuf, S32A_MEM_SZ, f)) {
             fprintf(stderr, "Error: Cannot read member table\n");
             free(strings);
             fclose(f);
             return;
         }
-        if (mem.name_offset >= hdr.str_size ||
-            mem.offset + mem.size > (uint32_t)archive_size) {
+        uint32_t name_offset = rd32le(mbuf + 0);
+        uint32_t member_offset = rd32le(mbuf + 4);
+        uint32_t member_size = rd32le(mbuf + 8);
+        if (name_offset >= str_size ||
+            member_offset + member_size > (uint32_t)archive_size) {
             fprintf(stderr, "Error: Archive member out of bounds\n");
             free(strings);
             fclose(f);
             return;
         }
-        
-        printf("%8u %s\n", mem.size, strings + mem.name_offset);
+
+        printf("%8u %s\n", member_size, strings + name_offset);
     }
     
     free(strings);
@@ -500,30 +570,35 @@ static void extract_archive(const char *archive, const char *member_name) {
 
     long archive_size = file_size_for(f);
     
-    s32a_header_t hdr;
-    if (!read_fully(&hdr, sizeof(hdr), f)) {
+    uint8_t hbuf[S32A_HDR_SZ];
+    if (!read_fully(hbuf, S32A_HDR_SZ, f)) {
         fprintf(stderr, "Error: Cannot read archive header\n");
         fclose(f);
         return;
     }
-    
-    if (hdr.magic != S32A_MAGIC) {
+
+    uint32_t nmembers = rd32le(hbuf + 8);
+    uint32_t mem_offset = rd32le(hbuf + 12);
+    uint32_t str_offset = rd32le(hbuf + 24);
+    uint32_t str_size = rd32le(hbuf + 28);
+
+    if (!(hbuf[0] == 'A' && hbuf[1] == '2' && hbuf[2] == '3' && hbuf[3] == 'S')) {
         fprintf(stderr, "Error: '%s' is not a valid SLOW-32 archive\n", archive);
         fclose(f);
         return;
     }
-    
-    if (hdr.str_offset + hdr.str_size > (uint32_t)archive_size ||
-        hdr.mem_offset + hdr.nmembers * sizeof(s32a_member_t) > (uint32_t)archive_size) {
+
+    if (str_offset + str_size > (uint32_t)archive_size ||
+        mem_offset + nmembers * S32A_MEM_SZ > (uint32_t)archive_size) {
         fprintf(stderr, "Error: Archive table out of bounds\n");
         fclose(f);
         return;
     }
 
     // Read string table
-    char *strings = malloc(hdr.str_size);
-    fseek(f, hdr.str_offset, SEEK_SET);
-    if (!read_fully(strings, hdr.str_size, f)) {
+    char *strings = malloc(str_size);
+    fseek(f, str_offset, SEEK_SET);
+    if (!read_fully(strings, str_size, f)) {
         fprintf(stderr, "Error: Cannot read archive string table\n");
         free(strings);
         fclose(f);
@@ -531,27 +606,30 @@ static void extract_archive(const char *archive, const char *member_name) {
     }
     
     // Find and extract member(s)
-    fseek(f, hdr.mem_offset, SEEK_SET);
+    fseek(f, mem_offset, SEEK_SET);
     int found = 0;
-    
-    for (uint32_t i = 0; i < hdr.nmembers; i++) {
-        s32a_member_t mem;
-        if (!read_fully(&mem, sizeof(mem), f)) {
+
+    for (uint32_t i = 0; i < nmembers; i++) {
+        uint8_t mbuf[S32A_MEM_SZ];
+        if (!read_fully(mbuf, S32A_MEM_SZ, f)) {
             fprintf(stderr, "Error: Cannot read member table\n");
             free(strings);
             fclose(f);
             return;
         }
-        
-        if (mem.name_offset >= hdr.str_size ||
-            mem.offset + mem.size > (uint32_t)archive_size) {
+        uint32_t name_offset = rd32le(mbuf + 0);
+        uint32_t member_offset = rd32le(mbuf + 4);
+        uint32_t member_size = rd32le(mbuf + 8);
+
+        if (name_offset >= str_size ||
+            member_offset + member_size > (uint32_t)archive_size) {
             fprintf(stderr, "Error: Archive member out of bounds\n");
             free(strings);
             fclose(f);
             return;
         }
 
-        const char *name = strings + mem.name_offset;
+        const char *name = strings + name_offset;
         const char *safe_name = basename_simple(name);
         
         if (member_name == NULL || strcmp(name, member_name) == 0 || strcmp(safe_name, member_name) == 0) {
@@ -563,17 +641,17 @@ static void extract_archive(const char *archive, const char *member_name) {
             }
             
             // Read and write member data
-            uint8_t *data = malloc(mem.size);
+            uint8_t *data = malloc(member_size);
             long saved_pos = ftell(f);
-            fseek(f, mem.offset, SEEK_SET);
-            if (!read_fully(data, mem.size, f)) {
+            fseek(f, member_offset, SEEK_SET);
+            if (!read_fully(data, member_size, f)) {
                 fprintf(stderr, "Error: Cannot read member data\n");
                 free(data);
                 fclose(out);
                 fseek(f, saved_pos, SEEK_SET);
                 continue;
             }
-            fwrite(data, 1, mem.size, out);
+            fwrite(data, 1, member_size, out);
             fclose(out);
             free(data);
             
@@ -649,6 +727,9 @@ int main(int argc, char **argv) {
         // Extract files
         if (files_start < argc) {
             for (int i = files_start; i < argc; i++) {
+                if (strcmp(argv[i], op) == 0) continue;
+                if (strcmp(argv[i], archive) == 0) continue;
+                if (strcmp(argv[i], argv[0]) == 0) continue;
                 extract_archive(archive, argv[i]);
             }
         } else {
@@ -661,7 +742,10 @@ int main(int argc, char **argv) {
             return 1;
         }
         
-        archive_state_t state = {0};
+        archive_state_t state;
+        state.members = g_fixed_members;
+        state.nmembers = 0;
+        state.members_capacity = MAX_STAGE4_AR_MEMBERS;
         bool loaded = false;
 
         if (file_exists(archive)) {
@@ -674,6 +758,9 @@ int main(int argc, char **argv) {
         
         // Add all specified files
         for (int i = files_start; i < argc; i++) {
+            if (strcmp(argv[i], op) == 0) continue;
+            if (strcmp(argv[i], archive) == 0) continue;
+            if (strcmp(argv[i], argv[0]) == 0) continue;
             add_or_replace_member(&state, argv[i]);
         }
         
