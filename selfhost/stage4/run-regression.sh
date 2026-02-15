@@ -2,14 +2,19 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+ROOT_DIR="${STAGE4_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
+    ROOT_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
+fi
 
 EMU="${STAGE4_EMU:-$ROOT_DIR/tools/emulator/slow32}"
 KERNEL="$ROOT_DIR/forth/kernel.s32x"
 PRELUDE="$ROOT_DIR/forth/prelude.fth"
-CC_FTH="$ROOT_DIR/selfhost/stage4/cc.fth"
-ASM_FTH="$ROOT_DIR/selfhost/stage2/asm.fth"
-LINK_FTH="$ROOT_DIR/selfhost/stage3/link.fth"
+CC_FTH="${STAGE4_CC:-$SCRIPT_DIR/cc.fth}"
+ASM_FTH="${STAGE4_ASM:-$ROOT_DIR/selfhost/stage2/asm.fth}"
+LINK_FTH="${STAGE4_LINK:-$ROOT_DIR/selfhost/stage3/link.fth}"
+TEST_DIR="${STAGE4_TEST_DIR:-$SCRIPT_DIR/tests}"
+VALIDATION_DIR="${STAGE4_VALIDATION_DIR:-$SCRIPT_DIR/validation}"
 
 SLOW32DUMP=0
 KEEP_ARTIFACTS=0
@@ -153,7 +158,7 @@ run_exe() {
 
 build_and_run_test() {
     local test_name="$1"
-    local src="$ROOT_DIR/selfhost/stage4/tests/${test_name}.c"
+    local src="$TEST_DIR/${test_name}.c"
     local asm="$WORKDIR/${test_name}.s"
     local obj="$WORKDIR/${test_name}.s32o"
     local exe="$WORKDIR/${test_name}.s32x"
@@ -181,7 +186,7 @@ run_stage "Stage C" test7 test8 test9
 if [[ "$SLOW32DUMP" -eq 1 ]]; then
     echo "[Stage D]"
     echo "  - slow32dump"
-    slow_src="$ROOT_DIR/selfhost/stage4/validation/slow32dump.c"
+    slow_src="$VALIDATION_DIR/slow32dump.c"
     slow_asm="$WORKDIR/slow32dump.s"
     slow_obj="$WORKDIR/slow32dump.s32o"
     slow_exe="$WORKDIR/slow32dump.s32x"

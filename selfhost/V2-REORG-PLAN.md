@@ -11,7 +11,7 @@ This plan executes the 17-stage model in `selfhost/docs/BOOTSTRAP-V2.md` by migr
 
 ## Phases
 
-## Phase 1: Scaffolding and Mapping (in progress)
+## Phase 1: Scaffolding and Mapping (completed)
 
 Deliverables:
 - `selfhost/v2/stage00..stage16/` scaffold created.
@@ -31,6 +31,7 @@ Actions:
   - bisect/repro corpus (`as_bisect*`, `ar_bisect*`)
   - validation spikes (`s32-as.c`, `s32-ar.c`, `slow32dump.c`, `slow32dis.c`)
 - Add wrapper scripts that reference new locations but keep old entry points.
+- Make core stage scripts path-override aware so they run from both legacy and v2 trees.
 
 Validation gate:
 - `selfhost/stage4/run-regression.sh` passes unchanged.
@@ -73,5 +74,5 @@ Validation gate:
 ## Immediate Next Tasks
 
 1. Implement Phase 2 test bucketing with zero behavior change.
-2. Add path-resolving helper in stage4 scripts so they can run from either legacy or v2 layout.
+2. Add stage2/stage3 wrapper scripts with the same path-override pattern now used by stage4.
 3. Start Phase 3 move for Stage 4 first (highest active development area), then Stage 2/3.
