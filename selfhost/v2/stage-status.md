@@ -10,7 +10,7 @@ This file is the quick orientation map for bootstrap work.
 | `stage03` | Forth linker (`.s32o + .s32a -> .s32x`) | `selfhost/v2/stage03/run-regression.sh test3` and `... archive` | completed | add stricter output equivalence checks (optional) |
 | `stage04` | Forth-hosted subset C compiler (`.c -> .s`) | `selfhost/v2/stage04/run-regression.sh` | completed (stage gate) | maintain stability while Stage5/6 replace tools |
 | `stage05` | Subset-C assembler replacement (`.s -> .s32o`) | `selfhost/v2/stage05/run-pipeline.sh --mode progressive-as --test test1` | in progress (green on `test1..test3`) | extend green set to full stage04 regression corpus |
-| `stage06` | Subset-C archiver replacement (`.s32o -> .s32a`) | `selfhost/v2/stage05/run-pipeline.sh --mode progressive-as-ar --test test1` | in progress (smoke path exists, failing) | bisect/fix `s32-ar.c` runtime path under self-hosted build |
+| `stage06` | Subset-C archiver replacement (`.s32o -> .s32a`) | `selfhost/v2/stage05/run-pipeline.sh --mode progressive-as-ar --test test1` | in progress (stage6-only smoke green; full progressive path still failing) | stabilize Stage5 assembler path so Stage6 can run self-hosted end-to-end |
 | `stage07` | Subset-C linker replacement (`.s32o + .s32a -> .s32x`) | `selfhost/v2/stage07/` | not started | create `s32-ld.c` subset implementation + harness |
 | `stage08` | Subset-C compiler rewritten in C (`.c -> .s`) | `selfhost/v2/stage08/` | not started | move from `cc.fth` to `cc.c` subset implementation |
 | `stage09` | Subset-C fixed-point proof (Gen2==Gen3) | `selfhost/v2/stage09/` | not started | define reproducible fixed-point harness |

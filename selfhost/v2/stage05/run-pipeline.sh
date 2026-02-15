@@ -24,12 +24,15 @@ KEEP_ARTIFACTS=0
 
 usage() {
     cat <<USAGE
-Usage: $0 [--mode baseline|progressive-as|progressive-as-ar] [--test <name>] [--emu <path>] [--keep-artifacts]
+Usage: $0 [--mode baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage6-ar-smoke|stage6-ar-scan-smoke] [--test <name>] [--emu <path>] [--keep-artifacts]
 
 Modes:
   baseline          Stage4 cc.fth + Stage1 asm.fth + Stage3 link.fth
   progressive-as    Stage4 cc.fth + Stage5 s32-as.c (for .s -> .s32o) + Stage3 link.fth
   progressive-as-ar Stage4 cc.fth + Stage5 s32-as.c + Stage6 s32-ar.c smoke-check + Stage3 link.fth
+  progressive-as-ar-scan Same as progressive-as-ar, but runs s32-ar with opt-in symbol scan flag
+  stage6-ar-smoke   Build stage5 assembler, then stage6 s32-ar.c with forth assembler; run archive smoke only
+  stage6-ar-scan-smoke Build stage5 assembler, then stage6 s32-ar-scan.c with forth assembler; run archive smoke with cmd=cs only
 
 Env overrides:
   SELFHOST_ROOT SELFHOST_EMU SELFHOST_KERNEL SELFHOST_PRELUDE
@@ -67,7 +70,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$MODE" in
-    baseline|progressive-as|progressive-as-ar) ;;
+    baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage6-ar-smoke|stage6-ar-scan-smoke) ;;
     *)
         echo "Unknown mode: $MODE" >&2
         usage
@@ -199,62 +202,104 @@ assemble_with_stage5() {
 }
 
 build_stage6_archiver() {
-    local src="$VALIDATION_DIR/s32-ar.c"
+    local src="${1:-$VALIDATION_DIR/s32-ar.c}"
+    local asm_mode="${2:-stage5}"
     local asm="$WORKDIR/s32-ar.s"
     local obj="$WORKDIR/s32-ar.s32o"
     local exe="$WORKDIR/s32-ar.s32x"
 
     [[ -f "$src" ]] || { echo "Missing source: $src" >&2; return 1; }
     compile_c_stage4 "$src" "$asm" "$WORKDIR/s32-ar.cc.log"
-    assemble_with_stage5 "$asm" "$obj" "$WORKDIR/s32-ar.as.log"
+    if [[ "$asm_mode" == "forth" ]]; then
+        assemble_forth "$asm" "$obj" "$WORKDIR/s32-ar.as.log"
+    else
+        assemble_with_stage5 "$asm" "$obj" "$WORKDIR/s32-ar.as.log"
+    fi
     link_forth "$obj" "$exe" "$WORKDIR/s32-ar.ld.log"
     STAGE6_AR_EXE="$exe"
 }
 
 stage6_archive_smoke() {
+    local cmd="${1:-c}"
     local archive="$WORKDIR/smoke.s32a"
     local log="$WORKDIR/s32-ar.run.log"
 
     [[ -n "${STAGE6_AR_EXE:-}" ]] || { echo "stage6 archiver is not built" >&2; return 1; }
-    run_exe "$STAGE6_AR_EXE" "$log" c "$archive" "$TARGET_OBJ"
+    run_exe "$STAGE6_AR_EXE" "$log" "$cmd" "$archive" "$TARGET_OBJ"
     [[ -s "$archive" ]] || { echo "stage6 archiver produced no output" >&2; return 1; }
 }
 
-if [[ "$TEST_NAME" = /* ]] || [[ "$TEST_NAME" == *.c ]]; then
-    TARGET_SRC="$TEST_NAME"
-else
-    TARGET_SRC="$TEST_DIR/${TEST_NAME}.c"
-fi
-[[ -f "$TARGET_SRC" ]] || { echo "Missing test source: $TARGET_SRC" >&2; exit 1; }
-
-TARGET_ASM="$WORKDIR/target.s"
-TARGET_OBJ="$WORKDIR/target.s32o"
-TARGET_EXE="$WORKDIR/target.s32x"
-
-compile_c_stage4 "$TARGET_SRC" "$TARGET_ASM" "$WORKDIR/target.cc.log"
-
 case "$MODE" in
+    stage6-ar-smoke)
+        build_stage5_assembler
+        TARGET_OBJ="$ROOT_DIR/runtime/crt0.s32o"
+        build_stage6_archiver "$VALIDATION_DIR/s32-ar.c" forth
+        stage6_archive_smoke
+        ;;
+    stage6-ar-scan-smoke)
+        build_stage5_assembler
+        TARGET_OBJ="$ROOT_DIR/runtime/crt0.s32o"
+        build_stage6_archiver "$VALIDATION_DIR/s32-ar-scan.c" forth
+        stage6_archive_smoke "cs"
+        ;;
     baseline)
+        if [[ "$TEST_NAME" = /* ]] || [[ "$TEST_NAME" == *.c ]]; then
+            TARGET_SRC="$TEST_NAME"
+        else
+            TARGET_SRC="$TEST_DIR/${TEST_NAME}.c"
+        fi
+        [[ -f "$TARGET_SRC" ]] || { echo "Missing test source: $TARGET_SRC" >&2; exit 1; }
+        TARGET_ASM="$WORKDIR/target.s"
+        TARGET_OBJ="$WORKDIR/target.s32o"
+        TARGET_EXE="$WORKDIR/target.s32x"
+        compile_c_stage4 "$TARGET_SRC" "$TARGET_ASM" "$WORKDIR/target.cc.log"
         assemble_forth "$TARGET_ASM" "$TARGET_OBJ" "$WORKDIR/target.as.log"
         ;;
-    progressive-as|progressive-as-ar)
+    progressive-as|progressive-as-ar|progressive-as-ar-scan)
+        if [[ "$TEST_NAME" = /* ]] || [[ "$TEST_NAME" == *.c ]]; then
+            TARGET_SRC="$TEST_NAME"
+        else
+            TARGET_SRC="$TEST_DIR/${TEST_NAME}.c"
+        fi
+        [[ -f "$TARGET_SRC" ]] || { echo "Missing test source: $TARGET_SRC" >&2; exit 1; }
+        TARGET_ASM="$WORKDIR/target.s"
+        TARGET_OBJ="$WORKDIR/target.s32o"
+        TARGET_EXE="$WORKDIR/target.s32x"
+        compile_c_stage4 "$TARGET_SRC" "$TARGET_ASM" "$WORKDIR/target.cc.log"
         build_stage5_assembler
         assemble_with_stage5 "$TARGET_ASM" "$TARGET_OBJ" "$WORKDIR/target.as.log"
         if [[ "$MODE" == "progressive-as-ar" ]]; then
             build_stage6_archiver
             stage6_archive_smoke
+        elif [[ "$MODE" == "progressive-as-ar-scan" ]]; then
+            build_stage6_archiver "$VALIDATION_DIR/s32-ar-scan.c"
+            stage6_archive_smoke "cs"
         fi
         ;;
 esac
 
-link_forth "$TARGET_OBJ" "$TARGET_EXE" "$WORKDIR/target.ld.log"
-run_exe "$TARGET_EXE" "$WORKDIR/target.run.log"
+if [[ "$MODE" != "stage6-ar-smoke" && "$MODE" != "stage6-ar-scan-smoke" ]]; then
+    link_forth "$TARGET_OBJ" "$TARGET_EXE" "$WORKDIR/target.ld.log"
+    run_exe "$TARGET_EXE" "$WORKDIR/target.run.log"
+fi
 
 echo "OK: stage05 pipeline ($MODE)"
-echo "Input: $TARGET_SRC"
-echo "Assembler path: $([[ "$MODE" == baseline ]] && echo "forth(stage01)" || echo "c(stage05)")"
-echo "Linker path: forth(stage03)"
-if [[ "$MODE" == "progressive-as-ar" ]]; then
+if [[ "$MODE" == "stage6-ar-smoke" || "$MODE" == "stage6-ar-scan-smoke" ]]; then
+    echo "Input member: $TARGET_OBJ"
+    echo "Assembler path: c(stage05) for s32-as, forth(stage01) for stage6 smoke asm"
+    echo "Linker path: forth(stage03)"
+elif [[ "$MODE" == "baseline" ]]; then
+    echo "Input: $TARGET_SRC"
+    echo "Assembler path: forth(stage01)"
+    echo "Linker path: forth(stage03)"
+else
+    echo "Input: $TARGET_SRC"
+    echo "Assembler path: c(stage05)"
+    echo "Linker path: forth(stage03)"
+fi
+if [[ "$MODE" == "progressive-as-ar" || "$MODE" == "stage6-ar-smoke" ]]; then
     echo "Archiver smoke: c(stage06)"
+elif [[ "$MODE" == "progressive-as-ar-scan" || "$MODE" == "stage6-ar-scan-smoke" ]]; then
+    echo "Archiver smoke: c(stage06, cmd=cs)"
 fi
 echo "Artifacts: $WORKDIR"
