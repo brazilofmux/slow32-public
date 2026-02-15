@@ -1,2 +1,1 @@
-.text
-halt
+../v2/stage01/test0.s

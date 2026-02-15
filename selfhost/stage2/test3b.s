@@ -1,6 +1,1 @@
-# Simplified test: data section
-.data
-msg:
-    .asciz "Hello"
-.text
-    halt
+../v2/stage01/test3b.s

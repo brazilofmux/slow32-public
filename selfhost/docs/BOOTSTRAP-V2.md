@@ -731,9 +731,9 @@ Execution artifacts for the reorg are tracked in:
 | V2 Stage | Current Directory | Key Files | Status |
 |----------|-------------------|-----------|--------|
 | 0 | `selfhost/stage0/` | `s32-emu.c` | Done |
-| 1 | `selfhost/stage2/` | `asm.fth` | Done |
+| 1 | `selfhost/v2/stage01/` (`selfhost/stage2/` compat links) | `asm.fth` | Done |
 | 2 | `selfhost/stage3/` | `ar.fth` | Done |
-| 3 | `selfhost/stage3/` | `link.fth` | Done |
+| 3 | `selfhost/v2/stage03/` (`selfhost/stage3/` compat links) | `link.fth` | Done |
 | 4 | `selfhost/v2/stage04/` (`selfhost/stage4/` compat links) | `cc.fth` | Done (regression passing) |
 | 5 | `selfhost/stage4/validation/` | `s32-as.c` | Spike proven end-to-end; replacement hardening in progress |
 | 6 | `selfhost/stage4/validation/` | `s32-ar.c` | Spike started; replacement hardening in progress |

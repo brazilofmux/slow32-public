@@ -63,6 +63,8 @@ Progress (2026-02-15):
 - Regression verified from both entry points:
   - `selfhost/stage4/run-regression.sh`
   - `selfhost/v2/stage04/run-regression.sh`
+- Stage2 relocated to `selfhost/v2/stage01/` with legacy compat symlinks in `selfhost/stage2/`.
+- Stage3 relocated to `selfhost/v2/stage03/` with legacy compat symlinks in `selfhost/stage3/`.
 
 ## Phase 4: Stage 5/6 Integration Tracks
 
