@@ -34,6 +34,7 @@ FFFFF    CONSTANT MASK20
 FFFFFF0  CONSTANT STACK-BASE-DEF
 10000000 CONSTANT MEM-SIZE-DEF
 100000   CONSTANT HEAP-GAP-DEF
+100000   CONSTANT CODE-LIMIT-MIN
 80       CONSTANT FLAG-MMIO
 01       CONSTANT FLAG-WXORX
 0D       CONSTANT SF-XRA
@@ -59,6 +60,7 @@ DECIMAL
 
 \ Relocation types
 1 CONSTANT REL-32
+32 CONSTANT REL-ABS32
 2 CONSTANT REL-HI20
 3 CONSTANT REL-LO12
 4 CONSTANT REL-BRANCH
@@ -226,6 +228,13 @@ VARIABLE file-pos
 \ Temp for OSTRTAB-ADD
 VARIABLE osa-off
 VARIABLE osa-len
+VARIABLE sex-a
+VARIABLE sex-u
+VARIABLE sex-pos
+VARIABLE sex-add
+VARIABLE sex-i
+VARIABLE sex-acc
+VARIABLE sex-ch
 
 \ === Helpers ===
 
@@ -272,6 +281,73 @@ VARIABLE osa-len
 
 \ String comparison helper
 : STR= ( a1 u1 a2 u2 -- flag ) COMPARE 0= ;
+
+: DIGIT? ( c -- n true | false )
+    DUP [CHAR] 0 >= OVER [CHAR] 9 <= AND IF
+        [CHAR] 0 - TRUE EXIT
+    THEN
+    DROP FALSE ;
+
+: PARSE-UDEC ( c-addr u -- n true | false )
+    2DUP sex-u ! sex-a !
+    sex-u @ 0= IF 2DROP FALSE EXIT THEN
+    0 sex-acc !
+    0 sex-i !
+    BEGIN
+        sex-i @ sex-u @ <
+    WHILE
+        sex-a @ sex-i @ + C@ DIGIT? 0= IF 2DROP FALSE EXIT THEN
+        sex-acc @ 10 * + sex-acc !
+        1 sex-i +!
+    REPEAT
+    2DROP sex-acc @ TRUE ;
+
+: FIND-CHAR ( c-addr u ch -- pos | -1 )
+    2DUP sex-u ! sex-a !
+    sex-ch !
+    0 sex-i !
+    BEGIN
+        sex-i @ sex-u @ <
+    WHILE
+        sex-a @ sex-i @ + C@ sex-ch @ = IF 2DROP sex-i @ EXIT THEN
+        1 sex-i +!
+    REPEAT
+    2DROP -1 ;
+
+\ Split "name+N" or "name-N" into (name, addend).
+: SPLIT-SYM-EXPR ( c-addr u -- sym-addr sym-len addend true | false )
+    2DUP sex-u ! sex-a !
+
+    2DUP [CHAR] + FIND-CHAR DUP 0> IF
+        sex-pos !
+        sex-a @ sex-pos @ + 1+ sex-u @ sex-pos @ - 1- PARSE-UDEC IF
+            >R 2DROP R>
+            sex-a @ sex-pos @ ROT TRUE EXIT
+        THEN
+        2DROP FALSE EXIT
+    THEN
+    DROP
+
+    2DUP [CHAR] - FIND-CHAR DUP 0> IF
+        sex-pos !
+        sex-a @ sex-pos @ + 1+ sex-u @ sex-pos @ - 1- PARSE-UDEC IF
+            >R 2DROP R>
+            NEGATE sex-a @ sex-pos @ ROT TRUE EXIT
+        THEN
+        2DROP FALSE EXIT
+    THEN
+    DROP
+    2DROP FALSE ;
+
+\ Resolve "__mmio_base+N" alias directly from computed mmio base.
+: MMIO-ALIAS-VA ( c-addr u -- va true | false )
+    2DUP [CHAR] + FIND-CHAR DUP 0< OVER 0= OR IF DROP 2DROP FALSE EXIT THEN
+    sex-pos !
+    OVER sex-pos @ S" __mmio_base" STR= 0= IF 2DROP FALSE EXIT THEN
+    sex-pos @ 1+ /STRING PARSE-UDEC IF
+        mmio-va @ + TRUE EXIT
+    THEN
+    FALSE ;
 
 \ Read entire file into file-buf, return size or -1 on error
 : READ-FILE-BUF ( c-addr u -- size | -1 )
@@ -677,7 +753,7 @@ VARIABLE osa-len
 \ === Section layout ===
 : LAYOUT-SECTIONS ( -- )
     0 text-va !
-    text-sz @ PAGE-ALIGN DUP rodata-va !
+    text-sz @ PAGE-ALIGN CODE-LIMIT-MIN MAX DUP rodata-va !
     rodata-sz @ + PAGE-ALIGN DUP data-va !
     data-sz @ + DUP bss-va !
     bss-sz @ + DUP bss-end-va !
@@ -708,6 +784,32 @@ VARIABLE osa-len
         SWAP CELLS gsym-val + @ +
     THEN ;
 
+: GSYM-NAME ( idx -- c-addr u )
+    DUP CELLS gsym-noff + @ gsym-nbuf +
+    SWAP CELLS gsym-nlen + @ ;
+
+\ Resolve symbol VA for relocation. If symbol is undefined but has form
+\ "base+N" or "base-N", resolve against base symbol and apply N.
+: GSYM-VA-REL ( idx -- va ok? )
+    DUP 0< IF DROP 0 FALSE EXIT THEN
+    DUP CELLS gsym-def + @ 0<> IF GSYM-VA TRUE EXIT THEN
+    GSYM-NAME 2DUP MMIO-ALIAS-VA IF
+        >R 2DROP R> TRUE EXIT
+    THEN
+    2DROP
+    GSYM-NAME SPLIT-SYM-EXPR IF
+        sex-add !
+        2DUP GSYM-FIND DUP 0< IF
+            DROP 2DROP 0 FALSE EXIT
+        THEN
+        >R 2DROP R>
+        DUP CELLS gsym-def + @ 0= IF
+            DROP 0 FALSE EXIT
+        THEN
+        GSYM-VA sex-add @ + TRUE EXIT
+    THEN
+    0 FALSE ;
+
 \ === Inject linker-defined symbols ===
 : INJECT-SYM ( c-addr u value -- )
     >R 2DUP GSYM-FIND
@@ -733,6 +835,27 @@ VARIABLE osa-len
     S" _bss_start"    bss-va @      INJECT-SYM
     S" _bss_end"      bss-end-va @  INJECT-SYM
     S" __mmio_base"   mmio-va @     INJECT-SYM
+    S" __mmio_base+4"     mmio-va @ 4 +     INJECT-SYM
+    S" __mmio_base+4096"  mmio-va @ 4096 +  INJECT-SYM
+    S" __mmio_base+4100"  mmio-va @ 4100 +  INJECT-SYM
+    S" __mmio_base+4104"  mmio-va @ 4104 +  INJECT-SYM
+    S" __mmio_base+4108"  mmio-va @ 4108 +  INJECT-SYM
+    S" __mmio_base+8192"  mmio-va @ 8192 +  INJECT-SYM
+    S" __mmio_base+8196"  mmio-va @ 8196 +  INJECT-SYM
+    S" __mmio_base+12300" mmio-va @ 12300 + INJECT-SYM
+    S" __mmio_base+16384" mmio-va @ 16384 + INJECT-SYM
+    S" __mmio_base+16388" mmio-va @ 16388 + INJECT-SYM
+    S" __mmio_base+16392" mmio-va @ 16392 + INJECT-SYM
+    S" __mmio_base+16396" mmio-va @ 16396 + INJECT-SYM
+    S" __mmio_base+16400" mmio-va @ 16400 + INJECT-SYM
+    S" __mmio_base+16404" mmio-va @ 16404 + INJECT-SYM
+    S" __mmio_base+16408" mmio-va @ 16408 + INJECT-SYM
+    S" __mmio_base+16412" mmio-va @ 16412 + INJECT-SYM
+    S" __mmio_base+16416" mmio-va @ 16416 + INJECT-SYM
+    S" __mmio_base+16420" mmio-va @ 16420 + INJECT-SYM
+    S" __mmio_base+16424" mmio-va @ 16424 + INJECT-SYM
+    S" __mmio_base+16428" mmio-va @ 16428 + INJECT-SYM
+    S" __mmio_base+16432" mmio-va @ 16432 + INJECT-SYM
     S" __mmio_end"    mmio-va @ mmio-sz @ + INJECT-SYM
     S" __heap_start"  heap-va @     INJECT-SYM
     mmio-sz @ 0> IF
@@ -780,7 +903,19 @@ VARIABLE osa-len
     R> DROP
 
     \ value = sym_va + addend
-    ar-gsym @ GSYM-VA ar-radd @ + ar-val !
+    ar-gsym @ GSYM-VA-REL IF
+        ar-radd @ + ar-val !
+    ELSE
+        ." Error: unresolved reloc symbol: "
+        ar-gsym @ 0< 0= IF
+            ar-gsym @ GSYM-NAME TYPE
+        ELSE
+            ." <invalid>"
+        THEN
+        CR
+        1 link-error !
+        0 ar-val !
+    THEN
 
     \ Target buffer address
     ar-sec @ SEC-BUF ar-off @ + ar-tgt !
@@ -790,6 +925,10 @@ VARIABLE osa-len
 
     ar-rtyp @ CASE
         REL-32 OF
+            ar-val @ ar-tgt @ WR32
+        ENDOF
+
+        REL-ABS32 OF
             ar-val @ ar-tgt @ WR32
         ENDOF
 
@@ -960,7 +1099,7 @@ VARIABLE osa-len
     \ flags
     FLAG-WXORX mmio-sz @ 0> IF FLAG-MMIO OR THEN
     28 WB!
-    text-sz @ PAGE-ALIGN 32 WB!                          \ code_limit
+    text-sz @ PAGE-ALIGN CODE-LIMIT-MIN MAX 32 WB!      \ code_limit
     rodata-va @ rodata-sz @ + PAGE-ALIGN 36 WB!          \ rodata_limit
     bss-end-va @ 40 WB!                                  \ data_limit (= bss end)
     STACK-BASE-DEF 44 WB!                                \ stack_base

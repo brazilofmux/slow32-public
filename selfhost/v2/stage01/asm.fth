@@ -37,6 +37,7 @@ DECIMAL
 1 CONSTANT REL-32
 2 CONSTANT REL-HI20
 3 CONSTANT REL-LO12
+5 CONSTANT REL-JAL
 
 \ === Configuration ===
 262144 CONSTANT INP-SZ      \ 256KB input buffer
@@ -68,7 +69,7 @@ CREATE reloc-add MAX-RELOC CELLS ALLOT   \ addend
 CREATE reloc-sym MAX-RELOC CELLS ALLOT   \ offset into rname-buf
 CREATE reloc-sln MAX-RELOC CELLS ALLOT   \ name length
 VARIABLE reloc-cnt
-16384 CONSTANT RNAME-SZ
+65536 CONSTANT RNAME-SZ
 CREATE rname-buf RNAME-SZ ALLOT
 VARIABLE rname-ptr
 
@@ -82,12 +83,12 @@ CREATE gname-buf GNAME-SZ ALLOT
 VARIABLE gname-ptr
 
 \ String table for .s32o output
-8192 CONSTANT STRTAB-SZ
+65536 CONSTANT STRTAB-SZ
 CREATE strtab STRTAB-SZ ALLOT
 VARIABLE strtab-sz
 
 \ Output symbol table
-256 CONSTANT MAX-OUT-SYM
+2048 CONSTANT MAX-OUT-SYM
 CREATE osym-stridx MAX-OUT-SYM CELLS ALLOT  \ string table index
 CREATE osym-value  MAX-OUT-SYM CELLS ALLOT  \ symbol value
 CREATE osym-sec    MAX-OUT-SYM CELLS ALLOT  \ output section index (1-based)
@@ -117,6 +118,7 @@ VARIABLE off-secdata
 \ Temp variables for helpers
 VARIABLE imm-sym-addr
 VARIABLE imm-sym-len
+VARIABLE imm-add
 VARIABLE r-off
 VARIABLE r-typ
 VARIABLE r-add
@@ -140,6 +142,8 @@ VARIABLE asm-tsz        \ .text size
 VARIABLE asm-dsz        \ .data size
 VARIABLE asm-bsz        \ .bss size
 VARIABLE asm-errs       \ error count
+CREATE out-path 256 ALLOT
+VARIABLE out-path-len
 VARIABLE asm-lno        \ line number
 VARIABLE asm-inp-len    \ input length
 VARIABLE asm-inp-pos    \ input scan position
@@ -230,6 +234,10 @@ VARIABLE str-idx
 
 : STRTAB-ADD ( addr u -- offset )
     sa-len ! sa-addr !
+    strtab-sz @ sa-len @ + 1+ STRTAB-SZ > IF
+        S" strtab overflow" ASM-ERR
+        0 EXIT
+    THEN
     strtab-sz @ sa-off !
     sa-addr @ strtab sa-off @ + sa-len @ CMOVE
     0 strtab sa-off @ sa-len @ + + C!
@@ -247,7 +255,11 @@ VARIABLE str-idx
     2DROP -1 ;
 
 : OSYM-ADD ( stridx value sec bind c-addr u -- )
-    osym-cnt @ MAX-OUT-SYM >= IF 2DROP 2DROP 2DROP EXIT THEN
+    osym-cnt @ MAX-OUT-SYM >= IF
+        2DROP 2DROP 2DROP
+        S" output symbol table full" ASM-ERR
+        EXIT
+    THEN
     osym-cnt @ >R
     R@ CELLS osym-nmlen + !
     R@ CELLS osym-nmbuf + !
@@ -263,6 +275,9 @@ VARIABLE str-idx
     r-nlen ! r-naddr !
     r-add ! r-typ ! r-off !
     reloc-cnt @ MAX-RELOC >= IF S" reloc table full" ASM-ERR EXIT THEN
+    rname-ptr @ r-nlen @ + RNAME-SZ > IF
+        S" reloc name table full" ASM-ERR EXIT
+    THEN
     reloc-cnt @ >R
     r-off @     R@ CELLS reloc-off + !
     asm-sect @  R@ CELLS reloc-sec + !
@@ -582,6 +597,9 @@ VARIABLE str-idx
 \ === Operand Parsing ===
 \ Find character in string, return position or -1
 VARIABLE find-ch-val
+VARIABLE sx-a
+VARIABLE sx-u
+VARIABLE sx-pos
 : FIND-CH ( addr u ch -- pos | -1 )
     find-ch-val !
     0 ?DO
@@ -603,6 +621,40 @@ VARIABLE find-ch-val
     OVER 4 S" %lo(" STREQI 0= IF 2DROP FALSE EXIT THEN
     OVER OVER + 1- C@ [CHAR] ) <> IF 2DROP FALSE EXIT THEN
     4 /STRING 1- TRUE ;
+
+: STRIP-OUTER-PARENS ( addr u -- addr' u' )
+    DUP 0> IF
+        OVER C@ [CHAR] ( = IF 1 /STRING THEN
+    THEN
+    DUP 0> IF
+        OVER OVER + 1- C@ [CHAR] ) = IF 1- THEN
+    THEN ;
+
+\ Split symbol expression "name+N" or "name-N" into base symbol and addend.
+\ Returns (sym-addr sym-len addend true) on success, else false.
+: SPLIT-SYM-ADDEND ( addr u -- sym-addr sym-len addend true | false )
+    2DUP sx-u ! sx-a !
+
+    2DUP [CHAR] + FIND-CH DUP 0> IF
+        sx-pos !
+        sx-a @ sx-pos @ + 1+ sx-u @ sx-pos @ - 1- PARSE-NUM IF
+            2DROP
+            sx-a @ sx-pos @ ROT TRUE EXIT
+        THEN
+        2DROP FALSE EXIT
+    THEN
+    DROP
+
+    2DUP [CHAR] - FIND-CH DUP 0> IF
+        sx-pos !
+        sx-a @ sx-pos @ + 1+ sx-u @ sx-pos @ - 1- PARSE-NUM IF
+            2DROP
+            NEGATE sx-a @ sx-pos @ ROT TRUE EXIT
+        THEN
+        2DROP FALSE EXIT
+    THEN
+    DROP
+    2DROP FALSE ;
 
 \ Resolve a symbol name to a virtual address
 : RESOLVE ( addr u -- vaddr )
@@ -638,9 +690,20 @@ VARIABLE find-ch-val
 \ Parse a jump target — result is PC-relative offset (for JAL)
 : PARSE-TARGET ( addr u -- offset )
     2DUP PARSE-NUM IF NIP NIP EXIT THEN
-    RESOLVE
-    \ Subtract current PC (text section)
-    text-va @ asm-tsz @ + - ;
+    2DUP SYM-FIND DUP -1 = IF
+        DROP
+        \ Unresolved JAL target: keep placeholder and emit relocation.
+        \ Linker resolves final PC-relative offset.
+        2DUP
+        imm-sym-len ! imm-sym-addr !
+        CUR-OFF @ REL-JAL 0 imm-sym-addr @ imm-sym-len @ ADD-RELOC
+        2DROP
+        0
+    ELSE
+        SYM-VA
+        \ Subtract current PC (text section)
+        text-va @ asm-tsz @ + -
+    THEN ;
 
 \ Parse a branch target — result is PC+4 relative offset (for BEQ/BNE/BLT etc.)
 : PARSE-BTARGET ( addr u -- offset )
@@ -772,8 +835,8 @@ VARIABLE find-ch-val
 \ HALT (R-type: opcode=127, rd=0, rs1=0, rs2=0)
 : DO-HALT  127 0 0 0 ENC-R EMIT-W32 ;
 
-\ YIELD (R-type: opcode=80)
-: DO-YIELD  80 0 0 0 ENC-R EMIT-W32 ;
+\ YIELD (R-type: opcode=81)
+: DO-YIELD  81 0 0 0 ENC-R EMIT-W32 ;
 
 \ === Pseudo-Instructions ===
 \ nop = add r0, r0, r0 (opcode 0)
@@ -862,25 +925,18 @@ VARIABLE li-rd
 : DO-BSS    2 asm-sect ! ;
 
 : DO-WORD
-    BEGIN
-        GET-TOK DUP 0=
-        IF 2DROP EXIT THEN
-        2DUP PARSE-NUM IF
-            NIP NIP EMIT-W32
-        ELSE
-            \ Symbol reference — record REL-32 reloc, emit placeholder
-            imm-sym-len ! imm-sym-addr !
-            CUR-OFF @ REL-32 0 imm-sym-addr @ imm-sym-len @ ADD-RELOC
-            0 EMIT-W32
-        THEN
-    AGAIN ;
+    GET-TOK
+    2DUP PARSE-NUM IF
+        NIP NIP EMIT-W32
+    ELSE
+        \ Symbol reference — record REL-32 reloc, emit placeholder
+        imm-sym-len ! imm-sym-addr !
+        CUR-OFF @ REL-32 0 imm-sym-addr @ imm-sym-len @ ADD-RELOC
+        0 EMIT-W32
+    THEN ;
 
 : DO-BYTE
-    BEGIN
-        GET-TOK DUP 0=
-        IF 2DROP EXIT THEN
-        PARSE-IMM 255 AND EMIT-B
-    AGAIN ;
+    GET-TOK PARSE-IMM 255 AND EMIT-B ;
 
 : DO-HALF
     GET-TOK PARSE-IMM
@@ -968,6 +1024,11 @@ VARIABLE li-rd
 : DO-SPACE
     GET-TOK PARSE-NUM 0= IF S" bad .space size" ASM-ERR EXIT THEN
     0 ?DO 0 EMIT-B LOOP ;
+
+: SAVE-OUT-PATH ( addr u -- )
+    DUP 255 > IF DROP 255 THEN
+    DUP out-path-len !
+    out-path SWAP CMOVE ;
 
 : DO-ALIGN
     GET-TOK PARSE-NUM 0= IF S" bad .align value" ASM-ERR EXIT THEN
@@ -1284,6 +1345,7 @@ CREATE hdr-buf 256 ALLOT
 
 \ === Main Entry Point ===
 : ASSEMBLE ( input-addr input-u output-addr output-u -- )
+    2DUP SAVE-OUT-PATH
     2SWAP
     \ Initialize
     0 sym-cnt !  0 sname-ptr !
@@ -1309,13 +1371,20 @@ CREATE hdr-buf 256 ALLOT
     2 RUN-PASS
     ." Pass 2 done. relocs=" reloc-cnt @ . CR
 
+    \ Some parser paths can leave transient values on the data stack for
+    \ larger inputs; keep only (output-addr output-u) before final emit.
+    DEPTH 2 > IF
+        ." warning: stack leak before WRITE-S32O, depth=" DEPTH . CR
+        BEGIN DEPTH 2 > WHILE DROP REPEAT
+    THEN
+
     \ Check for errors
     asm-errs @ 0<> IF
         ." FAILED: " asm-errs @ . ." errors" CR
-        2DROP EXIT
+        EXIT
     THEN
 
     \ Write output
     ." Writing..." CR
-    WRITE-S32O
+    out-path out-path-len @ WRITE-S32O
     ." Done." CR ;

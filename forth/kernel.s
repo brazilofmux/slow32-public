@@ -642,12 +642,24 @@ head_hello:
     .align 2
 xt_hello:
     .word docol_word
-    .word xt_lit, 72, xt_emit  # H
-    .word xt_lit, 101, xt_emit # e
-    .word xt_lit, 108, xt_emit # l
-    .word xt_lit, 108, xt_emit # l
-    .word xt_lit, 111, xt_emit # o
-    .word xt_lit, 10, xt_emit  # \n
+    .word xt_lit
+    .word 72
+    .word xt_emit  # H
+    .word xt_lit
+    .word 101
+    .word xt_emit # e
+    .word xt_lit
+    .word 108
+    .word xt_emit # l
+    .word xt_lit
+    .word 108
+    .word xt_emit # l
+    .word xt_lit
+    .word 111
+    .word xt_emit # o
+    .word xt_lit
+    .word 10
+    .word xt_emit  # \n
     .word xt_exit
 
 
@@ -5394,51 +5406,73 @@ str_banner:
 .text
 cold_start_body:
     # Initialize BASE to 10
-    .word xt_lit, 10
+    .word xt_lit
+    .word 10
     .word xt_base
     .word xt_store
 
     # Print banner
-    .word xt_lit, str_banner, xt_lit, 14, xt_type
+    .word xt_lit
+    .word str_banner
+    .word xt_lit
+    .word 14
+    .word xt_type
 
     # REPL loop
 cold_loop:
     # Conditional prompt: check var_prompt_enabled
-    .word xt_lit, var_prompt_enabled
+    .word xt_lit
+    .word var_prompt_enabled
     .word xt_fetch
-    .word xt_0branch, (cold_after_prompt - .Lcp1)
+    .word xt_0branch
+    .word 20
 .Lcp1:
-    .word xt_lit, str_prompt, xt_lit, 4, xt_type
+    .word xt_lit
+    .word str_prompt
+    .word xt_lit
+    .word 4
+    .word xt_type
 
 cold_after_prompt:
     .word xt_tib       # TIB address
-    .word xt_lit, 256  # Max length
+    .word xt_lit
+    .word 256  # Max length
     .word xt_accept    # Returns count (-1 = EOF)
 
     # Check EOF: count == -1?
-    .word xt_dup, xt_lit, -1, xt_equals
-    .word xt_0branch, (.Lcp3 - .Lcp2)
+    .word xt_dup
+    .word xt_lit
+    .word -1
+    .word xt_equals
+    .word xt_0branch
+    .word 8
 .Lcp2:
-    .word xt_drop, xt_bye  # EOF: exit
+    .word xt_drop
+    .word xt_bye  # EOF: exit
 
 .Lcp3:
     # Check blank line: count == 0?
-    .word xt_dup, xt_zero_equal
-    .word xt_0branch, (.Lcp6 - .Lcp4)
+    .word xt_dup
+    .word xt_zero_equal
+    .word xt_0branch
+    .word 12
 .Lcp4:
     .word xt_drop
-    .word xt_branch, (cold_loop - .Lcp5)
+    .word xt_branch
+    .word -116
 .Lcp5:
 
 .Lcp6:
     # Normal line: interpret
     .word xt_num_tib   # #TIB address
     .word xt_store     # #TIB !
-    .word xt_lit, 0
+    .word xt_lit
+    .word 0
     .word xt_to_in
     .word xt_store     # >IN !
     .word xt_interpret
-    .word xt_branch, (cold_loop - .Lcp7)
+    .word xt_branch
+    .word -152
 .Lcp7:
 
 
