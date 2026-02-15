@@ -420,8 +420,8 @@ static void mmio_process(emu_t *e) {
                 rc = fstat(hfd, &st);
             }
             if (rc != 0) { r_status = MMIO_STATUS_ERR; break; }
-            /* Write s32_mmio_stat_result_t (104 bytes, packed) */
-            uint8_t buf[104];
+            /* Write s32_mmio_stat_result_t (112 bytes, packed) */
+            uint8_t buf[112];
             memset(buf, 0, sizeof(buf));
             uint64_t tmp;
             tmp = (uint64_t)st.st_dev;   memcpy(buf + 0, &tmp, 8);
@@ -446,7 +446,7 @@ static void mmio_process(emu_t *e) {
             t32 = (uint32_t)st.st_mtim.tv_nsec; memcpy(buf + 88, &t32, 4);
             /* ctime */
             tmp = (uint64_t)st.st_ctim.tv_sec;  memcpy(buf + 96, &tmp, 8);
-            t32 = (uint32_t)st.st_ctim.tv_nsec; memcpy(buf + 104 - 4, &t32, 4);
+            t32 = (uint32_t)st.st_ctim.tv_nsec; memcpy(buf + 104, &t32, 4);
             memcpy(data + off, buf, sizeof(buf));
             r_length = sizeof(buf);
             break;
