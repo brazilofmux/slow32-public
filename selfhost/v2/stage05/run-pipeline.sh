@@ -15,6 +15,7 @@ EMU_EXPLICIT=0
 CC_FTH="${SELFHOST_CC_FTH:-$ROOT_DIR/selfhost/v2/stage04/cc.fth}"
 ASM_FTH="${SELFHOST_ASM_FTH:-$ROOT_DIR/selfhost/v2/stage01/asm.fth}"
 LINK_FTH="${SELFHOST_LINK_FTH:-$ROOT_DIR/selfhost/v2/stage03/link.fth}"
+AR_FTH="${SELFHOST_AR_FTH:-$ROOT_DIR/selfhost/v2/stage02/ar.fth}"
 
 TEST_DIR="${SELFHOST_TEST_DIR:-$ROOT_DIR/selfhost/v2/stage04/tests}"
 VALIDATION_DIR="${SELFHOST_VALIDATION_DIR:-$ROOT_DIR/selfhost/v2/stage04/validation}"
@@ -41,7 +42,7 @@ choose_default_emu() {
 
 usage() {
     cat <<USAGE
-Usage: $0 [--mode baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage6-ar-smoke|stage6-ar-scan-smoke|stage6-ar-asm-diff|stage6-utility-smoke] [--test <name>] [--emu <path>] [--keep-artifacts]
+Usage: $0 [--mode baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage6-ar-smoke|stage6-ar-rc-smoke|stage6-ar-scan-smoke|stage6-ar-asm-diff|stage6-utility-smoke] [--test <name>] [--emu <path>] [--keep-artifacts]
 
 Modes:
   baseline          Stage4 cc.fth + Stage1 asm.fth + Stage3 link.fth
@@ -49,13 +50,14 @@ Modes:
   progressive-as-ar Stage4 cc.fth + Stage5 s32-as.c + Stage6 s32-ar.c smoke-check + Stage3 link.fth
   progressive-as-ar-scan Same as progressive-as-ar, but runs s32-ar with opt-in symbol scan flag
   stage6-ar-smoke   Build stage5 assembler, then stage6 s32-ar.c with stage5 assembler; run archive smoke only
+  stage6-ar-rc-smoke Build stage5 assembler, then stage6 s32-ar.c with stage5 assembler; verify replace-on-existing (rc) path
   stage6-ar-scan-smoke Build stage5 assembler, then stage6 s32-ar-scan.c with stage5 assembler; run archive smoke with cmd=cs only
   stage6-ar-asm-diff Build stage5 assembler, assemble a validation .c with stage5 and forth, link both, and report first .s32x/.s32o byte diff
   stage6-utility-smoke Build a validation utility with stage5 and forth assemblers, require linked .s32x parity, then compare runtime output
 
 Env overrides:
   SELFHOST_ROOT SELFHOST_EMU SELFHOST_KERNEL SELFHOST_PRELUDE
-  SELFHOST_CC_FTH SELFHOST_ASM_FTH SELFHOST_LINK_FTH
+  SELFHOST_CC_FTH SELFHOST_ASM_FTH SELFHOST_LINK_FTH SELFHOST_AR_FTH
   SELFHOST_TEST_DIR SELFHOST_VALIDATION_DIR
 USAGE
 }
@@ -94,7 +96,7 @@ if [[ "$MODE" == "stage6-utility-smoke" && "$EMU_EXPLICIT" -eq 0 && -z "${SELFHO
 fi
 
 case "$MODE" in
-    baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage6-ar-smoke|stage6-ar-scan-smoke|stage6-ar-asm-diff|stage6-utility-smoke) ;;
+    baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage6-ar-smoke|stage6-ar-rc-smoke|stage6-ar-scan-smoke|stage6-ar-asm-diff|stage6-utility-smoke) ;;
     *)
         echo "Unknown mode: $MODE" >&2
         usage
@@ -102,7 +104,7 @@ case "$MODE" in
         ;;
 esac
 
-for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH"; do
+for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH" "$AR_FTH"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
 
@@ -275,6 +277,49 @@ stage6_archive_smoke() {
     [[ -s "$archive" ]] || { echo "stage6 archiver produced no output" >&2; return 1; }
 }
 
+stage6_archive_rc_smoke() {
+    local archive="$WORKDIR/smoke-rc.s32a"
+    local base_obj="$ROOT_DIR/runtime/divsi3.s32o"
+    local keep_obj="$ROOT_DIR/runtime/crt0.s32o"
+    local repl_src="$ROOT_DIR/runtime/builtins.s32o"
+    local repl_obj="$WORKDIR/divsi3.s32o"
+    local xdir="$WORKDIR/extract"
+    local xlog="$WORKDIR/s32-ar.extract.log"
+    local rc=0
+
+    [[ -f "$base_obj" && -f "$keep_obj" && -f "$repl_src" ]] || {
+        echo "Missing runtime object required for rc smoke" >&2
+        return 1
+    }
+    cp "$repl_src" "$repl_obj"
+
+    run_exe "$STAGE6_AR_EXE" "$WORKDIR/s32-ar.rc-create.log" "c" "$archive" "$base_obj" "$keep_obj"
+    run_exe "$STAGE6_AR_EXE" "$WORKDIR/s32-ar.rc-replace.log" "rc" "$archive" "$repl_obj"
+    [[ -s "$archive" ]] || { echo "stage6 archiver produced no output" >&2; return 1; }
+
+    mkdir -p "$xdir"
+    set +e
+    (
+        cd "$xdir"
+        cat "$PRELUDE" "$AR_FTH" - <<FTH | timeout 120 "$EMU" "$KERNEL" >"$xlog" 2>&1
+S" $archive" S" divsi3.s32o" AR-X1
+BYE
+FTH
+    )
+    rc=$?
+    set -e
+    if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
+        echo "forth extraction failed after stage6 rc replace (rc=$rc)" >&2
+        tail -n 40 "$xlog" >&2
+        return 1
+    fi
+    [[ -s "$xdir/divsi3.s32o" ]] || { echo "replaced member missing after extract" >&2; return 1; }
+    cmp -s "$repl_obj" "$xdir/divsi3.s32o" || {
+        echo "replaced member content mismatch after rc" >&2
+        return 1
+    }
+}
+
 resolve_validation_source() {
     local name="$1"
     if [[ "$name" = /* ]] || [[ "$name" == *.c ]]; then
@@ -290,6 +335,11 @@ case "$MODE" in
         TARGET_OBJ="$ROOT_DIR/runtime/crt0.s32o"
         build_stage6_archiver "$VALIDATION_DIR/s32-ar.c" stage5
         stage6_archive_smoke
+        ;;
+    stage6-ar-rc-smoke)
+        build_stage5_assembler
+        build_stage6_archiver "$VALIDATION_DIR/s32-ar.c" stage5
+        stage6_archive_rc_smoke
         ;;
     stage6-ar-scan-smoke)
         build_stage5_assembler
@@ -437,7 +487,7 @@ case "$MODE" in
         ;;
 esac
 
-if [[ "$MODE" != "stage6-ar-smoke" && "$MODE" != "stage6-ar-scan-smoke" && "$MODE" != "stage6-ar-asm-diff" && "$MODE" != "stage6-utility-smoke" ]]; then
+if [[ "$MODE" != "stage6-ar-smoke" && "$MODE" != "stage6-ar-rc-smoke" && "$MODE" != "stage6-ar-scan-smoke" && "$MODE" != "stage6-ar-asm-diff" && "$MODE" != "stage6-utility-smoke" ]]; then
     link_forth "$TARGET_OBJ" "$TARGET_EXE" "$WORKDIR/target.ld.log"
     run_exe "$TARGET_EXE" "$WORKDIR/target.run.log"
 fi
@@ -445,6 +495,10 @@ fi
 echo "OK: stage05 pipeline ($MODE)"
 if [[ "$MODE" == "stage6-ar-smoke" || "$MODE" == "stage6-ar-scan-smoke" ]]; then
     echo "Input member: $TARGET_OBJ"
+    echo "Assembler path: c(stage05) for s32-as and stage6 smoke asm"
+    echo "Linker path: forth(stage03)"
+elif [[ "$MODE" == "stage6-ar-rc-smoke" ]]; then
+    echo "Input members: runtime/divsi3.s32o runtime/crt0.s32o (replace divsi3.s32o)"
     echo "Assembler path: c(stage05) for s32-as and stage6 smoke asm"
     echo "Linker path: forth(stage03)"
 elif [[ "$MODE" == "stage6-ar-asm-diff" ]]; then
@@ -470,6 +524,8 @@ else
 fi
 if [[ "$MODE" == "progressive-as-ar" || "$MODE" == "stage6-ar-smoke" ]]; then
     echo "Archiver smoke: c(stage06)"
+elif [[ "$MODE" == "stage6-ar-rc-smoke" ]]; then
+    echo "Archiver smoke: c(stage06, cmd=rc replace)"
 elif [[ "$MODE" == "progressive-as-ar-scan" || "$MODE" == "stage6-ar-scan-smoke" ]]; then
     echo "Archiver smoke: c(stage06, cmd=cs)"
 elif [[ "$MODE" == "stage6-ar-asm-diff" ]]; then

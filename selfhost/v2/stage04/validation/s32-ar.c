@@ -4,16 +4,24 @@
 
 #define MAX_MEMBERS 64
 #define MAX_STRTAB 32768
+#define MAX_DATA (4u * 1024u * 1024u)
+#define SRC_FILE 1
+#define SRC_BUFFER 2
 
 typedef struct {
     const char *path;
     uint32_t name_off;
     uint32_t size;
     uint32_t data_off;
+    uint32_t src_kind;
+    uint32_t src_off;
 } member_t;
 
 static member_t g_members[MAX_MEMBERS];
 static uint8_t g_strtab[MAX_STRTAB];
+static uint8_t g_old_strtab[MAX_STRTAB];
+static uint8_t g_data[MAX_DATA];
+static uint32_t g_data_used;
 
 static void w16(FILE *f, uint16_t v) {
     fputc((int)(v & 0xFF), f);
@@ -25,6 +33,10 @@ static void w32(FILE *f, uint32_t v) {
     fputc((int)((v >> 8) & 0xFF), f);
     fputc((int)((v >> 16) & 0xFF), f);
     fputc((int)((v >> 24) & 0xFF), f);
+}
+
+static uint32_t r32(const uint8_t *p) {
+    return ((uint32_t)p[0]) | (((uint32_t)p[1]) << 8) | (((uint32_t)p[2]) << 16) | (((uint32_t)p[3]) << 24);
 }
 
 static int has_flag(const char *cmd, char ch) {
@@ -73,7 +85,16 @@ static uint32_t append_strtab(const char *s, uint32_t *str_used) {
     return off;
 }
 
-static int copy_member_data(FILE *out, const char *path) {
+static int find_member_by_name(const char *name, uint32_t nmembers) {
+    uint32_t i;
+    for (i = 0; i < nmembers; i++) {
+        const char *cur = (const char *)(g_strtab + g_members[i].name_off);
+        if (strcmp(cur, name) == 0) return (int)i;
+    }
+    return -1;
+}
+
+static int copy_member_file(FILE *out, const char *path) {
     FILE *in = fopen(path, "rb");
     int ch;
     if (!in) return 0;
@@ -87,6 +108,17 @@ static int copy_member_data(FILE *out, const char *path) {
     }
     fclose(in);
     return 1;
+}
+
+static int copy_member_data(FILE *out, const member_t *m) {
+    if (m->src_kind == SRC_FILE) {
+        return copy_member_file(out, m->path);
+    }
+    if (m->src_kind == SRC_BUFFER) {
+        if (m->src_off + m->size > g_data_used) return 0;
+        return fwrite(g_data + m->src_off, 1, m->size, out) == m->size;
+    }
+    return 0;
 }
 
 static int write_archive(const char *out_path, uint32_t nmembers, uint32_t str_used) {
@@ -132,13 +164,142 @@ static int write_archive(const char *out_path, uint32_t nmembers, uint32_t str_u
     }
 
     for (i = 0; i < nmembers; i++) {
-        if (!copy_member_data(out, g_members[i].path)) {
+        if (!copy_member_data(out, &g_members[i])) {
             fclose(out);
             return 0;
         }
     }
 
     if (fclose(out) != 0) return 0;
+    return 1;
+}
+
+static int load_existing_archive(const char *archive_path, uint32_t *nmembers, uint32_t *str_used) {
+    FILE *in = fopen(archive_path, "rb");
+    long end_pos;
+    uint32_t file_size;
+    uint8_t hdr[32];
+    uint32_t in_nmembers;
+    uint32_t in_mem_off;
+    uint32_t in_str_off;
+    uint32_t in_str_sz;
+    uint32_t i;
+
+    if (!in) return 0;
+    if (fseek(in, 0, SEEK_END) != 0) {
+        fclose(in);
+        return 0;
+    }
+    end_pos = ftell(in);
+    if (end_pos < 32) {
+        fclose(in);
+        return 0;
+    }
+    file_size = (uint32_t)end_pos;
+    if (fseek(in, 0, SEEK_SET) != 0) {
+        fclose(in);
+        return 0;
+    }
+    if (fread(hdr, 1, 32, in) != 32) {
+        fclose(in);
+        return 0;
+    }
+
+    if (hdr[0] != 'A' || hdr[1] != '2' || hdr[2] != '3' || hdr[3] != 'S') {
+        fclose(in);
+        return 0;
+    }
+
+    in_nmembers = r32(hdr + 8);
+    in_mem_off = r32(hdr + 12);
+    in_str_off = r32(hdr + 24);
+    in_str_sz = r32(hdr + 28);
+
+    if (in_nmembers > MAX_MEMBERS) {
+        fclose(in);
+        return 0;
+    }
+    if (in_str_sz > MAX_STRTAB) {
+        fclose(in);
+        return 0;
+    }
+    if (in_mem_off + in_nmembers * 24u > file_size) {
+        fclose(in);
+        return 0;
+    }
+    if (in_str_off + in_str_sz > file_size) {
+        fclose(in);
+        return 0;
+    }
+
+    if (fseek(in, (long)in_str_off, SEEK_SET) != 0) {
+        fclose(in);
+        return 0;
+    }
+    if (in_str_sz > 0 && fread(g_old_strtab, 1, in_str_sz, in) != in_str_sz) {
+        fclose(in);
+        return 0;
+    }
+
+    for (i = 0; i < in_nmembers; i++) {
+        uint8_t ent[24];
+        uint32_t ent_off = in_mem_off + i * 24u;
+        uint32_t name_off;
+        uint32_t data_off;
+        uint32_t size;
+        uint32_t off;
+
+        if (fseek(in, (long)ent_off, SEEK_SET) != 0) {
+            fclose(in);
+            return 0;
+        }
+        if (fread(ent, 1, 24, in) != 24) {
+            fclose(in);
+            return 0;
+        }
+
+        name_off = r32(ent + 0);
+        data_off = r32(ent + 4);
+        size = r32(ent + 8);
+
+        if (name_off >= in_str_sz) {
+            fclose(in);
+            return 0;
+        }
+        if (data_off + size > file_size) {
+            fclose(in);
+            return 0;
+        }
+        if (g_data_used + size > MAX_DATA) {
+            fclose(in);
+            return 0;
+        }
+        if (fseek(in, (long)data_off, SEEK_SET) != 0) {
+            fclose(in);
+            return 0;
+        }
+        if (size > 0 && fread(g_data + g_data_used, 1, size, in) != size) {
+            fclose(in);
+            return 0;
+        }
+
+        off = append_strtab((const char *)(g_old_strtab + name_off), str_used);
+        if (off == 0xFFFFFFFFu) {
+            fclose(in);
+            return 0;
+        }
+
+        g_members[*nmembers].path = archive_path;
+        g_members[*nmembers].name_off = off;
+        g_members[*nmembers].size = size;
+        g_members[*nmembers].data_off = 0;
+        g_members[*nmembers].src_kind = SRC_BUFFER;
+        g_members[*nmembers].src_off = g_data_used;
+        g_data_used += size;
+        *nmembers = *nmembers + 1;
+    }
+
+    fclose(in);
     return 1;
 }
 
@@ -155,20 +316,41 @@ int main(int argc, char **argv) {
     if (!has_flag(cmd, 'c') && !has_flag(cmd, 'r')) return 1;
 
     g_strtab[0] = 0;
+    g_data_used = 0;
+
+    if (has_flag(cmd, 'r')) {
+        int loaded = load_existing_archive(archive, &nmembers, &str_used);
+        if (!loaded && !has_flag(cmd, 'c')) return 1;
+    }
+
     for (i = 3; i < argc; i++) {
         const char *path = argv[i];
         const char *name = basename_ptr(path);
-        uint32_t off;
+        uint32_t size;
+        int idx;
 
-        if (nmembers >= MAX_MEMBERS) return 1;
-        if (!count_file_bytes(path, &g_members[nmembers].size)) return 1;
-        off = append_strtab(name, &str_used);
-        if (off == 0xFFFFFFFFu) return 1;
+        if (!count_file_bytes(path, &size)) return 1;
 
-        g_members[nmembers].path = path;
-        g_members[nmembers].name_off = off;
-        g_members[nmembers].data_off = 0;
-        nmembers++;
+        idx = find_member_by_name(name, nmembers);
+        if (idx >= 0) {
+            g_members[idx].path = path;
+            g_members[idx].size = size;
+            g_members[idx].src_kind = SRC_FILE;
+            g_members[idx].src_off = 0;
+        } else {
+            uint32_t off;
+            if (nmembers >= MAX_MEMBERS) return 1;
+            off = append_strtab(name, &str_used);
+            if (off == 0xFFFFFFFFu) return 1;
+
+            g_members[nmembers].path = path;
+            g_members[nmembers].name_off = off;
+            g_members[nmembers].size = size;
+            g_members[nmembers].data_off = 0;
+            g_members[nmembers].src_kind = SRC_FILE;
+            g_members[nmembers].src_off = 0;
+            nmembers++;
+        }
     }
 
     if (!write_archive(archive, nmembers, str_used)) return 1;

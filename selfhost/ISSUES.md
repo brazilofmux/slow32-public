@@ -65,12 +65,11 @@ This was cleaned up during the v2 relocation. Both `EMIT-LI-R1` and `EMIT-LI-R2`
 
 ## Stage 6: Subset C Archiver (`s32-ar.c`)
 
-### 12. [SPIKE] Hardcoded Limitations in `s32-ar.c`
-The current `selfhost/v2/stage04/validation/s32-ar.c` is a minimal spike with several hardcoded limitations:
-- It only supports exactly one object file in an archive.
-- The member name in the archive is hardcoded to "divsi3.s32o" regardless of input filename.
-- It ignores the command argument (e.g., 'c', 'rc').
-This must be replaced with a proper subset implementation before Stage 6 can be considered complete.
+### 12. [NARROWED] Stage06 `s32-ar.c` Needs Full Command Coverage
+The Stage06 subset archiver (`selfhost/v2/stage04/validation/s32-ar.c`) now supports bounded multi-member create and real `rc` replace-on-existing behavior with basename matching.
+
+Remaining gap:
+- Expand command surface and parity checks for `t/x/d/m/v/p` paths before Stage06 can be considered complete.
 
 ---
 
