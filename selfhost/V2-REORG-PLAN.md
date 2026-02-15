@@ -33,6 +33,14 @@ Actions:
 - Add wrapper scripts that reference new locations but keep old entry points.
 - Make core stage scripts path-override aware so they run from both legacy and v2 trees.
 
+Progress (2026-02-15):
+
+- Added stage04 bucket manifests under `selfhost/v2/stage04/tests/manifests/`.
+- Added bucket lister utility `selfhost/v2/stage04/tests/list-bucket.sh`.
+- Added path-override-aware runners:
+  - `selfhost/stage2/run-regression.sh`
+  - `selfhost/stage3/run-regression.sh`
+
 Validation gate:
 - `selfhost/stage4/run-regression.sh` passes unchanged.
 - New wrapper entry points pass same checks.
