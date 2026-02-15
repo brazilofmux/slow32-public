@@ -76,13 +76,19 @@ This must be replaced with a proper subset implementation before Stage 6 can be 
 
 ## Bootstrap Flow / Runtime Artifacts
 
-### 15. [BOOTSTRAP] Stage04+ Depends on Seeded Runtime Binaries
+### 15. [BOOTSTRAP] Stage04+ Depends on Seeded Runtime Binaries (Narrowed)
 Current Stage04 regression expects these prebuilt runtime artifacts to already exist:
 - `runtime/crt0.s32o`
 - `runtime/libc_mmio.s32a`
 - `runtime/libs32.s32a`
 
 For new users (or clean environments like Raspberry Pi), copying these files from another machine works as a temporary compromise, but it is not aligned with the long-term self-hosting goal.
+
+Progress:
+- Stage01 minimal runtime assembly inputs now exist in-tree:
+  - `selfhost/v2/stage01/crt0_minimal.s`
+  - `selfhost/v2/stage01/mmio_minimal.s`
+- This closes the "missing minimal assembly runtime sources" portion of the issue.
 
 Target direction:
 - Provide a selfhost-built runtime path under `./selfhost` that can be produced with Stage01/Stage02 tools (assembler + archiver), starting from minimal runtime needs.
