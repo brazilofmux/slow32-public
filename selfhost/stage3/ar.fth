@@ -14,6 +14,7 @@
 \   AR-C-END
 \   S" /tmp/new.s32a" AR-R-BEGIN
 \   S" runtime/builtins.s32o" AR-ADD
+\   S" divsi3.s32o" AR-D
 \   AR-R-END
 \
 \ Runs inside the Forth kernel on the Stage 0 emulator.
@@ -201,6 +202,21 @@ VARIABLE sym-midx
     t-size @ R@ CELLS m-size + !
     m-cnt @ 1+ m-cnt !
     R> ;
+
+: MEMBER-REMOVE-IDX ( idx -- ok? )
+    DUP 0< IF DROP FALSE EXIT THEN
+    DUP m-cnt @ >= IF DROP FALSE EXIT THEN
+    t-off !
+    m-cnt @ 1- t-size !
+    t-off @ t-size @ <> IF
+        t-size @ CELLS m-noff + @ t-off @ CELLS m-noff + !
+        t-size @ CELLS m-nlen + @ t-off @ CELLS m-nlen + !
+        t-size @ CELLS m-doff + @ t-off @ CELLS m-doff + !
+        t-size @ CELLS m-size + @ t-off @ CELLS m-size + !
+        t-size @ CELLS m-out-noff + @ t-off @ CELLS m-out-noff + !
+    THEN
+    m-cnt @ 1- m-cnt !
+    TRUE ;
 
 : DATA-ALLOC ( size -- off ok? )
     mdata-sz @ OVER + MDATA-BUF-SZ > IF DROP 0 FALSE EXIT THEN
@@ -621,9 +637,17 @@ VARIABLE sym-midx
     THEN
     ." a - " t-addr @ t-len @ TYPE CR ;
 
+: AR-D ( name-addr name-len -- )
+    BASENAME t-len ! t-addr !
+    t-addr @ t-len @ MEMBER-FIND DUP 0< IF
+        DROP ." d? - " t-addr @ t-len @ TYPE CR EXIT
+    THEN
+    MEMBER-REMOVE-IDX DROP
+    ." d - " t-addr @ t-len @ TYPE CR ;
+
 : AR-C-END ( -- ) WRITE-ARCHIVE ;
 : AR-R-END ( -- ) WRITE-ARCHIVE ;
 
 0 ar-is-open !
 
-." Stage 3 archiver spike loaded (AR-T/AR-X/AR-C/AR-R)." CR
+." Stage 3 archiver spike loaded (AR-T/AR-X/AR-C/AR-R/AR-D)." CR
