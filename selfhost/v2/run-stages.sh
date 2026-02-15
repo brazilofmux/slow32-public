@@ -28,10 +28,11 @@ EMU="$EMU_DEFAULT"
 
 FROM="stage00"
 TO="stage05"
+SKIP_SELFHOST_KERNEL=0
 
 usage() {
     cat <<USAGE
-Usage: $0 [--from stage00] [--to stage05] [--emu <path>]
+Usage: $0 [--from stage00] [--to stage05] [--emu <path>] [--skip-selfhost-kernel]
 
 Runs ordered V2 stage checks so a clean checkout can be validated end-to-end.
 
@@ -42,6 +43,8 @@ Options:
   --from stageNN   Start stage (stage00..stage05)
   --to stageNN     End stage (stage00..stage05)
   --emu path       Emulator for stage01..stage05 (default: slow32-fast, then stage00 s32-emu, then slow32)
+  --skip-selfhost-kernel
+                   Skip stage03 selfhost-kernel regeneration/boot gate (dev fast-path)
 USAGE
 }
 
@@ -61,6 +64,9 @@ while [[ $# -gt 0 ]]; do
             shift
             [[ $# -gt 0 ]] || { echo "--emu requires a path" >&2; exit 2; }
             EMU="$1"
+            ;;
+        --skip-selfhost-kernel)
+            SKIP_SELFHOST_KERNEL=1
             ;;
         -h|--help)
             usage
@@ -122,7 +128,11 @@ run_stage03() {
     echo "[stage03] linker regression"
     STAGE3_EMU="$EMU" "$ROOT_DIR/selfhost/v2/stage03/run-regression.sh" test3 >/tmp/v2-stage03-test3.log 2>&1
     STAGE3_EMU="$EMU" "$ROOT_DIR/selfhost/v2/stage03/run-regression.sh" archive >/tmp/v2-stage03-archive.log 2>&1
-    SELFHOST_EMU="$EMU" "$ROOT_DIR/selfhost/v2/stage03/run-selfhost-kernel.sh" >/tmp/v2-stage03-selfhost-kernel.log 2>&1
+    if [[ "$SKIP_SELFHOST_KERNEL" -eq 0 ]]; then
+        SELFHOST_EMU="$EMU" "$ROOT_DIR/selfhost/v2/stage03/run-selfhost-kernel.sh" >/tmp/v2-stage03-selfhost-kernel.log 2>&1
+    else
+        echo "[stage03] skipping selfhost kernel regeneration gate (--skip-selfhost-kernel)"
+    fi
 }
 
 run_stage04() {

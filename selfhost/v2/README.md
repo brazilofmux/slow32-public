@@ -23,6 +23,12 @@ For a clean checkout sanity pass (stage00 -> stage05):
 selfhost/v2/run-stages.sh
 ```
 
+For faster local loops, you can skip the Stage03 selfhost-kernel regen gate:
+
+```bash
+selfhost/v2/run-stages.sh --skip-selfhost-kernel
+```
+
 Manual per-stage entry points:
 - `stage00`: `make -C selfhost/v2/stage00 && make -C selfhost/v2/stage00 test`
 - `stage01`: `selfhost/v2/stage01/run-regression.sh test1`
