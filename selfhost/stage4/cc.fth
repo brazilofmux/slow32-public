@@ -316,6 +316,7 @@ VARIABLE label-cnt          \ next label number
 VARIABLE frame-size         \ current function frame size
 VARIABLE func-nargs         \ number of args in current function
 VARIABLE local-offset       \ next local variable offset (grows negative from FP)
+256 CONSTANT FUNC-FRAME-SZ  \ fixed stage4 frame size
 VARIABLE in-function        \ are we inside a function?
 
 \ Break/continue label stacks
@@ -523,34 +524,19 @@ VARIABLE is-lvalue          \ 1 if last expr result is an lvalue address in r1
     ENDCASE ;
 
 : TYPE-SIZE ( type -- n )
-    DUP TYPE-IS-PTR IF DROP 4 EXIT THEN
     DUP TYPE-IS-ARRAY IF
-        DUP TYPE-ARRAY-COUNT >R  \ save count
-        \ Element type: strip array count (bits 16-31), keep struct index (bits 9-15)
-        CLR-ARR-MASK AND
-        DUP TYPE-BASE TY-STRUCT = IF
-            9 RSHIFT 127 AND  \ extract struct index
-            STRUCT-SIZE
-            R> * EXIT
-        THEN
-        DUP TYPE-BASE CASE
-            TY-VOID   OF DROP 1 ENDOF
-            TY-CHAR   OF DROP 1 ENDOF
-            TY-SHORT  OF DROP 2 ENDOF
-            TY-INT    OF DROP 4 ENDOF
-            TY-LONG   OF DROP 4 ENDOF
-            TY-ENUM   OF DROP 4 ENDOF
-            DROP 4
-        ENDCASE
+        DUP TYPE-ARRAY-COUNT >R
+        CLR-ARR-MASK AND TYPE-SIZE
         R> * EXIT
     THEN
+    DUP TYPE-IS-PTR IF DROP 4 EXIT THEN
     DUP TYPE-BASE CASE
         TY-VOID   OF DROP 1 ENDOF
         TY-CHAR   OF DROP 1 ENDOF
         TY-SHORT  OF DROP 2 ENDOF
         TY-INT    OF DROP 4 ENDOF
         TY-LONG   OF DROP 4 ENDOF
-        TY-STRUCT OF DROP 9 RSHIFT 127 AND  \ struct index in bits 9-15
+        TY-STRUCT OF 9 RSHIFT 127 AND  \ struct index in bits 9-15
                      STRUCT-SIZE ENDOF
         TY-ENUM   OF DROP 4 ENDOF
         DROP 4
@@ -3726,8 +3712,8 @@ VARIABLE decl-name-len
     1 in-function !
     NEW-LABEL ret-label !
     \ Local offset is already set by PARSE-PARAMS (after args)
-    \ Emit prologue with fixed frame size (256 bytes).
-    256 EMIT-PROLOGUE
+    \ Emit prologue with fixed frame size.
+    FUNC-FRAME-SZ EMIT-PROLOGUE
     \ Save args to frame
     func-nargs @ 8 MIN 0 ?DO
         I 3 +
@@ -3739,7 +3725,7 @@ VARIABLE decl-name-len
     PARSE-COMPOUND
     \ Emit return label and epilogue
     ret-label @ EMIT-LABEL
-    256 frame-size !
+    FUNC-FRAME-SZ frame-size !
     frame-size @ EMIT-EPILOGUE
     0 in-function !
     OUT-NL ;
