@@ -33,7 +33,7 @@ Modes:
   progressive-as-ar-scan Same as progressive-as-ar, but runs s32-ar with opt-in symbol scan flag
   stage6-ar-smoke   Build stage5 assembler, then stage6 s32-ar.c with forth assembler; run archive smoke only
   stage6-ar-scan-smoke Build stage5 assembler, then stage6 s32-ar-scan.c with forth assembler; run archive smoke with cmd=cs only
-  stage6-ar-asm-diff Build stage5 assembler, assemble a validation .c with stage5 and forth, and report first .s32o byte diff
+  stage6-ar-asm-diff Build stage5 assembler, assemble a validation .c with stage5 and forth, link both, and report first .s32x/.s32o byte diff
 
 Env overrides:
   SELFHOST_ROOT SELFHOST_EMU SELFHOST_KERNEL SELFHOST_PRELUDE
@@ -256,22 +256,34 @@ case "$MODE" in
         TARGET_ASM="$WORKDIR/s32-ar.s"
         TARGET_STAGE5_OBJ="$WORKDIR/s32-ar.stage5.s32o"
         TARGET_FORTH_OBJ="$WORKDIR/s32-ar.forth.s32o"
+        TARGET_STAGE5_EXE="$WORKDIR/s32-ar.stage5.s32x"
+        TARGET_FORTH_EXE="$WORKDIR/s32-ar.forth.s32x"
         compile_c_stage4 "$TARGET_SRC" "$TARGET_ASM" "$WORKDIR/s32-ar.cc.log"
         assemble_with_stage5 "$TARGET_ASM" "$TARGET_STAGE5_OBJ" "$WORKDIR/s32-ar.stage5.as.log"
         assemble_forth "$TARGET_ASM" "$TARGET_FORTH_OBJ" "$WORKDIR/s32-ar.forth.as.log"
+        link_forth "$TARGET_STAGE5_OBJ" "$TARGET_STAGE5_EXE" "$WORKDIR/s32-ar.stage5.ld.log"
+        link_forth "$TARGET_FORTH_OBJ" "$TARGET_FORTH_EXE" "$WORKDIR/s32-ar.forth.ld.log"
 
-        if cmp -s "$TARGET_FORTH_OBJ" "$TARGET_STAGE5_OBJ"; then
-            echo "OK: stage5 and forth assemblers produced identical .s32o"
+        if cmp -s "$TARGET_FORTH_EXE" "$TARGET_STAGE5_EXE"; then
+            if cmp -s "$TARGET_FORTH_OBJ" "$TARGET_STAGE5_OBJ"; then
+                echo "OK: stage5 and forth assemblers produced identical .s32o/.s32x"
+            else
+                echo "OK: linked .s32x is identical (object metadata differs)"
+            fi
         else
-            FIRST_DIFF="$(cmp -l "$TARGET_FORTH_OBJ" "$TARGET_STAGE5_OBJ" 2>/dev/null | head -n 1 || true)"
-            echo "FAIL: stage5 and forth assembler outputs differ"
-            if [[ -n "$FIRST_DIFF" ]]; then
-                echo "First byte diff (1-based offset, forth, stage5): $FIRST_DIFF"
-                OFF_DEC="$(printf '%s\n' "$FIRST_DIFF" | awk '{print $1}')"
+            FIRST_EXE_DIFF="$(cmp -l "$TARGET_FORTH_EXE" "$TARGET_STAGE5_EXE" 2>/dev/null | head -n 1 || true)"
+            FIRST_OBJ_DIFF="$(cmp -l "$TARGET_FORTH_OBJ" "$TARGET_STAGE5_OBJ" 2>/dev/null | head -n 1 || true)"
+            echo "FAIL: stage5 and forth linked outputs differ"
+            if [[ -n "$FIRST_EXE_DIFF" ]]; then
+                echo "First .s32x byte diff (1-based offset, forth, stage5): $FIRST_EXE_DIFF"
+                OFF_DEC="$(printf '%s\n' "$FIRST_EXE_DIFF" | awk '{print $1}')"
                 if [[ -n "$OFF_DEC" ]]; then
                     OFF_HEX="$(printf '0x%X' "$((OFF_DEC - 1))")"
-                    echo "First differing zero-based offset: $OFF_HEX"
+                    echo "First .s32x differing zero-based offset: $OFF_HEX"
                 fi
+            fi
+            if [[ -n "$FIRST_OBJ_DIFF" ]]; then
+                echo "First .s32o byte diff (1-based offset, forth, stage5): $FIRST_OBJ_DIFF"
             fi
             exit 1
         fi
