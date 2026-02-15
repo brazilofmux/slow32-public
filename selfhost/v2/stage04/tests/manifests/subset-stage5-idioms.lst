@@ -4,3 +4,9 @@ selfhost/v2/stage04/tests/subset-idioms/idiom03_le32_decode.c
 selfhost/v2/stage04/tests/subset-idioms/idiom04_basename_match.c
 selfhost/v2/stage04/tests/subset-idioms/idiom05_prefix_parse.c
 selfhost/v2/stage04/tests/subset-idioms/idiom06_param_char_ptr_index.c
+selfhost/v2/stage04/tests/subset-idioms/idiom07_cast_index_uchar.c
+selfhost/v2/stage04/tests/subset-idioms/idiom08_cast_index_short.c
+selfhost/v2/stage04/tests/subset-idioms/idiom09_cast_index_sum.c
+selfhost/v2/stage04/tests/subset-idioms/idiom10_cast_index_var.c
+selfhost/v2/stage04/tests/subset-idioms/idiom11_ptradd_then_index.c
+selfhost/v2/stage04/tests/subset-idioms/idiom12_voidptr_cast_index.c
