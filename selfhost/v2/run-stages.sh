@@ -14,20 +14,20 @@ fi
 EMU="$EMU_DEFAULT"
 
 FROM="stage00"
-TO="stage04"
+TO="stage05"
 
 usage() {
     cat <<USAGE
-Usage: $0 [--from stage00] [--to stage04] [--emu <path>]
+Usage: $0 [--from stage00] [--to stage05] [--emu <path>]
 
 Runs ordered V2 stage checks so a clean checkout can be validated end-to-end.
 
 Default sequence:
-  stage00 -> stage01 -> stage02 -> stage03 -> stage04
+  stage00 -> stage01 -> stage02 -> stage03 -> stage04 -> stage05
 
 Options:
-  --from stageNN   Start stage (stage00..stage04)
-  --to stageNN     End stage (stage00..stage04)
+  --from stageNN   Start stage (stage00..stage05)
+  --to stageNN     End stage (stage00..stage05)
   --emu path       Emulator for stage01..stage04 (default prefers slow32-fast)
 USAGE
 }
@@ -73,6 +73,7 @@ stage_num() {
         stage02) echo 2 ;;
         stage03) echo 3 ;;
         stage04) echo 4 ;;
+        stage05) echo 5 ;;
         *) return 1 ;;
     esac
 }
@@ -115,7 +116,14 @@ run_stage04() {
     STAGE4_EMU="$EMU" "$ROOT_DIR/selfhost/v2/stage04/run-regression.sh" >/tmp/v2-stage04.log 2>&1
 }
 
-for st in stage00 stage01 stage02 stage03 stage04; do
+run_stage05() {
+    echo "[stage05] c-assembler replacement pipeline"
+    "$ROOT_DIR/selfhost/v2/stage05/run-pipeline.sh" --mode progressive-as --test test1 --emu "$EMU" >/tmp/v2-stage05-test1.log 2>&1
+    "$ROOT_DIR/selfhost/v2/stage05/run-pipeline.sh" --mode progressive-as --test test2 --emu "$EMU" >/tmp/v2-stage05-test2.log 2>&1
+    "$ROOT_DIR/selfhost/v2/stage05/run-pipeline.sh" --mode progressive-as --test test3 --emu "$EMU" >/tmp/v2-stage05-test3.log 2>&1
+}
+
+for st in stage00 stage01 stage02 stage03 stage04 stage05; do
     N="$(stage_num "$st")"
     if (( N < FROM_N || N > TO_N )); then
         continue
