@@ -4,8 +4,8 @@ v2_stage	v2_target	current_paths	category	status	notes
 2	selfhost/v2/stage02	selfhost/v2/stage02/ar.fth (canonical),selfhost/stage3/ar.fth and selfhost/v2/stage03/ar.fth (compat links)	code	completed	Stage2 archiver split completed with compatibility links retained.
 3	selfhost/v2/stage03	selfhost/v2/stage03/* (canonical),selfhost/stage3/* (compat symlinks)	code+tests	completed	Stage3 relocated; stage3 runner interface verified from both legacy and v2 entry points.
 4	selfhost/v2/stage04	selfhost/v2/stage04/* (canonical),selfhost/stage4/* (compat symlinks)	code+tests+infra	completed	Stage4 relocated; regression green from both legacy and v2 entry points.
-5	selfhost/v2/stage05	selfhost/v2/stage04/validation/s32-as.c (canonical),selfhost/stage4/validation/s32-as.c (compat)	code+validation	in_progress	Spike proven end-to-end; replacement hardening remains.
-6	selfhost/v2/stage06	selfhost/v2/stage04/validation/s32-ar.c (canonical),selfhost/stage4/validation/s32-ar.c (compat)	code+validation	in_progress	Spike exists; integrate into replacement pipeline later.
+5	selfhost/v2/stage05	selfhost/v2/stage05/run-pipeline.sh,selfhost/v2/stage04/validation/s32-as.c (canonical),selfhost/stage4/validation/s32-as.c (compat)	code+validation	in_progress	A/B harness added; baseline/progressive-as modes now scripted.
+6	selfhost/v2/stage06	selfhost/v2/stage05/run-pipeline.sh,selfhost/v2/stage04/validation/s32-ar.c (canonical),selfhost/stage4/validation/s32-ar.c (compat)	code+validation	in_progress	Progressive-as-ar smoke path scripted; full replacement hardening remains.
 7	selfhost/v2/stage07	(placeholder for s32-ld.c subset implementation)	code	not_started	Will replace stage3 linker in progressive chain.
 8	selfhost/v2/stage08	(placeholder for cc.c subset implementation)	code	not_started	Subset C compiler rewritten in C.
 9	selfhost/v2/stage09	(fixed-point harness)	validation+infra	not_started	Gen2==Gen3 for subset toolchain.

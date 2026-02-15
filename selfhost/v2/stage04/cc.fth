@@ -1439,7 +1439,7 @@ VARIABLE inc-fname-len
 
 \ Resolve include path
 \ For "file.h" — try current directory first, then include path
-\ For <file.h> — try selfhost/stage4/include/ then runtime/include/
+\ For <file.h> — try selfhost/v2/stage04/include/ then runtime/include/
 : PP-RESOLVE-INCLUDE ( -- )
     \ tmp-d is already past "include" from PP-DIRECTIVE
     PP-SKIP-WS
@@ -1459,9 +1459,9 @@ VARIABLE inc-fname-len
     ELSE 60 = IF   \ <file.h>
         1 tmp-d +!
         0 inc-fname-len !
-        \ Build path: selfhost/stage4/include/<file>
-        S" selfhost/stage4/include/" inc-fname SWAP CMOVE
-        24 inc-fname-len !
+        \ Build path: selfhost/v2/stage04/include/<file>
+        S" selfhost/v2/stage04/include/" inc-fname SWAP CMOVE
+        28 inc-fname-len !
         BEGIN
             tmp-d @ pp-line-len @ < IF
                 pp-line tmp-d @ + C@ 62 <>  \ not >

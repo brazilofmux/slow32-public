@@ -81,6 +81,15 @@ Validation gate:
 - Baseline mode remains green.
 - Progressive mode green for implemented replacement stages.
 
+Progress (2026-02-15):
+
+- Added `selfhost/v2/stage05/run-pipeline.sh` A/B harness with modes:
+  - `baseline`
+  - `progressive-as`
+  - `progressive-as-ar`
+- Added `selfhost/v2/stage05/README.md` usage notes.
+- Updated Stage4 regression defaults to canonical v2 stage paths (`stage01`/`stage03`).
+
 ## Phase 5: Infra/CI and Cleanup
 
 Actions:
@@ -94,6 +103,6 @@ Validation gate:
 
 ## Immediate Next Tasks
 
-1. Start Phase 4 progressive pipeline scripting (baseline Forth vs C replacements for Stage5/6).
+1. Validate `stage05/run-pipeline.sh` on both baseline and progressive modes, then freeze initial gate targets.
 2. Add initial CI stage-gate checks for relocated canonical paths under `selfhost/v2/`.
 3. Add stage04 bucket health checks that assert manifest/file-set parity for bisect corpora.

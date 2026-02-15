@@ -11,8 +11,8 @@ EMU="${STAGE4_EMU:-$ROOT_DIR/tools/emulator/slow32}"
 KERNEL="$ROOT_DIR/forth/kernel.s32x"
 PRELUDE="$ROOT_DIR/forth/prelude.fth"
 CC_FTH="${STAGE4_CC:-$SCRIPT_DIR/cc.fth}"
-ASM_FTH="${STAGE4_ASM:-$ROOT_DIR/selfhost/stage2/asm.fth}"
-LINK_FTH="${STAGE4_LINK:-$ROOT_DIR/selfhost/stage3/link.fth}"
+ASM_FTH="${STAGE4_ASM:-$ROOT_DIR/selfhost/v2/stage01/asm.fth}"
+LINK_FTH="${STAGE4_LINK:-$ROOT_DIR/selfhost/v2/stage03/link.fth}"
 TEST_DIR="${STAGE4_TEST_DIR:-$SCRIPT_DIR/tests}"
 VALIDATION_DIR="${STAGE4_VALIDATION_DIR:-$SCRIPT_DIR/validation}"
 
@@ -28,12 +28,12 @@ Runs Stage 4 compiler regression in a staged work-up:
   Stage B: test3.c, test4.c, test5.c, test6.c
   Stage C: test7.c, test8.c, test9.c
   Stage D (optional): validation/slow32dump.c
-    - on minimal emulator (selfhost/stage0/s32-emu): smoke-run (--help)
+    - on minimal emulator (selfhost/v2/stage00/s32-emu): smoke-run (--help)
     - on full emulators: disassemble test3.s32x and validate output
 
 Defaults:
   Emulator: \$STAGE4_EMU or $ROOT_DIR/tools/emulator/slow32
-  Minimal emulator example: --emu $ROOT_DIR/selfhost/stage0/s32-emu
+  Minimal emulator example: --emu $ROOT_DIR/selfhost/v2/stage00/s32-emu
 USAGE
 }
 
@@ -156,6 +156,10 @@ run_exe() {
     fi
 }
 
+is_minimal_emu() {
+    [[ "$(basename "$EMU")" == "s32-emu" ]]
+}
+
 build_and_run_test() {
     local test_name="$1"
     local src="$TEST_DIR/${test_name}.c"
@@ -194,7 +198,7 @@ if [[ "$SLOW32DUMP" -eq 1 ]]; then
     compile_c "$slow_src" "$slow_asm" "$WORKDIR/slow32dump.cc.log"
     assemble_s "$slow_asm" "$slow_obj" "$WORKDIR/slow32dump.as.log"
     link_obj "$slow_obj" "$slow_exe" "$WORKDIR/slow32dump.ld.log"
-    if [[ "$EMU" == *"/selfhost/stage0/s32-emu" ]]; then
+    if is_minimal_emu; then
         run_exe "$slow_exe" "$WORKDIR/slow32dump.run.log" "--help"
         if ! grep -q "Usage:" "$WORKDIR/slow32dump.run.log"; then
             echo "slow32dump minimal-emulator smoke validation failed" >&2
