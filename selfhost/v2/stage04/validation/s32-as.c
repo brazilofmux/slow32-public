@@ -173,6 +173,19 @@ static int emit32(uint32_t w) {
     return 0;
 }
 
+static int emit_byte_list(char *p) {
+    char *e;
+    long v;
+    for (;;) {
+        while (*p == ' ' || *p == '\t' || *p == ',') p++;
+        if (*p == 0) return 0;
+        v = strtol(p, &e, 0);
+        if (e == p || (*e != 0 && *e != ',' && *e != ' ' && *e != '\t')) return -1;
+        if (emit8((uint8_t)(v & 255)) != 0) return -1;
+        p = e;
+    }
+}
+
 static int add_reloc(uint32_t typ, uint32_t off, const char *name) {
     int li;
     if (g_nrel >= MAX_REL) return -1;
@@ -191,9 +204,36 @@ static int add_reloc(uint32_t typ, uint32_t off, const char *name) {
 static uint32_t enc_r(uint32_t op, int rd, int rs1, int rs2) { return op | ((uint32_t)rd << 7) | ((uint32_t)rs1 << 15) | ((uint32_t)rs2 << 20); }
 static uint32_t enc_i(uint32_t op, int rd, int rs1, int imm) { return op | ((uint32_t)rd << 7) | ((uint32_t)rs1 << 15) | (((uint32_t)imm & 4095u) << 20); }
 static uint32_t enc_s(uint32_t op, int rs1, int rs2, int imm) { uint32_t u=(uint32_t)imm; return op | ((u & 31u) << 7) | ((uint32_t)rs1 << 15) | ((uint32_t)rs2 << 20) | (((u >> 5) & 127u) << 25); }
-static uint32_t enc_b(uint32_t op, int rs1, int rs2, int imm) { uint32_t u=(uint32_t)imm; return op | (((u>>11)&1u)<<7) | (((u>>1)&15u)<<8) | ((uint32_t)rs1<<15) | ((uint32_t)rs2<<20) | (((u>>5)&63u)<<25) | (((u>>12)&1u)<<31); }
+static uint32_t enc_b(uint32_t op, int rs1, int rs2, int imm) {
+    uint32_t u = (uint32_t)imm;
+    uint32_t w = op;
+    uint32_t b11 = (u >> 11) & 1u;
+    uint32_t b4_1 = (u >> 1) & 15u;
+    uint32_t b10_5 = (u >> 5) & 63u;
+    uint32_t b12 = (u >> 12) & 1u;
+    w |= b11 << 7;
+    w |= b4_1 << 8;
+    w |= ((uint32_t)rs1) << 15;
+    w |= ((uint32_t)rs2) << 20;
+    w |= b10_5 << 25;
+    w |= b12 << 31;
+    return w;
+}
 static uint32_t enc_u(uint32_t op, int rd, int imm20) { return op | ((uint32_t)rd << 7) | (((uint32_t)imm20 & 0xFFFFFu) << 12); }
-static uint32_t enc_j(uint32_t op, int rd, int imm) { uint32_t u=(uint32_t)imm; return op | ((uint32_t)rd<<7) | (((u>>12)&255u)<<12) | (((u>>11)&1u)<<20) | (((u>>1)&1023u)<<21) | (((u>>20)&1u)<<31); }
+static uint32_t enc_j(uint32_t op, int rd, int imm) {
+    uint32_t u = (uint32_t)imm;
+    uint32_t w = op;
+    uint32_t b19_12 = (u >> 12) & 255u;
+    uint32_t b11 = (u >> 11) & 1u;
+    uint32_t b10_1 = (u >> 1) & 1023u;
+    uint32_t b20 = (u >> 20) & 1u;
+    w |= ((uint32_t)rd) << 7;
+    w |= b19_12 << 12;
+    w |= b11 << 20;
+    w |= b10_1 << 21;
+    w |= b20 << 31;
+    return w;
+}
 
 static uint32_t rd32(uint8_t *p) {
     uint32_t v = (uint32_t)p[0];
@@ -241,6 +281,11 @@ static int handle(char *line) {
         g_lbl_val[li] = cur_off();
         line = trim(c + 1);
         if (*line == 0) return 0;
+    }
+
+    if (strncmp(line, ".byte", 5) == 0 &&
+        (line[5] == 0 || line[5] == ' ' || line[5] == '\t' || line[5] == ',')) {
+        return emit_byte_list(line + 5);
     }
 
     n = split(line, tok);
@@ -346,12 +391,16 @@ static int handle(char *line) {
     if (strcmp(tok[0], "beq") == 0 || strcmp(tok[0], "bne") == 0) {
         int rs1, rs2;
         uint32_t off;
-        uint32_t op = (strcmp(tok[0], "beq") == 0) ? 0x48 : 0x49;
+        uint32_t op;
         if (n != 4) return -1;
         rs1 = parse_reg(tok[1]); rs2 = parse_reg(tok[2]);
         if (rs1 < 0 || rs2 < 0) return -1;
-        if (emit32(enc_b(op, rs1, rs2, 0)) != 0) return -1;
-        off = cur_off() - 4u;
+        if (strcmp(tok[0], "beq") == 0) op = 0x48;
+        else op = 0x49;
+        off = cur_off();
+        if (emit32(enc_b(0, rs1, rs2, 0)) != 0) return -1;
+        if (off >= g_tsz) return -1;
+        g_text[off] = (uint8_t)((g_text[off] & ~0x7Fu) | (op & 0x7Fu));
         return add_reloc(S32O_REL_BRANCH, off, tok[3]);
     }
 
@@ -382,8 +431,10 @@ static int handle(char *line) {
         if (n != 3) return -1;
         rd = parse_reg(tok[1]);
         if (rd < 0) return -1;
-        if (emit32(enc_j(0x40, rd, 0)) != 0) return -1;
-        off = cur_off() - 4u;
+        off = cur_off();
+        if (emit32(enc_j(0, rd, 0)) != 0) return -1;
+        if (off >= g_tsz) return -1;
+        g_text[off] = (uint8_t)((g_text[off] & ~0x7Fu) | 0x40u);
         return add_reloc(S32O_REL_JAL, off, tok[2]);
     }
 
@@ -440,8 +491,8 @@ static int build_syms(int text_idx, int data_idx, int bss_idx) {
         uint16_t sec = 0;
         uint8_t bind;
         if (!(g_lbl_glob[i] || g_lbl_refd[i])) continue;
-        if (!g_lbl_glob[i] && name[0] == '.' && name[1] == 'L' &&
-            name[2] >= '0' && name[2] <= '9') continue;
+        /* Keep local numeric labels in symtab when branch/jal relocations are
+           preserved for the stage03 linker. */
         if (g_nsym >= MAX_SYM) return -1;
         if (g_lbl_defd[i]) {
             if (g_lbl_sec[i] == SEC_TEXT) sec = (uint16_t)text_idx;
@@ -536,7 +587,8 @@ static int write_obj(const char *out) {
     if (g_dsz) { nsec++; data_idx = (int)nsec; }
     if (g_bsz) { nsec++; bss_idx = (int)nsec; }
 
-    if (resolve_local_text_relocs() != 0) return -1;
+    /* Keep local text branch/jal relocations for linker resolution.
+       This avoids stage5 self-host fold-path corruption. */
 
     for (i = 0; i < g_nrel; i++) {
         if (g_rel_sec[i] == SEC_TEXT) text_rel++;
