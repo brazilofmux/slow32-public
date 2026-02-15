@@ -1,5 +1,7 @@
 # Stage 0: Minimal Bootstrap Emulator
 
+> **V2 cross-reference:** This is **Stage 0** in [BOOTSTRAP-V2.md](BOOTSTRAP-V2.md) (Layer A: Foundation).
+
 ## Goal
 
 A minimal SLOW-32 emulator capable of running the bootstrap Forth kernel and, ultimately, the self-hosted toolchain. Small enough to audit by hand (~300-400 lines of C).

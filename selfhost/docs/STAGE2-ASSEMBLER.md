@@ -1,5 +1,7 @@
 # Stage 2: Forth-Hosted SLOW-32 Assembler
 
+> **V2 cross-reference:** This is **Stage 1** in [BOOTSTRAP-V2.md](BOOTSTRAP-V2.md) (Layer B: Forth Self-Hosting).
+
 ## Goal
 
 A SLOW-32 assembler written in Forth, loaded as a prelude file into the stage 1 kernel. It reads `.s` assembly source and produces `.s32o` object files (or `.s32x` executables directly for simplicity).

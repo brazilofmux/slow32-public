@@ -1,5 +1,7 @@
 # Stage 5: Compiling the Real Toolchain
 
+> **V2 cross-reference:** This material is spread across **Stages 5-9** (Subset C tools + fixed-point) and **Stages 11-12** (Full C tools) in [BOOTSTRAP-V2.md](BOOTSTRAP-V2.md). V2 breaks the single "self-host" stage into individual tool-replacement stages.
+
 ## Goal
 
 Use the stage 4 C compiler (running on SLOW-32 under emulation) to compile the real toolchain sources, then assemble and link them into working SLOW-32 executables. At the end of this stage, the full toolchain runs on SLOW-32.

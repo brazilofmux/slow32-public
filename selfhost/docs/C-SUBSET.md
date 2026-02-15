@@ -1,5 +1,7 @@
 # C Language Subset for Self-Hosting
 
+> **V2 cross-reference:** Defines the language scope for **Stage 4** (Subset C compiler) in [BOOTSTRAP-V2.md](BOOTSTRAP-V2.md). The Full C compiler (**Stage 11**) extends beyond this subset.
+
 ## Overview
 
 The SLOW-32 toolchain comprises 5 tools totaling ~6,993 lines of C plus ~286 lines of shared headers. This document catalogs the exact C features and libc functions required by a bootstrap compiler.

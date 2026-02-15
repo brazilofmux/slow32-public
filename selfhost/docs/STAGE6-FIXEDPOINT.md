@@ -1,5 +1,7 @@
 # Stage 6: Verification and Fixed-Point Proof
 
+> **V2 cross-reference:** V2 has three fixed-point stages: **Stage 9** (Subset C), **Stage 13** (Full C), and **Stage 16** (Optimized) in [BOOTSTRAP-V2.md](BOOTSTRAP-V2.md). Each layer proves Gen2 == Gen3 independently.
+
 ## Goal
 
 Prove that the self-hosted toolchain is correct by demonstrating a **fixed point**: the toolchain can compile itself and produce an identical binary.

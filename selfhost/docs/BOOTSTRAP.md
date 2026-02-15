@@ -1,4 +1,6 @@
-# SLOW-32 Self-Hosting Bootstrap
+# SLOW-32 Self-Hosting Bootstrap (V1)
+
+> **Superseded by [BOOTSTRAP-V2.md](BOOTSTRAP-V2.md).** This document is retained as historical reference. The V2 plan expands the 6-stage model into 17 fine-grained stages across three self-hosting layers (Forth, Subset C, Full C) plus optimization.
 
 ## The Problem
 

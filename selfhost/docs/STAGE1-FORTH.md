@@ -1,5 +1,7 @@
 # Stage 1: Hand-Assembled Forth Kernel
 
+> **V2 cross-reference:** The Forth kernel is a prerequisite for **Stages 1-4** in [BOOTSTRAP-V2.md](BOOTSTRAP-V2.md) (Layers B-C). It is not a numbered stage in V2 — it's an input (pre-built `kernel.s32x` or rebuilt at the Forth self-hosting checkpoint).
+
 ## Goal
 
 A working Forth REPL as a .s32x binary, assembled entirely by hand (no assembler tool needed). This provides the interactive programming environment for stages 2-4.

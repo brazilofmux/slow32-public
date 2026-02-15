@@ -1,5 +1,7 @@
 # Stage 4: Minimal C Compiler
 
+> **V2 cross-reference:** This is **Stage 4** in [BOOTSTRAP-V2.md](BOOTSTRAP-V2.md) (Layer C: Subset C Self-Hosting). The Forth-based compiler (`cc.fth`) is the starting point. Stages 5-8 progressively replace it with C-based tools.
+
 ## Goal
 
 A C compiler capable of compiling the SLOW-32 toolchain sources (~7,000 lines of C). This is the largest and most complex bootstrap stage. It reads C source and emits SLOW-32 assembly text (which the stage 2 assembler then converts to object files).
