@@ -1,0 +1,4 @@
+selfhost/v2/stage04/tests/subset-idioms/idiom01_has_flag.c
+selfhost/v2/stage04/tests/subset-idioms/idiom02_token_split.c
+selfhost/v2/stage04/tests/subset-idioms/idiom04_basename_match.c
+selfhost/v2/stage04/tests/subset-idioms/idiom05_prefix_parse.c

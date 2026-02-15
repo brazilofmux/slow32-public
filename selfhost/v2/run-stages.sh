@@ -140,6 +140,10 @@ run_stage04() {
     STAGE4_EMU="$EMU" "$ROOT_DIR/selfhost/v2/stage04/run-regression.sh" >/tmp/v2-stage04.log 2>&1
     echo "[stage04] subset-c conformance"
     STAGE4_EMU="$EMU" "$ROOT_DIR/selfhost/v2/stage04/run-subset-conformance.sh" >/tmp/v2-stage04-subset.log 2>&1
+    echo "[stage04] stage5-idiom conformance"
+    STAGE4_EMU="$EMU" "$ROOT_DIR/selfhost/v2/stage04/run-subset-conformance.sh" \
+        --manifest "$ROOT_DIR/selfhost/v2/stage04/tests/manifests/subset-stage5-idioms.lst" \
+        >/tmp/v2-stage04-idioms.log 2>&1
 }
 
 run_stage05() {

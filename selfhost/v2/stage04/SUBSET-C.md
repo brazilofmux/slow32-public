@@ -20,7 +20,12 @@ Conformance gate:
 - Test corpus: `selfhost/v2/stage04/tests/subset/`
 - Manifest: `selfhost/v2/stage04/tests/manifests/subset.lst`
 - Runner: `selfhost/v2/stage04/run-subset-conformance.sh`
+- Stage5 idiom corpus: `selfhost/v2/stage04/tests/subset-idioms/`
+- Stage5 idiom manifest: `selfhost/v2/stage04/tests/manifests/subset-stage5-idioms.lst`
 
 Policy:
 - Any change to `cc.fth` should keep this suite green.
 - Utility spikes (`s32-as.c`, `s32-ar.c`, etc.) are integration tests, not a substitute for subset conformance.
+
+Current known gap:
+- 32-bit little-endian decode idioms (byte-to-word recomposition) are tracked but not yet part of the required green manifest.
