@@ -10,3 +10,4 @@ selfhost/v2/stage04/tests/subset/subset09_globals.c
 selfhost/v2/stage04/tests/subset/subset10_chars.c
 selfhost/v2/stage04/tests/subset/subset11_logic.c
 selfhost/v2/stage04/tests/subset/subset12_ptr_arith.c
+selfhost/v2/stage04/tests/subset/subset13_long_branch.c
