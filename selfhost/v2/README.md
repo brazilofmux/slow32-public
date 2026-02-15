@@ -13,6 +13,7 @@ Stage directories:
 Primary tracking docs:
 - `selfhost/V2-REORG-PLAN.md`
 - `selfhost/V2-MIGRATION-MAP.tsv`
+- `selfhost/v2/stage-status.md`
 
 ## Ordered Stage Walk
 
