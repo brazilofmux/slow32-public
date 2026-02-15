@@ -33,7 +33,7 @@ Modes:
   progressive-as-ar-scan Same as progressive-as-ar, but runs s32-ar with opt-in symbol scan flag
   stage6-ar-smoke   Build stage5 assembler, then stage6 s32-ar.c with forth assembler; run archive smoke only
   stage6-ar-scan-smoke Build stage5 assembler, then stage6 s32-ar-scan.c with forth assembler; run archive smoke with cmd=cs only
-  stage6-ar-asm-diff Build stage5 assembler, assemble s32-ar.s with stage5 and forth, and report first .s32o byte diff
+  stage6-ar-asm-diff Build stage5 assembler, assemble a validation .c with stage5 and forth, and report first .s32o byte diff
 
 Env overrides:
   SELFHOST_ROOT SELFHOST_EMU SELFHOST_KERNEL SELFHOST_PRELUDE
@@ -245,7 +245,14 @@ case "$MODE" in
         ;;
     stage6-ar-asm-diff)
         build_stage5_assembler
-        TARGET_SRC="$VALIDATION_DIR/s32-ar.c"
+        if [[ "$TEST_NAME" == "test3" ]]; then
+            TARGET_SRC="$VALIDATION_DIR/s32-ar.c"
+        elif [[ "$TEST_NAME" = /* ]] || [[ "$TEST_NAME" == *.c ]]; then
+            TARGET_SRC="$TEST_NAME"
+        else
+            TARGET_SRC="$VALIDATION_DIR/${TEST_NAME}.c"
+        fi
+        [[ -f "$TARGET_SRC" ]] || { echo "Missing test source: $TARGET_SRC" >&2; exit 1; }
         TARGET_ASM="$WORKDIR/s32-ar.s"
         TARGET_STAGE5_OBJ="$WORKDIR/s32-ar.stage5.s32o"
         TARGET_FORTH_OBJ="$WORKDIR/s32-ar.forth.s32o"
