@@ -37,6 +37,7 @@ Progress (2026-02-15):
 
 - Added stage04 bucket manifests under `selfhost/v2/stage04/tests/manifests/`.
 - Added bucket lister utility `selfhost/v2/stage04/tests/list-bucket.sh`.
+- Promoted full stage04 assembler bisect corpus (`as_bisect1..22,27,28`) to tracked fixtures.
 - Added path-override-aware runners:
   - `selfhost/stage2/run-regression.sh`
   - `selfhost/stage3/run-regression.sh`
@@ -93,6 +94,6 @@ Validation gate:
 
 ## Immediate Next Tasks
 
-1. Resolve Stage4 bisect corpus tracking policy (promote selected `as_bisect*` files to tracked fixtures or archive/remove them).
-2. Start Phase 4 progressive pipeline scripting (baseline Forth vs C replacements for Stage5/6).
-3. Add initial CI stage-gate checks for relocated canonical paths under `selfhost/v2/`.
+1. Start Phase 4 progressive pipeline scripting (baseline Forth vs C replacements for Stage5/6).
+2. Add initial CI stage-gate checks for relocated canonical paths under `selfhost/v2/`.
+3. Add stage04 bucket health checks that assert manifest/file-set parity for bisect corpora.
