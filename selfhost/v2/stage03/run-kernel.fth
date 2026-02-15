@@ -1,10 +1,16 @@
-\ Link the Forth kernel from object files and archives
-\ Prerequisite: assemble kernel.s first with Stage 2 assembler
+\ Link the Forth kernel from minimal selfhost sources
+\ Prerequisite: assemble these with Stage 1 assembler first:
+\   - selfhost/v2/stage01/crt0_minimal.s -> crt0_minimal.s32o
+\   - selfhost/v2/stage01/mmio_minimal.s -> mmio_minimal.s32o
+\   - forth/kernel.s -> kernel.s32o
+\
+\ No host-built archives required - mmio_minimal.s32o provides all
+\ runtime functions needed by kernel.s (open, close, read, write, etc.)
+
 LINK-INIT
-S" runtime/crt0.s32o" LINK-OBJ
+S" selfhost/v2/stage01/crt0_minimal.s32o" LINK-OBJ
 S" forth/kernel.s32o" LINK-OBJ
+S" selfhost/v2/stage01/mmio_minimal.s32o" LINK-OBJ
 65536 LINK-MMIO
-S" runtime/libc_mmio.s32a" LINK-ARCHIVE
-S" runtime/libs32.s32a" LINK-ARCHIVE
-S" /tmp/kernel-forth-linked.s32x" LINK-EMIT
+S" /tmp/kernel-selfhost.s32x" LINK-EMIT
 BYE
