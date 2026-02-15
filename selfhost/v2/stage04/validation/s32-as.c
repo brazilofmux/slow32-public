@@ -7,7 +7,7 @@
 #define MAX_LINE 1024
 #define MAX_TOK 8
 #define MAX_LBL 512
-#define MAX_REL 1024
+#define MAX_REL 4096
 #define MAX_SYM 512
 #define MAX_TEXT 65536
 #define MAX_DATA 65536
@@ -186,6 +186,19 @@ static int emit_byte_list(char *p) {
     }
 }
 
+static int emit_word_list(char *p) {
+    char *e;
+    long v;
+    for (;;) {
+        while (*p == ' ' || *p == '\t' || *p == ',') p++;
+        if (*p == 0) return 0;
+        v = strtol(p, &e, 0);
+        if (e == p || (*e != 0 && *e != ',' && *e != ' ' && *e != '\t')) return -1;
+        if (emit32((uint32_t)v) != 0) return -1;
+        p = e;
+    }
+}
+
 static int add_reloc(uint32_t typ, uint32_t off, const char *name) {
     int li;
     if (g_nrel >= MAX_REL) return -1;
@@ -287,6 +300,10 @@ static int handle(char *line) {
         (line[5] == 0 || line[5] == ' ' || line[5] == '\t' || line[5] == ',')) {
         return emit_byte_list(line + 5);
     }
+    if (strncmp(line, ".word", 5) == 0 &&
+        (line[5] == 0 || line[5] == ' ' || line[5] == '\t' || line[5] == ',')) {
+        return emit_word_list(line + 5);
+    }
 
     n = split(line, tok);
     if (n == 0) return 0;
@@ -320,7 +337,7 @@ static int handle(char *line) {
         return 0;
     }
 
-    if (strcmp(tok[0], "add") == 0 || strcmp(tok[0], "sub") == 0 || strcmp(tok[0], "and") == 0 || strcmp(tok[0], "or") == 0 || strcmp(tok[0], "xor") == 0 || strcmp(tok[0], "mul") == 0 || strcmp(tok[0], "div") == 0 || strcmp(tok[0], "rem") == 0 || strcmp(tok[0], "slt") == 0 || strcmp(tok[0], "sltu") == 0 || strcmp(tok[0], "sge") == 0 || strcmp(tok[0], "sgeu") == 0 || strcmp(tok[0], "sle") == 0 || strcmp(tok[0], "seq") == 0 || strcmp(tok[0], "sne") == 0 || strcmp(tok[0], "sgt") == 0 || strcmp(tok[0], "sgtu") == 0 || strcmp(tok[0], "srl") == 0) {
+    if (strcmp(tok[0], "add") == 0 || strcmp(tok[0], "sub") == 0 || strcmp(tok[0], "and") == 0 || strcmp(tok[0], "or") == 0 || strcmp(tok[0], "xor") == 0 || strcmp(tok[0], "mul") == 0 || strcmp(tok[0], "div") == 0 || strcmp(tok[0], "rem") == 0 || strcmp(tok[0], "slt") == 0 || strcmp(tok[0], "sltu") == 0 || strcmp(tok[0], "sge") == 0 || strcmp(tok[0], "sgeu") == 0 || strcmp(tok[0], "sle") == 0 || strcmp(tok[0], "sleu") == 0 || strcmp(tok[0], "seq") == 0 || strcmp(tok[0], "sne") == 0 || strcmp(tok[0], "sgt") == 0 || strcmp(tok[0], "sgtu") == 0 || strcmp(tok[0], "sll") == 0 || strcmp(tok[0], "srl") == 0 || strcmp(tok[0], "sra") == 0) {
         int rd, rs1, rs2;
         uint32_t op = 0;
         if (n != 4) return -1;
@@ -341,8 +358,11 @@ static int handle(char *line) {
         else if (strcmp(tok[0], "sgt") == 0) op = 0x18;
         else if (strcmp(tok[0], "sgtu") == 0) op = 0x19;
         else if (strcmp(tok[0], "sle") == 0) op = 0x1A;
+        else if (strcmp(tok[0], "sleu") == 0) op = 0x1B;
         else if (strcmp(tok[0], "sgeu") == 0) op = 0x1D;
+        else if (strcmp(tok[0], "sll") == 0) op = 0x05;
         else if (strcmp(tok[0], "srl") == 0) op = 0x06;
+        else if (strcmp(tok[0], "sra") == 0) op = 0x07;
         else op = 0x1C;
         return emit32(enc_r(op, rd, rs1, rs2));
     }
