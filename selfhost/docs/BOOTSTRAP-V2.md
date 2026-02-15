@@ -730,7 +730,7 @@ Execution artifacts for the reorg are tracked in:
 
 | V2 Stage | Current Directory | Key Files | Status |
 |----------|-------------------|-----------|--------|
-| 0 | `selfhost/v2/stage00/` (`selfhost/stage0/` compat links for tracked sources) | `s32-emu.c` | Done |
+| 0 | `selfhost/v2/stage00/` | `s32-emu.c` | Done |
 | 1 | `selfhost/v2/stage01/` (`selfhost/stage2/` compat links) | `asm.fth` | Done |
 | 2 | `selfhost/v2/stage02/` (`selfhost/stage3/ar.fth` compat link) | `ar.fth` | Done |
 | 3 | `selfhost/v2/stage03/` (`selfhost/stage3/` compat links) | `link.fth` | Done |

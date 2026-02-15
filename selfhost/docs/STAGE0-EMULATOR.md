@@ -4,7 +4,7 @@
 
 ## Goal
 
-A minimal SLOW-32 emulator capable of running the bootstrap Forth kernel and, ultimately, the self-hosted toolchain. Small enough to audit by hand (currently ~780 lines of C in `selfhost/stage0/s32-emu.c`).
+A minimal SLOW-32 emulator capable of running the bootstrap Forth kernel and, ultimately, the self-hosted toolchain. Small enough to audit by hand (currently ~780 lines of C in `selfhost/v2/stage00/s32-emu.c`).
 
 ## What It Must Do
 
@@ -211,6 +211,6 @@ The existing reference emulator is `tools/emulator/slow32.c` (~1,200 lines inclu
 
 As of 2026-02-15:
 
-- `selfhost/stage0/s32-emu.c` is the active minimal emulator implementation.
+- `selfhost/v2/stage00/s32-emu.c` is the active minimal emulator implementation.
 - It is sufficient to run the Forth kernel and Stage 0-4 bootstrap workflows.
 - Full-emulator capabilities (`tools/emulator/slow32`, `slow32-fast`, DBT, QEMU variants) remain outside Stage 0 scope.

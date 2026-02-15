@@ -66,7 +66,7 @@ Progress (2026-02-15):
   - `selfhost/v2/stage04/run-regression.sh`
 - Stage2 relocated to `selfhost/v2/stage01/` with legacy compat symlinks in `selfhost/stage2/`.
 - Stage3 relocated to `selfhost/v2/stage03/` with legacy compat symlinks in `selfhost/stage3/`.
-- Stage0 tracked sources relocated to `selfhost/v2/stage00/` with legacy compat symlinks in `selfhost/stage0/`.
+- Stage0 tracked sources relocated to `selfhost/v2/stage00/` (canonical location).
 - Stage2 archiver split to canonical `selfhost/v2/stage02/ar.fth` with compatibility links from stage3 paths.
 
 ## Phase 4: Stage 5/6 Integration Tracks
