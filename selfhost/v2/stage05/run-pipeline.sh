@@ -24,7 +24,7 @@ KEEP_ARTIFACTS=0
 
 usage() {
     cat <<USAGE
-Usage: $0 [--mode baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage6-ar-smoke|stage6-ar-scan-smoke|stage6-ar-asm-diff] [--test <name>] [--emu <path>] [--keep-artifacts]
+Usage: $0 [--mode baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage6-ar-smoke|stage6-ar-scan-smoke|stage6-ar-asm-diff|stage6-utility-smoke] [--test <name>] [--emu <path>] [--keep-artifacts]
 
 Modes:
   baseline          Stage4 cc.fth + Stage1 asm.fth + Stage3 link.fth
@@ -34,6 +34,7 @@ Modes:
   stage6-ar-smoke   Build stage5 assembler, then stage6 s32-ar.c with stage5 assembler; run archive smoke only
   stage6-ar-scan-smoke Build stage5 assembler, then stage6 s32-ar-scan.c with stage5 assembler; run archive smoke with cmd=cs only
   stage6-ar-asm-diff Build stage5 assembler, assemble a validation .c with stage5 and forth, link both, and report first .s32x/.s32o byte diff
+  stage6-utility-smoke Build a validation utility with stage5 and forth assemblers, require linked .s32x parity, then compare runtime output
 
 Env overrides:
   SELFHOST_ROOT SELFHOST_EMU SELFHOST_KERNEL SELFHOST_PRELUDE
@@ -71,7 +72,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$MODE" in
-    baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage6-ar-smoke|stage6-ar-scan-smoke|stage6-ar-asm-diff) ;;
+    baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage6-ar-smoke|stage6-ar-scan-smoke|stage6-ar-asm-diff|stage6-utility-smoke) ;;
     *)
         echo "Unknown mode: $MODE" >&2
         usage
@@ -131,6 +132,28 @@ run_exe() {
         tail -n 60 "$log" >&2
         return 1
     fi
+}
+
+run_exe_any_rc() {
+    local exe="$1"
+    local log="$2"
+    shift 2
+
+    set +e
+    timeout 60 "$EMU" "$exe" "$@" >"$log" 2>&1
+    local rc=$?
+    set -e
+    if [[ "$rc" -eq 124 ]]; then
+        echo "execution timed out: $exe" >&2
+        tail -n 60 "$log" >&2
+        return 124
+    fi
+    if grep -Eq "Execute fault|Memory fault|Write out of bounds or to protected memory|Unknown opcode|Unknown instruction" "$log"; then
+        echo "execution faulted: $exe" >&2
+        tail -n 60 "$log" >&2
+        return 125
+    fi
+    return "$rc"
 }
 
 compile_c_stage4() {
@@ -230,6 +253,15 @@ stage6_archive_smoke() {
     [[ -s "$archive" ]] || { echo "stage6 archiver produced no output" >&2; return 1; }
 }
 
+resolve_validation_source() {
+    local name="$1"
+    if [[ "$name" = /* ]] || [[ "$name" == *.c ]]; then
+        printf '%s\n' "$name"
+    else
+        printf '%s/%s.c\n' "$VALIDATION_DIR" "$name"
+    fi
+}
+
 case "$MODE" in
     stage6-ar-smoke)
         build_stage5_assembler
@@ -247,10 +279,8 @@ case "$MODE" in
         build_stage5_assembler
         if [[ "$TEST_NAME" == "test3" ]]; then
             TARGET_SRC="$VALIDATION_DIR/s32-ar.c"
-        elif [[ "$TEST_NAME" = /* ]] || [[ "$TEST_NAME" == *.c ]]; then
-            TARGET_SRC="$TEST_NAME"
         else
-            TARGET_SRC="$VALIDATION_DIR/${TEST_NAME}.c"
+            TARGET_SRC="$(resolve_validation_source "$TEST_NAME")"
         fi
         [[ -f "$TARGET_SRC" ]] || { echo "Missing test source: $TARGET_SRC" >&2; exit 1; }
         TARGET_ASM="$WORKDIR/s32-ar.s"
@@ -285,6 +315,61 @@ case "$MODE" in
             if [[ -n "$FIRST_OBJ_DIFF" ]]; then
                 echo "First .s32o byte diff (1-based offset, forth, stage5): $FIRST_OBJ_DIFF"
             fi
+            exit 1
+        fi
+        ;;
+    stage6-utility-smoke)
+        build_stage5_assembler
+        if [[ "$TEST_NAME" == "test3" ]]; then
+            TARGET_SRC="$VALIDATION_DIR/slow32dump.c"
+        else
+            TARGET_SRC="$(resolve_validation_source "$TEST_NAME")"
+        fi
+        [[ -f "$TARGET_SRC" ]] || { echo "Missing test source: $TARGET_SRC" >&2; exit 1; }
+        TARGET_ASM="$WORKDIR/utility.s"
+        TARGET_STAGE5_OBJ="$WORKDIR/utility.stage5.s32o"
+        TARGET_FORTH_OBJ="$WORKDIR/utility.forth.s32o"
+        TARGET_STAGE5_EXE="$WORKDIR/utility.stage5.s32x"
+        TARGET_FORTH_EXE="$WORKDIR/utility.forth.s32x"
+        UTILITY_ARGS_RAW="${UTILITY_ARGS:--h}"
+        read -r -a UTILITY_ARGS_VEC <<<"$UTILITY_ARGS_RAW"
+        if [[ -n "${UTILITY_INPUT:-}" ]]; then
+            TARGET_INPUT="$UTILITY_INPUT"
+            [[ -f "$TARGET_INPUT" ]] || { echo "Missing utility input: $TARGET_INPUT" >&2; exit 1; }
+            UTILITY_ARGS_VEC+=("$TARGET_INPUT")
+        fi
+
+        compile_c_stage4 "$TARGET_SRC" "$TARGET_ASM" "$WORKDIR/utility.cc.log"
+        assemble_with_stage5 "$TARGET_ASM" "$TARGET_STAGE5_OBJ" "$WORKDIR/utility.stage5.as.log"
+        assemble_forth "$TARGET_ASM" "$TARGET_FORTH_OBJ" "$WORKDIR/utility.forth.as.log"
+        link_forth "$TARGET_STAGE5_OBJ" "$TARGET_STAGE5_EXE" "$WORKDIR/utility.stage5.ld.log"
+        link_forth "$TARGET_FORTH_OBJ" "$TARGET_FORTH_EXE" "$WORKDIR/utility.forth.ld.log"
+
+        if ! cmp -s "$TARGET_FORTH_EXE" "$TARGET_STAGE5_EXE"; then
+            FIRST_EXE_DIFF="$(cmp -l "$TARGET_FORTH_EXE" "$TARGET_STAGE5_EXE" 2>/dev/null | head -n 1 || true)"
+            echo "FAIL: utility linked outputs differ"
+            if [[ -n "$FIRST_EXE_DIFF" ]]; then
+                echo "First .s32x byte diff (1-based offset, forth, stage5): $FIRST_EXE_DIFF"
+            fi
+            exit 1
+        fi
+
+        set +e
+        run_exe_any_rc "$TARGET_STAGE5_EXE" "$WORKDIR/utility.stage5.run.log" "${UTILITY_ARGS_VEC[@]}"
+        RC_STAGE5=$?
+        run_exe_any_rc "$TARGET_FORTH_EXE" "$WORKDIR/utility.forth.run.log" "${UTILITY_ARGS_VEC[@]}"
+        RC_FORTH=$?
+        set -e
+        if [[ "$RC_STAGE5" -eq 124 || "$RC_STAGE5" -eq 125 || "$RC_FORTH" -eq 124 || "$RC_FORTH" -eq 125 ]]; then
+            echo "FAIL: utility runtime fault/timeout" >&2
+            exit 1
+        fi
+        if [[ "$RC_STAGE5" -ne "$RC_FORTH" ]]; then
+            echo "FAIL: utility exit code differs (stage5=$RC_STAGE5 forth=$RC_FORTH)" >&2
+            exit 1
+        fi
+        if ! cmp -s "$WORKDIR/utility.forth.run.log" "$WORKDIR/utility.stage5.run.log"; then
+            echo "FAIL: utility runtime output differs"
             exit 1
         fi
         ;;
@@ -324,7 +409,7 @@ case "$MODE" in
         ;;
 esac
 
-if [[ "$MODE" != "stage6-ar-smoke" && "$MODE" != "stage6-ar-scan-smoke" && "$MODE" != "stage6-ar-asm-diff" ]]; then
+if [[ "$MODE" != "stage6-ar-smoke" && "$MODE" != "stage6-ar-scan-smoke" && "$MODE" != "stage6-ar-asm-diff" && "$MODE" != "stage6-utility-smoke" ]]; then
     link_forth "$TARGET_OBJ" "$TARGET_EXE" "$WORKDIR/target.ld.log"
     run_exe "$TARGET_EXE" "$WORKDIR/target.run.log"
 fi
@@ -338,6 +423,14 @@ elif [[ "$MODE" == "stage6-ar-asm-diff" ]]; then
     echo "Input: $TARGET_SRC"
     echo "Assembler path: c(stage05) vs forth(stage01) object-compare"
     echo "Linker path: skipped"
+elif [[ "$MODE" == "stage6-utility-smoke" ]]; then
+    echo "Input: $TARGET_SRC"
+    echo "Utility args: $UTILITY_ARGS_RAW"
+    if [[ -n "${TARGET_INPUT:-}" ]]; then
+        echo "Utility input: $TARGET_INPUT"
+    fi
+    echo "Assembler path: c(stage05) vs forth(stage01) parity"
+    echo "Linker path: forth(stage03)"
 elif [[ "$MODE" == "baseline" ]]; then
     echo "Input: $TARGET_SRC"
     echo "Assembler path: forth(stage01)"
@@ -353,5 +446,7 @@ elif [[ "$MODE" == "progressive-as-ar-scan" || "$MODE" == "stage6-ar-scan-smoke"
     echo "Archiver smoke: c(stage06, cmd=cs)"
 elif [[ "$MODE" == "stage6-ar-asm-diff" ]]; then
     echo "Archiver smoke: skipped (assembler comparison only)"
+elif [[ "$MODE" == "stage6-utility-smoke" ]]; then
+    echo "Utility smoke: runtime output parity"
 fi
 echo "Artifacts: $WORKDIR"
