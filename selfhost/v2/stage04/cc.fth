@@ -136,7 +136,7 @@ DECIMAL
 
 \ === Buffer Sizes ===
 262144 CONSTANT INP-SZ      \ 256KB input buffer
-196608 CONSTANT OUT-SZ      \ 192KB output buffer
+262144 CONSTANT OUT-SZ      \ 256KB output buffer
 512    CONSTANT MAX-MACRO    \ max macros
 16384  CONSTANT MNAME-SZ    \ macro name storage
 49152  CONSTANT MVAL-SZ     \ macro value storage

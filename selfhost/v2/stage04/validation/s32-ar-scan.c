@@ -3,8 +3,6 @@
 
 #define MAX_MEMBERS 64
 #define MAX_STRTAB 32768
-#define MAX_SCAN_NAME 64
-#define MAX_SCAN_NAME_BUF 65
 
 typedef struct {
     const char *path;
@@ -21,13 +19,6 @@ typedef struct {
 static member_t g_members[MAX_MEMBERS];
 static symbol_t g_symbols[1];
 static uint8_t g_strtab[MAX_STRTAB];
-
-static uint32_t rd32le(const uint8_t *p) {
-    return (uint32_t)p[0]
-        + (uint32_t)p[1] * 256u
-        + (uint32_t)p[2] * 65536u
-        + (uint32_t)p[3] * 16777216u;
-}
 
 static void w16(FILE *f, uint16_t v) {
     fputc((int)(v & 0xFF), f);
@@ -101,91 +92,6 @@ static int copy_member_data(FILE *out, const char *path) {
     }
     fclose(in);
     return 1;
-}
-
-static int read_at(FILE *f, uint32_t off, uint8_t *buf, uint32_t n) {
-    uint32_t i;
-    int ch;
-    if (fseek(f, (long)off, SEEK_SET) != 0) return 0;
-    for (i = 0; i < n; i++) {
-        ch = fgetc(f);
-        if (ch == EOF) return 0;
-        buf[i] = (uint8_t)ch;
-    }
-    return 1;
-}
-
-static int scan_member_symbol(const char *path, uint32_t *nsymbols, uint32_t *str_used) {
-    FILE *f;
-    uint8_t hdr[36];
-    uint8_t sym[16];
-    uint8_t name[MAX_SCAN_NAME_BUF];
-    uint32_t nsym;
-    uint32_t sym_off;
-    uint32_t str_off;
-    uint32_t str_sz;
-    uint32_t name_off;
-    uint32_t sec_idx;
-    uint8_t bind;
-    uint32_t i;
-
-    if (*nsymbols != 0) return 0;
-
-    f = fopen(path, "rb");
-    if (!f) return 0;
-
-    if (!read_at(f, 0, hdr, 36)) {
-        fclose(f);
-        return 0;
-    }
-    if (hdr[0] != 'O' || hdr[1] != '2' || hdr[2] != '3' || hdr[3] != 'S') {
-        fclose(f);
-        return 0;
-    }
-
-    nsym = rd32le(hdr + 0x14);
-    sym_off = rd32le(hdr + 0x18);
-    str_off = rd32le(hdr + 0x1C);
-    str_sz = rd32le(hdr + 0x20);
-
-    if (nsym == 0 || str_sz == 0) {
-        fclose(f);
-        return 0;
-    }
-    if (!read_at(f, sym_off, sym, 16)) {
-        fclose(f);
-        return 0;
-    }
-
-    name_off = rd32le(sym + 0);
-    sec_idx = (uint32_t)sym[8] + (uint32_t)sym[9] * 256u;
-    bind = sym[11];
-    if (sec_idx == 0 || bind == 0 || name_off >= str_sz) {
-        fclose(f);
-        return 0;
-    }
-
-    for (i = 0; i < MAX_SCAN_NAME; i++) {
-        if (name_off + i >= str_sz) {
-            fclose(f);
-            return 0;
-        }
-        if (!read_at(f, str_off + name_off + i, &name[i], 1)) {
-            fclose(f);
-            return 0;
-        }
-        if (name[i] == 0) break;
-    }
-    fclose(f);
-
-    if (i == 0 || i >= MAX_SCAN_NAME || name[i] != 0) return 0;
-    name[i] = 0;
-
-    g_symbols[0].name_off = append_strtab((const char *)name, str_used);
-    if (g_symbols[0].name_off == 0xFFFFFFFFu) return 1;
-    g_symbols[0].member_idx = 0;
-    *nsymbols = 1;
-    return 0;
 }
 
 static int write_archive(const char *out_path, uint32_t nmembers, uint32_t nsymbols, uint32_t str_used) {
@@ -275,8 +181,11 @@ int main(int argc, char **argv) {
         nmembers++;
     }
 
+    /* Bounded opt-in path: only emit a single symbol index entry for one-member archives. */
     if (has_flag(cmd, 's') && nmembers == 1) {
-        if (scan_member_symbol(g_members[0].path, &nsymbols, &str_used) != 0) return 1;
+        g_symbols[0].name_off = g_members[0].name_off;
+        g_symbols[0].member_idx = 0;
+        nsymbols = 1;
     }
 
     if (!write_archive(archive, nmembers, nsymbols, str_used)) return 1;

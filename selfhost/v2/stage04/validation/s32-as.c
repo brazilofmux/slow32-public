@@ -11,9 +11,10 @@
 #define MAX_SYM 512
 #define MAX_TEXT 65536
 #define MAX_DATA 65536
+#define MAX_BSS 65536
 #define MAX_STR 16384
 
-enum { SEC_TEXT = 0, SEC_DATA = 1 };
+enum { SEC_TEXT = 0, SEC_DATA = 1, SEC_BSS = 2 };
 
 static char g_lbl_name_pool[32768];
 static uint32_t g_lbl_name_off[MAX_LBL];
@@ -36,6 +37,7 @@ static uint8_t g_text[MAX_TEXT];
 static uint8_t g_data[MAX_DATA];
 static uint32_t g_tsz = 0;
 static uint32_t g_dsz = 0;
+static uint32_t g_bsz = 0;
 static uint32_t g_sec = SEC_TEXT;
 
 static uint32_t g_lbl_to_sym[MAX_LBL];
@@ -145,16 +147,20 @@ static int get_lbl(const char *name) {
 
 static uint32_t cur_off(void) {
     if (g_sec == SEC_TEXT) return g_tsz;
-    return g_dsz;
+    if (g_sec == SEC_DATA) return g_dsz;
+    return g_bsz;
 }
 
 static int emit8(uint8_t b) {
     if (g_sec == SEC_TEXT) {
         if (g_tsz >= MAX_TEXT) return -1;
         g_text[g_tsz++] = b;
-    } else {
+    } else if (g_sec == SEC_DATA) {
         if (g_dsz >= MAX_DATA) return -1;
         g_data[g_dsz++] = b;
+    } else {
+        if (g_bsz >= MAX_BSS) return -1;
+        g_bsz++;
     }
     return 0;
 }
@@ -243,7 +249,7 @@ static int handle(char *line) {
     if (tok[0][0] == '.') {
         if (strcmp(tok[0], ".text") == 0) { g_sec = SEC_TEXT; return 0; }
         if (strcmp(tok[0], ".data") == 0) { g_sec = SEC_DATA; return 0; }
-        if (strcmp(tok[0], ".bss") == 0) { g_sec = SEC_DATA; return 0; }
+        if (strcmp(tok[0], ".bss") == 0) { g_sec = SEC_BSS; return 0; }
         if (strcmp(tok[0], ".global") == 0) { if (n < 2) return -1; ok = get_lbl(tok[1]); if (ok < 0) return -1; g_lbl_glob[ok] = 1; return 0; }
         if (strcmp(tok[0], ".align") == 0) { if (n < 2) return -1; ok = parse_num(tok[1], &n); if (!n) return -1; return do_align(ok); }
         if (strcmp(tok[0], ".byte") == 0) {
@@ -401,12 +407,11 @@ static int handle(char *line) {
         uint32_t off;
         uint32_t off2;
         if (n != 2) return -1;
-        if (emit32(enc_u(0x20, 1, 0)) != 0) return -1;
-        if (emit32(enc_i(0x10, 1, 1, 0)) != 0) return -1;
-        if (emit32(enc_i(0x41, 31, 1, 0)) != 0) return -1;
+        if (emit32(enc_u(0x20, 2, 0)) != 0) return -1;
+        if (emit32(enc_i(0x41, 31, 2, 0)) != 0) return -1;
         off2 = cur_off();
-        off = off2 - 12u;
-        off2 = off2 - 8u;
+        off = off2 - 8u;
+        off2 = off2 - 4u;
         if (add_reloc(S32O_REL_HI20, off, tok[1]) != 0) return -1;
         return add_reloc(S32O_REL_LO12, off2, tok[1]);
     }
@@ -426,16 +431,23 @@ static uint32_t s_add(const char *s) {
 static void w16(uint16_t v) { fputc((int)(v & 255), g_out); fputc((int)((v >> 8) & 255), g_out); }
 static void w32(uint32_t v) { fputc((int)(v & 255), g_out); fputc((int)((v >> 8) & 255), g_out); fputc((int)((v >> 16) & 255), g_out); fputc((int)((v >> 24) & 255), g_out); }
 
-static int build_syms(int text_idx, int data_idx) {
+static int build_syms(int text_idx, int data_idx, int bss_idx) {
     uint32_t i;
     g_nsym = 0;
     for (i = 0; i < g_nlbl; i++) g_lbl_to_sym[i] = 0xFFFFFFFFu;
     for (i = 0; i < g_nlbl; i++) {
+        const char *name = g_lbl_name_pool + g_lbl_name_off[i];
         uint16_t sec = 0;
         uint8_t bind;
         if (!(g_lbl_glob[i] || g_lbl_refd[i])) continue;
+        if (!g_lbl_glob[i] && name[0] == '.' && name[1] == 'L' &&
+            name[2] >= '0' && name[2] <= '9') continue;
         if (g_nsym >= MAX_SYM) return -1;
-        if (g_lbl_defd[i]) sec = (uint16_t)((g_lbl_sec[i] == SEC_TEXT) ? text_idx : data_idx);
+        if (g_lbl_defd[i]) {
+            if (g_lbl_sec[i] == SEC_TEXT) sec = (uint16_t)text_idx;
+            else if (g_lbl_sec[i] == SEC_DATA) sec = (uint16_t)data_idx;
+            else sec = (uint16_t)bss_idx;
+        }
         bind = g_lbl_glob[i] ? S32O_BIND_GLOBAL : S32O_BIND_LOCAL;
         if (!g_lbl_defd[i]) bind = S32O_BIND_GLOBAL;
         g_sym_lbl[g_nsym] = i;
@@ -472,13 +484,17 @@ static int resolve_local_text_relocs(void) {
                 uint32_t inst = rd32(g_text + off);
                 int rs1 = (int)((inst >> 15) & 31u);
                 int rs2 = (int)((inst >> 20) & 31u);
-                uint32_t op = inst & 127u;
-                wr32(g_text + off, enc_b(op, rs1, rs2, disp));
+                uint32_t patched = enc_b(0, rs1, rs2, disp);
+                /* Preserve original branch opcode bits. */
+                patched |= (inst & 0x7Fu);
+                wr32(g_text + off, patched);
             } else {
                 uint32_t inst = rd32(g_text + off);
                 int rd = (int)((inst >> 7) & 31u);
-                uint32_t op = inst & 127u;
-                wr32(g_text + off, enc_j(op, rd, disp));
+                uint32_t patched = enc_j(0, rd, disp);
+                /* Preserve original jal opcode/rd low bits. */
+                patched |= (inst & 0xFFFu);
+                wr32(g_text + off, patched);
             }
             keep = 0;
         }
@@ -502,33 +518,39 @@ static int write_obj(const char *out) {
     uint32_t nsec = 0;
     int text_idx = 0;
     int data_idx = 0;
+    int bss_idx = 0;
     uint32_t text_rel = 0;
     uint32_t data_rel = 0;
+    uint32_t bss_rel = 0;
     uint32_t i;
     uint32_t off;
     uint32_t text_name = 0;
     uint32_t data_name = 0;
+    uint32_t bss_name = 0;
     uint32_t sec_off, sym_off, rel_off, str_off;
-    uint32_t text_rel_off = 0, data_rel_off = 0;
+    uint32_t text_rel_off = 0, data_rel_off = 0, bss_rel_off = 0;
     uint32_t text_data_off = 0, data_data_off = 0;
     uint32_t v;
 
     if (g_tsz) { nsec++; text_idx = (int)nsec; }
     if (g_dsz) { nsec++; data_idx = (int)nsec; }
+    if (g_bsz) { nsec++; bss_idx = (int)nsec; }
 
     if (resolve_local_text_relocs() != 0) return -1;
 
     for (i = 0; i < g_nrel; i++) {
         if (g_rel_sec[i] == SEC_TEXT) text_rel++;
-        else data_rel++;
+        else if (g_rel_sec[i] == SEC_DATA) data_rel++;
+        else bss_rel++;
     }
 
     g_ssz = 0;
     g_str[g_ssz++] = 0;
     if (text_idx) text_name = s_add(".text");
     if (data_idx) data_name = s_add(".data");
+    if (bss_idx) bss_name = s_add(".bss");
 
-    if (build_syms(text_idx, data_idx) != 0) return -1;
+    if (build_syms(text_idx, data_idx, bss_idx) != 0) return -1;
 
     sec_off = (uint32_t)sizeof(s32o_header_t);
     sym_off = sec_off + nsec * (uint32_t)sizeof(s32o_section_t);
@@ -536,6 +558,7 @@ static int write_obj(const char *out) {
     off = rel_off;
     if (text_rel) { text_rel_off = off; off += text_rel * (uint32_t)sizeof(s32o_reloc_t); }
     if (data_rel) { data_rel_off = off; off += data_rel * (uint32_t)sizeof(s32o_reloc_t); }
+    if (bss_rel) { bss_rel_off = off; off += bss_rel * (uint32_t)sizeof(s32o_reloc_t); }
     str_off = off;
     off += g_ssz;
     off = (off + 3u) & ~3u;
@@ -578,6 +601,16 @@ static int write_obj(const char *out) {
         v = data_rel; w32(v);
         v = data_rel_off; w32(v);
     }
+    if (bss_idx) {
+        v = bss_name; w32(v);
+        v = S32_SEC_BSS; w32(v);
+        v = S32_SEC_FLAG_WRITE | S32_SEC_FLAG_READ | S32_SEC_FLAG_ALLOC; w32(v);
+        v = g_bsz; w32(v);
+        v = 0; w32(v);
+        v = 4; w32(v);
+        v = bss_rel; w32(v);
+        v = bss_rel_off; w32(v);
+    }
 
     for (i = 0; i < g_nsym; i++) {
         v = g_sym_name[i]; w32(v);
@@ -598,6 +631,14 @@ static int write_obj(const char *out) {
     }
     for (i = 0; i < g_nrel; i++) {
         if (g_rel_sec[i] == SEC_DATA) {
+            v = g_rel_off[i]; w32(v);
+            v = g_lbl_to_sym[g_rel_sym[i]]; w32(v);
+            v = g_rel_typ[i]; w32(v);
+            v = (uint32_t)g_rel_add[i]; w32(v);
+        }
+    }
+    for (i = 0; i < g_nrel; i++) {
+        if (g_rel_sec[i] == SEC_BSS) {
             v = g_rel_off[i]; w32(v);
             v = g_lbl_to_sym[g_rel_sym[i]]; w32(v);
             v = g_rel_typ[i]; w32(v);
