@@ -175,6 +175,21 @@ static uint32_t enc_b(uint32_t op, int rs1, int rs2, int imm) { uint32_t u=(uint
 static uint32_t enc_u(uint32_t op, int rd, int imm20) { return op | ((uint32_t)rd << 7) | (((uint32_t)imm20 & 0xFFFFFu) << 12); }
 static uint32_t enc_j(uint32_t op, int rd, int imm) { uint32_t u=(uint32_t)imm; return op | ((uint32_t)rd<<7) | (((u>>12)&255u)<<12) | (((u>>11)&1u)<<20) | (((u>>1)&1023u)<<21) | (((u>>20)&1u)<<31); }
 
+static uint32_t rd32(uint8_t *p) {
+    uint32_t v = (uint32_t)p[0];
+    v |= ((uint32_t)p[1] << 8);
+    v |= ((uint32_t)p[2] << 16);
+    v |= ((uint32_t)p[3] << 24);
+    return v;
+}
+
+static void wr32(uint8_t *p, uint32_t v) {
+    p[0] = (uint8_t)(v & 255u);
+    p[1] = (uint8_t)((v >> 8) & 255u);
+    p[2] = (uint8_t)((v >> 16) & 255u);
+    p[3] = (uint8_t)((v >> 24) & 255u);
+}
+
 static int do_align(int p) {
     uint32_t a = 1u << p;
     uint32_t n = cur_off();
@@ -228,7 +243,7 @@ static int handle(char *line) {
         return 0;
     }
 
-    if (strcmp(tok[0], "add") == 0 || strcmp(tok[0], "sub") == 0 || strcmp(tok[0], "and") == 0 || strcmp(tok[0], "or") == 0 || strcmp(tok[0], "xor") == 0 || strcmp(tok[0], "mul") == 0 || strcmp(tok[0], "div") == 0 || strcmp(tok[0], "rem") == 0 || strcmp(tok[0], "slt") == 0 || strcmp(tok[0], "sge") == 0 || strcmp(tok[0], "seq") == 0 || strcmp(tok[0], "sne") == 0 || strcmp(tok[0], "sgt") == 0) {
+    if (strcmp(tok[0], "add") == 0 || strcmp(tok[0], "sub") == 0 || strcmp(tok[0], "and") == 0 || strcmp(tok[0], "or") == 0 || strcmp(tok[0], "xor") == 0 || strcmp(tok[0], "mul") == 0 || strcmp(tok[0], "div") == 0 || strcmp(tok[0], "rem") == 0 || strcmp(tok[0], "slt") == 0 || strcmp(tok[0], "sge") == 0 || strcmp(tok[0], "sle") == 0 || strcmp(tok[0], "seq") == 0 || strcmp(tok[0], "sne") == 0 || strcmp(tok[0], "sgt") == 0) {
         int rd, rs1, rs2;
         uint32_t op = 0;
         if (n != 4) return -1;
@@ -246,6 +261,7 @@ static int handle(char *line) {
         else if (strcmp(tok[0], "seq") == 0) op = 0x0E;
         else if (strcmp(tok[0], "sne") == 0) op = 0x0F;
         else if (strcmp(tok[0], "sgt") == 0) op = 0x18;
+        else if (strcmp(tok[0], "sle") == 0) op = 0x1A;
         else op = 0x1C;
         return emit32(enc_r(op, rd, rs1, rs2));
     }
@@ -278,12 +294,13 @@ static int handle(char *line) {
 
     if (strcmp(tok[0], "beq") == 0 || strcmp(tok[0], "bne") == 0) {
         int rs1, rs2;
-        uint32_t off = cur_off();
+        uint32_t off;
         uint32_t op = (strcmp(tok[0], "beq") == 0) ? 0x48 : 0x49;
         if (n != 4) return -1;
         rs1 = parse_reg(tok[1]); rs2 = parse_reg(tok[2]);
         if (rs1 < 0 || rs2 < 0) return -1;
         if (emit32(enc_b(op, rs1, rs2, 0)) != 0) return -1;
+        off = cur_off() - 4u;
         return add_reloc(S32O_REL_BRANCH, off, tok[3]);
     }
 
@@ -297,37 +314,42 @@ static int handle(char *line) {
 
     if (strcmp(tok[0], "jal") == 0) {
         int rd;
-        uint32_t off = cur_off();
+        uint32_t off;
         if (n != 3) return -1;
         rd = parse_reg(tok[1]);
         if (rd < 0) return -1;
         if (emit32(enc_j(0x40, rd, 0)) != 0) return -1;
+        off = cur_off() - 4u;
         return add_reloc(S32O_REL_JAL, off, tok[2]);
     }
 
     if (strcmp(tok[0], "la") == 0) {
         int rd;
-        uint32_t off = cur_off();
+        uint32_t off;
         uint32_t off2;
         if (n != 3) return -1;
         rd = parse_reg(tok[1]);
         if (rd < 0) return -1;
         if (emit32(enc_u(0x20, rd, 0)) != 0) return -1;
         if (emit32(enc_i(0x10, rd, rd, 0)) != 0) return -1;
+        off2 = cur_off();
+        off = off2 - 8u;
+        off2 = off2 - 4u;
         if (add_reloc(S32O_REL_HI20, off, tok[2]) != 0) return -1;
-        off2 = off + 4u;
         return add_reloc(S32O_REL_LO12, off2, tok[2]);
     }
 
     if (strcmp(tok[0], "call") == 0) {
-        uint32_t off = cur_off();
+        uint32_t off;
         uint32_t off2;
         if (n != 2) return -1;
         if (emit32(enc_u(0x20, 1, 0)) != 0) return -1;
         if (emit32(enc_i(0x10, 1, 1, 0)) != 0) return -1;
         if (emit32(enc_i(0x41, 31, 1, 0)) != 0) return -1;
+        off2 = cur_off();
+        off = off2 - 12u;
+        off2 = off2 - 8u;
         if (add_reloc(S32O_REL_HI20, off, tok[1]) != 0) return -1;
-        off2 = off + 4u;
         return add_reloc(S32O_REL_LO12, off2, tok[1]);
     }
 
@@ -369,6 +391,55 @@ static int build_syms(int text_idx, int data_idx) {
     return 0;
 }
 
+static int resolve_local_text_relocs(void) {
+    uint32_t i, out = 0;
+    for (i = 0; i < g_nrel; i++) {
+        uint32_t li = g_rel_sym[i];
+        uint32_t typ = g_rel_typ[i];
+        uint32_t off = g_rel_off[i];
+        int keep = 1;
+
+        if (g_rel_sec[i] == SEC_TEXT &&
+            (typ == S32O_REL_BRANCH || typ == S32O_REL_JAL) &&
+            li < g_nlbl &&
+            g_lbl_defd[li] &&
+            g_lbl_sec[li] == SEC_TEXT) {
+            int32_t target = (int32_t)g_lbl_val[li] + g_rel_add[i];
+            int32_t disp = target - (int32_t)off;
+
+            if (off + 4u > g_tsz) return -1;
+            if ((off & 3u) != 0u) return -1;
+
+            if (typ == S32O_REL_BRANCH) {
+                uint32_t inst = rd32(g_text + off);
+                int rs1 = (int)((inst >> 15) & 31u);
+                int rs2 = (int)((inst >> 20) & 31u);
+                uint32_t op = inst & 127u;
+                wr32(g_text + off, enc_b(op, rs1, rs2, disp));
+            } else {
+                uint32_t inst = rd32(g_text + off);
+                int rd = (int)((inst >> 7) & 31u);
+                uint32_t op = inst & 127u;
+                wr32(g_text + off, enc_j(op, rd, disp));
+            }
+            keep = 0;
+        }
+
+        if (keep) {
+            if (out != i) {
+                g_rel_sec[out] = g_rel_sec[i];
+                g_rel_off[out] = g_rel_off[i];
+                g_rel_typ[out] = g_rel_typ[i];
+                g_rel_sym[out] = g_rel_sym[i];
+                g_rel_add[out] = g_rel_add[i];
+            }
+            out++;
+        }
+    }
+    g_nrel = out;
+    return 0;
+}
+
 static int write_obj(const char *out) {
     uint32_t nsec = 0;
     int text_idx = 0;
@@ -386,6 +457,8 @@ static int write_obj(const char *out) {
 
     if (g_tsz) { nsec++; text_idx = (int)nsec; }
     if (g_dsz) { nsec++; data_idx = (int)nsec; }
+
+    if (resolve_local_text_relocs() != 0) return -1;
 
     for (i = 0; i < g_nrel; i++) {
         if (g_rel_sec[i] == SEC_TEXT) text_rel++;
