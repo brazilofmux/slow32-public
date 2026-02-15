@@ -1,0 +1,12 @@
+selfhost/v2/stage04/tests/subset/subset01_string_space.c
+selfhost/v2/stage04/tests/subset/subset02_streq.c
+selfhost/v2/stage04/tests/subset/subset03_tok_loop.c
+selfhost/v2/stage04/tests/subset/subset04_bool_chain.c
+selfhost/v2/stage04/tests/subset/subset05_call_args.c
+selfhost/v2/stage04/tests/subset/subset06_ptr_args.c
+selfhost/v2/stage04/tests/subset/subset07_control.c
+selfhost/v2/stage04/tests/subset/subset08_arrays.c
+selfhost/v2/stage04/tests/subset/subset09_globals.c
+selfhost/v2/stage04/tests/subset/subset10_chars.c
+selfhost/v2/stage04/tests/subset/subset11_logic.c
+selfhost/v2/stage04/tests/subset/subset12_ptr_arith.c
