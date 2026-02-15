@@ -484,6 +484,21 @@ VARIABLE is-lvalue          \ 1 if last expr result is an lvalue address in r1
 : TYPE-IS-PTR ( type -- f )  TYPE-PTR 0> ;
 : TYPE-IS-ARRAY ( type -- f ) TYPE-ARRAY-COUNT 0<> ;
 
+\ Robust struct sizing: use cached st-size when set, otherwise derive from fields.
+: STRUCT-SIZE ( struct-idx -- n )
+    DUP MAX-STRUCT >= IF DROP 4 EXIT THEN
+    DUP CELLS st-size + @ DUP 0<> IF NIP EXIT THEN DROP
+    DUP CELLS st-fbase + @ tmp-a !
+    CELLS st-fcount + @ tmp-b !
+    0 tmp-c !
+    tmp-b @ 0 ?DO
+        tmp-a @ I + DUP CELLS fld-off + @ >R
+        CELLS fld-type + @ TYPE-SIZE
+        R> +
+        DUP tmp-c @ > IF tmp-c ! ELSE DROP THEN
+    LOOP
+    tmp-c @ 4 ALIGN-UP ;
+
 \ Size of a type in bytes
 \ Get element size of a base type (without array/pointer)
 : BASE-TYPE-SIZE ( type -- n )
@@ -514,7 +529,7 @@ VARIABLE is-lvalue          \ 1 if last expr result is an lvalue address in r1
         CLR-ARR-MASK AND
         DUP TYPE-BASE TY-STRUCT = IF
             14 RSHIFT 255 AND  \ extract struct index
-            DUP MAX-STRUCT < IF CELLS st-size + @ ELSE DROP 4 THEN
+            STRUCT-SIZE
             R> * EXIT
         THEN
         DUP TYPE-BASE CASE
@@ -535,8 +550,7 @@ VARIABLE is-lvalue          \ 1 if last expr result is an lvalue address in r1
         TY-INT    OF DROP 4 ENDOF
         TY-LONG   OF DROP 4 ENDOF
         TY-STRUCT OF DROP 14 RSHIFT 255 AND  \ struct index in bits 14-21
-                     DUP MAX-STRUCT < IF CELLS st-size + @
-                     ELSE DROP 4 THEN ENDOF
+                     STRUCT-SIZE ENDOF
         TY-ENUM   OF DROP 4 ENDOF
         DROP 4
     ENDCASE ;
@@ -709,6 +723,7 @@ VARIABLE is-lvalue          \ 1 if last expr result is an lvalue address in r1
             CC-SKIP
             BEGIN CC-PEEK DUP IS-HEXDIG WHILE
                 tok-val @ 16 *
+                SWAP
                 DUP IS-DIGIT IF 48 - ELSE
                     DUP 97 >= IF 87 - ELSE 55 - THEN  \ a=10, A=10
                 THEN +
@@ -1162,21 +1177,11 @@ VARIABLE is-lvalue          \ 1 if last expr result is an lvalue address in r1
     DUP -2048 >= OVER 2047 <= AND IF
         EMIT-INDENT S" addi r1, r0, " OUT-STR OUT-SNUM OUT-NL
     ELSE
-        DUP 16 RSHIFT MASK12 AND  tmp-a !  \ upper bits
-        DUP MASK12 AND tmp-b !              \ lower 12 bits
-        \ Check if we need sign-extension compensation for ADDI
-        tmp-b @ SIGN12 AND IF   \ bit 11 set - ADDI will sign-extend
-            DUP 2048 + 12 RSHIFT          \ compensated upper
-            EMIT-INDENT S" lui r1, " OUT-STR OUT-NUM OUT-NL
-            MASK12 AND
-            DUP SIGN12 AND IF SIGN12-EXT OR THEN  \ sign extend
-            EMIT-INDENT S" addi r1, r1, " OUT-STR OUT-SNUM OUT-NL
-        ELSE
-            DUP 12 RSHIFT
-            EMIT-INDENT S" lui r1, " OUT-STR OUT-NUM OUT-NL
-            MASK12 AND
-            EMIT-INDENT S" addi r1, r1, " OUT-STR OUT-SNUM OUT-NL
-        THEN
+        DUP 2048 + 12 RSHIFT MASK20 AND
+        EMIT-INDENT S" lui r1, " OUT-STR OUT-NUM OUT-NL
+        MASK12 AND
+        DUP SIGN12 AND IF SIGN12-EXT OR THEN
+        EMIT-INDENT S" addi r1, r1, " OUT-STR OUT-SNUM OUT-NL
     THEN ;
 
 \ Load immediate into r2
@@ -1184,20 +1189,11 @@ VARIABLE is-lvalue          \ 1 if last expr result is an lvalue address in r1
     DUP -2048 >= OVER 2047 <= AND IF
         EMIT-INDENT S" addi r2, r0, " OUT-STR OUT-SNUM OUT-NL
     ELSE
-        DUP 16 RSHIFT MASK12 AND  tmp-a !
-        DUP MASK12 AND tmp-b !
-        tmp-b @ SIGN12 AND IF
-            DUP 2048 + 12 RSHIFT
-            EMIT-INDENT S" lui r2, " OUT-STR OUT-NUM OUT-NL
-            MASK12 AND
-            DUP SIGN12 AND IF SIGN12-EXT OR THEN
-            EMIT-INDENT S" addi r2, r2, " OUT-STR OUT-SNUM OUT-NL
-        ELSE
-            DUP 12 RSHIFT
-            EMIT-INDENT S" lui r2, " OUT-STR OUT-NUM OUT-NL
-            MASK12 AND
-            EMIT-INDENT S" addi r2, r2, " OUT-STR OUT-SNUM OUT-NL
-        THEN
+        DUP 2048 + 12 RSHIFT MASK20 AND
+        EMIT-INDENT S" lui r2, " OUT-STR OUT-NUM OUT-NL
+        MASK12 AND
+        DUP SIGN12 AND IF SIGN12-EXT OR THEN
+        EMIT-INDENT S" addi r2, r2, " OUT-STR OUT-SNUM OUT-NL
     THEN ;
 
 \ Load global variable address into r2
@@ -2288,40 +2284,44 @@ DEFER PARSE-DECL-OR-STMT
 \ Dedicated buffer for function call names — with nesting stack
 CREATE call-name 256 ALLOT
 VARIABLE call-name-len
-CREATE call-stk 544 ALLOT   \ 8 levels × 68 bytes (64 name + 4 len)
+CREATE call-stk 576 ALLOT   \ 8 levels × 72 bytes (64 name + 4 len + 4 argc)
 VARIABLE call-sp
+VARIABLE call-argc
 0 call-sp !
 
 : CALL-SAVE ( -- )
-    call-sp @ 68 * call-stk +    \ dest slot
+    call-sp @ 72 * call-stk +    \ dest slot
     call-name SWAP 64 CMOVE      \ save name (from call-name to slot)
-    call-sp @ 68 * call-stk + 64 +
+    call-sp @ 72 * call-stk + 64 +
     call-name-len @ SWAP !       \ save length
+    call-sp @ 72 * call-stk + 68 +
+    call-argc @ SWAP !           \ save arg count
     1 call-sp +! ;
 
 : CALL-RESTORE ( -- )
     -1 call-sp +!
-    call-sp @ 68 * call-stk +
+    call-sp @ 72 * call-stk +
     DUP call-name 64 CMOVE       \ CMOVE( from=slot, to=call-name, count=64 )
-    64 + @ call-name-len ! ;
+    DUP 64 + @ call-name-len !
+    68 + @ call-argc ! ;
 
 : PARSE-CALL ( -- )
     \ tok-buf has function name, save it
     tok-buf call-name tok-len @ CMOVE
     tok-len @ call-name-len !
     CC-TOKEN  \ skip (
-    0  \ arg count on data stack (not global tmp-e)
+    0 call-argc !
     \ Check for empty args
     tok-type @ TK-PUNCT = tok-val @ P-RPAREN = AND 0= IF
         BEGIN
             \ Push previous args to expression stack
-            DUP 0> IF EMIT-PUSH-R1 THEN
+            call-argc @ 0> IF EMIT-PUSH-R1 THEN
             \ Save call state before arg evaluation (may nest)
             CALL-SAVE
             PARSE-ASSIGN-EXPR
             LVAL-TO-RVAL
             CALL-RESTORE
-            1+  \ increment arg count
+            1 call-argc +!
             tok-type @ TK-PUNCT = tok-val @ P-COMMA = AND
         WHILE
             CC-TOKEN  \ skip comma
@@ -2329,8 +2329,8 @@ VARIABLE call-sp
     THEN
     P-RPAREN EXPECT-PUNCT
     CC-TOKEN
-    \ Assign args to registers — count is on data stack
-    CASE
+    \ Assign args to registers
+    call-argc @ CASE
         0 OF ENDOF
         1 OF S" addi r3, r1, 0" EMIT-INSN ENDOF
         2 OF S" addi r4, r1, 0" EMIT-INSN
@@ -2562,7 +2562,10 @@ VARIABLE call-sp
         tok-type @ TK-PUNCT = IF
             tok-val @ CASE
                 P-LBRACK OF   \ array indexing: a[i]
-                    LVAL-TO-RVAL
+                    \ Array bases are already addresses; pointer bases must be loaded.
+                    expr-type @ TYPE-IS-ARRAY 0= IF
+                        LVAL-TO-RVAL
+                    THEN
                     EMIT-PUSH-R1  \ save base address
                     expr-type @ tmp-type !
                     CC-TOKEN  \ skip [
@@ -2584,7 +2587,11 @@ VARIABLE call-sp
                     ELSE DROP THEN
                     EMIT-POP-R2
                     S" add r1, r2, r1" EMIT-INSN  \ r1 = base + index*size
-                    tmp-type @ TYPE-REMOVE-PTR expr-type !
+                    tmp-type @ DUP TYPE-IS-ARRAY IF
+                        CLR-ARR-MASK AND
+                    ELSE
+                        TYPE-REMOVE-PTR
+                    THEN expr-type !
                     1 is-lvalue !
                     P-RBRACK EXPECT-PUNCT CC-TOKEN
                     TRUE
@@ -2641,15 +2648,15 @@ VARIABLE call-sp
                     LVAL-TO-RVAL   \ r1 = function address
                     EMIT-PUSH-R1  \ save fn addr
                     CC-TOKEN  \ skip (
-                    0  \ arg count
+                    0 call-argc !
                     tok-type @ TK-PUNCT = tok-val @ P-RPAREN = AND 0= IF
                         BEGIN
-                            DUP 0> IF EMIT-PUSH-R1 THEN
+                            call-argc @ 0> IF EMIT-PUSH-R1 THEN
                             CALL-SAVE
                             PARSE-ASSIGN-EXPR
                             LVAL-TO-RVAL
                             CALL-RESTORE
-                            1+
+                            1 call-argc +!
                             tok-type @ TK-PUNCT = tok-val @ P-COMMA = AND
                         WHILE
                             CC-TOKEN
@@ -2657,7 +2664,7 @@ VARIABLE call-sp
                     THEN
                     P-RPAREN EXPECT-PUNCT CC-TOKEN
                     \ Assign args to registers (same as PARSE-CALL)
-                    CASE
+                    call-argc @ CASE
                         0 OF ENDOF
                         1 OF S" addi r3, r1, 0" EMIT-INSN ENDOF
                         2 OF S" addi r4, r1, 0" EMIT-INSN

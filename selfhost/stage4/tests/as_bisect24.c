@@ -1,0 +1,21 @@
+#include <stdio.h>
+#include <stdint.h>
+
+static void w32(FILE *f, uint32_t v) {
+    fputc((int)(v & 255), f);
+    fputc((int)((v >> 8) & 255), f);
+    fputc((int)((v >> 16) & 255), f);
+    fputc((int)((v >> 24) & 255), f);
+}
+
+int main(int argc, char **argv) {
+    FILE *out;
+    uint32_t x;
+    if (argc != 3) return 1;
+    out = fopen(argv[2], "wb");
+    if (!out) return 2;
+    x = 0x5333324Fu;
+    w32(out, x);
+    fclose(out);
+    return 0;
+}
