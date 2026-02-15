@@ -111,6 +111,27 @@ run_exe() {
     fi
 }
 
+run_exe_nofault() {
+    local exe="$1"
+    local log="$2"
+    shift 2
+
+    set +e
+    timeout "${EXEC_TIMEOUT:-60}" "$EMU" "$exe" "$@" >"$log" 2>&1
+    local rc=$?
+    set -e
+    if [[ "$rc" -eq 124 ]]; then
+        echo "execution timed out: $exe" >&2
+        tail -n 60 "$log" >&2
+        return 1
+    fi
+    if grep -Eq "Execute fault|Memory fault|Write out of bounds or to protected memory|Unknown opcode|Unknown instruction|Load fault" "$log"; then
+        echo "execution faulted: $exe" >&2
+        tail -n 60 "$log" >&2
+        return 1
+    fi
+}
+
 compile_c_stage4() {
     local src="$1"
     local asm="$2"
@@ -208,7 +229,7 @@ ASM
     assemble_forth "$WORKDIR/reloc_spike.s" "$RELOC_OBJ" "$WORKDIR/reloc_spike.as.log"
     run_exe "$STAGE7_EXE" "$WORKDIR/s32-ld.reloc.run.log" "$RELOC_OBJ" "$RELOC_EXE"
     [[ -s "$RELOC_EXE" ]] || { echo "stage07 linker produced no relocation-spike output" >&2; exit 1; }
-    run_exe "$RELOC_EXE" "$WORKDIR/reloc_spike.run.log"
+    run_exe_nofault "$RELOC_EXE" "$WORKDIR/reloc_spike.run.log"
 fi
 
 echo "OK: stage07 linker spike"

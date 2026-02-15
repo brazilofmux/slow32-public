@@ -28,3 +28,6 @@ selfhost/v2/stage04/tests/subset-idioms/idiom27_nested_for_outer_progress.c
 selfhost/v2/stage04/tests/subset-idioms/idiom28_section_dispatch_chain.c
 selfhost/v2/stage04/tests/subset-idioms/idiom29_reloc_patch_bitpack.c
 selfhost/v2/stage04/tests/subset-idioms/idiom30_nested_reloc_pair_scan.c
+selfhost/v2/stage04/tests/subset-idioms/idiom31_hi20_lo12_rounding.c
+selfhost/v2/stage04/tests/subset-idioms/idiom32_branch_reloc_pack.c
+selfhost/v2/stage04/tests/subset-idioms/idiom33_jal_reloc_pack.c
