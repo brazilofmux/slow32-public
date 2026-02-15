@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-EMU="$ROOT_DIR/tools/emulator/slow32"
+EMU="${STAGE4_EMU:-$ROOT_DIR/tools/emulator/slow32}"
 KERNEL="$ROOT_DIR/forth/kernel.s32x"
 PRELUDE="$ROOT_DIR/forth/prelude.fth"
 CC_FTH="$ROOT_DIR/selfhost/stage4/cc.fth"
@@ -16,13 +16,17 @@ KEEP_ARTIFACTS=0
 
 usage() {
     cat <<USAGE
-Usage: $0 [--slow32dump] [--keep-artifacts]
+Usage: $0 [--slow32dump] [--keep-artifacts] [--emu <path>]
 
 Runs Stage 4 compiler regression in a staged work-up:
   Stage A: test1.c, test2.c
   Stage B: test3.c, test4.c, test5.c, test6.c
   Stage C: test7.c, test8.c, test9.c
   Stage D (optional): validation/slow32dump.c
+
+Defaults:
+  Emulator: \$STAGE4_EMU or $ROOT_DIR/tools/emulator/slow32
+  Minimal emulator example: --emu $ROOT_DIR/selfhost/stage0/s32-emu
 USAGE
 }
 
@@ -30,6 +34,11 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --slow32dump) SLOW32DUMP=1 ;;
         --keep-artifacts) KEEP_ARTIFACTS=1 ;;
+        --emu)
+            shift
+            [[ $# -gt 0 ]] || { echo "--emu requires a path" >&2; exit 2; }
+            EMU="$1"
+            ;;
         -h|--help) usage; exit 0 ;;
         *)
             echo "Unknown option: $1" >&2
@@ -119,12 +128,25 @@ run_exe() {
     local log="$2"
     shift 2
 
+    set +e
     timeout 30 "$EMU" "$exe" "$@" >"$log" 2>&1
-    grep -q "Program halted" "$log" || {
+    local rc=$?
+    set -e
+    if [[ "$rc" -eq 124 ]]; then
+        echo "execution timed out: $exe" >&2
+        tail -n 40 "$log" >&2
+        return 1
+    fi
+    if grep -Eq "Execute fault|Memory fault|Unknown opcode|Unknown instruction" "$log"; then
+        echo "execution faulted: $exe" >&2
+        tail -n 40 "$log" >&2
+        return 1
+    fi
+    if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
         echo "execution did not halt cleanly: $exe" >&2
         tail -n 40 "$log" >&2
         return 1
-    }
+    fi
 }
 
 build_and_run_test() {
