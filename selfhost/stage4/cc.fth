@@ -21,14 +21,14 @@ FFFFF CONSTANT MASK20
 FFF   CONSTANT MASK12
 FF    CONSTANT MASK8
 F00   CONSTANT BITS-8-11
-FFFFF0FF CONSTANT CLR-PTR-MASK   \ clear bits 8-11
+FFFFFF87 CONSTANT CLR-PTR-MASK   \ clear bits 3-6
 FFFF  CONSTANT MASK16
-1FFFFF CONSTANT CLR-ARR-MASK    \ keep bits 0-20, clear array count (bits 21-31)
+FFFF CONSTANT CLR-ARR-MASK       \ keep bits 0-15, clear array count (bits 16-31)
 800   CONSTANT SIGN12            \ sign bit of 12-bit value
 FFFFF000 CONSTANT SIGN12-EXT    \ sign extension mask
-1000  CONSTANT UNSIGNED-BIT      \ bit 12 = unsigned flag
+80    CONSTANT UNSIGNED-BIT      \ bit 7 = unsigned flag
 DECIMAL
-255 CONSTANT MASK-BYTE           \ mask for base type (bits 0-7)
+7 CONSTANT MASK-BYTE             \ mask for base type (bits 0-2)
 
 \ Token types
 0  CONSTANT TK-EOF
@@ -125,14 +125,14 @@ DECIMAL
 2 CONSTANT TY-SHORT
 3 CONSTANT TY-INT
 4 CONSTANT TY-LONG
-5 CONSTANT TY-STRUCT     \ index in bits 14-20
+5 CONSTANT TY-STRUCT     \ index in bits 9-15
 6 CONSTANT TY-ENUM
 
 \ Type bit fields
-: TY-PTR-SHIFT 8 ;       \ bits 8-11 = pointer depth
-: TY-UNSIGNED-BIT 12 ;   \ bit 12 = unsigned
-: TY-CONST-BIT 13 ;      \ bit 13 = const
-: TY-ARRAY-SHIFT 21 ;    \ bits 21-31 = array count (0=not array)
+: TY-PTR-SHIFT 3 ;       \ bits 3-6 = pointer depth
+: TY-UNSIGNED-BIT 7 ;    \ bit 7 = unsigned
+: TY-CONST-BIT 8 ;       \ bit 8 = const
+: TY-ARRAY-SHIFT 16 ;    \ bits 16-31 = array count (0=not array)
 
 \ === Buffer Sizes ===
 262144 CONSTANT INP-SZ      \ 256KB input buffer
@@ -455,30 +455,31 @@ VARIABLE is-lvalue          \ 1 if last expr result is an lvalue address in r1
     tok-buf tok-len @ 2SWAP STR= ;
 
 \ --- Type helpers ---
-: TYPE-BASE ( type -- base )     255 AND ;
-: TYPE-PTR  ( type -- depth )    8 RSHIFT 15 AND ;
-: TYPE-IS-UNSIGNED ( type -- f ) 12 RSHIFT 1 AND ;
-: TYPE-ARRAY-COUNT ( type -- n ) 21 RSHIFT ;
+: TYPE-BASE ( type -- base )     7 AND ;
+: TYPE-PTR  ( type -- depth )    3 RSHIFT 15 AND ;
+: TYPE-IS-UNSIGNED ( type -- f ) 7 RSHIFT 1 AND ;
+: TYPE-ARRAY-COUNT ( type -- n ) 16 RSHIFT ;
 
 : MAKE-TYPE ( base ptr unsigned -- type )
-    12 LSHIFT >R
-    8 LSHIFT OR
+    7 LSHIFT >R
+    3 LSHIFT OR
     R> OR ;
 
 : TYPE-ADD-PTR ( type -- type' )
-    DUP CLR-PTR-MASK AND   \ clear bits 8-11
+    DUP CLR-PTR-MASK AND   \ clear bits 3-6
     SWAP TYPE-PTR 1+ 15 AND
-    8 LSHIFT OR ;
+    3 LSHIFT OR ;
 
 : TYPE-REMOVE-PTR ( type -- type' )
     DUP TYPE-PTR DUP 0= IF DROP EXIT THEN
-    1- 15 AND 8 LSHIFT
-    SWAP CLR-PTR-MASK AND  \ clear bits 8-11
+    1- 15 AND 3 LSHIFT
+    SWAP CLR-PTR-MASK AND  \ clear bits 3-6
     OR ;
 
 : TYPE-SET-ARRAY ( type count -- type' )
-    21 LSHIFT
-    SWAP CLR-ARR-MASK AND     \ clear bits 21-31 (array count)
+    DUP 65535 > IF DROP 65535 THEN
+    16 LSHIFT
+    SWAP CLR-ARR-MASK AND     \ clear bits 16-31 (array count)
     OR ;
 
 : TYPE-IS-PTR ( type -- f )  TYPE-PTR 0> ;
@@ -509,11 +510,11 @@ VARIABLE is-lvalue          \ 1 if last expr result is an lvalue address in r1
         TY-INT    OF DROP 4 ENDOF
         TY-LONG   OF DROP 4 ENDOF
         TY-STRUCT OF DROP
-            \ Extract struct index from bits 14-20 of the ORIGINAL type
+            \ Extract struct index from bits 9-15 of the ORIGINAL type
             \ But since this is called after stripping array, we need the index
             \ stored alongside the TY-STRUCT base.
-            \ Our type encoding puts struct index in bits 14-20 when base=TY-STRUCT
-            \ After stripping array count, bits 21-31 are cleared. So we need
+            \ Our type encoding puts struct index in bits 9-15 when base=TY-STRUCT
+            \ After stripping array count, bits 16-31 are cleared. So we need
             \ to pass the original type. Let me redesign.
             4  \ fallback
         ENDOF
@@ -525,10 +526,10 @@ VARIABLE is-lvalue          \ 1 if last expr result is an lvalue address in r1
     DUP TYPE-IS-PTR IF DROP 4 EXIT THEN
     DUP TYPE-IS-ARRAY IF
         DUP TYPE-ARRAY-COUNT >R  \ save count
-        \ Element type: strip array count (bits 21-31), keep struct index (bits 14-20)
+        \ Element type: strip array count (bits 16-31), keep struct index (bits 9-15)
         CLR-ARR-MASK AND
         DUP TYPE-BASE TY-STRUCT = IF
-            14 RSHIFT 127 AND  \ extract struct index
+            9 RSHIFT 127 AND  \ extract struct index
             STRUCT-SIZE
             R> * EXIT
         THEN
@@ -549,7 +550,7 @@ VARIABLE is-lvalue          \ 1 if last expr result is an lvalue address in r1
         TY-SHORT  OF DROP 2 ENDOF
         TY-INT    OF DROP 4 ENDOF
         TY-LONG   OF DROP 4 ENDOF
-        TY-STRUCT OF DROP 14 RSHIFT 127 AND  \ struct index in bits 14-20
+        TY-STRUCT OF DROP 9 RSHIFT 127 AND  \ struct index in bits 9-15
                      STRUCT-SIZE ENDOF
         TY-ENUM   OF DROP 4 ENDOF
         DROP 4
@@ -2092,7 +2093,7 @@ VARIABLE mexp-scratch-len
                         \ Anonymous struct type (e.g. typedef struct { ... } T;)
                         tok-buf 0 ST-ADD
                     THEN
-                    14 LSHIFT TY-STRUCT OR
+                    9 LSHIFT TY-STRUCT OR
                     tmp-type @ MASK-BYTE INVERT AND OR tmp-type !
                     1 tmp-a !
                     \ Check for struct definition { ... }
@@ -2287,6 +2288,7 @@ VARIABLE call-name-len
 CREATE call-stk 576 ALLOT   \ 8 levels × 72 bytes (64 name + 4 len + 4 argc)
 VARIABLE call-sp
 VARIABLE call-argc
+VARIABLE index-base-type
 0 call-sp !
 
 : CALL-SAVE ( -- )
@@ -2567,13 +2569,13 @@ VARIABLE call-argc
                         LVAL-TO-RVAL
                     THEN
                     EMIT-PUSH-R1  \ save base address
-                    expr-type @ tmp-type !
+                    expr-type @ index-base-type !
                     CC-TOKEN  \ skip [
                     PARSE-EXPR
                     LVAL-TO-RVAL
                     \ r1 = index, stack top = base address
                     \ Scale index by element size
-                    tmp-type @ TYPE-DEREF-SIZE DUP 1 <> IF
+                    index-base-type @ TYPE-DEREF-SIZE DUP 1 <> IF
                         DUP 4 = IF
                             DROP
                             EMIT-INDENT S" slli r1, r1, 2" OUT-STR OUT-NL
@@ -2587,7 +2589,7 @@ VARIABLE call-argc
                     ELSE DROP THEN
                     EMIT-POP-R2
                     S" add r1, r2, r1" EMIT-INSN  \ r1 = base + index*size
-                    tmp-type @ DUP TYPE-IS-ARRAY IF
+                    index-base-type @ DUP TYPE-IS-ARRAY IF
                         CLR-ARR-MASK AND
                     ELSE
                         TYPE-REMOVE-PTR
@@ -2607,7 +2609,7 @@ VARIABLE call-argc
                     CC-TOKEN  \ skip .
                     \ Get field name
                     expr-type @ TYPE-BASE TY-STRUCT = IF
-                        expr-type @ 14 RSHIFT 127 AND  \ struct index
+                        expr-type @ 9 RSHIFT 127 AND  \ struct index
                         tok-buf tok-len @ FLD-FIND DUP -1 <> IF
                             DUP CELLS fld-off + @ tmp-a !   \ field offset
                             CELLS fld-type + @ expr-type !
@@ -2628,7 +2630,7 @@ VARIABLE call-argc
                     CC-TOKEN  \ skip ->
                     expr-type @ TYPE-REMOVE-PTR tmp-type !
                     tmp-type @ TYPE-BASE TY-STRUCT = IF
-                        tmp-type @ 14 RSHIFT 127 AND  \ struct index
+                        tmp-type @ 9 RSHIFT 127 AND  \ struct index
                         tok-buf tok-len @ FLD-FIND DUP -1 <> IF
                             DUP CELLS fld-off + @ tmp-a !
                             CELLS fld-type + @ expr-type !
@@ -3724,7 +3726,7 @@ VARIABLE decl-name-len
     1 in-function !
     NEW-LABEL ret-label !
     \ Local offset is already set by PARSE-PARAMS (after args)
-    \ Emit prologue with fixed frame size (256 bytes)
+    \ Emit prologue with fixed frame size (256 bytes).
     256 EMIT-PROLOGUE
     \ Save args to frame
     func-nargs @ 8 MIN 0 ?DO
@@ -3879,7 +3881,7 @@ VARIABLE decl-name-len
         tmp-idx @ PARSE-STRUCT-BODY
     THEN
     \ Return type word
-    TY-STRUCT tmp-idx @ 14 LSHIFT OR ;
+    TY-STRUCT tmp-idx @ 9 LSHIFT OR ;
 
 \ Parse top-level declaration
 : PARSE-TOP-LEVEL ( -- )
@@ -3899,7 +3901,7 @@ VARIABLE decl-name-len
         tok-type @ TK-PUNCT = tok-val @ P-LBRACE = AND IF
             \ struct with body + declarator
             OVER TYPE-BASE TY-STRUCT = IF
-                OVER 14 RSHIFT 127 AND PARSE-STRUCT-BODY
+                OVER 9 RSHIFT 127 AND PARSE-STRUCT-BODY
             THEN
         THEN
         \ Fall through to declarator parsing
@@ -3940,7 +3942,7 @@ VARIABLE decl-name-len
     \ Check for struct body inline
     DUP TYPE-BASE TY-STRUCT = IF
         tok-type @ TK-PUNCT = tok-val @ P-LBRACE = AND IF
-            DUP 14 RSHIFT 127 AND PARSE-STRUCT-BODY
+            DUP 9 RSHIFT 127 AND PARSE-STRUCT-BODY
         THEN
     THEN
     DUP PARSE-DECLARATOR  \ ( type type' name-addr name-len )
