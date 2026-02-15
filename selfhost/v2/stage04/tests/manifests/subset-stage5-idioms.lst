@@ -22,3 +22,6 @@ selfhost/v2/stage04/tests/subset-idioms/idiom21_pp_macro_forward_args.c
 selfhost/v2/stage04/tests/subset-idioms/idiom22_pp_macro_arg_ternary_cast.c
 selfhost/v2/stage04/tests/subset-idioms/idiom23_pp_macro_arg_comma_operator.c
 selfhost/v2/stage04/tests/subset-idioms/idiom24_pp_macro_arg_deep_paren.c
+selfhost/v2/stage04/tests/subset-idioms/idiom25_stage5_many_bss_globals.c
+selfhost/v2/stage04/tests/subset-idioms/idiom26_nested_for_increment_state.c
+selfhost/v2/stage04/tests/subset-idioms/idiom27_nested_for_outer_progress.c

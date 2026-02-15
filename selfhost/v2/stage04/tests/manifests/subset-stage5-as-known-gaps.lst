@@ -1,2 +1,2 @@
 # Stage4 subset idioms that pass baseline but fail with Stage5 assembler path.
-selfhost/v2/stage04/tests/subset-idioms/idiom25_stage5_many_bss_globals.c
+# Intentionally empty at the moment.

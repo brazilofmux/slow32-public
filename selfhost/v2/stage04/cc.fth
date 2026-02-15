@@ -370,8 +370,17 @@ VARIABLE sl-c   \ label C (continue target, etc.)
 VARIABLE sl-d   \ saved input position
 VARIABLE sl-e   \ saved line number
 
-CREATE for-inc-buf 1024 ALLOT   \ saved for-loop increment text
-VARIABLE for-inc-len            \ length of saved increment text
+8 CONSTANT MAX-FOR-NEST
+1024 CONSTANT FOR-INC-SZ
+CREATE for-inc-bufs MAX-FOR-NEST FOR-INC-SZ * ALLOT
+CREATE for-inc-lens MAX-FOR-NEST CELLS ALLOT
+VARIABLE for-depth
+
+: FOR-INC-BUF ( -- addr )
+    for-depth @ FOR-INC-SZ * for-inc-bufs + ;
+
+: FOR-INC-LEN-ADDR ( -- addr )
+    for-depth @ CELLS for-inc-lens + ;
 
 \ Current expression type tracking
 VARIABLE expr-type          \ type of last expression result
@@ -3233,6 +3242,12 @@ VARIABLE ret-label
 
 : PARSE-FOR-STMT ( -- )
     CC-TOKEN  \ skip 'for'
+    for-depth @ MAX-FOR-NEST >= IF
+        S" for-loop nesting too deep" CC-ERR
+    ELSE
+        1 for-depth +!
+    THEN
+    0 FOR-INC-LEN-ADDR !
     sl-a @ >R
     sl-b @ >R
     sl-c @ >R
@@ -3303,32 +3318,32 @@ VARIABLE ret-label
         THEN
     WHILE REPEAT
     \ Save the increment text (from sl-d to tok-start, before the ")")
-    tok-start @ sl-d @ - for-inc-len !
-    for-inc-len @ 0> IF
-        inp-buf sl-d @ + for-inc-buf for-inc-len @ CMOVE
+    tok-start @ sl-d @ - DUP FOR-INC-LEN-ADDR !
+    FOR-INC-LEN-ADDR @ 0> IF
+        inp-buf sl-d @ + FOR-INC-BUF FOR-INC-LEN-ADDR @ CMOVE
     THEN
     CC-TOKEN  \ skip )
     \ Parse body
     PARSE-STATEMENT
     \ Now emit increment
     sl-c @ EMIT-LABEL   \ continue label
-    for-inc-len @ 0> IF
+    FOR-INC-LEN-ADDR @ 0> IF
         \ Inject saved increment text before current token (tok-start).
         \ After loop body parse, tok already holds the next token.
         inp-len @ tok-start @ - tmp-a !             \ remaining bytes incl current token
-        for-inc-len @ 3 + tmp-a @ + tmp-b !         \ new total size at insertion point
+        FOR-INC-LEN-ADDR @ 3 + tmp-a @ + tmp-b !         \ new total size at insertion point
         \ Move remaining input to make room
         inp-buf tok-start @ +                          \ src
-        inp-buf tok-start @ + for-inc-len @ + 3 +     \ dst
+        inp-buf tok-start @ + FOR-INC-LEN-ADDR @ + 3 +     \ dst
         tmp-a @                                        \ count
         MOVE                                           \ overlap-safe
         \ Copy increment text at insertion point
-        for-inc-buf inp-buf tok-start @ + for-inc-len @ CMOVE
+        FOR-INC-BUF inp-buf tok-start @ + FOR-INC-LEN-ADDR @ CMOVE
         \ Add sentinel: space + ) + space
-        32 inp-buf tok-start @ for-inc-len @ + + C!
-        41 inp-buf tok-start @ for-inc-len @ + 1+ + C!
-        32 inp-buf tok-start @ for-inc-len @ + 2 + + C!
-        inp-len @ for-inc-len @ + 3 + inp-len !
+        32 inp-buf tok-start @ FOR-INC-LEN-ADDR @ + + C!
+        41 inp-buf tok-start @ FOR-INC-LEN-ADDR @ + 1+ + C!
+        32 inp-buf tok-start @ FOR-INC-LEN-ADDR @ + 2 + + C!
+        inp-len @ FOR-INC-LEN-ADDR @ + 3 + inp-len !
         tok-start @ inp-pos !   \ re-lex from injected text
         0 has-peek !
         \ Parse injected increment expression
@@ -3351,6 +3366,7 @@ VARIABLE ret-label
     R> sl-c !
     R> sl-b !
     R> sl-a !
+    -1 for-depth +!
 ;
 
 : PARSE-SWITCH-STMT ( -- )
@@ -4064,6 +4080,7 @@ VARIABLE decl-name-len
     0 enum-cnt ! 0 enum-nptr !
     0 td-cnt ! 0 td-nptr !
     0 str-pool-ptr ! 0 str-count !
+    0 for-depth !
     ASM-SEC-NONE asm-sec !
     0 label-cnt !
     0 frame-size ! 0 func-nargs !
