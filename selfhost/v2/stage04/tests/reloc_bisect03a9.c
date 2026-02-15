@@ -592,7 +592,7 @@ int main(int argc, char **argv) {
 #if REL_BISECT_LEVEL >= 3
  #if REL_BISECT_LO12_STYLE == 9
                 uint32_t out_inst;
-                out_inst = rd32(g_out + sec_out + rel->offset);
+                out_inst = patched;
                 out_inst = out_inst + 0u;
                 patched = out_inst;
  #elif REL_BISECT_LO12_STYLE == 8

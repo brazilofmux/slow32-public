@@ -18,7 +18,9 @@ Buckets:
 Current narrow boundary in `reloc-bisect-lo12-rdwr`:
 - `reloc_bisect03a00.c` passes
 - `reloc_bisect03a9.c` fails when the LO12 branch includes
-  a block-local temp with self-add using `0u` (`out_inst = out_inst + 0u;`)
+  a block-local temp with self-add using `0u`
+  (`out_inst = out_inst + 0u;`) even though this variant is
+  semantics-preserving (`patched -> out_inst -> patched`).
 
 The full bisect corpus is tracked as fixtures in this directory.
 

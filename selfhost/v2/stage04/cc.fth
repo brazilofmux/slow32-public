@@ -1046,9 +1046,11 @@ VARIABLE is-lvalue          \ 1 if last expr result is an lvalue address in r1
 : LSYM-FIND ( addr u -- idx | -1 )
     lsym-cnt @ 0 ?DO
         2DUP
-        I CELLS lsym-name + @ lsym-nbuf +
-        I CELLS lsym-nlen + @
-        COMPARE 0= IF 2DROP I UNLOOP EXIT THEN
+        lsym-cnt @ 1- I - DUP >R
+        CELLS lsym-name + @ lsym-nbuf +
+        R@ CELLS lsym-nlen + @
+        COMPARE 0= IF 2DROP R> UNLOOP EXIT THEN
+        R> DROP
     LOOP
     2DROP -1 ;
 
@@ -3568,6 +3570,9 @@ VARIABLE ret-label
 
 \ Parse compound statement (block)
 : (PARSE-COMPOUND) ( -- )
+    lsym-cnt @ >R
+    lsym-nptr @ >R
+    local-offset @ >R
     CC-TOKEN  \ skip {
     BEGIN
         tok-type @ TK-PUNCT = tok-val @ P-RBRACE = AND 0= IF
@@ -3578,6 +3583,9 @@ VARIABLE ret-label
         PARSE-DECL-OR-STMT
     REPEAT
     CC-TOKEN  \ skip }
+    R> local-offset !
+    R> lsym-nptr !
+    R> lsym-cnt !
 ;
 
 :NONAME (PARSE-COMPOUND) ; IS PARSE-COMPOUND
