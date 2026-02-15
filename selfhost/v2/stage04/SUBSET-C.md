@@ -35,3 +35,8 @@ Known-gap tracking:
 - Scanner: `selfhost/v2/stage04/run-subset-gap-scan.sh`
 - Stage5-assembler-path manifest: `selfhost/v2/stage04/tests/manifests/subset-stage5-as-known-gaps.lst`
 - Stage5-assembler-path scan: `selfhost/v2/stage04/run-subset-gap-scan.sh --mode progressive-as --manifest ...`
+
+Long-branch debug helper:
+- Script: `selfhost/v2/stage04/run-cc-long-branch-debug.sh`
+- Usage: `selfhost/v2/stage04/run-cc-long-branch-debug.sh --src selfhost/v2/stage04/tests/subset/subset13_long_branch.c`
+- Purpose: compile a single source with a temporary `DBG-LONG-BRANCH=1` compiler copy and print `[CC] Long branches lowered: <n>`.
