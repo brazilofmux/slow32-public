@@ -2507,31 +2507,12 @@ VARIABLE index-base-type
         ENDOF
         TK-PUNCT OF
             tok-val @ P-LPAREN = IF
-                \ Check for cast
-                \ Save position
-                inp-pos @ tmp-a !
-                cc-line @ tmp-b !
-                tok-type @ tmp-c !
-                tok-val @ tmp-d !
                 CC-TOKEN
-                IS-TYPE-START IF
-                    \ Cast expression: (type)expr
-                    PARSE-BASE-TYPE DROP
-                    PARSE-POINTERS
-                    tmp-type !  \ save cast target type
-                    P-RPAREN EXPECT-PUNCT
-                    CC-TOKEN
-                    PARSE-PRIMARY  \ parse operand (unary precedence)
-                    LVAL-TO-RVAL
-                    tmp-type @ expr-type !
-                    0 is-lvalue !
-                ELSE
-                    \ Parenthesized expression
-                    \ Token already consumed — it's the first token of the expr
-                    PARSE-EXPR
-                    P-RPAREN EXPECT-PUNCT
-                    CC-TOKEN
-                THEN
+                \ Parenthesized expression
+                \ Token already consumed — it's the first token of the expr
+                PARSE-EXPR
+                P-RPAREN EXPECT-PUNCT
+                CC-TOKEN
                 EXIT
             THEN
             S" unexpected punctuation in expression" CC-ERR
@@ -2721,6 +2702,28 @@ VARIABLE index-base-type
 \ --- Unary expression ---
 \ Handles: -x, !x, ~x, *p, &x, ++x, --x, (cast)
 : PARSE-UNARY ( -- )
+    \ Cast has unary precedence: (T)e parses as (T)(e), while (T)a[i] must
+    \ parse as (T)(a[i]) and not ((T)a)[i].
+    tok-type @ TK-PUNCT = tok-val @ P-LPAREN = AND IF
+        CC-TOKEN
+        IS-TYPE-START IF
+            PARSE-BASE-TYPE DROP
+            PARSE-POINTERS
+            tmp-type !          \ cast target type
+            P-RPAREN EXPECT-PUNCT
+            CC-TOKEN
+            PARSE-UNARY         \ cast-expression
+            LVAL-TO-RVAL
+            tmp-type @ expr-type !
+            0 is-lvalue !
+            EXIT
+        ELSE
+            \ Not a cast: restore only token stream state for "(expr)" path.
+            UNGET-TOKEN
+            TK-PUNCT tok-type !
+            P-LPAREN tok-val !
+        THEN
+    THEN
     tok-type @ TK-PUNCT = IF
         tok-val @ CASE
             P-MINUS OF    \ unary minus
@@ -3651,23 +3654,24 @@ VARIABLE decl-name-len
         THEN
         PARSE-BASE-TYPE DROP  \ type flags
         PARSE-DECLARATOR      \ type name-addr name-len
+        2 PICK tmp-type !     \ save declared param type
         DUP 0= IF
             \ Unnamed parameter
             2DROP
             \ Still count it for register allocation
             tmp-e @ 8 < IF
-                S" " 0 2 PICK -12 tmp-e @ 4 * - 1 LSYM-ADD DROP
+                S" " 0 tmp-type @ -12 tmp-e @ 4 * - 1 LSYM-ADD DROP
             THEN
             DROP
         ELSE
             tmp-name-len ! tmp-name-off !
             \ Args are saved to frame at fp-12, fp-16, etc.
             tmp-name-off @ tmp-name-len @
-            2 PICK  \ type
+            tmp-type @
             -12 tmp-e @ 4 * -  \ FP offset
             1  \ is-arg
             LSYM-ADD DROP
-            DROP  \ drop type
+            DROP
         THEN
         1 tmp-e +!
         tok-type @ TK-PUNCT = tok-val @ P-COMMA = AND IF

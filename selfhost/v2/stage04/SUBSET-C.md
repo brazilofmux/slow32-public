@@ -28,8 +28,7 @@ Policy:
 - Utility spikes (`s32-as.c`, `s32-ar.c`, etc.) are integration tests, not a substitute for subset conformance.
 
 Current known gap:
-- 32-bit little-endian decode idioms (byte-to-word recomposition) are tracked but not yet part of the required green manifest.
-- `char*` parameter indexing (`p[i]`) is tracked as a known gap for Stage4 codegen.
+- none currently tracked; existing gap scanner remains available for future additions.
 
 Known-gap tracking:
 - Manifest: `selfhost/v2/stage04/tests/manifests/subset-known-gaps.lst`
