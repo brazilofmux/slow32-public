@@ -24,7 +24,7 @@ KEEP_ARTIFACTS=0
 
 usage() {
     cat <<USAGE
-Usage: $0 [--mode baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage6-ar-smoke|stage6-ar-scan-smoke] [--test <name>] [--emu <path>] [--keep-artifacts]
+Usage: $0 [--mode baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage6-ar-smoke|stage6-ar-scan-smoke|stage6-ar-asm-diff] [--test <name>] [--emu <path>] [--keep-artifacts]
 
 Modes:
   baseline          Stage4 cc.fth + Stage1 asm.fth + Stage3 link.fth
@@ -33,6 +33,7 @@ Modes:
   progressive-as-ar-scan Same as progressive-as-ar, but runs s32-ar with opt-in symbol scan flag
   stage6-ar-smoke   Build stage5 assembler, then stage6 s32-ar.c with forth assembler; run archive smoke only
   stage6-ar-scan-smoke Build stage5 assembler, then stage6 s32-ar-scan.c with forth assembler; run archive smoke with cmd=cs only
+  stage6-ar-asm-diff Build stage5 assembler, assemble s32-ar.s with stage5 and forth, and report first .s32o byte diff
 
 Env overrides:
   SELFHOST_ROOT SELFHOST_EMU SELFHOST_KERNEL SELFHOST_PRELUDE
@@ -70,7 +71,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$MODE" in
-    baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage6-ar-smoke|stage6-ar-scan-smoke) ;;
+    baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage6-ar-smoke|stage6-ar-scan-smoke|stage6-ar-asm-diff) ;;
     *)
         echo "Unknown mode: $MODE" >&2
         usage
@@ -242,6 +243,32 @@ case "$MODE" in
         build_stage6_archiver "$VALIDATION_DIR/s32-ar-scan.c" forth
         stage6_archive_smoke "cs"
         ;;
+    stage6-ar-asm-diff)
+        build_stage5_assembler
+        TARGET_SRC="$VALIDATION_DIR/s32-ar.c"
+        TARGET_ASM="$WORKDIR/s32-ar.s"
+        TARGET_STAGE5_OBJ="$WORKDIR/s32-ar.stage5.s32o"
+        TARGET_FORTH_OBJ="$WORKDIR/s32-ar.forth.s32o"
+        compile_c_stage4 "$TARGET_SRC" "$TARGET_ASM" "$WORKDIR/s32-ar.cc.log"
+        assemble_with_stage5 "$TARGET_ASM" "$TARGET_STAGE5_OBJ" "$WORKDIR/s32-ar.stage5.as.log"
+        assemble_forth "$TARGET_ASM" "$TARGET_FORTH_OBJ" "$WORKDIR/s32-ar.forth.as.log"
+
+        if cmp -s "$TARGET_FORTH_OBJ" "$TARGET_STAGE5_OBJ"; then
+            echo "OK: stage5 and forth assemblers produced identical .s32o"
+        else
+            FIRST_DIFF="$(cmp -l "$TARGET_FORTH_OBJ" "$TARGET_STAGE5_OBJ" 2>/dev/null | head -n 1 || true)"
+            echo "FAIL: stage5 and forth assembler outputs differ"
+            if [[ -n "$FIRST_DIFF" ]]; then
+                echo "First byte diff (1-based offset, forth, stage5): $FIRST_DIFF"
+                OFF_DEC="$(printf '%s\n' "$FIRST_DIFF" | awk '{print $1}')"
+                if [[ -n "$OFF_DEC" ]]; then
+                    OFF_HEX="$(printf '0x%X' "$((OFF_DEC - 1))")"
+                    echo "First differing zero-based offset: $OFF_HEX"
+                fi
+            fi
+            exit 1
+        fi
+        ;;
     baseline)
         if [[ "$TEST_NAME" = /* ]] || [[ "$TEST_NAME" == *.c ]]; then
             TARGET_SRC="$TEST_NAME"
@@ -282,7 +309,7 @@ case "$MODE" in
         ;;
 esac
 
-if [[ "$MODE" != "stage6-ar-smoke" && "$MODE" != "stage6-ar-scan-smoke" ]]; then
+if [[ "$MODE" != "stage6-ar-smoke" && "$MODE" != "stage6-ar-scan-smoke" && "$MODE" != "stage6-ar-asm-diff" ]]; then
     link_forth "$TARGET_OBJ" "$TARGET_EXE" "$WORKDIR/target.ld.log"
     run_exe "$TARGET_EXE" "$WORKDIR/target.run.log"
 fi
@@ -292,6 +319,10 @@ if [[ "$MODE" == "stage6-ar-smoke" || "$MODE" == "stage6-ar-scan-smoke" ]]; then
     echo "Input member: $TARGET_OBJ"
     echo "Assembler path: c(stage05) for s32-as, forth(stage01) for stage6 smoke asm"
     echo "Linker path: forth(stage03)"
+elif [[ "$MODE" == "stage6-ar-asm-diff" ]]; then
+    echo "Input: $TARGET_SRC"
+    echo "Assembler path: c(stage05) vs forth(stage01) object-compare"
+    echo "Linker path: skipped"
 elif [[ "$MODE" == "baseline" ]]; then
     echo "Input: $TARGET_SRC"
     echo "Assembler path: forth(stage01)"
@@ -305,5 +336,7 @@ if [[ "$MODE" == "progressive-as-ar" || "$MODE" == "stage6-ar-smoke" ]]; then
     echo "Archiver smoke: c(stage06)"
 elif [[ "$MODE" == "progressive-as-ar-scan" || "$MODE" == "stage6-ar-scan-smoke" ]]; then
     echo "Archiver smoke: c(stage06, cmd=cs)"
+elif [[ "$MODE" == "stage6-ar-asm-diff" ]]; then
+    echo "Archiver smoke: skipped (assembler comparison only)"
 fi
 echo "Artifacts: $WORKDIR"
