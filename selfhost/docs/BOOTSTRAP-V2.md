@@ -489,14 +489,13 @@ The Stage 0 emulator is deliberately minimal — enough for Forth and subset C t
 
   - An emulator capable of running any SLOW-32 program — not just toolchain components, but real applications.
 
-- **Two paths:**
+- **Several paths:**
 
-  1. **Enhance Stage 0 on the host.** Edit `s32-emu.c` by hand. Simplest approach. The emulator stays a host-native program. Grows from ~780 to perhaps ~1,500 lines.
-  2. **Build an emulator with the subset C toolchain.** Write it in subset C, compile it, run it on Stage 0. Proves the toolchain handles a non-trivial program. The result is a SLOW-32 binary that emulates SLOW-32 (metacircular, slow, but auditable).
-
-  Path 1 is practical. Path 2 is pedagogically interesting. Either works. Both can be done.
-
-  There's also a **Path 3** to dream about: a self-hosted DBT. A SLOW-32 dynamic binary translator, written in C, compiled by the self-hosted toolchain, running on Stage 0. It wouldn't translate SLOW-32 to x86 (it's running on SLOW-32), but it could do block-level optimization: trace hot paths, eliminate redundant loads/stores, inline dispatch. A SLOW-32-to-SLOW-32 JIT. Absurd and wonderful. And a serious validation that the full C compiler can handle the kind of pointer-heavy, bit-twiddling code a DBT requires.
+  1. **Port a full emulator** If the host has an existing C (or really any) compiler that targets the native platform, you can port the slow32.c (interpreter) or slow32-fast.c (pre-decode/function call) emulators to the new host. If you feel particularly ambitious, you can attempt something equivalent to the QEMU TCG or SLOW-32 DBT emulators.
+  2. **Cross-compile** In your new Subset C, you can write a cross-compiler or a translator. This works as long as it implements a full emulator and targets native code, this works.
+  3. **Enhance Stage 0 manually.** The s32-emu.c code was a reference. You could have implemented it whatever facilities the target offered. Now would be the time to manually enhance that.
+  
+  Path 1 is practical because most platforms offer a C compiler. Path 2 is also practical but requires a C cross-compiler running on a secondary host. Path 3 is certaily possible -- if tedious. Any choice works.
 
 - **You can now:**
 
