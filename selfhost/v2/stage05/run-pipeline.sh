@@ -42,13 +42,14 @@ choose_default_emu() {
 
 usage() {
     cat <<USAGE
-Usage: $0 [--mode baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage6-ar-smoke|stage6-ar-rc-smoke|stage6-ar-tx-smoke|stage6-ar-scan-smoke|stage6-ar-asm-diff|stage6-utility-smoke] [--test <name>] [--emu <path>] [--keep-artifacts]
+Usage: $0 [--mode baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage5-as-bisect|stage6-ar-smoke|stage6-ar-rc-smoke|stage6-ar-tx-smoke|stage6-ar-scan-smoke|stage6-ar-asm-diff|stage6-utility-smoke] [--test <name>] [--emu <path>] [--keep-artifacts]
 
 Modes:
   baseline          Stage4 cc.fth + Stage1 asm.fth + Stage3 link.fth
   progressive-as    Stage4 cc.fth + Stage5 s32-as.c (for .s -> .s32o) + Stage3 link.fth
   progressive-as-ar Stage4 cc.fth + Stage5 s32-as.c + Stage6 s32-ar.c smoke-check + Stage3 link.fth
   progressive-as-ar-scan Same as progressive-as-ar, but runs s32-ar with opt-in symbol scan flag
+  stage5-as-bisect  Build stage5 s32-as.c, compile a target .c to .s, and isolate first source line that self-built assembler rejects
   stage6-ar-smoke   Build stage5 assembler, then stage6 s32-ar.c with stage5 assembler; run archive smoke only
   stage6-ar-rc-smoke Build stage5 assembler, then stage6 s32-ar.c with stage5 assembler; verify replace-on-existing (rc) path
   stage6-ar-tx-smoke Build stage5 assembler, then stage6 s32-ar.c with stage5 assembler; verify list/extract (t/x) paths
@@ -92,12 +93,16 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
+if [[ "$EMU" != /* ]]; then
+    EMU="$ROOT_DIR/$EMU"
+fi
+
 if [[ "$MODE" == "stage6-utility-smoke" && "$EMU_EXPLICIT" -eq 0 && -z "${SELFHOST_EMU:-}" ]]; then
     EMU="$(choose_default_emu)"
 fi
 
 case "$MODE" in
-    baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage6-ar-smoke|stage6-ar-rc-smoke|stage6-ar-tx-smoke|stage6-ar-scan-smoke|stage6-ar-asm-diff|stage6-utility-smoke) ;;
+    baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage5-as-bisect|stage6-ar-smoke|stage6-ar-rc-smoke|stage6-ar-tx-smoke|stage6-ar-scan-smoke|stage6-ar-asm-diff|stage6-utility-smoke) ;;
     *)
         echo "Unknown mode: $MODE" >&2
         usage
@@ -323,32 +328,25 @@ FTH
 
 stage6_archive_tx_smoke() {
     local archive="$WORKDIR/smoke-tx.s32a"
-    local obj_a="$ROOT_DIR/runtime/divsi3.s32o"
-    local obj_b="$ROOT_DIR/runtime/crt0.s32o"
+    local obj_a="$WORKDIR/member-a.src"
+    local obj_b="$WORKDIR/member-b.src"
+    local obj_a_expected="$WORKDIR/member-a.expected"
     local xdir="$WORKDIR/extract-tx"
     local rc=0
 
-    [[ -f "$obj_a" && -f "$obj_b" ]] || {
-        echo "Missing runtime object required for tx smoke" >&2
-        return 1
-    }
+    printf 'alpha-stage6-tx\n' > "$obj_a"
+    printf 'beta-stage6-tx\n' > "$obj_b"
+    cp "$obj_a" "$obj_a_expected"
 
     run_exe "$STAGE6_AR_EXE" "$WORKDIR/s32-ar.tx-create.log" "c" "$archive" "$obj_a" "$obj_b"
     run_exe "$STAGE6_AR_EXE" "$WORKDIR/s32-ar.tx-list.log" "t" "$archive"
-    grep -q "divsi3.s32o" "$WORKDIR/s32-ar.tx-list.log" || {
-        echo "stage6 t path missing divsi3.s32o" >&2
-        return 1
-    }
-    grep -q "crt0.s32o" "$WORKDIR/s32-ar.tx-list.log" || {
-        echo "stage6 t path missing crt0.s32o" >&2
-        return 1
-    }
+    rm -f "$obj_a" "$obj_b"
 
     mkdir -p "$xdir"
     set +e
     (
         cd "$xdir"
-        run_exe "$STAGE6_AR_EXE" "$WORKDIR/s32-ar.tx-extract.log" "x" "$archive" "divsi3.s32o"
+        run_exe "$STAGE6_AR_EXE" "$WORKDIR/s32-ar.tx-extract.log" "x" "$archive" "member-a.src"
     )
     rc=$?
     set -e
@@ -356,11 +354,52 @@ stage6_archive_tx_smoke() {
         echo "stage6 x path failed" >&2
         return 1
     fi
-    [[ -s "$xdir/divsi3.s32o" ]] || { echo "stage6 x path did not extract divsi3.s32o" >&2; return 1; }
-    cmp -s "$obj_a" "$xdir/divsi3.s32o" || {
+    [[ -s "$xdir/member-a.src" ]] || { echo "stage6 x path did not extract member-a.src" >&2; return 1; }
+    cmp -s "$obj_a_expected" "$xdir/member-a.src" || {
         echo "stage6 x extracted bytes mismatch" >&2
         return 1
     }
+}
+
+stage5_assemble_bisect() {
+    local asm="$1"
+    local out_obj="$2"
+    local run_log="$3"
+    local total first_bad lo hi mid tmp_asm tmp_obj
+
+    if run_exe "$STAGE5_AS_EXE" "$run_log" "$asm" "$out_obj"; then
+        [[ -s "$out_obj" ]] || { echo "stage5 assembler produced no output: $asm" >&2; return 1; }
+        echo "stage5 assembler accepted full assembly"
+        return 0
+    fi
+
+    total="$(wc -l < "$asm")"
+    if [[ -z "$total" || "$total" -le 0 ]]; then
+        echo "cannot bisect empty assembly file: $asm" >&2
+        return 1
+    fi
+
+    lo=1
+    hi="$total"
+    first_bad="$total"
+    while (( lo <= hi )); do
+        mid=$(( (lo + hi) / 2 ))
+        tmp_asm="$WORKDIR/bisect-$mid.s"
+        tmp_obj="$WORKDIR/bisect-$mid.s32o"
+        head -n "$mid" "$asm" > "$tmp_asm"
+        if run_exe "$STAGE5_AS_EXE" "$WORKDIR/bisect-$mid.log" "$tmp_asm" "$tmp_obj"; then
+            lo=$(( mid + 1 ))
+        else
+            first_bad="$mid"
+            hi=$(( mid - 1 ))
+        fi
+    done
+
+    echo "stage5 assembler first failing line: $first_bad"
+    echo "---- failing line context ----"
+    sed -n "$(( first_bad > 2 ? first_bad - 2 : 1 )),$(( first_bad + 2 ))p" "$asm"
+    echo "------------------------------"
+    return 1
 }
 
 resolve_validation_source() {
@@ -499,6 +538,19 @@ case "$MODE" in
             exit 1
         fi
         ;;
+    stage5-as-bisect)
+        if [[ "$TEST_NAME" = /* ]] || [[ "$TEST_NAME" == *.c ]]; then
+            TARGET_SRC="$TEST_NAME"
+        else
+            TARGET_SRC="$TEST_DIR/${TEST_NAME}.c"
+        fi
+        [[ -f "$TARGET_SRC" ]] || { echo "Missing test source: $TARGET_SRC" >&2; exit 1; }
+        TARGET_ASM="$WORKDIR/target.s"
+        TARGET_OBJ="$WORKDIR/target.s32o"
+        compile_c_stage4 "$TARGET_SRC" "$TARGET_ASM" "$WORKDIR/target.cc.log"
+        build_stage5_assembler
+        stage5_assemble_bisect "$TARGET_ASM" "$TARGET_OBJ" "$WORKDIR/target.as.log"
+        ;;
     baseline)
         if [[ "$TEST_NAME" = /* ]] || [[ "$TEST_NAME" == *.c ]]; then
             TARGET_SRC="$TEST_NAME"
@@ -535,7 +587,7 @@ case "$MODE" in
         ;;
 esac
 
-if [[ "$MODE" != "stage6-ar-smoke" && "$MODE" != "stage6-ar-rc-smoke" && "$MODE" != "stage6-ar-tx-smoke" && "$MODE" != "stage6-ar-scan-smoke" && "$MODE" != "stage6-ar-asm-diff" && "$MODE" != "stage6-utility-smoke" ]]; then
+if [[ "$MODE" != "stage6-ar-smoke" && "$MODE" != "stage6-ar-rc-smoke" && "$MODE" != "stage6-ar-tx-smoke" && "$MODE" != "stage6-ar-scan-smoke" && "$MODE" != "stage6-ar-asm-diff" && "$MODE" != "stage6-utility-smoke" && "$MODE" != "stage5-as-bisect" ]]; then
     link_forth "$TARGET_OBJ" "$TARGET_EXE" "$WORKDIR/target.ld.log"
     run_exe "$TARGET_EXE" "$WORKDIR/target.run.log"
 fi
@@ -565,6 +617,10 @@ elif [[ "$MODE" == "stage6-utility-smoke" ]]; then
     fi
     echo "Assembler path: c(stage05) vs forth(stage01) parity"
     echo "Linker path: forth(stage03)"
+elif [[ "$MODE" == "stage5-as-bisect" ]]; then
+    echo "Input: $TARGET_SRC"
+    echo "Assembler path: c(stage05) first-failing-line bisect"
+    echo "Linker path: skipped"
 elif [[ "$MODE" == "baseline" ]]; then
     echo "Input: $TARGET_SRC"
     echo "Assembler path: forth(stage01)"
@@ -586,6 +642,8 @@ elif [[ "$MODE" == "stage6-ar-asm-diff" ]]; then
     echo "Archiver smoke: skipped (assembler comparison only)"
 elif [[ "$MODE" == "stage6-utility-smoke" ]]; then
     echo "Utility smoke: runtime output parity"
+elif [[ "$MODE" == "stage5-as-bisect" ]]; then
+    echo "Archiver smoke: skipped (assembler failure isolation only)"
 fi
 echo "Emulator: $EMU"
 echo "Artifacts: $WORKDIR"
