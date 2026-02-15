@@ -722,6 +722,12 @@ An alternative approach is to build ALL C tools using the Forth toolchain and th
 
 The V2 stage numbers differ from the current source directory layout (which still reflects older V1 naming). Directory restructuring is intentionally deferred until the V2 stage boundaries are stable in code, tests, and CI scripts.
 
+Execution artifacts for the reorg are tracked in:
+
+- `selfhost/V2-REORG-PLAN.md`
+- `selfhost/V2-MIGRATION-MAP.tsv`
+- `selfhost/v2/` (target stage directories)
+
 | V2 Stage | Current Directory | Key Files | Status |
 |----------|-------------------|-----------|--------|
 | 0 | `selfhost/stage0/` | `s32-emu.c` | Done |

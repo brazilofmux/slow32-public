@@ -1,0 +1,19 @@
+v2_stage	v2_target	current_paths	category	status	notes
+0	selfhost/v2/stage00	selfhost/stage0/s32-emu.c,selfhost/stage0/Makefile	code+build	planned	Keep stage0 binary/output behavior unchanged during move.
+1	selfhost/v2/stage01	selfhost/stage2/asm.fth,selfhost/stage2/*.s,selfhost/stage2/run-*.fth	code+tests	planned	Assembler is currently stable and used by stage4 pipeline.
+2	selfhost/v2/stage02	selfhost/stage3/ar.fth	code	planned	Forth archiver already functionally expanded (AR-X/R/C/D/V/P/M).
+3	selfhost/v2/stage03	selfhost/stage3/link.fth,selfhost/stage3/run-*.fth	code+tests	planned	Linker stable for stage4 regression.
+4	selfhost/v2/stage04	selfhost/stage4/cc.fth,selfhost/stage4/include,selfhost/stage4/tests/test*.c,selfhost/stage4/run-regression.sh	code+tests+infra	planned	Stage4 baseline regression currently passing.
+5	selfhost/v2/stage05	selfhost/stage4/validation/s32-as.c	code+validation	in_progress	Spike proven end-to-end; replacement hardening remains.
+6	selfhost/v2/stage06	selfhost/stage4/validation/s32-ar.c	code+validation	in_progress	Spike exists; integrate into replacement pipeline later.
+7	selfhost/v2/stage07	(placeholder for s32-ld.c subset implementation)	code	not_started	Will replace stage3 linker in progressive chain.
+8	selfhost/v2/stage08	(placeholder for cc.c subset implementation)	code	not_started	Subset C compiler rewritten in C.
+9	selfhost/v2/stage09	(fixed-point harness)	validation+infra	not_started	Gen2==Gen3 for subset toolchain.
+10	selfhost/v2/stage10	(full emulator work area)	code+infra	not_started	Expanded emulator beyond minimal stage0 scope.
+11	selfhost/v2/stage11	(full C compiler extension area)	code	not_started	Beyond subset restrictions.
+12	selfhost/v2/stage12	(full C toolchain rebuild area)	code+infra	not_started	All tools rebuilt with full compiler.
+13	selfhost/v2/stage13	(full C fixed-point harness)	validation	not_started	Gen2==Gen3 full compiler.
+14	selfhost/v2/stage14	(optimizer development area)	code	not_started	Optimization passes.
+15	selfhost/v2/stage15	(optimized toolchain rebuild area)	code+infra	not_started	Rebuild with optimizer enabled.
+16	selfhost/v2/stage16	(final fixed-point harness)	validation	not_started	Final self-consistency checkpoint.
+shared	selfhost/v2/shared	selfhost/docs,selfhost/ISSUES.md	docs+tracking	in_progress	Docs now normalized to V2; continue syncing status.
