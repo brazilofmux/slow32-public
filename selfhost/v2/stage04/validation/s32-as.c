@@ -255,6 +255,17 @@ static int handle(char *line) {
             }
             return 0;
         }
+        if (strcmp(tok[0], ".space") == 0) {
+            int i;
+            int cnt;
+            if (n != 2) return -1;
+            cnt = parse_num(tok[1], &ok);
+            if (!ok || cnt < 0) return -1;
+            for (i = 0; i < cnt; i++) {
+                if (emit8(0) != 0) return -1;
+            }
+            return 0;
+        }
         return 0;
     }
 
