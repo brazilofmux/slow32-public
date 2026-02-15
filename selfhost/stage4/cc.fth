@@ -136,7 +136,7 @@ DECIMAL
 
 \ === Buffer Sizes ===
 262144 CONSTANT INP-SZ      \ 256KB input buffer
-131072 CONSTANT OUT-SZ      \ 128KB output buffer
+196608 CONSTANT OUT-SZ      \ 192KB output buffer
 512    CONSTANT MAX-MACRO    \ max macros
 16384  CONSTANT MNAME-SZ    \ macro name storage
 49152  CONSTANT MVAL-SZ     \ macro value storage
@@ -2111,10 +2111,7 @@ VARIABLE mexp-scratch-len
                     tok-type @ TK-IDENT = IF
                         CC-TOKEN  \ skip name
                     THEN
-                    \ Check for enum body { ... }
-                    tok-type @ TK-PUNCT = tok-val @ P-LBRACE = AND IF
-                        UNGET-TOKEN  \ will be parsed by caller
-                    THEN
+                    \ If tok is '{', caller handles enum body directly.
                     TY-INT tmp-type @ MASK-BYTE INVERT AND OR tmp-type !
                     1 tmp-a !
                     TRUE
@@ -3763,35 +3760,44 @@ VARIABLE decl-name-len
             tok-type @ TK-PUNCT = tok-val @ P-LBRACE = AND IF
                 \ Array/struct initializer
                 CC-TOKEN  \ skip {
+                1 tmp-e !  \ brace depth
                 BEGIN
-                    tok-type @ TK-PUNCT = tok-val @ P-RBRACE = AND 0=
+                    tmp-e @ 0>
                 WHILE
-                    tok-type @ TK-NUM = IF
+                    tok-type @ TK-PUNCT = IF
+                        tok-val @ P-LBRACE = IF
+                            1 tmp-e +!
+                            CC-TOKEN
+                        ELSE tok-val @ P-RBRACE = IF
+                            -1 tmp-e +!
+                            CC-TOKEN
+                        ELSE tok-val @ P-COMMA = IF
+                            CC-TOKEN
+                        ELSE
+                            \ Unknown punctuation inside initializer
+                            EMIT-INDENT S" .word 0" OUT-STR OUT-NL
+                            CC-TOKEN
+                        THEN THEN THEN
+                    ELSE tok-type @ TK-NUM = IF
                         EMIT-INDENT S" .word " OUT-STR tok-val @ OUT-SNUM OUT-NL
                         CC-TOKEN
                     ELSE tok-type @ TK-STR = IF
                         \ String in initializer
                         EMIT-INDENT S" .word .Lstr_" OUT-STR tok-val @ OUT-NUM OUT-NL
                         CC-TOKEN
+                    ELSE tok-type @ TK-IDENT = IF
+                        \ Identifier — enum value or symbol address
+                        EMIT-INDENT S" .word " OUT-STR tok-buf tok-len @ OUT-STR OUT-NL
+                        CC-TOKEN
+                    ELSE tok-type @ TK-PUNCT = tok-val @ P-MINUS = AND IF
+                        CC-TOKEN
+                        EMIT-INDENT S" .word " OUT-STR tok-val @ NEGATE OUT-SNUM OUT-NL
+                        CC-TOKEN
                     ELSE
-                        tok-type @ TK-PUNCT = tok-val @ P-MINUS = AND IF
-                            CC-TOKEN
-                            EMIT-INDENT S" .word " OUT-STR tok-val @ NEGATE OUT-SNUM OUT-NL
-                            CC-TOKEN
-                        ELSE
-                            \ Identifier — could be address
-                            tok-type @ TK-IDENT = IF
-                                EMIT-INDENT S" .word " OUT-STR tok-buf tok-len @ OUT-STR OUT-NL
-                                CC-TOKEN
-                            ELSE
-                                EMIT-INDENT S" .word 0" OUT-STR OUT-NL
-                                CC-TOKEN
-                            THEN
-                        THEN
-                    THEN THEN
-                    tok-type @ TK-PUNCT = tok-val @ P-COMMA = AND IF CC-TOKEN THEN
+                        EMIT-INDENT S" .word 0" OUT-STR OUT-NL
+                        CC-TOKEN
+                    THEN THEN THEN THEN
                 REPEAT
-                CC-TOKEN  \ skip }
             ELSE tok-type @ TK-NUM = IF
                 EMIT-INDENT S" .word " OUT-STR tok-val @ OUT-SNUM OUT-NL
                 CC-TOKEN
@@ -3830,9 +3836,15 @@ VARIABLE decl-name-len
     PARSE-BASE-TYPE DROP  \ type flags, drop flags
     \ Check for struct definition inline with typedef
     tok-type @ TK-PUNCT = tok-val @ P-LBRACE = AND IF
-        \ typedef struct { ... } name;
-        \ The struct was created, now parse body
-        st-cnt @ 1- PARSE-STRUCT-BODY
+        DUP TYPE-BASE TY-STRUCT = IF
+            \ typedef struct { ... } name;
+            \ The struct was created, now parse body
+            st-cnt @ 1- PARSE-STRUCT-BODY
+        ELSE
+            \ typedef enum { ... } name;
+            \ Enums are represented as int in type words, so detect by '{'
+            PARSE-ENUM-BODY
+        THEN
     THEN
     PARSE-DECLARATOR  \ type name-addr name-len
     DUP 0= IF 2DROP S" missing typedef name" CC-ERR DROP EXPECT-SEMI CC-TOKEN EXIT THEN
@@ -3967,6 +3979,8 @@ VARIABLE decl-name-len
             CC-TOKEN
         ELSE
             EMIT-INDENT S" .word 0" OUT-STR OUT-NL
+            PARSE-ASSIGN-EXPR  \ consume non-constant initializer expression
+            LVAL-TO-RVAL
         THEN THEN
         S" .text" EMIT-LINE
     ELSE
