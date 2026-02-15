@@ -9,9 +9,9 @@
 #define MAX_LBL 512
 #define MAX_REL 4096
 #define MAX_SYM 512
-#define MAX_TEXT 65536
-#define MAX_DATA 65536
-#define MAX_BSS 65536
+#define MAX_TEXT 262144
+#define MAX_DATA 262144
+#define MAX_BSS 262144
 #define MAX_STR 16384
 
 enum { SEC_TEXT = 0, SEC_DATA = 1, SEC_BSS = 2 };
