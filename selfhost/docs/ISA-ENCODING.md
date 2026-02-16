@@ -2,7 +2,7 @@
 
 This document covers the instruction encoding needed for hand-assembly of SLOW-32 programs. All instructions are 32 bits wide, little-endian.
 
-Stage00 decoder model (matches `selfhost/v2/stage00/s32-emu.c`):
+Stage00 decoder model (matches `selfhost/stage00/s32-emu.c`):
 - Opcode is always bits `[6:0]` and uniquely selects the instruction.
 - `funct3`/`funct7` bit positions exist in the bit layout, but are not used to distinguish operations in the selfhost ISA subset.
 
@@ -201,7 +201,7 @@ These are sufficient for a complete bootstrap toolchain. The Stage00 emulator im
 
 ## Additional Opcodes Implemented By Stage00 Emulator
 
-These opcodes are implemented in `selfhost/v2/stage00/s32-emu.c` even though they are not required for the minimal 34-instruction bootstrap core.
+These opcodes are implemented in `selfhost/stage00/s32-emu.c` even though they are not required for the minimal 34-instruction bootstrap core.
 
 ### Arithmetic / Comparison Extensions
 

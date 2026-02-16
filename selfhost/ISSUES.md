@@ -40,7 +40,7 @@ The memory access helpers (`rd32`, `wr32`) use `memcpy` directly into host integ
 ## Stage 2: Forth Assembler (`asm.fth`)
 
 ### 6. [FIXED] `.byte` and `.word` Limited to Single Values
-This was resolved in the v2 relocation (`selfhost/v2/stage01/asm.fth`). `DO-BYTE` and `DO-WORD` now use a `BEGIN ... AGAIN` loop to process all tokens on a line.
+This was resolved in the v2 relocation (`selfhost/stage01/asm.fth`). `DO-BYTE` and `DO-WORD` now use a `BEGIN ... AGAIN` loop to process all tokens on a line.
 
 ### 7. [INCONSISTENCY] PC-Relative Reference Points
 The reference point for PC-relative offsets differs between instructions:
@@ -66,7 +66,7 @@ This was cleaned up during the v2 relocation. Both `EMIT-LI-R1` and `EMIT-LI-R2`
 ## Stage 6: Subset C Archiver (`s32-ar.c`)
 
 ### 12. [NARROWED] Stage06 `s32-ar.c` Needs Full Command Coverage
-The Stage06 subset archiver (`selfhost/v2/stage04/validation/s32-ar.c`) now supports bounded multi-member create and real `rc` replace-on-existing behavior with basename matching.
+The Stage06 subset archiver (`selfhost/stage04/validation/s32-ar.c`) now supports bounded multi-member create and real `rc` replace-on-existing behavior with basename matching.
 
 Remaining gap:
 - Expand command surface and parity checks for `d/m/v/p` paths before Stage06 can be considered complete.
@@ -85,8 +85,8 @@ For new users (or clean environments like Raspberry Pi), copying these files fro
 
 Progress:
 - Stage01 minimal runtime assembly inputs now exist in-tree:
-  - `selfhost/v2/stage01/crt0_minimal.s`
-  - `selfhost/v2/stage01/mmio_minimal.s`
+  - `selfhost/stage01/crt0_minimal.s`
+  - `selfhost/stage01/mmio_minimal.s`
 - This closes the "missing minimal assembly runtime sources" portion of the issue.
 
 Target direction:
@@ -98,7 +98,7 @@ Acceptance criteria (future work):
   - host C compiler for Stage00 `s32-emu`
   - seeded `forth/kernel.s32x` + `forth/prelude.fth`
   - no copied runtime `.s32o/.s32a` blobs from another machine
-- `selfhost/v2/stage04/run-regression.sh` fails fast with clear missing-artifact guidance if runtime prerequisites are absent.
+- `selfhost/stage04/run-regression.sh` fails fast with clear missing-artifact guidance if runtime prerequisites are absent.
 
 ---
 

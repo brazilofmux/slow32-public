@@ -5,7 +5,7 @@ This document tracks the implementation status of SLOW-32 instructions across al
 
 ### Stage00 (Selfhost Minimal Emulator) Scope
 
-`selfhost/v2/stage00/s32-emu.c` intentionally implements an integer/MMIO subset of this ISA for bootstrap.
+`selfhost/stage00/s32-emu.c` intentionally implements an integer/MMIO subset of this ISA for bootstrap.
 
 - Implemented in Stage00: integer ALU, compare, branch/jump, loads/stores, `LUI`, `ASSERT_EQ`, `NOP`, `YIELD`, `DEBUG`, `HALT`.
 - Not implemented in Stage00: floating-point opcodes (`0x53` and above).

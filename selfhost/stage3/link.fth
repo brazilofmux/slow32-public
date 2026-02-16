@@ -1,1 +1,0 @@
-../v2/stage03/link.fth

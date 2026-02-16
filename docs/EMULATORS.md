@@ -6,7 +6,7 @@ Five emulators exist with different trade-offs between capability, speed, and po
 
 | Emulator | Type | Speed | Full ISA | Full MMIO | Intrinsic Hooks | Source |
 |----------|------|-------|----------|-----------|-----------------|--------|
-| s32-emu | Interpreter | ~50 MIPS | Subset | Minimal | No | `selfhost/v2/stage00/` |
+| s32-emu | Interpreter | ~50 MIPS | Subset | Minimal | No | `selfhost/stage00/` |
 | slow32 | Interpreter | ~240 MIPS | Yes | Yes | No | `tools/emulator/` |
 | slow32-fast | Pre-decoded | ~240 MIPS | Yes | Yes | No | `tools/emulator/` |
 | qemu-system-slow32 | TCG JIT | ~1 BIPS | Yes | Yes | Yes | `~/qemu` (separate repo) |
@@ -18,7 +18,7 @@ A minimal interpretive emulator used in the selfhost bootstrap chain. Implements
 enough of the ISA to run the Forth kernel and selfhost toolchain. Supports a
 restricted MMIO model (ring buffer I/O with a fixed set of opcodes).
 
-- **Build**: `make -C selfhost/v2/stage00` (gcc, no dependencies)
+- **Build**: `make -C selfhost/stage00` (gcc, no dependencies)
 - **Use case**: Selfhost bootstrap, CI validation
 - **Limitations**: Subset of instructions, limited MMIO
 

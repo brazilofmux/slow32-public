@@ -142,7 +142,7 @@ Using the pre-built kernel is fine for bootstrapping. After Stage 3, you can reb
   - Stage 0 emulator.
   - Pre-built `forth/kernel.s32x`.
   - `forth/prelude.fth` (standard library definitions).
-  - `selfhost/stage2/asm.fth` (~1,300 lines of Forth).
+  - `selfhost/stage01/asm.fth` (~1,300 lines of Forth).
 
 - **You produce:**
 
@@ -175,7 +175,7 @@ Using the pre-built kernel is fine for bootstrapping. After Stage 3, you can reb
 
   - Stage 0 emulator.
   - Pre-built `kernel.s32x`.
-  - `selfhost/stage3/ar.fth` (~735 lines of Forth).
+  - `selfhost/stage02/ar.fth` (~735 lines of Forth).
   - Object files from Stage 1.
 
 - **You produce:**
@@ -199,7 +199,7 @@ Using the pre-built kernel is fine for bootstrapping. After Stage 3, you can reb
 
   - Stage 0 emulator.
   - Pre-built `kernel.s32x`.
-  - `selfhost/stage3/link.fth` (~1,100 lines of Forth).
+  - `selfhost/stage03/link.fth` (~1,100 lines of Forth).
   - Object files and archives from Stages 1-2.
 
 - **You produce:**
@@ -250,9 +250,9 @@ The compiler is written in Forth, runs on the Forth kernel, and compiles a subse
   - Stage 0 emulator.
   - Stages 1-3 (Forth assembler, archiver, linker).
   - Pre-built `kernel.s32x`.
-  - `selfhost/stage4/cc.fth` (~4,100 lines of Forth).
+  - `selfhost/stage04/cc.fth` (~4,100 lines of Forth).
   - Runtime library sources: `crt0.s` (assembly) + libc sources (subset C or assembly).
-  - Subset C header files (`selfhost/stage4/include/`).
+  - Subset C header files (`selfhost/stage04/include/`).
 
 - **You produce:**
 
@@ -293,7 +293,7 @@ The compiler is written in Forth, runs on the Forth kernel, and compiles a subse
 
   - Compile and run the test suite (`test1.c` through `test9.c`).
   - Compare output with expected results.
-  - Run `selfhost/stage4/run-regression.sh`.
+  - Run `selfhost/stage04/run-regression.sh`.
 
 
 ### Stage 5: Subset C Assembler
@@ -726,24 +726,24 @@ Execution artifacts for the reorg are tracked in:
 
 - `selfhost/V2-REORG-PLAN.md`
 - `selfhost/V2-MIGRATION-MAP.tsv`
-- `selfhost/v2/` (target stage directories)
+- `selfhost/` (target stage directories)
 
 | V2 Stage | Current Directory | Key Files | Status |
 |----------|-------------------|-----------|--------|
-| 0 | `selfhost/v2/stage00/` | `s32-emu.c` | Done |
-| 1 | `selfhost/v2/stage01/` (`selfhost/stage2/` compat links) | `asm.fth` | Done |
-| 2 | `selfhost/v2/stage02/` (`selfhost/stage3/ar.fth` compat link) | `ar.fth` | Done |
-| 3 | `selfhost/v2/stage03/` (`selfhost/stage3/` compat links) | `link.fth` | Done |
-| 4 | `selfhost/v2/stage04/` (`selfhost/stage4/` compat links) | `cc.fth` | Done (regression passing) |
-| 5 | `selfhost/v2/stage04/validation/` (`selfhost/stage4/validation/` compat links) | `s32-as.c` | Spike proven end-to-end; replacement hardening in progress |
-| 6 | `selfhost/v2/stage04/validation/` (`selfhost/stage4/validation/` compat links) | `s32-ar.c` | Spike started; replacement hardening in progress |
-| 7 | `selfhost/stage4/validation/` | `s32-ld.c` (planned) | Not started |
-| 8 | `selfhost/stage4/validation/` | `cc.c` (planned) | Not started |
+| 0 | `selfhost/stage00/` | `s32-emu.c` | Done |
+| 1 | `selfhost/stage01/` | `asm.fth` | Done |
+| 2 | `selfhost/stage02/` | `ar.fth` | Done |
+| 3 | `selfhost/stage03/` | `link.fth` | Done |
+| 4 | `selfhost/stage04/` | `cc.fth` | Done (regression passing) |
+| 5 | `selfhost/stage05/` | `s32-as.c` | Spike proven end-to-end; replacement hardening in progress |
+| 6 | `selfhost/stage06/` | `s32-ar.c` | Spike started; replacement hardening in progress |
+| 7 | `selfhost/stage07/` | `s32-ld.c` (planned) | Not started |
+| 8 | `selfhost/stage08/` | `cc.c` (planned) | Not started |
 | 9-16 | — | — | Not started |
 
 **Current Stage 0-4 checkpoint (2026-02-15):**
 - Forth bootstrap chain is stable: `asm.fth`, `ar.fth`, and `link.fth` produce runnable outputs.
-- Stage 4 `cc.fth` passes `selfhost/stage4/run-regression.sh` on full emulator (`slow32-fast`).
+- Stage 4 `cc.fth` passes `selfhost/stage04/run-regression.sh` on full emulator (`slow32-fast`).
 - Stage 5 assembler spike is functional: stage4-built `s32-as.c` compiles, links, runs, and emits `.s32o`.
 - Stage 6 archiver spike exists (`s32-ar.c`), but is not yet the default replacement in the bootstrap pipeline.
 
