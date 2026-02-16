@@ -327,6 +327,9 @@ void emit_ldp_post_x64(emit_ctx_t *ctx, a64_reg_t rt1, a64_reg_t rt2, int32_t im
 // NOP
 void emit_nop(emit_ctx_t *ctx);
 
+// DMB ISHST (store-only memory barrier)
+void emit_dmb_ishst(emit_ctx_t *ctx);
+
 // BRK #imm16 (breakpoint)
 void emit_brk(emit_ctx_t *ctx, uint16_t imm);
 

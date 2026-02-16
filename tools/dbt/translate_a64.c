@@ -770,6 +770,11 @@ void emit_exit(translate_ctx_t *ctx, exit_reason_t reason, uint32_t next_pc) {
     emit_mov_w32_imm32(e, W1, (uint32_t)reason);
     emit_str_w32_imm(e, W1, W20, CPU_EXIT_REASON_OFFSET);
 
+    // Ensure guest stores are visible before host-side MMIO processing.
+    if (reason == EXIT_YIELD || reason == EXIT_HALT) {
+        emit_dmb_ishst(e);
+    }
+
     // Return to dispatcher
     emit_ret_lr(e);
 }

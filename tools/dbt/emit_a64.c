@@ -719,6 +719,11 @@ void emit_nop(emit_ctx_t *ctx) {
     emit_inst(ctx, 0xD503201F);
 }
 
+void emit_dmb_ishst(emit_ctx_t *ctx) {
+    // DMB ISHST
+    emit_inst(ctx, 0xD5033ABF);
+}
+
 void emit_brk(emit_ctx_t *ctx, uint16_t imm) {
     // 11010100 001 imm16 000 00
     uint32_t inst = 0xD4200000 | ((uint32_t)imm << 5);
