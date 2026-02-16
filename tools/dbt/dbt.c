@@ -1419,6 +1419,10 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Superblock side exits taken: %" PRIu32 "\n", cpu.side_exit_taken);
         }
 
+        if (cmp_branch_fusion_count > 0) {
+            fprintf(stderr, "Compare-branch fusions: %" PRIu32 "\n", cmp_branch_fusion_count);
+        }
+
         if (stage >= 2) {
             cache_print_stats(&cache);
             if (dump_offenders) {

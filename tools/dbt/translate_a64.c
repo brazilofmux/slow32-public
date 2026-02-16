@@ -22,6 +22,7 @@
 
 uint32_t superblock_profile_min_samples = SUPERBLOCK_PROFILE_MIN_SAMPLES;
 uint32_t superblock_taken_pct_threshold = SUPERBLOCK_TAKEN_PCT_THRESHOLD;
+uint32_t cmp_branch_fusion_count = 0;  // Global fusion counter for stats
 
 // ============================================================================
 // Instruction decoding (shared with x86-64 translator)
@@ -183,6 +184,7 @@ static void reg_alloc_reset(translate_ctx_t *ctx) {
 
 // Forward declarations
 static void bounds_elim_invalidate(translate_ctx_t *ctx, uint8_t guest_reg);
+static inline a64_reg_t resolve_src(translate_ctx_t *ctx, uint8_t guest_reg, a64_reg_t scratch);
 
 // Return the host register for a cached guest register, or A64_NOREG if not cached.
 static inline a64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg) {
@@ -463,9 +465,101 @@ static inline void flush_pending_write(translate_ctx_t *ctx) {
     ctx->emit.rax_pending = false;
 }
 
-// Stage 1: No pending_cond (compare-branch fusion is Stage 2+)
+// ============================================================================
+// Compare-Branch Fusion: pending condition management
+// ============================================================================
+
+// Invert an AArch64 condition code (flip bit 0)
+static inline a64_cond_t invert_cond(a64_cond_t cond) {
+    return (a64_cond_t)(cond ^ 1);
+}
+
+// Map comparison opcode to AArch64 condition code
+static a64_cond_t cmp_opcode_to_cond(uint8_t opcode) {
+    switch (opcode) {
+        case OP_SLT:  case OP_SLTI:  return COND_LT;
+        case OP_SLTU: case OP_SLTIU: return COND_LO;
+        case OP_SEQ:  return COND_EQ;
+        case OP_SNE:  return COND_NE;
+        case OP_SGT:  return COND_GT;
+        case OP_SGTU: return COND_HI;
+        case OP_SLE:  return COND_LE;
+        case OP_SLEU: return COND_LS;
+        case OP_SGE:  return COND_GE;
+        case OP_SGEU: return COND_HS;
+        default:      return COND_AL;
+    }
+}
+
+// Look ahead: can the comparison result be fused with the next branch?
+// Pattern: Sxx rd, rs1, rs2; BEQ/BNE rd, r0, target
+static bool can_fuse_with_next(translate_ctx_t *ctx, uint8_t rd) {
+    dbt_cpu_state_t *cpu = ctx->cpu;
+    uint32_t next_pc = ctx->guest_pc + 4;
+
+    if (next_pc + 4 > cpu->code_limit) return false;
+
+    uint32_t raw = *(uint32_t *)(cpu->mem_base + next_pc);
+    uint8_t opcode = raw & 0x7F;
+
+    // Only BEQ and BNE can be fused
+    if (opcode != OP_BEQ && opcode != OP_BNE) return false;
+
+    uint8_t rs1 = (raw >> 15) & 0x1F;
+    uint8_t rs2 = (raw >> 20) & 0x1F;
+
+    // Pattern: Bxx rd, r0, target (testing comparison result against zero)
+    return (rs1 == rd && rs2 == 0) || (rs2 == rd && rs1 == 0);
+}
+
+// Materialize a deferred comparison into its destination register.
+// Emits CMP + CSET + store. On AArch64, none of these modify flags,
+// but we only call this when the comparison is NOT being fused with a branch.
+static void materialize_pending_cond(translate_ctx_t *ctx) {
+    if (!ctx->pending_cond.valid) return;
+
+    emit_ctx_t *e = &ctx->emit;
+    uint8_t opcode = ctx->pending_cond.opcode;
+    uint8_t rd = ctx->pending_cond.rd;
+    uint8_t c_rs1 = ctx->pending_cond.rs1;
+    uint8_t c_rs2 = ctx->pending_cond.rs2;
+    bool rs2_is_imm = ctx->pending_cond.rs2_is_imm;
+    int32_t imm = ctx->pending_cond.imm;
+
+    // Clear valid BEFORE emitting to avoid re-entrant flush
+    ctx->pending_cond.valid = false;
+
+    // Emit the comparison
+    a64_reg_t s1 = resolve_src(ctx, c_rs1, W0);
+
+    if (rs2_is_imm) {
+        if (imm >= 0 && (uint32_t)imm < 4096) {
+            emit_cmp_w32_imm(e, s1, (uint32_t)imm);
+        } else if (imm < 0 && (uint32_t)(-imm) < 4096) {
+            emit_cmn_w32_imm(e, s1, (uint32_t)(-imm));
+        } else {
+            emit_mov_w32_imm32(e, W1, (uint32_t)imm);
+            emit_cmp_w32_w32(e, s1, W1);
+        }
+    } else {
+        a64_reg_t s2 = resolve_src(ctx, c_rs2, W1);
+        emit_cmp_w32_w32(e, s1, s2);
+    }
+
+    // Emit CSET + store
+    a64_cond_t cond = cmp_opcode_to_cond(opcode);
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != A64_NOREG) {
+        emit_cset_w32(e, hd, cond);
+        reg_cache_mark_written(ctx, rd);
+    } else {
+        emit_cset_w32(e, W0, cond);
+        emit_store_guest_reg(ctx, rd, W0);
+    }
+}
+
 static inline void flush_pending_cond(translate_ctx_t *ctx) {
-    (void)ctx;
+    materialize_pending_cond(ctx);
 }
 
 // Flush all dirty cached registers to memory, plus pending write/cond.
@@ -1324,23 +1418,8 @@ void translate_srai(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
 // ============================================================================
 // Comparison translations
 // AArch64: CMP + CSET replaces x86 CMP + SETcc + MOVZX
+// With compare-branch fusion: defer CMP when next instruction is BEQ/BNE
 // ============================================================================
-
-static a64_cond_t opcode_to_cond(uint8_t opcode) {
-    switch (opcode) {
-        case OP_SLT:  case OP_SLTI:  return COND_LT;
-        case OP_SLTU: case OP_SLTIU: return COND_LO;  // unsigned <
-        case OP_SEQ:  return COND_EQ;
-        case OP_SNE:  return COND_NE;
-        case OP_SGT:  return COND_GT;
-        case OP_SGTU: return COND_HI;  // unsigned >
-        case OP_SLE:  return COND_LE;
-        case OP_SLEU: return COND_LS;  // unsigned <=
-        case OP_SGE:  return COND_GE;
-        case OP_SGEU: return COND_HS;  // unsigned >=
-        default:      return COND_AL;
-    }
-}
 
 static void translate_cmp_set(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1,
                               uint8_t rs2, uint8_t opcode) {
@@ -1370,7 +1449,22 @@ static void translate_cmp_set(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1,
         return;
     }
 
-    a64_cond_t cond = opcode_to_cond(opcode);
+    // Compare-branch fusion: defer if next instruction is BEQ/BNE testing rd
+    if (can_fuse_with_next(ctx, rd)) {
+        flush_pending_cond(ctx);
+        ctx->pending_cond.opcode = opcode;
+        ctx->pending_cond.rd = rd;
+        ctx->pending_cond.rs1 = rs1;
+        ctx->pending_cond.rs2 = rs2;
+        ctx->pending_cond.rs2_is_imm = false;
+        ctx->pending_cond.inst_idx = ctx->current_inst_idx;
+        ctx->pending_cond.valid = true;
+        ctx->reg_constants[rd].valid = false;
+        return;
+    }
+
+    // Not fusible — emit immediately
+    a64_cond_t cond = cmp_opcode_to_cond(opcode);
     a64_reg_t s1 = resolve_src(ctx, rs1, W0);
     a64_reg_t s2 = resolve_src(ctx, rs2, W1);
     emit_cmp_w32_w32(e, s1, s2);
@@ -1425,6 +1519,21 @@ void translate_slti(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
         return;
     }
 
+    // Compare-branch fusion: defer if next instruction is BEQ/BNE testing rd
+    if (can_fuse_with_next(ctx, rd)) {
+        flush_pending_cond(ctx);
+        ctx->pending_cond.opcode = OP_SLTI;
+        ctx->pending_cond.rd = rd;
+        ctx->pending_cond.rs1 = rs1;
+        ctx->pending_cond.rs2 = 0;
+        ctx->pending_cond.rs2_is_imm = true;
+        ctx->pending_cond.imm = imm;
+        ctx->pending_cond.inst_idx = ctx->current_inst_idx;
+        ctx->pending_cond.valid = true;
+        ctx->reg_constants[rd].valid = false;
+        return;
+    }
+
     {
         a64_reg_t s1 = resolve_src(ctx, rs1, W0);
         if (imm >= 0 && (uint32_t)imm < 4096) {
@@ -1453,6 +1562,21 @@ void translate_sltiu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm)
     if (ctx->reg_constants[rs1].valid) {
         uint32_t result = (ctx->reg_constants[rs1].value < (uint32_t)imm) ? 1 : 0;
         emit_store_guest_reg_imm32(ctx, rd, result);
+        return;
+    }
+
+    // Compare-branch fusion: defer if next instruction is BEQ/BNE testing rd
+    if (can_fuse_with_next(ctx, rd)) {
+        flush_pending_cond(ctx);
+        ctx->pending_cond.opcode = OP_SLTIU;
+        ctx->pending_cond.rd = rd;
+        ctx->pending_cond.rs1 = rs1;
+        ctx->pending_cond.rs2 = 0;
+        ctx->pending_cond.rs2_is_imm = true;
+        ctx->pending_cond.imm = imm;
+        ctx->pending_cond.inst_idx = ctx->current_inst_idx;
+        ctx->pending_cond.valid = true;
+        ctx->reg_constants[rd].valid = false;
         return;
     }
 
@@ -1746,11 +1870,79 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
     emit_ctx_t *e = &ctx->emit;
     uint32_t fall_pc = ctx->guest_pc + 4;
     uint32_t taken_pc = fall_pc + imm;  // PC+4 + imm
+    bool fused = false;
 
-    // Compare rs1, rs2 (use cached regs if available)
-    a64_reg_t s1 = resolve_src(ctx, rs1, W0);
-    a64_reg_t s2 = resolve_src(ctx, rs2, W1);
-    emit_cmp_w32_w32(e, s1, s2);
+    // Compare-branch fusion: consume pending_cond if this branch tests its rd
+    if (ctx->pending_cond.valid) {
+        uint8_t prd = ctx->pending_cond.rd;
+        // Pattern: BEQ/BNE prd, r0, target — one operand is prd, other is r0
+        if ((rs1 == prd && rs2 == 0) || (rs2 == prd && rs1 == 0)) {
+            // Extract deferred comparison state
+            uint8_t saved_opcode = ctx->pending_cond.opcode;
+            uint8_t c_rs1 = ctx->pending_cond.rs1;
+            uint8_t c_rs2 = ctx->pending_cond.rs2;
+            bool rs2_is_imm = ctx->pending_cond.rs2_is_imm;
+            int32_t saved_imm = ctx->pending_cond.imm;
+            int saved_idx = ctx->pending_cond.inst_idx;
+
+            // Clear pending before emitting to avoid re-entrant flush
+            ctx->pending_cond.valid = false;
+
+            // Emit the deferred comparison
+            a64_reg_t s1 = resolve_src(ctx, c_rs1, W0);
+            if (rs2_is_imm) {
+                if (saved_imm >= 0 && (uint32_t)saved_imm < 4096) {
+                    emit_cmp_w32_imm(e, s1, (uint32_t)saved_imm);
+                } else if (saved_imm < 0 && (uint32_t)(-saved_imm) < 4096) {
+                    emit_cmn_w32_imm(e, s1, (uint32_t)(-saved_imm));
+                } else {
+                    emit_mov_w32_imm32(e, W1, (uint32_t)saved_imm);
+                    emit_cmp_w32_w32(e, s1, W1);
+                }
+            } else {
+                a64_reg_t s2 = resolve_src(ctx, c_rs2, W1);
+                emit_cmp_w32_w32(e, s1, s2);
+            }
+
+            // If rd is NOT dead, materialize the comparison result.
+            // On AArch64, CSET/STR don't modify flags, so this is safe
+            // between CMP and B.cond.
+            bool rd_is_dead = ctx->dead_temp_skip[saved_idx];
+            if (!rd_is_dead) {
+                a64_cond_t cmp_cond = cmp_opcode_to_cond(saved_opcode);
+                a64_reg_t hd = guest_host_reg(ctx, prd);
+                if (hd != A64_NOREG) {
+                    emit_cset_w32(e, hd, cmp_cond);
+                    reg_cache_mark_written(ctx, prd);
+                } else {
+                    emit_cset_w32(e, W2, cmp_cond);
+                    emit_store_guest_reg(ctx, prd, W2);
+                }
+            }
+
+            // Determine the fused branch condition:
+            // The comparison set cond (e.g., SLT → COND_LT).
+            // BNE rd, r0 = "branch if comparison was true" → use cond directly
+            // BEQ rd, r0 = "branch if comparison was false" → invert cond
+            a64_cond_t fused_cond = cmp_opcode_to_cond(saved_opcode);
+            if (cond == COND_EQ) {
+                fused_cond = invert_cond(fused_cond);
+            }
+            cond = fused_cond;
+            fused = true;
+            cmp_branch_fusion_count++;
+        }
+    }
+
+    if (!fused) {
+        // Standard comparison: flush any stale pending_cond
+        flush_pending_cond(ctx);
+
+        // Compare rs1, rs2 (use cached regs if available)
+        a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+        a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+        emit_cmp_w32_w32(e, s1, s2);
+    }
 
     // B.cond to taken path (jump over not-taken exit)
     size_t bcond_patch = emit_offset(e);
