@@ -49,3 +49,5 @@ selfhost/v2/stage04/tests/subset-idioms/idiom48_voidptr_uchar_roundtrip_loop.c
 selfhost/v2/stage04/tests/subset-idioms/idiom49_cast_roundtrip_branch_mix.c
 selfhost/v2/stage04/tests/subset-idioms/idiom50_helper_ptr_return_ternary.c
 selfhost/v2/stage04/tests/subset-idioms/idiom51_helper_ptr_alias_branch.c
+selfhost/v2/stage04/tests/subset-idioms/idiom52_nested_ptr_helpers_cast_mix.c
+selfhost/v2/stage04/tests/subset-idioms/idiom53_nested_ptr_helpers_shortcircuit.c
