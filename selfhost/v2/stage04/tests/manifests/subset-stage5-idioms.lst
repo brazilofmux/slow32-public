@@ -35,3 +35,5 @@ selfhost/v2/stage04/tests/subset-idioms/idiom34_archive_delete_shape.c
 selfhost/v2/stage04/tests/subset-idioms/idiom35_archive_header_bounds.c
 selfhost/v2/stage04/tests/subset-idioms/idiom36_param_byte_index_call_chain.c
 selfhost/v2/stage04/tests/subset-idioms/idiom37_pp_macro_forward_comma_expr.c
+selfhost/v2/stage04/tests/subset-idioms/idiom38_ptr_branch_reloc_window.c
+selfhost/v2/stage04/tests/subset-idioms/idiom39_ptr_branch_pair_stride.c
