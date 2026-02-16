@@ -59,3 +59,4 @@ selfhost/v2/stage04/tests/subset-idioms/idiom58_pp_ptr_arg_comma_layers.c
 selfhost/v2/stage04/tests/subset-idioms/idiom59_pp_ptr_nested_paren_layers.c
 selfhost/v2/stage04/tests/subset-idioms/idiom60_pp_ternary_ptr_expr_index.c
 selfhost/v2/stage04/tests/subset-idioms/idiom61_pp_ternary_ptr_expr_shortcircuit.c
+selfhost/v2/stage04/tests/subset-idioms/idiom62_reloc_addend_decode_window.c

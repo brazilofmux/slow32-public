@@ -151,6 +151,10 @@ static uint32_t rd32(const uint8_t *p) {
          | ((uint32_t)p[3] << 24);
 }
 
+static int32_t rd_i32(const uint8_t *p) {
+    return (int32_t)rd32(p);
+}
+
 static int read_file(const char *path, uint8_t *buf, uint32_t max_size, uint32_t *out_size) {
     FILE *f;
     long sz;
@@ -561,11 +565,13 @@ int main(int argc, char **argv) {
 
         for (r = 0; r < s->nrelocs; r = r + 1) {
             s32o_reloc_t *rel;
+            const uint8_t *rel_bytes;
             uint32_t sym_sec;
             uint32_t sym_abs;
             uint32_t patched;
 
             rel = (s32o_reloc_t *)(g_obj + s->reloc_offset + r * (uint32_t)sizeof(s32o_reloc_t));
+            rel_bytes = (const uint8_t *)rel;
             if (rel->symbol >= oh->nsymbols) {
                 fprintf(stderr, "error: relocation symbol index out of range\n");
                 return 1;
@@ -641,7 +647,7 @@ int main(int argc, char **argv) {
                 }
             }
 
-            patched = sym_abs;
+            patched = sym_abs + (uint32_t)rd_i32(rel_bytes + 12);
             if (rel->type == S32O_REL_32) {
                 wr32(g_out + sec_out + rel->offset, patched);
             } else if (rel->type == S32O_REL_HI20) {
@@ -663,6 +669,7 @@ int main(int argc, char **argv) {
                 wr32(g_out + sec_out + rel->offset, inst);
             } else if (rel->type == S32O_REL_BRANCH) {
                 int32_t off;
+                uint32_t off_u;
                 uint32_t pc = sec_va + rel->offset;
                 uint32_t inst;
                 uint32_t imm12;
@@ -670,6 +677,11 @@ int main(int argc, char **argv) {
                 uint32_t imm10_5;
                 uint32_t imm4_1;
                 off = (int32_t)(patched - (pc + 4U));
+                off_u = (uint32_t)off;
+                if ((off_u & 1U) != 0U || (off_u + 4096U) > 8190U) {
+                    fprintf(stderr, "error: branch relocation out of range\n");
+                    return 1;
+                }
                 imm12 = ((uint32_t)off >> 12) & 1U;
                 imm11 = ((uint32_t)off >> 11) & 1U;
                 imm10_5 = ((uint32_t)off >> 5) & 0x3FU;
@@ -683,6 +695,7 @@ int main(int argc, char **argv) {
                 wr32(g_out + sec_out + rel->offset, inst);
             } else if (rel->type == S32O_REL_JAL) {
                 int32_t off;
+                uint32_t off_u;
                 uint32_t pc = sec_va + rel->offset;
                 uint32_t inst;
                 uint32_t imm20;
@@ -690,6 +703,11 @@ int main(int argc, char **argv) {
                 uint32_t imm11;
                 uint32_t imm10_1;
                 off = (int32_t)(patched - pc);
+                off_u = (uint32_t)off;
+                if ((off_u & 1U) != 0U || (off_u + 1048576U) > 2097150U) {
+                    fprintf(stderr, "error: jal relocation out of range\n");
+                    return 1;
+                }
                 imm20 = ((uint32_t)off >> 20) & 1U;
                 imm19_12 = ((uint32_t)off >> 12) & 0xFFU;
                 imm11 = ((uint32_t)off >> 11) & 1U;
