@@ -592,9 +592,57 @@ int main(int argc, char **argv) {
 #if REL_BISECT_LEVEL >= 3
  #if REL_BISECT_LO12_STYLE == 9
                 uint32_t out_inst;
-                out_inst = patched;
+                uint32_t inst;
+                uint32_t opcode;
+                uint32_t imm;
+                int paired;
+                uint32_t k;
+                inst = rd32(g_out + sec_out + rel->offset);
+                opcode = inst & 0x7Fu;
+                imm = patched & 0xFFFu;
+                paired = 0;
+#if REL_BISECT_LO12_SCAN
+                for (k = 0; k < s->nrelocs; k = k + 1) {
+                    s32o_reloc_t *other;
+                    other = (s32o_reloc_t *)(g_obj + s->reloc_offset + k * (uint32_t)sizeof(s32o_reloc_t));
+                    if (other->type == S32O_REL_HI20 && other->symbol == rel->symbol) {
+                        paired = 1;
+                        break;
+                    }
+                }
+                if (!paired) {
+                    int32_t sv;
+                    sv = (int32_t)patched;
+                    if (sv < -2048 || sv > 2047) {
+                        fprintf(stderr, "error: unpaired LO12 relocation out of range\n");
+                        return 1;
+                    }
+                }
+#else
+                paired = 1;
+#endif
+#if REL_BISECT_LO12_PACK
+ #if REL_BISECT_LO12_PACK_MODE == 1
+                inst = (inst & 0x000FFFFFu) | (imm << 20);
+ #elif REL_BISECT_LO12_PACK_MODE == 3
+                inst = (inst & 0xFE000F80u)
+                    | ((imm & 0x1Fu) << 7)
+                    | (((imm >> 5) & 0x7Fu) << 25);
+ #else
+                if (opcode == 0x38u || opcode == 0x39u || opcode == 0x3Au) {
+                    inst = (inst & 0xFE000F80u)
+                        | ((imm & 0x1Fu) << 7)
+                        | (((imm >> 5) & 0x7Fu) << 25);
+                } else {
+                    inst = (inst & 0x000FFFFFu) | (imm << 20);
+                }
+ #endif
+#else
+                patched = patched;
+#endif
+                out_inst = inst;
                 out_inst = out_inst + 0u;
-                patched = out_inst;
+                wr32(g_out + sec_out + rel->offset, out_inst);
  #elif REL_BISECT_LO12_STYLE == 8
                 uint32_t out_inst;
                 out_inst = (uint32_t)g_out[0];

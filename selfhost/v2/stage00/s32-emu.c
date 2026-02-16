@@ -80,6 +80,8 @@
 #define GFLAG_CREATE 0x08u
 #define GFLAG_TRUNC  0x10u
 
+#define PC_HIST_LEN 64u
+
 /* ======================================================================
  * Memory access helpers (little-endian)
  * ====================================================================== */
@@ -100,6 +102,21 @@ static inline void wr16(uint8_t *m, uint32_t a, uint16_t v) {
 static bool range_ok_u32(uint32_t base, uint32_t size, uint32_t total) {
     if (size > total) return false;
     return base <= (total - size);
+}
+
+static bool mmio_trace_enabled(void) {
+    const char *v = getenv("S32_EMU_TRACE_MMIO");
+    return v && v[0] && strcmp(v, "0") != 0;
+}
+
+static bool exec_trace_enabled(void) {
+    const char *v = getenv("S32_EMU_TRACE_EXEC");
+    return v && v[0] && strcmp(v, "0") != 0;
+}
+
+static bool hist_trace_enabled(void) {
+    const char *v = getenv("S32_EMU_TRACE_HISTORY");
+    return v && v[0] && strcmp(v, "0") != 0;
 }
 
 static inline int32_t sign_extend_u32(uint32_t v, unsigned bits) {
@@ -129,7 +146,31 @@ typedef struct {
     uint8_t *args_blob;
     uint32_t args_argc;
     uint32_t args_total;
+
+    uint32_t pc_hist[PC_HIST_LEN];
+    uint32_t pc_hist_pos;
+    uint32_t pc_hist_count;
 } emu_t;
+
+static void pc_hist_push(emu_t *e, uint32_t pc) {
+    e->pc_hist[e->pc_hist_pos] = pc;
+    e->pc_hist_pos = (e->pc_hist_pos + 1u) % PC_HIST_LEN;
+    if (e->pc_hist_count < PC_HIST_LEN) {
+        e->pc_hist_count++;
+    }
+}
+
+static void dump_pc_hist(emu_t *e, const char *why) {
+    if (!hist_trace_enabled() || e->pc_hist_count == 0) {
+        return;
+    }
+    fprintf(stderr, "Recent PCs before %s:\n", why);
+    uint32_t start = (e->pc_hist_pos + PC_HIST_LEN - e->pc_hist_count) % PC_HIST_LEN;
+    for (uint32_t i = 0; i < e->pc_hist_count; i++) {
+        uint32_t idx = (start + i) % PC_HIST_LEN;
+        fprintf(stderr, "  #%02u pc=0x%08X\n", i, e->pc_hist[idx]);
+    }
+}
 
 static void emu_init(emu_t *e) {
     memset(e, 0, sizeof(*e));
@@ -325,6 +366,7 @@ static void mmio_process(emu_t *e) {
         return;
     }
 
+    const bool trace = mmio_trace_enabled();
     while (req_head != req_tail) {
         /* Read request descriptor */
         uint32_t da = mb + MMIO_REQ_RING + req_tail * MMIO_DESC_SIZE;
@@ -371,6 +413,10 @@ static void mmio_process(emu_t *e) {
             uint32_t off = offset % MMIO_DATA_CAP;
             uint32_t max = MMIO_DATA_CAP - off;
             uint32_t cnt = (length > max) ? max : length;
+            if (trace) {
+                fprintf(stderr, "MMIO WRITE: gfd=%u hfd=%d len=%u off=%u cnt=%u\n",
+                        status, hfd, length, offset, cnt);
+            }
             if (hfd < 0 || cnt == 0) {
                 r_status = MMIO_STATUS_ERR; r_length = 0; break;
             }
@@ -419,6 +465,10 @@ static void mmio_process(emu_t *e) {
             int hfd = (flags & O_CREAT)
                 ? open(path_buf, flags, 0644)
                 : open(path_buf, flags);
+            if (trace) {
+                fprintf(stderr, "MMIO OPEN: path='%s' gflags=0x%X host_flags=0x%X hfd=%d\n",
+                        path_buf, status, flags, hfd);
+            }
             if (hfd < 0) { r_status = MMIO_STATUS_ERR; break; }
 
             int gfd = alloc_fd(e, hfd);
@@ -591,6 +641,7 @@ static void step(emu_t *e) {
     #define MEM_FAULT(what, addr, size) do { \
         fprintf(stderr, what " fault: addr=0x%08X size=%u total=0x%08X PC=0x%08X\n", \
                 (uint32_t)(addr), (uint32_t)(size), e->mem_total, e->pc); \
+        dump_pc_hist(e, what " fault"); \
         e->halted = true; \
         return; \
     } while (0)
@@ -599,16 +650,20 @@ static void step(emu_t *e) {
             MEM_FAULT(what, addr, size); \
     } while (0)
 
+    pc_hist_push(e, e->pc);
+
     /* Bounds check PC */
     if (!range_ok_u32(e->pc, 4, e->mem_total)) {
         fprintf(stderr, "Execute fault: PC=0x%08X out of memory (total=0x%08X)\n",
                 e->pc, e->mem_total);
+        dump_pc_hist(e, "execute fault");
         e->halted = true;
         return;
     }
     if (e->pc > e->code_limit || e->code_limit - e->pc < 4) {
         fprintf(stderr, "Execute fault: PC=0x%08X past code_limit=0x%08X\n",
                 e->pc, e->code_limit);
+        dump_pc_hist(e, "execute fault");
         e->halted = true;
         return;
     }
@@ -642,6 +697,14 @@ static void step(emu_t *e) {
     uint32_t next_pc = e->pc + 4;
     uint32_t *r = e->r;
     uint8_t  *m = e->mem;
+    if (exec_trace_enabled()) {
+        static uint32_t trace_count = 0;
+        if (trace_count < 200) {
+            fprintf(stderr, "TRACE pc=0x%08X raw=0x%08X op=0x%02X rs1=%u rs2=%u rd=%u\n",
+                    e->pc, raw, op, rs1, rs2, rd);
+            trace_count++;
+        }
+    }
 
     switch (op) {
     /* ---- R-type arithmetic (0x00-0x0F) ---- */
