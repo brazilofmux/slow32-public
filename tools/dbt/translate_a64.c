@@ -154,7 +154,7 @@ void translate_init_cached(translate_ctx_t *ctx, dbt_cpu_state_t *cpu, block_cac
     ctx->block = NULL;
     ctx->inline_lookup_enabled = true;   // Stage 3: inline hash-probe lookup
     ctx->ras_enabled = true;              // Stage 3: return address stack
-    ctx->superblock_enabled = false;
+    ctx->superblock_enabled = true;
     ctx->superblock_depth = 0;
     ctx->side_exit_info_enabled = false;
     ctx->avoid_backedge_extend = false;
@@ -854,6 +854,95 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
             cache_record_exit(ctx->cache, ctx->block, exit_idx, target_pc, patch_site);
             cache_record_pending_chain(ctx->cache, ctx->block, exit_idx, target_pc);
         }
+    }
+}
+
+// ============================================================================
+// Compact chained exit (for superblock deferred side exits)
+// Same as emit_exit_chained() but WITHOUT reg_cache_flush() — caller already
+// flushed from the register allocation snapshot.
+// ============================================================================
+
+static void emit_exit_chained_compact(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Store target PC
+    emit_mov_w32_imm32(e, W1, target_pc);
+    emit_str_w32_imm(e, W1, W20, CPU_PC_OFFSET);
+
+    if (ctx->cache == NULL) {
+        // Stage 1: always return to dispatcher
+        emit_mov_w32_imm32(e, W1, EXIT_BRANCH);
+        emit_str_w32_imm(e, W1, W20, CPU_EXIT_REASON_OFFSET);
+        emit_ret_lr(e);
+        return;
+    }
+
+    // Stage 2+: chain to target if already translated
+    translated_block_t *target = cache_lookup(ctx->cache, target_pc);
+
+    if (target && target->host_code) {
+        // Target already translated - emit direct B
+        int64_t rel = (int64_t)((uint8_t *)target->host_code - emit_ptr(e));
+        emit_b(e, (int32_t)rel);
+
+        if (ctx->block && exit_idx < MAX_BLOCK_EXITS) {
+            cache_record_exit(ctx->cache, ctx->block, exit_idx, target_pc,
+                              emit_ptr(e) - 4);
+            ctx->block->exits[exit_idx].chained = true;
+        }
+    } else {
+        // Target not yet translated — jump to shared_branch_exit
+        uint8_t *patch_site = emit_ptr(e);
+        int64_t rel = (int64_t)(ctx->cache->shared_branch_exit - patch_site);
+        emit_b(e, (int32_t)rel);
+
+        if (ctx->block && exit_idx < MAX_BLOCK_EXITS) {
+            cache_record_exit(ctx->cache, ctx->block, exit_idx, target_pc, patch_site);
+            cache_record_pending_chain(ctx->cache, ctx->block, exit_idx, target_pc);
+        }
+    }
+}
+
+// ============================================================================
+// Deferred side exit emission (superblock cold stubs)
+// Called after the main translation loop to emit out-of-line exit stubs
+// for each superblock side exit (taken branch path).
+// ============================================================================
+
+static void emit_deferred_side_exits(translate_ctx_t *ctx) {
+    emit_ctx_t *e = &ctx->emit;
+
+    for (int i = 0; i < ctx->deferred_exit_count; i++) {
+        size_t cold_offset = emit_offset(e);
+
+        // Patch B.cond imm19 to point here
+        size_t bcond_off = ctx->deferred_exits[i].jmp_patch_offset;
+        int32_t rel = (int32_t)(cold_offset - bcond_off);
+        uint32_t *inst = (uint32_t *)(e->buf + bcond_off);
+        int32_t imm19 = rel >> 2;
+        *inst = (*inst & ~(0x7FFFF << 5)) | ((imm19 & 0x7FFFF) << 5);
+
+        // Flush pending write from snapshot
+        if (ctx->deferred_exits[i].pending_write_valid) {
+            emit_str_w32_imm(e, ctx->deferred_exits[i].pending_write_host_reg, W20,
+                             GUEST_REG_OFFSET(ctx->deferred_exits[i].pending_write_guest_reg));
+        }
+
+        // Flush dirty cached regs from snapshot
+        reg_alloc_flush_snapshot(ctx,
+            ctx->deferred_exits[i].dirty_snapshot,
+            ctx->deferred_exits[i].allocated_snapshot,
+            ctx->deferred_exits[i].guest_reg_snapshot);
+
+        // Record branch_pc for profiling
+        int exit_idx = ctx->deferred_exits[i].exit_idx;
+        if (ctx->block && exit_idx < MAX_BLOCK_EXITS) {
+            ctx->block->exits[exit_idx].branch_pc = ctx->deferred_exits[i].branch_pc;
+        }
+
+        // Emit compact exit (store PC + chain/dispatcher jump)
+        emit_exit_chained_compact(ctx, ctx->deferred_exits[i].target_pc, exit_idx);
     }
 }
 
@@ -2123,6 +2212,55 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
         emit_cmp_w32_w32(e, s1, s2);
     }
 
+    // ---- Superblock extension: inline fall-through, defer taken path ----
+    {
+        bool can_extend = ctx->superblock_enabled &&
+                          ctx->superblock_depth < MAX_SUPERBLOCK_DEPTH &&
+                          imm > 0 &&  // Forward branch only (fall-through is hot)
+                          ctx->exit_idx < MAX_SUPERBLOCK_EXITS - 1 &&
+                          ctx->deferred_exit_count < MAX_BLOCK_EXITS;
+        if (ctx->avoid_backedge_extend && imm < 0) can_extend = false;
+
+        if (can_extend) {
+            int de_idx = ctx->deferred_exit_count;
+
+            // Flush pending write before snapshot so cold stub doesn't need it
+            flush_pending_write(ctx);
+
+            // Emit B.cond to cold stub (placeholder, patched in emit_deferred_side_exits)
+            size_t bcond_patch = emit_offset(e);
+            emit_b_cond(e, cond, 0);  // imm19=0 placeholder
+
+            // Snapshot register allocation state for the deferred cold exit
+            ctx->deferred_exits[de_idx].jmp_patch_offset = bcond_patch;
+            ctx->deferred_exits[de_idx].target_pc = taken_pc;
+            ctx->deferred_exits[de_idx].exit_idx = ctx->exit_idx++;
+            ctx->deferred_exits[de_idx].branch_pc = ctx->guest_pc;
+            ctx->deferred_exits[de_idx].pending_write_valid = false;
+
+            for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+                ctx->deferred_exits[de_idx].dirty_snapshot[i] = ctx->reg_alloc[i].dirty;
+                ctx->deferred_exits[de_idx].allocated_snapshot[i] = ctx->reg_alloc[i].allocated;
+                ctx->deferred_exits[de_idx].guest_reg_snapshot[i] = ctx->reg_alloc[i].guest_reg;
+            }
+
+            // Record side exit PC for profiling
+            if (ctx->side_exit_emitted < MAX_BLOCK_EXITS) {
+                ctx->side_exit_pcs[ctx->side_exit_emitted] = ctx->guest_pc;
+            }
+            ctx->side_exit_emitted++;
+            ctx->deferred_exit_count++;
+
+            // Continue translating fall-through (not-taken) path
+            ctx->superblock_depth++;
+            ctx->guest_pc = fall_pc;
+            ctx->inst_count++;
+            return false;  // Block continues (superblock extension)
+        }
+    }
+
+    // ---- Standard dual-exit (no superblock) ----
+
     // B.cond to taken path (jump over not-taken exit)
     size_t bcond_patch = emit_offset(e);
     emit_b_cond(e, cond, 0);  // Patch later
@@ -2142,7 +2280,7 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
     // Exit with taken_pc
     emit_exit_chained(ctx, taken_pc, ctx->exit_idx++);
 
-    return true;  // Block always ends at branches in Stage 1
+    return true;  // Block ends at branch
 }
 
 bool translate_beq(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm) {
@@ -2634,6 +2772,11 @@ translated_block_t *translate_block_cached(translate_ctx_t *ctx, uint32_t guest_
     emit_exit(ctx, EXIT_BLOCK_END, ctx->guest_pc);
 
 cached_done:
+    // Emit deferred side exits (superblock cold stubs)
+    if (ctx->deferred_exit_count > 0) {
+        emit_deferred_side_exits(ctx);
+    }
+
     block->host_code = (uint8_t *)entry;
     block->host_size = emit_offset(e);
     block->guest_size = (ctx->inst_count + 1) * 4;
@@ -2641,6 +2784,16 @@ cached_done:
     block->reg_cache_misses = ctx->reg_cache_misses;
 
     cache_commit_code(cache, block->host_size);
+
+    // Update superblock metadata
+    if (ctx->side_exit_emitted > 0) {
+        uint32_t stored = ctx->side_exit_emitted;
+        if (stored > MAX_BLOCK_EXITS) stored = MAX_BLOCK_EXITS;
+        block->side_exit_count = (uint8_t)stored;
+        memcpy(block->side_exit_pcs, ctx->side_exit_pcs, sizeof(uint32_t) * stored);
+        cache->superblock_count++;
+        cache->side_exit_emitted += ctx->side_exit_emitted;
+    }
 
     // Insert into hash table so cache_lookup can find it
     cache_insert(cache, block);
