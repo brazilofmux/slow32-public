@@ -55,3 +55,5 @@ selfhost/v2/stage04/tests/subset-idioms/idiom54_macro_ptr_helper_ternary.c
 selfhost/v2/stage04/tests/subset-idioms/idiom55_macro_ptr_helper_shortcircuit.c
 selfhost/v2/stage04/tests/subset-idioms/idiom56_pp_call_forward_ptr_helper.c
 selfhost/v2/stage04/tests/subset-idioms/idiom57_pp_nested_call_ptr_shortcircuit.c
+selfhost/v2/stage04/tests/subset-idioms/idiom58_pp_ptr_arg_comma_layers.c
+selfhost/v2/stage04/tests/subset-idioms/idiom59_pp_ptr_nested_paren_layers.c
