@@ -41,3 +41,5 @@ selfhost/v2/stage04/tests/subset-idioms/idiom40_shortcircuit_ptr_cast_calls.c
 selfhost/v2/stage04/tests/subset-idioms/idiom41_shortcircuit_ptr_index_mix.c
 selfhost/v2/stage04/tests/subset-idioms/idiom42_ptr_ternary_chain.c
 selfhost/v2/stage04/tests/subset-idioms/idiom43_shortcircuit_ternary_calls.c
+selfhost/v2/stage04/tests/subset-idioms/idiom44_loop_ptr_stride_shortcircuit.c
+selfhost/v2/stage04/tests/subset-idioms/idiom45_loop_ptr_base_reanchor.c
