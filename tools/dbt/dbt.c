@@ -1423,6 +1423,10 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Compare-branch fusions: %" PRIu32 "\n", cmp_branch_fusion_count);
         }
 
+        if (cbz_peephole_count > 0) {
+            fprintf(stderr, "CBZ/CBNZ peepholes: %" PRIu32 "\n", cbz_peephole_count);
+        }
+
         if (stage >= 2) {
             cache_print_stats(&cache);
             if (dump_offenders) {

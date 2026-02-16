@@ -23,6 +23,7 @@
 uint32_t superblock_profile_min_samples = SUPERBLOCK_PROFILE_MIN_SAMPLES;
 uint32_t superblock_taken_pct_threshold = SUPERBLOCK_TAKEN_PCT_THRESHOLD;
 uint32_t cmp_branch_fusion_count = 0;  // Global fusion counter for stats
+uint32_t cbz_peephole_count = 0;      // CBZ/CBNZ peephole counter for stats
 
 // ============================================================================
 // Instruction decoding (shared with x86-64 translator)
@@ -2139,6 +2140,8 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
     uint32_t fall_pc = ctx->guest_pc + 4;
     uint32_t taken_pc = fall_pc + imm;  // PC+4 + imm
     bool fused = false;
+    a64_reg_t cbz_reg = A64_NOREG;
+    bool cbz_is_nz = false;
 
     // Compare-branch fusion: consume pending_cond if this branch tests its rd
     if (ctx->pending_cond.valid) {
@@ -2206,10 +2209,28 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
         // Standard comparison: flush any stale pending_cond
         flush_pending_cond(ctx);
 
-        // Compare rs1, rs2 (use cached regs if available)
-        a64_reg_t s1 = resolve_src(ctx, rs1, W0);
-        a64_reg_t s2 = resolve_src(ctx, rs2, W1);
-        emit_cmp_w32_w32(e, s1, s2);
+        if ((cond == COND_EQ || cond == COND_NE) && (rs1 == 0 || rs2 == 0)) {
+            // CBZ/CBNZ: skip CMP entirely, saves 2 instructions
+            uint8_t nonzero_reg = (rs1 == 0) ? rs2 : rs1;
+            cbz_reg = resolve_src(ctx, nonzero_reg, W0);
+            cbz_is_nz = (cond == COND_NE);
+            cbz_peephole_count++;
+        } else if (rs1 == 0 || rs2 == 0) {
+            // CMP-against-zero: saves 1 instruction (no MOVZ needed)
+            uint8_t nonzero_reg = (rs1 == 0) ? rs2 : rs1;
+            a64_reg_t s = resolve_src(ctx, nonzero_reg, W0);
+            if (rs1 == 0) {
+                // Comparing 0 vs rs2: flags must reflect (0 - rs2)
+                emit_cmp_w32_w32(e, WZR, s);
+            } else {
+                // Comparing rs1 vs 0
+                emit_cmp_w32_imm(e, s, 0);
+            }
+        } else {
+            a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+            a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+            emit_cmp_w32_w32(e, s1, s2);
+        }
     }
 
     // ---- Superblock extension: inline fall-through, defer taken path ----
@@ -2227,9 +2248,14 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
             // Flush pending write before snapshot so cold stub doesn't need it
             flush_pending_write(ctx);
 
-            // Emit B.cond to cold stub (placeholder, patched in emit_deferred_side_exits)
+            // Emit B.cond/CBZ/CBNZ to cold stub (placeholder, patched in emit_deferred_side_exits)
             size_t bcond_patch = emit_offset(e);
-            emit_b_cond(e, cond, 0);  // imm19=0 placeholder
+            if (cbz_reg != A64_NOREG) {
+                if (cbz_is_nz) emit_cbnz_w32(e, cbz_reg, 0);
+                else            emit_cbz_w32(e, cbz_reg, 0);
+            } else {
+                emit_b_cond(e, cond, 0);  // imm19=0 placeholder
+            }
 
             // Snapshot register allocation state for the deferred cold exit
             ctx->deferred_exits[de_idx].jmp_patch_offset = bcond_patch;
@@ -2261,9 +2287,14 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
 
     // ---- Standard dual-exit (no superblock) ----
 
-    // B.cond to taken path (jump over not-taken exit)
+    // B.cond/CBZ/CBNZ to taken path (jump over not-taken exit)
     size_t bcond_patch = emit_offset(e);
-    emit_b_cond(e, cond, 0);  // Patch later
+    if (cbz_reg != A64_NOREG) {
+        if (cbz_is_nz) emit_cbnz_w32(e, cbz_reg, 0);
+        else            emit_cbz_w32(e, cbz_reg, 0);
+    } else {
+        emit_b_cond(e, cond, 0);  // Patch later
+    }
 
     // Not-taken path: exit with fall_pc
     emit_exit_chained(ctx, fall_pc, ctx->exit_idx++);
