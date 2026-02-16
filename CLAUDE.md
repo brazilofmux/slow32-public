@@ -42,6 +42,7 @@ make
 - W^X protection - code segment is execute-only (0x0-0xFFFFF)
 - Stack at 0x0FFFFFF0 growing down
 - DEBUG instruction outputs character; MMIO ring buffers for full I/O (files, args, env)
+- Five emulators from ~50 MIPS to ~6 BIPS — see [docs/EMULATORS.md](docs/EMULATORS.md)
 
 ## Working Features
 
