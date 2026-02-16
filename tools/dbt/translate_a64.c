@@ -158,11 +158,21 @@ void translate_init_cached(translate_ctx_t *ctx, dbt_cpu_state_t *cpu, block_cac
     ctx->side_exit_info_enabled = false;
     ctx->avoid_backedge_extend = false;
     ctx->peephole_enabled = false;
+    ctx->reg_cache_enabled = true;  // Stage 5: enable register caching
 }
 
 // ============================================================================
-// Stage 1: No register allocation — stubs for interface compatibility
+// Stage 5: Per-block register allocation (7-slot, callee-saved)
 // ============================================================================
+
+// AArch64 callee-saved registers available for guest reg caching.
+// W20/W21/W22 are reserved for cpu_state/mem_base/lookup_table.
+// W29 (FP) and W30 (LR) are preserved by ABI convention.
+static const a64_reg_t reg_alloc_hosts[REG_ALLOC_SLOTS] = {
+    W19, W23, W24, W25, W26, W27, W28, A64_NOREG
+};
+// Note: REG_ALLOC_SLOTS=8 but we only have 7 usable AArch64 callee-saved regs.
+// Slot 7 is A64_NOREG and will never be allocated.
 
 static void reg_alloc_reset(translate_ctx_t *ctx) {
     memset(ctx->reg_alloc, 0, sizeof(ctx->reg_alloc));
@@ -171,9 +181,35 @@ static void reg_alloc_reset(translate_ctx_t *ctx) {
     ctx->reg_cache_misses = 0;
 }
 
-// Dead temporary elimination: prescan block for liveness analysis
+// Forward declarations
+static void bounds_elim_invalidate(translate_ctx_t *ctx, uint8_t guest_reg);
+
+// Return the host register for a cached guest register, or A64_NOREG if not cached.
+static inline a64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg) {
+    if (!ctx->reg_cache_enabled || guest_reg == 0) return A64_NOREG;
+    int8_t slot = ctx->reg_alloc_map[guest_reg];
+    return (slot >= 0) ? reg_alloc_hosts[slot] : A64_NOREG;
+}
+
+// Mark a cached guest register as written (dirty).
+// Used when the translate function writes directly into the cached host register.
+static inline void reg_cache_mark_written(translate_ctx_t *ctx, uint8_t guest_reg) {
+    ctx->reg_constants[guest_reg].valid = false;
+    bounds_elim_invalidate(ctx, guest_reg);
+    if (ctx->pending_write.valid && ctx->pending_write.guest_reg == guest_reg) {
+        ctx->pending_write.valid = false;
+        ctx->emit.rax_pending = false;
+    }
+    ctx->reg_cache_hits++;
+    int8_t slot = ctx->reg_alloc_map[guest_reg];
+    ctx->reg_alloc[slot].dirty = true;
+}
+
+// Pre-scan block: tally register usage, dead temporary analysis, back-edge detection,
+// and select top-used guest registers for caching in host callee-saved registers.
 static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
     dbt_cpu_state_t *cpu = ctx->cpu;
+    uint32_t use_count[32] = {0};
 
     memset(ctx->dead_temp_skip, 0, sizeof(ctx->dead_temp_skip));
     ctx->loop_written_regs = 0;
@@ -192,6 +228,33 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
         uint32_t raw = *(uint32_t *)(cpu->mem_base + pc);
         decoded_inst_t inst = decode_instruction(raw);
         decoded[inst_count] = inst;
+
+        // Tally register usage (skip r0)
+        switch (inst.format) {
+            case FMT_R:
+                if (inst.rd != 0)  use_count[inst.rd]++;
+                if (inst.rs1 != 0) use_count[inst.rs1]++;
+                if (inst.rs2 != 0) use_count[inst.rs2]++;
+                break;
+            case FMT_I:
+                if (inst.rd != 0)  use_count[inst.rd]++;
+                if (inst.rs1 != 0) use_count[inst.rs1]++;
+                break;
+            case FMT_S:
+                if (inst.rs1 != 0) use_count[inst.rs1]++;
+                if (inst.rs2 != 0) use_count[inst.rs2]++;
+                break;
+            case FMT_B:
+                if (inst.rs1 != 0) use_count[inst.rs1]++;
+                if (inst.rs2 != 0) use_count[inst.rs2]++;
+                break;
+            case FMT_U:
+                if (inst.rd != 0) use_count[inst.rd]++;
+                break;
+            case FMT_J:
+                if (inst.rd != 0) use_count[inst.rd]++;
+                break;
+        }
 
         // Stop at block-ending instructions
         bool is_block_end = false;
@@ -217,6 +280,18 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
                         }
                         if (!seen && ctx->backedge_target_count < MAX_BLOCK_INSTS) {
                             ctx->backedge_targets[ctx->backedge_target_count++] = target;
+                        }
+
+                        // Compute registers written in the loop body
+                        uint32_t target_idx = (target - start_pc) / 4;
+                        for (int k = (int)target_idx; k <= inst_count; k++) {
+                            uint8_t wr = 0;
+                            switch (decoded[k].format) {
+                                case FMT_R: case FMT_I: case FMT_U: case FMT_J:
+                                    wr = decoded[k].rd; break;
+                                default: break;
+                            }
+                            if (wr != 0) ctx->loop_written_regs |= (1u << wr);
                         }
                     }
                 }
@@ -262,6 +337,40 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
             if (r1 != 0) read_count_before_write[r1]++;
             if (r2 != 0) read_count_before_write[r2]++;
         }
+    }
+
+    // Select top-N guest registers for caching (only when reg_cache_enabled)
+    if (ctx->reg_cache_enabled) {
+        // 7 usable slots (slot 7 = A64_NOREG, skip)
+        for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
+            if (reg_alloc_hosts[s] == A64_NOREG) break;
+            int best = -1;
+            uint32_t best_count = 0;
+            for (int r = 1; r < 32; r++) {
+                if (use_count[r] > best_count) {
+                    best_count = use_count[r];
+                    best = r;
+                }
+            }
+            if (best < 0 || best_count == 0) break;
+
+            ctx->reg_alloc[s].guest_reg = (uint8_t)best;
+            ctx->reg_alloc[s].allocated = true;
+            ctx->reg_alloc[s].dirty = false;
+            ctx->reg_alloc_map[best] = (int8_t)s;
+            use_count[best] = 0;  // Remove from consideration
+        }
+    }
+}
+
+// Emit prologue: load allocated guest registers into host callee-saved registers
+static void reg_alloc_emit_prologue(translate_ctx_t *ctx) {
+    emit_ctx_t *e = &ctx->emit;
+    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+        if (!ctx->reg_alloc[i].allocated) continue;
+        // LDR Wd, [X20, #offset]
+        emit_ldr_w32_imm(e, reg_alloc_hosts[i], W20,
+                         GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg));
     }
 }
 
@@ -359,10 +468,51 @@ static inline void flush_pending_cond(translate_ctx_t *ctx) {
     (void)ctx;
 }
 
-// Stage 1: reg_cache_flush = flush pending write only (no reg alloc)
+// Flush all dirty cached registers to memory, plus pending write/cond.
 static void reg_cache_flush(translate_ctx_t *ctx) {
     flush_pending_cond(ctx);
     flush_pending_write(ctx);
+    if (!ctx->reg_cache_enabled) return;
+    emit_ctx_t *e = &ctx->emit;
+    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+        if (!ctx->reg_alloc[i].allocated || !ctx->reg_alloc[i].dirty) continue;
+        // STR Wd, [X20, #offset]
+        emit_str_w32_imm(e, reg_alloc_hosts[i], W20,
+                         GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg));
+        // NOTE: Do NOT clear dirty here! Multiple code paths (branch taken/fall-through)
+        // all call flush, but only one executes at runtime. Each path must emit its own.
+    }
+}
+
+// Flush using an allocation snapshot (for deferred side exits).
+static void reg_alloc_flush_snapshot(translate_ctx_t *ctx,
+                                      const bool *dirty_snapshot,
+                                      const bool *allocated_snapshot,
+                                      const uint8_t *guest_reg_snapshot) {
+    emit_ctx_t *e = &ctx->emit;
+    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+        if (!allocated_snapshot[i] || !dirty_snapshot[i]) continue;
+        emit_str_w32_imm(e, reg_alloc_hosts[i], W20,
+                         GUEST_REG_OFFSET(guest_reg_snapshot[i]));
+    }
+}
+
+// Flush and evict specific host registers being repurposed as scratch.
+static void flush_cached_host_regs(translate_ctx_t *ctx, a64_reg_t r1, a64_reg_t r2) {
+    if (!ctx->reg_cache_enabled) return;
+    emit_ctx_t *e = &ctx->emit;
+    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+        if (!ctx->reg_alloc[i].allocated) continue;
+        if (reg_alloc_hosts[i] == r1 || reg_alloc_hosts[i] == r2) {
+            if (ctx->reg_alloc[i].dirty) {
+                emit_str_w32_imm(e, reg_alloc_hosts[i], W20,
+                                 GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg));
+            }
+            ctx->reg_alloc_map[ctx->reg_alloc[i].guest_reg] = -1;
+            ctx->reg_alloc[i].allocated = false;
+            ctx->reg_alloc[i].dirty = false;
+        }
+    }
 }
 
 // Emit trace control (stub — tracing infrastructure unchanged)
@@ -372,7 +522,7 @@ void dbt_set_emit_trace(bool enabled, uint32_t pc) {
 }
 
 // ============================================================================
-// Guest register load/store (Stage 1: memory-only, no register cache)
+// Guest register load/store (with optional register caching)
 // ============================================================================
 
 // Load guest register into AArch64 register (handles r0 = 0)
@@ -403,12 +553,27 @@ void emit_load_guest_reg(translate_ctx_t *ctx, a64_reg_t dst, uint8_t guest_reg)
             if (dst != preg) {
                 emit_mov_w32_w32(e, dst, preg);
             }
+            ctx->reg_cache_hits++;
             return;
         }
         if (dst == ctx->pending_write.host_reg) {
             // About to clobber the pending register — flush first
             flush_pending_write(ctx);
         }
+    }
+
+    // Register caching: check if guest_reg is in a cached host register
+    if (ctx->reg_cache_enabled) {
+        int8_t slot = ctx->reg_alloc_map[guest_reg];
+        if (slot >= 0) {
+            ctx->reg_cache_hits++;
+            a64_reg_t host_reg = reg_alloc_hosts[slot];
+            if (dst != host_reg) {
+                emit_mov_w32_w32(e, dst, host_reg);
+            }
+            return;
+        }
+        ctx->reg_cache_misses++;
     }
 
     // Load from CPU state: LDR Wd, [X20, #offset]
@@ -430,6 +595,20 @@ void emit_store_guest_reg(translate_ctx_t *ctx, uint8_t guest_reg, a64_reg_t src
         ctx->emit.rax_pending = false;
     }
 
+    // Register caching: if allocated, move into host register and mark dirty
+    if (ctx->reg_cache_enabled) {
+        int8_t slot = ctx->reg_alloc_map[guest_reg];
+        if (slot >= 0) {
+            ctx->reg_cache_hits++;
+            a64_reg_t host_reg = reg_alloc_hosts[slot];
+            if (src != host_reg) {
+                emit_mov_w32_w32(e, host_reg, src);
+            }
+            ctx->reg_alloc[slot].dirty = true;
+            return;
+        }
+    }
+
     // Dead temporary elimination: defer W0 stores as pending writes
     if (src == W0) {
         flush_pending_write(ctx);
@@ -441,7 +620,8 @@ void emit_store_guest_reg(translate_ctx_t *ctx, uint8_t guest_reg, a64_reg_t src
         return;
     }
 
-    // Non-W0 stores — store immediately
+    // Non-W0, non-cached stores — store immediately
+    ctx->reg_cache_misses++;
     emit_str_w32_imm(e, src, W20, GUEST_REG_OFFSET(guest_reg));
 }
 
@@ -457,6 +637,18 @@ void emit_store_guest_reg_imm32(translate_ctx_t *ctx, uint8_t guest_reg, uint32_
     if (ctx->pending_write.valid && ctx->pending_write.guest_reg == guest_reg) {
         ctx->pending_write.valid = false;
         ctx->emit.rax_pending = false;
+    }
+
+    // Register caching: if allocated, load immediate into host register
+    if (ctx->reg_cache_enabled) {
+        int8_t slot = ctx->reg_alloc_map[guest_reg];
+        if (slot >= 0) {
+            ctx->reg_cache_hits++;
+            emit_mov_w32_imm32(e, reg_alloc_hosts[slot], imm);
+            ctx->reg_alloc[slot].dirty = true;
+            return;
+        }
+        ctx->reg_cache_misses++;
     }
 
     // AArch64: no memory-immediate store — load imm into W1, then store
@@ -735,6 +927,20 @@ static void emit_mem_access_check(translate_ctx_t *ctx, a64_reg_t addr_reg,
 }
 
 // ============================================================================
+// 3-operand register resolution helper
+// Returns the host register holding guest_reg:
+//   - If cached, returns the cached host register (zero-cost)
+//   - Otherwise, loads into the given scratch register and returns scratch
+// ============================================================================
+
+static inline a64_reg_t resolve_src(translate_ctx_t *ctx, uint8_t guest_reg, a64_reg_t scratch) {
+    a64_reg_t h = guest_host_reg(ctx, guest_reg);
+    if (h != A64_NOREG) return h;
+    emit_load_guest_reg(ctx, scratch, guest_reg);
+    return scratch;
+}
+
+// ============================================================================
 // Arithmetic translations
 // ============================================================================
 
@@ -749,13 +955,25 @@ void translate_add(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
         return;
     }
 
-    // AArch64: 3-operand ADD, no need for register shuffling
-    emit_load_guest_reg(ctx, W0, rs1);
-    if (rs2 != 0) {
-        emit_load_guest_reg(ctx, W1, rs2);
-        emit_add_w32(e, W0, W0, W1);
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != A64_NOREG) {
+        // 3-operand cached path: ADD hd, src1, src2
+        a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+        if (rs2 == 0) {
+            if (s1 != hd) emit_mov_w32_w32(e, hd, s1);
+        } else {
+            a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+            emit_add_w32(e, hd, s1, s2);
+        }
+        reg_cache_mark_written(ctx, rd);
+    } else {
+        emit_load_guest_reg(ctx, W0, rs1);
+        if (rs2 != 0) {
+            a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+            emit_add_w32(e, W0, W0, s2);
+        }
+        emit_store_guest_reg(ctx, rd, W0);
     }
-    emit_store_guest_reg(ctx, rd, W0);
 }
 
 void translate_sub(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
@@ -768,12 +986,24 @@ void translate_sub(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
         return;
     }
 
-    emit_load_guest_reg(ctx, W0, rs1);
-    if (rs2 != 0) {
-        emit_load_guest_reg(ctx, W1, rs2);
-        emit_sub_w32(e, W0, W0, W1);
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != A64_NOREG) {
+        a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+        if (rs2 == 0) {
+            if (s1 != hd) emit_mov_w32_w32(e, hd, s1);
+        } else {
+            a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+            emit_sub_w32(e, hd, s1, s2);
+        }
+        reg_cache_mark_written(ctx, rd);
+    } else {
+        emit_load_guest_reg(ctx, W0, rs1);
+        if (rs2 != 0) {
+            a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+            emit_sub_w32(e, W0, W0, s2);
+        }
+        emit_store_guest_reg(ctx, rd, W0);
     }
-    emit_store_guest_reg(ctx, rd, W0);
 }
 
 void translate_addi(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
@@ -791,18 +1021,26 @@ void translate_addi(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
         return;
     }
 
-    emit_load_guest_reg(ctx, W0, rs1);
-    if (imm != 0) {
-        if (imm > 0 && (uint32_t)imm < 4096) {
-            emit_add_w32_imm(e, W0, W0, (uint32_t)imm);
-        } else if (imm < 0 && (uint32_t)(-imm) < 4096) {
-            emit_sub_w32_imm(e, W0, W0, (uint32_t)(-imm));
-        } else {
-            emit_mov_w32_imm32(e, W1, (uint32_t)imm);
-            emit_add_w32(e, W0, W0, W1);
-        }
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    a64_reg_t dst = (hd != A64_NOREG) ? hd : W0;
+    a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+
+    if (imm == 0) {
+        if (s1 != dst) emit_mov_w32_w32(e, dst, s1);
+    } else if (imm > 0 && (uint32_t)imm < 4096) {
+        emit_add_w32_imm(e, dst, s1, (uint32_t)imm);
+    } else if (imm < 0 && (uint32_t)(-imm) < 4096) {
+        emit_sub_w32_imm(e, dst, s1, (uint32_t)(-imm));
+    } else {
+        emit_mov_w32_imm32(e, W1, (uint32_t)imm);
+        emit_add_w32(e, dst, s1, W1);
     }
-    emit_store_guest_reg(ctx, rd, W0);
+
+    if (hd != A64_NOREG) {
+        reg_cache_mark_written(ctx, rd);
+    } else {
+        emit_store_guest_reg(ctx, rd, W0);
+    }
 }
 
 // ============================================================================
@@ -818,10 +1056,20 @@ void translate_and(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
         return;
     }
 
-    emit_load_guest_reg(ctx, W0, rs1);
-    emit_load_guest_reg(ctx, W1, rs2);
-    emit_and_w32(e, W0, W0, W1);
-    emit_store_guest_reg(ctx, rd, W0);
+    {
+        a64_reg_t hd = guest_host_reg(ctx, rd);
+        if (hd != A64_NOREG) {
+            a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+            a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+            emit_and_w32(e, hd, s1, s2);
+            reg_cache_mark_written(ctx, rd);
+        } else {
+            emit_load_guest_reg(ctx, W0, rs1);
+            a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+            emit_and_w32(e, W0, W0, s2);
+            emit_store_guest_reg(ctx, rd, W0);
+        }
+    }
 }
 
 void translate_or(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
@@ -833,12 +1081,24 @@ void translate_or(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
         return;
     }
 
-    emit_load_guest_reg(ctx, W0, rs1);
-    if (rs2 != 0) {
-        emit_load_guest_reg(ctx, W1, rs2);
-        emit_orr_w32(e, W0, W0, W1);
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != A64_NOREG) {
+        a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+        if (rs2 == 0) {
+            if (s1 != hd) emit_mov_w32_w32(e, hd, s1);
+        } else {
+            a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+            emit_orr_w32(e, hd, s1, s2);
+        }
+        reg_cache_mark_written(ctx, rd);
+    } else {
+        emit_load_guest_reg(ctx, W0, rs1);
+        if (rs2 != 0) {
+            a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+            emit_orr_w32(e, W0, W0, s2);
+        }
+        emit_store_guest_reg(ctx, rd, W0);
     }
-    emit_store_guest_reg(ctx, rd, W0);
 }
 
 void translate_xor(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
@@ -850,10 +1110,18 @@ void translate_xor(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
         return;
     }
 
-    emit_load_guest_reg(ctx, W0, rs1);
-    emit_load_guest_reg(ctx, W1, rs2);
-    emit_eor_w32(e, W0, W0, W1);
-    emit_store_guest_reg(ctx, rd, W0);
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != A64_NOREG) {
+        a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+        a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+        emit_eor_w32(e, hd, s1, s2);
+        reg_cache_mark_written(ctx, rd);
+    } else {
+        emit_load_guest_reg(ctx, W0, rs1);
+        a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+        emit_eor_w32(e, W0, W0, s2);
+        emit_store_guest_reg(ctx, rd, W0);
+    }
 }
 
 void translate_andi(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
@@ -870,14 +1138,15 @@ void translate_andi(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
         return;
     }
 
-    emit_load_guest_reg(ctx, W0, rs1);
-    // Try logical immediate form
-    if (!emit_and_w32_imm(e, W0, W0, (uint32_t)imm)) {
-        // Fallback: load imm into register
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    a64_reg_t dst = (hd != A64_NOREG) ? hd : W0;
+    a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+    if (!emit_and_w32_imm(e, dst, s1, (uint32_t)imm)) {
         emit_mov_w32_imm32(e, W1, (uint32_t)imm);
-        emit_and_w32(e, W0, W0, W1);
+        emit_and_w32(e, dst, s1, W1);
     }
-    emit_store_guest_reg(ctx, rd, W0);
+    if (hd != A64_NOREG) reg_cache_mark_written(ctx, rd);
+    else emit_store_guest_reg(ctx, rd, W0);
 }
 
 void translate_ori(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
@@ -894,14 +1163,17 @@ void translate_ori(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
         return;
     }
 
-    emit_load_guest_reg(ctx, W0, rs1);
-    if (imm != 0) {
-        if (!emit_orr_w32_imm(e, W0, W0, (uint32_t)imm)) {
-            emit_mov_w32_imm32(e, W1, (uint32_t)imm);
-            emit_orr_w32(e, W0, W0, W1);
-        }
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    a64_reg_t dst = (hd != A64_NOREG) ? hd : W0;
+    a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+    if (imm == 0) {
+        if (s1 != dst) emit_mov_w32_w32(e, dst, s1);
+    } else if (!emit_orr_w32_imm(e, dst, s1, (uint32_t)imm)) {
+        emit_mov_w32_imm32(e, W1, (uint32_t)imm);
+        emit_orr_w32(e, dst, s1, W1);
     }
-    emit_store_guest_reg(ctx, rd, W0);
+    if (hd != A64_NOREG) reg_cache_mark_written(ctx, rd);
+    else emit_store_guest_reg(ctx, rd, W0);
 }
 
 void translate_xori(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
@@ -918,14 +1190,17 @@ void translate_xori(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
         return;
     }
 
-    emit_load_guest_reg(ctx, W0, rs1);
-    if (imm != 0) {
-        if (!emit_eor_w32_imm(e, W0, W0, (uint32_t)imm)) {
-            emit_mov_w32_imm32(e, W1, (uint32_t)imm);
-            emit_eor_w32(e, W0, W0, W1);
-        }
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    a64_reg_t dst = (hd != A64_NOREG) ? hd : W0;
+    a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+    if (imm == 0) {
+        if (s1 != dst) emit_mov_w32_w32(e, dst, s1);
+    } else if (!emit_eor_w32_imm(e, dst, s1, (uint32_t)imm)) {
+        emit_mov_w32_imm32(e, W1, (uint32_t)imm);
+        emit_eor_w32(e, dst, s1, W1);
     }
-    emit_store_guest_reg(ctx, rd, W0);
+    if (hd != A64_NOREG) reg_cache_mark_written(ctx, rd);
+    else emit_store_guest_reg(ctx, rd, W0);
 }
 
 // ============================================================================
@@ -935,28 +1210,52 @@ void translate_xori(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
 void translate_sll(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
-    emit_load_guest_reg(ctx, W0, rs1);
-    emit_load_guest_reg(ctx, W1, rs2);
-    emit_lslv_w32(e, W0, W0, W1);
-    emit_store_guest_reg(ctx, rd, W0);
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != A64_NOREG) {
+        a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+        a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+        emit_lslv_w32(e, hd, s1, s2);
+        reg_cache_mark_written(ctx, rd);
+    } else {
+        emit_load_guest_reg(ctx, W0, rs1);
+        a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+        emit_lslv_w32(e, W0, W0, s2);
+        emit_store_guest_reg(ctx, rd, W0);
+    }
 }
 
 void translate_srl(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
-    emit_load_guest_reg(ctx, W0, rs1);
-    emit_load_guest_reg(ctx, W1, rs2);
-    emit_lsrv_w32(e, W0, W0, W1);
-    emit_store_guest_reg(ctx, rd, W0);
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != A64_NOREG) {
+        a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+        a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+        emit_lsrv_w32(e, hd, s1, s2);
+        reg_cache_mark_written(ctx, rd);
+    } else {
+        emit_load_guest_reg(ctx, W0, rs1);
+        a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+        emit_lsrv_w32(e, W0, W0, s2);
+        emit_store_guest_reg(ctx, rd, W0);
+    }
 }
 
 void translate_sra(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
-    emit_load_guest_reg(ctx, W0, rs1);
-    emit_load_guest_reg(ctx, W1, rs2);
-    emit_asrv_w32(e, W0, W0, W1);
-    emit_store_guest_reg(ctx, rd, W0);
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != A64_NOREG) {
+        a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+        a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+        emit_asrv_w32(e, hd, s1, s2);
+        reg_cache_mark_written(ctx, rd);
+    } else {
+        emit_load_guest_reg(ctx, W0, rs1);
+        a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+        emit_asrv_w32(e, W0, W0, s2);
+        emit_store_guest_reg(ctx, rd, W0);
+    }
 }
 
 void translate_slli(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
@@ -968,11 +1267,16 @@ void translate_slli(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
         return;
     }
 
-    emit_load_guest_reg(ctx, W0, rs1);
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    a64_reg_t dst = (hd != A64_NOREG) ? hd : W0;
+    a64_reg_t s1 = resolve_src(ctx, rs1, W0);
     if ((imm & 31) != 0) {
-        emit_lsl_w32_imm(e, W0, W0, imm & 31);
+        emit_lsl_w32_imm(e, dst, s1, imm & 31);
+    } else if (s1 != dst) {
+        emit_mov_w32_w32(e, dst, s1);
     }
-    emit_store_guest_reg(ctx, rd, W0);
+    if (hd != A64_NOREG) reg_cache_mark_written(ctx, rd);
+    else emit_store_guest_reg(ctx, rd, W0);
 }
 
 void translate_srli(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
@@ -984,11 +1288,16 @@ void translate_srli(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
         return;
     }
 
-    emit_load_guest_reg(ctx, W0, rs1);
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    a64_reg_t dst = (hd != A64_NOREG) ? hd : W0;
+    a64_reg_t s1 = resolve_src(ctx, rs1, W0);
     if ((imm & 31) != 0) {
-        emit_lsr_w32_imm(e, W0, W0, imm & 31);
+        emit_lsr_w32_imm(e, dst, s1, imm & 31);
+    } else if (s1 != dst) {
+        emit_mov_w32_w32(e, dst, s1);
     }
-    emit_store_guest_reg(ctx, rd, W0);
+    if (hd != A64_NOREG) reg_cache_mark_written(ctx, rd);
+    else emit_store_guest_reg(ctx, rd, W0);
 }
 
 void translate_srai(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
@@ -1000,11 +1309,16 @@ void translate_srai(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
         return;
     }
 
-    emit_load_guest_reg(ctx, W0, rs1);
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    a64_reg_t dst = (hd != A64_NOREG) ? hd : W0;
+    a64_reg_t s1 = resolve_src(ctx, rs1, W0);
     if ((imm & 31) != 0) {
-        emit_asr_w32_imm(e, W0, W0, imm & 31);
+        emit_asr_w32_imm(e, dst, s1, imm & 31);
+    } else if (s1 != dst) {
+        emit_mov_w32_w32(e, dst, s1);
     }
-    emit_store_guest_reg(ctx, rd, W0);
+    if (hd != A64_NOREG) reg_cache_mark_written(ctx, rd);
+    else emit_store_guest_reg(ctx, rd, W0);
 }
 
 // ============================================================================
@@ -1057,11 +1371,17 @@ static void translate_cmp_set(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1,
     }
 
     a64_cond_t cond = opcode_to_cond(opcode);
-    emit_load_guest_reg(ctx, W0, rs1);
-    emit_load_guest_reg(ctx, W1, rs2);
-    emit_cmp_w32_w32(e, W0, W1);
-    emit_cset_w32(e, W0, cond);
-    emit_store_guest_reg(ctx, rd, W0);
+    a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+    a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+    emit_cmp_w32_w32(e, s1, s2);
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != A64_NOREG) {
+        emit_cset_w32(e, hd, cond);
+        reg_cache_mark_written(ctx, rd);
+    } else {
+        emit_cset_w32(e, W0, cond);
+        emit_store_guest_reg(ctx, rd, W0);
+    }
 }
 
 void translate_slt(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
@@ -1105,18 +1425,25 @@ void translate_slti(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
         return;
     }
 
-    emit_load_guest_reg(ctx, W0, rs1);
-    // CMP W0, #imm (use register form for large immediates)
-    if (imm >= 0 && (uint32_t)imm < 4096) {
-        emit_cmp_w32_imm(e, W0, (uint32_t)imm);
-    } else if (imm < 0 && (uint32_t)(-imm) < 4096) {
-        emit_cmn_w32_imm(e, W0, (uint32_t)(-imm));
-    } else {
-        emit_mov_w32_imm32(e, W1, (uint32_t)imm);
-        emit_cmp_w32_w32(e, W0, W1);
+    {
+        a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+        if (imm >= 0 && (uint32_t)imm < 4096) {
+            emit_cmp_w32_imm(e, s1, (uint32_t)imm);
+        } else if (imm < 0 && (uint32_t)(-imm) < 4096) {
+            emit_cmn_w32_imm(e, s1, (uint32_t)(-imm));
+        } else {
+            emit_mov_w32_imm32(e, W1, (uint32_t)imm);
+            emit_cmp_w32_w32(e, s1, W1);
+        }
+        a64_reg_t hd = guest_host_reg(ctx, rd);
+        if (hd != A64_NOREG) {
+            emit_cset_w32(e, hd, COND_LT);
+            reg_cache_mark_written(ctx, rd);
+        } else {
+            emit_cset_w32(e, W0, COND_LT);
+            emit_store_guest_reg(ctx, rd, W0);
+        }
     }
-    emit_cset_w32(e, W0, COND_LT);
-    emit_store_guest_reg(ctx, rd, W0);
 }
 
 void translate_sltiu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
@@ -1129,15 +1456,23 @@ void translate_sltiu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm)
         return;
     }
 
-    emit_load_guest_reg(ctx, W0, rs1);
-    if ((uint32_t)imm < 4096) {
-        emit_cmp_w32_imm(e, W0, (uint32_t)imm);
-    } else {
-        emit_mov_w32_imm32(e, W1, (uint32_t)imm);
-        emit_cmp_w32_w32(e, W0, W1);
+    {
+        a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+        if ((uint32_t)imm < 4096) {
+            emit_cmp_w32_imm(e, s1, (uint32_t)imm);
+        } else {
+            emit_mov_w32_imm32(e, W1, (uint32_t)imm);
+            emit_cmp_w32_w32(e, s1, W1);
+        }
+        a64_reg_t hd = guest_host_reg(ctx, rd);
+        if (hd != A64_NOREG) {
+            emit_cset_w32(e, hd, COND_LO);
+            reg_cache_mark_written(ctx, rd);
+        } else {
+            emit_cset_w32(e, W0, COND_LO);
+            emit_store_guest_reg(ctx, rd, W0);
+        }
     }
-    emit_cset_w32(e, W0, COND_LO);
-    emit_store_guest_reg(ctx, rd, W0);
 }
 
 // ============================================================================
@@ -1150,30 +1485,35 @@ void translate_mul(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    emit_load_guest_reg(ctx, W0, rs1);
-    emit_load_guest_reg(ctx, W1, rs2);
-    emit_mul_w32(e, W0, W0, W1);
-    emit_store_guest_reg(ctx, rd, W0);
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != A64_NOREG) {
+        a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+        a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+        emit_mul_w32(e, hd, s1, s2);
+        reg_cache_mark_written(ctx, rd);
+    } else {
+        emit_load_guest_reg(ctx, W0, rs1);
+        a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+        emit_mul_w32(e, W0, W0, s2);
+        emit_store_guest_reg(ctx, rd, W0);
+    }
 }
 
 void translate_mulh(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    // SMULL X0, W0, W1 → 64-bit signed product in X0
-    // ASR X0, X0, #32 → high 32 bits in W0
+    // SMULL uses X-register result, must go through W0/W1 scratch
     emit_load_guest_reg(ctx, W0, rs1);
     emit_load_guest_reg(ctx, W1, rs2);
-    emit_smull(e, W0, W0, W1);      // X0 = (int64_t)W0 * W1
-    emit_asr_x64_imm(e, W0, W0, 32); // X0 >>= 32, W0 = high half
+    emit_smull(e, W0, W0, W1);
+    emit_asr_x64_imm(e, W0, W0, 32);
     emit_store_guest_reg(ctx, rd, W0);
 }
 
 // Helper to emit 64-bit logical shift right (LSR Xd, Xn, #shift)
 static void emit_lsr_x64_imm(emit_ctx_t *e, a64_reg_t rd, a64_reg_t rn, uint32_t shift) {
     // UBFM Xd, Xn, #shift, #63
-    // 1 10 100110 1 immr imms Rn Rd
-    // immr = shift, imms = 63
     uint32_t inst = 0xD340FC00 | ((shift & 0x3F) << 16) | ((rn & 0x1F) << 5) | (rd & 0x1F);
     emit_inst(e, inst);
 }
@@ -1182,29 +1522,35 @@ void translate_mulhu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2)
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    // UMULL X0, W0, W1 → 64-bit unsigned product in X0
-    // LSR X0, X0, #32 → high 32 bits in W0
+    // UMULL uses X-register result, must go through scratch
     emit_load_guest_reg(ctx, W0, rs1);
     emit_load_guest_reg(ctx, W1, rs2);
-    emit_umull(e, W0, W0, W1);        // X0 = (uint64_t)W0 * W1
-    emit_lsr_x64_imm(e, W0, W0, 32);  // X0 >>= 32 (unsigned)
+    emit_umull(e, W0, W0, W1);
+    emit_lsr_x64_imm(e, W0, W0, 32);
     emit_store_guest_reg(ctx, rd, W0);
 }
 
 // ============================================================================
 // Divide/Remainder translations
 // AArch64 SDIV/UDIV are direct — no INT32_MIN/-1 guard needed
-// (AArch64 SDIV of INT32_MIN / -1 returns INT32_MIN, not an exception)
 // ============================================================================
 
 void translate_div(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    emit_load_guest_reg(ctx, W0, rs1);
-    emit_load_guest_reg(ctx, W1, rs2);
-    emit_sdiv_w32(e, W0, W0, W1);
-    emit_store_guest_reg(ctx, rd, W0);
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != A64_NOREG) {
+        a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+        a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+        emit_sdiv_w32(e, hd, s1, s2);
+        reg_cache_mark_written(ctx, rd);
+    } else {
+        emit_load_guest_reg(ctx, W0, rs1);
+        a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+        emit_sdiv_w32(e, W0, W0, s2);
+        emit_store_guest_reg(ctx, rd, W0);
+    }
 }
 
 void translate_rem(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
@@ -1212,10 +1558,11 @@ void translate_rem(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     emit_ctx_t *e = &ctx->emit;
 
     // REM = rs1 - (rs1/rs2)*rs2 = SDIV + MSUB
+    // Uses W0/W1/W2 as scratch since MSUB needs 4 operands
     emit_load_guest_reg(ctx, W0, rs1);
-    emit_load_guest_reg(ctx, W1, rs2);
-    emit_sdiv_w32(e, W2, W0, W1);     // W2 = W0 / W1
-    emit_msub_w32(e, W0, W2, W1, W0); // W0 = W0 - W2*W1
+    a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+    emit_sdiv_w32(e, W2, W0, s2);
+    emit_msub_w32(e, W0, W2, s2, W0);
     emit_store_guest_reg(ctx, rd, W0);
 }
 
@@ -1370,9 +1717,14 @@ void translate_jalr(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
 
     // Store return address (use W2 to preserve W0=target)
     if (rd != 0) {
-        emit_mov_w32_imm32(e, W2, return_pc);
-        emit_str_w32_imm(e, W2, W20, GUEST_REG_OFFSET(rd));
-        // Invalidate constant propagation
+        a64_reg_t hd = guest_host_reg(ctx, rd);
+        if (hd != A64_NOREG) {
+            emit_mov_w32_imm32(e, hd, return_pc);
+            ctx->reg_alloc[ctx->reg_alloc_map[rd]].dirty = true;
+        } else {
+            emit_mov_w32_imm32(e, W2, return_pc);
+            emit_str_w32_imm(e, W2, W20, GUEST_REG_OFFSET(rd));
+        }
         ctx->reg_constants[rd].valid = false;
         bounds_elim_invalidate(ctx, rd);
     }
@@ -1395,12 +1747,10 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
     uint32_t fall_pc = ctx->guest_pc + 4;
     uint32_t taken_pc = fall_pc + imm;  // PC+4 + imm
 
-    // Stage 1: no superblock extension, always end block
-
-    // Compare rs1, rs2
-    emit_load_guest_reg(ctx, W0, rs1);
-    emit_load_guest_reg(ctx, W1, rs2);
-    emit_cmp_w32_w32(e, W0, W1);
+    // Compare rs1, rs2 (use cached regs if available)
+    a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+    a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+    emit_cmp_w32_w32(e, s1, s2);
 
     // B.cond to taken path (jump over not-taken exit)
     size_t bcond_patch = emit_offset(e);
@@ -1790,6 +2140,11 @@ translated_block_t *translate_block_cached(translate_ctx_t *ctx, uint32_t guest_
     bounds_elim_reset(ctx);
     reg_alloc_prescan(ctx, guest_pc);
 
+    // Emit prologue: load cached guest registers into host callee-saved registers
+    if (ctx->reg_cache_enabled) {
+        reg_alloc_emit_prologue(ctx);
+    }
+
     if (DBT_TRACE) {
         fprintf(stderr, "DBT: Translating cached block at PC=0x%08X (AArch64)\n", guest_pc);
     }
@@ -1806,7 +2161,9 @@ translated_block_t *translate_block_cached(translate_ctx_t *ctx, uint32_t guest_
         }
 
         if (is_backedge_target(ctx, ctx->guest_pc)) {
-            flush_pending_write(ctx);
+            // At back-edge targets, flush all state so the loop iteration
+            // sees consistent memory values for non-cached register accesses.
+            reg_cache_flush(ctx);
             const_prop_reset(ctx);
             bounds_elim_reset(ctx);
         }
