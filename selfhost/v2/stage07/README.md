@@ -10,7 +10,8 @@ Current spike scope:
 Current constraints in `validation/s32-ld.c`:
 - Single `.s32o` input only.
 - No archive support yet.
-- Bounded relocation support for `REL_32`, `REL_HI20`, and `REL_LO12`.
+- Bounded relocation support for `REL_32`, `REL_HI20`, `REL_LO12`,
+  `REL_BRANCH`, and `REL_JAL`.
 
 Relocation spike run (recommended gate while widening):
 
