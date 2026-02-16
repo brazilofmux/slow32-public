@@ -11,8 +11,10 @@ static int g_x_val;
 static int g_y_val;
 static int g_have_helper;
 static int g_helper_ret;
-static int g_helper_param_count;
+static int g_helper_has_param;
+static int g_helper_has_two_params;
 static int g_helper_addend;
+static int g_helper_twoarg_if_lt;
 
 static int read_file(const char *path, char *buf, uint32_t max_len, uint32_t *out_len) {
     FILE *f;
@@ -95,9 +97,37 @@ static int parse_int_lit(int *out_v) {
 
 static int parse_expr(int *out_v);
 
-static int parse_primary(int *out_v) {
-    int arg_v2;
+static int parse_helper_call_value(int *out_v) {
     int arg_v;
+    int arg_v2;
+
+    if (!consume_kw("helper")) return 0;
+    if (!g_have_helper) return 0;
+    if (!consume_char('(')) return 0;
+    if (g_helper_has_param) {
+        if (!parse_expr(&arg_v)) return 0;
+        if (!consume_char(')')) return 0;
+        *out_v = arg_v + g_helper_addend;
+        return 1;
+    }
+    if (g_helper_has_two_params) {
+        if (!parse_expr(&arg_v)) return 0;
+        if (!consume_char(',')) return 0;
+        if (!parse_expr(&arg_v2)) return 0;
+        if (!consume_char(')')) return 0;
+        if (g_helper_twoarg_if_lt) {
+            *out_v = (arg_v < arg_v2) ? arg_v : arg_v2;
+        } else {
+            *out_v = arg_v + arg_v2;
+        }
+        return 1;
+    }
+    if (!consume_char(')')) return 0;
+    *out_v = g_helper_ret;
+    return 1;
+}
+
+static int parse_primary(int *out_v) {
     int v;
     skip_space();
     if (consume_char('(')) {
@@ -116,25 +146,7 @@ static int parse_primary(int *out_v) {
         *out_v = g_y_val;
         return 1;
     }
-    if (consume_kw("helper")) {
-        if (!g_have_helper) return 0;
-        if (!consume_char('(')) return 0;
-        if (g_helper_param_count == 1) {
-            if (!parse_expr(&arg_v)) return 0;
-            if (!consume_char(')')) return 0;
-            *out_v = arg_v + g_helper_addend;
-        } else if (g_helper_param_count == 2) {
-            if (!parse_expr(&arg_v)) return 0;
-            if (!consume_char(',')) return 0;
-            if (!parse_expr(&arg_v2)) return 0;
-            if (!consume_char(')')) return 0;
-            *out_v = arg_v + arg_v2;
-        } else {
-            if (!consume_char(')')) return 0;
-            *out_v = g_helper_ret;
-        }
-        return 1;
-    }
+    if (parse_helper_call_value(out_v)) return 1;
     return parse_int_lit(out_v);
 }
 
@@ -267,8 +279,10 @@ static int parse_program_return_value(int *out_ret) {
     g_y_val = 0;
     g_have_helper = 0;
     g_helper_ret = 0;
-    g_helper_param_count = 0;
+    g_helper_has_param = 0;
+    g_helper_has_two_params = 0;
     g_helper_addend = 0;
+    g_helper_twoarg_if_lt = 0;
     if (!consume_kw("int")) return 0;
     if (consume_kw("helper")) {
         if (!consume_char('(')) return 0;
@@ -294,11 +308,30 @@ static int parse_program_return_value(int *out_ret) {
         }
         if (!consume_char('{')) return 0;
         if (helper_mode_two_param) {
-            if (!consume_kw("return")) return 0;
-            if (!consume_kw("a")) return 0;
-            if (!consume_char('+')) return 0;
-            if (!consume_kw("b")) return 0;
-            g_helper_param_count = 2;
+            if (consume_kw("if")) {
+                /* Tiny helper-two-arg conditional form:
+                   if (a < b) return a; return b;
+                */
+                if (!consume_char('(')) return 0;
+                if (!consume_kw("a")) return 0;
+                if (!consume_char('<')) return 0;
+                if (!consume_kw("b")) return 0;
+                if (!consume_char(')')) return 0;
+                if (!consume_kw("return")) return 0;
+                if (!consume_kw("a")) return 0;
+                if (!consume_char(';')) return 0;
+                if (!consume_kw("return")) return 0;
+                if (!consume_kw("b")) return 0;
+                g_helper_twoarg_if_lt = 1;
+            } else {
+                if (!consume_kw("return")) return 0;
+                if (!consume_kw("a")) return 0;
+                if (!consume_char('+')) return 0;
+                if (!consume_kw("b")) return 0;
+                g_helper_twoarg_if_lt = 0;
+            }
+            g_helper_has_two_params = 1;
+            g_helper_has_param = 0;
             g_helper_addend = 0;
             g_helper_ret = 0;
         } else if (helper_mode_param) {
@@ -331,13 +364,15 @@ static int parse_program_return_value(int *out_ret) {
                     helper_addend = -helper_step;
                 }
             }
-            g_helper_param_count = 1;
+            g_helper_has_param = 1;
+            g_helper_has_two_params = 0;
             g_helper_addend = helper_addend;
             g_helper_ret = 0;
         } else {
             if (!consume_kw("return")) return 0;
             if (!parse_expr(&helper_v)) return 0;
-            g_helper_param_count = 0;
+            g_helper_has_param = 0;
+            g_helper_has_two_params = 0;
             g_helper_ret = helper_v;
             g_helper_addend = 0;
         }
@@ -381,7 +416,10 @@ static int parse_program_return_value(int *out_ret) {
         }
         if (!consume_kw("x")) return 0;
         if (!consume_char('=')) return 0;
-        if (!parse_expr(&v)) return 0;
+        if (parse_helper_call_value(&v)) {
+        } else {
+            if (!parse_expr(&v)) return 0;
+        }
         if (!consume_char(';')) return 0;
         g_x_val = v;
         if (g_have_y) {
@@ -430,7 +468,10 @@ static int parse_program_return_value(int *out_ret) {
         }
     } else {
         if (!consume_kw("return")) return 0;
-        if (!parse_expr(out_ret)) return 0;
+        if (parse_helper_call_value(out_ret)) {
+        } else {
+            if (!parse_expr(out_ret)) return 0;
+        }
         if (!consume_char(';')) return 0;
     }
 
