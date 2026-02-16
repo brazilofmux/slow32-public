@@ -51,3 +51,5 @@ selfhost/v2/stage04/tests/subset-idioms/idiom50_helper_ptr_return_ternary.c
 selfhost/v2/stage04/tests/subset-idioms/idiom51_helper_ptr_alias_branch.c
 selfhost/v2/stage04/tests/subset-idioms/idiom52_nested_ptr_helpers_cast_mix.c
 selfhost/v2/stage04/tests/subset-idioms/idiom53_nested_ptr_helpers_shortcircuit.c
+selfhost/v2/stage04/tests/subset-idioms/idiom54_macro_ptr_helper_ternary.c
+selfhost/v2/stage04/tests/subset-idioms/idiom55_macro_ptr_helper_shortcircuit.c
