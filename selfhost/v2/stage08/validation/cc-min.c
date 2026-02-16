@@ -85,6 +85,65 @@ static int parse_int_lit(int *out_v) {
     return 1;
 }
 
+static int parse_expr(int *out_v);
+
+static int parse_primary(int *out_v) {
+    int v;
+    skip_space();
+    if (consume_char('(')) {
+        if (!parse_expr(&v)) return 0;
+        if (!consume_char(')')) return 0;
+        *out_v = v;
+        return 1;
+    }
+    return parse_int_lit(out_v);
+}
+
+static int parse_mul(int *out_v) {
+    int lhs;
+    int rhs;
+    char op;
+
+    if (!parse_primary(&lhs)) return 0;
+    for (;;) {
+        skip_space();
+        op = g_src[g_pos];
+        if (op != '*' && op != '/') break;
+        g_pos = g_pos + 1;
+        if (!parse_primary(&rhs)) return 0;
+        if (op == '*') {
+            lhs = lhs * rhs;
+        } else {
+            if (rhs == 0) return 0;
+            lhs = lhs / rhs;
+        }
+    }
+    *out_v = lhs;
+    return 1;
+}
+
+static int parse_expr(int *out_v) {
+    int lhs;
+    int rhs;
+    char op;
+
+    if (!parse_mul(&lhs)) return 0;
+    for (;;) {
+        skip_space();
+        op = g_src[g_pos];
+        if (op != '+' && op != '-') break;
+        g_pos = g_pos + 1;
+        if (!parse_mul(&rhs)) return 0;
+        if (op == '+') {
+            lhs = lhs + rhs;
+        } else {
+            lhs = lhs - rhs;
+        }
+    }
+    *out_v = lhs;
+    return 1;
+}
+
 static int parse_program_return_value(int *out_ret) {
     if (!consume_kw("int")) return 0;
     if (!consume_kw("main")) return 0;
@@ -95,7 +154,7 @@ static int parse_program_return_value(int *out_ret) {
     }
     if (!consume_char('{')) return 0;
     if (!consume_kw("return")) return 0;
-    if (!parse_int_lit(out_ret)) return 0;
+    if (!parse_expr(out_ret)) return 0;
     if (!consume_char(';')) return 0;
     if (!consume_char('}')) return 0;
     skip_space();
