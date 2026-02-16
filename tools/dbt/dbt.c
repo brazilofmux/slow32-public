@@ -48,7 +48,13 @@ static bool mmio_initialized = false;
 static int host_argc = 0;
 static char **host_argv = NULL;
 
-#if defined(__x86_64__) || defined(__i386__)
+#if defined(__aarch64__)
+static inline uint64_t rdtsc(void) {
+    uint64_t val;
+    __asm__ __volatile__("mrs %0, cntvct_el0" : "=r"(val));
+    return val;
+}
+#elif defined(__x86_64__) || defined(__i386__)
 static inline uint64_t rdtsc(void) {
     uint32_t lo, hi;
     __asm__ __volatile__("lfence\nrdtsc" : "=a"(lo), "=d"(hi) :: "memory");
@@ -443,6 +449,63 @@ bool dbt_load_s32x(dbt_cpu_state_t *cpu, const char *filename) {
 //   rbp = pointer to dbt_cpu_state_t
 //   r14 = cpu->mem_base (guest memory base pointer)
 //   r15 = cpu->lookup_table (block cache base)
+#ifdef __aarch64__
+__attribute__((noinline))
+static void execute_translated(dbt_cpu_state_t *cpu, translated_block_fn block) {
+    uint8_t *mem_base = cpu->mem_base;
+    void *lookup_table = cpu->lookup_table;
+
+    // AArch64 trampoline:
+    //   x20 = cpu_state pointer (callee-saved)
+    //   x21 = mem_base pointer (callee-saved)
+    //   x22 = lookup_table pointer (callee-saved)
+    //
+    // We capture the inputs into caller-saved registers (x0-x3) first,
+    // then save callee-saved regs, then set up x20/x21/x22 from the
+    // captured values. This avoids the problem of the compiler putting
+    // inputs into callee-saved registers that get clobbered by the saves.
+    register uint64_t r_cpu     __asm__("x0") = (uint64_t)cpu;
+    register uint64_t r_mem     __asm__("x1") = (uint64_t)mem_base;
+    register uint64_t r_block   __asm__("x2") = (uint64_t)block;
+    register uint64_t r_lookup  __asm__("x3") = (uint64_t)lookup_table;
+
+    __asm__ __volatile__(
+        // Save callee-saved registers (x19-x28, fp, lr)
+        "stp x29, x30, [sp, #-16]!\n\t"
+        "stp x27, x28, [sp, #-16]!\n\t"
+        "stp x25, x26, [sp, #-16]!\n\t"
+        "stp x23, x24, [sp, #-16]!\n\t"
+        "stp x21, x22, [sp, #-16]!\n\t"
+        "stp x19, x20, [sp, #-16]!\n\t"
+
+        // Set up translated code register convention from x0-x3
+        "mov x20, x0\n\t"       // x20 = cpu
+        "mov x21, x1\n\t"       // x21 = mem_base
+        "mov x22, x3\n\t"       // x22 = lookup_table
+
+        // Call translated block (address in x2)
+        "blr x2\n\t"
+
+        // Restore callee-saved registers
+        "ldp x19, x20, [sp], #16\n\t"
+        "ldp x21, x22, [sp], #16\n\t"
+        "ldp x23, x24, [sp], #16\n\t"
+        "ldp x25, x26, [sp], #16\n\t"
+        "ldp x27, x28, [sp], #16\n\t"
+        "ldp x29, x30, [sp], #16\n\t"
+
+        : // No outputs
+        : "r" (r_cpu),          // x0 = cpu
+          "r" (r_mem),          // x1 = mem_base
+          "r" (r_block),        // x2 = block
+          "r" (r_lookup)        // x3 = lookup_table
+        : "x4", "x5", "x6", "x7",
+          "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
+          "x16", "x17", "x18",
+          "memory", "cc"
+    );
+}
+#else  // x86-64
 __attribute__((noinline))
 static void execute_translated(dbt_cpu_state_t *cpu, translated_block_fn block) {
     // Get mem_base into a local before inline asm
@@ -486,6 +549,7 @@ static void execute_translated(dbt_cpu_state_t *cpu, translated_block_fn block) 
           "memory", "cc"
     );
 }
+#endif // __aarch64__
 
 // Stage 1 dispatcher (no caching)
 static void run_dbt_stage1(dbt_cpu_state_t *cpu) {
@@ -497,7 +561,7 @@ static void run_dbt_stage1(dbt_cpu_state_t *cpu) {
         // Translate block at current PC
         translated_block_fn block;
         if (profile_timing) {
-#if defined(__x86_64__) || defined(__i386__)
+#if defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
             bool sample_now = (dispatch_iter % profile_sample_rate) == 0;
             if (sample_now) {
                 uint64_t t0 = rdtsc();
@@ -515,7 +579,7 @@ static void run_dbt_stage1(dbt_cpu_state_t *cpu) {
 
         // Execute translated code
         if (profile_timing) {
-#if defined(__x86_64__) || defined(__i386__)
+#if defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
             bool sample_now = (dispatch_iter % profile_sample_rate) == 0;
             if (sample_now) {
                 uint64_t t0 = rdtsc();
@@ -591,7 +655,7 @@ static void run_dbt_stage2(dbt_cpu_state_t *cpu, block_cache_t *cache) {
         if (!block) {
             // Translate and cache new block
             if (profile_timing) {
-#if defined(__x86_64__) || defined(__i386__)
+#if defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
                 bool sample_now = (dispatch_iter % profile_sample_rate) == 0;
                 if (sample_now) {
                     uint64_t t0 = rdtsc();
@@ -616,7 +680,7 @@ static void run_dbt_stage2(dbt_cpu_state_t *cpu, block_cache_t *cache) {
         // Execute translated code
         // With chaining, this may execute multiple blocks before returning
         if (profile_timing) {
-#if defined(__x86_64__) || defined(__i386__)
+#if defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
             bool sample_now = (dispatch_iter % profile_sample_rate) == 0;
             if (sample_now) {
                 uint64_t t0 = rdtsc();
@@ -694,7 +758,7 @@ static void run_dbt_stage3(dbt_cpu_state_t *cpu, block_cache_t *cache) {
         if (!block) {
             // Translate and cache new block
             if (profile_timing) {
-#if defined(__x86_64__) || defined(__i386__)
+#if defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
                 bool sample_now = (dispatch_iter % profile_sample_rate) == 0;
                 if (sample_now) {
                     uint64_t t0 = rdtsc();
@@ -719,7 +783,7 @@ static void run_dbt_stage3(dbt_cpu_state_t *cpu, block_cache_t *cache) {
         // Execute translated code
         // With chaining + inline lookup, this may execute many blocks
         if (profile_timing) {
-#if defined(__x86_64__) || defined(__i386__)
+#if defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
             bool sample_now = (dispatch_iter % profile_sample_rate) == 0;
             if (sample_now) {
                 uint64_t t0 = rdtsc();
@@ -847,7 +911,7 @@ static void run_dbt_stage4(dbt_cpu_state_t *cpu, block_cache_t *cache) {
 
             // Translate and cache new block (may be a superblock)
             if (profile_timing) {
-#if defined(__x86_64__) || defined(__i386__)
+#if defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
                 bool sample_now = (dispatch_iter % profile_sample_rate) == 0;
                 if (sample_now) {
                     uint64_t t0 = rdtsc();
@@ -871,7 +935,7 @@ static void run_dbt_stage4(dbt_cpu_state_t *cpu, block_cache_t *cache) {
 
         // Execute translated code
         if (profile_timing) {
-#if defined(__x86_64__) || defined(__i386__)
+#if defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
             bool sample_now = (dispatch_iter % profile_sample_rate) == 0;
             if (sample_now) {
                 uint64_t t0 = rdtsc();
@@ -1291,7 +1355,7 @@ int main(int argc, char **argv) {
     profile_tsc_start = 0;
     profile_tsc_end = 0;
     clock_gettime(CLOCK_MONOTONIC, &start);
-#if defined(__x86_64__) || defined(__i386__)
+#if defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
     if (profile_timing) {
         profile_tsc_start = rdtsc();
     }
@@ -1308,7 +1372,7 @@ int main(int argc, char **argv) {
     }
 
     clock_gettime(CLOCK_MONOTONIC, &end);
-#if defined(__x86_64__) || defined(__i386__)
+#if defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
     if (profile_timing) {
         profile_tsc_end = rdtsc();
     }
@@ -1325,7 +1389,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Exit code: %d (0x%08X)\n", exit_code, (uint32_t)exit_code);
         fprintf(stderr, "Time: %.3f seconds\n", elapsed);
         if (profile_timing) {
-#if defined(__x86_64__) || defined(__i386__)
+#if defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
             uint64_t total_tsc = profile_tsc_end - profile_tsc_start;
             double tsc_hz = 0.0;
             if (elapsed > 0.0) {

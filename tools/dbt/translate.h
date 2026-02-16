@@ -5,7 +5,14 @@
 #define DBT_TRANSLATE_H
 
 #include "cpu_state.h"
+
+#ifdef __aarch64__
+#include "emit_a64.h"
+typedef a64_reg_t host_reg_t;
+#else
 #include "emit_x64.h"
+typedef x64_reg_t host_reg_t;
+#endif
 
 // Forward declarations
 typedef struct block_cache block_cache_t;
@@ -84,7 +91,7 @@ typedef struct {
     // Dead temporary elimination: pending write tracker
     struct {
         uint8_t guest_reg;    // Which guest register
-        x64_reg_t host_reg;   // Which x64 reg holds the value (RAX)
+        host_reg_t host_reg;  // Which host reg holds the value (RAX/W0)
         bool valid;            // Is there a pending write?
         bool can_skip_store;   // Level 2: true if store can be skipped entirely
     } pending_write;
@@ -137,12 +144,13 @@ typedef struct {
         // Snapshot of pending write at the point of the branch
         bool pending_write_valid;
         uint8_t pending_write_guest_reg;
-        x64_reg_t pending_write_host_reg;
+        host_reg_t pending_write_host_reg;
     } deferred_exits[MAX_BLOCK_EXITS];
 } translate_ctx_t;
 
 // Translated block function signature
-// Called with rbp = &cpu, r14 = cpu->mem_base
+// x86-64: Called with rbp = &cpu, r14 = cpu->mem_base
+// AArch64: Called with x20 = &cpu, x21 = cpu->mem_base
 // Returns via 'ret' with exit_reason set in cpu->exit_reason
 typedef void (*translated_block_fn)(void);
 
@@ -370,11 +378,11 @@ void translate_assert_eq(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2);
 // Helper functions
 // ============================================================================
 
-// Load guest register into x64 register (handles r0 = 0)
-void emit_load_guest_reg(translate_ctx_t *ctx, x64_reg_t dst, uint8_t guest_reg);
+// Load guest register into host register (handles r0 = 0)
+void emit_load_guest_reg(translate_ctx_t *ctx, host_reg_t dst, uint8_t guest_reg);
 
-// Store x64 register to guest register (handles r0 = discard)
-void emit_store_guest_reg(translate_ctx_t *ctx, uint8_t guest_reg, x64_reg_t src);
+// Store host register to guest register (handles r0 = discard)
+void emit_store_guest_reg(translate_ctx_t *ctx, uint8_t guest_reg, host_reg_t src);
 
 // Store immediate to guest register (handles r0 = discard)
 void emit_store_guest_reg_imm32(translate_ctx_t *ctx, uint8_t guest_reg, uint32_t imm);

@@ -1,5 +1,5 @@
 # SLOW-32 DBT Makefile
-# Stage 1 - Correctness-first dynamic binary translator
+# Multi-architecture: detects x86-64 or AArch64 at build time
 
 CC = gcc
 CFLAGS = -Wall -Wextra -O2 -g -std=c11
@@ -11,14 +11,24 @@ CFLAGS += -Wno-unused-parameter -Wno-unused-variable
 
 LDFLAGS = -lm
 
+# Architecture detection: select emitter and translator
+UNAME_M := $(shell uname -m)
+ifeq ($(UNAME_M),aarch64)
+    ARCH_SRCS = emit_a64.c translate_a64.c
+    ARCH_HDRS = emit_a64.h
+else
+    ARCH_SRCS = emit_x64.c translate.c
+    ARCH_HDRS = emit_x64.h
+endif
+
 # Source files
-SRCS = dbt.c emit_x64.c translate.c block_cache.c
+SRCS = dbt.c $(ARCH_SRCS) block_cache.c
 EMULATOR_SRCS = ../emulator/mmio_ring.c
 OBJS = $(SRCS:.c=.o)
 EMULATOR_OBJS = mmio_ring.o
 
 # Headers
-HDRS = cpu_state.h emit_x64.h translate.h block_cache.h
+HDRS = cpu_state.h $(ARCH_HDRS) translate.h block_cache.h dbt_limits.h
 
 # Main target
 TARGET = slow32-dbt
@@ -26,6 +36,7 @@ TARGET = slow32-dbt
 .PHONY: all clean test
 
 all: $(TARGET)
+	@echo "Built for $(UNAME_M)"
 
 $(TARGET): $(OBJS) $(EMULATOR_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
@@ -53,7 +64,7 @@ test-diff: $(TARGET)
 	@./scripts/diff-test.sh
 
 clean:
-	rm -f $(OBJS) $(EMULATOR_OBJS) $(TARGET)
+	rm -f *.o $(TARGET)
 
 # Debug build with more checks
 debug: CFLAGS += -fsanitize=address,undefined -O0

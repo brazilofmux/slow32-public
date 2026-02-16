@@ -3,6 +3,9 @@
 
 #include "block_cache.h"
 #include "cpu_state.h"
+#ifdef __aarch64__
+#include "emit_a64.h"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,6 +49,149 @@ bool cache_init(block_cache_t *cache) {
     }
     cache->code_buffer_size = CODE_BUFFER_SIZE;
     cache->code_buffer_used = 0;
+
+#ifdef __aarch64__
+    // AArch64 dispatcher stub: just RET (return to execute_translated)
+    cache->dispatcher_stub = cache->code_buffer;
+    {
+        uint32_t *p = (uint32_t *)cache->code_buffer;
+        *p = 0xD65F03C0;  // RET
+    }
+    cache->code_buffer_used = 16;  // Align next code
+
+    // Shared branch exit stub:
+    //   MOVZ W0, #EXIT_BRANCH              (4 bytes)
+    //   STR W0, [X20, #CPU_EXIT_REASON_OFFSET]  (4 bytes)
+    //   B native_dispatcher                 (4 bytes)
+    // Total: 12 bytes
+    {
+        uint32_t *p = (uint32_t *)(cache->code_buffer + cache->code_buffer_used);
+        cache->shared_branch_exit = (uint8_t *)p;
+        uint32_t reason = EXIT_BRANCH;
+        // MOVZ W0, #reason
+        p[0] = 0x52800000 | ((reason & 0xFFFF) << 5) | 0;  // W0
+        // STR W0, [X20, #offset]  — unsigned offset scaled by 4
+        uint32_t scaled = (uint32_t)CPU_EXIT_REASON_OFFSET / 4;
+        p[1] = 0xB9000000 | ((scaled & 0xFFF) << 10) | (20 << 5) | 0;  // STR W0, [X20, #off]
+        // B native_dispatcher — placeholder, patched below
+        p[2] = 0x14000000;  // B +0 (placeholder)
+        cache->code_buffer_used += 12;
+    }
+
+    // Native dispatcher trampoline (AArch64):
+    // Uses X20=cpu, X22=lookup_table, scratch: W0-W5
+    {
+        uint32_t *p = (uint32_t *)(cache->code_buffer + cache->code_buffer_used);
+        cache->native_dispatcher = (uint8_t *)p;
+
+        // Patch B in shared_branch_exit to jump here
+        {
+            uint32_t *b_site = (uint32_t *)(cache->shared_branch_exit + 8);
+            int32_t diff = (int32_t)((uint8_t *)p - (uint8_t *)b_site);
+            *b_site = 0x14000000 | ((diff >> 2) & 0x03FFFFFF);
+        }
+
+        int n = 0;
+        uint32_t pc_off = (uint32_t)CPU_PC_OFFSET;
+        uint32_t mask_off = (uint32_t)CPU_LOOKUP_MASK_OFFSET;
+
+        // LDR W1, [X20, #pc_off]             ; W1 = cpu->pc
+        p[n++] = 0xB9400000 | (((pc_off / 4) & 0xFFF) << 10) | (20 << 5) | 1;
+
+        // LSR W2, W1, #2                     ; W2 = pc >> 2
+        p[n++] = 0x53000000 | (2 << 16) | (31 << 10) | (1 << 5) | 2;  // UBFM W2, W1, #2, #31
+
+        // LSR W3, W1, #12                    ; W3 = pc >> 12
+        p[n++] = 0x53000000 | (12 << 16) | (31 << 10) | (1 << 5) | 3;  // UBFM W3, W1, #12, #31
+
+        // EOR W2, W2, W3                     ; W2 = hash
+        p[n++] = 0x4A000000 | (3 << 16) | (2 << 5) | 2;
+
+        // LDR W4, [X20, #mask_off]           ; W4 = BLOCK_CACHE_MASK
+        p[n++] = 0xB9400000 | (((mask_off / 4) & 0xFFF) << 10) | (20 << 5) | 4;
+
+        // AND W2, W2, W4                     ; hash &= mask
+        p[n++] = 0x0A000000 | (4 << 16) | (2 << 5) | 2;
+
+        // MOV W5, W2                         ; W5 = start index
+        p[n++] = 0x2A0003E0 | (2 << 16) | 5;  // ORR W5, WZR, W2
+
+        // .probe:
+        int probe_idx = n;
+
+        // LDR X3, [X22, W2, UXTW #3]        ; X3 = blocks[hash] (pointer, scaled by 8)
+        // Load register (extended): LDR Xt, [Xn, Wm, UXTW #3]
+        // 11 111 0 00 0 11 Rm 010 S 10 Rn Rt
+        // option=010 (UXTW) at bits[15:13], S=1 at bit[12] for <<3 scaling
+        p[n++] = 0xF8605800 | (2 << 16) | (22 << 5) | 3;
+
+        // CBZ X3, .miss
+        int cbz_miss_idx = n;
+        p[n++] = 0xB4000000 | 3;  // placeholder, patched below
+
+        // LDR W0, [X3, #0]                  ; W0 = block->guest_pc
+        p[n++] = 0xB9400000 | (3 << 5) | 0;
+
+        // CMP W0, W1                        ; guest_pc == target?
+        p[n++] = 0x6B00001F | (1 << 16) | (0 << 5);
+
+        // B.EQ .hit
+        int beq_hit_idx = n;
+        p[n++] = 0x54000000 | COND_EQ;  // placeholder
+
+        // ADD W2, W2, #1
+        p[n++] = 0x11000400 | (2 << 5) | 2;
+
+        // AND W2, W2, W4                    ; wrap around
+        p[n++] = 0x0A000000 | (4 << 16) | (2 << 5) | 2;
+
+        // CMP W2, W5                        ; full circle?
+        p[n++] = 0x6B00001F | (5 << 16) | (2 << 5);
+
+        // B.NE .probe
+        int32_t probe_diff = (probe_idx - n) * 4;
+        p[n++] = 0x54000000 | (((probe_diff >> 2) & 0x7FFFF) << 5) | COND_NE;
+
+        // .miss:
+        {
+            int32_t diff = (n - cbz_miss_idx) * 4;
+            p[cbz_miss_idx] = 0xB4000000 | (((diff >> 2) & 0x7FFFF) << 5) | 3;
+        }
+
+        // RET                               ; return to C dispatcher
+        p[n++] = 0xD65F03C0;
+
+        // .hit:
+        {
+            int32_t diff = (n - beq_hit_idx) * 4;
+            p[beq_hit_idx] = 0x54000000 | (((diff >> 2) & 0x7FFFF) << 5) | COND_EQ;
+        }
+
+        // LDR W0, [X3, #24]                ; W0 = exec_count
+        p[n++] = 0xB9400000 | ((24 / 4) << 10) | (3 << 5) | 0;
+
+        // ADD W0, W0, #1
+        p[n++] = 0x11000400 | (0 << 5) | 0;
+
+        // STR W0, [X3, #24]                ; exec_count++
+        p[n++] = 0xB9000000 | ((24 / 4) << 10) | (3 << 5) | 0;
+
+        // LDR X0, [X3, #8]                 ; X0 = block->host_code
+        p[n++] = 0xF9400000 | ((8 / 8) << 10) | (3 << 5) | 0;
+
+        // BR X0                             ; jump to translated block
+        p[n++] = 0xD61F0000 | (0 << 5);
+
+        cache->code_buffer_used += (uint32_t)(n * 4);
+        // Align to 16 bytes
+        cache->code_buffer_used = (cache->code_buffer_used + 15) & ~15;
+    }
+
+    // Flush I-cache for all stubs
+    __builtin___clear_cache((char *)cache->code_buffer,
+                            (char *)cache->code_buffer + cache->code_buffer_used);
+
+#else  // x86-64
 
     // Emit dispatcher stub at start of code buffer
     // This is where unchained exits jump to - just 'ret' to C dispatcher
@@ -204,6 +350,7 @@ bool cache_init(block_cache_t *cache) {
         // Align
         cache->code_buffer_used = (cache->code_buffer_used + 15) & ~15;
     }
+#endif // __aarch64__
 
     // Record where stubs end (for cache_flush)
     cache->stubs_end = cache->code_buffer_used;
@@ -341,6 +488,11 @@ uint8_t *cache_get_code_ptr(block_cache_t *cache) {
 void cache_commit_code(block_cache_t *cache, uint32_t size) {
     uint32_t aligned_offset = (cache->code_buffer_used + 15) & ~15;
     cache->code_buffer_used = aligned_offset + size;
+#ifdef __aarch64__
+    // Flush I-cache for newly committed code
+    __builtin___clear_cache((char *)(cache->code_buffer + aligned_offset),
+                            (char *)(cache->code_buffer + aligned_offset + size));
+#endif
 }
 
 // ============================================================================
@@ -427,7 +579,26 @@ void cache_chain_pending(block_cache_t *cache, translated_block_t *target) {
 }
 
 void cache_patch_jmp(uint8_t *patch_site, uint8_t *target) {
-    // patch_site points to the rel32 offset of a jmp or jcc instruction
+#ifdef __aarch64__
+    // On AArch64, patch_site points to the B instruction itself (4 bytes).
+    // Rewrite the entire instruction with the correct offset.
+    int64_t diff = (int64_t)(target - patch_site);
+    int32_t imm26 = (int32_t)(diff >> 2);
+
+    // Check 26-bit signed range (+-128MB)
+    if (imm26 < -(1 << 25) || imm26 >= (1 << 25)) {
+        fprintf(stderr, "cache_patch_jmp: AArch64 B offset out of range!\n");
+        return;
+    }
+
+    uint32_t inst = 0x14000000 | (imm26 & 0x03FFFFFF);
+    uint32_t *p = (uint32_t *)patch_site;
+    *p = inst;
+
+    // Flush I-cache for the patched instruction
+    __builtin___clear_cache((char *)patch_site, (char *)(patch_site + 4));
+#else
+    // x86-64: patch_site points to the rel32 offset of a jmp or jcc instruction
     // Calculate the relative offset from end of instruction
     // jmp rel32: opcode(1) + rel32(4) = 5 bytes total, so rel = target - (patch_site + 4)
     // jcc rel32: 0F opcode(2) + rel32(4) = 6 bytes, but patch_site is after opcode
@@ -447,6 +618,7 @@ void cache_patch_jmp(uint8_t *patch_site, uint8_t *target) {
     patch_site[1] = (rel32 >> 8) & 0xFF;
     patch_site[2] = (rel32 >> 16) & 0xFF;
     patch_site[3] = (rel32 >> 24) & 0xFF;
+#endif
 }
 
 // ============================================================================
@@ -711,9 +883,15 @@ static void dump_objdump(const uint8_t *data, uint32_t len, uint32_t pc) {
     fclose(f);
 
     char cmd[512];
+#ifdef __aarch64__
+    snprintf(cmd, sizeof(cmd),
+             "objdump -D -b binary -m aarch64 %s 2>/dev/null",
+             path);
+#else
     snprintf(cmd, sizeof(cmd),
              "objdump -D -b binary -m i386:x86-64 %s 2>/dev/null",
              path);
+#endif
     int rc = system(cmd);
     if (rc != 0) {
         fprintf(stderr, "  objdump: failed for %s\n", path);
