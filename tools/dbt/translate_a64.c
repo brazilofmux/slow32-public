@@ -2136,8 +2136,10 @@ void translate_jalr(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
 static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2,
                                     int32_t imm, a64_cond_t cond) {
     emit_ctx_t *e = &ctx->emit;
+    uint32_t branch_pc = ctx->guest_pc;
     uint32_t fall_pc = ctx->guest_pc + 4;
     uint32_t taken_pc = fall_pc + imm;  // PC+4 + imm
+    bool branch_is_eq_ne = (cond == COND_EQ || cond == COND_NE);
     bool fused = false;
     a64_reg_t cbz_reg = A64_NOREG;
     bool cbz_is_nz = false;
@@ -2146,7 +2148,8 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
     if (ctx->pending_cond.valid) {
         uint8_t prd = ctx->pending_cond.rd;
         // Pattern: BEQ/BNE prd, r0, target — one operand is prd, other is r0
-        if ((rs1 == prd && rs2 == 0) || (rs2 == prd && rs1 == 0)) {
+        if (branch_is_eq_ne &&
+            ((rs1 == prd && rs2 == 0) || (rs2 == prd && rs1 == 0))) {
             // Extract deferred comparison state
             uint8_t saved_opcode = ctx->pending_cond.opcode;
             uint8_t c_rs1 = ctx->pending_cond.rs1;
@@ -2296,6 +2299,9 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
     }
 
     // Not-taken path: exit with fall_pc
+    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
+        ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
+    }
     emit_exit_chained(ctx, fall_pc, ctx->exit_idx++);
 
     // Taken path: patch B.cond to here
@@ -2308,6 +2314,9 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
     }
 
     // Exit with taken_pc
+    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
+        ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
+    }
     emit_exit_chained(ctx, taken_pc, ctx->exit_idx++);
 
     return true;  // Block ends at branch
@@ -3766,24 +3775,29 @@ translated_block_t *translate_block_cached(translate_ctx_t *ctx, uint32_t guest_
     dbt_cpu_state_t *cpu = ctx->cpu;
     block_cache_t *cache = ctx->cache;
     emit_ctx_t *e = &ctx->emit;
+    bool saved_superblock_enabled = ctx->superblock_enabled;
+    bool forced_no_superblock = false;
 
     // Allocate a block
     translated_block_t *block = cache_alloc_block(cache, guest_pc);
     if (!block) return NULL;
 
+    uint8_t *code_start = cache_get_code_ptr(cache);
+    void *entry = code_start;
+
+retry_translate:
+    uint32_t code_avail = cache->code_buffer_size -
+                          (uint32_t)(code_start - cache->code_buffer);
+    emit_init(e, code_start, code_avail);
+    memset(block, 0, sizeof(*block));
+    block->guest_pc = guest_pc;
+    block->host_code = code_start;
+    entry = emit_ptr(e);
+
     ctx->block = block;
     ctx->exit_idx = 0;
     ctx->guest_pc = guest_pc;
     cpu->pc = guest_pc;
-
-    // Translate into cache code buffer (aligned to 16 bytes)
-    uint8_t *code_start = cache_get_code_ptr(cache);
-    uint32_t code_avail = cache->code_buffer_size -
-                          (uint32_t)(code_start - cache->code_buffer);
-    emit_init(e, code_start, code_avail);
-
-    void *entry = emit_ptr(e);
-
     ctx->block_start_pc = guest_pc;
     ctx->inst_count = 0;
     ctx->side_exit_emitted = 0;
@@ -3937,6 +3951,24 @@ cached_done:
     block->reg_cache_hits = ctx->reg_cache_hits;
     block->reg_cache_misses = ctx->reg_cache_misses;
 
+    if (ctx->avoid_backedge_extend && ctx->superblock_enabled &&
+        ctx->side_exit_emitted > 0 && !forced_no_superblock) {
+        bool has_backedge = false;
+        for (uint32_t eidx = 0; eidx < block->exit_count; eidx++) {
+            block_exit_t *ex = &block->exits[eidx];
+            if (ex->branch_pc != 0 && ex->target_pc < ex->branch_pc) {
+                has_backedge = true;
+                break;
+            }
+        }
+        if (has_backedge) {
+            forced_no_superblock = true;
+            ctx->superblock_enabled = false;
+            ctx->superblock_depth = 0;
+            goto retry_translate;
+        }
+    }
+
     cache_commit_code(cache, block->host_size);
 
     // Update superblock metadata
@@ -3956,5 +3988,6 @@ cached_done:
     cache_chain_pending(cache, block);
 
     ctx->block = NULL;
+    ctx->superblock_enabled = saved_superblock_enabled;
     return block;
 }
