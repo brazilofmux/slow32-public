@@ -4,9 +4,9 @@
  * Bounded linker for one or two .s32o inputs and one .s32x output.
  * Current scope:
  *   - Supports .text/.data/.rodata/.bss merge from a primary object
- *   - Optional bounded aux object path: append aux .text (no relocs)
+ *   - Optional bounded aux object/archive path: append aux .text (no relocs)
  *   - Supports bounded REL_32 relocations within a single object
- *   - Ignores archives for now (next widening step)
+ *   - Archive support is bounded to first-member extraction
  */
 
 #include <stdint.h>
@@ -207,6 +207,47 @@ static int str_eq(const char *a, const char *b) {
     return strcmp(a, b) == 0;
 }
 
+static int maybe_extract_archive_member0(uint8_t *buf, uint32_t *size_io) {
+    uint32_t size;
+    uint32_t nmembers;
+    uint32_t mem_off;
+    uint32_t str_off;
+    uint32_t str_sz;
+    uint32_t name_off;
+    uint32_t data_off;
+    uint32_t member_size;
+    uint32_t i;
+
+    size = *size_io;
+    if (size < 32) return 1;
+    if (buf[0] != 'A' || buf[1] != '2' || buf[2] != '3' || buf[3] != 'S') return 1;
+
+    nmembers = rd32(buf + 8);
+    mem_off = rd32(buf + 12);
+    str_off = rd32(buf + 24);
+    str_sz = rd32(buf + 28);
+    if (nmembers < 1 ||
+        !in_bounds(mem_off, nmembers * 24U, size) ||
+        !in_bounds(str_off, str_sz, size)) {
+        return 0;
+    }
+
+    name_off = rd32(buf + mem_off + 0);
+    data_off = rd32(buf + mem_off + 4);
+    member_size = rd32(buf + mem_off + 8);
+    if (name_off >= str_sz ||
+        member_size > MAX_OBJ_SIZE ||
+        !in_bounds(data_off, member_size, size)) {
+        return 0;
+    }
+
+    for (i = 0; i < member_size; i = i + 1) {
+        buf[i] = buf[data_off + i];
+    }
+    *size_io = member_size;
+    return 1;
+}
+
 int main(int argc, char **argv) {
     const char *obj_path;
     const char *aux_path;
@@ -252,7 +293,7 @@ int main(int argc, char **argv) {
     int main_found;
 
     if (argc != 3 && argc != 4) {
-        fprintf(stderr, "Usage: %s <input.s32o> [aux.s32o] <output.s32x>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <input.s32o> [aux.s32o|aux.s32a] <output.s32x>\n", argv[0]);
         return 1;
     }
     obj_path = argv[1];
@@ -407,6 +448,11 @@ int main(int argc, char **argv) {
             fprintf(stderr, "error: cannot read %s\n", aux_path);
             return 1;
         }
+        if (!maybe_extract_archive_member0(g_aux_obj, &aux_size)) {
+            fprintf(stderr, "error: malformed archive %s\n", aux_path);
+            return 1;
+        }
+
         if (aux_size < sizeof(s32o_header_t)) { return 1; }
         aoh = (s32o_header_t *)g_aux_obj;
         if (aoh->magic != S32O_MAGIC ||

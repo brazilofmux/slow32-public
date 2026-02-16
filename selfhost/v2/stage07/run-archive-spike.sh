@@ -27,7 +27,7 @@ resolution scenario:
   - invokes stage07 linker with: <main.s32o> <lib.s32a> <out.s32x>
 
 Modes:
-  direct   Invoke linker with archive argument directly (currently expected-fail).
+  direct   Invoke linker with archive argument directly (expected-pass).
   extract  Extract first archive member first, then link object-only (expected-pass).
 USAGE
 }
@@ -74,11 +74,7 @@ case "$MODE" in
 esac
 
 if [[ "$EXPECT_SET" -eq 0 ]]; then
-    if [[ "$MODE" == "extract" ]]; then
-        EXPECT_PASS=1
-    else
-        EXPECT_PASS=0
-    fi
+    EXPECT_PASS=1
 fi
 
 if [[ "$EMU" != /* ]]; then

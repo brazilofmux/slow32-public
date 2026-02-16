@@ -8,8 +8,8 @@ Current spike scope:
 - Execute the produced `.s32x` on the selected emulator.
 
 Current constraints in `validation/s32-ld.c`:
-- Single `.s32o` input only.
-- No archive support yet.
+- Primary `.s32o` plus optional bounded aux input (`.s32o` or `.s32a`).
+- Archive support is bounded to first-member extraction.
 - Bounded relocation support for `REL_32`, `REL_HI20`, `REL_LO12`,
   `REL_BRANCH`, and `REL_JAL`.
 
@@ -31,14 +31,13 @@ Relocation-codegen bisect helper:
 selfhost/v2/stage07/run-reloc-bisect.sh --emu ./tools/emulator/slow32-fast
 ```
 
-Archive-resolution spike scaffold (currently expected to fail until archive
-member resolution is wired in `s32-ld.c`):
+Archive-resolution spike scaffold:
 
 ```bash
 selfhost/v2/stage07/run-archive-spike.sh --emu ./tools/emulator/slow32-fast
 ```
 
 Two-lane archive spike modes:
-- `--mode direct`: pass `.s32a` directly to stage07 linker (expected fail today).
+- `--mode direct`: pass `.s32a` directly to stage07 linker (expected pass).
 - `--mode extract`: extract first member and pass it as optional aux object input
-  to stage07 linker (expected pass with bounded aux-object path).
+  to stage07 linker (expected pass).
