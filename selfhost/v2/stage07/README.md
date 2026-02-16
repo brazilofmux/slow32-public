@@ -30,3 +30,10 @@ Relocation-codegen bisect helper:
 ```bash
 selfhost/v2/stage07/run-reloc-bisect.sh --emu ./tools/emulator/slow32-fast
 ```
+
+Archive-resolution spike scaffold (currently expected to fail until archive
+member resolution is wired in `s32-ld.c`):
+
+```bash
+selfhost/v2/stage07/run-archive-spike.sh --emu ./tools/emulator/slow32-fast
+```
