@@ -21,6 +21,7 @@ TEST_LOCAL_IN="${STAGE8_TEST_LOCAL_IN:-$SCRIPT_DIR/tests/min_local_ret_expr.c}"
 TEST_REL_IN="${STAGE8_TEST_REL_IN:-$SCRIPT_DIR/tests/min_ret_rel.c}"
 TEST_IF_TRUE_IN="${STAGE8_TEST_IF_TRUE_IN:-$SCRIPT_DIR/tests/min_if_true.c}"
 TEST_IF_FALSE_IN="${STAGE8_TEST_IF_FALSE_IN:-$SCRIPT_DIR/tests/min_if_false.c}"
+TEST_WHILE_IN="${STAGE8_TEST_WHILE_IN:-$SCRIPT_DIR/tests/min_while_countdown.c}"
 KEEP_ARTIFACTS=0
 
 usage() {
@@ -30,7 +31,7 @@ Usage: $0 [--emu <path>] [--keep-artifacts]
 Stage08 compiler spike:
   1) build cc-min.s32x via stage04->stage01->stage03
   2) build stage05 assembler (s32-as.s32x) and stage07 linker (s32-ld.s32x)
-  3) compile min_main, min_ret7, min_ret_expr, min_local_ret_expr, min_ret_rel, and min_if_{true,false} with cc-min.s32x
+  3) compile min_main, min_ret7, min_ret_expr, min_local_ret_expr, min_ret_rel, min_if_{true,false}, and min_while_countdown with cc-min.s32x
   4) assemble with stage05; produce raw link via stage07; run via stage03 runtime link
 USAGE
 }
@@ -62,7 +63,7 @@ if [[ "$EMU" != /* ]]; then
     EMU="$ROOT_DIR/$EMU"
 fi
 
-for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH" "$SRC" "$TEST_IN" "$TEST_RET_IN" "$TEST_EXPR_IN" "$TEST_LOCAL_IN" "$TEST_REL_IN" "$TEST_IF_TRUE_IN" "$TEST_IF_FALSE_IN"; do
+for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH" "$SRC" "$TEST_IN" "$TEST_RET_IN" "$TEST_EXPR_IN" "$TEST_LOCAL_IN" "$TEST_REL_IN" "$TEST_IF_TRUE_IN" "$TEST_IF_FALSE_IN" "$TEST_WHILE_IN"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
 
@@ -213,6 +214,7 @@ GEN_LOCAL_ASM="$WORKDIR/min_local_ret_expr.generated.s"
 GEN_REL_ASM="$WORKDIR/min_ret_rel.generated.s"
 GEN_IF_TRUE_ASM="$WORKDIR/min_if_true.generated.s"
 GEN_IF_FALSE_ASM="$WORKDIR/min_if_false.generated.s"
+GEN_WHILE_ASM="$WORKDIR/min_while_countdown.generated.s"
 run_exe "$CCMIN_EXE" "$WORKDIR/cc-min.run.log" "$TEST_IN" "$GEN_ASM"
 run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-ret.run.log" "$TEST_RET_IN" "$GEN_RET_ASM"
 run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-expr.run.log" "$TEST_EXPR_IN" "$GEN_EXPR_ASM"
@@ -220,6 +222,7 @@ run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-local.run.log" "$TEST_LOCAL_IN" "$GEN_LOCA
 run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-rel.run.log" "$TEST_REL_IN" "$GEN_REL_ASM"
 run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-if-true.run.log" "$TEST_IF_TRUE_IN" "$GEN_IF_TRUE_ASM"
 run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-if-false.run.log" "$TEST_IF_FALSE_IN" "$GEN_IF_FALSE_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-while.run.log" "$TEST_WHILE_IN" "$GEN_WHILE_ASM"
 [[ -s "$GEN_ASM" ]] || { echo "cc-min produced no assembly output" >&2; exit 1; }
 [[ -s "$GEN_RET_ASM" ]] || { echo "cc-min produced no return-test assembly output" >&2; exit 1; }
 [[ -s "$GEN_EXPR_ASM" ]] || { echo "cc-min produced no expr-test assembly output" >&2; exit 1; }
@@ -227,6 +230,7 @@ run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-if-false.run.log" "$TEST_IF_FALSE_IN" "$GE
 [[ -s "$GEN_REL_ASM" ]] || { echo "cc-min produced no relational-test assembly output" >&2; exit 1; }
 [[ -s "$GEN_IF_TRUE_ASM" ]] || { echo "cc-min produced no if-true assembly output" >&2; exit 1; }
 [[ -s "$GEN_IF_FALSE_ASM" ]] || { echo "cc-min produced no if-false assembly output" >&2; exit 1; }
+[[ -s "$GEN_WHILE_ASM" ]] || { echo "cc-min produced no while-test assembly output" >&2; exit 1; }
 grep -q '^main:' "$GEN_ASM" || { echo "generated assembly missing main label" >&2; exit 1; }
 grep -q 'addi r1, r0, 7' "$GEN_RET_ASM" || { echo "generated return-test assembly missing return immediate" >&2; exit 1; }
 grep -q 'addi r1, r0, 14' "$GEN_EXPR_ASM" || { echo "generated expr-test assembly missing expected immediate" >&2; exit 1; }
@@ -234,6 +238,7 @@ grep -q 'addi r1, r0, 14' "$GEN_LOCAL_ASM" || { echo "generated local-test assem
 grep -q 'addi r1, r0, 4' "$GEN_REL_ASM" || { echo "generated relational-test assembly missing expected immediate" >&2; exit 1; }
 grep -q 'addi r1, r0, 9' "$GEN_IF_TRUE_ASM" || { echo "generated if-true assembly missing expected immediate" >&2; exit 1; }
 grep -q 'addi r1, r0, 4' "$GEN_IF_FALSE_ASM" || { echo "generated if-false assembly missing expected immediate" >&2; exit 1; }
+grep -q 'addi r1, r0, 0' "$GEN_WHILE_ASM" || { echo "generated while-test assembly missing expected immediate" >&2; exit 1; }
 
 # 4) Assemble, link with stage07 (artifact), then link/run with stage03 runtime.
 GEN_OBJ="$WORKDIR/min_main.generated.s32o"
@@ -257,6 +262,9 @@ GEN_IF_TRUE_EXE="$WORKDIR/min_if_true.generated.s32x"
 GEN_IF_FALSE_OBJ="$WORKDIR/min_if_false.generated.s32o"
 GEN_IF_FALSE_RAW_EXE="$WORKDIR/min_if_false.generated.raw.s32x"
 GEN_IF_FALSE_EXE="$WORKDIR/min_if_false.generated.s32x"
+GEN_WHILE_OBJ="$WORKDIR/min_while_countdown.generated.s32o"
+GEN_WHILE_RAW_EXE="$WORKDIR/min_while_countdown.generated.raw.s32x"
+GEN_WHILE_EXE="$WORKDIR/min_while_countdown.generated.s32x"
 run_exe "$AS_EXE" "$WORKDIR/stage5-as.run.log" "$GEN_ASM" "$GEN_OBJ"
 run_exe "$AS_EXE" "$WORKDIR/stage5-as-ret.run.log" "$GEN_RET_ASM" "$GEN_RET_OBJ"
 run_exe "$AS_EXE" "$WORKDIR/stage5-as-expr.run.log" "$GEN_EXPR_ASM" "$GEN_EXPR_OBJ"
@@ -264,6 +272,7 @@ run_exe "$AS_EXE" "$WORKDIR/stage5-as-local.run.log" "$GEN_LOCAL_ASM" "$GEN_LOCA
 run_exe "$AS_EXE" "$WORKDIR/stage5-as-rel.run.log" "$GEN_REL_ASM" "$GEN_REL_OBJ"
 run_exe "$AS_EXE" "$WORKDIR/stage5-as-if-true.run.log" "$GEN_IF_TRUE_ASM" "$GEN_IF_TRUE_OBJ"
 run_exe "$AS_EXE" "$WORKDIR/stage5-as-if-false.run.log" "$GEN_IF_FALSE_ASM" "$GEN_IF_FALSE_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-while.run.log" "$GEN_WHILE_ASM" "$GEN_WHILE_OBJ"
 [[ -s "$GEN_OBJ" ]] || { echo "stage05 assembler produced no object output" >&2; exit 1; }
 [[ -s "$GEN_RET_OBJ" ]] || { echo "stage05 assembler produced no return-test object output" >&2; exit 1; }
 [[ -s "$GEN_EXPR_OBJ" ]] || { echo "stage05 assembler produced no expr-test object output" >&2; exit 1; }
@@ -271,6 +280,7 @@ run_exe "$AS_EXE" "$WORKDIR/stage5-as-if-false.run.log" "$GEN_IF_FALSE_ASM" "$GE
 [[ -s "$GEN_REL_OBJ" ]] || { echo "stage05 assembler produced no relational-test object output" >&2; exit 1; }
 [[ -s "$GEN_IF_TRUE_OBJ" ]] || { echo "stage05 assembler produced no if-true object output" >&2; exit 1; }
 [[ -s "$GEN_IF_FALSE_OBJ" ]] || { echo "stage05 assembler produced no if-false object output" >&2; exit 1; }
+[[ -s "$GEN_WHILE_OBJ" ]] || { echo "stage05 assembler produced no while-test object output" >&2; exit 1; }
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld.run.log" "$GEN_OBJ" "$GEN_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-ret.run.log" "$GEN_RET_OBJ" "$GEN_RET_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-expr.run.log" "$GEN_EXPR_OBJ" "$GEN_EXPR_RAW_EXE"
@@ -278,6 +288,7 @@ run_exe "$LD_EXE" "$WORKDIR/stage7-ld-local.run.log" "$GEN_LOCAL_OBJ" "$GEN_LOCA
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-rel.run.log" "$GEN_REL_OBJ" "$GEN_REL_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-if-true.run.log" "$GEN_IF_TRUE_OBJ" "$GEN_IF_TRUE_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-if-false.run.log" "$GEN_IF_FALSE_OBJ" "$GEN_IF_FALSE_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-while.run.log" "$GEN_WHILE_OBJ" "$GEN_WHILE_RAW_EXE"
 [[ -s "$GEN_RAW_EXE" ]] || { echo "stage07 linker produced no executable output" >&2; exit 1; }
 [[ -s "$GEN_RET_RAW_EXE" ]] || { echo "stage07 linker produced no return-test executable output" >&2; exit 1; }
 [[ -s "$GEN_EXPR_RAW_EXE" ]] || { echo "stage07 linker produced no expr-test executable output" >&2; exit 1; }
@@ -285,6 +296,7 @@ run_exe "$LD_EXE" "$WORKDIR/stage7-ld-if-false.run.log" "$GEN_IF_FALSE_OBJ" "$GE
 [[ -s "$GEN_REL_RAW_EXE" ]] || { echo "stage07 linker produced no relational-test executable output" >&2; exit 1; }
 [[ -s "$GEN_IF_TRUE_RAW_EXE" ]] || { echo "stage07 linker produced no if-true executable output" >&2; exit 1; }
 [[ -s "$GEN_IF_FALSE_RAW_EXE" ]] || { echo "stage07 linker produced no if-false executable output" >&2; exit 1; }
+[[ -s "$GEN_WHILE_RAW_EXE" ]] || { echo "stage07 linker produced no while executable output" >&2; exit 1; }
 link_forth "$GEN_OBJ" "$GEN_EXE" "$WORKDIR/stage3-link.run.log"
 link_forth "$GEN_RET_OBJ" "$GEN_RET_EXE" "$WORKDIR/stage3-link-ret.run.log"
 link_forth "$GEN_EXPR_OBJ" "$GEN_EXPR_EXE" "$WORKDIR/stage3-link-expr.run.log"
@@ -292,6 +304,7 @@ link_forth "$GEN_LOCAL_OBJ" "$GEN_LOCAL_EXE" "$WORKDIR/stage3-link-local.run.log
 link_forth "$GEN_REL_OBJ" "$GEN_REL_EXE" "$WORKDIR/stage3-link-rel.run.log"
 link_forth "$GEN_IF_TRUE_OBJ" "$GEN_IF_TRUE_EXE" "$WORKDIR/stage3-link-if-true.run.log"
 link_forth "$GEN_IF_FALSE_OBJ" "$GEN_IF_FALSE_EXE" "$WORKDIR/stage3-link-if-false.run.log"
+link_forth "$GEN_WHILE_OBJ" "$GEN_WHILE_EXE" "$WORKDIR/stage3-link-while.run.log"
 run_exe "$GEN_EXE" "$WORKDIR/gen.run.log"
 RET_RC=0
 run_exe_any_rc "$GEN_RET_EXE" "$WORKDIR/gen-ret.run.log" || RET_RC=$?
@@ -335,6 +348,13 @@ if [[ "$IF_FALSE_RC" -ne 4 ]]; then
     tail -n 60 "$WORKDIR/gen-if-false.run.log" >&2
     exit 1
 fi
+WHILE_RC=0
+run_exe_any_rc "$GEN_WHILE_EXE" "$WORKDIR/gen-while.run.log" || WHILE_RC=$?
+if [[ "$WHILE_RC" -ne 0 ]]; then
+    echo "while test executable had unexpected exit code: $WHILE_RC (expected 0)" >&2
+    tail -n 60 "$WORKDIR/gen-while.run.log" >&2
+    exit 1
+fi
 
 echo "OK: stage08 cc-min spike"
 echo "Compiler source: $SRC"
@@ -348,6 +368,7 @@ echo "Local-test C: $TEST_LOCAL_IN"
 echo "Relational-test C: $TEST_REL_IN"
 echo "If-true C: $TEST_IF_TRUE_IN"
 echo "If-false C: $TEST_IF_FALSE_IN"
+echo "While-test C: $TEST_WHILE_IN"
 echo "Generated asm: $GEN_ASM"
 echo "Generated return asm: $GEN_RET_ASM"
 echo "Generated expr asm: $GEN_EXPR_ASM"
@@ -355,6 +376,7 @@ echo "Generated local asm: $GEN_LOCAL_ASM"
 echo "Generated relational asm: $GEN_REL_ASM"
 echo "Generated if-true asm: $GEN_IF_TRUE_ASM"
 echo "Generated if-false asm: $GEN_IF_FALSE_ASM"
+echo "Generated while asm: $GEN_WHILE_ASM"
 echo "Generated raw exe (stage07): $GEN_RAW_EXE"
 echo "Generated return raw exe (stage07): $GEN_RET_RAW_EXE"
 echo "Generated expr raw exe (stage07): $GEN_EXPR_RAW_EXE"
@@ -362,6 +384,7 @@ echo "Generated local raw exe (stage07): $GEN_LOCAL_RAW_EXE"
 echo "Generated relational raw exe (stage07): $GEN_REL_RAW_EXE"
 echo "Generated if-true raw exe (stage07): $GEN_IF_TRUE_RAW_EXE"
 echo "Generated if-false raw exe (stage07): $GEN_IF_FALSE_RAW_EXE"
+echo "Generated while raw exe (stage07): $GEN_WHILE_RAW_EXE"
 echo "Generated exe: $GEN_EXE"
 echo "Generated return exe: $GEN_RET_EXE"
 echo "Generated expr exe: $GEN_EXPR_EXE"
@@ -369,5 +392,6 @@ echo "Generated local exe: $GEN_LOCAL_EXE"
 echo "Generated relational exe: $GEN_REL_EXE"
 echo "Generated if-true exe: $GEN_IF_TRUE_EXE"
 echo "Generated if-false exe: $GEN_IF_FALSE_EXE"
+echo "Generated while exe: $GEN_WHILE_EXE"
 echo "Emulator: $EMU"
 echo "Artifacts: $WORKDIR"

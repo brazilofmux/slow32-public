@@ -214,6 +214,8 @@ static int parse_program_return_value(int *out_ret) {
     int cond_v;
     int then_v;
     int else_v;
+    int step_v;
+    int iter;
     if (!consume_kw("int")) return 0;
     if (!consume_kw("main")) return 0;
     if (!consume_char('(')) return 0;
@@ -243,10 +245,35 @@ static int parse_program_return_value(int *out_ret) {
         if (!consume_char('=')) return 0;
         if (!parse_expr(&v)) return 0;
         if (!consume_char(';')) return 0;
-        if (!consume_kw("return")) return 0;
-        if (!consume_kw("x")) return 0;
-        if (!consume_char(';')) return 0;
-        *out_ret = v;
+        if (consume_kw("while")) {
+            /* Tiny while form: while (x) x = x - 1; return x; */
+            if (!consume_char('(')) return 0;
+            if (!consume_kw("x")) return 0;
+            if (!consume_char(')')) return 0;
+            if (!consume_kw("x")) return 0;
+            if (!consume_char('=')) return 0;
+            if (!consume_kw("x")) return 0;
+            if (!consume_char('-')) return 0;
+            if (!parse_int_lit(&step_v)) return 0;
+            if (!consume_char(';')) return 0;
+            if (!consume_kw("return")) return 0;
+            if (!consume_kw("x")) return 0;
+            if (!consume_char(';')) return 0;
+            if (step_v != 1) return 0;
+            if (v < 0) return 0;
+            iter = 0;
+            while (v != 0) {
+                v = v - step_v;
+                iter = iter + 1;
+                if (iter > 100000) return 0;
+            }
+            *out_ret = v;
+        } else {
+            if (!consume_kw("return")) return 0;
+            if (!consume_kw("x")) return 0;
+            if (!consume_char(';')) return 0;
+            *out_ret = v;
+        }
     } else {
         if (!consume_kw("return")) return 0;
         if (!parse_expr(out_ret)) return 0;
