@@ -24,6 +24,7 @@ typedef struct {
 } arc_member_t;
 
 static member_t g_members[MAX_MEMBERS];
+static member_t g_members_tmp[MAX_MEMBERS];
 static arc_member_t g_arc_members[MAX_MEMBERS];
 static uint8_t g_strtab[MAX_STRTAB];
 static uint8_t g_old_strtab[MAX_STRTAB];
@@ -331,6 +332,61 @@ static int extract_archive(const char *archive_path, int reqc, char **reqv) {
     return 1;
 }
 
+static int print_one(const char *archive_path, uint32_t midx) {
+    FILE *in = fopen(archive_path, "rb");
+    uint32_t i;
+    int ch;
+
+    if (!in) return 0;
+    if (fseek(in, (long)g_arc_members[midx].data_off, SEEK_SET) != 0) {
+        fclose(in);
+        return 0;
+    }
+    for (i = 0; i < g_arc_members[midx].size; i++) {
+        ch = fgetc(in);
+        if (ch == EOF) {
+            fclose(in);
+            return 0;
+        }
+        putchar(ch);
+    }
+    fclose(in);
+    return 1;
+}
+
+static int print_archive(const char *archive_path, int reqc, char **reqv) {
+    uint32_t nmembers;
+    uint32_t file_size;
+    uint32_t str_size;
+    uint32_t i;
+
+    if (!load_archive_view(archive_path, &nmembers, &file_size, &str_size)) return 0;
+    (void)file_size;
+    (void)str_size;
+
+    if (reqc == 0) {
+        for (i = 0; i < nmembers; i++) {
+            if (!print_one(archive_path, i)) return 0;
+        }
+        return 1;
+    }
+
+    for (i = 0; i < (uint32_t)reqc; i++) {
+        uint32_t j;
+        int found = 0;
+        for (j = 0; j < nmembers; j++) {
+            const char *name = (const char *)(g_arc_strtab + g_arc_members[j].name_off);
+            if (name_matches(name, reqv[i])) {
+                if (!print_one(archive_path, j)) return 0;
+                found = 1;
+                break;
+            }
+        }
+        if (!found) return 0;
+    }
+    return 1;
+}
+
 static int write_archive(const char *out_path, uint32_t nmembers, uint32_t str_used) {
     FILE *out;
     uint32_t nsymbols = 0;
@@ -559,6 +615,72 @@ static int delete_members(const char *archive_path, int reqc, char **reqv) {
     return write_archive(archive_path, out_n, str_used);
 }
 
+static int move_members(const char *archive_path, int reqc, char **reqv) {
+    uint32_t nmembers = 0;
+    uint32_t str_used = 1;
+    uint8_t req_found[MAX_MEMBERS];
+    uint32_t out_n = 0;
+    uint32_t i;
+
+    if (reqc <= 0) return 0;
+    if ((uint32_t)reqc > MAX_MEMBERS) return 0;
+
+    g_strtab[0] = 0;
+    g_data_used = 0;
+    if (!load_existing_archive(archive_path, &nmembers, &str_used)) return 0;
+    for (i = 0; i < (uint32_t)reqc; i++) req_found[i] = 0;
+
+    for (i = 0; i < nmembers; i++) {
+        const char *name = (const char *)(g_strtab + g_members[i].name_off);
+        uint32_t j;
+        int move_it = 0;
+        for (j = 0; j < (uint32_t)reqc; j++) {
+            if (name_matches(name, reqv[j])) {
+                req_found[j] = 1;
+                move_it = 1;
+            }
+        }
+        if (!move_it) {
+            g_members_tmp[out_n].path = g_members[i].path;
+            g_members_tmp[out_n].name_off = g_members[i].name_off;
+            g_members_tmp[out_n].size = g_members[i].size;
+            g_members_tmp[out_n].data_off = g_members[i].data_off;
+            g_members_tmp[out_n].src_kind = g_members[i].src_kind;
+            g_members_tmp[out_n].src_off = g_members[i].src_off;
+            out_n++;
+        }
+    }
+    for (i = 0; i < nmembers; i++) {
+        const char *name = (const char *)(g_strtab + g_members[i].name_off);
+        uint32_t j;
+        int move_it = 0;
+        for (j = 0; j < (uint32_t)reqc; j++) {
+            if (name_matches(name, reqv[j])) move_it = 1;
+        }
+        if (move_it) {
+            g_members_tmp[out_n].path = g_members[i].path;
+            g_members_tmp[out_n].name_off = g_members[i].name_off;
+            g_members_tmp[out_n].size = g_members[i].size;
+            g_members_tmp[out_n].data_off = g_members[i].data_off;
+            g_members_tmp[out_n].src_kind = g_members[i].src_kind;
+            g_members_tmp[out_n].src_off = g_members[i].src_off;
+            out_n++;
+        }
+    }
+    for (i = 0; i < (uint32_t)reqc; i++) {
+        if (!req_found[i]) return 0;
+    }
+    for (i = 0; i < out_n; i++) {
+        g_members[i].path = g_members_tmp[i].path;
+        g_members[i].name_off = g_members_tmp[i].name_off;
+        g_members[i].size = g_members_tmp[i].size;
+        g_members[i].data_off = g_members_tmp[i].data_off;
+        g_members[i].src_kind = g_members_tmp[i].src_kind;
+        g_members[i].src_off = g_members_tmp[i].src_off;
+    }
+    return write_archive(archive_path, out_n, str_used);
+}
+
 int main(int argc, char **argv) {
     const char *cmd;
     const char *archive;
@@ -579,9 +701,18 @@ int main(int argc, char **argv) {
         if (!extract_archive(archive, argc - 3, argv + 3)) return 1;
         return 0;
     }
+    if (has_flag(cmd, 'p')) {
+        if (!print_archive(archive, argc - 3, argv + 3)) return 1;
+        return 0;
+    }
     if (has_flag(cmd, 'd')) {
         if (argc < 4) return 1;
         if (!delete_members(archive, argc - 3, argv + 3)) return 1;
+        return 0;
+    }
+    if (has_flag(cmd, 'm')) {
+        if (argc < 4) return 1;
+        if (!move_members(archive, argc - 3, argv + 3)) return 1;
         return 0;
     }
 

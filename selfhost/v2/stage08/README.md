@@ -8,6 +8,8 @@ Gate commands covered:
 - `rc` replace/create
 - `t/x` list/extract
 - `d` delete
+- `m` move-to-end
+- `v/p` verbose/list + print-member
 - `cs` bounded symbol-scan path
 
 Run:

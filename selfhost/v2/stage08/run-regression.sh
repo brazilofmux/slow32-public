@@ -15,7 +15,7 @@ usage() {
 Usage: $0 [--emu <path>]
 
 Runs Stage08 pragmatic archiver parity gate using the subset-C s32-ar path:
-  c/rc/t/x/d/cs
+  c/rc/t/x/d/m/v/p/cs
 USAGE
 }
 
@@ -51,6 +51,8 @@ echo "[stage08] subset-c archiver parity gate"
 "$PIPE" --mode stage6-ar-rc-smoke --emu "$EMU" >/tmp/v2-stage08-rc.log 2>&1
 "$PIPE" --mode stage6-ar-tx-smoke --emu "$EMU" >/tmp/v2-stage08-tx.log 2>&1
 "$PIPE" --mode stage6-ar-d-smoke --emu "$EMU" >/tmp/v2-stage08-d.log 2>&1
+"$PIPE" --mode stage6-ar-m-smoke --emu "$EMU" >/tmp/v2-stage08-m.log 2>&1
+"$PIPE" --mode stage6-ar-vp-smoke --emu "$EMU" >/tmp/v2-stage08-vp.log 2>&1
 "$PIPE" --mode stage6-ar-scan-smoke --emu "$EMU" >/tmp/v2-stage08-cs.log 2>&1
 
 echo "OK: stage08 archiver parity gate"
