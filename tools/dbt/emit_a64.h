@@ -347,6 +347,61 @@ void emit_fmov_d_x64(emit_ctx_t *ctx, int dd, a64_reg_t xn);
 void emit_fmov_x64_d(emit_ctx_t *ctx, a64_reg_t xd, int dn);
 
 // ============================================================================
+// Floating-point Arithmetic
+// ============================================================================
+
+void emit_fadd_s(emit_ctx_t *ctx, int rd, int rn, int rm);
+void emit_fadd_d(emit_ctx_t *ctx, int rd, int rn, int rm);
+void emit_fsub_s(emit_ctx_t *ctx, int rd, int rn, int rm);
+void emit_fsub_d(emit_ctx_t *ctx, int rd, int rn, int rm);
+void emit_fmul_s(emit_ctx_t *ctx, int rd, int rn, int rm);
+void emit_fmul_d(emit_ctx_t *ctx, int rd, int rn, int rm);
+void emit_fdiv_s(emit_ctx_t *ctx, int rd, int rn, int rm);
+void emit_fdiv_d(emit_ctx_t *ctx, int rd, int rn, int rm);
+
+void emit_fsqrt_s(emit_ctx_t *ctx, int rd, int rn);
+void emit_fsqrt_d(emit_ctx_t *ctx, int rd, int rn);
+void emit_fabs_s(emit_ctx_t *ctx, int rd, int rn);
+void emit_fabs_d(emit_ctx_t *ctx, int rd, int rn);
+void emit_fneg_s(emit_ctx_t *ctx, int rd, int rn);
+void emit_fneg_d(emit_ctx_t *ctx, int rd, int rn);
+
+// ============================================================================
+// Floating-point Compare
+// ============================================================================
+
+void emit_fcmp_s(emit_ctx_t *ctx, int rn, int rm);
+void emit_fcmp_d(emit_ctx_t *ctx, int rn, int rm);
+
+// ============================================================================
+// Floating-point Convert
+// ============================================================================
+
+void emit_fcvt_s_d(emit_ctx_t *ctx, int sd, int dn); // double to single
+void emit_fcvt_d_s(emit_ctx_t *ctx, int dd, int sn); // single to double
+
+// Float <-> Int convert (Round towards zero)
+void emit_fcvtzs_w32_s(emit_ctx_t *ctx, a64_reg_t rd, int sn); // S -> W (signed)
+void emit_fcvtzu_w32_s(emit_ctx_t *ctx, a64_reg_t rd, int sn); // S -> W (unsigned)
+void emit_fcvtzs_x64_s(emit_ctx_t *ctx, a64_reg_t rd, int sn); // S -> X (signed)
+void emit_fcvtzu_x64_s(emit_ctx_t *ctx, a64_reg_t rd, int sn); // S -> X (unsigned)
+
+void emit_fcvtzs_w32_d(emit_ctx_t *ctx, a64_reg_t rd, int dn); // D -> W (signed)
+void emit_fcvtzu_w32_d(emit_ctx_t *ctx, a64_reg_t rd, int dn); // D -> W (unsigned)
+void emit_fcvtzs_x64_d(emit_ctx_t *ctx, a64_reg_t rd, int dn); // D -> X (signed)
+void emit_fcvtzu_x64_d(emit_ctx_t *ctx, a64_reg_t rd, int dn); // D -> X (unsigned)
+
+void emit_scvtf_s_w32(emit_ctx_t *ctx, int sd, a64_reg_t wn); // W -> S (signed)
+void emit_ucvtf_s_w32(emit_ctx_t *ctx, int sd, a64_reg_t wn); // W -> S (unsigned)
+void emit_scvtf_s_x64(emit_ctx_t *ctx, int sd, a64_reg_t xn); // X -> S (signed)
+void emit_ucvtf_s_x64(emit_ctx_t *ctx, int sd, a64_reg_t xn); // X -> S (unsigned)
+
+void emit_scvtf_d_w32(emit_ctx_t *ctx, int dd, a64_reg_t wn); // W -> D (signed)
+void emit_ucvtf_d_w32(emit_ctx_t *ctx, int dd, a64_reg_t wn); // W -> D (unsigned)
+void emit_scvtf_d_x64(emit_ctx_t *ctx, int dd, a64_reg_t xn); // X -> D (signed)
+void emit_ucvtf_d_x64(emit_ctx_t *ctx, int dd, a64_reg_t xn); // X -> D (unsigned)
+
+// ============================================================================
 // STP/LDP with general base register (64-bit)
 // ============================================================================
 

@@ -754,6 +754,124 @@ void emit_fmov_x64_d(emit_ctx_t *ctx, a64_reg_t xd, int dn) {
 }
 
 // ============================================================================
+// Floating-point Arithmetic
+// ============================================================================
+
+// FP 2-source: 00011110 type 1 Rm opcode Rn Rd
+// type: 00=S, 01=D
+// opcode: 001010=FADD, 001110=FSUB, 000010=FMUL, 000110=FDIV
+
+static void emit_fp_2src(emit_ctx_t *ctx, int type, int opcode, int rd, int rn, int rm) {
+    uint32_t inst = 0x1E200800 | (type << 22) | ((rm & 0x1F) << 16) | 
+                    ((opcode & 0x3F) << 10) | ((rn & 0x1F) << 5) | (rd & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+void emit_fadd_s(emit_ctx_t *ctx, int rd, int rn, int rm) { emit_fp_2src(ctx, 0, 0x0A, rd, rn, rm); }
+void emit_fadd_d(emit_ctx_t *ctx, int rd, int rn, int rm) { emit_fp_2src(ctx, 1, 0x0A, rd, rn, rm); }
+void emit_fsub_s(emit_ctx_t *ctx, int rd, int rn, int rm) { emit_fp_2src(ctx, 0, 0x0E, rd, rn, rm); }
+void emit_fsub_d(emit_ctx_t *ctx, int rd, int rn, int rm) { emit_fp_2src(ctx, 1, 0x0E, rd, rn, rm); }
+void emit_fmul_s(emit_ctx_t *ctx, int rd, int rn, int rm) { emit_fp_2src(ctx, 0, 0x02, rd, rn, rm); }
+void emit_fmul_d(emit_ctx_t *ctx, int rd, int rn, int rm) { emit_fp_2src(ctx, 1, 0x02, rd, rn, rm); }
+void emit_fdiv_s(emit_ctx_t *ctx, int rd, int rn, int rm) { emit_fp_2src(ctx, 0, 0x06, rd, rn, rm); }
+void emit_fdiv_d(emit_ctx_t *ctx, int rd, int rn, int rm) { emit_fp_2src(ctx, 1, 0x06, rd, rn, rm); }
+
+// FP 1-source: 00011110 type 1 00000 opcode Rn Rd
+// opcode: 000001=FSQRT, 000010=FABS, 000011=FNEG
+
+static void emit_fp_1src(emit_ctx_t *ctx, int type, int opcode, int rd, int rn) {
+    uint32_t inst = 0x1E204000 | (type << 22) | ((opcode & 0x3F) << 10) | 
+                    ((rn & 0x1F) << 5) | (rd & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+void emit_fsqrt_s(emit_ctx_t *ctx, int rd, int rn) { emit_fp_1src(ctx, 0, 0x01, rd, rn); }
+void emit_fsqrt_d(emit_ctx_t *ctx, int rd, int rn) { emit_fp_1src(ctx, 1, 0x01, rd, rn); }
+void emit_fabs_s(emit_ctx_t *ctx, int rd, int rn) { emit_fp_1src(ctx, 0, 0x02, rd, rn); }
+void emit_fabs_d(emit_ctx_t *ctx, int rd, int rn) { emit_fp_1src(ctx, 1, 0x02, rd, rn); }
+void emit_fneg_s(emit_ctx_t *ctx, int rd, int rn) { emit_fp_1src(ctx, 0, 0x03, rd, rn); }
+void emit_fneg_d(emit_ctx_t *ctx, int rd, int rn) { emit_fp_1src(ctx, 1, 0x03, rd, rn); }
+
+// ============================================================================
+// Floating-point Compare
+// ============================================================================
+
+// FP Compare: 00011110 type 1 Rm 001000 Rn 00000
+void emit_fcmp_s(emit_ctx_t *ctx, int rn, int rm) {
+    uint32_t inst = 0x1E202000 | (0 << 22) | ((rm & 0x1F) << 16) | ((rn & 0x1F) << 5);
+    emit_inst(ctx, inst);
+}
+
+void emit_fcmp_d(emit_ctx_t *ctx, int rn, int rm) {
+    uint32_t inst = 0x1E202000 | (1 << 22) | ((rm & 0x1F) << 16) | ((rn & 0x1F) << 5);
+    emit_inst(ctx, inst);
+}
+
+// ============================================================================
+// Floating-point Convert
+// ============================================================================
+
+// FCVT: 00011110 type 1 00000 opcode Rn Rd
+// opcode: 000=S, 001=D, 010=H
+// For FCVT <Sd>, <Dn>: type=01 (D), opcode=000 (S)
+// For FCVT <Dd>, <Sn>: type=00 (S), opcode=001 (D)
+void emit_fcvt_s_d(emit_ctx_t *ctx, int sd, int dn) {
+    uint32_t inst = 0x1E22C000 | ((dn & 0x1F) << 5) | (sd & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+void emit_fcvt_d_s(emit_ctx_t *ctx, int dd, int sn) {
+    uint32_t inst = 0x1E260000 | ((sn & 0x1F) << 5) | (dd & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+// Float <-> Int convert (Round towards zero)
+// FCVTZS: 0 sf 0 11110 type 1 00000 11000 Rn Rd
+// sf: 0=32-bit int, 1=64-bit int
+// type: 00=S, 01=D
+
+static void emit_fcvtzs(emit_ctx_t *ctx, int sf, int type, a64_reg_t rd, int sn) {
+    uint32_t inst = 0x1E380000 | (sf << 31) | (type << 22) | ((sn & 0x1F) << 5) | (rd & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+static void emit_fcvtzu(emit_ctx_t *ctx, int sf, int type, a64_reg_t rd, int sn) {
+    uint32_t inst = 0x1E390000 | (sf << 31) | (type << 22) | ((sn & 0x1F) << 5) | (rd & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+void emit_fcvtzs_w32_s(emit_ctx_t *ctx, a64_reg_t rd, int sn) { emit_fcvtzs(ctx, 0, 0, rd, sn); }
+void emit_fcvtzu_w32_s(emit_ctx_t *ctx, a64_reg_t rd, int sn) { emit_fcvtzu(ctx, 0, 0, rd, sn); }
+void emit_fcvtzs_x64_s(emit_ctx_t *ctx, a64_reg_t rd, int sn) { emit_fcvtzs(ctx, 1, 0, rd, sn); }
+void emit_fcvtzu_x64_s(emit_ctx_t *ctx, a64_reg_t rd, int sn) { emit_fcvtzu(ctx, 1, 0, rd, sn); }
+
+void emit_fcvtzs_w32_d(emit_ctx_t *ctx, a64_reg_t rd, int dn) { emit_fcvtzs(ctx, 0, 1, rd, dn); }
+void emit_fcvtzu_w32_d(emit_ctx_t *ctx, a64_reg_t rd, int dn) { emit_fcvtzu(ctx, 0, 1, rd, dn); }
+void emit_fcvtzs_x64_d(emit_ctx_t *ctx, a64_reg_t rd, int dn) { emit_fcvtzs(ctx, 1, 1, rd, dn); }
+void emit_fcvtzu_x64_d(emit_ctx_t *ctx, a64_reg_t rd, int dn) { emit_fcvtzu(ctx, 1, 1, rd, dn); }
+
+// SCVTF: 0 sf 0 11110 type 1 00000 00010 Rn Rd
+static void emit_scvtf(emit_ctx_t *ctx, int sf, int type, int sd, a64_reg_t rn) {
+    uint32_t inst = 0x1E220000 | (sf << 31) | (type << 22) | ((rn & 0x1F) << 5) | (sd & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+static void emit_ucvtf(emit_ctx_t *ctx, int sf, int type, int sd, a64_reg_t rn) {
+    uint32_t inst = 0x1E230000 | (sf << 31) | (type << 22) | ((rn & 0x1F) << 5) | (sd & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+void emit_scvtf_s_w32(emit_ctx_t *ctx, int sd, a64_reg_t wn) { emit_scvtf(ctx, 0, 0, sd, wn); }
+void emit_ucvtf_s_w32(emit_ctx_t *ctx, int sd, a64_reg_t wn) { emit_ucvtf(ctx, 0, 0, sd, wn); }
+void emit_scvtf_s_x64(emit_ctx_t *ctx, int sd, a64_reg_t xn) { emit_scvtf(ctx, 1, 0, sd, xn); }
+void emit_ucvtf_s_x64(emit_ctx_t *ctx, int sd, a64_reg_t xn) { emit_ucvtf(ctx, 1, 0, sd, xn); }
+
+void emit_scvtf_d_w32(emit_ctx_t *ctx, int dd, a64_reg_t wn) { emit_scvtf(ctx, 0, 1, dd, wn); }
+void emit_ucvtf_d_w32(emit_ctx_t *ctx, int dd, a64_reg_t wn) { emit_ucvtf(ctx, 0, 1, dd, wn); }
+void emit_scvtf_d_x64(emit_ctx_t *ctx, int dd, a64_reg_t xn) { emit_scvtf(ctx, 1, 1, dd, xn); }
+void emit_ucvtf_d_x64(emit_ctx_t *ctx, int dd, a64_reg_t xn) { emit_ucvtf(ctx, 1, 1, dd, xn); }
+
+// ============================================================================
 // STP/LDP with general base register (64-bit)
 // ============================================================================
 

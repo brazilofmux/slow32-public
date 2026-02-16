@@ -14,6 +14,9 @@
 
 uint32_t superblock_profile_min_samples = SUPERBLOCK_PROFILE_MIN_SAMPLES;
 uint32_t superblock_taken_pct_threshold = SUPERBLOCK_TAKEN_PCT_THRESHOLD;
+uint32_t cmp_branch_fusion_count = 0;  // Global fusion counter for stats
+uint32_t cbz_peephole_count = 0;      // CBZ/CBNZ peephole counter for stats
+uint32_t native_stub_count = 0;       // Native intrinsic stub counter
 
 // ============================================================================
 // Instruction decoding

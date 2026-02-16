@@ -2378,17 +2378,326 @@ void translate_assert_eq(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2) {
 }
 
 // ============================================================================
-// Floating-point (helper call fallback — all FP ops exit to dispatcher)
+// Floating-point (inline AArch64 NEON/VFP)
 // ============================================================================
 
-// FP helper function prototype (called from C, not from JIT code)
-// On AArch64 Stage 1, we just exit to the interpreter for FP ops.
+static void translate_fp_f32_arith(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1, uint8_t rs2) {
+    if (rd == 0) return;
+    emit_ctx_t *e = &ctx->emit;
+    flush_pending_write(ctx);
+    emit_load_guest_reg(ctx, W0, rs1);
+    emit_load_guest_reg(ctx, W1, rs2);
+    emit_fmov_s_w32(e, 0, W0);
+    emit_fmov_s_w32(e, 1, W1);
+    switch (opcode) {
+        case OP_FADD_S: emit_fadd_s(e, 0, 0, 1); break;
+        case OP_FSUB_S: emit_fsub_s(e, 0, 0, 1); break;
+        case OP_FMUL_S: emit_fmul_s(e, 0, 0, 1); break;
+        case OP_FDIV_S: emit_fdiv_s(e, 0, 0, 1); break;
+    }
+    emit_fmov_w32_s(e, W0, 0);
+    emit_store_guest_reg(ctx, rd, W0);
+}
+
+static void translate_fp_f64_arith(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1, uint8_t rs2) {
+    if (rd == 0 || rd == 31) return;
+    emit_ctx_t *e = &ctx->emit;
+    flush_pending_write(ctx);
+    // Load 64-bit pair into X0, X1
+    emit_load_guest_reg(ctx, W0, rs1);
+    emit_load_guest_reg(ctx, W1, rs1 + 1);
+    emit_orr_x64_lsl(e, W0, W0, W1, 32); // X0 = rs1 | (rs1+1 << 32)
+    emit_load_guest_reg(ctx, W1, rs2);
+    emit_load_guest_reg(ctx, W2, rs2 + 1);
+    emit_orr_x64_lsl(e, W1, W1, W2, 32); // X1 = rs2 | (rs2+1 << 32)
+    emit_fmov_d_x64(e, 0, W0);
+    emit_fmov_d_x64(e, 1, W1);
+    switch (opcode) {
+        case OP_FADD_D: emit_fadd_d(e, 0, 0, 1); break;
+        case OP_FSUB_D: emit_fsub_d(e, 0, 0, 1); break;
+        case OP_FMUL_D: emit_fmul_d(e, 0, 0, 1); break;
+        case OP_FDIV_D: emit_fdiv_d(e, 0, 0, 1); break;
+    }
+    emit_fmov_x64_d(e, W0, 0);
+    emit_store_guest_reg(ctx, rd, W0);
+    emit_lsr_x64_imm(e, W1, W0, 32);
+    emit_store_guest_reg(ctx, rd + 1, W1);
+}
+
+static void translate_fp_f32_unary(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1) {
+    if (rd == 0) return;
+    emit_ctx_t *e = &ctx->emit;
+    flush_pending_write(ctx);
+    emit_load_guest_reg(ctx, W0, rs1);
+    emit_fmov_s_w32(e, 0, W0);
+    switch (opcode) {
+        case OP_FSQRT_S: emit_fsqrt_s(e, 0, 0); break;
+        case OP_FABS_S:  emit_fabs_s(e, 0, 0);  break;
+        case OP_FNEG_S:  emit_fneg_s(e, 0, 0);  break;
+    }
+    emit_fmov_w32_s(e, W0, 0);
+    emit_store_guest_reg(ctx, rd, W0);
+}
+
+static void translate_fp_f64_unary(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1) {
+    if (rd == 0 || rd == 31) return;
+    emit_ctx_t *e = &ctx->emit;
+    flush_pending_write(ctx);
+    emit_load_guest_reg(ctx, W0, rs1);
+    emit_load_guest_reg(ctx, W1, rs1 + 1);
+    emit_orr_x64_lsl(e, W0, W0, W1, 32);
+    emit_fmov_d_x64(e, 0, W0);
+    switch (opcode) {
+        case OP_FSQRT_D: emit_fsqrt_d(e, 0, 0); break;
+        case OP_FABS_D:  emit_fabs_d(e, 0, 0);  break;
+        case OP_FNEG_D:  emit_fneg_d(e, 0, 0);  break;
+    }
+    emit_fmov_x64_d(e, W0, 0);
+    emit_store_guest_reg(ctx, rd, W0);
+    emit_lsr_x64_imm(e, W1, W0, 32);
+    emit_store_guest_reg(ctx, rd + 1, W1);
+}
+
+static void translate_fp_f32_cmp(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1, uint8_t rs2) {
+    if (rd == 0) return;
+    emit_ctx_t *e = &ctx->emit;
+    flush_pending_write(ctx);
+    emit_load_guest_reg(ctx, W0, rs1);
+    emit_load_guest_reg(ctx, W1, rs2);
+    emit_fmov_s_w32(e, 0, W0);
+    emit_fmov_s_w32(e, 1, W1);
+    emit_fcmp_s(e, 0, 1);
+    a64_cond_t cond = COND_AL;
+    switch (opcode) {
+        case OP_FEQ_S: cond = COND_EQ; break;
+        case OP_FLT_S: cond = COND_MI; break; // N=1 (LT)
+        case OP_FLE_S: cond = COND_LS; break; // C=0 or Z=1 (LE)
+    }
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != A64_NOREG) {
+        emit_cset_w32(e, hd, cond);
+        reg_cache_mark_written(ctx, rd);
+    } else {
+        emit_cset_w32(e, W0, cond);
+        emit_store_guest_reg(ctx, rd, W0);
+    }
+}
+
+static void translate_fp_f64_cmp(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1, uint8_t rs2) {
+    if (rd == 0) return;
+    emit_ctx_t *e = &ctx->emit;
+    flush_pending_write(ctx);
+    emit_load_guest_reg(ctx, W0, rs1);
+    emit_load_guest_reg(ctx, W1, rs1 + 1);
+    emit_orr_x64_lsl(e, W0, W0, W1, 32);
+    emit_load_guest_reg(ctx, W1, rs2);
+    emit_load_guest_reg(ctx, W2, rs2 + 1);
+    emit_orr_x64_lsl(e, W1, W1, W2, 32);
+    emit_fmov_d_x64(e, 0, W0);
+    emit_fmov_d_x64(e, 1, W1);
+    emit_fcmp_d(e, 0, 1);
+    a64_cond_t cond = COND_AL;
+    switch (opcode) {
+        case OP_FEQ_D: cond = COND_EQ; break;
+        case OP_FLT_D: cond = COND_MI; break;
+        case OP_FLE_D: cond = COND_LS; break;
+    }
+    a64_reg_t hd = guest_host_reg(ctx, rd);
+    if (hd != A64_NOREG) {
+        emit_cset_w32(e, hd, cond);
+        reg_cache_mark_written(ctx, rd);
+    } else {
+        emit_cset_w32(e, W0, cond);
+        emit_store_guest_reg(ctx, rd, W0);
+    }
+}
+
+static void translate_fp_cvt(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1) {
+    if (rd == 0) return;
+    emit_ctx_t *e = &ctx->emit;
+    flush_pending_write(ctx);
+    
+    switch (opcode) {
+        case OP_FCVT_S_D: // D -> S
+            emit_load_guest_reg(ctx, W0, rs1);
+            emit_load_guest_reg(ctx, W1, rs1 + 1);
+            emit_orr_x64_lsl(e, W0, W0, W1, 32);
+            emit_fmov_d_x64(e, 0, W0);
+            emit_fcvt_s_d(e, 0, 0);
+            emit_fmov_w32_s(e, W0, 0);
+            emit_store_guest_reg(ctx, rd, W0);
+            break;
+        case OP_FCVT_D_S: // S -> D
+            if (rd == 31) return;
+            emit_load_guest_reg(ctx, W0, rs1);
+            emit_fmov_s_w32(e, 0, W0);
+            emit_fcvt_d_s(e, 0, 0);
+            emit_fmov_x64_d(e, W0, 0);
+            emit_store_guest_reg(ctx, rd, W0);
+            emit_lsr_x64_imm(e, W1, W0, 32);
+            emit_store_guest_reg(ctx, rd + 1, W1);
+            break;
+        case OP_FCVT_W_S: // S -> W signed
+            emit_load_guest_reg(ctx, W0, rs1);
+            emit_fmov_s_w32(e, 0, W0);
+            emit_fcvtzs_w32_s(e, W0, 0);
+            emit_store_guest_reg(ctx, rd, W0);
+            break;
+        case OP_FCVT_WU_S: // S -> W unsigned
+            emit_load_guest_reg(ctx, W0, rs1);
+            emit_fmov_s_w32(e, 0, W0);
+            emit_fcvtzu_w32_s(e, W0, 0);
+            emit_store_guest_reg(ctx, rd, W0);
+            break;
+        case OP_FCVT_S_W: // W signed -> S
+            emit_load_guest_reg(ctx, W0, rs1);
+            emit_scvtf_s_w32(e, 0, W0);
+            emit_fmov_w32_s(e, W0, 0);
+            emit_store_guest_reg(ctx, rd, W0);
+            break;
+        case OP_FCVT_S_WU: // W unsigned -> S
+            emit_load_guest_reg(ctx, W0, rs1);
+            emit_ucvtf_s_w32(e, 0, W0);
+            emit_fmov_w32_s(e, W0, 0);
+            emit_store_guest_reg(ctx, rd, W0);
+            break;
+        case OP_FCVT_W_D: // D -> W signed
+            emit_load_guest_reg(ctx, W0, rs1);
+            emit_load_guest_reg(ctx, W1, rs1 + 1);
+            emit_orr_x64_lsl(e, W0, W0, W1, 32);
+            emit_fmov_d_x64(e, 0, W0);
+            emit_fcvtzs_w32_d(e, W0, 0);
+            emit_store_guest_reg(ctx, rd, W0);
+            break;
+        case OP_FCVT_WU_D: // D -> W unsigned
+            emit_load_guest_reg(ctx, W0, rs1);
+            emit_load_guest_reg(ctx, W1, rs1 + 1);
+            emit_orr_x64_lsl(e, W0, W0, W1, 32);
+            emit_fmov_d_x64(e, 0, W0);
+            emit_fcvtzu_w32_d(e, W0, 0);
+            emit_store_guest_reg(ctx, rd, W0);
+            break;
+        case OP_FCVT_D_W: // W signed -> D
+            if (rd == 31) return;
+            emit_load_guest_reg(ctx, W0, rs1);
+            emit_scvtf_d_w32(e, 0, W0);
+            emit_fmov_x64_d(e, W0, 0);
+            emit_store_guest_reg(ctx, rd, W0);
+            emit_lsr_x64_imm(e, W1, W0, 32);
+            emit_store_guest_reg(ctx, rd + 1, W1);
+            break;
+        case OP_FCVT_D_WU: // W unsigned -> D
+            if (rd == 31) return;
+            emit_load_guest_reg(ctx, W0, rs1);
+            emit_ucvtf_d_w32(e, 0, W0);
+            emit_fmov_x64_d(e, W0, 0);
+            emit_store_guest_reg(ctx, rd, W0);
+            emit_lsr_x64_imm(e, W1, W0, 32);
+            emit_store_guest_reg(ctx, rd + 1, W1);
+            break;
+        case OP_FCVT_L_S: // S -> L signed
+            if (rd == 31) return;
+            emit_load_guest_reg(ctx, W0, rs1);
+            emit_fmov_s_w32(e, 0, W0);
+            emit_fcvtzs_x64_s(e, W0, 0);
+            emit_store_guest_reg(ctx, rd, W0);
+            emit_lsr_x64_imm(e, W1, W0, 32);
+            emit_store_guest_reg(ctx, rd + 1, W1);
+            break;
+        case OP_FCVT_LU_S: // S -> L unsigned
+            if (rd == 31) return;
+            emit_load_guest_reg(ctx, W0, rs1);
+            emit_fmov_s_w32(e, 0, W0);
+            emit_fcvtzu_x64_s(e, W0, 0);
+            emit_store_guest_reg(ctx, rd, W0);
+            emit_lsr_x64_imm(e, W1, W0, 32);
+            emit_store_guest_reg(ctx, rd + 1, W1);
+            break;
+        case OP_FCVT_S_L: // L signed -> S
+            emit_load_guest_reg(ctx, W0, rs1);
+            emit_load_guest_reg(ctx, W1, rs1 + 1);
+            emit_orr_x64_lsl(e, W0, W0, W1, 32);
+            emit_scvtf_s_x64(e, 0, W0);
+            emit_fmov_w32_s(e, W0, 0);
+            emit_store_guest_reg(ctx, rd, W0);
+            break;
+        case OP_FCVT_S_LU: // L unsigned -> S
+            emit_load_guest_reg(ctx, W0, rs1);
+            emit_load_guest_reg(ctx, W1, rs1 + 1);
+            emit_orr_x64_lsl(e, W0, W0, W1, 32);
+            emit_ucvtf_s_x64(e, 0, W0);
+            emit_fmov_w32_s(e, W0, 0);
+            emit_store_guest_reg(ctx, rd, W0);
+            break;
+        case OP_FCVT_L_D: // D -> L signed
+            if (rd == 31) return;
+            emit_load_guest_reg(ctx, W0, rs1);
+            emit_load_guest_reg(ctx, W1, rs1 + 1);
+            emit_orr_x64_lsl(e, W0, W0, W1, 32);
+            emit_fmov_d_x64(e, 0, W0);
+            emit_fcvtzs_x64_d(e, W0, 0);
+            emit_store_guest_reg(ctx, rd, W0);
+            emit_lsr_x64_imm(e, W1, W0, 32);
+            emit_store_guest_reg(ctx, rd + 1, W1);
+            break;
+        case OP_FCVT_LU_D: // D -> L unsigned
+            if (rd == 31) return;
+            emit_load_guest_reg(ctx, W0, rs1);
+            emit_load_guest_reg(ctx, W1, rs1 + 1);
+            emit_orr_x64_lsl(e, W0, W0, W1, 32);
+            emit_fmov_d_x64(e, 0, W0);
+            emit_fcvtzu_x64_d(e, W0, 0);
+            emit_store_guest_reg(ctx, rd, W0);
+            emit_lsr_x64_imm(e, W1, W0, 32);
+            emit_store_guest_reg(ctx, rd + 1, W1);
+            break;
+        case OP_FCVT_D_L: // L signed -> D
+            if (rd == 31) return;
+            emit_load_guest_reg(ctx, W0, rs1);
+            emit_load_guest_reg(ctx, W1, rs1 + 1);
+            emit_orr_x64_lsl(e, W0, W0, W1, 32);
+            emit_scvtf_d_x64(e, 0, W0);
+            emit_fmov_x64_d(e, W0, 0);
+            emit_store_guest_reg(ctx, rd, W0);
+            emit_lsr_x64_imm(e, W1, W0, 32);
+            emit_store_guest_reg(ctx, rd + 1, W1);
+            break;
+        case OP_FCVT_D_LU: // L unsigned -> D
+            if (rd == 31) return;
+            emit_load_guest_reg(ctx, W0, rs1);
+            emit_load_guest_reg(ctx, W1, rs1 + 1);
+            emit_orr_x64_lsl(e, W0, W0, W1, 32);
+            emit_ucvtf_d_x64(e, 0, W0);
+            emit_fmov_x64_d(e, W0, 0);
+            emit_store_guest_reg(ctx, rd, W0);
+            emit_lsr_x64_imm(e, W1, W0, 32);
+            emit_store_guest_reg(ctx, rd + 1, W1);
+            break;
+    }
+}
+
 void translate_fp_r_type(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd,
                          uint8_t rs1, uint8_t rs2) {
-    (void)opcode; (void)rd; (void)rs1; (void)rs2;
-    // For Stage 1, exit to interpreter to handle FP
-    // The dispatcher will fall back to interpretation for this instruction
-    emit_exit(ctx, EXIT_HALT, ctx->guest_pc);
+    switch (opcode) {
+        case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
+            translate_fp_f32_arith(ctx, opcode, rd, rs1, rs2); break;
+        case OP_FADD_D: case OP_FSUB_D: case OP_FMUL_D: case OP_FDIV_D:
+            translate_fp_f64_arith(ctx, opcode, rd, rs1, rs2); break;
+        case OP_FSQRT_S: case OP_FABS_S: case OP_FNEG_S:
+            translate_fp_f32_unary(ctx, opcode, rd, rs1); break;
+        case OP_FSQRT_D: case OP_FABS_D: case OP_FNEG_D:
+            translate_fp_f64_unary(ctx, opcode, rd, rs1); break;
+        case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
+            translate_fp_f32_cmp(ctx, opcode, rd, rs1, rs2); break;
+        case OP_FEQ_D: case OP_FLT_D: case OP_FLE_D:
+            translate_fp_f64_cmp(ctx, opcode, rd, rs1, rs2); break;
+        case OP_FCVT_W_S: case OP_FCVT_WU_S: case OP_FCVT_S_W: case OP_FCVT_S_WU:
+        case OP_FCVT_W_D: case OP_FCVT_WU_D: case OP_FCVT_D_W: case OP_FCVT_D_WU:
+        case OP_FCVT_D_S: case OP_FCVT_S_D:
+        case OP_FCVT_L_S: case OP_FCVT_LU_S: case OP_FCVT_S_L: case OP_FCVT_S_LU:
+        case OP_FCVT_L_D: case OP_FCVT_LU_D: case OP_FCVT_D_L: case OP_FCVT_D_LU:
+            translate_fp_cvt(ctx, opcode, rd, rs1); break;
+    }
 }
 
 // ============================================================================
