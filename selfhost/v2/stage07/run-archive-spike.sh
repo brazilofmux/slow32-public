@@ -142,16 +142,25 @@ helper:
     halt
 ASM
 
+cat > "$WORKDIR/decoy.s" <<'ASM'
+.text
+.global decoy
+decoy:
+    beq r0, r0, decoy
+ASM
+
 MAIN_OBJ="$WORKDIR/main_call.s32o"
 HELPER_OBJ="$WORKDIR/helper.s32o"
+DECOY_OBJ="$WORKDIR/decoy.s32o"
 ARCHIVE="$WORKDIR/libhelper.s32a"
 OUT_EXE="$WORKDIR/archive_spike.s32x"
 
 assemble_forth "$WORKDIR/main_call.s" "$MAIN_OBJ" "$WORKDIR/main_call.as.log"
 assemble_forth "$WORKDIR/helper.s" "$HELPER_OBJ" "$WORKDIR/helper.as.log"
+assemble_forth "$WORKDIR/decoy.s" "$DECOY_OBJ" "$WORKDIR/decoy.as.log"
 
 cc -O2 -Wall -Wextra -std=c11 -pedantic "$ROOT_DIR/selfhost/v2/stage04/validation/s32-ar.c" -o "$WORKDIR/s32-ar-host"
-"$WORKDIR/s32-ar-host" c "$ARCHIVE" "$HELPER_OBJ"
+"$WORKDIR/s32-ar-host" c "$ARCHIVE" "$DECOY_OBJ" "$HELPER_OBJ"
 
 if [[ "$MODE" == "extract" ]]; then
     mkdir -p "$WORKDIR/extract"

@@ -207,7 +207,68 @@ static int str_eq(const char *a, const char *b) {
     return strcmp(a, b) == 0;
 }
 
-static int maybe_extract_archive_member0(uint8_t *buf, uint32_t *size_io) {
+static int primary_needs_symbol(const s32o_header_t *oh,
+                                const s32o_symbol_t *osym,
+                                const char *ostr,
+                                const char *name) {
+    uint32_t i;
+    for (i = 0; i < oh->nsymbols; i = i + 1) {
+        uint16_t sec;
+        if (osym[i].name_offset >= oh->str_size) continue;
+        sec = osym[i].section;
+        if (sec == 0 || sec == 0xFFFFu) {
+            if (str_eq(ostr + osym[i].name_offset, name)) return 1;
+        }
+    }
+    return 0;
+}
+
+static int member_provides_needed_symbol(const uint8_t *member,
+                                         uint32_t member_size,
+                                         const s32o_header_t *oh,
+                                         const s32o_symbol_t *osym,
+                                         const char *ostr) {
+    const s32o_header_t *mh;
+    const s32o_section_t *msec;
+    const s32o_symbol_t *msym;
+    const char *mstr;
+    uint32_t i;
+
+    if (member_size < sizeof(s32o_header_t)) return 0;
+    mh = (const s32o_header_t *)member;
+    if (mh->magic != S32O_MAGIC ||
+        mh->endian != S32_ENDIAN_LITTLE ||
+        mh->machine != S32_MACHINE_SLOW32 ||
+        mh->nsections < 1 ||
+        mh->nsymbols > MAX_SYMBOLS ||
+        !in_bounds(mh->sec_offset, mh->nsections * (uint32_t)sizeof(s32o_section_t), member_size) ||
+        !in_bounds(mh->sym_offset, mh->nsymbols * (uint32_t)sizeof(s32o_symbol_t), member_size) ||
+        !in_bounds(mh->str_offset, mh->str_size, member_size)) {
+        return 0;
+    }
+
+    msec = (const s32o_section_t *)(member + mh->sec_offset);
+    msym = (const s32o_symbol_t *)(member + mh->sym_offset);
+    mstr = (const char *)(member + mh->str_offset);
+
+    for (i = 0; i < mh->nsymbols; i = i + 1) {
+        uint16_t sec;
+        const char *name;
+        if (msym[i].name_offset >= mh->str_size) continue;
+        sec = msym[i].section;
+        if (sec == 0 || sec == 0xFFFFu || sec > mh->nsections) continue;
+        if (msec[sec - 1].type != S32_SEC_CODE) continue;
+        name = mstr + msym[i].name_offset;
+        if (primary_needs_symbol(oh, osym, ostr, name)) return 1;
+    }
+    return 0;
+}
+
+static int maybe_extract_archive_member(uint8_t *buf,
+                                        uint32_t *size_io,
+                                        const s32o_header_t *oh,
+                                        const s32o_symbol_t *osym,
+                                        const char *ostr) {
     uint32_t size;
     uint32_t nmembers;
     uint32_t mem_off;
@@ -216,7 +277,10 @@ static int maybe_extract_archive_member0(uint8_t *buf, uint32_t *size_io) {
     uint32_t name_off;
     uint32_t data_off;
     uint32_t member_size;
+    uint32_t chosen_data_off;
+    uint32_t chosen_size;
     uint32_t i;
+    int found;
 
     size = *size_io;
     if (size < 32) return 1;
@@ -232,19 +296,40 @@ static int maybe_extract_archive_member0(uint8_t *buf, uint32_t *size_io) {
         return 0;
     }
 
-    name_off = rd32(buf + mem_off + 0);
-    data_off = rd32(buf + mem_off + 4);
-    member_size = rd32(buf + mem_off + 8);
-    if (name_off >= str_sz ||
-        member_size > MAX_OBJ_SIZE ||
-        !in_bounds(data_off, member_size, size)) {
-        return 0;
+    found = 0;
+    chosen_data_off = 0;
+    chosen_size = 0;
+    for (i = 0; i < nmembers; i = i + 1) {
+        uint32_t ent = mem_off + i * 24U;
+        name_off = rd32(buf + ent + 0);
+        data_off = rd32(buf + ent + 4);
+        member_size = rd32(buf + ent + 8);
+        if (name_off >= str_sz ||
+            member_size > MAX_OBJ_SIZE ||
+            !in_bounds(data_off, member_size, size)) {
+            return 0;
+        }
+        if (!found && member_provides_needed_symbol(buf + data_off, member_size, oh, osym, ostr)) {
+            chosen_data_off = data_off;
+            chosen_size = member_size;
+            found = 1;
+        }
     }
 
-    for (i = 0; i < member_size; i = i + 1) {
-        buf[i] = buf[data_off + i];
+    if (!found) {
+        uint32_t ent0 = mem_off;
+        chosen_data_off = rd32(buf + ent0 + 4);
+        chosen_size = rd32(buf + ent0 + 8);
+        if (chosen_size > MAX_OBJ_SIZE ||
+            !in_bounds(chosen_data_off, chosen_size, size)) {
+            return 0;
+        }
     }
-    *size_io = member_size;
+
+    for (i = 0; i < chosen_size; i = i + 1) {
+        buf[i] = buf[chosen_data_off + i];
+    }
+    *size_io = chosen_size;
     return 1;
 }
 
@@ -448,7 +533,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "error: cannot read %s\n", aux_path);
             return 1;
         }
-        if (!maybe_extract_archive_member0(g_aux_obj, &aux_size)) {
+        if (!maybe_extract_archive_member(g_aux_obj, &aux_size, oh, osym, ostr)) {
             fprintf(stderr, "error: malformed archive %s\n", aux_path);
             return 1;
         }
