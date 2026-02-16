@@ -924,10 +924,11 @@ static void layout_sections(linker_state_t *ld) {
         // Set heap and stack
         ld->heap_base = current_addr;
         
-        // If stack size explicitly set or in compact mode, place stack close
-        if (ld->stack_size != DEFAULT_STACK_SIZE || auto_compact) {
-            // Place stack after a small heap gap
-            uint32_t heap_gap = auto_compact ? COMPACT_PAGE_SIZE : 0x10000; // 4KB or 64KB heap
+        // In ultra-compact mode, place stack close to reduce footprint.
+        // For normal packed layouts, keep the default high stack base so
+        // heap/mmio sizing remains predictable.
+        if (auto_compact) {
+            uint32_t heap_gap = COMPACT_PAGE_SIZE;
             ld->stack_base = current_addr + heap_gap + ld->stack_size;
             ld->stack_base = (ld->stack_base + 0xF) & ~0xF; // 16-byte align
         }
@@ -2114,7 +2115,8 @@ static void print_usage(const char *prog) {
     fprintf(stderr, "  --stack-size SIZE Stack size (default: 64KB)\n");
     fprintf(stderr, "  --heap-size SIZE  Heap space before MMIO (default: 1MB)\n");
     fprintf(stderr, "  --mmio SIZE       Reserve SIZE bytes for MMIO region\n");
-    fprintf(stderr, "  --pack-sections   Pack sections tightly to minimize gaps\n");
+    fprintf(stderr, "  --pack-sections   Pack sections tightly to minimize gaps (default)\n");
+    fprintf(stderr, "  --no-pack-sections Disable tight packing; use fixed region sizes\n");
     fprintf(stderr, "  --compact         Ultra-compact mode (4KB pages, minimal memory)\n");
     fprintf(stderr, "  --print-map       Generate memory map file (.map)\n");
     fprintf(stderr, "  --help            Show this help\n");
@@ -2132,6 +2134,7 @@ int main(int argc, char *argv[]) {
     ld.data_size = DEFAULT_DATA_SIZE;
     ld.stack_size = DEFAULT_STACK_SIZE;
     ld.stack_base = DEFAULT_STACK_BASE;
+    ld.pack_sections = true;  // Default to tight section packing
     ld.enable_wxorx = true;  // Default to secure
 
     // Initialize dynamic string table
@@ -2198,6 +2201,8 @@ int main(int argc, char *argv[]) {
             ld.mmio_size = parse_size(argv[++i]);
         } else if (strcmp(argv[i], "--pack-sections") == 0) {
             ld.pack_sections = true;
+        } else if (strcmp(argv[i], "--no-pack-sections") == 0) {
+            ld.pack_sections = false;
         } else if (strcmp(argv[i], "--compact") == 0) {
             ld.compact_mode = true;
             ld.pack_sections = true;  // Compact implies packing
