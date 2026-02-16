@@ -5,6 +5,10 @@
 
 static char g_src[MAX_SRC];
 static uint32_t g_pos;
+static int g_have_x;
+static int g_have_y;
+static int g_x_val;
+static int g_y_val;
 
 static int read_file(const char *path, char *buf, uint32_t max_len, uint32_t *out_len) {
     FILE *f;
@@ -94,6 +98,16 @@ static int parse_primary(int *out_v) {
         if (!parse_expr(&v)) return 0;
         if (!consume_char(')')) return 0;
         *out_v = v;
+        return 1;
+    }
+    if (consume_kw("x")) {
+        if (!g_have_x) return 0;
+        *out_v = g_x_val;
+        return 1;
+    }
+    if (consume_kw("y")) {
+        if (!g_have_y) return 0;
+        *out_v = g_y_val;
         return 1;
     }
     return parse_int_lit(out_v);
@@ -211,11 +225,16 @@ static int parse_expr(int *out_v) {
 
 static int parse_program_return_value(int *out_ret) {
     int v;
+    int yv;
     int cond_v;
     int then_v;
     int else_v;
     int step_v;
     int iter;
+    g_have_x = 0;
+    g_have_y = 0;
+    g_x_val = 0;
+    g_y_val = 0;
     if (!consume_kw("int")) return 0;
     if (!consume_kw("main")) return 0;
     if (!consume_char('(')) return 0;
@@ -238,13 +257,37 @@ static int parse_program_return_value(int *out_ret) {
         if (!consume_char(';')) return 0;
         *out_ret = (cond_v != 0) ? then_v : else_v;
     } else if (consume_kw("int")) {
-        /* Tiny local-int form: int x; x = <expr>; return x; */
+        /* Tiny local-int forms:
+           int x; x = <expr>; [while...] return x;
+           int x; int y; x = <expr>; y = <expr>; return y;
+        */
         if (!consume_kw("x")) return 0;
         if (!consume_char(';')) return 0;
+        g_have_x = 1;
+        if (consume_kw("int")) {
+            if (!consume_kw("y")) return 0;
+            if (!consume_char(';')) return 0;
+            g_have_y = 1;
+        }
         if (!consume_kw("x")) return 0;
         if (!consume_char('=')) return 0;
         if (!parse_expr(&v)) return 0;
         if (!consume_char(';')) return 0;
+        g_x_val = v;
+        if (g_have_y) {
+            if (!consume_kw("y")) return 0;
+            if (!consume_char('=')) return 0;
+            if (!parse_expr(&yv)) return 0;
+            if (!consume_char(';')) return 0;
+            g_y_val = yv;
+            if (!consume_kw("return")) return 0;
+            if (!consume_kw("y")) return 0;
+            if (!consume_char(';')) return 0;
+            *out_ret = g_y_val;
+            if (!consume_char('}')) return 0;
+            skip_space();
+            return g_src[g_pos] == 0;
+        }
         if (consume_kw("while")) {
             /* Tiny while form: while (x) x = x - 1; return x; */
             if (!consume_char('(')) return 0;
@@ -267,6 +310,7 @@ static int parse_program_return_value(int *out_ret) {
                 iter = iter + 1;
                 if (iter > 100000) return 0;
             }
+            g_x_val = v;
             *out_ret = v;
         } else {
             if (!consume_kw("return")) return 0;
