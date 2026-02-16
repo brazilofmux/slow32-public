@@ -145,6 +145,7 @@ static int parse_expr(int *out_v) {
 }
 
 static int parse_program_return_value(int *out_ret) {
+    int v;
     if (!consume_kw("int")) return 0;
     if (!consume_kw("main")) return 0;
     if (!consume_char('(')) return 0;
@@ -153,9 +154,25 @@ static int parse_program_return_value(int *out_ret) {
         if (!consume_char(')')) return 0;
     }
     if (!consume_char('{')) return 0;
-    if (!consume_kw("return")) return 0;
-    if (!parse_expr(out_ret)) return 0;
-    if (!consume_char(';')) return 0;
+
+    if (consume_kw("int")) {
+        /* Tiny local-int form: int x; x = <expr>; return x; */
+        if (!consume_kw("x")) return 0;
+        if (!consume_char(';')) return 0;
+        if (!consume_kw("x")) return 0;
+        if (!consume_char('=')) return 0;
+        if (!parse_expr(&v)) return 0;
+        if (!consume_char(';')) return 0;
+        if (!consume_kw("return")) return 0;
+        if (!consume_kw("x")) return 0;
+        if (!consume_char(';')) return 0;
+        *out_ret = v;
+    } else {
+        if (!consume_kw("return")) return 0;
+        if (!parse_expr(out_ret)) return 0;
+        if (!consume_char(';')) return 0;
+    }
+
     if (!consume_char('}')) return 0;
     skip_space();
     return g_src[g_pos] == 0;
