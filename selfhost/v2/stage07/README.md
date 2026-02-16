@@ -9,7 +9,7 @@ Current spike scope:
 
 Current constraints in `validation/s32-ld.c`:
 - Primary `.s32o` plus optional bounded aux input (`.s32o` or `.s32a`).
-- Archive support is bounded and symbol-aware (single selected member).
+- Archive support is bounded and symbol-aware (single selected member, no first-member fallback).
 - Bounded relocation support for `REL_32`, `REL_HI20`, `REL_LO12`,
   `REL_BRANCH`, and `REL_JAL`.
 

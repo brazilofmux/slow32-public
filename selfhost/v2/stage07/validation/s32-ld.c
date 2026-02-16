@@ -316,15 +316,7 @@ static int maybe_extract_archive_member(uint8_t *buf,
         }
     }
 
-    if (!found) {
-        uint32_t ent0 = mem_off;
-        chosen_data_off = rd32(buf + ent0 + 4);
-        chosen_size = rd32(buf + ent0 + 8);
-        if (chosen_size > MAX_OBJ_SIZE ||
-            !in_bounds(chosen_data_off, chosen_size, size)) {
-            return 0;
-        }
-    }
+    if (!found) return 0;
 
     for (i = 0; i < chosen_size; i = i + 1) {
         buf[i] = buf[chosen_data_off + i];
