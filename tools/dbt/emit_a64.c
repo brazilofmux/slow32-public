@@ -264,6 +264,42 @@ void emit_strh_imm(emit_ctx_t *ctx, a64_reg_t rt, a64_reg_t rn, uint32_t byte_of
 }
 
 // ============================================================================
+// Load/Store — 64-bit (for pointer loads in inline lookup)
+// ============================================================================
+
+// LDR Xt, [Xn, #imm]  (unsigned offset, scaled by 8)
+void emit_ldr_x64_imm(emit_ctx_t *ctx, a64_reg_t rt, a64_reg_t rn, uint32_t byte_offset) {
+    // 11 111 0 01 01 imm12 Rn Rt  (size=11, opc=01)
+    uint32_t scaled = byte_offset / 8;
+    uint32_t inst = 0xF9400000 | ((scaled & 0xFFF) << 10) | ((rn & 0x1F) << 5) | (rt & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+// STR Xt, [Xn, #imm]  (unsigned offset, scaled by 8)
+void emit_str_x64_imm(emit_ctx_t *ctx, a64_reg_t rt, a64_reg_t rn, uint32_t byte_offset) {
+    // 11 111 0 01 00 imm12 Rn Rt  (size=11, opc=00)
+    uint32_t scaled = byte_offset / 8;
+    uint32_t inst = 0xF9000000 | ((scaled & 0xFFF) << 10) | ((rn & 0x1F) << 5) | (rt & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+// LDR Xt, [Xn, Xm, LSL #3]  (register offset, scaled by 8)
+void emit_ldr_x64_reg_lsl3(emit_ctx_t *ctx, a64_reg_t rt, a64_reg_t rn, a64_reg_t rm) {
+    // 11 111 0 00 011 Rm option S 10 Rn Rt
+    // option=011 (LSL), S=1 (scale by 8), V=0
+    uint32_t inst = 0xF8607800 | ((rm & 0x1F) << 16) | ((rn & 0x1F) << 5) | (rt & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+// CBZ Xt, offset (64-bit zero test)
+void emit_cbz_x64(emit_ctx_t *ctx, a64_reg_t rt, int32_t byte_offset) {
+    // 1 011 0100 imm19 Rt  (sf=1 for 64-bit)
+    int32_t imm19 = byte_offset >> 2;
+    uint32_t inst = 0xB4000000 | ((imm19 & 0x7FFFF) << 5) | (rt & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+// ============================================================================
 // Load/Store — register offset with UXTW (for 32-bit guest addresses)
 // ============================================================================
 
@@ -436,6 +472,14 @@ bool emit_orr_w32_imm(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn, uint32_t imm)
 void emit_eor_w32(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn, a64_reg_t rm) {
     // 0 10 01010 00 0 Rm 000000 Rn Rd
     uint32_t inst = 0x4A000000 | ((rm & 0x1F) << 16) | ((rn & 0x1F) << 5) | (rd & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+// EOR Wd, Wn, Wm, LSR #shift
+void emit_eor_w32_lsr(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn, a64_reg_t rm, uint32_t shift) {
+    // 0 10 01010 01 0 Rm imm6 Rn Rd  (shift type 01 = LSR)
+    uint32_t inst = 0x4A400000 | ((rm & 0x1F) << 16) | ((shift & 0x3F) << 10) |
+                    ((rn & 0x1F) << 5) | (rd & 0x1F);
     emit_inst(ctx, inst);
 }
 

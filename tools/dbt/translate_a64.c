@@ -152,8 +152,8 @@ void translate_init_cached(translate_ctx_t *ctx, dbt_cpu_state_t *cpu, block_cac
     ctx->cpu = cpu;
     ctx->cache = cache;  // Stage 2 mode
     ctx->block = NULL;
-    ctx->inline_lookup_enabled = false;
-    ctx->ras_enabled = false;
+    ctx->inline_lookup_enabled = true;   // Stage 3: inline hash-probe lookup
+    ctx->ras_enabled = true;              // Stage 3: return address stack
     ctx->superblock_enabled = false;
     ctx->superblock_depth = 0;
     ctx->side_exit_info_enabled = false;
@@ -855,6 +855,169 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
             cache_record_pending_chain(ctx->cache, ctx->block, exit_idx, target_pc);
         }
     }
+}
+
+// ============================================================================
+// Inline indirect lookup (Stage 3)
+// Emits a 4-probe hash lookup directly in generated code for JALR targets.
+// Avoids returning to the C dispatcher when the target block is cached.
+//
+// Structure per probe:
+//   [advance index] → load block ptr → CBZ null→miss
+//   → load guest_pc → CMP → B.NE → [next probe]
+//   → [HIT: flush + LDR host_code + BR]  (exits generated code)
+// After all probes: [MISS: flush + store PC + jump to native dispatcher]
+// ============================================================================
+
+#define INLINE_LOOKUP_MAX_PROBES 4
+
+static void emit_inline_lookup(translate_ctx_t *ctx, a64_reg_t target_reg) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Save target in W3 (preserved across probes)
+    if (target_reg != W3) {
+        emit_mov_w32_w32(e, W3, target_reg);
+    }
+
+    // Compute hash: ((target >> 2) ^ (target >> 12)) & mask
+    emit_lsr_w32_imm(e, W4, W3, 2);              // W4 = target >> 2
+    emit_eor_w32_lsr(e, W4, W4, W3, 12);         // W4 ^= (target >> 12)
+    emit_ldr_w32_imm(e, W5, W20, CPU_LOOKUP_MASK_OFFSET);  // W5 = mask
+    emit_and_w32(e, W4, W4, W5);                  // W4 = hash index
+
+    // Track CBZ (null) patch locations — all patched to miss at end
+    size_t null_patches[INLINE_LOOKUP_MAX_PROBES];
+    int null_patch_count = 0;
+
+    for (int probe = 0; probe < INLINE_LOOKUP_MAX_PROBES; probe++) {
+        if (probe > 0) {
+            emit_add_w32_imm(e, W4, W4, 1);      // W4++
+            emit_and_w32(e, W4, W4, W5);          // W4 &= mask
+        }
+
+        // Load block pointer: X6 = lookup_table[hash] (8 bytes per entry)
+        emit_ldr_x64_reg_lsl3(e, W6, W22, W4);   // X6 = [X22 + X4<<3]
+
+        // Null check → miss
+        null_patches[null_patch_count++] = emit_offset(e);
+        emit_cbz_x64(e, W6, 0);                  // Patch later to miss
+
+        // Compare block->guest_pc vs target
+        emit_ldr_w32_imm(e, W7, W6, 0);          // W7 = block->guest_pc
+        emit_cmp_w32_w32(e, W7, W3);             // target match?
+
+        // B.NE → skip hit path to next probe (or miss for last)
+        size_t bne_patch = emit_offset(e);
+        emit_b_cond(e, COND_NE, 0);              // Patch after hit path
+
+        // HIT: flush cached regs, load host_code, jump to translated block
+        reg_cache_flush(ctx);
+        emit_ldr_x64_imm(e, W6, W6, 8);          // X6 = block->host_code
+        emit_br(e, W6);                           // BR X6 — exits block
+
+        // Patch B.NE to here (start of next probe, or miss for last)
+        {
+            size_t here = emit_offset(e);
+            int32_t rel = (int32_t)(here - bne_patch);
+            uint32_t *inst = (uint32_t *)(e->buf + bne_patch);
+            int32_t imm19 = rel >> 2;
+            *inst = (*inst & ~(0x7FFFF << 5)) | ((imm19 & 0x7FFFF) << 5);
+        }
+    }
+
+    // Miss path: patch all CBZ null branches here
+    size_t miss_offset = emit_offset(e);
+    for (int i = 0; i < null_patch_count; i++) {
+        int32_t rel = (int32_t)(miss_offset - null_patches[i]);
+        uint32_t *inst = (uint32_t *)(e->buf + null_patches[i]);
+        int32_t imm19 = rel >> 2;
+        *inst = (*inst & ~(0x7FFFF << 5)) | ((imm19 & 0x7FFFF) << 5);
+    }
+
+    // Miss fallback: flush + store PC + jump to native dispatcher
+    reg_cache_flush(ctx);
+    emit_str_w32_imm(e, W3, W20, CPU_PC_OFFSET);
+    emit_mov_w32_imm32(e, W1, EXIT_INDIRECT);
+    emit_str_w32_imm(e, W1, W20, CPU_EXIT_REASON_OFFSET);
+
+    if (ctx->cache && ctx->cache->native_dispatcher) {
+        int64_t rel = (int64_t)(ctx->cache->native_dispatcher - emit_ptr(e));
+        emit_b(e, (int32_t)rel);
+    } else {
+        emit_ret_lr(e);
+    }
+}
+
+// ============================================================================
+// Return Address Stack (Stage 3 Phase 2)
+// ============================================================================
+
+// Push return address onto RAS at JAL call sites (rd == REG_LR)
+static void emit_ras_push(translate_ctx_t *ctx, uint32_t return_pc) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Load ras_top index
+    emit_ldr_w32_imm(e, W1, W20, CPU_RAS_TOP_OFFSET);      // W1 = ras_top
+
+    // Compute byte offset: W2 = W1 << 2 (each entry is 4 bytes)
+    emit_lsl_w32_imm(e, W2, W1, 2);                         // W2 = ras_top * 4
+
+    // Store return_pc at ras_stack[ras_top]
+    emit_mov_w32_imm32(e, W3, return_pc);                    // W3 = return_pc
+    emit_add_w32_imm(e, W2, W2, CPU_RAS_STACK_OFFSET);      // W2 = byte offset into cpu_state
+    emit_str_w32_reg_uxtw(e, W3, W20, W2);                  // [X20 + W2] = return_pc
+
+    // Increment top with wrap: ras_top = (ras_top + 1) & RAS_MASK
+    emit_add_w32_imm(e, W1, W1, 1);                         // W1++
+    if (!emit_and_w32_imm(e, W1, W1, RAS_MASK)) {           // W1 &= RAS_MASK
+        emit_mov_w32_imm32(e, W2, RAS_MASK);
+        emit_and_w32(e, W1, W1, W2);
+    }
+    emit_str_w32_imm(e, W1, W20, CPU_RAS_TOP_OFFSET);       // store new ras_top
+}
+
+// Predict return address from RAS and perform inline lookup.
+// target_reg holds the actual computed return target.
+// If RAS prediction matches, we use it for inline lookup (should hit fast).
+// If mismatch, use the actual target instead.
+static void emit_ras_predict(translate_ctx_t *ctx, a64_reg_t target_reg) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Save actual target in W8 (higher scratch, survives RAS operations)
+    if (target_reg != W8) {
+        emit_mov_w32_w32(e, W8, target_reg);
+    }
+
+    // Decrement ras_top with wrap: ras_top = (ras_top - 1) & RAS_MASK
+    emit_ldr_w32_imm(e, W1, W20, CPU_RAS_TOP_OFFSET);       // W1 = ras_top
+    emit_sub_w32_imm(e, W1, W1, 1);                          // W1--
+    if (!emit_and_w32_imm(e, W1, W1, RAS_MASK)) {            // W1 &= RAS_MASK
+        emit_mov_w32_imm32(e, W2, RAS_MASK);
+        emit_and_w32(e, W1, W1, W2);
+    }
+    emit_str_w32_imm(e, W1, W20, CPU_RAS_TOP_OFFSET);       // store new ras_top
+
+    // Load predicted return address: W0 = ras_stack[ras_top]
+    emit_lsl_w32_imm(e, W2, W1, 2);                          // W2 = ras_top * 4
+    emit_add_w32_imm(e, W2, W2, CPU_RAS_STACK_OFFSET);       // byte offset into cpu_state
+    emit_ldr_w32_reg_uxtw(e, W0, W20, W2);                   // W0 = predicted PC
+
+    // Compare predicted vs actual
+    emit_cmp_w32_w32(e, W0, W8);                              // predicted == actual?
+
+    // If match → use predicted (W0) for inline lookup
+    // If mismatch → use actual (W8) for inline lookup
+    // CSEL W0, W0, W8, EQ  — select predicted if match, actual otherwise
+    // Actually, both paths do inline lookup with the same value anyway (the actual target).
+    // The RAS prediction matters because the inline lookup hash probe is more likely
+    // to hit on probe 0 for predicted targets (they were recently translated).
+    // So: always use W8 (actual target) for inline lookup.
+    // The point of RAS is just to avoid the native dispatcher, not to predict differently.
+    // Actually, looking at the x86 code again: if prediction matches, it uses the predicted
+    // value for inline lookup because it's more likely to be a hot block.
+    // If mismatch, it still does inline lookup with the actual target.
+    // For simplicity, just do inline lookup with the actual target always.
+    emit_inline_lookup(ctx, W8);
 }
 
 // ============================================================================
@@ -1813,6 +1976,11 @@ void translate_jal(translate_ctx_t *ctx, uint8_t rd, int32_t imm) {
         emit_store_guest_reg_imm32(ctx, rd, return_pc);
     }
 
+    // RAS push: if this is a call (rd == REG_LR), push return address
+    if (ctx->ras_enabled && rd == REG_LR) {
+        emit_ras_push(ctx, return_pc);
+    }
+
     // Exit with branch to target (chainable in Stage 2)
     emit_exit_chained(ctx, target_pc, ctx->exit_idx++);
 }
@@ -1853,12 +2021,23 @@ void translate_jalr(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
         bounds_elim_invalidate(ctx, rd);
     }
 
-    // Store target PC and exit
-    reg_cache_flush(ctx);
-    emit_str_w32_imm(e, W0, W20, CPU_PC_OFFSET);
-    emit_mov_w32_imm32(e, W1, EXIT_INDIRECT);
-    emit_str_w32_imm(e, W1, W20, CPU_EXIT_REASON_OFFSET);
-    emit_ret_lr(e);
+    // Inline lookup for indirect jumps (Stage 3)
+    bool is_return = (rd == 0 && rs1 == REG_LR && imm == 0);
+
+    if (ctx->ras_enabled && is_return && ctx->inline_lookup_enabled && ctx->cache) {
+        // RAS-predicted return: pop predicted PC, do inline lookup
+        emit_ras_predict(ctx, W0);
+    } else if (ctx->inline_lookup_enabled && ctx->cache) {
+        // Generic indirect: inline 4-probe hash lookup
+        emit_inline_lookup(ctx, W0);
+    } else {
+        // Stage 1-2 fallback: store PC + exit to dispatcher
+        reg_cache_flush(ctx);
+        emit_str_w32_imm(e, W0, W20, CPU_PC_OFFSET);
+        emit_mov_w32_imm32(e, W1, EXIT_INDIRECT);
+        emit_str_w32_imm(e, W1, W20, CPU_EXIT_REASON_OFFSET);
+        emit_ret_lr(e);
+    }
 }
 
 // ============================================================================

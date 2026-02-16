@@ -129,6 +129,22 @@ void emit_strb_imm(emit_ctx_t *ctx, a64_reg_t rt, a64_reg_t rn, uint32_t byte_of
 void emit_strh_imm(emit_ctx_t *ctx, a64_reg_t rt, a64_reg_t rn, uint32_t byte_offset);
 
 // ============================================================================
+// Load/Store - 64-bit (for pointer loads: block table, host_code, etc.)
+// ============================================================================
+
+// LDR Xt, [Xn, #imm]  (unsigned offset, scaled by 8)
+void emit_ldr_x64_imm(emit_ctx_t *ctx, a64_reg_t rt, a64_reg_t rn, uint32_t byte_offset);
+
+// LDR Xt, [Xn, Xm, LSL #3]  (register offset, scaled by 8)
+void emit_ldr_x64_reg_lsl3(emit_ctx_t *ctx, a64_reg_t rt, a64_reg_t rn, a64_reg_t rm);
+
+// STR Xt, [Xn, #imm]  (unsigned offset, scaled by 8)
+void emit_str_x64_imm(emit_ctx_t *ctx, a64_reg_t rt, a64_reg_t rn, uint32_t byte_offset);
+
+// CBZ Xt, offset (64-bit zero test)
+void emit_cbz_x64(emit_ctx_t *ctx, a64_reg_t rt, int32_t byte_offset);
+
+// ============================================================================
 // Load/Store - register offset (for guest memory: [Xbase, Windex, UXTW])
 // ============================================================================
 
@@ -211,6 +227,9 @@ bool emit_orr_w32_imm(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn, uint32_t imm)
 
 // EOR Wd, Wn, Wm
 void emit_eor_w32(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn, a64_reg_t rm);
+
+// EOR Wd, Wn, Wm, LSR #shift
+void emit_eor_w32_lsr(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn, a64_reg_t rm, uint32_t shift);
 
 // EOR Wd, Wn, #imm  (logical immediate)
 bool emit_eor_w32_imm(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn, uint32_t imm);
