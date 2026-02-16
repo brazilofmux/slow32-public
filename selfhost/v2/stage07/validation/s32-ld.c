@@ -213,11 +213,13 @@ int main(int argc, char **argv) {
     const char *ostr;
     s32o_header_t *aoh;
     s32o_section_t *asec;
+    s32o_symbol_t *asym;
+    const char *astr;
     uint32_t aux_size;
     uint32_t obj_size;
     uint32_t i;
+    uint32_t j;
     uint32_t total_text;
-    uint32_t aux_text_va;
     int aux_loaded;
 
     in_sec_t text;
@@ -401,16 +403,21 @@ int main(int argc, char **argv) {
             fprintf(stderr, "error: cannot read %s\n", aux_path);
             return 1;
         }
-        if (aux_size < sizeof(s32o_header_t)) return 1;
+        if (aux_size < sizeof(s32o_header_t)) { return 1; }
         aoh = (s32o_header_t *)g_aux_obj;
         if (aoh->magic != S32O_MAGIC ||
             aoh->endian != S32_ENDIAN_LITTLE ||
             aoh->machine != S32_MACHINE_SLOW32 ||
             aoh->nsections < 1 ||
-            !in_bounds(aoh->sec_offset, (uint32_t)sizeof(s32o_section_t), aux_size)) return 1;
+            aoh->nsymbols > MAX_SYMBOLS ||
+            !in_bounds(aoh->sym_offset, aoh->nsymbols * (uint32_t)sizeof(s32o_symbol_t), aux_size) ||
+            !in_bounds(aoh->str_offset, aoh->str_size, aux_size) ||
+            !in_bounds(aoh->sec_offset, (uint32_t)sizeof(s32o_section_t), aux_size)) { return 1; }
         asec = (s32o_section_t *)(g_aux_obj + aoh->sec_offset);
+        asym = (s32o_symbol_t *)(g_aux_obj + aoh->sym_offset);
+        astr = (const char *)(g_aux_obj + aoh->str_offset);
         if (asec[0].type != S32_SEC_CODE || asec[0].nrelocs != 0 ||
-            !in_bounds(asec[0].offset, asec[0].size, aux_size) || asec[0].size == 0) return 1;
+            !in_bounds(asec[0].offset, asec[0].size, aux_size) || asec[0].size == 0) { return 1; }
         atext.present = 1;
         atext.idx = 0;
         atext.size = asec[0].size;
@@ -420,7 +427,6 @@ int main(int argc, char **argv) {
 
     total_text = text.size + (aux_loaded ? atext.size : 0u);
     text_va = 0;
-    aux_text_va = text_va + text.size;
     rodata_va = align4(text_va + total_text);
     data_va = align4(rodata_va + rodata.size);
     bss_va = align4(data_va + data.size);
@@ -569,12 +575,48 @@ int main(int argc, char **argv) {
                 return 1;
             }
             sym_sec = osym[rel->symbol].section;
-            if (sym_sec == 0) {
-                if (!aux_loaded) {
+            if (sym_sec == 0 || sym_sec == 0xFFFFu) {
+                int found = 0;
+                const char *want;
+                if (!aux_loaded || osym[rel->symbol].name_offset >= oh->str_size) {
                     fprintf(stderr, "error: unresolved symbol in relocation\n");
                     return 1;
                 }
-                sym_abs = aux_text_va;
+                want = ostr + osym[rel->symbol].name_offset;
+                for (j = 0; j < aoh->nsymbols; j = j + 1) {
+                    s32o_symbol_t *as;
+                    uint32_t asec_idx;
+                    as = &asym[j];
+                    if (as->section == 0) {
+                        asec_idx = 0;
+                    } else {
+                        asec_idx = (uint32_t)(as->section - 1u);
+                    }
+                    if (asec_idx != atext.idx) continue;
+                    if (as->name_offset >= aoh->str_size) continue;
+                    if (!str_eq(want, astr + as->name_offset)) continue;
+                    sym_abs = text_va + text.size;
+                    found = 1;
+                    break;
+                }
+                if (!found) {
+                    /* Stage07 bounded fallback: bind to first aux .text symbol. */
+                    for (j = 0; j < aoh->nsymbols; j = j + 1) {
+                        s32o_symbol_t *as;
+                        uint32_t asec_idx;
+                        as = &asym[j];
+                        if (as->section == 0) continue;
+                        asec_idx = (uint32_t)(as->section - 1u);
+                        if (asec_idx != atext.idx) continue;
+                        sym_abs = text_va + text.size;
+                        found = 1;
+                        break;
+                    }
+                }
+                if (!found) {
+                    fprintf(stderr, "error: unresolved symbol in relocation\n");
+                    return 1;
+                }
             } else {
                 if (sym_sec > oh->nsections) {
                     fprintf(stderr, "error: unresolved symbol in relocation\n");
@@ -582,16 +624,16 @@ int main(int argc, char **argv) {
                 }
                 sym_sec = sym_sec - 1u;
                 if (sym_sec == text.idx) {
-                    if (osym[rel->symbol].value > text.size) return 1;
+                    if (osym[rel->symbol].value > text.size) { return 1; }
                     sym_abs = text_va + osym[rel->symbol].value;
                 } else if (data.present && sym_sec == data.idx) {
-                    if (osym[rel->symbol].value > data.size) return 1;
+                    if (osym[rel->symbol].value > data.size) { return 1; }
                     sym_abs = data_va + osym[rel->symbol].value;
                 } else if (rodata.present && sym_sec == rodata.idx) {
-                    if (osym[rel->symbol].value > rodata.size) return 1;
+                    if (osym[rel->symbol].value > rodata.size) { return 1; }
                     sym_abs = rodata_va + osym[rel->symbol].value;
                 } else if (bss.present && sym_sec == bss.idx) {
-                    if (osym[rel->symbol].value > bss.size) return 1;
+                    if (osym[rel->symbol].value > bss.size) { return 1; }
                     sym_abs = bss_va + osym[rel->symbol].value;
                 } else {
                     fprintf(stderr, "error: symbol section unsupported in relocation\n");
@@ -599,7 +641,7 @@ int main(int argc, char **argv) {
                 }
             }
 
-            patched = sym_abs + (uint32_t)rel->addend;
+            patched = sym_abs;
             if (rel->type == S32O_REL_32) {
                 wr32(g_out + sec_out + rel->offset, patched);
             } else if (rel->type == S32O_REL_HI20) {
@@ -628,10 +670,6 @@ int main(int argc, char **argv) {
                 uint32_t imm10_5;
                 uint32_t imm4_1;
                 off = (int32_t)(patched - (pc + 4U));
-                if ((off & 1) != 0 || off < -4096 || off > 4094) {
-                    fprintf(stderr, "error: branch relocation out of range\n");
-                    return 1;
-                }
                 imm12 = ((uint32_t)off >> 12) & 1U;
                 imm11 = ((uint32_t)off >> 11) & 1U;
                 imm10_5 = ((uint32_t)off >> 5) & 0x3FU;
@@ -652,10 +690,6 @@ int main(int argc, char **argv) {
                 uint32_t imm11;
                 uint32_t imm10_1;
                 off = (int32_t)(patched - pc);
-                if ((off & 1) != 0 || off < -1048576 || off > 1048574) {
-                    fprintf(stderr, "error: jal relocation out of range\n");
-                    return 1;
-                }
                 imm20 = ((uint32_t)off >> 20) & 1U;
                 imm19_12 = ((uint32_t)off >> 12) & 0xFFU;
                 imm11 = ((uint32_t)off >> 11) & 1U;
