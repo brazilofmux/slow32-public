@@ -37,3 +37,8 @@ member resolution is wired in `s32-ld.c`):
 ```bash
 selfhost/v2/stage07/run-archive-spike.sh --emu ./tools/emulator/slow32-fast
 ```
+
+Two-lane archive spike modes:
+- `--mode direct`: pass `.s32a` directly to stage07 linker (expected fail today).
+- `--mode extract`: extract first member and pass it as optional aux object input
+  to stage07 linker (expected pass with bounded aux-object path).

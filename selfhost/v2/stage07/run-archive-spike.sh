@@ -12,11 +12,13 @@ KERNEL="${STAGE7_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${STAGE7_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 ASM_FTH="${STAGE7_ASM:-$ROOT_DIR/selfhost/v2/stage01/asm.fth}"
 EXPECT_PASS=0
+EXPECT_SET=0
 KEEP_ARTIFACTS=0
+MODE="direct"
 
 usage() {
     cat <<USAGE
-Usage: $0 [--emu <path>] [--expect-pass] [--expect-fail] [--keep-artifacts]
+Usage: $0 [--emu <path>] [--mode direct|extract] [--expect-pass] [--expect-fail] [--keep-artifacts]
 
 Builds the current Stage07 linker via run-spike, then constructs an archive
 resolution scenario:
@@ -24,7 +26,9 @@ resolution scenario:
   - helper is packaged into a .s32a archive member
   - invokes stage07 linker with: <main.s32o> <lib.s32a> <out.s32x>
 
-Current expected behavior is failure (archive resolution not wired yet).
+Modes:
+  direct   Invoke linker with archive argument directly (currently expected-fail).
+  extract  Extract first archive member first, then link object-only (expected-pass).
 USAGE
 }
 
@@ -37,9 +41,16 @@ while [[ $# -gt 0 ]]; do
             ;;
         --expect-pass)
             EXPECT_PASS=1
+            EXPECT_SET=1
             ;;
         --expect-fail)
             EXPECT_PASS=0
+            EXPECT_SET=1
+            ;;
+        --mode)
+            shift
+            [[ $# -gt 0 ]] || { echo "--mode requires direct|extract" >&2; exit 2; }
+            MODE="$1"
             ;;
         --keep-artifacts)
             KEEP_ARTIFACTS=1
@@ -56,6 +67,19 @@ while [[ $# -gt 0 ]]; do
     esac
     shift
 done
+
+case "$MODE" in
+    direct|extract) ;;
+    *) echo "invalid --mode: $MODE (expected direct|extract)" >&2; exit 2 ;;
+esac
+
+if [[ "$EXPECT_SET" -eq 0 ]]; then
+    if [[ "$MODE" == "extract" ]]; then
+        EXPECT_PASS=1
+    else
+        EXPECT_PASS=0
+    fi
+fi
 
 if [[ "$EMU" != /* ]]; then
     EMU="$ROOT_DIR/$EMU"
@@ -133,10 +157,23 @@ assemble_forth "$WORKDIR/helper.s" "$HELPER_OBJ" "$WORKDIR/helper.as.log"
 cc -O2 -Wall -Wextra -std=c11 -pedantic "$ROOT_DIR/selfhost/v2/stage04/validation/s32-ar.c" -o "$WORKDIR/s32-ar-host"
 "$WORKDIR/s32-ar-host" c "$ARCHIVE" "$HELPER_OBJ"
 
-set +e
-timeout 60 "$EMU" "$LINKER_EXE" "$MAIN_OBJ" "$ARCHIVE" "$OUT_EXE" >"$WORKDIR/archive_spike.link.log" 2>&1
-RC=$?
-set -e
+if [[ "$MODE" == "extract" ]]; then
+    mkdir -p "$WORKDIR/extract"
+    (
+        cd "$WORKDIR/extract"
+        "$WORKDIR/s32-ar-host" x "$ARCHIVE" helper.s32o
+    )
+    [[ -f "$WORKDIR/extract/helper.s32o" ]] || { echo "extract mode failed to recover helper.s32o" >&2; exit 1; }
+    set +e
+    timeout 60 "$EMU" "$LINKER_EXE" "$MAIN_OBJ" "$WORKDIR/extract/helper.s32o" "$OUT_EXE" >"$WORKDIR/archive_spike.link.log" 2>&1
+    RC=$?
+    set -e
+else
+    set +e
+    timeout 60 "$EMU" "$LINKER_EXE" "$MAIN_OBJ" "$ARCHIVE" "$OUT_EXE" >"$WORKDIR/archive_spike.link.log" 2>&1
+    RC=$?
+    set -e
+fi
 
 if [[ "$EXPECT_PASS" -eq 1 ]]; then
     if [[ "$RC" -ne 0 && "$RC" -ne 96 ]]; then
@@ -152,7 +189,7 @@ else
     fi
 fi
 
-echo "OK: stage07 archive spike ($( [[ "$EXPECT_PASS" -eq 1 ]] && echo "pass" || echo "expected-fail" ))"
+echo "OK: stage07 archive spike mode=$MODE ($( [[ "$EXPECT_PASS" -eq 1 ]] && echo "pass" || echo "expected-fail" ))"
 echo "Linker exe: $LINKER_EXE"
 echo "Main object: $MAIN_OBJ"
 echo "Archive: $ARCHIVE"

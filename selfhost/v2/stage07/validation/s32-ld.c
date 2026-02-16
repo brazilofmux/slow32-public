@@ -1,9 +1,10 @@
 /*
  * Stage07 bootstrap linker spike
  *
- * Bounded linker for one .s32o input and one .s32x output.
+ * Bounded linker for one or two .s32o inputs and one .s32x output.
  * Current scope:
- *   - Supports .text/.data/.rodata/.bss merge from a single object
+ *   - Supports .text/.data/.rodata/.bss merge from a primary object
+ *   - Optional bounded aux object path: append aux .text (no relocs)
  *   - Supports bounded REL_32 relocations within a single object
  *   - Ignores archives for now (next widening step)
  */
@@ -121,6 +122,7 @@ typedef struct {
 } in_sec_t;
 
 static uint8_t g_obj[MAX_OBJ_SIZE];
+static uint8_t g_aux_obj[MAX_OBJ_SIZE];
 static uint8_t g_out[MAX_OUT_SIZE];
 
 static uint32_t align4(uint32_t n) {
@@ -202,17 +204,27 @@ static int str_eq(const char *a, const char *b) {
 }
 
 int main(int argc, char **argv) {
+    const char *obj_path;
+    const char *aux_path;
+    const char *out_path;
     s32o_header_t *oh;
     s32o_section_t *osec;
     s32o_symbol_t *osym;
     const char *ostr;
+    s32o_header_t *aoh;
+    s32o_section_t *asec;
+    uint32_t aux_size;
     uint32_t obj_size;
     uint32_t i;
+    uint32_t total_text;
+    uint32_t aux_text_va;
+    int aux_loaded;
 
     in_sec_t text;
     in_sec_t data;
     in_sec_t rodata;
     in_sec_t bss;
+    in_sec_t atext;
 
     uint32_t text_va;
     uint32_t rodata_va;
@@ -233,13 +245,17 @@ int main(int argc, char **argv) {
     s32x_section_t *xsec;
     int main_found;
 
-    if (argc != 3) {
-        fprintf(stderr, "Usage: %s <input.s32o> <output.s32x>\n", argv[0]);
+    if (argc != 3 && argc != 4) {
+        fprintf(stderr, "Usage: %s <input.s32o> [aux.s32o] <output.s32x>\n", argv[0]);
         return 1;
     }
+    obj_path = argv[1];
+    aux_path = NULL;
+    out_path = argv[argc - 1];
+    if (argc == 4) aux_path = argv[2];
 
-    if (!read_file(argv[1], g_obj, MAX_OBJ_SIZE, &obj_size)) {
-        fprintf(stderr, "error: cannot read %s\n", argv[1]);
+    if (!read_file(obj_path, g_obj, MAX_OBJ_SIZE, &obj_size)) {
+        fprintf(stderr, "error: cannot read %s\n", obj_path);
         return 1;
     }
     if (obj_size < sizeof(s32o_header_t)) {
@@ -287,6 +303,11 @@ int main(int argc, char **argv) {
     bss.idx = 0;
     bss.size = 0;
     bss.offset = 0;
+    atext.present = 0;
+    atext.idx = 0;
+    atext.size = 0;
+    atext.offset = 0;
+    aux_loaded = 0;
 
     for (i = 0; i < oh->nsections; i = i + 1) {
         s32o_section_t *s = &osec[i];
@@ -375,8 +396,32 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    if (aux_path != NULL) {
+        if (!read_file(aux_path, g_aux_obj, MAX_OBJ_SIZE, &aux_size)) {
+            fprintf(stderr, "error: cannot read %s\n", aux_path);
+            return 1;
+        }
+        if (aux_size < sizeof(s32o_header_t)) return 1;
+        aoh = (s32o_header_t *)g_aux_obj;
+        if (aoh->magic != S32O_MAGIC ||
+            aoh->endian != S32_ENDIAN_LITTLE ||
+            aoh->machine != S32_MACHINE_SLOW32 ||
+            aoh->nsections < 1 ||
+            !in_bounds(aoh->sec_offset, (uint32_t)sizeof(s32o_section_t), aux_size)) return 1;
+        asec = (s32o_section_t *)(g_aux_obj + aoh->sec_offset);
+        if (asec[0].type != S32_SEC_CODE || asec[0].nrelocs != 0 ||
+            !in_bounds(asec[0].offset, asec[0].size, aux_size) || asec[0].size == 0) return 1;
+        atext.present = 1;
+        atext.idx = 0;
+        atext.size = asec[0].size;
+        atext.offset = asec[0].offset;
+        aux_loaded = 1;
+    }
+
+    total_text = text.size + (aux_loaded ? atext.size : 0u);
     text_va = 0;
-    rodata_va = align4(text_va + text.size);
+    aux_text_va = text_va + text.size;
+    rodata_va = align4(text_va + total_text);
     data_va = align4(rodata_va + rodata.size);
     bss_va = align4(data_va + data.size);
     bss_end = bss_va + bss.size;
@@ -390,7 +435,7 @@ int main(int argc, char **argv) {
     out_data_off = (uint32_t)sizeof(s32x_header_t) + out_nsec * (uint32_t)sizeof(s32x_section_t) + out_str_size;
     out_data_off = align4(out_data_off);
 
-    out_size = out_data_off + text.size + data.size + rodata.size;
+    out_size = out_data_off + total_text + data.size + rodata.size;
     if (out_size > MAX_OUT_SIZE) {
         fprintf(stderr, "error: output exceeds stage07 bounds\n");
         return 1;
@@ -412,7 +457,7 @@ int main(int argc, char **argv) {
     xh->str_size = out_str_size;
     xh->flags = S32X_FLAG_W_XOR_X;
 
-    xh->code_limit = page_align(text.size);
+    xh->code_limit = page_align(total_text);
     if (xh->code_limit < 4096U) xh->code_limit = 4096U;
     xh->rodata_limit = page_align(rodata_va + rodata.size);
     if (xh->rodata_limit < xh->code_limit) xh->rodata_limit = xh->code_limit;
@@ -433,11 +478,15 @@ int main(int argc, char **argv) {
     xsec[0].type = S32_SEC_CODE;
     xsec[0].vaddr = text_va;
     xsec[0].offset = cur;
-    xsec[0].size = text.size;
-    xsec[0].mem_size = text.size;
+    xsec[0].size = total_text;
+    xsec[0].mem_size = total_text;
     xsec[0].flags = S32_SEC_FLAG_READ | S32_SEC_FLAG_EXEC | S32_SEC_FLAG_ALLOC;
     memcpy(g_out + cur, g_obj + text.offset, text.size);
     cur = cur + text.size;
+    if (aux_loaded) {
+        memcpy(g_out + cur, g_aux_obj + atext.offset, atext.size);
+        cur = cur + atext.size;
+    }
 
     i = 1;
     data_out_off = 0;
@@ -520,26 +569,34 @@ int main(int argc, char **argv) {
                 return 1;
             }
             sym_sec = osym[rel->symbol].section;
-            if (sym_sec == 0 || sym_sec > oh->nsections) {
-                fprintf(stderr, "error: unresolved symbol in relocation\n");
-                return 1;
-            }
-            sym_sec = sym_sec - 1u;
-            if (sym_sec == text.idx) {
-                if (osym[rel->symbol].value > text.size) return 1;
-                sym_abs = text_va + osym[rel->symbol].value;
-            } else if (data.present && sym_sec == data.idx) {
-                if (osym[rel->symbol].value > data.size) return 1;
-                sym_abs = data_va + osym[rel->symbol].value;
-            } else if (rodata.present && sym_sec == rodata.idx) {
-                if (osym[rel->symbol].value > rodata.size) return 1;
-                sym_abs = rodata_va + osym[rel->symbol].value;
-            } else if (bss.present && sym_sec == bss.idx) {
-                if (osym[rel->symbol].value > bss.size) return 1;
-                sym_abs = bss_va + osym[rel->symbol].value;
+            if (sym_sec == 0) {
+                if (!aux_loaded) {
+                    fprintf(stderr, "error: unresolved symbol in relocation\n");
+                    return 1;
+                }
+                sym_abs = aux_text_va;
             } else {
-                fprintf(stderr, "error: symbol section unsupported in relocation\n");
-                return 1;
+                if (sym_sec > oh->nsections) {
+                    fprintf(stderr, "error: unresolved symbol in relocation\n");
+                    return 1;
+                }
+                sym_sec = sym_sec - 1u;
+                if (sym_sec == text.idx) {
+                    if (osym[rel->symbol].value > text.size) return 1;
+                    sym_abs = text_va + osym[rel->symbol].value;
+                } else if (data.present && sym_sec == data.idx) {
+                    if (osym[rel->symbol].value > data.size) return 1;
+                    sym_abs = data_va + osym[rel->symbol].value;
+                } else if (rodata.present && sym_sec == rodata.idx) {
+                    if (osym[rel->symbol].value > rodata.size) return 1;
+                    sym_abs = rodata_va + osym[rel->symbol].value;
+                } else if (bss.present && sym_sec == bss.idx) {
+                    if (osym[rel->symbol].value > bss.size) return 1;
+                    sym_abs = bss_va + osym[rel->symbol].value;
+                } else {
+                    fprintf(stderr, "error: symbol section unsupported in relocation\n");
+                    return 1;
+                }
             }
 
             patched = sym_abs + (uint32_t)rel->addend;
@@ -617,11 +674,11 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (!write_file(argv[2], g_out, cur)) {
-        fprintf(stderr, "error: cannot write %s\n", argv[2]);
+    if (!write_file(out_path, g_out, cur)) {
+        fprintf(stderr, "error: cannot write %s\n", out_path);
         return 1;
     }
 
-    printf("stage07: linked %s -> %s\n", argv[1], argv[2]);
+    printf("stage07: linked %s -> %s\n", obj_path, out_path);
     return 0;
 }
