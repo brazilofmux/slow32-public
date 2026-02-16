@@ -32,6 +32,7 @@ Current `cc-min` accepted source shape:
 - `int main(void) { if (<const-expr>) return <const-expr>; return <const-expr>; }`
 - `int main(void) { int x; x = <const-expr>; while (x) x = x - 1; return x; }`
 - `int helper(void) { return <const-expr>; } int main(void) { return helper(); }`
+- `int helper(int a) { return a [+/- <int>]; } int main(void) { return helper(<const-expr>); }`
 
 `run-regression.sh` now runs both:
 - archiver parity gate (`c/rc/t/x/d/m/v/p/cs`)
