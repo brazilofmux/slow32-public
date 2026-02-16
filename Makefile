@@ -92,11 +92,11 @@ clean:
 	$(MAKE) -C tools/linker clean
 	$(MAKE) -C tools/utilities clean
 	$(MAKE) -C tools/dbt clean
-	$(MAKE) -C runtime clean
+	$(MAKE) -C runtime clean-build
 	rm -rf tests/
 	rm -f *.o *.bin *.ll *.s *.s32o *.s32x
 	rm -f benchmark_* assembler_reloc_patch.txt
-	find . -name "*.s32o" -o -name "*.s32x" | grep -v runtime | grep -v regression | xargs rm -f
+	find . -name "*.s32o" -o -name "*.s32x" | grep -v runtime | grep -v regression | grep -v forth/kernel.s32x | xargs rm -f
 
 # C compilation pattern rules
 %.ll: %.c runtime

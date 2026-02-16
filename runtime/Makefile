@@ -205,13 +205,19 @@ libc_mmio.s32a: $(LIBC_CORE_OBJS) $(STDIO_MMIO_OBJS) $(LIBC_MMIO_EXTRA_OBJS)
 # including both hand-written ones and those generated from C sources
 
 # Clean targets
-clean:
-	rm -f *.s32o *.ll *.s32a
+# clean-build: remove intermediate build artifacts but preserve checked-in archives
+clean-build:
+	rm -f *.s32o *.ll
 	# Clean generated .s files (but keep hand-written assembly sources)
 	@for src in $(C_SOURCES); do \
 		base=$$(basename $$src .c); \
 		rm -f $$base.s; \
 	done
+	@echo "Cleaned runtime build artifacts (archives preserved)"
+
+# clean: remove everything including archives (use for full rebuild)
+clean: clean-build
+	rm -f *.s32a
 	@echo "Cleaned runtime directory"
 
 clean-intermediate:
@@ -279,7 +285,7 @@ help:
 	@echo "Link order: crt0.s32o user.s32o libc_*.s32a libs32.s32a"
 	@echo "Example: s32-ld -o prog.s32x crt0.s32o prog.s32o libc_debug.s32a libs32.s32a"
 
-.PHONY: all clean clean-intermediate clean-old rebuild size help tools check
+.PHONY: all clean clean-build clean-intermediate clean-old rebuild size help tools check
 # Archive size comparison:
 # Original (with optimizations): 22.8KB
 # New (optimizations disabled): 31KB

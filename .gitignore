@@ -107,6 +107,7 @@ assembler_reloc_patch.txt
 # Object and executable formats
 *.s32o
 *.s32x
+!forth/kernel.s32x
 
 # Editor files
 .vscode/
