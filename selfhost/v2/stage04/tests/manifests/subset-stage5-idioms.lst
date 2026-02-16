@@ -45,3 +45,5 @@ selfhost/v2/stage04/tests/subset-idioms/idiom44_loop_ptr_stride_shortcircuit.c
 selfhost/v2/stage04/tests/subset-idioms/idiom45_loop_ptr_base_reanchor.c
 selfhost/v2/stage04/tests/subset-idioms/idiom46_ptrdiff_branch_gate.c
 selfhost/v2/stage04/tests/subset-idioms/idiom47_ternary_index_ptrdiff.c
+selfhost/v2/stage04/tests/subset-idioms/idiom48_voidptr_uchar_roundtrip_loop.c
+selfhost/v2/stage04/tests/subset-idioms/idiom49_cast_roundtrip_branch_mix.c
