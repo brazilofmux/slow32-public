@@ -75,30 +75,38 @@ Remaining gap:
 
 ## Bootstrap Flow / Runtime Artifacts
 
-### 15. [BOOTSTRAP] Stage04+ Depends on Seeded Runtime Binaries (Narrowed)
-Current Stage04 regression expects these prebuilt runtime artifacts to already exist:
-- `runtime/crt0.s32o`
-- `runtime/libc_mmio.s32a`
-- `runtime/libs32.s32a`
+### 15. [RESOLVED] Stage04+ Depends on Seeded Runtime Binaries
+Stage04 regression scripts now assemble the bootstrap runtime from in-tree sources at
+test time, using the Forth assembler (stage01). No prebuilt `runtime/*.s32o` or
+`runtime/*.s32a` blobs are required. A clean checkout can run Stage00 through Stage04
+using only:
+- host C compiler for Stage00 `s32-emu`
+- seeded `forth/kernel.s32x` + `forth/prelude.fth`
 
-For new users (or clean environments like Raspberry Pi), copying these files from another machine works as a temporary compromise, but it is not aligned with the long-term self-hosting goal.
+Runtime sources: `selfhost/stage01/crt0_minimal.s`, `selfhost/stage01/mmio_minimal.s`.
+These are linked as direct objects (not archives) to work around Issue #16.
 
-Progress:
-- Stage01 minimal runtime assembly inputs now exist in-tree:
-  - `selfhost/stage01/crt0_minimal.s`
-  - `selfhost/stage01/mmio_minimal.s`
-- This closes the "missing minimal assembly runtime sources" portion of the issue.
+### 16. [BUG] Forth Linker Archive Symbol Resolution Fails
+The Forth linker (`selfhost/stage03/link.fth`) `LINK-ARCHIVE` does not pull archive
+members to satisfy undefined symbols. The archive is read correctly (member count and
+symbol count are reported), but the iterative pull loop in `SYM-UNDEFINED?` never
+matches, leaving all references unresolved.
 
-Target direction:
-- Provide a selfhost-built runtime path under `./selfhost` that can be produced with Stage01/Stage02 tools (assembler + archiver), starting from minimal runtime needs.
-- Make Stage04 regression consume that selfhost runtime path by default (or via explicit flag), with clear fallback to seeded runtime when desired.
+Observed: crt0 references `memset` (undefined, HI20/LO12 relocations). Archive
+contains `mmio_minimal.s32o` with `memset` defined. Linker reports
+`members=1 symbols=43` but `After: syms=9 relocs=14` — no member pulled.
+All symbols resolve correctly when the same object is linked directly via `LINK-OBJ`.
 
-Acceptance criteria (future work):
-- A clean checkout can run Stage00 -> Stage04 using only:
-  - host C compiler for Stage00 `s32-emu`
-  - seeded `forth/kernel.s32x` + `forth/prelude.fth`
-  - no copied runtime `.s32o/.s32a` blobs from another machine
-- `selfhost/stage04/run-regression.sh` fails fast with clear missing-artifact guidance if runtime prerequisites are absent.
+Workaround: Stage04 now links `mmio_minimal.s32o` as a direct object instead of
+through an archive. This avoids the bug but means archive-based linking is untested
+in the selfhost-only path.
+
+Investigation needed:
+- Check if the Forth archiver's symbol index string table encoding matches what
+  `GSYM-FIND` expects (NUL termination, offsets, byte order)
+- Check if `AR-SYM-NAME` returns the correct `(c-addr u)` pair for comparison
+- The host-built archiver (`s32-ar.c` via `c` command) creates archives with
+  `symbols=0` — it may not write a symbol index at all
 
 ---
 

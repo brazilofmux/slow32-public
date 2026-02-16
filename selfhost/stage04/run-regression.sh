@@ -15,9 +15,8 @@ ASM_FTH="${STAGE4_ASM:-$ROOT_DIR/selfhost/stage01/asm.fth}"
 LINK_FTH="${STAGE4_LINK:-$ROOT_DIR/selfhost/stage03/link.fth}"
 TEST_DIR="${STAGE4_TEST_DIR:-$SCRIPT_DIR/tests}"
 VALIDATION_DIR="${STAGE4_VALIDATION_DIR:-$SCRIPT_DIR/validation}"
-RUNTIME_CRT0="${STAGE4_RUNTIME_CRT0:-$ROOT_DIR/runtime/crt0.s32o}"
-RUNTIME_LIBC_MMIO="${STAGE4_RUNTIME_LIBC_MMIO:-$ROOT_DIR/runtime/libc_mmio.s32a}"
-RUNTIME_LIBS32="${STAGE4_RUNTIME_LIBS32:-$ROOT_DIR/runtime/libs32.s32a}"
+CRT0_SRC="$ROOT_DIR/selfhost/stage01/crt0_minimal.s"
+MMIO_SRC="$ROOT_DIR/selfhost/stage01/mmio_minimal.s"
 
 SLOW32DUMP=0
 KEEP_ARTIFACTS=0
@@ -60,7 +59,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH" \
-         "$RUNTIME_CRT0" "$RUNTIME_LIBC_MMIO" "$RUNTIME_LIBS32"; do
+         "$CRT0_SRC" "$MMIO_SRC"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
 
@@ -68,6 +67,9 @@ WORKDIR="$(mktemp -d /tmp/stage4-regression.XXXXXX)"
 if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then
     trap 'rm -rf "$WORKDIR"' EXIT
 fi
+
+RUNTIME_CRT0="$WORKDIR/crt0_minimal.s32o"
+RUNTIME_MMIO_OBJ="$WORKDIR/mmio_minimal.s32o"
 
 run_forth() {
     local script_a="$1"
@@ -87,6 +89,16 @@ FTH
         return 1
     fi
 }
+
+# --- Build selfhost runtime from stage01 sources ---
+echo "[Runtime] building selfhost bootstrap runtime"
+run_forth "$ASM_FTH" /dev/null "S\" $CRT0_SRC\" S\" $RUNTIME_CRT0\" ASSEMBLE
+BYE" "$WORKDIR/crt0.as.log"
+[[ -s "$RUNTIME_CRT0" ]] || { echo "failed to assemble crt0_minimal.s" >&2; exit 1; }
+
+run_forth "$ASM_FTH" /dev/null "S\" $MMIO_SRC\" S\" $RUNTIME_MMIO_OBJ\" ASSEMBLE
+BYE" "$WORKDIR/mmio.as.log"
+[[ -s "$RUNTIME_MMIO_OBJ" ]] || { echo "failed to assemble mmio_minimal.s" >&2; exit 1; }
 
 compile_c() {
     local src="$1"
@@ -126,9 +138,8 @@ link_obj() {
     run_forth "$LINK_FTH" /dev/null "LINK-INIT
 S\" $RUNTIME_CRT0\" LINK-OBJ
 S\" $obj\" LINK-OBJ
+S\" $RUNTIME_MMIO_OBJ\" LINK-OBJ
 65536 LINK-MMIO
-S\" $RUNTIME_LIBC_MMIO\" LINK-ARCHIVE
-S\" $RUNTIME_LIBS32\" LINK-ARCHIVE
 S\" $exe\" LINK-EMIT
 BYE" "$log"
     [[ -s "$exe" ]] || { echo "linker produced no output: $obj" >&2; return 1; }
