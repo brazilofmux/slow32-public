@@ -24,6 +24,7 @@ uint32_t superblock_profile_min_samples = SUPERBLOCK_PROFILE_MIN_SAMPLES;
 uint32_t superblock_taken_pct_threshold = SUPERBLOCK_TAKEN_PCT_THRESHOLD;
 uint32_t cmp_branch_fusion_count = 0;  // Global fusion counter for stats
 uint32_t cbz_peephole_count = 0;      // CBZ/CBNZ peephole counter for stats
+uint32_t native_stub_count = 0;       // Native intrinsic stub counter
 
 // ============================================================================
 // Instruction decoding (shared with x86-64 translator)
@@ -1888,13 +1889,6 @@ void translate_mulh(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) 
     emit_store_guest_reg(ctx, rd, W0);
 }
 
-// Helper to emit 64-bit logical shift right (LSR Xd, Xn, #shift)
-static void emit_lsr_x64_imm(emit_ctx_t *e, a64_reg_t rd, a64_reg_t rn, uint32_t shift) {
-    // UBFM Xd, Xn, #shift, #63
-    uint32_t inst = 0xD340FC00 | ((shift & 0x3F) << 16) | ((rn & 0x1F) << 5) | (rd & 0x1F);
-    emit_inst(e, inst);
-}
-
 void translate_mulhu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
@@ -2636,10 +2630,740 @@ block_done:
 }
 
 // ============================================================================
-// Stage 2: translate_block_cached (stub — to be implemented)
+// Intrinsic recognition: emit native stubs for known functions (AArch64)
+// ============================================================================
+
+// Helper: emit stub prologue (save LR around host BLR calls)
+// STP X29, X30, [SP, #-16]!
+static void emit_a64_stub_prologue(emit_ctx_t *e) {
+    // In STP/LDP, register 31 in the Rn field = SP (not XZR)
+    emit_stp_x64_pre(e, W29, W30, WZR, -16);  // WZR=31=SP in load/store context
+}
+
+// Helper: emit stub epilogue (restore LR, set PC = guest LR, exit indirect)
+static void emit_a64_stub_epilogue(emit_ctx_t *e) {
+    // LDP X29, X30, [SP], #16
+    emit_ldp_x64_post(e, W29, W30, WZR, 16);
+    // PC = guest r31 (link register)
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(REG_LR));
+    emit_str_w32_imm(e, W0, W20, CPU_PC_OFFSET);
+    // exit_reason = EXIT_INDIRECT
+    emit_mov_w32_imm32(e, W0, EXIT_INDIRECT);
+    emit_str_w32_imm(e, W0, W20, CPU_EXIT_REASON_OFFSET);
+    emit_ret_lr(e);
+}
+
+// Helper: emit BLR to a host function via X8
+static void emit_a64_call_host(emit_ctx_t *e, void *fn) {
+    emit_mov_x64_imm64(e, W8, (uint64_t)(uintptr_t)fn);
+    emit_blr(e, W8);
+}
+
+// Helper: combine two 32-bit guest regs (lo, hi) into X0 as a 64-bit double
+// Loads regs[lo_reg] → W0, regs[hi_reg] → W1, combines: X0 = W0 | (X1 << 32)
+static void emit_a64_load_f64_args(emit_ctx_t *e, int lo_reg, int hi_reg) {
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(lo_reg));
+    emit_ldr_w32_imm(e, W1, W20, GUEST_REG_OFFSET(hi_reg));
+    // ORR X0, X0, X1, LSL #32
+    emit_orr_x64_lsl(e, W0, W0, W1, 32);
+    // FMOV D0, X0
+    emit_fmov_d_x64(e, 0, W0);
+}
+
+// Helper: store D0 result to guest r1:r2 (lo:hi)
+static void emit_a64_store_f64_result(emit_ctx_t *e) {
+    // FMOV X0, D0
+    emit_fmov_x64_d(e, W0, 0);
+    // Store low 32 bits to r1
+    emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
+    // LSR X0, X0, #32 → high 32 bits
+    emit_lsr_x64_imm(e, W0, W0, 32);
+    // Store to r2
+    emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(2));
+}
+
+// ---- Memory operation stubs ----
+// All memory stubs include runtime bounds checking:
+//   count == 0 → skip (no-op)
+//   count > mem_size → skip
+//   addr > mem_size - count → skip (addr + count would exceed guest memory)
+// On skip, return value (r1) is still set and we return via normal epilogue.
+
+// Helper: patch an array of CBZ/B.cond instructions to jump to current offset.
+// Both CBZ and B.cond use imm19 at bits[23:5], offset in 4-byte units.
+static void patch_skip_branches(emit_ctx_t *e, size_t *offsets, int count) {
+    size_t target = emit_offset(e);
+    for (int i = 0; i < count; i++) {
+        int32_t rel = (int32_t)(target - offsets[i]);
+        uint32_t *patch = (uint32_t *)(e->buf + offsets[i]);
+        int32_t imm19 = rel >> 2;
+        *patch = (*patch & ~(0x7FFFF << 5)) | ((imm19 & 0x7FFFF) << 5);
+    }
+}
+
+// memcpy / memmove stub
+// Guest: r3=dest, r4=src, r5=count, r1=return(dest)
+static bool emit_native_memcpy_stub_a64(translate_ctx_t *ctx, translated_block_t *block,
+                                         bool is_memmove) {
+    emit_ctx_t *e = &ctx->emit;
+
+    emit_a64_stub_prologue(e);
+
+    // Load guest regs
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(3));   // dest
+    emit_ldr_w32_imm(e, W1, W20, GUEST_REG_OFFSET(4));   // src
+    emit_ldr_w32_imm(e, W2, W20, GUEST_REG_OFFSET(5));   // count
+
+    // Store dest as return value in r1
+    emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
+
+    // Bounds checking
+    emit_ldr_w32_imm(e, W3, W20, CPU_MEM_SIZE_OFFSET);
+
+    size_t skip_patches[4];
+    int skip_count = 0;
+
+    // count == 0 → skip (no-op)
+    skip_patches[skip_count++] = emit_offset(e);
+    emit_cbz_w32(e, W2, 0);
+
+    // count > mem_size → skip
+    emit_cmp_w32_w32(e, W2, W3);
+    skip_patches[skip_count++] = emit_offset(e);
+    emit_b_cond(e, COND_HI, 0);
+
+    // W4 = mem_size - count
+    emit_sub_w32(e, W4, W3, W2);
+
+    // dest > mem_size - count → skip
+    emit_cmp_w32_w32(e, W0, W4);
+    skip_patches[skip_count++] = emit_offset(e);
+    emit_b_cond(e, COND_HI, 0);
+
+    // src > mem_size - count → skip
+    emit_cmp_w32_w32(e, W1, W4);
+    skip_patches[skip_count++] = emit_offset(e);
+    emit_b_cond(e, COND_HI, 0);
+
+    // Bounds OK — convert guest addresses to host pointers
+    emit_add_x64_x64_w32_uxtw(e, W0, W21, W0);
+    emit_add_x64_x64_w32_uxtw(e, W1, W21, W1);
+
+    // Call host memcpy/memmove
+    if (is_memmove) {
+        emit_a64_call_host(e, (void *)memmove);
+    } else {
+        emit_a64_call_host(e, (void *)memcpy);
+    }
+
+    // Patch skip branches to land here (at the epilogue)
+    patch_skip_branches(e, skip_patches, skip_count);
+
+    emit_a64_stub_epilogue(e);
+
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// memset stub
+// Guest: r3=dest, r4=value(byte), r5=count, r1=return(dest)
+static bool emit_native_memset_stub_a64(translate_ctx_t *ctx, translated_block_t *block) {
+    emit_ctx_t *e = &ctx->emit;
+
+    emit_a64_stub_prologue(e);
+
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(3));   // dest
+    emit_ldr_w32_imm(e, W1, W20, GUEST_REG_OFFSET(4));   // value
+    emit_ldr_w32_imm(e, W2, W20, GUEST_REG_OFFSET(5));   // count
+
+    // Store dest as return value
+    emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
+
+    // Bounds checking
+    emit_ldr_w32_imm(e, W3, W20, CPU_MEM_SIZE_OFFSET);
+
+    size_t skip_patches[3];
+    int skip_count = 0;
+
+    // count == 0 → skip
+    skip_patches[skip_count++] = emit_offset(e);
+    emit_cbz_w32(e, W2, 0);
+
+    // count > mem_size → skip
+    emit_cmp_w32_w32(e, W2, W3);
+    skip_patches[skip_count++] = emit_offset(e);
+    emit_b_cond(e, COND_HI, 0);
+
+    // dest > mem_size - count → skip
+    emit_sub_w32(e, W4, W3, W2);
+    emit_cmp_w32_w32(e, W0, W4);
+    skip_patches[skip_count++] = emit_offset(e);
+    emit_b_cond(e, COND_HI, 0);
+
+    // Bounds OK
+    emit_add_x64_x64_w32_uxtw(e, W0, W21, W0);
+    // W1 = value, W2 = count already set
+
+    emit_a64_call_host(e, (void *)memset);
+
+    // Patch skip branches
+    patch_skip_branches(e, skip_patches, skip_count);
+
+    emit_a64_stub_epilogue(e);
+
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// strlen stub
+// Guest: r3=str → r1=length
+static bool emit_native_strlen_stub_a64(translate_ctx_t *ctx, translated_block_t *block) {
+    emit_ctx_t *e = &ctx->emit;
+
+    emit_a64_stub_prologue(e);
+
+    // Load guest r3 (string pointer)
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(3));
+
+    // Bounds check: addr < mem_size
+    emit_ldr_w32_imm(e, W3, W20, CPU_MEM_SIZE_OFFSET);
+    emit_cmp_w32_w32(e, W0, W3);
+    // B.HS → fault (unsigned >=)
+    size_t fault_patch_offset = emit_offset(e);
+    emit_b_cond(e, COND_HS, 0);  // patch later
+
+    // Save guest addr in W4 for fault reporting
+    emit_mov_w32_w32(e, W4, W0);
+
+    // X0 = X21 + W0, UXTW (host pointer to string start)
+    emit_add_x64_x64_w32_uxtw(e, W0, W21, W0);
+    // Save host start pointer in X9 for length calculation
+    emit_mov_x64_x64(e, W9, W0);
+
+    // memchr(str, 0, mem_size - addr)
+    emit_mov_w32_imm32(e, W1, 0);          // search for null
+    emit_sub_w32(e, W2, W3, W4);           // W2 = mem_size - addr
+
+    emit_a64_call_host(e, (void *)memchr);
+
+    // If NULL (not found) → fault
+    emit_cbz_x64(e, W0, 0);  // patch later
+    size_t null_patch_offset = emit_offset(e) - 4;
+
+    // length = result - start (both host pointers, 64-bit subtraction)
+    emit_sub_x64(e, W0, W0, W9);
+
+    // Store length to guest r1
+    emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
+
+    emit_a64_stub_epilogue(e);
+
+    // Fault path (bounds check or null not found)
+    size_t fault_offset = emit_offset(e);
+
+    // Patch the B.HS to jump here
+    int32_t fault_rel1 = (int32_t)(fault_offset - fault_patch_offset);
+    uint32_t *patch1 = (uint32_t *)(e->buf + fault_patch_offset);
+    int32_t imm19_1 = fault_rel1 >> 2;
+    *patch1 = (*patch1 & ~(0x7FFFF << 5)) | ((imm19_1 & 0x7FFFF) << 5);
+
+    // Patch the CBZ to jump here
+    int32_t fault_rel2 = (int32_t)(fault_offset - null_patch_offset);
+    uint32_t *patch2 = (uint32_t *)(e->buf + null_patch_offset);
+    int32_t imm19_2 = fault_rel2 >> 2;
+    *patch2 = (*patch2 & ~(0x7FFFF << 5)) | ((imm19_2 & 0x7FFFF) << 5);
+
+    // Restore LR before fault exit
+    emit_ldp_x64_post(e, W29, W30, WZR, 16);
+
+    // Fault: set PC = guest_pc, exit_reason = EXIT_FAULT_LOAD, exit_info = addr
+    emit_mov_w32_imm32(e, W0, ctx->guest_pc);
+    emit_str_w32_imm(e, W0, W20, CPU_PC_OFFSET);
+    emit_mov_w32_imm32(e, W0, EXIT_FAULT_LOAD);
+    emit_str_w32_imm(e, W0, W20, CPU_EXIT_REASON_OFFSET);
+    emit_str_w32_imm(e, W4, W20, CPU_EXIT_INFO_OFFSET);
+    emit_ret_lr(e);
+
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// memswap stub (byte-by-byte swap loop using host pointers)
+// Guest: r3=a, r4=b, r5=count, no return value
+static bool emit_native_memswap_stub_a64(translate_ctx_t *ctx, translated_block_t *block) {
+    emit_ctx_t *e = &ctx->emit;
+
+    emit_a64_stub_prologue(e);
+
+    // Load guest registers
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(3));   // a
+    emit_ldr_w32_imm(e, W1, W20, GUEST_REG_OFFSET(4));   // b
+    emit_ldr_w32_imm(e, W2, W20, GUEST_REG_OFFSET(5));   // count
+
+    // Bounds checking
+    emit_ldr_w32_imm(e, W3, W20, CPU_MEM_SIZE_OFFSET);
+
+    size_t skip_patches[4];
+    int skip_count = 0;
+
+    // count == 0 → skip
+    skip_patches[skip_count++] = emit_offset(e);
+    emit_cbz_w32(e, W2, 0);
+
+    // count > mem_size → skip
+    emit_cmp_w32_w32(e, W2, W3);
+    skip_patches[skip_count++] = emit_offset(e);
+    emit_b_cond(e, COND_HI, 0);
+
+    // W4 = mem_size - count
+    emit_sub_w32(e, W4, W3, W2);
+
+    // a > mem_size - count → skip
+    emit_cmp_w32_w32(e, W0, W4);
+    skip_patches[skip_count++] = emit_offset(e);
+    emit_b_cond(e, COND_HI, 0);
+
+    // b > mem_size - count → skip
+    emit_cmp_w32_w32(e, W1, W4);
+    skip_patches[skip_count++] = emit_offset(e);
+    emit_b_cond(e, COND_HI, 0);
+
+    // Bounds OK — convert to host pointers
+    // X9 = X21 + W0, UXTW (host ptr a)
+    emit_add_x64_x64_w32_uxtw(e, W9, W21, W0);
+    // X10 = X21 + W1, UXTW (host ptr b)
+    emit_add_x64_x64_w32_uxtw(e, W10, W21, W1);
+    // W2 = count (loop counter)
+
+    // Byte swap loop:
+    //   .Lloop:
+    //     CBZ W2, .Ldone
+    //     LDRB W3, [X9]
+    //     LDRB W4, [X10]
+    //     STRB W4, [X9]
+    //     STRB W3, [X10]
+    //     ADD X9, X9, #1
+    //     ADD X10, X10, #1
+    //     SUB W2, W2, #1
+    //     B .Lloop
+    //   .Ldone:
+
+    size_t loop_top = emit_offset(e);
+
+    // CBZ W2, .Ldone (patch later)
+    size_t cbz_offset = emit_offset(e);
+    emit_cbz_w32(e, W2, 0);  // placeholder
+
+    // LDRB W3, [X9, #0]
+    emit_ldrb_imm(e, W3, W9, 0);
+    // LDRB W4, [X10, #0]
+    emit_ldrb_imm(e, W4, W10, 0);
+    // STRB W4, [X9, #0]
+    emit_strb_imm(e, W4, W9, 0);
+    // STRB W3, [X10, #0]
+    emit_strb_imm(e, W3, W10, 0);
+
+    // Advance pointers
+    emit_add_x64_imm(e, W9, W9, 1);
+    emit_add_x64_imm(e, W10, W10, 1);
+    // Decrement counter
+    emit_sub_w32_imm(e, W2, W2, 1);
+    // B .Lloop
+    int32_t loop_rel = (int32_t)(loop_top - emit_offset(e));
+    emit_b(e, loop_rel);
+
+    // .Ldone: patch CBZ
+    size_t done_offset = emit_offset(e);
+    int32_t cbz_rel = (int32_t)(done_offset - cbz_offset);
+    uint32_t *cbz_patch = (uint32_t *)(e->buf + cbz_offset);
+    int32_t cbz_imm19 = cbz_rel >> 2;
+    *cbz_patch = (*cbz_patch & ~(0x7FFFF << 5)) | ((cbz_imm19 & 0x7FFFF) << 5);
+
+    // Patch bounds-check skip branches to land here
+    patch_skip_branches(e, skip_patches, skip_count);
+
+    emit_a64_stub_epilogue(e);
+
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// ---- Math function stubs (11 signatures) ----
+
+// SIG_F32_F32: float fn(float)
+// Guest: r3=float_bits → r1=float_bits
+static bool emit_native_math_f32_unary_a64(translate_ctx_t *ctx, translated_block_t *block,
+                                            void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+    emit_a64_stub_prologue(e);
+
+    // Load r3 → W0, then FMOV S0, W0
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(3));
+    emit_fmov_s_w32(e, 0, W0);
+
+    emit_a64_call_host(e, host_fn);
+
+    // FMOV W0, S0 → store to r1
+    emit_fmov_w32_s(e, W0, 0);
+    emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
+
+    emit_a64_stub_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// SIG_F64_F64: double fn(double)
+// Guest: r3=low32, r4=high32 → r1=low32, r2=high32
+static bool emit_native_math_f64_unary_a64(translate_ctx_t *ctx, translated_block_t *block,
+                                            void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+    emit_a64_stub_prologue(e);
+
+    emit_a64_load_f64_args(e, 3, 4);  // r3:r4 → D0
+
+    emit_a64_call_host(e, host_fn);
+
+    emit_a64_store_f64_result(e);  // D0 → r1:r2
+
+    emit_a64_stub_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// SIG_F32_F32_F32: float fn(float, float)
+// Guest: r3=x, r4=y → r1=result
+static bool emit_native_math_f32_binary_a64(translate_ctx_t *ctx, translated_block_t *block,
+                                             void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+    emit_a64_stub_prologue(e);
+
+    // r3 → S0
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(3));
+    emit_fmov_s_w32(e, 0, W0);
+    // r4 → S1
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(4));
+    emit_fmov_s_w32(e, 1, W0);
+
+    emit_a64_call_host(e, host_fn);
+
+    // S0 → r1
+    emit_fmov_w32_s(e, W0, 0);
+    emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
+
+    emit_a64_stub_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// SIG_F64_F64_F64: double fn(double, double)
+// Guest: r3:r4=x, r5:r6=y → r1:r2=result
+static bool emit_native_math_f64_binary_a64(translate_ctx_t *ctx, translated_block_t *block,
+                                             void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+    emit_a64_stub_prologue(e);
+
+    // r3:r4 → D0
+    emit_a64_load_f64_args(e, 3, 4);
+    // r5:r6 → D1
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(5));
+    emit_ldr_w32_imm(e, W1, W20, GUEST_REG_OFFSET(6));
+    emit_orr_x64_lsl(e, W0, W0, W1, 32);
+    emit_fmov_d_x64(e, 1, W0);
+
+    emit_a64_call_host(e, host_fn);
+
+    emit_a64_store_f64_result(e);
+
+    emit_a64_stub_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// SIG_F64_F64_I32: double fn(double, int)  — ldexp
+// Guest: r3:r4=double, r5=int → r1:r2=result
+static bool emit_native_math_f64_i32_a64(translate_ctx_t *ctx, translated_block_t *block,
+                                          void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+    emit_a64_stub_prologue(e);
+
+    // r3:r4 → D0
+    emit_a64_load_f64_args(e, 3, 4);
+    // r5 → W0 (AAPCS64: int arg in W0)
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(5));
+
+    emit_a64_call_host(e, host_fn);
+
+    emit_a64_store_f64_result(e);
+
+    emit_a64_stub_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// SIG_F32_F32_I32: float fn(float, int)  — ldexpf
+// Guest: r3=float, r4=int → r1=result
+static bool emit_native_math_f32_i32_a64(translate_ctx_t *ctx, translated_block_t *block,
+                                          void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+    emit_a64_stub_prologue(e);
+
+    // r3 → S0
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(3));
+    emit_fmov_s_w32(e, 0, W0);
+    // r4 → W0 (int arg)
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(4));
+
+    emit_a64_call_host(e, host_fn);
+
+    // S0 → r1
+    emit_fmov_w32_s(e, W0, 0);
+    emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
+
+    emit_a64_stub_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// SIG_F64_F64_DPTR: double fn(double, double*)  — modf
+// Guest: r3:r4=double, r5=guest_ptr → r1:r2=result, *ptr written
+static bool emit_native_math_f64_dptr_a64(translate_ctx_t *ctx, translated_block_t *block,
+                                           void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+    emit_a64_stub_prologue(e);
+
+    // r3:r4 → D0
+    emit_a64_load_f64_args(e, 3, 4);
+    // r5 → guest ptr → host ptr in X0
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(5));
+    emit_add_x64_x64_w32_uxtw(e, W0, W21, W0);
+
+    emit_a64_call_host(e, host_fn);
+
+    emit_a64_store_f64_result(e);
+
+    emit_a64_stub_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// SIG_F64_F64_IPTR: double fn(double, int*)  — frexp
+// Guest: r3:r4=double, r5=guest_ptr → r1:r2=result, *ptr written
+static bool emit_native_math_f64_iptr_a64(translate_ctx_t *ctx, translated_block_t *block,
+                                           void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+    emit_a64_stub_prologue(e);
+
+    emit_a64_load_f64_args(e, 3, 4);
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(5));
+    emit_add_x64_x64_w32_uxtw(e, W0, W21, W0);
+
+    emit_a64_call_host(e, host_fn);
+
+    emit_a64_store_f64_result(e);
+
+    emit_a64_stub_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// SIG_F32_F32_FPTR: float fn(float, float*)  — modff
+// Guest: r3=float, r4=guest_ptr → r1=result, *ptr written
+static bool emit_native_math_f32_fptr_a64(translate_ctx_t *ctx, translated_block_t *block,
+                                           void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+    emit_a64_stub_prologue(e);
+
+    // r3 → S0
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(3));
+    emit_fmov_s_w32(e, 0, W0);
+    // r4 → guest ptr → host ptr in X0
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(4));
+    emit_add_x64_x64_w32_uxtw(e, W0, W21, W0);
+
+    emit_a64_call_host(e, host_fn);
+
+    // S0 → r1
+    emit_fmov_w32_s(e, W0, 0);
+    emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
+
+    emit_a64_stub_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// SIG_F32_F32_IPTR2: float fn(float, int*)  — frexpf
+// Guest: r3=float, r4=guest_ptr → r1=result, *ptr written
+static bool emit_native_math_f32_iptr_a64(translate_ctx_t *ctx, translated_block_t *block,
+                                           void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+    emit_a64_stub_prologue(e);
+
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(3));
+    emit_fmov_s_w32(e, 0, W0);
+    emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(4));
+    emit_add_x64_x64_w32_uxtw(e, W0, W21, W0);
+
+    emit_a64_call_host(e, host_fn);
+
+    emit_fmov_w32_s(e, W0, 0);
+    emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
+
+    emit_a64_stub_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// SIG_I32_F64: int fn(double)  — isnan, isinf, isfinite
+// Guest: r3:r4=double → r1=int result
+static bool emit_native_math_i32_f64_a64(translate_ctx_t *ctx, translated_block_t *block,
+                                          void *host_fn) {
+    emit_ctx_t *e = &ctx->emit;
+    emit_a64_stub_prologue(e);
+
+    emit_a64_load_f64_args(e, 3, 4);
+
+    emit_a64_call_host(e, host_fn);
+
+    // Result is in W0 (int), store to r1
+    emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
+
+    emit_a64_stub_epilogue(e);
+    block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+    block->guest_size = 4;
+    return !e->overflow;
+}
+
+// Dispatch to the correct math emitter based on signature type
+static bool emit_native_math_stub_a64(translate_ctx_t *ctx, translated_block_t *block,
+                                       void *host_fn, uint8_t sig) {
+    switch (sig) {
+        case SIG_F32_F32:      return emit_native_math_f32_unary_a64(ctx, block, host_fn);
+        case SIG_F64_F64:      return emit_native_math_f64_unary_a64(ctx, block, host_fn);
+        case SIG_F32_F32_F32:  return emit_native_math_f32_binary_a64(ctx, block, host_fn);
+        case SIG_F64_F64_F64:  return emit_native_math_f64_binary_a64(ctx, block, host_fn);
+        case SIG_F64_F64_I32:  return emit_native_math_f64_i32_a64(ctx, block, host_fn);
+        case SIG_F32_F32_I32:  return emit_native_math_f32_i32_a64(ctx, block, host_fn);
+        case SIG_F64_F64_DPTR: return emit_native_math_f64_dptr_a64(ctx, block, host_fn);
+        case SIG_F64_F64_IPTR: return emit_native_math_f64_iptr_a64(ctx, block, host_fn);
+        case SIG_F32_F32_FPTR: return emit_native_math_f32_fptr_a64(ctx, block, host_fn);
+        case SIG_F32_F32_IPTR2:return emit_native_math_f32_iptr_a64(ctx, block, host_fn);
+        case SIG_I32_F64:      return emit_native_math_i32_f64_a64(ctx, block, host_fn);
+        default: return false;
+    }
+}
+
+// ---- try_emit_intrinsic_a64: main entry point ----
+
+static translated_block_t *try_emit_intrinsic_a64(translate_ctx_t *ctx, uint32_t guest_pc) {
+    dbt_cpu_state_t *cpu = ctx->cpu;
+    if (!cpu->intrinsics_enabled) return NULL;
+
+    bool (*emitter)(translate_ctx_t *, translated_block_t *) = NULL;
+    bool is_memmove = false;
+    void *math_fn = NULL;
+    uint8_t math_sig = 0;
+
+    if (cpu->intrinsic_memcpy && guest_pc == cpu->intrinsic_memcpy) {
+        // Use emit_native_memcpy_stub_a64 with is_memmove=false
+    } else if (cpu->intrinsic_memset && guest_pc == cpu->intrinsic_memset) {
+        emitter = emit_native_memset_stub_a64;
+    } else if (cpu->intrinsic_memmove && guest_pc == cpu->intrinsic_memmove) {
+        is_memmove = true;
+    } else if (cpu->intrinsic_strlen && guest_pc == cpu->intrinsic_strlen) {
+        emitter = emit_native_strlen_stub_a64;
+    } else if (cpu->intrinsic_memswap && guest_pc == cpu->intrinsic_memswap) {
+        emitter = emit_native_memswap_stub_a64;
+    } else {
+        // Check math intercept table
+        for (int i = 0; i < cpu->num_intercepts; i++) {
+            if (cpu->intercepts[i].guest_addr == guest_pc) {
+                math_fn = cpu->intercepts[i].host_fn;
+                math_sig = cpu->intercepts[i].sig;
+                break;
+            }
+        }
+        if (!math_fn) return NULL;
+    }
+
+    block_cache_t *cache = ctx->cache;
+    if (!cache) return NULL;
+
+    // Allocate block
+    translated_block_t *block = cache_alloc_block(cache, guest_pc);
+    if (!block) {
+        cache_flush(cache);
+        block = cache_alloc_block(cache, guest_pc);
+        if (!block) return NULL;
+    }
+
+    uint8_t *code_start = cache_get_code_ptr(cache);
+    if (!code_start) {
+        cache_flush(cache);
+        block = cache_alloc_block(cache, guest_pc);
+        code_start = cache_get_code_ptr(cache);
+        if (!code_start || !block) return NULL;
+    }
+
+    emit_ctx_t *e = &ctx->emit;
+    emit_init(e, code_start, cache->code_buffer_size - cache->code_buffer_used);
+    memset(block, 0, sizeof(*block));
+    block->guest_pc = guest_pc;
+    block->host_code = code_start;
+
+    const char *name = "unknown";
+    if (math_fn) name = "math";
+    else if (emitter == emit_native_memset_stub_a64) name = "memset";
+    else if (emitter == emit_native_strlen_stub_a64) name = "strlen";
+    else if (emitter == emit_native_memswap_stub_a64) name = "memswap";
+    else if (is_memmove) name = "memmove";
+    else name = "memcpy";
+
+    bool ok;
+    if (math_fn) {
+        ok = emit_native_math_stub_a64(ctx, block, math_fn, math_sig);
+    } else if (emitter) {
+        ok = emitter(ctx, block);
+    } else {
+        ok = emit_native_memcpy_stub_a64(ctx, block, is_memmove);
+    }
+
+    if (!ok) return NULL;
+
+    native_stub_count++;
+    block->host_size = emit_offset(e);
+    if (DBT_TRACE) {
+        fprintf(stderr, "DBT: Emitted intrinsic stub '%s' at PC=0x%08X (%u bytes)\n",
+                name, guest_pc, block->host_size);
+    }
+    cache_commit_code(cache, block->host_size);
+    cache_insert(cache, block);
+    cache_chain_incoming(cache, block);
+    return block;
+}
+
+// ============================================================================
+// Stage 2: translate_block_cached
 // ============================================================================
 
 translated_block_t *translate_block_cached(translate_ctx_t *ctx, uint32_t guest_pc) {
+    // Check for intrinsic recognition before normal translation
+    translated_block_t *intrinsic_block = try_emit_intrinsic_a64(ctx, guest_pc);
+    if (intrinsic_block) return intrinsic_block;
+
     dbt_cpu_state_t *cpu = ctx->cpu;
     block_cache_t *cache = ctx->cache;
     emit_ctx_t *e = &ctx->emit;

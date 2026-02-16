@@ -331,6 +331,55 @@ void emit_nop(emit_ctx_t *ctx);
 void emit_brk(emit_ctx_t *ctx, uint16_t imm);
 
 // ============================================================================
+// FMOV (GPR <-> FP scalar)
+// ============================================================================
+
+// FMOV Sd, Wn  (move 32-bit GPR to single-precision FP register)
+void emit_fmov_s_w32(emit_ctx_t *ctx, int sd, a64_reg_t wn);
+
+// FMOV Wn, Sd  (move single-precision FP register to 32-bit GPR)
+void emit_fmov_w32_s(emit_ctx_t *ctx, a64_reg_t wd, int sn);
+
+// FMOV Dd, Xn  (move 64-bit GPR to double-precision FP register)
+void emit_fmov_d_x64(emit_ctx_t *ctx, int dd, a64_reg_t xn);
+
+// FMOV Xd, Dd  (move double-precision FP register to 64-bit GPR)
+void emit_fmov_x64_d(emit_ctx_t *ctx, a64_reg_t xd, int dn);
+
+// ============================================================================
+// STP/LDP with general base register (64-bit)
+// ============================================================================
+
+// STP Xt1, Xt2, [Xn, #imm]!  (pre-index)
+void emit_stp_x64_pre(emit_ctx_t *ctx, a64_reg_t rt1, a64_reg_t rt2, a64_reg_t rn, int imm);
+
+// LDP Xt1, Xt2, [Xn], #imm  (post-index)
+void emit_ldp_x64_post(emit_ctx_t *ctx, a64_reg_t rt1, a64_reg_t rt2, a64_reg_t rn, int imm);
+
+// ============================================================================
+// Extended register arithmetic (64-bit)
+// ============================================================================
+
+// ADD Xd, Xn, Wm, UXTW  (zero-extend 32-bit to 64-bit and add)
+void emit_add_x64_x64_w32_uxtw(emit_ctx_t *ctx, a64_reg_t xd, a64_reg_t xn, a64_reg_t wm);
+
+// ============================================================================
+// 64-bit logical/shift
+// ============================================================================
+
+// ORR Xd, Xn, Xm, LSL #shift  (64-bit OR with left shift)
+void emit_orr_x64_lsl(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn, a64_reg_t rm, uint32_t shift);
+
+// LSR Xd, Xn, #shift  (64-bit logical shift right)
+void emit_lsr_x64_imm(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn, uint32_t shift);
+
+// ADD Xd, Xn, #imm12  (64-bit add immediate)
+void emit_add_x64_imm(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn, uint32_t imm12);
+
+// SUB Xd, Xn, Xm  (64-bit subtract)
+void emit_sub_x64(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn, a64_reg_t rm);
+
+// ============================================================================
 // Patching
 // ============================================================================
 

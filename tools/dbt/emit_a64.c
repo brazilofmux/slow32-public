@@ -726,6 +726,103 @@ void emit_brk(emit_ctx_t *ctx, uint16_t imm) {
 }
 
 // ============================================================================
+// FMOV (GPR <-> FP scalar)
+// ============================================================================
+
+// FMOV Sd, Wn:  0001 1110 0010 0111 0000 00 Rn Rd
+void emit_fmov_s_w32(emit_ctx_t *ctx, int sd, a64_reg_t wn) {
+    uint32_t inst = 0x1E270000 | ((wn & 0x1F) << 5) | (sd & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+// FMOV Wn, Sd:  0001 1110 0010 0110 0000 00 Rn Rd
+void emit_fmov_w32_s(emit_ctx_t *ctx, a64_reg_t wd, int sn) {
+    uint32_t inst = 0x1E260000 | ((sn & 0x1F) << 5) | (wd & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+// FMOV Dd, Xn:  1001 1110 0110 0111 0000 00 Rn Rd
+void emit_fmov_d_x64(emit_ctx_t *ctx, int dd, a64_reg_t xn) {
+    uint32_t inst = 0x9E670000 | ((xn & 0x1F) << 5) | (dd & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+// FMOV Xd, Dd:  1001 1110 0110 0110 0000 00 Rn Rd
+void emit_fmov_x64_d(emit_ctx_t *ctx, a64_reg_t xd, int dn) {
+    uint32_t inst = 0x9E660000 | ((dn & 0x1F) << 5) | (xd & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+// ============================================================================
+// STP/LDP with general base register (64-bit)
+// ============================================================================
+
+// STP Xt1, Xt2, [Xn, #imm]!  (pre-index, 64-bit)
+void emit_stp_x64_pre(emit_ctx_t *ctx, a64_reg_t rt1, a64_reg_t rt2, a64_reg_t rn, int imm) {
+    int32_t scaled = imm / 8;
+    uint32_t inst = 0xA9800000 | ((scaled & 0x7F) << 15) | ((rt2 & 0x1F) << 10)
+                  | ((rn & 0x1F) << 5) | (rt1 & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+// LDP Xt1, Xt2, [Xn], #imm  (post-index, 64-bit)
+void emit_ldp_x64_post(emit_ctx_t *ctx, a64_reg_t rt1, a64_reg_t rt2, a64_reg_t rn, int imm) {
+    int32_t scaled = imm / 8;
+    uint32_t inst = 0xA8C00000 | ((scaled & 0x7F) << 15) | ((rt2 & 0x1F) << 10)
+                  | ((rn & 0x1F) << 5) | (rt1 & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+// ============================================================================
+// Extended register arithmetic (64-bit)
+// ============================================================================
+
+// ADD Xd, Xn, Wm, UXTW:  1000 1011 0010 0000 0100 0000 00 Rn Rd
+void emit_add_x64_x64_w32_uxtw(emit_ctx_t *ctx, a64_reg_t xd, a64_reg_t xn, a64_reg_t wm) {
+    uint32_t inst = 0x8B204000 | ((wm & 0x1F) << 16) | ((xn & 0x1F) << 5) | (xd & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+// ============================================================================
+// 64-bit logical/shift
+// ============================================================================
+
+// ORR Xd, Xn, Xm, LSL #shift
+void emit_orr_x64_lsl(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn, a64_reg_t rm, uint32_t shift) {
+    // 1 01 01010 00 0 Rm imm6 Rn Rd  (shift type 00 = LSL)
+    uint32_t inst = 0xAA000000 | ((rm & 0x1F) << 16) | ((shift & 0x3F) << 10)
+                  | ((rn & 0x1F) << 5) | (rd & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+// LSR Xd, Xn, #shift -> UBFM Xd, Xn, #shift, #63
+void emit_lsr_x64_imm(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn, uint32_t shift) {
+    shift &= 63;
+    if (shift == 0) {
+        if (rd != rn) emit_mov_x64_x64(ctx, rd, rn);
+        return;
+    }
+    // UBFM Xd, Xn, #shift, #63:  1 10 100110 1 immr 111111 Rn Rd
+    uint32_t inst = 0xD340FC00 | ((shift & 0x3F) << 16)
+                  | ((rn & 0x1F) << 5) | (rd & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+// ADD Xd, Xn, #imm12  (64-bit add immediate)
+void emit_add_x64_imm(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn, uint32_t imm12) {
+    // 1 00 100010 0 imm12 Rn Rd
+    uint32_t inst = 0x91000000 | ((imm12 & 0xFFF) << 10) | ((rn & 0x1F) << 5) | (rd & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+// SUB Xd, Xn, Xm  (64-bit subtract)
+void emit_sub_x64(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn, a64_reg_t rm) {
+    // 1 10 01011 00 0 Rm 000000 Rn Rd
+    uint32_t inst = 0xCB000000 | ((rm & 0x1F) << 16) | ((rn & 0x1F) << 5) | (rd & 0x1F);
+    emit_inst(ctx, inst);
+}
+
+// ============================================================================
 // Patching
 // ============================================================================
 

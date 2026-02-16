@@ -1427,6 +1427,10 @@ int main(int argc, char **argv) {
             fprintf(stderr, "CBZ/CBNZ peepholes: %" PRIu32 "\n", cbz_peephole_count);
         }
 
+        if (native_stub_count > 0) {
+            fprintf(stderr, "Native intrinsic stubs: %" PRIu32 "\n", native_stub_count);
+        }
+
         if (stage >= 2) {
             cache_print_stats(&cache);
             if (dump_offenders) {

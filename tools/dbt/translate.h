@@ -33,6 +33,7 @@ extern uint32_t superblock_profile_min_samples;
 extern uint32_t superblock_taken_pct_threshold;
 extern uint32_t cmp_branch_fusion_count;
 extern uint32_t cbz_peephole_count;
+extern uint32_t native_stub_count;
 
 // Translation context
 typedef struct {
