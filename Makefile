@@ -1,12 +1,15 @@
 # SLOW-32 Project Makefile
 
 # Tools and paths
-LLVM_BIN := ~/llvm-project/build/bin
+LLVM_BIN ?= ~/llvm-project/build/bin
 CLANG := $(LLVM_BIN)/clang
 LLC := $(LLVM_BIN)/llc
 ASM := tools/assembler/slow32asm
 LD := tools/linker/s32-ld
 EMU := tools/emulator/slow32
+
+# Detect whether LLVM with SLOW-32 backend is available
+HAVE_LLVM := $(shell $(CLANG) --version >/dev/null 2>&1 && echo yes || echo no)
 
 # Default flags
 TARGET := slow32-unknown-none
@@ -19,7 +22,15 @@ LIBC_ARCHIVE := runtime/libc_$(LIBC).s32a
 
 .PHONY: all clean emulator assembler runtime test tools cpp-test cpp-run dbt
 
+ifeq ($(HAVE_LLVM),yes)
 all: tools runtime
+else
+all: tools
+	@echo ""
+	@echo "Note: LLVM with SLOW-32 backend not found at $(LLVM_BIN)"
+	@echo "      Built tools only. Run 'make runtime' after installing LLVM,"
+	@echo "      or set LLVM_BIN to point to your LLVM build."
+endif
 
 tools: emulator assembler linker utilities dbt
 
@@ -39,9 +50,16 @@ dbt:
 	$(MAKE) -C tools/dbt
 
 runtime: assembler
+ifeq ($(HAVE_LLVM),yes)
 	$(MAKE) -C runtime
+else
+	@echo "Error: LLVM with SLOW-32 backend not found at $(LLVM_BIN)" >&2
+	@echo "Runtime libraries require clang/llc with -target slow32-unknown-none." >&2
+	@echo "Set LLVM_BIN=/path/to/llvm/build/bin or use pre-built runtime archives." >&2
+	@exit 1
+endif
 
-test: all
+test: tools
 	@echo "=== Running basic tests ==="
 	@echo "Testing assembler..."
 	@echo "addi r1, r0, 42" > /tmp/test.s
@@ -111,27 +129,37 @@ help:
 	@echo "SLOW-32 Build System"
 	@echo "===================="
 	@echo "Main Targets:"
-	@echo "  all       - Build everything"
+	@echo "  all       - Build tools (+ runtime if LLVM available)"
+	@echo "  tools     - Build all tools (gcc only, no LLVM needed)"
 	@echo "  emulator  - Build the CPU emulator"
 	@echo "  assembler - Build the assembler"
 	@echo "  dbt       - Build the dynamic binary translator"
-	@echo "  runtime   - Build runtime libraries"
-	@echo "  test      - Run basic tests"
+	@echo "  runtime   - Build runtime libraries (requires LLVM)"
+	@echo "  test      - Run basic smoke tests (tools only)"
 	@echo "  cpp-test  - Compile C++ examples (no execution)"
 	@echo "  cpp-run   - Build and run C++ examples"
 	@echo "  benchmark - Compare emulator performance"
 	@echo "  clean     - Remove all build artifacts"
 	@echo "  help      - Show this message"
 	@echo ""
-	@echo "C Compilation:"
+	@echo "C Compilation (requires LLVM with SLOW-32 backend):"
 	@echo "  %.s32x    - Compile and link a C file (e.g., make test.s32x)"
 	@echo "  run-%     - Compile and run a C file (e.g., make run-test)"
 	@echo ""
 	@echo "Options:"
-	@echo "  LIBC=debug  - Use DEBUG instruction for I/O (default)"
-	@echo "  LIBC=mmio   - Use MMIO ring buffer for I/O"
+	@echo "  LLVM_BIN=path - Path to LLVM build/bin (default: ~/llvm-project/build/bin)"
+	@echo "  LIBC=debug    - Use DEBUG instruction for I/O (default)"
+	@echo "  LIBC=mmio     - Use MMIO ring buffer for I/O"
 	@echo ""
 	@echo "Example:"
+	@echo "  make                     # Build tools (+ runtime if LLVM found)"
 	@echo "  make test.s32x           # Compile test.c with DEBUG I/O"
 	@echo "  make test.s32x LIBC=mmio # Compile test.c with MMIO I/O"
 	@echo "  make run-test            # Compile and run test.c"
+ifeq ($(HAVE_LLVM),yes)
+	@echo ""
+	@echo "LLVM: found at $(LLVM_BIN)"
+else
+	@echo ""
+	@echo "LLVM: not found (set LLVM_BIN to enable C compilation and runtime build)"
+endif
