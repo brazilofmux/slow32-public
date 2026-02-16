@@ -99,18 +99,29 @@ static int parse_primary(int *out_v) {
     return parse_int_lit(out_v);
 }
 
+static int parse_unary(int *out_v) {
+    int v;
+    skip_space();
+    if (consume_char('!')) {
+        if (!parse_unary(&v)) return 0;
+        *out_v = (v == 0) ? 1 : 0;
+        return 1;
+    }
+    return parse_primary(out_v);
+}
+
 static int parse_mul(int *out_v) {
     int lhs;
     int rhs;
     char op;
 
-    if (!parse_primary(&lhs)) return 0;
+    if (!parse_unary(&lhs)) return 0;
     for (;;) {
         skip_space();
         op = g_src[g_pos];
         if (op != '*' && op != '/') break;
         g_pos = g_pos + 1;
-        if (!parse_primary(&rhs)) return 0;
+        if (!parse_unary(&rhs)) return 0;
         if (op == '*') {
             lhs = lhs * rhs;
         } else {
@@ -122,7 +133,7 @@ static int parse_mul(int *out_v) {
     return 1;
 }
 
-static int parse_expr(int *out_v) {
+static int parse_add(int *out_v) {
     int lhs;
     int rhs;
     char op;
@@ -138,6 +149,60 @@ static int parse_expr(int *out_v) {
             lhs = lhs + rhs;
         } else {
             lhs = lhs - rhs;
+        }
+    }
+    *out_v = lhs;
+    return 1;
+}
+
+static int parse_rel(int *out_v) {
+    int lhs;
+    int rhs;
+
+    if (!parse_add(&lhs)) return 0;
+    for (;;) {
+        skip_space();
+        if (g_src[g_pos] == '<' && g_src[g_pos + 1] == '=') {
+            g_pos = g_pos + 2;
+            if (!parse_add(&rhs)) return 0;
+            lhs = (lhs <= rhs) ? 1 : 0;
+        } else if (g_src[g_pos] == '>' && g_src[g_pos + 1] == '=') {
+            g_pos = g_pos + 2;
+            if (!parse_add(&rhs)) return 0;
+            lhs = (lhs >= rhs) ? 1 : 0;
+        } else if (g_src[g_pos] == '<') {
+            g_pos = g_pos + 1;
+            if (!parse_add(&rhs)) return 0;
+            lhs = (lhs < rhs) ? 1 : 0;
+        } else if (g_src[g_pos] == '>') {
+            g_pos = g_pos + 1;
+            if (!parse_add(&rhs)) return 0;
+            lhs = (lhs > rhs) ? 1 : 0;
+        } else {
+            break;
+        }
+    }
+    *out_v = lhs;
+    return 1;
+}
+
+static int parse_expr(int *out_v) {
+    int lhs;
+    int rhs;
+
+    if (!parse_rel(&lhs)) return 0;
+    for (;;) {
+        skip_space();
+        if (g_src[g_pos] == '=' && g_src[g_pos + 1] == '=') {
+            g_pos = g_pos + 2;
+            if (!parse_rel(&rhs)) return 0;
+            lhs = (lhs == rhs) ? 1 : 0;
+        } else if (g_src[g_pos] == '!' && g_src[g_pos + 1] == '=') {
+            g_pos = g_pos + 2;
+            if (!parse_rel(&rhs)) return 0;
+            lhs = (lhs != rhs) ? 1 : 0;
+        } else {
+            break;
         }
     }
     *out_v = lhs;

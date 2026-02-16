@@ -26,7 +26,8 @@ selfhost/v2/stage08/run-cc-spike.sh --emu ./tools/emulator/slow32-fast
 
 Current `cc-min` accepted source shape:
 - `int main(void) { return <const-expr>; }`
-  where `<const-expr>` currently supports integer literals, `+ - * /`, and parentheses.
+  where `<const-expr>` currently supports integer literals, `+ - * /`,
+  unary `!`, relational/equality (`< <= > >= == !=`), and parentheses.
 - `int main(void) { int x; x = <const-expr>; return x; }`
 
 `run-regression.sh` now runs both:
