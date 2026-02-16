@@ -491,11 +491,12 @@ The Stage 0 emulator is deliberately minimal — enough for Forth and subset C t
 
 - **Several paths:**
 
-  1. **Port a full emulator** If the host has an existing C (or really any) compiler that targets the native platform, you can port the slow32.c (interpreter) or slow32-fast.c (pre-decode/function call) emulators to the new host. If you feel particularly ambitious, you can attempt something equivalent to the QEMU TCG or SLOW-32 DBT emulators.
-  2. **Cross-compile** In your new Subset C, you can write a cross-compiler or a translator. This works as long as it implements a full emulator and targets native code, this works.
-  3. **Enhance Stage 0 manually.** The s32-emu.c code was a reference. You could have implemented it whatever facilities the target offered. Now would be the time to manually enhance that.
-  
-  Path 1 is practical because most platforms offer a C compiler. Path 2 is also practical but requires a C cross-compiler running on a secondary host. Path 3 is certaily possible -- if tedious. Any choice works.
+  1. **Port a full emulator.** If the host has an existing C (or really any) compiler that targets the native platform, you can port the slow32.c (interpreter) or slow32-fast.c (pre-decode/function call) emulators to the new host. If you feel particularly ambitious, you can attempt something equivalent to the QEMU TCG or SLOW-32 DBT emulators.
+  2. **Cross-compile from a secondary host.** Use a C cross-compiler on another machine to compile a full emulator for your target platform.
+  3. **Self-hosted cross-compiler.** In your new Subset C, you can write a cross-compiler or a translator that targets native code. The result is a SLOW-32 binary (running under Stage 0) that produces a native emulator.
+  4. **Enhance Stage 0 manually.** The s32-emu.c code was a reference. You could have implemented it with whatever facilities the target offered. Now would be the time to manually enhance that.
+
+  Path 1 is practical because most platforms offer a C compiler. Path 2 is also practical but requires access to a secondary host. Path 3 is the most self-contained — everything stays on the target — but requires writing a native code generator in Subset C. Path 4 is certainly possible -- if tedious. Any choice works.
 
 - **You can now:**
 
