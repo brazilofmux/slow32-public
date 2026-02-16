@@ -277,21 +277,41 @@ static int parse_program_return_value(int *out_ret) {
             }
         }
         if (!consume_char('{')) return 0;
-        if (!consume_kw("return")) return 0;
         if (helper_mode_param) {
-            if (!consume_kw("a")) return 0;
             helper_addend = 0;
-            if (consume_char('+')) {
-                if (!parse_int_lit(&helper_step)) return 0;
-                helper_addend = helper_step;
-            } else if (consume_char('-')) {
-                if (!parse_int_lit(&helper_step)) return 0;
-                helper_addend = -helper_step;
+            if (consume_kw("int")) {
+                /* Tiny helper-local form: int t; t = a [+/- n]; return t; */
+                if (!consume_kw("t")) return 0;
+                if (!consume_char(';')) return 0;
+                if (!consume_kw("t")) return 0;
+                if (!consume_char('=')) return 0;
+                if (!consume_kw("a")) return 0;
+                if (consume_char('+')) {
+                    if (!parse_int_lit(&helper_step)) return 0;
+                    helper_addend = helper_step;
+                } else if (consume_char('-')) {
+                    if (!parse_int_lit(&helper_step)) return 0;
+                    helper_addend = -helper_step;
+                }
+                if (!consume_char(';')) return 0;
+                if (!consume_kw("return")) return 0;
+                if (!consume_kw("t")) return 0;
+            } else {
+                if (!consume_kw("return")) return 0;
+                if (!consume_kw("a")) return 0;
+                if (consume_char('+')) {
+                    if (!parse_int_lit(&helper_step)) return 0;
+                    helper_addend = helper_step;
+                } else if (consume_char('-')) {
+                    if (!parse_int_lit(&helper_step)) return 0;
+                    helper_addend = -helper_step;
+                }
             }
             g_helper_has_param = 1;
             g_helper_addend = helper_addend;
             g_helper_ret = 0;
         } else {
+            if (!consume_kw("return")) return 0;
             if (!parse_expr(&helper_v)) return 0;
             g_helper_has_param = 0;
             g_helper_ret = helper_v;
