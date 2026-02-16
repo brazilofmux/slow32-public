@@ -12,7 +12,7 @@ This file is the quick orientation map for bootstrap work.
 | `stage05` | Subset-C assembler replacement (`.s -> .s32o`) | `selfhost/v2/stage05/run-pipeline.sh --mode progressive-as --test test1` | in progress (green on `test1..test3`) | extend green set to full stage04 regression corpus |
 | `stage06` | Subset-C archiver replacement (`.s32o -> .s32a`) | `selfhost/v2/stage05/run-pipeline.sh --mode stage6-ar-smoke` and `... stage6-ar-rc-smoke` and `... stage6-ar-tx-smoke` and `... stage6-ar-d-smoke` | in progress (smoke gate green on `c/rc/t/x/d`) | widen coverage to `m/v/p` parity and archive-scan parity (`cs`) |
 | `stage07` | Subset-C linker replacement (`.s32o + .s32a -> .s32x`) | `selfhost/v2/stage07/run-spike.sh --with-reloc-spike` | in progress (single-object + bounded `REL_32/HI20/LO12` spike wired) | widen to branch/jal relocations + archive member resolution |
-| `stage08` | Subset-C compiler rewritten in C (`.c -> .s`) | `selfhost/v2/stage08/` | not started | move from `cc.fth` to `cc.c` subset implementation |
+| `stage08` | Pragmatic Subset-C archiver parity gate (`c/rc/t/x/d/cs`) | `selfhost/v2/stage08/run-regression.sh` | in progress (gate scaffolded) | widen coverage to `m/v/p`, then begin `cc.c` track |
 | `stage09` | Subset-C fixed-point proof (Gen2==Gen3) | `selfhost/v2/stage09/` | not started | define reproducible fixed-point harness |
 | `stage10` | Expanded/full emulator track | `selfhost/v2/stage10/` | not started | choose scope beyond stage00 minimum emulator |
 | `stage11` | Full C compiler feature expansion | `selfhost/v2/stage11/` | not started | language/runtime feature roadmap |

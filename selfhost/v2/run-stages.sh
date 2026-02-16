@@ -27,22 +27,22 @@ EMU_DEFAULT="$(choose_default_emu)"
 EMU="$EMU_DEFAULT"
 
 FROM="stage00"
-TO="stage06"
+TO="stage08"
 SKIP_SELFHOST_KERNEL=0
 
 usage() {
     cat <<USAGE
-Usage: $0 [--from stage00] [--to stage07] [--emu <path>] [--skip-selfhost-kernel]
+Usage: $0 [--from stage00] [--to stage08] [--emu <path>] [--skip-selfhost-kernel]
 
 Runs ordered V2 stage checks so a clean checkout can be validated end-to-end.
 
 Default sequence:
-  stage00 -> stage01 -> stage02 -> stage03 -> stage04 -> stage05 -> stage06
+  stage00 -> stage01 -> stage02 -> stage03 -> stage04 -> stage05 -> stage06 -> stage07 -> stage08
 
 Options:
-  --from stageNN   Start stage (stage00..stage07)
-  --to stageNN     End stage (stage00..stage07)
-  --emu path       Emulator for stage01..stage06 (default: slow32-fast, then stage00 s32-emu, then slow32)
+  --from stageNN   Start stage (stage00..stage08)
+  --to stageNN     End stage (stage00..stage08)
+  --emu path       Emulator for stage01..stage08 (default: slow32-fast, then stage00 s32-emu, then slow32)
   --skip-selfhost-kernel
                    Skip stage03 selfhost-kernel regeneration/boot gate (dev fast-path)
 USAGE
@@ -95,6 +95,7 @@ stage_num() {
         stage05) echo 5 ;;
         stage06) echo 6 ;;
         stage07) echo 7 ;;
+        stage08) echo 8 ;;
         *) return 1 ;;
     esac
 }
@@ -169,7 +170,12 @@ run_stage07() {
     "$ROOT_DIR/selfhost/v2/stage07/run-spike.sh" --emu "$EMU" --with-reloc-spike >/tmp/v2-stage07.log 2>&1
 }
 
-for st in stage00 stage01 stage02 stage03 stage04 stage05 stage06 stage07; do
+run_stage08() {
+    echo "[stage08] pragmatic c-archiver parity gate"
+    "$ROOT_DIR/selfhost/v2/stage08/run-regression.sh" --emu "$EMU" >/tmp/v2-stage08.log 2>&1
+}
+
+for st in stage00 stage01 stage02 stage03 stage04 stage05 stage06 stage07 stage08; do
     N="$(stage_num "$st")"
     if (( N < FROM_N || N > TO_N )); then
         continue
