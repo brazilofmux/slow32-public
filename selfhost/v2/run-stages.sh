@@ -156,15 +156,17 @@ run_stage05() {
 }
 
 run_stage06() {
-    echo "[stage06] c-archiver replacement smoke (c/rc/t/x)"
+    echo "[stage06] c-archiver replacement smoke (c/rc/t/x/d/cs)"
     "$ROOT_DIR/selfhost/v2/stage05/run-pipeline.sh" --mode stage6-ar-smoke --emu "$EMU" >/tmp/v2-stage06-smoke.log 2>&1
     "$ROOT_DIR/selfhost/v2/stage05/run-pipeline.sh" --mode stage6-ar-rc-smoke --emu "$EMU" >/tmp/v2-stage06-rc.log 2>&1
     "$ROOT_DIR/selfhost/v2/stage05/run-pipeline.sh" --mode stage6-ar-tx-smoke --emu "$EMU" >/tmp/v2-stage06-tx.log 2>&1
+    "$ROOT_DIR/selfhost/v2/stage05/run-pipeline.sh" --mode stage6-ar-d-smoke --emu "$EMU" >/tmp/v2-stage06-d.log 2>&1
+    "$ROOT_DIR/selfhost/v2/stage05/run-pipeline.sh" --mode stage6-ar-scan-smoke --emu "$EMU" >/tmp/v2-stage06-scan.log 2>&1
 }
 
 run_stage07() {
-    echo "[stage07] c-linker replacement spike"
-    "$ROOT_DIR/selfhost/v2/stage07/run-spike.sh" --emu "$EMU" >/tmp/v2-stage07.log 2>&1
+    echo "[stage07] c-linker replacement spike (+ reloc)"
+    "$ROOT_DIR/selfhost/v2/stage07/run-spike.sh" --emu "$EMU" --with-reloc-spike >/tmp/v2-stage07.log 2>&1
 }
 
 for st in stage00 stage01 stage02 stage03 stage04 stage05 stage06 stage07; do

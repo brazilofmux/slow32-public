@@ -10,7 +10,13 @@ Current spike scope:
 Current constraints in `validation/s32-ld.c`:
 - Single `.s32o` input only.
 - No archive support yet.
-- Bounded `REL_32` relocation support only.
+- Bounded relocation support for `REL_32`, `REL_HI20`, and `REL_LO12`.
+
+Relocation spike run (recommended gate while widening):
+
+```bash
+selfhost/v2/stage07/run-spike.sh --emu ./tools/emulator/slow32-fast --with-reloc-spike
+```
 
 Run:
 

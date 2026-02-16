@@ -30,6 +30,8 @@
 
 #define S32X_FLAG_W_XOR_X 0x0001
 #define S32O_REL_32 0x0001
+#define S32O_REL_HI20 0x0002
+#define S32O_REL_LO12 0x0003
 
 #define MAX_OBJ_SIZE 262144
 #define MAX_SECTIONS 16
@@ -136,6 +138,13 @@ static void wr32(uint8_t *p, uint32_t v) {
     p[1] = (uint8_t)((v >> 8) & 255u);
     p[2] = (uint8_t)((v >> 16) & 255u);
     p[3] = (uint8_t)((v >> 24) & 255u);
+}
+
+static uint32_t rd32(const uint8_t *p) {
+    return (uint32_t)p[0]
+         | ((uint32_t)p[1] << 8)
+         | ((uint32_t)p[2] << 16)
+         | ((uint32_t)p[3] << 24);
 }
 
 static int read_file(const char *path, uint8_t *buf, uint32_t max_size, uint32_t *out_size) {
@@ -500,10 +509,6 @@ int main(int argc, char **argv) {
             uint32_t patched;
 
             rel = (s32o_reloc_t *)(g_obj + s->reloc_offset + r * (uint32_t)sizeof(s32o_reloc_t));
-            if (rel->type != S32O_REL_32) {
-                fprintf(stderr, "error: relocation type %u not yet supported\n", rel->type);
-                return 1;
-            }
             if (rel->symbol >= oh->nsymbols) {
                 fprintf(stderr, "error: relocation symbol index out of range\n");
                 return 1;
@@ -536,7 +541,22 @@ int main(int argc, char **argv) {
             }
 
             patched = sym_abs + (uint32_t)rel->addend;
-            wr32(g_out + sec_out + rel->offset, patched);
+            if (rel->type == S32O_REL_32) {
+                wr32(g_out + sec_out + rel->offset, patched);
+            } else if (rel->type == S32O_REL_HI20) {
+                uint32_t inst = rd32(g_out + sec_out + rel->offset);
+                uint32_t hi20 = (patched + 0x800U) >> 12;
+                inst = (inst & 0x00000FFFU) | ((hi20 & 0x000FFFFFU) << 12);
+                wr32(g_out + sec_out + rel->offset, inst);
+            } else if (rel->type == S32O_REL_LO12) {
+                uint32_t inst = rd32(g_out + sec_out + rel->offset);
+                uint32_t lo12 = patched & 0x00000FFFU;
+                inst = (inst & 0x000FFFFFU) | (lo12 << 20);
+                wr32(g_out + sec_out + rel->offset, inst);
+            } else {
+                fprintf(stderr, "error: relocation type %u not yet supported\n", rel->type);
+                return 1;
+            }
         }
     }
 
