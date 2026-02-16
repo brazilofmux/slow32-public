@@ -513,6 +513,52 @@ static int load_existing_archive(const char *archive_path, uint32_t *nmembers, u
     return 1;
 }
 
+static int delete_members(const char *archive_path, int reqc, char **reqv) {
+    uint32_t nmembers = 0;
+    uint32_t str_used = 1;
+    uint32_t out_n = 0;
+    uint8_t req_found[MAX_MEMBERS];
+    uint32_t i;
+
+    if (reqc <= 0) return 0;
+    if ((uint32_t)reqc > MAX_MEMBERS) return 0;
+
+    g_strtab[0] = 0;
+    g_data_used = 0;
+    if (!load_existing_archive(archive_path, &nmembers, &str_used)) return 0;
+
+    for (i = 0; i < (uint32_t)reqc; i++) req_found[i] = 0;
+
+    for (i = 0; i < nmembers; i++) {
+        const char *name = (const char *)(g_strtab + g_members[i].name_off);
+        uint32_t j;
+        int remove = 0;
+        for (j = 0; j < (uint32_t)reqc; j++) {
+            if (name_matches(name, reqv[j])) {
+                req_found[j] = 1;
+                remove = 1;
+            }
+        }
+        if (!remove) {
+            if (out_n != i) {
+                g_members[out_n].path = g_members[i].path;
+                g_members[out_n].name_off = g_members[i].name_off;
+                g_members[out_n].size = g_members[i].size;
+                g_members[out_n].data_off = g_members[i].data_off;
+                g_members[out_n].src_kind = g_members[i].src_kind;
+                g_members[out_n].src_off = g_members[i].src_off;
+            }
+            out_n++;
+        }
+    }
+
+    for (i = 0; i < (uint32_t)reqc; i++) {
+        if (!req_found[i]) return 0;
+    }
+
+    return write_archive(archive_path, out_n, str_used);
+}
+
 int main(int argc, char **argv) {
     const char *cmd;
     const char *archive;
@@ -531,6 +577,11 @@ int main(int argc, char **argv) {
     }
     if (has_flag(cmd, 'x')) {
         if (!extract_archive(archive, argc - 3, argv + 3)) return 1;
+        return 0;
+    }
+    if (has_flag(cmd, 'd')) {
+        if (argc < 4) return 1;
+        if (!delete_members(archive, argc - 3, argv + 3)) return 1;
         return 0;
     }
 

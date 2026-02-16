@@ -42,7 +42,7 @@ choose_default_emu() {
 
 usage() {
     cat <<USAGE
-Usage: $0 [--mode baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage5-as-bisect|stage6-ar-smoke|stage6-ar-rc-smoke|stage6-ar-tx-smoke|stage6-ar-scan-smoke|stage6-ar-asm-diff|stage6-utility-smoke] [--test <name>] [--emu <path>] [--keep-artifacts]
+Usage: $0 [--mode baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage5-as-bisect|stage6-ar-smoke|stage6-ar-rc-smoke|stage6-ar-tx-smoke|stage6-ar-d-smoke|stage6-ar-scan-smoke|stage6-ar-asm-diff|stage6-utility-smoke] [--test <name>] [--emu <path>] [--keep-artifacts]
 
 Modes:
   baseline          Stage4 cc.fth + Stage1 asm.fth + Stage3 link.fth
@@ -53,6 +53,7 @@ Modes:
   stage6-ar-smoke   Build stage5 assembler, then stage6 s32-ar.c with stage5 assembler; run archive smoke only
   stage6-ar-rc-smoke Build stage5 assembler, then stage6 s32-ar.c with stage5 assembler; verify replace-on-existing (rc) path
   stage6-ar-tx-smoke Build stage5 assembler, then stage6 s32-ar.c with stage5 assembler; verify list/extract (t/x) paths
+  stage6-ar-d-smoke Build stage5 assembler, then stage6 s32-ar.c with stage5 assembler; verify delete (d) path
   stage6-ar-scan-smoke Build stage5 assembler, then stage6 s32-ar-scan.c with stage5 assembler; run archive smoke with cmd=cs only
   stage6-ar-asm-diff Build stage5 assembler, assemble a validation .c with stage5 and forth, link both, and report first .s32x/.s32o byte diff
   stage6-utility-smoke Build a validation utility with stage5 and forth assemblers, require linked .s32x parity, then compare runtime output
@@ -102,7 +103,7 @@ if [[ "$MODE" == "stage6-utility-smoke" && "$EMU_EXPLICIT" -eq 0 && -z "${SELFHO
 fi
 
 case "$MODE" in
-    baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage5-as-bisect|stage6-ar-smoke|stage6-ar-rc-smoke|stage6-ar-tx-smoke|stage6-ar-scan-smoke|stage6-ar-asm-diff|stage6-utility-smoke) ;;
+    baseline|progressive-as|progressive-as-ar|progressive-as-ar-scan|stage5-as-bisect|stage6-ar-smoke|stage6-ar-rc-smoke|stage6-ar-tx-smoke|stage6-ar-d-smoke|stage6-ar-scan-smoke|stage6-ar-asm-diff|stage6-utility-smoke) ;;
     *)
         echo "Unknown mode: $MODE" >&2
         usage
@@ -361,6 +362,51 @@ stage6_archive_tx_smoke() {
     }
 }
 
+stage6_archive_d_smoke() {
+    local archive="$WORKDIR/smoke-d.s32a"
+    local obj_a="$WORKDIR/member-a.src"
+    local obj_b="$WORKDIR/member-b.src"
+    local obj_b_expected="$WORKDIR/member-b.expected"
+    local xdir="$WORKDIR/extract-d"
+    local rc=0
+
+    printf 'alpha-stage6-d\n' > "$obj_a"
+    printf 'beta-stage6-d\n' > "$obj_b"
+    cp "$obj_b" "$obj_b_expected"
+
+    run_exe "$STAGE6_AR_EXE" "$WORKDIR/s32-ar.d-create.log" "c" "$archive" "$obj_a" "$obj_b"
+    run_exe "$STAGE6_AR_EXE" "$WORKDIR/s32-ar.d-delete.log" "d" "$archive" "member-a.src"
+    mkdir -p "$xdir"
+
+    run_exe_any_rc "$STAGE6_AR_EXE" "$WORKDIR/s32-ar.d-extract.log" "x" "$archive" "member-a.src" || rc=$?
+    if [[ "$rc" -eq 124 || "$rc" -eq 125 ]]; then
+        echo "stage6 d path failed: extract fault/timeout" >&2
+        return 1
+    fi
+    if [[ "$rc" -eq 0 || "$rc" -eq 96 ]]; then
+        echo "stage6 d path failed: deleted member unexpectedly extracted" >&2
+        return 1
+    fi
+
+    rc=0
+    set +e
+    (
+        cd "$xdir"
+        run_exe "$STAGE6_AR_EXE" "$WORKDIR/s32-ar.d-extract-keep.log" "x" "$archive" "member-b.src"
+    )
+    rc=$?
+    set -e
+    if [[ "$rc" -ne 0 ]]; then
+        echo "stage6 d path failed: remaining member extract failed" >&2
+        return 1
+    fi
+    [[ -s "$xdir/member-b.src" ]] || { echo "stage6 d path failed: remaining member missing after extract" >&2; return 1; }
+    cmp -s "$obj_b_expected" "$xdir/member-b.src" || {
+        echo "stage6 d path failed: remaining member bytes mismatch" >&2
+        return 1
+    }
+}
+
 stage5_assemble_bisect() {
     local asm="$1"
     local out_obj="$2"
@@ -427,6 +473,11 @@ case "$MODE" in
         build_stage5_assembler
         build_stage6_archiver "$VALIDATION_DIR/s32-ar.c" stage5
         stage6_archive_tx_smoke
+        ;;
+    stage6-ar-d-smoke)
+        build_stage5_assembler
+        build_stage6_archiver "$VALIDATION_DIR/s32-ar.c" stage5
+        stage6_archive_d_smoke
         ;;
     stage6-ar-scan-smoke)
         build_stage5_assembler
@@ -587,7 +638,7 @@ case "$MODE" in
         ;;
 esac
 
-if [[ "$MODE" != "stage6-ar-smoke" && "$MODE" != "stage6-ar-rc-smoke" && "$MODE" != "stage6-ar-tx-smoke" && "$MODE" != "stage6-ar-scan-smoke" && "$MODE" != "stage6-ar-asm-diff" && "$MODE" != "stage6-utility-smoke" && "$MODE" != "stage5-as-bisect" ]]; then
+if [[ "$MODE" != "stage6-ar-smoke" && "$MODE" != "stage6-ar-rc-smoke" && "$MODE" != "stage6-ar-tx-smoke" && "$MODE" != "stage6-ar-d-smoke" && "$MODE" != "stage6-ar-scan-smoke" && "$MODE" != "stage6-ar-asm-diff" && "$MODE" != "stage6-utility-smoke" && "$MODE" != "stage5-as-bisect" ]]; then
     link_forth "$TARGET_OBJ" "$TARGET_EXE" "$WORKDIR/target.ld.log"
     run_exe "$TARGET_EXE" "$WORKDIR/target.run.log"
 fi
@@ -603,6 +654,10 @@ elif [[ "$MODE" == "stage6-ar-rc-smoke" ]]; then
     echo "Linker path: forth(stage03)"
 elif [[ "$MODE" == "stage6-ar-tx-smoke" ]]; then
     echo "Input members: runtime/divsi3.s32o runtime/crt0.s32o"
+    echo "Assembler path: c(stage05) for s32-as and stage6 smoke asm"
+    echo "Linker path: forth(stage03)"
+elif [[ "$MODE" == "stage6-ar-d-smoke" ]]; then
+    echo "Input members: synthetic member-a.src member-b.src (delete member-a.src)"
     echo "Assembler path: c(stage05) for s32-as and stage6 smoke asm"
     echo "Linker path: forth(stage03)"
 elif [[ "$MODE" == "stage6-ar-asm-diff" ]]; then
@@ -636,6 +691,8 @@ elif [[ "$MODE" == "stage6-ar-rc-smoke" ]]; then
     echo "Archiver smoke: c(stage06, cmd=rc replace)"
 elif [[ "$MODE" == "stage6-ar-tx-smoke" ]]; then
     echo "Archiver smoke: c(stage06, cmd=t/x list+extract)"
+elif [[ "$MODE" == "stage6-ar-d-smoke" ]]; then
+    echo "Archiver smoke: c(stage06, cmd=d delete)"
 elif [[ "$MODE" == "progressive-as-ar-scan" || "$MODE" == "stage6-ar-scan-smoke" ]]; then
     echo "Archiver smoke: c(stage06, cmd=cs)"
 elif [[ "$MODE" == "stage6-ar-asm-diff" ]]; then
