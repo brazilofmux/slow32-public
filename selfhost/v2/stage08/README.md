@@ -29,6 +29,7 @@ Current `cc-min` accepted source shape:
   where `<const-expr>` currently supports integer literals, `+ - * /`,
   unary `!`, relational/equality (`< <= > >= == !=`), and parentheses.
 - `int main(void) { int x; x = <const-expr>; return x; }`
+- `int main(void) { if (<const-expr>) return <const-expr>; return <const-expr>; }`
 
 `run-regression.sh` now runs both:
 - archiver parity gate (`c/rc/t/x/d/m/v/p/cs`)

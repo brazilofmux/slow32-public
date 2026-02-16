@@ -211,6 +211,9 @@ static int parse_expr(int *out_v) {
 
 static int parse_program_return_value(int *out_ret) {
     int v;
+    int cond_v;
+    int then_v;
+    int else_v;
     if (!consume_kw("int")) return 0;
     if (!consume_kw("main")) return 0;
     if (!consume_char('(')) return 0;
@@ -220,7 +223,19 @@ static int parse_program_return_value(int *out_ret) {
     }
     if (!consume_char('{')) return 0;
 
-    if (consume_kw("int")) {
+    if (consume_kw("if")) {
+        /* Tiny if form: if (<expr>) return <expr>; return <expr>; */
+        if (!consume_char('(')) return 0;
+        if (!parse_expr(&cond_v)) return 0;
+        if (!consume_char(')')) return 0;
+        if (!consume_kw("return")) return 0;
+        if (!parse_expr(&then_v)) return 0;
+        if (!consume_char(';')) return 0;
+        if (!consume_kw("return")) return 0;
+        if (!parse_expr(&else_v)) return 0;
+        if (!consume_char(';')) return 0;
+        *out_ret = (cond_v != 0) ? then_v : else_v;
+    } else if (consume_kw("int")) {
         /* Tiny local-int form: int x; x = <expr>; return x; */
         if (!consume_kw("x")) return 0;
         if (!consume_char(';')) return 0;
