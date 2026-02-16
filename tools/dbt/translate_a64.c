@@ -2682,23 +2682,102 @@ static void emit_a64_store_f64_result(emit_ctx_t *e) {
     emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(2));
 }
 
-// ---- Memory operation stubs ----
-// All memory stubs include runtime bounds checking:
-//   count == 0 → skip (no-op)
-//   count > mem_size → skip
-//   addr > mem_size - count → skip (addr + count would exceed guest memory)
-// On skip, return value (r1) is still set and we return via normal epilogue.
+// ---- Shared helpers for intrinsic stubs ----
 
-// Helper: patch an array of CBZ/B.cond instructions to jump to current offset.
-// Both CBZ and B.cond use imm19 at bits[23:5], offset in 4-byte units.
-static void patch_skip_branches(emit_ctx_t *e, size_t *offsets, int count) {
-    size_t target = emit_offset(e);
+// Patch an array of CBZ/B.cond sites. Both use imm19 at bits[23:5].
+static void patch_imm19_branches(emit_ctx_t *e, size_t *offsets, int count, size_t target) {
     for (int i = 0; i < count; i++) {
         int32_t rel = (int32_t)(target - offsets[i]);
         uint32_t *patch = (uint32_t *)(e->buf + offsets[i]);
         int32_t imm19 = rel >> 2;
         *patch = (*patch & ~(0x7FFFF << 5)) | ((imm19 & 0x7FFFF) << 5);
     }
+}
+
+// Emit a fault return sequence for intrinsic stubs (restores stack frame first).
+static void emit_a64_stub_fault_exit(translate_ctx_t *ctx, exit_reason_t reason, a64_reg_t info_reg) {
+    emit_ctx_t *e = &ctx->emit;
+    emit_ldp_x64_post(e, W29, W30, WZR, 16);
+    emit_mov_w32_imm32(e, W0, ctx->guest_pc);
+    emit_str_w32_imm(e, W0, W20, CPU_PC_OFFSET);
+    emit_mov_w32_imm32(e, W0, (uint32_t)reason);
+    emit_str_w32_imm(e, W0, W20, CPU_EXIT_REASON_OFFSET);
+    emit_str_w32_imm(e, info_reg, W20, CPU_EXIT_INFO_OFFSET);
+    emit_ret_lr(e);
+}
+
+// Dynamic access check for intrinsic stubs.
+// Emits branches to caller-provided fault target patch list.
+// Semantics match x86 DBT dynamic checks:
+//   - size == 0 => success
+//   - bounds check on [addr, addr+size)
+//   - MMIO-disabled overlap check
+//   - W^X check for stores
+static void emit_stub_range_check_a64(translate_ctx_t *ctx,
+                                      a64_reg_t addr_reg,
+                                      a64_reg_t size_reg,
+                                      bool is_store,
+                                      size_t *fault_patches,
+                                      int *fault_count) {
+    emit_ctx_t *e = &ctx->emit;
+    dbt_cpu_state_t *cpu = ctx->cpu;
+
+    if (cpu->bounds_checks_disabled) return;
+
+    size_t ok_patches[4];
+    int ok_count = 0;
+
+    // size == 0 => ok
+    ok_patches[ok_count++] = emit_offset(e);
+    emit_cbz_w32(e, size_reg, 0);
+
+    // size > mem_size => fault
+    emit_ldr_w32_imm(e, W3, W20, CPU_MEM_SIZE_OFFSET);
+    emit_cmp_w32_w32(e, size_reg, W3);
+    fault_patches[(*fault_count)++] = emit_offset(e);
+    emit_b_cond(e, COND_HI, 0);
+
+    // addr > mem_size - size => fault
+    emit_sub_w32(e, W4, W3, size_reg);
+    emit_cmp_w32_w32(e, addr_reg, W4);
+    fault_patches[(*fault_count)++] = emit_offset(e);
+    emit_b_cond(e, COND_HI, 0);
+
+    // MMIO disabled window overlap check for dynamic ranges
+    if (!cpu->mmio_enabled && cpu->mmio_base != 0) {
+        // end = addr + size
+        emit_add_w32(e, W5, addr_reg, size_reg);
+
+        // if end <= mmio_base => ok
+        emit_mov_w32_imm32(e, W4, cpu->mmio_base);
+        emit_cmp_w32_w32(e, W5, W4);
+        ok_patches[ok_count++] = emit_offset(e);
+        emit_b_cond(e, COND_LS, 0);
+
+        // if addr >= mmio_base + 0x10000 => ok
+        emit_mov_w32_imm32(e, W4, cpu->mmio_base + 0x10000);
+        emit_cmp_w32_w32(e, addr_reg, W4);
+        ok_patches[ok_count++] = emit_offset(e);
+        emit_b_cond(e, COND_HS, 0);
+
+        // overlap => fault
+        emit_cmp_w32_w32(e, WZR, WZR);  // Always EQ
+        fault_patches[(*fault_count)++] = emit_offset(e);
+        emit_b_cond(e, COND_EQ, 0);
+    }
+
+    // W^X check — stores only
+    if (is_store && cpu->wxorx_enabled) {
+        uint32_t wx_limit = cpu->rodata_limit ? cpu->rodata_limit : cpu->code_limit;
+        if (wx_limit > 0) {
+            emit_mov_w32_imm32(e, W4, wx_limit);
+            emit_cmp_w32_w32(e, addr_reg, W4);
+            fault_patches[(*fault_count)++] = emit_offset(e);
+            emit_b_cond(e, COND_LO, 0);
+        }
+    }
+
+    patch_imm19_branches(e, ok_patches, ok_count, emit_offset(e));
 }
 
 // memcpy / memmove stub
@@ -2717,33 +2796,17 @@ static bool emit_native_memcpy_stub_a64(translate_ctx_t *ctx, translated_block_t
     // Store dest as return value in r1
     emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
 
-    // Bounds checking
-    emit_ldr_w32_imm(e, W3, W20, CPU_MEM_SIZE_OFFSET);
-
-    size_t skip_patches[4];
-    int skip_count = 0;
-
-    // count == 0 → skip (no-op)
-    skip_patches[skip_count++] = emit_offset(e);
+    // count == 0 => no-op
+    size_t done_patch = emit_offset(e);
     emit_cbz_w32(e, W2, 0);
 
-    // count > mem_size → skip
-    emit_cmp_w32_w32(e, W2, W3);
-    skip_patches[skip_count++] = emit_offset(e);
-    emit_b_cond(e, COND_HI, 0);
-
-    // W4 = mem_size - count
-    emit_sub_w32(e, W4, W3, W2);
-
-    // dest > mem_size - count → skip
-    emit_cmp_w32_w32(e, W0, W4);
-    skip_patches[skip_count++] = emit_offset(e);
-    emit_b_cond(e, COND_HI, 0);
-
-    // src > mem_size - count → skip
-    emit_cmp_w32_w32(e, W1, W4);
-    skip_patches[skip_count++] = emit_offset(e);
-    emit_b_cond(e, COND_HI, 0);
+    // Dynamic checks: src (load) and dest (store)
+    size_t fault_load_patches[8];
+    int fault_load_count = 0;
+    size_t fault_store_patches[8];
+    int fault_store_count = 0;
+    emit_stub_range_check_a64(ctx, W1, W2, false, fault_load_patches, &fault_load_count);
+    emit_stub_range_check_a64(ctx, W0, W2, true, fault_store_patches, &fault_store_count);
 
     // Bounds OK — convert guest addresses to host pointers
     emit_add_x64_x64_w32_uxtw(e, W0, W21, W0);
@@ -2756,10 +2819,18 @@ static bool emit_native_memcpy_stub_a64(translate_ctx_t *ctx, translated_block_t
         emit_a64_call_host(e, (void *)memcpy);
     }
 
-    // Patch skip branches to land here (at the epilogue)
-    patch_skip_branches(e, skip_patches, skip_count);
-
+    size_t done_offset = emit_offset(e);
+    patch_imm19_branches(e, &done_patch, 1, done_offset);
     emit_a64_stub_epilogue(e);
+
+    size_t fault_load_offset = emit_offset(e);
+    emit_a64_stub_fault_exit(ctx, EXIT_FAULT_LOAD, W1);
+
+    size_t fault_store_offset = emit_offset(e);
+    emit_a64_stub_fault_exit(ctx, EXIT_FAULT_STORE, W0);
+
+    patch_imm19_branches(e, fault_load_patches, fault_load_count, fault_load_offset);
+    patch_imm19_branches(e, fault_store_patches, fault_store_count, fault_store_offset);
 
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
@@ -2780,26 +2851,13 @@ static bool emit_native_memset_stub_a64(translate_ctx_t *ctx, translated_block_t
     // Store dest as return value
     emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
 
-    // Bounds checking
-    emit_ldr_w32_imm(e, W3, W20, CPU_MEM_SIZE_OFFSET);
-
-    size_t skip_patches[3];
-    int skip_count = 0;
-
-    // count == 0 → skip
-    skip_patches[skip_count++] = emit_offset(e);
+    // count == 0 => no-op
+    size_t done_patch = emit_offset(e);
     emit_cbz_w32(e, W2, 0);
 
-    // count > mem_size → skip
-    emit_cmp_w32_w32(e, W2, W3);
-    skip_patches[skip_count++] = emit_offset(e);
-    emit_b_cond(e, COND_HI, 0);
-
-    // dest > mem_size - count → skip
-    emit_sub_w32(e, W4, W3, W2);
-    emit_cmp_w32_w32(e, W0, W4);
-    skip_patches[skip_count++] = emit_offset(e);
-    emit_b_cond(e, COND_HI, 0);
+    size_t fault_store_patches[8];
+    int fault_store_count = 0;
+    emit_stub_range_check_a64(ctx, W0, W2, true, fault_store_patches, &fault_store_count);
 
     // Bounds OK
     emit_add_x64_x64_w32_uxtw(e, W0, W21, W0);
@@ -2807,10 +2865,14 @@ static bool emit_native_memset_stub_a64(translate_ctx_t *ctx, translated_block_t
 
     emit_a64_call_host(e, (void *)memset);
 
-    // Patch skip branches
-    patch_skip_branches(e, skip_patches, skip_count);
-
+    size_t done_offset = emit_offset(e);
+    patch_imm19_branches(e, &done_patch, 1, done_offset);
     emit_a64_stub_epilogue(e);
+
+    size_t fault_store_offset = emit_offset(e);
+    emit_a64_stub_fault_exit(ctx, EXIT_FAULT_STORE, W0);
+
+    patch_imm19_branches(e, fault_store_patches, fault_store_count, fault_store_offset);
 
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
@@ -2826,6 +2888,8 @@ static bool emit_native_strlen_stub_a64(translate_ctx_t *ctx, translated_block_t
 
     // Load guest r3 (string pointer)
     emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(3));
+    // Save guest addr in callee-saved reg for fault reporting.
+    emit_mov_w32_w32(e, W23, W0);
 
     // Bounds check: addr < mem_size
     emit_ldr_w32_imm(e, W3, W20, CPU_MEM_SIZE_OFFSET);
@@ -2834,17 +2898,14 @@ static bool emit_native_strlen_stub_a64(translate_ctx_t *ctx, translated_block_t
     size_t fault_patch_offset = emit_offset(e);
     emit_b_cond(e, COND_HS, 0);  // patch later
 
-    // Save guest addr in W4 for fault reporting
-    emit_mov_w32_w32(e, W4, W0);
-
     // X0 = X21 + W0, UXTW (host pointer to string start)
     emit_add_x64_x64_w32_uxtw(e, W0, W21, W0);
-    // Save host start pointer in X9 for length calculation
-    emit_mov_x64_x64(e, W9, W0);
+    // Save host start pointer in callee-saved X19 across the host call.
+    emit_mov_x64_x64(e, W19, W0);
 
     // memchr(str, 0, mem_size - addr)
     emit_mov_w32_imm32(e, W1, 0);          // search for null
-    emit_sub_w32(e, W2, W3, W4);           // W2 = mem_size - addr
+    emit_sub_w32(e, W2, W3, W23);          // W2 = mem_size - addr
 
     emit_a64_call_host(e, (void *)memchr);
 
@@ -2853,7 +2914,7 @@ static bool emit_native_strlen_stub_a64(translate_ctx_t *ctx, translated_block_t
     size_t null_patch_offset = emit_offset(e) - 4;
 
     // length = result - start (both host pointers, 64-bit subtraction)
-    emit_sub_x64(e, W0, W0, W9);
+    emit_sub_x64(e, W0, W0, W19);
 
     // Store length to guest r1
     emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
@@ -2875,16 +2936,7 @@ static bool emit_native_strlen_stub_a64(translate_ctx_t *ctx, translated_block_t
     int32_t imm19_2 = fault_rel2 >> 2;
     *patch2 = (*patch2 & ~(0x7FFFF << 5)) | ((imm19_2 & 0x7FFFF) << 5);
 
-    // Restore LR before fault exit
-    emit_ldp_x64_post(e, W29, W30, WZR, 16);
-
-    // Fault: set PC = guest_pc, exit_reason = EXIT_FAULT_LOAD, exit_info = addr
-    emit_mov_w32_imm32(e, W0, ctx->guest_pc);
-    emit_str_w32_imm(e, W0, W20, CPU_PC_OFFSET);
-    emit_mov_w32_imm32(e, W0, EXIT_FAULT_LOAD);
-    emit_str_w32_imm(e, W0, W20, CPU_EXIT_REASON_OFFSET);
-    emit_str_w32_imm(e, W4, W20, CPU_EXIT_INFO_OFFSET);
-    emit_ret_lr(e);
+    emit_a64_stub_fault_exit(ctx, EXIT_FAULT_LOAD, W23);
 
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
@@ -2903,33 +2955,17 @@ static bool emit_native_memswap_stub_a64(translate_ctx_t *ctx, translated_block_
     emit_ldr_w32_imm(e, W1, W20, GUEST_REG_OFFSET(4));   // b
     emit_ldr_w32_imm(e, W2, W20, GUEST_REG_OFFSET(5));   // count
 
-    // Bounds checking
-    emit_ldr_w32_imm(e, W3, W20, CPU_MEM_SIZE_OFFSET);
-
-    size_t skip_patches[4];
-    int skip_count = 0;
-
-    // count == 0 → skip
-    skip_patches[skip_count++] = emit_offset(e);
+    // count == 0 => no-op
+    size_t done_patch = emit_offset(e);
     emit_cbz_w32(e, W2, 0);
 
-    // count > mem_size → skip
-    emit_cmp_w32_w32(e, W2, W3);
-    skip_patches[skip_count++] = emit_offset(e);
-    emit_b_cond(e, COND_HI, 0);
-
-    // W4 = mem_size - count
-    emit_sub_w32(e, W4, W3, W2);
-
-    // a > mem_size - count → skip
-    emit_cmp_w32_w32(e, W0, W4);
-    skip_patches[skip_count++] = emit_offset(e);
-    emit_b_cond(e, COND_HI, 0);
-
-    // b > mem_size - count → skip
-    emit_cmp_w32_w32(e, W1, W4);
-    skip_patches[skip_count++] = emit_offset(e);
-    emit_b_cond(e, COND_HI, 0);
+    // Dynamic checks: both ranges are stores.
+    size_t fault_a_patches[8];
+    int fault_a_count = 0;
+    size_t fault_b_patches[8];
+    int fault_b_count = 0;
+    emit_stub_range_check_a64(ctx, W0, W2, true, fault_a_patches, &fault_a_count);
+    emit_stub_range_check_a64(ctx, W1, W2, true, fault_b_patches, &fault_b_count);
 
     // Bounds OK — convert to host pointers
     // X9 = X21 + W0, UXTW (host ptr a)
@@ -2982,10 +3018,17 @@ static bool emit_native_memswap_stub_a64(translate_ctx_t *ctx, translated_block_
     int32_t cbz_imm19 = cbz_rel >> 2;
     *cbz_patch = (*cbz_patch & ~(0x7FFFF << 5)) | ((cbz_imm19 & 0x7FFFF) << 5);
 
-    // Patch bounds-check skip branches to land here
-    patch_skip_branches(e, skip_patches, skip_count);
-
+    patch_imm19_branches(e, &done_patch, 1, done_offset);
     emit_a64_stub_epilogue(e);
+
+    size_t fault_a_offset = emit_offset(e);
+    emit_a64_stub_fault_exit(ctx, EXIT_FAULT_STORE, W0);
+
+    size_t fault_b_offset = emit_offset(e);
+    emit_a64_stub_fault_exit(ctx, EXIT_FAULT_STORE, W1);
+
+    patch_imm19_branches(e, fault_a_patches, fault_a_count, fault_a_offset);
+    patch_imm19_branches(e, fault_b_patches, fault_b_count, fault_b_offset);
 
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
@@ -3143,8 +3186,14 @@ static bool emit_native_math_f64_dptr_a64(translate_ctx_t *ctx, translated_block
 
     // r3:r4 → D0
     emit_a64_load_f64_args(e, 3, 4);
-    // r5 → guest ptr → host ptr in X0
+    // r5 -> guest pointer (store 8 bytes)
     emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(5));
+    emit_mov_w32_imm32(e, W2, 8);
+    size_t fault_patches[8];
+    int fault_count = 0;
+    emit_stub_range_check_a64(ctx, W0, W2, true, fault_patches, &fault_count);
+
+    // guest ptr -> host ptr in X0
     emit_add_x64_x64_w32_uxtw(e, W0, W21, W0);
 
     emit_a64_call_host(e, host_fn);
@@ -3152,6 +3201,11 @@ static bool emit_native_math_f64_dptr_a64(translate_ctx_t *ctx, translated_block
     emit_a64_store_f64_result(e);
 
     emit_a64_stub_epilogue(e);
+
+    size_t fault_offset = emit_offset(e);
+    emit_a64_stub_fault_exit(ctx, EXIT_FAULT_STORE, W0);
+    patch_imm19_branches(e, fault_patches, fault_count, fault_offset);
+
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
@@ -3166,6 +3220,11 @@ static bool emit_native_math_f64_iptr_a64(translate_ctx_t *ctx, translated_block
 
     emit_a64_load_f64_args(e, 3, 4);
     emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(5));
+    emit_mov_w32_imm32(e, W2, 4);
+    size_t fault_patches[8];
+    int fault_count = 0;
+    emit_stub_range_check_a64(ctx, W0, W2, true, fault_patches, &fault_count);
+
     emit_add_x64_x64_w32_uxtw(e, W0, W21, W0);
 
     emit_a64_call_host(e, host_fn);
@@ -3173,6 +3232,11 @@ static bool emit_native_math_f64_iptr_a64(translate_ctx_t *ctx, translated_block
     emit_a64_store_f64_result(e);
 
     emit_a64_stub_epilogue(e);
+
+    size_t fault_offset = emit_offset(e);
+    emit_a64_stub_fault_exit(ctx, EXIT_FAULT_STORE, W0);
+    patch_imm19_branches(e, fault_patches, fault_count, fault_offset);
+
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
@@ -3188,8 +3252,14 @@ static bool emit_native_math_f32_fptr_a64(translate_ctx_t *ctx, translated_block
     // r3 → S0
     emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(3));
     emit_fmov_s_w32(e, 0, W0);
-    // r4 → guest ptr → host ptr in X0
+    // r4 -> guest pointer (store 4 bytes)
     emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(4));
+    emit_mov_w32_imm32(e, W2, 4);
+    size_t fault_patches[8];
+    int fault_count = 0;
+    emit_stub_range_check_a64(ctx, W0, W2, true, fault_patches, &fault_count);
+
+    // guest ptr -> host ptr in X0
     emit_add_x64_x64_w32_uxtw(e, W0, W21, W0);
 
     emit_a64_call_host(e, host_fn);
@@ -3199,6 +3269,11 @@ static bool emit_native_math_f32_fptr_a64(translate_ctx_t *ctx, translated_block
     emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
 
     emit_a64_stub_epilogue(e);
+
+    size_t fault_offset = emit_offset(e);
+    emit_a64_stub_fault_exit(ctx, EXIT_FAULT_STORE, W0);
+    patch_imm19_branches(e, fault_patches, fault_count, fault_offset);
+
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
@@ -3214,6 +3289,11 @@ static bool emit_native_math_f32_iptr_a64(translate_ctx_t *ctx, translated_block
     emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(3));
     emit_fmov_s_w32(e, 0, W0);
     emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(4));
+    emit_mov_w32_imm32(e, W2, 4);
+    size_t fault_patches[8];
+    int fault_count = 0;
+    emit_stub_range_check_a64(ctx, W0, W2, true, fault_patches, &fault_count);
+
     emit_add_x64_x64_w32_uxtw(e, W0, W21, W0);
 
     emit_a64_call_host(e, host_fn);
@@ -3222,6 +3302,11 @@ static bool emit_native_math_f32_iptr_a64(translate_ctx_t *ctx, translated_block
     emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
 
     emit_a64_stub_epilogue(e);
+
+    size_t fault_offset = emit_offset(e);
+    emit_a64_stub_fault_exit(ctx, EXIT_FAULT_STORE, W0);
+    patch_imm19_branches(e, fault_patches, fault_count, fault_offset);
+
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
