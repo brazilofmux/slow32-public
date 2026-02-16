@@ -1,8 +1,12 @@
 // SLOW-32 DBT: Main Entry Point
 // Stage 4 - Superblock extension
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
+#ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 199309L
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>

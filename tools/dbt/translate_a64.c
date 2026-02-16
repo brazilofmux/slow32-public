@@ -3784,10 +3784,11 @@ translated_block_t *translate_block_cached(translate_ctx_t *ctx, uint32_t guest_
 
     uint8_t *code_start = cache_get_code_ptr(cache);
     void *entry = code_start;
+    uint32_t code_avail = 0;
 
 retry_translate:
-    uint32_t code_avail = cache->code_buffer_size -
-                          (uint32_t)(code_start - cache->code_buffer);
+    code_avail = cache->code_buffer_size -
+                 (uint32_t)(code_start - cache->code_buffer);
     emit_init(e, code_start, code_avail);
     memset(block, 0, sizeof(*block));
     block->guest_pc = guest_pc;
