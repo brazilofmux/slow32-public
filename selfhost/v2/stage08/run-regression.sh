@@ -55,5 +55,8 @@ echo "[stage08] subset-c archiver parity gate"
 "$PIPE" --mode stage6-ar-vp-smoke --emu "$EMU" >/tmp/v2-stage08-vp.log 2>&1
 "$PIPE" --mode stage6-ar-scan-smoke --emu "$EMU" >/tmp/v2-stage08-cs.log 2>&1
 
+echo "[stage08] cc-min compiler spike"
+"$ROOT_DIR/selfhost/v2/stage08/run-cc-spike.sh" --emu "$EMU" >/tmp/v2-stage08-cc.log 2>&1
+
 echo "OK: stage08 archiver parity gate"
 echo "Emulator: $EMU"

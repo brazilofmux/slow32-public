@@ -17,3 +17,13 @@ Run:
 ```bash
 selfhost/v2/stage08/run-regression.sh --emu ./tools/emulator/slow32-fast
 ```
+
+First compiler-in-C spike:
+
+```bash
+selfhost/v2/stage08/run-cc-spike.sh --emu ./tools/emulator/slow32-fast
+```
+
+`run-regression.sh` now runs both:
+- archiver parity gate (`c/rc/t/x/d/m/v/p/cs`)
+- `cc-min` end-to-end spike

@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="${SELFHOST_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
+if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
+    ROOT_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
+fi
+
+EMU="${STAGE8_EMU:-$ROOT_DIR/tools/emulator/slow32-fast}"
+KERNEL="${STAGE8_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
+PRELUDE="${STAGE8_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
+CC_FTH="${STAGE8_CC_FTH:-$ROOT_DIR/selfhost/v2/stage04/cc.fth}"
+ASM_FTH="${STAGE8_ASM_FTH:-$ROOT_DIR/selfhost/v2/stage01/asm.fth}"
+LINK_FTH="${STAGE8_LINK_FTH:-$ROOT_DIR/selfhost/v2/stage03/link.fth}"
+SRC="${STAGE8_CC_MIN_SRC:-$SCRIPT_DIR/validation/cc-min.c}"
+TEST_IN="${STAGE8_TEST_IN:-$SCRIPT_DIR/tests/min_main.c}"
+KEEP_ARTIFACTS=0
+
+usage() {
+    cat <<USAGE
+Usage: $0 [--emu <path>] [--keep-artifacts]
+
+Stage08 compiler spike:
+  1) build cc-min.s32x via stage04->stage01->stage03
+  2) build stage05 assembler (s32-as.s32x) and stage07 linker (s32-ld.s32x)
+  3) run cc-min.s32x to compile tests/min_main.c -> .s
+  4) assemble with stage05; produce raw link via stage07; run via stage03 runtime link
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --emu)
+            shift
+            [[ $# -gt 0 ]] || { echo "--emu requires a path" >&2; exit 2; }
+            EMU="$1"
+            ;;
+        --keep-artifacts)
+            KEEP_ARTIFACTS=1
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            usage
+            exit 2
+            ;;
+    esac
+    shift
+done
+
+if [[ "$EMU" != /* ]]; then
+    EMU="$ROOT_DIR/$EMU"
+fi
+
+for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH" "$SRC" "$TEST_IN"; do
+    [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
+done
+
+WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage08-cc.XXXXXX)"
+if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then
+    trap 'rm -rf "$WORKDIR"' EXIT
+fi
+
+run_forth() {
+    local script_a="$1"
+    local script_b="$2"
+    local cmd_text="$3"
+    local log_file="$4"
+
+    set +e
+    cat "$PRELUDE" "$script_a" "$script_b" - <<FTH | timeout 180 "$EMU" "$KERNEL" >"$log_file" 2>&1
+$cmd_text
+FTH
+    local rc=$?
+    set -e
+    if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
+        echo "forth pipeline failed (rc=$rc)" >&2
+        tail -n 60 "$log_file" >&2
+        return 1
+    fi
+}
+
+run_exe() {
+    local exe="$1"
+    local log="$2"
+    shift 2
+
+    set +e
+    timeout "${EXEC_TIMEOUT:-60}" "$EMU" "$exe" "$@" >"$log" 2>&1
+    local rc=$?
+    set -e
+    if [[ "$rc" -eq 124 ]]; then
+        echo "execution timed out: $exe" >&2
+        tail -n 60 "$log" >&2
+        return 1
+    fi
+    if grep -Eq "Execute fault|Memory fault|Write out of bounds or to protected memory|Unknown opcode|Unknown instruction|Load fault|Store fault" "$log"; then
+        echo "execution faulted: $exe" >&2
+        tail -n 60 "$log" >&2
+        return 1
+    fi
+    if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
+        echo "execution did not halt cleanly: $exe" >&2
+        tail -n 60 "$log" >&2
+        return 1
+    fi
+}
+
+compile_c_stage4() {
+    local src="$1"
+    local asm="$2"
+    local log="$3"
+
+    run_forth "$CC_FTH" /dev/null "S\" $src\" S\" $asm\" COMPILE-FILE
+BYE" "$log"
+    [[ -s "$asm" ]] || { echo "compile produced no output: $src" >&2; return 1; }
+    grep -q "Compilation successful" "$log" || {
+        echo "compile failed: $src" >&2
+        tail -n 60 "$log" >&2
+        return 1
+    }
+}
+
+assemble_forth() {
+    local asm="$1"
+    local obj="$2"
+    local log="$3"
+
+    run_forth "$ASM_FTH" /dev/null "S\" $asm\" S\" $obj\" ASSEMBLE
+BYE" "$log"
+    [[ -s "$obj" ]] || { echo "assembler produced no output: $asm" >&2; return 1; }
+    if grep -q "FAILED:" "$log"; then
+        echo "assembler failed: $asm" >&2
+        tail -n 60 "$log" >&2
+        return 1
+    fi
+}
+
+link_forth() {
+    local obj="$1"
+    local exe="$2"
+    local log="$3"
+
+    run_forth "$LINK_FTH" /dev/null "LINK-INIT
+S\" $ROOT_DIR/runtime/crt0.s32o\" LINK-OBJ
+S\" $obj\" LINK-OBJ
+65536 LINK-MMIO
+S\" $ROOT_DIR/runtime/libc_mmio.s32a\" LINK-ARCHIVE
+S\" $ROOT_DIR/runtime/libs32.s32a\" LINK-ARCHIVE
+S\" $exe\" LINK-EMIT
+BYE" "$log"
+    [[ -s "$exe" ]] || { echo "linker produced no output: $obj" >&2; return 1; }
+}
+
+# 1) Build cc-min compiler executable.
+CCMIN_ASM="$WORKDIR/cc-min.s"
+CCMIN_OBJ="$WORKDIR/cc-min.s32o"
+CCMIN_EXE="$WORKDIR/cc-min.s32x"
+compile_c_stage4 "$SRC" "$CCMIN_ASM" "$WORKDIR/cc-min.cc.log"
+assemble_forth "$CCMIN_ASM" "$CCMIN_OBJ" "$WORKDIR/cc-min.as.log"
+link_forth "$CCMIN_OBJ" "$CCMIN_EXE" "$WORKDIR/cc-min.ld.log"
+
+# 2) Build Stage05 assembler and Stage07 linker executables.
+PIPE_LOG="$WORKDIR/stage5-build.log"
+"$ROOT_DIR/selfhost/v2/stage05/run-pipeline.sh" --mode stage6-ar-smoke --emu "$EMU" --keep-artifacts >"$PIPE_LOG"
+PIPE_ART="$(awk -F': ' '/^Artifacts:/{print $2}' "$PIPE_LOG" | tail -n 1)"
+[[ -n "$PIPE_ART" && -d "$PIPE_ART" ]] || { echo "failed to locate stage05 artifacts dir" >&2; exit 1; }
+AS_EXE="$PIPE_ART/s32-as.s32x"
+[[ -f "$AS_EXE" ]] || { echo "missing stage05 assembler exe: $AS_EXE" >&2; exit 1; }
+
+LD_LOG="$WORKDIR/stage7-build.log"
+"$ROOT_DIR/selfhost/v2/stage07/run-spike.sh" --emu "$EMU" --keep-artifacts >"$LD_LOG"
+LD_EXE="$(awk -F': ' '/^Linker exe:/{print $2}' "$LD_LOG" | tail -n 1)"
+[[ -n "$LD_EXE" && -f "$LD_EXE" ]] || { echo "failed to locate stage07 linker exe" >&2; exit 1; }
+
+# 3) Use cc-min to compile minimal input.
+GEN_ASM="$WORKDIR/min_main.generated.s"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min.run.log" "$TEST_IN" "$GEN_ASM"
+[[ -s "$GEN_ASM" ]] || { echo "cc-min produced no assembly output" >&2; exit 1; }
+grep -q '^main:' "$GEN_ASM" || { echo "generated assembly missing main label" >&2; exit 1; }
+
+# 4) Assemble, link with stage07 (artifact), then link/run with stage03 runtime.
+GEN_OBJ="$WORKDIR/min_main.generated.s32o"
+GEN_RAW_EXE="$WORKDIR/min_main.generated.raw.s32x"
+GEN_EXE="$WORKDIR/min_main.generated.s32x"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as.run.log" "$GEN_ASM" "$GEN_OBJ"
+[[ -s "$GEN_OBJ" ]] || { echo "stage05 assembler produced no object output" >&2; exit 1; }
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld.run.log" "$GEN_OBJ" "$GEN_RAW_EXE"
+[[ -s "$GEN_RAW_EXE" ]] || { echo "stage07 linker produced no executable output" >&2; exit 1; }
+link_forth "$GEN_OBJ" "$GEN_EXE" "$WORKDIR/stage3-link.run.log"
+run_exe "$GEN_EXE" "$WORKDIR/gen.run.log"
+
+echo "OK: stage08 cc-min spike"
+echo "Compiler source: $SRC"
+echo "Compiler exe: $CCMIN_EXE"
+echo "Assembler exe: $AS_EXE"
+echo "Linker exe: $LD_EXE"
+echo "Input C: $TEST_IN"
+echo "Generated asm: $GEN_ASM"
+echo "Generated raw exe (stage07): $GEN_RAW_EXE"
+echo "Generated exe: $GEN_EXE"
+echo "Emulator: $EMU"
+echo "Artifacts: $WORKDIR"
