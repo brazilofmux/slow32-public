@@ -15,6 +15,7 @@ ASM_FTH="${STAGE8_ASM_FTH:-$ROOT_DIR/selfhost/v2/stage01/asm.fth}"
 LINK_FTH="${STAGE8_LINK_FTH:-$ROOT_DIR/selfhost/v2/stage03/link.fth}"
 SRC="${STAGE8_CC_MIN_SRC:-$SCRIPT_DIR/validation/cc-min.c}"
 TEST_IN="${STAGE8_TEST_IN:-$SCRIPT_DIR/tests/min_main.c}"
+TEST_RET_IN="${STAGE8_TEST_RET_IN:-$SCRIPT_DIR/tests/min_ret7.c}"
 KEEP_ARTIFACTS=0
 
 usage() {
@@ -24,7 +25,7 @@ Usage: $0 [--emu <path>] [--keep-artifacts]
 Stage08 compiler spike:
   1) build cc-min.s32x via stage04->stage01->stage03
   2) build stage05 assembler (s32-as.s32x) and stage07 linker (s32-ld.s32x)
-  3) run cc-min.s32x to compile tests/min_main.c -> .s
+  3) compile tests/min_main.c and tests/min_ret7.c with cc-min.s32x
   4) assemble with stage05; produce raw link via stage07; run via stage03 runtime link
 USAGE
 }
@@ -56,7 +57,7 @@ if [[ "$EMU" != /* ]]; then
     EMU="$ROOT_DIR/$EMU"
 fi
 
-for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH" "$SRC" "$TEST_IN"; do
+for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH" "$SRC" "$TEST_IN" "$TEST_RET_IN"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
 
@@ -108,6 +109,28 @@ run_exe() {
         tail -n 60 "$log" >&2
         return 1
     fi
+}
+
+run_exe_any_rc() {
+    local exe="$1"
+    local log="$2"
+    shift 2
+
+    set +e
+    timeout "${EXEC_TIMEOUT:-60}" "$EMU" "$exe" "$@" >"$log" 2>&1
+    local rc=$?
+    set -e
+    if [[ "$rc" -eq 124 ]]; then
+        echo "execution timed out: $exe" >&2
+        tail -n 60 "$log" >&2
+        return 124
+    fi
+    if grep -Eq "Execute fault|Memory fault|Write out of bounds or to protected memory|Unknown opcode|Unknown instruction|Load fault|Store fault" "$log"; then
+        echo "execution faulted: $exe" >&2
+        tail -n 60 "$log" >&2
+        return 125
+    fi
+    return "$rc"
 }
 
 compile_c_stage4() {
@@ -177,22 +200,41 @@ LD_LOG="$WORKDIR/stage7-build.log"
 LD_EXE="$(awk -F': ' '/^Linker exe:/{print $2}' "$LD_LOG" | tail -n 1)"
 [[ -n "$LD_EXE" && -f "$LD_EXE" ]] || { echo "failed to locate stage07 linker exe" >&2; exit 1; }
 
-# 3) Use cc-min to compile minimal input.
+# 3) Use cc-min to compile minimal inputs.
 GEN_ASM="$WORKDIR/min_main.generated.s"
+GEN_RET_ASM="$WORKDIR/min_ret7.generated.s"
 run_exe "$CCMIN_EXE" "$WORKDIR/cc-min.run.log" "$TEST_IN" "$GEN_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-ret.run.log" "$TEST_RET_IN" "$GEN_RET_ASM"
 [[ -s "$GEN_ASM" ]] || { echo "cc-min produced no assembly output" >&2; exit 1; }
+[[ -s "$GEN_RET_ASM" ]] || { echo "cc-min produced no return-test assembly output" >&2; exit 1; }
 grep -q '^main:' "$GEN_ASM" || { echo "generated assembly missing main label" >&2; exit 1; }
+grep -q 'addi r1, r0, 7' "$GEN_RET_ASM" || { echo "generated return-test assembly missing return immediate" >&2; exit 1; }
 
 # 4) Assemble, link with stage07 (artifact), then link/run with stage03 runtime.
 GEN_OBJ="$WORKDIR/min_main.generated.s32o"
 GEN_RAW_EXE="$WORKDIR/min_main.generated.raw.s32x"
 GEN_EXE="$WORKDIR/min_main.generated.s32x"
+GEN_RET_OBJ="$WORKDIR/min_ret7.generated.s32o"
+GEN_RET_RAW_EXE="$WORKDIR/min_ret7.generated.raw.s32x"
+GEN_RET_EXE="$WORKDIR/min_ret7.generated.s32x"
 run_exe "$AS_EXE" "$WORKDIR/stage5-as.run.log" "$GEN_ASM" "$GEN_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-ret.run.log" "$GEN_RET_ASM" "$GEN_RET_OBJ"
 [[ -s "$GEN_OBJ" ]] || { echo "stage05 assembler produced no object output" >&2; exit 1; }
+[[ -s "$GEN_RET_OBJ" ]] || { echo "stage05 assembler produced no return-test object output" >&2; exit 1; }
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld.run.log" "$GEN_OBJ" "$GEN_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-ret.run.log" "$GEN_RET_OBJ" "$GEN_RET_RAW_EXE"
 [[ -s "$GEN_RAW_EXE" ]] || { echo "stage07 linker produced no executable output" >&2; exit 1; }
+[[ -s "$GEN_RET_RAW_EXE" ]] || { echo "stage07 linker produced no return-test executable output" >&2; exit 1; }
 link_forth "$GEN_OBJ" "$GEN_EXE" "$WORKDIR/stage3-link.run.log"
+link_forth "$GEN_RET_OBJ" "$GEN_RET_EXE" "$WORKDIR/stage3-link-ret.run.log"
 run_exe "$GEN_EXE" "$WORKDIR/gen.run.log"
+RET_RC=0
+run_exe_any_rc "$GEN_RET_EXE" "$WORKDIR/gen-ret.run.log" || RET_RC=$?
+if [[ "$RET_RC" -ne 7 ]]; then
+    echo "return-test executable had unexpected exit code: $RET_RC (expected 7)" >&2
+    tail -n 60 "$WORKDIR/gen-ret.run.log" >&2
+    exit 1
+fi
 
 echo "OK: stage08 cc-min spike"
 echo "Compiler source: $SRC"
@@ -200,8 +242,12 @@ echo "Compiler exe: $CCMIN_EXE"
 echo "Assembler exe: $AS_EXE"
 echo "Linker exe: $LD_EXE"
 echo "Input C: $TEST_IN"
+echo "Return-test C: $TEST_RET_IN"
 echo "Generated asm: $GEN_ASM"
+echo "Generated return asm: $GEN_RET_ASM"
 echo "Generated raw exe (stage07): $GEN_RAW_EXE"
+echo "Generated return raw exe (stage07): $GEN_RET_RAW_EXE"
 echo "Generated exe: $GEN_EXE"
+echo "Generated return exe: $GEN_RET_EXE"
 echo "Emulator: $EMU"
 echo "Artifacts: $WORKDIR"
