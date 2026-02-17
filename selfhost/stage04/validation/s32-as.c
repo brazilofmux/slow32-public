@@ -4,6 +4,8 @@
 #include <string.h>
 #include <s32_formats.h>
 
+void fput_uint(FILE *fp, unsigned int val);
+
 #define MAX_LINE 1024
 #define MAX_TOK 8
 #define MAX_LBL 512
@@ -733,20 +735,22 @@ int main(int argc, char **argv) {
     uint32_t lno = 0;
 
     if (argc != 3) {
-        fprintf(stderr, "Usage: %s <input.s> <output.s32o>\n", argv[0]);
+        fputs("Usage: s32-as <input.s> <output.s32o>\n", stderr);
         return 1;
     }
 
     g_in = fopen(argv[1], "rb");
     if (!g_in) {
-        fprintf(stderr, "cannot open input\n");
+        fputs("cannot open input\n", stderr);
         return 1;
     }
 
     while (fgets(g_line, sizeof(g_line), g_in)) {
         lno++;
         if (handle(g_line) != 0) {
-            fprintf(stderr, "assemble error at line %u\n", lno);
+            fputs("assemble error at line ", stderr);
+            fput_uint(stderr, lno);
+            fputc('\n', stderr);
             fclose(g_in);
             g_in = 0;
             return 1;
@@ -756,12 +760,12 @@ int main(int argc, char **argv) {
     g_in = 0;
 
     if (resolve_local_text_relocs() != 0) {
-        fprintf(stderr, "resolve local text relocations failed\n");
+        fputs("resolve local text relocations failed\n", stderr);
         return 1;
     }
 
     if (write_obj(argv[2]) != 0) {
-        fprintf(stderr, "write object failed\n");
+        fputs("write object failed\n", stderr);
         return 1;
     }
     return 0;

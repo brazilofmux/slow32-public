@@ -300,8 +300,8 @@ VARIABLE sym-midx
     out-strsz @ >R
     DUP >R
     out-strtab out-strsz @ + SWAP CMOVE
-    0 out-strtab out-strsz @ + R> + C!
-    out-strsz @ SWAP 1+ + out-strsz !
+    0 out-strtab out-strsz @ + R@ + C!
+    R> 1+ out-strsz +!
     R> ;
 
 : AR-HEADER-OK? ( -- ok? )
@@ -561,8 +561,7 @@ VARIABLE sym-midx
         THEN
 
         m-tmp-size @ 0 ?DO
-            J sym-j !
-            sym-j @ 16 * m-tmp-off @ + m-tmp-pos !
+            I 16 * m-tmp-off @ + m-tmp-pos !
             sym-midx @ m-tmp-pos @ 11 + M-RD8 1 = IF          \ GLOBAL
                 sym-midx @ m-tmp-pos @ 8 + M-RD16 0<> IF      \ defined
                     sym-midx @ m-tmp-pos @ M-RD32 DUP t-off ! m-add-size @ < IF

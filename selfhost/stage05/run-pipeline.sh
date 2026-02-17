@@ -19,6 +19,9 @@ AR_FTH="${SELFHOST_AR_FTH:-$ROOT_DIR/selfhost/stage02/ar.fth}"
 
 TEST_DIR="${SELFHOST_TEST_DIR:-$ROOT_DIR/selfhost/stage04/tests}"
 VALIDATION_DIR="${SELFHOST_VALIDATION_DIR:-$ROOT_DIR/selfhost/stage04/validation}"
+LIBC_DIR="$ROOT_DIR/selfhost/stage05/libc"
+CRT0_SRC="$ROOT_DIR/selfhost/stage01/crt0_minimal.s"
+MMIO_SRC="$ROOT_DIR/selfhost/stage01/mmio_minimal.s"
 
 MODE="baseline"
 TEST_NAME="test3"
@@ -113,7 +116,8 @@ case "$MODE" in
         ;;
 esac
 
-for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH" "$AR_FTH"; do
+for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH" "$AR_FTH" \
+         "$CRT0_SRC" "$MMIO_SRC"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
 
@@ -140,6 +144,16 @@ FTH
         return 1
     fi
 }
+
+# --- Build selfhost runtime from stage01 sources ---
+RUNTIME_CRT0="$WORKDIR/crt0_minimal.s32o"
+RUNTIME_MMIO_OBJ="$WORKDIR/mmio_minimal.s32o"
+run_forth "$ASM_FTH" /dev/null "S\" $CRT0_SRC\" S\" $RUNTIME_CRT0\" ASSEMBLE
+BYE" "$WORKDIR/crt0.as.log"
+[[ -s "$RUNTIME_CRT0" ]] || { echo "failed to assemble crt0_minimal.s" >&2; exit 1; }
+run_forth "$ASM_FTH" /dev/null "S\" $MMIO_SRC\" S\" $RUNTIME_MMIO_OBJ\" ASSEMBLE
+BYE" "$WORKDIR/mmio.as.log"
+[[ -s "$RUNTIME_MMIO_OBJ" ]] || { echo "failed to assemble mmio_minimal.s" >&2; exit 1; }
 
 run_exe() {
     local exe="$1"
@@ -225,11 +239,74 @@ link_forth() {
     local log="$3"
 
     run_forth "$LINK_FTH" /dev/null "LINK-INIT
-S\" $ROOT_DIR/runtime/crt0.s32o\" LINK-OBJ
+S\" $RUNTIME_CRT0\" LINK-OBJ
 S\" $obj\" LINK-OBJ
+S\" $RUNTIME_MMIO_OBJ\" LINK-OBJ
 65536 LINK-MMIO
-S\" $ROOT_DIR/runtime/libc_mmio.s32a\" LINK-ARCHIVE
-S\" $ROOT_DIR/runtime/libs32.s32a\" LINK-ARCHIVE
+S\" $exe\" LINK-EMIT
+BYE" "$log"
+    [[ -s "$exe" ]] || { echo "linker produced no output: $obj" >&2; return 1; }
+}
+
+# --- Selfhost libc build ---
+LIBC_ARCHIVE=""
+LIBC_START_OBJ=""
+LIBC_BUILT=0
+
+build_selfhost_libc() {
+    if [[ "$LIBC_BUILT" -eq 1 ]]; then return 0; fi
+
+    local libc_c_files="string_extra convert stdio start"
+    local name src asm obj
+    local ar_objs=""
+
+    echo "Building selfhost libc..."
+
+    for name in $libc_c_files; do
+        src="$LIBC_DIR/${name}.c"
+        asm="$WORKDIR/libc_${name}.s"
+        obj="$WORKDIR/libc_${name}.s32o"
+
+        [[ -f "$src" ]] || { echo "Missing libc source: $src" >&2; return 1; }
+        compile_c_stage4 "$src" "$asm" "$WORKDIR/libc_${name}.cc.log"
+        assemble_forth "$asm" "$obj" "$WORKDIR/libc_${name}.as.log"
+
+        if [[ "$name" == "start" ]]; then
+            LIBC_START_OBJ="$obj"
+        else
+            ar_objs="$ar_objs $obj"
+        fi
+    done
+
+    # Archive the libc objects (start.s32o is linked directly, not archived)
+    LIBC_ARCHIVE="$WORKDIR/libc_selfhost.s32a"
+    local ar_cmd
+    ar_cmd="S\" $LIBC_ARCHIVE\" AR-C-BEGIN"
+    for obj in $ar_objs; do
+        ar_cmd="${ar_cmd}
+S\" $obj\" AR-ADD"
+    done
+    ar_cmd="${ar_cmd}
+AR-C-END
+BYE"
+    run_forth "$AR_FTH" /dev/null "$ar_cmd" "$WORKDIR/libc.ar.log"
+    [[ -s "$LIBC_ARCHIVE" ]] || { echo "failed to build libc archive" >&2; return 1; }
+    echo "Libc archive: $LIBC_ARCHIVE"
+    LIBC_BUILT=1
+}
+
+link_forth_with_libc() {
+    local obj="$1"
+    local exe="$2"
+    local log="$3"
+
+    run_forth "$LINK_FTH" /dev/null "LINK-INIT
+S\" $RUNTIME_CRT0\" LINK-OBJ
+S\" $obj\" LINK-OBJ
+S\" $LIBC_START_OBJ\" LINK-OBJ
+S\" $RUNTIME_MMIO_OBJ\" LINK-OBJ
+65536 LINK-MMIO
+S\" $LIBC_ARCHIVE\" LINK-ARCHIVE
 S\" $exe\" LINK-EMIT
 BYE" "$log"
     [[ -s "$exe" ]] || { echo "linker produced no output: $obj" >&2; return 1; }
@@ -242,9 +319,10 @@ build_stage5_assembler() {
     local exe="$WORKDIR/s32-as.s32x"
 
     [[ -f "$src" ]] || { echo "Missing source: $src" >&2; return 1; }
+    build_selfhost_libc
     compile_c_stage4 "$src" "$asm" "$WORKDIR/s32-as.cc.log"
     assemble_forth "$asm" "$obj" "$WORKDIR/s32-as.as.log"
-    link_forth "$obj" "$exe" "$WORKDIR/s32-as.ld.log"
+    link_forth_with_libc "$obj" "$exe" "$WORKDIR/s32-as.ld.log"
     STAGE5_AS_EXE="$exe"
 }
 
@@ -266,13 +344,14 @@ build_stage6_archiver() {
     local exe="$WORKDIR/s32-ar.s32x"
 
     [[ -f "$src" ]] || { echo "Missing source: $src" >&2; return 1; }
+    build_selfhost_libc
     compile_c_stage4 "$src" "$asm" "$WORKDIR/s32-ar.cc.log"
     if [[ "$asm_mode" == "forth" ]]; then
         assemble_forth "$asm" "$obj" "$WORKDIR/s32-ar.as.log"
     else
         assemble_with_stage5 "$asm" "$obj" "$WORKDIR/s32-ar.as.log"
     fi
-    link_forth "$obj" "$exe" "$WORKDIR/s32-ar.ld.log"
+    link_forth_with_libc "$obj" "$exe" "$WORKDIR/s32-ar.ld.log"
     STAGE6_AR_EXE="$exe"
 }
 
@@ -562,8 +641,8 @@ case "$MODE" in
         compile_c_stage4 "$TARGET_SRC" "$TARGET_ASM" "$WORKDIR/s32-ar.cc.log"
         assemble_with_stage5 "$TARGET_ASM" "$TARGET_STAGE5_OBJ" "$WORKDIR/s32-ar.stage5.as.log"
         assemble_forth "$TARGET_ASM" "$TARGET_FORTH_OBJ" "$WORKDIR/s32-ar.forth.as.log"
-        link_forth "$TARGET_STAGE5_OBJ" "$TARGET_STAGE5_EXE" "$WORKDIR/s32-ar.stage5.ld.log"
-        link_forth "$TARGET_FORTH_OBJ" "$TARGET_FORTH_EXE" "$WORKDIR/s32-ar.forth.ld.log"
+        link_forth_with_libc "$TARGET_STAGE5_OBJ" "$TARGET_STAGE5_EXE" "$WORKDIR/s32-ar.stage5.ld.log"
+        link_forth_with_libc "$TARGET_FORTH_OBJ" "$TARGET_FORTH_EXE" "$WORKDIR/s32-ar.forth.ld.log"
 
         if cmp -s "$TARGET_FORTH_EXE" "$TARGET_STAGE5_EXE"; then
             if cmp -s "$TARGET_FORTH_OBJ" "$TARGET_STAGE5_OBJ"; then
@@ -614,8 +693,8 @@ case "$MODE" in
         compile_c_stage4 "$TARGET_SRC" "$TARGET_ASM" "$WORKDIR/utility.cc.log"
         assemble_with_stage5 "$TARGET_ASM" "$TARGET_STAGE5_OBJ" "$WORKDIR/utility.stage5.as.log"
         assemble_forth "$TARGET_ASM" "$TARGET_FORTH_OBJ" "$WORKDIR/utility.forth.as.log"
-        link_forth "$TARGET_STAGE5_OBJ" "$TARGET_STAGE5_EXE" "$WORKDIR/utility.stage5.ld.log"
-        link_forth "$TARGET_FORTH_OBJ" "$TARGET_FORTH_EXE" "$WORKDIR/utility.forth.ld.log"
+        link_forth_with_libc "$TARGET_STAGE5_OBJ" "$TARGET_STAGE5_EXE" "$WORKDIR/utility.stage5.ld.log"
+        link_forth_with_libc "$TARGET_FORTH_OBJ" "$TARGET_FORTH_EXE" "$WORKDIR/utility.forth.ld.log"
 
         if ! cmp -s "$TARGET_FORTH_EXE" "$TARGET_STAGE5_EXE"; then
             FIRST_EXE_DIFF="$(cmp -l "$TARGET_FORTH_EXE" "$TARGET_STAGE5_EXE" 2>/dev/null | head -n 1 || true)"

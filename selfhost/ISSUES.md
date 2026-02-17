@@ -86,27 +86,24 @@ using only:
 Runtime sources: `selfhost/stage01/crt0_minimal.s`, `selfhost/stage01/mmio_minimal.s`.
 These are linked as direct objects (not archives) to work around Issue #16.
 
-### 16. [BUG] Forth Linker Archive Symbol Resolution Fails
-The Forth linker (`selfhost/stage03/link.fth`) `LINK-ARCHIVE` does not pull archive
-members to satisfy undefined symbols. The archive is read correctly (member count and
-symbol count are reported), but the iterative pull loop in `SYM-UNDEFINED?` never
-matches, leaving all references unresolved.
+### 16. [FIXED] Forth Archiver Symbol Index Bugs
+The Forth archiver (`selfhost/stage02/ar.fth`) had two bugs preventing archive-based
+linking from working:
 
-Observed: crt0 references `memset` (undefined, HI20/LO12 relocations). Archive
-contains `mmio_minimal.s32o` with `memset` defined. Linker reports
-`members=1 symbols=43` but `After: syms=9 relocs=14` — no member pulled.
-All symbols resolve correctly when the same object is linked directly via `LINK-OBJ`.
+**Bug A: `OUTSTR-ADD` stack underflow** — In the output string table builder,
+`R>` popped the string length from the return stack for the NUL-terminator write,
+leaving the stack empty for the subsequent size update. Fixed by using `R@` (copy)
+instead of `R>` (pop), then properly advancing `out-strsz` with `R> 1+ out-strsz +!`.
 
-Workaround: Stage04 now links `mmio_minimal.s32o` as a direct object instead of
-through an archive. This avoids the bug but means archive-based linking is untested
-in the selfhost-only path.
+**Bug B: `BUILD-SYMINDEX` used wrong loop variable** — In the nested `?DO` loops,
+`J sym-j !` stored the outer loop index (member index) where the inner loop index
+(symbol index) was needed. This caused every symbol within a member to read the same
+symbol table entry (at position `member_idx * 16 + sym_offset` instead of
+`symbol_idx * 16 + sym_offset`). Fixed by replacing `J sym-j !` /
+`sym-j @ 16 * m-tmp-off @ +` with `I 16 * m-tmp-off @ +`.
 
-Investigation needed:
-- Check if the Forth archiver's symbol index string table encoding matches what
-  `GSYM-FIND` expects (NUL termination, offsets, byte order)
-- Check if `AR-SYM-NAME` returns the correct `(c-addr u)` pair for comparison
-- The host-built archiver (`s32-ar.c` via `c` command) creates archives with
-  `symbols=0` — it may not write a symbol index at all
+Both fixes verified by stage02 and stage03 regression tests. Archive-based linking
+now works correctly in the stage05 selfhost libc build.
 
 ---
 
