@@ -55,13 +55,28 @@ FTH
 
 case "$TARGET" in
     kernel)
+        CRT0_SRC="$ROOT_DIR/selfhost/stage01/crt0_minimal.s"
+        MMIO_SRC="$ROOT_DIR/selfhost/stage01/mmio_minimal.s"
+        KERNEL_SRC="$ROOT_DIR/forth/kernel.s"
+        CRT0_OBJ="$WORKDIR/crt0_minimal.s32o"
+        MMIO_OBJ="$WORKDIR/mmio_minimal.s32o"
+        KERNEL_OBJ="$WORKDIR/kernel.s32o"
         OUT="$WORKDIR/kernel-forth-linked.s32x"
+
+        run_forth "$ASM_FTH" "S\" $CRT0_SRC\" S\" $CRT0_OBJ\" ASSEMBLE" "$WORKDIR/kernel-crt0.log"
+        [[ -s "$CRT0_OBJ" ]] || { echo "failed to assemble crt0_minimal.s" >&2; exit 1; }
+
+        run_forth "$ASM_FTH" "S\" $MMIO_SRC\" S\" $MMIO_OBJ\" ASSEMBLE" "$WORKDIR/kernel-mmio.log"
+        [[ -s "$MMIO_OBJ" ]] || { echo "failed to assemble mmio_minimal.s" >&2; exit 1; }
+
+        run_forth "$ASM_FTH" "S\" $KERNEL_SRC\" S\" $KERNEL_OBJ\" ASSEMBLE" "$WORKDIR/kernel-asm.log"
+        [[ -s "$KERNEL_OBJ" ]] || { echo "failed to assemble kernel.s" >&2; exit 1; }
+
         CMD="LINK-INIT
-S\" $ROOT_DIR/runtime/crt0.s32o\" LINK-OBJ
-S\" $ROOT_DIR/forth/kernel.s32o\" LINK-OBJ
+S\" $CRT0_OBJ\" LINK-OBJ
+S\" $KERNEL_OBJ\" LINK-OBJ
+S\" $MMIO_OBJ\" LINK-OBJ
 65536 LINK-MMIO
-S\" $ROOT_DIR/runtime/libc_mmio.s32a\" LINK-ARCHIVE
-S\" $ROOT_DIR/runtime/libs32.s32a\" LINK-ARCHIVE
 S\" $OUT\" LINK-EMIT"
         ;;
     test3)
