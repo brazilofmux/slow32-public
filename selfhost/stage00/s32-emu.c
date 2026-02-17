@@ -87,24 +87,16 @@
  * ====================================================================== */
 
 static inline uint32_t rd32(const uint8_t *m, uint32_t a) {
-    return ((uint32_t)m[a + 0])
-         | ((uint32_t)m[a + 1] << 8)
-         | ((uint32_t)m[a + 2] << 16)
-         | ((uint32_t)m[a + 3] << 24);
+    uint32_t v; memcpy(&v, m + a, 4); return v;
 }
 static inline uint16_t rd16(const uint8_t *m, uint32_t a) {
-    return (uint16_t)(((uint16_t)m[a + 0])
-                    | ((uint16_t)m[a + 1] << 8));
+    uint16_t v; memcpy(&v, m + a, 2); return v;
 }
 static inline void wr32(uint8_t *m, uint32_t a, uint32_t v) {
-    m[a + 0] = (uint8_t)(v & 0xFFu);
-    m[a + 1] = (uint8_t)((v >> 8) & 0xFFu);
-    m[a + 2] = (uint8_t)((v >> 16) & 0xFFu);
-    m[a + 3] = (uint8_t)((v >> 24) & 0xFFu);
+    memcpy(m + a, &v, 4);
 }
 static inline void wr16(uint8_t *m, uint32_t a, uint16_t v) {
-    m[a + 0] = (uint8_t)(v & 0xFFu);
-    m[a + 1] = (uint8_t)((v >> 8) & 0xFFu);
+    memcpy(m + a, &v, 2);
 }
 
 static bool range_ok_u32(uint32_t base, uint32_t size, uint32_t total) {
