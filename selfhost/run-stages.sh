@@ -29,10 +29,11 @@ EMU="$EMU_DEFAULT"
 FROM="stage00"
 TO="stage08"
 SKIP_SELFHOST_KERNEL=0
+SKIP_PURITY_GUARD=0
 
 usage() {
     cat <<USAGE
-Usage: $0 [--from stage00] [--to stage08] [--emu <path>] [--skip-selfhost-kernel]
+Usage: $0 [--from stage00] [--to stage08] [--emu <path>] [--skip-selfhost-kernel] [--skip-purity-guard]
 
 Runs ordered stage checks so a clean checkout can be validated end-to-end.
 
@@ -45,6 +46,8 @@ Options:
   --emu path       Emulator for stage01..stage08 (default: slow32-fast, then stage00 s32-emu, then slow32)
   --skip-selfhost-kernel
                    Skip stage03 selfhost-kernel regeneration/boot gate (dev fast-path)
+  --skip-purity-guard
+                   Skip bootstrap purity guard for stage00..06 (debug only)
 USAGE
 }
 
@@ -67,6 +70,9 @@ while [[ $# -gt 0 ]]; do
             ;;
         --skip-selfhost-kernel)
             SKIP_SELFHOST_KERNEL=1
+            ;;
+        --skip-purity-guard)
+            SKIP_PURITY_GUARD=1
             ;;
         -h|--help)
             usage
@@ -110,6 +116,15 @@ fi
 for req in "$ROOT_DIR/forth/kernel.s32x" "$ROOT_DIR/forth/prelude.fth"; do
     [[ -f "$req" ]] || { echo "Missing required file: $req" >&2; exit 1; }
 done
+
+if (( TO_N >= 0 && FROM_N <= 6 )); then
+    if [[ "$SKIP_PURITY_GUARD" -eq 0 ]]; then
+        echo "[guard] bootstrap purity (stage00..06)"
+        "$ROOT_DIR/selfhost/check-bootstrap-purity.sh"
+    else
+        echo "[guard] skipping bootstrap purity check (--skip-purity-guard)"
+    fi
+fi
 
 run_stage00() {
     echo "[stage00] build + smoke"
