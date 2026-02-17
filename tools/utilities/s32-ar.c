@@ -606,6 +606,16 @@ static void usage(const char *prog) {
 }
 
 int main(int argc, char **argv) {
+    /* Endianness check: SLOW-32 is Little-Endian and this tool 
+     * relies on host endianness for binary format performance. */
+    {
+        uint32_t test = 1;
+        if (*(uint8_t *)&test != 1) {
+            fprintf(stderr, "Error: This tool only supports Little-Endian host platforms.\n");
+            return 1;
+        }
+    }
+
     if (argc < 3) {
         usage(argv[0]);
     }

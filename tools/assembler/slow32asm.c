@@ -2350,6 +2350,16 @@ static int write_object_file(assembler_t *as, const char *filename) {
 }
 
 int main(int argc, char *argv[]) {
+    /* Endianness check: SLOW-32 is Little-Endian and this tool 
+     * relies on host endianness for binary output performance. */
+    {
+        uint32_t test = 1;
+        if (*(uint8_t *)&test != 1) {
+            fprintf(stderr, "Error: This tool only supports Little-Endian host platforms.\n");
+            return 1;
+        }
+    }
+
     int opt;
     const char *output_file = NULL;
     

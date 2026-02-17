@@ -27,8 +27,12 @@ with a deterministic fault instead of touching host memory out of range.
 and MMIO end (when MMIO is enabled). This prevents under-allocation when older artifacts
 under-report `mem_size` relative to the requested stack top.
 
-### 5. [PORTABILITY] Host Endianness Dependency
-The memory access helpers (`rd32`, `wr32`) use `memcpy` directly into host integers, making the emulator non-portable to Big Endian hosts.
+### 5. [NOT SUPPORTED] Host Endianness Dependency
+The memory access helpers (`rd32`, `wr32`) use `memcpy` directly into host integers.
+While this makes the emulator non-portable to Big Endian hosts, the performance benefits
+of native-endian memory mapping on common architectures (x86_64, ARM64, RISC-V) outweigh
+the cost of BE portability. The emulator and toolchain now explicitly check for host
+endianness at startup and will exit with an error on Big Endian platforms.
 
 ---
 

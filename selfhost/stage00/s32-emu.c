@@ -894,6 +894,16 @@ static void step(emu_t *e) {
  * ====================================================================== */
 
 int main(int argc, char **argv) {
+    /* Endianness check: SLOW-32 is Little-Endian and this emulator 
+     * relies on host endianness for memory access performance. */
+    {
+        uint32_t test = 1;
+        if (*(uint8_t *)&test != 1) {
+            fprintf(stderr, "Error: This emulator only supports Little-Endian host platforms.\n");
+            return 1;
+        }
+    }
+
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <program.s32x> [args...]\n", argv[0]);
         return 1;

@@ -469,6 +469,16 @@ static bool slow32_load_kernel(Slow32MachineState *sms, MachineState *machine,
 
 static void slow32_machine_init(MachineState *machine)
 {
+    /* Endianness check: SLOW-32 is Little-Endian and this emulator
+     * relies on host endianness for memory access performance. */
+    {
+        uint32_t test = 1;
+        if (*(uint8_t *)&test != 1) {
+            error_report("This emulator only supports Little-Endian host platforms.");
+            exit(EXIT_FAILURE);
+        }
+    }
+
     Slow32MachineState *sms = SLOW32_MACHINE(machine);
     MemoryRegion *system_memory = get_system_memory();
     Error *err = NULL;

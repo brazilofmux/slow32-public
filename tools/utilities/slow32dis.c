@@ -536,6 +536,16 @@ static void disassemble_section(FILE *f, const char *name, uint32_t vaddr,
 // ============================================================================
 
 int main(int argc, char *argv[]) {
+    /* Endianness check: SLOW-32 is Little-Endian and this tool 
+     * relies on host endianness for binary format performance. */
+    {
+        uint32_t test = 1;
+        if (*(uint8_t *)&test != 1) {
+            fprintf(stderr, "Error: This tool only supports Little-Endian host platforms.\n");
+            return 1;
+        }
+    }
+
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <file.s32x|file.s32o> [start_addr] [end_addr]\n", argv[0]);
         return 1;

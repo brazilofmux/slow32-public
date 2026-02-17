@@ -1075,6 +1075,16 @@ static void parse_service_list(const char *list, char names[][S32_MAX_SVC_NAME],
 }
 
 int main(int argc, char **argv) {
+    /* Endianness check: SLOW-32 is Little-Endian and this emulator 
+     * relies on host endianness for code translation performance. */
+    {
+        uint32_t test = 1;
+        if (*(uint8_t *)&test != 1) {
+            fprintf(stderr, "Error: This emulator only supports Little-Endian host platforms.\n");
+            return 1;
+        }
+    }
+
     bool verbose = false;
     bool show_stats = false;
     bool two_pass = false;
