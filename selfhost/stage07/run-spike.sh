@@ -14,7 +14,7 @@ CC_FTH="${STAGE7_CC:-$ROOT_DIR/selfhost/stage04/cc.fth}"
 ASM_FTH="${STAGE7_ASM:-$ROOT_DIR/selfhost/stage01/asm.fth}"
 LINK_FTH="${STAGE7_LINK:-$ROOT_DIR/selfhost/stage03/link.fth}"
 AR_FTH="${STAGE7_AR:-$ROOT_DIR/selfhost/stage02/ar.fth}"
-SRC="${STAGE7_SRC:-$SCRIPT_DIR/validation/s32-ld.c}"
+SRC="${STAGE7_SRC:-$SCRIPT_DIR/s32-ld.c}"
 KEEP_ARTIFACTS=0
 WITH_RELOC_SPIKE=0
 
@@ -63,9 +63,15 @@ if [[ "$EMU" != /* ]]; then
 fi
 
 for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH" "$AR_FTH" \
-         "$SRC" "$CRT0_SRC" "$MMIO_SRC"; do
+         "$CRT0_SRC" "$MMIO_SRC"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
+
+if [[ ! -f "$SRC" ]]; then
+    # Backward-compatible fallback during path transition.
+    SRC="$SCRIPT_DIR/validation/s32-ld.c"
+fi
+[[ -f "$SRC" ]] || { echo "Missing required file: $SRC" >&2; exit 1; }
 
 WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage07.XXXXXX)"
 if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then

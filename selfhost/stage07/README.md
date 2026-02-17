@@ -3,11 +3,11 @@
 This stage starts the C-subset linker track (`.s32o + .s32a -> .s32x`).
 
 Current spike scope:
-- Build `validation/s32-ld.c` through the existing selfhost pipeline (`stage04 -> stage01 -> stage03`).
+- Build `s32-ld.c` through the existing selfhost pipeline (`stage04 -> stage01 -> stage03`).
 - Run the resulting linker to link a tiny single-object program (`main: halt`).
 - Execute the produced `.s32x` on the selected emulator.
 
-Current constraints in `validation/s32-ld.c`:
+Current constraints in `s32-ld.c`:
 - Primary `.s32o` plus optional bounded aux input (`.s32o` or `.s32a`).
 - Archive support is bounded and symbol-aware (single selected member, no first-member fallback).
 - Bounded relocation support for `REL_32`, `REL_HI20`, `REL_LO12`,
