@@ -5,6 +5,9 @@ This stage provides an A/B pipeline driver for replacing Forth tools with subset
 Script:
 - `run-pipeline.sh`
 
+Primary Stage05 assembler source:
+- `selfhost/stage05/s32-as.c`
+
 Modes:
 - `baseline`: Stage4 `cc.fth` + Stage1 Forth assembler + Stage3 Forth linker
 - `progressive-as`: Stage4 `cc.fth` + Stage5 `s32-as.c` (C assembler) + Stage3 linker

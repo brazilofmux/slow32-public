@@ -19,6 +19,7 @@ AR_FTH="${SELFHOST_AR_FTH:-$ROOT_DIR/selfhost/stage02/ar.fth}"
 
 TEST_DIR="${SELFHOST_TEST_DIR:-$ROOT_DIR/selfhost/stage04/tests}"
 VALIDATION_DIR="${SELFHOST_VALIDATION_DIR:-$ROOT_DIR/selfhost/stage04/validation}"
+STAGE5_AS_SRC="${SELFHOST_STAGE5_AS_SRC:-$ROOT_DIR/selfhost/stage05/s32-as.c}"
 LIBC_DIR="$ROOT_DIR/selfhost/stage05/libc"
 CRT0_SRC="$ROOT_DIR/selfhost/stage01/crt0_minimal.s"
 MMIO_SRC="$ROOT_DIR/selfhost/stage01/mmio_minimal.s"
@@ -66,7 +67,7 @@ Modes:
 Env overrides:
   SELFHOST_ROOT SELFHOST_EMU SELFHOST_KERNEL SELFHOST_PRELUDE
   SELFHOST_CC_FTH SELFHOST_ASM_FTH SELFHOST_LINK_FTH SELFHOST_AR_FTH
-  SELFHOST_TEST_DIR SELFHOST_VALIDATION_DIR
+  SELFHOST_TEST_DIR SELFHOST_VALIDATION_DIR SELFHOST_STAGE5_AS_SRC
 USAGE
 }
 
@@ -313,11 +314,15 @@ BYE" "$log"
 }
 
 build_stage5_assembler() {
-    local src="$VALIDATION_DIR/s32-as.c"
+    local src="$STAGE5_AS_SRC"
     local asm="$WORKDIR/s32-as.s"
     local obj="$WORKDIR/s32-as.s32o"
     local exe="$WORKDIR/s32-as.s32x"
 
+    if [[ ! -f "$src" ]]; then
+        # Backward-compatible fallback during path transition.
+        src="$VALIDATION_DIR/s32-as.c"
+    fi
     [[ -f "$src" ]] || { echo "Missing source: $src" >&2; return 1; }
     build_selfhost_libc
     compile_c_stage4 "$src" "$asm" "$WORKDIR/s32-as.cc.log"
