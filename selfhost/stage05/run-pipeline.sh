@@ -20,6 +20,8 @@ AR_FTH="${SELFHOST_AR_FTH:-$ROOT_DIR/selfhost/stage02/ar.fth}"
 TEST_DIR="${SELFHOST_TEST_DIR:-$ROOT_DIR/selfhost/stage04/tests}"
 VALIDATION_DIR="${SELFHOST_VALIDATION_DIR:-$ROOT_DIR/selfhost/stage04/validation}"
 STAGE5_AS_SRC="${SELFHOST_STAGE5_AS_SRC:-$ROOT_DIR/selfhost/stage05/s32-as.c}"
+STAGE6_AR_SRC="${SELFHOST_STAGE6_AR_SRC:-$ROOT_DIR/selfhost/stage06/s32-ar.c}"
+STAGE6_AR_SCAN_SRC="${SELFHOST_STAGE6_AR_SCAN_SRC:-$ROOT_DIR/selfhost/stage06/s32-ar-scan.c}"
 LIBC_DIR="$ROOT_DIR/selfhost/stage05/libc"
 CRT0_SRC="$ROOT_DIR/selfhost/stage01/crt0_minimal.s"
 MMIO_SRC="$ROOT_DIR/selfhost/stage01/mmio_minimal.s"
@@ -68,6 +70,7 @@ Env overrides:
   SELFHOST_ROOT SELFHOST_EMU SELFHOST_KERNEL SELFHOST_PRELUDE
   SELFHOST_CC_FTH SELFHOST_ASM_FTH SELFHOST_LINK_FTH SELFHOST_AR_FTH
   SELFHOST_TEST_DIR SELFHOST_VALIDATION_DIR SELFHOST_STAGE5_AS_SRC
+  SELFHOST_STAGE6_AR_SRC SELFHOST_STAGE6_AR_SCAN_SRC
 USAGE
 }
 
@@ -342,12 +345,16 @@ assemble_with_stage5() {
 }
 
 build_stage6_archiver() {
-    local src="${1:-$VALIDATION_DIR/s32-ar.c}"
+    local src="${1:-$STAGE6_AR_SRC}"
     local asm_mode="${2:-stage5}"
     local asm="$WORKDIR/s32-ar.s"
     local obj="$WORKDIR/s32-ar.s32o"
     local exe="$WORKDIR/s32-ar.s32x"
 
+    if [[ ! -f "$src" ]]; then
+        # Backward-compatible fallback during path transition.
+        src="$VALIDATION_DIR/s32-ar.c"
+    fi
     [[ -f "$src" ]] || { echo "Missing source: $src" >&2; return 1; }
     build_selfhost_libc
     compile_c_stage4 "$src" "$asm" "$WORKDIR/s32-ar.cc.log"
@@ -593,44 +600,47 @@ case "$MODE" in
     stage6-ar-smoke)
         build_stage5_assembler
         TARGET_OBJ="$RUNTIME_CRT0"
-        build_stage6_archiver "$VALIDATION_DIR/s32-ar.c" stage5
+        build_stage6_archiver "$STAGE6_AR_SRC" stage5
         stage6_archive_smoke
         ;;
     stage6-ar-rc-smoke)
         build_stage5_assembler
-        build_stage6_archiver "$VALIDATION_DIR/s32-ar.c" stage5
+        build_stage6_archiver "$STAGE6_AR_SRC" stage5
         stage6_archive_rc_smoke
         ;;
     stage6-ar-tx-smoke)
         build_stage5_assembler
-        build_stage6_archiver "$VALIDATION_DIR/s32-ar.c" stage5
+        build_stage6_archiver "$STAGE6_AR_SRC" stage5
         stage6_archive_tx_smoke
         ;;
     stage6-ar-d-smoke)
         build_stage5_assembler
-        build_stage6_archiver "$VALIDATION_DIR/s32-ar.c" stage5
+        build_stage6_archiver "$STAGE6_AR_SRC" stage5
         stage6_archive_d_smoke
         ;;
     stage6-ar-m-smoke)
         build_stage5_assembler
-        build_stage6_archiver "$VALIDATION_DIR/s32-ar.c" stage5
+        build_stage6_archiver "$STAGE6_AR_SRC" stage5
         stage6_archive_m_smoke
         ;;
     stage6-ar-vp-smoke)
         build_stage5_assembler
-        build_stage6_archiver "$VALIDATION_DIR/s32-ar.c" stage5
+        build_stage6_archiver "$STAGE6_AR_SRC" stage5
         stage6_archive_vp_smoke
         ;;
     stage6-ar-scan-smoke)
         build_stage5_assembler
         TARGET_OBJ="$RUNTIME_CRT0"
-        build_stage6_archiver "$VALIDATION_DIR/s32-ar-scan.c" stage5
+        build_stage6_archiver "$STAGE6_AR_SCAN_SRC" stage5
         stage6_archive_smoke "cs"
         ;;
     stage6-ar-asm-diff)
         build_stage5_assembler
         if [[ "$TEST_NAME" == "test3" ]]; then
-            TARGET_SRC="$VALIDATION_DIR/s32-ar.c"
+            TARGET_SRC="$STAGE6_AR_SRC"
+            if [[ ! -f "$TARGET_SRC" ]]; then
+                TARGET_SRC="$VALIDATION_DIR/s32-ar.c"
+            fi
         else
             TARGET_SRC="$(resolve_validation_source "$TEST_NAME")"
         fi
@@ -771,10 +781,10 @@ case "$MODE" in
         build_stage5_assembler
         assemble_with_stage5 "$TARGET_ASM" "$TARGET_OBJ" "$WORKDIR/target.as.log"
         if [[ "$MODE" == "progressive-as-ar" ]]; then
-            build_stage6_archiver "$VALIDATION_DIR/s32-ar.c" stage5
+            build_stage6_archiver "$STAGE6_AR_SRC" stage5
             stage6_archive_smoke
         elif [[ "$MODE" == "progressive-as-ar-scan" ]]; then
-            build_stage6_archiver "$VALIDATION_DIR/s32-ar-scan.c" stage5
+            build_stage6_archiver "$STAGE6_AR_SCAN_SRC" stage5
             stage6_archive_smoke "cs"
         fi
         ;;
