@@ -32,6 +32,9 @@ Stage0 memory access helpers now decode/encode little-endian values explicitly b
 instead of `memcpy` into host integers. This makes instruction and data memory behavior
 portable across host endianness.
 
+MMIO guest field packing/unpacking paths (`SEEK` distance and `STAT` result payload)
+also now use explicit little-endian encode/decode helpers.
+
 ---
 
 ## Stage 2: Forth Assembler (`asm.fth`)
