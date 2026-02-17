@@ -13,9 +13,14 @@ PRELUDE="${STAGE7_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 CC_FTH="${STAGE7_CC:-$ROOT_DIR/selfhost/stage04/cc.fth}"
 ASM_FTH="${STAGE7_ASM:-$ROOT_DIR/selfhost/stage01/asm.fth}"
 LINK_FTH="${STAGE7_LINK:-$ROOT_DIR/selfhost/stage03/link.fth}"
+AR_FTH="${STAGE7_AR:-$ROOT_DIR/selfhost/stage02/ar.fth}"
 SRC="${STAGE7_SRC:-$SCRIPT_DIR/validation/s32-ld.c}"
 KEEP_ARTIFACTS=0
 WITH_RELOC_SPIKE=0
+
+CRT0_SRC="$ROOT_DIR/selfhost/stage01/crt0_minimal.s"
+MMIO_SRC="$ROOT_DIR/selfhost/stage01/mmio_minimal.s"
+LIBC_DIR="$ROOT_DIR/selfhost/stage05/libc"
 
 usage() {
     cat <<USAGE
@@ -57,7 +62,8 @@ if [[ "$EMU" != /* ]]; then
     EMU="$ROOT_DIR/$EMU"
 fi
 
-for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH" "$SRC"; do
+for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH" "$AR_FTH" \
+         "$SRC" "$CRT0_SRC" "$MMIO_SRC"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
 
@@ -162,17 +168,71 @@ BYE" "$log"
     fi
 }
 
-link_forth() {
+# --- Build selfhost runtime from stage01 sources ---
+RUNTIME_CRT0="$WORKDIR/crt0_minimal.s32o"
+RUNTIME_MMIO_OBJ="$WORKDIR/mmio_minimal.s32o"
+run_forth "$ASM_FTH" /dev/null "S\" $CRT0_SRC\" S\" $RUNTIME_CRT0\" ASSEMBLE
+BYE" "$WORKDIR/crt0.as.log"
+[[ -s "$RUNTIME_CRT0" ]] || { echo "failed to assemble crt0_minimal.s" >&2; exit 1; }
+run_forth "$ASM_FTH" /dev/null "S\" $MMIO_SRC\" S\" $RUNTIME_MMIO_OBJ\" ASSEMBLE
+BYE" "$WORKDIR/mmio.as.log"
+[[ -s "$RUNTIME_MMIO_OBJ" ]] || { echo "failed to assemble mmio_minimal.s" >&2; exit 1; }
+
+# --- Build selfhost libc ---
+LIBC_ARCHIVE="$WORKDIR/libc_selfhost.s32a"
+LIBC_START_OBJ=""
+
+build_selfhost_libc() {
+    local libc_c_files="string_extra convert stdio start"
+    local name src asm obj
+    local ar_objs=""
+
+    echo "Building selfhost libc..."
+
+    for name in $libc_c_files; do
+        src="$LIBC_DIR/${name}.c"
+        asm="$WORKDIR/libc_${name}.s"
+        obj="$WORKDIR/libc_${name}.s32o"
+
+        [[ -f "$src" ]] || { echo "Missing libc source: $src" >&2; return 1; }
+        compile_c_stage4 "$src" "$asm" "$WORKDIR/libc_${name}.cc.log"
+        assemble_forth "$asm" "$obj" "$WORKDIR/libc_${name}.as.log"
+
+        if [[ "$name" == "start" ]]; then
+            LIBC_START_OBJ="$obj"
+        else
+            ar_objs="$ar_objs $obj"
+        fi
+    done
+
+    local ar_cmd
+    ar_cmd="S\" $LIBC_ARCHIVE\" AR-C-BEGIN"
+    for obj in $ar_objs; do
+        ar_cmd="${ar_cmd}
+S\" $obj\" AR-ADD"
+    done
+    ar_cmd="${ar_cmd}
+AR-C-END
+BYE"
+    run_forth "$AR_FTH" /dev/null "$ar_cmd" "$WORKDIR/libc.ar.log"
+    [[ -s "$LIBC_ARCHIVE" ]] || { echo "failed to build libc archive" >&2; return 1; }
+    echo "Libc archive: $LIBC_ARCHIVE"
+}
+
+build_selfhost_libc
+
+link_forth_with_libc() {
     local obj="$1"
     local exe="$2"
     local log="$3"
 
     run_forth "$LINK_FTH" /dev/null "LINK-INIT
-S\" $ROOT_DIR/runtime/crt0.s32o\" LINK-OBJ
+S\" $RUNTIME_CRT0\" LINK-OBJ
 S\" $obj\" LINK-OBJ
+S\" $LIBC_START_OBJ\" LINK-OBJ
+S\" $RUNTIME_MMIO_OBJ\" LINK-OBJ
 65536 LINK-MMIO
-S\" $ROOT_DIR/runtime/libc_mmio.s32a\" LINK-ARCHIVE
-S\" $ROOT_DIR/runtime/libs32.s32a\" LINK-ARCHIVE
+S\" $LIBC_ARCHIVE\" LINK-ARCHIVE
 S\" $exe\" LINK-EMIT
 BYE" "$log"
     [[ -s "$exe" ]] || { echo "linker produced no output: $obj" >&2; return 1; }
@@ -184,7 +244,7 @@ STAGE7_EXE="$WORKDIR/s32-ld.s32x"
 
 compile_c_stage4 "$SRC" "$STAGE7_ASM" "$WORKDIR/s32-ld.cc.log"
 assemble_forth "$STAGE7_ASM" "$STAGE7_OBJ" "$WORKDIR/s32-ld.as.log"
-link_forth "$STAGE7_OBJ" "$STAGE7_EXE" "$WORKDIR/s32-ld.ld.log"
+link_forth_with_libc "$STAGE7_OBJ" "$STAGE7_EXE" "$WORKDIR/s32-ld.ld.log"
 
 cat > "$WORKDIR/main_halt.s" <<'ASM'
 .text

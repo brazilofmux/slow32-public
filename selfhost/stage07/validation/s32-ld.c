@@ -370,7 +370,9 @@ int main(int argc, char **argv) {
     int main_found;
 
     if (argc != 3 && argc != 4) {
-        fprintf(stderr, "Usage: %s <input.s32o> [aux.s32o|aux.s32a] <output.s32x>\n", argv[0]);
+        fputs("Usage: ", stderr);
+        fputs(argv[0], stderr);
+        fputs(" <input.s32o> [aux.s32o|aux.s32a] <output.s32x>\n", stderr);
         return 1;
     }
     obj_path = argv[1];
@@ -379,31 +381,31 @@ int main(int argc, char **argv) {
     if (argc == 4) aux_path = argv[2];
 
     if (!read_file(obj_path, g_obj, MAX_OBJ_SIZE, &obj_size)) {
-        fprintf(stderr, "error: cannot read %s\n", obj_path);
+        fputs("error: cannot read ", stderr); fputs(obj_path, stderr); fputc('\n', stderr);
         return 1;
     }
     if (obj_size < sizeof(s32o_header_t)) {
-        fprintf(stderr, "error: object too small\n");
+        fputs("error: object too small\n", stderr);
         return 1;
     }
 
     oh = (s32o_header_t *)g_obj;
     if (oh->magic != S32O_MAGIC) {
-        fprintf(stderr, "error: bad .s32o magic\n");
+        fputs("error: bad .s32o magic\n", stderr);
         return 1;
     }
     if (oh->endian != S32_ENDIAN_LITTLE || oh->machine != S32_MACHINE_SLOW32) {
-        fprintf(stderr, "error: unsupported object target\n");
+        fputs("error: unsupported object target\n", stderr);
         return 1;
     }
     if (oh->nsections > MAX_SECTIONS || oh->nsymbols > MAX_SYMBOLS) {
-        fprintf(stderr, "error: object exceeds stage07 bounds\n");
+        fputs("error: object exceeds stage07 bounds\n", stderr);
         return 1;
     }
     if (!in_bounds(oh->sec_offset, oh->nsections * (uint32_t)sizeof(s32o_section_t), obj_size) ||
         !in_bounds(oh->sym_offset, oh->nsymbols * (uint32_t)sizeof(s32o_symbol_t), obj_size) ||
         !in_bounds(oh->str_offset, oh->str_size, obj_size)) {
-        fprintf(stderr, "error: object tables out of bounds\n");
+        fputs("error: object tables out of bounds\n", stderr);
         return 1;
     }
 
@@ -439,18 +441,20 @@ int main(int argc, char **argv) {
             if (!in_bounds(s->reloc_offset,
                            s->nrelocs * (uint32_t)sizeof(s32o_reloc_t),
                            obj_size)) {
-                fprintf(stderr, "error: relocation table out of bounds (section %u)\n", i);
+                fputs("error: relocation table out of bounds (section ", stderr);
+                fput_uint(stderr, i);
+                fputs(")\n", stderr);
                 return 1;
             }
         }
 
         if (s->type == S32_SEC_CODE) {
             if (text.present) {
-                fprintf(stderr, "error: multiple .text sections not supported\n");
+                fputs("error: multiple .text sections not supported\n", stderr);
                 return 1;
             }
             if (!in_bounds(s->offset, s->size, obj_size)) {
-                fprintf(stderr, "error: .text out of bounds\n");
+                fputs("error: .text out of bounds\n", stderr);
                 return 1;
             }
             text.present = 1;
@@ -459,11 +463,11 @@ int main(int argc, char **argv) {
             text.offset = s->offset;
         } else if (s->type == S32_SEC_DATA) {
             if (data.present) {
-                fprintf(stderr, "error: multiple .data sections not supported\n");
+                fputs("error: multiple .data sections not supported\n", stderr);
                 return 1;
             }
             if (!in_bounds(s->offset, s->size, obj_size)) {
-                fprintf(stderr, "error: .data out of bounds\n");
+                fputs("error: .data out of bounds\n", stderr);
                 return 1;
             }
             data.present = 1;
@@ -472,11 +476,11 @@ int main(int argc, char **argv) {
             data.offset = s->offset;
         } else if (s->type == S32_SEC_RODATA) {
             if (rodata.present) {
-                fprintf(stderr, "error: multiple .rodata sections not supported\n");
+                fputs("error: multiple .rodata sections not supported\n", stderr);
                 return 1;
             }
             if (!in_bounds(s->offset, s->size, obj_size)) {
-                fprintf(stderr, "error: .rodata out of bounds\n");
+                fputs("error: .rodata out of bounds\n", stderr);
                 return 1;
             }
             rodata.present = 1;
@@ -485,7 +489,7 @@ int main(int argc, char **argv) {
             rodata.offset = s->offset;
         } else if (s->type == S32_SEC_BSS) {
             if (bss.present) {
-                fprintf(stderr, "error: multiple .bss sections not supported\n");
+                fputs("error: multiple .bss sections not supported\n", stderr);
                 return 1;
             }
             bss.present = 1;
@@ -496,7 +500,7 @@ int main(int argc, char **argv) {
     }
 
     if (!text.present || text.size == 0) {
-        fprintf(stderr, "error: missing .text section\n");
+        fputs("error: missing .text section\n", stderr);
         return 1;
     }
 
@@ -516,17 +520,17 @@ int main(int argc, char **argv) {
         }
     }
     if (!main_found) {
-        fprintf(stderr, "error: main symbol not found in .text\n");
+        fputs("error: main symbol not found in .text\n", stderr);
         return 1;
     }
 
     if (aux_path != NULL) {
         if (!read_file(aux_path, g_aux_obj, MAX_OBJ_SIZE, &aux_size)) {
-            fprintf(stderr, "error: cannot read %s\n", aux_path);
+            fputs("error: cannot read ", stderr); fputs(aux_path, stderr); fputc('\n', stderr);
             return 1;
         }
         if (!maybe_extract_archive_member(g_aux_obj, &aux_size, oh, osym, ostr)) {
-            fprintf(stderr, "error: malformed archive %s\n", aux_path);
+            fputs("error: malformed archive ", stderr); fputs(aux_path, stderr); fputc('\n', stderr);
             return 1;
         }
 
@@ -570,7 +574,7 @@ int main(int argc, char **argv) {
 
     out_size = out_data_off + total_text + data.size + rodata.size;
     if (out_size > MAX_OUT_SIZE) {
-        fprintf(stderr, "error: output exceeds stage07 bounds\n");
+        fputs("error: output exceeds stage07 bounds\n", stderr);
         return 1;
     }
 
@@ -682,7 +686,9 @@ int main(int argc, char **argv) {
             sec_out = rodata_out_off;
             sec_size = rodata.size;
         } else {
-            fprintf(stderr, "error: relocations in unsupported section %u\n", i);
+            fputs("error: relocations in unsupported section ", stderr);
+                fput_uint(stderr, i);
+                fputc('\n', stderr);
             return 1;
         }
 
@@ -696,11 +702,11 @@ int main(int argc, char **argv) {
             rel = (s32o_reloc_t *)(g_obj + s->reloc_offset + r * (uint32_t)sizeof(s32o_reloc_t));
             rel_bytes = (const uint8_t *)rel;
             if (rel->symbol >= oh->nsymbols) {
-                fprintf(stderr, "error: relocation symbol index out of range\n");
+                fputs("error: relocation symbol index out of range\n", stderr);
                 return 1;
             }
             if (rel->offset + 4u > sec_size) {
-                fprintf(stderr, "error: relocation offset out of section bounds\n");
+                fputs("error: relocation offset out of section bounds\n", stderr);
                 return 1;
             }
             sym_sec = osym[rel->symbol].section;
@@ -708,7 +714,7 @@ int main(int argc, char **argv) {
                 int found = 0;
                 const char *want;
                 if (!aux_loaded || osym[rel->symbol].name_offset >= oh->str_size) {
-                    fprintf(stderr, "error: unresolved symbol in relocation\n");
+                    fputs("error: unresolved symbol in relocation\n", stderr);
                     return 1;
                 }
                 want = ostr + osym[rel->symbol].name_offset;
@@ -743,12 +749,12 @@ int main(int argc, char **argv) {
                     }
                 }
                 if (!found) {
-                    fprintf(stderr, "error: unresolved symbol in relocation\n");
+                    fputs("error: unresolved symbol in relocation\n", stderr);
                     return 1;
                 }
             } else {
                 if (sym_sec > oh->nsections) {
-                    fprintf(stderr, "error: unresolved symbol in relocation\n");
+                    fputs("error: unresolved symbol in relocation\n", stderr);
                     return 1;
                 }
                 sym_sec = sym_sec - 1u;
@@ -765,7 +771,7 @@ int main(int argc, char **argv) {
                     if (osym[rel->symbol].value > bss.size) { return 1; }
                     sym_abs = bss_va + osym[rel->symbol].value;
                 } else {
-                    fprintf(stderr, "error: symbol section unsupported in relocation\n");
+                    fputs("error: symbol section unsupported in relocation\n", stderr);
                     return 1;
                 }
             }
@@ -802,7 +808,7 @@ int main(int argc, char **argv) {
                 off = (int32_t)(patched - (pc + 4U));
                 off_u = (uint32_t)off;
                 if ((off_u & 1U) != 0U || (off_u + 4096U) > 8190U) {
-                    fprintf(stderr, "error: branch relocation out of range\n");
+                    fputs("error: branch relocation out of range\n", stderr);
                     return 1;
                 }
                 imm12 = ((uint32_t)off >> 12) & 1U;
@@ -828,7 +834,7 @@ int main(int argc, char **argv) {
                 off = (int32_t)(patched - pc);
                 off_u = (uint32_t)off;
                 if ((off_u & 1U) != 0U || (off_u + 1048576U) > 2097150U) {
-                    fprintf(stderr, "error: jal relocation out of range\n");
+                    fputs("error: jal relocation out of range\n", stderr);
                     return 1;
                 }
                 imm20 = ((uint32_t)off >> 20) & 1U;
@@ -843,17 +849,23 @@ int main(int argc, char **argv) {
                     | (imm20 << 31);
                 wr32(g_out + sec_out + rel->offset, inst);
             } else {
-                fprintf(stderr, "error: relocation type %u not yet supported\n", rel->type);
+                fputs("error: relocation type ", stderr);
+                fput_uint(stderr, rel->type);
+                fputs(" not yet supported\n", stderr);
                 return 1;
             }
         }
     }
 
     if (!write_file(out_path, g_out, cur)) {
-        fprintf(stderr, "error: cannot write %s\n", out_path);
+        fputs("error: cannot write ", stderr); fputs(out_path, stderr); fputc('\n', stderr);
         return 1;
     }
 
-    printf("stage07: linked %s -> %s\n", obj_path, out_path);
+    fputs("stage07: linked ", stdout);
+    fputs(obj_path, stdout);
+    fputs(" -> ", stdout);
+    fputs(out_path, stdout);
+    fputc('\n', stdout);
     return 0;
 }
