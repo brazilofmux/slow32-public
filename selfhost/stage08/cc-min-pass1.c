@@ -41,9 +41,32 @@ static int g_str_lens[MAX_STRINGS];
 static int g_str_pool_len;
 static int g_nstrings;
 
+/* Source file directory for #include resolution */
+static char g_src_dir[256];
+static int g_src_dir_len;
+
 int ccmin_load_source(const char *path) {
     int f;
     int ch;
+    int pi;
+    int last_slash;
+    /* Extract source directory for #include resolution */
+    last_slash = -1;
+    pi = 0;
+    while (path[pi]) {
+        if (path[pi] == '/') last_slash = pi;
+        pi = pi + 1;
+    }
+    g_src_dir_len = 0;
+    if (last_slash >= 0) {
+        pi = 0;
+        while (pi <= last_slash && pi < 254) {
+            g_src_dir[pi] = path[pi];
+            pi = pi + 1;
+        }
+        g_src_dir_len = pi;
+    }
+    g_src_dir[g_src_dir_len] = 0;
     f = fopen(path, "rb");
     if (!f) return 0;
     g_src_len = 0;
@@ -118,6 +141,7 @@ int ccmin_load_source(const char *path) {
 #define TK_ARROW    69
 #define TK_UNSIGNED 70
 #define TK_LONG     71
+#define TK_ENUM     72
 
 static int g_tok;
 static int g_tok_val;
@@ -168,6 +192,194 @@ static void cc_error(const char *msg) {
     fputc(10, stderr);
 }
 
+/* Define table (object-like macros) */
+#define MAX_DEFINES 256
+#define DNBUF_SZ 12288
+static char g_def_names[DNBUF_SZ];
+static int g_def_vals[MAX_DEFINES];
+static int g_ndefines;
+
+/* Include state (depth-1 save) */
+#define INC_SAVE_SZ 32768
+static char g_inc_save[INC_SAVE_SZ];
+static int g_inc_save_len;
+static int g_inc_save_pos;
+static int g_inc_save_line;
+static int g_inc_depth;
+static char g_inc_path[256];
+static char g_inc_fullpath[256];
+
+static void pp_skip_line(void) {
+    while (g_pos < g_src_len && g_src[g_pos] != '\n') g_pos = g_pos + 1;
+}
+
+static int pp_parse_int(void) {
+    int v;
+    int neg;
+    char c;
+    neg = 0;
+    v = 0;
+    while (g_pos < g_src_len && (g_src[g_pos] == ' ' || g_src[g_pos] == '\t'))
+        g_pos = g_pos + 1;
+    if (g_pos < g_src_len && g_src[g_pos] == '-') { neg = 1; g_pos = g_pos + 1; }
+    if (g_pos + 1 < g_src_len && g_src[g_pos] == '0' && g_src[g_pos+1] == 'x') {
+        g_pos = g_pos + 2;
+        while (g_pos < g_src_len) {
+            c = g_src[g_pos];
+            if (c >= '0' && c <= '9') { v = v * 16 + (c - '0'); g_pos = g_pos + 1; }
+            else if (c >= 'a' && c <= 'f') { v = v * 16 + (c - 'a' + 10); g_pos = g_pos + 1; }
+            else if (c >= 'A' && c <= 'F') { v = v * 16 + (c - 'A' + 10); g_pos = g_pos + 1; }
+            else break;
+        }
+    } else {
+        while (g_pos < g_src_len && g_src[g_pos] >= '0' && g_src[g_pos] <= '9') {
+            v = v * 10 + (g_src[g_pos] - '0');
+            g_pos = g_pos + 1;
+        }
+    }
+    /* skip optional U/L suffixes */
+    while (g_pos < g_src_len && (g_src[g_pos] == 'U' || g_src[g_pos] == 'u' ||
+           g_src[g_pos] == 'L' || g_src[g_pos] == 'l'))
+        g_pos = g_pos + 1;
+    if (neg) v = 0 - v;
+    return v;
+}
+
+static void process_define(void) {
+    char name[128];
+    int i;
+    int v;
+    /* skip whitespace after "define" */
+    while (g_pos < g_src_len && (g_src[g_pos] == ' ' || g_src[g_pos] == '\t'))
+        g_pos = g_pos + 1;
+    /* read macro name */
+    i = 0;
+    while (g_pos < g_src_len && (is_alpha(g_src[g_pos]) || is_digit(g_src[g_pos]))) {
+        if (i < 126) { name[i] = g_src[g_pos]; i = i + 1; }
+        g_pos = g_pos + 1;
+    }
+    name[i] = 0;
+    /* check for function-like macro: ( immediately after name */
+    if (g_pos < g_src_len && g_src[g_pos] == '(') {
+        pp_skip_line();
+        return;
+    }
+    v = pp_parse_int();
+    add_define(name, v);
+    pp_skip_line();
+}
+
+static void pop_include(void) {
+    int i;
+    /* restore parent source */
+    i = 0;
+    while (i < g_inc_save_len) {
+        g_src[i] = g_inc_save[i];
+        i = i + 1;
+    }
+    g_src[g_inc_save_len] = 0;
+    g_src_len = g_inc_save_len;
+    g_pos = g_inc_save_pos;
+    g_line = g_inc_save_line;
+    g_inc_depth = g_inc_depth - 1;
+}
+
+static void process_include(void) {
+    int i;
+    int ch;
+    int delim;
+    int f;
+    int remaining;
+    int j;
+    int fp;
+    int k;
+    /* skip whitespace */
+    while (g_pos < g_src_len && (g_src[g_pos] == ' ' || g_src[g_pos] == '\t'))
+        g_pos = g_pos + 1;
+    /* parse filename */
+    if (g_pos >= g_src_len) return;
+    delim = 0;
+    if (g_src[g_pos] == '"') { delim = '"'; g_pos = g_pos + 1; }
+    else if (g_src[g_pos] == '<') { delim = '>'; g_pos = g_pos + 1; }
+    else { pp_skip_line(); return; }
+    i = 0;
+    while (g_pos < g_src_len && g_src[g_pos] != delim && g_src[g_pos] != '\n') {
+        if (i < 254) { g_inc_path[i] = g_src[g_pos]; i = i + 1; }
+        g_pos = g_pos + 1;
+    }
+    g_inc_path[i] = 0;
+    if (g_pos < g_src_len && g_src[g_pos] == delim) g_pos = g_pos + 1;
+    pp_skip_line();
+    if (g_inc_depth > 0) { cc_error("nested #include not supported"); return; }
+    /* save remaining source */
+    remaining = g_src_len - g_pos;
+    if (remaining > INC_SAVE_SZ) { cc_error("#include: source too large to save"); return; }
+    j = 0;
+    while (j < remaining) {
+        g_inc_save[j] = g_src[g_pos + j];
+        j = j + 1;
+    }
+    g_inc_save_len = remaining;
+    g_inc_save_pos = 0;
+    g_inc_save_line = g_line;
+    /* load included file into g_src */
+    /* resolve relative path against source directory */
+    if (g_inc_path[0] != '/' && g_src_dir_len > 0) {
+        fp = 0;
+        k = 0;
+        while (k < g_src_dir_len && fp < 254) {
+            g_inc_fullpath[fp] = g_src_dir[k];
+            fp = fp + 1;
+            k = k + 1;
+        }
+        k = 0;
+        while (g_inc_path[k] && fp < 254) {
+            g_inc_fullpath[fp] = g_inc_path[k];
+            fp = fp + 1;
+            k = k + 1;
+        }
+        g_inc_fullpath[fp] = 0;
+        f = fopen(g_inc_fullpath, "rb");
+    } else {
+        f = fopen(g_inc_path, "rb");
+    }
+    if (!f) { cc_error("cannot open include file"); return; }
+    g_src_len = 0;
+    for (;;) {
+        ch = fgetc(f);
+        if (ch < 0) break;
+        if (g_src_len >= MAX_SRC - 1) break;
+        g_src[g_src_len] = ch;
+        g_src_len = g_src_len + 1;
+    }
+    fclose(f);
+    g_src[g_src_len] = 0;
+    g_pos = 0;
+    g_line = 1;
+    g_inc_depth = g_inc_depth + 1;
+}
+
+static void process_directive(void) {
+    char dir[16];
+    int i;
+    /* skip '#' */
+    g_pos = g_pos + 1;
+    /* skip whitespace after '#' */
+    while (g_pos < g_src_len && (g_src[g_pos] == ' ' || g_src[g_pos] == '\t'))
+        g_pos = g_pos + 1;
+    /* read directive name */
+    i = 0;
+    while (g_pos < g_src_len && is_alpha(g_src[g_pos])) {
+        if (i < 14) { dir[i] = g_src[g_pos]; i = i + 1; }
+        g_pos = g_pos + 1;
+    }
+    dir[i] = 0;
+    if (str_eq(dir, "define")) { process_define(); return; }
+    if (str_eq(dir, "include")) { process_include(); return; }
+    /* skip unknown directives (#ifdef, #endif, #pragma, etc.) */
+    pp_skip_line();
+}
+
 static void skip_ws(void) {
     char c;
     for (;;) {
@@ -186,6 +398,8 @@ static void skip_ws(void) {
                 if (g_src[g_pos] == '*' && g_src[g_pos+1] == '/') { g_pos = g_pos + 2; break; }
                 g_pos = g_pos + 1;
             }
+        } else if (c == '#') {
+            process_directive();
         } else { return; }
     }
 }
@@ -212,7 +426,14 @@ static void next_token(void) {
     int i;
     int si;
     skip_ws();
-    if (g_pos >= g_src_len) { g_tok = TK_EOF; return; }
+    if (g_pos >= g_src_len) {
+        if (g_inc_depth > 0) {
+            pop_include();
+            next_token();
+            return;
+        }
+        g_tok = TK_EOF; return;
+    }
     c = g_src[g_pos];
     if (is_digit(c)) {
         v = 0;
@@ -295,6 +516,9 @@ static void next_token(void) {
         if (str_eq(g_tok_str, "typedef")) { g_tok = TK_TYPEDEF; return; }
         if (str_eq(g_tok_str, "unsigned")) { g_tok = TK_UNSIGNED; return; }
         if (str_eq(g_tok_str, "long")) { g_tok = TK_LONG; return; }
+        if (str_eq(g_tok_str, "enum")) { g_tok = TK_ENUM; return; }
+        { int di; di = find_define(g_tok_str);
+          if (di >= 0) { g_tok = TK_NUM; g_tok_val = g_def_vals[di]; return; } }
         g_tok = TK_IDENT; return;
     }
     g_pos = g_pos + 1;
@@ -566,6 +790,23 @@ static void add_typedef(const char *name, int type) {
     g_ntypedefs = g_ntypedefs + 1;
 }
 
+static int find_define(const char *name) {
+    int i;
+    i = 0;
+    while (i < g_ndefines) {
+        if (sym_name_eq(g_def_names, i, name)) return i;
+        i = i + 1;
+    }
+    return -1;
+}
+
+static void add_define(const char *name, int val) {
+    if (g_ndefines >= MAX_DEFINES) { cc_error("too many defines"); return; }
+    sym_set_name(g_def_names, g_ndefines, name);
+    g_def_vals[g_ndefines] = val;
+    g_ndefines = g_ndefines + 1;
+}
+
 static int type_size(int type) {
     int bt;
     int pt;
@@ -588,6 +829,7 @@ static int is_type_start(void) {
     if (g_tok == TK_STRUCT) return 1;
     if (g_tok == TK_UNSIGNED) return 1;
     if (g_tok == TK_LONG) return 1;
+    if (g_tok == TK_ENUM) return 1;
     if (g_tok == TK_CONST) return 1;
     if (g_tok == TK_STATIC) return 1;
     if (g_tok == TK_IDENT && find_typedef(g_tok_str) >= 0) return 1;
@@ -970,6 +1212,36 @@ static int parse_struct_ref(void) {
         sidx = add_struct(sn);
     }
     return TY_STRUCT | (sidx << 16);
+}
+
+static void parse_enum(void) {
+    char name[128];
+    int val;
+    next_token(); /* consume 'enum' */
+    if (g_tok == TK_IDENT) next_token(); /* skip optional tag name */
+    expect(TK_LBRACE);
+    val = 0;
+    while (g_tok != TK_RBRACE && g_tok != TK_EOF) {
+        if (g_tok != TK_IDENT) { cc_error("expected enum name"); return; }
+        str_copy(name, g_tok_str, 128);
+        next_token();
+        if (g_tok == TK_ASSIGN) {
+            next_token();
+            if (g_tok == TK_MINUS) {
+                next_token();
+                val = 0 - g_tok_val;
+                next_token();
+            } else {
+                val = g_tok_val;
+                next_token();
+            }
+        }
+        add_define(name, val);
+        val = val + 1;
+        if (g_tok == TK_COMMA) next_token();
+    }
+    expect(TK_RBRACE);
+    expect(TK_SEMI);
 }
 
 static void parse_typedef(void) {
@@ -1444,6 +1716,11 @@ static int parse_base_type(void) {
         if (g_tok == TK_INT) next_token();
         bt = TY_INT;
     }
+    else if (g_tok == TK_ENUM) {
+        next_token();
+        if (g_tok == TK_IDENT) next_token(); /* skip optional tag */
+        bt = TY_INT;
+    }
     else if (g_tok == TK_IDENT) {
         ti = find_typedef(g_tok_str);
         if (ti >= 0) { bt = g_tdtypes[ti]; next_token(); }
@@ -1618,8 +1895,6 @@ static void parse_function(const char *fname, int rtype) {
     int ptype;
     int frame_sz;
 
-    emit(fname); emit(":\n    .global "); emit(fname); emit_ch('\n');
-
     expect(TK_LPAREN);
     g_nlocals = 0;
     g_local_off = -12;
@@ -1646,6 +1921,15 @@ static void parse_function(const char *fname, int rtype) {
     }
     expect(TK_RPAREN);
     add_func(fname, np, rtype);
+
+    /* Prototype (forward declaration)? */
+    if (g_tok == TK_SEMI) {
+        next_token();
+        return;
+    }
+
+    /* Function definition — emit code */
+    emit(fname); emit(":\n    .global "); emit(fname); emit_ch('\n');
     g_local_off = -12 - np * 4;
 
     emit_prologue_placeholder();
@@ -1754,6 +2038,25 @@ static void parse_program(void) {
             parse_typedef();
             continue;
         }
+        if (g_tok == TK_ENUM) {
+            /* Peek: enum + '{' or enum + IDENT + '{' means enum definition */
+            lexer_save();
+            next_token();
+            if (g_tok == TK_LBRACE) {
+                lexer_restore();
+                parse_enum();
+                continue;
+            }
+            if (g_tok == TK_IDENT) {
+                next_token();
+                if (g_tok == TK_LBRACE) {
+                    lexer_restore();
+                    parse_enum();
+                    continue;
+                }
+            }
+            lexer_restore();
+        }
         if (g_tok == TK_STATIC) next_token();
         bt = parse_base_type();
         pt = parse_ptr_stars();
@@ -1785,6 +2088,8 @@ int pass1_parse_to_ir(void) {
     g_nstrings = 0; g_str_pool_len = 0;
     g_nstructs = 0; g_nfields = 0;
     g_ntypedefs = 0;
+    g_ndefines = 0;
+    g_inc_depth = 0;
     next_token();
     parse_program();
     g_output[g_output_len] = 0;

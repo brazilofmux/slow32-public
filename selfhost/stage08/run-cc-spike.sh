@@ -60,6 +60,12 @@ TEST_STRUCT_ARRAY_IN="$SCRIPT_DIR/tests/min_struct_array.c"
 TEST_SIZEOF_IN="$SCRIPT_DIR/tests/min_sizeof.c"
 TEST_SIZEOF_STRUCT_IN="$SCRIPT_DIR/tests/min_sizeof_struct.c"
 TEST_CAST_IN="$SCRIPT_DIR/tests/min_cast.c"
+TEST_DEFINE_IN="$SCRIPT_DIR/tests/min_define.c"
+TEST_DEFINE_HEX_IN="$SCRIPT_DIR/tests/min_define_hex.c"
+TEST_ENUM_IN="$SCRIPT_DIR/tests/min_enum.c"
+TEST_PROTOTYPE_IN="$SCRIPT_DIR/tests/min_prototype.c"
+TEST_INCLUDE_IN="$SCRIPT_DIR/tests/min_include.c"
+TEST_INCLUDE_HELPER_IN="$SCRIPT_DIR/tests/min_include_helper.h"
 KEEP_ARTIFACTS=0
 REBUILD_LIBC="${STAGE8_REBUILD_LIBC:-0}"
 
@@ -131,7 +137,8 @@ for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$LINK_FTH" \
          "$SRC_PASS1" "$SRC_PASS2" "$SRC_PASS3" "$TEST_IN" "$TEST_RET_IN" "$TEST_EXPR_IN" "$TEST_LOCAL_IN" "$TEST_REL_IN" "$TEST_IF_TRUE_IN" "$TEST_IF_FALSE_IN" "$TEST_WHILE_IN" "$TEST_TWO_LOCALS_IN" "$TEST_HELPER_IN" "$TEST_HELPER_ARG_IN" "$TEST_HELPER_LOCAL_IN" "$TEST_MAIN_LOCAL_HELPER_IN" "$TEST_HELPER_TWO_ARGS_IN" "$TEST_HELPER_TWO_ARGS_IF_IN" \
          "$TEST_MULTI_FUNC_IN" "$TEST_FOR_LOOP_IN" "$TEST_NESTED_IF_IN" "$TEST_BREAK_CONTINUE_IN" "$TEST_GENERAL_NAMES_IN" "$TEST_COMPLEX_EXPR_IN" \
          "$TEST_CHAR_TYPE_IN" "$TEST_CHAR_LITERAL_IN" "$TEST_LOCAL_ARRAY_IN" "$TEST_CHAR_ARRAY_IN" "$TEST_STRING_LIT_IN" "$TEST_POINTER_IN" "$TEST_GLOBAL_IN" "$TEST_GLOBAL_ARRAY_IN" "$TEST_PTR_ARITH_IN" "$TEST_SHORT_CIRCUIT_IN" \
-         "$TEST_TYPEDEF_IN" "$TEST_TYPEDEF_STRUCT_IN" "$TEST_STRUCT_BASIC_IN" "$TEST_STRUCT_ARROW_IN" "$TEST_STRUCT_ARRAY_IN" "$TEST_SIZEOF_IN" "$TEST_SIZEOF_STRUCT_IN" "$TEST_CAST_IN"; do
+         "$TEST_TYPEDEF_IN" "$TEST_TYPEDEF_STRUCT_IN" "$TEST_STRUCT_BASIC_IN" "$TEST_STRUCT_ARROW_IN" "$TEST_STRUCT_ARRAY_IN" "$TEST_SIZEOF_IN" "$TEST_SIZEOF_STRUCT_IN" "$TEST_CAST_IN" \
+         "$TEST_DEFINE_IN" "$TEST_DEFINE_HEX_IN" "$TEST_ENUM_IN" "$TEST_PROTOTYPE_IN" "$TEST_INCLUDE_IN" "$TEST_INCLUDE_HELPER_IN"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
 
@@ -407,6 +414,21 @@ run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-struct-array.run.log" "$TEST_STRUCT_ARRAY_
 run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-sizeof.run.log" "$TEST_SIZEOF_IN" "$GEN_SIZEOF_ASM"
 run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-sizeof-struct.run.log" "$TEST_SIZEOF_STRUCT_IN" "$GEN_SIZEOF_STRUCT_ASM"
 run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-cast.run.log" "$TEST_CAST_IN" "$GEN_CAST_ASM"
+GEN_DEFINE_ASM="$WORKDIR/min_define.generated.s"
+GEN_DEFINE_HEX_ASM="$WORKDIR/min_define_hex.generated.s"
+GEN_ENUM_ASM="$WORKDIR/min_enum.generated.s"
+GEN_PROTOTYPE_ASM="$WORKDIR/min_prototype.generated.s"
+GEN_INCLUDE_ASM="$WORKDIR/min_include.generated.s"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-define.run.log" "$TEST_DEFINE_IN" "$GEN_DEFINE_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-define-hex.run.log" "$TEST_DEFINE_HEX_IN" "$GEN_DEFINE_HEX_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-enum.run.log" "$TEST_ENUM_IN" "$GEN_ENUM_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-prototype.run.log" "$TEST_PROTOTYPE_IN" "$GEN_PROTOTYPE_ASM"
+# Include test: copy helper .h to workdir so cc-min can find it
+cp "$TEST_INCLUDE_HELPER_IN" "$WORKDIR/min_include_helper.h"
+cp "$TEST_INCLUDE_IN" "$WORKDIR/min_include.c"
+pushd "$WORKDIR" >/dev/null
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-include.run.log" "$WORKDIR/min_include.c" "$GEN_INCLUDE_ASM"
+popd >/dev/null
 [[ -s "$GEN_ASM" ]] || { echo "cc-min produced no assembly output" >&2; exit 1; }
 [[ -s "$GEN_RET_ASM" ]] || { echo "cc-min produced no return-test assembly output" >&2; exit 1; }
 [[ -s "$GEN_EXPR_ASM" ]] || { echo "cc-min produced no expr-test assembly output" >&2; exit 1; }
@@ -446,6 +468,11 @@ run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-cast.run.log" "$TEST_CAST_IN" "$GEN_CAST_A
 [[ -s "$GEN_SIZEOF_ASM" ]] || { echo "cc-min produced no sizeof assembly output" >&2; exit 1; }
 [[ -s "$GEN_SIZEOF_STRUCT_ASM" ]] || { echo "cc-min produced no sizeof-struct assembly output" >&2; exit 1; }
 [[ -s "$GEN_CAST_ASM" ]] || { echo "cc-min produced no cast assembly output" >&2; exit 1; }
+[[ -s "$GEN_DEFINE_ASM" ]] || { echo "cc-min produced no define assembly output" >&2; exit 1; }
+[[ -s "$GEN_DEFINE_HEX_ASM" ]] || { echo "cc-min produced no define-hex assembly output" >&2; exit 1; }
+[[ -s "$GEN_ENUM_ASM" ]] || { echo "cc-min produced no enum assembly output" >&2; exit 1; }
+[[ -s "$GEN_PROTOTYPE_ASM" ]] || { echo "cc-min produced no prototype assembly output" >&2; exit 1; }
+[[ -s "$GEN_INCLUDE_ASM" ]] || { echo "cc-min produced no include assembly output" >&2; exit 1; }
 grep -q '^main:' "$GEN_ASM" || { echo "generated assembly missing main label" >&2; exit 1; }
 
 # 4) Assemble, link with stage07 (artifact), then link/run with stage03 runtime.
@@ -569,6 +596,16 @@ run_exe "$AS_EXE" "$WORKDIR/stage5-as-struct-array.run.log" "$GEN_STRUCT_ARRAY_A
 run_exe "$AS_EXE" "$WORKDIR/stage5-as-sizeof.run.log" "$GEN_SIZEOF_ASM" "$GEN_SIZEOF_OBJ"
 run_exe "$AS_EXE" "$WORKDIR/stage5-as-sizeof-struct.run.log" "$GEN_SIZEOF_STRUCT_ASM" "$GEN_SIZEOF_STRUCT_OBJ"
 run_exe "$AS_EXE" "$WORKDIR/stage5-as-cast.run.log" "$GEN_CAST_ASM" "$GEN_CAST_OBJ"
+GEN_DEFINE_OBJ="$WORKDIR/min_define.generated.s32o"
+GEN_DEFINE_HEX_OBJ="$WORKDIR/min_define_hex.generated.s32o"
+GEN_ENUM_OBJ="$WORKDIR/min_enum.generated.s32o"
+GEN_PROTOTYPE_OBJ="$WORKDIR/min_prototype.generated.s32o"
+GEN_INCLUDE_OBJ="$WORKDIR/min_include.generated.s32o"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-define.run.log" "$GEN_DEFINE_ASM" "$GEN_DEFINE_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-define-hex.run.log" "$GEN_DEFINE_HEX_ASM" "$GEN_DEFINE_HEX_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-enum.run.log" "$GEN_ENUM_ASM" "$GEN_ENUM_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-prototype.run.log" "$GEN_PROTOTYPE_ASM" "$GEN_PROTOTYPE_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-include.run.log" "$GEN_INCLUDE_ASM" "$GEN_INCLUDE_OBJ"
 [[ -s "$GEN_OBJ" ]] || { echo "stage05 assembler produced no object output" >&2; exit 1; }
 [[ -s "$GEN_RET_OBJ" ]] || { echo "stage05 assembler produced no return-test object output" >&2; exit 1; }
 [[ -s "$GEN_EXPR_OBJ" ]] || { echo "stage05 assembler produced no expr-test object output" >&2; exit 1; }
@@ -608,6 +645,11 @@ run_exe "$AS_EXE" "$WORKDIR/stage5-as-cast.run.log" "$GEN_CAST_ASM" "$GEN_CAST_O
 [[ -s "$GEN_SIZEOF_OBJ" ]] || { echo "stage05 assembler produced no sizeof object output" >&2; exit 1; }
 [[ -s "$GEN_SIZEOF_STRUCT_OBJ" ]] || { echo "stage05 assembler produced no sizeof-struct object output" >&2; exit 1; }
 [[ -s "$GEN_CAST_OBJ" ]] || { echo "stage05 assembler produced no cast object output" >&2; exit 1; }
+[[ -s "$GEN_DEFINE_OBJ" ]] || { echo "stage05 assembler produced no define object output" >&2; exit 1; }
+[[ -s "$GEN_DEFINE_HEX_OBJ" ]] || { echo "stage05 assembler produced no define-hex object output" >&2; exit 1; }
+[[ -s "$GEN_ENUM_OBJ" ]] || { echo "stage05 assembler produced no enum object output" >&2; exit 1; }
+[[ -s "$GEN_PROTOTYPE_OBJ" ]] || { echo "stage05 assembler produced no prototype object output" >&2; exit 1; }
+[[ -s "$GEN_INCLUDE_OBJ" ]] || { echo "stage05 assembler produced no include object output" >&2; exit 1; }
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld.run.log" "$GEN_OBJ" "$GEN_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-ret.run.log" "$GEN_RET_OBJ" "$GEN_RET_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-expr.run.log" "$GEN_EXPR_OBJ" "$GEN_EXPR_RAW_EXE"
@@ -665,6 +707,16 @@ run_exe "$LD_EXE" "$WORKDIR/stage7-ld-struct-array.run.log" "$GEN_STRUCT_ARRAY_O
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-sizeof.run.log" "$GEN_SIZEOF_OBJ" "$GEN_SIZEOF_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-sizeof-struct.run.log" "$GEN_SIZEOF_STRUCT_OBJ" "$GEN_SIZEOF_STRUCT_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-cast.run.log" "$GEN_CAST_OBJ" "$GEN_CAST_RAW_EXE"
+GEN_DEFINE_RAW_EXE="$WORKDIR/min_define.generated.raw.s32x"
+GEN_DEFINE_HEX_RAW_EXE="$WORKDIR/min_define_hex.generated.raw.s32x"
+GEN_ENUM_RAW_EXE="$WORKDIR/min_enum.generated.raw.s32x"
+GEN_PROTOTYPE_RAW_EXE="$WORKDIR/min_prototype.generated.raw.s32x"
+GEN_INCLUDE_RAW_EXE="$WORKDIR/min_include.generated.raw.s32x"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-define.run.log" "$GEN_DEFINE_OBJ" "$GEN_DEFINE_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-define-hex.run.log" "$GEN_DEFINE_HEX_OBJ" "$GEN_DEFINE_HEX_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-enum.run.log" "$GEN_ENUM_OBJ" "$GEN_ENUM_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-prototype.run.log" "$GEN_PROTOTYPE_OBJ" "$GEN_PROTOTYPE_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-include.run.log" "$GEN_INCLUDE_OBJ" "$GEN_INCLUDE_RAW_EXE"
 [[ -s "$GEN_RAW_EXE" ]] || { echo "stage07 linker produced no executable output" >&2; exit 1; }
 [[ -s "$GEN_RET_RAW_EXE" ]] || { echo "stage07 linker produced no return-test executable output" >&2; exit 1; }
 [[ -s "$GEN_EXPR_RAW_EXE" ]] || { echo "stage07 linker produced no expr-test executable output" >&2; exit 1; }
@@ -704,6 +756,11 @@ run_exe "$LD_EXE" "$WORKDIR/stage7-ld-cast.run.log" "$GEN_CAST_OBJ" "$GEN_CAST_R
 [[ -s "$GEN_SIZEOF_RAW_EXE" ]] || { echo "stage07 linker produced no sizeof executable output" >&2; exit 1; }
 [[ -s "$GEN_SIZEOF_STRUCT_RAW_EXE" ]] || { echo "stage07 linker produced no sizeof-struct executable output" >&2; exit 1; }
 [[ -s "$GEN_CAST_RAW_EXE" ]] || { echo "stage07 linker produced no cast executable output" >&2; exit 1; }
+[[ -s "$GEN_DEFINE_RAW_EXE" ]] || { echo "stage07 linker produced no define executable output" >&2; exit 1; }
+[[ -s "$GEN_DEFINE_HEX_RAW_EXE" ]] || { echo "stage07 linker produced no define-hex executable output" >&2; exit 1; }
+[[ -s "$GEN_ENUM_RAW_EXE" ]] || { echo "stage07 linker produced no enum executable output" >&2; exit 1; }
+[[ -s "$GEN_PROTOTYPE_RAW_EXE" ]] || { echo "stage07 linker produced no prototype executable output" >&2; exit 1; }
+[[ -s "$GEN_INCLUDE_RAW_EXE" ]] || { echo "stage07 linker produced no include executable output" >&2; exit 1; }
 link_forth_with_libc "$GEN_OBJ" "$GEN_EXE" "$WORKDIR/stage3-link.run.log"
 link_forth_with_libc "$GEN_RET_OBJ" "$GEN_RET_EXE" "$WORKDIR/stage3-link-ret.run.log"
 link_forth_with_libc "$GEN_EXPR_OBJ" "$GEN_EXPR_EXE" "$WORKDIR/stage3-link-expr.run.log"
@@ -761,6 +818,16 @@ link_forth_with_libc "$GEN_STRUCT_ARRAY_OBJ" "$GEN_STRUCT_ARRAY_EXE" "$WORKDIR/s
 link_forth_with_libc "$GEN_SIZEOF_OBJ" "$GEN_SIZEOF_EXE" "$WORKDIR/stage3-link-sizeof.run.log"
 link_forth_with_libc "$GEN_SIZEOF_STRUCT_OBJ" "$GEN_SIZEOF_STRUCT_EXE" "$WORKDIR/stage3-link-sizeof-struct.run.log"
 link_forth_with_libc "$GEN_CAST_OBJ" "$GEN_CAST_EXE" "$WORKDIR/stage3-link-cast.run.log"
+GEN_DEFINE_EXE="$WORKDIR/min_define.generated.s32x"
+GEN_DEFINE_HEX_EXE="$WORKDIR/min_define_hex.generated.s32x"
+GEN_ENUM_EXE="$WORKDIR/min_enum.generated.s32x"
+GEN_PROTOTYPE_EXE="$WORKDIR/min_prototype.generated.s32x"
+GEN_INCLUDE_EXE="$WORKDIR/min_include.generated.s32x"
+link_forth_with_libc "$GEN_DEFINE_OBJ" "$GEN_DEFINE_EXE" "$WORKDIR/stage3-link-define.run.log"
+link_forth_with_libc "$GEN_DEFINE_HEX_OBJ" "$GEN_DEFINE_HEX_EXE" "$WORKDIR/stage3-link-define-hex.run.log"
+link_forth_with_libc "$GEN_ENUM_OBJ" "$GEN_ENUM_EXE" "$WORKDIR/stage3-link-enum.run.log"
+link_forth_with_libc "$GEN_PROTOTYPE_OBJ" "$GEN_PROTOTYPE_EXE" "$WORKDIR/stage3-link-prototype.run.log"
+link_forth_with_libc "$GEN_INCLUDE_OBJ" "$GEN_INCLUDE_EXE" "$WORKDIR/stage3-link-include.run.log"
 run_exe "$GEN_EXE" "$WORKDIR/gen.run.log"
 RET_RC=0
 run_exe_any_rc "$GEN_RET_EXE" "$WORKDIR/gen-ret.run.log" || RET_RC=$?
@@ -1026,6 +1093,41 @@ run_exe_any_rc "$GEN_CAST_EXE" "$WORKDIR/gen-cast.run.log" || CAST_RC=$?
 if [[ "$CAST_RC" -ne 1 ]]; then
     echo "cast test executable had unexpected exit code: $CAST_RC (expected 1)" >&2
     tail -n 60 "$WORKDIR/gen-cast.run.log" >&2
+    exit 1
+fi
+DEFINE_RC=0
+run_exe_any_rc "$GEN_DEFINE_EXE" "$WORKDIR/gen-define.run.log" || DEFINE_RC=$?
+if [[ "$DEFINE_RC" -ne 10 ]]; then
+    echo "define test executable had unexpected exit code: $DEFINE_RC (expected 10)" >&2
+    tail -n 60 "$WORKDIR/gen-define.run.log" >&2
+    exit 1
+fi
+DEFINE_HEX_RC=0
+run_exe_any_rc "$GEN_DEFINE_HEX_EXE" "$WORKDIR/gen-define-hex.run.log" || DEFINE_HEX_RC=$?
+if [[ "$DEFINE_HEX_RC" -ne 255 ]]; then
+    echo "define-hex test executable had unexpected exit code: $DEFINE_HEX_RC (expected 255)" >&2
+    tail -n 60 "$WORKDIR/gen-define-hex.run.log" >&2
+    exit 1
+fi
+ENUM_RC=0
+run_exe_any_rc "$GEN_ENUM_EXE" "$WORKDIR/gen-enum.run.log" || ENUM_RC=$?
+if [[ "$ENUM_RC" -ne 6 ]]; then
+    echo "enum test executable had unexpected exit code: $ENUM_RC (expected 6)" >&2
+    tail -n 60 "$WORKDIR/gen-enum.run.log" >&2
+    exit 1
+fi
+PROTOTYPE_RC=0
+run_exe_any_rc "$GEN_PROTOTYPE_EXE" "$WORKDIR/gen-prototype.run.log" || PROTOTYPE_RC=$?
+if [[ "$PROTOTYPE_RC" -ne 42 ]]; then
+    echo "prototype test executable had unexpected exit code: $PROTOTYPE_RC (expected 42)" >&2
+    tail -n 60 "$WORKDIR/gen-prototype.run.log" >&2
+    exit 1
+fi
+INCLUDE_RC=0
+run_exe_any_rc "$GEN_INCLUDE_EXE" "$WORKDIR/gen-include.run.log" || INCLUDE_RC=$?
+if [[ "$INCLUDE_RC" -ne 7 ]]; then
+    echo "include test executable had unexpected exit code: $INCLUDE_RC (expected 7)" >&2
+    tail -n 60 "$WORKDIR/gen-include.run.log" >&2
     exit 1
 fi
 
