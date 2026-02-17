@@ -367,21 +367,19 @@ stage6_archive_smoke() {
 
 stage6_archive_rc_smoke() {
     local archive="$WORKDIR/smoke-rc.s32a"
-    local base_obj="$ROOT_DIR/runtime/divsi3.s32o"
-    local keep_obj="$ROOT_DIR/runtime/crt0.s32o"
-    local repl_src="$ROOT_DIR/runtime/builtins.s32o"
-    local repl_obj="$WORKDIR/divsi3.s32o"
+    local obj_a="$WORKDIR/rc-alpha.dat"
+    local obj_b="$WORKDIR/rc-beta.dat"
+    local repl_obj="$WORKDIR/rc-repl/rc-alpha.dat"
     local xdir="$WORKDIR/extract"
     local xlog="$WORKDIR/s32-ar.extract.log"
     local rc=0
 
-    [[ -f "$base_obj" && -f "$keep_obj" && -f "$repl_src" ]] || {
-        echo "Missing runtime object required for rc smoke" >&2
-        return 1
-    }
-    cp "$repl_src" "$repl_obj"
+    printf 'original-alpha-content-for-rc-smoke\n' > "$obj_a"
+    printf 'original-beta-content-for-rc-smoke\n' > "$obj_b"
+    mkdir -p "$WORKDIR/rc-repl"
+    printf 'replaced-alpha-content-for-rc-smoke\n' > "$repl_obj"
 
-    run_exe "$STAGE6_AR_EXE" "$WORKDIR/s32-ar.rc-create.log" "c" "$archive" "$base_obj" "$keep_obj"
+    run_exe "$STAGE6_AR_EXE" "$WORKDIR/s32-ar.rc-create.log" "c" "$archive" "$obj_a" "$obj_b"
     run_exe "$STAGE6_AR_EXE" "$WORKDIR/s32-ar.rc-replace.log" "rc" "$archive" "$repl_obj"
     [[ -s "$archive" ]] || { echo "stage6 archiver produced no output" >&2; return 1; }
 
@@ -390,7 +388,7 @@ stage6_archive_rc_smoke() {
     (
         cd "$xdir"
         cat "$PRELUDE" "$AR_FTH" - <<FTH | timeout 120 "$EMU" "$KERNEL" >"$xlog" 2>&1
-S" $archive" S" divsi3.s32o" AR-X1
+S" $archive" S" rc-alpha.dat" AR-X1
 BYE
 FTH
     )
@@ -401,8 +399,8 @@ FTH
         tail -n 40 "$xlog" >&2
         return 1
     fi
-    [[ -s "$xdir/divsi3.s32o" ]] || { echo "replaced member missing after extract" >&2; return 1; }
-    cmp -s "$repl_obj" "$xdir/divsi3.s32o" || {
+    [[ -s "$xdir/rc-alpha.dat" ]] || { echo "replaced member missing after extract" >&2; return 1; }
+    cmp -s "$repl_obj" "$xdir/rc-alpha.dat" || {
         echo "replaced member content mismatch after rc" >&2
         return 1
     }
@@ -493,8 +491,7 @@ stage6_archive_m_smoke() {
     local obj_a="$WORKDIR/member-a.src"
     local obj_b="$WORKDIR/member-b.src"
     local obj_c="$WORKDIR/member-c.src"
-    local host_ar="$WORKDIR/s32-ar-host"
-    local host_list="$WORKDIR/s32-ar.m-host-list.log"
+    local list_log="$WORKDIR/s32-ar.m-list.log"
     local order_after="$WORKDIR/s32-ar.m-after.names"
     local expected_after="$WORKDIR/s32-ar.m-expected.names"
 
@@ -502,11 +499,11 @@ stage6_archive_m_smoke() {
     printf 'beta-stage6-m\n' > "$obj_b"
     printf 'gamma-stage6-m\n' > "$obj_c"
 
-    cc -O2 -Wall -Wextra -std=c11 -pedantic "$VALIDATION_DIR/s32-ar.c" -o "$host_ar"
     run_exe "$STAGE6_AR_EXE" "$WORKDIR/s32-ar.m-create.log" "c" "$archive" "$obj_a" "$obj_b" "$obj_c"
     run_exe "$STAGE6_AR_EXE" "$WORKDIR/s32-ar.m-move.log" "m" "$archive" "member-a.src"
-    "$host_ar" t "$archive" > "$host_list"
-    awk '{print $2}' "$host_list" > "$order_after"
+    run_exe "$STAGE6_AR_EXE" "$list_log" "t" "$archive"
+    sed -E '/^Wall time: /d;/^Performance: /d;/instructions\/second$/d;/^Starting execution/d;/^MMIO enabled/d;/^HALT at /d;/^$/d;/^Program halted/d;/^Exit code:/d;/^Instructions executed:/d;/^Simulated cycles:/d' \
+        "$list_log" | awk '{print $2}' > "$order_after"
     printf "member-b.src\nmember-c.src\nmember-a.src\n" > "$expected_after"
     cmp -s "$order_after" "$expected_after" || {
         echo "stage6 m path failed: member order mismatch after move" >&2
@@ -590,7 +587,7 @@ resolve_validation_source() {
 case "$MODE" in
     stage6-ar-smoke)
         build_stage5_assembler
-        TARGET_OBJ="$ROOT_DIR/runtime/crt0.s32o"
+        TARGET_OBJ="$RUNTIME_CRT0"
         build_stage6_archiver "$VALIDATION_DIR/s32-ar.c" stage5
         stage6_archive_smoke
         ;;
@@ -621,7 +618,7 @@ case "$MODE" in
         ;;
     stage6-ar-scan-smoke)
         build_stage5_assembler
-        TARGET_OBJ="$ROOT_DIR/runtime/crt0.s32o"
+        TARGET_OBJ="$RUNTIME_CRT0"
         build_stage6_archiver "$VALIDATION_DIR/s32-ar-scan.c" stage5
         stage6_archive_smoke "cs"
         ;;
@@ -789,11 +786,11 @@ if [[ "$MODE" == "stage6-ar-smoke" || "$MODE" == "stage6-ar-scan-smoke" ]]; then
     echo "Assembler path: c(stage05) for s32-as and stage6 smoke asm"
     echo "Linker path: forth(stage03)"
 elif [[ "$MODE" == "stage6-ar-rc-smoke" ]]; then
-    echo "Input members: runtime/divsi3.s32o runtime/crt0.s32o (replace divsi3.s32o)"
+    echo "Input members: synthetic rc-alpha.dat rc-beta.dat (replace rc-alpha.dat)"
     echo "Assembler path: c(stage05) for s32-as and stage6 smoke asm"
     echo "Linker path: forth(stage03)"
 elif [[ "$MODE" == "stage6-ar-tx-smoke" ]]; then
-    echo "Input members: runtime/divsi3.s32o runtime/crt0.s32o"
+    echo "Input members: synthetic member-a.src member-b.src"
     echo "Assembler path: c(stage05) for s32-as and stage6 smoke asm"
     echo "Linker path: forth(stage03)"
 elif [[ "$MODE" == "stage6-ar-d-smoke" ]]; then

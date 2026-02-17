@@ -77,6 +77,10 @@ S\" $OUT\" LINK-EMIT"
         MINI_S="$WORKDIR/main_halt.s"
         MINI_O="$WORKDIR/main_halt.s32o"
         MINI_A="$WORKDIR/libmini.s32a"
+        CRT0_SRC="$ROOT_DIR/selfhost/stage01/crt0_minimal.s"
+        MMIO_SRC="$ROOT_DIR/selfhost/stage01/mmio_minimal.s"
+        CRT0_OBJ="$WORKDIR/crt0_minimal.s32o"
+        MMIO_OBJ="$WORKDIR/mmio_minimal.s32o"
         OUT="$WORKDIR/archive-linked.s32x"
 
         cat >"$MINI_S" <<'ASM'
@@ -89,17 +93,22 @@ ASM
         run_forth "$ASM_FTH" "S\" $MINI_S\" S\" $MINI_O\" ASSEMBLE" "$WORKDIR/archive-asm.log"
         [[ -s "$MINI_O" ]] || { echo "assembler produced no output" >&2; exit 1; }
 
+        run_forth "$ASM_FTH" "S\" $CRT0_SRC\" S\" $CRT0_OBJ\" ASSEMBLE" "$WORKDIR/archive-crt0.log"
+        [[ -s "$CRT0_OBJ" ]] || { echo "failed to assemble crt0_minimal.s" >&2; exit 1; }
+
+        run_forth "$ASM_FTH" "S\" $MMIO_SRC\" S\" $MMIO_OBJ\" ASSEMBLE" "$WORKDIR/archive-mmio.log"
+        [[ -s "$MMIO_OBJ" ]] || { echo "failed to assemble mmio_minimal.s" >&2; exit 1; }
+
         run_forth "$AR_FTH" "S\" $MINI_A\" AR-C-BEGIN
 S\" $MINI_O\" AR-ADD
 AR-C-END" "$WORKDIR/archive-ar.log"
         [[ -s "$MINI_A" ]] || { echo "archiver produced no output" >&2; exit 1; }
 
         CMD="LINK-INIT
-S\" $ROOT_DIR/runtime/crt0.s32o\" LINK-OBJ
+S\" $CRT0_OBJ\" LINK-OBJ
+S\" $MMIO_OBJ\" LINK-OBJ
 S\" $MINI_A\" LINK-ARCHIVE
 65536 LINK-MMIO
-S\" $ROOT_DIR/runtime/libc_mmio.s32a\" LINK-ARCHIVE
-S\" $ROOT_DIR/runtime/libs32.s32a\" LINK-ARCHIVE
 S\" $OUT\" LINK-EMIT"
         ;;
     -h|--help)

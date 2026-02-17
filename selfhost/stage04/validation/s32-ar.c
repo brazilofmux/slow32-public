@@ -249,7 +249,10 @@ static int list_archive(const char *archive_path) {
     (void)str_size;
     for (i = 0; i < nmembers; i++) {
         const char *name = (const char *)(g_arc_strtab + g_arc_members[i].name_off);
-        printf("%u %s\n", g_arc_members[i].size, name);
+        fput_uint(stdout, g_arc_members[i].size);
+        fputc(' ', stdout);
+        fputs(name, stdout);
+        fputc('\n', stdout);
     }
     return 1;
 }

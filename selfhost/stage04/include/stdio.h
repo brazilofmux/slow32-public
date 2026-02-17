@@ -33,5 +33,6 @@ int getchar(void);
 void perror(const char *s);
 int fflush(FILE *fp);
 int fileno(FILE *fp);
+void fput_uint(FILE *fp, unsigned int val);
 
 #endif

@@ -4,8 +4,6 @@
 #include <string.h>
 #include <s32_formats.h>
 
-void fput_uint(FILE *fp, unsigned int val);
-
 #define MAX_LINE 1024
 #define MAX_TOK 8
 #define MAX_LBL 512
