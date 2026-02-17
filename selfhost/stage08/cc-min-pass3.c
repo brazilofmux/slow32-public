@@ -2,6 +2,34 @@
 
 int ccmin_get_ret_imm(void);
 
+static void emit_int(FILE *f, int val) {
+    char buf[12];
+    int i;
+    int neg;
+    neg = 0;
+    if (val < 0) {
+        neg = 1;
+        val = 0 - val;
+    }
+    i = 0;
+    if (val == 0) {
+        buf[0] = '0';
+        i = 1;
+    }
+    while (val > 0) {
+        buf[i] = '0' + (val % 10);
+        i = i + 1;
+        val = val / 10;
+    }
+    if (neg) {
+        fputc('-', f);
+    }
+    while (i > 0) {
+        i = i - 1;
+        fputc(buf[i], f);
+    }
+}
+
 static int emit_min_asm(const char *out_path, int ret_imm) {
     FILE *f = fopen(out_path, "wb");
     if (!f) return 0;
@@ -13,7 +41,9 @@ static int emit_min_asm(const char *out_path, int ret_imm) {
     if (fputs("    stw r29, r31, 252\n", f) < 0) { fclose(f); return 0; }
     if (fputs("    stw r29, r30, 248\n", f) < 0) { fclose(f); return 0; }
     if (fputs("    addi r30, r29, 256\n", f) < 0) { fclose(f); return 0; }
-    if (fprintf(f, "    addi r1, r0, %d\n", ret_imm) < 0) { fclose(f); return 0; }
+    if (fputs("    addi r1, r0, ", f) < 0) { fclose(f); return 0; }
+    emit_int(f, ret_imm);
+    if (fputc('\n', f) < 0) { fclose(f); return 0; }
     if (fputs("    jal r0, .L0\n", f) < 0) { fclose(f); return 0; }
     if (fputs(".L0:\n", f) < 0) { fclose(f); return 0; }
     if (fputs("    ldw r31, r29, 252\n", f) < 0) { fclose(f); return 0; }

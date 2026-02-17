@@ -12,7 +12,12 @@ KERNEL="${STAGE8_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${STAGE8_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 CC_FTH="${STAGE8_CC_FTH:-$ROOT_DIR/selfhost/stage04/cc.fth}"
 ASM_FTH="${STAGE8_ASM_FTH:-$ROOT_DIR/selfhost/stage01/asm.fth}"
+AR_FTH="${STAGE8_AR_FTH:-$ROOT_DIR/selfhost/stage02/ar.fth}"
 LINK_FTH="${STAGE8_LINK_FTH:-$ROOT_DIR/selfhost/stage03/link.fth}"
+
+CRT0_SRC="$ROOT_DIR/selfhost/stage01/crt0_minimal.s"
+MMIO_SRC="$ROOT_DIR/selfhost/stage01/mmio_minimal.s"
+LIBC_DIR="$ROOT_DIR/selfhost/stage05/libc"
 SRC="${STAGE8_CC_MIN_SRC:-$SCRIPT_DIR/cc-min.c}"
 SRC_PASS1="${STAGE8_CC_MIN_PASS1_SRC:-$SCRIPT_DIR/cc-min-pass1.c}"
 SRC_PASS2="${STAGE8_CC_MIN_PASS2_SRC:-$SCRIPT_DIR/cc-min-pass2.c}"
@@ -73,7 +78,9 @@ if [[ "$EMU" != /* ]]; then
     EMU="$ROOT_DIR/$EMU"
 fi
 
-for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH" "$SRC_PASS1" "$SRC_PASS2" "$SRC_PASS3" "$TEST_IN" "$TEST_RET_IN" "$TEST_EXPR_IN" "$TEST_LOCAL_IN" "$TEST_REL_IN" "$TEST_IF_TRUE_IN" "$TEST_IF_FALSE_IN" "$TEST_WHILE_IN" "$TEST_TWO_LOCALS_IN" "$TEST_HELPER_IN" "$TEST_HELPER_ARG_IN" "$TEST_HELPER_LOCAL_IN" "$TEST_MAIN_LOCAL_HELPER_IN" "$TEST_HELPER_TWO_ARGS_IN" "$TEST_HELPER_TWO_ARGS_IF_IN"; do
+for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$AR_FTH" "$LINK_FTH" \
+         "$CRT0_SRC" "$MMIO_SRC" \
+         "$SRC_PASS1" "$SRC_PASS2" "$SRC_PASS3" "$TEST_IN" "$TEST_RET_IN" "$TEST_EXPR_IN" "$TEST_LOCAL_IN" "$TEST_REL_IN" "$TEST_IF_TRUE_IN" "$TEST_IF_FALSE_IN" "$TEST_WHILE_IN" "$TEST_TWO_LOCALS_IN" "$TEST_HELPER_IN" "$TEST_HELPER_ARG_IN" "$TEST_HELPER_LOCAL_IN" "$TEST_MAIN_LOCAL_HELPER_IN" "$TEST_HELPER_TWO_ARGS_IN" "$TEST_HELPER_TWO_ARGS_IF_IN"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
 
@@ -185,17 +192,71 @@ BYE" "$log"
     fi
 }
 
-link_forth() {
+# --- Build selfhost runtime from stage01 sources ---
+RUNTIME_CRT0="$WORKDIR/crt0_minimal.s32o"
+RUNTIME_MMIO_OBJ="$WORKDIR/mmio_minimal.s32o"
+run_forth "$ASM_FTH" /dev/null "S\" $CRT0_SRC\" S\" $RUNTIME_CRT0\" ASSEMBLE
+BYE" "$WORKDIR/crt0.as.log"
+[[ -s "$RUNTIME_CRT0" ]] || { echo "failed to assemble crt0_minimal.s" >&2; exit 1; }
+run_forth "$ASM_FTH" /dev/null "S\" $MMIO_SRC\" S\" $RUNTIME_MMIO_OBJ\" ASSEMBLE
+BYE" "$WORKDIR/mmio.as.log"
+[[ -s "$RUNTIME_MMIO_OBJ" ]] || { echo "failed to assemble mmio_minimal.s" >&2; exit 1; }
+
+# --- Build selfhost libc ---
+LIBC_ARCHIVE="$WORKDIR/libc_selfhost.s32a"
+LIBC_START_OBJ=""
+
+build_selfhost_libc() {
+    local libc_c_files="string_extra convert stdio start"
+    local name src asm obj
+    local ar_objs=""
+
+    echo "Building selfhost libc..."
+
+    for name in $libc_c_files; do
+        src="$LIBC_DIR/${name}.c"
+        asm="$WORKDIR/libc_${name}.s"
+        obj="$WORKDIR/libc_${name}.s32o"
+
+        [[ -f "$src" ]] || { echo "Missing libc source: $src" >&2; return 1; }
+        compile_c_stage4 "$src" "$asm" "$WORKDIR/libc_${name}.cc.log"
+        assemble_forth "$asm" "$obj" "$WORKDIR/libc_${name}.as.log"
+
+        if [[ "$name" == "start" ]]; then
+            LIBC_START_OBJ="$obj"
+        else
+            ar_objs="$ar_objs $obj"
+        fi
+    done
+
+    local ar_cmd
+    ar_cmd="S\" $LIBC_ARCHIVE\" AR-C-BEGIN"
+    for obj in $ar_objs; do
+        ar_cmd="${ar_cmd}
+S\" $obj\" AR-ADD"
+    done
+    ar_cmd="${ar_cmd}
+AR-C-END
+BYE"
+    run_forth "$AR_FTH" /dev/null "$ar_cmd" "$WORKDIR/libc.ar.log"
+    [[ -s "$LIBC_ARCHIVE" ]] || { echo "failed to build libc archive" >&2; return 1; }
+    echo "Libc archive: $LIBC_ARCHIVE"
+}
+
+build_selfhost_libc
+
+link_forth_with_libc() {
     local obj="$1"
     local exe="$2"
     local log="$3"
 
     run_forth "$LINK_FTH" /dev/null "LINK-INIT
-S\" $ROOT_DIR/runtime/crt0.s32o\" LINK-OBJ
+S\" $RUNTIME_CRT0\" LINK-OBJ
 S\" $obj\" LINK-OBJ
+S\" $LIBC_START_OBJ\" LINK-OBJ
+S\" $RUNTIME_MMIO_OBJ\" LINK-OBJ
 65536 LINK-MMIO
-S\" $ROOT_DIR/runtime/libc_mmio.s32a\" LINK-ARCHIVE
-S\" $ROOT_DIR/runtime/libs32.s32a\" LINK-ARCHIVE
+S\" $LIBC_ARCHIVE\" LINK-ARCHIVE
 S\" $exe\" LINK-EMIT
 BYE" "$log"
     [[ -s "$exe" ]] || { echo "linker produced no output: $obj" >&2; return 1; }
@@ -212,7 +273,7 @@ CCMIN_OBJ="$WORKDIR/cc-min-main.s32o"
 CCMIN_EXE="$WORKDIR/cc-min.s32x"
 compile_c_stage4 "$CCMIN_MERGED_SRC" "$CCMIN_ASM" "$WORKDIR/cc-min.cc.log"
 assemble_forth "$CCMIN_ASM" "$CCMIN_OBJ" "$WORKDIR/cc-min.as.log"
-link_forth "$CCMIN_OBJ" "$CCMIN_EXE" "$WORKDIR/cc-min.ld.log"
+link_forth_with_libc "$CCMIN_OBJ" "$CCMIN_EXE" "$WORKDIR/cc-min.ld.log"
 
 # 2) Build Stage05 assembler and Stage07 linker executables.
 PIPE_LOG="$WORKDIR/stage5-build.log"
@@ -395,21 +456,21 @@ run_exe "$LD_EXE" "$WORKDIR/stage7-ld-helper-two-args-if.run.log" "$GEN_HELPER_T
 [[ -s "$GEN_MAIN_LOCAL_HELPER_RAW_EXE" ]] || { echo "stage07 linker produced no main-local-helper executable output" >&2; exit 1; }
 [[ -s "$GEN_HELPER_TWO_ARGS_RAW_EXE" ]] || { echo "stage07 linker produced no helper-two-args executable output" >&2; exit 1; }
 [[ -s "$GEN_HELPER_TWO_ARGS_IF_RAW_EXE" ]] || { echo "stage07 linker produced no helper-two-args-if executable output" >&2; exit 1; }
-link_forth "$GEN_OBJ" "$GEN_EXE" "$WORKDIR/stage3-link.run.log"
-link_forth "$GEN_RET_OBJ" "$GEN_RET_EXE" "$WORKDIR/stage3-link-ret.run.log"
-link_forth "$GEN_EXPR_OBJ" "$GEN_EXPR_EXE" "$WORKDIR/stage3-link-expr.run.log"
-link_forth "$GEN_LOCAL_OBJ" "$GEN_LOCAL_EXE" "$WORKDIR/stage3-link-local.run.log"
-link_forth "$GEN_REL_OBJ" "$GEN_REL_EXE" "$WORKDIR/stage3-link-rel.run.log"
-link_forth "$GEN_IF_TRUE_OBJ" "$GEN_IF_TRUE_EXE" "$WORKDIR/stage3-link-if-true.run.log"
-link_forth "$GEN_IF_FALSE_OBJ" "$GEN_IF_FALSE_EXE" "$WORKDIR/stage3-link-if-false.run.log"
-link_forth "$GEN_WHILE_OBJ" "$GEN_WHILE_EXE" "$WORKDIR/stage3-link-while.run.log"
-link_forth "$GEN_TWO_LOCALS_OBJ" "$GEN_TWO_LOCALS_EXE" "$WORKDIR/stage3-link-two-locals.run.log"
-link_forth "$GEN_HELPER_OBJ" "$GEN_HELPER_EXE" "$WORKDIR/stage3-link-helper.run.log"
-link_forth "$GEN_HELPER_ARG_OBJ" "$GEN_HELPER_ARG_EXE" "$WORKDIR/stage3-link-helper-arg.run.log"
-link_forth "$GEN_HELPER_LOCAL_OBJ" "$GEN_HELPER_LOCAL_EXE" "$WORKDIR/stage3-link-helper-local.run.log"
-link_forth "$GEN_MAIN_LOCAL_HELPER_OBJ" "$GEN_MAIN_LOCAL_HELPER_EXE" "$WORKDIR/stage3-link-main-local-helper.run.log"
-link_forth "$GEN_HELPER_TWO_ARGS_OBJ" "$GEN_HELPER_TWO_ARGS_EXE" "$WORKDIR/stage3-link-helper-two-args.run.log"
-link_forth "$GEN_HELPER_TWO_ARGS_IF_OBJ" "$GEN_HELPER_TWO_ARGS_IF_EXE" "$WORKDIR/stage3-link-helper-two-args-if.run.log"
+link_forth_with_libc "$GEN_OBJ" "$GEN_EXE" "$WORKDIR/stage3-link.run.log"
+link_forth_with_libc "$GEN_RET_OBJ" "$GEN_RET_EXE" "$WORKDIR/stage3-link-ret.run.log"
+link_forth_with_libc "$GEN_EXPR_OBJ" "$GEN_EXPR_EXE" "$WORKDIR/stage3-link-expr.run.log"
+link_forth_with_libc "$GEN_LOCAL_OBJ" "$GEN_LOCAL_EXE" "$WORKDIR/stage3-link-local.run.log"
+link_forth_with_libc "$GEN_REL_OBJ" "$GEN_REL_EXE" "$WORKDIR/stage3-link-rel.run.log"
+link_forth_with_libc "$GEN_IF_TRUE_OBJ" "$GEN_IF_TRUE_EXE" "$WORKDIR/stage3-link-if-true.run.log"
+link_forth_with_libc "$GEN_IF_FALSE_OBJ" "$GEN_IF_FALSE_EXE" "$WORKDIR/stage3-link-if-false.run.log"
+link_forth_with_libc "$GEN_WHILE_OBJ" "$GEN_WHILE_EXE" "$WORKDIR/stage3-link-while.run.log"
+link_forth_with_libc "$GEN_TWO_LOCALS_OBJ" "$GEN_TWO_LOCALS_EXE" "$WORKDIR/stage3-link-two-locals.run.log"
+link_forth_with_libc "$GEN_HELPER_OBJ" "$GEN_HELPER_EXE" "$WORKDIR/stage3-link-helper.run.log"
+link_forth_with_libc "$GEN_HELPER_ARG_OBJ" "$GEN_HELPER_ARG_EXE" "$WORKDIR/stage3-link-helper-arg.run.log"
+link_forth_with_libc "$GEN_HELPER_LOCAL_OBJ" "$GEN_HELPER_LOCAL_EXE" "$WORKDIR/stage3-link-helper-local.run.log"
+link_forth_with_libc "$GEN_MAIN_LOCAL_HELPER_OBJ" "$GEN_MAIN_LOCAL_HELPER_EXE" "$WORKDIR/stage3-link-main-local-helper.run.log"
+link_forth_with_libc "$GEN_HELPER_TWO_ARGS_OBJ" "$GEN_HELPER_TWO_ARGS_EXE" "$WORKDIR/stage3-link-helper-two-args.run.log"
+link_forth_with_libc "$GEN_HELPER_TWO_ARGS_IF_OBJ" "$GEN_HELPER_TWO_ARGS_IF_EXE" "$WORKDIR/stage3-link-helper-two-args-if.run.log"
 run_exe "$GEN_EXE" "$WORKDIR/gen.run.log"
 RET_RC=0
 run_exe_any_rc "$GEN_RET_EXE" "$WORKDIR/gen-ret.run.log" || RET_RC=$?

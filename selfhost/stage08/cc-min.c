@@ -7,23 +7,29 @@ int pass3_emit_from_ir(const char *out_path);
 
 int main(int argc, char **argv) {
     if (argc != 3) {
-        fprintf(stderr, "usage: %s <input.c> <output.s>\n", argv[0]);
+        fputs("usage: ", stderr);
+        fputs(argv[0], stderr);
+        fputs(" <input.c> <output.s>\n", stderr);
         return 1;
     }
     if (!ccmin_load_source(argv[1])) {
-        fprintf(stderr, "error: unable to read %s\n", argv[1]);
+        fputs("error: unable to read ", stderr);
+        fputs(argv[1], stderr);
+        fputc('\n', stderr);
         return 1;
     }
     if (!pass1_parse_to_ir()) {
-        fprintf(stderr, "error: unsupported source shape\n");
+        fputs("error: unsupported source shape\n", stderr);
         return 1;
     }
     if (!pass2_validate_ir()) {
-        fprintf(stderr, "error: return immediate out of range\n");
+        fputs("error: return immediate out of range\n", stderr);
         return 1;
     }
     if (!pass3_emit_from_ir(argv[2])) {
-        fprintf(stderr, "error: unable to write %s\n", argv[2]);
+        fputs("error: unable to write ", stderr);
+        fputs(argv[2], stderr);
+        fputc('\n', stderr);
         return 1;
     }
     return 0;
