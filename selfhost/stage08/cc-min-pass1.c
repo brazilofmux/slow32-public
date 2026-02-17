@@ -1,7 +1,8 @@
-#include <stdio.h>
+/* cc-min pass1: parser + code generator
+ * No #include <stdio.h> — cc.fth auto-declares fopen/fclose/fgetc.
+ * This avoids the 32KB include-save-buffer limit in cc.fth. */
 
 #define MAX_SRC 65536
-
 static char g_src[MAX_SRC];
 static int g_src_len;
 static int g_pos;
@@ -21,28 +22,37 @@ static int g_break_labels[MAX_LOOP];
 static int g_cont_labels[MAX_LOOP];
 static int g_loop_depth;
 
-static int read_file(const char *path, char *buf, int max_len, int *out_len) {
-    FILE *f;
-    int n;
+/* Type system */
+#define TY_INT  0
+#define TY_CHAR 1
+#define TY_VOID 2
+static int g_lval;
+static int g_expr_type;
+
+/* String pool */
+#define MAX_STRINGS 128
+#define STR_POOL_SZ 4096
+static char g_str_pool[STR_POOL_SZ];
+static int g_str_offs[MAX_STRINGS];
+static int g_str_lens[MAX_STRINGS];
+static int g_str_pool_len;
+static int g_nstrings;
+
+int ccmin_load_source(const char *path) {
+    int f;
     int ch;
     f = fopen(path, "rb");
     if (!f) return 0;
-    n = 0;
+    g_src_len = 0;
     for (;;) {
         ch = fgetc(f);
         if (ch < 0) break;
-        if (n + 1 >= max_len) { fclose(f); return 0; }
-        buf[n] = ch;
-        n = n + 1;
+        if (g_src_len >= MAX_SRC - 1) { fclose(f); return 0; }
+        g_src[g_src_len] = ch;
+        g_src_len = g_src_len + 1;
     }
     fclose(f);
-    buf[n] = 0;
-    *out_len = n;
-    return 1;
-}
-
-int ccmin_load_source(const char *path) {
-    if (!read_file(path, g_src, MAX_SRC, &g_src_len)) return 0;
+    g_src[g_src_len] = 0;
     return 1;
 }
 
@@ -92,6 +102,12 @@ int ccmin_load_source(const char *path) {
 #define TK_QMARK    56
 #define TK_COLON    57
 #define TK_CHAR_KW  58
+#define TK_LBRACK   59
+#define TK_RBRACK   60
+#define TK_STRING   61
+#define TK_CHARLIT  62
+#define TK_CONST    63
+#define TK_STATIC   64
 
 static int g_tok;
 static int g_tok_val;
@@ -113,9 +129,7 @@ static int is_alpha(char c) {
     return 0;
 }
 
-static int is_digit(char c) {
-    return c >= '0' && c <= '9';
-}
+static int is_digit(char c) { return c >= '0' && c <= '9'; }
 
 static int str_eq(const char *a, const char *b) {
     int i;
@@ -128,19 +142,8 @@ static int str_eq(const char *a, const char *b) {
 }
 
 static void cc_error(const char *msg) {
-    char nb[12];
-    int v;
-    int i;
-    fputs("cc-min error: ", stderr);
-    fputs(msg, stderr);
-    fputs(" (line ", stderr);
-    v = g_line;
-    if (v <= 0) v = 1;
-    i = 0;
-    while (v > 0) { nb[i] = '0' + (v % 10); i = i + 1; v = v / 10; }
-    if (i == 0) { nb[0] = '0'; i = 1; }
-    while (i > 0) { i = i - 1; fputc(nb[i], stderr); }
-    fputs(")\n", stderr);
+    /* Minimal error handler — no stdio dependency. */
+    /* Errors are visible as bad/missing codegen in test output. */
 }
 
 static void skip_ws(void) {
@@ -165,20 +168,86 @@ static void skip_ws(void) {
     }
 }
 
+static int scan_escape(void) {
+    char c;
+    g_pos = g_pos + 1;
+    if (g_pos >= g_src_len) return 0;
+    c = g_src[g_pos];
+    g_pos = g_pos + 1;
+    if (c == 'n') return 10;
+    if (c == 't') return 9;
+    if (c == 'r') return 13;
+    if (c == '0') return 0;
+    if (c == '\\') return 92;
+    if (c == '\'') return 39;
+    if (c == '"') return 34;
+    return c;
+}
+
 static void next_token(void) {
     char c;
     int v;
     int i;
+    int si;
     skip_ws();
     if (g_pos >= g_src_len) { g_tok = TK_EOF; return; }
     c = g_src[g_pos];
     if (is_digit(c)) {
         v = 0;
-        while (g_pos < g_src_len && is_digit(g_src[g_pos])) {
-            v = v * 10 + (g_src[g_pos] - '0');
-            g_pos = g_pos + 1;
+        if (c == '0' && g_pos + 1 < g_src_len && g_src[g_pos+1] == 'x') {
+            g_pos = g_pos + 2;
+            while (g_pos < g_src_len) {
+                c = g_src[g_pos];
+                if (c >= '0' && c <= '9') v = v * 16 + (c - '0');
+                else if (c >= 'a' && c <= 'f') v = v * 16 + (c - 'a' + 10);
+                else if (c >= 'A' && c <= 'F') v = v * 16 + (c - 'A' + 10);
+                else break;
+                g_pos = g_pos + 1;
+            }
+        } else {
+            while (g_pos < g_src_len && is_digit(g_src[g_pos])) {
+                v = v * 10 + (g_src[g_pos] - '0');
+                g_pos = g_pos + 1;
+            }
         }
         g_tok = TK_NUM; g_tok_val = v; return;
+    }
+    if (c == '\'') {
+        g_pos = g_pos + 1;
+        if (g_pos < g_src_len && g_src[g_pos] == '\\') {
+            v = scan_escape();
+        } else {
+            v = g_src[g_pos]; g_pos = g_pos + 1;
+        }
+        if (g_pos < g_src_len && g_src[g_pos] == '\'') g_pos = g_pos + 1;
+        g_tok = TK_CHARLIT; g_tok_val = v; return;
+    }
+    if (c == '"') {
+        g_pos = g_pos + 1;
+        si = g_str_pool_len;
+        while (g_pos < g_src_len && g_src[g_pos] != '"') {
+            if (g_src[g_pos] == '\\') {
+                v = scan_escape();
+            } else {
+                v = g_src[g_pos]; g_pos = g_pos + 1;
+            }
+            if (g_str_pool_len < STR_POOL_SZ) {
+                g_str_pool[g_str_pool_len] = v;
+                g_str_pool_len = g_str_pool_len + 1;
+            }
+        }
+        if (g_pos < g_src_len) g_pos = g_pos + 1;
+        if (g_str_pool_len < STR_POOL_SZ) {
+            g_str_pool[g_str_pool_len] = 0;
+            g_str_pool_len = g_str_pool_len + 1;
+        }
+        if (g_nstrings < MAX_STRINGS) {
+            g_str_offs[g_nstrings] = si;
+            g_str_lens[g_nstrings] = g_str_pool_len - si;
+            g_tok = TK_STRING; g_tok_val = g_nstrings;
+            g_nstrings = g_nstrings + 1;
+        }
+        return;
     }
     if (is_alpha(c)) {
         i = 0;
@@ -197,6 +266,8 @@ static void next_token(void) {
         if (str_eq(g_tok_str, "return")) { g_tok = TK_RETURN; return; }
         if (str_eq(g_tok_str, "break")) { g_tok = TK_BREAK; return; }
         if (str_eq(g_tok_str, "continue")) { g_tok = TK_CONTINUE; return; }
+        if (str_eq(g_tok_str, "const")) { g_tok = TK_CONST; return; }
+        if (str_eq(g_tok_str, "static")) { g_tok = TK_STATIC; return; }
         g_tok = TK_IDENT; return;
     }
     g_pos = g_pos + 1;
@@ -229,6 +300,8 @@ static void next_token(void) {
     if (c == ')') { g_tok = TK_RPAREN; return; }
     if (c == '{') { g_tok = TK_LBRACE; return; }
     if (c == '}') { g_tok = TK_RBRACE; return; }
+    if (c == '[') { g_tok = TK_LBRACK; return; }
+    if (c == ']') { g_tok = TK_RBRACK; return; }
     if (c == ';') { g_tok = TK_SEMI; return; }
     if (c == ',') { g_tok = TK_COMMA; return; }
     if (c == '?') { g_tok = TK_QMARK; return; }
@@ -243,6 +316,7 @@ static int expect(int tok) {
     return 1;
 }
 
+/* ---- Symbol tables ---- */
 #define MAX_LOCALS 64
 #define MAX_FUNCS 128
 #define NAMESZ 32
@@ -250,12 +324,23 @@ static int expect(int tok) {
 #define FNBUF_SZ 4096
 static char g_lnames[LNBUF_SZ];
 static int g_loffs[MAX_LOCALS];
+static int g_ltypes[MAX_LOCALS];
+static int g_lsizes[MAX_LOCALS];
 static int g_nlocals;
 static int g_local_off;
 
 static char g_fnames[FNBUF_SZ];
 static int g_fparams[MAX_FUNCS];
+static int g_fret[MAX_FUNCS];
 static int g_nfuncs;
+
+#define MAX_GLOBALS 64
+#define GNBUF_SZ 2048
+static char g_gnames[GNBUF_SZ];
+static int g_gtypes[MAX_GLOBALS];
+static int g_gsizes[MAX_GLOBALS];
+static int g_gbytes[MAX_GLOBALS];
+static int g_nglobals;
 
 static int g_ret_label;
 
@@ -295,26 +380,40 @@ static int find_local(const char *name) {
     int i;
     i = 0;
     while (i < g_nlocals) {
-        if (sym_name_eq(g_lnames, i, name)) return g_loffs[i];
+        if (sym_name_eq(g_lnames, i, name)) return i;
         i = i + 1;
     }
-    return 99999;
+    return -1;
 }
 
-static void add_local(const char *name) {
+static void add_local(const char *name, int type, int arr_cnt) {
+    int sz;
+    int esz;
     if (g_nlocals >= MAX_LOCALS) { cc_error("too many locals"); return; }
-    g_local_off = g_local_off - 4;
+    if (arr_cnt > 0) {
+        esz = 4;
+        if ((type & 255) == TY_CHAR && ((type >> 8) & 255) == 0) esz = 1;
+        sz = arr_cnt * esz;
+        sz = ((sz + 3) / 4) * 4;
+    } else {
+        sz = 4;
+    }
+    g_local_off = g_local_off - sz;
     sym_set_name(g_lnames, g_nlocals, name);
     g_loffs[g_nlocals] = g_local_off;
+    g_ltypes[g_nlocals] = type;
+    g_lsizes[g_nlocals] = arr_cnt;
     g_nlocals = g_nlocals + 1;
 }
 
-static void add_param(const char *name, int idx) {
+static void add_param(const char *name, int idx, int type) {
     int off;
     if (g_nlocals >= MAX_LOCALS) { cc_error("too many locals"); return; }
     off = -12 - idx * 4;
     sym_set_name(g_lnames, g_nlocals, name);
     g_loffs[g_nlocals] = off;
+    g_ltypes[g_nlocals] = type;
+    g_lsizes[g_nlocals] = 0;
     g_nlocals = g_nlocals + 1;
 }
 
@@ -322,19 +421,40 @@ static int find_func(const char *name) {
     int i;
     i = 0;
     while (i < g_nfuncs) {
-        if (sym_name_eq(g_fnames, i, name)) return g_fparams[i];
+        if (sym_name_eq(g_fnames, i, name)) return i;
         i = i + 1;
     }
     return -1;
 }
 
-static void add_func(const char *name, int np) {
+static void add_func(const char *name, int np, int rtype) {
     if (g_nfuncs >= MAX_FUNCS) { cc_error("too many funcs"); return; }
     sym_set_name(g_fnames, g_nfuncs, name);
     g_fparams[g_nfuncs] = np;
+    g_fret[g_nfuncs] = rtype;
     g_nfuncs = g_nfuncs + 1;
 }
 
+static int find_global(const char *name) {
+    int i;
+    i = 0;
+    while (i < g_nglobals) {
+        if (sym_name_eq(g_gnames, i, name)) return i;
+        i = i + 1;
+    }
+    return -1;
+}
+
+static void add_global(const char *name, int type, int arr_cnt, int bsz) {
+    if (g_nglobals >= MAX_GLOBALS) { cc_error("too many globals"); return; }
+    sym_set_name(g_gnames, g_nglobals, name);
+    g_gtypes[g_nglobals] = type;
+    g_gsizes[g_nglobals] = arr_cnt;
+    g_gbytes[g_nglobals] = bsz;
+    g_nglobals = g_nglobals + 1;
+}
+
+/* ---- Emit helpers ---- */
 static int new_label(void) {
     int l;
     l = g_label_count;
@@ -402,14 +522,6 @@ static void emit_li(int val) {
     }
 }
 
-static void emit_ldloc(int off) {
-    emit("    ldw r1, r30, "); emit_num(off); emit_ch('\n');
-}
-
-static void emit_stloc(int off) {
-    emit("    stw r30, r1, "); emit_num(off); emit_ch('\n');
-}
-
 static void emit_bz(int lbl) {
     int skip;
     skip = new_label();
@@ -423,34 +535,83 @@ static void emit_jmp(int lbl) {
 }
 
 static void emit_prologue(void) {
-    emit("    addi r29, r29, -256\n");
-    emit("    stw r29, r31, 252\n");
-    emit("    stw r29, r30, 248\n");
-    emit("    addi r30, r29, 256\n");
+    emit("    addi r29, r29, -256\n    stw r29, r31, 252\n    stw r29, r30, 248\n    addi r30, r29, 256\n");
 }
 
 static void emit_epilogue(int rl) {
     emit_ldef(rl);
-    emit("    ldw r31, r29, 252\n");
-    emit("    ldw r30, r29, 248\n");
-    emit("    addi r29, r29, 256\n");
-    emit("    jalr r0, r31, 0\n");
+    emit("    ldw r31, r29, 252\n    ldw r30, r29, 248\n    addi r29, r29, 256\n    jalr r0, r31, 0\n");
 }
 
 static void emit_call(const char *name) {
     emit("    jal r31, "); emit(name); emit_ch('\n');
 }
 
+static void emit_sym_name(char *buf, int idx) {
+    int base;
+    int i;
+    base = idx * NAMESZ;
+    i = 0;
+    while (buf[base + i] != 0) { emit_ch(buf[base + i]); i = i + 1; }
+}
+
+static void lval_to_rval(void) {
+    if (!g_lval) return;
+    if ((g_expr_type & 255) == TY_CHAR && ((g_expr_type >> 8) & 255) == 0)
+        emit("    ldb r1, r1, 0\n");
+    else
+        emit("    ldw r1, r1, 0\n");
+    g_lval = 0;
+}
+
+static void emit_store_ind(int type) {
+    if ((type & 255) == TY_CHAR && ((type >> 8) & 255) == 0)
+        emit("    stb r2, r1, 0\n");
+    else
+        emit("    stw r2, r1, 0\n");
+}
+
+static void emit_global_addr(int gidx) {
+    emit("    lui r1, %hi(");
+    emit_sym_name(g_gnames, gidx);
+    emit(")\n    addi r1, r1, %lo(");
+    emit_sym_name(g_gnames, gidx);
+    emit(")\n");
+}
+
+/* ---- Expression parser ---- */
 static void parse_expr(void);
 static void parse_assign(void);
 
 static void parse_primary(void) {
-    int off;
     char sn[128];
     int nargs;
     int k;
-    if (g_tok == TK_NUM) { emit_li(g_tok_val); next_token(); return; }
-    if (g_tok == TK_LPAREN) { next_token(); parse_expr(); expect(TK_RPAREN); return; }
+    int li;
+    int gi;
+    int fi;
+    int bt;
+    int pt;
+    int sid;
+    if (g_tok == TK_NUM) {
+        emit_li(g_tok_val); g_lval = 0; g_expr_type = TY_INT;
+        next_token(); return;
+    }
+    if (g_tok == TK_CHARLIT) {
+        emit_li(g_tok_val); g_lval = 0; g_expr_type = TY_INT;
+        next_token(); return;
+    }
+    if (g_tok == TK_STRING) {
+        sid = g_tok_val;
+        emit("    lui r1, %hi(.Lstr_"); emit_num(sid);
+        emit(")\n    addi r1, r1, %lo(.Lstr_"); emit_num(sid);
+        emit(")\n");
+        g_lval = 0; g_expr_type = TY_CHAR | (1 << 8);
+        next_token(); return;
+    }
+    if (g_tok == TK_LPAREN) {
+        next_token(); parse_expr(); expect(TK_RPAREN); return;
+    }
     if (g_tok == TK_IDENT) {
         str_copy(sn, g_tok_str, 128);
         next_token();
@@ -458,222 +619,319 @@ static void parse_primary(void) {
             next_token();
             nargs = 0;
             if (g_tok != TK_RPAREN) {
-                parse_expr(); emit_push(); nargs = 1;
+                parse_expr(); lval_to_rval(); emit_push(); nargs = 1;
                 while (g_tok == TK_COMMA) {
-                    next_token(); parse_expr(); emit_push(); nargs = nargs + 1;
+                    next_token(); parse_expr(); lval_to_rval(); emit_push(); nargs = nargs + 1;
                 }
             }
             expect(TK_RPAREN);
             k = nargs;
             while (k > 0) {
                 k = k - 1;
-                emit("    ldw r"); emit_num(3 + k); emit(", r29, 0\n");
-                emit("    addi r29, r29, 4\n");
+                emit("    ldw r"); emit_num(3 + k); emit(", r29, 0\n    addi r29, r29, 4\n");
             }
             emit_call(sn);
+            g_lval = 0;
+            fi = find_func(sn);
+            if (fi >= 0) g_expr_type = g_fret[fi];
+            else g_expr_type = TY_INT;
             return;
         }
-        off = find_local(sn);
-        if (off != 99999) { emit_ldloc(off); return; }
+        li = find_local(sn);
+        if (li >= 0) {
+            emit("    addi r1, r30, "); emit_num(g_loffs[li]); emit_ch('\n');
+            if (g_lsizes[li] > 0) {
+                bt = g_ltypes[li] & 255;
+                pt = (g_ltypes[li] >> 8) & 255;
+                g_lval = 0;
+                g_expr_type = bt | ((pt + 1) << 8);
+            } else {
+                g_lval = 1;
+                g_expr_type = g_ltypes[li];
+            }
+            return;
+        }
+        gi = find_global(sn);
+        if (gi >= 0) {
+            emit_global_addr(gi);
+            if (g_gsizes[gi] > 0) {
+                bt = g_gtypes[gi] & 255;
+                pt = (g_gtypes[gi] >> 8) & 255;
+                g_lval = 0;
+                g_expr_type = bt | ((pt + 1) << 8);
+            } else {
+                g_lval = 1;
+                g_expr_type = g_gtypes[gi];
+            }
+            return;
+        }
         cc_error("undefined variable");
         return;
     }
     cc_error("expected expression");
 }
 
-static void parse_postfix(void) { parse_primary(); }
+static void parse_postfix(void) {
+    int btype;
+    int ebt;
+    int ept;
+    int esz;
+    parse_primary();
+    while (g_tok == TK_LBRACK) {
+        btype = g_expr_type;
+        lval_to_rval();
+        emit_push();
+        next_token();
+        parse_expr();
+        lval_to_rval();
+        ept = (btype >> 8) & 255;
+        ebt = btype & 255;
+        if (ept > 0) ept = ept - 1;
+        esz = 4;
+        if (ebt == TY_CHAR && ept == 0) esz = 1;
+        if (esz == 4) emit("    slli r1, r1, 2\n");
+        emit_pop();
+        emit("    add r1, r2, r1\n");
+        g_lval = 1;
+        g_expr_type = ebt | (ept << 8);
+        expect(TK_RBRACK);
+    }
+}
 
 static void parse_unary(void) {
-    int off;
-    if (g_tok == TK_BANG) { next_token(); parse_unary(); emit("    seq r1, r1, r0\n"); return; }
-    if (g_tok == TK_MINUS) { next_token(); parse_unary(); emit("    sub r1, r0, r1\n"); return; }
-    if (g_tok == TK_TILDE) { next_token(); parse_unary(); emit("    xori r1, r1, -1\n"); return; }
+    int ty;
+    int bt;
+    int pt;
+    if (g_tok == TK_BANG) {
+        next_token(); parse_unary(); lval_to_rval();
+        emit("    seq r1, r1, r0\n");
+        g_lval = 0; g_expr_type = TY_INT; return;
+    }
+    if (g_tok == TK_MINUS) {
+        next_token(); parse_unary(); lval_to_rval();
+        emit("    sub r1, r0, r1\n");
+        g_lval = 0; g_expr_type = TY_INT; return;
+    }
+    if (g_tok == TK_TILDE) {
+        next_token(); parse_unary(); lval_to_rval();
+        emit("    xori r1, r1, -1\n");
+        g_lval = 0; g_expr_type = TY_INT; return;
+    }
+    if (g_tok == TK_STAR) {
+        next_token(); parse_unary(); lval_to_rval();
+        pt = (g_expr_type >> 8) & 255;
+        bt = g_expr_type & 255;
+        if (pt > 0) g_expr_type = bt | ((pt - 1) << 8);
+        g_lval = 1;
+        return;
+    }
+    if (g_tok == TK_AMP) {
+        next_token(); parse_unary();
+        if (!g_lval) { cc_error("& requires lvalue"); return; }
+        g_lval = 0;
+        bt = g_expr_type & 255;
+        pt = (g_expr_type >> 8) & 255;
+        g_expr_type = bt | ((pt + 1) << 8);
+        return;
+    }
     if (g_tok == TK_INC) {
-        next_token();
-        if (g_tok == TK_IDENT) {
-            off = find_local(g_tok_str);
-            if (off != 99999) {
-                emit_ldloc(off); emit("    addi r1, r1, 1\n"); emit_stloc(off);
-                next_token(); return;
-            }
+        next_token(); parse_unary();
+        if (g_lval) {
+            ty = g_expr_type;
+            emit("    addi r2, r1, 0\n");
+            lval_to_rval();
+            emit("    addi r1, r1, 1\n");
+            emit_store_ind(ty);
+            g_lval = 0;
+        } else {
+            emit("    addi r1, r1, 1\n");
         }
-        parse_unary(); emit("    addi r1, r1, 1\n"); return;
+        return;
     }
     if (g_tok == TK_DEC) {
-        next_token();
-        if (g_tok == TK_IDENT) {
-            off = find_local(g_tok_str);
-            if (off != 99999) {
-                emit_ldloc(off); emit("    addi r1, r1, -1\n"); emit_stloc(off);
-                next_token(); return;
-            }
+        next_token(); parse_unary();
+        if (g_lval) {
+            ty = g_expr_type;
+            emit("    addi r2, r1, 0\n");
+            lval_to_rval();
+            emit("    addi r1, r1, -1\n");
+            emit_store_ind(ty);
+            g_lval = 0;
+        } else {
+            emit("    addi r1, r1, -1\n");
         }
-        parse_unary(); emit("    addi r1, r1, -1\n"); return;
+        return;
     }
     parse_postfix();
 }
 
-static void parse_mul(void) {
+/* Precedence climbing for binary operators */
+static int binop_prec(int tok) {
+    if (tok == TK_STAR || tok == TK_SLASH || tok == TK_PERCENT) return 10;
+    if (tok == TK_PLUS || tok == TK_MINUS) return 9;
+    if (tok == TK_LSHIFT || tok == TK_RSHIFT) return 8;
+    if (tok == TK_LT || tok == TK_GT || tok == TK_LE || tok == TK_GE) return 7;
+    if (tok == TK_EQ || tok == TK_NE) return 6;
+    if (tok == TK_AMP) return 5;
+    if (tok == TK_CARET) return 4;
+    if (tok == TK_PIPE) return 3;
+    if (tok == TK_LAND) return 2;
+    if (tok == TK_LOR) return 1;
+    return 0;
+}
+
+static void emit_binop(int tok) {
+    if (tok == TK_STAR) emit("    mul r1, r2, r1\n");
+    else if (tok == TK_SLASH) emit("    div r1, r2, r1\n");
+    else if (tok == TK_PERCENT) emit("    rem r1, r2, r1\n");
+    else if (tok == TK_PLUS) emit("    add r1, r2, r1\n");
+    else if (tok == TK_MINUS) emit("    sub r1, r2, r1\n");
+    else if (tok == TK_LSHIFT) emit("    sll r1, r2, r1\n");
+    else if (tok == TK_RSHIFT) emit("    sra r1, r2, r1\n");
+    else if (tok == TK_LT) emit("    slt r1, r2, r1\n");
+    else if (tok == TK_GT) emit("    sgt r1, r2, r1\n");
+    else if (tok == TK_LE) emit("    sle r1, r2, r1\n");
+    else if (tok == TK_GE) emit("    sge r1, r2, r1\n");
+    else if (tok == TK_EQ) emit("    seq r1, r2, r1\n");
+    else if (tok == TK_NE) emit("    sne r1, r2, r1\n");
+    else if (tok == TK_AMP) emit("    and r1, r2, r1\n");
+    else if (tok == TK_CARET) emit("    xor r1, r2, r1\n");
+    else if (tok == TK_PIPE) emit("    or r1, r2, r1\n");
+    else if (tok == TK_LAND) emit("    sne r2, r2, r0\n    sne r1, r1, r0\n    and r1, r2, r1\n");
+    else if (tok == TK_LOR) emit("    sne r2, r2, r0\n    sne r1, r1, r0\n    or r1, r2, r1\n");
+}
+
+static void parse_binop(int min_prec) {
     int op;
+    int p;
     parse_unary();
     for (;;) {
-        if (g_tok == TK_STAR) op = 0;
-        else if (g_tok == TK_SLASH) op = 1;
-        else if (g_tok == TK_PERCENT) op = 2;
-        else break;
-        next_token(); emit_push(); parse_unary(); emit_pop();
-        if (op == 0) emit("    mul r1, r2, r1\n");
-        else if (op == 1) emit("    div r1, r2, r1\n");
-        else emit("    rem r1, r2, r1\n");
-    }
-}
-
-static void parse_add(void) {
-    int op;
-    parse_mul();
-    for (;;) {
-        if (g_tok == TK_PLUS) op = 0;
-        else if (g_tok == TK_MINUS) op = 1;
-        else break;
-        next_token(); emit_push(); parse_mul(); emit_pop();
-        if (op == 0) emit("    add r1, r2, r1\n");
-        else emit("    sub r1, r2, r1\n");
-    }
-}
-
-static void parse_shift(void) {
-    int op;
-    parse_add();
-    for (;;) {
-        if (g_tok == TK_LSHIFT) op = 0;
-        else if (g_tok == TK_RSHIFT) op = 1;
-        else break;
-        next_token(); emit_push(); parse_add(); emit_pop();
-        if (op == 0) emit("    sll r1, r2, r1\n");
-        else emit("    sra r1, r2, r1\n");
-    }
-}
-
-static void parse_rel(void) {
-    int op;
-    parse_shift();
-    for (;;) {
-        if (g_tok == TK_LT) op = 0;
-        else if (g_tok == TK_GT) op = 1;
-        else if (g_tok == TK_LE) op = 2;
-        else if (g_tok == TK_GE) op = 3;
-        else break;
-        next_token(); emit_push(); parse_shift(); emit_pop();
-        if (op == 0) emit("    slt r1, r2, r1\n");
-        else if (op == 1) emit("    sgt r1, r2, r1\n");
-        else if (op == 2) emit("    sle r1, r2, r1\n");
-        else emit("    sge r1, r2, r1\n");
-    }
-}
-
-static void parse_eq(void) {
-    int op;
-    parse_rel();
-    for (;;) {
-        if (g_tok == TK_EQ) op = 0;
-        else if (g_tok == TK_NE) op = 1;
-        else break;
-        next_token(); emit_push(); parse_rel(); emit_pop();
-        if (op == 0) emit("    seq r1, r2, r1\n");
-        else emit("    sne r1, r2, r1\n");
-    }
-}
-
-static void parse_bitand(void) {
-    parse_eq();
-    while (g_tok == TK_AMP) {
-        next_token(); emit_push(); parse_eq(); emit_pop();
-        emit("    and r1, r2, r1\n");
-    }
-}
-
-static void parse_bitxor(void) {
-    parse_bitand();
-    while (g_tok == TK_CARET) {
-        next_token(); emit_push(); parse_bitand(); emit_pop();
-        emit("    xor r1, r2, r1\n");
-    }
-}
-
-static void parse_bitor(void) {
-    parse_bitxor();
-    while (g_tok == TK_PIPE) {
-        next_token(); emit_push(); parse_bitxor(); emit_pop();
-        emit("    or r1, r2, r1\n");
-    }
-}
-
-static void parse_and(void) {
-    parse_bitor();
-    while (g_tok == TK_LAND) {
-        next_token(); emit_push(); parse_bitor(); emit_pop();
-        emit("    sne r2, r2, r0\n    sne r1, r1, r0\n    and r1, r2, r1\n");
-    }
-}
-
-static void parse_or(void) {
-    parse_and();
-    while (g_tok == TK_LOR) {
-        next_token(); emit_push(); parse_and(); emit_pop();
-        emit("    sne r2, r2, r0\n    sne r1, r1, r0\n    or r1, r2, r1\n");
+        p = binop_prec(g_tok);
+        if (p < min_prec) break;
+        op = g_tok;
+        lval_to_rval();
+        next_token();
+        emit_push();
+        parse_binop(p + 1);
+        lval_to_rval();
+        emit_pop();
+        emit_binop(op);
+        g_lval = 0; g_expr_type = TY_INT;
     }
 }
 
 static void parse_ternary(void) {
     int le;
     int lend;
-    parse_or();
+    parse_binop(1);
     if (g_tok == TK_QMARK) {
+        lval_to_rval();
         next_token(); le = new_label(); lend = new_label();
-        emit_bz(le); parse_expr(); expect(TK_COLON);
-        emit_jmp(lend); emit_ldef(le); parse_ternary(); emit_ldef(lend);
+        emit_bz(le); parse_expr(); lval_to_rval(); expect(TK_COLON);
+        emit_jmp(lend); emit_ldef(le); parse_ternary(); lval_to_rval(); emit_ldef(lend);
     }
 }
 
 static void parse_assign(void) {
-    char sn[128];
-    int off;
-    int spos;
-    int stok;
-    int sline;
-    if (g_tok == TK_IDENT) {
-        str_copy(sn, g_tok_str, 128);
-        off = find_local(sn);
-        if (off != 99999) {
-            spos = g_pos; stok = g_tok; sline = g_line;
-            next_token();
-            if (g_tok == TK_ASSIGN) {
-                next_token(); parse_assign(); emit_stloc(off); return;
-            }
-            if (g_tok == TK_PLUSEQ) {
-                next_token(); emit_ldloc(off); emit_push();
-                parse_assign(); emit_pop(); emit("    add r1, r2, r1\n");
-                emit_stloc(off); return;
-            }
-            if (g_tok == TK_MINUSEQ) {
-                next_token(); emit_ldloc(off); emit_push();
-                parse_assign(); emit_pop(); emit("    sub r1, r2, r1\n");
-                emit_stloc(off); return;
-            }
-            g_pos = spos; g_tok = stok; g_line = sline;
-            str_copy(g_tok_str, sn, 128);
-        }
-    }
+    int sty;
     parse_ternary();
+    if (g_tok == TK_ASSIGN) {
+        if (!g_lval) { cc_error("assign to non-lvalue"); }
+        sty = g_expr_type;
+        emit_push();
+        next_token(); parse_assign(); lval_to_rval();
+        emit_pop();
+        emit_store_ind(sty);
+        g_lval = 0;
+        return;
+    }
+    if (g_tok == TK_PLUSEQ) {
+        if (!g_lval) { cc_error("+= to non-lvalue"); }
+        sty = g_expr_type;
+        emit("    addi r2, r1, 0\n");
+        emit_push();
+        lval_to_rval();
+        emit_push();
+        next_token(); parse_assign(); lval_to_rval();
+        emit_pop();
+        emit("    add r1, r2, r1\n");
+        emit_pop();
+        emit_store_ind(sty);
+        g_lval = 0;
+        return;
+    }
+    if (g_tok == TK_MINUSEQ) {
+        if (!g_lval) { cc_error("-= to non-lvalue"); }
+        sty = g_expr_type;
+        emit("    addi r2, r1, 0\n");
+        emit_push();
+        lval_to_rval();
+        emit_push();
+        next_token(); parse_assign(); lval_to_rval();
+        emit_pop();
+        emit("    sub r1, r2, r1\n");
+        emit_pop();
+        emit_store_ind(sty);
+        g_lval = 0;
+        return;
+    }
 }
 
 static void parse_expr(void) { parse_assign(); }
 
+/* ---- Statement parser ---- */
 static void parse_stmt(void);
 
 static void parse_compound(void) {
     while (g_tok != TK_RBRACE && g_tok != TK_EOF) parse_stmt();
     expect(TK_RBRACE);
+}
+
+static int parse_base_type(void) {
+    int bt;
+    if (g_tok == TK_CONST) next_token();
+    if (g_tok == TK_INT) { bt = TY_INT; next_token(); }
+    else if (g_tok == TK_CHAR_KW) { bt = TY_CHAR; next_token(); }
+    else if (g_tok == TK_VOID) { bt = TY_VOID; next_token(); }
+    else { bt = TY_INT; }
+    return bt;
+}
+
+static int parse_ptr_stars(void) {
+    int p;
+    p = 0;
+    while (g_tok == TK_STAR) { p = p + 1; next_token(); }
+    return p;
+}
+
+static void parse_local_decl(void) {
+    int bt;
+    int pt;
+    int type;
+    int arr;
+    int off;
+    char nb[128];
+    bt = parse_base_type();
+    pt = parse_ptr_stars();
+    type = bt | (pt << 8);
+    if (g_tok != TK_IDENT) { cc_error("expected var name"); return; }
+    str_copy(nb, g_tok_str, 128);
+    next_token();
+    if (g_tok == TK_LBRACK) {
+        next_token();
+        arr = g_tok_val;
+        expect(TK_NUM);
+        expect(TK_RBRACK);
+        add_local(nb, type, arr);
+    } else {
+        add_local(nb, type, 0);
+        off = g_loffs[g_nlocals - 1];
+        if (g_tok == TK_ASSIGN) {
+            next_token(); parse_expr(); lval_to_rval();
+            emit("    stw r30, r1, "); emit_num(off); emit_ch('\n');
+        }
+    }
+    expect(TK_SEMI);
 }
 
 static void parse_stmt(void) {
@@ -684,26 +942,22 @@ static void parse_stmt(void) {
     int lcont;
     int sfl;
     int sef;
-    char nb[128];
-    int off;
     int fi;
+    int off;
+    int bt;
+    int pt;
+    int type;
+    char nb[128];
 
     if (g_tok == TK_LBRACE) { next_token(); parse_compound(); return; }
 
-    if (g_tok == TK_INT || g_tok == TK_CHAR_KW) {
-        next_token();
-        if (g_tok != TK_IDENT) { cc_error("expected var name"); return; }
-        str_copy(nb, g_tok_str, 128);
-        add_local(nb);
-        off = find_local(nb);
-        next_token();
-        if (g_tok == TK_ASSIGN) { next_token(); parse_expr(); emit_stloc(off); }
-        expect(TK_SEMI);
+    if (g_tok == TK_INT || g_tok == TK_CHAR_KW || g_tok == TK_CONST) {
+        parse_local_decl();
         return;
     }
 
     if (g_tok == TK_IF) {
-        next_token(); expect(TK_LPAREN); parse_expr(); expect(TK_RPAREN);
+        next_token(); expect(TK_LPAREN); parse_expr(); lval_to_rval(); expect(TK_RPAREN);
         le = new_label(); lend = new_label();
         emit_bz(le); parse_stmt();
         if (g_tok == TK_ELSE) {
@@ -716,7 +970,7 @@ static void parse_stmt(void) {
         next_token();
         lloop = new_label(); lbrk = new_label();
         emit_ldef(lloop);
-        expect(TK_LPAREN); parse_expr(); expect(TK_RPAREN);
+        expect(TK_LPAREN); parse_expr(); lval_to_rval(); expect(TK_RPAREN);
         emit_bz(lbrk);
         if (g_loop_depth < MAX_LOOP) {
             g_break_labels[g_loop_depth] = lbrk;
@@ -731,24 +985,30 @@ static void parse_stmt(void) {
 
     if (g_tok == TK_FOR) {
         next_token(); expect(TK_LPAREN);
-        if (g_tok == TK_INT || g_tok == TK_CHAR_KW) {
-            next_token();
+        if (g_tok == TK_INT || g_tok == TK_CHAR_KW || g_tok == TK_CONST) {
+            bt = parse_base_type();
+            pt = parse_ptr_stars();
+            type = bt | (pt << 8);
             if (g_tok == TK_IDENT) {
                 str_copy(nb, g_tok_str, 128);
-                add_local(nb); off = find_local(nb);
+                add_local(nb, type, 0);
+                off = g_loffs[g_nlocals - 1];
                 next_token();
-                if (g_tok == TK_ASSIGN) { next_token(); parse_expr(); emit_stloc(off); }
+                if (g_tok == TK_ASSIGN) {
+                    next_token(); parse_expr(); lval_to_rval();
+                    emit("    stw r30, r1, "); emit_num(off); emit_ch('\n');
+                }
             }
             expect(TK_SEMI);
-        } else if (g_tok != TK_SEMI) { parse_expr(); expect(TK_SEMI); }
+        } else if (g_tok != TK_SEMI) { parse_expr(); lval_to_rval(); expect(TK_SEMI); }
         else { next_token(); }
         lloop = new_label(); lbrk = new_label(); lcont = new_label();
         emit_ldef(lloop);
-        if (g_tok != TK_SEMI) { parse_expr(); emit_bz(lbrk); }
+        if (g_tok != TK_SEMI) { parse_expr(); lval_to_rval(); emit_bz(lbrk); }
         expect(TK_SEMI);
         sfl = g_for_len; sef = g_emit_to_for;
         g_for_len = 0; g_emit_to_for = 1;
-        if (g_tok != TK_RPAREN) parse_expr();
+        if (g_tok != TK_RPAREN) { parse_expr(); lval_to_rval(); }
         g_emit_to_for = sef;
         expect(TK_RPAREN);
         if (g_loop_depth < MAX_LOOP) {
@@ -768,7 +1028,7 @@ static void parse_stmt(void) {
 
     if (g_tok == TK_RETURN) {
         next_token();
-        if (g_tok != TK_SEMI) parse_expr();
+        if (g_tok != TK_SEMI) { parse_expr(); lval_to_rval(); }
         emit_jmp(g_ret_label);
         expect(TK_SEMI);
         return;
@@ -790,23 +1050,18 @@ static void parse_stmt(void) {
 
     if (g_tok == TK_SEMI) { next_token(); return; }
 
-    parse_expr(); expect(TK_SEMI);
+    parse_expr(); lval_to_rval(); expect(TK_SEMI);
 }
 
-static void parse_function(void) {
-    char fn[128];
+/* ---- Function and program parsers ---- */
+static void parse_function(const char *fname, int rtype) {
     int np;
     int i;
+    int bt;
+    int pt;
+    int ptype;
 
-    if (g_tok != TK_INT && g_tok != TK_VOID && g_tok != TK_CHAR_KW) {
-        cc_error("expected type"); return;
-    }
-    next_token();
-    if (g_tok != TK_IDENT) { cc_error("expected function name"); return; }
-    str_copy(fn, g_tok_str, 128);
-    next_token();
-
-    emit(fn); emit(":\n    .global "); emit(fn); emit_ch('\n');
+    emit(fname); emit(":\n    .global "); emit(fname); emit_ch('\n');
 
     expect(TK_LPAREN);
     g_nlocals = 0;
@@ -820,10 +1075,17 @@ static void parse_function(void) {
             next_token();
         } else {
             for (;;) {
-                if (g_tok != TK_INT && g_tok != TK_CHAR_KW) { cc_error("expected param type"); break; }
+                if (g_tok == TK_CONST) next_token();
+                if (g_tok != TK_INT && g_tok != TK_CHAR_KW && g_tok != TK_VOID) {
+                    cc_error("expected param type"); break;
+                }
+                bt = TY_INT;
+                if (g_tok == TK_CHAR_KW) bt = TY_CHAR;
                 next_token();
+                pt = parse_ptr_stars();
+                ptype = bt | (pt << 8);
                 if (g_tok != TK_IDENT) { cc_error("expected param name"); break; }
-                add_param(g_tok_str, np);
+                add_param(g_tok_str, np, ptype);
                 np = np + 1;
                 next_token();
                 if (g_tok != TK_COMMA) break;
@@ -832,7 +1094,7 @@ static void parse_function(void) {
         }
     }
     expect(TK_RPAREN);
-    add_func(fn, np);
+    add_func(fname, np, rtype);
     g_local_off = -12 - np * 4;
 
     emit_prologue();
@@ -849,16 +1111,105 @@ static void parse_function(void) {
     emit_ch('\n');
 }
 
+static void parse_global_decl(const char *name, int type) {
+    int arr;
+    int esz;
+    int bsz;
+    if (g_tok == TK_LBRACK) {
+        next_token();
+        arr = g_tok_val;
+        expect(TK_NUM);
+        expect(TK_RBRACK);
+        esz = 4;
+        if ((type & 255) == TY_CHAR && ((type >> 8) & 255) == 0) esz = 1;
+        bsz = arr * esz;
+        bsz = ((bsz + 3) / 4) * 4;
+        add_global(name, type, arr, bsz);
+    } else {
+        add_global(name, type, 0, 4);
+    }
+    expect(TK_SEMI);
+}
+
+static void emit_strings(void) {
+    int i;
+    int j;
+    int off;
+    int len;
+    int bv;
+    if (g_nstrings == 0) return;
+    emit(".data\n");
+    i = 0;
+    while (i < g_nstrings) {
+        emit(".align 4\n.Lstr_"); emit_num(i); emit(":\n");
+        off = g_str_offs[i];
+        len = g_str_lens[i];
+        j = 0;
+        while (j < len) {
+            emit(".byte ");
+            bv = g_str_pool[off + j];
+            if (bv < 0) bv = bv + 256;
+            emit_num(bv);
+            emit_ch('\n');
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+}
+
+static void emit_globals_bss(void) {
+    int i;
+    if (g_nglobals == 0) return;
+    emit(".bss\n");
+    i = 0;
+    while (i < g_nglobals) {
+        emit(".align 4\n");
+        emit_sym_name(g_gnames, i);
+        emit(":\n    .global ");
+        emit_sym_name(g_gnames, i);
+        emit("\n    .space ");
+        emit_num(g_gbytes[i]);
+        emit_ch('\n');
+        i = i + 1;
+    }
+}
+
 static void parse_program(void) {
+    int bt;
+    int pt;
+    int rtype;
+    char fn[128];
     emit("# Generated by cc-min\n.text\n");
-    while (g_tok != TK_EOF) parse_function();
+    while (g_tok != TK_EOF) {
+        if (g_tok == TK_STATIC) next_token();
+        if (g_tok == TK_CONST) next_token();
+        bt = TY_INT;
+        if (g_tok == TK_INT) { bt = TY_INT; next_token(); }
+        else if (g_tok == TK_CHAR_KW) { bt = TY_CHAR; next_token(); }
+        else if (g_tok == TK_VOID) { bt = TY_VOID; next_token(); }
+        else { next_token(); }
+        pt = parse_ptr_stars();
+        rtype = bt | (pt << 8);
+        if (g_tok != TK_IDENT) { cc_error("expected name"); break; }
+        str_copy(fn, g_tok_str, 128);
+        next_token();
+        if (g_tok == TK_LPAREN) {
+            parse_function(fn, rtype);
+        } else {
+            parse_global_decl(fn, rtype);
+        }
+    }
+    emit_strings();
+    emit_globals_bss();
 }
 
 int pass1_parse_to_ir(void) {
     g_pos = 0; g_line = 1;
     g_output_len = 0; g_label_count = 0;
-    g_nfuncs = 0; g_nlocals = 0;
+    g_nfuncs = 0; g_nlocals = 0; g_nglobals = 0;
     g_loop_depth = 0; g_emit_to_for = 0; g_for_len = 0;
+    g_lval = 0; g_expr_type = 0;
+    g_nstrings = 0; g_str_pool_len = 0;
     next_token();
     parse_program();
     g_output[g_output_len] = 0;

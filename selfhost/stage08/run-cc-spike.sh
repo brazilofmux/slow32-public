@@ -41,6 +41,14 @@ TEST_NESTED_IF_IN="$SCRIPT_DIR/tests/min_nested_if.c"
 TEST_BREAK_CONTINUE_IN="$SCRIPT_DIR/tests/min_break_continue.c"
 TEST_GENERAL_NAMES_IN="$SCRIPT_DIR/tests/min_general_names.c"
 TEST_COMPLEX_EXPR_IN="$SCRIPT_DIR/tests/min_complex_expr.c"
+TEST_CHAR_TYPE_IN="$SCRIPT_DIR/tests/min_char_type.c"
+TEST_CHAR_LITERAL_IN="$SCRIPT_DIR/tests/min_char_literal.c"
+TEST_LOCAL_ARRAY_IN="$SCRIPT_DIR/tests/min_local_array.c"
+TEST_CHAR_ARRAY_IN="$SCRIPT_DIR/tests/min_char_array.c"
+TEST_STRING_LIT_IN="$SCRIPT_DIR/tests/min_string_lit.c"
+TEST_POINTER_IN="$SCRIPT_DIR/tests/min_pointer.c"
+TEST_GLOBAL_IN="$SCRIPT_DIR/tests/min_global.c"
+TEST_GLOBAL_ARRAY_IN="$SCRIPT_DIR/tests/min_global_array.c"
 KEEP_ARTIFACTS=0
 REBUILD_LIBC="${STAGE8_REBUILD_LIBC:-0}"
 
@@ -85,7 +93,8 @@ fi
 
 for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$LINK_FTH" \
          "$SRC_PASS1" "$SRC_PASS2" "$SRC_PASS3" "$TEST_IN" "$TEST_RET_IN" "$TEST_EXPR_IN" "$TEST_LOCAL_IN" "$TEST_REL_IN" "$TEST_IF_TRUE_IN" "$TEST_IF_FALSE_IN" "$TEST_WHILE_IN" "$TEST_TWO_LOCALS_IN" "$TEST_HELPER_IN" "$TEST_HELPER_ARG_IN" "$TEST_HELPER_LOCAL_IN" "$TEST_MAIN_LOCAL_HELPER_IN" "$TEST_HELPER_TWO_ARGS_IN" "$TEST_HELPER_TWO_ARGS_IF_IN" \
-         "$TEST_MULTI_FUNC_IN" "$TEST_FOR_LOOP_IN" "$TEST_NESTED_IF_IN" "$TEST_BREAK_CONTINUE_IN" "$TEST_GENERAL_NAMES_IN" "$TEST_COMPLEX_EXPR_IN"; do
+         "$TEST_MULTI_FUNC_IN" "$TEST_FOR_LOOP_IN" "$TEST_NESTED_IF_IN" "$TEST_BREAK_CONTINUE_IN" "$TEST_GENERAL_NAMES_IN" "$TEST_COMPLEX_EXPR_IN" \
+         "$TEST_CHAR_TYPE_IN" "$TEST_CHAR_LITERAL_IN" "$TEST_LOCAL_ARRAY_IN" "$TEST_CHAR_ARRAY_IN" "$TEST_STRING_LIT_IN" "$TEST_POINTER_IN" "$TEST_GLOBAL_IN" "$TEST_GLOBAL_ARRAY_IN"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
 
@@ -325,6 +334,22 @@ run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-nested-if.run.log" "$TEST_NESTED_IF_IN" "$
 run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-break-continue.run.log" "$TEST_BREAK_CONTINUE_IN" "$GEN_BREAK_CONTINUE_ASM"
 run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-general-names.run.log" "$TEST_GENERAL_NAMES_IN" "$GEN_GENERAL_NAMES_ASM"
 run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-complex-expr.run.log" "$TEST_COMPLEX_EXPR_IN" "$GEN_COMPLEX_EXPR_ASM"
+GEN_CHAR_TYPE_ASM="$WORKDIR/min_char_type.generated.s"
+GEN_CHAR_LITERAL_ASM="$WORKDIR/min_char_literal.generated.s"
+GEN_LOCAL_ARRAY_ASM="$WORKDIR/min_local_array.generated.s"
+GEN_CHAR_ARRAY_ASM="$WORKDIR/min_char_array.generated.s"
+GEN_STRING_LIT_ASM="$WORKDIR/min_string_lit.generated.s"
+GEN_POINTER_ASM="$WORKDIR/min_pointer.generated.s"
+GEN_GLOBAL_ASM="$WORKDIR/min_global.generated.s"
+GEN_GLOBAL_ARRAY_ASM="$WORKDIR/min_global_array.generated.s"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-char-type.run.log" "$TEST_CHAR_TYPE_IN" "$GEN_CHAR_TYPE_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-char-literal.run.log" "$TEST_CHAR_LITERAL_IN" "$GEN_CHAR_LITERAL_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-local-array.run.log" "$TEST_LOCAL_ARRAY_IN" "$GEN_LOCAL_ARRAY_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-char-array.run.log" "$TEST_CHAR_ARRAY_IN" "$GEN_CHAR_ARRAY_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-string-lit.run.log" "$TEST_STRING_LIT_IN" "$GEN_STRING_LIT_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-pointer.run.log" "$TEST_POINTER_IN" "$GEN_POINTER_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-global.run.log" "$TEST_GLOBAL_IN" "$GEN_GLOBAL_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-global-array.run.log" "$TEST_GLOBAL_ARRAY_IN" "$GEN_GLOBAL_ARRAY_ASM"
 [[ -s "$GEN_ASM" ]] || { echo "cc-min produced no assembly output" >&2; exit 1; }
 [[ -s "$GEN_RET_ASM" ]] || { echo "cc-min produced no return-test assembly output" >&2; exit 1; }
 [[ -s "$GEN_EXPR_ASM" ]] || { echo "cc-min produced no expr-test assembly output" >&2; exit 1; }
@@ -346,6 +371,14 @@ run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-complex-expr.run.log" "$TEST_COMPLEX_EXPR_
 [[ -s "$GEN_BREAK_CONTINUE_ASM" ]] || { echo "cc-min produced no break-continue assembly output" >&2; exit 1; }
 [[ -s "$GEN_GENERAL_NAMES_ASM" ]] || { echo "cc-min produced no general-names assembly output" >&2; exit 1; }
 [[ -s "$GEN_COMPLEX_EXPR_ASM" ]] || { echo "cc-min produced no complex-expr assembly output" >&2; exit 1; }
+[[ -s "$GEN_CHAR_TYPE_ASM" ]] || { echo "cc-min produced no char-type assembly output" >&2; exit 1; }
+[[ -s "$GEN_CHAR_LITERAL_ASM" ]] || { echo "cc-min produced no char-literal assembly output" >&2; exit 1; }
+[[ -s "$GEN_LOCAL_ARRAY_ASM" ]] || { echo "cc-min produced no local-array assembly output" >&2; exit 1; }
+[[ -s "$GEN_CHAR_ARRAY_ASM" ]] || { echo "cc-min produced no char-array assembly output" >&2; exit 1; }
+[[ -s "$GEN_STRING_LIT_ASM" ]] || { echo "cc-min produced no string-lit assembly output" >&2; exit 1; }
+[[ -s "$GEN_POINTER_ASM" ]] || { echo "cc-min produced no pointer assembly output" >&2; exit 1; }
+[[ -s "$GEN_GLOBAL_ASM" ]] || { echo "cc-min produced no global assembly output" >&2; exit 1; }
+[[ -s "$GEN_GLOBAL_ARRAY_ASM" ]] || { echo "cc-min produced no global-array assembly output" >&2; exit 1; }
 grep -q '^main:' "$GEN_ASM" || { echo "generated assembly missing main label" >&2; exit 1; }
 
 # 4) Assemble, link with stage07 (artifact), then link/run with stage03 runtime.
@@ -433,6 +466,22 @@ run_exe "$AS_EXE" "$WORKDIR/stage5-as-nested-if.run.log" "$GEN_NESTED_IF_ASM" "$
 run_exe "$AS_EXE" "$WORKDIR/stage5-as-break-continue.run.log" "$GEN_BREAK_CONTINUE_ASM" "$GEN_BREAK_CONTINUE_OBJ"
 run_exe "$AS_EXE" "$WORKDIR/stage5-as-general-names.run.log" "$GEN_GENERAL_NAMES_ASM" "$GEN_GENERAL_NAMES_OBJ"
 run_exe "$AS_EXE" "$WORKDIR/stage5-as-complex-expr.run.log" "$GEN_COMPLEX_EXPR_ASM" "$GEN_COMPLEX_EXPR_OBJ"
+GEN_CHAR_TYPE_OBJ="$WORKDIR/min_char_type.generated.s32o"
+GEN_CHAR_LITERAL_OBJ="$WORKDIR/min_char_literal.generated.s32o"
+GEN_LOCAL_ARRAY_OBJ="$WORKDIR/min_local_array.generated.s32o"
+GEN_CHAR_ARRAY_OBJ="$WORKDIR/min_char_array.generated.s32o"
+GEN_STRING_LIT_OBJ="$WORKDIR/min_string_lit.generated.s32o"
+GEN_POINTER_OBJ="$WORKDIR/min_pointer.generated.s32o"
+GEN_GLOBAL_OBJ="$WORKDIR/min_global.generated.s32o"
+GEN_GLOBAL_ARRAY_OBJ="$WORKDIR/min_global_array.generated.s32o"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-char-type.run.log" "$GEN_CHAR_TYPE_ASM" "$GEN_CHAR_TYPE_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-char-literal.run.log" "$GEN_CHAR_LITERAL_ASM" "$GEN_CHAR_LITERAL_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-local-array.run.log" "$GEN_LOCAL_ARRAY_ASM" "$GEN_LOCAL_ARRAY_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-char-array.run.log" "$GEN_CHAR_ARRAY_ASM" "$GEN_CHAR_ARRAY_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-string-lit.run.log" "$GEN_STRING_LIT_ASM" "$GEN_STRING_LIT_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-pointer.run.log" "$GEN_POINTER_ASM" "$GEN_POINTER_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-global.run.log" "$GEN_GLOBAL_ASM" "$GEN_GLOBAL_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-global-array.run.log" "$GEN_GLOBAL_ARRAY_ASM" "$GEN_GLOBAL_ARRAY_OBJ"
 [[ -s "$GEN_OBJ" ]] || { echo "stage05 assembler produced no object output" >&2; exit 1; }
 [[ -s "$GEN_RET_OBJ" ]] || { echo "stage05 assembler produced no return-test object output" >&2; exit 1; }
 [[ -s "$GEN_EXPR_OBJ" ]] || { echo "stage05 assembler produced no expr-test object output" >&2; exit 1; }
@@ -454,6 +503,14 @@ run_exe "$AS_EXE" "$WORKDIR/stage5-as-complex-expr.run.log" "$GEN_COMPLEX_EXPR_A
 [[ -s "$GEN_BREAK_CONTINUE_OBJ" ]] || { echo "stage05 assembler produced no break-continue object output" >&2; exit 1; }
 [[ -s "$GEN_GENERAL_NAMES_OBJ" ]] || { echo "stage05 assembler produced no general-names object output" >&2; exit 1; }
 [[ -s "$GEN_COMPLEX_EXPR_OBJ" ]] || { echo "stage05 assembler produced no complex-expr object output" >&2; exit 1; }
+[[ -s "$GEN_CHAR_TYPE_OBJ" ]] || { echo "stage05 assembler produced no char-type object output" >&2; exit 1; }
+[[ -s "$GEN_CHAR_LITERAL_OBJ" ]] || { echo "stage05 assembler produced no char-literal object output" >&2; exit 1; }
+[[ -s "$GEN_LOCAL_ARRAY_OBJ" ]] || { echo "stage05 assembler produced no local-array object output" >&2; exit 1; }
+[[ -s "$GEN_CHAR_ARRAY_OBJ" ]] || { echo "stage05 assembler produced no char-array object output" >&2; exit 1; }
+[[ -s "$GEN_STRING_LIT_OBJ" ]] || { echo "stage05 assembler produced no string-lit object output" >&2; exit 1; }
+[[ -s "$GEN_POINTER_OBJ" ]] || { echo "stage05 assembler produced no pointer object output" >&2; exit 1; }
+[[ -s "$GEN_GLOBAL_OBJ" ]] || { echo "stage05 assembler produced no global object output" >&2; exit 1; }
+[[ -s "$GEN_GLOBAL_ARRAY_OBJ" ]] || { echo "stage05 assembler produced no global-array object output" >&2; exit 1; }
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld.run.log" "$GEN_OBJ" "$GEN_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-ret.run.log" "$GEN_RET_OBJ" "$GEN_RET_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-expr.run.log" "$GEN_EXPR_OBJ" "$GEN_EXPR_RAW_EXE"
@@ -475,6 +532,22 @@ run_exe "$LD_EXE" "$WORKDIR/stage7-ld-nested-if.run.log" "$GEN_NESTED_IF_OBJ" "$
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-break-continue.run.log" "$GEN_BREAK_CONTINUE_OBJ" "$GEN_BREAK_CONTINUE_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-general-names.run.log" "$GEN_GENERAL_NAMES_OBJ" "$GEN_GENERAL_NAMES_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-complex-expr.run.log" "$GEN_COMPLEX_EXPR_OBJ" "$GEN_COMPLEX_EXPR_RAW_EXE"
+GEN_CHAR_TYPE_RAW_EXE="$WORKDIR/min_char_type.generated.raw.s32x"
+GEN_CHAR_LITERAL_RAW_EXE="$WORKDIR/min_char_literal.generated.raw.s32x"
+GEN_LOCAL_ARRAY_RAW_EXE="$WORKDIR/min_local_array.generated.raw.s32x"
+GEN_CHAR_ARRAY_RAW_EXE="$WORKDIR/min_char_array.generated.raw.s32x"
+GEN_STRING_LIT_RAW_EXE="$WORKDIR/min_string_lit.generated.raw.s32x"
+GEN_POINTER_RAW_EXE="$WORKDIR/min_pointer.generated.raw.s32x"
+GEN_GLOBAL_RAW_EXE="$WORKDIR/min_global.generated.raw.s32x"
+GEN_GLOBAL_ARRAY_RAW_EXE="$WORKDIR/min_global_array.generated.raw.s32x"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-char-type.run.log" "$GEN_CHAR_TYPE_OBJ" "$GEN_CHAR_TYPE_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-char-literal.run.log" "$GEN_CHAR_LITERAL_OBJ" "$GEN_CHAR_LITERAL_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-local-array.run.log" "$GEN_LOCAL_ARRAY_OBJ" "$GEN_LOCAL_ARRAY_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-char-array.run.log" "$GEN_CHAR_ARRAY_OBJ" "$GEN_CHAR_ARRAY_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-string-lit.run.log" "$GEN_STRING_LIT_OBJ" "$GEN_STRING_LIT_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-pointer.run.log" "$GEN_POINTER_OBJ" "$GEN_POINTER_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-global.run.log" "$GEN_GLOBAL_OBJ" "$GEN_GLOBAL_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-global-array.run.log" "$GEN_GLOBAL_ARRAY_OBJ" "$GEN_GLOBAL_ARRAY_RAW_EXE"
 [[ -s "$GEN_RAW_EXE" ]] || { echo "stage07 linker produced no executable output" >&2; exit 1; }
 [[ -s "$GEN_RET_RAW_EXE" ]] || { echo "stage07 linker produced no return-test executable output" >&2; exit 1; }
 [[ -s "$GEN_EXPR_RAW_EXE" ]] || { echo "stage07 linker produced no expr-test executable output" >&2; exit 1; }
@@ -496,6 +569,14 @@ run_exe "$LD_EXE" "$WORKDIR/stage7-ld-complex-expr.run.log" "$GEN_COMPLEX_EXPR_O
 [[ -s "$GEN_BREAK_CONTINUE_RAW_EXE" ]] || { echo "stage07 linker produced no break-continue executable output" >&2; exit 1; }
 [[ -s "$GEN_GENERAL_NAMES_RAW_EXE" ]] || { echo "stage07 linker produced no general-names executable output" >&2; exit 1; }
 [[ -s "$GEN_COMPLEX_EXPR_RAW_EXE" ]] || { echo "stage07 linker produced no complex-expr executable output" >&2; exit 1; }
+[[ -s "$GEN_CHAR_TYPE_RAW_EXE" ]] || { echo "stage07 linker produced no char-type executable output" >&2; exit 1; }
+[[ -s "$GEN_CHAR_LITERAL_RAW_EXE" ]] || { echo "stage07 linker produced no char-literal executable output" >&2; exit 1; }
+[[ -s "$GEN_LOCAL_ARRAY_RAW_EXE" ]] || { echo "stage07 linker produced no local-array executable output" >&2; exit 1; }
+[[ -s "$GEN_CHAR_ARRAY_RAW_EXE" ]] || { echo "stage07 linker produced no char-array executable output" >&2; exit 1; }
+[[ -s "$GEN_STRING_LIT_RAW_EXE" ]] || { echo "stage07 linker produced no string-lit executable output" >&2; exit 1; }
+[[ -s "$GEN_POINTER_RAW_EXE" ]] || { echo "stage07 linker produced no pointer executable output" >&2; exit 1; }
+[[ -s "$GEN_GLOBAL_RAW_EXE" ]] || { echo "stage07 linker produced no global executable output" >&2; exit 1; }
+[[ -s "$GEN_GLOBAL_ARRAY_RAW_EXE" ]] || { echo "stage07 linker produced no global-array executable output" >&2; exit 1; }
 link_forth_with_libc "$GEN_OBJ" "$GEN_EXE" "$WORKDIR/stage3-link.run.log"
 link_forth_with_libc "$GEN_RET_OBJ" "$GEN_RET_EXE" "$WORKDIR/stage3-link-ret.run.log"
 link_forth_with_libc "$GEN_EXPR_OBJ" "$GEN_EXPR_EXE" "$WORKDIR/stage3-link-expr.run.log"
@@ -517,6 +598,22 @@ link_forth_with_libc "$GEN_NESTED_IF_OBJ" "$GEN_NESTED_IF_EXE" "$WORKDIR/stage3-
 link_forth_with_libc "$GEN_BREAK_CONTINUE_OBJ" "$GEN_BREAK_CONTINUE_EXE" "$WORKDIR/stage3-link-break-continue.run.log"
 link_forth_with_libc "$GEN_GENERAL_NAMES_OBJ" "$GEN_GENERAL_NAMES_EXE" "$WORKDIR/stage3-link-general-names.run.log"
 link_forth_with_libc "$GEN_COMPLEX_EXPR_OBJ" "$GEN_COMPLEX_EXPR_EXE" "$WORKDIR/stage3-link-complex-expr.run.log"
+GEN_CHAR_TYPE_EXE="$WORKDIR/min_char_type.generated.s32x"
+GEN_CHAR_LITERAL_EXE="$WORKDIR/min_char_literal.generated.s32x"
+GEN_LOCAL_ARRAY_EXE="$WORKDIR/min_local_array.generated.s32x"
+GEN_CHAR_ARRAY_EXE="$WORKDIR/min_char_array.generated.s32x"
+GEN_STRING_LIT_EXE="$WORKDIR/min_string_lit.generated.s32x"
+GEN_POINTER_EXE="$WORKDIR/min_pointer.generated.s32x"
+GEN_GLOBAL_EXE="$WORKDIR/min_global.generated.s32x"
+GEN_GLOBAL_ARRAY_EXE="$WORKDIR/min_global_array.generated.s32x"
+link_forth_with_libc "$GEN_CHAR_TYPE_OBJ" "$GEN_CHAR_TYPE_EXE" "$WORKDIR/stage3-link-char-type.run.log"
+link_forth_with_libc "$GEN_CHAR_LITERAL_OBJ" "$GEN_CHAR_LITERAL_EXE" "$WORKDIR/stage3-link-char-literal.run.log"
+link_forth_with_libc "$GEN_LOCAL_ARRAY_OBJ" "$GEN_LOCAL_ARRAY_EXE" "$WORKDIR/stage3-link-local-array.run.log"
+link_forth_with_libc "$GEN_CHAR_ARRAY_OBJ" "$GEN_CHAR_ARRAY_EXE" "$WORKDIR/stage3-link-char-array.run.log"
+link_forth_with_libc "$GEN_STRING_LIT_OBJ" "$GEN_STRING_LIT_EXE" "$WORKDIR/stage3-link-string-lit.run.log"
+link_forth_with_libc "$GEN_POINTER_OBJ" "$GEN_POINTER_EXE" "$WORKDIR/stage3-link-pointer.run.log"
+link_forth_with_libc "$GEN_GLOBAL_OBJ" "$GEN_GLOBAL_EXE" "$WORKDIR/stage3-link-global.run.log"
+link_forth_with_libc "$GEN_GLOBAL_ARRAY_OBJ" "$GEN_GLOBAL_ARRAY_EXE" "$WORKDIR/stage3-link-global-array.run.log"
 run_exe "$GEN_EXE" "$WORKDIR/gen.run.log"
 RET_RC=0
 run_exe_any_rc "$GEN_RET_EXE" "$WORKDIR/gen-ret.run.log" || RET_RC=$?
@@ -656,6 +753,62 @@ run_exe_any_rc "$GEN_COMPLEX_EXPR_EXE" "$WORKDIR/gen-complex-expr.run.log" || CO
 if [[ "$COMPLEX_EXPR_RC" -ne 15 ]]; then
     echo "complex-expr test executable had unexpected exit code: $COMPLEX_EXPR_RC (expected 15)" >&2
     tail -n 60 "$WORKDIR/gen-complex-expr.run.log" >&2
+    exit 1
+fi
+CHAR_TYPE_RC=0
+run_exe_any_rc "$GEN_CHAR_TYPE_EXE" "$WORKDIR/gen-char-type.run.log" || CHAR_TYPE_RC=$?
+if [[ "$CHAR_TYPE_RC" -ne 1 ]]; then
+    echo "char-type test executable had unexpected exit code: $CHAR_TYPE_RC (expected 1)" >&2
+    tail -n 60 "$WORKDIR/gen-char-type.run.log" >&2
+    exit 1
+fi
+CHAR_LITERAL_RC=0
+run_exe_any_rc "$GEN_CHAR_LITERAL_EXE" "$WORKDIR/gen-char-literal.run.log" || CHAR_LITERAL_RC=$?
+if [[ "$CHAR_LITERAL_RC" -ne 3 ]]; then
+    echo "char-literal test executable had unexpected exit code: $CHAR_LITERAL_RC (expected 3)" >&2
+    tail -n 60 "$WORKDIR/gen-char-literal.run.log" >&2
+    exit 1
+fi
+LOCAL_ARRAY_RC=0
+run_exe_any_rc "$GEN_LOCAL_ARRAY_EXE" "$WORKDIR/gen-local-array.run.log" || LOCAL_ARRAY_RC=$?
+if [[ "$LOCAL_ARRAY_RC" -ne 50 ]]; then
+    echo "local-array test executable had unexpected exit code: $LOCAL_ARRAY_RC (expected 50)" >&2
+    tail -n 60 "$WORKDIR/gen-local-array.run.log" >&2
+    exit 1
+fi
+CHAR_ARRAY_RC=0
+run_exe_any_rc "$GEN_CHAR_ARRAY_EXE" "$WORKDIR/gen-char-array.run.log" || CHAR_ARRAY_RC=$?
+if [[ "$CHAR_ARRAY_RC" -ne 6 ]]; then
+    echo "char-array test executable had unexpected exit code: $CHAR_ARRAY_RC (expected 6)" >&2
+    tail -n 60 "$WORKDIR/gen-char-array.run.log" >&2
+    exit 1
+fi
+STRING_LIT_RC=0
+run_exe_any_rc "$GEN_STRING_LIT_EXE" "$WORKDIR/gen-string-lit.run.log" || STRING_LIT_RC=$?
+if [[ "$STRING_LIT_RC" -ne 5 ]]; then
+    echo "string-lit test executable had unexpected exit code: $STRING_LIT_RC (expected 5)" >&2
+    tail -n 60 "$WORKDIR/gen-string-lit.run.log" >&2
+    exit 1
+fi
+POINTER_RC=0
+run_exe_any_rc "$GEN_POINTER_EXE" "$WORKDIR/gen-pointer.run.log" || POINTER_RC=$?
+if [[ "$POINTER_RC" -ne 7 ]]; then
+    echo "pointer test executable had unexpected exit code: $POINTER_RC (expected 7)" >&2
+    tail -n 60 "$WORKDIR/gen-pointer.run.log" >&2
+    exit 1
+fi
+GLOBAL_RC=0
+run_exe_any_rc "$GEN_GLOBAL_EXE" "$WORKDIR/gen-global.run.log" || GLOBAL_RC=$?
+if [[ "$GLOBAL_RC" -ne 10 ]]; then
+    echo "global test executable had unexpected exit code: $GLOBAL_RC (expected 10)" >&2
+    tail -n 60 "$WORKDIR/gen-global.run.log" >&2
+    exit 1
+fi
+GLOBAL_ARRAY_RC=0
+run_exe_any_rc "$GEN_GLOBAL_ARRAY_EXE" "$WORKDIR/gen-global-array.run.log" || GLOBAL_ARRAY_RC=$?
+if [[ "$GLOBAL_ARRAY_RC" -ne 8 ]]; then
+    echo "global-array test executable had unexpected exit code: $GLOBAL_ARRAY_RC (expected 8)" >&2
+    tail -n 60 "$WORKDIR/gen-global-array.run.log" >&2
     exit 1
 fi
 
