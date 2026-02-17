@@ -6,9 +6,9 @@
 
 #define MAX_LINE 1024
 #define MAX_TOK 8
-#define MAX_LBL 512
-#define MAX_REL 4096
-#define MAX_SYM 512
+#define MAX_LBL 4096
+#define MAX_REL 16384
+#define MAX_SYM 4096
 #define MAX_TEXT 262144
 #define MAX_DATA 262144
 #define MAX_BSS 262144
@@ -16,7 +16,7 @@
 
 enum { SEC_TEXT = 0, SEC_DATA = 1, SEC_BSS = 2 };
 
-static char g_lbl_name_pool[32768];
+static char g_lbl_name_pool[131072];
 static uint32_t g_lbl_name_off[MAX_LBL];
 static uint32_t g_lbl_name_ptr = 0;
 static uint32_t g_lbl_sec[MAX_LBL];
@@ -131,7 +131,7 @@ static int get_lbl(const char *name) {
     if (i >= 0) return i;
     if (g_nlbl >= MAX_LBL) return -1;
     n = (uint32_t)strlen(name) + 1u;
-    if (g_lbl_name_ptr + n > 32768u) return -1;
+    if (g_lbl_name_ptr + n > 131072u) return -1;
     g_lbl_name_off[g_nlbl] = g_lbl_name_ptr;
     memcpy(g_lbl_name_pool + g_lbl_name_ptr, name, n);
     g_lbl_name_ptr += n;
@@ -583,6 +583,15 @@ static int resolve_local_text_relocs(void) {
         }
     }
     g_nrel = out;
+
+    /* Recompute reference flags from the relocations we actually kept.
+       Otherwise local labels that were fully resolved still bloat symtab
+       and can trigger downstream linker fragility. */
+    for (i = 0; i < g_nlbl; i++) g_lbl_refd[i] = 0;
+    for (i = 0; i < g_nrel; i++) {
+        uint32_t li = g_rel_sym[i];
+        if (li < g_nlbl) g_lbl_refd[li] = 1;
+    }
     return 0;
 }
 

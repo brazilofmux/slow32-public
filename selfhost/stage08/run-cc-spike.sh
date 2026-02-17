@@ -11,8 +11,6 @@ EMU="${STAGE8_EMU:-$ROOT_DIR/tools/emulator/slow32-fast}"
 KERNEL="${STAGE8_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${STAGE8_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 CC_FTH="${STAGE8_CC_FTH:-$ROOT_DIR/selfhost/stage04/cc.fth}"
-ASM_FTH="${STAGE8_ASM_FTH:-$ROOT_DIR/selfhost/stage01/asm.fth}"
-AR_FTH="${STAGE8_AR_FTH:-$ROOT_DIR/selfhost/stage02/ar.fth}"
 LINK_FTH="${STAGE8_LINK_FTH:-$ROOT_DIR/selfhost/stage03/link.fth}"
 
 CRT0_SRC="$ROOT_DIR/selfhost/stage01/crt0_minimal.s"
@@ -44,14 +42,15 @@ TEST_BREAK_CONTINUE_IN="$SCRIPT_DIR/tests/min_break_continue.c"
 TEST_GENERAL_NAMES_IN="$SCRIPT_DIR/tests/min_general_names.c"
 TEST_COMPLEX_EXPR_IN="$SCRIPT_DIR/tests/min_complex_expr.c"
 KEEP_ARTIFACTS=0
+REBUILD_LIBC="${STAGE8_REBUILD_LIBC:-0}"
 
 usage() {
     cat <<USAGE
 Usage: $0 [--emu <path>] [--keep-artifacts]
 
 Stage08 compiler spike:
-  1) build cc-min.s32x via stage04->stage01->stage03
-  2) build stage05 assembler (s32-as.s32x) and stage07 linker (s32-ld.s32x)
+  1) bootstrap stage05 assembler + stage06 archiver + stage07 linker
+  2) build cc-min.s32x via stage04->stage05->stage03
   3) compile min_main, min_ret7, min_ret_expr, min_local_ret_expr, min_ret_rel, min_if_{true,false}, min_while_countdown, min_two_locals, min_helper_call, min_helper_arg, min_helper_local, min_main_local_helper, min_helper_two_args, and min_helper_two_args_if with cc-min.s32x
   4) assemble with stage05; produce raw link via stage07; run via stage03 runtime link
 USAGE
@@ -84,8 +83,7 @@ if [[ "$EMU" != /* ]]; then
     EMU="$ROOT_DIR/$EMU"
 fi
 
-for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$AR_FTH" "$LINK_FTH" \
-         "$CRT0_SRC" "$MMIO_SRC" \
+for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$LINK_FTH" \
          "$SRC_PASS1" "$SRC_PASS2" "$SRC_PASS3" "$TEST_IN" "$TEST_RET_IN" "$TEST_EXPR_IN" "$TEST_LOCAL_IN" "$TEST_REL_IN" "$TEST_IF_TRUE_IN" "$TEST_IF_FALSE_IN" "$TEST_WHILE_IN" "$TEST_TWO_LOCALS_IN" "$TEST_HELPER_IN" "$TEST_HELPER_ARG_IN" "$TEST_HELPER_LOCAL_IN" "$TEST_MAIN_LOCAL_HELPER_IN" "$TEST_HELPER_TWO_ARGS_IN" "$TEST_HELPER_TWO_ARGS_IF_IN" \
          "$TEST_MULTI_FUNC_IN" "$TEST_FOR_LOOP_IN" "$TEST_NESTED_IF_IN" "$TEST_BREAK_CONTINUE_IN" "$TEST_GENERAL_NAMES_IN" "$TEST_COMPLEX_EXPR_IN"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
@@ -101,6 +99,21 @@ WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage08-cc.XXXXXX)"
 if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then
     trap 'rm -rf "$WORKDIR"' EXIT
 fi
+
+# Bootstrap strict C-toolchain stages first. Stage08 then uses these outputs.
+PIPE_LOG="$WORKDIR/stage5-build.log"
+"$ROOT_DIR/selfhost/stage05/run-pipeline.sh" --mode stage6-ar-smoke --emu "$EMU" --keep-artifacts >"$PIPE_LOG"
+PIPE_ART="$(awk -F': ' '/^Artifacts:/{print $2}' "$PIPE_LOG" | tail -n 1)"
+[[ -n "$PIPE_ART" && -d "$PIPE_ART" ]] || { echo "failed to locate stage05 artifacts dir" >&2; exit 1; }
+AS_EXE="$PIPE_ART/s32-as.s32x"
+AR_EXE="$PIPE_ART/s32-ar.s32x"
+[[ -f "$AS_EXE" ]] || { echo "missing stage05 assembler exe: $AS_EXE" >&2; exit 1; }
+[[ -f "$AR_EXE" ]] || { echo "missing stage06 archiver exe: $AR_EXE" >&2; exit 1; }
+
+LD_LOG="$WORKDIR/stage7-build.log"
+"$ROOT_DIR/selfhost/stage07/run-spike.sh" --emu "$EMU" --keep-artifacts >"$LD_LOG"
+LD_EXE="$(awk -F': ' '/^Linker exe:/{print $2}' "$LD_LOG" | tail -n 1)"
+[[ -n "$LD_EXE" && -f "$LD_EXE" ]] || { echo "failed to locate stage07 linker exe" >&2; exit 1; }
 
 run_forth() {
     local script_a="$1"
@@ -135,7 +148,7 @@ run_exe() {
         tail -n 60 "$log" >&2
         return 1
     fi
-    if grep -Eq "Execute fault|Memory fault|Write out of bounds or to protected memory|Unknown opcode|Unknown instruction|Load fault|Store fault" "$log"; then
+    if grep -Eq "Execute fault|Memory fault|Write out of bounds or to protected memory|Unknown opcode|Unknown instruction|Load fault|Store fault|Execution limit reached" "$log"; then
         echo "execution faulted: $exe" >&2
         tail -n 60 "$log" >&2
         return 1
@@ -161,7 +174,7 @@ run_exe_any_rc() {
         tail -n 60 "$log" >&2
         return 124
     fi
-    if grep -Eq "Execute fault|Memory fault|Write out of bounds or to protected memory|Unknown opcode|Unknown instruction|Load fault|Store fault" "$log"; then
+    if grep -Eq "Execute fault|Memory fault|Write out of bounds or to protected memory|Unknown opcode|Unknown instruction|Load fault|Store fault|Execution limit reached" "$log"; then
         echo "execution faulted: $exe" >&2
         tail -n 60 "$log" >&2
         return 125
@@ -184,39 +197,31 @@ BYE" "$log"
     }
 }
 
-assemble_forth() {
+assemble_with_stage5() {
     local asm="$1"
     local obj="$2"
     local log="$3"
 
-    run_forth "$ASM_FTH" /dev/null "S\" $asm\" S\" $obj\" ASSEMBLE
-BYE" "$log"
-    [[ -s "$obj" ]] || { echo "assembler produced no output: $asm" >&2; return 1; }
-    if grep -q "FAILED:" "$log"; then
-        echo "assembler failed: $asm" >&2
-        tail -n 60 "$log" >&2
-        return 1
-    fi
+    run_exe "$AS_EXE" "$log" "$asm" "$obj"
+    [[ -s "$obj" ]] || { echo "stage05 assembler produced no output: $asm" >&2; return 1; }
 }
 
-# --- Build selfhost runtime from stage01 sources ---
-RUNTIME_CRT0="$WORKDIR/crt0_minimal.s32o"
-RUNTIME_MMIO_OBJ="$WORKDIR/mmio_minimal.s32o"
-run_forth "$ASM_FTH" /dev/null "S\" $CRT0_SRC\" S\" $RUNTIME_CRT0\" ASSEMBLE
-BYE" "$WORKDIR/crt0.as.log"
-[[ -s "$RUNTIME_CRT0" ]] || { echo "failed to assemble crt0_minimal.s" >&2; exit 1; }
-run_forth "$ASM_FTH" /dev/null "S\" $MMIO_SRC\" S\" $RUNTIME_MMIO_OBJ\" ASSEMBLE
-BYE" "$WORKDIR/mmio.as.log"
-[[ -s "$RUNTIME_MMIO_OBJ" ]] || { echo "failed to assemble mmio_minimal.s" >&2; exit 1; }
+# --- Runtime objects come from stage05 bootstrap artifacts ---
+RUNTIME_CRT0="$PIPE_ART/crt0_minimal.s32o"
+RUNTIME_MMIO_OBJ="$PIPE_ART/mmio_minimal.s32o"
+[[ -s "$RUNTIME_CRT0" ]] || { echo "missing runtime crt0 object: $RUNTIME_CRT0" >&2; exit 1; }
+[[ -s "$RUNTIME_MMIO_OBJ" ]] || { echo "missing runtime mmio object: $RUNTIME_MMIO_OBJ" >&2; exit 1; }
 
 # --- Build selfhost libc ---
-LIBC_ARCHIVE="$WORKDIR/libc_selfhost.s32a"
-LIBC_START_OBJ=""
+LIBC_ARCHIVE="$PIPE_ART/libc_selfhost.s32a"
+LIBC_START_OBJ="$PIPE_ART/libc_start.s32o"
+[[ -s "$LIBC_ARCHIVE" ]] || { echo "missing bootstrap libc archive: $LIBC_ARCHIVE" >&2; exit 1; }
+[[ -s "$LIBC_START_OBJ" ]] || { echo "missing bootstrap libc start object: $LIBC_START_OBJ" >&2; exit 1; }
 
 build_selfhost_libc() {
     local libc_c_files="string_extra convert stdio start"
     local name src asm obj
-    local ar_objs=""
+    local ar_objs=()
 
     echo "Building selfhost libc..."
 
@@ -227,30 +232,25 @@ build_selfhost_libc() {
 
         [[ -f "$src" ]] || { echo "Missing libc source: $src" >&2; return 1; }
         compile_c_stage4 "$src" "$asm" "$WORKDIR/libc_${name}.cc.log"
-        assemble_forth "$asm" "$obj" "$WORKDIR/libc_${name}.as.log"
+        assemble_with_stage5 "$asm" "$obj" "$WORKDIR/libc_${name}.as.log"
 
         if [[ "$name" == "start" ]]; then
             LIBC_START_OBJ="$obj"
         else
-            ar_objs="$ar_objs $obj"
+            ar_objs+=("$obj")
         fi
     done
 
-    local ar_cmd
-    ar_cmd="S\" $LIBC_ARCHIVE\" AR-C-BEGIN"
-    for obj in $ar_objs; do
-        ar_cmd="${ar_cmd}
-S\" $obj\" AR-ADD"
-    done
-    ar_cmd="${ar_cmd}
-AR-C-END
-BYE"
-    run_forth "$AR_FTH" /dev/null "$ar_cmd" "$WORKDIR/libc.ar.log"
+    run_exe "$AR_EXE" "$WORKDIR/libc.ar.log" "c" "$LIBC_ARCHIVE" "${ar_objs[@]}"
     [[ -s "$LIBC_ARCHIVE" ]] || { echo "failed to build libc archive" >&2; return 1; }
     echo "Libc archive: $LIBC_ARCHIVE"
 }
 
-build_selfhost_libc
+if [[ "$REBUILD_LIBC" -eq 1 ]]; then
+    LIBC_ARCHIVE="$WORKDIR/libc_selfhost.s32a"
+    LIBC_START_OBJ=""
+    build_selfhost_libc
+fi
 
 link_forth_with_libc() {
     local obj="$1"
@@ -279,21 +279,8 @@ CCMIN_ASM="$WORKDIR/cc-min.s"
 CCMIN_OBJ="$WORKDIR/cc-min-main.s32o"
 CCMIN_EXE="$WORKDIR/cc-min.s32x"
 compile_c_stage4 "$CCMIN_MERGED_SRC" "$CCMIN_ASM" "$WORKDIR/cc-min.cc.log"
-assemble_forth "$CCMIN_ASM" "$CCMIN_OBJ" "$WORKDIR/cc-min.as.log"
+assemble_with_stage5 "$CCMIN_ASM" "$CCMIN_OBJ" "$WORKDIR/cc-min.as.log"
 link_forth_with_libc "$CCMIN_OBJ" "$CCMIN_EXE" "$WORKDIR/cc-min.ld.log"
-
-# 2) Build Stage05 assembler and Stage07 linker executables.
-PIPE_LOG="$WORKDIR/stage5-build.log"
-"$ROOT_DIR/selfhost/stage05/run-pipeline.sh" --mode stage6-ar-smoke --emu "$EMU" --keep-artifacts >"$PIPE_LOG"
-PIPE_ART="$(awk -F': ' '/^Artifacts:/{print $2}' "$PIPE_LOG" | tail -n 1)"
-[[ -n "$PIPE_ART" && -d "$PIPE_ART" ]] || { echo "failed to locate stage05 artifacts dir" >&2; exit 1; }
-AS_EXE="$PIPE_ART/s32-as.s32x"
-[[ -f "$AS_EXE" ]] || { echo "missing stage05 assembler exe: $AS_EXE" >&2; exit 1; }
-
-LD_LOG="$WORKDIR/stage7-build.log"
-"$ROOT_DIR/selfhost/stage07/run-spike.sh" --emu "$EMU" --keep-artifacts >"$LD_LOG"
-LD_EXE="$(awk -F': ' '/^Linker exe:/{print $2}' "$LD_LOG" | tail -n 1)"
-[[ -n "$LD_EXE" && -f "$LD_EXE" ]] || { echo "failed to locate stage07 linker exe" >&2; exit 1; }
 
 # 3) Use cc-min to compile minimal inputs.
 GEN_ASM="$WORKDIR/min_main.generated.s"

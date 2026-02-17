@@ -23,14 +23,14 @@ _start:
     addi r5, r5, %lo(__bss_end)
     sub  r5, r5, r3                # r5 = length
     beq  r5, r0, .L_bss_done
-    call memset
+    jal  r31, memset
 .L_bss_done:
 
     # Clear frame pointer
     add  fp, r0, r0
 
     # Call runtime entry point
-    call __slow32_start
+    jal  r31, __slow32_start
 
     # Fallback halt if __slow32_start ever returns
     halt
