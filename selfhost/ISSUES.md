@@ -193,17 +193,12 @@ Commit `def868a` removed `zork/stories/minizork.z3`, while `zork/tests/run-tests
 requires that exact path. The story file has now been restored in commit `694ed6a`
 (`Restore minizork story blob for zork tests`).
 
-### 27. [PERF] Stage08 Default Emulator Priority
-`selfhost/stage08/run-cc-spike.sh` currently prefers `tools/dbt/slow32-dbg` before
-`tools/dbt/slow32-dbt` in `choose_default_emu()`.
+### 27. [FIXED] Stage08 Default Emulator Priority
+`choose_default_emu()` in `run-cc-spike.sh` now prefers `slow32-dbt` before `slow32-dbg`.
 
-For normal Stage08 debug cycles, we should default to the faster DBT path first and
-keep `slow32-dbg` as an explicit opt-in when trace/debug behavior is required.
-
-### 28. [CLEANUP] Unused Locals in `cc-min-pass1.c`
-`parse_binop()` in `selfhost/stage08/cc-min-pass1.c` declares `lsc` and `rsc` but does
-not use them. This is harmless now, but creates warning noise and can break strict
-`-Werror` configurations.
+### 28. [RESOLVED] Unused Locals in `cc-min-pass1.c`
+`lsc` and `rsc` are declared and used in `emit_ptr_add()` and `emit_ptr_sub()`, not in
+`parse_binop()`. No unused locals exist; this was a false positive.
 
 ### 29. [DOC] Commit Message vs Touched Files Audit Trail
 Commit `a851552` message says it fixes issues `#1/#2/#19/#25`, but touched files are:

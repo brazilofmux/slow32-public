@@ -56,12 +56,12 @@ KEEP_ARTIFACTS=0
 REBUILD_LIBC="${STAGE8_REBUILD_LIBC:-0}"
 
 choose_default_emu() {
-    if [[ -x "$ROOT_DIR/tools/dbt/slow32-dbg" ]]; then
-        printf '%s\n' "$ROOT_DIR/tools/dbt/slow32-dbg"
-        return
-    fi
     if [[ -x "$ROOT_DIR/tools/dbt/slow32-dbt" ]]; then
         printf '%s\n' "$ROOT_DIR/tools/dbt/slow32-dbt"
+        return
+    fi
+    if [[ -x "$ROOT_DIR/tools/dbt/slow32-dbg" ]]; then
+        printf '%s\n' "$ROOT_DIR/tools/dbt/slow32-dbg"
         return
     fi
     if [[ -x "$ROOT_DIR/tools/emulator/slow32-fast" ]]; then
