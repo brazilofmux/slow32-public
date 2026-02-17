@@ -1,17 +1,7 @@
 /* cc-min pass1: parser + code generator
  *
  * No #include <stdio.h>: the merged source is ~37KB which exceeds cc.fth's
- * 32KB include-save-buffer. Also, cc.fth has a bug where the second call to
- * an auto-declared external function generates variable-access code (lui+addi
- * +ldw) instead of a function call (lui+jalr). Wrapper functions below ensure
- * each external I/O function is called exactly once via auto-declaration. */
-
-/* I/O wrappers — each external function called once, avoiding cc.fth bug */
-int io_fopen(const char *p, const char *m) { return fopen(p, m); }
-int io_fclose(int f) { return fclose(f); }
-int io_fgetc(int f) { return fgetc(f); }
-int io_fputc(int c, int f) { return fputc(c, f); }
-int io_fputs(const char *s, int f) { return fputs(s, f); }
+ * 32KB include-save-buffer. External I/O functions are auto-declared. */
 
 #define MAX_SRC 65536
 static char g_src[MAX_SRC];
@@ -52,17 +42,17 @@ static int g_nstrings;
 int ccmin_load_source(const char *path) {
     int f;
     int ch;
-    f = io_fopen(path, "rb");
+    f = fopen(path, "rb");
     if (!f) return 0;
     g_src_len = 0;
     for (;;) {
-        ch = io_fgetc(f);
+        ch = fgetc(f);
         if (ch < 0) break;
-        if (g_src_len >= MAX_SRC - 1) { io_fclose(f); return 0; }
+        if (g_src_len >= MAX_SRC - 1) { fclose(f); return 0; }
         g_src[g_src_len] = ch;
         g_src_len = g_src_len + 1;
     }
-    io_fclose(f);
+    fclose(f);
     g_src[g_src_len] = 0;
     return 1;
 }
@@ -152,9 +142,13 @@ static int str_eq(const char *a, const char *b) {
     }
 }
 
+int stderr;
 static void cc_error(const char *msg) {
-    /* Minimal error handler — no stdio dependency. */
-    /* Errors are visible as bad/missing codegen in test output. */
+    fputs("cc-min:", stderr);
+    fput_uint(stderr, g_line);
+    fputs(": error: ", stderr);
+    fputs(msg, stderr);
+    fputc(10, stderr);
 }
 
 static void skip_ws(void) {
@@ -582,6 +576,56 @@ static void emit_store_ind(int type) {
         emit("    stw r2, r1, 0\n");
 }
 
+static int ptr_scale(int type) {
+    int pt;
+    pt = (type >> 8) & 255;
+    if (pt == 0) return 0;
+    if ((type & 255) == TY_CHAR && pt == 1) return 1;
+    return 4;
+}
+
+static int emit_ptr_add(int lt, int rt) {
+    int lsc;
+    int rsc;
+    lsc = ptr_scale(lt);
+    rsc = ptr_scale(rt);
+    if (lsc > 0 && rsc == 0) {
+        if (lsc == 4) emit("    slli r1, r1, 2\n");
+        emit("    add r1, r2, r1\n");
+        return lt;
+    }
+    if (lsc == 0 && rsc > 0) {
+        if (rsc == 4) emit("    slli r2, r2, 2\n");
+        emit("    add r1, r2, r1\n");
+        return rt;
+    }
+    emit("    add r1, r2, r1\n");
+    return TY_INT;
+}
+
+static int emit_ptr_sub(int lt, int rt) {
+    int lsc;
+    int rsc;
+    lsc = ptr_scale(lt);
+    rsc = ptr_scale(rt);
+    if (lsc > 0 && rsc == 0) {
+        if (lsc == 4) emit("    slli r1, r1, 2\n");
+        emit("    sub r1, r2, r1\n");
+        return lt;
+    }
+    if (lsc > 0 && rsc > 0) {
+        emit("    sub r1, r2, r1\n");
+        if (lsc == 4) emit("    addi r2, r0, 2\n    sra r1, r1, r2\n");
+        return TY_INT;
+    }
+    emit("    sub r1, r2, r1\n");
+    return TY_INT;
+}
+
+static void emit_scale_r1(int sc) {
+    if (sc == 4) emit("    slli r1, r1, 2\n");
+}
+
 static void emit_global_addr(int gidx) {
     emit("    lui r1, %hi(");
     emit_sym_name(g_gnames, gidx);
@@ -713,6 +757,7 @@ static void parse_unary(void) {
     int ty;
     int bt;
     int pt;
+    int sc;
     if (g_tok == TK_BANG) {
         next_token(); parse_unary(); lval_to_rval();
         emit("    seq r1, r1, r0\n");
@@ -747,29 +792,33 @@ static void parse_unary(void) {
     }
     if (g_tok == TK_INC) {
         next_token(); parse_unary();
+        sc = ptr_scale(g_expr_type);
+        if (sc == 0) sc = 1;
         if (g_lval) {
             ty = g_expr_type;
             emit("    addi r2, r1, 0\n");
             lval_to_rval();
-            emit("    addi r1, r1, 1\n");
+            emit("    addi r1, r1, "); emit_num(sc); emit("\n");
             emit_store_ind(ty);
             g_lval = 0;
         } else {
-            emit("    addi r1, r1, 1\n");
+            emit("    addi r1, r1, "); emit_num(sc); emit("\n");
         }
         return;
     }
     if (g_tok == TK_DEC) {
         next_token(); parse_unary();
+        sc = ptr_scale(g_expr_type);
+        if (sc == 0) sc = 1;
         if (g_lval) {
             ty = g_expr_type;
             emit("    addi r2, r1, 0\n");
             lval_to_rval();
-            emit("    addi r1, r1, -1\n");
+            emit("    addi r1, r1, -"); emit_num(sc); emit("\n");
             emit_store_ind(ty);
             g_lval = 0;
         } else {
-            emit("    addi r1, r1, -1\n");
+            emit("    addi r1, r1, -"); emit_num(sc); emit("\n");
         }
         return;
     }
@@ -815,19 +864,32 @@ static void emit_binop(int tok) {
 static void parse_binop(int min_prec) {
     int op;
     int p;
+    int lhs_type;
+    int rhs_type;
+    int lsc;
+    int rsc;
     parse_unary();
     for (;;) {
         p = binop_prec(g_tok);
         if (p < min_prec) break;
         op = g_tok;
+        lhs_type = g_expr_type;
         lval_to_rval();
         next_token();
         emit_push();
         parse_binop(p + 1);
         lval_to_rval();
+        rhs_type = g_expr_type;
         emit_pop();
-        emit_binop(op);
-        g_lval = 0; g_expr_type = TY_INT;
+        if (op == TK_PLUS) {
+            g_expr_type = emit_ptr_add(lhs_type, rhs_type);
+        } else if (op == TK_MINUS) {
+            g_expr_type = emit_ptr_sub(lhs_type, rhs_type);
+        } else {
+            emit_binop(op);
+            g_expr_type = TY_INT;
+        }
+        g_lval = 0;
     }
 }
 
@@ -845,6 +907,7 @@ static void parse_ternary(void) {
 
 static void parse_assign(void) {
     int sty;
+    int sc;
     parse_ternary();
     if (g_tok == TK_ASSIGN) {
         if (!g_lval) { cc_error("assign to non-lvalue"); }
@@ -859,11 +922,13 @@ static void parse_assign(void) {
     if (g_tok == TK_PLUSEQ) {
         if (!g_lval) { cc_error("+= to non-lvalue"); }
         sty = g_expr_type;
+        sc = ptr_scale(sty);
         emit("    addi r2, r1, 0\n");
         emit_push();
         lval_to_rval();
         emit_push();
         next_token(); parse_assign(); lval_to_rval();
+        if (sc > 0) emit_scale_r1(sc);
         emit_pop();
         emit("    add r1, r2, r1\n");
         emit_pop();
@@ -874,11 +939,13 @@ static void parse_assign(void) {
     if (g_tok == TK_MINUSEQ) {
         if (!g_lval) { cc_error("-= to non-lvalue"); }
         sty = g_expr_type;
+        sc = ptr_scale(sty);
         emit("    addi r2, r1, 0\n");
         emit_push();
         lval_to_rval();
         emit_push();
         next_token(); parse_assign(); lval_to_rval();
+        if (sc > 0) emit_scale_r1(sc);
         emit_pop();
         emit("    sub r1, r2, r1\n");
         emit_pop();

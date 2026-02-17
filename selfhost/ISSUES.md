@@ -4,27 +4,13 @@ This document captures bugs, inconsistencies, and opportunities for improvement 
 
 ## Stage 0: Emulator (`s32-emu.c`)
 
-### 1. [BUG] Pathname Truncation in `OP_MMIO_OPEN`
-The implementation of `OP_MMIO_OPEN` (and `OP_MMIO_STAT`) incorrectly truncates the last character of the provided pathname:
-```c
-uint32_t plen = (length < sizeof(path_buf)) ? length : sizeof(path_buf) - 1;
-memcpy(path_buf, data + off, plen);
-path_buf[plen] = '\0';
-if (plen > 0) path_buf[plen - 1] = '\0'; // <--- BUG: Truncates last char
-```
-If the guest provides a non-NUL-terminated string (standard for Forth), the last character of the filename is lost. If it *is* NUL-terminated, the truncation is redundant but safe. This makes opening files with 1-character names impossible and potentially breaks all file I/O for standard Forth strings.
+### 1. [FIXED] Pathname Truncation in `OP_MMIO_OPEN`
+The spurious `path_buf[plen - 1] = '\0'` line has been removed. Both OPEN and STAT paths
+now correctly NUL-terminate at `path_buf[plen]`.
 
-### 2. [BUG] `OP_MMIO_STAT` Layout Overlap and Buffer Size
-The `ctime` field in the `stat` result layout is corrupted and the buffer is too small:
-```c
-/* Write s32_mmio_stat_result_t (104 bytes, packed) */
-uint8_t buf[104]; // <--- BUG: s32_mmio_stat_result_t is 112 bytes
-...
-/* ctime */
-tmp = (uint64_t)st.st_ctim.tv_sec;  memcpy(buf + 96, &tmp, 8);
-t32 = (uint32_t)st.st_ctim.tv_nsec; memcpy(buf + 104 - 4, &t32, 4); // <--- BUG: Overwrites buf[100..103]
-```
-`buf + 104 - 4` is `100`. Since the `sec` field at `96` is 8 bytes long, it occupies `96..103`. Writing `nsec` at `100` overwrites the upper 4 bytes of `sec`. The correct offset for `nsec` is `104`, requiring a buffer of at least 108 bytes (or 112 for full alignment).
+### 2. [FIXED] `OP_MMIO_STAT` Layout Overlap and Buffer Size
+Buffer is now 112 bytes. `ctime.tv_nsec` is written at offset 104, no longer overlapping
+`ctime.tv_sec` at offset 96.
 
 ### 3. [CRITICAL] Lack of Memory Bounds Checking
 The emulator performs no bounds checking on guest memory accesses (`rd32`, `wr32`, `LDB`, `STW`, etc.). A malicious or buggy guest program can read/write anywhere in the host process's memory space.
@@ -125,16 +111,10 @@ while (v > 0) { ... }
 ```
 When `v` is `INT_MIN`, `0 - v` is still `INT_MIN` due to two's complement overflow. The `while (v > 0)` loop will not execute, and the function will only emit a minus sign.
 
-### 19. [LIMITATION] Lack of Pointer Arithmetic Scaling
-While array indexing `[]` correctly scales by element size, general pointer arithmetic (e.g., `p + 1`) in `parse_binop` does not.
-```c
-static void parse_binop(int min_prec) {
-    ...
-    emit_binop(op);
-    g_lval = 0; g_expr_type = TY_INT;
-}
-```
-All binary operations currently result in `TY_INT` and perform raw integer arithmetic. Adding 1 to a `int *` will only advance it by 1 byte instead of 4.
+### 19. [FIXED] Lack of Pointer Arithmetic Scaling
+`ptr + int`, `int + ptr`, `ptr - int`, and `ptr - ptr` now scale by element size.
+`++`/`--` and `+=`/`-=` on pointers also scale correctly.
+Verified by `min_ptr_arith.c` test (int* advances by 4, char* by 1, ptr-ptr divides).
 
 ### 20. [SCALABILITY] Small Fixed-Size Symbol Tables and Buffers
 The compiler uses small fixed-size arrays for its symbol tables and buffers:
@@ -167,70 +147,27 @@ The `for` loop parser only supports a single expression in the initialization, c
 - Global variables are only allocated in `.bss` with `.space`; they cannot be initialized at declaration.
 - Local variable initialization only works for scalar types (e.g., `int x = 5;`). Arrays cannot be initialized at declaration.
 
-### 25. [STABILITY] Empty Error Reporting
-The `cc_error` function is a stub.
-```c
-static void cc_error(const char *msg) {
-    /* Minimal error handler — no stdio dependency. */
-}
-```
-Providing no feedback on syntax or semantic errors makes debugging source code extremely difficult. Even a simple write to `stderr` or a halt would be preferable.
+### 25. [FIXED] Empty Error Reporting
+`cc_error` now prints `cc-min:<line>: error: <msg>` to stderr using `fputs`/`fput_uint`.
+Example output: `cc-min:5: error: unexpected character`.
 
 ## Stage 4: C Compiler (`cc.fth`) — Long-Call Materialization Bug
 
-### 17. [BUG] Second Call to Auto-Declared Function Generates Variable-Access Code
+### 17. [FIXED] Second Call to Auto-Declared Function Generates Variable-Access Code
 
-When cc.fth auto-declares an external function on first use (e.g., `fclose(f)`), it
-generates correct code: `call fclose` which the assembler turns into a JAL relocation or
-`lui+jalr` HI20/LO12 pair.
+**Fixed in commit 5b0a9b1** by adding `GSYM-KIND-FUNC?` helper that accepts gsym-kind=1
+(definition) OR gsym-kind=2 (prototype) when resolving identifiers in call position.
 
-However, on the **second and subsequent calls** to the same function, cc.fth generates
-the wrong instruction sequence — treating the function name as a **global variable**
-instead of a function:
-
-```
-; FIRST call to fclose — correct (direct call)
-    call fclose
-
-; SECOND call to fclose — incorrect (variable access + indirect call)
-    lui r2, %hi(fclose)
-    addi r2, r2, %lo(fclose)   ; computes address of fclose in .text
-    addi r1, r2, 0
-    ldw r1, r1, 0              ; loads instruction bytes (0xF00E8E90) as data!
-    ... push r1 ... pop r2 ...
-    jalr r31, r2, 0            ; jumps to garbage address → Execute fault
-```
-
-The `addi` (opcode 0x10) is used where `jalr` (opcode 0x41) should be. The linker
-correctly resolves the HI20/LO12 relocations to the function's .text address, but the
-generated code loads a **word from that address** (getting an instruction encoding) and
-tries to call it as a function pointer.
-
-**Root cause (hypothesis):** After the first `call func` pseudo-instruction, cc.fth
-adds `func` to an internal symbol table. On subsequent references, the compiler finds
-`func` in the symbol table and resolves it via the global-variable-access path
-(lui+addi+ldw) instead of the function-call path (lui+jalr or call).
-
-**Affected pattern:** Any external function called more than once in a single
-compilation unit. Functions declared via `#include <stdio.h>` are NOT affected because
-the explicit declaration keeps them in the function table. Only auto-declared (implicit)
-functions exhibit this bug.
-
-**Workaround (used in stage08 cc-min):** Define non-static wrapper functions that each
-call the external function exactly once. All other code uses the wrappers:
-```c
-int io_fopen(const char *p, const char *m) { return fopen(p, m); }
-int io_fclose(int f) { return fclose(f); }
-```
-
-**Impact:** Any stage05+ C program compiled by cc.fth that calls an auto-declared
-function more than once will crash at runtime. Programs that `#include <stdio.h>` (or
-other headers with explicit declarations) before calling these functions are unaffected.
+**Root cause:** When cc.fth auto-declares an external function on first use, it adds the
+symbol with gsym-kind=2 (prototype). On subsequent references, the identifier resolver
+checked `gsym-kind = 1` (definition only), falling through to the global-variable-access
+path (lui+addi+ldw) instead of the function-call path (lui+jalr or call). This caused
+the second call to load instruction bytes as data and jump to a garbage address.
 
 **Tracked repro:** `selfhost/stage04/tests/subset-known-gaps/subset_gap01_implicit_repeat_call.c`
-is listed in `selfhost/stage04/tests/manifests/subset-known-gaps.lst` and currently
-fails in baseline mode (`run-subset-gap-scan.sh`), preserving a concrete non-gating
-test case for this compiler bug.
+
+**Verification:** stage08 cc-min now calls fopen/fclose/fgetc/fputc/fputs directly
+(no io_* wrappers needed); all 29 tests pass.
 
 ---
 
