@@ -22,8 +22,10 @@ These checks are now applied to instruction fetch, load/store instructions, and 
 ring metadata/descriptor reads and writes. Out-of-bounds guest accesses now halt cleanly
 with a deterministic fault instead of touching host memory out of range.
 
-### 4. [STABILITY] Stack Allocation Risk in `load_s32x`
-`load_s32x` allocates memory based on the header's `mem_size` but does not ensure it covers the `stack_base`. If `stack_base` is outside the allocated `mem_size`, the emulator will segfault on the first stack access.
+### 4. [FIXED] Stack Allocation Risk in `load_s32x`
+`load_s32x` now computes total memory as the max of header `mem_size`, `stack_base`,
+and MMIO end (when MMIO is enabled). This prevents under-allocation when older artifacts
+under-report `mem_size` relative to the requested stack top.
 
 ### 5. [PORTABILITY] Host Endianness Dependency
 The memory access helpers (`rd32`, `wr32`) use `memcpy` directly into host integers, making the emulator non-portable to Big Endian hosts.

@@ -263,8 +263,11 @@ static bool load_s32x(emu_t *e, const char *path) {
     uint32_t mmio_base  = rd32(hdr, 0x3C);
     bool     has_mmio   = (flags & S32X_FLAG_MMIO) != 0;
 
-    /* Compute total memory needed (overflow-safe) */
+    /* Compute total memory needed (overflow-safe).
+     * Some older artifacts under-report mem_size; ensure stack_base and MMIO fit. */
     uint64_t total64 = mem_size;
+    if ((uint64_t)stack_base > total64)
+        total64 = (uint64_t)stack_base;
     if (has_mmio) {
         uint64_t mmio_end = (uint64_t)mmio_base + (uint64_t)MMIO_WINDOW_SIZE;
         if (mmio_end > total64)
@@ -286,11 +289,7 @@ static bool load_s32x(emu_t *e, const char *path) {
                 path, entry, code_limit);
         fclose(f); return false;
     }
-    if (stack_base > total) {
-        fprintf(stderr, "%s: stack_base out of range (0x%X > 0x%X)\n",
-                path, stack_base, total);
-        fclose(f); return false;
-    }
+    /* stack_base is allowed to equal total (stack starts at top and grows down). */
 
     e->mem = calloc(1, total);
     if (!e->mem) {
