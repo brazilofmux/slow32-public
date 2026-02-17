@@ -11,7 +11,7 @@
 #define MAX_SYM 4096
 #define MAX_TEXT 262144
 #define MAX_DATA 262144
-#define MAX_BSS 262144
+#define MAX_BSS 8388608
 #define MAX_STR 16384
 
 enum { SEC_TEXT = 0, SEC_DATA = 1, SEC_BSS = 2 };

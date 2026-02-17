@@ -488,7 +488,10 @@ VARIABLE is-lvalue          \ 1 if last expr result is an lvalue address in r1
     SWAP CLR-PTR-MASK AND  \ clear bits 3-6
     OR ;
 
+VARIABLE big-arr-count   \ full 32-bit array count (before clamping to 16 bits)
+
 : TYPE-SET-ARRAY ( type count -- type' )
+    DUP big-arr-count !   \ save real element count
     DUP 65535 > IF DROP 65535 THEN
     16 LSHIFT
     SWAP CLR-ARR-MASK AND     \ clear bits 16-31 (array count)
@@ -3896,7 +3899,10 @@ VARIABLE decl-name-len
             THEN
             decl-name decl-name-len @ OUT-STR 58 OUT-CHAR OUT-NL
             EMIT-INDENT S" .space " OUT-STR
-            DUP TYPE-SIZE OUT-NUM OUT-NL
+            DUP TYPE-IS-ARRAY IF
+                DUP CLR-ARR-MASK AND TYPE-SIZE big-arr-count @ *
+            ELSE DUP TYPE-SIZE THEN
+            OUT-NUM OUT-NL
         THEN
         tok-type @ TK-PUNCT = tok-val @ P-COMMA = AND IF
             CC-TOKEN TRUE
@@ -4066,7 +4072,11 @@ VARIABLE decl-name-len
             EMIT-INDENT S" .global " OUT-STR decl-name decl-name-len @ OUT-STR OUT-NL
         THEN
         decl-name decl-name-len @ OUT-STR 58 OUT-CHAR OUT-NL
-        EMIT-INDENT S" .space " OUT-STR DUP TYPE-SIZE OUT-NUM OUT-NL
+        EMIT-INDENT S" .space " OUT-STR
+        DUP TYPE-IS-ARRAY IF
+            DUP CLR-ARR-MASK AND TYPE-SIZE big-arr-count @ *
+        ELSE DUP TYPE-SIZE THEN
+        OUT-NUM OUT-NL
     THEN
     \ Check for comma-separated additional declarations
     tok-type @ TK-PUNCT = tok-val @ P-COMMA = AND IF

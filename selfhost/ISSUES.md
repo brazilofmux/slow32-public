@@ -139,19 +139,21 @@ while (k > 0) {
 ```
 If a function is called with more than 8 arguments, it will attempt to use non-existent or incorrect registers (`r11+`). The calling convention requires overflow arguments to be passed on the stack.
 
-### 22. [STABILITY] Hardcoded Stack Frame Size
-`emit_prologue` hardcodes a 256-byte stack frame for every function:
-```c
-emit("    addi r29, r29, -256\n    stw r29, r31, 252\n    stw r29, r30, 248\n    addi r30, r29, 256\n");
-```
-This is wasteful for small functions and will cause a stack overflow for functions with more than ~240 bytes of local variables/saved arguments.
+### 22. [FIXED] Hardcoded Stack Frame Size
+`emit_prologue` now emits a placeholder that is back-patched after the function body is
+parsed. `emit_prologue_final(frame_sz)` overwrites the placeholder with the actual frame
+size, computed as `((-local_offset + 15) & ~15)` with a minimum of 32 bytes. This
+eliminates the fixed 256-byte frame overhead and prevents stack overflow for functions
+with many locals.
 
 ### 23. [INCOMPLETE] Comma Operator and `for` Loop Expressions
 The `for` loop parser only supports a single expression in the initialization, condition, and increment sections. Standard C allows multiple expressions separated by the comma operator, which is frequently used in `for` loops.
 
-### 24. [BUG] Global and Local Initialization Limitations
-- Global variables are only allocated in `.bss` with `.space`; they cannot be initialized at declaration.
-- Local variable initialization only works for scalar types (e.g., `int x = 5;`). Arrays cannot be initialized at declaration.
+### 24. [RESOLVED] Global and Local Initialization Limitations
+Global variables are only allocated in `.bss` with `.space`; they cannot be initialized
+at declaration. Local array initialization is also unsupported. However, BSS zero-init
+is sufficient for the selfhost toolchain, and all required initialization is done via
+assignment statements.
 
 ### 25. [FIXED] Empty Error Reporting
 `cc_error` now prints `cc-min:<line>: error: <msg>` to stderr using `fputs`/`fput_uint`.
@@ -174,6 +176,22 @@ the second call to load instruction bytes as data and jump to a garbage address.
 
 **Verification:** stage08 cc-min now calls fopen/fclose/fgetc/fputc/fputs directly
 (no io_* wrappers needed); all 29 tests pass.
+
+### 30. [FIXED] cc.fth Clamps Global Array Sizes to 65535 Bytes
+`TYPE-SET-ARRAY` stored the array element count in bits 16-31 of the type word (16 bits,
+max 65535). For `uint8_t`/`char` arrays exceeding 65535 elements, the count was silently
+clamped, causing undersized `.space` directives in generated assembly.
+
+**Impact:** The stage05 assembler (`s32-as.c`) declared `uint8_t g_text[262144]` which
+was emitted as `.space 65535`. When assembling cc-min (67KB .text), bytes past offset
+65536 overflowed into `g_data`, corrupting the object file.
+
+**Fix:** Added `big-arr-count` sideband variable in cc.fth. `TYPE-SET-ARRAY` saves the
+full 32-bit count before clamping. Both `.space` emission sites compute the real byte
+size as `element_size * big-arr-count` when the type is an array.
+
+Also bumped `MAX_BSS` in `s32-as.c` from 256KB to 8MB to accommodate the archiver's
+4MB data buffer.
 
 ---
 
