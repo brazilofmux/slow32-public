@@ -227,6 +227,11 @@ int io_fclose(int f) { return fclose(f); }
 function more than once will crash at runtime. Programs that `#include <stdio.h>` (or
 other headers with explicit declarations) before calling these functions are unaffected.
 
+**Tracked repro:** `selfhost/stage04/tests/subset-known-gaps/subset_gap01_implicit_repeat_call.c`
+is listed in `selfhost/stage04/tests/manifests/subset-known-gaps.lst` and currently
+fails in baseline mode (`run-subset-gap-scan.sh`), preserving a concrete non-gating
+test case for this compiler bug.
+
 ---
 
 ## Documentation Opportunities

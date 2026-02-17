@@ -1044,6 +1044,11 @@ VARIABLE is-lvalue          \ 1 if last expr result is an lvalue address in r1
     0 R@ CELLS gsym-off + !
     R> DUP 1+ gsym-cnt ! ;
 
+\ Global symbol kind helper
+\ true for callable symbols: function definition or prototype
+: GSYM-KIND-FUNC? ( kind -- f )
+    DUP 1 = SWAP 2 = OR ;
+
 \ --- Local symbol table ---
 : LSYM-FIND ( addr u -- idx | -1 )
     lsym-cnt @ 0 ?DO
@@ -2492,7 +2497,7 @@ VARIABLE index-base-type
                     EMIT-VAR-ADDR-LOCAL
                 ENDOF
                 1 OF  \ global symbol
-                    DUP CELLS gsym-kind + @ 1 = IF  \ function
+                    DUP CELLS gsym-kind + @ GSYM-KIND-FUNC? IF
                         \ Check if followed by ( — function call
                         DUP CELLS gsym-type + @ expr-type !
                         CC-TOKEN  \ get next token

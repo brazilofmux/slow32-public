@@ -1,2 +1,1 @@
-# Intentionally empty at the moment.
-# Keep this manifest for future tracked-but-non-gating Stage4 subset gaps.
+selfhost/stage04/tests/subset-known-gaps/subset_gap01_implicit_repeat_call.c
