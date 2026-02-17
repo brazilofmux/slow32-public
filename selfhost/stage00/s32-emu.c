@@ -106,16 +106,6 @@ static inline void wr16(uint8_t *m, uint32_t a, uint16_t v) {
     m[a + 0] = (uint8_t)(v & 0xFFu);
     m[a + 1] = (uint8_t)((v >> 8) & 0xFFu);
 }
-static inline void wr64(uint8_t *m, uint32_t a, uint64_t v) {
-    m[a + 0] = (uint8_t)(v & 0xFFu);
-    m[a + 1] = (uint8_t)((v >> 8) & 0xFFu);
-    m[a + 2] = (uint8_t)((v >> 16) & 0xFFu);
-    m[a + 3] = (uint8_t)((v >> 24) & 0xFFu);
-    m[a + 4] = (uint8_t)((v >> 32) & 0xFFu);
-    m[a + 5] = (uint8_t)((v >> 40) & 0xFFu);
-    m[a + 6] = (uint8_t)((v >> 48) & 0xFFu);
-    m[a + 7] = (uint8_t)((v >> 56) & 0xFFu);
-}
 
 static bool range_ok_u32(uint32_t base, uint32_t size, uint32_t total) {
     if (size > total) return false;
@@ -551,7 +541,8 @@ static void mmio_process(emu_t *e) {
                 r_status = MMIO_STATUS_ERR; break;
             }
             uint8_t whence = data[off];
-            int32_t dist = (int32_t)rd32(data, off + 4);
+            int32_t dist;
+            memcpy(&dist, data + off + 4, 4);
             off_t pos = lseek(hfd, (off_t)dist, (int)whence);
             if (pos == (off_t)-1) r_status = MMIO_STATUS_ERR;
             else                  r_status = (uint32_t)pos;
@@ -587,25 +578,30 @@ static void mmio_process(emu_t *e) {
             /* Write s32_mmio_stat_result_t (112 bytes, packed) */
             uint8_t buf[112];
             memset(buf, 0, sizeof(buf));
-            wr64(buf, 0,  (uint64_t)st.st_dev);
-            wr64(buf, 8,  (uint64_t)st.st_ino);
-            wr32(buf, 16, (uint32_t)st.st_mode);
-            wr32(buf, 20, (uint32_t)st.st_nlink);
-            wr32(buf, 24, (uint32_t)st.st_uid);
-            wr32(buf, 28, (uint32_t)st.st_gid);
-            wr64(buf, 32, (uint64_t)st.st_rdev);
-            wr64(buf, 40, (uint64_t)(st.st_size < 0 ? 0 : st.st_size));
-            wr64(buf, 48, (uint64_t)(st.st_blksize < 0 ? 0 : st.st_blksize));
-            wr64(buf, 56, (uint64_t)(st.st_blocks < 0 ? 0 : st.st_blocks));
+            uint64_t tmp;
+            tmp = (uint64_t)st.st_dev;   memcpy(buf + 0, &tmp, 8);
+            tmp = (uint64_t)st.st_ino;   memcpy(buf + 8, &tmp, 8);
+            uint32_t t32;
+            t32 = (uint32_t)st.st_mode;  memcpy(buf + 16, &t32, 4);
+            t32 = (uint32_t)st.st_nlink; memcpy(buf + 20, &t32, 4);
+            t32 = (uint32_t)st.st_uid;   memcpy(buf + 24, &t32, 4);
+            t32 = (uint32_t)st.st_gid;   memcpy(buf + 28, &t32, 4);
+            tmp = (uint64_t)st.st_rdev;  memcpy(buf + 32, &tmp, 8);
+            tmp = (uint64_t)(st.st_size < 0 ? 0 : st.st_size);
+                                         memcpy(buf + 40, &tmp, 8);
+            tmp = (uint64_t)(st.st_blksize < 0 ? 0 : st.st_blksize);
+                                         memcpy(buf + 48, &tmp, 8);
+            tmp = (uint64_t)(st.st_blocks < 0 ? 0 : st.st_blocks);
+                                         memcpy(buf + 56, &tmp, 8);
             /* atime */
-            wr64(buf, 64, (uint64_t)st.st_atim.tv_sec);
-            wr32(buf, 72, (uint32_t)st.st_atim.tv_nsec);
+            tmp = (uint64_t)st.st_atim.tv_sec;  memcpy(buf + 64, &tmp, 8);
+            t32 = (uint32_t)st.st_atim.tv_nsec; memcpy(buf + 72, &t32, 4);
             /* mtime */
-            wr64(buf, 80, (uint64_t)st.st_mtim.tv_sec);
-            wr32(buf, 88, (uint32_t)st.st_mtim.tv_nsec);
+            tmp = (uint64_t)st.st_mtim.tv_sec;  memcpy(buf + 80, &tmp, 8);
+            t32 = (uint32_t)st.st_mtim.tv_nsec; memcpy(buf + 88, &t32, 4);
             /* ctime */
-            wr64(buf, 96, (uint64_t)st.st_ctim.tv_sec);
-            wr32(buf, 104, (uint32_t)st.st_ctim.tv_nsec);
+            tmp = (uint64_t)st.st_ctim.tv_sec;  memcpy(buf + 96, &tmp, 8);
+            t32 = (uint32_t)st.st_ctim.tv_nsec; memcpy(buf + 104, &t32, 4);
             if (off + sizeof(buf) > MMIO_DATA_CAP) {
                 r_status = MMIO_STATUS_ERR; break;
             }
