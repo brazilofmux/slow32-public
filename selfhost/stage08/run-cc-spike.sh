@@ -37,6 +37,12 @@ TEST_HELPER_LOCAL_IN="${STAGE8_TEST_HELPER_LOCAL_IN:-$SCRIPT_DIR/tests/min_helpe
 TEST_MAIN_LOCAL_HELPER_IN="${STAGE8_TEST_MAIN_LOCAL_HELPER_IN:-$SCRIPT_DIR/tests/min_main_local_helper.c}"
 TEST_HELPER_TWO_ARGS_IN="${STAGE8_TEST_HELPER_TWO_ARGS_IN:-$SCRIPT_DIR/tests/min_helper_two_args.c}"
 TEST_HELPER_TWO_ARGS_IF_IN="${STAGE8_TEST_HELPER_TWO_ARGS_IF_IN:-$SCRIPT_DIR/tests/min_helper_two_args_if.c}"
+TEST_MULTI_FUNC_IN="$SCRIPT_DIR/tests/min_multi_func.c"
+TEST_FOR_LOOP_IN="$SCRIPT_DIR/tests/min_for_loop.c"
+TEST_NESTED_IF_IN="$SCRIPT_DIR/tests/min_nested_if.c"
+TEST_BREAK_CONTINUE_IN="$SCRIPT_DIR/tests/min_break_continue.c"
+TEST_GENERAL_NAMES_IN="$SCRIPT_DIR/tests/min_general_names.c"
+TEST_COMPLEX_EXPR_IN="$SCRIPT_DIR/tests/min_complex_expr.c"
 KEEP_ARTIFACTS=0
 
 usage() {
@@ -80,7 +86,8 @@ fi
 
 for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$AR_FTH" "$LINK_FTH" \
          "$CRT0_SRC" "$MMIO_SRC" \
-         "$SRC_PASS1" "$SRC_PASS2" "$SRC_PASS3" "$TEST_IN" "$TEST_RET_IN" "$TEST_EXPR_IN" "$TEST_LOCAL_IN" "$TEST_REL_IN" "$TEST_IF_TRUE_IN" "$TEST_IF_FALSE_IN" "$TEST_WHILE_IN" "$TEST_TWO_LOCALS_IN" "$TEST_HELPER_IN" "$TEST_HELPER_ARG_IN" "$TEST_HELPER_LOCAL_IN" "$TEST_MAIN_LOCAL_HELPER_IN" "$TEST_HELPER_TWO_ARGS_IN" "$TEST_HELPER_TWO_ARGS_IF_IN"; do
+         "$SRC_PASS1" "$SRC_PASS2" "$SRC_PASS3" "$TEST_IN" "$TEST_RET_IN" "$TEST_EXPR_IN" "$TEST_LOCAL_IN" "$TEST_REL_IN" "$TEST_IF_TRUE_IN" "$TEST_IF_FALSE_IN" "$TEST_WHILE_IN" "$TEST_TWO_LOCALS_IN" "$TEST_HELPER_IN" "$TEST_HELPER_ARG_IN" "$TEST_HELPER_LOCAL_IN" "$TEST_MAIN_LOCAL_HELPER_IN" "$TEST_HELPER_TWO_ARGS_IN" "$TEST_HELPER_TWO_ARGS_IF_IN" \
+         "$TEST_MULTI_FUNC_IN" "$TEST_FOR_LOOP_IN" "$TEST_NESTED_IF_IN" "$TEST_BREAK_CONTINUE_IN" "$TEST_GENERAL_NAMES_IN" "$TEST_COMPLEX_EXPR_IN"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
 
@@ -319,6 +326,18 @@ run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-helper-local.run.log" "$TEST_HELPER_LOCAL_
 run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-main-local-helper.run.log" "$TEST_MAIN_LOCAL_HELPER_IN" "$GEN_MAIN_LOCAL_HELPER_ASM"
 run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-helper-two-args.run.log" "$TEST_HELPER_TWO_ARGS_IN" "$GEN_HELPER_TWO_ARGS_ASM"
 run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-helper-two-args-if.run.log" "$TEST_HELPER_TWO_ARGS_IF_IN" "$GEN_HELPER_TWO_ARGS_IF_ASM"
+GEN_MULTI_FUNC_ASM="$WORKDIR/min_multi_func.generated.s"
+GEN_FOR_LOOP_ASM="$WORKDIR/min_for_loop.generated.s"
+GEN_NESTED_IF_ASM="$WORKDIR/min_nested_if.generated.s"
+GEN_BREAK_CONTINUE_ASM="$WORKDIR/min_break_continue.generated.s"
+GEN_GENERAL_NAMES_ASM="$WORKDIR/min_general_names.generated.s"
+GEN_COMPLEX_EXPR_ASM="$WORKDIR/min_complex_expr.generated.s"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-multi-func.run.log" "$TEST_MULTI_FUNC_IN" "$GEN_MULTI_FUNC_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-for-loop.run.log" "$TEST_FOR_LOOP_IN" "$GEN_FOR_LOOP_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-nested-if.run.log" "$TEST_NESTED_IF_IN" "$GEN_NESTED_IF_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-break-continue.run.log" "$TEST_BREAK_CONTINUE_IN" "$GEN_BREAK_CONTINUE_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-general-names.run.log" "$TEST_GENERAL_NAMES_IN" "$GEN_GENERAL_NAMES_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-complex-expr.run.log" "$TEST_COMPLEX_EXPR_IN" "$GEN_COMPLEX_EXPR_ASM"
 [[ -s "$GEN_ASM" ]] || { echo "cc-min produced no assembly output" >&2; exit 1; }
 [[ -s "$GEN_RET_ASM" ]] || { echo "cc-min produced no return-test assembly output" >&2; exit 1; }
 [[ -s "$GEN_EXPR_ASM" ]] || { echo "cc-min produced no expr-test assembly output" >&2; exit 1; }
@@ -334,21 +353,13 @@ run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-helper-two-args-if.run.log" "$TEST_HELPER_
 [[ -s "$GEN_MAIN_LOCAL_HELPER_ASM" ]] || { echo "cc-min produced no main-local-helper assembly output" >&2; exit 1; }
 [[ -s "$GEN_HELPER_TWO_ARGS_ASM" ]] || { echo "cc-min produced no helper-two-args assembly output" >&2; exit 1; }
 [[ -s "$GEN_HELPER_TWO_ARGS_IF_ASM" ]] || { echo "cc-min produced no helper-two-args-if assembly output" >&2; exit 1; }
+[[ -s "$GEN_MULTI_FUNC_ASM" ]] || { echo "cc-min produced no multi-func assembly output" >&2; exit 1; }
+[[ -s "$GEN_FOR_LOOP_ASM" ]] || { echo "cc-min produced no for-loop assembly output" >&2; exit 1; }
+[[ -s "$GEN_NESTED_IF_ASM" ]] || { echo "cc-min produced no nested-if assembly output" >&2; exit 1; }
+[[ -s "$GEN_BREAK_CONTINUE_ASM" ]] || { echo "cc-min produced no break-continue assembly output" >&2; exit 1; }
+[[ -s "$GEN_GENERAL_NAMES_ASM" ]] || { echo "cc-min produced no general-names assembly output" >&2; exit 1; }
+[[ -s "$GEN_COMPLEX_EXPR_ASM" ]] || { echo "cc-min produced no complex-expr assembly output" >&2; exit 1; }
 grep -q '^main:' "$GEN_ASM" || { echo "generated assembly missing main label" >&2; exit 1; }
-grep -q 'addi r1, r0, 7' "$GEN_RET_ASM" || { echo "generated return-test assembly missing return immediate" >&2; exit 1; }
-grep -q 'addi r1, r0, 14' "$GEN_EXPR_ASM" || { echo "generated expr-test assembly missing expected immediate" >&2; exit 1; }
-grep -q 'addi r1, r0, 14' "$GEN_LOCAL_ASM" || { echo "generated local-test assembly missing expected immediate" >&2; exit 1; }
-grep -q 'addi r1, r0, 4' "$GEN_REL_ASM" || { echo "generated relational-test assembly missing expected immediate" >&2; exit 1; }
-grep -q 'addi r1, r0, 9' "$GEN_IF_TRUE_ASM" || { echo "generated if-true assembly missing expected immediate" >&2; exit 1; }
-grep -q 'addi r1, r0, 4' "$GEN_IF_FALSE_ASM" || { echo "generated if-false assembly missing expected immediate" >&2; exit 1; }
-grep -q 'addi r1, r0, 0' "$GEN_WHILE_ASM" || { echo "generated while-test assembly missing expected immediate" >&2; exit 1; }
-grep -q 'addi r1, r0, 6' "$GEN_TWO_LOCALS_ASM" || { echo "generated two-locals assembly missing expected immediate" >&2; exit 1; }
-grep -q 'addi r1, r0, 11' "$GEN_HELPER_ASM" || { echo "generated helper-call assembly missing expected immediate" >&2; exit 1; }
-grep -q 'addi r1, r0, 13' "$GEN_HELPER_ARG_ASM" || { echo "generated helper-arg assembly missing expected immediate" >&2; exit 1; }
-grep -q 'addi r1, r0, 15' "$GEN_HELPER_LOCAL_ASM" || { echo "generated helper-local assembly missing expected immediate" >&2; exit 1; }
-grep -q 'addi r1, r0, 12' "$GEN_MAIN_LOCAL_HELPER_ASM" || { echo "generated main-local-helper assembly missing expected immediate" >&2; exit 1; }
-grep -q 'addi r1, r0, 14' "$GEN_HELPER_TWO_ARGS_ASM" || { echo "generated helper-two-args assembly missing expected immediate" >&2; exit 1; }
-grep -q 'addi r1, r0, 5' "$GEN_HELPER_TWO_ARGS_IF_ASM" || { echo "generated helper-two-args-if assembly missing expected immediate" >&2; exit 1; }
 
 # 4) Assemble, link with stage07 (artifact), then link/run with stage03 runtime.
 GEN_OBJ="$WORKDIR/min_main.generated.s32o"
@@ -396,6 +407,24 @@ GEN_HELPER_TWO_ARGS_EXE="$WORKDIR/min_helper_two_args.generated.s32x"
 GEN_HELPER_TWO_ARGS_IF_OBJ="$WORKDIR/min_helper_two_args_if.generated.s32o"
 GEN_HELPER_TWO_ARGS_IF_RAW_EXE="$WORKDIR/min_helper_two_args_if.generated.raw.s32x"
 GEN_HELPER_TWO_ARGS_IF_EXE="$WORKDIR/min_helper_two_args_if.generated.s32x"
+GEN_MULTI_FUNC_OBJ="$WORKDIR/min_multi_func.generated.s32o"
+GEN_MULTI_FUNC_RAW_EXE="$WORKDIR/min_multi_func.generated.raw.s32x"
+GEN_MULTI_FUNC_EXE="$WORKDIR/min_multi_func.generated.s32x"
+GEN_FOR_LOOP_OBJ="$WORKDIR/min_for_loop.generated.s32o"
+GEN_FOR_LOOP_RAW_EXE="$WORKDIR/min_for_loop.generated.raw.s32x"
+GEN_FOR_LOOP_EXE="$WORKDIR/min_for_loop.generated.s32x"
+GEN_NESTED_IF_OBJ="$WORKDIR/min_nested_if.generated.s32o"
+GEN_NESTED_IF_RAW_EXE="$WORKDIR/min_nested_if.generated.raw.s32x"
+GEN_NESTED_IF_EXE="$WORKDIR/min_nested_if.generated.s32x"
+GEN_BREAK_CONTINUE_OBJ="$WORKDIR/min_break_continue.generated.s32o"
+GEN_BREAK_CONTINUE_RAW_EXE="$WORKDIR/min_break_continue.generated.raw.s32x"
+GEN_BREAK_CONTINUE_EXE="$WORKDIR/min_break_continue.generated.s32x"
+GEN_GENERAL_NAMES_OBJ="$WORKDIR/min_general_names.generated.s32o"
+GEN_GENERAL_NAMES_RAW_EXE="$WORKDIR/min_general_names.generated.raw.s32x"
+GEN_GENERAL_NAMES_EXE="$WORKDIR/min_general_names.generated.s32x"
+GEN_COMPLEX_EXPR_OBJ="$WORKDIR/min_complex_expr.generated.s32o"
+GEN_COMPLEX_EXPR_RAW_EXE="$WORKDIR/min_complex_expr.generated.raw.s32x"
+GEN_COMPLEX_EXPR_EXE="$WORKDIR/min_complex_expr.generated.s32x"
 run_exe "$AS_EXE" "$WORKDIR/stage5-as.run.log" "$GEN_ASM" "$GEN_OBJ"
 run_exe "$AS_EXE" "$WORKDIR/stage5-as-ret.run.log" "$GEN_RET_ASM" "$GEN_RET_OBJ"
 run_exe "$AS_EXE" "$WORKDIR/stage5-as-expr.run.log" "$GEN_EXPR_ASM" "$GEN_EXPR_OBJ"
@@ -411,6 +440,12 @@ run_exe "$AS_EXE" "$WORKDIR/stage5-as-helper-local.run.log" "$GEN_HELPER_LOCAL_A
 run_exe "$AS_EXE" "$WORKDIR/stage5-as-main-local-helper.run.log" "$GEN_MAIN_LOCAL_HELPER_ASM" "$GEN_MAIN_LOCAL_HELPER_OBJ"
 run_exe "$AS_EXE" "$WORKDIR/stage5-as-helper-two-args.run.log" "$GEN_HELPER_TWO_ARGS_ASM" "$GEN_HELPER_TWO_ARGS_OBJ"
 run_exe "$AS_EXE" "$WORKDIR/stage5-as-helper-two-args-if.run.log" "$GEN_HELPER_TWO_ARGS_IF_ASM" "$GEN_HELPER_TWO_ARGS_IF_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-multi-func.run.log" "$GEN_MULTI_FUNC_ASM" "$GEN_MULTI_FUNC_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-for-loop.run.log" "$GEN_FOR_LOOP_ASM" "$GEN_FOR_LOOP_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-nested-if.run.log" "$GEN_NESTED_IF_ASM" "$GEN_NESTED_IF_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-break-continue.run.log" "$GEN_BREAK_CONTINUE_ASM" "$GEN_BREAK_CONTINUE_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-general-names.run.log" "$GEN_GENERAL_NAMES_ASM" "$GEN_GENERAL_NAMES_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-complex-expr.run.log" "$GEN_COMPLEX_EXPR_ASM" "$GEN_COMPLEX_EXPR_OBJ"
 [[ -s "$GEN_OBJ" ]] || { echo "stage05 assembler produced no object output" >&2; exit 1; }
 [[ -s "$GEN_RET_OBJ" ]] || { echo "stage05 assembler produced no return-test object output" >&2; exit 1; }
 [[ -s "$GEN_EXPR_OBJ" ]] || { echo "stage05 assembler produced no expr-test object output" >&2; exit 1; }
@@ -426,6 +461,12 @@ run_exe "$AS_EXE" "$WORKDIR/stage5-as-helper-two-args-if.run.log" "$GEN_HELPER_T
 [[ -s "$GEN_MAIN_LOCAL_HELPER_OBJ" ]] || { echo "stage05 assembler produced no main-local-helper object output" >&2; exit 1; }
 [[ -s "$GEN_HELPER_TWO_ARGS_OBJ" ]] || { echo "stage05 assembler produced no helper-two-args object output" >&2; exit 1; }
 [[ -s "$GEN_HELPER_TWO_ARGS_IF_OBJ" ]] || { echo "stage05 assembler produced no helper-two-args-if object output" >&2; exit 1; }
+[[ -s "$GEN_MULTI_FUNC_OBJ" ]] || { echo "stage05 assembler produced no multi-func object output" >&2; exit 1; }
+[[ -s "$GEN_FOR_LOOP_OBJ" ]] || { echo "stage05 assembler produced no for-loop object output" >&2; exit 1; }
+[[ -s "$GEN_NESTED_IF_OBJ" ]] || { echo "stage05 assembler produced no nested-if object output" >&2; exit 1; }
+[[ -s "$GEN_BREAK_CONTINUE_OBJ" ]] || { echo "stage05 assembler produced no break-continue object output" >&2; exit 1; }
+[[ -s "$GEN_GENERAL_NAMES_OBJ" ]] || { echo "stage05 assembler produced no general-names object output" >&2; exit 1; }
+[[ -s "$GEN_COMPLEX_EXPR_OBJ" ]] || { echo "stage05 assembler produced no complex-expr object output" >&2; exit 1; }
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld.run.log" "$GEN_OBJ" "$GEN_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-ret.run.log" "$GEN_RET_OBJ" "$GEN_RET_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-expr.run.log" "$GEN_EXPR_OBJ" "$GEN_EXPR_RAW_EXE"
@@ -441,6 +482,12 @@ run_exe "$LD_EXE" "$WORKDIR/stage7-ld-helper-local.run.log" "$GEN_HELPER_LOCAL_O
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-main-local-helper.run.log" "$GEN_MAIN_LOCAL_HELPER_OBJ" "$GEN_MAIN_LOCAL_HELPER_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-helper-two-args.run.log" "$GEN_HELPER_TWO_ARGS_OBJ" "$GEN_HELPER_TWO_ARGS_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-helper-two-args-if.run.log" "$GEN_HELPER_TWO_ARGS_IF_OBJ" "$GEN_HELPER_TWO_ARGS_IF_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-multi-func.run.log" "$GEN_MULTI_FUNC_OBJ" "$GEN_MULTI_FUNC_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-for-loop.run.log" "$GEN_FOR_LOOP_OBJ" "$GEN_FOR_LOOP_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-nested-if.run.log" "$GEN_NESTED_IF_OBJ" "$GEN_NESTED_IF_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-break-continue.run.log" "$GEN_BREAK_CONTINUE_OBJ" "$GEN_BREAK_CONTINUE_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-general-names.run.log" "$GEN_GENERAL_NAMES_OBJ" "$GEN_GENERAL_NAMES_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-complex-expr.run.log" "$GEN_COMPLEX_EXPR_OBJ" "$GEN_COMPLEX_EXPR_RAW_EXE"
 [[ -s "$GEN_RAW_EXE" ]] || { echo "stage07 linker produced no executable output" >&2; exit 1; }
 [[ -s "$GEN_RET_RAW_EXE" ]] || { echo "stage07 linker produced no return-test executable output" >&2; exit 1; }
 [[ -s "$GEN_EXPR_RAW_EXE" ]] || { echo "stage07 linker produced no expr-test executable output" >&2; exit 1; }
@@ -456,6 +503,12 @@ run_exe "$LD_EXE" "$WORKDIR/stage7-ld-helper-two-args-if.run.log" "$GEN_HELPER_T
 [[ -s "$GEN_MAIN_LOCAL_HELPER_RAW_EXE" ]] || { echo "stage07 linker produced no main-local-helper executable output" >&2; exit 1; }
 [[ -s "$GEN_HELPER_TWO_ARGS_RAW_EXE" ]] || { echo "stage07 linker produced no helper-two-args executable output" >&2; exit 1; }
 [[ -s "$GEN_HELPER_TWO_ARGS_IF_RAW_EXE" ]] || { echo "stage07 linker produced no helper-two-args-if executable output" >&2; exit 1; }
+[[ -s "$GEN_MULTI_FUNC_RAW_EXE" ]] || { echo "stage07 linker produced no multi-func executable output" >&2; exit 1; }
+[[ -s "$GEN_FOR_LOOP_RAW_EXE" ]] || { echo "stage07 linker produced no for-loop executable output" >&2; exit 1; }
+[[ -s "$GEN_NESTED_IF_RAW_EXE" ]] || { echo "stage07 linker produced no nested-if executable output" >&2; exit 1; }
+[[ -s "$GEN_BREAK_CONTINUE_RAW_EXE" ]] || { echo "stage07 linker produced no break-continue executable output" >&2; exit 1; }
+[[ -s "$GEN_GENERAL_NAMES_RAW_EXE" ]] || { echo "stage07 linker produced no general-names executable output" >&2; exit 1; }
+[[ -s "$GEN_COMPLEX_EXPR_RAW_EXE" ]] || { echo "stage07 linker produced no complex-expr executable output" >&2; exit 1; }
 link_forth_with_libc "$GEN_OBJ" "$GEN_EXE" "$WORKDIR/stage3-link.run.log"
 link_forth_with_libc "$GEN_RET_OBJ" "$GEN_RET_EXE" "$WORKDIR/stage3-link-ret.run.log"
 link_forth_with_libc "$GEN_EXPR_OBJ" "$GEN_EXPR_EXE" "$WORKDIR/stage3-link-expr.run.log"
@@ -471,6 +524,12 @@ link_forth_with_libc "$GEN_HELPER_LOCAL_OBJ" "$GEN_HELPER_LOCAL_EXE" "$WORKDIR/s
 link_forth_with_libc "$GEN_MAIN_LOCAL_HELPER_OBJ" "$GEN_MAIN_LOCAL_HELPER_EXE" "$WORKDIR/stage3-link-main-local-helper.run.log"
 link_forth_with_libc "$GEN_HELPER_TWO_ARGS_OBJ" "$GEN_HELPER_TWO_ARGS_EXE" "$WORKDIR/stage3-link-helper-two-args.run.log"
 link_forth_with_libc "$GEN_HELPER_TWO_ARGS_IF_OBJ" "$GEN_HELPER_TWO_ARGS_IF_EXE" "$WORKDIR/stage3-link-helper-two-args-if.run.log"
+link_forth_with_libc "$GEN_MULTI_FUNC_OBJ" "$GEN_MULTI_FUNC_EXE" "$WORKDIR/stage3-link-multi-func.run.log"
+link_forth_with_libc "$GEN_FOR_LOOP_OBJ" "$GEN_FOR_LOOP_EXE" "$WORKDIR/stage3-link-for-loop.run.log"
+link_forth_with_libc "$GEN_NESTED_IF_OBJ" "$GEN_NESTED_IF_EXE" "$WORKDIR/stage3-link-nested-if.run.log"
+link_forth_with_libc "$GEN_BREAK_CONTINUE_OBJ" "$GEN_BREAK_CONTINUE_EXE" "$WORKDIR/stage3-link-break-continue.run.log"
+link_forth_with_libc "$GEN_GENERAL_NAMES_OBJ" "$GEN_GENERAL_NAMES_EXE" "$WORKDIR/stage3-link-general-names.run.log"
+link_forth_with_libc "$GEN_COMPLEX_EXPR_OBJ" "$GEN_COMPLEX_EXPR_EXE" "$WORKDIR/stage3-link-complex-expr.run.log"
 run_exe "$GEN_EXE" "$WORKDIR/gen.run.log"
 RET_RC=0
 run_exe_any_rc "$GEN_RET_EXE" "$WORKDIR/gen-ret.run.log" || RET_RC=$?
@@ -570,6 +629,48 @@ if [[ "$HELPER_TWO_ARGS_IF_RC" -ne 5 ]]; then
     tail -n 60 "$WORKDIR/gen-helper-two-args-if.run.log" >&2
     exit 1
 fi
+MULTI_FUNC_RC=0
+run_exe_any_rc "$GEN_MULTI_FUNC_EXE" "$WORKDIR/gen-multi-func.run.log" || MULTI_FUNC_RC=$?
+if [[ "$MULTI_FUNC_RC" -ne 8 ]]; then
+    echo "multi-func test executable had unexpected exit code: $MULTI_FUNC_RC (expected 8)" >&2
+    tail -n 60 "$WORKDIR/gen-multi-func.run.log" >&2
+    exit 1
+fi
+FOR_LOOP_RC=0
+run_exe_any_rc "$GEN_FOR_LOOP_EXE" "$WORKDIR/gen-for-loop.run.log" || FOR_LOOP_RC=$?
+if [[ "$FOR_LOOP_RC" -ne 15 ]]; then
+    echo "for-loop test executable had unexpected exit code: $FOR_LOOP_RC (expected 15)" >&2
+    tail -n 60 "$WORKDIR/gen-for-loop.run.log" >&2
+    exit 1
+fi
+NESTED_IF_RC=0
+run_exe_any_rc "$GEN_NESTED_IF_EXE" "$WORKDIR/gen-nested-if.run.log" || NESTED_IF_RC=$?
+if [[ "$NESTED_IF_RC" -ne 3 ]]; then
+    echo "nested-if test executable had unexpected exit code: $NESTED_IF_RC (expected 3)" >&2
+    tail -n 60 "$WORKDIR/gen-nested-if.run.log" >&2
+    exit 1
+fi
+BREAK_CONTINUE_RC=0
+run_exe_any_rc "$GEN_BREAK_CONTINUE_EXE" "$WORKDIR/gen-break-continue.run.log" || BREAK_CONTINUE_RC=$?
+if [[ "$BREAK_CONTINUE_RC" -ne 9 ]]; then
+    echo "break-continue test executable had unexpected exit code: $BREAK_CONTINUE_RC (expected 9)" >&2
+    tail -n 60 "$WORKDIR/gen-break-continue.run.log" >&2
+    exit 1
+fi
+GENERAL_NAMES_RC=0
+run_exe_any_rc "$GEN_GENERAL_NAMES_EXE" "$WORKDIR/gen-general-names.run.log" || GENERAL_NAMES_RC=$?
+if [[ "$GENERAL_NAMES_RC" -ne 9 ]]; then
+    echo "general-names test executable had unexpected exit code: $GENERAL_NAMES_RC (expected 9)" >&2
+    tail -n 60 "$WORKDIR/gen-general-names.run.log" >&2
+    exit 1
+fi
+COMPLEX_EXPR_RC=0
+run_exe_any_rc "$GEN_COMPLEX_EXPR_EXE" "$WORKDIR/gen-complex-expr.run.log" || COMPLEX_EXPR_RC=$?
+if [[ "$COMPLEX_EXPR_RC" -ne 15 ]]; then
+    echo "complex-expr test executable had unexpected exit code: $COMPLEX_EXPR_RC (expected 15)" >&2
+    tail -n 60 "$WORKDIR/gen-complex-expr.run.log" >&2
+    exit 1
+fi
 
 echo "OK: stage08 cc-min spike"
 echo "Compiler source: $SRC"
@@ -636,5 +737,11 @@ echo "Generated helper-local exe: $GEN_HELPER_LOCAL_EXE"
 echo "Generated main-local-helper exe: $GEN_MAIN_LOCAL_HELPER_EXE"
 echo "Generated helper-two-args exe: $GEN_HELPER_TWO_ARGS_EXE"
 echo "Generated helper-two-args-if exe: $GEN_HELPER_TWO_ARGS_IF_EXE"
+echo "Generated multi-func exe: $GEN_MULTI_FUNC_EXE"
+echo "Generated for-loop exe: $GEN_FOR_LOOP_EXE"
+echo "Generated nested-if exe: $GEN_NESTED_IF_EXE"
+echo "Generated break-continue exe: $GEN_BREAK_CONTINUE_EXE"
+echo "Generated general-names exe: $GEN_GENERAL_NAMES_EXE"
+echo "Generated complex-expr exe: $GEN_COMPLEX_EXPR_EXE"
 echo "Emulator: $EMU"
 echo "Artifacts: $WORKDIR"
