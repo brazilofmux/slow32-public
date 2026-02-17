@@ -24,6 +24,14 @@ First compiler-in-C spike:
 selfhost/stage08/run-cc-spike.sh --emu ./tools/emulator/slow32-fast
 ```
 
+Current `cc-min` pipeline shape (Stage08 multipass skeleton):
+- Pass 1 (`pass1_parse_to_ir`): parse accepted subset-C into tiny IR state.
+- Pass 2 (`pass2_validate_ir`): IR validation / codegen-prep checks.
+- Pass 3 (`pass3_emit_from_ir`): emit target assembly from IR.
+
+This preserves current behavior but provides explicit boundaries for
+next-step features (for example variadic-function producer support).
+
 Current `cc-min` accepted source shape:
 - `int main(void) { return <const-expr>; }`
   where `<const-expr>` currently supports integer literals, `+ - * /`,

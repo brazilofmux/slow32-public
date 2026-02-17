@@ -15,6 +15,7 @@ static int g_helper_has_param;
 static int g_helper_has_two_params;
 static int g_helper_addend;
 static int g_helper_twoarg_if_lt;
+static int g_ir_ret_imm;
 
 static int read_file(const char *path, char *buf, uint32_t max_len, uint32_t *out_len) {
     FILE *f;
@@ -502,9 +503,30 @@ static int emit_min_asm(const char *out_path, int ret_imm) {
     return 1;
 }
 
+/* -------------------------------------------------------------------------
+ * Stage08 multipass skeleton
+ *
+ * Pass 1: parse input source into tiny IR (currently only return immediate).
+ * Pass 2: validate/codegen-prep checks over IR.
+ * Pass 3: emit assembly from IR.
+ * ------------------------------------------------------------------------- */
+static int pass1_parse_to_ir(void) {
+    g_pos = 0;
+    if (!parse_program_return_value(&g_ir_ret_imm)) return 0;
+    return 1;
+}
+
+static int pass2_validate_ir(void) {
+    if (g_ir_ret_imm < -2048 || g_ir_ret_imm > 2047) return 0;
+    return 1;
+}
+
+static int pass3_emit_from_ir(const char *out_path) {
+    return emit_min_asm(out_path, g_ir_ret_imm);
+}
+
 int main(int argc, char **argv) {
     uint32_t src_len;
-    int ret_imm;
     if (argc != 3) {
         fprintf(stderr, "usage: %s <input.c> <output.s>\n", argv[0]);
         return 1;
@@ -514,16 +536,15 @@ int main(int argc, char **argv) {
         return 1;
     }
     (void)src_len;
-    g_pos = 0;
-    if (!parse_program_return_value(&ret_imm)) {
+    if (!pass1_parse_to_ir()) {
         fprintf(stderr, "error: unsupported source shape\n");
         return 1;
     }
-    if (ret_imm < -2048 || ret_imm > 2047) {
+    if (!pass2_validate_ir()) {
         fprintf(stderr, "error: return immediate out of range\n");
         return 1;
     }
-    if (!emit_min_asm(argv[2], ret_imm)) {
+    if (!pass3_emit_from_ir(argv[2])) {
         fprintf(stderr, "error: unable to write %s\n", argv[2]);
         return 1;
     }
