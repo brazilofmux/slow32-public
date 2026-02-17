@@ -13,7 +13,7 @@ PRELUDE="${STAGE8_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 CC_FTH="${STAGE8_CC_FTH:-$ROOT_DIR/selfhost/stage04/cc.fth}"
 ASM_FTH="${STAGE8_ASM_FTH:-$ROOT_DIR/selfhost/stage01/asm.fth}"
 LINK_FTH="${STAGE8_LINK_FTH:-$ROOT_DIR/selfhost/stage03/link.fth}"
-SRC="${STAGE8_CC_MIN_SRC:-$SCRIPT_DIR/validation/cc-min.c}"
+SRC="${STAGE8_CC_MIN_SRC:-$SCRIPT_DIR/cc-min.c}"
 TEST_IN="${STAGE8_TEST_IN:-$SCRIPT_DIR/tests/min_main.c}"
 TEST_RET_IN="${STAGE8_TEST_RET_IN:-$SCRIPT_DIR/tests/min_ret7.c}"
 TEST_EXPR_IN="${STAGE8_TEST_EXPR_IN:-$SCRIPT_DIR/tests/min_ret_expr.c}"
@@ -70,9 +70,15 @@ if [[ "$EMU" != /* ]]; then
     EMU="$ROOT_DIR/$EMU"
 fi
 
-for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH" "$SRC" "$TEST_IN" "$TEST_RET_IN" "$TEST_EXPR_IN" "$TEST_LOCAL_IN" "$TEST_REL_IN" "$TEST_IF_TRUE_IN" "$TEST_IF_FALSE_IN" "$TEST_WHILE_IN" "$TEST_TWO_LOCALS_IN" "$TEST_HELPER_IN" "$TEST_HELPER_ARG_IN" "$TEST_HELPER_LOCAL_IN" "$TEST_MAIN_LOCAL_HELPER_IN" "$TEST_HELPER_TWO_ARGS_IN" "$TEST_HELPER_TWO_ARGS_IF_IN"; do
+for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH" "$TEST_IN" "$TEST_RET_IN" "$TEST_EXPR_IN" "$TEST_LOCAL_IN" "$TEST_REL_IN" "$TEST_IF_TRUE_IN" "$TEST_IF_FALSE_IN" "$TEST_WHILE_IN" "$TEST_TWO_LOCALS_IN" "$TEST_HELPER_IN" "$TEST_HELPER_ARG_IN" "$TEST_HELPER_LOCAL_IN" "$TEST_MAIN_LOCAL_HELPER_IN" "$TEST_HELPER_TWO_ARGS_IN" "$TEST_HELPER_TWO_ARGS_IF_IN"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
+
+if [[ ! -f "$SRC" ]]; then
+    # Backward-compatible fallback during path transition.
+    SRC="$SCRIPT_DIR/validation/cc-min.c"
+fi
+[[ -f "$SRC" ]] || { echo "Missing required file: $SRC" >&2; exit 1; }
 
 WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage08-cc.XXXXXX)"
 if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then
