@@ -7,7 +7,8 @@ if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
     ROOT_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 fi
 
-EMU="${STAGE8_EMU:-$ROOT_DIR/tools/emulator/slow32-fast}"
+EMU="${STAGE8_EMU:-}"
+EMU_EXPLICIT=0
 KERNEL="${STAGE8_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${STAGE8_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 CC_FTH="${STAGE8_CC_FTH:-$ROOT_DIR/selfhost/stage04/cc.fth}"
@@ -52,6 +53,26 @@ TEST_GLOBAL_ARRAY_IN="$SCRIPT_DIR/tests/min_global_array.c"
 KEEP_ARTIFACTS=0
 REBUILD_LIBC="${STAGE8_REBUILD_LIBC:-0}"
 
+choose_default_emu() {
+    if [[ -x "$ROOT_DIR/tools/dbt/slow32-dbg" ]]; then
+        printf '%s\n' "$ROOT_DIR/tools/dbt/slow32-dbg"
+        return
+    fi
+    if [[ -x "$ROOT_DIR/tools/dbt/slow32-dbt" ]]; then
+        printf '%s\n' "$ROOT_DIR/tools/dbt/slow32-dbt"
+        return
+    fi
+    if [[ -x "$ROOT_DIR/tools/emulator/slow32-fast" ]]; then
+        printf '%s\n' "$ROOT_DIR/tools/emulator/slow32-fast"
+        return
+    fi
+    if [[ -x "$ROOT_DIR/tools/emulator/slow32" ]]; then
+        printf '%s\n' "$ROOT_DIR/tools/emulator/slow32"
+        return
+    fi
+    printf '%s\n' "$ROOT_DIR/tools/emulator/slow32-fast"
+}
+
 usage() {
     cat <<USAGE
 Usage: $0 [--emu <path>] [--keep-artifacts]
@@ -70,6 +91,7 @@ while [[ $# -gt 0 ]]; do
             shift
             [[ $# -gt 0 ]] || { echo "--emu requires a path" >&2; exit 2; }
             EMU="$1"
+            EMU_EXPLICIT=1
             ;;
         --keep-artifacts)
             KEEP_ARTIFACTS=1
@@ -86,6 +108,10 @@ while [[ $# -gt 0 ]]; do
     esac
     shift
 done
+
+if [[ "$EMU_EXPLICIT" -eq 0 && -z "${STAGE8_EMU:-}" ]]; then
+    EMU="$(choose_default_emu)"
+fi
 
 if [[ "$EMU" != /* ]]; then
     EMU="$ROOT_DIR/$EMU"
