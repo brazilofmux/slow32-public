@@ -5383,7 +5383,7 @@ interp_resume_xt:
 .bss
     .align 2
 tib:            .space 256         # Terminal Input Buffer
-user_dictionary: .space 1048576    # 1MB space for new words (was 64KB)
+user_dictionary: .space 2097152    # 2MB space for new words
 user_dictionary_end:
 pad:            .space 128         # Scratch pad for strings/numbers
 file_path_buf:   .space 512        # Temporary path buffer

@@ -52,6 +52,14 @@ TEST_GLOBAL_IN="$SCRIPT_DIR/tests/min_global.c"
 TEST_GLOBAL_ARRAY_IN="$SCRIPT_DIR/tests/min_global_array.c"
 TEST_PTR_ARITH_IN="$SCRIPT_DIR/tests/min_ptr_arith.c"
 TEST_SHORT_CIRCUIT_IN="$SCRIPT_DIR/tests/min_short_circuit.c"
+TEST_TYPEDEF_IN="$SCRIPT_DIR/tests/min_typedef.c"
+TEST_TYPEDEF_STRUCT_IN="$SCRIPT_DIR/tests/min_typedef_struct.c"
+TEST_STRUCT_BASIC_IN="$SCRIPT_DIR/tests/min_struct_basic.c"
+TEST_STRUCT_ARROW_IN="$SCRIPT_DIR/tests/min_struct_arrow.c"
+TEST_STRUCT_ARRAY_IN="$SCRIPT_DIR/tests/min_struct_array.c"
+TEST_SIZEOF_IN="$SCRIPT_DIR/tests/min_sizeof.c"
+TEST_SIZEOF_STRUCT_IN="$SCRIPT_DIR/tests/min_sizeof_struct.c"
+TEST_CAST_IN="$SCRIPT_DIR/tests/min_cast.c"
 KEEP_ARTIFACTS=0
 REBUILD_LIBC="${STAGE8_REBUILD_LIBC:-0}"
 
@@ -122,7 +130,8 @@ fi
 for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$LINK_FTH" \
          "$SRC_PASS1" "$SRC_PASS2" "$SRC_PASS3" "$TEST_IN" "$TEST_RET_IN" "$TEST_EXPR_IN" "$TEST_LOCAL_IN" "$TEST_REL_IN" "$TEST_IF_TRUE_IN" "$TEST_IF_FALSE_IN" "$TEST_WHILE_IN" "$TEST_TWO_LOCALS_IN" "$TEST_HELPER_IN" "$TEST_HELPER_ARG_IN" "$TEST_HELPER_LOCAL_IN" "$TEST_MAIN_LOCAL_HELPER_IN" "$TEST_HELPER_TWO_ARGS_IN" "$TEST_HELPER_TWO_ARGS_IF_IN" \
          "$TEST_MULTI_FUNC_IN" "$TEST_FOR_LOOP_IN" "$TEST_NESTED_IF_IN" "$TEST_BREAK_CONTINUE_IN" "$TEST_GENERAL_NAMES_IN" "$TEST_COMPLEX_EXPR_IN" \
-         "$TEST_CHAR_TYPE_IN" "$TEST_CHAR_LITERAL_IN" "$TEST_LOCAL_ARRAY_IN" "$TEST_CHAR_ARRAY_IN" "$TEST_STRING_LIT_IN" "$TEST_POINTER_IN" "$TEST_GLOBAL_IN" "$TEST_GLOBAL_ARRAY_IN" "$TEST_PTR_ARITH_IN" "$TEST_SHORT_CIRCUIT_IN"; do
+         "$TEST_CHAR_TYPE_IN" "$TEST_CHAR_LITERAL_IN" "$TEST_LOCAL_ARRAY_IN" "$TEST_CHAR_ARRAY_IN" "$TEST_STRING_LIT_IN" "$TEST_POINTER_IN" "$TEST_GLOBAL_IN" "$TEST_GLOBAL_ARRAY_IN" "$TEST_PTR_ARITH_IN" "$TEST_SHORT_CIRCUIT_IN" \
+         "$TEST_TYPEDEF_IN" "$TEST_TYPEDEF_STRUCT_IN" "$TEST_STRUCT_BASIC_IN" "$TEST_STRUCT_ARROW_IN" "$TEST_STRUCT_ARRAY_IN" "$TEST_SIZEOF_IN" "$TEST_SIZEOF_STRUCT_IN" "$TEST_CAST_IN"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
 
@@ -382,6 +391,22 @@ GEN_PTR_ARITH_ASM="$WORKDIR/min_ptr_arith.generated.s"
 run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-ptr-arith.run.log" "$TEST_PTR_ARITH_IN" "$GEN_PTR_ARITH_ASM"
 GEN_SHORT_CIRCUIT_ASM="$WORKDIR/min_short_circuit.generated.s"
 run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-short-circuit.run.log" "$TEST_SHORT_CIRCUIT_IN" "$GEN_SHORT_CIRCUIT_ASM"
+GEN_TYPEDEF_ASM="$WORKDIR/min_typedef.generated.s"
+GEN_TYPEDEF_STRUCT_ASM="$WORKDIR/min_typedef_struct.generated.s"
+GEN_STRUCT_BASIC_ASM="$WORKDIR/min_struct_basic.generated.s"
+GEN_STRUCT_ARROW_ASM="$WORKDIR/min_struct_arrow.generated.s"
+GEN_STRUCT_ARRAY_ASM="$WORKDIR/min_struct_array.generated.s"
+GEN_SIZEOF_ASM="$WORKDIR/min_sizeof.generated.s"
+GEN_SIZEOF_STRUCT_ASM="$WORKDIR/min_sizeof_struct.generated.s"
+GEN_CAST_ASM="$WORKDIR/min_cast.generated.s"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-typedef.run.log" "$TEST_TYPEDEF_IN" "$GEN_TYPEDEF_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-typedef-struct.run.log" "$TEST_TYPEDEF_STRUCT_IN" "$GEN_TYPEDEF_STRUCT_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-struct-basic.run.log" "$TEST_STRUCT_BASIC_IN" "$GEN_STRUCT_BASIC_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-struct-arrow.run.log" "$TEST_STRUCT_ARROW_IN" "$GEN_STRUCT_ARROW_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-struct-array.run.log" "$TEST_STRUCT_ARRAY_IN" "$GEN_STRUCT_ARRAY_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-sizeof.run.log" "$TEST_SIZEOF_IN" "$GEN_SIZEOF_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-sizeof-struct.run.log" "$TEST_SIZEOF_STRUCT_IN" "$GEN_SIZEOF_STRUCT_ASM"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-cast.run.log" "$TEST_CAST_IN" "$GEN_CAST_ASM"
 [[ -s "$GEN_ASM" ]] || { echo "cc-min produced no assembly output" >&2; exit 1; }
 [[ -s "$GEN_RET_ASM" ]] || { echo "cc-min produced no return-test assembly output" >&2; exit 1; }
 [[ -s "$GEN_EXPR_ASM" ]] || { echo "cc-min produced no expr-test assembly output" >&2; exit 1; }
@@ -413,6 +438,14 @@ run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-short-circuit.run.log" "$TEST_SHORT_CIRCUI
 [[ -s "$GEN_GLOBAL_ARRAY_ASM" ]] || { echo "cc-min produced no global-array assembly output" >&2; exit 1; }
 [[ -s "$GEN_PTR_ARITH_ASM" ]] || { echo "cc-min produced no ptr-arith assembly output" >&2; exit 1; }
 [[ -s "$GEN_SHORT_CIRCUIT_ASM" ]] || { echo "cc-min produced no short-circuit assembly output" >&2; exit 1; }
+[[ -s "$GEN_TYPEDEF_ASM" ]] || { echo "cc-min produced no typedef assembly output" >&2; exit 1; }
+[[ -s "$GEN_TYPEDEF_STRUCT_ASM" ]] || { echo "cc-min produced no typedef-struct assembly output" >&2; exit 1; }
+[[ -s "$GEN_STRUCT_BASIC_ASM" ]] || { echo "cc-min produced no struct-basic assembly output" >&2; exit 1; }
+[[ -s "$GEN_STRUCT_ARROW_ASM" ]] || { echo "cc-min produced no struct-arrow assembly output" >&2; exit 1; }
+[[ -s "$GEN_STRUCT_ARRAY_ASM" ]] || { echo "cc-min produced no struct-array assembly output" >&2; exit 1; }
+[[ -s "$GEN_SIZEOF_ASM" ]] || { echo "cc-min produced no sizeof assembly output" >&2; exit 1; }
+[[ -s "$GEN_SIZEOF_STRUCT_ASM" ]] || { echo "cc-min produced no sizeof-struct assembly output" >&2; exit 1; }
+[[ -s "$GEN_CAST_ASM" ]] || { echo "cc-min produced no cast assembly output" >&2; exit 1; }
 grep -q '^main:' "$GEN_ASM" || { echo "generated assembly missing main label" >&2; exit 1; }
 
 # 4) Assemble, link with stage07 (artifact), then link/run with stage03 runtime.
@@ -520,6 +553,22 @@ GEN_PTR_ARITH_OBJ="$WORKDIR/min_ptr_arith.generated.s32o"
 run_exe "$AS_EXE" "$WORKDIR/stage5-as-ptr-arith.run.log" "$GEN_PTR_ARITH_ASM" "$GEN_PTR_ARITH_OBJ"
 GEN_SHORT_CIRCUIT_OBJ="$WORKDIR/min_short_circuit.generated.s32o"
 run_exe "$AS_EXE" "$WORKDIR/stage5-as-short-circuit.run.log" "$GEN_SHORT_CIRCUIT_ASM" "$GEN_SHORT_CIRCUIT_OBJ"
+GEN_TYPEDEF_OBJ="$WORKDIR/min_typedef.generated.s32o"
+GEN_TYPEDEF_STRUCT_OBJ="$WORKDIR/min_typedef_struct.generated.s32o"
+GEN_STRUCT_BASIC_OBJ="$WORKDIR/min_struct_basic.generated.s32o"
+GEN_STRUCT_ARROW_OBJ="$WORKDIR/min_struct_arrow.generated.s32o"
+GEN_STRUCT_ARRAY_OBJ="$WORKDIR/min_struct_array.generated.s32o"
+GEN_SIZEOF_OBJ="$WORKDIR/min_sizeof.generated.s32o"
+GEN_SIZEOF_STRUCT_OBJ="$WORKDIR/min_sizeof_struct.generated.s32o"
+GEN_CAST_OBJ="$WORKDIR/min_cast.generated.s32o"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-typedef.run.log" "$GEN_TYPEDEF_ASM" "$GEN_TYPEDEF_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-typedef-struct.run.log" "$GEN_TYPEDEF_STRUCT_ASM" "$GEN_TYPEDEF_STRUCT_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-struct-basic.run.log" "$GEN_STRUCT_BASIC_ASM" "$GEN_STRUCT_BASIC_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-struct-arrow.run.log" "$GEN_STRUCT_ARROW_ASM" "$GEN_STRUCT_ARROW_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-struct-array.run.log" "$GEN_STRUCT_ARRAY_ASM" "$GEN_STRUCT_ARRAY_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-sizeof.run.log" "$GEN_SIZEOF_ASM" "$GEN_SIZEOF_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-sizeof-struct.run.log" "$GEN_SIZEOF_STRUCT_ASM" "$GEN_SIZEOF_STRUCT_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-cast.run.log" "$GEN_CAST_ASM" "$GEN_CAST_OBJ"
 [[ -s "$GEN_OBJ" ]] || { echo "stage05 assembler produced no object output" >&2; exit 1; }
 [[ -s "$GEN_RET_OBJ" ]] || { echo "stage05 assembler produced no return-test object output" >&2; exit 1; }
 [[ -s "$GEN_EXPR_OBJ" ]] || { echo "stage05 assembler produced no expr-test object output" >&2; exit 1; }
@@ -551,6 +600,14 @@ run_exe "$AS_EXE" "$WORKDIR/stage5-as-short-circuit.run.log" "$GEN_SHORT_CIRCUIT
 [[ -s "$GEN_GLOBAL_ARRAY_OBJ" ]] || { echo "stage05 assembler produced no global-array object output" >&2; exit 1; }
 [[ -s "$GEN_PTR_ARITH_OBJ" ]] || { echo "stage05 assembler produced no ptr-arith object output" >&2; exit 1; }
 [[ -s "$GEN_SHORT_CIRCUIT_OBJ" ]] || { echo "stage05 assembler produced no short-circuit object output" >&2; exit 1; }
+[[ -s "$GEN_TYPEDEF_OBJ" ]] || { echo "stage05 assembler produced no typedef object output" >&2; exit 1; }
+[[ -s "$GEN_TYPEDEF_STRUCT_OBJ" ]] || { echo "stage05 assembler produced no typedef-struct object output" >&2; exit 1; }
+[[ -s "$GEN_STRUCT_BASIC_OBJ" ]] || { echo "stage05 assembler produced no struct-basic object output" >&2; exit 1; }
+[[ -s "$GEN_STRUCT_ARROW_OBJ" ]] || { echo "stage05 assembler produced no struct-arrow object output" >&2; exit 1; }
+[[ -s "$GEN_STRUCT_ARRAY_OBJ" ]] || { echo "stage05 assembler produced no struct-array object output" >&2; exit 1; }
+[[ -s "$GEN_SIZEOF_OBJ" ]] || { echo "stage05 assembler produced no sizeof object output" >&2; exit 1; }
+[[ -s "$GEN_SIZEOF_STRUCT_OBJ" ]] || { echo "stage05 assembler produced no sizeof-struct object output" >&2; exit 1; }
+[[ -s "$GEN_CAST_OBJ" ]] || { echo "stage05 assembler produced no cast object output" >&2; exit 1; }
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld.run.log" "$GEN_OBJ" "$GEN_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-ret.run.log" "$GEN_RET_OBJ" "$GEN_RET_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-expr.run.log" "$GEN_EXPR_OBJ" "$GEN_EXPR_RAW_EXE"
@@ -592,6 +649,22 @@ GEN_PTR_ARITH_RAW_EXE="$WORKDIR/min_ptr_arith.generated.raw.s32x"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-ptr-arith.run.log" "$GEN_PTR_ARITH_OBJ" "$GEN_PTR_ARITH_RAW_EXE"
 GEN_SHORT_CIRCUIT_RAW_EXE="$WORKDIR/min_short_circuit.generated.raw.s32x"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-short-circuit.run.log" "$GEN_SHORT_CIRCUIT_OBJ" "$GEN_SHORT_CIRCUIT_RAW_EXE"
+GEN_TYPEDEF_RAW_EXE="$WORKDIR/min_typedef.generated.raw.s32x"
+GEN_TYPEDEF_STRUCT_RAW_EXE="$WORKDIR/min_typedef_struct.generated.raw.s32x"
+GEN_STRUCT_BASIC_RAW_EXE="$WORKDIR/min_struct_basic.generated.raw.s32x"
+GEN_STRUCT_ARROW_RAW_EXE="$WORKDIR/min_struct_arrow.generated.raw.s32x"
+GEN_STRUCT_ARRAY_RAW_EXE="$WORKDIR/min_struct_array.generated.raw.s32x"
+GEN_SIZEOF_RAW_EXE="$WORKDIR/min_sizeof.generated.raw.s32x"
+GEN_SIZEOF_STRUCT_RAW_EXE="$WORKDIR/min_sizeof_struct.generated.raw.s32x"
+GEN_CAST_RAW_EXE="$WORKDIR/min_cast.generated.raw.s32x"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-typedef.run.log" "$GEN_TYPEDEF_OBJ" "$GEN_TYPEDEF_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-typedef-struct.run.log" "$GEN_TYPEDEF_STRUCT_OBJ" "$GEN_TYPEDEF_STRUCT_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-struct-basic.run.log" "$GEN_STRUCT_BASIC_OBJ" "$GEN_STRUCT_BASIC_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-struct-arrow.run.log" "$GEN_STRUCT_ARROW_OBJ" "$GEN_STRUCT_ARROW_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-struct-array.run.log" "$GEN_STRUCT_ARRAY_OBJ" "$GEN_STRUCT_ARRAY_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-sizeof.run.log" "$GEN_SIZEOF_OBJ" "$GEN_SIZEOF_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-sizeof-struct.run.log" "$GEN_SIZEOF_STRUCT_OBJ" "$GEN_SIZEOF_STRUCT_RAW_EXE"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-cast.run.log" "$GEN_CAST_OBJ" "$GEN_CAST_RAW_EXE"
 [[ -s "$GEN_RAW_EXE" ]] || { echo "stage07 linker produced no executable output" >&2; exit 1; }
 [[ -s "$GEN_RET_RAW_EXE" ]] || { echo "stage07 linker produced no return-test executable output" >&2; exit 1; }
 [[ -s "$GEN_EXPR_RAW_EXE" ]] || { echo "stage07 linker produced no expr-test executable output" >&2; exit 1; }
@@ -623,6 +696,14 @@ run_exe "$LD_EXE" "$WORKDIR/stage7-ld-short-circuit.run.log" "$GEN_SHORT_CIRCUIT
 [[ -s "$GEN_GLOBAL_ARRAY_RAW_EXE" ]] || { echo "stage07 linker produced no global-array executable output" >&2; exit 1; }
 [[ -s "$GEN_PTR_ARITH_RAW_EXE" ]] || { echo "stage07 linker produced no ptr-arith executable output" >&2; exit 1; }
 [[ -s "$GEN_SHORT_CIRCUIT_RAW_EXE" ]] || { echo "stage07 linker produced no short-circuit executable output" >&2; exit 1; }
+[[ -s "$GEN_TYPEDEF_RAW_EXE" ]] || { echo "stage07 linker produced no typedef executable output" >&2; exit 1; }
+[[ -s "$GEN_TYPEDEF_STRUCT_RAW_EXE" ]] || { echo "stage07 linker produced no typedef-struct executable output" >&2; exit 1; }
+[[ -s "$GEN_STRUCT_BASIC_RAW_EXE" ]] || { echo "stage07 linker produced no struct-basic executable output" >&2; exit 1; }
+[[ -s "$GEN_STRUCT_ARROW_RAW_EXE" ]] || { echo "stage07 linker produced no struct-arrow executable output" >&2; exit 1; }
+[[ -s "$GEN_STRUCT_ARRAY_RAW_EXE" ]] || { echo "stage07 linker produced no struct-array executable output" >&2; exit 1; }
+[[ -s "$GEN_SIZEOF_RAW_EXE" ]] || { echo "stage07 linker produced no sizeof executable output" >&2; exit 1; }
+[[ -s "$GEN_SIZEOF_STRUCT_RAW_EXE" ]] || { echo "stage07 linker produced no sizeof-struct executable output" >&2; exit 1; }
+[[ -s "$GEN_CAST_RAW_EXE" ]] || { echo "stage07 linker produced no cast executable output" >&2; exit 1; }
 link_forth_with_libc "$GEN_OBJ" "$GEN_EXE" "$WORKDIR/stage3-link.run.log"
 link_forth_with_libc "$GEN_RET_OBJ" "$GEN_RET_EXE" "$WORKDIR/stage3-link-ret.run.log"
 link_forth_with_libc "$GEN_EXPR_OBJ" "$GEN_EXPR_EXE" "$WORKDIR/stage3-link-expr.run.log"
@@ -664,6 +745,22 @@ GEN_PTR_ARITH_EXE="$WORKDIR/min_ptr_arith.generated.s32x"
 link_forth_with_libc "$GEN_PTR_ARITH_OBJ" "$GEN_PTR_ARITH_EXE" "$WORKDIR/stage3-link-ptr-arith.run.log"
 GEN_SHORT_CIRCUIT_EXE="$WORKDIR/min_short_circuit.generated.s32x"
 link_forth_with_libc "$GEN_SHORT_CIRCUIT_OBJ" "$GEN_SHORT_CIRCUIT_EXE" "$WORKDIR/stage3-link-short-circuit.run.log"
+GEN_TYPEDEF_EXE="$WORKDIR/min_typedef.generated.s32x"
+GEN_TYPEDEF_STRUCT_EXE="$WORKDIR/min_typedef_struct.generated.s32x"
+GEN_STRUCT_BASIC_EXE="$WORKDIR/min_struct_basic.generated.s32x"
+GEN_STRUCT_ARROW_EXE="$WORKDIR/min_struct_arrow.generated.s32x"
+GEN_STRUCT_ARRAY_EXE="$WORKDIR/min_struct_array.generated.s32x"
+GEN_SIZEOF_EXE="$WORKDIR/min_sizeof.generated.s32x"
+GEN_SIZEOF_STRUCT_EXE="$WORKDIR/min_sizeof_struct.generated.s32x"
+GEN_CAST_EXE="$WORKDIR/min_cast.generated.s32x"
+link_forth_with_libc "$GEN_TYPEDEF_OBJ" "$GEN_TYPEDEF_EXE" "$WORKDIR/stage3-link-typedef.run.log"
+link_forth_with_libc "$GEN_TYPEDEF_STRUCT_OBJ" "$GEN_TYPEDEF_STRUCT_EXE" "$WORKDIR/stage3-link-typedef-struct.run.log"
+link_forth_with_libc "$GEN_STRUCT_BASIC_OBJ" "$GEN_STRUCT_BASIC_EXE" "$WORKDIR/stage3-link-struct-basic.run.log"
+link_forth_with_libc "$GEN_STRUCT_ARROW_OBJ" "$GEN_STRUCT_ARROW_EXE" "$WORKDIR/stage3-link-struct-arrow.run.log"
+link_forth_with_libc "$GEN_STRUCT_ARRAY_OBJ" "$GEN_STRUCT_ARRAY_EXE" "$WORKDIR/stage3-link-struct-array.run.log"
+link_forth_with_libc "$GEN_SIZEOF_OBJ" "$GEN_SIZEOF_EXE" "$WORKDIR/stage3-link-sizeof.run.log"
+link_forth_with_libc "$GEN_SIZEOF_STRUCT_OBJ" "$GEN_SIZEOF_STRUCT_EXE" "$WORKDIR/stage3-link-sizeof-struct.run.log"
+link_forth_with_libc "$GEN_CAST_OBJ" "$GEN_CAST_EXE" "$WORKDIR/stage3-link-cast.run.log"
 run_exe "$GEN_EXE" "$WORKDIR/gen.run.log"
 RET_RC=0
 run_exe_any_rc "$GEN_RET_EXE" "$WORKDIR/gen-ret.run.log" || RET_RC=$?
@@ -873,6 +970,62 @@ run_exe_any_rc "$GEN_SHORT_CIRCUIT_EXE" "$WORKDIR/gen-short-circuit.run.log" || 
 if [[ "$SHORT_CIRCUIT_RC" -ne 0 ]]; then
     echo "short-circuit test executable had unexpected exit code: $SHORT_CIRCUIT_RC (expected 0)" >&2
     tail -n 60 "$WORKDIR/gen-short-circuit.run.log" >&2
+    exit 1
+fi
+TYPEDEF_RC=0
+run_exe_any_rc "$GEN_TYPEDEF_EXE" "$WORKDIR/gen-typedef.run.log" || TYPEDEF_RC=$?
+if [[ "$TYPEDEF_RC" -ne 42 ]]; then
+    echo "typedef test executable had unexpected exit code: $TYPEDEF_RC (expected 42)" >&2
+    tail -n 60 "$WORKDIR/gen-typedef.run.log" >&2
+    exit 1
+fi
+TYPEDEF_STRUCT_RC=0
+run_exe_any_rc "$GEN_TYPEDEF_STRUCT_EXE" "$WORKDIR/gen-typedef-struct.run.log" || TYPEDEF_STRUCT_RC=$?
+if [[ "$TYPEDEF_STRUCT_RC" -ne 3 ]]; then
+    echo "typedef-struct test executable had unexpected exit code: $TYPEDEF_STRUCT_RC (expected 3)" >&2
+    tail -n 60 "$WORKDIR/gen-typedef-struct.run.log" >&2
+    exit 1
+fi
+STRUCT_BASIC_RC=0
+run_exe_any_rc "$GEN_STRUCT_BASIC_EXE" "$WORKDIR/gen-struct-basic.run.log" || STRUCT_BASIC_RC=$?
+if [[ "$STRUCT_BASIC_RC" -ne 7 ]]; then
+    echo "struct-basic test executable had unexpected exit code: $STRUCT_BASIC_RC (expected 7)" >&2
+    tail -n 60 "$WORKDIR/gen-struct-basic.run.log" >&2
+    exit 1
+fi
+STRUCT_ARROW_RC=0
+run_exe_any_rc "$GEN_STRUCT_ARROW_EXE" "$WORKDIR/gen-struct-arrow.run.log" || STRUCT_ARROW_RC=$?
+if [[ "$STRUCT_ARROW_RC" -ne 10 ]]; then
+    echo "struct-arrow test executable had unexpected exit code: $STRUCT_ARROW_RC (expected 10)" >&2
+    tail -n 60 "$WORKDIR/gen-struct-arrow.run.log" >&2
+    exit 1
+fi
+STRUCT_ARRAY_RC=0
+run_exe_any_rc "$GEN_STRUCT_ARRAY_EXE" "$WORKDIR/gen-struct-array.run.log" || STRUCT_ARRAY_RC=$?
+if [[ "$STRUCT_ARRAY_RC" -ne 99 ]]; then
+    echo "struct-array test executable had unexpected exit code: $STRUCT_ARRAY_RC (expected 99)" >&2
+    tail -n 60 "$WORKDIR/gen-struct-array.run.log" >&2
+    exit 1
+fi
+SIZEOF_RC=0
+run_exe_any_rc "$GEN_SIZEOF_EXE" "$WORKDIR/gen-sizeof.run.log" || SIZEOF_RC=$?
+if [[ "$SIZEOF_RC" -ne 4 ]]; then
+    echo "sizeof test executable had unexpected exit code: $SIZEOF_RC (expected 4)" >&2
+    tail -n 60 "$WORKDIR/gen-sizeof.run.log" >&2
+    exit 1
+fi
+SIZEOF_STRUCT_RC=0
+run_exe_any_rc "$GEN_SIZEOF_STRUCT_EXE" "$WORKDIR/gen-sizeof-struct.run.log" || SIZEOF_STRUCT_RC=$?
+if [[ "$SIZEOF_STRUCT_RC" -ne 8 ]]; then
+    echo "sizeof-struct test executable had unexpected exit code: $SIZEOF_STRUCT_RC (expected 8)" >&2
+    tail -n 60 "$WORKDIR/gen-sizeof-struct.run.log" >&2
+    exit 1
+fi
+CAST_RC=0
+run_exe_any_rc "$GEN_CAST_EXE" "$WORKDIR/gen-cast.run.log" || CAST_RC=$?
+if [[ "$CAST_RC" -ne 1 ]]; then
+    echo "cast test executable had unexpected exit code: $CAST_RC (expected 1)" >&2
+    tail -n 60 "$WORKDIR/gen-cast.run.log" >&2
     exit 1
 fi
 

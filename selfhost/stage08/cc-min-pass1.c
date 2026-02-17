@@ -28,6 +28,7 @@ static int g_loop_depth;
 #define TY_INT  0
 #define TY_CHAR 1
 #define TY_VOID 2
+#define TY_STRUCT 3
 static int g_lval;
 static int g_expr_type;
 
@@ -110,11 +111,26 @@ int ccmin_load_source(const char *path) {
 #define TK_CHARLIT  62
 #define TK_CONST    63
 #define TK_STATIC   64
+#define TK_STRUCT   65
+#define TK_SIZEOF   66
+#define TK_TYPEDEF  67
+#define TK_DOT      68
+#define TK_ARROW    69
+#define TK_UNSIGNED 70
+#define TK_LONG     71
 
 static int g_tok;
 static int g_tok_val;
 static char g_tok_str[128];
 static int g_tok_slen;
+
+/* Lexer save/restore for cast disambiguation */
+static int g_save_pos;
+static int g_save_line;
+static int g_save_tok;
+static int g_save_tok_val;
+static char g_save_tok_str[128];
+static int g_save_tok_slen;
 
 static int is_space(char c) {
     if (c == ' ') return 1;
@@ -274,6 +290,11 @@ static void next_token(void) {
         if (str_eq(g_tok_str, "continue")) { g_tok = TK_CONTINUE; return; }
         if (str_eq(g_tok_str, "const")) { g_tok = TK_CONST; return; }
         if (str_eq(g_tok_str, "static")) { g_tok = TK_STATIC; return; }
+        if (str_eq(g_tok_str, "struct")) { g_tok = TK_STRUCT; return; }
+        if (str_eq(g_tok_str, "sizeof")) { g_tok = TK_SIZEOF; return; }
+        if (str_eq(g_tok_str, "typedef")) { g_tok = TK_TYPEDEF; return; }
+        if (str_eq(g_tok_str, "unsigned")) { g_tok = TK_UNSIGNED; return; }
+        if (str_eq(g_tok_str, "long")) { g_tok = TK_LONG; return; }
         g_tok = TK_IDENT; return;
     }
     g_pos = g_pos + 1;
@@ -286,6 +307,7 @@ static void next_token(void) {
     if (c == '<' && g_pos < g_src_len && g_src[g_pos] == '<') { g_pos = g_pos+1; g_tok = TK_LSHIFT; return; }
     if (c == '>' && g_pos < g_src_len && g_src[g_pos] == '>') { g_pos = g_pos+1; g_tok = TK_RSHIFT; return; }
     if (c == '+' && g_pos < g_src_len && g_src[g_pos] == '+') { g_pos = g_pos+1; g_tok = TK_INC; return; }
+    if (c == '-' && g_pos < g_src_len && g_src[g_pos] == '>') { g_pos = g_pos+1; g_tok = TK_ARROW; return; }
     if (c == '-' && g_pos < g_src_len && g_src[g_pos] == '-') { g_pos = g_pos+1; g_tok = TK_DEC; return; }
     if (c == '+' && g_pos < g_src_len && g_src[g_pos] == '=') { g_pos = g_pos+1; g_tok = TK_PLUSEQ; return; }
     if (c == '-' && g_pos < g_src_len && g_src[g_pos] == '=') { g_pos = g_pos+1; g_tok = TK_MINUSEQ; return; }
@@ -312,6 +334,7 @@ static void next_token(void) {
     if (c == ',') { g_tok = TK_COMMA; return; }
     if (c == '?') { g_tok = TK_QMARK; return; }
     if (c == ':') { g_tok = TK_COLON; return; }
+    if (c == '.') { g_tok = TK_DOT; return; }
     cc_error("unexpected character");
     g_tok = TK_EOF;
 }
@@ -348,7 +371,27 @@ static int g_gsizes[MAX_GLOBALS];
 static int g_gbytes[MAX_GLOBALS];
 static int g_nglobals;
 
+/* Struct table */
+#define MAX_STRUCTS 16
+#define MAX_FIELDS  96
+static char g_snames[768];
+static int g_ssizes[MAX_STRUCTS];
+static int g_sfbase[MAX_STRUCTS];
+static int g_sfcount[MAX_STRUCTS];
+static int g_nstructs;
+static char g_fdnames[4608];
+static int g_fdtypes[MAX_FIELDS];
+static int g_fdoffs[MAX_FIELDS];
+static int g_nfields;
+
+/* Typedef table */
+#define MAX_TYPEDEFS 16
+static char g_tdnames[768];
+static int g_tdtypes[MAX_TYPEDEFS];
+static int g_ntypedefs;
+
 static int g_ret_label;
+static int g_prologue_pos;
 
 static int str_copy(char *dst, const char *src, int max) {
     int i;
@@ -395,11 +438,20 @@ static int find_local(const char *name) {
 static void add_local(const char *name, int type, int arr_cnt) {
     int sz;
     int esz;
+    int sidx;
     if (g_nlocals >= MAX_LOCALS) { cc_error("too many locals"); return; }
     if (arr_cnt > 0) {
         esz = 4;
         if ((type & 255) == TY_CHAR && ((type >> 8) & 255) == 0) esz = 1;
+        if ((type & 255) == TY_STRUCT && ((type >> 8) & 255) == 0) {
+            sidx = (type >> 16) & 127;
+            esz = g_ssizes[sidx];
+        }
         sz = arr_cnt * esz;
+        sz = ((sz + 3) / 4) * 4;
+    } else if ((type & 255) == TY_STRUCT && ((type >> 8) & 255) == 0) {
+        sidx = (type >> 16) & 127;
+        sz = g_ssizes[sidx];
         sz = ((sz + 3) / 4) * 4;
     } else {
         sz = 4;
@@ -458,6 +510,116 @@ static void add_global(const char *name, int type, int arr_cnt, int bsz) {
     g_gsizes[g_nglobals] = arr_cnt;
     g_gbytes[g_nglobals] = bsz;
     g_nglobals = g_nglobals + 1;
+}
+
+/* ---- Struct/typedef helpers ---- */
+static int find_struct(const char *name) {
+    int i;
+    i = 0;
+    while (i < g_nstructs) {
+        if (sym_name_eq(g_snames, i, name)) return i;
+        i = i + 1;
+    }
+    return -1;
+}
+
+static int add_struct(const char *name) {
+    int idx;
+    if (g_nstructs >= MAX_STRUCTS) { cc_error("too many structs"); return 0; }
+    idx = g_nstructs;
+    sym_set_name(g_snames, idx, name);
+    g_ssizes[idx] = 0;
+    g_sfbase[idx] = g_nfields;
+    g_sfcount[idx] = 0;
+    g_nstructs = g_nstructs + 1;
+    return idx;
+}
+
+static int find_field(int sidx, const char *name) {
+    int base;
+    int count;
+    int i;
+    base = g_sfbase[sidx];
+    count = g_sfcount[sidx];
+    i = 0;
+    while (i < count) {
+        if (sym_name_eq(g_fdnames, base + i, name)) return base + i;
+        i = i + 1;
+    }
+    return -1;
+}
+
+static int find_typedef(const char *name) {
+    int i;
+    i = 0;
+    while (i < g_ntypedefs) {
+        if (sym_name_eq(g_tdnames, i, name)) return i;
+        i = i + 1;
+    }
+    return -1;
+}
+
+static void add_typedef(const char *name, int type) {
+    if (g_ntypedefs >= MAX_TYPEDEFS) { cc_error("too many typedefs"); return; }
+    sym_set_name(g_tdnames, g_ntypedefs, name);
+    g_tdtypes[g_ntypedefs] = type;
+    g_ntypedefs = g_ntypedefs + 1;
+}
+
+static int type_size(int type) {
+    int bt;
+    int pt;
+    int sidx;
+    bt = type & 255;
+    pt = (type >> 8) & 255;
+    if (pt > 0) return 4;
+    if (bt == TY_CHAR) return 1;
+    if (bt == TY_STRUCT) {
+        sidx = (type >> 16) & 127;
+        return g_ssizes[sidx];
+    }
+    return 4;
+}
+
+static int is_type_start(void) {
+    if (g_tok == TK_INT) return 1;
+    if (g_tok == TK_CHAR_KW) return 1;
+    if (g_tok == TK_VOID) return 1;
+    if (g_tok == TK_STRUCT) return 1;
+    if (g_tok == TK_UNSIGNED) return 1;
+    if (g_tok == TK_LONG) return 1;
+    if (g_tok == TK_CONST) return 1;
+    if (g_tok == TK_STATIC) return 1;
+    if (g_tok == TK_IDENT && find_typedef(g_tok_str) >= 0) return 1;
+    return 0;
+}
+
+static void lexer_save(void) {
+    int i;
+    g_save_pos = g_pos;
+    g_save_line = g_line;
+    g_save_tok = g_tok;
+    g_save_tok_val = g_tok_val;
+    g_save_tok_slen = g_tok_slen;
+    i = 0;
+    while (i <= g_tok_slen) {
+        g_save_tok_str[i] = g_tok_str[i];
+        i = i + 1;
+    }
+}
+
+static void lexer_restore(void) {
+    int i;
+    g_pos = g_save_pos;
+    g_line = g_save_line;
+    g_tok = g_save_tok;
+    g_tok_val = g_save_tok_val;
+    g_tok_slen = g_save_tok_slen;
+    i = 0;
+    while (i <= g_save_tok_slen) {
+        g_tok_str[i] = g_save_tok_str[i];
+        i = i + 1;
+    }
 }
 
 /* ---- Emit helpers ---- */
@@ -552,13 +714,57 @@ static void emit_jmp(int lbl) {
     emit("    jal r0, "); emit_lref(lbl); emit_ch('\n');
 }
 
-static void emit_prologue(void) {
-    emit("    addi r29, r29, -256\n    stw r29, r31, 252\n    stw r29, r30, 248\n    addi r30, r29, 256\n");
+static void emit_prologue_placeholder(void) {
+    int i;
+    g_prologue_pos = g_output_len;
+    i = 0;
+    while (i < 128) {
+        if (g_output_len < MAX_OUTPUT - 1) {
+            g_output[g_output_len] = ' ';
+            g_output_len = g_output_len + 1;
+        }
+        i = i + 1;
+    }
+    emit_ch('\n');
 }
 
-static void emit_epilogue(int rl) {
+static void emit_prologue_final(int frame_sz) {
+    int saved_len;
+    int stw31_off;
+    int stw30_off;
+    saved_len = g_output_len;
+    g_output_len = g_prologue_pos;
+    stw31_off = frame_sz - 4;
+    stw30_off = frame_sz - 8;
+    emit("    addi r29, r29, -");
+    emit_num(frame_sz);
+    emit("\n    stw r29, r31, ");
+    emit_num(stw31_off);
+    emit("\n    stw r29, r30, ");
+    emit_num(stw30_off);
+    emit("\n    addi r30, r29, ");
+    emit_num(frame_sz);
+    emit_ch('\n');
+    while (g_output_len < g_prologue_pos + 128) {
+        g_output[g_output_len] = ' ';
+        g_output_len = g_output_len + 1;
+    }
+    g_output_len = saved_len;
+}
+
+static void emit_epilogue(int rl, int frame_sz) {
+    int stw31_off;
+    int stw30_off;
+    stw31_off = frame_sz - 4;
+    stw30_off = frame_sz - 8;
     emit_ldef(rl);
-    emit("    ldw r31, r29, 252\n    ldw r30, r29, 248\n    addi r29, r29, 256\n    jalr r0, r31, 0\n");
+    emit("    ldw r31, r29, ");
+    emit_num(stw31_off);
+    emit("\n    ldw r30, r29, ");
+    emit_num(stw30_off);
+    emit("\n    addi r29, r29, ");
+    emit_num(frame_sz);
+    emit("\n    jalr r0, r31, 0\n");
 }
 
 static void emit_call(const char *name) {
@@ -575,6 +781,11 @@ static void emit_sym_name(char *buf, int idx) {
 
 static void lval_to_rval(void) {
     if (!g_lval) return;
+    /* Struct values stay as addresses - don't emit load */
+    if ((g_expr_type & 255) == TY_STRUCT && ((g_expr_type >> 8) & 255) == 0) {
+        g_lval = 0;
+        return;
+    }
     if ((g_expr_type & 255) == TY_CHAR && ((g_expr_type >> 8) & 255) == 0)
         emit("    ldb r1, r1, 0\n");
     else
@@ -591,9 +802,16 @@ static void emit_store_ind(int type) {
 
 static int ptr_scale(int type) {
     int pt;
+    int bt;
+    int sidx;
     pt = (type >> 8) & 255;
     if (pt == 0) return 0;
-    if ((type & 255) == TY_CHAR && pt == 1) return 1;
+    bt = type & 255;
+    if (bt == TY_CHAR && pt == 1) return 1;
+    if (bt == TY_STRUCT && pt == 1) {
+        sidx = (type >> 16) & 127;
+        return g_ssizes[sidx];
+    }
     return 4;
 }
 
@@ -604,11 +822,19 @@ static int emit_ptr_add(int lt, int rt) {
     rsc = ptr_scale(rt);
     if (lsc > 0 && rsc == 0) {
         if (lsc == 4) emit("    slli r1, r1, 2\n");
+        else if (lsc > 1) {
+            emit("    addi r11, r0, "); emit_num(lsc); emit_ch('\n');
+            emit("    mul r1, r1, r11\n");
+        }
         emit("    add r1, r2, r1\n");
         return lt;
     }
     if (lsc == 0 && rsc > 0) {
         if (rsc == 4) emit("    slli r2, r2, 2\n");
+        else if (rsc > 1) {
+            emit("    addi r11, r0, "); emit_num(rsc); emit_ch('\n');
+            emit("    mul r2, r2, r11\n");
+        }
         emit("    add r1, r2, r1\n");
         return rt;
     }
@@ -623,12 +849,20 @@ static int emit_ptr_sub(int lt, int rt) {
     rsc = ptr_scale(rt);
     if (lsc > 0 && rsc == 0) {
         if (lsc == 4) emit("    slli r1, r1, 2\n");
+        else if (lsc > 1) {
+            emit("    addi r11, r0, "); emit_num(lsc); emit_ch('\n');
+            emit("    mul r1, r1, r11\n");
+        }
         emit("    sub r1, r2, r1\n");
         return lt;
     }
     if (lsc > 0 && rsc > 0) {
         emit("    sub r1, r2, r1\n");
         if (lsc == 4) emit("    addi r2, r0, 2\n    sra r1, r1, r2\n");
+        else if (lsc > 1) {
+            emit("    addi r2, r0, "); emit_num(lsc); emit_ch('\n');
+            emit("    div r1, r1, r2\n");
+        }
         return TY_INT;
     }
     emit("    sub r1, r2, r1\n");
@@ -637,6 +871,10 @@ static int emit_ptr_sub(int lt, int rt) {
 
 static void emit_scale_r1(int sc) {
     if (sc == 4) emit("    slli r1, r1, 2\n");
+    else if (sc > 1) {
+        emit("    addi r11, r0, "); emit_num(sc); emit_ch('\n');
+        emit("    mul r1, r1, r11\n");
+    }
 }
 
 static void emit_global_addr(int gidx) {
@@ -645,6 +883,108 @@ static void emit_global_addr(int gidx) {
     emit(")\n    addi r1, r1, %lo(");
     emit_sym_name(g_gnames, gidx);
     emit(")\n");
+}
+
+/* ---- Struct parsing (forward-calls parse_base_type, parse_ptr_stars) ---- */
+static int parse_base_type(void);
+static int parse_ptr_stars(void);
+
+static void parse_struct_body(int sidx) {
+    int bt;
+    int pt;
+    int ftype;
+    int off;
+    int arr;
+    int fsz;
+    off = 0;
+    g_sfbase[sidx] = g_nfields;
+    while (g_tok != TK_RBRACE && g_tok != TK_EOF) {
+        bt = parse_base_type();
+        pt = parse_ptr_stars();
+        ftype = bt | (pt << 8);
+        if (g_tok != TK_IDENT) { cc_error("expected field name"); return; }
+        /* alignment: 4-align for non-char scalar types */
+        if (!((ftype & 255) == TY_CHAR && ((ftype >> 8) & 255) == 0)) {
+            off = ((off + 3) / 4) * 4;
+        }
+        if (g_nfields < MAX_FIELDS) {
+            sym_set_name(g_fdnames, g_nfields, g_tok_str);
+            g_fdtypes[g_nfields] = ftype;
+            g_fdoffs[g_nfields] = off;
+            g_nfields = g_nfields + 1;
+        }
+        next_token();
+        if (g_tok == TK_LBRACK) {
+            /* array field: e.g. char buf[N] */
+            next_token();
+            arr = g_tok_val;
+            expect(TK_NUM);
+            expect(TK_RBRACK);
+            fsz = 4;
+            if ((ftype & 255) == TY_CHAR && ((ftype >> 8) & 255) == 0) fsz = 1;
+            off = off + arr * fsz;
+        } else {
+            if ((ftype & 255) == TY_CHAR && ((ftype >> 8) & 255) == 0)
+                off = off + 1;
+            else
+                off = off + 4;
+        }
+        expect(TK_SEMI);
+    }
+    /* 4-align total size */
+    off = ((off + 3) / 4) * 4;
+    g_sfcount[sidx] = g_nfields - g_sfbase[sidx];
+    g_ssizes[sidx] = off;
+    expect(TK_RBRACE);
+}
+
+static int parse_struct_ref(void) {
+    char sn[128];
+    int sidx;
+    int named;
+    next_token(); /* consume 'struct' */
+    named = 0;
+    sn[0] = 0;
+    if (g_tok == TK_IDENT) {
+        str_copy(sn, g_tok_str, 128);
+        next_token();
+        named = 1;
+    }
+    if (g_tok == TK_LBRACE) {
+        /* struct definition with body */
+        if (named) {
+            sidx = find_struct(sn);
+            if (sidx < 0) sidx = add_struct(sn);
+        } else {
+            sidx = add_struct("");
+        }
+        next_token(); /* consume '{' */
+        parse_struct_body(sidx);
+        return TY_STRUCT | (sidx << 16);
+    }
+    /* struct reference without body - must be named */
+    if (!named) { cc_error("expected struct name or {"); return TY_INT; }
+    sidx = find_struct(sn);
+    if (sidx < 0) {
+        /* forward declaration - create empty struct entry */
+        sidx = add_struct(sn);
+    }
+    return TY_STRUCT | (sidx << 16);
+}
+
+static void parse_typedef(void) {
+    int bt;
+    int pt;
+    int type;
+    next_token(); /* consume 'typedef' */
+    bt = parse_base_type();
+    pt = parse_ptr_stars();
+    type = bt | (pt << 8);
+    if (g_tok == TK_IDENT) {
+        add_typedef(g_tok_str, type);
+        next_token();
+    }
+    expect(TK_SEMI);
 }
 
 /* ---- Expression parser ---- */
@@ -744,25 +1084,78 @@ static void parse_postfix(void) {
     int ebt;
     int ept;
     int esz;
+    int sidx;
+    int fi;
+    int foff;
+    int ftype;
     parse_primary();
-    while (g_tok == TK_LBRACK) {
-        btype = g_expr_type;
-        lval_to_rval();
-        emit_push();
-        next_token();
-        parse_expr();
-        lval_to_rval();
-        ept = (btype >> 8) & 255;
-        ebt = btype & 255;
-        if (ept > 0) ept = ept - 1;
-        esz = 4;
-        if (ebt == TY_CHAR && ept == 0) esz = 1;
-        if (esz == 4) emit("    slli r1, r1, 2\n");
-        emit_pop();
-        emit("    add r1, r2, r1\n");
-        g_lval = 1;
-        g_expr_type = ebt | (ept << 8);
-        expect(TK_RBRACK);
+    for (;;) {
+        if (g_tok == TK_LBRACK) {
+            btype = g_expr_type;
+            lval_to_rval();
+            emit_push();
+            next_token();
+            parse_expr();
+            lval_to_rval();
+            ept = (btype >> 8) & 255;
+            ebt = btype & 255;
+            if (ept > 0) ept = ept - 1;
+            esz = 4;
+            if (ebt == TY_CHAR && ept == 0) esz = 1;
+            if (ebt == TY_STRUCT && ept == 0) {
+                sidx = (btype >> 16) & 127;
+                esz = g_ssizes[sidx];
+            }
+            if (esz == 4) emit("    slli r1, r1, 2\n");
+            else if (esz != 1) {
+                emit("    addi r11, r0, "); emit_num(esz); emit_ch('\n');
+                emit("    mul r1, r1, r11\n");
+            }
+            emit_pop();
+            emit("    add r1, r2, r1\n");
+            g_lval = 1;
+            g_expr_type = ebt | (ept << 8);
+            if (ebt == TY_STRUCT) g_expr_type = g_expr_type | (((btype >> 16) & 127) << 16);
+            expect(TK_RBRACK);
+        } else if (g_tok == TK_DOT) {
+            /* r1 has struct address (lvalue) */
+            next_token();
+            if (g_tok != TK_IDENT) { cc_error("expected field name"); return; }
+            ebt = g_expr_type & 255;
+            if (ebt != TY_STRUCT) { cc_error(". requires struct"); return; }
+            sidx = (g_expr_type >> 16) & 127;
+            fi = find_field(sidx, g_tok_str);
+            if (fi < 0) { cc_error("unknown field"); next_token(); return; }
+            foff = g_fdoffs[fi];
+            ftype = g_fdtypes[fi];
+            if (foff != 0) {
+                emit("    addi r1, r1, "); emit_num(foff); emit_ch('\n');
+            }
+            g_expr_type = ftype;
+            g_lval = 1;
+            next_token();
+        } else if (g_tok == TK_ARROW) {
+            /* r1 has pointer to struct (lvalue or rvalue) */
+            lval_to_rval(); /* load the pointer */
+            next_token();
+            if (g_tok != TK_IDENT) { cc_error("expected field name"); return; }
+            ept = (g_expr_type >> 8) & 255;
+            ebt = g_expr_type & 255;
+            if (ept < 1 || ebt != TY_STRUCT) { cc_error("-> requires struct pointer"); return; }
+            sidx = (g_expr_type >> 16) & 127;
+            fi = find_field(sidx, g_tok_str);
+            if (fi < 0) { cc_error("unknown field"); next_token(); return; }
+            foff = g_fdoffs[fi];
+            ftype = g_fdtypes[fi];
+            if (foff != 0) {
+                emit("    addi r1, r1, "); emit_num(foff); emit_ch('\n');
+            }
+            g_expr_type = ftype;
+            g_lval = 1;
+            next_token();
+        } else {
+            break;
+        }
     }
 }
 
@@ -771,6 +1164,31 @@ static void parse_unary(void) {
     int bt;
     int pt;
     int sc;
+    int type;
+    if (g_tok == TK_SIZEOF) {
+        next_token();
+        if (g_tok == TK_LPAREN) {
+            next_token();
+            if (is_type_start()) {
+                bt = parse_base_type();
+                pt = parse_ptr_stars();
+                type = bt | (pt << 8);
+                expect(TK_RPAREN);
+                emit_li(type_size(type));
+            } else {
+                parse_expr();
+                type = g_expr_type;
+                expect(TK_RPAREN);
+                emit_li(type_size(type));
+            }
+        } else {
+            parse_unary();
+            type = g_expr_type;
+            emit_li(type_size(type));
+        }
+        g_lval = 0; g_expr_type = TY_INT;
+        return;
+    }
     if (g_tok == TK_BANG) {
         next_token(); parse_unary(); lval_to_rval();
         emit("    seq r1, r1, r0\n");
@@ -834,6 +1252,23 @@ static void parse_unary(void) {
             emit("    addi r1, r1, -"); emit_num(sc); emit("\n");
         }
         return;
+    }
+    /* Cast: (type)expr */
+    if (g_tok == TK_LPAREN) {
+        lexer_save();
+        next_token();
+        if (is_type_start()) {
+            bt = parse_base_type();
+            pt = parse_ptr_stars();
+            type = bt | (pt << 8);
+            expect(TK_RPAREN);
+            parse_unary();
+            lval_to_rval();
+            g_expr_type = type;
+            g_lval = 0;
+            return;
+        }
+        lexer_restore();
     }
     parse_postfix();
 }
@@ -992,10 +1427,28 @@ static void parse_compound(void) {
 
 static int parse_base_type(void) {
     int bt;
+    int ti;
     if (g_tok == TK_CONST) next_token();
     if (g_tok == TK_INT) { bt = TY_INT; next_token(); }
     else if (g_tok == TK_CHAR_KW) { bt = TY_CHAR; next_token(); }
     else if (g_tok == TK_VOID) { bt = TY_VOID; next_token(); }
+    else if (g_tok == TK_STRUCT) { bt = parse_struct_ref(); }
+    else if (g_tok == TK_UNSIGNED) {
+        next_token();
+        if (g_tok == TK_INT || g_tok == TK_LONG) next_token();
+        else if (g_tok == TK_CHAR_KW) { next_token(); bt = TY_CHAR; return bt; }
+        bt = TY_INT;
+    }
+    else if (g_tok == TK_LONG) {
+        next_token();
+        if (g_tok == TK_INT) next_token();
+        bt = TY_INT;
+    }
+    else if (g_tok == TK_IDENT) {
+        ti = find_typedef(g_tok_str);
+        if (ti >= 0) { bt = g_tdtypes[ti]; next_token(); }
+        else { bt = TY_INT; }
+    }
     else { bt = TY_INT; }
     return bt;
 }
@@ -1054,7 +1507,7 @@ static void parse_stmt(void) {
 
     if (g_tok == TK_LBRACE) { next_token(); parse_compound(); return; }
 
-    if (g_tok == TK_INT || g_tok == TK_CHAR_KW || g_tok == TK_CONST) {
+    if (is_type_start()) {
         parse_local_decl();
         return;
     }
@@ -1088,7 +1541,7 @@ static void parse_stmt(void) {
 
     if (g_tok == TK_FOR) {
         next_token(); expect(TK_LPAREN);
-        if (g_tok == TK_INT || g_tok == TK_CHAR_KW || g_tok == TK_CONST) {
+        if (is_type_start()) {
             bt = parse_base_type();
             pt = parse_ptr_stars();
             type = bt | (pt << 8);
@@ -1163,6 +1616,7 @@ static void parse_function(const char *fname, int rtype) {
     int bt;
     int pt;
     int ptype;
+    int frame_sz;
 
     emit(fname); emit(":\n    .global "); emit(fname); emit_ch('\n');
 
@@ -1178,13 +1632,7 @@ static void parse_function(const char *fname, int rtype) {
             next_token();
         } else {
             for (;;) {
-                if (g_tok == TK_CONST) next_token();
-                if (g_tok != TK_INT && g_tok != TK_CHAR_KW && g_tok != TK_VOID) {
-                    cc_error("expected param type"); break;
-                }
-                bt = TY_INT;
-                if (g_tok == TK_CHAR_KW) bt = TY_CHAR;
-                next_token();
+                bt = parse_base_type();
                 pt = parse_ptr_stars();
                 ptype = bt | (pt << 8);
                 if (g_tok != TK_IDENT) { cc_error("expected param name"); break; }
@@ -1200,7 +1648,7 @@ static void parse_function(const char *fname, int rtype) {
     add_func(fname, np, rtype);
     g_local_off = -12 - np * 4;
 
-    emit_prologue();
+    emit_prologue_placeholder();
     i = 0;
     while (i < np && i < 8) {
         emit("    stw r30, r"); emit_num(3 + i); emit(", ");
@@ -1210,7 +1658,14 @@ static void parse_function(const char *fname, int rtype) {
 
     expect(TK_LBRACE);
     parse_compound();
-    emit_epilogue(g_ret_label);
+
+    /* Compute dynamic frame size */
+    frame_sz = 0 - g_local_off;
+    frame_sz = ((frame_sz + 15) / 16) * 16;
+    if (frame_sz < 32) frame_sz = 32;
+
+    emit_prologue_final(frame_sz);
+    emit_epilogue(g_ret_label, frame_sz);
     emit_ch('\n');
 }
 
@@ -1218,6 +1673,7 @@ static void parse_global_decl(const char *name, int type) {
     int arr;
     int esz;
     int bsz;
+    int sidx;
     if (g_tok == TK_LBRACK) {
         next_token();
         arr = g_tok_val;
@@ -1225,11 +1681,21 @@ static void parse_global_decl(const char *name, int type) {
         expect(TK_RBRACK);
         esz = 4;
         if ((type & 255) == TY_CHAR && ((type >> 8) & 255) == 0) esz = 1;
+        if ((type & 255) == TY_STRUCT && ((type >> 8) & 255) == 0) {
+            sidx = (type >> 16) & 127;
+            esz = g_ssizes[sidx];
+        }
         bsz = arr * esz;
         bsz = ((bsz + 3) / 4) * 4;
         add_global(name, type, arr, bsz);
     } else {
-        add_global(name, type, 0, 4);
+        bsz = 4;
+        if ((type & 255) == TY_STRUCT && ((type >> 8) & 255) == 0) {
+            sidx = (type >> 16) & 127;
+            bsz = g_ssizes[sidx];
+            bsz = ((bsz + 3) / 4) * 4;
+        }
+        add_global(name, type, 0, bsz);
     }
     expect(TK_SEMI);
 }
@@ -1284,15 +1750,19 @@ static void parse_program(void) {
     char fn[128];
     emit("# Generated by cc-min\n.text\n");
     while (g_tok != TK_EOF) {
+        if (g_tok == TK_TYPEDEF) {
+            parse_typedef();
+            continue;
+        }
         if (g_tok == TK_STATIC) next_token();
-        if (g_tok == TK_CONST) next_token();
-        bt = TY_INT;
-        if (g_tok == TK_INT) { bt = TY_INT; next_token(); }
-        else if (g_tok == TK_CHAR_KW) { bt = TY_CHAR; next_token(); }
-        else if (g_tok == TK_VOID) { bt = TY_VOID; next_token(); }
-        else { next_token(); }
+        bt = parse_base_type();
         pt = parse_ptr_stars();
         rtype = bt | (pt << 8);
+        /* Handle standalone struct definition: struct foo { ... }; */
+        if (g_tok == TK_SEMI) {
+            next_token();
+            continue;
+        }
         if (g_tok != TK_IDENT) { cc_error("expected name"); break; }
         str_copy(fn, g_tok_str, 128);
         next_token();
@@ -1313,6 +1783,8 @@ int pass1_parse_to_ir(void) {
     g_loop_depth = 0; g_emit_to_for = 0; g_for_len = 0;
     g_lval = 0; g_expr_type = 0;
     g_nstrings = 0; g_str_pool_len = 0;
+    g_nstructs = 0; g_nfields = 0;
+    g_ntypedefs = 0;
     next_token();
     parse_program();
     g_output[g_output_len] = 0;
