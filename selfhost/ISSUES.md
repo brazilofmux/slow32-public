@@ -107,6 +107,77 @@ now works correctly in the stage05 selfhost libc build.
 
 ---
 
+## Stage 8: Subset C Compiler (`cc-min-pass1.c`)
+
+### 17. [BUG] `&&` and `||` Are Not Short-Circuiting
+The implementation of `TK_LAND` and `TK_LOR` in `emit_binop` evaluates both sides of the expression before performing the logical AND/OR.
+```c
+else if (tok == TK_LAND) emit("    sne r2, r2, r0\n    sne r1, r1, r0\n    and r1, r2, r1\n");
+```
+In standard C, these operators MUST short-circuit. This bug can lead to side effects occurring when they shouldn't (e.g., `if (p && *p)`) and violates the principle of least surprise for a C compiler.
+
+### 18. [BUG] `INT_MIN` Handling in `emit_num`
+The `emit_num` helper fails to correctly handle `INT_MIN` (-2147483648).
+```c
+if (v < 0) { neg = 1; v = 0 - v; }
+...
+while (v > 0) { ... }
+```
+When `v` is `INT_MIN`, `0 - v` is still `INT_MIN` due to two's complement overflow. The `while (v > 0)` loop will not execute, and the function will only emit a minus sign.
+
+### 19. [LIMITATION] Lack of Pointer Arithmetic Scaling
+While array indexing `[]` correctly scales by element size, general pointer arithmetic (e.g., `p + 1`) in `parse_binop` does not.
+```c
+static void parse_binop(int min_prec) {
+    ...
+    emit_binop(op);
+    g_lval = 0; g_expr_type = TY_INT;
+}
+```
+All binary operations currently result in `TY_INT` and perform raw integer arithmetic. Adding 1 to a `int *` will only advance it by 1 byte instead of 4.
+
+### 20. [SCALABILITY] Small Fixed-Size Symbol Tables and Buffers
+The compiler uses small fixed-size arrays for its symbol tables and buffers:
+- `MAX_LOCALS 64`, `MAX_GLOBALS 64`, `MAX_FUNCS 128`
+- `NAMESZ 32` (truncates identifiers longer than 31 characters)
+- `g_output[65536]` (64KB limit for generated assembly)
+These limits are sufficient for small test cases but will likely be exceeded when attempting to compile the full toolchain or larger programs during self-hosting.
+
+### 21. [CC] Caller-Side Argument Limit
+The compiler only supports up to 8 arguments in function calls, passed via registers `r3-r10`.
+```c
+while (k > 0) {
+    k = k - 1;
+    emit("    ldw r"); emit_num(3 + k); emit(", r29, 0\n    addi r29, r29, 4\n");
+}
+```
+If a function is called with more than 8 arguments, it will attempt to use non-existent or incorrect registers (`r11+`). The calling convention requires overflow arguments to be passed on the stack.
+
+### 22. [STABILITY] Hardcoded Stack Frame Size
+`emit_prologue` hardcodes a 256-byte stack frame for every function:
+```c
+emit("    addi r29, r29, -256\n    stw r29, r31, 252\n    stw r29, r30, 248\n    addi r30, r29, 256\n");
+```
+This is wasteful for small functions and will cause a stack overflow for functions with more than ~240 bytes of local variables/saved arguments.
+
+### 23. [INCOMPLETE] Comma Operator and `for` Loop Expressions
+The `for` loop parser only supports a single expression in the initialization, condition, and increment sections. Standard C allows multiple expressions separated by the comma operator, which is frequently used in `for` loops.
+
+### 24. [BUG] Global and Local Initialization Limitations
+- Global variables are only allocated in `.bss` with `.space`; they cannot be initialized at declaration.
+- Local variable initialization only works for scalar types (e.g., `int x = 5;`). Arrays cannot be initialized at declaration.
+
+### 25. [STABILITY] Empty Error Reporting
+The `cc_error` function is a stub.
+```c
+static void cc_error(const char *msg) {
+    /* Minimal error handler — no stdio dependency. */
+}
+```
+Providing no feedback on syntax or semantic errors makes debugging source code extremely difficult. Even a simple write to `stderr` or a halt would be preferable.
+
+---
+
 ## Documentation Opportunities
 
 ### 10. `ISA-ENCODING.md` Errors and Discrepancies
