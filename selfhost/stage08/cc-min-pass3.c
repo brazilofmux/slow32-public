@@ -1,23 +1,24 @@
-#include <stdio.h>
+/* cc-min pass3: write assembly output to file.
+ * Uses io_* wrappers from pass1 to avoid cc.fth long-call bug. */
 
 int ccmin_get_output_len(void);
 char *ccmin_get_output_buf(void);
 
 int pass3_emit_from_ir(const char *out_path) {
-    FILE *f;
+    int f;
     char *buf;
     int len;
     int i;
 
-    f = fopen(out_path, "wb");
+    f = io_fopen(out_path, "wb");
     if (!f) return 0;
     buf = ccmin_get_output_buf();
     len = ccmin_get_output_len();
     i = 0;
     while (i < len) {
-        fputc(buf[i], f);
+        io_fputc(buf[i], f);
         i = i + 1;
     }
-    if (fclose(f) != 0) return 0;
+    if (io_fclose(f) != 0) return 0;
     return 1;
 }

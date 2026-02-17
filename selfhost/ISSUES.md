@@ -176,6 +176,57 @@ static void cc_error(const char *msg) {
 ```
 Providing no feedback on syntax or semantic errors makes debugging source code extremely difficult. Even a simple write to `stderr` or a halt would be preferable.
 
+## Stage 4: C Compiler (`cc.fth`) — Long-Call Materialization Bug
+
+### 17. [BUG] Second Call to Auto-Declared Function Generates Variable-Access Code
+
+When cc.fth auto-declares an external function on first use (e.g., `fclose(f)`), it
+generates correct code: `call fclose` which the assembler turns into a JAL relocation or
+`lui+jalr` HI20/LO12 pair.
+
+However, on the **second and subsequent calls** to the same function, cc.fth generates
+the wrong instruction sequence — treating the function name as a **global variable**
+instead of a function:
+
+```
+; FIRST call to fclose — correct (direct call)
+    call fclose
+
+; SECOND call to fclose — incorrect (variable access + indirect call)
+    lui r2, %hi(fclose)
+    addi r2, r2, %lo(fclose)   ; computes address of fclose in .text
+    addi r1, r2, 0
+    ldw r1, r1, 0              ; loads instruction bytes (0xF00E8E90) as data!
+    ... push r1 ... pop r2 ...
+    jalr r31, r2, 0            ; jumps to garbage address → Execute fault
+```
+
+The `addi` (opcode 0x10) is used where `jalr` (opcode 0x41) should be. The linker
+correctly resolves the HI20/LO12 relocations to the function's .text address, but the
+generated code loads a **word from that address** (getting an instruction encoding) and
+tries to call it as a function pointer.
+
+**Root cause (hypothesis):** After the first `call func` pseudo-instruction, cc.fth
+adds `func` to an internal symbol table. On subsequent references, the compiler finds
+`func` in the symbol table and resolves it via the global-variable-access path
+(lui+addi+ldw) instead of the function-call path (lui+jalr or call).
+
+**Affected pattern:** Any external function called more than once in a single
+compilation unit. Functions declared via `#include <stdio.h>` are NOT affected because
+the explicit declaration keeps them in the function table. Only auto-declared (implicit)
+functions exhibit this bug.
+
+**Workaround (used in stage08 cc-min):** Define non-static wrapper functions that each
+call the external function exactly once. All other code uses the wrappers:
+```c
+int io_fopen(const char *p, const char *m) { return fopen(p, m); }
+int io_fclose(int f) { return fclose(f); }
+```
+
+**Impact:** Any stage05+ C program compiled by cc.fth that calls an auto-declared
+function more than once will crash at runtime. Programs that `#include <stdio.h>` (or
+other headers with explicit declarations) before calling these functions are unaffected.
+
 ---
 
 ## Documentation Opportunities

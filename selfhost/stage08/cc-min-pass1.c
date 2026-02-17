@@ -1,6 +1,17 @@
 /* cc-min pass1: parser + code generator
- * No #include <stdio.h> — cc.fth auto-declares fopen/fclose/fgetc.
- * This avoids the 32KB include-save-buffer limit in cc.fth. */
+ *
+ * No #include <stdio.h>: the merged source is ~37KB which exceeds cc.fth's
+ * 32KB include-save-buffer. Also, cc.fth has a bug where the second call to
+ * an auto-declared external function generates variable-access code (lui+addi
+ * +ldw) instead of a function call (lui+jalr). Wrapper functions below ensure
+ * each external I/O function is called exactly once via auto-declaration. */
+
+/* I/O wrappers — each external function called once, avoiding cc.fth bug */
+int io_fopen(const char *p, const char *m) { return fopen(p, m); }
+int io_fclose(int f) { return fclose(f); }
+int io_fgetc(int f) { return fgetc(f); }
+int io_fputc(int c, int f) { return fputc(c, f); }
+int io_fputs(const char *s, int f) { return fputs(s, f); }
 
 #define MAX_SRC 65536
 static char g_src[MAX_SRC];
@@ -41,17 +52,17 @@ static int g_nstrings;
 int ccmin_load_source(const char *path) {
     int f;
     int ch;
-    f = fopen(path, "rb");
+    f = io_fopen(path, "rb");
     if (!f) return 0;
     g_src_len = 0;
     for (;;) {
-        ch = fgetc(f);
+        ch = io_fgetc(f);
         if (ch < 0) break;
-        if (g_src_len >= MAX_SRC - 1) { fclose(f); return 0; }
+        if (g_src_len >= MAX_SRC - 1) { io_fclose(f); return 0; }
         g_src[g_src_len] = ch;
         g_src_len = g_src_len + 1;
     }
-    fclose(f);
+    io_fclose(f);
     g_src[g_src_len] = 0;
     return 1;
 }
