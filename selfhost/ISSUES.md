@@ -102,21 +102,15 @@ now works correctly in the stage05 selfhost libc build.
 
 ## Stage 8: Subset C Compiler (`cc-min-pass1.c`)
 
-### 17. [BUG] `&&` and `||` Are Not Short-Circuiting
-The implementation of `TK_LAND` and `TK_LOR` in `emit_binop` evaluates both sides of the expression before performing the logical AND/OR.
-```c
-else if (tok == TK_LAND) emit("    sne r2, r2, r0\n    sne r1, r1, r0\n    and r1, r2, r1\n");
-```
-In standard C, these operators MUST short-circuit. This bug can lead to side effects occurring when they shouldn't (e.g., `if (p && *p)`) and violates the principle of least surprise for a C compiler.
+### 17. [FIXED] `&&` and `||` Are Not Short-Circuiting
+`&&` and `||` now short-circuit in `parse_binop`: LHS is normalized to 0/1, then a
+conditional branch skips the RHS when the result is already determined. Verified by
+`min_short_circuit.c` test using side-effect counters.
 
-### 18. [BUG] `INT_MIN` Handling in `emit_num`
-The `emit_num` helper fails to correctly handle `INT_MIN` (-2147483648).
-```c
-if (v < 0) { neg = 1; v = 0 - v; }
-...
-while (v > 0) { ... }
-```
-When `v` is `INT_MIN`, `0 - v` is still `INT_MIN` due to two's complement overflow. The `while (v > 0)` loop will not execute, and the function will only emit a minus sign.
+### 18. [FIXED] `INT_MIN` Handling in `emit_num`
+Special-cased `INT_MIN` (-2147483648) to emit the literal string directly before
+the negate-and-loop path. Uses `-2147483647 - 1` in the comparison to avoid
+C literal overflow ambiguity.
 
 ### 19. [FIXED] Lack of Pointer Arithmetic Scaling
 `ptr + int`, `int + ptr`, `ptr - int`, and `ptr - ptr` now scale by element size.

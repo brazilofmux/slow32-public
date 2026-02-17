@@ -51,6 +51,7 @@ TEST_POINTER_IN="$SCRIPT_DIR/tests/min_pointer.c"
 TEST_GLOBAL_IN="$SCRIPT_DIR/tests/min_global.c"
 TEST_GLOBAL_ARRAY_IN="$SCRIPT_DIR/tests/min_global_array.c"
 TEST_PTR_ARITH_IN="$SCRIPT_DIR/tests/min_ptr_arith.c"
+TEST_SHORT_CIRCUIT_IN="$SCRIPT_DIR/tests/min_short_circuit.c"
 KEEP_ARTIFACTS=0
 REBUILD_LIBC="${STAGE8_REBUILD_LIBC:-0}"
 
@@ -121,7 +122,7 @@ fi
 for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$LINK_FTH" \
          "$SRC_PASS1" "$SRC_PASS2" "$SRC_PASS3" "$TEST_IN" "$TEST_RET_IN" "$TEST_EXPR_IN" "$TEST_LOCAL_IN" "$TEST_REL_IN" "$TEST_IF_TRUE_IN" "$TEST_IF_FALSE_IN" "$TEST_WHILE_IN" "$TEST_TWO_LOCALS_IN" "$TEST_HELPER_IN" "$TEST_HELPER_ARG_IN" "$TEST_HELPER_LOCAL_IN" "$TEST_MAIN_LOCAL_HELPER_IN" "$TEST_HELPER_TWO_ARGS_IN" "$TEST_HELPER_TWO_ARGS_IF_IN" \
          "$TEST_MULTI_FUNC_IN" "$TEST_FOR_LOOP_IN" "$TEST_NESTED_IF_IN" "$TEST_BREAK_CONTINUE_IN" "$TEST_GENERAL_NAMES_IN" "$TEST_COMPLEX_EXPR_IN" \
-         "$TEST_CHAR_TYPE_IN" "$TEST_CHAR_LITERAL_IN" "$TEST_LOCAL_ARRAY_IN" "$TEST_CHAR_ARRAY_IN" "$TEST_STRING_LIT_IN" "$TEST_POINTER_IN" "$TEST_GLOBAL_IN" "$TEST_GLOBAL_ARRAY_IN" "$TEST_PTR_ARITH_IN"; do
+         "$TEST_CHAR_TYPE_IN" "$TEST_CHAR_LITERAL_IN" "$TEST_LOCAL_ARRAY_IN" "$TEST_CHAR_ARRAY_IN" "$TEST_STRING_LIT_IN" "$TEST_POINTER_IN" "$TEST_GLOBAL_IN" "$TEST_GLOBAL_ARRAY_IN" "$TEST_PTR_ARITH_IN" "$TEST_SHORT_CIRCUIT_IN"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
 
@@ -379,6 +380,8 @@ run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-global.run.log" "$TEST_GLOBAL_IN" "$GEN_GL
 run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-global-array.run.log" "$TEST_GLOBAL_ARRAY_IN" "$GEN_GLOBAL_ARRAY_ASM"
 GEN_PTR_ARITH_ASM="$WORKDIR/min_ptr_arith.generated.s"
 run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-ptr-arith.run.log" "$TEST_PTR_ARITH_IN" "$GEN_PTR_ARITH_ASM"
+GEN_SHORT_CIRCUIT_ASM="$WORKDIR/min_short_circuit.generated.s"
+run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-short-circuit.run.log" "$TEST_SHORT_CIRCUIT_IN" "$GEN_SHORT_CIRCUIT_ASM"
 [[ -s "$GEN_ASM" ]] || { echo "cc-min produced no assembly output" >&2; exit 1; }
 [[ -s "$GEN_RET_ASM" ]] || { echo "cc-min produced no return-test assembly output" >&2; exit 1; }
 [[ -s "$GEN_EXPR_ASM" ]] || { echo "cc-min produced no expr-test assembly output" >&2; exit 1; }
@@ -409,6 +412,7 @@ run_exe "$CCMIN_EXE" "$WORKDIR/cc-min-ptr-arith.run.log" "$TEST_PTR_ARITH_IN" "$
 [[ -s "$GEN_GLOBAL_ASM" ]] || { echo "cc-min produced no global assembly output" >&2; exit 1; }
 [[ -s "$GEN_GLOBAL_ARRAY_ASM" ]] || { echo "cc-min produced no global-array assembly output" >&2; exit 1; }
 [[ -s "$GEN_PTR_ARITH_ASM" ]] || { echo "cc-min produced no ptr-arith assembly output" >&2; exit 1; }
+[[ -s "$GEN_SHORT_CIRCUIT_ASM" ]] || { echo "cc-min produced no short-circuit assembly output" >&2; exit 1; }
 grep -q '^main:' "$GEN_ASM" || { echo "generated assembly missing main label" >&2; exit 1; }
 
 # 4) Assemble, link with stage07 (artifact), then link/run with stage03 runtime.
@@ -514,6 +518,8 @@ run_exe "$AS_EXE" "$WORKDIR/stage5-as-global.run.log" "$GEN_GLOBAL_ASM" "$GEN_GL
 run_exe "$AS_EXE" "$WORKDIR/stage5-as-global-array.run.log" "$GEN_GLOBAL_ARRAY_ASM" "$GEN_GLOBAL_ARRAY_OBJ"
 GEN_PTR_ARITH_OBJ="$WORKDIR/min_ptr_arith.generated.s32o"
 run_exe "$AS_EXE" "$WORKDIR/stage5-as-ptr-arith.run.log" "$GEN_PTR_ARITH_ASM" "$GEN_PTR_ARITH_OBJ"
+GEN_SHORT_CIRCUIT_OBJ="$WORKDIR/min_short_circuit.generated.s32o"
+run_exe "$AS_EXE" "$WORKDIR/stage5-as-short-circuit.run.log" "$GEN_SHORT_CIRCUIT_ASM" "$GEN_SHORT_CIRCUIT_OBJ"
 [[ -s "$GEN_OBJ" ]] || { echo "stage05 assembler produced no object output" >&2; exit 1; }
 [[ -s "$GEN_RET_OBJ" ]] || { echo "stage05 assembler produced no return-test object output" >&2; exit 1; }
 [[ -s "$GEN_EXPR_OBJ" ]] || { echo "stage05 assembler produced no expr-test object output" >&2; exit 1; }
@@ -544,6 +550,7 @@ run_exe "$AS_EXE" "$WORKDIR/stage5-as-ptr-arith.run.log" "$GEN_PTR_ARITH_ASM" "$
 [[ -s "$GEN_GLOBAL_OBJ" ]] || { echo "stage05 assembler produced no global object output" >&2; exit 1; }
 [[ -s "$GEN_GLOBAL_ARRAY_OBJ" ]] || { echo "stage05 assembler produced no global-array object output" >&2; exit 1; }
 [[ -s "$GEN_PTR_ARITH_OBJ" ]] || { echo "stage05 assembler produced no ptr-arith object output" >&2; exit 1; }
+[[ -s "$GEN_SHORT_CIRCUIT_OBJ" ]] || { echo "stage05 assembler produced no short-circuit object output" >&2; exit 1; }
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld.run.log" "$GEN_OBJ" "$GEN_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-ret.run.log" "$GEN_RET_OBJ" "$GEN_RET_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-expr.run.log" "$GEN_EXPR_OBJ" "$GEN_EXPR_RAW_EXE"
@@ -583,6 +590,8 @@ run_exe "$LD_EXE" "$WORKDIR/stage7-ld-global.run.log" "$GEN_GLOBAL_OBJ" "$GEN_GL
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-global-array.run.log" "$GEN_GLOBAL_ARRAY_OBJ" "$GEN_GLOBAL_ARRAY_RAW_EXE"
 GEN_PTR_ARITH_RAW_EXE="$WORKDIR/min_ptr_arith.generated.raw.s32x"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-ptr-arith.run.log" "$GEN_PTR_ARITH_OBJ" "$GEN_PTR_ARITH_RAW_EXE"
+GEN_SHORT_CIRCUIT_RAW_EXE="$WORKDIR/min_short_circuit.generated.raw.s32x"
+run_exe "$LD_EXE" "$WORKDIR/stage7-ld-short-circuit.run.log" "$GEN_SHORT_CIRCUIT_OBJ" "$GEN_SHORT_CIRCUIT_RAW_EXE"
 [[ -s "$GEN_RAW_EXE" ]] || { echo "stage07 linker produced no executable output" >&2; exit 1; }
 [[ -s "$GEN_RET_RAW_EXE" ]] || { echo "stage07 linker produced no return-test executable output" >&2; exit 1; }
 [[ -s "$GEN_EXPR_RAW_EXE" ]] || { echo "stage07 linker produced no expr-test executable output" >&2; exit 1; }
@@ -613,6 +622,7 @@ run_exe "$LD_EXE" "$WORKDIR/stage7-ld-ptr-arith.run.log" "$GEN_PTR_ARITH_OBJ" "$
 [[ -s "$GEN_GLOBAL_RAW_EXE" ]] || { echo "stage07 linker produced no global executable output" >&2; exit 1; }
 [[ -s "$GEN_GLOBAL_ARRAY_RAW_EXE" ]] || { echo "stage07 linker produced no global-array executable output" >&2; exit 1; }
 [[ -s "$GEN_PTR_ARITH_RAW_EXE" ]] || { echo "stage07 linker produced no ptr-arith executable output" >&2; exit 1; }
+[[ -s "$GEN_SHORT_CIRCUIT_RAW_EXE" ]] || { echo "stage07 linker produced no short-circuit executable output" >&2; exit 1; }
 link_forth_with_libc "$GEN_OBJ" "$GEN_EXE" "$WORKDIR/stage3-link.run.log"
 link_forth_with_libc "$GEN_RET_OBJ" "$GEN_RET_EXE" "$WORKDIR/stage3-link-ret.run.log"
 link_forth_with_libc "$GEN_EXPR_OBJ" "$GEN_EXPR_EXE" "$WORKDIR/stage3-link-expr.run.log"
@@ -652,6 +662,8 @@ link_forth_with_libc "$GEN_GLOBAL_OBJ" "$GEN_GLOBAL_EXE" "$WORKDIR/stage3-link-g
 link_forth_with_libc "$GEN_GLOBAL_ARRAY_OBJ" "$GEN_GLOBAL_ARRAY_EXE" "$WORKDIR/stage3-link-global-array.run.log"
 GEN_PTR_ARITH_EXE="$WORKDIR/min_ptr_arith.generated.s32x"
 link_forth_with_libc "$GEN_PTR_ARITH_OBJ" "$GEN_PTR_ARITH_EXE" "$WORKDIR/stage3-link-ptr-arith.run.log"
+GEN_SHORT_CIRCUIT_EXE="$WORKDIR/min_short_circuit.generated.s32x"
+link_forth_with_libc "$GEN_SHORT_CIRCUIT_OBJ" "$GEN_SHORT_CIRCUIT_EXE" "$WORKDIR/stage3-link-short-circuit.run.log"
 run_exe "$GEN_EXE" "$WORKDIR/gen.run.log"
 RET_RC=0
 run_exe_any_rc "$GEN_RET_EXE" "$WORKDIR/gen-ret.run.log" || RET_RC=$?
@@ -854,6 +866,13 @@ run_exe_any_rc "$GEN_PTR_ARITH_EXE" "$WORKDIR/gen-ptr-arith.run.log" || PTR_ARIT
 if [[ "$PTR_ARITH_RC" -ne 0 ]]; then
     echo "ptr-arith test executable had unexpected exit code: $PTR_ARITH_RC (expected 0)" >&2
     tail -n 60 "$WORKDIR/gen-ptr-arith.run.log" >&2
+    exit 1
+fi
+SHORT_CIRCUIT_RC=0
+run_exe_any_rc "$GEN_SHORT_CIRCUIT_EXE" "$WORKDIR/gen-short-circuit.run.log" || SHORT_CIRCUIT_RC=$?
+if [[ "$SHORT_CIRCUIT_RC" -ne 0 ]]; then
+    echo "short-circuit test executable had unexpected exit code: $SHORT_CIRCUIT_RC (expected 0)" >&2
+    tail -n 60 "$WORKDIR/gen-short-circuit.run.log" >&2
     exit 1
 fi
 

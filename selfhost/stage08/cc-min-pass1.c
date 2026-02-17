@@ -492,6 +492,10 @@ static void emit_num(int v) {
     char buf[12];
     int i;
     int neg;
+    if (v == -2147483647 - 1) {
+        emit("-2147483648");
+        return;
+    }
     neg = 0;
     if (v < 0) { neg = 1; v = 0 - v; }
     i = 0;
@@ -531,6 +535,14 @@ static void emit_bz(int lbl) {
     int skip;
     skip = new_label();
     emit("    bne r1, r0, "); emit_lref(skip); emit_ch('\n');
+    emit("    jal r0, "); emit_lref(lbl); emit_ch('\n');
+    emit_ldef(skip);
+}
+
+static void emit_bnz(int lbl) {
+    int skip;
+    skip = new_label();
+    emit("    beq r1, r0, "); emit_lref(skip); emit_ch('\n');
     emit("    jal r0, "); emit_lref(lbl); emit_ch('\n');
     emit_ldef(skip);
 }
@@ -857,8 +869,7 @@ static void emit_binop(int tok) {
     else if (tok == TK_AMP) emit("    and r1, r2, r1\n");
     else if (tok == TK_CARET) emit("    xor r1, r2, r1\n");
     else if (tok == TK_PIPE) emit("    or r1, r2, r1\n");
-    else if (tok == TK_LAND) emit("    sne r2, r2, r0\n    sne r1, r1, r0\n    and r1, r2, r1\n");
-    else if (tok == TK_LOR) emit("    sne r2, r2, r0\n    sne r1, r1, r0\n    or r1, r2, r1\n");
+    /* TK_LAND/TK_LOR handled by short-circuit path in parse_binop */
 }
 
 static void parse_binop(int min_prec) {
@@ -866,8 +877,7 @@ static void parse_binop(int min_prec) {
     int p;
     int lhs_type;
     int rhs_type;
-    int lsc;
-    int rsc;
+    int sc_label;
     parse_unary();
     for (;;) {
         p = binop_prec(g_tok);
@@ -876,6 +886,20 @@ static void parse_binop(int min_prec) {
         lhs_type = g_expr_type;
         lval_to_rval();
         next_token();
+        if (op == TK_LAND || op == TK_LOR) {
+            emit("    sne r1, r1, r0\n");
+            sc_label = new_label();
+            if (op == TK_LAND)
+                emit_bz(sc_label);
+            else
+                emit_bnz(sc_label);
+            parse_binop(p + 1);
+            lval_to_rval();
+            emit("    sne r1, r1, r0\n");
+            emit_ldef(sc_label);
+            g_lval = 0; g_expr_type = TY_INT;
+            continue;
+        }
         emit_push();
         parse_binop(p + 1);
         lval_to_rval();
