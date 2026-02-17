@@ -1,43 +1,41 @@
-# Stage07: Subset-C Linker Replacement (Spike)
+# Stage 07: Subset-C Linker
 
-This stage starts the C-subset linker track (`.s32o + .s32a -> .s32x`).
+## What Is Here
 
-Current spike scope:
-- Build `s32-ld.c` through the existing selfhost pipeline (`stage04 -> stage01 -> stage03`).
-- Run the resulting linker to link a tiny single-object program (`main: halt`).
-- Execute the produced `.s32x` on the selected emulator.
+A C-based replacement for the Stage 03 Forth linker. Links `.s32o`
+object files and resolves symbols from `.s32a` archives to produce
+`.s32x` executables.
 
-Current constraints in `s32-ld.c`:
-- Primary `.s32o` plus optional bounded aux input (`.s32o` or `.s32a`).
-- Archive support is bounded and symbol-aware (single selected member, no first-member fallback).
-- Bounded relocation support for `REL_32`, `REL_HI20`, `REL_LO12`,
-  `REL_BRANCH`, and `REL_JAL`.
+| File/Dir | Description |
+|----------|-------------|
+| `s32-ld.c` | Linker source (subset C) |
+| `run-spike.sh` | Spike test runner |
+| `run-archive-spike.sh` | Archive-resolution test scaffold |
+| `run-reloc-bisect.sh` | Relocation codegen bisect helper |
 
-Relocation spike run (recommended gate while widening):
+## What It Needs
+
+- Stage 00 emulator (`s32-emu`)
+- Stage 04 compiler, Stage 01 assembler, Stage 03 linker (to build)
+- `libc/` from Stage 05
+- `crt0_minimal.s` and `mmio_minimal.s` from Stage 01
+
+## What It Produces
+
+`.s32x` executable files from `.s32o` objects and `.s32a` archives.
+Supports section merging (`.text/.data/.rodata/.bss`), relocations
+(`REL_32`, `REL_HI20`, `REL_LO12`, `REL_BRANCH`, `REL_JAL`), and
+symbol-aware archive member resolution.
+
+## How To Test
 
 ```bash
-selfhost/stage07/run-spike.sh --emu ./tools/emulator/slow32-fast --with-reloc-spike
-```
-
-Run:
-
-```bash
+# Basic linker spike
 selfhost/stage07/run-spike.sh --emu ./tools/emulator/slow32-fast
-```
 
-Relocation-codegen bisect helper:
+# With relocation spike
+selfhost/stage07/run-spike.sh --emu ./tools/emulator/slow32-fast --with-reloc-spike
 
-```bash
-selfhost/stage07/run-reloc-bisect.sh --emu ./tools/emulator/slow32-fast
-```
-
-Archive-resolution spike scaffold:
-
-```bash
+# Archive resolution
 selfhost/stage07/run-archive-spike.sh --emu ./tools/emulator/slow32-fast
 ```
-
-Two-lane archive spike modes:
-- `--mode direct`: pass `.s32a` directly to stage07 linker (expected pass).
-- `--mode extract`: extract first member and pass it as optional aux object input
-  to stage07 linker (expected pass).

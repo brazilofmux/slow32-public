@@ -1,56 +1,46 @@
-# Stage08: Pragmatic Archiver Parity Gate
+# Stage 08: Subset-C Compiler (cc-min)
 
-This stage is a practical widening step before `cc.c` work: it hardens the
-subset-C archiver (`s32-ar.c`) across the expected command surface.
+## What Is Here
 
-Gate commands covered:
-- `c` create
-- `rc` replace/create
-- `t/x` list/extract
-- `d` delete
-- `m` move-to-end
-- `v/p` verbose/list + print-member
-- `cs` bounded symbol-scan path
+Two things: an archiver parity gate that validates Stage 06, and
+`cc-min` -- the first C compiler written in C. This is where the
+bootstrap turns recursive: a C compiler compiling C.
 
-Run:
+| File/Dir | Description |
+|----------|-------------|
+| `cc-min.c` | Main driver |
+| `cc-min-pass1.c` | Pass 1: parse subset C into a tiny IR |
+| `cc-min-pass2.c` | Pass 2: IR validation and range checking |
+| `cc-min-pass3.c` | Pass 3: emit SLOW-32 assembly from IR |
+| `tests/` | 15 minimal test programs |
+| `run-regression.sh` | Runs both archiver parity and cc-min spike |
+| `run-cc-spike.sh` | Builds and end-to-end tests cc-min |
+
+## What It Needs
+
+- Stage 00 emulator (`s32-emu`)
+- Stage 04 compiler (`cc.fth`) to build cc-min itself
+- Stage 01 assembler and Stage 03 linker (to build cc-min)
+- Stage 05 assembler (to assemble cc-min's output)
+- Stage 07 linker (to link cc-min's output)
+- `libc/` from Stage 05
+
+## What It Produces
+
+`.s` assembly files from `.c` source files. The accepted subset is
+growing: return values, const expressions, local variables, `if/else`,
+`while`, function calls with 0-2 parameters, and conditional
+expressions.
+
+The pipeline is: cc-min compiles `.c` to `.s`, Stage 05 assembles
+`.s` to `.s32o`, Stage 07 links `.s32o` to `.s32x`, emulator runs it.
+
+## How To Test
 
 ```bash
+# Full regression (archiver parity + cc-min spike)
 selfhost/stage08/run-regression.sh --emu ./tools/emulator/slow32-fast
-```
 
-First compiler-in-C spike:
-
-```bash
+# Just the compiler spike
 selfhost/stage08/run-cc-spike.sh --emu ./tools/emulator/slow32-fast
 ```
-
-Primary Stage08 compiler source:
-- `selfhost/stage08/cc-min.c`
-- `selfhost/stage08/cc-min-pass1.c`
-- `selfhost/stage08/cc-min-pass2.c`
-- `selfhost/stage08/cc-min-pass3.c`
-
-Current `cc-min` pipeline shape (Stage08 multipass skeleton):
-- Pass 1 (`pass1_parse_to_ir`): parse accepted subset-C into tiny IR state.
-- Pass 2 (`pass2_validate_ir`): IR validation / codegen-prep checks.
-- Pass 3 (`pass3_emit_from_ir`): emit target assembly from IR.
-
-This preserves current behavior but provides explicit boundaries for
-next-step features (for example variadic-function producer support).
-
-Current `cc-min` accepted source shape:
-- `int main(void) { return <const-expr>; }`
-  where `<const-expr>` currently supports integer literals, `+ - * /`,
-  unary `!`, relational/equality (`< <= > >= == !=`), and parentheses.
-- `int main(void) { int x; x = <const-expr>; return x; }`
-- `int main(void) { if (<const-expr>) return <const-expr>; return <const-expr>; }`
-- `int main(void) { int x; x = <const-expr>; while (x) x = x - 1; return x; }`
-- `int helper(void) { return <const-expr>; } int main(void) { return helper(); }`
-- `int helper(int a) { return a [+/- <int>]; } int main(void) { return helper(<const-expr>); }`
-- `int helper(int a) { int t; t = a [+/- <int>]; return t; } int main(void) { return helper(<const-expr>); }`
-- `int helper(int a, int b) { return a + b; } int main(void) { return helper(<const-expr>, <const-expr>); }`
-- `int helper(int a, int b) { if (a < b) return a; return b; } int main(void) { return helper(<const-expr>, <const-expr>); }`
-
-`run-regression.sh` now runs both:
-- archiver parity gate (`c/rc/t/x/d/m/v/p/cs`)
-- `cc-min` end-to-end spike
