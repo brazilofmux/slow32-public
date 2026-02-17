@@ -14,6 +14,9 @@ CC_FTH="${STAGE8_CC_FTH:-$ROOT_DIR/selfhost/stage04/cc.fth}"
 ASM_FTH="${STAGE8_ASM_FTH:-$ROOT_DIR/selfhost/stage01/asm.fth}"
 LINK_FTH="${STAGE8_LINK_FTH:-$ROOT_DIR/selfhost/stage03/link.fth}"
 SRC="${STAGE8_CC_MIN_SRC:-$SCRIPT_DIR/cc-min.c}"
+SRC_PASS1="${STAGE8_CC_MIN_PASS1_SRC:-$SCRIPT_DIR/cc-min-pass1.c}"
+SRC_PASS2="${STAGE8_CC_MIN_PASS2_SRC:-$SCRIPT_DIR/cc-min-pass2.c}"
+SRC_PASS3="${STAGE8_CC_MIN_PASS3_SRC:-$SCRIPT_DIR/cc-min-pass3.c}"
 TEST_IN="${STAGE8_TEST_IN:-$SCRIPT_DIR/tests/min_main.c}"
 TEST_RET_IN="${STAGE8_TEST_RET_IN:-$SCRIPT_DIR/tests/min_ret7.c}"
 TEST_EXPR_IN="${STAGE8_TEST_EXPR_IN:-$SCRIPT_DIR/tests/min_ret_expr.c}"
@@ -70,7 +73,7 @@ if [[ "$EMU" != /* ]]; then
     EMU="$ROOT_DIR/$EMU"
 fi
 
-for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH" "$TEST_IN" "$TEST_RET_IN" "$TEST_EXPR_IN" "$TEST_LOCAL_IN" "$TEST_REL_IN" "$TEST_IF_TRUE_IN" "$TEST_IF_FALSE_IN" "$TEST_WHILE_IN" "$TEST_TWO_LOCALS_IN" "$TEST_HELPER_IN" "$TEST_HELPER_ARG_IN" "$TEST_HELPER_LOCAL_IN" "$TEST_MAIN_LOCAL_HELPER_IN" "$TEST_HELPER_TWO_ARGS_IN" "$TEST_HELPER_TWO_ARGS_IF_IN"; do
+for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH" "$SRC_PASS1" "$SRC_PASS2" "$SRC_PASS3" "$TEST_IN" "$TEST_RET_IN" "$TEST_EXPR_IN" "$TEST_LOCAL_IN" "$TEST_REL_IN" "$TEST_IF_TRUE_IN" "$TEST_IF_FALSE_IN" "$TEST_WHILE_IN" "$TEST_TWO_LOCALS_IN" "$TEST_HELPER_IN" "$TEST_HELPER_ARG_IN" "$TEST_HELPER_LOCAL_IN" "$TEST_MAIN_LOCAL_HELPER_IN" "$TEST_HELPER_TWO_ARGS_IN" "$TEST_HELPER_TWO_ARGS_IF_IN"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
 
@@ -199,10 +202,15 @@ BYE" "$log"
 }
 
 # 1) Build cc-min compiler executable.
+# Keep pass sources split on disk, but concatenate for now so Stage08 can
+# run on the current subset-C toolchain without multi-TU linkage pitfalls.
+CCMIN_MERGED_SRC="$WORKDIR/cc-min.merged.c"
+cat "$SRC_PASS1" "$SRC_PASS2" "$SRC_PASS3" "$SRC" > "$CCMIN_MERGED_SRC"
+
 CCMIN_ASM="$WORKDIR/cc-min.s"
-CCMIN_OBJ="$WORKDIR/cc-min.s32o"
+CCMIN_OBJ="$WORKDIR/cc-min-main.s32o"
 CCMIN_EXE="$WORKDIR/cc-min.s32x"
-compile_c_stage4 "$SRC" "$CCMIN_ASM" "$WORKDIR/cc-min.cc.log"
+compile_c_stage4 "$CCMIN_MERGED_SRC" "$CCMIN_ASM" "$WORKDIR/cc-min.cc.log"
 assemble_forth "$CCMIN_ASM" "$CCMIN_OBJ" "$WORKDIR/cc-min.as.log"
 link_forth "$CCMIN_OBJ" "$CCMIN_EXE" "$WORKDIR/cc-min.ld.log"
 

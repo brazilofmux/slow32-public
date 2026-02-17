@@ -26,6 +26,9 @@ selfhost/stage08/run-cc-spike.sh --emu ./tools/emulator/slow32-fast
 
 Primary Stage08 compiler source:
 - `selfhost/stage08/cc-min.c`
+- `selfhost/stage08/cc-min-pass1.c`
+- `selfhost/stage08/cc-min-pass2.c`
+- `selfhost/stage08/cc-min-pass3.c`
 
 Current `cc-min` pipeline shape (Stage08 multipass skeleton):
 - Pass 1 (`pass1_parse_to_ir`): parse accepted subset-C into tiny IR state.
