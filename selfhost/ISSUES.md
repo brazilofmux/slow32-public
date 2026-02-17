@@ -117,12 +117,11 @@ C literal overflow ambiguity.
 `++`/`--` and `+=`/`-=` on pointers also scale correctly.
 Verified by `min_ptr_arith.c` test (int* advances by 4, char* by 1, ptr-ptr divides).
 
-### 20. [SCALABILITY] Small Fixed-Size Symbol Tables and Buffers
-The compiler uses small fixed-size arrays for its symbol tables and buffers:
-- `MAX_LOCALS 64`, `MAX_GLOBALS 64`, `MAX_FUNCS 128`
-- `NAMESZ 32` (truncates identifiers longer than 31 characters)
-- `g_output[65536]` (64KB limit for generated assembly)
-These limits are sufficient for small test cases but will likely be exceeded when attempting to compile the full toolchain or larger programs during self-hosting.
+### 20. [FIXED] Small Fixed-Size Symbol Tables and Buffers
+All limits bumped to support self-hosting-scale programs:
+- `MAX_LOCALS` 64→128, `MAX_GLOBALS` 64→256, `MAX_FUNCS` 128→256
+- `NAMESZ` 32→48, name buffers proportionally increased
+- `MAX_OUTPUT` 65536→131072 (128KB), `MAX_STRINGS` 128→512, `STR_POOL_SZ` 4096→16384
 
 ### 21. [CC] Caller-Side Argument Limit
 The compiler only supports up to 8 arguments in function calls, passed via registers `r3-r10`.

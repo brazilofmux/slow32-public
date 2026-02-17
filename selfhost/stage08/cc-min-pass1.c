@@ -4,12 +4,13 @@
  * 32KB include-save-buffer. External I/O functions are auto-declared. */
 
 #define MAX_SRC 65536
+#define MAX_OUTPUT 131072
 static char g_src[MAX_SRC];
 static int g_src_len;
 static int g_pos;
 static int g_line;
 
-static char g_output[65536];
+static char g_output[MAX_OUTPUT];
 static int g_output_len;
 
 static char g_for_buf[4096];
@@ -31,8 +32,8 @@ static int g_lval;
 static int g_expr_type;
 
 /* String pool */
-#define MAX_STRINGS 128
-#define STR_POOL_SZ 4096
+#define MAX_STRINGS 512
+#define STR_POOL_SZ 16384
 static char g_str_pool[STR_POOL_SZ];
 static int g_str_offs[MAX_STRINGS];
 static int g_str_lens[MAX_STRINGS];
@@ -322,11 +323,11 @@ static int expect(int tok) {
 }
 
 /* ---- Symbol tables ---- */
-#define MAX_LOCALS 64
-#define MAX_FUNCS 128
-#define NAMESZ 32
-#define LNBUF_SZ 2048
-#define FNBUF_SZ 4096
+#define MAX_LOCALS 128
+#define MAX_FUNCS 256
+#define NAMESZ 48
+#define LNBUF_SZ 6144
+#define FNBUF_SZ 12288
 static char g_lnames[LNBUF_SZ];
 static int g_loffs[MAX_LOCALS];
 static int g_ltypes[MAX_LOCALS];
@@ -339,8 +340,8 @@ static int g_fparams[MAX_FUNCS];
 static int g_fret[MAX_FUNCS];
 static int g_nfuncs;
 
-#define MAX_GLOBALS 64
-#define GNBUF_SZ 2048
+#define MAX_GLOBALS 256
+#define GNBUF_SZ 12288
 static char g_gnames[GNBUF_SZ];
 static int g_gtypes[MAX_GLOBALS];
 static int g_gsizes[MAX_GLOBALS];
@@ -474,7 +475,7 @@ static void emit(const char *s) {
         if (g_emit_to_for) {
             if (g_for_len < 4095) { g_for_buf[g_for_len] = s[i]; g_for_len = g_for_len + 1; }
         } else {
-            if (g_output_len < 65535) { g_output[g_output_len] = s[i]; g_output_len = g_output_len + 1; }
+            if (g_output_len < MAX_OUTPUT - 1) { g_output[g_output_len] = s[i]; g_output_len = g_output_len + 1; }
         }
         i = i + 1;
     }
@@ -484,7 +485,7 @@ static void emit_ch(int c) {
     if (g_emit_to_for) {
         if (g_for_len < 4095) { g_for_buf[g_for_len] = c; g_for_len = g_for_len + 1; }
     } else {
-        if (g_output_len < 65535) { g_output[g_output_len] = c; g_output_len = g_output_len + 1; }
+        if (g_output_len < MAX_OUTPUT - 1) { g_output[g_output_len] = c; g_output_len = g_output_len + 1; }
     }
 }
 
