@@ -26,6 +26,24 @@ make
 ./tools/emulator/slow32 program.s32x
 ```
 
+## Binary Artifact Policy
+
+Some SLOW-32 binaries are intentionally checked into git because they are
+bootstrap assets and host-agnostic across little-endian machines.
+
+- Tracked bootstrap artifacts:
+  - `forth/kernel.s32x`
+  - `runtime/libc_debug.s32a`
+  - `runtime/libc_mmio.s32a`
+  - `runtime/libs32.s32a`
+- Not tracked:
+  - Host-native tool executables (for example `selfhost/stage00/s32-emu`,
+    `tools/utilities/slow32dump`)
+  - Rebuildable app/regression executables (`*.s32x` outputs)
+
+Note: current checked-in binaries assume little-endian hosts. Big-endian
+support is not currently a bootstrap target.
+
 ## Architecture Overview
 
 - **32-bit RISC-like ISA** with 32 registers (r0 hardwired to zero)
