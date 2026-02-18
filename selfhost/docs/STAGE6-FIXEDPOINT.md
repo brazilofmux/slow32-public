@@ -1,6 +1,6 @@
 # Stage 6: Verification and Fixed-Point Proof
 
-> **V2 cross-reference:** V2 has three fixed-point stages: **Stage 9** (Subset C), **Stage 13** (Full C), and **Stage 16** (Optimized) in [BOOTSTRAP-V2.md](BOOTSTRAP-V2.md). Each layer proves Gen2 == Gen3 independently.
+> **V2 cross-reference:** V2 has two fixed-point checkpoints today: **Stage 9** (Subset C) and **Stage 16** (final optimized toolchain) in [BOOTSTRAP-V2.md](BOOTSTRAP-V2.md). Additional fixed-point gates may be inserted as the full C plan (Stage 13+) solidifies.
 >
 > **Status:** This document is a legacy V1-style explanation. For active milestone tracking and sequencing, use `BOOTSTRAP-V2.md`.
 

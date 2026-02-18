@@ -1,13 +1,13 @@
 # SLOW-32 Self-Hosting Bootstrap Plan (V2)
 
-This document supersedes [BOOTSTRAP.md](BOOTSTRAP.md) (retained as historical reference).
+This is the canonical bootstrap roadmap. Earlier V1 documents have been retired so this file remains the single source of truth.
 
 ## Philosophy
 
 Three principles guide this plan:
 
 1. **Each stage is narrow.** One new tool or one new capability. Specific prerequisites, specific outputs, specific verification.
-2. **Three self-hosting layers.** Forth rebuilds itself. Subset C rebuilds itself. Full C rebuilds itself. Each layer proves something different.
+2. **Layered cycles.** Every cycle rebuilds the assembler/archiver/linker/compiler stack with stricter constraints (Forth → Subset C on Forth → Subset C on itself → Full C). Each cycle ends with a proof gate so regressions cannot hide.
 3. **Trust is auditable.** The only opaque binary is the Stage 0 emulator (~780 lines of C). Everything else is built from inspectable source.
 
 ### Why Fine-Grained Stages
@@ -21,16 +21,16 @@ Fine-grained stages give you:
 - **Visible progress.** "Stage 7 of 16" is more motivating than "somewhere in Stage 2."
 - **Natural parallelism.** Independent stages can be worked on concurrently.
 
-### Why Three Self-Hosting Layers
+### Why Layered Cycles
 
-Each layer answers a different question:
+Each pass through the assembler/archiver/linker/compiler stack answers a different question:
 
-- **Forth self-hosting** (Stages 1-3): Do the assembler, archiver, and linker actually work? Can they rebuild the kernel that hosts them? This is cheap to verify and catches tool bugs early.
-- **Subset C self-hosting** (Stages 4-9): Does the C compiler work? Can it compile itself? This is the critical layer — it transitions the entire toolchain from Forth to C.
-- **Full C self-hosting** (Stages 10-13): Can the compiler handle real-world C? Varargs, function pointers, complex expressions? This proves the toolchain is practical, not just a toy.
-- **Optimization** (Stages 14-16): Can we make it fast? This is optional but satisfying.
+- **Forth cycle** (Stages 1-4): Do the Forth tools actually work, and can they rebuild the kernel that hosts them (fixed-point proof lives inside Stage 4)?
+- **Subset C on Forth** (Stages 5-9): Can the subset C compiler run, replace every Forth tool, and compile itself? This is the transition from Forth to C.
+- **Subset C on itself** (Stages 10-12): Can the subset C toolchain, running purely on its own output, hit feature parity with the production tools in `tools/`? No compromises, no Forth fallback.
+- **Full C and beyond** (Stage 13+): Can the compiler handle real-world C (varargs, unions, function pointers) and eventually optimize itself? These stages may split further as the implementation plan solidifies.
 
-None of these layers is redundant. Forth self-hosting is a prerequisite for building the C compiler. Subset C self-hosting eliminates the Forth dependency. Full C self-hosting eliminates the subset restriction. Each layer stands on the previous one.
+None of these cycles is redundant. Each constrains the next: Forth work proves the kernel, the first Subset C cycle removes Forth from the pipeline, the second cycle removes the "subset" qualifier from the tools themselves, and the Full C cycle opens the door to a general-purpose compiler stack.
 
 
 ## Overview
@@ -54,17 +54,20 @@ Layer C: Subset C Self-Hosting
   Stage 9:  Subset C fixed-point    Gen2 == Gen3
             ✓ CHECKPOINT: Entire toolchain is C. Forth no longer needed.
 
-Layer D: Full C Self-Hosting
-  Stage 10: Full emulator           enhanced Stage 0 (or self-hosted emulator)
-  Stage 11: Full C compiler         extend compiler with advanced features
-  Stage 12: Full C toolchain        rebuild everything with full compiler
-  Stage 13: Full C fixed-point      Gen2 == Gen3
-            ✓ CHECKPOINT: Full C toolchain is self-hosting.
+Layer D: Subset C Parity (Self-Hosted)
+  Stage 10: Subset C assembler (parity)        .s → .s32o with full tool support
+  Stage 11: Subset C archiver (parity)         .s32o → .s32a with archive/scan parity
+  Stage 12: Subset C linker   (parity)         .s32o + .s32a → .s32x, feature-complete
+            ✓ CHECKPOINT: Subset C toolchain matches `tools/` while running on itself.
 
-Layer E: Optimization
-  Stage 14: Optimizing compiler     add optimization passes
-  Stage 15: Optimized toolchain     rebuild everything optimized
-  Stage 16: Final fixed-point       Gen2 == Gen3
+Layer E: Full C Bring-Up
+  Stage 13: Full C compiler (Layer 1)          varargs, unions, function pointers, etc.
+            ✓ CHECKPOINT: Full C compiler online. Later layers break down optimizer/runtime work.
+
+Layer F: Future Optimizations
+  Stage 14: Follow-on compiler layers          optimizer, ABI polish, runtime expansion
+  Stage 15: Advanced toolchain rebuild         rebuild everything with new layers
+  Stage 16: Final fixed-point                  Gen2 == Gen3 with optimizations enabled
             ✓ CHECKPOINT: Optimized toolchain is self-hosting. Bootstrap complete.
 ```
 
@@ -82,13 +85,13 @@ Layer E: Optimization
 | 7 | C Linker | Subset C | ~2,500 | Stages 0-6 |
 | 8 | C Compiler (in C) | Subset C | ~5,000 | Stages 0-7 |
 | 9 | Fixed-point | (verification) | — | Stage 8 |
-| 10 | Full Emulator | C | ~1,500 | Stages 0-9 |
-| 11 | Full Compiler | C | ~7,000 | Stages 0-10 |
-| 12 | Full Toolchain | C | (rebuild) | Stages 0-11 |
-| 13 | Fixed-point | (verification) | — | Stage 12 |
-| 14 | Optimizer | C | ~2,000+ | Stages 0-13 |
-| 15 | Optimized Toolchain | C | (rebuild) | Stage 14 |
-| 16 | Fixed-point | (verification) | — | Stage 15 |
+| 10 | Parity Assembler | Subset C | ~1,700 | Stage 9 |
+| 11 | Parity Archiver | Subset C | ~900 | Stage 10 |
+| 12 | Parity Linker | Subset C | ~2,700 | Stage 11 |
+| 13 | Full C Compiler (Layer 1) | C | 7,000+ | Stage 12 |
+| 14 | Full C Layers (optimizers/runtime) | C | TBD | Stage 13 |
+| 15 | Full Toolchain Rebuild | C | (rebuild) | Stage 14 |
+| 16 | Final Fixed-point | (verification) | — | Stage 15 |
 
 
 ---
@@ -465,192 +468,207 @@ At this point, you can throw away the Forth kernel and tools. The C toolchain is
 
 ---
 
-## Layer D: Full C Self-Hosting
+## Layer D: Subset C Parity (Self-Hosted)
 
-The subset C toolchain is functional but limited. Real-world C programs use varargs, function pointers, unions, and other features the subset compiler doesn't handle. This layer extends the compiler to handle them.
+The Stage 5-8 cycle proved that Subset C can replace every Forth tool. Layer D reruns that cycle but insists on two constraints: (1) every binary is produced by the Stage 9 fixed-point compiler running on itself, and (2) the resulting assembler/archiver/linker are drop-in compatible with the production tools in `tools/`. No shortcuts, no missing directives, no reliance on "progressive" modes.
 
-### Stage 10: Full Emulator
-
-The Stage 0 emulator is deliberately minimal — enough for Forth and subset C toolchain work. But real-world C programs need more. Try porting SLOW BASIC to the minimal emulator and you'll feel every missing piece.
+### Stage 10: Subset C Assembler (Self-Hosted Parity)
 
 - **You need:**
 
-  - Stages 0-9 (working subset C toolchain).
-
-- **What the full emulator adds over Stage 0:**
-
-  - **Floating point instructions.** Software float routines in libc (`strtod`, `dtoa`, math functions) are pure integer code, but the compiler may need to handle `float`/`double` types, and programs like SLOW BASIC use floating point pervasively. The emulator needs to execute any FP instructions the compiler emits (even if they're just "move bits around" operations for soft-float calling conventions).
-  - **Complete MMIO ring buffer coverage.** Stage 0 handles the basics (open, read, write, close, stat, brk, exit). Full programs need the complete set: seek, truncate, rename, unlink, mkdir, getcwd, environment access, and correct edge-case behavior (partial reads, error returns, etc.).
-  - **Service negotiation protocol.** Dynamic MMIO service registration (opcodes 0xF0-0xF4). Needed for terminal services and any future extensions.
-  - **Larger memory and robust bounds checking.** The subset toolchain fits comfortably in default memory. A full C compiler compiling large programs (MY-BASIC is ~10K lines) needs more heap, more stack, and the emulator should catch out-of-bounds accesses instead of silently corrupting.
-  - **Debugging features.** Trace mode, breakpoints, register display, memory watchpoints. Not strictly required for self-hosting, but debugging full C programs without them is painful.
+  - Stage 9 (Gen2) toolchain and runtime objects built under it.
+  - Assembler sources (`s32-as.c` / `slow32asm.c`) plus the regression suite from `tools/`.
 
 - **You produce:**
 
-  - An emulator capable of running any SLOW-32 program — not just toolchain components, but real applications.
+  - `s32-as.s32x` compiled entirely by Gen2/Gen3 that matches the production assembler's command-line interface, directive set, macro handling, relocation coverage, and diagnostic behavior.
 
-- **Several paths:**
+- **Build pipeline (fully self-hosted):**
 
-  1. **Port a full emulator.** If the host has an existing C (or really any) compiler that targets the native platform, you can port the slow32.c (interpreter) or slow32-fast.c (pre-decode/function call) emulators to the new host. If you feel particularly ambitious, you can attempt something equivalent to the QEMU TCG or SLOW-32 DBT emulators.
-  2. **Cross-compile from a secondary host.** Use a C cross-compiler on another machine to compile a full emulator for your target platform.
-  3. **Self-hosted cross-compiler.** In your new Subset C, you can write a cross-compiler or a translator that targets native code. The result is a SLOW-32 binary (running under Stage 0) that produces a native emulator.
-  4. **Enhance Stage 0 manually.** The s32-emu.c code was a reference. You could have implemented it with whatever facilities the target offered. Now would be the time to manually enhance that.
-
-  Path 1 is practical because most platforms offer a C compiler. Path 2 is also practical but requires access to a secondary host. Path 3 is the most self-contained — everything stays on the target — but requires writing a native code generator in Subset C. Path 4 is certainly possible -- if tedious. Any choice works.
-
-- **You can now:**
-
-  - Run full C programs: SLOW BASIC, MY-BASIC, or anything that uses floats, complex I/O, or larger memory.
-  - Develop and debug the full C compiler (Stage 11) in a capable environment.
-
-- **Verification:**
-
-  - Run the full regression suite (all 23+ tests).
-  - Run SLOW BASIC test suite (29 tests) or equivalent complex workload.
-  - Compare behavior with reference emulators (`slow32`, `slow32-fast`).
-
-
-### Stage 11: Full C Compiler
-
-Extend the subset C compiler to handle the full language features needed for real-world programs.
-
-- **You need:**
-
-  - Stages 0-10.
-  - Extended compiler source (evolves from `cc.c`).
-
-- **New features to add:**
-
-  - **Varargs:** `va_list`, `va_start`, `va_arg`, `va_end`. Needed for real `printf`.
-  - **Function pointers:** Declaration, assignment, calling through pointers. Needed for callbacks, qsort, etc.
-  - **Unions.**
-  - **Full preprocessor:** `#if` constant expressions, macro expansion with arguments, stringification (`#`), token pasting (`##`).
-  - **Wider type support:** Possibly 64-bit integers, `size_t`, complete type promotion rules.
-  - **Designated initializers** for arrays (not just structs).
+  ```
+  Gen2 cc   compiles s32-as.c → s32-as.s
+  Gen2 as   assembles        → s32-as.s32o
+  Gen2 ld   links            → s32-as.s32x
+  ```
 
 - **You can now:**
 
-  - Compile programs that use standard C idioms.
-  - Compile the existing toolchain sources (`slow32asm.c`, `s32-ld.c`, etc.) without modification.
+  - Assemble every workload (kernel, runtime, regression corpus, libs32) with the self-hosted toolchain alone.
+  - Retire the Stage 5 "progressive" modes — this binary is the canonical assembler.
 
 - **Verification:**
 
-  - Compile and run complex programs (MY-BASIC, SLOW BASIC, or equivalent).
-  - Compile the existing toolchain source code.
-  - Pass the full regression test suite.
+  - Run the Stage 04/05 regression corpus plus targeted assembler stress tests (macro expansion, pseudo-ops, `.incbin`, `.org`, relocations, listing output).
+  - Compare `.s32o` output with the `tools/slow32asm` baseline (bit-identical when possible, functionally identical otherwise).
+  - Ensure diagnostics (error locations, warning text) align with `tools/`.
 
 
-### Stage 12: Full C Toolchain
-
-Rebuild the entire toolchain with the full C compiler.
+### Stage 11: Subset C Archiver (Self-Hosted Parity)
 
 - **You need:**
 
-  - Stage 11 (full C compiler).
+  - Stage 10 assembler parity (the tool feeds itself now).
+  - Archiver sources and test archives from `tools/`.
 
 - **You produce:**
 
-  - Full C versions of: assembler, archiver, linker, compiler.
-  - Full runtime library with real `printf`, `stdio`, `stdlib`, `string`, etc.
-  - The compiler compiles itself.
+  - `s32-ar.s32x` with deterministic member ordering, scan tables, and symbol indices identical to the production archiver, including edge cases such as empty members, long filenames, and archive rescan heuristics.
+
+- **Build pipeline:**
+
+  ```
+  Gen2 cc   compiles s32-ar.c → s32-ar.s
+  Stage10 as assembles        → s32-ar.s32o
+  Gen2 ld   links             → s32-ar.s32x
+  ```
 
 - **You can now:**
 
-  - Compile essentially any C program that fits the SLOW-32 memory model.
-  - The toolchain handles its own source code natively.
+  - Produce runtime and libc archives using only the self-hosted tools.
+  - Exercise archive scanning/resolution logic inside later linker stages without falling back to Forth or host-built binaries.
 
 - **Verification:**
 
-  - All tools produce correct output.
-  - Full regression suite passes.
-  - Can compile and run the existing example programs.
+  - Archive the runtime/libc objects, list/extract members, and compare binary layouts with `tools/s32-ar`.
+  - Mirror the `tools/` regression suite (category directories `c/rc/t/x/d/m/v/p` plus archive-scan parity).
+  - Confirm deterministic byte-for-byte archives across repeated builds.
 
 
-### Stage 13: Full C Fixed-Point
+### Stage 12: Subset C Linker (Self-Hosted Parity)
 
-- **Process:**
+- **You need:**
 
-  1. Full C compiler compiles itself → Gen2.
-  2. Gen2 compiles itself → Gen3.
-  3. Verify: **Gen2 == Gen3**.
+  - Stage 11 archiver parity (archives produced by the self-hosted toolchain).
+  - Linker sources aligned with `tools/s32-ld` plus comprehensive relocation and archive-resolution fixtures.
 
-- **Also verify:**
+- **You produce:**
 
-  - Rebuild all tools with Gen2, verify they work.
-  - Compare behavior with LLVM-compiled toolchain (semantic equivalence).
+  - `s32-ld.s32x` that resolves every relocation type (REL32, HI20/LO12, branch, jal, weak/strong symbols, archive member selection) exactly like the production linker, while also matching injected symbol semantics and memory maps.
+
+- **Build pipeline:**
+
+  ```
+  Gen2 cc   compiles s32-ld.c → s32-ld.s
+  Stage10 as assembles        → s32-ld.s32o
+  Stage11 ar supplies libs32  → *.s32a
+  Gen2 ld   links             → s32-ld.s32x
+  ```
+
+- **You can now:**
+
+  - Link Stage 04+ workloads, the kernel, and the self-hosting compiler stack with a self-contained C toolchain.
+  - Run regression gates that insist on identical `.s32x` layouts compared to the `tools/` linker.
+
+- **Verification:**
+
+  - Execute relocation spike suites (branch/jal/pc-relative), archive member resolution tests, and real program builds.
+  - Compare generated `.s32x` binaries against `tools/s32-ld` output (diff sections, symbol tables, relocation logs).
+  - Rebuild the Forth kernel and ensure the bit-for-bit check matches the earlier Stage 03 benchmark.
 
 
-### Checkpoint: Full C Self-Hosted
+### Checkpoint: Subset C Parity
 
-The full C toolchain is self-hosting. It can compile real-world C programs, including itself. The bootstrap chain is fully auditable from Stage 0 emulator through this point.
+Stages 10-12 prove that the Stage 9 fixed-point compiler can reproduce the shipping assembler/archiver/linker without help. The bootstrap stack is now:
+
+```
+Stage 0 emulator → Forth cycle (Stages 1-4) → Subset C on Forth (Stages 5-9) → Subset C on itself (Stages 10-12)
+```
+
+Every binary needed for day-to-day development now comes from the self-hosted subset C pipeline, with outputs matching the main `tools/` tree.
 
 
 ---
 
-## Layer E: Optimization
+## Layer E: Full C Bring-Up
 
-Optional but rewarding. An unoptimized compiler produces correct but slow code (accumulator model, no register allocation, no constant folding). Adding optimization passes makes the compiled programs — including the compiler itself — significantly faster.
+Layer E is where the compiler stops being "Subset C" and becomes "C." Expect this work to split across multiple sub-stages (parser extensions, code generation, runtime/libc upgrades, emulator support). Stage 13 tracks the first major milestone: a compiler that understands the features real programs rely on.
 
-### Stage 14: Optimizing Compiler
+### Stage 13: Full C Compiler (Layer 1)
 
 - **You need:**
 
-  - Stages 0-13 (full C toolchain).
+  - Stages 0-12 (parity-proven subset C toolchain).
+  - Extended compiler sources (evolutions of `cc.c`) plus runtime/libc updates to exercise the new language surface.
 
-- **You produce:**
+- **New features to add (initial list):**
 
-  - A C compiler with optimization passes. Candidates:
-    - **Constant folding and propagation.** Evaluate constant expressions at compile time.
-    - **Dead code elimination.** Remove unreachable code and unused variables.
-    - **Register allocation.** Move beyond the accumulator model; use available registers.
-    - **Common subexpression elimination.** Avoid recomputing the same expression.
-    - **Peephole optimization.** Pattern-match and simplify instruction sequences.
-    - **Strength reduction.** Replace expensive operations (multiply) with cheaper ones (shift).
-    - **Inlining** of small functions.
+  - **Varargs:** `va_list`, `va_start`, `va_arg`, `va_end` so real `printf` works.
+  - **Function pointers** and indirect calls.
+  - **Unions** and richer struct initialization (designated initializers, nested aggregates).
+  - **Full preprocessor** parity: `#if` expressions, token pasting, stringification, macro recursion limits.
+  - **Type width and promotion fixes:** 64-bit integers, `size_t`, `ptrdiff_t`, correct integer promotions, signedness rules.
+  - **Runtime/ABI polish:** calling conventions for new types, stack frame layout, alignment rules, better debug info.
 
 - **You can now:**
 
-  - Produce faster code.
+  - Compile the existing C toolchain sources (`slow32asm.c`, `s32-ld.c`, `libs32`) without rewriting them into the subset.
+  - Target external programs that expect a "normal" C compiler.
 
 - **Verification:**
 
-  - Optimized programs must produce **identical results** to unoptimized (same inputs → same outputs).
-  - Run the full test suite at each optimization level.
-  - Benchmark to measure improvement.
+  - Compile and run MY-BASIC, SLOW BASIC, or another complex workload that uses unions, varargs, and function pointers.
+  - Rebuild the toolchain using the new compiler and compare against LLVM-built binaries for behavioral parity.
+  - Expand the regression suite to include headers and libc functions that were previously out-of-scope.
+
+This stage may branch into sub-targets (parser uplift, semantic analysis overhaul, runtime work). Track them inside `selfhost/stage13/` and promote them to new numbered stages when the scope solidifies.
 
 
-### Stage 15: Optimized Toolchain
+---
+
+## Layer F: Future Optimizations
+
+Layer F placeholders capture the remaining work once the full C compiler exists. Right now the plan maps them to "make it fast and prove it again," but the exact content may evolve as Stage 13 lands.
+
+### Stage 14: Follow-On Compiler Layers
 
 - **You need:**
 
-  - Stage 14 (optimizing compiler).
+  - Stage 13 (full C compiler) with a stable runtime.
 
 - **You produce:**
 
-  - Rebuild the entire toolchain with optimization enabled.
-  - Everything runs faster: compiler, assembler, linker, archiver.
+  - Advanced compiler improvements: optimizer passes (constant folding, DCE, register allocation, peephole), improved code generation, ABI cleanups, richer debug info, and emulator/runtime enhancements demanded by larger programs.
+
+- **You can now:**
+
+  - Generate materially faster code while keeping behavior identical to the unoptimized builds.
 
 - **Verification:**
 
-  - All tools still function correctly.
-  - Measurable performance improvement on benchmarks.
+  - Every optimization level must pass the regression suite.
+  - Benchmarks (compiler throughput, runtime performance) should demonstrate measurable wins.
+
+
+### Stage 15: Full Toolchain Rebuild
+
+- **You need:**
+
+  - Stage 14 (enhanced compiler layers).
+
+- **You produce:**
+
+  - A rebuilt toolchain (assembler, archiver, linker, compiler, libc, emulator if upgraded) using the optimized/final compiler configuration.
+
+- **Verification:**
+
+  - End-to-end rebuild scripts (`make`, `regression/run-tests.sh`, Stage walkthroughs) pass without falling back to older compilers.
+  - Compare performance of the rebuilt binaries against previous stages to ensure the optimizations provide value.
 
 
 ### Stage 16: Final Fixed-Point
 
 - **Process:**
 
-  1. Optimizing compiler compiles itself (with optimization) → Gen2.
+  1. Optimized compiler compiles itself (with the new layers enabled) → Gen2.
   2. Gen2 compiles itself → Gen3.
   3. Verify: **Gen2 == Gen3**.
 
-- **This is the hardest fixed-point.** Optimizer bugs often manifest as incorrect self-compilation. If Gen2 == Gen3, the optimizer is self-consistent.
+- **This is the hardest fixed-point.** Any optimizer or ABI bug often shows up here as a self-recompilation mismatch.
 
 - **Also verify:**
 
-  - Rebuild all tools with Gen2, run full test suite.
-  - Cross-verify with LLVM-compiled binaries (semantic equivalence, not bit-equality).
-  - Optionally: Diverse Double-Compiling (DDC) — compile with an independent compiler and compare.
+  - Rebuild all tools with Gen2, run the full regression suite, and compare behavior against LLVM-built binaries (semantic equivalence).
+  - Optional: run Diverse Double-Compiling (DDC) checks using an external compiler.
 
 
 ### Checkpoint: Bootstrap Complete
@@ -766,11 +784,9 @@ Option 3 is probably the right balance. The exact split depends on what the subs
 
 ### On the Full Emulator
 
-The Stage 0 emulator is deliberately austere — enough for Forth and the subset C toolchain, nothing more. Full C programs (SLOW BASIC, MY-BASIC, anything with floating point or complex I/O) need a real emulator: complete MMIO coverage, floating point instruction support, robust memory management, debugging features. Stage 10 is a genuine build step, not just a verification gate.
+The Stage 0 emulator is deliberately austere — enough for Forth and the subset C toolchain, nothing more. Full C programs (SLOW BASIC, MY-BASIC, anything with floating point or complex I/O) still need a richer emulator: complete MMIO coverage, floating point instruction semantics, robust memory management, debugging features. That work no longer has its own numbered stage, but it remains a **Stage 13/14 deliverable**. Treat emulator upgrades as part of "full C bring-up" exit criteria.
 
-The simplest path is enhancing `s32-emu.c` on the host. It grows from ~780 to ~1,500 lines but remains auditable.
-
-The ambitious path is building a SLOW-32 emulator in C, compiled by the self-hosted toolchain, running on Stage 0 (metacircular emulation). Slow, but it proves the toolchain handles non-trivial code. And if the full C toolchain can compile a DBT (dynamic binary translator) — SLOW-32 translating SLOW-32 blocks to... SLOW-32 blocks with optimized dispatch — that's a serious validation of the compiler's capability, even if the performance story is ironic.
+The simplest path is enhancing `s32-emu.c` on the host. It grows from ~780 to ~1,500 lines but remains auditable. The ambitious path is building a SLOW-32 emulator in C, compiled by the self-hosted toolchain, running on Stage 0 (metacircular emulation). Slow, but it proves the toolchain handles non-trivial code. And if the full C toolchain can compile a DBT (dynamic binary translator) — SLOW-32 translating SLOW-32 blocks to... SLOW-32 blocks with optimized dispatch — that's a serious validation of the compiler's capability, even if the performance story is ironic.
 
 ### On Three vs. Two Self-Hosting Layers
 
@@ -793,5 +809,4 @@ You could also skip the Subset C layer and go straight to Full C. This is a wors
 - [STAGE3-LINKER.md](STAGE3-LINKER.md) — Forth linker specification (Stage 3).
 - [STAGE4-COMPILER.md](STAGE4-COMPILER.md) — C compiler specification (Stage 4).
 - [STAGE5-SELFHOST.md](STAGE5-SELFHOST.md) — Self-hosting procedure (Stages 5-9, 11-12).
-- [STAGE6-FIXEDPOINT.md](STAGE6-FIXEDPOINT.md) — Fixed-point verification (Stages 9, 13, 16).
-- [BOOTSTRAP.md](BOOTSTRAP.md) — Original (V1) bootstrap plan (historical reference).
+- [STAGE6-FIXEDPOINT.md](STAGE6-FIXEDPOINT.md) — Fixed-point verification (Stages 9 and 16).

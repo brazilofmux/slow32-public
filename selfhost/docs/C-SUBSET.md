@@ -1,6 +1,6 @@
 # C Language Subset for Self-Hosting
 
-> **V2 cross-reference:** Defines the language scope for **Stage 4** (Subset C compiler) in [BOOTSTRAP-V2.md](BOOTSTRAP-V2.md). The Full C compiler (**Stage 11**) extends beyond this subset.
+> **V2 cross-reference:** Defines the language scope for **Stage 4** (Subset C compiler) in [BOOTSTRAP-V2.md](BOOTSTRAP-V2.md). The Full C compiler (**Stage 13**) extends beyond this subset.
 
 ## Overview
 

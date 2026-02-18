@@ -1,6 +1,6 @@
 # Selfhost V2 Workspace
 
-This tree is the target layout for the 17-stage bootstrap model in `selfhost/docs/BOOTSTRAP-V2.md`.
+This tree tracks the multi-cycle bootstrap plan captured in `selfhost/stage-status.md` (derived from `selfhost/docs/BOOTSTRAP-V2.md`).
 
 Current policy:
 - Keep existing `selfhost/stage*` paths working while migration is in progress.
@@ -8,7 +8,15 @@ Current policy:
 - Update tests/CI scripts in lockstep with each stage move.
 
 Stage directories:
-- `stage00` through `stage16` map 1:1 to V2 stage numbers.
+- `stage00` through `stage16` map 1:1 to the current V2 stage numbers.
+
+Stage cycles at a glance:
+- `stage00`: standalone ~800 line emulator that every other stage relies on.
+- `stage01`–`stage04`: assembler/archiver/linker/compiler written in Forth, with the Forth kernel fixed-point proof landing inside Stage04.
+- `stage05`–`stage08`: the same four tools now authored in Subset C but still hosted by the Forth toolchain.
+- `stage09`: Subset C fixed-point proof (Subset C compiling itself).
+- `stage10`–`stage12`: another assembler/archiver/linker pass, this time fully self-hosted in Subset C and chasing feature parity with `tools/`.
+- `stage13+`: full C compiler bring-up; exact layer breakdown will crystalize as the implementation roadmap settles.
 
 Primary tracking docs:
 - `selfhost/V2-REORG-PLAN.md`
@@ -38,5 +46,5 @@ Manual per-stage entry points:
 - `stage04`: `selfhost/stage04/run-regression.sh`
 - `stage05`: `selfhost/stage05/run-pipeline.sh --mode progressive-as --test test1`
 - `stage06`: `selfhost/stage05/run-pipeline.sh --mode stage6-ar-smoke` and `... stage6-ar-rc-smoke` and `... stage6-ar-tx-smoke`
-- `stage07` (spike): `selfhost/stage07/run-spike.sh --emu ./tools/emulator/slow32-fast`
-- `stage08` (pragmatic archiver parity): `selfhost/stage08/run-regression.sh --emu ./tools/emulator/slow32-fast`
+- `stage07` (Subset C linker spike): `selfhost/stage07/run-spike.sh --emu ./tools/emulator/slow32-fast`
+- `stage08` (Subset C compiler gate): `selfhost/stage08/run-regression.sh --emu ./tools/emulator/slow32-fast`
