@@ -2,48 +2,35 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="${SELFHOST_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
-    ROOT_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
-fi
+SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
-EMU="${SELFHOST_EMU:-$ROOT_DIR/tools/emulator/slow32}"
+EMU="${SELFHOST_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
 KERNEL="${SELFHOST_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${SELFHOST_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 EMU_EXPLICIT=0
 
-CC_FTH="${SELFHOST_CC_FTH:-$ROOT_DIR/selfhost/stage04/cc.fth}"
-ASM_FTH="${SELFHOST_ASM_FTH:-$ROOT_DIR/selfhost/stage01/asm.fth}"
-LINK_FTH="${SELFHOST_LINK_FTH:-$ROOT_DIR/selfhost/stage03/link.fth}"
-AR_FTH="${SELFHOST_AR_FTH:-$ROOT_DIR/selfhost/stage02/ar.fth}"
+CC_FTH="${SELFHOST_CC_FTH:-$SELFHOST_DIR/stage04/cc.fth}"
+ASM_FTH="${SELFHOST_ASM_FTH:-$SELFHOST_DIR/stage01/asm.fth}"
+LINK_FTH="${SELFHOST_LINK_FTH:-$SELFHOST_DIR/stage03/link.fth}"
+AR_FTH="${SELFHOST_AR_FTH:-$SELFHOST_DIR/stage02/ar.fth}"
 
-TEST_DIR="${SELFHOST_TEST_DIR:-$ROOT_DIR/selfhost/stage04/tests}"
-VALIDATION_DIR="${SELFHOST_VALIDATION_DIR:-$ROOT_DIR/selfhost/stage04/validation}"
-STAGE5_AS_SRC="${SELFHOST_STAGE5_AS_SRC:-$ROOT_DIR/selfhost/stage05/s32-as.c}"
-STAGE6_AR_SRC="${SELFHOST_STAGE6_AR_SRC:-$ROOT_DIR/selfhost/stage06/s32-ar.c}"
-STAGE6_AR_SCAN_SRC="${SELFHOST_STAGE6_AR_SCAN_SRC:-$ROOT_DIR/selfhost/stage06/s32-ar-scan.c}"
-LIBC_DIR="$ROOT_DIR/selfhost/stage05/libc"
-CRT0_SRC="$ROOT_DIR/selfhost/stage01/crt0_minimal.s"
-MMIO_SRC="$ROOT_DIR/selfhost/stage01/mmio_minimal.s"
+TEST_DIR="${SELFHOST_TEST_DIR:-$SELFHOST_DIR/stage04/tests}"
+VALIDATION_DIR="${SELFHOST_VALIDATION_DIR:-$SELFHOST_DIR/stage04/validation}"
+STAGE5_AS_SRC="${SELFHOST_STAGE5_AS_SRC:-$SCRIPT_DIR/s32-as.c}"
+STAGE6_AR_SRC="${SELFHOST_STAGE6_AR_SRC:-$SELFHOST_DIR/stage06/s32-ar.c}"
+STAGE6_AR_SCAN_SRC="${SELFHOST_STAGE6_AR_SCAN_SRC:-$SELFHOST_DIR/stage06/s32-ar-scan.c}"
+LIBC_DIR="$SCRIPT_DIR/libc"
+CRT0_SRC="$SCRIPT_DIR/crt0.s"
+MMIO_SRC="$SCRIPT_DIR/mmio.s"
+MMIO_NO_START_SRC="$SCRIPT_DIR/mmio_no_start.s"
 
 MODE="baseline"
 TEST_NAME="test3"
 KEEP_ARTIFACTS=0
 
 choose_default_emu() {
-    if [[ -x "$ROOT_DIR/tools/emulator/slow32-fast" ]]; then
-        printf '%s\n' "$ROOT_DIR/tools/emulator/slow32-fast"
-        return
-    fi
-    if [[ -x "$ROOT_DIR/selfhost/stage00/s32-emu" ]]; then
-        printf '%s\n' "$ROOT_DIR/selfhost/stage00/s32-emu"
-        return
-    fi
-    if [[ -x "$ROOT_DIR/tools/emulator/slow32" ]]; then
-        printf '%s\n' "$ROOT_DIR/tools/emulator/slow32"
-        return
-    fi
-    printf '%s\n' "$ROOT_DIR/tools/emulator/slow32"
+    printf '%s\n' "$SELFHOST_DIR/stage00/s32-emu"
 }
 
 usage() {
@@ -103,10 +90,6 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-if [[ "$EMU" != /* ]]; then
-    EMU="$ROOT_DIR/$EMU"
-fi
-
 if [[ "$MODE" == "stage6-utility-smoke" && "$EMU_EXPLICIT" -eq 0 && -z "${SELFHOST_EMU:-}" ]]; then
     EMU="$(choose_default_emu)"
 fi
@@ -121,7 +104,7 @@ case "$MODE" in
 esac
 
 for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH" "$AR_FTH" \
-         "$CRT0_SRC" "$MMIO_SRC"; do
+         "$CRT0_SRC" "$MMIO_SRC" "$MMIO_NO_START_SRC"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
 
@@ -129,6 +112,9 @@ WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage05.XXXXXX)"
 if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then
     trap 'rm -rf "$WORKDIR"' EXIT
 fi
+
+# cc.fth uses relative include path "selfhost/stage04/include/" — run from repo root
+cd "$ROOT_DIR"
 
 run_forth() {
     local script_a="$1"
@@ -149,15 +135,19 @@ FTH
     fi
 }
 
-# --- Build selfhost runtime from stage01 sources ---
+# --- Build selfhost runtime from bundled stage05 sources ---
 RUNTIME_CRT0="$WORKDIR/crt0_minimal.s32o"
 RUNTIME_MMIO_OBJ="$WORKDIR/mmio_minimal.s32o"
+RUNTIME_MMIO_NO_START_OBJ="$WORKDIR/mmio_no_start.s32o"
 run_forth "$ASM_FTH" /dev/null "S\" $CRT0_SRC\" S\" $RUNTIME_CRT0\" ASSEMBLE
 BYE" "$WORKDIR/crt0.as.log"
 [[ -s "$RUNTIME_CRT0" ]] || { echo "failed to assemble crt0_minimal.s" >&2; exit 1; }
 run_forth "$ASM_FTH" /dev/null "S\" $MMIO_SRC\" S\" $RUNTIME_MMIO_OBJ\" ASSEMBLE
 BYE" "$WORKDIR/mmio.as.log"
 [[ -s "$RUNTIME_MMIO_OBJ" ]] || { echo "failed to assemble mmio_minimal.s" >&2; exit 1; }
+run_forth "$ASM_FTH" /dev/null "S\" $MMIO_NO_START_SRC\" S\" $RUNTIME_MMIO_NO_START_OBJ\" ASSEMBLE
+BYE" "$WORKDIR/mmio_no_start.as.log"
+[[ -s "$RUNTIME_MMIO_NO_START_OBJ" ]] || { echo "failed to assemble mmio.s" >&2; exit 1; }
 
 run_exe() {
     local exe="$1"
@@ -308,7 +298,7 @@ link_forth_with_libc() {
 S\" $RUNTIME_CRT0\" LINK-OBJ
 S\" $obj\" LINK-OBJ
 S\" $LIBC_START_OBJ\" LINK-OBJ
-S\" $RUNTIME_MMIO_OBJ\" LINK-OBJ
+S\" $RUNTIME_MMIO_NO_START_OBJ\" LINK-OBJ
 65536 LINK-MMIO
 S\" $LIBC_ARCHIVE\" LINK-ARCHIVE
 S\" $exe\" LINK-EMIT
