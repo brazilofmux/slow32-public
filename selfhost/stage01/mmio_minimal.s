@@ -8,7 +8,7 @@
 #   - s32_mmio_request (core MMIO protocol)
 #   - getchar, open, close, read, write, lseek, fstat, rename, unlink, usleep
 #   - strlen, memset, memcpy, memmove
-#   - __slow32_start must come from selfhost/stage05/libc/start.c
+#   - __slow32_start (minimal fallback; libc's start.s32o overrides via link order)
 #
 # Assembled from compiler output of runtime/*.c using the SLOW-32 LLVM backend.
 # No hand-written assembly - extracted and adapted for Forth assembler compatibility.
@@ -806,6 +806,13 @@ __get_mmio_data:
     lui r1, %hi(__mmio_base+16384)
     addi r1, r1, %lo(__mmio_base+16384)
     jalr r0, lr, 0
+
+# Minimal fallback — libc's start.s32o overrides this via first-definition-wins
+.global __slow32_start
+__slow32_start:
+    jal r31, main
+    add r3, r1, r0
+    halt
 
 .global exit
 exit:
