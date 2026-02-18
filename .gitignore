@@ -14,6 +14,11 @@ tools/utilities/s32-exedump
 tools/utilities/s32-ar
 tools/utilities/slow32dis
 tools/dbt/slow32-dbt
+tools/utilities/slow32dump
+
+# Selfhost one-off scripts and binaries
+selfhost/stage00/s32-emu
+selfhost/stage08/*.py
 
 # Test files
 *.bin
