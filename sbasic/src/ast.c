@@ -160,6 +160,28 @@ int stmt_input_add_var(stmt_t *s, const char *name, val_type_t type) {
     return 0;
 }
 
+stmt_t *stmt_cls(int line) {
+    return stmt_alloc(STMT_CLS, line);
+}
+
+stmt_t *stmt_locate(expr_t *row, expr_t *col, int line) {
+    stmt_t *s = stmt_alloc(STMT_LOCATE, line);
+    if (!s) return NULL;
+    s->locate_stmt.row = row;
+    s->locate_stmt.col = col;
+    return s;
+}
+
+stmt_t *stmt_color(expr_t *fg, expr_t *bg, int has_fg, int has_bg, int line) {
+    stmt_t *s = stmt_alloc(STMT_COLOR, line);
+    if (!s) return NULL;
+    s->color_stmt.fg = fg;
+    s->color_stmt.bg = bg;
+    s->color_stmt.has_fg = has_fg;
+    s->color_stmt.has_bg = has_bg;
+    return s;
+}
+
 stmt_t *stmt_assign(const char *name, val_type_t type, expr_t *value, int line) {
     stmt_t *s = stmt_alloc(STMT_ASSIGN, line);
     if (!s) return NULL;
@@ -398,6 +420,16 @@ void stmt_free(stmt_t *s) {
                 free(s->input.prompt);
                 free(s->input.varnames);
                 free(s->input.vartypes);
+                break;
+            case STMT_CLS:
+                break;
+            case STMT_LOCATE:
+                expr_free(s->locate_stmt.row);
+                expr_free(s->locate_stmt.col);
+                break;
+            case STMT_COLOR:
+                expr_free(s->color_stmt.fg);
+                expr_free(s->color_stmt.bg);
                 break;
             case STMT_ASSIGN:
                 expr_free(s->assign.value);

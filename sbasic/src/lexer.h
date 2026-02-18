@@ -19,6 +19,7 @@ typedef enum {
 
     /* Keywords */
     TOK_PRINT, TOK_INPUT, TOK_LET,
+    TOK_CLS, TOK_LOCATE, TOK_COLOR,
     TOK_IF, TOK_THEN, TOK_ELSE, TOK_END,
     TOK_FOR, TOK_TO, TOK_STEP, TOK_NEXT,
     TOK_WHILE, TOK_WEND,

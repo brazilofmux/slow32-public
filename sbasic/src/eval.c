@@ -2,6 +2,7 @@
 #include "builtin.h"
 #include "array.h"
 #include "fileio.h"
+#include "terminal.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -778,6 +779,56 @@ static error_t exec_input(env_t *env, stmt_t *s) {
         if (*p == ',') p++;
     }
 
+    return ERR_NONE;
+}
+
+static error_t exec_cls(stmt_t *s) {
+    (void)s;
+    sb_term_cls();
+    print_col = 0;
+    return ERR_NONE;
+}
+
+static error_t exec_locate(env_t *env, stmt_t *s) {
+    value_t rv, cv;
+    EVAL_CHECK(eval_expr(env, s->locate_stmt.row, &rv));
+    error_t err = eval_expr(env, s->locate_stmt.col, &cv);
+    if (err != ERR_NONE) {
+        val_clear(&rv);
+        return err;
+    }
+    int row, col;
+    err = val_to_integer(&rv, &row);
+    if (err == ERR_NONE) err = val_to_integer(&cv, &col);
+    val_clear(&rv);
+    val_clear(&cv);
+    if (err != ERR_NONE) return err;
+    if (row < 1 || col < 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    sb_term_locate(row, col);
+    print_col = col - 1;
+    return ERR_NONE;
+}
+
+static error_t exec_color(env_t *env, stmt_t *s) {
+    int fg = 7;
+    int bg = 0;
+    if (s->color_stmt.has_fg) {
+        value_t fv;
+        EVAL_CHECK(eval_expr(env, s->color_stmt.fg, &fv));
+        error_t err = val_to_integer(&fv, &fg);
+        val_clear(&fv);
+        if (err != ERR_NONE) return err;
+        if (fg < 0 || fg > 15) return ERR_ILLEGAL_FUNCTION_CALL;
+    }
+    if (s->color_stmt.has_bg) {
+        value_t bv;
+        EVAL_CHECK(eval_expr(env, s->color_stmt.bg, &bv));
+        error_t err = val_to_integer(&bv, &bg);
+        val_clear(&bv);
+        if (err != ERR_NONE) return err;
+        if (bg < 0 || bg > 15) return ERR_ILLEGAL_FUNCTION_CALL;
+    }
+    sb_term_color(fg, bg, s->color_stmt.has_fg, s->color_stmt.has_bg);
     return ERR_NONE;
 }
 
@@ -1715,6 +1766,9 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
     switch (s->type) {
         case STMT_PRINT:        return exec_print(env, s);
         case STMT_INPUT:        return exec_input(env, s);
+        case STMT_CLS:          return exec_cls(s);
+        case STMT_LOCATE:       return exec_locate(env, s);
+        case STMT_COLOR:        return exec_color(env, s);
         case STMT_ASSIGN:       return exec_assign(env, s);
         case STMT_IF:           return exec_if(env, s);
         case STMT_FOR:          return exec_for(env, s);
@@ -2022,6 +2076,7 @@ error_t eval_program(env_t *env, stmt_t *program) {
     array_clear_all();
     data_pool_clear();
     fileio_init();
+    sb_term_init();
     deftype_init();
     type_def_count = 0;
     print_col = 0;
@@ -2032,20 +2087,23 @@ error_t eval_program(env_t *env, stmt_t *program) {
     on_error_err_line = 0;
     resume_is_next = 0;
 
+    error_t result = ERR_NONE;
+
     /* First pass: collect labels, proc definitions, and DATA values */
     proc_count = 0;
     label_count = 0;
 
     for (i = 0; i < count; i++) {
         error_t serr = scan_one_stmt(stmts[i], i);
-        if (serr != ERR_NONE) return serr;
+        if (serr != ERR_NONE) {
+            result = serr;
+            goto cleanup;
+        }
     }
 
     /* Execute with program counter */
     int pc = 0;
     gosub_top = 0;
-    error_t result = ERR_NONE;
-
     while (pc < count) {
         if (stmts[pc]->type == STMT_SUB_DEF ||
             stmts[pc]->type == STMT_FUNC_DEF) {
@@ -2124,6 +2182,7 @@ error_t eval_program(env_t *env, stmt_t *program) {
         break;
     }
 
+cleanup:
     /* Clean up */
     fileio_close_all();
     data_pool_clear();
@@ -2135,5 +2194,6 @@ error_t eval_program(env_t *env, stmt_t *program) {
         }
     }
     free(stmts);
+    sb_term_shutdown();
     return result;
 }

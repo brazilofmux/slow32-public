@@ -83,6 +83,9 @@ typedef struct expr {
 typedef enum {
     STMT_PRINT,
     STMT_INPUT,
+    STMT_CLS,
+    STMT_LOCATE,
+    STMT_COLOR,
     STMT_ASSIGN,
     STMT_IF,
     STMT_FOR,
@@ -190,6 +193,20 @@ typedef struct stmt {
             int nvars;
             int var_cap;
         } input;
+
+        /* STMT_LOCATE */
+        struct {
+            expr_t *row;
+            expr_t *col;
+        } locate_stmt;
+
+        /* STMT_COLOR */
+        struct {
+            expr_t *fg;
+            expr_t *bg;
+            int has_fg;
+            int has_bg;
+        } color_stmt;
 
         /* STMT_ASSIGN */
         struct {
@@ -476,6 +493,9 @@ stmt_t *stmt_print(int line);
 int stmt_print_add(stmt_t *s, expr_t *expr, char sep);
 stmt_t *stmt_input(const char *prompt, int line);
 int stmt_input_add_var(stmt_t *s, const char *name, val_type_t type);
+stmt_t *stmt_cls(int line);
+stmt_t *stmt_locate(expr_t *row, expr_t *col, int line);
+stmt_t *stmt_color(expr_t *fg, expr_t *bg, int has_fg, int has_bg, int line);
 stmt_t *stmt_assign(const char *name, val_type_t type, expr_t *value, int line);
 stmt_t *stmt_if(expr_t *cond, stmt_t *then_body, stmt_t *else_body, int line);
 stmt_t *stmt_for(const char *var, val_type_t type,

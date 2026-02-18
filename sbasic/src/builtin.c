@@ -1,6 +1,7 @@
 #include "builtin.h"
 #include "eval.h"
 #include "fileio.h"
+#include "terminal.h"
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -681,6 +682,19 @@ static error_t fn_command(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+/* INKEY$ - non-blocking single character read */
+static error_t fn_inkey(value_t *args, int nargs, value_t *out) {
+    (void)args;
+    if (nargs != 0) return ERR_ILLEGAL_FUNCTION_CALL;
+    char ch[2];
+    if (sb_term_inkey(ch)) {
+        *out = val_string(ch, 1);
+    } else {
+        *out = val_string_cstr("");
+    }
+    return ERR_NONE;
+}
+
 /* DIR$([pattern$]) - directory listing with simple wildcard matching */
 static DIR *dir_handle = NULL;
 static char dir_pattern[256] = "";
@@ -830,6 +844,7 @@ static const builtin_entry_t builtins[] = {
     /* System */
     { "ENVIRON$", fn_environ },
     { "COMMAND$", fn_command },
+    { "INKEY$",   fn_inkey },
     { "DIR$",     fn_dir },
     { NULL, NULL }
 };

@@ -400,6 +400,76 @@ static stmt_t *parse_input(parser_t *p) {
     return s;
 }
 
+static stmt_t *parse_cls(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume CLS */
+    if (!at_stmt_end(p)) {
+        parser_error(p, ERR_SYNTAX);
+        return NULL;
+    }
+    return stmt_cls(line);
+}
+
+static stmt_t *parse_locate(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    lexer_next(&p->lex); /* consume LOCATE */
+    expr_t *row = parse_expr(p);
+    if (!row) return NULL;
+    if (!lexer_match(&p->lex, TOK_COMMA)) {
+        parser_error(p, ERR_SYNTAX);
+        expr_free(row);
+        return NULL;
+    }
+    expr_t *col = parse_expr(p);
+    if (!col) {
+        expr_free(row);
+        return NULL;
+    }
+    if (!at_stmt_end(p)) {
+        parser_error(p, ERR_SYNTAX);
+        expr_free(row);
+        expr_free(col);
+        return NULL;
+    }
+    return stmt_locate(row, col, line);
+}
+
+static stmt_t *parse_color(parser_t *p) {
+    int line = lexer_peek(&p->lex)->line;
+    int has_fg = 0;
+    int has_bg = 0;
+    expr_t *fg = NULL;
+    expr_t *bg = NULL;
+
+    lexer_next(&p->lex); /* consume COLOR */
+
+    if (at_stmt_end(p))
+        return stmt_color(NULL, NULL, 0, 0, line);
+
+    if (!lexer_check(&p->lex, TOK_COMMA)) {
+        fg = parse_expr(p);
+        if (!fg) return NULL;
+        has_fg = 1;
+    }
+    if (lexer_match(&p->lex, TOK_COMMA)) {
+        if (!at_stmt_end(p)) {
+            bg = parse_expr(p);
+            if (!bg) {
+                expr_free(fg);
+                return NULL;
+            }
+            has_bg = 1;
+        }
+    }
+    if (!at_stmt_end(p)) {
+        parser_error(p, ERR_SYNTAX);
+        expr_free(fg);
+        expr_free(bg);
+        return NULL;
+    }
+    return stmt_color(fg, bg, has_fg, has_bg, line);
+}
+
 static stmt_t *parse_assign(parser_t *p, const char *name) {
     int line = lexer_peek(&p->lex)->line;
     val_type_t vt = var_type_from_name(name);
@@ -1457,6 +1527,9 @@ static stmt_t *parse_stmt(parser_t *p) {
     switch (tok->type) {
         case TOK_PRINT:    return parse_print(p);
         case TOK_INPUT:    return parse_input(p);
+        case TOK_CLS:      return parse_cls(p);
+        case TOK_LOCATE:   return parse_locate(p);
+        case TOK_COLOR:    return parse_color(p);
         case TOK_IF:       return parse_if(p);
         case TOK_FOR:      return parse_for(p);
         case TOK_WHILE:    return parse_while(p);
