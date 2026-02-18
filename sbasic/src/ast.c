@@ -384,6 +384,9 @@ void case_clause_free(case_clause_t *c) {
 
 /* --- Statement destructor --- */
 
+#if defined(__clang__)
+__attribute__((optnone))
+#endif
 void stmt_free(stmt_t *s) {
     while (s) {
         stmt_t *next = s->next;
@@ -465,6 +468,7 @@ void stmt_free(stmt_t *s) {
             case STMT_OPTION_BASE:
             case STMT_ERASE:
             case STMT_RESTORE:
+                break;
             case STMT_READ:
                 free(s->read_stmt.varnames);
                 free(s->read_stmt.vartypes);
