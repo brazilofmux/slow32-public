@@ -24,7 +24,10 @@ Builds and spikes Stage07 linker candidate with current selfhost pipeline:
   2) stage04 cc.fth -> s32-ld.s
   3) stage05 s32-as -> s32-ld.s32o
   4) stage03 link.fth -> s32-ld.s32x
-Then validates linker output by linking/running a tiny halt object.
+Then validates:
+  - Old-style CLI: input.s32o output.s32x (backward compat)
+  - New-style CLI: -o output input.s32o (single object)
+  - Multi-object:  -o output --mmio 64K crt0 prog start mmio archive
 USAGE
 }
 
@@ -34,22 +37,22 @@ while [[ $# -gt 0 ]]; do
             shift
             [[ $# -gt 0 ]] || { echo "--emu requires a path" >&2; exit 2; }
             EMU="$1"
-            ;; 
+            ;;
         --keep-artifacts)
             KEEP_ARTIFACTS=1
-            ;; 
+            ;;
         --with-reloc-spike)
             WITH_RELOC_SPIKE=1
-            ;; 
+            ;;
         -h|--help)
             usage
             exit 0
-            ;; 
+            ;;
         *)
             echo "Unknown option: $1" >&2
             usage
             exit 2
-            ;; 
+            ;;
     esac
     shift
 done
@@ -126,7 +129,7 @@ run_exe() {
         tail -n 60 "$log" >&2
         return 1
     fi
-    if grep -Eq "Execute fault|Memory fault|Write out of bounds or to protected memory|Unknown opcode|Unknown instruction|Load fault" "$log"; then
+    if grep -Eq "Execute fault|Memory fault|Write out of bounds or to protected memory|Unknown opcode|Unknown instruction|Load fault|Store fault" "$log"; then
         echo "execution faulted: $exe" >&2
         tail -n 60 "$log" >&2
         return 1
@@ -136,6 +139,28 @@ run_exe() {
         tail -n 60 "$log" >&2
         return 1
     fi
+}
+
+run_exe_any_rc() {
+    local exe="$1"
+    local log="$2"
+    shift 2
+
+    set +e
+    timeout "${EXEC_TIMEOUT:-180}" "$EMU" "$exe" "$@" >"$log" 2>&1
+    local rc=$?
+    set -e
+    if [[ "$rc" -eq 124 ]]; then
+        echo "execution timed out: $exe" >&2
+        tail -n 60 "$log" >&2
+        return 124
+    fi
+    if grep -Eq "Execute fault|Memory fault|Write out of bounds or to protected memory|Unknown opcode|Unknown instruction|Load fault|Store fault" "$log"; then
+        echo "execution faulted: $exe" >&2
+        tail -n 60 "$log" >&2
+        return 125
+    fi
+    return "$rc"
 }
 
 run_exe_nofault() {
@@ -200,6 +225,11 @@ BYE" "$log"
     [[ -s "$exe" ]] || { echo "linker produced no output: $obj" >&2; return 1; }
 }
 
+# ============================================================
+# Build linker
+# ============================================================
+echo "=== Building stage07 linker ==="
+
 STAGE7_ASM="$WORKDIR/s32-ld.s"
 STAGE7_OBJ="$WORKDIR/s32-ld.s32o"
 STAGE7_EXE="$WORKDIR/s32-ld.s32x"
@@ -207,6 +237,13 @@ STAGE7_EXE="$WORKDIR/s32-ld.s32x"
 compile_c_stage4 "$SRC" "$STAGE7_ASM" "$WORKDIR/s32-ld.cc.log"
 assemble_with_stage5 "$STAGE7_ASM" "$STAGE7_OBJ" "$WORKDIR/s32-ld.as.log"
 link_forth_with_libc "$STAGE7_OBJ" "$STAGE7_EXE" "$WORKDIR/s32-ld.ld.log"
+echo "Linker built: $STAGE7_EXE"
+
+# ============================================================
+# Test 1: Old-style CLI (backward compat for stage08)
+# ============================================================
+echo ""
+echo "=== Test 1: Old-style CLI ==="
 
 cat > "$WORKDIR/main_halt.s" <<'ASM'
 .text
@@ -220,10 +257,72 @@ MINI_EXE="$WORKDIR/main_halt.s32x"
 
 assemble_with_stage5 "$WORKDIR/main_halt.s" "$MINI_OBJ" "$WORKDIR/main_halt.as.log"
 run_exe "$STAGE7_EXE" "$WORKDIR/s32-ld.run.log" "$MINI_OBJ" "$MINI_EXE"
-[[ -s "$MINI_EXE" ]] || { echo "stage07 linker produced no output" >&2; exit 1; }
+[[ -s "$MINI_EXE" ]] || { echo "FAIL: old-style linker produced no output" >&2; exit 1; }
 run_exe "$MINI_EXE" "$WORKDIR/main_halt.run.log"
+echo "  Old-style single object: PASS"
 
+# ============================================================
+# Test 2: New-style CLI (single object, -o flag)
+# ============================================================
+echo ""
+echo "=== Test 2: New-style CLI ==="
+
+NEW_EXE="$WORKDIR/main_halt_new.s32x"
+run_exe "$STAGE7_EXE" "$WORKDIR/s32-ld.new.run.log" -o "$NEW_EXE" "$MINI_OBJ"
+[[ -s "$NEW_EXE" ]] || { echo "FAIL: new-style linker produced no output" >&2; exit 1; }
+run_exe "$NEW_EXE" "$WORKDIR/main_halt_new.run.log"
+echo "  New-style single object: PASS"
+
+# ============================================================
+# Test 3: Multi-object with libc + MMIO (new-style CLI)
+# ============================================================
+echo ""
+echo "=== Test 3: Multi-object with libc + MMIO ==="
+
+# Compile test_smoke.c (returns 42) if available, else create a simple test
+SMOKE_SRC="$SELFHOST_DIR/stage09/test_smoke.c"
+if [[ -f "$SMOKE_SRC" ]]; then
+    compile_c_stage4 "$SMOKE_SRC" "$WORKDIR/smoke.s" "$WORKDIR/smoke.cc.log"
+    assemble_with_stage5 "$WORKDIR/smoke.s" "$WORKDIR/smoke.s32o" "$WORKDIR/smoke.as.log"
+    SMOKE_OBJ="$WORKDIR/smoke.s32o"
+else
+    # Simple smoke test: main returns 42
+    cat > "$WORKDIR/smoke_main.s" <<'ASM'
+.text
+.global main
+main:
+    addi r1, r0, 42
+    jalr r0, r31, 0
+ASM
+    assemble_with_stage5 "$WORKDIR/smoke_main.s" "$WORKDIR/smoke_main.s32o" "$WORKDIR/smoke_main.as.log"
+    SMOKE_OBJ="$WORKDIR/smoke_main.s32o"
+fi
+
+MULTI_EXE="$WORKDIR/multi_test.s32x"
+run_exe "$STAGE7_EXE" "$WORKDIR/s32-ld.multi.run.log" \
+    -o "$MULTI_EXE" --mmio 64K \
+    "$RUNTIME_CRT0" "$SMOKE_OBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+    "$LIBC_ARCHIVE"
+[[ -s "$MULTI_EXE" ]] || { echo "FAIL: multi-object linker produced no output" >&2; exit 1; }
+
+set +e
+timeout "${EXEC_TIMEOUT:-60}" "$EMU" "$MULTI_EXE" >"$WORKDIR/multi_test.run.log" 2>&1
+MULTI_RC=$?
+set -e
+if [[ "$MULTI_RC" -eq 42 ]]; then
+    echo "  Multi-object with libc: PASS (rc=42)"
+else
+    echo "  Multi-object with libc: FAIL (expected rc=42, got rc=$MULTI_RC)" >&2
+    tail -n 20 "$WORKDIR/multi_test.run.log" >&2
+    exit 1
+fi
+
+# ============================================================
+# Optional: Relocation spike
+# ============================================================
 if [[ "$WITH_RELOC_SPIKE" -eq 1 ]]; then
+    echo ""
+    echo "=== Relocation spike ==="
     cat > "$WORKDIR/reloc_spike.s" <<'ASM'
 .data
 .global value
@@ -250,18 +349,14 @@ ASM
 
     assemble_with_stage5 "$WORKDIR/reloc_spike.s" "$RELOC_OBJ" "$WORKDIR/reloc_spike.as.log"
     run_exe "$STAGE7_EXE" "$WORKDIR/s32-ld.reloc.run.log" "$RELOC_OBJ" "$RELOC_EXE"
-    [[ -s "$RELOC_EXE" ]] || { echo "stage07 linker produced no relocation-spike output" >&2; exit 1; }
+    [[ -s "$RELOC_EXE" ]] || { echo "FAIL: relocation-spike produced no output" >&2; exit 1; }
     run_exe_nofault "$RELOC_EXE" "$WORKDIR/reloc_spike.run.log"
+    echo "  Relocation spike: PASS"
 fi
 
+echo ""
 echo "OK: stage07 linker spike"
 echo "Linker source: $SRC"
 echo "Linker exe: $STAGE7_EXE"
-echo "Spike object: $MINI_OBJ"
-echo "Spike output: $MINI_EXE"
-if [[ "$WITH_RELOC_SPIKE" -eq 1 ]]; then
-    echo "Reloc spike object: $RELOC_OBJ"
-    echo "Reloc spike output: $RELOC_EXE"
-fi
 echo "Emulator: $EMU"
 echo "Artifacts: $WORKDIR"
