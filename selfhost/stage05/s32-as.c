@@ -398,13 +398,13 @@ static int handle(char *line) {
         return 0;
     }
 
-    if (strcmp(tok[0], "stw") == 0 || strcmp(tok[0], "stb") == 0) {
+    if (strcmp(tok[0], "stw") == 0 || strcmp(tok[0], "sth") == 0 || strcmp(tok[0], "stb") == 0) {
         int rs1, rs2, imm;
         uint32_t op;
         if (n != 4) return -1;
         rs1 = parse_reg(tok[1]); rs2 = parse_reg(tok[2]); imm = parse_num(tok[3], &ok);
         if (rs1 < 0 || rs2 < 0 || !ok) return -1;
-        op = (strcmp(tok[0], "stw") == 0) ? 0x3A : 0x38;
+        op = (strcmp(tok[0], "stw") == 0) ? 0x3A : (strcmp(tok[0], "sth") == 0) ? 0x39 : 0x38;
         return emit32(enc_s(op, rs1, rs2, imm));
     }
 
@@ -485,6 +485,14 @@ static int handle(char *line) {
         off2 = off2 - 4u;
         if (add_reloc(S32O_REL_HI20, off, tok[1]) != 0) return -1;
         return add_reloc(S32O_REL_LO12, off2, tok[1]);
+    }
+
+    if (strcmp(tok[0], "yield") == 0) {
+        return emit32(enc_r(0x51, 0, 0, 0));
+    }
+
+    if (strcmp(tok[0], "halt") == 0) {
+        return emit32(enc_r(0x7F, 0, 0, 0));
     }
 
     return -1;

@@ -2,32 +2,28 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="${SELFHOST_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
-    ROOT_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
-fi
+SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
-EMU="${STAGE7_EMU:-$ROOT_DIR/tools/emulator/slow32-fast}"
+EMU="${STAGE7_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
 KERNEL="${STAGE7_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${STAGE7_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
-CC_FTH="${STAGE7_CC:-$ROOT_DIR/selfhost/stage04/cc.fth}"
-ASM_FTH="${STAGE7_ASM:-$ROOT_DIR/selfhost/stage01/asm.fth}"
-LINK_FTH="${STAGE7_LINK:-$ROOT_DIR/selfhost/stage03/link.fth}"
-AR_FTH="${STAGE7_AR:-$ROOT_DIR/selfhost/stage02/ar.fth}"
+CC_FTH="${STAGE7_CC:-$SELFHOST_DIR/stage04/cc.fth}"
+ASM_FTH="${STAGE7_ASM:-$SELFHOST_DIR/stage01/asm.fth}"
+LINK_FTH="${STAGE7_LINK:-$SELFHOST_DIR/stage03/link.fth}"
 SRC="${STAGE7_SRC:-$SCRIPT_DIR/s32-ld.c}"
 KEEP_ARTIFACTS=0
 WITH_RELOC_SPIKE=0
-
-CRT0_SRC="$ROOT_DIR/selfhost/stage01/crt0_minimal.s"
-MMIO_SRC="$ROOT_DIR/selfhost/stage01/mmio_minimal.s"
-LIBC_DIR="$ROOT_DIR/selfhost/stage05/libc"
 
 usage() {
     cat <<USAGE
 Usage: $0 [--emu <path>] [--keep-artifacts] [--with-reloc-spike]
 
 Builds and spikes Stage07 linker candidate with current selfhost pipeline:
-  stage04 cc.fth -> stage01 asm.fth -> stage03 link.fth
+  1) Bootstrap stage05 assembler (and stage06 archiver)
+  2) stage04 cc.fth -> s32-ld.s
+  3) stage05 s32-as -> s32-ld.s32o
+  4) stage03 link.fth -> s32-ld.s32x
 Then validates linker output by linking/running a tiny halt object.
 USAGE
 }
@@ -38,32 +34,27 @@ while [[ $# -gt 0 ]]; do
             shift
             [[ $# -gt 0 ]] || { echo "--emu requires a path" >&2; exit 2; }
             EMU="$1"
-            ;;
+            ;; 
         --keep-artifacts)
             KEEP_ARTIFACTS=1
-            ;;
+            ;; 
         --with-reloc-spike)
             WITH_RELOC_SPIKE=1
-            ;;
+            ;; 
         -h|--help)
             usage
             exit 0
-            ;;
+            ;; 
         *)
             echo "Unknown option: $1" >&2
             usage
             exit 2
-            ;;
+            ;; 
     esac
     shift
 done
 
-if [[ "$EMU" != /* ]]; then
-    EMU="$ROOT_DIR/$EMU"
-fi
-
-for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH" "$AR_FTH" \
-         "$CRT0_SRC" "$MMIO_SRC"; do
+for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
 
@@ -77,6 +68,30 @@ WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage07.XXXXXX)"
 if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then
     trap 'rm -rf "$WORKDIR"' EXIT
 fi
+
+# cc.fth uses relative include path "selfhost/stage04/include/" — run from repo root
+cd "$ROOT_DIR"
+
+# Bootstrap stage05/06 tools first
+PIPE_LOG="$WORKDIR/stage5-build.log"
+"$SELFHOST_DIR/stage05/run-pipeline.sh" --mode stage6-ar-smoke --emu "$EMU" --keep-artifacts >"$PIPE_LOG"
+PIPE_ART="$(awk -F': ' '/^Artifacts:/{print $2}' "$PIPE_LOG" | tail -n 1)"
+[[ -n "$PIPE_ART" && -d "$PIPE_ART" ]] || { echo "failed to locate stage05 artifacts dir" >&2; exit 1; }
+AS_EXE="$PIPE_ART/s32-as.s32x"
+[[ -f "$AS_EXE" ]] || { echo "missing stage05 assembler exe: $AS_EXE" >&2; exit 1; }
+
+# Runtime objects from stage05 bootstrap
+RUNTIME_CRT0="$PIPE_ART/crt0_minimal.s32o"
+RUNTIME_MMIO_OBJ="$PIPE_ART/mmio_minimal.s32o"
+RUNTIME_MMIO_NO_START_OBJ="$PIPE_ART/mmio_no_start.s32o"
+LIBC_ARCHIVE="$PIPE_ART/libc_selfhost.s32a"
+LIBC_START_OBJ="$PIPE_ART/libc_start.s32o"
+
+[[ -s "$RUNTIME_CRT0" ]] || { echo "missing runtime crt0: $RUNTIME_CRT0" >&2; exit 1; }
+[[ -s "$RUNTIME_MMIO_OBJ" ]] || { echo "missing runtime mmio: $RUNTIME_MMIO_OBJ" >&2; exit 1; }
+[[ -s "$RUNTIME_MMIO_NO_START_OBJ" ]] || { echo "missing runtime mmio (no start): $RUNTIME_MMIO_NO_START_OBJ" >&2; exit 1; }
+[[ -s "$LIBC_ARCHIVE" ]] || { echo "missing libc archive: $LIBC_ARCHIVE" >&2; exit 1; }
+[[ -s "$LIBC_START_OBJ" ]] || { echo "missing libc start: $LIBC_START_OBJ" >&2; exit 1; }
 
 run_forth() {
     local script_a="$1"
@@ -159,73 +174,14 @@ BYE" "$log"
     }
 }
 
-assemble_forth() {
+assemble_with_stage5() {
     local asm="$1"
     local obj="$2"
     local log="$3"
 
-    run_forth "$ASM_FTH" /dev/null "S\" $asm\" S\" $obj\" ASSEMBLE
-BYE" "$log"
-    [[ -s "$obj" ]] || { echo "assembler produced no output: $asm" >&2; return 1; }
-    if grep -q "FAILED:" "$log"; then
-        echo "assembler failed: $asm" >&2
-        tail -n 60 "$log" >&2
-        return 1
-    fi
+    run_exe "$AS_EXE" "$log" "$asm" "$obj"
+    [[ -s "$obj" ]] || { echo "stage05 assembler produced no output: $asm" >&2; return 1; }
 }
-
-# --- Build selfhost runtime from stage01 sources ---
-RUNTIME_CRT0="$WORKDIR/crt0_minimal.s32o"
-RUNTIME_MMIO_OBJ="$WORKDIR/mmio_minimal.s32o"
-run_forth "$ASM_FTH" /dev/null "S\" $CRT0_SRC\" S\" $RUNTIME_CRT0\" ASSEMBLE
-BYE" "$WORKDIR/crt0.as.log"
-[[ -s "$RUNTIME_CRT0" ]] || { echo "failed to assemble crt0_minimal.s" >&2; exit 1; }
-run_forth "$ASM_FTH" /dev/null "S\" $MMIO_SRC\" S\" $RUNTIME_MMIO_OBJ\" ASSEMBLE
-BYE" "$WORKDIR/mmio.as.log"
-[[ -s "$RUNTIME_MMIO_OBJ" ]] || { echo "failed to assemble mmio_minimal.s" >&2; exit 1; }
-
-# --- Build selfhost libc ---
-LIBC_ARCHIVE="$WORKDIR/libc_selfhost.s32a"
-LIBC_START_OBJ=""
-
-build_selfhost_libc() {
-    local libc_c_files="string_extra convert stdio start"
-    local name src asm obj
-    local ar_objs=""
-
-    echo "Building selfhost libc..."
-
-    for name in $libc_c_files; do
-        src="$LIBC_DIR/${name}.c"
-        asm="$WORKDIR/libc_${name}.s"
-        obj="$WORKDIR/libc_${name}.s32o"
-
-        [[ -f "$src" ]] || { echo "Missing libc source: $src" >&2; return 1; }
-        compile_c_stage4 "$src" "$asm" "$WORKDIR/libc_${name}.cc.log"
-        assemble_forth "$asm" "$obj" "$WORKDIR/libc_${name}.as.log"
-
-        if [[ "$name" == "start" ]]; then
-            LIBC_START_OBJ="$obj"
-        else
-            ar_objs="$ar_objs $obj"
-        fi
-    done
-
-    local ar_cmd
-    ar_cmd="S\" $LIBC_ARCHIVE\" AR-C-BEGIN"
-    for obj in $ar_objs; do
-        ar_cmd="${ar_cmd}
-S\" $obj\" AR-ADD"
-    done
-    ar_cmd="${ar_cmd}
-AR-C-END
-BYE"
-    run_forth "$AR_FTH" /dev/null "$ar_cmd" "$WORKDIR/libc.ar.log"
-    [[ -s "$LIBC_ARCHIVE" ]] || { echo "failed to build libc archive" >&2; return 1; }
-    echo "Libc archive: $LIBC_ARCHIVE"
-}
-
-build_selfhost_libc
 
 link_forth_with_libc() {
     local obj="$1"
@@ -236,7 +192,7 @@ link_forth_with_libc() {
 S\" $RUNTIME_CRT0\" LINK-OBJ
 S\" $obj\" LINK-OBJ
 S\" $LIBC_START_OBJ\" LINK-OBJ
-S\" $RUNTIME_MMIO_OBJ\" LINK-OBJ
+S\" $RUNTIME_MMIO_NO_START_OBJ\" LINK-OBJ
 65536 LINK-MMIO
 S\" $LIBC_ARCHIVE\" LINK-ARCHIVE
 S\" $exe\" LINK-EMIT
@@ -249,7 +205,7 @@ STAGE7_OBJ="$WORKDIR/s32-ld.s32o"
 STAGE7_EXE="$WORKDIR/s32-ld.s32x"
 
 compile_c_stage4 "$SRC" "$STAGE7_ASM" "$WORKDIR/s32-ld.cc.log"
-assemble_forth "$STAGE7_ASM" "$STAGE7_OBJ" "$WORKDIR/s32-ld.as.log"
+assemble_with_stage5 "$STAGE7_ASM" "$STAGE7_OBJ" "$WORKDIR/s32-ld.as.log"
 link_forth_with_libc "$STAGE7_OBJ" "$STAGE7_EXE" "$WORKDIR/s32-ld.ld.log"
 
 cat > "$WORKDIR/main_halt.s" <<'ASM'
@@ -262,7 +218,7 @@ ASM
 MINI_OBJ="$WORKDIR/main_halt.s32o"
 MINI_EXE="$WORKDIR/main_halt.s32x"
 
-assemble_forth "$WORKDIR/main_halt.s" "$MINI_OBJ" "$WORKDIR/main_halt.as.log"
+assemble_with_stage5 "$WORKDIR/main_halt.s" "$MINI_OBJ" "$WORKDIR/main_halt.as.log"
 run_exe "$STAGE7_EXE" "$WORKDIR/s32-ld.run.log" "$MINI_OBJ" "$MINI_EXE"
 [[ -s "$MINI_EXE" ]] || { echo "stage07 linker produced no output" >&2; exit 1; }
 run_exe "$MINI_EXE" "$WORKDIR/main_halt.run.log"
@@ -292,7 +248,7 @@ ASM
     RELOC_OBJ="$WORKDIR/reloc_spike.s32o"
     RELOC_EXE="$WORKDIR/reloc_spike.s32x"
 
-    assemble_forth "$WORKDIR/reloc_spike.s" "$RELOC_OBJ" "$WORKDIR/reloc_spike.as.log"
+    assemble_with_stage5 "$WORKDIR/reloc_spike.s" "$RELOC_OBJ" "$WORKDIR/reloc_spike.as.log"
     run_exe "$STAGE7_EXE" "$WORKDIR/s32-ld.reloc.run.log" "$RELOC_OBJ" "$RELOC_EXE"
     [[ -s "$RELOC_EXE" ]] || { echo "stage07 linker produced no relocation-spike output" >&2; exit 1; }
     run_exe_nofault "$RELOC_EXE" "$WORKDIR/reloc_spike.run.log"

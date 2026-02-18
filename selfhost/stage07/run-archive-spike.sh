@@ -2,15 +2,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="${SELFHOST_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
-    ROOT_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
-fi
+SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
-EMU="${STAGE7_EMU:-$ROOT_DIR/tools/emulator/slow32-fast}"
+EMU="${STAGE7_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
 KERNEL="${STAGE7_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${STAGE7_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
-ASM_FTH="${STAGE7_ASM:-$ROOT_DIR/selfhost/stage01/asm.fth}"
+ASM_FTH="${STAGE7_ASM:-$SELFHOST_DIR/stage01/asm.fth}"
 EXPECT_PASS=0
 EXPECT_SET=0
 KEEP_ARTIFACTS=0
@@ -77,16 +75,12 @@ if [[ "$EXPECT_SET" -eq 0 ]]; then
     EXPECT_PASS=1
 fi
 
-if [[ "$EMU" != /* ]]; then
-    EMU="$ROOT_DIR/$EMU"
-fi
-
 for f in "$EMU" "$KERNEL" "$PRELUDE" "$ASM_FTH"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
 
 TMP_LOG="$(mktemp /tmp/stage07-archive-spike.XXXXXX.log)"
-"$ROOT_DIR/selfhost/stage07/run-spike.sh" --emu "$EMU" --keep-artifacts >"$TMP_LOG"
+"$SCRIPT_DIR/run-spike.sh" --emu "$EMU" --keep-artifacts >"$TMP_LOG"
 LINKER_EXE="$(awk -F': ' '/^Linker exe:/{print $2}' "$TMP_LOG" | tail -n 1)"
 WORKDIR="$(awk -F': ' '/^Artifacts:/{print $2}' "$TMP_LOG" | tail -n 1)"
 [[ -n "$LINKER_EXE" && -f "$LINKER_EXE" ]] || { echo "failed to locate linker exe from run-spike output" >&2; exit 1; }
@@ -159,14 +153,44 @@ assemble_forth "$WORKDIR/main_call.s" "$MAIN_OBJ" "$WORKDIR/main_call.as.log"
 assemble_forth "$WORKDIR/helper.s" "$HELPER_OBJ" "$WORKDIR/helper.as.log"
 assemble_forth "$WORKDIR/decoy.s" "$DECOY_OBJ" "$WORKDIR/decoy.as.log"
 
-cc -O2 -Wall -Wextra -std=c11 -pedantic "$ROOT_DIR/selfhost/stage04/validation/s32-ar.c" -o "$WORKDIR/s32-ar-host"
-"$WORKDIR/s32-ar-host" c "$ARCHIVE" "$DECOY_OBJ" "$HELPER_OBJ"
+# run-spike runs stage6-ar-smoke which builds stage06 archiver in its pipeline artifacts
+SPIKE_PIPE_ART="$(awk -F': ' '/^Artifacts:/{print $2}' "$TMP_LOG" | head -n 1)"
+# The stage05 pipeline artifacts (nested inside run-spike) contain s32-ar.s32x
+# but run-spike's own WORKDIR reuses the stage05 artifact dir, so look there
+AR_EXE=""
+for candidate in "$WORKDIR/s32-ar.s32x" "$SPIKE_PIPE_ART/s32-ar.s32x"; do
+    if [[ -f "$candidate" ]]; then
+        AR_EXE="$candidate"
+        break
+    fi
+done
+[[ -n "$AR_EXE" && -f "$AR_EXE" ]] || { echo "missing stage06 archiver exe in run-spike artifacts" >&2; exit 1; }
+
+run_ar() {
+    local log="$1"
+    shift
+    set +e
+    timeout "${EXEC_TIMEOUT:-60}" "$EMU" "$AR_EXE" "$@" >"$log" 2>&1
+    local rc=$?
+    set -e
+    if [[ "$rc" -eq 124 ]]; then
+        echo "archiver timed out" >&2
+        tail -n 60 "$log" >&2
+        return 1
+    fi
+    if grep -Eq "Execute fault|Memory fault|Write out of bounds|Unknown opcode|Unknown instruction|Load fault" "$log"; then
+        echo "archiver faulted" >&2
+        tail -n 60 "$log" >&2
+        return 1
+    fi
+}
+run_ar "$WORKDIR/ar-create.log" c "$ARCHIVE" "$DECOY_OBJ" "$HELPER_OBJ"
 
 if [[ "$MODE" == "extract" ]]; then
     mkdir -p "$WORKDIR/extract"
     (
         cd "$WORKDIR/extract"
-        "$WORKDIR/s32-ar-host" x "$ARCHIVE" helper.s32o
+        run_ar "$WORKDIR/ar-extract.log" x "$ARCHIVE" helper.s32o
     )
     [[ -f "$WORKDIR/extract/helper.s32o" ]] || { echo "extract mode failed to recover helper.s32o" >&2; exit 1; }
     set +e

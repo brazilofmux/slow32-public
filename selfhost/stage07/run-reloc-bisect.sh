@@ -2,13 +2,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="${SELFHOST_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
-    ROOT_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
-fi
+SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
-EMU="${STAGE7_EMU:-$ROOT_DIR/tools/emulator/slow32-fast}"
-MANIFEST="${RELOC_BISECT_MANIFEST:-$ROOT_DIR/selfhost/stage04/tests/manifests/reloc-bisect.lst}"
+EMU="${STAGE7_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
+MANIFEST="${RELOC_BISECT_MANIFEST:-$SELFHOST_DIR/stage04/tests/manifests/reloc-bisect.lst}"
 WITH_RELOC_SPIKE=0
 KEEP_ARTIFACTS=0
 
@@ -52,11 +50,8 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-if [[ "$EMU" != /* ]]; then
-    EMU="$ROOT_DIR/$EMU"
-fi
 if [[ "$MANIFEST" != /* ]]; then
-    MANIFEST="$ROOT_DIR/$MANIFEST"
+    MANIFEST="$SCRIPT_DIR/$MANIFEST"
 fi
 
 [[ -f "$EMU" ]] || { echo "Missing emulator: $EMU" >&2; exit 1; }
@@ -77,7 +72,7 @@ while IFS= read -r src || [[ -n "$src" ]]; do
     base="$(basename "$src")"
     echo "  - [$count] $base"
 
-    cmd=("$ROOT_DIR/selfhost/stage07/run-spike.sh" "--emu" "$EMU")
+    cmd=("$SCRIPT_DIR/run-spike.sh" "--emu" "$EMU")
     if [[ "$WITH_RELOC_SPIKE" -eq 1 ]]; then
         cmd+=("--with-reloc-spike")
     fi
