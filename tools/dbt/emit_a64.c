@@ -781,21 +781,22 @@ void emit_fmul_d(emit_ctx_t *ctx, int rd, int rn, int rm) { emit_fp_2src(ctx, 1,
 void emit_fdiv_s(emit_ctx_t *ctx, int rd, int rn, int rm) { emit_fp_2src(ctx, 0, 0x06, rd, rn, rm); }
 void emit_fdiv_d(emit_ctx_t *ctx, int rd, int rn, int rm) { emit_fp_2src(ctx, 1, 0x06, rd, rn, rm); }
 
-// FP 1-source: 00011110 type 1 00000 opcode Rn Rd
-// opcode: 000001=FSQRT, 000010=FABS, 000011=FNEG
-
-static void emit_fp_1src(emit_ctx_t *ctx, int type, int opcode, int rd, int rn) {
-    uint32_t inst = 0x1E204000 | (type << 22) | ((opcode & 0x3F) << 10) | 
-                    ((rn & 0x1F) << 5) | (rd & 0x1F);
+// FP 1-source encodings are not a single linear opcode field.
+// Use explicit bases verified against assembler output:
+//   fsqrt s/d: 0x1E21C000 / 0x1E61C000
+//   fabs  s/d: 0x1E20C000 / 0x1E60C000
+//   fneg  s/d: 0x1E214000 / 0x1E614000
+static void emit_fp_1src_base(emit_ctx_t *ctx, uint32_t base_s, int type, int rd, int rn) {
+    uint32_t inst = base_s | ((type & 1) << 22) | ((rn & 0x1F) << 5) | (rd & 0x1F);
     emit_inst(ctx, inst);
 }
 
-void emit_fsqrt_s(emit_ctx_t *ctx, int rd, int rn) { emit_fp_1src(ctx, 0, 0x01, rd, rn); }
-void emit_fsqrt_d(emit_ctx_t *ctx, int rd, int rn) { emit_fp_1src(ctx, 1, 0x01, rd, rn); }
-void emit_fabs_s(emit_ctx_t *ctx, int rd, int rn) { emit_fp_1src(ctx, 0, 0x02, rd, rn); }
-void emit_fabs_d(emit_ctx_t *ctx, int rd, int rn) { emit_fp_1src(ctx, 1, 0x02, rd, rn); }
-void emit_fneg_s(emit_ctx_t *ctx, int rd, int rn) { emit_fp_1src(ctx, 0, 0x03, rd, rn); }
-void emit_fneg_d(emit_ctx_t *ctx, int rd, int rn) { emit_fp_1src(ctx, 1, 0x03, rd, rn); }
+void emit_fsqrt_s(emit_ctx_t *ctx, int rd, int rn) { emit_fp_1src_base(ctx, 0x1E21C000u, 0, rd, rn); }
+void emit_fsqrt_d(emit_ctx_t *ctx, int rd, int rn) { emit_fp_1src_base(ctx, 0x1E21C000u, 1, rd, rn); }
+void emit_fabs_s(emit_ctx_t *ctx, int rd, int rn)  { emit_fp_1src_base(ctx, 0x1E20C000u, 0, rd, rn); }
+void emit_fabs_d(emit_ctx_t *ctx, int rd, int rn)  { emit_fp_1src_base(ctx, 0x1E20C000u, 1, rd, rn); }
+void emit_fneg_s(emit_ctx_t *ctx, int rd, int rn)  { emit_fp_1src_base(ctx, 0x1E214000u, 0, rd, rn); }
+void emit_fneg_d(emit_ctx_t *ctx, int rd, int rn)  { emit_fp_1src_base(ctx, 0x1E214000u, 1, rd, rn); }
 
 // ============================================================================
 // Floating-point Compare
