@@ -38,6 +38,17 @@ NC='\033[0m'
 TOTAL=0
 PASSED=0
 FAILED=0
+SKIPPED=0
+
+# Tool availability (allow partial runs when LLVM tools are missing)
+HAVE_CLANG=1
+HAVE_LLC=1
+if [ ! -x "$CLANG" ]; then
+    HAVE_CLANG=0
+fi
+if [ ! -x "$LLC" ]; then
+    HAVE_LLC=0
+fi
 
 # Ensure runtime libraries are rebuilt with any local changes. [Let's not do this. It's out of control.]
 # make -C "$SLOW32_BASE/runtime" libc_debug.s32a libs32.s32a >/dev/null
@@ -49,6 +60,13 @@ mkdir -p "$RESULTS_DIR"
 echo "SLOW-32 Regression Tests (Modern Linker Version)"
 echo "================================================="
 echo ""
+if [ $HAVE_CLANG -eq 0 ] || [ $HAVE_LLC -eq 0 ]; then
+    echo "Note: LLVM tools not fully available."
+    echo "  clang: $([ $HAVE_CLANG -eq 1 ] && echo yes || echo no)"
+    echo "  llc:   $([ $HAVE_LLC -eq 1 ] && echo yes || echo no)"
+    echo "C-based tests will be skipped; assembly-based tests will still run."
+    echo ""
+fi
 
 run_test() {
     local test_name="$1"
@@ -83,6 +101,12 @@ run_test() {
     fi
 
     if [ "$asm_source" = "c" ]; then
+        if [ $HAVE_CLANG -eq 0 ] || [ $HAVE_LLC -eq 0 ]; then
+            echo -e "${YELLOW}SKIP${NC} (clang/llc unavailable)"
+            SKIPPED=$((SKIPPED + 1))
+            return
+        fi
+
         # Compile: C -> LLVM IR (with our runtime includes)
         if ! $CLANG -target slow32-unknown-none -S -emit-llvm -O0 \
              -I"$SLOW32_BASE/runtime/include" \
@@ -229,7 +253,7 @@ done
 
 echo ""
 echo "================================================="
-echo "Results: $PASSED/$TOTAL passed, $FAILED failed"
+echo "Results: $PASSED passed, $FAILED failed, $SKIPPED skipped (of $TOTAL)"
 echo ""
 
 if [ $FAILED -eq 0 ]; then
