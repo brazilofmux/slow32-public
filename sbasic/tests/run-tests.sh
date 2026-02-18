@@ -30,6 +30,7 @@ filter_output() {
         -e "instructions/second" \
         -e "^Error: Read out of bounds" \
         -e "^Error: Write out of bounds" \
+        -e "^DBT: Memory fault at PC=" \
         || true
 }
 
