@@ -269,37 +269,42 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
                 break;
             case OP_BEQ: case OP_BNE: case OP_BLT: case OP_BGE:
             case OP_BLTU: case OP_BGEU:
-                // Detect in-block back-edge for flush safety
-                if (inst.imm < 0) {
-                    uint32_t target = pc + 4 + inst.imm;
-                    if (target >= start_pc) {
-                        ctx->has_backedge = true;
-                        ctx->backedge_target_pc = target;
-                        bool seen = false;
-                        for (int i = 0; i < ctx->backedge_target_count; i++) {
-                            if (ctx->backedge_targets[i] == target) {
-                                seen = true;
-                                break;
+                // For superblock mode, forward branches continue on fall-through
+                if (ctx->superblock_enabled && inst.imm > 0) {
+                    // Continue scanning fall-through (mirrors superblock heuristic)
+                } else {
+                    // Detect in-block back-edge: backward branch targeting within this block
+                    if (inst.imm < 0 && ctx->reg_cache_enabled) {
+                        uint32_t target = pc + 4 + inst.imm;
+                        if (target >= start_pc) {
+                            ctx->has_backedge = true;
+                            ctx->backedge_target_pc = target;
+                            bool seen = false;
+                            for (int i = 0; i < ctx->backedge_target_count; i++) {
+                                if (ctx->backedge_targets[i] == target) {
+                                    seen = true;
+                                    break;
+                                }
                             }
-                        }
-                        if (!seen && ctx->backedge_target_count < MAX_BLOCK_INSTS) {
-                            ctx->backedge_targets[ctx->backedge_target_count++] = target;
-                        }
+                            if (!seen && ctx->backedge_target_count < MAX_BLOCK_INSTS) {
+                                ctx->backedge_targets[ctx->backedge_target_count++] = target;
+                            }
 
-                        // Compute registers written in the loop body
-                        uint32_t target_idx = (target - start_pc) / 4;
-                        for (int k = (int)target_idx; k <= inst_count; k++) {
-                            uint8_t wr = 0;
-                            switch (decoded[k].format) {
-                                case FMT_R: case FMT_I: case FMT_U: case FMT_J:
-                                    wr = decoded[k].rd; break;
-                                default: break;
+                            // Compute registers written in the loop body
+                            uint32_t target_idx = (target - start_pc) / 4;
+                            for (int k = (int)target_idx; k <= inst_count; k++) {
+                                uint8_t wr = 0;
+                                switch (decoded[k].format) {
+                                    case FMT_R: case FMT_I: case FMT_U: case FMT_J:
+                                        wr = decoded[k].rd; break;
+                                    default: break;
+                                }
+                                if (wr != 0) ctx->loop_written_regs |= (1u << wr);
                             }
-                            if (wr != 0) ctx->loop_written_regs |= (1u << wr);
                         }
                     }
+                    is_block_end = true;
                 }
-                is_block_end = true;
                 break;
             default:
                 break;
