@@ -1,15 +1,38 @@
 #include "terminal.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <term.h>
 
 static int term_state = 0; /* 0=uninitialized, 1=available, -1=unavailable */
 static int cur_fg = 7;
 static int cur_bg = 0;
+static int term_debug = -1;
+static int warned_no_term_for_inkey = 0;
+
+static int debug_enabled(void) {
+    if (term_debug >= 0)
+        return term_debug;
+    const char *v = getenv("SBASIC_TERM_DEBUG");
+    if (!v || !v[0] || strcmp(v, "0") == 0)
+        term_debug = 0;
+    else
+        term_debug = 1;
+    return term_debug;
+}
 
 static void ensure_init(void) {
     if (term_state != 0)
         return;
-    term_state = (term_init() == 0) ? 1 : -1;
+    int rc = term_init();
+    term_state = (rc == 0) ? 1 : -1;
+    if (debug_enabled()) {
+        if (term_state == 1) {
+            fprintf(stderr, "SBASIC TERM DEBUG: term service enabled\n");
+        } else {
+            fprintf(stderr, "SBASIC TERM DEBUG: term service unavailable; using ANSI fallback\n");
+        }
+    }
 }
 
 int sb_term_init(void) {
@@ -92,8 +115,13 @@ void sb_term_color(int fg, int bg, int has_fg, int has_bg) {
 
 int sb_term_inkey(char out[2]) {
     ensure_init();
-    if (term_state != 1)
+    if (term_state != 1) {
+        if (debug_enabled() && !warned_no_term_for_inkey) {
+            fprintf(stderr, "SBASIC TERM DEBUG: INKEY$ disabled (no term service)\n");
+            warned_no_term_for_inkey = 1;
+        }
         return 0;
+    }
 
     term_set_raw(1);
     if (!term_kbhit()) {
