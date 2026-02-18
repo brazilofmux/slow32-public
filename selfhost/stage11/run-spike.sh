@@ -6,49 +6,23 @@ set -euo pipefail
 # 1) Bootstrap via stage09 (obtains Gen2 cc-min, stage05 assembler, runtime)
 # 2) cc-min compiles s32-as-port.c → s32-as-port.s
 # 3) Stage05 assembler assembles → s32-as-port.s32o
-# 4) Forth linker links → s32-as-port.s32x
+# 4) Stage07 C linker links → s32-as-port.s32x
 # 5) Parity test: both assemblers assemble the same inputs, compare .s32o
 # 6) Smoke test: cc-min-compiled assembler assembles a test, link + run
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="${SELFHOST_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
-    ROOT_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
-fi
+SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 EMU="${STAGE11_EMU:-}"
 EMU_EXPLICIT=0
-KERNEL="${STAGE11_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
-PRELUDE="${STAGE11_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
-LINK_FTH="${STAGE11_LINK_FTH:-$ROOT_DIR/selfhost/stage03/link.fth}"
-
-STAGE09_DIR="$ROOT_DIR/selfhost/stage09"
+STAGE09_DIR="$SELFHOST_DIR/stage09"
 AS_PORT_SRC="$SCRIPT_DIR/s32-as-port.c"
 SMOKE_SRC="$STAGE09_DIR/test_smoke.c"
-
-CRT0_SRC="$ROOT_DIR/selfhost/stage01/crt0_minimal.s"
-MMIO_SRC="$ROOT_DIR/selfhost/stage01/mmio_minimal.s"
 
 KEEP_ARTIFACTS=0
 
 choose_default_emu() {
-    if [[ -x "$ROOT_DIR/tools/dbt/slow32-dbt" ]]; then
-        printf '%s\n' "$ROOT_DIR/tools/dbt/slow32-dbt"
-        return
-    fi
-    if [[ -x "$ROOT_DIR/tools/dbt/slow32-dbg" ]]; then
-        printf '%s\n' "$ROOT_DIR/tools/dbt/slow32-dbg"
-        return
-    fi
-    if [[ -x "$ROOT_DIR/tools/emulator/slow32-fast" ]]; then
-        printf '%s\n' "$ROOT_DIR/tools/emulator/slow32-fast"
-        return
-    fi
-    if [[ -x "$ROOT_DIR/tools/emulator/slow32" ]]; then
-        printf '%s\n' "$ROOT_DIR/tools/emulator/slow32"
-        return
-    fi
-    printf '%s\n' "$ROOT_DIR/tools/emulator/slow32-fast"
+    printf '%s\n' "$SELFHOST_DIR/stage00/s32-emu"
 }
 
 usage() {
@@ -92,12 +66,7 @@ if [[ "$EMU_EXPLICIT" -eq 0 && -z "${STAGE11_EMU:-}" ]]; then
     EMU="$(choose_default_emu)"
 fi
 
-if [[ "$EMU" != /* ]]; then
-    EMU="$ROOT_DIR/$EMU"
-fi
-
-for f in "$EMU" "$KERNEL" "$PRELUDE" "$LINK_FTH" \
-         "$AS_PORT_SRC" "$SMOKE_SRC" "$CRT0_SRC" "$MMIO_SRC"; do
+for f in "$EMU" "$AS_PORT_SRC" "$SMOKE_SRC"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
 
@@ -107,25 +76,6 @@ if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then
 fi
 
 # --- Utility functions ---
-
-run_forth() {
-    local script_a="$1"
-    local script_b="$2"
-    local cmd_text="$3"
-    local log_file="$4"
-
-    set +e
-    cat "$PRELUDE" "$script_a" "$script_b" - <<FTH | timeout 180 "$EMU" "$KERNEL" >"$log_file" 2>&1
-$cmd_text
-FTH
-    local rc=$?
-    set -e
-    if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
-        echo "forth pipeline failed (rc=$rc)" >&2
-        tail -n 60 "$log_file" >&2
-        return 1
-    fi
-}
 
 run_exe() {
     local exe="$1"
@@ -175,21 +125,16 @@ run_exe_any_rc() {
     return "$rc"
 }
 
-link_forth_with_libc() {
+link_with_c_linker() {
     local obj="$1"
     local exe="$2"
     local log="$3"
 
-    run_forth "$LINK_FTH" /dev/null "LINK-INIT
-S\" $RUNTIME_CRT0\" LINK-OBJ
-S\" $obj\" LINK-OBJ
-S\" $LIBC_START_OBJ\" LINK-OBJ
-S\" $RUNTIME_MMIO_OBJ\" LINK-OBJ
-65536 LINK-MMIO
-S\" $LIBC_ARCHIVE\" LINK-ARCHIVE
-S\" $exe\" LINK-EMIT
-BYE" "$log"
-    [[ -s "$exe" ]] || { echo "linker produced no output: $obj" >&2; return 1; }
+    run_exe "$LD_EXE" "$log" \
+        -o "$exe" --mmio 64K \
+        "$RUNTIME_CRT0" "$obj" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+        "$LIBC_ARCHIVE"
+    [[ -s "$exe" ]] || { echo "C linker produced no output: $obj" >&2; return 1; }
 }
 
 # ============================================================
@@ -219,6 +164,10 @@ S8_ART="$(awk -F': ' '/^Artifacts:/{print $2}' "$S8_LOG" | tail -n 1)"
 [[ -n "$AS_EXE" && -f "$AS_EXE" ]] || { echo "failed to locate stage05 assembler" >&2; exit 1; }
 [[ -n "$S8_ART" && -d "$S8_ART" ]] || { echo "failed to locate stage08 artifacts" >&2; exit 1; }
 
+# Find stage07 C linker from stage08
+LD_EXE="$(awk -F': ' '/^Linker exe:/{print $2}' "$S8_LOG" | tail -n 1)"
+[[ -n "$LD_EXE" && -f "$LD_EXE" ]] || { echo "failed to locate stage07 C linker" >&2; exit 1; }
+
 # Runtime objects from stage05 pipeline (nested inside stage08 workdir)
 S5_LOG="$S8_ART/stage5-build.log"
 [[ -f "$S5_LOG" ]] || { echo "missing stage05 build log: $S5_LOG" >&2; exit 1; }
@@ -226,17 +175,18 @@ S5_ART="$(awk -F': ' '/^Artifacts:/{print $2}' "$S5_LOG" | tail -n 1)"
 [[ -n "$S5_ART" && -d "$S5_ART" ]] || { echo "failed to locate stage05 artifacts" >&2; exit 1; }
 
 RUNTIME_CRT0="$S5_ART/crt0_minimal.s32o"
-RUNTIME_MMIO_OBJ="$S5_ART/mmio_minimal.s32o"
+RUNTIME_MMIO_NO_START_OBJ="$S5_ART/mmio_no_start.s32o"
 LIBC_ARCHIVE="$S5_ART/libc_selfhost.s32a"
 LIBC_START_OBJ="$S5_ART/libc_start.s32o"
 
 [[ -s "$RUNTIME_CRT0" ]] || { echo "missing runtime crt0: $RUNTIME_CRT0" >&2; exit 1; }
-[[ -s "$RUNTIME_MMIO_OBJ" ]] || { echo "missing runtime mmio: $RUNTIME_MMIO_OBJ" >&2; exit 1; }
+[[ -s "$RUNTIME_MMIO_NO_START_OBJ" ]] || { echo "missing runtime mmio (no start): $RUNTIME_MMIO_NO_START_OBJ" >&2; exit 1; }
 [[ -s "$LIBC_ARCHIVE" ]] || { echo "missing libc archive: $LIBC_ARCHIVE" >&2; exit 1; }
 [[ -s "$LIBC_START_OBJ" ]] || { echo "missing libc start: $LIBC_START_OBJ" >&2; exit 1; }
 
 echo "Gen2 cc-min: $GEN2_EXE"
 echo "Stage05 assembler: $AS_EXE"
+echo "Stage07 C linker: $LD_EXE"
 
 # ============================================================
 # Step 2: Compile s32-as-port.c with cc-min
@@ -267,7 +217,7 @@ PORT_EXE="$WORKDIR/s32-as-port.s32x"
 run_exe "$AS_EXE" "$WORKDIR/assemble-as-port.log" "$PORT_ASM" "$PORT_OBJ"
 [[ -s "$PORT_OBJ" ]] || { echo "assembler produced no output for s32-as-port" >&2; exit 1; }
 
-link_forth_with_libc "$PORT_OBJ" "$PORT_EXE" "$WORKDIR/link-as-port.log"
+link_with_c_linker "$PORT_OBJ" "$PORT_EXE" "$WORKDIR/link-as-port.log"
 echo "cc-min-compiled assembler: $PORT_EXE"
 
 # ============================================================
@@ -325,7 +275,7 @@ SMOKE_OBJ="$NEW_SMOKE_OBJ"
 SMOKE_EXE="$WORKDIR/smoke.s32x"
 
 # Link and run using the new assembler's .s32o
-link_forth_with_libc "$SMOKE_OBJ" "$SMOKE_EXE" "$WORKDIR/smoke-link.log"
+link_with_c_linker "$SMOKE_OBJ" "$SMOKE_EXE" "$WORKDIR/smoke-link.log"
 
 set +e
 timeout "${EXEC_TIMEOUT:-180}" "$EMU" "$SMOKE_EXE" >"$WORKDIR/smoke-run.log" 2>&1
