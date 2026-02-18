@@ -8,18 +8,16 @@ set -euo pipefail
 # If gen2.s == gen3.s, the compiler has reached a fixed point.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="${SELFHOST_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
-    ROOT_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
-fi
+SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
 EMU="${STAGE9_EMU:-}"
 EMU_EXPLICIT=0
 KERNEL="${STAGE9_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${STAGE9_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
-LINK_FTH="${STAGE9_LINK_FTH:-$ROOT_DIR/selfhost/stage03/link.fth}"
+LINK_FTH="${STAGE9_LINK_FTH:-$SELFHOST_DIR/stage03/link.fth}"
 
-STAGE08_DIR="$ROOT_DIR/selfhost/stage08"
+STAGE08_DIR="$SELFHOST_DIR/stage08"
 SRC_PASS1="$STAGE08_DIR/cc-min-pass1.c"
 SRC_PASS2="$STAGE08_DIR/cc-min-pass2.c"
 SRC_PASS3="$STAGE08_DIR/cc-min-pass3.c"
@@ -28,23 +26,7 @@ SMOKE_SRC="$SCRIPT_DIR/test_smoke.c"
 KEEP_ARTIFACTS=0
 
 choose_default_emu() {
-    if [[ -x "$ROOT_DIR/tools/dbt/slow32-dbt" ]]; then
-        printf '%s\n' "$ROOT_DIR/tools/dbt/slow32-dbt"
-        return
-    fi
-    if [[ -x "$ROOT_DIR/tools/dbt/slow32-dbg" ]]; then
-        printf '%s\n' "$ROOT_DIR/tools/dbt/slow32-dbg"
-        return
-    fi
-    if [[ -x "$ROOT_DIR/tools/emulator/slow32-fast" ]]; then
-        printf '%s\n' "$ROOT_DIR/tools/emulator/slow32-fast"
-        return
-    fi
-    if [[ -x "$ROOT_DIR/tools/emulator/slow32" ]]; then
-        printf '%s\n' "$ROOT_DIR/tools/emulator/slow32"
-        return
-    fi
-    printf '%s\n' "$ROOT_DIR/tools/emulator/slow32-fast"
+    printf '%s\n' "$SELFHOST_DIR/stage00/s32-emu"
 }
 
 usage() {
@@ -87,10 +69,6 @@ done
 
 if [[ "$EMU_EXPLICIT" -eq 0 && -z "${STAGE9_EMU:-}" ]]; then
     EMU="$(choose_default_emu)"
-fi
-
-if [[ "$EMU" != /* ]]; then
-    EMU="$ROOT_DIR/$EMU"
 fi
 
 for f in "$EMU" "$KERNEL" "$PRELUDE" "$LINK_FTH" \
@@ -181,7 +159,7 @@ link_forth_with_libc() {
 S\" $RUNTIME_CRT0\" LINK-OBJ
 S\" $obj\" LINK-OBJ
 S\" $LIBC_START_OBJ\" LINK-OBJ
-S\" $RUNTIME_MMIO_OBJ\" LINK-OBJ
+S\" $RUNTIME_MMIO_NO_START_OBJ\" LINK-OBJ
 65536 LINK-MMIO
 S\" $LIBC_ARCHIVE\" LINK-ARCHIVE
 S\" $exe\" LINK-EMIT
@@ -204,10 +182,12 @@ fi
 # Extract paths from stage08 output
 GEN1_EXE="$(awk -F': ' '/^Compiler exe:/{print $2}' "$S8_LOG" | tail -n 1)"
 AS_EXE="$(awk -F': ' '/^Assembler exe:/{print $2}' "$S8_LOG" | tail -n 1)"
+LD_EXE="$(awk -F': ' '/^Linker exe:/{print $2}' "$S8_LOG" | tail -n 1)"
 S8_ART="$(awk -F': ' '/^Artifacts:/{print $2}' "$S8_LOG" | tail -n 1)"
 
 [[ -n "$GEN1_EXE" && -f "$GEN1_EXE" ]] || { echo "failed to locate Gen1 cc-min exe" >&2; exit 1; }
 [[ -n "$AS_EXE" && -f "$AS_EXE" ]] || { echo "failed to locate stage05 assembler" >&2; exit 1; }
+[[ -n "$LD_EXE" && -f "$LD_EXE" ]] || { echo "failed to locate stage07 linker" >&2; exit 1; }
 [[ -n "$S8_ART" && -d "$S8_ART" ]] || { echo "failed to locate stage08 artifacts" >&2; exit 1; }
 
 # Runtime objects live in the stage05 pipeline artifacts (nested inside stage08 workdir)
@@ -218,11 +198,13 @@ S5_ART="$(awk -F': ' '/^Artifacts:/{print $2}' "$S5_LOG" | tail -n 1)"
 
 RUNTIME_CRT0="$S5_ART/crt0_minimal.s32o"
 RUNTIME_MMIO_OBJ="$S5_ART/mmio_minimal.s32o"
+RUNTIME_MMIO_NO_START_OBJ="$S5_ART/mmio_no_start.s32o"
 LIBC_ARCHIVE="$S5_ART/libc_selfhost.s32a"
 LIBC_START_OBJ="$S5_ART/libc_start.s32o"
 
 [[ -s "$RUNTIME_CRT0" ]] || { echo "missing runtime crt0: $RUNTIME_CRT0" >&2; exit 1; }
 [[ -s "$RUNTIME_MMIO_OBJ" ]] || { echo "missing runtime mmio: $RUNTIME_MMIO_OBJ" >&2; exit 1; }
+[[ -s "$RUNTIME_MMIO_NO_START_OBJ" ]] || { echo "missing runtime mmio (no start): $RUNTIME_MMIO_NO_START_OBJ" >&2; exit 1; }
 [[ -s "$LIBC_ARCHIVE" ]] || { echo "missing libc archive: $LIBC_ARCHIVE" >&2; exit 1; }
 [[ -s "$LIBC_START_OBJ" ]] || { echo "missing libc start: $LIBC_START_OBJ" >&2; exit 1; }
 
