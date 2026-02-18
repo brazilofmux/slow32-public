@@ -2,12 +2,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="${STAGE4_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
-    ROOT_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
-fi
+SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
-EMU="${STAGE4_EMU:-$ROOT_DIR/tools/emulator/slow32-fast}"
+EMU="${STAGE4_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
 MANIFEST="${STAGE4_GAP_MANIFEST:-$SCRIPT_DIR/tests/manifests/subset-known-gaps.lst}"
 MODE="${STAGE4_GAP_MODE:-baseline}"
 
@@ -48,11 +46,8 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-if [[ "$EMU" != /* ]]; then
-    EMU="$ROOT_DIR/$EMU"
-fi
 if [[ "$MANIFEST" != /* ]]; then
-    MANIFEST="$ROOT_DIR/$MANIFEST"
+    MANIFEST="$SCRIPT_DIR/$MANIFEST"
 fi
 
 [[ -f "$MANIFEST" ]] || { echo "Missing manifest: $MANIFEST" >&2; exit 1; }

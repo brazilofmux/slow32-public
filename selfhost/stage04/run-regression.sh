@@ -2,21 +2,19 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="${STAGE4_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
-    ROOT_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
-fi
+SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
-EMU="${STAGE4_EMU:-$ROOT_DIR/tools/emulator/slow32}"
+EMU="${STAGE4_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
 KERNEL="$ROOT_DIR/forth/kernel.s32x"
 PRELUDE="$ROOT_DIR/forth/prelude.fth"
 CC_FTH="${STAGE4_CC:-$SCRIPT_DIR/cc.fth}"
-ASM_FTH="${STAGE4_ASM:-$ROOT_DIR/selfhost/stage01/asm.fth}"
-LINK_FTH="${STAGE4_LINK:-$ROOT_DIR/selfhost/stage03/link.fth}"
+ASM_FTH="${STAGE4_ASM:-$SELFHOST_DIR/stage01/asm.fth}"
+LINK_FTH="${STAGE4_LINK:-$SELFHOST_DIR/stage03/link.fth}"
 TEST_DIR="${STAGE4_TEST_DIR:-$SCRIPT_DIR/tests}"
 VALIDATION_DIR="${STAGE4_VALIDATION_DIR:-$SCRIPT_DIR/validation}"
-CRT0_SRC="$ROOT_DIR/selfhost/stage01/crt0_minimal.s"
-MMIO_SRC="$ROOT_DIR/selfhost/stage01/mmio_minimal.s"
+CRT0_SRC="$SELFHOST_DIR/stage01/crt0_minimal.s"
+MMIO_SRC="$SELFHOST_DIR/stage01/mmio_minimal.s"
 
 SLOW32DUMP=0
 KEEP_ARTIFACTS=0
@@ -34,8 +32,7 @@ Runs Stage 4 compiler regression in a staged work-up:
     - on full emulators: disassemble test3.s32x and validate output
 
 Defaults:
-  Emulator: \$STAGE4_EMU or $ROOT_DIR/tools/emulator/slow32
-  Minimal emulator example: --emu $ROOT_DIR/selfhost/stage00/s32-emu
+  Emulator: \$STAGE4_EMU or stage00/s32-emu
 USAGE
 }
 
@@ -70,6 +67,9 @@ fi
 
 RUNTIME_CRT0="$WORKDIR/crt0_minimal.s32o"
 RUNTIME_MMIO_OBJ="$WORKDIR/mmio_minimal.s32o"
+
+# cc.fth uses relative include path "selfhost/stage04/include/" — run from repo root
+cd "$ROOT_DIR"
 
 run_forth() {
     local script_a="$1"

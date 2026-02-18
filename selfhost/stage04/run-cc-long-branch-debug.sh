@@ -2,12 +2,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="${STAGE4_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
-    ROOT_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
-fi
+SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
-EMU="${STAGE4_EMU:-$ROOT_DIR/tools/emulator/slow32}"
+EMU="${STAGE4_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
 KERNEL="${STAGE4_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${STAGE4_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 CC_FTH="${STAGE4_CC:-$SCRIPT_DIR/cc.fth}"
@@ -61,14 +59,11 @@ done
 
 [[ -n "$SRC" ]] || { echo "Missing required --src" >&2; usage; exit 2; }
 
-if [[ "$EMU" != /* ]]; then
-    EMU="$ROOT_DIR/$EMU"
-fi
 if [[ "$SRC" != /* ]]; then
-    SRC="$ROOT_DIR/$SRC"
+    SRC="$(pwd)/$SRC"
 fi
 if [[ -n "$OUT" && "$OUT" != /* ]]; then
-    OUT="$ROOT_DIR/$OUT"
+    OUT="$(pwd)/$OUT"
 fi
 
 for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$SRC"; do

@@ -2,20 +2,18 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="${STAGE4_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
-    ROOT_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
-fi
+SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
-EMU="${STAGE4_EMU:-$ROOT_DIR/tools/emulator/slow32}"
+EMU="${STAGE4_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
 KERNEL="${STAGE4_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${STAGE4_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 CC_FTH="${STAGE4_CC:-$SCRIPT_DIR/cc.fth}"
-ASM_FTH="${STAGE4_ASM:-$ROOT_DIR/selfhost/stage01/asm.fth}"
-LINK_FTH="${STAGE4_LINK:-$ROOT_DIR/selfhost/stage03/link.fth}"
+ASM_FTH="${STAGE4_ASM:-$SELFHOST_DIR/stage01/asm.fth}"
+LINK_FTH="${STAGE4_LINK:-$SELFHOST_DIR/stage03/link.fth}"
 MANIFEST="${STAGE4_SUBSET_MANIFEST:-$SCRIPT_DIR/tests/manifests/subset.lst}"
-CRT0_SRC="$ROOT_DIR/selfhost/stage01/crt0_minimal.s"
-MMIO_SRC="$ROOT_DIR/selfhost/stage01/mmio_minimal.s"
+CRT0_SRC="$SELFHOST_DIR/stage01/crt0_minimal.s"
+MMIO_SRC="$SELFHOST_DIR/stage01/mmio_minimal.s"
 
 KEEP_ARTIFACTS=0
 
@@ -54,11 +52,8 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-if [[ "$EMU" != /* ]]; then
-    EMU="$ROOT_DIR/$EMU"
-fi
 if [[ "$MANIFEST" != /* ]]; then
-    MANIFEST="$ROOT_DIR/$MANIFEST"
+    MANIFEST="$SCRIPT_DIR/$MANIFEST"
 fi
 
 for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$ASM_FTH" "$LINK_FTH" "$MANIFEST" \
