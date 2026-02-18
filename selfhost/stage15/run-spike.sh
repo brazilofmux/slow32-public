@@ -696,5 +696,11 @@ else
 fi
 
 echo "Emulator: $EMU"
+echo "Compiler exe: $S32CC_EXE"
 echo "New assembler: $NEW_AS_EXE"
+echo "Linker exe: $LD_EXE"
+echo "Runtime crt0: $RUNTIME_CRT0"
+echo "Runtime mmio: $RUNTIME_MMIO_NO_START_OBJ"
+echo "Libc archive: $LIBC_ARCHIVE"
+echo "Libc start: $LIBC_START_OBJ"
 echo "Artifacts: $WORKDIR"
