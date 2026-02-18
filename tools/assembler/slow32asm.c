@@ -753,8 +753,24 @@ static uint32_t encode_r(uint32_t op, int rd, int rs1, int rs2) {
 }
 
 static uint32_t encode_i(uint32_t op, int rd, int rs1, int imm) {
-    if (imm < -2048 || imm > 2047) {
-        fprintf(stderr, "Warning: I-type immediate %d (0x%X) truncated to 12-bit signed range\n", imm, imm);
+    int is_zero_extended =
+        (op == 0x11) || /* ori */
+        (op == 0x12) || /* andi */
+        (op == 0x1E) || /* xori */
+        (op == 0x17);   /* sltiu */
+
+    if (is_zero_extended) {
+        if (imm < 0 || imm > 4095) {
+            fprintf(stderr,
+                    "Warning: I-type immediate %d (0x%X) truncated to 12-bit unsigned range\n",
+                    imm, imm);
+        }
+    } else {
+        if (imm < -2048 || imm > 2047) {
+            fprintf(stderr,
+                    "Warning: I-type immediate %d (0x%X) truncated to 12-bit signed range\n",
+                    imm, imm);
+        }
     }
     return op | (rd << 7) | (rs1 << 15) | ((imm & 0xFFF) << 20);
 }
