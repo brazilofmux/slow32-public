@@ -8,6 +8,7 @@ set -euo pipefail
 # 2) Lexer tests: compile each test_lex_*.c with cc-min, run
 # 3) Build s32-cc: concatenate lex+parse headers, compile s32cc.c with cc-min
 # 4) Parser tests: compile each test_parse_*.c with s32-cc, assemble, link, run
+# 5) Self-hosting: s32-cc compiles itself → fixed point proof (gen2.s == gen3.s)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -34,6 +35,7 @@ Stage14 s32-cc compiler tests:
   2) compile each test_lex_*.c with cc-min, run
   3) build s32-cc compiler from s32cc.c with cc-min
   4) compile each test_parse_*.c with s32-cc, assemble, link, run
+  5) self-hosting: s32-cc compiles itself, fixed point + smoke test
 USAGE
 }
 
@@ -398,6 +400,131 @@ for test_name in $PARSE_TESTS; do
         FAIL=$((FAIL + 1))
     fi
 done
+
+# ============================================================
+# Step 5: Self-hosting — s32-cc compiles itself
+# ============================================================
+echo ""
+echo "=== Step 5: Self-hosting ==="
+
+# Create merged source: lex header + parse header + driver (minus #include line)
+S32CC_MERGED="$WORKDIR/s32cc_merged.c"
+cat "$SCRIPT_DIR/s32cc_lex.h" "$SCRIPT_DIR/s32cc_parse.h" > "$S32CC_MERGED"
+tail -n +2 "$SCRIPT_DIR/s32cc.c" >> "$S32CC_MERGED"
+
+MERGED_SZ="$(wc -c < "$S32CC_MERGED")"
+echo "  Merged source: $MERGED_SZ bytes (limit 65536)"
+if [[ "$MERGED_SZ" -ge 65536 ]]; then
+    echo "ERROR: merged source ($MERGED_SZ bytes) exceeds LEX_SRC_SZ (65536)" >&2
+    exit 1
+fi
+
+# Save and bump timeout for self-compilation (compiling 62KB source is slow)
+SAVED_TIMEOUT="${EXEC_TIMEOUT:-180}"
+EXEC_TIMEOUT=300
+
+# Gen1 compile: s32cc.s32x (compiled by cc-min) compiles merged → gen2-s32cc.s
+GEN2_S32CC_ASM="$WORKDIR/gen2-s32cc.s"
+run_exe "$S32CC_EXE" "$WORKDIR/gen1-s32cc-compile.log" "$S32CC_MERGED" "$GEN2_S32CC_ASM"
+if [[ ! -s "$GEN2_S32CC_ASM" ]]; then
+    echo "Gen1 (s32cc) produced no assembly output" >&2
+    cat "$WORKDIR/gen1-s32cc-compile.log" >&2
+    exit 1
+fi
+GEN2_ASM_SZ="$(wc -c < "$GEN2_S32CC_ASM")"
+echo "  Gen1 → Gen2: OK ($GEN2_ASM_SZ bytes asm)"
+TOTAL=$((TOTAL + 1))
+PASS=$((PASS + 1))
+
+# Assemble + link Gen2
+GEN2_S32CC_OBJ="$WORKDIR/gen2-s32cc.s32o"
+GEN2_S32CC_EXE="$WORKDIR/gen2-s32cc.s32x"
+
+run_exe "$AS_EXE" "$WORKDIR/gen2-s32cc-assemble.log" "$GEN2_S32CC_ASM" "$GEN2_S32CC_OBJ"
+if [[ ! -s "$GEN2_S32CC_OBJ" ]]; then
+    echo "assembler produced no output for gen2-s32cc" >&2
+    cat "$WORKDIR/gen2-s32cc-assemble.log" >&2
+    exit 1
+fi
+
+run_exe "$LD_EXE" "$WORKDIR/gen2-s32cc-link.log" \
+    -o "$GEN2_S32CC_EXE" --mmio 64K \
+    "$RUNTIME_CRT0" "$GEN2_S32CC_OBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+    "$LIBC_ARCHIVE"
+if [[ ! -s "$GEN2_S32CC_EXE" ]]; then
+    echo "linker produced no output for gen2-s32cc" >&2
+    cat "$WORKDIR/gen2-s32cc-link.log" >&2
+    exit 1
+fi
+echo "  Gen2 assembled + linked OK"
+TOTAL=$((TOTAL + 1))
+PASS=$((PASS + 1))
+
+# Gen2 compile: gen2-s32cc.s32x compiles merged → gen3-s32cc.s
+GEN3_S32CC_ASM="$WORKDIR/gen3-s32cc.s"
+run_exe "$GEN2_S32CC_EXE" "$WORKDIR/gen2-s32cc-compile.log" "$S32CC_MERGED" "$GEN3_S32CC_ASM"
+if [[ ! -s "$GEN3_S32CC_ASM" ]]; then
+    echo "Gen2 (s32cc) produced no assembly output" >&2
+    cat "$WORKDIR/gen2-s32cc-compile.log" >&2
+    exit 1
+fi
+GEN3_ASM_SZ="$(wc -c < "$GEN3_S32CC_ASM")"
+echo "  Gen2 → Gen3: OK ($GEN3_ASM_SZ bytes asm)"
+
+# Restore timeout
+EXEC_TIMEOUT="$SAVED_TIMEOUT"
+
+# Fixed-point check: gen2.s must equal gen3.s
+TOTAL=$((TOTAL + 1))
+if diff "$GEN2_S32CC_ASM" "$GEN3_S32CC_ASM" >/dev/null 2>&1; then
+    echo "  FIXED POINT PROVEN: gen2.s == gen3.s"
+    PASS=$((PASS + 1))
+else
+    echo "  FIXED POINT FAILED: gen2.s and gen3.s differ" >&2
+    diff "$GEN2_S32CC_ASM" "$GEN3_S32CC_ASM" | head -n 40 >&2
+    FAIL=$((FAIL + 1))
+fi
+
+# Smoke test: Gen2 compiles test_parse_smoke.c → assemble → link → run
+SMOKE_SRC="$TESTS_DIR/test_parse_smoke.c"
+SMOKE_ASM="$WORKDIR/selfhost-smoke.s"
+SMOKE_OBJ="$WORKDIR/selfhost-smoke.s32o"
+SMOKE_EXE="$WORKDIR/selfhost-smoke.s32x"
+
+TOTAL=$((TOTAL + 1))
+run_exe "$GEN2_S32CC_EXE" "$WORKDIR/selfhost-smoke-compile.log" "$SMOKE_SRC" "$SMOKE_ASM"
+if [[ ! -s "$SMOKE_ASM" ]]; then
+    echo "  Smoke test: FAIL (Gen2 produced no assembly)" >&2
+    FAIL=$((FAIL + 1))
+else
+    run_exe "$AS_EXE" "$WORKDIR/selfhost-smoke-assemble.log" "$SMOKE_ASM" "$SMOKE_OBJ"
+    if [[ ! -s "$SMOKE_OBJ" ]]; then
+        echo "  Smoke test: FAIL (assemble)" >&2
+        FAIL=$((FAIL + 1))
+    else
+        run_exe "$LD_EXE" "$WORKDIR/selfhost-smoke-link.log" \
+            -o "$SMOKE_EXE" --mmio 64K \
+            "$RUNTIME_CRT0" "$SMOKE_OBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+            "$LIBC_ARCHIVE"
+        if [[ ! -s "$SMOKE_EXE" ]]; then
+            echo "  Smoke test: FAIL (link)" >&2
+            FAIL=$((FAIL + 1))
+        else
+            set +e
+            run_exe_rc "$SMOKE_EXE" "$WORKDIR/selfhost-smoke-run.log"
+            SMOKE_RC=$?
+            set -e
+
+            if [[ "$SMOKE_RC" -eq 0 ]]; then
+                echo "  Smoke test: PASS (rc=0)"
+                PASS=$((PASS + 1))
+            else
+                echo "  Smoke test: FAIL (rc=$SMOKE_RC)" >&2
+                FAIL=$((FAIL + 1))
+            fi
+        fi
+    fi
+fi
 
 # ============================================================
 # Final report
