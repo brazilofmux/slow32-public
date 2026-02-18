@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stage 14: C Lexer (Pass 1 of s32-cc)
+# Stage 14: s32-cc C compiler (Pass 1 lexer + Pass 2 parser)
 #
 # Bootstrap chain:
 # 1) Bootstrap via stage13 (obtains Gen2 cc-min, assembler, C linker, runtime)
-# 2) For each test_lex_*.c:
-#    a) cc-min compiles test → .s
-#    b) assembler → .s32o
-#    c) C linker links with libc → .s32x
-#    d) run, expect rc=0
+# 2) Lexer tests: compile each test_lex_*.c with cc-min, run
+# 3) Build s32-cc: concatenate lex+parse headers, compile s32cc.c with cc-min
+# 4) Parser tests: compile each test_parse_*.c with s32-cc, assemble, link, run
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -31,11 +29,11 @@ usage() {
     cat <<USAGE
 Usage: $0 [--emu <path>] [--keep-artifacts]
 
-Stage14 C lexer tests:
+Stage14 s32-cc compiler tests:
   1) bootstrap Gen2 cc-min + assembler + C linker via stage13
-  2) compile each test_lex_*.c with cc-min
-  3) assemble + link → test.s32x
-  4) run each test, expect rc=0
+  2) compile each test_lex_*.c with cc-min, run
+  3) build s32-cc compiler from s32cc.c with cc-min
+  4) compile each test_parse_*.c with s32-cc, assemble, link, run
 USAGE
 }
 
@@ -81,10 +79,8 @@ run_exe() {
     local log="$2"
     shift 2
 
-    set +e
-    timeout "${EXEC_TIMEOUT:-180}" "$EMU" "$exe" "$@" >"$log" 2>&1
-    local rc=$?
-    set -e
+    local rc=0
+    timeout "${EXEC_TIMEOUT:-180}" "$EMU" "$exe" "$@" >"$log" 2>&1 || rc=$?
     if [[ "$rc" -eq 124 ]]; then
         echo "execution timed out: $exe" >&2
         tail -n 60 "$log" >&2
@@ -107,10 +103,8 @@ run_exe_rc() {
     local log="$2"
     shift 2
 
-    set +e
-    timeout "${EXEC_TIMEOUT:-180}" "$EMU" "$exe" "$@" >"$log" 2>&1
-    local rc=$?
-    set -e
+    local rc=0
+    timeout "${EXEC_TIMEOUT:-180}" "$EMU" "$exe" "$@" >"$log" 2>&1 || rc=$?
     if [[ "$rc" -eq 124 ]]; then
         echo "execution timed out: $exe" >&2
         tail -n 60 "$log" >&2
@@ -274,13 +268,145 @@ for test_name in $TESTS; do
 done
 
 # ============================================================
+# Step 3: Build s32-cc compiler
+# ============================================================
+echo ""
+echo "=== Step 3: Build s32-cc ==="
+
+# Concatenate lexer + parser headers
+cat "$SCRIPT_DIR/s32cc_lex.h" "$SCRIPT_DIR/s32cc_parse.h" > "$WORKDIR/s32cc_combined.h"
+
+# Copy driver
+cp "$SCRIPT_DIR/s32cc.c" "$WORKDIR/s32cc.c"
+
+# Compile with cc-min
+S32CC_ASM="$WORKDIR/s32cc.s"
+S32CC_OBJ="$WORKDIR/s32cc.s32o"
+S32CC_EXE="$WORKDIR/s32cc.s32x"
+
+run_exe "$GEN2_EXE" "$WORKDIR/s32cc-compile.log" "$WORKDIR/s32cc.c" "$S32CC_ASM"
+if [[ ! -s "$S32CC_ASM" ]]; then
+    echo "cc-min produced no assembly for s32cc" >&2
+    cat "$WORKDIR/s32cc-compile.log" >&2
+    exit 1
+fi
+echo "  s32cc.c compiled OK ($(wc -c < "$S32CC_ASM") bytes asm)"
+
+# Assemble
+run_exe "$AS_EXE" "$WORKDIR/s32cc-assemble.log" "$S32CC_ASM" "$S32CC_OBJ"
+if [[ ! -s "$S32CC_OBJ" ]]; then
+    echo "assembler produced no output for s32cc" >&2
+    cat "$WORKDIR/s32cc-assemble.log" >&2
+    exit 1
+fi
+
+# Link
+run_exe "$LD_EXE" "$WORKDIR/s32cc-link.log" \
+    -o "$S32CC_EXE" --mmio 64K \
+    "$RUNTIME_CRT0" "$S32CC_OBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+    "$LIBC_ARCHIVE"
+if [[ ! -s "$S32CC_EXE" ]]; then
+    echo "linker produced no output for s32cc" >&2
+    cat "$WORKDIR/s32cc-link.log" >&2
+    exit 1
+fi
+echo "  s32cc.s32x linked OK ($(wc -c < "$S32CC_EXE") bytes)"
+TOTAL=$((TOTAL + 1))
+PASS=$((PASS + 1))
+
+# ============================================================
+# Step 4: Parser tests (compile with s32-cc, assemble, link, run)
+# ============================================================
+echo ""
+echo "=== Step 4: Parser tests ==="
+
+PARSE_TESTS="test_parse_smoke test_parse_expr test_parse_ctrl test_parse_ptr test_parse_mixed"
+
+for test_name in $PARSE_TESTS; do
+    TOTAL=$((TOTAL + 1))
+    SRC="$TESTS_DIR/${test_name}.c"
+    PASM="$WORKDIR/${test_name}.s"
+    POBJ="$WORKDIR/${test_name}.s32o"
+    EXE="$WORKDIR/${test_name}.s32x"
+
+    if [[ ! -f "$SRC" ]]; then
+        printf "  %-24s SKIP (source not found)\n" "${test_name}:"
+        FAIL=$((FAIL + 1))
+        continue
+    fi
+
+    # Compile with s32-cc
+    if ! run_exe "$S32CC_EXE" "$WORKDIR/${test_name}-s32cc.log" "$SRC" "$PASM" 2>"$WORKDIR/${test_name}-s32cc-err.log"; then
+        printf "  %-24s FAIL (s32cc compile)\n" "${test_name}:"
+        cat "$WORKDIR/${test_name}-s32cc.log" >&2
+        cat "$WORKDIR/${test_name}-s32cc-err.log" >&2
+        FAIL=$((FAIL + 1))
+        continue
+    fi
+    if [[ ! -s "$PASM" ]]; then
+        printf "  %-24s FAIL (no asm output)\n" "${test_name}:"
+        cat "$WORKDIR/${test_name}-s32cc.log" >&2
+        FAIL=$((FAIL + 1))
+        continue
+    fi
+
+    # Assemble
+    if ! run_exe "$AS_EXE" "$WORKDIR/${test_name}-assemble.log" "$PASM" "$POBJ" 2>"$WORKDIR/${test_name}-as-err.log"; then
+        printf "  %-24s FAIL (assemble)\n" "${test_name}:"
+        cat "$WORKDIR/${test_name}-assemble.log" >&2
+        cat "$WORKDIR/${test_name}-as-err.log" >&2
+        FAIL=$((FAIL + 1))
+        continue
+    fi
+    if [[ ! -s "$POBJ" ]]; then
+        printf "  %-24s FAIL (no obj output)\n" "${test_name}:"
+        FAIL=$((FAIL + 1))
+        continue
+    fi
+
+    # Link (needs libc_start for __slow32_start which calls main)
+    if ! run_exe "$LD_EXE" "$WORKDIR/${test_name}-link.log" \
+        -o "$EXE" --mmio 64K \
+        "$RUNTIME_CRT0" "$POBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+        "$LIBC_ARCHIVE" 2>"$WORKDIR/${test_name}-ld-err.log"; then
+        printf "  %-24s FAIL (link)\n" "${test_name}:"
+        cat "$WORKDIR/${test_name}-link.log" >&2
+        cat "$WORKDIR/${test_name}-ld-err.log" >&2
+        FAIL=$((FAIL + 1))
+        continue
+    fi
+    if [[ ! -s "$EXE" ]]; then
+        printf "  %-24s FAIL (no exe output)\n" "${test_name}:"
+        FAIL=$((FAIL + 1))
+        continue
+    fi
+
+    # Run test
+    set +e
+    run_exe_rc "$EXE" "$WORKDIR/${test_name}-run.log"
+    TEST_RC=$?
+    set -e
+
+    if [[ "$TEST_RC" -eq 0 ]]; then
+        printf "  %-24s PASS (rc=0)\n" "${test_name}:"
+        PASS=$((PASS + 1))
+    else
+        printf "  %-24s FAIL (rc=%d)\n" "${test_name}:" "$TEST_RC"
+        # Show assembly for debugging
+        echo "  --- Assembly output (first 40 lines) ---" >&2
+        head -n 40 "$PASM" >&2
+        FAIL=$((FAIL + 1))
+    fi
+done
+
+# ============================================================
 # Final report
 # ============================================================
 echo ""
 if [[ "$FAIL" -eq 0 ]]; then
-    echo "OK: stage14 lexer ($PASS/$TOTAL tests passed)"
+    echo "OK: stage14 ($PASS/$TOTAL tests passed)"
 else
-    echo "FAIL: stage14 lexer ($PASS/$TOTAL tests passed, $FAIL failed)" >&2
+    echo "FAIL: stage14 ($PASS/$TOTAL tests passed, $FAIL failed)" >&2
     exit 1
 fi
 
