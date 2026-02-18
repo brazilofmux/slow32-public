@@ -2,21 +2,19 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="${SELFHOST_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
-    ROOT_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
-fi
+SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
 EMU="${STAGE8_EMU:-}"
 EMU_EXPLICIT=0
 KERNEL="${STAGE8_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${STAGE8_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
-CC_FTH="${STAGE8_CC_FTH:-$ROOT_DIR/selfhost/stage04/cc.fth}"
-LINK_FTH="${STAGE8_LINK_FTH:-$ROOT_DIR/selfhost/stage03/link.fth}"
+CC_FTH="${STAGE8_CC_FTH:-$SELFHOST_DIR/stage04/cc.fth}"
+LINK_FTH="${STAGE8_LINK_FTH:-$SELFHOST_DIR/stage03/link.fth}"
 
-CRT0_SRC="$ROOT_DIR/selfhost/stage01/crt0_minimal.s"
-MMIO_SRC="$ROOT_DIR/selfhost/stage01/mmio_minimal.s"
-LIBC_DIR="$ROOT_DIR/selfhost/stage05/libc"
+CRT0_SRC="$SELFHOST_DIR/stage05/crt0.s"
+MMIO_SRC="$SELFHOST_DIR/stage05/mmio.s"
+LIBC_DIR="$SELFHOST_DIR/stage05/libc"
 SRC="${STAGE8_CC_MIN_SRC:-$SCRIPT_DIR/cc-min.c}"
 SRC_PASS1="${STAGE8_CC_MIN_PASS1_SRC:-$SCRIPT_DIR/cc-min-pass1.c}"
 SRC_PASS2="${STAGE8_CC_MIN_PASS2_SRC:-$SCRIPT_DIR/cc-min-pass2.c}"
@@ -70,23 +68,7 @@ KEEP_ARTIFACTS=0
 REBUILD_LIBC="${STAGE8_REBUILD_LIBC:-0}"
 
 choose_default_emu() {
-    if [[ -x "$ROOT_DIR/tools/dbt/slow32-dbt" ]]; then
-        printf '%s\n' "$ROOT_DIR/tools/dbt/slow32-dbt"
-        return
-    fi
-    if [[ -x "$ROOT_DIR/tools/dbt/slow32-dbg" ]]; then
-        printf '%s\n' "$ROOT_DIR/tools/dbt/slow32-dbg"
-        return
-    fi
-    if [[ -x "$ROOT_DIR/tools/emulator/slow32-fast" ]]; then
-        printf '%s\n' "$ROOT_DIR/tools/emulator/slow32-fast"
-        return
-    fi
-    if [[ -x "$ROOT_DIR/tools/emulator/slow32" ]]; then
-        printf '%s\n' "$ROOT_DIR/tools/emulator/slow32"
-        return
-    fi
-    printf '%s\n' "$ROOT_DIR/tools/emulator/slow32-fast"
+    printf '%s\n' "$SELFHOST_DIR/stage00/s32-emu"
 }
 
 usage() {
@@ -129,10 +111,6 @@ if [[ "$EMU_EXPLICIT" -eq 0 && -z "${STAGE8_EMU:-}" ]]; then
     EMU="$(choose_default_emu)"
 fi
 
-if [[ "$EMU" != /* ]]; then
-    EMU="$ROOT_DIR/$EMU"
-fi
-
 for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$LINK_FTH" \
          "$SRC_PASS1" "$SRC_PASS2" "$SRC_PASS3" "$TEST_IN" "$TEST_RET_IN" "$TEST_EXPR_IN" "$TEST_LOCAL_IN" "$TEST_REL_IN" "$TEST_IF_TRUE_IN" "$TEST_IF_FALSE_IN" "$TEST_WHILE_IN" "$TEST_TWO_LOCALS_IN" "$TEST_HELPER_IN" "$TEST_HELPER_ARG_IN" "$TEST_HELPER_LOCAL_IN" "$TEST_MAIN_LOCAL_HELPER_IN" "$TEST_HELPER_TWO_ARGS_IN" "$TEST_HELPER_TWO_ARGS_IF_IN" \
          "$TEST_MULTI_FUNC_IN" "$TEST_FOR_LOOP_IN" "$TEST_NESTED_IF_IN" "$TEST_BREAK_CONTINUE_IN" "$TEST_GENERAL_NAMES_IN" "$TEST_COMPLEX_EXPR_IN" \
@@ -153,9 +131,12 @@ if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then
     trap 'rm -rf "$WORKDIR"' EXIT
 fi
 
+# cc.fth uses relative include path "selfhost/stage04/include/" — run from repo root
+cd "$ROOT_DIR"
+
 # Bootstrap strict C-toolchain stages first. Stage08 then uses these outputs.
 PIPE_LOG="$WORKDIR/stage5-build.log"
-"$ROOT_DIR/selfhost/stage05/run-pipeline.sh" --mode stage6-ar-smoke --emu "$EMU" --keep-artifacts >"$PIPE_LOG"
+"$SELFHOST_DIR/stage05/run-pipeline.sh" --mode stage6-ar-smoke --emu "$EMU" --keep-artifacts >"$PIPE_LOG"
 PIPE_ART="$(awk -F': ' '/^Artifacts:/{print $2}' "$PIPE_LOG" | tail -n 1)"
 [[ -n "$PIPE_ART" && -d "$PIPE_ART" ]] || { echo "failed to locate stage05 artifacts dir" >&2; exit 1; }
 AS_EXE="$PIPE_ART/s32-as.s32x"
@@ -164,7 +145,7 @@ AR_EXE="$PIPE_ART/s32-ar.s32x"
 [[ -f "$AR_EXE" ]] || { echo "missing stage06 archiver exe: $AR_EXE" >&2; exit 1; }
 
 LD_LOG="$WORKDIR/stage7-build.log"
-"$ROOT_DIR/selfhost/stage07/run-spike.sh" --emu "$EMU" --keep-artifacts >"$LD_LOG"
+"$SELFHOST_DIR/stage07/run-spike.sh" --emu "$EMU" --keep-artifacts >"$LD_LOG"
 LD_EXE="$(awk -F': ' '/^Linker exe:/{print $2}' "$LD_LOG" | tail -n 1)"
 [[ -n "$LD_EXE" && -f "$LD_EXE" ]] || { echo "failed to locate stage07 linker exe" >&2; exit 1; }
 
@@ -262,8 +243,10 @@ assemble_with_stage5() {
 # --- Runtime objects come from stage05 bootstrap artifacts ---
 RUNTIME_CRT0="$PIPE_ART/crt0_minimal.s32o"
 RUNTIME_MMIO_OBJ="$PIPE_ART/mmio_minimal.s32o"
+RUNTIME_MMIO_NO_START_OBJ="$PIPE_ART/mmio_no_start.s32o"
 [[ -s "$RUNTIME_CRT0" ]] || { echo "missing runtime crt0 object: $RUNTIME_CRT0" >&2; exit 1; }
 [[ -s "$RUNTIME_MMIO_OBJ" ]] || { echo "missing runtime mmio object: $RUNTIME_MMIO_OBJ" >&2; exit 1; }
+[[ -s "$RUNTIME_MMIO_NO_START_OBJ" ]] || { echo "missing runtime mmio (no start) object: $RUNTIME_MMIO_NO_START_OBJ" >&2; exit 1; }
 
 # --- Build selfhost libc ---
 LIBC_ARCHIVE="$PIPE_ART/libc_selfhost.s32a"
@@ -314,7 +297,7 @@ link_forth_with_libc() {
 S\" $RUNTIME_CRT0\" LINK-OBJ
 S\" $obj\" LINK-OBJ
 S\" $LIBC_START_OBJ\" LINK-OBJ
-S\" $RUNTIME_MMIO_OBJ\" LINK-OBJ
+S\" $RUNTIME_MMIO_NO_START_OBJ\" LINK-OBJ
 65536 LINK-MMIO
 S\" $LIBC_ARCHIVE\" LINK-ARCHIVE
 S\" $exe\" LINK-EMIT

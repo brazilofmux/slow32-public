@@ -2,33 +2,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="${SELFHOST_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
-    ROOT_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
-fi
+SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
 EMU="${STAGE8_EMU:-}"
 EMU_EXPLICIT=0
-PIPE="$ROOT_DIR/selfhost/stage05/run-pipeline.sh"
+PIPE="$SELFHOST_DIR/stage05/run-pipeline.sh"
 
 choose_default_emu() {
-    if [[ -x "$ROOT_DIR/tools/dbt/slow32-dbg" ]]; then
-        printf '%s\n' "$ROOT_DIR/tools/dbt/slow32-dbg"
-        return
-    fi
-    if [[ -x "$ROOT_DIR/tools/dbt/slow32-dbt" ]]; then
-        printf '%s\n' "$ROOT_DIR/tools/dbt/slow32-dbt"
-        return
-    fi
-    if [[ -x "$ROOT_DIR/tools/emulator/slow32-fast" ]]; then
-        printf '%s\n' "$ROOT_DIR/tools/emulator/slow32-fast"
-        return
-    fi
-    if [[ -x "$ROOT_DIR/tools/emulator/slow32" ]]; then
-        printf '%s\n' "$ROOT_DIR/tools/emulator/slow32"
-        return
-    fi
-    printf '%s\n' "$ROOT_DIR/tools/emulator/slow32-fast"
+    printf '%s\n' "$SELFHOST_DIR/stage00/s32-emu"
 }
 
 usage() {
@@ -65,10 +47,6 @@ if [[ "$EMU_EXPLICIT" -eq 0 && -z "${STAGE8_EMU:-}" ]]; then
     EMU="$(choose_default_emu)"
 fi
 
-if [[ "$EMU" != /* ]]; then
-    EMU="$ROOT_DIR/$EMU"
-fi
-
 [[ -x "$PIPE" ]] || { echo "Missing pipeline runner: $PIPE" >&2; exit 1; }
 [[ -x "$EMU" ]] || { echo "Missing emulator: $EMU" >&2; exit 1; }
 
@@ -82,7 +60,7 @@ echo "[stage08] subset-c archiver parity gate"
 "$PIPE" --mode stage6-ar-scan-smoke --emu "$EMU" >/tmp/v2-stage08-cs.log 2>&1
 
 echo "[stage08] cc-min compiler spike"
-"$ROOT_DIR/selfhost/stage08/run-cc-spike.sh" --emu "$EMU" >/tmp/v2-stage08-cc.log 2>&1
+"$SCRIPT_DIR/run-cc-spike.sh" --emu "$EMU" >/tmp/v2-stage08-cc.log 2>&1
 
 echo "OK: stage08 archiver parity gate"
 echo "Emulator: $EMU"
