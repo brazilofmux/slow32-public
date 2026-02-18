@@ -2,17 +2,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="${STAGE3_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
-    ROOT_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
-fi
+SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
-EMU="${STAGE3_EMU:-$ROOT_DIR/tools/emulator/slow32}"
+EMU="${STAGE3_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
 KERNEL="${STAGE3_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${STAGE3_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 LINK_FTH="${STAGE3_LINK:-$SCRIPT_DIR/link.fth}"
-ASM_FTH="${STAGE3_ASM:-$ROOT_DIR/selfhost/stage01/asm.fth}"
-AR_FTH="${STAGE3_AR:-$ROOT_DIR/selfhost/stage02/ar.fth}"
+ASM_FTH="${STAGE3_ASM:-$SELFHOST_DIR/stage01/asm.fth}"
+AR_FTH="${STAGE3_AR:-$SELFHOST_DIR/stage02/ar.fth}"
 
 usage() {
     cat <<USAGE
@@ -55,8 +53,8 @@ FTH
 
 case "$TARGET" in
     kernel)
-        CRT0_SRC="$ROOT_DIR/selfhost/stage01/crt0_minimal.s"
-        MMIO_SRC="$ROOT_DIR/selfhost/stage01/mmio_minimal.s"
+        CRT0_SRC="$SELFHOST_DIR/stage01/crt0_minimal.s"
+        MMIO_SRC="$SELFHOST_DIR/stage01/mmio_minimal.s"
         KERNEL_SRC="$ROOT_DIR/forth/kernel.s"
         CRT0_OBJ="$WORKDIR/crt0_minimal.s32o"
         MMIO_OBJ="$WORKDIR/mmio_minimal.s32o"
@@ -81,7 +79,7 @@ S\" $OUT\" LINK-EMIT"
         ;;
     test3)
         OBJ="$WORKDIR/test3-forth.s32o"
-        run_forth "$ASM_FTH" "S\" $ROOT_DIR/selfhost/stage01/test3.s\" S\" $OBJ\" ASSEMBLE" "$WORKDIR/test3-asm.log"
+        run_forth "$ASM_FTH" "S\" $SELFHOST_DIR/stage01/test3.s\" S\" $OBJ\" ASSEMBLE" "$WORKDIR/test3-asm.log"
         [[ -s "$OBJ" ]] || { echo "assembler produced no output" >&2; exit 1; }
         OUT="$WORKDIR/test3-forth-linked.s32x"
         CMD="LINK-INIT
@@ -92,8 +90,8 @@ S\" $OUT\" LINK-EMIT"
         MINI_S="$WORKDIR/main_halt.s"
         MINI_O="$WORKDIR/main_halt.s32o"
         MINI_A="$WORKDIR/libmini.s32a"
-        CRT0_SRC="$ROOT_DIR/selfhost/stage01/crt0_minimal.s"
-        MMIO_SRC="$ROOT_DIR/selfhost/stage01/mmio_minimal.s"
+        CRT0_SRC="$SELFHOST_DIR/stage01/crt0_minimal.s"
+        MMIO_SRC="$SELFHOST_DIR/stage01/mmio_minimal.s"
         CRT0_OBJ="$WORKDIR/crt0_minimal.s32o"
         MMIO_OBJ="$WORKDIR/mmio_minimal.s32o"
         OUT="$WORKDIR/archive-linked.s32x"

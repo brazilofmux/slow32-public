@@ -2,28 +2,24 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="${STAGE01_ROOT:-${STAGE2_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}}"
-if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
-    ROOT_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
-fi
+SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
-EMU="${STAGE01_EMU:-${STAGE2_EMU:-$ROOT_DIR/tools/emulator/slow32}}"
-KERNEL="${STAGE01_KERNEL:-${STAGE2_KERNEL:-$ROOT_DIR/forth/kernel.s32x}}"
-PRELUDE="${STAGE01_PRELUDE:-${STAGE2_PRELUDE:-$ROOT_DIR/forth/prelude.fth}}"
-ASM_FTH="${STAGE01_ASM:-${STAGE2_ASM:-$SCRIPT_DIR/asm.fth}}"
-TEST_DIR="${STAGE01_TEST_DIR:-${STAGE2_TEST_DIR:-$SCRIPT_DIR}}"
+EMU="${STAGE01_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
+KERNEL="${STAGE01_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
+PRELUDE="${STAGE01_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
+ASM_FTH="${STAGE01_ASM:-$SCRIPT_DIR/asm.fth}"
+TEST_DIR="${STAGE01_TEST_DIR:-$SCRIPT_DIR}"
 TIMEOUT_SEC="${STAGE01_TIMEOUT_SEC:-120}"
 
 usage() {
     cat <<USAGE
 Usage: $0 [test1|test2|test3|test3b]
 
-Runs stage01 assembler checks with path-override aware defaults.
+Runs stage01 assembler checks.
 Env overrides:
   STAGE01_EMU STAGE01_KERNEL STAGE01_PRELUDE STAGE01_ASM STAGE01_TEST_DIR
   STAGE01_TIMEOUT_SEC
-Legacy aliases still accepted:
-  STAGE2_EMU STAGE2_KERNEL STAGE2_PRELUDE STAGE2_ASM STAGE2_TEST_DIR
 USAGE
 }
 

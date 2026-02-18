@@ -2,21 +2,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT_DIR="${STAGE2_AR_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
-    ROOT_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
-fi
+SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
-EMU="${STAGE2_AR_EMU:-$ROOT_DIR/tools/emulator/slow32}"
+EMU="${STAGE2_AR_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
 KERNEL="${STAGE2_AR_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${STAGE2_AR_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
-ASM_FTH="${STAGE2_AR_ASM:-$ROOT_DIR/selfhost/stage01/asm.fth}"
+ASM_FTH="${STAGE2_AR_ASM:-$SELFHOST_DIR/stage01/asm.fth}"
 AR_FTH="${STAGE2_AR_AR:-$SCRIPT_DIR/ar.fth}"
-ASM_SRC="${STAGE2_AR_SRC:-$ROOT_DIR/selfhost/stage01/test3.s}"
-
-if [[ "$EMU" != /* ]]; then
-    EMU="$ROOT_DIR/$EMU"
-fi
+ASM_SRC="${STAGE2_AR_SRC:-$SELFHOST_DIR/stage01/test3.s}"
 
 usage() {
     cat <<USAGE
