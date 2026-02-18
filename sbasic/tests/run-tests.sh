@@ -5,6 +5,8 @@ set -e
 BASDIR="$(cd "$(dirname "$0")/.." && pwd)"
 EMU="${EMU:-$BASDIR/../tools/emulator/slow32-fast}"
 SBASIC="$BASDIR/sbasic.s32x"
+FILTER_FAULTS="${FILTER_FAULTS:-1}"
+STRICT_FAULTS="${STRICT_FAULTS:-0}"
 
 if [ ! -f "$SBASIC" ]; then
     echo "Error: sbasic.s32x not found. Run build.sh first."
@@ -17,7 +19,7 @@ TOTAL=0
 
 # Filter function: remove emulator status lines
 filter_output() {
-    grep -v \
+    local grep_args=(
         -e "^Starting execution" \
         -e "^MMIO enabled" \
         -e "^HALT at" \
@@ -27,11 +29,20 @@ filter_output() {
         -e "^Simulated cycles" \
         -e "^Wall time:" \
         -e "^Performance:" \
-        -e "instructions/second" \
-        -e "^Error: Read out of bounds" \
-        -e "^Error: Write out of bounds" \
-        -e "^DBT: Memory fault at PC=" \
-        || true
+        -e "instructions/second"
+    )
+    if [ "$FILTER_FAULTS" = "1" ]; then
+        grep_args+=(
+            -e "^Error: Read out of bounds" \
+            -e "^Error: Write out of bounds" \
+            -e "^DBT: Memory fault at PC="
+        )
+    fi
+    grep -v "${grep_args[@]}" || true
+}
+
+has_fault_signature() {
+    grep -Eq "^Error: Read out of bounds|^Error: Write out of bounds|^DBT: Memory fault at PC="
 }
 
 for testfile in "$BASDIR"/tests/*.bas; do
@@ -40,7 +51,15 @@ for testfile in "$BASDIR"/tests/*.bas; do
     TOTAL=$((TOTAL + 1))
 
     # Run test: merge stdout+stderr, filter emulator lines
-    actual=$( (cat "$testfile"; echo "RUN") | "$EMU" "$SBASIC" 2>&1 | filter_output )
+    raw_output=$( (cat "$testfile"; echo "RUN") | "$EMU" "$SBASIC" 2>&1 )
+    actual=$( printf '%s\n' "$raw_output" | filter_output )
+
+    if [ "$STRICT_FAULTS" = "1" ] && printf '%s\n' "$raw_output" | has_fault_signature; then
+        echo "  FAIL: $name (fault signature)"
+        printf '%s\n' "$raw_output" | grep -E "^Error: Read out of bounds|^Error: Write out of bounds|^DBT: Memory fault at PC=" | head -1 | sed 's/^/      /'
+        FAIL=$((FAIL + 1))
+        continue
+    fi
 
     if [ -f "$expected" ]; then
         exp=$(cat "$expected")
