@@ -1,7 +1,5 @@
 /* cc-min main: driver for the minimal C compiler.
- * stderr declared as global — libc's __stdio_init() initialises it. */
-
-int stderr;
+ * stderr declared as global in pass1 — libc's __stdio_init() initialises it. */
 
 int ccmin_load_source(const char *path);
 int pass1_parse_to_ir(void);

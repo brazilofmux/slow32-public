@@ -4,7 +4,7 @@
  * 32KB include-save-buffer. External I/O functions are auto-declared. */
 
 #define MAX_SRC 65536
-#define MAX_OUTPUT 131072
+#define MAX_OUTPUT 524288
 static char g_src[MAX_SRC];
 static int g_src_len;
 static int g_pos;
@@ -425,6 +425,7 @@ static void next_token(void) {
     int v;
     int i;
     int si;
+    int di;
     skip_ws();
     if (g_pos >= g_src_len) {
         if (g_inc_depth > 0) {
@@ -517,8 +518,8 @@ static void next_token(void) {
         if (str_eq(g_tok_str, "unsigned")) { g_tok = TK_UNSIGNED; return; }
         if (str_eq(g_tok_str, "long")) { g_tok = TK_LONG; return; }
         if (str_eq(g_tok_str, "enum")) { g_tok = TK_ENUM; return; }
-        { int di; di = find_define(g_tok_str);
-          if (di >= 0) { g_tok = TK_NUM; g_tok_val = g_def_vals[di]; return; } }
+        di = find_define(g_tok_str);
+        if (di >= 0) { g_tok = TK_NUM; g_tok_val = g_def_vals[di]; return; }
         g_tok = TK_IDENT; return;
     }
     g_pos = g_pos + 1;
