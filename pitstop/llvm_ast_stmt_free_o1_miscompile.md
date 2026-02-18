@@ -76,6 +76,33 @@ This keeps global `-O1` while preventing the failure in this hotspot.
 4. Run llc with debug/verify passes on reduced IR.
 5. If reproducible, file backend bug with minimized IR and asm diff.
 
+## Follow-up Check: `-fno-jump-tables` A/B
+
+Requested check was run explicitly on Intel with three variants of `ast.c` codegen:
+
+1. `-O1` (normal)
+2. `-O1 -fno-jump-tables`
+3. current tree workaround/reference build
+
+### Results
+
+- **Current fixed `ast.c`** (semantic cleanup fix present):
+  - `-O1`: strict `sbasic` suite `29/29`
+  - `-O1 -fno-jump-tables`: strict `sbasic` suite `29/29`
+
+- **Pre-fix `ast.c`** (from commit `d4ea81d`, no workaround):
+  - `-O1`: strict suite `27/29` (same two failures)
+  - `-O1 -fno-jump-tables`: strict suite `27/29` (same two failures)
+
+### Interpretation
+
+Disabling jump tables does **not** change the failing behavior in the pre-fix case.
+This weakens the hypothesis that switch lowering/jump-table generation is the
+primary fault mechanism for the observed failures.
+
+The concrete semantic bug in `stmt_free` was required to restore stability.
+If a backend issue remains, it is likely elsewhere (not jump-table-only).
+
 ## Notes
 
 - Native host ASan run (x86) also pointed at `stmt_free` cleanup path before

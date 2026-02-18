@@ -384,9 +384,6 @@ void case_clause_free(case_clause_t *c) {
 
 /* --- Statement destructor --- */
 
-#if defined(__clang__)
-__attribute__((optnone))
-#endif
 void stmt_free(stmt_t *s) {
     while (s) {
         stmt_t *next = s->next;
