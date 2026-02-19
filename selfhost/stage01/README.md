@@ -26,6 +26,50 @@ and symbol tables.
 provides `crt0_minimal.s` and `mmio_minimal.s`, the bootstrap runtime
 sources used by all later stages.
 
+## Supported ISA Subset
+
+The Stage 01 assembler implements the **Bootstrap Core** subset of the SLOW-32 ISA. It is designed to be narrow and consistent, avoiding dialect variations like RISC-V aliases.
+
+### Instructions
+
+-   **Arithmetic**: `add`, `sub`, `mul`, `mulh`, `mulhu`
+-   **Logical**: `xor`, `or`, `and`, `sll`, `srl`, `sra`
+-   **Comparison**: `slt`, `sltu`, `seq`, `sne`, `sgt`, `sgtu`, `sle`, `sleu`, `sge`, `sgeu`
+-   **Immediate**: `addi`, `ori`, `andi`, `slli`, `srli`, `srai`, `xori`, `slti`, `sltiu`
+-   **Upper Immediate**: `lui`
+-   **Memory**: `ldb`, `ldh`, `ldw`, `ldbu`, `ldhu`, `stb`, `sth`, `stw`
+    -   Also supports aliases: `lb`, `lh`, `lw`, `lbu`, `lhu`
+-   **Control Flow**: `jal`, `jalr`, `beq`, `bne`, `blt`, `bge`, `bltu`, `bgeu`
+-   **System**: `debug`, `yield`, `halt`
+
+### Pseudo-Instructions
+
+-   `li rd, imm`
+-   `la rd, sym`
+-   `mv rd, rs`
+-   `j target`
+-   `ret`
+-   `call target`
+-   `tail target`
+-   `nop`
+-   `not rd, rs`
+-   `neg rd, rs`
+-   `seqz rd, rs`
+-   `snez rd, rs`
+-   `bgt`, `ble`, `bgtu`, `bleu` (reversed branches)
+
+### Registers
+
+Supports both numeric (`r0`..`r31`) and ABI names:
+-   `zero` (r0)
+-   `rv` (r1)
+-   `t0` (r2)
+-   `a0`-`a7` (r3-r10)
+-   `s0`-`s17` (r11-r28)
+-   `sp` (r29)
+-   `fp` (r30)
+-   `lr` (r31)
+
 ## How To Test
 
 ```bash
