@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stage 07 smoke test: validate s32-ld.s32x (the C linker)
+# Stage 02 smoke test: validate s32-ld.s32x (the C linker)
 # Uses pre-built artifacts from earlier stages.
 # Tests:
 #   1. Old-style CLI: input.s32o output.s32x
@@ -17,7 +17,7 @@ fi
 
 EMU="${SELFHOST_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
 STAGE2_AS="$SELFHOST_DIR/stage02/s32-as.s32x"
-STAGE7_LD="$SCRIPT_DIR/s32-ld.s32x"
+STAGE2_LD="$SCRIPT_DIR/s32-ld.s32x"
 CC_FTH="$SELFHOST_DIR/stage01/cc.fth"
 KERNEL="${SELFHOST_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${SELFHOST_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
@@ -26,12 +26,12 @@ CRT0_SRC="$SELFHOST_DIR/stage02/crt0.s"
 MMIO_NO_START_SRC="$SELFHOST_DIR/stage02/mmio_no_start.s"
 LIBC_DIR="$SELFHOST_DIR/stage02/libc"
 
-for f in "$EMU" "$STAGE2_AS" "$STAGE7_LD" "$CC_FTH" "$KERNEL" "$PRELUDE" \
+for f in "$EMU" "$STAGE2_AS" "$STAGE2_LD" "$CC_FTH" "$KERNEL" "$PRELUDE" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC"; do
     [[ -f "$f" ]] || { echo "Missing: $f" >&2; exit 1; }
 done
 
-WORKDIR="$(mktemp -d /tmp/stage07-spike.XXXXXX)"
+WORKDIR="$(mktemp -d /tmp/stage02-spike.XXXXXX)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
 cd "$ROOT_DIR"
@@ -64,7 +64,7 @@ link_exe() {
     local log="$1"
     shift
     set +e
-    timeout 120 "$EMU" "$STAGE7_LD" "$@" >"$log" 2>&1
+    timeout 120 "$EMU" "$STAGE2_LD" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -171,7 +171,7 @@ fi
 
 # --- Summary ---
 echo ""
-echo "Stage 07 smoke: $PASS passed, $FAIL failed"
+echo "Stage 02 smoke: $PASS passed, $FAIL failed"
 if [[ "$FAIL" -gt 0 ]]; then
     exit 1
 fi

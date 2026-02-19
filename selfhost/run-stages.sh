@@ -42,7 +42,7 @@ Usage: $0 [--from stage00] [--to stage08] [--emu <path>] [--skip-selfhost-kernel
 Runs ordered stage checks so a clean checkout can be validated end-to-end.
 
 Default sequence:
-  stage00 -> stage01 -> stage02 -> stage07 -> stage08
+  stage00 -> stage01 -> stage02 -> stage08
 
 Options:
   --from stageNN   Start stage (stage00..stage08)
@@ -51,7 +51,7 @@ Options:
   --skip-selfhost-kernel
                    Skip stage01 selfhost-kernel regeneration/boot gate (dev fast-path)
   --skip-purity-guard
-                   Skip bootstrap purity guard for stage00..06 (debug only)
+                   Skip bootstrap purity guard for stage00..02 (debug only)
   --quick          Run reduced smoke checks for faster iteration
   --keep-logs      Keep log directory on success (always kept on failure)
 USAGE
@@ -135,7 +135,6 @@ stage_num() {
         stage00) echo 0 ;;
         stage01) echo 1 ;;
         stage02) echo 2 ;;
-        stage07) echo 7 ;;
         stage08) echo 8 ;;
         *) return 1 ;;
     esac
@@ -234,17 +233,9 @@ run_stage02() {
     else
         echo "[stage02] quick mode: c-only smoke"
     fi
-}
-
-run_stage07() {
-    echo "[stage07] c-linker replacement spike (+ reloc)"
-    if [[ "$QUICK" -eq 0 ]]; then
-        run_logged "stage07 spike+reloc" "$LOG_DIR/stage07.log" \
-            "$ROOT_DIR/selfhost/stage07/run-spike.sh" --emu "$EMU" --with-reloc-spike
-    else
-        run_logged "stage07 spike" "$LOG_DIR/stage07.log" \
-            "$ROOT_DIR/selfhost/stage07/run-spike.sh" --emu "$EMU"
-    fi
+    echo "[stage02] c-linker replacement spike"
+    run_logged "stage02 ld-spike" "$LOG_DIR/stage02-ld.log" \
+        env SELFHOST_EMU="$EMU" "$ROOT_DIR/selfhost/stage02/run-spike-ld.sh"
 }
 
 run_stage08() {
@@ -260,7 +251,7 @@ run_stage08() {
     fi
 }
 
-for st in stage00 stage01 stage02 stage07 stage08; do
+for st in stage00 stage01 stage02 stage08; do
     N="$(stage_num "$st")"
     if (( N < FROM_N || N > TO_N )); then
         continue

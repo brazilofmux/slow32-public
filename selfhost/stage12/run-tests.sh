@@ -6,7 +6,7 @@ set -euo pipefail
 # Bootstrap chain:
 #   stage11/s32cc → compile stage12 sources
 #   stage02/s32-as → assemble
-#   stage07/s32-ld → link
+#   stage02/s32-ld → link
 #
 # Tests:
 #   1) Duff's device test (nested switch + goto labels)
@@ -159,7 +159,7 @@ echo "=== Step 1: Bootstrap ==="
 
 CC_EXE="$SELFHOST_DIR/stage11/s32cc.s32x"
 AS_EXE="$SELFHOST_DIR/stage02/s32-as.s32x"
-LD_EXE="$SELFHOST_DIR/stage07/s32-ld.s32x"
+LD_EXE="$SELFHOST_DIR/stage02/s32-ld.s32x"
 
 [[ -f "$CC_EXE" ]] || { echo "Missing s32cc (stage11): $CC_EXE" >&2; exit 1; }
 [[ -f "$AS_EXE" ]] || { echo "Missing assembler: $AS_EXE" >&2; exit 1; }

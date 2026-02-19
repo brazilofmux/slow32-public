@@ -22,7 +22,7 @@ bootstrap turns recursive: a C compiler compiling C.
 - Stage 04 compiler (`cc.fth`) to build cc-min itself
 - Stage 01 assembler and Stage 03 linker (to build cc-min)
 - Stage 02 assembler (to assemble cc-min's output)
-- Stage 07 linker (to link cc-min's output)
+- Stage 02 linker (to link cc-min's output)
 - `libc/` from Stage 02
 
 ## What It Produces
@@ -32,7 +32,7 @@ recursive descent compiler (SubC/Small-C style) that emits SLOW-32
 assembly directly during parsing -- no AST, no separate IR.
 
 The pipeline is: cc-min compiles `.c` to `.s`, Stage 02 assembles
-`.s` to `.s32o`, Stage 07 links `.s32o` to `.s32x`, emulator runs it.
+`.s` to `.s32o`, Stage 02 links `.s32o` to `.s32x`, emulator runs it.
 
 ## How To Test
 
@@ -144,5 +144,5 @@ These apply to all cc-min source code since cc.fth (stage01) compiles it:
 - No expressions in array sizes: use `#define SZ 1024` then `arr[SZ]`
 - No 2D arrays: use flat buffer with manual indexing
 - No struct arrays with embedded char arrays: use parallel flat arrays
-- Use `jal r31, <func>` not `call <func>` (stage07 linker HI20/LO12 limitation)
+- Use `jal r31, <func>` not `call <func>` (stage02 linker HI20/LO12 limitation)
 - No switch/case, varargs, function pointers, unions

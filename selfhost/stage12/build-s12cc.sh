@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Build s12cc.s32x: the stage12 AST-based C compiler.
 # Uses: Stage 11 s32cc.s32x (compiler), Stage 02 s32-as.s32x (assembler),
-#       Stage 07 s32-ld.s32x (linker).
+#       Stage 02 s32-ld.s32x (linker).
 # Deposits the artifact in the script's directory.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -25,14 +25,14 @@ fi
 
 STAGE11_CC="$SELFHOST_DIR/stage11/s32cc.s32x"
 STAGE2_AS="$SELFHOST_DIR/stage02/s32-as.s32x"
-STAGE7_LD="$SELFHOST_DIR/stage07/s32-ld.s32x"
+STAGE2_LD="$SELFHOST_DIR/stage02/s32-ld.s32x"
 
 LIBC_DIR="$SELFHOST_DIR/stage02/libc"
 CRT0_SRC="$SELFHOST_DIR/stage02/crt0.s"
 MMIO_NO_START_SRC="$SELFHOST_DIR/stage02/mmio_no_start.s"
 OUT_EXE="$SCRIPT_DIR/s12cc.s32x"
 
-for f in "$EMU" "$STAGE11_CC" "$STAGE2_AS" "$STAGE7_LD" \
+for f in "$EMU" "$STAGE11_CC" "$STAGE2_AS" "$STAGE2_LD" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC" \
          "$SCRIPT_DIR/s12cc.c" "$SCRIPT_DIR/c_lexer_gen.c" \
          "$SCRIPT_DIR/ast.h" "$SCRIPT_DIR/parser.h" "$SCRIPT_DIR/sema.h" \
@@ -77,7 +77,7 @@ link_exe() {
     local log="$1"
     shift
     set +e
-    timeout 120 "$EMU" "$STAGE7_LD" "$@" >"$log" 2>&1
+    timeout 120 "$EMU" "$STAGE2_LD" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then

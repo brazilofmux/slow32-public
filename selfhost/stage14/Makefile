@@ -1,12 +1,12 @@
 # Stage 14: Compiler playground (copy of stage13, bootstrapped by stage13)
 # All C sources compiled by Stage 13 s12cc.s32x, assembled by Stage 02 s32-as.s32x,
-# linked by Stage 07 s32-ld.s32x.
+# linked by Stage 02 s32-ld.s32x.
 
 COMPILER_SRCS = s12cc.c c_lexer_gen.c ast.h parser.h sema.h optimize.h codegen.h pp.h
 LIBC_SRCS = libc/start.c libc/stdio.c libc/string_extra.c libc/string_more.c libc/ctype.c libc/convert.c libc/malloc.c
 RUNTIME_SRCS = crt0.s mmio_no_start.s
 TOOL_SRCS = tools/s32-as.c tools/s32_formats_min.h tools/s32-ar.c tools/s32ar_min.h tools/s32-ld.c
-BOOTSTRAP = ../stage13/s12cc.s32x ../stage02/s32-as.s32x ../stage07/s32-ld.s32x
+BOOTSTRAP = ../stage13/s12cc.s32x ../stage02/s32-as.s32x ../stage02/s32-ld.s32x
 
 .PHONY: all tools verify clean
 

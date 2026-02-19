@@ -1447,7 +1447,7 @@ int main(int argc, char **argv) {
     link_emit(out_path);
     if (link_error) return 1;
 
-    fputs("stage07: linked -> ", stdout);
+    fputs("stage02: linked -> ", stdout);
     fputs(out_path, stdout);
     fputc('\n', stdout);
     return 0;

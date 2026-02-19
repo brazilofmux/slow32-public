@@ -17,10 +17,10 @@ fi
 
 EMU="${SELFHOST_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
 STAGE2_AS="$SELFHOST_DIR/stage02/s32-as.s32x"
-STAGE7_LD="$SELFHOST_DIR/stage07/s32-ld.s32x"
+STAGE2_LD="$SELFHOST_DIR/stage02/s32-ld.s32x"
 STAGE8_CC="$SCRIPT_DIR/cc-min.s32x"
 
-for f in "$EMU" "$STAGE2_AS" "$STAGE7_LD" "$STAGE8_CC"; do
+for f in "$EMU" "$STAGE2_AS" "$STAGE2_LD" "$STAGE8_CC"; do
     [[ -f "$f" ]] || { echo "Missing: $f" >&2; exit 1; }
 done
 
@@ -84,7 +84,7 @@ link_exe() {
     local log="$1"
     shift
     set +e
-    timeout 120 "$EMU" "$STAGE7_LD" "$@" >"$log" 2>&1
+    timeout 120 "$EMU" "$STAGE2_LD" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then

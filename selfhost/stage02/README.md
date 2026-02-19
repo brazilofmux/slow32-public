@@ -1,17 +1,20 @@
-# Stage 02: Subset-C Assembler + Archiver
+# Stage 02: Subset-C Assembler + Archiver + Linker
 
 ## What Is Here
 
-The first C-based tool replacements. `s32-as.c` is a SLOW-32 assembler
-and `s32-ar.c` is a SLOW-32 archiver, both written in subset C (compiled
-by Stage 01's Forth compiler). They replace the Stage 01 Forth assembler
-and archiver in the bootstrap pipeline.
+The C-based tool replacements. `s32-as.c` is a SLOW-32 assembler,
+`s32-ar.c` is a SLOW-32 archiver, and `s32-ld.c` is a SLOW-32 linker,
+all written in subset C (compiled by Stage 01's Forth compiler). They
+replace the Stage 01 Forth assembler, archiver, and linker in the
+bootstrap pipeline. After this stage, Forth tools (stage01) are no
+longer needed.
 
 | File/Dir | Description |
 |----------|-------------|
 | `s32-as.c` | Assembler source (subset C) |
 | `s32-ar.c` | Archiver source (subset C) |
 | `s32-ar-scan.c` | Archive symbol scanner source (subset C) |
+| `s32-ld.c` | Linker source (subset C) |
 | `crt0.s` | Stage02-specific startup object (zeros BSS, calls `__slow32_start`) |
 | `mmio.s` / `mmio_no_start.s` | Minimal MMIO runtime (with/without fallback `__slow32_start`) |
 | `libc/` | Minimal C library: `start.c`, `stdio.c`, `string_extra.c`, `convert.c` |
@@ -22,7 +25,7 @@ and archiver in the bootstrap pipeline.
 - Stage 00 emulator (`s32-emu`)
 - Stage 01 compiler (`cc.fth`) to compile the C source
 - Stage 01 assembler (`asm.fth`) to assemble the compiler output
-- Stage 01 linker (`link.fth`) to link the result
+- Stage 01 linker (`link.fth`) to link the linker itself (last Forth dependency)
 - Forth kernel and prelude
 - Stage02 runtime sources (`crt0.s`, `mmio*.s`) provided locally, so no Stage 01 assembly files are required.
 
@@ -33,6 +36,7 @@ and archiver in the bootstrap pipeline.
 - `.s32a` archive files from `.s32o` object files, or extracts/lists
   members from existing archives. Commands: `c`, `rc`, `t`, `x`, `d`,
   `m`, `v`, `p`, `cs`.
+- `.s32x` executables from `.s32o` object files.
 
 The `libc/` directory provides the minimal C library (stdio, strings,
 startup) that all C-based tools in Stages 02-08 link against.
@@ -52,6 +56,9 @@ selfhost/stage02/run-pipeline.sh --mode stage6-ar-rc-smoke
 selfhost/stage02/run-pipeline.sh --mode stage6-ar-tx-smoke
 selfhost/stage02/run-pipeline.sh --mode stage6-ar-d-smoke
 selfhost/stage02/run-pipeline.sh --mode stage6-ar-scan-smoke
+
+# Linker smoke test
+selfhost/stage02/run-spike-ld.sh
 ```
 
 See `run-pipeline.sh --help` for all modes.

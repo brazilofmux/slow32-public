@@ -7,7 +7,7 @@
 all: cc-min.s32x
 
 # Build the self-compiled compiler (Gen2)
-cc-min.s32x: ../stage08/cc-min.s32x ../stage08/cc-min.c ../stage08/cc-min-pass1.c ../stage08/cc-min-pass2.c ../stage08/cc-min-pass3.c ../stage02/s32-as.s32x ../stage07/s32-ld.s32x ../stage02/libc/start.c ../stage02/libc/stdio.c ../stage02/libc/string_extra.c ../stage02/libc/convert.c ../stage02/crt0.s ../stage02/mmio_no_start.s
+cc-min.s32x: ../stage08/cc-min.s32x ../stage08/cc-min.c ../stage08/cc-min-pass1.c ../stage08/cc-min-pass2.c ../stage08/cc-min-pass3.c ../stage02/s32-as.s32x ../stage02/s32-ld.s32x ../stage02/libc/start.c ../stage02/libc/stdio.c ../stage02/libc/string_extra.c ../stage02/libc/convert.c ../stage02/crt0.s ../stage02/mmio_no_start.s
 	@echo "Building cc-min.s32x (Gen2: self-compiled)..."
 	@bash build-cc-min-gen2.sh
 

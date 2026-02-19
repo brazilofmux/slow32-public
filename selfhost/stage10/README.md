@@ -13,7 +13,7 @@ evolved from cc-min (stage08/09). Compiled by cc-min, self-hosting proven.
 Uses pre-built tools from earlier stages:
 - cc-min.s32x (stage09) to compile s32-cc
 - s32-as.s32x (stage02) to assemble
-- s32-ld.s32x (stage07) to link
+- s32-ld.s32x (stage02) to link
 
 Self-hosting: s32-cc compiles itself, gen2.s == gen3.s.
 

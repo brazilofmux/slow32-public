@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
-EMU="${STAGE7_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
+EMU="${STAGE2_LD_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
 MANIFEST="${RELOC_BISECT_MANIFEST:-$SELFHOST_DIR/stage01/tests/manifests/reloc-bisect.lst}"
 WITH_RELOC_SPIKE=0
 KEEP_ARTIFACTS=0
@@ -15,7 +15,7 @@ usage() {
 Usage: $0 [--emu <path>] [--manifest <path>] [--with-reloc-spike] [--keep-artifacts]
 
 Runs Stage07 linker-source bisect corpus and stops at first failing variant.
-Each entry is passed as STAGE7_SRC to stage07/run-spike.sh.
+Each entry is passed as STAGE2_LD_SRC to stage02/run-spike.sh.
 USAGE
 }
 
@@ -81,12 +81,12 @@ while IFS= read -r src || [[ -n "$src" ]]; do
     fi
 
     set +e
-    STAGE7_SRC="$src" "${cmd[@]}" >/tmp/stage7-reloc-bisect.log 2>&1
+    STAGE2_LD_SRC="$src" "${cmd[@]}" >/tmp/stage2-reloc-bisect.log 2>&1
     rc=$?
     set -e
     if [[ "$rc" -ne 0 ]]; then
         echo "FAIL: first failing variant is $base (rc=$rc)"
-        tail -n 60 /tmp/stage7-reloc-bisect.log
+        tail -n 60 /tmp/stage2-reloc-bisect.log
         exit 1
     fi
 done < "$MANIFEST"

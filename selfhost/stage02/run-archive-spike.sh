@@ -5,10 +5,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
-EMU="${STAGE7_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
-KERNEL="${STAGE7_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
-PRELUDE="${STAGE7_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
-ASM_FTH="${STAGE7_ASM:-$SELFHOST_DIR/stage01/asm.fth}"
+EMU="${STAGE2_LD_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
+KERNEL="${STAGE2_LD_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
+PRELUDE="${STAGE2_LD_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
+ASM_FTH="${STAGE2_LD_ASM:-$SELFHOST_DIR/stage01/asm.fth}"
 EXPECT_PASS=0
 EXPECT_SET=0
 KEEP_ARTIFACTS=0
@@ -22,7 +22,7 @@ Builds the current Stage07 linker via run-spike, then constructs an archive
 resolution scenario:
   - main object has unresolved call to helper
   - helper is packaged into a .s32a archive member
-  - invokes stage07 linker with: <main.s32o> <lib.s32a> <out.s32x>
+  - invokes stage02 linker with: <main.s32o> <lib.s32a> <out.s32x>
 
 Modes:
   direct   Invoke linker with archive argument directly (expected-pass).
@@ -79,7 +79,7 @@ for f in "$EMU" "$KERNEL" "$PRELUDE" "$ASM_FTH"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
 
-TMP_LOG="$(mktemp /tmp/stage07-archive-spike.XXXXXX.log)"
+TMP_LOG="$(mktemp /tmp/stage02-archive-spike.XXXXXX.log)"
 "$SCRIPT_DIR/run-spike.sh" --emu "$EMU" --keep-artifacts >"$TMP_LOG"
 LINKER_EXE="$(awk -F': ' '/^Linker exe:/{print $2}' "$TMP_LOG" | tail -n 1)"
 WORKDIR="$(awk -F': ' '/^Artifacts:/{print $2}' "$TMP_LOG" | tail -n 1)"
@@ -218,7 +218,7 @@ else
     fi
 fi
 
-echo "OK: stage07 archive spike mode=$MODE ($( [[ "$EXPECT_PASS" -eq 1 ]] && echo "pass" || echo "expected-fail" ))"
+echo "OK: stage02 archive spike mode=$MODE ($( [[ "$EXPECT_PASS" -eq 1 ]] && echo "pass" || echo "expected-fail" ))"
 echo "Linker exe: $LINKER_EXE"
 echo "Main object: $MAIN_OBJ"
 echo "Archive: $ARCHIVE"

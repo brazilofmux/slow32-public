@@ -166,7 +166,7 @@ echo "=== Step 1: Bootstrap ==="
 # Pre-built tools from earlier stages
 GEN2_EXE="$SELFHOST_DIR/stage11/s32cc.s32x"
 AS_EXE="$SELFHOST_DIR/stage02/s32-as.s32x"
-LD_EXE="$SELFHOST_DIR/stage07/s32-ld.s32x"
+LD_EXE="$SELFHOST_DIR/stage02/s32-ld.s32x"
 
 [[ -f "$GEN2_EXE" ]] || { echo "missing s32cc (stage11): $GEN2_EXE" >&2; exit 1; }
 [[ -f "$AS_EXE" ]] || { echo "missing assembler: $AS_EXE" >&2; exit 1; }

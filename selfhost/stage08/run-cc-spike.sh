@@ -76,10 +76,10 @@ usage() {
 Usage: $0 [--emu <path>] [--keep-artifacts]
 
 Stage08 compiler spike:
-  1) bootstrap stage02 assembler + stage02 archiver + stage07 linker
+  1) bootstrap stage02 assembler + stage02 archiver + stage02 linker
   2) build cc-min.s32x via stage01->stage02->stage01
   3) compile min_main, min_ret7, min_ret_expr, min_local_ret_expr, min_ret_rel, min_if_{true,false}, min_while_countdown, min_two_locals, min_helper_call, min_helper_arg, min_helper_local, min_main_local_helper, min_helper_two_args, and min_helper_two_args_if with cc-min.s32x
-  4) assemble with stage02; produce raw link via stage07; run via stage01 runtime link
+  4) assemble with stage02; produce raw link via stage02; run via stage01 runtime link
 USAGE
 }
 
@@ -145,9 +145,9 @@ AR_EXE="$PIPE_ART/s32-ar.s32x"
 [[ -f "$AR_EXE" ]] || { echo "missing stage02 archiver exe: $AR_EXE" >&2; exit 1; }
 
 LD_LOG="$WORKDIR/stage7-build.log"
-"$SELFHOST_DIR/stage07/run-spike.sh" --emu "$EMU" --keep-artifacts >"$LD_LOG"
+"$SELFHOST_DIR/stage02/run-spike.sh" --emu "$EMU" --keep-artifacts >"$LD_LOG"
 LD_EXE="$(awk -F': ' '/^Linker exe:/{print $2}' "$LD_LOG" | tail -n 1)"
-[[ -n "$LD_EXE" && -f "$LD_EXE" ]] || { echo "failed to locate stage07 linker exe" >&2; exit 1; }
+[[ -n "$LD_EXE" && -f "$LD_EXE" ]] || { echo "failed to locate stage02 linker exe" >&2; exit 1; }
 
 run_forth() {
     local script_a="$1"
@@ -458,7 +458,7 @@ popd >/dev/null
 [[ -s "$GEN_INCLUDE_ASM" ]] || { echo "cc-min produced no include assembly output" >&2; exit 1; }
 grep -q '^main:' "$GEN_ASM" || { echo "generated assembly missing main label" >&2; exit 1; }
 
-# 4) Assemble, link with stage07 (artifact), then link/run with stage01 runtime.
+# 4) Assemble, link with stage02 (artifact), then link/run with stage01 runtime.
 GEN_OBJ="$WORKDIR/min_main.generated.s32o"
 GEN_RAW_EXE="$WORKDIR/min_main.generated.raw.s32x"
 GEN_EXE="$WORKDIR/min_main.generated.s32x"
@@ -700,50 +700,50 @@ run_exe "$LD_EXE" "$WORKDIR/stage7-ld-define-hex.run.log" "$GEN_DEFINE_HEX_OBJ" 
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-enum.run.log" "$GEN_ENUM_OBJ" "$GEN_ENUM_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-prototype.run.log" "$GEN_PROTOTYPE_OBJ" "$GEN_PROTOTYPE_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-include.run.log" "$GEN_INCLUDE_OBJ" "$GEN_INCLUDE_RAW_EXE"
-[[ -s "$GEN_RAW_EXE" ]] || { echo "stage07 linker produced no executable output" >&2; exit 1; }
-[[ -s "$GEN_RET_RAW_EXE" ]] || { echo "stage07 linker produced no return-test executable output" >&2; exit 1; }
-[[ -s "$GEN_EXPR_RAW_EXE" ]] || { echo "stage07 linker produced no expr-test executable output" >&2; exit 1; }
-[[ -s "$GEN_LOCAL_RAW_EXE" ]] || { echo "stage07 linker produced no local-test executable output" >&2; exit 1; }
-[[ -s "$GEN_REL_RAW_EXE" ]] || { echo "stage07 linker produced no relational-test executable output" >&2; exit 1; }
-[[ -s "$GEN_IF_TRUE_RAW_EXE" ]] || { echo "stage07 linker produced no if-true executable output" >&2; exit 1; }
-[[ -s "$GEN_IF_FALSE_RAW_EXE" ]] || { echo "stage07 linker produced no if-false executable output" >&2; exit 1; }
-[[ -s "$GEN_WHILE_RAW_EXE" ]] || { echo "stage07 linker produced no while executable output" >&2; exit 1; }
-[[ -s "$GEN_TWO_LOCALS_RAW_EXE" ]] || { echo "stage07 linker produced no two-locals executable output" >&2; exit 1; }
-[[ -s "$GEN_HELPER_RAW_EXE" ]] || { echo "stage07 linker produced no helper-call executable output" >&2; exit 1; }
-[[ -s "$GEN_HELPER_ARG_RAW_EXE" ]] || { echo "stage07 linker produced no helper-arg executable output" >&2; exit 1; }
-[[ -s "$GEN_HELPER_LOCAL_RAW_EXE" ]] || { echo "stage07 linker produced no helper-local executable output" >&2; exit 1; }
-[[ -s "$GEN_MAIN_LOCAL_HELPER_RAW_EXE" ]] || { echo "stage07 linker produced no main-local-helper executable output" >&2; exit 1; }
-[[ -s "$GEN_HELPER_TWO_ARGS_RAW_EXE" ]] || { echo "stage07 linker produced no helper-two-args executable output" >&2; exit 1; }
-[[ -s "$GEN_HELPER_TWO_ARGS_IF_RAW_EXE" ]] || { echo "stage07 linker produced no helper-two-args-if executable output" >&2; exit 1; }
-[[ -s "$GEN_MULTI_FUNC_RAW_EXE" ]] || { echo "stage07 linker produced no multi-func executable output" >&2; exit 1; }
-[[ -s "$GEN_FOR_LOOP_RAW_EXE" ]] || { echo "stage07 linker produced no for-loop executable output" >&2; exit 1; }
-[[ -s "$GEN_NESTED_IF_RAW_EXE" ]] || { echo "stage07 linker produced no nested-if executable output" >&2; exit 1; }
-[[ -s "$GEN_BREAK_CONTINUE_RAW_EXE" ]] || { echo "stage07 linker produced no break-continue executable output" >&2; exit 1; }
-[[ -s "$GEN_GENERAL_NAMES_RAW_EXE" ]] || { echo "stage07 linker produced no general-names executable output" >&2; exit 1; }
-[[ -s "$GEN_COMPLEX_EXPR_RAW_EXE" ]] || { echo "stage07 linker produced no complex-expr executable output" >&2; exit 1; }
-[[ -s "$GEN_CHAR_TYPE_RAW_EXE" ]] || { echo "stage07 linker produced no char-type executable output" >&2; exit 1; }
-[[ -s "$GEN_CHAR_LITERAL_RAW_EXE" ]] || { echo "stage07 linker produced no char-literal executable output" >&2; exit 1; }
-[[ -s "$GEN_LOCAL_ARRAY_RAW_EXE" ]] || { echo "stage07 linker produced no local-array executable output" >&2; exit 1; }
-[[ -s "$GEN_CHAR_ARRAY_RAW_EXE" ]] || { echo "stage07 linker produced no char-array executable output" >&2; exit 1; }
-[[ -s "$GEN_STRING_LIT_RAW_EXE" ]] || { echo "stage07 linker produced no string-lit executable output" >&2; exit 1; }
-[[ -s "$GEN_POINTER_RAW_EXE" ]] || { echo "stage07 linker produced no pointer executable output" >&2; exit 1; }
-[[ -s "$GEN_GLOBAL_RAW_EXE" ]] || { echo "stage07 linker produced no global executable output" >&2; exit 1; }
-[[ -s "$GEN_GLOBAL_ARRAY_RAW_EXE" ]] || { echo "stage07 linker produced no global-array executable output" >&2; exit 1; }
-[[ -s "$GEN_PTR_ARITH_RAW_EXE" ]] || { echo "stage07 linker produced no ptr-arith executable output" >&2; exit 1; }
-[[ -s "$GEN_SHORT_CIRCUIT_RAW_EXE" ]] || { echo "stage07 linker produced no short-circuit executable output" >&2; exit 1; }
-[[ -s "$GEN_TYPEDEF_RAW_EXE" ]] || { echo "stage07 linker produced no typedef executable output" >&2; exit 1; }
-[[ -s "$GEN_TYPEDEF_STRUCT_RAW_EXE" ]] || { echo "stage07 linker produced no typedef-struct executable output" >&2; exit 1; }
-[[ -s "$GEN_STRUCT_BASIC_RAW_EXE" ]] || { echo "stage07 linker produced no struct-basic executable output" >&2; exit 1; }
-[[ -s "$GEN_STRUCT_ARROW_RAW_EXE" ]] || { echo "stage07 linker produced no struct-arrow executable output" >&2; exit 1; }
-[[ -s "$GEN_STRUCT_ARRAY_RAW_EXE" ]] || { echo "stage07 linker produced no struct-array executable output" >&2; exit 1; }
-[[ -s "$GEN_SIZEOF_RAW_EXE" ]] || { echo "stage07 linker produced no sizeof executable output" >&2; exit 1; }
-[[ -s "$GEN_SIZEOF_STRUCT_RAW_EXE" ]] || { echo "stage07 linker produced no sizeof-struct executable output" >&2; exit 1; }
-[[ -s "$GEN_CAST_RAW_EXE" ]] || { echo "stage07 linker produced no cast executable output" >&2; exit 1; }
-[[ -s "$GEN_DEFINE_RAW_EXE" ]] || { echo "stage07 linker produced no define executable output" >&2; exit 1; }
-[[ -s "$GEN_DEFINE_HEX_RAW_EXE" ]] || { echo "stage07 linker produced no define-hex executable output" >&2; exit 1; }
-[[ -s "$GEN_ENUM_RAW_EXE" ]] || { echo "stage07 linker produced no enum executable output" >&2; exit 1; }
-[[ -s "$GEN_PROTOTYPE_RAW_EXE" ]] || { echo "stage07 linker produced no prototype executable output" >&2; exit 1; }
-[[ -s "$GEN_INCLUDE_RAW_EXE" ]] || { echo "stage07 linker produced no include executable output" >&2; exit 1; }
+[[ -s "$GEN_RAW_EXE" ]] || { echo "stage02 linker produced no executable output" >&2; exit 1; }
+[[ -s "$GEN_RET_RAW_EXE" ]] || { echo "stage02 linker produced no return-test executable output" >&2; exit 1; }
+[[ -s "$GEN_EXPR_RAW_EXE" ]] || { echo "stage02 linker produced no expr-test executable output" >&2; exit 1; }
+[[ -s "$GEN_LOCAL_RAW_EXE" ]] || { echo "stage02 linker produced no local-test executable output" >&2; exit 1; }
+[[ -s "$GEN_REL_RAW_EXE" ]] || { echo "stage02 linker produced no relational-test executable output" >&2; exit 1; }
+[[ -s "$GEN_IF_TRUE_RAW_EXE" ]] || { echo "stage02 linker produced no if-true executable output" >&2; exit 1; }
+[[ -s "$GEN_IF_FALSE_RAW_EXE" ]] || { echo "stage02 linker produced no if-false executable output" >&2; exit 1; }
+[[ -s "$GEN_WHILE_RAW_EXE" ]] || { echo "stage02 linker produced no while executable output" >&2; exit 1; }
+[[ -s "$GEN_TWO_LOCALS_RAW_EXE" ]] || { echo "stage02 linker produced no two-locals executable output" >&2; exit 1; }
+[[ -s "$GEN_HELPER_RAW_EXE" ]] || { echo "stage02 linker produced no helper-call executable output" >&2; exit 1; }
+[[ -s "$GEN_HELPER_ARG_RAW_EXE" ]] || { echo "stage02 linker produced no helper-arg executable output" >&2; exit 1; }
+[[ -s "$GEN_HELPER_LOCAL_RAW_EXE" ]] || { echo "stage02 linker produced no helper-local executable output" >&2; exit 1; }
+[[ -s "$GEN_MAIN_LOCAL_HELPER_RAW_EXE" ]] || { echo "stage02 linker produced no main-local-helper executable output" >&2; exit 1; }
+[[ -s "$GEN_HELPER_TWO_ARGS_RAW_EXE" ]] || { echo "stage02 linker produced no helper-two-args executable output" >&2; exit 1; }
+[[ -s "$GEN_HELPER_TWO_ARGS_IF_RAW_EXE" ]] || { echo "stage02 linker produced no helper-two-args-if executable output" >&2; exit 1; }
+[[ -s "$GEN_MULTI_FUNC_RAW_EXE" ]] || { echo "stage02 linker produced no multi-func executable output" >&2; exit 1; }
+[[ -s "$GEN_FOR_LOOP_RAW_EXE" ]] || { echo "stage02 linker produced no for-loop executable output" >&2; exit 1; }
+[[ -s "$GEN_NESTED_IF_RAW_EXE" ]] || { echo "stage02 linker produced no nested-if executable output" >&2; exit 1; }
+[[ -s "$GEN_BREAK_CONTINUE_RAW_EXE" ]] || { echo "stage02 linker produced no break-continue executable output" >&2; exit 1; }
+[[ -s "$GEN_GENERAL_NAMES_RAW_EXE" ]] || { echo "stage02 linker produced no general-names executable output" >&2; exit 1; }
+[[ -s "$GEN_COMPLEX_EXPR_RAW_EXE" ]] || { echo "stage02 linker produced no complex-expr executable output" >&2; exit 1; }
+[[ -s "$GEN_CHAR_TYPE_RAW_EXE" ]] || { echo "stage02 linker produced no char-type executable output" >&2; exit 1; }
+[[ -s "$GEN_CHAR_LITERAL_RAW_EXE" ]] || { echo "stage02 linker produced no char-literal executable output" >&2; exit 1; }
+[[ -s "$GEN_LOCAL_ARRAY_RAW_EXE" ]] || { echo "stage02 linker produced no local-array executable output" >&2; exit 1; }
+[[ -s "$GEN_CHAR_ARRAY_RAW_EXE" ]] || { echo "stage02 linker produced no char-array executable output" >&2; exit 1; }
+[[ -s "$GEN_STRING_LIT_RAW_EXE" ]] || { echo "stage02 linker produced no string-lit executable output" >&2; exit 1; }
+[[ -s "$GEN_POINTER_RAW_EXE" ]] || { echo "stage02 linker produced no pointer executable output" >&2; exit 1; }
+[[ -s "$GEN_GLOBAL_RAW_EXE" ]] || { echo "stage02 linker produced no global executable output" >&2; exit 1; }
+[[ -s "$GEN_GLOBAL_ARRAY_RAW_EXE" ]] || { echo "stage02 linker produced no global-array executable output" >&2; exit 1; }
+[[ -s "$GEN_PTR_ARITH_RAW_EXE" ]] || { echo "stage02 linker produced no ptr-arith executable output" >&2; exit 1; }
+[[ -s "$GEN_SHORT_CIRCUIT_RAW_EXE" ]] || { echo "stage02 linker produced no short-circuit executable output" >&2; exit 1; }
+[[ -s "$GEN_TYPEDEF_RAW_EXE" ]] || { echo "stage02 linker produced no typedef executable output" >&2; exit 1; }
+[[ -s "$GEN_TYPEDEF_STRUCT_RAW_EXE" ]] || { echo "stage02 linker produced no typedef-struct executable output" >&2; exit 1; }
+[[ -s "$GEN_STRUCT_BASIC_RAW_EXE" ]] || { echo "stage02 linker produced no struct-basic executable output" >&2; exit 1; }
+[[ -s "$GEN_STRUCT_ARROW_RAW_EXE" ]] || { echo "stage02 linker produced no struct-arrow executable output" >&2; exit 1; }
+[[ -s "$GEN_STRUCT_ARRAY_RAW_EXE" ]] || { echo "stage02 linker produced no struct-array executable output" >&2; exit 1; }
+[[ -s "$GEN_SIZEOF_RAW_EXE" ]] || { echo "stage02 linker produced no sizeof executable output" >&2; exit 1; }
+[[ -s "$GEN_SIZEOF_STRUCT_RAW_EXE" ]] || { echo "stage02 linker produced no sizeof-struct executable output" >&2; exit 1; }
+[[ -s "$GEN_CAST_RAW_EXE" ]] || { echo "stage02 linker produced no cast executable output" >&2; exit 1; }
+[[ -s "$GEN_DEFINE_RAW_EXE" ]] || { echo "stage02 linker produced no define executable output" >&2; exit 1; }
+[[ -s "$GEN_DEFINE_HEX_RAW_EXE" ]] || { echo "stage02 linker produced no define-hex executable output" >&2; exit 1; }
+[[ -s "$GEN_ENUM_RAW_EXE" ]] || { echo "stage02 linker produced no enum executable output" >&2; exit 1; }
+[[ -s "$GEN_PROTOTYPE_RAW_EXE" ]] || { echo "stage02 linker produced no prototype executable output" >&2; exit 1; }
+[[ -s "$GEN_INCLUDE_RAW_EXE" ]] || { echo "stage02 linker produced no include executable output" >&2; exit 1; }
 link_forth_with_libc "$GEN_OBJ" "$GEN_EXE" "$WORKDIR/stage3-link.run.log"
 link_forth_with_libc "$GEN_RET_OBJ" "$GEN_RET_EXE" "$WORKDIR/stage3-link-ret.run.log"
 link_forth_with_libc "$GEN_EXPR_OBJ" "$GEN_EXPR_EXE" "$WORKDIR/stage3-link-expr.run.log"
@@ -1149,21 +1149,21 @@ echo "Generated helper-local asm: $GEN_HELPER_LOCAL_ASM"
 echo "Generated main-local-helper asm: $GEN_MAIN_LOCAL_HELPER_ASM"
 echo "Generated helper-two-args asm: $GEN_HELPER_TWO_ARGS_ASM"
 echo "Generated helper-two-args-if asm: $GEN_HELPER_TWO_ARGS_IF_ASM"
-echo "Generated raw exe (stage07): $GEN_RAW_EXE"
-echo "Generated return raw exe (stage07): $GEN_RET_RAW_EXE"
-echo "Generated expr raw exe (stage07): $GEN_EXPR_RAW_EXE"
-echo "Generated local raw exe (stage07): $GEN_LOCAL_RAW_EXE"
-echo "Generated relational raw exe (stage07): $GEN_REL_RAW_EXE"
-echo "Generated if-true raw exe (stage07): $GEN_IF_TRUE_RAW_EXE"
-echo "Generated if-false raw exe (stage07): $GEN_IF_FALSE_RAW_EXE"
-echo "Generated while raw exe (stage07): $GEN_WHILE_RAW_EXE"
-echo "Generated two-locals raw exe (stage07): $GEN_TWO_LOCALS_RAW_EXE"
-echo "Generated helper-call raw exe (stage07): $GEN_HELPER_RAW_EXE"
-echo "Generated helper-arg raw exe (stage07): $GEN_HELPER_ARG_RAW_EXE"
-echo "Generated helper-local raw exe (stage07): $GEN_HELPER_LOCAL_RAW_EXE"
-echo "Generated main-local-helper raw exe (stage07): $GEN_MAIN_LOCAL_HELPER_RAW_EXE"
-echo "Generated helper-two-args raw exe (stage07): $GEN_HELPER_TWO_ARGS_RAW_EXE"
-echo "Generated helper-two-args-if raw exe (stage07): $GEN_HELPER_TWO_ARGS_IF_RAW_EXE"
+echo "Generated raw exe (stage02): $GEN_RAW_EXE"
+echo "Generated return raw exe (stage02): $GEN_RET_RAW_EXE"
+echo "Generated expr raw exe (stage02): $GEN_EXPR_RAW_EXE"
+echo "Generated local raw exe (stage02): $GEN_LOCAL_RAW_EXE"
+echo "Generated relational raw exe (stage02): $GEN_REL_RAW_EXE"
+echo "Generated if-true raw exe (stage02): $GEN_IF_TRUE_RAW_EXE"
+echo "Generated if-false raw exe (stage02): $GEN_IF_FALSE_RAW_EXE"
+echo "Generated while raw exe (stage02): $GEN_WHILE_RAW_EXE"
+echo "Generated two-locals raw exe (stage02): $GEN_TWO_LOCALS_RAW_EXE"
+echo "Generated helper-call raw exe (stage02): $GEN_HELPER_RAW_EXE"
+echo "Generated helper-arg raw exe (stage02): $GEN_HELPER_ARG_RAW_EXE"
+echo "Generated helper-local raw exe (stage02): $GEN_HELPER_LOCAL_RAW_EXE"
+echo "Generated main-local-helper raw exe (stage02): $GEN_MAIN_LOCAL_HELPER_RAW_EXE"
+echo "Generated helper-two-args raw exe (stage02): $GEN_HELPER_TWO_ARGS_RAW_EXE"
+echo "Generated helper-two-args-if raw exe (stage02): $GEN_HELPER_TWO_ARGS_IF_RAW_EXE"
 echo "Generated exe: $GEN_EXE"
 echo "Generated return exe: $GEN_RET_EXE"
 echo "Generated expr exe: $GEN_EXPR_EXE"

@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Build cc-min.s32x (the C compiler) from source.
 # Uses: Stage 04 cc.fth (compiler — last Forth dependency, one final time),
-#       Stage 02 s32-as.s32x (C assembler), Stage 07 s32-ld.s32x (C linker).
+#       Stage 02 s32-as.s32x (C assembler), Stage 02 s32-ld.s32x (C linker).
 # After this stage, ALL Forth tools (stage01-04) are no longer needed.
 # Deposits the artifact in the script's directory.
 
@@ -19,7 +19,7 @@ KERNEL="${SELFHOST_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${SELFHOST_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 CC_FTH="$SELFHOST_DIR/stage01/cc.fth"
 STAGE2_AS="$SELFHOST_DIR/stage02/s32-as.s32x"
-STAGE7_LD="$SELFHOST_DIR/stage07/s32-ld.s32x"
+STAGE2_LD="$SELFHOST_DIR/stage02/s32-ld.s32x"
 
 LIBC_DIR="$SELFHOST_DIR/stage02/libc"
 CRT0_SRC="$SELFHOST_DIR/stage02/crt0.s"
@@ -30,7 +30,7 @@ CCMIN_PASS2="$SCRIPT_DIR/cc-min-pass2.c"
 CCMIN_PASS3="$SCRIPT_DIR/cc-min-pass3.c"
 OUT_EXE="$SCRIPT_DIR/cc-min.s32x"
 
-for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$STAGE2_AS" "$STAGE7_LD" \
+for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$STAGE2_AS" "$STAGE2_LD" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC" \
          "$CCMIN_SRC" "$CCMIN_PASS1" "$CCMIN_PASS2" "$CCMIN_PASS3"; do
     [[ -f "$f" ]] || { echo "Missing: $f" >&2; exit 1; }
@@ -84,7 +84,7 @@ link_exe() {
     local log="$1"
     shift
     set +e
-    timeout 120 "$EMU" "$STAGE7_LD" "$@" >"$log" 2>&1
+    timeout 120 "$EMU" "$STAGE2_LD" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -117,7 +117,7 @@ cat "$CCMIN_PASS1" "$CCMIN_PASS2" "$CCMIN_PASS3" "$CCMIN_SRC" > "$WORKDIR/cc-min
 compile "$WORKDIR/cc-min.merged.c" "$WORKDIR/cc-min.s" "$WORKDIR/cc-min.cc.log"
 assemble "$WORKDIR/cc-min.s" "$WORKDIR/cc-min.s32o" "$WORKDIR/cc-min.as.log"
 
-# --- Link using Stage 07 C linker (no more Forth!) ---
+# --- Link using Stage 02 C linker (no more Forth!) ---
 echo "[4/4] Link cc-min.s32x"
 link_exe "$WORKDIR/link.log" -o "$OUT_EXE" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/cc-min.s32o" "$WORKDIR/start.s32o" \
