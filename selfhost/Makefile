@@ -100,15 +100,17 @@ stage12: stage11
 	@echo "--- Building Stage 12: s12cc AST Compiler ---"
 	$(MAKE) -C stage12
 
-# Stage 13: s12cc (copy of stage12, bootstrapped by stage12)
+# Stage 13: Complete s12cc toolchain (compiler + assembler + archiver + linker + runtime)
 # Prerequisites: Stage 12 s12cc (compiler), Stage 05 assembler, Stage 07 linker
-# Future purpose: add C features needed for real toolchain compilation
+# Artifacts: s12cc.s32x, s32-as.s32x, s32-ar.s32x, s32-ld.s32x
+# All C compiled by stage12's s12cc. Runtime (libc) included.
 stage13: stage12
-	@echo "--- Building Stage 13: s12cc (bootstrapped from stage12) ---"
+	@echo "--- Building Stage 13: Complete s12cc Toolchain ---"
 	$(MAKE) -C stage13
 
 # Stage 14: Compiler playground (copy of stage13, bootstrapped by stage13)
 # Prerequisites: Stage 13 s12cc (compiler), Stage 05 assembler, Stage 07 linker
+# Artifacts: s12cc.s32x, s32-as.s32x, s32-ar.s32x, s32-ld.s32x
 stage14: stage13
 	@echo "--- Building Stage 14: s12cc playground ---"
 	$(MAKE) -C stage14

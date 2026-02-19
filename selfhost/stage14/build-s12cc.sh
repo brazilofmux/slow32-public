@@ -4,6 +4,7 @@ set -euo pipefail
 # Build s12cc.s32x: the stage14 AST-based C compiler.
 # Uses: Stage 13 s12cc.s32x (compiler), Stage 05 s32-as.s32x (assembler),
 #       Stage 07 s32-ld.s32x (linker).
+# Libc is compiled by stage13's s12cc (not stage11).
 # Deposits the artifact in the script's directory.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -27,9 +28,9 @@ STAGE13_CC="$SELFHOST_DIR/stage13/s12cc.s32x"
 STAGE5_AS="$SELFHOST_DIR/stage05/s32-as.s32x"
 STAGE7_LD="$SELFHOST_DIR/stage07/s32-ld.s32x"
 
-LIBC_DIR="$SELFHOST_DIR/stage05/libc"
-CRT0_SRC="$SELFHOST_DIR/stage05/crt0.s"
-MMIO_NO_START_SRC="$SELFHOST_DIR/stage05/mmio_no_start.s"
+LIBC_DIR="$SCRIPT_DIR/libc"
+CRT0_SRC="$SCRIPT_DIR/crt0.s"
+MMIO_NO_START_SRC="$SCRIPT_DIR/mmio_no_start.s"
 OUT_EXE="$SCRIPT_DIR/s12cc.s32x"
 
 for f in "$EMU" "$STAGE13_CC" "$STAGE5_AS" "$STAGE7_LD" \
@@ -92,20 +93,15 @@ echo "[1/4] Assemble runtime"
 assemble "$CRT0_SRC" "$WORKDIR/crt0.s32o" "$WORKDIR/crt0.log"
 assemble "$MMIO_NO_START_SRC" "$WORKDIR/mmio_no_start.s32o" "$WORKDIR/mmio_no_start.log"
 
-# --- Build libc (compiled by stage11 s32cc) ---
+# --- Build libc (compiled by stage13 s12cc) ---
 echo "[2/4] Build libc"
-S11CC="$SELFHOST_DIR/stage11/s32cc.s32x"
 LIBC_OBJS=""
 for name in string_extra string_more ctype convert stdio malloc; do
-    set +e
-    timeout "${EXEC_TIMEOUT:-300}" "$EMU" "$S11CC" "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s" >"$WORKDIR/${name}.cc.log" 2>&1
-    set -e
+    compile "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s" "$WORKDIR/${name}.cc.log"
     assemble "$WORKDIR/${name}.s" "$WORKDIR/${name}.s32o" "$WORKDIR/${name}.as.log"
     LIBC_OBJS="$LIBC_OBJS $WORKDIR/${name}.s32o"
 done
-set +e
-timeout "${EXEC_TIMEOUT:-300}" "$EMU" "$S11CC" "$LIBC_DIR/start.c" "$WORKDIR/start.s" >"$WORKDIR/start.cc.log" 2>&1
-set -e
+compile "$LIBC_DIR/start.c" "$WORKDIR/start.s" "$WORKDIR/start.cc.log"
 assemble "$WORKDIR/start.s" "$WORKDIR/start.s32o" "$WORKDIR/start.as.log"
 
 # --- Compile s12cc with stage13 compiler ---

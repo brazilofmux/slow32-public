@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build s12cc.s32x: the stage13 AST-based C compiler.
-# Uses: Stage 12 s12cc.s32x (compiler), Stage 05 s32-as.s32x (assembler),
-#       Stage 07 s32-ld.s32x (linker).
-# Libc is compiled by stage12's s12cc (not stage11).
-# Deposits the artifact in the script's directory.
+# Build stage13 tools: s32-as.s32x, s32-ar.s32x, s32-ld.s32x
+# All compiled by stage12's s12cc, assembled by stage05 assembler,
+# linked by stage07 linker. Uses stage13's own libc/runtime.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -31,17 +29,17 @@ STAGE7_LD="$SELFHOST_DIR/stage07/s32-ld.s32x"
 LIBC_DIR="$SCRIPT_DIR/libc"
 CRT0_SRC="$SCRIPT_DIR/crt0.s"
 MMIO_NO_START_SRC="$SCRIPT_DIR/mmio_no_start.s"
-OUT_EXE="$SCRIPT_DIR/s12cc.s32x"
+TOOLS_DIR="$SCRIPT_DIR/tools"
 
 for f in "$EMU" "$STAGE12_CC" "$STAGE5_AS" "$STAGE7_LD" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC" \
-         "$SCRIPT_DIR/s12cc.c" "$SCRIPT_DIR/c_lexer_gen.c" \
-         "$SCRIPT_DIR/ast.h" "$SCRIPT_DIR/parser.h" \
-         "$SCRIPT_DIR/optimize.h" "$SCRIPT_DIR/codegen.h" "$SCRIPT_DIR/pp.h"; do
+         "$TOOLS_DIR/s32-as.c" "$TOOLS_DIR/s32_formats_min.h" \
+         "$TOOLS_DIR/s32-ar.c" "$TOOLS_DIR/s32ar_min.h" \
+         "$TOOLS_DIR/s32-ld.c"; do
     [[ -f "$f" ]] || { echo "Missing: $f" >&2; exit 1; }
 done
 
-WORKDIR="$(mktemp -d /tmp/stage13-build.XXXXXX)"
+WORKDIR="$(mktemp -d /tmp/stage13-tools.XXXXXX)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
 cd "$ROOT_DIR"
@@ -89,12 +87,12 @@ link_exe() {
 }
 
 # --- Build runtime objects ---
-echo "[1/4] Assemble runtime"
+echo "[1/5] Assemble runtime"
 assemble "$CRT0_SRC" "$WORKDIR/crt0.s32o" "$WORKDIR/crt0.log"
 assemble "$MMIO_NO_START_SRC" "$WORKDIR/mmio_no_start.s32o" "$WORKDIR/mmio_no_start.log"
 
 # --- Build libc (compiled by stage12 s12cc) ---
-echo "[2/4] Build libc"
+echo "[2/5] Build libc"
 LIBC_OBJS=""
 for name in string_extra string_more ctype convert stdio malloc; do
     compile "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s" "$WORKDIR/${name}.cc.log"
@@ -104,17 +102,38 @@ done
 compile "$LIBC_DIR/start.c" "$WORKDIR/start.s" "$WORKDIR/start.cc.log"
 assemble "$WORKDIR/start.s" "$WORKDIR/start.s32o" "$WORKDIR/start.as.log"
 
-# --- Compile s12cc with stage12 compiler ---
-echo "[3/4] Compile s12cc"
-compile "$SCRIPT_DIR/s12cc.c" "$WORKDIR/s12cc.s" "$WORKDIR/s12cc.cc.log"
-assemble "$WORKDIR/s12cc.s" "$WORKDIR/s12cc.s32o" "$WORKDIR/s12cc.as.log"
-
-# --- Link s12cc.s32x ---
-echo "[4/4] Link s12cc.s32x"
-link_exe "$WORKDIR/link.log" -o "$OUT_EXE" --mmio 64K \
-    "$WORKDIR/crt0.s32o" "$WORKDIR/s12cc.s32o" "$WORKDIR/start.s32o" \
+# --- Build assembler ---
+echo "[3/5] Build s32-as.s32x"
+compile "$TOOLS_DIR/s32-as.c" "$WORKDIR/s32-as.s" "$WORKDIR/s32-as.cc.log"
+assemble "$WORKDIR/s32-as.s" "$WORKDIR/s32-as.s32o" "$WORKDIR/s32-as.as.log"
+link_exe "$WORKDIR/s32-as.link.log" -o "$SCRIPT_DIR/s32-as.s32x" --mmio 64K \
+    "$WORKDIR/crt0.s32o" "$WORKDIR/s32-as.s32o" "$WORKDIR/start.s32o" \
     "$WORKDIR/mmio_no_start.s32o" \
     $LIBC_OBJS
-[[ -s "$OUT_EXE" ]] || { echo "link failed" >&2; exit 1; }
+[[ -s "$SCRIPT_DIR/s32-as.s32x" ]] || { echo "s32-as link failed" >&2; exit 1; }
+echo "  OK: s32-as.s32x ($(wc -c < "$SCRIPT_DIR/s32-as.s32x") bytes)"
 
-echo "OK: $OUT_EXE ($(wc -c < "$OUT_EXE") bytes)"
+# --- Build archiver ---
+echo "[4/5] Build s32-ar.s32x"
+compile "$TOOLS_DIR/s32-ar.c" "$WORKDIR/s32-ar.s" "$WORKDIR/s32-ar.cc.log"
+assemble "$WORKDIR/s32-ar.s" "$WORKDIR/s32-ar.s32o" "$WORKDIR/s32-ar.as.log"
+link_exe "$WORKDIR/s32-ar.link.log" -o "$SCRIPT_DIR/s32-ar.s32x" --mmio 64K \
+    "$WORKDIR/crt0.s32o" "$WORKDIR/s32-ar.s32o" "$WORKDIR/start.s32o" \
+    "$WORKDIR/mmio_no_start.s32o" \
+    $LIBC_OBJS
+[[ -s "$SCRIPT_DIR/s32-ar.s32x" ]] || { echo "s32-ar link failed" >&2; exit 1; }
+echo "  OK: s32-ar.s32x ($(wc -c < "$SCRIPT_DIR/s32-ar.s32x") bytes)"
+
+# --- Build linker ---
+echo "[5/5] Build s32-ld.s32x"
+compile "$TOOLS_DIR/s32-ld.c" "$WORKDIR/s32-ld.s" "$WORKDIR/s32-ld.cc.log"
+assemble "$WORKDIR/s32-ld.s" "$WORKDIR/s32-ld.s32o" "$WORKDIR/s32-ld.as.log"
+link_exe "$WORKDIR/s32-ld.link.log" -o "$SCRIPT_DIR/s32-ld.s32x" --mmio 64K \
+    "$WORKDIR/crt0.s32o" "$WORKDIR/s32-ld.s32o" "$WORKDIR/start.s32o" \
+    "$WORKDIR/mmio_no_start.s32o" \
+    $LIBC_OBJS
+[[ -s "$SCRIPT_DIR/s32-ld.s32x" ]] || { echo "s32-ld link failed" >&2; exit 1; }
+echo "  OK: s32-ld.s32x ($(wc -c < "$SCRIPT_DIR/s32-ld.s32x") bytes)"
+
+echo ""
+echo "All tools built successfully."
