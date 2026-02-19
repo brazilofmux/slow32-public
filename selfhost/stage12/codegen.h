@@ -11,7 +11,7 @@
 
 static char cg_out[CG_MAX_OUT];
 static int  cg_olen;
-static int  cg_lbl;    /* label counter (monotonically increasing) */
+/* cg_lbl and cg_label() are defined in parser.h (shared with parser) */
 static int  cg_epilog; /* current function's epilog label */
 
 #define CG_MAX_LOOP 16
@@ -65,13 +65,6 @@ static void cg_n(int v) {
         i = i - 1;
         cg_c(buf[i]);
     }
-}
-
-static int cg_label(void) {
-    int l;
-    l = cg_lbl;
-    cg_lbl = cg_lbl + 1;
-    return l;
 }
 
 static void cg_ldef(int l) {
@@ -729,6 +722,19 @@ static void gen_stmt(struct Node *n) {
         return;
     }
 
+    if (n->kind == ND_GOTO) {
+        cg_s("    jal r0, ");
+        cg_lref(n->val);
+        cg_c(10);
+        return;
+    }
+
+    if (n->kind == ND_LABEL) {
+        cg_ldef(n->val);
+        if (n->body) gen_stmt(n->body);
+        return;
+    }
+
     if (n->kind == ND_BLOCK) {
         s = n->body;
         while (s) {
@@ -850,8 +856,10 @@ static void gen_data(void) {
             cg_n(ps_gsize[i]);
             cg_c(10);
         } else {
-            /* Scalar: one word */
-            cg_s("    .word 0\n");
+            /* Scalar: one word (with optional initializer) */
+            cg_s("    .word ");
+            cg_n(ps_ginit[i]);
+            cg_c(10);
         }
         i = i + 1;
     }

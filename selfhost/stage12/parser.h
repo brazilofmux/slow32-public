@@ -5,6 +5,16 @@
  * Compiled by stage11 s32-cc.
  */
 
+/* --- Shared label counter (used by both parser and codegen) --- */
+static int cg_lbl;    /* label counter (monotonically increasing) */
+
+static int cg_label(void) {
+    int l;
+    l = cg_lbl;
+    cg_lbl = cg_lbl + 1;
+    return l;
+}
+
 /* --- Parser state --- */
 #define P_MAX_LOCALS  128
 #define P_MAX_GLOBALS 512
@@ -21,7 +31,14 @@ static int   ps_nparams;              /* params in current func */
 static char *ps_gname[P_MAX_GLOBALS]; /* global var names */
 static int   ps_gtype[P_MAX_GLOBALS]; /* global var types */
 static int   ps_gsize[P_MAX_GLOBALS]; /* size in bytes (0=scalar, >0=array) */
+static int   ps_ginit[P_MAX_GLOBALS]; /* initial value for scalars */
 static int   ps_nglobals;
+
+/* goto/label table (per-function, reset at each function) */
+#define P_MAX_LABELS 512
+static char *ps_lblname[P_MAX_LABELS];
+static int   ps_lblid[P_MAX_LABELS];
+static int   ps_nlabels;
 
 /* Enum constant table */
 static char *ps_cname[PS_MAX_CONSTS];
@@ -91,6 +108,24 @@ static int find_const(char *name) {
         i = i - 1;
     }
     return -1;
+}
+
+/* Find or create a label for goto/label. Returns codegen label ID. */
+static int find_or_add_label(char *name) {
+    int i;
+    i = 0;
+    while (i < ps_nlabels) {
+        if (strcmp(name, ps_lblname[i]) == 0) return ps_lblid[i];
+        i = i + 1;
+    }
+    if (ps_nlabels >= P_MAX_LABELS) {
+        p_error("too many labels");
+        return 0;
+    }
+    ps_lblname[ps_nlabels] = strdup(name);
+    ps_lblid[ps_nlabels] = cg_label();
+    ps_nlabels = ps_nlabels + 1;
+    return ps_lblid[ps_nlabels - 1];
 }
 
 static void parse_enum_def(void) {
@@ -765,6 +800,10 @@ static struct Node *parse_stmt(void) {
     int cv;
     int neg;
     char nm[256];
+    /* Lexer save/restore for label lookahead */
+    int sv_tok; int sv_val; int sv_slen; int sv_rcs; int sv_ract;
+    char *sv_rp; char *sv_rts; char *sv_rte;
+    char sv_str[256];
 
     /* return statement */
     if (lex_tok == TK_RETURN) {
@@ -914,6 +953,18 @@ static struct Node *parse_stmt(void) {
         return nd_new(ND_CONTINUE);
     }
 
+    /* goto statement */
+    if (lex_tok == TK_GOTO) {
+        next();
+        if (lex_tok != TK_IDENT) {
+            p_error("expected label name after goto");
+        }
+        memcpy(nm, lex_str, lex_slen + 1);
+        next();
+        expect(TK_SEMI);
+        return nd_goto(find_or_add_label(nm));
+    }
+
     /* block */
     if (lex_tok == TK_LBRACE) {
         return parse_block();
@@ -926,6 +977,9 @@ static struct Node *parse_stmt(void) {
         expect(TK_SEMI);
         return nd_block(NULL);
     }
+
+    /* Skip static/const qualifiers before local declarations */
+    while (lex_tok == TK_STATIC || lex_tok == TK_CONST) next();
 
     /* local variable declaration */
     if (is_type()) {
@@ -963,6 +1017,28 @@ static struct Node *parse_stmt(void) {
         }
         expect(TK_SEMI);
         return nd_block(NULL);
+    }
+
+    /* Label detection: identifier followed by colon */
+    if (lex_tok == TK_IDENT) {
+        /* Save lexer state for lookahead */
+        memcpy(nm, lex_str, lex_slen + 1);
+        sv_tok = lex_tok; sv_val = lex_val; sv_slen = lex_slen;
+        sv_rcs = lex_rcs; sv_ract = lex_ract;
+        sv_rp = lex_rp; sv_rts = lex_rts; sv_rte = lex_rte;
+        memcpy(sv_str, lex_str, lex_slen + 1);
+        next();
+        if (lex_tok == TK_COLON) {
+            /* It's a label */
+            next();
+            t = parse_stmt();
+            return nd_label(find_or_add_label(nm), t);
+        }
+        /* Not a label — restore lexer state */
+        lex_tok = sv_tok; lex_val = sv_val; lex_slen = sv_slen;
+        lex_rcs = sv_rcs; lex_ract = sv_ract;
+        lex_rp = sv_rp; lex_rts = sv_rts; lex_rte = sv_rte;
+        memcpy(lex_str, sv_str, sv_slen + 1);
     }
 
     /* expression statement */
@@ -1012,6 +1088,10 @@ static struct Node *parse_top_decl(void) {
     int off;
     int i;
     int count;
+    int neg;
+
+    /* Skip static/const qualifiers (single-file compiler, no semantic effect) */
+    while (lex_tok == TK_STATIC || lex_tok == TK_CONST) next();
 
     /* Enum definition at top level */
     if (lex_tok == TK_ENUM) {
@@ -1038,14 +1118,23 @@ static struct Node *parse_top_decl(void) {
     memcpy(nm, lex_str, lex_slen + 1);
     next();
 
-    /* Global variable: type name; or type name[N]; */
-    if (lex_tok == TK_SEMI) {
-        next();
+    /* Global variable: type name; or type name = expr; or type name[N]; */
+    if (lex_tok == TK_SEMI || lex_tok == TK_ASSIGN) {
         if (ty_is_struct(ty)) {
             add_global(nm, ty, ty_size(ty));
         } else {
             add_global(nm, ty, 0);
         }
+        if (lex_tok == TK_ASSIGN) {
+            next();
+            neg = 0;
+            if (lex_tok == TK_MINUS) { neg = 1; next(); }
+            if (lex_tok == TK_NUM) {
+                ps_ginit[ps_nglobals - 1] = neg ? (0 - lex_val) : lex_val;
+                next();
+            }
+        }
+        expect(TK_SEMI);
         return NULL;
     }
     if (lex_tok == TK_LBRACK) {
@@ -1074,6 +1163,7 @@ static struct Node *parse_top_decl(void) {
     ps_nlocals = 0;
     ps_stack = 8;  /* reserve 8 bytes: saved r31 + saved r30 */
     ps_nparams = 0;
+    ps_nlabels = 0;
 
     /* Parameters */
     phead = NULL;

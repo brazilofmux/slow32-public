@@ -90,6 +90,8 @@ static int ty_deref(int ty) {
 #define ND_SWITCH   26   /* switch: cond=expr, body=block */
 #define ND_CASE     27   /* case label: val=constant value */
 #define ND_DEFAULT  28   /* default label (no data) */
+#define ND_GOTO     29   /* goto label */
+#define ND_LABEL    30   /* label: stmt */
 
 /* --- AST node --- */
 struct Node {
@@ -307,5 +309,20 @@ static struct Node *nd_member(struct Node *lhs, int offset, int mty) {
     n->lhs = lhs;
     n->val = offset;
     n->ty = mty;
+    return n;
+}
+
+static struct Node *nd_goto(int label_id) {
+    struct Node *n;
+    n = nd_new(ND_GOTO);
+    n->val = label_id;
+    return n;
+}
+
+static struct Node *nd_label(int label_id, struct Node *stmt) {
+    struct Node *n;
+    n = nd_new(ND_LABEL);
+    n->val = label_id;
+    n->body = stmt;
     return n;
 }

@@ -114,9 +114,8 @@ int main(int argc, char **argv) {
     lex_init(src, n);
     prog = parse_program();
 
-    /* Codegen */
+    /* Codegen (cg_lbl not reset — parser may have allocated goto labels) */
     cg_olen = 0;
-    cg_lbl = 0;
     cg_loop_depth = 0;
     cg_sw_depth = 0;
     gen_program(prog);
