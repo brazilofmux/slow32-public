@@ -3,9 +3,9 @@
 # This Makefile guides the student through the stage-by-stage progression.
 # Each stage has specific prerequisites and produces clear, minimal artifacts.
 
-.PHONY: all clean stage00 stage01 stage02 stage03
+.PHONY: all clean stage00 stage01 stage02 stage03 stage04
 
-all: stage03
+all: stage04
 
 # Stage 00: Minimum bootstrap emulator (the trust root)
 stage00:
@@ -33,8 +33,16 @@ stage03: stage02
 	@echo "--- Building Stage 03: Forth Linker Artifacts ---"
 	$(MAKE) -C stage03
 
+# Stage 04: Forth-Hosted Subset C Compiler
+# Prerequisites: Stage 01/02/03 artifacts
+# Artifacts: test1.s32x (compiled from C)
+stage04: stage03
+	@echo "--- Building Stage 04: Forth C Compiler Artifacts ---"
+	$(MAKE) -C stage04
+
 clean:
 	$(MAKE) -C stage00 clean
 	$(MAKE) -C stage01 clean
 	$(MAKE) -C stage02 clean
 	$(MAKE) -C stage03 clean
+	$(MAKE) -C stage04 clean
