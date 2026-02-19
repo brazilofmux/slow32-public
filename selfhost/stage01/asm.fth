@@ -40,11 +40,11 @@ DECIMAL
 5 CONSTANT REL-JAL
 
 \ === Configuration ===
-262144 CONSTANT INP-SZ      \ 256KB input buffer
-131072 CONSTANT CODE-SZ     \ 128KB code output
-65536  CONSTANT DATA-SZ     \ 64KB data output
-1024   CONSTANT MAX-SYM     \ max symbols
-32768  CONSTANT SNAME-SZ    \ symbol name storage
+786432 CONSTANT INP-SZ      \ 768KB input buffer
+262144  CONSTANT CODE-SZ     \ 256KB code output
+65536   CONSTANT DATA-SZ     \ 64KB data output
+2048    CONSTANT MAX-SYM     \ max symbols
+65536   CONSTANT SNAME-SZ    \ symbol name storage
 
 \ === Buffers ===
 CREATE inp-buf INP-SZ ALLOT
@@ -703,6 +703,7 @@ VARIABLE sx-pos
         SYM-VA
         \ Subtract current PC (text section)
         text-va @ asm-tsz @ + -
+        2SWAP 2DROP
     THEN ;
 
 \ Parse a branch target — result is PC+4 relative offset (for BEQ/BNE/BLT etc.)
