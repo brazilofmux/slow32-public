@@ -915,10 +915,29 @@ static Node *parse_stmt(void) {
     if (lex_tok == TK_FOR) {
         next();
         expect(TK_LPAREN);
+        ci = ps_nlocals;  /* save scope for for-init declarations */
         /* init */
         if (lex_tok == TK_SEMI) {
             next();
             n = NULL;
+        } else if (is_type()) {
+            /* for-loop init declaration: for (int i = 0; ...) */
+            ty = parse_type();
+            if (lex_tok != TK_IDENT) {
+                p_error("expected identifier in for-init");
+                return nd_num(0);
+            }
+            memcpy(nm, lex_str, lex_slen + 1);
+            next();
+            off = add_local(nm, ty);
+            if (lex_tok == TK_ASSIGN) {
+                next();
+                n = nd_assign(nd_var(nm, off, ty), parse_expr());
+                n->lhs->is_local = 1;
+            } else {
+                n = NULL;
+            }
+            expect(TK_SEMI);
         } else {
             n = parse_expr();
             expect(TK_SEMI);
@@ -941,6 +960,7 @@ static Node *parse_stmt(void) {
         }
         /* body */
         t = parse_stmt();
+        ps_nlocals = ci;  /* restore scope */
         return nd_for(n, c, e, t);
     }
 
@@ -1133,8 +1153,10 @@ static Node *parse_block(void) {
     Node *head;
     Node *tail;
     Node *s;
+    int saved_nlocals;
 
     expect(TK_LBRACE);
+    saved_nlocals = ps_nlocals;
     head = NULL;
     tail = NULL;
     while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
@@ -1148,6 +1170,7 @@ static Node *parse_block(void) {
         }
     }
     expect(TK_RBRACE);
+    ps_nlocals = saved_nlocals;
     return nd_block(head);
 }
 
