@@ -1,24 +1,32 @@
 /* parser.h -- Recursive-descent parser for stage12 compiler
  *
- * Phase 1: int/void/char types, arithmetic, if/while, function calls.
- * Builds an AST from the Ragel lexer token stream.
+ * Phase 2: types, pointers, strings, globals, local arrays.
+ * Builds a typed AST from the Ragel lexer token stream.
  * Compiled by stage11 s32-cc.
  */
 
 /* --- Parser state --- */
-#define P_MAX_LOCALS 128
-#define P_MAX_FUNCS  256
+#define P_MAX_LOCALS  128
+#define P_MAX_GLOBALS 512
 
 static char *ps_lname[P_MAX_LOCALS];  /* local var names */
 static int   ps_loff[P_MAX_LOCALS];   /* local var offsets from fp */
+static int   ps_ltype[P_MAX_LOCALS];  /* local var types */
+static int   ps_larr[P_MAX_LOCALS];   /* 1 if array (addr, no load) */
 static int   ps_nlocals;
 static int   ps_stack;                /* current stack allocation */
 static int   ps_nparams;              /* params in current func */
+
+static char *ps_gname[P_MAX_GLOBALS]; /* global var names */
+static int   ps_gtype[P_MAX_GLOBALS]; /* global var types */
+static int   ps_gsize[P_MAX_GLOBALS]; /* size in bytes (0=scalar, >0=array) */
+static int   ps_nglobals;
 
 /* Forward declarations */
 static struct Node *parse_expr(void);
 static struct Node *parse_stmt(void);
 static struct Node *parse_assign(void);
+static struct Node *parse_postfix(void);
 
 /* --- Utilities --- */
 
@@ -56,7 +64,19 @@ static int is_type(void) {
     return 0;
 }
 
-/* Look up local variable by name. Returns index or -1. */
+/* Parse a type: int, char, void, with optional pointer stars */
+static int parse_type(void) {
+    int ty;
+    if (lex_tok == TK_INT)  { ty = TY_INT;  next(); }
+    else if (lex_tok == TK_CHAR) { ty = TY_CHAR; next(); }
+    else if (lex_tok == TK_VOID) { ty = TY_VOID; next(); }
+    else { p_error("expected type"); return TY_INT; }
+    while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); }
+    return ty;
+}
+
+/* --- Variable lookup --- */
+
 static int find_local(char *name) {
     int i;
     i = ps_nlocals - 1;
@@ -67,19 +87,69 @@ static int find_local(char *name) {
     return -1;
 }
 
-/* Add a local variable. Returns its offset from fp. */
-static int add_local(char *name) {
+static int find_global(char *name) {
+    int i;
+    i = ps_nglobals - 1;
+    while (i >= 0) {
+        if (strcmp(name, ps_gname[i]) == 0) return i;
+        i = i - 1;
+    }
+    return -1;
+}
+
+static int add_local(char *name, int ty) {
     int idx;
+    int sz;
     if (ps_nlocals >= P_MAX_LOCALS) {
         p_error("too many locals");
         return 0;
     }
-    ps_stack = ps_stack + 4;
+    sz = 4;  /* all locals occupy word-aligned slots */
+    ps_stack = ps_stack + sz;
     idx = ps_nlocals;
     ps_lname[idx] = strdup(name);
     ps_loff[idx] = 0 - ps_stack;
+    ps_ltype[idx] = ty;
+    ps_larr[idx] = 0;
     ps_nlocals = ps_nlocals + 1;
     return ps_loff[idx];
+}
+
+/* Add a local array. Returns offset of start of array. */
+static int add_local_array(char *name, int elem_ty, int count) {
+    int idx;
+    int total;
+    int elem_sz;
+    if (ps_nlocals >= P_MAX_LOCALS) {
+        p_error("too many locals");
+        return 0;
+    }
+    elem_sz = ty_size(elem_ty);
+    total = elem_sz * count;
+    /* Round up to multiple of 4 */
+    total = ((total + 3) / 4) * 4;
+    ps_stack = ps_stack + total;
+    idx = ps_nlocals;
+    ps_lname[idx] = strdup(name);
+    ps_loff[idx] = 0 - ps_stack;
+    ps_ltype[idx] = elem_ty + TY_PTR;  /* array decays to pointer */
+    ps_larr[idx] = 1;
+    ps_nlocals = ps_nlocals + 1;
+    return ps_loff[idx];
+}
+
+static int add_global(char *name, int ty, int size_bytes) {
+    int idx;
+    if (ps_nglobals >= P_MAX_GLOBALS) {
+        p_error("too many globals");
+        return 0;
+    }
+    idx = ps_nglobals;
+    ps_gname[idx] = strdup(name);
+    ps_gtype[idx] = ty;
+    ps_gsize[idx] = size_bytes;
+    ps_nglobals = ps_nglobals + 1;
+    return idx;
 }
 
 /* --- Expression parser (operator precedence climbing) --- */
@@ -93,6 +163,7 @@ static struct Node *parse_primary(void) {
     struct Node *arg;
     int nargs;
     int li;
+    int gi;
 
     /* Number literal */
     if (lex_tok == TK_NUM) {
@@ -106,6 +177,13 @@ static struct Node *parse_primary(void) {
         v = lex_val;
         next();
         return nd_num(v);
+    }
+
+    /* String literal */
+    if (lex_tok == TK_STRING) {
+        v = lex_val;  /* string pool index */
+        next();
+        return nd_string(v);
     }
 
     /* Identifier: variable or function call */
@@ -136,13 +214,31 @@ static struct Node *parse_primary(void) {
             return nd_call(nm, head, nargs);
         }
 
-        /* Variable reference */
+        /* Local variable */
         li = find_local(nm);
-        if (li < 0) {
-            p_error(nm);
-            return nd_num(0);
+        if (li >= 0) {
+            n = nd_var(nm, ps_loff[li], ps_ltype[li]);
+            n->is_local = 1;
+            n->is_array = ps_larr[li];
+            return n;
         }
-        return nd_var(nm, ps_loff[li]);
+
+        /* Global variable */
+        gi = find_global(nm);
+        if (gi >= 0) {
+            n = nd_var(nm, 0, ps_gtype[gi]);
+            n->is_local = 0;
+            n->is_array = (ps_gsize[gi] > 0) ? 1 : 0;
+            return n;
+        }
+
+        fputs("s12cc:", stderr);
+        fput_uint(stderr, lex_line);
+        fputs(": undefined: ", stderr);
+        fputs(nm, stderr);
+        fputc(10, stderr);
+        exit(1);
+        return nd_num(0);
     }
 
     /* Parenthesized expression */
@@ -153,8 +249,40 @@ static struct Node *parse_primary(void) {
         return n;
     }
 
+    /* sizeof(type) — basic support */
+    if (lex_tok == TK_SIZEOF) {
+        next();
+        expect(TK_LPAREN);
+        if (is_type()) {
+            v = ty_size(parse_type());
+        } else {
+            n = parse_expr();
+            v = ty_size(n->ty);
+        }
+        expect(TK_RPAREN);
+        return nd_num(v);
+    }
+
     p_error("unexpected token in expression");
     return nd_num(0);
+}
+
+/* Postfix: handle array subscript p[i] */
+static struct Node *parse_postfix(void) {
+    struct Node *n;
+    struct Node *idx;
+    int elem_sz;
+
+    n = parse_primary();
+    while (lex_tok == TK_LBRACK) {
+        next();
+        idx = parse_expr();
+        expect(TK_RBRACK);
+        /* n[idx] → *(n + idx)  — codegen handles pointer arithmetic scaling */
+        n = nd_binop(TK_PLUS, n, idx);
+        n = nd_unary(TK_STAR, n);
+    }
+    return n;
 }
 
 static struct Node *parse_unary(void) {
@@ -170,7 +298,19 @@ static struct Node *parse_unary(void) {
         n = parse_unary();
         return nd_unary(TK_BANG, n);
     }
-    return parse_primary();
+    /* Dereference */
+    if (lex_tok == TK_STAR) {
+        next();
+        n = parse_unary();
+        return nd_unary(TK_STAR, n);
+    }
+    /* Address-of */
+    if (lex_tok == TK_AMP) {
+        next();
+        n = parse_unary();
+        return nd_unary(TK_AMP, n);
+    }
+    return parse_postfix();
 }
 
 static struct Node *parse_multiplicative(void) {
@@ -225,13 +365,46 @@ static struct Node *parse_equality(void) {
     return n;
 }
 
-static struct Node *parse_land(void) {
+static struct Node *parse_band(void) {
     struct Node *n;
 
     n = parse_equality();
+    while (lex_tok == TK_AMP) {
+        next();
+        n = nd_binop(TK_AMP, n, parse_equality());
+    }
+    return n;
+}
+
+static struct Node *parse_bxor(void) {
+    struct Node *n;
+
+    n = parse_band();
+    while (lex_tok == TK_CARET) {
+        next();
+        n = nd_binop(TK_CARET, n, parse_band());
+    }
+    return n;
+}
+
+static struct Node *parse_bor(void) {
+    struct Node *n;
+
+    n = parse_bxor();
+    while (lex_tok == TK_PIPE) {
+        next();
+        n = nd_binop(TK_PIPE, n, parse_bxor());
+    }
+    return n;
+}
+
+static struct Node *parse_land(void) {
+    struct Node *n;
+
+    n = parse_bor();
     while (lex_tok == TK_LAND) {
         next();
-        n = nd_binop(TK_LAND, n, parse_equality());
+        n = nd_binop(TK_LAND, n, parse_bor());
     }
     return n;
 }
@@ -271,8 +444,9 @@ static struct Node *parse_stmt(void) {
     struct Node *c;
     struct Node *t;
     struct Node *e;
-    int bt;
+    int ty;
     int off;
+    int count;
     char nm[256];
 
     /* return statement */
@@ -312,31 +486,108 @@ static struct Node *parse_stmt(void) {
         return nd_while(c, t);
     }
 
+    /* for statement: for (init; cond; step) body → { init; while(cond) { body; step; } } */
+    if (lex_tok == TK_FOR) {
+        next();
+        expect(TK_LPAREN);
+        /* init */
+        if (lex_tok == TK_SEMI) {
+            next();
+            n = NULL;
+        } else {
+            n = parse_expr();
+            expect(TK_SEMI);
+        }
+        /* cond */
+        if (lex_tok == TK_SEMI) {
+            c = nd_num(1);
+            next();
+        } else {
+            c = parse_expr();
+            expect(TK_SEMI);
+        }
+        /* step */
+        if (lex_tok == TK_RPAREN) {
+            e = NULL;
+            next();
+        } else {
+            e = parse_expr();
+            expect(TK_RPAREN);
+        }
+        /* body */
+        t = parse_stmt();
+        /* Build: { init_stmt; while(cond) { body; step_stmt; } } */
+        if (e) {
+            /* Append step to body */
+            if (t->kind == ND_BLOCK) {
+                /* find tail of body's statement list */
+                struct Node *s;
+                s = t->body;
+                if (s) {
+                    while (s->next) s = s->next;
+                    s->next = nd_expr_stmt(e);
+                } else {
+                    t->body = nd_expr_stmt(e);
+                }
+            } else {
+                /* wrap body + step in a block */
+                struct Node *step_stmt;
+                step_stmt = nd_expr_stmt(e);
+                t->next = step_stmt;
+                t = nd_block(t);
+            }
+        }
+        t = nd_while(c, t);
+        if (n) {
+            /* wrap init + while in a block */
+            struct Node *init_stmt;
+            init_stmt = nd_expr_stmt(n);
+            init_stmt->next = t;
+            return nd_block(init_stmt);
+        }
+        return t;
+    }
+
     /* block */
     if (lex_tok == TK_LBRACE) {
         return parse_block();
     }
 
-    /* local variable declaration: int x; or int x = expr; */
+    /* local variable declaration */
     if (is_type()) {
-        bt = lex_tok;
-        next();
+        ty = parse_type();
         if (lex_tok != TK_IDENT) {
             p_error("expected identifier in declaration");
             return nd_num(0);
         }
         memcpy(nm, lex_str, lex_slen + 1);
         next();
-        off = add_local(nm);
-        if (lex_tok == TK_ASSIGN) {
-            /* int x = expr; → declare + assign */
+
+        /* Array declaration: type name[N]; */
+        if (lex_tok == TK_LBRACK) {
             next();
-            n = nd_assign(nd_var(nm, off), parse_expr());
+            if (lex_tok != TK_NUM) {
+                p_error("expected array size");
+                return nd_num(0);
+            }
+            count = lex_val;
+            next();
+            expect(TK_RBRACK);
+            off = add_local_array(nm, ty, count);
+            expect(TK_SEMI);
+            return nd_block(NULL);
+        }
+
+        /* Scalar: type name; or type name = expr; */
+        off = add_local(nm, ty);
+        if (lex_tok == TK_ASSIGN) {
+            next();
+            n = nd_assign(nd_var(nm, off, ty), parse_expr());
+            n->lhs->is_local = 1;
             expect(TK_SEMI);
             return nd_expr_stmt(n);
         }
         expect(TK_SEMI);
-        /* bare declaration, no initializer → no-op block */
         return nd_block(NULL);
     }
 
@@ -370,14 +621,57 @@ static struct Node *parse_block(void) {
 
 /* --- Top-level parser --- */
 
-static struct Node *parse_func(void) {
+/* Parse type + name + optional pointer stars + params.
+ * Handles: function definitions, function prototypes, global variables. */
+static void parse_type_and_stars(int *out_ty) {
+    *out_ty = parse_type();
+}
+
+static struct Node *parse_top_decl(void) {
     struct Node *fn;
     struct Node *phead;
     struct Node *ptail;
     struct Node *p;
     char nm[256];
+    int ty;
+    int pty;
     int off;
     int i;
+    int count;
+
+    /* Parse return type / variable type */
+    ty = parse_type();
+
+    /* Name */
+    if (lex_tok != TK_IDENT) {
+        p_error("expected name in declaration");
+        return NULL;
+    }
+    memcpy(nm, lex_str, lex_slen + 1);
+    next();
+
+    /* Global variable: type name; or type name[N]; */
+    if (lex_tok == TK_SEMI) {
+        next();
+        add_global(nm, ty, 0);
+        return NULL;
+    }
+    if (lex_tok == TK_LBRACK) {
+        next();
+        if (lex_tok != TK_NUM) {
+            p_error("expected array size");
+            return NULL;
+        }
+        count = lex_val;
+        next();
+        expect(TK_RBRACK);
+        expect(TK_SEMI);
+        add_global(nm, ty + TY_PTR, ty_size(ty) * count);
+        return NULL;
+    }
+
+    /* Function: type name(params) { body } or type name(params); */
+    expect(TK_LPAREN);
 
     /* Reset locals for this function */
     i = 0;
@@ -389,23 +683,7 @@ static struct Node *parse_func(void) {
     ps_stack = 8;  /* reserve 8 bytes: saved r31 + saved r30 */
     ps_nparams = 0;
 
-    /* Parse return type (skip it for now — Phase 1 is untyped) */
-    if (!is_type()) {
-        p_error("expected type");
-        return NULL;
-    }
-    next();
-
-    /* Function name */
-    if (lex_tok != TK_IDENT) {
-        p_error("expected function name");
-        return NULL;
-    }
-    memcpy(nm, lex_str, lex_slen + 1);
-    next();
-
     /* Parameters */
-    expect(TK_LPAREN);
     phead = NULL;
     ptail = NULL;
     if (lex_tok != TK_RPAREN) {
@@ -415,21 +693,21 @@ static struct Node *parse_func(void) {
             return NULL;
         }
         if (lex_tok == TK_VOID) {
-            next();
+            pty = parse_type();
             if (lex_tok == TK_RPAREN) {
-                /* (void) → no params, fall through to expect(TK_RPAREN) */
+                /* (void) → no params */
                 goto params_done;
             }
-            /* void followed by ident: void *name or similar — treat as param */
         } else {
-            next();
+            pty = parse_type();
         }
         if (lex_tok != TK_IDENT) {
             p_error("expected param name");
             return NULL;
         }
-        off = add_local(lex_str);
-        p = nd_var(lex_str, off);
+        off = add_local(lex_str, pty);
+        p = nd_var(lex_str, off, pty);
+        p->is_local = 1;
         ps_nparams = 1;
         phead = p;
         ptail = p;
@@ -441,13 +719,14 @@ static struct Node *parse_func(void) {
                 p_error("expected type in params");
                 return NULL;
             }
-            next();
+            pty = parse_type();
             if (lex_tok != TK_IDENT) {
                 p_error("expected param name");
                 return NULL;
             }
-            off = add_local(lex_str);
-            p = nd_var(lex_str, off);
+            off = add_local(lex_str, pty);
+            p = nd_var(lex_str, off, pty);
+            p->is_local = 1;
             ptail->next = p;
             ptail = p;
             ps_nparams = ps_nparams + 1;
@@ -457,7 +736,14 @@ static struct Node *parse_func(void) {
 params_done:
     expect(TK_RPAREN);
 
-    /* Body */
+    /* Prototype: type name(params); */
+    if (lex_tok == TK_SEMI) {
+        next();
+        /* Just skip — we don't need prototypes in a single-pass compiler */
+        return NULL;
+    }
+
+    /* Function body */
     fn = nd_new(ND_FUNC);
     fn->name = strdup(nm);
     fn->args = phead;
@@ -474,12 +760,13 @@ static struct Node *parse_program(void) {
     struct Node *ftail;
     struct Node *f;
 
+    ps_nglobals = 0;
     next();  /* prime the first token */
 
     fhead = NULL;
     ftail = NULL;
     while (lex_tok != TK_EOF) {
-        f = parse_func();
+        f = parse_top_decl();
         if (f) {
             if (fhead == NULL) {
                 fhead = f;

@@ -1,7 +1,7 @@
 /* codegen.h -- Tree-walk code generator for stage12 compiler
  *
- * Phase 1: walks AST, emits SLOW-32 assembly directly.
- * No IR layers yet — just get working output.
+ * Phase 2: type-aware loads/stores, pointers, strings, globals.
+ * Walks AST, emits SLOW-32 assembly directly.
  * Uses stack-machine style: expressions evaluate into r1,
  * binary ops push lhs, evaluate rhs, pop lhs into r2.
  */
@@ -34,7 +34,6 @@ static void cg_n(int v) {
     char buf[12];
     int i;
     int neg;
-    int d;
 
     if (v == 0) { cg_c(48); return; }
     neg = 0;
@@ -101,6 +100,33 @@ static void cg_li(int v) {
     }
 }
 
+/* Load address of symbol into r1 */
+static void cg_la(char *sym) {
+    cg_s("    lui r1, %hi(");
+    cg_s(sym);
+    cg_s(")\n    addi r1, r1, %lo(");
+    cg_s(sym);
+    cg_s(")\n");
+}
+
+/* Load from [r1] with appropriate width for type */
+static void cg_load(int ty) {
+    if (ty == TY_CHAR) {
+        cg_s("    ldb r1, r1, 0\n");
+    } else {
+        cg_s("    ldw r1, r1, 0\n");
+    }
+}
+
+/* Store r2 to [r1] with appropriate width for type */
+static void cg_store(int ty) {
+    if (ty == TY_CHAR) {
+        cg_s("    stb r1, r2, 0\n");
+    } else {
+        cg_s("    stw r1, r2, 0\n");
+    }
+}
+
 /* --- Code generation --- */
 
 static void gen_expr(struct Node *n);
@@ -108,12 +134,27 @@ static void gen_stmt(struct Node *n);
 
 /* Generate address of lvalue into r1 */
 static void gen_addr(struct Node *n) {
+    char lbl[32];
+    int i;
+
     if (n->kind == ND_VAR) {
-        cg_s("    addi r1, r30, ");
-        cg_n(n->offset);
-        cg_c(10);
+        if (n->is_local) {
+            cg_s("    addi r1, r30, ");
+            cg_n(n->offset);
+            cg_c(10);
+        } else {
+            /* Global variable address */
+            cg_la(n->name);
+        }
         return;
     }
+
+    /* Dereference: address of *p is just the value of p */
+    if (n->kind == ND_UNARY && n->op == TK_STAR) {
+        gen_expr(n->lhs);
+        return;
+    }
+
     p_error("not an lvalue");
 }
 
@@ -123,40 +164,79 @@ static void gen_expr(struct Node *n) {
     int l2;
     struct Node *a;
     int i;
+    int elem_sz;
+    char slbl[16];
 
     if (n->kind == ND_NUM) {
         cg_li(n->val);
         return;
     }
 
+    if (n->kind == ND_STRING) {
+        /* Load address of string literal */
+        cg_s("    lui r1, %hi(.LS");
+        cg_n(n->val);
+        cg_s(")\n    addi r1, r1, %lo(.LS");
+        cg_n(n->val);
+        cg_s(")\n");
+        return;
+    }
+
     if (n->kind == ND_VAR) {
-        cg_s("    ldw r1, r30, ");
-        cg_n(n->offset);
-        cg_c(10);
+        if (n->is_array) {
+            /* Array: evaluate to address (no load) */
+            gen_addr(n);
+            return;
+        }
+        if (n->is_local) {
+            /* Local scalar: load from stack */
+            cg_s("    ldw r1, r30, ");
+            cg_n(n->offset);
+            cg_c(10);
+        } else {
+            /* Global scalar: load via %hi/%lo */
+            cg_la(n->name);
+            cg_load(n->ty);
+        }
         return;
     }
 
     if (n->kind == ND_ASSIGN) {
-        /* evaluate rhs into r1, save to lhs address */
+        /* evaluate rhs into r1, save; compute lhs addr; store */
         gen_expr(n->rhs);
         cg_push();
         gen_addr(n->lhs);
         cg_pop();
-        /* r2 = value, r1 = address */
-        cg_s("    addi r11, r1, 0\n");
+        /* r1 = lhs address, r2 = rhs value */
+        cg_store(n->ty);
+        /* Result value = r2; move to r1 */
         cg_s("    addi r1, r2, 0\n");
-        cg_s("    stw r11, r1, 0\n");
-        /* result is the assigned value (in r1) */
         return;
     }
 
     if (n->kind == ND_UNARY) {
-        gen_expr(n->lhs);
         if (n->op == TK_MINUS) {
+            gen_expr(n->lhs);
             cg_s("    sub r1, r0, r1\n");
-        } else if (n->op == TK_BANG) {
-            cg_s("    seq r1, r1, r0\n");
+            return;
         }
+        if (n->op == TK_BANG) {
+            gen_expr(n->lhs);
+            cg_s("    seq r1, r1, r0\n");
+            return;
+        }
+        /* Dereference *p */
+        if (n->op == TK_STAR) {
+            gen_expr(n->lhs);
+            cg_load(n->ty);
+            return;
+        }
+        /* Address-of &x */
+        if (n->op == TK_AMP) {
+            gen_addr(n->lhs);
+            return;
+        }
+        p_error("unknown unary op");
         return;
     }
 
@@ -197,6 +277,31 @@ static void gen_expr(struct Node *n) {
             return;
         }
 
+        /* Pointer arithmetic: scale the non-pointer operand */
+        if (n->op == TK_PLUS || n->op == TK_MINUS) {
+            if (ty_is_ptr(n->lhs->ty)) {
+                elem_sz = ty_size(ty_deref(n->lhs->ty));
+                gen_expr(n->lhs);
+                cg_push();
+                gen_expr(n->rhs);
+                if (elem_sz > 1) {
+                    /* Scale rhs: r1 = r1 * elem_sz */
+                    cg_s("    addi r2, r0, ");
+                    cg_n(elem_sz);
+                    cg_c(10);
+                    cg_s("    mul r1, r1, r2\n");
+                }
+                cg_pop();
+                /* r2 = lhs (pointer), r1 = rhs (scaled) */
+                if (n->op == TK_PLUS) {
+                    cg_s("    add r1, r2, r1\n");
+                } else {
+                    cg_s("    sub r1, r2, r1\n");
+                }
+                return;
+            }
+        }
+
         /* Regular binary op: lhs in r2, rhs in r1 */
         gen_expr(n->lhs);
         cg_push();
@@ -226,15 +331,14 @@ static void gen_expr(struct Node *n) {
     }
 
     if (n->kind == ND_CALL) {
-        /* Push args right-to-left onto stack, then pop into r3-r10 */
-        /* First, evaluate all args left-to-right and push */
+        /* Evaluate all args left-to-right and push */
         a = n->args;
         while (a) {
             gen_expr(a);
             cg_push();
             a = a->next;
         }
-        /* Pop into argument registers: arg0 at highest offset, argN at sp */
+        /* Pop into argument registers: arg0 at highest offset */
         i = 0;
         while (i < n->nparams) {
             cg_s("    ldw r");
@@ -395,6 +499,56 @@ static void gen_func(struct Node *fn) {
     cg_s("    jalr r0, r31, 0\n\n");
 }
 
+/* Emit .data section: string literals + global variables */
+static void gen_data(void) {
+    int i;
+    int j;
+    int len;
+    char *sp;
+    int ch;
+
+    cg_s(".data\n");
+
+    /* String literals from the lexer pool */
+    i = 0;
+    while (i < lex_str_count) {
+        cg_s(".LS");
+        cg_n(i);
+        cg_s(":\n    .byte ");
+        sp = lex_strpool + lex_str_off[i];
+        len = lex_str_len[i];
+        j = 0;
+        while (j < len) {
+            if (j > 0) cg_s(", ");
+            cg_n(sp[j] & 255);
+            j = j + 1;
+        }
+        if (j > 0) cg_s(", ");
+        cg_s("0\n");  /* null terminator */
+        i = i + 1;
+    }
+
+    /* Global variables */
+    i = 0;
+    while (i < ps_nglobals) {
+        cg_s(".global ");
+        cg_s(ps_gname[i]);
+        cg_c(10);
+        cg_s(ps_gname[i]);
+        cg_s(":\n");
+        if (ps_gsize[i] > 0) {
+            /* Array: allocate space */
+            cg_s("    .space ");
+            cg_n(ps_gsize[i]);
+            cg_c(10);
+        } else {
+            /* Scalar: one word */
+            cg_s("    .word 0\n");
+        }
+        i = i + 1;
+    }
+}
+
 /* Generate entire program */
 static void gen_program(struct Node *prog) {
     struct Node *fn;
@@ -405,4 +559,6 @@ static void gen_program(struct Node *prog) {
         gen_func(fn);
         fn = fn->next;
     }
+
+    gen_data();
 }

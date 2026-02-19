@@ -328,7 +328,8 @@ fi
 
 # Run Phase 1 test programs using s12cc
 if [[ -n "$S12CC_EXE" && -s "$S12CC_EXE" ]]; then
-    for tst in "$TESTS_DIR"/test_spike*.c; do
+    for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c; do
+        [[ -f "$tst" ]] || continue
         tname="$(basename "$tst" .c)"
         TOTAL=$((TOTAL + 1))
 
