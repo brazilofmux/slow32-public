@@ -7,11 +7,18 @@
 CC     ?= cc
 CFLAGS ?= -O2 -Wall -Wextra -std=c11 -pedantic
 TARGET  = s32-emu
+DBT     = ../../tools/dbt/slow32-dbt
 
 all: $(TARGET)
 
 $(TARGET): s32-emu.c
-	$(CC) $(CFLAGS) -o $@ $<
+	@if [ -f $(DBT) ]; then \
+		echo "Found fast DBT emulator, creating symlink..."; \
+		ln -sf $(DBT) $(TARGET); \
+	else \
+		echo "Building bootstrap emulator from source..."; \
+		$(CC) $(CFLAGS) -o $@ $<; \
+	fi
 
 clean:
 	rm -f $(TARGET)
