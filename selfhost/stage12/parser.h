@@ -102,6 +102,7 @@ static int is_type(void) {
     if (lex_tok == TK_VOID) return 1;
     if (lex_tok == TK_CHAR) return 1;
     if (lex_tok == TK_STRUCT) return 1;
+    if (lex_tok == TK_UNION) return 1;
     if (lex_tok == TK_UNSIGNED) return 1;
     if (lex_tok == TK_LONG) return 1;
     if (lex_tok == TK_CONST) return 1;
@@ -229,6 +230,7 @@ static int add_struct(char *name) {
     st_nfields[idx] = 0;
     st_first[idx] = stm_count;
     st_size[idx] = 0;
+    st_is_union[idx] = 0;
     st_count = st_count + 1;
     return idx;
 }
@@ -255,6 +257,7 @@ static int parse_type(void) {
     int si;
     int mty;
     int off;
+    int max_sz;
     char nm[256];
     /* Skip const/volatile qualifiers */
     while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE) next();
@@ -320,6 +323,54 @@ static int parse_type(void) {
             /* Forward reference: struct Name (no brace) */
             if (si < 0) {
                 p_error("undefined struct");
+                return TY_INT;
+            }
+        }
+        ty = TY_STRUCT_BASE + si;
+    }
+    else if (lex_tok == TK_UNION) {
+        next();
+        if (lex_tok != TK_IDENT) {
+            p_error("expected union tag name");
+            return TY_INT;
+        }
+        memcpy(nm, lex_str, lex_slen + 1);
+        next();
+        si = find_struct(nm);
+        if (lex_tok == TK_LBRACE) {
+            /* Union definition: union Name { ... } */
+            next();
+            if (si < 0) {
+                si = add_struct(nm);
+            }
+            st_is_union[si] = 1;
+            max_sz = 0;
+            while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+                mty = parse_type();
+                if (lex_tok != TK_IDENT) {
+                    p_error("expected member name");
+                    return TY_INT;
+                }
+                if (stm_count >= ST_MAX_MEMBERS) {
+                    p_error("too many struct members");
+                    return TY_INT;
+                }
+                stm_name[stm_count] = strdup(lex_str);
+                stm_type[stm_count] = mty;
+                stm_off[stm_count] = 0;  /* all union members at offset 0 */
+                stm_count = stm_count + 1;
+                st_nfields[si] = st_nfields[si] + 1;
+                if (ty_size(mty) > max_sz) max_sz = ty_size(mty);
+                next();
+                expect(TK_SEMI);
+            }
+            expect(TK_RBRACE);
+            /* Round total size to multiple of 4 */
+            st_size[si] = ((max_sz + 3) / 4) * 4;
+        } else {
+            /* Forward reference: union Name (no brace) */
+            if (si < 0) {
+                p_error("undefined union");
                 return TY_INT;
             }
         }

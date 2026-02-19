@@ -32,6 +32,7 @@ static char *st_name[ST_MAX_STRUCTS];
 static int   st_nfields[ST_MAX_STRUCTS];
 static int   st_first[ST_MAX_STRUCTS];
 static int   st_size[ST_MAX_STRUCTS];
+static int   st_is_union[ST_MAX_STRUCTS]; /* 1 if union, 0 if struct */
 static int   st_count;
 
 static char *stm_name[ST_MAX_MEMBERS];
