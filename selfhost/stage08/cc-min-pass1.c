@@ -3,7 +3,7 @@
  * No #include <stdio.h>: the merged source is ~37KB which exceeds cc.fth's
  * 32KB include-save-buffer. External I/O functions are auto-declared. */
 
-#define MAX_SRC 65536
+#define MAX_SRC 131072
 #define MAX_OUTPUT 1048576
 static char g_src[MAX_SRC];
 static int g_src_len;

@@ -80,6 +80,21 @@ static int p_ntd;
 static char p_dn[P_DNBUF];
 static int p_dv[P_MXDEF];
 static int p_nd;
+
+#define P_MXLBL 64
+#define P_LBNBUF 3072
+static char p_lbn[P_LBNBUF];
+static int p_lbid[P_MXLBL];
+static int p_lbdef[P_MXLBL];
+static int p_nlb;
+
+#define PP_MXIF 8
+static int pp_skip;
+static int pp_stk[PP_MXIF];
+static int pp_dep;
+
+static char p_sdir[128];
+
 static int p_spos;
 static int p_sline;
 static int p_scol;
@@ -111,15 +126,23 @@ static int p_ftd(char *n){int i;i=0;while(i<p_ntd){if(p_sneq(p_tdn,i,n))return i
 static void p_atd(char *n,int ty){if(p_ntd>=P_MXTD){p_err("TD");return;}p_sset(p_tdn,p_ntd,n);p_tdt[p_ntd]=ty;p_ntd=p_ntd+1;}
 static int p_fdf(char *n){int i;i=0;while(i<p_nd){if(p_sneq(p_dn,i,n))return i;i=i+1;}return -1;}
 static void p_adf(char *n,int v){if(p_nd>=P_MXDEF){p_err("DF");return;}p_sset(p_dn,p_nd,n);p_dv[p_nd]=v;p_nd=p_nd+1;}
+
+static int p_flbl(char *n){int i;i=0;while(i<p_nlb){if(p_sneq(p_lbn,i,n))return i;i=i+1;}return -1;}
+static int p_albl(char *n){int i;i=p_flbl(n);if(i>=0)return i;if(p_nlb>=P_MXLBL){p_err("LBL");return 0;}i=p_nlb;p_sset(p_lbn,i,n);p_lbid[i]=p_nl2();p_lbdef[i]=0;p_nlb=p_nlb+1;return i;}
+
 /* Preprocessor */
 static void pp_sl(void){while(lex_pos<lex_len&&lex_src[lex_pos]!=10)lex_pos=lex_pos+1;}
 static int pp_int(void){int v;int n;int c;n=0;v=0;while(lex_pos<lex_len&&(lex_src[lex_pos]==32||lex_src[lex_pos]==9))lex_pos=lex_pos+1;if(lex_pos<lex_len&&lex_src[lex_pos]==45){n=1;lex_pos=lex_pos+1;}if(lex_pos+1<lex_len&&lex_src[lex_pos]==48&&lex_src[lex_pos+1]==120){lex_pos=lex_pos+2;while(lex_pos<lex_len){c=lex_src[lex_pos]&255;if(c>=48&&c<=57){v=v*16+(c-48);lex_pos=lex_pos+1;}else if(c>=97&&c<=102){v=v*16+(c-87);lex_pos=lex_pos+1;}else if(c>=65&&c<=70){v=v*16+(c-55);lex_pos=lex_pos+1;}else break;}}else{while(lex_pos<lex_len&&lex_src[lex_pos]>=48&&lex_src[lex_pos]<=57){v=v*10+(lex_src[lex_pos]-48);lex_pos=lex_pos+1;}}while(lex_pos<lex_len&&(lex_src[lex_pos]==85||lex_src[lex_pos]==117||lex_src[lex_pos]==76||lex_src[lex_pos]==108))lex_pos=lex_pos+1;if(n)v=0-v;return v;}
 
 static void pp_def(void){char nm[128];int i;int v;while(lex_pos<lex_len&&(lex_src[lex_pos]==32||lex_src[lex_pos]==9))lex_pos=lex_pos+1;i=0;while(lex_pos<lex_len&&(lex_is_alpha(lex_src[lex_pos]&255)||lex_is_digit(lex_src[lex_pos]&255))){if(i<126){nm[i]=lex_src[lex_pos];i=i+1;}lex_pos=lex_pos+1;}nm[i]=0;if(lex_pos<lex_len&&lex_src[lex_pos]==40){pp_sl();return;}v=pp_int();p_adf(nm,v);pp_sl();}
 
-static void pp_dir(void){char d[16];int i;while(lex_pos<lex_len&&(lex_src[lex_pos]==32||lex_src[lex_pos]==9))lex_pos=lex_pos+1;i=0;while(lex_pos<lex_len&&lex_is_alpha(lex_src[lex_pos]&255)){if(i<14){d[i]=lex_src[lex_pos];i=i+1;}lex_pos=lex_pos+1;}d[i]=0;if(p_seq(d,"define")){pp_def();return;}pp_sl();}
+static void pp_nm(char *nm){int i;while(lex_pos<lex_len&&(lex_src[lex_pos]==32||lex_src[lex_pos]==9))lex_pos=lex_pos+1;i=0;while(lex_pos<lex_len&&(lex_is_alpha(lex_src[lex_pos]&255)||lex_is_digit(lex_src[lex_pos]&255))){if(i<126){nm[i]=lex_src[lex_pos];i=i+1;}lex_pos=lex_pos+1;}nm[i]=0;}
 
-static void next(void){int di;while(1){lex_next();if(lex_tok==TK_HASH){pp_dir();continue;}if(lex_tok==TK_IDENT){di=p_fdf(lex_str);if(di>=0){lex_tok=TK_NUM;lex_val=p_dv[di];return;}}return;}}
+static void pp_include(void){char fn[256];int i;int f;int ch;int n;int d;while(lex_pos<lex_len&&(lex_src[lex_pos]==32||lex_src[lex_pos]==9))lex_pos=lex_pos+1;if(lex_pos>=lex_len||lex_src[lex_pos]!=34){pp_sl();return;}lex_pos=lex_pos+1;d=0;while(p_sdir[d]!=0)d=d+1;i=0;while(i<d){fn[i]=p_sdir[i];i=i+1;}while(lex_pos<lex_len&&lex_src[lex_pos]!=34&&lex_src[lex_pos]!=10){if(d<254){fn[d]=lex_src[lex_pos];d=d+1;}lex_pos=lex_pos+1;}if(lex_pos<lex_len&&lex_src[lex_pos]==34)lex_pos=lex_pos+1;fn[d]=0;pp_sl();f=fopen(fn,"rb");if(!f){p_err("INC");return;}n=0;while(1){ch=fgetc(f);if(ch<0)break;n=n+1;}fclose(f);if(n==0||n>LEX_SRC_SZ-lex_len-1)return;i=lex_len-1;while(i>=lex_pos){lex_src[i+n]=lex_src[i];i=i-1;}f=fopen(fn,"rb");if(!f)return;i=0;while(i<n){ch=fgetc(f);if(ch<0)break;lex_src[lex_pos+i]=ch;i=i+1;}fclose(f);lex_len=lex_len+n;}
+
+static void pp_dir(void){char d[16];char nm[128];int i;while(lex_pos<lex_len&&(lex_src[lex_pos]==32||lex_src[lex_pos]==9))lex_pos=lex_pos+1;i=0;while(lex_pos<lex_len&&lex_is_alpha(lex_src[lex_pos]&255)){if(i<14){d[i]=lex_src[lex_pos];i=i+1;}lex_pos=lex_pos+1;}d[i]=0;if(pp_skip){if(p_seq(d,"ifdef")||p_seq(d,"ifndef")){pp_dep=pp_dep+1;pp_stk[pp_dep]=1;pp_sl();return;}if(p_seq(d,"endif")){if(pp_dep>0){pp_skip=pp_stk[pp_dep];pp_dep=pp_dep-1;if(pp_dep==0)pp_skip=0;else pp_skip=pp_stk[pp_dep];}pp_sl();return;}if(p_seq(d,"else")){if(pp_dep>0&&(pp_dep<=1||pp_stk[pp_dep-1]==0)){pp_skip=1-pp_skip;pp_stk[pp_dep]=pp_skip;}pp_sl();return;}pp_sl();return;}if(p_seq(d,"define")){pp_def();return;}if(p_seq(d,"include")){pp_include();return;}if(p_seq(d,"ifdef")){pp_nm(nm);pp_dep=pp_dep+1;if(p_fdf(nm)>=0)pp_skip=0;else pp_skip=1;pp_stk[pp_dep]=pp_skip;pp_sl();return;}if(p_seq(d,"ifndef")){pp_nm(nm);pp_dep=pp_dep+1;if(p_fdf(nm)>=0)pp_skip=1;else pp_skip=0;pp_stk[pp_dep]=pp_skip;pp_sl();return;}if(p_seq(d,"endif")){if(pp_dep>0)pp_dep=pp_dep-1;if(pp_dep==0)pp_skip=0;else pp_skip=pp_stk[pp_dep];pp_sl();return;}if(p_seq(d,"else")){if(pp_dep>0){pp_skip=1-pp_skip;pp_stk[pp_dep]=pp_skip;}pp_sl();return;}pp_sl();}
+
+static void next(void){int di;while(1){lex_next();if(lex_tok==TK_HASH){pp_dir();continue;}if(pp_skip){continue;}if(lex_tok==TK_IDENT){di=p_fdf(lex_str);if(di>=0){lex_tok=TK_NUM;lex_val=p_dv[di];return;}}return;}}
 static int p_expect(int t){if(lex_tok!=t){p_err("TOK");return 0;}next();return 1;}
 static void p_lsave(void){int i;p_spos=lex_pos;p_sline=lex_line;p_scol=lex_col;p_stok=lex_tok;p_sval=lex_val;p_sslen=lex_slen;i=0;while(i<=lex_slen){p_sstr[i]=lex_str[i];i=i+1;}}
 static void p_lrest(void){int i;lex_pos=p_spos;lex_line=p_sline;lex_col=p_scol;lex_tok=p_stok;lex_val=p_sval;lex_slen=p_sslen;i=0;while(i<=p_sslen){lex_str[i]=p_sstr[i];i=i+1;}}
@@ -638,6 +661,20 @@ static void p_stmt(void) {
         if (p_ldep > 0 && p_ctn[p_ldep - 1] >= 0) p_jmp(p_ctn[p_ldep - 1]); else p_err("CTN");
         p_expect(TK_SEMI); return;
     }
+    if (lex_tok == TK_GOTO) {
+        next();
+        if (lex_tok == TK_IDENT) { i = p_albl(lex_str); next(); p_jmp(p_lbid[i]); }
+        else p_err("GOTO");
+        p_expect(TK_SEMI); return;
+    }
+    if (lex_tok == TK_IDENT) {
+        p_lsave(); next();
+        if (lex_tok == TK_COLON) {
+            next(); i = p_albl(p_sstr); p_lbdef[i] = 1; p_ld(p_lbid[i]);
+            p_stmt(); return;
+        }
+        p_lrest();
+    }
     if (lex_tok == TK_SEMI) { next(); return; }
     p_expr(); p_l2r(); p_expect(TK_SEMI);
 }
@@ -674,7 +711,7 @@ static void p_ptypedef(void) {
 static void p_pfunc(char *fn, int rt) {
     int np; int i; int bt; int pt; int pty; int fs;
     p_expect(TK_LPAREN);
-    p_nl = 0; p_loff = -12; p_ldep = 0; p_retl = p_nl2(); np = 0;
+    p_nl = 0; p_loff = -12; p_ldep = 0; p_nlb = 0; p_retl = p_nl2(); np = 0;
     if (lex_tok != TK_RPAREN) {
         if (lex_tok == TK_VOID) { next(); }
         else {
@@ -819,7 +856,10 @@ static void p_program(void) {
 
 /* Entry point */
 int s32cc_compile(char *path) {
-    int f; int ch;
+    int f; int ch; int i; int last;
+    last = -1; i = 0; while (path[i] != 0) { if (path[i] == 47) last = i; i = i + 1; }
+    if (last >= 0 && last < 126) { i = 0; while (i <= last) { p_sdir[i] = path[i]; i = i + 1; } p_sdir[i] = 0; }
+    else { p_sdir[0] = 0; }
     f = fopen(path, "rb");
     if (!f) { p_err("IO"); return 1; }
     lex_len = 0;
@@ -828,6 +868,7 @@ int s32cc_compile(char *path) {
     p_olen = 0; p_lbl = 0; p_nf = 0; p_nl = 0; p_ng = 0;
     p_ldep = 0; p_femit = 0; p_flen = 0; p_lval = 0; p_ety = 0;
     p_ns = 0; p_nfd = 0; p_ntd = 0; p_nd = 0; p_insw = 0; p_swn = 0;
+    p_nlb = 0; pp_skip = 0; pp_dep = 0;
     lex_strpool_len = 0; lex_str_count = 0;
     next(); p_program(); p_out[p_olen] = 0;
     return 0;

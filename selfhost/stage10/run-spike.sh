@@ -396,9 +396,9 @@ cat "$SCRIPT_DIR/s32cc_lex.h" "$SCRIPT_DIR/s32cc_parse.h" > "$S32CC_MERGED"
 tail -n +2 "$SCRIPT_DIR/s32cc.c" >> "$S32CC_MERGED"
 
 MERGED_SZ="$(wc -c < "$S32CC_MERGED")"
-echo "  Merged source: $MERGED_SZ bytes (limit 65536)"
-if [[ "$MERGED_SZ" -ge 65536 ]]; then
-    echo "ERROR: merged source ($MERGED_SZ bytes) exceeds LEX_SRC_SZ (65536)" >&2
+echo "  Merged source: $MERGED_SZ bytes (limit 131072)"
+if [[ "$MERGED_SZ" -ge 131072 ]]; then
+    echo "ERROR: merged source ($MERGED_SZ bytes) exceeds LEX_SRC_SZ (131072)" >&2
     exit 1
 fi
 
