@@ -42,7 +42,7 @@ Usage: $0 [--from stage00] [--to stage08] [--emu <path>] [--skip-selfhost-kernel
 Runs ordered stage checks so a clean checkout can be validated end-to-end.
 
 Default sequence:
-  stage00 -> stage01 -> stage02 -> stage06 -> stage07 -> stage08
+  stage00 -> stage01 -> stage02 -> stage07 -> stage08
 
 Options:
   --from stageNN   Start stage (stage00..stage08)
@@ -135,7 +135,6 @@ stage_num() {
         stage00) echo 0 ;;
         stage01) echo 1 ;;
         stage02) echo 2 ;;
-        stage06) echo 6 ;;
         stage07) echo 7 ;;
         stage08) echo 8 ;;
         *) return 1 ;;
@@ -209,7 +208,7 @@ run_stage01() {
 }
 
 run_stage02() {
-    echo "[stage02] c-assembler replacement pipeline"
+    echo "[stage02] c-assembler + c-archiver replacement pipeline"
     run_logged "stage02 progressive-as test1" "$LOG_DIR/stage02-test1.log" \
         "$ROOT_DIR/selfhost/stage02/run-pipeline.sh" --mode progressive-as --test test1 --emu "$EMU"
     if [[ "$QUICK" -eq 0 ]]; then
@@ -220,23 +219,20 @@ run_stage02() {
     else
         echo "[stage02] quick mode: test1 only"
     fi
-}
-
-run_stage06() {
-    echo "[stage06] c-archiver replacement smoke (c/rc/t/x/d/cs)"
-    run_logged "stage06 ar-smoke" "$LOG_DIR/stage06-smoke.log" \
+    echo "[stage02] c-archiver replacement smoke (c/rc/t/x/d/cs)"
+    run_logged "stage02 ar-smoke" "$LOG_DIR/stage02-ar-smoke.log" \
         "$ROOT_DIR/selfhost/stage02/run-pipeline.sh" --mode stage6-ar-smoke --emu "$EMU"
     if [[ "$QUICK" -eq 0 ]]; then
-        run_logged "stage06 ar-rc-smoke" "$LOG_DIR/stage06-rc.log" \
+        run_logged "stage02 ar-rc-smoke" "$LOG_DIR/stage02-ar-rc.log" \
             "$ROOT_DIR/selfhost/stage02/run-pipeline.sh" --mode stage6-ar-rc-smoke --emu "$EMU"
-        run_logged "stage06 ar-tx-smoke" "$LOG_DIR/stage06-tx.log" \
+        run_logged "stage02 ar-tx-smoke" "$LOG_DIR/stage02-ar-tx.log" \
             "$ROOT_DIR/selfhost/stage02/run-pipeline.sh" --mode stage6-ar-tx-smoke --emu "$EMU"
-        run_logged "stage06 ar-d-smoke" "$LOG_DIR/stage06-d.log" \
+        run_logged "stage02 ar-d-smoke" "$LOG_DIR/stage02-ar-d.log" \
             "$ROOT_DIR/selfhost/stage02/run-pipeline.sh" --mode stage6-ar-d-smoke --emu "$EMU"
-        run_logged "stage06 ar-scan-smoke" "$LOG_DIR/stage06-scan.log" \
+        run_logged "stage02 ar-scan-smoke" "$LOG_DIR/stage02-ar-scan.log" \
             "$ROOT_DIR/selfhost/stage02/run-pipeline.sh" --mode stage6-ar-scan-smoke --emu "$EMU"
     else
-        echo "[stage06] quick mode: c-only smoke"
+        echo "[stage02] quick mode: c-only smoke"
     fi
 }
 
@@ -264,7 +260,7 @@ run_stage08() {
     fi
 }
 
-for st in stage00 stage01 stage02 stage06 stage07 stage08; do
+for st in stage00 stage01 stage02 stage07 stage08; do
     N="$(stage_num "$st")"
     if (( N < FROM_N || N > TO_N )); then
         continue

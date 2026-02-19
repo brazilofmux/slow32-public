@@ -3,7 +3,7 @@
 # This Makefile guides the student through the stage-by-stage progression.
 # Each stage has specific prerequisites and produces clear, minimal artifacts.
 
-.PHONY: all clean stage00 stage01 stage02 stage06 stage07 stage08 stage09 stage10 stage11 stage12 stage13 stage14
+.PHONY: all clean stage00 stage01 stage02 stage07 stage08 stage09 stage10 stage11 stage12 stage13 stage14
 
 all: stage14
 
@@ -19,26 +19,19 @@ stage01: stage00
 	@echo "--- Building Stage 01: Forth Toolchain Artifacts ---"
 	$(MAKE) -C stage01
 
-# Stage 02: Subset-C Assembler
+# Stage 02: Subset-C Assembler + Archiver
 # Prerequisites: Stage 01 C compiler + Forth tools
-# Artifacts: s32-as.s32x (C assembler, runs on emulator)
+# Artifacts: s32-as.s32x (C assembler), s32-ar.s32x (C archiver)
 stage02: stage01
-	@echo "--- Building Stage 02: C Assembler ---"
+	@echo "--- Building Stage 02: C Assembler + Archiver ---"
 	$(MAKE) -C stage02
-
-# Stage 06: Subset-C Archiver
-# Prerequisites: Stage 01 C compiler, Stage 02 C assembler, Stage 01 linker
-# Artifacts: s32-ar.s32x (C archiver, runs on emulator)
-stage06: stage02
-	@echo "--- Building Stage 06: C Archiver ---"
-	$(MAKE) -C stage06
 
 # Stage 07: Subset-C Linker
 # Prerequisites: Stage 01 C compiler, Stage 02 C assembler
 # Uses Stage 01 link.fth one final time to link itself (bootstrap).
 # After this stage, Forth tools (stage01) are no longer needed.
 # Artifacts: s32-ld.s32x (C linker, runs on emulator)
-stage07: stage06
+stage07: stage02
 	@echo "--- Building Stage 07: C Linker ---"
 	$(MAKE) -C stage07
 
@@ -98,7 +91,6 @@ clean:
 	$(MAKE) -C stage00 clean
 	$(MAKE) -C stage01 clean
 	$(MAKE) -C stage02 clean
-	$(MAKE) -C stage06 clean
 	$(MAKE) -C stage07 clean
 	$(MAKE) -C stage08 clean
 	$(MAKE) -C stage09 clean

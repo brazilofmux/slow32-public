@@ -64,11 +64,11 @@ This was cleaned up during the v2 relocation. Both `EMIT-LI-R1` and `EMIT-LI-R2`
 
 ## Stage 6: Subset C Archiver (`s32-ar.c`)
 
-### 12. [NARROWED] Stage06 `s32-ar.c` Needs Full Command Coverage
-The Stage06 subset archiver (`selfhost/stage01/validation/s32-ar.c`) now supports bounded multi-member create and real `rc` replace-on-existing behavior with basename matching.
+### 12. [NARROWED] Stage02 `s32-ar.c` Needs Full Command Coverage
+The Stage02 subset archiver (`selfhost/stage01/validation/s32-ar.c`) now supports bounded multi-member create and real `rc` replace-on-existing behavior with basename matching.
 
 Remaining gap:
-- Expand command surface and parity checks for `d/m/v/p` paths before Stage06 can be considered complete.
+- Expand command surface and parity checks for `d/m/v/p` paths before Stage02 can be considered complete.
 
 ---
 

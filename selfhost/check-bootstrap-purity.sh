@@ -30,13 +30,12 @@ scan_no_match() {
     fi
 }
 
-# Restrict checks to stage00..stage06 orchestration/build files.
+# Restrict checks to stage00..stage02 orchestration/build files.
 SCAN_PATHS=(
     "$SELFHOST_DIR/run-stages.sh"
     "$SELFHOST_DIR/stage00"
     "$SELFHOST_DIR/stage01"
     "$SELFHOST_DIR/stage02"
-    "$SELFHOST_DIR/stage06"
 )
 
 BASE_GLOBS=(
@@ -52,15 +51,14 @@ scan_no_match \
     '^(?!\s*[#\\]).*runtime/[^[:space:]]*\.s32[oa]\b' \
     "${BASE_GLOBS[@]}" "${SCAN_PATHS[@]}"
 
-# 2) No direct host compiler invocations in stage01..06 scripts.
+# 2) No direct host compiler invocations in stage01..02 scripts.
 # (stage00 Makefile is the accepted seed toolchain root)
 scan_no_match \
-    "direct host compiler command in stage01..06 scripts" \
+    "direct host compiler command in stage01..02 scripts" \
     '^(?!\s*[#\\]).*(^|[;&|()[:space:]])(cc|gcc|clang)[[:space:]]' \
     --glob '*.sh' \
     "$SELFHOST_DIR/stage01" \
-    "$SELFHOST_DIR/stage02" \
-    "$SELFHOST_DIR/stage06"
+    "$SELFHOST_DIR/stage02"
 
 if [[ "$fail" -ne 0 ]]; then
     echo "Bootstrap purity check FAILED." >&2
@@ -68,4 +66,4 @@ if [[ "$fail" -ne 0 ]]; then
     exit 1
 fi
 
-echo "Bootstrap purity check passed (stage00..06)."
+echo "Bootstrap purity check passed (stage00..02)."

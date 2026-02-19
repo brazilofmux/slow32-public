@@ -1,4 +1,4 @@
-/* s32-ar-port.c -- cc-min compatible port of stage06/s32-ar.c
+/* s32-ar-port.c -- cc-min compatible port of stage02/s32-ar.c
  *
  * Mechanical port of the full-featured archiver to cc-min subset C,
  * plus symbol index building so archives work with the Forth linker.

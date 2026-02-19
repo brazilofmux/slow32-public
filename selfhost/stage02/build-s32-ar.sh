@@ -32,7 +32,7 @@ for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$AR_FTH" "$LINK_FTH" "$STAGE2_AS
     [[ -f "$f" ]] || { echo "Missing: $f" >&2; exit 1; }
 done
 
-WORKDIR="$(mktemp -d /tmp/stage06-build.XXXXXX)"
+WORKDIR="$(mktemp -d /tmp/stage02-ar-build.XXXXXX)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
 # cc.fth uses relative include paths — run from repo root

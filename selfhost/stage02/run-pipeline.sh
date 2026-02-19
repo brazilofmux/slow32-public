@@ -17,8 +17,8 @@ AR_FTH="${SELFHOST_AR_FTH:-$SELFHOST_DIR/stage01/ar.fth}"
 
 TEST_DIR="${SELFHOST_TEST_DIR:-$SELFHOST_DIR/stage01/tests}"
 VALIDATION_DIR="${SELFHOST_VALIDATION_DIR:-$SELFHOST_DIR/stage01/validation}"
-STAGE6_AR_SRC="${SELFHOST_STAGE6_AR_SRC:-$SELFHOST_DIR/stage06/s32-ar.c}"
-STAGE6_AR_SCAN_SRC="${SELFHOST_STAGE6_AR_SCAN_SRC:-$SELFHOST_DIR/stage06/s32-ar-scan.c}"
+STAGE6_AR_SRC="${SELFHOST_STAGE6_AR_SRC:-$SCRIPT_DIR/s32-ar.c}"
+STAGE6_AR_SCAN_SRC="${SELFHOST_STAGE6_AR_SCAN_SRC:-$SCRIPT_DIR/s32-ar-scan.c}"
 LIBC_DIR="$SCRIPT_DIR/libc"
 CRT0_SRC="$SCRIPT_DIR/crt0.s"
 MMIO_SRC="$SCRIPT_DIR/mmio.s"
@@ -846,19 +846,19 @@ else
     echo "Linker path: forth(stage01)"
 fi
 if [[ "$MODE" == "progressive-as-ar" || "$MODE" == "stage6-ar-smoke" ]]; then
-    echo "Archiver smoke: c(stage06)"
+    echo "Archiver smoke: c(stage02)"
 elif [[ "$MODE" == "stage6-ar-rc-smoke" ]]; then
-    echo "Archiver smoke: c(stage06, cmd=rc replace)"
+    echo "Archiver smoke: c(stage02, cmd=rc replace)"
 elif [[ "$MODE" == "stage6-ar-tx-smoke" ]]; then
-    echo "Archiver smoke: c(stage06, cmd=t/x list+extract)"
+    echo "Archiver smoke: c(stage02, cmd=t/x list+extract)"
 elif [[ "$MODE" == "stage6-ar-d-smoke" ]]; then
-    echo "Archiver smoke: c(stage06, cmd=d delete)"
+    echo "Archiver smoke: c(stage02, cmd=d delete)"
 elif [[ "$MODE" == "stage6-ar-m-smoke" ]]; then
-    echo "Archiver smoke: c(stage06, cmd=m move-to-end)"
+    echo "Archiver smoke: c(stage02, cmd=m move-to-end)"
 elif [[ "$MODE" == "stage6-ar-vp-smoke" ]]; then
-    echo "Archiver smoke: c(stage06, cmd=v/p list+print)"
+    echo "Archiver smoke: c(stage02, cmd=v/p list+print)"
 elif [[ "$MODE" == "progressive-as-ar-scan" || "$MODE" == "stage6-ar-scan-smoke" ]]; then
-    echo "Archiver smoke: c(stage06, cmd=cs)"
+    echo "Archiver smoke: c(stage02, cmd=cs)"
 elif [[ "$MODE" == "stage6-ar-asm-diff" ]]; then
     echo "Archiver smoke: skipped (assembler comparison only)"
 elif [[ "$MODE" == "stage6-utility-smoke" ]]; then

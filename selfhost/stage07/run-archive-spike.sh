@@ -153,7 +153,7 @@ assemble_forth "$WORKDIR/main_call.s" "$MAIN_OBJ" "$WORKDIR/main_call.as.log"
 assemble_forth "$WORKDIR/helper.s" "$HELPER_OBJ" "$WORKDIR/helper.as.log"
 assemble_forth "$WORKDIR/decoy.s" "$DECOY_OBJ" "$WORKDIR/decoy.as.log"
 
-# run-spike runs stage6-ar-smoke which builds stage06 archiver in its pipeline artifacts
+# run-spike runs stage6-ar-smoke which builds stage02 archiver in its pipeline artifacts
 SPIKE_PIPE_ART="$(awk -F': ' '/^Artifacts:/{print $2}' "$TMP_LOG" | head -n 1)"
 # The stage02 pipeline artifacts (nested inside run-spike) contain s32-ar.s32x
 # but run-spike's own WORKDIR reuses the stage02 artifact dir, so look there
@@ -164,7 +164,7 @@ for candidate in "$WORKDIR/s32-ar.s32x" "$SPIKE_PIPE_ART/s32-ar.s32x"; do
         break
     fi
 done
-[[ -n "$AR_EXE" && -f "$AR_EXE" ]] || { echo "missing stage06 archiver exe in run-spike artifacts" >&2; exit 1; }
+[[ -n "$AR_EXE" && -f "$AR_EXE" ]] || { echo "missing stage02 archiver exe in run-spike artifacts" >&2; exit 1; }
 
 run_ar() {
     local log="$1"

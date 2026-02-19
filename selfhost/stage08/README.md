@@ -2,7 +2,7 @@
 
 ## What Is Here
 
-Two things: an archiver parity gate that validates Stage 06, and
+Two things: an archiver parity gate that validates Stage 02 archiver, and
 `cc-min` -- the first C compiler written in C. This is where the
 bootstrap turns recursive: a C compiler compiling C.
 

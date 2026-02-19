@@ -76,7 +76,7 @@ usage() {
 Usage: $0 [--emu <path>] [--keep-artifacts]
 
 Stage08 compiler spike:
-  1) bootstrap stage02 assembler + stage06 archiver + stage07 linker
+  1) bootstrap stage02 assembler + stage02 archiver + stage07 linker
   2) build cc-min.s32x via stage01->stage02->stage01
   3) compile min_main, min_ret7, min_ret_expr, min_local_ret_expr, min_ret_rel, min_if_{true,false}, min_while_countdown, min_two_locals, min_helper_call, min_helper_arg, min_helper_local, min_main_local_helper, min_helper_two_args, and min_helper_two_args_if with cc-min.s32x
   4) assemble with stage02; produce raw link via stage07; run via stage01 runtime link
@@ -142,7 +142,7 @@ PIPE_ART="$(awk -F': ' '/^Artifacts:/{print $2}' "$PIPE_LOG" | tail -n 1)"
 AS_EXE="$PIPE_ART/s32-as.s32x"
 AR_EXE="$PIPE_ART/s32-ar.s32x"
 [[ -f "$AS_EXE" ]] || { echo "missing stage02 assembler exe: $AS_EXE" >&2; exit 1; }
-[[ -f "$AR_EXE" ]] || { echo "missing stage06 archiver exe: $AR_EXE" >&2; exit 1; }
+[[ -f "$AR_EXE" ]] || { echo "missing stage02 archiver exe: $AR_EXE" >&2; exit 1; }
 
 LD_LOG="$WORKDIR/stage7-build.log"
 "$SELFHOST_DIR/stage07/run-spike.sh" --emu "$EMU" --keep-artifacts >"$LD_LOG"

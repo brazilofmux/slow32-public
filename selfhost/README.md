@@ -44,7 +44,7 @@ Manual per-stage entry points:
 - `stage01` (linker): `selfhost/stage01/run-regression-ld.sh test3` and `... archive`
 - `stage01` (kernel regen gate): `SELFHOST_EMU=./tools/emulator/slow32-fast selfhost/stage01/run-selfhost-kernel.sh`
 - `stage01` (compiler): `selfhost/stage01/run-regression-cc.sh`
-- `stage02`: `selfhost/stage02/run-pipeline.sh --mode progressive-as --test test1`
-- `stage06`: `selfhost/stage02/run-pipeline.sh --mode stage6-ar-smoke` and `... stage6-ar-rc-smoke` and `... stage6-ar-tx-smoke`
+- `stage02` (assembler): `selfhost/stage02/run-pipeline.sh --mode progressive-as --test test1`
+- `stage02` (archiver): `selfhost/stage02/run-pipeline.sh --mode stage6-ar-smoke` and `... stage6-ar-rc-smoke` and `... stage6-ar-tx-smoke`
 - `stage07` (Subset C linker spike): `selfhost/stage07/run-spike.sh --emu ./tools/emulator/slow32-fast`
 - `stage08` (Subset C compiler gate): `selfhost/stage08/run-regression.sh --emu ./tools/emulator/slow32-fast`
