@@ -102,6 +102,10 @@ static int is_type(void) {
     if (lex_tok == TK_VOID) return 1;
     if (lex_tok == TK_CHAR) return 1;
     if (lex_tok == TK_STRUCT) return 1;
+    if (lex_tok == TK_UNSIGNED) return 1;
+    if (lex_tok == TK_LONG) return 1;
+    if (lex_tok == TK_CONST) return 1;
+    if (lex_tok == TK_VOLATILE) return 1;
     if (lex_tok == TK_IDENT && find_typedef(lex_str) >= 0) return 1;
     return 0;
 }
@@ -252,9 +256,24 @@ static int parse_type(void) {
     int mty;
     int off;
     char nm[256];
+    /* Skip const/volatile qualifiers */
+    while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE) next();
     if (lex_tok == TK_INT)  { ty = TY_INT;  next(); }
     else if (lex_tok == TK_CHAR) { ty = TY_CHAR; next(); }
     else if (lex_tok == TK_VOID) { ty = TY_VOID; next(); }
+    else if (lex_tok == TK_UNSIGNED) {
+        next();
+        if (lex_tok == TK_CHAR) { ty = TY_CHAR; next(); }
+        else if (lex_tok == TK_INT) { ty = TY_INT; next(); }
+        else if (lex_tok == TK_LONG) { ty = TY_INT; next(); }
+        else { ty = TY_INT; }
+    }
+    else if (lex_tok == TK_LONG) {
+        next();
+        if (lex_tok == TK_INT) { ty = TY_INT; next(); }
+        else if (lex_tok == TK_UNSIGNED) { ty = TY_INT; next(); }
+        else { ty = TY_INT; }
+    }
     else if (lex_tok == TK_STRUCT) {
         next();
         if (lex_tok != TK_IDENT) {
