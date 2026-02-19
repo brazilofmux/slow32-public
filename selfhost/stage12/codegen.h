@@ -503,6 +503,42 @@ static void gen_expr(Node *n) {
         return;
     }
 
+    if (n->kind == ND_FUNC_REF) {
+        /* Load function address into r1 */
+        cg_la(n->name);
+        return;
+    }
+
+    if (n->kind == ND_CALL_PTR) {
+        /* Indirect call: evaluate callee, push, evaluate args, call via jalr */
+        gen_expr(n->lhs);
+        cg_push();  /* push callee address */
+        /* Evaluate all args left-to-right and push */
+        a = n->args;
+        while (a) {
+            gen_expr(a);
+            cg_push();
+            a = a->next;
+        }
+        /* Pop args into argument registers */
+        i = 0;
+        while (i < n->nparams) {
+            cg_s("    ldw r");
+            cg_n(3 + i);
+            cg_s(", r29, ");
+            cg_n((n->nparams - 1 - i) * 4);
+            cg_c(10);
+            i = i + 1;
+        }
+        cg_s("    addi r29, r29, ");
+        cg_n(n->nparams * 4);
+        cg_c(10);
+        /* Pop callee address into r2 and call */
+        cg_s("    ldw r2, r29, 0\n    addi r29, r29, 4\n");
+        cg_s("    jalr r31, r2, 0\n");
+        return;
+    }
+
     p_error("unknown expression node");
 }
 

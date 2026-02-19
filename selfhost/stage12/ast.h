@@ -92,6 +92,8 @@ static int ty_deref(int ty) {
 #define ND_DEFAULT  28   /* default label (no data) */
 #define ND_GOTO     29   /* goto label */
 #define ND_LABEL    30   /* label: stmt */
+#define ND_FUNC_REF 31   /* bare function name as address */
+#define ND_CALL_PTR 32   /* indirect call through expression: lhs=callee, args=arglist */
 
 /* --- AST node --- */
 struct Node {
@@ -326,5 +328,23 @@ static Node *nd_label(int label_id, Node *stmt) {
     n = nd_new(ND_LABEL);
     n->val = label_id;
     n->body = stmt;
+    return n;
+}
+
+static Node *nd_func_ref(char *nm) {
+    Node *n;
+    n = nd_new(ND_FUNC_REF);
+    n->name = strdup(nm);
+    n->ty = TY_INT;
+    return n;
+}
+
+static Node *nd_call_ptr(Node *callee, Node *a, int na) {
+    Node *n;
+    n = nd_new(ND_CALL_PTR);
+    n->lhs = callee;
+    n->args = a;
+    n->nparams = na;
+    n->ty = TY_INT;
     return n;
 }

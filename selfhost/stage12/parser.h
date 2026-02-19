@@ -430,35 +430,12 @@ static Node *parse_primary(void) {
         return nd_string(v);
     }
 
-    /* Identifier: variable or function call */
+    /* Identifier: variable, enum constant, function call, or function ref */
     if (lex_tok == TK_IDENT) {
         memcpy(nm, lex_str, lex_slen + 1);
         next();
 
-        /* Function call */
-        if (lex_tok == TK_LPAREN) {
-            next();
-            head = NULL;
-            tail = NULL;
-            nargs = 0;
-            if (lex_tok != TK_RPAREN) {
-                arg = parse_assign();
-                nargs = 1;
-                head = arg;
-                tail = arg;
-                while (lex_tok == TK_COMMA) {
-                    next();
-                    arg = parse_assign();
-                    tail->next = arg;
-                    tail = arg;
-                    nargs = nargs + 1;
-                }
-            }
-            expect(TK_RPAREN);
-            return nd_call(nm, head, nargs);
-        }
-
-        /* Local variable */
+        /* Check local variable first (enables fn ptr calls via postfix) */
         li = find_local(nm);
         if (li >= 0) {
             n = nd_var(nm, ps_loff[li], ps_ltype[li]);
@@ -482,13 +459,31 @@ static Node *parse_primary(void) {
             return nd_num(ps_cval[ci]);
         }
 
-        fputs("s12cc:", stderr);
-        fput_uint(stderr, lex_line);
-        fputs(": undefined: ", stderr);
-        fputs(nm, stderr);
-        fputc(10, stderr);
-        exit(1);
-        return nd_num(0);
+        /* Direct function call: name(args) */
+        if (lex_tok == TK_LPAREN) {
+            next();
+            head = NULL;
+            tail = NULL;
+            nargs = 0;
+            if (lex_tok != TK_RPAREN) {
+                arg = parse_assign();
+                nargs = 1;
+                head = arg;
+                tail = arg;
+                while (lex_tok == TK_COMMA) {
+                    next();
+                    arg = parse_assign();
+                    tail->next = arg;
+                    tail = arg;
+                    nargs = nargs + 1;
+                }
+            }
+            expect(TK_RPAREN);
+            return nd_call(nm, head, nargs);
+        }
+
+        /* Bare function name: load address (for function pointers) */
+        return nd_func_ref(nm);
     }
 
     /* Parenthesized expression or type cast */
@@ -528,14 +523,39 @@ static Node *parse_postfix(void) {
     Node *n;
     Node *idx;
     Node *pi;
+    Node *ahead;
+    Node *atail;
+    Node *aarg;
+    int anargs;
     int sty;
     int mi;
     char mnm[256];
 
     n = parse_primary();
     while (lex_tok == TK_LBRACK || lex_tok == TK_INC || lex_tok == TK_DEC ||
-           lex_tok == TK_DOT || lex_tok == TK_ARROW) {
-        if (lex_tok == TK_LBRACK) {
+           lex_tok == TK_DOT || lex_tok == TK_ARROW || lex_tok == TK_LPAREN) {
+        if (lex_tok == TK_LPAREN) {
+            /* Indirect call through expression: expr(args) */
+            next();
+            ahead = NULL;
+            atail = NULL;
+            anargs = 0;
+            if (lex_tok != TK_RPAREN) {
+                aarg = parse_assign();
+                anargs = 1;
+                ahead = aarg;
+                atail = aarg;
+                while (lex_tok == TK_COMMA) {
+                    next();
+                    aarg = parse_assign();
+                    atail->next = aarg;
+                    atail = aarg;
+                    anargs = anargs + 1;
+                }
+            }
+            expect(TK_RPAREN);
+            n = nd_call_ptr(n, ahead, anargs);
+        } else if (lex_tok == TK_LBRACK) {
             next();
             idx = parse_expr();
             expect(TK_RBRACK);
@@ -1018,6 +1038,34 @@ static Node *parse_stmt(void) {
     /* local variable declaration */
     if (is_type()) {
         ty = parse_type();
+        /* Function pointer declaration: type (*name)(args); */
+        if (lex_tok == TK_LPAREN) {
+            next();
+            if (lex_tok == TK_STAR) next();
+            if (lex_tok != TK_IDENT) {
+                p_error("expected identifier in fn ptr decl");
+                return nd_num(0);
+            }
+            memcpy(nm, lex_str, lex_slen + 1);
+            next();
+            expect(TK_RPAREN);
+            /* Skip parameter list */
+            if (lex_tok == TK_LPAREN) {
+                next();
+                while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
+                expect(TK_RPAREN);
+            }
+            off = add_local(nm, TY_INT);
+            if (lex_tok == TK_ASSIGN) {
+                next();
+                n = nd_assign(nd_var(nm, off, TY_INT), parse_expr());
+                n->lhs->is_local = 1;
+                expect(TK_SEMI);
+                return nd_expr_stmt(n);
+            }
+            expect(TK_SEMI);
+            return nd_block(NULL);
+        }
         if (lex_tok != TK_IDENT) {
             p_error("expected identifier in declaration");
             return nd_num(0);
@@ -1177,6 +1225,27 @@ static Node *parse_top_decl(void) {
         return NULL;
     }
 
+    /* Global function pointer: type (*name)(args); */
+    if (lex_tok == TK_LPAREN) {
+        next();
+        if (lex_tok == TK_STAR) next();
+        if (lex_tok != TK_IDENT) {
+            p_error("expected name in fn ptr decl");
+            return NULL;
+        }
+        memcpy(nm, lex_str, lex_slen + 1);
+        next();
+        expect(TK_RPAREN);
+        if (lex_tok == TK_LPAREN) {
+            next();
+            while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
+            expect(TK_RPAREN);
+        }
+        add_global(nm, TY_INT, 0);
+        expect(TK_SEMI);
+        return NULL;
+    }
+
     /* Name */
     if (lex_tok != TK_IDENT) {
         p_error("expected name in declaration");
@@ -1250,17 +1319,33 @@ static Node *parse_top_decl(void) {
         } else {
             pty = parse_type();
         }
-        if (lex_tok != TK_IDENT) {
+        /* Function pointer param: type (*name)(args) */
+        if (lex_tok == TK_LPAREN) {
+            next();
+            if (lex_tok == TK_STAR) next();
+            if (lex_tok != TK_IDENT) { p_error("expected param name"); return NULL; }
+            off = add_local(lex_str, TY_INT);
+            p = nd_var(lex_str, off, TY_INT);
+            p->is_local = 1;
+            next();
+            expect(TK_RPAREN);
+            if (lex_tok == TK_LPAREN) {
+                next();
+                while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
+                expect(TK_RPAREN);
+            }
+        } else if (lex_tok != TK_IDENT) {
             p_error("expected param name");
             return NULL;
+        } else {
+            off = add_local(lex_str, pty);
+            p = nd_var(lex_str, off, pty);
+            p->is_local = 1;
+            next();
         }
-        off = add_local(lex_str, pty);
-        p = nd_var(lex_str, off, pty);
-        p->is_local = 1;
         ps_nparams = 1;
         phead = p;
         ptail = p;
-        next();
 
         while (lex_tok == TK_COMMA) {
             next();
@@ -1269,17 +1354,33 @@ static Node *parse_top_decl(void) {
                 return NULL;
             }
             pty = parse_type();
-            if (lex_tok != TK_IDENT) {
+            /* Function pointer param: type (*name)(args) */
+            if (lex_tok == TK_LPAREN) {
+                next();
+                if (lex_tok == TK_STAR) next();
+                if (lex_tok != TK_IDENT) { p_error("expected param name"); return NULL; }
+                off = add_local(lex_str, TY_INT);
+                p = nd_var(lex_str, off, TY_INT);
+                p->is_local = 1;
+                next();
+                expect(TK_RPAREN);
+                if (lex_tok == TK_LPAREN) {
+                    next();
+                    while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
+                    expect(TK_RPAREN);
+                }
+            } else if (lex_tok != TK_IDENT) {
                 p_error("expected param name");
                 return NULL;
+            } else {
+                off = add_local(lex_str, pty);
+                p = nd_var(lex_str, off, pty);
+                p->is_local = 1;
+                next();
             }
-            off = add_local(lex_str, pty);
-            p = nd_var(lex_str, off, pty);
-            p->is_local = 1;
             ptail->next = p;
             ptail = p;
             ps_nparams = ps_nparams + 1;
-            next();
         }
     }
 params_done:
