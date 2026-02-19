@@ -15,9 +15,7 @@ all: $(OBJECTS)
 
 %.s32o: %.s $(ASM) $(EMU) $(KERNEL) $(PRELUDE)
 	@echo "Assembling $< -> $@"
-	@printf 'S" $<" S" $@" ASSEMBLE
-BYE
-' | cat $(PRELUDE) $(ASM) - | $(EMU) $(KERNEL) > /dev/null
+	@printf 'S" $<" S" $@" ASSEMBLE\nBYE\n' | cat $(PRELUDE) $(ASM) - | $(EMU) $(KERNEL) > /dev/null || [ $$? -eq 96 ]
 
 clean:
 	rm -f $(OBJECTS)
