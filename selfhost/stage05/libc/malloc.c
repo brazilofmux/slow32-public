@@ -1,6 +1,6 @@
 /* malloc.c -- heap allocator for selfhost libc
  * Ported from runtime/malloc.c for cc-min/s32-cc compilation.
- * Uses a static heap array (no linker-provided symbols needed).
+ * Uses linker-provided __heap_start/__heap_end via asm helpers.
  * Single free-list with boundary tags and coalescing.
  *
  * Block layout:
@@ -12,8 +12,9 @@
 char *memset(char *dst, int c, int n);
 char *memcpy(char *dst, char *src, int n);
 
-#define HEAP_SIZE 1048576
-static char heap_mem[HEAP_SIZE];
+/* Linker symbols accessed via asm helpers (cc-min can't do extern vars) */
+char *__get_heap_start(void);
+char *__get_heap_end(void);
 
 #define ALIGNMENT 8
 #define ALLOC_BIT 1
@@ -31,6 +32,10 @@ struct fnode {
 
 static struct fnode free_head;
 static int heap_ready;
+
+/* Cached heap bounds (set once in heap_init) */
+static char *heap_lo;
+static char *heap_hi;
 
 static int align_up(int v) {
     return (v + ALIGNMENT - 1) & SIZE_MASK;
@@ -75,11 +80,13 @@ static void heap_init(void) {
     free_head.next = &free_head;
     free_head.prev = &free_head;
     free_head.size = 0;
-    start = (int)heap_mem;
+    heap_lo = __get_heap_start();
+    heap_hi = __get_heap_end();
+    start = (int)heap_lo;
     astart = align_up(start);
-    if (astart + MIN_BLK > (int)heap_mem + HEAP_SIZE) return;
+    if (astart + MIN_BLK > (int)heap_hi) return;
     first = (char *)astart;
-    sz = ((int)heap_mem + HEAP_SIZE - astart) & SIZE_MASK;
+    sz = ((int)heap_hi - astart) & SIZE_MASK;
     if (sz < MIN_BLK) return;
     *((int *)first) = sz;
     set_footer(first, sz);
@@ -129,18 +136,16 @@ void free(char *ptr) {
     char *blk;
     int sz;
     char *nblk;
-    char *heap_end;
     int *pftr;
     int psz;
     char *pblk;
     if (!ptr) return;
-    heap_end = heap_mem + HEAP_SIZE;
     blk = ptr - HDR_SIZE;
     sz = blk_size(blk);
     *((int *)blk) = *((int *)blk) & ~ALLOC_BIT;
     /* coalesce next */
     nblk = blk + sz;
-    if (nblk < heap_end) {
+    if (nblk < heap_hi) {
         if (!blk_alloc(nblk)) {
             list_remove(nblk);
             sz = sz + blk_size(nblk);
@@ -149,9 +154,9 @@ void free(char *ptr) {
         }
     }
     /* coalesce prev */
-    if (blk > (char *)heap_mem) {
+    if (blk > heap_lo) {
         pftr = (int *)(blk - FTR_SIZE);
-        if ((int)pftr >= (int)heap_mem) {
+        if ((int)pftr >= (int)heap_lo) {
             psz = *pftr & SIZE_MASK;
             if (psz > 0) {
                 pblk = blk - psz;
@@ -190,17 +195,15 @@ char *realloc(char *ptr, int size) {
     char *sb;
     char *np;
     int cp;
-    char *heap_end;
     if (!ptr) return malloc(size);
     if (size <= 0) { free(ptr); return (char *)0; }
-    heap_end = heap_mem + HEAP_SIZE;
     blk = ptr - HDR_SIZE;
     cur_sz = blk_size(blk);
     payload = cur_sz - HDR_SIZE - FTR_SIZE;
     if (payload >= size) return ptr;
     need = align_up(HDR_SIZE + align_up(size) + FTR_SIZE);
     nblk = blk + cur_sz;
-    if (nblk < heap_end && !blk_alloc(nblk)) {
+    if (nblk < heap_hi && !blk_alloc(nblk)) {
         nsz = blk_size(nblk);
         if (cur_sz + nsz >= need) {
             list_remove(nblk);

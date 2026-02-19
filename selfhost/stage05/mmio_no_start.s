@@ -807,6 +807,18 @@ __get_mmio_data:
     addi r1, r1, %lo(__mmio_base+16384)
     jalr r0, lr, 0
 
+.global __get_heap_start
+__get_heap_start:
+    lui r1, %hi(__heap_start)
+    addi r1, r1, %lo(__heap_start)
+    jalr r0, lr, 0
+
+.global __get_heap_end
+__get_heap_end:
+    lui r1, %hi(__heap_end)
+    addi r1, r1, %lo(__heap_end)
+    jalr r0, lr, 0
+
 # Minimal fallback — libc's start.s32o overrides this via first-definition-wins
 
 .global exit
