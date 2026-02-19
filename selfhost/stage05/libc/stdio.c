@@ -13,8 +13,8 @@
 /* Low-level I/O from mmio_minimal.s */
 int open(const char *path, int flags);
 int close(int fd);
-int read(int fd, void *buf, int count);
-int write(int fd, const void *buf, int count);
+int read(int fd, char *buf, int count);
+int write(int fd, const char *buf, int count);
 int lseek(int fd, int offset, int whence);
 unsigned int strlen(const char *s);
 
@@ -72,7 +72,7 @@ void __stdio_init(void) {
 
 static FILE *pool_alloc(void) {
     int i;
-    for (i = 0; i < FILE_POOL_SIZE; i++) {
+    for (i = 0; i < FILE_POOL_SIZE; i = i + 1) {
         if (!_file_pool[i].used) {
             _file_pool[i].used = 1;
             _file_pool[i].error = 0;
@@ -145,7 +145,7 @@ int fputc(int c, FILE *fp) {
     return c;
 }
 
-unsigned int fwrite(const void *ptr, unsigned int size, unsigned int nmemb, FILE *fp) {
+unsigned int fwrite(const char *ptr, unsigned int size, unsigned int nmemb, FILE *fp) {
     unsigned int total;
     int n;
     total = size * nmemb;
@@ -158,7 +158,7 @@ unsigned int fwrite(const void *ptr, unsigned int size, unsigned int nmemb, FILE
     return (unsigned int)n / size;
 }
 
-unsigned int fread(void *ptr, unsigned int size, unsigned int nmemb, FILE *fp) {
+unsigned int fread(char *ptr, unsigned int size, unsigned int nmemb, FILE *fp) {
     unsigned int total;
     int n;
     total = size * nmemb;
@@ -216,7 +216,7 @@ char *fgets(char *buf, int n, FILE *fp) {
             break;
         }
         buf[i] = (char)c;
-        i++;
+        i = i + 1;
         if (c == '\n') break;
     }
     buf[i] = 0;
@@ -243,10 +243,10 @@ void fput_uint(FILE *fp, unsigned int val) {
     while (val > 0) {
         buf[i] = '0' + (int)(val % 10);
         val = val / 10;
-        i++;
+        i = i + 1;
     }
     while (i > 0) {
-        i--;
+        i = i - 1;
         fputc((int)buf[i], fp);
     }
 }

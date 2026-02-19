@@ -15,14 +15,14 @@
  * use "extern char __mmio_base;" directly. Instead we use __get_mmio_data()
  * from mmio_minimal.s which returns &__mmio_base + 16384.
  *
- * Written for cc.fth subset-C compatibility.
+ * Written for cc-min subset-C compatibility.
  */
 
 int main(int argc, char **argv);
 void exit(int status);
 void __stdio_init(void);
 int s32_mmio_request(int opcode, int length, int offset, int fd);
-void *memcpy(void *dst, const void *src, unsigned int n);
+char *memcpy(char *dst, const char *src, unsigned int n);
 char *__get_mmio_data(void);
 
 #define ARGS_BLOB_SIZE 4096
@@ -74,12 +74,12 @@ void __slow32_start(void) {
 
                 /* Parse NUL-separated strings into argv array */
                 offset = 0;
-                for (i = 0; i < arg_count; i++) {
+                for (i = 0; i < arg_count; i = i + 1) {
                     args_argv[i] = args_blob + offset;
                     while (offset < total && args_blob[offset] != 0)
-                        offset++;
+                        offset = offset + 1;
                     if (offset < total)
-                        offset++;
+                        offset = offset + 1;
                 }
                 args_argv[arg_count] = (char *)0;
                 argc = arg_count;

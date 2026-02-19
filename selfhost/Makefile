@@ -3,9 +3,9 @@
 # This Makefile guides the student through the stage-by-stage progression.
 # Each stage has specific prerequisites and produces clear, minimal artifacts.
 
-.PHONY: all clean stage00 stage01 stage02 stage03 stage04 stage05 stage06 stage07 stage08
+.PHONY: all clean stage00 stage01 stage02 stage03 stage04 stage05 stage06 stage07 stage08 stage09
 
-all: stage08
+all: stage09
 
 # Stage 00: Minimum bootstrap emulator (the trust root)
 stage00:
@@ -71,6 +71,14 @@ stage08: stage07
 	@echo "--- Building Stage 08: C Compiler ---"
 	$(MAKE) -C stage08
 
+# Stage 09: Self-Compilation Fixed-Point Proof
+# Prerequisites: Stage 08 cc-min, Stage 05 C assembler, Stage 07 C linker
+# cc-min compiles itself. No Forth tools. gen2.s == gen3.s proves the fixed point.
+# Artifacts: cc-min.s32x (Gen2: self-compiled compiler)
+stage09: stage08
+	@echo "--- Building Stage 09: Self-Compiled Compiler ---"
+	$(MAKE) -C stage09
+
 clean:
 	$(MAKE) -C stage00 clean
 	$(MAKE) -C stage01 clean
@@ -81,3 +89,4 @@ clean:
 	$(MAKE) -C stage06 clean
 	$(MAKE) -C stage07 clean
 	$(MAKE) -C stage08 clean
+	$(MAKE) -C stage09 clean

@@ -1,7 +1,7 @@
 /* Selfhost bootstrap libc: conversion functions
  *
  * Provides strtol for the selfhost assembler.
- * Ported from runtime/stdlib_extra.c, simplified for cc.fth subset-C.
+ * Ported from runtime/stdlib_extra.c, simplified for cc-min subset-C.
  */
 
 long strtol(const char *nptr, char **endptr, int base) {
@@ -9,6 +9,7 @@ long strtol(const char *nptr, char **endptr, int base) {
     long result;
     int sign;
     int found_digit;
+    int digit;
 
     s = nptr;
     result = 0;
@@ -16,23 +17,23 @@ long strtol(const char *nptr, char **endptr, int base) {
     found_digit = 0;
 
     /* Skip whitespace */
-    while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') s++;
+    while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') s = s + 1;
 
     /* Handle sign */
     if (*s == '-') {
         sign = -1;
-        s++;
+        s = s + 1;
     } else if (*s == '+') {
-        s++;
+        s = s + 1;
     }
 
     /* Handle base */
     if (base == 0) {
         if (*s == '0') {
-            s++;
+            s = s + 1;
             if (*s == 'x' || *s == 'X') {
                 base = 16;
-                s++;
+                s = s + 1;
             } else {
                 base = 8;
                 found_digit = 1;
@@ -48,7 +49,6 @@ long strtol(const char *nptr, char **endptr, int base) {
 
     /* Convert digits */
     while (*s) {
-        int digit;
         if (*s >= '0' && *s <= '9') {
             digit = *s - '0';
         } else if (*s >= 'a' && *s <= 'z') {
@@ -63,7 +63,7 @@ long strtol(const char *nptr, char **endptr, int base) {
 
         found_digit = 1;
         result = result * base + digit;
-        s++;
+        s = s + 1;
     }
 
     if (endptr) {
