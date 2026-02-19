@@ -86,7 +86,7 @@ Runtime sources: `selfhost/stage01/crt0_minimal.s`, `selfhost/stage01/mmio_minim
 These are linked as direct objects (not archives) to work around Issue #16.
 
 ### 16. [FIXED] Forth Archiver Symbol Index Bugs
-The Forth archiver (`selfhost/stage02/ar.fth`) had two bugs preventing archive-based
+The Forth archiver (`selfhost/stage01/ar.fth`) had two bugs preventing archive-based
 linking from working:
 
 **Bug A: `OUTSTR-ADD` stack underflow** — In the output string table builder,
@@ -101,7 +101,7 @@ symbol table entry (at position `member_idx * 16 + sym_offset` instead of
 `symbol_idx * 16 + sym_offset`). Fixed by replacing `J sym-j !` /
 `sym-j @ 16 * m-tmp-off @ +` with `I 16 * m-tmp-off @ +`.
 
-Both fixes verified by stage02 and stage03 regression tests. Archive-based linking
+Both fixes verified by stage01 and stage03 regression tests. Archive-based linking
 now works correctly in the stage05 selfhost libc build.
 
 ---

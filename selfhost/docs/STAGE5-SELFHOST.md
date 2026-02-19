@@ -1,8 +1,8 @@
 # Stage 5: Compiling the Real Toolchain
 
-> **V2 cross-reference:** This material is spread across **Stages 5-9** (Subset C tools + fixed-point) and **Stages 11-12** (Full C tools) in [BOOTSTRAP-V2.md](BOOTSTRAP-V2.md). V2 breaks the single "self-host" stage into individual tool-replacement stages.
+> **V2 cross-reference:** This material is spread across **Stages 5-9** (Subset C tools + fixed-point) and **Stages 11-12** (Full C tools) in [BOOTSTRAP.md](BOOTSTRAP.md). V2 breaks the single "self-host" stage into individual tool-replacement stages.
 >
-> **Status:** This document is a legacy V1 playbook. For current sequencing and checkpoint status, treat `BOOTSTRAP-V2.md` as authoritative.
+> **Status:** This document is a legacy V1 playbook. For current sequencing and checkpoint status, treat `BOOTSTRAP.md` as authoritative.
 
 ## Goal
 

@@ -1,6 +1,6 @@
 # Stage 2: Forth-Hosted SLOW-32 Assembler
 
-> **V2 cross-reference:** This is **Stage 1** in [BOOTSTRAP-V2.md](BOOTSTRAP-V2.md) (Layer B: Forth Self-Hosting).
+> **V2 cross-reference:** This is **Stage 1** in [BOOTSTRAP.md](BOOTSTRAP.md) (Layer B: Forth Self-Hosting).
 
 ## Goal
 

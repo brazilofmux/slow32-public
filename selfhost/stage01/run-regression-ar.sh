@@ -5,26 +5,26 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
-EMU="${STAGE2_AR_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
-KERNEL="${STAGE2_AR_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
-PRELUDE="${STAGE2_AR_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
-ASM_FTH="${STAGE2_AR_ASM:-$SELFHOST_DIR/stage01/asm.fth}"
-AR_FTH="${STAGE2_AR_AR:-$SCRIPT_DIR/ar.fth}"
-ASM_SRC="${STAGE2_AR_SRC:-$SELFHOST_DIR/stage01/test3.s}"
+EMU="${STAGE01_AR_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
+KERNEL="${STAGE01_AR_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
+PRELUDE="${STAGE01_AR_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
+ASM_FTH="${STAGE01_AR_ASM:-$SCRIPT_DIR/asm.fth}"
+AR_FTH="${STAGE01_AR_AR:-$SCRIPT_DIR/ar.fth}"
+ASM_SRC="${STAGE01_AR_SRC:-$SCRIPT_DIR/test3.s}"
 
 usage() {
     cat <<USAGE
 Usage: $0 [test3]
 
-Runs stage02 archiver checks:
-  1) Assemble stage01 test3.s -> test3.s32o
+Runs stage01 archiver checks:
+  1) Assemble test3.s -> test3.s32o
   2) Archive test3.s32o -> test3.s32a (AR-C-BEGIN/AR-ADD/AR-C-END)
   3) List archive and verify member name
   4) Extract member (AR-X1) and byte-compare with original
 
 Env overrides:
-  STAGE2_AR_EMU STAGE2_AR_KERNEL STAGE2_AR_PRELUDE
-  STAGE2_AR_ASM STAGE2_AR_AR STAGE2_AR_SRC
+  STAGE01_AR_EMU STAGE01_AR_KERNEL STAGE01_AR_PRELUDE
+  STAGE01_AR_ASM STAGE01_AR_AR STAGE01_AR_SRC
 USAGE
 }
 
@@ -43,7 +43,7 @@ for f in "$EMU" "$KERNEL" "$PRELUDE" "$ASM_FTH" "$AR_FTH" "$ASM_SRC"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
 
-WORKDIR="$(mktemp -d /tmp/stage02-archiver.XXXXXX)"
+WORKDIR="$(mktemp -d /tmp/stage01-archiver.XXXXXX)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
 run_forth() {
@@ -109,5 +109,5 @@ cmp -s "$OBJ" "$XDIR/test3.s32o" || {
     exit 1
 }
 
-echo "OK: stage02 $TARGET"
+echo "OK: stage01-ar $TARGET"
 echo "Archive: $ARC"

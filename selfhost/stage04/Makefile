@@ -8,11 +8,10 @@ CC = cc.fth
 ASM = ../stage01/asm.fth
 LINK = ../stage03/link.fth
 
-# Prerequisites from previous stages
+# Prerequisites from Stage 01
 STAGE01_DIR = ../stage01
-STAGE02_DIR = ../stage02
 CRT0 = $(STAGE01_DIR)/crt0_minimal.s32o
-LIBS32 = $(STAGE02_DIR)/libs32_minimal.s32a
+LIBS32 = $(STAGE01_DIR)/libs32_minimal.s32a
 
 # Test program
 TEST_SRC = tests/test1.c

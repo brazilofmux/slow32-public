@@ -42,7 +42,7 @@ Usage: $0 [--from stage00] [--to stage08] [--emu <path>] [--skip-selfhost-kernel
 Runs ordered stage checks so a clean checkout can be validated end-to-end.
 
 Default sequence:
-  stage00 -> stage01 -> stage02 -> stage03 -> stage04 -> stage05 -> stage06 -> stage07 -> stage08
+  stage00 -> stage01 -> stage03 -> stage04 -> stage05 -> stage06 -> stage07 -> stage08
 
 Options:
   --from stageNN   Start stage (stage00..stage08)
@@ -134,7 +134,6 @@ stage_num() {
     case "$1" in
         stage00) echo 0 ;;
         stage01) echo 1 ;;
-        stage02) echo 2 ;;
         stage03) echo 3 ;;
         stage04) echo 4 ;;
         stage05) echo 5 ;;
@@ -174,15 +173,11 @@ run_stage00() {
 }
 
 run_stage01() {
-    echo "[stage01] assembler regression"
-    run_logged "stage01 test1" "$LOG_DIR/stage01-test1.log" \
-        env STAGE01_EMU="$EMU" "$ROOT_DIR/selfhost/stage01/run-regression.sh" test1
-}
-
-run_stage02() {
-    echo "[stage02] archiver regression"
-    run_logged "stage02 test3" "$LOG_DIR/stage02-test3.log" \
-        env STAGE2_AR_EMU="$EMU" "$ROOT_DIR/selfhost/stage02/run-regression.sh" test3
+    echo "[stage01] assembler + archiver regression"
+    run_logged "stage01 asm test1" "$LOG_DIR/stage01-test1.log" \
+        env STAGE01_EMU="$EMU" "$ROOT_DIR/selfhost/stage01/run-regression-as.sh" test1
+    run_logged "stage01 ar test3" "$LOG_DIR/stage01-ar-test3.log" \
+        env STAGE01_AR_EMU="$EMU" "$ROOT_DIR/selfhost/stage01/run-regression-ar.sh" test3
 }
 
 run_stage03() {
@@ -278,7 +273,7 @@ run_stage08() {
     fi
 }
 
-for st in stage00 stage01 stage02 stage03 stage04 stage05 stage06 stage07 stage08; do
+for st in stage00 stage01 stage03 stage04 stage05 stage06 stage07 stage08; do
     N="$(stage_num "$st")"
     if (( N < FROM_N || N > TO_N )); then
         continue

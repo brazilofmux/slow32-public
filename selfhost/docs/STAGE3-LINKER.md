@@ -1,6 +1,6 @@
 # Stage 3: Forth-Hosted Minimal Linker
 
-> **V2 cross-reference:** This is **Stage 3** in [BOOTSTRAP-V2.md](BOOTSTRAP-V2.md) (Layer B: Forth Self-Hosting). The Forth archiver (previously bundled here) is now **Stage 2**.
+> **V2 cross-reference:** This is **Stage 3** in [BOOTSTRAP.md](BOOTSTRAP.md) (Layer B: Forth Self-Hosting). The Forth archiver (previously bundled here) is now **Stage 2**.
 
 ## Goal
 

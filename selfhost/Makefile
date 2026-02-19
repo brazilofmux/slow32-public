@@ -3,7 +3,7 @@
 # This Makefile guides the student through the stage-by-stage progression.
 # Each stage has specific prerequisites and produces clear, minimal artifacts.
 
-.PHONY: all clean stage00 stage01 stage02 stage03 stage04 stage05 stage06 stage07 stage08 stage09 stage10 stage11 stage12 stage13 stage14
+.PHONY: all clean stage00 stage01 stage03 stage04 stage05 stage06 stage07 stage08 stage09 stage10 stage11 stage12 stage13 stage14
 
 all: stage14
 
@@ -12,29 +12,22 @@ stage00:
 	@echo "--- Building Stage 00: Emulator ---"
 	$(MAKE) -C stage00
 
-# Stage 01: Forth Assembler
+# Stage 01: Forth Assembler + Archiver
 # Prerequisites: Stage 00 emulator, Forth kernel.s32x
-# Artifacts: crt0_minimal.s32o, mmio_minimal.s32o
+# Artifacts: crt0_minimal.s32o, mmio_minimal.s32o, libs32_minimal.s32a
 stage01: stage00
-	@echo "--- Building Stage 01: Forth Assembler Artifacts ---"
+	@echo "--- Building Stage 01: Forth Assembler + Archiver Artifacts ---"
 	$(MAKE) -C stage01
 
-# Stage 02: Forth Archiver
-# Prerequisites: Stage 01 artifacts
-# Artifacts: libs32_minimal.s32a
-stage02: stage01
-	@echo "--- Building Stage 02: Forth Archiver Artifacts ---"
-	$(MAKE) -C stage02
-
 # Stage 03: Forth Linker
-# Prerequisites: Stage 01/02 artifacts
+# Prerequisites: Stage 01 artifacts
 # Artifacts: hello_minimal.s32x
-stage03: stage02
+stage03: stage01
 	@echo "--- Building Stage 03: Forth Linker Artifacts ---"
 	$(MAKE) -C stage03
 
 # Stage 04: Forth-Hosted Subset C Compiler
-# Prerequisites: Stage 01/02/03 artifacts
+# Prerequisites: Stage 01/03 artifacts
 # Artifacts: test1.s32x (compiled from C)
 stage04: stage03
 	@echo "--- Building Stage 04: Forth C Compiler Artifacts ---"
@@ -118,7 +111,6 @@ stage14: stage13
 clean:
 	$(MAKE) -C stage00 clean
 	$(MAKE) -C stage01 clean
-	$(MAKE) -C stage02 clean
 	$(MAKE) -C stage03 clean
 	$(MAKE) -C stage04 clean
 	$(MAKE) -C stage05 clean

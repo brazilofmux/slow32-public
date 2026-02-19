@@ -1,6 +1,6 @@
 # Stage 0: Minimal Bootstrap Emulator
 
-> **V2 cross-reference:** This is **Stage 0** in [BOOTSTRAP-V2.md](BOOTSTRAP-V2.md) (Layer A: Foundation).
+> **V2 cross-reference:** This is **Stage 0** in [BOOTSTRAP.md](BOOTSTRAP.md) (Layer A: Foundation).
 
 ## Goal
 

@@ -10,7 +10,7 @@ KERNEL="${STAGE3_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${STAGE3_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 LINK_FTH="${STAGE3_LINK:-$SCRIPT_DIR/link.fth}"
 ASM_FTH="${STAGE3_ASM:-$SELFHOST_DIR/stage01/asm.fth}"
-AR_FTH="${STAGE3_AR:-$SELFHOST_DIR/stage02/ar.fth}"
+AR_FTH="${STAGE3_AR:-$SELFHOST_DIR/stage01/ar.fth}"
 
 usage() {
     cat <<USAGE

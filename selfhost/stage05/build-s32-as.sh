@@ -16,7 +16,7 @@ KERNEL="${SELFHOST_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${SELFHOST_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 CC_FTH="$SELFHOST_DIR/stage04/cc.fth"
 ASM_FTH="$SELFHOST_DIR/stage01/asm.fth"
-AR_FTH="$SELFHOST_DIR/stage02/ar.fth"
+AR_FTH="$SELFHOST_DIR/stage01/ar.fth"
 LINK_FTH="$SELFHOST_DIR/stage03/link.fth"
 
 LIBC_DIR="$SCRIPT_DIR/libc"

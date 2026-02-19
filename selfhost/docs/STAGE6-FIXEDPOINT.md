@@ -1,8 +1,8 @@
 # Stage 6: Verification and Fixed-Point Proof
 
-> **V2 cross-reference:** V2 has two fixed-point checkpoints today: **Stage 9** (Subset C) and **Stage 16** (final optimized toolchain) in [BOOTSTRAP-V2.md](BOOTSTRAP-V2.md). Additional fixed-point gates may be inserted as the full C plan (Stage 13+) solidifies.
+> **V2 cross-reference:** V2 has two fixed-point checkpoints today: **Stage 9** (Subset C) and **Stage 16** (final optimized toolchain) in [BOOTSTRAP.md](BOOTSTRAP.md). Additional fixed-point gates may be inserted as the full C plan (Stage 13+) solidifies.
 >
-> **Status:** This document is a legacy V1-style explanation. For active milestone tracking and sequencing, use `BOOTSTRAP-V2.md`.
+> **Status:** This document is a legacy V1-style explanation. For active milestone tracking and sequencing, use `BOOTSTRAP.md`.
 
 ## Goal
 

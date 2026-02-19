@@ -1,6 +1,6 @@
 # Selfhost V2 Workspace
 
-This tree tracks the multi-cycle bootstrap plan captured in `selfhost/stage-status.md` (derived from `selfhost/docs/BOOTSTRAP-V2.md`).
+This tree tracks the multi-cycle bootstrap plan captured in `selfhost/stage-status.md` (derived from `selfhost/docs/BOOTSTRAP.md`).
 
 Current policy:
 - Keep existing `selfhost/stage*` paths working while migration is in progress.
@@ -12,7 +12,7 @@ Stage directories:
 
 Stage cycles at a glance:
 - `stage00`: standalone ~800 line emulator that every other stage relies on.
-- `stage01`–`stage04`: assembler/archiver/linker/compiler written in Forth, with the Forth kernel fixed-point proof landing inside Stage04.
+- `stage01`: assembler + archiver written in Forth; `stage03`–`stage04`: linker + compiler written in Forth, with the Forth kernel fixed-point proof landing inside Stage03.
 - `stage05`–`stage08`: the same four tools now authored in Subset C but still hosted by the Forth toolchain.
 - `stage09`: Subset C fixed-point proof (Subset C compiling itself).
 - `stage10`–`stage12`: another assembler/archiver/linker pass, this time fully self-hosted in Subset C and chasing feature parity with `tools/`.
@@ -39,8 +39,8 @@ selfhost/run-stages.sh --skip-selfhost-kernel
 
 Manual per-stage entry points:
 - `stage00`: `make -C selfhost/stage00 && make -C selfhost/stage00 test`
-- `stage01`: `selfhost/stage01/run-regression.sh test1`
-- `stage02`: `selfhost/stage02/run-regression.sh test3`
+- `stage01` (assembler): `selfhost/stage01/run-regression-as.sh test1`
+- `stage01` (archiver): `selfhost/stage01/run-regression-ar.sh test3`
 - `stage03`: `selfhost/stage03/run-regression.sh test3` and `... archive`
 - `stage03` (kernel regen gate): `SELFHOST_EMU=./tools/emulator/slow32-fast selfhost/stage03/run-selfhost-kernel.sh`
 - `stage04`: `selfhost/stage04/run-regression.sh`

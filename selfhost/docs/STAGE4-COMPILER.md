@@ -1,6 +1,6 @@
 # Stage 4: Minimal C Compiler
 
-> **V2 cross-reference:** This is **Stage 4** in [BOOTSTRAP-V2.md](BOOTSTRAP-V2.md) (Layer C: Subset C Self-Hosting). The Forth-based compiler (`cc.fth`) is the starting point. Stages 5-8 progressively replace it with C-based tools.
+> **V2 cross-reference:** This is **Stage 4** in [BOOTSTRAP.md](BOOTSTRAP.md) (Layer C: Subset C Self-Hosting). The Forth-based compiler (`cc.fth`) is the starting point. Stages 5-8 progressively replace it with C-based tools.
 
 ## Goal
 
