@@ -1,7 +1,7 @@
-/* s32cc_lex.h -- C lexer for s32-cc (stage15)
+/* s32cc_lex.h -- C lexer for s32-cc (stage10)
  *
  * Single includable file: token constants + full lexer implementation.
- * Self-hosting capable: uses switch, postfix++/--, do-while, goto.
+ * cc-min compatible: no switch, no postfix++, no goto, no do-while.
  */
 
 /* === Libc prototypes (no #include nesting) === */
@@ -128,10 +128,10 @@ void exit(int status);
  * Lexer state (globals)
  * ======================================================== */
 
-#define LEX_SRC_SZ   262144
+#define LEX_SRC_SZ   65536
 #define LEX_STR_SZ   256
-#define LEX_POOL_SZ  65536
-#define LEX_POOL_MAX 2048
+#define LEX_POOL_SZ  32768
+#define LEX_POOL_MAX 1024
 
 static char lex_src[LEX_SRC_SZ];
 static int  lex_len;

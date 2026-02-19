@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stage 14: s32-cc C compiler (Pass 1 lexer + Pass 2 parser)
+# Stage 10: s32-cc C compiler (Pass 1 lexer + Pass 2 parser)
 #
 # Bootstrap chain:
-# 1) Bootstrap via stage13 (obtains Gen2 cc-min, assembler, C linker, runtime)
+# 1) Bootstrap via stage09 (obtains Gen2 cc-min, assembler, C linker, runtime)
 # 2) Lexer tests: compile each test_lex_*.c with cc-min, run
 # 3) Build s32-cc: concatenate lex+parse headers, compile s32cc.c with cc-min
 # 4) Parser tests: compile each test_parse_*.c with s32-cc, assemble, link, run
@@ -15,10 +15,8 @@ SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 TESTS_DIR="$SCRIPT_DIR/tests"
 
-EMU="${STAGE14_EMU:-}"
+EMU="${STAGE10_EMU:-}"
 EMU_EXPLICIT=0
-
-STAGE13_DIR="$SELFHOST_DIR/stage13"
 
 KEEP_ARTIFACTS=0
 
@@ -30,8 +28,8 @@ usage() {
     cat <<USAGE
 Usage: $0 [--emu <path>] [--keep-artifacts]
 
-Stage14 s32-cc compiler tests:
-  1) bootstrap Gen2 cc-min + assembler + C linker via stage13
+Stage10 s32-cc compiler tests:
+  1) build runtime/libc from source using pre-built tools
   2) compile each test_lex_*.c with cc-min, run
   3) build s32-cc compiler from s32cc.c with cc-min
   4) compile each test_parse_*.c with s32-cc, assemble, link, run
@@ -63,13 +61,13 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-if [[ "$EMU_EXPLICIT" -eq 0 && -z "${STAGE14_EMU:-}" ]]; then
+if [[ "$EMU_EXPLICIT" -eq 0 && -z "${STAGE10_EMU:-}" ]]; then
     EMU="$(choose_default_emu)"
 fi
 
 [[ -f "$EMU" ]] || { echo "Missing emulator: $EMU" >&2; exit 1; }
 
-WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage14.XXXXXX)"
+WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage10.XXXXXX)"
 if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then
     trap 'rm -rf "$WORKDIR"' EXIT
 fi
@@ -152,7 +150,7 @@ compile_and_link() {
     run_exe "$LD_EXE" "$WORKDIR/${name}-link.log" \
         -o "$exe" --mmio 64K \
         "$RUNTIME_CRT0" "$obj_out" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-        "$LIBC_ARCHIVE"
+        $LIBC_OBJS
     if [[ ! -s "$exe" ]]; then
         echo "linker produced no output for $name" >&2
         cat "$WORKDIR/${name}-link.log" >&2
@@ -161,64 +159,49 @@ compile_and_link() {
 }
 
 # ============================================================
-# Step 1: Bootstrap via stage13
+# Step 1: Bootstrap — use pre-built tools, build runtime/libc
 # ============================================================
-echo "=== Step 1: Bootstrap via stage13 ==="
+echo "=== Step 1: Bootstrap ==="
 
-S13_LOG="$WORKDIR/stage13-build.log"
-EMU_FLAG=()
-if [[ "$EMU_EXPLICIT" -eq 1 ]]; then
-    EMU_FLAG=(--emu "$EMU")
-fi
-"$STAGE13_DIR/run-spike.sh" "${EMU_FLAG[@]}" --keep-artifacts >"$S13_LOG"
+# Pre-built tools from earlier stages
+GEN2_EXE="$SELFHOST_DIR/stage09/cc-min.s32x"
+AS_EXE="$SELFHOST_DIR/stage05/s32-as.s32x"
+LD_EXE="$SELFHOST_DIR/stage07/s32-ld.s32x"
 
-# Extract paths from stage13 output
-S13_ART="$(awk -F': ' '/^Artifacts:/{print $2}' "$S13_LOG" | tail -n 1)"
-[[ -n "$S13_ART" && -d "$S13_ART" ]] || { echo "failed to locate stage13 artifacts" >&2; exit 1; }
+[[ -f "$GEN2_EXE" ]] || { echo "missing cc-min: $GEN2_EXE" >&2; exit 1; }
+[[ -f "$AS_EXE" ]] || { echo "missing assembler: $AS_EXE" >&2; exit 1; }
+[[ -f "$LD_EXE" ]] || { echo "missing linker: $LD_EXE" >&2; exit 1; }
 
-# Find Gen2 cc-min via stage12→stage11→stage09
-S12_LOG="$S13_ART/stage12-build.log"
-[[ -f "$S12_LOG" ]] || { echo "missing stage12 build log" >&2; exit 1; }
-S12_ART="$(awk -F': ' '/^Artifacts:/{print $2}' "$S12_LOG" | tail -n 1)"
-[[ -n "$S12_ART" && -d "$S12_ART" ]] || { echo "failed to locate stage12 artifacts" >&2; exit 1; }
+# Build runtime objects from source
+LIBC_DIR="$SELFHOST_DIR/stage05/libc"
+CRT0_SRC="$SELFHOST_DIR/stage05/crt0.s"
+MMIO_NO_START_SRC="$SELFHOST_DIR/stage05/mmio_no_start.s"
 
-S11_LOG="$S12_ART/stage11-build.log"
-[[ -f "$S11_LOG" ]] || { echo "missing stage11 build log" >&2; exit 1; }
-S11_ART="$(awk -F': ' '/^Artifacts:/{print $2}' "$S11_LOG" | tail -n 1)"
-[[ -n "$S11_ART" && -d "$S11_ART" ]] || { echo "failed to locate stage11 artifacts" >&2; exit 1; }
+run_exe "$AS_EXE" "$WORKDIR/crt0.log" "$CRT0_SRC" "$WORKDIR/crt0.s32o"
+[[ -s "$WORKDIR/crt0.s32o" ]] || { echo "failed to assemble crt0" >&2; exit 1; }
 
-S9_LOG="$S11_ART/stage09-build.log"
-[[ -f "$S9_LOG" ]] || { echo "missing stage09 build log" >&2; exit 1; }
-GEN2_EXE="$(awk -F': ' '/^Gen2 exe:/{print $2}' "$S9_LOG" | tail -n 1)"
-S9_ART="$(awk -F': ' '/^Artifacts:/{print $2}' "$S9_LOG" | tail -n 1)"
-[[ -n "$GEN2_EXE" && -f "$GEN2_EXE" ]] || { echo "failed to locate Gen2 cc-min exe" >&2; exit 1; }
+run_exe "$AS_EXE" "$WORKDIR/mmio_no_start.log" "$MMIO_NO_START_SRC" "$WORKDIR/mmio_no_start.s32o"
+[[ -s "$WORKDIR/mmio_no_start.s32o" ]] || { echo "failed to assemble mmio_no_start" >&2; exit 1; }
 
-# Find assembler from stage08
-S8_LOG="$S9_ART/stage08-build.log"
-[[ -f "$S8_LOG" ]] || { echo "missing stage08 build log" >&2; exit 1; }
-AS_EXE="$(awk -F': ' '/^Assembler exe:/{print $2}' "$S8_LOG" | tail -n 1)"
-S8_ART="$(awk -F': ' '/^Artifacts:/{print $2}' "$S8_LOG" | tail -n 1)"
-[[ -n "$AS_EXE" && -f "$AS_EXE" ]] || { echo "failed to locate assembler" >&2; exit 1; }
+# Build libc (compiled by cc-min)
+LIBC_OBJS=""
+for name in string_extra convert stdio; do
+    run_exe "$GEN2_EXE" "$WORKDIR/${name}.cc.log" "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s"
+    [[ -s "$WORKDIR/${name}.s" ]] || { echo "failed to compile ${name}.c" >&2; exit 1; }
+    run_exe "$AS_EXE" "$WORKDIR/${name}.as.log" "$WORKDIR/${name}.s" "$WORKDIR/${name}.s32o"
+    [[ -s "$WORKDIR/${name}.s32o" ]] || { echo "failed to assemble ${name}.s" >&2; exit 1; }
+    LIBC_OBJS="$LIBC_OBJS $WORKDIR/${name}.s32o"
+done
 
-# Find C linker from stage08
-LD_EXE="$(awk -F': ' '/^Linker exe:/{print $2}' "$S8_LOG" | tail -n 1)"
-[[ -n "$LD_EXE" && -f "$LD_EXE" ]] || { echo "failed to locate C linker" >&2; exit 1; }
+# Build start.c (libc startup)
+run_exe "$GEN2_EXE" "$WORKDIR/start.cc.log" "$LIBC_DIR/start.c" "$WORKDIR/start.s"
+[[ -s "$WORKDIR/start.s" ]] || { echo "failed to compile start.c" >&2; exit 1; }
+run_exe "$AS_EXE" "$WORKDIR/start.as.log" "$WORKDIR/start.s" "$WORKDIR/start.s32o"
+[[ -s "$WORKDIR/start.s32o" ]] || { echo "failed to assemble start.s" >&2; exit 1; }
 
-# Runtime objects from stage05
-S5_LOG="$S8_ART/stage5-build.log"
-[[ -f "$S5_LOG" ]] || { echo "missing stage05 build log" >&2; exit 1; }
-S5_ART="$(awk -F': ' '/^Artifacts:/{print $2}' "$S5_LOG" | tail -n 1)"
-[[ -n "$S5_ART" && -d "$S5_ART" ]] || { echo "failed to locate stage05 artifacts" >&2; exit 1; }
-
-RUNTIME_CRT0="$S5_ART/crt0_minimal.s32o"
-RUNTIME_MMIO_NO_START_OBJ="$S5_ART/mmio_no_start.s32o"
-LIBC_ARCHIVE="$S5_ART/libc_selfhost.s32a"
-LIBC_START_OBJ="$S5_ART/libc_start.s32o"
-
-[[ -s "$RUNTIME_CRT0" ]] || { echo "missing runtime crt0" >&2; exit 1; }
-[[ -s "$RUNTIME_MMIO_NO_START_OBJ" ]] || { echo "missing runtime mmio" >&2; exit 1; }
-[[ -s "$LIBC_ARCHIVE" ]] || { echo "missing libc archive" >&2; exit 1; }
-[[ -s "$LIBC_START_OBJ" ]] || { echo "missing libc start" >&2; exit 1; }
+RUNTIME_CRT0="$WORKDIR/crt0.s32o"
+RUNTIME_MMIO_NO_START_OBJ="$WORKDIR/mmio_no_start.s32o"
+LIBC_START_OBJ="$WORKDIR/start.s32o"
 
 echo "Gen2 cc-min: $GEN2_EXE"
 echo "Assembler: $AS_EXE"
@@ -306,7 +289,7 @@ fi
 run_exe "$LD_EXE" "$WORKDIR/s32cc-link.log" \
     -o "$S32CC_EXE" --mmio 64K \
     "$RUNTIME_CRT0" "$S32CC_OBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-    "$LIBC_ARCHIVE"
+    "$LIBC_OBJS"
 if [[ ! -s "$S32CC_EXE" ]]; then
     echo "linker produced no output for s32cc" >&2
     cat "$WORKDIR/s32cc-link.log" >&2
@@ -370,7 +353,7 @@ for test_name in $PARSE_TESTS; do
     if ! run_exe "$LD_EXE" "$WORKDIR/${test_name}-link.log" \
         -o "$EXE" --mmio 64K \
         "$RUNTIME_CRT0" "$POBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-        "$LIBC_ARCHIVE" 2>"$WORKDIR/${test_name}-ld-err.log"; then
+        "$LIBC_OBJS" 2>"$WORKDIR/${test_name}-ld-err.log"; then
         printf "  %-24s FAIL (link)\n" "${test_name}:"
         cat "$WORKDIR/${test_name}-link.log" >&2
         cat "$WORKDIR/${test_name}-ld-err.log" >&2
@@ -450,7 +433,7 @@ fi
 run_exe "$LD_EXE" "$WORKDIR/gen2-s32cc-link.log" \
     -o "$GEN2_S32CC_EXE" --mmio 64K \
     "$RUNTIME_CRT0" "$GEN2_S32CC_OBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-    "$LIBC_ARCHIVE"
+    "$LIBC_OBJS"
 if [[ ! -s "$GEN2_S32CC_EXE" ]]; then
     echo "linker produced no output for gen2-s32cc" >&2
     cat "$WORKDIR/gen2-s32cc-link.log" >&2
@@ -505,7 +488,7 @@ else
         run_exe "$LD_EXE" "$WORKDIR/selfhost-smoke-link.log" \
             -o "$SMOKE_EXE" --mmio 64K \
             "$RUNTIME_CRT0" "$SMOKE_OBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-            "$LIBC_ARCHIVE"
+            "$LIBC_OBJS"
         if [[ ! -s "$SMOKE_EXE" ]]; then
             echo "  Smoke test: FAIL (link)" >&2
             FAIL=$((FAIL + 1))
@@ -531,9 +514,9 @@ fi
 # ============================================================
 echo ""
 if [[ "$FAIL" -eq 0 ]]; then
-    echo "OK: stage14 ($PASS/$TOTAL tests passed)"
+    echo "OK: stage10 ($PASS/$TOTAL tests passed)"
 else
-    echo "FAIL: stage14 ($PASS/$TOTAL tests passed, $FAIL failed)" >&2
+    echo "FAIL: stage10 ($PASS/$TOTAL tests passed, $FAIL failed)" >&2
     exit 1
 fi
 

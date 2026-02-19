@@ -1,4 +1,4 @@
-/* s32cc_parse.h -- Parser + code emitter for s32-cc (stage14)
+/* s32cc_parse.h -- Parser + code emitter for s32-cc (stage10)
  * Assumes s32cc_lex.h symbols in scope via concatenation.
  * cc-min compatible source. */
 
