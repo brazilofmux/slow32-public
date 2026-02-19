@@ -3,9 +3,9 @@
 # This Makefile guides the student through the stage-by-stage progression.
 # Each stage has specific prerequisites and produces clear, minimal artifacts.
 
-.PHONY: all clean stage00 stage01 stage02 stage03 stage04 stage05
+.PHONY: all clean stage00 stage01 stage02 stage03 stage04 stage05 stage06
 
-all: stage05
+all: stage06
 
 # Stage 00: Minimum bootstrap emulator (the trust root)
 stage00:
@@ -47,6 +47,13 @@ stage05: stage04
 	@echo "--- Building Stage 05: C Assembler ---"
 	$(MAKE) -C stage05
 
+# Stage 06: Subset-C Archiver
+# Prerequisites: Stage 04 C compiler, Stage 05 C assembler, Stage 03 linker
+# Artifacts: s32-ar.s32x (C archiver, runs on emulator)
+stage06: stage05
+	@echo "--- Building Stage 06: C Archiver ---"
+	$(MAKE) -C stage06
+
 clean:
 	$(MAKE) -C stage00 clean
 	$(MAKE) -C stage01 clean
@@ -54,3 +61,4 @@ clean:
 	$(MAKE) -C stage03 clean
 	$(MAKE) -C stage04 clean
 	$(MAKE) -C stage05 clean
+	$(MAKE) -C stage06 clean
