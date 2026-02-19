@@ -2,7 +2,7 @@
  * Assumes s32cc_lex.h symbols in scope via concatenation.
  * cc-min compatible source. */
 
-#define P_MAX_OUT 1048576
+#define P_MAX_OUT 2097152
 static char p_out[P_MAX_OUT];
 static int p_olen;
 static int p_lbl;
@@ -60,20 +60,20 @@ static int p_gsz[P_MXGLOB];
 static int p_gby[P_MXGLOB];
 static int p_giv[P_MXGLOB];
 static int p_ng;
-#define P_MXST 32
-#define P_MXFD 192
-static char p_sn[1536];
+#define P_MXST 128
+#define P_MXFD 768
+static char p_sn[6144];
 static int p_ss[P_MXST];
 static int p_sfb[P_MXST];
 static int p_sfc[P_MXST];
 static int p_ns;
-static char p_fdn[9216];
+static char p_fdn[36864];
 static int p_fdt[P_MXFD];
 static int p_fdo[P_MXFD];
 static int p_fda[P_MXFD];
 static int p_nfd;
-#define P_MXTD 64
-static char p_tdn[3072];
+#define P_MXTD 256
+static char p_tdn[12288];
 static int p_tdt[P_MXTD];
 static int p_ntd;
 #define P_MXDEF 512

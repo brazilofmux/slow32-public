@@ -84,7 +84,7 @@ assemble "$MMIO_NO_START_SRC" "$WORKDIR/mmio_no_start.s32o" "$WORKDIR/mmio_no_st
 # --- Build libc (compiled by cc-min) ---
 echo "[2/4] Build libc"
 LIBC_OBJS=""
-for name in string_extra convert stdio; do
+for name in string_extra string_more ctype convert stdio malloc; do
     compile "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s" "$WORKDIR/${name}.cc.log"
     assemble "$WORKDIR/${name}.s" "$WORKDIR/${name}.s32o" "$WORKDIR/${name}.as.log"
     LIBC_OBJS="$LIBC_OBJS $WORKDIR/${name}.s32o"

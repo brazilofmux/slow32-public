@@ -185,7 +185,7 @@ run_exe "$AS_EXE" "$WORKDIR/mmio_no_start.log" "$MMIO_NO_START_SRC" "$WORKDIR/mm
 
 # Build libc (compiled by cc-min)
 LIBC_OBJS=""
-for name in string_extra convert stdio; do
+for name in string_extra string_more ctype convert stdio malloc; do
     run_exe "$GEN2_EXE" "$WORKDIR/${name}.cc.log" "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s"
     [[ -s "$WORKDIR/${name}.s" ]] || { echo "failed to compile ${name}.c" >&2; exit 1; }
     run_exe "$AS_EXE" "$WORKDIR/${name}.as.log" "$WORKDIR/${name}.s" "$WORKDIR/${name}.s32o"
@@ -305,7 +305,7 @@ PASS=$((PASS + 1))
 echo ""
 echo "=== Step 4: Parser tests ==="
 
-PARSE_TESTS="test_parse_smoke test_parse_expr test_parse_ctrl test_parse_ptr test_parse_mixed"
+PARSE_TESTS="test_parse_smoke test_parse_expr test_parse_ctrl test_parse_ptr test_parse_mixed test_malloc test_libc"
 
 for test_name in $PARSE_TESTS; do
     TOTAL=$((TOTAL + 1))
