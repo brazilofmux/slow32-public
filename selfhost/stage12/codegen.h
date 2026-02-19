@@ -153,11 +153,11 @@ static void cg_apply_binop(int op) {
     p_error("unknown binop");
 }
 
-static void gen_expr(struct Node *n);
-static void gen_stmt(struct Node *n);
+static void gen_expr(Node *n);
+static void gen_stmt(Node *n);
 
 /* Generate address of lvalue into r1 */
-static void gen_addr(struct Node *n) {
+static void gen_addr(Node *n) {
     char lbl[32];
     int i;
 
@@ -194,10 +194,10 @@ static void gen_addr(struct Node *n) {
 }
 
 /* Generate expression, result in r1 */
-static void gen_expr(struct Node *n) {
+static void gen_expr(Node *n) {
     int l1;
     int l2;
-    struct Node *a;
+    Node *a;
     int i;
     int elem_sz;
     char slbl[16];
@@ -507,7 +507,7 @@ static void gen_expr(struct Node *n) {
 }
 
 /* Generate statement */
-static void gen_stmt(struct Node *n) {
+static void gen_stmt(Node *n) {
     int l1;
     int l2;
     int l3;
@@ -520,8 +520,8 @@ static void gen_stmt(struct Node *n) {
     int cd;
     int ci2;
     int skip_lbl;
-    struct Node *s;
-    struct Node *cs;
+    Node *s;
+    Node *cs;
 
     if (!n) return;
 
@@ -759,7 +759,7 @@ static void gen_stmt(struct Node *n) {
 }
 
 /* Generate function */
-static void gen_func(struct Node *fn) {
+static void gen_func(Node *fn) {
     int fs;
     int i;
 
@@ -890,8 +890,8 @@ static void gen_data(void) {
 }
 
 /* Generate entire program */
-static void gen_program(struct Node *prog) {
-    struct Node *fn;
+static void gen_program(Node *prog) {
+    Node *fn;
 
     cg_s(".text\n\n");
     fn = prog->body;

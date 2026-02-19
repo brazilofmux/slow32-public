@@ -45,11 +45,17 @@ static char *ps_cname[PS_MAX_CONSTS];
 static int   ps_cval[PS_MAX_CONSTS];
 static int   ps_nconsts;
 
+/* Typedef table */
+#define PS_MAX_TYPEDEFS 128
+static char *ps_tdname[PS_MAX_TYPEDEFS];
+static int   ps_tdtype[PS_MAX_TYPEDEFS];
+static int   ps_ntypedefs;
+
 /* Forward declarations */
-static struct Node *parse_expr(void);
-static struct Node *parse_stmt(void);
-static struct Node *parse_assign(void);
-static struct Node *parse_postfix(void);
+static Node *parse_expr(void);
+static Node *parse_stmt(void);
+static Node *parse_assign(void);
+static Node *parse_postfix(void);
 
 /* --- Utilities --- */
 
@@ -95,6 +101,7 @@ static int is_type(void) {
     if (lex_tok == TK_VOID) return 1;
     if (lex_tok == TK_CHAR) return 1;
     if (lex_tok == TK_STRUCT) return 1;
+    if (lex_tok == TK_IDENT && find_typedef(lex_str) >= 0) return 1;
     return 0;
 }
 
@@ -108,6 +115,28 @@ static int find_const(char *name) {
         i = i - 1;
     }
     return -1;
+}
+
+/* --- Typedef helpers --- */
+
+static int find_typedef(char *name) {
+    int i;
+    i = ps_ntypedefs - 1;
+    while (i >= 0) {
+        if (strcmp(name, ps_tdname[i]) == 0) return ps_tdtype[i];
+        i = i - 1;
+    }
+    return -1;
+}
+
+static void add_typedef(char *name, int ty) {
+    if (ps_ntypedefs >= PS_MAX_TYPEDEFS) {
+        p_error("too many typedefs");
+        return;
+    }
+    ps_tdname[ps_ntypedefs] = strdup(name);
+    ps_tdtype[ps_ntypedefs] = ty;
+    ps_ntypedefs = ps_ntypedefs + 1;
 }
 
 /* Find or create a label for goto/label. Returns codegen label ID. */
@@ -276,6 +305,11 @@ static int parse_type(void) {
         }
         ty = TY_STRUCT_BASE + si;
     }
+    else if (lex_tok == TK_IDENT) {
+        ty = find_typedef(lex_str);
+        if (ty < 0) { p_error("expected type"); return TY_INT; }
+        next();
+    }
     else { p_error("expected type"); return TY_INT; }
     while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); }
     return ty;
@@ -362,14 +396,14 @@ static int add_global(char *name, int ty, int size_bytes) {
 
 /* --- Expression parser (operator precedence climbing) --- */
 
-static struct Node *parse_primary(void) {
-    struct Node *n;
+static Node *parse_primary(void) {
+    Node *n;
     int v;
     int ty;
     char nm[256];
-    struct Node *head;
-    struct Node *tail;
-    struct Node *arg;
+    Node *head;
+    Node *tail;
+    Node *arg;
     int nargs;
     int li;
     int gi;
@@ -490,10 +524,10 @@ static struct Node *parse_primary(void) {
 }
 
 /* Postfix: handle array subscript p[i], postfix ++/--, member access . and -> */
-static struct Node *parse_postfix(void) {
-    struct Node *n;
-    struct Node *idx;
-    struct Node *pi;
+static Node *parse_postfix(void) {
+    Node *n;
+    Node *idx;
+    Node *pi;
     int sty;
     int mi;
     char mnm[256];
@@ -563,8 +597,8 @@ static struct Node *parse_postfix(void) {
     return n;
 }
 
-static struct Node *parse_unary(void) {
-    struct Node *n;
+static Node *parse_unary(void) {
+    Node *n;
 
     if (lex_tok == TK_MINUS) {
         next();
@@ -609,8 +643,8 @@ static struct Node *parse_unary(void) {
     return parse_postfix();
 }
 
-static struct Node *parse_multiplicative(void) {
-    struct Node *n;
+static Node *parse_multiplicative(void) {
+    Node *n;
     int op;
 
     n = parse_unary();
@@ -622,8 +656,8 @@ static struct Node *parse_multiplicative(void) {
     return n;
 }
 
-static struct Node *parse_additive(void) {
-    struct Node *n;
+static Node *parse_additive(void) {
+    Node *n;
     int op;
 
     n = parse_multiplicative();
@@ -635,8 +669,8 @@ static struct Node *parse_additive(void) {
     return n;
 }
 
-static struct Node *parse_shift(void) {
-    struct Node *n;
+static Node *parse_shift(void) {
+    Node *n;
     int op;
 
     n = parse_additive();
@@ -648,8 +682,8 @@ static struct Node *parse_shift(void) {
     return n;
 }
 
-static struct Node *parse_relational(void) {
-    struct Node *n;
+static Node *parse_relational(void) {
+    Node *n;
     int op;
 
     n = parse_shift();
@@ -661,8 +695,8 @@ static struct Node *parse_relational(void) {
     return n;
 }
 
-static struct Node *parse_equality(void) {
-    struct Node *n;
+static Node *parse_equality(void) {
+    Node *n;
     int op;
 
     n = parse_relational();
@@ -674,8 +708,8 @@ static struct Node *parse_equality(void) {
     return n;
 }
 
-static struct Node *parse_band(void) {
-    struct Node *n;
+static Node *parse_band(void) {
+    Node *n;
 
     n = parse_equality();
     while (lex_tok == TK_AMP) {
@@ -685,8 +719,8 @@ static struct Node *parse_band(void) {
     return n;
 }
 
-static struct Node *parse_bxor(void) {
-    struct Node *n;
+static Node *parse_bxor(void) {
+    Node *n;
 
     n = parse_band();
     while (lex_tok == TK_CARET) {
@@ -696,8 +730,8 @@ static struct Node *parse_bxor(void) {
     return n;
 }
 
-static struct Node *parse_bor(void) {
-    struct Node *n;
+static Node *parse_bor(void) {
+    Node *n;
 
     n = parse_bxor();
     while (lex_tok == TK_PIPE) {
@@ -707,8 +741,8 @@ static struct Node *parse_bor(void) {
     return n;
 }
 
-static struct Node *parse_land(void) {
-    struct Node *n;
+static Node *parse_land(void) {
+    Node *n;
 
     n = parse_bor();
     while (lex_tok == TK_LAND) {
@@ -718,8 +752,8 @@ static struct Node *parse_land(void) {
     return n;
 }
 
-static struct Node *parse_lor(void) {
-    struct Node *n;
+static Node *parse_lor(void) {
+    Node *n;
 
     n = parse_land();
     while (lex_tok == TK_LOR) {
@@ -729,10 +763,10 @@ static struct Node *parse_lor(void) {
     return n;
 }
 
-static struct Node *parse_conditional(void) {
-    struct Node *n;
-    struct Node *then_e;
-    struct Node *else_e;
+static Node *parse_conditional(void) {
+    Node *n;
+    Node *then_e;
+    Node *else_e;
 
     n = parse_lor();
     if (lex_tok == TK_QMARK) {
@@ -745,8 +779,8 @@ static struct Node *parse_conditional(void) {
     return n;
 }
 
-static struct Node *parse_assign(void) {
-    struct Node *n;
+static Node *parse_assign(void) {
+    Node *n;
     int op;
 
     n = parse_conditional();
@@ -773,8 +807,8 @@ static struct Node *parse_assign(void) {
     return n;
 }
 
-static struct Node *parse_expr(void) {
-    struct Node *n;
+static Node *parse_expr(void) {
+    Node *n;
 
     n = parse_assign();
     while (lex_tok == TK_COMMA) {
@@ -786,13 +820,13 @@ static struct Node *parse_expr(void) {
 
 /* --- Statement parser --- */
 
-static struct Node *parse_block(void);
+static Node *parse_block(void);
 
-static struct Node *parse_stmt(void) {
-    struct Node *n;
-    struct Node *c;
-    struct Node *t;
-    struct Node *e;
+static Node *parse_stmt(void) {
+    Node *n;
+    Node *c;
+    Node *t;
+    Node *e;
     int ty;
     int off;
     int count;
@@ -1047,10 +1081,10 @@ static struct Node *parse_stmt(void) {
     return nd_expr_stmt(n);
 }
 
-static struct Node *parse_block(void) {
-    struct Node *head;
-    struct Node *tail;
-    struct Node *s;
+static Node *parse_block(void) {
+    Node *head;
+    Node *tail;
+    Node *s;
 
     expect(TK_LBRACE);
     head = NULL;
@@ -1077,11 +1111,11 @@ static void parse_type_and_stars(int *out_ty) {
     *out_ty = parse_type();
 }
 
-static struct Node *parse_top_decl(void) {
-    struct Node *fn;
-    struct Node *phead;
-    struct Node *ptail;
-    struct Node *p;
+static Node *parse_top_decl(void) {
+    Node *fn;
+    Node *phead;
+    Node *ptail;
+    Node *p;
     char nm[256];
     int ty;
     int pty;
@@ -1092,6 +1126,39 @@ static struct Node *parse_top_decl(void) {
 
     /* Skip static/const qualifiers (single-file compiler, no semantic effect) */
     while (lex_tok == TK_STATIC || lex_tok == TK_CONST) next();
+
+    /* Typedef */
+    if (lex_tok == TK_TYPEDEF) {
+        next();
+        ty = parse_type();
+        if (lex_tok == TK_LPAREN) {
+            /* Function pointer typedef: typedef int (*Name)(args); */
+            next();  /* skip ( */
+            if (lex_tok == TK_STAR) next();  /* skip * */
+            if (lex_tok != TK_IDENT) {
+                p_error("expected typedef name");
+                return NULL;
+            }
+            memcpy(nm, lex_str, lex_slen + 1);
+            next();
+            expect(TK_RPAREN);
+            /* Skip argument list */
+            expect(TK_LPAREN);
+            while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
+            expect(TK_RPAREN);
+            add_typedef(nm, TY_INT);  /* treat function pointers as int-sized */
+            expect(TK_SEMI);
+            return NULL;
+        }
+        if (lex_tok != TK_IDENT) {
+            p_error("expected typedef name");
+            return NULL;
+        }
+        add_typedef(lex_str, ty);
+        next();
+        expect(TK_SEMI);
+        return NULL;
+    }
 
     /* Enum definition at top level */
     if (lex_tok == TK_ENUM) {
@@ -1236,11 +1303,11 @@ params_done:
     return fn;
 }
 
-static struct Node *parse_program(void) {
-    struct Node *prog;
-    struct Node *fhead;
-    struct Node *ftail;
-    struct Node *f;
+static Node *parse_program(void) {
+    Node *prog;
+    Node *fhead;
+    Node *ftail;
+    Node *f;
 
     ps_nglobals = 0;
     next();  /* prime the first token */

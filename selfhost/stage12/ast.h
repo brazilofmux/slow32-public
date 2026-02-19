@@ -116,10 +116,12 @@ struct Node {
     struct Node *next;/* linked list sibling */
 };
 
+typedef struct Node Node;
+
 /* --- Constructors --- */
 
-static struct Node *nd_new(int kind) {
-    struct Node *n;
+static Node *nd_new(int kind) {
+    Node *n;
     n = calloc(1, sizeof(struct Node));
     if (!n) {
         fputs("s12cc: out of memory\n", stderr);
@@ -129,24 +131,24 @@ static struct Node *nd_new(int kind) {
     return n;
 }
 
-static struct Node *nd_num(int v) {
-    struct Node *n;
+static Node *nd_num(int v) {
+    Node *n;
     n = nd_new(ND_NUM);
     n->val = v;
     n->ty = TY_INT;
     return n;
 }
 
-static struct Node *nd_string(int pool_id) {
-    struct Node *n;
+static Node *nd_string(int pool_id) {
+    Node *n;
     n = nd_new(ND_STRING);
     n->val = pool_id;
     n->ty = TY_PTR + TY_CHAR;
     return n;
 }
 
-static struct Node *nd_var(char *nm, int off, int ty) {
-    struct Node *n;
+static Node *nd_var(char *nm, int off, int ty) {
+    Node *n;
     n = nd_new(ND_VAR);
     n->name = strdup(nm);
     n->offset = off;
@@ -154,8 +156,8 @@ static struct Node *nd_var(char *nm, int off, int ty) {
     return n;
 }
 
-static struct Node *nd_binop(int op, struct Node *l, struct Node *r) {
-    struct Node *n;
+static Node *nd_binop(int op, Node *l, Node *r) {
+    Node *n;
     n = nd_new(ND_BINOP);
     n->op = op;
     n->lhs = l;
@@ -174,8 +176,8 @@ static struct Node *nd_binop(int op, struct Node *l, struct Node *r) {
     return n;
 }
 
-static struct Node *nd_unary(int op, struct Node *operand) {
-    struct Node *n;
+static Node *nd_unary(int op, Node *operand) {
+    Node *n;
     n = nd_new(ND_UNARY);
     n->op = op;
     n->lhs = operand;
@@ -189,8 +191,8 @@ static struct Node *nd_unary(int op, struct Node *operand) {
     return n;
 }
 
-static struct Node *nd_assign(struct Node *l, struct Node *r) {
-    struct Node *n;
+static Node *nd_assign(Node *l, Node *r) {
+    Node *n;
     n = nd_new(ND_ASSIGN);
     n->lhs = l;
     n->rhs = r;
@@ -198,8 +200,8 @@ static struct Node *nd_assign(struct Node *l, struct Node *r) {
     return n;
 }
 
-static struct Node *nd_call(char *nm, struct Node *a, int na) {
-    struct Node *n;
+static Node *nd_call(char *nm, Node *a, int na) {
+    Node *n;
     n = nd_new(ND_CALL);
     n->name = strdup(nm);
     n->args = a;
@@ -208,15 +210,15 @@ static struct Node *nd_call(char *nm, struct Node *a, int na) {
     return n;
 }
 
-static struct Node *nd_return(struct Node *expr) {
-    struct Node *n;
+static Node *nd_return(Node *expr) {
+    Node *n;
     n = nd_new(ND_RETURN);
     n->lhs = expr;
     return n;
 }
 
-static struct Node *nd_if(struct Node *c, struct Node *then_b, struct Node *else_b) {
-    struct Node *n;
+static Node *nd_if(Node *c, Node *then_b, Node *else_b) {
+    Node *n;
     n = nd_new(ND_IF);
     n->cond = c;
     n->body = then_b;
@@ -224,39 +226,39 @@ static struct Node *nd_if(struct Node *c, struct Node *then_b, struct Node *else
     return n;
 }
 
-static struct Node *nd_while(struct Node *c, struct Node *b) {
-    struct Node *n;
+static Node *nd_while(Node *c, Node *b) {
+    Node *n;
     n = nd_new(ND_WHILE);
     n->cond = c;
     n->body = b;
     return n;
 }
 
-static struct Node *nd_block(struct Node *stmts) {
-    struct Node *n;
+static Node *nd_block(Node *stmts) {
+    Node *n;
     n = nd_new(ND_BLOCK);
     n->body = stmts;
     return n;
 }
 
-static struct Node *nd_expr_stmt(struct Node *expr) {
-    struct Node *n;
+static Node *nd_expr_stmt(Node *expr) {
+    Node *n;
     n = nd_new(ND_EXPR_STMT);
     n->lhs = expr;
     return n;
 }
 
-static struct Node *nd_do_while(struct Node *c, struct Node *b) {
-    struct Node *n;
+static Node *nd_do_while(Node *c, Node *b) {
+    Node *n;
     n = nd_new(ND_DO_WHILE);
     n->cond = c;
     n->body = b;
     return n;
 }
 
-static struct Node *nd_for(struct Node *init_e, struct Node *cond_e,
-                           struct Node *step_e, struct Node *body_s) {
-    struct Node *n;
+static Node *nd_for(Node *init_e, Node *cond_e,
+                    Node *step_e, Node *body_s) {
+    Node *n;
     n = nd_new(ND_FOR);
     n->init = init_e;
     n->cond = cond_e;
@@ -265,8 +267,8 @@ static struct Node *nd_for(struct Node *init_e, struct Node *cond_e,
     return n;
 }
 
-static struct Node *nd_comp_assign(int op, struct Node *l, struct Node *r) {
-    struct Node *n;
+static Node *nd_comp_assign(int op, Node *l, Node *r) {
+    Node *n;
     n = nd_new(ND_COMP_ASSIGN);
     n->op = op;
     n->lhs = l;
@@ -275,9 +277,9 @@ static struct Node *nd_comp_assign(int op, struct Node *l, struct Node *r) {
     return n;
 }
 
-static struct Node *nd_ternary(struct Node *c, struct Node *then_e,
-                               struct Node *else_e) {
-    struct Node *n;
+static Node *nd_ternary(Node *c, Node *then_e,
+                        Node *else_e) {
+    Node *n;
     n = nd_new(ND_TERNARY);
     n->cond = c;
     n->lhs = then_e;
@@ -286,16 +288,16 @@ static struct Node *nd_ternary(struct Node *c, struct Node *then_e,
     return n;
 }
 
-static struct Node *nd_cast(struct Node *expr, int ty) {
-    struct Node *n;
+static Node *nd_cast(Node *expr, int ty) {
+    Node *n;
     n = nd_new(ND_CAST);
     n->lhs = expr;
     n->ty = ty;
     return n;
 }
 
-static struct Node *nd_comma(struct Node *l, struct Node *r) {
-    struct Node *n;
+static Node *nd_comma(Node *l, Node *r) {
+    Node *n;
     n = nd_new(ND_COMMA);
     n->lhs = l;
     n->rhs = r;
@@ -303,8 +305,8 @@ static struct Node *nd_comma(struct Node *l, struct Node *r) {
     return n;
 }
 
-static struct Node *nd_member(struct Node *lhs, int offset, int mty) {
-    struct Node *n;
+static Node *nd_member(Node *lhs, int offset, int mty) {
+    Node *n;
     n = nd_new(ND_MEMBER);
     n->lhs = lhs;
     n->val = offset;
@@ -312,15 +314,15 @@ static struct Node *nd_member(struct Node *lhs, int offset, int mty) {
     return n;
 }
 
-static struct Node *nd_goto(int label_id) {
-    struct Node *n;
+static Node *nd_goto(int label_id) {
+    Node *n;
     n = nd_new(ND_GOTO);
     n->val = label_id;
     return n;
 }
 
-static struct Node *nd_label(int label_id, struct Node *stmt) {
-    struct Node *n;
+static Node *nd_label(int label_id, Node *stmt) {
+    Node *n;
     n = nd_new(ND_LABEL);
     n->val = label_id;
     n->body = stmt;

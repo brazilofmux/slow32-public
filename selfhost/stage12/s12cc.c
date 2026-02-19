@@ -62,7 +62,7 @@ int main(int argc, char **argv) {
     int i;
     int last_slash;
     char *src;
-    struct Node *prog;
+    Node *prog;
 
     if (argc < 3) {
         fputs("Usage: s12cc input.c output.s\n", stderr);
@@ -91,6 +91,7 @@ int main(int argc, char **argv) {
     pp_ndefs = 0;
     pp_skip = 0;
     pp_dep = 0;
+    ps_ntypedefs = 0;
 
     /* Read source file */
     fd = open(argv[1], 0);
