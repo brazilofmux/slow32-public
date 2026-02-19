@@ -8,4 +8,6 @@ main:
     # Print newline
     li r3, 10
     jal r31, putchar
-    ret
+    # Exit success
+    li r1, 0
+    halt
