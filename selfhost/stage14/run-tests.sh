@@ -1,17 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stage 12: New compiler (Ragel lexer + parser)
-#
-# Bootstrap chain:
-#   stage11/s32cc → compile stage12 sources
-#   stage05/s32-as → assemble
-#   stage07/s32-ld → link
-#
-# Tests:
-#   1) Duff's device test (nested switch + goto labels)
-#   2) Ragel lexer smoke test (compile + basic tokenize)
-#   3) Full lexer regression test (10 token test groups)
+# Stage 14: Compiler playground (copy of stage13, bootstrapped by stage13)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -34,7 +24,7 @@ usage() {
     cat <<USAGE
 Usage: $0 [--emu <path>] [--keep-artifacts]
 
-Stage12 tests: Ragel lexer + parser tests
+Stage14 tests: s12cc compiler tests (bootstrapped from stage13)
 USAGE
 }
 
@@ -68,7 +58,7 @@ fi
 
 [[ -f "$EMU" ]] || { echo "Missing emulator: $EMU" >&2; exit 1; }
 
-WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage12.XXXXXX)"
+WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage14.XXXXXX)"
 if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then
     trap 'rm -rf "$WORKDIR"' EXIT
 fi
@@ -193,7 +183,7 @@ RUNTIME_CRT0="$WORKDIR/crt0.s32o"
 RUNTIME_MMIO_NO_START_OBJ="$WORKDIR/mmio_no_start.s32o"
 LIBC_START_OBJ="$WORKDIR/start.s32o"
 
-echo "Compiler (stage11): $CC_EXE"
+echo "Compiler (stage11 for libc): $CC_EXE"
 echo "Assembler: $AS_EXE"
 echo "Linker: $LD_EXE"
 
@@ -202,142 +192,68 @@ FAIL=0
 TOTAL=0
 
 # ============================================================
-# Step 2: Duff's device test
+# Step 2: Build s14cc using stage13's s12cc
 # ============================================================
 echo ""
-echo "=== Step 2: Duff's device test ==="
-TOTAL=$((TOTAL + 1))
-DUFF_EXE=""
-DUFF_EXE=$(compile_and_link "test_duff" "$TESTS_DIR/test_duff.c") || true
-if [[ -n "$DUFF_EXE" && -s "$DUFF_EXE" ]]; then
-    set +e
-    run_exe_rc "$DUFF_EXE" "$WORKDIR/test_duff-run.log"
-    DUFF_RC=$?
-    set -e
-    if [[ "$DUFF_RC" -eq 0 ]]; then
-        printf "  %-30s PASS\n" "test_duff:"
-        PASS=$((PASS + 1))
-    else
-        printf "  %-30s FAIL (rc=%d)\n" "test_duff:" "$DUFF_RC"
-        cat "$WORKDIR/test_duff-run.log" >&2
-        FAIL=$((FAIL + 1))
-    fi
-else
-    printf "  %-30s FAIL (build)\n" "test_duff:"
-    FAIL=$((FAIL + 1))
-fi
+echo "=== Step 2: Build s14cc (compiled by stage13 s12cc) ==="
 
-# ============================================================
-# Step 3: Ragel lexer smoke test
-# ============================================================
-echo ""
-echo "=== Step 3: Ragel lexer smoke test ==="
+S13CC_EXE="$SELFHOST_DIR/stage13/s12cc.s32x"
+[[ -f "$S13CC_EXE" ]] || { echo "Missing s12cc (stage13): $S13CC_EXE" >&2; exit 1; }
 
-LEXER_GEN="$SCRIPT_DIR/c_lexer_gen.c"
-[[ -s "$LEXER_GEN" ]] || { echo "ERROR: c_lexer_gen.c not found (run gen_lexer.sh)" >&2; exit 1; }
-echo "  Lexer: $(wc -l < "$LEXER_GEN") lines, $(wc -c < "$LEXER_GEN") bytes"
-
-TOTAL=$((TOTAL + 1))
-SMOKE_SRC="$WORKDIR/lex_smoke.c"
-cp "$LEXER_GEN" "$SMOKE_SRC"
-printf '\nint main(void) {\n    char *src;\n    src = "int x;";\n    lex_init(src, strlen(src));\n    lex_next();\n    if (lex_tok != TK_INT) return 1;\n    lex_next();\n    if (lex_tok != TK_IDENT) return 2;\n    lex_next();\n    if (lex_tok != TK_SEMI) return 3;\n    lex_next();\n    if (lex_tok != TK_EOF) return 4;\n    return 0;\n}\n' >> "$SMOKE_SRC"
-
-echo "  Smoke source: $(wc -c < "$SMOKE_SRC") bytes"
-SMOKE_EXE=""
-SAVED_TIMEOUT="${EXEC_TIMEOUT:-180}"
-EXEC_TIMEOUT=300
-SMOKE_EXE=$(compile_and_link "lex_smoke" "$SMOKE_SRC") || true
-EXEC_TIMEOUT="$SAVED_TIMEOUT"
-if [[ -n "$SMOKE_EXE" && -s "$SMOKE_EXE" ]]; then
-    set +e
-    run_exe_rc "$SMOKE_EXE" "$WORKDIR/lex_smoke-run.log"
-    SMOKE_RC=$?
-    set -e
-    if [[ "$SMOKE_RC" -eq 0 ]]; then
-        printf "  %-30s PASS\n" "lex-smoke:"
-        PASS=$((PASS + 1))
-    else
-        printf "  %-30s FAIL (rc=%d)\n" "lex-smoke:" "$SMOKE_RC"
-        cat "$WORKDIR/lex_smoke-run.log" >&2
-        FAIL=$((FAIL + 1))
-    fi
-else
-    printf "  %-30s FAIL (build)\n" "lex-smoke:"
-    FAIL=$((FAIL + 1))
-fi
-
-# ============================================================
-# Step 4: Full lexer token tests
-# ============================================================
-echo ""
-echo "=== Step 4: Full lexer token tests ==="
-
-TOTAL=$((TOTAL + 1))
-MERGED_TEST="$WORKDIR/lex_test_merged.c"
-cp "$LEXER_GEN" "$MERGED_TEST"
-grep -v '^#include "c_lexer_gen.c"' "$TESTS_DIR/lex_test.c" >> "$MERGED_TEST"
-
-echo "  Test source: $(wc -c < "$MERGED_TEST") bytes"
-TEST_EXE=""
-SAVED_TIMEOUT="${EXEC_TIMEOUT:-180}"
-EXEC_TIMEOUT=300
-TEST_EXE=$(compile_and_link "lex_test" "$MERGED_TEST") || true
-EXEC_TIMEOUT="$SAVED_TIMEOUT"
-if [[ -n "$TEST_EXE" && -s "$TEST_EXE" ]]; then
-    set +e
-    run_exe_rc "$TEST_EXE" "$WORKDIR/lex_test-run.log"
-    TEST_RC=$?
-    set -e
-    if [[ "$TEST_RC" -eq 0 ]]; then
-        printf "  %-30s PASS\n" "lex-test:"
-        PASS=$((PASS + 1))
-        cat "$WORKDIR/lex_test-run.log"
-    else
-        printf "  %-30s FAIL (rc=%d)\n" "lex-test:" "$TEST_RC"
-        cat "$WORKDIR/lex_test-run.log" >&2
-        FAIL=$((FAIL + 1))
-    fi
-else
-    printf "  %-30s FAIL (build)\n" "lex-test:"
-    FAIL=$((FAIL + 1))
-fi
-
-# ============================================================
-# Step 5: s12cc compiler build + Phase 1 tests
-# ============================================================
-echo ""
-echo "=== Step 5: s12cc compiler tests ==="
-
-# Build s12cc
-S12CC_SRC="$SCRIPT_DIR/s12cc.c"
-[[ -s "$S12CC_SRC" ]] || { echo "ERROR: s12cc.c not found" >&2; exit 1; }
+S14CC_SRC="$SCRIPT_DIR/s12cc.c"
+[[ -s "$S14CC_SRC" ]] || { echo "ERROR: s12cc.c not found" >&2; exit 1; }
 
 TOTAL=$((TOTAL + 1))
 SAVED_TIMEOUT="${EXEC_TIMEOUT:-180}"
 EXEC_TIMEOUT=300
-S12CC_EXE=$(compile_and_link "s12cc" "$S12CC_SRC") || true
+
+# Compile stage14 source with stage13 compiler
+run_exe "$S13CC_EXE" "$WORKDIR/s14cc-compile.log" "$S14CC_SRC" "$WORKDIR/s14cc.s"
+if [[ ! -s "$WORKDIR/s14cc.s" ]]; then
+    printf "  %-30s FAIL (compile)\n" "s14cc-build:"
+    tail -n 20 "$WORKDIR/s14cc-compile.log" >&2
+    FAIL=$((FAIL + 1))
+else
+    run_exe "$AS_EXE" "$WORKDIR/s14cc-assemble.log" "$WORKDIR/s14cc.s" "$WORKDIR/s14cc.s32o"
+    if [[ ! -s "$WORKDIR/s14cc.s32o" ]]; then
+        printf "  %-30s FAIL (assemble)\n" "s14cc-build:"
+        FAIL=$((FAIL + 1))
+    else
+        run_exe "$LD_EXE" "$WORKDIR/s14cc-link.log" \
+            -o "$WORKDIR/s14cc.s32x" --mmio 64K \
+            "$RUNTIME_CRT0" "$WORKDIR/s14cc.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+            $LIBC_OBJS
+        if [[ ! -s "$WORKDIR/s14cc.s32x" ]]; then
+            printf "  %-30s FAIL (link)\n" "s14cc-build:"
+            FAIL=$((FAIL + 1))
+        else
+            printf "  %-30s PASS\n" "s14cc-build:"
+            PASS=$((PASS + 1))
+        fi
+    fi
+fi
 EXEC_TIMEOUT="$SAVED_TIMEOUT"
 
-if [[ -n "$S12CC_EXE" && -s "$S12CC_EXE" ]]; then
-    printf "  %-30s PASS\n" "s12cc-build:"
-    PASS=$((PASS + 1))
-else
-    printf "  %-30s FAIL (build)\n" "s12cc-build:"
-    FAIL=$((FAIL + 1))
-fi
+# ============================================================
+# Step 3: Test s14cc by compiling and running test programs
+# ============================================================
+S14CC_EXE="$WORKDIR/s14cc.s32x"
 
-# Run Phase 1 test programs using s12cc
-if [[ -n "$S12CC_EXE" && -s "$S12CC_EXE" ]]; then
+if [[ -s "$S14CC_EXE" ]]; then
+    CC_EXE="$S14CC_EXE"
+    echo ""
+    echo "=== Step 3: s14cc compiler tests ==="
+
     for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c "$TESTS_DIR"/test_phase3.c "$TESTS_DIR"/test_phase4.c "$TESTS_DIR"/test_phase5.c "$TESTS_DIR"/test_phase6.c "$TESTS_DIR"/test_phase7.c "$TESTS_DIR"/test_phase8.c "$TESTS_DIR"/test_phase9.c "$TESTS_DIR"/test_phase10.c "$TESTS_DIR"/test_phase11.c "$TESTS_DIR"/test_phase12.c; do
         [[ -f "$tst" ]] || continue
         tname="$(basename "$tst" .c)"
         TOTAL=$((TOTAL + 1))
 
-        # Compile with s12cc
-        run_exe "$S12CC_EXE" "$WORKDIR/${tname}-s12cc.log" "$tst" "$WORKDIR/${tname}.s"
+        # Compile with s14cc
+        run_exe "$CC_EXE" "$WORKDIR/${tname}-s14cc.log" "$tst" "$WORKDIR/${tname}.s"
         if [[ ! -s "$WORKDIR/${tname}.s" ]]; then
             printf "  %-30s FAIL (compile)\n" "$tname:"
-            tail -n 20 "$WORKDIR/${tname}-s12cc.log" >&2
+            tail -n 20 "$WORKDIR/${tname}-s14cc.log" >&2
             FAIL=$((FAIL + 1))
             continue
         fi
@@ -384,9 +300,9 @@ fi
 # ============================================================
 echo ""
 if [[ "$FAIL" -eq 0 ]]; then
-    echo "OK: stage12 ($PASS/$TOTAL tests passed)"
+    echo "OK: stage14 ($PASS/$TOTAL tests passed)"
 else
-    echo "FAIL: stage12 ($PASS/$TOTAL tests passed, $FAIL failed)" >&2
+    echo "FAIL: stage14 ($PASS/$TOTAL tests passed, $FAIL failed)" >&2
     exit 1
 fi
 

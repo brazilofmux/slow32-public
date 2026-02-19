@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build s12cc.s32x: the stage12 AST-based C compiler.
-# Uses: Stage 11 s32cc.s32x (compiler), Stage 05 s32-as.s32x (assembler),
+# Build s12cc.s32x: the stage14 AST-based C compiler.
+# Uses: Stage 13 s12cc.s32x (compiler), Stage 05 s32-as.s32x (assembler),
 #       Stage 07 s32-ld.s32x (linker).
 # Deposits the artifact in the script's directory.
 
@@ -23,7 +23,7 @@ if [[ -z "$EMU" ]]; then
     fi
 fi
 
-STAGE11_CC="$SELFHOST_DIR/stage11/s32cc.s32x"
+STAGE13_CC="$SELFHOST_DIR/stage13/s12cc.s32x"
 STAGE5_AS="$SELFHOST_DIR/stage05/s32-as.s32x"
 STAGE7_LD="$SELFHOST_DIR/stage07/s32-ld.s32x"
 
@@ -32,7 +32,7 @@ CRT0_SRC="$SELFHOST_DIR/stage05/crt0.s"
 MMIO_NO_START_SRC="$SELFHOST_DIR/stage05/mmio_no_start.s"
 OUT_EXE="$SCRIPT_DIR/s12cc.s32x"
 
-for f in "$EMU" "$STAGE11_CC" "$STAGE5_AS" "$STAGE7_LD" \
+for f in "$EMU" "$STAGE13_CC" "$STAGE5_AS" "$STAGE7_LD" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC" \
          "$SCRIPT_DIR/s12cc.c" "$SCRIPT_DIR/c_lexer_gen.c" \
          "$SCRIPT_DIR/ast.h" "$SCRIPT_DIR/parser.h" \
@@ -40,7 +40,7 @@ for f in "$EMU" "$STAGE11_CC" "$STAGE5_AS" "$STAGE7_LD" \
     [[ -f "$f" ]] || { echo "Missing: $f" >&2; exit 1; }
 done
 
-WORKDIR="$(mktemp -d /tmp/stage12-build.XXXXXX)"
+WORKDIR="$(mktemp -d /tmp/stage14-build.XXXXXX)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
 cd "$ROOT_DIR"
@@ -48,15 +48,15 @@ cd "$ROOT_DIR"
 compile() {
     local src="$1" asm="$2" log="$3"
     set +e
-    timeout "${EXEC_TIMEOUT:-300}" "$EMU" "$STAGE11_CC" "$src" "$asm" >"$log" 2>&1
+    timeout "${EXEC_TIMEOUT:-300}" "$EMU" "$STAGE13_CC" "$src" "$asm" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
-        echo "s32cc failed (rc=$rc): $src" >&2
+        echo "s12cc failed (rc=$rc): $src" >&2
         tail -n 40 "$log" >&2
         return 1
     fi
-    [[ -s "$asm" ]] || { echo "s32cc produced no output: $src" >&2; return 1; }
+    [[ -s "$asm" ]] || { echo "s12cc produced no output: $src" >&2; return 1; }
 }
 
 assemble() {
@@ -94,16 +94,21 @@ assemble "$MMIO_NO_START_SRC" "$WORKDIR/mmio_no_start.s32o" "$WORKDIR/mmio_no_st
 
 # --- Build libc (compiled by stage11 s32cc) ---
 echo "[2/4] Build libc"
+S11CC="$SELFHOST_DIR/stage11/s32cc.s32x"
 LIBC_OBJS=""
 for name in string_extra string_more ctype convert stdio malloc; do
-    compile "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s" "$WORKDIR/${name}.cc.log"
+    set +e
+    timeout "${EXEC_TIMEOUT:-300}" "$EMU" "$S11CC" "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s" >"$WORKDIR/${name}.cc.log" 2>&1
+    set -e
     assemble "$WORKDIR/${name}.s" "$WORKDIR/${name}.s32o" "$WORKDIR/${name}.as.log"
     LIBC_OBJS="$LIBC_OBJS $WORKDIR/${name}.s32o"
 done
-compile "$LIBC_DIR/start.c" "$WORKDIR/start.s" "$WORKDIR/start.cc.log"
+set +e
+timeout "${EXEC_TIMEOUT:-300}" "$EMU" "$S11CC" "$LIBC_DIR/start.c" "$WORKDIR/start.s" >"$WORKDIR/start.cc.log" 2>&1
+set -e
 assemble "$WORKDIR/start.s" "$WORKDIR/start.s32o" "$WORKDIR/start.as.log"
 
-# --- Compile s12cc ---
+# --- Compile s12cc with stage13 compiler ---
 echo "[3/4] Compile s12cc"
 compile "$SCRIPT_DIR/s12cc.c" "$WORKDIR/s12cc.s" "$WORKDIR/s12cc.cc.log"
 assemble "$WORKDIR/s12cc.s" "$WORKDIR/s12cc.s32o" "$WORKDIR/s12cc.as.log"

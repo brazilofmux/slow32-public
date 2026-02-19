@@ -3,9 +3,9 @@
 # This Makefile guides the student through the stage-by-stage progression.
 # Each stage has specific prerequisites and produces clear, minimal artifacts.
 
-.PHONY: all clean stage00 stage01 stage02 stage03 stage04 stage05 stage06 stage07 stage08 stage09 stage10 stage11 stage12
+.PHONY: all clean stage00 stage01 stage02 stage03 stage04 stage05 stage06 stage07 stage08 stage09 stage10 stage11 stage12 stage13 stage14
 
-all: stage12
+all: stage14
 
 # Stage 00: Minimum bootstrap emulator (the trust root)
 stage00:
@@ -100,6 +100,19 @@ stage12: stage11
 	@echo "--- Building Stage 12: s12cc AST Compiler ---"
 	$(MAKE) -C stage12
 
+# Stage 13: s12cc (copy of stage12, bootstrapped by stage12)
+# Prerequisites: Stage 12 s12cc (compiler), Stage 05 assembler, Stage 07 linker
+# Future purpose: add C features needed for real toolchain compilation
+stage13: stage12
+	@echo "--- Building Stage 13: s12cc (bootstrapped from stage12) ---"
+	$(MAKE) -C stage13
+
+# Stage 14: Compiler playground (copy of stage13, bootstrapped by stage13)
+# Prerequisites: Stage 13 s12cc (compiler), Stage 05 assembler, Stage 07 linker
+stage14: stage13
+	@echo "--- Building Stage 14: s12cc playground ---"
+	$(MAKE) -C stage14
+
 clean:
 	$(MAKE) -C stage00 clean
 	$(MAKE) -C stage01 clean
@@ -114,3 +127,5 @@ clean:
 	$(MAKE) -C stage10 clean
 	$(MAKE) -C stage11 clean
 	$(MAKE) -C stage12 clean
+	$(MAKE) -C stage13 clean
+	$(MAKE) -C stage14 clean
