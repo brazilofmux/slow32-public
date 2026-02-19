@@ -542,6 +542,10 @@ static void lex_parse_id(char *ts, char *te) {
 
 void lex_init(char *src, int len) {
     int i;
+    int cs;
+    char *ts;
+    char *te;
+    int act;
     i = 0;
     while (i < len && i < LEX_SRC_SZ - 1) {
         lex_src[i] = src[i];
