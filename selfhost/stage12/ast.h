@@ -49,6 +49,16 @@ static int ty_deref(int ty) {
 #define ND_PROGRAM  12   /* top-level program */
 #define ND_EXPR_STMT 13  /* expression statement (expr;) */
 #define ND_STRING   14   /* string literal */
+#define ND_DO_WHILE 15   /* do-while loop */
+#define ND_BREAK    16   /* break statement */
+#define ND_CONTINUE 17   /* continue statement */
+#define ND_FOR      18   /* for loop (first-class) */
+#define ND_COMP_ASSIGN 19 /* compound assignment (+=, -=, etc.) */
+#define ND_POST_INC 20   /* postfix ++ */
+#define ND_POST_DEC 21   /* postfix -- */
+#define ND_TERNARY  22   /* ternary ?: */
+#define ND_CAST     23   /* type cast */
+#define ND_COMMA    24   /* comma operator */
 
 /* --- AST node --- */
 struct Node {
@@ -65,7 +75,9 @@ struct Node {
     struct Node *lhs; /* BINOP/ASSIGN/UNARY: left/operand */
     struct Node *rhs; /* BINOP/ASSIGN: right */
     struct Node *cond;/* IF/WHILE: condition */
-    struct Node *body;/* BLOCK/FUNC/WHILE/IF(then): body/statements */
+    struct Node *body;/* BLOCK/FUNC/WHILE/IF(then)/FOR: body/statements */
+    struct Node *init;/* FOR: init expression */
+    struct Node *step;/* FOR: step expression */
     struct Node *els; /* IF: else branch */
     struct Node *args;/* CALL: argument list; FUNC: parameter list */
     struct Node *next;/* linked list sibling */
@@ -198,5 +210,62 @@ static struct Node *nd_expr_stmt(struct Node *expr) {
     struct Node *n;
     n = nd_new(ND_EXPR_STMT);
     n->lhs = expr;
+    return n;
+}
+
+static struct Node *nd_do_while(struct Node *c, struct Node *b) {
+    struct Node *n;
+    n = nd_new(ND_DO_WHILE);
+    n->cond = c;
+    n->body = b;
+    return n;
+}
+
+static struct Node *nd_for(struct Node *init_e, struct Node *cond_e,
+                           struct Node *step_e, struct Node *body_s) {
+    struct Node *n;
+    n = nd_new(ND_FOR);
+    n->init = init_e;
+    n->cond = cond_e;
+    n->step = step_e;
+    n->body = body_s;
+    return n;
+}
+
+static struct Node *nd_comp_assign(int op, struct Node *l, struct Node *r) {
+    struct Node *n;
+    n = nd_new(ND_COMP_ASSIGN);
+    n->op = op;
+    n->lhs = l;
+    n->rhs = r;
+    n->ty = l->ty;
+    return n;
+}
+
+static struct Node *nd_ternary(struct Node *c, struct Node *then_e,
+                               struct Node *else_e) {
+    struct Node *n;
+    n = nd_new(ND_TERNARY);
+    n->cond = c;
+    n->lhs = then_e;
+    n->rhs = else_e;
+    n->ty = then_e->ty;
+    return n;
+}
+
+static struct Node *nd_cast(struct Node *expr, int ty) {
+    struct Node *n;
+    n = nd_new(ND_CAST);
+    n->lhs = expr;
+    n->ty = ty;
+    return n;
+}
+
+static struct Node *nd_comma(struct Node *l, struct Node *r) {
+    struct Node *n;
+    n = nd_new(ND_COMMA);
+    n->lhs = l;
+    n->rhs = r;
+    n->ty = r->ty;
     return n;
 }

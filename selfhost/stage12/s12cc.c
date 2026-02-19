@@ -91,6 +91,7 @@ int main(int argc, char **argv) {
     /* Codegen */
     cg_olen = 0;
     cg_lbl = 0;
+    cg_loop_depth = 0;
     gen_program(prog);
 
     /* Write output */

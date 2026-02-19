@@ -14,6 +14,11 @@ static int  cg_olen;
 static int  cg_lbl;    /* label counter (monotonically increasing) */
 static int  cg_epilog; /* current function's epilog label */
 
+#define CG_MAX_LOOP 16
+static int cg_break_lbl[CG_MAX_LOOP];
+static int cg_cont_lbl[CG_MAX_LOOP];
+static int cg_loop_depth;
+
 static void cg_c(int ch) {
     if (cg_olen < CG_MAX_OUT - 1) {
         cg_out[cg_olen] = ch;
@@ -129,6 +134,21 @@ static void cg_store(int ty) {
 
 /* --- Code generation --- */
 
+/* Apply binary operation: r1 = r2 op r1 */
+static void cg_apply_binop(int op) {
+    if (op == TK_PLUS)    { cg_s("    add r1, r2, r1\n"); return; }
+    if (op == TK_MINUS)   { cg_s("    sub r1, r2, r1\n"); return; }
+    if (op == TK_STAR)    { cg_s("    mul r1, r2, r1\n"); return; }
+    if (op == TK_SLASH)   { cg_s("    div r1, r2, r1\n"); return; }
+    if (op == TK_PERCENT) { cg_s("    rem r1, r2, r1\n"); return; }
+    if (op == TK_AMP)     { cg_s("    and r1, r2, r1\n"); return; }
+    if (op == TK_PIPE)    { cg_s("    or r1, r2, r1\n"); return; }
+    if (op == TK_CARET)   { cg_s("    xor r1, r2, r1\n"); return; }
+    if (op == TK_LSHIFT)  { cg_s("    sll r1, r2, r1\n"); return; }
+    if (op == TK_RSHIFT)  { cg_s("    sra r1, r2, r1\n"); return; }
+    p_error("unknown binop");
+}
+
 static void gen_expr(struct Node *n);
 static void gen_stmt(struct Node *n);
 
@@ -236,6 +256,13 @@ static void gen_expr(struct Node *n) {
             gen_addr(n->lhs);
             return;
         }
+        /* Bitwise NOT ~x: r1 = r1 XOR -1 */
+        if (n->op == TK_TILDE) {
+            gen_expr(n->lhs);
+            cg_s("    addi r2, r0, -1\n");
+            cg_s("    xor r1, r1, r2\n");
+            return;
+        }
         p_error("unknown unary op");
         return;
     }
@@ -330,6 +357,96 @@ static void gen_expr(struct Node *n) {
         return;
     }
 
+    if (n->kind == ND_COMP_ASSIGN) {
+        /* Compound assignment: lhs op= rhs
+         * Stack plan: push addr, load old_val, push old_val,
+         * gen_expr(rhs), pop old_val, apply op, store back */
+        gen_addr(n->lhs);
+        cg_push();              /* stack: [addr], r1 = addr still */
+        cg_load(n->ty);         /* r1 = old_val */
+        cg_push();              /* stack: [addr, old_val] */
+        gen_expr(n->rhs);       /* r1 = rhs */
+        /* Pointer arithmetic scaling for += and -= */
+        if (ty_is_ptr(n->ty)) {
+            if (n->op == TK_PLUS || n->op == TK_MINUS) {
+                elem_sz = ty_size(ty_deref(n->ty));
+                if (elem_sz > 1) {
+                    cg_s("    addi r2, r0, ");
+                    cg_n(elem_sz);
+                    cg_c(10);
+                    cg_s("    mul r1, r1, r2\n");
+                }
+            }
+        }
+        cg_pop();               /* r2 = old_val, stack: [addr] */
+        cg_apply_binop(n->op);  /* r1 = r2 op r1 = new_val */
+        /* Store new_val back to addr */
+        cg_s("    addi r2, r1, 0\n");   /* r2 = new_val */
+        cg_s("    ldw r1, r29, 0\n    addi r29, r29, 4\n"); /* pop addr → r1 */
+        cg_store(n->ty);               /* mem[r1] = r2 */
+        cg_s("    addi r1, r2, 0\n");   /* r1 = new_val (result) */
+        return;
+    }
+
+    if (n->kind == ND_POST_INC || n->kind == ND_POST_DEC) {
+        /* Postfix ++/--: result is old value */
+        gen_addr(n->lhs);
+        cg_push();              /* stack: [addr], r1 = addr */
+        cg_load(n->ty);         /* r1 = old_val */
+        cg_push();              /* stack: [addr, old_val] */
+        /* Compute new_val = old_val +/- step */
+        if (ty_is_ptr(n->ty)) {
+            elem_sz = ty_size(ty_deref(n->ty));
+        } else {
+            elem_sz = 1;
+        }
+        if (n->kind == ND_POST_INC) {
+            cg_s("    addi r1, r1, ");
+            cg_n(elem_sz);
+            cg_c(10);
+        } else {
+            cg_s("    addi r1, r1, -");
+            cg_n(elem_sz);
+            cg_c(10);
+        }
+        /* r1 = new_val, store back */
+        cg_s("    addi r2, r1, 0\n");         /* r2 = new_val */
+        cg_s("    ldw r1, r29, 4\n");          /* r1 = addr (below old_val) */
+        cg_store(n->ty);                       /* mem[r1] = r2 (new_val) */
+        /* Pop old_val as result, clean stack */
+        cg_s("    ldw r1, r29, 0\n    addi r29, r29, 8\n"); /* r1 = old_val */
+        return;
+    }
+
+    if (n->kind == ND_TERNARY) {
+        l1 = cg_label();   /* false branch */
+        l2 = cg_label();   /* end */
+        gen_expr(n->cond);
+        cg_s("    beq r1, r0, ");
+        cg_lref(l1);
+        cg_c(10);
+        gen_expr(n->lhs);  /* then expr */
+        cg_s("    jal r0, ");
+        cg_lref(l2);
+        cg_c(10);
+        cg_ldef(l1);
+        gen_expr(n->rhs);  /* else expr */
+        cg_ldef(l2);
+        return;
+    }
+
+    if (n->kind == ND_CAST) {
+        gen_expr(n->lhs);
+        /* No-op for 32-bit types — just changes the type tag */
+        return;
+    }
+
+    if (n->kind == ND_COMMA) {
+        gen_expr(n->lhs);  /* discard result */
+        gen_expr(n->rhs);  /* keep result in r1 */
+        return;
+    }
+
     if (n->kind == ND_CALL) {
         /* Evaluate all args left-to-right and push */
         a = n->args;
@@ -366,6 +483,7 @@ static void gen_expr(struct Node *n) {
 static void gen_stmt(struct Node *n) {
     int l1;
     int l2;
+    int l3;
     struct Node *s;
 
     if (!n) return;
@@ -406,8 +524,11 @@ static void gen_stmt(struct Node *n) {
     }
 
     if (n->kind == ND_WHILE) {
-        l1 = cg_label();
-        l2 = cg_label();
+        l1 = cg_label();   /* loop_top = continue target */
+        l2 = cg_label();   /* break target */
+        cg_break_lbl[cg_loop_depth] = l2;
+        cg_cont_lbl[cg_loop_depth] = l1;
+        cg_loop_depth = cg_loop_depth + 1;
         cg_ldef(l1);
         gen_expr(n->cond);
         cg_s("    beq r1, r0, ");
@@ -418,6 +539,66 @@ static void gen_stmt(struct Node *n) {
         cg_lref(l1);
         cg_c(10);
         cg_ldef(l2);
+        cg_loop_depth = cg_loop_depth - 1;
+        return;
+    }
+
+    if (n->kind == ND_DO_WHILE) {
+        l1 = cg_label();   /* loop_top */
+        l2 = cg_label();   /* cont_label */
+        l3 = cg_label();   /* break_label */
+        cg_break_lbl[cg_loop_depth] = l3;
+        cg_cont_lbl[cg_loop_depth] = l2;
+        cg_loop_depth = cg_loop_depth + 1;
+        cg_ldef(l1);
+        gen_stmt(n->body);
+        cg_ldef(l2);
+        gen_expr(n->cond);
+        cg_s("    bne r1, r0, ");
+        cg_lref(l1);
+        cg_c(10);
+        cg_ldef(l3);
+        cg_loop_depth = cg_loop_depth - 1;
+        return;
+    }
+
+    if (n->kind == ND_FOR) {
+        l1 = cg_label();   /* loop_top */
+        l2 = cg_label();   /* cont_label (before step) */
+        l3 = cg_label();   /* break_label */
+        cg_break_lbl[cg_loop_depth] = l3;
+        cg_cont_lbl[cg_loop_depth] = l2;
+        cg_loop_depth = cg_loop_depth + 1;
+        if (n->init) gen_expr(n->init);
+        cg_ldef(l1);
+        gen_expr(n->cond);
+        cg_s("    beq r1, r0, ");
+        cg_lref(l3);
+        cg_c(10);
+        gen_stmt(n->body);
+        cg_ldef(l2);
+        if (n->step) gen_expr(n->step);
+        cg_s("    jal r0, ");
+        cg_lref(l1);
+        cg_c(10);
+        cg_ldef(l3);
+        cg_loop_depth = cg_loop_depth - 1;
+        return;
+    }
+
+    if (n->kind == ND_BREAK) {
+        if (cg_loop_depth < 1) p_error("break outside loop");
+        cg_s("    jal r0, ");
+        cg_lref(cg_break_lbl[cg_loop_depth - 1]);
+        cg_c(10);
+        return;
+    }
+
+    if (n->kind == ND_CONTINUE) {
+        if (cg_loop_depth < 1) p_error("continue outside loop");
+        cg_s("    jal r0, ");
+        cg_lref(cg_cont_lbl[cg_loop_depth - 1]);
+        cg_c(10);
         return;
     }
 

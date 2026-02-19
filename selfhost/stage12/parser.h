@@ -157,6 +157,7 @@ static int add_global(char *name, int ty, int size_bytes) {
 static struct Node *parse_primary(void) {
     struct Node *n;
     int v;
+    int ty;
     char nm[256];
     struct Node *head;
     struct Node *tail;
@@ -241,9 +242,15 @@ static struct Node *parse_primary(void) {
         return nd_num(0);
     }
 
-    /* Parenthesized expression */
+    /* Parenthesized expression or type cast */
     if (lex_tok == TK_LPAREN) {
         next();
+        if (is_type()) {
+            ty = parse_type();
+            expect(TK_RPAREN);
+            n = parse_unary();
+            return nd_cast(n, ty);
+        }
         n = parse_expr();
         expect(TK_RPAREN);
         return n;
@@ -267,20 +274,34 @@ static struct Node *parse_primary(void) {
     return nd_num(0);
 }
 
-/* Postfix: handle array subscript p[i] */
+/* Postfix: handle array subscript p[i], postfix ++/-- */
 static struct Node *parse_postfix(void) {
     struct Node *n;
     struct Node *idx;
-    int elem_sz;
+    struct Node *pi;
 
     n = parse_primary();
-    while (lex_tok == TK_LBRACK) {
-        next();
-        idx = parse_expr();
-        expect(TK_RBRACK);
-        /* n[idx] → *(n + idx)  — codegen handles pointer arithmetic scaling */
-        n = nd_binop(TK_PLUS, n, idx);
-        n = nd_unary(TK_STAR, n);
+    while (lex_tok == TK_LBRACK || lex_tok == TK_INC || lex_tok == TK_DEC) {
+        if (lex_tok == TK_LBRACK) {
+            next();
+            idx = parse_expr();
+            expect(TK_RBRACK);
+            /* n[idx] → *(n + idx)  — codegen handles pointer arithmetic scaling */
+            n = nd_binop(TK_PLUS, n, idx);
+            n = nd_unary(TK_STAR, n);
+        } else if (lex_tok == TK_INC) {
+            next();
+            pi = nd_new(ND_POST_INC);
+            pi->lhs = n;
+            pi->ty = n->ty;
+            n = pi;
+        } else {
+            next();
+            pi = nd_new(ND_POST_DEC);
+            pi->lhs = n;
+            pi->ty = n->ty;
+            n = pi;
+        }
     }
     return n;
 }
@@ -297,6 +318,24 @@ static struct Node *parse_unary(void) {
         next();
         n = parse_unary();
         return nd_unary(TK_BANG, n);
+    }
+    /* Bitwise NOT */
+    if (lex_tok == TK_TILDE) {
+        next();
+        n = parse_unary();
+        return nd_unary(TK_TILDE, n);
+    }
+    /* Prefix ++ (desugar to compound assign) */
+    if (lex_tok == TK_INC) {
+        next();
+        n = parse_unary();
+        return nd_comp_assign(TK_PLUS, n, nd_num(1));
+    }
+    /* Prefix -- (desugar to compound assign) */
+    if (lex_tok == TK_DEC) {
+        next();
+        n = parse_unary();
+        return nd_comp_assign(TK_MINUS, n, nd_num(1));
     }
     /* Dereference */
     if (lex_tok == TK_STAR) {
@@ -339,15 +378,28 @@ static struct Node *parse_additive(void) {
     return n;
 }
 
-static struct Node *parse_relational(void) {
+static struct Node *parse_shift(void) {
     struct Node *n;
     int op;
 
     n = parse_additive();
-    while (lex_tok == TK_LT || lex_tok == TK_GT || lex_tok == TK_LE || lex_tok == TK_GE) {
+    while (lex_tok == TK_LSHIFT || lex_tok == TK_RSHIFT) {
         op = lex_tok;
         next();
         n = nd_binop(op, n, parse_additive());
+    }
+    return n;
+}
+
+static struct Node *parse_relational(void) {
+    struct Node *n;
+    int op;
+
+    n = parse_shift();
+    while (lex_tok == TK_LT || lex_tok == TK_GT || lex_tok == TK_LE || lex_tok == TK_GE) {
+        op = lex_tok;
+        next();
+        n = nd_binop(op, n, parse_shift());
     }
     return n;
 }
@@ -420,19 +472,59 @@ static struct Node *parse_lor(void) {
     return n;
 }
 
-static struct Node *parse_assign(void) {
+static struct Node *parse_conditional(void) {
     struct Node *n;
+    struct Node *then_e;
+    struct Node *else_e;
 
     n = parse_lor();
+    if (lex_tok == TK_QMARK) {
+        next();
+        then_e = parse_expr();
+        expect(TK_COLON);
+        else_e = parse_conditional();
+        n = nd_ternary(n, then_e, else_e);
+    }
+    return n;
+}
+
+static struct Node *parse_assign(void) {
+    struct Node *n;
+    int op;
+
+    n = parse_conditional();
     if (lex_tok == TK_ASSIGN) {
         next();
-        n = nd_assign(n, parse_assign());
+        return nd_assign(n, parse_assign());
+    }
+    /* Compound assignment operators */
+    op = 0;
+    if (lex_tok == TK_PLUSEQ)    { op = TK_PLUS;    }
+    if (lex_tok == TK_MINUSEQ)   { op = TK_MINUS;   }
+    if (lex_tok == TK_STAREQ)    { op = TK_STAR;    }
+    if (lex_tok == TK_SLASHEQ)   { op = TK_SLASH;   }
+    if (lex_tok == TK_PERCENTEQ) { op = TK_PERCENT; }
+    if (lex_tok == TK_AMPEQ)     { op = TK_AMP;     }
+    if (lex_tok == TK_PIPEEQ)    { op = TK_PIPE;    }
+    if (lex_tok == TK_CARETEQ)   { op = TK_CARET;   }
+    if (lex_tok == TK_LSHIFTEQ)  { op = TK_LSHIFT;  }
+    if (lex_tok == TK_RSHIFTEQ)  { op = TK_RSHIFT;  }
+    if (op) {
+        next();
+        return nd_comp_assign(op, n, parse_assign());
     }
     return n;
 }
 
 static struct Node *parse_expr(void) {
-    return parse_assign();
+    struct Node *n;
+
+    n = parse_assign();
+    while (lex_tok == TK_COMMA) {
+        next();
+        n = nd_comma(n, parse_assign());
+    }
+    return n;
 }
 
 /* --- Statement parser --- */
@@ -476,6 +568,21 @@ static struct Node *parse_stmt(void) {
         return nd_if(c, t, e);
     }
 
+    /* do/while statement */
+    if (lex_tok == TK_DO) {
+        next();
+        t = parse_stmt();
+        if (lex_tok != TK_WHILE) {
+            p_error("expected 'while' after do body");
+        }
+        next();
+        expect(TK_LPAREN);
+        c = parse_expr();
+        expect(TK_RPAREN);
+        expect(TK_SEMI);
+        return nd_do_while(c, t);
+    }
+
     /* while statement */
     if (lex_tok == TK_WHILE) {
         next();
@@ -486,7 +593,7 @@ static struct Node *parse_stmt(void) {
         return nd_while(c, t);
     }
 
-    /* for statement: for (init; cond; step) body → { init; while(cond) { body; step; } } */
+    /* for statement (first-class node) */
     if (lex_tok == TK_FOR) {
         next();
         expect(TK_LPAREN);
@@ -516,36 +623,21 @@ static struct Node *parse_stmt(void) {
         }
         /* body */
         t = parse_stmt();
-        /* Build: { init_stmt; while(cond) { body; step_stmt; } } */
-        if (e) {
-            /* Append step to body */
-            if (t->kind == ND_BLOCK) {
-                /* find tail of body's statement list */
-                struct Node *s;
-                s = t->body;
-                if (s) {
-                    while (s->next) s = s->next;
-                    s->next = nd_expr_stmt(e);
-                } else {
-                    t->body = nd_expr_stmt(e);
-                }
-            } else {
-                /* wrap body + step in a block */
-                struct Node *step_stmt;
-                step_stmt = nd_expr_stmt(e);
-                t->next = step_stmt;
-                t = nd_block(t);
-            }
-        }
-        t = nd_while(c, t);
-        if (n) {
-            /* wrap init + while in a block */
-            struct Node *init_stmt;
-            init_stmt = nd_expr_stmt(n);
-            init_stmt->next = t;
-            return nd_block(init_stmt);
-        }
-        return t;
+        return nd_for(n, c, e, t);
+    }
+
+    /* break statement */
+    if (lex_tok == TK_BREAK) {
+        next();
+        expect(TK_SEMI);
+        return nd_new(ND_BREAK);
+    }
+
+    /* continue statement */
+    if (lex_tok == TK_CONTINUE) {
+        next();
+        expect(TK_SEMI);
+        return nd_new(ND_CONTINUE);
     }
 
     /* block */
