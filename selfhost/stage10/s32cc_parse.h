@@ -70,6 +70,7 @@ static int p_ns;
 static char p_fdn[9216];
 static int p_fdt[P_MXFD];
 static int p_fdo[P_MXFD];
+static int p_fda[P_MXFD];
 static int p_nfd;
 #define P_MXTD 64
 static char p_tdn[3072];
@@ -186,7 +187,7 @@ static void p_assign(void);
 static void p_stmt(void);
 
 /* Struct parsing */
-static void p_stbody(int si){int bt;int pt;int ft;int off;int ar;int fsz;off=0;p_sfb[si]=p_nfd;while(lex_tok!=TK_RBRACE&&lex_tok!=TK_EOF){bt=p_btype();pt=p_pstars();ft=bt|(pt<<8);if(lex_tok!=TK_IDENT){p_err("EF");return;}if(!((ft&255)==TY_CHAR&&((ft>>8)&255)==0))off=((off+3)/4)*4;if(p_nfd<P_MXFD){p_sset(p_fdn,p_nfd,lex_str);p_fdt[p_nfd]=ft;p_fdo[p_nfd]=off;p_nfd=p_nfd+1;}next();if(lex_tok==TK_LBRACK){next();ar=lex_val;p_expect(TK_NUM);p_expect(TK_RBRACK);fsz=4;if((ft&255)==TY_CHAR&&((ft>>8)&255)==0)fsz=1;if((ft&255)==TY_STRUCT&&((ft>>8)&255)==0)fsz=p_ss[(ft>>16)&127];off=off+ar*fsz;}else{if((ft&255)==TY_CHAR&&((ft>>8)&255)==0)off=off+1;else if((ft&255)==TY_STRUCT&&((ft>>8)&255)==0)off=off+p_ss[(ft>>16)&127];else off=off+4;}p_expect(TK_SEMI);}off=((off+3)/4)*4;p_sfc[si]=p_nfd-p_sfb[si];p_ss[si]=off;p_expect(TK_RBRACE);}
+static void p_stbody(int si){int bt;int pt;int ft;int off;int ar;int fsz;off=0;p_sfb[si]=p_nfd;while(lex_tok!=TK_RBRACE&&lex_tok!=TK_EOF){bt=p_btype();pt=p_pstars();ft=bt|(pt<<8);if(lex_tok!=TK_IDENT){p_err("EF");return;}if(!((ft&255)==TY_CHAR&&((ft>>8)&255)==0))off=((off+3)/4)*4;if(p_nfd<P_MXFD){p_sset(p_fdn,p_nfd,lex_str);p_fdt[p_nfd]=ft;p_fdo[p_nfd]=off;p_fda[p_nfd]=0;p_nfd=p_nfd+1;}next();if(lex_tok==TK_LBRACK){next();ar=lex_val;p_expect(TK_NUM);p_expect(TK_RBRACK);if(p_nfd>0)p_fda[p_nfd-1]=1;fsz=4;if((ft&255)==TY_CHAR&&((ft>>8)&255)==0)fsz=1;if((ft&255)==TY_STRUCT&&((ft>>8)&255)==0)fsz=p_ss[(ft>>16)&127];off=off+ar*fsz;}else{if((ft&255)==TY_CHAR&&((ft>>8)&255)==0)off=off+1;else if((ft&255)==TY_STRUCT&&((ft>>8)&255)==0)off=off+p_ss[(ft>>16)&127];else off=off+4;}p_expect(TK_SEMI);}off=((off+3)/4)*4;p_sfc[si]=p_nfd-p_sfb[si];p_ss[si]=off;p_expect(TK_RBRACE);}
 
 static int p_stref(void){char s[128];int si;int nm;next();nm=0;s[0]=0;if(lex_tok==TK_IDENT){p_scpy(s,lex_str,128);next();nm=1;}if(lex_tok==TK_LBRACE){if(nm){si=p_fst(s);if(si<0)si=p_ast(s);}else{si=p_ast("");}next();p_stbody(si);return TY_STRUCT|(si<<16);}if(!nm){p_err("ST");return TY_INT;}si=p_fst(s);if(si<0)si=p_ast(s);return TY_STRUCT|(si<<16);}
 
@@ -303,7 +304,9 @@ static void p_postfix(void) {
             if (fi < 0) { p_err("UF"); next(); return; }
             fo = p_fdo[fi]; ft = p_fdt[fi];
             if (fo != 0) { pe("    addi r1, r1, "); pn(fo); pc(10); }
-            p_ety = ft; p_lval = 1; next();
+            if (p_fda[fi]) { p_ety = (ft & 255) | (((ft >> 8 & 255) + 1) << 8) | (ft & 0x7F0000); p_lval = 0; }
+            else { p_ety = ft; p_lval = 1; }
+            next();
         } else if (lex_tok == TK_ARROW) {
             p_l2r(); next();
             if (lex_tok != TK_IDENT) { p_err("EF"); return; }
@@ -313,7 +316,9 @@ static void p_postfix(void) {
             if (fi < 0) { p_err("UF"); next(); return; }
             fo = p_fdo[fi]; ft = p_fdt[fi];
             if (fo != 0) { pe("    addi r1, r1, "); pn(fo); pc(10); }
-            p_ety = ft; p_lval = 1; next();
+            if (p_fda[fi]) { p_ety = (ft & 255) | (((ft >> 8 & 255) + 1) << 8) | (ft & 0x7F0000); p_lval = 0; }
+            else { p_ety = ft; p_lval = 1; }
+            next();
         } else if (lex_tok == TK_INC) {
             sc = p_psc(p_ety); if (sc == 0) sc = 1;
             if (p_lval) {
