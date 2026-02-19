@@ -557,6 +557,7 @@ static void p_stmt(void) {
     int osoff;
     int oisw;
     int i;
+    int sk;
 
     if (lex_tok == TK_LBRACE) { next(); snl = p_nl; p_compound(); p_nl = snl; return; }
     if (p_isty()) { p_ldecl(); return; }
@@ -644,7 +645,10 @@ static void p_stmt(void) {
         i = osnc;
         while (i < p_swn) {
             pe("    addi r2, r0, "); pn(p_swv[i]); pc(10);
-            pe("    beq r1, r2, "); p_lr(p_swl[i]); pc(10);
+            sk = p_nl2();
+            pe("    bne r1, r2, "); p_lr(sk); pc(10);
+            pe("    jal r0, "); p_lr(p_swl[i]); pc(10);
+            p_ld(sk);
             i = i + 1;
         }
         if (p_swdef >= 0) p_jmp(p_swdef); else p_jmp(p_swend);

@@ -3,9 +3,9 @@
 # This Makefile guides the student through the stage-by-stage progression.
 # Each stage has specific prerequisites and produces clear, minimal artifacts.
 
-.PHONY: all clean stage00 stage01 stage02 stage03 stage04 stage05 stage06 stage07 stage08 stage09 stage10
+.PHONY: all clean stage00 stage01 stage02 stage03 stage04 stage05 stage06 stage07 stage08 stage09 stage10 stage11 stage12
 
-all: stage10
+all: stage12
 
 # Stage 00: Minimum bootstrap emulator (the trust root)
 stage00:
@@ -86,6 +86,20 @@ stage10: stage09
 	@echo "--- Building Stage 10: s32-cc Compiler ---"
 	$(MAKE) -C stage10
 
+# Stage 11: s32-cc Compiler (stable bootstrap, copy of stage10)
+# Prerequisites: Stage 10 s32cc (compiler), Stage 05 assembler, Stage 07 linker
+# Artifacts: s32cc.s32x (s32-cc compiler with nested switch fix + long branches)
+stage11: stage10
+	@echo "--- Building Stage 11: s32-cc Compiler (stable) ---"
+	$(MAKE) -C stage11
+
+# Stage 12: s12cc AST-based C Compiler
+# Prerequisites: Stage 11 s32cc (compiler), Stage 05 assembler, Stage 07 linker
+# Artifacts: s12cc.s32x (AST-based compiler, Ragel lexer + recursive-descent parser)
+stage12: stage11
+	@echo "--- Building Stage 12: s12cc AST Compiler ---"
+	$(MAKE) -C stage12
+
 clean:
 	$(MAKE) -C stage00 clean
 	$(MAKE) -C stage01 clean
@@ -98,3 +112,5 @@ clean:
 	$(MAKE) -C stage08 clean
 	$(MAKE) -C stage09 clean
 	$(MAKE) -C stage10 clean
+	$(MAKE) -C stage11 clean
+	$(MAKE) -C stage12 clean

@@ -118,6 +118,32 @@ static void cg_la(char *sym) {
     cg_s(")\n");
 }
 
+/* Long-branch: beq r1, r0 → label (uses bne skip + jal target) */
+static void cg_beq_long(int lbl) {
+    int skip;
+    skip = cg_label();
+    cg_s("    bne r1, r0, ");
+    cg_lref(skip);
+    cg_c(10);
+    cg_s("    jal r0, ");
+    cg_lref(lbl);
+    cg_c(10);
+    cg_ldef(skip);
+}
+
+/* Long-branch: bne r1, r0 → label (uses beq skip + jal target) */
+static void cg_bne_long(int lbl) {
+    int skip;
+    skip = cg_label();
+    cg_s("    beq r1, r0, ");
+    cg_lref(skip);
+    cg_c(10);
+    cg_s("    jal r0, ");
+    cg_lref(lbl);
+    cg_c(10);
+    cg_ldef(skip);
+}
+
 /* Load from [r1] with appropriate width for type */
 static void cg_load(int ty) {
     if (ty == TY_CHAR) {
@@ -225,7 +251,11 @@ static void gen_expr(Node *n) {
         }
         if (n->is_local) {
             /* Local scalar: load from stack */
-            cg_s("    ldw r1, r30, ");
+            if (n->ty == TY_CHAR) {
+                cg_s("    ldb r1, r30, ");
+            } else {
+                cg_s("    ldw r1, r30, ");
+            }
             cg_n(n->offset);
             cg_c(10);
         } else {
@@ -291,9 +321,7 @@ static void gen_expr(Node *n) {
             l1 = cg_label();
             l2 = cg_label();
             gen_expr(n->lhs);
-            cg_s("    beq r1, r0, ");
-            cg_lref(l1);
-            cg_c(10);
+            cg_beq_long(l1);
             gen_expr(n->rhs);
             cg_s("    sne r1, r1, r0\n");
             cg_s("    jal r0, ");
@@ -308,9 +336,7 @@ static void gen_expr(Node *n) {
             l1 = cg_label();
             l2 = cg_label();
             gen_expr(n->lhs);
-            cg_s("    bne r1, r0, ");
-            cg_lref(l1);
-            cg_c(10);
+            cg_bne_long(l1);
             gen_expr(n->rhs);
             cg_s("    sne r1, r1, r0\n");
             cg_s("    jal r0, ");
@@ -576,9 +602,7 @@ static void gen_stmt(Node *n) {
         gen_expr(n->cond);
         if (n->els) {
             l2 = cg_label();
-            cg_s("    beq r1, r0, ");
-            cg_lref(l1);
-            cg_c(10);
+            cg_beq_long(l1);
             gen_stmt(n->body);
             cg_s("    jal r0, ");
             cg_lref(l2);
@@ -587,9 +611,7 @@ static void gen_stmt(Node *n) {
             gen_stmt(n->els);
             cg_ldef(l2);
         } else {
-            cg_s("    beq r1, r0, ");
-            cg_lref(l1);
-            cg_c(10);
+            cg_beq_long(l1);
             gen_stmt(n->body);
             cg_ldef(l1);
         }
@@ -604,9 +626,7 @@ static void gen_stmt(Node *n) {
         cg_loop_depth = cg_loop_depth + 1;
         cg_ldef(l1);
         gen_expr(n->cond);
-        cg_s("    beq r1, r0, ");
-        cg_lref(l2);
-        cg_c(10);
+        cg_beq_long(l2);
         gen_stmt(n->body);
         cg_s("    jal r0, ");
         cg_lref(l1);
@@ -627,9 +647,7 @@ static void gen_stmt(Node *n) {
         gen_stmt(n->body);
         cg_ldef(l2);
         gen_expr(n->cond);
-        cg_s("    bne r1, r0, ");
-        cg_lref(l1);
-        cg_c(10);
+        cg_bne_long(l1);
         cg_ldef(l3);
         cg_loop_depth = cg_loop_depth - 1;
         return;
@@ -645,9 +663,7 @@ static void gen_stmt(Node *n) {
         if (n->init) gen_expr(n->init);
         cg_ldef(l1);
         gen_expr(n->cond);
-        cg_s("    beq r1, r0, ");
-        cg_lref(l3);
-        cg_c(10);
+        cg_beq_long(l3);
         gen_stmt(n->body);
         cg_ldef(l2);
         if (n->step) gen_expr(n->step);
