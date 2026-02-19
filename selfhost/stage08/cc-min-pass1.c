@@ -4,7 +4,7 @@
  * 32KB include-save-buffer. External I/O functions are auto-declared. */
 
 #define MAX_SRC 65536
-#define MAX_OUTPUT 524288
+#define MAX_OUTPUT 1048576
 static char g_src[MAX_SRC];
 static int g_src_len;
 static int g_pos;

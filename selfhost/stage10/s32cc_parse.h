@@ -2,7 +2,7 @@
  * Assumes s32cc_lex.h symbols in scope via concatenation.
  * cc-min compatible source. */
 
-#define P_MAX_OUT 524288
+#define P_MAX_OUT 1048576
 static char p_out[P_MAX_OUT];
 static int p_olen;
 static int p_lbl;
@@ -38,12 +38,12 @@ static int p_insw;
 static int p_retl;
 static int p_ppos;
 
-#define P_MXLOC 192
-#define P_MXFN 256
-#define P_MXGLOB 256
-#define P_LNBUF 9216
-#define P_FNBUF 12288
-#define P_GNBUF 12288
+#define P_MXLOC 384
+#define P_MXFN 512
+#define P_MXGLOB 512
+#define P_LNBUF 18432
+#define P_FNBUF 24576
+#define P_GNBUF 24576
 static char p_ln[P_LNBUF];
 static int p_lo[P_MXLOC];
 static int p_lt[P_MXLOC];
@@ -58,6 +58,7 @@ static char p_gn[P_GNBUF];
 static int p_gty[P_MXGLOB];
 static int p_gsz[P_MXGLOB];
 static int p_gby[P_MXGLOB];
+static int p_giv[P_MXGLOB];
 static int p_ng;
 #define P_MXST 32
 #define P_MXFD 192
@@ -70,11 +71,11 @@ static char p_fdn[9216];
 static int p_fdt[P_MXFD];
 static int p_fdo[P_MXFD];
 static int p_nfd;
-#define P_MXTD 32
-static char p_tdn[1536];
+#define P_MXTD 64
+static char p_tdn[3072];
 static int p_tdt[P_MXTD];
 static int p_ntd;
-#define P_MXDEF 256
+#define P_MXDEF 512
 #define P_DNBUF 12288
 static char p_dn[P_DNBUF];
 static int p_dv[P_MXDEF];
@@ -101,7 +102,7 @@ static int p_ffn(char *n){int i;i=0;while(i<p_nf){if(p_sneq(p_fn,i,n))return i;i
 static void p_afn(char *n,int np,int rt){if(p_nf>=P_MXFN){p_err("FN");return;}p_sset(p_fn,p_nf,n);p_fp[p_nf]=np;p_fr[p_nf]=rt;p_nf=p_nf+1;}
 
 static int p_fgl(char *n){int i;i=0;while(i<p_ng){if(p_sneq(p_gn,i,n))return i;i=i+1;}return -1;}
-static void p_agl(char *n,int ty,int ac,int bsz){if(p_ng>=P_MXGLOB){p_err("GL");return;}p_sset(p_gn,p_ng,n);p_gty[p_ng]=ty;p_gsz[p_ng]=ac;p_gby[p_ng]=bsz;p_ng=p_ng+1;}
+static void p_agl(char *n,int ty,int ac,int bsz){if(p_ng>=P_MXGLOB){p_err("GL");return;}p_sset(p_gn,p_ng,n);p_gty[p_ng]=ty;p_gsz[p_ng]=ac;p_gby[p_ng]=bsz;p_giv[p_ng]=0;p_ng=p_ng+1;}
 
 static int p_fst(char *n){int i;i=0;while(i<p_ns){if(p_sneq(p_sn,i,n))return i;i=i+1;}return -1;}
 static int p_ast(char *n){int i;if(p_ns>=P_MXST){p_err("ST");return 0;}i=p_ns;p_sset(p_sn,i,n);p_ss[i]=0;p_sfb[i]=p_nfd;p_sfc[i]=0;p_ns=p_ns+1;return i;}
@@ -150,7 +151,7 @@ static void p_sti(int t){if((t&255)==TY_CHAR&&((t>>8)&255)==0)pe("    stb r2, r1
 
 /* Type system */
 static int p_tysz(int t){int b;int p;int si;b=t&255;p=(t>>8)&255;if(p>0)return 4;if(b==TY_CHAR)return 1;if(b==TY_STRUCT){si=(t>>16)&127;return p_ss[si];}return 4;}
-static int p_isty(void){if(lex_tok==TK_INT||lex_tok==TK_CHAR||lex_tok==TK_VOID||lex_tok==TK_STRUCT)return 1;if(lex_tok==TK_UNSIGNED||lex_tok==TK_LONG||lex_tok==TK_ENUM||lex_tok==TK_CONST)return 1;if(lex_tok==TK_STATIC||lex_tok==TK_SIGNED||lex_tok==TK_SHORT)return 1;if(lex_tok==TK_IDENT&&p_ftd(lex_str)>=0)return 1;return 0;}
+static int p_isty(void){if(lex_tok==TK_INT||lex_tok==TK_CHAR||lex_tok==TK_VOID||lex_tok==TK_STRUCT)return 1;if(lex_tok==TK_UNSIGNED||lex_tok==TK_LONG||lex_tok==TK_ENUM||lex_tok==TK_CONST)return 1;if(lex_tok==TK_STATIC||lex_tok==TK_SIGNED||lex_tok==TK_SHORT)return 1;if(lex_tok==TK_VOLATILE||lex_tok==TK_REGISTER||lex_tok==TK_INLINE)return 1;if(lex_tok==TK_IDENT&&p_ftd(lex_str)>=0)return 1;return 0;}
 static int p_psc(int t){int pt;int bt;int si;pt=(t>>8)&255;if(pt==0)return 0;bt=t&255;if(bt==TY_CHAR&&pt==1)return 1;if(bt==TY_STRUCT&&pt==1){si=(t>>16)&127;return p_ss[si];}return 4;}
 static void p_scr1(int sc){if(sc==4)pe("    slli r1, r1, 2\n");else if(sc>1){pe("    addi r11, r0, ");pn(sc);pc(10);pe("    mul r1, r1, r11\n");}}
 
@@ -166,7 +167,7 @@ static void p_stbody(int si){int bt;int pt;int ft;int off;int ar;int fsz;off=0;p
 
 static int p_stref(void){char s[128];int si;int nm;next();nm=0;s[0]=0;if(lex_tok==TK_IDENT){p_scpy(s,lex_str,128);next();nm=1;}if(lex_tok==TK_LBRACE){if(nm){si=p_fst(s);if(si<0)si=p_ast(s);}else{si=p_ast("");}next();p_stbody(si);return TY_STRUCT|(si<<16);}if(!nm){p_err("ST");return TY_INT;}si=p_fst(s);if(si<0)si=p_ast(s);return TY_STRUCT|(si<<16);}
 
-static int p_btype(void){int bt;int ti;if(lex_tok==TK_CONST)next();if(lex_tok==TK_STATIC)next();if(lex_tok==TK_INT){bt=TY_INT;next();}else if(lex_tok==TK_CHAR){bt=TY_CHAR;next();}else if(lex_tok==TK_VOID){bt=TY_VOID;next();}else if(lex_tok==TK_STRUCT){bt=p_stref();}else if(lex_tok==TK_UNSIGNED){next();if(lex_tok==TK_INT||lex_tok==TK_LONG)next();else if(lex_tok==TK_CHAR){next();return TY_CHAR;}else if(lex_tok==TK_SHORT)next();bt=TY_INT;}else if(lex_tok==TK_SIGNED){next();if(lex_tok==TK_INT||lex_tok==TK_LONG)next();else if(lex_tok==TK_CHAR){next();return TY_CHAR;}else if(lex_tok==TK_SHORT)next();bt=TY_INT;}else if(lex_tok==TK_LONG){next();if(lex_tok==TK_INT)next();bt=TY_INT;}else if(lex_tok==TK_SHORT){next();if(lex_tok==TK_INT)next();bt=TY_INT;}else if(lex_tok==TK_ENUM){next();if(lex_tok==TK_IDENT)next();bt=TY_INT;}else if(lex_tok==TK_IDENT){ti=p_ftd(lex_str);if(ti>=0){bt=p_tdt[ti];next();}else bt=TY_INT;}else bt=TY_INT;return bt;}
+static int p_btype(void){int bt;int ti;while(lex_tok==TK_CONST||lex_tok==TK_VOLATILE||lex_tok==TK_REGISTER||lex_tok==TK_INLINE||lex_tok==TK_STATIC)next();if(lex_tok==TK_INT){bt=TY_INT;next();}else if(lex_tok==TK_CHAR){bt=TY_CHAR;next();}else if(lex_tok==TK_VOID){bt=TY_VOID;next();}else if(lex_tok==TK_STRUCT){bt=p_stref();}else if(lex_tok==TK_UNSIGNED){next();if(lex_tok==TK_INT||lex_tok==TK_LONG)next();else if(lex_tok==TK_CHAR){next();return TY_CHAR;}else if(lex_tok==TK_SHORT)next();bt=TY_INT;}else if(lex_tok==TK_SIGNED){next();if(lex_tok==TK_INT||lex_tok==TK_LONG)next();else if(lex_tok==TK_CHAR){next();return TY_CHAR;}else if(lex_tok==TK_SHORT)next();bt=TY_INT;}else if(lex_tok==TK_LONG){next();if(lex_tok==TK_INT)next();bt=TY_INT;}else if(lex_tok==TK_SHORT){next();if(lex_tok==TK_INT)next();bt=TY_INT;}else if(lex_tok==TK_ENUM){next();if(lex_tok==TK_IDENT)next();bt=TY_INT;}else if(lex_tok==TK_IDENT){ti=p_ftd(lex_str);if(ti>=0){bt=p_tdt[ti];next();}else bt=TY_INT;}else bt=TY_INT;return bt;}
 static int p_pstars(void){int p;p=0;while(lex_tok==TK_STAR){p=p+1;next();}return p;}
 
 /* Pointer arithmetic */
@@ -377,7 +378,7 @@ static void p_unary(void) {
     }
     if (lex_tok == TK_LPAREN) {
         p_lsave(); next();
-        if (p_isty()) { bt = p_btype(); pt = p_pstars(); tp = bt | (pt << 8); p_expect(TK_RPAREN); p_unary(); p_l2r(); p_ety = tp; p_lval = 0; return; }
+        if (p_isty()) { bt = p_btype(); pt = p_pstars(); tp = bt | (pt << 8); p_expect(TK_RPAREN); p_unary(); p_l2r(); if ((tp & 255) == TY_CHAR && ((tp >> 8) & 255) == 0) pe("    addi r2, r0, 255\n    and r1, r1, r2\n"); p_ety = tp; p_lval = 0; return; }
         p_lrest();
     }
     p_postfix();
@@ -477,6 +478,18 @@ static void p_ldecl(void) {
     char nb[128];
     bt = p_btype(); pt = p_pstars(); ty = bt | (pt << 8);
     while (1) {
+        if (lex_tok == TK_LPAREN) {
+            next();
+            if (lex_tok == TK_STAR) next();
+            if (lex_tok != TK_IDENT) { p_err("VN"); return; }
+            p_scpy(nb, lex_str, 128); next();
+            p_expect(TK_RPAREN);
+            if (lex_tok == TK_LPAREN) { next(); while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next(); p_expect(TK_RPAREN); }
+            p_aloc(nb, TY_INT, 0);
+            off = p_lo[p_nl - 1];
+            if (lex_tok == TK_ASSIGN) { next(); p_expr(); p_l2r(); pe("    stw r30, r1, "); pn(off); pc(10); }
+            break;
+        }
         if (lex_tok != TK_IDENT) { p_err("VN"); return; }
         p_scpy(nb, lex_str, 128); next();
         if (lex_tok == TK_LBRACK) {
@@ -692,7 +705,7 @@ static void p_pfunc(char *fn, int rt) {
 }
 
 static void p_pgdecl(char *nm, int ty) {
-    int ar; int esz; int bsz; int si;
+    int ar; int esz; int bsz; int si; int iv; int neg; int gi;
     if (lex_tok == TK_LBRACK) {
         next(); ar = lex_val; p_expect(TK_NUM); p_expect(TK_RBRACK);
         esz = 4;
@@ -703,6 +716,13 @@ static void p_pgdecl(char *nm, int ty) {
         bsz = 4;
         if ((ty & 255) == TY_STRUCT && ((ty >> 8) & 255) == 0) { si = (ty >> 16) & 127; bsz = p_ss[si]; bsz = ((bsz + 3) / 4) * 4; }
         p_agl(nm, ty, 0, bsz);
+        if (lex_tok == TK_ASSIGN) {
+            next(); neg = 0; iv = 0;
+            if (lex_tok == TK_MINUS) { neg = 1; next(); }
+            if (lex_tok == TK_NUM) { iv = lex_val; next(); }
+            if (neg) iv = 0 - iv;
+            gi = p_ng - 1; p_giv[gi] = iv;
+        }
     }
     while (lex_tok == TK_COMMA) {
         next(); if (lex_tok == TK_STAR) { while (lex_tok == TK_STAR) next(); }
@@ -732,18 +752,29 @@ static void p_estr(void) {
 }
 
 static void p_egbss(void) {
-    int i;
+    int i; int hd; int hb;
     if (p_ng == 0) return;
-    pe(".bss\n");
+    hd = 0; hb = 0;
     i = 0;
     while (i < p_ng) {
-        pe(".align 4\n"); p_esn(p_gn, i); pe(":\n    .global "); p_esn(p_gn, i); pe("\n    .space "); pn(p_gby[i]); pc(10);
+        if (p_giv[i] != 0) {
+            if (!hd) { pe(".data\n"); hd = 1; }
+            pe(".align 4\n"); p_esn(p_gn, i); pe(":\n    .global "); p_esn(p_gn, i); pe("\n    .word "); pn(p_giv[i]); pc(10);
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while (i < p_ng) {
+        if (p_giv[i] == 0) {
+            if (!hb) { pe(".bss\n"); hb = 1; }
+            pe(".align 4\n"); p_esn(p_gn, i); pe(":\n    .global "); p_esn(p_gn, i); pe("\n    .space "); pn(p_gby[i]); pc(10);
+        }
         i = i + 1;
     }
 }
 
 static void p_program(void) {
-    int bt; int pt; int rt; char fn[128];
+    int bt; int pt; int rt; char fn[128]; int cv; int cn;
     pe("# Generated by s32-cc\n.text\n");
     while (lex_tok != TK_EOF) {
         if (lex_tok == TK_TYPEDEF) { p_ptypedef(); continue; }
@@ -753,7 +784,28 @@ static void p_program(void) {
             if (lex_tok == TK_IDENT) { next(); if (lex_tok == TK_LBRACE) { p_lrest(); p_penum(); continue; } }
             p_lrest();
         }
-        if (lex_tok == TK_STATIC) next();
+        if (lex_tok == TK_STATIC) {
+            p_lsave(); next();
+            if (lex_tok == TK_CONST) {
+                next();
+                if (lex_tok == TK_INT || lex_tok == TK_UNSIGNED || lex_tok == TK_LONG || lex_tok == TK_CHAR) {
+                    next();
+                    if (lex_tok == TK_IDENT) {
+                        p_scpy(fn, lex_str, 128); next();
+                        if (lex_tok == TK_ASSIGN) {
+                            next(); cn = 0; cv = 0;
+                            if (lex_tok == TK_MINUS) { cn = 1; next(); }
+                            if (lex_tok == TK_NUM) { cv = lex_val; next(); }
+                            if (cn) cv = 0 - cv;
+                            p_adf(fn, cv);
+                            p_expect(TK_SEMI); continue;
+                        }
+                    }
+                }
+            }
+            p_lrest();
+            next();
+        }
         if (lex_tok == TK_EXTERN) next();
         bt = p_btype(); pt = p_pstars(); rt = bt | (pt << 8);
         if (lex_tok == TK_SEMI) { next(); continue; }
