@@ -289,7 +289,7 @@ fi
 run_exe "$LD_EXE" "$WORKDIR/s32cc-link.log" \
     -o "$S32CC_EXE" --mmio 64K \
     "$RUNTIME_CRT0" "$S32CC_OBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-    "$LIBC_OBJS"
+    $LIBC_OBJS
 if [[ ! -s "$S32CC_EXE" ]]; then
     echo "linker produced no output for s32cc" >&2
     cat "$WORKDIR/s32cc-link.log" >&2
@@ -353,7 +353,7 @@ for test_name in $PARSE_TESTS; do
     if ! run_exe "$LD_EXE" "$WORKDIR/${test_name}-link.log" \
         -o "$EXE" --mmio 64K \
         "$RUNTIME_CRT0" "$POBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-        "$LIBC_OBJS" 2>"$WORKDIR/${test_name}-ld-err.log"; then
+        $LIBC_OBJS 2>"$WORKDIR/${test_name}-ld-err.log"; then
         printf "  %-24s FAIL (link)\n" "${test_name}:"
         cat "$WORKDIR/${test_name}-link.log" >&2
         cat "$WORKDIR/${test_name}-ld-err.log" >&2
@@ -433,7 +433,7 @@ fi
 run_exe "$LD_EXE" "$WORKDIR/gen2-s32cc-link.log" \
     -o "$GEN2_S32CC_EXE" --mmio 64K \
     "$RUNTIME_CRT0" "$GEN2_S32CC_OBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-    "$LIBC_OBJS"
+    $LIBC_OBJS
 if [[ ! -s "$GEN2_S32CC_EXE" ]]; then
     echo "linker produced no output for gen2-s32cc" >&2
     cat "$WORKDIR/gen2-s32cc-link.log" >&2
@@ -488,7 +488,7 @@ else
         run_exe "$LD_EXE" "$WORKDIR/selfhost-smoke-link.log" \
             -o "$SMOKE_EXE" --mmio 64K \
             "$RUNTIME_CRT0" "$SMOKE_OBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-            "$LIBC_OBJS"
+            $LIBC_OBJS
         if [[ ! -s "$SMOKE_EXE" ]]; then
             echo "  Smoke test: FAIL (link)" >&2
             FAIL=$((FAIL + 1))

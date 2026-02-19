@@ -152,7 +152,7 @@ compile_s32cc() {
     run_exe "$LD_EXE" "$WORKDIR/${name}-link.log" \
         -o "$exe" --mmio 64K \
         "$RUNTIME_CRT0" "$obj_out" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-        "$LIBC_OBJS"
+        $LIBC_OBJS
     if [[ ! -s "$exe" ]]; then
         echo "linker produced no output for $name" >&2
         cat "$WORKDIR/${name}-link.log" >&2
@@ -294,7 +294,7 @@ fi
 run_exe "$LD_EXE" "$WORKDIR/boot-link.log" \
     -o "$BOOT_EXE" --mmio 64K \
     "$RUNTIME_CRT0" "$BOOT_OBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-    "$LIBC_OBJS"
+    $LIBC_OBJS
 if [[ ! -s "$BOOT_EXE" ]]; then
     echo "linker produced no output for boot" >&2
     cat "$WORKDIR/boot-link.log" >&2
@@ -330,7 +330,7 @@ fi
 run_exe "$LD_EXE" "$WORKDIR/s32cc-link.log" \
     -o "$S32CC_EXE" --mmio 64K \
     "$RUNTIME_CRT0" "$S32CC_OBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-    "$LIBC_OBJS"
+    $LIBC_OBJS
 if [[ ! -s "$S32CC_EXE" ]]; then
     echo "linker produced no output for s32cc" >&2
     cat "$WORKDIR/s32cc-link.log" >&2
@@ -468,7 +468,7 @@ fi
 run_exe "$LD_EXE" "$WORKDIR/gen2-link.log" \
     -o "$GEN2_S32CC_EXE" --mmio 64K \
     "$RUNTIME_CRT0" "$GEN2_S32CC_OBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-    "$LIBC_OBJS"
+    $LIBC_OBJS
 if [[ ! -s "$GEN2_S32CC_EXE" ]]; then
     echo "linker produced no output for gen2" >&2
     cat "$WORKDIR/gen2-link.log" >&2
@@ -522,7 +522,7 @@ else
         run_exe "$LD_EXE" "$WORKDIR/selfhost-smoke-link.log" \
             -o "$SMOKE_EXE" --mmio 64K \
             "$RUNTIME_CRT0" "$SMOKE_OBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-            "$LIBC_OBJS"
+            $LIBC_OBJS
         if [[ ! -s "$SMOKE_EXE" ]]; then
             echo "  Smoke test: FAIL (link)" >&2
             FAIL=$((FAIL + 1))
@@ -580,7 +580,7 @@ fi
 run_exe "$LD_EXE" "$WORKDIR/s32-as-link.log" \
     -o "$NEW_AS_EXE" --mmio 64K \
     "$RUNTIME_CRT0" "$NEW_AS_OBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-    "$LIBC_OBJS"
+    $LIBC_OBJS
 if [[ ! -s "$NEW_AS_EXE" ]]; then
     echo "linker produced no output for s32-as" >&2
     cat "$WORKDIR/s32-as-link.log" >&2
@@ -659,7 +659,7 @@ else
         run_exe "$LD_EXE" "$WORKDIR/func-test-link.log" \
             -o "$FUNC_EXE" --mmio 64K \
             "$RUNTIME_CRT0" "$FUNC_OBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-            "$LIBC_OBJS"
+            $LIBC_OBJS
         if [[ ! -s "$FUNC_EXE" ]]; then
             echo "  Functional test: FAIL (link)" >&2
             FAIL=$((FAIL + 1))
