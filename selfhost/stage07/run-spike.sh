@@ -18,7 +18,7 @@ fi
 EMU="${SELFHOST_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
 STAGE5_AS="$SELFHOST_DIR/stage05/s32-as.s32x"
 STAGE7_LD="$SCRIPT_DIR/s32-ld.s32x"
-CC_FTH="$SELFHOST_DIR/stage04/cc.fth"
+CC_FTH="$SELFHOST_DIR/stage01/cc.fth"
 KERNEL="${SELFHOST_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${SELFHOST_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 

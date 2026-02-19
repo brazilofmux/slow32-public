@@ -5,15 +5,15 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
-EMU="${STAGE4_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
-KERNEL="${STAGE4_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
-PRELUDE="${STAGE4_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
-CC_FTH="${STAGE4_CC:-$SCRIPT_DIR/cc.fth}"
-ASM_FTH="${STAGE4_ASM:-$SELFHOST_DIR/stage01/asm.fth}"
-LINK_FTH="${STAGE4_LINK:-$SELFHOST_DIR/stage01/link.fth}"
-MANIFEST="${STAGE4_SUBSET_MANIFEST:-$SCRIPT_DIR/tests/manifests/subset.lst}"
-CRT0_SRC="$SELFHOST_DIR/stage01/crt0_minimal.s"
-MMIO_SRC="$SELFHOST_DIR/stage01/mmio_minimal.s"
+EMU="${STAGE01_CC_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
+KERNEL="${STAGE01_CC_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
+PRELUDE="${STAGE01_CC_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
+CC_FTH="${STAGE01_CC_CC:-$SCRIPT_DIR/cc.fth}"
+ASM_FTH="${STAGE01_CC_ASM:-$SCRIPT_DIR/asm.fth}"
+LINK_FTH="${STAGE01_CC_LINK:-$SCRIPT_DIR/link.fth}"
+MANIFEST="${STAGE01_CC_SUBSET_MANIFEST:-$SCRIPT_DIR/tests/manifests/subset.lst}"
+CRT0_SRC="$SCRIPT_DIR/crt0_minimal.s"
+MMIO_SRC="$SCRIPT_DIR/mmio_minimal.s"
 
 KEEP_ARTIFACTS=0
 
@@ -21,10 +21,10 @@ usage() {
     cat <<USAGE
 Usage: $0 [--emu <path>] [--manifest <path>] [--keep-artifacts]
 
-Runs Stage4 Subset-C conformance checks:
-  - compile with stage4 cc.fth
-  - assemble with stage01 asm.fth
-  - link with stage01 link.fth
+Runs Stage01 Subset-C conformance checks:
+  - compile with cc.fth
+  - assemble with asm.fth
+  - link with link.fth
   - execute and require clean exit (0 or 96 HALT mapping)
 USAGE
 }
@@ -168,7 +168,7 @@ run_exe() {
     fi
 }
 
-echo "[subset] Stage4 conformance"
+echo "[subset] Stage01 conformance"
 count=0
 while IFS= read -r src || [[ -n "$src" ]]; do
     [[ -z "$src" ]] && continue
@@ -190,5 +190,5 @@ while IFS= read -r src || [[ -n "$src" ]]; do
     count=$((count + 1))
 done < "$MANIFEST"
 
-echo "OK: Stage4 subset conformance passed ($count tests)"
+echo "OK: Stage01 subset conformance passed ($count tests)"
 echo "Artifacts: $WORKDIR"

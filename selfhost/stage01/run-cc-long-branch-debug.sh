@@ -5,10 +5,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
-EMU="${STAGE4_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
-KERNEL="${STAGE4_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
-PRELUDE="${STAGE4_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
-CC_FTH="${STAGE4_CC:-$SCRIPT_DIR/cc.fth}"
+EMU="${STAGE01_CC_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
+KERNEL="${STAGE01_CC_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
+PRELUDE="${STAGE01_CC_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
+CC_FTH="${STAGE01_CC_CC:-$SCRIPT_DIR/cc.fth}"
 SRC=""
 OUT=""
 KEEP_ARTIFACTS=0
@@ -17,7 +17,7 @@ usage() {
     cat <<USAGE
 Usage: $0 --src <file.c> [--out <file.s>] [--emu <path>] [--keep-artifacts]
 
-Compiles one source file with Stage4 compiler while forcing:
+Compiles one source file with Stage01 compiler while forcing:
   DBG-LONG-BRANCH = 1
 
 Prints the compiler's "[CC] Long branches lowered" summary.

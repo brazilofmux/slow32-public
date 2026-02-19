@@ -6,7 +6,7 @@ SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
 EMU="${STAGE7_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
-MANIFEST="${RELOC_BISECT_MANIFEST:-$SELFHOST_DIR/stage04/tests/manifests/reloc-bisect.lst}"
+MANIFEST="${RELOC_BISECT_MANIFEST:-$SELFHOST_DIR/stage01/tests/manifests/reloc-bisect.lst}"
 WITH_RELOC_SPIKE=0
 KEEP_ARTIFACTS=0
 

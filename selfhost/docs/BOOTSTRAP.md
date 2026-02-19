@@ -253,9 +253,9 @@ The compiler is written in Forth, runs on the Forth kernel, and compiles a subse
   - Stage 0 emulator.
   - Stages 1-3 (Forth assembler, archiver, linker).
   - Pre-built `kernel.s32x`.
-  - `selfhost/stage04/cc.fth` (~4,100 lines of Forth).
+  - `selfhost/stage01/cc.fth` (~4,100 lines of Forth).
   - Runtime library sources: `crt0.s` (assembly) + libc sources (subset C or assembly).
-  - Subset C header files (`selfhost/stage04/include/`).
+  - Subset C header files (`selfhost/stage01/include/`).
 
 - **You produce:**
 
@@ -296,7 +296,7 @@ The compiler is written in Forth, runs on the Forth kernel, and compiles a subse
 
   - Compile and run the test suite (`test1.c` through `test9.c`).
   - Compare output with expected results.
-  - Run `selfhost/stage04/run-regression.sh`.
+  - Run `selfhost/stage01/run-regression-cc.sh`.
 
 
 ### Stage 5: Subset C Assembler
@@ -752,7 +752,7 @@ Execution artifacts for the reorg are tracked in:
 | 1 | `selfhost/stage01/` | `asm.fth` | Done |
 | 2 | `selfhost/stage01/` | `ar.fth` (merged) | Done |
 | 3 | `selfhost/stage01/` | `link.fth` (merged) | Done |
-| 4 | `selfhost/stage04/` | `cc.fth` | Done (regression passing) |
+| 4 | `selfhost/stage01/` | `cc.fth` (merged) | Done (regression passing) |
 | 5 | `selfhost/stage05/` | `s32-as.c` | Spike proven end-to-end; replacement hardening in progress |
 | 6 | `selfhost/stage06/` | `s32-ar.c` | Spike started; replacement hardening in progress |
 | 7 | `selfhost/stage07/` | `s32-ld.c` (planned) | Not started |
@@ -761,7 +761,7 @@ Execution artifacts for the reorg are tracked in:
 
 **Current Stage 0-4 checkpoint (2026-02-15):**
 - Forth bootstrap chain is stable: `asm.fth`, `ar.fth`, and `link.fth` produce runnable outputs.
-- Stage 4 `cc.fth` passes `selfhost/stage04/run-regression.sh` on full emulator (`slow32-fast`).
+- Stage 4 `cc.fth` passes `selfhost/stage01/run-regression-cc.sh` on full emulator (`slow32-fast`).
 - Stage 5 assembler spike is functional: stage4-built `s32-as.c` compiles, links, runs, and emits `.s32o`.
 - Stage 6 archiver spike exists (`s32-ar.c`), but is not yet the default replacement in the bootstrap pipeline.
 

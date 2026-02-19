@@ -138,7 +138,7 @@ nested structs.
 
 ## cc.fth Constraints
 
-These apply to all cc-min source code since cc.fth (stage04) compiles it:
+These apply to all cc-min source code since cc.fth (stage01) compiles it:
 
 - Merged source must be < 32768 bytes (INC-BUF-SZ limit)
 - No expressions in array sizes: use `#define SZ 1024` then `arr[SZ]`

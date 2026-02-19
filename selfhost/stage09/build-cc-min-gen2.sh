@@ -4,7 +4,7 @@ set -euo pipefail
 # Build gen2 cc-min.s32x: cc-min compiles itself.
 # Uses: Stage 08 cc-min.s32x (Gen1 compiler), Stage 05 s32-as.s32x (assembler),
 #       Stage 07 s32-ld.s32x (linker).
-# Libc is compiled by cc.fth (stage04) since cc-min doesn't yet support
+# Libc is compiled by cc.fth (stage01) since cc-min doesn't yet support
 # all features used in the libc sources (e.g. postfix ++).
 # Deposits the self-compiled artifact in the script's directory.
 

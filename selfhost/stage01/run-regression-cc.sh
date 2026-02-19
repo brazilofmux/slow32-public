@@ -5,16 +5,16 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
-EMU="${STAGE4_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
+EMU="${STAGE01_CC_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
 KERNEL="$ROOT_DIR/forth/kernel.s32x"
 PRELUDE="$ROOT_DIR/forth/prelude.fth"
-CC_FTH="${STAGE4_CC:-$SCRIPT_DIR/cc.fth}"
-ASM_FTH="${STAGE4_ASM:-$SELFHOST_DIR/stage01/asm.fth}"
-LINK_FTH="${STAGE4_LINK:-$SELFHOST_DIR/stage01/link.fth}"
-TEST_DIR="${STAGE4_TEST_DIR:-$SCRIPT_DIR/tests}"
-VALIDATION_DIR="${STAGE4_VALIDATION_DIR:-$SCRIPT_DIR/validation}"
-CRT0_SRC="$SELFHOST_DIR/stage01/crt0_minimal.s"
-MMIO_SRC="$SELFHOST_DIR/stage01/mmio_minimal.s"
+CC_FTH="${STAGE01_CC_CC:-$SCRIPT_DIR/cc.fth}"
+ASM_FTH="${STAGE01_CC_ASM:-$SCRIPT_DIR/asm.fth}"
+LINK_FTH="${STAGE01_CC_LINK:-$SCRIPT_DIR/link.fth}"
+TEST_DIR="${STAGE01_CC_TEST_DIR:-$SCRIPT_DIR/tests}"
+VALIDATION_DIR="${STAGE01_CC_VALIDATION_DIR:-$SCRIPT_DIR/validation}"
+CRT0_SRC="$SCRIPT_DIR/crt0_minimal.s"
+MMIO_SRC="$SCRIPT_DIR/mmio_minimal.s"
 
 SLOW32DUMP=0
 KEEP_ARTIFACTS=0
@@ -23,7 +23,7 @@ usage() {
     cat <<USAGE
 Usage: $0 [--slow32dump] [--keep-artifacts] [--emu <path>]
 
-Runs Stage 4 compiler regression in a staged work-up:
+Runs Stage 01 compiler regression in a staged work-up:
   Stage A: test1.c, test2.c
   Stage B: test3.c, test4.c, test5.c, test6.c
   Stage C: test7.c, test8.c, test9.c
@@ -32,7 +32,7 @@ Runs Stage 4 compiler regression in a staged work-up:
     - on full emulators: disassemble test3.s32x and validate output
 
 Defaults:
-  Emulator: \$STAGE4_EMU or stage00/s32-emu
+  Emulator: \$STAGE01_CC_EMU or stage00/s32-emu
 USAGE
 }
 
@@ -68,7 +68,7 @@ fi
 RUNTIME_CRT0="$WORKDIR/crt0_minimal.s32o"
 RUNTIME_MMIO_OBJ="$WORKDIR/mmio_minimal.s32o"
 
-# cc.fth uses relative include path "selfhost/stage04/include/" — run from repo root
+# cc.fth uses relative include path "selfhost/stage01/include/" — run from repo root
 cd "$ROOT_DIR"
 
 run_forth() {
@@ -230,5 +230,5 @@ if [[ "$SLOW32DUMP" -eq 1 ]]; then
     fi
 fi
 
-echo "OK: Stage 4 regression passed"
+echo "OK: Stage 01 compiler regression passed"
 echo "Artifacts: $WORKDIR"

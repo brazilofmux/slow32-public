@@ -5,9 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
-EMU="${STAGE4_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
-MANIFEST="${STAGE4_GAP_MANIFEST:-$SCRIPT_DIR/tests/manifests/subset-known-gaps.lst}"
-MODE="${STAGE4_GAP_MODE:-baseline}"
+EMU="${STAGE01_CC_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
+MANIFEST="${STAGE01_CC_GAP_MANIFEST:-$SCRIPT_DIR/tests/manifests/subset-known-gaps.lst}"
+MODE="${STAGE01_CC_GAP_MODE:-baseline}"
 
 usage() {
     cat <<USAGE

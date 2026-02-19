@@ -10,13 +10,13 @@ KERNEL="${SELFHOST_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${SELFHOST_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 EMU_EXPLICIT=0
 
-CC_FTH="${SELFHOST_CC_FTH:-$SELFHOST_DIR/stage04/cc.fth}"
+CC_FTH="${SELFHOST_CC_FTH:-$SELFHOST_DIR/stage01/cc.fth}"
 ASM_FTH="${SELFHOST_ASM_FTH:-$SELFHOST_DIR/stage01/asm.fth}"
 LINK_FTH="${SELFHOST_LINK_FTH:-$SELFHOST_DIR/stage01/link.fth}"
 AR_FTH="${SELFHOST_AR_FTH:-$SELFHOST_DIR/stage01/ar.fth}"
 
-TEST_DIR="${SELFHOST_TEST_DIR:-$SELFHOST_DIR/stage04/tests}"
-VALIDATION_DIR="${SELFHOST_VALIDATION_DIR:-$SELFHOST_DIR/stage04/validation}"
+TEST_DIR="${SELFHOST_TEST_DIR:-$SELFHOST_DIR/stage01/tests}"
+VALIDATION_DIR="${SELFHOST_VALIDATION_DIR:-$SELFHOST_DIR/stage01/validation}"
 STAGE6_AR_SRC="${SELFHOST_STAGE6_AR_SRC:-$SELFHOST_DIR/stage06/s32-ar.c}"
 STAGE6_AR_SCAN_SRC="${SELFHOST_STAGE6_AR_SCAN_SRC:-$SELFHOST_DIR/stage06/s32-ar-scan.c}"
 LIBC_DIR="$SCRIPT_DIR/libc"
@@ -113,7 +113,7 @@ if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then
     trap 'rm -rf "$WORKDIR"' EXIT
 fi
 
-# cc.fth uses relative include path "selfhost/stage04/include/" — run from repo root
+# cc.fth uses relative include path "selfhost/stage01/include/" — run from repo root
 cd "$ROOT_DIR"
 
 run_forth() {

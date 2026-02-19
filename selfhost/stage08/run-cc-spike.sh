@@ -9,7 +9,7 @@ EMU="${STAGE8_EMU:-}"
 EMU_EXPLICIT=0
 KERNEL="${STAGE8_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${STAGE8_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
-CC_FTH="${STAGE8_CC_FTH:-$SELFHOST_DIR/stage04/cc.fth}"
+CC_FTH="${STAGE8_CC_FTH:-$SELFHOST_DIR/stage01/cc.fth}"
 LINK_FTH="${STAGE8_LINK_FTH:-$SELFHOST_DIR/stage01/link.fth}"
 
 CRT0_SRC="$SELFHOST_DIR/stage05/crt0.s"
@@ -77,7 +77,7 @@ Usage: $0 [--emu <path>] [--keep-artifacts]
 
 Stage08 compiler spike:
   1) bootstrap stage05 assembler + stage06 archiver + stage07 linker
-  2) build cc-min.s32x via stage04->stage05->stage01
+  2) build cc-min.s32x via stage01->stage05->stage01
   3) compile min_main, min_ret7, min_ret_expr, min_local_ret_expr, min_ret_rel, min_if_{true,false}, min_while_countdown, min_two_locals, min_helper_call, min_helper_arg, min_helper_local, min_main_local_helper, min_helper_two_args, and min_helper_two_args_if with cc-min.s32x
   4) assemble with stage05; produce raw link via stage07; run via stage01 runtime link
 USAGE
@@ -131,7 +131,7 @@ if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then
     trap 'rm -rf "$WORKDIR"' EXIT
 fi
 
-# cc.fth uses relative include path "selfhost/stage04/include/" — run from repo root
+# cc.fth uses relative include path "selfhost/stage01/include/" — run from repo root
 cd "$ROOT_DIR"
 
 # Bootstrap strict C-toolchain stages first. Stage08 then uses these outputs.

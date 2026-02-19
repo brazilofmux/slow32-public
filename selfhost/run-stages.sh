@@ -42,7 +42,7 @@ Usage: $0 [--from stage00] [--to stage08] [--emu <path>] [--skip-selfhost-kernel
 Runs ordered stage checks so a clean checkout can be validated end-to-end.
 
 Default sequence:
-  stage00 -> stage01 -> stage04 -> stage05 -> stage06 -> stage07 -> stage08
+  stage00 -> stage01 -> stage05 -> stage06 -> stage07 -> stage08
 
 Options:
   --from stageNN   Start stage (stage00..stage08)
@@ -134,7 +134,6 @@ stage_num() {
     case "$1" in
         stage00) echo 0 ;;
         stage01) echo 1 ;;
-        stage04) echo 4 ;;
         stage05) echo 5 ;;
         stage06) echo 6 ;;
         stage07) echo 7 ;;
@@ -172,7 +171,7 @@ run_stage00() {
 }
 
 run_stage01() {
-    echo "[stage01] assembler + archiver + linker regression"
+    echo "[stage01] assembler + archiver + linker + compiler regression"
     run_logged "stage01 asm test1" "$LOG_DIR/stage01-test1.log" \
         env STAGE01_EMU="$EMU" "$ROOT_DIR/selfhost/stage01/run-regression-as.sh" test1
     run_logged "stage01 ar test3" "$LOG_DIR/stage01-ar-test3.log" \
@@ -193,22 +192,19 @@ run_stage01() {
     else
         echo "[stage01] skipping selfhost kernel regeneration gate (--skip-selfhost-kernel)"
     fi
-}
-
-run_stage04() {
-    echo "[stage04] compiler regression"
-    run_logged "stage04 regression" "$LOG_DIR/stage04-regression.log" \
-        env STAGE4_EMU="$EMU" "$ROOT_DIR/selfhost/stage04/run-regression.sh"
+    echo "[stage01] compiler regression"
+    run_logged "stage01 cc regression" "$LOG_DIR/stage01-cc-regression.log" \
+        env STAGE01_CC_EMU="$EMU" "$ROOT_DIR/selfhost/stage01/run-regression-cc.sh"
     if [[ "$QUICK" -eq 0 ]]; then
-        echo "[stage04] subset-c conformance"
-        run_logged "stage04 subset" "$LOG_DIR/stage04-subset.log" \
-            env STAGE4_EMU="$EMU" "$ROOT_DIR/selfhost/stage04/run-subset-conformance.sh"
-        echo "[stage04] stage5-idiom conformance"
-        run_logged "stage04 idioms" "$LOG_DIR/stage04-idioms.log" \
-            env STAGE4_EMU="$EMU" "$ROOT_DIR/selfhost/stage04/run-subset-conformance.sh" \
-                --manifest "$ROOT_DIR/selfhost/stage04/tests/manifests/subset-stage5-idioms.lst"
+        echo "[stage01] subset-c conformance"
+        run_logged "stage01 cc subset" "$LOG_DIR/stage01-cc-subset.log" \
+            env STAGE01_CC_EMU="$EMU" "$ROOT_DIR/selfhost/stage01/run-subset-conformance.sh"
+        echo "[stage01] stage5-idiom conformance"
+        run_logged "stage01 cc idioms" "$LOG_DIR/stage01-cc-idioms.log" \
+            env STAGE01_CC_EMU="$EMU" "$ROOT_DIR/selfhost/stage01/run-subset-conformance.sh" \
+                --manifest "$ROOT_DIR/selfhost/stage01/tests/manifests/subset-stage5-idioms.lst"
     else
-        echo "[stage04] quick mode: skipping subset + idioms manifests"
+        echo "[stage01] quick mode: skipping subset + idioms manifests"
     fi
 }
 
@@ -268,7 +264,7 @@ run_stage08() {
     fi
 }
 
-for st in stage00 stage01 stage04 stage05 stage06 stage07 stage08; do
+for st in stage00 stage01 stage05 stage06 stage07 stage08; do
     N="$(stage_num "$st")"
     if (( N < FROM_N || N > TO_N )); then
         continue

@@ -12,7 +12,7 @@ Stage directories:
 
 Stage cycles at a glance:
 - `stage00`: standalone ~800 line emulator that every other stage relies on.
-- `stage01`: assembler + archiver + linker written in Forth (includes kernel fixed-point proof); `stage04`: compiler written in Forth.
+- `stage01`: assembler + archiver + linker + C compiler written in Forth (includes kernel fixed-point proof).
 - `stage05`–`stage08`: the same four tools now authored in Subset C but still hosted by the Forth toolchain.
 - `stage09`: Subset C fixed-point proof (Subset C compiling itself).
 - `stage10`–`stage12`: another assembler/archiver/linker pass, this time fully self-hosted in Subset C and chasing feature parity with `tools/`.
@@ -43,7 +43,7 @@ Manual per-stage entry points:
 - `stage01` (archiver): `selfhost/stage01/run-regression-ar.sh test3`
 - `stage01` (linker): `selfhost/stage01/run-regression-ld.sh test3` and `... archive`
 - `stage01` (kernel regen gate): `SELFHOST_EMU=./tools/emulator/slow32-fast selfhost/stage01/run-selfhost-kernel.sh`
-- `stage04`: `selfhost/stage04/run-regression.sh`
+- `stage01` (compiler): `selfhost/stage01/run-regression-cc.sh`
 - `stage05`: `selfhost/stage05/run-pipeline.sh --mode progressive-as --test test1`
 - `stage06`: `selfhost/stage05/run-pipeline.sh --mode stage6-ar-smoke` and `... stage6-ar-rc-smoke` and `... stage6-ar-tx-smoke`
 - `stage07` (Subset C linker spike): `selfhost/stage07/run-spike.sh --emu ./tools/emulator/slow32-fast`
