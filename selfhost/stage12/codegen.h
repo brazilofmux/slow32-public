@@ -887,8 +887,17 @@ static void gen_data(void) {
     /* Global variables (initialized → .data, uninitialized → .bss) */
     i = 0;
     while (i < ps_nglobals) {
-        if (ps_gsize[i] == 0 && ps_ginit[i] != 0) {
-            /* Initialized scalar: stays in .data */
+        if (ps_gsize[i] == 0 && ps_gstr[i] >= 0) {
+            /* String-initialized scalar: .word .LSN */
+            cg_s(".global ");
+            cg_s(ps_gname[i]);
+            cg_c(10);
+            cg_s(ps_gname[i]);
+            cg_s(":\n    .word .LS");
+            cg_n(ps_gstr[i]);
+            cg_c(10);
+        } else if (ps_gsize[i] == 0 && ps_ginit[i] != 0) {
+            /* Integer-initialized scalar: stays in .data */
             cg_s(".global ");
             cg_s(ps_gname[i]);
             cg_c(10);
@@ -913,8 +922,8 @@ static void gen_data(void) {
             cg_s(":\n    .space ");
             cg_n(ps_gsize[i]);
             cg_c(10);
-        } else if (ps_ginit[i] == 0) {
-            /* Zero-init scalar */
+        } else if (ps_ginit[i] == 0 && ps_gstr[i] < 0) {
+            /* Zero-init scalar (not string-initialized) */
             cg_s(".global ");
             cg_s(ps_gname[i]);
             cg_c(10);

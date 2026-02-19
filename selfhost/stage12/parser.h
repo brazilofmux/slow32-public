@@ -32,6 +32,7 @@ static char *ps_gname[P_MAX_GLOBALS]; /* global var names */
 static int   ps_gtype[P_MAX_GLOBALS]; /* global var types */
 static int   ps_gsize[P_MAX_GLOBALS]; /* size in bytes (0=scalar, >0=array) */
 static int   ps_ginit[P_MAX_GLOBALS]; /* initial value for scalars */
+static int   ps_gstr[P_MAX_GLOBALS];  /* string init: pool index, -1 if none */
 static int   ps_nglobals;
 
 /* goto/label table (per-function, reset at each function) */
@@ -390,6 +391,7 @@ static int add_global(char *name, int ty, int size_bytes) {
     ps_gname[idx] = strdup(name);
     ps_gtype[idx] = ty;
     ps_gsize[idx] = size_bytes;
+    ps_gstr[idx] = -1;
     ps_nglobals = ps_nglobals + 1;
     return idx;
 }
@@ -1286,11 +1288,16 @@ static Node *parse_top_decl(void) {
         }
         if (lex_tok == TK_ASSIGN) {
             next();
-            neg = 0;
-            if (lex_tok == TK_MINUS) { neg = 1; next(); }
-            if (lex_tok == TK_NUM) {
-                ps_ginit[ps_nglobals - 1] = neg ? (0 - lex_val) : lex_val;
+            if (lex_tok == TK_STRING) {
+                ps_gstr[ps_nglobals - 1] = lex_val;
                 next();
+            } else {
+                neg = 0;
+                if (lex_tok == TK_MINUS) { neg = 1; next(); }
+                if (lex_tok == TK_NUM) {
+                    ps_ginit[ps_nglobals - 1] = neg ? (0 - lex_val) : lex_val;
+                    next();
+                }
             }
         }
         expect(TK_SEMI);
