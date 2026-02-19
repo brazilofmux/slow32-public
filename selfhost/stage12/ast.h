@@ -17,10 +17,37 @@ int memcpy(char *dst, char *src, int n);
 #define TY_INT    0
 #define TY_CHAR   1
 #define TY_VOID   2
+#define TY_STRUCT_BASE 3  /* struct index i → type = 3+i; fits 3..255 */
 #define TY_PTR  256   /* add to base: TY_PTR+TY_CHAR = char*, TY_PTR+TY_INT = int* */
+
+/* --- Struct definition tables --- */
+#define ST_MAX_STRUCTS 64
+#define ST_MAX_MEMBERS 512
+
+static char *st_name[ST_MAX_STRUCTS];
+static int   st_nfields[ST_MAX_STRUCTS];
+static int   st_first[ST_MAX_STRUCTS];
+static int   st_size[ST_MAX_STRUCTS];
+static int   st_count;
+
+static char *stm_name[ST_MAX_MEMBERS];
+static int   stm_type[ST_MAX_MEMBERS];
+static int   stm_off[ST_MAX_MEMBERS];
+static int   stm_count;
+
+/* --- Type helpers --- */
+
+static int ty_is_struct(int ty) {
+    return ty >= TY_STRUCT_BASE && ty < TY_PTR;
+}
+
+static int ty_struct_idx(int ty) {
+    return ty - TY_STRUCT_BASE;
+}
 
 static int ty_size(int ty) {
     if (ty >= TY_PTR) return 4;
+    if (ty >= TY_STRUCT_BASE) return st_size[ty - TY_STRUCT_BASE];
     if (ty == TY_CHAR) return 1;
     return 4;
 }
@@ -59,6 +86,7 @@ static int ty_deref(int ty) {
 #define ND_TERNARY  22   /* ternary ?: */
 #define ND_CAST     23   /* type cast */
 #define ND_COMMA    24   /* comma operator */
+#define ND_MEMBER   25   /* struct member access: lhs=struct expr, val=offset, ty=member type */
 
 /* --- AST node --- */
 struct Node {
@@ -267,5 +295,14 @@ static struct Node *nd_comma(struct Node *l, struct Node *r) {
     n->lhs = l;
     n->rhs = r;
     n->ty = r->ty;
+    return n;
+}
+
+static struct Node *nd_member(struct Node *lhs, int offset, int mty) {
+    struct Node *n;
+    n = nd_new(ND_MEMBER);
+    n->lhs = lhs;
+    n->val = offset;
+    n->ty = mty;
     return n;
 }

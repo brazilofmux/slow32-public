@@ -61,15 +61,114 @@ static int is_type(void) {
     if (lex_tok == TK_INT) return 1;
     if (lex_tok == TK_VOID) return 1;
     if (lex_tok == TK_CHAR) return 1;
+    if (lex_tok == TK_STRUCT) return 1;
     return 0;
 }
 
-/* Parse a type: int, char, void, with optional pointer stars */
+/* --- Struct helpers --- */
+
+static int find_struct(char *name) {
+    int i;
+    i = st_count - 1;
+    while (i >= 0) {
+        if (strcmp(name, st_name[i]) == 0) return i;
+        i = i - 1;
+    }
+    return -1;
+}
+
+static int add_struct(char *name) {
+    int idx;
+    if (st_count >= ST_MAX_STRUCTS) {
+        p_error("too many structs");
+        return 0;
+    }
+    idx = st_count;
+    st_name[idx] = strdup(name);
+    st_nfields[idx] = 0;
+    st_first[idx] = stm_count;
+    st_size[idx] = 0;
+    st_count = st_count + 1;
+    return idx;
+}
+
+static int find_member(int sty, char *name) {
+    int si;
+    int base;
+    int nf;
+    int i;
+    si = ty_struct_idx(sty);
+    base = st_first[si];
+    nf = st_nfields[si];
+    i = 0;
+    while (i < nf) {
+        if (strcmp(name, stm_name[base + i]) == 0) return base + i;
+        i = i + 1;
+    }
+    return -1;
+}
+
+/* Parse a type: int, char, void, struct, with optional pointer stars */
 static int parse_type(void) {
     int ty;
+    int si;
+    int mty;
+    int off;
+    char nm[256];
     if (lex_tok == TK_INT)  { ty = TY_INT;  next(); }
     else if (lex_tok == TK_CHAR) { ty = TY_CHAR; next(); }
     else if (lex_tok == TK_VOID) { ty = TY_VOID; next(); }
+    else if (lex_tok == TK_STRUCT) {
+        next();
+        if (lex_tok != TK_IDENT) {
+            p_error("expected struct tag name");
+            return TY_INT;
+        }
+        memcpy(nm, lex_str, lex_slen + 1);
+        next();
+        si = find_struct(nm);
+        if (lex_tok == TK_LBRACE) {
+            /* Struct definition: struct Name { ... } */
+            next();
+            if (si < 0) {
+                si = add_struct(nm);
+            }
+            off = 0;
+            while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+                mty = parse_type();
+                if (lex_tok != TK_IDENT) {
+                    p_error("expected member name");
+                    return TY_INT;
+                }
+                /* Align offset: char=1, everything else=4 */
+                if (mty != TY_CHAR) {
+                    off = ((off + 3) / 4) * 4;
+                }
+                if (stm_count >= ST_MAX_MEMBERS) {
+                    p_error("too many struct members");
+                    return TY_INT;
+                }
+                stm_name[stm_count] = strdup(lex_str);
+                stm_type[stm_count] = mty;
+                stm_off[stm_count] = off;
+                stm_count = stm_count + 1;
+                st_nfields[si] = st_nfields[si] + 1;
+                off = off + ty_size(mty);
+                next();
+                expect(TK_SEMI);
+            }
+            expect(TK_RBRACE);
+            /* Round total size to multiple of 4 */
+            st_size[si] = ((off + 3) / 4) * 4;
+        } else {
+            /* Forward reference: struct Name (no brace) */
+            if (si < 0) {
+                p_error("undefined struct");
+                return TY_INT;
+            }
+        }
+        ty = TY_STRUCT_BASE + si;
+    }
     else { p_error("expected type"); return TY_INT; }
     while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); }
     return ty;
@@ -104,7 +203,9 @@ static int add_local(char *name, int ty) {
         p_error("too many locals");
         return 0;
     }
-    sz = 4;  /* all locals occupy word-aligned slots */
+    sz = ty_size(ty);
+    /* Round up to multiple of 4 */
+    sz = ((sz + 3) / 4) * 4;
     ps_stack = ps_stack + sz;
     idx = ps_nlocals;
     ps_lname[idx] = strdup(name);
@@ -274,14 +375,18 @@ static struct Node *parse_primary(void) {
     return nd_num(0);
 }
 
-/* Postfix: handle array subscript p[i], postfix ++/-- */
+/* Postfix: handle array subscript p[i], postfix ++/--, member access . and -> */
 static struct Node *parse_postfix(void) {
     struct Node *n;
     struct Node *idx;
     struct Node *pi;
+    int sty;
+    int mi;
+    char mnm[256];
 
     n = parse_primary();
-    while (lex_tok == TK_LBRACK || lex_tok == TK_INC || lex_tok == TK_DEC) {
+    while (lex_tok == TK_LBRACK || lex_tok == TK_INC || lex_tok == TK_DEC ||
+           lex_tok == TK_DOT || lex_tok == TK_ARROW) {
         if (lex_tok == TK_LBRACK) {
             next();
             idx = parse_expr();
@@ -289,6 +394,44 @@ static struct Node *parse_postfix(void) {
             /* n[idx] → *(n + idx)  — codegen handles pointer arithmetic scaling */
             n = nd_binop(TK_PLUS, n, idx);
             n = nd_unary(TK_STAR, n);
+        } else if (lex_tok == TK_DOT) {
+            next();
+            if (lex_tok != TK_IDENT) {
+                p_error("expected member name after '.'");
+            }
+            memcpy(mnm, lex_str, lex_slen + 1);
+            next();
+            sty = n->ty;
+            if (!ty_is_struct(sty)) {
+                p_error("'.' on non-struct type");
+            }
+            mi = find_member(sty, mnm);
+            if (mi < 0) {
+                p_error("undefined struct member");
+            }
+            n = nd_member(n, stm_off[mi], stm_type[mi]);
+        } else if (lex_tok == TK_ARROW) {
+            next();
+            if (lex_tok != TK_IDENT) {
+                p_error("expected member name after '->'");
+            }
+            memcpy(mnm, lex_str, lex_slen + 1);
+            next();
+            /* Desugar p->m to (*p).m */
+            if (!ty_is_ptr(n->ty)) {
+                p_error("'->' on non-pointer type");
+            }
+            sty = ty_deref(n->ty);
+            if (!ty_is_struct(sty)) {
+                p_error("'->' on pointer to non-struct");
+            }
+            /* Dereference: *p gives struct, but we don't load — create ND_UNARY TK_STAR */
+            n = nd_unary(TK_STAR, n);
+            mi = find_member(sty, mnm);
+            if (mi < 0) {
+                p_error("undefined struct member");
+            }
+            n = nd_member(n, stm_off[mi], stm_type[mi]);
         } else if (lex_tok == TK_INC) {
             next();
             pi = nd_new(ND_POST_INC);
@@ -734,6 +877,12 @@ static struct Node *parse_top_decl(void) {
     /* Parse return type / variable type */
     ty = parse_type();
 
+    /* Bare struct definition: struct Foo { ... }; */
+    if (lex_tok == TK_SEMI && ty_is_struct(ty)) {
+        next();
+        return NULL;
+    }
+
     /* Name */
     if (lex_tok != TK_IDENT) {
         p_error("expected name in declaration");
@@ -745,7 +894,11 @@ static struct Node *parse_top_decl(void) {
     /* Global variable: type name; or type name[N]; */
     if (lex_tok == TK_SEMI) {
         next();
-        add_global(nm, ty, 0);
+        if (ty_is_struct(ty)) {
+            add_global(nm, ty, ty_size(ty));
+        } else {
+            add_global(nm, ty, 0);
+        }
         return NULL;
     }
     if (lex_tok == TK_LBRACK) {

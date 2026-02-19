@@ -175,6 +175,17 @@ static void gen_addr(struct Node *n) {
         return;
     }
 
+    /* Member access: address of base + member offset */
+    if (n->kind == ND_MEMBER) {
+        gen_addr(n->lhs);
+        if (n->val != 0) {
+            cg_s("    addi r1, r1, ");
+            cg_n(n->val);
+            cg_c(10);
+        }
+        return;
+    }
+
     p_error("not an lvalue");
 }
 
@@ -203,8 +214,8 @@ static void gen_expr(struct Node *n) {
     }
 
     if (n->kind == ND_VAR) {
-        if (n->is_array) {
-            /* Array: evaluate to address (no load) */
+        if (n->is_array || ty_is_struct(n->ty)) {
+            /* Array or struct: evaluate to address (no load) */
             gen_addr(n);
             return;
         }
@@ -248,7 +259,10 @@ static void gen_expr(struct Node *n) {
         /* Dereference *p */
         if (n->op == TK_STAR) {
             gen_expr(n->lhs);
-            cg_load(n->ty);
+            /* Struct deref: result is address (no load) */
+            if (!ty_is_struct(n->ty)) {
+                cg_load(n->ty);
+            }
             return;
         }
         /* Address-of &x */
@@ -444,6 +458,15 @@ static void gen_expr(struct Node *n) {
     if (n->kind == ND_COMMA) {
         gen_expr(n->lhs);  /* discard result */
         gen_expr(n->rhs);  /* keep result in r1 */
+        return;
+    }
+
+    if (n->kind == ND_MEMBER) {
+        gen_addr(n);
+        /* Struct-typed member: keep as address; scalar: load */
+        if (!ty_is_struct(n->ty)) {
+            cg_load(n->ty);
+        }
         return;
     }
 
