@@ -3,9 +3,9 @@
 # This Makefile guides the student through the stage-by-stage progression.
 # Each stage has specific prerequisites and produces clear, minimal artifacts.
 
-.PHONY: all clean stage00 stage01 stage02 stage03 stage04 stage05 stage06 stage07 stage08 stage09
+.PHONY: all clean stage00 stage01 stage02 stage03 stage04 stage05 stage06 stage07 stage08 stage09 stage10
 
-all: stage09
+all: stage10
 
 # Stage 00: Minimum bootstrap emulator (the trust root)
 stage00:
@@ -79,6 +79,13 @@ stage09: stage08
 	@echo "--- Building Stage 09: Self-Compiled Compiler ---"
 	$(MAKE) -C stage09
 
+# Stage 10: s32-cc Compiler (lex/parse split)
+# Prerequisites: Stage 09 cc-min (compiler), Stage 05 assembler, Stage 07 linker
+# Artifacts: s32cc.s32x (s32-cc compiler, runs on emulator)
+stage10: stage09
+	@echo "--- Building Stage 10: s32-cc Compiler ---"
+	$(MAKE) -C stage10
+
 clean:
 	$(MAKE) -C stage00 clean
 	$(MAKE) -C stage01 clean
@@ -90,3 +97,4 @@ clean:
 	$(MAKE) -C stage07 clean
 	$(MAKE) -C stage08 clean
 	$(MAKE) -C stage09 clean
+	$(MAKE) -C stage10 clean
