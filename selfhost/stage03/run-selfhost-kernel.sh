@@ -20,13 +20,11 @@ usage() {
     cat <<USAGE
 Usage: $0 [--emu <path>] [--kernel <path>] [--keep-artifacts] [--skip-boot]
 
-Build and boot a fully selfhosted Forth kernel image:
-  1) Stage01 assembles:
-     - selfhost/stage01/crt0_minimal.s
-     - selfhost/stage01/mmio_minimal.s
-     - forth/kernel.s
-  2) Stage03 links those three .s32o files into kernel-selfhost.s32x
-  3) Optional boot smoke: run "1 2 + . CR BYE" and require output "3"
+Build, boot, and fixed-point verify a selfhosted Forth kernel image:
+  1) Stage01 assembles crt0_minimal.s, mmio_minimal.s, kernel.s
+  2) Stage03 links them into gen1 kernel-selfhost.s32x
+  3) Boot smoke: run "1 2 + . CR BYE" and require output "3"
+  4) Fixed-point: rebuild using gen1 as kernel, verify gen2 == gen1
 
 Env overrides:
   SELFHOST_ROOT SELFHOST_EMU SELFHOST_KERNEL SELFHOST_PRELUDE
@@ -120,7 +118,7 @@ read_le32() {
     od -An -tu4 -N4 -j"$off" "$file" | tr -d ' \n'
 }
 
-echo "[1/3] Stage01 assemble prerequisites"
+echo "[1/5] Stage01 assemble prerequisites"
 cp "$ROOT_DIR/selfhost/stage01/crt0_minimal.s" "$SHORT_DIR/c0.s"
 cp "$ROOT_DIR/selfhost/stage01/mmio_minimal.s" "$SHORT_DIR/m0.s"
 cp "$ROOT_DIR/forth/kernel.s" "$SHORT_DIR/k0.s"
@@ -134,7 +132,7 @@ assemble_with_stage01 "$SHORT_DIR/c0.s" "$CRT0_OBJ" "$WORKDIR/crt0.log"
 assemble_with_stage01 "$SHORT_DIR/m0.s" "$MMIO_OBJ" "$WORKDIR/mmio.log"
 assemble_with_stage01 "$SHORT_DIR/k0.s" "$KERNEL_OBJ" "$WORKDIR/kernel.log"
 
-echo "[2/3] Stage03 link selfhost kernel"
+echo "[2/5] Stage03 link gen1 kernel"
 OUT_EXE="$SHORT_DIR/k0.x"
 rm -f "$OUT_EXE"
 run_forth "$LINK_FTH" /dev/null "LINK-INIT
@@ -153,7 +151,7 @@ if [[ -z "$code_limit" || "$code_limit" -lt 1048576 ]]; then
 fi
 
 if [[ "$SKIP_BOOT" -eq 0 ]]; then
-    echo "[3/3] Boot smoke"
+    echo "[3/5] Boot smoke (gen1)"
     set +e
     printf '1 2 + . CR BYE\n' | timeout 90 "$EMU" "$OUT_EXE" >"$WORKDIR/boot.log" 2>&1
     boot_rc=$?
@@ -170,11 +168,54 @@ if [[ "$SKIP_BOOT" -eq 0 ]]; then
     fi
 fi
 
-cp "$CRT0_OBJ" "$WORKDIR/crt0_minimal.s32o"
-cp "$MMIO_OBJ" "$WORKDIR/mmio_minimal.s32o"
-cp "$KERNEL_OBJ" "$WORKDIR/kernel.s32o"
-cp "$OUT_EXE" "$WORKDIR/kernel-selfhost.s32x"
+GEN1="$WORKDIR/kernel-gen1.s32x"
+cp "$OUT_EXE" "$GEN1"
 
-echo "OK: selfhost kernel pipeline passed"
+# --- Gen2: rebuild using gen1 as the Forth kernel ---
+echo "[4/5] Fixed-point: reassemble with gen1 kernel"
+GEN2_DIR="$SHORT_DIR/g2"
+mkdir -p "$GEN2_DIR"
+cp "$ROOT_DIR/selfhost/stage01/crt0_minimal.s" "$GEN2_DIR/c0.s"
+cp "$ROOT_DIR/selfhost/stage01/mmio_minimal.s" "$GEN2_DIR/m0.s"
+cp "$ROOT_DIR/forth/kernel.s" "$GEN2_DIR/k0.s"
+
+GEN2_CRT0="$GEN2_DIR/c0.o"
+GEN2_MMIO="$GEN2_DIR/m0.o"
+GEN2_KERN="$GEN2_DIR/k0.o"
+
+SAVE_KERNEL="$KERNEL"
+KERNEL="$GEN1"
+
+rm -f "$GEN2_CRT0" "$GEN2_MMIO" "$GEN2_KERN"
+assemble_with_stage01 "$GEN2_DIR/c0.s" "$GEN2_CRT0" "$WORKDIR/gen2-crt0.log"
+assemble_with_stage01 "$GEN2_DIR/m0.s" "$GEN2_MMIO" "$WORKDIR/gen2-mmio.log"
+assemble_with_stage01 "$GEN2_DIR/k0.s" "$GEN2_KERN" "$WORKDIR/gen2-kernel.log"
+
+echo "[5/5] Fixed-point: link gen2 and compare"
+GEN2_EXE="$GEN2_DIR/k0.x"
+rm -f "$GEN2_EXE"
+run_forth "$LINK_FTH" /dev/null "LINK-INIT
+S\" $GEN2_CRT0\" LINK-OBJ
+S\" $GEN2_KERN\" LINK-OBJ
+S\" $GEN2_MMIO\" LINK-OBJ
+65536 LINK-MMIO
+S\" $GEN2_EXE\" LINK-EMIT
+BYE" "$WORKDIR/gen2-link.log"
+[[ -s "$GEN2_EXE" ]] || { echo "gen2 linker produced no output" >&2; exit 1; }
+
+KERNEL="$SAVE_KERNEL"
+
+if cmp -s "$GEN1" "$GEN2_EXE"; then
+    echo "FIXED POINT: gen1 == gen2 ($(wc -c < "$GEN1") bytes)"
+else
+    echo "FIXED POINT FAILED: gen1 != gen2" >&2
+    echo "  gen1: $(wc -c < "$GEN1") bytes" >&2
+    echo "  gen2: $(wc -c < "$GEN2_EXE") bytes" >&2
+    exit 1
+fi
+
+cp "$GEN1" "$WORKDIR/kernel-selfhost.s32x"
+
+echo "OK: selfhost kernel fixed-point verified"
 echo "Image: $WORKDIR/kernel-selfhost.s32x"
 echo "Artifacts: $WORKDIR"

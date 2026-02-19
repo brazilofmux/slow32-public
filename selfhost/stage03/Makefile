@@ -17,7 +17,7 @@ HELLO_SRC = hello_minimal.s
 HELLO_OBJ = hello_minimal.s32o
 HELLO_EXE = hello_minimal.s32x
 
-.PHONY: all clean test
+.PHONY: all clean test verify
 
 all: $(HELLO_EXE)
 
@@ -33,6 +33,10 @@ $(HELLO_EXE): $(HELLO_OBJ) $(CRT0) $(LIBS32) $(LINK) $(EMU) $(KERNEL) $(PRELUDE)
 test: $(HELLO_EXE)
 	@echo "--- Running linked test program ---"
 	@$(EMU) $(HELLO_EXE)
+
+verify:
+	@echo "--- Fixed-point kernel verification ---"
+	@bash run-selfhost-kernel.sh
 
 clean:
 	rm -f $(HELLO_OBJ) $(HELLO_EXE)
