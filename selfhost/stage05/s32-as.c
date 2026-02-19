@@ -9,8 +9,8 @@
 #define MAX_LBL 4096
 #define MAX_REL 16384
 #define MAX_SYM 4096
-#define MAX_TEXT 262144
-#define MAX_DATA 262144
+#define MAX_TEXT 524288
+#define MAX_DATA 524288
 #define MAX_BSS 8388608
 #define MAX_STR 16384
 

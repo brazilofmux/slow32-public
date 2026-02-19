@@ -519,6 +519,7 @@ static void gen_stmt(struct Node *n) {
     int def_lbl;
     int cd;
     int ci2;
+    int skip_lbl;
     struct Node *s;
     struct Node *cs;
 
@@ -664,14 +665,19 @@ static void gen_stmt(struct Node *n) {
         gen_expr(n->cond);
         cg_s("    addi r2, r1, 0\n");  /* r2 = switch value */
 
-        /* Comparison chain */
+        /* Comparison chain (long-branch: bne skip + jal case) */
         sw_n = cg_sw_count[sw_d];
         sw_i = 0;
         while (sw_i < sw_n) {
             cg_li(cg_sw_val[sw_b + sw_i]);
-            cg_s("    beq r2, r1, ");
+            skip_lbl = cg_label();
+            cg_s("    bne r2, r1, ");
+            cg_lref(skip_lbl);
+            cg_c(10);
+            cg_s("    jal r0, ");
             cg_lref(cg_sw_lbl[sw_b + sw_i]);
             cg_c(10);
+            cg_ldef(skip_lbl);
             sw_i = sw_i + 1;
         }
 
@@ -842,24 +848,42 @@ static void gen_data(void) {
         i = i + 1;
     }
 
-    /* Global variables */
+    /* Global variables (initialized → .data, uninitialized → .bss) */
     i = 0;
     while (i < ps_nglobals) {
-        cg_s(".global ");
-        cg_s(ps_gname[i]);
-        cg_c(10);
-        cg_s(ps_gname[i]);
-        cg_s(":\n");
-        if (ps_gsize[i] > 0) {
-            /* Array: allocate space */
-            cg_s("    .space ");
-            cg_n(ps_gsize[i]);
+        if (ps_gsize[i] == 0 && ps_ginit[i] != 0) {
+            /* Initialized scalar: stays in .data */
+            cg_s(".global ");
+            cg_s(ps_gname[i]);
             cg_c(10);
-        } else {
-            /* Scalar: one word (with optional initializer) */
-            cg_s("    .word ");
+            cg_s(ps_gname[i]);
+            cg_s(":\n    .word ");
             cg_n(ps_ginit[i]);
             cg_c(10);
+        }
+        i = i + 1;
+    }
+
+    /* BSS section: uninitialized arrays and zero-init scalars */
+    cg_s(".bss\n");
+    i = 0;
+    while (i < ps_nglobals) {
+        if (ps_gsize[i] > 0) {
+            /* Array */
+            cg_s(".global ");
+            cg_s(ps_gname[i]);
+            cg_c(10);
+            cg_s(ps_gname[i]);
+            cg_s(":\n    .space ");
+            cg_n(ps_gsize[i]);
+            cg_c(10);
+        } else if (ps_ginit[i] == 0) {
+            /* Zero-init scalar */
+            cg_s(".global ");
+            cg_s(ps_gname[i]);
+            cg_c(10);
+            cg_s(ps_gname[i]);
+            cg_s(":\n    .space 4\n");
         }
         i = i + 1;
     }
