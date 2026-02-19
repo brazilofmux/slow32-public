@@ -101,7 +101,7 @@ symbol table entry (at position `member_idx * 16 + sym_offset` instead of
 `symbol_idx * 16 + sym_offset`). Fixed by replacing `J sym-j !` /
 `sym-j @ 16 * m-tmp-off @ +` with `I 16 * m-tmp-off @ +`.
 
-Both fixes verified by stage01 and stage03 regression tests. Archive-based linking
+Both fixes verified by stage01 regression tests. Archive-based linking
 now works correctly in the stage05 selfhost libc build.
 
 ---

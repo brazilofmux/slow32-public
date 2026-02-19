@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Build s32-ar.s32x (the C archiver) from source.
 # Uses: Stage 04 cc.fth (compiler), Stage 05 s32-as.s32x (assembler),
-#       Stage 02 ar.fth (archive libc), Stage 03 link.fth (linker).
+#       Stage 01 ar.fth (archive libc), Stage 01 link.fth (linker).
 # Deposits the artifact in the script's directory.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -18,7 +18,7 @@ KERNEL="${SELFHOST_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${SELFHOST_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 CC_FTH="$SELFHOST_DIR/stage04/cc.fth"
 AR_FTH="$SELFHOST_DIR/stage01/ar.fth"
-LINK_FTH="$SELFHOST_DIR/stage03/link.fth"
+LINK_FTH="$SELFHOST_DIR/stage01/link.fth"
 STAGE5_AS="$SELFHOST_DIR/stage05/s32-as.s32x"
 
 LIBC_DIR="$SELFHOST_DIR/stage05/libc"

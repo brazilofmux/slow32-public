@@ -10,7 +10,7 @@ KERNEL="${STAGE4_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${STAGE4_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 CC_FTH="${STAGE4_CC:-$SCRIPT_DIR/cc.fth}"
 ASM_FTH="${STAGE4_ASM:-$SELFHOST_DIR/stage01/asm.fth}"
-LINK_FTH="${STAGE4_LINK:-$SELFHOST_DIR/stage03/link.fth}"
+LINK_FTH="${STAGE4_LINK:-$SELFHOST_DIR/stage01/link.fth}"
 MANIFEST="${STAGE4_SUBSET_MANIFEST:-$SCRIPT_DIR/tests/manifests/subset.lst}"
 CRT0_SRC="$SELFHOST_DIR/stage01/crt0_minimal.s"
 MMIO_SRC="$SELFHOST_DIR/stage01/mmio_minimal.s"
@@ -24,7 +24,7 @@ Usage: $0 [--emu <path>] [--manifest <path>] [--keep-artifacts]
 Runs Stage4 Subset-C conformance checks:
   - compile with stage4 cc.fth
   - assemble with stage01 asm.fth
-  - link with stage03 link.fth
+  - link with stage01 link.fth
   - execute and require clean exit (0 or 96 HALT mapping)
 USAGE
 }

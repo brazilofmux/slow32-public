@@ -6,7 +6,7 @@ KERNEL = ../../forth/kernel.s32x
 PRELUDE = ../../forth/prelude.fth
 CC = cc.fth
 ASM = ../stage01/asm.fth
-LINK = ../stage03/link.fth
+LINK = ../stage01/link.fth
 
 # Prerequisites from Stage 01
 STAGE01_DIR = ../stage01

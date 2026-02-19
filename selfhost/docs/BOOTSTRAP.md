@@ -202,8 +202,8 @@ Using the pre-built kernel is fine for bootstrapping. After Stage 3, you can reb
 
   - Stage 0 emulator.
   - Pre-built `kernel.s32x`.
-  - `selfhost/stage03/link.fth` (~1,100 lines of Forth).
-  - Object files and archives from Stages 1-2.
+  - `selfhost/stage01/link.fth` (~1,100 lines of Forth).
+  - Object files and archives from Stage 1.
 
 - **You produce:**
 
@@ -751,7 +751,7 @@ Execution artifacts for the reorg are tracked in:
 | 0 | `selfhost/stage00/` | `s32-emu.c` | Done |
 | 1 | `selfhost/stage01/` | `asm.fth` | Done |
 | 2 | `selfhost/stage01/` | `ar.fth` (merged) | Done |
-| 3 | `selfhost/stage03/` | `link.fth` | Done |
+| 3 | `selfhost/stage01/` | `link.fth` (merged) | Done |
 | 4 | `selfhost/stage04/` | `cc.fth` | Done (regression passing) |
 | 5 | `selfhost/stage05/` | `s32-as.c` | Spike proven end-to-end; replacement hardening in progress |
 | 6 | `selfhost/stage06/` | `s32-ar.c` | Spike started; replacement hardening in progress |

@@ -1,4 +1,4 @@
-# Stage 01: Forth Assembler + Archiver
+# Stage 01: Forth Assembler + Archiver + Linker
 
 ## What Is Here
 
@@ -9,15 +9,22 @@ and symbol tables.
 An archiver written in Forth that creates and manipulates `.s32a`
 archive files (the SLOW-32 equivalent of Unix `.a` static libraries).
 
+A linker written in Forth that merges `.s32o` object files, resolves
+symbols from `.s32a` archives, and produces `.s32x` executables.
+
 | File | Description |
 |------|-------------|
 | `asm.fth` | The assembler (~1200 lines of Forth) |
 | `ar.fth` | The archiver (~600 lines of Forth) |
+| `link.fth` | The linker (~1100 lines of Forth) |
 | `crt0_minimal.s` | Minimal C runtime startup code |
 | `mmio_minimal.s` | Minimal MMIO runtime (putchar, open, read, write, memset, memcpy) |
+| `hello_minimal.s` | Linked test program |
 | `test*.s` | Assembly test sources |
 | `run-regression-as.sh` | Assembler regression test runner |
 | `run-regression-ar.sh` | Archiver regression test runner |
+| `run-regression-ld.sh` | Linker regression test runner |
+| `run-selfhost-kernel.sh` | Full self-hosting kernel pipeline |
 | `run-test*.fth` | Forth scripts that drive assembly of individual tests |
 
 ## What It Needs
@@ -34,6 +41,13 @@ sources used by all later stages.
 `.s32a` archive files from `.s32o` object files. The archiver supports
 create, list, extract, replace, delete, move, verbose list, and print
 member.
+
+`.s32x` executable files with resolved symbols, merged sections
+(`.text/.data/.rodata/.bss`), W^X flags, and MMIO configuration.
+
+The self-hosting kernel gate (`run-selfhost-kernel.sh`) assembles
+`crt0_minimal.s`, `mmio_minimal.s`, and `forth/kernel.s` from source,
+links them into `kernel-selfhost.s32x`, and boots it as a smoke test.
 
 ## Supported ISA Subset
 
@@ -85,4 +99,7 @@ Supports both numeric (`r0`..`r31`) and ABI names:
 selfhost/stage01/run-regression-as.sh test1
 selfhost/stage01/run-regression-as.sh test3
 selfhost/stage01/run-regression-ar.sh test3
+selfhost/stage01/run-regression-ld.sh test3
+selfhost/stage01/run-regression-ld.sh kernel
+selfhost/stage01/run-regression-ld.sh archive
 ```

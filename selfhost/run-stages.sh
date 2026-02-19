@@ -42,14 +42,14 @@ Usage: $0 [--from stage00] [--to stage08] [--emu <path>] [--skip-selfhost-kernel
 Runs ordered stage checks so a clean checkout can be validated end-to-end.
 
 Default sequence:
-  stage00 -> stage01 -> stage03 -> stage04 -> stage05 -> stage06 -> stage07 -> stage08
+  stage00 -> stage01 -> stage04 -> stage05 -> stage06 -> stage07 -> stage08
 
 Options:
   --from stageNN   Start stage (stage00..stage08)
   --to stageNN     End stage (stage00..stage08)
   --emu path       Emulator for stage01..stage08 (default: slow32-fast, then stage00 s32-emu, then slow32)
   --skip-selfhost-kernel
-                   Skip stage03 selfhost-kernel regeneration/boot gate (dev fast-path)
+                   Skip stage01 selfhost-kernel regeneration/boot gate (dev fast-path)
   --skip-purity-guard
                    Skip bootstrap purity guard for stage00..06 (debug only)
   --quick          Run reduced smoke checks for faster iteration
@@ -134,7 +134,6 @@ stage_num() {
     case "$1" in
         stage00) echo 0 ;;
         stage01) echo 1 ;;
-        stage03) echo 3 ;;
         stage04) echo 4 ;;
         stage05) echo 5 ;;
         stage06) echo 6 ;;
@@ -173,30 +172,26 @@ run_stage00() {
 }
 
 run_stage01() {
-    echo "[stage01] assembler + archiver regression"
+    echo "[stage01] assembler + archiver + linker regression"
     run_logged "stage01 asm test1" "$LOG_DIR/stage01-test1.log" \
         env STAGE01_EMU="$EMU" "$ROOT_DIR/selfhost/stage01/run-regression-as.sh" test1
     run_logged "stage01 ar test3" "$LOG_DIR/stage01-ar-test3.log" \
         env STAGE01_AR_EMU="$EMU" "$ROOT_DIR/selfhost/stage01/run-regression-ar.sh" test3
-}
-
-run_stage03() {
-    echo "[stage03] linker regression"
-    run_logged "stage03 test3" "$LOG_DIR/stage03-test3.log" \
-        env STAGE3_EMU="$EMU" "$ROOT_DIR/selfhost/stage03/run-regression.sh" test3
+    run_logged "stage01 ld test3" "$LOG_DIR/stage01-ld-test3.log" \
+        env STAGE01_LD_EMU="$EMU" "$ROOT_DIR/selfhost/stage01/run-regression-ld.sh" test3
     if [[ "$QUICK" -eq 0 ]]; then
-        run_logged "stage03 archive" "$LOG_DIR/stage03-archive.log" \
-            env STAGE3_EMU="$EMU" "$ROOT_DIR/selfhost/stage03/run-regression.sh" archive
+        run_logged "stage01 ld archive" "$LOG_DIR/stage01-ld-archive.log" \
+            env STAGE01_LD_EMU="$EMU" "$ROOT_DIR/selfhost/stage01/run-regression-ld.sh" archive
     else
-        echo "[stage03] quick mode: skipping archive regression"
+        echo "[stage01] quick mode: skipping linker archive regression"
     fi
     if [[ "$SKIP_SELFHOST_KERNEL" -eq 0 && "$QUICK" -eq 0 ]]; then
-        run_logged "stage03 selfhost-kernel" "$LOG_DIR/stage03-selfhost-kernel.log" \
-            env SELFHOST_EMU="$EMU" "$ROOT_DIR/selfhost/stage03/run-selfhost-kernel.sh"
+        run_logged "stage01 selfhost-kernel" "$LOG_DIR/stage01-selfhost-kernel.log" \
+            env SELFHOST_EMU="$EMU" "$ROOT_DIR/selfhost/stage01/run-selfhost-kernel.sh"
     elif [[ "$SKIP_SELFHOST_KERNEL" -eq 0 && "$QUICK" -eq 1 ]]; then
-        echo "[stage03] quick mode: skipping selfhost kernel regeneration gate"
+        echo "[stage01] quick mode: skipping selfhost kernel regeneration gate"
     else
-        echo "[stage03] skipping selfhost kernel regeneration gate (--skip-selfhost-kernel)"
+        echo "[stage01] skipping selfhost kernel regeneration gate (--skip-selfhost-kernel)"
     fi
 }
 
@@ -273,7 +268,7 @@ run_stage08() {
     fi
 }
 
-for st in stage00 stage01 stage03 stage04 stage05 stage06 stage07 stage08; do
+for st in stage00 stage01 stage04 stage05 stage06 stage07 stage08; do
     N="$(stage_num "$st")"
     if (( N < FROM_N || N > TO_N )); then
         continue

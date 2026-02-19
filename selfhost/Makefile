@@ -3,7 +3,7 @@
 # This Makefile guides the student through the stage-by-stage progression.
 # Each stage has specific prerequisites and produces clear, minimal artifacts.
 
-.PHONY: all clean stage00 stage01 stage03 stage04 stage05 stage06 stage07 stage08 stage09 stage10 stage11 stage12 stage13 stage14
+.PHONY: all clean stage00 stage01 stage04 stage05 stage06 stage07 stage08 stage09 stage10 stage11 stage12 stage13 stage14
 
 all: stage14
 
@@ -12,36 +12,29 @@ stage00:
 	@echo "--- Building Stage 00: Emulator ---"
 	$(MAKE) -C stage00
 
-# Stage 01: Forth Assembler + Archiver
+# Stage 01: Forth Assembler + Archiver + Linker
 # Prerequisites: Stage 00 emulator, Forth kernel.s32x
-# Artifacts: crt0_minimal.s32o, mmio_minimal.s32o, libs32_minimal.s32a
+# Artifacts: crt0_minimal.s32o, mmio_minimal.s32o, libs32_minimal.s32a, hello_minimal.s32x
 stage01: stage00
-	@echo "--- Building Stage 01: Forth Assembler + Archiver Artifacts ---"
+	@echo "--- Building Stage 01: Forth Assembler + Archiver + Linker Artifacts ---"
 	$(MAKE) -C stage01
 
-# Stage 03: Forth Linker
-# Prerequisites: Stage 01 artifacts
-# Artifacts: hello_minimal.s32x
-stage03: stage01
-	@echo "--- Building Stage 03: Forth Linker Artifacts ---"
-	$(MAKE) -C stage03
-
 # Stage 04: Forth-Hosted Subset C Compiler
-# Prerequisites: Stage 01/03 artifacts
+# Prerequisites: Stage 01 artifacts
 # Artifacts: test1.s32x (compiled from C)
-stage04: stage03
+stage04: stage01
 	@echo "--- Building Stage 04: Forth C Compiler Artifacts ---"
 	$(MAKE) -C stage04
 
 # Stage 05: Subset-C Assembler
-# Prerequisites: Stage 04 C compiler, Stage 01/03 Forth tools
+# Prerequisites: Stage 04 C compiler, Stage 01 Forth tools
 # Artifacts: s32-as.s32x (C assembler, runs on emulator)
 stage05: stage04
 	@echo "--- Building Stage 05: C Assembler ---"
 	$(MAKE) -C stage05
 
 # Stage 06: Subset-C Archiver
-# Prerequisites: Stage 04 C compiler, Stage 05 C assembler, Stage 03 linker
+# Prerequisites: Stage 04 C compiler, Stage 05 C assembler, Stage 01 linker
 # Artifacts: s32-ar.s32x (C archiver, runs on emulator)
 stage06: stage05
 	@echo "--- Building Stage 06: C Archiver ---"
@@ -49,8 +42,8 @@ stage06: stage05
 
 # Stage 07: Subset-C Linker
 # Prerequisites: Stage 04 C compiler, Stage 05 C assembler
-# Uses Stage 03 link.fth one final time to link itself (bootstrap).
-# After this stage, Forth tools (stage01-03) are no longer needed.
+# Uses Stage 01 link.fth one final time to link itself (bootstrap).
+# After this stage, Forth tools (stage01) are no longer needed.
 # Artifacts: s32-ld.s32x (C linker, runs on emulator)
 stage07: stage06
 	@echo "--- Building Stage 07: C Linker ---"
@@ -58,7 +51,7 @@ stage07: stage06
 
 # Stage 08: Subset-C Compiler (cc-min)
 # Prerequisites: Stage 04 cc.fth (one last time), Stage 05 C assembler, Stage 07 C linker
-# After this stage, ALL Forth tools (stage01-04) are retired.
+# After this stage, ALL Forth tools (stage01/04) are retired.
 # Artifacts: cc-min.s32x (C compiler, runs on emulator)
 stage08: stage07
 	@echo "--- Building Stage 08: C Compiler ---"
@@ -111,7 +104,6 @@ stage14: stage13
 clean:
 	$(MAKE) -C stage00 clean
 	$(MAKE) -C stage01 clean
-	$(MAKE) -C stage03 clean
 	$(MAKE) -C stage04 clean
 	$(MAKE) -C stage05 clean
 	$(MAKE) -C stage06 clean

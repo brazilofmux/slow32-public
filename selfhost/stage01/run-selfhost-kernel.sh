@@ -11,7 +11,7 @@ EMU="${SELFHOST_EMU:-$ROOT_DIR/selfhost/stage00/s32-emu}"
 KERNEL="${SELFHOST_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${SELFHOST_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 ASM_FTH="${SELFHOST_ASM_FTH:-$ROOT_DIR/selfhost/stage01/asm.fth}"
-LINK_FTH="${SELFHOST_LINK_FTH:-$ROOT_DIR/selfhost/stage03/link.fth}"
+LINK_FTH="${SELFHOST_LINK_FTH:-$ROOT_DIR/selfhost/stage01/link.fth}"
 
 KEEP_ARTIFACTS=0
 SKIP_BOOT=0
@@ -22,7 +22,7 @@ Usage: $0 [--emu <path>] [--kernel <path>] [--keep-artifacts] [--skip-boot]
 
 Build, boot, and fixed-point verify a selfhosted Forth kernel image:
   1) Stage01 assembles crt0_minimal.s, mmio_minimal.s, kernel.s
-  2) Stage03 links them into gen1 kernel-selfhost.s32x
+  2) Stage01 linker links them into gen1 kernel-selfhost.s32x
   3) Boot smoke: run "1 2 + . CR BYE" and require output "3"
   4) Fixed-point: rebuild using gen1 as kernel, verify gen2 == gen1
 
@@ -63,7 +63,7 @@ for req in "$EMU" "$KERNEL" "$PRELUDE" "$ASM_FTH" "$LINK_FTH"; do
     [[ -f "$req" ]] || { echo "Missing required file: $req" >&2; exit 1; }
 done
 
-WORKDIR="$(mktemp -d /tmp/stage03-selfhost-kernel.XXXXXX)"
+WORKDIR="$(mktemp -d /tmp/stage01-selfhost-kernel.XXXXXX)"
 if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then
     trap 'rm -rf "$WORKDIR"' EXIT
 fi
@@ -132,7 +132,7 @@ assemble_with_stage01 "$SHORT_DIR/c0.s" "$CRT0_OBJ" "$WORKDIR/crt0.log"
 assemble_with_stage01 "$SHORT_DIR/m0.s" "$MMIO_OBJ" "$WORKDIR/mmio.log"
 assemble_with_stage01 "$SHORT_DIR/k0.s" "$KERNEL_OBJ" "$WORKDIR/kernel.log"
 
-echo "[2/5] Stage03 link gen1 kernel"
+echo "[2/5] Stage01 link gen1 kernel"
 OUT_EXE="$SHORT_DIR/k0.x"
 rm -f "$OUT_EXE"
 run_forth "$LINK_FTH" /dev/null "LINK-INIT

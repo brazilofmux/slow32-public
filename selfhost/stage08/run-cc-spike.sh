@@ -10,7 +10,7 @@ EMU_EXPLICIT=0
 KERNEL="${STAGE8_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${STAGE8_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 CC_FTH="${STAGE8_CC_FTH:-$SELFHOST_DIR/stage04/cc.fth}"
-LINK_FTH="${STAGE8_LINK_FTH:-$SELFHOST_DIR/stage03/link.fth}"
+LINK_FTH="${STAGE8_LINK_FTH:-$SELFHOST_DIR/stage01/link.fth}"
 
 CRT0_SRC="$SELFHOST_DIR/stage05/crt0.s"
 MMIO_SRC="$SELFHOST_DIR/stage05/mmio.s"
@@ -77,9 +77,9 @@ Usage: $0 [--emu <path>] [--keep-artifacts]
 
 Stage08 compiler spike:
   1) bootstrap stage05 assembler + stage06 archiver + stage07 linker
-  2) build cc-min.s32x via stage04->stage05->stage03
+  2) build cc-min.s32x via stage04->stage05->stage01
   3) compile min_main, min_ret7, min_ret_expr, min_local_ret_expr, min_ret_rel, min_if_{true,false}, min_while_countdown, min_two_locals, min_helper_call, min_helper_arg, min_helper_local, min_main_local_helper, min_helper_two_args, and min_helper_two_args_if with cc-min.s32x
-  4) assemble with stage05; produce raw link via stage07; run via stage03 runtime link
+  4) assemble with stage05; produce raw link via stage07; run via stage01 runtime link
 USAGE
 }
 
@@ -458,7 +458,7 @@ popd >/dev/null
 [[ -s "$GEN_INCLUDE_ASM" ]] || { echo "cc-min produced no include assembly output" >&2; exit 1; }
 grep -q '^main:' "$GEN_ASM" || { echo "generated assembly missing main label" >&2; exit 1; }
 
-# 4) Assemble, link with stage07 (artifact), then link/run with stage03 runtime.
+# 4) Assemble, link with stage07 (artifact), then link/run with stage01 runtime.
 GEN_OBJ="$WORKDIR/min_main.generated.s32o"
 GEN_RAW_EXE="$WORKDIR/min_main.generated.raw.s32x"
 GEN_EXE="$WORKDIR/min_main.generated.s32x"

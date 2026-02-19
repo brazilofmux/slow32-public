@@ -3,8 +3,8 @@ set -euo pipefail
 
 # Build s32-ld.s32x (the C linker) from source.
 # Uses: Stage 04 cc.fth (compiler), Stage 05 s32-as.s32x (assembler),
-#       Stage 03 link.fth (linker — last Forth dependency).
-# After this stage, Forth tools (stage01-03) are no longer needed.
+#       Stage 01 link.fth (linker — last Forth dependency).
+# After this stage, Forth tools (stage01) are no longer needed.
 # Deposits the artifact in the script's directory.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -18,7 +18,7 @@ EMU="${SELFHOST_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
 KERNEL="${SELFHOST_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${SELFHOST_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 CC_FTH="$SELFHOST_DIR/stage04/cc.fth"
-LINK_FTH="$SELFHOST_DIR/stage03/link.fth"
+LINK_FTH="$SELFHOST_DIR/stage01/link.fth"
 STAGE5_AS="$SELFHOST_DIR/stage05/s32-as.s32x"
 
 LIBC_DIR="$SELFHOST_DIR/stage05/libc"

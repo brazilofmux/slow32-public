@@ -5,20 +5,20 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
-EMU="${STAGE3_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
-KERNEL="${STAGE3_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
-PRELUDE="${STAGE3_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
-LINK_FTH="${STAGE3_LINK:-$SCRIPT_DIR/link.fth}"
-ASM_FTH="${STAGE3_ASM:-$SELFHOST_DIR/stage01/asm.fth}"
-AR_FTH="${STAGE3_AR:-$SELFHOST_DIR/stage01/ar.fth}"
+EMU="${STAGE01_LD_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
+KERNEL="${STAGE01_LD_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
+PRELUDE="${STAGE01_LD_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
+LINK_FTH="${STAGE01_LD_LINK:-$SCRIPT_DIR/link.fth}"
+ASM_FTH="${STAGE01_LD_ASM:-$SCRIPT_DIR/asm.fth}"
+AR_FTH="${STAGE01_LD_AR:-$SCRIPT_DIR/ar.fth}"
 
 usage() {
     cat <<USAGE
 Usage: $0 [kernel|test3|archive]
 
-Runs stage3 linker checks with path-override aware defaults.
+Runs stage01 linker checks with path-override aware defaults.
 Env overrides:
-  STAGE3_EMU STAGE3_KERNEL STAGE3_PRELUDE STAGE3_LINK STAGE3_ASM STAGE3_AR
+  STAGE01_LD_EMU STAGE01_LD_KERNEL STAGE01_LD_PRELUDE STAGE01_LD_LINK STAGE01_LD_ASM STAGE01_LD_AR
 USAGE
 }
 
@@ -28,7 +28,7 @@ for f in "$EMU" "$KERNEL" "$PRELUDE" "$LINK_FTH" "$ASM_FTH" "$AR_FTH"; do
     [[ -f "$f" ]] || { echo "Missing required file: $f" >&2; exit 1; }
 done
 
-WORKDIR="$(mktemp -d /tmp/stage3-regression.XXXXXX)"
+WORKDIR="$(mktemp -d /tmp/stage01-linker.XXXXXX)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
 run_forth() {
@@ -53,8 +53,8 @@ FTH
 
 case "$TARGET" in
     kernel)
-        CRT0_SRC="$SELFHOST_DIR/stage01/crt0_minimal.s"
-        MMIO_SRC="$SELFHOST_DIR/stage01/mmio_minimal.s"
+        CRT0_SRC="$SCRIPT_DIR/crt0_minimal.s"
+        MMIO_SRC="$SCRIPT_DIR/mmio_minimal.s"
         KERNEL_SRC="$ROOT_DIR/forth/kernel.s"
         CRT0_OBJ="$WORKDIR/crt0_minimal.s32o"
         MMIO_OBJ="$WORKDIR/mmio_minimal.s32o"
@@ -79,7 +79,7 @@ S\" $OUT\" LINK-EMIT"
         ;;
     test3)
         OBJ="$WORKDIR/test3-forth.s32o"
-        run_forth "$ASM_FTH" "S\" $SELFHOST_DIR/stage01/test3.s\" S\" $OBJ\" ASSEMBLE" "$WORKDIR/test3-asm.log"
+        run_forth "$ASM_FTH" "S\" $SCRIPT_DIR/test3.s\" S\" $OBJ\" ASSEMBLE" "$WORKDIR/test3-asm.log"
         [[ -s "$OBJ" ]] || { echo "assembler produced no output" >&2; exit 1; }
         OUT="$WORKDIR/test3-forth-linked.s32x"
         CMD="LINK-INIT
@@ -90,8 +90,8 @@ S\" $OUT\" LINK-EMIT"
         MINI_S="$WORKDIR/main_halt.s"
         MINI_O="$WORKDIR/main_halt.s32o"
         MINI_A="$WORKDIR/libmini.s32a"
-        CRT0_SRC="$SELFHOST_DIR/stage01/crt0_minimal.s"
-        MMIO_SRC="$SELFHOST_DIR/stage01/mmio_minimal.s"
+        CRT0_SRC="$SCRIPT_DIR/crt0_minimal.s"
+        MMIO_SRC="$SCRIPT_DIR/mmio_minimal.s"
         CRT0_OBJ="$WORKDIR/crt0_minimal.s32o"
         MMIO_OBJ="$WORKDIR/mmio_minimal.s32o"
         OUT="$WORKDIR/archive-linked.s32x"
@@ -138,5 +138,5 @@ esac
 run_forth "$LINK_FTH" "$CMD" "$WORKDIR/${TARGET}.log"
 [[ -s "$OUT" ]] || { echo "linker produced no output" >&2; exit 1; }
 
-echo "OK: stage3 $TARGET"
+echo "OK: stage01-ld $TARGET"
 echo "Output: $OUT"

@@ -12,7 +12,7 @@ EMU_EXPLICIT=0
 
 CC_FTH="${SELFHOST_CC_FTH:-$SELFHOST_DIR/stage04/cc.fth}"
 ASM_FTH="${SELFHOST_ASM_FTH:-$SELFHOST_DIR/stage01/asm.fth}"
-LINK_FTH="${SELFHOST_LINK_FTH:-$SELFHOST_DIR/stage03/link.fth}"
+LINK_FTH="${SELFHOST_LINK_FTH:-$SELFHOST_DIR/stage01/link.fth}"
 AR_FTH="${SELFHOST_AR_FTH:-$SELFHOST_DIR/stage01/ar.fth}"
 
 TEST_DIR="${SELFHOST_TEST_DIR:-$SELFHOST_DIR/stage04/tests}"
@@ -799,27 +799,27 @@ echo "OK: stage05 pipeline ($MODE)"
 if [[ "$MODE" == "stage6-ar-smoke" || "$MODE" == "stage6-ar-scan-smoke" ]]; then
     echo "Input member: $TARGET_OBJ"
     echo "Assembler path: c(stage05) for s32-as and stage6 smoke asm"
-    echo "Linker path: forth(stage03)"
+    echo "Linker path: forth(stage01)"
 elif [[ "$MODE" == "stage6-ar-rc-smoke" ]]; then
     echo "Input members: synthetic rc-alpha.dat rc-beta.dat (replace rc-alpha.dat)"
     echo "Assembler path: c(stage05) for s32-as and stage6 smoke asm"
-    echo "Linker path: forth(stage03)"
+    echo "Linker path: forth(stage01)"
 elif [[ "$MODE" == "stage6-ar-tx-smoke" ]]; then
     echo "Input members: synthetic member-a.src member-b.src"
     echo "Assembler path: c(stage05) for s32-as and stage6 smoke asm"
-    echo "Linker path: forth(stage03)"
+    echo "Linker path: forth(stage01)"
 elif [[ "$MODE" == "stage6-ar-d-smoke" ]]; then
     echo "Input members: synthetic member-a.src member-b.src (delete member-a.src)"
     echo "Assembler path: c(stage05) for s32-as and stage6 smoke asm"
-    echo "Linker path: forth(stage03)"
+    echo "Linker path: forth(stage01)"
 elif [[ "$MODE" == "stage6-ar-m-smoke" ]]; then
     echo "Input members: synthetic member-a.src member-b.src member-c.src (move member-a.src to end)"
     echo "Assembler path: c(stage05) for s32-as and stage6 smoke asm"
-    echo "Linker path: forth(stage03)"
+    echo "Linker path: forth(stage01)"
 elif [[ "$MODE" == "stage6-ar-vp-smoke" ]]; then
     echo "Input members: synthetic member-a.src member-b.src (list/print)"
     echo "Assembler path: c(stage05) for s32-as and stage6 smoke asm"
-    echo "Linker path: forth(stage03)"
+    echo "Linker path: forth(stage01)"
 elif [[ "$MODE" == "stage6-ar-asm-diff" ]]; then
     echo "Input: $TARGET_SRC"
     echo "Assembler path: c(stage05) vs forth(stage01) object-compare"
@@ -831,7 +831,7 @@ elif [[ "$MODE" == "stage6-utility-smoke" ]]; then
         echo "Utility input: $TARGET_INPUT"
     fi
     echo "Assembler path: c(stage05) vs forth(stage01) parity"
-    echo "Linker path: forth(stage03)"
+    echo "Linker path: forth(stage01)"
 elif [[ "$MODE" == "stage5-as-bisect" ]]; then
     echo "Input: $TARGET_SRC"
     echo "Assembler path: c(stage05) first-failing-line bisect"
@@ -839,11 +839,11 @@ elif [[ "$MODE" == "stage5-as-bisect" ]]; then
 elif [[ "$MODE" == "baseline" ]]; then
     echo "Input: $TARGET_SRC"
     echo "Assembler path: forth(stage01)"
-    echo "Linker path: forth(stage03)"
+    echo "Linker path: forth(stage01)"
 else
     echo "Input: $TARGET_SRC"
     echo "Assembler path: c(stage05)"
-    echo "Linker path: forth(stage03)"
+    echo "Linker path: forth(stage01)"
 fi
 if [[ "$MODE" == "progressive-as-ar" || "$MODE" == "stage6-ar-smoke" ]]; then
     echo "Archiver smoke: c(stage06)"

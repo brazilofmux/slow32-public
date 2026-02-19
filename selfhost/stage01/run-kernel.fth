@@ -1,8 +1,16 @@
-: RUN-KERNEL
-    ." Loading assembler..." CR
-    S" forth/kernel.s" S" /tmp/kernel-forth.s32o"
-    ." About to call ASSEMBLE..." CR
-    ['] ASSEMBLE CATCH
-    ?DUP IF ." ASSEMBLE threw error: " . CR ELSE ." ASSEMBLE completed." CR THEN ;
-RUN-KERNEL
+\ Link the Forth kernel from minimal selfhost sources
+\ Prerequisite: assemble these with Stage 1 assembler first:
+\   - selfhost/stage01/crt0_minimal.s -> crt0_minimal.s32o
+\   - selfhost/stage01/mmio_minimal.s -> mmio_minimal.s32o
+\   - forth/kernel.s -> kernel.s32o
+\
+\ No host-built archives required - mmio_minimal.s32o provides all
+\ runtime functions needed by kernel.s (open, close, read, write, etc.)
+
+LINK-INIT
+S" selfhost/stage01/crt0_minimal.s32o" LINK-OBJ
+S" forth/kernel.s32o" LINK-OBJ
+S" selfhost/stage01/mmio_minimal.s32o" LINK-OBJ
+65536 LINK-MMIO
+S" /tmp/kernel-selfhost.s32x" LINK-EMIT
 BYE
