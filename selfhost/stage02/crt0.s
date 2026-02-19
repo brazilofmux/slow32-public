@@ -1,11 +1,11 @@
-# SLOW-32 Minimal C Runtime Startup for Selfhost Stage05+
+# SLOW-32 Minimal C Runtime Startup for Selfhost Stage02+
 #
 # Simplified version that:
 #   - Assumes stack pointer initialized from .s32x header
 #   - Zeros the .bss section
 #   - Invokes __slow32_start (provided by libc/start.c)
 #
-# This copy lives with the stage05 toolchain so later stages no longer
+# This copy lives with the stage02 toolchain so later stages no longer
 # depend on stage01 sources once the C cycle begins.
 
 .text

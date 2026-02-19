@@ -7,7 +7,7 @@ ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 
 EMU="${STAGE8_EMU:-}"
 EMU_EXPLICIT=0
-PIPE="$SELFHOST_DIR/stage05/run-pipeline.sh"
+PIPE="$SELFHOST_DIR/stage02/run-pipeline.sh"
 
 choose_default_emu() {
     printf '%s\n' "$SELFHOST_DIR/stage00/s32-emu"

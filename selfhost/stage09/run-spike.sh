@@ -19,7 +19,7 @@ if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
 fi
 
 EMU="${SELFHOST_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
-STAGE5_AS="$SELFHOST_DIR/stage05/s32-as.s32x"
+STAGE2_AS="$SELFHOST_DIR/stage02/s32-as.s32x"
 STAGE7_LD="$SELFHOST_DIR/stage07/s32-ld.s32x"
 GEN1_CC="$SELFHOST_DIR/stage08/cc-min.s32x"
 GEN2_CC="$SCRIPT_DIR/cc-min.s32x"
@@ -31,7 +31,7 @@ CCMIN_PASS2="$STAGE08_DIR/cc-min-pass2.c"
 CCMIN_PASS3="$STAGE08_DIR/cc-min-pass3.c"
 CCMIN_MAIN="$STAGE08_DIR/cc-min.c"
 
-for f in "$EMU" "$STAGE5_AS" "$STAGE7_LD" "$GEN1_CC" "$GEN2_CC" "$SMOKE_SRC" \
+for f in "$EMU" "$STAGE2_AS" "$STAGE7_LD" "$GEN1_CC" "$GEN2_CC" "$SMOKE_SRC" \
          "$CCMIN_PASS1" "$CCMIN_PASS2" "$CCMIN_PASS3" "$CCMIN_MAIN"; do
     [[ -f "$f" ]] || { echo "Missing: $f" >&2; exit 1; }
 done
@@ -68,7 +68,7 @@ run_cc() {
 assemble() {
     local src="$1" obj="$2" log="$3"
     set +e
-    timeout 120 "$EMU" "$STAGE5_AS" "$src" "$obj" >"$log" 2>&1
+    timeout 120 "$EMU" "$STAGE2_AS" "$src" "$obj" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then

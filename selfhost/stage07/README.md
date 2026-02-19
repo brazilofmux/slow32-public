@@ -17,7 +17,7 @@ object files and resolves symbols from `.s32a` archives to produce
 
 - Stage 00 emulator (`s32-emu`)
 - Stage 04 compiler, Stage 01 assembler, Stage 03 linker (to build)
-- `libc/` from Stage 05
+- `libc/` from Stage 02
 - `crt0_minimal.s` and `mmio_minimal.s` from Stage 01
 
 ## What It Produces

@@ -21,9 +21,9 @@ bootstrap turns recursive: a C compiler compiling C.
 - Stage 00 emulator (`s32-emu`)
 - Stage 04 compiler (`cc.fth`) to build cc-min itself
 - Stage 01 assembler and Stage 03 linker (to build cc-min)
-- Stage 05 assembler (to assemble cc-min's output)
+- Stage 02 assembler (to assemble cc-min's output)
 - Stage 07 linker (to link cc-min's output)
-- `libc/` from Stage 05
+- `libc/` from Stage 02
 
 ## What It Produces
 
@@ -31,7 +31,7 @@ bootstrap turns recursive: a C compiler compiling C.
 recursive descent compiler (SubC/Small-C style) that emits SLOW-32
 assembly directly during parsing -- no AST, no separate IR.
 
-The pipeline is: cc-min compiles `.c` to `.s`, Stage 05 assembles
+The pipeline is: cc-min compiles `.c` to `.s`, Stage 02 assembles
 `.s` to `.s32o`, Stage 07 links `.s32o` to `.s32x`, emulator runs it.
 
 ## How To Test

@@ -122,7 +122,7 @@ run_exe_rc() {
 echo "=== Step 1: Bootstrap ==="
 
 STAGE13_CC="$SELFHOST_DIR/stage13/s12cc.s32x"
-AS_EXE="$SELFHOST_DIR/stage05/s32-as.s32x"
+AS_EXE="$SELFHOST_DIR/stage02/s32-as.s32x"
 LD_EXE="$SELFHOST_DIR/stage07/s32-ld.s32x"
 
 [[ -f "$STAGE13_CC" ]] || { echo "Missing s12cc (stage13): $STAGE13_CC" >&2; exit 1; }

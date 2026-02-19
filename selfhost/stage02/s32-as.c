@@ -789,7 +789,7 @@ static int write_obj(const char *out) {
     if (g_bsz) { nsec++; bss_idx = (int)nsec; }
 
     /* Keep local text branch/jal relocations for linker resolution.
-       This avoids stage5 self-host fold-path corruption. */
+       This avoids stage2 self-host fold-path corruption. */
 
     for (i = 0; i < g_nrel; i++) {
         if (g_rel_sec[i] == SEC_TEXT) text_rel++;

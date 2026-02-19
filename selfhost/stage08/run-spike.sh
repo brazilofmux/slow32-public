@@ -16,11 +16,11 @@ if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
 fi
 
 EMU="${SELFHOST_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
-STAGE5_AS="$SELFHOST_DIR/stage05/s32-as.s32x"
+STAGE2_AS="$SELFHOST_DIR/stage02/s32-as.s32x"
 STAGE7_LD="$SELFHOST_DIR/stage07/s32-ld.s32x"
 STAGE8_CC="$SCRIPT_DIR/cc-min.s32x"
 
-for f in "$EMU" "$STAGE5_AS" "$STAGE7_LD" "$STAGE8_CC"; do
+for f in "$EMU" "$STAGE2_AS" "$STAGE7_LD" "$STAGE8_CC"; do
     [[ -f "$f" ]] || { echo "Missing: $f" >&2; exit 1; }
 done
 
@@ -38,7 +38,7 @@ _start:
     halt
 ASM
 set +e
-timeout 30 "$EMU" "$STAGE5_AS" "$WORKDIR/minicrt0.s" "$WORKDIR/minicrt0.s32o" >/dev/null 2>&1
+timeout 30 "$EMU" "$STAGE2_AS" "$WORKDIR/minicrt0.s" "$WORKDIR/minicrt0.s32o" >/dev/null 2>&1
 set -e
 [[ -s "$WORKDIR/minicrt0.s32o" ]] || { echo "Failed to assemble minicrt0" >&2; exit 1; }
 
@@ -69,7 +69,7 @@ compile_cc() {
 assemble() {
     local src="$1" obj="$2" log="$3"
     set +e
-    timeout 120 "$EMU" "$STAGE5_AS" "$src" "$obj" >"$log" 2>&1
+    timeout 120 "$EMU" "$STAGE2_AS" "$src" "$obj" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then

@@ -753,7 +753,7 @@ Execution artifacts for the reorg are tracked in:
 | 2 | `selfhost/stage01/` | `ar.fth` (merged) | Done |
 | 3 | `selfhost/stage01/` | `link.fth` (merged) | Done |
 | 4 | `selfhost/stage01/` | `cc.fth` (merged) | Done (regression passing) |
-| 5 | `selfhost/stage05/` | `s32-as.c` | Spike proven end-to-end; replacement hardening in progress |
+| 5 | `selfhost/stage02/` | `s32-as.c` | Spike proven end-to-end; replacement hardening in progress |
 | 6 | `selfhost/stage06/` | `s32-ar.c` | Spike started; replacement hardening in progress |
 | 7 | `selfhost/stage07/` | `s32-ld.c` (planned) | Not started |
 | 8 | `selfhost/stage08/` | `cc.c` (planned) | Not started |
@@ -808,5 +808,5 @@ You could also skip the Subset C layer and go straight to Full C. This is a wors
 - [STAGE2-ASSEMBLER.md](STAGE2-ASSEMBLER.md) — Forth assembler specification (Stage 1).
 - [STAGE3-LINKER.md](STAGE3-LINKER.md) — Forth linker specification (Stage 3).
 - [STAGE4-COMPILER.md](STAGE4-COMPILER.md) — C compiler specification (Stage 4).
-- [STAGE5-SELFHOST.md](STAGE5-SELFHOST.md) — Self-hosting procedure (Stages 5-9, 11-12).
+- [STAGE2-SELFHOST.md](STAGE2-SELFHOST.md) — Self-hosting procedure (Stages 5-9, 11-12).
 - [STAGE6-FIXEDPOINT.md](STAGE6-FIXEDPOINT.md) — Fixed-point verification (Stages 9 and 16).

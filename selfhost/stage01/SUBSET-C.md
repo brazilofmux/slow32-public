@@ -20,8 +20,8 @@ Conformance gate:
 - Test corpus: `selfhost/stage01/tests/subset/`
 - Manifest: `selfhost/stage01/tests/manifests/subset.lst`
 - Runner: `selfhost/stage01/run-subset-conformance.sh`
-- Stage5 idiom corpus: `selfhost/stage01/tests/subset-idioms/`
-- Stage5 idiom manifest: `selfhost/stage01/tests/manifests/subset-stage5-idioms.lst`
+- Stage2 idiom corpus: `selfhost/stage01/tests/subset-idioms/`
+- Stage2 idiom manifest: `selfhost/stage01/tests/manifests/subset-stage2-idioms.lst`
 
 Policy:
 - Any change to `cc.fth` should keep this suite green.
@@ -33,8 +33,8 @@ Current known gap:
 Known-gap tracking:
 - Manifest: `selfhost/stage01/tests/manifests/subset-known-gaps.lst`
 - Scanner: `selfhost/stage01/run-subset-gap-scan.sh`
-- Stage5-assembler-path manifest: `selfhost/stage01/tests/manifests/subset-stage5-as-known-gaps.lst`
-- Stage5-assembler-path scan: `selfhost/stage01/run-subset-gap-scan.sh --mode progressive-as --manifest ...`
+- Stage2-assembler-path manifest: `selfhost/stage01/tests/manifests/subset-stage2-as-known-gaps.lst`
+- Stage2-assembler-path scan: `selfhost/stage01/run-subset-gap-scan.sh --mode progressive-as --manifest ...`
 
 Long-branch debug helper:
 - Script: `selfhost/stage01/run-cc-long-branch-debug.sh`

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Build stage14 tools: s32-as.s32x, s32-ar.s32x, s32-ld.s32x
-# All compiled by stage13's s12cc, assembled by stage05 assembler,
+# All compiled by stage13's s12cc, assembled by stage02 assembler,
 # linked by stage07 linker. Uses stage14's own libc/runtime.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -23,7 +23,7 @@ if [[ -z "$EMU" ]]; then
 fi
 
 STAGE13_CC="$SELFHOST_DIR/stage13/s12cc.s32x"
-STAGE5_AS="$SELFHOST_DIR/stage05/s32-as.s32x"
+STAGE2_AS="$SELFHOST_DIR/stage02/s32-as.s32x"
 STAGE7_LD="$SELFHOST_DIR/stage07/s32-ld.s32x"
 
 LIBC_DIR="$SCRIPT_DIR/libc"
@@ -31,7 +31,7 @@ CRT0_SRC="$SCRIPT_DIR/crt0.s"
 MMIO_NO_START_SRC="$SCRIPT_DIR/mmio_no_start.s"
 TOOLS_DIR="$SCRIPT_DIR/tools"
 
-for f in "$EMU" "$STAGE13_CC" "$STAGE5_AS" "$STAGE7_LD" \
+for f in "$EMU" "$STAGE13_CC" "$STAGE2_AS" "$STAGE7_LD" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC" \
          "$TOOLS_DIR/s32-as.c" "$TOOLS_DIR/s32_formats_min.h" \
          "$TOOLS_DIR/s32-ar.c" "$TOOLS_DIR/s32ar_min.h" \
@@ -61,7 +61,7 @@ compile() {
 assemble() {
     local src="$1" obj="$2" log="$3"
     set +e
-    timeout 120 "$EMU" "$STAGE5_AS" "$src" "$obj" >"$log" 2>&1
+    timeout 120 "$EMU" "$STAGE2_AS" "$src" "$obj" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then

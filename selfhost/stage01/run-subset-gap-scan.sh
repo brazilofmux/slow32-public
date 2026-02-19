@@ -15,7 +15,7 @@ Usage: $0 [--emu <path>] [--manifest <path>] [--mode <pipeline-mode>]
 
 Runs known-gap subset tests and reports pass/fail per case.
 This scan is informational and always exits 0.
-Pipeline mode defaults to baseline and is passed to stage05/run-pipeline.sh.
+Pipeline mode defaults to baseline and is passed to stage02/run-pipeline.sh.
 USAGE
 }
 
@@ -65,7 +65,7 @@ while IFS= read -r src || [[ -n "$src" ]]; do
     fi
     base="$(basename "$src" .c)"
     echo "  - $base"
-    if selfhost/stage05/run-pipeline.sh --mode "$MODE" --test "$src" --emu "$EMU" >/tmp/stage4-gap-$base.log 2>&1; then
+    if selfhost/stage02/run-pipeline.sh --mode "$MODE" --test "$src" --emu "$EMU" >/tmp/stage4-gap-$base.log 2>&1; then
         echo "    PASS (gap closed)"
         pass=$((pass + 1))
     else

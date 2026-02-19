@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Build s32cc.s32x: the s32-cc compiler (lex/parse split, evolved from cc-min).
-# Uses: Stage 09 cc-min.s32x (compiler), Stage 05 s32-as.s32x (assembler),
+# Uses: Stage 09 cc-min.s32x (compiler), Stage 02 s32-as.s32x (assembler),
 #       Stage 07 s32-ld.s32x (linker).
 # Deposits the artifact in the script's directory.
 
@@ -14,16 +14,16 @@ if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
 fi
 
 EMU="${SELFHOST_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
-STAGE5_AS="$SELFHOST_DIR/stage05/s32-as.s32x"
+STAGE2_AS="$SELFHOST_DIR/stage02/s32-as.s32x"
 STAGE7_LD="$SELFHOST_DIR/stage07/s32-ld.s32x"
 GEN2_CC="$SELFHOST_DIR/stage09/cc-min.s32x"
 
-LIBC_DIR="$SELFHOST_DIR/stage05/libc"
-CRT0_SRC="$SELFHOST_DIR/stage05/crt0.s"
-MMIO_NO_START_SRC="$SELFHOST_DIR/stage05/mmio_no_start.s"
+LIBC_DIR="$SELFHOST_DIR/stage02/libc"
+CRT0_SRC="$SELFHOST_DIR/stage02/crt0.s"
+MMIO_NO_START_SRC="$SELFHOST_DIR/stage02/mmio_no_start.s"
 OUT_EXE="$SCRIPT_DIR/s32cc.s32x"
 
-for f in "$EMU" "$STAGE5_AS" "$STAGE7_LD" "$GEN2_CC" \
+for f in "$EMU" "$STAGE2_AS" "$STAGE7_LD" "$GEN2_CC" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC" \
          "$SCRIPT_DIR/s32cc.c" "$SCRIPT_DIR/s32cc_lex.h" "$SCRIPT_DIR/s32cc_parse.h"; do
     [[ -f "$f" ]] || { echo "Missing: $f" >&2; exit 1; }
@@ -51,7 +51,7 @@ compile() {
 assemble() {
     local src="$1" obj="$2" log="$3"
     set +e
-    timeout 120 "$EMU" "$STAGE5_AS" "$src" "$obj" >"$log" 2>&1
+    timeout 120 "$EMU" "$STAGE2_AS" "$src" "$obj" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then

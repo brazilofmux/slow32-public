@@ -102,7 +102,7 @@ symbol table entry (at position `member_idx * 16 + sym_offset` instead of
 `sym-j @ 16 * m-tmp-off @ +` with `I 16 * m-tmp-off @ +`.
 
 Both fixes verified by stage01 regression tests. Archive-based linking
-now works correctly in the stage05 selfhost libc build.
+now works correctly in the stage02 selfhost libc build.
 
 ---
 
@@ -182,7 +182,7 @@ the second call to load instruction bytes as data and jump to a garbage address.
 max 65535). For `uint8_t`/`char` arrays exceeding 65535 elements, the count was silently
 clamped, causing undersized `.space` directives in generated assembly.
 
-**Impact:** The stage05 assembler (`s32-as.c`) declared `uint8_t g_text[262144]` which
+**Impact:** The stage02 assembler (`s32-as.c`) declared `uint8_t g_text[262144]` which
 was emitted as `.space 65535`. When assembling cc-min (67KB .text), bytes past offset
 65536 overflowed into `g_data`, corrupting the object file.
 

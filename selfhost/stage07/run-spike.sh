@@ -16,17 +16,17 @@ if git -C "$SCRIPT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
 fi
 
 EMU="${SELFHOST_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
-STAGE5_AS="$SELFHOST_DIR/stage05/s32-as.s32x"
+STAGE2_AS="$SELFHOST_DIR/stage02/s32-as.s32x"
 STAGE7_LD="$SCRIPT_DIR/s32-ld.s32x"
 CC_FTH="$SELFHOST_DIR/stage01/cc.fth"
 KERNEL="${SELFHOST_KERNEL:-$ROOT_DIR/forth/kernel.s32x}"
 PRELUDE="${SELFHOST_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 
-CRT0_SRC="$SELFHOST_DIR/stage05/crt0.s"
-MMIO_NO_START_SRC="$SELFHOST_DIR/stage05/mmio_no_start.s"
-LIBC_DIR="$SELFHOST_DIR/stage05/libc"
+CRT0_SRC="$SELFHOST_DIR/stage02/crt0.s"
+MMIO_NO_START_SRC="$SELFHOST_DIR/stage02/mmio_no_start.s"
+LIBC_DIR="$SELFHOST_DIR/stage02/libc"
 
-for f in "$EMU" "$STAGE5_AS" "$STAGE7_LD" "$CC_FTH" "$KERNEL" "$PRELUDE" \
+for f in "$EMU" "$STAGE2_AS" "$STAGE7_LD" "$CC_FTH" "$KERNEL" "$PRELUDE" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC"; do
     [[ -f "$f" ]] || { echo "Missing: $f" >&2; exit 1; }
 done
@@ -49,7 +49,7 @@ run_emu() {
 assemble() {
     local src="$1" obj="$2" log="$3"
     set +e
-    timeout 120 "$EMU" "$STAGE5_AS" "$src" "$obj" >"$log" 2>&1
+    timeout 120 "$EMU" "$STAGE2_AS" "$src" "$obj" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then

@@ -155,8 +155,8 @@ assemble_forth "$WORKDIR/decoy.s" "$DECOY_OBJ" "$WORKDIR/decoy.as.log"
 
 # run-spike runs stage6-ar-smoke which builds stage06 archiver in its pipeline artifacts
 SPIKE_PIPE_ART="$(awk -F': ' '/^Artifacts:/{print $2}' "$TMP_LOG" | head -n 1)"
-# The stage05 pipeline artifacts (nested inside run-spike) contain s32-ar.s32x
-# but run-spike's own WORKDIR reuses the stage05 artifact dir, so look there
+# The stage02 pipeline artifacts (nested inside run-spike) contain s32-ar.s32x
+# but run-spike's own WORKDIR reuses the stage02 artifact dir, so look there
 AR_EXE=""
 for candidate in "$WORKDIR/s32-ar.s32x" "$SPIKE_PIPE_ART/s32-ar.s32x"; do
     if [[ -f "$candidate" ]]; then

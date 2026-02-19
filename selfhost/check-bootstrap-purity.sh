@@ -35,7 +35,7 @@ SCAN_PATHS=(
     "$SELFHOST_DIR/run-stages.sh"
     "$SELFHOST_DIR/stage00"
     "$SELFHOST_DIR/stage01"
-    "$SELFHOST_DIR/stage05"
+    "$SELFHOST_DIR/stage02"
     "$SELFHOST_DIR/stage06"
 )
 
@@ -59,7 +59,7 @@ scan_no_match \
     '^(?!\s*[#\\]).*(^|[;&|()[:space:]])(cc|gcc|clang)[[:space:]]' \
     --glob '*.sh' \
     "$SELFHOST_DIR/stage01" \
-    "$SELFHOST_DIR/stage05" \
+    "$SELFHOST_DIR/stage02" \
     "$SELFHOST_DIR/stage06"
 
 if [[ "$fail" -ne 0 ]]; then

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Build s32-ar.s32x (the C archiver) from source.
-# Uses: Stage 04 cc.fth (compiler), Stage 05 s32-as.s32x (assembler),
+# Uses: Stage 04 cc.fth (compiler), Stage 02 s32-as.s32x (assembler),
 #       Stage 01 ar.fth (archive libc), Stage 01 link.fth (linker).
 # Deposits the artifact in the script's directory.
 
@@ -19,15 +19,15 @@ PRELUDE="${SELFHOST_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 CC_FTH="$SELFHOST_DIR/stage01/cc.fth"
 AR_FTH="$SELFHOST_DIR/stage01/ar.fth"
 LINK_FTH="$SELFHOST_DIR/stage01/link.fth"
-STAGE5_AS="$SELFHOST_DIR/stage05/s32-as.s32x"
+STAGE2_AS="$SELFHOST_DIR/stage02/s32-as.s32x"
 
-LIBC_DIR="$SELFHOST_DIR/stage05/libc"
-CRT0_SRC="$SELFHOST_DIR/stage05/crt0.s"
-MMIO_NO_START_SRC="$SELFHOST_DIR/stage05/mmio_no_start.s"
+LIBC_DIR="$SELFHOST_DIR/stage02/libc"
+CRT0_SRC="$SELFHOST_DIR/stage02/crt0.s"
+MMIO_NO_START_SRC="$SELFHOST_DIR/stage02/mmio_no_start.s"
 AR_SRC="$SCRIPT_DIR/s32-ar.c"
 OUT_EXE="$SCRIPT_DIR/s32-ar.s32x"
 
-for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$AR_FTH" "$LINK_FTH" "$STAGE5_AS" \
+for f in "$EMU" "$KERNEL" "$PRELUDE" "$CC_FTH" "$AR_FTH" "$LINK_FTH" "$STAGE2_AS" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC" "$AR_SRC"; do
     [[ -f "$f" ]] || { echo "Missing: $f" >&2; exit 1; }
 done
@@ -65,7 +65,7 @@ BYE" "$log"
 assemble() {
     local src="$1" obj="$2" log="$3"
     set +e
-    timeout 120 "$EMU" "$STAGE5_AS" "$src" "$obj" >"$log" 2>&1
+    timeout 120 "$EMU" "$STAGE2_AS" "$src" "$obj" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then

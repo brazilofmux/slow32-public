@@ -15,8 +15,8 @@ delete, move, verbose list, print member, and symbol scanning.
 
 - Stage 00 emulator (`s32-emu`)
 - Stage 04 compiler, Stage 01 assembler, Stage 03 linker (to build)
-- Stage 05 pipeline harness (`run-pipeline.sh`)
-- `libc/` from Stage 05
+- Stage 02 pipeline harness (`run-pipeline.sh`)
+- `libc/` from Stage 02
 
 ## What It Produces
 
@@ -26,12 +26,12 @@ members from existing archives. Commands: `c`, `rc`, `t`, `x`, `d`,
 
 ## How To Test
 
-All testing is driven through the Stage 05 pipeline:
+All testing is driven through the Stage 02 pipeline:
 
 ```bash
-selfhost/stage05/run-pipeline.sh --mode stage6-ar-smoke
-selfhost/stage05/run-pipeline.sh --mode stage6-ar-rc-smoke
-selfhost/stage05/run-pipeline.sh --mode stage6-ar-tx-smoke
-selfhost/stage05/run-pipeline.sh --mode stage6-ar-d-smoke
-selfhost/stage05/run-pipeline.sh --mode stage6-ar-scan-smoke
+selfhost/stage02/run-pipeline.sh --mode stage6-ar-smoke
+selfhost/stage02/run-pipeline.sh --mode stage6-ar-rc-smoke
+selfhost/stage02/run-pipeline.sh --mode stage6-ar-tx-smoke
+selfhost/stage02/run-pipeline.sh --mode stage6-ar-d-smoke
+selfhost/stage02/run-pipeline.sh --mode stage6-ar-scan-smoke
 ```

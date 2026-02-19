@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # Bootstrap chain:
 #   stage11/s32cc → compile stage12 sources
-#   stage05/s32-as → assemble
+#   stage02/s32-as → assemble
 #   stage07/s32-ld → link
 #
 # Tests:
@@ -158,16 +158,16 @@ compile_and_link() {
 echo "=== Step 1: Bootstrap ==="
 
 CC_EXE="$SELFHOST_DIR/stage11/s32cc.s32x"
-AS_EXE="$SELFHOST_DIR/stage05/s32-as.s32x"
+AS_EXE="$SELFHOST_DIR/stage02/s32-as.s32x"
 LD_EXE="$SELFHOST_DIR/stage07/s32-ld.s32x"
 
 [[ -f "$CC_EXE" ]] || { echo "Missing s32cc (stage11): $CC_EXE" >&2; exit 1; }
 [[ -f "$AS_EXE" ]] || { echo "Missing assembler: $AS_EXE" >&2; exit 1; }
 [[ -f "$LD_EXE" ]] || { echo "Missing linker: $LD_EXE" >&2; exit 1; }
 
-LIBC_DIR="$SELFHOST_DIR/stage05/libc"
-CRT0_SRC="$SELFHOST_DIR/stage05/crt0.s"
-MMIO_NO_START_SRC="$SELFHOST_DIR/stage05/mmio_no_start.s"
+LIBC_DIR="$SELFHOST_DIR/stage02/libc"
+CRT0_SRC="$SELFHOST_DIR/stage02/crt0.s"
+MMIO_NO_START_SRC="$SELFHOST_DIR/stage02/mmio_no_start.s"
 
 run_exe "$AS_EXE" "$WORKDIR/crt0.log" "$CRT0_SRC" "$WORKDIR/crt0.s32o"
 [[ -s "$WORKDIR/crt0.s32o" ]] || { echo "failed to assemble crt0" >&2; exit 1; }

@@ -12,9 +12,9 @@ PRELUDE="${STAGE8_PRELUDE:-$ROOT_DIR/forth/prelude.fth}"
 CC_FTH="${STAGE8_CC_FTH:-$SELFHOST_DIR/stage01/cc.fth}"
 LINK_FTH="${STAGE8_LINK_FTH:-$SELFHOST_DIR/stage01/link.fth}"
 
-CRT0_SRC="$SELFHOST_DIR/stage05/crt0.s"
-MMIO_SRC="$SELFHOST_DIR/stage05/mmio.s"
-LIBC_DIR="$SELFHOST_DIR/stage05/libc"
+CRT0_SRC="$SELFHOST_DIR/stage02/crt0.s"
+MMIO_SRC="$SELFHOST_DIR/stage02/mmio.s"
+LIBC_DIR="$SELFHOST_DIR/stage02/libc"
 SRC="${STAGE8_CC_MIN_SRC:-$SCRIPT_DIR/cc-min.c}"
 SRC_PASS1="${STAGE8_CC_MIN_PASS1_SRC:-$SCRIPT_DIR/cc-min-pass1.c}"
 SRC_PASS2="${STAGE8_CC_MIN_PASS2_SRC:-$SCRIPT_DIR/cc-min-pass2.c}"
@@ -76,10 +76,10 @@ usage() {
 Usage: $0 [--emu <path>] [--keep-artifacts]
 
 Stage08 compiler spike:
-  1) bootstrap stage05 assembler + stage06 archiver + stage07 linker
-  2) build cc-min.s32x via stage01->stage05->stage01
+  1) bootstrap stage02 assembler + stage06 archiver + stage07 linker
+  2) build cc-min.s32x via stage01->stage02->stage01
   3) compile min_main, min_ret7, min_ret_expr, min_local_ret_expr, min_ret_rel, min_if_{true,false}, min_while_countdown, min_two_locals, min_helper_call, min_helper_arg, min_helper_local, min_main_local_helper, min_helper_two_args, and min_helper_two_args_if with cc-min.s32x
-  4) assemble with stage05; produce raw link via stage07; run via stage01 runtime link
+  4) assemble with stage02; produce raw link via stage07; run via stage01 runtime link
 USAGE
 }
 
@@ -135,13 +135,13 @@ fi
 cd "$ROOT_DIR"
 
 # Bootstrap strict C-toolchain stages first. Stage08 then uses these outputs.
-PIPE_LOG="$WORKDIR/stage5-build.log"
-"$SELFHOST_DIR/stage05/run-pipeline.sh" --mode stage6-ar-smoke --emu "$EMU" --keep-artifacts >"$PIPE_LOG"
+PIPE_LOG="$WORKDIR/stage2-build.log"
+"$SELFHOST_DIR/stage02/run-pipeline.sh" --mode stage6-ar-smoke --emu "$EMU" --keep-artifacts >"$PIPE_LOG"
 PIPE_ART="$(awk -F': ' '/^Artifacts:/{print $2}' "$PIPE_LOG" | tail -n 1)"
-[[ -n "$PIPE_ART" && -d "$PIPE_ART" ]] || { echo "failed to locate stage05 artifacts dir" >&2; exit 1; }
+[[ -n "$PIPE_ART" && -d "$PIPE_ART" ]] || { echo "failed to locate stage02 artifacts dir" >&2; exit 1; }
 AS_EXE="$PIPE_ART/s32-as.s32x"
 AR_EXE="$PIPE_ART/s32-ar.s32x"
-[[ -f "$AS_EXE" ]] || { echo "missing stage05 assembler exe: $AS_EXE" >&2; exit 1; }
+[[ -f "$AS_EXE" ]] || { echo "missing stage02 assembler exe: $AS_EXE" >&2; exit 1; }
 [[ -f "$AR_EXE" ]] || { echo "missing stage06 archiver exe: $AR_EXE" >&2; exit 1; }
 
 LD_LOG="$WORKDIR/stage7-build.log"
@@ -231,16 +231,16 @@ BYE" "$log"
     }
 }
 
-assemble_with_stage5() {
+assemble_with_stage2() {
     local asm="$1"
     local obj="$2"
     local log="$3"
 
     run_exe "$AS_EXE" "$log" "$asm" "$obj"
-    [[ -s "$obj" ]] || { echo "stage05 assembler produced no output: $asm" >&2; return 1; }
+    [[ -s "$obj" ]] || { echo "stage02 assembler produced no output: $asm" >&2; return 1; }
 }
 
-# --- Runtime objects come from stage05 bootstrap artifacts ---
+# --- Runtime objects come from stage02 bootstrap artifacts ---
 RUNTIME_CRT0="$PIPE_ART/crt0_minimal.s32o"
 RUNTIME_MMIO_OBJ="$PIPE_ART/mmio_minimal.s32o"
 RUNTIME_MMIO_NO_START_OBJ="$PIPE_ART/mmio_no_start.s32o"
@@ -268,7 +268,7 @@ build_selfhost_libc() {
 
         [[ -f "$src" ]] || { echo "Missing libc source: $src" >&2; return 1; }
         compile_c_stage4 "$src" "$asm" "$WORKDIR/libc_${name}.cc.log"
-        assemble_with_stage5 "$asm" "$obj" "$WORKDIR/libc_${name}.as.log"
+        assemble_with_stage2 "$asm" "$obj" "$WORKDIR/libc_${name}.as.log"
 
         if [[ "$name" == "start" ]]; then
             LIBC_START_OBJ="$obj"
@@ -315,7 +315,7 @@ CCMIN_ASM="$WORKDIR/cc-min.s"
 CCMIN_OBJ="$WORKDIR/cc-min-main.s32o"
 CCMIN_EXE="$WORKDIR/cc-min.s32x"
 compile_c_stage4 "$CCMIN_MERGED_SRC" "$CCMIN_ASM" "$WORKDIR/cc-min.cc.log"
-assemble_with_stage5 "$CCMIN_ASM" "$CCMIN_OBJ" "$WORKDIR/cc-min.as.log"
+assemble_with_stage2 "$CCMIN_ASM" "$CCMIN_OBJ" "$WORKDIR/cc-min.as.log"
 link_forth_with_libc "$CCMIN_OBJ" "$CCMIN_EXE" "$WORKDIR/cc-min.ld.log"
 
 # 3) Use cc-min to compile minimal inputs.
@@ -522,27 +522,27 @@ GEN_GENERAL_NAMES_EXE="$WORKDIR/min_general_names.generated.s32x"
 GEN_COMPLEX_EXPR_OBJ="$WORKDIR/min_complex_expr.generated.s32o"
 GEN_COMPLEX_EXPR_RAW_EXE="$WORKDIR/min_complex_expr.generated.raw.s32x"
 GEN_COMPLEX_EXPR_EXE="$WORKDIR/min_complex_expr.generated.s32x"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as.run.log" "$GEN_ASM" "$GEN_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-ret.run.log" "$GEN_RET_ASM" "$GEN_RET_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-expr.run.log" "$GEN_EXPR_ASM" "$GEN_EXPR_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-local.run.log" "$GEN_LOCAL_ASM" "$GEN_LOCAL_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-rel.run.log" "$GEN_REL_ASM" "$GEN_REL_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-if-true.run.log" "$GEN_IF_TRUE_ASM" "$GEN_IF_TRUE_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-if-false.run.log" "$GEN_IF_FALSE_ASM" "$GEN_IF_FALSE_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-while.run.log" "$GEN_WHILE_ASM" "$GEN_WHILE_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-two-locals.run.log" "$GEN_TWO_LOCALS_ASM" "$GEN_TWO_LOCALS_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-helper.run.log" "$GEN_HELPER_ASM" "$GEN_HELPER_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-helper-arg.run.log" "$GEN_HELPER_ARG_ASM" "$GEN_HELPER_ARG_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-helper-local.run.log" "$GEN_HELPER_LOCAL_ASM" "$GEN_HELPER_LOCAL_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-main-local-helper.run.log" "$GEN_MAIN_LOCAL_HELPER_ASM" "$GEN_MAIN_LOCAL_HELPER_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-helper-two-args.run.log" "$GEN_HELPER_TWO_ARGS_ASM" "$GEN_HELPER_TWO_ARGS_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-helper-two-args-if.run.log" "$GEN_HELPER_TWO_ARGS_IF_ASM" "$GEN_HELPER_TWO_ARGS_IF_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-multi-func.run.log" "$GEN_MULTI_FUNC_ASM" "$GEN_MULTI_FUNC_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-for-loop.run.log" "$GEN_FOR_LOOP_ASM" "$GEN_FOR_LOOP_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-nested-if.run.log" "$GEN_NESTED_IF_ASM" "$GEN_NESTED_IF_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-break-continue.run.log" "$GEN_BREAK_CONTINUE_ASM" "$GEN_BREAK_CONTINUE_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-general-names.run.log" "$GEN_GENERAL_NAMES_ASM" "$GEN_GENERAL_NAMES_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-complex-expr.run.log" "$GEN_COMPLEX_EXPR_ASM" "$GEN_COMPLEX_EXPR_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as.run.log" "$GEN_ASM" "$GEN_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-ret.run.log" "$GEN_RET_ASM" "$GEN_RET_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-expr.run.log" "$GEN_EXPR_ASM" "$GEN_EXPR_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-local.run.log" "$GEN_LOCAL_ASM" "$GEN_LOCAL_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-rel.run.log" "$GEN_REL_ASM" "$GEN_REL_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-if-true.run.log" "$GEN_IF_TRUE_ASM" "$GEN_IF_TRUE_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-if-false.run.log" "$GEN_IF_FALSE_ASM" "$GEN_IF_FALSE_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-while.run.log" "$GEN_WHILE_ASM" "$GEN_WHILE_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-two-locals.run.log" "$GEN_TWO_LOCALS_ASM" "$GEN_TWO_LOCALS_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-helper.run.log" "$GEN_HELPER_ASM" "$GEN_HELPER_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-helper-arg.run.log" "$GEN_HELPER_ARG_ASM" "$GEN_HELPER_ARG_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-helper-local.run.log" "$GEN_HELPER_LOCAL_ASM" "$GEN_HELPER_LOCAL_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-main-local-helper.run.log" "$GEN_MAIN_LOCAL_HELPER_ASM" "$GEN_MAIN_LOCAL_HELPER_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-helper-two-args.run.log" "$GEN_HELPER_TWO_ARGS_ASM" "$GEN_HELPER_TWO_ARGS_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-helper-two-args-if.run.log" "$GEN_HELPER_TWO_ARGS_IF_ASM" "$GEN_HELPER_TWO_ARGS_IF_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-multi-func.run.log" "$GEN_MULTI_FUNC_ASM" "$GEN_MULTI_FUNC_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-for-loop.run.log" "$GEN_FOR_LOOP_ASM" "$GEN_FOR_LOOP_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-nested-if.run.log" "$GEN_NESTED_IF_ASM" "$GEN_NESTED_IF_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-break-continue.run.log" "$GEN_BREAK_CONTINUE_ASM" "$GEN_BREAK_CONTINUE_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-general-names.run.log" "$GEN_GENERAL_NAMES_ASM" "$GEN_GENERAL_NAMES_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-complex-expr.run.log" "$GEN_COMPLEX_EXPR_ASM" "$GEN_COMPLEX_EXPR_OBJ"
 GEN_CHAR_TYPE_OBJ="$WORKDIR/min_char_type.generated.s32o"
 GEN_CHAR_LITERAL_OBJ="$WORKDIR/min_char_literal.generated.s32o"
 GEN_LOCAL_ARRAY_OBJ="$WORKDIR/min_local_array.generated.s32o"
@@ -551,18 +551,18 @@ GEN_STRING_LIT_OBJ="$WORKDIR/min_string_lit.generated.s32o"
 GEN_POINTER_OBJ="$WORKDIR/min_pointer.generated.s32o"
 GEN_GLOBAL_OBJ="$WORKDIR/min_global.generated.s32o"
 GEN_GLOBAL_ARRAY_OBJ="$WORKDIR/min_global_array.generated.s32o"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-char-type.run.log" "$GEN_CHAR_TYPE_ASM" "$GEN_CHAR_TYPE_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-char-literal.run.log" "$GEN_CHAR_LITERAL_ASM" "$GEN_CHAR_LITERAL_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-local-array.run.log" "$GEN_LOCAL_ARRAY_ASM" "$GEN_LOCAL_ARRAY_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-char-array.run.log" "$GEN_CHAR_ARRAY_ASM" "$GEN_CHAR_ARRAY_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-string-lit.run.log" "$GEN_STRING_LIT_ASM" "$GEN_STRING_LIT_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-pointer.run.log" "$GEN_POINTER_ASM" "$GEN_POINTER_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-global.run.log" "$GEN_GLOBAL_ASM" "$GEN_GLOBAL_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-global-array.run.log" "$GEN_GLOBAL_ARRAY_ASM" "$GEN_GLOBAL_ARRAY_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-char-type.run.log" "$GEN_CHAR_TYPE_ASM" "$GEN_CHAR_TYPE_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-char-literal.run.log" "$GEN_CHAR_LITERAL_ASM" "$GEN_CHAR_LITERAL_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-local-array.run.log" "$GEN_LOCAL_ARRAY_ASM" "$GEN_LOCAL_ARRAY_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-char-array.run.log" "$GEN_CHAR_ARRAY_ASM" "$GEN_CHAR_ARRAY_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-string-lit.run.log" "$GEN_STRING_LIT_ASM" "$GEN_STRING_LIT_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-pointer.run.log" "$GEN_POINTER_ASM" "$GEN_POINTER_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-global.run.log" "$GEN_GLOBAL_ASM" "$GEN_GLOBAL_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-global-array.run.log" "$GEN_GLOBAL_ARRAY_ASM" "$GEN_GLOBAL_ARRAY_OBJ"
 GEN_PTR_ARITH_OBJ="$WORKDIR/min_ptr_arith.generated.s32o"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-ptr-arith.run.log" "$GEN_PTR_ARITH_ASM" "$GEN_PTR_ARITH_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-ptr-arith.run.log" "$GEN_PTR_ARITH_ASM" "$GEN_PTR_ARITH_OBJ"
 GEN_SHORT_CIRCUIT_OBJ="$WORKDIR/min_short_circuit.generated.s32o"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-short-circuit.run.log" "$GEN_SHORT_CIRCUIT_ASM" "$GEN_SHORT_CIRCUIT_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-short-circuit.run.log" "$GEN_SHORT_CIRCUIT_ASM" "$GEN_SHORT_CIRCUIT_OBJ"
 GEN_TYPEDEF_OBJ="$WORKDIR/min_typedef.generated.s32o"
 GEN_TYPEDEF_STRUCT_OBJ="$WORKDIR/min_typedef_struct.generated.s32o"
 GEN_STRUCT_BASIC_OBJ="$WORKDIR/min_struct_basic.generated.s32o"
@@ -571,68 +571,68 @@ GEN_STRUCT_ARRAY_OBJ="$WORKDIR/min_struct_array.generated.s32o"
 GEN_SIZEOF_OBJ="$WORKDIR/min_sizeof.generated.s32o"
 GEN_SIZEOF_STRUCT_OBJ="$WORKDIR/min_sizeof_struct.generated.s32o"
 GEN_CAST_OBJ="$WORKDIR/min_cast.generated.s32o"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-typedef.run.log" "$GEN_TYPEDEF_ASM" "$GEN_TYPEDEF_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-typedef-struct.run.log" "$GEN_TYPEDEF_STRUCT_ASM" "$GEN_TYPEDEF_STRUCT_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-struct-basic.run.log" "$GEN_STRUCT_BASIC_ASM" "$GEN_STRUCT_BASIC_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-struct-arrow.run.log" "$GEN_STRUCT_ARROW_ASM" "$GEN_STRUCT_ARROW_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-struct-array.run.log" "$GEN_STRUCT_ARRAY_ASM" "$GEN_STRUCT_ARRAY_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-sizeof.run.log" "$GEN_SIZEOF_ASM" "$GEN_SIZEOF_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-sizeof-struct.run.log" "$GEN_SIZEOF_STRUCT_ASM" "$GEN_SIZEOF_STRUCT_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-cast.run.log" "$GEN_CAST_ASM" "$GEN_CAST_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-typedef.run.log" "$GEN_TYPEDEF_ASM" "$GEN_TYPEDEF_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-typedef-struct.run.log" "$GEN_TYPEDEF_STRUCT_ASM" "$GEN_TYPEDEF_STRUCT_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-struct-basic.run.log" "$GEN_STRUCT_BASIC_ASM" "$GEN_STRUCT_BASIC_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-struct-arrow.run.log" "$GEN_STRUCT_ARROW_ASM" "$GEN_STRUCT_ARROW_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-struct-array.run.log" "$GEN_STRUCT_ARRAY_ASM" "$GEN_STRUCT_ARRAY_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-sizeof.run.log" "$GEN_SIZEOF_ASM" "$GEN_SIZEOF_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-sizeof-struct.run.log" "$GEN_SIZEOF_STRUCT_ASM" "$GEN_SIZEOF_STRUCT_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-cast.run.log" "$GEN_CAST_ASM" "$GEN_CAST_OBJ"
 GEN_DEFINE_OBJ="$WORKDIR/min_define.generated.s32o"
 GEN_DEFINE_HEX_OBJ="$WORKDIR/min_define_hex.generated.s32o"
 GEN_ENUM_OBJ="$WORKDIR/min_enum.generated.s32o"
 GEN_PROTOTYPE_OBJ="$WORKDIR/min_prototype.generated.s32o"
 GEN_INCLUDE_OBJ="$WORKDIR/min_include.generated.s32o"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-define.run.log" "$GEN_DEFINE_ASM" "$GEN_DEFINE_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-define-hex.run.log" "$GEN_DEFINE_HEX_ASM" "$GEN_DEFINE_HEX_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-enum.run.log" "$GEN_ENUM_ASM" "$GEN_ENUM_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-prototype.run.log" "$GEN_PROTOTYPE_ASM" "$GEN_PROTOTYPE_OBJ"
-run_exe "$AS_EXE" "$WORKDIR/stage5-as-include.run.log" "$GEN_INCLUDE_ASM" "$GEN_INCLUDE_OBJ"
-[[ -s "$GEN_OBJ" ]] || { echo "stage05 assembler produced no object output" >&2; exit 1; }
-[[ -s "$GEN_RET_OBJ" ]] || { echo "stage05 assembler produced no return-test object output" >&2; exit 1; }
-[[ -s "$GEN_EXPR_OBJ" ]] || { echo "stage05 assembler produced no expr-test object output" >&2; exit 1; }
-[[ -s "$GEN_LOCAL_OBJ" ]] || { echo "stage05 assembler produced no local-test object output" >&2; exit 1; }
-[[ -s "$GEN_REL_OBJ" ]] || { echo "stage05 assembler produced no relational-test object output" >&2; exit 1; }
-[[ -s "$GEN_IF_TRUE_OBJ" ]] || { echo "stage05 assembler produced no if-true object output" >&2; exit 1; }
-[[ -s "$GEN_IF_FALSE_OBJ" ]] || { echo "stage05 assembler produced no if-false object output" >&2; exit 1; }
-[[ -s "$GEN_WHILE_OBJ" ]] || { echo "stage05 assembler produced no while-test object output" >&2; exit 1; }
-[[ -s "$GEN_TWO_LOCALS_OBJ" ]] || { echo "stage05 assembler produced no two-locals object output" >&2; exit 1; }
-[[ -s "$GEN_HELPER_OBJ" ]] || { echo "stage05 assembler produced no helper-call object output" >&2; exit 1; }
-[[ -s "$GEN_HELPER_ARG_OBJ" ]] || { echo "stage05 assembler produced no helper-arg object output" >&2; exit 1; }
-[[ -s "$GEN_HELPER_LOCAL_OBJ" ]] || { echo "stage05 assembler produced no helper-local object output" >&2; exit 1; }
-[[ -s "$GEN_MAIN_LOCAL_HELPER_OBJ" ]] || { echo "stage05 assembler produced no main-local-helper object output" >&2; exit 1; }
-[[ -s "$GEN_HELPER_TWO_ARGS_OBJ" ]] || { echo "stage05 assembler produced no helper-two-args object output" >&2; exit 1; }
-[[ -s "$GEN_HELPER_TWO_ARGS_IF_OBJ" ]] || { echo "stage05 assembler produced no helper-two-args-if object output" >&2; exit 1; }
-[[ -s "$GEN_MULTI_FUNC_OBJ" ]] || { echo "stage05 assembler produced no multi-func object output" >&2; exit 1; }
-[[ -s "$GEN_FOR_LOOP_OBJ" ]] || { echo "stage05 assembler produced no for-loop object output" >&2; exit 1; }
-[[ -s "$GEN_NESTED_IF_OBJ" ]] || { echo "stage05 assembler produced no nested-if object output" >&2; exit 1; }
-[[ -s "$GEN_BREAK_CONTINUE_OBJ" ]] || { echo "stage05 assembler produced no break-continue object output" >&2; exit 1; }
-[[ -s "$GEN_GENERAL_NAMES_OBJ" ]] || { echo "stage05 assembler produced no general-names object output" >&2; exit 1; }
-[[ -s "$GEN_COMPLEX_EXPR_OBJ" ]] || { echo "stage05 assembler produced no complex-expr object output" >&2; exit 1; }
-[[ -s "$GEN_CHAR_TYPE_OBJ" ]] || { echo "stage05 assembler produced no char-type object output" >&2; exit 1; }
-[[ -s "$GEN_CHAR_LITERAL_OBJ" ]] || { echo "stage05 assembler produced no char-literal object output" >&2; exit 1; }
-[[ -s "$GEN_LOCAL_ARRAY_OBJ" ]] || { echo "stage05 assembler produced no local-array object output" >&2; exit 1; }
-[[ -s "$GEN_CHAR_ARRAY_OBJ" ]] || { echo "stage05 assembler produced no char-array object output" >&2; exit 1; }
-[[ -s "$GEN_STRING_LIT_OBJ" ]] || { echo "stage05 assembler produced no string-lit object output" >&2; exit 1; }
-[[ -s "$GEN_POINTER_OBJ" ]] || { echo "stage05 assembler produced no pointer object output" >&2; exit 1; }
-[[ -s "$GEN_GLOBAL_OBJ" ]] || { echo "stage05 assembler produced no global object output" >&2; exit 1; }
-[[ -s "$GEN_GLOBAL_ARRAY_OBJ" ]] || { echo "stage05 assembler produced no global-array object output" >&2; exit 1; }
-[[ -s "$GEN_PTR_ARITH_OBJ" ]] || { echo "stage05 assembler produced no ptr-arith object output" >&2; exit 1; }
-[[ -s "$GEN_SHORT_CIRCUIT_OBJ" ]] || { echo "stage05 assembler produced no short-circuit object output" >&2; exit 1; }
-[[ -s "$GEN_TYPEDEF_OBJ" ]] || { echo "stage05 assembler produced no typedef object output" >&2; exit 1; }
-[[ -s "$GEN_TYPEDEF_STRUCT_OBJ" ]] || { echo "stage05 assembler produced no typedef-struct object output" >&2; exit 1; }
-[[ -s "$GEN_STRUCT_BASIC_OBJ" ]] || { echo "stage05 assembler produced no struct-basic object output" >&2; exit 1; }
-[[ -s "$GEN_STRUCT_ARROW_OBJ" ]] || { echo "stage05 assembler produced no struct-arrow object output" >&2; exit 1; }
-[[ -s "$GEN_STRUCT_ARRAY_OBJ" ]] || { echo "stage05 assembler produced no struct-array object output" >&2; exit 1; }
-[[ -s "$GEN_SIZEOF_OBJ" ]] || { echo "stage05 assembler produced no sizeof object output" >&2; exit 1; }
-[[ -s "$GEN_SIZEOF_STRUCT_OBJ" ]] || { echo "stage05 assembler produced no sizeof-struct object output" >&2; exit 1; }
-[[ -s "$GEN_CAST_OBJ" ]] || { echo "stage05 assembler produced no cast object output" >&2; exit 1; }
-[[ -s "$GEN_DEFINE_OBJ" ]] || { echo "stage05 assembler produced no define object output" >&2; exit 1; }
-[[ -s "$GEN_DEFINE_HEX_OBJ" ]] || { echo "stage05 assembler produced no define-hex object output" >&2; exit 1; }
-[[ -s "$GEN_ENUM_OBJ" ]] || { echo "stage05 assembler produced no enum object output" >&2; exit 1; }
-[[ -s "$GEN_PROTOTYPE_OBJ" ]] || { echo "stage05 assembler produced no prototype object output" >&2; exit 1; }
-[[ -s "$GEN_INCLUDE_OBJ" ]] || { echo "stage05 assembler produced no include object output" >&2; exit 1; }
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-define.run.log" "$GEN_DEFINE_ASM" "$GEN_DEFINE_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-define-hex.run.log" "$GEN_DEFINE_HEX_ASM" "$GEN_DEFINE_HEX_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-enum.run.log" "$GEN_ENUM_ASM" "$GEN_ENUM_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-prototype.run.log" "$GEN_PROTOTYPE_ASM" "$GEN_PROTOTYPE_OBJ"
+run_exe "$AS_EXE" "$WORKDIR/stage2-as-include.run.log" "$GEN_INCLUDE_ASM" "$GEN_INCLUDE_OBJ"
+[[ -s "$GEN_OBJ" ]] || { echo "stage02 assembler produced no object output" >&2; exit 1; }
+[[ -s "$GEN_RET_OBJ" ]] || { echo "stage02 assembler produced no return-test object output" >&2; exit 1; }
+[[ -s "$GEN_EXPR_OBJ" ]] || { echo "stage02 assembler produced no expr-test object output" >&2; exit 1; }
+[[ -s "$GEN_LOCAL_OBJ" ]] || { echo "stage02 assembler produced no local-test object output" >&2; exit 1; }
+[[ -s "$GEN_REL_OBJ" ]] || { echo "stage02 assembler produced no relational-test object output" >&2; exit 1; }
+[[ -s "$GEN_IF_TRUE_OBJ" ]] || { echo "stage02 assembler produced no if-true object output" >&2; exit 1; }
+[[ -s "$GEN_IF_FALSE_OBJ" ]] || { echo "stage02 assembler produced no if-false object output" >&2; exit 1; }
+[[ -s "$GEN_WHILE_OBJ" ]] || { echo "stage02 assembler produced no while-test object output" >&2; exit 1; }
+[[ -s "$GEN_TWO_LOCALS_OBJ" ]] || { echo "stage02 assembler produced no two-locals object output" >&2; exit 1; }
+[[ -s "$GEN_HELPER_OBJ" ]] || { echo "stage02 assembler produced no helper-call object output" >&2; exit 1; }
+[[ -s "$GEN_HELPER_ARG_OBJ" ]] || { echo "stage02 assembler produced no helper-arg object output" >&2; exit 1; }
+[[ -s "$GEN_HELPER_LOCAL_OBJ" ]] || { echo "stage02 assembler produced no helper-local object output" >&2; exit 1; }
+[[ -s "$GEN_MAIN_LOCAL_HELPER_OBJ" ]] || { echo "stage02 assembler produced no main-local-helper object output" >&2; exit 1; }
+[[ -s "$GEN_HELPER_TWO_ARGS_OBJ" ]] || { echo "stage02 assembler produced no helper-two-args object output" >&2; exit 1; }
+[[ -s "$GEN_HELPER_TWO_ARGS_IF_OBJ" ]] || { echo "stage02 assembler produced no helper-two-args-if object output" >&2; exit 1; }
+[[ -s "$GEN_MULTI_FUNC_OBJ" ]] || { echo "stage02 assembler produced no multi-func object output" >&2; exit 1; }
+[[ -s "$GEN_FOR_LOOP_OBJ" ]] || { echo "stage02 assembler produced no for-loop object output" >&2; exit 1; }
+[[ -s "$GEN_NESTED_IF_OBJ" ]] || { echo "stage02 assembler produced no nested-if object output" >&2; exit 1; }
+[[ -s "$GEN_BREAK_CONTINUE_OBJ" ]] || { echo "stage02 assembler produced no break-continue object output" >&2; exit 1; }
+[[ -s "$GEN_GENERAL_NAMES_OBJ" ]] || { echo "stage02 assembler produced no general-names object output" >&2; exit 1; }
+[[ -s "$GEN_COMPLEX_EXPR_OBJ" ]] || { echo "stage02 assembler produced no complex-expr object output" >&2; exit 1; }
+[[ -s "$GEN_CHAR_TYPE_OBJ" ]] || { echo "stage02 assembler produced no char-type object output" >&2; exit 1; }
+[[ -s "$GEN_CHAR_LITERAL_OBJ" ]] || { echo "stage02 assembler produced no char-literal object output" >&2; exit 1; }
+[[ -s "$GEN_LOCAL_ARRAY_OBJ" ]] || { echo "stage02 assembler produced no local-array object output" >&2; exit 1; }
+[[ -s "$GEN_CHAR_ARRAY_OBJ" ]] || { echo "stage02 assembler produced no char-array object output" >&2; exit 1; }
+[[ -s "$GEN_STRING_LIT_OBJ" ]] || { echo "stage02 assembler produced no string-lit object output" >&2; exit 1; }
+[[ -s "$GEN_POINTER_OBJ" ]] || { echo "stage02 assembler produced no pointer object output" >&2; exit 1; }
+[[ -s "$GEN_GLOBAL_OBJ" ]] || { echo "stage02 assembler produced no global object output" >&2; exit 1; }
+[[ -s "$GEN_GLOBAL_ARRAY_OBJ" ]] || { echo "stage02 assembler produced no global-array object output" >&2; exit 1; }
+[[ -s "$GEN_PTR_ARITH_OBJ" ]] || { echo "stage02 assembler produced no ptr-arith object output" >&2; exit 1; }
+[[ -s "$GEN_SHORT_CIRCUIT_OBJ" ]] || { echo "stage02 assembler produced no short-circuit object output" >&2; exit 1; }
+[[ -s "$GEN_TYPEDEF_OBJ" ]] || { echo "stage02 assembler produced no typedef object output" >&2; exit 1; }
+[[ -s "$GEN_TYPEDEF_STRUCT_OBJ" ]] || { echo "stage02 assembler produced no typedef-struct object output" >&2; exit 1; }
+[[ -s "$GEN_STRUCT_BASIC_OBJ" ]] || { echo "stage02 assembler produced no struct-basic object output" >&2; exit 1; }
+[[ -s "$GEN_STRUCT_ARROW_OBJ" ]] || { echo "stage02 assembler produced no struct-arrow object output" >&2; exit 1; }
+[[ -s "$GEN_STRUCT_ARRAY_OBJ" ]] || { echo "stage02 assembler produced no struct-array object output" >&2; exit 1; }
+[[ -s "$GEN_SIZEOF_OBJ" ]] || { echo "stage02 assembler produced no sizeof object output" >&2; exit 1; }
+[[ -s "$GEN_SIZEOF_STRUCT_OBJ" ]] || { echo "stage02 assembler produced no sizeof-struct object output" >&2; exit 1; }
+[[ -s "$GEN_CAST_OBJ" ]] || { echo "stage02 assembler produced no cast object output" >&2; exit 1; }
+[[ -s "$GEN_DEFINE_OBJ" ]] || { echo "stage02 assembler produced no define object output" >&2; exit 1; }
+[[ -s "$GEN_DEFINE_HEX_OBJ" ]] || { echo "stage02 assembler produced no define-hex object output" >&2; exit 1; }
+[[ -s "$GEN_ENUM_OBJ" ]] || { echo "stage02 assembler produced no enum object output" >&2; exit 1; }
+[[ -s "$GEN_PROTOTYPE_OBJ" ]] || { echo "stage02 assembler produced no prototype object output" >&2; exit 1; }
+[[ -s "$GEN_INCLUDE_OBJ" ]] || { echo "stage02 assembler produced no include object output" >&2; exit 1; }
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld.run.log" "$GEN_OBJ" "$GEN_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-ret.run.log" "$GEN_RET_OBJ" "$GEN_RET_RAW_EXE"
 run_exe "$LD_EXE" "$WORKDIR/stage7-ld-expr.run.log" "$GEN_EXPR_OBJ" "$GEN_EXPR_RAW_EXE"

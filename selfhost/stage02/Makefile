@@ -1,4 +1,4 @@
-# Stage 05: Subset-C Assembler (s32-as.c)
+# Stage 02: Subset-C Assembler (s32-as.c)
 # Compiled by Stage 04 cc.fth, replaces Stage 01 Forth assembler.
 
 PIPELINE = ./run-pipeline.sh
@@ -15,12 +15,12 @@ s32-as.s32x: s32-as.c libc/start.c libc/stdio.c libc/string_extra.c libc/convert
 
 # Baseline: all-Forth pipeline smoke test
 test: s32-as.s32x
-	@echo "--- Stage 05: baseline (all-Forth) ---"
+	@echo "--- Stage 02: baseline (all-Forth) ---"
 	@$(PIPELINE) --mode baseline --test $(TEST)
 
 # Progressive: C assembler replaces Forth assembler
 verify: s32-as.s32x
-	@echo "--- Stage 05: progressive-as (C assembler) ---"
+	@echo "--- Stage 02: progressive-as (C assembler) ---"
 	@$(PIPELINE) --mode progressive-as --test $(TEST)
 
 clean:

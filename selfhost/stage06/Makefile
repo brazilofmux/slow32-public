@@ -1,8 +1,8 @@
 # Stage 06: Subset-C Archiver (s32-ar.c)
-# Compiled by Stage 04 cc.fth, assembled by Stage 05 s32-as.s32x,
+# Compiled by Stage 04 cc.fth, assembled by Stage 02 s32-as.s32x,
 # linked by Stage 03 link.fth. Replaces Stage 02 Forth archiver.
 
-PIPELINE = ../stage05/run-pipeline.sh
+PIPELINE = ../stage02/run-pipeline.sh
 TEST = test3
 
 .PHONY: all verify clean
@@ -10,7 +10,7 @@ TEST = test3
 all: s32-ar.s32x
 
 # Build the archiver executable
-s32-ar.s32x: s32-ar.c ../stage05/s32-as.s32x ../stage05/libc/start.c ../stage05/libc/stdio.c ../stage05/libc/string_extra.c ../stage05/libc/convert.c ../stage05/crt0.s ../stage05/mmio_no_start.s
+s32-ar.s32x: s32-ar.c ../stage02/s32-as.s32x ../stage02/libc/start.c ../stage02/libc/stdio.c ../stage02/libc/string_extra.c ../stage02/libc/convert.c ../stage02/crt0.s ../stage02/mmio_no_start.s
 	@echo "Building s32-ar.s32x..."
 	@bash build-s32-ar.sh
 
