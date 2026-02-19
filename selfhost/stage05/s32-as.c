@@ -89,6 +89,10 @@ static int split(char *s, char *tok[]) {
 static int parse_reg(const char *s) {
     char *e;
     long v;
+    if (strcmp(s, "zero") == 0) return 0;
+    if (strcmp(s, "sp") == 0) return 29;
+    if (strcmp(s, "fp") == 0) return 30;
+    if (strcmp(s, "lr") == 0) return 31;
     if (s[0] != 'r' && s[0] != 'R') return -1;
     v = strtol(s + 1, &e, 10);
     if (*e != 0 || v < 0 || v > 31) return -1;
@@ -300,9 +304,27 @@ static int handle(char *line) {
         (line[5] == 0 || line[5] == ' ' || line[5] == '\t' || line[5] == ',')) {
         return emit_byte_list(line + 5);
     }
-    if (strncmp(line, ".word", 5) == 0 &&
-        (line[5] == 0 || line[5] == ' ' || line[5] == '\t' || line[5] == ',')) {
-        return emit_word_list(line + 5);
+
+    if (strncmp(line, ".asciz", 6) == 0 || strncmp(line, ".string", 7) == 0 || strncmp(line, ".ascii", 6) == 0) {
+        int nul = (strncmp(line, ".asciz", 6) == 0 || strncmp(line, ".string", 7) == 0);
+        char *p = strchr(line, '"');
+        if (!p) return -1;
+        p++;
+        while (*p && *p != '"') {
+            uint8_t ch = (uint8_t)*p++;
+            if (ch == '\\') {
+                if (!*p) return -1;
+                if (*p == 'n') ch = 10;
+                else if (*p == 't') ch = 9;
+                else if (*p == 'r') ch = 13;
+                else if (*p == '0') ch = 0;
+                else ch = (uint8_t)*p++;
+                continue;
+            }
+            if (emit8(ch) != 0) return -1;
+        }
+        if (nul) if (emit8(0) != 0) return -1;
+        return 0;
     }
 
     n = split(line, tok);
@@ -312,8 +334,17 @@ static int handle(char *line) {
         if (strcmp(tok[0], ".text") == 0) { g_sec = SEC_TEXT; return 0; }
         if (strcmp(tok[0], ".data") == 0) { g_sec = SEC_DATA; return 0; }
         if (strcmp(tok[0], ".bss") == 0) { g_sec = SEC_BSS; return 0; }
-        if (strcmp(tok[0], ".global") == 0) { if (n < 2) return -1; ok = get_lbl(tok[1]); if (ok < 0) return -1; g_lbl_glob[ok] = 1; return 0; }
-        if (strcmp(tok[0], ".align") == 0) { if (n < 2) return -1; ok = parse_num(tok[1], &n); if (!n) return -1; return do_align(ok); }
+        if (strcmp(tok[0], ".global") == 0 || strcmp(tok[0], ".globl") == 0) { if (n < 2) return -1; ok = get_lbl(tok[1]); if (ok < 0) return -1; g_lbl_glob[ok] = 1; return 0; }
+        if (strcmp(tok[0], ".section") == 0) {
+            if (n < 2) return -1;
+            if (strncmp(tok[1], ".rodata", 7) == 0) { g_sec = SEC_DATA; return 0; }
+            if (strcmp(tok[1], ".text") == 0) { g_sec = SEC_TEXT; return 0; }
+            if (strcmp(tok[1], ".data") == 0) { g_sec = SEC_DATA; return 0; }
+            if (strcmp(tok[1], ".bss") == 0) { g_sec = SEC_BSS; return 0; }
+            return 0;
+        }
+        if (strcmp(tok[0], ".type") == 0 || strcmp(tok[0], ".size") == 0 || strcmp(tok[0], ".file") == 0 || strcmp(tok[0], ".ident") == 0) return 0;
+        if (strcmp(tok[0], ".align") == 0 || strcmp(tok[0], ".p2align") == 0) { if (n < 2) return -1; ok = parse_num(tok[1], &n); if (!n) return -1; return do_align(ok); }
         if (strcmp(tok[0], ".byte") == 0) {
             int i;
             for (i = 1; i < n; i++) {
@@ -323,7 +354,30 @@ static int handle(char *line) {
             }
             return 0;
         }
-        if (strcmp(tok[0], ".space") == 0) {
+        if (strcmp(tok[0], ".word") == 0 || strcmp(tok[0], ".long") == 0) {
+            int i;
+            for (i = 1; i < n; i++) {
+                int v = parse_num(tok[i], &ok);
+                if (ok) {
+                    if (emit32((uint32_t)v) != 0) return -1;
+                } else {
+                    if (add_reloc(S32O_REL_32, cur_off(), tok[i]) != 0) return -1;
+                    if (emit32(0) != 0) return -1;
+                }
+            }
+            return 0;
+        }
+        if (strcmp(tok[0], ".half") == 0 || strcmp(tok[0], ".short") == 0) {
+            int i;
+            for (i = 1; i < n; i++) {
+                int v = parse_num(tok[i], &ok);
+                if (!ok) return -1;
+                if (emit8((uint8_t)(v & 255)) != 0) return -1;
+                if (emit8((uint8_t)((v >> 8) & 255)) != 0) return -1;
+            }
+            return 0;
+        }
+        if (strcmp(tok[0], ".space") == 0 || strcmp(tok[0], ".zero") == 0) {
             int i;
             int cnt;
             if (n != 2) return -1;
@@ -337,7 +391,7 @@ static int handle(char *line) {
         return 0;
     }
 
-    if (strcmp(tok[0], "add") == 0 || strcmp(tok[0], "sub") == 0 || strcmp(tok[0], "and") == 0 || strcmp(tok[0], "or") == 0 || strcmp(tok[0], "xor") == 0 || strcmp(tok[0], "mul") == 0 || strcmp(tok[0], "div") == 0 || strcmp(tok[0], "rem") == 0 || strcmp(tok[0], "slt") == 0 || strcmp(tok[0], "sltu") == 0 || strcmp(tok[0], "sge") == 0 || strcmp(tok[0], "sgeu") == 0 || strcmp(tok[0], "sle") == 0 || strcmp(tok[0], "sleu") == 0 || strcmp(tok[0], "seq") == 0 || strcmp(tok[0], "sne") == 0 || strcmp(tok[0], "sgt") == 0 || strcmp(tok[0], "sgtu") == 0 || strcmp(tok[0], "sll") == 0 || strcmp(tok[0], "srl") == 0 || strcmp(tok[0], "sra") == 0) {
+    if (strcmp(tok[0], "add") == 0 || strcmp(tok[0], "sub") == 0 || strcmp(tok[0], "and") == 0 || strcmp(tok[0], "or") == 0 || strcmp(tok[0], "xor") == 0 || strcmp(tok[0], "mul") == 0 || strcmp(tok[0], "mulh") == 0 || strcmp(tok[0], "mulhu") == 0 || strcmp(tok[0], "div") == 0 || strcmp(tok[0], "divu") == 0 || strcmp(tok[0], "rem") == 0 || strcmp(tok[0], "remu") == 0 || strcmp(tok[0], "slt") == 0 || strcmp(tok[0], "sltu") == 0 || strcmp(tok[0], "sge") == 0 || strcmp(tok[0], "sgeu") == 0 || strcmp(tok[0], "sle") == 0 || strcmp(tok[0], "sleu") == 0 || strcmp(tok[0], "seq") == 0 || strcmp(tok[0], "sne") == 0 || strcmp(tok[0], "sgt") == 0 || strcmp(tok[0], "sgtu") == 0 || strcmp(tok[0], "sll") == 0 || strcmp(tok[0], "srl") == 0 || strcmp(tok[0], "sra") == 0) {
         int rd, rs1, rs2;
         uint32_t op = 0;
         if (n != 4) return -1;
@@ -351,8 +405,12 @@ static int handle(char *line) {
         else if (strcmp(tok[0], "slt") == 0) op = 0x08;
         else if (strcmp(tok[0], "sltu") == 0) op = 0x09;
         else if (strcmp(tok[0], "mul") == 0) op = 0x0A;
+        else if (strcmp(tok[0], "mulh") == 0) op = 0x0B;
+        else if (strcmp(tok[0], "mulhu") == 0) op = 0x1F;
         else if (strcmp(tok[0], "div") == 0) op = 0x0C;
+        else if (strcmp(tok[0], "divu") == 0) op = 0x2C;
         else if (strcmp(tok[0], "rem") == 0) op = 0x0D;
+        else if (strcmp(tok[0], "remu") == 0) op = 0x2D;
         else if (strcmp(tok[0], "seq") == 0) op = 0x0E;
         else if (strcmp(tok[0], "sne") == 0) op = 0x0F;
         else if (strcmp(tok[0], "sgt") == 0) op = 0x18;
@@ -367,7 +425,9 @@ static int handle(char *line) {
         return emit32(enc_r(op, rd, rs1, rs2));
     }
 
-    if (strcmp(tok[0], "addi") == 0 || strcmp(tok[0], "slli") == 0 || strcmp(tok[0], "ldw") == 0 || strcmp(tok[0], "ldb") == 0 || strcmp(tok[0], "lbu") == 0 || strcmp(tok[0], "lhu") == 0 || strcmp(tok[0], "jalr") == 0) {
+    if (strcmp(tok[0], "addi") == 0 || strcmp(tok[0], "slli") == 0 || strcmp(tok[0], "srli") == 0 || strcmp(tok[0], "srai") == 0 || strcmp(tok[0], "andi") == 0 || strcmp(tok[0], "ori") == 0 || strcmp(tok[0], "xori") == 0 ||
+        strcmp(tok[0], "ldw") == 0 || strcmp(tok[0], "ldh") == 0 || strcmp(tok[0], "ldb") == 0 || strcmp(tok[0], "lbu") == 0 || strcmp(tok[0], "lhu") == 0 || strcmp(tok[0], "ldhu") == 0 || strcmp(tok[0], "ldbu") == 0 ||
+        strcmp(tok[0], "lw") == 0 || strcmp(tok[0], "lh") == 0 || strcmp(tok[0], "lb") == 0 || strcmp(tok[0], "jalr") == 0) {
         int rd, rs1, imm;
         uint32_t op = 0;
         uint32_t off;
@@ -376,7 +436,7 @@ static int handle(char *line) {
         int has_hi = 0;
         if (n != 4) return -1;
         rd = parse_reg(tok[1]); rs1 = parse_reg(tok[2]); imm = parse_num(tok[3], &ok);
-        if (!ok && strcmp(tok[0], "addi") == 0) {
+        if (!ok && (strcmp(tok[0], "addi") == 0 || strcmp(tok[0], "andi") == 0 || strcmp(tok[0], "ori") == 0 || strcmp(tok[0], "xori") == 0)) {
             if (parse_reloc_expr(tok[3], "%lo(", sym, 128)) has_lo = 1;
             else if (parse_reloc_expr(tok[3], "%hi(", sym, 128)) has_hi = 1;
             else return -1;
@@ -386,10 +446,16 @@ static int handle(char *line) {
         if (rd < 0 || rs1 < 0 || !ok) return -1;
         if (strcmp(tok[0], "addi") == 0) op = 0x10;
         else if (strcmp(tok[0], "slli") == 0) op = 0x13;
-        else if (strcmp(tok[0], "ldb") == 0) op = 0x30;
-        else if (strcmp(tok[0], "ldw") == 0) op = 0x32;
-        else if (strcmp(tok[0], "lbu") == 0) op = 0x33;
-        else if (strcmp(tok[0], "lhu") == 0) op = 0x34;
+        else if (strcmp(tok[0], "srli") == 0) op = 0x14;
+        else if (strcmp(tok[0], "srai") == 0) op = 0x15;
+        else if (strcmp(tok[0], "andi") == 0) op = 0x12;
+        else if (strcmp(tok[0], "ori") == 0) op = 0x11;
+        else if (strcmp(tok[0], "xori") == 0) op = 0x1E;
+        else if (strcmp(tok[0], "ldb") == 0 || strcmp(tok[0], "lb") == 0) op = 0x30;
+        else if (strcmp(tok[0], "ldh") == 0 || strcmp(tok[0], "lh") == 0) op = 0x31;
+        else if (strcmp(tok[0], "ldw") == 0 || strcmp(tok[0], "lw") == 0) op = 0x32;
+        else if (strcmp(tok[0], "lbu") == 0 || strcmp(tok[0], "ldbu") == 0) op = 0x33;
+        else if (strcmp(tok[0], "lhu") == 0 || strcmp(tok[0], "ldhu") == 0) op = 0x34;
         else op = 0x41;
         if (emit32(enc_i(op, rd, rs1, imm)) != 0) return -1;
         off = cur_off() - 4u;
@@ -408,7 +474,8 @@ static int handle(char *line) {
         return emit32(enc_s(op, rs1, rs2, imm));
     }
 
-    if (strcmp(tok[0], "beq") == 0 || strcmp(tok[0], "bne") == 0) {
+    if (strcmp(tok[0], "beq") == 0 || strcmp(tok[0], "bne") == 0 || strcmp(tok[0], "blt") == 0 || strcmp(tok[0], "bge") == 0 || strcmp(tok[0], "bltu") == 0 || strcmp(tok[0], "bgeu") == 0 ||
+        strcmp(tok[0], "bgt") == 0 || strcmp(tok[0], "ble") == 0 || strcmp(tok[0], "bgtu") == 0 || strcmp(tok[0], "bleu") == 0) {
         int rs1, rs2;
         uint32_t off;
         uint32_t op;
@@ -416,7 +483,11 @@ static int handle(char *line) {
         rs1 = parse_reg(tok[1]); rs2 = parse_reg(tok[2]);
         if (rs1 < 0 || rs2 < 0) return -1;
         if (strcmp(tok[0], "beq") == 0) op = 0x48;
-        else op = 0x49;
+        else if (strcmp(tok[0], "bne") == 0) op = 0x49;
+        else if (strcmp(tok[0], "blt") == 0 || strcmp(tok[0], "bgt") == 0) { op = 0x4A; if (tok[0][1] == 'g') { int t = rs1; rs1 = rs2; rs2 = t; } }
+        else if (strcmp(tok[0], "bge") == 0 || strcmp(tok[0], "ble") == 0) { op = 0x4B; if (tok[0][1] == 'l') { int t = rs1; rs1 = rs2; rs2 = t; } }
+        else if (strcmp(tok[0], "bltu") == 0 || strcmp(tok[0], "bgtu") == 0) { op = 0x4C; if (tok[0][1] == 'g') { int t = rs1; rs1 = rs2; rs2 = t; } }
+        else { op = 0x4D; if (tok[0][1] == 'l') { int t = rs1; rs1 = rs2; rs2 = t; } }
         off = cur_off();
         if (emit32(enc_b(0, rs1, rs2, 0)) != 0) return -1;
         if (off >= g_tsz) return -1;
@@ -448,14 +519,20 @@ static int handle(char *line) {
     if (strcmp(tok[0], "jal") == 0) {
         int rd;
         uint32_t off;
-        if (n != 3) return -1;
-        rd = parse_reg(tok[1]);
+        char *sym;
+        if (n == 3) {
+            rd = parse_reg(tok[1]);
+            sym = tok[2];
+        } else if (n == 2) {
+            rd = 31;
+            sym = tok[1];
+        } else return -1;
         if (rd < 0) return -1;
         off = cur_off();
         if (emit32(enc_j(0, rd, 0)) != 0) return -1;
         if (off >= g_tsz) return -1;
         g_text[off] = (uint8_t)((g_text[off] & ~0x7Fu) | 0x40u);
-        return add_reloc(S32O_REL_JAL, off, tok[2]);
+        return add_reloc(S32O_REL_JAL, off, sym);
     }
 
     if (strcmp(tok[0], "la") == 0) {
@@ -485,6 +562,54 @@ static int handle(char *line) {
         off2 = off2 - 4u;
         if (add_reloc(S32O_REL_HI20, off, tok[1]) != 0) return -1;
         return add_reloc(S32O_REL_LO12, off2, tok[1]);
+    }
+
+    if (strcmp(tok[0], "mv") == 0) {
+        int rd, rs1;
+        if (n != 3) return -1;
+        rd = parse_reg(tok[1]); rs1 = parse_reg(tok[2]);
+        if (rd < 0 || rs1 < 0) return -1;
+        return emit32(enc_r(0x00, rd, rs1, 0));
+    }
+
+    if (strcmp(tok[0], "li") == 0) {
+        int rd, imm;
+        if (n != 3) return -1;
+        rd = parse_reg(tok[1]); imm = parse_num(tok[2], &ok);
+        if (rd < 0 || !ok) return -1;
+        if (imm >= -2048 && imm <= 2047) return emit32(enc_i(0x10, rd, 0, imm));
+        if (emit32(enc_u(0x20, rd, (imm + 0x800) >> 12)) != 0) return -1;
+        return emit32(enc_i(0x10, rd, rd, imm & 0xFFF));
+    }
+
+    if (strcmp(tok[0], "j") == 0) {
+        if (n != 2) return -1;
+        if (emit32(enc_j(0x40, 0, 0)) != 0) return -1;
+        return add_reloc(S32O_REL_JAL, cur_off() - 4u, tok[1]);
+    }
+
+    if (strcmp(tok[0], "jr") == 0) {
+        int rs1;
+        if (n != 2) return -1;
+        rs1 = parse_reg(tok[1]);
+        if (rs1 < 0) return -1;
+        return emit32(enc_i(0x41, 0, rs1, 0));
+    }
+
+    if (strcmp(tok[0], "ret") == 0) {
+        return emit32(enc_i(0x41, 0, 31, 0));
+    }
+
+    if (strcmp(tok[0], "nop") == 0) {
+        return emit32(enc_r(0x00, 0, 0, 0));
+    }
+
+    if (strcmp(tok[0], "debug") == 0) {
+        int rs1;
+        if (n != 2) return -1;
+        rs1 = parse_reg(tok[1]);
+        if (rs1 < 0) return -1;
+        return emit32(enc_r(0x52, 0, rs1, 0));
     }
 
     if (strcmp(tok[0], "yield") == 0) {

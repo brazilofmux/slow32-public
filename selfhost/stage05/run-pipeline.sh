@@ -24,6 +24,7 @@ LIBC_DIR="$SCRIPT_DIR/libc"
 CRT0_SRC="$SCRIPT_DIR/crt0.s"
 MMIO_SRC="$SCRIPT_DIR/mmio.s"
 MMIO_NO_START_SRC="$SCRIPT_DIR/mmio_no_start.s"
+STAGE5_AS_READY=0
 
 MODE="baseline"
 TEST_NAME="test3"
@@ -148,6 +149,7 @@ BYE" "$WORKDIR/mmio.as.log"
 run_forth "$ASM_FTH" /dev/null "S\" $MMIO_NO_START_SRC\" S\" $RUNTIME_MMIO_NO_START_OBJ\" ASSEMBLE
 BYE" "$WORKDIR/mmio_no_start.as.log"
 [[ -s "$RUNTIME_MMIO_NO_START_OBJ" ]] || { echo "failed to assemble mmio.s" >&2; exit 1; }
+RUNTIME_BUILD_MODE="forth"
 
 run_exe() {
     local exe="$1"
@@ -246,15 +248,17 @@ BYE" "$log"
 LIBC_ARCHIVE=""
 LIBC_START_OBJ=""
 LIBC_BUILT=0
+LIBC_BUILD_MODE=""
 
 build_selfhost_libc() {
-    if [[ "$LIBC_BUILT" -eq 1 ]]; then return 0; fi
-
+    local mode="${1:-forth}"
+    if [[ "$LIBC_BUILT" -eq 1 && "${LIBC_BUILD_MODE:-}" == "$mode" ]]; then return 0; fi
+    LIBC_BUILD_MODE="$mode"
     local libc_c_files="string_extra convert stdio start"
     local name src asm obj
     local ar_objs=""
 
-    echo "Building selfhost libc..."
+    echo "Building selfhost libc (assembler: $mode)..."
 
     for name in $libc_c_files; do
         src="$LIBC_DIR/${name}.c"
@@ -263,7 +267,11 @@ build_selfhost_libc() {
 
         [[ -f "$src" ]] || { echo "Missing libc source: $src" >&2; return 1; }
         compile_c_stage4 "$src" "$asm" "$WORKDIR/libc_${name}.cc.log"
-        assemble_forth "$asm" "$obj" "$WORKDIR/libc_${name}.as.log"
+        if [[ "$mode" == "stage5" ]]; then
+            assemble_with_stage5 "$asm" "$obj" "$WORKDIR/libc_${name}.as.log"
+        else
+            assemble_forth "$asm" "$obj" "$WORKDIR/libc_${name}.as.log"
+        fi
 
         if [[ "$name" == "start" ]]; then
             LIBC_START_OBJ="$obj"
@@ -289,6 +297,18 @@ BYE"
     LIBC_BUILT=1
 }
 
+rebuild_runtime_with_stage5() {
+    if [[ "${RUNTIME_BUILD_MODE:-}" == "stage5" ]]; then
+        return 0
+    fi
+    [[ -n "${STAGE5_AS_EXE:-}" ]] || { echo "stage5 assembler is not built" >&2; return 1; }
+    echo "Rebuilding runtime objects with stage5 assembler..."
+    assemble_with_stage5 "$CRT0_SRC" "$RUNTIME_CRT0" "$WORKDIR/crt0.stage5.as.log"
+    assemble_with_stage5 "$MMIO_SRC" "$RUNTIME_MMIO_OBJ" "$WORKDIR/mmio.stage5.as.log"
+    assemble_with_stage5 "$MMIO_NO_START_SRC" "$RUNTIME_MMIO_NO_START_OBJ" "$WORKDIR/mmio_no_start.stage5.as.log"
+    RUNTIME_BUILD_MODE="stage5"
+}
+
 link_forth_with_libc() {
     local obj="$1"
     local exe="$2"
@@ -307,6 +327,9 @@ BYE" "$log"
 }
 
 build_stage5_assembler() {
+    if [[ "${STAGE5_AS_READY:-0}" -eq 1 ]]; then
+        return 0
+    fi
     local src="$STAGE5_AS_SRC"
     local asm="$WORKDIR/s32-as.s"
     local obj="$WORKDIR/s32-as.s32o"
@@ -317,11 +340,14 @@ build_stage5_assembler() {
         src="$VALIDATION_DIR/s32-as.c"
     fi
     [[ -f "$src" ]] || { echo "Missing source: $src" >&2; return 1; }
-    build_selfhost_libc
+    build_selfhost_libc forth
     compile_c_stage4 "$src" "$asm" "$WORKDIR/s32-as.cc.log"
     assemble_forth "$asm" "$obj" "$WORKDIR/s32-as.as.log"
     link_forth_with_libc "$obj" "$exe" "$WORKDIR/s32-as.ld.log"
     STAGE5_AS_EXE="$exe"
+    STAGE5_AS_READY=1
+    rebuild_runtime_with_stage5
+    build_selfhost_libc stage5
 }
 
 assemble_with_stage5() {
@@ -346,7 +372,11 @@ build_stage6_archiver() {
         src="$VALIDATION_DIR/s32-ar.c"
     fi
     [[ -f "$src" ]] || { echo "Missing source: $src" >&2; return 1; }
-    build_selfhost_libc
+    if [[ "$asm_mode" == "stage5" ]]; then
+        build_selfhost_libc stage5
+    else
+        build_selfhost_libc forth
+    fi
     compile_c_stage4 "$src" "$asm" "$WORKDIR/s32-ar.cc.log"
     if [[ "$asm_mode" == "forth" ]]; then
         assemble_forth "$asm" "$obj" "$WORKDIR/s32-ar.as.log"
