@@ -303,6 +303,82 @@ else
 fi
 
 # ============================================================
+# Step 5: s12cc compiler build + Phase 1 tests
+# ============================================================
+echo ""
+echo "=== Step 5: s12cc compiler tests ==="
+
+# Build s12cc
+S12CC_SRC="$SCRIPT_DIR/s12cc.c"
+[[ -s "$S12CC_SRC" ]] || { echo "ERROR: s12cc.c not found" >&2; exit 1; }
+
+TOTAL=$((TOTAL + 1))
+SAVED_TIMEOUT="${EXEC_TIMEOUT:-180}"
+EXEC_TIMEOUT=300
+S12CC_EXE=$(compile_and_link "s12cc" "$S12CC_SRC") || true
+EXEC_TIMEOUT="$SAVED_TIMEOUT"
+
+if [[ -n "$S12CC_EXE" && -s "$S12CC_EXE" ]]; then
+    printf "  %-30s PASS\n" "s12cc-build:"
+    PASS=$((PASS + 1))
+else
+    printf "  %-30s FAIL (build)\n" "s12cc-build:"
+    FAIL=$((FAIL + 1))
+fi
+
+# Run Phase 1 test programs using s12cc
+if [[ -n "$S12CC_EXE" && -s "$S12CC_EXE" ]]; then
+    for tst in "$TESTS_DIR"/test_spike*.c; do
+        tname="$(basename "$tst" .c)"
+        TOTAL=$((TOTAL + 1))
+
+        # Compile with s12cc
+        run_exe "$S12CC_EXE" "$WORKDIR/${tname}-s12cc.log" "$tst" "$WORKDIR/${tname}.s"
+        if [[ ! -s "$WORKDIR/${tname}.s" ]]; then
+            printf "  %-30s FAIL (compile)\n" "$tname:"
+            tail -n 20 "$WORKDIR/${tname}-s12cc.log" >&2
+            FAIL=$((FAIL + 1))
+            continue
+        fi
+
+        # Assemble
+        run_exe "$AS_EXE" "$WORKDIR/${tname}-as.log" "$WORKDIR/${tname}.s" "$WORKDIR/${tname}.s32o"
+        if [[ ! -s "$WORKDIR/${tname}.s32o" ]]; then
+            printf "  %-30s FAIL (assemble)\n" "$tname:"
+            tail -n 20 "$WORKDIR/${tname}-as.log" >&2
+            FAIL=$((FAIL + 1))
+            continue
+        fi
+
+        # Link
+        run_exe "$LD_EXE" "$WORKDIR/${tname}-ld.log" \
+            -o "$WORKDIR/${tname}.s32x" --mmio 64K \
+            "$RUNTIME_CRT0" "$WORKDIR/${tname}.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+            $LIBC_OBJS
+        if [[ ! -s "$WORKDIR/${tname}.s32x" ]]; then
+            printf "  %-30s FAIL (link)\n" "$tname:"
+            tail -n 20 "$WORKDIR/${tname}-ld.log" >&2
+            FAIL=$((FAIL + 1))
+            continue
+        fi
+
+        # Run
+        set +e
+        run_exe_rc "$WORKDIR/${tname}.s32x" "$WORKDIR/${tname}-run.log"
+        RUN_RC=$?
+        set -e
+        if [[ "$RUN_RC" -eq 0 ]]; then
+            printf "  %-30s PASS\n" "$tname:"
+            PASS=$((PASS + 1))
+        else
+            printf "  %-30s FAIL (rc=%d)\n" "$tname:" "$RUN_RC"
+            cat "$WORKDIR/${tname}-run.log" >&2
+            FAIL=$((FAIL + 1))
+        fi
+    done
+fi
+
+# ============================================================
 # Final report
 # ============================================================
 echo ""
