@@ -92,6 +92,7 @@ int main(int argc, char **argv) {
     cg_olen = 0;
     cg_lbl = 0;
     cg_loop_depth = 0;
+    cg_sw_depth = 0;
     gen_program(prog);
 
     /* Write output */

@@ -8,6 +8,7 @@
 /* --- Parser state --- */
 #define P_MAX_LOCALS  128
 #define P_MAX_GLOBALS 512
+#define PS_MAX_CONSTS 512
 
 static char *ps_lname[P_MAX_LOCALS];  /* local var names */
 static int   ps_loff[P_MAX_LOCALS];   /* local var offsets from fp */
@@ -21,6 +22,11 @@ static char *ps_gname[P_MAX_GLOBALS]; /* global var names */
 static int   ps_gtype[P_MAX_GLOBALS]; /* global var types */
 static int   ps_gsize[P_MAX_GLOBALS]; /* size in bytes (0=scalar, >0=array) */
 static int   ps_nglobals;
+
+/* Enum constant table */
+static char *ps_cname[PS_MAX_CONSTS];
+static int   ps_cval[PS_MAX_CONSTS];
+static int   ps_nconsts;
 
 /* Forward declarations */
 static struct Node *parse_expr(void);
@@ -63,6 +69,62 @@ static int is_type(void) {
     if (lex_tok == TK_CHAR) return 1;
     if (lex_tok == TK_STRUCT) return 1;
     return 0;
+}
+
+/* --- Enum helpers --- */
+
+static int find_const(char *name) {
+    int i;
+    i = ps_nconsts - 1;
+    while (i >= 0) {
+        if (strcmp(name, ps_cname[i]) == 0) return i;
+        i = i - 1;
+    }
+    return -1;
+}
+
+static void parse_enum_def(void) {
+    int val;
+    /* Skip optional tag name */
+    if (lex_tok == TK_IDENT) {
+        next();
+    }
+    expect(TK_LBRACE);
+    val = 0;
+    while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+        if (lex_tok != TK_IDENT) {
+            p_error("expected enum constant name");
+        }
+        if (ps_nconsts >= PS_MAX_CONSTS) {
+            p_error("too many enum constants");
+        }
+        ps_cname[ps_nconsts] = strdup(lex_str);
+        next();
+        if (lex_tok == TK_ASSIGN) {
+            next();
+            /* Parse optional negative sign */
+            if (lex_tok == TK_MINUS) {
+                next();
+                if (lex_tok != TK_NUM) {
+                    p_error("expected number after '-' in enum");
+                }
+                val = 0 - lex_val;
+                next();
+            } else if (lex_tok == TK_NUM) {
+                val = lex_val;
+                next();
+            } else {
+                p_error("expected number in enum initializer");
+            }
+        }
+        ps_cval[ps_nconsts] = val;
+        ps_nconsts = ps_nconsts + 1;
+        val = val + 1;
+        if (lex_tok == TK_COMMA) {
+            next();
+        }
+    }
+    expect(TK_RBRACE);
 }
 
 /* --- Struct helpers --- */
@@ -266,6 +328,7 @@ static struct Node *parse_primary(void) {
     int nargs;
     int li;
     int gi;
+    int ci;
 
     /* Number literal */
     if (lex_tok == TK_NUM) {
@@ -332,6 +395,12 @@ static struct Node *parse_primary(void) {
             n->is_local = 0;
             n->is_array = (ps_gsize[gi] > 0) ? 1 : 0;
             return n;
+        }
+
+        /* Enum constant */
+        ci = find_const(nm);
+        if (ci >= 0) {
+            return nd_num(ps_cval[ci]);
         }
 
         fputs("s12cc:", stderr);
@@ -682,6 +751,9 @@ static struct Node *parse_stmt(void) {
     int ty;
     int off;
     int count;
+    int ci;
+    int cv;
+    int neg;
     char nm[256];
 
     /* return statement */
@@ -769,6 +841,55 @@ static struct Node *parse_stmt(void) {
         return nd_for(n, c, e, t);
     }
 
+    /* switch statement */
+    if (lex_tok == TK_SWITCH) {
+        next();
+        expect(TK_LPAREN);
+        c = parse_expr();
+        expect(TK_RPAREN);
+        t = parse_stmt();
+        n = nd_new(ND_SWITCH);
+        n->cond = c;
+        n->body = t;
+        return n;
+    }
+
+    /* case label */
+    if (lex_tok == TK_CASE) {
+        next();
+        neg = 0;
+        if (lex_tok == TK_MINUS) {
+            neg = 1;
+            next();
+        }
+        if (lex_tok == TK_NUM) {
+            cv = lex_val;
+            next();
+        } else if (lex_tok == TK_IDENT) {
+            ci = find_const(lex_str);
+            if (ci < 0) {
+                p_error("undefined constant in case");
+            }
+            cv = ps_cval[ci];
+            next();
+        } else {
+            p_error("expected constant in case");
+            cv = 0;
+        }
+        if (neg) cv = 0 - cv;
+        expect(TK_COLON);
+        n = nd_new(ND_CASE);
+        n->val = cv;
+        return n;
+    }
+
+    /* default label */
+    if (lex_tok == TK_DEFAULT) {
+        next();
+        expect(TK_COLON);
+        return nd_new(ND_DEFAULT);
+    }
+
     /* break statement */
     if (lex_tok == TK_BREAK) {
         next();
@@ -786,6 +907,14 @@ static struct Node *parse_stmt(void) {
     /* block */
     if (lex_tok == TK_LBRACE) {
         return parse_block();
+    }
+
+    /* enum definition inside function body */
+    if (lex_tok == TK_ENUM) {
+        next();
+        parse_enum_def();
+        expect(TK_SEMI);
+        return nd_block(NULL);
     }
 
     /* local variable declaration */
@@ -873,6 +1002,14 @@ static struct Node *parse_top_decl(void) {
     int off;
     int i;
     int count;
+
+    /* Enum definition at top level */
+    if (lex_tok == TK_ENUM) {
+        next();
+        parse_enum_def();
+        expect(TK_SEMI);
+        return NULL;
+    }
 
     /* Parse return type / variable type */
     ty = parse_type();

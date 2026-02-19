@@ -87,6 +87,9 @@ static int ty_deref(int ty) {
 #define ND_CAST     23   /* type cast */
 #define ND_COMMA    24   /* comma operator */
 #define ND_MEMBER   25   /* struct member access: lhs=struct expr, val=offset, ty=member type */
+#define ND_SWITCH   26   /* switch: cond=expr, body=block */
+#define ND_CASE     27   /* case label: val=constant value */
+#define ND_DEFAULT  28   /* default label (no data) */
 
 /* --- AST node --- */
 struct Node {

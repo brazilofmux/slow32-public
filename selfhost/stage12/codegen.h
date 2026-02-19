@@ -19,6 +19,17 @@ static int cg_break_lbl[CG_MAX_LOOP];
 static int cg_cont_lbl[CG_MAX_LOOP];
 static int cg_loop_depth;
 
+/* Switch state (nested switch support) */
+#define CG_MAX_CASE     256
+#define CG_MAX_SW_DEPTH 8
+static int cg_sw_val[CG_MAX_CASE];   /* case values */
+static int cg_sw_lbl[CG_MAX_CASE];   /* case labels */
+static int cg_sw_base[CG_MAX_SW_DEPTH];  /* base index into val/lbl arrays */
+static int cg_sw_count[CG_MAX_SW_DEPTH]; /* number of cases at this depth */
+static int cg_sw_def[CG_MAX_SW_DEPTH];   /* default label (-1 if none) */
+static int cg_sw_cur[CG_MAX_SW_DEPTH];   /* cursor for body generation */
+static int cg_sw_depth;
+
 static void cg_c(int ch) {
     if (cg_olen < CG_MAX_OUT - 1) {
         cg_out[cg_olen] = ch;
@@ -507,7 +518,16 @@ static void gen_stmt(struct Node *n) {
     int l1;
     int l2;
     int l3;
+    int sw_d;
+    int sw_b;
+    int sw_n;
+    int sw_i;
+    int brk_lbl;
+    int def_lbl;
+    int cd;
+    int ci2;
     struct Node *s;
+    struct Node *cs;
 
     if (!n) return;
 
@@ -609,8 +629,92 @@ static void gen_stmt(struct Node *n) {
         return;
     }
 
+    if (n->kind == ND_SWITCH) {
+        /* Pre-scan: collect case values and assign labels */
+        sw_d = cg_sw_depth;
+        sw_b = 0;
+        if (sw_d > 0) {
+            sw_b = cg_sw_base[sw_d - 1] + cg_sw_count[sw_d - 1];
+        }
+        cg_sw_base[sw_d] = sw_b;
+        cg_sw_count[sw_d] = 0;
+        cg_sw_def[sw_d] = -1;
+
+        /* Walk the body's statement list to find case/default */
+        if (n->body && n->body->kind == ND_BLOCK) {
+            cs = n->body->body;
+            while (cs) {
+                if (cs->kind == ND_CASE) {
+                    sw_n = cg_sw_count[sw_d];
+                    cg_sw_val[sw_b + sw_n] = cs->val;
+                    cg_sw_lbl[sw_b + sw_n] = cg_label();
+                    cg_sw_count[sw_d] = sw_n + 1;
+                } else if (cs->kind == ND_DEFAULT) {
+                    cg_sw_def[sw_d] = cg_label();
+                }
+                cs = cs->next;
+            }
+        }
+
+        brk_lbl = cg_label();
+        if (cg_sw_def[sw_d] >= 0) {
+            def_lbl = cg_sw_def[sw_d];
+        } else {
+            def_lbl = brk_lbl;
+        }
+
+        /* Push break target */
+        cg_break_lbl[cg_loop_depth] = brk_lbl;
+        cg_loop_depth = cg_loop_depth + 1;
+
+        /* Generate condition expression */
+        gen_expr(n->cond);
+        cg_s("    addi r2, r1, 0\n");  /* r2 = switch value */
+
+        /* Comparison chain */
+        sw_n = cg_sw_count[sw_d];
+        sw_i = 0;
+        while (sw_i < sw_n) {
+            cg_li(cg_sw_val[sw_b + sw_i]);
+            cg_s("    beq r2, r1, ");
+            cg_lref(cg_sw_lbl[sw_b + sw_i]);
+            cg_c(10);
+            sw_i = sw_i + 1;
+        }
+
+        /* Jump to default or break */
+        cg_s("    jal r0, ");
+        cg_lref(def_lbl);
+        cg_c(10);
+
+        /* Generate body with case/default cursor */
+        cg_sw_cur[sw_d] = 0;
+        cg_sw_depth = sw_d + 1;
+        gen_stmt(n->body);
+        cg_sw_depth = sw_d;
+
+        /* Break label */
+        cg_ldef(brk_lbl);
+        cg_loop_depth = cg_loop_depth - 1;
+        return;
+    }
+
+    if (n->kind == ND_CASE) {
+        cd = cg_sw_depth - 1;
+        ci2 = cg_sw_cur[cd];
+        cg_ldef(cg_sw_lbl[cg_sw_base[cd] + ci2]);
+        cg_sw_cur[cd] = ci2 + 1;
+        return;
+    }
+
+    if (n->kind == ND_DEFAULT) {
+        cd = cg_sw_depth - 1;
+        cg_ldef(cg_sw_def[cd]);
+        return;
+    }
+
     if (n->kind == ND_BREAK) {
-        if (cg_loop_depth < 1) p_error("break outside loop");
+        if (cg_loop_depth < 1) p_error("break outside loop/switch");
         cg_s("    jal r0, ");
         cg_lref(cg_break_lbl[cg_loop_depth - 1]);
         cg_c(10);
