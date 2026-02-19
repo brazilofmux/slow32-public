@@ -176,8 +176,9 @@ static void cg_bne_long(int lbl) {
 
 /* Load from [r1] with appropriate width for type */
 static void cg_load(int ty) {
-    if (ty == TY_CHAR) {
-        cg_s("    ldb r1, r1, 0\n");
+    if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
+        if (ty & TY_UNSIGNED) cg_s("    ldbu r1, r1, 0\n");
+        else                  cg_s("    ldb r1, r1, 0\n");
     } else {
         cg_s("    ldw r1, r1, 0\n");
     }
@@ -185,7 +186,7 @@ static void cg_load(int ty) {
 
 /* Store r2 to [r1] with appropriate width for type */
 static void cg_store(int ty) {
-    if (ty == TY_CHAR) {
+    if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
         cg_s("    stb r1, r2, 0\n");
     } else {
         cg_s("    stw r1, r2, 0\n");
@@ -194,8 +195,8 @@ static void cg_store(int ty) {
 
 /* --- Code generation --- */
 
-/* Apply binary operation: r1 = r2 op r1 */
-static void cg_apply_binop(int op) {
+/* Apply binary operation: r1 = r2 op r1 (ty used for shift signedness) */
+static void cg_apply_binop(int op, int ty) {
     if (op == TK_PLUS)    { cg_s("    add r1, r2, r1\n"); return; }
     if (op == TK_MINUS)   { cg_s("    sub r1, r2, r1\n"); return; }
     if (op == TK_STAR)    { cg_s("    mul r1, r2, r1\n"); return; }
@@ -205,7 +206,11 @@ static void cg_apply_binop(int op) {
     if (op == TK_PIPE)    { cg_s("    or r1, r2, r1\n"); return; }
     if (op == TK_CARET)   { cg_s("    xor r1, r2, r1\n"); return; }
     if (op == TK_LSHIFT)  { cg_s("    sll r1, r2, r1\n"); return; }
-    if (op == TK_RSHIFT)  { cg_s("    sra r1, r2, r1\n"); return; }
+    if (op == TK_RSHIFT) {
+        if (ty & TY_UNSIGNED) cg_s("    srl r1, r2, r1\n");
+        else                  cg_s("    sra r1, r2, r1\n");
+        return;
+    }
     p_error("unknown binop");
 }
 
@@ -281,8 +286,9 @@ static void gen_expr(Node *n) {
         }
         if (n->is_local) {
             /* Local scalar: load from stack */
-            if (n->ty == TY_CHAR) {
-                cg_s("    ldb r1, r30, ");
+            if (!ty_is_ptr(n->ty) && (n->ty & TY_BASE_MASK) == TY_CHAR) {
+                if (n->ty & TY_UNSIGNED) cg_s("    ldbu r1, r30, ");
+                else                      cg_s("    ldb r1, r30, ");
             } else {
                 cg_s("    ldw r1, r30, ");
             }
@@ -440,15 +446,35 @@ static void gen_expr(Node *n) {
         if (n->op == TK_PERCENT) { cg_s("    rem r1, r2, r1\n"); return; }
         if (n->op == TK_EQ)      { cg_s("    seq r1, r2, r1\n"); return; }
         if (n->op == TK_NE)      { cg_s("    sne r1, r2, r1\n"); return; }
-        if (n->op == TK_LT)      { cg_s("    slt r1, r2, r1\n"); return; }
-        if (n->op == TK_GT)      { cg_s("    sgt r1, r2, r1\n"); return; }
-        if (n->op == TK_LE)      { cg_s("    sle r1, r2, r1\n"); return; }
-        if (n->op == TK_GE)      { cg_s("    sge r1, r2, r1\n"); return; }
+        if (n->op == TK_LT) {
+            if (n->ty & TY_UNSIGNED) cg_s("    sltu r1, r2, r1\n");
+            else                     cg_s("    slt r1, r2, r1\n");
+            return;
+        }
+        if (n->op == TK_GT) {
+            if (n->ty & TY_UNSIGNED) cg_s("    sgtu r1, r2, r1\n");
+            else                     cg_s("    sgt r1, r2, r1\n");
+            return;
+        }
+        if (n->op == TK_LE) {
+            if (n->ty & TY_UNSIGNED) cg_s("    sleu r1, r2, r1\n");
+            else                     cg_s("    sle r1, r2, r1\n");
+            return;
+        }
+        if (n->op == TK_GE) {
+            if (n->ty & TY_UNSIGNED) cg_s("    sgeu r1, r2, r1\n");
+            else                     cg_s("    sge r1, r2, r1\n");
+            return;
+        }
         if (n->op == TK_AMP)     { cg_s("    and r1, r2, r1\n"); return; }
         if (n->op == TK_PIPE)    { cg_s("    or r1, r2, r1\n"); return; }
         if (n->op == TK_CARET)   { cg_s("    xor r1, r2, r1\n"); return; }
         if (n->op == TK_LSHIFT)  { cg_s("    sll r1, r2, r1\n"); return; }
-        if (n->op == TK_RSHIFT)  { cg_s("    sra r1, r2, r1\n"); return; }
+        if (n->op == TK_RSHIFT) {
+            if (n->ty & TY_UNSIGNED) cg_s("    srl r1, r2, r1\n");
+            else                     cg_s("    sra r1, r2, r1\n");
+            return;
+        }
 
         p_error("unknown binop");
         return;
@@ -475,7 +501,7 @@ static void gen_expr(Node *n) {
                 }
             }
             cg_rpop();              /* r2 = old_val */
-            cg_apply_binop(n->op);  /* r1 = r2 op r1 = new_val */
+            cg_apply_binop(n->op, n->ty);  /* r1 = r2 op r1 = new_val */
             /* Store new_val back to addr: need r2=new_val, r1=addr */
             cg_s("    addi r2, r1, 0\n");   /* r2 = new_val */
             cg_rsp = cg_rsp - 1;
@@ -503,7 +529,7 @@ static void gen_expr(Node *n) {
                 }
             }
             cg_pop();               /* r2 = old_val, stack: [addr] */
-            cg_apply_binop(n->op);  /* r1 = r2 op r1 = new_val */
+            cg_apply_binop(n->op, n->ty);  /* r1 = r2 op r1 = new_val */
             cg_s("    addi r2, r1, 0\n");   /* r2 = new_val */
             cg_s("    ldw r1, r29, 0\n    addi r29, r29, 4\n"); /* pop addr → r1 */
             cg_store(n->ty);               /* mem[r1] = r2 */

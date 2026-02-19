@@ -20,6 +20,10 @@ int memcpy(char *dst, char *src, int n);
 #define TY_STRUCT_BASE 3  /* struct index i → type = 3+i; fits 3..255 */
 #define TY_PTR  256   /* add to base: TY_PTR+TY_CHAR = char*, TY_PTR+TY_INT = int* */
 
+#define TY_UNSIGNED  0x4000  /* flag bit: unsigned qualifier */
+#define TY_BASE_MASK 0x00FF  /* bits 0-7: base type */
+#define TY_PTR_MASK  0x3F00  /* bits 8-13: pointer depth */
+
 /* --- Struct definition tables --- */
 #define ST_MAX_STRUCTS 64
 #define ST_MAX_MEMBERS 512
@@ -38,27 +42,34 @@ static int   stm_count;
 /* --- Type helpers --- */
 
 static int ty_is_struct(int ty) {
-    return ty >= TY_STRUCT_BASE && ty < TY_PTR;
+    int base;
+    base = ty & TY_BASE_MASK;
+    return base >= TY_STRUCT_BASE && (ty & TY_PTR_MASK) == 0;
 }
 
 static int ty_struct_idx(int ty) {
-    return ty - TY_STRUCT_BASE;
+    return (ty & TY_BASE_MASK) - TY_STRUCT_BASE;
 }
 
 static int ty_size(int ty) {
-    if (ty >= TY_PTR) return 4;
-    if (ty >= TY_STRUCT_BASE) return st_size[ty - TY_STRUCT_BASE];
-    if (ty == TY_CHAR) return 1;
+    if (ty & TY_PTR_MASK) return 4;
+    if ((ty & TY_BASE_MASK) >= TY_STRUCT_BASE)
+        return st_size[(ty & TY_BASE_MASK) - TY_STRUCT_BASE];
+    if ((ty & TY_BASE_MASK) == TY_CHAR) return 1;
     return 4;
 }
 
 static int ty_is_ptr(int ty) {
-    return ty >= TY_PTR;
+    return (ty & TY_PTR_MASK) != 0;
 }
 
 static int ty_deref(int ty) {
-    if (ty >= TY_PTR) return ty - TY_PTR;
+    if (ty & TY_PTR_MASK) return ty - TY_PTR;
     return TY_INT;
+}
+
+static int ty_is_unsigned(int ty) {
+    return (ty & TY_UNSIGNED) != 0;
 }
 
 /* --- Node kinds --- */
@@ -166,7 +177,12 @@ static Node *nd_binop(int op, Node *l, Node *r) {
     n->rhs = r;
     /* type: comparisons→int, pointer arithmetic→pointer, else int */
     if (op == TK_EQ || op == TK_NE || op == TK_LT || op == TK_GT ||
-        op == TK_LE || op == TK_GE || op == TK_LAND || op == TK_LOR) {
+        op == TK_LE || op == TK_GE) {
+        n->ty = TY_INT;
+        /* Mark unsigned if either operand is unsigned (for codegen) */
+        if ((l->ty & TY_UNSIGNED) || (r->ty & TY_UNSIGNED))
+            n->ty = TY_INT | TY_UNSIGNED;
+    } else if (op == TK_LAND || op == TK_LOR) {
         n->ty = TY_INT;
     } else if (ty_is_ptr(l->ty)) {
         n->ty = l->ty;
@@ -174,6 +190,9 @@ static Node *nd_binop(int op, Node *l, Node *r) {
         n->ty = r->ty;
     } else {
         n->ty = TY_INT;
+        /* Propagate unsigned for arithmetic/bitwise ops */
+        if ((l->ty & TY_UNSIGNED) || (r->ty & TY_UNSIGNED))
+            n->ty = TY_INT | TY_UNSIGNED;
     }
     return n;
 }
@@ -187,6 +206,8 @@ static Node *nd_unary(int op, Node *operand) {
         n->ty = ty_deref(operand->ty);
     } else if (op == TK_AMP) {
         n->ty = operand->ty + TY_PTR;
+    } else if (op == TK_MINUS || op == TK_TILDE) {
+        n->ty = operand->ty;
     } else {
         n->ty = TY_INT;
     }

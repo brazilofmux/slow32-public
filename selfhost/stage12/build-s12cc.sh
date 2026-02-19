@@ -35,7 +35,7 @@ OUT_EXE="$SCRIPT_DIR/s12cc.s32x"
 for f in "$EMU" "$STAGE11_CC" "$STAGE5_AS" "$STAGE7_LD" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC" \
          "$SCRIPT_DIR/s12cc.c" "$SCRIPT_DIR/c_lexer_gen.c" \
-         "$SCRIPT_DIR/ast.h" "$SCRIPT_DIR/parser.h" \
+         "$SCRIPT_DIR/ast.h" "$SCRIPT_DIR/parser.h" "$SCRIPT_DIR/sema.h" \
          "$SCRIPT_DIR/optimize.h" "$SCRIPT_DIR/codegen.h" "$SCRIPT_DIR/pp.h"; do
     [[ -f "$f" ]] || { echo "Missing: $f" >&2; exit 1; }
 done

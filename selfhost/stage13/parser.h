@@ -263,15 +263,15 @@ static int parse_type(void) {
     else if (lex_tok == TK_VOID) { ty = TY_VOID; next(); }
     else if (lex_tok == TK_UNSIGNED) {
         next();
-        if (lex_tok == TK_CHAR) { ty = TY_CHAR; next(); }
-        else if (lex_tok == TK_INT) { ty = TY_INT; next(); }
-        else if (lex_tok == TK_LONG) { ty = TY_INT; next(); }
-        else { ty = TY_INT; }
+        if (lex_tok == TK_CHAR) { ty = TY_CHAR | TY_UNSIGNED; next(); }
+        else if (lex_tok == TK_INT) { ty = TY_INT | TY_UNSIGNED; next(); }
+        else if (lex_tok == TK_LONG) { ty = TY_INT | TY_UNSIGNED; next(); }
+        else { ty = TY_INT | TY_UNSIGNED; }
     }
     else if (lex_tok == TK_LONG) {
         next();
         if (lex_tok == TK_INT) { ty = TY_INT; next(); }
-        else if (lex_tok == TK_UNSIGNED) { ty = TY_INT; next(); }
+        else if (lex_tok == TK_UNSIGNED) { ty = TY_INT | TY_UNSIGNED; next(); }
         else { ty = TY_INT; }
     }
     else if (lex_tok == TK_STRUCT) {
@@ -297,7 +297,7 @@ static int parse_type(void) {
                     return TY_INT;
                 }
                 /* Align offset: char=1, everything else=4 */
-                if (mty != TY_CHAR) {
+                if ((mty & TY_BASE_MASK) != TY_CHAR) {
                     off = ((off + 3) / 4) * 4;
                 }
                 if (stm_count >= ST_MAX_MEMBERS) {
@@ -1445,6 +1445,7 @@ params_done:
     /* Function body */
     fn = nd_new(ND_FUNC);
     fn->name = strdup(nm);
+    fn->ty = ty;  /* store return type for sema pass */
     fn->args = phead;
     fn->nparams = ps_nparams;
     fn->body = parse_block();

@@ -54,6 +54,7 @@ void fput_uint(int fd, int val) {
 #include "pp.h"
 #include "ast.h"
 #include "parser.h"
+#include "sema.h"
 #include "optimize.h"
 #include "codegen.h"
 
@@ -115,6 +116,9 @@ int main(int argc, char **argv) {
     /* Lex + Parse */
     lex_init(src, n);
     prog = parse_program();
+
+    /* Semantic analysis (type propagation) */
+    sema(prog);
 
     /* Optimize AST */
     optimize(prog);

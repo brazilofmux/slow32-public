@@ -97,6 +97,14 @@ static void opt_fold(Node *n) {
         rv = n->rhs->val;
         result = 0;
 
+        /* Skip folding ops that differ between signed/unsigned */
+        if (n->ty & TY_UNSIGNED) {
+            if (n->op == TK_LT || n->op == TK_GT ||
+                n->op == TK_LE || n->op == TK_GE ||
+                n->op == TK_SLASH || n->op == TK_PERCENT ||
+                n->op == TK_RSHIFT) return;
+        }
+
         if (n->op == TK_PLUS)    { result = lv + rv; }
         else if (n->op == TK_MINUS)   { result = lv - rv; }
         else if (n->op == TK_STAR)    { result = lv * rv; }
