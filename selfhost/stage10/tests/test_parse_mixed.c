@@ -143,6 +143,76 @@ int test_block_scope(void) {
     return 0;
 }
 
+/* Test comma operator */
+int test_comma(void) {
+    int a;
+    int b;
+    /* Comma operator: evaluate left, discard, return right */
+    a = (1, 2, 3);
+    if (a != 3) return 1;
+    /* Comma in for-loop increment */
+    a = 0;
+    b = 0;
+    for (a = 0; a < 5; a = a + 1, b = b + 2) { }
+    if (a != 5) return 2;
+    if (b != 10) return 3;
+    return 0;
+}
+
+/* Test do-while */
+int test_do_while(void) {
+    int n;
+    int count;
+    n = 1;
+    count = 0;
+    do {
+        count = count + 1;
+        n = n * 2;
+    } while (n < 100);
+    if (n != 128) return 1;
+    if (count != 7) return 2;
+    /* do-while with break */
+    n = 0;
+    do {
+        n = n + 1;
+        if (n == 3) break;
+    } while (n < 10);
+    if (n != 3) return 3;
+    return 0;
+}
+
+/* Test switch/case */
+int test_switch(void) {
+    int r;
+    int x;
+    /* Basic switch */
+    x = 2;
+    switch (x) {
+    case 1: r = 10; break;
+    case 2: r = 20; break;
+    case 3: r = 30; break;
+    default: r = -1; break;
+    }
+    if (r != 20) return 1;
+    /* Default case */
+    x = 99;
+    switch (x) {
+    case 1: r = 10; break;
+    default: r = -1; break;
+    }
+    if (r != -1) return 2;
+    /* Fallthrough */
+    r = 0;
+    x = 1;
+    switch (x) {
+    case 1: r = r + 10;
+    case 2: r = r + 20; break;
+    case 3: r = r + 30; break;
+    }
+    if (r != 30) return 3;
+    return 0;
+}
+
 int main(void) {
     int rc;
     rc = test_factorial();
@@ -161,5 +231,11 @@ int main(void) {
     if (rc) return rc + 60;
     rc = test_block_scope();
     if (rc) return rc + 70;
+    rc = test_comma();
+    if (rc) return rc + 80;
+    rc = test_do_while();
+    if (rc) return rc + 90;
+    rc = test_switch();
+    if (rc) return rc + 100;
     return 0;
 }

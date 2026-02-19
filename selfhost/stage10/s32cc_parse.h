@@ -247,8 +247,8 @@ static void p_primary(void) {
         if (lex_tok == TK_LPAREN) {
             next(); na = 0;
             if (lex_tok != TK_RPAREN) {
-                p_expr(); p_l2r(); p_push(); na = 1;
-                while (lex_tok == TK_COMMA) { next(); p_expr(); p_l2r(); p_push(); na = na + 1; }
+                p_assign(); p_l2r(); p_push(); na = 1;
+                while (lex_tok == TK_COMMA) { next(); p_assign(); p_l2r(); p_push(); na = na + 1; }
             }
             p_expect(TK_RPAREN);
             k = na;
@@ -344,8 +344,8 @@ static void p_postfix(void) {
             pe("    addi r11, r1, 0\n"); p_push(); next();
             na = 0;
             if (lex_tok != TK_RPAREN) {
-                p_expr(); p_l2r(); p_push(); na = 1;
-                while (lex_tok == TK_COMMA) { next(); p_expr(); p_l2r(); p_push(); na = na + 1; }
+                p_assign(); p_l2r(); p_push(); na = 1;
+                while (lex_tok == TK_COMMA) { next(); p_assign(); p_l2r(); p_push(); na = na + 1; }
             }
             p_expect(TK_RPAREN);
             k = na;
@@ -492,7 +492,7 @@ static void p_assign(void) {
     }
 }
 
-static void p_expr(void) { p_assign(); }
+static void p_expr(void) { p_assign(); while (lex_tok == TK_COMMA) { p_l2r(); next(); p_assign(); } }
 
 /* Statement parser */
 static void p_compound(void);
