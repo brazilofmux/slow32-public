@@ -17,7 +17,6 @@ AR_FTH="${SELFHOST_AR_FTH:-$SELFHOST_DIR/stage02/ar.fth}"
 
 TEST_DIR="${SELFHOST_TEST_DIR:-$SELFHOST_DIR/stage04/tests}"
 VALIDATION_DIR="${SELFHOST_VALIDATION_DIR:-$SELFHOST_DIR/stage04/validation}"
-STAGE5_AS_SRC="${SELFHOST_STAGE5_AS_SRC:-$SCRIPT_DIR/s32-as.c}"
 STAGE6_AR_SRC="${SELFHOST_STAGE6_AR_SRC:-$SELFHOST_DIR/stage06/s32-ar.c}"
 STAGE6_AR_SCAN_SRC="${SELFHOST_STAGE6_AR_SCAN_SRC:-$SELFHOST_DIR/stage06/s32-ar-scan.c}"
 LIBC_DIR="$SCRIPT_DIR/libc"
@@ -57,7 +56,7 @@ Modes:
 Env overrides:
   SELFHOST_ROOT SELFHOST_EMU SELFHOST_KERNEL SELFHOST_PRELUDE
   SELFHOST_CC_FTH SELFHOST_ASM_FTH SELFHOST_LINK_FTH SELFHOST_AR_FTH
-  SELFHOST_TEST_DIR SELFHOST_VALIDATION_DIR SELFHOST_STAGE5_AS_SRC
+  SELFHOST_TEST_DIR SELFHOST_VALIDATION_DIR
   SELFHOST_STAGE6_AR_SRC SELFHOST_STAGE6_AR_SCAN_SRC
 USAGE
 }
@@ -330,20 +329,8 @@ build_stage5_assembler() {
     if [[ "${STAGE5_AS_READY:-0}" -eq 1 ]]; then
         return 0
     fi
-    local src="$STAGE5_AS_SRC"
-    local asm="$WORKDIR/s32-as.s"
-    local obj="$WORKDIR/s32-as.s32o"
-    local exe="$WORKDIR/s32-as.s32x"
-
-    if [[ ! -f "$src" ]]; then
-        # Backward-compatible fallback during path transition.
-        src="$VALIDATION_DIR/s32-as.c"
-    fi
-    [[ -f "$src" ]] || { echo "Missing source: $src" >&2; return 1; }
-    build_selfhost_libc forth
-    compile_c_stage4 "$src" "$asm" "$WORKDIR/s32-as.cc.log"
-    assemble_forth "$asm" "$obj" "$WORKDIR/s32-as.as.log"
-    link_forth_with_libc "$obj" "$exe" "$WORKDIR/s32-as.ld.log"
+    local exe="$SCRIPT_DIR/s32-as.s32x"
+    [[ -f "$exe" ]] || { echo "Missing artifact: $exe (run 'make' in stage05 first)" >&2; return 1; }
     STAGE5_AS_EXE="$exe"
     STAGE5_AS_READY=1
     rebuild_runtime_with_stage5
@@ -367,10 +354,6 @@ build_stage6_archiver() {
     local obj="$WORKDIR/s32-ar.s32o"
     local exe="$WORKDIR/s32-ar.s32x"
 
-    if [[ ! -f "$src" ]]; then
-        # Backward-compatible fallback during path transition.
-        src="$VALIDATION_DIR/s32-ar.c"
-    fi
     [[ -f "$src" ]] || { echo "Missing source: $src" >&2; return 1; }
     if [[ "$asm_mode" == "stage5" ]]; then
         build_selfhost_libc stage5
@@ -658,9 +641,6 @@ case "$MODE" in
         build_stage5_assembler
         if [[ "$TEST_NAME" == "test3" ]]; then
             TARGET_SRC="$STAGE6_AR_SRC"
-            if [[ ! -f "$TARGET_SRC" ]]; then
-                TARGET_SRC="$VALIDATION_DIR/s32-ar.c"
-            fi
         else
             TARGET_SRC="$(resolve_validation_source "$TEST_NAME")"
         fi
