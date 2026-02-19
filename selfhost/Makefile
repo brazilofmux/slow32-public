@@ -3,9 +3,9 @@
 # This Makefile guides the student through the stage-by-stage progression.
 # Each stage has specific prerequisites and produces clear, minimal artifacts.
 
-.PHONY: all clean stage00 stage01 stage02 stage03 stage04 stage05 stage06
+.PHONY: all clean stage00 stage01 stage02 stage03 stage04 stage05 stage06 stage07
 
-all: stage06
+all: stage07
 
 # Stage 00: Minimum bootstrap emulator (the trust root)
 stage00:
@@ -54,6 +54,15 @@ stage06: stage05
 	@echo "--- Building Stage 06: C Archiver ---"
 	$(MAKE) -C stage06
 
+# Stage 07: Subset-C Linker
+# Prerequisites: Stage 04 C compiler, Stage 05 C assembler
+# Uses Stage 03 link.fth one final time to link itself (bootstrap).
+# After this stage, Forth tools (stage01-03) are no longer needed.
+# Artifacts: s32-ld.s32x (C linker, runs on emulator)
+stage07: stage06
+	@echo "--- Building Stage 07: C Linker ---"
+	$(MAKE) -C stage07
+
 clean:
 	$(MAKE) -C stage00 clean
 	$(MAKE) -C stage01 clean
@@ -62,3 +71,4 @@ clean:
 	$(MAKE) -C stage04 clean
 	$(MAKE) -C stage05 clean
 	$(MAKE) -C stage06 clean
+	$(MAKE) -C stage07 clean
