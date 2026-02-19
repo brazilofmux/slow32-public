@@ -1243,13 +1243,13 @@ VARIABLE asm-sec
     ELSE
         tmp-type @ TYPE-BASE TY-CHAR = tmp-type @ TYPE-PTR 0= AND IF
             tmp-type @ TYPE-IS-UNSIGNED IF
-                S" lbu r1, r2, 0" EMIT-INSN
+                S" ldbu r1, r2, 0" EMIT-INSN
             ELSE
                 S" ldb r1, r2, 0" EMIT-INSN
             THEN
         ELSE tmp-type @ TYPE-BASE TY-SHORT = tmp-type @ TYPE-PTR 0= AND IF
             tmp-type @ TYPE-IS-UNSIGNED IF
-                S" lhu r1, r2, 0" EMIT-INSN
+                S" ldhu r1, r2, 0" EMIT-INSN
             ELSE
                 S" ldh r1, r2, 0" EMIT-INSN
             THEN
@@ -1279,13 +1279,13 @@ VARIABLE asm-sec
     ELSE
         tmp-type @ TYPE-BASE TY-CHAR = tmp-type @ TYPE-PTR 0= AND IF
             tmp-type @ TYPE-IS-UNSIGNED IF
-                EMIT-INDENT S" lbu r1, r30, " OUT-STR OUT-SNUM OUT-NL
+                EMIT-INDENT S" ldbu r1, r30, " OUT-STR OUT-SNUM OUT-NL
             ELSE
                 EMIT-INDENT S" ldb r1, r30, " OUT-STR OUT-SNUM OUT-NL
             THEN
         ELSE tmp-type @ TYPE-BASE TY-SHORT = tmp-type @ TYPE-PTR 0= AND IF
             tmp-type @ TYPE-IS-UNSIGNED IF
-                EMIT-INDENT S" lhu r1, r30, " OUT-STR OUT-SNUM OUT-NL
+                EMIT-INDENT S" ldhu r1, r30, " OUT-STR OUT-SNUM OUT-NL
             ELSE
                 EMIT-INDENT S" ldh r1, r30, " OUT-STR OUT-SNUM OUT-NL
             THEN
@@ -1309,14 +1309,14 @@ VARIABLE asm-sec
 : EMIT-LOAD-DEREF ( type -- )
     DUP TYPE-BASE TY-CHAR = OVER TYPE-PTR 0= AND IF
         TYPE-IS-UNSIGNED IF
-            S" lbu r1, r1, 0" EMIT-INSN
+            S" ldbu r1, r1, 0" EMIT-INSN
         ELSE
             S" ldb r1, r1, 0" EMIT-INSN
         THEN EXIT
     THEN
     DUP TYPE-BASE TY-SHORT = OVER TYPE-PTR 0= AND IF
         TYPE-IS-UNSIGNED IF
-            S" lhu r1, r1, 0" EMIT-INSN
+            S" ldhu r1, r1, 0" EMIT-INSN
         ELSE
             S" ldh r1, r1, 0" EMIT-INSN
         THEN EXIT
