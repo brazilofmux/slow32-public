@@ -12,7 +12,7 @@
 char *memset(char *dst, int c, int n);
 char *memcpy(char *dst, char *src, int n);
 
-#define HEAP_SIZE 524288
+#define HEAP_SIZE 1048576
 static char heap_mem[HEAP_SIZE];
 
 #define ALIGNMENT 8

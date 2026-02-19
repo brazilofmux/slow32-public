@@ -51,6 +51,7 @@ void fput_uint(int fd, int val) {
     write(fd, buf, i);
 }
 
+#include "pp.h"
 #include "ast.h"
 #include "parser.h"
 #include "codegen.h"
@@ -58,6 +59,8 @@ void fput_uint(int fd, int val) {
 int main(int argc, char **argv) {
     int fd;
     int n;
+    int i;
+    int last_slash;
     char *src;
     struct Node *prog;
 
@@ -65,6 +68,29 @@ int main(int argc, char **argv) {
         fputs("Usage: s12cc input.c output.s\n", stderr);
         return 1;
     }
+
+    /* Extract source directory for #include resolution */
+    last_slash = -1;
+    i = 0;
+    while (argv[1][i] != 0) {
+        if (argv[1][i] == 47) last_slash = i;  /* '/' */
+        i = i + 1;
+    }
+    if (last_slash >= 0) {
+        i = 0;
+        while (i <= last_slash) {
+            pp_sdir[i] = argv[1][i];
+            i = i + 1;
+        }
+        pp_sdir[i] = 0;
+    } else {
+        pp_sdir[0] = 0;
+    }
+
+    /* Init preprocessor state */
+    pp_ndefs = 0;
+    pp_skip = 0;
+    pp_dep = 0;
 
     /* Read source file */
     fd = open(argv[1], 0);

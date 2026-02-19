@@ -37,7 +37,17 @@ static struct Node *parse_postfix(void);
 /* --- Utilities --- */
 
 static void next(void) {
-    lex_next();
+    int di;
+    while (1) {
+        lex_next();
+        if (lex_tok == TK_HASH) { pp_directive(); continue; }
+        if (pp_skip) { continue; }
+        if (lex_tok == TK_IDENT) {
+            di = pp_find(lex_str);
+            if (di >= 0) { lex_tok = TK_NUM; lex_val = pp_dval[di]; return; }
+        }
+        return;
+    }
 }
 
 static void p_error(char *msg) {
