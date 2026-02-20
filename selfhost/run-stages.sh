@@ -251,12 +251,18 @@ run_stage03() {
     echo "[stage03] s32-cc compiler tests"
     run_logged "stage03 spike" "$LOG_DIR/stage03.log" \
         "$ROOT_DIR/selfhost/stage03/run-spike.sh" --emu "$EMU"
+    echo "[stage03] ABI conformance"
+    run_logged "stage03 abi" "$LOG_DIR/stage03-abi.log" \
+        "$ROOT_DIR/selfhost/stage03/run-abi-conformance.sh" --emu "$EMU"
 }
 
 run_stage04() {
     echo "[stage04] s12cc compiler tests"
     run_logged "stage04 tests" "$LOG_DIR/stage04.log" \
         env SELFHOST_EMU="$EMU" "$ROOT_DIR/selfhost/stage04/run-tests.sh"
+    echo "[stage04] ABI conformance"
+    run_logged "stage04 abi" "$LOG_DIR/stage04-abi.log" \
+        "$ROOT_DIR/selfhost/stage04/run-abi-conformance.sh" --emu "$EMU"
 }
 
 for st in stage00 stage01 stage02 stage03 stage04; do

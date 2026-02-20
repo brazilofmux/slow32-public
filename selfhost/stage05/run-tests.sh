@@ -355,6 +355,73 @@ if [[ -s "$S13CC_EXE" ]]; then
 fi
 
 # ============================================================
+# Step 3b: Semantic equivalence smoke (stage04 vs stage05 cc)
+# ============================================================
+if [[ -s "$S13CC_EXE" ]]; then
+    echo ""
+    echo "=== Step 3b: Semantic equivalence (stage04 vs s13cc) ==="
+
+    # Deterministic stress cases, no libc dependency.
+    # Compare observable behavior (program return code) between compilers.
+    cat > "$WORKDIR/sem_eq_01.c" <<'EOF'
+int main(void){int x;x=0;for(x=0;x<100;x=x+1){}return x-100;}
+EOF
+    cat > "$WORKDIR/sem_eq_02.c" <<'EOF'
+int main(void){int a;a=7;if((a*8)+(a*4)!=(a<<3)+(a<<2))return 1;return 0;}
+EOF
+    cat > "$WORKDIR/sem_eq_03.c" <<'EOF'
+int f(int x){if(x<2)return x;return f(x-1)+f(x-2);} int main(void){return f(8)-21;}
+EOF
+    cat > "$WORKDIR/sem_eq_04.c" <<'EOF'
+int main(void){int x;x=12345; if((x&-1)!=x)return 1; if((x|-1)!=-1)return 2; if((x^-1)!=~x)return 3; return 0;}
+EOF
+    cat > "$WORKDIR/sem_eq_05.c" <<'EOF'
+int main(void){int i;int s;i=0;s=0;while(i<50){s=s+i;i=i+1;}if(s!=1225)return 1;return 0;}
+EOF
+    cat > "$WORKDIR/sem_eq_06.c" <<'EOF'
+int main(void){int x;x=3; x=(x+5)+9; return x-17;}
+EOF
+
+    for src in "$WORKDIR"/sem_eq_*.c; do
+        name="$(basename "$src" .c)"
+        TOTAL=$((TOTAL + 1))
+
+        EXE_A=$(compile_and_link "${name}-s4" "$src" "$STAGE4_CC" "$AS_EXE" "$LD_EXE") || {
+            printf "  %-30s FAIL (stage04 build)\n" "${name}:"
+            FAIL=$((FAIL + 1))
+            continue
+        }
+        EXE_B=$(compile_and_link "${name}-s5" "$src" "$S13CC_EXE" "$AS_EXE" "$LD_EXE") || {
+            printf "  %-30s FAIL (s13cc build)\n" "${name}:"
+            FAIL=$((FAIL + 1))
+            continue
+        }
+
+        set +e
+        run_exe_rc "$EXE_A" "$WORKDIR/${name}-s4.run.log"
+        RC_A=$?
+        run_exe_rc "$EXE_B" "$WORKDIR/${name}-s5.run.log"
+        RC_B=$?
+        set -e
+
+        if [[ "$RC_A" -eq 96 ]]; then RC_A=0; fi
+        if [[ "$RC_B" -eq 96 ]]; then RC_B=0; fi
+
+        if [[ "$RC_A" -eq "$RC_B" ]]; then
+            printf "  %-30s PASS (rc=%d)\n" "${name}:" "$RC_A"
+            PASS=$((PASS + 1))
+        else
+            printf "  %-30s FAIL (s4=%d, s5=%d)\n" "${name}:" "$RC_A" "$RC_B"
+            echo "    stage04 run log:" >&2
+            tail -n 20 "$WORKDIR/${name}-s4.run.log" >&2 || true
+            echo "    stage05 run log:" >&2
+            tail -n 20 "$WORKDIR/${name}-s5.run.log" >&2 || true
+            FAIL=$((FAIL + 1))
+        fi
+    done
+fi
+
+# ============================================================
 # Step 4: Build tools with stage04's s12cc
 # ============================================================
 echo ""
