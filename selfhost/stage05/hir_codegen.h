@@ -781,7 +781,7 @@ static void hcg_func(Node *fn) {
     hir_opt();
 
     /* Loop-invariant code motion */
-    /* hir_licm(); */
+    hir_licm();
 
     /* Register allocation: assigns ra_reg[], ra_spill_off[],
      * callee-save info, and updates hl_temp_stack */
