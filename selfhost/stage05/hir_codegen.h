@@ -74,6 +74,10 @@ static int hcg_blk_lbl[HIR_MAX_BLOCK];
  * 0 means not spilled (rematerializable). */
 static int hcg_spill[HIR_MAX_INST];
 
+/* Track which HIR inst result is currently in r1 (-1 = unknown).
+ * Eliminates store-then-immediate-reload patterns. */
+static int hcg_r1_val;
+
 /* --- Register read-cache (r11-r18) --- */
 #define RA_NREG 8
 #define RA_BASE 11
@@ -90,6 +94,7 @@ static void ra_reset(void) {
         i = i + 1;
     }
     ra_clock = 0;
+    hcg_r1_val = -1;
 }
 
 static int ra_find(int inst) {
@@ -194,8 +199,22 @@ static void hcg_into(int reg, int inst) {
         cg_s("    addi r");
         cg_n(reg);
         cg_s(", r0, 0\n");
+        if (reg == 1) hcg_r1_val = -1;
         return;
     }
+
+    /* Quick check: value already in r1? */
+    if (inst == hcg_r1_val) {
+        if (reg == 1) return;
+        cg_s("    addi r");
+        cg_n(reg);
+        cg_s(", r1, 0\n");
+        return;
+    }
+
+    /* Loading into r1 invalidates the tracker */
+    if (reg == 1) hcg_r1_val = -1;
+
     k = h_kind[inst];
 
     if (k == HI_ICONST) {
@@ -309,6 +328,8 @@ static void hcg_spill_res(int inst) {
         cg_n(creg);
         cg_s(", r1, 0\n");
     }
+    /* Track that r1 now holds this instruction's result */
+    hcg_r1_val = inst;
 }
 
 /* Load with appropriate width for type */
@@ -510,6 +531,7 @@ static void hcg_inst(int idx) {
             } else {
                 hcg_li(1, off);
                 cg_s("    add r1, r30, r1\n");
+                hcg_r1_val = -1;
                 hcg_store(ty);
             }
         } else {
