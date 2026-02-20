@@ -1471,8 +1471,12 @@ VARIABLE inc-fname-len
     \ Load new file
     R/O OPEN-FILE IF 2DROP S" cannot open include file" CC-ERR FALSE EXIT THEN
     >R
-    inp-buf INP-SZ R@ READ-FILE IF R> CLOSE-FILE DROP DROP S" read error" CC-ERR FALSE EXIT THEN
-    inp-len !
+    R@ FILE-SIZE IF R> CLOSE-FILE DROP S" cannot stat include file" CC-ERR FALSE EXIT THEN
+    DROP
+    DUP INP-SZ > IF DROP R> CLOSE-FILE DROP S" include file too large" CC-ERR FALSE EXIT THEN
+    inp-buf OVER R@ READ-FILE IF R> CLOSE-FILE DROP S" read error" CC-ERR FALSE EXIT THEN
+    DUP inp-len !
+    SWAP <> IF R> CLOSE-FILE DROP S" short read on include file" CC-ERR FALSE EXIT THEN
     R> CLOSE-FILE DROP
     0 inp-pos !
     1 cc-line !
@@ -4150,8 +4154,12 @@ VARIABLE decl-name-len
 : LOAD-SOURCE ( addr u -- )
     R/O OPEN-FILE IF S" cannot open source file" CC-ERR EXIT THEN
     >R
-    inp-buf INP-SZ R@ READ-FILE IF R> CLOSE-FILE DROP S" read error" CC-ERR EXIT THEN
-    inp-len !
+    R@ FILE-SIZE IF R> CLOSE-FILE DROP S" cannot stat source file" CC-ERR EXIT THEN
+    DROP
+    DUP INP-SZ > IF DROP R> CLOSE-FILE DROP S" source file too large" CC-ERR EXIT THEN
+    inp-buf OVER R@ READ-FILE IF R> CLOSE-FILE DROP S" read error" CC-ERR EXIT THEN
+    DUP inp-len !
+    SWAP <> IF R> CLOSE-FILE DROP S" short read on source file" CC-ERR EXIT THEN
     R> CLOSE-FILE DROP
     0 inp-pos !
     1 cc-line ! ;
@@ -4159,7 +4167,11 @@ VARIABLE decl-name-len
 : WRITE-OUTPUT ( addr u -- )
     26 OPEN-FILE IF S" cannot open output file" CC-ERR EXIT THEN
     out-fh !
-    out-buf out-len @ out-fh @ WRITE-FILE DROP
+    out-buf out-len @ out-fh @ WRITE-FILE IF
+        out-fh @ CLOSE-FILE DROP
+        S" write error" CC-ERR
+        EXIT
+    THEN
     out-fh @ CLOSE-FILE DROP ;
 
 \ Main compilation entry point

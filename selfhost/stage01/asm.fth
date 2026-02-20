@@ -457,10 +457,23 @@ VARIABLE str-idx
 
 \ === Input / Line Handling ===
 : LOAD-INPUT ( c-addr u -- )
-    R/O OPEN-FILE THROW >R
-    inp-buf INP-SZ R@ READ-FILE THROW
-    asm-inp-len !
-    R> CLOSE-FILE THROW
+    R/O OPEN-FILE IF S" cannot open input file" ASM-ERR EXIT THEN
+    >R
+    R@ FILE-SIZE IF R> CLOSE-FILE DROP S" cannot stat input file" ASM-ERR EXIT THEN
+    DROP
+    DUP INP-SZ > IF DROP R> CLOSE-FILE DROP S" input file too large" ASM-ERR EXIT THEN
+    inp-buf OVER R@ READ-FILE IF
+        R> CLOSE-FILE DROP
+        S" read error" ASM-ERR
+        EXIT
+    THEN
+    DUP asm-inp-len !
+    SWAP <> IF
+        R> CLOSE-FILE DROP
+        S" short read on input file" ASM-ERR
+        EXIT
+    THEN
+    R> CLOSE-FILE DROP
     0 asm-inp-pos ! ;
 
 : NEXT-LINE ( -- flag )

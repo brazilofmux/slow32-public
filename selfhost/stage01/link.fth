@@ -152,6 +152,8 @@ VARIABLE out-fname-len
 \ === Temp variables ===
 VARIABLE tmp-fh
 VARIABLE tmp-fsz
+VARIABLE obj-fsz
+VARIABLE obj-str-sz
 
 \ Per-file section base offsets (indexed by section type 0-7)
 CREATE sec-base 8 CELLS ALLOT
@@ -238,6 +240,9 @@ VARIABLE sex-u
 VARIABLE sex-pos
 VARIABLE sex-add
 VARIABLE sex-i
+VARIABLE csl-addr
+VARIABLE csl-max
+VARIABLE csl-i
 VARIABLE sex-acc
 VARIABLE sex-ch
 
@@ -372,10 +377,52 @@ VARIABLE sex-ch
     tmp-fh @ CLOSE-FILE DROP
     tmp-fsz @ ;
 
+: OBJ-BOUNDS? ( off len -- ok? )
+    OVER 0< OVER 0< OR IF 2DROP FALSE EXIT THEN
+    + obj-fsz @ <= ;
+
+: CSTR-LEN-BOUND ( c-addr max -- c-addr u ok? )
+    csl-max !
+    csl-addr !
+    0 csl-i !
+    BEGIN
+        csl-i @ csl-max @ <
+    WHILE
+        csl-addr @ csl-i @ + C@ 0= IF
+            csl-addr @ csl-i @ TRUE EXIT
+        THEN
+        1 csl-i +!
+    REPEAT
+    csl-addr @ 0 FALSE ;
+
+: AR-READ-AT ( addr len off -- ok? )
+    >R
+    R@ S>D ar-fh @ REPOSITION-FILE IF
+        R> DROP 2DROP FALSE EXIT
+    THEN
+    R> DROP
+    DUP >R
+    ar-fh @ READ-FILE IF
+        R> DROP DROP FALSE EXIT
+    THEN
+    R> = ;
+
 \ Get NUL-terminated string from file-buf string table
 : OBJ-STR ( name-off -- c-addr u )
+    DUP obj-str-sz @ >= IF
+        DROP
+        1 link-error !
+        file-buf 0
+        EXIT
+    THEN
+    DUP >R
     obj-str-off @ + file-buf +
-    DUP 0 BEGIN OVER OVER + C@ 0<> WHILE 1+ REPEAT NIP ;
+    R> obj-str-sz @ SWAP - CSTR-LEN-BOUND IF
+        EXIT
+    THEN
+    2DROP
+    1 link-error !
+    file-buf 0 ;
 
 \ Output string table management
 : OSTRTAB-INIT  0 out-strtab C! 1 out-strtab-sz ! ;
@@ -497,6 +544,9 @@ VARIABLE sex-ch
 
 \ === Parse .s32o header ===
 : PARSE-OBJ-HEADER ( -- ok? )
+    obj-fsz @ 32 < IF
+        ." Error: object too small for header" CR FALSE EXIT
+    THEN
     file-buf RD32 S32O-MAGIC <> IF
         ." Error: bad .s32o magic" CR FALSE EXIT
     THEN
@@ -505,6 +555,16 @@ VARIABLE sex-ch
     file-buf 20 + RD32 obj-nsym !
     file-buf 24 + RD32 obj-sym-off !
     file-buf 28 + RD32 obj-str-off !
+    obj-sec-off @ obj-nsec @ 32 * OBJ-BOUNDS? 0= IF
+        ." Error: object section table out of bounds" CR FALSE EXIT
+    THEN
+    obj-sym-off @ obj-nsym @ 16 * OBJ-BOUNDS? 0= IF
+        ." Error: object symbol table out of bounds" CR FALSE EXIT
+    THEN
+    obj-str-off @ obj-fsz @ > IF
+        ." Error: object string table out of bounds" CR FALSE EXIT
+    THEN
+    obj-fsz @ obj-str-off @ - obj-str-sz !
     TRUE ;
 
 \ === Merge sections from current .s32o ===
@@ -529,7 +589,17 @@ VARIABLE sex-ch
 
             \ Copy data (skip BSS)
             ms-type @ SEC-BSS <> IF
-                ms-size @ 0> ms-file-off @ 0> AND IF
+                ms-size @ 0> IF
+                    ms-file-off @ 0< IF
+                        ." Error: section payload offset invalid" CR
+                        1 link-error !
+                        LEAVE
+                    THEN
+                    ms-file-off @ ms-size @ OBJ-BOUNDS? 0= IF
+                        ." Error: section payload out of bounds" CR
+                        1 link-error !
+                        LEAVE
+                    THEN
                     ms-base @ ms-size @ + ms-type @ SEC-CAP > IF
                         ." Error: section buffer overflow type=" ms-type @ .
                         ." need=" ms-base @ ms-size @ + .
@@ -564,6 +634,11 @@ VARIABLE sex-ch
         R> 11 + C@ sy-bind !
 
         sy-noff @ OBJ-STR ( c-addr u )
+        link-error @ IF
+            2DROP
+            -1 I CELLS sym-map + !
+            LEAVE
+        THEN
 
         sy-sec @ 0= IF
             \ Undefined symbol (locals should not be unresolved across files)
@@ -573,6 +648,15 @@ VARIABLE sex-ch
                 GSYM-ADD-UNDEF
             THEN
         ELSE
+            sy-sec @ 1- DUP 0< OVER obj-nsec @ >= OR IF
+                DROP
+                ." Error: symbol section index out of bounds" CR
+                2DROP
+                1 link-error !
+                -1 I CELLS sym-map + !
+                LEAVE
+            THEN
+            DROP
             \ Defined: get section type from section table
             sy-sec @ 1- 32 * obj-sec-off @ + file-buf + 4 + RD32 sy-sectype !
             \ Adjust value by section base offset
@@ -596,6 +680,12 @@ VARIABLE sex-ch
         R@ 24 + RD32   \ nrelocs
         R> 28 + RD32   \ reloc_offset in file
         ( sec-type nrelocs reloc-off )
+        OVER 16 * OVER OBJ-BOUNDS? 0= IF
+            ." Error: relocation table out of bounds" CR
+            2DROP
+            1 link-error !
+            LEAVE
+        THEN
 
         SWAP ( sec-type reloc-off nrelocs )
         0 ?DO
@@ -638,6 +728,7 @@ VARIABLE sex-ch
     ." Loading: " 2DUP TYPE CR
     READ-FILE-BUF
     DUP 0< IF DROP ." Error reading file" CR EXIT THEN
+    DUP obj-fsz !
     DROP
     PARSE-OBJ-HEADER 0= IF EXIT THEN
     sym-map MAX-FILE-SYM CELLS 0 FILL
@@ -657,9 +748,20 @@ VARIABLE sex-ch
 
 : AR-SYM-NAME ( idx -- c-addr u )
     8 * ar-symtab + RD32
-    DUP ar-str-sz @ >= IF DROP ar-strtab 0 EXIT THEN
+    DUP ar-str-sz @ >= IF
+        DROP
+        1 link-error !
+        ar-strtab 0
+        EXIT
+    THEN
+    DUP >R
     ar-strtab +
-    DUP 0 BEGIN OVER OVER + C@ 0<> WHILE 1+ REPEAT NIP ;
+    R> ar-str-sz @ SWAP - CSTR-LEN-BOUND IF
+        EXIT
+    THEN
+    2DROP
+    1 link-error !
+    ar-strtab 0 ;
 
 : AR-SYM-MEMBER ( idx -- member-idx )
     8 * ar-symtab + 4 + RD32 ;
@@ -680,10 +782,11 @@ VARIABLE sex-ch
     DUP mem-loaded + 1 SWAP C!
     DUP AR-MEM-SIZE SWAP AR-MEM-OFFSET
     ( size file-offset )
-    S>D ar-fh @ REPOSITION-FILE DROP
-    ( size )
-    DUP FILE-BUFSZ > IF ." Member too large" CR DROP EXIT THEN
-    file-buf SWAP ar-fh @ READ-FILE DROP DROP
+    OVER obj-fsz !
+    DUP FILE-BUFSZ > IF ." Member too large" CR 2DROP 1 link-error ! EXIT THEN
+    2DUP + tmp-fsz @ > IF ." Member payload out of bounds" CR 2DROP 1 link-error ! EXIT THEN
+    >R
+    file-buf SWAP R> AR-READ-AT 0= IF ." Error: read member payload failed" CR 1 link-error ! EXIT THEN
     PARSE-OBJ-HEADER 0= IF EXIT THEN
     sym-map MAX-FILE-SYM CELLS 0 FILL
     MERGE-SECTIONS
@@ -698,7 +801,10 @@ VARIABLE sex-ch
     ar-fh !
 
     \ Read header (32 bytes)
-    file-buf 32 ar-fh @ READ-FILE DROP DROP
+    file-buf 32 0 AR-READ-AT 0= IF
+        ." Error: cannot read archive header" CR
+        ar-fh @ CLOSE-FILE DROP EXIT
+    THEN
     file-buf RD32 S32A-MAGIC <> IF
         ." Error: bad .s32a magic" CR
         ar-fh @ CLOSE-FILE DROP EXIT
@@ -710,6 +816,11 @@ VARIABLE sex-ch
     file-buf 20 + RD32 ar-sym-off !
     file-buf 24 + RD32 ar-str-off !
     file-buf 28 + RD32 ar-str-sz !
+    ar-fh @ FILE-SIZE IF
+        ." Error: cannot stat archive file" CR
+        1 link-error ! ar-fh @ CLOSE-FILE DROP EXIT
+    THEN
+    DROP tmp-fsz !
 
     ."   members=" ar-nmembers @ .
     ." symbols=" ar-nsymbols @ . CR
@@ -732,16 +843,22 @@ VARIABLE sex-ch
     THEN
 
     \ Read symbol index
-    ar-sym-off @ S>D ar-fh @ REPOSITION-FILE DROP
-    ar-symtab ar-nsymbols @ 8 * ar-fh @ READ-FILE DROP DROP
+    ar-symtab ar-nsymbols @ 8 * ar-sym-off @ AR-READ-AT 0= IF
+        ." Error: cannot read archive symbol table" CR
+        1 link-error ! ar-fh @ CLOSE-FILE DROP EXIT
+    THEN
 
     \ Read member table
-    ar-mem-off @ S>D ar-fh @ REPOSITION-FILE DROP
-    ar-memtab ar-nmembers @ 24 * ar-fh @ READ-FILE DROP DROP
+    ar-memtab ar-nmembers @ 24 * ar-mem-off @ AR-READ-AT 0= IF
+        ." Error: cannot read archive member table" CR
+        1 link-error ! ar-fh @ CLOSE-FILE DROP EXIT
+    THEN
 
     \ Read string table
-    ar-str-off @ S>D ar-fh @ REPOSITION-FILE DROP
-    ar-strtab ar-str-sz @ ar-fh @ READ-FILE DROP DROP
+    ar-strtab ar-str-sz @ ar-str-off @ AR-READ-AT 0= IF
+        ." Error: cannot read archive string table" CR
+        1 link-error ! ar-fh @ CLOSE-FILE DROP EXIT
+    THEN
 
     \ Clear loaded flags
     mem-loaded MAX-MEMBERS 0 FILL
