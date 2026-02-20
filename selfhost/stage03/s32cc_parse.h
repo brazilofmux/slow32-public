@@ -205,6 +205,7 @@ static void p_primary(void) {
     char sn[128];
     int na;
     int k;
+    int regc;
     int li;
     int gi;
     int fi;
@@ -251,9 +252,26 @@ static void p_primary(void) {
                 while (lex_tok == TK_COMMA) { next(); p_assign(); p_l2r(); p_push(); na = na + 1; }
             }
             p_expect(TK_RPAREN);
-            k = na;
-            while (k > 0) { k = k - 1; pe("    ldw r"); pn(3 + k); pe(", r29, 0\n    addi r29, r29, 4\n"); }
-            p_call(sn); p_lval = 0;
+            /* Reverse pushed args so arg0 is at lowest stack address. */
+            k = 0;
+            while (k < na / 2) {
+                pe("    ldw r1, r29, "); pn(k * 4); pc(10);
+                pe("    ldw r2, r29, "); pn((na - 1 - k) * 4); pc(10);
+                pe("    stw r29, r1, "); pn((na - 1 - k) * 4); pc(10);
+                pe("    stw r29, r2, "); pn(k * 4); pc(10);
+                k = k + 1;
+            }
+            regc = na;
+            if (regc > 8) regc = 8;
+            k = 0;
+            while (k < regc) {
+                pe("    ldw r"); pn(3 + k); pe(", r29, "); pn(k * 4); pc(10);
+                k = k + 1;
+            }
+            if (regc > 0) { pe("    addi r29, r29, "); pn(regc * 4); pc(10); }
+            p_call(sn);
+            if (na > regc) { pe("    addi r29, r29, "); pn((na - regc) * 4); pc(10); }
+            p_lval = 0;
             fi = p_ffn(sn);
             if (fi >= 0) p_ety = p_fr[fi]; else p_ety = TY_INT;
             return;
@@ -278,6 +296,7 @@ static void p_postfix(void) {
     int ty;
     int na;
     int k;
+    int regc;
     p_primary();
     while (1) {
         if (lex_tok == TK_LBRACK) {
@@ -348,10 +367,26 @@ static void p_postfix(void) {
                 while (lex_tok == TK_COMMA) { next(); p_assign(); p_l2r(); p_push(); na = na + 1; }
             }
             p_expect(TK_RPAREN);
-            k = na;
-            while (k > 0) { k = k - 1; pe("    ldw r"); pn(3 + k); pe(", r29, 0\n    addi r29, r29, 4\n"); }
-            pe("    ldw r11, r29, 0\n    addi r29, r29, 4\n");
+            /* Reverse pushed args so arg0 is at lowest stack address. */
+            k = 0;
+            while (k < na / 2) {
+                pe("    ldw r1, r29, "); pn(k * 4); pc(10);
+                pe("    ldw r2, r29, "); pn((na - 1 - k) * 4); pc(10);
+                pe("    stw r29, r1, "); pn((na - 1 - k) * 4); pc(10);
+                pe("    stw r29, r2, "); pn(k * 4); pc(10);
+                k = k + 1;
+            }
+            regc = na;
+            if (regc > 8) regc = 8;
+            k = 0;
+            while (k < regc) {
+                pe("    ldw r"); pn(3 + k); pe(", r29, "); pn(k * 4); pc(10);
+                k = k + 1;
+            }
+            if (regc > 0) { pe("    addi r29, r29, "); pn(regc * 4); pc(10); }
+            pe("    ldw r11, r29, "); pn((na - regc) * 4); pc(10);
             pe("    jalr r31, r11, 0\n");
+            pe("    addi r29, r29, "); pn((na - regc + 1) * 4); pc(10);
             p_lval = 0; p_ety = TY_INT;
         } else {
             break;

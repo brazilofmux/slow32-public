@@ -1012,11 +1012,27 @@ static void gen_func(Node *fn) {
         i = i + 1;
     }
 
+    /* Save callee-saved registers used as expression stack (r11-r18). */
+    i = 11;
+    while (i <= 18) {
+        cg_s("    addi r29, r29, -4\n    stw r29, r");
+        cg_n(i);
+        cg_s(", 0\n");
+        i = i + 1;
+    }
+
     /* Body */
     gen_stmt(fn->body);
 
     /* Epilog */
     cg_ldef(cg_epilog);
+    i = 18;
+    while (i >= 11) {
+        cg_s("    ldw r");
+        cg_n(i);
+        cg_s(", r29, 0\n    addi r29, r29, 4\n");
+        i = i - 1;
+    }
     cg_s("    ldw r31, r29, ");
     cg_n(fs - 4);
     cg_c(10);
