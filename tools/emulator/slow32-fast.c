@@ -8,6 +8,8 @@
 #include <string.h>
 #include <time.h>
 #include <inttypes.h>
+#include <signal.h>
+#include <sys/time.h>
 #include <sys/mman.h>
 #include <math.h>
 #include "slow32.h"
@@ -36,6 +38,33 @@
     (S32_MMIO_DATA_BUFFER_OFFSET + S32_MMIO_DATA_CAPACITY)
 #define S32_MMIO_REGION_SIZE 0x00010000u
 #define UNUSED(x) (void)(x)
+
+// ============================================================
+// Signal-based probe/debugging support
+// ============================================================
+
+// Sorted function symbol table for PC → function name lookup
+typedef struct { uint32_t addr; const char *name; } func_sym_t;
+typedef struct {
+    func_sym_t *syms;
+    uint32_t count;
+    s32x_symtab_result_t raw;  // Owns the memory (symbols + strtab)
+} sorted_symtab_t;
+
+// Probe state (ring buffer + timing)
+#define PROBE_RING_SIZE 8
+typedef struct {
+    volatile sig_atomic_t flag;        // Set by SIGALRM, cleared by main loop
+    volatile sig_atomic_t sigint_flag; // Set by SIGINT
+    uint32_t pc_ring[PROBE_RING_SIZE]; // Ring buffer for loop detection
+    int ring_pos, ring_count;
+    struct timespec start_time;
+    uint64_t last_inst_count;
+    int probe_interval_sec;
+    int probe_count;
+    int full_dump_interval;            // Full dump every N probes
+    bool enabled;
+} probe_state_t;
 
 // Forward declarations
 typedef struct fast_cpu_state fast_cpu_state_t;
@@ -82,6 +111,11 @@ struct fast_cpu_state {
     region_cache_entry_t region_cache[2];
     uint8_t region_cache_next;
 };
+
+// Globals for signal handler access
+static fast_cpu_state_t *g_cpu = NULL;
+static probe_state_t *g_probe = NULL;
+static sorted_symtab_t g_symtab = {0};
 
 
 // MMIO initialization
@@ -1213,6 +1247,221 @@ static inline void cpu_step_fast(fast_cpu_state_t *cpu) {
     cpu->inst_count++;
 }
 
+// ============================================================
+// Symbol table building and lookup
+// ============================================================
+
+static int func_sym_cmp(const void *a, const void *b) {
+    uint32_t aa = ((const func_sym_t *)a)->addr;
+    uint32_t bb = ((const func_sym_t *)b)->addr;
+    return (aa > bb) - (aa < bb);
+}
+
+static void build_sorted_symtab(sorted_symtab_t *st, const char *filename) {
+    memset(st, 0, sizeof(*st));
+    st->raw = load_s32x_symtab(filename);
+    if (!st->raw.success || st->raw.num_symbols == 0) return;
+
+    // Count usable symbols: FUNC type, or NOTYPE with a non-zero address
+    // (many linkers emit all globals as NOTYPE)
+    uint32_t nfunc = 0;
+    for (uint32_t i = 0; i < st->raw.num_symbols; i++) {
+        uint8_t t = st->raw.symbols[i].type;
+        if (t == S32O_SYM_FUNC ||
+            (t == S32O_SYM_NOTYPE && st->raw.symbols[i].value != 0 &&
+             st->raw.symbols[i].name && st->raw.symbols[i].name[0] != '\0'))
+            nfunc++;
+    }
+    if (nfunc == 0) return;
+
+    st->syms = malloc(nfunc * sizeof(func_sym_t));
+    if (!st->syms) return;
+
+    uint32_t j = 0;
+    for (uint32_t i = 0; i < st->raw.num_symbols; i++) {
+        uint8_t t = st->raw.symbols[i].type;
+        if (t == S32O_SYM_FUNC ||
+            (t == S32O_SYM_NOTYPE && st->raw.symbols[i].value != 0 &&
+             st->raw.symbols[i].name && st->raw.symbols[i].name[0] != '\0')) {
+            st->syms[j].addr = st->raw.symbols[i].value;
+            st->syms[j].name = st->raw.symbols[i].name;
+            j++;
+        }
+    }
+    st->count = j;
+    qsort(st->syms, st->count, sizeof(func_sym_t), func_sym_cmp);
+}
+
+// Binary search: find last symbol with addr <= pc
+static const char *resolve_symbol(sorted_symtab_t *st, uint32_t pc, uint32_t *offset) {
+    if (!st->syms || st->count == 0) {
+        *offset = pc;
+        return NULL;
+    }
+    uint32_t lo = 0, hi = st->count;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (st->syms[mid].addr <= pc) lo = mid + 1;
+        else hi = mid;
+    }
+    if (lo == 0) {
+        *offset = pc;
+        return NULL;
+    }
+    lo--;
+    *offset = pc - st->syms[lo].addr;
+    return st->syms[lo].name;
+}
+
+static void free_sorted_symtab(sorted_symtab_t *st) {
+    free(st->syms);
+    st->syms = NULL;
+    s32x_symtab_free(&st->raw);
+    st->count = 0;
+}
+
+// ============================================================
+// Register dump
+// ============================================================
+
+static void dump_registers(FILE *out, fast_cpu_state_t *cpu, sorted_symtab_t *st) {
+    static const char *rnames[32] = {
+        "zero", "rv1 ", "rv2 ", "a0  ", "a1  ", "a2  ", "a3  ", "a4  ",
+        "a5  ", "a6  ", "a7  ", "r11 ", "r12 ", "r13 ", "r14 ", "r15 ",
+        "r16 ", "r17 ", "r18 ", "r19 ", "r20 ", "r21 ", "r22 ", "r23 ",
+        "r24 ", "r25 ", "r26 ", "r27 ", "r28 ", "sp  ", "fp  ", "lr  "
+    };
+
+    fprintf(out, "--- Register Dump ---\n");
+    uint32_t off;
+    const char *sym = resolve_symbol(st, cpu->pc, &off);
+    if (sym) {
+        fprintf(out, "PC = 0x%08X  <%s+0x%X>\n", cpu->pc, sym, off);
+    } else {
+        fprintf(out, "PC = 0x%08X\n", cpu->pc);
+    }
+
+    for (int i = 0; i < 32; i += 4) {
+        fprintf(out, "  r%-2d/%-4s = 0x%08X  r%-2d/%-4s = 0x%08X  "
+                     "r%-2d/%-4s = 0x%08X  r%-2d/%-4s = 0x%08X\n",
+                i,   rnames[i],   cpu->regs[i],
+                i+1, rnames[i+1], cpu->regs[i+1],
+                i+2, rnames[i+2], cpu->regs[i+2],
+                i+3, rnames[i+3], cpu->regs[i+3]);
+    }
+    fprintf(out, "Instructions: %" PRIu64 "  Cycles: %" PRIu64 "\n", cpu->inst_count, cpu->cycle_count);
+    fprintf(out, "---------------------\n");
+}
+
+// ============================================================
+// Signal handlers (minimal, async-signal-safe)
+// ============================================================
+
+static void sigint_handler(int sig) {
+    UNUSED(sig);
+    if (g_probe) g_probe->sigint_flag = 1;
+    if (g_cpu) g_cpu->halted = true;
+}
+
+static void sigalrm_handler(int sig) {
+    UNUSED(sig);
+    if (g_probe && g_cpu) {
+        g_probe->flag = 1;
+    }
+}
+
+static void install_sigint_handler(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = sigint_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;  // No SA_RESTART — we want to interrupt blocking calls
+    sigaction(SIGINT, &sa, NULL);
+}
+
+static void start_probe_timer(int interval_sec) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = sigalrm_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGALRM, &sa, NULL);
+
+    struct itimerval itv;
+    itv.it_value.tv_sec = interval_sec;
+    itv.it_value.tv_usec = 0;
+    itv.it_interval.tv_sec = interval_sec;
+    itv.it_interval.tv_usec = 0;
+    setitimer(ITIMER_REAL, &itv, NULL);
+}
+
+static void stop_probe_timer(void) {
+    struct itimerval itv = {{0, 0}, {0, 0}};
+    setitimer(ITIMER_REAL, &itv, NULL);
+    signal(SIGALRM, SIG_DFL);
+}
+
+// ============================================================
+// Probe processing (called from main loop, not signal handler)
+// ============================================================
+
+static void process_probe(probe_state_t *probe, fast_cpu_state_t *cpu, sorted_symtab_t *st) {
+    probe->flag = 0;
+    uint32_t pc = cpu->pc;
+
+    // Add to ring buffer
+    probe->pc_ring[probe->ring_pos % PROBE_RING_SIZE] = pc;
+    probe->ring_pos++;
+    if (probe->ring_count < PROBE_RING_SIZE) probe->ring_count++;
+    probe->probe_count++;
+
+    // Calculate elapsed time
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    double elapsed = (now.tv_sec - probe->start_time.tv_sec)
+                   + (now.tv_nsec - probe->start_time.tv_nsec) / 1e9;
+
+    // Calculate delta MIPS
+    uint64_t delta_inst = cpu->inst_count - probe->last_inst_count;
+    double delta_mips = (double)delta_inst / ((double)probe->probe_interval_sec * 1e6);
+    probe->last_inst_count = cpu->inst_count;
+
+    // Resolve symbol
+    uint32_t off;
+    const char *sym = resolve_symbol(st, pc, &off);
+
+    // Loop detection: check if all ring entries are in same 4KB-aligned region
+    bool looping = false;
+    if (probe->ring_count >= PROBE_RING_SIZE) {
+        uint32_t base = probe->pc_ring[0] & ~0xFFFu;
+        looping = true;
+        for (int i = 1; i < PROBE_RING_SIZE; i++) {
+            if ((probe->pc_ring[i] & ~0xFFFu) != base) {
+                looping = false;
+                break;
+            }
+        }
+    }
+
+    // Full dump every full_dump_interval probes (default 10)
+    bool do_full_dump = (probe->probe_count % probe->full_dump_interval) == 0;
+
+    // Print probe line
+    if (sym) {
+        fprintf(stderr, "[%7.1fs] PC=0x%08X <%s+0x%X>  %" PRIu64 " inst  %.1f MIPS%s\n",
+                elapsed, pc, sym, off, cpu->inst_count, delta_mips,
+                looping ? " (looping)" : "");
+    } else {
+        fprintf(stderr, "[%7.1fs] PC=0x%08X  %" PRIu64 " inst  %.1f MIPS%s\n",
+                elapsed, pc, cpu->inst_count, delta_mips,
+                looping ? " (looping)" : "");
+    }
+
+    if (do_full_dump) {
+        dump_registers(stderr, cpu, st);
+    }
+}
+
 static void parse_service_list(const char *list, char names[][S32_MAX_SVC_NAME], int *count, int max) {
     char buf[256];
     strncpy(buf, list, sizeof(buf) - 1);
@@ -1230,9 +1479,12 @@ static void parse_service_list(const char *list, char names[][S32_MAX_SVC_NAME],
 static void print_usage(const char *progname) {
     fprintf(stderr, "Usage: %s [options] <binary> [-- <args...>]\n", progname);
     fprintf(stderr, "Options:\n");
-    fprintf(stderr, "  -h, --help      Show this help message\n");
-    fprintf(stderr, "  --allow <list>  Only allow these services (comma-separated)\n");
-    fprintf(stderr, "  --deny <list>   Deny these services (comma-separated)\n");
+    fprintf(stderr, "  -h, --help       Show this help message\n");
+    fprintf(stderr, "  -p, --probe [N]  Periodic probe: sample PC every N seconds (default 1)\n");
+    fprintf(stderr, "  --allow <list>   Only allow these services (comma-separated)\n");
+    fprintf(stderr, "  --deny <list>    Deny these services (comma-separated)\n");
+    fprintf(stderr, "\n");
+    fprintf(stderr, "Ctrl+C always dumps full register state before exiting.\n");
 }
 
 int main(int argc, char **argv) {
@@ -1251,12 +1503,33 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Pre-scan for --help/--allow/--deny
+    // Probe state (stack-allocated, pointed to by g_probe when enabled)
+    probe_state_t probe = {0};
+    probe.probe_interval_sec = 1;
+    probe.full_dump_interval = 10;
+
+    // Pre-scan for --help/--allow/--deny/-p/--probe
     svc_policy_t policy = { .default_allow = true };
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             print_usage(argv[0]);
             return 0;
+        }
+        if (strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--probe") == 0) {
+            probe.enabled = true;
+            // Check if next arg is a number (optional interval)
+            int consume = 1;
+            if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') {
+                probe.probe_interval_sec = atoi(argv[i + 1]);
+                if (probe.probe_interval_sec < 1) probe.probe_interval_sec = 1;
+                probe.full_dump_interval = 10 / probe.probe_interval_sec;
+                if (probe.full_dump_interval < 1) probe.full_dump_interval = 1;
+                consume = 2;
+            }
+            memmove(&argv[i], &argv[i + consume], (argc - i - consume) * sizeof(char *));
+            argc -= consume;
+            i--;
+            continue;
         }
         if (i >= argc - 1) break;
         if (strcmp(argv[i], "--allow") == 0) {
@@ -1378,7 +1651,22 @@ int main(int argc, char **argv) {
     }
 
     predecode_program(&cpu, lr.code_limit);
-    
+
+    // Build sorted symbol table for PC → function name resolution
+    build_sorted_symtab(&g_symtab, argv[1]);
+
+    // Install SIGINT handler (always — Ctrl+C dumps registers)
+    g_cpu = &cpu;
+    g_probe = &probe;
+    install_sigint_handler();
+
+    // Start probe timer if requested
+    if (probe.enabled) {
+        fprintf(stderr, "Probe enabled: sampling every %d second(s)\n", probe.probe_interval_sec);
+        clock_gettime(CLOCK_MONOTONIC, &probe.start_time);
+        start_probe_timer(probe.probe_interval_sec);
+    }
+
     // Time the execution
     printf("Starting execution at PC 0x%08x\n", cpu.pc);
     if (cpu.mmio.enabled) {
@@ -1386,36 +1674,53 @@ int main(int argc, char **argv) {
     }
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
-    
+
     uint64_t max_instructions = 10000000000;  // 10B instruction limit for debugging
     while (!cpu.halted && cpu.inst_count < max_instructions) {
         cpu_step_fast(&cpu);
+        if (__builtin_expect(probe.flag, 0)) {
+            process_probe(&probe, &cpu, &g_symtab);
+        }
     }
-    
+
+    // Stop probe timer before any output
+    if (probe.enabled) {
+        stop_probe_timer();
+    }
+
+    // SIGINT register dump
+    if (probe.sigint_flag) {
+        fprintf(stderr, "\nInterrupted (SIGINT)\n");
+        dump_registers(stderr, &cpu, &g_symtab);
+    }
+
     if (cpu.inst_count >= max_instructions) {
-        printf("WARNING: Execution limit reached (%lu instructions)\n", max_instructions);
+        printf("WARNING: Execution limit reached (%" PRIu64 " instructions)\n", max_instructions);
         cpu.halted = true;
     }
-    
+
     clock_gettime(CLOCK_MONOTONIC, &end);
-    
+
     // Calculate elapsed time
     double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
-    
+
     printf("HALT at PC 0x%08x\n", cpu.pc);
     printf("\nProgram halted.\n");
     printf("Exit code: %d\n", cpu.regs[1]);
     printf("Instructions executed: %" PRIu64 "\n", cpu.inst_count);
     printf("Simulated cycles: %" PRIu64 "\n", cpu.cycle_count);
     printf("Wall time: %.6f seconds\n", elapsed);
-    
+
     if (elapsed > 0) {
         double ips = cpu.inst_count / elapsed;
         printf("Performance: %.2f MIPS (actual)\n", ips / 1e6);
         printf("            %.2f instructions/second\n", ips);
     }
-    
+
     // Cleanup
+    g_cpu = NULL;
+    g_probe = NULL;
+    free_sorted_symtab(&g_symtab);
     if (cpu.mmio.state) {
         mmio_cleanup_services(cpu.mmio.state);
     }
