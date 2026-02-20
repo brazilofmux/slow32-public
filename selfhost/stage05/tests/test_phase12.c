@@ -335,6 +335,44 @@ int test_addi_peephole(void) {
     return 0;
 }
 
+/* --- Test 15: bitmask/neg1 peepholes --- */
+
+int test_neg1_peephole(void) {
+    int x;
+    int y;
+
+    x = 12345;
+
+    y = x & -1;
+    if (y != x) return 1;
+
+    y = -1 & x;
+    if (y != x) return 2;
+
+    y = x | -1;
+    if (y != -1) return 3;
+
+    y = -1 | x;
+    if (y != -1) return 4;
+
+    y = x ^ -1;
+    if (y != ~x) return 5;
+
+    y = -1 ^ x;
+    if (y != ~x) return 6;
+
+    y = x + 17;
+    if (y != 12362) return 7;
+
+    y = 17 + x;
+    if (y != 12362) return 8;
+
+    y = x - 9;
+    if (y != 12336) return 9;
+
+    return 0;
+}
+
 /* --- Main --- */
 int main(void) {
     int rc;
@@ -380,6 +418,9 @@ int main(void) {
 
     rc = test_addi_peephole();
     if (rc) return rc + 130;
+
+    rc = test_neg1_peephole();
+    if (rc) return rc + 140;
 
     puts("Phase 12: all tests passed\n");
     return 0;

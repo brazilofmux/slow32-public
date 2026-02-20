@@ -133,6 +133,7 @@ static int ho_const_fold(void) {
     int shift;
     int tmp;
     int ci;
+    int imm;
 
     changed = 0;
     i = 0;
@@ -218,6 +219,43 @@ static int ho_const_fold(void) {
                     h_src2[i] = -1;
                     changed = 1;
                 }
+                /* x & -1 -> x */
+                else if (k == HI_AND && b == -1) {
+                    h_kind[i] = HI_COPY;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* x | -1 -> -1 */
+                else if (k == HI_OR && b == -1) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = -1;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* x ^ -1 -> ~x */
+                else if (k == HI_XOR && b == -1) {
+                    h_kind[i] = HI_BNOT;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* x + c -> addi x, c (if imm fits) */
+                else if (k == HI_ADD && b >= -2048 && b <= 2047) {
+                    h_kind[i] = HI_ADDI;
+                    h_val[i] = b;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* x - c -> addi x, -c (if imm fits) */
+                else if (k == HI_SUB) {
+                    imm = 0 - b;
+                    if (imm >= -2048 && imm <= 2047) {
+                        h_kind[i] = HI_ADDI;
+                        h_val[i] = imm;
+                        h_src2[i] = -1;
+                        changed = 1;
+                    }
+                }
             } else if (s1c) {
                 /* Left operand constant: identity/absorbing simplifications */
                 a = h_val[h_src1[i]];
@@ -249,6 +287,36 @@ static int ho_const_fold(void) {
                     h_kind[i] = HI_COPY;
                     h_src1[i] = h_src2[i];
                     h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* -1 & x -> x */
+                else if (k == HI_AND && a == -1) {
+                    h_kind[i] = HI_COPY;
+                    h_src1[i] = h_src2[i];
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* -1 | x -> -1 */
+                else if (k == HI_OR && a == -1) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = -1;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* -1 ^ x -> ~x */
+                else if (k == HI_XOR && a == -1) {
+                    h_kind[i] = HI_BNOT;
+                    h_src1[i] = h_src2[i];
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* c + x -> addi x, c (if imm fits) */
+                else if (k == HI_ADD && a >= -2048 && a <= 2047) {
+                    h_kind[i] = HI_ADDI;
+                    h_src1[i] = h_src2[i];
+                    h_src2[i] = -1;
+                    h_val[i] = a;
                     changed = 1;
                 }
             }
