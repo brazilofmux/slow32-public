@@ -8,7 +8,7 @@ Current policy:
 - Update tests/CI scripts in lockstep with each stage move.
 
 Stage directories:
-- `stage00` through `stage13` map to the current V2 stage numbers.
+- `stage00` through `stage05` map to the current V2 stage numbers.
 
 Stage cycles at a glance:
 - `stage00`: standalone ~800 line emulator that every other stage relies on.
@@ -16,7 +16,7 @@ Stage cycles at a glance:
 - `stage02`: the same four tools (assembler, archiver, linker, compiler) now authored in Subset C but still hosted by the Forth toolchain. After this stage, all Forth tools are retired.
 - `stage03`: s32-cc compiler + tools (as, ar, ld) + libc/runtime. Self-sufficient toolchain. Compiled by stage02 cc-min, tools compiled by s32-cc. First Forth-free stage.
 - `stage04`: s12cc AST-based compiler (Ragel lexer + recursive-descent parser) + tools + libc/runtime. Language capability stage. Compiled by stage03 s32-cc.
-- `stage13`: complete s12cc toolchain (compiler + AS + AR + LD + libc). Compiled by stage04.
+- `stage05`: code quality — optimized s12cc toolchain (compiler + AS + AR + LD + libc). Compiled by stage04.
 
 Primary tracking docs:
 - `selfhost/V2-REORG-PLAN.md`
@@ -50,3 +50,4 @@ Manual per-stage entry points:
 - `stage02` (compiler): `selfhost/stage02/run-regression-cc-min.sh --emu ./tools/emulator/slow32-fast`
 - `stage03` (s32-cc compiler): `selfhost/stage03/run-spike.sh --emu ./tools/emulator/slow32-fast`
 - `stage04` (s12cc compiler): `selfhost/stage04/run-tests.sh --emu ./tools/emulator/slow32-fast`
+- `stage05` (optimized toolchain): `selfhost/stage05/run-tests.sh --emu ./tools/emulator/slow32-fast`

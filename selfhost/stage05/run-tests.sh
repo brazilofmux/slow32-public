@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stage 13: Full toolchain tests
+# Stage 05: Full toolchain tests
 #
 # Tests:
 #   1. Build s13cc using stage04's s12cc (compiler bootstrap)
 #   2. Run compiler tests with s13cc
 #   3. Build tools (s32-as, s32-ar, s32-ld) using stage04's s12cc
-#   4. End-to-end: s13cc + stage13 tools compile/assemble/link/run a program
+#   4. End-to-end: s13cc + stage05 tools compile/assemble/link/run a program
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -64,7 +64,7 @@ fi
 
 [[ -f "$EMU" ]] || { echo "Missing emulator: $EMU" >&2; exit 1; }
 
-WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage13.XXXXXX)"
+WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage05.XXXXXX)"
 if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then
     trap 'rm -rf "$WORKDIR"' EXIT
 fi
@@ -214,7 +214,7 @@ TOTAL=$((TOTAL + 1))
 SAVED_TIMEOUT="${EXEC_TIMEOUT:-180}"
 EXEC_TIMEOUT=300
 
-# Compile stage13 source with stage04 compiler
+# Compile stage05 source with stage04 compiler
 run_exe "$STAGE4_CC" "$WORKDIR/s13cc-compile.log" "$S13CC_SRC" "$WORKDIR/s13cc.s"
 if [[ ! -s "$WORKDIR/s13cc.s" ]]; then
     printf "  %-30s FAIL (compile)\n" "s13cc-build:"
@@ -305,7 +305,7 @@ fi
 # Step 4: Build tools with stage04's s12cc
 # ============================================================
 echo ""
-echo "=== Step 4: Build stage13 tools ==="
+echo "=== Step 4: Build stage05 tools ==="
 
 S13_AS_SRC="$SCRIPT_DIR/tools/s32-as.c"
 S13_AR_SRC="$SCRIPT_DIR/tools/s32-ar.c"
@@ -396,7 +396,7 @@ EXEC_TIMEOUT="$SAVED_TIMEOUT"
 
 # ============================================================
 # Step 5: End-to-end toolchain test
-# Use s13cc + stage13 tools to compile/assemble/link/run a program
+# Use s13cc + stage05 tools to compile/assemble/link/run a program
 # ============================================================
 S13_AS_EXE="$WORKDIR/s32-as.s32x"
 S13_AR_EXE="$WORKDIR/s32-ar.s32x"
@@ -404,9 +404,9 @@ S13_LD_EXE="$WORKDIR/s32-ld.s32x"
 
 if [[ -s "$S13CC_EXE" && -s "$S13_AS_EXE" && -s "$S13_LD_EXE" ]]; then
     echo ""
-    echo "=== Step 5: End-to-end toolchain test (s13cc + stage13 tools) ==="
+    echo "=== Step 5: End-to-end toolchain test (s13cc + stage05 tools) ==="
 
-    # Test: compile test_spike.c with s13cc, assemble with stage13 AS, link with stage13 LD
+    # Test: compile test_spike.c with s13cc, assemble with stage05 AS, link with stage05 LD
     for tst in test_spike test_phase2 test_phase3; do
         TST_SRC="$TESTS_DIR/${tst}.c"
         [[ -f "$TST_SRC" ]] || continue
@@ -420,7 +420,7 @@ if [[ -s "$S13CC_EXE" && -s "$S13_AS_EXE" && -s "$S13_LD_EXE" ]]; then
             continue
         fi
 
-        # Assemble with stage13 AS
+        # Assemble with stage05 AS
         run_exe "$S13_AS_EXE" "$WORKDIR/e2e-${tst}-as.log" "$WORKDIR/e2e-${tst}.s" "$WORKDIR/e2e-${tst}.s32o"
         if [[ ! -s "$WORKDIR/e2e-${tst}.s32o" ]]; then
             printf "  %-30s FAIL (assemble)\n" "e2e-${tst}:"
@@ -428,7 +428,7 @@ if [[ -s "$S13CC_EXE" && -s "$S13_AS_EXE" && -s "$S13_LD_EXE" ]]; then
             continue
         fi
 
-        # Link with stage13 LD
+        # Link with stage05 LD
         run_exe "$S13_LD_EXE" "$WORKDIR/e2e-${tst}-ld.log" \
             -o "$WORKDIR/e2e-${tst}.s32x" --mmio 64K \
             "$RUNTIME_CRT0" "$WORKDIR/e2e-${tst}.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
@@ -454,7 +454,7 @@ if [[ -s "$S13CC_EXE" && -s "$S13_AS_EXE" && -s "$S13_LD_EXE" ]]; then
         fi
     done
 
-    # Test: use stage13 archiver to create a libc archive, then link with it
+    # Test: use stage05 archiver to create a libc archive, then link with it
     if [[ -s "$S13_AR_EXE" ]]; then
         TOTAL=$((TOTAL + 1))
         echo ""
@@ -468,7 +468,7 @@ if [[ -s "$S13CC_EXE" && -s "$S13_AS_EXE" && -s "$S13_LD_EXE" ]]; then
             tail -n 20 "$WORKDIR/e2e-ar.log" >&2
             FAIL=$((FAIL + 1))
         else
-            # Compile test_spike with s13cc, assemble with stage13 AS, link with archive
+            # Compile test_spike with s13cc, assemble with stage05 AS, link with archive
             run_exe "$S13CC_EXE" "$WORKDIR/e2e-ar-cc.log" "$TESTS_DIR/test_spike.c" "$WORKDIR/e2e-ar-test.s"
             run_exe "$S13_AS_EXE" "$WORKDIR/e2e-ar-as.log" "$WORKDIR/e2e-ar-test.s" "$WORKDIR/e2e-ar-test.s32o"
             run_exe "$S13_LD_EXE" "$WORKDIR/e2e-ar-ld.log" \
@@ -501,9 +501,9 @@ fi
 # ============================================================
 echo ""
 if [[ "$FAIL" -eq 0 ]]; then
-    echo "OK: stage13 ($PASS/$TOTAL tests passed)"
+    echo "OK: stage05 ($PASS/$TOTAL tests passed)"
 else
-    echo "FAIL: stage13 ($PASS/$TOTAL tests passed, $FAIL failed)" >&2
+    echo "FAIL: stage05 ($PASS/$TOTAL tests passed, $FAIL failed)" >&2
     exit 1
 fi
 

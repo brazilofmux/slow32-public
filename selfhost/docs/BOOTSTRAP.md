@@ -610,7 +610,7 @@ Layer E is where the compiler stops being "Subset C" and becomes "C." Expect thi
   - Rebuild the toolchain using the new compiler and compare against LLVM-built binaries for behavioral parity.
   - Expand the regression suite to include headers and libc functions that were previously out-of-scope.
 
-This stage may branch into sub-targets (parser uplift, semantic analysis overhaul, runtime work). Track them inside `selfhost/stage13/` and promote them to new numbered stages when the scope solidifies.
+This stage may branch into sub-targets (parser uplift, semantic analysis overhaul, runtime work). Track them inside `selfhost/stage05/` and promote them to new numbered stages when the scope solidifies.
 
 
 ---

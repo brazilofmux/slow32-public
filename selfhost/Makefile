@@ -3,9 +3,9 @@
 # This Makefile guides the student through the stage-by-stage progression.
 # Each stage has specific prerequisites and produces clear, minimal artifacts.
 
-.PHONY: all clean stage00 stage01 stage02 stage03 stage04 stage13
+.PHONY: all clean stage00 stage01 stage02 stage03 stage04 stage05
 
-all: stage13
+all: stage05
 
 # Stage 00: Minimum bootstrap emulator (the trust root)
 stage00:
@@ -43,13 +43,13 @@ stage04: stage03
 	@echo "--- Building Stage 04: s12cc AST Compiler + Tools ---"
 	$(MAKE) -C stage04
 
-# Stage 13: Complete s12cc toolchain (compiler + assembler + archiver + linker + runtime)
+# Stage 05: Code quality — optimized s12cc toolchain
 # Prerequisites: Stage 04 s12cc (compiler), Stage 04 assembler + linker
 # Artifacts: s12cc.s32x, s32-as.s32x, s32-ar.s32x, s32-ld.s32x
 # All C compiled by stage04's s12cc. Runtime (libc) included.
-stage13: stage04
-	@echo "--- Building Stage 13: Complete s12cc Toolchain ---"
-	$(MAKE) -C stage13
+stage05: stage04
+	@echo "--- Building Stage 05: Optimized s12cc Toolchain ---"
+	$(MAKE) -C stage05
 
 clean:
 	$(MAKE) -C stage00 clean
@@ -57,4 +57,4 @@ clean:
 	$(MAKE) -C stage02 clean
 	$(MAKE) -C stage03 clean
 	$(MAKE) -C stage04 clean
-	$(MAKE) -C stage13 clean
+	$(MAKE) -C stage05 clean
