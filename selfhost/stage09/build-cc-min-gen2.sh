@@ -18,16 +18,16 @@ fi
 EMU="${SELFHOST_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
 STAGE2_AS="$SELFHOST_DIR/stage02/s32-as.s32x"
 STAGE2_LD="$SELFHOST_DIR/stage02/s32-ld.s32x"
-GEN1_CC="$SELFHOST_DIR/stage08/cc-min.s32x"
+GEN1_CC="$SELFHOST_DIR/stage02/cc-min.s32x"
 
 LIBC_DIR="$SELFHOST_DIR/stage02/libc"
 CRT0_SRC="$SELFHOST_DIR/stage02/crt0.s"
 MMIO_NO_START_SRC="$SELFHOST_DIR/stage02/mmio_no_start.s"
-STAGE08_DIR="$SELFHOST_DIR/stage08"
-CCMIN_PASS1="$STAGE08_DIR/cc-min-pass1.c"
-CCMIN_PASS2="$STAGE08_DIR/cc-min-pass2.c"
-CCMIN_PASS3="$STAGE08_DIR/cc-min-pass3.c"
-CCMIN_MAIN="$STAGE08_DIR/cc-min.c"
+STAGE02_DIR="$SELFHOST_DIR/stage02"
+CCMIN_PASS1="$STAGE02_DIR/cc-min-pass1.c"
+CCMIN_PASS2="$STAGE02_DIR/cc-min-pass2.c"
+CCMIN_PASS3="$STAGE02_DIR/cc-min-pass3.c"
+CCMIN_MAIN="$STAGE02_DIR/cc-min.c"
 OUT_EXE="$SCRIPT_DIR/cc-min.s32x"
 
 for f in "$EMU" "$STAGE2_AS" "$STAGE2_LD" "$GEN1_CC" \

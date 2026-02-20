@@ -13,7 +13,7 @@ Stage directories:
 Stage cycles at a glance:
 - `stage00`: standalone ~800 line emulator that every other stage relies on.
 - `stage01`: assembler + archiver + linker + C compiler written in Forth (includes kernel fixed-point proof).
-- `stage02`–`stage08`: the same four tools now authored in Subset C but still hosted by the Forth toolchain.
+- `stage02`: the same four tools (assembler, archiver, linker, compiler) now authored in Subset C but still hosted by the Forth toolchain.
 - `stage09`: Subset C fixed-point proof (Subset C compiling itself).
 - `stage10`–`stage12`: another assembler/archiver/linker pass, this time fully self-hosted in Subset C and chasing feature parity with `tools/`.
 - `stage13+`: full C compiler bring-up; exact layer breakdown will crystalize as the implementation roadmap settles.
@@ -25,7 +25,7 @@ Primary tracking docs:
 
 ## Ordered Stage Walk
 
-For a clean checkout sanity pass (stage00 -> stage08):
+For a clean checkout sanity pass (stage00 -> stage02):
 
 ```bash
 selfhost/run-stages.sh
@@ -47,4 +47,4 @@ Manual per-stage entry points:
 - `stage02` (assembler): `selfhost/stage02/run-pipeline.sh --mode progressive-as --test test1`
 - `stage02` (archiver): `selfhost/stage02/run-pipeline.sh --mode stage6-ar-smoke` and `... stage6-ar-rc-smoke` and `... stage6-ar-tx-smoke`
 - `stage02` (linker): `selfhost/stage02/run-spike-ld.sh`
-- `stage08` (Subset C compiler gate): `selfhost/stage08/run-regression.sh --emu ./tools/emulator/slow32-fast`
+- `stage02` (Subset C compiler gate): `selfhost/stage02/run-regression-cc-min.sh --emu ./tools/emulator/slow32-fast`

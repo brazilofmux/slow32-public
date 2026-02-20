@@ -126,7 +126,7 @@ if [[ ! -f "$SRC" ]]; then
 fi
 [[ -f "$SRC" ]] || { echo "Missing required file: $SRC" >&2; exit 1; }
 
-WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage08-cc.XXXXXX)"
+WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage02-cc.XXXXXX)"
 if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then
     trap 'rm -rf "$WORKDIR"' EXIT
 fi
@@ -1114,7 +1114,7 @@ if [[ "$INCLUDE_RC" -ne 7 ]]; then
     exit 1
 fi
 
-echo "OK: stage08 cc-min spike"
+echo "OK: stage02 cc-min spike"
 echo "Compiler source: $SRC"
 echo "Compiler exe: $CCMIN_EXE"
 echo "Assembler exe: $AS_EXE"

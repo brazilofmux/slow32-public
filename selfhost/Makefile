@@ -3,7 +3,7 @@
 # This Makefile guides the student through the stage-by-stage progression.
 # Each stage has specific prerequisites and produces clear, minimal artifacts.
 
-.PHONY: all clean stage00 stage01 stage02 stage08 stage09 stage10 stage11 stage12 stage13 stage14
+.PHONY: all clean stage00 stage01 stage02 stage09 stage10 stage11 stage12 stage13 stage14
 
 all: stage14
 
@@ -19,27 +19,19 @@ stage01: stage00
 	@echo "--- Building Stage 01: Forth Toolchain Artifacts ---"
 	$(MAKE) -C stage01
 
-# Stage 02: Subset-C Assembler + Archiver + Linker
+# Stage 02: Subset-C Assembler + Archiver + Linker + Compiler
 # Prerequisites: Stage 01 C compiler + Forth tools
-# After this stage, Forth tools (stage01) are no longer needed.
-# Artifacts: s32-as.s32x (C assembler), s32-ar.s32x (C archiver), s32-ld.s32x (C linker)
+# After this stage, ALL Forth tools (stage01) are retired.
+# Artifacts: s32-as.s32x (C assembler), s32-ar.s32x (C archiver), s32-ld.s32x (C linker), cc-min.s32x (C compiler)
 stage02: stage01
-	@echo "--- Building Stage 02: C Assembler + Archiver + Linker ---"
+	@echo "--- Building Stage 02: C Assembler + Archiver + Linker + Compiler ---"
 	$(MAKE) -C stage02
 
-# Stage 08: Subset-C Compiler (cc-min)
-# Prerequisites: Stage 01 cc.fth (one last time), Stage 02 C assembler + linker
-# After this stage, ALL Forth tools (stage01) are retired.
-# Artifacts: cc-min.s32x (C compiler, runs on emulator)
-stage08: stage02
-	@echo "--- Building Stage 08: C Compiler ---"
-	$(MAKE) -C stage08
-
 # Stage 09: Self-Compilation Fixed-Point Proof
-# Prerequisites: Stage 08 cc-min, Stage 02 C assembler + linker
+# Prerequisites: Stage 02 cc-min, Stage 02 C assembler + linker
 # cc-min compiles itself. No Forth tools. gen2.s == gen3.s proves the fixed point.
 # Artifacts: cc-min.s32x (Gen2: self-compiled compiler)
-stage09: stage08
+stage09: stage02
 	@echo "--- Building Stage 09: Self-Compiled Compiler ---"
 	$(MAKE) -C stage09
 
@@ -83,7 +75,6 @@ clean:
 	$(MAKE) -C stage00 clean
 	$(MAKE) -C stage01 clean
 	$(MAKE) -C stage02 clean
-	$(MAKE) -C stage08 clean
 	$(MAKE) -C stage09 clean
 	$(MAKE) -C stage10 clean
 	$(MAKE) -C stage11 clean

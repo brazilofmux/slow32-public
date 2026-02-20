@@ -1,7 +1,7 @@
 # Stage 10: s32-cc C Compiler
 
 s32-cc: a restructured C compiler with separate lexer and parser passes,
-evolved from cc-min (stage08/09). Compiled by cc-min, self-hosting proven.
+evolved from cc-min (stage02/09). Compiled by cc-min, self-hosting proven.
 
 ## Features (over cc-min)
 

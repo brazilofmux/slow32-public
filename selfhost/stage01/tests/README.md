@@ -10,7 +10,7 @@ Buckets:
 - `subset-stage2-as-known-gaps`: tracked non-gating idioms that fail only on Stage2 assembler path
 - `as-bisect`: assembler spike bisect/repro corpus (`as_bisect*.c`)
 - `ar-bisect`: archiver spike bisect/repro corpus (`ar_bisect*.c`)
-- `reloc-bisect`: stage07 relocation-linker source bisect corpus (`reloc_bisect*.c`)
+- `reloc-bisect`: stage02 relocation-linker source bisect corpus (`reloc_bisect*.c`)
 - `reloc-bisect-lo12`: focused LO12 sub-bisect corpus (`reloc_bisect03[a-c].c`)
 - `reloc-bisect-lo12-pack`: focused LO12 pack-shape corpus (`reloc_bisect03a[1-3].c`)
 - `reloc-bisect-lo12-rdwr`: LO12 minimal read/write-shape corpus (`reloc_bisect03a{00,9,...}.c`)

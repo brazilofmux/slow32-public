@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Stage 09: Self-Compilation Fixed-Point Proof
 #
-# Gen1 (cc-min compiled by cc.fth, stage08) is already built.
+# Gen1 (cc-min compiled by cc.fth, stage02) is already built.
 # Gen2 (cc-min compiled by Gen1, stage09) is already built.
 # This script:
 #   1. Gen2 compiles cc-min → Gen3 assembly
@@ -21,15 +21,15 @@ fi
 EMU="${SELFHOST_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
 STAGE2_AS="$SELFHOST_DIR/stage02/s32-as.s32x"
 STAGE2_LD="$SELFHOST_DIR/stage02/s32-ld.s32x"
-GEN1_CC="$SELFHOST_DIR/stage08/cc-min.s32x"
+GEN1_CC="$SELFHOST_DIR/stage02/cc-min.s32x"
 GEN2_CC="$SCRIPT_DIR/cc-min.s32x"
 SMOKE_SRC="$SCRIPT_DIR/test_smoke.c"
 
-STAGE08_DIR="$SELFHOST_DIR/stage08"
-CCMIN_PASS1="$STAGE08_DIR/cc-min-pass1.c"
-CCMIN_PASS2="$STAGE08_DIR/cc-min-pass2.c"
-CCMIN_PASS3="$STAGE08_DIR/cc-min-pass3.c"
-CCMIN_MAIN="$STAGE08_DIR/cc-min.c"
+STAGE02_DIR="$SELFHOST_DIR/stage02"
+CCMIN_PASS1="$STAGE02_DIR/cc-min-pass1.c"
+CCMIN_PASS2="$STAGE02_DIR/cc-min-pass2.c"
+CCMIN_PASS3="$STAGE02_DIR/cc-min-pass3.c"
+CCMIN_MAIN="$STAGE02_DIR/cc-min.c"
 
 for f in "$EMU" "$STAGE2_AS" "$STAGE2_LD" "$GEN1_CC" "$GEN2_CC" "$SMOKE_SRC" \
          "$CCMIN_PASS1" "$CCMIN_PASS2" "$CCMIN_PASS3" "$CCMIN_MAIN"; do

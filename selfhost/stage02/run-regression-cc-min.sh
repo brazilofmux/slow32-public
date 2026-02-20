@@ -50,17 +50,17 @@ fi
 [[ -x "$PIPE" ]] || { echo "Missing pipeline runner: $PIPE" >&2; exit 1; }
 [[ -x "$EMU" ]] || { echo "Missing emulator: $EMU" >&2; exit 1; }
 
-echo "[stage08] subset-c archiver parity gate"
-"$PIPE" --mode stage6-ar-smoke --emu "$EMU" >/tmp/v2-stage08-c.log 2>&1
-"$PIPE" --mode stage6-ar-rc-smoke --emu "$EMU" >/tmp/v2-stage08-rc.log 2>&1
-"$PIPE" --mode stage6-ar-tx-smoke --emu "$EMU" >/tmp/v2-stage08-tx.log 2>&1
-"$PIPE" --mode stage6-ar-d-smoke --emu "$EMU" >/tmp/v2-stage08-d.log 2>&1
-"$PIPE" --mode stage6-ar-m-smoke --emu "$EMU" >/tmp/v2-stage08-m.log 2>&1
-"$PIPE" --mode stage6-ar-vp-smoke --emu "$EMU" >/tmp/v2-stage08-vp.log 2>&1
-"$PIPE" --mode stage6-ar-scan-smoke --emu "$EMU" >/tmp/v2-stage08-cs.log 2>&1
+echo "[stage02] subset-c archiver parity gate"
+"$PIPE" --mode stage6-ar-smoke --emu "$EMU" >/tmp/v2-stage02-c.log 2>&1
+"$PIPE" --mode stage6-ar-rc-smoke --emu "$EMU" >/tmp/v2-stage02-rc.log 2>&1
+"$PIPE" --mode stage6-ar-tx-smoke --emu "$EMU" >/tmp/v2-stage02-tx.log 2>&1
+"$PIPE" --mode stage6-ar-d-smoke --emu "$EMU" >/tmp/v2-stage02-d.log 2>&1
+"$PIPE" --mode stage6-ar-m-smoke --emu "$EMU" >/tmp/v2-stage02-m.log 2>&1
+"$PIPE" --mode stage6-ar-vp-smoke --emu "$EMU" >/tmp/v2-stage02-vp.log 2>&1
+"$PIPE" --mode stage6-ar-scan-smoke --emu "$EMU" >/tmp/v2-stage02-cs.log 2>&1
 
-echo "[stage08] cc-min compiler spike"
-"$SCRIPT_DIR/run-cc-spike.sh" --emu "$EMU" >/tmp/v2-stage08-cc.log 2>&1
+echo "[stage02] cc-min compiler spike"
+"$SCRIPT_DIR/run-cc-spike.sh" --emu "$EMU" >/tmp/v2-stage02-cc.log 2>&1
 
-echo "OK: stage08 archiver parity gate"
+echo "OK: stage02 archiver parity gate"
 echo "Emulator: $EMU"

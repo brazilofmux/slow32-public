@@ -24,7 +24,7 @@ for f in "$EMU" "$STAGE2_AS" "$STAGE2_LD" "$STAGE8_CC"; do
     [[ -f "$f" ]] || { echo "Missing: $f" >&2; exit 1; }
 done
 
-WORKDIR="$(mktemp -d /tmp/stage08-spike.XXXXXX)"
+WORKDIR="$(mktemp -d /tmp/stage02-cc-spike.XXXXXX)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
 cd "$ROOT_DIR"

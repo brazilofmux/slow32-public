@@ -755,8 +755,8 @@ Execution artifacts for the reorg are tracked in:
 | 4 | `selfhost/stage01/` | `cc.fth` (merged) | Done (regression passing) |
 | 5 | `selfhost/stage02/` | `s32-as.c` | Spike proven end-to-end; replacement hardening in progress |
 | 6 | `selfhost/stage02/` | `s32-ar.c` (merged) | Spike started; replacement hardening in progress |
-| 7 | `selfhost/stage07/` | `s32-ld.c` (planned) | Not started |
-| 8 | `selfhost/stage08/` | `cc.c` (planned) | Not started |
+| 7 | `selfhost/stage02/` | `s32-ld.c` (planned) | Not started |
+| 8 | `selfhost/stage02/` | `cc-min.c` (merged) | Done (regression passing) |
 | 9-16 | — | — | Not started |
 
 **Current Stage 0-4 checkpoint (2026-02-15):**

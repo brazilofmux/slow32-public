@@ -27,7 +27,7 @@ EMU_DEFAULT="$(choose_default_emu)"
 EMU="$EMU_DEFAULT"
 
 FROM="stage00"
-TO="stage08"
+TO="stage02"
 SKIP_SELFHOST_KERNEL=0
 SKIP_PURITY_GUARD=0
 QUICK=0
@@ -37,17 +37,17 @@ LOG_DIR="$(mktemp -d /tmp/selfhost-stage-walk.XXXXXX)"
 
 usage() {
     cat <<USAGE
-Usage: $0 [--from stage00] [--to stage08] [--emu <path>] [--skip-selfhost-kernel] [--skip-purity-guard] [--quick] [--keep-logs]
+Usage: $0 [--from stage00] [--to stage02] [--emu <path>] [--skip-selfhost-kernel] [--skip-purity-guard] [--quick] [--keep-logs]
 
 Runs ordered stage checks so a clean checkout can be validated end-to-end.
 
 Default sequence:
-  stage00 -> stage01 -> stage02 -> stage08
+  stage00 -> stage01 -> stage02
 
 Options:
-  --from stageNN   Start stage (stage00..stage08)
-  --to stageNN     End stage (stage00..stage08)
-  --emu path       Emulator for stage01..stage08 (default: slow32-fast, then stage00 s32-emu, then slow32)
+  --from stageNN   Start stage (stage00..stage02)
+  --to stageNN     End stage (stage00..stage02)
+  --emu path       Emulator for stage01..stage02 (default: slow32-fast, then stage00 s32-emu, then slow32)
   --skip-selfhost-kernel
                    Skip stage01 selfhost-kernel regeneration/boot gate (dev fast-path)
   --skip-purity-guard
@@ -135,7 +135,6 @@ stage_num() {
         stage00) echo 0 ;;
         stage01) echo 1 ;;
         stage02) echo 2 ;;
-        stage08) echo 8 ;;
         *) return 1 ;;
     esac
 }
@@ -236,22 +235,17 @@ run_stage02() {
     echo "[stage02] c-linker replacement spike"
     run_logged "stage02 ld-spike" "$LOG_DIR/stage02-ld.log" \
         env SELFHOST_EMU="$EMU" "$ROOT_DIR/selfhost/stage02/run-spike-ld.sh"
-}
-
-run_stage08() {
-    echo "[stage08] pragmatic c-archiver parity gate"
+    echo "[stage02] c-compiler regression"
     if [[ "$QUICK" -eq 0 ]]; then
-        run_logged "stage08 regression" "$LOG_DIR/stage08.log" \
-            "$ROOT_DIR/selfhost/stage08/run-regression.sh" --emu "$EMU"
+        run_logged "stage02 cc-regression" "$LOG_DIR/stage02-cc.log" \
+            "$ROOT_DIR/selfhost/stage02/run-regression-cc-min.sh" --emu "$EMU"
     else
-        run_logged "stage08 ar-smoke" "$LOG_DIR/stage08-smoke.log" \
-            "$ROOT_DIR/selfhost/stage02/run-pipeline.sh" --mode stage6-ar-smoke --emu "$EMU"
-        run_logged "stage08 cc-spike" "$LOG_DIR/stage08-cc.log" \
-            "$ROOT_DIR/selfhost/stage08/run-cc-spike.sh" --emu "$EMU"
+        run_logged "stage02 cc-spike" "$LOG_DIR/stage02-cc.log" \
+            "$ROOT_DIR/selfhost/stage02/run-cc-spike.sh" --emu "$EMU"
     fi
 }
 
-for st in stage00 stage01 stage02 stage08; do
+for st in stage00 stage01 stage02; do
     N="$(stage_num "$st")"
     if (( N < FROM_N || N > TO_N )); then
         continue

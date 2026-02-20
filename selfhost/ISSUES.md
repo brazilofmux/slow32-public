@@ -174,7 +174,7 @@ the second call to load instruction bytes as data and jump to a garbage address.
 
 **Tracked repro:** `selfhost/stage01/tests/subset-known-gaps/subset_gap01_implicit_repeat_call.c`
 
-**Verification:** stage08 cc-min now calls fopen/fclose/fgetc/fputc/fputs directly
+**Verification:** stage02 cc-min now calls fopen/fclose/fgetc/fputc/fputs directly
 (no io_* wrappers needed); all 29 tests pass.
 
 ### 30. [FIXED] cc.fth Clamps Global Array Sizes to 65535 Bytes
@@ -217,7 +217,7 @@ Commit `def868a` removed `zork/stories/minizork.z3`, while `zork/tests/run-tests
 requires that exact path. The story file has now been restored in commit `694ed6a`
 (`Restore minizork story blob for zork tests`).
 
-### 27. [FIXED] Stage08 Default Emulator Priority
+### 27. [FIXED] Stage02 cc-min Default Emulator Priority
 `choose_default_emu()` in `run-cc-spike.sh` now prefers `slow32-dbt` before `slow32-dbg`.
 
 ### 28. [RESOLVED] Unused Locals in `cc-min-pass1.c`
@@ -228,7 +228,7 @@ requires that exact path. The story file has now been restored in commit `694ed6
 Commit `a851552` message says it fixes issues `#1/#2/#19/#25`, but touched files are:
 - `selfhost/ISSUES.md`
 - `selfhost/stage01/cc.fth`
-- `selfhost/stage08/*`
+- `selfhost/stage02/*`
 
 No Stage0 emulator source file is touched in that commit. If Stage0 fixes were landed
 earlier, the message should clarify that this commit updates tracking/docs for #1/#2

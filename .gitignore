@@ -18,7 +18,7 @@ tools/utilities/slow32dump
 
 # Selfhost one-off scripts and binaries
 selfhost/stage00/s32-emu
-selfhost/stage08/*.py
+selfhost/stage02/*.py
 
 # Test files
 *.bin

@@ -274,7 +274,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (oh->nsections > MAX_SECTIONS || oh->nsymbols > MAX_SYMBOLS) {
-        fprintf(stderr, "error: object exceeds stage07 bounds\n");
+        fprintf(stderr, "error: object exceeds stage02 bounds\n");
         return 1;
     }
     if (!in_bounds(oh->sec_offset, oh->nsections * (uint32_t)sizeof(s32o_section_t), obj_size) ||
@@ -409,7 +409,7 @@ int main(int argc, char **argv) {
 
     out_size = out_data_off + text.size + data.size + rodata.size;
     if (out_size > MAX_OUT_SIZE) {
-        fprintf(stderr, "error: output exceeds stage07 bounds\n");
+        fprintf(stderr, "error: output exceeds stage02 bounds\n");
         return 1;
     }
 
@@ -680,6 +680,6 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    printf("stage07: linked %s -> %s\n", argv[1], argv[2]);
+    printf("stage02: linked %s -> %s\n", argv[1], argv[2]);
     return 0;
 }
