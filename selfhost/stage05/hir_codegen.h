@@ -692,11 +692,41 @@ static void hcg_inst(int idx) {
 
 static void hcg_block(int b) {
     int i;
+    int term;
+    int k;
     cg_ldef(hcg_blk_lbl[b]);
+
+    /* Find the terminator (last non-NOP: BR/BRC/RET) */
+    term = -1;
+    i = bb_end[b] - 1;
+    while (i >= bb_start[b]) {
+        k = h_kind[i];
+        if (k == HI_BR || k == HI_BRC || k == HI_RET) {
+            term = i;
+            break;
+        }
+        if (k != HI_NOP) break;
+        i = i - 1;
+    }
+
+    /* Emit regular instructions up to (but not including) the terminator */
     i = bb_start[b];
     while (i < bb_end[b]) {
+        if (i == term) break;
         hcg_inst(i);
         i = i + 1;
+    }
+
+    /* Emit hoisted (LICM) instructions before the terminator */
+    i = licm_head[b];
+    while (i >= 0) {
+        hcg_inst(i);
+        i = licm_next[i];
+    }
+
+    /* Emit the terminator */
+    if (term >= 0) {
+        hcg_inst(term);
     }
 }
 
@@ -749,6 +779,9 @@ static void hcg_func(Node *fn) {
 
     /* Run SSA optimizations */
     hir_opt();
+
+    /* Loop-invariant code motion */
+    /* hir_licm(); */
 
     /* Register allocation: assigns ra_reg[], ra_spill_off[],
      * callee-save info, and updates hl_temp_stack */

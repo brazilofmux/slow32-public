@@ -52,6 +52,8 @@ static void ra_compute_pos(void) {
     int i;
     int pos;
     int phi;
+    int term;
+    int tk;
 
     /* Init all positions to -1 (unreachable) */
     i = 0;
@@ -80,9 +82,23 @@ static void ra_compute_pos(void) {
             phi = ssa_phi_next[phi];
         }
 
-        /* Regular instructions in this block */
+        /* Find terminator (last BR/BRC/RET) in this block */
+        term = -1;
+        i = bb_end[b] - 1;
+        while (i >= bb_start[b]) {
+            tk = h_kind[i];
+            if (tk == HI_BR || tk == HI_BRC || tk == HI_RET) {
+                term = i;
+                break;
+            }
+            if (tk != HI_NOP) break;
+            i = i - 1;
+        }
+
+        /* Regular instructions up to (not including) the terminator */
         i = bb_start[b];
         while (i < bb_end[b]) {
+            if (i == term) break;
             if (h_kind[i] != HI_NOP) {
                 ra_pos[i] = pos;
                 ra_order[ra_norder] = i;
@@ -90,6 +106,26 @@ static void ra_compute_pos(void) {
                 pos = pos + 1;
             }
             i = i + 1;
+        }
+
+        /* LICM-hoisted instructions (after regular, before terminator) */
+        i = licm_head[b];
+        while (i >= 0) {
+            if (h_kind[i] != HI_NOP) {
+                ra_pos[i] = pos;
+                ra_order[ra_norder] = i;
+                ra_norder = ra_norder + 1;
+                pos = pos + 1;
+            }
+            i = licm_next[i];
+        }
+
+        /* The terminator itself */
+        if (term >= 0 && h_kind[term] != HI_NOP) {
+            ra_pos[term] = pos;
+            ra_order[ra_norder] = term;
+            ra_norder = ra_norder + 1;
+            pos = pos + 1;
         }
 
         ri = ri + 1;

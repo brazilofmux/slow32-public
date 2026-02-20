@@ -60,6 +60,7 @@ void fput_uint(int fd, int val) {
 #include "hir_lower.h"
 #include "hir_ssa.h"
 #include "hir_opt.h"
+#include "hir_licm.h"
 #include "hir_regalloc.h"
 #include "hir_codegen.h"
 
@@ -147,6 +148,9 @@ int main(int argc, char **argv) {
     fputs("hir_opt: ", stderr);
     fput_uint(stderr, ho_stat_elim);
     fputs(" HIR instructions eliminated\n", stderr);
+    fputs("hir_licm: ", stderr);
+    fput_uint(stderr, licm_stat_hoisted);
+    fputs(" instructions hoisted\n", stderr);
 
     return 0;
 }
