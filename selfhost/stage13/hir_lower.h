@@ -742,6 +742,9 @@ static void hl_stmt(Node *n) {
     p_error("unknown statement node (hir)");
 }
 
+/* --- Number of params for SSA (shared with hir_ssa.h) --- */
+static int hl_nparams;
+
 /* --- Lower one function --- */
 
 static void hl_func(Node *fn) {
@@ -749,6 +752,7 @@ static void hl_func(Node *fn) {
 
     hir_reset();
     hl_nalloca = 0;
+    hl_nparams = fn->nparams;
     hl_temp_stack = fn->locals_size;
     hl_loop_depth = 0;
     hl_sw_depth = 0;

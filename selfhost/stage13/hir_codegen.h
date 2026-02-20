@@ -245,6 +245,65 @@ static void hcg_store(int ty) {
     }
 }
 
+/* --- Emit phi copies for a branch from_blk → to_blk --- */
+
+static int hcg_phi_tmp[SSA_MAX_PROMO];
+
+static void hcg_phi_copies(int from_blk, int to_blk) {
+    int i;
+    int n;
+    int j;
+    int v;
+    int off;
+
+    /* Collect PHIs in to_blk */
+    n = 0;
+    i = ssa_phi_base;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_PHI && h_blk[i] == to_blk) {
+            hcg_phi_tmp[n] = i;
+            n = n + 1;
+        }
+        i = i + 1;
+    }
+    if (n == 0) return;
+
+    /* Push all argument values onto runtime stack */
+    j = 0;
+    while (j < n) {
+        v = ssa_phi_find_arg(hcg_phi_tmp[j], from_blk);
+        hcg_into(1, v);
+        cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
+        j = j + 1;
+    }
+
+    /* Pop in reverse order into PHI spill slots */
+    j = n - 1;
+    while (j >= 0) {
+        cg_s("    ldw r1, r29, ");
+        cg_n((n - 1 - j) * 4);
+        cg_c(10);
+        off = hcg_spill[hcg_phi_tmp[j]];
+        if (off >= -2048 && off <= 2047) {
+            cg_s("    stw r30, r1, ");
+            cg_n(off);
+            cg_c(10);
+        } else {
+            hcg_li(2, off);
+            cg_s("    add r2, r30, r2\n");
+            cg_s("    stw r2, r1, 0\n");
+        }
+        j = j - 1;
+    }
+
+    /* Clean up stack */
+    if (n > 0) {
+        cg_s("    addi r29, r29, ");
+        cg_n(n * 4);
+        cg_c(10);
+    }
+}
+
 /* --- Generate code for one HIR instruction --- */
 
 static void hcg_inst(int idx) {
@@ -410,6 +469,7 @@ static void hcg_inst(int idx) {
 
     /* Branch (unconditional) */
     if (k == HI_BR) {
+        hcg_phi_copies(h_blk[idx], h_val[idx]);
         cg_s("    jal r0, ");
         cg_lref(hcg_blk_lbl[h_val[idx]]);
         cg_c(10);
@@ -424,10 +484,12 @@ static void hcg_inst(int idx) {
         cg_s("    beq r1, r0, ");
         cg_lref(skip);
         cg_c(10);
+        hcg_phi_copies(h_blk[idx], s2);
         cg_s("    jal r0, ");
         cg_lref(hcg_blk_lbl[s2]);
         cg_c(10);
         cg_ldef(skip);
+        hcg_phi_copies(h_blk[idx], h_val[idx]);
         cg_s("    jal r0, ");
         cg_lref(hcg_blk_lbl[h_val[idx]]);
         cg_c(10);
