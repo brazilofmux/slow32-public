@@ -13,7 +13,7 @@
 #include <sys/mman.h>
 
 // Maximum number of blocks we can store
-#define MAX_BLOCKS 8192
+#define MAX_BLOCKS 131072
 
 // ============================================================================
 // Cache management
@@ -452,16 +452,30 @@ translated_block_t *cache_alloc_block(block_cache_t *cache, uint32_t guest_pc) {
     return block;
 }
 
+bool cache_needs_flush(block_cache_t *cache) {
+    // Flush when hash table exceeds 75% load factor to prevent
+    // infinite loop in linear probing
+    return cache->block_count >= (BLOCK_CACHE_SIZE * 3 / 4);
+}
+
 void cache_insert(block_cache_t *cache, translated_block_t *block) {
     uint32_t idx = cache_hash(block->guest_pc);
+    uint32_t start = idx;
 
     // Find empty slot (linear probe)
-    while (cache->blocks[idx] != NULL) {
+    do {
+        if (cache->blocks[idx] == NULL) {
+            cache->blocks[idx] = block;
+            cache->block_count++;
+            return;
+        }
         idx = (idx + 1) & BLOCK_CACHE_MASK;
-    }
+    } while (idx != start);
 
-    cache->blocks[idx] = block;
-    cache->block_count++;
+    // Table completely full — this should not happen if caller
+    // checks cache_needs_flush() before translating
+    fprintf(stderr, "DBT: cache_insert: hash table full! block_count=%u\n",
+            cache->block_count);
 }
 
 // ============================================================================

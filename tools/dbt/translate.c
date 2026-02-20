@@ -5109,6 +5109,11 @@ translated_block_t *translate_block_cached(translate_ctx_t *ctx, uint32_t guest_
         return NULL;
     }
 
+    // Flush if hash table is too full (prevents infinite loop in linear probing)
+    if (cache_needs_flush(cache)) {
+        cache_flush(cache);
+    }
+
     // Check for intrinsic recognition before normal translation
     translated_block_t *intrinsic_block = try_emit_intrinsic(ctx, guest_pc);
     if (intrinsic_block) {

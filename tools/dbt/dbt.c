@@ -16,6 +16,9 @@
 #include <time.h>
 #include <inttypes.h>
 #include <math.h>
+#include <signal.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 #include "cpu_state.h"
 #include "translate.h"
@@ -51,6 +54,148 @@ static bool mmio_initialized = false;
 // Host argc/argv for passing to guest
 static int host_argc = 0;
 static char **host_argv = NULL;
+
+// ============================================================================
+// Signal-based probe/debugging support
+// ============================================================================
+
+#define PROBE_RING_SIZE 8
+
+typedef struct {
+    volatile sig_atomic_t flag;        // Set by SIGALRM, cleared by dispatch loop
+    volatile sig_atomic_t sigint_flag; // Set by SIGINT
+    uint32_t pc_ring[PROBE_RING_SIZE]; // Ring buffer for loop detection
+    int ring_pos, ring_count;
+    struct timespec start_time;
+    int probe_interval_sec;
+    int probe_count;
+    bool enabled;
+} dbt_probe_state_t;
+
+static volatile dbt_cpu_state_t *g_dbt_cpu = NULL;
+static dbt_probe_state_t *g_dbt_probe = NULL;
+
+// Async-signal-safe hex printer: writes "0xNNNNNNNN" to buf, returns length
+static int probe_hex32(char *buf, uint32_t val) {
+    static const char hex[] = "0123456789ABCDEF";
+    buf[0] = '0'; buf[1] = 'x';
+    int i;
+    for (i = 0; i < 8; i++) {
+        buf[2 + i] = hex[(val >> (28 - i * 4)) & 0xF];
+    }
+    return 10;
+}
+
+static void dbt_sigint_handler(int sig) {
+    (void)sig;
+    if (g_dbt_probe) g_dbt_probe->sigint_flag = 1;
+    if (g_dbt_cpu) ((dbt_cpu_state_t *)g_dbt_cpu)->halted = true;
+}
+
+static void dbt_sigalrm_handler(int sig) {
+    (void)sig;
+    if (!g_dbt_cpu || !g_dbt_probe) return;
+    g_dbt_probe->flag = 1;
+
+    // Async-signal-safe: print PC and key registers using write()
+    char buf[128];
+    int pos = 0;
+    // "[probe] PC="
+    const char prefix[] = "[probe] PC=";
+    int j;
+    for (j = 0; prefix[j]; j++) buf[pos++] = prefix[j];
+    pos += probe_hex32(buf + pos, g_dbt_cpu->pc);
+    // " SP="
+    buf[pos++] = ' '; buf[pos++] = 'S'; buf[pos++] = 'P'; buf[pos++] = '=';
+    pos += probe_hex32(buf + pos, g_dbt_cpu->regs[29]);
+    // " FP="
+    buf[pos++] = ' '; buf[pos++] = 'F'; buf[pos++] = 'P'; buf[pos++] = '=';
+    pos += probe_hex32(buf + pos, g_dbt_cpu->regs[30]);
+    // " LR="
+    buf[pos++] = ' '; buf[pos++] = 'L'; buf[pos++] = 'R'; buf[pos++] = '=';
+    pos += probe_hex32(buf + pos, g_dbt_cpu->regs[31]);
+    // " r1="
+    buf[pos++] = ' '; buf[pos++] = 'r'; buf[pos++] = '1'; buf[pos++] = '=';
+    pos += probe_hex32(buf + pos, g_dbt_cpu->regs[1]);
+    buf[pos++] = '\n';
+    if (write(STDERR_FILENO, buf, pos)) {/* async-signal-safe */}
+}
+
+static void dbt_install_sigint(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = dbt_sigint_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT, &sa, NULL);
+}
+
+static void dbt_start_probe_timer(int interval_sec) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = dbt_sigalrm_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGALRM, &sa, NULL);
+
+    struct itimerval itv;
+    itv.it_value.tv_sec = interval_sec;
+    itv.it_value.tv_usec = 0;
+    itv.it_interval.tv_sec = interval_sec;
+    itv.it_interval.tv_usec = 0;
+    setitimer(ITIMER_REAL, &itv, NULL);
+}
+
+static void dbt_stop_probe_timer(void) {
+    struct itimerval itv = {{0, 0}, {0, 0}};
+    setitimer(ITIMER_REAL, &itv, NULL);
+    signal(SIGALRM, SIG_DFL);
+}
+
+// Detailed probe processing (called from dispatch loop when flag is set)
+static void dbt_process_probe(dbt_probe_state_t *probe, dbt_cpu_state_t *cpu) {
+    probe->flag = 0;
+    uint32_t pc = cpu->pc;
+
+    // Add to ring buffer
+    probe->pc_ring[probe->ring_pos % PROBE_RING_SIZE] = pc;
+    probe->ring_pos++;
+    if (probe->ring_count < PROBE_RING_SIZE) probe->ring_count++;
+    probe->probe_count++;
+
+    // Calculate elapsed time
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    double elapsed = (now.tv_sec - probe->start_time.tv_sec)
+                   + (now.tv_nsec - probe->start_time.tv_nsec) / 1e9;
+
+    // Loop detection: check if all ring entries are in same 4KB region
+    bool looping = false;
+    if (probe->ring_count >= PROBE_RING_SIZE) {
+        uint32_t base = probe->pc_ring[0] & ~0xFFFu;
+        looping = true;
+        int i;
+        for (i = 1; i < PROBE_RING_SIZE; i++) {
+            if ((probe->pc_ring[i] & ~0xFFFu) != base) {
+                looping = false;
+                break;
+            }
+        }
+    }
+
+    fprintf(stderr, "[%7.1fs] PC=0x%08X SP=0x%08X FP=0x%08X LR=0x%08X r1=0x%08X%s\n",
+            elapsed, pc, cpu->regs[29], cpu->regs[30], cpu->regs[31],
+            cpu->regs[1], looping ? " (LOOPING)" : "");
+
+    // Full register dump every 10 probes
+    if ((probe->probe_count % 10) == 0) {
+        fprintf(stderr, "  r1-r10:");
+        int i;
+        for (i = 1; i <= 10; i++)
+            fprintf(stderr, " %08X", cpu->regs[i]);
+        fprintf(stderr, "\n");
+    }
+}
 
 #if defined(__aarch64__)
 static inline uint64_t rdtsc(void) {
@@ -601,6 +746,11 @@ static void run_dbt_stage1(dbt_cpu_state_t *cpu) {
 
         dispatch_iter++;
 
+        // Check probe flag
+        if (__builtin_expect(g_dbt_probe && g_dbt_probe->flag, 0)) {
+            dbt_process_probe(g_dbt_probe, cpu);
+        }
+
         // Handle exit reason
         switch (cpu->exit_reason) {
             case EXIT_BRANCH:
@@ -701,6 +851,11 @@ static void run_dbt_stage2(dbt_cpu_state_t *cpu, block_cache_t *cache) {
         }
 
         dispatch_iter++;
+
+        // Check probe flag
+        if (__builtin_expect(g_dbt_probe && g_dbt_probe->flag, 0)) {
+            dbt_process_probe(g_dbt_probe, cpu);
+        }
 
         // Handle exit reason
         switch (cpu->exit_reason) {
@@ -804,6 +959,11 @@ static void run_dbt_stage3(dbt_cpu_state_t *cpu, block_cache_t *cache) {
         }
 
         dispatch_iter++;
+
+        // Check probe flag
+        if (__builtin_expect(g_dbt_probe && g_dbt_probe->flag, 0)) {
+            dbt_process_probe(g_dbt_probe, cpu);
+        }
 
         // Track indirect branch statistics when we return to dispatcher
         if (cpu->exit_reason == EXIT_INDIRECT) {
@@ -957,6 +1117,11 @@ static void run_dbt_stage4(dbt_cpu_state_t *cpu, block_cache_t *cache) {
 
         dispatch_iter++;
 
+        // Check probe flag
+        if (__builtin_expect(g_dbt_probe && g_dbt_probe->flag, 0)) {
+            dbt_process_probe(g_dbt_probe, cpu);
+        }
+
         // Track indirect branch statistics when we return to dispatcher
         if (cpu->exit_reason == EXIT_INDIRECT) {
             cache->inline_miss_count++;
@@ -1050,6 +1215,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -X <pc>   Dump block containing guest PC\n");
     fprintf(stderr, "  -I        Disable intrinsic recognition (memcpy/memset native stubs)\n");
     fprintf(stderr, "  -U        UNSAFE: Disable all bounds/W^X checks (for benchmarking)\n");
+    fprintf(stderr, "  -q [N]    Probe: sample PC every N seconds (default 1) via SIGALRM\n");
     fprintf(stderr, "  -1        Use Stage 1 mode (no caching)\n");
     fprintf(stderr, "  -2        Use Stage 2 mode (block cache + chaining)\n");
     fprintf(stderr, "  -3        Use Stage 3 mode (inline indirect lookup)\n");
@@ -1094,6 +1260,8 @@ int main(int argc, char **argv) {
     uint32_t dump_pc = 0;
     int stage = 4;  // Default to Stage 4 now
     const char *filename = NULL;
+    dbt_probe_state_t probe = {0};
+    probe.probe_interval_sec = 1;
     const char *trace_env = getenv("SLOW32_DBT_EMIT_TRACE");
     const char *trace_pc_env = getenv("SLOW32_DBT_EMIT_TRACE_PC");
     const char *align_env = getenv("SLOW32_DBT_ALIGN_TRAP");
@@ -1159,6 +1327,14 @@ int main(int argc, char **argv) {
                     break;
                 case 'U':
                     bounds_checks_disabled = true;
+                    break;
+                case 'q':
+                    probe.enabled = true;
+                    // Optional numeric argument for interval
+                    if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') {
+                        probe.probe_interval_sec = atoi(argv[++i]);
+                        if (probe.probe_interval_sec < 1) probe.probe_interval_sec = 1;
+                    }
                     break;
                 case 't':
                     two_pass = true;
@@ -1272,7 +1448,7 @@ int main(int argc, char **argv) {
     }
 
     // Initialize block cache for Stage 2 and 3
-    block_cache_t cache;
+    static block_cache_t cache;
     if (stage >= 2) {
         if (!cache_init(&cache)) {
             fprintf(stderr, "Failed to initialize block cache\n");
@@ -1368,6 +1544,19 @@ int main(int argc, char **argv) {
     profile_exec_cycles = 0;
     profile_tsc_start = 0;
     profile_tsc_end = 0;
+
+    // Install SIGINT handler (always — Ctrl+C dumps registers and halts)
+    g_dbt_cpu = &cpu;
+    g_dbt_probe = &probe;
+    dbt_install_sigint();
+
+    // Start probe timer if requested
+    if (probe.enabled) {
+        fprintf(stderr, "DBT probe enabled: sampling every %d second(s)\n", probe.probe_interval_sec);
+        clock_gettime(CLOCK_MONOTONIC, &probe.start_time);
+        dbt_start_probe_timer(probe.probe_interval_sec);
+    }
+
     clock_gettime(CLOCK_MONOTONIC, &start);
 #if defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
     if (profile_timing) {
@@ -1385,12 +1574,33 @@ int main(int argc, char **argv) {
         run_dbt_stage4(&cpu, &cache);
     }
 
+    // Stop probe timer before any output
+    if (probe.enabled) {
+        dbt_stop_probe_timer();
+    }
+
     clock_gettime(CLOCK_MONOTONIC, &end);
 #if defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
     if (profile_timing) {
         profile_tsc_end = rdtsc();
     }
 #endif
+
+    // SIGINT register dump
+    if (probe.sigint_flag) {
+        fprintf(stderr, "\nInterrupted (SIGINT) — register dump:\n");
+        fprintf(stderr, "  PC=0x%08X  SP=0x%08X  FP=0x%08X  LR=0x%08X\n",
+                cpu.pc, cpu.regs[29], cpu.regs[30], cpu.regs[31]);
+        int ri;
+        for (ri = 0; ri < 32; ri += 4) {
+            fprintf(stderr, "  r%-2d=%08X  r%-2d=%08X  r%-2d=%08X  r%-2d=%08X\n",
+                    ri, cpu.regs[ri], ri+1, cpu.regs[ri+1],
+                    ri+2, cpu.regs[ri+2], ri+3, cpu.regs[ri+3]);
+        }
+    }
+
+    g_dbt_cpu = NULL;
+    g_dbt_probe = NULL;
 
     // Results
     int exit_code = cpu.regs[REG_RV];

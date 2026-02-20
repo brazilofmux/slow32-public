@@ -14,7 +14,7 @@
 typedef struct translated_block translated_block_t;
 
 // Block cache size (power of 2 for fast modulo)
-#define BLOCK_CACHE_SIZE 4096
+#define BLOCK_CACHE_SIZE 131072
 #define BLOCK_CACHE_MASK (BLOCK_CACHE_SIZE - 1)
 
 // Code buffer size for translated code
@@ -148,6 +148,9 @@ translated_block_t *cache_lookup(block_cache_t *cache, uint32_t guest_pc);
 // Allocate a new block for translation
 // Returns NULL if cache is full (triggers flush)
 translated_block_t *cache_alloc_block(block_cache_t *cache, uint32_t guest_pc);
+
+// Check if cache needs flushing (hash table load factor > 75%)
+bool cache_needs_flush(block_cache_t *cache);
 
 // Insert a block into the cache after translation
 void cache_insert(block_cache_t *cache, translated_block_t *block);

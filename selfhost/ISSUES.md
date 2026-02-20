@@ -238,7 +238,7 @@ rather than containing those code changes directly.
 
 ## slow32-dbt
 
-### 31. [OPEN] Infinite Loop on SSA-Compiled gen2.s32x
+### 31. [FIXED] Infinite Loop on SSA-Compiled gen2.s32x
 
 **Discovered**: 2026-02-20, during Phase C (register cache) development
 **Pre-existing**: Yes — reproduces on pre-cache code (commit c2eef78)
@@ -280,20 +280,31 @@ slow32-fast gen2.s32x /tmp/stub_ast.c /tmp/out.s
 | gen1 + s12cc.c (full self-compile) | OK (~seconds) | OK |
 | SSA-compiled s32-as assembling 66K-line file | OK | OK |
 
-**What does NOT help** — every dbt flag combination was tested, all reproduce:
-`-1` (stage 1, no JIT), `-2`, `-3`, `-4`, `-R`, `-P`, `-S`, `-I`, and all
-combinations thereof. Since stage 1 (pure interpret, no block cache) also
-hangs, the bug is in the core instruction dispatch or memory subsystem,
-not the JIT optimizer.
+**Stage-level bracketing** (corrected with signal-based probe):
+
+| Stage | Behavior | Notes |
+|-------|----------|-------|
+| `-1` (no cache) | **WORKS** — makes progress | Was misidentified as "hang" — just very slow (retranslates every block) |
+| `-2` (block cache) | **HANGS** at PC=0x0002CAA0 (`ssa_build_cfg`) | Block cache is the trigger |
+| `-3` (+ inline lookup) | HANGS | Same root cause as stage 2 |
+| `-4` (+ superblock) | **HANGS** at PC=0x00037038 (`hcg_phi_copies`) | Different function but same pattern |
+
+Flags that do NOT help: `-R`, `-P`, `-S`, `-I`, and all combinations.
+The bug is in the **block cache** (translate_block_cached), not the core
+instruction dispatch or JIT optimizer.
 
 **Analysis:**
 - The sharp cliff between 133M (0.13s) and 153M (infinite loop) indicates
   a hard trigger, not gradual slowdown.
-- gen1 (tree-walk-compiled, 184KB) compiles s12cc.c fine on dbt. gen2
-  (SSA-compiled, 268KB) hangs. Same source code, different machine code.
+- gen1 (tree-walk-compiled, 184KB) compiles s12cc.c fine on dbt (all stages).
+  gen2 (SSA-compiled, 268KB) hangs on stages 2+. Same source code, different
+  machine code.
 - SSA codegen patterns: spill-everything ldw/stw, PHI parallel copies
   (push/pop sequences), more basic blocks with branches.
 - Small SSA-compiled programs run fine on dbt. Only gen2 at scale triggers it.
+- Stage 2 and 4 hang at different PCs/functions, suggesting the cached block
+  translations diverge from correct execution at different points depending
+  on which blocks happen to be cached first.
 
 **Narrowing — trigger pattern (lexer/pp base + calloc + struct arrow):**
 
@@ -331,28 +342,66 @@ between emulators. slow32-fast may tolerate the bug (e.g., a wrong value that
 doesn't affect control flow on fast's memory layout), while slow32-dbt diverges
 into an infinite loop.
 
-**Hypotheses (updated):**
+**Probe diagnostics** (added 2026-02-20):
 
-1. **SSA codegen bug**: The SSA backend may emit incorrect code for a specific
-   pattern (e.g., call result used as struct pointer). The generated machine
-   code has undefined behavior that fast tolerates but dbt doesn't. This is
-   the leading theory.
+Signal-based probe added to slow32-dbt (`-q` flag): SIGALRM fires every N
+seconds and prints cpu->pc via async-signal-safe write(). This works even when
+the JIT code never returns to the dispatch loop (the signal interrupts the
+native code).
 
-2. **dbt instruction emulation bug**: A rare instruction or operand combination
-   produced by the SSA codegen is emulated incorrectly by the dbt's interpreter.
-   Since even stage 1 (pure interpret) hangs, this would be in the core decode
-   loop. Less likely since gen2 works for small inputs.
+Stage 4 stuck PC: `0x00037038` in `hcg_phi_copies` (PHI elimination codegen).
+The code at this address is `stw fp+-300, r1` — storing the return value of
+`cg_s()` (string output). The enclosing loop pushes PHI argument values via
+`hcg_into()` + `cg_s()`. This is a while loop that traverses PHI nodes.
 
-3. **Memory-layout-dependent UB**: The SSA codegen has a latent bug (e.g.,
-   uninitialized read, buffer overflow in HIR arrays) that only manifests after
-   processing enough code to fill internal tables. The resulting corruption
-   causes different behavior depending on the exact memory layout, which
-   differs between emulators.
+Stage 2 stuck PC: `0x0002CAA0` in `ssa_build_cfg` (SSA CFG construction).
+Different function than stage 4, suggesting the block cache corruption affects
+different code paths depending on cache layout.
 
-**Next steps:**
-- Compare gen1 vs gen2 assembly for the trigger function (`mk` with calloc +
-  arrow) to identify suspicious instruction sequences
-- Add signal-based probe diagnostics to slow32-dbt (like slow32-fast has)
-  to identify WHERE the infinite loop occurs (guest PC)
-- Run under gdb: let hang, Ctrl+C, examine backtrace and guest PC
-- Add `-DSLOW32_DBT_ALIGN_TRAP=1` to check for unaligned memory access
+In both cases: SP/FP/LR are constant across all probes = the loop is tight,
+never calling deeper or returning. r1=0 (stage 4) or r1=1 (stage 2).
+
+**Hypotheses (updated with probe data):**
+
+1. **Block cache hash collision / stale block**: The block cache (used in
+   stages 2-4) may serve a stale or incorrect translated block for a guest
+   PC due to a hash collision or invalidation bug. The cached block jumps
+   to the wrong target, creating the loop. Stage 1 (no cache) always
+   retranslates fresh, so it never hits this. **Leading theory.**
+
+2. **Block chaining mislink**: When the dbt chains blocks (direct jump from
+   one translated block to the next), a chaining patch may link to the wrong
+   target after a cache eviction or when two blocks share the same hash slot.
+
+3. **SSA codegen + block cache interaction**: The SSA backend produces many
+   small basic blocks with frequent branches (more blocks than tree-walk
+   codegen). This increases cache pressure and collision probability, making
+   a latent cache bug manifest only at scale with SSA code.
+
+4. ~~dbt instruction emulation bug~~ — ruled out. Stage 1 (same decode
+   loop, no cache) works fine.
+
+**Root cause found (2026-02-20):**
+
+`cache_insert()` in block_cache.c used linear probing to find an empty hash
+table slot but had **no guard against a full table**. The hash table had
+`BLOCK_CACHE_SIZE=4096` slots, but the block pool allowed `MAX_BLOCKS=8192`
+entries. When a program with >4096 unique basic blocks was run, `cache_insert`
+looped forever scanning for a NULL slot that didn't exist.
+
+The SSA codegen creates many small basic blocks (~5897 for s12cc), easily
+exceeding 4096. The tree-walk codegen creates fewer, larger blocks, staying
+under the limit. This is why gen1 worked but gen2 didn't — and why only
+stages 2+ (which use the block cache) were affected.
+
+**Fix:**
+1. Added `cache_needs_flush()` — returns true when load factor exceeds 75%
+2. Added pre-translation check in `translate_block_cached()` to flush before
+   the hash table fills up
+3. Bumped `BLOCK_CACHE_SIZE` 4K→128K and `MAX_BLOCKS` 8K→128K
+4. Made `block_cache_t` static (BSS) to avoid 3MB+ stack allocation
+
+**Verification:**
+- 4K cache + guard: gen2 selfhost fixed point proven (gen2.s == gen3.s)
+- 128K cache + guard: gen2 selfhost fixed point proven
+- Full stage05 test suite: 22/22 pass
