@@ -242,9 +242,62 @@ fi
 EXEC_TIMEOUT="$SAVED_TIMEOUT"
 
 # ============================================================
-# Step 3: Test s13cc by compiling and running test programs
+# Step 2b: Recompile libc with s13cc (HIR/SSA ABI)
+#
+# Stage04's tree-walk codegen clobbers r11-r18 without saving them.
+# Stage05's register allocator assumes r11-r28 are callee-saved.
+# Programs compiled by s13cc must link against s13cc-compiled libc
+# to get a consistent ABI.
 # ============================================================
 S13CC_EXE="$WORKDIR/s13cc.s32x"
+G1_LIBC_OBJS=""
+G1_LIBC_START_OBJ=""
+
+if [[ -s "$S13CC_EXE" ]]; then
+    echo ""
+    echo "=== Step 2b: Recompile libc with s13cc (HIR/SSA ABI) ==="
+    EXEC_TIMEOUT=300
+
+    for name in string_extra string_more ctype convert stdio malloc; do
+        run_exe "$S13CC_EXE" "$WORKDIR/g1_${name}.cc.log" "$LIBC_DIR/${name}.c" "$WORKDIR/g1_${name}.s"
+        if [[ ! -s "$WORKDIR/g1_${name}.s" ]]; then
+            echo "  WARN: gen1 failed to compile ${name}.c, falling back to stage04 libc" >&2
+            G1_LIBC_OBJS=""
+            break
+        fi
+        run_exe "$AS_EXE" "$WORKDIR/g1_${name}.as.log" "$WORKDIR/g1_${name}.s" "$WORKDIR/g1_${name}.s32o"
+        if [[ ! -s "$WORKDIR/g1_${name}.s32o" ]]; then
+            echo "  WARN: gen1 libc assemble failed: ${name}.s" >&2
+            G1_LIBC_OBJS=""
+            break
+        fi
+        G1_LIBC_OBJS="$G1_LIBC_OBJS $WORKDIR/g1_${name}.s32o"
+    done
+
+    if [[ -n "$G1_LIBC_OBJS" ]]; then
+        run_exe "$S13CC_EXE" "$WORKDIR/g1_start.cc.log" "$LIBC_DIR/start.c" "$WORKDIR/g1_start.s"
+        if [[ -s "$WORKDIR/g1_start.s" ]]; then
+            run_exe "$AS_EXE" "$WORKDIR/g1_start.as.log" "$WORKDIR/g1_start.s" "$WORKDIR/g1_start.s32o"
+            if [[ -s "$WORKDIR/g1_start.s32o" ]]; then
+                G1_LIBC_START_OBJ="$WORKDIR/g1_start.s32o"
+                echo "  gen1-compiled libc ready (HIR/SSA ABI, r11-r28 callee-saved)"
+            fi
+        fi
+    fi
+
+    EXEC_TIMEOUT="$SAVED_TIMEOUT"
+fi
+
+# If gen1 libc was built, use it for all subsequent test linking.
+# Runtime asm objects (crt0, mmio_no_start) are ABI-neutral.
+if [[ -n "$G1_LIBC_OBJS" && -n "$G1_LIBC_START_OBJ" ]]; then
+    LIBC_OBJS="$G1_LIBC_OBJS"
+    LIBC_START_OBJ="$G1_LIBC_START_OBJ"
+fi
+
+# ============================================================
+# Step 3: Test s13cc by compiling and running test programs
+# ============================================================
 
 if [[ -s "$S13CC_EXE" ]]; then
     echo ""

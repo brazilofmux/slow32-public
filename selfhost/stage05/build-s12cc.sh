@@ -4,8 +4,15 @@ set -euo pipefail
 # Build s12cc.s32x: the stage05 AST-based C compiler.
 # Uses: Stage 04 s12cc.s32x (compiler), Stage 04 s32-as.s32x (assembler),
 #       Stage 04 s32-ld.s32x (linker).
-# Libc is compiled by stage04's s12cc (not stage03).
-# Deposits the artifact in the script's directory.
+#
+# Two-phase build:
+#   Phase 1: stage04 compiles s12cc.c + libc → gen1 (tree-walk ABI)
+#   Phase 2: gen1 recompiles libc → stage05 libc (HIR/SSA ABI, r11-r28 callee-saved)
+#
+# gen1 (s12cc.s32x) uses tree-walk ABI internally but its codegen produces
+# HIR/SSA ABI code.  Programs compiled by gen1 must link against gen1-compiled
+# libc to avoid register clobbering (stage04 libc doesn't save r11-r18).
+# Deposits s12cc.s32x and libc objects in the script's directory.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -110,11 +117,82 @@ compile "$SCRIPT_DIR/s12cc.c" "$WORKDIR/s12cc.s" "$WORKDIR/s12cc.cc.log"
 assemble "$WORKDIR/s12cc.s" "$WORKDIR/s12cc.s32o" "$WORKDIR/s12cc.as.log"
 
 # --- Link s12cc.s32x ---
-echo "[4/4] Link s12cc.s32x"
+echo "[4/6] Link s12cc.s32x (gen1, tree-walk ABI)"
 link_exe "$WORKDIR/link.log" -o "$OUT_EXE" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/s12cc.s32o" "$WORKDIR/start.s32o" \
     "$WORKDIR/mmio_no_start.s32o" \
     $LIBC_OBJS
 [[ -s "$OUT_EXE" ]] || { echo "link failed" >&2; exit 1; }
 
+echo "  gen1: $OUT_EXE ($(wc -c < "$OUT_EXE") bytes)"
+
+# --- Phase 2: Recompile libc with gen1 (HIR/SSA ABI) ---
+# gen1's codegen uses r11-r28 as callee-saved registers.  stage04's tree-walk
+# codegen clobbers r11-r18 without saving them.  Programs compiled by gen1
+# must link against gen1-compiled libc to get a consistent ABI.
+
+compile_gen1() {
+    local src="$1" asm="$2" log="$3"
+    set +e
+    timeout "${EXEC_TIMEOUT:-300}" "$EMU" "$OUT_EXE" "$src" "$asm" >"$log" 2>&1
+    local rc=$?
+    set -e
+    if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
+        echo "gen1 compile failed (rc=$rc): $src" >&2
+        tail -n 40 "$log" >&2
+        return 1
+    fi
+    [[ -s "$asm" ]] || { echo "gen1 produced no output: $src" >&2; return 1; }
+}
+
+echo "[5/6] Recompile libc with gen1 (HIR/SSA ABI)"
+LIBC_OUT_DIR="$SCRIPT_DIR/lib"
+mkdir -p "$LIBC_OUT_DIR"
+
+for name in string_extra string_more ctype convert stdio malloc; do
+    compile_gen1 "$LIBC_DIR/${name}.c" "$WORKDIR/g1_${name}.s" "$WORKDIR/g1_${name}.cc.log"
+    assemble "$WORKDIR/g1_${name}.s" "$LIBC_OUT_DIR/${name}.s32o" "$WORKDIR/g1_${name}.as.log"
+done
+compile_gen1 "$LIBC_DIR/start.c" "$WORKDIR/g1_start.s" "$WORKDIR/g1_start.cc.log"
+assemble "$WORKDIR/g1_start.s" "$LIBC_OUT_DIR/start.s32o" "$WORKDIR/g1_start.as.log"
+
+# Runtime asm objects are ABI-neutral (hand-written assembly)
+cp "$WORKDIR/crt0.s32o" "$LIBC_OUT_DIR/crt0.s32o"
+cp "$WORKDIR/mmio_no_start.s32o" "$LIBC_OUT_DIR/mmio_no_start.s32o"
+
+echo "[6/6] Verify gen1 + gen1-libc"
+# Quick smoke test: gen1 compiles a program that calls strcmp (libc function),
+# verifying the ABI is consistent (r11-r28 preserved across calls).
+cat > "$WORKDIR/smoke.c" <<'SMOKE_EOF'
+int strcmp(char *a, char *b);
+int main(void) {
+    if (strcmp("hello", "hello") != 0) return 1;
+    if (strcmp("abc", "abd") == 0) return 2;
+    return 0;
+}
+SMOKE_EOF
+
+compile_gen1 "$WORKDIR/smoke.c" "$WORKDIR/smoke.s" "$WORKDIR/smoke.cc.log"
+assemble "$WORKDIR/smoke.s" "$WORKDIR/smoke.s32o" "$WORKDIR/smoke.as.log"
+link_exe "$WORKDIR/smoke.link.log" -o "$WORKDIR/smoke.s32x" --mmio 64K \
+    "$LIBC_OUT_DIR/crt0.s32o" "$WORKDIR/smoke.s32o" "$LIBC_OUT_DIR/start.s32o" \
+    "$LIBC_OUT_DIR/mmio_no_start.s32o" \
+    "$LIBC_OUT_DIR/string_extra.s32o" "$LIBC_OUT_DIR/string_more.s32o" \
+    "$LIBC_OUT_DIR/ctype.s32o" "$LIBC_OUT_DIR/convert.s32o" \
+    "$LIBC_OUT_DIR/stdio.s32o" "$LIBC_OUT_DIR/malloc.s32o"
+
+set +e
+timeout 30 "$EMU" "$WORKDIR/smoke.s32x" > "$WORKDIR/smoke.out" 2>&1
+SMOKE_RC=$?
+set -e
+
+if [[ "$SMOKE_RC" -eq 0 || "$SMOKE_RC" -eq 96 ]]; then
+    echo "  smoke test: PASS"
+else
+    echo "  smoke test: FAIL (rc=$SMOKE_RC)" >&2
+    cat "$WORKDIR/smoke.out" >&2
+    exit 1
+fi
+
 echo "OK: $OUT_EXE ($(wc -c < "$OUT_EXE") bytes)"
+echo "    lib/ contains gen1-compiled libc objects (HIR/SSA ABI)"
