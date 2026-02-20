@@ -113,6 +113,13 @@ int has_flag(char *cmd, int ch) {
     return 0;
 }
 
+int in_bounds(int off, int size, int total) {
+    if (off < 0 || size < 0 || total < 0) return 0;
+    if (off > total) return 0;
+    if (size > total - off) return 0;
+    return 1;
+}
+
 char *basename_ptr(char *path) {
     char *p;
     char *base;
@@ -252,11 +259,15 @@ int load_archive_view(char *archive_path, int *out_nmembers, int *out_file_size,
         fclose(in);
         return 0;
     }
-    if (in_mem_off + in_nmembers * 24 > file_size) {
+    if (in_nmembers < 0 || in_nmembers > (file_size / 24)) {
         fclose(in);
         return 0;
     }
-    if (in_str_off + in_str_sz > file_size) {
+    if (!in_bounds(in_mem_off, in_nmembers * 24, file_size)) {
+        fclose(in);
+        return 0;
+    }
+    if (!in_bounds(in_str_off, in_str_sz, file_size)) {
         fclose(in);
         return 0;
     }
@@ -292,7 +303,7 @@ int load_archive_view(char *archive_path, int *out_nmembers, int *out_file_size,
             fclose(in);
             return 0;
         }
-        if (data_off + size > file_size) {
+        if (!in_bounds(data_off, size, file_size)) {
             fclose(in);
             return 0;
         }
@@ -564,11 +575,15 @@ int build_symbol_index(int nmembers, int *str_used) {
         str_off = r32(g_data + base + 28);
         str_sz = r32(g_data + base + 32);
 
-        if (sym_off + nsyms * 16 > g_members[i].size) {
+        if (nsyms < 0 || nsyms > (g_members[i].size / 16)) {
             i = i + 1;
             continue;
         }
-        if (str_off + str_sz > g_members[i].size) {
+        if (!in_bounds(sym_off, nsyms * 16, g_members[i].size)) {
+            i = i + 1;
+            continue;
+        }
+        if (!in_bounds(str_off, str_sz, g_members[i].size)) {
             i = i + 1;
             continue;
         }
@@ -744,11 +759,15 @@ int load_existing_archive(char *archive_path, int *nmembers, int *str_used) {
         fclose(in);
         return 0;
     }
-    if (in_mem_off + in_nmembers * 24 > file_size) {
+    if (in_nmembers < 0 || in_nmembers > (file_size / 24)) {
         fclose(in);
         return 0;
     }
-    if (in_str_off + in_str_sz > file_size) {
+    if (!in_bounds(in_mem_off, in_nmembers * 24, file_size)) {
+        fclose(in);
+        return 0;
+    }
+    if (!in_bounds(in_str_off, in_str_sz, file_size)) {
         fclose(in);
         return 0;
     }
@@ -785,7 +804,7 @@ int load_existing_archive(char *archive_path, int *nmembers, int *str_used) {
             fclose(in);
             return 0;
         }
-        if (data_off + size > file_size) {
+        if (!in_bounds(data_off, size, file_size)) {
             fclose(in);
             return 0;
         }
