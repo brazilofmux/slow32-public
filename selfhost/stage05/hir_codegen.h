@@ -74,6 +74,70 @@ static int hcg_blk_lbl[HIR_MAX_BLOCK];
  * 0 means not spilled (rematerializable). */
 static int hcg_spill[HIR_MAX_INST];
 
+/* --- Register read-cache (r11-r18) --- */
+#define RA_NREG 8
+#define RA_BASE 11
+
+static int ra_val[RA_NREG];   /* HIR inst cached in each reg, -1 = empty */
+static int ra_age[RA_NREG];   /* LRU clock tick */
+static int ra_clock;
+
+static void ra_reset(void) {
+    int i;
+    i = 0;
+    while (i < RA_NREG) {
+        ra_val[i] = -1;
+        i = i + 1;
+    }
+    ra_clock = 0;
+}
+
+static int ra_find(int inst) {
+    int i;
+    i = 0;
+    while (i < RA_NREG) {
+        if (ra_val[i] == inst) {
+            ra_clock = ra_clock + 1;
+            ra_age[i] = ra_clock;
+            return RA_BASE + i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+static int ra_alloc(int inst) {
+    int i;
+    int best;
+    int best_age;
+    /* Try empty slot first */
+    i = 0;
+    while (i < RA_NREG) {
+        if (ra_val[i] < 0) {
+            ra_val[i] = inst;
+            ra_clock = ra_clock + 1;
+            ra_age[i] = ra_clock;
+            return RA_BASE + i;
+        }
+        i = i + 1;
+    }
+    /* Evict LRU */
+    best = 0;
+    best_age = ra_age[0];
+    i = 1;
+    while (i < RA_NREG) {
+        if (ra_age[i] < best_age) {
+            best = i;
+            best_age = ra_age[i];
+        }
+        i = i + 1;
+    }
+    ra_val[best] = inst;
+    ra_clock = ra_clock + 1;
+    ra_age[best] = ra_clock;
+    return RA_BASE + best;
+}
+
 /* --- Load immediate into register --- */
 static void hcg_li(int reg, int v) {
     int hi;
@@ -124,6 +188,7 @@ static void hcg_la(int reg, char *sym) {
 static void hcg_into(int reg, int inst) {
     int k;
     int off;
+    int cached;
     if (inst < 0) {
         /* -1 means no value (void), load 0 */
         cg_s("    addi r");
@@ -178,6 +243,17 @@ static void hcg_into(int reg, int inst) {
         return;
     }
 
+    /* Check register cache */
+    cached = ra_find(inst);
+    if (cached >= 0) {
+        cg_s("    addi r");
+        cg_n(reg);
+        cg_s(", r");
+        cg_n(cached);
+        cg_s(", 0\n");
+        return;
+    }
+
     /* Load from spill slot */
     if (hcg_spill[inst] != 0) {
         off = hcg_spill[inst];
@@ -212,6 +288,7 @@ static void hcg_into(int reg, int inst) {
 /* Spill r1 to instruction's temp slot */
 static void hcg_spill_res(int inst) {
     int off;
+    int creg;
     if (hi_is_remat(h_kind[inst])) return;
     off = hcg_spill[inst];
     if (off >= -2048 && off <= 2047) {
@@ -223,6 +300,14 @@ static void hcg_spill_res(int inst) {
         hcg_li(2, off);
         cg_s("    add r2, r30, r2\n");
         cg_s("    stw r2, r1, 0\n");
+    }
+    /* Cache result in register (only for large-offset spill slots
+     * where loads cost 4 instructions vs 1 for a cache hit move) */
+    if (off < -2048 || off > 2047) {
+        creg = ra_alloc(inst);
+        cg_s("    addi r");
+        cg_n(creg);
+        cg_s(", r1, 0\n");
     }
 }
 
@@ -534,6 +619,7 @@ static void hcg_inst(int idx) {
         cg_s("    jal r31, ");
         cg_s(h_name[idx]);
         cg_c(10);
+        ra_reset();
         hcg_spill_res(idx);
         return;
     }
@@ -570,6 +656,7 @@ static void hcg_inst(int idx) {
         /* Pop callee into r2 */
         cg_s("    ldw r2, r29, 0\n    addi r29, r29, 4\n");
         cg_s("    jalr r31, r2, 0\n");
+        ra_reset();
         hcg_spill_res(idx);
         return;
     }
@@ -591,6 +678,7 @@ static void hcg_inst(int idx) {
 
 static void hcg_block(int b) {
     int i;
+    ra_reset();
     cg_ldef(hcg_blk_lbl[b]);
     i = bb_start[b];
     while (i < bb_end[b]) {
