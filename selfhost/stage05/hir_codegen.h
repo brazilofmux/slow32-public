@@ -256,15 +256,13 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
     int v;
     int off;
 
-    /* Collect PHIs in to_blk */
+    /* Collect PHIs in to_blk (use linked list for O(1) per block) */
     n = 0;
-    i = ssa_phi_base;
-    while (i < h_ninst) {
-        if (h_kind[i] == HI_PHI && h_blk[i] == to_blk) {
-            hcg_phi_tmp[n] = i;
-            n = n + 1;
-        }
-        i = i + 1;
+    i = ssa_phi_head[to_blk];
+    while (i >= 0) {
+        hcg_phi_tmp[n] = i;
+        n = n + 1;
+        i = ssa_phi_next[i];
     }
     if (n == 0) return;
 

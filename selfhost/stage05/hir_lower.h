@@ -389,11 +389,12 @@ static int hl_expr(Node *n) {
 
     /* Direct function call */
     if (n->kind == ND_CALL) {
-        int av[8];
+        int av[16];
         /* Lower all arguments first (inner calls may use h_carg) */
         a = n->args;
         nargs = 0;
         while (a) {
+            if (nargs >= 16) p_error("too many call args (limit 16)");
             av[nargs] = hl_expr(a);
             nargs = nargs + 1;
             a = a->next;
@@ -421,11 +422,12 @@ static int hl_expr(Node *n) {
 
     /* Indirect call through expression */
     if (n->kind == ND_CALL_PTR) {
-        int av[8];
+        int av[16];
         callee = hl_expr(n->lhs);
         a = n->args;
         nargs = 0;
         while (a) {
+            if (nargs >= 16) p_error("too many call args (limit 16)");
             av[nargs] = hl_expr(a);
             nargs = nargs + 1;
             a = a->next;

@@ -23,8 +23,8 @@ static int ssa_rpo_cnt;
 static int ssa_idom[HIR_MAX_BLOCK];
 
 /* --- Dominance frontier (fixed width per block) --- */
-#define SSA_DF_W 16
-#define SSA_DF_SZ 32768
+#define SSA_DF_W 32
+#define SSA_DF_SZ 65536
 static int ssa_df[SSA_DF_SZ];
 static int ssa_dfc[HIR_MAX_BLOCK];
 
@@ -33,6 +33,10 @@ static int ssa_dfc[HIR_MAX_BLOCK];
 static int ssa_promo[SSA_MAX_PROMO];
 static int ssa_npromo;
 static int ssa_phi_base; /* h_ninst before phi insertion */
+
+/* --- PHI optimization (linked lists per block) --- */
+static int ssa_phi_head[HIR_MAX_BLOCK];
+static int ssa_phi_next[HIR_MAX_INST];
 
 /* hl_nparams defined in hir_lower.h (shared) */
 
@@ -141,14 +145,23 @@ static void ssa_build_cfg(void) {
         b = b + 1;
     }
 
-    /* Count predecessors */
+    /* Count predecessors (with bounds validation on targets) */
     b = 0;
     while (b < bb_nblk) {
         i = 0;
         while (i < ssa_nsucc[b]) {
             s = ssa_succ[b * 2 + i];
-            ssa_npred[s] = ssa_npred[s] + 1;
-            i = i + 1;
+            if (s >= 0 && s < bb_nblk) {
+                ssa_npred[s] = ssa_npred[s] + 1;
+                i = i + 1;
+            } else {
+                /* Invalid target — remove this edge by shifting second edge if it exists */
+                if (i == 0 && ssa_nsucc[b] == 2) {
+                    ssa_succ[b * 2] = ssa_succ[b * 2 + 1];
+                }
+                ssa_nsucc[b] = ssa_nsucc[b] - 1;
+                /* Don't increment i — retry current slot which now has the next edge */
+            }
         }
         b = b + 1;
     }
@@ -167,15 +180,17 @@ static void ssa_build_cfg(void) {
         exit(1);
     }
 
-    /* Fill predecessors */
+    /* Fill predecessors (with bounds validation) */
     b = 0;
     while (b < bb_nblk) {
         i = 0;
         while (i < ssa_nsucc[b]) {
             s = ssa_succ[b * 2 + i];
-            pb = ssa_pbase[s] + ssa_npred[s];
-            ssa_pred[pb] = b;
-            ssa_npred[s] = ssa_npred[s] + 1;
+            if (s >= 0 && s < bb_nblk) {
+                pb = ssa_pbase[s] + ssa_npred[s];
+                ssa_pred[pb] = b;
+                ssa_npred[s] = ssa_npred[s] + 1;
+            }
             i = i + 1;
         }
         b = b + 1;
@@ -215,6 +230,10 @@ static void ssa_compute_rpo(void) {
             if (!ssa_vis[s]) {
                 ssa_vis[s] = 1;
                 top = top + 1;
+                if (top >= SSA_DFS) {
+                    fputs("s12cc: RPO DFS stack overflow\n", stderr);
+                    exit(1);
+                }
                 ssa_rblk[top] = s;
                 ssa_rci[top] = 0;
             }
@@ -240,9 +259,19 @@ static void ssa_compute_rpo(void) {
 /* ------------------------------------------------------------ */
 
 static int ssa_intersect(int b1, int b2) {
+    int guard;
+    guard = 0;
     while (b1 != b2) {
-        while (ssa_rpo[b1] > ssa_rpo[b2]) b1 = ssa_idom[b1];
-        while (ssa_rpo[b2] > ssa_rpo[b1]) b2 = ssa_idom[b2];
+        while (ssa_rpo[b1] > ssa_rpo[b2]) {
+            if (b1 == ssa_idom[b1]) return b1; /* at root */
+            b1 = ssa_idom[b1];
+        }
+        while (ssa_rpo[b2] > ssa_rpo[b1]) {
+            if (b2 == ssa_idom[b2]) return b2; /* at root */
+            b2 = ssa_idom[b2];
+        }
+        guard = guard + 1;
+        if (guard > bb_nblk) return 0; /* bail to entry */
     }
     return b1;
 }
@@ -312,6 +341,7 @@ static void ssa_compute_df(void) {
     b = 0;
     while (b < bb_nblk) {
         if (ssa_npred[b] < 2) { b = b + 1; continue; }
+        if (ssa_idom[b] < 0) { b = b + 1; continue; }
         j = 0;
         while (j < ssa_npred[b]) {
             p = ssa_pred[ssa_pbase[b] + j];
@@ -329,6 +359,8 @@ static void ssa_compute_df(void) {
                     ssa_df[base + ssa_dfc[runner]] = b;
                     ssa_dfc[runner] = ssa_dfc[runner] + 1;
                 }
+                /* Stop at root (self-dominating entry node) */
+                if (runner == ssa_idom[runner]) break;
                 runner = ssa_idom[runner];
             }
             j = j + 1;
@@ -552,6 +584,19 @@ static void ssa_insert_phis(void) {
         }
         v = v + 1;
     }
+
+    /* Build PHI lists per block for fast lookup in ssa_rename */
+    b = 0;
+    while (b < bb_nblk) { ssa_phi_head[b] = -1; b = b + 1; }
+    i = ssa_phi_base;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_PHI) {
+            b = h_blk[i];
+            ssa_phi_next[i] = ssa_phi_head[b];
+            ssa_phi_head[b] = i;
+        }
+        i = i + 1;
+    }
 }
 
 /* ------------------------------------------------------------ */
@@ -617,13 +662,11 @@ static void ssa_rename(void) {
             ssa_rmark[top] = ssa_plog_n;
 
             /* Process PHI nodes in block b (they define the variable) */
-            i = ssa_phi_base;
-            while (i < h_ninst) {
-                if (h_kind[i] == HI_PHI && h_blk[i] == b) {
-                    phi_v = h_val[i];
-                    ssa_vpush(phi_v, i);
-                }
-                i = i + 1;
+            i = ssa_phi_head[b];
+            while (i >= 0) {
+                phi_v = h_val[i];
+                ssa_vpush(phi_v, i);
+                i = ssa_phi_next[i];
             }
 
             /* Process regular instructions (stop at first terminator
@@ -656,21 +699,19 @@ static void ssa_rename(void) {
             si = 0;
             while (si < ssa_nsucc[b]) {
                 s = ssa_succ[b * 2 + si];
-                i = ssa_phi_base;
-                while (i < h_ninst) {
-                    if (h_kind[i] == HI_PHI && h_blk[i] == s) {
-                        phi_v = h_val[i];
-                        val = ssa_vcur(phi_v);
-                        /* Find this pred's slot in phi args */
-                        j = 0;
-                        while (j < h_pcnt[i]) {
-                            if (h_pblk[h_pbase[i] + j] == b) {
-                                h_pval[h_pbase[i] + j] = val;
-                            }
-                            j = j + 1;
+                i = ssa_phi_head[s];
+                while (i >= 0) {
+                    phi_v = h_val[i];
+                    val = ssa_vcur(phi_v);
+                    /* Find this pred's slot in phi args */
+                    j = 0;
+                    while (j < h_pcnt[i]) {
+                        if (h_pblk[h_pbase[i] + j] == b) {
+                            h_pval[h_pbase[i] + j] = val;
                         }
+                        j = j + 1;
                     }
-                    i = i + 1;
+                    i = ssa_phi_next[i];
                 }
                 si = si + 1;
             }
@@ -706,6 +747,12 @@ static void ssa_rename(void) {
 /* ------------------------------------------------------------ */
 
 static void hir_ssa_construct(void) {
+    int b;
+
+    /* Always init phi linked lists (codegen uses them even with 0 promos) */
+    b = 0;
+    while (b < bb_nblk) { ssa_phi_head[b] = -1; b = b + 1; }
+
     if (bb_nblk < 1) {
         ssa_phi_base = h_ninst;
         return;
