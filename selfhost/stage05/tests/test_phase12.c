@@ -315,6 +315,26 @@ int test_ptr_arith(void) {
     return 0;
 }
 
+/* --- Test 14: ADDI peepholes --- */
+
+int test_addi_peephole(void) {
+    int x;
+    int y;
+    int z;
+
+    x = 17;
+
+    /* addi x, 0 -> copy x */
+    y = x + 0;
+    if (y != 17) return 1;
+
+    /* Nested addi combine: (x + 5) + 9 -> x + 14 */
+    z = (x + 5) + 9;
+    if (z != 31) return 2;
+
+    return 0;
+}
+
 /* --- Main --- */
 int main(void) {
     int rc;
@@ -357,6 +377,9 @@ int main(void) {
 
     rc = test_ptr_arith();
     if (rc) return rc + 120;
+
+    rc = test_addi_peephole();
+    if (rc) return rc + 130;
 
     puts("Phase 12: all tests passed\n");
     return 0;

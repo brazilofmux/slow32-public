@@ -342,13 +342,27 @@ static int ho_const_fold(void) {
             changed = 1;
         }
 
-        /* === ADDI with constant base === */
-        if (k == HI_ADDI && h_src1[i] >= 0 &&
-            h_kind[h_src1[i]] == HI_ICONST) {
-            h_kind[i] = HI_ICONST;
-            h_val[i] = h_val[h_src1[i]] + h_val[i];
-            h_src1[i] = -1;
-            changed = 1;
+        /* === ADDI peepholes === */
+        if (k == HI_ADDI) {
+            /* addi x, 0 -> copy x */
+            if (h_val[i] == 0) {
+                h_kind[i] = HI_COPY;
+                h_src2[i] = -1;
+                changed = 1;
+            }
+            /* addi (addi x, c1), c2 -> addi x, (c1 + c2) */
+            else if (h_src1[i] >= 0 && h_kind[h_src1[i]] == HI_ADDI) {
+                h_val[i] = h_val[i] + h_val[h_src1[i]];
+                h_src1[i] = h_src1[h_src1[i]];
+                changed = 1;
+            }
+            /* addi const, c -> const */
+            else if (h_src1[i] >= 0 && h_kind[h_src1[i]] == HI_ICONST) {
+                h_kind[i] = HI_ICONST;
+                h_val[i] = h_val[h_src1[i]] + h_val[i];
+                h_src1[i] = -1;
+                changed = 1;
+            }
         }
 
         /* === BRC with constant condition -> unconditional BR === */
