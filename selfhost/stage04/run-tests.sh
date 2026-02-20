@@ -4,9 +4,9 @@ set -euo pipefail
 # Stage 12: New compiler (Ragel lexer + parser)
 #
 # Bootstrap chain:
-#   stage03/s32cc → compile stage12 sources
-#   stage02/s32-as → assemble
-#   stage02/s32-ld → link
+#   stage03/s32cc → compile stage04 sources
+#   stage03/s32-as → assemble
+#   stage03/s32-ld → link
 #
 # Tests:
 #   1) Duff's device test (nested switch + goto labels)
@@ -68,7 +68,7 @@ fi
 
 [[ -f "$EMU" ]] || { echo "Missing emulator: $EMU" >&2; exit 1; }
 
-WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage12.XXXXXX)"
+WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage04.XXXXXX)"
 if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then
     trap 'rm -rf "$WORKDIR"' EXIT
 fi
@@ -158,16 +158,16 @@ compile_and_link() {
 echo "=== Step 1: Bootstrap ==="
 
 CC_EXE="$SELFHOST_DIR/stage03/s32cc.s32x"
-AS_EXE="$SELFHOST_DIR/stage02/s32-as.s32x"
-LD_EXE="$SELFHOST_DIR/stage02/s32-ld.s32x"
+AS_EXE="$SELFHOST_DIR/stage03/s32-as.s32x"
+LD_EXE="$SELFHOST_DIR/stage03/s32-ld.s32x"
 
 [[ -f "$CC_EXE" ]] || { echo "Missing s32cc (stage03): $CC_EXE" >&2; exit 1; }
 [[ -f "$AS_EXE" ]] || { echo "Missing assembler: $AS_EXE" >&2; exit 1; }
 [[ -f "$LD_EXE" ]] || { echo "Missing linker: $LD_EXE" >&2; exit 1; }
 
-LIBC_DIR="$SELFHOST_DIR/stage02/libc"
-CRT0_SRC="$SELFHOST_DIR/stage02/crt0.s"
-MMIO_NO_START_SRC="$SELFHOST_DIR/stage02/mmio_no_start.s"
+LIBC_DIR="$SCRIPT_DIR/libc"
+CRT0_SRC="$SCRIPT_DIR/crt0.s"
+MMIO_NO_START_SRC="$SCRIPT_DIR/mmio_no_start.s"
 
 run_exe "$AS_EXE" "$WORKDIR/crt0.log" "$CRT0_SRC" "$WORKDIR/crt0.s32o"
 [[ -s "$WORKDIR/crt0.s32o" ]] || { echo "failed to assemble crt0" >&2; exit 1; }
@@ -384,9 +384,9 @@ fi
 # ============================================================
 echo ""
 if [[ "$FAIL" -eq 0 ]]; then
-    echo "OK: stage12 ($PASS/$TOTAL tests passed)"
+    echo "OK: stage04 ($PASS/$TOTAL tests passed)"
 else
-    echo "FAIL: stage12 ($PASS/$TOTAL tests passed, $FAIL failed)" >&2
+    echo "FAIL: stage04 ($PASS/$TOTAL tests passed, $FAIL failed)" >&2
     exit 1
 fi
 

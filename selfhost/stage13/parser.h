@@ -1,4 +1,4 @@
-/* parser.h -- Recursive-descent parser for stage12 compiler
+/* parser.h -- Recursive-descent parser for stage04 compiler
  *
  * Phase 2: types, pointers, strings, globals, local arrays.
  * Builds a typed AST from the Ragel lexer token stream.

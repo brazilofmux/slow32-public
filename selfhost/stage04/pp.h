@@ -1,4 +1,4 @@
-/* pp.h -- Preprocessor for stage12 compiler
+/* pp.h -- Preprocessor for stage04 compiler
  *
  * Phase 6: #define, #include, #ifdef/#ifndef/#else/#endif, #line skip.
  * Token-level interception: next() calls pp_directive() on TK_HASH,

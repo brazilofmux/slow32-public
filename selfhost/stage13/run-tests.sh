@@ -4,9 +4,9 @@ set -euo pipefail
 # Stage 13: Full toolchain tests
 #
 # Tests:
-#   1. Build s13cc using stage12's s12cc (compiler bootstrap)
+#   1. Build s13cc using stage04's s12cc (compiler bootstrap)
 #   2. Run compiler tests with s13cc
-#   3. Build tools (s32-as, s32-ar, s32-ld) using stage12's s12cc
+#   3. Build tools (s32-as, s32-ar, s32-ld) using stage04's s12cc
 #   4. End-to-end: s13cc + stage13 tools compile/assemble/link/run a program
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -30,7 +30,7 @@ usage() {
     cat <<USAGE
 Usage: $0 [--emu <path>] [--keep-artifacts]
 
-Stage13 tests: s12cc compiler + toolchain tests (bootstrapped from stage12)
+Stage13 tests: s12cc compiler + toolchain tests (bootstrapped from stage04)
 USAGE
 }
 
@@ -152,15 +152,15 @@ compile_and_link() {
 }
 
 # ============================================================
-# Step 1: Bootstrap — build runtime/libc using stage12 s12cc
+# Step 1: Bootstrap — build runtime/libc using stage04 s12cc
 # ============================================================
 echo "=== Step 1: Bootstrap ==="
 
-STAGE12_CC="$SELFHOST_DIR/stage12/s12cc.s32x"
-AS_EXE="$SELFHOST_DIR/stage02/s32-as.s32x"
-LD_EXE="$SELFHOST_DIR/stage02/s32-ld.s32x"
+STAGE4_CC="$SELFHOST_DIR/stage04/s12cc.s32x"
+AS_EXE="$SELFHOST_DIR/stage04/s32-as.s32x"
+LD_EXE="$SELFHOST_DIR/stage04/s32-ld.s32x"
 
-[[ -f "$STAGE12_CC" ]] || { echo "Missing s12cc (stage12): $STAGE12_CC" >&2; exit 1; }
+[[ -f "$STAGE4_CC" ]] || { echo "Missing s12cc (stage04): $STAGE4_CC" >&2; exit 1; }
 [[ -f "$AS_EXE" ]] || { echo "Missing assembler: $AS_EXE" >&2; exit 1; }
 [[ -f "$LD_EXE" ]] || { echo "Missing linker: $LD_EXE" >&2; exit 1; }
 
@@ -174,17 +174,17 @@ run_exe "$AS_EXE" "$WORKDIR/crt0.log" "$CRT0_SRC" "$WORKDIR/crt0.s32o"
 run_exe "$AS_EXE" "$WORKDIR/mmio_no_start.log" "$MMIO_NO_START_SRC" "$WORKDIR/mmio_no_start.s32o"
 [[ -s "$WORKDIR/mmio_no_start.s32o" ]] || { echo "failed to assemble mmio_no_start" >&2; exit 1; }
 
-# Build libc with stage12's s12cc
+# Build libc with stage04's s12cc
 LIBC_OBJS=""
 for name in string_extra string_more ctype convert stdio malloc; do
-    run_exe "$STAGE12_CC" "$WORKDIR/${name}.cc.log" "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s"
+    run_exe "$STAGE4_CC" "$WORKDIR/${name}.cc.log" "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s"
     [[ -s "$WORKDIR/${name}.s" ]] || { echo "failed to compile ${name}.c" >&2; exit 1; }
     run_exe "$AS_EXE" "$WORKDIR/${name}.as.log" "$WORKDIR/${name}.s" "$WORKDIR/${name}.s32o"
     [[ -s "$WORKDIR/${name}.s32o" ]] || { echo "failed to assemble ${name}.s" >&2; exit 1; }
     LIBC_OBJS="$LIBC_OBJS $WORKDIR/${name}.s32o"
 done
 
-run_exe "$STAGE12_CC" "$WORKDIR/start.cc.log" "$LIBC_DIR/start.c" "$WORKDIR/start.s"
+run_exe "$STAGE4_CC" "$WORKDIR/start.cc.log" "$LIBC_DIR/start.c" "$WORKDIR/start.s"
 [[ -s "$WORKDIR/start.s" ]] || { echo "failed to compile start.c" >&2; exit 1; }
 run_exe "$AS_EXE" "$WORKDIR/start.as.log" "$WORKDIR/start.s" "$WORKDIR/start.s32o"
 [[ -s "$WORKDIR/start.s32o" ]] || { echo "failed to assemble start.s" >&2; exit 1; }
@@ -193,7 +193,7 @@ RUNTIME_CRT0="$WORKDIR/crt0.s32o"
 RUNTIME_MMIO_NO_START_OBJ="$WORKDIR/mmio_no_start.s32o"
 LIBC_START_OBJ="$WORKDIR/start.s32o"
 
-echo "Compiler (stage12 s12cc): $STAGE12_CC"
+echo "Compiler (stage04 s12cc): $STAGE4_CC"
 echo "Assembler: $AS_EXE"
 echo "Linker: $LD_EXE"
 
@@ -202,10 +202,10 @@ FAIL=0
 TOTAL=0
 
 # ============================================================
-# Step 2: Build s13cc using stage12's s12cc
+# Step 2: Build s13cc using stage04's s12cc
 # ============================================================
 echo ""
-echo "=== Step 2: Build s13cc (compiled by stage12 s12cc) ==="
+echo "=== Step 2: Build s13cc (compiled by stage04 s12cc) ==="
 
 S13CC_SRC="$SCRIPT_DIR/s12cc.c"
 [[ -s "$S13CC_SRC" ]] || { echo "ERROR: s12cc.c not found" >&2; exit 1; }
@@ -214,8 +214,8 @@ TOTAL=$((TOTAL + 1))
 SAVED_TIMEOUT="${EXEC_TIMEOUT:-180}"
 EXEC_TIMEOUT=300
 
-# Compile stage13 source with stage12 compiler
-run_exe "$STAGE12_CC" "$WORKDIR/s13cc-compile.log" "$S13CC_SRC" "$WORKDIR/s13cc.s"
+# Compile stage13 source with stage04 compiler
+run_exe "$STAGE4_CC" "$WORKDIR/s13cc-compile.log" "$S13CC_SRC" "$WORKDIR/s13cc.s"
 if [[ ! -s "$WORKDIR/s13cc.s" ]]; then
     printf "  %-30s FAIL (compile)\n" "s13cc-build:"
     tail -n 20 "$WORKDIR/s13cc-compile.log" >&2
@@ -302,7 +302,7 @@ if [[ -s "$S13CC_EXE" ]]; then
 fi
 
 # ============================================================
-# Step 4: Build tools with stage12's s12cc
+# Step 4: Build tools with stage04's s12cc
 # ============================================================
 echo ""
 echo "=== Step 4: Build stage13 tools ==="
@@ -314,7 +314,7 @@ S13_LD_SRC="$SCRIPT_DIR/tools/s32-ld.c"
 # Build assembler
 TOTAL=$((TOTAL + 1))
 EXEC_TIMEOUT=300
-run_exe "$STAGE12_CC" "$WORKDIR/s32-as-compile.log" "$S13_AS_SRC" "$WORKDIR/s32-as.s"
+run_exe "$STAGE4_CC" "$WORKDIR/s32-as-compile.log" "$S13_AS_SRC" "$WORKDIR/s32-as.s"
 if [[ ! -s "$WORKDIR/s32-as.s" ]]; then
     printf "  %-30s FAIL (compile)\n" "s32-as-build:"
     tail -n 20 "$WORKDIR/s32-as-compile.log" >&2
@@ -341,7 +341,7 @@ fi
 
 # Build archiver
 TOTAL=$((TOTAL + 1))
-run_exe "$STAGE12_CC" "$WORKDIR/s32-ar-compile.log" "$S13_AR_SRC" "$WORKDIR/s32-ar.s"
+run_exe "$STAGE4_CC" "$WORKDIR/s32-ar-compile.log" "$S13_AR_SRC" "$WORKDIR/s32-ar.s"
 if [[ ! -s "$WORKDIR/s32-ar.s" ]]; then
     printf "  %-30s FAIL (compile)\n" "s32-ar-build:"
     tail -n 20 "$WORKDIR/s32-ar-compile.log" >&2
@@ -368,7 +368,7 @@ fi
 
 # Build linker
 TOTAL=$((TOTAL + 1))
-run_exe "$STAGE12_CC" "$WORKDIR/s32-ld-compile.log" "$S13_LD_SRC" "$WORKDIR/s32-ld.s"
+run_exe "$STAGE4_CC" "$WORKDIR/s32-ld-compile.log" "$S13_LD_SRC" "$WORKDIR/s32-ld.s"
 if [[ ! -s "$WORKDIR/s32-ld.s" ]]; then
     printf "  %-30s FAIL (compile)\n" "s32-ld-build:"
     tail -n 20 "$WORKDIR/s32-ld-compile.log" >&2

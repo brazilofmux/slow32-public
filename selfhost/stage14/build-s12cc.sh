@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Build s12cc.s32x: the stage14 AST-based C compiler.
-# Uses: Stage 13 s12cc.s32x (compiler), Stage 02 s32-as.s32x (assembler),
-#       Stage 02 s32-ld.s32x (linker).
+# Uses: Stage 13 s12cc.s32x (compiler), Stage 04 s32-as.s32x (assembler),
+#       Stage 04 s32-ld.s32x (linker).
 # Libc is compiled by stage13's s12cc (not stage03).
 # Deposits the artifact in the script's directory.
 
@@ -25,15 +25,15 @@ if [[ -z "$EMU" ]]; then
 fi
 
 STAGE13_CC="$SELFHOST_DIR/stage13/s12cc.s32x"
-STAGE2_AS="$SELFHOST_DIR/stage02/s32-as.s32x"
-STAGE2_LD="$SELFHOST_DIR/stage02/s32-ld.s32x"
+STAGE4_AS="$SELFHOST_DIR/stage04/s32-as.s32x"
+STAGE4_LD="$SELFHOST_DIR/stage04/s32-ld.s32x"
 
 LIBC_DIR="$SCRIPT_DIR/libc"
 CRT0_SRC="$SCRIPT_DIR/crt0.s"
 MMIO_NO_START_SRC="$SCRIPT_DIR/mmio_no_start.s"
 OUT_EXE="$SCRIPT_DIR/s12cc.s32x"
 
-for f in "$EMU" "$STAGE13_CC" "$STAGE2_AS" "$STAGE2_LD" \
+for f in "$EMU" "$STAGE13_CC" "$STAGE4_AS" "$STAGE4_LD" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC" \
          "$SCRIPT_DIR/s12cc.c" "$SCRIPT_DIR/c_lexer_gen.c" \
          "$SCRIPT_DIR/ast.h" "$SCRIPT_DIR/parser.h" "$SCRIPT_DIR/sema.h" \
@@ -63,7 +63,7 @@ compile() {
 assemble() {
     local src="$1" obj="$2" log="$3"
     set +e
-    timeout 120 "$EMU" "$STAGE2_AS" "$src" "$obj" >"$log" 2>&1
+    timeout 120 "$EMU" "$STAGE4_AS" "$src" "$obj" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -78,7 +78,7 @@ link_exe() {
     local log="$1"
     shift
     set +e
-    timeout 120 "$EMU" "$STAGE2_LD" "$@" >"$log" 2>&1
+    timeout 120 "$EMU" "$STAGE4_LD" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then

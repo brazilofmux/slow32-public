@@ -1,4 +1,4 @@
-/* ast.h -- AST node types for stage12 compiler
+/* ast.h -- AST node types for stage04 compiler
  *
  * Phase 2: types, pointers, strings, globals, arrays.
  * No unions: flat struct, access only relevant fields per kind.

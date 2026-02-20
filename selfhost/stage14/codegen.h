@@ -1,4 +1,4 @@
-/* codegen.h -- Tree-walk code generator for stage12 compiler
+/* codegen.h -- Tree-walk code generator for stage04 compiler
  *
  * Phase 2: type-aware loads/stores, pointers, strings, globals.
  * Walks AST, emits SLOW-32 assembly directly.

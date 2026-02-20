@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # Build s12cc.s32x: the stage13 AST-based C compiler.
-# Uses: Stage 12 s12cc.s32x (compiler), Stage 02 s32-as.s32x (assembler),
-#       Stage 02 s32-ld.s32x (linker).
-# Libc is compiled by stage12's s12cc (not stage03).
+# Uses: Stage 04 s12cc.s32x (compiler), Stage 04 s32-as.s32x (assembler),
+#       Stage 04 s32-ld.s32x (linker).
+# Libc is compiled by stage04's s12cc (not stage03).
 # Deposits the artifact in the script's directory.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -24,16 +24,16 @@ if [[ -z "$EMU" ]]; then
     fi
 fi
 
-STAGE12_CC="$SELFHOST_DIR/stage12/s12cc.s32x"
-STAGE2_AS="$SELFHOST_DIR/stage02/s32-as.s32x"
-STAGE2_LD="$SELFHOST_DIR/stage02/s32-ld.s32x"
+STAGE4_CC="$SELFHOST_DIR/stage04/s12cc.s32x"
+STAGE4_AS="$SELFHOST_DIR/stage04/s32-as.s32x"
+STAGE4_LD="$SELFHOST_DIR/stage04/s32-ld.s32x"
 
 LIBC_DIR="$SCRIPT_DIR/libc"
 CRT0_SRC="$SCRIPT_DIR/crt0.s"
 MMIO_NO_START_SRC="$SCRIPT_DIR/mmio_no_start.s"
 OUT_EXE="$SCRIPT_DIR/s12cc.s32x"
 
-for f in "$EMU" "$STAGE12_CC" "$STAGE2_AS" "$STAGE2_LD" \
+for f in "$EMU" "$STAGE4_CC" "$STAGE4_AS" "$STAGE4_LD" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC" \
          "$SCRIPT_DIR/s12cc.c" "$SCRIPT_DIR/c_lexer_gen.c" \
          "$SCRIPT_DIR/ast.h" "$SCRIPT_DIR/parser.h" "$SCRIPT_DIR/sema.h" \
@@ -49,7 +49,7 @@ cd "$ROOT_DIR"
 compile() {
     local src="$1" asm="$2" log="$3"
     set +e
-    timeout "${EXEC_TIMEOUT:-300}" "$EMU" "$STAGE12_CC" "$src" "$asm" >"$log" 2>&1
+    timeout "${EXEC_TIMEOUT:-300}" "$EMU" "$STAGE4_CC" "$src" "$asm" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -63,7 +63,7 @@ compile() {
 assemble() {
     local src="$1" obj="$2" log="$3"
     set +e
-    timeout 120 "$EMU" "$STAGE2_AS" "$src" "$obj" >"$log" 2>&1
+    timeout 120 "$EMU" "$STAGE4_AS" "$src" "$obj" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -78,7 +78,7 @@ link_exe() {
     local log="$1"
     shift
     set +e
-    timeout 120 "$EMU" "$STAGE2_LD" "$@" >"$log" 2>&1
+    timeout 120 "$EMU" "$STAGE4_LD" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -93,7 +93,7 @@ echo "[1/4] Assemble runtime"
 assemble "$CRT0_SRC" "$WORKDIR/crt0.s32o" "$WORKDIR/crt0.log"
 assemble "$MMIO_NO_START_SRC" "$WORKDIR/mmio_no_start.s32o" "$WORKDIR/mmio_no_start.log"
 
-# --- Build libc (compiled by stage12 s12cc) ---
+# --- Build libc (compiled by stage04 s12cc) ---
 echo "[2/4] Build libc"
 LIBC_OBJS=""
 for name in string_extra string_more ctype convert stdio malloc; do
@@ -104,7 +104,7 @@ done
 compile "$LIBC_DIR/start.c" "$WORKDIR/start.s" "$WORKDIR/start.cc.log"
 assemble "$WORKDIR/start.s" "$WORKDIR/start.s32o" "$WORKDIR/start.as.log"
 
-# --- Compile s12cc with stage12 compiler ---
+# --- Compile s12cc with stage04 compiler ---
 echo "[3/4] Compile s12cc"
 compile "$SCRIPT_DIR/s12cc.c" "$WORKDIR/s12cc.s" "$WORKDIR/s12cc.cc.log"
 assemble "$WORKDIR/s12cc.s" "$WORKDIR/s12cc.s32o" "$WORKDIR/s12cc.as.log"

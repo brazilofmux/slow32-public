@@ -1,4 +1,4 @@
-/* lex_test.c -- Test harness for Ragel -G2 C lexer (stage12)
+/* lex_test.c -- Test harness for Ragel -G2 C lexer (stage04)
  *
  * Tokenizes embedded C source strings and checks token sequences.
  * Returns 0 on success, non-zero on first failure.

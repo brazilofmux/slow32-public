@@ -3,7 +3,7 @@
 # This Makefile guides the student through the stage-by-stage progression.
 # Each stage has specific prerequisites and produces clear, minimal artifacts.
 
-.PHONY: all clean stage00 stage01 stage02 stage03 stage12 stage13 stage14
+.PHONY: all clean stage00 stage01 stage02 stage03 stage04 stage13 stage14
 
 all: stage14
 
@@ -35,23 +35,24 @@ stage03: stage02
 	@echo "--- Building Stage 03: s32-cc Compiler + Tools ---"
 	$(MAKE) -C stage03
 
-# Stage 12: s12cc AST-based C Compiler
-# Prerequisites: Stage 03 s32cc (compiler), Stage 02 assembler + linker
-# Artifacts: s12cc.s32x (AST-based compiler, Ragel lexer + recursive-descent parser)
-stage12: stage03
-	@echo "--- Building Stage 12: s12cc AST Compiler ---"
-	$(MAKE) -C stage12
+# Stage 04: s12cc AST-based C Compiler + Tools (as, ar, ld)
+# Prerequisites: Stage 03 (compiler, assembler, linker)
+# s12cc compiled by s32cc; tools compiled by s12cc. Self-sufficient toolchain.
+# Artifacts: s12cc.s32x, s32-as.s32x, s32-ar.s32x, s32-ld.s32x
+stage04: stage03
+	@echo "--- Building Stage 04: s12cc AST Compiler + Tools ---"
+	$(MAKE) -C stage04
 
 # Stage 13: Complete s12cc toolchain (compiler + assembler + archiver + linker + runtime)
-# Prerequisites: Stage 12 s12cc (compiler), Stage 02 assembler + linker
+# Prerequisites: Stage 04 s12cc (compiler), Stage 04 assembler + linker
 # Artifacts: s12cc.s32x, s32-as.s32x, s32-ar.s32x, s32-ld.s32x
-# All C compiled by stage12's s12cc. Runtime (libc) included.
-stage13: stage12
+# All C compiled by stage04's s12cc. Runtime (libc) included.
+stage13: stage04
 	@echo "--- Building Stage 13: Complete s12cc Toolchain ---"
 	$(MAKE) -C stage13
 
 # Stage 14: Compiler playground (copy of stage13, bootstrapped by stage13)
-# Prerequisites: Stage 13 s12cc (compiler), Stage 02 assembler + linker
+# Prerequisites: Stage 13 s12cc (compiler), Stage 04 assembler + linker
 # Artifacts: s12cc.s32x, s32-as.s32x, s32-ar.s32x, s32-ld.s32x
 stage14: stage13
 	@echo "--- Building Stage 14: s12cc playground ---"
@@ -62,6 +63,6 @@ clean:
 	$(MAKE) -C stage01 clean
 	$(MAKE) -C stage02 clean
 	$(MAKE) -C stage03 clean
-	$(MAKE) -C stage12 clean
+	$(MAKE) -C stage04 clean
 	$(MAKE) -C stage13 clean
 	$(MAKE) -C stage14 clean

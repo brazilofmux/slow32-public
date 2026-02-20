@@ -1,4 +1,4 @@
-/* optimize.h -- AST optimization passes for stage12 compiler
+/* optimize.h -- AST optimization passes for stage04 compiler
  *
  * Phase 12: constant folding, dead code elimination, strength reduction.
  * Runs between parse and codegen on the AST.

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build s12cc.s32x: the stage12 AST-based C compiler.
-# Uses: Stage 03 s32cc.s32x (compiler), Stage 02 s32-as.s32x (assembler),
-#       Stage 02 s32-ld.s32x (linker).
+# Build s12cc.s32x: the stage04 AST-based C compiler.
+# Uses: Stage 03 s32cc.s32x (compiler), Stage 03 s32-as.s32x (assembler),
+#       Stage 03 s32-ld.s32x (linker). Local libc/runtime.
 # Deposits the artifact in the script's directory.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -24,15 +24,15 @@ if [[ -z "$EMU" ]]; then
 fi
 
 STAGE3_CC="$SELFHOST_DIR/stage03/s32cc.s32x"
-STAGE2_AS="$SELFHOST_DIR/stage02/s32-as.s32x"
-STAGE2_LD="$SELFHOST_DIR/stage02/s32-ld.s32x"
+STAGE3_AS="$SELFHOST_DIR/stage03/s32-as.s32x"
+STAGE3_LD="$SELFHOST_DIR/stage03/s32-ld.s32x"
 
-LIBC_DIR="$SELFHOST_DIR/stage02/libc"
-CRT0_SRC="$SELFHOST_DIR/stage02/crt0.s"
-MMIO_NO_START_SRC="$SELFHOST_DIR/stage02/mmio_no_start.s"
+LIBC_DIR="$SCRIPT_DIR/libc"
+CRT0_SRC="$SCRIPT_DIR/crt0.s"
+MMIO_NO_START_SRC="$SCRIPT_DIR/mmio_no_start.s"
 OUT_EXE="$SCRIPT_DIR/s12cc.s32x"
 
-for f in "$EMU" "$STAGE3_CC" "$STAGE2_AS" "$STAGE2_LD" \
+for f in "$EMU" "$STAGE3_CC" "$STAGE3_AS" "$STAGE3_LD" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC" \
          "$SCRIPT_DIR/s12cc.c" "$SCRIPT_DIR/c_lexer_gen.c" \
          "$SCRIPT_DIR/ast.h" "$SCRIPT_DIR/parser.h" "$SCRIPT_DIR/sema.h" \
@@ -40,7 +40,7 @@ for f in "$EMU" "$STAGE3_CC" "$STAGE2_AS" "$STAGE2_LD" \
     [[ -f "$f" ]] || { echo "Missing: $f" >&2; exit 1; }
 done
 
-WORKDIR="$(mktemp -d /tmp/stage12-build.XXXXXX)"
+WORKDIR="$(mktemp -d /tmp/stage04-build.XXXXXX)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
 cd "$ROOT_DIR"
@@ -62,7 +62,7 @@ compile() {
 assemble() {
     local src="$1" obj="$2" log="$3"
     set +e
-    timeout 120 "$EMU" "$STAGE2_AS" "$src" "$obj" >"$log" 2>&1
+    timeout 120 "$EMU" "$STAGE3_AS" "$src" "$obj" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -77,7 +77,7 @@ link_exe() {
     local log="$1"
     shift
     set +e
-    timeout 120 "$EMU" "$STAGE2_LD" "$@" >"$log" 2>&1
+    timeout 120 "$EMU" "$STAGE3_LD" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then

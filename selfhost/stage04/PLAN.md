@@ -1,4 +1,4 @@
-# Stage 12: New Self-Hosting C Compiler
+# Stage 04: New Self-Hosting C Compiler
 
 ## Architecture Overview
 
@@ -223,7 +223,7 @@ Final polish:
 
 ### Phase 11: Self-Hosting
 
-The ultimate goal: stage12 compiler compiles itself.
+The ultimate goal: stage04 compiler compiles itself.
 - Incrementally add C features needed by the compiler's own source
 - Fixed-point proof: gen2.s == gen3.s
 - Performance comparison with stage03
@@ -270,7 +270,7 @@ Node kinds (Phase 1):
 ## File Organization
 
 ```
-stage12/
+stage04/
   c_lexer.rl          Ragel source
   c_lexer_gen.c        Generated lexer (raw ragel -G2)
   gen_lexer.sh         Regenerate lexer
@@ -288,14 +288,14 @@ stage12/
 ## Bootstrapping Strategy
 
 - Stage 03 s32-cc compiles stage 12 source code
-- Stage 12 compiler initially targets the same subset as stage 11
+- Stage 04 compiler initially targets the same subset as stage 11
 - Once stage 12 can compile itself, it becomes self-hosting
 - We iterate between stage 11 (fix/extend) and stage 12 (build up)
 - Stage 03 is the safety net — always a working compiler to fall back to
 
 ## Constraints from s32-cc (bootstrap compiler)
 
-Stage 12 source must be compilable by stage 11's s32-cc:
+Stage 04 source must be compilable by stage 11's s32-cc:
 - No block-scoped declarations (vars at function top only)
 - No unions (use flat structs with unused fields per kind)
 - No string/array initializers

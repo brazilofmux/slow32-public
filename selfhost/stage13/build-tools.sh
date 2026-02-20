@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Build stage13 tools: s32-as.s32x, s32-ar.s32x, s32-ld.s32x
-# All compiled by stage12's s12cc, assembled by stage02 assembler,
-# linked by stage02 linker. Uses stage13's own libc/runtime.
+# All compiled by stage04's s12cc, assembled by stage04 assembler,
+# linked by stage04 linker. Uses stage13's own libc/runtime.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -22,16 +22,16 @@ if [[ -z "$EMU" ]]; then
     fi
 fi
 
-STAGE12_CC="$SELFHOST_DIR/stage12/s12cc.s32x"
-STAGE2_AS="$SELFHOST_DIR/stage02/s32-as.s32x"
-STAGE2_LD="$SELFHOST_DIR/stage02/s32-ld.s32x"
+STAGE4_CC="$SELFHOST_DIR/stage04/s12cc.s32x"
+STAGE4_AS="$SELFHOST_DIR/stage04/s32-as.s32x"
+STAGE4_LD="$SELFHOST_DIR/stage04/s32-ld.s32x"
 
 LIBC_DIR="$SCRIPT_DIR/libc"
 CRT0_SRC="$SCRIPT_DIR/crt0.s"
 MMIO_NO_START_SRC="$SCRIPT_DIR/mmio_no_start.s"
 TOOLS_DIR="$SCRIPT_DIR/tools"
 
-for f in "$EMU" "$STAGE12_CC" "$STAGE2_AS" "$STAGE2_LD" \
+for f in "$EMU" "$STAGE4_CC" "$STAGE4_AS" "$STAGE4_LD" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC" \
          "$TOOLS_DIR/s32-as.c" "$TOOLS_DIR/s32_formats_min.h" \
          "$TOOLS_DIR/s32-ar.c" "$TOOLS_DIR/s32ar_min.h" \
@@ -47,7 +47,7 @@ cd "$ROOT_DIR"
 compile() {
     local src="$1" asm="$2" log="$3"
     set +e
-    timeout "${EXEC_TIMEOUT:-300}" "$EMU" "$STAGE12_CC" "$src" "$asm" >"$log" 2>&1
+    timeout "${EXEC_TIMEOUT:-300}" "$EMU" "$STAGE4_CC" "$src" "$asm" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -61,7 +61,7 @@ compile() {
 assemble() {
     local src="$1" obj="$2" log="$3"
     set +e
-    timeout 120 "$EMU" "$STAGE2_AS" "$src" "$obj" >"$log" 2>&1
+    timeout 120 "$EMU" "$STAGE4_AS" "$src" "$obj" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -76,7 +76,7 @@ link_exe() {
     local log="$1"
     shift
     set +e
-    timeout 120 "$EMU" "$STAGE2_LD" "$@" >"$log" 2>&1
+    timeout 120 "$EMU" "$STAGE4_LD" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -91,7 +91,7 @@ echo "[1/5] Assemble runtime"
 assemble "$CRT0_SRC" "$WORKDIR/crt0.s32o" "$WORKDIR/crt0.log"
 assemble "$MMIO_NO_START_SRC" "$WORKDIR/mmio_no_start.s32o" "$WORKDIR/mmio_no_start.log"
 
-# --- Build libc (compiled by stage12 s12cc) ---
+# --- Build libc (compiled by stage04 s12cc) ---
 echo "[2/5] Build libc"
 LIBC_OBJS=""
 for name in string_extra string_more ctype convert stdio malloc; do

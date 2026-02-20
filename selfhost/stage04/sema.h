@@ -1,4 +1,4 @@
-/* sema.h -- Semantic analysis pass for stage12 compiler
+/* sema.h -- Semantic analysis pass for stage04 compiler
  *
  * Phase 13: single tree walk (L-attributed grammar).
  * Propagates unsigned type info, validates + fixes expression types.

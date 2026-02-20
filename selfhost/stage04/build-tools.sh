@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build stage14 tools: s32-as.s32x, s32-ar.s32x, s32-ld.s32x
-# All compiled by stage13's s12cc, assembled by stage04 assembler,
-# linked by stage04 linker. Uses stage14's own libc/runtime.
+# Build stage04 tools: s32-as.s32x, s32-ar.s32x, s32-ld.s32x
+# All compiled by stage04's s12cc, assembled by stage03 assembler,
+# linked by stage03 linker. Uses stage04's own libc/runtime.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -22,24 +22,23 @@ if [[ -z "$EMU" ]]; then
     fi
 fi
 
-STAGE13_CC="$SELFHOST_DIR/stage13/s12cc.s32x"
-STAGE4_AS="$SELFHOST_DIR/stage04/s32-as.s32x"
-STAGE4_LD="$SELFHOST_DIR/stage04/s32-ld.s32x"
+STAGE4_CC="$SCRIPT_DIR/s12cc.s32x"
+STAGE3_AS="$SELFHOST_DIR/stage03/s32-as.s32x"
+STAGE3_LD="$SELFHOST_DIR/stage03/s32-ld.s32x"
 
 LIBC_DIR="$SCRIPT_DIR/libc"
 CRT0_SRC="$SCRIPT_DIR/crt0.s"
 MMIO_NO_START_SRC="$SCRIPT_DIR/mmio_no_start.s"
-TOOLS_DIR="$SCRIPT_DIR/tools"
 
-for f in "$EMU" "$STAGE13_CC" "$STAGE4_AS" "$STAGE4_LD" \
+for f in "$EMU" "$STAGE4_CC" "$STAGE3_AS" "$STAGE3_LD" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC" \
-         "$TOOLS_DIR/s32-as.c" "$TOOLS_DIR/s32_formats_min.h" \
-         "$TOOLS_DIR/s32-ar.c" "$TOOLS_DIR/s32ar_min.h" \
-         "$TOOLS_DIR/s32-ld.c"; do
+         "$SCRIPT_DIR/s32-as.c" "$SCRIPT_DIR/s32_formats_min.h" \
+         "$SCRIPT_DIR/s32-ar.c" "$SCRIPT_DIR/s32ar_min.h" \
+         "$SCRIPT_DIR/s32-ld.c"; do
     [[ -f "$f" ]] || { echo "Missing: $f" >&2; exit 1; }
 done
 
-WORKDIR="$(mktemp -d /tmp/stage14-tools.XXXXXX)"
+WORKDIR="$(mktemp -d /tmp/stage04-tools.XXXXXX)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
 cd "$ROOT_DIR"
@@ -47,7 +46,7 @@ cd "$ROOT_DIR"
 compile() {
     local src="$1" asm="$2" log="$3"
     set +e
-    timeout "${EXEC_TIMEOUT:-300}" "$EMU" "$STAGE13_CC" "$src" "$asm" >"$log" 2>&1
+    timeout "${EXEC_TIMEOUT:-300}" "$EMU" "$STAGE4_CC" "$src" "$asm" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -61,7 +60,7 @@ compile() {
 assemble() {
     local src="$1" obj="$2" log="$3"
     set +e
-    timeout 120 "$EMU" "$STAGE4_AS" "$src" "$obj" >"$log" 2>&1
+    timeout 120 "$EMU" "$STAGE3_AS" "$src" "$obj" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -76,7 +75,7 @@ link_exe() {
     local log="$1"
     shift
     set +e
-    timeout 120 "$EMU" "$STAGE4_LD" "$@" >"$log" 2>&1
+    timeout 120 "$EMU" "$STAGE3_LD" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -91,7 +90,7 @@ echo "[1/5] Assemble runtime"
 assemble "$CRT0_SRC" "$WORKDIR/crt0.s32o" "$WORKDIR/crt0.log"
 assemble "$MMIO_NO_START_SRC" "$WORKDIR/mmio_no_start.s32o" "$WORKDIR/mmio_no_start.log"
 
-# --- Build libc (compiled by stage13 s12cc) ---
+# --- Build libc (compiled by s12cc) ---
 echo "[2/5] Build libc"
 LIBC_OBJS=""
 for name in string_extra string_more ctype convert stdio malloc; do
@@ -104,7 +103,7 @@ assemble "$WORKDIR/start.s" "$WORKDIR/start.s32o" "$WORKDIR/start.as.log"
 
 # --- Build assembler ---
 echo "[3/5] Build s32-as.s32x"
-compile "$TOOLS_DIR/s32-as.c" "$WORKDIR/s32-as.s" "$WORKDIR/s32-as.cc.log"
+compile "$SCRIPT_DIR/s32-as.c" "$WORKDIR/s32-as.s" "$WORKDIR/s32-as.cc.log"
 assemble "$WORKDIR/s32-as.s" "$WORKDIR/s32-as.s32o" "$WORKDIR/s32-as.as.log"
 link_exe "$WORKDIR/s32-as.link.log" -o "$SCRIPT_DIR/s32-as.s32x" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/s32-as.s32o" "$WORKDIR/start.s32o" \
@@ -115,7 +114,7 @@ echo "  OK: s32-as.s32x ($(wc -c < "$SCRIPT_DIR/s32-as.s32x") bytes)"
 
 # --- Build archiver ---
 echo "[4/5] Build s32-ar.s32x"
-compile "$TOOLS_DIR/s32-ar.c" "$WORKDIR/s32-ar.s" "$WORKDIR/s32-ar.cc.log"
+compile "$SCRIPT_DIR/s32-ar.c" "$WORKDIR/s32-ar.s" "$WORKDIR/s32-ar.cc.log"
 assemble "$WORKDIR/s32-ar.s" "$WORKDIR/s32-ar.s32o" "$WORKDIR/s32-ar.as.log"
 link_exe "$WORKDIR/s32-ar.link.log" -o "$SCRIPT_DIR/s32-ar.s32x" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/s32-ar.s32o" "$WORKDIR/start.s32o" \
@@ -126,7 +125,7 @@ echo "  OK: s32-ar.s32x ($(wc -c < "$SCRIPT_DIR/s32-ar.s32x") bytes)"
 
 # --- Build linker ---
 echo "[5/5] Build s32-ld.s32x"
-compile "$TOOLS_DIR/s32-ld.c" "$WORKDIR/s32-ld.s" "$WORKDIR/s32-ld.cc.log"
+compile "$SCRIPT_DIR/s32-ld.c" "$WORKDIR/s32-ld.s" "$WORKDIR/s32-ld.cc.log"
 assemble "$WORKDIR/s32-ld.s" "$WORKDIR/s32-ld.s32o" "$WORKDIR/s32-ld.as.log"
 link_exe "$WORKDIR/s32-ld.link.log" -o "$SCRIPT_DIR/s32-ld.s32x" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/s32-ld.s32o" "$WORKDIR/start.s32o" \
