@@ -2,7 +2,7 @@
  *
  * Phase 12: constant folding, dead code elimination, strength reduction.
  * Runs between parse and codegen on the AST.
- * Compiled by stage11 s32-cc.
+ * Compiled by stage03 s32-cc.
  */
 
 /* --- Helpers --- */

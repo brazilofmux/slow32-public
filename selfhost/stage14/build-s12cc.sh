@@ -4,7 +4,7 @@ set -euo pipefail
 # Build s12cc.s32x: the stage14 AST-based C compiler.
 # Uses: Stage 13 s12cc.s32x (compiler), Stage 02 s32-as.s32x (assembler),
 #       Stage 02 s32-ld.s32x (linker).
-# Libc is compiled by stage13's s12cc (not stage11).
+# Libc is compiled by stage13's s12cc (not stage03).
 # Deposits the artifact in the script's directory.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

@@ -4,7 +4,7 @@
  * Token-level interception: next() calls pp_directive() on TK_HASH,
  * expands macros on TK_IDENT.
  *
- * Compiled by stage11 s32-cc.
+ * Compiled by stage03 s32-cc.
  */
 
 #define PP_MAX_DEFS  512

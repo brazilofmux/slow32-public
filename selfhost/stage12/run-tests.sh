@@ -4,7 +4,7 @@ set -euo pipefail
 # Stage 12: New compiler (Ragel lexer + parser)
 #
 # Bootstrap chain:
-#   stage11/s32cc → compile stage12 sources
+#   stage03/s32cc → compile stage12 sources
 #   stage02/s32-as → assemble
 #   stage02/s32-ld → link
 #
@@ -157,11 +157,11 @@ compile_and_link() {
 # ============================================================
 echo "=== Step 1: Bootstrap ==="
 
-CC_EXE="$SELFHOST_DIR/stage11/s32cc.s32x"
+CC_EXE="$SELFHOST_DIR/stage03/s32cc.s32x"
 AS_EXE="$SELFHOST_DIR/stage02/s32-as.s32x"
 LD_EXE="$SELFHOST_DIR/stage02/s32-ld.s32x"
 
-[[ -f "$CC_EXE" ]] || { echo "Missing s32cc (stage11): $CC_EXE" >&2; exit 1; }
+[[ -f "$CC_EXE" ]] || { echo "Missing s32cc (stage03): $CC_EXE" >&2; exit 1; }
 [[ -f "$AS_EXE" ]] || { echo "Missing assembler: $AS_EXE" >&2; exit 1; }
 [[ -f "$LD_EXE" ]] || { echo "Missing linker: $LD_EXE" >&2; exit 1; }
 
@@ -193,7 +193,7 @@ RUNTIME_CRT0="$WORKDIR/crt0.s32o"
 RUNTIME_MMIO_NO_START_OBJ="$WORKDIR/mmio_no_start.s32o"
 LIBC_START_OBJ="$WORKDIR/start.s32o"
 
-echo "Compiler (stage11): $CC_EXE"
+echo "Compiler (stage03): $CC_EXE"
 echo "Assembler: $AS_EXE"
 echo "Linker: $LD_EXE"
 

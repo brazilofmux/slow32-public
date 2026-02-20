@@ -2,7 +2,7 @@
  *
  * Phase 2: types, pointers, strings, globals, arrays.
  * No unions: flat struct, access only relevant fields per kind.
- * Compiled by stage11 s32-cc (no block-scoped vars, no unions).
+ * Compiled by stage03 s32-cc (no block-scoped vars, no unions).
  */
 
 /* --- Additional libc prototypes --- */

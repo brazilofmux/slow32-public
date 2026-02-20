@@ -3,7 +3,7 @@
  * Phase 13: single tree walk (L-attributed grammar).
  * Propagates unsigned type info, validates + fixes expression types.
  * Included between parser.h and optimize.h.
- * Compiled by stage11 s32-cc.
+ * Compiled by stage03 s32-cc.
  */
 
 /* --- State --- */

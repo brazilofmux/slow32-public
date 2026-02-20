@@ -3,7 +3,7 @@
 # This Makefile guides the student through the stage-by-stage progression.
 # Each stage has specific prerequisites and produces clear, minimal artifacts.
 
-.PHONY: all clean stage00 stage01 stage02 stage09 stage10 stage11 stage12 stage13 stage14
+.PHONY: all clean stage00 stage01 stage02 stage03 stage12 stage13 stage14
 
 all: stage14
 
@@ -27,32 +27,18 @@ stage02: stage01
 	@echo "--- Building Stage 02: C Assembler + Archiver + Linker + Compiler ---"
 	$(MAKE) -C stage02
 
-# Stage 09: Self-Compilation Fixed-Point Proof
-# Prerequisites: Stage 02 cc-min, Stage 02 C assembler + linker
-# cc-min compiles itself. No Forth tools. gen2.s == gen3.s proves the fixed point.
-# Artifacts: cc-min.s32x (Gen2: self-compiled compiler)
-stage09: stage02
-	@echo "--- Building Stage 09: Self-Compiled Compiler ---"
-	$(MAKE) -C stage09
-
-# Stage 10: s32-cc Compiler (lex/parse split)
-# Prerequisites: Stage 09 cc-min (compiler), Stage 02 assembler + linker
+# Stage 03: s32-cc Compiler (lex/parse split, evolved from cc-min)
+# Prerequisites: Stage 02 cc-min (compiler), Stage 02 assembler + linker
+# Includes BNE+JAL long-branch switch, increased limits
 # Artifacts: s32cc.s32x (s32-cc compiler, runs on emulator)
-stage10: stage09
-	@echo "--- Building Stage 10: s32-cc Compiler ---"
-	$(MAKE) -C stage10
-
-# Stage 11: s32-cc Compiler (stable bootstrap, copy of stage10)
-# Prerequisites: Stage 10 s32cc (compiler), Stage 02 assembler + linker
-# Artifacts: s32cc.s32x (s32-cc compiler with nested switch fix + long branches)
-stage11: stage10
-	@echo "--- Building Stage 11: s32-cc Compiler (stable) ---"
-	$(MAKE) -C stage11
+stage03: stage02
+	@echo "--- Building Stage 03: s32-cc Compiler ---"
+	$(MAKE) -C stage03
 
 # Stage 12: s12cc AST-based C Compiler
-# Prerequisites: Stage 11 s32cc (compiler), Stage 02 assembler + linker
+# Prerequisites: Stage 03 s32cc (compiler), Stage 02 assembler + linker
 # Artifacts: s12cc.s32x (AST-based compiler, Ragel lexer + recursive-descent parser)
-stage12: stage11
+stage12: stage03
 	@echo "--- Building Stage 12: s12cc AST Compiler ---"
 	$(MAKE) -C stage12
 
@@ -75,9 +61,7 @@ clean:
 	$(MAKE) -C stage00 clean
 	$(MAKE) -C stage01 clean
 	$(MAKE) -C stage02 clean
-	$(MAKE) -C stage09 clean
-	$(MAKE) -C stage10 clean
-	$(MAKE) -C stage11 clean
+	$(MAKE) -C stage03 clean
 	$(MAKE) -C stage12 clean
 	$(MAKE) -C stage13 clean
 	$(MAKE) -C stage14 clean

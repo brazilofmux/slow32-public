@@ -2,7 +2,7 @@
 
 ## Architecture Overview
 
-A multi-pass compiler replacing stage11's single-pass emit-as-you-go design.
+A multi-pass compiler replacing stage03's single-pass emit-as-you-go design.
 The goal is proper separation of concerns: each layer has a single job,
 making the compiler easier to extend, optimize, and debug.
 
@@ -150,7 +150,7 @@ Handle the subset of cpp that s32-cc needs:
 - `#line` (silently skip)
 
 This can be a separate pass before the lexer, or integrated into the
-token stream (like stage11's approach).
+token stream (like stage03's approach).
 
 ### Phase 5: AST → HIR
 
@@ -226,7 +226,7 @@ Final polish:
 The ultimate goal: stage12 compiler compiles itself.
 - Incrementally add C features needed by the compiler's own source
 - Fixed-point proof: gen2.s == gen3.s
-- Performance comparison with stage11
+- Performance comparison with stage03
 
 ## SLOW-32 Target Notes
 
@@ -287,11 +287,11 @@ stage12/
 
 ## Bootstrapping Strategy
 
-- Stage 11 s32-cc compiles stage 12 source code
+- Stage 03 s32-cc compiles stage 12 source code
 - Stage 12 compiler initially targets the same subset as stage 11
 - Once stage 12 can compile itself, it becomes self-hosting
 - We iterate between stage 11 (fix/extend) and stage 12 (build up)
-- Stage 11 is the safety net — always a working compiler to fall back to
+- Stage 03 is the safety net — always a working compiler to fall back to
 
 ## Constraints from s32-cc (bootstrap compiler)
 

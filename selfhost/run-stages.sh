@@ -27,7 +27,7 @@ EMU_DEFAULT="$(choose_default_emu)"
 EMU="$EMU_DEFAULT"
 
 FROM="stage00"
-TO="stage02"
+TO="stage03"
 SKIP_SELFHOST_KERNEL=0
 SKIP_PURITY_GUARD=0
 QUICK=0
@@ -37,17 +37,17 @@ LOG_DIR="$(mktemp -d /tmp/selfhost-stage-walk.XXXXXX)"
 
 usage() {
     cat <<USAGE
-Usage: $0 [--from stage00] [--to stage02] [--emu <path>] [--skip-selfhost-kernel] [--skip-purity-guard] [--quick] [--keep-logs]
+Usage: $0 [--from stage00] [--to stage03] [--emu <path>] [--skip-selfhost-kernel] [--skip-purity-guard] [--quick] [--keep-logs]
 
 Runs ordered stage checks so a clean checkout can be validated end-to-end.
 
 Default sequence:
-  stage00 -> stage01 -> stage02
+  stage00 -> stage01 -> stage02 -> stage03
 
 Options:
-  --from stageNN   Start stage (stage00..stage02)
-  --to stageNN     End stage (stage00..stage02)
-  --emu path       Emulator for stage01..stage02 (default: slow32-fast, then stage00 s32-emu, then slow32)
+  --from stageNN   Start stage (stage00..stage03)
+  --to stageNN     End stage (stage00..stage03)
+  --emu path       Emulator for stage01..stage03 (default: slow32-fast, then stage00 s32-emu, then slow32)
   --skip-selfhost-kernel
                    Skip stage01 selfhost-kernel regeneration/boot gate (dev fast-path)
   --skip-purity-guard
@@ -135,6 +135,7 @@ stage_num() {
         stage00) echo 0 ;;
         stage01) echo 1 ;;
         stage02) echo 2 ;;
+        stage03) echo 3 ;;
         *) return 1 ;;
     esac
 }
@@ -150,9 +151,9 @@ for req in "$ROOT_DIR/forth/kernel.s32x" "$ROOT_DIR/forth/prelude.fth"; do
     [[ -f "$req" ]] || { echo "Missing required file: $req" >&2; exit 1; }
 done
 
-if (( TO_N >= 0 && FROM_N <= 6 )); then
+if (( TO_N >= 0 && FROM_N <= 3 )); then
     if [[ "$SKIP_PURITY_GUARD" -eq 0 ]]; then
-        echo "[guard] bootstrap purity (stage00..06)"
+        echo "[guard] bootstrap purity (stage00..03)"
         "$ROOT_DIR/selfhost/check-bootstrap-purity.sh"
     else
         echo "[guard] skipping bootstrap purity check (--skip-purity-guard)"
@@ -245,7 +246,13 @@ run_stage02() {
     fi
 }
 
-for st in stage00 stage01 stage02; do
+run_stage03() {
+    echo "[stage03] s32-cc compiler tests"
+    run_logged "stage03 spike" "$LOG_DIR/stage03.log" \
+        "$ROOT_DIR/selfhost/stage03/run-spike.sh" --emu "$EMU"
+}
+
+for st in stage00 stage01 stage02 stage03; do
     N="$(stage_num "$st")"
     if (( N < FROM_N || N > TO_N )); then
         continue

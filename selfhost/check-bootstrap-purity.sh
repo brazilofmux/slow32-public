@@ -30,12 +30,13 @@ scan_no_match() {
     fi
 }
 
-# Restrict checks to stage00..stage02 orchestration/build files.
+# Restrict checks to stage00..stage03 orchestration/build files.
 SCAN_PATHS=(
     "$SELFHOST_DIR/run-stages.sh"
     "$SELFHOST_DIR/stage00"
     "$SELFHOST_DIR/stage01"
     "$SELFHOST_DIR/stage02"
+    "$SELFHOST_DIR/stage03"
 )
 
 BASE_GLOBS=(
@@ -44,21 +45,22 @@ BASE_GLOBS=(
     --glob 'Makefile'
 )
 
-# 1) No active references to prebuilt runtime blobs in stage00..06 flow.
+# 1) No active references to prebuilt runtime blobs in stage00..03 flow.
 # Ignore comment lines in shell (# ...) and Forth (\ ...).
 scan_no_match \
     "active reference to runtime/*.s32o or runtime/*.s32a" \
     '^(?!\s*[#\\]).*runtime/[^[:space:]]*\.s32[oa]\b' \
     "${BASE_GLOBS[@]}" "${SCAN_PATHS[@]}"
 
-# 2) No direct host compiler invocations in stage01..02 scripts.
+# 2) No direct host compiler invocations in stage01..03 scripts.
 # (stage00 Makefile is the accepted seed toolchain root)
 scan_no_match \
-    "direct host compiler command in stage01..02 scripts" \
+    "direct host compiler command in stage01..03 scripts" \
     '^(?!\s*[#\\]).*(^|[;&|()[:space:]])(cc|gcc|clang)[[:space:]]' \
     --glob '*.sh' \
     "$SELFHOST_DIR/stage01" \
-    "$SELFHOST_DIR/stage02"
+    "$SELFHOST_DIR/stage02" \
+    "$SELFHOST_DIR/stage03"
 
 if [[ "$fail" -ne 0 ]]; then
     echo "Bootstrap purity check FAILED." >&2
@@ -66,4 +68,4 @@ if [[ "$fail" -ne 0 ]]; then
     exit 1
 fi
 
-echo "Bootstrap purity check passed (stage00..02)."
+echo "Bootstrap purity check passed (stage00..03)."

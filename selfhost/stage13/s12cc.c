@@ -5,7 +5,7 @@
  *
  * Usage: s12cc input.c output.s
  *
- * Compiled by stage11 s32-cc.
+ * Compiled by stage03 s32-cc.
  */
 
 #include "c_lexer_gen.c"

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stage 10: s32-cc C compiler (Pass 1 lexer + Pass 2 parser)
+# Stage 03: s32-cc C compiler (Pass 1 lexer + Pass 2 parser)
 #
 # Bootstrap chain:
-# 1) Bootstrap via stage09 (obtains Gen2 cc-min, assembler, C linker, runtime)
+# 1) Bootstrap via stage02 (cc-min, assembler, C linker, runtime)
 # 2) Lexer tests: compile each test_lex_*.c with cc-min, run
 # 3) Build s32-cc: concatenate lex+parse headers, compile s32cc.c with cc-min
 # 4) Parser tests: compile each test_parse_*.c with s32-cc, assemble, link, run
@@ -15,7 +15,7 @@ SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$SELFHOST_DIR/.." && pwd)"
 TESTS_DIR="$SCRIPT_DIR/tests"
 
-EMU="${STAGE10_EMU:-}"
+EMU="${STAGE03_EMU:-}"
 EMU_EXPLICIT=0
 
 KEEP_ARTIFACTS=0
@@ -28,7 +28,7 @@ usage() {
     cat <<USAGE
 Usage: $0 [--emu <path>] [--keep-artifacts]
 
-Stage10 s32-cc compiler tests:
+Stage03 s32-cc compiler tests:
   1) build runtime/libc from source using pre-built tools
   2) compile each test_lex_*.c with cc-min, run
   3) build s32-cc compiler from s32cc.c with cc-min
@@ -61,13 +61,13 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-if [[ "$EMU_EXPLICIT" -eq 0 && -z "${STAGE10_EMU:-}" ]]; then
+if [[ "$EMU_EXPLICIT" -eq 0 && -z "${STAGE03_EMU:-}" ]]; then
     EMU="$(choose_default_emu)"
 fi
 
 [[ -f "$EMU" ]] || { echo "Missing emulator: $EMU" >&2; exit 1; }
 
-WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage10.XXXXXX)"
+WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage03.XXXXXX)"
 if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then
     trap 'rm -rf "$WORKDIR"' EXIT
 fi
@@ -164,7 +164,7 @@ compile_and_link() {
 echo "=== Step 1: Bootstrap ==="
 
 # Pre-built tools from earlier stages
-GEN2_EXE="$SELFHOST_DIR/stage09/cc-min.s32x"
+GEN2_EXE="$SELFHOST_DIR/stage02/cc-min.s32x"
 AS_EXE="$SELFHOST_DIR/stage02/s32-as.s32x"
 LD_EXE="$SELFHOST_DIR/stage02/s32-ld.s32x"
 
@@ -514,9 +514,9 @@ fi
 # ============================================================
 echo ""
 if [[ "$FAIL" -eq 0 ]]; then
-    echo "OK: stage10 ($PASS/$TOTAL tests passed)"
+    echo "OK: stage03 ($PASS/$TOTAL tests passed)"
 else
-    echo "FAIL: stage10 ($PASS/$TOTAL tests passed, $FAIL failed)" >&2
+    echo "FAIL: stage03 ($PASS/$TOTAL tests passed, $FAIL failed)" >&2
     exit 1
 fi
 

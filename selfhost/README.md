@@ -8,15 +8,16 @@ Current policy:
 - Update tests/CI scripts in lockstep with each stage move.
 
 Stage directories:
-- `stage00` through `stage16` map 1:1 to the current V2 stage numbers.
+- `stage00` through `stage14` map to the current V2 stage numbers.
 
 Stage cycles at a glance:
 - `stage00`: standalone ~800 line emulator that every other stage relies on.
 - `stage01`: assembler + archiver + linker + C compiler written in Forth (includes kernel fixed-point proof).
-- `stage02`: the same four tools (assembler, archiver, linker, compiler) now authored in Subset C but still hosted by the Forth toolchain.
-- `stage09`: Subset C fixed-point proof (Subset C compiling itself).
-- `stage10`–`stage12`: another assembler/archiver/linker pass, this time fully self-hosted in Subset C and chasing feature parity with `tools/`.
-- `stage13+`: full C compiler bring-up; exact layer breakdown will crystalize as the implementation roadmap settles.
+- `stage02`: the same four tools (assembler, archiver, linker, compiler) now authored in Subset C but still hosted by the Forth toolchain. After this stage, all Forth tools are retired.
+- `stage03`: s32-cc compiler (lex/parse split, evolved from cc-min). Compiled by stage02 cc-min.
+- `stage12`: s12cc AST-based compiler (Ragel lexer + recursive-descent parser). Compiled by stage03 s32-cc.
+- `stage13`: complete s12cc toolchain (compiler + AS + AR + LD + libc). Compiled by stage12.
+- `stage14`: compiler playground (copy of stage13, bootstrapped by stage13).
 
 Primary tracking docs:
 - `selfhost/V2-REORG-PLAN.md`
@@ -25,7 +26,7 @@ Primary tracking docs:
 
 ## Ordered Stage Walk
 
-For a clean checkout sanity pass (stage00 -> stage02):
+For a clean checkout sanity pass (stage00 -> stage03):
 
 ```bash
 selfhost/run-stages.sh
@@ -47,4 +48,5 @@ Manual per-stage entry points:
 - `stage02` (assembler): `selfhost/stage02/run-pipeline.sh --mode progressive-as --test test1`
 - `stage02` (archiver): `selfhost/stage02/run-pipeline.sh --mode stage6-ar-smoke` and `... stage6-ar-rc-smoke` and `... stage6-ar-tx-smoke`
 - `stage02` (linker): `selfhost/stage02/run-spike-ld.sh`
-- `stage02` (Subset C compiler gate): `selfhost/stage02/run-regression-cc-min.sh --emu ./tools/emulator/slow32-fast`
+- `stage02` (compiler): `selfhost/stage02/run-regression-cc-min.sh --emu ./tools/emulator/slow32-fast`
+- `stage03` (s32-cc compiler): `selfhost/stage03/run-spike.sh --emu ./tools/emulator/slow32-fast`

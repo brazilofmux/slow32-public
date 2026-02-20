@@ -1,4 +1,4 @@
-/* s32cc_lex.h -- C lexer for s32-cc (stage10)
+/* s32cc_lex.h -- C lexer for s32-cc (stage03)
  *
  * Single includable file: token constants + full lexer implementation.
  * cc-min compatible: no switch, no postfix++, no goto, no do-while.

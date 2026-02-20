@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build gen2 cc-min.s32x: cc-min compiles itself.
-# Uses: Stage 08 cc-min.s32x (Gen1 compiler), Stage 02 s32-as.s32x (assembler),
+# Build s32cc.s32x: the s32-cc compiler (lex/parse split, evolved from cc-min).
+# Uses: Stage 02 cc-min.s32x (compiler), Stage 02 s32-as.s32x (assembler),
 #       Stage 02 s32-ld.s32x (linker).
-# Libc is compiled by cc.fth (stage01) since cc-min doesn't yet support
-# all features used in the libc sources (e.g. postfix ++).
-# Deposits the self-compiled artifact in the script's directory.
+# Deposits the artifact in the script's directory.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -18,25 +16,20 @@ fi
 EMU="${SELFHOST_EMU:-$SELFHOST_DIR/stage00/s32-emu}"
 STAGE2_AS="$SELFHOST_DIR/stage02/s32-as.s32x"
 STAGE2_LD="$SELFHOST_DIR/stage02/s32-ld.s32x"
-GEN1_CC="$SELFHOST_DIR/stage02/cc-min.s32x"
+GEN2_CC="$SELFHOST_DIR/stage02/cc-min.s32x"
 
 LIBC_DIR="$SELFHOST_DIR/stage02/libc"
 CRT0_SRC="$SELFHOST_DIR/stage02/crt0.s"
 MMIO_NO_START_SRC="$SELFHOST_DIR/stage02/mmio_no_start.s"
-STAGE02_DIR="$SELFHOST_DIR/stage02"
-CCMIN_PASS1="$STAGE02_DIR/cc-min-pass1.c"
-CCMIN_PASS2="$STAGE02_DIR/cc-min-pass2.c"
-CCMIN_PASS3="$STAGE02_DIR/cc-min-pass3.c"
-CCMIN_MAIN="$STAGE02_DIR/cc-min.c"
-OUT_EXE="$SCRIPT_DIR/cc-min.s32x"
+OUT_EXE="$SCRIPT_DIR/s32cc.s32x"
 
-for f in "$EMU" "$STAGE2_AS" "$STAGE2_LD" "$GEN1_CC" \
+for f in "$EMU" "$STAGE2_AS" "$STAGE2_LD" "$GEN2_CC" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC" \
-         "$CCMIN_PASS1" "$CCMIN_PASS2" "$CCMIN_PASS3" "$CCMIN_MAIN"; do
+         "$SCRIPT_DIR/s32cc.c" "$SCRIPT_DIR/s32cc_lex.h" "$SCRIPT_DIR/s32cc_parse.h"; do
     [[ -f "$f" ]] || { echo "Missing: $f" >&2; exit 1; }
 done
 
-WORKDIR="$(mktemp -d /tmp/stage09-build.XXXXXX)"
+WORKDIR="$(mktemp -d /tmp/stage03-build.XXXXXX)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
 cd "$ROOT_DIR"
@@ -44,7 +37,7 @@ cd "$ROOT_DIR"
 compile() {
     local src="$1" asm="$2" log="$3"
     set +e
-    timeout "${EXEC_TIMEOUT:-180}" "$EMU" "$GEN1_CC" "$src" "$asm" >"$log" 2>&1
+    timeout "${EXEC_TIMEOUT:-180}" "$EMU" "$GEN2_CC" "$src" "$asm" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -88,10 +81,10 @@ echo "[1/4] Assemble runtime"
 assemble "$CRT0_SRC" "$WORKDIR/crt0.s32o" "$WORKDIR/crt0.log"
 assemble "$MMIO_NO_START_SRC" "$WORKDIR/mmio_no_start.s32o" "$WORKDIR/mmio_no_start.log"
 
-# --- Build libc (compiled by cc-min, not cc.fth!) ---
+# --- Build libc (compiled by cc-min) ---
 echo "[2/4] Build libc"
 LIBC_OBJS=""
-for name in string_extra convert stdio; do
+for name in string_extra string_more ctype convert stdio malloc; do
     compile "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s" "$WORKDIR/${name}.cc.log"
     assemble "$WORKDIR/${name}.s" "$WORKDIR/${name}.s32o" "$WORKDIR/${name}.as.log"
     LIBC_OBJS="$LIBC_OBJS $WORKDIR/${name}.s32o"
@@ -99,16 +92,17 @@ done
 compile "$LIBC_DIR/start.c" "$WORKDIR/start.s" "$WORKDIR/start.cc.log"
 assemble "$WORKDIR/start.s" "$WORKDIR/start.s32o" "$WORKDIR/start.as.log"
 
-# --- Gen1 compiles cc-min → Gen2 ---
-echo "[3/4] Compile cc-min (Gen1 → Gen2)"
-cat "$CCMIN_PASS1" "$CCMIN_PASS2" "$CCMIN_PASS3" "$CCMIN_MAIN" > "$WORKDIR/cc-min.merged.c"
-compile "$WORKDIR/cc-min.merged.c" "$WORKDIR/cc-min.s" "$WORKDIR/cc-min.cc.log"
-assemble "$WORKDIR/cc-min.s" "$WORKDIR/cc-min.s32o" "$WORKDIR/cc-min.as.log"
+# --- Compile s32-cc ---
+echo "[3/4] Compile s32-cc"
+cat "$SCRIPT_DIR/s32cc_lex.h" "$SCRIPT_DIR/s32cc_parse.h" > "$WORKDIR/s32cc_combined.h"
+cp "$SCRIPT_DIR/s32cc.c" "$WORKDIR/s32cc.c"
+compile "$WORKDIR/s32cc.c" "$WORKDIR/s32cc.s" "$WORKDIR/s32cc.cc.log"
+assemble "$WORKDIR/s32cc.s" "$WORKDIR/s32cc.s32o" "$WORKDIR/s32cc.as.log"
 
-# --- Link Gen2 using C linker ---
-echo "[4/4] Link cc-min.s32x (Gen2)"
+# --- Link s32cc.s32x ---
+echo "[4/4] Link s32cc.s32x"
 link_exe "$WORKDIR/link.log" -o "$OUT_EXE" --mmio 64K \
-    "$WORKDIR/crt0.s32o" "$WORKDIR/cc-min.s32o" "$WORKDIR/start.s32o" \
+    "$WORKDIR/crt0.s32o" "$WORKDIR/s32cc.s32o" "$WORKDIR/start.s32o" \
     "$WORKDIR/mmio_no_start.s32o" \
     $LIBC_OBJS
 [[ -s "$OUT_EXE" ]] || { echo "link failed" >&2; exit 1; }

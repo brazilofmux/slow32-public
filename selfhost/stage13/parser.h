@@ -2,7 +2,7 @@
  *
  * Phase 2: types, pointers, strings, globals, local arrays.
  * Builds a typed AST from the Ragel lexer token stream.
- * Compiled by stage11 s32-cc.
+ * Compiled by stage03 s32-cc.
  */
 
 /* --- Shared label counter (used by both parser and codegen) --- */

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Generate Ragel -G2 lexer.
-# No post-processing needed -- stage11 s32-cc handles:
+# No post-processing needed -- stage03 s32-cc handles:
 #   - #line directives (pp_dir skips unknown directives)
 #   - Prefix ++/-- (p_unary TK_INC/TK_DEC)
 #   - Duff's device pattern (nested switch fix)
