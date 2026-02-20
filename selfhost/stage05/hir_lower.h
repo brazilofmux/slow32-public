@@ -751,6 +751,9 @@ static int hl_nparams;
 
 static void hl_func(Node *fn) {
     int entry;
+    int pi;
+    int param_inst;
+    int param_alloca;
 
     hir_reset();
     hl_nalloca = 0;
@@ -762,6 +765,15 @@ static void hl_func(Node *fn) {
 
     entry = hir_new_block();
     hl_switch_block(entry);
+
+    /* Emit PARAM+STORE for each parameter (enables SSA promotion) */
+    pi = 0;
+    while (pi < fn->nparams) {
+        param_inst = hi_emit(HI_PARAM, TY_INT, -1, -1, pi, NULL);
+        param_alloca = hl_get_alloca(-8 - (pi + 1) * 4, TY_INT);
+        hi_emit(HI_STORE, TY_INT, param_alloca, param_inst, 0, NULL);
+        pi = pi + 1;
+    }
 
     hl_stmt(fn->body);
 

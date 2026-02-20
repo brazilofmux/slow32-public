@@ -2,10 +2,11 @@
  *
  * Runs after hir_ssa.h, before hir_codegen.h.
  * 1. Copy propagation (eliminate HI_COPY chains)
- * 2. Constant folding (evaluate constant binops at compile time)
+ * 2. Constant folding + strength reduction (MUL by pow2 -> SLL)
  * 3. Algebraic simplifications (identity/absorbing elements)
- * 4. PHI simplification (trivial phis -> COPY)
- * 5. Dead code elimination (remove unused value-producing instructions)
+ * 4. Dead block elimination (NOP unreachable blocks after BRC->BR)
+ * 5. PHI simplification (trivial phis -> COPY)
+ * 6. Dead code elimination (remove unused value-producing instructions)
  */
 
 /* Use count per instruction */
@@ -129,6 +130,9 @@ static int ho_const_fold(void) {
     int can_fold;
     int s1c;
     int s2c;
+    int shift;
+    int tmp;
+    int ci;
 
     changed = 0;
     i = 0;
@@ -246,6 +250,34 @@ static int ho_const_fold(void) {
                     h_src1[i] = h_src2[i];
                     h_src2[i] = -1;
                     changed = 1;
+                }
+            }
+
+            /* Strength reduction: MUL by power-of-2 -> SLL */
+            if (h_kind[i] == HI_MUL) {
+                if (s2c) {
+                    b = h_val[h_src2[i]];
+                    if (b > 0 && (b & (b - 1)) == 0) {
+                        shift = 0; tmp = b;
+                        while (tmp > 1) { shift = shift + 1; tmp = tmp >> 1; }
+                        ci = hi_emit(HI_ICONST, TY_INT, -1, -1, shift, NULL);
+                        h_blk[ci] = h_blk[i];
+                        h_kind[i] = HI_SLL;
+                        h_src2[i] = ci;
+                        changed = 1;
+                    }
+                } else if (s1c) {
+                    a = h_val[h_src1[i]];
+                    if (a > 0 && (a & (a - 1)) == 0) {
+                        shift = 0; tmp = a;
+                        while (tmp > 1) { shift = shift + 1; tmp = tmp >> 1; }
+                        ci = hi_emit(HI_ICONST, TY_INT, -1, -1, shift, NULL);
+                        h_blk[ci] = h_blk[i];
+                        h_kind[i] = HI_SLL;
+                        h_src1[i] = h_src2[i];
+                        h_src2[i] = ci;
+                        changed = 1;
+                    }
                 }
             }
 
@@ -389,7 +421,101 @@ static int ho_phi_simplify(void) {
 }
 
 /* ----------------------------------------------------------------
- * Pass 4: Dead code elimination
+ * Pass 4: Dead block elimination
+ * DFS from block 0, NOP unreachable blocks, fix PHI args from
+ * dead predecessors (make self-referential so phi_simplify ignores them).
+ * Reuses ho_use[] as visited + DFS stack (non-overlapping regions).
+ * ---------------------------------------------------------------- */
+
+static int ho_dead_blocks(void) {
+    int changed;
+    int i;
+    int j;
+    int sp;
+    int b;
+    int t;
+    int k;
+
+    if (bb_nblk == 0) return 0;
+
+    /* ho_use[0..bb_nblk-1] = visited, ho_use[bb_nblk..] = DFS stack */
+    i = 0;
+    while (i < bb_nblk) { ho_use[i] = 0; i = i + 1; }
+
+    /* DFS from block 0 */
+    sp = bb_nblk;
+    ho_use[0] = 1;
+    ho_use[sp] = 0;
+    sp = sp + 1;
+
+    while (sp > bb_nblk) {
+        sp = sp - 1;
+        b = ho_use[sp];
+
+        /* Scan block for branch targets */
+        if (bb_start[b] < 0) continue;
+        i = bb_start[b];
+        while (i < bb_end[b]) {
+            k = h_kind[i];
+            if (k == HI_BR) {
+                t = h_val[i];
+                if (t >= 0 && t < bb_nblk && !ho_use[t]) {
+                    ho_use[t] = 1;
+                    ho_use[sp] = t;
+                    sp = sp + 1;
+                }
+            }
+            if (k == HI_BRC) {
+                t = h_src2[i];
+                if (t >= 0 && t < bb_nblk && !ho_use[t]) {
+                    ho_use[t] = 1;
+                    ho_use[sp] = t;
+                    sp = sp + 1;
+                }
+                t = h_val[i];
+                if (t >= 0 && t < bb_nblk && !ho_use[t]) {
+                    ho_use[t] = 1;
+                    ho_use[sp] = t;
+                    sp = sp + 1;
+                }
+            }
+            i = i + 1;
+        }
+    }
+
+    /* NOP dead blocks + fixup PHI args from dead predecessors */
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        b = h_blk[i];
+        if (b >= 0 && b < bb_nblk && !ho_use[b]) {
+            /* Dead block: NOP this instruction */
+            if (h_kind[i] != HI_NOP) {
+                h_kind[i] = HI_NOP;
+                h_src1[i] = -1;
+                h_src2[i] = -1;
+                changed = 1;
+            }
+        } else if (h_kind[i] == HI_PHI && h_pbase[i] >= 0) {
+            /* Live block PHI: make args from dead predecessors self-ref */
+            j = 0;
+            while (j < h_pcnt[i]) {
+                t = h_pblk[h_pbase[i] + j];
+                if (t >= 0 && t < bb_nblk && !ho_use[t]) {
+                    h_pval[h_pbase[i] + j] = i;
+                    changed = 1;
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+
+    return changed;
+}
+
+/* ----------------------------------------------------------------
+ * Pass 5: Dead code elimination
  * Count uses of each instruction, delete unused value-producers
  * (except calls which have side effects).
  * ---------------------------------------------------------------- */
@@ -502,6 +628,7 @@ static void hir_opt(void) {
         changed = 0;
         changed = changed | ho_copy_prop();
         changed = changed | ho_const_fold();
+        changed = changed | ho_dead_blocks();
         changed = changed | ho_phi_simplify();
         changed = changed | ho_dce();
         iter = iter + 1;

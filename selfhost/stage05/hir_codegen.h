@@ -436,7 +436,11 @@ static void hcg_inst(int idx) {
     }
 
     if (k == HI_PARAM) {
-        /* Not used in Phase A; params are copied in prologue */
+        /* Copy arg register to r1, then spill */
+        cg_s("    addi r1, r");
+        cg_n(3 + h_val[idx]);
+        cg_s(", 0\n");
+        hcg_spill_res(idx);
         return;
     }
 
@@ -786,16 +790,7 @@ static void hcg_func(Node *fn) {
         cg_s("    sub r29, r29, r1\n");
     }
 
-    /* Copy params from arg registers to stack slots */
-    i = 0;
-    while (i < fn->nparams) {
-        cg_s("    stw r30, r");
-        cg_n(3 + i);
-        cg_s(", ");
-        cg_n(-8 - (i + 1) * 4);
-        cg_c(10);
-        i = i + 1;
-    }
+    /* Params are now handled by HI_PARAM instructions in entry block */
 
     /* Emit all basic blocks */
     b = 0;

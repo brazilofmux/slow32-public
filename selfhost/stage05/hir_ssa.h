@@ -389,16 +389,6 @@ static void ssa_find_promo(void) {
         i = i + 1;
     }
 
-    /* Exclude parameter ALLOCAs */
-    i = 0;
-    while (i < hl_nalloca) {
-        off = hl_aoff[i];
-        if (off <= -12 && off >= -8 - hl_nparams * 4) {
-            ok[i] = 0;
-        }
-        i = i + 1;
-    }
-
     /* Scan instructions for non-promotable uses */
     i = 0;
     while (i < h_ninst) {
