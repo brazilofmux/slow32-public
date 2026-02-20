@@ -8,7 +8,7 @@ Current policy:
 - Update tests/CI scripts in lockstep with each stage move.
 
 Stage directories:
-- `stage00` through `stage14` map to the current V2 stage numbers.
+- `stage00` through `stage13` map to the current V2 stage numbers.
 
 Stage cycles at a glance:
 - `stage00`: standalone ~800 line emulator that every other stage relies on.
@@ -17,7 +17,6 @@ Stage cycles at a glance:
 - `stage03`: s32-cc compiler + tools (as, ar, ld) + libc/runtime. Self-sufficient toolchain. Compiled by stage02 cc-min, tools compiled by s32-cc. First Forth-free stage.
 - `stage04`: s12cc AST-based compiler (Ragel lexer + recursive-descent parser) + tools + libc/runtime. Language capability stage. Compiled by stage03 s32-cc.
 - `stage13`: complete s12cc toolchain (compiler + AS + AR + LD + libc). Compiled by stage04.
-- `stage14`: compiler playground (copy of stage13, bootstrapped by stage13).
 
 Primary tracking docs:
 - `selfhost/V2-REORG-PLAN.md`
