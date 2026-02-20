@@ -390,7 +390,15 @@ int handle(char *line) {
         if (strcmp(tok[0], ".bss") == 0) { g_sec = SEC_BSS; return 0; }
         if (strcmp(tok[0], ".global") == 0 || strcmp(tok[0], ".globl") == 0) { if (n < 2) return -1; ok = get_lbl(tok[1]); if (ok < 0) return -1; g_lbl_glob[ok] = 1; return 0; }
         if (strcmp(tok[0], ".align") == 0 || strcmp(tok[0], ".p2align") == 0) { if (n < 2) return -1; ok = parse_num(tok[1], &n); if (!n) return -1; return do_align(ok); }
-        if (strcmp(tok[0], ".section") == 0 || strcmp(tok[0], ".type") == 0 || strcmp(tok[0], ".size") == 0 || strcmp(tok[0], ".file") == 0 || strcmp(tok[0], ".ident") == 0) return 0;
+        if (strcmp(tok[0], ".section") == 0) {
+            if (n < 2) return -1;
+            if (strncmp(tok[1], ".rodata", 7) == 0) { g_sec = SEC_DATA; return 0; }
+            if (strcmp(tok[1], ".text") == 0) { g_sec = SEC_TEXT; return 0; }
+            if (strcmp(tok[1], ".data") == 0) { g_sec = SEC_DATA; return 0; }
+            if (strcmp(tok[1], ".bss") == 0) { g_sec = SEC_BSS; return 0; }
+            return 0;
+        }
+        if (strcmp(tok[0], ".type") == 0 || strcmp(tok[0], ".size") == 0 || strcmp(tok[0], ".file") == 0 || strcmp(tok[0], ".ident") == 0) return 0;
         if (strcmp(tok[0], ".byte") == 0) {
             for (i = 1; i < n; i = i + 1) {
                 v = parse_num(tok[i], &ok);
@@ -672,7 +680,7 @@ int s_add(char *s) {
     int n;
     off = g_ssz;
     n = strlen(s) + 1;
-    if (g_ssz + n > MAX_STR) return 0;
+    if (g_ssz + n > MAX_STR) return -1;
     memcpy(g_str + g_ssz, s, n);
     g_ssz = g_ssz + n;
     return off;
@@ -712,6 +720,7 @@ int build_syms(int text_idx, int data_idx, int bss_idx) {
         if (!g_lbl_defd[i]) bind = S32O_BIND_GLOBAL;
         g_sym_lbl[g_nsym] = i;
         g_sym_name[g_nsym] = s_add(g_lbl_name_pool + g_lbl_name_off[i]);
+        if (g_sym_name[g_nsym] < 0) return -1;
         if (g_lbl_defd[i]) g_sym_val[g_nsym] = g_lbl_val[i];
         else g_sym_val[g_nsym] = 0;
         g_sym_sec[g_nsym] = sec;
@@ -850,6 +859,11 @@ int write_obj(char *out) {
     if (text_idx) text_name = s_add(".text");
     if (data_idx) data_name = s_add(".data");
     if (bss_idx) bss_name = s_add(".bss");
+    if ((text_idx && text_name < 0) ||
+        (data_idx && data_name < 0) ||
+        (bss_idx && bss_name < 0)) {
+        return -1;
+    }
 
     if (build_syms(text_idx, data_idx, bss_idx) != 0) return -1;
 

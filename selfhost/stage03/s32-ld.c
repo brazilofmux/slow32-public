@@ -177,6 +177,8 @@ int obj_nsym;
 int obj_sec_off;
 int obj_sym_off;
 int obj_str_off;
+int obj_str_sz;
+int obj_file_sz;
 
 /* === Archive state === */
 char ar_symtab[AR_SYMTAB_SZ];
@@ -189,6 +191,7 @@ int ar_nsymbols;
 int ar_sym_off;
 int ar_str_off;
 int ar_str_sz;
+int ar_file_sz;
 
 /* === Output state === */
 char out_strtab[OUT_STRTAB_SZ];
@@ -262,11 +265,19 @@ int streq(char *a, char *b) {
     return strcmp(a, b) == 0;
 }
 
+int in_bounds(int off, int size, int total) {
+    if (off < 0 || size < 0 || total < 0) return 0;
+    if (off > total) return 0;
+    if (size > total - off) return 0;
+    return 1;
+}
+
 /* NUL-terminated string length in file_buf starting at offset */
-int fbuf_strlen(int off) {
+int fbuf_strnlen(int off, int max_len) {
     int len;
+    if (off < 0 || off > obj_file_sz) return max_len;
     len = 0;
-    while (file_buf[off + len] != 0) {
+    while (len < max_len && off + len < obj_file_sz && file_buf[off + len] != 0) {
         len = len + 1;
     }
     return len;
@@ -323,6 +334,7 @@ int read_file(char *path) {
         }
     }
     fclose(f);
+    obj_file_sz = sz;
     return sz;
 }
 
@@ -390,6 +402,7 @@ int gsym_add_new(char *name, int sec, int val, int bind, int def) {
     idx = gsym_cnt;
     nlen = strlen(name);
     noff = gsym_add_name(name, nlen);
+    if (link_error) return -1;
     gsym_noff[idx] = noff;
     gsym_nlen[idx] = nlen;
     gsym_sec[idx] = sec;
@@ -470,6 +483,14 @@ int sec_va_get(int sec_type) {
 
 int parse_obj_header() {
     int magic;
+    int sec_sz;
+    int sym_sz;
+
+    if (obj_file_sz < 40) {
+        fputs("error: object too small\n", stderr);
+        return 0;
+    }
+
     magic = rd32(file_buf, 0);
     if (magic != S32O_MAGIC) {
         fputs("error: bad .s32o magic\n", stderr);
@@ -480,6 +501,22 @@ int parse_obj_header() {
     obj_nsym = rd32(file_buf, 20);
     obj_sym_off = rd32(file_buf, 24);
     obj_str_off = rd32(file_buf, 28);
+    obj_str_sz = rd32(file_buf, 32);
+
+    if (obj_nsec < 0 || obj_nsec > (FILE_BUFSZ / S32O_SEC_SZ) ||
+        obj_nsym < 0 || obj_nsym > (FILE_BUFSZ / S32O_SYM_SZ)) {
+        fputs("error: malformed object tables\n", stderr);
+        return 0;
+    }
+    sec_sz = obj_nsec * S32O_SEC_SZ;
+    sym_sz = obj_nsym * S32O_SYM_SZ;
+    if (!in_bounds(obj_sec_off, sec_sz, obj_file_sz) ||
+        !in_bounds(obj_sym_off, sym_sz, obj_file_sz) ||
+        !in_bounds(obj_str_off, obj_str_sz, obj_file_sz)) {
+        fputs("error: malformed object tables\n", stderr);
+        return 0;
+    }
+
     return 1;
 }
 
@@ -532,6 +569,11 @@ void merge_sections() {
                         link_error = 1;
                         return;
                     }
+                    if (!in_bounds(sfileoff, ssize, obj_file_sz)) {
+                        fputs("error: section data out of range\n", stderr);
+                        link_error = 1;
+                        return;
+                    }
                     dst = sec_buf(stype) + base;
                     src = file_buf + sfileoff;
                     j = 0;
@@ -580,7 +622,18 @@ void merge_symbols() {
         sy_bind = rd8(file_buf, ent_off + 11);
 
         /* Get name from string table */
+        if (sy_noff < 0 || sy_noff >= obj_str_sz) {
+            fputs("error: symbol name offset out of range\n", stderr);
+            link_error = 1;
+            return;
+        }
         name_off = obj_str_off + sy_noff;
+        name_len = fbuf_strnlen(name_off, obj_str_sz - sy_noff);
+        if (name_len >= obj_str_sz - sy_noff) {
+            fputs("error: unterminated symbol name\n", stderr);
+            link_error = 1;
+            return;
+        }
         name = file_buf + name_off;
 
         if (sy_sec == 0) {
@@ -592,7 +645,18 @@ void merge_symbols() {
             }
         } else {
             /* Defined: get section type from section table */
+            if (sy_sec < 1 || sy_sec > obj_nsec) {
+                fputs("error: symbol section index out of range\n", stderr);
+                link_error = 1;
+                return;
+            }
             sy_sectype = rd32(file_buf, (sy_sec - 1) * S32O_SEC_SZ + obj_sec_off + 4);
+            if (sy_sectype != SEC_CODE && sy_sectype != SEC_DATA &&
+                sy_sectype != SEC_BSS && sy_sectype != SEC_RODATA) {
+                fputs("error: symbol section type invalid\n", stderr);
+                link_error = 1;
+                return;
+            }
 
             /* Adjust value by section base offset */
             sy_val = sec_base[sy_sectype] + sy_val;
@@ -604,6 +668,7 @@ void merge_symbols() {
                 gidx = gsym_upsert(name, sy_sectype, sy_val, sy_bind);
             }
         }
+        if (link_error) return;
 
         sym_map[i] = gidx;
         i = i + 1;
@@ -625,6 +690,7 @@ void merge_relocs() {
     int rl_typ;
     int rl_add;
     int mapped_sym;
+    int rel_sz;
 
     i = 0;
     while (i < obj_nsec) {
@@ -632,6 +698,23 @@ void merge_relocs() {
         stype = rd32(file_buf, sec_off + 4);
         nrelocs = rd32(file_buf, sec_off + 24);
         reloc_off = rd32(file_buf, sec_off + 28);
+
+        if (stype != SEC_CODE && stype != SEC_DATA &&
+            stype != SEC_BSS && stype != SEC_RODATA) {
+            i = i + 1;
+            continue;
+        }
+        if (nrelocs < 0 || nrelocs > (obj_file_sz / S32O_REL_SZ)) {
+            fputs("error: relocation table out of range\n", stderr);
+            link_error = 1;
+            return;
+        }
+        rel_sz = nrelocs * S32O_REL_SZ;
+        if (!in_bounds(reloc_off, rel_sz, obj_file_sz)) {
+            fputs("error: relocation table out of range\n", stderr);
+            link_error = 1;
+            return;
+        }
 
         r = 0;
         while (r < nrelocs) {
@@ -755,6 +838,11 @@ void load_ar_member(int ar_fh, int midx) {
         link_error = 1;
         return;
     }
+    if (!in_bounds(mem_off, mem_sz, ar_file_sz)) {
+        fputs("error: archive member range invalid\n", stderr);
+        link_error = 1;
+        return;
+    }
 
     fseek(ar_fh, mem_off, SEEK_SET);
     if (fread(file_buf, 1, mem_sz, ar_fh) != mem_sz) {
@@ -762,6 +850,7 @@ void load_ar_member(int ar_fh, int midx) {
         link_error = 1;
         return;
     }
+    obj_file_sz = mem_sz;
 
     if (!parse_obj_header()) {
         link_error = 1;
@@ -784,7 +873,7 @@ void load_ar_member(int ar_fh, int midx) {
 
 void link_archive(char *path) {
     int ar_fh;
-    int hdr_nmembers;
+    int ar_end;
     int added_any;
     int i;
     int midx;
@@ -799,6 +888,27 @@ void link_archive(char *path) {
         fputs("error: cannot open archive: ", stderr);
         fputs(path, stderr);
         fputc('\n', stderr);
+        link_error = 1;
+        return;
+    }
+
+    if (fseek(ar_fh, 0, SEEK_END) != 0) {
+        fputs("error: cannot size archive\n", stderr);
+        fclose(ar_fh);
+        link_error = 1;
+        return;
+    }
+    ar_end = ftell(ar_fh);
+    if (ar_end < 32) {
+        fputs("error: invalid archive size\n", stderr);
+        fclose(ar_fh);
+        link_error = 1;
+        return;
+    }
+    ar_file_sz = ar_end;
+    if (fseek(ar_fh, 0, SEEK_SET) != 0) {
+        fputs("error: cannot rewind archive\n", stderr);
+        fclose(ar_fh);
         link_error = 1;
         return;
     }
@@ -831,13 +941,13 @@ void link_archive(char *path) {
         link_error = 1;
         return;
     }
-    if (ar_nsymbols * 8 > AR_SYMTAB_SZ) {
+    if (ar_nsymbols < 0 || ar_nsymbols > (AR_SYMTAB_SZ / 8)) {
         fputs("error: archive symbol table too large\n", stderr);
         fclose(ar_fh);
         link_error = 1;
         return;
     }
-    if (ar_nmembers * 24 > AR_MEMTAB_SZ) {
+    if (ar_nmembers < 0 || ar_nmembers > (AR_MEMTAB_SZ / 24)) {
         fputs("error: archive member table too large\n", stderr);
         fclose(ar_fh);
         link_error = 1;
@@ -849,18 +959,41 @@ void link_archive(char *path) {
         link_error = 1;
         return;
     }
+    if (!in_bounds(ar_sym_off, ar_nsymbols * 8, ar_file_sz) ||
+        !in_bounds(ar_mem_off, ar_nmembers * 24, ar_file_sz) ||
+        !in_bounds(ar_str_off, ar_str_sz, ar_file_sz)) {
+        fputs("error: archive table offsets out of range\n", stderr);
+        fclose(ar_fh);
+        link_error = 1;
+        return;
+    }
 
     /* Read symbol index */
     fseek(ar_fh, ar_sym_off, SEEK_SET);
-    fread(ar_symtab, 1, ar_nsymbols * 8, ar_fh);
+    if (fread(ar_symtab, 1, ar_nsymbols * 8, ar_fh) != ar_nsymbols * 8) {
+        fputs("error: short read on archive symtab\n", stderr);
+        fclose(ar_fh);
+        link_error = 1;
+        return;
+    }
 
     /* Read member table */
     fseek(ar_fh, ar_mem_off, SEEK_SET);
-    fread(ar_memtab, 1, ar_nmembers * 24, ar_fh);
+    if (fread(ar_memtab, 1, ar_nmembers * 24, ar_fh) != ar_nmembers * 24) {
+        fputs("error: short read on archive member table\n", stderr);
+        fclose(ar_fh);
+        link_error = 1;
+        return;
+    }
 
     /* Read string table */
     fseek(ar_fh, ar_str_off, SEEK_SET);
-    fread(ar_strtab, 1, ar_str_sz, ar_fh);
+    if (fread(ar_strtab, 1, ar_str_sz, ar_fh) != ar_str_sz) {
+        fputs("error: short read on archive string table\n", stderr);
+        fclose(ar_fh);
+        link_error = 1;
+        return;
+    }
 
     /* Clear loaded flags */
     i = 0;
@@ -1237,6 +1370,11 @@ void apply_rel(int idx) {
 
     } else if (r_typ == REL_BRANCH) {
         offset = val - pc - 4;
+        if ((offset & 1) != 0 || offset < -4096 || offset > 4094) {
+            fputs("error: branch relocation out of range\n", stderr);
+            link_error = 1;
+            return;
+        }
         imm12 = (offset >> 12) & 1;
         imm11 = (offset >> 11) & 1;
         imm10_5 = (offset >> 5) & MASK6;
@@ -1251,6 +1389,11 @@ void apply_rel(int idx) {
 
     } else if (r_typ == REL_JAL || r_typ == REL_CALL) {
         offset = val - pc;
+        if ((offset & 1) != 0 || offset < -1048576 || offset > 1048574) {
+            fputs("error: jal relocation out of range\n", stderr);
+            link_error = 1;
+            return;
+        }
         imm20 = (offset >> 20) & 1;
         imm19_12 = (offset >> 12) & MASK8;
         imm11 = (offset >> 11) & 1;
@@ -1325,6 +1468,7 @@ void find_entry() {
     if (idx < 0) {
         fputs("error: _start not found\n", stderr);
         entry_pt = 0;
+        link_error = 1;
     } else {
         entry_pt = gsym_va(idx);
     }
