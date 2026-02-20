@@ -56,7 +56,10 @@ void fput_uint(int fd, int val) {
 #include "parser.h"
 #include "sema.h"
 #include "optimize.h"
-#include "codegen.h"
+#include "hir.h"
+#include "hir_lower.h"
+#include "hir_ssa.h"
+#include "hir_codegen.h"
 
 int main(int argc, char **argv) {
     int fd;
@@ -125,8 +128,6 @@ int main(int argc, char **argv) {
 
     /* Codegen (cg_lbl not reset — parser may have allocated goto labels) */
     cg_olen = 0;
-    cg_loop_depth = 0;
-    cg_sw_depth = 0;
     gen_program(prog);
 
     /* Write output */

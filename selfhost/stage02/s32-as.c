@@ -6,9 +6,9 @@
 
 #define MAX_LINE 1024
 #define MAX_TOK 8
-#define MAX_LBL 4096
+#define MAX_LBL 8192
 #define MAX_REL 16384
-#define MAX_SYM 4096
+#define MAX_SYM 8192
 #define MAX_TEXT 524288
 #define MAX_DATA 524288
 #define MAX_BSS 8388608
