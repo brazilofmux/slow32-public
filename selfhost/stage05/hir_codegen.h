@@ -1,9 +1,9 @@
 /* hir_codegen.h -- HIR to SLOW-32 assembly for s12cc
  *
- * Phase A: spill-everything strategy.
- * Each value-producing HIR instruction gets a temp stack slot.
+ * Phase 8: Linear scan register allocation (r11-r28, callee-saved).
+ * Uses ra_reg[] from hir_regalloc.h for physical register assignments.
  * Rematerializable values (ICONST, ALLOCA, GADDR, SADDR, FADDR)
- * are regenerated on demand instead of loading from spill slots.
+ * are regenerated on demand. Spilled values use r1/r2 as scratch.
  */
 
 /* --- Output buffer --- */
@@ -61,98 +61,47 @@ static void cg_lref(int l) {
     cg_n(l);
 }
 
+/* Emit "    OP rD, rA, rB\n" */
+static void cg_rrr(char *op, int rd, int ra, int rb) {
+    cg_s("    ");
+    cg_s(op);
+    cg_s(" r");
+    cg_n(rd);
+    cg_s(", r");
+    cg_n(ra);
+    cg_s(", r");
+    cg_n(rb);
+    cg_c(10);
+}
+
+/* Emit "    OP rD, rA, imm\n" */
+static void cg_rri(char *op, int rd, int ra, int imm) {
+    cg_s("    ");
+    cg_s(op);
+    cg_s(" r");
+    cg_n(rd);
+    cg_s(", r");
+    cg_n(ra);
+    cg_s(", ");
+    cg_n(imm);
+    cg_c(10);
+}
+
 /* --- Per-function codegen state --- */
 
 static int hcg_locals;     /* fn->locals_size (original) */
-static int hcg_frame;      /* total frame size (locals + temps) */
+static int hcg_frame;      /* total frame size */
 static int hcg_epilog;     /* epilog label */
 
 /* Block labels */
 static int hcg_blk_lbl[HIR_MAX_BLOCK];
-
-/* Spill slot for each HIR instruction: offset from fp (negative).
- * 0 means not spilled (rematerializable). */
-static int hcg_spill[HIR_MAX_INST];
-
-/* Track which HIR inst result is currently in r1 (-1 = unknown).
- * Eliminates store-then-immediate-reload patterns. */
-static int hcg_r1_val;
-
-/* --- Register read-cache (r11-r18) --- */
-#define RA_NREG 8
-#define RA_BASE 11
-
-static int ra_val[RA_NREG];   /* HIR inst cached in each reg, -1 = empty */
-static int ra_age[RA_NREG];   /* LRU clock tick */
-static int ra_clock;
-
-static void ra_reset(void) {
-    int i;
-    i = 0;
-    while (i < RA_NREG) {
-        ra_val[i] = -1;
-        i = i + 1;
-    }
-    ra_clock = 0;
-    hcg_r1_val = -1;
-}
-
-static int ra_find(int inst) {
-    int i;
-    i = 0;
-    while (i < RA_NREG) {
-        if (ra_val[i] == inst) {
-            ra_clock = ra_clock + 1;
-            ra_age[i] = ra_clock;
-            return RA_BASE + i;
-        }
-        i = i + 1;
-    }
-    return -1;
-}
-
-static int ra_alloc(int inst) {
-    int i;
-    int best;
-    int best_age;
-    /* Try empty slot first */
-    i = 0;
-    while (i < RA_NREG) {
-        if (ra_val[i] < 0) {
-            ra_val[i] = inst;
-            ra_clock = ra_clock + 1;
-            ra_age[i] = ra_clock;
-            return RA_BASE + i;
-        }
-        i = i + 1;
-    }
-    /* Evict LRU */
-    best = 0;
-    best_age = ra_age[0];
-    i = 1;
-    while (i < RA_NREG) {
-        if (ra_age[i] < best_age) {
-            best = i;
-            best_age = ra_age[i];
-        }
-        i = i + 1;
-    }
-    ra_val[best] = inst;
-    ra_clock = ra_clock + 1;
-    ra_age[best] = ra_clock;
-    return RA_BASE + best;
-}
 
 /* --- Load immediate into register --- */
 static void hcg_li(int reg, int v) {
     int hi;
     int lo;
     if (v >= -2048 && v <= 2047) {
-        cg_s("    addi r");
-        cg_n(reg);
-        cg_s(", r0, ");
-        cg_n(v);
-        cg_c(10);
+        cg_rri("addi", reg, 0, v);
     } else {
         hi = (v + 2048) >> 12;
         hi = hi & 1048575;
@@ -163,13 +112,7 @@ static void hcg_li(int reg, int v) {
         cg_s(", ");
         cg_n(hi);
         cg_c(10);
-        cg_s("    addi r");
-        cg_n(reg);
-        cg_s(", r");
-        cg_n(reg);
-        cg_s(", ");
-        cg_n(lo);
-        cg_c(10);
+        cg_rri("addi", reg, reg, lo);
     }
 }
 
@@ -179,7 +122,8 @@ static void hcg_la(int reg, char *sym) {
     cg_n(reg);
     cg_s(", %hi(");
     cg_s(sym);
-    cg_s(")\n    addi r");
+    cg_s(")\n");
+    cg_s("    addi r");
     cg_n(reg);
     cg_s(", r");
     cg_n(reg);
@@ -193,30 +137,22 @@ static void hcg_la(int reg, char *sym) {
 static void hcg_into(int reg, int inst) {
     int k;
     int off;
-    int cached;
+
     if (inst < 0) {
-        /* -1 means no value (void), load 0 */
-        cg_s("    addi r");
-        cg_n(reg);
-        cg_s(", r0, 0\n");
-        if (reg == 1) hcg_r1_val = -1;
+        cg_rri("addi", reg, 0, 0);
         return;
     }
 
-    /* Quick check: value already in r1? */
-    if (inst == hcg_r1_val) {
-        if (reg == 1) return;
-        cg_s("    addi r");
-        cg_n(reg);
-        cg_s(", r1, 0\n");
+    /* Check register allocation first */
+    if (ra_reg[inst] >= 0) {
+        if (reg == ra_reg[inst]) return;
+        cg_rri("addi", reg, ra_reg[inst], 0);
         return;
     }
-
-    /* Loading into r1 invalidates the tracker */
-    if (reg == 1) hcg_r1_val = -1;
 
     k = h_kind[inst];
 
+    /* Rematerializable instructions */
     if (k == HI_ICONST) {
         hcg_li(reg, h_val[inst]);
         return;
@@ -224,18 +160,10 @@ static void hcg_into(int reg, int inst) {
     if (k == HI_ALLOCA) {
         off = h_val[inst];
         if (off >= -2048 && off <= 2047) {
-            cg_s("    addi r");
-            cg_n(reg);
-            cg_s(", r30, ");
-            cg_n(off);
-            cg_c(10);
+            cg_rri("addi", reg, 30, off);
         } else {
             hcg_li(reg, off);
-            cg_s("    add r");
-            cg_n(reg);
-            cg_s(", r30, r");
-            cg_n(reg);
-            cg_c(10);
+            cg_rrr("add", reg, 30, reg);
         }
         return;
     }
@@ -262,20 +190,9 @@ static void hcg_into(int reg, int inst) {
         return;
     }
 
-    /* Check register cache */
-    cached = ra_find(inst);
-    if (cached >= 0) {
-        cg_s("    addi r");
-        cg_n(reg);
-        cg_s(", r");
-        cg_n(cached);
-        cg_s(", 0\n");
-        return;
-    }
-
-    /* Load from spill slot */
-    if (hcg_spill[inst] != 0) {
-        off = hcg_spill[inst];
+    /* Spilled: load from spill slot */
+    off = ra_spill_off[inst];
+    if (off != 0) {
         if (off >= -2048 && off <= 2047) {
             cg_s("    ldw r");
             cg_n(reg);
@@ -284,11 +201,7 @@ static void hcg_into(int reg, int inst) {
             cg_c(10);
         } else {
             hcg_li(reg, off);
-            cg_s("    add r");
-            cg_n(reg);
-            cg_s(", r30, r");
-            cg_n(reg);
-            cg_c(10);
+            cg_rrr("add", reg, 30, reg);
             cg_s("    ldw r");
             cg_n(reg);
             cg_s(", r");
@@ -299,59 +212,108 @@ static void hcg_into(int reg, int inst) {
     }
 
     /* Fallback: value not available */
-    cg_s("    addi r");
-    cg_n(reg);
-    cg_s(", r0, 0\n");
+    cg_rri("addi", reg, 0, 0);
 }
 
-/* Spill r1 to instruction's temp slot */
-static void hcg_spill_res(int inst) {
+/* --- Source register helper ---
+ * Returns the physical register containing inst's value.
+ * If inst is in a register, returns that register (no code emitted).
+ * If inst is rematerializable or spilled, loads into scratch and returns scratch. */
+static int hcg_src(int inst, int scratch) {
+    if (inst < 0) return 0;
+    if (ra_reg[inst] >= 0) return ra_reg[inst];
+    hcg_into(scratch, inst);
+    return scratch;
+}
+
+/* --- Destination register helper ---
+ * Returns the physical register for the result.
+ * If allocated, returns the physical register.
+ * If spilled, returns r1 (caller must store r1 to spill slot). */
+static int hcg_dst(int idx) {
+    if (ra_reg[idx] >= 0) return ra_reg[idx];
+    return 1;
+}
+
+/* --- Store r1 to spill slot if instruction is spilled --- */
+static void hcg_maybe_spill(int idx) {
     int off;
-    int creg;
-    if (hi_is_remat(h_kind[inst])) return;
-    off = hcg_spill[inst];
+    if (ra_reg[idx] >= 0) return;
+    if (hi_is_remat(h_kind[idx])) return;
+    off = ra_spill_off[idx];
+    if (off == 0) return;
     if (off >= -2048 && off <= 2047) {
         cg_s("    stw r30, r1, ");
         cg_n(off);
         cg_c(10);
     } else {
-        /* Use r2 as scratch to compute address */
         hcg_li(2, off);
-        cg_s("    add r2, r30, r2\n");
+        cg_rrr("add", 2, 30, 2);
         cg_s("    stw r2, r1, 0\n");
     }
-    /* Cache result in register (only for large-offset spill slots
-     * where loads cost 4 instructions vs 1 for a cache hit move) */
-    if (off < -2048 || off > 2047) {
-        creg = ra_alloc(inst);
-        cg_s("    addi r");
-        cg_n(creg);
-        cg_s(", r1, 0\n");
-    }
-    /* Track that r1 now holds this instruction's result */
-    hcg_r1_val = inst;
 }
 
-/* Load with appropriate width for type */
-static void hcg_load(int ty) {
+/* --- Typed load/store helpers --- */
+
+/* Emit load from [areg+0] into dreg with appropriate width */
+static void hcg_load_mem(int dreg, int areg, int ty) {
     if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
-        if (ty & TY_UNSIGNED) cg_s("    ldbu r1, r1, 0\n");
-        else                  cg_s("    ldb r1, r1, 0\n");
+        if (ty & TY_UNSIGNED) cg_s("    ldbu r");
+        else                  cg_s("    ldb r");
     } else {
-        cg_s("    ldw r1, r1, 0\n");
+        cg_s("    ldw r");
     }
+    cg_n(dreg);
+    cg_s(", r");
+    cg_n(areg);
+    cg_s(", 0\n");
 }
 
-/* Store r2 to [r1] with appropriate width */
-static void hcg_store(int ty) {
+/* Emit load from [base+off] into dreg with appropriate width (small offset) */
+static void hcg_load_off(int dreg, int base, int off, int ty) {
     if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
-        cg_s("    stb r1, r2, 0\n");
+        if (ty & TY_UNSIGNED) cg_s("    ldbu r");
+        else                  cg_s("    ldb r");
     } else {
-        cg_s("    stw r1, r2, 0\n");
+        cg_s("    ldw r");
     }
+    cg_n(dreg);
+    cg_s(", r");
+    cg_n(base);
+    cg_s(", ");
+    cg_n(off);
+    cg_c(10);
 }
 
-/* --- Emit phi copies for a branch from_blk → to_blk --- */
+/* Emit store vreg to [areg+0] with appropriate width */
+static void hcg_store_mem(int areg, int vreg, int ty) {
+    if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
+        cg_s("    stb r");
+    } else {
+        cg_s("    stw r");
+    }
+    cg_n(areg);
+    cg_s(", r");
+    cg_n(vreg);
+    cg_s(", 0\n");
+}
+
+/* Emit store vreg to [base+off] with appropriate width (small offset) */
+static void hcg_store_off(int base, int vreg, int off, int ty) {
+    if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
+        cg_s("    stb r");
+    } else {
+        cg_s("    stw r");
+    }
+    cg_n(base);
+    cg_s(", r");
+    cg_n(vreg);
+    cg_s(", ");
+    cg_n(off);
+    cg_c(10);
+}
+
+/* --- Emit phi copies for a branch from_blk -> to_blk --- */
 
 static int hcg_phi_tmp[SSA_MAX_PROMO];
 
@@ -361,9 +323,11 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
     int j;
     int v;
     int off;
+    int src;
+    int phi;
+    int dreg;
 
-    /* Collect PHIs in to_blk (use linked list for O(1) per block).
-     * Skip entries that were optimized away (e.g. PHI -> COPY by hir_opt). */
+    /* Collect PHIs in to_blk */
     n = 0;
     i = ssa_phi_head[to_blk];
     while (i >= 0) {
@@ -384,31 +348,68 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
         j = j + 1;
     }
 
-    /* Pop in reverse order into PHI spill slots */
+    /* Pop in reverse order into PHI dest registers or spill slots */
     j = n - 1;
     while (j >= 0) {
-        cg_s("    ldw r1, r29, ");
-        cg_n((n - 1 - j) * 4);
-        cg_c(10);
-        off = hcg_spill[hcg_phi_tmp[j]];
-        if (off >= -2048 && off <= 2047) {
-            cg_s("    stw r30, r1, ");
-            cg_n(off);
+        phi = hcg_phi_tmp[j];
+        if (ra_reg[phi] >= 0) {
+            /* Pop directly into physical register */
+            dreg = ra_reg[phi];
+            cg_s("    ldw r");
+            cg_n(dreg);
+            cg_s(", r29, ");
+            cg_n((n - 1 - j) * 4);
             cg_c(10);
         } else {
-            hcg_li(2, off);
-            cg_s("    add r2, r30, r2\n");
-            cg_s("    stw r2, r1, 0\n");
+            /* Pop into r1, then store to spill slot */
+            cg_s("    ldw r1, r29, ");
+            cg_n((n - 1 - j) * 4);
+            cg_c(10);
+            off = ra_spill_off[phi];
+            if (off >= -2048 && off <= 2047) {
+                cg_s("    stw r30, r1, ");
+                cg_n(off);
+                cg_c(10);
+            } else {
+                hcg_li(2, off);
+                cg_rrr("add", 2, 30, 2);
+                cg_s("    stw r2, r1, 0\n");
+            }
         }
         j = j - 1;
     }
 
     /* Clean up stack */
     if (n > 0) {
-        cg_s("    addi r29, r29, ");
-        cg_n(n * 4);
-        cg_c(10);
+        cg_rri("addi", 29, 29, n * 4);
     }
+}
+
+/* --- Binop opcode name lookup --- */
+
+static char *hcg_binop_name(int k) {
+    if (k == HI_ADD)  return "add";
+    if (k == HI_SUB)  return "sub";
+    if (k == HI_MUL)  return "mul";
+    if (k == HI_DIV)  return "div";
+    if (k == HI_REM)  return "rem";
+    if (k == HI_AND)  return "and";
+    if (k == HI_OR)   return "or";
+    if (k == HI_XOR)  return "xor";
+    if (k == HI_SLL)  return "sll";
+    if (k == HI_SRA)  return "sra";
+    if (k == HI_SRL)  return "srl";
+    if (k == HI_SEQ)  return "seq";
+    if (k == HI_SNE)  return "sne";
+    if (k == HI_SLT)  return "slt";
+    if (k == HI_SGT)  return "sgt";
+    if (k == HI_SLE)  return "sle";
+    if (k == HI_SGE)  return "sge";
+    if (k == HI_SLTU) return "sltu";
+    if (k == HI_SGTU) return "sgtu";
+    if (k == HI_SLEU) return "sleu";
+    if (k == HI_SGEU) return "sgeu";
+    return "add";
 }
 
 /* --- Generate code for one HIR instruction --- */
@@ -423,6 +424,12 @@ static void hcg_inst(int idx) {
     int i;
     int skip;
     int off;
+    int rs1;
+    int rs2;
+    int rd;
+    int src;
+    int vreg;
+    int cond;
 
     k = h_kind[idx];
     ty = h_ty[idx];
@@ -431,151 +438,118 @@ static void hcg_inst(int idx) {
 
     if (k == HI_NOP || k == HI_ICONST || k == HI_ALLOCA ||
         k == HI_GADDR || k == HI_SADDR || k == HI_FADDR) {
-        /* Rematerializable: no code emitted at definition site */
         return;
     }
 
     if (k == HI_PARAM) {
-        /* Copy arg register to r1, then spill */
-        cg_s("    addi r1, r");
-        cg_n(3 + h_val[idx]);
-        cg_s(", 0\n");
-        hcg_spill_res(idx);
+        rd = hcg_dst(idx);
+        cg_rri("addi", rd, 3 + h_val[idx], 0);
+        hcg_maybe_spill(idx);
         return;
     }
 
     /* Binary arithmetic/logic/comparison */
     if (k >= HI_ADD && k <= HI_SGEU) {
-        hcg_into(2, s1);
-        hcg_into(1, s2);
-        if (k == HI_ADD)  cg_s("    add r1, r2, r1\n");
-        if (k == HI_SUB)  cg_s("    sub r1, r2, r1\n");
-        if (k == HI_MUL)  cg_s("    mul r1, r2, r1\n");
-        if (k == HI_DIV)  cg_s("    div r1, r2, r1\n");
-        if (k == HI_REM)  cg_s("    rem r1, r2, r1\n");
-        if (k == HI_AND)  cg_s("    and r1, r2, r1\n");
-        if (k == HI_OR)   cg_s("    or r1, r2, r1\n");
-        if (k == HI_XOR)  cg_s("    xor r1, r2, r1\n");
-        if (k == HI_SLL)  cg_s("    sll r1, r2, r1\n");
-        if (k == HI_SRA)  cg_s("    sra r1, r2, r1\n");
-        if (k == HI_SRL)  cg_s("    srl r1, r2, r1\n");
-        if (k == HI_SEQ)  cg_s("    seq r1, r2, r1\n");
-        if (k == HI_SNE)  cg_s("    sne r1, r2, r1\n");
-        if (k == HI_SLT)  cg_s("    slt r1, r2, r1\n");
-        if (k == HI_SGT)  cg_s("    sgt r1, r2, r1\n");
-        if (k == HI_SLE)  cg_s("    sle r1, r2, r1\n");
-        if (k == HI_SGE)  cg_s("    sge r1, r2, r1\n");
-        if (k == HI_SLTU) cg_s("    sltu r1, r2, r1\n");
-        if (k == HI_SGTU) cg_s("    sgtu r1, r2, r1\n");
-        if (k == HI_SLEU) cg_s("    sleu r1, r2, r1\n");
-        if (k == HI_SGEU) cg_s("    sgeu r1, r2, r1\n");
-        hcg_spill_res(idx);
+        rs1 = hcg_src(s1, 1);
+        rs2 = hcg_src(s2, 2);
+        rd = hcg_dst(idx);
+        cg_rrr(hcg_binop_name(k), rd, rs1, rs2);
+        hcg_maybe_spill(idx);
         return;
     }
 
-    /* Unary ops */
+    /* Unary: negate */
     if (k == HI_NEG) {
-        hcg_into(1, s1);
-        cg_s("    sub r1, r0, r1\n");
-        hcg_spill_res(idx);
+        rs1 = hcg_src(s1, 1);
+        rd = hcg_dst(idx);
+        cg_rrr("sub", rd, 0, rs1);
+        hcg_maybe_spill(idx);
         return;
     }
+
+    /* Unary: logical not */
     if (k == HI_NOT) {
-        hcg_into(1, s1);
-        cg_s("    seq r1, r1, r0\n");
-        hcg_spill_res(idx);
+        rs1 = hcg_src(s1, 1);
+        rd = hcg_dst(idx);
+        cg_rrr("seq", rd, rs1, 0);
+        hcg_maybe_spill(idx);
         return;
     }
+
+    /* Unary: bitwise not */
     if (k == HI_BNOT) {
-        hcg_into(1, s1);
-        cg_s("    addi r2, r0, -1\n");
-        cg_s("    xor r1, r1, r2\n");
-        hcg_spill_res(idx);
+        rs1 = hcg_src(s1, 1);
+        rd = hcg_dst(idx);
+        cg_rri("addi", 2, 0, -1);
+        cg_rrr("xor", rd, rs1, 2);
+        hcg_maybe_spill(idx);
         return;
     }
 
     /* Load */
     if (k == HI_LOAD) {
-        /* Optimization: if src is ALLOCA, load directly from fp+offset */
+        rd = hcg_dst(idx);
         if (s1 >= 0 && h_kind[s1] == HI_ALLOCA) {
             off = h_val[s1];
             if (off >= -2048 && off <= 2047) {
-                if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
-                    if (ty & TY_UNSIGNED) cg_s("    ldbu r1, r30, ");
-                    else                  cg_s("    ldb r1, r30, ");
-                } else {
-                    cg_s("    ldw r1, r30, ");
-                }
-                cg_n(off);
-                cg_c(10);
+                hcg_load_off(rd, 30, off, ty);
             } else {
-                hcg_li(1, off);
-                cg_s("    add r1, r30, r1\n");
-                hcg_load(ty);
+                hcg_li(rd, off);
+                cg_rrr("add", rd, 30, rd);
+                hcg_load_mem(rd, rd, ty);
             }
         } else {
-            hcg_into(1, s1);
-            hcg_load(ty);
+            rs1 = hcg_src(s1, 1);
+            /* If rd == rs1 (both r1 when spilled), load overwrites address
+             * only after reading it — this is fine for ldw rN, rN, 0. */
+            hcg_load_mem(rd, rs1, ty);
         }
-        hcg_spill_res(idx);
+        hcg_maybe_spill(idx);
         return;
     }
 
     /* Store */
     if (k == HI_STORE) {
-        /* Optimization: if dst is ALLOCA, store directly to fp+offset */
         if (s1 >= 0 && h_kind[s1] == HI_ALLOCA) {
             off = h_val[s1];
-            hcg_into(2, s2);
+            vreg = hcg_src(s2, 2);
             if (off >= -2048 && off <= 2047) {
-                if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
-                    cg_s("    stb r30, r2, ");
-                } else {
-                    cg_s("    stw r30, r2, ");
-                }
-                cg_n(off);
-                cg_c(10);
+                hcg_store_off(30, vreg, off, ty);
             } else {
                 hcg_li(1, off);
-                cg_s("    add r1, r30, r1\n");
-                hcg_r1_val = -1;
-                hcg_store(ty);
+                cg_rrr("add", 1, 30, 1);
+                hcg_store_mem(1, vreg, ty);
             }
         } else {
-            hcg_into(1, s1);
-            hcg_into(2, s2);
-            hcg_store(ty);
+            rs1 = hcg_src(s1, 1);
+            vreg = hcg_src(s2, 2);
+            hcg_store_mem(rs1, vreg, ty);
         }
         return;
     }
 
     /* ADDI (src1 + immediate) */
     if (k == HI_ADDI) {
-        /* Optimization: if src is ALLOCA, fold offsets */
+        rd = hcg_dst(idx);
         if (s1 >= 0 && h_kind[s1] == HI_ALLOCA) {
             off = h_val[s1] + h_val[idx];
             if (off >= -2048 && off <= 2047) {
-                cg_s("    addi r1, r30, ");
-                cg_n(off);
-                cg_c(10);
+                cg_rri("addi", rd, 30, off);
             } else {
-                hcg_li(1, off);
-                cg_s("    add r1, r30, r1\n");
+                hcg_li(rd, off);
+                cg_rrr("add", rd, 30, rd);
             }
         } else {
             off = h_val[idx];
+            rs1 = hcg_src(s1, 1);
             if (off >= -2048 && off <= 2047) {
-                hcg_into(1, s1);
-                cg_s("    addi r1, r1, ");
-                cg_n(off);
-                cg_c(10);
+                cg_rri("addi", rd, rs1, off);
             } else {
-                hcg_into(1, s1);
                 hcg_li(2, off);
-                cg_s("    add r1, r1, r2\n");
+                cg_rrr("add", rd, rs1, 2);
             }
         }
-        hcg_spill_res(idx);
+        hcg_maybe_spill(idx);
         return;
     }
 
@@ -590,10 +564,11 @@ static void hcg_inst(int idx) {
 
     /* Conditional branch */
     if (k == HI_BRC) {
-        /* if src1 != 0 goto src2(then_blk) else goto val(else_blk) */
-        hcg_into(1, s1);
+        cond = hcg_src(s1, 1);
         skip = cg_label();
-        cg_s("    beq r1, r0, ");
+        cg_s("    beq r");
+        cg_n(cond);
+        cg_s(", r0, ");
         cg_lref(skip);
         cg_c(10);
         hcg_phi_copies(h_blk[idx], s2);
@@ -641,15 +616,18 @@ static void hcg_inst(int idx) {
             i = i + 1;
         }
         if (nargs > 0) {
-            cg_s("    addi r29, r29, ");
-            cg_n(nargs * 4);
-            cg_c(10);
+            cg_rri("addi", 29, 29, nargs * 4);
         }
         cg_s("    jal r31, ");
         cg_s(h_name[idx]);
         cg_c(10);
-        ra_reset();
-        hcg_spill_res(idx);
+        /* Move result from r1 to allocated register or spill */
+        rd = hcg_dst(idx);
+        if (rd != 1) {
+            cg_rri("addi", rd, 1, 0);
+        } else {
+            hcg_maybe_spill(idx);
+        }
         return;
     }
 
@@ -678,26 +656,33 @@ static void hcg_inst(int idx) {
             i = i + 1;
         }
         if (nargs > 0) {
-            cg_s("    addi r29, r29, ");
-            cg_n(nargs * 4);
-            cg_c(10);
+            cg_rri("addi", 29, 29, nargs * 4);
         }
         /* Pop callee into r2 */
         cg_s("    ldw r2, r29, 0\n    addi r29, r29, 4\n");
         cg_s("    jalr r31, r2, 0\n");
-        ra_reset();
-        hcg_spill_res(idx);
+        /* Move result from r1 to allocated register or spill */
+        rd = hcg_dst(idx);
+        if (rd != 1) {
+            cg_rri("addi", rd, 1, 0);
+        } else {
+            hcg_maybe_spill(idx);
+        }
         return;
     }
 
-    /* COPY (Phase B) */
+    /* COPY */
     if (k == HI_COPY) {
-        hcg_into(1, s1);
-        hcg_spill_res(idx);
+        rd = hcg_dst(idx);
+        rs1 = hcg_src(s1, 1);
+        if (rd != rs1) {
+            cg_rri("addi", rd, rs1, 0);
+        }
+        hcg_maybe_spill(idx);
         return;
     }
 
-    /* PHI (Phase B — should be eliminated before codegen) */
+    /* PHI — result is written by hcg_phi_copies, no code here */
     if (k == HI_PHI) {
         return;
     }
@@ -707,12 +692,45 @@ static void hcg_inst(int idx) {
 
 static void hcg_block(int b) {
     int i;
-    ra_reset();
     cg_ldef(hcg_blk_lbl[b]);
     i = bb_start[b];
     while (i < bb_end[b]) {
         hcg_inst(i);
         i = i + 1;
+    }
+}
+
+/* --- Save/restore callee-saved register at fp+off --- */
+
+static void hcg_save_reg(int reg, int off) {
+    if (off >= -2048 && off <= 2047) {
+        cg_s("    stw r30, r");
+        cg_n(reg);
+        cg_s(", ");
+        cg_n(off);
+        cg_c(10);
+    } else {
+        hcg_li(1, off);
+        cg_rrr("add", 1, 30, 1);
+        cg_s("    stw r1, r");
+        cg_n(reg);
+        cg_s(", 0\n");
+    }
+}
+
+static void hcg_restore_reg(int reg, int off) {
+    if (off >= -2048 && off <= 2047) {
+        cg_s("    ldw r");
+        cg_n(reg);
+        cg_s(", r30, ");
+        cg_n(off);
+        cg_c(10);
+    } else {
+        hcg_li(1, off);
+        cg_rrr("add", 1, 30, 1);
+        cg_s("    ldw r");
+        cg_n(reg);
+        cg_s(", r1, 0\n");
     }
 }
 
@@ -726,25 +744,17 @@ static void hcg_func(Node *fn) {
     /* Lower AST to HIR */
     hl_func(fn);
 
-    /* Run SSA construction (no-op in Phase A) */
+    /* Run SSA construction */
     hir_ssa_construct();
 
     /* Run SSA optimizations */
     hir_opt();
 
-    /* Assign spill slots for non-rematerializable value-producing instructions */
-    i = 0;
-    while (i < h_ninst) {
-        if (hi_has_value(h_kind[i]) && !hi_is_remat(h_kind[i])) {
-            hl_temp_stack = hl_temp_stack + 4;
-            hcg_spill[i] = 0 - hl_temp_stack;
-        } else {
-            hcg_spill[i] = 0;
-        }
-        i = i + 1;
-    }
+    /* Register allocation: assigns ra_reg[], ra_spill_off[],
+     * callee-save info, and updates hl_temp_stack */
+    hir_regalloc();
 
-    /* Compute frame size */
+    /* Compute frame size (hl_temp_stack now includes spills + callee-saves) */
     fs = hl_temp_stack;
     fs = ((fs + 3) / 4) * 4;
     hcg_locals = fn->locals_size;
@@ -767,30 +777,28 @@ static void hcg_func(Node *fn) {
 
     /* Prologue — handle large frames (>2047 bytes) */
     if (fs <= 2047) {
-        cg_s("    addi r29, r29, -");
-        cg_n(fs);
-        cg_c(10);
+        cg_rri("addi", 29, 29, 0 - fs);
         cg_s("    stw r29, r31, ");
         cg_n(fs - 4);
         cg_c(10);
         cg_s("    stw r29, r30, ");
         cg_n(fs - 8);
         cg_c(10);
-        cg_s("    addi r30, r29, ");
-        cg_n(fs);
-        cg_c(10);
+        cg_rri("addi", 30, 29, fs);
     } else {
-        /* Save r31/r30 before frame allocation using old r29 */
         cg_s("    stw r29, r31, -4\n");
         cg_s("    stw r29, r30, -8\n");
-        /* r30 = old r29 (callee's frame pointer) */
-        cg_s("    addi r30, r29, 0\n");
-        /* Allocate frame */
+        cg_rri("addi", 30, 29, 0);
         hcg_li(1, fs);
-        cg_s("    sub r29, r29, r1\n");
+        cg_rrr("sub", 29, 29, 1);
     }
 
-    /* Params are now handled by HI_PARAM instructions in entry block */
+    /* Save callee-saved registers (after fp is set up) */
+    i = 0;
+    while (i < ra_ncsave) {
+        hcg_save_reg(ra_csave_reg[i], ra_csave_off[i]);
+        i = i + 1;
+    }
 
     /* Emit all basic blocks */
     b = 0;
@@ -799,8 +807,14 @@ static void hcg_func(Node *fn) {
         b = b + 1;
     }
 
-    /* Epilogue */
+    /* Epilogue: restore callee-saved registers */
     cg_ldef(hcg_epilog);
+    i = 0;
+    while (i < ra_ncsave) {
+        hcg_restore_reg(ra_csave_reg[i], ra_csave_off[i]);
+        i = i + 1;
+    }
+
     if (fs <= 2047) {
         cg_s("    ldw r31, r29, ");
         cg_n(fs - 4);
@@ -808,12 +822,9 @@ static void hcg_func(Node *fn) {
         cg_s("    ldw r30, r29, ");
         cg_n(fs - 8);
         cg_c(10);
-        cg_s("    addi r29, r29, ");
-        cg_n(fs);
-        cg_c(10);
+        cg_rri("addi", 29, 29, fs);
     } else {
-        /* r30 = old_r29 from prologue; restore via r30 */
-        cg_s("    addi r29, r30, 0\n");
+        cg_rri("addi", 29, 30, 0);
         cg_s("    ldw r31, r29, -4\n");
         cg_s("    ldw r30, r29, -8\n");
     }
@@ -849,7 +860,7 @@ static void gen_data(void) {
         i = i + 1;
     }
 
-    /* Global variables (initialized → .data) */
+    /* Global variables (initialized -> .data) */
     i = 0;
     while (i < ps_nglobals) {
         if (ps_gsize[i] == 0 && ps_gstr[i] >= 0) {

@@ -60,6 +60,7 @@ void fput_uint(int fd, int val) {
 #include "hir_lower.h"
 #include "hir_ssa.h"
 #include "hir_opt.h"
+#include "hir_regalloc.h"
 #include "hir_codegen.h"
 
 int main(int argc, char **argv) {
