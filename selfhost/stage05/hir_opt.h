@@ -1,0 +1,519 @@
+/* hir_opt.h -- SSA optimization passes for s12cc
+ *
+ * Runs after hir_ssa.h, before hir_codegen.h.
+ * 1. Copy propagation (eliminate HI_COPY chains)
+ * 2. Constant folding (evaluate constant binops at compile time)
+ * 3. Algebraic simplifications (identity/absorbing elements)
+ * 4. PHI simplification (trivial phis -> COPY)
+ * 5. Dead code elimination (remove unused value-producing instructions)
+ */
+
+/* Use count per instruction */
+static int ho_use[HIR_MAX_INST];
+
+/* Resolve COPY chains: follow src1 until non-COPY */
+static int ho_resolve(int inst) {
+    int depth;
+    depth = 0;
+    while (inst >= 0 && h_kind[inst] == HI_COPY && depth < 100) {
+        inst = h_src1[inst];
+        depth = depth + 1;
+    }
+    return inst;
+}
+
+/* Is src2 an instruction reference (not a block number)? */
+static int ho_src2_is_ref(int k) {
+    if (k >= HI_ADD && k <= HI_SGEU) return 1;
+    if (k == HI_STORE) return 1;
+    return 0;
+}
+
+/* ----------------------------------------------------------------
+ * Pass 1: Copy propagation
+ * Rewrite all instruction references through COPY chains.
+ * Also inline rematerializable COPY sources (COPY of ICONST -> ICONST).
+ * ---------------------------------------------------------------- */
+
+static int ho_copy_prop(void) {
+    int changed;
+    int i;
+    int j;
+    int k;
+    int r;
+    int base;
+    int cnt;
+
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_NOP) { i = i + 1; continue; }
+
+        /* Rewrite src1 */
+        if (h_src1[i] >= 0) {
+            r = ho_resolve(h_src1[i]);
+            if (r != h_src1[i]) {
+                h_src1[i] = r;
+                changed = 1;
+            }
+        }
+
+        /* Rewrite src2 (only if it's an instruction ref, not a block number) */
+        if (h_src2[i] >= 0 && ho_src2_is_ref(k)) {
+            r = ho_resolve(h_src2[i]);
+            if (r != h_src2[i]) {
+                h_src2[i] = r;
+                changed = 1;
+            }
+        }
+
+        /* Rewrite call args */
+        if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
+            base = h_cbase[i];
+            cnt = h_val[i];
+            j = 0;
+            while (j < cnt) {
+                if (h_carg[base + j] >= 0) {
+                    r = ho_resolve(h_carg[base + j]);
+                    if (r != h_carg[base + j]) {
+                        h_carg[base + j] = r;
+                        changed = 1;
+                    }
+                }
+                j = j + 1;
+            }
+        }
+
+        /* Rewrite PHI args */
+        if (k == HI_PHI && h_pbase[i] >= 0) {
+            j = 0;
+            while (j < h_pcnt[i]) {
+                if (h_pval[h_pbase[i] + j] >= 0) {
+                    r = ho_resolve(h_pval[h_pbase[i] + j]);
+                    if (r != h_pval[h_pbase[i] + j]) {
+                        h_pval[h_pbase[i] + j] = r;
+                        changed = 1;
+                    }
+                }
+                j = j + 1;
+            }
+        }
+
+        /* Inline rematerializable COPY sources:
+         * COPY of ICONST -> ICONST (saves a spill slot) */
+        if (k == HI_COPY && h_src1[i] >= 0 &&
+            h_kind[h_src1[i]] == HI_ICONST) {
+            h_kind[i] = HI_ICONST;
+            h_val[i] = h_val[h_src1[i]];
+            h_src1[i] = -1;
+            changed = 1;
+        }
+
+        i = i + 1;
+    }
+    return changed;
+}
+
+/* ----------------------------------------------------------------
+ * Pass 2: Constant folding and algebraic simplifications
+ * ---------------------------------------------------------------- */
+
+static int ho_const_fold(void) {
+    int changed;
+    int i;
+    int k;
+    int a;
+    int b;
+    int result;
+    int can_fold;
+    int s1c;
+    int s2c;
+
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+
+        /* === Binop optimizations === */
+        if (k >= HI_ADD && k <= HI_SGEU) {
+            s1c = (h_src1[i] >= 0 && h_kind[h_src1[i]] == HI_ICONST);
+            s2c = (h_src2[i] >= 0 && h_kind[h_src2[i]] == HI_ICONST);
+
+            if (s1c && s2c) {
+                /* Both operands constant: evaluate at compile time */
+                a = h_val[h_src1[i]];
+                b = h_val[h_src2[i]];
+                result = 0;
+                can_fold = 1;
+
+                if      (k == HI_ADD) result = a + b;
+                else if (k == HI_SUB) result = a - b;
+                else if (k == HI_MUL) result = a * b;
+                else if (k == HI_DIV) {
+                    if (b != 0) result = a / b; else can_fold = 0;
+                }
+                else if (k == HI_REM) {
+                    if (b != 0) result = a % b; else can_fold = 0;
+                }
+                else if (k == HI_AND) result = a & b;
+                else if (k == HI_OR)  result = a | b;
+                else if (k == HI_XOR) result = a ^ b;
+                else if (k == HI_SLL) result = a << b;
+                else if (k == HI_SRA) result = a >> b;
+                else if (k == HI_SEQ) {
+                    if (a == b) result = 1; else result = 0;
+                }
+                else if (k == HI_SNE) {
+                    if (a != b) result = 1; else result = 0;
+                }
+                else if (k == HI_SLT) {
+                    if (a < b) result = 1; else result = 0;
+                }
+                else if (k == HI_SGT) {
+                    if (a > b) result = 1; else result = 0;
+                }
+                else if (k == HI_SLE) {
+                    if (a <= b) result = 1; else result = 0;
+                }
+                else if (k == HI_SGE) {
+                    if (a >= b) result = 1; else result = 0;
+                }
+                else can_fold = 0;  /* SRL, SLTU, SGTU, SLEU, SGEU */
+
+                if (can_fold) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = result;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+            } else if (s2c) {
+                /* Right operand constant: identity/absorbing simplifications */
+                b = h_val[h_src2[i]];
+
+                /* x + 0, x - 0, x | 0, x ^ 0, x << 0, x >> 0 -> x */
+                if (b == 0 && (k == HI_ADD || k == HI_SUB || k == HI_OR ||
+                               k == HI_XOR || k == HI_SLL || k == HI_SRA ||
+                               k == HI_SRL)) {
+                    h_kind[i] = HI_COPY;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* x * 1 -> x */
+                else if (k == HI_MUL && b == 1) {
+                    h_kind[i] = HI_COPY;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* x * 0 -> 0, x & 0 -> 0 */
+                else if ((k == HI_MUL || k == HI_AND) && b == 0) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = 0;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+            } else if (s1c) {
+                /* Left operand constant: identity/absorbing simplifications */
+                a = h_val[h_src1[i]];
+
+                /* 0 + x -> x */
+                if (k == HI_ADD && a == 0) {
+                    h_kind[i] = HI_COPY;
+                    h_src1[i] = h_src2[i];
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* 1 * x -> x */
+                else if (k == HI_MUL && a == 1) {
+                    h_kind[i] = HI_COPY;
+                    h_src1[i] = h_src2[i];
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* 0 * x -> 0, 0 & x -> 0 */
+                else if ((k == HI_MUL || k == HI_AND) && a == 0) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = 0;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* 0 | x -> x, 0 ^ x -> x */
+                else if ((k == HI_OR || k == HI_XOR) && a == 0) {
+                    h_kind[i] = HI_COPY;
+                    h_src1[i] = h_src2[i];
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+            }
+
+            /* Same-operand simplifications (only if not already folded) */
+            if (h_kind[i] == k && h_src1[i] >= 0 && h_src1[i] == h_src2[i]) {
+                /* x - x -> 0, x ^ x -> 0 */
+                if (k == HI_SUB || k == HI_XOR) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = 0;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* x == x -> 1, x <= x -> 1, x >= x -> 1 */
+                else if (k == HI_SEQ || k == HI_SLE || k == HI_SGE ||
+                         k == HI_SLEU || k == HI_SGEU) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = 1;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* x != x -> 0, x < x -> 0, x > x -> 0 */
+                else if (k == HI_SNE || k == HI_SLT || k == HI_SGT ||
+                         k == HI_SLTU || k == HI_SGTU) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = 0;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* x & x -> x, x | x -> x */
+                else if (k == HI_AND || k == HI_OR) {
+                    h_kind[i] = HI_COPY;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+            }
+        }
+
+        /* === Unary ops with constant operand === */
+        if (k == HI_NEG && h_src1[i] >= 0 &&
+            h_kind[h_src1[i]] == HI_ICONST) {
+            h_kind[i] = HI_ICONST;
+            h_val[i] = 0 - h_val[h_src1[i]];
+            h_src1[i] = -1;
+            changed = 1;
+        }
+        if (k == HI_NOT && h_src1[i] >= 0 &&
+            h_kind[h_src1[i]] == HI_ICONST) {
+            h_kind[i] = HI_ICONST;
+            if (h_val[h_src1[i]] == 0) h_val[i] = 1;
+            else h_val[i] = 0;
+            h_src1[i] = -1;
+            changed = 1;
+        }
+        if (k == HI_BNOT && h_src1[i] >= 0 &&
+            h_kind[h_src1[i]] == HI_ICONST) {
+            h_kind[i] = HI_ICONST;
+            h_val[i] = (-1) ^ h_val[h_src1[i]];
+            h_src1[i] = -1;
+            changed = 1;
+        }
+
+        /* === ADDI with constant base === */
+        if (k == HI_ADDI && h_src1[i] >= 0 &&
+            h_kind[h_src1[i]] == HI_ICONST) {
+            h_kind[i] = HI_ICONST;
+            h_val[i] = h_val[h_src1[i]] + h_val[i];
+            h_src1[i] = -1;
+            changed = 1;
+        }
+
+        /* === BRC with constant condition -> unconditional BR === */
+        if (k == HI_BRC && h_src1[i] >= 0 &&
+            h_kind[h_src1[i]] == HI_ICONST) {
+            if (h_val[h_src1[i]] != 0) {
+                /* Always true: branch to then-block (src2) */
+                h_kind[i] = HI_BR;
+                h_val[i] = h_src2[i];
+            } else {
+                /* Always false: branch to else-block (val unchanged) */
+                h_kind[i] = HI_BR;
+            }
+            h_src1[i] = -1;
+            h_src2[i] = -1;
+            changed = 1;
+        }
+
+        i = i + 1;
+    }
+    return changed;
+}
+
+/* ----------------------------------------------------------------
+ * Pass 3: PHI simplification
+ * If all non-self-referential PHI args are the same value,
+ * replace the PHI with a COPY of that value.
+ * ---------------------------------------------------------------- */
+
+static int ho_phi_simplify(void) {
+    int changed;
+    int i;
+    int j;
+    int v;
+    int unique;
+
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] != HI_PHI) { i = i + 1; continue; }
+        if (h_pbase[i] < 0 || h_pcnt[i] == 0) { i = i + 1; continue; }
+
+        /* Find unique non-self-referential arg */
+        unique = -1;
+        j = 0;
+        while (j < h_pcnt[i]) {
+            v = h_pval[h_pbase[i] + j];
+            if (v != i) {
+                if (unique == -1) {
+                    unique = v;
+                } else if (v != unique) {
+                    unique = -2;  /* multiple distinct values */
+                }
+            }
+            j = j + 1;
+        }
+
+        if (unique >= 0) {
+            /* All non-self args are the same value -> COPY */
+            h_kind[i] = HI_COPY;
+            h_src1[i] = unique;
+            h_pbase[i] = -1;
+            h_pcnt[i] = 0;
+            changed = 1;
+        }
+
+        i = i + 1;
+    }
+    return changed;
+}
+
+/* ----------------------------------------------------------------
+ * Pass 4: Dead code elimination
+ * Count uses of each instruction, delete unused value-producers
+ * (except calls which have side effects).
+ * ---------------------------------------------------------------- */
+
+static void ho_count_uses(void) {
+    int i;
+    int j;
+    int k;
+    int base;
+    int cnt;
+
+    i = 0;
+    while (i < h_ninst) {
+        ho_use[i] = 0;
+        i = i + 1;
+    }
+
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_NOP) { i = i + 1; continue; }
+
+        /* src1 is always an instruction ref when >= 0 */
+        if (h_src1[i] >= 0)
+            ho_use[h_src1[i]] = ho_use[h_src1[i]] + 1;
+
+        /* src2 is an instruction ref only for binops and STORE */
+        if (h_src2[i] >= 0 && ho_src2_is_ref(k))
+            ho_use[h_src2[i]] = ho_use[h_src2[i]] + 1;
+
+        /* Call arguments */
+        if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
+            base = h_cbase[i];
+            cnt = h_val[i];
+            j = 0;
+            while (j < cnt) {
+                if (h_carg[base + j] >= 0)
+                    ho_use[h_carg[base + j]] = ho_use[h_carg[base + j]] + 1;
+                j = j + 1;
+            }
+        }
+
+        /* PHI arguments */
+        if (k == HI_PHI && h_pbase[i] >= 0) {
+            j = 0;
+            while (j < h_pcnt[i]) {
+                if (h_pval[h_pbase[i] + j] >= 0)
+                    ho_use[h_pval[h_pbase[i] + j]] =
+                        ho_use[h_pval[h_pbase[i] + j]] + 1;
+                j = j + 1;
+            }
+        }
+
+        i = i + 1;
+    }
+}
+
+static int ho_dce(void) {
+    int changed;
+    int i;
+    int k;
+
+    ho_count_uses();
+
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_NOP) { i = i + 1; continue; }
+
+        /* Delete if: produces value, no uses, no side effects */
+        if (hi_has_value(k) && ho_use[i] == 0 &&
+            k != HI_CALL && k != HI_CALLP) {
+            h_kind[i] = HI_NOP;
+            h_src1[i] = -1;
+            h_src2[i] = -1;
+            changed = 1;
+        }
+
+        i = i + 1;
+    }
+    return changed;
+}
+
+/* ----------------------------------------------------------------
+ * Main optimization driver: iterate until fixpoint
+ * ---------------------------------------------------------------- */
+
+/* Cumulative count of HIR instructions eliminated across all functions */
+static int ho_stat_elim;
+
+static void hir_opt(void) {
+    int changed;
+    int iter;
+    int before;
+    int after;
+    int i;
+
+    /* Count live instructions before */
+    before = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] != HI_NOP) before = before + 1;
+        i = i + 1;
+    }
+
+    iter = 0;
+    changed = 1;
+    while (changed && iter < 10) {
+        changed = 0;
+        changed = changed | ho_copy_prop();
+        changed = changed | ho_const_fold();
+        changed = changed | ho_phi_simplify();
+        changed = changed | ho_dce();
+        iter = iter + 1;
+    }
+
+    /* Count live instructions after */
+    after = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] != HI_NOP) after = after + 1;
+        i = i + 1;
+    }
+
+    ho_stat_elim = ho_stat_elim + (before - after);
+}

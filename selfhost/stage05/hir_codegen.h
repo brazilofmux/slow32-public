@@ -362,12 +362,15 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
     int v;
     int off;
 
-    /* Collect PHIs in to_blk (use linked list for O(1) per block) */
+    /* Collect PHIs in to_blk (use linked list for O(1) per block).
+     * Skip entries that were optimized away (e.g. PHI -> COPY by hir_opt). */
     n = 0;
     i = ssa_phi_head[to_blk];
     while (i >= 0) {
-        hcg_phi_tmp[n] = i;
-        n = n + 1;
+        if (h_kind[i] == HI_PHI) {
+            hcg_phi_tmp[n] = i;
+            n = n + 1;
+        }
         i = ssa_phi_next[i];
     }
     if (n == 0) return;
@@ -721,6 +724,9 @@ static void hcg_func(Node *fn) {
 
     /* Run SSA construction (no-op in Phase A) */
     hir_ssa_construct();
+
+    /* Run SSA optimizations */
+    hir_opt();
 
     /* Assign spill slots for non-rematerializable value-producing instructions */
     i = 0;

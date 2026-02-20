@@ -59,6 +59,7 @@ void fput_uint(int fd, int val) {
 #include "hir.h"
 #include "hir_lower.h"
 #include "hir_ssa.h"
+#include "hir_opt.h"
 #include "hir_codegen.h"
 
 int main(int argc, char **argv) {
@@ -140,6 +141,11 @@ int main(int argc, char **argv) {
     }
     write(fd, cg_out, cg_olen);
     close(fd);
+
+    /* Print optimization stats to stderr */
+    fputs("hir_opt: ", stderr);
+    fput_uint(stderr, ho_stat_elim);
+    fputs(" HIR instructions eliminated\n", stderr);
 
     return 0;
 }
