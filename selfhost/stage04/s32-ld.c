@@ -72,7 +72,7 @@ int stderr;
 #define B_MASK 0x01FFF07F
 
 #define STACK_BASE    0x0FFFFFF0
-#define STACK_SIZE    262144
+#define STACK_SIZE    1048576
 #define MEM_SIZE      0x10000000
 #define HEAP_GAP      0x800000
 #define CODE_LIMIT_MIN 0x100000
