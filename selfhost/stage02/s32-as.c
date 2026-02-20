@@ -664,7 +664,7 @@ static int handle(char *line) {
 static uint32_t s_add(const char *s) {
     uint32_t off = g_ssz;
     uint32_t n = (uint32_t)strlen(s) + 1u;
-    if (g_ssz + n > MAX_STR) return 0;
+    if (g_ssz + n > MAX_STR) return 0xFFFFFFFFu;
     memcpy(g_str + g_ssz, s, n);
     g_ssz += n;
     return off;
@@ -694,6 +694,7 @@ static int build_syms(int text_idx, int data_idx, int bss_idx) {
         if (!g_lbl_defd[i]) bind = S32O_BIND_GLOBAL;
         g_sym_lbl[g_nsym] = i;
         g_sym_name[g_nsym] = s_add(g_lbl_name_pool + g_lbl_name_off[i]);
+        if (g_sym_name[g_nsym] == 0xFFFFFFFFu) return -1;
         g_sym_val[g_nsym] = g_lbl_defd[i] ? g_lbl_val[i] : 0;
         g_sym_sec[g_nsym] = sec;
         g_sym_bind[g_nsym] = bind;
@@ -802,6 +803,11 @@ static int write_obj(const char *out) {
     if (text_idx) text_name = s_add(".text");
     if (data_idx) data_name = s_add(".data");
     if (bss_idx) bss_name = s_add(".bss");
+    if ((text_idx && text_name == 0xFFFFFFFFu) ||
+        (data_idx && data_name == 0xFFFFFFFFu) ||
+        (bss_idx && bss_name == 0xFFFFFFFFu)) {
+        return -1;
+    }
 
     if (build_syms(text_idx, data_idx, bss_idx) != 0) return -1;
 
