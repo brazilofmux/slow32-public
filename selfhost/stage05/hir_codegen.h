@@ -112,7 +112,10 @@ static void hcg_li(int reg, int v) {
         cg_s(", ");
         cg_n(hi);
         cg_c(10);
-        cg_rri("addi", reg, reg, lo);
+        /* Avoid no-op addi when low part is 0. */
+        if (lo != 0) {
+            cg_rri("addi", reg, reg, lo);
+        }
     }
 }
 
