@@ -420,6 +420,7 @@ static void hcg_inst(int idx) {
     int s1;
     int s2;
     int nargs;
+    int regc;
     int base;
     int i;
     int skip;
@@ -598,29 +599,39 @@ static void hcg_inst(int idx) {
     if (k == HI_CALL) {
         nargs = h_val[idx];
         base = h_cbase[idx];
-        /* Push all args to stack */
-        i = 0;
-        while (i < nargs) {
+        /* Push all args right-to-left so arg0 is at lowest stack address. */
+        i = nargs - 1;
+        while (i >= 0) {
             hcg_into(1, h_carg[base + i]);
             cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
-            i = i + 1;
+            i = i - 1;
         }
-        /* Pop into arg registers */
+
+        /* Load first 8 args into r3-r10; leave overflow args on stack. */
+        regc = nargs;
+        if (regc > 8) regc = 8;
         i = 0;
-        while (i < nargs) {
+        while (i < regc) {
             cg_s("    ldw r");
             cg_n(3 + i);
             cg_s(", r29, ");
-            cg_n((nargs - 1 - i) * 4);
+            cg_n(i * 4);
             cg_c(10);
             i = i + 1;
         }
-        if (nargs > 0) {
-            cg_rri("addi", 29, 29, nargs * 4);
+        if (regc > 0) {
+            cg_rri("addi", 29, 29, regc * 4);
         }
+
         cg_s("    jal r31, ");
         cg_s(h_name[idx]);
         cg_c(10);
+
+        /* Clean up overflow stack args (if any). */
+        if (nargs > regc) {
+            cg_rri("addi", 29, 29, (nargs - regc) * 4);
+        }
+
         /* Move result from r1 to allocated register or spill */
         rd = hcg_dst(idx);
         if (rd != 1) {
@@ -635,32 +646,44 @@ static void hcg_inst(int idx) {
     if (k == HI_CALLP) {
         nargs = h_val[idx];
         base = h_cbase[idx];
-        /* Push callee address first */
+
+        /* Push callee address first. */
         hcg_into(1, s1);
         cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
-        /* Push all args */
-        i = 0;
-        while (i < nargs) {
+
+        /* Push args right-to-left so arg0 is at lowest stack address. */
+        i = nargs - 1;
+        while (i >= 0) {
             hcg_into(1, h_carg[base + i]);
             cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
-            i = i + 1;
+            i = i - 1;
         }
-        /* Pop args into arg registers */
+
+        /* Load first 8 args into r3-r10; leave overflow args on stack. */
+        regc = nargs;
+        if (regc > 8) regc = 8;
         i = 0;
-        while (i < nargs) {
+        while (i < regc) {
             cg_s("    ldw r");
             cg_n(3 + i);
             cg_s(", r29, ");
-            cg_n((nargs - 1 - i) * 4);
+            cg_n(i * 4);
             cg_c(10);
             i = i + 1;
         }
-        if (nargs > 0) {
-            cg_rri("addi", 29, 29, nargs * 4);
+        if (regc > 0) {
+            cg_rri("addi", 29, 29, regc * 4);
         }
-        /* Pop callee into r2 */
-        cg_s("    ldw r2, r29, 0\n    addi r29, r29, 4\n");
+
+        /* Callee is after overflow args. */
+        cg_s("    ldw r2, r29, ");
+        cg_n((nargs - regc) * 4);
+        cg_c(10);
         cg_s("    jalr r31, r2, 0\n");
+
+        /* Pop overflow args and callee slot. */
+        cg_rri("addi", 29, 29, (nargs - regc + 1) * 4);
+
         /* Move result from r1 to allocated register or spill */
         rd = hcg_dst(idx);
         if (rd != 1) {

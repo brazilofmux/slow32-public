@@ -217,6 +217,14 @@ static void cg_apply_binop(int op, int ty) {
 static void gen_expr(Node *n);
 static void gen_stmt(Node *n);
 
+/* Push arguments right-to-left so arg0 ends up at lowest stack address. */
+static void cg_push_args_rev(Node *a) {
+    if (!a) return;
+    cg_push_args_rev(a->next);
+    gen_expr(a);
+    cg_push();
+}
+
 /* Generate address of lvalue into r1 */
 static void gen_addr(Node *n) {
     char lbl[32];
@@ -260,6 +268,7 @@ static void gen_expr(Node *n) {
     int l2;
     Node *a;
     int i;
+    int regc;
     int elem_sz;
     char slbl[16];
 
@@ -632,30 +641,36 @@ static void gen_expr(Node *n) {
     }
 
     if (n->kind == ND_CALL) {
-        /* Evaluate all args left-to-right and push */
-        a = n->args;
-        while (a) {
-            gen_expr(a);
-            cg_push();
-            a = a->next;
-        }
-        /* Pop into argument registers: arg0 at highest offset */
+        /* Push args right-to-left to match ABI arg order. */
+        cg_push_args_rev(n->args);
+
+        /* Load first 8 args into r3-r10. */
+        regc = n->nparams;
+        if (regc > 8) regc = 8;
         i = 0;
-        while (i < n->nparams) {
+        while (i < regc) {
             cg_s("    ldw r");
             cg_n(3 + i);
             cg_s(", r29, ");
-            cg_n((n->nparams - 1 - i) * 4);
+            cg_n(i * 4);
             cg_c(10);
             i = i + 1;
         }
-        cg_s("    addi r29, r29, ");
-        cg_n(n->nparams * 4);
-        cg_c(10);
+        if (regc > 0) {
+            cg_s("    addi r29, r29, ");
+            cg_n(regc * 4);
+            cg_c(10);
+        }
         /* Call */
         cg_s("    jal r31, ");
         cg_s(n->name);
         cg_c(10);
+        /* Pop overflow args (if any). */
+        if (n->nparams > regc) {
+            cg_s("    addi r29, r29, ");
+            cg_n((n->nparams - regc) * 4);
+            cg_c(10);
+        }
         /* Result is in r1 */
         return;
     }
@@ -670,29 +685,38 @@ static void gen_expr(Node *n) {
         /* Indirect call: evaluate callee, push, evaluate args, call via jalr */
         gen_expr(n->lhs);
         cg_push();  /* push callee address */
-        /* Evaluate all args left-to-right and push */
-        a = n->args;
-        while (a) {
-            gen_expr(a);
-            cg_push();
-            a = a->next;
-        }
-        /* Pop args into argument registers */
+
+        /* Push args right-to-left to match ABI arg order. */
+        cg_push_args_rev(n->args);
+
+        /* Load first 8 args into r3-r10. */
+        regc = n->nparams;
+        if (regc > 8) regc = 8;
         i = 0;
-        while (i < n->nparams) {
+        while (i < regc) {
             cg_s("    ldw r");
             cg_n(3 + i);
             cg_s(", r29, ");
-            cg_n((n->nparams - 1 - i) * 4);
+            cg_n(i * 4);
             cg_c(10);
             i = i + 1;
         }
-        cg_s("    addi r29, r29, ");
-        cg_n(n->nparams * 4);
+        if (regc > 0) {
+            cg_s("    addi r29, r29, ");
+            cg_n(regc * 4);
+            cg_c(10);
+        }
+
+        /* Callee is after overflow args. */
+        cg_s("    ldw r2, r29, ");
+        cg_n((n->nparams - regc) * 4);
         cg_c(10);
-        /* Pop callee address into r2 and call */
-        cg_s("    ldw r2, r29, 0\n    addi r29, r29, 4\n");
         cg_s("    jalr r31, r2, 0\n");
+
+        /* Pop overflow args and callee slot. */
+        cg_s("    addi r29, r29, ");
+        cg_n((n->nparams - regc + 1) * 4);
+        cg_c(10);
         return;
     }
 

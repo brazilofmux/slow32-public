@@ -51,3 +51,9 @@ Manual per-stage entry points:
 - `stage03` (s32-cc compiler): `selfhost/stage03/run-spike.sh --emu ./tools/emulator/slow32-fast`
 - `stage04` (s12cc compiler): `selfhost/stage04/run-tests.sh --emu ./tools/emulator/slow32-fast`
 - `stage05` (optimized toolchain): `selfhost/stage05/run-tests.sh --emu ./tools/emulator/slow32-fast`
+
+ABI conformance entry points:
+- all supported stages: `selfhost/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`
+- stage03 only: `selfhost/stage03/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`
+- stage04 only: `selfhost/stage04/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`
+- stage05 only: `selfhost/stage05/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`
