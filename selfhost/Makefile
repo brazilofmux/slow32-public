@@ -27,12 +27,12 @@ stage02: stage01
 	@echo "--- Building Stage 02: C Assembler + Archiver + Linker + Compiler ---"
 	$(MAKE) -C stage02
 
-# Stage 03: s32-cc Compiler (lex/parse split, evolved from cc-min)
+# Stage 03: s32-cc Compiler + Tools (as, ar, ld) + libc/runtime
 # Prerequisites: Stage 02 cc-min (compiler), Stage 02 assembler + linker
-# Includes BNE+JAL long-branch switch, increased limits
-# Artifacts: s32cc.s32x (s32-cc compiler, runs on emulator)
+# s32cc compiled by cc-min; tools compiled by s32cc. Self-sufficient toolchain.
+# Artifacts: s32cc.s32x, s32-as.s32x, s32-ar.s32x, s32-ld.s32x
 stage03: stage02
-	@echo "--- Building Stage 03: s32-cc Compiler ---"
+	@echo "--- Building Stage 03: s32-cc Compiler + Tools ---"
 	$(MAKE) -C stage03
 
 # Stage 12: s12cc AST-based C Compiler

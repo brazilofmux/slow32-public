@@ -18,9 +18,9 @@ STAGE2_AS="$SELFHOST_DIR/stage02/s32-as.s32x"
 STAGE2_LD="$SELFHOST_DIR/stage02/s32-ld.s32x"
 GEN2_CC="$SELFHOST_DIR/stage02/cc-min.s32x"
 
-LIBC_DIR="$SELFHOST_DIR/stage02/libc"
-CRT0_SRC="$SELFHOST_DIR/stage02/crt0.s"
-MMIO_NO_START_SRC="$SELFHOST_DIR/stage02/mmio_no_start.s"
+LIBC_DIR="$SCRIPT_DIR/libc"
+CRT0_SRC="$SCRIPT_DIR/crt0.s"
+MMIO_NO_START_SRC="$SCRIPT_DIR/mmio_no_start.s"
 OUT_EXE="$SCRIPT_DIR/s32cc.s32x"
 
 for f in "$EMU" "$STAGE2_AS" "$STAGE2_LD" "$GEN2_CC" \

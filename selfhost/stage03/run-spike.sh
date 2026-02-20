@@ -173,9 +173,9 @@ LD_EXE="$SELFHOST_DIR/stage02/s32-ld.s32x"
 [[ -f "$LD_EXE" ]] || { echo "missing linker: $LD_EXE" >&2; exit 1; }
 
 # Build runtime objects from source
-LIBC_DIR="$SELFHOST_DIR/stage02/libc"
-CRT0_SRC="$SELFHOST_DIR/stage02/crt0.s"
-MMIO_NO_START_SRC="$SELFHOST_DIR/stage02/mmio_no_start.s"
+LIBC_DIR="$SCRIPT_DIR/libc"
+CRT0_SRC="$SCRIPT_DIR/crt0.s"
+MMIO_NO_START_SRC="$SCRIPT_DIR/mmio_no_start.s"
 
 run_exe "$AS_EXE" "$WORKDIR/crt0.log" "$CRT0_SRC" "$WORKDIR/crt0.s32o"
 [[ -s "$WORKDIR/crt0.s32o" ]] || { echo "failed to assemble crt0" >&2; exit 1; }

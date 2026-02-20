@@ -14,7 +14,7 @@ Stage cycles at a glance:
 - `stage00`: standalone ~800 line emulator that every other stage relies on.
 - `stage01`: assembler + archiver + linker + C compiler written in Forth (includes kernel fixed-point proof).
 - `stage02`: the same four tools (assembler, archiver, linker, compiler) now authored in Subset C but still hosted by the Forth toolchain. After this stage, all Forth tools are retired.
-- `stage03`: s32-cc compiler (lex/parse split, evolved from cc-min). Compiled by stage02 cc-min.
+- `stage03`: s32-cc compiler + tools (as, ar, ld) + libc/runtime. Self-sufficient toolchain. Compiled by stage02 cc-min, tools compiled by s32-cc.
 - `stage12`: s12cc AST-based compiler (Ragel lexer + recursive-descent parser). Compiled by stage03 s32-cc.
 - `stage13`: complete s12cc toolchain (compiler + AS + AR + LD + libc). Compiled by stage12.
 - `stage14`: compiler playground (copy of stage13, bootstrapped by stage13).
