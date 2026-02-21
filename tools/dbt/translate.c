@@ -605,18 +605,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     bool saved_superblock_enabled = ctx->superblock_enabled;
     ctx->superblock_enabled = false;
 
-    // Policy fallback: call/return/indirect patterns still use Stage4 path.
-    if (emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
-        emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG ||
-        emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_SHORT ||
-        emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_LONG ||
-        emitted_pattern == STAGE5_BURG_PATTERN_JALR_INDIRECT) {
-        ctx->superblock_enabled = saved_superblock_enabled;
-        stage5_emit_fallback++;
-        stage5_emit_fallback_shape++;
-        return false;
-    }
-
     // BURG-pattern fast paths from lifted IR tail.
     int term_idx = -1;
     for (int i = (int)region.ir_count - 1; i >= 0; i--) {

@@ -146,10 +146,7 @@ Requirements:
 
 **Coverage improvement** (bench-loops): 20 → 138 emitted (7x), 75% of BURG-selected blocks now emit.
 
-**Remaining policy gates** (call/return/indirect — Phase 2b):
-- `JAL_CALL_SHORT`, `JAL_CALL_LONG`
-- `JALR_RET_SHORT`, `JALR_RET_LONG`
-- `JALR_INDIRECT`
+**Phase 2b complete**: All policy gates removed. Call/return/indirect patterns (`JAL_CALL_SHORT`, `JAL_CALL_LONG`, `JALR_RET_SHORT`, `JALR_RET_LONG`, `JALR_INDIRECT`) now emit via their Stage 4 translators within the BURG emission framework. Coverage is 100% across all test workloads (0 fallbacks).
 
 **Double-lift eliminated**: emit path now tracks lift+BURG counters itself; noop select only runs when emit is disabled (`-G` without `-W`).
 
@@ -208,8 +205,8 @@ Rollout:
 - per-pattern emit efficiency (`emit pattern <name> ... bpg=<x>`)
   - terminals are split (`jal_call_short`, `jal_call_long`, `jal_jump`, `jalr_ret_short`, `jalr_ret_long`, `jalr_indirect`, `halt`, `yield`, `debug`)
   - direct branches are split (`direct_branch_eq`, `direct_branch_ne`, `direct_branch_rel`, `direct_branch_relu`)
-  - `jal_call_short`, `jal_call_long`, `jalr_ret_short`, `jalr_ret_long`, `jalr_indirect` currently use policy fallback to Stage 4 emission
-  - `jal_jump`, `direct_branch_eq`, `direct_branch_ne`, `direct_branch_rel`, `direct_branch_relu` emit for all region sizes
+  - all pattern families emit (no remaining policy gates)
+  - `jal_call_short`, `jal_call_long`, `jalr_ret_short`, `jalr_ret_long`, `jalr_indirect` emit via Stage 4 translators within BURG framework
   - `cmp_branch_zero` uses BURG-native fused emitter (CMP + Jcc, no intermediate rd)
   - `stage5_emit_fused_cmp_branch` counts fused emissions
 - `stage5_strict_carry_skips`
