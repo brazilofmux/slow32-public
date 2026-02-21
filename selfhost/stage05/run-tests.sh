@@ -16,6 +16,8 @@ TESTS_DIR="$SCRIPT_DIR/tests"
 EMU="${SELFHOST_EMU:-}"
 EMU_EXPLICIT=0
 KEEP_ARTIFACTS=0
+RUN_FIXED_POINT=0
+STRICT_SHAPE=0
 
 choose_default_emu() {
     local dbt="$SELFHOST_DIR/../tools/dbt/slow32-dbt"
@@ -28,7 +30,7 @@ choose_default_emu() {
 
 usage() {
     cat <<USAGE
-Usage: $0 [--emu <path>] [--keep-artifacts]
+Usage: $0 [--emu <path>] [--keep-artifacts] [--fixed-point] [--strict-shape]
 
 Stage13 tests: s12cc compiler + toolchain tests (bootstrapped from stage04)
 USAGE
@@ -44,6 +46,12 @@ while [[ $# -gt 0 ]]; do
             ;;
         --keep-artifacts)
             KEEP_ARTIFACTS=1
+            ;;
+        --fixed-point)
+            RUN_FIXED_POINT=1
+            ;;
+        --strict-shape)
+            STRICT_SHAPE=1
             ;;
         -h|--help)
             usage
@@ -128,6 +136,73 @@ check_noop_addi_self() {
     return 0
 }
 
+check_missed_immediate_ops() {
+    local asm="$1"
+    local tag="$2"
+    local log="$WORKDIR/${tag}-imm-shape.log"
+
+    awk '
+    function is_small_imm(v) { return (v >= -2048 && v <= 2047); }
+    function is_shift_imm(v) { return (v >= 0 && v <= 31); }
+    function regnum(tok) {
+        if (tok ~ /^r[0-9]+$/) return substr(tok, 2) + 0;
+        return -1;
+    }
+    function is_int(tok) { return (tok ~ /^-?[0-9]+$/); }
+    BEGIN { have_prev = 0; bad = 0; }
+    {
+        orig = $0;
+        line = $0;
+        gsub(",", "", line);
+        gsub(/^[[:space:]]+/, "", line);
+        n = split(line, t, /[[:space:]]+/);
+
+        if (n == 4 && t[1] == "addi" && regnum(t[2]) >= 0 && t[3] == "r0" && is_int(t[4])) {
+            preg = regnum(t[2]);
+            pimm = t[4] + 0;
+            pline = NR;
+            have_prev = 1;
+            next;
+        }
+
+        if (have_prev && n == 4) {
+            op = t[1];
+            rd = regnum(t[2]);
+            rA = regnum(t[3]);
+            rB = regnum(t[4]);
+            if (rd >= 0 && rA >= 0 && rB >= 0) {
+                if ((op == "and" || op == "or" || op == "xor") &&
+                    (rA == preg || rB == preg) && is_small_imm(pimm)) {
+                    printf("%d:%s (from addi at %d)\n", NR, orig, pline);
+                    bad = 1;
+                } else if ((op == "slt" || op == "sltu") &&
+                           rB == preg && is_small_imm(pimm)) {
+                    printf("%d:%s (from addi at %d)\n", NR, orig, pline);
+                    bad = 1;
+                } else if ((op == "sll" || op == "srl" || op == "sra") &&
+                           rB == preg && is_shift_imm(pimm)) {
+                    printf("%d:%s (from addi at %d)\n", NR, orig, pline);
+                    bad = 1;
+                }
+            }
+        }
+        have_prev = 0;
+    }
+    END { exit(bad ? 1 : 0); }
+    ' "$asm" >"$log" || {
+        if [[ "$STRICT_SHAPE" -eq 1 ]]; then
+            echo "  $tag: FAIL (missed immediate opcode shape)" >&2
+            cat "$log" >&2
+            return 1
+        fi
+        echo "  $tag: WARN (missed immediate opcode opportunities)" >&2
+        cat "$log" >&2
+        SHAPE_WARN=$((SHAPE_WARN + 1))
+        echo "$tag" >> "$SHAPE_WARN_FILE"
+    }
+    return 0
+}
+
 compile_and_link() {
     local name="$1"
     local src="$2"
@@ -146,6 +221,7 @@ compile_and_link() {
     fi
     if [[ "$cc" == "${S13CC_EXE:-}" ]]; then
         check_noop_addi_self "$asm" "$name" || return 1
+        check_missed_immediate_ops "$asm" "$name" || return 1
     fi
 
     run_exe "$as" "$WORKDIR/${name}-assemble.log" "$asm" "$obj"
@@ -208,6 +284,8 @@ run_exe "$AS_EXE" "$WORKDIR/start.as.log" "$WORKDIR/start.s" "$WORKDIR/start.s32
 RUNTIME_CRT0="$WORKDIR/crt0.s32o"
 RUNTIME_MMIO_NO_START_OBJ="$WORKDIR/mmio_no_start.s32o"
 LIBC_START_OBJ="$WORKDIR/start.s32o"
+STAGE4_LIBC_OBJS="$LIBC_OBJS"
+STAGE4_LIBC_START_OBJ="$LIBC_START_OBJ"
 
 echo "Compiler (stage04 s12cc): $STAGE4_CC"
 echo "Assembler: $AS_EXE"
@@ -216,6 +294,9 @@ echo "Linker: $LD_EXE"
 PASS=0
 FAIL=0
 TOTAL=0
+SHAPE_WARN=0
+SHAPE_WARN_FILE="$WORKDIR/shape.warn"
+: > "$SHAPE_WARN_FILE"
 
 # ============================================================
 # Step 2: Build s13cc using stage04's s12cc
@@ -337,6 +418,11 @@ if [[ -s "$S13CC_EXE" ]]; then
             FAIL=$((FAIL + 1))
             continue
         fi
+        if ! check_missed_immediate_ops "$WORKDIR/${tname}.s" "$tname"; then
+            printf "  %-30s FAIL (imm shape)\n" "$tname:"
+            FAIL=$((FAIL + 1))
+            continue
+        fi
 
         # Assemble
         run_exe "$AS_EXE" "$WORKDIR/${tname}-as.log" "$WORKDIR/${tname}.s" "$WORKDIR/${tname}.s32o"
@@ -373,6 +459,76 @@ if [[ -s "$S13CC_EXE" ]]; then
             FAIL=$((FAIL + 1))
         fi
     done
+fi
+
+# ============================================================
+# Step 3d: Fixed-point gate (optional slow test)
+# Build gen2 with gen1, then gen3 with gen2, and require gen2 == gen3.
+# ============================================================
+if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$S13CC_EXE" ]]; then
+    echo ""
+    echo "=== Step 3d: Fixed-point gate (gen2 == gen3) ==="
+    TOTAL=$((TOTAL + 1))
+    EXEC_TIMEOUT=300
+
+    run_exe "$S13CC_EXE" "$WORKDIR/fp-gen2-compile.log" "$S13CC_SRC" "$WORKDIR/fp-gen2.s"
+    if [[ ! -s "$WORKDIR/fp-gen2.s" ]]; then
+        printf "  %-30s FAIL (compile)\n" "fixed-point:"
+        FAIL=$((FAIL + 1))
+    else
+        if grep -Eq '^hir_burg|^hir_burg_select' "$WORKDIR/fp-gen2-compile.log"; then
+            echo "  gen2 self-compile stats:"
+            grep -E '^hir_burg|^hir_burg_select' "$WORKDIR/fp-gen2-compile.log" | tail -n 2
+        fi
+        run_exe "$AS_EXE" "$WORKDIR/fp-gen2-assemble.log" "$WORKDIR/fp-gen2.s" "$WORKDIR/fp-gen2.s32o"
+        if [[ ! -s "$WORKDIR/fp-gen2.s32o" ]]; then
+            printf "  %-30s FAIL (assemble)\n" "fixed-point:"
+            FAIL=$((FAIL + 1))
+        else
+            run_exe "$LD_EXE" "$WORKDIR/fp-gen2-link.log" \
+                -o "$WORKDIR/fp-gen2.s32x" --mmio 64K \
+                "$RUNTIME_CRT0" "$WORKDIR/fp-gen2.s32o" "$STAGE4_LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+                $STAGE4_LIBC_OBJS
+            if [[ ! -s "$WORKDIR/fp-gen2.s32x" ]]; then
+                printf "  %-30s FAIL (link)\n" "fixed-point:"
+                FAIL=$((FAIL + 1))
+            else
+                run_exe "$WORKDIR/fp-gen2.s32x" "$WORKDIR/fp-gen3-compile.log" "$S13CC_SRC" "$WORKDIR/fp-gen3.s"
+                if [[ ! -s "$WORKDIR/fp-gen3.s" ]]; then
+                    printf "  %-30s FAIL (gen3 compile)\n" "fixed-point:"
+                    FAIL=$((FAIL + 1))
+                else
+                    if grep -Eq '^hir_burg|^hir_burg_select' "$WORKDIR/fp-gen3-compile.log"; then
+                        echo "  gen3 self-compile stats:"
+                        grep -E '^hir_burg|^hir_burg_select' "$WORKDIR/fp-gen3-compile.log" | tail -n 2
+                    fi
+                    run_exe "$AS_EXE" "$WORKDIR/fp-gen3-assemble.log" "$WORKDIR/fp-gen3.s" "$WORKDIR/fp-gen3.s32o"
+                    if [[ ! -s "$WORKDIR/fp-gen3.s32o" ]]; then
+                        printf "  %-30s FAIL (gen3 assemble)\n" "fixed-point:"
+                        FAIL=$((FAIL + 1))
+                    else
+                        run_exe "$LD_EXE" "$WORKDIR/fp-gen3-link.log" \
+                            -o "$WORKDIR/fp-gen3.s32x" --mmio 64K \
+                            "$RUNTIME_CRT0" "$WORKDIR/fp-gen3.s32o" "$STAGE4_LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+                            $STAGE4_LIBC_OBJS
+                        if [[ ! -s "$WORKDIR/fp-gen3.s32x" ]]; then
+                            printf "  %-30s FAIL (gen3 link)\n" "fixed-point:"
+                            FAIL=$((FAIL + 1))
+                        elif cmp -s "$WORKDIR/fp-gen2.s32x" "$WORKDIR/fp-gen3.s32x"; then
+                            printf "  %-30s PASS\n" "fixed-point:"
+                            PASS=$((PASS + 1))
+                        else
+                            printf "  %-30s FAIL (gen2 != gen3)\n" "fixed-point:"
+                            echo "    gen2: $(wc -c < "$WORKDIR/fp-gen2.s32x") bytes" >&2
+                            echo "    gen3: $(wc -c < "$WORKDIR/fp-gen3.s32x") bytes" >&2
+                            FAIL=$((FAIL + 1))
+                        fi
+                    fi
+                fi
+            fi
+        fi
+    fi
+    EXEC_TIMEOUT="$SAVED_TIMEOUT"
 fi
 
 # ============================================================
@@ -722,6 +878,16 @@ if [[ "$FAIL" -eq 0 ]]; then
 else
     echo "FAIL: stage05 ($PASS/$TOTAL tests passed, $FAIL failed)" >&2
     exit 1
+fi
+
+if [[ "$SHAPE_WARN" -gt 0 ]]; then
+    if [[ -f "$SHAPE_WARN_FILE" ]]; then
+        SHAPE_WARN=$(wc -l < "$SHAPE_WARN_FILE")
+    fi
+    echo "WARN: shape checks reported opportunities in $SHAPE_WARN compilations"
+    if [[ "$STRICT_SHAPE" -eq 0 ]]; then
+        echo "      rerun with --strict-shape to make these fatal"
+    fi
 fi
 
 echo "Artifacts: $WORKDIR"

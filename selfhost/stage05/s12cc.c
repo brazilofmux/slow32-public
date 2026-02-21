@@ -129,6 +129,17 @@ int main(int argc, char **argv) {
     fputs(" cost=", stderr);
     fput_uint(stderr, bg_stat_rej_cost);
     fputs("\n", stderr);
+    fputs("hir_burg_select: total=", stderr);
+    fput_uint(stderr, bg_stat_sel_total);
+    fputs(" chain=", stderr);
+    fput_uint(stderr, bg_stat_sel_chain);
+    fputs(" imm=", stderr);
+    fput_uint(stderr, bg_stat_sel_imm);
+    fputs(" faddr=", stderr);
+    fput_uint(stderr, bg_stat_sel_faddr);
+    fputs(" saddr=", stderr);
+    fput_uint(stderr, bg_stat_sel_saddr);
+    fputs("\n", stderr);
 
     return 0;
 }

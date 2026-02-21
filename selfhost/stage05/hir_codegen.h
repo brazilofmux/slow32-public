@@ -229,6 +229,36 @@ static int hcg_src(int inst, int scratch) {
     return scratch;
 }
 
+/* Recover a small constant through COPY/ADDI chains for immediate emission. */
+static int hcg_const_imm_inst(int inst, int *out) {
+    int k;
+    int acc;
+    int lim;
+
+    acc = 0;
+    lim = 0;
+    while (inst >= 0 && lim < 64) {
+        k = h_kind[inst];
+        if (k == HI_ICONST) {
+            *out = acc + h_val[inst];
+            return 1;
+        }
+        if (k == HI_COPY) {
+            inst = h_src1[inst];
+            lim = lim + 1;
+            continue;
+        }
+        if (k == HI_ADDI) {
+            acc = acc + h_val[inst];
+            inst = h_src1[inst];
+            lim = lim + 1;
+            continue;
+        }
+        return 0;
+    }
+    return 0;
+}
+
 /* --- Destination register helper ---
  * Returns the physical register for the result.
  * If allocated, returns the physical register.
@@ -545,63 +575,94 @@ static void hcg_inst(int idx) {
         return;
     }
 
-    if ((k == HI_AND || k == HI_OR || k == HI_XOR) && pat >= 0 &&
-        ((lnt == BG_REG && rnt == BG_IMM) || (lnt == BG_IMM && rnt == BG_REG))) {
+    if (k == HI_AND || k == HI_OR || k == HI_XOR) {
         char *opi;
+        int imm_ok;
+        int base_inst;
         rd = hcg_dst(idx);
-        if (lnt == BG_REG) {
-            rs1 = hcg_src(s1, 1);
+        imm_ok = 0;
+        base_inst = -1;
+
+        if (hcg_const_imm_inst(s2, &off)) {
+            imm_ok = 1;
+            base_inst = s1;
+        } else if (hcg_const_imm_inst(s1, &off)) {
+            imm_ok = 1;
+            base_inst = s2;
+        } else if (pat >= 0 &&
+                   ((lnt == BG_REG && rnt == BG_IMM) || (lnt == BG_IMM && rnt == BG_REG))) {
+            imm_ok = 1;
+            if (lnt == BG_REG) {
+                base_inst = s1;
+                off = h_val[s2];
+            } else {
+                base_inst = s2;
+                off = h_val[s1];
+            }
+        }
+        if (!imm_ok) {
+            /* fall through to generic reg-reg emission */
+        } else {
+            rs1 = hcg_src(base_inst, 1);
+            if (k == HI_AND) opi = "andi";
+            else if (k == HI_OR) opi = "ori";
+            else opi = "xori";
+            if (off >= -2048 && off <= 2047) {
+                cg_rri(opi, rd, rs1, off);
+            } else {
+                hcg_li(2, off);
+                cg_rrr(hcg_binop_name(k), rd, rs1, 2);
+            }
+            hcg_maybe_spill(idx);
+            return;
+        }
+    }
+
+    if (k == HI_SLL || k == HI_SRL || k == HI_SRA) {
+        char *opi;
+        int have_imm;
+        rd = hcg_dst(idx);
+        have_imm = hcg_const_imm_inst(s2, &off);
+        if (!have_imm && pat >= 0 && lnt == BG_REG && rnt == BG_IMM) {
+            have_imm = 1;
             off = h_val[s2];
-        } else {
-            rs1 = hcg_src(s2, 1);
-            off = h_val[s1];
         }
-        if (k == HI_AND) opi = "andi";
-        else if (k == HI_OR) opi = "ori";
-        else opi = "xori";
-        if (off >= -2048 && off <= 2047) {
-            cg_rri(opi, rd, rs1, off);
-        } else {
-            hcg_li(2, off);
-            cg_rrr(hcg_binop_name(k), rd, rs1, 2);
+        if (have_imm) {
+            rs1 = hcg_src(s1, 1);
+            if (k == HI_SLL) opi = "slli";
+            else if (k == HI_SRL) opi = "srli";
+            else opi = "srai";
+            if (off >= 0 && off <= 31) {
+                cg_rri(opi, rd, rs1, off);
+            } else {
+                hcg_li(2, off);
+                cg_rrr(hcg_binop_name(k), rd, rs1, 2);
+            }
+            hcg_maybe_spill(idx);
+            return;
         }
-        hcg_maybe_spill(idx);
-        return;
     }
 
-    if ((k == HI_SLL || k == HI_SRL || k == HI_SRA) && pat >= 0 &&
-        lnt == BG_REG && rnt == BG_IMM) {
-        char *opi;
-        rd = hcg_dst(idx);
-        rs1 = hcg_src(s1, 1);
-        off = h_val[s2];
-        if (k == HI_SLL) opi = "slli";
-        else if (k == HI_SRL) opi = "srli";
-        else opi = "srai";
-        if (off >= 0 && off <= 31) {
-            cg_rri(opi, rd, rs1, off);
-        } else {
-            hcg_li(2, off);
-            cg_rrr(hcg_binop_name(k), rd, rs1, 2);
+    if (k == HI_SLT || k == HI_SLTU) {
+        int have_imm;
+        have_imm = hcg_const_imm_inst(s2, &off);
+        if (!have_imm && pat >= 0 && lnt == BG_REG && rnt == BG_IMM) {
+            have_imm = 1;
+            off = h_val[s2];
         }
-        hcg_maybe_spill(idx);
-        return;
-    }
-
-    if ((k == HI_SLT || k == HI_SLTU) && pat >= 0 &&
-        lnt == BG_REG && rnt == BG_IMM) {
-        rd = hcg_dst(idx);
-        rs1 = hcg_src(s1, 1);
-        off = h_val[s2];
-        if (off >= -2048 && off <= 2047) {
-            if (k == HI_SLT) cg_rri("slti", rd, rs1, off);
-            else cg_rri("sltiu", rd, rs1, off);
-        } else {
-            hcg_li(2, off);
-            cg_rrr(hcg_binop_name(k), rd, rs1, 2);
+        if (have_imm) {
+            rd = hcg_dst(idx);
+            rs1 = hcg_src(s1, 1);
+            if (off >= -2048 && off <= 2047) {
+                if (k == HI_SLT) cg_rri("slti", rd, rs1, off);
+                else cg_rri("sltiu", rd, rs1, off);
+            } else {
+                hcg_li(2, off);
+                cg_rrr(hcg_binop_name(k), rd, rs1, 2);
+            }
+            hcg_maybe_spill(idx);
+            return;
         }
-        hcg_maybe_spill(idx);
-        return;
     }
 
     /* Binary arithmetic/logic/comparison */
@@ -636,8 +697,7 @@ static void hcg_inst(int idx) {
     if (k == HI_BNOT) {
         rs1 = hcg_src(s1, 1);
         rd = hcg_dst(idx);
-        cg_rri("addi", 2, 0, -1);
-        cg_rrr("xor", rd, rs1, 2);
+        cg_rri("xori", rd, rs1, -1);
         hcg_maybe_spill(idx);
         return;
     }

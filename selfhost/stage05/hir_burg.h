@@ -69,6 +69,11 @@ static int bg_stat_rej_uses;
 static int bg_stat_rej_remat;
 static int bg_stat_rej_blk;
 static int bg_stat_rej_cost;
+static int bg_stat_sel_total;
+static int bg_stat_sel_chain;
+static int bg_stat_sel_imm;
+static int bg_stat_sel_faddr;
+static int bg_stat_sel_saddr;
 
 /* Init flag */
 static int bg_inited;
@@ -479,6 +484,17 @@ static void bg_select(void) {
         }
 
         bg_sel[i] = bg_rule[i * BG_NNT + nt];
+        if (bg_sel[i] >= 0) {
+            pat = bg_sel[i];
+            bg_stat_sel_total = bg_stat_sel_total + 1;
+            lnt = bg_plnt[pat];
+            rnt = bg_prnt[pat];
+            if (lnt == BG_IMM || rnt == BG_IMM) bg_stat_sel_imm = bg_stat_sel_imm + 1;
+            if (lnt == BG_FADDR || rnt == BG_FADDR) bg_stat_sel_faddr = bg_stat_sel_faddr + 1;
+            if (lnt == BG_SADDR || rnt == BG_SADDR) bg_stat_sel_saddr = bg_stat_sel_saddr + 1;
+        } else if (bg_sel[i] < 0) {
+            bg_stat_sel_chain = bg_stat_sel_chain + 1;
+        }
         i = i + 1;
     }
 
