@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build stage06 tools: s32-as.s32x, s32-ar.s32x, s32-ld.s32x
+# Build stage06 tools: s32-as.s32x, s32-ar.s32x, s32-ld.s32x, slow32dump.s32x, slow32dis.s32x
 # All compiled by stage05's cc.s32x, assembled by stage05 assembler,
 # linked by stage05 linker. Uses stage06's own libc/runtime.
 
@@ -35,7 +35,8 @@ for f in "$EMU" "$STAGE5_CC" "$STAGE5_AS" "$STAGE5_LD" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC" \
          "$TOOLS_DIR/s32-as.c" "$TOOLS_DIR/s32_formats_min.h" \
          "$TOOLS_DIR/s32-ar.c" "$TOOLS_DIR/s32ar_min.h" \
-         "$TOOLS_DIR/s32-ld.c"; do
+         "$TOOLS_DIR/s32-ld.c" "$TOOLS_DIR/s32util_min.h" \
+         "$TOOLS_DIR/slow32dump.c" "$TOOLS_DIR/slow32dis.c"; do
     [[ -f "$f" ]] || { echo "Missing: $f" >&2; exit 1; }
 done
 
@@ -125,7 +126,7 @@ link_exe "$WORKDIR/s32-ar.link.log" -o "$SCRIPT_DIR/s32-ar.s32x" --mmio 64K \
 echo "  OK: s32-ar.s32x ($(wc -c < "$SCRIPT_DIR/s32-ar.s32x") bytes)"
 
 # --- Build linker ---
-echo "[5/5] Build s32-ld.s32x"
+echo "[5/7] Build s32-ld.s32x"
 compile "$TOOLS_DIR/s32-ld.c" "$WORKDIR/s32-ld.s" "$WORKDIR/s32-ld.cc.log"
 assemble "$WORKDIR/s32-ld.s" "$WORKDIR/s32-ld.s32o" "$WORKDIR/s32-ld.as.log"
 link_exe "$WORKDIR/s32-ld.link.log" -o "$SCRIPT_DIR/s32-ld.s32x" --mmio 64K \
@@ -134,6 +135,28 @@ link_exe "$WORKDIR/s32-ld.link.log" -o "$SCRIPT_DIR/s32-ld.s32x" --mmio 64K \
     $LIBC_OBJS
 [[ -s "$SCRIPT_DIR/s32-ld.s32x" ]] || { echo "s32-ld link failed" >&2; exit 1; }
 echo "  OK: s32-ld.s32x ($(wc -c < "$SCRIPT_DIR/s32-ld.s32x") bytes)"
+
+# --- Build dumper ---
+echo "[6/7] Build slow32dump.s32x"
+compile "$TOOLS_DIR/slow32dump.c" "$WORKDIR/slow32dump.s" "$WORKDIR/slow32dump.cc.log"
+assemble "$WORKDIR/slow32dump.s" "$WORKDIR/slow32dump.s32o" "$WORKDIR/slow32dump.as.log"
+link_exe "$WORKDIR/slow32dump.link.log" -o "$SCRIPT_DIR/slow32dump.s32x" --mmio 64K \
+    "$WORKDIR/crt0.s32o" "$WORKDIR/slow32dump.s32o" "$WORKDIR/start.s32o" \
+    "$WORKDIR/mmio_no_start.s32o" \
+    $LIBC_OBJS
+[[ -s "$SCRIPT_DIR/slow32dump.s32x" ]] || { echo "slow32dump link failed" >&2; exit 1; }
+echo "  OK: slow32dump.s32x ($(wc -c < "$SCRIPT_DIR/slow32dump.s32x") bytes)"
+
+# --- Build disassembler ---
+echo "[7/7] Build slow32dis.s32x"
+compile "$TOOLS_DIR/slow32dis.c" "$WORKDIR/slow32dis.s" "$WORKDIR/slow32dis.cc.log"
+assemble "$WORKDIR/slow32dis.s" "$WORKDIR/slow32dis.s32o" "$WORKDIR/slow32dis.as.log"
+link_exe "$WORKDIR/slow32dis.link.log" -o "$SCRIPT_DIR/slow32dis.s32x" --mmio 64K \
+    "$WORKDIR/crt0.s32o" "$WORKDIR/slow32dis.s32o" "$WORKDIR/start.s32o" \
+    "$WORKDIR/mmio_no_start.s32o" \
+    $LIBC_OBJS
+[[ -s "$SCRIPT_DIR/slow32dis.s32x" ]] || { echo "slow32dis link failed" >&2; exit 1; }
+echo "  OK: slow32dis.s32x ($(wc -c < "$SCRIPT_DIR/slow32dis.s32x") bytes)"
 
 echo ""
 echo "All tools built successfully."
