@@ -137,6 +137,9 @@ int data_sz;
 int rodata_sz;
 int bss_sz;
 
+int init_array_base;
+int init_array_end_off;
+
 /* === Global symbol table (parallel arrays) === */
 int gsym_noff[MAX_GSYM];
 int gsym_nlen[MAX_GSYM];
@@ -269,6 +272,10 @@ void wr16(char *buf, int off, int val) {
 
 int align4(int n) {
     return (n + 3) & (-4);
+}
+
+int align_to(int n, int a) {
+    return (n + a - 1) & (0 - a);
 }
 
 int align16(int n) {
@@ -536,10 +543,14 @@ void merge_sections() {
     int stype;
     int ssize;
     int sfileoff;
+    int sname_off;
+    int salign;
+    int merge_type;
     int base;
     int cur_sz;
     char *dst;
     char *src;
+    char *sname;
     int j;
 
     i = 0;
@@ -554,14 +565,22 @@ void merge_sections() {
         stype = rd32(file_buf, sec_off + 4);
         ssize = rd32(file_buf, sec_off + 12);
         sfileoff = rd32(file_buf, sec_off + 16);
+        sname_off = rd32(file_buf, sec_off + 0);
+        salign = rd32(file_buf, sec_off + 20);
+        if (salign < 4) salign = 4;
 
-        if (stype == SEC_CODE || stype == SEC_DATA ||
-            stype == SEC_BSS || stype == SEC_RODATA) {
+        merge_type = stype;
+        if (stype == 0x10 || stype == 0x11 || stype == 0x20) {
+            merge_type = SEC_RODATA;
+        }
+
+        if (merge_type == SEC_CODE || merge_type == SEC_DATA ||
+            merge_type == SEC_BSS || merge_type == SEC_RODATA) {
 
             /* Compute aligned base in merged section */
-            cur_sz = sec_sz_get(stype);
+            cur_sz = sec_sz_get(merge_type);
             if (cur_sz > 0) {
-                base = align4(cur_sz);
+                base = align_to(cur_sz, salign);
             } else {
                 base = 0;
             }
@@ -572,14 +591,14 @@ void merge_sections() {
             }
 
             /* Copy data (skip BSS) */
-            if (stype != SEC_BSS) {
+            if (merge_type != SEC_BSS) {
                 if (ssize > 0 && sfileoff > 0) {
-                    if (base + ssize > sec_cap(stype)) {
+                    if (base + ssize > sec_cap(merge_type)) {
                         fputs("error: section buffer overflow\n", stderr);
                         link_error = 1;
                         return;
                     }
-                    dst = sec_buf(stype) + base;
+                    dst = sec_buf(merge_type) + base;
                     src = file_buf + sfileoff;
                     j = 0;
                     while (j < ssize) {
@@ -590,7 +609,18 @@ void merge_sections() {
             }
 
             /* Update merged section size */
-            sec_sz_set(stype, base + ssize);
+            sec_sz_set(merge_type, base + ssize);
+
+            /* Track .init_array */
+            if (merge_type == SEC_DATA && sname_off > 0) {
+                sname = file_buf + obj_str_off + sname_off;
+                if (streq(sname, ".init_array")) {
+                    if (init_array_end_off == 0) {
+                        init_array_base = base;
+                    }
+                    init_array_end_off = base + ssize;
+                }
+            }
         }
 
         i = i + 1;
@@ -640,6 +670,9 @@ void merge_symbols() {
         } else {
             /* Defined: get section type from section table */
             sy_sectype = rd32(file_buf, (sy_sec - 1) * S32O_SEC_SZ + obj_sec_off + 4);
+            if (sy_sectype == 0x10 || sy_sectype == 0x11 || sy_sectype == 0x20) {
+                sy_sectype = SEC_RODATA;
+            }
 
             /* Adjust value by section base offset (per section index) */
             sy_val = sec_base_by_idx[sy_sec - 1] + sy_val;
@@ -663,6 +696,7 @@ void merge_relocs() {
     int i;
     int sec_off;
     int stype;
+    int merge_type;
     int nrelocs;
     int reloc_off;
     int r;
@@ -679,6 +713,11 @@ void merge_relocs() {
         stype = rd32(file_buf, sec_off + 4);
         nrelocs = rd32(file_buf, sec_off + 24);
         reloc_off = rd32(file_buf, sec_off + 28);
+
+        merge_type = stype;
+        if (stype == 0x10 || stype == 0x11 || stype == 0x20) {
+            merge_type = SEC_RODATA;
+        }
 
         r = 0;
         while (r < nrelocs) {
@@ -704,7 +743,7 @@ void merge_relocs() {
                 grel_off[grel_cnt] = rl_off + sec_base_by_idx[i];
 
                 /* Store section type and file index */
-                grel_sec[grel_cnt] = stype;
+                grel_sec[grel_cnt] = merge_type;
                 grel_file[grel_cnt] = input_file_idx;
 
                 grel_cnt = grel_cnt + 1;
@@ -1177,8 +1216,13 @@ void inject_linker_symbols() {
     inject_sym("_end", bss_end_va);
     inject_sym("end", bss_end_va);
 
-    inject_sym("__init_array_start", 0);
-    inject_sym("__init_array_end", 0);
+    if (init_array_end_off > 0) {
+        inject_sym("__init_array_start", data_va + init_array_base);
+        inject_sym("__init_array_end", data_va + init_array_end_off);
+    } else {
+        inject_sym("__init_array_start", 0);
+        inject_sym("__init_array_end", 0);
+    }
 }
 
 /* === Collect symbol table for output === */
@@ -1825,6 +1869,8 @@ int main(int argc, char **argv) {
     mmio_sz = 0;
     mmio_va = 0;
     entry_pt = 0;
+    init_array_base = 0;
+    init_array_end_off = 0;
 
     ostrtab_init();
 
