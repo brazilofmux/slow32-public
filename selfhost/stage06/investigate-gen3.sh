@@ -17,7 +17,10 @@ FAST="$ROOT_DIR/tools/emulator/slow32-fast"
 [[ -x "$DBT" ]] || { echo "Missing: $DBT" >&2; exit 1; }
 [[ -x "$FAST" ]] || { echo "Missing: $FAST" >&2; exit 1; }
 
-STAGE5_CC="$SELFHOST_DIR/stage05/s12cc.s32x"
+STAGE5_CC="$SELFHOST_DIR/stage05/cc.s32x"
+if [[ ! -f "$STAGE5_CC" ]]; then
+    STAGE5_CC="$SELFHOST_DIR/stage05/s12cc.s32x"
+fi
 STAGE5_AS="$SELFHOST_DIR/stage05/s32-as.s32x"
 STAGE5_LD="$SELFHOST_DIR/stage05/s32-ld.s32x"
 

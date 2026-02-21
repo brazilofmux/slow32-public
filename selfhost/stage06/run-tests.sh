@@ -244,15 +244,18 @@ compile_and_link() {
 }
 
 # ============================================================
-# Step 1: Bootstrap — build runtime/libc using stage05 s12cc
+# Step 1: Bootstrap — build runtime/libc using stage05 compiler
 # ============================================================
 echo "=== Step 1: Bootstrap ==="
 
-STAGE5_CC="$SELFHOST_DIR/stage05/s12cc.s32x"
+STAGE5_CC="$SELFHOST_DIR/stage05/cc.s32x"
+if [[ ! -f "$STAGE5_CC" ]]; then
+    STAGE5_CC="$SELFHOST_DIR/stage05/s12cc.s32x"
+fi
 AS_EXE="$SELFHOST_DIR/stage05/s32-as.s32x"
 LD_EXE="$SELFHOST_DIR/stage05/s32-ld.s32x"
 
-[[ -f "$STAGE5_CC" ]] || { echo "Missing s12cc (stage05): $STAGE5_CC" >&2; exit 1; }
+[[ -f "$STAGE5_CC" ]] || { echo "Missing compiler (stage05): $STAGE5_CC" >&2; exit 1; }
 [[ -f "$AS_EXE" ]] || { echo "Missing assembler: $AS_EXE" >&2; exit 1; }
 [[ -f "$LD_EXE" ]] || { echo "Missing linker: $LD_EXE" >&2; exit 1; }
 
@@ -266,7 +269,7 @@ run_exe "$AS_EXE" "$WORKDIR/crt0.log" "$CRT0_SRC" "$WORKDIR/crt0.s32o"
 run_exe "$AS_EXE" "$WORKDIR/mmio_no_start.log" "$MMIO_NO_START_SRC" "$WORKDIR/mmio_no_start.s32o"
 [[ -s "$WORKDIR/mmio_no_start.s32o" ]] || { echo "failed to assemble mmio_no_start" >&2; exit 1; }
 
-# Build libc with stage05's s12cc
+# Build libc with stage05 compiler
 LIBC_OBJS=""
 for name in string_extra string_more ctype convert stdio malloc; do
     run_exe "$STAGE5_CC" "$WORKDIR/${name}.cc.log" "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s"
@@ -287,7 +290,7 @@ LIBC_START_OBJ="$WORKDIR/start.s32o"
 STAGE5_LIBC_OBJS="$LIBC_OBJS"
 STAGE5_LIBC_START_OBJ="$LIBC_START_OBJ"
 
-echo "Compiler (stage05 s12cc): $STAGE5_CC"
+echo "Compiler (stage05): $STAGE5_CC"
 echo "Assembler: $AS_EXE"
 echo "Linker: $LD_EXE"
 
