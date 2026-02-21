@@ -361,7 +361,7 @@ if [[ -s "$S13CC_EXE" ]]; then
     echo ""
     echo "=== Step 3b: Semantic equivalence (stage04 vs s13cc) ==="
 
-    # Deterministic stress cases, no libc dependency.
+    # Deterministic no-libc cases.
     # Compare observable behavior (program return code) between compilers.
     cat > "$WORKDIR/sem_eq_01.c" <<'EOF'
 int main(void){int x;x=0;for(x=0;x<100;x=x+1){}return x-100;}
@@ -381,8 +381,84 @@ EOF
     cat > "$WORKDIR/sem_eq_06.c" <<'EOF'
 int main(void){int x;x=3; x=(x+5)+9; return x-17;}
 EOF
+    cat > "$WORKDIR/sem_eq_07.c" <<'EOF'
+int g(int x){int i;int s;s=0;for(i=0;i<20;i=i+1){s=s+((x*3)+5);}return s;} int main(void){return g(7)-520;}
+EOF
+    cat > "$WORKDIR/sem_eq_08.c" <<'EOF'
+int main(void){int i;int j;int s;int x;x=9;s=0;for(i=0;i<6;i=i+1){for(j=0;j<5;j=j+1){s=s+((x*4)-3)+i;}}return s-1065;}
+EOF
+    cat > "$WORKDIR/sem_eq_09.c" <<'EOF'
+int side; int touch(int x){side=side+1; return x+side;} int main(void){int i;int s;side=0;s=0;for(i=0;i<10;i=i+1){s=s+touch(3);} if(side!=10)return 1; return s-85;}
+EOF
+    cat > "$WORKDIR/sem_eq_10.c" <<'EOF'
+int g0; int main(void){int i;int s;g0=1;s=0;for(i=0;i<8;i=i+1){s=s+g0; if(i==3) g0=2;} return s-12;}
+EOF
+    cat > "$WORKDIR/sem_eq_11.c" <<'EOF'
+int main(void){int i;int a;int b;a=1;b=2;for(i=0;i<50;i=i+1){if((i&1)==0)a=a+b;else b=b+a; if(a<0)a=a&32767; if(b<0)b=b&32767;}return (a^b)&255;}
+EOF
+    cat > "$WORKDIR/sem_eq_12.c" <<'EOF'
+int main(void){int i;int x;int y;x=1234;y=77;for(i=0;i<40;i=i+1){x=((x<<2)+(x>>3))-(y<<1); y=(y+3)^(x&31);}return (x+y)&255;}
+EOF
 
-    for src in "$WORKDIR"/sem_eq_*.c; do
+    for src in \
+        "$WORKDIR/sem_eq_01.c" \
+        "$WORKDIR/sem_eq_02.c" \
+        "$WORKDIR/sem_eq_03.c" \
+        "$WORKDIR/sem_eq_04.c" \
+        "$WORKDIR/sem_eq_05.c" \
+        "$WORKDIR/sem_eq_06.c"; do
+        name="$(basename "$src" .c)"
+        TOTAL=$((TOTAL + 1))
+
+        EXE_A=$(compile_and_link "${name}-s4" "$src" "$STAGE4_CC" "$AS_EXE" "$LD_EXE") || {
+            printf "  %-30s FAIL (stage04 build)\n" "${name}:"
+            FAIL=$((FAIL + 1))
+            continue
+        }
+        EXE_B=$(compile_and_link "${name}-s5" "$src" "$S13CC_EXE" "$AS_EXE" "$LD_EXE") || {
+            printf "  %-30s FAIL (s13cc build)\n" "${name}:"
+            FAIL=$((FAIL + 1))
+            continue
+        }
+
+        set +e
+        run_exe_rc "$EXE_A" "$WORKDIR/${name}-s4.run.log"
+        RC_A=$?
+        run_exe_rc "$EXE_B" "$WORKDIR/${name}-s5.run.log"
+        RC_B=$?
+        set -e
+
+        if [[ "$RC_A" -eq 96 ]]; then RC_A=0; fi
+        if [[ "$RC_B" -eq 96 ]]; then RC_B=0; fi
+
+        if [[ "$RC_A" -eq "$RC_B" ]]; then
+            printf "  %-30s PASS (rc=%d)\n" "${name}:" "$RC_A"
+            PASS=$((PASS + 1))
+        else
+            printf "  %-30s FAIL (s4=%d, s5=%d)\n" "${name}:" "$RC_A" "$RC_B"
+            echo "    stage04 run log:" >&2
+            tail -n 20 "$WORKDIR/${name}-s4.run.log" >&2 || true
+            echo "    stage05 run log:" >&2
+            tail -n 20 "$WORKDIR/${name}-s5.run.log" >&2 || true
+            FAIL=$((FAIL + 1))
+        fi
+    done
+fi
+
+# ============================================================
+# Step 3c: Optimizer regression pack (stage04 vs stage05 cc)
+# ============================================================
+if [[ -s "$S13CC_EXE" ]]; then
+    echo ""
+    echo "=== Step 3c: Optimizer regression pack ==="
+
+    for src in \
+        "$WORKDIR/sem_eq_07.c" \
+        "$WORKDIR/sem_eq_08.c" \
+        "$WORKDIR/sem_eq_09.c" \
+        "$WORKDIR/sem_eq_10.c" \
+        "$WORKDIR/sem_eq_11.c" \
+        "$WORKDIR/sem_eq_12.c"; do
         name="$(basename "$src" .c)"
         TOTAL=$((TOTAL + 1))
 
