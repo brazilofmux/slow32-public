@@ -6,7 +6,7 @@ STAGE="all"
 
 usage() {
     cat <<USAGE
-Usage: $0 [--stage 03|04|05|all] [extra args...]
+Usage: $0 [--stage 03|04|05|06|all] [extra args...]
 
 Run selfhost ABI conformance tests.
 Extra args are forwarded to stage runners (for example: --emu, --keep-artifacts).
@@ -47,11 +47,13 @@ case "$STAGE" in
     03) run_stage "03" "$@" ;;
     04) run_stage "04" "$@" ;;
     05) run_stage "05" "$@" ;;
+    06) run_stage "06" "$@" ;;
     all)
         fail=0
         run_stage "03" "$@" || fail=1
         run_stage "04" "$@" || fail=1
         run_stage "05" "$@" || fail=1
+        run_stage "06" "$@" || fail=1
         if [[ "$fail" -ne 0 ]]; then
             exit 1
         fi

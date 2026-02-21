@@ -143,6 +143,7 @@ static void bg_init(void) {
     bg_add_pat(BG_STMT, HI_STORE, BG_REG,   BG_REG, 1);
 
     /* ADDI */
+    bg_add_pat(BG_IMM,   HI_ADDI, BG_IMM, -1, 0);
     bg_add_pat(BG_FADDR, HI_ADDI, BG_FADDR, -1, 0);
     bg_add_pat(BG_REG,   HI_ADDI, BG_FADDR, -1, 1);
     bg_add_pat(BG_REG,   HI_ADDI, BG_REG,   -1, 1);
@@ -280,15 +281,58 @@ static int bg_addi_faddr_ok(int idx) {
     return (off >= -2048 && off <= 2047);
 }
 
-static int bg_use_is_imm_capable(int user, int pos) {
+static int bg_const_imm_inst(int inst, int *out, int *root_iconst) {
+    int k;
+    int acc;
+    int lim;
+
+    acc = 0;
+    lim = 0;
+    while (inst >= 0 && lim < 64) {
+        k = h_kind[inst];
+        if (k == HI_ICONST) {
+            *out = acc + h_val[inst];
+            *root_iconst = inst;
+            return 1;
+        }
+        if (k == HI_COPY) {
+            inst = h_src1[inst];
+            lim = lim + 1;
+            continue;
+        }
+        if (k == HI_ADDI) {
+            acc = acc + h_val[inst];
+            inst = h_src1[inst];
+            lim = lim + 1;
+            continue;
+        }
+        return 0;
+    }
+    return 0;
+}
+
+static int bg_is_i12(int v) {
+    return (v >= -2048 && v <= 2047);
+}
+
+static int bg_is_u12(int v) {
+    return (v >= 0 && v <= 4095);
+}
+
+static int bg_use_accepts_imm(int user, int pos, int c) {
     int k;
     k = h_kind[user];
 
-    if (k == HI_ADD) return 1;                  /* add r,r,imm (both sides) */
-    if (k == HI_SUB && pos == 2) return 1;      /* sub r,imm via addi -imm */
-    if ((k == HI_AND || k == HI_OR || k == HI_XOR)) return 1;
-    if ((k == HI_SLL || k == HI_SRL || k == HI_SRA) && pos == 2) return 1;
-    if ((k == HI_SLT || k == HI_SLTU) && pos == 2) return 1;
+    if (k == HI_COPY && pos == 1) return 1;     /* transit */
+    if (k == HI_ADDI && pos == 1) return 1;     /* transit */
+    if (k == HI_ADD) return bg_is_i12(c);
+    if (k == HI_SUB && pos == 2) {
+        if (c == -2147483647 - 1) return 0;
+        return bg_is_i12(0 - c);
+    }
+    if ((k == HI_AND || k == HI_OR || k == HI_XOR)) return bg_is_u12(c);
+    if ((k == HI_SLL || k == HI_SRL || k == HI_SRA) && pos == 2) return (c >= 0 && c <= 31);
+    if ((k == HI_SLT || k == HI_SLTU) && pos == 2) return bg_is_i12(c);
     return 0;
 }
 
@@ -298,6 +342,8 @@ static void bg_profile_iconst_consumers(void) {
     int k;
     int base;
     int cnt;
+    int root;
+    int c;
     int v;
 
     i = 0;
@@ -318,22 +364,22 @@ static void bg_profile_iconst_consumers(void) {
         k = h_kind[i];
         if (k != HI_NOP) {
             v = h_src1[i];
-            if (v >= 0 && h_kind[v] == HI_ICONST) {
-                bg_iconst_seen_use[v] = 1;
+            if (v >= 0 && bg_const_imm_inst(v, &c, &root)) {
+                bg_iconst_seen_use[root] = 1;
                 if (k >= 0 && k <= BG_MAX_OP) bg_stat_iconst_use_op[k] = bg_stat_iconst_use_op[k] + 1;
-                if (!bg_use_is_imm_capable(i, 1)) {
-                    bg_iconst_seen_nonimm[v] = 1;
+                if (!bg_use_accepts_imm(i, 1, c)) {
+                    bg_iconst_seen_nonimm[root] = 1;
                     if (k >= 0 && k <= BG_MAX_OP) {
                         bg_stat_iconst_nonimm_use_op[k] = bg_stat_iconst_nonimm_use_op[k] + 1;
                     }
                 }
             }
             v = h_src2[i];
-            if (v >= 0 && h_kind[v] == HI_ICONST) {
-                bg_iconst_seen_use[v] = 1;
+            if (v >= 0 && bg_const_imm_inst(v, &c, &root)) {
+                bg_iconst_seen_use[root] = 1;
                 if (k >= 0 && k <= BG_MAX_OP) bg_stat_iconst_use_op[k] = bg_stat_iconst_use_op[k] + 1;
-                if (!bg_use_is_imm_capable(i, 2)) {
-                    bg_iconst_seen_nonimm[v] = 1;
+                if (!bg_use_accepts_imm(i, 2, c)) {
+                    bg_iconst_seen_nonimm[root] = 1;
                     if (k >= 0 && k <= BG_MAX_OP) {
                         bg_stat_iconst_nonimm_use_op[k] = bg_stat_iconst_nonimm_use_op[k] + 1;
                     }
@@ -346,9 +392,9 @@ static void bg_profile_iconst_consumers(void) {
                 j = 0;
                 while (j < cnt) {
                     v = h_carg[base + j];
-                    if (v >= 0 && h_kind[v] == HI_ICONST) {
-                        bg_iconst_seen_use[v] = 1;
-                        bg_iconst_seen_nonimm[v] = 1;
+                    if (v >= 0 && bg_const_imm_inst(v, &c, &root)) {
+                        bg_iconst_seen_use[root] = 1;
+                        bg_iconst_seen_nonimm[root] = 1;
                         bg_stat_iconst_use_op[k] = bg_stat_iconst_use_op[k] + 1;
                         bg_stat_iconst_nonimm_use_op[k] = bg_stat_iconst_nonimm_use_op[k] + 1;
                     }
@@ -362,9 +408,9 @@ static void bg_profile_iconst_consumers(void) {
                 j = 0;
                 while (j < cnt) {
                     v = h_pval[base + j];
-                    if (v >= 0 && h_kind[v] == HI_ICONST) {
-                        bg_iconst_seen_use[v] = 1;
-                        bg_iconst_seen_nonimm[v] = 1;
+                    if (v >= 0 && bg_const_imm_inst(v, &c, &root)) {
+                        bg_iconst_seen_use[root] = 1;
+                        bg_iconst_seen_nonimm[root] = 1;
                         bg_stat_iconst_use_op[k] = bg_stat_iconst_use_op[k] + 1;
                         bg_stat_iconst_nonimm_use_op[k] = bg_stat_iconst_nonimm_use_op[k] + 1;
                     }
