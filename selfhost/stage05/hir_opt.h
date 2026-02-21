@@ -165,6 +165,7 @@ static int ho_const_fold(void) {
                 else if (k == HI_XOR) result = a ^ b;
                 else if (k == HI_SLL) result = a << (b & 31);
                 else if (k == HI_SRA) result = a >> (b & 31);
+                else if (k == HI_SRL) can_fold = 0;
                 else if (k == HI_SEQ) {
                     if (a == b) result = 1; else result = 0;
                 }
@@ -341,6 +342,14 @@ static int ho_const_fold(void) {
                     h_src2[i] = -1;
                     changed = 1;
                 }
+                /* x / x -> 1 */
+                else if (k == HI_DIV) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = 1;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
                 /* x == x -> 1, x <= x -> 1, x >= x -> 1 */
                 else if (k == HI_SEQ || k == HI_SLE || k == HI_SGE ||
                          k == HI_SLEU || k == HI_SGEU) {
@@ -394,8 +403,13 @@ static int ho_const_fold(void) {
 
         /* === ADDI peepholes === */
         if (k == HI_ADDI) {
+            /* addi x, 0 -> x */
+            if (h_val[i] == 0) {
+                h_kind[i] = HI_COPY;
+                changed = 1;
+            }
             /* addi const, c -> const */
-            if (h_src1[i] >= 0 && h_kind[h_src1[i]] == HI_ICONST) {
+            else if (h_src1[i] >= 0 && h_kind[h_src1[i]] == HI_ICONST) {
                 h_kind[i] = HI_ICONST;
                 h_val[i] = h_val[h_src1[i]] + h_val[i];
                 h_src1[i] = -1;

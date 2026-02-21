@@ -121,10 +121,10 @@ void exit(int status);
 
 /* === Lexer globals === */
 
-#define LEX_SRC_SZ   262144
+#define LEX_SRC_SZ   1100000
 #define LEX_STR_SZ   256
-#define LEX_POOL_SZ  65536
-#define LEX_POOL_MAX 2048
+#define LEX_POOL_SZ  524288
+#define LEX_POOL_MAX 16384
 
 static char lex_src[LEX_SRC_SZ];
 static int  lex_len;
