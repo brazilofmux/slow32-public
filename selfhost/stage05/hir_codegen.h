@@ -306,6 +306,33 @@ static int hcg_const_is_zero(int inst) {
     return (c == 0);
 }
 
+static int hcg_addr_base_off(int inst, int *base_out, int *off_out) {
+    int k;
+    int off;
+    int lim;
+
+    off = 0;
+    lim = 0;
+    while (inst >= 0 && lim < 64) {
+        k = h_kind[inst];
+        if (k == HI_COPY) {
+            inst = h_src1[inst];
+            lim = lim + 1;
+            continue;
+        }
+        if (k == HI_ADDI) {
+            off = off + h_val[inst];
+            inst = h_src1[inst];
+            lim = lim + 1;
+            continue;
+        }
+        *base_out = inst;
+        *off_out = off;
+        return (inst >= 0);
+    }
+    return 0;
+}
+
 /* --- Destination register helper ---
  * Returns the physical register for the result.
  * If allocated, returns the physical register.
@@ -454,14 +481,18 @@ static void hcg_store_off(int base, int vreg, int off, int ty) {
 /* --- Emit phi copies for a branch from_blk -> to_blk --- */
 
 static int hcg_phi_tmp[SSA_MAX_PROMO];
+static int hcg_phi_push_ix[SSA_MAX_PROMO];
+static int hcg_phi_is_const[SSA_MAX_PROMO];
+static int hcg_phi_const_val[SSA_MAX_PROMO];
 
 static void hcg_phi_copies(int from_blk, int to_blk) {
     int i;
     int n;
+    int npush;
     int j;
     int v;
+    int c;
     int off;
-    int src;
     int phi;
     int dreg;
 
@@ -477,31 +508,73 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
     }
     if (n == 0) return;
 
-    /* Push all argument values onto runtime stack */
+    /* Push non-constant argument values onto runtime stack. */
+    npush = 0;
     j = 0;
     while (j < n) {
         v = ssa_phi_find_arg(hcg_phi_tmp[j], from_blk);
-        hcg_into(1, v);
-        cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
+        if (hcg_const_imm_inst(v, &c)) {
+            hcg_phi_is_const[j] = 1;
+            hcg_phi_const_val[j] = c;
+            hcg_phi_push_ix[j] = -1;
+        } else {
+            hcg_phi_is_const[j] = 0;
+            hcg_phi_push_ix[j] = npush;
+            hcg_into(1, v);
+            cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
+            npush = npush + 1;
+        }
         j = j + 1;
     }
 
-    /* Pop in reverse order into PHI dest registers or spill slots */
+    /* Resolve PHI destinations in reverse order. */
     j = n - 1;
     while (j >= 0) {
         phi = hcg_phi_tmp[j];
-        if (ra_reg[phi] >= 0) {
-            /* Pop directly into physical register */
+        if (hcg_phi_is_const[j]) {
+            c = hcg_phi_const_val[j];
+            if (ra_reg[phi] >= 0) {
+                dreg = ra_reg[phi];
+                if (c == 0) cg_rri("addi", dreg, 0, 0);
+                else if (hcg_is_i12(c)) cg_rri("addi", dreg, 0, c);
+                else hcg_li(dreg, c);
+            } else {
+                off = ra_spill_off[phi];
+                if (off >= -2048 && off <= 2047) {
+                    if (c == 0) {
+                        cg_s("    stw r30, r0, ");
+                        cg_n(off);
+                        cg_c(10);
+                    } else {
+                        if (hcg_is_i12(c)) cg_rri("addi", 1, 0, c);
+                        else hcg_li(1, c);
+                        cg_s("    stw r30, r1, ");
+                        cg_n(off);
+                        cg_c(10);
+                    }
+                } else {
+                    hcg_li(2, off);
+                    cg_rrr("add", 2, 30, 2);
+                    if (c == 0) cg_s("    stw r2, r0, 0\n");
+                    else {
+                        if (hcg_is_i12(c)) cg_rri("addi", 1, 0, c);
+                        else hcg_li(1, c);
+                        cg_s("    stw r2, r1, 0\n");
+                    }
+                }
+            }
+        } else if (ra_reg[phi] >= 0) {
+            /* Load pushed value directly into physical register. */
             dreg = ra_reg[phi];
             cg_s("    ldw r");
             cg_n(dreg);
             cg_s(", r29, ");
-            cg_n((n - 1 - j) * 4);
+            cg_n((npush - 1 - hcg_phi_push_ix[j]) * 4);
             cg_c(10);
         } else {
-            /* Pop into r1, then store to spill slot */
+            /* Load pushed value into r1, then store to spill slot. */
             cg_s("    ldw r1, r29, ");
-            cg_n((n - 1 - j) * 4);
+            cg_n((npush - 1 - hcg_phi_push_ix[j]) * 4);
             cg_c(10);
             off = ra_spill_off[phi];
             if (off >= -2048 && off <= 2047) {
@@ -517,9 +590,9 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
         j = j - 1;
     }
 
-    /* Clean up stack */
-    if (n > 0) {
-        cg_rri("addi", 29, 29, n * 4);
+    /* Clean up runtime stack for pushed PHI args. */
+    if (npush > 0) {
+        cg_rri("addi", 29, 29, npush * 4);
     }
 }
 
@@ -964,9 +1037,14 @@ static void hcg_inst(int idx) {
             /* LOAD(saddr): lui + ldw with %lo */
             hcg_load_saddr(rd, s1, ty);
         } else {
-            /* LOAD(reg): load from register */
-            rs1 = hcg_src(s1, 1);
-            hcg_load_mem(rd, rs1, ty);
+            /* LOAD(reg): try to fold ADDI-chain base+offset shape. */
+            if (hcg_addr_base_off(s1, &base_i, &off) && hcg_is_i12(off)) {
+                rs1 = hcg_src(base_i, 1);
+                hcg_load_off(rd, rs1, off, ty);
+            } else {
+                rs1 = hcg_src(s1, 1);
+                hcg_load_mem(rd, rs1, ty);
+            }
         }
         hcg_maybe_spill(idx);
         return;
@@ -993,10 +1071,17 @@ static void hcg_inst(int idx) {
             hcg_store_saddr(vreg, s1, ty);
         } else {
             /* STORE(reg, reg) */
-            rs1 = hcg_src(s1, 1);
-            if (hcg_const_is_zero(s2)) vreg = 0;
-            else vreg = hcg_src(s2, 2);
-            hcg_store_mem(rs1, vreg, ty);
+            if (hcg_addr_base_off(s1, &base_i, &off) && hcg_is_i12(off)) {
+                rs1 = hcg_src(base_i, 1);
+                if (hcg_const_is_zero(s2)) vreg = 0;
+                else vreg = hcg_src(s2, 2);
+                hcg_store_off(rs1, vreg, off, ty);
+            } else {
+                rs1 = hcg_src(s1, 1);
+                if (hcg_const_is_zero(s2)) vreg = 0;
+                else vreg = hcg_src(s2, 2);
+                hcg_store_mem(rs1, vreg, ty);
+            }
         }
         return;
     }
@@ -1051,6 +1136,20 @@ static void hcg_inst(int idx) {
 
     /* Conditional branch */
     if (k == HI_BRC) {
+        if (hcg_const_imm_inst(s1, &off)) {
+            if (off != 0) {
+                hcg_phi_copies(h_blk[idx], s2);
+                cg_s("    jal r0, ");
+                cg_lref(hcg_blk_lbl[s2]);
+                cg_c(10);
+            } else {
+                hcg_phi_copies(h_blk[idx], h_val[idx]);
+                cg_s("    jal r0, ");
+                cg_lref(hcg_blk_lbl[h_val[idx]]);
+                cg_c(10);
+            }
+            return;
+        }
         cond = hcg_src(s1, 1);
         skip = cg_label();
         cg_s("    beq r");
@@ -1073,7 +1172,13 @@ static void hcg_inst(int idx) {
     /* Return */
     if (k == HI_RET) {
         if (s1 >= 0) {
-            hcg_into(1, s1);
+            if (hcg_const_imm_inst(s1, &off)) {
+                if (off == 0) cg_rri("addi", 1, 0, 0);
+                else if (hcg_is_i12(off)) cg_rri("addi", 1, 0, off);
+                else hcg_li(1, off);
+            } else {
+                hcg_into(1, s1);
+            }
         }
         cg_s("    jal r0, ");
         cg_lref(hcg_epilog);
