@@ -39,7 +39,13 @@ extern uint32_t stage5_lift_attempted;
 extern uint32_t stage5_lift_success;
 extern uint32_t stage5_burg_attempted;
 extern uint32_t stage5_burg_selected;
+extern uint64_t stage5_burg_selected_guest_insts;
+extern uint32_t stage5_select_calls;
+extern uint64_t stage5_select_time_ns;
 extern uint32_t stage5_burg_pattern_hist[];
+extern uint32_t stage5_emit_pattern_success[];
+extern uint64_t stage5_emit_pattern_guest_insts[];
+extern uint64_t stage5_emit_pattern_host_bytes[];
 extern uint32_t stage5_fallback_total;
 extern uint32_t stage5_fallback_lift_not_implemented;
 extern uint32_t stage5_fallback_lift_unsupported_opcode;
@@ -53,6 +59,8 @@ extern uint32_t stage5_fallback_burg_internal;
 extern uint32_t stage5_fallback_unsupported_opcode_hist[128];
 extern uint32_t stage5_emit_attempted;
 extern uint32_t stage5_emit_success;
+extern uint64_t stage5_emit_success_guest_insts;
+extern uint64_t stage5_emit_success_host_bytes;
 extern uint32_t stage5_emit_fallback;
 extern uint32_t stage5_emit_fallback_non_terminal;
 extern uint32_t stage5_emit_fallback_shape;
@@ -60,6 +68,10 @@ extern uint32_t stage5_emit_fallback_single_unhandled;
 extern uint32_t stage5_emit_fallback_cmp_branch_miss;
 extern uint32_t stage5_emit_fallback_not_ended;
 extern uint32_t stage5_emit_unhandled_opcode_hist[128];
+extern uint32_t stage5_emit_calls;
+extern uint64_t stage5_emit_time_ns;
+extern uint64_t stage5_emit_success_time_ns;
+extern uint64_t stage5_emit_fallback_time_ns;
 
 // Translation context
 typedef struct {

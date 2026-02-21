@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 
 // Debug flag - set to 1 to enable translation tracing
 #ifndef DBT_TRACE
@@ -24,6 +25,9 @@ uint32_t stage5_lift_attempted = 0;
 uint32_t stage5_lift_success = 0;
 uint32_t stage5_burg_attempted = 0;
 uint32_t stage5_burg_selected = 0;
+uint64_t stage5_burg_selected_guest_insts = 0;
+uint32_t stage5_select_calls = 0;
+uint64_t stage5_select_time_ns = 0;
 uint32_t stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_COUNT] = {0};
 uint32_t stage5_fallback_total = 0;
 uint32_t stage5_fallback_lift_not_implemented = 0;
@@ -38,6 +42,11 @@ uint32_t stage5_fallback_burg_internal = 0;
 uint32_t stage5_fallback_unsupported_opcode_hist[128] = {0};
 uint32_t stage5_emit_attempted = 0;
 uint32_t stage5_emit_success = 0;
+uint64_t stage5_emit_success_guest_insts = 0;
+uint64_t stage5_emit_success_host_bytes = 0;
+uint32_t stage5_emit_pattern_success[STAGE5_BURG_PATTERN_COUNT] = {0};
+uint64_t stage5_emit_pattern_guest_insts[STAGE5_BURG_PATTERN_COUNT] = {0};
+uint64_t stage5_emit_pattern_host_bytes[STAGE5_BURG_PATTERN_COUNT] = {0};
 uint32_t stage5_emit_fallback = 0;
 uint32_t stage5_emit_fallback_non_terminal = 0;
 uint32_t stage5_emit_fallback_shape = 0;
@@ -45,8 +54,149 @@ uint32_t stage5_emit_fallback_single_unhandled = 0;
 uint32_t stage5_emit_fallback_cmp_branch_miss = 0;
 uint32_t stage5_emit_fallback_not_ended = 0;
 uint32_t stage5_emit_unhandled_opcode_hist[128] = {0};
+uint32_t stage5_emit_calls = 0;
+uint64_t stage5_emit_time_ns = 0;
+uint64_t stage5_emit_success_time_ns = 0;
+uint64_t stage5_emit_fallback_time_ns = 0;
 
 static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
+static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg);
+static inline void flush_pending_write(translate_ctx_t *ctx);
+static inline void flush_pending_cond(translate_ctx_t *ctx);
+
+static inline uint64_t stage5_now_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+static inline bool stage5_pattern_is_terminal(stage5_burg_pattern_t pattern) {
+    switch (pattern) {
+        case STAGE5_BURG_PATTERN_JAL_CALL_SHORT:
+        case STAGE5_BURG_PATTERN_JAL_CALL_LONG:
+        case STAGE5_BURG_PATTERN_JAL_JUMP:
+        case STAGE5_BURG_PATTERN_JALR_RET_SHORT:
+        case STAGE5_BURG_PATTERN_JALR_RET_LONG:
+        case STAGE5_BURG_PATTERN_JALR_INDIRECT:
+        case STAGE5_BURG_PATTERN_HALT:
+        case STAGE5_BURG_PATTERN_YIELD:
+        case STAGE5_BURG_PATTERN_DEBUG:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static inline bool stage5_pattern_is_direct_branch(stage5_burg_pattern_t pattern) {
+    return pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_EQ ||
+           pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_NE ||
+           pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL ||
+           pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_RELU;
+}
+
+static inline void stage5_translate_jal_jump_compact(translate_ctx_t *ctx,
+                                                     uint8_t rd, int32_t imm) {
+    emit_ctx_t *e = &ctx->emit;
+    uint32_t return_pc = ctx->guest_pc + 4;
+    uint32_t target_pc = ctx->guest_pc + imm;
+
+    if (rd != 0) {
+        emit_mov_r32_imm32(e, RAX, return_pc);
+        emit_store_guest_reg(ctx, rd, RAX);
+    }
+    if (ctx->block) {
+        ctx->block->flags |= BLOCK_FLAG_DIRECT;
+    }
+    emit_exit(ctx, EXIT_BRANCH, target_pc);
+}
+
+// Size-first direct branch fast path for single-instruction BNE regions.
+// This intentionally skips Stage4 superblock/backedge branch shaping.
+static inline bool stage5_translate_bne_compact(translate_ctx_t *ctx,
+                                                uint8_t rs1, uint8_t rs2, int32_t imm) {
+    emit_ctx_t *e = &ctx->emit;
+    uint32_t fall_pc = ctx->guest_pc + 4;
+    uint32_t taken_pc = fall_pc + imm;
+    uint32_t branch_pc = ctx->guest_pc;
+
+    if (ctx->block) {
+        ctx->block->flags |= BLOCK_FLAG_DIRECT;
+    }
+
+    if (ctx->pending_cond.valid) {
+        flush_pending_cond(ctx);
+    }
+
+    if (rs1 == 0 && rs2 == 0) {
+        flush_pending_write(ctx);
+        emit_xor_r32_r32(e, RAX, RAX);
+    } else if (rs1 == 0) {
+        x64_reg_t h2 = guest_host_reg(ctx, rs2);
+        if (h2 != X64_NOREG) {
+            flush_pending_write(ctx);
+            emit_test_r32_r32(e, h2, h2);
+        } else {
+            emit_load_guest_reg(ctx, RAX, rs2);
+            emit_test_r32_r32(e, RAX, RAX);
+        }
+    } else if (rs2 == 0) {
+        x64_reg_t h1 = guest_host_reg(ctx, rs1);
+        if (h1 != X64_NOREG) {
+            flush_pending_write(ctx);
+            emit_test_r32_r32(e, h1, h1);
+        } else {
+            emit_load_guest_reg(ctx, RAX, rs1);
+            emit_test_r32_r32(e, RAX, RAX);
+        }
+    } else {
+        x64_reg_t h1 = guest_host_reg(ctx, rs1);
+        x64_reg_t h2 = guest_host_reg(ctx, rs2);
+        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : RAX;
+        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : RCX;
+        if (h1 == X64_NOREG) emit_load_guest_reg(ctx, RAX, rs1);
+        if (h2 == X64_NOREG) emit_load_guest_reg(ctx, RCX, rs2);
+        if (h1 != X64_NOREG || h2 != X64_NOREG) {
+            flush_pending_write(ctx);
+        }
+        emit_cmp_r32_r32(e, cmp_a, cmp_b);
+    }
+
+    size_t jcc_patch = emit_offset(e) + 2;
+    emit_jne_rel32(e, 0);
+
+    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
+        ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
+    }
+    emit_exit_chained(ctx, fall_pc, ctx->exit_idx++);
+
+    size_t taken_offset = emit_offset(e);
+    emit_patch_rel32(e, jcc_patch, taken_offset);
+    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
+        ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
+    }
+    emit_exit_chained(ctx, taken_pc, ctx->exit_idx++);
+
+    return true;
+}
+
+static inline void stage5_record_emit_success(translate_ctx_t *ctx,
+                                              stage5_burg_pattern_t pattern,
+                                              uint32_t guest_insts,
+                                              size_t emit_start_size) {
+    stage5_emit_success++;
+    stage5_emit_success_guest_insts += guest_insts;
+    size_t emit_end_size = emit_offset(&ctx->emit);
+    uint64_t host_bytes = 0;
+    if (emit_end_size >= emit_start_size) {
+        host_bytes = (uint64_t)(emit_end_size - emit_start_size);
+        stage5_emit_success_host_bytes += host_bytes;
+    }
+    if ((uint32_t)pattern < STAGE5_BURG_PATTERN_COUNT) {
+        stage5_emit_pattern_success[pattern]++;
+        stage5_emit_pattern_guest_insts[pattern] += guest_insts;
+        stage5_emit_pattern_host_bytes[pattern] += host_bytes;
+    }
+}
 
 // ============================================================================
 // Instruction decoding
@@ -267,6 +417,7 @@ static void stage5_try_select_noop(translate_ctx_t *ctx, uint32_t guest_pc) {
 
     if (result.selected) {
         stage5_burg_selected++;
+        stage5_burg_selected_guest_insts += region.guest_inst_count;
         if ((uint32_t)result.pattern < STAGE5_BURG_PATTERN_COUNT) {
             stage5_burg_pattern_hist[result.pattern]++;
         }
@@ -294,6 +445,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     }
 
     stage5_emit_attempted++;
+    size_t emit_start_size = emit_offset(&ctx->emit);
+    stage5_burg_pattern_t emitted_pattern = result.pattern;
 
     bool synth_block_end = (result.pattern == STAGE5_BURG_PATTERN_BLOCK_END);
     if ((!region.has_terminal_branch && !synth_block_end) || region.guest_inst_count == 0) {
@@ -310,6 +463,22 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     bool saved_superblock_enabled = ctx->superblock_enabled;
     ctx->superblock_enabled = false;
 
+    // Policy fallback: very short return blocks can be cheaper through Stage4 path.
+    if (emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
+        emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG ||
+        (emitted_pattern == STAGE5_BURG_PATTERN_JAL_JUMP && region.guest_inst_count > 1) ||
+        emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_SHORT ||
+        emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_LONG ||
+        emitted_pattern == STAGE5_BURG_PATTERN_JALR_INDIRECT ||
+        emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_EQ ||
+        emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL ||
+        emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_RELU) {
+        ctx->superblock_enabled = saved_superblock_enabled;
+        stage5_emit_fallback++;
+        stage5_emit_fallback_shape++;
+        return false;
+    }
+
     // BURG-pattern fast paths from lifted IR tail.
     int term_idx = -1;
     for (int i = (int)region.ir_count - 1; i >= 0; i--) {
@@ -319,13 +488,20 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         }
     }
     if (term_idx >= 0 && region.guest_inst_count == 1 &&
-        result.pattern == STAGE5_BURG_PATTERN_TERMINAL) {
+        stage5_pattern_is_terminal(result.pattern)) {
         stage5_ir_node_t *t = &region.ir[term_idx];
         ctx->guest_pc = t->pc;
         ctx->current_inst_idx = term_idx;
         bool ended = false;
         switch (t->opcode) {
-            case OP_JAL:   translate_jal(ctx, t->rd, t->imm); ended = true; break;
+            case OP_JAL:
+                if (emitted_pattern == STAGE5_BURG_PATTERN_JAL_JUMP) {
+                    stage5_translate_jal_jump_compact(ctx, t->rd, t->imm);
+                } else {
+                    translate_jal(ctx, t->rd, t->imm);
+                }
+                ended = true;
+                break;
             case OP_JALR:  translate_jalr(ctx, t->rd, t->rs1, t->imm); ended = true; break;
             case OP_HALT:  translate_halt(ctx); ended = true; break;
             case OP_DEBUG: translate_debug(ctx, t->rs1); ended = true; break;
@@ -334,20 +510,20 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         }
         if (ended) {
             ctx->superblock_enabled = saved_superblock_enabled;
-            stage5_emit_success++;
+            stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
             return true;
         }
     }
 
     if (term_idx >= 0 && region.guest_inst_count == 1 &&
-        result.pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH) {
+        stage5_pattern_is_direct_branch(result.pattern)) {
         stage5_ir_node_t *t = &region.ir[term_idx];
         ctx->guest_pc = t->pc;
         ctx->current_inst_idx = term_idx;
         bool ended = false;
         switch (t->opcode) {
             case OP_BEQ:  ended = translate_beq(ctx, t->rs1, t->rs2, t->imm); break;
-            case OP_BNE:  ended = translate_bne(ctx, t->rs1, t->rs2, t->imm); break;
+            case OP_BNE:  ended = stage5_translate_bne_compact(ctx, t->rs1, t->rs2, t->imm); break;
             case OP_BLT:  ended = translate_blt(ctx, t->rs1, t->rs2, t->imm); break;
             case OP_BGE:  ended = translate_bge(ctx, t->rs1, t->rs2, t->imm); break;
             case OP_BLTU: ended = translate_bltu(ctx, t->rs1, t->rs2, t->imm); break;
@@ -356,7 +532,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         }
         if (ended) {
             ctx->superblock_enabled = saved_superblock_enabled;
-            stage5_emit_success++;
+            stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
             return true;
         }
     }
@@ -391,7 +567,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 : translate_bne(ctx, b->rs1, b->rs2, b->imm);
             if (ended) {
                 ctx->superblock_enabled = saved_superblock_enabled;
-                stage5_emit_success++;
+                stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                 return true;
             }
         }
@@ -403,34 +579,38 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         ctx->current_inst_idx = 0;
         switch (inst0.opcode) {
             case OP_JAL:
-                translate_jal(ctx, inst0.rd, inst0.imm);
+                if (emitted_pattern == STAGE5_BURG_PATTERN_JAL_JUMP) {
+                    stage5_translate_jal_jump_compact(ctx, inst0.rd, inst0.imm);
+                } else {
+                    translate_jal(ctx, inst0.rd, inst0.imm);
+                }
                 ctx->superblock_enabled = saved_superblock_enabled;
-                stage5_emit_success++;
+                stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                 return true;
             case OP_JALR:
                 translate_jalr(ctx, inst0.rd, inst0.rs1, inst0.imm);
                 ctx->superblock_enabled = saved_superblock_enabled;
-                stage5_emit_success++;
+                stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                 return true;
             case OP_HALT:
                 translate_halt(ctx);
                 ctx->superblock_enabled = saved_superblock_enabled;
-                stage5_emit_success++;
+                stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                 return true;
             case OP_DEBUG:
                 translate_debug(ctx, inst0.rs1);
                 ctx->superblock_enabled = saved_superblock_enabled;
-                stage5_emit_success++;
+                stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                 return true;
             case OP_YIELD:
                 translate_yield(ctx);
                 ctx->superblock_enabled = saved_superblock_enabled;
-                stage5_emit_success++;
+                stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                 return true;
             case OP_BEQ:
                 if (translate_beq(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
                     ctx->superblock_enabled = saved_superblock_enabled;
-                    stage5_emit_success++;
+                    stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -438,7 +618,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             case OP_BNE:
                 if (translate_bne(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
                     ctx->superblock_enabled = saved_superblock_enabled;
-                    stage5_emit_success++;
+                    stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -446,7 +626,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             case OP_BLT:
                 if (translate_blt(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
                     ctx->superblock_enabled = saved_superblock_enabled;
-                    stage5_emit_success++;
+                    stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -454,7 +634,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             case OP_BGE:
                 if (translate_bge(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
                     ctx->superblock_enabled = saved_superblock_enabled;
-                    stage5_emit_success++;
+                    stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -462,7 +642,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             case OP_BLTU:
                 if (translate_bltu(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
                     ctx->superblock_enabled = saved_superblock_enabled;
-                    stage5_emit_success++;
+                    stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -470,7 +650,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             case OP_BGEU:
                 if (translate_bgeu(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
                     ctx->superblock_enabled = saved_superblock_enabled;
-                    stage5_emit_success++;
+                    stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -520,7 +700,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     : translate_bne(ctx, inst1.rs1, inst1.rs2, inst1.imm);
                 if (ended) {
                     ctx->superblock_enabled = saved_superblock_enabled;
-                    stage5_emit_success++;
+                    stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -583,7 +763,14 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 ctx->current_inst_idx = 1;
                 bool ended = false;
                 switch (inst1.opcode) {
-                    case OP_JAL:   translate_jal(ctx, inst1.rd, inst1.imm); ended = true; break;
+                    case OP_JAL:
+                        if (emitted_pattern == STAGE5_BURG_PATTERN_JAL_JUMP) {
+                            stage5_translate_jal_jump_compact(ctx, inst1.rd, inst1.imm);
+                        } else {
+                            translate_jal(ctx, inst1.rd, inst1.imm);
+                        }
+                        ended = true;
+                        break;
                     case OP_JALR:  translate_jalr(ctx, inst1.rd, inst1.rs1, inst1.imm); ended = true; break;
                     case OP_HALT:  translate_halt(ctx); ended = true; break;
                     case OP_DEBUG: translate_debug(ctx, inst1.rs1); ended = true; break;
@@ -598,7 +785,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 }
                 if (ended) {
                     ctx->superblock_enabled = saved_superblock_enabled;
-                    stage5_emit_success++;
+                    stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -689,7 +876,14 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 ctx->guest_pc = last->pc;
                 ctx->current_inst_idx = terminal_idx;
                 switch (last->opcode) {
-                    case OP_JAL:   translate_jal(ctx, last->rd, last->imm); ended = true; break;
+                    case OP_JAL:
+                        if (emitted_pattern == STAGE5_BURG_PATTERN_JAL_JUMP) {
+                            stage5_translate_jal_jump_compact(ctx, last->rd, last->imm);
+                        } else {
+                            translate_jal(ctx, last->rd, last->imm);
+                        }
+                        ended = true;
+                        break;
                     case OP_JALR:  translate_jalr(ctx, last->rd, last->rs1, last->imm); ended = true; break;
                     case OP_HALT:  translate_halt(ctx); ended = true; break;
                     case OP_DEBUG: translate_debug(ctx, last->rs1); ended = true; break;
@@ -707,7 +901,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             }
             if (ended) {
                 ctx->superblock_enabled = saved_superblock_enabled;
-                stage5_emit_success++;
+                stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                 return true;
             }
             stage5_emit_fallback_not_ended++;
@@ -5762,10 +5956,25 @@ retry_translate:
         reg_alloc_emit_prologue(ctx);
     }
 
-    // Stage 5 no-op hook: collect lift/BURG fallback telemetry only.
-    stage5_try_select_noop(ctx, guest_pc);
-    if (stage5_try_emit_pilot(ctx, guest_pc)) {
-        goto cached_block_done;
+    // Stage 5 hook timing split: selection/lift vs emit path.
+    if (ctx->stage5_burg_enabled) {
+        uint64_t t0 = stage5_now_ns();
+        stage5_try_select_noop(ctx, guest_pc);
+        uint64_t dt = stage5_now_ns() - t0;
+        stage5_select_calls++;
+        stage5_select_time_ns += dt;
+    }
+    if (ctx->stage5_burg_enabled && ctx->stage5_emit_enabled) {
+        uint64_t t0 = stage5_now_ns();
+        bool stage5_emitted = stage5_try_emit_pilot(ctx, guest_pc);
+        uint64_t dt = stage5_now_ns() - t0;
+        stage5_emit_calls++;
+        stage5_emit_time_ns += dt;
+        if (stage5_emitted) {
+            stage5_emit_success_time_ns += dt;
+            goto cached_block_done;
+        }
+        stage5_emit_fallback_time_ns += dt;
     }
 
     if (DBT_TRACE) {

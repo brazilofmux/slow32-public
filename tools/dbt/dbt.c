@@ -1713,26 +1713,24 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Stage5 lift success:   %" PRIu32 "\n", stage5_lift_success);
             fprintf(stderr, "Stage5 BURG attempted: %" PRIu32 "\n", stage5_burg_attempted);
             fprintf(stderr, "Stage5 BURG selected:  %" PRIu32 "\n", stage5_burg_selected);
+            if (stage5_burg_selected_guest_insts > 0) {
+                fprintf(stderr, "Stage5 BURG sel guest insts: %" PRIu64 "\n",
+                        stage5_burg_selected_guest_insts);
+            }
+            if (stage5_select_calls > 0 && stage5_select_time_ns > 0) {
+                double sel_ms = (double)stage5_select_time_ns / 1e6;
+                double sel_us_per_call = (double)stage5_select_time_ns /
+                                         (double)stage5_select_calls / 1e3;
+                fprintf(stderr, "Stage5 select calls: %" PRIu32 "\n", stage5_select_calls);
+                fprintf(stderr, "Stage5 select time: %.3f ms (avg %.3f us/call)\n",
+                        sel_ms, sel_us_per_call);
+            }
             if (stage5_burg_selected > 0) {
-                if (stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_TERMINAL] > 0) {
-                    fprintf(stderr, "  burg pattern terminal: %" PRIu32 "\n",
-                            stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_TERMINAL]);
-                }
-                if (stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_DIRECT_BRANCH] > 0) {
-                    fprintf(stderr, "  burg pattern direct_branch: %" PRIu32 "\n",
-                            stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_DIRECT_BRANCH]);
-                }
-                if (stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO] > 0) {
-                    fprintf(stderr, "  burg pattern cmp_branch_zero: %" PRIu32 "\n",
-                            stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO]);
-                }
-                if (stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_BLOCK_END] > 0) {
-                    fprintf(stderr, "  burg pattern block_end: %" PRIu32 "\n",
-                            stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_BLOCK_END]);
-                }
-                if (stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_GENERIC] > 0) {
-                    fprintf(stderr, "  burg pattern generic: %" PRIu32 "\n",
-                            stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_GENERIC]);
+                for (int p = 1; p < STAGE5_BURG_PATTERN_COUNT; p++) {
+                    if (stage5_burg_pattern_hist[p] == 0) continue;
+                    fprintf(stderr, "  burg pattern %-15s %" PRIu32 "\n",
+                            stage5_burg_pattern_str((stage5_burg_pattern_t)p),
+                            stage5_burg_pattern_hist[p]);
                 }
             }
             fprintf(stderr, "Stage5 fallback total: %" PRIu32 "\n", stage5_fallback_total);
@@ -1800,6 +1798,66 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "Stage5 emit attempted: %" PRIu32 "\n", stage5_emit_attempted);
                 fprintf(stderr, "Stage5 emit success:   %" PRIu32 "\n", stage5_emit_success);
                 fprintf(stderr, "Stage5 emit fallback:  %" PRIu32 "\n", stage5_emit_fallback);
+                if (stage5_emit_success_guest_insts > 0) {
+                    fprintf(stderr, "Stage5 emit guest insts: %" PRIu64 "\n",
+                            stage5_emit_success_guest_insts);
+                }
+                if (stage5_emit_success_host_bytes > 0) {
+                    fprintf(stderr, "Stage5 emit host bytes: %" PRIu64 "\n",
+                            stage5_emit_success_host_bytes);
+                }
+                if (stage5_emit_success_guest_insts > 0 && stage5_emit_success_host_bytes > 0) {
+                    double bpg = (double)stage5_emit_success_host_bytes /
+                                 (double)stage5_emit_success_guest_insts;
+                    fprintf(stderr, "Stage5 emit bytes/guest-inst: %.2f\n", bpg);
+                }
+                if (stage5_emit_calls > 0 && stage5_emit_time_ns > 0) {
+                    double emit_ms = (double)stage5_emit_time_ns / 1e6;
+                    double emit_us_per_call = (double)stage5_emit_time_ns /
+                                              (double)stage5_emit_calls / 1e3;
+                    fprintf(stderr, "Stage5 emit calls: %" PRIu32 "\n", stage5_emit_calls);
+                    fprintf(stderr, "Stage5 emit time: %.3f ms (avg %.3f us/call)\n",
+                            emit_ms, emit_us_per_call);
+                }
+                if (stage5_emit_success > 0 && stage5_emit_success_time_ns > 0) {
+                    double succ_ms = (double)stage5_emit_success_time_ns / 1e6;
+                    double succ_us_per = (double)stage5_emit_success_time_ns /
+                                         (double)stage5_emit_success / 1e3;
+                    fprintf(stderr, "  emit success time: %.3f ms (avg %.3f us/success)\n",
+                            succ_ms, succ_us_per);
+                }
+                if (stage5_emit_fallback > 0 && stage5_emit_fallback_time_ns > 0) {
+                    double fb_ms = (double)stage5_emit_fallback_time_ns / 1e6;
+                    double fb_us_per = (double)stage5_emit_fallback_time_ns /
+                                       (double)stage5_emit_fallback / 1e3;
+                    fprintf(stderr, "  emit fallback time: %.3f ms (avg %.3f us/fallback)\n",
+                            fb_ms, fb_us_per);
+                }
+                for (int p = 0; p < STAGE5_BURG_PATTERN_COUNT; p++) {
+                    if (stage5_emit_pattern_success[p] == 0) continue;
+                    double pbpg = 0.0;
+                    double avg_g = 0.0;
+                    double avg_h = 0.0;
+                    if (stage5_emit_pattern_guest_insts[p] > 0 &&
+                        stage5_emit_pattern_host_bytes[p] > 0) {
+                        pbpg = (double)stage5_emit_pattern_host_bytes[p] /
+                               (double)stage5_emit_pattern_guest_insts[p];
+                    }
+                    if (stage5_emit_pattern_success[p] > 0) {
+                        avg_g = (double)stage5_emit_pattern_guest_insts[p] /
+                                (double)stage5_emit_pattern_success[p];
+                        avg_h = (double)stage5_emit_pattern_host_bytes[p] /
+                                (double)stage5_emit_pattern_success[p];
+                    }
+                    fprintf(stderr,
+                            "  emit pattern %-15s n=%" PRIu32 " ginst=%" PRIu64
+                            " hbytes=%" PRIu64 " bpg=%.2f avg_g=%.2f avg_h=%.2f\n",
+                            stage5_burg_pattern_str((stage5_burg_pattern_t)p),
+                            stage5_emit_pattern_success[p],
+                            stage5_emit_pattern_guest_insts[p],
+                            stage5_emit_pattern_host_bytes[p],
+                            pbpg, avg_g, avg_h);
+                }
                 if (stage5_emit_fallback_non_terminal > 0) {
                     fprintf(stderr, "  emit non_terminal: %" PRIu32 "\n",
                             stage5_emit_fallback_non_terminal);

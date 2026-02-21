@@ -175,9 +175,39 @@ Rollout:
 - `stage5_lift_success`
 - `stage5_burg_attempted`
 - `stage5_burg_selected`
+- `stage5_burg_selected_guest_insts`
 - `stage5_burg_fallback_total`
 - `stage5_burg_fallback_<reason>`
+- `stage5_emit_success_guest_insts`
+- `stage5_emit_success_host_bytes`
+- per-pattern emit efficiency (`emit pattern <name> ... bpg=<x>`)
+  - terminals are split (`jal_call_short`, `jal_call_long`, `jal_jump`, `jalr_ret_short`, `jalr_ret_long`, `jalr_indirect`, `halt`, `yield`, `debug`)
+  - direct branches are split (`direct_branch_eq`, `direct_branch_ne`, `direct_branch_rel`, `direct_branch_relu`)
+  - `jal_call_short`, `jal_call_long`, `jalr_ret_short`, `jalr_ret_long`, `jalr_indirect`, `direct_branch_eq`, `direct_branch_rel`, and `direct_branch_relu` currently use policy fallback to Stage 4 emission
+  - `jal_jump` is enabled only for single-instruction selected regions (`guest_inst_count == 1`) and otherwise falls back to Stage 4
 - `stage5_strict_carry_skips`
+
+### Quick Comparison Workflow
+
+Use the helper script to get parity + coarse runtime and Stage5 coverage metrics:
+
+```bash
+tools/dbt/scripts/compare-stage4-stage5.sh
+```
+
+Or pass specific `.s32x` files:
+
+```bash
+tools/dbt/scripts/compare-stage4-stage5.sh \
+  regression/results/feature-strtod/test.s32x \
+  regression/results/feature-crc32/test.s32x
+```
+
+To rank BURG pattern hotspots across many tests:
+
+```bash
+tools/dbt/scripts/stage5-aggregate-patterns.sh
+```
 
 ## Initial Test Focus
 

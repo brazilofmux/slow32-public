@@ -12,6 +12,34 @@ static bool is_terminal_cf_opcode(uint8_t opcode) {
            opcode == 0x52 || opcode == 0x7F;
 }
 
+static stage5_burg_pattern_t terminal_pattern_for_opcode(uint8_t opcode) {
+    switch (opcode) {
+        case 0x40: return STAGE5_BURG_PATTERN_JAL_JUMP;
+        case 0x41: return STAGE5_BURG_PATTERN_JALR_INDIRECT;
+        case 0x7F: return STAGE5_BURG_PATTERN_HALT;
+        case 0x51: return STAGE5_BURG_PATTERN_YIELD;
+        case 0x52: return STAGE5_BURG_PATTERN_DEBUG;
+        default:   return STAGE5_BURG_PATTERN_NONE;
+    }
+}
+
+static stage5_burg_pattern_t direct_branch_pattern_for_opcode(uint8_t opcode) {
+    switch (opcode) {
+        case 0x48:  // BEQ
+            return STAGE5_BURG_PATTERN_DIRECT_BRANCH_EQ;
+        case 0x49:  // BNE
+            return STAGE5_BURG_PATTERN_DIRECT_BRANCH_NE;
+        case 0x4A:  // BLT
+        case 0x4B:  // BGE
+            return STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL;
+        case 0x4C:  // BLTU
+        case 0x4D:  // BGEU
+            return STAGE5_BURG_PATTERN_DIRECT_BRANCH_RELU;
+        default:
+            return STAGE5_BURG_PATTERN_NONE;
+    }
+}
+
 static bool is_cmp_opcode(uint8_t opcode) {
     return opcode == 0x08 || opcode == 0x09 || opcode == 0x0E || opcode == 0x0F ||
            opcode == 0x18 || opcode == 0x19 || opcode == 0x1A || opcode == 0x1B ||
@@ -113,7 +141,17 @@ bool stage5_burg_select(const stage5_lift_region_t *region, stage5_burg_result_t
         if (n->kind != STAGE5_IR_BRANCH) continue;
 
         if (is_terminal_cf_opcode(n->opcode)) {
-            result->pattern = STAGE5_BURG_PATTERN_TERMINAL;
+            result->pattern = terminal_pattern_for_opcode(n->opcode);
+            if (n->opcode == 0x40 && n->rd == 31) {
+                result->pattern = (region->guest_inst_count <= 4)
+                    ? STAGE5_BURG_PATTERN_JAL_CALL_SHORT
+                    : STAGE5_BURG_PATTERN_JAL_CALL_LONG;
+            }
+            if (n->opcode == 0x41 && n->rd == 0 && n->rs1 == 31 && n->imm == 0) {
+                result->pattern = (region->guest_inst_count <= 4)
+                    ? STAGE5_BURG_PATTERN_JALR_RET_SHORT
+                    : STAGE5_BURG_PATTERN_JALR_RET_LONG;
+            }
             break;
         }
 
@@ -126,7 +164,7 @@ bool stage5_burg_select(const stage5_lift_region_t *region, stage5_burg_result_t
                     break;
                 }
             }
-            result->pattern = STAGE5_BURG_PATTERN_DIRECT_BRANCH;
+            result->pattern = direct_branch_pattern_for_opcode(n->opcode);
             break;
         }
     }
@@ -177,10 +215,32 @@ const char *stage5_burg_pattern_str(stage5_burg_pattern_t pattern) {
     switch (pattern) {
         case STAGE5_BURG_PATTERN_NONE:
             return "none";
-        case STAGE5_BURG_PATTERN_TERMINAL:
-            return "terminal";
-        case STAGE5_BURG_PATTERN_DIRECT_BRANCH:
-            return "direct_branch";
+        case STAGE5_BURG_PATTERN_JAL_CALL_SHORT:
+            return "jal_call_short";
+        case STAGE5_BURG_PATTERN_JAL_CALL_LONG:
+            return "jal_call_long";
+        case STAGE5_BURG_PATTERN_JAL_JUMP:
+            return "jal_jump";
+        case STAGE5_BURG_PATTERN_JALR_RET_SHORT:
+            return "jalr_ret_short";
+        case STAGE5_BURG_PATTERN_JALR_RET_LONG:
+            return "jalr_ret_long";
+        case STAGE5_BURG_PATTERN_JALR_INDIRECT:
+            return "jalr_indirect";
+        case STAGE5_BURG_PATTERN_HALT:
+            return "halt";
+        case STAGE5_BURG_PATTERN_YIELD:
+            return "yield";
+        case STAGE5_BURG_PATTERN_DEBUG:
+            return "debug";
+        case STAGE5_BURG_PATTERN_DIRECT_BRANCH_EQ:
+            return "direct_branch_eq";
+        case STAGE5_BURG_PATTERN_DIRECT_BRANCH_NE:
+            return "direct_branch_ne";
+        case STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL:
+            return "direct_branch_rel";
+        case STAGE5_BURG_PATTERN_DIRECT_BRANCH_RELU:
+            return "direct_branch_relu";
         case STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO:
             return "cmp_branch_zero";
         case STAGE5_BURG_PATTERN_BLOCK_END:
