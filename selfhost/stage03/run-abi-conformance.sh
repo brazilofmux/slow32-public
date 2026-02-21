@@ -75,7 +75,9 @@ for f in \
     "$TEST_DIR/callee_save_main.s" \
     "$TEST_DIR/arg_caller.c" \
     "$TEST_DIR/arg_probe.s" \
-    "$TEST_DIR/arg_probe_main.s"; do
+    "$TEST_DIR/arg_probe_main.s" \
+    "$TEST_DIR/varargs_reg_stack.c" \
+    "$TEST_DIR/varargs_promotions.c"; do
     [[ -f "$f" ]] || { echo "Missing ABI test input: $f" >&2; exit 1; }
 done
 
@@ -218,6 +220,18 @@ assemble_s "$TEST_DIR/arg_probe.s" "$WORKDIR/arg_probe.s32o" "$WORKDIR/arg_probe
 assemble_s "$TEST_DIR/arg_probe_main.s" "$WORKDIR/arg_probe_main.s32o" "$WORKDIR/arg_probe_main.as.log"
 link_and_run_expect_zero "abi-arg-pass-10" \
     "$WORKDIR/arg_probe_main.s32o" "$WORKDIR/arg_caller.s32o" "$WORKDIR/arg_probe.s32o"
+
+# Test 3: varargs over register + stack argument paths.
+compile_c "$TEST_DIR/varargs_reg_stack.c" "$WORKDIR/varargs_reg_stack.s" "$WORKDIR/varargs_reg_stack.cc.log"
+assemble_s "$WORKDIR/varargs_reg_stack.s" "$WORKDIR/varargs_reg_stack.s32o" "$WORKDIR/varargs_reg_stack.as.log"
+link_and_run_expect_zero "abi-varargs-reg-stack" \
+    "$WORKDIR/varargs_reg_stack.s32o"
+
+# Test 4: varargs default promotions (unsigned short/short -> int) with 8 fixed args.
+compile_c "$TEST_DIR/varargs_promotions.c" "$WORKDIR/varargs_promotions.s" "$WORKDIR/varargs_promotions.cc.log"
+assemble_s "$WORKDIR/varargs_promotions.s" "$WORKDIR/varargs_promotions.s32o" "$WORKDIR/varargs_promotions.as.log"
+link_and_run_expect_zero "abi-varargs-promotions" \
+    "$WORKDIR/varargs_promotions.s32o"
 
 echo ""
 if [[ "$FAIL" -eq 0 ]]; then
