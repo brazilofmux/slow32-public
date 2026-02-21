@@ -112,16 +112,208 @@ int parse_num(char *s, int *ok) {
     return v;
 }
 
-int parse_num_or_abs(char *s, int *ok) {
-    int li;
+static void ex_skip(char *s, int *p) {
+    while (s[*p] == ' ' || s[*p] == '\t') *p = *p + 1;
+}
+
+static int ex_is_id0(int c) {
+    if (c >= 'A' && c <= 'Z') return 1;
+    if (c >= 'a' && c <= 'z') return 1;
+    if (c == '_' || c == '.' || c == '$') return 1;
+    return 0;
+}
+
+static int ex_is_idn(int c) {
+    if (ex_is_id0(c)) return 1;
+    if (c >= '0' && c <= '9') return 1;
+    return 0;
+}
+
+static int ex_expr_abs(char *s, int *p, int *ok);
+
+static int ex_factor_abs(char *s, int *p, int *ok) {
+    int sign;
     int v;
-    v = parse_num(s, ok);
-    if (*ok) return v;
-    li = find_lbl(s);
-    if (li >= 0 && g_lbl_defd[li] && g_lbl_abs[li]) {
-        *ok = 1;
-        return g_lbl_val[li];
+    int q;
+    int li;
+    int i;
+    char name[128];
+    char *e;
+
+    ex_skip(s, p);
+    sign = 1;
+    while (s[*p] == '+' || s[*p] == '-') {
+        if (s[*p] == '-') sign = 0 - sign;
+        *p = *p + 1;
+        ex_skip(s, p);
     }
+
+    if (s[*p] == '(') {
+        *p = *p + 1;
+        v = ex_expr_abs(s, p, ok);
+        if (!*ok) return 0;
+        ex_skip(s, p);
+        if (s[*p] != ')') { *ok = 0; return 0; }
+        *p = *p + 1;
+        return sign * v;
+    }
+
+    if ((s[*p] >= '0' && s[*p] <= '9')) {
+        v = strtol(s + *p, &e, 0);
+        if (e == s + *p) { *ok = 0; return 0; }
+        *p = *p + (e - (s + *p));
+        return sign * v;
+    }
+
+    if (ex_is_id0(s[*p])) {
+        i = 0;
+        while (ex_is_idn(s[*p])) {
+            if (i + 1 >= 128) { *ok = 0; return 0; }
+            name[i] = s[*p];
+            i = i + 1;
+            *p = *p + 1;
+        }
+        name[i] = 0;
+        li = find_lbl(name);
+        if (li < 0 || !g_lbl_defd[li] || !g_lbl_abs[li]) { *ok = 0; return 0; }
+        return sign * g_lbl_val[li];
+    }
+
+    *ok = 0;
+    return 0;
+}
+
+static int ex_term_abs(char *s, int *p, int *ok) {
+    int v;
+    int r;
+    char op;
+
+    v = ex_factor_abs(s, p, ok);
+    if (!*ok) return 0;
+
+    while (1) {
+        ex_skip(s, p);
+        op = s[*p];
+        if (op != '*' && op != '/') break;
+        *p = *p + 1;
+        r = ex_factor_abs(s, p, ok);
+        if (!*ok) return 0;
+        if (op == '*') v = v * r;
+        else {
+            if (r == 0) { *ok = 0; return 0; }
+            v = v / r;
+        }
+    }
+    return v;
+}
+
+static int ex_expr_abs(char *s, int *p, int *ok) {
+    int v;
+    int r;
+    char op;
+
+    v = ex_term_abs(s, p, ok);
+    if (!*ok) return 0;
+
+    while (1) {
+        ex_skip(s, p);
+        op = s[*p];
+        if (op != '+' && op != '-') break;
+        *p = *p + 1;
+        r = ex_term_abs(s, p, ok);
+        if (!*ok) return 0;
+        if (op == '+') v = v + r;
+        else v = v - r;
+    }
+    return v;
+}
+
+int parse_num_or_abs(char *s, int *ok) {
+    int p;
+    int v;
+    p = 0;
+    *ok = 1;
+    v = ex_expr_abs(s, &p, ok);
+    if (!*ok) return 0;
+    ex_skip(s, &p);
+    if (s[p] != 0) { *ok = 0; return 0; }
+    return v;
+}
+
+int parse_sym_add(char *s, char *sym, int sym_sz, int *add, int *ok) {
+    int i;
+    int ni;
+    char c;
+    int li;
+    int a;
+    int sgn;
+    int v;
+    int depth;
+    int beg;
+    int t;
+    int k;
+    char part[128];
+
+    i = 0;
+    while (s[i] == ' ' || s[i] == '\t') i = i + 1;
+
+    ni = 0;
+    c = s[i];
+    if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+          c == '_' || c == '.' || c == '$')) {
+        *ok = 0;
+        return 0;
+    }
+    while (1) {
+        c = s[i];
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '$')) {
+            break;
+        }
+        if (ni + 1 >= sym_sz) { *ok = 0; return 0; }
+        sym[ni] = c;
+        ni = ni + 1;
+        i = i + 1;
+    }
+    sym[ni] = 0;
+
+    a = 0;
+    while (1) {
+        while (s[i] == ' ' || s[i] == '\t') i = i + 1;
+        if (s[i] != '+' && s[i] != '-') break;
+        sgn = (s[i] == '-') ? -1 : 1;
+        i = i + 1;
+        while (s[i] == ' ' || s[i] == '\t') i = i + 1;
+        depth = 0;
+        beg = i;
+        while (s[i]) {
+            if (s[i] == '(') depth = depth + 1;
+            else if (s[i] == ')') {
+                if (depth > 0) depth = depth - 1;
+            } else if (depth == 0 && (s[i] == '+' || s[i] == '-')) {
+                break;
+            }
+            i = i + 1;
+        }
+        if (i <= beg) { *ok = 0; return 0; }
+        if (i - beg >= 127) { *ok = 0; return 0; }
+        k = 0;
+        t = beg;
+        while (t < i) {
+            part[k] = s[t];
+            k = k + 1;
+            t = t + 1;
+        }
+        part[k] = 0;
+        v = parse_num_or_abs(part, &li);
+        if (!li) { *ok = 0; return 0; }
+        a = a + sgn * v;
+    }
+
+    while (s[i] == ' ' || s[i] == '\t') i = i + 1;
+    if (s[i] != 0) { *ok = 0; return 0; }
+    *add = a;
+    *ok = 1;
     return 0;
 }
 
@@ -229,7 +421,7 @@ int emit_word_list(char *p) {
     }
 }
 
-int add_reloc(int typ, int off, char *name) {
+int add_reloc_ex(int typ, int off, char *name, int add) {
     int li;
     if (g_nrel >= MAX_REL) return -1;
     li = get_lbl(name);
@@ -239,9 +431,13 @@ int add_reloc(int typ, int off, char *name) {
     g_rel_off[g_nrel] = off;
     g_rel_typ[g_nrel] = typ;
     g_rel_sym[g_nrel] = li;
-    g_rel_add[g_nrel] = 0;
+    g_rel_add[g_nrel] = add;
     g_nrel = g_nrel + 1;
     return 0;
+}
+
+int add_reloc(int typ, int off, char *name) {
+    return add_reloc_ex(typ, off, name, 0);
 }
 
 int enc_r(int op, int rd, int rs1, int rs2) {
@@ -361,8 +557,10 @@ int handle(char *line) {
     int off;
     int off2;
     char sym[128];
+    char rexpr[128];
     int has_lo;
     int has_hi;
+    int rel_add;
     int fill;
     int lo;
     int hi;
@@ -459,7 +657,12 @@ int handle(char *line) {
             for (i = 1; i < n; i = i + 1) {
                 v = parse_num_or_abs(tok[i], &ok);
                 if (ok) { if (emit32(v) != 0) return -1; }
-                else { if (add_reloc(S32O_REL_32, cur_off(), tok[i]) != 0) return -1; if (emit32(0) != 0) return -1; }
+                else {
+                    parse_sym_add(tok[i], sym, 128, &rel_add, &ok);
+                    if (!ok) return -1;
+                    if (add_reloc_ex(S32O_REL_32, cur_off(), sym, rel_add) != 0) return -1;
+                    if (emit32(0) != 0) return -1;
+                }
             }
             return 0;
         }
@@ -473,7 +676,9 @@ int handle(char *line) {
                     if (emit32(lo) != 0) return -1;
                     if (emit32(hi) != 0) return -1;
                 } else {
-                    if (add_reloc(S32O_REL_32, cur_off(), tok[i]) != 0) return -1;
+                    parse_sym_add(tok[i], sym, 128, &rel_add, &ok);
+                    if (!ok) return -1;
+                    if (add_reloc_ex(S32O_REL_32, cur_off(), sym, rel_add) != 0) return -1;
                     if (emit32(0) != 0) return -1;
                     if (emit32(0) != 0) return -1;
                 }
@@ -571,11 +776,19 @@ int handle(char *line) {
         op = 0;
         has_lo = 0;
         has_hi = 0;
+        rel_add = 0;
         if (n != 4) return -1;
         rd = parse_reg(tok[1]); rs1 = parse_reg(tok[2]); imm = parse_num_or_abs(tok[3], &ok);
         if (!ok) {
-            if (parse_reloc_expr(tok[3], "%lo(", sym, 128)) has_lo = 1;
-            else if (parse_reloc_expr(tok[3], "%hi(", sym, 128)) has_hi = 1;
+            if (parse_reloc_expr(tok[3], "%lo(", rexpr, 128)) {
+                parse_sym_add(rexpr, sym, 128, &rel_add, &ok);
+                if (!ok) return -1;
+                has_lo = 1;
+            } else if (parse_reloc_expr(tok[3], "%hi(", rexpr, 128)) {
+                parse_sym_add(rexpr, sym, 128, &rel_add, &ok);
+                if (!ok) return -1;
+                has_hi = 1;
+            }
             else return -1;
             imm = 0;
             ok = 1;
@@ -598,19 +811,27 @@ int handle(char *line) {
         else op = 0x41;
         if (emit32(enc_i(op, rd, rs1, imm)) != 0) return -1;
         off = cur_off() - 4;
-        if (has_lo) return add_reloc(S32O_REL_LO12, off, sym);
-        if (has_hi) return add_reloc(S32O_REL_HI20, off, sym);
+        if (has_lo) return add_reloc_ex(S32O_REL_LO12, off, sym, rel_add);
+        if (has_hi) return add_reloc_ex(S32O_REL_HI20, off, sym, rel_add);
         return 0;
     }
 
     if (strcmp(tok[0], "stw") == 0 || strcmp(tok[0], "sth") == 0 || strcmp(tok[0], "stb") == 0) {
         has_lo = 0;
         has_hi = 0;
+        rel_add = 0;
         if (n != 4) return -1;
         rs1 = parse_reg(tok[1]); rs2 = parse_reg(tok[2]); imm = parse_num_or_abs(tok[3], &ok);
         if (!ok) {
-            if (parse_reloc_expr(tok[3], "%lo(", sym, 128)) has_lo = 1;
-            else if (parse_reloc_expr(tok[3], "%hi(", sym, 128)) has_hi = 1;
+            if (parse_reloc_expr(tok[3], "%lo(", rexpr, 128)) {
+                parse_sym_add(rexpr, sym, 128, &rel_add, &ok);
+                if (!ok) return -1;
+                has_lo = 1;
+            } else if (parse_reloc_expr(tok[3], "%hi(", rexpr, 128)) {
+                parse_sym_add(rexpr, sym, 128, &rel_add, &ok);
+                if (!ok) return -1;
+                has_hi = 1;
+            }
             else return -1;
             imm = 0;
             ok = 1;
@@ -621,8 +842,8 @@ int handle(char *line) {
         else op = 0x38;
         if (emit32(enc_s(op, rs1, rs2, imm)) != 0) return -1;
         off = cur_off() - 4;
-        if (has_lo) return add_reloc(S32O_REL_LO12, off, sym);
-        if (has_hi) return add_reloc(S32O_REL_HI20, off, sym);
+        if (has_lo) return add_reloc_ex(S32O_REL_LO12, off, sym, rel_add);
+        if (has_hi) return add_reloc_ex(S32O_REL_HI20, off, sym, rel_add);
         return 0;
     }
 
@@ -654,10 +875,13 @@ int handle(char *line) {
 
     if (strcmp(tok[0], "lui") == 0) {
         has_hi = 0;
+        rel_add = 0;
         if (n != 3) return -1;
         rd = parse_reg(tok[1]); imm = parse_num_or_abs(tok[2], &ok);
         if (!ok) {
-            if (parse_reloc_expr(tok[2], "%hi(", sym, 128)) {
+            if (parse_reloc_expr(tok[2], "%hi(", rexpr, 128)) {
+                parse_sym_add(rexpr, sym, 128, &rel_add, &ok);
+                if (!ok) return -1;
                 has_hi = 1;
                 imm = 0;
                 ok = 1;
@@ -667,7 +891,7 @@ int handle(char *line) {
         if (emit32(enc_u(0x20, rd, imm)) != 0) return -1;
         if (!has_hi) return 0;
         off = cur_off() - 4;
-        return add_reloc(S32O_REL_HI20, off, sym);
+        return add_reloc_ex(S32O_REL_HI20, off, sym, rel_add);
     }
 
     if (strcmp(tok[0], "jal") == 0) {
@@ -679,7 +903,10 @@ int handle(char *line) {
         if (emit32(enc_j(0, rd, 0)) != 0) return -1;
         if (off >= g_tsz) return -1;
         g_text[off] = ((g_text[off] & 255) & -128) | 0x40;
-        return add_reloc(S32O_REL_JAL, off, tok[2]);
+        rel_add = 0;
+        parse_sym_add(tok[2], sym, 128, &rel_add, &ok);
+        if (!ok) return -1;
+        return add_reloc_ex(S32O_REL_JAL, off, sym, rel_add);
     }
 
     if (strcmp(tok[0], "la") == 0) {
@@ -691,8 +918,11 @@ int handle(char *line) {
         off2 = cur_off();
         off = off2 - 8;
         off2 = off2 - 4;
-        if (add_reloc(S32O_REL_HI20, off, tok[2]) != 0) return -1;
-        return add_reloc(S32O_REL_LO12, off2, tok[2]);
+        rel_add = 0;
+        parse_sym_add(tok[2], sym, 128, &rel_add, &ok);
+        if (!ok) return -1;
+        if (add_reloc_ex(S32O_REL_HI20, off, sym, rel_add) != 0) return -1;
+        return add_reloc_ex(S32O_REL_LO12, off2, sym, rel_add);
     }
 
     if (strcmp(tok[0], "call") == 0) {
@@ -702,14 +932,20 @@ int handle(char *line) {
         off2 = cur_off();
         off = off2 - 8;
         off2 = off2 - 4;
-        if (add_reloc(S32O_REL_HI20, off, tok[1]) != 0) return -1;
-        return add_reloc(S32O_REL_LO12, off2, tok[1]);
+        rel_add = 0;
+        parse_sym_add(tok[1], sym, 128, &rel_add, &ok);
+        if (!ok) return -1;
+        if (add_reloc_ex(S32O_REL_HI20, off, sym, rel_add) != 0) return -1;
+        return add_reloc_ex(S32O_REL_LO12, off2, sym, rel_add);
     }
 
     if (strcmp(tok[0], "tail") == 0) {
         if (n != 2) return -1;
         if (emit32(enc_j(0x40, 0, 0)) != 0) return -1;
-        return add_reloc(S32O_REL_JAL, cur_off() - 4, tok[1]);
+        rel_add = 0;
+        parse_sym_add(tok[1], sym, 128, &rel_add, &ok);
+        if (!ok) return -1;
+        return add_reloc_ex(S32O_REL_JAL, cur_off() - 4, sym, rel_add);
     }
 
     if (strcmp(tok[0], "nop") == 0) { return emit32(enc_r(0x00, 0, 0, 0)); }
@@ -773,7 +1009,10 @@ int handle(char *line) {
         if (emit32(enc_j(0, 0, 0)) != 0) return -1;
         if (off >= g_tsz) return -1;
         g_text[off] = ((g_text[off] & 255) & -128) | 0x40;
-        return add_reloc(S32O_REL_JAL, off, tok[1]);
+        rel_add = 0;
+        parse_sym_add(tok[1], sym, 128, &rel_add, &ok);
+        if (!ok) return -1;
+        return add_reloc_ex(S32O_REL_JAL, off, sym, rel_add);
     }
 
     if (strcmp(tok[0], "jr") == 0) {
