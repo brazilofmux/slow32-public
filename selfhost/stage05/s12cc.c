@@ -259,6 +259,15 @@ int main(int argc, char **argv) {
     fputs(" miss=", stderr);
     fput_uint(stderr, hcg_stat_imm_miss_cmp);
     fputs("\n", stderr);
+    fputs("hir_iconst_use: total=", stderr);
+    fput_uint(stderr, bg_stat_iconst_total);
+    fputs(" imm_only=", stderr);
+    fput_uint(stderr, bg_stat_iconst_imm_only);
+    fputs(" nonimm=", stderr);
+    fput_uint(stderr, bg_stat_iconst_nonimm);
+    fputs(" unused=", stderr);
+    fput_uint(stderr, bg_stat_iconst_unused);
+    fputs("\n", stderr);
     print_burg_top_ops(8);
     print_burg_top_patterns(8);
 

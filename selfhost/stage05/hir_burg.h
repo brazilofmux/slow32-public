@@ -76,6 +76,12 @@ static int bg_stat_sel_faddr;
 static int bg_stat_sel_saddr;
 static int bg_stat_sel_op[BG_OP_SZ];
 static int bg_stat_sel_pat[BG_MAX_PAT];
+static int bg_stat_iconst_total;
+static int bg_stat_iconst_imm_only;
+static int bg_stat_iconst_nonimm;
+static int bg_stat_iconst_unused;
+static int bg_iconst_seen_use[HIR_MAX_INST];
+static int bg_iconst_seen_nonimm[HIR_MAX_INST];
 
 /* Init flag */
 static int bg_inited;
@@ -270,6 +276,95 @@ static int bg_addi_faddr_ok(int idx) {
     int off;
     off = bg_faddr_offset(idx);
     return (off >= -2048 && off <= 2047);
+}
+
+static int bg_use_is_imm_capable(int user, int pos) {
+    int k;
+    k = h_kind[user];
+
+    if (k == HI_ADD) return 1;                  /* add r,r,imm (both sides) */
+    if (k == HI_SUB && pos == 2) return 1;      /* sub r,imm via addi -imm */
+    if ((k == HI_AND || k == HI_OR || k == HI_XOR)) return 1;
+    if ((k == HI_SLL || k == HI_SRL || k == HI_SRA) && pos == 2) return 1;
+    if ((k == HI_SLT || k == HI_SLTU) && pos == 2) return 1;
+    return 0;
+}
+
+static void bg_profile_iconst_consumers(void) {
+    int i;
+    int j;
+    int k;
+    int base;
+    int cnt;
+    int v;
+
+    i = 0;
+    while (i < h_ninst) {
+        bg_iconst_seen_use[i] = 0;
+        bg_iconst_seen_nonimm[i] = 0;
+        i = i + 1;
+    }
+
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k != HI_NOP) {
+            v = h_src1[i];
+            if (v >= 0 && h_kind[v] == HI_ICONST) {
+                bg_iconst_seen_use[v] = 1;
+                if (!bg_use_is_imm_capable(i, 1)) bg_iconst_seen_nonimm[v] = 1;
+            }
+            v = h_src2[i];
+            if (v >= 0 && h_kind[v] == HI_ICONST) {
+                bg_iconst_seen_use[v] = 1;
+                if (!bg_use_is_imm_capable(i, 2)) bg_iconst_seen_nonimm[v] = 1;
+            }
+
+            if (k == HI_CALL || k == HI_CALLP) {
+                base = h_cbase[i];
+                cnt = h_val[i];
+                j = 0;
+                while (j < cnt) {
+                    v = h_carg[base + j];
+                    if (v >= 0 && h_kind[v] == HI_ICONST) {
+                        bg_iconst_seen_use[v] = 1;
+                        bg_iconst_seen_nonimm[v] = 1;
+                    }
+                    j = j + 1;
+                }
+            }
+
+            if (k == HI_PHI) {
+                base = h_pbase[i];
+                cnt = h_pcnt[i];
+                j = 0;
+                while (j < cnt) {
+                    v = h_pval[base + j];
+                    if (v >= 0 && h_kind[v] == HI_ICONST) {
+                        bg_iconst_seen_use[v] = 1;
+                        bg_iconst_seen_nonimm[v] = 1;
+                    }
+                    j = j + 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_ICONST) {
+            bg_stat_iconst_total = bg_stat_iconst_total + 1;
+            if (!bg_iconst_seen_use[i]) {
+                bg_stat_iconst_unused = bg_stat_iconst_unused + 1;
+            } else if (!bg_iconst_seen_nonimm[i]) {
+                bg_stat_iconst_imm_only = bg_stat_iconst_imm_only + 1;
+            } else {
+                bg_stat_iconst_nonimm = bg_stat_iconst_nonimm + 1;
+            }
+        }
+        i = i + 1;
+    }
 }
 
 static char *bg_nt_name(int nt) {
@@ -640,6 +735,7 @@ static void hir_burg(void) {
 
     bg_label();
     bg_count_uses();
+    bg_profile_iconst_consumers();
     /* bg_compute_foff already called above (before any NOP changes) */
     bg_select();  /* Phase 2 of select may NOP folded instructions */
 }
