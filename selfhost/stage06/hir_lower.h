@@ -30,6 +30,7 @@ static int hl_sw_count[HL_MAX_SW_DEPTH];
 static int hl_sw_def[HL_MAX_SW_DEPTH];
 static int hl_sw_cur[HL_MAX_SW_DEPTH];
 static int hl_sw_depth;
+static int hl_sw_ord[HL_MAX_CASE];
 
 /* --- Goto label map --- */
 #define HL_MAX_GOTO 512
@@ -81,6 +82,102 @@ static int hl_label_block(int label_id) {
     hl_goto_blk[hl_ngoto] = hir_new_block();
     hl_ngoto = hl_ngoto + 1;
     return hl_goto_blk[hl_ngoto - 1];
+}
+
+static int hl_sw_less_val(int a, int b, int is_unsigned) {
+    if (is_unsigned) return ((unsigned)a) < ((unsigned)b);
+    return a < b;
+}
+
+static void hl_sw_sort_cases(int sw_b, int sw_n, int is_unsigned) {
+    int i;
+    int j;
+    int key;
+    int keyv;
+    int curv;
+
+    i = 0;
+    while (i < sw_n) {
+        hl_sw_ord[sw_b + i] = sw_b + i;
+        i = i + 1;
+    }
+
+    i = 1;
+    while (i < sw_n) {
+        key = hl_sw_ord[sw_b + i];
+        keyv = hl_sw_val[key];
+        j = i - 1;
+        while (j >= 0) {
+            curv = hl_sw_val[hl_sw_ord[sw_b + j]];
+            if (!hl_sw_less_val(keyv, curv, is_unsigned)) break;
+            hl_sw_ord[sw_b + j + 1] = hl_sw_ord[sw_b + j];
+            j = j - 1;
+        }
+        hl_sw_ord[sw_b + j + 1] = key;
+        i = i + 1;
+    }
+}
+
+static void hl_sw_emit_chain(int lv, int def_blk, int sw_b, int sw_n) {
+    int sw_i;
+    int cv;
+    int cmp;
+    int next_blk;
+
+    sw_i = 0;
+    while (sw_i < sw_n) {
+        cv = hi_emit(HI_ICONST, TY_INT, -1, -1, hl_sw_val[sw_b + sw_i], NULL);
+        cmp = hi_emit(HI_SEQ, TY_INT, lv, cv, 0, NULL);
+        next_blk = hir_new_block();
+        hi_emit(HI_BRC, 0, cmp, hl_sw_blk[sw_b + sw_i], next_blk, NULL);
+        hl_switch_block(next_blk);
+        sw_i = sw_i + 1;
+    }
+
+    hi_emit(HI_BR, 0, -1, -1, def_blk, NULL);
+}
+
+static void hl_sw_emit_bsearch(int lv, int def_blk, int lt_kind, int lo, int hi) {
+    int mid;
+    int idx;
+    int c;
+    int cv;
+    int cmp_eq;
+    int cmp_lt;
+    int neq_blk;
+    int left_blk;
+    int right_blk;
+
+    if (lo > hi) {
+        hi_emit(HI_BR, 0, -1, -1, def_blk, NULL);
+        return;
+    }
+
+    mid = lo + (hi - lo) / 2;
+    idx = hl_sw_ord[mid];
+    c = hl_sw_val[idx];
+    cv = hi_emit(HI_ICONST, TY_INT, -1, -1, c, NULL);
+    cmp_eq = hi_emit(HI_SEQ, TY_INT, lv, cv, 0, NULL);
+    if (lo == hi) {
+        hi_emit(HI_BRC, 0, cmp_eq, hl_sw_blk[idx], def_blk, NULL);
+        return;
+    }
+
+    neq_blk = hir_new_block();
+    hi_emit(HI_BRC, 0, cmp_eq, hl_sw_blk[idx], neq_blk, NULL);
+
+    hl_switch_block(neq_blk);
+    cv = hi_emit(HI_ICONST, TY_INT, -1, -1, c, NULL);
+    cmp_lt = hi_emit(lt_kind, TY_INT, lv, cv, 0, NULL);
+    left_blk = hir_new_block();
+    right_blk = hir_new_block();
+    hi_emit(HI_BRC, 0, cmp_lt, left_blk, right_blk, NULL);
+
+    hl_switch_block(left_blk);
+    hl_sw_emit_bsearch(lv, def_blk, lt_kind, lo, mid - 1);
+
+    hl_switch_block(right_blk);
+    hl_sw_emit_bsearch(lv, def_blk, lt_kind, mid + 1, hi);
 }
 
 /* Map AST binary operator token to HIR instruction kind */
@@ -496,6 +593,8 @@ static void hl_stmt(Node *n) {
     int ci;
     int lbl_blk;
     int zero_inst;
+    int lt_kind;
+    int use_bs;
     Node *s;
     Node *cs;
 
@@ -666,20 +765,20 @@ static void hl_stmt(Node *n) {
         /* Evaluate switch expression */
         lv = hl_expr(n->cond);
 
-        /* Comparison chain */
         sw_n = hl_sw_count[sw_d];
-        sw_i = 0;
-        while (sw_i < sw_n) {
-            cv = hi_emit(HI_ICONST, TY_INT, -1, -1, hl_sw_val[sw_b + sw_i], NULL);
-            cmp = hi_emit(HI_SEQ, TY_INT, lv, cv, 0, NULL);
-            next_blk = hir_new_block();
-            hi_emit(HI_BRC, 0, cmp, hl_sw_blk[sw_b + sw_i], next_blk, NULL);
-            hl_switch_block(next_blk);
-            sw_i = sw_i + 1;
-        }
+        if (n->cond && (n->cond->ty & TY_UNSIGNED)) lt_kind = HI_SLTU;
+        else lt_kind = HI_SLT;
 
-        /* Fall through to default or break */
-        hi_emit(HI_BR, 0, -1, -1, def_blk, NULL);
+        /* First slice for issue #32:
+           keep tiny switches as linear chain; lower larger ones to a
+           balanced binary decision tree by case value. */
+        use_bs = (sw_n >= 6);
+        if (use_bs) {
+            hl_sw_sort_cases(sw_b, sw_n, (lt_kind == HI_SLTU));
+            hl_sw_emit_bsearch(lv, def_blk, lt_kind, sw_b, sw_b + sw_n - 1);
+        } else {
+            hl_sw_emit_chain(lv, def_blk, sw_b, sw_n);
+        }
 
         /* Generate body with case cursor */
         hl_sw_cur[sw_d] = 0;
