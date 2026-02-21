@@ -324,6 +324,13 @@ static int bg_is_u12(int v) {
     return (v >= 0 && v <= 4095);
 }
 
+/* Is src2 an instruction reference (not a block number)? */
+static int bg_src2_is_ref(int k) {
+    if (k >= HI_ADD && k <= HI_SGEU) return 1;
+    if (k == HI_STORE) return 1;
+    return 0;
+}
+
 static int bg_use_accepts_imm(int user, int pos, int c) {
     int k;
     k = h_kind[user];
@@ -385,7 +392,7 @@ static void bg_profile_iconst_consumers(void) {
                 }
             }
             v = h_src2[i];
-            if (v >= 0 && bg_const_imm_inst(v, &c, &root)) {
+            if (v >= 0 && bg_src2_is_ref(k) && bg_const_imm_inst(v, &c, &root)) {
                 bg_iconst_seen_use[root] = 1;
                 if (k >= 0 && k <= BG_MAX_OP) bg_stat_iconst_use_op[k] = bg_stat_iconst_use_op[k] + 1;
                 if (!bg_use_accepts_imm(i, 2, c)) {
@@ -519,7 +526,7 @@ static void bg_count_uses(void) {
         if (k == HI_NOP) { i = i + 1; continue; }
 
         if (h_src1[i] >= 0) bg_uses[h_src1[i]] = bg_uses[h_src1[i]] + 1;
-        if (h_src2[i] >= 0) bg_uses[h_src2[i]] = bg_uses[h_src2[i]] + 1;
+        if (h_src2[i] >= 0 && bg_src2_is_ref(k)) bg_uses[h_src2[i]] = bg_uses[h_src2[i]] + 1;
 
         /* CALL/CALLP args */
         if (k == HI_CALL || k == HI_CALLP) {
