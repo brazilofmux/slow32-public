@@ -580,6 +580,37 @@ int do_balign(int bytes, int fill) {
     return 0;
 }
 
+int emit_uleb128(int v) {
+    unsigned int u;
+    int b;
+    u = (unsigned int)v;
+    while (1) {
+        b = u & 0x7F;
+        u = u >> 7;
+        if (u != 0) b = b | 0x80;
+        if (emit8(b) != 0) return -1;
+        if (u == 0) break;
+    }
+    return 0;
+}
+
+int emit_sleb128(int v) {
+    int b;
+    int more;
+    more = 1;
+    while (more) {
+        b = v & 0x7F;
+        v = v >> 7;
+        if ((v == 0 && (b & 0x40) == 0) || (v == -1 && (b & 0x40) != 0)) {
+            more = 0;
+        } else {
+            b = b | 0x80;
+        }
+        if (emit8(b) != 0) return -1;
+    }
+    return 0;
+}
+
 int handle(char *line) {
     char *tok[8];
     int n;
@@ -601,6 +632,8 @@ int handle(char *line) {
     char rexpr[128];
     int has_lo;
     int has_hi;
+    int has_pcrel_lo;
+    int has_pcrel_hi;
     int rel_add;
     int rel_has_plus;
     int rel_has_minus;
@@ -801,6 +834,18 @@ int handle(char *line) {
             }
             return 0;
         }
+        if (strcmp(tok[0], ".uleb128") == 0) {
+            if (n != 2) return -1;
+            v = parse_num_or_abs(tok[1], &ok);
+            if (!ok) return -1;
+            return emit_uleb128(v);
+        }
+        if (strcmp(tok[0], ".sleb128") == 0) {
+            if (n != 2) return -1;
+            v = parse_num_or_abs(tok[1], &ok);
+            if (!ok) return -1;
+            return emit_sleb128(v);
+        }
         return 0;
     }
 
@@ -839,6 +884,8 @@ int handle(char *line) {
         op = 0;
         has_lo = 0;
         has_hi = 0;
+        has_pcrel_lo = 0;
+        has_pcrel_hi = 0;
         rel_add = 0;
         if (n != 4) return -1;
         rd = parse_reg(tok[1]); rs1 = parse_reg(tok[2]); imm = parse_num_or_abs(tok[3], &ok);
@@ -851,6 +898,14 @@ int handle(char *line) {
                 parse_sym_add(rexpr, sym, 128, &rel_add, &ok);
                 if (!ok) return -1;
                 has_hi = 1;
+            } else if (parse_reloc_expr(tok[3], "%pcrel_lo(", rexpr, 128)) {
+                parse_sym_add(rexpr, sym, 128, &rel_add, &ok);
+                if (!ok) return -1;
+                has_pcrel_lo = 1;
+            } else if (parse_reloc_expr(tok[3], "%pcrel_hi(", rexpr, 128)) {
+                parse_sym_add(rexpr, sym, 128, &rel_add, &ok);
+                if (!ok) return -1;
+                has_pcrel_hi = 1;
             }
             else return -1;
             imm = 0;
@@ -876,12 +931,16 @@ int handle(char *line) {
         off = cur_off() - 4;
         if (has_lo) return add_reloc_ex(S32O_REL_LO12, off, sym, rel_add);
         if (has_hi) return add_reloc_ex(S32O_REL_HI20, off, sym, rel_add);
+        if (has_pcrel_lo) return add_reloc_ex(S32O_REL_PCREL_LO12, off, sym, rel_add);
+        if (has_pcrel_hi) return add_reloc_ex(S32O_REL_PCREL_HI20, off, sym, rel_add);
         return 0;
     }
 
     if (strcmp(tok[0], "stw") == 0 || strcmp(tok[0], "sth") == 0 || strcmp(tok[0], "stb") == 0) {
         has_lo = 0;
         has_hi = 0;
+        has_pcrel_lo = 0;
+        has_pcrel_hi = 0;
         rel_add = 0;
         if (n != 4) return -1;
         rs1 = parse_reg(tok[1]); rs2 = parse_reg(tok[2]); imm = parse_num_or_abs(tok[3], &ok);
@@ -894,6 +953,14 @@ int handle(char *line) {
                 parse_sym_add(rexpr, sym, 128, &rel_add, &ok);
                 if (!ok) return -1;
                 has_hi = 1;
+            } else if (parse_reloc_expr(tok[3], "%pcrel_lo(", rexpr, 128)) {
+                parse_sym_add(rexpr, sym, 128, &rel_add, &ok);
+                if (!ok) return -1;
+                has_pcrel_lo = 1;
+            } else if (parse_reloc_expr(tok[3], "%pcrel_hi(", rexpr, 128)) {
+                parse_sym_add(rexpr, sym, 128, &rel_add, &ok);
+                if (!ok) return -1;
+                has_pcrel_hi = 1;
             }
             else return -1;
             imm = 0;
@@ -907,6 +974,8 @@ int handle(char *line) {
         off = cur_off() - 4;
         if (has_lo) return add_reloc_ex(S32O_REL_LO12, off, sym, rel_add);
         if (has_hi) return add_reloc_ex(S32O_REL_HI20, off, sym, rel_add);
+        if (has_pcrel_lo) return add_reloc_ex(S32O_REL_PCREL_LO12, off, sym, rel_add);
+        if (has_pcrel_hi) return add_reloc_ex(S32O_REL_PCREL_HI20, off, sym, rel_add);
         return 0;
     }
 
@@ -938,6 +1007,7 @@ int handle(char *line) {
 
     if (strcmp(tok[0], "lui") == 0) {
         has_hi = 0;
+        has_pcrel_hi = 0;
         rel_add = 0;
         if (n != 3) return -1;
         rd = parse_reg(tok[1]); imm = parse_num_or_abs(tok[2], &ok);
@@ -948,13 +1018,20 @@ int handle(char *line) {
                 has_hi = 1;
                 imm = 0;
                 ok = 1;
+            } else if (parse_reloc_expr(tok[2], "%pcrel_hi(", rexpr, 128)) {
+                parse_sym_add(rexpr, sym, 128, &rel_add, &ok);
+                if (!ok) return -1;
+                has_pcrel_hi = 1;
+                imm = 0;
+                ok = 1;
             } else return -1;
         }
         if (rd < 0 || !ok) return -1;
         if (emit32(enc_u(0x20, rd, imm)) != 0) return -1;
-        if (!has_hi) return 0;
+        if (!has_hi && !has_pcrel_hi) return 0;
         off = cur_off() - 4;
-        return add_reloc_ex(S32O_REL_HI20, off, sym, rel_add);
+        if (has_hi) return add_reloc_ex(S32O_REL_HI20, off, sym, rel_add);
+        return add_reloc_ex(S32O_REL_PCREL_HI20, off, sym, rel_add);
     }
 
     if (strcmp(tok[0], "jal") == 0) {
