@@ -373,15 +373,14 @@ Remaining gap:
 
 ### Stage 8: Subset C Compiler (`cc-min-pass1.c`)
 
-### 21. [CC] Caller-Side Argument Limit
-The compiler only supports up to 8 arguments in function calls, passed via registers `r3-r10`.
-```c
-while (k > 0) {
-    k = k - 1;
-    emit("    ldw r"); emit_num(3 + k); emit(", r29, 0\n    addi r29, r29, 4\n");
-}
-```
-If a function is called with more than 8 arguments, it will attempt to use non-existent or incorrect registers (`r11+`). The calling convention requires overflow arguments to be passed on the stack.
+### 21. [FIXED] Caller-Side Argument Limit
+Stage02 `cc-min-pass1.c` now handles calls with more than 8 arguments by:
+- loading register arguments (`r3-r10`) from a temporary argument block
+- re-packing overflow arguments to caller stack in ABI order (`arg9` at `sp+0`, `arg10` at `sp+4`, etc.)
+- cleaning up caller stack space after call
+
+Function prologues now also materialize parameters `9+` from caller stack (`fp+0`, `fp+4`, ...)
+into local parameter slots, so both caller and callee sides agree for `>8` arguments.
 
 ### 23. [INCOMPLETE] Comma Operator and `for` Loop Expressions
 The `for` loop parser only supports a single expression in the initialization, condition, and increment sections. Standard C allows multiple expressions separated by the comma operator, which is frequently used in `for` loops.

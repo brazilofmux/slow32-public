@@ -1268,6 +1268,8 @@ static void parse_primary(void) {
     char sn[128];
     int nargs;
     int k;
+    int regc;
+    int off;
     int li;
     int gi;
     int fi;
@@ -1306,12 +1308,29 @@ static void parse_primary(void) {
                 }
             }
             expect(TK_RPAREN);
-            k = nargs;
-            while (k > 0) {
-                k = k - 1;
-                emit("    ldw r"); emit_num(3 + k); emit(", r29, 0\n    addi r29, r29, 4\n");
+            regc = nargs;
+            if (regc > 8) regc = 8;
+            if (nargs > 0) {
+                emit("    addi r2, r29, 0\n");
+                k = 0;
+                while (k < regc) {
+                    off = (nargs - 1 - k) * 4;
+                    emit("    ldw r"); emit_num(3 + k); emit(", r2, "); emit_num(off); emit_ch('\n');
+                    k = k + 1;
+                }
+                emit("    addi r29, r29, "); emit_num(nargs * 4); emit_ch('\n');
+                k = nargs - 1;
+                while (k >= regc) {
+                    off = (nargs - 1 - k) * 4;
+                    emit("    ldw r1, r2, "); emit_num(off); emit_ch('\n');
+                    emit_push();
+                    k = k - 1;
+                }
             }
             emit_call(sn);
+            if (nargs > regc) {
+                emit("    addi r29, r29, "); emit_num((nargs - regc) * 4); emit_ch('\n');
+            }
             g_lval = 0;
             fi = find_func(sn);
             if (fi >= 0) g_expr_type = g_fret[fi];
@@ -1938,6 +1957,16 @@ static void parse_function(const char *fname, int rtype) {
     while (i < np && i < 8) {
         emit("    stw r30, r"); emit_num(3 + i); emit(", ");
         emit_num(-12 - i * 4); emit_ch('\n');
+        i = i + 1;
+    }
+    while (i < np) {
+        /* Overflow params are passed on caller stack at SP + (param_index - 8) * 4. */
+        emit("    ldw r1, r30, ");
+        emit_num((i - 8) * 4);
+        emit_ch('\n');
+        emit("    stw r30, r1, ");
+        emit_num(-12 - i * 4);
+        emit_ch('\n');
         i = i + 1;
     }
 
