@@ -346,6 +346,8 @@ static int bg_use_accepts_imm(int user, int pos, int c) {
     if ((k == HI_SLL || k == HI_SRL || k == HI_SRA) && pos == 2) return (c >= 0 && c <= 31);
     if (k == HI_SEQ || k == HI_SNE) return bg_is_u12(c);
     if ((k == HI_SLT || k == HI_SLTU) && pos == 2) return bg_is_i12(c);
+    if ((k == HI_SGT || k == HI_SGTU) && pos == 1) return bg_is_i12(c);
+    if ((k == HI_SGE || k == HI_SGEU) && pos == 2) return bg_is_i12(c);
     if (k == HI_RET && pos == 1) return 1;
     if (k == HI_BRC && pos == 1) return 1;
     if (k == HI_CALLP && pos == 1) return 1;
