@@ -112,12 +112,20 @@ static int hcg_stat_imm_miss_shift;
 static int hcg_stat_imm_opp_cmp;
 static int hcg_stat_imm_hit_cmp;
 static int hcg_stat_imm_miss_cmp;
+static int hcg_stat_li_total;
+static int hcg_stat_li_small;
+static int hcg_stat_li_lui_only;
+static int hcg_stat_li_lui_addi;
+static int hcg_stat_copy_emit;
+static int hcg_stat_addi0_elide;
 
 /* --- Load immediate into register --- */
 static void hcg_li(int reg, int v) {
     int hi;
     int lo;
+    hcg_stat_li_total = hcg_stat_li_total + 1;
     if (v >= -2048 && v <= 2047) {
+        hcg_stat_li_small = hcg_stat_li_small + 1;
         cg_rri("addi", reg, 0, v);
     } else {
         hi = (v + 2048) >> 12;
@@ -131,7 +139,10 @@ static void hcg_li(int reg, int v) {
         cg_c(10);
         /* Avoid no-op addi when low part is 0. */
         if (lo != 0) {
+            hcg_stat_li_lui_addi = hcg_stat_li_lui_addi + 1;
             cg_rri("addi", reg, reg, lo);
+        } else {
+            hcg_stat_li_lui_only = hcg_stat_li_lui_only + 1;
         }
     }
 }
@@ -876,6 +887,8 @@ static void hcg_inst(int idx) {
                 /* Zero-offset add is a move/no-op at emission time. */
                 if (rd != rs1) {
                     cg_rri("addi", rd, rs1, 0);
+                } else {
+                    hcg_stat_addi0_elide = hcg_stat_addi0_elide + 1;
                 }
             } else if (off >= -2048 && off <= 2047) {
                 cg_rri("addi", rd, rs1, off);
@@ -1029,6 +1042,7 @@ static void hcg_inst(int idx) {
         rs1 = hcg_src(s1, 1);
         if (rd != rs1) {
             cg_rri("addi", rd, rs1, 0);
+            hcg_stat_copy_emit = hcg_stat_copy_emit + 1;
         }
         hcg_maybe_spill(idx);
         return;

@@ -82,6 +82,8 @@ static int bg_stat_iconst_nonimm;
 static int bg_stat_iconst_unused;
 static int bg_iconst_seen_use[HIR_MAX_INST];
 static int bg_iconst_seen_nonimm[HIR_MAX_INST];
+static int bg_stat_iconst_use_op[BG_OP_SZ];
+static int bg_stat_iconst_nonimm_use_op[BG_OP_SZ];
 
 /* Init flag */
 static int bg_inited;
@@ -304,6 +306,12 @@ static void bg_profile_iconst_consumers(void) {
         bg_iconst_seen_nonimm[i] = 0;
         i = i + 1;
     }
+    i = 0;
+    while (i <= BG_MAX_OP) {
+        bg_stat_iconst_use_op[i] = 0;
+        bg_stat_iconst_nonimm_use_op[i] = 0;
+        i = i + 1;
+    }
 
     i = 0;
     while (i < h_ninst) {
@@ -312,12 +320,24 @@ static void bg_profile_iconst_consumers(void) {
             v = h_src1[i];
             if (v >= 0 && h_kind[v] == HI_ICONST) {
                 bg_iconst_seen_use[v] = 1;
-                if (!bg_use_is_imm_capable(i, 1)) bg_iconst_seen_nonimm[v] = 1;
+                if (k >= 0 && k <= BG_MAX_OP) bg_stat_iconst_use_op[k] = bg_stat_iconst_use_op[k] + 1;
+                if (!bg_use_is_imm_capable(i, 1)) {
+                    bg_iconst_seen_nonimm[v] = 1;
+                    if (k >= 0 && k <= BG_MAX_OP) {
+                        bg_stat_iconst_nonimm_use_op[k] = bg_stat_iconst_nonimm_use_op[k] + 1;
+                    }
+                }
             }
             v = h_src2[i];
             if (v >= 0 && h_kind[v] == HI_ICONST) {
                 bg_iconst_seen_use[v] = 1;
-                if (!bg_use_is_imm_capable(i, 2)) bg_iconst_seen_nonimm[v] = 1;
+                if (k >= 0 && k <= BG_MAX_OP) bg_stat_iconst_use_op[k] = bg_stat_iconst_use_op[k] + 1;
+                if (!bg_use_is_imm_capable(i, 2)) {
+                    bg_iconst_seen_nonimm[v] = 1;
+                    if (k >= 0 && k <= BG_MAX_OP) {
+                        bg_stat_iconst_nonimm_use_op[k] = bg_stat_iconst_nonimm_use_op[k] + 1;
+                    }
+                }
             }
 
             if (k == HI_CALL || k == HI_CALLP) {
@@ -329,6 +349,8 @@ static void bg_profile_iconst_consumers(void) {
                     if (v >= 0 && h_kind[v] == HI_ICONST) {
                         bg_iconst_seen_use[v] = 1;
                         bg_iconst_seen_nonimm[v] = 1;
+                        bg_stat_iconst_use_op[k] = bg_stat_iconst_use_op[k] + 1;
+                        bg_stat_iconst_nonimm_use_op[k] = bg_stat_iconst_nonimm_use_op[k] + 1;
                     }
                     j = j + 1;
                 }
@@ -343,6 +365,8 @@ static void bg_profile_iconst_consumers(void) {
                     if (v >= 0 && h_kind[v] == HI_ICONST) {
                         bg_iconst_seen_use[v] = 1;
                         bg_iconst_seen_nonimm[v] = 1;
+                        bg_stat_iconst_use_op[k] = bg_stat_iconst_use_op[k] + 1;
+                        bg_stat_iconst_nonimm_use_op[k] = bg_stat_iconst_nonimm_use_op[k] + 1;
                     }
                     j = j + 1;
                 }

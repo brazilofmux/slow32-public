@@ -117,6 +117,43 @@ static void print_burg_top_patterns(int topn) {
     }
 }
 
+static void print_iconst_nonimm_top_ops(int topn) {
+    int used[BG_OP_SZ];
+    int i;
+    int r;
+    int best;
+    int bestc;
+
+    i = 0;
+    while (i < BG_OP_SZ) {
+        used[i] = 0;
+        i = i + 1;
+    }
+
+    fputs("hir_iconst_nonimm_top_ops:\n", stderr);
+    r = 0;
+    while (r < topn) {
+        best = -1;
+        bestc = 0;
+        i = 0;
+        while (i <= BG_MAX_OP) {
+            if (!used[i] && bg_stat_iconst_nonimm_use_op[i] > bestc) {
+                best = i;
+                bestc = bg_stat_iconst_nonimm_use_op[i];
+            }
+            i = i + 1;
+        }
+        if (best < 0 || bestc <= 0) break;
+        used[best] = 1;
+        fputs("  ", stderr);
+        fputs(bg_op_name(best), stderr);
+        fputs("=", stderr);
+        fput_uint(stderr, bestc);
+        fputc(10, stderr);
+        r = r + 1;
+    }
+}
+
 int main(int argc, char **argv) {
     int fd;
     int n;
@@ -259,6 +296,19 @@ int main(int argc, char **argv) {
     fputs(" miss=", stderr);
     fput_uint(stderr, hcg_stat_imm_miss_cmp);
     fputs("\n", stderr);
+    fputs("hir_codegen_li: total=", stderr);
+    fput_uint(stderr, hcg_stat_li_total);
+    fputs(" small=", stderr);
+    fput_uint(stderr, hcg_stat_li_small);
+    fputs(" lui_only=", stderr);
+    fput_uint(stderr, hcg_stat_li_lui_only);
+    fputs(" lui_addi=", stderr);
+    fput_uint(stderr, hcg_stat_li_lui_addi);
+    fputs(" copy_mov=", stderr);
+    fput_uint(stderr, hcg_stat_copy_emit);
+    fputs(" addi0_elide=", stderr);
+    fput_uint(stderr, hcg_stat_addi0_elide);
+    fputs("\n", stderr);
     fputs("hir_iconst_use: total=", stderr);
     fput_uint(stderr, bg_stat_iconst_total);
     fputs(" imm_only=", stderr);
@@ -268,6 +318,7 @@ int main(int argc, char **argv) {
     fputs(" unused=", stderr);
     fput_uint(stderr, bg_stat_iconst_unused);
     fputs("\n", stderr);
+    print_iconst_nonimm_top_ops(8);
     print_burg_top_ops(8);
     print_burg_top_patterns(8);
 

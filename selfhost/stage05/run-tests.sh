@@ -476,9 +476,9 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$S13CC_EXE" ]]; then
         printf "  %-30s FAIL (compile)\n" "fixed-point:"
         FAIL=$((FAIL + 1))
     else
-        if grep -Eq '^hir_burg|^hir_burg_select|^hir_imm_sel|^hir_iconst_use' "$WORKDIR/fp-gen2-compile.log"; then
+        if grep -Eq '^hir_burg|^hir_burg_select|^hir_imm_sel|^hir_iconst_use|^hir_codegen_li|^hir_iconst_nonimm_top_ops' "$WORKDIR/fp-gen2-compile.log"; then
             echo "  gen2 self-compile stats:"
-            grep -E '^hir_burg|^hir_imm_sel|^hir_iconst_use|^  ' "$WORKDIR/fp-gen2-compile.log" | head -n 26
+            grep -E '^hir_burg|^hir_imm_sel|^hir_iconst_use|^hir_codegen_li|^hir_iconst_nonimm_top_ops|^  ' "$WORKDIR/fp-gen2-compile.log" | head -n 36
         fi
         run_exe "$AS_EXE" "$WORKDIR/fp-gen2-assemble.log" "$WORKDIR/fp-gen2.s" "$WORKDIR/fp-gen2.s32o"
         if [[ ! -s "$WORKDIR/fp-gen2.s32o" ]]; then
@@ -498,9 +498,9 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$S13CC_EXE" ]]; then
                     printf "  %-30s FAIL (gen3 compile)\n" "fixed-point:"
                     FAIL=$((FAIL + 1))
                 else
-                    if grep -Eq '^hir_burg|^hir_burg_select|^hir_imm_sel|^hir_iconst_use' "$WORKDIR/fp-gen3-compile.log"; then
+                    if grep -Eq '^hir_burg|^hir_burg_select|^hir_imm_sel|^hir_iconst_use|^hir_codegen_li|^hir_iconst_nonimm_top_ops' "$WORKDIR/fp-gen3-compile.log"; then
                         echo "  gen3 self-compile stats:"
-                        grep -E '^hir_burg|^hir_imm_sel|^hir_iconst_use|^  ' "$WORKDIR/fp-gen3-compile.log" | head -n 26
+                        grep -E '^hir_burg|^hir_imm_sel|^hir_iconst_use|^hir_codegen_li|^hir_iconst_nonimm_top_ops|^  ' "$WORKDIR/fp-gen3-compile.log" | head -n 36
                     fi
                     run_exe "$AS_EXE" "$WORKDIR/fp-gen3-assemble.log" "$WORKDIR/fp-gen3.s" "$WORKDIR/fp-gen3.s32o"
                     if [[ ! -s "$WORKDIR/fp-gen3.s32o" ]]; then
