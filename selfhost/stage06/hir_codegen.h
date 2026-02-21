@@ -291,6 +291,10 @@ static int hcg_is_i12(int v) {
     return (v >= -2048 && v <= 2047);
 }
 
+static int hcg_is_u12(int v) {
+    return (v >= 0 && v <= 4095);
+}
+
 /* --- Destination register helper ---
  * Returns the physical register for the result.
  * If allocated, returns the physical register.
@@ -663,12 +667,12 @@ static void hcg_inst(int idx) {
         imm_ok = 0;
         base_inst = -1;
 
-        if (hcg_const_imm_inst(s2, &c) && hcg_is_i12(c)) {
+        if (hcg_const_imm_inst(s2, &c) && hcg_is_u12(c)) {
             imm_opp = 1;
             off = c;
             imm_ok = 1;
             base_inst = s1;
-        } else if (hcg_const_imm_inst(s1, &c) && hcg_is_i12(c)) {
+        } else if (hcg_const_imm_inst(s1, &c) && hcg_is_u12(c)) {
             imm_opp = 1;
             off = c;
             imm_ok = 1;
@@ -677,7 +681,7 @@ static void hcg_inst(int idx) {
                    ((lnt == BG_REG && rnt == BG_IMM) || (lnt == BG_IMM && rnt == BG_REG))) {
             if (lnt == BG_REG) c = h_val[s2];
             else c = h_val[s1];
-            if (hcg_is_i12(c)) {
+            if (hcg_is_u12(c)) {
                 imm_opp = 1;
                 imm_ok = 1;
             }
