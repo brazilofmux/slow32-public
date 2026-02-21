@@ -484,10 +484,20 @@ static int hcg_phi_tmp[SSA_MAX_PROMO];
 static int hcg_phi_push_ix[SSA_MAX_PROMO];
 static int hcg_phi_is_const[SSA_MAX_PROMO];
 static int hcg_phi_const_val[SSA_MAX_PROMO];
+static int hcg_phi_src_reg[SSA_MAX_PROMO];
+static int hcg_phi_dst_reg[SSA_MAX_PROMO];
+static int hcg_phi_active[SSA_MAX_PROMO];
 
 static void hcg_phi_copies(int from_blk, int to_blk) {
     int i;
     int n;
+    int fast_ok;
+    int rem;
+    int progress;
+    int blocked;
+    int srcv;
+    int src;
+    int dst;
     int npush;
     int j;
     int v;
@@ -507,6 +517,103 @@ static void hcg_phi_copies(int from_blk, int to_blk) {
         i = ssa_phi_next[i];
     }
     if (n == 0) return;
+
+    /* Fast path: all destinations and non-constant sources are in registers.
+     * Emit cycle-safe parallel copies without runtime stack traffic. */
+    fast_ok = 1;
+    j = 0;
+    while (j < n) {
+        phi = hcg_phi_tmp[j];
+        if (ra_reg[phi] < 0) { fast_ok = 0; break; }
+        hcg_phi_dst_reg[j] = ra_reg[phi];
+        if (hcg_phi_dst_reg[j] == 2) { fast_ok = 0; break; } /* keep r2 as temp */
+        v = ssa_phi_find_arg(phi, from_blk);
+        if (hcg_const_imm_inst(v, &c)) {
+            hcg_phi_is_const[j] = 1;
+            hcg_phi_const_val[j] = c;
+            hcg_phi_src_reg[j] = -1;
+        } else {
+            if (v < 0 || ra_reg[v] < 0) { fast_ok = 0; break; }
+            if (ra_reg[v] == 2) { fast_ok = 0; break; }
+            hcg_phi_is_const[j] = 0;
+            hcg_phi_src_reg[j] = ra_reg[v];
+        }
+        hcg_phi_active[j] = 1;
+        j = j + 1;
+    }
+
+    if (fast_ok) {
+        rem = n;
+        while (rem > 0) {
+            progress = 0;
+            j = 0;
+            while (j < n) {
+                if (!hcg_phi_active[j]) { j = j + 1; continue; }
+                dst = hcg_phi_dst_reg[j];
+                blocked = 0;
+                if (hcg_phi_is_const[j]) {
+                    i = 0;
+                    while (i < n) {
+                        if (hcg_phi_active[i] && !hcg_phi_is_const[i] && hcg_phi_src_reg[i] == dst) {
+                            blocked = 1;
+                            break;
+                        }
+                        i = i + 1;
+                    }
+                } else {
+                    src = hcg_phi_src_reg[j];
+                    if (src != dst) {
+                        i = 0;
+                        while (i < n) {
+                            if (hcg_phi_active[i] && !hcg_phi_is_const[i] && hcg_phi_src_reg[i] == dst) {
+                                blocked = 1;
+                                break;
+                            }
+                            i = i + 1;
+                        }
+                    }
+                }
+                if (!blocked) {
+                    if (hcg_phi_is_const[j]) {
+                        c = hcg_phi_const_val[j];
+                        if (c == 0) cg_rri("addi", dst, 0, 0);
+                        else if (hcg_is_i12(c)) cg_rri("addi", dst, 0, c);
+                        else hcg_li(dst, c);
+                    } else {
+                        src = hcg_phi_src_reg[j];
+                        if (dst != src) cg_rri("addi", dst, src, 0);
+                    }
+                    hcg_phi_active[j] = 0;
+                    rem = rem - 1;
+                    progress = 1;
+                }
+                j = j + 1;
+            }
+            if (progress) continue;
+
+            /* Break copy cycle: snapshot one source in temp r2. */
+            j = 0;
+            srcv = -1;
+            while (j < n) {
+                if (hcg_phi_active[j] && !hcg_phi_is_const[j]) {
+                    dst = hcg_phi_dst_reg[j];
+                    src = hcg_phi_src_reg[j];
+                    if (dst != src) { srcv = src; break; }
+                }
+                j = j + 1;
+            }
+            if (srcv < 0) break;
+            cg_rri("addi", 2, srcv, 0);
+            j = 0;
+            while (j < n) {
+                if (hcg_phi_active[j] && !hcg_phi_is_const[j] && hcg_phi_src_reg[j] == srcv) {
+                    hcg_phi_src_reg[j] = 2;
+                }
+                j = j + 1;
+            }
+        }
+        return;
+    }
 
     /* Push non-constant argument values onto runtime stack. */
     npush = 0;
