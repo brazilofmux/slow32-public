@@ -158,6 +158,27 @@ static int hi_is_remat(int kind) {
     return 0;
 }
 
+/* Is this instruction kind safe to hoist/CSE? Pure, non-faulting. */
+static int hi_is_pure(int k) {
+    /* Binary arithmetic/logic/comparison, excluding DIV/REM */
+    if (k >= HI_ADD && k <= HI_SGEU) {
+        if (k == HI_DIV || k == HI_REM) return 0;
+        return 1;
+    }
+    if (k == HI_NEG) return 1;
+    if (k == HI_NOT) return 1;
+    if (k == HI_BNOT) return 1;
+    if (k == HI_ADDI) return 1;
+    if (k == HI_COPY) return 1;
+    if (k == HI_ICONST) return 1;
+    if (k == HI_PARAM) return 1;
+    if (k == HI_ALLOCA) return 1;
+    if (k == HI_GADDR) return 1;
+    if (k == HI_SADDR) return 1;
+    if (k == HI_FADDR) return 1;
+    return 0;
+}
+
 /* Is the current block terminated? */
 static int hl_terminated(void) {
     int last;

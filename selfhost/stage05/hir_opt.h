@@ -163,8 +163,8 @@ static int ho_const_fold(void) {
                 else if (k == HI_AND) result = a & b;
                 else if (k == HI_OR)  result = a | b;
                 else if (k == HI_XOR) result = a ^ b;
-                else if (k == HI_SLL) result = a << b;
-                else if (k == HI_SRA) result = a >> b;
+                else if (k == HI_SLL) result = a << (b & 31);
+                else if (k == HI_SRA) result = a >> (b & 31);
                 else if (k == HI_SEQ) {
                     if (a == b) result = 1; else result = 0;
                 }
@@ -204,9 +204,17 @@ static int ho_const_fold(void) {
                     h_src2[i] = -1;
                     changed = 1;
                 }
-                /* x * 1 -> x */
-                else if (k == HI_MUL && b == 1) {
+                /* x * 1 -> x, x / 1 -> x */
+                else if ((k == HI_MUL || k == HI_DIV) && b == 1) {
                     h_kind[i] = HI_COPY;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* x % 1 -> 0 */
+                else if (k == HI_REM && b == 1) {
+                    h_kind[i] = HI_ICONST;
+                    h_val[i] = 0;
+                    h_src1[i] = -1;
                     h_src2[i] = -1;
                     changed = 1;
                 }
@@ -325,8 +333,8 @@ static int ho_const_fold(void) {
 
             /* Same-operand simplifications (only if not already folded) */
             if (h_kind[i] == k && h_src1[i] >= 0 && h_src1[i] == h_src2[i]) {
-                /* x - x -> 0, x ^ x -> 0 */
-                if (k == HI_SUB || k == HI_XOR) {
+                /* x - x -> 0, x ^ x -> 0, x % x -> 0 */
+                if (k == HI_SUB || k == HI_XOR || k == HI_REM) {
                     h_kind[i] = HI_ICONST;
                     h_val[i] = 0;
                     h_src1[i] = -1;

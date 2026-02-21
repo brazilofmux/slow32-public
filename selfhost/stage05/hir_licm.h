@@ -46,21 +46,6 @@ static int licm_dominates(int a, int b) {
     return 0;
 }
 
-/* Is this instruction kind safe to hoist?  Pure, non-faulting. */
-static int licm_is_pure(int k) {
-    /* Binary arithmetic/logic/comparison, excluding DIV/REM */
-    if (k >= HI_ADD && k <= HI_SGEU) {
-        if (k == HI_DIV || k == HI_REM) return 0;
-        return 1;
-    }
-    if (k == HI_NEG) return 1;
-    if (k == HI_NOT) return 1;
-    if (k == HI_BNOT) return 1;
-    if (k == HI_ADDI) return 1;
-    if (k == HI_COPY) return 1;
-    return 0;
-}
-
 /* Is instruction defined inside the loop body? */
 static int licm_in_loop(int inst) {
     if (inst < 0) return 0;
@@ -178,7 +163,7 @@ static void licm_mark(int body_count) {
             i = bb_start[b];
             while (i < bb_end[b]) {
                 k = h_kind[i];
-                if (!ho_use[i] && licm_is_pure(k)) {
+                if (!ho_use[i] && hi_is_pure(k)) {
                     /* Check all operands */
                     if (licm_operand_ok(h_src1[i]) &&
                         (ho_src2_is_ref(k) ? licm_operand_ok(h_src2[i]) : 1)) {
