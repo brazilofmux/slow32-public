@@ -205,6 +205,39 @@ int test_cmp_imm_eqne(void) {
     return 0;
 }
 
+/* --- Test 9: ordered comparison with immediates (SGT/SGE/U variants) --- */
+
+int test_cmp_imm_ordered(void) {
+    int x;
+    unsigned int u;
+
+    x = 5;
+    if (!(x > 3)) return 1;
+    if (x > 5) return 2;
+    if (!(x >= 5)) return 3;
+    if (x >= 6) return 4;
+
+    if (!(7 > x)) return 5;
+    if (5 > x) return 6;
+
+    x = -4;
+    if (!(-3 > x)) return 7;
+    if (-4 > x) return 8;
+    if (!(x >= -4)) return 9;
+    if (x >= -3) return 10;
+
+    u = 9;
+    if (!(u > 7)) return 11;
+    if (u > 9) return 12;
+    if (!(u >= 9)) return 13;
+    if (u >= 10) return 14;
+
+    if (!(11 > u)) return 15;
+    if (9 > u) return 16;
+
+    return 0;
+}
+
 /* --- Main --- */
 int main(void) {
     int rc;
@@ -232,6 +265,9 @@ int main(void) {
 
     rc = test_cmp_imm_eqne();
     if (rc) return rc + 70;
+
+    rc = test_cmp_imm_ordered();
+    if (rc) return rc + 80;
 
     my_puts("Phase 13: all tests passed\n");
     return 0;
