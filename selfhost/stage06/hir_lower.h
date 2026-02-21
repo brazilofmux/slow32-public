@@ -387,6 +387,26 @@ static int hl_expr(Node *n) {
         return hi_emit(HI_LOAD, n->ty, addr, -1, 0, NULL);
     }
 
+    /* va_start(ap, last) → ap = __getfp() */
+    if (n->kind == ND_VA_START) {
+        addr = hl_addr(n->lhs);
+        val = hi_emit(HI_GETFP, TY_INT, -1, -1, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, addr, val, 0, NULL);
+        return val;
+    }
+
+    /* va_arg(ap, type) → val = *ap; ap += 4; return val */
+    if (n->kind == ND_VA_ARG) {
+        int ap_val;
+        int new_ap;
+        addr = hl_addr(n->lhs);
+        ap_val = hi_emit(HI_LOAD, TY_INT, addr, -1, 0, NULL);
+        val = hi_emit(HI_LOAD, n->ty, ap_val, -1, 0, NULL);
+        new_ap = hi_emit(HI_ADDI, TY_INT, ap_val, -1, 4, NULL);
+        hi_emit(HI_STORE, TY_INT, addr, new_ap, 0, NULL);
+        return val;
+    }
+
     /* Direct function call */
     if (n->kind == ND_CALL) {
         int av[16];

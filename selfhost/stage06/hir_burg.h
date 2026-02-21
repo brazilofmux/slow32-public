@@ -131,6 +131,7 @@ static void bg_init(void) {
     bg_add_pat(BG_SADDR, HI_FADDR,  -1, -1, 0);
     bg_add_pat(BG_REG,   HI_FADDR,  -1, -1, 2);
     bg_add_pat(BG_REG,   HI_PARAM,  -1, -1, 1);
+    bg_add_pat(BG_REG,   HI_GETFP,  -1, -1, 1);
 
     /* Addressing: LOAD */
     bg_add_pat(BG_REG,  HI_LOAD, BG_FADDR, -1, 1);
@@ -493,6 +494,7 @@ static char *bg_op_name(int op) {
     if (op == HI_PHI) return "phi";
     if (op == HI_COPY) return "copy";
     if (op == HI_ADDI) return "addi";
+    if (op == HI_GETFP) return "getfp";
     return "?";
 }
 

@@ -27,6 +27,7 @@ static int   ps_larr[P_MAX_LOCALS];   /* 1 if array (addr, no load) */
 static int   ps_nlocals;
 static int   ps_stack;                /* current stack allocation */
 static int   ps_nparams;              /* params in current func */
+static int   ps_is_varargs;           /* 1 if current func has ... */
 
 static char *ps_gname[P_MAX_GLOBALS]; /* global var names */
 static int   ps_gtype[P_MAX_GLOBALS]; /* global var types */
@@ -540,6 +541,51 @@ static Node *parse_primary(void) {
         ci = find_const(nm);
         if (ci >= 0) {
             return nd_num(ps_cval[ci]);
+        }
+
+        /* va_start(ap, last) */
+        if (strcmp(nm, "va_start") == 0 || strcmp(nm, "__builtin_va_start") == 0) {
+            expect(TK_LPAREN);
+            arg = parse_assign();
+            expect(TK_COMMA);
+            parse_assign();
+            expect(TK_RPAREN);
+            n = nd_new(ND_VA_START);
+            n->lhs = arg;
+            n->ty = TY_INT;
+            return n;
+        }
+
+        /* va_arg(ap, type) */
+        if (strcmp(nm, "va_arg") == 0 || strcmp(nm, "__builtin_va_arg") == 0) {
+            expect(TK_LPAREN);
+            arg = parse_assign();
+            expect(TK_COMMA);
+            ty = parse_type();
+            while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); }
+            expect(TK_RPAREN);
+            n = nd_new(ND_VA_ARG);
+            n->lhs = arg;
+            n->ty = ty;
+            return n;
+        }
+
+        /* va_end(ap) — no-op */
+        if (strcmp(nm, "va_end") == 0 || strcmp(nm, "__builtin_va_end") == 0) {
+            expect(TK_LPAREN);
+            parse_assign();
+            expect(TK_RPAREN);
+            return nd_num(0);
+        }
+
+        /* va_copy(dst, src) — assignment */
+        if (strcmp(nm, "va_copy") == 0) {
+            expect(TK_LPAREN);
+            n = parse_assign();
+            expect(TK_COMMA);
+            arg = parse_assign();
+            expect(TK_RPAREN);
+            return nd_assign(n, arg);
         }
 
         /* Direct function call: name(args) */
@@ -1410,6 +1456,7 @@ static Node *parse_top_decl(void) {
     ps_nlocals = 0;
     ps_stack = 8;  /* reserve 8 bytes: saved r31 + saved r30 */
     ps_nparams = 0;
+    ps_is_varargs = 0;
     ps_nlabels = 0;
 
     /* Parameters */
@@ -1460,6 +1507,11 @@ static Node *parse_top_decl(void) {
 
         while (lex_tok == TK_COMMA) {
             next();
+            if (lex_tok == TK_ELLIPSIS) {
+                ps_is_varargs = 1;
+                next();
+                break;
+            }
             if (!is_type()) {
                 p_error("expected type in params");
                 return NULL;
@@ -1510,6 +1562,7 @@ params_done:
     fn->ty = ty;  /* store return type for sema pass */
     fn->args = phead;
     fn->nparams = ps_nparams;
+    fn->is_varargs = ps_is_varargs;
     fn->body = parse_block();
     fn->locals_size = ps_stack;
 
@@ -1523,6 +1576,7 @@ static Node *parse_program(void) {
     Node *f;
 
     ps_nglobals = 0;
+    add_typedef("va_list", TY_PTR + TY_CHAR);
     next();  /* prime the first token */
 
     fhead = NULL;

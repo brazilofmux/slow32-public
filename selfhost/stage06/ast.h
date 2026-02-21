@@ -108,6 +108,8 @@ static int ty_is_unsigned(int ty) {
 #define ND_LABEL    30   /* label: stmt */
 #define ND_FUNC_REF 31   /* bare function name as address */
 #define ND_CALL_PTR 32   /* indirect call through expression: lhs=callee, args=arglist */
+#define ND_VA_START 33   /* va_start: lhs = ap variable */
+#define ND_VA_ARG   34   /* va_arg:   lhs = ap variable, ty = requested type */
 
 /* --- AST node --- */
 struct Node {
@@ -120,6 +122,7 @@ struct Node {
     int is_local;     /* VAR: 1=local, 0=global */
     int is_array;     /* VAR: 1=array (address, no load) */
     int nparams;      /* FUNC: number of parameters */
+    int is_varargs;   /* FUNC: 1 if variadic (...) */
     int locals_size;  /* FUNC: total local stack bytes */
     struct Node *lhs; /* BINOP/ASSIGN/UNARY: left/operand */
     struct Node *rhs; /* BINOP/ASSIGN: right */

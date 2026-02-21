@@ -92,6 +92,7 @@ static void cg_rri(char *op, int rd, int ra, int imm) {
 static int hcg_locals;     /* fn->locals_size (original) */
 static int hcg_frame;      /* total frame size */
 static int hcg_epilog;     /* epilog label */
+static int hcg_va_save_size; /* varargs register save area size */
 
 /* Block labels */
 static int hcg_blk_lbl[HIR_MAX_BLOCK];
@@ -218,6 +219,10 @@ static void hcg_into(int reg, int inst) {
     }
     if (k == HI_FADDR) {
         hcg_la(reg, h_name[inst]);
+        return;
+    }
+    if (k == HI_GETFP) {
+        cg_rri("addi", reg, 30, 0);
         return;
     }
 
@@ -587,6 +592,13 @@ static void hcg_inst(int idx) {
     if (k == HI_PARAM) {
         rd = hcg_dst(idx);
         cg_rri("addi", rd, 3 + h_val[idx], 0);
+        hcg_maybe_spill(idx);
+        return;
+    }
+
+    if (k == HI_GETFP) {
+        rd = hcg_dst(idx);
+        cg_rri("addi", rd, 30, 0);
         hcg_maybe_spill(idx);
         return;
     }
@@ -1192,6 +1204,31 @@ static void hcg_func(Node *fn) {
     cg_s(fn->name);
     cg_s(":\n");
 
+    /* Varargs register save area — placed before regular prologue so
+       it's contiguous with caller's stack arguments */
+    hcg_va_save_size = 0;
+    if (fn->is_varargs) {
+        int nfixed;
+        int nsave;
+        int j;
+        nfixed = fn->nparams;
+        nsave = 8 - nfixed;
+        if (nsave < 0) nsave = 0;
+        if (nsave > 0) {
+            hcg_va_save_size = nsave * 4;
+            cg_rri("addi", 29, 29, 0 - hcg_va_save_size);
+            j = 0;
+            while (j < nsave) {
+                cg_s("    stw r29, r");
+                cg_n(3 + nfixed + j);
+                cg_s(", ");
+                cg_n(j * 4);
+                cg_c(10);
+                j = j + 1;
+            }
+        }
+    }
+
     /* Prologue — handle large frames (>2047 bytes) */
     if (fs <= 2047) {
         cg_rri("addi", 29, 29, 0 - fs);
@@ -1244,6 +1281,9 @@ static void hcg_func(Node *fn) {
         cg_rri("addi", 29, 30, 0);
         cg_s("    ldw r31, r29, -4\n");
         cg_s("    ldw r30, r29, -8\n");
+    }
+    if (hcg_va_save_size > 0) {
+        cg_rri("addi", 29, 29, hcg_va_save_size);
     }
     cg_s("    jalr r0, r31, 0\n\n");
 }

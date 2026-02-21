@@ -47,6 +47,7 @@
 #define HI_PHI      38
 #define HI_COPY     39
 #define HI_ADDI     40
+#define HI_GETFP    41
 
 /* --- Limits --- */
 #define HIR_MAX_INST   16384
@@ -155,6 +156,7 @@ static int hi_is_remat(int kind) {
     if (kind == HI_GADDR) return 1;
     if (kind == HI_SADDR) return 1;
     if (kind == HI_FADDR) return 1;
+    if (kind == HI_GETFP) return 1;
     return 0;
 }
 
@@ -176,6 +178,7 @@ static int hi_is_pure(int k) {
     if (k == HI_GADDR) return 1;
     if (k == HI_SADDR) return 1;
     if (k == HI_FADDR) return 1;
+    if (k == HI_GETFP) return 1;
     return 0;
 }
 
