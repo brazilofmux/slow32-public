@@ -4,10 +4,10 @@ set -euo pipefail
 # Stage 06: Full toolchain tests
 #
 # Tests:
-#   1. Build s13cc using stage05's s12cc (compiler bootstrap)
-#   2. Run compiler tests with s13cc
+#   1. Build gen1_cc using stage05's s12cc (compiler bootstrap)
+#   2. Run compiler tests with gen1_cc
 #   3. Build tools (s32-as, s32-ar, s32-ld) using stage05's s12cc
-#   4. End-to-end: s13cc + stage06 tools compile/assemble/link/run a program
+#   4. End-to-end: gen1_cc + stage06 tools compile/assemble/link/run a program
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -32,7 +32,7 @@ usage() {
     cat <<USAGE
 Usage: $0 [--emu <path>] [--keep-artifacts] [--fixed-point] [--strict-shape]
 
-Stage13 tests: s12cc compiler + toolchain tests (bootstrapped from stage05)
+Stage compiler tests: s12cc compiler + toolchain tests (bootstrapped from stage05)
 USAGE
 }
 
@@ -219,7 +219,7 @@ compile_and_link() {
         tail -n 20 "$WORKDIR/${name}-compile.log" >&2
         return 1
     fi
-    if [[ "$cc" == "${S13CC_EXE:-}" ]]; then
+    if [[ "$cc" == "${GEN1_CC_EXE:-}" ]]; then
         check_noop_addi_self "$asm" "$name" || return 1
         check_missed_immediate_ops "$asm" "$name" || return 1
     fi
@@ -299,39 +299,39 @@ SHAPE_WARN_FILE="$WORKDIR/shape.warn"
 : > "$SHAPE_WARN_FILE"
 
 # ============================================================
-# Step 2: Build s13cc using stage05's s12cc (building stage06 compiler)
+# Step 2: Build gen1_cc using stage05's s12cc (building stage06 compiler)
 # ============================================================
 echo ""
-echo "=== Step 2: Build s13cc (compiled by stage05 s12cc) ==="
+echo "=== Step 2: Build gen1_cc (compiled by stage05 s12cc) ==="
 
-S13CC_SRC="$SCRIPT_DIR/s12cc.c"
-[[ -s "$S13CC_SRC" ]] || { echo "ERROR: s12cc.c not found" >&2; exit 1; }
+STAGE_CC_SRC="$SCRIPT_DIR/s12cc.c"
+[[ -s "$STAGE_CC_SRC" ]] || { echo "ERROR: s12cc.c not found" >&2; exit 1; }
 
 TOTAL=$((TOTAL + 1))
 SAVED_TIMEOUT="${EXEC_TIMEOUT:-180}"
 EXEC_TIMEOUT=300
 
 # Compile stage06 source with stage05 compiler
-run_exe "$STAGE5_CC" "$WORKDIR/s13cc-compile.log" "$S13CC_SRC" "$WORKDIR/s13cc.s"
-if [[ ! -s "$WORKDIR/s13cc.s" ]]; then
-    printf "  %-30s FAIL (compile)\n" "s13cc-build:"
-    tail -n 20 "$WORKDIR/s13cc-compile.log" >&2
+run_exe "$STAGE5_CC" "$WORKDIR/gen1_cc-compile.log" "$STAGE_CC_SRC" "$WORKDIR/gen1_cc.s"
+if [[ ! -s "$WORKDIR/gen1_cc.s" ]]; then
+    printf "  %-30s FAIL (compile)\n" "gen1_cc-build:"
+    tail -n 20 "$WORKDIR/gen1_cc-compile.log" >&2
     FAIL=$((FAIL + 1))
 else
-    run_exe "$AS_EXE" "$WORKDIR/s13cc-assemble.log" "$WORKDIR/s13cc.s" "$WORKDIR/s13cc.s32o"
-    if [[ ! -s "$WORKDIR/s13cc.s32o" ]]; then
-        printf "  %-30s FAIL (assemble)\n" "s13cc-build:"
+    run_exe "$AS_EXE" "$WORKDIR/gen1_cc-assemble.log" "$WORKDIR/gen1_cc.s" "$WORKDIR/gen1_cc.s32o"
+    if [[ ! -s "$WORKDIR/gen1_cc.s32o" ]]; then
+        printf "  %-30s FAIL (assemble)\n" "gen1_cc-build:"
         FAIL=$((FAIL + 1))
     else
-        run_exe "$LD_EXE" "$WORKDIR/s13cc-link.log" \
-            -o "$WORKDIR/s13cc.s32x" --mmio 64K \
-            "$RUNTIME_CRT0" "$WORKDIR/s13cc.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+        run_exe "$LD_EXE" "$WORKDIR/gen1_cc-link.log" \
+            -o "$WORKDIR/gen1_cc.s32x" --mmio 64K \
+            "$RUNTIME_CRT0" "$WORKDIR/gen1_cc.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
             $LIBC_OBJS
-        if [[ ! -s "$WORKDIR/s13cc.s32x" ]]; then
-            printf "  %-30s FAIL (link)\n" "s13cc-build:"
+        if [[ ! -s "$WORKDIR/gen1_cc.s32x" ]]; then
+            printf "  %-30s FAIL (link)\n" "gen1_cc-build:"
             FAIL=$((FAIL + 1))
         else
-            printf "  %-30s PASS\n" "s13cc-build:"
+            printf "  %-30s PASS\n" "gen1_cc-build:"
             PASS=$((PASS + 1))
         fi
     fi
@@ -339,24 +339,24 @@ fi
 EXEC_TIMEOUT="$SAVED_TIMEOUT"
 
 # ============================================================
-# Step 2b: Recompile libc with s13cc (HIR/SSA ABI)
+# Step 2b: Recompile libc with gen1_cc (HIR/SSA ABI)
 #
 # Stage04's tree-walk codegen clobbers r11-r18 without saving them.
 # Stage05's register allocator assumes r11-r28 are callee-saved.
-# Programs compiled by s13cc must link against s13cc-compiled libc
+# Programs compiled by gen1_cc must link against gen1_cc-compiled libc
 # to get a consistent ABI.
 # ============================================================
-S13CC_EXE="$WORKDIR/s13cc.s32x"
+GEN1_CC_EXE="$WORKDIR/gen1_cc.s32x"
 G1_LIBC_OBJS=""
 G1_LIBC_START_OBJ=""
 
-if [[ -s "$S13CC_EXE" ]]; then
+if [[ -s "$GEN1_CC_EXE" ]]; then
     echo ""
-    echo "=== Step 2b: Recompile libc with s13cc (HIR/SSA ABI) ==="
+    echo "=== Step 2b: Recompile libc with gen1_cc (HIR/SSA ABI) ==="
     EXEC_TIMEOUT=300
 
     for name in string_extra string_more ctype convert stdio malloc; do
-        run_exe "$S13CC_EXE" "$WORKDIR/g1_${name}.cc.log" "$LIBC_DIR/${name}.c" "$WORKDIR/g1_${name}.s"
+        run_exe "$GEN1_CC_EXE" "$WORKDIR/g1_${name}.cc.log" "$LIBC_DIR/${name}.c" "$WORKDIR/g1_${name}.s"
         if [[ ! -s "$WORKDIR/g1_${name}.s" ]]; then
             echo "  WARN: gen1 failed to compile ${name}.c, falling back to stage05 libc" >&2
             G1_LIBC_OBJS=""
@@ -372,7 +372,7 @@ if [[ -s "$S13CC_EXE" ]]; then
     done
 
     if [[ -n "$G1_LIBC_OBJS" ]]; then
-        run_exe "$S13CC_EXE" "$WORKDIR/g1_start.cc.log" "$LIBC_DIR/start.c" "$WORKDIR/g1_start.s"
+        run_exe "$GEN1_CC_EXE" "$WORKDIR/g1_start.cc.log" "$LIBC_DIR/start.c" "$WORKDIR/g1_start.s"
         if [[ -s "$WORKDIR/g1_start.s" ]]; then
             run_exe "$AS_EXE" "$WORKDIR/g1_start.as.log" "$WORKDIR/g1_start.s" "$WORKDIR/g1_start.s32o"
             if [[ -s "$WORKDIR/g1_start.s32o" ]]; then
@@ -393,23 +393,23 @@ if [[ -n "$G1_LIBC_OBJS" && -n "$G1_LIBC_START_OBJ" ]]; then
 fi
 
 # ============================================================
-# Step 3: Test s13cc by compiling and running test programs
+# Step 3: Test gen1_cc by compiling and running test programs
 # ============================================================
 
-if [[ -s "$S13CC_EXE" ]]; then
+if [[ -s "$GEN1_CC_EXE" ]]; then
     echo ""
-    echo "=== Step 3: s13cc compiler tests ==="
+    echo "=== Step 3: gen1_cc compiler tests ==="
 
     for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c "$TESTS_DIR"/test_phase3.c "$TESTS_DIR"/test_phase4.c "$TESTS_DIR"/test_phase5.c "$TESTS_DIR"/test_phase6.c "$TESTS_DIR"/test_phase7.c "$TESTS_DIR"/test_phase8.c "$TESTS_DIR"/test_phase9.c "$TESTS_DIR"/test_phase10.c "$TESTS_DIR"/test_phase11.c "$TESTS_DIR"/test_phase12.c "$TESTS_DIR"/test_phase13.c "$TESTS_DIR"/test_phase14.c; do
         [[ -f "$tst" ]] || continue
         tname="$(basename "$tst" .c)"
         TOTAL=$((TOTAL + 1))
 
-        # Compile with s13cc
-        run_exe "$S13CC_EXE" "$WORKDIR/${tname}-s13cc.log" "$tst" "$WORKDIR/${tname}.s"
+        # Compile with gen1_cc
+        run_exe "$GEN1_CC_EXE" "$WORKDIR/${tname}-gen1_cc.log" "$tst" "$WORKDIR/${tname}.s"
         if [[ ! -s "$WORKDIR/${tname}.s" ]]; then
             printf "  %-30s FAIL (compile)\n" "$tname:"
-            tail -n 20 "$WORKDIR/${tname}-s13cc.log" >&2
+            tail -n 20 "$WORKDIR/${tname}-gen1_cc.log" >&2
             FAIL=$((FAIL + 1))
             continue
         fi
@@ -465,20 +465,20 @@ fi
 # Step 3d: Fixed-point gate (optional slow test)
 # Build gen2 with gen1, then gen3 with gen2, and require gen2 == gen3.
 # ============================================================
-if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$S13CC_EXE" ]]; then
+if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$GEN1_CC_EXE" ]]; then
     echo ""
     echo "=== Step 3d: Fixed-point gate (gen2 == gen3) ==="
     TOTAL=$((TOTAL + 1))
     EXEC_TIMEOUT=300
 
-    run_exe "$S13CC_EXE" "$WORKDIR/fp-gen2-compile.log" "$S13CC_SRC" "$WORKDIR/fp-gen2.s"
+    run_exe "$GEN1_CC_EXE" "$WORKDIR/fp-gen2-compile.log" "$STAGE_CC_SRC" "$WORKDIR/fp-gen2.s"
     if [[ ! -s "$WORKDIR/fp-gen2.s" ]]; then
         printf "  %-30s FAIL (compile)\n" "fixed-point:"
         FAIL=$((FAIL + 1))
     else
-        if grep -Eq '^hir_burg|^hir_burg_select|^hir_imm_sel|^hir_iconst_use|^hir_codegen_li|^hir_iconst_nonimm_top_ops|^hir_iconst_nonimm_block_top_ops' "$WORKDIR/fp-gen2-compile.log"; then
+        if grep -Eq '^hir_burg|^hir_burg_select|^hir_imm_sel|^hir_iconst_use|^hir_codegen_li|^hir_iconst_nonimm_top_ops' "$WORKDIR/fp-gen2-compile.log"; then
             echo "  gen2 self-compile stats:"
-            grep -E '^hir_burg|^hir_imm_sel|^hir_iconst_use|^hir_codegen_li|^hir_iconst_nonimm_top_ops|^hir_iconst_nonimm_block_top_ops|^  ' "$WORKDIR/fp-gen2-compile.log" | head -n 42
+            grep -E '^hir_burg|^hir_imm_sel|^hir_iconst_use|^hir_codegen_li|^hir_iconst_nonimm_top_ops|^  ' "$WORKDIR/fp-gen2-compile.log" | head -n 36
         fi
         run_exe "$AS_EXE" "$WORKDIR/fp-gen2-assemble.log" "$WORKDIR/fp-gen2.s" "$WORKDIR/fp-gen2.s32o"
         if [[ ! -s "$WORKDIR/fp-gen2.s32o" ]]; then
@@ -493,14 +493,14 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$S13CC_EXE" ]]; then
                 printf "  %-30s FAIL (link)\n" "fixed-point:"
                 FAIL=$((FAIL + 1))
             else
-                run_exe "$WORKDIR/fp-gen2.s32x" "$WORKDIR/fp-gen3-compile.log" "$S13CC_SRC" "$WORKDIR/fp-gen3.s"
+                run_exe "$WORKDIR/fp-gen2.s32x" "$WORKDIR/fp-gen3-compile.log" "$STAGE_CC_SRC" "$WORKDIR/fp-gen3.s"
                 if [[ ! -s "$WORKDIR/fp-gen3.s" ]]; then
                     printf "  %-30s FAIL (gen3 compile)\n" "fixed-point:"
                     FAIL=$((FAIL + 1))
                 else
-                    if grep -Eq '^hir_burg|^hir_burg_select|^hir_imm_sel|^hir_iconst_use|^hir_codegen_li|^hir_iconst_nonimm_top_ops|^hir_iconst_nonimm_block_top_ops' "$WORKDIR/fp-gen3-compile.log"; then
+                    if grep -Eq '^hir_burg|^hir_burg_select|^hir_imm_sel|^hir_iconst_use|^hir_codegen_li|^hir_iconst_nonimm_top_ops' "$WORKDIR/fp-gen3-compile.log"; then
                         echo "  gen3 self-compile stats:"
-                        grep -E '^hir_burg|^hir_imm_sel|^hir_iconst_use|^hir_codegen_li|^hir_iconst_nonimm_top_ops|^hir_iconst_nonimm_block_top_ops|^  ' "$WORKDIR/fp-gen3-compile.log" | head -n 42
+                        grep -E '^hir_burg|^hir_imm_sel|^hir_iconst_use|^hir_codegen_li|^hir_iconst_nonimm_top_ops|^  ' "$WORKDIR/fp-gen3-compile.log" | head -n 36
                     fi
                     run_exe "$AS_EXE" "$WORKDIR/fp-gen3-assemble.log" "$WORKDIR/fp-gen3.s" "$WORKDIR/fp-gen3.s32o"
                     if [[ ! -s "$WORKDIR/fp-gen3.s32o" ]]; then
@@ -534,9 +534,9 @@ fi
 # ============================================================
 # Step 3b: Semantic equivalence smoke (stage05 vs stage06 cc)
 # ============================================================
-if [[ -s "$S13CC_EXE" ]]; then
+if [[ -s "$GEN1_CC_EXE" ]]; then
     echo ""
-    echo "=== Step 3b: Semantic equivalence (stage05 vs s13cc) ==="
+    echo "=== Step 3b: Semantic equivalence (stage05 vs gen1_cc) ==="
 
     # Deterministic no-libc cases.
     # Compare observable behavior (program return code) between compilers.
@@ -592,8 +592,8 @@ EOF
             FAIL=$((FAIL + 1))
             continue
         }
-        EXE_B=$(compile_and_link "${name}-s5" "$src" "$S13CC_EXE" "$AS_EXE" "$LD_EXE") || {
-            printf "  %-30s FAIL (s13cc build)\n" "${name}:"
+        EXE_B=$(compile_and_link "${name}-s5" "$src" "$GEN1_CC_EXE" "$AS_EXE" "$LD_EXE") || {
+            printf "  %-30s FAIL (gen1_cc build)\n" "${name}:"
             FAIL=$((FAIL + 1))
             continue
         }
@@ -625,7 +625,7 @@ fi
 # ============================================================
 # Step 3c: Optimizer regression pack (stage05 vs stage06 cc)
 # ============================================================
-if [[ -s "$S13CC_EXE" ]]; then
+if [[ -s "$GEN1_CC_EXE" ]]; then
     echo ""
     echo "=== Step 3c: Optimizer regression pack ==="
 
@@ -644,8 +644,8 @@ if [[ -s "$S13CC_EXE" ]]; then
             FAIL=$((FAIL + 1))
             continue
         }
-        EXE_B=$(compile_and_link "${name}-s5" "$src" "$S13CC_EXE" "$AS_EXE" "$LD_EXE") || {
-            printf "  %-30s FAIL (s13cc build)\n" "${name}:"
+        EXE_B=$(compile_and_link "${name}-s5" "$src" "$GEN1_CC_EXE" "$AS_EXE" "$LD_EXE") || {
+            printf "  %-30s FAIL (gen1_cc build)\n" "${name}:"
             FAIL=$((FAIL + 1))
             continue
         }
@@ -680,14 +680,14 @@ fi
 echo ""
 echo "=== Step 4: Build stage06 tools ==="
 
-S13_AS_SRC="$SCRIPT_DIR/tools/s32-as.c"
-S13_AR_SRC="$SCRIPT_DIR/tools/s32-ar.c"
-S13_LD_SRC="$SCRIPT_DIR/tools/s32-ld.c"
+STAGE_AS_SRC="$SCRIPT_DIR/tools/s32-as.c"
+STAGE_AR_SRC="$SCRIPT_DIR/tools/s32-ar.c"
+STAGE_LD_SRC="$SCRIPT_DIR/tools/s32-ld.c"
 
 # Build assembler
 TOTAL=$((TOTAL + 1))
 EXEC_TIMEOUT=300
-run_exe "$STAGE5_CC" "$WORKDIR/s32-as-compile.log" "$S13_AS_SRC" "$WORKDIR/s32-as.s"
+run_exe "$STAGE5_CC" "$WORKDIR/s32-as-compile.log" "$STAGE_AS_SRC" "$WORKDIR/s32-as.s"
 if [[ ! -s "$WORKDIR/s32-as.s" ]]; then
     printf "  %-30s FAIL (compile)\n" "s32-as-build:"
     tail -n 20 "$WORKDIR/s32-as-compile.log" >&2
@@ -714,7 +714,7 @@ fi
 
 # Build archiver
 TOTAL=$((TOTAL + 1))
-run_exe "$STAGE5_CC" "$WORKDIR/s32-ar-compile.log" "$S13_AR_SRC" "$WORKDIR/s32-ar.s"
+run_exe "$STAGE5_CC" "$WORKDIR/s32-ar-compile.log" "$STAGE_AR_SRC" "$WORKDIR/s32-ar.s"
 if [[ ! -s "$WORKDIR/s32-ar.s" ]]; then
     printf "  %-30s FAIL (compile)\n" "s32-ar-build:"
     tail -n 20 "$WORKDIR/s32-ar-compile.log" >&2
@@ -741,7 +741,7 @@ fi
 
 # Build linker
 TOTAL=$((TOTAL + 1))
-run_exe "$STAGE5_CC" "$WORKDIR/s32-ld-compile.log" "$S13_LD_SRC" "$WORKDIR/s32-ld.s"
+run_exe "$STAGE5_CC" "$WORKDIR/s32-ld-compile.log" "$STAGE_LD_SRC" "$WORKDIR/s32-ld.s"
 if [[ ! -s "$WORKDIR/s32-ld.s" ]]; then
     printf "  %-30s FAIL (compile)\n" "s32-ld-build:"
     tail -n 20 "$WORKDIR/s32-ld-compile.log" >&2
@@ -769,24 +769,24 @@ EXEC_TIMEOUT="$SAVED_TIMEOUT"
 
 # ============================================================
 # Step 5: End-to-end toolchain test
-# Use s13cc + stage06 tools to compile/assemble/link/run a program
+# Use gen1_cc + stage06 tools to compile/assemble/link/run a program
 # ============================================================
-S13_AS_EXE="$WORKDIR/s32-as.s32x"
-S13_AR_EXE="$WORKDIR/s32-ar.s32x"
-S13_LD_EXE="$WORKDIR/s32-ld.s32x"
+STAGE_AS_EXE="$WORKDIR/s32-as.s32x"
+STAGE_AR_EXE="$WORKDIR/s32-ar.s32x"
+STAGE_LD_EXE="$WORKDIR/s32-ld.s32x"
 
-if [[ -s "$S13CC_EXE" && -s "$S13_AS_EXE" && -s "$S13_LD_EXE" ]]; then
+if [[ -s "$GEN1_CC_EXE" && -s "$STAGE_AS_EXE" && -s "$STAGE_LD_EXE" ]]; then
     echo ""
-    echo "=== Step 5: End-to-end toolchain test (s13cc + stage06 tools) ==="
+    echo "=== Step 5: End-to-end toolchain test (gen1_cc + stage06 tools) ==="
 
-    # Test: compile test_spike.c with s13cc, assemble with stage06 AS, link with stage06 LD
+    # Test: compile test_spike.c with gen1_cc, assemble with stage06 AS, link with stage06 LD
     for tst in test_spike test_phase2 test_phase3; do
         TST_SRC="$TESTS_DIR/${tst}.c"
         [[ -f "$TST_SRC" ]] || continue
         TOTAL=$((TOTAL + 1))
 
-        # Compile with s13cc
-        run_exe "$S13CC_EXE" "$WORKDIR/e2e-${tst}-cc.log" "$TST_SRC" "$WORKDIR/e2e-${tst}.s"
+        # Compile with gen1_cc
+        run_exe "$GEN1_CC_EXE" "$WORKDIR/e2e-${tst}-cc.log" "$TST_SRC" "$WORKDIR/e2e-${tst}.s"
         if [[ ! -s "$WORKDIR/e2e-${tst}.s" ]]; then
             printf "  %-30s FAIL (compile)\n" "e2e-${tst}:"
             FAIL=$((FAIL + 1))
@@ -794,7 +794,7 @@ if [[ -s "$S13CC_EXE" && -s "$S13_AS_EXE" && -s "$S13_LD_EXE" ]]; then
         fi
 
         # Assemble with stage06 AS
-        run_exe "$S13_AS_EXE" "$WORKDIR/e2e-${tst}-as.log" "$WORKDIR/e2e-${tst}.s" "$WORKDIR/e2e-${tst}.s32o"
+        run_exe "$STAGE_AS_EXE" "$WORKDIR/e2e-${tst}-as.log" "$WORKDIR/e2e-${tst}.s" "$WORKDIR/e2e-${tst}.s32o"
         if [[ ! -s "$WORKDIR/e2e-${tst}.s32o" ]]; then
             printf "  %-30s FAIL (assemble)\n" "e2e-${tst}:"
             FAIL=$((FAIL + 1))
@@ -802,7 +802,7 @@ if [[ -s "$S13CC_EXE" && -s "$S13_AS_EXE" && -s "$S13_LD_EXE" ]]; then
         fi
 
         # Link with stage06 LD
-        run_exe "$S13_LD_EXE" "$WORKDIR/e2e-${tst}-ld.log" \
+        run_exe "$STAGE_LD_EXE" "$WORKDIR/e2e-${tst}-ld.log" \
             -o "$WORKDIR/e2e-${tst}.s32x" --mmio 64K \
             "$RUNTIME_CRT0" "$WORKDIR/e2e-${tst}.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
             $LIBC_OBJS
@@ -828,23 +828,23 @@ if [[ -s "$S13CC_EXE" && -s "$S13_AS_EXE" && -s "$S13_LD_EXE" ]]; then
     done
 
     # Test: use stage06 archiver to create a libc archive, then link with it
-    if [[ -s "$S13_AR_EXE" ]]; then
+    if [[ -s "$STAGE_AR_EXE" ]]; then
         TOTAL=$((TOTAL + 1))
         echo ""
         echo "  --- Archive test: s32-ar creates libc.s32a, link with it ---"
 
         # Create archive from libc objects
-        run_exe "$S13_AR_EXE" "$WORKDIR/e2e-ar.log" \
+        run_exe "$STAGE_AR_EXE" "$WORKDIR/e2e-ar.log" \
             rcs "$WORKDIR/e2e-libc.s32a" $LIBC_OBJS
         if [[ ! -s "$WORKDIR/e2e-libc.s32a" ]]; then
             printf "  %-30s FAIL (archive)\n" "e2e-archive:"
             tail -n 20 "$WORKDIR/e2e-ar.log" >&2
             FAIL=$((FAIL + 1))
         else
-            # Compile test_spike with s13cc, assemble with stage06 AS, link with archive
-            run_exe "$S13CC_EXE" "$WORKDIR/e2e-ar-cc.log" "$TESTS_DIR/test_spike.c" "$WORKDIR/e2e-ar-test.s"
-            run_exe "$S13_AS_EXE" "$WORKDIR/e2e-ar-as.log" "$WORKDIR/e2e-ar-test.s" "$WORKDIR/e2e-ar-test.s32o"
-            run_exe "$S13_LD_EXE" "$WORKDIR/e2e-ar-ld.log" \
+            # Compile test_spike with gen1_cc, assemble with stage06 AS, link with archive
+            run_exe "$GEN1_CC_EXE" "$WORKDIR/e2e-ar-cc.log" "$TESTS_DIR/test_spike.c" "$WORKDIR/e2e-ar-test.s"
+            run_exe "$STAGE_AS_EXE" "$WORKDIR/e2e-ar-as.log" "$WORKDIR/e2e-ar-test.s" "$WORKDIR/e2e-ar-test.s32o"
+            run_exe "$STAGE_LD_EXE" "$WORKDIR/e2e-ar-ld.log" \
                 -o "$WORKDIR/e2e-ar-test.s32x" --mmio 64K \
                 "$RUNTIME_CRT0" "$WORKDIR/e2e-ar-test.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
                 "$WORKDIR/e2e-libc.s32a"
