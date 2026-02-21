@@ -96,6 +96,23 @@ static int hcg_epilog;     /* epilog label */
 /* Block labels */
 static int hcg_blk_lbl[HIR_MAX_BLOCK];
 
+/* Immediate-selection telemetry */
+static int hcg_stat_imm_opp_add;
+static int hcg_stat_imm_hit_add;
+static int hcg_stat_imm_miss_add;
+static int hcg_stat_imm_opp_sub;
+static int hcg_stat_imm_hit_sub;
+static int hcg_stat_imm_miss_sub;
+static int hcg_stat_imm_opp_logic;
+static int hcg_stat_imm_hit_logic;
+static int hcg_stat_imm_miss_logic;
+static int hcg_stat_imm_opp_shift;
+static int hcg_stat_imm_hit_shift;
+static int hcg_stat_imm_miss_shift;
+static int hcg_stat_imm_opp_cmp;
+static int hcg_stat_imm_hit_cmp;
+static int hcg_stat_imm_miss_cmp;
+
 /* --- Load immediate into register --- */
 static void hcg_li(int reg, int v) {
     int hi;
@@ -257,6 +274,10 @@ static int hcg_const_imm_inst(int inst, int *out) {
         return 0;
     }
     return 0;
+}
+
+static int hcg_is_i12(int v) {
+    return (v >= -2048 && v <= 2047);
 }
 
 /* --- Destination register helper ---
@@ -542,96 +563,122 @@ static void hcg_inst(int idx) {
 
     /* ADD/SUB with immediate operand */
     if (k == HI_ADD) {
+        int imm_opp;
+        int c;
         int imm_ok;
         int base_inst;
+        imm_opp = 0;
         imm_ok = 0;
         base_inst = -1;
-        if (hcg_const_imm_inst(s2, &off)) {
+        if (hcg_const_imm_inst(s2, &c) && hcg_is_i12(c)) {
+            imm_opp = 1;
+            off = c;
             imm_ok = 1;
             base_inst = s1;
-        } else if (hcg_const_imm_inst(s1, &off)) {
+        } else if (hcg_const_imm_inst(s1, &c) && hcg_is_i12(c)) {
+            imm_opp = 1;
+            off = c;
             imm_ok = 1;
             base_inst = s2;
         } else if (pat >= 0 &&
                    ((lnt == BG_REG && rnt == BG_IMM) || (lnt == BG_IMM && rnt == BG_REG))) {
-            imm_ok = 1;
+            if (lnt == BG_REG) c = h_val[s2];
+            else c = h_val[s1];
+            if (hcg_is_i12(c)) {
+                imm_opp = 1;
+                imm_ok = 1;
+            }
             if (lnt == BG_REG) {
                 base_inst = s1;
-                off = h_val[s2];
+                off = c;
             } else {
                 base_inst = s2;
-                off = h_val[s1];
+                off = c;
             }
         }
+        if (imm_opp) hcg_stat_imm_opp_add = hcg_stat_imm_opp_add + 1;
         if (imm_ok) {
             rd = hcg_dst(idx);
             rs1 = hcg_src(base_inst, 1);
-            if (off >= -2048 && off <= 2047) {
-                cg_rri("addi", rd, rs1, off);
-            } else {
-                hcg_li(2, off);
-                cg_rrr("add", rd, rs1, 2);
-            }
+            cg_rri("addi", rd, rs1, off);
+            hcg_stat_imm_hit_add = hcg_stat_imm_hit_add + 1;
             hcg_maybe_spill(idx);
             return;
         }
+        if (imm_opp) hcg_stat_imm_miss_add = hcg_stat_imm_miss_add + 1;
     }
 
     if (k == HI_SUB) {
+        int imm_opp;
+        int c;
         int imm_ok;
+        imm_opp = 0;
         imm_ok = 0;
-        if (hcg_const_imm_inst(s2, &off)) {
-            imm_ok = 1;
+        if (hcg_const_imm_inst(s2, &c)) {
+            if (c != -2147483647 - 1 && hcg_is_i12(0 - c)) {
+                imm_opp = 1;
+                imm_ok = 1;
+                off = c;
+            }
         } else if (pat >= 0 && lnt == BG_REG && rnt == BG_IMM) {
-            imm_ok = 1;
-            off = h_val[s2];
+            c = h_val[s2];
+            if (c != -2147483647 - 1 && hcg_is_i12(0 - c)) {
+                imm_opp = 1;
+                imm_ok = 1;
+                off = c;
+            }
         }
+        if (imm_opp) hcg_stat_imm_opp_sub = hcg_stat_imm_opp_sub + 1;
         if (imm_ok) {
             rd = hcg_dst(idx);
             rs1 = hcg_src(s1, 1);
-            if (off == -2147483647 - 1) {
-                /* cannot negate INT_MIN in 32-bit signed C */
-                hcg_li(2, off);
-                cg_rrr("sub", rd, rs1, 2);
-            } else {
-                off = 0 - off;
-                if (off >= -2048 && off <= 2047) {
-                    cg_rri("addi", rd, rs1, off);
-                } else {
-                    hcg_li(2, 0 - off);
-                    cg_rrr("sub", rd, rs1, 2);
-                }
-            }
+            off = 0 - off;
+            cg_rri("addi", rd, rs1, off);
+            hcg_stat_imm_hit_sub = hcg_stat_imm_hit_sub + 1;
             hcg_maybe_spill(idx);
             return;
         }
+        if (imm_opp) hcg_stat_imm_miss_sub = hcg_stat_imm_miss_sub + 1;
     }
 
     if (k == HI_AND || k == HI_OR || k == HI_XOR) {
         char *opi;
+        int imm_opp;
+        int c;
         int imm_ok;
         int base_inst;
         rd = hcg_dst(idx);
+        imm_opp = 0;
         imm_ok = 0;
         base_inst = -1;
 
-        if (hcg_const_imm_inst(s2, &off)) {
+        if (hcg_const_imm_inst(s2, &c) && hcg_is_i12(c)) {
+            imm_opp = 1;
+            off = c;
             imm_ok = 1;
             base_inst = s1;
-        } else if (hcg_const_imm_inst(s1, &off)) {
+        } else if (hcg_const_imm_inst(s1, &c) && hcg_is_i12(c)) {
+            imm_opp = 1;
+            off = c;
             imm_ok = 1;
             base_inst = s2;
         } else if (pat >= 0 &&
                    ((lnt == BG_REG && rnt == BG_IMM) || (lnt == BG_IMM && rnt == BG_REG))) {
-            imm_ok = 1;
+            if (lnt == BG_REG) c = h_val[s2];
+            else c = h_val[s1];
+            if (hcg_is_i12(c)) {
+                imm_opp = 1;
+                imm_ok = 1;
+            }
             if (lnt == BG_REG) {
                 base_inst = s1;
-                off = h_val[s2];
+                off = c;
             } else {
                 base_inst = s2;
-                off = h_val[s1];
+                off = c;
             }
         }
+        if (imm_opp) hcg_stat_imm_opp_logic = hcg_stat_imm_opp_logic + 1;
         if (!imm_ok) {
             /* fall through to generic reg-reg emission */
         } else {
@@ -639,62 +686,79 @@ static void hcg_inst(int idx) {
             if (k == HI_AND) opi = "andi";
             else if (k == HI_OR) opi = "ori";
             else opi = "xori";
-            if (off >= -2048 && off <= 2047) {
-                cg_rri(opi, rd, rs1, off);
-            } else {
-                hcg_li(2, off);
-                cg_rrr(hcg_binop_name(k), rd, rs1, 2);
-            }
+            cg_rri(opi, rd, rs1, off);
+            hcg_stat_imm_hit_logic = hcg_stat_imm_hit_logic + 1;
             hcg_maybe_spill(idx);
             return;
         }
+        if (imm_opp) hcg_stat_imm_miss_logic = hcg_stat_imm_miss_logic + 1;
     }
 
     if (k == HI_SLL || k == HI_SRL || k == HI_SRA) {
         char *opi;
+        int imm_opp;
+        int c;
         int have_imm;
         rd = hcg_dst(idx);
-        have_imm = hcg_const_imm_inst(s2, &off);
-        if (!have_imm && pat >= 0 && lnt == BG_REG && rnt == BG_IMM) {
+        imm_opp = 0;
+        have_imm = 0;
+        if (hcg_const_imm_inst(s2, &c) && c >= 0 && c <= 31) {
+            imm_opp = 1;
             have_imm = 1;
-            off = h_val[s2];
+            off = c;
         }
+        if (!have_imm && pat >= 0 && lnt == BG_REG && rnt == BG_IMM) {
+            c = h_val[s2];
+            if (c >= 0 && c <= 31) {
+                imm_opp = 1;
+                have_imm = 1;
+                off = c;
+            }
+        }
+        if (imm_opp) hcg_stat_imm_opp_shift = hcg_stat_imm_opp_shift + 1;
         if (have_imm) {
             rs1 = hcg_src(s1, 1);
             if (k == HI_SLL) opi = "slli";
             else if (k == HI_SRL) opi = "srli";
             else opi = "srai";
-            if (off >= 0 && off <= 31) {
-                cg_rri(opi, rd, rs1, off);
-            } else {
-                hcg_li(2, off);
-                cg_rrr(hcg_binop_name(k), rd, rs1, 2);
-            }
+            cg_rri(opi, rd, rs1, off);
+            hcg_stat_imm_hit_shift = hcg_stat_imm_hit_shift + 1;
             hcg_maybe_spill(idx);
             return;
         }
+        if (imm_opp) hcg_stat_imm_miss_shift = hcg_stat_imm_miss_shift + 1;
     }
 
     if (k == HI_SLT || k == HI_SLTU) {
+        int imm_opp;
+        int c;
         int have_imm;
-        have_imm = hcg_const_imm_inst(s2, &off);
-        if (!have_imm && pat >= 0 && lnt == BG_REG && rnt == BG_IMM) {
+        imm_opp = 0;
+        have_imm = 0;
+        if (hcg_const_imm_inst(s2, &c) && hcg_is_i12(c)) {
+            imm_opp = 1;
             have_imm = 1;
-            off = h_val[s2];
+            off = c;
         }
+        if (!have_imm && pat >= 0 && lnt == BG_REG && rnt == BG_IMM) {
+            c = h_val[s2];
+            if (hcg_is_i12(c)) {
+                imm_opp = 1;
+                have_imm = 1;
+                off = c;
+            }
+        }
+        if (imm_opp) hcg_stat_imm_opp_cmp = hcg_stat_imm_opp_cmp + 1;
         if (have_imm) {
             rd = hcg_dst(idx);
             rs1 = hcg_src(s1, 1);
-            if (off >= -2048 && off <= 2047) {
-                if (k == HI_SLT) cg_rri("slti", rd, rs1, off);
-                else cg_rri("sltiu", rd, rs1, off);
-            } else {
-                hcg_li(2, off);
-                cg_rrr(hcg_binop_name(k), rd, rs1, 2);
-            }
+            if (k == HI_SLT) cg_rri("slti", rd, rs1, off);
+            else cg_rri("sltiu", rd, rs1, off);
+            hcg_stat_imm_hit_cmp = hcg_stat_imm_hit_cmp + 1;
             hcg_maybe_spill(idx);
             return;
         }
+        if (imm_opp) hcg_stat_imm_miss_cmp = hcg_stat_imm_miss_cmp + 1;
     }
 
     /* Binary arithmetic/logic/comparison */
