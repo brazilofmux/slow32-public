@@ -28,12 +28,12 @@ usage() {
     cat <<USAGE
 Usage: $0 [--emu <path>] [--keep-artifacts]
 
-Stage03 s32-cc compiler tests:
+Stage03 compiler tests:
   1) build runtime/libc from source using pre-built tools
   2) compile each test_lex_*.c with cc-min, run
-  3) build s32-cc compiler from s32cc.c with cc-min
-  4) compile each test_parse_*.c with s32-cc, assemble, link, run
-  5) self-hosting: s32-cc compiles itself, fixed point + smoke test
+  3) build stage03 compiler from s32cc.c with cc-min
+  4) compile each test_parse_*.c with gen1 compiler, assemble, link, run
+  5) self-hosting: gen1 compiler compiles itself, fixed point + smoke test
 USAGE
 }
 
@@ -253,10 +253,10 @@ for test_name in $TESTS; do
 done
 
 # ============================================================
-# Step 3: Build s32-cc compiler
+# Step 3: Build stage03 compiler
 # ============================================================
 echo ""
-echo "=== Step 3: Build s32-cc ==="
+echo "=== Step 3: Build stage03 compiler ==="
 
 # Concatenate lexer + parser headers
 cat "$SCRIPT_DIR/s32cc_lex.h" "$SCRIPT_DIR/s32cc_parse.h" > "$WORKDIR/s32cc_combined.h"
@@ -265,42 +265,44 @@ cat "$SCRIPT_DIR/s32cc_lex.h" "$SCRIPT_DIR/s32cc_parse.h" > "$WORKDIR/s32cc_comb
 cp "$SCRIPT_DIR/s32cc.c" "$WORKDIR/s32cc.c"
 
 # Compile with cc-min
-S32CC_ASM="$WORKDIR/s32cc.s"
-S32CC_OBJ="$WORKDIR/s32cc.s32o"
-S32CC_EXE="$WORKDIR/s32cc.s32x"
+GEN1_CC_ASM="$WORKDIR/gen1_cc.s"
+GEN1_CC_OBJ="$WORKDIR/gen1_cc.s32o"
+GEN1_CC_EXE="$WORKDIR/gen1_cc.s32x"
+GEN1_CC_EXE_CANON="$WORKDIR/cc.s32x"
 
-run_exe "$GEN2_EXE" "$WORKDIR/s32cc-compile.log" "$WORKDIR/s32cc.c" "$S32CC_ASM"
-if [[ ! -s "$S32CC_ASM" ]]; then
+run_exe "$GEN2_EXE" "$WORKDIR/gen1_cc-compile.log" "$WORKDIR/s32cc.c" "$GEN1_CC_ASM"
+if [[ ! -s "$GEN1_CC_ASM" ]]; then
     echo "cc-min produced no assembly for s32cc" >&2
-    cat "$WORKDIR/s32cc-compile.log" >&2
+    cat "$WORKDIR/gen1_cc-compile.log" >&2
     exit 1
 fi
-echo "  s32cc.c compiled OK ($(wc -c < "$S32CC_ASM") bytes asm)"
+echo "  compiler source compiled OK ($(wc -c < "$GEN1_CC_ASM") bytes asm)"
 
 # Assemble
-run_exe "$AS_EXE" "$WORKDIR/s32cc-assemble.log" "$S32CC_ASM" "$S32CC_OBJ"
-if [[ ! -s "$S32CC_OBJ" ]]; then
+run_exe "$AS_EXE" "$WORKDIR/gen1_cc-assemble.log" "$GEN1_CC_ASM" "$GEN1_CC_OBJ"
+if [[ ! -s "$GEN1_CC_OBJ" ]]; then
     echo "assembler produced no output for s32cc" >&2
-    cat "$WORKDIR/s32cc-assemble.log" >&2
+    cat "$WORKDIR/gen1_cc-assemble.log" >&2
     exit 1
 fi
 
 # Link
-run_exe "$LD_EXE" "$WORKDIR/s32cc-link.log" \
-    -o "$S32CC_EXE" --mmio 64K \
-    "$RUNTIME_CRT0" "$S32CC_OBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+run_exe "$LD_EXE" "$WORKDIR/gen1_cc-link.log" \
+    -o "$GEN1_CC_EXE" --mmio 64K \
+    "$RUNTIME_CRT0" "$GEN1_CC_OBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
     $LIBC_OBJS
-if [[ ! -s "$S32CC_EXE" ]]; then
+if [[ ! -s "$GEN1_CC_EXE" ]]; then
     echo "linker produced no output for s32cc" >&2
-    cat "$WORKDIR/s32cc-link.log" >&2
+    cat "$WORKDIR/gen1_cc-link.log" >&2
     exit 1
 fi
-echo "  s32cc.s32x linked OK ($(wc -c < "$S32CC_EXE") bytes)"
+cp -f "$GEN1_CC_EXE" "$GEN1_CC_EXE_CANON"
+echo "  compiler linked OK ($(wc -c < "$GEN1_CC_EXE") bytes)"
 TOTAL=$((TOTAL + 1))
 PASS=$((PASS + 1))
 
 # ============================================================
-# Step 4: Parser tests (compile with s32-cc, assemble, link, run)
+# Step 4: Parser tests (compile with gen1 compiler, assemble, link, run)
 # ============================================================
 echo ""
 echo "=== Step 4: Parser tests ==="
@@ -320,17 +322,17 @@ for test_name in $PARSE_TESTS; do
         continue
     fi
 
-    # Compile with s32-cc
-    if ! run_exe "$S32CC_EXE" "$WORKDIR/${test_name}-s32cc.log" "$SRC" "$PASM" 2>"$WORKDIR/${test_name}-s32cc-err.log"; then
-        printf "  %-24s FAIL (s32cc compile)\n" "${test_name}:"
-        cat "$WORKDIR/${test_name}-s32cc.log" >&2
-        cat "$WORKDIR/${test_name}-s32cc-err.log" >&2
+    # Compile with gen1 compiler
+    if ! run_exe "$GEN1_CC_EXE" "$WORKDIR/${test_name}-gen1_cc.log" "$SRC" "$PASM" 2>"$WORKDIR/${test_name}-gen1_cc-err.log"; then
+        printf "  %-24s FAIL (compiler)\n" "${test_name}:"
+        cat "$WORKDIR/${test_name}-gen1_cc.log" >&2
+        cat "$WORKDIR/${test_name}-gen1_cc-err.log" >&2
         FAIL=$((FAIL + 1))
         continue
     fi
     if [[ ! -s "$PASM" ]]; then
         printf "  %-24s FAIL (no asm output)\n" "${test_name}:"
-        cat "$WORKDIR/${test_name}-s32cc.log" >&2
+        cat "$WORKDIR/${test_name}-gen1_cc.log" >&2
         FAIL=$((FAIL + 1))
         continue
     fi
@@ -385,7 +387,7 @@ for test_name in $PARSE_TESTS; do
 done
 
 # ============================================================
-# Step 5: Self-hosting — s32-cc compiles itself
+# Step 5: Self-hosting — compiler compiles itself
 # ============================================================
 echo ""
 echo "=== Step 5: Self-hosting ==="
@@ -406,9 +408,9 @@ fi
 SAVED_TIMEOUT="${EXEC_TIMEOUT:-180}"
 EXEC_TIMEOUT=300
 
-# Gen1 compile: s32cc.s32x (compiled by cc-min) compiles merged → gen2-s32cc.s
+# Gen1 compile: compiler (compiled by cc-min) compiles merged -> gen2
 GEN2_S32CC_ASM="$WORKDIR/gen2-s32cc.s"
-run_exe "$S32CC_EXE" "$WORKDIR/gen1-s32cc-compile.log" "$S32CC_MERGED" "$GEN2_S32CC_ASM"
+run_exe "$GEN1_CC_EXE" "$WORKDIR/gen1-s32cc-compile.log" "$S32CC_MERGED" "$GEN2_S32CC_ASM"
 if [[ ! -s "$GEN2_S32CC_ASM" ]]; then
     echo "Gen1 (s32cc) produced no assembly output" >&2
     cat "$WORKDIR/gen1-s32cc-compile.log" >&2
@@ -443,7 +445,7 @@ echo "  Gen2 assembled + linked OK"
 TOTAL=$((TOTAL + 1))
 PASS=$((PASS + 1))
 
-# Gen2 compile: gen2-s32cc.s32x compiles merged → gen3-s32cc.s
+# Gen2 compile: gen2 compiler compiles merged -> gen3
 GEN3_S32CC_ASM="$WORKDIR/gen3-s32cc.s"
 run_exe "$GEN2_S32CC_EXE" "$WORKDIR/gen2-s32cc-compile.log" "$S32CC_MERGED" "$GEN3_S32CC_ASM"
 if [[ ! -s "$GEN3_S32CC_ASM" ]]; then

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stage 12: New compiler (Ragel lexer + parser)
+# Stage 04: Compiler tests (Ragel lexer + parser)
 #
 # Bootstrap chain:
 #   stage03 compiler → compile stage04 sources
@@ -34,7 +34,7 @@ usage() {
     cat <<USAGE
 Usage: $0 [--emu <path>] [--keep-artifacts]
 
-Stage12 tests: Ragel lexer + parser tests
+Stage04 compiler tests: Ragel lexer + parser tests
 USAGE
 }
 
