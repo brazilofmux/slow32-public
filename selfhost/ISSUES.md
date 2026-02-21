@@ -382,8 +382,12 @@ Stage02 `cc-min-pass1.c` now handles calls with more than 8 arguments by:
 Function prologues now also materialize parameters `9+` from caller stack (`fp+0`, `fp+4`, ...)
 into local parameter slots, so both caller and callee sides agree for `>8` arguments.
 
-### 23. [INCOMPLETE] Comma Operator and `for` Loop Expressions
-The `for` loop parser only supports a single expression in the initialization, condition, and increment sections. Standard C allows multiple expressions separated by the comma operator, which is frequently used in `for` loops.
+### 23. [FIXED] Comma Operator and `for` Loop Expressions
+Stage02 `cc-min-pass1.c` now parses comma-separated expression lists in all three `for`
+clause slots (init/cond/step). This enables idioms like:
+- `for (i = 0, j = 10; i < n, j > 0; i = i + 1, j = j - 1) { ... }`
+
+Validation: targeted stage02 test returns expected value for mixed init/cond/step lists.
 
 ---
 
@@ -407,9 +411,11 @@ The `for` loop parser only supports a single expression in the initialization, c
 Currently, structs can only be effectively accessed via pointers. Passing or returning a struct by value is not supported in the parser or calling convention.
 **Recommendation**: Update calling convention and codegen to handle struct copies on stack/registers.
 
-### 39. [LIMITATION] For-Loop Expression Limit
-As noted in Issue #23, `for` loops only support single expressions in the init/cond/step sections. Standard C allows comma-separated lists.
-**Recommendation**: Update `parse_for` in `parser.h` to handle comma-separated expression lists.
+### 39. [RESOLVED] For-Loop Expression Limit
+Stage05/Stage06 `parser.h` already parse full expressions (including comma operator)
+for `for` init/cond/step slots via `parse_expr()`.
+
+Issue #23 tracked the remaining Stage02 gap and is now fixed there as well.
 
 ---
 

@@ -1709,6 +1709,17 @@ static void parse_assign(void) {
 
 static void parse_expr(void) { parse_assign(); }
 
+/* Parse comma-separated expression list used in for-clause slots. */
+static void parse_for_expr_list(void) {
+    parse_expr();
+    lval_to_rval();
+    while (g_tok == TK_COMMA) {
+        next_token();
+        parse_expr();
+        lval_to_rval();
+    }
+}
+
 /* ---- Statement parser ---- */
 static void parse_stmt(void);
 
@@ -1853,15 +1864,15 @@ static void parse_stmt(void) {
                 }
             }
             expect(TK_SEMI);
-        } else if (g_tok != TK_SEMI) { parse_expr(); lval_to_rval(); expect(TK_SEMI); }
+        } else if (g_tok != TK_SEMI) { parse_for_expr_list(); expect(TK_SEMI); }
         else { next_token(); }
         lloop = new_label(); lbrk = new_label(); lcont = new_label();
         emit_ldef(lloop);
-        if (g_tok != TK_SEMI) { parse_expr(); lval_to_rval(); emit_bz(lbrk); }
+        if (g_tok != TK_SEMI) { parse_for_expr_list(); emit_bz(lbrk); }
         expect(TK_SEMI);
         sfl = g_for_len; sef = g_emit_to_for;
         g_for_len = 0; g_emit_to_for = 1;
-        if (g_tok != TK_RPAREN) { parse_expr(); lval_to_rval(); }
+        if (g_tok != TK_RPAREN) { parse_for_expr_list(); }
         g_emit_to_for = sef;
         expect(TK_RPAREN);
         if (g_loop_depth < MAX_LOOP) {
