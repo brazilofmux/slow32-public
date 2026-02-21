@@ -16,6 +16,8 @@ int close(int fd);
 int read(int fd, char *buf, int count);
 int write(int fd, const char *buf, int count);
 int lseek(int fd, int offset, int whence);
+int unlink(const char *path);
+int rename(const char *oldpath, const char *newpath);
 unsigned int strlen(const char *s);
 
 #define SEEK_SET 0
@@ -145,6 +147,14 @@ int fputc(int c, FILE *fp) {
     return c;
 }
 
+int getc(FILE *fp) {
+    return fgetc(fp);
+}
+
+int putc(int c, FILE *fp) {
+    return fputc(c, fp);
+}
+
 unsigned int fwrite(const char *ptr, unsigned int size, unsigned int nmemb, FILE *fp) {
     unsigned int total;
     int n;
@@ -230,6 +240,74 @@ int fputs(const char *s, FILE *fp) {
     n = write(fp->fd, s, (int)len);
     if (n < 0) return -1;
     return 0;
+}
+
+int puts(const char *s) {
+    if (fputs(s, stdout) < 0) return -1;
+    if (fputc('\n', stdout) < 0) return -1;
+    return 0;
+}
+
+int fflush(FILE *fp) {
+    (void)fp;
+    return 0; /* unbuffered */
+}
+
+void rewind(FILE *fp) {
+    if (!fp) return;
+    fseek(fp, 0, SEEK_SET);
+    fp->error = 0;
+    fp->eof = 0;
+}
+
+int feof(FILE *fp) {
+    if (!fp) return 0;
+    return fp->eof;
+}
+
+int ferror(FILE *fp) {
+    if (!fp) return 0;
+    return fp->error;
+}
+
+void clearerr(FILE *fp) {
+    if (!fp) return;
+    fp->error = 0;
+    fp->eof = 0;
+}
+
+int fileno(FILE *fp) {
+    if (!fp) return -1;
+    return fp->fd;
+}
+
+void perror(const char *s) {
+    if (s && *s) {
+        fputs(s, stderr);
+        fputs(": ", stderr);
+    }
+    fputs("error\n", stderr);
+}
+
+int ungetc(int c, FILE *fp) {
+    (void)fp;
+    return c; /* minimal stub */
+}
+
+int setvbuf(FILE *fp, char *buf, int mode, unsigned int size) {
+    (void)fp;
+    (void)buf;
+    (void)mode;
+    (void)size;
+    return 0; /* unbuffered runtime ignores */
+}
+
+FILE *tmpfile(void) {
+    return (FILE *)0;
+}
+
+int remove(const char *path) {
+    return unlink(path);
 }
 
 void fput_uint(FILE *fp, unsigned int val) {
