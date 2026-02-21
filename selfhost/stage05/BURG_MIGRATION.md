@@ -36,11 +36,13 @@ Goal: move codegen-shape rewrites out of `hir_opt.h` and into BURG selection so 
    - `x + c` / `c + x` -> `HI_ADDI`
    - `x - c` -> `HI_ADDI`
 4. Keep semantic folds and branch simplification unchanged.
+Status: completed in `c5ff8ba`.
 
 ### Batch B
 
 1. Add BURG-side handling for `HI_ADDI` chains in general-reg form.
 2. Remove `addi(addi x,c1),c2` rewrite from `hir_opt.h`.
+Status: completed (codegen-side chain fold + peephole removal).
 
 ### Batch C
 
@@ -48,6 +50,8 @@ Goal: move codegen-shape rewrites out of `hir_opt.h` and into BURG selection so 
    - either keep as IR canonicalization to `HI_COPY`, or
    - keep in HIR and treat as zero-cost move in ISel/emission.
 2. Pick one behavior and enforce consistently (avoid duplicate logic).
+Status: completed with codegen-owned policy (`HI_ADDI` kept in HIR; zero-offset
+handled in emission, optimizer rewrite removed).
 
 ## Test gates per batch
 

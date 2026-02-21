@@ -479,6 +479,7 @@ static void hcg_inst(int idx) {
     int rd;
     int vreg;
     int cond;
+    int base_i;
 
     k = h_kind[idx];
     if (k == HI_NOP) return;
@@ -646,10 +647,20 @@ static void hcg_inst(int idx) {
                 cg_rrr("add", rd, 30, rd);
             }
         } else {
-            /* ADDI(reg, imm) */
+            /* ADDI(reg, imm): fold addi chains at emission time */
             off = h_val[idx];
-            rs1 = hcg_src(s1, 1);
-            if (off >= -2048 && off <= 2047) {
+            base_i = s1;
+            while (base_i >= 0 && h_kind[base_i] == HI_ADDI) {
+                off = off + h_val[base_i];
+                base_i = h_src1[base_i];
+            }
+            rs1 = hcg_src(base_i, 1);
+            if (off == 0) {
+                /* Zero-offset add is a move/no-op at emission time. */
+                if (rd != rs1) {
+                    cg_rri("addi", rd, rs1, 0);
+                }
+            } else if (off >= -2048 && off <= 2047) {
                 cg_rri("addi", rd, rs1, off);
             } else {
                 hcg_li(2, off);

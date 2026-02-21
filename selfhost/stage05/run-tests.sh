@@ -115,6 +115,19 @@ run_exe_rc() {
     return "$rc"
 }
 
+check_noop_addi_self() {
+    local asm="$1"
+    local tag="$2"
+    local log="$WORKDIR/${tag}-shape.log"
+
+    if grep -nE '^[[:space:]]*addi r([0-9]+), r\1, 0$' "$asm" >"$log"; then
+        echo "  $tag: FAIL (redundant addi rX, rX, 0)" >&2
+        cat "$log" >&2
+        return 1
+    fi
+    return 0
+}
+
 compile_and_link() {
     local name="$1"
     local src="$2"
@@ -130,6 +143,9 @@ compile_and_link() {
         echo "  $name: FAIL (compile)" >&2
         tail -n 20 "$WORKDIR/${name}-compile.log" >&2
         return 1
+    fi
+    if [[ "$cc" == "${S13CC_EXE:-}" ]]; then
+        check_noop_addi_self "$asm" "$name" || return 1
     fi
 
     run_exe "$as" "$WORKDIR/${name}-assemble.log" "$asm" "$obj"
@@ -313,6 +329,11 @@ if [[ -s "$S13CC_EXE" ]]; then
         if [[ ! -s "$WORKDIR/${tname}.s" ]]; then
             printf "  %-30s FAIL (compile)\n" "$tname:"
             tail -n 20 "$WORKDIR/${tname}-s13cc.log" >&2
+            FAIL=$((FAIL + 1))
+            continue
+        fi
+        if ! check_noop_addi_self "$WORKDIR/${tname}.s" "$tname"; then
+            printf "  %-30s FAIL (asm shape)\n" "$tname:"
             FAIL=$((FAIL + 1))
             continue
         fi
