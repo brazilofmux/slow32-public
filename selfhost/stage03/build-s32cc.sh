@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build s32cc.s32x: the s32-cc compiler (lex/parse split, evolved from cc-min).
+# Build cc.s32x: the stage03 compiler (lex/parse split, evolved from cc-min).
 # Uses: Stage 02 cc-min.s32x (compiler), Stage 02 s32-as.s32x (assembler),
 #       Stage 02 s32-ld.s32x (linker).
 # Deposits the artifact in the script's directory.
@@ -21,8 +21,7 @@ GEN2_CC="$SELFHOST_DIR/stage02/cc-min.s32x"
 LIBC_DIR="$SCRIPT_DIR/libc"
 CRT0_SRC="$SCRIPT_DIR/crt0.s"
 MMIO_NO_START_SRC="$SCRIPT_DIR/mmio_no_start.s"
-OUT_EXE="$SCRIPT_DIR/s32cc.s32x"
-OUT_EXE_CANON="$SCRIPT_DIR/cc.s32x"
+OUT_EXE="$SCRIPT_DIR/cc.s32x"
 
 for f in "$EMU" "$STAGE2_AS" "$STAGE2_LD" "$GEN2_CC" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC" \
@@ -100,8 +99,8 @@ cp "$SCRIPT_DIR/s32cc.c" "$WORKDIR/s32cc.c"
 compile "$WORKDIR/s32cc.c" "$WORKDIR/s32cc.s" "$WORKDIR/s32cc.cc.log"
 assemble "$WORKDIR/s32cc.s" "$WORKDIR/s32cc.s32o" "$WORKDIR/s32cc.as.log"
 
-# --- Link s32cc.s32x ---
-echo "[4/4] Link s32cc.s32x"
+# --- Link cc.s32x ---
+echo "[4/4] Link cc.s32x"
 link_exe "$WORKDIR/link.log" -o "$OUT_EXE" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/s32cc.s32o" "$WORKDIR/start.s32o" \
     "$WORKDIR/mmio_no_start.s32o" \
@@ -109,5 +108,3 @@ link_exe "$WORKDIR/link.log" -o "$OUT_EXE" --mmio 64K \
 [[ -s "$OUT_EXE" ]] || { echo "link failed" >&2; exit 1; }
 
 echo "OK: $OUT_EXE ($(wc -c < "$OUT_EXE") bytes)"
-cp -f "$OUT_EXE" "$OUT_EXE_CANON"
-echo "    canonical alias: $OUT_EXE_CANON"

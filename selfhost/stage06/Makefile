@@ -1,4 +1,4 @@
-# Stage 06: Complete s12cc toolchain (compiler + assembler + archiver + linker + runtime)
+# Stage 06: Complete compiler toolchain (compiler + assembler + archiver + linker + runtime)
 # All C sources compiled by Stage 05 compiler, assembled by Stage 05 s32-as.s32x,
 # linked by Stage 05 s32-ld.s32x.
 
@@ -14,12 +14,9 @@ BOOTSTRAP = $(BOOTSTRAP_CC) ../stage05/s32-as.s32x ../stage05/s32-ld.s32x
 all: cc.s32x tools
 
 # Build the compiler executable
-s12cc.s32x: $(COMPILER_SRCS) $(LIBC_SRCS) $(RUNTIME_SRCS) $(BOOTSTRAP)
-	@echo "Building s12cc.s32x (stage06, bootstrapped from stage05)..."
+cc.s32x: $(COMPILER_SRCS) $(LIBC_SRCS) $(RUNTIME_SRCS) $(BOOTSTRAP)
+	@echo "Building cc.s32x (stage06, bootstrapped from stage05)..."
 	@bash build-s12cc.sh
-
-cc.s32x: s12cc.s32x
-	@cp -f s12cc.s32x cc.s32x
 
 # Build assembler, archiver, linker
 tools: s32-as.s32x s32-ar.s32x s32-ld.s32x
@@ -28,9 +25,9 @@ s32-as.s32x s32-ar.s32x s32-ld.s32x: $(TOOL_SRCS) $(LIBC_SRCS) $(RUNTIME_SRCS) $
 	@echo "Building stage06 tools (s32-as, s32-ar, s32-ld)..."
 	@bash build-tools.sh
 
-verify: cc.s32x s12cc.s32x s32-as.s32x s32-ar.s32x s32-ld.s32x
+verify: cc.s32x s32-as.s32x s32-ar.s32x s32-ld.s32x
 	@echo "--- Stage 06: full toolchain tests ---"
 	@bash run-tests.sh
 
 clean:
-	rm -f cc.s32x s12cc.s32x s32-as.s32x s32-ar.s32x s32-ld.s32x
+	rm -f cc.s32x s32-as.s32x s32-ar.s32x s32-ld.s32x

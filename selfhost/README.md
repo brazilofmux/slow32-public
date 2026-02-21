@@ -14,9 +14,9 @@ Stage cycles at a glance:
 - `stage00`: standalone ~800 line emulator that every other stage relies on.
 - `stage01`: assembler + archiver + linker + C compiler written in Forth (includes kernel fixed-point proof).
 - `stage02`: the same four tools (assembler, archiver, linker, compiler) now authored in Subset C but still hosted by the Forth toolchain. After this stage, all Forth tools are retired.
-- `stage03`: first canonical `cc.s32x` compiler stage (legacy alias: `s32cc.s32x`) + tools (as, ar, ld) + libc/runtime. Self-sufficient toolchain. Compiled by stage02 cc-min.
-- `stage04`: canonical `cc.s32x` compiler stage (legacy alias: `s12cc.s32x`) with Ragel lexer + recursive-descent parser + tools + libc/runtime. Compiled by stage03.
-- `stage05`: code quality stage using canonical `cc.s32x` compiler naming (legacy alias: `s12cc.s32x`) + AS/AR/LD/libc. Compiled by stage04.
+- `stage03`: first canonical `cc.s32x` compiler stage + tools (as, ar, ld) + libc/runtime. Self-sufficient toolchain. Compiled by stage02 cc-min.
+- `stage04`: canonical `cc.s32x` compiler stage with Ragel lexer + recursive-descent parser + tools + libc/runtime. Compiled by stage03.
+- `stage05`: code quality stage using canonical `cc.s32x` compiler naming + AS/AR/LD/libc. Compiled by stage04.
 - `stage06`: next selfhost cycle seeded from stage05 and bootstrapped by stage05 tools.
 
 Primary tracking docs:
@@ -50,8 +50,8 @@ Manual per-stage entry points:
 - `stage02` (archiver): `selfhost/stage02/run-pipeline.sh --mode stage6-ar-smoke` and `... stage6-ar-rc-smoke` and `... stage6-ar-tx-smoke`
 - `stage02` (linker): `selfhost/stage02/run-spike-ld.sh`
 - `stage02` (compiler): `selfhost/stage02/run-regression-cc-min.sh --emu ./tools/emulator/slow32-fast`
-- `stage03` (compiler `cc.s32x`, alias `s32cc.s32x`): `selfhost/stage03/run-spike.sh --emu ./tools/emulator/slow32-fast`
-- `stage04` (compiler `cc.s32x`, alias `s12cc.s32x`): `selfhost/stage04/run-tests.sh --emu ./tools/emulator/slow32-fast`
+- `stage03` (compiler `cc.s32x`): `selfhost/stage03/run-spike.sh --emu ./tools/emulator/slow32-fast`
+- `stage04` (compiler `cc.s32x`): `selfhost/stage04/run-tests.sh --emu ./tools/emulator/slow32-fast`
 - `stage05` (optimized toolchain): `selfhost/stage05/run-tests.sh --emu ./tools/emulator/slow32-fast`
 - `stage06` (next-cycle toolchain): `selfhost/stage06/run-tests.sh --emu ./tools/emulator/slow32-fast`
 

@@ -422,22 +422,22 @@ TOTAL=$((TOTAL + 1))
 PASS=$((PASS + 1))
 
 # Assemble + link Gen2
-GEN2_S32CC_OBJ="$WORKDIR/gen2-s32cc.s32o"
-GEN2_S32CC_EXE="$WORKDIR/gen2-s32cc.s32x"
+GEN2_CC_OBJ="$WORKDIR/gen2-cc.s32o"
+GEN2_CC_EXE="$WORKDIR/gen2-cc.s32x"
 
-run_exe "$AS_EXE" "$WORKDIR/gen2-s32cc-assemble.log" "$GEN2_S32CC_ASM" "$GEN2_S32CC_OBJ"
-if [[ ! -s "$GEN2_S32CC_OBJ" ]]; then
-    echo "assembler produced no output for gen2-s32cc" >&2
+run_exe "$AS_EXE" "$WORKDIR/gen2-cc-assemble.log" "$GEN2_S32CC_ASM" "$GEN2_CC_OBJ"
+if [[ ! -s "$GEN2_CC_OBJ" ]]; then
+    echo "assembler produced no output for gen2-cc" >&2
     cat "$WORKDIR/gen2-s32cc-assemble.log" >&2
     exit 1
 fi
 
-run_exe "$LD_EXE" "$WORKDIR/gen2-s32cc-link.log" \
-    -o "$GEN2_S32CC_EXE" --mmio 64K \
-    "$RUNTIME_CRT0" "$GEN2_S32CC_OBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+run_exe "$LD_EXE" "$WORKDIR/gen2-cc-link.log" \
+    -o "$GEN2_CC_EXE" --mmio 64K \
+    "$RUNTIME_CRT0" "$GEN2_CC_OBJ" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
     $LIBC_OBJS
-if [[ ! -s "$GEN2_S32CC_EXE" ]]; then
-    echo "linker produced no output for gen2-s32cc" >&2
+if [[ ! -s "$GEN2_CC_EXE" ]]; then
+    echo "linker produced no output for gen2-cc" >&2
     cat "$WORKDIR/gen2-s32cc-link.log" >&2
     exit 1
 fi
@@ -447,7 +447,7 @@ PASS=$((PASS + 1))
 
 # Gen2 compile: gen2 compiler compiles merged -> gen3
 GEN3_S32CC_ASM="$WORKDIR/gen3-s32cc.s"
-run_exe "$GEN2_S32CC_EXE" "$WORKDIR/gen2-s32cc-compile.log" "$S32CC_MERGED" "$GEN3_S32CC_ASM"
+run_exe "$GEN2_CC_EXE" "$WORKDIR/gen2-s32cc-compile.log" "$S32CC_MERGED" "$GEN3_S32CC_ASM"
 if [[ ! -s "$GEN3_S32CC_ASM" ]]; then
     echo "Gen2 (s32cc) produced no assembly output" >&2
     cat "$WORKDIR/gen2-s32cc-compile.log" >&2

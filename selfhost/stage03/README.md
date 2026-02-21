@@ -13,8 +13,7 @@ stage02.
 
 ## Artifacts
 
-- cc.s32x — canonical stage03 compiler name (alias: s32cc.s32x)
-- s32cc.s32x — legacy compiler name (kept for compatibility)
+- cc.s32x — stage03 compiler executable
 - s32-as.s32x — assembler (compiled by stage03 compiler)
 - s32-ar.s32x — archiver with symbol index (compiled by stage03 compiler)
 - s32-ld.s32x — linker (compiled by stage03 compiler)

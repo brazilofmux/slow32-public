@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build s12cc.s32x: the stage06 AST-based C compiler.
+# Build cc.s32x: the stage06 compiler.
 # Uses: Stage 05 cc.s32x (compiler), Stage 05 s32-as.s32x (assembler),
 #       Stage 05 s32-ld.s32x (linker).
 #
@@ -9,10 +9,10 @@ set -euo pipefail
 #   Phase 1: stage05 compiles s12cc.c + libc → gen1 (tree-walk ABI)
 #   Phase 2: gen1 recompiles libc → stage06 libc (HIR/SSA ABI, r11-r28 callee-saved)
 #
-# gen1 (s12cc.s32x) uses tree-walk ABI internally but its codegen produces
+# gen1 (cc.s32x) uses tree-walk ABI internally but its codegen produces
 # HIR/SSA ABI code.  Programs compiled by gen1 must link against gen1-compiled
 # libc to avoid register clobbering (stage05 bootstrap libc may differ).
-# Deposits s12cc.s32x and libc objects in the script's directory.
+# Deposits cc.s32x and libc objects in the script's directory.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -38,8 +38,7 @@ STAGE5_LD="$SELFHOST_DIR/stage05/s32-ld.s32x"
 LIBC_DIR="$SCRIPT_DIR/libc"
 CRT0_SRC="$SCRIPT_DIR/crt0.s"
 MMIO_NO_START_SRC="$SCRIPT_DIR/mmio_no_start.s"
-OUT_EXE="$SCRIPT_DIR/s12cc.s32x"
-OUT_EXE_CANON="$SCRIPT_DIR/cc.s32x"
+OUT_EXE="$SCRIPT_DIR/cc.s32x"
 
 for f in "$EMU" "$STAGE5_CC" "$STAGE5_AS" "$STAGE5_LD" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC" \
@@ -112,13 +111,13 @@ done
 compile "$LIBC_DIR/start.c" "$WORKDIR/start.s" "$WORKDIR/start.cc.log"
 assemble "$WORKDIR/start.s" "$WORKDIR/start.s32o" "$WORKDIR/start.as.log"
 
-# --- Compile s12cc with stage05 compiler ---
-echo "[3/4] Compile s12cc"
+# --- Compile compiler with stage05 compiler ---
+echo "[3/4] Compile compiler"
 compile "$SCRIPT_DIR/s12cc.c" "$WORKDIR/s12cc.s" "$WORKDIR/s12cc.cc.log"
 assemble "$WORKDIR/s12cc.s" "$WORKDIR/s12cc.s32o" "$WORKDIR/s12cc.as.log"
 
-# --- Link s12cc.s32x ---
-echo "[4/6] Link s12cc.s32x (gen1, tree-walk ABI)"
+# --- Link cc.s32x ---
+echo "[4/6] Link cc.s32x (gen1, tree-walk ABI)"
 link_exe "$WORKDIR/link.log" -o "$OUT_EXE" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/s12cc.s32o" "$WORKDIR/start.s32o" \
     "$WORKDIR/mmio_no_start.s32o" \
@@ -195,6 +194,4 @@ else
 fi
 
 echo "OK: $OUT_EXE ($(wc -c < "$OUT_EXE") bytes)"
-cp -f "$OUT_EXE" "$OUT_EXE_CANON"
-echo "    canonical alias: $OUT_EXE_CANON"
 echo "    lib/ contains gen1-compiled libc objects (HIR/SSA ABI)"
