@@ -133,6 +133,9 @@ static void bg_init(void) {
     bg_add_pat(BG_REG,   HI_ADDI, BG_REG,   -1, 1);
 
     /* Binary arithmetic/logic/comparison */
+    bg_add_pat(BG_REG, HI_ADD,  BG_REG, BG_IMM, 1);
+    bg_add_pat(BG_REG, HI_ADD,  BG_IMM, BG_REG, 1);
+    bg_add_pat(BG_REG, HI_SUB,  BG_REG, BG_IMM, 1);
     bg_add_pat(BG_REG, HI_ADD,  BG_REG, BG_REG, 1);
     bg_add_pat(BG_REG, HI_SUB,  BG_REG, BG_REG, 1);
     bg_add_pat(BG_REG, HI_MUL,  BG_REG, BG_REG, 1);

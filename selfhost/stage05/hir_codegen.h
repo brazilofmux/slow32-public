@@ -467,6 +467,7 @@ static void hcg_inst(int idx) {
     int s2;
     int pat;
     int lnt;
+    int rnt;
     int nargs;
     int regc;
     int base;
@@ -493,8 +494,10 @@ static void hcg_inst(int idx) {
      * If pat < 0 (BURG skipped or chain rule), fall back to
      * checking h_kind[s1] directly (same as original codegen). */
     lnt = -1;
+    rnt = -1;
     if (pat >= 0) {
         lnt = bg_plnt[pat];
+        rnt = bg_prnt[pat];
     } else if (s1 >= 0 && h_kind[s1] == HI_ALLOCA) {
         lnt = BG_FADDR;
     }
@@ -502,6 +505,41 @@ static void hcg_inst(int idx) {
     if (k == HI_PARAM) {
         rd = hcg_dst(idx);
         cg_rri("addi", rd, 3 + h_val[idx], 0);
+        hcg_maybe_spill(idx);
+        return;
+    }
+
+    /* ADD/SUB with immediate child selected by BURG */
+    if (k == HI_ADD && pat >= 0 &&
+        ((lnt == BG_REG && rnt == BG_IMM) || (lnt == BG_IMM && rnt == BG_REG))) {
+        rd = hcg_dst(idx);
+        if (lnt == BG_REG) {
+            rs1 = hcg_src(s1, 1);
+            off = h_val[s2];
+        } else {
+            rs1 = hcg_src(s2, 1);
+            off = h_val[s1];
+        }
+        if (off >= -2048 && off <= 2047) {
+            cg_rri("addi", rd, rs1, off);
+        } else {
+            hcg_li(2, off);
+            cg_rrr("add", rd, rs1, 2);
+        }
+        hcg_maybe_spill(idx);
+        return;
+    }
+
+    if (k == HI_SUB && pat >= 0 && lnt == BG_REG && rnt == BG_IMM) {
+        rd = hcg_dst(idx);
+        rs1 = hcg_src(s1, 1);
+        off = 0 - h_val[s2];
+        if (off >= -2048 && off <= 2047) {
+            cg_rri("addi", rd, rs1, off);
+        } else {
+            hcg_li(2, h_val[s2]);
+            cg_rrr("sub", rd, rs1, 2);
+        }
         hcg_maybe_spill(idx);
         return;
     }
