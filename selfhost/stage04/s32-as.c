@@ -2,15 +2,15 @@
 
 #define MAX_LINE 1024
 #define MAX_TOK 8
-#define MAX_LBL 8192
+#define MAX_LBL 16384
 #define MAX_REL 32768
-#define MAX_SYM 8192
+#define MAX_SYM 16384
 #define MAX_TEXT 1048576
 #define MAX_RODATA 1048576
 #define MAX_DATA 1048576
 #define MAX_INIT_ARRAY 262144
 #define MAX_BSS 16777216
-#define MAX_STR 65536
+#define MAX_STR 131072
 #define LBL_POOL_SZ 262144
 #define MAX_DIFF 8192
 
@@ -21,14 +21,14 @@
 #define SEC_BSS  4
 
 static char g_lbl_name_pool[262144];
-static int g_lbl_name_off[8192];
+static int g_lbl_name_off[16384];
 static int g_lbl_name_ptr;
-static int g_lbl_sec[8192];
-static int g_lbl_val[8192];
-static char g_lbl_defd[8192];
-static char g_lbl_glob[8192];
-static char g_lbl_refd[8192];
-static char g_lbl_abs[8192];
+static int g_lbl_sec[16384];
+static int g_lbl_val[16384];
+static char g_lbl_defd[16384];
+static char g_lbl_glob[16384];
+static char g_lbl_refd[16384];
+static char g_lbl_abs[16384];
 static int g_nlbl;
 
 static int g_rel_sec[32768];
@@ -38,12 +38,12 @@ static int g_rel_sym[32768];
 static int g_rel_add[32768];
 static int g_nrel;
 
-static int g_diff_sec[8192];
-static int g_diff_off[8192];
-static int g_diff_plus[8192];
-static int g_diff_minus[8192];
-static int g_diff_add[8192];
-static int g_diff_wide[8192];
+static int g_diff_sec[16384];
+static int g_diff_off[16384];
+static int g_diff_plus[16384];
+static int g_diff_minus[16384];
+static int g_diff_add[16384];
+static int g_diff_wide[16384];
 static int g_ndiff;
 
 static char g_text[1048576];
@@ -57,15 +57,15 @@ static int g_isz;
 static int g_bsz;
 static int g_sec;
 
-static int g_lbl_to_sym[8192];
+static int g_lbl_to_sym[16384];
 static int g_nsym;
-static int g_sym_lbl[8192];
-static int g_sym_name[8192];
-static int g_sym_val[8192];
-static int g_sym_sec[8192];
-static char g_sym_bind[8192];
+static int g_sym_lbl[16384];
+static int g_sym_name[16384];
+static int g_sym_val[16384];
+static int g_sym_sec[16384];
+static char g_sym_bind[16384];
 
-static char g_str[65536];
+static char g_str[131072];
 static char g_line[1024];
 static int g_ssz;
 static int g_in;
