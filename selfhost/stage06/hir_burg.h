@@ -339,6 +339,10 @@ static int bg_use_accepts_imm(int user, int pos, int c) {
     if ((k == HI_SLL || k == HI_SRL || k == HI_SRA) && pos == 2) return (c >= 0 && c <= 31);
     if (k == HI_SEQ || k == HI_SNE) return bg_is_u12(c);
     if ((k == HI_SLT || k == HI_SLTU) && pos == 2) return bg_is_i12(c);
+    if (k == HI_RET && pos == 1) return 1;
+    if (k == HI_BRC && pos == 1) return 1;
+    if (k == HI_CALLP && pos == 1) return 1;
+    if (k == HI_STORE && pos == 2 && c == 0) return 1;
     return 0;
 }
 
@@ -400,9 +404,7 @@ static void bg_profile_iconst_consumers(void) {
                     v = h_carg[base + j];
                     if (v >= 0 && bg_const_imm_inst(v, &c, &root)) {
                         bg_iconst_seen_use[root] = 1;
-                        bg_iconst_seen_nonimm[root] = 1;
                         bg_stat_iconst_use_op[k] = bg_stat_iconst_use_op[k] + 1;
-                        bg_stat_iconst_nonimm_use_op[k] = bg_stat_iconst_nonimm_use_op[k] + 1;
                     }
                     j = j + 1;
                 }
@@ -416,9 +418,7 @@ static void bg_profile_iconst_consumers(void) {
                     v = h_pval[base + j];
                     if (v >= 0 && bg_const_imm_inst(v, &c, &root)) {
                         bg_iconst_seen_use[root] = 1;
-                        bg_iconst_seen_nonimm[root] = 1;
                         bg_stat_iconst_use_op[k] = bg_stat_iconst_use_op[k] + 1;
-                        bg_stat_iconst_nonimm_use_op[k] = bg_stat_iconst_nonimm_use_op[k] + 1;
                     }
                     j = j + 1;
                 }
