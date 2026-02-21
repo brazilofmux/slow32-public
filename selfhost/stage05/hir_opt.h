@@ -455,7 +455,33 @@ static int ho_const_fold(void) {
 }
 
 /* ----------------------------------------------------------------
- * Pass 3: PHI simplification
+ * Pass 3: Branch simplification
+ * ---------------------------------------------------------------- */
+
+static int ho_branch_simplify(void) {
+    int changed;
+    int i;
+
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_BRC) {
+            /* If both BRC successors are identical, collapse to BR. */
+            if (h_src2[i] == h_val[i]) {
+                h_kind[i] = HI_BR;
+                h_val[i] = h_src2[i];
+                h_src1[i] = -1;
+                h_src2[i] = -1;
+                changed = 1;
+            }
+        }
+        i = i + 1;
+    }
+    return changed;
+}
+
+/* ----------------------------------------------------------------
+ * Pass 4: PHI simplification
  * If all non-self-referential PHI args are the same value,
  * replace the PHI with a COPY of that value.
  * ---------------------------------------------------------------- */
@@ -503,7 +529,7 @@ static int ho_phi_simplify(void) {
 }
 
 /* ----------------------------------------------------------------
- * Pass 4: Dead block elimination
+ * Pass 5: Dead block elimination
  * DFS from block 0, NOP unreachable blocks, fix PHI args from
  * dead predecessors (make self-referential so phi_simplify ignores them).
  * Reuses ho_use[] as visited + DFS stack (non-overlapping regions).
@@ -597,7 +623,7 @@ static int ho_dead_blocks(void) {
 }
 
 /* ----------------------------------------------------------------
- * Pass 5: Dead code elimination
+ * Pass 6: Dead code elimination
  * Count uses of each instruction, delete unused value-producers
  * (except calls which have side effects).
  * ---------------------------------------------------------------- */
@@ -710,6 +736,7 @@ static void hir_opt(void) {
         changed = 0;
         changed = changed | ho_copy_prop();
         changed = changed | ho_const_fold();
+        changed = changed | ho_branch_simplify();
         changed = changed | ho_dead_blocks();
         changed = changed | ho_phi_simplify();
         changed = changed | ho_dce();
