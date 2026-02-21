@@ -300,6 +300,12 @@ static int hcg_is_u12(int v) {
     return (v >= 0 && v <= 4095);
 }
 
+static int hcg_const_is_zero(int inst) {
+    int c;
+    if (!hcg_const_imm_inst(inst, &c)) return 0;
+    return (c == 0);
+}
+
 /* --- Destination register helper ---
  * Returns the physical register for the result.
  * If allocated, returns the physical register.
@@ -971,7 +977,8 @@ static void hcg_inst(int idx) {
         if (lnt == BG_FADDR) {
             /* STORE(faddr, reg): direct store to fp + offset */
             off = bg_foff[s1];
-            vreg = hcg_src(s2, 2);
+            if (hcg_const_is_zero(s2)) vreg = 0;
+            else vreg = hcg_src(s2, 2);
             if (off >= -2048 && off <= 2047) {
                 hcg_store_off(30, vreg, off, ty);
             } else {
@@ -981,12 +988,14 @@ static void hcg_inst(int idx) {
             }
         } else if (lnt == BG_SADDR) {
             /* STORE(saddr, reg): lui + stw with %lo */
-            vreg = hcg_src(s2, 2);
+            if (hcg_const_is_zero(s2)) vreg = 0;
+            else vreg = hcg_src(s2, 2);
             hcg_store_saddr(vreg, s1, ty);
         } else {
             /* STORE(reg, reg) */
             rs1 = hcg_src(s1, 1);
-            vreg = hcg_src(s2, 2);
+            if (hcg_const_is_zero(s2)) vreg = 0;
+            else vreg = hcg_src(s2, 2);
             hcg_store_mem(rs1, vreg, ty);
         }
         return;
@@ -1076,26 +1085,25 @@ static void hcg_inst(int idx) {
     if (k == HI_CALL) {
         nargs = h_val[idx];
         base = h_cbase[idx];
-        i = nargs - 1;
-        while (i >= 0) {
-            hcg_into(1, h_carg[base + i]);
-            cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
-            i = i - 1;
-        }
 
         regc = nargs;
         if (regc > 8) regc = 8;
+
         i = 0;
         while (i < regc) {
-            cg_s("    ldw r");
-            cg_n(3 + i);
-            cg_s(", r29, ");
-            cg_n(i * 4);
-            cg_c(10);
+            hcg_into(3 + i, h_carg[base + i]);
             i = i + 1;
         }
-        if (regc > 0) {
-            cg_rri("addi", 29, 29, regc * 4);
+
+        i = nargs - 1;
+        while (i >= regc) {
+            if (hcg_const_is_zero(h_carg[base + i])) {
+                cg_s("    addi r29, r29, -4\n    stw r29, r0, 0\n");
+            } else {
+                hcg_into(1, h_carg[base + i]);
+                cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
+            }
+            i = i - 1;
         }
 
         cg_s("    jal r31, ");
@@ -1120,29 +1128,27 @@ static void hcg_inst(int idx) {
         nargs = h_val[idx];
         base = h_cbase[idx];
 
+        regc = nargs;
+        if (regc > 8) regc = 8;
+
+        i = 0;
+        while (i < regc) {
+            hcg_into(3 + i, h_carg[base + i]);
+            i = i + 1;
+        }
+
         hcg_into(1, s1);
         cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
 
         i = nargs - 1;
-        while (i >= 0) {
-            hcg_into(1, h_carg[base + i]);
-            cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
+        while (i >= regc) {
+            if (hcg_const_is_zero(h_carg[base + i])) {
+                cg_s("    addi r29, r29, -4\n    stw r29, r0, 0\n");
+            } else {
+                hcg_into(1, h_carg[base + i]);
+                cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
+            }
             i = i - 1;
-        }
-
-        regc = nargs;
-        if (regc > 8) regc = 8;
-        i = 0;
-        while (i < regc) {
-            cg_s("    ldw r");
-            cg_n(3 + i);
-            cg_s(", r29, ");
-            cg_n(i * 4);
-            cg_c(10);
-            i = i + 1;
-        }
-        if (regc > 0) {
-            cg_rri("addi", 29, 29, regc * 4);
         }
 
         cg_s("    ldw r2, r29, ");
