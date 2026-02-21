@@ -23,6 +23,7 @@ static int g_lbl_val[8192];
 static char g_lbl_defd[8192];
 static char g_lbl_glob[8192];
 static char g_lbl_refd[8192];
+static char g_lbl_abs[8192];
 static int g_nlbl;
 
 static int g_rel_sec[32768];
@@ -52,6 +53,8 @@ static char g_line[1024];
 static int g_ssz;
 static int g_in;
 static int g_out;
+
+int find_lbl(char *name);
 
 char *trim(char *s) {
     int n;
@@ -109,6 +112,19 @@ int parse_num(char *s, int *ok) {
     return v;
 }
 
+int parse_num_or_abs(char *s, int *ok) {
+    int li;
+    int v;
+    v = parse_num(s, ok);
+    if (*ok) return v;
+    li = find_lbl(s);
+    if (li >= 0 && g_lbl_defd[li] && g_lbl_abs[li]) {
+        *ok = 1;
+        return g_lbl_val[li];
+    }
+    return 0;
+}
+
 int parse_reloc_expr(char *s, char *prefix, char *out, int out_sz) {
     int i;
     int pfx_len;
@@ -151,6 +167,7 @@ int get_lbl(char *name) {
     g_lbl_defd[g_nlbl] = 0;
     g_lbl_glob[g_nlbl] = 0;
     g_lbl_refd[g_nlbl] = 0;
+    g_lbl_abs[g_nlbl] = 0;
     i = g_nlbl;
     g_nlbl = g_nlbl + 1;
     return i;
@@ -316,6 +333,17 @@ int do_align(int p) {
     return 0;
 }
 
+int do_balign(int bytes, int fill) {
+    int n;
+    if (bytes <= 0) return -1;
+    n = cur_off();
+    while ((n % bytes) != 0) {
+        if (emit8(fill & 255) != 0) return -1;
+        n = n + 1;
+    }
+    return 0;
+}
+
 int handle(char *line) {
     char *tok[8];
     int n;
@@ -335,6 +363,10 @@ int handle(char *line) {
     char sym[128];
     int has_lo;
     int has_hi;
+    int fill;
+    int lo;
+    int hi;
+    int align;
 
     strip_comment(line);
     line = trim(line);
@@ -348,6 +380,7 @@ int handle(char *line) {
         g_lbl_defd[li] = 1;
         g_lbl_sec[li] = g_sec;
         g_lbl_val[li] = cur_off();
+        g_lbl_abs[li] = 0;
         line = trim(c + 1);
         if (*line == 0) return 0;
     }
@@ -388,11 +421,26 @@ int handle(char *line) {
         if (strcmp(tok[0], ".text") == 0) { g_sec = SEC_TEXT; return 0; }
         if (strcmp(tok[0], ".data") == 0) { g_sec = SEC_DATA; return 0; }
         if (strcmp(tok[0], ".bss") == 0) { g_sec = SEC_BSS; return 0; }
+        if (strcmp(tok[0], ".rodata") == 0) { g_sec = SEC_DATA; return 0; }
         if (strcmp(tok[0], ".global") == 0 || strcmp(tok[0], ".globl") == 0) { if (n < 2) return -1; ok = get_lbl(tok[1]); if (ok < 0) return -1; g_lbl_glob[ok] = 1; return 0; }
-        if (strcmp(tok[0], ".align") == 0 || strcmp(tok[0], ".p2align") == 0) { if (n < 2) return -1; ok = parse_num(tok[1], &n); if (!n) return -1; return do_align(ok); }
+        if (strcmp(tok[0], ".align") == 0 || strcmp(tok[0], ".p2align") == 0) { if (n < 2) return -1; ok = parse_num_or_abs(tok[1], &n); if (!n) return -1; return do_align(ok); }
+        if (strcmp(tok[0], ".balign") == 0) {
+            if (n < 2) return -1;
+            v = parse_num_or_abs(tok[1], &ok);
+            if (!ok || v <= 0) return -1;
+            fill = 0;
+            if (n >= 3) {
+                fill = parse_num_or_abs(tok[2], &ok);
+                if (!ok) return -1;
+            }
+            return do_balign(v, fill);
+        }
         if (strcmp(tok[0], ".section") == 0) {
             if (n < 2) return -1;
             if (strncmp(tok[1], ".rodata", 7) == 0) { g_sec = SEC_DATA; return 0; }
+            if (strncmp(tok[1], ".init_array", 11) == 0) { g_sec = SEC_DATA; return 0; }
+            if (strncmp(tok[1], ".fpc", 4) == 0) { g_sec = SEC_DATA; return 0; }
+            if (strncmp(tok[1], ".debug", 6) == 0) { g_sec = SEC_DATA; return 0; }
             if (strcmp(tok[1], ".text") == 0) { g_sec = SEC_TEXT; return 0; }
             if (strcmp(tok[1], ".data") == 0) { g_sec = SEC_DATA; return 0; }
             if (strcmp(tok[1], ".bss") == 0) { g_sec = SEC_BSS; return 0; }
@@ -401,7 +449,7 @@ int handle(char *line) {
         if (strcmp(tok[0], ".type") == 0 || strcmp(tok[0], ".size") == 0 || strcmp(tok[0], ".file") == 0 || strcmp(tok[0], ".ident") == 0) return 0;
         if (strcmp(tok[0], ".byte") == 0) {
             for (i = 1; i < n; i = i + 1) {
-                v = parse_num(tok[i], &ok);
+                v = parse_num_or_abs(tok[i], &ok);
                 if (!ok) return -1;
                 if (emit8(v & 255) != 0) return -1;
             }
@@ -409,15 +457,67 @@ int handle(char *line) {
         }
         if (strcmp(tok[0], ".word") == 0 || strcmp(tok[0], ".long") == 0) {
             for (i = 1; i < n; i = i + 1) {
-                v = parse_num(tok[i], &ok);
+                v = parse_num_or_abs(tok[i], &ok);
                 if (ok) { if (emit32(v) != 0) return -1; }
                 else { if (add_reloc(S32O_REL_32, cur_off(), tok[i]) != 0) return -1; if (emit32(0) != 0) return -1; }
             }
             return 0;
         }
+        if (strcmp(tok[0], ".quad") == 0) {
+            for (i = 1; i < n; i = i + 1) {
+                v = parse_num_or_abs(tok[i], &ok);
+                if (ok) {
+                    lo = v;
+                    if (v < 0) hi = -1;
+                    else hi = 0;
+                    if (emit32(lo) != 0) return -1;
+                    if (emit32(hi) != 0) return -1;
+                } else {
+                    if (add_reloc(S32O_REL_32, cur_off(), tok[i]) != 0) return -1;
+                    if (emit32(0) != 0) return -1;
+                    if (emit32(0) != 0) return -1;
+                }
+            }
+            return 0;
+        }
+        if (strcmp(tok[0], ".equ") == 0 || strcmp(tok[0], ".set") == 0) {
+            if (n != 3) return -1;
+            v = parse_num_or_abs(tok[2], &ok);
+            if (!ok) return -1;
+            li = get_lbl(tok[1]);
+            if (li < 0) return -1;
+            g_lbl_defd[li] = 1;
+            g_lbl_sec[li] = g_sec;
+            g_lbl_val[li] = v;
+            g_lbl_abs[li] = 1;
+            return 0;
+        }
+        if (strcmp(tok[0], ".comm") == 0) {
+            if (n < 3) return -1;
+            cnt = parse_num_or_abs(tok[2], &ok);
+            if (!ok || cnt < 0) return -1;
+            align = 1;
+            if (n >= 4) {
+                align = parse_num_or_abs(tok[3], &ok);
+                if (!ok || align <= 0) return -1;
+            }
+            li = get_lbl(tok[1]);
+            if (li < 0) return -1;
+            while ((g_bsz % align) != 0) {
+                g_bsz = g_bsz + 1;
+                if (g_bsz >= MAX_BSS) return -1;
+            }
+            g_lbl_defd[li] = 1;
+            g_lbl_sec[li] = SEC_BSS;
+            g_lbl_val[li] = g_bsz;
+            g_lbl_abs[li] = 0;
+            g_bsz = g_bsz + cnt;
+            if (g_bsz > MAX_BSS) return -1;
+            return 0;
+        }
         if (strcmp(tok[0], ".space") == 0 || strcmp(tok[0], ".zero") == 0) {
             if (n != 2) return -1;
-            cnt = parse_num(tok[1], &ok);
+            cnt = parse_num_or_abs(tok[1], &ok);
             if (!ok || cnt < 0) return -1;
             for (i = 0; i < cnt; i = i + 1) {
                 if (emit8(0) != 0) return -1;
@@ -426,7 +526,7 @@ int handle(char *line) {
         }
         if (strcmp(tok[0], ".half") == 0 || strcmp(tok[0], ".short") == 0) {
             for (i = 1; i < n; i = i + 1) {
-                v = parse_num(tok[i], &ok);
+                v = parse_num_or_abs(tok[i], &ok);
                 if (!ok) return -1;
                 if (emit8(v & 255) != 0) return -1;
                 if (emit8((v >> 8) & 255) != 0) return -1;
@@ -472,7 +572,7 @@ int handle(char *line) {
         has_lo = 0;
         has_hi = 0;
         if (n != 4) return -1;
-        rd = parse_reg(tok[1]); rs1 = parse_reg(tok[2]); imm = parse_num(tok[3], &ok);
+        rd = parse_reg(tok[1]); rs1 = parse_reg(tok[2]); imm = parse_num_or_abs(tok[3], &ok);
         if (!ok) {
             if (parse_reloc_expr(tok[3], "%lo(", sym, 128)) has_lo = 1;
             else if (parse_reloc_expr(tok[3], "%hi(", sym, 128)) has_hi = 1;
@@ -507,7 +607,7 @@ int handle(char *line) {
         has_lo = 0;
         has_hi = 0;
         if (n != 4) return -1;
-        rs1 = parse_reg(tok[1]); rs2 = parse_reg(tok[2]); imm = parse_num(tok[3], &ok);
+        rs1 = parse_reg(tok[1]); rs2 = parse_reg(tok[2]); imm = parse_num_or_abs(tok[3], &ok);
         if (!ok) {
             if (parse_reloc_expr(tok[3], "%lo(", sym, 128)) has_lo = 1;
             else if (parse_reloc_expr(tok[3], "%hi(", sym, 128)) has_hi = 1;
@@ -555,7 +655,7 @@ int handle(char *line) {
     if (strcmp(tok[0], "lui") == 0) {
         has_hi = 0;
         if (n != 3) return -1;
-        rd = parse_reg(tok[1]); imm = parse_num(tok[2], &ok);
+        rd = parse_reg(tok[1]); imm = parse_num_or_abs(tok[2], &ok);
         if (!ok) {
             if (parse_reloc_expr(tok[2], "%hi(", sym, 128)) {
                 has_hi = 1;
@@ -660,7 +760,7 @@ int handle(char *line) {
 
     if (strcmp(tok[0], "li") == 0) {
         if (n != 3) return -1;
-        rd = parse_reg(tok[1]); imm = parse_num(tok[2], &ok);
+        rd = parse_reg(tok[1]); imm = parse_num_or_abs(tok[2], &ok);
         if (rd < 0 || !ok) return -1;
         if (imm >= -2048 && imm < 2048) return emit32(enc_i(0x10, rd, 0, imm));
         if (emit32(enc_u(0x20, rd, ((imm + 0x800) >> 12) & 0xFFFFF)) != 0) return -1;
@@ -684,6 +784,80 @@ int handle(char *line) {
     }
 
     if (strcmp(tok[0], "ret") == 0) { return emit32(enc_i(0x41, 0, 31, 0)); }
+    if (strcmp(tok[0], "assert_eq") == 0) {
+        if (n != 3) return -1;
+        rs1 = parse_reg(tok[1]); rs2 = parse_reg(tok[2]);
+        if (rs1 < 0 || rs2 < 0) return -1;
+        return emit32(enc_r(0x3F, 0, rs1, rs2));
+    }
+
+    if (strcmp(tok[0], "fadd.s") == 0 || strcmp(tok[0], "fsub.s") == 0 ||
+        strcmp(tok[0], "fmul.s") == 0 || strcmp(tok[0], "fdiv.s") == 0 ||
+        strcmp(tok[0], "fsqrt.s") == 0 || strcmp(tok[0], "feq.s") == 0 ||
+        strcmp(tok[0], "flt.s") == 0 || strcmp(tok[0], "fle.s") == 0 ||
+        strcmp(tok[0], "fcvt.w.s") == 0 || strcmp(tok[0], "fcvt.wu.s") == 0 ||
+        strcmp(tok[0], "fcvt.s.w") == 0 || strcmp(tok[0], "fcvt.s.wu") == 0 ||
+        strcmp(tok[0], "fneg.s") == 0 || strcmp(tok[0], "fabs.s") == 0 ||
+        strcmp(tok[0], "fadd.d") == 0 || strcmp(tok[0], "fsub.d") == 0 ||
+        strcmp(tok[0], "fmul.d") == 0 || strcmp(tok[0], "fdiv.d") == 0 ||
+        strcmp(tok[0], "fsqrt.d") == 0 || strcmp(tok[0], "feq.d") == 0 ||
+        strcmp(tok[0], "flt.d") == 0 || strcmp(tok[0], "fle.d") == 0 ||
+        strcmp(tok[0], "fcvt.w.d") == 0 || strcmp(tok[0], "fcvt.wu.d") == 0 ||
+        strcmp(tok[0], "fcvt.d.w") == 0 || strcmp(tok[0], "fcvt.d.wu") == 0 ||
+        strcmp(tok[0], "fcvt.d.s") == 0 || strcmp(tok[0], "fcvt.s.d") == 0 ||
+        strcmp(tok[0], "fneg.d") == 0 || strcmp(tok[0], "fabs.d") == 0 ||
+        strcmp(tok[0], "fcvt.l.s") == 0 || strcmp(tok[0], "fcvt.lu.s") == 0 ||
+        strcmp(tok[0], "fcvt.s.l") == 0 || strcmp(tok[0], "fcvt.s.lu") == 0 ||
+        strcmp(tok[0], "fcvt.l.d") == 0 || strcmp(tok[0], "fcvt.lu.d") == 0 ||
+        strcmp(tok[0], "fcvt.d.l") == 0 || strcmp(tok[0], "fcvt.d.lu") == 0) {
+        rs2 = 0;
+        if (n != 3 && n != 4) return -1;
+        rd = parse_reg(tok[1]); rs1 = parse_reg(tok[2]);
+        if (rd < 0 || rs1 < 0) return -1;
+        if (n == 4) {
+            rs2 = parse_reg(tok[3]);
+            if (rs2 < 0) return -1;
+        }
+        if (strcmp(tok[0], "fadd.s") == 0) op = 0x53;
+        else if (strcmp(tok[0], "fsub.s") == 0) op = 0x54;
+        else if (strcmp(tok[0], "fmul.s") == 0) op = 0x55;
+        else if (strcmp(tok[0], "fdiv.s") == 0) op = 0x56;
+        else if (strcmp(tok[0], "fsqrt.s") == 0) op = 0x57;
+        else if (strcmp(tok[0], "feq.s") == 0) op = 0x58;
+        else if (strcmp(tok[0], "flt.s") == 0) op = 0x59;
+        else if (strcmp(tok[0], "fle.s") == 0) op = 0x5A;
+        else if (strcmp(tok[0], "fcvt.w.s") == 0) op = 0x5B;
+        else if (strcmp(tok[0], "fcvt.wu.s") == 0) op = 0x5C;
+        else if (strcmp(tok[0], "fcvt.s.w") == 0) op = 0x5D;
+        else if (strcmp(tok[0], "fcvt.s.wu") == 0) op = 0x5E;
+        else if (strcmp(tok[0], "fneg.s") == 0) op = 0x5F;
+        else if (strcmp(tok[0], "fabs.s") == 0) op = 0x60;
+        else if (strcmp(tok[0], "fadd.d") == 0) op = 0x61;
+        else if (strcmp(tok[0], "fsub.d") == 0) op = 0x62;
+        else if (strcmp(tok[0], "fmul.d") == 0) op = 0x63;
+        else if (strcmp(tok[0], "fdiv.d") == 0) op = 0x64;
+        else if (strcmp(tok[0], "fsqrt.d") == 0) op = 0x65;
+        else if (strcmp(tok[0], "feq.d") == 0) op = 0x66;
+        else if (strcmp(tok[0], "flt.d") == 0) op = 0x67;
+        else if (strcmp(tok[0], "fle.d") == 0) op = 0x68;
+        else if (strcmp(tok[0], "fcvt.w.d") == 0) op = 0x69;
+        else if (strcmp(tok[0], "fcvt.wu.d") == 0) op = 0x6A;
+        else if (strcmp(tok[0], "fcvt.d.w") == 0) op = 0x6B;
+        else if (strcmp(tok[0], "fcvt.d.wu") == 0) op = 0x6C;
+        else if (strcmp(tok[0], "fcvt.d.s") == 0) op = 0x6D;
+        else if (strcmp(tok[0], "fcvt.s.d") == 0) op = 0x6E;
+        else if (strcmp(tok[0], "fneg.d") == 0) op = 0x6F;
+        else if (strcmp(tok[0], "fabs.d") == 0) op = 0x70;
+        else if (strcmp(tok[0], "fcvt.l.s") == 0) op = 0x71;
+        else if (strcmp(tok[0], "fcvt.lu.s") == 0) op = 0x72;
+        else if (strcmp(tok[0], "fcvt.s.l") == 0) op = 0x73;
+        else if (strcmp(tok[0], "fcvt.s.lu") == 0) op = 0x74;
+        else if (strcmp(tok[0], "fcvt.l.d") == 0) op = 0x75;
+        else if (strcmp(tok[0], "fcvt.lu.d") == 0) op = 0x76;
+        else if (strcmp(tok[0], "fcvt.d.l") == 0) op = 0x77;
+        else op = 0x78;
+        return emit32(enc_r(op, rd, rs1, rs2));
+    }
 
     return -1;
 }
