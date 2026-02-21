@@ -180,6 +180,7 @@ static void bg_init(void) {
     bg_add_pat(BG_REG, HI_NEG,  BG_REG, -1, 1);
     bg_add_pat(BG_REG, HI_NOT,  BG_REG, -1, 1);
     bg_add_pat(BG_REG, HI_BNOT, BG_REG, -1, 2);
+    bg_add_pat(BG_IMM, HI_COPY, BG_IMM, -1, 0);
     bg_add_pat(BG_REG, HI_COPY, BG_REG, -1, 0);
 
     /* Control flow */

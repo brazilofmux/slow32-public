@@ -540,39 +540,71 @@ static void hcg_inst(int idx) {
         return;
     }
 
-    /* ADD/SUB with immediate child selected by BURG */
-    if (k == HI_ADD && pat >= 0 &&
-        ((lnt == BG_REG && rnt == BG_IMM) || (lnt == BG_IMM && rnt == BG_REG))) {
-        rd = hcg_dst(idx);
-        if (lnt == BG_REG) {
-            rs1 = hcg_src(s1, 1);
-            off = h_val[s2];
-        } else {
-            rs1 = hcg_src(s2, 1);
-            off = h_val[s1];
+    /* ADD/SUB with immediate operand */
+    if (k == HI_ADD) {
+        int imm_ok;
+        int base_inst;
+        imm_ok = 0;
+        base_inst = -1;
+        if (hcg_const_imm_inst(s2, &off)) {
+            imm_ok = 1;
+            base_inst = s1;
+        } else if (hcg_const_imm_inst(s1, &off)) {
+            imm_ok = 1;
+            base_inst = s2;
+        } else if (pat >= 0 &&
+                   ((lnt == BG_REG && rnt == BG_IMM) || (lnt == BG_IMM && rnt == BG_REG))) {
+            imm_ok = 1;
+            if (lnt == BG_REG) {
+                base_inst = s1;
+                off = h_val[s2];
+            } else {
+                base_inst = s2;
+                off = h_val[s1];
+            }
         }
-        if (off >= -2048 && off <= 2047) {
-            cg_rri("addi", rd, rs1, off);
-        } else {
-            hcg_li(2, off);
-            cg_rrr("add", rd, rs1, 2);
+        if (imm_ok) {
+            rd = hcg_dst(idx);
+            rs1 = hcg_src(base_inst, 1);
+            if (off >= -2048 && off <= 2047) {
+                cg_rri("addi", rd, rs1, off);
+            } else {
+                hcg_li(2, off);
+                cg_rrr("add", rd, rs1, 2);
+            }
+            hcg_maybe_spill(idx);
+            return;
         }
-        hcg_maybe_spill(idx);
-        return;
     }
 
-    if (k == HI_SUB && pat >= 0 && lnt == BG_REG && rnt == BG_IMM) {
-        rd = hcg_dst(idx);
-        rs1 = hcg_src(s1, 1);
-        off = 0 - h_val[s2];
-        if (off >= -2048 && off <= 2047) {
-            cg_rri("addi", rd, rs1, off);
-        } else {
-            hcg_li(2, h_val[s2]);
-            cg_rrr("sub", rd, rs1, 2);
+    if (k == HI_SUB) {
+        int imm_ok;
+        imm_ok = 0;
+        if (hcg_const_imm_inst(s2, &off)) {
+            imm_ok = 1;
+        } else if (pat >= 0 && lnt == BG_REG && rnt == BG_IMM) {
+            imm_ok = 1;
+            off = h_val[s2];
         }
-        hcg_maybe_spill(idx);
-        return;
+        if (imm_ok) {
+            rd = hcg_dst(idx);
+            rs1 = hcg_src(s1, 1);
+            if (off == -2147483647 - 1) {
+                /* cannot negate INT_MIN in 32-bit signed C */
+                hcg_li(2, off);
+                cg_rrr("sub", rd, rs1, 2);
+            } else {
+                off = 0 - off;
+                if (off >= -2048 && off <= 2047) {
+                    cg_rri("addi", rd, rs1, off);
+                } else {
+                    hcg_li(2, 0 - off);
+                    cg_rrr("sub", rd, rs1, 2);
+                }
+            }
+            hcg_maybe_spill(idx);
+            return;
+        }
     }
 
     if (k == HI_AND || k == HI_OR || k == HI_XOR) {
@@ -667,8 +699,10 @@ static void hcg_inst(int idx) {
 
     /* Binary arithmetic/logic/comparison */
     if (k >= HI_ADD && k <= HI_SGEU) {
-        rs1 = hcg_src(s1, 1);
-        rs2 = hcg_src(s2, 2);
+        if (hcg_const_imm_inst(s1, &off) && off == 0) rs1 = 0;
+        else rs1 = hcg_src(s1, 1);
+        if (hcg_const_imm_inst(s2, &off) && off == 0) rs2 = 0;
+        else rs2 = hcg_src(s2, 2);
         rd = hcg_dst(idx);
         cg_rrr(hcg_binop_name(k), rd, rs1, rs2);
         hcg_maybe_spill(idx);
@@ -923,6 +957,11 @@ static void hcg_inst(int idx) {
     /* COPY */
     if (k == HI_COPY) {
         rd = hcg_dst(idx);
+        if (hcg_const_imm_inst(s1, &off)) {
+            hcg_li(rd, off);
+            hcg_maybe_spill(idx);
+            return;
+        }
         rs1 = hcg_src(s1, 1);
         if (rd != rs1) {
             cg_rri("addi", rd, rs1, 0);
