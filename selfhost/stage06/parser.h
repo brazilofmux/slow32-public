@@ -17,7 +17,7 @@ static int cg_label(void) {
 
 /* --- Parser state --- */
 #define P_MAX_LOCALS  128
-#define P_MAX_GLOBALS 512
+#define P_MAX_GLOBALS 8192
 #define PS_MAX_CONSTS 512
 
 static char *ps_lname[P_MAX_LOCALS];  /* local var names */
