@@ -415,13 +415,15 @@ static char *hcg_binop_name(int k) {
     return "add";
 }
 
-/* --- Generate code for one HIR instruction --- */
+/* --- Generate code for one HIR instruction (BURG-dispatched) --- */
 
 static void hcg_inst(int idx) {
     int k;
     int ty;
     int s1;
     int s2;
+    int pat;
+    int lnt;
     int nargs;
     int regc;
     int base;
@@ -431,18 +433,27 @@ static void hcg_inst(int idx) {
     int rs1;
     int rs2;
     int rd;
-    int src;
     int vreg;
     int cond;
 
     k = h_kind[idx];
+    if (k == HI_NOP) return;
+    if (hi_is_remat(k)) return;
+    if (k == HI_PHI) return;
+
     ty = h_ty[idx];
     s1 = h_src1[idx];
     s2 = h_src2[idx];
+    pat = bg_sel[idx];
 
-    if (k == HI_NOP || k == HI_ICONST || k == HI_ALLOCA ||
-        k == HI_GADDR || k == HI_SADDR || k == HI_FADDR) {
-        return;
+    /* Determine left child NT from selected pattern.
+     * If pat < 0 (BURG skipped or chain rule), fall back to
+     * checking h_kind[s1] directly (same as original codegen). */
+    lnt = -1;
+    if (pat >= 0) {
+        lnt = bg_plnt[pat];
+    } else if (s1 >= 0 && h_kind[s1] == HI_ALLOCA) {
+        lnt = BG_FADDR;
     }
 
     if (k == HI_PARAM) {
@@ -490,11 +501,12 @@ static void hcg_inst(int idx) {
         return;
     }
 
-    /* Load */
+    /* Load — dispatched by BURG left-child NT */
     if (k == HI_LOAD) {
         rd = hcg_dst(idx);
-        if (s1 >= 0 && h_kind[s1] == HI_ALLOCA) {
-            off = h_val[s1];
+        if (lnt == BG_FADDR) {
+            /* LOAD(faddr): direct load from fp + offset */
+            off = bg_faddr_offset(s1);
             if (off >= -2048 && off <= 2047) {
                 hcg_load_off(rd, 30, off, ty);
             } else {
@@ -503,19 +515,19 @@ static void hcg_inst(int idx) {
                 hcg_load_mem(rd, rd, ty);
             }
         } else {
+            /* LOAD(reg): load from register */
             rs1 = hcg_src(s1, 1);
-            /* If rd == rs1 (both r1 when spilled), load overwrites address
-             * only after reading it — this is fine for ldw rN, rN, 0. */
             hcg_load_mem(rd, rs1, ty);
         }
         hcg_maybe_spill(idx);
         return;
     }
 
-    /* Store */
+    /* Store — dispatched by BURG left-child NT */
     if (k == HI_STORE) {
-        if (s1 >= 0 && h_kind[s1] == HI_ALLOCA) {
-            off = h_val[s1];
+        if (lnt == BG_FADDR) {
+            /* STORE(faddr, reg): direct store to fp + offset */
+            off = bg_faddr_offset(s1);
             vreg = hcg_src(s2, 2);
             if (off >= -2048 && off <= 2047) {
                 hcg_store_off(30, vreg, off, ty);
@@ -525,6 +537,7 @@ static void hcg_inst(int idx) {
                 hcg_store_mem(1, vreg, ty);
             }
         } else {
+            /* STORE(reg, reg) or STORE(saddr, reg) */
             rs1 = hcg_src(s1, 1);
             vreg = hcg_src(s2, 2);
             hcg_store_mem(rs1, vreg, ty);
@@ -532,11 +545,12 @@ static void hcg_inst(int idx) {
         return;
     }
 
-    /* ADDI (src1 + immediate) */
+    /* ADDI — dispatched by BURG left-child NT */
     if (k == HI_ADDI) {
         rd = hcg_dst(idx);
-        if (s1 >= 0 && h_kind[s1] == HI_ALLOCA) {
-            off = h_val[s1] + h_val[idx];
+        if (lnt == BG_FADDR) {
+            /* ADDI(faddr, imm): combine with frame offset */
+            off = bg_faddr_offset(s1) + h_val[idx];
             if (off >= -2048 && off <= 2047) {
                 cg_rri("addi", rd, 30, off);
             } else {
@@ -544,6 +558,7 @@ static void hcg_inst(int idx) {
                 cg_rrr("add", rd, 30, rd);
             }
         } else {
+            /* ADDI(reg, imm) */
             off = h_val[idx];
             rs1 = hcg_src(s1, 1);
             if (off >= -2048 && off <= 2047) {
@@ -602,7 +617,6 @@ static void hcg_inst(int idx) {
     if (k == HI_CALL) {
         nargs = h_val[idx];
         base = h_cbase[idx];
-        /* Push all args right-to-left so arg0 is at lowest stack address. */
         i = nargs - 1;
         while (i >= 0) {
             hcg_into(1, h_carg[base + i]);
@@ -610,7 +624,6 @@ static void hcg_inst(int idx) {
             i = i - 1;
         }
 
-        /* Load first 8 args into r3-r10; leave overflow args on stack. */
         regc = nargs;
         if (regc > 8) regc = 8;
         i = 0;
@@ -630,12 +643,10 @@ static void hcg_inst(int idx) {
         cg_s(h_name[idx]);
         cg_c(10);
 
-        /* Clean up overflow stack args (if any). */
         if (nargs > regc) {
             cg_rri("addi", 29, 29, (nargs - regc) * 4);
         }
 
-        /* Move result from r1 to allocated register or spill */
         rd = hcg_dst(idx);
         if (rd != 1) {
             cg_rri("addi", rd, 1, 0);
@@ -650,11 +661,9 @@ static void hcg_inst(int idx) {
         nargs = h_val[idx];
         base = h_cbase[idx];
 
-        /* Push callee address first. */
         hcg_into(1, s1);
         cg_s("    addi r29, r29, -4\n    stw r29, r1, 0\n");
 
-        /* Push args right-to-left so arg0 is at lowest stack address. */
         i = nargs - 1;
         while (i >= 0) {
             hcg_into(1, h_carg[base + i]);
@@ -662,7 +671,6 @@ static void hcg_inst(int idx) {
             i = i - 1;
         }
 
-        /* Load first 8 args into r3-r10; leave overflow args on stack. */
         regc = nargs;
         if (regc > 8) regc = 8;
         i = 0;
@@ -678,16 +686,13 @@ static void hcg_inst(int idx) {
             cg_rri("addi", 29, 29, regc * 4);
         }
 
-        /* Callee is after overflow args. */
         cg_s("    ldw r2, r29, ");
         cg_n((nargs - regc) * 4);
         cg_c(10);
         cg_s("    jalr r31, r2, 0\n");
 
-        /* Pop overflow args and callee slot. */
         cg_rri("addi", 29, 29, (nargs - regc + 1) * 4);
 
-        /* Move result from r1 to allocated register or spill */
         rd = hcg_dst(idx);
         if (rd != 1) {
             cg_rri("addi", rd, 1, 0);
@@ -705,11 +710,6 @@ static void hcg_inst(int idx) {
             cg_rri("addi", rd, rs1, 0);
         }
         hcg_maybe_spill(idx);
-        return;
-    }
-
-    /* PHI — result is written by hcg_phi_copies, no code here */
-    if (k == HI_PHI) {
         return;
     }
 }
@@ -808,6 +808,9 @@ static void hcg_func(Node *fn) {
 
     /* Loop-invariant code motion */
     hir_licm();
+
+    /* BURG instruction selection: labels + selects patterns */
+    hir_burg();
 
     /* Register allocation: assigns ra_reg[], ra_spill_off[],
      * callee-save info, and updates hl_temp_stack */

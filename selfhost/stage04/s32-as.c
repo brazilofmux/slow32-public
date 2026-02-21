@@ -7,7 +7,7 @@
 #define MAX_SYM 8192
 #define MAX_TEXT 1048576
 #define MAX_DATA 1048576
-#define MAX_BSS 8388608
+#define MAX_BSS 16777216
 #define MAX_STR 65536
 #define LBL_POOL_SZ 262144
 
