@@ -68,7 +68,7 @@ int stderr;
 #define OP_STH 0x39
 #define OP_STW 0x3A
 
-#define S_MASK 0xFE000F80
+#define S_MASK 0x01FFF07F
 #define B_MASK 0x01FFF07F
 
 #define STACK_BASE    0x0FFFFFF0

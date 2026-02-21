@@ -1540,7 +1540,7 @@ static void apply_relocations(linker_state_t *ld) {
                     // SLOW-32 store opcodes: STB=0x38, STH=0x39, STW=0x3A
                     if (opcode == 0x38 || opcode == 0x39 || opcode == 0x3A) {
                         // S-type: imm[11:5] at bits 31:25, imm[4:0] at bits 11:7
-                        *target = (*target & 0xFE000F80)
+                        *target = (*target & 0x01FFF07F)
                                 | ((imm & 0x1F) << 7)
                                 | (((imm >> 5) & 0x7F) << 25);
                     } else {
@@ -1679,7 +1679,7 @@ static void apply_relocations(linker_state_t *ld) {
                         // Store instructions (S-type format)
                         uint32_t imm11_5 = (imm >> 5) & 0x7F;
                         uint32_t imm4_0 = imm & 0x1F;
-                        *target = (*target & 0xFE000F80) | (imm11_5 << 25) | (imm4_0 << 7);
+                        *target = (*target & 0x01FFF07F) | (imm11_5 << 25) | (imm4_0 << 7);
                     }
                     
                     if (ld->verbose) {

@@ -359,7 +359,17 @@ int main(int argc, char **argv) {
     fputs(" instructions hoisted\n", stderr);
     fputs("hir_burg: ", stderr);
     fput_uint(stderr, bg_stat_folded);
-    fputs(" instructions folded\n", stderr);
+    fputs(" folded, ", stderr);
+    fput_uint(stderr, bg_stat_cand);
+    fputs(" cand, rej: uses=", stderr);
+    fput_uint(stderr, bg_stat_rej_uses);
+    fputs(" remat=", stderr);
+    fput_uint(stderr, bg_stat_rej_remat);
+    fputs(" blk=", stderr);
+    fput_uint(stderr, bg_stat_rej_blk);
+    fputs(" cost=", stderr);
+    fput_uint(stderr, bg_stat_rej_cost);
+    fputs("\n", stderr);
 
     return 0;
 }

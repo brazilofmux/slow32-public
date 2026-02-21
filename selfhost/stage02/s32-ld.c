@@ -86,7 +86,7 @@ void *memset(void *s, int c, size_t n);
 #define OP_STB  0x38U
 #define OP_STH  0x39U
 #define OP_STW  0x3AU
-#define S_MASK  0xFE000F80U
+#define S_MASK  0x01FFF07FU
 #define B_MASK  0x01FFF07FU
 
 /* Binary layout sizes */

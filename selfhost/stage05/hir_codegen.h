@@ -259,6 +259,49 @@ static void hcg_maybe_spill(int idx) {
 /* --- Typed load/store helpers --- */
 
 /* Emit load from [areg+0] into dreg with appropriate width */
+/* Emit symbol name for SADDR/GADDR/FADDR instruction */
+static void hcg_emit_sym(int inst) {
+    if (h_kind[inst] == HI_SADDR) {
+        cg_s(".LS");
+        cg_n(h_val[inst]);
+    } else {
+        cg_s(h_name[inst]);
+    }
+}
+
+/* Emit load from symbol address: lui r1, %hi(sym); ldX rd, r1, %lo(sym) */
+static void hcg_load_saddr(int dreg, int sinst, int ty) {
+    cg_s("    lui r1, %hi(");
+    hcg_emit_sym(sinst);
+    cg_s(")\n");
+    if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
+        if (ty & TY_UNSIGNED) cg_s("    ldbu r");
+        else                  cg_s("    ldb r");
+    } else {
+        cg_s("    ldw r");
+    }
+    cg_n(dreg);
+    cg_s(", r1, %lo(");
+    hcg_emit_sym(sinst);
+    cg_s(")\n");
+}
+
+/* Emit store to symbol address: lui r1, %hi(sym); stX r1, vreg, %lo(sym) */
+static void hcg_store_saddr(int vreg, int sinst, int ty) {
+    cg_s("    lui r1, %hi(");
+    hcg_emit_sym(sinst);
+    cg_s(")\n");
+    if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
+        cg_s("    stb r1, r");
+    } else {
+        cg_s("    stw r1, r");
+    }
+    cg_n(vreg);
+    cg_s(", %lo(");
+    hcg_emit_sym(sinst);
+    cg_s(")\n");
+}
+
 static void hcg_load_mem(int dreg, int areg, int ty) {
     if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
         if (ty & TY_UNSIGNED) cg_s("    ldbu r");
@@ -506,7 +549,7 @@ static void hcg_inst(int idx) {
         rd = hcg_dst(idx);
         if (lnt == BG_FADDR) {
             /* LOAD(faddr): direct load from fp + offset */
-            off = bg_faddr_offset(s1);
+            off = bg_foff[s1];
             if (off >= -2048 && off <= 2047) {
                 hcg_load_off(rd, 30, off, ty);
             } else {
@@ -514,6 +557,9 @@ static void hcg_inst(int idx) {
                 cg_rrr("add", rd, 30, rd);
                 hcg_load_mem(rd, rd, ty);
             }
+        } else if (lnt == BG_SADDR) {
+            /* LOAD(saddr): lui + ldw with %lo */
+            hcg_load_saddr(rd, s1, ty);
         } else {
             /* LOAD(reg): load from register */
             rs1 = hcg_src(s1, 1);
@@ -527,7 +573,7 @@ static void hcg_inst(int idx) {
     if (k == HI_STORE) {
         if (lnt == BG_FADDR) {
             /* STORE(faddr, reg): direct store to fp + offset */
-            off = bg_faddr_offset(s1);
+            off = bg_foff[s1];
             vreg = hcg_src(s2, 2);
             if (off >= -2048 && off <= 2047) {
                 hcg_store_off(30, vreg, off, ty);
@@ -536,8 +582,12 @@ static void hcg_inst(int idx) {
                 cg_rrr("add", 1, 30, 1);
                 hcg_store_mem(1, vreg, ty);
             }
+        } else if (lnt == BG_SADDR) {
+            /* STORE(saddr, reg): lui + stw with %lo */
+            vreg = hcg_src(s2, 2);
+            hcg_store_saddr(vreg, s1, ty);
         } else {
-            /* STORE(reg, reg) or STORE(saddr, reg) */
+            /* STORE(reg, reg) */
             rs1 = hcg_src(s1, 1);
             vreg = hcg_src(s2, 2);
             hcg_store_mem(rs1, vreg, ty);
@@ -549,8 +599,8 @@ static void hcg_inst(int idx) {
     if (k == HI_ADDI) {
         rd = hcg_dst(idx);
         if (lnt == BG_FADDR) {
-            /* ADDI(faddr, imm): combine with frame offset */
-            off = bg_faddr_offset(s1) + h_val[idx];
+            /* ADDI(faddr, imm): combined offset precomputed */
+            off = bg_foff[idx];
             if (off >= -2048 && off <= 2047) {
                 cg_rri("addi", rd, 30, off);
             } else {

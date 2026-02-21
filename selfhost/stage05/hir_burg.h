@@ -57,8 +57,18 @@ static int bg_rule[BG_COST_SZ];
 /* Selection output */
 static int bg_sel[HIR_MAX_INST];
 
+/* Folding */
+static int bg_fold[HIR_MAX_INST];  /* 1 = folded into parent */
+static int bg_uses[HIR_MAX_INST];  /* use count per value */
+static int bg_foff[HIR_MAX_INST];  /* precomputed faddr offset */
+
 /* Stats */
 static int bg_stat_folded;
+static int bg_stat_cand;
+static int bg_stat_rej_uses;
+static int bg_stat_rej_remat;
+static int bg_stat_rej_blk;
+static int bg_stat_rej_cost;
 
 /* Init flag */
 static int bg_inited;
@@ -240,6 +250,88 @@ static int bg_addi_faddr_ok(int idx) {
     return (off >= -2048 && off <= 2047);
 }
 
+/* --- Use counting --- */
+
+static void bg_count_uses(void) {
+    int i;
+    int j;
+    int k;
+    int base;
+    int cnt;
+
+    i = 0;
+    while (i < h_ninst) {
+        bg_uses[i] = 0;
+        i = i + 1;
+    }
+
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_NOP) { i = i + 1; continue; }
+
+        if (h_src1[i] >= 0) bg_uses[h_src1[i]] = bg_uses[h_src1[i]] + 1;
+        if (h_src2[i] >= 0) bg_uses[h_src2[i]] = bg_uses[h_src2[i]] + 1;
+
+        /* CALL/CALLP args */
+        if (k == HI_CALL || k == HI_CALLP) {
+            base = h_cbase[i];
+            cnt = h_val[i];
+            j = 0;
+            while (j < cnt) {
+                if (h_carg[base + j] >= 0) {
+                    bg_uses[h_carg[base + j]] = bg_uses[h_carg[base + j]] + 1;
+                }
+                j = j + 1;
+            }
+        }
+
+        /* PHI args */
+        if (k == HI_PHI) {
+            base = h_pbase[i];
+            cnt = h_pcnt[i];
+            j = 0;
+            while (j < cnt) {
+                if (h_pval[base + j] >= 0) {
+                    bg_uses[h_pval[base + j]] = bg_uses[h_pval[base + j]] + 1;
+                }
+                j = j + 1;
+            }
+        }
+
+        i = i + 1;
+    }
+}
+
+/* --- Precompute frame-relative offsets --- */
+
+static void bg_compute_foff(void) {
+    int i;
+    int k;
+    int s1;
+    int sk;
+
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_ALLOCA) {
+            bg_foff[i] = h_val[i];
+        } else if (k == HI_ADDI) {
+            s1 = h_src1[i];
+            sk = -1;
+            if (s1 >= 0) sk = h_kind[s1];
+            if (sk == HI_ALLOCA || sk == HI_ADDI) {
+                bg_foff[i] = bg_foff[s1] + h_val[i];
+            } else {
+                bg_foff[i] = 0;
+            }
+        } else {
+            bg_foff[i] = 0;
+        }
+        i = i + 1;
+    }
+}
+
 /* --- Bottom-up labeling --- */
 
 static void bg_label(void) {
@@ -345,14 +437,21 @@ static void bg_select(void) {
     int i;
     int k;
     int nt;
+    int pat;
+    int lnt;
+    int rnt;
+    int s1;
+    int s2;
 
+    /* Phase 1: Init and select all patterns */
     i = 0;
     while (i < h_ninst) {
         bg_sel[i] = -1;
+        bg_fold[i] = 0;
         i = i + 1;
     }
 
-    bg_stat_folded = 0;
+    /* Note: stats accumulate across all functions (not reset here) */
 
     i = 0;
     while (i < h_ninst) {
@@ -368,6 +467,54 @@ static void bg_select(void) {
         bg_sel[i] = bg_rule[i * BG_NNT + nt];
         i = i + 1;
     }
+
+    /* Phase 2: Fold single-use children into parents */
+    i = 0;
+    while (i < h_ninst) {
+        pat = bg_sel[i];
+        if (pat < 0) { i = i + 1; continue; }
+
+        lnt = bg_plnt[pat];
+        s1 = h_src1[i];
+
+        /* Fold left child if: non-REG NT, single use, same block, viable */
+        if (lnt >= 0 && lnt != BG_REG && s1 >= 0 && !bg_fold[s1]) {
+            bg_stat_cand = bg_stat_cand + 1;
+            if (hi_is_remat(h_kind[s1])) {
+                bg_stat_rej_remat = bg_stat_rej_remat + 1;
+            } else if (bg_uses[s1] != 1) {
+                bg_stat_rej_uses = bg_stat_rej_uses + 1;
+            } else if (h_blk[s1] != h_blk[i]) {
+                bg_stat_rej_blk = bg_stat_rej_blk + 1;
+            } else if (bg_cost[s1 * BG_NNT + lnt] >= BG_INF) {
+                bg_stat_rej_cost = bg_stat_rej_cost + 1;
+            } else if (h_kind[s1] != HI_NOP) {
+                bg_fold[s1] = 1;
+                bg_sel[s1] = -1;
+                h_kind[s1] = HI_NOP;
+                bg_stat_folded = bg_stat_folded + 1;
+            }
+        }
+
+        rnt = bg_prnt[pat];
+        s2 = h_src2[i];
+
+        /* Fold right child (rare, but check for completeness) */
+        if (rnt >= 0 && rnt != BG_REG && s2 >= 0 && !bg_fold[s2]) {
+            if (bg_uses[s2] == 1
+                && !hi_is_remat(h_kind[s2])
+                && h_kind[s2] != HI_NOP
+                && h_blk[s2] == h_blk[i]
+                && bg_cost[s2 * BG_NNT + rnt] < BG_INF) {
+                bg_fold[s2] = 1;
+                bg_sel[s2] = -1;
+                h_kind[s2] = HI_NOP;
+                bg_stat_folded = bg_stat_folded + 1;
+            }
+        }
+
+        i = i + 1;
+    }
 }
 
 /* --- Entry point --- */
@@ -381,17 +528,23 @@ static void hir_burg(void) {
         bg_inited = 1;
     }
 
+    /* Always precompute foff (needed by codegen even in fallback) */
+    bg_compute_foff();
+
     /* Skip BURG for functions with too many instructions */
     if (h_ninst > BG_MAX_INST) {
         /* Set bg_sel to -1: codegen falls back to h_kind dispatch */
         i = 0;
         while (i < h_ninst) {
             bg_sel[i] = -1;
+            bg_fold[i] = 0;
             i = i + 1;
         }
         return;
     }
 
     bg_label();
-    bg_select();
+    bg_count_uses();
+    /* bg_compute_foff already called above (before any NOP changes) */
+    bg_select();  /* Phase 2 of select may NOP folded instructions */
 }

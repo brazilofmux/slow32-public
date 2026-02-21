@@ -473,7 +473,7 @@ int handle(char *line) {
         has_hi = 0;
         if (n != 4) return -1;
         rd = parse_reg(tok[1]); rs1 = parse_reg(tok[2]); imm = parse_num(tok[3], &ok);
-        if (!ok && (strcmp(tok[0], "addi") == 0 || strcmp(tok[0], "andi") == 0 || strcmp(tok[0], "ori") == 0 || strcmp(tok[0], "xori") == 0)) {
+        if (!ok) {
             if (parse_reloc_expr(tok[3], "%lo(", sym, 128)) has_lo = 1;
             else if (parse_reloc_expr(tok[3], "%hi(", sym, 128)) has_hi = 1;
             else return -1;
@@ -504,13 +504,26 @@ int handle(char *line) {
     }
 
     if (strcmp(tok[0], "stw") == 0 || strcmp(tok[0], "sth") == 0 || strcmp(tok[0], "stb") == 0) {
+        has_lo = 0;
+        has_hi = 0;
         if (n != 4) return -1;
         rs1 = parse_reg(tok[1]); rs2 = parse_reg(tok[2]); imm = parse_num(tok[3], &ok);
+        if (!ok) {
+            if (parse_reloc_expr(tok[3], "%lo(", sym, 128)) has_lo = 1;
+            else if (parse_reloc_expr(tok[3], "%hi(", sym, 128)) has_hi = 1;
+            else return -1;
+            imm = 0;
+            ok = 1;
+        }
         if (rs1 < 0 || rs2 < 0 || !ok) return -1;
         if (strcmp(tok[0], "stw") == 0) op = 0x3A;
         else if (strcmp(tok[0], "sth") == 0) op = 0x39;
         else op = 0x38;
-        return emit32(enc_s(op, rs1, rs2, imm));
+        if (emit32(enc_s(op, rs1, rs2, imm)) != 0) return -1;
+        off = cur_off() - 4;
+        if (has_lo) return add_reloc(S32O_REL_LO12, off, sym);
+        if (has_hi) return add_reloc(S32O_REL_HI20, off, sym);
+        return 0;
     }
 
     if (strcmp(tok[0], "beq") == 0 || strcmp(tok[0], "bne") == 0 ||
