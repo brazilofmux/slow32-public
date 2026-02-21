@@ -154,6 +154,8 @@ for name in string_extra string_more ctype convert stdio malloc; do
 done
 compile_gen1 "$LIBC_DIR/start.c" "$WORKDIR/g1_start.s" "$WORKDIR/g1_start.cc.log"
 assemble "$WORKDIR/g1_start.s" "$LIBC_OUT_DIR/start.s32o" "$WORKDIR/g1_start.as.log"
+compile_gen1 "$LIBC_DIR/printf_varargs.c" "$WORKDIR/g1_printf_varargs.s" "$WORKDIR/g1_printf_varargs.cc.log"
+assemble "$WORKDIR/g1_printf_varargs.s" "$LIBC_OUT_DIR/printf_varargs.s32o" "$WORKDIR/g1_printf_varargs.as.log"
 
 # Runtime asm objects are ABI-neutral (hand-written assembly)
 cp "$WORKDIR/crt0.s32o" "$LIBC_OUT_DIR/crt0.s32o"
@@ -178,7 +180,8 @@ link_exe "$WORKDIR/smoke.link.log" -o "$WORKDIR/smoke.s32x" --mmio 64K \
     "$LIBC_OUT_DIR/mmio_no_start.s32o" \
     "$LIBC_OUT_DIR/string_extra.s32o" "$LIBC_OUT_DIR/string_more.s32o" \
     "$LIBC_OUT_DIR/ctype.s32o" "$LIBC_OUT_DIR/convert.s32o" \
-    "$LIBC_OUT_DIR/stdio.s32o" "$LIBC_OUT_DIR/malloc.s32o"
+    "$LIBC_OUT_DIR/stdio.s32o" "$LIBC_OUT_DIR/malloc.s32o" \
+    "$LIBC_OUT_DIR/printf_varargs.s32o"
 
 set +e
 timeout 30 "$EMU" "$WORKDIR/smoke.s32x" > "$WORKDIR/smoke.out" 2>&1

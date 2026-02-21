@@ -355,7 +355,7 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     echo "=== Step 2b: Recompile libc with gen1_cc (HIR/SSA ABI) ==="
     EXEC_TIMEOUT=300
 
-    for name in string_extra string_more ctype convert stdio malloc; do
+    for name in string_extra string_more ctype convert stdio malloc printf_varargs; do
         run_exe "$GEN1_CC_EXE" "$WORKDIR/g1_${name}.cc.log" "$LIBC_DIR/${name}.c" "$WORKDIR/g1_${name}.s"
         if [[ ! -s "$WORKDIR/g1_${name}.s" ]]; then
             echo "  WARN: gen1 failed to compile ${name}.c, falling back to stage05 libc" >&2
