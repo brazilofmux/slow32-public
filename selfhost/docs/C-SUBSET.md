@@ -1,12 +1,10 @@
 # C Language Subset for Self-Hosting
 
-> **V2 cross-reference:** Defines the language scope for **Stage 4** (Subset C compiler) in [BOOTSTRAP.md](BOOTSTRAP.md). The Full C compiler (**Stage 13**) extends beyond this subset.
-
 ## Overview
 
-The SLOW-32 toolchain comprises 5 tools totaling ~6,993 lines of C plus ~286 lines of shared headers. This document catalogs the exact C features and libc functions required by a bootstrap compiler.
+The SLOW-32 native toolchain comprises 5 tools totaling ~7K lines of C plus shared headers. This document catalogs the C features and libc functions they use, defining the target language surface for the selfhost subset-C compilers (s12cc and successors).
 
-This is the target language surface for V2 Stages 5-9. Early Stage 4 validation spikes may intentionally use a narrower subset while bringing individual replacement tools online.
+Note: the selfhost compilers themselves use a narrower subset (no `stdint.h` types, no `enum`, no designated initializers, no `snprintf`). This audit covers the native tools — the programs the selfhost compilers need to be able to compile.
 
 ## Source Inventory
 
@@ -223,4 +221,4 @@ If the toolchain sources were modified slightly for bootstrap-friendliness:
 5. **Replace designated initializers** with positional — simpler parser
 6. **Remove `#pragma pack`** — not needed on SLOW-32 with emulated memory
 
-These changes would be minimal and could be guarded with `#ifdef BOOTSTRAP_CC`.
+These changes would be minimal. In practice, the selfhost toolchain rewrites each tool from scratch in the subset C dialect rather than modifying the native sources.

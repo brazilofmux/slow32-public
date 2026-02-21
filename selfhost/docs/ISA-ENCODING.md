@@ -2,9 +2,9 @@
 
 This document covers the instruction encoding needed for hand-assembly of SLOW-32 programs. All instructions are 32 bits wide, little-endian.
 
-Stage00 decoder model (matches `selfhost/stage00/s32-emu.c`):
+Decoder model:
 - Opcode is always bits `[6:0]` and uniquely selects the instruction.
-- `funct3`/`funct7` bit positions exist in the bit layout, but are not used to distinguish operations in the selfhost ISA subset.
+- `funct3`/`funct7` bit positions exist in the bit layout, but are not used to distinguish operations.
 
 ## Register Map
 
@@ -199,9 +199,9 @@ These are sufficient for a complete bootstrap toolchain. The Stage00 emulator im
 | `DEBUG rs1` | 0x52 | R | Output character in rs1 |
 | `HALT` | 0x7F | - | Stop execution |
 
-## Additional Opcodes Implemented By Stage00 Emulator
+## Additional Opcodes
 
-These opcodes are implemented in `selfhost/stage00/s32-emu.c` even though they are not required for the minimal 34-instruction bootstrap core.
+Beyond the 34-instruction bootstrap core, all emulators implement these extensions.
 
 ### Arithmetic / Comparison Extensions
 
@@ -376,8 +376,8 @@ imm_4_1  = ((-8) >> 1) & 0xF = 0xC
 
 ```
 0x00000000 - 0x000FFFFF   Code region (1 MB, execute-only with W^X)
-0x00100000 - 0x0FFFFFFF   Data region (read/write)
+0x00100000 - ...           Data/BSS region (read/write)
+     Heap follows BSS, grows upward (size set by linker HEAP_GAP)
+     MMIO region follows heap (if enabled via --mmio)
      Stack starts at 0x0FFFFFF0, grows downward
-     Heap follows BSS, grows upward
-0x10000000+                MMIO region (if enabled)
 ```
