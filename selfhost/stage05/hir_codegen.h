@@ -882,12 +882,19 @@ static void hcg_inst(int idx) {
         if (imm_opp) hcg_stat_imm_miss_cmp = hcg_stat_imm_miss_cmp + 1;
     }
 
-    if (k == HI_SGT || k == HI_SGTU || k == HI_SGE || k == HI_SGEU) {
+    if (k == HI_SGT || k == HI_SGTU || k == HI_SGE || k == HI_SGEU ||
+        k == HI_SLE || k == HI_SLEU) {
         int imm_opp;
         int c;
         int have_imm;
+        int invert;
+        int const_res;
+        int const_valid;
         imm_opp = 0;
         have_imm = 0;
+        invert = 0;
+        const_valid = 0;
+        const_res = 0;
 
         if ((k == HI_SGT || k == HI_SGTU) && hcg_const_imm_inst(s1, &c) && hcg_is_i12(c)) {
             /* c > x   => x < c */
@@ -901,14 +908,55 @@ static void hcg_inst(int idx) {
             have_imm = 1;
             off = c;
             rs1 = hcg_src(s1, 1);
+            invert = 1;
+        } else if ((k == HI_SGT || k == HI_SGTU) &&
+                   hcg_const_imm_inst(s2, &c)) {
+            /* x > c  => !(x < c+1) */
+            imm_opp = 1;
+            if (k == HI_SGT && c == 2147483647) {
+                const_valid = 1;
+                const_res = 0;
+            } else if (k == HI_SGTU && c == -1) {
+                const_valid = 1;
+                const_res = 0;
+            } else if (hcg_is_i12(c + 1)) {
+                have_imm = 1;
+                off = c + 1;
+                rs1 = hcg_src(s1, 1);
+                invert = 1;
+            }
+        } else if ((k == HI_SLE || k == HI_SLEU) &&
+                   hcg_const_imm_inst(s2, &c)) {
+            /* x <= c => x < c+1 */
+            imm_opp = 1;
+            if (k == HI_SLE && c == 2147483647) {
+                const_valid = 1;
+                const_res = 1;
+            } else if (k == HI_SLEU && c == -1) {
+                const_valid = 1;
+                const_res = 1;
+            } else if (hcg_is_i12(c + 1)) {
+                have_imm = 1;
+                off = c + 1;
+                rs1 = hcg_src(s1, 1);
+            }
+        } else if ((k == HI_SLE || k == HI_SLEU) &&
+                   hcg_const_imm_inst(s1, &c) && hcg_is_i12(c)) {
+            /* c <= x => !(x < c) */
+            imm_opp = 1;
+            have_imm = 1;
+            off = c;
+            rs1 = hcg_src(s2, 2);
+            invert = 1;
         } else if (pat >= 0 && lnt == BG_IMM && rnt == BG_REG &&
-                   (k == HI_SGT || k == HI_SGTU)) {
+                   (k == HI_SGT || k == HI_SGTU || k == HI_SLE || k == HI_SLEU)) {
             c = h_val[s1];
             if (hcg_is_i12(c)) {
                 imm_opp = 1;
                 have_imm = 1;
                 off = c;
                 rs1 = hcg_src(s2, 2);
+                if (k == HI_SLE || k == HI_SLEU) invert = 1;
             }
         } else if (pat >= 0 && lnt == BG_REG && rnt == BG_IMM &&
                    (k == HI_SGE || k == HI_SGEU)) {
@@ -918,15 +966,39 @@ static void hcg_inst(int idx) {
                 have_imm = 1;
                 off = c;
                 rs1 = hcg_src(s1, 1);
+                invert = 1;
+            }
+        } else if (pat >= 0 && lnt == BG_REG && rnt == BG_IMM &&
+                   (k == HI_SGT || k == HI_SGTU || k == HI_SLE || k == HI_SLEU)) {
+            c = h_val[s2];
+            imm_opp = 1;
+            if ((k == HI_SGT && c == 2147483647) || (k == HI_SGTU && c == -1)) {
+                const_valid = 1;
+                const_res = 0;
+            } else if ((k == HI_SLE && c == 2147483647) || (k == HI_SLEU && c == -1)) {
+                const_valid = 1;
+                const_res = 1;
+            } else if (hcg_is_i12(c + 1)) {
+                have_imm = 1;
+                off = c + 1;
+                rs1 = hcg_src(s1, 1);
+                if (k == HI_SGT || k == HI_SGTU) invert = 1;
             }
         }
 
         if (imm_opp) hcg_stat_imm_opp_cmp = hcg_stat_imm_opp_cmp + 1;
+        if (const_valid) {
+            rd = hcg_dst(idx);
+            cg_rri("addi", rd, 0, const_res);
+            hcg_stat_imm_hit_cmp = hcg_stat_imm_hit_cmp + 1;
+            hcg_maybe_spill(idx);
+            return;
+        }
         if (have_imm) {
             rd = hcg_dst(idx);
-            if (k == HI_SGT || k == HI_SGE) cg_rri("slti", rd, rs1, off);
+            if (k == HI_SGT || k == HI_SGE || k == HI_SLE) cg_rri("slti", rd, rs1, off);
             else cg_rri("sltiu", rd, rs1, off);
-            if (k == HI_SGE || k == HI_SGEU) cg_rrr("seq", rd, rd, 0);
+            if (invert) cg_rrr("seq", rd, rd, 0);
             hcg_stat_imm_hit_cmp = hcg_stat_imm_hit_cmp + 1;
             hcg_maybe_spill(idx);
             return;
