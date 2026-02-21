@@ -33,7 +33,7 @@ RUN apk add --no-cache \
 # This is the upstream commit our patches are generated against.
 # Update this hash (and regenerate patches) when syncing with upstream.
 WORKDIR /build
-ENV QEMU_COMMIT=44dba5a0c86fff68fdd013c29bba81d5a1e32825
+ENV QEMU_COMMIT=986001fd121d0efe51666e69388501fda772ba4d
 RUN git init qemu && cd qemu && \
     git remote add origin https://gitlab.com/qemu-project/qemu.git && \
     git fetch --depth 1 origin $QEMU_COMMIT && \

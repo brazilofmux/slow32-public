@@ -925,7 +925,7 @@ void slow32_translate_code(CPUState *cs, TranslationBlock *tb, int *max_insns,
         uint32_t raw = cpu_ldl_code(env, ctx.pc);
         bool collapse_branch = slow32_is_cmp_branch_pair(&ctx, raw);
 
-        tcg_gen_insn_start(ctx.pc, ctx.next_pc);
+        tcg_gen_insn_start(ctx.pc, ctx.next_pc, 0);
 
         /* TB chaining hook: per-instruction start */
         if (plugin_enabled) {
