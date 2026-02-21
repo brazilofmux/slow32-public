@@ -491,6 +491,19 @@ static void list_archive(const char *filename) {
     fclose(f);
 }
 
+static bool name_matches(const char *member_name, const char *target) {
+    if (strcmp(member_name, target) == 0) return true;
+    return strcmp(basename_simple(member_name), target) == 0;
+}
+
+static void free_state(archive_state_t *state) {
+    for (size_t i = 0; i < state->nmembers; i++) {
+        free(state->members[i].name);
+        free(state->members[i].data);
+    }
+    free(state->members);
+}
+
 static void extract_archive(const char *archive, const char *member_name) {
     FILE *f = fopen(archive, "rb");
     if (!f) {
@@ -595,13 +608,122 @@ static void extract_archive(const char *archive, const char *member_name) {
     fclose(f);
 }
 
+static void print_archive(const char *archive, int reqc, char **reqv) {
+    archive_state_t state = {0};
+    if (!load_archive_members(archive, &state)) {
+        fprintf(stderr, "Error: Cannot load archive '%s'\n", archive);
+        return;
+    }
+
+    for (size_t i = 0; i < state.nmembers; i++) {
+        bool match = (reqc == 0);
+        if (!match) {
+            for (int j = 0; j < reqc; j++) {
+                if (name_matches(state.members[i].name, reqv[j])) {
+                    match = true;
+                    break;
+                }
+            }
+        }
+        if (match) {
+            fwrite(state.members[i].data, 1, state.members[i].size, stdout);
+        }
+    }
+
+    free_state(&state);
+}
+
+static void delete_members(const char *archive, int reqc, char **reqv) {
+    archive_state_t state = {0};
+    if (!load_archive_members(archive, &state)) {
+        fprintf(stderr, "Error: Cannot load archive '%s'\n", archive);
+        return;
+    }
+
+    size_t out = 0;
+    for (size_t i = 0; i < state.nmembers; i++) {
+        bool del = false;
+        for (int j = 0; j < reqc; j++) {
+            if (name_matches(state.members[i].name, reqv[j])) {
+                del = true;
+                break;
+            }
+        }
+        if (del) {
+            free(state.members[i].name);
+            free(state.members[i].data);
+        } else {
+            if (out != i) {
+                state.members[out] = state.members[i];
+            }
+            out++;
+        }
+    }
+
+    if (out == state.nmembers) {
+        fprintf(stderr, "Warning: No members matched for deletion\n");
+    }
+    state.nmembers = out;
+
+    write_archive(&state, archive);
+    free_state(&state);
+}
+
+static void move_members(const char *archive, int reqc, char **reqv) {
+    archive_state_t state = {0};
+    if (!load_archive_members(archive, &state)) {
+        fprintf(stderr, "Error: Cannot load archive '%s'\n", archive);
+        return;
+    }
+
+    member_t *reordered = malloc(state.nmembers * sizeof(member_t));
+    size_t out = 0;
+
+    // First pass: non-moved members
+    for (size_t i = 0; i < state.nmembers; i++) {
+        bool move = false;
+        for (int j = 0; j < reqc; j++) {
+            if (name_matches(state.members[i].name, reqv[j])) {
+                move = true;
+                break;
+            }
+        }
+        if (!move) {
+            reordered[out++] = state.members[i];
+        }
+    }
+
+    // Second pass: moved members appended at end
+    for (size_t i = 0; i < state.nmembers; i++) {
+        bool move = false;
+        for (int j = 0; j < reqc; j++) {
+            if (name_matches(state.members[i].name, reqv[j])) {
+                move = true;
+                break;
+            }
+        }
+        if (move) {
+            reordered[out++] = state.members[i];
+        }
+    }
+
+    free(state.members);
+    state.members = reordered;
+
+    write_archive(&state, archive);
+    free_state(&state);
+}
+
 static void usage(const char *prog) {
     fprintf(stderr, "Usage: %s <operation> archive [files...]\n", prog);
     fprintf(stderr, "Operations:\n");
     fprintf(stderr, "  r - insert/replace files in archive\n");
+    fprintf(stderr, "  c - create archive (same as r)\n");
     fprintf(stderr, "  t - list archive contents\n");
     fprintf(stderr, "  x - extract files from archive\n");
-    fprintf(stderr, "  c - create archive (same as r)\n");
+    fprintf(stderr, "  p - print member contents to stdout\n");
+    fprintf(stderr, "  d - delete members from archive\n");
+    fprintf(stderr, "  m - move members to end of archive\n");
     exit(1);
 }
 
@@ -624,24 +746,35 @@ int main(int argc, char **argv) {
     const char *archive = argv[2];
     
     if (strchr(op, 't')) {
-        // List archive contents
         list_archive(archive);
     } else if (strchr(op, 'x')) {
-        // Extract files
         if (argc > 3) {
             for (int i = 3; i < argc; i++) {
                 extract_archive(archive, argv[i]);
             }
         } else {
-            extract_archive(archive, NULL);  // Extract all
+            extract_archive(archive, NULL);
         }
+    } else if (strchr(op, 'p')) {
+        print_archive(archive, argc - 3, argv + 3);
+    } else if (strchr(op, 'd')) {
+        if (argc < 4) {
+            fprintf(stderr, "Error: No members specified for delete\n");
+            return 1;
+        }
+        delete_members(archive, argc - 3, argv + 3);
+    } else if (strchr(op, 'm')) {
+        if (argc < 4) {
+            fprintf(stderr, "Error: No members specified for move\n");
+            return 1;
+        }
+        move_members(archive, argc - 3, argv + 3);
     } else if (strchr(op, 'r') || strchr(op, 'c')) {
-        // Create/update archive
         if (argc < 4) {
             fprintf(stderr, "Error: No files specified\n");
             return 1;
         }
-        
+
         archive_state_t state = {0};
         bool loaded = false;
 
@@ -652,27 +785,13 @@ int main(int argc, char **argv) {
                 return 1;
             }
         }
-        
-        // Add all specified files
+
         for (int i = 3; i < argc; i++) {
             add_or_replace_member(&state, argv[i]);
         }
-        
-        // Write archive
+
         write_archive(&state, archive);
-        
-        // Cleanup
-        for (size_t i = 0; i < state.nmembers; i++) {
-            free(state.members[i].name);
-            free(state.members[i].data);
-        }
-        free(state.members);
-        
-        if (loaded) {
-            printf("Archive '%s' updated with %zu members\n", archive, state.nmembers);
-        } else {
-            printf("Archive '%s' created with %zu members\n", archive, state.nmembers);
-        }
+        free_state(&state);
     } else {
         fprintf(stderr, "Error: Unknown operation '%s'\n", op);
         usage(argv[0]);
