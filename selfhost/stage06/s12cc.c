@@ -315,10 +315,6 @@ int main(int argc, char **argv) {
     fput_uint(stderr, bg_stat_iconst_imm_only);
     fputs(" nonimm=", stderr);
     fput_uint(stderr, bg_stat_iconst_nonimm);
-    fputs(" remat=", stderr);
-    fput_uint(stderr, bg_stat_iconst_nonimm_remat);
-    fputs(" block=", stderr);
-    fput_uint(stderr, bg_stat_iconst_nonimm_block);
     fputs(" unused=", stderr);
     fput_uint(stderr, bg_stat_iconst_unused);
     fputs("\n", stderr);

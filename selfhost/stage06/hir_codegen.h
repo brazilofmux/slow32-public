@@ -806,11 +806,12 @@ static void hcg_inst(int idx) {
         return;
     }
 
-    /* Unary: bitwise not */
+    /* Unary: bitwise not — xori zero-extends, so use addi+xor */
     if (k == HI_BNOT) {
         rs1 = hcg_src(s1, 1);
         rd = hcg_dst(idx);
-        cg_rri("xori", rd, rs1, -1);
+        cg_rri("addi", 2, 0, -1);
+        cg_rrr("xor", rd, rs1, 2);
         hcg_maybe_spill(idx);
         return;
     }

@@ -84,10 +84,6 @@ static int bg_iconst_seen_use[HIR_MAX_INST];
 static int bg_iconst_seen_nonimm[HIR_MAX_INST];
 static int bg_stat_iconst_use_op[BG_OP_SZ];
 static int bg_stat_iconst_nonimm_use_op[BG_OP_SZ];
-static int bg_stat_iconst_nonimm_remat_use_op[BG_OP_SZ];
-static int bg_stat_iconst_nonimm_block_use_op[BG_OP_SZ];
-static int bg_stat_iconst_nonimm_remat;
-static int bg_stat_iconst_nonimm_block;
 
 /* Init flag */
 static int bg_inited;
@@ -288,23 +284,11 @@ static int bg_use_is_imm_capable(int user, int pos) {
     int k;
     k = h_kind[user];
 
-    if (k == HI_COPY && pos == 1) return 1;     /* transit */
-    if (k == HI_ADDI && pos == 1) return 1;     /* transit */
     if (k == HI_ADD) return 1;                  /* add r,r,imm (both sides) */
     if (k == HI_SUB && pos == 2) return 1;      /* sub r,imm via addi -imm */
     if ((k == HI_AND || k == HI_OR || k == HI_XOR)) return 1;
     if ((k == HI_SLL || k == HI_SRL || k == HI_SRA) && pos == 2) return 1;
     if ((k == HI_SLT || k == HI_SLTU) && pos == 2) return 1;
-    return 0;
-}
-
-static int bg_use_is_remat_friendly(int user, int pos) {
-    int k;
-    k = h_kind[user];
-
-    if (k == HI_STORE && pos == 2) return 1;   /* value can be remat into scratch */
-    if (k == HI_RET && pos == 1) return 1;     /* remat into return reg */
-    if (k == HI_BRC && pos == 1) return 1;     /* remat into condition reg */
     return 0;
 }
 
@@ -323,6 +307,13 @@ static void bg_profile_iconst_consumers(void) {
         i = i + 1;
     }
     i = 0;
+    while (i <= BG_MAX_OP) {
+        bg_stat_iconst_use_op[i] = 0;
+        bg_stat_iconst_nonimm_use_op[i] = 0;
+        i = i + 1;
+    }
+
+    i = 0;
     while (i < h_ninst) {
         k = h_kind[i];
         if (k != HI_NOP) {
@@ -334,13 +325,6 @@ static void bg_profile_iconst_consumers(void) {
                     bg_iconst_seen_nonimm[v] = 1;
                     if (k >= 0 && k <= BG_MAX_OP) {
                         bg_stat_iconst_nonimm_use_op[k] = bg_stat_iconst_nonimm_use_op[k] + 1;
-                        if (bg_use_is_remat_friendly(i, 1)) {
-                            bg_stat_iconst_nonimm_remat_use_op[k] = bg_stat_iconst_nonimm_remat_use_op[k] + 1;
-                            bg_stat_iconst_nonimm_remat = bg_stat_iconst_nonimm_remat + 1;
-                        } else {
-                            bg_stat_iconst_nonimm_block_use_op[k] = bg_stat_iconst_nonimm_block_use_op[k] + 1;
-                            bg_stat_iconst_nonimm_block = bg_stat_iconst_nonimm_block + 1;
-                        }
                     }
                 }
             }
@@ -352,13 +336,6 @@ static void bg_profile_iconst_consumers(void) {
                     bg_iconst_seen_nonimm[v] = 1;
                     if (k >= 0 && k <= BG_MAX_OP) {
                         bg_stat_iconst_nonimm_use_op[k] = bg_stat_iconst_nonimm_use_op[k] + 1;
-                        if (bg_use_is_remat_friendly(i, 2)) {
-                            bg_stat_iconst_nonimm_remat_use_op[k] = bg_stat_iconst_nonimm_remat_use_op[k] + 1;
-                            bg_stat_iconst_nonimm_remat = bg_stat_iconst_nonimm_remat + 1;
-                        } else {
-                            bg_stat_iconst_nonimm_block_use_op[k] = bg_stat_iconst_nonimm_block_use_op[k] + 1;
-                            bg_stat_iconst_nonimm_block = bg_stat_iconst_nonimm_block + 1;
-                        }
                     }
                 }
             }
@@ -374,8 +351,6 @@ static void bg_profile_iconst_consumers(void) {
                         bg_iconst_seen_nonimm[v] = 1;
                         bg_stat_iconst_use_op[k] = bg_stat_iconst_use_op[k] + 1;
                         bg_stat_iconst_nonimm_use_op[k] = bg_stat_iconst_nonimm_use_op[k] + 1;
-                        bg_stat_iconst_nonimm_remat_use_op[k] = bg_stat_iconst_nonimm_remat_use_op[k] + 1;
-                        bg_stat_iconst_nonimm_remat = bg_stat_iconst_nonimm_remat + 1;
                     }
                     j = j + 1;
                 }
@@ -392,8 +367,6 @@ static void bg_profile_iconst_consumers(void) {
                         bg_iconst_seen_nonimm[v] = 1;
                         bg_stat_iconst_use_op[k] = bg_stat_iconst_use_op[k] + 1;
                         bg_stat_iconst_nonimm_use_op[k] = bg_stat_iconst_nonimm_use_op[k] + 1;
-                        bg_stat_iconst_nonimm_remat_use_op[k] = bg_stat_iconst_nonimm_remat_use_op[k] + 1;
-                        bg_stat_iconst_nonimm_remat = bg_stat_iconst_nonimm_remat + 1;
                     }
                     j = j + 1;
                 }
