@@ -120,6 +120,20 @@ int in_bounds(int off, int size, int total) {
     return 1;
 }
 
+int align4(int off) {
+    while ((off & 3) != 0) off = off + 1;
+    return off;
+}
+
+void pad4(int out) {
+    int pos;
+    pos = ftell(out);
+    while ((pos & 3) != 0) {
+        fputc(0, out);
+        pos = pos + 1;
+    }
+}
+
 char *basename_ptr(char *path) {
     char *p;
     char *base;
@@ -149,9 +163,26 @@ int count_file_bytes(char *path, int *out_size) {
     return 1;
 }
 
+int validate_s32o_file(char *path) {
+    int f;
+    char buf[4];
+    f = fopen(path, "rb");
+    if (!f) return 0;
+    if (fread(buf, 1, 4, f) != 4) { fclose(f); return 0; }
+    fclose(f);
+    return r32(buf) == S32O_MAGIC;
+}
+
 int append_strtab(char *s, int *str_used) {
     int off;
     int i;
+    /* Search for existing string (deduplication) */
+    off = 0;
+    while (off < *str_used) {
+        if (strcmp(g_strtab + off, s) == 0) return off;
+        off = off + strlen(g_strtab + off) + 1;
+    }
+    /* Append new string */
     off = *str_used;
     i = 0;
     while (s[i]) {
@@ -633,12 +664,12 @@ int write_archive(char *out_path, int nmembers, int str_used) {
     sym_off = 32;
     mem_off = sym_off + nsymbols * 8;
     str_off = mem_off + nmembers * 24;
-    data_off = str_off + str_used;
+    data_off = align4(str_off + str_used);
 
     i = 0;
     while (i < nmembers) {
         g_members[i].data_off = data_off;
-        data_off = data_off + g_members[i].size;
+        data_off = align4(data_off + g_members[i].size);
         i = i + 1;
     }
 
@@ -687,6 +718,7 @@ int write_archive(char *out_path, int nmembers, int str_used) {
             return 0;
         }
     }
+    pad4(out);
 
     /* Member data */
     i = 0;
@@ -695,6 +727,7 @@ int write_archive(char *out_path, int nmembers, int str_used) {
             fclose(out);
             return 0;
         }
+        pad4(out);
         i = i + 1;
     }
 
@@ -1025,36 +1058,66 @@ int main(int argc, char **argv) {
     nmembers = 0;
     str_used = 1;
 
-    if (argc < 3) return 1;
+    if (argc < 3) {
+        fputs("Usage: s32-ar <operation> archive [files...]\n", stderr);
+        return 1;
+    }
     cmd = argv[1];
     archive = argv[2];
 
     if (has_flag(cmd, 't')) {
         if (argc != 3) return 1;
-        if (!list_archive(archive)) return 1;
+        if (!list_archive(archive)) {
+            fputs("Error: failed to list archive\n", stderr);
+            return 1;
+        }
         return 0;
     }
     if (has_flag(cmd, 'x')) {
-        if (!extract_archive(archive, argc - 3, argv + 3)) return 1;
+        if (!extract_archive(archive, argc - 3, argv + 3)) {
+            fputs("Error: extract failed\n", stderr);
+            return 1;
+        }
         return 0;
     }
     if (has_flag(cmd, 'p')) {
-        if (!print_archive(archive, argc - 3, argv + 3)) return 1;
+        if (!print_archive(archive, argc - 3, argv + 3)) {
+            fputs("Error: print failed\n", stderr);
+            return 1;
+        }
         return 0;
     }
     if (has_flag(cmd, 'd')) {
-        if (argc < 4) return 1;
-        if (!delete_members(archive, argc - 3, argv + 3)) return 1;
+        if (argc < 4) {
+            fputs("Error: no members specified for delete\n", stderr);
+            return 1;
+        }
+        if (!delete_members(archive, argc - 3, argv + 3)) {
+            fputs("Error: delete failed\n", stderr);
+            return 1;
+        }
         return 0;
     }
     if (has_flag(cmd, 'm')) {
-        if (argc < 4) return 1;
-        if (!move_members(archive, argc - 3, argv + 3)) return 1;
+        if (argc < 4) {
+            fputs("Error: no members specified for move\n", stderr);
+            return 1;
+        }
+        if (!move_members(archive, argc - 3, argv + 3)) {
+            fputs("Error: move failed\n", stderr);
+            return 1;
+        }
         return 0;
     }
 
-    if (argc < 4) return 1;
-    if (!has_flag(cmd, 'c') && !has_flag(cmd, 'r')) return 1;
+    if (argc < 4) {
+        fputs("Error: no files specified\n", stderr);
+        return 1;
+    }
+    if (!has_flag(cmd, 'c') && !has_flag(cmd, 'r')) {
+        fputs("Error: unknown operation\n", stderr);
+        return 1;
+    }
 
     g_strtab[0] = 0;
     g_data_used = 0;
@@ -1069,7 +1132,19 @@ int main(int argc, char **argv) {
         path = argv[i];
         name = basename_ptr(path);
 
-        if (!count_file_bytes(path, &size)) return 1;
+        if (!count_file_bytes(path, &size)) {
+            fputs("Error: cannot open: ", stderr);
+            fputs(path, stderr);
+            fputc('\n', stderr);
+            return 1;
+        }
+
+        if (!validate_s32o_file(path)) {
+            fputs("Error: not a valid .s32o: ", stderr);
+            fputs(path, stderr);
+            fputc('\n', stderr);
+            return 1;
+        }
 
         idx = find_member_by_name(name, nmembers);
         if (idx >= 0) {
@@ -1104,6 +1179,9 @@ int main(int argc, char **argv) {
     /* Build symbol index from .s32o member data */
     build_symbol_index(nmembers, &str_used);
 
-    if (!write_archive(archive, nmembers, str_used)) return 1;
+    if (!write_archive(archive, nmembers, str_used)) {
+        fputs("Error: failed to write archive\n", stderr);
+        return 1;
+    }
     return 0;
 }
