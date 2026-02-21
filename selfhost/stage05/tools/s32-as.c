@@ -10,6 +10,7 @@
 #define MAX_BSS 16777216
 #define MAX_STR 65536
 #define LBL_POOL_SZ 262144
+#define MAX_DIFF 8192
 
 #define SEC_TEXT 0
 #define SEC_DATA 1
@@ -33,6 +34,14 @@ static int g_rel_sym[32768];
 static int g_rel_add[32768];
 static int g_nrel;
 
+static int g_diff_sec[8192];
+static int g_diff_off[8192];
+static int g_diff_plus[8192];
+static int g_diff_minus[8192];
+static int g_diff_add[8192];
+static int g_diff_wide[8192];
+static int g_ndiff;
+
 static char g_text[1048576];
 static char g_data[1048576];
 static int g_tsz;
@@ -53,6 +62,11 @@ static char g_line[1024];
 static int g_ssz;
 static int g_in;
 static int g_out;
+
+static char g_lin_plus[128];
+static char g_lin_minus[128];
+static int g_lin_has_plus;
+static int g_lin_has_minus;
 
 int find_lbl(char *name);
 
@@ -240,80 +254,89 @@ int parse_num_or_abs(char *s, int *ok) {
     return v;
 }
 
-int parse_sym_add(char *s, char *sym, int sym_sz, int *add, int *ok) {
+int parse_linear_expr(char *s, int *add, int *ok) {
     int i;
-    int ni;
-    char c;
-    int li;
-    int a;
+    int j;
+    int beg;
+    int end;
+    int depth;
     int sgn;
     int v;
-    int depth;
-    int beg;
-    int t;
-    int k;
+    int li;
+    int a;
     char part[128];
 
-    i = 0;
-    while (s[i] == ' ' || s[i] == '\t') i = i + 1;
-
-    ni = 0;
-    c = s[i];
-    if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-          c == '_' || c == '.' || c == '$')) {
-        *ok = 0;
-        return 0;
-    }
-    while (1) {
-        c = s[i];
-        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-              (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '$')) {
-            break;
-        }
-        if (ni + 1 >= sym_sz) { *ok = 0; return 0; }
-        sym[ni] = c;
-        ni = ni + 1;
-        i = i + 1;
-    }
-    sym[ni] = 0;
-
+    g_lin_has_plus = 0;
+    g_lin_has_minus = 0;
+    g_lin_plus[0] = 0;
+    g_lin_minus[0] = 0;
     a = 0;
-    while (1) {
-        while (s[i] == ' ' || s[i] == '\t') i = i + 1;
-        if (s[i] != '+' && s[i] != '-') break;
-        sgn = (s[i] == '-') ? -1 : 1;
+    i = 0;
+    sgn = 1;
+
+    while (s[i] == ' ' || s[i] == '\t') i = i + 1;
+    while (s[i] == '+' || s[i] == '-') {
+        if (s[i] == '-') sgn = 0 - sgn;
         i = i + 1;
         while (s[i] == ' ' || s[i] == '\t') i = i + 1;
-        depth = 0;
+    }
+
+    while (s[i]) {
         beg = i;
+        depth = 0;
         while (s[i]) {
             if (s[i] == '(') depth = depth + 1;
-            else if (s[i] == ')') {
-                if (depth > 0) depth = depth - 1;
-            } else if (depth == 0 && (s[i] == '+' || s[i] == '-')) {
-                break;
-            }
+            else if (s[i] == ')') { if (depth > 0) depth = depth - 1; }
+            else if (depth == 0 && (s[i] == '+' || s[i] == '-')) break;
             i = i + 1;
         }
-        if (i <= beg) { *ok = 0; return 0; }
-        if (i - beg >= 127) { *ok = 0; return 0; }
-        k = 0;
-        t = beg;
-        while (t < i) {
-            part[k] = s[t];
-            k = k + 1;
-            t = t + 1;
-        }
-        part[k] = 0;
+        end = i;
+        while (beg < end && (s[beg] == ' ' || s[beg] == '\t')) beg = beg + 1;
+        while (end > beg && (s[end - 1] == ' ' || s[end - 1] == '\t')) end = end - 1;
+        if (end <= beg || end - beg >= 127) { *ok = 0; return 0; }
+        memcpy(part, s + beg, end - beg);
+        part[end - beg] = 0;
+
         v = parse_num_or_abs(part, &li);
-        if (!li) { *ok = 0; return 0; }
-        a = a + sgn * v;
+        if (li) {
+            a = a + sgn * v;
+        } else {
+            if (!ex_is_id0(part[0])) { *ok = 0; return 0; }
+            j = 1;
+            while (part[j] && ex_is_idn(part[j])) j = j + 1;
+            if (part[j] != 0) { *ok = 0; return 0; }
+            if (sgn > 0) {
+                if (g_lin_has_plus) { *ok = 0; return 0; }
+                memcpy(g_lin_plus, part, j + 1);
+                g_lin_has_plus = 1;
+            } else {
+                if (g_lin_has_minus) { *ok = 0; return 0; }
+                memcpy(g_lin_minus, part, j + 1);
+                g_lin_has_minus = 1;
+            }
+        }
+
+        while (s[i] == ' ' || s[i] == '\t') i = i + 1;
+        if (!s[i]) break;
+        if (s[i] == '+') sgn = 1;
+        else if (s[i] == '-') sgn = -1;
+        else { *ok = 0; return 0; }
+        i = i + 1;
+        while (s[i] == ' ' || s[i] == '\t') i = i + 1;
     }
 
-    while (s[i] == ' ' || s[i] == '\t') i = i + 1;
-    if (s[i] != 0) { *ok = 0; return 0; }
     *add = a;
     *ok = 1;
+    return 0;
+}
+
+int parse_sym_add(char *s, char *sym, int sym_sz, int *add, int *ok) {
+    int n;
+    if (parse_linear_expr(s, add, ok) != 0) return 0;
+    if (!*ok || !g_lin_has_plus || g_lin_has_minus) { *ok = 0; return 0; }
+    n = strlen(g_lin_plus) + 1;
+    if (n > sym_sz) { *ok = 0; return 0; }
+    memcpy(sym, g_lin_plus, n);
     return 0;
 }
 
@@ -440,6 +463,23 @@ int add_reloc(int typ, int off, char *name) {
     return add_reloc_ex(typ, off, name, 0);
 }
 
+int add_diff_fixup(int sec, int off, char *plus, char *minus, int add, int wide) {
+    int li_plus;
+    int li_minus;
+    if (g_ndiff >= MAX_DIFF) return -1;
+    li_plus = get_lbl(plus);
+    li_minus = get_lbl(minus);
+    if (li_plus < 0 || li_minus < 0) return -1;
+    g_diff_sec[g_ndiff] = sec;
+    g_diff_off[g_ndiff] = off;
+    g_diff_plus[g_ndiff] = li_plus;
+    g_diff_minus[g_ndiff] = li_minus;
+    g_diff_add[g_ndiff] = add;
+    g_diff_wide[g_ndiff] = wide;
+    g_ndiff = g_ndiff + 1;
+    return 0;
+}
+
 int enc_r(int op, int rd, int rs1, int rs2) {
     return op | (rd << 7) | (rs1 << 15) | (rs2 << 20);
 }
@@ -557,10 +597,13 @@ int handle(char *line) {
     int off;
     int off2;
     char sym[128];
+    char sym2[128];
     char rexpr[128];
     int has_lo;
     int has_hi;
     int rel_add;
+    int rel_has_plus;
+    int rel_has_minus;
     int fill;
     int lo;
     int hi;
@@ -658,9 +701,19 @@ int handle(char *line) {
                 v = parse_num_or_abs(tok[i], &ok);
                 if (ok) { if (emit32(v) != 0) return -1; }
                 else {
-                    parse_sym_add(tok[i], sym, 128, &rel_add, &ok);
+                    rel_has_plus = 0;
+                    rel_has_minus = 0;
+                    if (parse_linear_expr(tok[i], &rel_add, &ok) != 0) return -1;
                     if (!ok) return -1;
-                    if (add_reloc_ex(S32O_REL_32, cur_off(), sym, rel_add) != 0) return -1;
+                    rel_has_plus = g_lin_has_plus;
+                    rel_has_minus = g_lin_has_minus;
+                    if (rel_has_plus) memcpy(sym, g_lin_plus, strlen(g_lin_plus) + 1);
+                    if (rel_has_minus) memcpy(sym2, g_lin_minus, strlen(g_lin_minus) + 1);
+                    if (rel_has_plus && !rel_has_minus) {
+                        if (add_reloc_ex(S32O_REL_32, cur_off(), sym, rel_add) != 0) return -1;
+                    } else if (rel_has_plus && rel_has_minus) {
+                        if (add_diff_fixup(g_sec, cur_off(), sym, sym2, rel_add, 0) != 0) return -1;
+                    } else return -1;
                     if (emit32(0) != 0) return -1;
                 }
             }
@@ -676,9 +729,19 @@ int handle(char *line) {
                     if (emit32(lo) != 0) return -1;
                     if (emit32(hi) != 0) return -1;
                 } else {
-                    parse_sym_add(tok[i], sym, 128, &rel_add, &ok);
+                    rel_has_plus = 0;
+                    rel_has_minus = 0;
+                    if (parse_linear_expr(tok[i], &rel_add, &ok) != 0) return -1;
                     if (!ok) return -1;
-                    if (add_reloc_ex(S32O_REL_32, cur_off(), sym, rel_add) != 0) return -1;
+                    rel_has_plus = g_lin_has_plus;
+                    rel_has_minus = g_lin_has_minus;
+                    if (rel_has_plus) memcpy(sym, g_lin_plus, strlen(g_lin_plus) + 1);
+                    if (rel_has_minus) memcpy(sym2, g_lin_minus, strlen(g_lin_minus) + 1);
+                    if (rel_has_plus && !rel_has_minus) {
+                        if (add_reloc_ex(S32O_REL_32, cur_off(), sym, rel_add) != 0) return -1;
+                    } else if (rel_has_plus && rel_has_minus) {
+                        if (add_diff_fixup(g_sec, cur_off(), sym, sym2, rel_add, 1) != 0) return -1;
+                    } else return -1;
                     if (emit32(0) != 0) return -1;
                     if (emit32(0) != 0) return -1;
                 }
@@ -1229,6 +1292,51 @@ int resolve_local_text_relocs() {
     return 0;
 }
 
+int resolve_diff_fixups() {
+    int i;
+    int li_plus;
+    int li_minus;
+    int sec;
+    int off;
+    int val;
+    int hi;
+
+    for (i = 0; i < g_ndiff; i = i + 1) {
+        li_plus = g_diff_plus[i];
+        li_minus = g_diff_minus[i];
+        if (li_plus >= g_nlbl || li_minus >= g_nlbl) return -1;
+        if (!g_lbl_defd[li_plus] || !g_lbl_defd[li_minus]) return -1;
+        if (g_lbl_sec[li_plus] != g_lbl_sec[li_minus]) return -1;
+
+        sec = g_diff_sec[i];
+        off = g_diff_off[i];
+        val = (g_lbl_val[li_plus] - g_lbl_val[li_minus]) + g_diff_add[i];
+
+        if (sec == SEC_TEXT) {
+            if (off < 0 || off + 4 > g_tsz) return -1;
+            wr32(g_text + off, val);
+            if (g_diff_wide[i]) {
+                if (off + 8 > g_tsz) return -1;
+                if (val < 0) hi = -1;
+                else hi = 0;
+                wr32(g_text + off + 4, hi);
+            }
+        } else if (sec == SEC_DATA) {
+            if (off < 0 || off + 4 > g_dsz) return -1;
+            wr32(g_data + off, val);
+            if (g_diff_wide[i]) {
+                if (off + 8 > g_dsz) return -1;
+                if (val < 0) hi = -1;
+                else hi = 0;
+                wr32(g_data + off + 4, hi);
+            }
+        } else {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 int write_obj(char *out) {
     int nsec;
     int text_idx;
@@ -1425,6 +1533,11 @@ int main(int argc, char **argv) {
     }
     fclose(g_in);
     g_in = 0;
+
+    if (resolve_diff_fixups() != 0) {
+        fputs("resolve label-diff fixups failed\n", stderr);
+        return 1;
+    }
 
     if (resolve_local_text_relocs() != 0) {
         fputs("resolve local text relocations failed\n", stderr);
