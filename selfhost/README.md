@@ -8,7 +8,7 @@ Current policy:
 - Update tests/CI scripts in lockstep with each stage move.
 
 Stage directories:
-- `stage00` through `stage05` map to the current V2 stage numbers.
+- `stage00` through `stage06` map to the current V2 stage numbers.
 
 Stage cycles at a glance:
 - `stage00`: standalone ~800 line emulator that every other stage relies on.
@@ -17,15 +17,17 @@ Stage cycles at a glance:
 - `stage03`: s32-cc compiler + tools (as, ar, ld) + libc/runtime. Self-sufficient toolchain. Compiled by stage02 cc-min, tools compiled by s32-cc. First Forth-free stage.
 - `stage04`: s12cc AST-based compiler (Ragel lexer + recursive-descent parser) + tools + libc/runtime. Language capability stage. Compiled by stage03 s32-cc.
 - `stage05`: code quality — optimized s12cc toolchain (compiler + AS + AR + LD + libc). Compiled by stage04.
+- `stage06`: next selfhost cycle seeded from stage05 and bootstrapped by stage05 tools.
 
 Primary tracking docs:
 - `selfhost/V2-REORG-PLAN.md`
 - `selfhost/V2-MIGRATION-MAP.tsv`
 - `selfhost/stage-status.md`
+- `selfhost/TOOL-NAMING.md`
 
 ## Ordered Stage Walk
 
-For a clean checkout sanity pass (stage00 -> stage03):
+For a clean checkout sanity pass (stage00 -> stage06):
 
 ```bash
 selfhost/run-stages.sh
@@ -51,9 +53,11 @@ Manual per-stage entry points:
 - `stage03` (s32-cc compiler): `selfhost/stage03/run-spike.sh --emu ./tools/emulator/slow32-fast`
 - `stage04` (s12cc compiler): `selfhost/stage04/run-tests.sh --emu ./tools/emulator/slow32-fast`
 - `stage05` (optimized toolchain): `selfhost/stage05/run-tests.sh --emu ./tools/emulator/slow32-fast`
+- `stage06` (next-cycle toolchain): `selfhost/stage06/run-tests.sh --emu ./tools/emulator/slow32-fast`
 
 ABI conformance entry points:
 - all supported stages: `selfhost/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`
 - stage03 only: `selfhost/stage03/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`
 - stage04 only: `selfhost/stage04/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`
 - stage05 only: `selfhost/stage05/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`
+- stage06 only: `selfhost/stage06/run-abi-conformance.sh --emu ./tools/dbt/slow32-dbt`

@@ -31,7 +31,15 @@ if [[ -z "$EMU" ]]; then
     fi
 fi
 
-STAGE4_CC="$SELFHOST_DIR/stage04/s12cc.s32x"
+pick_stage4_cc() {
+    if [[ -x "$SELFHOST_DIR/stage04/cc.s32x" ]]; then
+        printf '%s\n' "$SELFHOST_DIR/stage04/cc.s32x"
+    else
+        printf '%s\n' "$SELFHOST_DIR/stage04/s12cc.s32x"
+    fi
+}
+
+STAGE4_CC="$(pick_stage4_cc)"
 STAGE4_AS="$SELFHOST_DIR/stage04/s32-as.s32x"
 STAGE4_LD="$SELFHOST_DIR/stage04/s32-ld.s32x"
 
@@ -39,6 +47,7 @@ LIBC_DIR="$SCRIPT_DIR/libc"
 CRT0_SRC="$SCRIPT_DIR/crt0.s"
 MMIO_NO_START_SRC="$SCRIPT_DIR/mmio_no_start.s"
 OUT_EXE="$SCRIPT_DIR/s12cc.s32x"
+OUT_EXE_CANON="$SCRIPT_DIR/cc.s32x"
 
 for f in "$EMU" "$STAGE4_CC" "$STAGE4_AS" "$STAGE4_LD" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC" \
@@ -195,4 +204,6 @@ else
 fi
 
 echo "OK: $OUT_EXE ($(wc -c < "$OUT_EXE") bytes)"
+cp -f "$OUT_EXE" "$OUT_EXE_CANON"
+echo "    canonical alias: $OUT_EXE_CANON"
 echo "    lib/ contains gen1-compiled libc objects (HIR/SSA ABI)"

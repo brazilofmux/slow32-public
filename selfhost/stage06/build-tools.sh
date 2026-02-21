@@ -22,7 +22,15 @@ if [[ -z "$EMU" ]]; then
     fi
 fi
 
-STAGE5_CC="$SELFHOST_DIR/stage05/s12cc.s32x"
+pick_stage5_cc() {
+    if [[ -x "$SELFHOST_DIR/stage05/cc.s32x" ]]; then
+        printf '%s\n' "$SELFHOST_DIR/stage05/cc.s32x"
+    else
+        printf '%s\n' "$SELFHOST_DIR/stage05/s12cc.s32x"
+    fi
+}
+
+STAGE5_CC="$(pick_stage5_cc)"
 STAGE5_AS="$SELFHOST_DIR/stage05/s32-as.s32x"
 STAGE5_LD="$SELFHOST_DIR/stage05/s32-ld.s32x"
 
