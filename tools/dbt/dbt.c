@@ -1726,6 +1726,10 @@ int main(int argc, char **argv) {
                     fprintf(stderr, "  burg pattern cmp_branch_zero: %" PRIu32 "\n",
                             stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO]);
                 }
+                if (stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_BLOCK_END] > 0) {
+                    fprintf(stderr, "  burg pattern block_end: %" PRIu32 "\n",
+                            stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_BLOCK_END]);
+                }
                 if (stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_GENERIC] > 0) {
                     fprintf(stderr, "  burg pattern generic: %" PRIu32 "\n",
                             stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_GENERIC]);

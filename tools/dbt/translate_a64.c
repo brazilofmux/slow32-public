@@ -12,6 +12,7 @@
 
 #include "translate.h"
 #include "block_cache.h"
+#include "stage5_burg.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -30,7 +31,7 @@ uint32_t stage5_lift_attempted = 0;
 uint32_t stage5_lift_success = 0;
 uint32_t stage5_burg_attempted = 0;
 uint32_t stage5_burg_selected = 0;
-uint32_t stage5_burg_pattern_hist[5] = {0};
+uint32_t stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_COUNT] = {0};
 uint32_t stage5_fallback_total = 0;
 uint32_t stage5_fallback_lift_not_implemented = 0;
 uint32_t stage5_fallback_lift_unsupported_opcode = 0;
