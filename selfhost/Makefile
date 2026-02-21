@@ -3,9 +3,9 @@
 # This Makefile guides the student through the stage-by-stage progression.
 # Each stage has specific prerequisites and produces clear, minimal artifacts.
 
-.PHONY: all clean stage00 stage01 stage02 stage03 stage04 stage05
+.PHONY: all clean stage00 stage01 stage02 stage03 stage04 stage05 stage06
 
-all: stage05
+all: stage06
 
 # Stage 00: Minimum bootstrap emulator (the trust root)
 stage00:
@@ -30,7 +30,7 @@ stage02: stage01
 # Stage 03: s32-cc Compiler + Tools (as, ar, ld) + libc/runtime
 # Prerequisites: Stage 02 cc-min (compiler), Stage 02 assembler + linker
 # s32cc compiled by cc-min; tools compiled by s32cc. Self-sufficient toolchain.
-# Artifacts: s32cc.s32x, s32-as.s32x, s32-ar.s32x, s32-ld.s32x
+# Artifacts: cc.s32x (alias: s32cc.s32x), s32-as.s32x, s32-ar.s32x, s32-ld.s32x
 stage03: stage02
 	@echo "--- Building Stage 03: s32-cc Compiler + Tools ---"
 	$(MAKE) -C stage03
@@ -38,18 +38,26 @@ stage03: stage02
 # Stage 04: s12cc AST-based C Compiler + Tools (as, ar, ld)
 # Prerequisites: Stage 03 (compiler, assembler, linker)
 # s12cc compiled by s32cc; tools compiled by s12cc. Self-sufficient toolchain.
-# Artifacts: s12cc.s32x, s32-as.s32x, s32-ar.s32x, s32-ld.s32x
+# Artifacts: cc.s32x (alias: s12cc.s32x), s32-as.s32x, s32-ar.s32x, s32-ld.s32x
 stage04: stage03
 	@echo "--- Building Stage 04: s12cc AST Compiler + Tools ---"
 	$(MAKE) -C stage04
 
 # Stage 05: Code quality — optimized s12cc toolchain
 # Prerequisites: Stage 04 s12cc (compiler), Stage 04 assembler + linker
-# Artifacts: s12cc.s32x, s32-as.s32x, s32-ar.s32x, s32-ld.s32x
+# Artifacts: cc.s32x (alias: s12cc.s32x), s32-as.s32x, s32-ar.s32x, s32-ld.s32x
 # All C compiled by stage04's s12cc. Runtime (libc) included.
 stage05: stage04
 	@echo "--- Building Stage 05: Optimized s12cc Toolchain ---"
 	$(MAKE) -C stage05
+
+# Stage 06: Next-generation selfhost toolchain
+# Prerequisites: Stage 05 s12cc (compiler), Stage 05 assembler + linker
+# Artifacts: cc.s32x (alias: s12cc.s32x), s32-as.s32x, s32-ar.s32x, s32-ld.s32x
+# All C compiled by stage05's s12cc. Runtime (libc) included.
+stage06: stage05
+	@echo "--- Building Stage 06: Selfhost Toolchain ---"
+	$(MAKE) -C stage06
 
 clean:
 	$(MAKE) -C stage00 clean
@@ -58,3 +66,4 @@ clean:
 	$(MAKE) -C stage03 clean
 	$(MAKE) -C stage04 clean
 	$(MAKE) -C stage05 clean
+	$(MAKE) -C stage06 clean
