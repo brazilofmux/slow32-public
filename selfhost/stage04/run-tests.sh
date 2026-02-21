@@ -4,7 +4,7 @@ set -euo pipefail
 # Stage 12: New compiler (Ragel lexer + parser)
 #
 # Bootstrap chain:
-#   stage03/s32cc → compile stage04 sources
+#   stage03 compiler → compile stage04 sources
 #   stage03/s32-as → assemble
 #   stage03/s32-ld → link
 #
@@ -157,11 +157,14 @@ compile_and_link() {
 # ============================================================
 echo "=== Step 1: Bootstrap ==="
 
-CC_EXE="$SELFHOST_DIR/stage03/s32cc.s32x"
+CC_EXE="$SELFHOST_DIR/stage03/cc.s32x"
+if [[ ! -f "$CC_EXE" ]]; then
+    CC_EXE="$SELFHOST_DIR/stage03/s32cc.s32x"
+fi
 AS_EXE="$SELFHOST_DIR/stage03/s32-as.s32x"
 LD_EXE="$SELFHOST_DIR/stage03/s32-ld.s32x"
 
-[[ -f "$CC_EXE" ]] || { echo "Missing s32cc (stage03): $CC_EXE" >&2; exit 1; }
+[[ -f "$CC_EXE" ]] || { echo "Missing compiler (stage03): $CC_EXE" >&2; exit 1; }
 [[ -f "$AS_EXE" ]] || { echo "Missing assembler: $AS_EXE" >&2; exit 1; }
 [[ -f "$LD_EXE" ]] || { echo "Missing linker: $LD_EXE" >&2; exit 1; }
 

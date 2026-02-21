@@ -22,6 +22,7 @@ LIBC_DIR="$SCRIPT_DIR/libc"
 CRT0_SRC="$SCRIPT_DIR/crt0.s"
 MMIO_NO_START_SRC="$SCRIPT_DIR/mmio_no_start.s"
 OUT_EXE="$SCRIPT_DIR/s32cc.s32x"
+OUT_EXE_CANON="$SCRIPT_DIR/cc.s32x"
 
 for f in "$EMU" "$STAGE2_AS" "$STAGE2_LD" "$GEN2_CC" \
          "$CRT0_SRC" "$MMIO_NO_START_SRC" \
@@ -108,3 +109,5 @@ link_exe "$WORKDIR/link.log" -o "$OUT_EXE" --mmio 64K \
 [[ -s "$OUT_EXE" ]] || { echo "link failed" >&2; exit 1; }
 
 echo "OK: $OUT_EXE ($(wc -c < "$OUT_EXE") bytes)"
+cp -f "$OUT_EXE" "$OUT_EXE_CANON"
+echo "    canonical alias: $OUT_EXE_CANON"

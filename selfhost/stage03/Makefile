@@ -5,7 +5,7 @@
 
 .PHONY: all verify clean
 
-all: s32cc.s32x s32-as.s32x s32-ar.s32x s32-ld.s32x
+all: cc.s32x s32-as.s32x s32-ar.s32x s32-ld.s32x
 
 # Build the compiler executable
 s32cc.s32x: s32cc.c s32cc_lex.h s32cc_parse.h \
@@ -15,8 +15,11 @@ s32cc.s32x: s32cc.c s32cc_lex.h s32cc_parse.h \
 	@echo "Building s32cc.s32x..."
 	@bash build-s32cc.sh
 
+cc.s32x: s32cc.s32x
+	@cp -f s32cc.s32x cc.s32x
+
 # Build tools (as, ar, ld) using s32cc
-s32-as.s32x s32-ar.s32x s32-ld.s32x: s32cc.s32x \
+s32-as.s32x s32-ar.s32x s32-ld.s32x: cc.s32x \
             s32-as.c s32_formats_min.h s32-ar.c s32ar_min.h s32-ld.c \
             ../stage02/s32-as.s32x ../stage02/s32-ld.s32x \
             libc/start.c libc/stdio.c libc/string_extra.c libc/convert.c \
@@ -24,9 +27,9 @@ s32-as.s32x s32-ar.s32x s32-ld.s32x: s32cc.s32x \
 	@echo "Building tools (as, ar, ld)..."
 	@bash build-tools.sh
 
-verify: s32cc.s32x
+verify: cc.s32x s32cc.s32x
 	@echo "--- Stage 03: s32-cc compiler tests ---"
 	@bash run-spike.sh
 
 clean:
-	rm -f s32cc.s32x s32-as.s32x s32-ar.s32x s32-ld.s32x
+	rm -f cc.s32x s32cc.s32x s32-as.s32x s32-ar.s32x s32-ld.s32x

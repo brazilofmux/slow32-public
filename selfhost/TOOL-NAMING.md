@@ -34,6 +34,8 @@ For now, stage05+stage06 build scripts emit both:
 
 ## Current migration status
 
+- Stage03: canonical compiler alias enabled.
+- Stage04: canonical compiler alias enabled.
 - Stage05: canonical compiler alias enabled.
 - Stage06: canonical compiler alias enabled.
-- Stage04 and earlier: pending.
+- Stage00-stage02: pending (not currently targeted by this policy).
