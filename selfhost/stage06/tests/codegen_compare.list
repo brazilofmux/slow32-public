@@ -1,0 +1,5 @@
+selfhost/stage06/tests/compare_switch_dense.c
+selfhost/stage06/tests/compare_branch_mix.c
+selfhost/stage06/tests/test_phase5.c
+selfhost/stage06/tests/test_duff.c
+selfhost/stage06/tests/test_phase9.c
