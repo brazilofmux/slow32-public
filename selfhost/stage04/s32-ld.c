@@ -154,6 +154,7 @@ int grel_sec[MAX_GREL];
 int grel_typ[MAX_GREL];
 int grel_add[MAX_GREL];
 int grel_sym[MAX_GREL];
+int grel_file[MAX_GREL];
 int grel_cnt;
 
 /* === Layout variables === */
@@ -209,6 +210,12 @@ int link_error;
 
 /* MMIO size from command line */
 int mmio_size_arg;
+
+/* Pack sections flag: 1=packed (default), 0=fixed 1MB floor */
+int pack_sections;
+
+/* Input file index for PCREL matching */
+int input_file_idx;
 
 /* Emitted symbol table (parallel arrays) */
 #define MAX_EMIT_SYM 4096
@@ -461,11 +468,12 @@ int gsym_upsert(char *name, int sec, int val, int bind) {
             gsym_val[idx] = val;
             gsym_bind[idx] = bind;
         } else if (bind != BIND_WEAK) {
-            /* Both strong -- warn on multiple definition (allow BSS merging) */
+            /* Both strong -- error on multiple definition (allow BSS merging) */
             if (gsym_sec[idx] != SEC_BSS || sec != SEC_BSS) {
-                fputs("warning: multiple definition of '", stderr);
+                fputs("error: multiple definition of '", stderr);
                 fputs(name, stderr);
                 fputs("'\n", stderr);
+                link_error = 1;
             }
         }
         /* else: existing is strong, new is weak -- keep existing */
@@ -777,8 +785,9 @@ void merge_relocs() {
                 /* Adjust offset by section base (per section index) */
                 grel_off[grel_cnt] = rl_off + sec_base_by_idx[i];
 
-                /* Store section type */
+                /* Store section type and file index */
                 grel_sec[grel_cnt] = stype;
+                grel_file[grel_cnt] = input_file_idx;
 
                 grel_cnt = grel_cnt + 1;
             }
@@ -799,6 +808,8 @@ void link_obj(char *path) {
     fputs("Loading: ", stderr);
     fputs(path, stderr);
     fputc('\n', stderr);
+
+    input_file_idx = input_file_idx + 1;
 
     sz = read_file(path);
     if (sz < 0) {
@@ -867,6 +878,7 @@ void load_ar_member(int ar_fh, int midx) {
     if (midx >= ar_nmembers) return;
     if (mem_loaded[midx]) return;
     mem_loaded[midx] = 1;
+    input_file_idx = input_file_idx + 1;
 
     mem_sz = ar_mem_size(midx);
     mem_off = ar_mem_offset(midx);
@@ -1071,7 +1083,9 @@ void layout_sections() {
     int t;
     text_va = 0;
     t = page_align(text_sz);
-    if (t < CODE_LIMIT_MIN) t = CODE_LIMIT_MIN;
+    if (!pack_sections) {
+        if (t < CODE_LIMIT_MIN) t = CODE_LIMIT_MIN;
+    }
     rodata_va = t;
     t = page_align(rodata_va + rodata_sz);
     data_va = t;
@@ -1529,7 +1543,10 @@ void apply_rel(int idx) {
         j = 0;
         while (j < grel_cnt) {
             if (grel_typ[j] == REL_PCREL_HI20) {
-                if (grel_sym[j] == r_gsym) {
+                if (grel_sym[j] == r_gsym &&
+                    grel_sec[j] == r_sec &&
+                    grel_add[j] == r_add &&
+                    grel_file[j] == grel_file[idx]) {
                     hi_pc = sec_va_get(grel_sec[j]) + grel_off[j];
                     break;
                 }
@@ -1553,8 +1570,10 @@ void apply_rel(int idx) {
             }
             wr32(tgt, 0, insn);
         }
+    } else {
+        fputs("error: unknown relocation type\n", stderr);
+        link_error = 1;
     }
-    /* Unknown types silently skipped */
 }
 
 void apply_relocations() {
@@ -1742,7 +1761,9 @@ void link_emit(char *out_path) {
     wb_wr32(28, flags);
 
     code_limit = page_align(text_sz);
-    if (code_limit < CODE_LIMIT_MIN) code_limit = CODE_LIMIT_MIN;
+    if (!pack_sections) {
+        if (code_limit < CODE_LIMIT_MIN) code_limit = CODE_LIMIT_MIN;
+    }
     wb_wr32(32, code_limit);                                    /* code_limit */
     wb_wr32(36, page_align(rodata_va + rodata_sz));            /* rodata_limit */
     wb_wr32(40, bss_end_va);                                    /* data_limit */
@@ -1926,6 +1947,8 @@ int main(int argc, char **argv) {
 
     out_path = NULL;
     mmio_size_arg = 0;
+    pack_sections = 1;
+    input_file_idx = 0;
     link_error = 0;
 
     /* Initialize state */
@@ -1970,6 +1993,10 @@ int main(int argc, char **argv) {
                 return 1;
             }
             mmio_size_arg = parse_mmio_size(argv[i]);
+        } else if (streq(argv[i], "--pack-sections")) {
+            pack_sections = 1;
+        } else if (streq(argv[i], "--no-pack-sections")) {
+            pack_sections = 0;
         } else {
             /* Input file -- process it */
             ftype = detect_file_type(argv[i]);
