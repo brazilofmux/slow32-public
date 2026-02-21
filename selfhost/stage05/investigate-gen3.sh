@@ -18,9 +18,6 @@ FAST="$ROOT_DIR/tools/emulator/slow32-fast"
 [[ -x "$FAST" ]] || { echo "Missing: $FAST" >&2; exit 1; }
 
 STAGE4_CC="$SELFHOST_DIR/stage04/cc.s32x"
-if [[ ! -f "$STAGE4_CC" ]]; then
-    STAGE4_CC="$SELFHOST_DIR/stage04/s12cc.s32x"
-fi
 STAGE4_AS="$SELFHOST_DIR/stage04/s32-as.s32x"
 STAGE4_LD="$SELFHOST_DIR/stage04/s32-ld.s32x"
 

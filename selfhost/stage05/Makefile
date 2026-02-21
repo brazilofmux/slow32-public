@@ -6,7 +6,7 @@ COMPILER_SRCS = s12cc.c c_lexer_gen.c ast.h parser.h sema.h optimize.h codegen.h
 LIBC_SRCS = libc/start.c libc/stdio.c libc/string_extra.c libc/string_more.c libc/ctype.c libc/convert.c libc/malloc.c
 RUNTIME_SRCS = crt0.s mmio_no_start.s
 TOOL_SRCS = tools/s32-as.c tools/s32_formats_min.h tools/s32-ar.c tools/s32ar_min.h tools/s32-ld.c
-BOOTSTRAP_CC = $(or $(wildcard ../stage04/cc.s32x),../stage04/s12cc.s32x)
+BOOTSTRAP_CC = ../stage04/cc.s32x
 BOOTSTRAP = $(BOOTSTRAP_CC) ../stage04/s32-as.s32x ../stage04/s32-ld.s32x
 
 .PHONY: all tools verify clean

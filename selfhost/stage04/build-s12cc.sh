@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Build s12cc.s32x: the stage04 AST-based C compiler.
-# Uses: Stage 03 s32cc.s32x (compiler), Stage 03 s32-as.s32x (assembler),
+# Uses: Stage 03 cc.s32x (compiler), Stage 03 s32-as.s32x (assembler),
 #       Stage 03 s32-ld.s32x (linker). Local libc/runtime.
 # Deposits the artifact in the script's directory.
 
@@ -23,15 +23,7 @@ if [[ -z "$EMU" ]]; then
     fi
 fi
 
-pick_stage3_cc() {
-    if [[ -x "$SELFHOST_DIR/stage03/cc.s32x" ]]; then
-        printf '%s\n' "$SELFHOST_DIR/stage03/cc.s32x"
-    else
-        printf '%s\n' "$SELFHOST_DIR/stage03/s32cc.s32x"
-    fi
-}
-
-STAGE3_CC="$(pick_stage3_cc)"
+STAGE3_CC="$SELFHOST_DIR/stage03/cc.s32x"
 STAGE3_AS="$SELFHOST_DIR/stage03/s32-as.s32x"
 STAGE3_LD="$SELFHOST_DIR/stage03/s32-ld.s32x"
 

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Build stage04 tools: s32-as.s32x, s32-ar.s32x, s32-ld.s32x
-# All compiled by stage04's s12cc, assembled by stage03 assembler,
+# All compiled by stage04's cc.s32x, assembled by stage03 assembler,
 # linked by stage03 linker. Uses stage04's own libc/runtime.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -22,15 +22,7 @@ if [[ -z "$EMU" ]]; then
     fi
 fi
 
-pick_stage4_cc() {
-    if [[ -x "$SCRIPT_DIR/cc.s32x" ]]; then
-        printf '%s\n' "$SCRIPT_DIR/cc.s32x"
-    else
-        printf '%s\n' "$SCRIPT_DIR/s12cc.s32x"
-    fi
-}
-
-STAGE4_CC="$(pick_stage4_cc)"
+STAGE4_CC="$SCRIPT_DIR/cc.s32x"
 STAGE3_AS="$SELFHOST_DIR/stage03/s32-as.s32x"
 STAGE3_LD="$SELFHOST_DIR/stage03/s32-ld.s32x"
 

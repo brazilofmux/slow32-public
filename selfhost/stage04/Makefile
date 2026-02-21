@@ -5,7 +5,7 @@
 
 .PHONY: all verify clean
 
-BOOTSTRAP_CC = $(or $(wildcard ../stage03/cc.s32x),../stage03/s32cc.s32x)
+BOOTSTRAP_CC = ../stage03/cc.s32x
 
 all: cc.s32x s32-as.s32x s32-ar.s32x s32-ld.s32x
 

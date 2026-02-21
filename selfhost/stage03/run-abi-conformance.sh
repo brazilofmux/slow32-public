@@ -11,9 +11,6 @@ EMU_EXPLICIT=0
 KEEP_ARTIFACTS=0
 
 CC_EXE="$SCRIPT_DIR/cc.s32x"
-if [[ ! -f "$CC_EXE" ]]; then
-    CC_EXE="$SCRIPT_DIR/s32cc.s32x"
-fi
 AS_EXE="$SCRIPT_DIR/s32-as.s32x"
 LD_EXE="$SCRIPT_DIR/s32-ld.s32x"
 RUNTIME_DIR="$SCRIPT_DIR"
@@ -35,7 +32,7 @@ Usage: $0 [options]
 Run ABI conformance tests against a compiler/toolchain tuple.
 
 Options:
-  --cc <path>            Compiler executable (default: stage03/cc.s32x)
+  --cc <path>            Compiler executable (default: stage03/cc.s32x, required)
   --as <path>            Assembler executable (default: stage03/s32-as.s32x)
   --ld <path>            Linker executable (default: stage03/s32-ld.s32x)
   --runtime-dir <path>   Directory containing crt0.s and mmio_no_start.s

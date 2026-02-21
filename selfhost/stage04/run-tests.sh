@@ -158,9 +158,6 @@ compile_and_link() {
 echo "=== Step 1: Bootstrap ==="
 
 CC_EXE="$SELFHOST_DIR/stage03/cc.s32x"
-if [[ ! -f "$CC_EXE" ]]; then
-    CC_EXE="$SELFHOST_DIR/stage03/s32cc.s32x"
-fi
 AS_EXE="$SELFHOST_DIR/stage03/s32-as.s32x"
 LD_EXE="$SELFHOST_DIR/stage03/s32-ld.s32x"
 

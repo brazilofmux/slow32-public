@@ -20,18 +20,16 @@ instead of embedding historical stage numbers in tool names.
 - Stage03 compiler legacy name: `s32cc.s32x`
 - Stage04/05/06 compiler legacy name: `s12cc.s32x`
 
-For now, stage03+stage04+stage05+stage06 build scripts emit both:
+Stage03+stage04+stage05+stage06 build scripts emit both:
 - canonical: `cc.s32x`
 - compatibility: legacy stage-specific alias (`s32cc.s32x` or `s12cc.s32x`)
 
 ## Transition rules
 
 1. New scripts and docs should reference canonical names first.
-2. Existing scripts may keep compatibility names until migrated.
-3. Lookup order in wrappers/build scripts should be:
-   - canonical name
-   - compatibility fallback
-4. Remove compatibility names only after all in-tree references are migrated.
+2. Stage03-stage06 script/tool boundaries require canonical compiler names (`cc.s32x`).
+3. Compatibility names are retained as emitted aliases only.
+4. Remove compatibility names only after all in-tree references and external workflows are migrated.
 
 ## Current migration status
 

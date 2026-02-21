@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Build s12cc.s32x: the stage06 AST-based C compiler.
-# Uses: Stage 05 s12cc.s32x (compiler), Stage 05 s32-as.s32x (assembler),
+# Uses: Stage 05 cc.s32x (compiler), Stage 05 s32-as.s32x (assembler),
 #       Stage 05 s32-ld.s32x (linker).
 #
 # Two-phase build:
@@ -31,15 +31,7 @@ if [[ -z "$EMU" ]]; then
     fi
 fi
 
-pick_stage5_cc() {
-    if [[ -x "$SELFHOST_DIR/stage05/cc.s32x" ]]; then
-        printf '%s\n' "$SELFHOST_DIR/stage05/cc.s32x"
-    else
-        printf '%s\n' "$SELFHOST_DIR/stage05/s12cc.s32x"
-    fi
-}
-
-STAGE5_CC="$(pick_stage5_cc)"
+STAGE5_CC="$SELFHOST_DIR/stage05/cc.s32x"
 STAGE5_AS="$SELFHOST_DIR/stage05/s32-as.s32x"
 STAGE5_LD="$SELFHOST_DIR/stage05/s32-ld.s32x"
 
