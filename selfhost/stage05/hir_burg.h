@@ -161,6 +161,10 @@ static void bg_init(void) {
     bg_add_pat(BG_REG, HI_SLL,  BG_REG, BG_IMM, 1);
     bg_add_pat(BG_REG, HI_SRL,  BG_REG, BG_IMM, 1);
     bg_add_pat(BG_REG, HI_SRA,  BG_REG, BG_IMM, 1);
+    bg_add_pat(BG_REG, HI_SEQ,  BG_REG, BG_IMM, 1);
+    bg_add_pat(BG_REG, HI_SEQ,  BG_IMM, BG_REG, 1);
+    bg_add_pat(BG_REG, HI_SNE,  BG_REG, BG_IMM, 1);
+    bg_add_pat(BG_REG, HI_SNE,  BG_IMM, BG_REG, 1);
     bg_add_pat(BG_REG, HI_SLT,  BG_REG, BG_IMM, 1);
     bg_add_pat(BG_REG, HI_SLTU, BG_REG, BG_IMM, 1);
     bg_add_pat(BG_REG, HI_ADD,  BG_REG, BG_REG, 1);
@@ -332,6 +336,7 @@ static int bg_use_accepts_imm(int user, int pos, int c) {
     }
     if ((k == HI_AND || k == HI_OR || k == HI_XOR)) return bg_is_u12(c);
     if ((k == HI_SLL || k == HI_SRL || k == HI_SRA) && pos == 2) return (c >= 0 && c <= 31);
+    if (k == HI_SEQ || k == HI_SNE) return bg_is_u12(c);
     if ((k == HI_SLT || k == HI_SLTU) && pos == 2) return bg_is_i12(c);
     return 0;
 }
