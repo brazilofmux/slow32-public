@@ -74,7 +74,7 @@ int stderr;
 #define STACK_BASE    0x0FFFFFF0
 #define STACK_SIZE    1048576
 #define MEM_SIZE      0x10000000
-#define HEAP_GAP      0x800000
+#define HEAP_GAP      0x4000000
 #define CODE_LIMIT_MIN 0x100000
 #define PAGE_MASK     0xFFFFF000
 

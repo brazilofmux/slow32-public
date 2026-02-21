@@ -16,8 +16,9 @@ int memcpy(char *dst, char *src, int n);
 /* --- Type encoding --- */
 #define TY_INT    0
 #define TY_CHAR   1
-#define TY_VOID   2
-#define TY_STRUCT_BASE 3  /* struct index i → type = 3+i; fits 3..255 */
+#define TY_SHORT  2
+#define TY_VOID   3
+#define TY_STRUCT_BASE 4  /* struct index i → type = 4+i; fits 4..255 */
 #define TY_PTR  256   /* add to base: TY_PTR+TY_CHAR = char*, TY_PTR+TY_INT = int* */
 
 #define TY_UNSIGNED  0x4000  /* flag bit: unsigned qualifier */
@@ -57,6 +58,7 @@ static int ty_size(int ty) {
     if ((ty & TY_BASE_MASK) >= TY_STRUCT_BASE)
         return st_size[(ty & TY_BASE_MASK) - TY_STRUCT_BASE];
     if ((ty & TY_BASE_MASK) == TY_CHAR) return 1;
+    if ((ty & TY_BASE_MASK) == TY_SHORT) return 2;
     return 4;
 }
 

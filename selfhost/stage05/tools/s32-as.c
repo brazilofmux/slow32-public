@@ -1,6 +1,6 @@
 #include "s32_formats_min.h"
 
-#define MAX_LINE 1024
+#define MAX_LINE 65536
 #define MAX_TOK 8
 #define MAX_LBL 16384
 #define MAX_REL 32768

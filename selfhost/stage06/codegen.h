@@ -179,6 +179,9 @@ static void cg_load(int ty) {
     if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
         if (ty & TY_UNSIGNED) cg_s("    ldbu r1, r1, 0\n");
         else                  cg_s("    ldb r1, r1, 0\n");
+    } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+        if (ty & TY_UNSIGNED) cg_s("    ldhu r1, r1, 0\n");
+        else                  cg_s("    ldh r1, r1, 0\n");
     } else {
         cg_s("    ldw r1, r1, 0\n");
     }
@@ -188,6 +191,8 @@ static void cg_load(int ty) {
 static void cg_store(int ty) {
     if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
         cg_s("    stb r1, r2, 0\n");
+    } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+        cg_s("    sth r1, r2, 0\n");
     } else {
         cg_s("    stw r1, r2, 0\n");
     }
@@ -289,6 +294,9 @@ static void gen_expr(Node *n) {
             if (!ty_is_ptr(n->ty) && (n->ty & TY_BASE_MASK) == TY_CHAR) {
                 if (n->ty & TY_UNSIGNED) cg_s("    ldbu r1, r30, ");
                 else                      cg_s("    ldb r1, r30, ");
+            } else if (!ty_is_ptr(n->ty) && (n->ty & TY_BASE_MASK) == TY_SHORT) {
+                if (n->ty & TY_UNSIGNED) cg_s("    ldhu r1, r30, ");
+                else                      cg_s("    ldh r1, r30, ");
             } else {
                 cg_s("    ldw r1, r30, ");
             }

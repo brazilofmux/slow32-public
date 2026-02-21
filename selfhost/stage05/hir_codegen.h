@@ -7,7 +7,7 @@
  */
 
 /* --- Output buffer --- */
-#define CG_MAX_OUT 2097152
+#define CG_MAX_OUT 4194304
 
 static char cg_out[CG_MAX_OUT];
 static int  cg_olen;
@@ -343,6 +343,9 @@ static void hcg_load_saddr(int dreg, int sinst, int ty) {
     if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
         if (ty & TY_UNSIGNED) cg_s("    ldbu r");
         else                  cg_s("    ldb r");
+    } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+        if (ty & TY_UNSIGNED) cg_s("    ldhu r");
+        else                  cg_s("    ldh r");
     } else {
         cg_s("    ldw r");
     }
@@ -359,6 +362,8 @@ static void hcg_store_saddr(int vreg, int sinst, int ty) {
     cg_s(")\n");
     if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
         cg_s("    stb r1, r");
+    } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+        cg_s("    sth r1, r");
     } else {
         cg_s("    stw r1, r");
     }
@@ -372,6 +377,9 @@ static void hcg_load_mem(int dreg, int areg, int ty) {
     if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
         if (ty & TY_UNSIGNED) cg_s("    ldbu r");
         else                  cg_s("    ldb r");
+    } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+        if (ty & TY_UNSIGNED) cg_s("    ldhu r");
+        else                  cg_s("    ldh r");
     } else {
         cg_s("    ldw r");
     }
@@ -386,6 +394,9 @@ static void hcg_load_off(int dreg, int base, int off, int ty) {
     if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
         if (ty & TY_UNSIGNED) cg_s("    ldbu r");
         else                  cg_s("    ldb r");
+    } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+        if (ty & TY_UNSIGNED) cg_s("    ldhu r");
+        else                  cg_s("    ldh r");
     } else {
         cg_s("    ldw r");
     }
@@ -401,6 +412,8 @@ static void hcg_load_off(int dreg, int base, int off, int ty) {
 static void hcg_store_mem(int areg, int vreg, int ty) {
     if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
         cg_s("    stb r");
+    } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+        cg_s("    sth r");
     } else {
         cg_s("    stw r");
     }
@@ -414,6 +427,8 @@ static void hcg_store_mem(int areg, int vreg, int ty) {
 static void hcg_store_off(int base, int vreg, int off, int ty) {
     if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
         cg_s("    stb r");
+    } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+        cg_s("    sth r");
     } else {
         cg_s("    stw r");
     }

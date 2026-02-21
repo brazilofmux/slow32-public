@@ -105,6 +105,7 @@ static int is_type(void) {
     if (lex_tok == TK_UNION) return 1;
     if (lex_tok == TK_UNSIGNED) return 1;
     if (lex_tok == TK_LONG) return 1;
+    if (lex_tok == TK_SHORT) return 1;
     if (lex_tok == TK_CONST) return 1;
     if (lex_tok == TK_VOLATILE) return 1;
     if (lex_tok == TK_IDENT && find_typedef(lex_str) >= 0) return 1;
@@ -264,10 +265,16 @@ static int parse_type(void) {
     if (lex_tok == TK_INT)  { ty = TY_INT;  next(); }
     else if (lex_tok == TK_CHAR) { ty = TY_CHAR; next(); }
     else if (lex_tok == TK_VOID) { ty = TY_VOID; next(); }
+    else if (lex_tok == TK_SHORT) {
+        next();
+        if (lex_tok == TK_INT) { ty = TY_SHORT; next(); }
+        else { ty = TY_SHORT; }
+    }
     else if (lex_tok == TK_UNSIGNED) {
         next();
         if (lex_tok == TK_CHAR) { ty = TY_CHAR | TY_UNSIGNED; next(); }
         else if (lex_tok == TK_INT) { ty = TY_INT | TY_UNSIGNED; next(); }
+        else if (lex_tok == TK_SHORT) { ty = TY_SHORT | TY_UNSIGNED; next(); }
         else if (lex_tok == TK_LONG) { ty = TY_INT | TY_UNSIGNED; next(); }
         else { ty = TY_INT | TY_UNSIGNED; }
     }
@@ -299,8 +306,12 @@ static int parse_type(void) {
                     p_error("expected member name");
                     return TY_INT;
                 }
-                /* Align offset: char=1, everything else=4 */
-                if ((mty & TY_BASE_MASK) != TY_CHAR) {
+                /* Align offset: char=1, short=2, else=4 */
+                if ((mty & TY_BASE_MASK) == TY_CHAR) {
+                    /* 1-byte aligned */
+                } else if ((mty & TY_BASE_MASK) == TY_SHORT) {
+                    off = ((off + 1) / 2) * 2;
+                } else {
                     off = ((off + 3) / 4) * 4;
                 }
                 if (stm_count >= ST_MAX_MEMBERS) {
