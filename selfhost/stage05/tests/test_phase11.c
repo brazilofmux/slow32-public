@@ -11,14 +11,14 @@ int my_strlen(char *s) {
     return n;
 }
 
-int puts(char *s) {
+int my_puts(char *s) {
     int len;
     len = my_strlen(s);
     write(1, s, len);
     return 0;
 }
 
-int strcmp(char *a, char *b) {
+int my_strcmp(char *a, char *b) {
     while (*a && *a == *b) {
         a = a + 1;
         b = b + 1;
@@ -43,8 +43,8 @@ char *g_foo = "foo";
 char *g_bar = "bar";
 
 int test_multi_str(void) {
-    if (strcmp(g_foo, "foo") != 0) return 1;
-    if (strcmp(g_bar, "bar") != 0) return 2;
+    if (my_strcmp(g_foo, "foo") != 0) return 1;
+    if (my_strcmp(g_bar, "bar") != 0) return 2;
     return 0;
 }
 
@@ -63,9 +63,9 @@ int test_str_call(void) {
 char *g_ptr = "first";
 
 int test_reassign(void) {
-    if (strcmp(g_ptr, "first") != 0) return 1;
+    if (my_strcmp(g_ptr, "first") != 0) return 1;
     g_ptr = "second";
-    if (strcmp(g_ptr, "second") != 0) return 2;
+    if (my_strcmp(g_ptr, "second") != 0) return 2;
     return 0;
 }
 
@@ -77,7 +77,7 @@ int g_num2 = 99;
 
 int test_mixed(void) {
     if (g_num != 42) return 1;
-    if (strcmp(g_str, "mixed") != 0) return 2;
+    if (my_strcmp(g_str, "mixed") != 0) return 2;
     if (g_num2 != 99) return 3;
     return 0;
 }
@@ -113,6 +113,6 @@ int main(void) {
     rc = test_strlen();
     if (rc) return rc + 50;
 
-    puts(g_msg);
+    my_puts(g_msg);
     return 0;
 }

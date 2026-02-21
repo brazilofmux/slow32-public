@@ -11,7 +11,7 @@ int my_strlen(char *s) {
     return n;
 }
 
-int puts(char *s) {
+int my_puts(char *s) {
     int len;
     len = my_strlen(s);
     write(1, s, len);
@@ -299,6 +299,6 @@ int main(void) {
     rc = test_compound_result();
     if (rc) return rc + 150;
 
-    puts("Phase 3: all tests passed\n");
+    my_puts("Phase 3: all tests passed\n");
     return 0;
 }
