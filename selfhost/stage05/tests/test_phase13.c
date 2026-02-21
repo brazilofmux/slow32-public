@@ -177,6 +177,34 @@ int test_unsigned_return(void) {
     return 0;
 }
 
+/* --- Test 8: comparison with immediate constants (SEQ/SNE paths) --- */
+
+int test_cmp_imm_eqne(void) {
+    int x;
+    unsigned int u;
+
+    x = 1234;
+    if (!(x == 1234)) return 1;
+    if (x != 1234) return 2;
+    if (!(x != 1235)) return 3;
+    if (x == 1235) return 4;
+
+    u = 4095;
+    if (!(u == 4095)) return 5;
+    if (u != 4095) return 6;
+    if (!(u != 4094)) return 7;
+
+    x = -1;
+    if (!(x == -1)) return 8;
+    if (x != -1) return 9;
+
+    x = 50000;
+    if (!(x == 50000)) return 10;
+    if (x != 50000) return 11;
+
+    return 0;
+}
+
 /* --- Main --- */
 int main(void) {
     int rc;
@@ -201,6 +229,9 @@ int main(void) {
 
     rc = test_unsigned_return();
     if (rc) return rc + 60;
+
+    rc = test_cmp_imm_eqne();
+    if (rc) return rc + 70;
 
     my_puts("Phase 13: all tests passed\n");
     return 0;

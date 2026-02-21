@@ -803,6 +803,52 @@ static void hcg_inst(int idx) {
         if (imm_opp) hcg_stat_imm_miss_cmp = hcg_stat_imm_miss_cmp + 1;
     }
 
+    if (k == HI_SEQ || k == HI_SNE) {
+        int imm_opp;
+        int c;
+        int have_imm;
+        imm_opp = 0;
+        have_imm = 0;
+        if (hcg_const_imm_inst(s2, &c) && hcg_is_u12(c)) {
+            imm_opp = 1;
+            have_imm = 1;
+            off = c;
+            rs1 = hcg_src(s1, 1);
+        } else if (hcg_const_imm_inst(s1, &c) && hcg_is_u12(c)) {
+            imm_opp = 1;
+            have_imm = 1;
+            off = c;
+            rs1 = hcg_src(s2, 2);
+        } else if (pat >= 0 && lnt == BG_REG && rnt == BG_IMM) {
+            c = h_val[s2];
+            if (hcg_is_u12(c)) {
+                imm_opp = 1;
+                have_imm = 1;
+                off = c;
+                rs1 = hcg_src(s1, 1);
+            }
+        } else if (pat >= 0 && lnt == BG_IMM && rnt == BG_REG) {
+            c = h_val[s1];
+            if (hcg_is_u12(c)) {
+                imm_opp = 1;
+                have_imm = 1;
+                off = c;
+                rs1 = hcg_src(s2, 2);
+            }
+        }
+        if (imm_opp) hcg_stat_imm_opp_cmp = hcg_stat_imm_opp_cmp + 1;
+        if (have_imm) {
+            rd = hcg_dst(idx);
+            cg_rri("xori", rd, rs1, off);
+            if (k == HI_SEQ) cg_rrr("seq", rd, rd, 0);
+            else cg_rrr("sne", rd, rd, 0);
+            hcg_stat_imm_hit_cmp = hcg_stat_imm_hit_cmp + 1;
+            hcg_maybe_spill(idx);
+            return;
+        }
+        if (imm_opp) hcg_stat_imm_miss_cmp = hcg_stat_imm_miss_cmp + 1;
+    }
+
     /* Binary arithmetic/logic/comparison */
     if (k >= HI_ADD && k <= HI_SGEU) {
         if (hcg_const_imm_inst(s1, &off) && off == 0) rs1 = 0;
