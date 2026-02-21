@@ -1010,8 +1010,10 @@ static void hcg_inst(int idx) {
         int imm_opp;
         int c;
         int have_imm;
+        int have_addi_cmp;
         imm_opp = 0;
         have_imm = 0;
+        have_addi_cmp = 0;
         if (hcg_const_imm_inst(s2, &c) && hcg_is_u12(c)) {
             imm_opp = 1;
             have_imm = 1;
@@ -1043,6 +1045,34 @@ static void hcg_inst(int idx) {
         if (have_imm) {
             rd = hcg_dst(idx);
             cg_rri("xori", rd, rs1, off);
+            if (k == HI_SEQ) cg_rrr("seq", rd, rd, 0);
+            else cg_rrr("sne", rd, rd, 0);
+            hcg_stat_imm_hit_cmp = hcg_stat_imm_hit_cmp + 1;
+            hcg_maybe_spill(idx);
+            return;
+        }
+        /* Signed-12 equality sink: x == c  => (x + (-c)) == 0.
+         * This avoids separate constant materialization for small negative constants. */
+        if (hcg_const_imm_inst(s2, &c)) {
+            if (c != (-2147483647 - 1)) {
+                off = 0 - c;
+                if (hcg_is_i12(off)) {
+                    have_addi_cmp = 1;
+                    rs1 = hcg_src(s1, 1);
+                }
+            }
+        } else if (hcg_const_imm_inst(s1, &c)) {
+            if (c != (-2147483647 - 1)) {
+                off = 0 - c;
+                if (hcg_is_i12(off)) {
+                    have_addi_cmp = 1;
+                    rs1 = hcg_src(s2, 2);
+                }
+            }
+        }
+        if (have_addi_cmp) {
+            rd = hcg_dst(idx);
+            cg_rri("addi", rd, rs1, off);
             if (k == HI_SEQ) cg_rrr("seq", rd, rd, 0);
             else cg_rrr("sne", rd, rd, 0);
             hcg_stat_imm_hit_cmp = hcg_stat_imm_hit_cmp + 1;
