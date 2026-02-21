@@ -67,6 +67,7 @@ extern uint32_t stage5_emit_fallback_shape;
 extern uint32_t stage5_emit_fallback_single_unhandled;
 extern uint32_t stage5_emit_fallback_cmp_branch_miss;
 extern uint32_t stage5_emit_fallback_not_ended;
+extern uint32_t stage5_emit_fused_cmp_branch;
 extern uint32_t stage5_emit_unhandled_opcode_hist[128];
 extern uint32_t stage5_emit_calls;
 extern uint64_t stage5_emit_time_ns;

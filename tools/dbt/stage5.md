@@ -128,6 +128,31 @@ Requirements:
 - Deterministic selection.
 - Clean fail/abort path to Stage 4 emitter.
 
+### Phase 2 Status
+
+**BURG-native fused compare+branch emitter** (`stage5_emit_cmp_branch_fused`):
+- Handles SLT/SLTU/SEQ/SNE/SGT/SGTU/SLE/SLEU/SGE/SGEU + BEQ/BNE
+- Handles SLTI/SLTIU + BEQ/BNE (immediate compare)
+- Emits CMP + Jcc directly: no SETcc, no MOVZX, no intermediate rd store
+- Works for 2-instruction regions and as fused tail of 3+ instruction regions
+- Measured improvement: cmp_branch_zero bpg 19.44 → 15.88
+
+**Policy gates removed** for these pattern families (now emit via Family C):
+- `DIRECT_BRANCH_EQ` (blocks ending with BEQ)
+- `DIRECT_BRANCH_NE` (blocks ending with BNE, was already enabled)
+- `DIRECT_BRANCH_REL` (blocks ending with BLT/BGE)
+- `DIRECT_BRANCH_RELU` (blocks ending with BLTU/BGEU)
+- `JAL_JUMP` multi-instruction (blocks ending with JAL rd!=31)
+
+**Coverage improvement** (bench-loops): 20 → 138 emitted (7x), 75% of BURG-selected blocks now emit.
+
+**Remaining policy gates** (call/return/indirect — Phase 2b):
+- `JAL_CALL_SHORT`, `JAL_CALL_LONG`
+- `JALR_RET_SHORT`, `JALR_RET_LONG`
+- `JALR_INDIRECT`
+
+**Double-lift eliminated**: emit path now tracks lift+BURG counters itself; noop select only runs when emit is disabled (`-G` without `-W`).
+
 ## Phase 3: Local Register Assignment for Selected Regions
 
 Add region-local register assignment over BURG output:
@@ -183,8 +208,10 @@ Rollout:
 - per-pattern emit efficiency (`emit pattern <name> ... bpg=<x>`)
   - terminals are split (`jal_call_short`, `jal_call_long`, `jal_jump`, `jalr_ret_short`, `jalr_ret_long`, `jalr_indirect`, `halt`, `yield`, `debug`)
   - direct branches are split (`direct_branch_eq`, `direct_branch_ne`, `direct_branch_rel`, `direct_branch_relu`)
-  - `jal_call_short`, `jal_call_long`, `jalr_ret_short`, `jalr_ret_long`, `jalr_indirect`, `direct_branch_eq`, `direct_branch_rel`, and `direct_branch_relu` currently use policy fallback to Stage 4 emission
-  - `jal_jump` is enabled only for single-instruction selected regions (`guest_inst_count == 1`) and otherwise falls back to Stage 4
+  - `jal_call_short`, `jal_call_long`, `jalr_ret_short`, `jalr_ret_long`, `jalr_indirect` currently use policy fallback to Stage 4 emission
+  - `jal_jump`, `direct_branch_eq`, `direct_branch_ne`, `direct_branch_rel`, `direct_branch_relu` emit for all region sizes
+  - `cmp_branch_zero` uses BURG-native fused emitter (CMP + Jcc, no intermediate rd)
+  - `stage5_emit_fused_cmp_branch` counts fused emissions
 - `stage5_strict_carry_skips`
 
 ### Quick Comparison Workflow

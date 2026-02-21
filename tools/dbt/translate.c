@@ -58,6 +58,7 @@ uint32_t stage5_emit_calls = 0;
 uint64_t stage5_emit_time_ns = 0;
 uint64_t stage5_emit_success_time_ns = 0;
 uint64_t stage5_emit_fallback_time_ns = 0;
+uint32_t stage5_emit_fused_cmp_branch = 0;
 
 static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
 static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg);
@@ -176,6 +177,134 @@ static inline bool stage5_translate_bne_compact(translate_ctx_t *ctx,
     }
     emit_exit_chained(ctx, taken_pc, ctx->exit_idx++);
 
+    return true;
+}
+
+// BURG-native fused compare+branch emitter.
+// Emits CMP + Jcc directly without materializing the 0/1 intermediate into rd.
+// Handles: SLT/SLTU/SEQ/SNE/SGT/SGTU/SLE/SLEU/SGE/SGEU + BEQ/BNE rd,r0
+//          SLTI/SLTIU + BEQ/BNE rd,r0
+//
+// The compare rd is dead (only consumed by the branch); we skip SETcc+MOVZX+store.
+// If rd is live (used later), the caller must NOT use this path.
+static bool stage5_emit_cmp_branch_fused(translate_ctx_t *ctx,
+                                         uint8_t cmp_opcode,
+                                         uint8_t cmp_rs1, uint8_t cmp_rs2,
+                                         int32_t cmp_imm, bool cmp_is_imm,
+                                         uint8_t branch_opcode,
+                                         int32_t branch_imm,
+                                         uint32_t branch_pc) {
+    emit_ctx_t *e = &ctx->emit;
+    uint32_t fall_pc = branch_pc + 4;
+    uint32_t taken_pc = fall_pc + branch_imm;
+
+    if (ctx->block) {
+        ctx->block->flags |= BLOCK_FLAG_DIRECT;
+    }
+
+    if (ctx->pending_cond.valid) {
+        flush_pending_cond(ctx);
+    }
+
+    // 1. Emit the comparison operand loads + CMP.
+    if (cmp_is_imm) {
+        // SLTI/SLTIU: compare rs1 against immediate
+        x64_reg_t h1 = guest_host_reg(ctx, cmp_rs1);
+        if (h1 != X64_NOREG) {
+            flush_pending_write(ctx);
+            emit_cmp_r32_imm32(e, h1, cmp_imm);
+        } else {
+            emit_load_guest_reg(ctx, RAX, cmp_rs1);
+            emit_cmp_r32_imm32(e, RAX, cmp_imm);
+        }
+    } else {
+        // Register-register compare
+        x64_reg_t h1 = guest_host_reg(ctx, cmp_rs1);
+        x64_reg_t h2 = guest_host_reg(ctx, cmp_rs2);
+        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : RAX;
+        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : RCX;
+        if (h1 == X64_NOREG) emit_load_guest_reg(ctx, RAX, cmp_rs1);
+        if (h2 == X64_NOREG) emit_load_guest_reg(ctx, RCX, cmp_rs2);
+        if (h1 != X64_NOREG || h2 != X64_NOREG) {
+            flush_pending_write(ctx);
+        }
+        emit_cmp_r32_r32(e, cmp_a, cmp_b);
+    }
+
+    // 2. Map cmp_opcode + branch_condition → x86 Jcc.
+    //    SLT + BNE(rd,r0) → "if (rs1 < rs2) jump" → JL
+    //    SLT + BEQ(rd,r0) → "if !(rs1 < rs2) jump" → JGE
+    bool is_bne = (branch_opcode == OP_BNE);
+    uint8_t taken_cc = 0, fall_cc = 0;
+
+    switch (cmp_opcode) {
+        case OP_SLT:  case OP_SLTI:
+            taken_cc = is_bne ? 0x8C : 0x8D;  // JL : JGE
+            fall_cc  = is_bne ? 0x8D : 0x8C;
+            break;
+        case OP_SLTU: case OP_SLTIU:
+            taken_cc = is_bne ? 0x82 : 0x83;  // JB : JAE
+            fall_cc  = is_bne ? 0x83 : 0x82;
+            break;
+        case OP_SEQ:
+            taken_cc = is_bne ? 0x84 : 0x85;  // JE : JNE
+            fall_cc  = is_bne ? 0x85 : 0x84;
+            break;
+        case OP_SNE:
+            taken_cc = is_bne ? 0x85 : 0x84;  // JNE : JE
+            fall_cc  = is_bne ? 0x84 : 0x85;
+            break;
+        case OP_SGT:
+            taken_cc = is_bne ? 0x8F : 0x8E;  // JG : JLE
+            fall_cc  = is_bne ? 0x8E : 0x8F;
+            break;
+        case OP_SGTU:
+            taken_cc = is_bne ? 0x87 : 0x86;  // JA : JBE
+            fall_cc  = is_bne ? 0x86 : 0x87;
+            break;
+        case OP_SLE:
+            taken_cc = is_bne ? 0x8E : 0x8F;  // JLE : JG
+            fall_cc  = is_bne ? 0x8F : 0x8E;
+            break;
+        case OP_SLEU:
+            taken_cc = is_bne ? 0x86 : 0x87;  // JBE : JA
+            fall_cc  = is_bne ? 0x87 : 0x86;
+            break;
+        case OP_SGE:
+            taken_cc = is_bne ? 0x8D : 0x8C;  // JGE : JL
+            fall_cc  = is_bne ? 0x8C : 0x8D;
+            break;
+        case OP_SGEU:
+            taken_cc = is_bne ? 0x83 : 0x82;  // JAE : JB
+            fall_cc  = is_bne ? 0x82 : 0x83;
+            break;
+        default:
+            return false;
+    }
+
+    void (*emit_jcc_taken)(emit_ctx_t *, int32_t) =
+        (void (*)(emit_ctx_t *, int32_t))emit_jcc_rel32_from_cc(taken_cc);
+    if (!emit_jcc_taken) return false;
+
+    // 3. Emit branch exits.
+    //    Layout: Jcc taken → fall-through exit → taken exit
+    size_t jcc_patch = emit_offset(e) + 2;  // After 0F XX
+    emit_jcc_taken(e, 0);  // Placeholder
+
+    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
+        ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
+    }
+    emit_exit_chained(ctx, fall_pc, ctx->exit_idx++);
+
+    size_t taken_offset = emit_offset(e);
+    emit_patch_rel32(e, jcc_patch, taken_offset);
+    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
+        ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
+    }
+    emit_exit_chained(ctx, taken_pc, ctx->exit_idx++);
+
+    stage5_emit_fused_cmp_branch++;
+    (void)fall_cc;  // reserved for future inv_cc usage
     return true;
 }
 
@@ -431,17 +560,30 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         return false;
     }
 
+    stage5_lift_attempted++;
+
     stage5_lift_region_t region;
     stage5_lift_region_init(&region, guest_pc);
     if (!stage5_lift_superblock(&region, ctx->cpu->mem_base, ctx->cpu->code_limit,
                                 MAX_BLOCK_INSTS)) {
+        stage5_record_lift_fallback(&region);
         return false;
     }
+
+    stage5_lift_success++;
+    stage5_burg_attempted++;
 
     stage5_burg_result_t result;
     stage5_burg_result_init(&result);
     if (!stage5_burg_select(&region, &result) || !result.selected) {
+        stage5_record_burg_fallback(result.reason);
         return false;
+    }
+
+    stage5_burg_selected++;
+    stage5_burg_selected_guest_insts += region.guest_inst_count;
+    if ((uint32_t)result.pattern < STAGE5_BURG_PATTERN_COUNT) {
+        stage5_burg_pattern_hist[result.pattern]++;
     }
 
     stage5_emit_attempted++;
@@ -463,16 +605,12 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     bool saved_superblock_enabled = ctx->superblock_enabled;
     ctx->superblock_enabled = false;
 
-    // Policy fallback: very short return blocks can be cheaper through Stage4 path.
+    // Policy fallback: call/return/indirect patterns still use Stage4 path.
     if (emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
         emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG ||
-        (emitted_pattern == STAGE5_BURG_PATTERN_JAL_JUMP && region.guest_inst_count > 1) ||
         emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_SHORT ||
         emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_LONG ||
-        emitted_pattern == STAGE5_BURG_PATTERN_JALR_INDIRECT ||
-        emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_EQ ||
-        emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL ||
-        emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_RELU) {
+        emitted_pattern == STAGE5_BURG_PATTERN_JALR_INDIRECT) {
         ctx->superblock_enabled = saved_superblock_enabled;
         stage5_emit_fallback++;
         stage5_emit_fallback_shape++;
@@ -541,35 +679,18 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         result.pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO) {
         stage5_ir_node_t *c = &region.ir[term_idx - 1];
         stage5_ir_node_t *b = &region.ir[term_idx];
-        ctx->guest_pc = c->pc;
-        ctx->current_inst_idx = term_idx - 1;
-        bool ok_cmp = true;
-        switch (c->opcode) {
-            case OP_SLT:   translate_slt(ctx, c->rd, c->rs1, c->rs2); break;
-            case OP_SLTU:  translate_sltu(ctx, c->rd, c->rs1, c->rs2); break;
-            case OP_SEQ:   translate_seq(ctx, c->rd, c->rs1, c->rs2); break;
-            case OP_SNE:   translate_sne(ctx, c->rd, c->rs1, c->rs2); break;
-            case OP_SGT:   translate_sgt(ctx, c->rd, c->rs1, c->rs2); break;
-            case OP_SGTU:  translate_sgtu(ctx, c->rd, c->rs1, c->rs2); break;
-            case OP_SLE:   translate_sle(ctx, c->rd, c->rs1, c->rs2); break;
-            case OP_SLEU:  translate_sleu(ctx, c->rd, c->rs1, c->rs2); break;
-            case OP_SGE:   translate_sge(ctx, c->rd, c->rs1, c->rs2); break;
-            case OP_SGEU:  translate_sgeu(ctx, c->rd, c->rs1, c->rs2); break;
-            case OP_SLTI:  translate_slti(ctx, c->rd, c->rs1, c->imm); break;
-            case OP_SLTIU: translate_sltiu(ctx, c->rd, c->rs1, c->imm); break;
-            default: ok_cmp = false; break;
-        }
-        if (ok_cmp) {
-            ctx->guest_pc = b->pc;
-            ctx->current_inst_idx = term_idx;
-            bool ended = (b->opcode == OP_BEQ)
-                ? translate_beq(ctx, b->rs1, b->rs2, b->imm)
-                : translate_bne(ctx, b->rs1, b->rs2, b->imm);
-            if (ended) {
-                ctx->superblock_enabled = saved_superblock_enabled;
-                stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-                return true;
-            }
+        bool cmp_is_imm = (c->opcode == OP_SLTI || c->opcode == OP_SLTIU);
+
+        // BURG-native fused path: CMP + Jcc with no intermediate rd.
+        ctx->guest_pc = b->pc;
+        ctx->current_inst_idx = term_idx;
+        bool fused = stage5_emit_cmp_branch_fused(ctx,
+            c->opcode, c->rs1, c->rs2, c->imm, cmp_is_imm,
+            b->opcode, b->imm, b->pc);
+        if (fused) {
+            ctx->superblock_enabled = saved_superblock_enabled;
+            stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+            return true;
         }
     }
 
@@ -809,10 +930,19 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             }
         }
 
+        // For CMP_BRANCH_ZERO, also skip the compare node (fused with branch).
+        int fuse_cmp_idx = -1;
+        if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO &&
+            terminal_idx > 0 && !region.ir[terminal_idx - 1].synthetic &&
+            region.ir[terminal_idx - 1].kind == STAGE5_IR_CMP) {
+            fuse_cmp_idx = terminal_idx - 1;
+        }
+
         for (uint32_t i = 0; i < region.ir_count; i++) {
             stage5_ir_node_t *n = &region.ir[i];
             if (n->synthetic) continue;
             if (terminal_idx >= 0 && (int)i == terminal_idx) continue;
+            if (fuse_cmp_idx >= 0 && (int)i == fuse_cmp_idx) continue;
             ctx->guest_pc = n->pc;
             ctx->current_inst_idx = (int)i;
             switch (n->opcode) {
@@ -871,6 +1001,16 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 ctx->guest_pc = guest_pc + region.guest_inst_count * 4;
                 emit_exit_chained(ctx, ctx->guest_pc, ctx->exit_idx++);
                 ended = true;
+            } else if (fuse_cmp_idx >= 0 && terminal_idx >= 0) {
+                // BURG fused cmp+branch: CMP + Jcc with no intermediate rd.
+                stage5_ir_node_t *c = &region.ir[fuse_cmp_idx];
+                stage5_ir_node_t *b = &region.ir[terminal_idx];
+                bool cmp_is_imm = (c->opcode == OP_SLTI || c->opcode == OP_SLTIU);
+                ctx->guest_pc = b->pc;
+                ctx->current_inst_idx = terminal_idx;
+                ended = stage5_emit_cmp_branch_fused(ctx,
+                    c->opcode, c->rs1, c->rs2, c->imm, cmp_is_imm,
+                    b->opcode, b->imm, b->pc);
             } else if (terminal_idx >= 0) {
                 stage5_ir_node_t *last = &region.ir[terminal_idx];
                 ctx->guest_pc = last->pc;
@@ -5957,7 +6097,8 @@ retry_translate:
     }
 
     // Stage 5 hook timing split: selection/lift vs emit path.
-    if (ctx->stage5_burg_enabled) {
+    // When emit is enabled, skip the noop select (emit path lifts+selects itself).
+    if (ctx->stage5_burg_enabled && !ctx->stage5_emit_enabled) {
         uint64_t t0 = stage5_now_ns();
         stage5_try_select_noop(ctx, guest_pc);
         uint64_t dt = stage5_now_ns() - t0;

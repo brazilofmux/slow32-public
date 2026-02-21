@@ -1878,6 +1878,10 @@ int main(int argc, char **argv) {
                     fprintf(stderr, "  emit not_ended: %" PRIu32 "\n",
                             stage5_emit_fallback_not_ended);
                 }
+                if (stage5_emit_fused_cmp_branch > 0) {
+                    fprintf(stderr, "  emit fused_cmp_branch: %" PRIu32 "\n",
+                            stage5_emit_fused_cmp_branch);
+                }
                 if (stage5_emit_fallback > 0) {
                     uint32_t top_count[3] = {0, 0, 0};
                     uint32_t top_opcode[3] = {0, 0, 0};
