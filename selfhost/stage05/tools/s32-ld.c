@@ -168,7 +168,8 @@ int entry_pt;
 char file_buf[FILE_BUFSZ];
 
 /* === Per-file state === */
-int sec_base[8];
+#define MAX_OBJ_SEC 32
+int sec_base_by_idx[MAX_OBJ_SEC];
 int sym_map[MAX_FILE_SYM];
 
 /* Object header parse state */
@@ -413,12 +414,30 @@ int gsym_upsert(char *name, int sec, int val, int bind) {
         }
         return gsym_add_new(name, sec, val, bind, def);
     }
-    /* Found -- update if currently undefined and new is defined */
-    if (sec != 0 && gsym_def[idx] == 0) {
-        gsym_sec[idx] = sec;
-        gsym_val[idx] = val;
-        gsym_bind[idx] = bind;
-        gsym_def[idx] = 1;
+    /* Found -- handle based on binding priority */
+    if (sec != 0) {
+        if (gsym_def[idx] == 0) {
+            /* Was undefined, now defined -- always update */
+            gsym_sec[idx] = sec;
+            gsym_val[idx] = val;
+            gsym_bind[idx] = bind;
+            gsym_def[idx] = 1;
+        } else if (gsym_def[idx] == 2) {
+            /* Linker-defined -- keep linker definition */
+        } else if (gsym_bind[idx] == BIND_WEAK) {
+            /* Existing is weak -- replace with new (strong or weak) */
+            gsym_sec[idx] = sec;
+            gsym_val[idx] = val;
+            gsym_bind[idx] = bind;
+        } else if (bind != BIND_WEAK) {
+            /* Both strong -- warn on multiple definition (allow BSS merging) */
+            if (gsym_sec[idx] != SEC_BSS || sec != SEC_BSS) {
+                fputs("warning: multiple definition of '", stderr);
+                fputs(name, stderr);
+                fputs("'\n", stderr);
+            }
+        }
+        /* else: existing is strong, new is weak -- keep existing */
     }
     return idx;
 }
@@ -498,8 +517,8 @@ void merge_sections() {
     int j;
 
     i = 0;
-    while (i < 8) {
-        sec_base[i] = 0;
+    while (i < MAX_OBJ_SEC) {
+        sec_base_by_idx[i] = 0;
         i = i + 1;
     }
 
@@ -521,8 +540,10 @@ void merge_sections() {
                 base = 0;
             }
 
-            /* Record base for symbol/reloc adjustment */
-            sec_base[stype] = base;
+            /* Record base for symbol/reloc adjustment (per section index) */
+            if (i < MAX_OBJ_SEC) {
+                sec_base_by_idx[i] = base;
+            }
 
             /* Copy data (skip BSS) */
             if (stype != SEC_BSS) {
@@ -594,8 +615,8 @@ void merge_symbols() {
             /* Defined: get section type from section table */
             sy_sectype = rd32(file_buf, (sy_sec - 1) * S32O_SEC_SZ + obj_sec_off + 4);
 
-            /* Adjust value by section base offset */
-            sy_val = sec_base[sy_sectype] + sy_val;
+            /* Adjust value by section base offset (per section index) */
+            sy_val = sec_base_by_idx[sy_sec - 1] + sy_val;
 
             if (sy_bind == BIND_LOCAL) {
                 /* Locals are file-scoped */
@@ -653,8 +674,8 @@ void merge_relocs() {
                 }
                 grel_sym[grel_cnt] = mapped_sym;
 
-                /* Adjust offset by section base */
-                grel_off[grel_cnt] = rl_off + sec_base[stype];
+                /* Adjust offset by section base (per section index) */
+                grel_off[grel_cnt] = rl_off + sec_base_by_idx[i];
 
                 /* Store section type */
                 grel_sec[grel_cnt] = stype;

@@ -4,49 +4,10 @@
  * Returns 0 on success, non-zero on first failure.
  *
  * Build: merge c_lexer_gen.c + this file, compile with s32-cc.
- * The lexer defines stderr=2 (integer fd).  We provide fd-based
- * I/O wrappers so the libc's FILE*-based fputs is not called.
+ * Uses libc FILE*-based I/O (stderr from __stdio_init).
  */
 
 #include "c_lexer_gen.c"
-
-/* --- fd-based I/O (shadows libc FILE* versions) --- */
-int write(int fd, char *buf, int len);
-
-int fputs(char *s, int fd) {
-    int len;
-    len = strlen(s);
-    write(fd, s, len);
-    return 0;
-}
-
-int fputc(int c, int fd) {
-    char buf[1];
-    buf[0] = c;
-    write(fd, buf, 1);
-    return c;
-}
-
-void fput_uint(int fd, int val) {
-    char buf[11];
-    int i;
-    int d;
-    int started;
-    if (val == 0) { fputc(48, fd); return; }
-    i = 0;
-    d = 1000000000;
-    started = 0;
-    while (d > 0) {
-        if (val >= d || started) {
-            buf[i] = 48 + val / d;
-            val = val - (val / d) * d;
-            i = i + 1;
-            started = 1;
-        }
-        d = d / 10;
-    }
-    write(fd, buf, i);
-}
 
 static int test_pass;
 static int test_fail;

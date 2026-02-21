@@ -10,46 +10,10 @@
 
 #include "c_lexer_gen.c"
 
-/* --- fd-based I/O wrappers (stderr=2 from lexer) --- */
-int write(int fd, char *buf, int len);
+/* --- I/O from libc (stdio.c) --- */
 int read(int fd, char *buf, int len);
 int open(char *path, int flags);
 int close(int fd);
-
-int fputs(char *s, int fd) {
-    int len;
-    len = strlen(s);
-    write(fd, s, len);
-    return 0;
-}
-
-int fputc(int c, int fd) {
-    char buf[1];
-    buf[0] = c;
-    write(fd, buf, 1);
-    return c;
-}
-
-void fput_uint(int fd, int val) {
-    char buf[11];
-    int i;
-    int d;
-    int started;
-    if (val == 0) { fputc(48, fd); return; }
-    i = 0;
-    d = 1000000000;
-    started = 0;
-    while (d > 0) {
-        if (val >= d || started) {
-            buf[i] = 48 + val / d;
-            val = val - (val / d) * d;
-            i = i + 1;
-            started = 1;
-        }
-        d = d / 10;
-    }
-    write(fd, buf, i);
-}
 
 #include "pp.h"
 #include "ast.h"

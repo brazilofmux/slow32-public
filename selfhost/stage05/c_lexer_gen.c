@@ -20,7 +20,7 @@ int fputc(int c, int f);
 void fput_uint(int f, int v);
 void exit(int status);
 
-#define stderr 2
+int stderr;
 #define NULL 0
 
 /* === Token constants (same numbering as s32cc_lex.h) === */
