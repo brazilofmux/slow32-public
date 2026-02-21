@@ -23,8 +23,34 @@
 uint32_t superblock_profile_min_samples = SUPERBLOCK_PROFILE_MIN_SAMPLES;
 uint32_t superblock_taken_pct_threshold = SUPERBLOCK_TAKEN_PCT_THRESHOLD;
 uint32_t cmp_branch_fusion_count = 0;  // Global fusion counter for stats
+uint32_t cmp_branch_fusion_carry_skipped = 0; // Unsigned fusions skipped in strict-carry mode
 uint32_t cbz_peephole_count = 0;      // CBZ/CBNZ peephole counter for stats
 uint32_t native_stub_count = 0;       // Native intrinsic stub counter
+uint32_t stage5_lift_attempted = 0;
+uint32_t stage5_lift_success = 0;
+uint32_t stage5_burg_attempted = 0;
+uint32_t stage5_burg_selected = 0;
+uint32_t stage5_burg_pattern_hist[5] = {0};
+uint32_t stage5_fallback_total = 0;
+uint32_t stage5_fallback_lift_not_implemented = 0;
+uint32_t stage5_fallback_lift_unsupported_opcode = 0;
+uint32_t stage5_fallback_lift_region_too_large = 0;
+uint32_t stage5_fallback_lift_invalid_cfg = 0;
+uint32_t stage5_fallback_lift_internal = 0;
+uint32_t stage5_fallback_burg_not_implemented = 0;
+uint32_t stage5_fallback_burg_no_cover = 0;
+uint32_t stage5_fallback_burg_illegal_cover = 0;
+uint32_t stage5_fallback_burg_internal = 0;
+uint32_t stage5_fallback_unsupported_opcode_hist[128] = {0};
+uint32_t stage5_emit_attempted = 0;
+uint32_t stage5_emit_success = 0;
+uint32_t stage5_emit_fallback = 0;
+uint32_t stage5_emit_fallback_non_terminal = 0;
+uint32_t stage5_emit_fallback_shape = 0;
+uint32_t stage5_emit_fallback_single_unhandled = 0;
+uint32_t stage5_emit_fallback_cmp_branch_miss = 0;
+uint32_t stage5_emit_fallback_not_ended = 0;
+uint32_t stage5_emit_unhandled_opcode_hist[128] = {0};
 
 // ============================================================================
 // Instruction decoding (shared with x86-64 translator)

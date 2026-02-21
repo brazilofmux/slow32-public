@@ -3,6 +3,8 @@
 
 #include "translate.h"
 #include "block_cache.h"
+#include "stage5_lift.h"
+#include "stage5_burg.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -15,8 +17,36 @@
 uint32_t superblock_profile_min_samples = SUPERBLOCK_PROFILE_MIN_SAMPLES;
 uint32_t superblock_taken_pct_threshold = SUPERBLOCK_TAKEN_PCT_THRESHOLD;
 uint32_t cmp_branch_fusion_count = 0;  // Global fusion counter for stats
+uint32_t cmp_branch_fusion_carry_skipped = 0; // Unsigned fusions skipped in strict-carry mode
 uint32_t cbz_peephole_count = 0;      // CBZ/CBNZ peephole counter for stats
 uint32_t native_stub_count = 0;       // Native intrinsic stub counter
+uint32_t stage5_lift_attempted = 0;
+uint32_t stage5_lift_success = 0;
+uint32_t stage5_burg_attempted = 0;
+uint32_t stage5_burg_selected = 0;
+uint32_t stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_COUNT] = {0};
+uint32_t stage5_fallback_total = 0;
+uint32_t stage5_fallback_lift_not_implemented = 0;
+uint32_t stage5_fallback_lift_unsupported_opcode = 0;
+uint32_t stage5_fallback_lift_region_too_large = 0;
+uint32_t stage5_fallback_lift_invalid_cfg = 0;
+uint32_t stage5_fallback_lift_internal = 0;
+uint32_t stage5_fallback_burg_not_implemented = 0;
+uint32_t stage5_fallback_burg_no_cover = 0;
+uint32_t stage5_fallback_burg_illegal_cover = 0;
+uint32_t stage5_fallback_burg_internal = 0;
+uint32_t stage5_fallback_unsupported_opcode_hist[128] = {0};
+uint32_t stage5_emit_attempted = 0;
+uint32_t stage5_emit_success = 0;
+uint32_t stage5_emit_fallback = 0;
+uint32_t stage5_emit_fallback_non_terminal = 0;
+uint32_t stage5_emit_fallback_shape = 0;
+uint32_t stage5_emit_fallback_single_unhandled = 0;
+uint32_t stage5_emit_fallback_cmp_branch_miss = 0;
+uint32_t stage5_emit_fallback_not_ended = 0;
+uint32_t stage5_emit_unhandled_opcode_hist[128] = {0};
+
+static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
 
 // ============================================================================
 // Instruction decoding
@@ -156,6 +186,542 @@ void translate_init_cached(translate_ctx_t *ctx, dbt_cpu_state_t *cpu, block_cac
     ctx->side_exit_info_enabled = false;
     ctx->avoid_backedge_extend = false;
     ctx->peephole_enabled = false;
+    ctx->stage5_burg_enabled = false;
+    ctx->stage5_emit_enabled = false;
+}
+
+static void stage5_record_lift_fallback(const stage5_lift_region_t *region) {
+    stage5_lift_reason_t reason = region ? region->reason : STAGE5_LIFT_INTERNAL_ERROR;
+    stage5_fallback_total++;
+    switch (reason) {
+        case STAGE5_LIFT_NOT_IMPLEMENTED:
+            stage5_fallback_lift_not_implemented++;
+            break;
+        case STAGE5_LIFT_UNSUPPORTED_OPCODE:
+            stage5_fallback_lift_unsupported_opcode++;
+            if (region && region->has_unsupported_opcode) {
+                stage5_fallback_unsupported_opcode_hist[region->unsupported_opcode & 0x7F]++;
+            }
+            break;
+        case STAGE5_LIFT_REGION_TOO_LARGE:
+            stage5_fallback_lift_region_too_large++;
+            break;
+        case STAGE5_LIFT_INVALID_CONTROL_FLOW:
+            stage5_fallback_lift_invalid_cfg++;
+            break;
+        case STAGE5_LIFT_INTERNAL_ERROR:
+            stage5_fallback_lift_internal++;
+            break;
+        default:
+            stage5_fallback_lift_internal++;
+            break;
+    }
+}
+
+static void stage5_record_burg_fallback(stage5_burg_reason_t reason) {
+    stage5_fallback_total++;
+    switch (reason) {
+        case STAGE5_BURG_NOT_IMPLEMENTED:
+            stage5_fallback_burg_not_implemented++;
+            break;
+        case STAGE5_BURG_NO_COVER:
+            stage5_fallback_burg_no_cover++;
+            break;
+        case STAGE5_BURG_ILLEGAL_COVER:
+            stage5_fallback_burg_illegal_cover++;
+            break;
+        case STAGE5_BURG_INTERNAL_ERROR:
+            stage5_fallback_burg_internal++;
+            break;
+        default:
+            stage5_fallback_burg_internal++;
+            break;
+    }
+}
+
+// Stage 5 hook scaffold: collects lift/BURG telemetry but never changes codegen.
+static void stage5_try_select_noop(translate_ctx_t *ctx, uint32_t guest_pc) {
+    if (!ctx->stage5_burg_enabled) {
+        return;
+    }
+
+    stage5_lift_attempted++;
+
+    stage5_lift_region_t region;
+    stage5_lift_region_init(&region, guest_pc);
+    if (!stage5_lift_superblock(&region, ctx->cpu->mem_base, ctx->cpu->code_limit,
+                                MAX_BLOCK_INSTS)) {
+        stage5_record_lift_fallback(&region);
+        return;
+    }
+
+    stage5_lift_success++;
+    stage5_burg_attempted++;
+
+    stage5_burg_result_t result;
+    stage5_burg_result_init(&result);
+    if (!stage5_burg_select(&region, &result)) {
+        stage5_record_burg_fallback(result.reason);
+        return;
+    }
+
+    if (result.selected) {
+        stage5_burg_selected++;
+        if ((uint32_t)result.pattern < STAGE5_BURG_PATTERN_COUNT) {
+            stage5_burg_pattern_hist[result.pattern]++;
+        }
+    } else {
+        stage5_record_burg_fallback(result.reason);
+    }
+}
+
+static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
+    if (!ctx->stage5_burg_enabled || !ctx->stage5_emit_enabled) {
+        return false;
+    }
+
+    stage5_lift_region_t region;
+    stage5_lift_region_init(&region, guest_pc);
+    if (!stage5_lift_superblock(&region, ctx->cpu->mem_base, ctx->cpu->code_limit,
+                                MAX_BLOCK_INSTS)) {
+        return false;
+    }
+
+    stage5_burg_result_t result;
+    stage5_burg_result_init(&result);
+    if (!stage5_burg_select(&region, &result) || !result.selected) {
+        return false;
+    }
+
+    stage5_emit_attempted++;
+
+    bool synth_block_end = (result.pattern == STAGE5_BURG_PATTERN_BLOCK_END);
+    if ((!region.has_terminal_branch && !synth_block_end) || region.guest_inst_count == 0) {
+        stage5_emit_fallback++;
+        stage5_emit_fallback_non_terminal++;
+        return false;
+    }
+
+    uint32_t raw0 = *(uint32_t *)(ctx->cpu->mem_base + guest_pc);
+    decoded_inst_t inst0 = decode_instruction(raw0);
+
+    // Keep pilot control-flow deterministic: disable superblock extension while
+    // selected compare/branch families are emitted directly.
+    bool saved_superblock_enabled = ctx->superblock_enabled;
+    ctx->superblock_enabled = false;
+
+    // BURG-pattern fast paths from lifted IR tail.
+    int term_idx = -1;
+    for (int i = (int)region.ir_count - 1; i >= 0; i--) {
+        if (!region.ir[i].synthetic && region.ir[i].kind == STAGE5_IR_BRANCH) {
+            term_idx = i;
+            break;
+        }
+    }
+    if (term_idx >= 0 && region.guest_inst_count == 1 &&
+        result.pattern == STAGE5_BURG_PATTERN_TERMINAL) {
+        stage5_ir_node_t *t = &region.ir[term_idx];
+        ctx->guest_pc = t->pc;
+        ctx->current_inst_idx = term_idx;
+        bool ended = false;
+        switch (t->opcode) {
+            case OP_JAL:   translate_jal(ctx, t->rd, t->imm); ended = true; break;
+            case OP_JALR:  translate_jalr(ctx, t->rd, t->rs1, t->imm); ended = true; break;
+            case OP_HALT:  translate_halt(ctx); ended = true; break;
+            case OP_DEBUG: translate_debug(ctx, t->rs1); ended = true; break;
+            case OP_YIELD: translate_yield(ctx); ended = true; break;
+            default: break;
+        }
+        if (ended) {
+            ctx->superblock_enabled = saved_superblock_enabled;
+            stage5_emit_success++;
+            return true;
+        }
+    }
+
+    if (term_idx >= 0 && region.guest_inst_count == 1 &&
+        result.pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH) {
+        stage5_ir_node_t *t = &region.ir[term_idx];
+        ctx->guest_pc = t->pc;
+        ctx->current_inst_idx = term_idx;
+        bool ended = false;
+        switch (t->opcode) {
+            case OP_BEQ:  ended = translate_beq(ctx, t->rs1, t->rs2, t->imm); break;
+            case OP_BNE:  ended = translate_bne(ctx, t->rs1, t->rs2, t->imm); break;
+            case OP_BLT:  ended = translate_blt(ctx, t->rs1, t->rs2, t->imm); break;
+            case OP_BGE:  ended = translate_bge(ctx, t->rs1, t->rs2, t->imm); break;
+            case OP_BLTU: ended = translate_bltu(ctx, t->rs1, t->rs2, t->imm); break;
+            case OP_BGEU: ended = translate_bgeu(ctx, t->rs1, t->rs2, t->imm); break;
+            default: break;
+        }
+        if (ended) {
+            ctx->superblock_enabled = saved_superblock_enabled;
+            stage5_emit_success++;
+            return true;
+        }
+    }
+
+    if (term_idx > 0 && region.guest_inst_count == 2 &&
+        result.pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO) {
+        stage5_ir_node_t *c = &region.ir[term_idx - 1];
+        stage5_ir_node_t *b = &region.ir[term_idx];
+        ctx->guest_pc = c->pc;
+        ctx->current_inst_idx = term_idx - 1;
+        bool ok_cmp = true;
+        switch (c->opcode) {
+            case OP_SLT:   translate_slt(ctx, c->rd, c->rs1, c->rs2); break;
+            case OP_SLTU:  translate_sltu(ctx, c->rd, c->rs1, c->rs2); break;
+            case OP_SEQ:   translate_seq(ctx, c->rd, c->rs1, c->rs2); break;
+            case OP_SNE:   translate_sne(ctx, c->rd, c->rs1, c->rs2); break;
+            case OP_SGT:   translate_sgt(ctx, c->rd, c->rs1, c->rs2); break;
+            case OP_SGTU:  translate_sgtu(ctx, c->rd, c->rs1, c->rs2); break;
+            case OP_SLE:   translate_sle(ctx, c->rd, c->rs1, c->rs2); break;
+            case OP_SLEU:  translate_sleu(ctx, c->rd, c->rs1, c->rs2); break;
+            case OP_SGE:   translate_sge(ctx, c->rd, c->rs1, c->rs2); break;
+            case OP_SGEU:  translate_sgeu(ctx, c->rd, c->rs1, c->rs2); break;
+            case OP_SLTI:  translate_slti(ctx, c->rd, c->rs1, c->imm); break;
+            case OP_SLTIU: translate_sltiu(ctx, c->rd, c->rs1, c->imm); break;
+            default: ok_cmp = false; break;
+        }
+        if (ok_cmp) {
+            ctx->guest_pc = b->pc;
+            ctx->current_inst_idx = term_idx;
+            bool ended = (b->opcode == OP_BEQ)
+                ? translate_beq(ctx, b->rs1, b->rs2, b->imm)
+                : translate_bne(ctx, b->rs1, b->rs2, b->imm);
+            if (ended) {
+                ctx->superblock_enabled = saved_superblock_enabled;
+                stage5_emit_success++;
+                return true;
+            }
+        }
+    }
+
+    // Family A: single-instruction terminals and direct conditional branches.
+    if (region.guest_inst_count == 1) {
+        ctx->guest_pc = guest_pc;
+        ctx->current_inst_idx = 0;
+        switch (inst0.opcode) {
+            case OP_JAL:
+                translate_jal(ctx, inst0.rd, inst0.imm);
+                ctx->superblock_enabled = saved_superblock_enabled;
+                stage5_emit_success++;
+                return true;
+            case OP_JALR:
+                translate_jalr(ctx, inst0.rd, inst0.rs1, inst0.imm);
+                ctx->superblock_enabled = saved_superblock_enabled;
+                stage5_emit_success++;
+                return true;
+            case OP_HALT:
+                translate_halt(ctx);
+                ctx->superblock_enabled = saved_superblock_enabled;
+                stage5_emit_success++;
+                return true;
+            case OP_DEBUG:
+                translate_debug(ctx, inst0.rs1);
+                ctx->superblock_enabled = saved_superblock_enabled;
+                stage5_emit_success++;
+                return true;
+            case OP_YIELD:
+                translate_yield(ctx);
+                ctx->superblock_enabled = saved_superblock_enabled;
+                stage5_emit_success++;
+                return true;
+            case OP_BEQ:
+                if (translate_beq(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
+                    ctx->superblock_enabled = saved_superblock_enabled;
+                    stage5_emit_success++;
+                    return true;
+                }
+                stage5_emit_fallback_not_ended++;
+                break;
+            case OP_BNE:
+                if (translate_bne(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
+                    ctx->superblock_enabled = saved_superblock_enabled;
+                    stage5_emit_success++;
+                    return true;
+                }
+                stage5_emit_fallback_not_ended++;
+                break;
+            case OP_BLT:
+                if (translate_blt(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
+                    ctx->superblock_enabled = saved_superblock_enabled;
+                    stage5_emit_success++;
+                    return true;
+                }
+                stage5_emit_fallback_not_ended++;
+                break;
+            case OP_BGE:
+                if (translate_bge(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
+                    ctx->superblock_enabled = saved_superblock_enabled;
+                    stage5_emit_success++;
+                    return true;
+                }
+                stage5_emit_fallback_not_ended++;
+                break;
+            case OP_BLTU:
+                if (translate_bltu(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
+                    ctx->superblock_enabled = saved_superblock_enabled;
+                    stage5_emit_success++;
+                    return true;
+                }
+                stage5_emit_fallback_not_ended++;
+                break;
+            case OP_BGEU:
+                if (translate_bgeu(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
+                    ctx->superblock_enabled = saved_superblock_enabled;
+                    stage5_emit_success++;
+                    return true;
+                }
+                stage5_emit_fallback_not_ended++;
+                break;
+            default:
+                stage5_emit_fallback_single_unhandled++;
+                stage5_emit_unhandled_opcode_hist[inst0.opcode & 0x7F]++;
+                break;
+        }
+    } else if (region.guest_inst_count == 2 && guest_pc + 8 <= ctx->cpu->code_limit) {
+        // Family B: two-instruction compare -> branch-on-result.
+        uint32_t raw1 = *(uint32_t *)(ctx->cpu->mem_base + guest_pc + 4);
+        decoded_inst_t inst1 = decode_instruction(raw1);
+
+        bool branch_uses_cmp_rd =
+            (inst1.opcode == OP_BEQ || inst1.opcode == OP_BNE) &&
+            inst0.rd != 0 &&
+            ((inst1.rs1 == inst0.rd && inst1.rs2 == 0) ||
+             (inst1.rs2 == inst0.rd && inst1.rs1 == 0));
+
+        if (branch_uses_cmp_rd) {
+            ctx->guest_pc = guest_pc;
+            ctx->current_inst_idx = 0;
+            switch (inst0.opcode) {
+                case OP_SLT:   translate_slt(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SLTU:  translate_sltu(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SEQ:   translate_seq(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SNE:   translate_sne(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SGT:   translate_sgt(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SGTU:  translate_sgtu(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SLE:   translate_sle(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SLEU:  translate_sleu(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SGE:   translate_sge(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SGEU:  translate_sgeu(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SLTI:  translate_slti(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
+                case OP_SLTIU: translate_sltiu(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
+                default:
+                    branch_uses_cmp_rd = false;
+                    break;
+            }
+
+            if (branch_uses_cmp_rd) {
+                ctx->guest_pc = guest_pc + 4;
+                ctx->current_inst_idx = 1;
+                bool ended = (inst1.opcode == OP_BEQ)
+                    ? translate_beq(ctx, inst1.rs1, inst1.rs2, inst1.imm)
+                    : translate_bne(ctx, inst1.rs1, inst1.rs2, inst1.imm);
+                if (ended) {
+                    ctx->superblock_enabled = saved_superblock_enabled;
+                    stage5_emit_success++;
+                    return true;
+                }
+                stage5_emit_fallback_not_ended++;
+            }
+        }
+
+        // Family B fallback: generic prefix + terminal for 2-inst regions.
+        if (!branch_uses_cmp_rd) {
+            bool ok_prefix = true;
+            ctx->guest_pc = guest_pc;
+            ctx->current_inst_idx = 0;
+            switch (inst0.opcode) {
+                case OP_NOP: break;
+                case OP_ADD:  translate_add(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SUB:  translate_sub(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_ADDI: translate_addi(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
+                case OP_AND:  translate_and(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_OR:   translate_or(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_XOR:  translate_xor(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_ANDI: translate_andi(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
+                case OP_ORI:  translate_ori(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
+                case OP_XORI: translate_xori(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
+                case OP_SLL:  translate_sll(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SRL:  translate_srl(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SRA:  translate_sra(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SLLI: translate_slli(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
+                case OP_SRLI: translate_srli(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
+                case OP_SRAI: translate_srai(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
+                case OP_SLT:  translate_slt(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SLTU: translate_sltu(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SEQ:  translate_seq(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SNE:  translate_sne(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SGT:  translate_sgt(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SGTU: translate_sgtu(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SLE:  translate_sle(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SLEU: translate_sleu(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SGE:  translate_sge(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SGEU: translate_sgeu(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_SLTI: translate_slti(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
+                case OP_SLTIU:translate_sltiu(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
+                case OP_MUL:  translate_mul(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_MULHU: translate_mulhu(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_DIV:  translate_div(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_REM:  translate_rem(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
+                case OP_LUI:  translate_lui(ctx, inst0.rd, inst0.imm); break;
+                case OP_LDW:  translate_ldw(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
+                case OP_LDH:  translate_ldh(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
+                case OP_LDB:  translate_ldb(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
+                case OP_LDHU: translate_ldhu(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
+                case OP_LDBU: translate_ldbu(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
+                case OP_STW:  translate_stw(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
+                case OP_STH:  translate_sth(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
+                case OP_STB:  translate_stb(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
+                default:
+                    ok_prefix = false;
+                    break;
+            }
+            if (ok_prefix) {
+                ctx->guest_pc = guest_pc + 4;
+                ctx->current_inst_idx = 1;
+                bool ended = false;
+                switch (inst1.opcode) {
+                    case OP_JAL:   translate_jal(ctx, inst1.rd, inst1.imm); ended = true; break;
+                    case OP_JALR:  translate_jalr(ctx, inst1.rd, inst1.rs1, inst1.imm); ended = true; break;
+                    case OP_HALT:  translate_halt(ctx); ended = true; break;
+                    case OP_DEBUG: translate_debug(ctx, inst1.rs1); ended = true; break;
+                    case OP_YIELD: translate_yield(ctx); ended = true; break;
+                    case OP_BEQ:   ended = translate_beq(ctx, inst1.rs1, inst1.rs2, inst1.imm); break;
+                    case OP_BNE:   ended = translate_bne(ctx, inst1.rs1, inst1.rs2, inst1.imm); break;
+                    case OP_BLT:   ended = translate_blt(ctx, inst1.rs1, inst1.rs2, inst1.imm); break;
+                    case OP_BGE:   ended = translate_bge(ctx, inst1.rs1, inst1.rs2, inst1.imm); break;
+                    case OP_BLTU:  ended = translate_bltu(ctx, inst1.rs1, inst1.rs2, inst1.imm); break;
+                    case OP_BGEU:  ended = translate_bgeu(ctx, inst1.rs1, inst1.rs2, inst1.imm); break;
+                    default: ended = false; break;
+                }
+                if (ended) {
+                    ctx->superblock_enabled = saved_superblock_enabled;
+                    stage5_emit_success++;
+                    return true;
+                }
+                stage5_emit_fallback_not_ended++;
+            } else {
+                stage5_emit_fallback_cmp_branch_miss++;
+                stage5_emit_unhandled_opcode_hist[inst0.opcode & 0x7F]++;
+            }
+        }
+    } else if (region.guest_inst_count >= 3 && region.guest_inst_count <= MAX_BLOCK_INSTS) {
+        // Family C: IR-driven straight-line prefix ending in a terminal/branch.
+        bool ok_prefix = true;
+        uint8_t first_bad_prefix_opcode = 0;
+        int terminal_idx = -1;
+
+        if (region.has_terminal_branch) {
+            for (int i = (int)region.ir_count - 1; i >= 0; i--) {
+                if (!region.ir[i].synthetic && region.ir[i].kind == STAGE5_IR_BRANCH) {
+                    terminal_idx = i;
+                    break;
+                }
+            }
+        }
+
+        for (uint32_t i = 0; i < region.ir_count; i++) {
+            stage5_ir_node_t *n = &region.ir[i];
+            if (n->synthetic) continue;
+            if (terminal_idx >= 0 && (int)i == terminal_idx) continue;
+            ctx->guest_pc = n->pc;
+            ctx->current_inst_idx = (int)i;
+            switch (n->opcode) {
+                case OP_NOP: break;
+                case OP_ADD:  translate_add(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_SUB:  translate_sub(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_ADDI: translate_addi(ctx, n->rd, n->rs1, n->imm); break;
+                case OP_AND:  translate_and(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_OR:   translate_or(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_XOR:  translate_xor(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_ANDI: translate_andi(ctx, n->rd, n->rs1, n->imm); break;
+                case OP_ORI:  translate_ori(ctx, n->rd, n->rs1, n->imm); break;
+                case OP_XORI: translate_xori(ctx, n->rd, n->rs1, n->imm); break;
+                case OP_SLL:  translate_sll(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_SRL:  translate_srl(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_SRA:  translate_sra(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_SLLI: translate_slli(ctx, n->rd, n->rs1, n->imm); break;
+                case OP_SRLI: translate_srli(ctx, n->rd, n->rs1, n->imm); break;
+                case OP_SRAI: translate_srai(ctx, n->rd, n->rs1, n->imm); break;
+                case OP_SLT:  translate_slt(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_SLTU: translate_sltu(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_SEQ:  translate_seq(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_SNE:  translate_sne(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_SGT:  translate_sgt(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_SGTU: translate_sgtu(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_SLE:  translate_sle(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_SLEU: translate_sleu(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_SGE:  translate_sge(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_SGEU: translate_sgeu(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_SLTI: translate_slti(ctx, n->rd, n->rs1, n->imm); break;
+                case OP_SLTIU:translate_sltiu(ctx, n->rd, n->rs1, n->imm); break;
+                case OP_MUL:  translate_mul(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_MULHU:translate_mulhu(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_DIV:  translate_div(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_REM:  translate_rem(ctx, n->rd, n->rs1, n->rs2); break;
+                case OP_LUI:  translate_lui(ctx, n->rd, n->imm); break;
+                case OP_LDW:  translate_ldw(ctx, n->rd, n->rs1, n->imm); break;
+                case OP_LDH:  translate_ldh(ctx, n->rd, n->rs1, n->imm); break;
+                case OP_LDB:  translate_ldb(ctx, n->rd, n->rs1, n->imm); break;
+                case OP_LDHU: translate_ldhu(ctx, n->rd, n->rs1, n->imm); break;
+                case OP_LDBU: translate_ldbu(ctx, n->rd, n->rs1, n->imm); break;
+                case OP_STW:  translate_stw(ctx, n->rs1, n->rs2, n->imm); break;
+                case OP_STH:  translate_sth(ctx, n->rs1, n->rs2, n->imm); break;
+                case OP_STB:  translate_stb(ctx, n->rs1, n->rs2, n->imm); break;
+                default:
+                    ok_prefix = false;
+                    first_bad_prefix_opcode = n->opcode;
+                    break;
+            }
+            if (!ok_prefix) break;
+        }
+
+        if (ok_prefix) {
+            bool ended = false;
+            if (synth_block_end) {
+                ctx->guest_pc = guest_pc + region.guest_inst_count * 4;
+                emit_exit_chained(ctx, ctx->guest_pc, ctx->exit_idx++);
+                ended = true;
+            } else if (terminal_idx >= 0) {
+                stage5_ir_node_t *last = &region.ir[terminal_idx];
+                ctx->guest_pc = last->pc;
+                ctx->current_inst_idx = terminal_idx;
+                switch (last->opcode) {
+                    case OP_JAL:   translate_jal(ctx, last->rd, last->imm); ended = true; break;
+                    case OP_JALR:  translate_jalr(ctx, last->rd, last->rs1, last->imm); ended = true; break;
+                    case OP_HALT:  translate_halt(ctx); ended = true; break;
+                    case OP_DEBUG: translate_debug(ctx, last->rs1); ended = true; break;
+                    case OP_YIELD: translate_yield(ctx); ended = true; break;
+                    case OP_BEQ:   ended = translate_beq(ctx, last->rs1, last->rs2, last->imm); break;
+                    case OP_BNE:   ended = translate_bne(ctx, last->rs1, last->rs2, last->imm); break;
+                    case OP_BLT:   ended = translate_blt(ctx, last->rs1, last->rs2, last->imm); break;
+                    case OP_BGE:   ended = translate_bge(ctx, last->rs1, last->rs2, last->imm); break;
+                    case OP_BLTU:  ended = translate_bltu(ctx, last->rs1, last->rs2, last->imm); break;
+                    case OP_BGEU:  ended = translate_bgeu(ctx, last->rs1, last->rs2, last->imm); break;
+                    default:
+                        ended = false;
+                        break;
+                }
+            }
+            if (ended) {
+                ctx->superblock_enabled = saved_superblock_enabled;
+                stage5_emit_success++;
+                return true;
+            }
+            stage5_emit_fallback_not_ended++;
+        } else {
+            stage5_emit_fallback_shape++;
+            stage5_emit_unhandled_opcode_hist[first_bad_prefix_opcode & 0x7F]++;
+        }
+    } else {
+        stage5_emit_fallback_shape++;
+    }
+
+    ctx->superblock_enabled = saved_superblock_enabled;
+    stage5_emit_fallback++;
+    return false;
 }
 
 // ============================================================================
@@ -1401,6 +1967,11 @@ static bool can_fuse_with_next(translate_ctx_t *ctx, uint8_t rd) {
     return (rs1 == rd && rs2 == 0) || (rs2 == rd && rs1 == 0);
 }
 
+static inline bool cmp_op_uses_carry(uint8_t opcode) {
+    return opcode == OP_SLTU || opcode == OP_SGTU || opcode == OP_SLEU ||
+           opcode == OP_SGEU || opcode == OP_SLTIU;
+}
+
 // Emit a comparison immediately (non-deferred path)
 static void emit_cmp_set_immediate(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2,
                                    void (*emit_setcc)(emit_ctx_t *, x64_reg_t)) {
@@ -1437,21 +2008,25 @@ static void translate_cmp_set(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uin
 
     // Only defer if the next instruction is a fusible BEQ/BNE
     if (can_fuse_with_next(ctx, rd)) {
-        // Flush any existing pending condition
-        flush_pending_cond(ctx);
+        if (ctx->strict_carry && cmp_op_uses_carry(opcode)) {
+            cmp_branch_fusion_carry_skipped++;
+        } else {
+            // Flush any existing pending condition
+            flush_pending_cond(ctx);
 
-        // Defer the comparison for fusion with the next branch
-        ctx->pending_cond.opcode = opcode;
-        ctx->pending_cond.rd = rd;
-        ctx->pending_cond.rs1 = rs1;
-        ctx->pending_cond.rs2 = rs2;
-        ctx->pending_cond.rs2_is_imm = false;
-        ctx->pending_cond.inst_idx = ctx->current_inst_idx;
-        ctx->pending_cond.valid = true;
-        // Invalidate constant for rd — the comparison writes rd even though
-        // the store is deferred for fusion
-        ctx->reg_constants[rd].valid = false;
-        return;
+            // Defer the comparison for fusion with the next branch
+            ctx->pending_cond.opcode = opcode;
+            ctx->pending_cond.rd = rd;
+            ctx->pending_cond.rs1 = rs1;
+            ctx->pending_cond.rs2 = rs2;
+            ctx->pending_cond.rs2_is_imm = false;
+            ctx->pending_cond.inst_idx = ctx->current_inst_idx;
+            ctx->pending_cond.valid = true;
+            // Invalidate constant for rd — the comparison writes rd even though
+            // the store is deferred for fusion
+            ctx->reg_constants[rd].valid = false;
+            return;
+        }
     }
 
     // Not fusible — emit the comparison immediately
@@ -1553,16 +2128,20 @@ void translate_sltiu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm)
     if (rd == 0) return;
 
     if (can_fuse_with_next(ctx, rd)) {
-        flush_pending_cond(ctx);
-        ctx->pending_cond.opcode = OP_SLTIU;
-        ctx->pending_cond.rd = rd;
-        ctx->pending_cond.rs1 = rs1;
-        ctx->pending_cond.rs2_is_imm = true;
-        ctx->pending_cond.imm = imm;
-        ctx->pending_cond.inst_idx = ctx->current_inst_idx;
-        ctx->pending_cond.valid = true;
-        ctx->reg_constants[rd].valid = false;
-        return;
+        if (ctx->strict_carry) {
+            cmp_branch_fusion_carry_skipped++;
+        } else {
+            flush_pending_cond(ctx);
+            ctx->pending_cond.opcode = OP_SLTIU;
+            ctx->pending_cond.rd = rd;
+            ctx->pending_cond.rs1 = rs1;
+            ctx->pending_cond.rs2_is_imm = true;
+            ctx->pending_cond.imm = imm;
+            ctx->pending_cond.inst_idx = ctx->current_inst_idx;
+            ctx->pending_cond.valid = true;
+            ctx->reg_constants[rd].valid = false;
+            return;
+        }
     }
 
     // Not fusible — emit immediately
@@ -5181,6 +5760,12 @@ retry_translate:
     if (ctx->reg_cache_enabled) {
         reg_alloc_prescan(ctx, guest_pc);
         reg_alloc_emit_prologue(ctx);
+    }
+
+    // Stage 5 no-op hook: collect lift/BURG fallback telemetry only.
+    stage5_try_select_noop(ctx, guest_pc);
+    if (stage5_try_emit_pilot(ctx, guest_pc)) {
+        goto cached_block_done;
     }
 
     if (DBT_TRACE) {

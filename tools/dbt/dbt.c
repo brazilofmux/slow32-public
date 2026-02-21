@@ -23,6 +23,7 @@
 #include "cpu_state.h"
 #include "translate.h"
 #include "block_cache.h"
+#include "stage5_burg.h"
 
 // Reuse components from the emulator
 #include "../emulator/s32x_loader.h"
@@ -43,6 +44,9 @@ static bool avoid_backedge_extend = false;
 static bool peephole_enabled = true;
 static bool superblock_enabled = true;
 static bool reg_cache_enabled = true;
+static bool strict_carry_enabled = false;
+static bool stage5_burg_hook_enabled = false;
+static bool stage5_emit_hook_enabled = false;
 static bool align_traps_enabled = false;
 static bool intrinsics_disabled = false;
 static bool bounds_checks_disabled = false;
@@ -1051,8 +1055,9 @@ static void run_dbt_stage3(dbt_cpu_state_t *cpu, block_cache_t *cache) {
     }
 }
 
-// Stage 4 dispatcher (with superblock extension)
-static void run_dbt_stage4(dbt_cpu_state_t *cpu, block_cache_t *cache) {
+// Stage 4/5 dispatcher (with superblock extension)
+static void run_dbt_stage4plus(dbt_cpu_state_t *cpu, block_cache_t *cache,
+                               bool strict_carry, bool stage5_mode) {
     translate_ctx_t ctx;
     translate_init_cached(&ctx, cpu, cache);
     ctx.inline_lookup_enabled = true;   // Keep Stage 3 inline lookup
@@ -1063,6 +1068,9 @@ static void run_dbt_stage4(dbt_cpu_state_t *cpu, block_cache_t *cache) {
     ctx.avoid_backedge_extend = avoid_backedge_extend;
     ctx.peephole_enabled = peephole_enabled;
     ctx.reg_cache_enabled = reg_cache_enabled;
+    ctx.strict_carry = strict_carry;
+    ctx.stage5_burg_enabled = stage5_mode && stage5_burg_hook_enabled;
+    ctx.stage5_emit_enabled = stage5_mode && stage5_emit_hook_enabled;
     uint64_t dispatch_iter = 0;
 
     while (!cpu->halted) {
@@ -1190,6 +1198,15 @@ static void run_dbt_stage4(dbt_cpu_state_t *cpu, block_cache_t *cache) {
     }
 }
 
+static void run_dbt_stage4(dbt_cpu_state_t *cpu, block_cache_t *cache) {
+    run_dbt_stage4plus(cpu, cache, strict_carry_enabled, false);
+}
+
+static void run_dbt_stage5(dbt_cpu_state_t *cpu, block_cache_t *cache) {
+    // Stage 5 starts from Stage 4 pipeline with strict carry-flag guardrails.
+    run_dbt_stage4plus(cpu, cache, true, true);
+}
+
 // ============================================================================
 // Main
 // ============================================================================
@@ -1207,7 +1224,10 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -P        Disable peephole optimization on emitted x86-64\n");
     fprintf(stderr, "  -S        Toggle superblock expansion (default: on)\n");
     fprintf(stderr, "  -R        Toggle fixed register cache (default: on)\n");
-    fprintf(stderr, "  -t        Two-pass superblock profiling (Stage 4 only)\n");
+    fprintf(stderr, "  -C        Enable strict carry guardrails (disable unsigned cmp-branch fusion)\n");
+    fprintf(stderr, "  -G        Enable Stage 5 lift/BURG hook telemetry (default: off)\n");
+    fprintf(stderr, "  -W        Enable Stage 5 pilot emission (small terminal families)\n");
+    fprintf(stderr, "  -t        Two-pass superblock profiling (Stage 4/5 only)\n");
     fprintf(stderr, "  -M <n>    Min samples before using side-exit rate\n");
     fprintf(stderr, "  -T <pct>  Max taken %% to allow superblock extension\n");
     fprintf(stderr, "  -D        Dump top offender blocks\n");
@@ -1220,6 +1240,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -2        Use Stage 2 mode (block cache + chaining)\n");
     fprintf(stderr, "  -3        Use Stage 3 mode (inline indirect lookup)\n");
     fprintf(stderr, "  -4        Use Stage 4 mode (superblock extension, default)\n");
+    fprintf(stderr, "  -5        Use Stage 5 mode (Stage 4 + strict carry guardrails)\n");
     fprintf(stderr, "  --allow <list>  Only allow these MMIO services (comma-separated)\n");
     fprintf(stderr, "  --deny <list>   Deny these MMIO services (comma-separated)\n");
     fprintf(stderr, "\nEnvironment:\n");
@@ -1322,6 +1343,15 @@ int main(int argc, char **argv) {
                 case 'R':
                     reg_cache_enabled = !reg_cache_enabled;
                     break;
+                case 'C':
+                    strict_carry_enabled = true;
+                    break;
+                case 'G':
+                    stage5_burg_hook_enabled = true;
+                    break;
+                case 'W':
+                    stage5_emit_hook_enabled = true;
+                    break;
                 case 'I':
                     intrinsics_disabled = true;
                     break;
@@ -1382,6 +1412,9 @@ int main(int argc, char **argv) {
                 case '4':
                     stage = 4;
                     break;
+                case '5':
+                    stage = 5;
+                    break;
                 default:
                     fprintf(stderr, "Unknown option: %s\n", argv[i]);
                     usage(argv[0]);
@@ -1435,6 +1468,16 @@ int main(int argc, char **argv) {
             fprintf(stderr, "  MMIO base:    0x%08X\n", cpu.mmio_base);
         }
         fprintf(stderr, "  Stage:        %d\n", stage);
+        if (stage >= 4 || strict_carry_enabled) {
+            fprintf(stderr, "  Strict carry: %s\n",
+                    (stage == 5 || strict_carry_enabled) ? "enabled" : "disabled");
+        }
+        if (stage == 5) {
+            fprintf(stderr, "  Stage5 hook:  %s\n",
+                    stage5_burg_hook_enabled ? "enabled" : "disabled");
+            fprintf(stderr, "  Stage5 emit:  %s\n",
+                    stage5_emit_hook_enabled ? "enabled" : "disabled");
+        }
         if (cpu.intrinsics_enabled) {
             fprintf(stderr, "  Intrinsics:   enabled\n");
             if (cpu.intrinsic_memcpy)  fprintf(stderr, "    memcpy:  0x%08X\n", cpu.intrinsic_memcpy);
@@ -1463,13 +1506,13 @@ int main(int argc, char **argv) {
     // Run
     struct timespec start, end;
 
-    if (two_pass && stage != 4 && !two_pass_forced) {
+    if (two_pass && stage != 4 && stage != 5 && !two_pass_forced) {
         two_pass = false;
     }
 
     if (two_pass) {
-        if (stage != 4) {
-            fprintf(stderr, "Two-pass profiling is only supported for Stage 4.\n");
+        if (stage != 4 && stage != 5) {
+            fprintf(stderr, "Two-pass profiling is only supported for Stage 4/5.\n");
             dbt_cpu_destroy(&cpu);
             if (stage >= 2) {
                 cache_destroy(&cache);
@@ -1484,7 +1527,11 @@ int main(int argc, char **argv) {
         bool saved_profile = profile_timing;
         profile_timing = false;
         profile_side_exits = true;
-        run_dbt_stage4(&cpu, &cache);
+        if (stage == 5) {
+            run_dbt_stage5(&cpu, &cache);
+        } else {
+            run_dbt_stage4(&cpu, &cache);
+        }
         profile_side_exits = false;
         profile_timing = saved_profile;
         if (verbose) {
@@ -1570,6 +1617,8 @@ int main(int argc, char **argv) {
         run_dbt_stage2(&cpu, &cache);
     } else if (stage == 3) {
         run_dbt_stage3(&cpu, &cache);
+    } else if (stage == 5) {
+        run_dbt_stage5(&cpu, &cache);
     } else {
         run_dbt_stage4(&cpu, &cache);
     }
@@ -1646,6 +1695,10 @@ int main(int argc, char **argv) {
         if (cmp_branch_fusion_count > 0) {
             fprintf(stderr, "Compare-branch fusions: %" PRIu32 "\n", cmp_branch_fusion_count);
         }
+        if (cmp_branch_fusion_carry_skipped > 0) {
+            fprintf(stderr, "Unsigned fusion skips (strict carry): %" PRIu32 "\n",
+                    cmp_branch_fusion_carry_skipped);
+        }
 
         if (cbz_peephole_count > 0) {
             fprintf(stderr, "CBZ/CBNZ peepholes: %" PRIu32 "\n", cbz_peephole_count);
@@ -1653,6 +1706,141 @@ int main(int argc, char **argv) {
 
         if (native_stub_count > 0) {
             fprintf(stderr, "Native intrinsic stubs: %" PRIu32 "\n", native_stub_count);
+        }
+
+        if (stage5_lift_attempted > 0 || stage5_burg_attempted > 0 || stage5_fallback_total > 0) {
+            fprintf(stderr, "Stage5 lift attempted: %" PRIu32 "\n", stage5_lift_attempted);
+            fprintf(stderr, "Stage5 lift success:   %" PRIu32 "\n", stage5_lift_success);
+            fprintf(stderr, "Stage5 BURG attempted: %" PRIu32 "\n", stage5_burg_attempted);
+            fprintf(stderr, "Stage5 BURG selected:  %" PRIu32 "\n", stage5_burg_selected);
+            if (stage5_burg_selected > 0) {
+                if (stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_TERMINAL] > 0) {
+                    fprintf(stderr, "  burg pattern terminal: %" PRIu32 "\n",
+                            stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_TERMINAL]);
+                }
+                if (stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_DIRECT_BRANCH] > 0) {
+                    fprintf(stderr, "  burg pattern direct_branch: %" PRIu32 "\n",
+                            stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_DIRECT_BRANCH]);
+                }
+                if (stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO] > 0) {
+                    fprintf(stderr, "  burg pattern cmp_branch_zero: %" PRIu32 "\n",
+                            stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO]);
+                }
+                if (stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_GENERIC] > 0) {
+                    fprintf(stderr, "  burg pattern generic: %" PRIu32 "\n",
+                            stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_GENERIC]);
+                }
+            }
+            fprintf(stderr, "Stage5 fallback total: %" PRIu32 "\n", stage5_fallback_total);
+            if (stage5_fallback_lift_not_implemented > 0) {
+                fprintf(stderr, "  lift not_implemented: %" PRIu32 "\n",
+                        stage5_fallback_lift_not_implemented);
+            }
+            if (stage5_fallback_lift_unsupported_opcode > 0) {
+                fprintf(stderr, "  lift unsupported_opcode: %" PRIu32 "\n",
+                        stage5_fallback_lift_unsupported_opcode);
+            }
+            if (stage5_fallback_lift_region_too_large > 0) {
+                fprintf(stderr, "  lift region_too_large: %" PRIu32 "\n",
+                        stage5_fallback_lift_region_too_large);
+            }
+            if (stage5_fallback_lift_invalid_cfg > 0) {
+                fprintf(stderr, "  lift invalid_cfg: %" PRIu32 "\n",
+                        stage5_fallback_lift_invalid_cfg);
+            }
+            if (stage5_fallback_lift_internal > 0) {
+                fprintf(stderr, "  lift internal: %" PRIu32 "\n",
+                        stage5_fallback_lift_internal);
+            }
+            if (stage5_fallback_burg_not_implemented > 0) {
+                fprintf(stderr, "  burg not_implemented: %" PRIu32 "\n",
+                        stage5_fallback_burg_not_implemented);
+            }
+            if (stage5_fallback_burg_no_cover > 0) {
+                fprintf(stderr, "  burg no_cover: %" PRIu32 "\n",
+                        stage5_fallback_burg_no_cover);
+            }
+            if (stage5_fallback_burg_illegal_cover > 0) {
+                fprintf(stderr, "  burg illegal_cover: %" PRIu32 "\n",
+                        stage5_fallback_burg_illegal_cover);
+            }
+            if (stage5_fallback_burg_internal > 0) {
+                fprintf(stderr, "  burg internal: %" PRIu32 "\n",
+                        stage5_fallback_burg_internal);
+            }
+            if (stage5_fallback_lift_unsupported_opcode > 0) {
+                uint32_t top_count[3] = {0, 0, 0};
+                uint32_t top_opcode[3] = {0, 0, 0};
+                for (uint32_t op = 0; op < 128; op++) {
+                    uint32_t c = stage5_fallback_unsupported_opcode_hist[op];
+                    if (c == 0) continue;
+                    for (int k = 0; k < 3; k++) {
+                        if (c > top_count[k]) {
+                            for (int m = 2; m > k; m--) {
+                                top_count[m] = top_count[m - 1];
+                                top_opcode[m] = top_opcode[m - 1];
+                            }
+                            top_count[k] = c;
+                            top_opcode[k] = op;
+                            break;
+                        }
+                    }
+                }
+                for (int k = 0; k < 3; k++) {
+                    if (top_count[k] == 0) break;
+                    fprintf(stderr, "  lift unsupported top%d: op=0x%02X count=%" PRIu32 "\n",
+                            k + 1, top_opcode[k], top_count[k]);
+                }
+            }
+            if (stage5_emit_attempted > 0 || stage5_emit_success > 0 || stage5_emit_fallback > 0) {
+                fprintf(stderr, "Stage5 emit attempted: %" PRIu32 "\n", stage5_emit_attempted);
+                fprintf(stderr, "Stage5 emit success:   %" PRIu32 "\n", stage5_emit_success);
+                fprintf(stderr, "Stage5 emit fallback:  %" PRIu32 "\n", stage5_emit_fallback);
+                if (stage5_emit_fallback_non_terminal > 0) {
+                    fprintf(stderr, "  emit non_terminal: %" PRIu32 "\n",
+                            stage5_emit_fallback_non_terminal);
+                }
+                if (stage5_emit_fallback_shape > 0) {
+                    fprintf(stderr, "  emit shape: %" PRIu32 "\n",
+                            stage5_emit_fallback_shape);
+                }
+                if (stage5_emit_fallback_single_unhandled > 0) {
+                    fprintf(stderr, "  emit single_unhandled: %" PRIu32 "\n",
+                            stage5_emit_fallback_single_unhandled);
+                }
+                if (stage5_emit_fallback_cmp_branch_miss > 0) {
+                    fprintf(stderr, "  emit cmp_branch_miss: %" PRIu32 "\n",
+                            stage5_emit_fallback_cmp_branch_miss);
+                }
+                if (stage5_emit_fallback_not_ended > 0) {
+                    fprintf(stderr, "  emit not_ended: %" PRIu32 "\n",
+                            stage5_emit_fallback_not_ended);
+                }
+                if (stage5_emit_fallback > 0) {
+                    uint32_t top_count[3] = {0, 0, 0};
+                    uint32_t top_opcode[3] = {0, 0, 0};
+                    for (uint32_t op = 0; op < 128; op++) {
+                        uint32_t c = stage5_emit_unhandled_opcode_hist[op];
+                        if (c == 0) continue;
+                        for (int k = 0; k < 3; k++) {
+                            if (c > top_count[k]) {
+                                for (int m = 2; m > k; m--) {
+                                    top_count[m] = top_count[m - 1];
+                                    top_opcode[m] = top_opcode[m - 1];
+                                }
+                                top_count[k] = c;
+                                top_opcode[k] = op;
+                                break;
+                            }
+                        }
+                    }
+                    for (int k = 0; k < 3; k++) {
+                        if (top_count[k] == 0) break;
+                        fprintf(stderr, "  emit unhandled top%d: op=0x%02X count=%" PRIu32 "\n",
+                                k + 1, top_opcode[k], top_count[k]);
+                    }
+                }
+            }
         }
 
         if (stage >= 2) {

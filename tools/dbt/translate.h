@@ -32,8 +32,34 @@ typedef struct translated_block translated_block_t;
 extern uint32_t superblock_profile_min_samples;
 extern uint32_t superblock_taken_pct_threshold;
 extern uint32_t cmp_branch_fusion_count;
+extern uint32_t cmp_branch_fusion_carry_skipped;
 extern uint32_t cbz_peephole_count;
 extern uint32_t native_stub_count;
+extern uint32_t stage5_lift_attempted;
+extern uint32_t stage5_lift_success;
+extern uint32_t stage5_burg_attempted;
+extern uint32_t stage5_burg_selected;
+extern uint32_t stage5_burg_pattern_hist[];
+extern uint32_t stage5_fallback_total;
+extern uint32_t stage5_fallback_lift_not_implemented;
+extern uint32_t stage5_fallback_lift_unsupported_opcode;
+extern uint32_t stage5_fallback_lift_region_too_large;
+extern uint32_t stage5_fallback_lift_invalid_cfg;
+extern uint32_t stage5_fallback_lift_internal;
+extern uint32_t stage5_fallback_burg_not_implemented;
+extern uint32_t stage5_fallback_burg_no_cover;
+extern uint32_t stage5_fallback_burg_illegal_cover;
+extern uint32_t stage5_fallback_burg_internal;
+extern uint32_t stage5_fallback_unsupported_opcode_hist[128];
+extern uint32_t stage5_emit_attempted;
+extern uint32_t stage5_emit_success;
+extern uint32_t stage5_emit_fallback;
+extern uint32_t stage5_emit_fallback_non_terminal;
+extern uint32_t stage5_emit_fallback_shape;
+extern uint32_t stage5_emit_fallback_single_unhandled;
+extern uint32_t stage5_emit_fallback_cmp_branch_miss;
+extern uint32_t stage5_emit_fallback_not_ended;
+extern uint32_t stage5_emit_unhandled_opcode_hist[128];
 
 // Translation context
 typedef struct {
@@ -63,6 +89,9 @@ typedef struct {
     bool side_exit_info_enabled; // Emit branch_pc info for diagnostics
     bool avoid_backedge_extend;  // Study-only guard: don't extend across back-edges
     bool peephole_enabled;       // Peephole optimize emitted host code
+    bool strict_carry;           // Guardrail: disable carry-sensitive fusion paths
+    bool stage5_burg_enabled;    // Stage 5 hook toggle (disabled by default)
+    bool stage5_emit_enabled;    // Stage 5 pilot emission toggle (disabled by default)
 
     // Stage 5: Per-block register allocation (8-slot fully-associative)
     bool reg_cache_enabled;
@@ -340,6 +369,7 @@ void translate_sltiu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm)
 // Multiply/divide
 void translate_mul(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
 void translate_mulh(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
+void translate_mulhu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
 void translate_div(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
 void translate_rem(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2);
 
