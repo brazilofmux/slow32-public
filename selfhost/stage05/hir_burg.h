@@ -74,6 +74,8 @@ static int bg_stat_sel_chain;
 static int bg_stat_sel_imm;
 static int bg_stat_sel_faddr;
 static int bg_stat_sel_saddr;
+static int bg_stat_sel_op[BG_OP_SZ];
+static int bg_stat_sel_pat[BG_MAX_PAT];
 
 /* Init flag */
 static int bg_inited;
@@ -269,6 +271,60 @@ static int bg_addi_faddr_ok(int idx) {
     return (off >= -2048 && off <= 2047);
 }
 
+static char *bg_nt_name(int nt) {
+    if (nt == BG_REG) return "reg";
+    if (nt == BG_IMM) return "imm";
+    if (nt == BG_FADDR) return "faddr";
+    if (nt == BG_SADDR) return "saddr";
+    if (nt == BG_STMT) return "stmt";
+    return "?";
+}
+
+static char *bg_op_name(int op) {
+    if (op == HI_NOP) return "nop";
+    if (op == HI_ICONST) return "iconst";
+    if (op == HI_PARAM) return "param";
+    if (op == HI_ADD) return "add";
+    if (op == HI_SUB) return "sub";
+    if (op == HI_MUL) return "mul";
+    if (op == HI_DIV) return "div";
+    if (op == HI_REM) return "rem";
+    if (op == HI_AND) return "and";
+    if (op == HI_OR) return "or";
+    if (op == HI_XOR) return "xor";
+    if (op == HI_SLL) return "sll";
+    if (op == HI_SRA) return "sra";
+    if (op == HI_SRL) return "srl";
+    if (op == HI_SEQ) return "seq";
+    if (op == HI_SNE) return "sne";
+    if (op == HI_SLT) return "slt";
+    if (op == HI_SGT) return "sgt";
+    if (op == HI_SLE) return "sle";
+    if (op == HI_SGE) return "sge";
+    if (op == HI_SLTU) return "sltu";
+    if (op == HI_SGTU) return "sgtu";
+    if (op == HI_SLEU) return "sleu";
+    if (op == HI_SGEU) return "sgeu";
+    if (op == HI_NEG) return "neg";
+    if (op == HI_NOT) return "not";
+    if (op == HI_BNOT) return "bnot";
+    if (op == HI_LOAD) return "load";
+    if (op == HI_STORE) return "store";
+    if (op == HI_ALLOCA) return "alloca";
+    if (op == HI_GADDR) return "gaddr";
+    if (op == HI_SADDR) return "saddr";
+    if (op == HI_FADDR) return "faddr";
+    if (op == HI_BR) return "br";
+    if (op == HI_BRC) return "brc";
+    if (op == HI_RET) return "ret";
+    if (op == HI_CALL) return "call";
+    if (op == HI_CALLP) return "callp";
+    if (op == HI_PHI) return "phi";
+    if (op == HI_COPY) return "copy";
+    if (op == HI_ADDI) return "addi";
+    return "?";
+}
+
 /* --- Use counting --- */
 
 static void bg_count_uses(void) {
@@ -440,7 +496,8 @@ static void bg_label(void) {
                 dst = i * BG_NNT + bg_cto[ci];
                 if (cost < bg_cost[dst]) {
                     bg_cost[dst] = cost;
-                    bg_rule[dst] = -(ci + 1);
+                    /* Chain encodes as <= -2; -1 means no rule. */
+                    bg_rule[dst] = -(ci + 2);
                 }
             }
             ci = ci + 1;
@@ -486,13 +543,20 @@ static void bg_select(void) {
         bg_sel[i] = bg_rule[i * BG_NNT + nt];
         if (bg_sel[i] >= 0) {
             pat = bg_sel[i];
+            k = bg_pop[pat];
             bg_stat_sel_total = bg_stat_sel_total + 1;
+            if (k >= 0 && k <= BG_MAX_OP) {
+                bg_stat_sel_op[k] = bg_stat_sel_op[k] + 1;
+            }
+            if (pat >= 0 && pat < BG_MAX_PAT) {
+                bg_stat_sel_pat[pat] = bg_stat_sel_pat[pat] + 1;
+            }
             lnt = bg_plnt[pat];
             rnt = bg_prnt[pat];
             if (lnt == BG_IMM || rnt == BG_IMM) bg_stat_sel_imm = bg_stat_sel_imm + 1;
             if (lnt == BG_FADDR || rnt == BG_FADDR) bg_stat_sel_faddr = bg_stat_sel_faddr + 1;
             if (lnt == BG_SADDR || rnt == BG_SADDR) bg_stat_sel_saddr = bg_stat_sel_saddr + 1;
-        } else if (bg_sel[i] < 0) {
+        } else if (bg_sel[i] <= -2) {
             bg_stat_sel_chain = bg_stat_sel_chain + 1;
         }
         i = i + 1;

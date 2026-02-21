@@ -478,7 +478,7 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$S13CC_EXE" ]]; then
     else
         if grep -Eq '^hir_burg|^hir_burg_select' "$WORKDIR/fp-gen2-compile.log"; then
             echo "  gen2 self-compile stats:"
-            grep -E '^hir_burg|^hir_burg_select' "$WORKDIR/fp-gen2-compile.log" | tail -n 2
+            grep -E '^hir_burg|^  ' "$WORKDIR/fp-gen2-compile.log" | head -n 20
         fi
         run_exe "$AS_EXE" "$WORKDIR/fp-gen2-assemble.log" "$WORKDIR/fp-gen2.s" "$WORKDIR/fp-gen2.s32o"
         if [[ ! -s "$WORKDIR/fp-gen2.s32o" ]]; then
@@ -500,7 +500,7 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$S13CC_EXE" ]]; then
                 else
                     if grep -Eq '^hir_burg|^hir_burg_select' "$WORKDIR/fp-gen3-compile.log"; then
                         echo "  gen3 self-compile stats:"
-                        grep -E '^hir_burg|^hir_burg_select' "$WORKDIR/fp-gen3-compile.log" | tail -n 2
+                        grep -E '^hir_burg|^  ' "$WORKDIR/fp-gen3-compile.log" | head -n 20
                     fi
                     run_exe "$AS_EXE" "$WORKDIR/fp-gen3-assemble.log" "$WORKDIR/fp-gen3.s" "$WORKDIR/fp-gen3.s32o"
                     if [[ ! -s "$WORKDIR/fp-gen3.s32o" ]]; then

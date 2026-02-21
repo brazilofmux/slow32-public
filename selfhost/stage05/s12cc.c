@@ -29,6 +29,94 @@ int close(int fd);
 #include "hir_regalloc.h"
 #include "hir_codegen.h"
 
+static void print_burg_top_ops(int topn) {
+    int used[BG_OP_SZ];
+    int i;
+    int r;
+    int best;
+    int bestc;
+
+    i = 0;
+    while (i < BG_OP_SZ) {
+        used[i] = 0;
+        i = i + 1;
+    }
+
+    fputs("hir_burg_top_ops:\n", stderr);
+    r = 0;
+    while (r < topn) {
+        best = -1;
+        bestc = 0;
+        i = 0;
+        while (i <= BG_MAX_OP) {
+            if (!used[i] && bg_stat_sel_op[i] > bestc) {
+                best = i;
+                bestc = bg_stat_sel_op[i];
+            }
+            i = i + 1;
+        }
+        if (best < 0 || bestc <= 0) break;
+        used[best] = 1;
+        fputs("  ", stderr);
+        fputs(bg_op_name(best), stderr);
+        fputs("=", stderr);
+        fput_uint(stderr, bestc);
+        fputc(10, stderr);
+        r = r + 1;
+    }
+}
+
+static void print_burg_top_patterns(int topn) {
+    int used[BG_MAX_PAT];
+    int i;
+    int r;
+    int best;
+    int bestc;
+    int lnt;
+    int rnt;
+
+    i = 0;
+    while (i < BG_MAX_PAT) {
+        used[i] = 0;
+        i = i + 1;
+    }
+
+    fputs("hir_burg_top_pats:\n", stderr);
+    r = 0;
+    while (r < topn) {
+        best = -1;
+        bestc = 0;
+        i = 0;
+        while (i < bg_npat) {
+            if (!used[i] && bg_stat_sel_pat[i] > bestc) {
+                best = i;
+                bestc = bg_stat_sel_pat[i];
+            }
+            i = i + 1;
+        }
+        if (best < 0 || bestc <= 0) break;
+        used[best] = 1;
+        lnt = bg_plnt[best];
+        rnt = bg_prnt[best];
+        fputs("  #", stderr);
+        fput_uint(stderr, best);
+        fputs(" ", stderr);
+        fputs(bg_op_name(bg_pop[best]), stderr);
+        fputs("(", stderr);
+        if (lnt < 0) fputs("_", stderr);
+        else fputs(bg_nt_name(lnt), stderr);
+        fputs(",", stderr);
+        if (rnt < 0) fputs("_", stderr);
+        else fputs(bg_nt_name(rnt), stderr);
+        fputs(")->", stderr);
+        fputs(bg_nt_name(bg_pnt[best]), stderr);
+        fputs(" x", stderr);
+        fput_uint(stderr, bestc);
+        fputc(10, stderr);
+        r = r + 1;
+    }
+}
+
 int main(int argc, char **argv) {
     int fd;
     int n;
@@ -140,6 +228,8 @@ int main(int argc, char **argv) {
     fputs(" saddr=", stderr);
     fput_uint(stderr, bg_stat_sel_saddr);
     fputs("\n", stderr);
+    print_burg_top_ops(8);
+    print_burg_top_patterns(8);
 
     return 0;
 }
