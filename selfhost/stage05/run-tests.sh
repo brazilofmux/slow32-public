@@ -143,6 +143,7 @@ check_missed_immediate_ops() {
 
     awk '
     function is_small_imm(v) { return (v >= -2048 && v <= 2047); }
+    function is_u12_imm(v) { return (v >= 0 && v <= 4095); }
     function is_shift_imm(v) { return (v >= 0 && v <= 31); }
     function regnum(tok) {
         if (tok ~ /^r[0-9]+$/) return substr(tok, 2) + 0;
@@ -172,7 +173,7 @@ check_missed_immediate_ops() {
             rB = regnum(t[4]);
             if (rd >= 0 && rA >= 0 && rB >= 0) {
                 if ((op == "and" || op == "or" || op == "xor") &&
-                    (rA == preg || rB == preg) && is_small_imm(pimm)) {
+                    (rA == preg || rB == preg) && is_u12_imm(pimm)) {
                     printf("%d:%s (from addi at %d)\n", NR, orig, pline);
                     bad = 1;
                 } else if ((op == "slt" || op == "sltu") &&
