@@ -1,8 +1,22 @@
 # Code Review Issues: SLOW-32 Self-Hosting Toolchain
 
-This document captures bugs, inconsistencies, and opportunities for improvement identified during the code review of the `./selfhost` directory.
+This document captures bugs, inconsistencies, limitations, and opportunities identified during review of `./selfhost` and adjacent toolchain components.
 
-## Stage 0: Emulator (`s32-emu.c`)
+## Reading Guide
+
+- **Section A**: Closed items (`[FIXED]`, `[RESOLVED]`, `[NOT SUPPORTED]` design decisions).
+- **Section B**: Active correctness/conformance gaps.
+- **Section C**: Missing language/ABI surface (feature backlog).
+- **Section D**: Optimization backlog.
+- **Section E**: Documentation/process follow-ups.
+
+Note: Original issue numbers are preserved as recorded, including historical numbering collisions (for example, two separate Issue `#17` entries).
+
+---
+
+## Section A: Closed / Resolved / Decisioned
+
+### Stage 0: Emulator (`s32-emu.c`)
 
 ### 1. [FIXED] Pathname Truncation in `OP_MMIO_OPEN`
 The spurious `path_buf[plen - 1] = '\0'` line has been removed. Both OPEN and STAT paths
@@ -34,132 +48,20 @@ of native-endian memory mapping on common architectures (x86_64, ARM64, RISC-V) 
 the cost of BE portability. The emulator and toolchain now explicitly check for host
 endianness at startup and will exit with an error on Big Endian platforms.
 
----
-
-## Stage 2: Forth Assembler (`asm.fth`)
+### Stage 2: Forth Assembler (`asm.fth`)
 
 ### 6. [FIXED] `.byte` and `.word` Limited to Single Values
 This was resolved in the v2 relocation (`selfhost/stage01/asm.fth`). `DO-BYTE` and `DO-WORD` now use a `BEGIN ... AGAIN` loop to process all tokens on a line.
 
-### 7. [INCONSISTENCY] PC-Relative Reference Points
-The reference point for PC-relative offsets differs between instructions:
-- `JAL` (0x40): Relative to `PC`.
-- `BEQ/BNE/...` (0x48+): Relative to `PC + 4`.
-While the assembler compensates for this in `PARSE-TARGET` vs `PARSE-BTARGET`, it is an inconsistent design that complicates manual assembly and debugging.
-
----
-
-## Stage 4: C Compiler (`cc.fth`)
+### Stage 4: C Compiler (`cc.fth`)
 
 ### 8. [FIXED] String Truncation in Self-Host
 This was resolved by the fix to Issue #6. The Stage 2 assembler now correctly parses comma-separated byte lists emitted by the C compiler.
 
-### 9. [DOC] Misleading Type Encoding Comments
-Comments in `cc.fth` claim that `TY-STRUCT` indices and array counts overlap in the type word (bits 16-31), but the code actually uses disjoint ranges (14-21 for structs, 22-31 for arrays). The comments should be updated to reflect the actual (correct) implementation.
-
 ### 11. [FIXED] Dead Code and Redundancy in `EMIT-LI-R2`
 This was cleaned up during the v2 relocation. Both `EMIT-LI-R1` and `EMIT-LI-R2` now use identical, optimized logic without redundant temporary variables.
 
----
-
-## Stage 6: Subset C Archiver (`s32-ar.c`)
-
-### 12. [NARROWED] Stage02 `s32-ar.c` Needs Full Command Coverage
-The Stage02 subset archiver (`selfhost/stage01/validation/s32-ar.c`) now supports bounded multi-member create and real `rc` replace-on-existing behavior with basename matching.
-
-Remaining gap:
-- Expand command surface and parity checks for `d/m/v/p` paths before Stage02 can be considered complete.
-
----
-
-## Bootstrap Flow / Runtime Artifacts
-
-### 15. [RESOLVED] Stage04+ Depends on Seeded Runtime Binaries
-Stage04 regression scripts now assemble the bootstrap runtime from in-tree sources at
-test time, using the Forth assembler (stage01). No prebuilt `runtime/*.s32o` or
-`runtime/*.s32a` blobs are required. A clean checkout can run Stage00 through Stage04
-using only:
-- host C compiler for Stage00 `s32-emu`
-- seeded `forth/kernel.s32x` + `forth/prelude.fth`
-
-Runtime sources: `selfhost/stage01/crt0_minimal.s`, `selfhost/stage01/mmio_minimal.s`.
-These are linked as direct objects (not archives) to work around Issue #16.
-
-### 16. [FIXED] Forth Archiver Symbol Index Bugs
-The Forth archiver (`selfhost/stage01/ar.fth`) had two bugs preventing archive-based
-linking from working:
-
-**Bug A: `OUTSTR-ADD` stack underflow** — In the output string table builder,
-`R>` popped the string length from the return stack for the NUL-terminator write,
-leaving the stack empty for the subsequent size update. Fixed by using `R@` (copy)
-instead of `R>` (pop), then properly advancing `out-strsz` with `R> 1+ out-strsz +!`.
-
-**Bug B: `BUILD-SYMINDEX` used wrong loop variable** — In the nested `?DO` loops,
-`J sym-j !` stored the outer loop index (member index) where the inner loop index
-(symbol index) was needed. This caused every symbol within a member to read the same
-symbol table entry (at position `member_idx * 16 + sym_offset` instead of
-`symbol_idx * 16 + sym_offset`). Fixed by replacing `J sym-j !` /
-`sym-j @ 16 * m-tmp-off @ +` with `I 16 * m-tmp-off @ +`.
-
-Both fixes verified by stage01 regression tests. Archive-based linking
-now works correctly in the stage02 selfhost libc build.
-
----
-
-## Stage 8: Subset C Compiler (`cc-min-pass1.c`)
-
-### 17. [FIXED] `&&` and `||` Are Not Short-Circuiting
-`&&` and `||` now short-circuit in `parse_binop`: LHS is normalized to 0/1, then a
-conditional branch skips the RHS when the result is already determined. Verified by
-`min_short_circuit.c` test using side-effect counters.
-
-### 18. [FIXED] `INT_MIN` Handling in `emit_num`
-Special-cased `INT_MIN` (-2147483648) to emit the literal string directly before
-the negate-and-loop path. Uses `-2147483647 - 1` in the comparison to avoid
-C literal overflow ambiguity.
-
-### 19. [FIXED] Lack of Pointer Arithmetic Scaling
-`ptr + int`, `int + ptr`, `ptr - int`, and `ptr - ptr` now scale by element size.
-`++`/`--` and `+=`/`-=` on pointers also scale correctly.
-Verified by `min_ptr_arith.c` test (int* advances by 4, char* by 1, ptr-ptr divides).
-
-### 20. [FIXED] Small Fixed-Size Symbol Tables and Buffers
-All limits bumped to support self-hosting-scale programs:
-- `MAX_LOCALS` 64→128, `MAX_GLOBALS` 64→256, `MAX_FUNCS` 128→256
-- `NAMESZ` 32→48, name buffers proportionally increased
-- `MAX_OUTPUT` 65536→131072 (128KB), `MAX_STRINGS` 128→512, `STR_POOL_SZ` 4096→16384
-
-### 21. [CC] Caller-Side Argument Limit
-The compiler only supports up to 8 arguments in function calls, passed via registers `r3-r10`.
-```c
-while (k > 0) {
-    k = k - 1;
-    emit("    ldw r"); emit_num(3 + k); emit(", r29, 0\n    addi r29, r29, 4\n");
-}
-```
-If a function is called with more than 8 arguments, it will attempt to use non-existent or incorrect registers (`r11+`). The calling convention requires overflow arguments to be passed on the stack.
-
-### 22. [FIXED] Hardcoded Stack Frame Size
-`emit_prologue` now emits a placeholder that is back-patched after the function body is
-parsed. `emit_prologue_final(frame_sz)` overwrites the placeholder with the actual frame
-size, computed as `((-local_offset + 15) & ~15)` with a minimum of 32 bytes. This
-eliminates the fixed 256-byte frame overhead and prevents stack overflow for functions
-with many locals.
-
-### 23. [INCOMPLETE] Comma Operator and `for` Loop Expressions
-The `for` loop parser only supports a single expression in the initialization, condition, and increment sections. Standard C allows multiple expressions separated by the comma operator, which is frequently used in `for` loops.
-
-### 24. [RESOLVED] Global and Local Initialization Limitations
-Global variables are only allocated in `.bss` with `.space`; they cannot be initialized
-at declaration. Local array initialization is also unsupported. However, BSS zero-init
-is sufficient for the selfhost toolchain, and all required initialization is done via
-assignment statements.
-
-### 25. [FIXED] Empty Error Reporting
-`cc_error` now prints `cc-min:<line>: error: <msg>` to stderr using `fputs`/`fput_uint`.
-Example output: `cc-min:5: error: unexpected character`.
-
-## Stage 4: C Compiler (`cc.fth`) — Long-Call Materialization Bug
+### Stage 4: C Compiler (`cc.fth`) — Long-Call Materialization / Array Size
 
 ### 17. [FIXED] Second Call to Auto-Declared Function Generates Variable-Access Code
 
@@ -193,24 +95,79 @@ size as `element_size * big-arr-count` when the type is an array.
 Also bumped `MAX_BSS` in `s32-as.c` from 256KB to 8MB to accommodate the archiver's
 4MB data buffer.
 
----
+### Bootstrap Flow / Runtime Artifacts
 
-## Documentation Opportunities
+### 15. [RESOLVED] Stage04+ Depends on Seeded Runtime Binaries
+Stage04 regression scripts now assemble the bootstrap runtime from in-tree sources at
+test time, using the Forth assembler (stage01). No prebuilt `runtime/*.s32o` or
+`runtime/*.s32a` blobs are required. A clean checkout can run Stage00 through Stage04
+using only:
+- host C compiler for Stage00 `s32-emu`
+- seeded `forth/kernel.s32x` + `forth/prelude.fth`
 
-### 10. `ISA-ENCODING.md` Errors and Discrepancies
-- The "Operation" column for `SLTI` is a copy-paste error from `ADDI` (or rather, `SLTI` is missing from the I-Type table while appearing in other sections).
-- Opcode ranges for R-type vs I-type are not clearly defined. Instructions `0x18` (SGT) through `0x1D` (SGEU) are R-type (using `rs2`) but reside in the `0x10-0x1F` range typically reserved for I-type arithmetic.
-- **Major Discrepancy:** The instruction format diagrams show `funct7` (bits 25-31) and `f3` (bits 12-14) fields, but the Stage 0 emulator (`s32-emu.c`) and Forth assembler (`asm.fth`) use a flat 7-bit opcode space, effectively ignoring or zeroing these fields. This should be clarified to avoid confusion for developers familiar with standard RISC-V.
+Runtime sources: `selfhost/stage01/crt0_minimal.s`, `selfhost/stage01/mmio_minimal.s`.
+These are linked as direct objects (not archives) to work around Issue #16.
 
-### 13. [DOC] Stale Implementation Status in `STAGE0-EMULATOR.md`
-The `STAGE0-EMULATOR.md` file lists several instructions as "deferred" or "not needed by Forth kernel" (e.g., `DIV/REM`, `BLTU/BGEU`, `LDH/STH`, `MULH`), but these are already fully implemented in the actual `s32-emu.c` source. The documentation should be updated to reflect that the Stage 0 emulator is more capable than initially planned, while still maintaining the "intentional subset" philosophy (no floating-point, no 64-bit integers).
+### 16. [FIXED] Forth Archiver Symbol Index Bugs
+The Forth archiver (`selfhost/stage01/ar.fth`) had two bugs preventing archive-based
+linking from working:
 
-### 14. [DOC] Intentional Subset Alignment
-While `./docs/INSTRUCTION-SET.md` defines a rich set including floating-point and 64-bit conversions, the `./selfhost` toolchain intentionally targets a minimal integer-only subset. This boundary is mostly respected, but the documentation in `selfhost/docs/` should more explicitly cross-reference the main ISA spec to clarify that self-hosting is a "reduced surface" effort.
+**Bug A: `OUTSTR-ADD` stack underflow** — In the output string table builder,
+`R>` popped the string length from the return stack for the NUL-terminator write,
+leaving the stack empty for the subsequent size update. Fixed by using `R@` (copy)
+instead of `R>` (pop), then properly advancing `out-strsz` with `R> 1+ out-strsz +!`.
 
----
+**Bug B: `BUILD-SYMINDEX` used wrong loop variable** — In the nested `?DO` loops,
+`J sym-j !` stored the outer loop index (member index) where the inner loop index
+(symbol index) was needed. This caused every symbol within a member to read the same
+symbol table entry (at position `member_idx * 16 + sym_offset` instead of
+`symbol_idx * 16 + sym_offset`). Fixed by replacing `J sym-j !` /
+`sym-j @ 16 * m-tmp-off @ +` with `I 16 * m-tmp-off @ +`.
 
-## Recent Commit Review Follow-Ups
+Both fixes verified by stage01 regression tests. Archive-based linking
+now works correctly in the stage02 selfhost libc build.
+
+### Stage 8: Subset C Compiler (`cc-min-pass1.c`)
+
+### 17. [FIXED] `&&` and `||` Are Not Short-Circuiting
+`&&` and `||` now short-circuit in `parse_binop`: LHS is normalized to 0/1, then a
+conditional branch skips the RHS when the result is already determined. Verified by
+`min_short_circuit.c` test using side-effect counters.
+
+### 18. [FIXED] `INT_MIN` Handling in `emit_num`
+Special-cased `INT_MIN` (-2147483648) to emit the literal string directly before
+the negate-and-loop path. Uses `-2147483647 - 1` in the comparison to avoid
+C literal overflow ambiguity.
+
+### 19. [FIXED] Lack of Pointer Arithmetic Scaling
+`ptr + int`, `int + ptr`, `ptr - int`, and `ptr - ptr` now scale by element size.
+`++`/`--` and `+=`/`-=` on pointers also scale correctly.
+Verified by `min_ptr_arith.c` test (int* advances by 4, char* by 1, ptr-ptr divides).
+
+### 20. [FIXED] Small Fixed-Size Symbol Tables and Buffers
+All limits bumped to support self-hosting-scale programs:
+- `MAX_LOCALS` 64→128, `MAX_GLOBALS` 64→256, `MAX_FUNCS` 128→256
+- `NAMESZ` 32→48, name buffers proportionally increased
+- `MAX_OUTPUT` 65536→131072 (128KB), `MAX_STRINGS` 128→512, `STR_POOL_SZ` 4096→16384
+
+### 22. [FIXED] Hardcoded Stack Frame Size
+`emit_prologue` now emits a placeholder that is back-patched after the function body is
+parsed. `emit_prologue_final(frame_sz)` overwrites the placeholder with the actual frame
+size, computed as `((-local_offset + 15) & ~15)` with a minimum of 32 bytes. This
+eliminates the fixed 256-byte frame overhead and prevents stack overflow for functions
+with many locals.
+
+### 24. [RESOLVED] Global and Local Initialization Limitations
+Global variables are only allocated in `.bss` with `.space`; they cannot be initialized
+at declaration. Local array initialization is also unsupported. However, BSS zero-init
+is sufficient for the selfhost toolchain, and all required initialization is done via
+assignment statements.
+
+### 25. [FIXED] Empty Error Reporting
+`cc_error` now prints `cc-min:<line>: error: <msg>` to stderr using `fputs`/`fput_uint`.
+Example output: `cc-min:5: error: unexpected character`.
+
+### Recent Commit Review Follow-Ups
 
 ### 26. [RESOLVED] Missing `minizork.z3` Broke Zork Tests
 Commit `def868a` removed `zork/stories/minizork.z3`, while `zork/tests/run-tests.sh`
@@ -224,19 +181,7 @@ requires that exact path. The story file has now been restored in commit `694ed6
 `lsc` and `rsc` are declared and used in `emit_ptr_add()` and `emit_ptr_sub()`, not in
 `parse_binop()`. No unused locals exist; this was a false positive.
 
-### 29. [DOC] Commit Message vs Touched Files Audit Trail
-Commit `a851552` message says it fixes issues `#1/#2/#19/#25`, but touched files are:
-- `selfhost/ISSUES.md`
-- `selfhost/stage01/cc.fth`
-- `selfhost/stage02/*`
-
-No Stage0 emulator source file is touched in that commit. If Stage0 fixes were landed
-earlier, the message should clarify that this commit updates tracking/docs for #1/#2
-rather than containing those code changes directly.
-
----
-
-## slow32-dbt
+### slow32-dbt
 
 ### 31. [FIXED] Infinite Loop on SSA-Compiled gen2.s32x
 
@@ -255,12 +200,12 @@ slow32-fast completes the same workload correctly in under 5 seconds.
 #   gen2 = s12cc.s32x compiles s12cc.c → gen2.s → assemble → link → gen2.s32x
 
 # Create minimal trigger (copy c_lexer_gen.c, pp.h, ast.h to same dir)
-cat > /tmp/stub_ast.c << 'EOF'
+cat > /tmp/stub_ast.c << 'EOF_INNER'
 #include "c_lexer_gen.c"
 #include "pp.h"
 #include "ast.h"
 int main(int argc, char **argv) { return 0; }
-EOF
+EOF_INNER
 
 # HANGS (infinite loop, 100% CPU):
 slow32-dbt gen2.s32x /tmp/stub_ast.c /tmp/out.s
@@ -405,3 +350,120 @@ stages 2+ (which use the block cache) were affected.
 - 4K cache + guard: gen2 selfhost fixed point proven (gen2.s == gen3.s)
 - 128K cache + guard: gen2 selfhost fixed point proven
 - Full stage05 test suite: 22/22 pass
+
+---
+
+## Section B: Active Correctness / Conformance Gaps
+
+### Stage 2: Forth Assembler (`asm.fth`)
+
+### 7. [INCONSISTENCY] PC-Relative Reference Points
+The reference point for PC-relative offsets differs between instructions:
+- `JAL` (0x40): Relative to `PC`.
+- `BEQ/BNE/...` (0x48+): Relative to `PC + 4`.
+While the assembler compensates for this in `PARSE-TARGET` vs `PARSE-BTARGET`, it is an inconsistent design that complicates manual assembly and debugging.
+
+### Stage 6: Subset C Archiver (`s32-ar.c`)
+
+### 12. [NARROWED] Stage02 `s32-ar.c` Needs Full Command Coverage
+The Stage02 subset archiver (`selfhost/stage01/validation/s32-ar.c`) now supports bounded multi-member create and real `rc` replace-on-existing behavior with basename matching.
+
+Remaining gap:
+- Expand command surface and parity checks for `d/m/v/p` paths before Stage02 can be considered complete.
+
+### Stage 8: Subset C Compiler (`cc-min-pass1.c`)
+
+### 21. [CC] Caller-Side Argument Limit
+The compiler only supports up to 8 arguments in function calls, passed via registers `r3-r10`.
+```c
+while (k > 0) {
+    k = k - 1;
+    emit("    ldw r"); emit_num(3 + k); emit(", r29, 0\n    addi r29, r29, 4\n");
+}
+```
+If a function is called with more than 8 arguments, it will attempt to use non-existent or incorrect registers (`r11+`). The calling convention requires overflow arguments to be passed on the stack.
+
+### 23. [INCOMPLETE] Comma Operator and `for` Loop Expressions
+The `for` loop parser only supports a single expression in the initialization, condition, and increment sections. Standard C allows multiple expressions separated by the comma operator, which is frequently used in `for` loops.
+
+---
+
+## Section C: Missing Language / ABI Surface (Feature Backlog)
+
+### Stage 6: Subset C Compiler (`s12cc.c`)
+
+### 33. [MISSING] `long long` (64-bit) Support
+`is_type` recognizes `long`, but `parse_type` and the rest of the toolchain treat it as a 32-bit `TY_INT`. There is no support for true 64-bit integers.
+**Recommendation**: Add `TY_LONG_LONG` and implement 64-bit lowering (pair of 32-bit registers/stack slots) and arithmetic/logical expansion.
+
+### 34. [MISSING] Floating Point Support
+`float` and `double` are completely missing.
+**Recommendation**: Add type support and either implement soft-float library calls or MMIO-based FPU interface.
+
+### 35. [LIMITATION] Preprocessor Gaps
+`pp.h` lacks function-like macros, `#if` expression evaluation, `#undef`, and predefined macros like `__FILE__`/`__LINE__`.
+**Recommendation**: Enhance `pp.h` to support token-based macro expansion and a more complete expression parser for `#if`.
+
+### 38. [MISSING] `struct` by Value
+Currently, structs can only be effectively accessed via pointers. Passing or returning a struct by value is not supported in the parser or calling convention.
+**Recommendation**: Update calling convention and codegen to handle struct copies on stack/registers.
+
+### 39. [LIMITATION] For-Loop Expression Limit
+As noted in Issue #23, `for` loops only support single expressions in the init/cond/step sections. Standard C allows comma-separated lists.
+**Recommendation**: Update `parse_for` in `parser.h` to handle comma-separated expression lists.
+
+---
+
+## Section D: Optimization Backlog
+
+### Stage 6: Subset C Compiler (`s12cc.c`)
+
+### 32. [OPPORTUNITY] `switch` Comparison Chain
+`ND_SWITCH` is lowered in `hir_lower.h` to a linear chain of `HI_SEQ` + `HI_BRC`. For switches with many cases, this is O(N) at runtime.
+**Recommendation**: Implement jump tables for dense case ranges and binary search for sparse ranges.
+
+### 36. [OPPORTUNITY] Register Allocation: Caller-Saved Registers
+`hir_regalloc.h` only uses callee-saved registers (`r11-r28`). This forces every function to save/restore registers in the prologue/epilogue even if it has very few locals or short live intervals.
+**Recommendation**: Use `r3-r10` (caller-saved arguments) for short-lived values and arguments to minimize save/restore overhead.
+
+### 37. [OPPORTUNITY] SSA Optimization: Memory SSA & GVN
+Current SSA optimizations are mostly local or simple algebraic folds. Promotion to SSA is limited to scalar locals.
+**Recommendation**: Implement Memory SSA to track memory state, allowing for global CSE across loads/stores and better dead store elimination. Implement Global Value Numbering (GVN) for more powerful redundancy removal.
+
+### 40. [OPPORTUNITY] Tail Call Optimization (TCO)
+Self-hosted compilers, especially those handling recursive descent (like `s12cc`), can benefit significantly from TCO.
+**Recommendation**: Detect tail calls in `hir_opt.h` and rewrite to jumps to function start.
+
+---
+
+## Section E: Documentation and Process Follow-Ups
+
+### Stage 4: C Compiler (`cc.fth`)
+
+### 9. [DOC] Misleading Type Encoding Comments
+Comments in `cc.fth` claim that `TY-STRUCT` indices and array counts overlap in the type word (bits 16-31), but the code actually uses disjoint ranges (14-21 for structs, 22-31 for arrays). The comments should be updated to reflect the actual (correct) implementation.
+
+### Documentation Opportunities
+
+### 10. `ISA-ENCODING.md` Errors and Discrepancies
+- The "Operation" column for `SLTI` is a copy-paste error from `ADDI` (or rather, `SLTI` is missing from the I-Type table while appearing in other sections).
+- Opcode ranges for R-type vs I-type are not clearly defined. Instructions `0x18` (SGT) through `0x1D` (SGEU) are R-type (using `rs2`) but reside in the `0x10-0x1F` range typically reserved for I-type arithmetic.
+- **Major Discrepancy:** The instruction format diagrams show `funct7` (bits 25-31) and `f3` (bits 12-14) fields, but the Stage 0 emulator (`s32-emu.c`) and Forth assembler (`asm.fth`) use a flat 7-bit opcode space, effectively ignoring or zeroing these fields. This should be clarified to avoid confusion for developers familiar with standard RISC-V.
+
+### 13. [DOC] Stale Implementation Status in `STAGE0-EMULATOR.md`
+The `STAGE0-EMULATOR.md` file lists several instructions as "deferred" or "not needed by Forth kernel" (e.g., `DIV/REM`, `BLTU/BGEU`, `LDH/STH`, `MULH`), but these are already fully implemented in the actual `s32-emu.c` source. The documentation should be updated to reflect that the Stage 0 emulator is more capable than initially planned, while still maintaining the "intentional subset" philosophy (no floating-point, no 64-bit integers).
+
+### 14. [DOC] Intentional Subset Alignment
+While `./docs/INSTRUCTION-SET.md` defines a rich set including floating-point and 64-bit conversions, the `./selfhost` toolchain intentionally targets a minimal integer-only subset. This boundary is mostly respected, but the documentation in `selfhost/docs/` should more explicitly cross-reference the main ISA spec to clarify that self-hosting is a "reduced surface" effort.
+
+### Recent Commit Review Follow-Ups
+
+### 29. [DOC] Commit Message vs Touched Files Audit Trail
+Commit `a851552` message says it fixes issues `#1/#2/#19/#25`, but touched files are:
+- `selfhost/ISSUES.md`
+- `selfhost/stage01/cc.fth`
+- `selfhost/stage02/*`
+
+No Stage0 emulator source file is touched in that commit. If Stage0 fixes were landed
+earlier, the message should clarify that this commit updates tracking/docs for #1/#2
+rather than containing those code changes directly.
