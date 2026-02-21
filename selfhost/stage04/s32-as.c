@@ -6,6 +6,7 @@
 #define MAX_REL 32768
 #define MAX_SYM 8192
 #define MAX_TEXT 1048576
+#define MAX_RODATA 1048576
 #define MAX_DATA 1048576
 #define MAX_BSS 16777216
 #define MAX_STR 65536
@@ -13,8 +14,9 @@
 #define MAX_DIFF 8192
 
 #define SEC_TEXT 0
-#define SEC_DATA 1
-#define SEC_BSS  2
+#define SEC_RODATA 1
+#define SEC_DATA 2
+#define SEC_BSS  3
 
 static char g_lbl_name_pool[262144];
 static int g_lbl_name_off[8192];
@@ -43,8 +45,10 @@ static int g_diff_wide[8192];
 static int g_ndiff;
 
 static char g_text[1048576];
+static char g_rodata[1048576];
 static char g_data[1048576];
 static int g_tsz;
+static int g_rsz;
 static int g_dsz;
 static int g_bsz;
 static int g_sec;
@@ -390,6 +394,7 @@ int get_lbl(char *name) {
 
 int cur_off() {
     if (g_sec == SEC_TEXT) return g_tsz;
+    if (g_sec == SEC_RODATA) return g_rsz;
     if (g_sec == SEC_DATA) return g_dsz;
     return g_bsz;
 }
@@ -399,6 +404,10 @@ int emit8(int b) {
         if (g_tsz >= MAX_TEXT) return -1;
         g_text[g_tsz] = b;
         g_tsz = g_tsz + 1;
+    } else if (g_sec == SEC_RODATA) {
+        if (g_rsz >= MAX_RODATA) return -1;
+        g_rodata[g_rsz] = b;
+        g_rsz = g_rsz + 1;
     } else if (g_sec == SEC_DATA) {
         if (g_dsz >= MAX_DATA) return -1;
         g_data[g_dsz] = b;
@@ -695,7 +704,7 @@ int handle(char *line) {
         if (strcmp(tok[0], ".text") == 0) { g_sec = SEC_TEXT; return 0; }
         if (strcmp(tok[0], ".data") == 0) { g_sec = SEC_DATA; return 0; }
         if (strcmp(tok[0], ".bss") == 0) { g_sec = SEC_BSS; return 0; }
-        if (strcmp(tok[0], ".rodata") == 0) { g_sec = SEC_DATA; return 0; }
+        if (strcmp(tok[0], ".rodata") == 0) { g_sec = SEC_RODATA; return 0; }
         if (strcmp(tok[0], ".global") == 0 || strcmp(tok[0], ".globl") == 0) { if (n < 2) return -1; ok = get_lbl(tok[1]); if (ok < 0) return -1; g_lbl_glob[ok] = 1; return 0; }
         if (strcmp(tok[0], ".align") == 0 || strcmp(tok[0], ".p2align") == 0) { if (n < 2) return -1; ok = parse_num_or_abs(tok[1], &n); if (!n) return -1; return do_align(ok); }
         if (strcmp(tok[0], ".balign") == 0) {
@@ -711,10 +720,10 @@ int handle(char *line) {
         }
         if (strcmp(tok[0], ".section") == 0) {
             if (n < 2) return -1;
-            if (strncmp(tok[1], ".rodata", 7) == 0) { g_sec = SEC_DATA; return 0; }
+            if (strncmp(tok[1], ".rodata", 7) == 0) { g_sec = SEC_RODATA; return 0; }
             if (strncmp(tok[1], ".init_array", 11) == 0) { g_sec = SEC_DATA; return 0; }
-            if (strncmp(tok[1], ".fpc", 4) == 0) { g_sec = SEC_DATA; return 0; }
-            if (strncmp(tok[1], ".debug", 6) == 0) { g_sec = SEC_DATA; return 0; }
+            if (strncmp(tok[1], ".fpc", 4) == 0) { g_sec = SEC_RODATA; return 0; }
+            if (strncmp(tok[1], ".debug", 6) == 0) { g_sec = SEC_RODATA; return 0; }
             if (strcmp(tok[1], ".text") == 0) { g_sec = SEC_TEXT; return 0; }
             if (strcmp(tok[1], ".data") == 0) { g_sec = SEC_DATA; return 0; }
             if (strcmp(tok[1], ".bss") == 0) { g_sec = SEC_BSS; return 0; }
@@ -1264,7 +1273,7 @@ void w32(int v) {
     fputc((v >> 24) & 255, g_out);
 }
 
-int build_syms(int text_idx, int data_idx, int bss_idx) {
+int build_syms(int text_idx, int rodata_idx, int data_idx, int bss_idx) {
     int i;
     char *name;
     int sec;
@@ -1278,6 +1287,7 @@ int build_syms(int text_idx, int data_idx, int bss_idx) {
         if (g_nsym >= MAX_SYM) return -1;
         if (g_lbl_defd[i]) {
             if (g_lbl_sec[i] == SEC_TEXT) sec = text_idx;
+            else if (g_lbl_sec[i] == SEC_RODATA) sec = rodata_idx;
             else if (g_lbl_sec[i] == SEC_DATA) sec = data_idx;
             else sec = bss_idx;
         }
@@ -1398,6 +1408,15 @@ int resolve_diff_fixups() {
                 else hi = 0;
                 wr32(g_text + off + 4, hi);
             }
+        } else if (sec == SEC_RODATA) {
+            if (off < 0 || off + 4 > g_rsz) return -1;
+            wr32(g_rodata + off, val);
+            if (g_diff_wide[i]) {
+                if (off + 8 > g_rsz) return -1;
+                if (val < 0) hi = -1;
+                else hi = 0;
+                wr32(g_rodata + off + 4, hi);
+            }
         } else if (sec == SEC_DATA) {
             if (off < 0 || off + 4 > g_dsz) return -1;
             wr32(g_data + off, val);
@@ -1417,14 +1436,17 @@ int resolve_diff_fixups() {
 int write_obj(char *out) {
     int nsec;
     int text_idx;
+    int rodata_idx;
     int data_idx;
     int bss_idx;
     int text_rel;
+    int rodata_rel;
     int data_rel;
     int bss_rel;
     int i;
     int off;
     int text_name;
+    int rodata_name;
     int data_name;
     int bss_name;
     int sec_off;
@@ -1432,34 +1454,43 @@ int write_obj(char *out) {
     int rel_off;
     int str_off;
     int text_rel_off;
+    int rodata_rel_off;
     int data_rel_off;
     int bss_rel_off;
     int text_data_off;
+    int rodata_data_off;
     int data_data_off;
     int v;
 
     nsec = 0;
     text_idx = 0;
+    rodata_idx = 0;
     data_idx = 0;
     bss_idx = 0;
     text_rel = 0;
+    rodata_rel = 0;
     data_rel = 0;
     bss_rel = 0;
     text_name = 0;
+    rodata_name = 0;
     data_name = 0;
     bss_name = 0;
     text_rel_off = 0;
+    rodata_rel_off = 0;
     data_rel_off = 0;
     bss_rel_off = 0;
     text_data_off = 0;
+    rodata_data_off = 0;
     data_data_off = 0;
 
     if (g_tsz) { nsec = nsec + 1; text_idx = nsec; }
+    if (g_rsz) { nsec = nsec + 1; rodata_idx = nsec; }
     if (g_dsz) { nsec = nsec + 1; data_idx = nsec; }
     if (g_bsz) { nsec = nsec + 1; bss_idx = nsec; }
 
     for (i = 0; i < g_nrel; i = i + 1) {
         if (g_rel_sec[i] == SEC_TEXT) text_rel = text_rel + 1;
+        else if (g_rel_sec[i] == SEC_RODATA) rodata_rel = rodata_rel + 1;
         else if (g_rel_sec[i] == SEC_DATA) data_rel = data_rel + 1;
         else bss_rel = bss_rel + 1;
     }
@@ -1468,27 +1499,31 @@ int write_obj(char *out) {
     g_str[g_ssz] = 0;
     g_ssz = g_ssz + 1;
     if (text_idx) text_name = s_add(".text");
+    if (rodata_idx) rodata_name = s_add(".rodata");
     if (data_idx) data_name = s_add(".data");
     if (bss_idx) bss_name = s_add(".bss");
     if ((text_idx && text_name < 0) ||
+        (rodata_idx && rodata_name < 0) ||
         (data_idx && data_name < 0) ||
         (bss_idx && bss_name < 0)) {
         return -1;
     }
 
-    if (build_syms(text_idx, data_idx, bss_idx) != 0) return -1;
+    if (build_syms(text_idx, rodata_idx, data_idx, bss_idx) != 0) return -1;
 
     sec_off = SIZEOF_S32O_HEADER;
     sym_off = sec_off + nsec * SIZEOF_S32O_SECTION;
     rel_off = sym_off + g_nsym * SIZEOF_S32O_SYMBOL;
     off = rel_off;
     if (text_rel) { text_rel_off = off; off = off + text_rel * SIZEOF_S32O_RELOC; }
+    if (rodata_rel) { rodata_rel_off = off; off = off + rodata_rel * SIZEOF_S32O_RELOC; }
     if (data_rel) { data_rel_off = off; off = off + data_rel * SIZEOF_S32O_RELOC; }
     if (bss_rel) { bss_rel_off = off; off = off + bss_rel * SIZEOF_S32O_RELOC; }
     str_off = off;
     off = off + g_ssz;
     off = (off + 3) & -4;
     if (text_idx) { text_data_off = off; off = off + g_tsz; }
+    if (rodata_idx) { rodata_data_off = off; off = off + g_rsz; }
     if (data_idx) { data_data_off = off; off = off + g_dsz; }
 
     g_out = fopen(out, "wb");
@@ -1516,6 +1551,16 @@ int write_obj(char *out) {
         v = 4; w32(v);
         v = text_rel; w32(v);
         v = text_rel_off; w32(v);
+    }
+    if (rodata_idx) {
+        v = rodata_name; w32(v);
+        v = S32_SEC_RODATA; w32(v);
+        v = S32_SEC_FLAG_READ | S32_SEC_FLAG_ALLOC; w32(v);
+        v = g_rsz; w32(v);
+        v = rodata_data_off; w32(v);
+        v = 4; w32(v);
+        v = rodata_rel; w32(v);
+        v = rodata_rel_off; w32(v);
     }
     if (data_idx) {
         v = data_name; w32(v);
@@ -1556,6 +1601,14 @@ int write_obj(char *out) {
         }
     }
     for (i = 0; i < g_nrel; i = i + 1) {
+        if (g_rel_sec[i] == SEC_RODATA) {
+            v = g_rel_off[i]; w32(v);
+            v = g_lbl_to_sym[g_rel_sym[i]]; w32(v);
+            v = g_rel_typ[i]; w32(v);
+            v = g_rel_add[i]; w32(v);
+        }
+    }
+    for (i = 0; i < g_nrel; i = i + 1) {
         if (g_rel_sec[i] == SEC_DATA) {
             v = g_rel_off[i]; w32(v);
             v = g_lbl_to_sym[g_rel_sym[i]]; w32(v);
@@ -1575,6 +1628,7 @@ int write_obj(char *out) {
     fwrite(g_str, 1, g_ssz, g_out);
     while ((ftell(g_out) & 3) != 0) fputc(0, g_out);
     if (g_tsz) fwrite(g_text, 1, g_tsz, g_out);
+    if (g_rsz) fwrite(g_rodata, 1, g_rsz, g_out);
     if (g_dsz) fwrite(g_data, 1, g_dsz, g_out);
 
     fclose(g_out);
