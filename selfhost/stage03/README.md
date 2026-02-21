@@ -1,6 +1,6 @@
-# Stage 03: s32-cc C Compiler + Tools
+# Stage 03: Compiler + Tools
 
-s32-cc: a restructured C compiler with separate lexer and parser passes,
+The stage03 compiler is a restructured C compiler with separate lexer and parser passes,
 evolved from cc-min (stage02). Compiled by cc-min, self-hosting proven.
 
 Includes BNE+JAL long-branch switch codegen and increased limits
@@ -15,9 +15,9 @@ stage02.
 
 - cc.s32x — canonical stage03 compiler name (alias: s32cc.s32x)
 - s32cc.s32x — legacy compiler name (kept for compatibility)
-- s32-as.s32x — assembler (compiled by s32cc)
-- s32-ar.s32x — archiver with symbol index (compiled by s32cc)
-- s32-ld.s32x — linker (compiled by s32cc)
+- s32-as.s32x — assembler (compiled by stage03 compiler)
+- s32-ar.s32x — archiver with symbol index (compiled by stage03 compiler)
+- s32-ld.s32x — linker (compiled by stage03 compiler)
 
 ## Features (over cc-min)
 
@@ -28,11 +28,11 @@ stage02.
 ## Bootstrap
 
 Uses pre-built tools from stage02:
-- cc-min.s32x (stage02) to compile s32-cc
+- cc-min.s32x (stage02) to compile stage03 compiler
 - s32-as.s32x (stage02) to assemble
 - s32-ld.s32x (stage02) to link
 
-Self-hosting: s32-cc compiles itself, gen2.s == gen3.s.
+Self-hosting: stage03 compiler compiles itself, gen2.s == gen3.s.
 
 ## Tests
 

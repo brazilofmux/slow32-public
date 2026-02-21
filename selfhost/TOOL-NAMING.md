@@ -17,11 +17,12 @@ instead of embedding historical stage numbers in tool names.
 
 ## Compatibility names (temporary)
 
+- Stage03 compiler legacy name: `s32cc.s32x`
 - Stage04/05/06 compiler legacy name: `s12cc.s32x`
 
-For now, stage05+stage06 build scripts emit both:
+For now, stage03+stage04+stage05+stage06 build scripts emit both:
 - canonical: `cc.s32x`
-- compatibility: `s12cc.s32x`
+- compatibility: legacy stage-specific alias (`s32cc.s32x` or `s12cc.s32x`)
 
 ## Transition rules
 
