@@ -89,6 +89,9 @@ int stderr;
 #define S32X_FLAG_WXORX 0x01
 #define S32X_FLAG_MMIO  0x80
 
+#define SEC_SYMTAB     0x0021
+#define SEC_STRTAB_SYM 0x0022
+
 int strcmp(char *a, char *b);
 int strlen(char *s);
 char *strchr(char *s, int c);
@@ -203,6 +206,21 @@ int link_error;
 
 /* MMIO size from command line */
 int mmio_size_arg;
+
+/* Emitted symbol table (parallel arrays) */
+#define MAX_EMIT_SYM 4096
+#define SYM_STRTAB_SZ 65536
+
+int emit_sym_noff[MAX_EMIT_SYM];
+int emit_sym_val[MAX_EMIT_SYM];
+int emit_sym_sec[MAX_EMIT_SYM];
+int emit_sym_type[MAX_EMIT_SYM];
+int emit_sym_bind[MAX_EMIT_SYM];
+int emit_sym_size[MAX_EMIT_SYM];
+int emit_sym_cnt;
+
+char sym_strtab[SYM_STRTAB_SZ];
+int sym_strtab_sz;
 
 /* === Helper functions === */
 
@@ -1149,6 +1167,74 @@ void inject_linker_symbols() {
     inject_sym("__init_array_end", 0);
 }
 
+/* === Collect symbol table for output === */
+
+void collect_symtab() {
+    int i;
+    int noff;
+    int nlen;
+    int soff;
+    int sec_idx;
+    int j;
+
+    sym_strtab[0] = 0;
+    sym_strtab_sz = 1;
+    emit_sym_cnt = 0;
+
+    i = 0;
+    while (i < gsym_cnt) {
+        if (gsym_bind[i] == BIND_GLOBAL && gsym_def[i] != 0) {
+            if (emit_sym_cnt >= MAX_EMIT_SYM) break;
+
+            /* Add name to symbol string table */
+            noff = gsym_noff[i];
+            nlen = gsym_nlen[i];
+            if (sym_strtab_sz + nlen + 1 <= SYM_STRTAB_SZ) {
+                soff = sym_strtab_sz;
+                j = 0;
+                while (j < nlen) {
+                    sym_strtab[soff + j] = gsym_nbuf[noff + j];
+                    j = j + 1;
+                }
+                sym_strtab[soff + nlen] = 0;
+                sym_strtab_sz = soff + nlen + 1;
+            } else {
+                soff = 0;
+            }
+
+            emit_sym_noff[emit_sym_cnt] = soff;
+            emit_sym_val[emit_sym_cnt] = gsym_va(i);
+
+            /* Map gsym section type to output section index */
+            sec_idx = 0;
+            if (gsym_def[i] != 2) {
+                if (gsym_sec[i] == SEC_CODE && text_sz > 0) {
+                    sec_idx = 1;
+                } else if (gsym_sec[i] == SEC_DATA && data_sz > 0) {
+                    sec_idx = 1;
+                    if (text_sz > 0) sec_idx = sec_idx + 1;
+                } else if (gsym_sec[i] == SEC_BSS && bss_sz > 0) {
+                    sec_idx = 1;
+                    if (text_sz > 0) sec_idx = sec_idx + 1;
+                    if (data_sz > 0) sec_idx = sec_idx + 1;
+                } else if (gsym_sec[i] == SEC_RODATA && rodata_sz > 0) {
+                    sec_idx = 1;
+                    if (text_sz > 0) sec_idx = sec_idx + 1;
+                    if (data_sz > 0) sec_idx = sec_idx + 1;
+                    if (bss_sz > 0) sec_idx = sec_idx + 1;
+                }
+            }
+
+            emit_sym_sec[emit_sym_cnt] = sec_idx;
+            emit_sym_type[emit_sym_cnt] = 0;
+            emit_sym_bind[emit_sym_cnt] = BIND_GLOBAL;
+            emit_sym_size[emit_sym_cnt] = 0;
+            emit_sym_cnt = emit_sym_cnt + 1;
+        }
+        i = i + 1;
+    }
+}
+
 /* === Relocation application === */
 
 int is_store(int opcode) {
@@ -1360,6 +1446,7 @@ int count_sections() {
     if (data_sz > 0) n = n + 1;
     if (bss_sz > 0) n = n + 1;
     if (rodata_sz > 0) n = n + 1;
+    if (emit_sym_cnt > 0) n = n + 2;
     return n;
 }
 
@@ -1369,6 +1456,8 @@ int str_text_off;
 int str_data_off;
 int str_bss_off;
 int str_rodata_off;
+int str_symtab_off;
+int str_symstrtab_off;
 
 void build_strtab() {
     ostrtab_init();
@@ -1376,6 +1465,10 @@ void build_strtab() {
     if (data_sz > 0)   str_data_off = ostrtab_add(".data", 5);
     if (bss_sz > 0)    str_bss_off = ostrtab_add(".bss", 4);
     if (rodata_sz > 0) str_rodata_off = ostrtab_add(".rodata", 7);
+    if (emit_sym_cnt > 0) {
+        str_symtab_off = ostrtab_add(".symtab", 7);
+        str_symstrtab_off = ostrtab_add(".sym_strtab", 11);
+    }
 }
 
 /* === Write helpers === */
@@ -1422,14 +1515,18 @@ void link_emit(char *out_path) {
     int sec_text_foff;
     int sec_data_foff;
     int sec_rodata_foff;
+    int sec_symtab_foff;
+    int sec_symstrtab_foff;
     int pad;
     int f;
     int code_limit;
     int flags;
+    int i;
 
     /* Layout and resolve */
     layout_sections();
     inject_linker_symbols();
+    collect_symtab();
     apply_relocations();
     find_entry();
 
@@ -1461,8 +1558,17 @@ void link_emit(char *out_path) {
     }
     if (rodata_sz > 0) {
         sec_rodata_foff = file_pos;
+        file_pos = align4(file_pos + rodata_sz);
     } else {
         sec_rodata_foff = 0;
+    }
+    if (emit_sym_cnt > 0) {
+        sec_symtab_foff = file_pos;
+        file_pos = file_pos + emit_sym_cnt * 16;
+        sec_symstrtab_foff = file_pos;
+    } else {
+        sec_symtab_foff = 0;
+        sec_symstrtab_foff = 0;
     }
 
     /* Open output file */
@@ -1549,6 +1655,27 @@ void link_emit(char *out_path) {
         wb_wr32(24, SF_RA);
         fwrite(wb_buf, 1, S32X_SEC_SZ, f);
     }
+    if (emit_sym_cnt > 0) {
+        wb_init();
+        wb_wr32(0, str_symtab_off);
+        wb_wr32(4, SEC_SYMTAB);
+        wb_wr32(8, 0);
+        wb_wr32(12, sec_symtab_foff);
+        wb_wr32(16, emit_sym_cnt * 16);
+        wb_wr32(20, 0);
+        wb_wr32(24, 0);
+        fwrite(wb_buf, 1, S32X_SEC_SZ, f);
+
+        wb_init();
+        wb_wr32(0, str_symstrtab_off);
+        wb_wr32(4, SEC_STRTAB_SYM);
+        wb_wr32(8, 0);
+        wb_wr32(12, sec_symstrtab_foff);
+        wb_wr32(16, sym_strtab_sz);
+        wb_wr32(20, 0);
+        wb_wr32(24, 0);
+        fwrite(wb_buf, 1, S32X_SEC_SZ, f);
+    }
 
     /* Write string table */
     fwrite(out_strtab, 1, out_strtab_sz, f);
@@ -1571,6 +1698,25 @@ void link_emit(char *out_path) {
     }
     if (rodata_sz > 0) {
         fwrite(rodata_buf, 1, rodata_sz, f);
+        if (emit_sym_cnt > 0) {
+            pad = align4(rodata_sz) - rodata_sz;
+            if (pad > 0) fwrite_zeros(f, pad);
+        }
+    }
+    if (emit_sym_cnt > 0) {
+        i = 0;
+        while (i < emit_sym_cnt) {
+            wb_init();
+            wb_wr32(0, emit_sym_noff[i]);
+            wb_wr32(4, emit_sym_val[i]);
+            wb_wr16(8, emit_sym_sec[i]);
+            wb_wr8(10, emit_sym_type[i]);
+            wb_wr8(11, emit_sym_bind[i]);
+            wb_wr32(12, emit_sym_size[i]);
+            fwrite(wb_buf, 1, 16, f);
+            i = i + 1;
+        }
+        fwrite(sym_strtab, 1, sym_strtab_sz, f);
     }
 
     fclose(f);
