@@ -136,6 +136,17 @@ static void bg_init(void) {
     bg_add_pat(BG_REG, HI_ADD,  BG_REG, BG_IMM, 1);
     bg_add_pat(BG_REG, HI_ADD,  BG_IMM, BG_REG, 1);
     bg_add_pat(BG_REG, HI_SUB,  BG_REG, BG_IMM, 1);
+    bg_add_pat(BG_REG, HI_AND,  BG_REG, BG_IMM, 1);
+    bg_add_pat(BG_REG, HI_AND,  BG_IMM, BG_REG, 1);
+    bg_add_pat(BG_REG, HI_OR,   BG_REG, BG_IMM, 1);
+    bg_add_pat(BG_REG, HI_OR,   BG_IMM, BG_REG, 1);
+    bg_add_pat(BG_REG, HI_XOR,  BG_REG, BG_IMM, 1);
+    bg_add_pat(BG_REG, HI_XOR,  BG_IMM, BG_REG, 1);
+    bg_add_pat(BG_REG, HI_SLL,  BG_REG, BG_IMM, 1);
+    bg_add_pat(BG_REG, HI_SRL,  BG_REG, BG_IMM, 1);
+    bg_add_pat(BG_REG, HI_SRA,  BG_REG, BG_IMM, 1);
+    bg_add_pat(BG_REG, HI_SLT,  BG_REG, BG_IMM, 1);
+    bg_add_pat(BG_REG, HI_SLTU, BG_REG, BG_IMM, 1);
     bg_add_pat(BG_REG, HI_ADD,  BG_REG, BG_REG, 1);
     bg_add_pat(BG_REG, HI_SUB,  BG_REG, BG_REG, 1);
     bg_add_pat(BG_REG, HI_MUL,  BG_REG, BG_REG, 1);

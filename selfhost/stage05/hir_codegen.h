@@ -545,6 +545,65 @@ static void hcg_inst(int idx) {
         return;
     }
 
+    if ((k == HI_AND || k == HI_OR || k == HI_XOR) && pat >= 0 &&
+        ((lnt == BG_REG && rnt == BG_IMM) || (lnt == BG_IMM && rnt == BG_REG))) {
+        char *opi;
+        rd = hcg_dst(idx);
+        if (lnt == BG_REG) {
+            rs1 = hcg_src(s1, 1);
+            off = h_val[s2];
+        } else {
+            rs1 = hcg_src(s2, 1);
+            off = h_val[s1];
+        }
+        if (k == HI_AND) opi = "andi";
+        else if (k == HI_OR) opi = "ori";
+        else opi = "xori";
+        if (off >= -2048 && off <= 2047) {
+            cg_rri(opi, rd, rs1, off);
+        } else {
+            hcg_li(2, off);
+            cg_rrr(hcg_binop_name(k), rd, rs1, 2);
+        }
+        hcg_maybe_spill(idx);
+        return;
+    }
+
+    if ((k == HI_SLL || k == HI_SRL || k == HI_SRA) && pat >= 0 &&
+        lnt == BG_REG && rnt == BG_IMM) {
+        char *opi;
+        rd = hcg_dst(idx);
+        rs1 = hcg_src(s1, 1);
+        off = h_val[s2];
+        if (k == HI_SLL) opi = "slli";
+        else if (k == HI_SRL) opi = "srli";
+        else opi = "srai";
+        if (off >= 0 && off <= 31) {
+            cg_rri(opi, rd, rs1, off);
+        } else {
+            hcg_li(2, off);
+            cg_rrr(hcg_binop_name(k), rd, rs1, 2);
+        }
+        hcg_maybe_spill(idx);
+        return;
+    }
+
+    if ((k == HI_SLT || k == HI_SLTU) && pat >= 0 &&
+        lnt == BG_REG && rnt == BG_IMM) {
+        rd = hcg_dst(idx);
+        rs1 = hcg_src(s1, 1);
+        off = h_val[s2];
+        if (off >= -2048 && off <= 2047) {
+            if (k == HI_SLT) cg_rri("slti", rd, rs1, off);
+            else cg_rri("sltiu", rd, rs1, off);
+        } else {
+            hcg_li(2, off);
+            cg_rrr(hcg_binop_name(k), rd, rs1, 2);
+        }
+        hcg_maybe_spill(idx);
+        return;
+    }
+
     /* Binary arithmetic/logic/comparison */
     if (k >= HI_ADD && k <= HI_SGEU) {
         rs1 = hcg_src(s1, 1);
