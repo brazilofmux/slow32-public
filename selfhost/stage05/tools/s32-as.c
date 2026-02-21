@@ -629,6 +629,40 @@ int emit_sleb128(int v) {
     return 0;
 }
 
+int sec_flag_has(char *s, int ch) {
+    int i;
+    if (!s) return 0;
+    i = 0;
+    while (s[i]) {
+        if (s[i] == ch) return 1;
+        i = i + 1;
+    }
+    return 0;
+}
+
+int parse_section_kind(char *name, char *flags, char *stype, int cur_sec) {
+    if (!name) return cur_sec;
+    if (strncmp(name, ".text", 5) == 0) return SEC_TEXT;
+    if (strncmp(name, ".rodata", 7) == 0) return SEC_RODATA;
+    if (strncmp(name, ".data", 5) == 0) return SEC_DATA;
+    if (strncmp(name, ".bss", 4) == 0) return SEC_BSS;
+    if (strncmp(name, ".init_array", 11) == 0) return SEC_INIT_ARRAY;
+    if (strncmp(name, ".fpc", 4) == 0) return SEC_RODATA;
+    if (strncmp(name, ".debug", 6) == 0) return SEC_RODATA;
+
+    if (stype) {
+        if (strcmp(stype, "@nobits") == 0 || strcmp(stype, "%nobits") == 0) return SEC_BSS;
+    }
+
+    if (flags) {
+        if (sec_flag_has(flags, 'x')) return SEC_TEXT;
+        if (sec_flag_has(flags, 'w')) return SEC_DATA;
+        if (sec_flag_has(flags, 'a')) return SEC_RODATA;
+    }
+
+    return cur_sec;
+}
+
 int handle(char *line) {
     char *tok[8];
     int n;
@@ -659,6 +693,9 @@ int handle(char *line) {
     int lo;
     int hi;
     int align;
+    int new_sec;
+    char *sec_flags;
+    char *sec_type;
 
     strip_comment(line);
     line = trim(line);
@@ -729,14 +766,12 @@ int handle(char *line) {
         }
         if (strcmp(tok[0], ".section") == 0) {
             if (n < 2) return -1;
-            if (strncmp(tok[1], ".rodata", 7) == 0) { g_sec = SEC_RODATA; return 0; }
-            if (strncmp(tok[1], ".init_array", 11) == 0) { g_sec = SEC_INIT_ARRAY; return 0; }
-            if (strncmp(tok[1], ".fpc", 4) == 0) { g_sec = SEC_RODATA; return 0; }
-            if (strncmp(tok[1], ".debug", 6) == 0) { g_sec = SEC_RODATA; return 0; }
-            if (strcmp(tok[1], ".text") == 0) { g_sec = SEC_TEXT; return 0; }
-            if (strcmp(tok[1], ".data") == 0) { g_sec = SEC_DATA; return 0; }
-            if (strcmp(tok[1], ".init_array") == 0) { g_sec = SEC_INIT_ARRAY; return 0; }
-            if (strcmp(tok[1], ".bss") == 0) { g_sec = SEC_BSS; return 0; }
+            sec_flags = 0;
+            sec_type = 0;
+            if (n >= 3) sec_flags = tok[2];
+            if (n >= 4) sec_type = tok[3];
+            new_sec = parse_section_kind(tok[1], sec_flags, sec_type, g_sec);
+            g_sec = new_sec;
             return 0;
         }
         if (strcmp(tok[0], ".type") == 0 || strcmp(tok[0], ".size") == 0 || strcmp(tok[0], ".file") == 0 || strcmp(tok[0], ".ident") == 0) return 0;
