@@ -1936,6 +1936,16 @@ int main(int argc, char **argv) {
                             stage5_emit_region_side_exit_unsupported,
                             stage5_emit_region_side_exit_disabled,
                             stage5_emit_region_side_exit_call_guard);
+                    if (stage5_emit_side_exit_forced_family_c_unsigned > 0) {
+                        fprintf(stderr,
+                                "  emit side_exit forced_family_c_unsigned: %" PRIu32 "\n",
+                                stage5_emit_side_exit_forced_family_c_unsigned);
+                    }
+                    if (stage5_emit_side_exit_auto_backedge_retry_unsigned > 0) {
+                        fprintf(stderr,
+                                "  emit side_exit auto_backedge_retry_unsigned: %" PRIu32 "\n",
+                                stage5_emit_side_exit_auto_backedge_retry_unsigned);
+                    }
                     if (stage5_emit_region_side_exit_unsupported > 0) {
                         uint32_t top_count[3] = {0, 0, 0};
                         uint32_t top_opcode[3] = {0, 0, 0};

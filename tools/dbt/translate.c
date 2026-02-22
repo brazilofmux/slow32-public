@@ -75,6 +75,8 @@ uint32_t stage5_emit_region_side_exit_owned = 0;
 uint32_t stage5_emit_region_side_exit_unsupported = 0;
 uint32_t stage5_emit_region_side_exit_disabled = 0;
 uint32_t stage5_emit_region_side_exit_call_guard = 0;
+uint32_t stage5_emit_side_exit_forced_family_c_unsigned = 0;
+uint32_t stage5_emit_side_exit_auto_backedge_retry_unsigned = 0;
 uint32_t stage5_emit_side_exit_opcode_hist[128] = {0};
 uint32_t stage5_emit_side_exit_unsupported_opcode_hist[128] = {0};
 uint32_t stage5_emit_side_exit_emitted_opcode_hist[128] = {0};
@@ -187,6 +189,9 @@ static stage5_side_exit_family_cfg_t stage5_side_exit_family_cfg(void) {
         // Family-B can mis-handle these shapes and fault (observed in strtod).
         if (stage5_side_exit_mode() >= STAGE5_SIDE_EXIT_MODE_EQNE_U &&
             stage5_side_exit_unsigned_mode() != STAGE5_SIDE_EXIT_UNSIGNED_NONE) {
+            if (cfg.family_b || !cfg.family_c) {
+                stage5_emit_side_exit_forced_family_c_unsigned++;
+            }
             cfg.family_b = false;
             cfg.family_c = true;
         }
@@ -7236,6 +7241,9 @@ cached_block_done:
             }
         }
         if (has_backedge) {
+            if (unsigned_side_exits_enabled) {
+                stage5_emit_side_exit_auto_backedge_retry_unsigned++;
+            }
             forced_no_superblock = true;
             ctx->superblock_enabled = false;
             ctx->superblock_depth = 0;

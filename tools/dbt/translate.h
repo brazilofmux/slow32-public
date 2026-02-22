@@ -83,6 +83,8 @@ extern uint32_t stage5_emit_region_side_exit_owned;
 extern uint32_t stage5_emit_region_side_exit_unsupported;
 extern uint32_t stage5_emit_region_side_exit_disabled;
 extern uint32_t stage5_emit_region_side_exit_call_guard;
+extern uint32_t stage5_emit_side_exit_forced_family_c_unsigned;
+extern uint32_t stage5_emit_side_exit_auto_backedge_retry_unsigned;
 extern uint32_t stage5_emit_side_exit_opcode_hist[128];
 extern uint32_t stage5_emit_side_exit_unsupported_opcode_hist[128];
 extern uint32_t stage5_emit_side_exit_emitted_opcode_hist[128];
