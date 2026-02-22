@@ -2679,6 +2679,105 @@ void stage5_flush_pending_for_codegen(translate_ctx_t *ctx) {
     flush_pending_write(ctx);
 }
 
+bool stage5_side_exit_opcode_supported_for_codegen(uint8_t opcode) {
+    return stage5_side_exit_opcode_supported(opcode);
+}
+
+bool stage5_emit_side_exit_for_codegen(translate_ctx_t *ctx,
+    uint8_t opcode, uint8_t rs1, uint8_t rs2, int32_t imm, uint32_t branch_pc) {
+    if (!ctx) return false;
+    if (!stage5_side_exit_opcode_supported(opcode)) return false;
+    if (ctx->exit_idx + 2 >= MAX_BLOCK_EXITS ||
+        ctx->deferred_exit_count >= MAX_BLOCK_EXITS) {
+        return false;
+    }
+
+    emit_ctx_t *e = &ctx->emit;
+    uint32_t fall_pc = branch_pc + 4;
+    uint32_t taken_pc = fall_pc + imm;
+    stage5_side_exit_trace_emit(opcode, rs1, rs2, imm,
+                                branch_pc, fall_pc, taken_pc);
+    ctx->guest_pc = branch_pc;
+
+    // Match Family-C side-exit semantics exactly.
+    flush_pending_cond(ctx);
+
+    if ((opcode == OP_BEQ || opcode == OP_BNE) &&
+        (rs1 == 0 || rs2 == 0)) {
+        uint8_t rz = (rs1 == 0) ? rs2 : rs1;
+        x64_reg_t hz = (rz != 0) ? guest_host_reg(ctx, rz) : X64_NOREG;
+        if (rz == 0) {
+            flush_pending_write(ctx);
+            emit_xor_r32_r32(e, RAX, RAX);
+            emit_test_r32_r32(e, RAX, RAX);
+        } else if (hz != X64_NOREG) {
+            flush_pending_write(ctx);
+            emit_test_r32_r32(e, hz, hz);
+        } else {
+            emit_load_guest_reg(ctx, RAX, rz);
+            emit_test_r32_r32(e, RAX, RAX);
+        }
+    } else {
+        x64_reg_t h1 = (rs1 != 0) ? guest_host_reg(ctx, rs1) : X64_NOREG;
+        x64_reg_t h2 = (rs2 != 0) ? guest_host_reg(ctx, rs2) : X64_NOREG;
+        x64_reg_t t1 = RAX, t2 = RCX;
+        stage5_pick_cmp_scratch_regs(ctx, h1, h2, &t1, &t2);
+        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : t1;
+        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : t2;
+        if (h1 == X64_NOREG) {
+            flush_pending_write(ctx);
+            if (rs1 == 0) emit_xor_r32_r32(e, t1, t1);
+            else emit_load_guest_reg(ctx, t1, rs1);
+        }
+        if (h2 == X64_NOREG) {
+            if (rs2 == 0) emit_xor_r32_r32(e, t2, t2);
+            else emit_load_guest_reg(ctx, t2, rs2);
+        }
+        if (h1 != X64_NOREG || h2 != X64_NOREG)
+            flush_pending_write(ctx);
+        emit_cmp_r32_r32(e, cmp_a, cmp_b);
+    }
+
+    uint8_t inv_cc = stage5_branch_inv_cc(opcode);
+    if (inv_cc == 0xFF) return false;
+    emit_jcc_short(e, inv_cc, 5);
+
+    size_t jmp_patch = emit_offset(e) + 1;
+    emit_jmp_rel32(e, 0);
+
+    int di = ctx->deferred_exit_count++;
+    ctx->deferred_exits[di].jmp_patch_offset = jmp_patch;
+    ctx->deferred_exits[di].target_pc = taken_pc;
+    ctx->deferred_exits[di].exit_idx = ctx->exit_idx;
+    ctx->deferred_exits[di].branch_pc = branch_pc;
+    for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
+        ctx->deferred_exits[di].dirty_snapshot[s] = ctx->reg_alloc[s].dirty;
+        ctx->deferred_exits[di].allocated_snapshot[s] = ctx->reg_alloc[s].allocated;
+        ctx->deferred_exits[di].guest_reg_snapshot[s] = ctx->reg_alloc[s].guest_reg;
+    }
+    ctx->deferred_exits[di].pending_write_valid = ctx->pending_write.valid;
+    ctx->deferred_exits[di].pending_write_guest_reg = ctx->pending_write.guest_reg;
+    ctx->deferred_exits[di].pending_write_host_reg = ctx->pending_write.host_reg;
+    ctx->deferred_exits[di].force_full_flush =
+        (opcode == OP_BLTU || opcode == OP_BGEU);
+    stage5_trace_deferred_exit("capture", ctx, di);
+    stage5_trace_exit_slot("capture", ctx, branch_pc,
+                           ctx->deferred_exits[di].exit_idx,
+                           ctx->deferred_exits[di].target_pc, di);
+
+    if (ctx->block) {
+        ctx->block->flags |= BLOCK_FLAG_DIRECT;
+    }
+    if (ctx->side_exit_emitted < MAX_BLOCK_EXITS) {
+        ctx->side_exit_pcs[ctx->side_exit_emitted] = branch_pc;
+    }
+    ctx->exit_idx++;
+    ctx->side_exit_emitted++;
+    stage5_emit_side_exits++;
+    stage5_emit_side_exit_emitted_opcode_hist[opcode & 0x7F]++;
+    return true;
+}
+
 void stage5_translate_jal_jump_compact_for_codegen(translate_ctx_t *ctx,
     uint8_t rd, int32_t imm) {
     stage5_translate_jal_jump_compact(ctx, rd, imm);

@@ -91,6 +91,9 @@ bool stage5_translate_branch_direct_for_codegen(translate_ctx_t *ctx,
     uint8_t opcode, uint8_t rs1, uint8_t rs2, int32_t imm);
 
 void stage5_flush_pending_for_codegen(translate_ctx_t *ctx);
+bool stage5_side_exit_opcode_supported_for_codegen(uint8_t opcode);
+bool stage5_emit_side_exit_for_codegen(translate_ctx_t *ctx,
+    uint8_t opcode, uint8_t rs1, uint8_t rs2, int32_t imm, uint32_t branch_pc);
 
 void stage5_translate_jal_jump_compact_for_codegen(translate_ctx_t *ctx,
     uint8_t rd, int32_t imm);

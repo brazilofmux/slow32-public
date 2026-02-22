@@ -221,6 +221,60 @@ static bool cg_boolpair_skip_pc_enabled(uint32_t guest_pc) {
     return has_pc && guest_pc == skip_pc;
 }
 
+static bool cg_codegen_trace_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_TRACE");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+static bool cg_codegen_skip_pc_enabled(uint32_t guest_pc) {
+    static bool inited = false;
+    static char spec[256];
+    static bool has_spec = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_SKIP_PC");
+        if (v && v[0] != '\0') {
+            size_t n = strlen(v);
+            if (n >= sizeof(spec)) n = sizeof(spec) - 1;
+            memcpy(spec, v, n);
+            spec[n] = '\0';
+            has_spec = true;
+        }
+        inited = true;
+    }
+    if (!has_spec) return false;
+    const char *p = spec;
+    while (*p) {
+        while (*p == ' ' || *p == '\t' || *p == ',') p++;
+        if (!*p) break;
+        char *end = NULL;
+        unsigned long x = strtoul(p, &end, 0);
+        if (end != p) {
+            if ((uint32_t)x == guest_pc) return true;
+            p = end;
+            continue;
+        }
+        while (*p && *p != ',') p++;
+    }
+    return false;
+}
+
+static void cg_trace_codegen_region(uint32_t guest_pc,
+                                    int emitted_pattern,
+                                    const stage5_lift_region_t *region) {
+    if (!cg_codegen_trace_enabled()) return;
+    fprintf(stderr, "[stage5-codegen] pc=0x%08X pattern=%s ginst=%u ir=%u side_exits=%u\n",
+            guest_pc, stage5_burg_pattern_str((stage5_burg_pattern_t)emitted_pattern),
+            region ? region->guest_inst_count : 0,
+            region ? region->ir_count : 0,
+            region ? region->side_exit_count : 0);
+}
+
 static void cg_trace_boolpair_region(const stage5_lift_region_t *region,
                                      uint32_t guest_pc,
                                      int terminal_idx) {
@@ -1395,6 +1449,10 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
         }
         if (n->is_side_exit && n->kind == STAGE5_IR_BRANCH &&
             side_exit_emit_enabled && side_exit_family_c) {
+            if (!stage5_side_exit_opcode_supported_for_codegen(n->opcode)) {
+                stage5_codegen_fallback_preflight_side_exit++;
+                return false;
+            }
             if (side_exit_enabled) {
                 continue;
             }
@@ -1533,122 +1591,10 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
 // These are static in translate.c so we can't call them directly.
 // Replicate the minimal versions here.
 
-static uint8_t cg_branch_inv_cc(uint8_t opcode) {
-    switch (opcode) {
-        case OP_BEQ:  return 0x05; // JNE
-        case OP_BNE:  return 0x04; // JE
-        case OP_BLT:  return 0x0D; // JGE
-        case OP_BGE:  return 0x0C; // JL
-        case OP_BLTU: return 0x03; // JAE
-        case OP_BGEU: return 0x02; // JB
-        default:      return 0xFF;
-    }
-}
-
 static __attribute__((unused)) bool cg_emit_side_exit(stage5_cg_t *cg, const stage5_ir_node_t *n) {
-    translate_ctx_t *ctx = cg->ctx;
-    emit_ctx_t *e = cg->e;
-
-    uint32_t branch_pc = n->pc;
-    uint32_t fall_pc = branch_pc + 4;
-    uint32_t taken_pc = fall_pc + n->imm;
-    ctx->guest_pc = branch_pc;
-
-    // Flush any pending comparison/write state before side-exit compare.
-    stage5_flush_pending_for_codegen(ctx);
-
-    // Flush pending write before comparison
-    if (ctx->pending_write.valid) {
-        emit_mov_m32_r32(e, RBP,
-                         GUEST_REG_OFFSET(ctx->pending_write.guest_reg),
-                         ctx->pending_write.host_reg);
-        ctx->pending_write.valid = false;
-        e->rax_pending = false;
-    }
-
-    // Emit comparison
-    if ((n->opcode == OP_BEQ || n->opcode == OP_BNE) &&
-        (n->rs1 == 0 || n->rs2 == 0)) {
-        // TEST optimization for comparison with zero
-        uint8_t rz = (n->rs1 == 0) ? n->rs2 : n->rs1;
-        if (rz == 0) {
-            emit_xor_r32_r32(e, RAX, RAX);
-            emit_test_r32_r32(e, RAX, RAX);
-        } else {
-            x64_reg_t hz = cg_guest_host(cg, rz);
-            if (hz != X64_NOREG) {
-                emit_test_r32_r32(e, hz, hz);
-            } else {
-                emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(rz));
-                emit_test_r32_r32(e, RAX, RAX);
-            }
-        }
-    } else {
-        x64_reg_t h1 = cg_guest_host(cg, n->rs1);
-        x64_reg_t h2 = cg_guest_host(cg, n->rs2);
-        x64_reg_t cmp_a, cmp_b;
-
-        if (n->rs1 == 0) {
-            cmp_a = RAX;
-            emit_xor_r32_r32(e, RAX, RAX);
-        } else if (h1 != X64_NOREG) {
-            cmp_a = h1;
-        } else {
-            cmp_a = RAX;
-            emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(n->rs1));
-        }
-
-        if (n->rs2 == 0) {
-            cmp_b = RCX;
-            emit_xor_r32_r32(e, RCX, RCX);
-        } else if (h2 != X64_NOREG) {
-            cmp_b = h2;
-        } else {
-            cmp_b = RCX;
-            emit_mov_r32_m32(e, RCX, RBP, GUEST_REG_OFFSET(n->rs2));
-        }
-
-        emit_cmp_r32_r32(e, cmp_a, cmp_b);
-    }
-
-    // Short jcc (2 bytes) skips the 5-byte jmp trampoline
-    uint8_t inv_cc = cg_branch_inv_cc(n->opcode);
-    if (inv_cc == 0xFF) return false;
-    emit_jcc_short(e, inv_cc, 5);
-
-    // 5-byte jmp rel32 trampoline to cold stub (patched later)
-    size_t jmp_patch = emit_offset(e) + 1;
-    emit_jmp_rel32(e, 0);
-
-    // Record deferred side exit
-    if (ctx->deferred_exit_count >= MAX_BLOCK_EXITS) return false;
-    int di = ctx->deferred_exit_count++;
-    ctx->deferred_exits[di].jmp_patch_offset = jmp_patch;
-    ctx->deferred_exits[di].target_pc = taken_pc;
-    ctx->deferred_exits[di].exit_idx = ctx->exit_idx;
-    ctx->deferred_exits[di].branch_pc = branch_pc;
-    for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
-        ctx->deferred_exits[di].dirty_snapshot[s] = ctx->reg_alloc[s].dirty;
-        ctx->deferred_exits[di].allocated_snapshot[s] = ctx->reg_alloc[s].allocated;
-        ctx->deferred_exits[di].guest_reg_snapshot[s] = ctx->reg_alloc[s].guest_reg;
-    }
-    ctx->deferred_exits[di].pending_write_valid = false;
-    ctx->deferred_exits[di].pending_write_guest_reg = 0;
-    ctx->deferred_exits[di].pending_write_host_reg = RAX;
-    ctx->deferred_exits[di].force_full_flush =
-        (n->opcode == OP_BLTU || n->opcode == OP_BGEU);
-
-    if (ctx->block) {
-        ctx->block->flags |= BLOCK_FLAG_DIRECT;
-    }
-    if (ctx->side_exit_emitted < MAX_BLOCK_EXITS) {
-        ctx->side_exit_pcs[ctx->side_exit_emitted] = branch_pc;
-    }
-    ctx->exit_idx++;
-    ctx->side_exit_emitted++;
-    stage5_emit_side_exits++;
-
-    return true;
+    (void)cg;
+    return stage5_emit_side_exit_for_codegen(cg->ctx,
+        n->opcode, n->rs1, n->rs2, n->imm, n->pc);
 }
 
 // Native branch terminal emission for predicate families.
@@ -1766,6 +1712,12 @@ bool stage5_codegen(translate_ctx_t *ctx,
 
     stage5_codegen_state_t saved;
     cg_state_save(&saved, ctx);
+    if (cg_codegen_skip_pc_enabled(guest_pc)) {
+        stage5_codegen_fallback++;
+        stage5_codegen_fallback_preflight++;
+        return false;
+    }
+    cg_trace_codegen_region(guest_pc, emitted_pattern, region);
 
     // Count allocated registers
     {
@@ -1826,6 +1778,19 @@ bool stage5_codegen(translate_ctx_t *ctx,
         if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
         return false;
     }
+    if (predicate_native_active && side_exit_codegen && region->side_exit_count > 0) {
+        stage5_codegen_fallback++;
+        stage5_codegen_fallback_preflight++;
+        stage5_codegen_fallback_preflight_side_exit++;
+        stage5_codegen_boolpair_native_fallback++;
+        return false;
+    }
+    if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP) {
+        stage5_codegen_fallback++;
+        stage5_codegen_fallback_preflight++;
+        if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
+        return false;
+    }
 
     int mix_cmp_idx = -1;
     int mix_extra_skip_idx = -1;
@@ -1863,6 +1828,16 @@ bool stage5_codegen(translate_ctx_t *ctx,
             side_exit_emit_enabled && side_exit_family_c &&
             ctx->exit_idx + 2 < MAX_BLOCK_EXITS &&
             ctx->deferred_exit_count < MAX_BLOCK_EXITS) {
+            // Guardrail: predicate-native regions with in-prefix side exits
+            // still have unresolved correctness drift on some loops.
+            // Keep them on the established fallback path for now.
+            if (predicate_native_active) {
+                stage5_codegen_fallback++;
+                stage5_codegen_fallback_side_exit++;
+                if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
+                cg_state_restore(ctx, &saved);
+                return false;
+            }
             if (side_exit_codegen) {
                 if (!cg_emit_side_exit(&cg, n)) {
                     stage5_codegen_fallback++;
