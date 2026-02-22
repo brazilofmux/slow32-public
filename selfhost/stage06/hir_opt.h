@@ -166,7 +166,7 @@ static int ho_const_fold(void) {
                 else if (k == HI_XOR) result = a ^ b;
                 else if (k == HI_SLL) result = a << (b & 31);
                 else if (k == HI_SRA) result = a >> (b & 31);
-                else if (k == HI_SRL) can_fold = 0;
+                else if (k == HI_SRL) result = (int)((unsigned int)a >> (b & 31));
                 else if (k == HI_SEQ) {
                     if (a == b) result = 1; else result = 0;
                 }
@@ -185,7 +185,19 @@ static int ho_const_fold(void) {
                 else if (k == HI_SGE) {
                     if (a >= b) result = 1; else result = 0;
                 }
-                else can_fold = 0;  /* SRL, SLTU, SGTU, SLEU, SGEU */
+                else if (k == HI_SLTU) {
+                    if ((unsigned int)a < (unsigned int)b) result = 1; else result = 0;
+                }
+                else if (k == HI_SGTU) {
+                    if ((unsigned int)a > (unsigned int)b) result = 1; else result = 0;
+                }
+                else if (k == HI_SLEU) {
+                    if ((unsigned int)a <= (unsigned int)b) result = 1; else result = 0;
+                }
+                else if (k == HI_SGEU) {
+                    if ((unsigned int)a >= (unsigned int)b) result = 1; else result = 0;
+                }
+                else can_fold = 0;
 
                 if (can_fold) {
                     h_kind[i] = HI_ICONST;
