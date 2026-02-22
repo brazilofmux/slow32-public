@@ -104,11 +104,14 @@ sweep-peephole-strict: $(TARGET)
 #   make stage5-gate TESTS="../../regression/results/feature-strtod/test.s32x" SWEEP_ITERS=80 STRESS_ITERS=200
 stage5-gate: $(TARGET)
 	@echo "Stage5 gate: strict compare"
-	@DBT_REQUIRE_MATCH=1 ./scripts/compare-stage5-safe-unsafe.sh $(TESTS)
+	@SLOW32_DBT_STAGE5_VALIDATE_LIFT=1 SLOW32_DBT_STAGE5_VALIDATE_REQUIRE=1 \
+	 DBT_REQUIRE_MATCH=1 ./scripts/compare-stage5-safe-unsafe.sh $(TESTS)
 	@echo "Stage5 gate: strict peephole sweep (iters=$(SWEEP_ITERS))"
-	@SWEEP_REQUIRE_STABLE=1 ./scripts/sweep-peephole-call-guards.sh "$(SWEEP_ITERS)" $(TESTS)
+	@SLOW32_DBT_STAGE5_VALIDATE_LIFT=1 SLOW32_DBT_STAGE5_VALIDATE_REQUIRE=1 \
+	 SWEEP_REQUIRE_STABLE=1 ./scripts/sweep-peephole-call-guards.sh "$(SWEEP_ITERS)" $(TESTS)
 	@echo "Stage5 gate: stress safe-vs-unsafe (iters=$(STRESS_ITERS))"
-	@./scripts/stress-stage5-safe-unsafe.sh "$(STRESS_ITERS)" $(TESTS)
+	@SLOW32_DBT_STAGE5_VALIDATE_LIFT=1 SLOW32_DBT_STAGE5_VALIDATE_REQUIRE=1 \
+	 ./scripts/stress-stage5-safe-unsafe.sh "$(STRESS_ITERS)" $(TESTS)
 
 # Quick local preflight for rapid iteration.
 stage5-gate-fast: SWEEP_ITERS=20

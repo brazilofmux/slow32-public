@@ -1497,6 +1497,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "  SLOW32_DBT_ALIGN_TRAP=1  Trap on unaligned LD/ST/fetch\n");
     fprintf(stderr, "  SLOW32_DBT_STAGE5_VALIDATE_LIFT=1  Validate lift semantics against decoded steps\n");
     fprintf(stderr, "  SLOW32_DBT_STAGE5_VALIDATE_ABORT=1 Abort on first validation mismatch\n");
+    fprintf(stderr, "  SLOW32_DBT_STAGE5_VALIDATE_REQUIRE=1 Return non-zero if validator reports mismatches\n");
 }
 
 static void parse_service_list(const char *list, char names[][S32_MAX_SVC_NAME], int *count, int max) {
@@ -1538,6 +1539,10 @@ int main(int argc, char **argv) {
     const char *trace_env = getenv("SLOW32_DBT_EMIT_TRACE");
     const char *trace_pc_env = getenv("SLOW32_DBT_EMIT_TRACE_PC");
     const char *align_env = getenv("SLOW32_DBT_ALIGN_TRAP");
+    const char *validate_require_env = getenv("SLOW32_DBT_STAGE5_VALIDATE_REQUIRE");
+    bool validate_require_clean =
+        (validate_require_env && validate_require_env[0] != '\0' &&
+         strcmp(validate_require_env, "0") != 0);
     bool emit_trace = (trace_env && atoi(trace_env) != 0);
     if (align_env && atoi(align_env) != 0) {
         align_traps_enabled = true;
@@ -1914,6 +1919,13 @@ int main(int argc, char **argv) {
 
     // Results
     int exit_code = cpu.regs[REG_RV];
+    if (validate_require_clean && stage5_validate_mismatch > 0) {
+        fprintf(stderr, "Stage5 validate require-clean failed: mismatches=%" PRIu32 "\n",
+                stage5_validate_mismatch);
+        if (exit_code == 0) {
+            exit_code = 2;
+        }
+    }
 
     if (show_stats || verbose) {
         double elapsed = (end.tv_sec - start.tv_sec) +
@@ -2332,7 +2344,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Stage5 validate ok:        %" PRIu32 "\n", stage5_validate_ok);
             fprintf(stderr, "Stage5 validate mismatch:  %" PRIu32 "\n", stage5_validate_mismatch);
             if (stage5_validate_skipped_load_store > 0) {
-                fprintf(stderr, "  validate skipped load/store: %" PRIu32 "\n",
+                fprintf(stderr, "  validate skipped unsupported: %" PRIu32 "\n",
                         stage5_validate_skipped_load_store);
             }
             if (stage5_validate_skipped_call_indirect > 0) {
@@ -2342,6 +2354,18 @@ int main(int argc, char **argv) {
             if (stage5_validate_skipped_terminal > 0) {
                 fprintf(stderr, "  validate skipped terminal: %" PRIu32 "\n",
                         stage5_validate_skipped_terminal);
+            }
+            if (stage5_validate_skipped_mem_mmio > 0) {
+                fprintf(stderr, "  validate skipped mem-mmio: %" PRIu32 "\n",
+                        stage5_validate_skipped_mem_mmio);
+            }
+            if (stage5_validate_skipped_mem_oob > 0) {
+                fprintf(stderr, "  validate skipped mem-oob: %" PRIu32 "\n",
+                        stage5_validate_skipped_mem_oob);
+            }
+            if (stage5_validate_skipped_mem_capacity > 0) {
+                fprintf(stderr, "  validate skipped mem-capacity: %" PRIu32 "\n",
+                        stage5_validate_skipped_mem_capacity);
             }
         }
 
