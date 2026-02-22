@@ -9,6 +9,7 @@
 
 #include "stage5_codegen.h"
 #include "stage5_burg.h"
+#include "stage5_ssa.h"
 #include "block_cache.h"
 #include "cpu_state.h"
 #include <string.h>
@@ -2518,6 +2519,19 @@ bool stage5_codegen(translate_ctx_t *ctx,
         stage5_codegen_fallback_preflight++;
         if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
         return false;
+    }
+
+    // Build a region-local SSA overlay (value numbering + def/use links).
+    // This is a foundation pass for later SSA-side simplification and RA work.
+    if (stage5_ssa_enabled()) {
+        stage5_ssa_overlay_t ssa;
+        if (!stage5_ssa_build_overlay(region, &ssa)) {
+            stage5_codegen_fallback++;
+            stage5_codegen_fallback_preflight++;
+            if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
+            cg_state_restore(ctx, &saved);
+            return false;
+        }
     }
 
     // ========================================================================
