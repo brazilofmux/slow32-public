@@ -76,7 +76,19 @@ static void next(void) {
         if (pp_skip) { continue; }
         if (lex_tok == TK_IDENT) {
             di = pp_find(lex_str);
-            if (di >= 0) { lex_tok = TK_NUM; lex_val = pp_dval[di]; return; }
+            if (di >= 0) {
+                if (pp_dnpar[di] >= 0) {
+                    if (pp_expand_func(di)) continue;
+                    return;  /* no '(' — treat as identifier */
+                }
+                if (pp_dbody[di] != 0) {
+                    pp_expand_obj(di);
+                    continue;  /* re-lex expanded text */
+                }
+                lex_tok = TK_NUM;
+                lex_val = pp_dval[di];
+                return;
+            }
         }
         return;
     }

@@ -139,6 +139,54 @@ static void cg_li(int v) {
     }
 }
 
+/* Compute r1 = r30 + off (handles large frame offsets via lui+addi+add) */
+static void cg_frame_off(int off) {
+    int hi;
+    int lo;
+
+    if (off >= -2048 && off <= 2047) {
+        cg_s("    addi r1, r30, ");
+        cg_n(off);
+        cg_c(10);
+    } else {
+        hi = (off + 2048) >> 12;
+        hi = hi & 1048575;
+        lo = off & 4095;
+        if (lo >= 2048) lo = lo - 4096;
+        cg_s("    lui r1, ");
+        cg_n(hi);
+        cg_c(10);
+        cg_s("    addi r1, r1, ");
+        cg_n(lo);
+        cg_c(10);
+        cg_s("    add r1, r30, r1\n");
+    }
+}
+
+/* Compute r1 = r1 + imm (uses r2 as scratch for large imm) */
+static void cg_r1_add_imm(int imm) {
+    int hi;
+    int lo;
+
+    if (imm >= -2048 && imm <= 2047) {
+        cg_s("    addi r1, r1, ");
+        cg_n(imm);
+        cg_c(10);
+    } else {
+        hi = (imm + 2048) >> 12;
+        hi = hi & 1048575;
+        lo = imm & 4095;
+        if (lo >= 2048) lo = lo - 4096;
+        cg_s("    lui r2, ");
+        cg_n(hi);
+        cg_c(10);
+        cg_s("    addi r2, r2, ");
+        cg_n(lo);
+        cg_c(10);
+        cg_s("    add r1, r1, r2\n");
+    }
+}
+
 /* Load address of symbol into r1 */
 static void cg_la(char *sym) {
     cg_s("    lui r1, %hi(");
@@ -229,9 +277,7 @@ static void gen_addr(Node *n) {
 
     if (n->kind == ND_VAR) {
         if (n->is_local) {
-            cg_s("    addi r1, r30, ");
-            cg_n(n->offset);
-            cg_c(10);
+            cg_frame_off(n->offset);
         } else {
             /* Global variable address */
             cg_la(n->name);
@@ -249,9 +295,7 @@ static void gen_addr(Node *n) {
     if (n->kind == ND_MEMBER) {
         gen_addr(n->lhs);
         if (n->val != 0) {
-            cg_s("    addi r1, r1, ");
-            cg_n(n->val);
-            cg_c(10);
+            cg_r1_add_imm(n->val);
         }
         return;
     }
@@ -291,17 +335,23 @@ static void gen_expr(Node *n) {
         }
         if (n->is_local) {
             /* Local scalar: load from stack */
-            if (!ty_is_ptr(n->ty) && (n->ty & TY_BASE_MASK) == TY_CHAR) {
-                if (n->ty & TY_UNSIGNED) cg_s("    ldbu r1, r30, ");
-                else                      cg_s("    ldb r1, r30, ");
-            } else if (!ty_is_ptr(n->ty) && (n->ty & TY_BASE_MASK) == TY_SHORT) {
-                if (n->ty & TY_UNSIGNED) cg_s("    ldhu r1, r30, ");
-                else                      cg_s("    ldh r1, r30, ");
+            if (n->offset >= -2048 && n->offset <= 2047) {
+                if (!ty_is_ptr(n->ty) && (n->ty & TY_BASE_MASK) == TY_CHAR) {
+                    if (n->ty & TY_UNSIGNED) cg_s("    ldbu r1, r30, ");
+                    else                      cg_s("    ldb r1, r30, ");
+                } else if (!ty_is_ptr(n->ty) && (n->ty & TY_BASE_MASK) == TY_SHORT) {
+                    if (n->ty & TY_UNSIGNED) cg_s("    ldhu r1, r30, ");
+                    else                      cg_s("    ldh r1, r30, ");
+                } else {
+                    cg_s("    ldw r1, r30, ");
+                }
+                cg_n(n->offset);
+                cg_c(10);
             } else {
-                cg_s("    ldw r1, r30, ");
+                /* Large offset: compute address, then load */
+                cg_frame_off(n->offset);
+                cg_load(n->ty);
             }
-            cg_n(n->offset);
-            cg_c(10);
         } else {
             /* Global scalar: load via %hi/%lo */
             cg_la(n->name);
@@ -972,18 +1022,28 @@ static void gen_func(Node *fn) {
     cg_s(":\n");
 
     /* Prolog */
-    cg_s("    addi r29, r29, -");
-    cg_n(fs);
-    cg_c(10);
-    cg_s("    stw r29, r31, ");
-    cg_n(fs - 4);
-    cg_c(10);
-    cg_s("    stw r29, r30, ");
-    cg_n(fs - 8);
-    cg_c(10);
-    cg_s("    addi r30, r29, ");
-    cg_n(fs);
-    cg_c(10);
+    if (fs <= 2047) {
+        cg_s("    addi r29, r29, -");
+        cg_n(fs);
+        cg_c(10);
+        cg_s("    stw r29, r31, ");
+        cg_n(fs - 4);
+        cg_c(10);
+        cg_s("    stw r29, r30, ");
+        cg_n(fs - 8);
+        cg_c(10);
+        cg_s("    addi r30, r29, ");
+        cg_n(fs);
+        cg_c(10);
+    } else {
+        /* Large frame: save r31/r30 at small offsets from old SP,
+           then set FP = old SP, then adjust SP via lui+sub */
+        cg_s("    stw r29, r31, -4\n");
+        cg_s("    stw r29, r30, -8\n");
+        cg_s("    addi r30, r29, 0\n");
+        cg_li(fs);
+        cg_s("    sub r29, r30, r1\n");
+    }
 
     /* Copy params from arg registers to stack slots */
     i = 0;
@@ -1001,15 +1061,23 @@ static void gen_func(Node *fn) {
 
     /* Epilog */
     cg_ldef(cg_epilog);
-    cg_s("    ldw r31, r29, ");
-    cg_n(fs - 4);
-    cg_c(10);
-    cg_s("    ldw r30, r29, ");
-    cg_n(fs - 8);
-    cg_c(10);
-    cg_s("    addi r29, r29, ");
-    cg_n(fs);
-    cg_c(10);
+    if (fs <= 2047) {
+        cg_s("    ldw r31, r29, ");
+        cg_n(fs - 4);
+        cg_c(10);
+        cg_s("    ldw r30, r29, ");
+        cg_n(fs - 8);
+        cg_c(10);
+        cg_s("    addi r29, r29, ");
+        cg_n(fs);
+        cg_c(10);
+    } else {
+        /* Large frame: restore from FP-relative small offsets */
+        cg_s("    ldw r31, r30, -4\n");
+        cg_s("    ldw r1, r30, -8\n");
+        cg_s("    addi r29, r30, 0\n");
+        cg_s("    addi r30, r1, 0\n");
+    }
     cg_s("    jalr r0, r31, 0\n\n");
 }
 
