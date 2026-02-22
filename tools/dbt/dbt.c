@@ -19,6 +19,7 @@
 #include <signal.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <ucontext.h>
 
 #include "cpu_state.h"
 #include "translate.h"
@@ -87,6 +88,11 @@ typedef struct {
 
 static volatile dbt_cpu_state_t *g_dbt_cpu = NULL;
 static dbt_probe_state_t *g_dbt_probe = NULL;
+static volatile uintptr_t g_dbt_code_base = 0;
+static volatile uintptr_t g_dbt_code_limit = 0;
+static volatile uint32_t g_dbt_block_pc = 0;
+static volatile uintptr_t g_dbt_block_code = 0;
+static volatile uint32_t g_dbt_block_size = 0;
 
 static void dbt_init_branch_trace_from_env(void) {
     static bool inited = false;
@@ -214,6 +220,85 @@ static int probe_hex32(char *buf, uint32_t val) {
     return 10;
 }
 
+// Async-signal-safe hex printer for 64-bit values: writes "0xNN..NN"
+static int probe_hex64(char *buf, uint64_t val) {
+    static const char hex[] = "0123456789ABCDEF";
+    buf[0] = '0'; buf[1] = 'x';
+    for (int i = 0; i < 16; i++) {
+        buf[2 + i] = hex[(val >> (60 - i * 4)) & 0xFULL];
+    }
+    return 18;
+}
+
+static void dbt_sigfault_handler(int sig, siginfo_t *si, void *ucontext) {
+    char buf[320];
+    int pos = 0;
+    const char prefix[] = "[dbt-fault] signal=";
+    for (int i = 0; prefix[i]; i++) buf[pos++] = prefix[i];
+    if (sig >= 0 && sig < 100) {
+        if (sig >= 10) buf[pos++] = (char)('0' + (sig / 10));
+        buf[pos++] = (char)('0' + (sig % 10));
+    } else {
+        buf[pos++] = '?';
+    }
+    const char a[] = " addr=";
+    for (int i = 0; a[i]; i++) buf[pos++] = a[i];
+    pos += probe_hex64(buf + pos, (uint64_t)(uintptr_t)(si ? si->si_addr : NULL));
+
+    if (g_dbt_cpu) {
+        const char p[] = " guest_pc=";
+        for (int i = 0; p[i]; i++) buf[pos++] = p[i];
+        pos += probe_hex32(buf + pos, g_dbt_cpu->pc);
+
+        const char sp[] = " sp=";
+        for (int i = 0; sp[i]; i++) buf[pos++] = sp[i];
+        pos += probe_hex32(buf + pos, g_dbt_cpu->regs[29]);
+
+        const char fp[] = " fp=";
+        for (int i = 0; fp[i]; i++) buf[pos++] = fp[i];
+        pos += probe_hex32(buf + pos, g_dbt_cpu->regs[30]);
+
+        const char lr[] = " lr=";
+        for (int i = 0; lr[i]; i++) buf[pos++] = lr[i];
+        pos += probe_hex32(buf + pos, g_dbt_cpu->regs[31]);
+    }
+#if defined(__x86_64__)
+    if (ucontext) {
+        ucontext_t *uc = (ucontext_t *)ucontext;
+        uint64_t ripv = (uint64_t)uc->uc_mcontext.gregs[REG_RIP];
+        const char rip[] = " host_rip=";
+        for (int i = 0; rip[i]; i++) buf[pos++] = rip[i];
+        pos += probe_hex64(buf + pos, ripv);
+        const char rsp[] = " host_rsp=";
+        for (int i = 0; rsp[i]; i++) buf[pos++] = rsp[i];
+        pos += probe_hex64(buf + pos, (uint64_t)uc->uc_mcontext.gregs[REG_RSP]);
+        if (g_dbt_code_base != 0 && g_dbt_code_limit > g_dbt_code_base &&
+            ripv >= g_dbt_code_base && ripv < g_dbt_code_limit) {
+            const char off[] = " host_off=";
+            for (int i = 0; off[i]; i++) buf[pos++] = off[i];
+            pos += probe_hex64(buf + pos, ripv - g_dbt_code_base);
+        }
+        if (g_dbt_block_code != 0) {
+            const char bpc[] = " block_pc=";
+            for (int i = 0; bpc[i]; i++) buf[pos++] = bpc[i];
+            pos += probe_hex32(buf + pos, g_dbt_block_pc);
+            const char boff[] = " block_off=";
+            for (int i = 0; boff[i]; i++) buf[pos++] = boff[i];
+            if (ripv >= g_dbt_block_code &&
+                ripv < g_dbt_block_code + g_dbt_block_size) {
+                pos += probe_hex64(buf + pos, ripv - g_dbt_block_code);
+            } else {
+                pos += probe_hex64(buf + pos, UINT64_MAX);
+            }
+        }
+    }
+#endif
+
+    buf[pos++] = '\n';
+    if (write(STDERR_FILENO, buf, pos)) {/* async-signal-safe */}
+    _exit(128 + sig);
+}
+
 static void dbt_sigint_handler(int sig) {
     (void)sig;
     if (g_dbt_probe) g_dbt_probe->sigint_flag = 1;
@@ -256,6 +341,17 @@ static void dbt_install_sigint(void) {
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIGINT, &sa, NULL);
+}
+
+static void dbt_install_sigfault(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = dbt_sigfault_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_SIGINFO;
+    sigaction(SIGSEGV, &sa, NULL);
+    sigaction(SIGBUS, &sa, NULL);
+    sigaction(SIGILL, &sa, NULL);
 }
 
 static void dbt_start_probe_timer(int interval_sec) {
@@ -924,6 +1020,13 @@ static void run_dbt_stage1(dbt_cpu_state_t *cpu) {
     }
 }
 
+static inline void execute_cached_block(dbt_cpu_state_t *cpu, translated_block_t *block) {
+    g_dbt_block_pc = block ? block->guest_pc : 0;
+    g_dbt_block_code = (uintptr_t)(block ? block->host_code : NULL);
+    g_dbt_block_size = block ? block->host_size : 0;
+    execute_translated(cpu, (translated_block_fn)(block ? block->host_code : NULL));
+}
+
 // Stage 2 dispatcher (with block cache and chaining)
 static void run_dbt_stage2(dbt_cpu_state_t *cpu, block_cache_t *cache) {
     translate_ctx_t ctx;
@@ -966,16 +1069,16 @@ static void run_dbt_stage2(dbt_cpu_state_t *cpu, block_cache_t *cache) {
             bool sample_now = (dispatch_iter % profile_sample_rate) == 0;
             if (sample_now) {
                 uint64_t t0 = rdtsc();
-                execute_translated(cpu, (translated_block_fn)block->host_code);
+                execute_cached_block(cpu, block);
                 profile_exec_cycles += rdtsc() - t0;
             } else {
-                execute_translated(cpu, (translated_block_fn)block->host_code);
+                execute_cached_block(cpu, block);
             }
 #else
-            execute_translated(cpu, (translated_block_fn)block->host_code);
+            execute_cached_block(cpu, block);
 #endif
         } else {
-            execute_translated(cpu, (translated_block_fn)block->host_code);
+            execute_cached_block(cpu, block);
         }
 
         dbt_trace_branch_exit(cache, block, cpu);
@@ -1076,16 +1179,16 @@ static void run_dbt_stage3(dbt_cpu_state_t *cpu, block_cache_t *cache) {
             bool sample_now = (dispatch_iter % profile_sample_rate) == 0;
             if (sample_now) {
                 uint64_t t0 = rdtsc();
-                execute_translated(cpu, (translated_block_fn)block->host_code);
+                execute_cached_block(cpu, block);
                 profile_exec_cycles += rdtsc() - t0;
             } else {
-                execute_translated(cpu, (translated_block_fn)block->host_code);
+                execute_cached_block(cpu, block);
             }
 #else
-            execute_translated(cpu, (translated_block_fn)block->host_code);
+            execute_cached_block(cpu, block);
 #endif
         } else {
-            execute_translated(cpu, (translated_block_fn)block->host_code);
+            execute_cached_block(cpu, block);
         }
 
         dbt_trace_branch_exit(cache, block, cpu);
@@ -1249,16 +1352,16 @@ static void run_dbt_stage4plus(dbt_cpu_state_t *cpu, block_cache_t *cache,
             bool sample_now = (dispatch_iter % profile_sample_rate) == 0;
             if (sample_now) {
                 uint64_t t0 = rdtsc();
-                execute_translated(cpu, (translated_block_fn)block->host_code);
+                execute_cached_block(cpu, block);
                 profile_exec_cycles += rdtsc() - t0;
             } else {
-                execute_translated(cpu, (translated_block_fn)block->host_code);
+                execute_cached_block(cpu, block);
             }
 #else
-            execute_translated(cpu, (translated_block_fn)block->host_code);
+            execute_cached_block(cpu, block);
 #endif
         } else {
-            execute_translated(cpu, (translated_block_fn)block->host_code);
+            execute_cached_block(cpu, block);
         }
 
         dbt_trace_branch_exit(cache, block, cpu);
@@ -1646,6 +1749,8 @@ int main(int argc, char **argv) {
             dbt_cpu_destroy(&cpu);
             return 1;
         }
+        g_dbt_code_base = (uintptr_t)cache.code_buffer;
+        g_dbt_code_limit = (uintptr_t)(cache.code_buffer + cache.code_buffer_size);
         // Stage 3: Set up inline lookup table pointer in CPU state
         cpu.lookup_table = cache.blocks;
         cpu.lookup_mask = BLOCK_CACHE_MASK;
@@ -1744,6 +1849,7 @@ int main(int argc, char **argv) {
     g_dbt_cpu = &cpu;
     g_dbt_probe = &probe;
     dbt_install_sigint();
+    dbt_install_sigfault();
 
     // Start probe timer if requested
     if (probe.enabled) {
@@ -1798,6 +1904,11 @@ int main(int argc, char **argv) {
 
     g_dbt_cpu = NULL;
     g_dbt_probe = NULL;
+    g_dbt_code_base = 0;
+    g_dbt_code_limit = 0;
+    g_dbt_block_pc = 0;
+    g_dbt_block_code = 0;
+    g_dbt_block_size = 0;
 
     // Results
     int exit_code = cpu.regs[REG_RV];

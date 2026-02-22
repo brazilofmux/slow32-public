@@ -101,6 +101,9 @@ struct block_cache {
     uint64_t superblock_guest_bytes_total; // Total guest bytes in superblocks
     uint64_t superblock_host_bytes_total;  // Total host bytes in superblocks
     uint64_t peephole_hits;        // Number of peephole rewrites (study only)
+    uint64_t patch_attempt_count;  // Dynamic chain patch attempts
+    uint64_t patch_oob_count;      // Patch-site bounds violations
+    uint64_t patch_rel_oob_count;  // rel32 out-of-range attempts
 
     // Chain pending index: reverse lookup for O(1) chaining
     // chain_pending[hash] = index into chain_pending_entries[], or -1
@@ -184,7 +187,7 @@ void cache_chain_incoming(block_cache_t *cache, translated_block_t *target);
 
 // Patch a jmp rel32 instruction to point to a new target
 // patch_site points to the first byte of the rel32 offset
-void cache_patch_jmp(uint8_t *patch_site, uint8_t *target);
+void cache_patch_jmp(block_cache_t *cache, uint8_t *patch_site, uint8_t *target);
 
 // Record a pending chain entry (for O(1) chaining)
 void cache_record_pending_chain(block_cache_t *cache, translated_block_t *block,

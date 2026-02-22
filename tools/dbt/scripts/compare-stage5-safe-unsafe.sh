@@ -30,15 +30,14 @@ else
     )
 fi
 
-tmpdir=$(mktemp -d /tmp/compare-stage4-stage5.XXXXXX)
+tmpdir=$(mktemp -d /tmp/compare-stage5-safe-unsafe.XXXXXX)
 if [[ "$KEEP_TMP" == "0" ]]; then
     trap 'rm -rf "$tmpdir"' EXIT
 else
     echo "keeping tmpdir: $tmpdir" >&2
 fi
 
-printf "%-20s %-5s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s\n" \
-  "test" "rc" "t4(s)" "t5(s)" "sel" "emit" "ginst" "b/gi" "jret_s" "jret_l" "jind"
+printf "%-20s %-6s %-8s %-8s\n" "test" "rc" "safe(s)" "unsf(s)"
 
 for t in "${TESTS[@]}"; do
     if [[ ! -f "$t" ]]; then
@@ -47,36 +46,42 @@ for t in "${TESTS[@]}"; do
     fi
 
     base=$(basename "$(dirname "$t")")
-    out4="$tmpdir/${base}.s4.out"
-    err4="$tmpdir/${base}.s4.err"
-    out5="$tmpdir/${base}.s5.out"
-    err5="$tmpdir/${base}.s5.err"
+    out_safe="$tmpdir/${base}.safe.out"
+    err_safe="$tmpdir/${base}.safe.err"
+    out_unsafe="$tmpdir/${base}.unsafe.out"
+    err_unsafe="$tmpdir/${base}.unsafe.err"
 
     set +e
-    "$DBT" -4 -s "$t" >"$out4" 2>"$err4"
-    rc4=$?
-    "$DBT" -5 -G -W -s "$t" >"$out5" 2>"$err5"
-    rc5=$?
+    SLOW32_DBT_STAGE5_SIDE_EXIT=1 \
+    SLOW32_DBT_STAGE5_SIDE_EXIT_MODE=eqne_u \
+    "$DBT" -5 -G -W -s "$t" >"$out_safe" 2>"$err_safe"
+    rc_safe=$?
+
+    SLOW32_DBT_STAGE5_SIDE_EXIT=1 \
+    SLOW32_DBT_STAGE5_SIDE_EXIT_MODE=eqne_u \
+    SLOW32_DBT_STAGE5_SIDE_EXIT_FAMILY=B \
+    SLOW32_DBT_STAGE5_ALLOW_UNSAFE_FAMILY_B=1 \
+    "$DBT" -5 -G -W -s "$t" >"$out_unsafe" 2>"$err_unsafe"
+    rc_unsafe=$?
     set -e
 
     rc="ok"
-    if [[ $rc4 -ne $rc5 ]]; then
-        fault4=$(grep -E '^DBT: (Memory fault|Unknown instruction)' "$err4" | tail -n1 || true)
-        fault5=$(grep -E '^DBT: (Memory fault|Unknown instruction)' "$err5" | tail -n1 || true)
-        if [[ -n "$fault4" && "$fault4" == "$fault5" ]]; then
-            rc="fault"
-        else
-            rc="rc!"
-        fi
+    if [[ $rc_safe -ne $rc_unsafe ]]; then
+        rc="rc!"
     fi
-    if ! cmp -s "$out4" "$out5"; then
+    if ! cmp -s "$out_safe" "$out_unsafe"; then
         rc="out!"
     fi
 
     if [[ "$DIAG_ON_MISMATCH" != "0" && "$rc" != "ok" ]]; then
         diag_out="$tmpdir/${base}.diag.out"
         diag_err="$tmpdir/${base}.diag.err"
-        diag_env=()
+        diag_env=(
+            "SLOW32_DBT_STAGE5_SIDE_EXIT=1"
+            "SLOW32_DBT_STAGE5_SIDE_EXIT_MODE=eqne_u"
+            "SLOW32_DBT_STAGE5_SIDE_EXIT_FAMILY=B"
+            "SLOW32_DBT_STAGE5_ALLOW_UNSAFE_FAMILY_B=1"
+        )
         if [[ -n "$DIAG_BLOCK_PC" ]]; then
             diag_env+=("SLOW32_DBT_TRACE_TRANSLATED_BLOCK_PC=$DIAG_BLOCK_PC")
             diag_env+=("SLOW32_DBT_TRACE_TRANSLATED_BLOCK_MAX=$DIAG_MAX")
@@ -103,26 +108,9 @@ for t in "${TESTS[@]}"; do
         echo "diag[$base]: rc=$diag_rc logs: $diag_out $diag_err" >&2
     fi
 
-    t4=$(awk '/^Time: / {print $2}' "$err4" | tail -n1)
-    t5=$(awk '/^Time: / {print $2}' "$err5" | tail -n1)
-    sel=$(awk '/^Stage5 BURG selected:/ {print $4}' "$err5" | tail -n1)
-    emit=$(awk '/^Stage5 emit success:/ {print $4}' "$err5" | tail -n1)
-    ginst=$(awk '/^Stage5 emit guest insts:/ {print $5}' "$err5" | tail -n1)
-    bgi=$(awk '/^Stage5 emit bytes\/guest-inst:/ {print $4}' "$err5" | tail -n1)
-    jret_s=$(awk '/^  emit pattern jalr_ret_short/ {for(i=1;i<=NF;i++) if($i ~ /^bpg=/){sub(/^bpg=/,"",$i); print $i}}' "$err5" | tail -n1)
-    jret_l=$(awk '/^  emit pattern jalr_ret_long/ {for(i=1;i<=NF;i++) if($i ~ /^bpg=/){sub(/^bpg=/,"",$i); print $i}}' "$err5" | tail -n1)
-    jind=$(awk '/^  emit pattern jalr_indirect/ {for(i=1;i<=NF;i++) if($i ~ /^bpg=/){sub(/^bpg=/,"",$i); print $i}}' "$err5" | tail -n1)
-
-    [[ -n "$t4" ]] || t4="-"
-    [[ -n "$t5" ]] || t5="-"
-    [[ -n "$sel" ]] || sel="-"
-    [[ -n "$emit" ]] || emit="-"
-    [[ -n "$ginst" ]] || ginst="-"
-    [[ -n "$bgi" ]] || bgi="-"
-    [[ -n "$jret_s" ]] || jret_s="-"
-    [[ -n "$jret_l" ]] || jret_l="-"
-    [[ -n "$jind" ]] || jind="-"
-
-    printf "%-20s %-5s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s\n" \
-      "$base" "$rc" "$t4" "$t5" "$sel" "$emit" "$ginst" "$bgi" "$jret_s" "$jret_l" "$jind"
+    ts=$(awk '/^Time: / {print $2}' "$err_safe" | tail -n1)
+    tu=$(awk '/^Time: / {print $2}' "$err_unsafe" | tail -n1)
+    [[ -n "$ts" ]] || ts="-"
+    [[ -n "$tu" ]] || tu="-"
+    printf "%-20s %-6s %-8s %-8s\n" "$base" "$rc" "$ts" "$tu"
 done

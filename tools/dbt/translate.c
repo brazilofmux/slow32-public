@@ -93,6 +93,13 @@ uint32_t stage5_deferred_exit_snapshot_r15_allocated = 0;
 uint32_t stage5_deferred_exit_snapshot_r15_dirty = 0;
 uint32_t stage5_backedge_dirty_promotions = 0;
 uint32_t stage5_backedge_dirty_promotions_r15 = 0;
+uint32_t peephole_guard_skip_calls_count = 0;
+uint32_t peephole_guard_skip_jcc_calls_count = 0;
+uint32_t peephole_guard_skip_immimm_calls_count = 0;
+uint32_t peephole_call_block_seen_count = 0;
+uint32_t peephole_call_block_rewrite_count = 0;
+uint32_t peephole_call_block_jcc_fold_count = 0;
+uint32_t peephole_call_block_other_rewrite_count = 0;
 
 static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
 static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg);
@@ -107,6 +114,32 @@ static bool stage5_side_exit_emit_enabled(void) {
     if (!inited) {
         const char *v = getenv("SLOW32_DBT_STAGE5_SIDE_EXIT");
         enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+static bool dbt_nop_compact_enabled(void) {
+    static bool inited = false;
+    static bool enabled = true;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_NO_NOP_COMPACT");
+        if (v && v[0] != '\0' && strcmp(v, "0") != 0) {
+            enabled = false;
+        }
+        inited = true;
+    }
+    return enabled;
+}
+
+static bool dbt_peephole_jcc_fold_enabled(void) {
+    static bool inited = false;
+    static bool enabled = true;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_NO_PEEPHOLE_JCC");
+        if (v && v[0] != '\0' && strcmp(v, "0") != 0) {
+            enabled = false;
+        }
         inited = true;
     }
     return enabled;
@@ -381,7 +414,8 @@ static void stage5_count_deferred_exit_flush(const translate_ctx_t *ctx,
     }
 }
 
-static void stage5_trace_translated_block(const translated_block_t *block) {
+static void stage5_trace_translated_block(const translate_ctx_t *ctx,
+                                          const translated_block_t *block) {
     static bool inited = false;
     static uint32_t filter_pc = 0;
     static int budget = 0;
@@ -398,10 +432,14 @@ static void stage5_trace_translated_block(const translated_block_t *block) {
     if (filter_pc == 0 || budget == 0 || !block) return;
     if (block->guest_pc != filter_pc) return;
 
+    uint64_t host_off = 0;
+    if (ctx && ctx->cache && ctx->cache->code_buffer && block->host_code) {
+        host_off = (uint64_t)(block->host_code - ctx->cache->code_buffer);
+    }
     fprintf(stderr,
-            "stage5-block-finalize block_pc=0x%08X guest_size=%u host_size=%u exits=%u side_exits=%u\n",
+            "stage5-block-finalize block_pc=0x%08X guest_size=%u host_size=%u host_off=0x%llX exits=%u side_exits=%u\n",
             block->guest_pc, block->guest_size, block->host_size,
-            block->exit_count, block->side_exit_count);
+            (unsigned long long)host_off, block->exit_count, block->side_exit_count);
 
     for (uint8_t i = 0; i < block->exit_count; i++) {
         bool owned_by_side_exit = false;
@@ -421,6 +459,40 @@ static void stage5_trace_translated_block(const translated_block_t *block) {
     }
     for (uint8_t s = 0; s < block->side_exit_count; s++) {
         fprintf(stderr, "  side_exit_pc[%u]=0x%08X\n", s, block->side_exit_pcs[s]);
+    }
+    budget--;
+}
+
+static void stage5_trace_translated_block_guest_words(const translate_ctx_t *ctx,
+                                                      const translated_block_t *block) {
+    static bool inited = false;
+    static uint32_t filter_pc = 0;
+    static int budget = 0;
+    if (!inited) {
+        const char *pcv = getenv("SLOW32_DBT_TRACE_TRANSLATED_BLOCK_PC");
+        if (pcv && pcv[0] != '\0') {
+            filter_pc = (uint32_t)strtoul(pcv, NULL, 0);
+            const char *maxv = getenv("SLOW32_DBT_TRACE_TRANSLATED_BLOCK_MAX");
+            budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 8;
+            if (budget < 0) budget = 0;
+        }
+        inited = true;
+    }
+    if (filter_pc == 0 || budget == 0 || !ctx || !block) return;
+    if (block->guest_pc != filter_pc) return;
+
+    uint32_t insts = block->guest_size / 4;
+    if (insts > MAX_BLOCK_INSTS) insts = MAX_BLOCK_INSTS;
+    fprintf(stderr, "stage5-block-guest-words block_pc=0x%08X insts=%u\n",
+            block->guest_pc, insts);
+    for (uint32_t i = 0; i < insts; i++) {
+        uint32_t pc = block->guest_pc + i * 4;
+        if (pc + 4 > ctx->cpu->code_limit) break;
+        uint32_t raw = *(uint32_t *)(ctx->cpu->mem_base + pc);
+        decoded_inst_t d = decode_instruction(raw);
+        fprintf(stderr,
+                "  [%02u] pc=0x%08X raw=0x%08X op=0x%02X rd=%u rs1=%u rs2=%u imm=%d\n",
+                i, pc, raw, d.opcode, d.rd, d.rs1, d.rs2, d.imm);
     }
     budget--;
 }
@@ -481,6 +553,46 @@ static void stage5_trace_backedge_dirty_promotion(uint32_t branch_pc,
     fprintf(stderr,
             "stage5-backedge-dirty branch_pc=0x%08X taken=0x%08X deferred_idx=%d slot=%d guest_r=%u\n",
             branch_pc, taken_pc, deferred_idx, slot_idx, guest_reg);
+    budget--;
+}
+
+static void stage5_trace_exit_slot(const char *phase,
+                                   const translate_ctx_t *ctx,
+                                   uint32_t branch_pc,
+                                   int exit_idx,
+                                   uint32_t target_pc,
+                                   int deferred_idx) {
+    static bool inited = false;
+    static uint32_t filter_pc = 0;
+    static int budget = 0;
+    if (!inited) {
+        const char *pcv = getenv("SLOW32_DBT_TRACE_EXIT_SLOT_PC");
+        if (pcv && pcv[0] != '\0') {
+            filter_pc = (uint32_t)strtoul(pcv, NULL, 0);
+            const char *maxv = getenv("SLOW32_DBT_TRACE_EXIT_SLOT_MAX");
+            budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 64;
+            if (budget < 0) budget = 0;
+        }
+        inited = true;
+    }
+    if (filter_pc == 0 || budget == 0 || !phase || !ctx) return;
+    if (branch_pc != filter_pc) return;
+
+    uint32_t slot_target = 0;
+    uint32_t slot_branch = 0;
+    uint32_t slot_chained = 0;
+    if (ctx->block && exit_idx >= 0 && exit_idx < MAX_BLOCK_EXITS) {
+        slot_target = ctx->block->exits[exit_idx].target_pc;
+        slot_branch = ctx->block->exits[exit_idx].branch_pc;
+        slot_chained = ctx->block->exits[exit_idx].chained ? 1u : 0u;
+    }
+
+    fprintf(stderr,
+            "stage5-exit-slot phase=%s branch_pc=0x%08X exit_idx=%d target=0x%08X deferred_idx=%d block_pc=0x%08X slot_target=0x%08X slot_branch=0x%08X slot_chained=%u side_exit_emitted=%d deferred_count=%d\n",
+            phase, branch_pc, exit_idx, target_pc, deferred_idx,
+            ctx->block ? ctx->block->guest_pc : 0,
+            slot_target, slot_branch, slot_chained,
+            ctx->side_exit_emitted, ctx->deferred_exit_count);
     budget--;
 }
 
@@ -1877,6 +1989,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     ctx->deferred_exits[di].force_full_flush =
                         (inst0.opcode == OP_BLTU || inst0.opcode == OP_BGEU);
                     stage5_trace_deferred_exit("capture", ctx, di);
+                    stage5_trace_exit_slot("capture", ctx, branch_pc,
+                                           ctx->deferred_exits[di].exit_idx,
+                                           ctx->deferred_exits[di].target_pc, di);
 
                     if (ctx->block) {
                         ctx->block->flags |= BLOCK_FLAG_DIRECT;
@@ -2044,6 +2159,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 ctx->deferred_exits[di].force_full_flush =
                     (n->opcode == OP_BLTU || n->opcode == OP_BGEU);
                 stage5_trace_deferred_exit("capture", ctx, di);
+                stage5_trace_exit_slot("capture", ctx, branch_pc,
+                                       ctx->deferred_exits[di].exit_idx,
+                                       ctx->deferred_exits[di].target_pc, di);
 
                 if (ctx->block) {
                     ctx->block->flags |= BLOCK_FLAG_DIRECT;
@@ -4161,6 +4279,9 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
         if (ctx->block && exit_idx < MAX_BLOCK_EXITS) {
             cache_record_exit(ctx->cache, ctx->block, exit_idx, target_pc, patch_site);
             ctx->block->exits[exit_idx].chained = true;
+            stage5_trace_exit_slot("record-direct", ctx,
+                                   ctx->block->exits[exit_idx].branch_pc,
+                                   exit_idx, target_pc, -1);
         }
     } else {
         // Target not yet translated - jump to shared_branch_exit stub
@@ -4175,6 +4296,9 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
         if (ctx->block && exit_idx < MAX_BLOCK_EXITS) {
             cache_record_exit(ctx->cache, ctx->block, exit_idx, target_pc, patch_site);
             cache_record_pending_chain(ctx->cache, ctx->block, exit_idx, target_pc);
+            stage5_trace_exit_slot("record-shared", ctx,
+                                   ctx->block->exits[exit_idx].branch_pc,
+                                   exit_idx, target_pc, -1);
         }
     }
 }
@@ -4217,6 +4341,9 @@ static void emit_exit_chained_compact(translate_ctx_t *ctx, uint32_t target_pc,
         if (ctx->block && exit_idx < MAX_BLOCK_EXITS) {
             cache_record_exit(ctx->cache, ctx->block, exit_idx, target_pc, patch_site);
             ctx->block->exits[exit_idx].chained = true;
+            stage5_trace_exit_slot("record-compact-direct", ctx,
+                                   ctx->block->exits[exit_idx].branch_pc,
+                                   exit_idx, target_pc, -1);
         }
     } else {
         // Not yet translated - jump to shared_branch_exit (sets EXIT_REASON + ret)
@@ -4227,6 +4354,9 @@ static void emit_exit_chained_compact(translate_ctx_t *ctx, uint32_t target_pc,
         if (ctx->block && exit_idx < MAX_BLOCK_EXITS) {
             cache_record_exit(ctx->cache, ctx->block, exit_idx, target_pc, patch_site);
             cache_record_pending_chain(ctx->cache, ctx->block, exit_idx, target_pc);
+            stage5_trace_exit_slot("record-compact-shared", ctx,
+                                   ctx->block->exits[exit_idx].branch_pc,
+                                   exit_idx, target_pc, -1);
         }
     }
 }
@@ -4277,11 +4407,19 @@ static void emit_deferred_side_exits(translate_ctx_t *ctx) {
         if (ctx->block && ctx->deferred_exits[i].exit_idx < MAX_BLOCK_EXITS) {
             ctx->block->exits[ctx->deferred_exits[i].exit_idx].branch_pc =
                 ctx->deferred_exits[i].branch_pc;
+            stage5_trace_exit_slot("emit-branchpc", ctx,
+                                   ctx->deferred_exits[i].branch_pc,
+                                   ctx->deferred_exits[i].exit_idx,
+                                   ctx->deferred_exits[i].target_pc, i);
         }
 
         // Emit compact exit (mov PC + jmp shared/chained)
         emit_exit_chained_compact(ctx, ctx->deferred_exits[i].target_pc,
                                   ctx->deferred_exits[i].exit_idx);
+        stage5_trace_exit_slot("emit-exit", ctx,
+                               ctx->deferred_exits[i].branch_pc,
+                               ctx->deferred_exits[i].exit_idx,
+                               ctx->deferred_exits[i].target_pc, i);
     }
 }
 
@@ -4789,6 +4927,9 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
             ctx->deferred_exits[di].pending_write_host_reg = ctx->pending_write.host_reg;
             ctx->deferred_exits[di].force_full_flush = false;
             stage5_trace_deferred_exit("capture", ctx, di);
+            stage5_trace_exit_slot("capture", ctx, branch_pc,
+                                   ctx->deferred_exits[di].exit_idx,
+                                   ctx->deferred_exits[di].target_pc, di);
 
         }
 
@@ -5132,7 +5273,99 @@ static int x64_insn_length(const uint8_t *code, size_t offset, size_t len) {
     return 0; // Unknown
 }
 
-static size_t peephole_optimize_x64(uint8_t *code, size_t len) {
+typedef enum {
+    PEEPHOLE_CALL_GUARD_NONE = 0,
+    PEEPHOLE_CALL_GUARD_JCC = 1,
+    PEEPHOLE_CALL_GUARD_ALL = 2
+} peephole_call_guard_mode_t;
+
+static peephole_call_guard_mode_t dbt_peephole_call_guard_mode(void) {
+    static bool inited = false;
+    static peephole_call_guard_mode_t mode = PEEPHOLE_CALL_GUARD_JCC;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_PEEPHOLE_GUARD_CALLS");
+        if (v && v[0] != '\0') {
+            if (strcmp(v, "0") == 0 || strcmp(v, "none") == 0) {
+                mode = PEEPHOLE_CALL_GUARD_NONE;
+            } else if (strcmp(v, "all") == 0 || strcmp(v, "1") == 0) {
+                mode = PEEPHOLE_CALL_GUARD_ALL;
+            } else {
+                mode = PEEPHOLE_CALL_GUARD_JCC;
+            }
+        }
+        inited = true;
+    }
+    return mode;
+}
+
+static bool x64_block_has_call(const uint8_t *code, size_t len) {
+    size_t pos = 0;
+    while (pos < len) {
+        int ilen = x64_insn_length(code, pos, len);
+        if (ilen <= 0) break;
+        uint8_t op = code[pos];
+        if (op == 0xE8) return true;  // call rel32
+        if (op == 0xFF && pos + 1 < len) {
+            uint8_t modrm = code[pos + 1];
+            uint8_t reg = (modrm >> 3) & 0x07;
+            if (reg == 2) return true;  // call r/m64
+        }
+        pos += (size_t)ilen;
+    }
+    return false;
+}
+
+static void dbt_trace_peephole_hit(uint32_t guest_pc, const char *pattern, size_t off) {
+    static bool inited = false;
+    static uint32_t filter_pc = 0;
+    static int budget = 0;
+    if (!inited) {
+        const char *pcv = getenv("SLOW32_DBT_TRACE_PEEPHOLE_PC");
+        if (pcv && pcv[0] != '\0') {
+            filter_pc = (uint32_t)strtoul(pcv, NULL, 0);
+            const char *maxv = getenv("SLOW32_DBT_TRACE_PEEPHOLE_MAX");
+            budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 64;
+            if (budget < 0) budget = 0;
+        }
+        inited = true;
+    }
+    if (filter_pc == 0 || budget == 0 || !pattern) return;
+    if (guest_pc != filter_pc) return;
+    fprintf(stderr, "stage5-peephole block_pc=0x%08X off=0x%zX pattern=%s\n",
+            guest_pc, off, pattern);
+    budget--;
+}
+
+static void dbt_trace_peephole_call_hit(uint32_t guest_pc, const char *pattern, size_t off) {
+    static bool inited = false;
+    static bool enabled = false;
+    static int budget = 0;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_TRACE_PEEPHOLE_CALLS");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        const char *maxv = getenv("SLOW32_DBT_TRACE_PEEPHOLE_CALLS_MAX");
+        budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 64;
+        if (budget < 0) budget = 0;
+        inited = true;
+    }
+    if (!enabled || budget == 0 || !pattern) return;
+    fprintf(stderr, "stage5-peephole-call block_pc=0x%08X off=0x%zX pattern=%s\n",
+            guest_pc, off, pattern);
+    budget--;
+}
+
+static size_t peephole_optimize_x64(uint8_t *code, size_t len, uint32_t guest_pc) {
+    peephole_call_guard_mode_t guard_mode = dbt_peephole_call_guard_mode();
+    bool has_call = (guard_mode != PEEPHOLE_CALL_GUARD_NONE) &&
+                    x64_block_has_call(code, len);
+    if (has_call) {
+        peephole_call_block_seen_count++;
+    }
+    if (has_call && guard_mode == PEEPHOLE_CALL_GUARD_ALL) {
+        peephole_guard_skip_calls_count++;
+        dbt_trace_peephole_hit(guest_pc, "guard_skip_calls", 0);
+        return 0;
+    }
     size_t hits = 0;
     size_t i = 0;
     while (i + 6 < len) {
@@ -5142,7 +5375,9 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len) {
         // The emitter produces "ja +5; jmp target" for bounds checks.
         // We fold into a single "jbe target" saving 5 bytes.
         // Matches: 0F 8x [rel32=05000000] E9 [rel32]
-        if (i0 + 11 <= len &&
+        if (dbt_peephole_jcc_fold_enabled() &&
+            !(has_call && guard_mode == PEEPHOLE_CALL_GUARD_JCC) &&
+            i0 + 11 <= len &&
             code[i0] == 0x0F &&
             (code[i0 + 1] & 0xF0) == 0x80 &&        // Jcc near (0F 80..8F)
             code[i0 + 2] == 0x05 &&                   // rel32 = 5
@@ -5173,9 +5408,27 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len) {
             for (size_t k = i0 + 6; k < i0 + 11; k++) {
                 code[k] = 0x90;
             }
+            dbt_trace_peephole_hit(guest_pc, "jcc_fold", i0);
+            if (has_call) {
+                peephole_call_block_rewrite_count++;
+                peephole_call_block_jcc_fold_count++;
+                dbt_trace_peephole_call_hit(guest_pc, "jcc_fold", i0);
+            }
             hits++;
             i = i0 + 11;
             continue;
+        } else if (has_call &&
+                   guard_mode == PEEPHOLE_CALL_GUARD_JCC &&
+                   i0 + 11 <= len &&
+                   code[i0] == 0x0F &&
+                   (code[i0 + 1] & 0xF0) == 0x80 &&
+                   code[i0 + 2] == 0x05 &&
+                   code[i0 + 3] == 0x00 &&
+                   code[i0 + 4] == 0x00 &&
+                   code[i0 + 5] == 0x00 &&
+                   code[i0 + 6] == 0xE9) {
+            peephole_guard_skip_jcc_calls_count++;
+            dbt_trace_peephole_hit(guest_pc, "guard_skip_jcc_on_call", i0);
         }
 
         // Pattern DSTORE: mov [rbp+disp8], imm32 ; mov [rbp+disp8], imm32 (same disp)
@@ -5188,6 +5441,12 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len) {
             // NOP out first store
             for (size_t k = i0; k < i0 + 7; k++) {
                 code[k] = 0x90;
+            }
+            dbt_trace_peephole_hit(guest_pc, "dstore8", i0);
+            if (has_call) {
+                peephole_call_block_rewrite_count++;
+                peephole_call_block_other_rewrite_count++;
+                dbt_trace_peephole_call_hit(guest_pc, "dstore8", i0);
             }
             hits++;
             i = i0 + 7;
@@ -5206,6 +5465,12 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len) {
             // NOP out first store
             for (size_t k = i0; k < i0 + 10; k++) {
                 code[k] = 0x90;
+            }
+            dbt_trace_peephole_hit(guest_pc, "dstore32", i0);
+            if (has_call) {
+                peephole_call_block_rewrite_count++;
+                peephole_call_block_other_rewrite_count++;
+                dbt_trace_peephole_call_hit(guest_pc, "dstore32", i0);
             }
             hits++;
             i = i0 + 10;
@@ -5279,6 +5544,12 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len) {
                                         code[cmp_pos + 1] = new_modrm;
                                         code[i0] = 0x90;
                                         code[i0 + 1] = 0x90;
+                                        dbt_trace_peephole_hit(guest_pc, "mov_cmp", i0);
+                                        if (has_call) {
+                                            peephole_call_block_rewrite_count++;
+                                            peephole_call_block_other_rewrite_count++;
+                                            dbt_trace_peephole_call_hit(guest_pc, "mov_cmp", i0);
+                                        }
                                         hits++;
                                         i = cmp_pos;
                                         continue;
@@ -5307,6 +5578,12 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len) {
                     if (mod_cmp == 0xC0 && reg_cmp == reg_xor) {
                         code[i0 + 2] = 0x85; // test r/m32, r32
                         code[i0 + 3] = (uint8_t)(0xC0 | (rm_cmp << 3) | rm_cmp);
+                        dbt_trace_peephole_hit(guest_pc, "xor_cmp_to_test", i0);
+                        if (has_call) {
+                            peephole_call_block_rewrite_count++;
+                            peephole_call_block_other_rewrite_count++;
+                            dbt_trace_peephole_call_hit(guest_pc, "xor_cmp_to_test", i0);
+                        }
                         hits++;
                         i = i0 + 4;
                         continue;
@@ -5350,6 +5627,12 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len) {
                             code[i0 + 8] = (uint8_t)((imm0 >> 16) & 0xFF);
                             code[i0 + 9] = (uint8_t)((imm0 >> 24) & 0xFF);
                             code[i0 + 10] = 0x90;
+                            dbt_trace_peephole_hit(guest_pc, "imm_store_imm", i0);
+                            if (has_call) {
+                                peephole_call_block_rewrite_count++;
+                                peephole_call_block_other_rewrite_count++;
+                                dbt_trace_peephole_call_hit(guest_pc, "imm_store_imm", i0);
+                            }
                             hits++;
                             i = i0 + 11;
                             continue;
@@ -5391,6 +5674,12 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len) {
                                     for (size_t k = p2; k < p2 + 5; k++) {
                                         code[k] = 0x90;
                                     }
+                                    dbt_trace_peephole_hit(guest_pc, "zero_store_zero", i0);
+                                    if (has_call) {
+                                        peephole_call_block_rewrite_count++;
+                                        peephole_call_block_other_rewrite_count++;
+                                        dbt_trace_peephole_call_hit(guest_pc, "zero_store_zero", i0);
+                                    }
                                     hits++;
                                     i = p2 + 5;
                                     continue;
@@ -5427,12 +5716,23 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len) {
                     size_t imm1 = q + 1;
                     size_t end1 = imm1 + 4;
                     if (end1 <= len && rd0 == rd1) {
-                        for (size_t k = i0; k < end0; k++) {
-                            code[k] = 0x90;
+                        if (has_call && guard_mode == PEEPHOLE_CALL_GUARD_JCC) {
+                            peephole_guard_skip_immimm_calls_count++;
+                            dbt_trace_peephole_hit(guest_pc, "guard_skip_imm_imm_on_call", i0);
+                        } else {
+                            for (size_t k = i0; k < end0; k++) {
+                                code[k] = 0x90;
+                            }
+                            dbt_trace_peephole_hit(guest_pc, "imm_imm_same_reg", i0);
+                            if (has_call) {
+                                peephole_call_block_rewrite_count++;
+                                peephole_call_block_other_rewrite_count++;
+                                dbt_trace_peephole_call_hit(guest_pc, "imm_imm_same_reg", i0);
+                            }
+                            hits++;
+                            i = end0;
+                            continue;
                         }
-                        hits++;
-                        i = end0;
-                        continue;
                     }
                 }
                 // No Pattern C match — skip past this mov r32, imm32 instruction
@@ -5491,6 +5791,12 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len) {
                 for (size_t k = end0; k < end1; k++) {
                     code[k] = 0x90;
                 }
+                dbt_trace_peephole_hit(guest_pc, "mov_load_store_pair", i0);
+                if (has_call) {
+                    peephole_call_block_rewrite_count++;
+                    peephole_call_block_other_rewrite_count++;
+                    dbt_trace_peephole_call_hit(guest_pc, "mov_load_store_pair", i0);
+                }
                 hits++;
                 i = end1;
                 continue;
@@ -5499,6 +5805,12 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len) {
                 // Store then reload into same reg: remove load.
                 for (size_t k = end0; k < end1; k++) {
                     code[k] = 0x90;
+                }
+                dbt_trace_peephole_hit(guest_pc, "mov_store_load_pair", i0);
+                if (has_call) {
+                    peephole_call_block_rewrite_count++;
+                    peephole_call_block_other_rewrite_count++;
+                    dbt_trace_peephole_call_hit(guest_pc, "mov_store_load_pair", i0);
                 }
                 hits++;
                 i = end1;
@@ -5544,6 +5856,10 @@ static size_t nop_compact_x64(uint8_t *code, size_t len,
     for (size_t i = 0; i < scanned_end; i++)
         if (is_nop[i]) nop_count++;
     if (nop_count == 0) return len;
+
+    // Keep a copy so we can safely abort compaction if post-checks fail.
+    uint8_t original[len];
+    memcpy(original, code, len);
 
     // Phase 2: Build cumulative shift map
     uint16_t shift[len + 1];
@@ -5597,12 +5913,16 @@ static size_t nop_compact_x64(uint8_t *code, size_t len,
                 old_disp = (int8_t)code[pos + disp_off];
             }
 
-            int64_t old_target = (int64_t)pos + (int64_t)insn_len + (int64_t)old_disp;
+            int64_t old_target_abs =
+                (int64_t)(intptr_t)code + (int64_t)pos + (int64_t)insn_len + (int64_t)old_disp;
             int32_t new_disp;
 
-            if (old_target >= 0 && (size_t)old_target <= scanned_end) {
+            int64_t block_base = (int64_t)(intptr_t)code;
+            int64_t block_end = block_base + (int64_t)scanned_end;
+            if (old_target_abs >= block_base && old_target_abs <= block_end) {
                 // Intra-block: both source and target shift
-                new_disp = old_disp + (int32_t)shift[pos] - (int32_t)shift[(size_t)old_target];
+                size_t old_target = (size_t)(old_target_abs - block_base);
+                new_disp = old_disp + (int32_t)shift[pos] - (int32_t)shift[old_target];
             } else {
                 // Extra-block: only source shifts
                 new_disp = old_disp + (int32_t)shift[pos];
@@ -5645,6 +5965,64 @@ static size_t nop_compact_x64(uint8_t *code, size_t len,
 
     // Phase 6: Fill freed tail with INT3 for debugging
     memset(code + new_len, 0xCC, len - new_len);
+
+    // Phase 7: Validate that in-block branch/call targets still land on
+    // instruction boundaries after compaction. If not, revert compaction.
+    bool is_start[new_len + 1];
+    memset(is_start, 0, sizeof(is_start));
+    is_start[0] = true;
+    pos = 0;
+    while (pos < new_len) {
+        int ilen = x64_insn_length(code, pos, new_len);
+        if (ilen <= 0) {
+            memcpy(code, original, len);
+            return len;
+        }
+        pos += ilen;
+        if (pos <= new_len) is_start[pos] = true;
+    }
+
+    pos = 0;
+    while (pos < new_len) {
+        int ilen = x64_insn_length(code, pos, new_len);
+        if (ilen <= 0) {
+            memcpy(code, original, len);
+            return len;
+        }
+
+        uint8_t op = code[pos];
+        size_t disp_off = 0;
+        size_t insn_len = 0;
+        int disp_size = 0;
+        if (pos + 1 < new_len && op == 0x0F && (code[pos + 1] & 0xF0) == 0x80) {
+            disp_off = 2; insn_len = 6; disp_size = 4;
+        } else if (op == 0xE9 || op == 0xE8) {
+            disp_off = 1; insn_len = 5; disp_size = 4;
+        } else if ((op & 0xF0) == 0x70 || op == 0xEB) {
+            disp_off = 1; insn_len = 2; disp_size = 1;
+        }
+
+        if (disp_size > 0 && pos + insn_len <= new_len) {
+            int32_t disp;
+            if (disp_size == 4) {
+                disp = (int32_t)((uint32_t)code[pos + disp_off] |
+                                 ((uint32_t)code[pos + disp_off + 1] << 8) |
+                                 ((uint32_t)code[pos + disp_off + 2] << 16) |
+                                 ((uint32_t)code[pos + disp_off + 3] << 24));
+            } else {
+                disp = (int8_t)code[pos + disp_off];
+            }
+            int64_t target = (int64_t)pos + (int64_t)insn_len + (int64_t)disp;
+            if (target >= 0 && (size_t)target <= new_len) {
+                if (!is_start[(size_t)target]) {
+                    memcpy(code, original, len);
+                    return len;
+                }
+            }
+        }
+
+        pos += ilen;
+    }
 
     return new_len;
 }
@@ -7496,12 +7874,14 @@ cached_block_done:
     block->host_size = emit_offset(e);
 
     if (ctx->peephole_enabled && block->host_size > 0) {
-        size_t hits = peephole_optimize_x64(block->host_code, block->host_size);
+        size_t hits = peephole_optimize_x64(block->host_code, block->host_size, block->guest_pc);
         if (hits > 0) {
             cache->peephole_hits += hits;
-            // Compact NOPs out of the code
-            size_t new_size = nop_compact_x64(block->host_code, block->host_size, block);
-            block->host_size = (uint32_t)new_size;
+            if (dbt_nop_compact_enabled()) {
+                // Compact NOPs out of the code
+                size_t new_size = nop_compact_x64(block->host_code, block->host_size, block);
+                block->host_size = (uint32_t)new_size;
+            }
         }
     }
 
@@ -7551,7 +7931,8 @@ cached_block_done:
     } else {
         block->side_exit_count = 0;
     }
-    stage5_trace_translated_block(block);
+    stage5_trace_translated_block(ctx, block);
+    stage5_trace_translated_block_guest_words(ctx, block);
 
     // Commit code to cache
     cache_commit_code(cache, block->host_size);

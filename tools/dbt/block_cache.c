@@ -9,6 +9,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
+#include "translate.h"
 #include <stddef.h>
 #include <sys/mman.h>
 
@@ -515,10 +517,19 @@ void cache_commit_code(block_cache_t *cache, uint32_t size) {
 
 void cache_record_exit(block_cache_t *cache, translated_block_t *block,
                        int exit_idx, uint32_t target_pc, uint8_t *patch_site) {
-    (void)cache;  // Unused for now
-
     if (exit_idx >= MAX_BLOCK_EXITS) {
         return;  // Shouldn't happen
+    }
+    if (cache) {
+        uint8_t *base = cache->code_buffer;
+        uint8_t *limit = cache->code_buffer + cache->code_buffer_size;
+        if (patch_site < base || patch_site + 4 > limit) {
+            cache->patch_oob_count++;
+            fprintf(stderr,
+                    "DBT: cache_record_exit patch_site OOB block=0x%08X exit=%d target=0x%08X patch=%p range=[%p,%p)\n",
+                    block ? block->guest_pc : 0, exit_idx, target_pc,
+                    (void *)patch_site, (void *)base, (void *)limit);
+        }
     }
 
     block->exits[exit_idx].target_pc = target_pc;
@@ -572,7 +583,7 @@ void cache_chain_pending(block_cache_t *cache, translated_block_t *target) {
                 b->exits[exit_idx].patch_site != NULL &&
                 b->exits[exit_idx].target_pc == target_pc) {
 
-                cache_patch_jmp(b->exits[exit_idx].patch_site, target->host_code);
+                cache_patch_jmp(cache, b->exits[exit_idx].patch_site, target->host_code);
                 b->exits[exit_idx].chained = true;
                 cache->chain_count++;
             }
@@ -592,7 +603,20 @@ void cache_chain_pending(block_cache_t *cache, translated_block_t *target) {
     }
 }
 
-void cache_patch_jmp(uint8_t *patch_site, uint8_t *target) {
+void cache_patch_jmp(block_cache_t *cache, uint8_t *patch_site, uint8_t *target) {
+    if (cache) {
+        cache->patch_attempt_count++;
+        uint8_t *base = cache->code_buffer;
+        uint8_t *limit = cache->code_buffer + cache->code_buffer_used;
+        if (patch_site < base || patch_site + 4 > limit ||
+            target < base || target >= limit) {
+            cache->patch_oob_count++;
+            fprintf(stderr,
+                    "DBT: cache_patch_jmp OOB patch=%p target=%p range=[%p,%p)\n",
+                    (void *)patch_site, (void *)target, (void *)base, (void *)limit);
+            return;
+        }
+    }
 #ifdef __aarch64__
     // On AArch64, patch_site points to the B instruction itself (4 bytes).
     // Rewrite the entire instruction with the correct offset.
@@ -601,6 +625,7 @@ void cache_patch_jmp(uint8_t *patch_site, uint8_t *target) {
 
     // Check 26-bit signed range (+-128MB)
     if (imm26 < -(1 << 25) || imm26 >= (1 << 25)) {
+        if (cache) cache->patch_rel_oob_count++;
         fprintf(stderr, "cache_patch_jmp: AArch64 B offset out of range!\n");
         return;
     }
@@ -622,6 +647,7 @@ void cache_patch_jmp(uint8_t *patch_site, uint8_t *target) {
 
     // Check if offset fits in 32 bits (should always be true with our buffer sizes)
     if (rel < INT32_MIN || rel > INT32_MAX) {
+        if (cache) cache->patch_rel_oob_count++;
         fprintf(stderr, "cache_patch_jmp: offset out of range!\n");
         return;
     }
@@ -656,6 +682,14 @@ void cache_print_stats(block_cache_t *cache) {
     }
 
     fprintf(stderr, "Chains made:   %lu\n", cache->chain_count);
+    if (cache->patch_attempt_count > 0 || cache->patch_oob_count > 0 ||
+        cache->patch_rel_oob_count > 0) {
+        fprintf(stderr,
+                "Patch stats:   attempts=%lu oob=%lu rel_oob=%lu\n",
+                cache->patch_attempt_count,
+                cache->patch_oob_count,
+                cache->patch_rel_oob_count);
+    }
     fprintf(stderr, "Cache flushes: %lu\n", cache->flush_count);
 
     // Stage 3 inline lookup stats
@@ -733,6 +767,27 @@ void cache_print_stats(block_cache_t *cache) {
     }
     if (cache->peephole_hits > 0) {
         fprintf(stderr, "Peephole rewrites: %lu\n", cache->peephole_hits);
+    }
+    if (peephole_guard_skip_calls_count > 0) {
+        fprintf(stderr, "Peephole guard (call blocks skipped): %" PRIu32 "\n",
+                peephole_guard_skip_calls_count);
+    }
+    if (peephole_guard_skip_jcc_calls_count > 0) {
+        fprintf(stderr, "Peephole guard (jcc-fold skipped on call blocks): %" PRIu32 "\n",
+                peephole_guard_skip_jcc_calls_count);
+    }
+    if (peephole_guard_skip_immimm_calls_count > 0) {
+        fprintf(stderr, "Peephole guard (imm-imm skipped on call blocks): %" PRIu32 "\n",
+                peephole_guard_skip_immimm_calls_count);
+    }
+    if (peephole_call_block_seen_count > 0) {
+        fprintf(stderr,
+                "Peephole call-blocks: seen=%" PRIu32 " rewrites=%" PRIu32
+                " jcc=%" PRIu32 " other=%" PRIu32 "\n",
+                peephole_call_block_seen_count,
+                peephole_call_block_rewrite_count,
+                peephole_call_block_jcc_fold_count,
+                peephole_call_block_other_rewrite_count);
     }
 
     // Side-exit profile summary (debug)
@@ -869,6 +924,9 @@ void cache_reset_stats(block_cache_t *cache) {
     cache->superblock_host_bytes_total = 0;
     cache->peephole_hits = 0;
     cache->side_exit_pc_count = 0;
+    cache->patch_attempt_count = 0;
+    cache->patch_oob_count = 0;
+    cache->patch_rel_oob_count = 0;
 }
 
 static void dump_bytes(const uint8_t *data, uint32_t len, uint32_t max_len) {
