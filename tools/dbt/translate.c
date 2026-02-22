@@ -55,6 +55,7 @@ uint32_t stage5_emit_fallback_superblock_policy = 0;
 uint32_t stage5_emit_fallback_policy_guardrail = 0;
 uint32_t stage5_emit_fallback_policy_jalr_indirect = 0;
 uint32_t stage5_emit_fallback_policy_direct_branch = 0;
+uint32_t stage5_emit_policy_allow_call = 0;
 uint32_t stage5_emit_prefilter_skip = 0;
 uint32_t stage5_emit_prefilter_skip_branch_head = 0;
 uint32_t stage5_emit_prefilter_skip_noncmp_head = 0;
@@ -128,6 +129,17 @@ static bool stage5_validate_lift_enabled(void) {
     static bool enabled = false;
     if (!inited) {
         const char *v = getenv("SLOW32_DBT_STAGE5_VALIDATE_LIFT");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+static bool stage5_emit_calls_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_EMIT_CALLS");
         enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
         inited = true;
     }
@@ -2097,7 +2109,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         stage5_prefilter_has_near_terminal(ctx, guest_pc, 8);
     if ((ctx->superblock_enabled && is_branch_op && !allow_branch_probe) ||
         inst_pref.opcode == OP_JALR ||
-        (inst_pref.opcode == OP_JAL && inst_pref.rd == 31)) {
+        (inst_pref.opcode == OP_JAL && inst_pref.rd == 31 && !stage5_emit_calls_enabled())) {
         stage5_emit_prefilter_skip++;
         if (ctx->superblock_enabled && is_branch_op) {
             stage5_emit_prefilter_skip_branch_head++;
@@ -2237,8 +2249,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     }
 
     // Policy fallback: keep call/return/indirect JALR forms on Stage4's mature path.
-    if (emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
-        emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG ||
+    if (((emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
+          emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG) &&
+         !stage5_emit_calls_enabled()) ||
         emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_SHORT ||
         emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_LONG) {
         ctx->superblock_enabled = saved_superblock_enabled;
@@ -2246,6 +2259,11 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         stage5_emit_fallback_shape++;
         stage5_emit_fallback_superblock_policy++;
         return false;
+    }
+    if ((emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
+         emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG) &&
+        stage5_emit_calls_enabled()) {
+        stage5_emit_policy_allow_call++;
     }
 
     // Superblock-first policy: keep larger direct branches on the Stage4 path.

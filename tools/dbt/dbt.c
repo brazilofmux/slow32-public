@@ -1498,6 +1498,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "  SLOW32_DBT_STAGE5_VALIDATE_LIFT=1  Validate lift semantics against decoded steps\n");
     fprintf(stderr, "  SLOW32_DBT_STAGE5_VALIDATE_ABORT=1 Abort on first validation mismatch\n");
     fprintf(stderr, "  SLOW32_DBT_STAGE5_VALIDATE_REQUIRE=1 Return non-zero if validator reports mismatches\n");
+    fprintf(stderr, "  SLOW32_DBT_STAGE5_EMIT_CALLS=1  Allow Stage5 emit for terminal JAL call regions\n");
 }
 
 static void parse_service_list(const char *list, char names[][S32_MAX_SVC_NAME], int *count, int max) {
@@ -2181,6 +2182,10 @@ int main(int argc, char **argv) {
                         fprintf(stderr, "  emit policy direct_branch: %" PRIu32 "\n",
                                 stage5_emit_fallback_policy_direct_branch);
                     }
+                }
+                if (stage5_emit_policy_allow_call > 0) {
+                    fprintf(stderr, "  emit policy allow_call: %" PRIu32 "\n",
+                            stage5_emit_policy_allow_call);
                 }
                 if (stage5_emit_prefilter_skip > 0) {
                     fprintf(stderr, "  emit prefilter_skip: %" PRIu32 "\n",

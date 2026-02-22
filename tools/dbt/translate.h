@@ -68,6 +68,7 @@ extern uint32_t stage5_emit_fallback_superblock_policy;
 extern uint32_t stage5_emit_fallback_policy_guardrail;
 extern uint32_t stage5_emit_fallback_policy_jalr_indirect;
 extern uint32_t stage5_emit_fallback_policy_direct_branch;
+extern uint32_t stage5_emit_policy_allow_call;
 extern uint32_t stage5_emit_prefilter_skip;
 extern uint32_t stage5_emit_prefilter_skip_branch_head;
 extern uint32_t stage5_emit_prefilter_skip_noncmp_head;
