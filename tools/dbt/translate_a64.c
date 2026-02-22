@@ -99,6 +99,7 @@ uint32_t stage5_emit_region_side_exit_disabled = 0;
 uint32_t stage5_emit_region_side_exit_call_guard = 0;
 uint32_t stage5_emit_region_side_exit_call_guard_jal = 0;
 uint32_t stage5_emit_region_side_exit_call_guard_jalr = 0;
+uint32_t stage5_emit_region_side_exit_call_guard_relaxed_after_only = 0;
 uint32_t stage5_emit_policy_allow_call = 0;
 uint32_t stage5_emit_policy_allow_call_bench = 0;
 uint32_t stage5_emit_policy_allow_jalr_ret_bench = 0;

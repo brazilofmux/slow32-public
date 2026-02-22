@@ -2523,6 +2523,11 @@ int main(int argc, char **argv) {
                                 stage5_emit_region_side_exit_call_guard_jal,
                                 stage5_emit_region_side_exit_call_guard_jalr);
                     }
+                    if (stage5_emit_region_side_exit_call_guard_relaxed_after_only > 0) {
+                        fprintf(stderr,
+                                "    side_exit call_guard relaxed_after_only: %" PRIu32 "\n",
+                                stage5_emit_region_side_exit_call_guard_relaxed_after_only);
+                    }
                     if (stage5_emit_side_exit_forced_family_c_unsigned > 0) {
                         fprintf(stderr,
                                 "  emit side_exit forced_family_c_unsigned: %" PRIu32 "\n",
