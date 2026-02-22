@@ -237,7 +237,7 @@ static bool stage5_bench_profile_enabled(void) {
 
 static uint32_t stage5_bench_max_jal_jump_ginst(void) {
     static bool inited = false;
-    static uint32_t limit = 2;
+    static uint32_t limit = MAX_BLOCK_INSTS;
     if (!inited) {
         const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_MAX_JAL_JUMP_GINST");
         if (v && v[0] != '\0') {
@@ -251,7 +251,7 @@ static uint32_t stage5_bench_max_jal_jump_ginst(void) {
 
 static uint32_t stage5_bench_max_direct_branch_ginst(void) {
     static bool inited = false;
-    static uint32_t limit = 16;
+    static uint32_t limit = MAX_BLOCK_INSTS;
     if (!inited) {
         const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_MAX_DIRECT_BRANCH_GINST");
         if (v && v[0] != '\0') {
@@ -265,7 +265,7 @@ static uint32_t stage5_bench_max_direct_branch_ginst(void) {
 
 static uint32_t stage5_bench_max_jal_call_ginst(void) {
     static bool inited = false;
-    static uint32_t limit = 4;
+    static uint32_t limit = MAX_BLOCK_INSTS;
     if (!inited) {
         const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_MAX_JAL_CALL_GINST");
         if (v && v[0] != '\0') {
@@ -279,7 +279,7 @@ static uint32_t stage5_bench_max_jal_call_ginst(void) {
 
 static uint32_t stage5_bench_max_jal_call_long_ginst(void) {
     static bool inited = false;
-    static uint32_t limit = 0;
+    static uint32_t limit = MAX_BLOCK_INSTS;
     if (!inited) {
         const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_MAX_JAL_CALL_LONG_GINST");
         if (v && v[0] != '\0') {
@@ -293,7 +293,7 @@ static uint32_t stage5_bench_max_jal_call_long_ginst(void) {
 
 static uint32_t stage5_bench_max_jalr_ret_short_ginst(void) {
     static bool inited = false;
-    static uint32_t limit = 0;
+    static uint32_t limit = MAX_BLOCK_INSTS;
     if (!inited) {
         const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_MAX_JALR_RET_SHORT_GINST");
         if (v && v[0] != '\0') {
@@ -307,7 +307,7 @@ static uint32_t stage5_bench_max_jalr_ret_short_ginst(void) {
 
 static uint32_t stage5_bench_max_jalr_ret_long_ginst(void) {
     static bool inited = false;
-    static uint32_t limit = 0;
+    static uint32_t limit = MAX_BLOCK_INSTS;
     if (!inited) {
         const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_MAX_JALR_RET_LONG_GINST");
         if (v && v[0] != '\0') {
@@ -321,7 +321,7 @@ static uint32_t stage5_bench_max_jalr_ret_long_ginst(void) {
 
 static uint32_t stage5_bench_max_block_end_ginst(void) {
     static bool inited = false;
-    static uint32_t limit = 8;
+    static uint32_t limit = MAX_BLOCK_INSTS;
     if (!inited) {
         const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_MAX_BLOCK_END_GINST");
         if (v && v[0] != '\0') {
@@ -331,6 +331,17 @@ static uint32_t stage5_bench_max_block_end_ginst(void) {
         inited = true;
     }
     return limit;
+}
+
+static bool stage5_bench_jal_jump_backedge_guard_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_GUARD_JAL_JUMP_BACKEDGE");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
 }
 
 static uint32_t stage5_emit_regflow_cross_limit(void) {
@@ -3406,6 +3417,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         return false;
     }
     if (bench_profile &&
+        stage5_bench_jal_jump_backedge_guard_enabled() &&
         emitted_pattern == STAGE5_BURG_PATTERN_JAL_JUMP &&
         region.guest_inst_count > 2u) {
         int32_t jal_imm = 0;
