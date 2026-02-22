@@ -34,7 +34,7 @@ HDRS = cpu_state.h $(ARCH_HDRS) translate.h block_cache.h dbt_limits.h \
 # Main target
 TARGET = slow32-dbt
 
-.PHONY: all clean test test-diff compare-safe-unsafe compare-safe-unsafe-strict stress-safe-unsafe sweep-peephole sweep-peephole-strict stage5-validate-preflight stage5-gate stage5-gate-fast stage5-native-bench debug disasm
+.PHONY: all clean test test-diff compare-safe-unsafe compare-safe-unsafe-strict stress-safe-unsafe sweep-peephole sweep-peephole-strict stage5-validate-preflight stage5-gate stage5-gate-fast stage5-native-bench stage5-native-compare stage5-native-bench-compare debug disasm
 
 all: $(TARGET)
 	@echo "Built for $(UNAME_M)"
@@ -145,6 +145,24 @@ stage5-native-bench: $(TARGET)
 	fi
 	@echo "Running Stage5-native benchmark profile: $(BIN)"
 	@./$(TARGET) -N $(DBT_ARGS) $(BIN) $(ARGS)
+
+# Compare correctness+timing summary for Stage4 vs Stage5-native over tests.
+# Optional: TESTS="path1 path2 ..."
+stage5-native-compare: $(TARGET)
+	@echo "Comparing Stage4 (-4) vs Stage5-native (-N)..."
+	@STAGE4_ARGS="-4" STAGE5_ARGS="-N" ./scripts/compare-stage4-stage5.sh $(TESTS)
+
+# Repeated timing benchmark for one program.
+# Usage:
+#   make stage5-native-bench-compare BIN=../../benchmark_core.s32x RUNS=30
+RUNS ?= 30
+stage5-native-bench-compare: $(TARGET)
+	@if [ -z "$(BIN)" ]; then \
+		echo "usage: make stage5-native-bench-compare BIN=<program.s32x> [RUNS=30]"; \
+		exit 1; \
+	fi
+	@echo "Benchmarking Stage4 (-4) vs Stage5-native (-N): $(BIN), runs=$(RUNS)"
+	@STAGE4_ARGS="-4" STAGE5_ARGS="-N" ./scripts/bench-stage4-stage5.sh "$(BIN)" "$(RUNS)"
 
 clean:
 	rm -f *.o $(TARGET)

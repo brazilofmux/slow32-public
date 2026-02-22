@@ -8,6 +8,8 @@ else
     ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 fi
 DBT="${DBT:-$ROOT/tools/dbt/slow32-dbt}"
+STAGE4_ARGS="${STAGE4_ARGS:--4}"
+STAGE5_ARGS="${STAGE5_ARGS:--N}"
 DIAG_ON_MISMATCH="${DBT_DIAG_ON_MISMATCH:-0}"
 DIAG_BLOCK_PC="${DBT_DIAG_BLOCK_PC:-}"
 DIAG_BRANCH_PC="${DBT_DIAG_BRANCH_PC:-}"
@@ -18,6 +20,9 @@ if [[ ! -x "$DBT" ]]; then
     echo "error: missing executable: $DBT" >&2
     exit 1
 fi
+
+read -r -a S4_ARR <<< "$STAGE4_ARGS"
+read -r -a S5_ARR <<< "$STAGE5_ARGS"
 
 if [[ $# -gt 0 ]]; then
     TESTS=("$@")
@@ -53,9 +58,9 @@ for t in "${TESTS[@]}"; do
     err5="$tmpdir/${base}.s5.err"
 
     set +e
-    "$DBT" -4 -s "$t" >"$out4" 2>"$err4"
+    "$DBT" "${S4_ARR[@]}" -s "$t" >"$out4" 2>"$err4"
     rc4=$?
-    "$DBT" -5 -G -W -s "$t" >"$out5" 2>"$err5"
+    "$DBT" "${S5_ARR[@]}" -s "$t" >"$out5" 2>"$err5"
     rc5=$?
     set -e
 
@@ -97,7 +102,7 @@ for t in "${TESTS[@]}"; do
         fi
 
         set +e
-        env "${diag_env[@]}" "$DBT" -5 -G -W -s "$t" >"$diag_out" 2>"$diag_err"
+        env "${diag_env[@]}" "$DBT" "${S5_ARR[@]}" -s "$t" >"$diag_out" 2>"$diag_err"
         diag_rc=$?
         set -e
         echo "diag[$base]: rc=$diag_rc logs: $diag_out $diag_err" >&2
