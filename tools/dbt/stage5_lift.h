@@ -43,9 +43,13 @@ typedef struct {
     int32_t imm;
     uint32_t pc;
     bool synthetic;
+    bool is_side_exit;   // forward branch converted to superblock side exit
 } stage5_ir_node_t;
 
 #define STAGE5_MAX_IR_NODES 128
+// Keep side-exit lifting disabled until Stage5 side-exit emission is fully
+// hardened against superblock formation pathologies.
+#define STAGE5_MAX_SIDE_EXITS 0
 
 typedef struct {
     uint32_t start_pc;
@@ -58,6 +62,7 @@ typedef struct {
     bool has_unsigned_cmp;
     bool has_unsupported_opcode;
     uint8_t unsupported_opcode;
+    uint32_t side_exit_count;
     uint32_t ir_count;
     stage5_ir_node_t ir[STAGE5_MAX_IR_NODES];
     stage5_lift_reason_t reason;

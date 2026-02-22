@@ -252,6 +252,7 @@ static bool append_ir_node(stage5_lift_region_t *region, stage5_ir_node_kind_t k
     n->imm = imm;
     n->pc = pc;
     n->synthetic = synthetic;
+    n->is_side_exit = false;
     return true;
 }
 
@@ -269,6 +270,7 @@ void stage5_lift_region_init(stage5_lift_region_t *region, uint32_t start_pc) {
     region->has_unsigned_cmp = false;
     region->has_unsupported_opcode = false;
     region->unsupported_opcode = 0;
+    region->side_exit_count = 0;
     region->ir_count = 0;
     region->reason = STAGE5_LIFT_NOT_IMPLEMENTED;
 }
@@ -371,9 +373,16 @@ bool stage5_lift_superblock(stage5_lift_region_t *region,
         }
 
         if (is_branch_opcode(opcode)) {
-            // Initial slice supports either:
-            // 1) compare-result branch (prev compare), or
-            // 2) direct branch compare (beq/bne/blt/...).
+            // Forward branches (imm > 0) can become superblock side exits:
+            // the fall-through is the hot path and we continue lifting.
+            // Backward branches always terminate the region.
+#if STAGE5_MAX_SIDE_EXITS > 0
+            bool can_side_exit = (imm > 0) &&
+                                 (region->side_exit_count < STAGE5_MAX_SIDE_EXITS);
+#else
+            bool can_side_exit = false;
+#endif
+
             if (!prev_was_compare) {
                 region->node_count++;  // synthetic compare node
                 region->value_count++;
@@ -391,9 +400,24 @@ bool stage5_lift_superblock(stage5_lift_region_t *region,
             if (is_unsigned_branch_opcode(opcode)) {
                 region->has_unsigned_cmp = true;
             }
-            region->has_terminal_branch = true;
             region->guest_inst_count++;
             pc += 4;
+
+            if (can_side_exit) {
+                // Mark this branch as a side exit and continue lifting.
+                region->ir[region->ir_count - 1].is_side_exit = true;
+                region->side_exit_count++;
+                prev_was_compare = false;
+                if (region->node_count > STAGE5_MAX_NODES) {
+                    region->reason = STAGE5_LIFT_REGION_TOO_LARGE;
+                    region->end_pc = pc;
+                    return false;
+                }
+                continue;
+            }
+
+            // Backward branch or side-exit limit: terminate region.
+            region->has_terminal_branch = true;
             region->end_pc = pc;
             region->reason = STAGE5_LIFT_OK;
             return true;

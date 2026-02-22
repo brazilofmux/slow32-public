@@ -59,6 +59,7 @@ uint64_t stage5_emit_time_ns = 0;
 uint64_t stage5_emit_success_time_ns = 0;
 uint64_t stage5_emit_fallback_time_ns = 0;
 uint32_t stage5_emit_fused_cmp_branch = 0;
+uint32_t stage5_emit_side_exits = 0;
 
 static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
 static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg);
@@ -93,6 +94,20 @@ static inline bool stage5_pattern_is_direct_branch(stage5_burg_pattern_t pattern
            pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_NE ||
            pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL ||
            pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_RELU;
+}
+
+// Map SLOW-32 branch opcode to x86 inverted condition code (for side-exit skip).
+// The inverted CC means: skip trampoline when branch is NOT taken.
+static uint8_t stage5_branch_inv_cc(uint8_t opcode) {
+    switch (opcode) {
+        case 0x48: return 0x05;  // BEQ → inv JNE (skip if !=)
+        case 0x49: return 0x04;  // BNE → inv JE  (skip if ==)
+        case 0x4A: return 0x0D;  // BLT → inv JGE (skip if >=)
+        case 0x4B: return 0x0C;  // BGE → inv JL  (skip if <)
+        case 0x4C: return 0x03;  // BLTU → inv JAE (skip if >=u)
+        case 0x4D: return 0x02;  // BGEU → inv JB  (skip if <u)
+        default:   return 0xFF;
+    }
 }
 
 static inline void stage5_translate_jal_jump_compact(translate_ctx_t *ctx,
@@ -931,6 +946,80 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             if (n->synthetic) continue;
             if (terminal_idx >= 0 && (int)i == terminal_idx) continue;
             if (fuse_cmp_idx >= 0 && (int)i == fuse_cmp_idx) continue;
+
+            // Side-exit branch: emit compare + jcc_short + jmp trampoline,
+            // record deferred cold stub, and continue with fall-through.
+            if (n->is_side_exit && n->kind == STAGE5_IR_BRANCH &&
+                ctx->exit_idx < MAX_BLOCK_EXITS &&
+                ctx->deferred_exit_count < MAX_BLOCK_EXITS) {
+                emit_ctx_t *e = &ctx->emit;
+                uint32_t branch_pc = n->pc;
+                uint32_t fall_pc = branch_pc + 4;
+                uint32_t taken_pc = fall_pc + n->imm;
+                ctx->guest_pc = branch_pc;
+
+                // Materialize any deferred comparison (pending_cond) before
+                // emitting our own compare — SLT→BEQ fusion may have deferred
+                // the compare result into pending_cond.
+                flush_pending_cond(ctx);
+
+                // Emit the compare for this branch.
+                // Always use CMP (not TEST) for correct signed/unsigned semantics
+                // across all branch types (BEQ/BNE/BLT/BGE/BLTU/BGEU).
+                {
+                    x64_reg_t h1 = (n->rs1 != 0) ? guest_host_reg(ctx, n->rs1) : X64_NOREG;
+                    x64_reg_t h2 = (n->rs2 != 0) ? guest_host_reg(ctx, n->rs2) : X64_NOREG;
+                    x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : RAX;
+                    x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : RCX;
+                    if (h1 == X64_NOREG) {
+                        flush_pending_write(ctx);
+                        if (n->rs1 == 0)
+                            emit_xor_r32_r32(e, RAX, RAX);
+                        else
+                            emit_load_guest_reg(ctx, RAX, n->rs1);
+                    }
+                    if (h2 == X64_NOREG) {
+                        if (n->rs2 == 0)
+                            emit_xor_r32_r32(e, RCX, RCX);
+                        else
+                            emit_load_guest_reg(ctx, RCX, n->rs2);
+                    }
+                    if (h1 != X64_NOREG || h2 != X64_NOREG)
+                        flush_pending_write(ctx);
+                    emit_cmp_r32_r32(e, cmp_a, cmp_b);
+                }
+
+                // Short jcc (2 bytes) skips the 5-byte jmp trampoline.
+                uint8_t inv_cc = stage5_branch_inv_cc(n->opcode);
+                emit_jcc_short(e, inv_cc, 5);
+
+                // 5-byte jmp rel32 trampoline to cold stub (patched later).
+                size_t jmp_patch = emit_offset(e) + 1;
+                emit_jmp_rel32(e, 0);
+
+                // Record deferred side exit.
+                int di = ctx->deferred_exit_count++;
+                ctx->deferred_exits[di].jmp_patch_offset = jmp_patch;
+                ctx->deferred_exits[di].target_pc = taken_pc;
+                ctx->deferred_exits[di].exit_idx = ctx->exit_idx;
+                ctx->deferred_exits[di].branch_pc = branch_pc;
+                for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
+                    ctx->deferred_exits[di].dirty_snapshot[s] = ctx->reg_alloc[s].dirty;
+                    ctx->deferred_exits[di].allocated_snapshot[s] = ctx->reg_alloc[s].allocated;
+                    ctx->deferred_exits[di].guest_reg_snapshot[s] = ctx->reg_alloc[s].guest_reg;
+                }
+                ctx->deferred_exits[di].pending_write_valid = ctx->pending_write.valid;
+                ctx->deferred_exits[di].pending_write_guest_reg = ctx->pending_write.guest_reg;
+                ctx->deferred_exits[di].pending_write_host_reg = ctx->pending_write.host_reg;
+
+                if (ctx->block) {
+                    ctx->block->flags |= BLOCK_FLAG_DIRECT;
+                }
+                ctx->exit_idx++;
+                stage5_emit_side_exits++;
+                continue;
+            }
+
             ctx->guest_pc = n->pc;
             ctx->current_inst_idx = (int)i;
             switch (n->opcode) {
