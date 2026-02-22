@@ -30,7 +30,10 @@ tmpdir=$(mktemp -d /tmp/stage5-validate-preflight.XXXXXX)
 trap 'rm -rf "$tmpdir"' EXIT
 
 echo "stage5-validate-preflight: tests=${#TESTS[@]}"
-printf "%-20s %-6s %-8s %-8s\n" "test" "rc" "mismatch" "eligible"
+printf "%-20s %-6s %-8s %-8s %-9s %-8s\n" "test" "rc" "mismatch" "eligible" "attempted" "cover%"
+
+total_eligible=0
+total_attempted=0
 
 for t in "${TESTS[@]}"; do
     if [[ ! -f "$t" ]]; then
@@ -50,14 +53,28 @@ for t in "${TESTS[@]}"; do
 
     mismatch="0"
     eligible="-"
+    attempted="-"
+    cover="-"
     if rg -q "stage5-validate mismatch" "$err"; then
         mismatch="1"
     fi
     if rg -q "Stage5 validate eligible:" "$err"; then
         eligible=$(awk '/Stage5 validate eligible:/ {print $4}' "$err" | tail -n1)
     fi
+    if rg -q "Stage5 validate attempted:" "$err"; then
+        attempted=$(awk '/Stage5 validate attempted:/ {print $4}' "$err" | tail -n1)
+    fi
+    if [[ "$eligible" != "-" && "$attempted" != "-" ]]; then
+        total_eligible=$((total_eligible + eligible))
+        total_attempted=$((total_attempted + attempted))
+        if [[ "$attempted" -gt 0 ]]; then
+            cover=$(awk -v e="$eligible" -v a="$attempted" 'BEGIN { printf "%.1f", (100.0 * e) / a }')
+        else
+            cover="0.0"
+        fi
+    fi
 
-    printf "%-20s %-6s %-8s %-8s\n" "$base" "$rc" "$mismatch" "$eligible"
+    printf "%-20s %-6s %-8s %-8s %-9s %-8s\n" "$base" "$rc" "$mismatch" "$eligible" "$attempted" "$cover"
 
     if [[ $rc -ne 0 ]]; then
         echo "failure: $base (rc=$rc)" >&2
@@ -70,5 +87,10 @@ for t in "${TESTS[@]}"; do
         exit 2
     fi
 done
+
+if [[ "$total_attempted" -gt 0 ]]; then
+    total_cover=$(awk -v e="$total_eligible" -v a="$total_attempted" 'BEGIN { printf "%.1f", (100.0 * e) / a }')
+    echo "stage5-validate-preflight: coverage eligible/attempted=${total_eligible}/${total_attempted} (${total_cover}%)"
+fi
 
 echo "stage5-validate-preflight: all ok"
