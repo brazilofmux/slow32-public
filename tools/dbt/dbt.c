@@ -53,6 +53,9 @@ static bool bounds_checks_disabled = false;
 static bool trace_branch_exit_enabled = false;
 static int trace_branch_exit_budget = 0;
 static uint32_t trace_branch_exit_pc_filter = 0;
+static bool trace_block_exits_enabled = false;
+static int trace_block_exits_budget = 0;
+static uint32_t trace_block_exits_pc = 0;
 
 // MMIO state
 static mmio_ring_state_t mmio_state;
@@ -89,15 +92,24 @@ static void dbt_init_branch_trace_from_env(void) {
 
     const char *v = getenv("SLOW32_DBT_TRACE_BRANCH_EXIT");
     trace_branch_exit_enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-    if (!trace_branch_exit_enabled) return;
+    if (trace_branch_exit_enabled) {
+        const char *maxv = getenv("SLOW32_DBT_TRACE_BRANCH_EXIT_MAX");
+        trace_branch_exit_budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 64;
+        if (trace_branch_exit_budget < 0) trace_branch_exit_budget = 0;
 
-    const char *maxv = getenv("SLOW32_DBT_TRACE_BRANCH_EXIT_MAX");
-    trace_branch_exit_budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 64;
-    if (trace_branch_exit_budget < 0) trace_branch_exit_budget = 0;
+        const char *pcv = getenv("SLOW32_DBT_TRACE_BRANCH_PC");
+        if (pcv && pcv[0] != '\0') {
+            trace_branch_exit_pc_filter = (uint32_t)strtoul(pcv, NULL, 0);
+        }
+    }
 
-    const char *pcv = getenv("SLOW32_DBT_TRACE_BRANCH_PC");
-    if (pcv && pcv[0] != '\0') {
-        trace_branch_exit_pc_filter = (uint32_t)strtoul(pcv, NULL, 0);
+    const char *bx = getenv("SLOW32_DBT_TRACE_BLOCK_EXITS_PC");
+    if (bx && bx[0] != '\0') {
+        trace_block_exits_enabled = true;
+        trace_block_exits_pc = (uint32_t)strtoul(bx, NULL, 0);
+        const char *bmax = getenv("SLOW32_DBT_TRACE_BLOCK_EXITS_MAX");
+        trace_block_exits_budget = (bmax && bmax[0] != '\0') ? atoi(bmax) : 8;
+        if (trace_block_exits_budget < 0) trace_block_exits_budget = 0;
     }
 }
 
@@ -135,6 +147,27 @@ static void dbt_trace_branch_exit(block_cache_t *cache,
             cpu->exit_reason, cpu->pc, block ? block->guest_pc : 0, exit_idx,
             branch_pc, target_pc, cpu->exit_info);
     trace_branch_exit_budget--;
+}
+
+static void dbt_trace_block_exits(translated_block_t *block) {
+    if (!trace_block_exits_enabled || !block) return;
+    if (trace_block_exits_budget == 0) return;
+    if (trace_block_exits_pc != 0 && block->guest_pc != trace_block_exits_pc) return;
+
+    uint32_t guest_end = block->guest_pc + block->guest_size;
+    fprintf(stderr,
+            "dbt-block-exits block_pc=0x%08X block_end=0x%08X host_size=%u exits=%u side_exits=%u\n",
+            block->guest_pc, guest_end, block->host_size, block->exit_count, block->side_exit_count);
+    for (uint8_t i = 0; i < block->exit_count; i++) {
+        fprintf(stderr,
+                "  exit[%u] target=0x%08X branch_pc=0x%08X chained=%u\n",
+                i, block->exits[i].target_pc, block->exits[i].branch_pc,
+                block->exits[i].chained ? 1u : 0u);
+    }
+    for (uint8_t i = 0; i < block->side_exit_count; i++) {
+        fprintf(stderr, "  side_exit_pc[%u]=0x%08X\n", i, block->side_exit_pcs[i]);
+    }
+    trace_block_exits_budget--;
 }
 
 // Async-signal-safe hex printer: writes "0xNNNNNNNN" to buf, returns length
@@ -1173,6 +1206,8 @@ static void run_dbt_stage4plus(dbt_cpu_state_t *cpu, block_cache_t *cache,
                 break;
             }
         }
+
+        dbt_trace_block_exits(block);
 
         // Execute translated code
         if (profile_timing) {
