@@ -5309,6 +5309,19 @@ static bool dbt_peephole_allow_immimm_on_call(void) {
     return enabled;
 }
 
+static bool dbt_peephole_immimm_enabled(void) {
+    static bool inited = false;
+    static bool enabled = true;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_NO_PEEPHOLE_IMMIMM");
+        if (v && v[0] != '\0' && strcmp(v, "0") != 0) {
+            enabled = false;
+        }
+        inited = true;
+    }
+    return enabled;
+}
+
 static bool x64_block_has_call(const uint8_t *code, size_t len) {
     size_t pos = 0;
     while (pos < len) {
@@ -5727,6 +5740,11 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len, uint32_t guest_pc
                     size_t imm1 = q + 1;
                     size_t end1 = imm1 + 4;
                     if (end1 <= len && rd0 == rd1) {
+                        if (!dbt_peephole_immimm_enabled()) {
+                            dbt_trace_peephole_hit(guest_pc, "guard_skip_imm_imm_global", i0);
+                            i = end0;
+                            continue;
+                        }
                         if (has_call &&
                             guard_mode == PEEPHOLE_CALL_GUARD_JCC &&
                             !dbt_peephole_allow_immimm_on_call()) {

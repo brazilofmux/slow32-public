@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
+STRESS="$ROOT/tools/dbt/scripts/stress-stage5-safe-unsafe.sh"
+
+if [[ ! -x "$STRESS" ]]; then
+    echo "error: missing executable script: $STRESS" >&2
+    exit 1
+fi
+
+ITERS="${1:-100}"
+shift || true
+
+if [[ $# -gt 0 ]]; then
+    TESTS=("$@")
+else
+    TESTS=("$ROOT/regression/results/feature-strtod/test.s32x")
+fi
+
+declare -a MODES=(
+    "default|"
+    "guard_all|SLOW32_DBT_PEEPHOLE_GUARD_CALLS=all"
+    "guard_jcc|SLOW32_DBT_PEEPHOLE_GUARD_CALLS=jcc"
+    "guard_jcc_immimm_on|SLOW32_DBT_PEEPHOLE_GUARD_CALLS=jcc SLOW32_DBT_PEEPHOLE_CALL_ALLOW_IMMIMM=1"
+    "guard_none|SLOW32_DBT_PEEPHOLE_GUARD_CALLS=none"
+    "guard_none_no_immimm|SLOW32_DBT_PEEPHOLE_GUARD_CALLS=none SLOW32_DBT_NO_PEEPHOLE_IMMIMM=1"
+    "guard_none_no_jcc|SLOW32_DBT_PEEPHOLE_GUARD_CALLS=none SLOW32_DBT_NO_PEEPHOLE_JCC=1"
+    "guard_none_no_jcc_no_immimm|SLOW32_DBT_PEEPHOLE_GUARD_CALLS=none SLOW32_DBT_NO_PEEPHOLE_JCC=1 SLOW32_DBT_NO_PEEPHOLE_IMMIMM=1"
+)
+
+printf "%-24s %-6s %-12s\n" "mode" "rc" "notes"
+
+for row in "${MODES[@]}"; do
+    name="${row%%|*}"
+    envs="${row#*|}"
+    rc=0
+    notes="ok"
+
+    set +e
+    if [[ -n "$envs" ]]; then
+        # shellcheck disable=SC2086
+        env DBT_KEEP_TMP=1 $envs bash "$STRESS" "$ITERS" "${TESTS[@]}" >/tmp/sweep-peephole."$name".out 2>/tmp/sweep-peephole."$name".err
+    else
+        env DBT_KEEP_TMP=1 bash "$STRESS" "$ITERS" "${TESTS[@]}" >/tmp/sweep-peephole."$name".out 2>/tmp/sweep-peephole."$name".err
+    fi
+    rc=$?
+    set -e
+
+    if [[ $rc -ne 0 ]]; then
+        notes=$(rg -n "mismatch:|failed to run command|command not found" /tmp/sweep-peephole."$name".err | head -n1 | sed 's/^[0-9]*://')
+        if [[ -z "$notes" ]]; then
+            notes=$(tail -n 1 /tmp/sweep-peephole."$name".err | tr -d '\n')
+        fi
+        [[ -n "$notes" ]] || notes="failed"
+    fi
+    printf "%-24s %-6s %-12s\n" "$name" "$rc" "$notes"
+done
