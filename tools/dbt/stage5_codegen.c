@@ -1,10 +1,11 @@
 // SLOW-32 DBT: Stage 5 Native Codegen
 // Region-level register allocation + direct x86-64 emission
 //
-// Emits x86-64 for lifted IR prefix instructions using the pre-assigned
-// host registers from ctx->reg_alloc[] (set up by reg_alloc_prescan()).
-// Delegates terminal emission to existing stage5_emit_cmp_branch_fused()
-// or translate_*() functions.
+// Emits x86-64 for lifted IR prefix instructions (ALU, shifts, compares,
+// MUL, MULH, MULHU, DIV, REM, loads, stores) using the pre-assigned host
+// registers from ctx->reg_alloc[] (set up by reg_alloc_prescan()).
+// Emits native terminals for JAL, HALT, DEBUG, YIELD.
+// Delegates FP to translate_fp_r_type() and JALR to translate_jalr().
 
 #include "stage5_codegen.h"
 #include "stage5_burg.h"
@@ -65,13 +66,24 @@ uint32_t stage5_codegen_predicate_native_terminal_fallback;
 uint32_t stage5_codegen_predicate_native_terminal_opcode_hist[128];
 uint64_t stage5_codegen_predicate_native_guest_insts;
 uint64_t stage5_codegen_predicate_native_host_bytes;
+uint32_t stage5_codegen_fused_addi_mem;
+uint32_t stage5_codegen_evictions;
+uint64_t stage5_codegen_native_loads;
+uint64_t stage5_codegen_native_stores;
+
+static bool cg_env_flag_enabled(const char *name, bool default_enabled) {
+    const char *v = getenv(name);
+    if (!v || v[0] == '\0') {
+        return default_enabled;
+    }
+    return strcmp(v, "0") != 0;
+}
 
 static bool cg_cmp_rr_enabled(void) {
     static bool inited = false;
-    static bool enabled = false;
+    static bool enabled = true;
     if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_CMP_RR");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_CMP_RR", true);
         inited = true;
     }
     return enabled;
@@ -79,10 +91,9 @@ static bool cg_cmp_rr_enabled(void) {
 
 static bool cg_cmp_ri_enabled(void) {
     static bool inited = false;
-    static bool enabled = false;
+    static bool enabled = true;
     if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_CMP_RI");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_CMP_RI", true);
         inited = true;
     }
     return enabled;
@@ -90,10 +101,9 @@ static bool cg_cmp_ri_enabled(void) {
 
 static bool cg_fused_branch_enabled(void) {
     static bool inited = false;
-    static bool enabled = false;
+    static bool enabled = true;
     if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_FUSED_BRANCH");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_FUSED_BRANCH", true);
         inited = true;
     }
     return enabled;
@@ -101,10 +111,9 @@ static bool cg_fused_branch_enabled(void) {
 
 static bool cg_branch_term_enabled(void) {
     static bool inited = false;
-    static bool enabled = false;
+    static bool enabled = true;
     if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_TERM");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_TERM", true);
         inited = true;
     }
     return enabled;
@@ -112,10 +121,9 @@ static bool cg_branch_term_enabled(void) {
 
 static bool cg_branch_cmp_mix_enabled(void) {
     static bool inited = false;
-    static bool enabled = false;
+    static bool enabled = true;
     if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX", true);
         inited = true;
     }
     return enabled;
@@ -123,10 +131,9 @@ static bool cg_branch_cmp_mix_enabled(void) {
 
 static bool cg_branch_cmp_mix_slt_enabled(void) {
     static bool inited = false;
-    static bool enabled = false;
+    static bool enabled = true;
     if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX_SLT");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX_SLT", true);
         inited = true;
     }
     return enabled;
@@ -134,10 +141,9 @@ static bool cg_branch_cmp_mix_slt_enabled(void) {
 
 static bool cg_branch_cmp_mix_slti_enabled(void) {
     static bool inited = false;
-    static bool enabled = false;
+    static bool enabled = true;
     if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX_SLTI");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX_SLTI", true);
         inited = true;
     }
     return enabled;
@@ -145,10 +151,9 @@ static bool cg_branch_cmp_mix_slti_enabled(void) {
 
 static bool cg_branch_cmp_mix_sltiu_enabled(void) {
     static bool inited = false;
-    static bool enabled = false;
+    static bool enabled = true;
     if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX_SLTIU");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX_SLTIU", true);
         inited = true;
     }
     return enabled;
@@ -156,10 +161,9 @@ static bool cg_branch_cmp_mix_sltiu_enabled(void) {
 
 static bool cg_branch_cmp_mix_unsigned_rr_enabled(void) {
     static bool inited = false;
-    static bool enabled = false;
+    static bool enabled = true;
     if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX_UNSIGNED_RR");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX_UNSIGNED_RR", true);
         inited = true;
     }
     return enabled;
@@ -178,10 +182,9 @@ static bool cg_side_exit_enabled(void) {
 
 static bool cg_boolpair_native_enabled(void) {
     static bool inited = false;
-    static bool enabled = false;
+    static bool enabled = true;
     if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_BOOLPAIR_NATIVE");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_BOOLPAIR_NATIVE", true);
         inited = true;
     }
     return enabled;
@@ -189,10 +192,9 @@ static bool cg_boolpair_native_enabled(void) {
 
 static bool cg_predicate_native_enabled(void) {
     static bool inited = false;
-    static bool enabled = false;
+    static bool enabled = true;
     if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_PREDICATE_NATIVE");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_PREDICATE_NATIVE", true);
         inited = true;
     }
     return enabled;
@@ -200,10 +202,9 @@ static bool cg_predicate_native_enabled(void) {
 
 static bool cg_allow_cmpdep_side_exit(void) {
     static bool inited = false;
-    static bool enabled = false;
+    static bool enabled = true;
     if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_ALLOW_CMPDEP_SIDE_EXIT");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_ALLOW_CMPDEP_SIDE_EXIT", true);
         inited = true;
     }
     return enabled;
@@ -550,6 +551,7 @@ typedef struct {
     emit_ctx_t *e;
     const stage5_lift_region_t *region;
     uint32_t emitted_insts;        // Number of guest instructions emitted
+    int current_idx;               // Current instruction index in region->ir
 } stage5_cg_t;
 
 typedef struct {
@@ -659,6 +661,77 @@ static void cg_state_restore(translate_ctx_t *ctx, const stage5_codegen_state_t 
 // Register resolution helpers
 // ============================================================================
 
+static bool cg_is_reg_live(const stage5_cg_t *cg, uint8_t guest_reg) {
+    if (guest_reg == 0 || guest_reg >= 32) return false;
+    if (!cg->region->reg_flow_valid) return true; // Conservative
+    const stage5_reg_flow_t *f = &cg->region->reg_flow[guest_reg];
+    if (f->live_across_edge) return true;
+    return (int)f->last_use >= cg->current_idx;
+}
+
+static x64_reg_t cg_alloc_reg(stage5_cg_t *cg, uint8_t guest_reg, bool is_write,
+                              uint32_t protect_mask) {
+    if (guest_reg == 0 || guest_reg >= 32) return X64_NOREG;
+    translate_ctx_t *ctx = cg->ctx;
+
+    // 1. Already mapped?
+    int8_t slot = ctx->reg_alloc_map[guest_reg];
+    if (slot >= 0) return cg_reg_alloc_hosts[slot];
+
+    // 2. Any free slot?
+    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+        if (!ctx->reg_alloc[i].allocated) {
+            ctx->reg_alloc[i].guest_reg = guest_reg;
+            ctx->reg_alloc[i].allocated = true;
+            ctx->reg_alloc[i].dirty = false;
+            ctx->reg_alloc_map[guest_reg] = (int8_t)i;
+            if (!is_write) {
+                emit_mov_r32_m32(cg->e, cg_reg_alloc_hosts[i], RBP, GUEST_REG_OFFSET(guest_reg));
+            }
+            return cg_reg_alloc_hosts[i];
+        }
+    }
+
+    // 3. Eviction
+    int best_slot = -1;
+    int min_last_use = 999999;
+    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+        uint8_t g = ctx->reg_alloc[i].guest_reg;
+        if (protect_mask & (1u << g)) continue;
+
+        if (!cg_is_reg_live(cg, g)) {
+            best_slot = i;
+            break;
+        }
+
+        int last = (int)cg->region->reg_flow[g].last_use;
+        if (last < min_last_use) {
+            min_last_use = last;
+            best_slot = i;
+        }
+    }
+
+    if (best_slot >= 0) {
+        uint8_t old_g = ctx->reg_alloc[best_slot].guest_reg;
+        if (ctx->reg_alloc[best_slot].dirty) {
+            emit_mov_m32_r32(cg->e, RBP, GUEST_REG_OFFSET(old_g), cg_reg_alloc_hosts[best_slot]);
+        }
+        ctx->reg_alloc_map[old_g] = -1;
+        stage5_codegen_evictions++;
+
+        ctx->reg_alloc[best_slot].guest_reg = guest_reg;
+        ctx->reg_alloc[best_slot].allocated = true;
+        ctx->reg_alloc[best_slot].dirty = false;
+        ctx->reg_alloc_map[guest_reg] = (int8_t)best_slot;
+        if (!is_write) {
+            emit_mov_r32_m32(cg->e, cg_reg_alloc_hosts[best_slot], RBP, GUEST_REG_OFFSET(guest_reg));
+        }
+        return cg_reg_alloc_hosts[best_slot];
+    }
+
+    return X64_NOREG;
+}
+
 // Return the host register for a guest register, or X64_NOREG if not cached.
 static inline x64_reg_t cg_guest_host(const stage5_cg_t *cg, uint8_t guest_reg) {
     if (guest_reg == 0) return X64_NOREG;
@@ -671,12 +744,12 @@ static inline x64_reg_t cg_guest_host(const stage5_cg_t *cg, uint8_t guest_reg) 
 // If not cached, loads from memory into 'scratch' and returns scratch.
 // Guest r0 loads zero into scratch.
 static inline x64_reg_t cg_resolve_src(stage5_cg_t *cg, uint8_t guest_reg,
-                                        x64_reg_t scratch) {
+                                        x64_reg_t scratch, uint32_t protect_mask) {
     if (guest_reg == 0) {
         emit_xor_r32_r32(cg->e, scratch, scratch);
         return scratch;
     }
-    x64_reg_t h = cg_guest_host(cg, guest_reg);
+    x64_reg_t h = cg_alloc_reg(cg, guest_reg, false, protect_mask);
     if (h != X64_NOREG) return h;
     // Load from memory
     emit_mov_r32_m32(cg->e, scratch, RBP, GUEST_REG_OFFSET(guest_reg));
@@ -685,9 +758,10 @@ static inline x64_reg_t cg_resolve_src(stage5_cg_t *cg, uint8_t guest_reg,
 
 // Resolve destination. If cached, returns the host reg.
 // If not cached (spilled), returns RAX (caller must store back).
-static inline x64_reg_t cg_resolve_dst(const stage5_cg_t *cg, uint8_t guest_reg) {
+static inline x64_reg_t cg_resolve_dst(stage5_cg_t *cg, uint8_t guest_reg,
+                                        uint32_t protect_mask) {
     if (guest_reg == 0) return RAX; // writes to r0 are discarded
-    x64_reg_t h = cg_guest_host(cg, guest_reg);
+    x64_reg_t h = cg_alloc_reg(cg, guest_reg, true, protect_mask);
     return (h != X64_NOREG) ? h : RAX;
 }
 
@@ -729,12 +803,8 @@ static inline void cg_store_spilled(stage5_cg_t *cg, uint8_t guest_reg,
 }
 
 // ============================================================================
-// Load/Store: delegate to existing translate_* functions
+// (Load/Store emission moved above — native x86-64, no Stage 4 delegation)
 // ============================================================================
-// For loads and stores, we delegate to the existing translate_* functions.
-// These already handle address computation, bounds checking, W^X enforcement,
-// and register cache interaction. This gives us correctness without
-// duplicating the bounds check infrastructure.
 
 // ============================================================================
 // Individual instruction emitters
@@ -745,8 +815,9 @@ static bool cg_emit_alu_rr(stage5_cg_t *cg, const stage5_ir_node_t *n) {
     uint8_t rd = n->rd, rs1 = n->rs1, rs2 = n->rs2;
     if (rd == 0) return true; // discard
 
+    uint32_t protect = (1u << rs1) | (1u << rs2);
     emit_ctx_t *e = cg->e;
-    x64_reg_t dst_h = cg_resolve_dst(cg, rd);
+    x64_reg_t dst_h = cg_resolve_dst(cg, rd, protect);
     bool commutative = (n->opcode != OP_SUB);
 
     // Choose the emit function
@@ -766,12 +837,12 @@ static bool cg_emit_alu_rr(stage5_cg_t *cg, const stage5_ir_node_t *n) {
 
     if (h_rd != X64_NOREG && rd == rs1) {
         // rd == rs1 and both cached: OP dst, src2
-        x64_reg_t src2_h = cg_resolve_src(cg, rs2, RCX);
+        x64_reg_t src2_h = cg_resolve_src(cg, rs2, RCX, protect);
         emit_op(e, dst_h, src2_h);
     } else if (!commutative && h_rd != X64_NOREG && rd == rs2) {
         // Non-commutative hazard (e.g., SUB): rd == rs2.
         // Preserve old rd/rs2 before loading rs1 into dst.
-        x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX);
+        x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX, protect);
         x64_reg_t tmp_h = (src1_h == RCX) ? RAX : RCX;
         emit_mov_r32_r32(e, tmp_h, dst_h);
         if (dst_h != src1_h)
@@ -779,14 +850,14 @@ static bool cg_emit_alu_rr(stage5_cg_t *cg, const stage5_ir_node_t *n) {
         emit_op(e, dst_h, tmp_h);
     } else if (h_rd != X64_NOREG && rd == rs2 && commutative) {
         // rd == rs2 commutative: OP dst, src1
-        x64_reg_t src1_h = cg_resolve_src(cg, rs1, RCX);
+        x64_reg_t src1_h = cg_resolve_src(cg, rs1, RCX, protect);
         emit_op(e, dst_h, src1_h);
     } else {
         // General case: mov dst, src1; OP dst, src2
-        x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX);
+        x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX, protect);
         if (dst_h != src1_h)
             emit_mov_r32_r32(e, dst_h, src1_h);
-        x64_reg_t src2_h = cg_resolve_src(cg, rs2, RCX);
+        x64_reg_t src2_h = cg_resolve_src(cg, rs2, RCX, protect);
         emit_op(e, dst_h, src2_h);
     }
 
@@ -801,15 +872,16 @@ static bool cg_emit_alu_ri(stage5_cg_t *cg, const stage5_ir_node_t *n) {
     int32_t imm = n->imm;
     if (rd == 0) return true;
 
+    uint32_t protect = (1u << rs1);
     emit_ctx_t *e = cg->e;
-    x64_reg_t dst_h = cg_resolve_dst(cg, rd);
+    x64_reg_t dst_h = cg_resolve_dst(cg, rd, protect);
 
     // For ADDI with imm=0, it's a move
     if (n->opcode == OP_ADDI && imm == 0) {
         if (rs1 == 0) {
             emit_xor_r32_r32(e, dst_h, dst_h);
         } else {
-            x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX);
+            x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX, protect);
             if (dst_h != src1_h)
                 emit_mov_r32_r32(e, dst_h, src1_h);
         }
@@ -834,7 +906,7 @@ static bool cg_emit_alu_ri(stage5_cg_t *cg, const stage5_ir_node_t *n) {
         // In-place: OP dst, imm
         emit_op(e, dst_h, imm);
     } else {
-        x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX);
+        x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX, protect);
         if (dst_h != src1_h)
             emit_mov_r32_r32(e, dst_h, src1_h);
         emit_op(e, dst_h, imm);
@@ -851,8 +923,9 @@ static bool cg_emit_shift_imm(stage5_cg_t *cg, const stage5_ir_node_t *n) {
     uint8_t shamt = (uint8_t)(n->imm & 31);
     if (rd == 0) return true;
 
+    uint32_t protect = (1u << rs1);
     emit_ctx_t *e = cg->e;
-    x64_reg_t dst_h = cg_resolve_dst(cg, rd);
+    x64_reg_t dst_h = cg_resolve_dst(cg, rd, protect);
 
     void (*emit_sh)(emit_ctx_t *, x64_reg_t, uint8_t) = NULL;
     switch (n->opcode) {
@@ -862,7 +935,7 @@ static bool cg_emit_shift_imm(stage5_cg_t *cg, const stage5_ir_node_t *n) {
         default: return false;
     }
 
-    x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX);
+    x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX, protect);
     if (dst_h != src1_h)
         emit_mov_r32_r32(e, dst_h, src1_h);
     emit_sh(e, dst_h, shamt);
@@ -878,8 +951,9 @@ static bool cg_emit_shift_reg(stage5_cg_t *cg, const stage5_ir_node_t *n) {
     uint8_t rd = n->rd, rs1 = n->rs1, rs2 = n->rs2;
     if (rd == 0) return true;
 
+    uint32_t protect = (1u << rs1) | (1u << rs2);
     emit_ctx_t *e = cg->e;
-    x64_reg_t dst_h = cg_resolve_dst(cg, rd);
+    x64_reg_t dst_h = cg_resolve_dst(cg, rd, protect);
 
     void (*emit_sh)(emit_ctx_t *, x64_reg_t) = NULL;
     switch (n->opcode) {
@@ -900,7 +974,7 @@ static bool cg_emit_shift_reg(stage5_cg_t *cg, const stage5_ir_node_t *n) {
     }
 
     // Prepare dst = src1
-    x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX);
+    x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX, protect);
     if (dst_h == RCX) {
         // dst is RCX (spilled rd maps to RAX, but let's be safe)
         // This shouldn't happen since rd==0 returns early and RCX isn't cached
@@ -922,7 +996,7 @@ static bool cg_emit_lui(stage5_cg_t *cg, const stage5_ir_node_t *n) {
     if (rd == 0) return true;
 
     emit_ctx_t *e = cg->e;
-    x64_reg_t dst_h = cg_resolve_dst(cg, rd);
+    x64_reg_t dst_h = cg_resolve_dst(cg, rd, 0);
     // n->imm for LUI is already the shifted value (raw & 0xFFFFF000)
     emit_mov_r32_imm32(e, dst_h, (uint32_t)n->imm);
 
@@ -936,13 +1010,14 @@ static bool cg_emit_mul(stage5_cg_t *cg, const stage5_ir_node_t *n) {
     uint8_t rd = n->rd, rs1 = n->rs1, rs2 = n->rs2;
     if (rd == 0) return true;
 
+    uint32_t protect = (1u << rs1) | (1u << rs2);
     emit_ctx_t *e = cg->e;
-    x64_reg_t dst_h = cg_resolve_dst(cg, rd);
+    x64_reg_t dst_h = cg_resolve_dst(cg, rd, protect);
 
-    x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX);
+    x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX, protect);
     if (dst_h != src1_h)
         emit_mov_r32_r32(e, dst_h, src1_h);
-    x64_reg_t src2_h = cg_resolve_src(cg, rs2, RCX);
+    x64_reg_t src2_h = cg_resolve_src(cg, rs2, RCX, protect);
     emit_imul_r32_r32(e, dst_h, src2_h);
 
     cg_mark_dirty(cg, rd);
@@ -955,10 +1030,11 @@ static bool cg_emit_cmp_rr(stage5_cg_t *cg, const stage5_ir_node_t *n) {
     uint8_t rd = n->rd;
     if (rd == 0) return true;
 
+    uint32_t protect = (1u << n->rs1) | (1u << n->rs2);
     emit_ctx_t *e = cg->e;
-    x64_reg_t dst_h = cg_resolve_dst(cg, rd);
-    x64_reg_t lhs_h = cg_resolve_src(cg, n->rs1, RCX);
-    x64_reg_t rhs_h = cg_resolve_src(cg, n->rs2, RDX);
+    x64_reg_t dst_h = cg_resolve_dst(cg, rd, protect);
+    x64_reg_t lhs_h = cg_resolve_src(cg, n->rs1, RCX, protect);
+    x64_reg_t rhs_h = cg_resolve_src(cg, n->rs2, RDX, protect);
 
     emit_cmp_r32_r32(e, lhs_h, rhs_h);
 
@@ -986,9 +1062,10 @@ static bool cg_emit_cmp_ri(stage5_cg_t *cg, const stage5_ir_node_t *n) {
     uint8_t rd = n->rd;
     if (rd == 0) return true;
 
+    uint32_t protect = (1u << n->rs1);
     emit_ctx_t *e = cg->e;
-    x64_reg_t dst_h = cg_resolve_dst(cg, rd);
-    x64_reg_t lhs_h = cg_resolve_src(cg, n->rs1, RCX);
+    x64_reg_t dst_h = cg_resolve_dst(cg, rd, protect);
+    x64_reg_t lhs_h = cg_resolve_src(cg, n->rs1, RCX, protect);
     emit_cmp_r32_imm32(e, lhs_h, n->imm);
 
     switch (n->opcode) {
@@ -1003,53 +1080,133 @@ static bool cg_emit_cmp_ri(stage5_cg_t *cg, const stage5_ir_node_t *n) {
 }
 
 // ============================================================================
-// Load/Store emission
-// Uses existing translate_* functions for correctness (bounds checks, etc.)
+// MULH/MULHU/DIV/REM — native x86-64
 // ============================================================================
 
-// For loads and stores, we delegate to the existing translate_* functions.
-// These already handle:
-//   - Address computation with constant folding
-//   - Memory bounds checking
-//   - W^X enforcement
-//   - Register cache interaction (guest_host_reg, reg_cache_mark_written)
-//
-// The existing translate_* functions read ctx->reg_alloc which we've populated,
-// so they benefit from our cached registers automatically.
+// MULH: rd = hi(rs1 * rs2) (signed)
+// Uses IMUL r/m32 (one-operand form): EDX:EAX = EAX * src (signed)
+static bool cg_emit_mulh(stage5_cg_t *cg, const stage5_ir_node_t *n) {
+    uint8_t rd = n->rd, rs1 = n->rs1, rs2 = n->rs2;
+    if (rd == 0) return true;
+    emit_ctx_t *e = cg->e;
 
-static bool cg_emit_load(stage5_cg_t *cg, const stage5_ir_node_t *n) {
-    translate_ctx_t *ctx = cg->ctx;
-    ctx->guest_pc = n->pc;
-    switch (n->opcode) {
-        case OP_LDW:  translate_ldw(ctx, n->rd, n->rs1, n->imm); return true;
-        case OP_LDH:  translate_ldh(ctx, n->rd, n->rs1, n->imm); return true;
-        case OP_LDB:  translate_ldb(ctx, n->rd, n->rs1, n->imm); return true;
-        case OP_LDHU: translate_ldhu(ctx, n->rd, n->rs1, n->imm); return true;
-        case OP_LDBU: translate_ldbu(ctx, n->rd, n->rs1, n->imm); return true;
-        default: return false;
-    }
+    uint32_t protect = (1u << rs1) | (1u << rs2);
+    x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX, protect);
+    if (src1_h != RAX) emit_mov_r32_r32(e, RAX, src1_h);
+    x64_reg_t src2_h = cg_resolve_src(cg, rs2, RCX, protect);
+    emit_imul_one_r32(e, src2_h);  // EDX:EAX = EAX * src2_h (signed)
+    x64_reg_t dst_h = cg_resolve_dst(cg, rd, 0);
+    emit_mov_r32_r32(e, dst_h, RDX);  // high 32 bits
+    cg_mark_dirty(cg, rd);
+    cg_store_spilled(cg, rd, dst_h);
+    return true;
 }
 
-static bool cg_emit_store(stage5_cg_t *cg, const stage5_ir_node_t *n) {
-    translate_ctx_t *ctx = cg->ctx;
-    ctx->guest_pc = n->pc;
-    switch (n->opcode) {
-        case OP_STW: translate_stw(ctx, n->rs1, n->rs2, n->imm); return true;
-        case OP_STH: translate_sth(ctx, n->rs1, n->rs2, n->imm); return true;
-        case OP_STB: translate_stb(ctx, n->rs1, n->rs2, n->imm); return true;
-        default: return false;
-    }
+// MULHU: rd = hi(rs1 * rs2) (unsigned)
+// Uses MUL r/m32 (one-operand form): EDX:EAX = EAX * src (unsigned)
+static bool cg_emit_mulhu(stage5_cg_t *cg, const stage5_ir_node_t *n) {
+    uint8_t rd = n->rd, rs1 = n->rs1, rs2 = n->rs2;
+    if (rd == 0) return true;
+    emit_ctx_t *e = cg->e;
+
+    uint32_t protect = (1u << rs1) | (1u << rs2);
+    x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX, protect);
+    if (src1_h != RAX) emit_mov_r32_r32(e, RAX, src1_h);
+    x64_reg_t src2_h = cg_resolve_src(cg, rs2, RCX, protect);
+    emit_mul_r32(e, src2_h);  // EDX:EAX = EAX * src2_h (unsigned)
+    x64_reg_t dst_h = cg_resolve_dst(cg, rd, 0);
+    emit_mov_r32_r32(e, dst_h, RDX);  // high 32 bits
+    cg_mark_dirty(cg, rd);
+    cg_store_spilled(cg, rd, dst_h);
+    return true;
+}
+
+// DIV: rd = rs1 / rs2 (signed)
+// Guard against INT32_MIN / -1 (would SIGFPE on x86).
+static bool cg_emit_div(stage5_cg_t *cg, const stage5_ir_node_t *n) {
+    uint8_t rd = n->rd, rs1 = n->rs1, rs2 = n->rs2;
+    if (rd == 0) return true;
+    emit_ctx_t *e = cg->e;
+
+    uint32_t protect = (1u << rs1) | (1u << rs2);
+    x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX, protect);
+    if (src1_h != RAX) emit_mov_r32_r32(e, RAX, src1_h);
+    x64_reg_t src2_h = cg_resolve_src(cg, rs2, RCX, protect);
+
+    // Guard: INT32_MIN / -1 → INT32_MIN (avoid x86 SIGFPE)
+    emit_cmp_r32_imm32(e, src2_h, -1);
+    emit_jne_rel32(e, 0);
+    size_t patch_not_neg1 = e->offset - 4;
+    emit_cmp_r32_imm32(e, RAX, (int32_t)0x80000000);
+    emit_jne_rel32(e, 0);
+    size_t patch_not_intmin = e->offset - 4;
+    // INT32_MIN / -1 = INT32_MIN
+    emit_mov_r32_imm32(e, RAX, 0x80000000);
+    emit_jmp_rel32(e, 0);
+    size_t patch_skip_idiv = e->offset - 4;
+
+    // Normal path
+    emit_patch_rel32(e, patch_not_neg1, e->offset);
+    emit_patch_rel32(e, patch_not_intmin, e->offset);
+    emit_cdq(e);
+    emit_idiv_r32(e, src2_h);
+
+    emit_patch_rel32(e, patch_skip_idiv, e->offset);
+    x64_reg_t dst_h = cg_resolve_dst(cg, rd, 0);
+    if (dst_h != RAX) emit_mov_r32_r32(e, dst_h, RAX);
+    cg_mark_dirty(cg, rd);
+    cg_store_spilled(cg, rd, dst_h);
+    return true;
+}
+
+// REM: rd = rs1 % rs2 (signed)
+// Guard against INT32_MIN % -1 (would SIGFPE on x86).
+static bool cg_emit_rem(stage5_cg_t *cg, const stage5_ir_node_t *n) {
+    uint8_t rd = n->rd, rs1 = n->rs1, rs2 = n->rs2;
+    if (rd == 0) return true;
+    emit_ctx_t *e = cg->e;
+
+    uint32_t protect = (1u << rs1) | (1u << rs2);
+    x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX, protect);
+    if (src1_h != RAX) emit_mov_r32_r32(e, RAX, src1_h);
+    x64_reg_t src2_h = cg_resolve_src(cg, rs2, RCX, protect);
+
+    // Guard: INT32_MIN % -1 → 0 (avoid x86 SIGFPE)
+    emit_cmp_r32_imm32(e, src2_h, -1);
+    emit_jne_rel32(e, 0);
+    size_t patch_not_neg1 = e->offset - 4;
+    emit_cmp_r32_imm32(e, RAX, (int32_t)0x80000000);
+    emit_jne_rel32(e, 0);
+    size_t patch_not_intmin = e->offset - 4;
+    // INT32_MIN % -1 = 0
+    emit_xor_r32_r32(e, RAX, RAX);
+    emit_jmp_rel32(e, 0);
+    size_t patch_skip_idiv = e->offset - 4;
+
+    // Normal path
+    emit_patch_rel32(e, patch_not_neg1, e->offset);
+    emit_patch_rel32(e, patch_not_intmin, e->offset);
+    emit_cdq(e);
+    emit_idiv_r32(e, src2_h);
+    emit_mov_r32_r32(e, RAX, RDX);  // remainder in EDX
+
+    emit_patch_rel32(e, patch_skip_idiv, e->offset);
+    x64_reg_t dst_h = cg_resolve_dst(cg, rd, 0);
+    if (dst_h != RAX) emit_mov_r32_r32(e, dst_h, RAX);
+    cg_mark_dirty(cg, rd);
+    cg_store_spilled(cg, rd, dst_h);
+    return true;
 }
 
 // ============================================================================
-// IR node dispatch
+// Load/Store emission — native x86-64 (no Stage 4 delegation)
 // ============================================================================
 
-// Flush pending write and pending cond before native ALU emission.
+// Flush pending write and pending cond before native emission.
 // This is necessary because:
 // 1. pending_write may hold a value in RAX that we're about to clobber
 // 2. pending_cond may reference registers we're about to write
-// Load/store delegation to translate_* handles its own flushing.
+// Called by both ALU emission (via cg_emit_node) and load/store emission.
 static inline void cg_flush_pending(stage5_cg_t *cg) {
     translate_ctx_t *ctx = cg->ctx;
     if (ctx->pending_write.valid) {
@@ -1064,9 +1221,193 @@ static inline void cg_flush_pending(stage5_cg_t *cg) {
     }
 }
 
+// Compute guest effective address into RAX.
+// Uses Stage 5 RA to resolve rs1 — no flush_pending_write, no constant propagation.
+static void cg_emit_compute_addr(stage5_cg_t *cg, uint8_t rs1, int32_t imm,
+                                  uint32_t protect_mask) {
+    emit_ctx_t *e = cg->e;
+    if (rs1 == 0) {
+        emit_mov_r32_imm32(e, RAX, (uint32_t)imm);
+        return;
+    }
+    x64_reg_t base_h = cg_resolve_src(cg, rs1, RCX, protect_mask);
+    if (imm == 0) {
+        emit_mov_r32_r32(e, RAX, base_h);
+    } else {
+        emit_lea_r32_r32_disp(e, RAX, base_h, imm);
+    }
+}
+
+// Emit inline bounds and W^X checks for a memory access.
+// Address must be in RAX. Emits fault stub with JMP-over pattern.
+// Uses translate-time constants from ctx->cpu (no bounds_elim, no reg_constants).
+static void cg_emit_bounds_check(stage5_cg_t *cg, uint32_t access_size,
+                                  bool is_store, uint32_t pc) {
+    translate_ctx_t *ctx = cg->ctx;
+    emit_ctx_t *e = cg->e;
+    dbt_cpu_state_t *cpu = ctx->cpu;
+
+    if (cpu->bounds_checks_disabled) return;
+
+    exit_reason_t reason = is_store ? EXIT_FAULT_STORE : EXIT_FAULT_LOAD;
+
+    if (cpu->mem_size < access_size) {
+        // Always faults — emit unconditional fault exit
+        emit_fault_exit_for_codegen(ctx, reason, pc, RAX);
+        return;
+    }
+
+    size_t fault_jumps[8];
+    int fault_count = 0;
+    size_t ok_jumps[8];
+    int ok_count = 0;
+
+    // 1. Bounds check
+    uint32_t limit = cpu->mem_size - access_size;
+    emit_cmp_r32_imm32(e, RAX, (int32_t)limit);
+    fault_jumps[fault_count++] = emit_offset(e) + 2;
+    emit_ja_rel32(e, 0);
+
+    // 2. Alignment check
+    if (cpu->align_traps_enabled && access_size > 1) {
+        emit_mov_r32_r32(e, RDX, RAX);
+        emit_and_r32_imm32(e, RDX, (int32_t)(access_size - 1));
+        fault_jumps[fault_count++] = emit_offset(e) + 2;
+        emit_jne_rel32(e, 0);
+    }
+
+    // 3. MMIO disabled check
+    if (!cpu->mmio_enabled && cpu->mmio_base != 0) {
+        emit_cmp_r32_imm32(e, RAX, (int32_t)cpu->mmio_base);
+        ok_jumps[ok_count++] = emit_offset(e) + 2;
+        emit_jb_rel32(e, 0);
+        emit_cmp_r32_imm32(e, RAX, (int32_t)(cpu->mmio_base + 0x10000));
+        fault_jumps[fault_count++] = emit_offset(e) + 2;
+        emit_jb_rel32(e, 0);
+    }
+
+    // 4. W^X check (stores only)
+    if (is_store && cpu->wxorx_enabled) {
+        uint32_t wx_limit = cpu->rodata_limit ? cpu->rodata_limit : cpu->code_limit;
+        if (wx_limit > 0) {
+            emit_cmp_r32_imm32(e, RAX, (int32_t)wx_limit);
+            fault_jumps[fault_count++] = emit_offset(e) + 2;
+            emit_jb_rel32(e, 0);
+        }
+    }
+
+    if (fault_count == 0 && ok_count == 0) return;
+
+    // Jump over fault stub (hot path)
+    size_t ok_jump = emit_offset(e) + 1;
+    emit_jmp_rel32(e, 0);
+
+    // Fault stub (cold path — flush regs, store PC/reason/info, RET)
+    size_t fault_offset = emit_offset(e);
+    emit_fault_exit_for_codegen(ctx, reason, pc, RAX);
+
+    // Patch all jumps
+    size_t ok_offset = emit_offset(e);
+    emit_patch_rel32(e, ok_jump, ok_offset);
+    for (int i = 0; i < ok_count; i++) {
+        emit_patch_rel32(e, ok_jumps[i], ok_offset);
+    }
+    for (int i = 0; i < fault_count; i++) {
+        emit_patch_rel32(e, fault_jumps[i], fault_offset);
+    }
+}
+
+static bool cg_emit_load(stage5_cg_t *cg, const stage5_ir_node_t *n) {
+    if (n->rd == 0) return true;
+
+    // Flush any pending state before we clobber RAX for address computation.
+    cg_flush_pending(cg);
+
+    uint32_t protect = (1u << n->rs1);
+    emit_ctx_t *e = cg->e;
+
+    // Determine access size
+    uint32_t access_size;
+    switch (n->opcode) {
+        case OP_LDW:                access_size = 4; break;
+        case OP_LDH: case OP_LDHU: access_size = 2; break;
+        case OP_LDB: case OP_LDBU: access_size = 1; break;
+        default: return false;
+    }
+
+    // Compute effective address into RAX
+    cg_emit_compute_addr(cg, n->rs1, n->imm, protect);
+
+    // Bounds check (address in RAX)
+    cg_emit_bounds_check(cg, access_size, false, n->pc);
+
+    // Resolve destination (may evict, but address is safely in RAX)
+    x64_reg_t dst_h = cg_resolve_dst(cg, n->rd, 0);
+
+    // Load from guest memory [R14 + RAX]
+    switch (n->opcode) {
+        case OP_LDW:  emit_mov_r32_m32_idx(e, dst_h, R14, RAX);    break;
+        case OP_LDH:  emit_movsx_r32_m16_idx(e, dst_h, R14, RAX);  break;
+        case OP_LDB:  emit_movsx_r32_m8_idx(e, dst_h, R14, RAX);   break;
+        case OP_LDHU: emit_movzx_r32_m16_idx(e, dst_h, R14, RAX);  break;
+        case OP_LDBU: emit_movzx_r32_m8_idx(e, dst_h, R14, RAX);   break;
+        default: return false;
+    }
+
+    cg_mark_dirty(cg, n->rd);
+    cg_store_spilled(cg, n->rd, dst_h);
+    stage5_codegen_native_loads++;
+    return true;
+}
+
+static bool cg_emit_store(stage5_cg_t *cg, const stage5_ir_node_t *n) {
+    // Flush any pending Stage 4 state before we clobber RAX for address computation.
+    cg_flush_pending(cg);
+    emit_ctx_t *e = cg->e;
+    uint32_t protect = (1u << n->rs1) | (1u << n->rs2);
+
+    // Determine access size
+    uint32_t access_size;
+    switch (n->opcode) {
+        case OP_STW: access_size = 4; break;
+        case OP_STH: access_size = 2; break;
+        case OP_STB: access_size = 1; break;
+        default: return false;
+    }
+
+    // Pre-allocate both operands to prevent mutual eviction
+    cg_alloc_reg(cg, n->rs1, false, protect);
+    cg_alloc_reg(cg, n->rs2, false, protect);
+
+    // Compute effective address into RAX
+    cg_emit_compute_addr(cg, n->rs1, n->imm, protect);
+
+    // Bounds + W^X check (address in RAX)
+    cg_emit_bounds_check(cg, access_size, true, n->pc);
+
+    // Resolve value operand (scratch=RCX since RAX holds address)
+    x64_reg_t val_h = cg_resolve_src(cg, n->rs2, RCX, protect);
+
+    // Store to guest memory [R14 + RAX]
+    switch (n->opcode) {
+        case OP_STW: emit_mov_m32_r32_idx(e, R14, RAX, val_h); break;
+        case OP_STH: emit_mov_m16_r16_idx(e, R14, RAX, val_h); break;
+        case OP_STB: emit_mov_m8_r8_idx(e, R14, RAX, val_h);   break;
+        default: return false;
+    }
+
+    stage5_codegen_native_stores++;
+    return true;
+}
+
+// ============================================================================
+// IR node dispatch
+// ============================================================================
+
 static bool cg_emit_node(stage5_cg_t *cg, const stage5_ir_node_t *n) {
-    // Flush pending state before native emission (ALU instructions).
-    // Load/store delegates to translate_* which handle their own flushing.
+    // Flush pending state before native emission (ALU/compare/multiply/div instructions).
+    // Load/store functions call cg_flush_pending() internally, so skip them here
+    // to avoid double-flushing (harmless but wasteful).
     bool is_load_store = (n->opcode >= OP_LDB && n->opcode <= OP_STW);
     if (!is_load_store && n->opcode != OP_NOP) {
         cg_flush_pending(cg);
@@ -1143,10 +1484,9 @@ static bool cg_emit_node(stage5_cg_t *cg, const stage5_ir_node_t *n) {
         case OP_STB:
             return cg_emit_store(cg, n);
 
-        // Unsupported: abort region
+        // Native MULH/MULHU/DIV/REM
         case OP_MULH:
-            translate_mulh(cg->ctx, n->rd, n->rs1, n->rs2);
-            return true;
+            return cg_emit_mulh(cg, n);
         case OP_MULHU:
             translate_mulhu(cg->ctx, n->rd, n->rs1, n->rs2);
             return true;
@@ -1905,6 +2245,43 @@ static bool cg_emit_branch_terminal_native(stage5_cg_t *cg,
 // stage5_codegen emits prefix AND terminal, since we can call the public
 // translate_* functions for terminals.
 
+// ============================================================================
+// Native JAL terminal — replaces translate_jal() for non-JAL_JUMP pattern
+// ============================================================================
+
+static void cg_emit_jal_terminal(stage5_cg_t *cg, uint8_t rd, int32_t imm) {
+    translate_ctx_t *ctx = cg->ctx;
+    emit_ctx_t *e = cg->e;
+    uint32_t return_pc = ctx->guest_pc + 4;
+    uint32_t target_pc = ctx->guest_pc + imm;
+
+    // Store return address to rd (if rd != 0)
+    if (rd != 0) {
+        x64_reg_t dst_h = cg_resolve_dst(cg, rd, 0);
+        emit_mov_r32_imm32(e, dst_h, return_pc);
+        cg_mark_dirty(cg, rd);
+        cg_store_spilled(cg, rd, dst_h);
+    }
+
+    // Mark this as a call for profiling
+    if (ctx->block && rd == REG_LR) {
+        ctx->block->flags |= BLOCK_FLAG_CALL;
+    }
+
+    // RAS push for calls (rd == REG_LR)
+    if (ctx->ras_enabled && rd == REG_LR) {
+        // Inline the RAS push: ras_stack[ras_top++ & RAS_MASK] = return_pc
+        emit_mov_r32_m32(e, RCX, RBP, CPU_RAS_TOP_OFFSET);
+        emit_mov_m32_imm32_sib(e, RBP, RCX, 4, CPU_RAS_STACK_OFFSET, return_pc);
+        emit_add_r32_imm32(e, RCX, 1);
+        emit_and_r32_imm32(e, RCX, RAS_MASK);
+        emit_mov_m32_r32(e, RBP, CPU_RAS_TOP_OFFSET, RCX);
+    }
+
+    // Exit chained (shared infrastructure)
+    emit_exit_chained_for_codegen(ctx, target_pc, ctx->exit_idx++);
+}
+
 bool stage5_codegen(translate_ctx_t *ctx,
                     const stage5_lift_region_t *region,
                     uint32_t guest_pc,
@@ -1942,7 +2319,9 @@ bool stage5_codegen(translate_ctx_t *ctx,
     cg.e = &ctx->emit;
     cg.region = region;
     cg.emitted_insts = 0;
+    cg.current_idx = 0;
 
+    bool terminal_fused = false;
     size_t emit_start = emit_offset(cg.e);
 
     // The side_exit_family_cfg_ptr is a pointer to a stage5_side_exit_family_cfg_t
@@ -2097,12 +2476,78 @@ bool stage5_codegen(translate_ctx_t *ctx,
     // ========================================================================
 
     for (uint32_t i = 0; i < region->ir_count; i++) {
+        cg.current_idx = (int)i;
         const stage5_ir_node_t *n = &region->ir[i];
         if (n->synthetic) continue;
         if (terminal_idx >= 0 && (int)i == terminal_idx) continue;
         if (fuse_cmp_idx >= 0 && (int)i == fuse_cmp_idx) continue;
         if (mix_cmp_idx >= 0 && (int)i == mix_cmp_idx) continue;
         if (mix_extra_skip_idx >= 0 && (int)i == mix_extra_skip_idx) continue;
+
+        // Try to fuse ADDI + LOAD/STORE (Addressing Mode Fusion)
+        if (n->opcode == OP_ADDI && n->rd != 0 && n->rd != n->rs1 &&
+            terminal_idx >= 0 && (int)i < terminal_idx) {
+            int next_idx = -1;
+            for (uint32_t k = i + 1; k < region->ir_count; k++) {
+                if (region->ir[k].synthetic) continue;
+                if ((int)k == terminal_idx) {
+                    next_idx = (int)k;
+                    break;
+                }
+                if ((int)k == fuse_cmp_idx) continue;
+                if ((int)k == mix_cmp_idx) continue;
+                if ((int)k == mix_extra_skip_idx) continue;
+                next_idx = (int)k;
+                break;
+            }
+
+            if (next_idx != -1) {
+                const stage5_ir_node_t *next_n = &region->ir[next_idx];
+                bool is_mem = (next_n->opcode >= OP_LDB && next_n->opcode <= OP_STW);
+                if (is_mem && next_n->rs1 == n->rd) {
+                    bool addi_emitted = false;
+                    ctx->guest_pc = n->pc;
+                    ctx->current_inst_idx = (int)i;
+                    if (!cg_emit_node(&cg, n)) {
+                         stage5_codegen_fallback++;
+                         stage5_codegen_fallback_emit_node++;
+                         if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
+                         cg_state_restore(ctx, &saved);
+                         return false;
+                    }
+                    addi_emitted = true;
+                    cg.emitted_insts++;
+
+                    ctx->guest_pc = next_n->pc;
+                    ctx->current_inst_idx = next_idx;
+                    int32_t total_disp = n->imm + next_n->imm;
+                    bool fused_ok = false;
+                    // Build fused node with ADDI's original base + combined displacement
+                    stage5_ir_node_t fused = *next_n;
+                    fused.rs1 = n->rs1;
+                    fused.imm = total_disp;
+                    bool is_load = (next_n->opcode >= OP_LDB && next_n->opcode <= OP_LDHU);
+                    if (is_load) {
+                        fused_ok = cg_emit_load(&cg, &fused);
+                    } else {
+                        fused_ok = cg_emit_store(&cg, &fused);
+                    }
+                    if (fused_ok) {
+                        stage5_codegen_fused_addi_mem++;
+                        cg.emitted_insts++;
+                        if (next_idx == terminal_idx) terminal_fused = true;
+                        i = next_idx; 
+                        continue;
+                    }
+
+                    // ADDI already emitted above; if fused mem emission did not
+                    // happen, continue without re-emitting ADDI in the generic path.
+                    if (addi_emitted) {
+                        continue;
+                    }
+                }
+            }
+        }
 
         // Optional side-exit ownership by native codegen.
         if (n->is_side_exit && n->kind == STAGE5_IR_BRANCH &&
@@ -2158,7 +2603,9 @@ bool stage5_codegen(translate_ctx_t *ctx,
 
     bool ended = false;
 
-    if (synth_block_end) {
+    if (terminal_fused) {
+        ended = true;
+    } else if (synth_block_end) {
         ctx->guest_pc = guest_pc + region->guest_inst_count * 4;
         // reg_cache_flush is called by emit_exit_chained
         emit_exit_chained_for_codegen(ctx, ctx->guest_pc, ctx->exit_idx++);
