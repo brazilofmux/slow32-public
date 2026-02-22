@@ -3582,6 +3582,41 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
 
     // Family A: single-instruction terminals and direct conditional branches.
     if (region.guest_inst_count == 1) {
+        if (stage5_codegen_enabled()) {
+            int terminal_idx = -1;
+            for (int i = (int)region.ir_count - 1; i >= 0; i--) {
+                if (region.ir[i].synthetic) continue;
+                switch (region.ir[i].opcode) {
+                    case OP_JAL:
+                    case OP_JALR:
+                    case OP_HALT:
+                    case OP_DEBUG:
+                    case OP_YIELD:
+                    case OP_BEQ:
+                    case OP_BNE:
+                    case OP_BLT:
+                    case OP_BGE:
+                    case OP_BLTU:
+                    case OP_BGEU:
+                        terminal_idx = i;
+                        i = -1;
+                        break;
+                    default:
+                        break;
+                }
+            }
+            bool cg_ok = stage5_codegen(ctx, &region, guest_pc,
+                terminal_idx, -1, emitted_pattern,
+                synth_block_end, side_exit_emit_enabled,
+                &side_exit_family_cfg);
+            if (cg_ok) {
+                ctx->superblock_enabled = saved_superblock_enabled;
+                stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
+                return true;
+            }
+        }
+
         ctx->guest_pc = guest_pc;
         ctx->current_inst_idx = 0;
         switch (inst0.opcode) {
