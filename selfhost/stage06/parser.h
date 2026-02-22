@@ -281,8 +281,8 @@ static int parse_type(void) {
     else if (lex_tok == TK_UNSIGNED) {
         next();
         if (lex_tok == TK_CHAR) { ty = TY_CHAR | TY_UNSIGNED; next(); }
-        else if (lex_tok == TK_INT) { ty = TY_INT | TY_UNSIGNED; next(); }
         else if (lex_tok == TK_SHORT) { ty = TY_SHORT | TY_UNSIGNED; next(); }
+        else if (lex_tok == TK_INT) { ty = TY_INT | TY_UNSIGNED; next(); }
         else if (lex_tok == TK_LONG) { ty = TY_INT | TY_UNSIGNED; next(); }
         else { ty = TY_INT | TY_UNSIGNED; }
     }
@@ -1315,29 +1315,43 @@ static Node *parse_stmt(void) {
                     }
                     next();
                 } else if (lex_tok == TK_LBRACE) {
-                    if (count < 0) {
-                        p_error("array size required for brace init");
-                        return nd_num(0);
-                    }
-                    off = add_local_array(nm, ty, count);
                     next();
                     tail = NULL;
                     ci = 0;
+                    /* First pass: parse expressions, count them */
+                    /* Store expr nodes temporarily in the block list */
                     while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
                         if (ci > 0) expect(TK_COMMA);
-                        if (ci >= count) { p_error("too many initializers"); break; }
-                        n = nd_var(nm, off, ty + TY_PTR);
-                        n->is_local = 1;
-                        n->is_array = 1;
-                        a = nd_binop(TK_PLUS, n, nd_num(ci));
-                        a = nd_unary(TK_STAR, a);
-                        a = nd_assign(a, parse_assign());
-                        a = nd_expr_stmt(a);
+                        if (count >= 0 && ci >= count) {
+                            p_error("too many initializers"); break;
+                        }
+                        /* Store parsed expr as ND_EXPR_STMT placeholder */
+                        a = nd_expr_stmt(parse_assign());
                         if (head == NULL) { head = a; tail = a; }
                         else { tail->next = a; tail = a; }
                         ci = ci + 1;
                     }
                     expect(TK_RBRACE);
+                    if (count < 0) count = ci;
+                    off = add_local_array(nm, ty, count);
+                    /* Second pass: wrap each expr into *(arr+i) = expr */
+                    a = head;
+                    head = NULL;
+                    tail = NULL;
+                    ci = 0;
+                    while (a != NULL) {
+                        n = nd_var(nm, off, ty + TY_PTR);
+                        n->is_local = 1;
+                        n->is_array = 1;
+                        t = nd_binop(TK_PLUS, n, nd_num(ci));
+                        t = nd_unary(TK_STAR, t);
+                        t = nd_assign(t, a->lhs);
+                        t = nd_expr_stmt(t);
+                        if (head == NULL) { head = t; tail = t; }
+                        else { tail->next = t; tail = t; }
+                        a = a->next;
+                        ci = ci + 1;
+                    }
                 } else {
                     p_error("expected string or { in array init");
                     return nd_num(0);
@@ -1676,17 +1690,14 @@ static Node *parse_top_decl(void) {
                 ps_ginit_count[idx] = gi;
                 next();
             } else if (lex_tok == TK_LBRACE) {
-                if (count < 0) {
-                    p_error("array size required for brace init");
-                    return NULL;
-                }
-                idx = add_global(nm, ty + TY_PTR, ty_size(ty) * count);
                 next();
-                ps_ginit_start[idx] = ps_ginit_pool_len;
+                si = ps_ginit_pool_len;  /* save pool start */
                 gi = 0;
                 while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
                     if (gi > 0) expect(TK_COMMA);
-                    if (gi >= count) { p_error("too many initializers"); break; }
+                    if (count >= 0 && gi >= count) {
+                        p_error("too many initializers"); break;
+                    }
                     if (ps_ginit_pool_len >= PS_MAX_INIT_POOL) {
                         p_error("init pool overflow"); break;
                     }
@@ -1694,6 +1705,9 @@ static Node *parse_top_decl(void) {
                     ps_ginit_pool_len = ps_ginit_pool_len + 1;
                     gi = gi + 1;
                 }
+                if (count < 0) count = gi;
+                idx = add_global(nm, ty + TY_PTR, ty_size(ty) * count);
+                ps_ginit_start[idx] = si;
                 ps_ginit_count[idx] = gi;
                 expect(TK_RBRACE);
             } else {
