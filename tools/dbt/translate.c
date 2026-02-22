@@ -241,6 +241,56 @@ static void stage5_side_exit_trace_emit(uint8_t opcode,
             branch_pc, opcode, rs1, rs2, imm, fall_pc, taken_pc);
 }
 
+static void stage5_trace_deferred_exit(const char *phase,
+                                       const translate_ctx_t *ctx,
+                                       int deferred_idx) {
+    static bool inited = false;
+    static uint32_t filter_pc = 0;
+    static int budget = 0;
+    if (!inited) {
+        const char *pcv = getenv("SLOW32_DBT_TRACE_DEFERRED_EXIT_PC");
+        if (pcv && pcv[0] != '\0') {
+            filter_pc = (uint32_t)strtoul(pcv, NULL, 0);
+            const char *maxv = getenv("SLOW32_DBT_TRACE_DEFERRED_EXIT_MAX");
+            budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 32;
+            if (budget < 0) budget = 0;
+        }
+        inited = true;
+    }
+    if (filter_pc == 0 || budget == 0 || !phase || !ctx) return;
+    if (deferred_idx < 0 || deferred_idx >= ctx->deferred_exit_count) return;
+
+    const int di = deferred_idx;
+    if (ctx->deferred_exits[di].branch_pc != filter_pc) return;
+
+    int slot_r15 = -1;
+    bool slot_r15_dirty = false;
+    for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
+        if (ctx->deferred_exits[di].allocated_snapshot[s] &&
+            ctx->deferred_exits[di].guest_reg_snapshot[s] == 15) {
+            slot_r15 = s;
+            slot_r15_dirty = ctx->deferred_exits[di].dirty_snapshot[s];
+            break;
+        }
+    }
+
+    fprintf(stderr,
+            "stage5-deferred-exit phase=%s idx=%d branch_pc=0x%08X target=0x%08X exit_idx=%d pending_valid=%u pending_g=%u pending_h=%d force_full=%u slot_r15=%d slot_r15_dirty=%u side_exit_emitted=%d deferred_count=%d\n",
+            phase, deferred_idx,
+            ctx->deferred_exits[di].branch_pc,
+            ctx->deferred_exits[di].target_pc,
+            ctx->deferred_exits[di].exit_idx,
+            ctx->deferred_exits[di].pending_write_valid ? 1u : 0u,
+            ctx->deferred_exits[di].pending_write_guest_reg,
+            (int)ctx->deferred_exits[di].pending_write_host_reg,
+            ctx->deferred_exits[di].force_full_flush ? 1u : 0u,
+            slot_r15,
+            slot_r15_dirty ? 1u : 0u,
+            ctx->side_exit_emitted,
+            ctx->deferred_exit_count);
+    budget--;
+}
+
 static bool stage5_region_contains_jal_or_jalr(const stage5_lift_region_t *region) {
     if (!region) return false;
     for (uint32_t i = 0; i < region->ir_count; i++) {
@@ -1627,6 +1677,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     ctx->deferred_exits[di].pending_write_host_reg = ctx->pending_write.host_reg;
                     ctx->deferred_exits[di].force_full_flush =
                         (inst0.opcode == OP_BLTU || inst0.opcode == OP_BGEU);
+                    stage5_trace_deferred_exit("capture", ctx, di);
 
                     if (ctx->block) {
                         ctx->block->flags |= BLOCK_FLAG_DIRECT;
@@ -1793,6 +1844,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 ctx->deferred_exits[di].pending_write_host_reg = ctx->pending_write.host_reg;
                 ctx->deferred_exits[di].force_full_flush =
                     (n->opcode == OP_BLTU || n->opcode == OP_BGEU);
+                stage5_trace_deferred_exit("capture", ctx, di);
 
                 if (ctx->block) {
                     ctx->block->flags |= BLOCK_FLAG_DIRECT;
@@ -3986,6 +4038,7 @@ static void emit_deferred_side_exits(translate_ctx_t *ctx) {
     emit_ctx_t *e = &ctx->emit;
 
     for (int i = 0; i < ctx->deferred_exit_count; i++) {
+        stage5_trace_deferred_exit("emit", ctx, i);
         // Patch the inline jmp to point here
         size_t cold_offset = emit_offset(e);
         emit_patch_rel32(e, ctx->deferred_exits[i].jmp_patch_offset, cold_offset);
@@ -4532,6 +4585,7 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
             ctx->deferred_exits[di].pending_write_guest_reg = ctx->pending_write.guest_reg;
             ctx->deferred_exits[di].pending_write_host_reg = ctx->pending_write.host_reg;
             ctx->deferred_exits[di].force_full_flush = false;
+            stage5_trace_deferred_exit("capture", ctx, di);
 
         }
 
