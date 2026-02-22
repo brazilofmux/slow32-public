@@ -1524,6 +1524,8 @@ static void usage(const char *prog) {
     fprintf(stderr, "  SLOW32_DBT_STAGE5_VALIDATE_ABORT=1 Abort on first validation mismatch\n");
     fprintf(stderr, "  SLOW32_DBT_STAGE5_VALIDATE_REQUIRE=1 Return non-zero if validator reports mismatches\n");
     fprintf(stderr, "  SLOW32_DBT_STAGE5_EMIT_CALLS=1  Allow Stage5 emit for terminal JAL call regions\n");
+    fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_CMP_RR=1  Allow Stage5 native codegen for compare rr ops\n");
+    fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_CMP_RI=1  Allow Stage5 native codegen for compare imm ops\n");
 }
 
 static void parse_service_list(const char *list, char names[][S32_MAX_SVC_NAME], int *count, int max) {

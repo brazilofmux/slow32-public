@@ -12,6 +12,7 @@
 #include "cpu_state.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 // ============================================================================
 // Telemetry counters
@@ -23,6 +24,28 @@ uint32_t stage5_codegen_fallback_unsupported_op;
 uint64_t stage5_codegen_guest_insts;
 uint64_t stage5_codegen_host_bytes;
 uint32_t stage5_codegen_regs_allocated_hist[REG_ALLOC_SLOTS + 1];
+
+static bool cg_cmp_rr_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_CMP_RR");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+static bool cg_cmp_ri_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_CMP_RI");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
 
 // ============================================================================
 // Forward declarations for translate.c functions we need
@@ -564,7 +587,7 @@ static bool cg_emit_node(stage5_cg_t *cg, const stage5_ir_node_t *n) {
     }
 }
 
-static bool cg_opcode_supported(uint8_t opcode) {
+static bool cg_opcode_supported(uint8_t opcode, bool cmp_rr_enabled, bool cmp_ri_enabled) {
     switch (opcode) {
         case OP_NOP:
         case OP_ADD: case OP_SUB: case OP_AND: case OP_OR: case OP_XOR:
@@ -575,6 +598,12 @@ static bool cg_opcode_supported(uint8_t opcode) {
         case OP_LDW: case OP_LDH: case OP_LDB: case OP_LDHU: case OP_LDBU:
         case OP_STW: case OP_STH: case OP_STB:
             return true;
+        case OP_SLT: case OP_SLTU: case OP_SEQ: case OP_SNE:
+        case OP_SGT: case OP_SGTU: case OP_SLE: case OP_SLEU:
+        case OP_SGE: case OP_SGEU:
+            return cmp_rr_enabled;
+        case OP_SLTI: case OP_SLTIU:
+            return cmp_ri_enabled;
         default:
             return false;
     }
@@ -599,6 +628,9 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
                                 bool synth_block_end,
                                 bool side_exit_emit_enabled,
                                 bool side_exit_family_c) {
+    bool cmp_rr_enabled = cg_cmp_rr_enabled();
+    bool cmp_ri_enabled = cmp_rr_enabled && cg_cmp_ri_enabled();
+
     if (fuse_cmp_idx >= 0) {
         return false;
     }
@@ -616,7 +648,7 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
         if (n->synthetic) continue;
         if (terminal_idx >= 0 && (int)i == terminal_idx) continue;
         if (fuse_cmp_idx >= 0 && (int)i == fuse_cmp_idx) continue;
-        if (!cg_opcode_supported(n->opcode)) {
+        if (!cg_opcode_supported(n->opcode, cmp_rr_enabled, cmp_ri_enabled)) {
             return false;
         }
         if (n->is_side_exit && n->kind == STAGE5_IR_BRANCH &&
