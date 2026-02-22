@@ -2203,6 +2203,16 @@ int main(int argc, char **argv) {
                     fprintf(stderr, "  emit policy allow_call: %" PRIu32 "\n",
                             stage5_emit_policy_allow_call);
                 }
+                if (stage5_emit_regflow_retry_attempted > 0) {
+                    fprintf(stderr, "  emit regflow_retry attempted: %" PRIu32 "\n",
+                            stage5_emit_regflow_retry_attempted);
+                    fprintf(stderr, "  emit regflow_retry accepted:  %" PRIu32 "\n",
+                            stage5_emit_regflow_retry_accepted);
+                    if (stage5_emit_regflow_retry_emit_success > 0) {
+                        fprintf(stderr, "  emit regflow_retry success:   %" PRIu32 "\n",
+                                stage5_emit_regflow_retry_emit_success);
+                    }
+                }
                 if (stage5_emit_prefilter_skip > 0) {
                     fprintf(stderr, "  emit prefilter_skip: %" PRIu32 "\n",
                             stage5_emit_prefilter_skip);

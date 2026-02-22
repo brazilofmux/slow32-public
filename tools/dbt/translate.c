@@ -59,6 +59,9 @@ uint32_t stage5_emit_fallback_policy_regflow = 0;
 uint32_t stage5_emit_fallback_policy_regflow_cross = 0;
 uint32_t stage5_emit_fallback_policy_regflow_span = 0;
 uint32_t stage5_emit_fallback_policy_regflow_live = 0;
+uint32_t stage5_emit_regflow_retry_attempted = 0;
+uint32_t stage5_emit_regflow_retry_accepted = 0;
+uint32_t stage5_emit_regflow_retry_emit_success = 0;
 uint32_t stage5_emit_policy_allow_call = 0;
 uint32_t stage5_emit_prefilter_skip = 0;
 uint32_t stage5_emit_prefilter_skip_branch_head = 0;
@@ -198,6 +201,33 @@ static uint32_t stage5_emit_regflow_live_limit(void) {
         inited = true;
     }
     return limit;
+}
+
+static bool stage5_region_regflow_guard_hit(const stage5_lift_region_t *region,
+                                            bool superblock_enabled,
+                                            bool *cross_hit_out,
+                                            bool *span_hit_out,
+                                            bool *live_hit_out) {
+    bool cross_hit = false;
+    bool span_hit = false;
+    bool live_hit = false;
+    if (superblock_enabled &&
+        region &&
+        region->cfg_valid &&
+        region->reg_flow_valid &&
+        region->cfg_block_count > 1 &&
+        region->guest_inst_count >= 4) {
+        uint32_t cross_limit = stage5_emit_regflow_cross_limit();
+        uint32_t span_limit = stage5_emit_regflow_span_limit();
+        uint32_t live_limit = stage5_emit_regflow_live_limit();
+        cross_hit = region->reg_flow_cross_block_regs > cross_limit;
+        span_hit = region->reg_flow_max_span > span_limit;
+        live_hit = region->cfg_max_live > live_limit;
+    }
+    if (cross_hit_out) *cross_hit_out = cross_hit;
+    if (span_hit_out) *span_hit_out = span_hit;
+    if (live_hit_out) *live_hit_out = live_hit;
+    return cross_hit || span_hit || live_hit;
 }
 
 static bool stage5_validate_abort_on_mismatch(void) {
@@ -2216,6 +2246,30 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     stage5_lift_success++;
     stage5_record_cfg_metrics(&region);
     stage5_validate_region(ctx, &region);
+    bool regflow_retry_applied = false;
+    if (stage5_region_regflow_guard_hit(&region, ctx->superblock_enabled, NULL, NULL, NULL)) {
+        uint32_t retry_budget = region.guest_inst_count / 2u;
+        if (retry_budget >= 4u && retry_budget < region.guest_inst_count) {
+            stage5_emit_regflow_retry_attempted++;
+            stage5_lift_attempted++;
+            stage5_lift_region_t retry_region;
+            stage5_lift_region_init(&retry_region, guest_pc);
+            if (stage5_lift_superblock(&retry_region, ctx->cpu->mem_base, ctx->cpu->code_limit,
+                                       retry_budget)) {
+                stage5_lift_success++;
+                stage5_record_cfg_metrics(&retry_region);
+                stage5_validate_region(ctx, &retry_region);
+                if (!stage5_region_regflow_guard_hit(&retry_region, ctx->superblock_enabled,
+                                                     NULL, NULL, NULL)) {
+                    region = retry_region;
+                    regflow_retry_applied = true;
+                    stage5_emit_regflow_retry_accepted++;
+                }
+            } else {
+                stage5_record_lift_fallback(&retry_region);
+            }
+        }
+    }
     stage5_burg_attempted++;
 
     stage5_burg_result_t result;
@@ -2293,23 +2347,13 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
 
     // Superblock guardrail: for larger branch-ending regions, keep Stage4 in
     // control so forward-branch extension and side-exit shaping remain intact.
-    bool regflow_guard_hit = false;
     bool regflow_cross_hit = false;
     bool regflow_span_hit = false;
     bool regflow_live_hit = false;
-    if (saved_superblock_enabled &&
-        region.cfg_valid &&
-        region.reg_flow_valid &&
-        region.cfg_block_count > 1 &&
-        region.guest_inst_count >= 4) {
-        uint32_t cross_limit = stage5_emit_regflow_cross_limit();
-        uint32_t span_limit = stage5_emit_regflow_span_limit();
-        uint32_t live_limit = stage5_emit_regflow_live_limit();
-        regflow_cross_hit = region.reg_flow_cross_block_regs > cross_limit;
-        regflow_span_hit = region.reg_flow_max_span > span_limit;
-        regflow_live_hit = region.cfg_max_live > live_limit;
-        regflow_guard_hit = regflow_cross_hit || regflow_span_hit || regflow_live_hit;
-    }
+    bool regflow_guard_hit = stage5_region_regflow_guard_hit(&region, saved_superblock_enabled,
+                                                             &regflow_cross_hit,
+                                                             &regflow_span_hit,
+                                                             &regflow_live_hit);
     if (regflow_guard_hit) {
         ctx->superblock_enabled = saved_superblock_enabled;
         stage5_emit_fallback++;
@@ -2418,6 +2462,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         if (ended) {
             ctx->superblock_enabled = saved_superblock_enabled;
             stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+            if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
             return true;
         }
     }
@@ -2440,6 +2485,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         if (ended) {
             ctx->superblock_enabled = saved_superblock_enabled;
             stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+            if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
             return true;
         }
     }
@@ -2459,6 +2505,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         if (fused) {
             ctx->superblock_enabled = saved_superblock_enabled;
             stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+            if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
             return true;
         }
     }
@@ -2476,31 +2523,37 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 }
                 ctx->superblock_enabled = saved_superblock_enabled;
                 stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
                 return true;
             case OP_JALR:
                 translate_jalr(ctx, inst0.rd, inst0.rs1, inst0.imm);
                 ctx->superblock_enabled = saved_superblock_enabled;
                 stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
                 return true;
             case OP_HALT:
                 translate_halt(ctx);
                 ctx->superblock_enabled = saved_superblock_enabled;
                 stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
                 return true;
             case OP_DEBUG:
                 translate_debug(ctx, inst0.rs1);
                 ctx->superblock_enabled = saved_superblock_enabled;
                 stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
                 return true;
             case OP_YIELD:
                 translate_yield(ctx);
                 ctx->superblock_enabled = saved_superblock_enabled;
                 stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
                 return true;
             case OP_BEQ:
                 if (stage5_translate_beq_compact(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                    if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -2509,6 +2562,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (translate_bne(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                    if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -2517,6 +2571,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (translate_blt(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                    if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -2525,6 +2580,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (translate_bge(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                    if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -2533,6 +2589,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (translate_bltu(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                    if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -2541,6 +2598,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (translate_bgeu(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                    if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -2573,6 +2631,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (ended) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                    if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -2623,6 +2682,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (ended) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                    if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -2658,6 +2718,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (ended) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                    if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -2855,6 +2916,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (ended) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                    if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -3093,6 +3155,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             if (ended) {
                 ctx->superblock_enabled = saved_superblock_enabled;
                 stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
                 return true;
             }
             stage5_emit_fallback_not_ended++;
