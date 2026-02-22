@@ -865,6 +865,58 @@ static int ho_cse(void) {
 }
 
 /* ----------------------------------------------------------------
+ * Dead store elimination
+ * If two STOREs in the same block write to the same address with
+ * no intervening LOAD/CALL/CALLP, the first STORE is dead.
+ * ---------------------------------------------------------------- */
+
+static int ho_stat_dse;
+
+static int ho_dse_pass(void) {
+    int changed;
+    int i;
+    int j;
+    int addr;
+    int blk;
+    int end;
+    int alive;
+    int jk;
+
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] != HI_STORE) { i = i + 1; continue; }
+        addr = h_src1[i];  /* address operand of STORE */
+        blk = h_blk[i];
+        end = bb_end[blk];
+
+        /* Scan forward in same block for another STORE to same address */
+        alive = 1;
+        j = i + 1;
+        while (j < end && alive) {
+            jk = h_kind[j];
+            if (jk == HI_NOP) { j = j + 1; continue; }
+            /* If any LOAD/CALL/CALLP, the stored value might be observed */
+            if (jk == HI_LOAD || jk == HI_CALL || jk == HI_CALLP) {
+                alive = 0;
+            }
+            /* Found another STORE to same address — first store is dead */
+            if (jk == HI_STORE && h_src1[j] == addr) {
+                h_kind[i] = HI_NOP;
+                h_src1[i] = -1;
+                h_src2[i] = -1;
+                changed = 1;
+                ho_stat_dse = ho_stat_dse + 1;
+                alive = 0;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return changed;
+}
+
+/* ----------------------------------------------------------------
  * Main optimization driver: iterate until fixpoint
  * ---------------------------------------------------------------- */
 
@@ -896,6 +948,7 @@ static void hir_opt(void) {
         changed = changed | ho_branch_simplify();
         changed = changed | ho_dead_blocks();
         changed = changed | ho_phi_simplify();
+        changed = changed | ho_dse_pass();
         changed = changed | ho_dce();
         iter = iter + 1;
     }
