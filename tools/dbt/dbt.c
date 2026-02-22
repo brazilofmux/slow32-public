@@ -2748,6 +2748,18 @@ int main(int argc, char **argv) {
                     if (stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store > 0) {
                         fprintf(stderr, "        cmpdep mem-guard stores:      %" PRIu32 "\n",
                                 stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store);
+                        if (stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_stb > 0) {
+                            fprintf(stderr, "          store stb:                  %" PRIu32 "\n",
+                                    stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_stb);
+                        }
+                        if (stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_sth > 0) {
+                            fprintf(stderr, "          store sth:                  %" PRIu32 "\n",
+                                    stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_sth);
+                        }
+                        if (stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_stw > 0) {
+                            fprintf(stderr, "          store stw:                  %" PRIu32 "\n",
+                                    stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_stw);
+                        }
                     }
                 }
                 if (stage5_codegen_fallback_preflight_terminal > 0) {
