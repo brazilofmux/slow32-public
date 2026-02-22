@@ -35,6 +35,7 @@ uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_opcode_hist[128];
 uint32_t stage5_codegen_fallback_side_exit;
 uint32_t stage5_codegen_fallback_emit_node;
 uint32_t stage5_codegen_fallback_terminal;
+uint32_t stage5_codegen_fallback_terminal_opcode_hist[128];
 uint64_t stage5_codegen_guest_insts;
 uint64_t stage5_codegen_host_bytes;
 uint32_t stage5_codegen_regs_allocated_hist[REG_ALLOC_SLOTS + 1];
@@ -1268,6 +1269,10 @@ bool stage5_codegen(translate_ctx_t *ctx,
     if (!ended) {
         stage5_codegen_fallback++;
         stage5_codegen_fallback_terminal++;
+        if (terminal_idx >= 0 && terminal_idx < (int)region->ir_count) {
+            stage5_codegen_fallback_terminal_opcode_hist[
+                region->ir[terminal_idx].opcode & 0x7F]++;
+        }
         cg_state_restore(ctx, &saved);
         return false;
     }

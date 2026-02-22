@@ -2759,6 +2759,8 @@ int main(int argc, char **argv) {
             if (stage5_codegen_fallback_terminal > 0) {
                 fprintf(stderr, "  codegen terminal:       %" PRIu32 "\n",
                         stage5_codegen_fallback_terminal);
+                print_top_opcode_hist("codegen terminal fallback",
+                                      stage5_codegen_fallback_terminal_opcode_hist);
             }
             if (stage5_codegen_guest_insts > 0) {
                 fprintf(stderr, "Stage5 codegen guest insts: %" PRIu64 "\n",

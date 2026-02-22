@@ -52,6 +52,7 @@ extern uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_opcode_hist[128
 extern uint32_t stage5_codegen_fallback_side_exit;
 extern uint32_t stage5_codegen_fallback_emit_node;
 extern uint32_t stage5_codegen_fallback_terminal;
+extern uint32_t stage5_codegen_fallback_terminal_opcode_hist[128];
 extern uint64_t stage5_codegen_guest_insts;
 extern uint64_t stage5_codegen_host_bytes;
 extern uint32_t stage5_codegen_regs_allocated_hist[REG_ALLOC_SLOTS + 1];
