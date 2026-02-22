@@ -408,7 +408,8 @@ static void stage5_validate_dump_repro(const translate_ctx_t *ctx,
 static bool stage5_validate_region_eligible(const stage5_lift_region_t *region) {
     for (uint32_t i = 0; i < region->ir_count; i++) {
         const stage5_ir_node_t *n = &region->ir[i];
-        if (n->opcode == OP_JALR || (n->opcode == OP_JAL && n->rd == 31)) {
+        bool jalr_ret = (n->opcode == OP_JALR && n->rd == 0 && n->rs1 == REG_LR && n->imm == 0);
+        if ((n->opcode == OP_JALR && !jalr_ret) || (n->opcode == OP_JAL && n->rd == 31)) {
             stage5_validate_skipped_call_indirect++;
             return false;
         }
@@ -527,6 +528,10 @@ static bool stage5_validate_execute_op(stage5_validate_state_t *s,
         case OP_JAL:
             stage5_validate_reg_write(s, rd, pc + 4);
             next_pc = pc + (uint32_t)imm;
+            break;
+        case OP_JALR:
+            stage5_validate_reg_write(s, rd, pc + 4);
+            next_pc = (rs1 + (uint32_t)imm) & ~1u;
             break;
         case OP_DEBUG:
         case OP_YIELD:
