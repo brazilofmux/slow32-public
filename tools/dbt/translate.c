@@ -3908,13 +3908,47 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
 
         // Family B fallback: generic prefix + terminal for 2-inst regions.
         if (!branch_uses_cmp_rd) {
+            uint8_t inst0_op = (uint8_t)(inst0.opcode & 0x7F);
+            uint8_t inst1_op = (uint8_t)(inst1.opcode & 0x7F);
             bool inst0_is_branch =
-                inst0.opcode == OP_BEQ || inst0.opcode == OP_BNE ||
-                inst0.opcode == OP_BLT || inst0.opcode == OP_BGE ||
-                inst0.opcode == OP_BLTU || inst0.opcode == OP_BGEU;
+                inst0_op == OP_BEQ || inst0_op == OP_BNE ||
+                inst0_op == OP_BLT || inst0_op == OP_BGE ||
+                inst0_op == OP_BLTU || inst0_op == OP_BGEU;
             bool side_exit_capacity_blocked =
                 (ctx->exit_idx + 2 >= MAX_BLOCK_EXITS ||
                  ctx->deferred_exit_count >= MAX_BLOCK_EXITS);
+
+            // 2-inst non-terminal straight-line block: emit both ops and
+            // terminate with a chained exit.
+            if (synth_block_end &&
+                emitted_pattern == STAGE5_BURG_PATTERN_BLOCK_END &&
+                !region.has_terminal_branch &&
+                !inst0_is_branch &&
+                !stage5_is_terminal_opcode(inst1_op)) {
+                bool ok_prefix = true;
+                ctx->guest_pc = guest_pc;
+                ctx->current_inst_idx = 0;
+                ok_prefix = stage5_emit_familyb_prefix_nonbranch(ctx, &inst0);
+                if (!ok_prefix) {
+                    stage5_emit_fallback_helper_prefix_nonbranch_fail++;
+                }
+                if (ok_prefix) {
+                    ctx->guest_pc = guest_pc + 4;
+                    ctx->current_inst_idx = 1;
+                    ok_prefix = stage5_emit_familyb_prefix_nonbranch(ctx, &inst1);
+                    if (!ok_prefix) {
+                        stage5_emit_fallback_helper_prefix_nonbranch_fail++;
+                    }
+                }
+                if (ok_prefix) {
+                    ctx->guest_pc = guest_pc + 8;
+                    emit_exit_chained(ctx, ctx->guest_pc, ctx->exit_idx++);
+                    ctx->superblock_enabled = saved_superblock_enabled;
+                    stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                    if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
+                    return true;
+                }
+            }
 
             // If the first op is a branch but we cannot shape it as a side-exit
             // prefix, still keep Stage5 ownership by emitting the branch as a
@@ -3942,7 +3976,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             bool ok_prefix = true;
             ctx->guest_pc = guest_pc;
             ctx->current_inst_idx = 0;
-            switch (inst0.opcode) {
+            switch (inst0_op) {
                 case OP_NOP:
                 case OP_ADD:
                 case OP_SUB:
@@ -4294,7 +4328,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
 
             ctx->guest_pc = n->pc;
             ctx->current_inst_idx = (int)i;
-            switch (n->opcode) {
+            uint8_t op = (uint8_t)(n->opcode & 0x7F);
+            switch (op) {
                 case OP_NOP:
                 case OP_ADD:
                 case OP_SUB:
@@ -4336,7 +4371,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 case OP_STW:
                 case OP_STH:
                 case OP_STB:
-                    ok_prefix = stage5_emit_prefix_nonbranch(ctx, n->opcode, n->rd,
+                    ok_prefix = stage5_emit_prefix_nonbranch(ctx, op, n->rd,
                                                              n->rs1, n->rs2, n->imm);
                     if (!ok_prefix) {
                         stage5_emit_fallback_helper_prefix_nonbranch_fail++;
@@ -4344,7 +4379,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     break;
                 default:
                     ok_prefix = false;
-                    first_bad_prefix_opcode = n->opcode;
+                    first_bad_prefix_opcode = op;
                     break;
             }
             if (!ok_prefix) break;
