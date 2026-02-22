@@ -71,6 +71,13 @@ uint32_t stage5_emit_calls = 0;
 uint64_t stage5_emit_time_ns = 0;
 uint64_t stage5_emit_success_time_ns = 0;
 uint64_t stage5_emit_fallback_time_ns = 0;
+uint32_t stage5_validate_attempted = 0;
+uint32_t stage5_validate_eligible = 0;
+uint32_t stage5_validate_skipped_load_store = 0;
+uint32_t stage5_validate_skipped_call_indirect = 0;
+uint32_t stage5_validate_skipped_terminal = 0;
+uint32_t stage5_validate_mismatch = 0;
+uint32_t stage5_validate_ok = 0;
 uint32_t stage5_emit_fused_cmp_branch = 0;
 uint32_t stage5_emit_side_exits = 0;
 uint32_t stage5_emit_region_side_exit_total = 0;
@@ -106,6 +113,329 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
 static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg);
 static inline void flush_pending_write(translate_ctx_t *ctx);
 static inline void flush_pending_cond(translate_ctx_t *ctx);
+
+static bool stage5_validate_lift_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_VALIDATE_LIFT");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+static bool stage5_validate_abort_on_mismatch(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_VALIDATE_ABORT");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+typedef struct {
+    uint32_t regs[32];
+    uint32_t pc;
+} stage5_validate_state_t;
+
+static inline uint32_t stage5_validate_reg_read(const stage5_validate_state_t *s, uint8_t reg) {
+    return reg ? s->regs[reg & 31u] : 0u;
+}
+
+static inline void stage5_validate_reg_write(stage5_validate_state_t *s, uint8_t reg, uint32_t value) {
+    if (reg != 0) {
+        s->regs[reg & 31u] = value;
+    }
+}
+
+static bool stage5_validate_is_terminal_unsupported(uint8_t opcode) {
+    return opcode == OP_JAL || opcode == OP_JALR ||
+           opcode == OP_YIELD || opcode == OP_DEBUG || opcode == OP_HALT ||
+           opcode == OP_ASSERT_EQ;
+}
+
+static bool stage5_validate_region_eligible(const stage5_lift_region_t *region) {
+    for (uint32_t i = 0; i < region->ir_count; i++) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->kind == STAGE5_IR_LOAD || n->kind == STAGE5_IR_STORE) {
+            stage5_validate_skipped_load_store++;
+            return false;
+        }
+        if (n->opcode == OP_JAL || n->opcode == OP_JALR) {
+            stage5_validate_skipped_call_indirect++;
+            return false;
+        }
+        if (stage5_validate_is_terminal_unsupported(n->opcode)) {
+            stage5_validate_skipped_terminal++;
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool stage5_validate_execute_decoded(stage5_validate_state_t *s,
+                                            const decoded_inst_t *inst,
+                                            uint32_t pc) {
+    uint32_t next_pc = pc + 4;
+    uint32_t rs1 = stage5_validate_reg_read(s, inst->rs1);
+    uint32_t rs2 = stage5_validate_reg_read(s, inst->rs2);
+    int32_t simm = inst->imm;
+
+    switch (inst->opcode) {
+        case OP_ADD:  stage5_validate_reg_write(s, inst->rd, rs1 + rs2); break;
+        case OP_SUB:  stage5_validate_reg_write(s, inst->rd, rs1 - rs2); break;
+        case OP_XOR:  stage5_validate_reg_write(s, inst->rd, rs1 ^ rs2); break;
+        case OP_OR:   stage5_validate_reg_write(s, inst->rd, rs1 | rs2); break;
+        case OP_AND:  stage5_validate_reg_write(s, inst->rd, rs1 & rs2); break;
+        case OP_SLL:  stage5_validate_reg_write(s, inst->rd, rs1 << (rs2 & 31)); break;
+        case OP_SRL:  stage5_validate_reg_write(s, inst->rd, rs1 >> (rs2 & 31)); break;
+        case OP_SRA:  stage5_validate_reg_write(s, inst->rd, (uint32_t)((int32_t)rs1 >> (rs2 & 31))); break;
+        case OP_SLT:  stage5_validate_reg_write(s, inst->rd, ((int32_t)rs1 < (int32_t)rs2) ? 1u : 0u); break;
+        case OP_SLTU: stage5_validate_reg_write(s, inst->rd, (rs1 < rs2) ? 1u : 0u); break;
+        case OP_SEQ:  stage5_validate_reg_write(s, inst->rd, (rs1 == rs2) ? 1u : 0u); break;
+        case OP_SNE:  stage5_validate_reg_write(s, inst->rd, (rs1 != rs2) ? 1u : 0u); break;
+        case OP_SGT:  stage5_validate_reg_write(s, inst->rd, ((int32_t)rs1 > (int32_t)rs2) ? 1u : 0u); break;
+        case OP_SGTU: stage5_validate_reg_write(s, inst->rd, (rs1 > rs2) ? 1u : 0u); break;
+        case OP_SLE:  stage5_validate_reg_write(s, inst->rd, ((int32_t)rs1 <= (int32_t)rs2) ? 1u : 0u); break;
+        case OP_SLEU: stage5_validate_reg_write(s, inst->rd, (rs1 <= rs2) ? 1u : 0u); break;
+        case OP_SGE:  stage5_validate_reg_write(s, inst->rd, ((int32_t)rs1 >= (int32_t)rs2) ? 1u : 0u); break;
+        case OP_SGEU: stage5_validate_reg_write(s, inst->rd, (rs1 >= rs2) ? 1u : 0u); break;
+        case OP_ADDI: stage5_validate_reg_write(s, inst->rd, rs1 + (uint32_t)simm); break;
+        case OP_ORI:  stage5_validate_reg_write(s, inst->rd, rs1 | (uint32_t)simm); break;
+        case OP_ANDI: stage5_validate_reg_write(s, inst->rd, rs1 & (uint32_t)simm); break;
+        case OP_XORI: stage5_validate_reg_write(s, inst->rd, rs1 ^ (uint32_t)simm); break;
+        case OP_SLLI: stage5_validate_reg_write(s, inst->rd, rs1 << (simm & 31)); break;
+        case OP_SRLI: stage5_validate_reg_write(s, inst->rd, rs1 >> (simm & 31)); break;
+        case OP_SRAI: stage5_validate_reg_write(s, inst->rd, (uint32_t)((int32_t)rs1 >> (simm & 31))); break;
+        case OP_SLTI: stage5_validate_reg_write(s, inst->rd, ((int32_t)rs1 < simm) ? 1u : 0u); break;
+        case OP_SLTIU:stage5_validate_reg_write(s, inst->rd, (rs1 < (uint32_t)simm) ? 1u : 0u); break;
+        case OP_LUI:  stage5_validate_reg_write(s, inst->rd, (uint32_t)simm); break;
+        case OP_MUL:  stage5_validate_reg_write(s, inst->rd, rs1 * rs2); break;
+        case OP_MULHU: {
+            uint64_t p = (uint64_t)rs1 * (uint64_t)rs2;
+            stage5_validate_reg_write(s, inst->rd, (uint32_t)(p >> 32));
+            break;
+        }
+        case OP_DIV:
+            if (rs2 == 0) {
+                stage5_validate_reg_write(s, inst->rd, 0xFFFFFFFFu);
+            } else if (rs1 == 0x80000000u && rs2 == 0xFFFFFFFFu) {
+                stage5_validate_reg_write(s, inst->rd, 0x80000000u);
+            } else {
+                stage5_validate_reg_write(s, inst->rd,
+                    (uint32_t)((int32_t)rs1 / (int32_t)rs2));
+            }
+            break;
+        case OP_REM:
+            if (rs2 == 0) {
+                stage5_validate_reg_write(s, inst->rd, rs1);
+            } else if (rs1 == 0x80000000u && rs2 == 0xFFFFFFFFu) {
+                stage5_validate_reg_write(s, inst->rd, 0);
+            } else {
+                stage5_validate_reg_write(s, inst->rd,
+                    (uint32_t)((int32_t)rs1 % (int32_t)rs2));
+            }
+            break;
+        case OP_BEQ:  if (rs1 == rs2) next_pc = next_pc + (uint32_t)simm; break;
+        case OP_BNE:  if (rs1 != rs2) next_pc = next_pc + (uint32_t)simm; break;
+        case OP_BLT:  if ((int32_t)rs1 <  (int32_t)rs2) next_pc = next_pc + (uint32_t)simm; break;
+        case OP_BGE:  if ((int32_t)rs1 >= (int32_t)rs2) next_pc = next_pc + (uint32_t)simm; break;
+        case OP_BLTU: if (rs1 <  rs2) next_pc = next_pc + (uint32_t)simm; break;
+        case OP_BGEU: if (rs1 >= rs2) next_pc = next_pc + (uint32_t)simm; break;
+        case OP_NOP: break;
+        default:
+            return false;
+    }
+
+    s->regs[0] = 0;
+    s->pc = next_pc;
+    return true;
+}
+
+static const stage5_ir_node_t *stage5_validate_find_node(const stage5_lift_region_t *region,
+                                                          uint32_t pc,
+                                                          uint8_t opcode) {
+    for (uint32_t i = 0; i < region->ir_count; i++) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->pc != pc || n->synthetic) continue;
+        if ((n->opcode & 0x7F) == (opcode & 0x7F)) {
+            return n;
+        }
+    }
+    return NULL;
+}
+
+static bool stage5_validate_execute_ir(stage5_validate_state_t *s,
+                                       const stage5_ir_node_t *n,
+                                       uint8_t opcode,
+                                       int32_t imm,
+                                       uint32_t pc) {
+    uint32_t next_pc = pc + 4;
+    uint32_t rs1 = stage5_validate_reg_read(s, n->rs1);
+    uint32_t rs2 = stage5_validate_reg_read(s, n->rs2);
+
+    switch (opcode) {
+        case OP_ADD:  stage5_validate_reg_write(s, n->rd, rs1 + rs2); break;
+        case OP_SUB:  stage5_validate_reg_write(s, n->rd, rs1 - rs2); break;
+        case OP_XOR:  stage5_validate_reg_write(s, n->rd, rs1 ^ rs2); break;
+        case OP_OR:   stage5_validate_reg_write(s, n->rd, rs1 | rs2); break;
+        case OP_AND:  stage5_validate_reg_write(s, n->rd, rs1 & rs2); break;
+        case OP_SLL:  stage5_validate_reg_write(s, n->rd, rs1 << (rs2 & 31)); break;
+        case OP_SRL:  stage5_validate_reg_write(s, n->rd, rs1 >> (rs2 & 31)); break;
+        case OP_SRA:  stage5_validate_reg_write(s, n->rd, (uint32_t)((int32_t)rs1 >> (rs2 & 31))); break;
+        case OP_SLT:  stage5_validate_reg_write(s, n->rd, ((int32_t)rs1 < (int32_t)rs2) ? 1u : 0u); break;
+        case OP_SLTU: stage5_validate_reg_write(s, n->rd, (rs1 < rs2) ? 1u : 0u); break;
+        case OP_SEQ:  stage5_validate_reg_write(s, n->rd, (rs1 == rs2) ? 1u : 0u); break;
+        case OP_SNE:  stage5_validate_reg_write(s, n->rd, (rs1 != rs2) ? 1u : 0u); break;
+        case OP_SGT:  stage5_validate_reg_write(s, n->rd, ((int32_t)rs1 > (int32_t)rs2) ? 1u : 0u); break;
+        case OP_SGTU: stage5_validate_reg_write(s, n->rd, (rs1 > rs2) ? 1u : 0u); break;
+        case OP_SLE:  stage5_validate_reg_write(s, n->rd, ((int32_t)rs1 <= (int32_t)rs2) ? 1u : 0u); break;
+        case OP_SLEU: stage5_validate_reg_write(s, n->rd, (rs1 <= rs2) ? 1u : 0u); break;
+        case OP_SGE:  stage5_validate_reg_write(s, n->rd, ((int32_t)rs1 >= (int32_t)rs2) ? 1u : 0u); break;
+        case OP_SGEU: stage5_validate_reg_write(s, n->rd, (rs1 >= rs2) ? 1u : 0u); break;
+        case OP_ADDI: stage5_validate_reg_write(s, n->rd, rs1 + (uint32_t)imm); break;
+        case OP_ORI:  stage5_validate_reg_write(s, n->rd, rs1 | (uint32_t)imm); break;
+        case OP_ANDI: stage5_validate_reg_write(s, n->rd, rs1 & (uint32_t)imm); break;
+        case OP_XORI: stage5_validate_reg_write(s, n->rd, rs1 ^ (uint32_t)imm); break;
+        case OP_SLLI: stage5_validate_reg_write(s, n->rd, rs1 << (imm & 31)); break;
+        case OP_SRLI: stage5_validate_reg_write(s, n->rd, rs1 >> (imm & 31)); break;
+        case OP_SRAI: stage5_validate_reg_write(s, n->rd, (uint32_t)((int32_t)rs1 >> (imm & 31))); break;
+        case OP_SLTI: stage5_validate_reg_write(s, n->rd, ((int32_t)rs1 < imm) ? 1u : 0u); break;
+        case OP_SLTIU:stage5_validate_reg_write(s, n->rd, (rs1 < (uint32_t)imm) ? 1u : 0u); break;
+        case OP_LUI:  stage5_validate_reg_write(s, n->rd, (uint32_t)imm); break;
+        case OP_MUL:  stage5_validate_reg_write(s, n->rd, rs1 * rs2); break;
+        case OP_MULHU: {
+            uint64_t p = (uint64_t)rs1 * (uint64_t)rs2;
+            stage5_validate_reg_write(s, n->rd, (uint32_t)(p >> 32));
+            break;
+        }
+        case OP_DIV:
+            if (rs2 == 0) {
+                stage5_validate_reg_write(s, n->rd, 0xFFFFFFFFu);
+            } else if (rs1 == 0x80000000u && rs2 == 0xFFFFFFFFu) {
+                stage5_validate_reg_write(s, n->rd, 0x80000000u);
+            } else {
+                stage5_validate_reg_write(s, n->rd, (uint32_t)((int32_t)rs1 / (int32_t)rs2));
+            }
+            break;
+        case OP_REM:
+            if (rs2 == 0) {
+                stage5_validate_reg_write(s, n->rd, rs1);
+            } else if (rs1 == 0x80000000u && rs2 == 0xFFFFFFFFu) {
+                stage5_validate_reg_write(s, n->rd, 0);
+            } else {
+                stage5_validate_reg_write(s, n->rd, (uint32_t)((int32_t)rs1 % (int32_t)rs2));
+            }
+            break;
+        case OP_BEQ:  if (rs1 == rs2) next_pc = next_pc + (uint32_t)imm; break;
+        case OP_BNE:  if (rs1 != rs2) next_pc = next_pc + (uint32_t)imm; break;
+        case OP_BLT:  if ((int32_t)rs1 <  (int32_t)rs2) next_pc = next_pc + (uint32_t)imm; break;
+        case OP_BGE:  if ((int32_t)rs1 >= (int32_t)rs2) next_pc = next_pc + (uint32_t)imm; break;
+        case OP_BLTU: if (rs1 <  rs2) next_pc = next_pc + (uint32_t)imm; break;
+        case OP_BGEU: if (rs1 >= rs2) next_pc = next_pc + (uint32_t)imm; break;
+        case OP_NOP: break;
+        default:
+            return false;
+    }
+
+    s->regs[0] = 0;
+    s->pc = next_pc;
+    return true;
+}
+
+static bool stage5_validate_region(const translate_ctx_t *ctx,
+                                   const stage5_lift_region_t *region) {
+    if (!stage5_validate_lift_enabled() || !ctx || !ctx->cpu || !region) {
+        return true;
+    }
+
+    stage5_validate_attempted++;
+
+    if (!stage5_validate_region_eligible(region)) {
+        return true;
+    }
+    stage5_validate_eligible++;
+
+    stage5_validate_state_t ref = {0}, ir = {0};
+    memcpy(ref.regs, ctx->cpu->regs, sizeof(ref.regs));
+    memcpy(ir.regs, ctx->cpu->regs, sizeof(ir.regs));
+    ref.regs[0] = 0;
+    ir.regs[0] = 0;
+    ref.pc = region->start_pc;
+    ir.pc = region->start_pc;
+
+    for (uint32_t step = 0; step < region->guest_inst_count; step++) {
+        uint32_t pc = ref.pc;
+        if (pc >= ctx->cpu->code_limit || ctx->cpu->code_limit - pc < 4) {
+            break;
+        }
+
+        uint32_t raw = *(uint32_t *)(ctx->cpu->mem_base + pc);
+        decoded_inst_t inst = decode_instruction(raw);
+        const stage5_ir_node_t *node = stage5_validate_find_node(region, pc, inst.opcode);
+        if (inst.opcode != OP_NOP && !node) {
+            stage5_validate_mismatch++;
+            fprintf(stderr,
+                    "stage5-validate mismatch: missing-node block_pc=0x%08X step=%u pc=0x%08X op=0x%02X\n",
+                    region->start_pc, step, pc, inst.opcode);
+            if (stage5_validate_abort_on_mismatch()) abort();
+            return false;
+        }
+        if (!stage5_validate_execute_decoded(&ref, &inst, pc)) {
+            stage5_validate_mismatch++;
+            fprintf(stderr,
+                    "stage5-validate mismatch: unsupported-ref block_pc=0x%08X step=%u pc=0x%08X op=0x%02X\n",
+                    region->start_pc, step, pc, inst.opcode);
+            if (stage5_validate_abort_on_mismatch()) abort();
+            return false;
+        }
+        if (inst.opcode != OP_NOP &&
+            !stage5_validate_execute_ir(&ir, node, inst.opcode, inst.imm, pc)) {
+            stage5_validate_mismatch++;
+            fprintf(stderr,
+                    "stage5-validate mismatch: unsupported-ir block_pc=0x%08X step=%u pc=0x%08X op=0x%02X\n",
+                    region->start_pc, step, pc, inst.opcode);
+            if (stage5_validate_abort_on_mismatch()) abort();
+            return false;
+        } else if (inst.opcode == OP_NOP) {
+            ir.pc = pc + 4;
+        }
+
+        if (ref.pc != ir.pc || memcmp(ref.regs, ir.regs, sizeof(ref.regs)) != 0) {
+            int first_reg = -1;
+            for (int r = 0; r < 32; r++) {
+                if (ref.regs[r] != ir.regs[r]) {
+                    first_reg = r;
+                    break;
+                }
+            }
+            stage5_validate_mismatch++;
+            fprintf(stderr,
+                    "stage5-validate mismatch: state block_pc=0x%08X step=%u pc=0x%08X op=0x%02X ref_next=0x%08X ir_next=0x%08X",
+                    region->start_pc, step, pc, inst.opcode, ref.pc, ir.pc);
+            if (first_reg >= 0) {
+                fprintf(stderr,
+                        " reg=r%d ref=0x%08X ir=0x%08X",
+                        first_reg, ref.regs[first_reg], ir.regs[first_reg]);
+            }
+            fprintf(stderr, "\n");
+            if (stage5_validate_abort_on_mismatch()) abort();
+            return false;
+        }
+
+        if (inst.opcode == OP_BEQ || inst.opcode == OP_BNE ||
+            inst.opcode == OP_BLT || inst.opcode == OP_BGE ||
+            inst.opcode == OP_BLTU || inst.opcode == OP_BGEU) {
+            break;
+        }
+    }
+
+    stage5_validate_ok++;
+    return true;
+}
 
 // Stage5 side-exit emission is off by default.
 // Enable for experiments with: SLOW32_DBT_STAGE5_SIDE_EXIT=1
@@ -1352,6 +1682,7 @@ static void stage5_try_select_noop(translate_ctx_t *ctx, uint32_t guest_pc) {
     }
 
     stage5_lift_success++;
+    stage5_validate_region(ctx, &region);
     stage5_burg_attempted++;
 
     stage5_burg_result_t result;
@@ -1434,6 +1765,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     }
 
     stage5_lift_success++;
+    stage5_validate_region(ctx, &region);
     stage5_burg_attempted++;
 
     stage5_burg_result_t result;

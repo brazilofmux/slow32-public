@@ -114,6 +114,13 @@ extern uint32_t stage5_emit_calls;
 extern uint64_t stage5_emit_time_ns;
 extern uint64_t stage5_emit_success_time_ns;
 extern uint64_t stage5_emit_fallback_time_ns;
+extern uint32_t stage5_validate_attempted;
+extern uint32_t stage5_validate_eligible;
+extern uint32_t stage5_validate_skipped_load_store;
+extern uint32_t stage5_validate_skipped_call_indirect;
+extern uint32_t stage5_validate_skipped_terminal;
+extern uint32_t stage5_validate_mismatch;
+extern uint32_t stage5_validate_ok;
 
 // Translation context
 typedef struct {

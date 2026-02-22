@@ -1495,6 +1495,8 @@ static void usage(const char *prog) {
     fprintf(stderr, "  --deny <list>   Deny these MMIO services (comma-separated)\n");
     fprintf(stderr, "\nEnvironment:\n");
     fprintf(stderr, "  SLOW32_DBT_ALIGN_TRAP=1  Trap on unaligned LD/ST/fetch\n");
+    fprintf(stderr, "  SLOW32_DBT_STAGE5_VALIDATE_LIFT=1  Validate lift semantics against decoded steps\n");
+    fprintf(stderr, "  SLOW32_DBT_STAGE5_VALIDATE_ABORT=1 Abort on first validation mismatch\n");
 }
 
 static void parse_service_list(const char *list, char names[][S32_MAX_SVC_NAME], int *count, int max) {
@@ -2322,6 +2324,24 @@ int main(int argc, char **argv) {
                                 k + 1, top_opcode[k], top_count[k]);
                     }
                 }
+            }
+        }
+        if (stage5_validate_attempted > 0 || stage5_validate_mismatch > 0) {
+            fprintf(stderr, "Stage5 validate attempted: %" PRIu32 "\n", stage5_validate_attempted);
+            fprintf(stderr, "Stage5 validate eligible:  %" PRIu32 "\n", stage5_validate_eligible);
+            fprintf(stderr, "Stage5 validate ok:        %" PRIu32 "\n", stage5_validate_ok);
+            fprintf(stderr, "Stage5 validate mismatch:  %" PRIu32 "\n", stage5_validate_mismatch);
+            if (stage5_validate_skipped_load_store > 0) {
+                fprintf(stderr, "  validate skipped load/store: %" PRIu32 "\n",
+                        stage5_validate_skipped_load_store);
+            }
+            if (stage5_validate_skipped_call_indirect > 0) {
+                fprintf(stderr, "  validate skipped call/indirect: %" PRIu32 "\n",
+                        stage5_validate_skipped_call_indirect);
+            }
+            if (stage5_validate_skipped_terminal > 0) {
+                fprintf(stderr, "  validate skipped terminal: %" PRIu32 "\n",
+                        stage5_validate_skipped_terminal);
             }
         }
 
