@@ -29,6 +29,9 @@ uint32_t stage5_codegen_fallback_preflight_bad_fuse_index;
 uint32_t stage5_codegen_fallback_preflight_opcode;
 uint32_t stage5_codegen_fallback_preflight_opcode_hist[128];
 uint32_t stage5_codegen_fallback_preflight_side_exit;
+uint32_t stage5_codegen_fallback_preflight_side_exit_cmpdep_mem;
+uint32_t stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_load;
+uint32_t stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store;
 uint32_t stage5_codegen_fallback_preflight_terminal;
 uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix;
 uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_opcode_hist[128];
@@ -202,6 +205,34 @@ static bool cg_allow_cmpdep_side_exit(void) {
     return enabled;
 }
 
+static bool cg_allow_cmpdep_side_exit_loads(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_ALLOW_CMPDEP_SIDE_EXIT_LOADS");
+        // Default-on once cmpdep side-exit ownership is enabled: loads are
+        // currently parity-clean, stores are still guarded separately.
+        if (!v || v[0] == '\0') {
+            enabled = true;
+        } else {
+            enabled = (strcmp(v, "0") != 0);
+        }
+        inited = true;
+    }
+    return enabled;
+}
+
+static bool cg_allow_cmpdep_side_exit_stores(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_ALLOW_CMPDEP_SIDE_EXIT_STORES");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
 static bool cg_boolpair_trace_enabled(void) {
     static bool inited = false;
     static bool enabled = false;
@@ -348,16 +379,33 @@ static bool cg_opcode_is_mem(uint8_t op) {
            op == OP_STB || op == OP_STH || op == OP_STW;
 }
 
-static bool cg_region_has_mem_prefix(const stage5_lift_region_t *region,
-                                     int terminal_idx) {
-    if (!region) return false;
+static void cg_region_mem_prefix_flags(const stage5_lift_region_t *region,
+                                       int terminal_idx,
+                                       bool *has_load_out,
+                                       bool *has_store_out) {
+    bool has_load = false;
+    bool has_store = false;
+    if (!region) {
+        if (has_load_out) *has_load_out = false;
+        if (has_store_out) *has_store_out = false;
+        return;
+    }
     for (uint32_t i = 0; i < region->ir_count; i++) {
         if (terminal_idx >= 0 && (int)i == terminal_idx) continue;
         const stage5_ir_node_t *n = &region->ir[i];
         if (n->synthetic) continue;
-        if (cg_opcode_is_mem(n->opcode)) return true;
+        if (!cg_opcode_is_mem(n->opcode)) continue;
+        if (n->opcode == OP_LDB || n->opcode == OP_LDH || n->opcode == OP_LDW ||
+            n->opcode == OP_LDBU || n->opcode == OP_LDHU) {
+            has_load = true;
+        }
+        if (n->opcode == OP_STB || n->opcode == OP_STH || n->opcode == OP_STW) {
+            has_store = true;
+        }
+        if (has_load && has_store) break;
     }
-    return false;
+    if (has_load_out) *has_load_out = has_load;
+    if (has_store_out) *has_store_out = has_store;
 }
 
 // ============================================================================
@@ -1818,15 +1866,28 @@ bool stage5_codegen(translate_ctx_t *ctx,
             stage5_codegen_boolpair_native_fallback++;
             return false;
         }
-        // Guardrail: cmpdep + side-exit ownership still drifts on some
-        // memory-touching regions (e.g. strtod loops). Keep those on the
-        // established fallback path until fully validated.
-        if (cg_region_has_mem_prefix(region, terminal_idx)) {
-            stage5_codegen_fallback++;
-            stage5_codegen_fallback_preflight++;
-            stage5_codegen_fallback_preflight_side_exit++;
-            stage5_codegen_boolpair_native_fallback++;
-            return false;
+        if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP) {
+            bool has_load = false;
+            bool has_store = false;
+            cg_region_mem_prefix_flags(region, terminal_idx, &has_load, &has_store);
+            if (has_load && !cg_allow_cmpdep_side_exit_loads()) {
+                stage5_codegen_fallback++;
+                stage5_codegen_fallback_preflight++;
+                stage5_codegen_fallback_preflight_side_exit++;
+                stage5_codegen_fallback_preflight_side_exit_cmpdep_mem++;
+                stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_load++;
+                stage5_codegen_boolpair_native_fallback++;
+                return false;
+            }
+            if (has_store && !cg_allow_cmpdep_side_exit_stores()) {
+                stage5_codegen_fallback++;
+                stage5_codegen_fallback_preflight++;
+                stage5_codegen_fallback_preflight_side_exit++;
+                stage5_codegen_fallback_preflight_side_exit_cmpdep_mem++;
+                stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store++;
+                stage5_codegen_boolpair_native_fallback++;
+                return false;
+            }
         }
     }
     if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP) {

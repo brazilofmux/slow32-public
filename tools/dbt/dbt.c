@@ -2737,6 +2737,18 @@ int main(int argc, char **argv) {
                 if (stage5_codegen_fallback_preflight_side_exit > 0) {
                     fprintf(stderr, "    preflight side_exit ownership:    %" PRIu32 "\n",
                             stage5_codegen_fallback_preflight_side_exit);
+                    if (stage5_codegen_fallback_preflight_side_exit_cmpdep_mem > 0) {
+                        fprintf(stderr, "      cmpdep mem-guard total:         %" PRIu32 "\n",
+                                stage5_codegen_fallback_preflight_side_exit_cmpdep_mem);
+                    }
+                    if (stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_load > 0) {
+                        fprintf(stderr, "        cmpdep mem-guard loads:       %" PRIu32 "\n",
+                                stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_load);
+                    }
+                    if (stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store > 0) {
+                        fprintf(stderr, "        cmpdep mem-guard stores:      %" PRIu32 "\n",
+                                stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store);
+                    }
                 }
                 if (stage5_codegen_fallback_preflight_terminal > 0) {
                     fprintf(stderr, "    preflight unsupported terminal:   %" PRIu32 "\n",
