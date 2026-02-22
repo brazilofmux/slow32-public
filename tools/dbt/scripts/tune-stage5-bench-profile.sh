@@ -21,26 +21,29 @@ JAL_JUMP_CAPS="${JAL_JUMP_CAPS:-2 3 4 6}"
 JAL_CALL_CAPS="${JAL_CALL_CAPS:-2 4 6}"
 JAL_CALL_LONG_CAPS="${JAL_CALL_LONG_CAPS:-0 8 12}"
 JALR_RET_SHORT_CAPS="${JALR_RET_SHORT_CAPS:-0 4}"
+JALR_RET_LONG_CAPS="${JALR_RET_LONG_CAPS:-0 8}"
 
 if [[ ! -x "$BENCH" ]]; then
     echo "error: missing executable script: $BENCH" >&2
     exit 1
 fi
 
-printf "%-4s %-4s %-4s %-4s %-9s %-9s %-7s %-7s %-7s %-8s %-6s\n" \
-  "JJ" "CS" "CL" "JR" "t4_mean" "t5_mean" "emit" "bpg" "crtn" "jjpol" "flag"
+printf "%-4s %-4s %-4s %-4s %-4s %-9s %-9s %-7s %-7s %-7s %-8s %-6s\n" \
+  "JJ" "CS" "CL" "JR" "JL" "t4_mean" "t5_mean" "emit" "bpg" "crtn" "jjpol" "flag"
 
 for jj in $JAL_JUMP_CAPS; do
     for cs in $JAL_CALL_CAPS; do
         for cl in $JAL_CALL_LONG_CAPS; do
             for jr in $JALR_RET_SHORT_CAPS; do
-                out=$(
-                    SLOW32_DBT_STAGE5_BENCH_MAX_JAL_JUMP_GINST="$jj" \
-                    SLOW32_DBT_STAGE5_BENCH_MAX_JAL_CALL_GINST="$cs" \
-                    SLOW32_DBT_STAGE5_BENCH_MAX_JAL_CALL_LONG_GINST="$cl" \
-                    SLOW32_DBT_STAGE5_BENCH_MAX_JALR_RET_SHORT_GINST="$jr" \
-                    "$BENCH" "$PROG" "$RUNS"
-                )
+                for jl in $JALR_RET_LONG_CAPS; do
+                    out=$(
+                        SLOW32_DBT_STAGE5_BENCH_MAX_JAL_JUMP_GINST="$jj" \
+                        SLOW32_DBT_STAGE5_BENCH_MAX_JAL_CALL_GINST="$cs" \
+                        SLOW32_DBT_STAGE5_BENCH_MAX_JAL_CALL_LONG_GINST="$cl" \
+                        SLOW32_DBT_STAGE5_BENCH_MAX_JALR_RET_SHORT_GINST="$jr" \
+                        SLOW32_DBT_STAGE5_BENCH_MAX_JALR_RET_LONG_GINST="$jl" \
+                        "$BENCH" "$PROG" "$RUNS"
+                    )
 
                 t4=$(awk '/^stage4:/ {for(i=1;i<=NF;i++) if($i ~ /^mean=/){sub(/^mean=/,"",$i); print $i}}' <<<"$out")
                 t5=$(awk '/^stage5:/ {for(i=1;i<=NF;i++) if($i ~ /^mean=/){sub(/^mean=/,"",$i); print $i}}' <<<"$out")
@@ -62,8 +65,9 @@ for jj in $JAL_JUMP_CAPS; do
                         flag="bad"
                     fi
                 fi
-                printf "%-4s %-4s %-4s %-4s %-9s %-9s %-7s %-7s %-7s %-8s %-6s\n" \
-                  "$jj" "$cs" "$cl" "$jr" "$t4" "$t5" "$emit" "$bpg" "$crtn" "$jjpol" "$flag"
+                    printf "%-4s %-4s %-4s %-4s %-4s %-9s %-9s %-7s %-7s %-7s %-8s %-6s\n" \
+                      "$jj" "$cs" "$cl" "$jr" "$jl" "$t4" "$t5" "$emit" "$bpg" "$crtn" "$jjpol" "$flag"
+                done
             done
         done
     done
