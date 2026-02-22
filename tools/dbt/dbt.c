@@ -2423,6 +2423,16 @@ int main(int argc, char **argv) {
                                       stage5_validate_skip_mem_opcode_hist);
             }
         }
+        if (stage5_cfg_regions > 0) {
+            double avg_blocks = (double)stage5_cfg_blocks_total / (double)stage5_cfg_regions;
+            double avg_iters = (double)stage5_cfg_liveness_iterations_total / (double)stage5_cfg_regions;
+            fprintf(stderr, "Stage5 cfg regions: %" PRIu32 "\n", stage5_cfg_regions);
+            fprintf(stderr, "  cfg avg blocks/region: %.2f\n", avg_blocks);
+            fprintf(stderr, "  cfg avg liveness iters: %.2f\n", avg_iters);
+            fprintf(stderr, "  cfg spill_likely regions: %" PRIu32 "\n",
+                    stage5_cfg_spill_likely_regions);
+            fprintf(stderr, "  cfg max live seen: %" PRIu32 "\n", stage5_cfg_max_live_seen);
+        }
 
         if (stage >= 2) {
             cache_print_stats(&cache);

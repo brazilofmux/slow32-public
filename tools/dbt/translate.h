@@ -131,6 +131,11 @@ extern uint32_t stage5_validate_eligible_len_hist[5];
 extern uint32_t stage5_validate_eligible_terminal_opcode_hist[128];
 extern uint32_t stage5_validate_mismatch;
 extern uint32_t stage5_validate_ok;
+extern uint32_t stage5_cfg_regions;
+extern uint32_t stage5_cfg_blocks_total;
+extern uint64_t stage5_cfg_liveness_iterations_total;
+extern uint32_t stage5_cfg_spill_likely_regions;
+extern uint32_t stage5_cfg_max_live_seen;
 
 // Translation context
 typedef struct {

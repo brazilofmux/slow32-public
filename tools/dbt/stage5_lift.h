@@ -85,6 +85,10 @@ typedef struct {
     uint32_t succ_pc[2];   // successor PCs (may be outside region)
     int16_t succ_block[2]; // successor block index, -1 if outside region/unknown
     stage5_cfg_edge_kind_t succ_kind[2];
+    uint32_t def_mask;
+    uint32_t use_mask;
+    uint32_t live_in_mask;
+    uint32_t live_out_mask;
 } stage5_cfg_block_t;
 
 typedef struct {
@@ -104,6 +108,9 @@ typedef struct {
     uint32_t cfg_block_count;
     bool cfg_valid;
     stage5_cfg_block_t cfg_blocks[STAGE5_MAX_CFG_BLOCKS];
+    uint32_t cfg_liveness_iterations;
+    uint32_t cfg_max_live;
+    bool cfg_spill_likely; // coarse pressure hint: true when max_live > 8
     stage5_lift_reason_t reason;
 } stage5_lift_region_t;
 

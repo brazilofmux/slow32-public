@@ -161,6 +161,56 @@ static bool is_terminal_cf_opcode(uint8_t opcode) {
            opcode == OP_YIELD || opcode == OP_DEBUG || opcode == OP_HALT;
 }
 
+static inline uint32_t reg_mask(uint8_t reg) {
+    return (reg == 0) ? 0u : (1u << (reg & 31u));
+}
+
+static void stage5_cfg_inst_rw_masks(uint8_t opcode, uint8_t rd, uint8_t rs1, uint8_t rs2,
+                                     uint32_t *read_mask, uint32_t *write_mask) {
+    uint32_t r = 0, w = 0;
+    switch (opcode) {
+        case OP_ADD: case OP_SUB: case OP_XOR: case OP_OR: case OP_AND:
+        case OP_SLL: case OP_SRL: case OP_SRA:
+        case OP_SLT: case OP_SLTU: case OP_SEQ: case OP_SNE:
+        case OP_SGT: case OP_SGTU: case OP_SLE: case OP_SLEU:
+        case OP_SGE: case OP_SGEU: case OP_MUL: case OP_DIV:
+        case OP_REM: case OP_MULHU:
+            r = reg_mask(rs1) | reg_mask(rs2);
+            w = reg_mask(rd);
+            break;
+        case OP_ADDI: case OP_ORI: case OP_ANDI: case OP_XORI:
+        case OP_SLLI: case OP_SRLI: case OP_SRAI:
+        case OP_SLTI: case OP_SLTIU: case OP_LUI:
+            r = reg_mask(rs1);
+            w = reg_mask(rd);
+            break;
+        case OP_LDB: case OP_LDH: case OP_LDW: case OP_LDBU: case OP_LDHU:
+            r = reg_mask(rs1);
+            w = reg_mask(rd);
+            break;
+        case OP_STB: case OP_STH: case OP_STW:
+            r = reg_mask(rs1) | reg_mask(rs2);
+            break;
+        case OP_BEQ: case OP_BNE: case OP_BLT: case OP_BGE: case OP_BLTU: case OP_BGEU:
+            r = reg_mask(rs1) | reg_mask(rs2);
+            break;
+        case OP_JAL:
+            w = reg_mask(rd);
+            break;
+        case OP_JALR:
+            r = reg_mask(rs1);
+            w = reg_mask(rd);
+            break;
+        case OP_DEBUG:
+            r = reg_mask(rs1);
+            break;
+        default:
+            break;
+    }
+    *read_mask = r;
+    *write_mask = w;
+}
+
 static bool stage5_cfg_is_branch_opcode(uint8_t opcode) {
     return is_branch_opcode(opcode);
 }
@@ -233,6 +283,7 @@ static void stage5_build_cfg(stage5_lift_region_t *region) {
     uint8_t inst_op[STAGE5_MAX_IR_NODES];
     uint8_t inst_rd[STAGE5_MAX_IR_NODES];
     uint8_t inst_rs1[STAGE5_MAX_IR_NODES];
+    uint8_t inst_rs2[STAGE5_MAX_IR_NODES];
     int32_t inst_imm[STAGE5_MAX_IR_NODES];
     uint32_t inst_count = 0;
 
@@ -255,6 +306,7 @@ static void stage5_build_cfg(stage5_lift_region_t *region) {
         inst_op[inst_count] = n->opcode;
         inst_rd[inst_count] = n->rd;
         inst_rs1[inst_count] = n->rs1;
+        inst_rs2[inst_count] = n->rs2;
         inst_imm[inst_count] = n->imm;
         inst_count++;
     }
@@ -297,6 +349,10 @@ static void stage5_build_cfg(stage5_lift_region_t *region) {
         blk->succ_pc[0] = blk->succ_pc[1] = 0;
         blk->succ_block[0] = blk->succ_block[1] = -1;
         blk->succ_kind[0] = blk->succ_kind[1] = STAGE5_CFG_EDGE_NORMAL;
+        blk->def_mask = 0;
+        blk->use_mask = 0;
+        blk->live_in_mask = 0;
+        blk->live_out_mask = 0;
 
         bool found_first = false;
         uint32_t first = 0;
@@ -346,6 +402,59 @@ static void stage5_build_cfg(stage5_lift_region_t *region) {
             blk->succ_block[s] = (int16_t)stage5_cfg_find_block_by_start(region, blk->succ_pc[s]);
         }
     }
+
+    // Per-block def/use sets.
+    for (uint32_t b = 0; b < region->cfg_block_count; b++) {
+        stage5_cfg_block_t *blk = &region->cfg_blocks[b];
+        uint32_t def = 0, use = 0;
+        for (uint32_t k = 0; k < blk->inst_count; k++) {
+            uint32_t idx = (uint32_t)blk->first_inst + k;
+            if (idx >= inst_count) break;
+            uint32_t read_mask = 0, write_mask = 0;
+            stage5_cfg_inst_rw_masks(inst_op[idx], inst_rd[idx], inst_rs1[idx], inst_rs2[idx],
+                                     &read_mask, &write_mask);
+            use |= (read_mask & ~def);
+            def |= write_mask;
+        }
+        blk->def_mask = def;
+        blk->use_mask = use;
+    }
+
+    // Backward liveness fixed-point.
+    region->cfg_liveness_iterations = 0;
+    bool changed;
+    do {
+        changed = false;
+        region->cfg_liveness_iterations++;
+        for (int bi = (int)region->cfg_block_count - 1; bi >= 0; bi--) {
+            stage5_cfg_block_t *blk = &region->cfg_blocks[bi];
+            uint32_t out = 0;
+            for (uint8_t s = 0; s < blk->succ_count; s++) {
+                int sb = blk->succ_block[s];
+                if (sb >= 0 && (uint32_t)sb < region->cfg_block_count) {
+                    out |= region->cfg_blocks[sb].live_in_mask;
+                }
+            }
+            uint32_t in = blk->use_mask | (out & ~blk->def_mask);
+            if (in != blk->live_in_mask || out != blk->live_out_mask) {
+                blk->live_in_mask = in;
+                blk->live_out_mask = out;
+                changed = true;
+            }
+        }
+    } while (changed && region->cfg_liveness_iterations < 64);
+
+    // Region pressure hint from max live set size.
+    uint32_t max_live = 0;
+    for (uint32_t b = 0; b < region->cfg_block_count; b++) {
+        const stage5_cfg_block_t *blk = &region->cfg_blocks[b];
+        uint32_t in_pop = (uint32_t)__builtin_popcount(blk->live_in_mask);
+        uint32_t out_pop = (uint32_t)__builtin_popcount(blk->live_out_mask);
+        if (in_pop > max_live) max_live = in_pop;
+        if (out_pop > max_live) max_live = out_pop;
+    }
+    region->cfg_max_live = max_live;
+    region->cfg_spill_likely = (max_live > 8u);
 
     region->cfg_valid = true;
 }
@@ -463,6 +572,9 @@ void stage5_lift_region_init(stage5_lift_region_t *region, uint32_t start_pc) {
     region->ir_count = 0;
     region->cfg_block_count = 0;
     region->cfg_valid = false;
+    region->cfg_liveness_iterations = 0;
+    region->cfg_max_live = 0;
+    region->cfg_spill_likely = false;
     region->reason = STAGE5_LIFT_NOT_IMPLEMENTED;
 }
 

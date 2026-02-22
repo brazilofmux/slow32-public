@@ -88,6 +88,11 @@ uint32_t stage5_validate_eligible_len_hist[5] = {0}; // 1-2,3-4,5-8,9-16,17+
 uint32_t stage5_validate_eligible_terminal_opcode_hist[128] = {0};
 uint32_t stage5_validate_mismatch = 0;
 uint32_t stage5_validate_ok = 0;
+uint32_t stage5_cfg_regions = 0;
+uint32_t stage5_cfg_blocks_total = 0;
+uint64_t stage5_cfg_liveness_iterations_total = 0;
+uint32_t stage5_cfg_spill_likely_regions = 0;
+uint32_t stage5_cfg_max_live_seen = 0;
 uint32_t stage5_emit_fused_cmp_branch = 0;
 uint32_t stage5_emit_side_exits = 0;
 uint32_t stage5_emit_region_side_exit_total = 0;
@@ -811,6 +816,17 @@ static bool stage5_validate_region(const translate_ctx_t *ctx,
 
     stage5_validate_ok++;
     return true;
+}
+
+static void stage5_record_cfg_metrics(const stage5_lift_region_t *region) {
+    if (!region || !region->cfg_valid) return;
+    stage5_cfg_regions++;
+    stage5_cfg_blocks_total += region->cfg_block_count;
+    stage5_cfg_liveness_iterations_total += region->cfg_liveness_iterations;
+    if (region->cfg_spill_likely) stage5_cfg_spill_likely_regions++;
+    if (region->cfg_max_live > stage5_cfg_max_live_seen) {
+        stage5_cfg_max_live_seen = region->cfg_max_live;
+    }
 }
 
 // Stage5 side-exit emission is off by default.
@@ -2058,6 +2074,7 @@ static void stage5_try_select_noop(translate_ctx_t *ctx, uint32_t guest_pc) {
     }
 
     stage5_lift_success++;
+    stage5_record_cfg_metrics(&region);
     stage5_validate_region(ctx, &region);
     stage5_burg_attempted++;
 
@@ -2141,6 +2158,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     }
 
     stage5_lift_success++;
+    stage5_record_cfg_metrics(&region);
     stage5_validate_region(ctx, &region);
     stage5_burg_attempted++;
 
