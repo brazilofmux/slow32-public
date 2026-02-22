@@ -47,6 +47,17 @@ static bool cg_cmp_ri_enabled(void) {
     return enabled;
 }
 
+static bool cg_fused_branch_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_FUSED_BRANCH");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
 // ============================================================================
 // Forward declarations for translate.c functions we need
 // ============================================================================
@@ -630,8 +641,9 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
                                 bool side_exit_family_c) {
     bool cmp_rr_enabled = cg_cmp_rr_enabled();
     bool cmp_ri_enabled = cmp_rr_enabled && cg_cmp_ri_enabled();
+    bool fused_branch_enabled = cg_fused_branch_enabled();
 
-    if (fuse_cmp_idx >= 0) {
+    if (fuse_cmp_idx >= 0 && !fused_branch_enabled) {
         return false;
     }
 
@@ -640,6 +652,10 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
     }
 
     if (terminal_idx >= (int)region->ir_count) {
+        return false;
+    }
+
+    if (fuse_cmp_idx >= (int)region->ir_count) {
         return false;
     }
 
@@ -660,6 +676,25 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
     if (terminal_idx >= 0) {
         const stage5_ir_node_t *term = &region->ir[terminal_idx];
         if (!cg_terminal_supported(term->opcode)) {
+            return false;
+        }
+    }
+
+    if (fuse_cmp_idx >= 0) {
+        if (terminal_idx < 0) return false;
+        const stage5_ir_node_t *cmp = &region->ir[fuse_cmp_idx];
+        const stage5_ir_node_t *br = &region->ir[terminal_idx];
+        if (!(cmp->opcode == OP_SLT || cmp->opcode == OP_SLTU ||
+              cmp->opcode == OP_SEQ || cmp->opcode == OP_SNE ||
+              cmp->opcode == OP_SGT || cmp->opcode == OP_SGTU ||
+              cmp->opcode == OP_SLE || cmp->opcode == OP_SLEU ||
+              cmp->opcode == OP_SGE || cmp->opcode == OP_SGEU ||
+              cmp->opcode == OP_SLTI || cmp->opcode == OP_SLTIU)) {
+            return false;
+        }
+        if (!(br->opcode == OP_BEQ || br->opcode == OP_BNE ||
+              br->opcode == OP_BLT || br->opcode == OP_BGE ||
+              br->opcode == OP_BLTU || br->opcode == OP_BGEU)) {
             return false;
         }
     }
