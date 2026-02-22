@@ -191,6 +191,17 @@ static bool cg_predicate_native_enabled(void) {
     return enabled;
 }
 
+static bool cg_allow_cmpdep_side_exit(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_ALLOW_CMPDEP_SIDE_EXIT");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
 static bool cg_boolpair_trace_enabled(void) {
     static bool inited = false;
     static bool enabled = false;
@@ -1745,6 +1756,9 @@ bool stage5_codegen(translate_ctx_t *ctx,
     bool side_exit_family_c = se_cfg ? se_cfg->family_c : false;
     bool side_exit_codegen = cg_side_exit_enabled();
     bool use_cmp_mix_fusion = cg_pattern_uses_cmp_mix_fusion(emitted_pattern);
+    bool allow_cmpdep_with_side_exit =
+        (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP) &&
+        cg_allow_cmpdep_side_exit();
     bool predicate_native_enabled =
         cg_predicate_native_enabled() || cg_boolpair_native_enabled();
     bool boolpair_native_active =
@@ -1779,11 +1793,13 @@ bool stage5_codegen(translate_ctx_t *ctx,
         return false;
     }
     if (predicate_native_active && side_exit_codegen && region->side_exit_count > 0) {
-        stage5_codegen_fallback++;
-        stage5_codegen_fallback_preflight++;
-        stage5_codegen_fallback_preflight_side_exit++;
-        stage5_codegen_boolpair_native_fallback++;
-        return false;
+        if (!allow_cmpdep_with_side_exit) {
+            stage5_codegen_fallback++;
+            stage5_codegen_fallback_preflight++;
+            stage5_codegen_fallback_preflight_side_exit++;
+            stage5_codegen_boolpair_native_fallback++;
+            return false;
+        }
     }
     if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP) {
         stage5_codegen_fallback++;
@@ -1831,7 +1847,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
             // Guardrail: predicate-native regions with in-prefix side exits
             // still have unresolved correctness drift on some loops.
             // Keep them on the established fallback path for now.
-            if (predicate_native_active) {
+            if (predicate_native_active && !allow_cmpdep_with_side_exit) {
                 stage5_codegen_fallback++;
                 stage5_codegen_fallback_side_exit++;
                 if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
