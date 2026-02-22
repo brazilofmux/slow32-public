@@ -66,6 +66,13 @@ static int trace_block_regs_budget = 0;
 static uint32_t trace_block_regs_pc = 0;
 static bool trace_block_store_preview_enabled = false;
 static uint32_t trace_block_store_pc = 0;
+static bool trace_replay_enabled = false;
+static uint32_t trace_replay_block_pc = 0;
+static uint32_t trace_replay_branch_pc = 0;
+static int trace_replay_budget = 0;
+static bool trace_replay_pre_valid = false;
+static uint32_t trace_replay_pre_block_pc = 0;
+static uint32_t trace_replay_pre_regs[32];
 
 static void apply_stage5_native_bench_profile(int *stage_out,
                                               bool *two_pass_out,
@@ -173,6 +180,17 @@ static void dbt_init_branch_trace_from_env(void) {
         trace_block_store_preview_enabled = true;
         trace_block_store_pc = (uint32_t)strtoul(sp, NULL, 0);
     }
+
+    const char *rb = getenv("SLOW32_DBT_TRACE_REPLAY_BLOCK_PC");
+    const char *rp = getenv("SLOW32_DBT_TRACE_REPLAY_BRANCH_PC");
+    if (rb && rb[0] != '\0' && rp && rp[0] != '\0') {
+        trace_replay_enabled = true;
+        trace_replay_block_pc = (uint32_t)strtoul(rb, NULL, 0);
+        trace_replay_branch_pc = (uint32_t)strtoul(rp, NULL, 0);
+        const char *rm = getenv("SLOW32_DBT_TRACE_REPLAY_MAX");
+        trace_replay_budget = (rm && rm[0] != '\0') ? atoi(rm) : 32;
+        if (trace_replay_budget < 0) trace_replay_budget = 0;
+    }
 }
 
 static bool dbt_trace_pc_matches_filter(uint32_t pc) {
@@ -205,6 +223,187 @@ static bool dbt_eval_branch_taken(uint8_t opcode, uint32_t rs1, uint32_t rs2) {
         case OP_BGEU: return rs1 >= rs2;
         default: return false;
     }
+}
+
+typedef struct {
+    bool valid;
+    uint32_t addr;
+    uint8_t value;
+} replay_byte_t;
+
+static void replay_store_bytes(replay_byte_t *ov, int *ov_count,
+                               uint32_t addr, uint32_t value, uint32_t size) {
+    if (!ov || !ov_count) return;
+    for (uint32_t i = 0; i < size; i++) {
+        uint8_t b = (uint8_t)((value >> (8 * i)) & 0xFFu);
+        bool updated = false;
+        for (int k = 0; k < *ov_count; k++) {
+            if (ov[k].valid && ov[k].addr == addr + i) {
+                ov[k].value = b;
+                updated = true;
+                break;
+            }
+        }
+        if (!updated && *ov_count < 128) {
+            ov[*ov_count].valid = true;
+            ov[*ov_count].addr = addr + i;
+            ov[*ov_count].value = b;
+            (*ov_count)++;
+        }
+    }
+}
+
+static bool replay_load_u32(const dbt_cpu_state_t *cpu,
+                            const replay_byte_t *ov, int ov_count,
+                            uint32_t addr, uint32_t size, uint32_t *out) {
+    if (!cpu || !cpu->mem_base || !out) return false;
+    if (addr > cpu->mem_size || size > cpu->mem_size || addr + size > cpu->mem_size) return false;
+    uint32_t v = 0;
+    for (uint32_t i = 0; i < size; i++) {
+        uint8_t b = cpu->mem_base[addr + i];
+        for (int k = 0; k < ov_count; k++) {
+            if (ov[k].valid && ov[k].addr == addr + i) {
+                b = ov[k].value;
+                break;
+            }
+        }
+        v |= ((uint32_t)b) << (8 * i);
+    }
+    *out = v;
+    return true;
+}
+
+static void dbt_trace_replay_branch(translated_block_t *block,
+                                    dbt_cpu_state_t *cpu,
+                                    uint32_t observed_branch_pc) {
+    if (!trace_replay_enabled || trace_replay_budget == 0) return;
+    if (!block || !cpu) return;
+    if (!trace_replay_pre_valid) return;
+    if (block->guest_pc != trace_replay_block_pc) return;
+    if (trace_replay_pre_block_pc != block->guest_pc) return;
+
+    uint32_t regs[32];
+    memcpy(regs, trace_replay_pre_regs, sizeof(regs));
+    replay_byte_t ov[128] = {0};
+    int ov_count = 0;
+    bool reached = false;
+    bool ok = true;
+    uint32_t expected_next = 0;
+    uint8_t replay_opcode = 0;
+    uint32_t pc = block->guest_pc;
+    uint32_t block_end = block->guest_pc + block->guest_size;
+
+    for (int steps = 0; steps < 1024; steps++) {
+        if (pc < block->guest_pc || pc >= block_end) break;
+        if (pc + 4 > cpu->code_limit) { ok = false; break; }
+        uint32_t raw = *(uint32_t *)(cpu->mem_base + pc);
+        decoded_inst_t d = decode_instruction(raw);
+        uint32_t rs1 = regs[d.rs1];
+        uint32_t rs2 = regs[d.rs2];
+        uint32_t next_pc = pc + 4;
+
+        switch (d.opcode) {
+            case OP_ADD:  if (d.rd) regs[d.rd] = rs1 + rs2; break;
+            case OP_SUB:  if (d.rd) regs[d.rd] = rs1 - rs2; break;
+            case OP_XOR:  if (d.rd) regs[d.rd] = rs1 ^ rs2; break;
+            case OP_OR:   if (d.rd) regs[d.rd] = rs1 | rs2; break;
+            case OP_AND:  if (d.rd) regs[d.rd] = rs1 & rs2; break;
+            case OP_SLL:  if (d.rd) regs[d.rd] = rs1 << (rs2 & 31); break;
+            case OP_SRL:  if (d.rd) regs[d.rd] = rs1 >> (rs2 & 31); break;
+            case OP_SRA:  if (d.rd) regs[d.rd] = (uint32_t)((int32_t)rs1 >> (rs2 & 31)); break;
+            case OP_SLT:  if (d.rd) regs[d.rd] = ((int32_t)rs1 < (int32_t)rs2) ? 1u : 0u; break;
+            case OP_SLTU: if (d.rd) regs[d.rd] = (rs1 < rs2) ? 1u : 0u; break;
+            case OP_SEQ:  if (d.rd) regs[d.rd] = (rs1 == rs2) ? 1u : 0u; break;
+            case OP_SNE:  if (d.rd) regs[d.rd] = (rs1 != rs2) ? 1u : 0u; break;
+            case OP_SGT:  if (d.rd) regs[d.rd] = ((int32_t)rs1 > (int32_t)rs2) ? 1u : 0u; break;
+            case OP_SGTU: if (d.rd) regs[d.rd] = (rs1 > rs2) ? 1u : 0u; break;
+            case OP_SLE:  if (d.rd) regs[d.rd] = ((int32_t)rs1 <= (int32_t)rs2) ? 1u : 0u; break;
+            case OP_SLEU: if (d.rd) regs[d.rd] = (rs1 <= rs2) ? 1u : 0u; break;
+            case OP_SGE:  if (d.rd) regs[d.rd] = ((int32_t)rs1 >= (int32_t)rs2) ? 1u : 0u; break;
+            case OP_SGEU: if (d.rd) regs[d.rd] = (rs1 >= rs2) ? 1u : 0u; break;
+            case OP_ADDI: if (d.rd) regs[d.rd] = rs1 + (uint32_t)d.imm; break;
+            case OP_ORI:  if (d.rd) regs[d.rd] = rs1 | (uint32_t)d.imm; break;
+            case OP_ANDI: if (d.rd) regs[d.rd] = rs1 & (uint32_t)d.imm; break;
+            case OP_XORI: if (d.rd) regs[d.rd] = rs1 ^ (uint32_t)d.imm; break;
+            case OP_SLLI: if (d.rd) regs[d.rd] = rs1 << (d.imm & 31); break;
+            case OP_SRLI: if (d.rd) regs[d.rd] = rs1 >> (d.imm & 31); break;
+            case OP_SRAI: if (d.rd) regs[d.rd] = (uint32_t)((int32_t)rs1 >> (d.imm & 31)); break;
+            case OP_SLTI: if (d.rd) regs[d.rd] = ((int32_t)rs1 < d.imm) ? 1u : 0u; break;
+            case OP_SLTIU:if (d.rd) regs[d.rd] = (rs1 < (uint32_t)d.imm) ? 1u : 0u; break;
+            case OP_LUI:  if (d.rd) regs[d.rd] = (uint32_t)d.imm; break;
+            case OP_LDB: {
+                uint32_t v = 0; if (!replay_load_u32(cpu, ov, ov_count, rs1 + (uint32_t)d.imm, 1, &v)) { ok = false; break; }
+                if (d.rd) regs[d.rd] = (uint32_t)(int32_t)(int8_t)(v & 0xFFu);
+                break;
+            }
+            case OP_LDBU: {
+                uint32_t v = 0; if (!replay_load_u32(cpu, ov, ov_count, rs1 + (uint32_t)d.imm, 1, &v)) { ok = false; break; }
+                if (d.rd) regs[d.rd] = v & 0xFFu;
+                break;
+            }
+            case OP_LDH: {
+                uint32_t v = 0; if (!replay_load_u32(cpu, ov, ov_count, rs1 + (uint32_t)d.imm, 2, &v)) { ok = false; break; }
+                if (d.rd) regs[d.rd] = (uint32_t)(int32_t)(int16_t)(v & 0xFFFFu);
+                break;
+            }
+            case OP_LDHU: {
+                uint32_t v = 0; if (!replay_load_u32(cpu, ov, ov_count, rs1 + (uint32_t)d.imm, 2, &v)) { ok = false; break; }
+                if (d.rd) regs[d.rd] = v & 0xFFFFu;
+                break;
+            }
+            case OP_LDW: {
+                uint32_t v = 0; if (!replay_load_u32(cpu, ov, ov_count, rs1 + (uint32_t)d.imm, 4, &v)) { ok = false; break; }
+                if (d.rd) regs[d.rd] = v;
+                break;
+            }
+            case OP_STB:
+                replay_store_bytes(ov, &ov_count, rs1 + (uint32_t)d.imm, rs2, 1);
+                break;
+            case OP_STH:
+                replay_store_bytes(ov, &ov_count, rs1 + (uint32_t)d.imm, rs2, 2);
+                break;
+            case OP_STW:
+                replay_store_bytes(ov, &ov_count, rs1 + (uint32_t)d.imm, rs2, 4);
+                break;
+            case OP_BEQ:  if (rs1 == rs2) next_pc = next_pc + (uint32_t)d.imm; break;
+            case OP_BNE:  if (rs1 != rs2) next_pc = next_pc + (uint32_t)d.imm; break;
+            case OP_BLT:  if ((int32_t)rs1 <  (int32_t)rs2) next_pc = next_pc + (uint32_t)d.imm; break;
+            case OP_BGE:  if ((int32_t)rs1 >= (int32_t)rs2) next_pc = next_pc + (uint32_t)d.imm; break;
+            case OP_BLTU: if (rs1 <  rs2) next_pc = next_pc + (uint32_t)d.imm; break;
+            case OP_BGEU: if (rs1 >= rs2) next_pc = next_pc + (uint32_t)d.imm; break;
+            case OP_NOP: break;
+            case OP_DEBUG:
+            case OP_YIELD:
+            case OP_HALT:
+            case OP_JAL:
+            case OP_JALR:
+            default:
+                ok = false;
+                break;
+        }
+        regs[0] = 0;
+        if (!ok) break;
+        if (pc == trace_replay_branch_pc) {
+            reached = true;
+            expected_next = next_pc;
+            replay_opcode = d.opcode;
+            break;
+        }
+        pc = next_pc;
+    }
+
+    if (!reached && observed_branch_pc == trace_replay_branch_pc) {
+        // We still want a line if runtime exited at the target branch.
+        expected_next = 0;
+    }
+    bool observed_at_target = (observed_branch_pc == trace_replay_branch_pc);
+    bool match = reached && observed_at_target && (expected_next == cpu->pc);
+    fprintf(stderr,
+            "dbt-replay-branch block_pc=0x%08X target_branch_pc=0x%08X observed_branch_pc=0x%08X replay_ok=%u reached=%u op=0x%02X expected_next=0x%08X observed_next=0x%08X match=%u\n",
+            block->guest_pc, trace_replay_branch_pc, observed_branch_pc,
+            ok ? 1u : 0u, reached ? 1u : 0u, replay_opcode,
+            expected_next, cpu->pc, match ? 1u : 0u);
+    trace_replay_budget--;
 }
 
 static void dbt_trace_branch_exit(block_cache_t *cache,
@@ -267,6 +466,7 @@ static void dbt_trace_branch_exit(block_cache_t *cache,
                     cond_taken ? 1u : 0u, cpu->pc, path, taken_pc, fall_pc);
         }
     }
+    dbt_trace_replay_branch(block, cpu, branch_pc);
     trace_branch_exit_budget--;
 }
 
@@ -1472,6 +1672,13 @@ static void run_dbt_stage4plus(dbt_cpu_state_t *cpu, block_cache_t *cache,
 
         dbt_trace_block_exits(block);
         dbt_trace_block_regs(cpu, block);
+        if (trace_replay_enabled && block && block->guest_pc == trace_replay_block_pc) {
+            trace_replay_pre_valid = true;
+            trace_replay_pre_block_pc = block->guest_pc;
+            memcpy(trace_replay_pre_regs, cpu->regs, sizeof(trace_replay_pre_regs));
+        } else {
+            trace_replay_pre_valid = false;
+        }
 
         // Execute translated code
         if (profile_timing) {
