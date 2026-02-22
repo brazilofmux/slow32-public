@@ -124,6 +124,7 @@ uint32_t stage5_emit_fallback_cmp_branch_miss = 0;
 uint32_t stage5_emit_fallback_helper_cmp_prefix_fail = 0;
 uint32_t stage5_emit_fallback_helper_prefix_nonbranch_fail = 0;
 uint32_t stage5_emit_fallback_helper_single_terminal_fail = 0;
+uint32_t stage5_emit_fallback_helper_single_terminal_fail_opcode_hist[256] = {0};
 uint32_t stage5_emit_fallback_not_ended = 0;
 uint32_t stage5_emit_not_ended_opcode_hist[128] = {0};
 uint32_t stage5_emit_not_ended_reason_single_terminal = 0;
@@ -2079,6 +2080,25 @@ static inline bool stage5_emit_single_terminal(translate_ctx_t *ctx,
     }
 }
 
+static inline bool stage5_is_terminal_opcode(uint8_t opcode) {
+    switch (opcode) {
+        case OP_JAL:
+        case OP_JALR:
+        case OP_HALT:
+        case OP_DEBUG:
+        case OP_YIELD:
+        case OP_BEQ:
+        case OP_BNE:
+        case OP_BLT:
+        case OP_BGE:
+        case OP_BLTU:
+        case OP_BGEU:
+            return true;
+        default:
+            return false;
+    }
+}
+
 static inline bool stage5_emit_familyb_prefix_nonbranch(translate_ctx_t *ctx,
                                                          const decoded_inst_t *inst) {
     if (!ctx || !inst) return false;
@@ -3716,6 +3736,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             return true;
         }
         stage5_emit_fallback_helper_single_terminal_fail++;
+        stage5_emit_fallback_helper_single_terminal_fail_opcode_hist[inst0.opcode]++;
         switch (inst0.opcode) {
             case OP_BEQ:
             case OP_BNE:
@@ -3872,6 +3893,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     return true;
                 }
                 stage5_emit_fallback_helper_single_terminal_fail++;
+                stage5_emit_fallback_helper_single_terminal_fail_opcode_hist[inst0.opcode]++;
                 stage5_record_emit_not_ended(inst0.opcode, STAGE5_NOT_ENDED_FAMILYB_BRANCH_FIRST);
                 ctx->superblock_enabled = saved_superblock_enabled;
                 stage5_emit_fallback++;
@@ -4047,18 +4069,28 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             if (ok_prefix) {
                 ctx->guest_pc = guest_pc + 4;
                 ctx->current_inst_idx = 1;
-                bool ended = stage5_emit_single_terminal(ctx, inst1.opcode, inst1.rd,
-                                                         inst1.rs1, inst1.rs2, inst1.imm,
-                                                         emitted_pattern);
+                if (!stage5_is_terminal_opcode(inst1.opcode)) {
+                    ok_prefix = false;
+                }
+                bool ended = false;
+                if (ok_prefix) {
+                    ended = stage5_emit_single_terminal(ctx, inst1.opcode, inst1.rd,
+                                                        inst1.rs1, inst1.rs2, inst1.imm,
+                                                        emitted_pattern);
+                }
                 if (ended) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                     if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
-                stage5_emit_fallback_helper_single_terminal_fail++;
-                stage5_record_emit_not_ended(inst1.opcode, STAGE5_NOT_ENDED_FAMILYB_PREFIX_TERMINAL);
-            } else {
+                if (ok_prefix) {
+                    stage5_emit_fallback_helper_single_terminal_fail++;
+                    stage5_emit_fallback_helper_single_terminal_fail_opcode_hist[inst1.opcode]++;
+                    stage5_record_emit_not_ended(inst1.opcode, STAGE5_NOT_ENDED_FAMILYB_PREFIX_TERMINAL);
+                }
+            }
+            if (!ok_prefix) {
                 if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO ||
                     emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CONST01 ||
                     emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR ||
@@ -4303,6 +4335,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                                                     emitted_pattern);
                 if (!ended) {
                     stage5_emit_fallback_helper_single_terminal_fail++;
+                    stage5_emit_fallback_helper_single_terminal_fail_opcode_hist[last->opcode]++;
                 }
             }
             if (ended) {
