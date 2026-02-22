@@ -243,6 +243,8 @@ int main(int argc, char **argv) {
     fput_uint(stderr, ho_stat_dse);
     fputs(" slf=", stderr);
     fput_uint(stderr, ho_stat_slf);
+    fputs(" lse=", stderr);
+    fput_uint(stderr, ho_stat_lse);
     fputs("\n", stderr);
     fputs("hir_licm: ", stderr);
     fput_uint(stderr, licm_stat_hoisted);
