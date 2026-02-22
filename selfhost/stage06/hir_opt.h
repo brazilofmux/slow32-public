@@ -218,6 +218,22 @@ static int ho_const_fold(void) {
                     h_src2[i] = -1;
                     changed = 1;
                 }
+                /* SNE(cmp,0) -> COPY(cmp) when cmp produces 0/1 */
+                else if (k == HI_SNE && b == 0 && h_src1[i] >= 0 &&
+                         h_kind[h_src1[i]] >= HI_SEQ &&
+                         h_kind[h_src1[i]] <= HI_SGEU) {
+                    h_kind[i] = HI_COPY;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+                /* SEQ(cmp,0) -> NOT(cmp) when cmp produces 0/1 */
+                else if (k == HI_SEQ && b == 0 && h_src1[i] >= 0 &&
+                         h_kind[h_src1[i]] >= HI_SEQ &&
+                         h_kind[h_src1[i]] <= HI_SGEU) {
+                    h_kind[i] = HI_NOT;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
                 /* x * 1 -> x, x / 1 -> x */
                 else if ((k == HI_MUL || k == HI_DIV) && b == 1) {
                     h_kind[i] = HI_COPY;
@@ -430,6 +446,36 @@ static int ho_const_fold(void) {
             if (h_val[h_src1[i]] == 0) h_val[i] = 1;
             else h_val[i] = 0;
             h_src1[i] = -1;
+            changed = 1;
+        }
+        /* NOT(comparison) -> inverted comparison */
+        if (k == HI_NOT && h_src1[i] >= 0) {
+            int sk;
+            int inv;
+            sk = h_kind[h_src1[i]];
+            inv = -1;
+            if (sk == HI_SEQ)  inv = HI_SNE;
+            else if (sk == HI_SNE)  inv = HI_SEQ;
+            else if (sk == HI_SLT)  inv = HI_SGE;
+            else if (sk == HI_SGE)  inv = HI_SLT;
+            else if (sk == HI_SGT)  inv = HI_SLE;
+            else if (sk == HI_SLE)  inv = HI_SGT;
+            else if (sk == HI_SLTU) inv = HI_SGEU;
+            else if (sk == HI_SGEU) inv = HI_SLTU;
+            else if (sk == HI_SGTU) inv = HI_SLEU;
+            else if (sk == HI_SLEU) inv = HI_SGTU;
+            if (inv >= 0) {
+                h_kind[i] = inv;
+                h_src2[i] = h_src2[h_src1[i]];
+                h_src1[i] = h_src1[h_src1[i]];
+                changed = 1;
+            }
+        }
+        /* NOT(NOT(x)) -> COPY(x) */
+        if (k == HI_NOT && h_src1[i] >= 0 &&
+            h_kind[h_src1[i]] == HI_NOT) {
+            h_kind[i] = HI_COPY;
+            h_src1[i] = h_src1[h_src1[i]];
             changed = 1;
         }
         if (k == HI_BNOT && h_src1[i] >= 0 &&

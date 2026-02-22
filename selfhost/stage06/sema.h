@@ -113,7 +113,8 @@ static void sema_expr(Node *n) {
         return;
     }
 
-    /* ND_CALL, ND_CALL_PTR: result stays TY_INT (no prototype table) */
+    /* ND_CALL: typed by parser via find_func_type() */
+    /* ND_CALL_PTR: stays TY_INT (no return type info for indirect calls) */
     /* ND_CAST: preserve parser-assigned type */
     /* ND_MEMBER: preserve member type */
 }

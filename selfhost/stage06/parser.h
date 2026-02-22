@@ -139,6 +139,7 @@ static int is_type(void) {
     if (lex_tok == TK_STRUCT) return 1;
     if (lex_tok == TK_UNION) return 1;
     if (lex_tok == TK_UNSIGNED) return 1;
+    if (lex_tok == TK_SIGNED) return 1;
     if (lex_tok == TK_LONG) return 1;
     if (lex_tok == TK_SHORT) return 1;
     if (lex_tok == TK_CONST) return 1;
@@ -323,8 +324,9 @@ static int parse_type(void) {
     int off;
     int max_sz;
     char nm[256];
-    /* Skip const/volatile qualifiers */
-    while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE) next();
+    /* Skip const/volatile/signed/restrict qualifiers */
+    while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE ||
+           lex_tok == TK_SIGNED || lex_tok == TK_RESTRICT) next();
     if (lex_tok == TK_INT)  { ty = TY_INT;  next(); }
     else if (lex_tok == TK_CHAR) { ty = TY_CHAR; next(); }
     else if (lex_tok == TK_VOID) { ty = TY_VOID; next(); }
@@ -1336,7 +1338,9 @@ static Node *parse_stmt(void) {
     int sl_gi;
     int sl_li;
     is_static = 0;
-    while (lex_tok == TK_STATIC || lex_tok == TK_CONST) {
+    while (lex_tok == TK_STATIC || lex_tok == TK_CONST ||
+           lex_tok == TK_REGISTER || lex_tok == TK_RESTRICT ||
+           lex_tok == TK_AUTO) {
         if (lex_tok == TK_STATIC) is_static = 1;
         next();
     }
@@ -1648,8 +1652,11 @@ static Node *parse_top_decl(void) {
     int slen;
     char *sp;
 
-    /* Skip static/const qualifiers (single-file compiler, no semantic effect) */
-    while (lex_tok == TK_STATIC || lex_tok == TK_CONST) next();
+    /* Skip storage class / qualifier keywords (single-file compiler, no semantic effect) */
+    while (lex_tok == TK_STATIC || lex_tok == TK_CONST ||
+           lex_tok == TK_EXTERN || lex_tok == TK_INLINE ||
+           lex_tok == TK_REGISTER || lex_tok == TK_RESTRICT ||
+           lex_tok == TK_AUTO) next();
 
     /* Typedef */
     if (lex_tok == TK_TYPEDEF) {
