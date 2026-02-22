@@ -6,7 +6,7 @@
  */
 
 /* --- Additional libc prototypes --- */
-/* Use char* not void* — s32-cc confuses void* param with void) */
+/* void* works correctly — ty_size(TY_VOID) returns 1 (GCC extension) */
 char *strdup(char *s);
 char *malloc(int size);
 char *calloc(int n, int size);
@@ -83,6 +83,7 @@ static int ty_size(int ty) {
     if ((ty & TY_BASE_MASK) == TY_FLOAT) return 4;
     if ((ty & TY_BASE_MASK) == TY_CHAR) return 1;
     if ((ty & TY_BASE_MASK) == TY_SHORT) return 2;
+    if ((ty & TY_BASE_MASK) == TY_VOID) return 1;
     return 4;
 }
 

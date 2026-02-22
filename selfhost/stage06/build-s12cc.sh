@@ -107,6 +107,13 @@ if [[ -f "$BUILTINS64_SRC" ]]; then
     BUILTINS64_OBJ="$WORKDIR/builtins64.s32o"
 fi
 
+BUILTINS_FP64_SRC="$SCRIPT_DIR/builtins_fp64.s"
+BUILTINS_FP64_OBJ=""
+if [[ -f "$BUILTINS_FP64_SRC" ]]; then
+    assemble "$BUILTINS_FP64_SRC" "$WORKDIR/builtins_fp64.s32o" "$WORKDIR/builtins_fp64.log"
+    BUILTINS_FP64_OBJ="$WORKDIR/builtins_fp64.s32o"
+fi
+
 # --- Build libc (compiled by stage05 s12cc) ---
 echo "[2/4] Build libc"
 LIBC_OBJS=""
@@ -128,7 +135,7 @@ echo "[4/6] Link cc.s32x (gen1, tree-walk ABI)"
 link_exe "$WORKDIR/link.log" -o "$OUT_EXE" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/s12cc.s32o" "$WORKDIR/start.s32o" \
     "$WORKDIR/mmio_no_start.s32o" \
-    $BUILTINS64_OBJ $LIBC_OBJS
+    $BUILTINS64_OBJ $BUILTINS_FP64_OBJ $LIBC_OBJS
 [[ -s "$OUT_EXE" ]] || { echo "link failed" >&2; exit 1; }
 
 echo "  gen1: $OUT_EXE ($(wc -c < "$OUT_EXE") bytes)"
@@ -170,6 +177,9 @@ cp "$WORKDIR/mmio_no_start.s32o" "$LIBC_OUT_DIR/mmio_no_start.s32o"
 if [[ -n "$BUILTINS64_OBJ" ]]; then
     cp "$BUILTINS64_OBJ" "$LIBC_OUT_DIR/builtins64.s32o"
 fi
+if [[ -n "$BUILTINS_FP64_OBJ" ]]; then
+    cp "$BUILTINS_FP64_OBJ" "$LIBC_OUT_DIR/builtins_fp64.s32o"
+fi
 
 echo "[6/6] Verify gen1 + gen1-libc"
 # Quick smoke test: gen1 compiles a program that calls strcmp (libc function),
@@ -189,10 +199,14 @@ SMOKE_B64=""
 if [[ -f "$LIBC_OUT_DIR/builtins64.s32o" ]]; then
     SMOKE_B64="$LIBC_OUT_DIR/builtins64.s32o"
 fi
+SMOKE_BFP64=""
+if [[ -f "$LIBC_OUT_DIR/builtins_fp64.s32o" ]]; then
+    SMOKE_BFP64="$LIBC_OUT_DIR/builtins_fp64.s32o"
+fi
 link_exe "$WORKDIR/smoke.link.log" -o "$WORKDIR/smoke.s32x" --mmio 64K \
     "$LIBC_OUT_DIR/crt0.s32o" "$WORKDIR/smoke.s32o" "$LIBC_OUT_DIR/start.s32o" \
     "$LIBC_OUT_DIR/mmio_no_start.s32o" \
-    $SMOKE_B64 \
+    $SMOKE_B64 $SMOKE_BFP64 \
     "$LIBC_OUT_DIR/string_extra.s32o" "$LIBC_OUT_DIR/string_more.s32o" \
     "$LIBC_OUT_DIR/ctype.s32o" "$LIBC_OUT_DIR/convert.s32o" \
     "$LIBC_OUT_DIR/stdio.s32o" "$LIBC_OUT_DIR/malloc.s32o" \

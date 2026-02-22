@@ -55,6 +55,10 @@ static void hl_widen64(int val, int from_ty, int *out_lo, int *out_hi) {
     }
 }
 
+/* Promote a 32-bit value (int or float) to f64 twin pair via helper call.
+ * After return, hl_hi holds the hi word. */
+static int hl_promote_to_f64(int val, int from_ty);
+
 /* Forward declarations */
 static int hl_expr(Node *n);
 static int hl_addr(Node *n);
@@ -197,6 +201,24 @@ static void hl_sw_emit_bsearch(int lv, int def_blk, int lt_kind, int lo, int hi)
     hl_sw_emit_bsearch(lv, def_blk, lt_kind, mid + 1, hi);
 }
 
+/* Promote a 32-bit value (int or float) to f64 twin pair via helper call.
+ * After return, hl_hi holds the hi word. */
+static int hl_promote_to_f64(int val, int from_ty) {
+    int cb;
+    int r;
+    cb = h_ncarg;
+    h_carg[h_ncarg] = val;
+    h_ncarg = h_ncarg + 1;
+    if (ty_is_float(from_ty)) {
+        r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "__fp64_cvt_ftoD");
+    } else {
+        r = hi_emit(HI_CALL, TY_INT, -1, -1, 1, "__fp64_cvt_itoD");
+    }
+    h_cbase[r] = cb;
+    hl_hi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
+    return r;
+}
+
 /* Map AST binary operator token to HIR instruction kind */
 static int hl_binop_kind(int op, int ty) {
     if (op == TK_PLUS) return HI_ADD;
@@ -323,7 +345,7 @@ static int hl_expr(Node *n) {
             return hl_addr(n);
         }
         addr = hl_addr(n);
-        if (ty_is_llong(n->ty)) {
+        if (ty_is_llong(n->ty) || ty_is_double(n->ty)) {
             lv = hi_emit(HI_LOAD, TY_INT, addr, -1, 0, NULL);
             tmp = hi_emit(HI_ADDI, TY_INT, addr, -1, 4, NULL);
             hl_hi = hi_emit(HI_LOAD, TY_INT, tmp, -1, 0, NULL);
@@ -378,6 +400,22 @@ static int hl_expr(Node *n) {
             hl_hi = val_hi;
             return val;
         }
+        if (ty_is_double(n->ty)) {
+            int val_hi;
+            int addr4;
+            val = hl_expr(n->rhs);
+            val_hi = hl_hi;
+            if (!ty_is_double(n->rhs->ty)) {
+                val = hl_promote_to_f64(val, n->rhs->ty);
+                val_hi = hl_hi;
+            }
+            addr = hl_addr(n->lhs);
+            hi_emit(HI_STORE, TY_INT, addr, val, 0, NULL);
+            addr4 = hi_emit(HI_ADDI, TY_INT, addr, -1, 4, NULL);
+            hi_emit(HI_STORE, TY_INT, addr4, val_hi, 0, NULL);
+            hl_hi = val_hi;
+            return val;
+        }
         val = hl_expr(n->rhs);
         addr = hl_addr(n->lhs);
         hi_emit(HI_STORE, n->ty, addr, val, 0, NULL);
@@ -405,6 +443,18 @@ static int hl_expr(Node *n) {
                 return r_lo;
             }
             lv = hl_expr(n->lhs);
+            if (ty_is_double(n->lhs->ty)) {
+                int d_hi;
+                int cb;
+                d_hi = hl_hi;
+                cb = h_ncarg;
+                h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
+                h_carg[h_ncarg] = d_hi; h_ncarg = h_ncarg + 1;
+                lv = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "__fp64_neg");
+                h_cbase[lv] = cb;
+                hl_hi = hi_emit(HI_CALLHI, TY_INT, lv, -1, 0, NULL);
+                return lv;
+            }
             if (ty_is_float(n->lhs->ty))
                 return hi_emit(HI_FNEG, TY_FLOAT, lv, -1, 0, NULL);
             return hi_emit(HI_NEG, n->ty, lv, -1, 0, NULL);
@@ -441,6 +491,13 @@ static int hl_expr(Node *n) {
         if (n->op == TK_STAR) {
             lv = hl_expr(n->lhs);
             if (ty_is_struct(n->ty)) return lv;
+            if (ty_is_double(n->ty) || ty_is_llong(n->ty)) {
+                int t2;
+                val = hi_emit(HI_LOAD, TY_INT, lv, -1, 0, NULL);
+                t2 = hi_emit(HI_ADDI, TY_INT, lv, -1, 4, NULL);
+                hl_hi = hi_emit(HI_LOAD, TY_INT, t2, -1, 0, NULL);
+                return val;
+            }
             return hi_emit(HI_LOAD, n->ty, lv, -1, 0, NULL);
         }
         if (n->op == TK_AMP) {
@@ -776,6 +833,80 @@ static int hl_expr(Node *n) {
             return hi_emit(HI_SUB, n->ty, lv, rv, 0, NULL);
         }
 
+        /* Floating-point binary operations (f64) via helper calls */
+        if (ty_is_double(n->lhs->ty) || ty_is_double(n->rhs->ty)) {
+            int lv_hi;
+            int rv_hi;
+            int cb;
+            int r;
+            /* Evaluate and promote left operand to double */
+            lv = hl_expr(n->lhs);
+            if (ty_is_double(n->lhs->ty)) {
+                lv_hi = hl_hi;
+            } else {
+                lv = hl_promote_to_f64(lv, n->lhs->ty);
+                lv_hi = hl_hi;
+            }
+            /* Evaluate and promote right operand to double */
+            rv = hl_expr(n->rhs);
+            if (ty_is_double(n->rhs->ty)) {
+                rv_hi = hl_hi;
+            } else {
+                rv = hl_promote_to_f64(rv, n->rhs->ty);
+                rv_hi = hl_hi;
+            }
+            /* Comparisons: result is single int, no CALLHI */
+            if (n->op == TK_EQ || n->op == TK_NE ||
+                n->op == TK_LT || n->op == TK_LE ||
+                n->op == TK_GT || n->op == TK_GE) {
+                if (n->op == TK_GT || n->op == TK_GE) {
+                    /* Swap operands: GT→LT, GE→LE */
+                    cb = h_ncarg;
+                    h_carg[h_ncarg] = rv; h_ncarg = h_ncarg + 1;
+                    h_carg[h_ncarg] = rv_hi; h_ncarg = h_ncarg + 1;
+                    h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
+                    h_carg[h_ncarg] = lv_hi; h_ncarg = h_ncarg + 1;
+                    if (n->op == TK_GT) {
+                        r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_lt");
+                    } else {
+                        r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_le");
+                    }
+                    h_cbase[r] = cb;
+                    return r;
+                }
+                cb = h_ncarg;
+                h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
+                h_carg[h_ncarg] = lv_hi; h_ncarg = h_ncarg + 1;
+                h_carg[h_ncarg] = rv; h_ncarg = h_ncarg + 1;
+                h_carg[h_ncarg] = rv_hi; h_ncarg = h_ncarg + 1;
+                if (n->op == TK_LT) {
+                    r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_lt");
+                } else if (n->op == TK_LE) {
+                    r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_le");
+                } else {
+                    r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_eq");
+                }
+                h_cbase[r] = cb;
+                if (n->op == TK_NE) {
+                    return hi_emit(HI_NOT, TY_INT, r, -1, 0, NULL);
+                }
+                return r;
+            }
+            /* Arithmetic: result is double pair */
+            cb = h_ncarg;
+            h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
+            h_carg[h_ncarg] = lv_hi; h_ncarg = h_ncarg + 1;
+            h_carg[h_ncarg] = rv; h_ncarg = h_ncarg + 1;
+            h_carg[h_ncarg] = rv_hi; h_ncarg = h_ncarg + 1;
+            if (n->op == TK_PLUS)  r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_add");
+            else if (n->op == TK_MINUS) r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_sub");
+            else if (n->op == TK_STAR)  r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_mul");
+            else r = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__fp64_div");
+            h_cbase[r] = cb;
+            hl_hi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
+            return r;
+        }
+
         /* Floating-point binary operations (f32) */
         if (ty_is_float(n->lhs->ty) || ty_is_float(n->rhs->ty)) {
             lv = hl_expr(n->lhs);
@@ -867,22 +998,80 @@ static int hl_expr(Node *n) {
     /* Type cast */
     if (n->kind == ND_CAST) {
         lv = hl_expr(n->lhs);
-        if (ty_is_llong(n->ty) && !ty_is_llong(n->lhs->ty)) {
+        if (ty_is_llong(n->ty) && !ty_is_llong(n->lhs->ty) && !ty_is_double(n->lhs->ty)) {
             /* Widen 32->64 */
             hl_widen64(lv, n->lhs->ty, &lv, &hl_hi);
             return lv;
         }
-        if (!ty_is_llong(n->ty) && ty_is_llong(n->lhs->ty)) {
+        if (!ty_is_llong(n->ty) && !ty_is_double(n->ty) && ty_is_llong(n->lhs->ty)) {
             /* Truncate 64->32: just use lo word */
             return lv;
         }
         /* int → float */
-        if (ty_is_float(n->ty) && !ty_is_fp(n->lhs->ty)) {
+        if (ty_is_float(n->ty) && !ty_is_fp(n->lhs->ty) && !ty_is_llong(n->lhs->ty)) {
             return hi_emit(HI_FCVT_ItoF, TY_FLOAT, lv, -1, 0, NULL);
         }
         /* float → int */
-        if (!ty_is_fp(n->ty) && ty_is_float(n->lhs->ty)) {
+        if (!ty_is_fp(n->ty) && !ty_is_llong(n->ty) && ty_is_float(n->lhs->ty)) {
             return hi_emit(HI_FCVT_FtoI, TY_INT, lv, -1, 0, NULL);
+        }
+        /* int → double */
+        if (ty_is_double(n->ty) && !ty_is_fp(n->lhs->ty) && !ty_is_llong(n->lhs->ty)) {
+            return hl_promote_to_f64(lv, n->lhs->ty);
+        }
+        /* float → double */
+        if (ty_is_double(n->ty) && ty_is_float(n->lhs->ty)) {
+            return hl_promote_to_f64(lv, n->lhs->ty);
+        }
+        /* double → int */
+        if (!ty_is_fp(n->ty) && !ty_is_llong(n->ty) && ty_is_double(n->lhs->ty)) {
+            int d_hi;
+            int cb;
+            d_hi = hl_hi;
+            cb = h_ncarg;
+            h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
+            h_carg[h_ncarg] = d_hi; h_ncarg = h_ncarg + 1;
+            lv = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "__fp64_cvt_DtoI");
+            h_cbase[lv] = cb;
+            return lv;
+        }
+        /* double → float */
+        if (ty_is_float(n->ty) && ty_is_double(n->lhs->ty)) {
+            int d_hi;
+            int cb;
+            d_hi = hl_hi;
+            cb = h_ncarg;
+            h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
+            h_carg[h_ncarg] = d_hi; h_ncarg = h_ncarg + 1;
+            lv = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "__fp64_cvt_DtoF");
+            h_cbase[lv] = cb;
+            return lv;
+        }
+        /* llong → double */
+        if (ty_is_double(n->ty) && ty_is_llong(n->lhs->ty)) {
+            int d_hi;
+            int cb;
+            d_hi = hl_hi;
+            cb = h_ncarg;
+            h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
+            h_carg[h_ncarg] = d_hi; h_ncarg = h_ncarg + 1;
+            lv = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "__fp64_cvt_ltoD");
+            h_cbase[lv] = cb;
+            hl_hi = hi_emit(HI_CALLHI, TY_INT, lv, -1, 0, NULL);
+            return lv;
+        }
+        /* double → llong */
+        if (ty_is_llong(n->ty) && ty_is_double(n->lhs->ty)) {
+            int d_hi;
+            int cb;
+            d_hi = hl_hi;
+            cb = h_ncarg;
+            h_carg[h_ncarg] = lv; h_ncarg = h_ncarg + 1;
+            h_carg[h_ncarg] = d_hi; h_ncarg = h_ncarg + 1;
+            lv = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "__fp64_cvt_DtoL");
+            h_cbase[lv] = cb;
+            hl_hi = hi_emit(HI_CALLHI, TY_INT, lv, -1, 0, NULL);
+            return lv;
         }
         return lv;
     }
@@ -897,6 +1086,12 @@ static int hl_expr(Node *n) {
     if (n->kind == ND_MEMBER) {
         addr = hl_addr(n);
         if (ty_is_struct(n->ty)) return addr;
+        if (ty_is_double(n->ty) || ty_is_llong(n->ty)) {
+            lv = hi_emit(HI_LOAD, TY_INT, addr, -1, 0, NULL);
+            tmp = hi_emit(HI_ADDI, TY_INT, addr, -1, 4, NULL);
+            hl_hi = hi_emit(HI_LOAD, TY_INT, tmp, -1, 0, NULL);
+            return lv;
+        }
         return hi_emit(HI_LOAD, n->ty, addr, -1, 0, NULL);
     }
 
@@ -914,7 +1109,7 @@ static int hl_expr(Node *n) {
         int new_ap;
         addr = hl_addr(n->lhs);
         ap_val = hi_emit(HI_LOAD, TY_INT, addr, -1, 0, NULL);
-        if (ty_is_llong(n->ty)) {
+        if (ty_is_llong(n->ty) || ty_is_double(n->ty)) {
             /* 64-bit: load lo and hi words, advance ap by 8 */
             int lo;
             int ap4;
@@ -946,7 +1141,7 @@ static int hl_expr(Node *n) {
         while (a) {
             if (nargs >= 16) p_error("too many call args (limit 16)");
             av[nargs] = hl_expr(a);
-            if (ty_is_llong(a->ty)) {
+            if (ty_is_llong(a->ty) || ty_is_double(a->ty)) {
                 av_hi[nargs] = hl_hi;
                 is64[nargs] = 1;
             } else {
@@ -976,7 +1171,7 @@ static int hl_expr(Node *n) {
         ret_ty = find_func_type(n->name);
         i = hi_emit(HI_CALL, TY_INT, -1, -1, phys_count, n->name);
         h_cbase[i] = carg_base;
-        if (ty_is_llong(ret_ty)) {
+        if (ty_is_llong(ret_ty) || ty_is_double(ret_ty)) {
             hl_hi = hi_emit(HI_CALLHI, TY_INT, i, -1, 0, NULL);
         }
         return i;
@@ -999,7 +1194,7 @@ static int hl_expr(Node *n) {
         while (a) {
             if (nargs >= 16) p_error("too many call args (limit 16)");
             av[nargs] = hl_expr(a);
-            if (ty_is_llong(a->ty)) {
+            if (ty_is_llong(a->ty) || ty_is_double(a->ty)) {
                 av_hi2[nargs] = hl_hi;
                 is64_2[nargs] = 1;
             } else {
@@ -1070,7 +1265,7 @@ static void hl_stmt(Node *n) {
     if (n->kind == ND_RETURN) {
         if (n->lhs) {
             lv = hl_expr(n->lhs);
-            if (ty_is_llong(n->lhs->ty)) {
+            if (ty_is_llong(n->lhs->ty) || ty_is_double(n->lhs->ty)) {
                 hi_emit(HI_RET, 0, lv, hl_hi, 0, NULL);
             } else {
                 hi_emit(HI_RET, 0, lv, -1, 0, NULL);

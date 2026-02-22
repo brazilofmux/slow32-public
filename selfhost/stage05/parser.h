@@ -1142,6 +1142,7 @@ static Node *parse_stmt(void) {
     int nj;
     int mi_off;
     int mi_ty;
+    int xty;
     int sp_idx;
     int slen;
     char *sp;
@@ -1520,6 +1521,8 @@ static Node *parse_stmt(void) {
 
         /* Scalar or struct: type name; or type name = expr; */
         off = add_local(nm, ty);
+        head = NULL;
+        tail = NULL;
         if (lex_tok == TK_ASSIGN) {
             next();
             if (lex_tok == TK_LBRACE && ty_is_struct(ty)) {
@@ -1528,8 +1531,6 @@ static Node *parse_stmt(void) {
                 si = ty_struct_idx(ty);
                 base = st_first[si];
                 nf = st_nfields[si];
-                head = NULL;
-                tail = NULL;
                 ci = 0;  /* field index */
                 while (ci < nf && lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
                     if (ty_is_struct(stm_type[base + ci])) {
@@ -1571,10 +1572,33 @@ static Node *parse_stmt(void) {
             }
             n = nd_assign(nd_var(nm, off, ty), parse_expr());
             n->lhs->is_local = 1;
-            expect(TK_SEMI);
-            return nd_expr_stmt(n);
+            t = nd_expr_stmt(n);
+            if (head == NULL) { head = t; tail = t; }
+            else { tail->next = t; tail = t; }
+        }
+        /* Additional declarators after comma: int a, b; or int *a, *b; */
+        while (lex_tok == TK_COMMA) {
+            next();
+            /* Strip pointer depth from ty to get base type */
+            xty = ty;
+            while (ty_is_ptr(xty)) xty = ty_deref(xty);
+            /* Each declarator adds its own pointer stars */
+            while (lex_tok == TK_STAR) { xty = xty + TY_PTR; next(); }
+            if (lex_tok != TK_IDENT) break;
+            memcpy(nm, lex_str, lex_slen + 1);
+            next();
+            off = add_local(nm, xty);
+            if (lex_tok == TK_ASSIGN) {
+                next();
+                n = nd_assign(nd_var(nm, off, xty), parse_expr());
+                n->lhs->is_local = 1;
+                t = nd_expr_stmt(n);
+                if (head == NULL) { head = t; tail = t; }
+                else { tail->next = t; tail = t; }
+            }
         }
         expect(TK_SEMI);
+        if (head != NULL) return nd_block(head);
         return nd_block(NULL);
     }
     } /* end is_static scope */
