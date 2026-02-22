@@ -77,7 +77,7 @@ static inline void flush_pending_cond(translate_ctx_t *ctx);
 
 // Stage5 superblock ownership roadmap:
 // enable narrow side-exit ownership first (forward BEQ/BNE only), then expand.
-static const bool stage5_enable_side_exit_emit = true;
+static const bool stage5_enable_side_exit_emit = false;
 
 static inline bool stage5_side_exit_supported(const stage5_ir_node_t *n) {
     if (!n) return false;
@@ -878,9 +878,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     ctx->superblock_enabled = false;
     bool side_exit_owned = stage5_region_side_exits_supported(&region);
 
-    bool allow_small_direct_branch =
-        stage5_pattern_is_direct_branch(emitted_pattern) &&
-        region.guest_inst_count <= 24;
+    bool allow_small_direct_branch = false;
     bool allow_jal_call =
         emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
         emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG;
@@ -918,8 +916,12 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         return false;
     }
 
-    // Policy fallback: keep indirect JALR forms on Stage4's mature path for now.
-    if (emitted_pattern == STAGE5_BURG_PATTERN_JALR_INDIRECT) {
+    // Policy fallback: keep call/return/indirect JALR forms on Stage4's mature path.
+    if (emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
+        emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG ||
+        emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_SHORT ||
+        emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_LONG ||
+        emitted_pattern == STAGE5_BURG_PATTERN_JALR_INDIRECT) {
         ctx->superblock_enabled = saved_superblock_enabled;
         stage5_emit_fallback++;
         stage5_emit_fallback_shape++;
@@ -934,8 +936,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
          emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_NE ||
          emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL ||
          emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_RELU) &&
-        !allow_small_direct_branch &&
-        !(region.side_exit_count > 0 && side_exit_owned)) {
+        emitted_pattern != STAGE5_BURG_PATTERN_DIRECT_BRANCH_RELU &&
+        emitted_pattern != STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL) {
         ctx->superblock_enabled = saved_superblock_enabled;
         stage5_emit_fallback++;
         stage5_emit_fallback_shape++;
