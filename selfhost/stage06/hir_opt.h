@@ -917,6 +917,61 @@ static int ho_dse_pass(void) {
 }
 
 /* ----------------------------------------------------------------
+ * Store-load forwarding
+ * If STORE(addr, val) is followed by LOAD(addr) in the same block
+ * with no intervening STORE/CALL/CALLP, replace LOAD with COPY(val).
+ * ---------------------------------------------------------------- */
+
+static int ho_stat_slf;
+
+static int ho_store_load_fwd(void) {
+    int changed;
+    int i;
+    int j;
+    int addr;
+    int sval;
+    int blk;
+    int end;
+    int jk;
+    int ok;
+
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] != HI_STORE) { i = i + 1; continue; }
+        addr = h_src1[i];  /* address */
+        sval = h_src2[i];  /* stored value */
+        blk = h_blk[i];
+        end = bb_end[blk];
+
+        /* Scan forward for LOAD from same address */
+        ok = 1;
+        j = i + 1;
+        while (j < end && ok) {
+            jk = h_kind[j];
+            if (jk == HI_NOP) { j = j + 1; continue; }
+            /* Any STORE/CALL/CALLP kills the forwarding */
+            if (jk == HI_STORE || jk == HI_CALL || jk == HI_CALLP) {
+                ok = 0;
+            }
+            /* Found LOAD from same address — forward the stored value */
+            if (ok && jk == HI_LOAD && h_src1[j] == addr &&
+                h_ty[j] == h_ty[i]) {
+                h_kind[j] = HI_COPY;
+                h_src1[j] = sval;
+                h_src2[j] = -1;
+                changed = 1;
+                ho_stat_slf = ho_stat_slf + 1;
+                ok = 0;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return changed;
+}
+
+/* ----------------------------------------------------------------
  * Main optimization driver: iterate until fixpoint
  * ---------------------------------------------------------------- */
 
@@ -949,6 +1004,7 @@ static void hir_opt(void) {
         changed = changed | ho_dead_blocks();
         changed = changed | ho_phi_simplify();
         changed = changed | ho_dse_pass();
+        changed = changed | ho_store_load_fwd();
         changed = changed | ho_dce();
         iter = iter + 1;
     }
