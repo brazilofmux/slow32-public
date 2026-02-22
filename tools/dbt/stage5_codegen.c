@@ -2169,8 +2169,6 @@ static void cg_emit_guest_reg_copy(stage5_cg_t *cg, uint8_t dst_reg, uint8_t src
     translate_ctx_t *ctx = cg->ctx;
     emit_ctx_t *e = cg->e;
 
-    stage5_flush_pending_for_codegen(ctx);
-
     x64_reg_t h_src = cg_guest_host(cg, src_reg);
     x64_reg_t h_dst = cg_guest_host(cg, dst_reg);
 
@@ -2195,11 +2193,14 @@ static void cg_emit_guest_reg_copy(stage5_cg_t *cg, uint8_t dst_reg, uint8_t src
     cg_mark_dirty(cg, dst_reg);
 }
 
-static bool cg_emit_phi_edge_copies(stage5_cg_t *cg,
-                                    const stage5_phi_elim_plan_t *plan,
-                                    int pred_block, int succ_block) {
+static bool cg_emit_parallel_copy_edge(stage5_cg_t *cg,
+                                       const stage5_phi_elim_plan_t *plan,
+                                       int pred_block, int succ_block) {
     const stage5_phi_edge_plan_t *edge = cg_find_phi_edge_plan(plan, pred_block, succ_block);
     if (!edge || edge->copy_count == 0) return true;
+
+    // Execute this edge as a single parallel-copy batch.
+    stage5_flush_pending_for_codegen(cg->ctx);
 
     // Peephole for edge copies: drop no-ops and duplicate (dst<-src) pairs.
     stage5_phi_copy_t copies[STAGE5_MAX_PHI_COPIES_PER_EDGE];
@@ -2274,7 +2275,6 @@ static bool cg_emit_phi_edge_copies(stage5_cg_t *cg,
             continue;
         }
 
-        stage5_flush_pending_for_codegen(cg->ctx);
         x64_reg_t h_dst0 = cg_guest_host(cg, dst0);
         if (h_dst0 != X64_NOREG) {
             emit_mov_r32_r32(cg->e, R10, h_dst0);
@@ -2315,7 +2315,6 @@ static bool cg_emit_phi_edge_copies(stage5_cg_t *cg,
             curr_src = next_src;
         }
 
-        stage5_flush_pending_for_codegen(cg->ctx);
         x64_reg_t h_dst = cg_guest_host(cg, curr_dst);
         if (h_dst != X64_NOREG) {
             emit_mov_r32_r32(cg->e, h_dst, R10);
@@ -2404,7 +2403,7 @@ static bool cg_emit_branch_terminal_native(stage5_cg_t *cg,
     }
     int pred_block = cg_find_cfg_block_by_pc(region, branch_pc);
     int fall_block = cg_find_cfg_block_by_pc(region, fall_pc);
-    if (!cg_emit_phi_edge_copies(cg, phi_plan, pred_block, fall_block)) {
+    if (!cg_emit_parallel_copy_edge(cg, phi_plan, pred_block, fall_block)) {
         return false;
     }
     emit_exit_chained_for_codegen(ctx, fall_pc, ctx->exit_idx++);
@@ -2415,7 +2414,7 @@ static bool cg_emit_branch_terminal_native(stage5_cg_t *cg,
         ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
     }
     int taken_block = cg_find_cfg_block_by_pc(region, taken_pc);
-    if (!cg_emit_phi_edge_copies(cg, phi_plan, pred_block, taken_block)) {
+    if (!cg_emit_parallel_copy_edge(cg, phi_plan, pred_block, taken_block)) {
         return false;
     }
     emit_exit_chained_for_codegen(ctx, taken_pc, ctx->exit_idx++);
@@ -2432,7 +2431,7 @@ static bool cg_emit_phi_for_edge(stage5_cg_t *cg,
     int pred_block = cg_find_cfg_block_by_pc(region, pred_pc);
     int succ_block = cg_find_cfg_block_by_pc(region, succ_pc);
     if (pred_block < 0 || succ_block < 0) return true;
-    return cg_emit_phi_edge_copies(cg, phi_plan, pred_block, succ_block);
+    return cg_emit_parallel_copy_edge(cg, phi_plan, pred_block, succ_block);
 }
 
 // ============================================================================
