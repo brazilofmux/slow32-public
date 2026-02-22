@@ -780,6 +780,10 @@ void cache_print_stats(block_cache_t *cache) {
         fprintf(stderr, "Peephole guard (imm-imm skipped on call blocks): %" PRIu32 "\n",
                 peephole_guard_skip_immimm_calls_count);
     }
+    if (peephole_guard_skip_immimm_global_count > 0) {
+        fprintf(stderr, "Peephole guard (imm-imm globally skipped): %" PRIu32 "\n",
+                peephole_guard_skip_immimm_global_count);
+    }
     if (peephole_call_block_seen_count > 0) {
         fprintf(stderr,
                 "Peephole call-blocks: seen=%" PRIu32 " rewrites=%" PRIu32

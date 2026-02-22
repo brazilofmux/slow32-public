@@ -104,6 +104,7 @@ extern uint32_t stage5_backedge_dirty_promotions_r15;
 extern uint32_t peephole_guard_skip_calls_count;
 extern uint32_t peephole_guard_skip_jcc_calls_count;
 extern uint32_t peephole_guard_skip_immimm_calls_count;
+extern uint32_t peephole_guard_skip_immimm_global_count;
 extern uint32_t peephole_call_block_seen_count;
 extern uint32_t peephole_call_block_rewrite_count;
 extern uint32_t peephole_call_block_jcc_fold_count;
