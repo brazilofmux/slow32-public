@@ -39,6 +39,14 @@ extern uint32_t stage5_codegen_success;
 extern uint32_t stage5_codegen_fallback;
 extern uint32_t stage5_codegen_fallback_unsupported_op;
 extern uint32_t stage5_codegen_fallback_preflight;
+extern uint32_t stage5_codegen_fallback_preflight_fused_branch;
+extern uint32_t stage5_codegen_fallback_preflight_missing_terminal;
+extern uint32_t stage5_codegen_fallback_preflight_bad_terminal_index;
+extern uint32_t stage5_codegen_fallback_preflight_bad_fuse_index;
+extern uint32_t stage5_codegen_fallback_preflight_opcode;
+extern uint32_t stage5_codegen_fallback_preflight_opcode_hist[128];
+extern uint32_t stage5_codegen_fallback_preflight_side_exit;
+extern uint32_t stage5_codegen_fallback_preflight_terminal;
 extern uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix;
 extern uint32_t stage5_codegen_fallback_side_exit;
 extern uint32_t stage5_codegen_fallback_emit_node;
@@ -56,6 +64,9 @@ bool stage5_emit_cmp_branch_fused_for_codegen(translate_ctx_t *ctx,
     uint8_t branch_opcode, int32_t branch_imm, uint32_t branch_pc);
 
 bool stage5_translate_branch_terminal_for_codegen(translate_ctx_t *ctx,
+    uint8_t opcode, uint8_t rs1, uint8_t rs2, int32_t imm);
+
+bool stage5_translate_branch_direct_for_codegen(translate_ctx_t *ctx,
     uint8_t opcode, uint8_t rs1, uint8_t rs2, int32_t imm);
 
 void stage5_translate_jal_jump_compact_for_codegen(translate_ctx_t *ctx,

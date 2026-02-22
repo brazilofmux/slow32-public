@@ -2506,6 +2506,19 @@ bool stage5_translate_branch_terminal_for_codegen(translate_ctx_t *ctx,
     return stage5_translate_branch_terminal(ctx, opcode, rs1, rs2, imm);
 }
 
+bool stage5_translate_branch_direct_for_codegen(translate_ctx_t *ctx,
+    uint8_t opcode, uint8_t rs1, uint8_t rs2, int32_t imm) {
+    switch (opcode) {
+        case OP_BEQ:  return translate_beq(ctx, rs1, rs2, imm);
+        case OP_BNE:  return translate_bne(ctx, rs1, rs2, imm);
+        case OP_BLT:  return translate_blt(ctx, rs1, rs2, imm);
+        case OP_BGE:  return translate_bge(ctx, rs1, rs2, imm);
+        case OP_BLTU: return translate_bltu(ctx, rs1, rs2, imm);
+        case OP_BGEU: return translate_bgeu(ctx, rs1, rs2, imm);
+        default: return false;
+    }
+}
+
 void stage5_translate_jal_jump_compact_for_codegen(translate_ctx_t *ctx,
     uint8_t rd, int32_t imm) {
     stage5_translate_jal_jump_compact(ctx, rd, imm);

@@ -22,6 +22,14 @@ uint32_t stage5_codegen_success;
 uint32_t stage5_codegen_fallback;
 uint32_t stage5_codegen_fallback_unsupported_op;
 uint32_t stage5_codegen_fallback_preflight;
+uint32_t stage5_codegen_fallback_preflight_fused_branch;
+uint32_t stage5_codegen_fallback_preflight_missing_terminal;
+uint32_t stage5_codegen_fallback_preflight_bad_terminal_index;
+uint32_t stage5_codegen_fallback_preflight_bad_fuse_index;
+uint32_t stage5_codegen_fallback_preflight_opcode;
+uint32_t stage5_codegen_fallback_preflight_opcode_hist[128];
+uint32_t stage5_codegen_fallback_preflight_side_exit;
+uint32_t stage5_codegen_fallback_preflight_terminal;
 uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix;
 uint32_t stage5_codegen_fallback_side_exit;
 uint32_t stage5_codegen_fallback_emit_node;
@@ -68,6 +76,28 @@ static bool cg_branch_term_enabled(void) {
     static bool enabled = false;
     if (!inited) {
         const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_TERM");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+static bool cg_branch_cmp_mix_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+static bool cg_side_exit_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_SIDE_EXIT");
         enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
         inited = true;
     }
@@ -703,12 +733,30 @@ static bool cg_emit_node(stage5_cg_t *cg, const stage5_ir_node_t *n) {
             return cg_emit_store(cg, n);
 
         // Unsupported: abort region
-        case OP_DIV:
-        case OP_REM:
-        case OP_MULHU:
         case OP_MULH:
-            stage5_codegen_fallback_unsupported_op++;
-            return false;
+            translate_mulh(cg->ctx, n->rd, n->rs1, n->rs2);
+            return true;
+        case OP_MULHU:
+            translate_mulhu(cg->ctx, n->rd, n->rs1, n->rs2);
+            return true;
+        case OP_DIV:
+            translate_div(cg->ctx, n->rd, n->rs1, n->rs2);
+            return true;
+        case OP_REM:
+            translate_rem(cg->ctx, n->rd, n->rs1, n->rs2);
+            return true;
+        case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
+        case OP_FSQRT_S: case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
+        case OP_FCVT_W_S: case OP_FCVT_WU_S: case OP_FCVT_S_W: case OP_FCVT_S_WU:
+        case OP_FNEG_S: case OP_FABS_S:
+        case OP_FADD_D: case OP_FSUB_D: case OP_FMUL_D: case OP_FDIV_D:
+        case OP_FSQRT_D: case OP_FEQ_D: case OP_FLT_D: case OP_FLE_D:
+        case OP_FCVT_W_D: case OP_FCVT_WU_D: case OP_FCVT_D_W: case OP_FCVT_D_WU:
+        case OP_FCVT_D_S: case OP_FCVT_S_D: case OP_FNEG_D: case OP_FABS_D:
+        case OP_FCVT_L_S: case OP_FCVT_LU_S: case OP_FCVT_S_L: case OP_FCVT_S_LU:
+        case OP_FCVT_L_D: case OP_FCVT_LU_D: case OP_FCVT_D_L: case OP_FCVT_D_LU:
+            translate_fp_r_type(cg->ctx, n->opcode, n->rd, n->rs1, n->rs2);
+            return true;
 
         default:
             // Unknown opcode — abort
@@ -725,8 +773,20 @@ static bool cg_opcode_supported(uint8_t opcode, bool cmp_rr_enabled, bool cmp_ri
         case OP_SLLI: case OP_SRLI: case OP_SRAI:
         case OP_SLL: case OP_SRL: case OP_SRA:
         case OP_LUI: case OP_MUL:
+        case OP_MULH: case OP_MULHU: case OP_DIV: case OP_REM:
         case OP_LDW: case OP_LDH: case OP_LDB: case OP_LDHU: case OP_LDBU:
         case OP_STW: case OP_STH: case OP_STB:
+        case OP_BEQ: case OP_BNE: case OP_BLT: case OP_BGE: case OP_BLTU: case OP_BGEU:
+        case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
+        case OP_FSQRT_S: case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
+        case OP_FCVT_W_S: case OP_FCVT_WU_S: case OP_FCVT_S_W: case OP_FCVT_S_WU:
+        case OP_FNEG_S: case OP_FABS_S:
+        case OP_FADD_D: case OP_FSUB_D: case OP_FMUL_D: case OP_FDIV_D:
+        case OP_FSQRT_D: case OP_FEQ_D: case OP_FLT_D: case OP_FLE_D:
+        case OP_FCVT_W_D: case OP_FCVT_WU_D: case OP_FCVT_D_W: case OP_FCVT_D_WU:
+        case OP_FCVT_D_S: case OP_FCVT_S_D: case OP_FNEG_D: case OP_FABS_D:
+        case OP_FCVT_L_S: case OP_FCVT_LU_S: case OP_FCVT_S_L: case OP_FCVT_S_LU:
+        case OP_FCVT_L_D: case OP_FCVT_LU_D: case OP_FCVT_D_L: case OP_FCVT_D_LU:
             return true;
         case OP_SLT: case OP_SLTU: case OP_SEQ: case OP_SNE:
         case OP_SGT: case OP_SGTU: case OP_SLE: case OP_SLEU:
@@ -749,6 +809,10 @@ static bool cg_terminal_supported(uint8_t opcode, bool branch_term_enabled) {
             return true;
         case OP_BEQ:
         case OP_BNE:
+        case OP_BLT:
+        case OP_BGE:
+        case OP_BLTU:
+        case OP_BGEU:
             return branch_term_enabled;
         default:
             return false;
@@ -765,20 +829,26 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
     bool cmp_ri_enabled = cmp_rr_enabled && cg_cmp_ri_enabled();
     bool fused_branch_enabled = cg_fused_branch_enabled();
     bool branch_term_enabled = cg_branch_term_enabled();
+    bool branch_cmp_mix_enabled = cg_branch_cmp_mix_enabled();
+    bool side_exit_enabled = cg_side_exit_enabled();
 
     if (fuse_cmp_idx >= 0 && !fused_branch_enabled) {
+        stage5_codegen_fallback_preflight_fused_branch++;
         return false;
     }
 
     if (!synth_block_end && terminal_idx < 0) {
+        stage5_codegen_fallback_preflight_missing_terminal++;
         return false;
     }
 
     if (terminal_idx >= (int)region->ir_count) {
+        stage5_codegen_fallback_preflight_bad_terminal_index++;
         return false;
     }
 
     if (fuse_cmp_idx >= (int)region->ir_count) {
+        stage5_codegen_fallback_preflight_bad_fuse_index++;
         return false;
     }
 
@@ -788,10 +858,16 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
         if (terminal_idx >= 0 && (int)i == terminal_idx) continue;
         if (fuse_cmp_idx >= 0 && (int)i == fuse_cmp_idx) continue;
         if (!cg_opcode_supported(n->opcode, cmp_rr_enabled, cmp_ri_enabled)) {
+            stage5_codegen_fallback_preflight_opcode++;
+            stage5_codegen_fallback_preflight_opcode_hist[n->opcode & 0x7F]++;
             return false;
         }
         if (n->is_side_exit && n->kind == STAGE5_IR_BRANCH &&
             side_exit_emit_enabled && side_exit_family_c) {
+            if (side_exit_enabled) {
+                continue;
+            }
+            stage5_codegen_fallback_preflight_side_exit++;
             return false;
         }
     }
@@ -799,12 +875,15 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
     if (terminal_idx >= 0) {
         const stage5_ir_node_t *term = &region->ir[terminal_idx];
         if (!cg_terminal_supported(term->opcode, branch_term_enabled)) {
+            stage5_codegen_fallback_preflight_terminal++;
             return false;
         }
         if (branch_term_enabled &&
             (term->opcode == OP_BEQ || term->opcode == OP_BNE ||
              term->opcode == OP_BLT || term->opcode == OP_BGE ||
              term->opcode == OP_BLTU || term->opcode == OP_BGEU)) {
+            bool allow_mix = branch_cmp_mix_enabled &&
+                             (term->opcode == OP_BEQ || term->opcode == OP_BNE);
             // Conservative safety gate: avoid branch-terminal regions that
             // also contain compare prefix nodes until cmp+branch interactions
             // are fully audited.
@@ -820,8 +899,11 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
                     n->opcode == OP_SLE || n->opcode == OP_SLEU ||
                     n->opcode == OP_SGE || n->opcode == OP_SGEU ||
                     n->opcode == OP_SLTI || n->opcode == OP_SLTIU) {
-                    stage5_codegen_fallback_preflight_branch_cmp_mix++;
-                    return false;
+                    if (!allow_mix ||
+                        n->opcode == OP_SLTI || n->opcode == OP_SLTIU) {
+                        stage5_codegen_fallback_preflight_branch_cmp_mix++;
+                        return false;
+                    }
                 }
             }
         }
@@ -1060,6 +1142,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
     typedef struct { bool family_b; bool family_c; } side_exit_cfg_t;
     const side_exit_cfg_t *se_cfg = (const side_exit_cfg_t *)side_exit_family_cfg_ptr;
     bool side_exit_family_c = se_cfg ? se_cfg->family_c : false;
+    bool side_exit_codegen = cg_side_exit_enabled();
 
     if (!cg_region_preflight(region, terminal_idx, fuse_cmp_idx, synth_block_end,
                              side_exit_emit_enabled, side_exit_family_c)) {
@@ -1078,17 +1161,26 @@ bool stage5_codegen(translate_ctx_t *ctx,
         if (terminal_idx >= 0 && (int)i == terminal_idx) continue;
         if (fuse_cmp_idx >= 0 && (int)i == fuse_cmp_idx) continue;
 
-        // Side exits are still emitted by the legacy Stage5 path.
-        // Native codegen falls back for these regions until deferred-exit
-        // ownership is fully mirrored.
+        // Optional side-exit ownership by native codegen.
         if (n->is_side_exit && n->kind == STAGE5_IR_BRANCH &&
             side_exit_emit_enabled && side_exit_family_c &&
             ctx->exit_idx + 2 < MAX_BLOCK_EXITS &&
             ctx->deferred_exit_count < MAX_BLOCK_EXITS) {
-            stage5_codegen_fallback++;
-            stage5_codegen_fallback_side_exit++;
-            cg_state_restore(ctx, &saved);
-            return false;
+            if (side_exit_codegen) {
+                if (!cg_emit_side_exit(&cg, n)) {
+                    stage5_codegen_fallback++;
+                    stage5_codegen_fallback_side_exit++;
+                    cg_state_restore(ctx, &saved);
+                    return false;
+                }
+                cg.emitted_insts++;
+                continue;
+            } else {
+                stage5_codegen_fallback++;
+                stage5_codegen_fallback_side_exit++;
+                cg_state_restore(ctx, &saved);
+                return false;
+            }
         }
 
         ctx->guest_pc = n->pc;
@@ -1161,7 +1253,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
             case OP_BGE:
             case OP_BLTU:
             case OP_BGEU:
-                ended = stage5_translate_branch_terminal_for_codegen(ctx,
+                ended = stage5_translate_branch_direct_for_codegen(ctx,
                     last->opcode, last->rs1, last->rs2, last->imm);
                 break;
             default:

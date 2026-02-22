@@ -1528,6 +1528,8 @@ static void usage(const char *prog) {
     fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_CMP_RI=1  Allow Stage5 native codegen for compare imm ops\n");
     fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_FUSED_BRANCH=1  Allow fused cmp+branch terminal codegen\n");
     fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_BRANCH_TERM=1  Allow branch terminal codegen\n");
+    fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX=1  Allow BEQ/BNE terminals in cmp-mixed regions\n");
+    fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_SIDE_EXIT=1  Allow native side-exit emission in codegen\n");
 }
 
 static void parse_service_list(const char *list, char names[][S32_MAX_SVC_NAME], int *count, int max) {
@@ -2709,6 +2711,36 @@ int main(int argc, char **argv) {
             if (stage5_codegen_fallback_preflight > 0) {
                 fprintf(stderr, "  codegen preflight:      %" PRIu32 "\n",
                         stage5_codegen_fallback_preflight);
+                if (stage5_codegen_fallback_preflight_fused_branch > 0) {
+                    fprintf(stderr, "    preflight fused-branch disabled: %" PRIu32 "\n",
+                            stage5_codegen_fallback_preflight_fused_branch);
+                }
+                if (stage5_codegen_fallback_preflight_missing_terminal > 0) {
+                    fprintf(stderr, "    preflight missing terminal:       %" PRIu32 "\n",
+                            stage5_codegen_fallback_preflight_missing_terminal);
+                }
+                if (stage5_codegen_fallback_preflight_bad_terminal_index > 0) {
+                    fprintf(stderr, "    preflight bad terminal index:     %" PRIu32 "\n",
+                            stage5_codegen_fallback_preflight_bad_terminal_index);
+                }
+                if (stage5_codegen_fallback_preflight_bad_fuse_index > 0) {
+                    fprintf(stderr, "    preflight bad fuse index:         %" PRIu32 "\n",
+                            stage5_codegen_fallback_preflight_bad_fuse_index);
+                }
+                if (stage5_codegen_fallback_preflight_opcode > 0) {
+                    fprintf(stderr, "    preflight unsupported opcode:     %" PRIu32 "\n",
+                            stage5_codegen_fallback_preflight_opcode);
+                    print_top_opcode_hist("codegen preflight unsupported opcode",
+                                          stage5_codegen_fallback_preflight_opcode_hist);
+                }
+                if (stage5_codegen_fallback_preflight_side_exit > 0) {
+                    fprintf(stderr, "    preflight side_exit ownership:    %" PRIu32 "\n",
+                            stage5_codegen_fallback_preflight_side_exit);
+                }
+                if (stage5_codegen_fallback_preflight_terminal > 0) {
+                    fprintf(stderr, "    preflight unsupported terminal:   %" PRIu32 "\n",
+                            stage5_codegen_fallback_preflight_terminal);
+                }
             }
             if (stage5_codegen_fallback_preflight_branch_cmp_mix > 0) {
                 fprintf(stderr, "    preflight branch+cmp mix: %" PRIu32 "\n",
