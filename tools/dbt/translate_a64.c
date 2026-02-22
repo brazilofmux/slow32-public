@@ -57,6 +57,7 @@ uint32_t stage5_emit_fallback_shape = 0;
 uint32_t stage5_emit_fallback_single_unhandled = 0;
 uint32_t stage5_emit_fallback_cmp_branch_miss = 0;
 uint32_t stage5_emit_fallback_not_ended = 0;
+uint32_t stage5_emit_not_ended_opcode_hist[128] = {0};
 uint32_t stage5_emit_unhandled_opcode_hist[128] = {0};
 
 // ============================================================================

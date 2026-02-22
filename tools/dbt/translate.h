@@ -114,6 +114,7 @@ extern uint32_t stage5_emit_fallback_side_exit_call_guard;
 extern uint32_t stage5_emit_fallback_single_unhandled;
 extern uint32_t stage5_emit_fallback_cmp_branch_miss;
 extern uint32_t stage5_emit_fallback_not_ended;
+extern uint32_t stage5_emit_not_ended_opcode_hist[128];
 extern uint32_t stage5_emit_fused_cmp_branch;
 extern uint32_t stage5_emit_side_exits;
 extern uint32_t stage5_emit_region_side_exit_total;

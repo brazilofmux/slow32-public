@@ -2343,6 +2343,29 @@ int main(int argc, char **argv) {
                 if (stage5_emit_fallback_not_ended > 0) {
                     fprintf(stderr, "  emit not_ended: %" PRIu32 "\n",
                             stage5_emit_fallback_not_ended);
+                    uint8_t top_op[3] = {0};
+                    uint32_t top_ct[3] = {0};
+                    for (uint32_t op = 0; op < 128; op++) {
+                        uint32_t c = stage5_emit_not_ended_opcode_hist[op];
+                        if (c == 0) continue;
+                        for (int i = 0; i < 3; i++) {
+                            if (c > top_ct[i]) {
+                                for (int k = 2; k > i; k--) {
+                                    top_ct[k] = top_ct[k - 1];
+                                    top_op[k] = top_op[k - 1];
+                                }
+                                top_ct[i] = c;
+                                top_op[i] = (uint8_t)op;
+                                break;
+                            }
+                        }
+                    }
+                    for (int i = 0; i < 3; i++) {
+                        if (top_ct[i] == 0) break;
+                        fprintf(stderr,
+                                "  emit not_ended top%d: op=0x%02X count=%" PRIu32 "\n",
+                                i + 1, top_op[i], top_ct[i]);
+                    }
                 }
                 if (stage5_emit_fused_cmp_branch > 0) {
                     fprintf(stderr, "  emit fused_cmp_branch: %" PRIu32 "\n",

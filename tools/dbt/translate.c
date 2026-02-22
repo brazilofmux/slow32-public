@@ -101,6 +101,7 @@ uint32_t stage5_emit_fallback_side_exit_call_guard = 0;
 uint32_t stage5_emit_fallback_single_unhandled = 0;
 uint32_t stage5_emit_fallback_cmp_branch_miss = 0;
 uint32_t stage5_emit_fallback_not_ended = 0;
+uint32_t stage5_emit_not_ended_opcode_hist[128] = {0};
 uint32_t stage5_emit_unhandled_opcode_hist[128] = {0};
 uint32_t stage5_emit_calls = 0;
 uint64_t stage5_emit_time_ns = 0;
@@ -1799,6 +1800,11 @@ static inline bool stage5_pattern_is_direct_branch(stage5_burg_pattern_t pattern
            pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_RELU;
 }
 
+static inline void stage5_record_emit_not_ended(uint8_t opcode) {
+    stage5_emit_fallback_not_ended++;
+    stage5_emit_not_ended_opcode_hist[opcode & 0x7F]++;
+}
+
 static inline bool stage5_prefilter_is_cmp_opcode(uint8_t opcode) {
     return opcode == OP_SLT || opcode == OP_SLTU ||
            opcode == OP_SEQ || opcode == OP_SNE ||
@@ -2959,16 +2965,16 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
-                stage5_emit_fallback_not_ended++;
+                stage5_record_emit_not_ended(inst0.opcode);
                 break;
             case OP_BNE:
-                if (translate_bne(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
+                if (stage5_translate_bne_compact(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                     if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
-                stage5_emit_fallback_not_ended++;
+                stage5_record_emit_not_ended(inst0.opcode);
                 break;
             case OP_BLT:
                 if (translate_blt(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
@@ -2977,7 +2983,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
-                stage5_emit_fallback_not_ended++;
+                stage5_record_emit_not_ended(inst0.opcode);
                 break;
             case OP_BGE:
                 if (translate_bge(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
@@ -2986,7 +2992,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
-                stage5_emit_fallback_not_ended++;
+                stage5_record_emit_not_ended(inst0.opcode);
                 break;
             case OP_BLTU:
                 if (translate_bltu(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
@@ -2995,7 +3001,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
-                stage5_emit_fallback_not_ended++;
+                stage5_record_emit_not_ended(inst0.opcode);
                 break;
             case OP_BGEU:
                 if (translate_bgeu(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
@@ -3004,7 +3010,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
-                stage5_emit_fallback_not_ended++;
+                stage5_record_emit_not_ended(inst0.opcode);
                 break;
             default:
                 stage5_emit_fallback_single_unhandled++;
@@ -3037,7 +3043,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
-                stage5_emit_fallback_not_ended++;
+                stage5_record_emit_not_ended(b->opcode);
             } else {
                 stage5_emit_fallback_cmp_branch_miss++;
             }
@@ -3079,16 +3085,16 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             if (branch_uses_cmp_rd) {
                 ctx->guest_pc = guest_pc + 4;
                 ctx->current_inst_idx = 1;
-                bool ended = (inst1.opcode == OP_BEQ)
-                    ? translate_beq(ctx, inst1.rs1, inst1.rs2, inst1.imm)
-                    : translate_bne(ctx, inst1.rs1, inst1.rs2, inst1.imm);
+                    bool ended = (inst1.opcode == OP_BEQ)
+                    ? stage5_translate_beq_compact(ctx, inst1.rs1, inst1.rs2, inst1.imm)
+                    : stage5_translate_bne_compact(ctx, inst1.rs1, inst1.rs2, inst1.imm);
                 if (ended) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                     if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
-                stage5_emit_fallback_not_ended++;
+                stage5_record_emit_not_ended(inst1.opcode);
             }
         }
 
@@ -3110,8 +3116,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 ctx->current_inst_idx = 0;
                 bool ended = false;
                 switch (inst0.opcode) {
-                    case OP_BEQ:  ended = translate_beq(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
-                    case OP_BNE:  ended = translate_bne(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
+                    case OP_BEQ:  ended = stage5_translate_beq_compact(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
+                    case OP_BNE:  ended = stage5_translate_bne_compact(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
                     case OP_BLT:  ended = translate_blt(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
                     case OP_BGE:  ended = translate_bge(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
                     case OP_BLTU: ended = translate_bltu(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
@@ -3124,7 +3130,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
-                stage5_emit_fallback_not_ended++;
+                stage5_record_emit_not_ended(inst0.opcode);
                 ctx->superblock_enabled = saved_superblock_enabled;
                 stage5_emit_fallback++;
                 return false;
@@ -3308,8 +3314,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     case OP_HALT:  translate_halt(ctx); ended = true; break;
                     case OP_DEBUG: translate_debug(ctx, inst1.rs1); ended = true; break;
                     case OP_YIELD: translate_yield(ctx); ended = true; break;
-                    case OP_BEQ:   ended = translate_beq(ctx, inst1.rs1, inst1.rs2, inst1.imm); break;
-                    case OP_BNE:   ended = translate_bne(ctx, inst1.rs1, inst1.rs2, inst1.imm); break;
+                    case OP_BEQ:   ended = stage5_translate_beq_compact(ctx, inst1.rs1, inst1.rs2, inst1.imm); break;
+                    case OP_BNE:   ended = stage5_translate_bne_compact(ctx, inst1.rs1, inst1.rs2, inst1.imm); break;
                     case OP_BLT:   ended = translate_blt(ctx, inst1.rs1, inst1.rs2, inst1.imm); break;
                     case OP_BGE:   ended = translate_bge(ctx, inst1.rs1, inst1.rs2, inst1.imm); break;
                     case OP_BLTU:  ended = translate_bltu(ctx, inst1.rs1, inst1.rs2, inst1.imm); break;
@@ -3322,7 +3328,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
-                stage5_emit_fallback_not_ended++;
+                stage5_record_emit_not_ended(inst1.opcode);
             } else {
                 if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO) {
                     stage5_emit_fallback_cmp_branch_miss++;
@@ -3544,8 +3550,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     case OP_HALT:  translate_halt(ctx); ended = true; break;
                     case OP_DEBUG: translate_debug(ctx, last->rs1); ended = true; break;
                     case OP_YIELD: translate_yield(ctx); ended = true; break;
-                    case OP_BEQ:   ended = translate_beq(ctx, last->rs1, last->rs2, last->imm); break;
-                    case OP_BNE:   ended = translate_bne(ctx, last->rs1, last->rs2, last->imm); break;
+                    case OP_BEQ:   ended = stage5_translate_beq_compact(ctx, last->rs1, last->rs2, last->imm); break;
+                    case OP_BNE:   ended = stage5_translate_bne_compact(ctx, last->rs1, last->rs2, last->imm); break;
                     case OP_BLT:   ended = translate_blt(ctx, last->rs1, last->rs2, last->imm); break;
                     case OP_BGE:   ended = translate_bge(ctx, last->rs1, last->rs2, last->imm); break;
                     case OP_BLTU:  ended = translate_bltu(ctx, last->rs1, last->rs2, last->imm); break;
@@ -3561,7 +3567,11 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                 return true;
             }
-            stage5_emit_fallback_not_ended++;
+            uint8_t term_op = 0xFF;
+            if (terminal_idx >= 0) {
+                term_op = region.ir[terminal_idx].opcode;
+            }
+            stage5_record_emit_not_ended(term_op);
         } else {
             stage5_emit_fallback_shape++;
             stage5_emit_unhandled_opcode_hist[first_bad_prefix_opcode & 0x7F]++;
