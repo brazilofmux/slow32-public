@@ -25,6 +25,9 @@ else
     )
 fi
 
+tmpdir=$(mktemp -d /tmp/compare-stage4-stage5.XXXXXX)
+trap 'rm -rf "$tmpdir"' EXIT
+
 printf "%-20s %-5s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s\n" \
   "test" "rc" "t4(s)" "t5(s)" "sel" "emit" "ginst" "b/gi" "jret_s" "jret_l" "jind"
 
@@ -35,10 +38,10 @@ for t in "${TESTS[@]}"; do
     fi
 
     base=$(basename "$(dirname "$t")")
-    out4="/tmp/${base}.s4.out"
-    err4="/tmp/${base}.s4.err"
-    out5="/tmp/${base}.s5.out"
-    err5="/tmp/${base}.s5.err"
+    out4="$tmpdir/${base}.s4.out"
+    err4="$tmpdir/${base}.s4.err"
+    out5="$tmpdir/${base}.s5.out"
+    err5="$tmpdir/${base}.s5.err"
 
     set +e
     "$DBT" -4 -s "$t" >"$out4" 2>"$err4"

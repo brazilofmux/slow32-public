@@ -73,6 +73,9 @@ uint32_t stage5_emit_region_side_exit_total = 0;
 uint32_t stage5_emit_region_side_exit_owned = 0;
 uint32_t stage5_emit_region_side_exit_unsupported = 0;
 uint32_t stage5_emit_region_side_exit_disabled = 0;
+uint32_t stage5_emit_region_side_exit_call_guard = 0;
+uint32_t stage5_emit_side_exit_opcode_hist[128] = {0};
+uint32_t stage5_emit_side_exit_unsupported_opcode_hist[128] = {0};
 
 static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
 static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg);
@@ -81,7 +84,17 @@ static inline void flush_pending_cond(translate_ctx_t *ctx);
 
 // Stage5 superblock ownership roadmap:
 // enable narrow side-exit ownership first (forward BEQ/BNE only), then expand.
-static const bool stage5_enable_side_exit_emit = true;
+static const bool stage5_enable_side_exit_emit = false;
+
+static bool stage5_region_contains_jal_or_jalr(const stage5_lift_region_t *region) {
+    if (!region) return false;
+    for (uint32_t i = 0; i < region->ir_count; i++) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) continue;
+        if (n->opcode == OP_JAL || n->opcode == OP_JALR) return true;
+    }
+    return false;
+}
 
 static inline bool stage5_side_exit_supported(const stage5_ir_node_t *n) {
     if (!n) return false;
@@ -926,12 +939,24 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     bool saved_superblock_enabled = ctx->superblock_enabled;
     ctx->superblock_enabled = false;
     bool side_exit_owned = stage5_region_side_exits_supported(&region);
+    bool side_exit_call_guard = stage5_region_contains_jal_or_jalr(&region);
     if (region.side_exit_count > 0) {
+        for (uint32_t i = 0; i < region.ir_count; i++) {
+            const stage5_ir_node_t *n = &region.ir[i];
+            if (!n->is_side_exit) continue;
+            uint8_t op = n->opcode & 0x7F;
+            stage5_emit_side_exit_opcode_hist[op]++;
+            if (!stage5_side_exit_supported(n)) {
+                stage5_emit_side_exit_unsupported_opcode_hist[op]++;
+            }
+        }
         stage5_emit_region_side_exit_total++;
         if (side_exit_owned) {
             stage5_emit_region_side_exit_owned++;
             if (!stage5_enable_side_exit_emit) {
                 stage5_emit_region_side_exit_disabled++;
+            } else if (side_exit_call_guard) {
+                stage5_emit_region_side_exit_call_guard++;
             }
         } else {
             stage5_emit_region_side_exit_unsupported++;
@@ -969,7 +994,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         return false;
     }
 
-    if ((!stage5_enable_side_exit_emit || !side_exit_owned) &&
+    if ((!stage5_enable_side_exit_emit || !side_exit_owned || side_exit_call_guard) &&
         region.side_exit_count > 0) {
         ctx->superblock_enabled = saved_superblock_enabled;
         stage5_emit_fallback++;

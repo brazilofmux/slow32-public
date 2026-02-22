@@ -21,12 +21,15 @@ else
 fi
 
 tmp=$(mktemp)
-trap 'rm -f "$tmp"' EXIT
+tmp_side=$(mktemp)
+tmp_unsup=$(mktemp)
+tmpdir=$(mktemp -d /tmp/stage5-aggregate.XXXXXX)
+trap 'rm -f "$tmp" "$tmp_side" "$tmp_unsup"; rm -rf "$tmpdir"' EXIT
 
 for t in "${TESTS[@]}"; do
     [[ -f "$t" ]] || continue
     base=$(basename "$(dirname "$t")")
-    err="/tmp/stage5_${base}.err"
+    err="$tmpdir/${base}.err"
     set +e
     "$DBT" -5 -G -W -s "$t" >/dev/null 2>"$err"
     rc=$?
@@ -57,6 +60,34 @@ for t in "${TESTS[@]}"; do
         }
       }
     ' "$err" >> "$tmp"
+
+    awk -v test="$base" '
+      /^  emit side_exit_regions:/ {
+        total=owned=unsupported=disabled=call_guard=0
+        for (i=1; i<=NF; i++) {
+          if ($i ~ /^total=/)       { x=$i; sub(/^total=/, "", x); total=x+0 }
+          if ($i ~ /^owned=/)       { x=$i; sub(/^owned=/, "", x); owned=x+0 }
+          if ($i ~ /^unsupported=/) { x=$i; sub(/^unsupported=/, "", x); unsupported=x+0 }
+          if ($i ~ /^disabled=/)    { x=$i; sub(/^disabled=/, "", x); disabled=x+0 }
+          if ($i ~ /^call_guard=/)  { x=$i; sub(/^call_guard=/, "", x); call_guard=x+0 }
+        }
+        printf "%s\t%d\t%d\t%d\t%d\t%d\n",
+               test, total, owned, unsupported, disabled, call_guard
+      }
+    ' "$err" >> "$tmp_side"
+
+    awk -v test="$base" '
+      /^  emit side_exit unsupported top[0-9]+:/ {
+        op=""; cnt=0
+        for (i=1; i<=NF; i++) {
+          if ($i ~ /^op=/)    { x=$i; sub(/^op=/, "", x); op=x }
+          if ($i ~ /^count=/) { x=$i; sub(/^count=/, "", x); cnt=x+0 }
+        }
+        if (op != "" && cnt > 0) {
+          printf "%s\t%s\t%d\n", test, op, cnt
+        }
+      }
+    ' "$err" >> "$tmp_unsup"
 done
 
 if [[ ! -s "$tmp" ]]; then
@@ -80,3 +111,28 @@ awk -F'\t' '
     }
   }
 ' "$tmp" | sort -t$'\t' -k2,2nr | cut -f1,3-
+
+if [[ -s "$tmp_side" ]]; then
+    echo
+    echo "Side-exit region totals (all selected tests):"
+    awk -F'\t' '
+      { T+=$2; O+=$3; U+=$4; D+=$5; C+=$6; N++ }
+      END {
+        printf "tests=%d total=%d owned=%d unsupported=%d disabled=%d call_guard=%d\n",
+               N, T, O, U, D, C
+      }
+    ' "$tmp_side"
+fi
+
+if [[ -s "$tmp_unsup" ]]; then
+    echo
+    echo "Unsupported side-exit opcodes (aggregated top):"
+    awk -F'\t' '
+      { op=$2; c[op]+=$3 }
+      END {
+        for (op in c) {
+          printf "%s\t%d\n", op, c[op]
+        }
+      }
+    ' "$tmp_unsup" | sort -t$'\t' -k2,2nr | head -n 8
+fi
