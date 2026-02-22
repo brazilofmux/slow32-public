@@ -177,7 +177,7 @@ static inline void stage5_validate_reg_write(stage5_validate_state_t *s, uint8_t
 }
 
 static bool stage5_validate_is_terminal_unsupported(uint8_t opcode) {
-    return opcode == OP_JAL || opcode == OP_JALR ||
+    return opcode == OP_JALR ||
            opcode == OP_YIELD || opcode == OP_DEBUG || opcode == OP_HALT ||
            opcode == OP_ASSERT_EQ;
 }
@@ -410,7 +410,7 @@ static void stage5_validate_dump_repro(const translate_ctx_t *ctx,
 static bool stage5_validate_region_eligible(const stage5_lift_region_t *region) {
     for (uint32_t i = 0; i < region->ir_count; i++) {
         const stage5_ir_node_t *n = &region->ir[i];
-        if (n->opcode == OP_JAL || n->opcode == OP_JALR) {
+        if (n->opcode == OP_JALR || (n->opcode == OP_JAL && n->rd == 31)) {
             stage5_validate_skipped_call_indirect++;
             return false;
         }
@@ -525,6 +525,10 @@ static bool stage5_validate_execute_op(stage5_validate_state_t *s,
             break;
         case OP_STW:
             if (!stage5_validate_mem_store(m, rs1 + (uint32_t)imm, 4, rs2)) return false;
+            break;
+        case OP_JAL:
+            stage5_validate_reg_write(s, rd, pc + 4);
+            next_pc = pc + (uint32_t)imm;
             break;
         case OP_BEQ:  if (rs1 == rs2) next_pc = next_pc + (uint32_t)imm; break;
         case OP_BNE:  if (rs1 != rs2) next_pc = next_pc + (uint32_t)imm; break;
