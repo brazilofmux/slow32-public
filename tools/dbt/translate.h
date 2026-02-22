@@ -89,6 +89,8 @@ extern uint32_t stage5_emit_side_exit_auto_backedge_retry_unsigned;
 extern uint32_t stage5_emit_side_exit_opcode_hist[128];
 extern uint32_t stage5_emit_side_exit_unsupported_opcode_hist[128];
 extern uint32_t stage5_emit_side_exit_emitted_opcode_hist[128];
+extern uint32_t stage_emit_inblock_backedge_total;
+extern uint32_t stage_emit_inblock_backedge_with_side_exit;
 extern uint32_t stage5_emit_unhandled_opcode_hist[128];
 extern uint32_t stage5_emit_calls;
 extern uint64_t stage5_emit_time_ns;

@@ -2003,6 +2003,12 @@ int main(int argc, char **argv) {
                     fprintf(stderr, "  emit side_exits: %" PRIu32 "\n",
                             stage5_emit_side_exits);
                 }
+                if (stage_emit_inblock_backedge_total > 0) {
+                    fprintf(stderr,
+                            "  emit inblock_backedge: total=%" PRIu32 " with_side_exit=%" PRIu32 "\n",
+                            stage_emit_inblock_backedge_total,
+                            stage_emit_inblock_backedge_with_side_exit);
+                }
                 if (stage5_emit_region_side_exit_total > 0) {
                     fprintf(stderr,
                             "  emit side_exit_regions: total=%" PRIu32

@@ -81,6 +81,8 @@ uint32_t stage5_emit_side_exit_auto_backedge_retry_unsigned = 0;
 uint32_t stage5_emit_side_exit_opcode_hist[128] = {0};
 uint32_t stage5_emit_side_exit_unsupported_opcode_hist[128] = {0};
 uint32_t stage5_emit_side_exit_emitted_opcode_hist[128] = {0};
+uint32_t stage_emit_inblock_backedge_total = 0;
+uint32_t stage_emit_inblock_backedge_with_side_exit = 0;
 
 static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
 static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg);
@@ -4563,6 +4565,10 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
     }
 
     if (backedge_host_offset != (size_t)-1) {
+        stage_emit_inblock_backedge_total++;
+        if (ctx->side_exit_emitted > 0) {
+            stage_emit_inblock_backedge_with_side_exit++;
+        }
         // In-block back-edge: emit tight loop
         //   [compare]
         //   jcc taken_path
