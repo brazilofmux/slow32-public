@@ -60,6 +60,9 @@ uint32_t stage5_emit_fallback_policy_bench_direct_branch = 0;
 uint32_t stage5_emit_fallback_policy_bench_block_end = 0;
 uint32_t stage5_emit_fallback_policy_bench_jal_call = 0;
 uint32_t stage5_emit_fallback_policy_call_return = 0;
+uint32_t stage5_emit_fallback_policy_call_return_jal_call_disabled = 0;
+uint32_t stage5_emit_fallback_policy_call_return_jal_call_long = 0;
+uint32_t stage5_emit_fallback_policy_call_return_jalr_ret = 0;
 uint32_t stage5_emit_fallback_policy_regflow = 0;
 uint32_t stage5_emit_fallback_policy_regflow_cross = 0;
 uint32_t stage5_emit_fallback_policy_regflow_span = 0;
@@ -253,6 +256,20 @@ static uint32_t stage5_bench_max_jal_call_ginst(void) {
         if (v && v[0] != '\0') {
             unsigned long x = strtoul(v, NULL, 0);
             if (x > 0 && x <= MAX_BLOCK_INSTS) limit = (uint32_t)x;
+        }
+        inited = true;
+    }
+    return limit;
+}
+
+static uint32_t stage5_bench_max_jal_call_long_ginst(void) {
+    static bool inited = false;
+    static uint32_t limit = 0;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_MAX_JAL_CALL_LONG_GINST");
+        if (v && v[0] != '\0') {
+            unsigned long x = strtoul(v, NULL, 0);
+            if (x <= MAX_BLOCK_INSTS) limit = (uint32_t)x;
         }
         inited = true;
     }
@@ -2928,30 +2945,49 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         bench_profile &&
         emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT &&
         region.guest_inst_count <= stage5_bench_max_jal_call_ginst();
+    bool bench_allow_jal_call_long =
+        bench_profile &&
+        emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG &&
+        stage5_bench_max_jal_call_long_ginst() > 0 &&
+        region.guest_inst_count <= stage5_bench_max_jal_call_long_ginst();
     bool allow_jal_call_emit = stage5_emit_calls_enabled() || bench_allow_jal_call_short;
-
-    if (((emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
-          emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG) &&
-         !allow_jal_call_emit) ||
+    if (!allow_jal_call_emit && bench_allow_jal_call_long) {
+        allow_jal_call_emit = true;
+    }
+    bool is_jal_call =
+        emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
+        emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG;
+    bool is_jalr_ret =
         emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_SHORT ||
-        emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_LONG) {
+        emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_LONG;
+
+    if ((is_jal_call && !allow_jal_call_emit) || is_jalr_ret) {
         ctx->superblock_enabled = saved_superblock_enabled;
         stage5_emit_fallback++;
         stage5_emit_fallback_shape++;
         stage5_emit_fallback_superblock_policy++;
-        if ((emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
-             emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG) &&
-            bench_profile) {
+        if (is_jal_call && bench_profile) {
             stage5_emit_fallback_policy_bench_jal_call++;
         }
         stage5_emit_fallback_policy_call_return++;
+        if (is_jal_call) {
+            if (emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG) {
+                stage5_emit_fallback_policy_call_return_jal_call_long++;
+            } else {
+                stage5_emit_fallback_policy_call_return_jal_call_disabled++;
+            }
+        } else if (is_jalr_ret) {
+            stage5_emit_fallback_policy_call_return_jalr_ret++;
+        }
         return false;
     }
     if ((emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
          emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG) &&
         allow_jal_call_emit) {
         stage5_emit_policy_allow_call++;
-        if (bench_allow_jal_call_short) stage5_emit_policy_allow_call_bench++;
+        if (bench_allow_jal_call_short || bench_allow_jal_call_long) {
+            stage5_emit_policy_allow_call_bench++;
+        }
     }
 
     // Superblock-first policy: keep larger direct branches on the Stage4 path.
