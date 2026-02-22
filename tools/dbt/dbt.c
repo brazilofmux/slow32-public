@@ -2745,6 +2745,8 @@ int main(int argc, char **argv) {
             if (stage5_codegen_fallback_preflight_branch_cmp_mix > 0) {
                 fprintf(stderr, "    preflight branch+cmp mix: %" PRIu32 "\n",
                         stage5_codegen_fallback_preflight_branch_cmp_mix);
+                print_top_opcode_hist("codegen preflight branch+cmp mix",
+                                      stage5_codegen_fallback_preflight_branch_cmp_mix_opcode_hist);
             }
             if (stage5_codegen_fallback_side_exit > 0) {
                 fprintf(stderr, "  codegen side_exit:      %" PRIu32 "\n",
