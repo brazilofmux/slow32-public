@@ -2071,6 +2071,18 @@ int main(int argc, char **argv) {
                             stage_emit_inblock_backedge_total,
                             stage_emit_inblock_backedge_with_side_exit);
                 }
+                if (stage5_deferred_exit_flush_full > 0 ||
+                    stage5_deferred_exit_flush_dirty > 0) {
+                    fprintf(stderr,
+                            "  emit deferred_flush: full=%" PRIu32 " dirty=%" PRIu32
+                            " pending_r15=%" PRIu32 " snap_r15_alloc=%" PRIu32
+                            " snap_r15_dirty=%" PRIu32 "\n",
+                            stage5_deferred_exit_flush_full,
+                            stage5_deferred_exit_flush_dirty,
+                            stage5_deferred_exit_pending_write_r15,
+                            stage5_deferred_exit_snapshot_r15_allocated,
+                            stage5_deferred_exit_snapshot_r15_dirty);
+                }
                 if (stage5_emit_region_side_exit_total > 0) {
                     fprintf(stderr,
                             "  emit side_exit_regions: total=%" PRIu32

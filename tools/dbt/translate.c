@@ -83,6 +83,11 @@ uint32_t stage5_emit_side_exit_unsupported_opcode_hist[128] = {0};
 uint32_t stage5_emit_side_exit_emitted_opcode_hist[128] = {0};
 uint32_t stage_emit_inblock_backedge_total = 0;
 uint32_t stage_emit_inblock_backedge_with_side_exit = 0;
+uint32_t stage5_deferred_exit_flush_full = 0;
+uint32_t stage5_deferred_exit_flush_dirty = 0;
+uint32_t stage5_deferred_exit_pending_write_r15 = 0;
+uint32_t stage5_deferred_exit_snapshot_r15_allocated = 0;
+uint32_t stage5_deferred_exit_snapshot_r15_dirty = 0;
 
 static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
 static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg);
@@ -340,6 +345,35 @@ static void stage5_trace_deferred_exit_flush(const translate_ctx_t *ctx,
             dirty_r15 ? 1u : 0u,
             ctx->side_exit_emitted);
     budget--;
+}
+
+static void stage5_count_deferred_exit_flush(const translate_ctx_t *ctx,
+                                             int deferred_idx,
+                                             bool full_flush) {
+    if (!ctx) return;
+    if (deferred_idx < 0 || deferred_idx >= ctx->deferred_exit_count) return;
+
+    const int di = deferred_idx;
+    if (full_flush) {
+        stage5_deferred_exit_flush_full++;
+    } else {
+        stage5_deferred_exit_flush_dirty++;
+    }
+
+    if (ctx->deferred_exits[di].pending_write_valid &&
+        ctx->deferred_exits[di].pending_write_guest_reg == 15) {
+        stage5_deferred_exit_pending_write_r15++;
+    }
+
+    for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
+        if (ctx->deferred_exits[di].guest_reg_snapshot[s] != 15) continue;
+        if (!ctx->deferred_exits[di].allocated_snapshot[s]) break;
+        stage5_deferred_exit_snapshot_r15_allocated++;
+        if (ctx->deferred_exits[di].dirty_snapshot[s]) {
+            stage5_deferred_exit_snapshot_r15_dirty++;
+        }
+        break;
+    }
 }
 
 static bool stage5_region_contains_jal_or_jalr(const stage5_lift_region_t *region) {
@@ -4105,6 +4139,7 @@ static void emit_deferred_side_exits(translate_ctx_t *ctx) {
             // Unsigned side exits are prone to loop-carried dirty-state drift.
             // Force a full snapshot flush there; otherwise keep dirty-only flush.
             if (ctx->deferred_exits[i].force_full_flush) {
+                stage5_count_deferred_exit_flush(ctx, i, true);
                 stage5_trace_deferred_exit_flush(ctx, i, true);
                 bool full_dirty[REG_ALLOC_SLOTS];
                 for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
@@ -4115,6 +4150,7 @@ static void emit_deferred_side_exits(translate_ctx_t *ctx) {
                     ctx->deferred_exits[i].allocated_snapshot,
                     ctx->deferred_exits[i].guest_reg_snapshot);
             } else {
+                stage5_count_deferred_exit_flush(ctx, i, false);
                 stage5_trace_deferred_exit_flush(ctx, i, false);
                 reg_alloc_flush_snapshot(ctx,
                     ctx->deferred_exits[i].dirty_snapshot,
