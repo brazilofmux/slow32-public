@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 STRESS="$ROOT/tools/dbt/scripts/stress-stage5-safe-unsafe.sh"
+REQUIRE_STABLE="${SWEEP_REQUIRE_STABLE:-0}"
 
 if [[ ! -x "$STRESS" ]]; then
     echo "error: missing executable script: $STRESS" >&2
@@ -85,6 +86,9 @@ if [[ -n "$stable_first" ]]; then
 fi
 if [[ ${#unstable_modes[@]} -gt 0 ]]; then
     echo "unstable: ${unstable_modes[*]}"
+    if [[ "$REQUIRE_STABLE" != "0" ]]; then
+        exit 2
+    fi
 else
     echo "unstable: none"
 fi
