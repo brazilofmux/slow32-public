@@ -256,7 +256,7 @@ static bool cg_allow_cmpdep_side_exit_store_stb(void) {
     if (!inited) {
         const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_ALLOW_CMPDEP_SIDE_EXIT_STORE_STB");
         if (!v || v[0] == '\0') {
-            enabled = false;
+            enabled = true;
         } else {
             enabled = (strcmp(v, "0") != 0);
         }
@@ -334,6 +334,49 @@ static bool cg_codegen_trace_enabled(void) {
         inited = true;
     }
     return enabled;
+}
+
+static bool cg_regalloc_trace_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_TRACE_REGALLOC");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+static bool cg_regalloc_trace_pc_match(uint32_t guest_pc) {
+    static bool inited = false;
+    static bool has_pc = false;
+    static uint32_t trace_pc = 0;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_TRACE_REGALLOC_PC");
+        if (v && v[0] != '\0') {
+            trace_pc = (uint32_t)strtoul(v, NULL, 0);
+            has_pc = true;
+        }
+        inited = true;
+    }
+    return !has_pc || guest_pc == trace_pc;
+}
+
+static void cg_trace_regalloc(translate_ctx_t *ctx, uint32_t guest_pc) {
+    if (!cg_regalloc_trace_enabled()) return;
+    if (!cg_regalloc_trace_pc_match(guest_pc)) return;
+    fprintf(stderr, "[stage5-regalloc] pc=0x%08X slots:", guest_pc);
+    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+        if (!ctx->reg_alloc[i].allocated) continue;
+        fprintf(stderr, " s%d=g%u(d=%u)", i, ctx->reg_alloc[i].guest_reg,
+                ctx->reg_alloc[i].dirty ? 1u : 0u);
+    }
+    fprintf(stderr, " map:");
+    for (int g = 1; g < 32; g++) {
+        int8_t s = ctx->reg_alloc_map[g];
+        if (s >= 0) fprintf(stderr, " g%u->s%d", g, s);
+    }
+    fprintf(stderr, "\n");
 }
 
 static bool cg_codegen_skip_pc_enabled(uint32_t guest_pc) {
@@ -725,6 +768,15 @@ static bool cg_emit_alu_rr(stage5_cg_t *cg, const stage5_ir_node_t *n) {
         // rd == rs1 and both cached: OP dst, src2
         x64_reg_t src2_h = cg_resolve_src(cg, rs2, RCX);
         emit_op(e, dst_h, src2_h);
+    } else if (!commutative && h_rd != X64_NOREG && rd == rs2) {
+        // Non-commutative hazard (e.g., SUB): rd == rs2.
+        // Preserve old rd/rs2 before loading rs1 into dst.
+        x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX);
+        x64_reg_t tmp_h = (src1_h == RCX) ? RAX : RCX;
+        emit_mov_r32_r32(e, tmp_h, dst_h);
+        if (dst_h != src1_h)
+            emit_mov_r32_r32(e, dst_h, src1_h);
+        emit_op(e, dst_h, tmp_h);
     } else if (h_rd != X64_NOREG && rd == rs2 && commutative) {
         // rd == rs2 commutative: OP dst, src1
         x64_reg_t src1_h = cg_resolve_src(cg, rs1, RCX);
@@ -1872,6 +1924,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
         return false;
     }
     cg_trace_codegen_region(guest_pc, emitted_pattern, region);
+    cg_trace_regalloc(ctx, guest_pc);
 
     // Count allocated registers
     {

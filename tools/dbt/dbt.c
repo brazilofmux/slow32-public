@@ -290,6 +290,12 @@ static void dbt_trace_replay_branch(translated_block_t *block,
     bool ok = true;
     uint32_t expected_next = 0;
     uint8_t replay_opcode = 0;
+    uint8_t replay_rs1 = 0;
+    uint8_t replay_rs2 = 0;
+    uint32_t replay_rs1v = 0;
+    uint32_t replay_rs2v = 0;
+    int32_t replay_imm = 0;
+    bool replay_cond_taken = false;
     uint32_t pc = block->guest_pc;
     uint32_t block_end = block->guest_pc + block->guest_size;
 
@@ -387,6 +393,12 @@ static void dbt_trace_replay_branch(translated_block_t *block,
             reached = true;
             expected_next = next_pc;
             replay_opcode = d.opcode;
+            replay_rs1 = d.rs1;
+            replay_rs2 = d.rs2;
+            replay_rs1v = rs1;
+            replay_rs2v = rs2;
+            replay_imm = d.imm;
+            replay_cond_taken = dbt_eval_branch_taken(d.opcode, rs1, rs2);
             break;
         }
         pc = next_pc;
@@ -399,9 +411,11 @@ static void dbt_trace_replay_branch(translated_block_t *block,
     bool observed_at_target = (observed_branch_pc == trace_replay_branch_pc);
     bool match = reached && observed_at_target && (expected_next == cpu->pc);
     fprintf(stderr,
-            "dbt-replay-branch block_pc=0x%08X target_branch_pc=0x%08X observed_branch_pc=0x%08X replay_ok=%u reached=%u op=0x%02X expected_next=0x%08X observed_next=0x%08X match=%u\n",
+            "dbt-replay-branch block_pc=0x%08X target_branch_pc=0x%08X observed_branch_pc=0x%08X replay_ok=%u reached=%u op=0x%02X rs1=r%u(0x%08X) rs2=r%u(0x%08X) imm=%d cond_taken=%u expected_next=0x%08X observed_next=0x%08X match=%u\n",
             block->guest_pc, trace_replay_branch_pc, observed_branch_pc,
             ok ? 1u : 0u, reached ? 1u : 0u, replay_opcode,
+            replay_rs1, replay_rs1v, replay_rs2, replay_rs2v,
+            replay_imm, replay_cond_taken ? 1u : 0u,
             expected_next, cpu->pc, match ? 1u : 0u);
     trace_replay_budget--;
 }
