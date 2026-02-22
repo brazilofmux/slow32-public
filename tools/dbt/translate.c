@@ -71,6 +71,9 @@ uint32_t stage5_emit_regflow_retry_term_emit_success = 0;
 uint32_t stage5_emit_regflow_retry_half_attempted = 0;
 uint32_t stage5_emit_regflow_retry_half_accepted = 0;
 uint32_t stage5_emit_regflow_retry_half_emit_success = 0;
+uint64_t stage5_emit_regflow_retry_guest_before_total = 0;
+uint64_t stage5_emit_regflow_retry_guest_after_total = 0;
+uint32_t stage5_emit_regflow_retry_max_reduction = 0;
 uint32_t stage5_emit_policy_allow_call = 0;
 uint32_t stage5_emit_prefilter_skip = 0;
 uint32_t stage5_emit_prefilter_skip_branch_head = 0;
@@ -2298,6 +2301,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     stage5_validate_region(ctx, &region);
     bool regflow_retry_applied = false;
     int regflow_retry_choice = 0; // 1=cfg_head, 2=terminal, 3=half
+    uint32_t retry_initial_guest_inst_count = region.guest_inst_count;
     if (stage5_region_regflow_guard_hit(&region, ctx->superblock_enabled, NULL, NULL, NULL)) {
         uint32_t retry_budgets[3];
         int retry_choices[3];
@@ -2344,6 +2348,14 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     if (retry_choice == 1) stage5_emit_regflow_retry_cfg_accepted++;
                     if (retry_choice == 2) stage5_emit_regflow_retry_term_accepted++;
                     if (retry_choice == 3) stage5_emit_regflow_retry_half_accepted++;
+                    stage5_emit_regflow_retry_guest_before_total += retry_initial_guest_inst_count;
+                    stage5_emit_regflow_retry_guest_after_total += region.guest_inst_count;
+                    if (retry_initial_guest_inst_count > region.guest_inst_count) {
+                        uint32_t red = retry_initial_guest_inst_count - region.guest_inst_count;
+                        if (red > stage5_emit_regflow_retry_max_reduction) {
+                            stage5_emit_regflow_retry_max_reduction = red;
+                        }
+                    }
                 }
             } else {
                 stage5_record_lift_fallback(&retry_region);

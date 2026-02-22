@@ -2230,6 +2230,16 @@ int main(int argc, char **argv) {
                                 stage5_emit_regflow_retry_half_accepted,
                                 stage5_emit_regflow_retry_half_emit_success);
                     }
+                    if (stage5_emit_regflow_retry_accepted > 0 &&
+                        stage5_emit_regflow_retry_guest_before_total > 0 &&
+                        stage5_emit_regflow_retry_guest_after_total > 0) {
+                        double avg_before = (double)stage5_emit_regflow_retry_guest_before_total /
+                                            (double)stage5_emit_regflow_retry_accepted;
+                        double avg_after = (double)stage5_emit_regflow_retry_guest_after_total /
+                                           (double)stage5_emit_regflow_retry_accepted;
+                        fprintf(stderr, "    retry avg guest insts: %.2f -> %.2f (max drop=%" PRIu32 ")\n",
+                                avg_before, avg_after, stage5_emit_regflow_retry_max_reduction);
+                    }
                 }
                 if (stage5_emit_prefilter_skip > 0) {
                     fprintf(stderr, "  emit prefilter_skip: %" PRIu32 "\n",
