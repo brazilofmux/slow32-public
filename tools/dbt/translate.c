@@ -325,6 +325,88 @@ static bool stage5_validate_shadow_equal(const stage5_validate_mem_t *a,
     return true;
 }
 
+static bool stage5_validate_first_shadow_diff(const stage5_validate_mem_t *a,
+                                              const stage5_validate_mem_t *b,
+                                              uint32_t *addr_out,
+                                              uint8_t *a_val_out,
+                                              uint8_t *b_val_out) {
+    if (!a || !b) return false;
+    for (size_t i = 0; i < STAGE5_VALIDATE_MEM_SHADOW_SIZE; i++) {
+        const stage5_validate_mem_entry_t *e = &a->shadow[i];
+        if (!e->used) continue;
+        uint8_t vb = 0;
+        if (!stage5_validate_mem_has_addr(b, e->addr, &vb) || vb != e->value) {
+            if (addr_out) *addr_out = e->addr;
+            if (a_val_out) *a_val_out = e->value;
+            if (b_val_out) *b_val_out = vb;
+            return true;
+        }
+    }
+    for (size_t i = 0; i < STAGE5_VALIDATE_MEM_SHADOW_SIZE; i++) {
+        const stage5_validate_mem_entry_t *e = &b->shadow[i];
+        if (!e->used) continue;
+        if (!stage5_validate_mem_has_addr(a, e->addr, NULL)) {
+            if (addr_out) *addr_out = e->addr;
+            if (a_val_out) *a_val_out = 0;
+            if (b_val_out) *b_val_out = e->value;
+            return true;
+        }
+    }
+    return false;
+}
+
+static void stage5_validate_dump_repro(const translate_ctx_t *ctx,
+                                       const stage5_lift_region_t *region,
+                                       uint32_t step,
+                                       uint32_t pc,
+                                       uint8_t opcode,
+                                       const stage5_validate_state_t *ref,
+                                       const stage5_validate_state_t *ir,
+                                       const stage5_validate_mem_t *ref_mem,
+                                       const stage5_validate_mem_t *ir_mem) {
+    if (!ctx || !ctx->cpu || !region) return;
+
+    fprintf(stderr,
+            "stage5-validate repro: block_pc=0x%08X step=%u pc=0x%08X op=0x%02X guest_insts=%u ir=%u\n",
+            region->start_pc, step, pc, opcode, region->guest_inst_count, region->ir_count);
+
+    fprintf(stderr, "  regs-ref:");
+    for (int r = 0; r < 32; r++) {
+        fprintf(stderr, " r%d=%08X", r, ref ? ref->regs[r] : 0u);
+    }
+    fprintf(stderr, "\n");
+    fprintf(stderr, "  regs-ir :");
+    for (int r = 0; r < 32; r++) {
+        fprintf(stderr, " r%d=%08X", r, ir ? ir->regs[r] : 0u);
+    }
+    fprintf(stderr, "\n");
+
+    uint32_t mem_diff_addr = 0;
+    uint8_t mem_ref = 0, mem_irv = 0;
+    if (ref_mem && ir_mem &&
+        stage5_validate_first_shadow_diff(ref_mem, ir_mem, &mem_diff_addr, &mem_ref, &mem_irv)) {
+        fprintf(stderr,
+                "  mem-diff: addr=0x%08X ref=%02X ir=%02X shadow_ref=%u shadow_ir=%u\n",
+                mem_diff_addr, mem_ref, mem_irv,
+                ref_mem->used_count, ir_mem->used_count);
+    } else if (ref_mem && ir_mem) {
+        fprintf(stderr,
+                "  mem-shadow: ref=%u ir=%u (no first-byte diff found)\n",
+                ref_mem->used_count, ir_mem->used_count);
+    }
+
+    uint32_t max_words = region->guest_inst_count;
+    if (max_words > MAX_BLOCK_INSTS) max_words = MAX_BLOCK_INSTS;
+    fprintf(stderr, "  words:");
+    for (uint32_t i = 0; i < max_words; i++) {
+        uint32_t wpc = region->start_pc + i * 4;
+        if (wpc >= ctx->cpu->code_limit || ctx->cpu->code_limit - wpc < 4) break;
+        uint32_t raw = *(uint32_t *)(ctx->cpu->mem_base + wpc);
+        fprintf(stderr, " [%u]=%08X@%08X", i, raw, wpc);
+    }
+    fprintf(stderr, "\n");
+}
+
 static bool stage5_validate_region_eligible(const stage5_lift_region_t *region) {
     for (uint32_t i = 0; i < region->ir_count; i++) {
         const stage5_ir_node_t *n = &region->ir[i];
@@ -528,6 +610,8 @@ static bool stage5_validate_region(const translate_ctx_t *ctx,
             fprintf(stderr,
                     "stage5-validate mismatch: missing-node block_pc=0x%08X step=%u pc=0x%08X op=0x%02X\n",
                     region->start_pc, step, pc, inst.opcode);
+            stage5_validate_dump_repro(ctx, region, step, pc, inst.opcode,
+                                       &ref, &ir, &ref_mem, &ir_mem);
             if (stage5_validate_abort_on_mismatch()) abort();
             return false;
         }
@@ -565,6 +649,8 @@ static bool stage5_validate_region(const translate_ctx_t *ctx,
             fprintf(stderr,
                     "stage5-validate mismatch: unsupported-ir block_pc=0x%08X step=%u pc=0x%08X op=0x%02X\n",
                     region->start_pc, step, pc, inst.opcode);
+            stage5_validate_dump_repro(ctx, region, step, pc, inst.opcode,
+                                       &ref, &ir, &ref_mem, &ir_mem);
             if (stage5_validate_abort_on_mismatch()) abort();
             return false;
         } else if (inst.opcode == OP_NOP) {
@@ -594,6 +680,8 @@ static bool stage5_validate_region(const translate_ctx_t *ctx,
                 fprintf(stderr, " mem_used ref=%u ir=%u", ref_mem.used_count, ir_mem.used_count);
             }
             fprintf(stderr, "\n");
+            stage5_validate_dump_repro(ctx, region, step, pc, inst.opcode,
+                                       &ref, &ir, &ref_mem, &ir_mem);
             if (stage5_validate_abort_on_mismatch()) abort();
             return false;
         }
