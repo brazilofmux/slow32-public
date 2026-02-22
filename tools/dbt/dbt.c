@@ -2212,6 +2212,18 @@ int main(int argc, char **argv) {
                         fprintf(stderr, "  emit regflow_retry success:   %" PRIu32 "\n",
                                 stage5_emit_regflow_retry_emit_success);
                     }
+                    if (stage5_emit_regflow_retry_cfg_attempted > 0) {
+                        fprintf(stderr, "    cfg_head attempt/accept/success: %" PRIu32 "/%" PRIu32 "/%" PRIu32 "\n",
+                                stage5_emit_regflow_retry_cfg_attempted,
+                                stage5_emit_regflow_retry_cfg_accepted,
+                                stage5_emit_regflow_retry_cfg_emit_success);
+                    }
+                    if (stage5_emit_regflow_retry_half_attempted > 0) {
+                        fprintf(stderr, "    half     attempt/accept/success: %" PRIu32 "/%" PRIu32 "/%" PRIu32 "\n",
+                                stage5_emit_regflow_retry_half_attempted,
+                                stage5_emit_regflow_retry_half_accepted,
+                                stage5_emit_regflow_retry_half_emit_success);
+                    }
                 }
                 if (stage5_emit_prefilter_skip > 0) {
                     fprintf(stderr, "  emit prefilter_skip: %" PRIu32 "\n",

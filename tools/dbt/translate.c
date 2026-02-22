@@ -62,6 +62,12 @@ uint32_t stage5_emit_fallback_policy_regflow_live = 0;
 uint32_t stage5_emit_regflow_retry_attempted = 0;
 uint32_t stage5_emit_regflow_retry_accepted = 0;
 uint32_t stage5_emit_regflow_retry_emit_success = 0;
+uint32_t stage5_emit_regflow_retry_cfg_attempted = 0;
+uint32_t stage5_emit_regflow_retry_cfg_accepted = 0;
+uint32_t stage5_emit_regflow_retry_cfg_emit_success = 0;
+uint32_t stage5_emit_regflow_retry_half_attempted = 0;
+uint32_t stage5_emit_regflow_retry_half_accepted = 0;
+uint32_t stage5_emit_regflow_retry_half_emit_success = 0;
 uint32_t stage5_emit_policy_allow_call = 0;
 uint32_t stage5_emit_prefilter_skip = 0;
 uint32_t stage5_emit_prefilter_skip_branch_head = 0;
@@ -230,18 +236,28 @@ static bool stage5_region_regflow_guard_hit(const stage5_lift_region_t *region,
     return cross_hit || span_hit || live_hit;
 }
 
-static uint32_t stage5_choose_regflow_retry_budget(const stage5_lift_region_t *region) {
-    if (!region || region->guest_inst_count <= 1) return 0;
-    uint32_t budget = region->guest_inst_count / 2u;
-    if (region->cfg_valid && region->cfg_block_count > 1) {
-        uint32_t head_block = region->cfg_blocks[0].inst_count;
-        if (head_block > 0 && head_block < region->guest_inst_count) {
-            budget = head_block;
-        }
-    }
-    if (budget < 2u) budget = 2u;
-    if (budget >= region->guest_inst_count) return 0;
+static uint32_t stage5_retry_budget_cfg_head(const stage5_lift_region_t *region) {
+    if (!region || !region->cfg_valid || region->cfg_block_count <= 1) return 0;
+    uint32_t budget = region->cfg_blocks[0].inst_count;
+    if (budget < 2u || budget >= region->guest_inst_count) return 0;
     return budget;
+}
+
+static uint32_t stage5_retry_budget_half(const stage5_lift_region_t *region) {
+    if (!region || region->guest_inst_count <= 3) return 0;
+    uint32_t budget = region->guest_inst_count / 2u;
+    if (budget < 2u || budget >= region->guest_inst_count) return 0;
+    return budget;
+}
+
+static void stage5_record_regflow_retry_emit_success(int retry_choice) {
+    if (retry_choice <= 0) return;
+    stage5_emit_regflow_retry_emit_success++;
+    if (retry_choice == 1) {
+        stage5_emit_regflow_retry_cfg_emit_success++;
+    } else if (retry_choice == 2) {
+        stage5_emit_regflow_retry_half_emit_success++;
+    }
 }
 
 static bool stage5_validate_abort_on_mismatch(void) {
@@ -2261,10 +2277,29 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     stage5_record_cfg_metrics(&region);
     stage5_validate_region(ctx, &region);
     bool regflow_retry_applied = false;
+    int regflow_retry_choice = 0; // 1=cfg_head, 2=half
     if (stage5_region_regflow_guard_hit(&region, ctx->superblock_enabled, NULL, NULL, NULL)) {
-        uint32_t retry_budget = stage5_choose_regflow_retry_budget(&region);
-        if (retry_budget > 0) {
+        uint32_t retry_budgets[2];
+        int retry_choices[2];
+        int retry_count = 0;
+        uint32_t budget_cfg = stage5_retry_budget_cfg_head(&region);
+        uint32_t budget_half = stage5_retry_budget_half(&region);
+        if (budget_cfg > 0) {
+            retry_budgets[retry_count] = budget_cfg;
+            retry_choices[retry_count] = 1;
+            retry_count++;
+        }
+        if (budget_half > 0 && budget_half != budget_cfg) {
+            retry_budgets[retry_count] = budget_half;
+            retry_choices[retry_count] = 2;
+            retry_count++;
+        }
+        for (int ri = 0; ri < retry_count && !regflow_retry_applied; ri++) {
+            uint32_t retry_budget = retry_budgets[ri];
+            int retry_choice = retry_choices[ri];
             stage5_emit_regflow_retry_attempted++;
+            if (retry_choice == 1) stage5_emit_regflow_retry_cfg_attempted++;
+            if (retry_choice == 2) stage5_emit_regflow_retry_half_attempted++;
             stage5_lift_attempted++;
             stage5_lift_region_t retry_region;
             stage5_lift_region_init(&retry_region, guest_pc);
@@ -2277,7 +2312,10 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                                                      NULL, NULL, NULL)) {
                     region = retry_region;
                     regflow_retry_applied = true;
+                    regflow_retry_choice = retry_choice;
                     stage5_emit_regflow_retry_accepted++;
+                    if (retry_choice == 1) stage5_emit_regflow_retry_cfg_accepted++;
+                    if (retry_choice == 2) stage5_emit_regflow_retry_half_accepted++;
                 }
             } else {
                 stage5_record_lift_fallback(&retry_region);
@@ -2476,7 +2514,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         if (ended) {
             ctx->superblock_enabled = saved_superblock_enabled;
             stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-            if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
+            if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
             return true;
         }
     }
@@ -2499,7 +2537,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         if (ended) {
             ctx->superblock_enabled = saved_superblock_enabled;
             stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-            if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
+            if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
             return true;
         }
     }
@@ -2519,7 +2557,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         if (fused) {
             ctx->superblock_enabled = saved_superblock_enabled;
             stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-            if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
+            if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
             return true;
         }
     }
@@ -2537,37 +2575,37 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 }
                 ctx->superblock_enabled = saved_superblock_enabled;
                 stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-                if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
+                if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                 return true;
             case OP_JALR:
                 translate_jalr(ctx, inst0.rd, inst0.rs1, inst0.imm);
                 ctx->superblock_enabled = saved_superblock_enabled;
                 stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-                if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
+                if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                 return true;
             case OP_HALT:
                 translate_halt(ctx);
                 ctx->superblock_enabled = saved_superblock_enabled;
                 stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-                if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
+                if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                 return true;
             case OP_DEBUG:
                 translate_debug(ctx, inst0.rs1);
                 ctx->superblock_enabled = saved_superblock_enabled;
                 stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-                if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
+                if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                 return true;
             case OP_YIELD:
                 translate_yield(ctx);
                 ctx->superblock_enabled = saved_superblock_enabled;
                 stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-                if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
+                if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                 return true;
             case OP_BEQ:
                 if (stage5_translate_beq_compact(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-                    if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
+                    if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -2576,7 +2614,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (translate_bne(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-                    if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
+                    if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -2585,7 +2623,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (translate_blt(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-                    if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
+                    if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -2594,7 +2632,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (translate_bge(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-                    if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
+                    if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -2603,7 +2641,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (translate_bltu(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-                    if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
+                    if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -2612,7 +2650,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (translate_bgeu(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-                    if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
+                    if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -2645,7 +2683,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (ended) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-                    if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
+                    if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -2696,7 +2734,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (ended) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-                    if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
+                    if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -2732,7 +2770,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (ended) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-                    if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
+                    if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -2930,7 +2968,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (ended) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-                    if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
+                    if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
                 stage5_emit_fallback_not_ended++;
@@ -3169,7 +3207,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             if (ended) {
                 ctx->superblock_enabled = saved_superblock_enabled;
                 stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-                if (regflow_retry_applied) stage5_emit_regflow_retry_emit_success++;
+                if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                 return true;
             }
             stage5_emit_fallback_not_ended++;
