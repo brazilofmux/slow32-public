@@ -376,6 +376,50 @@ static void stage5_count_deferred_exit_flush(const translate_ctx_t *ctx,
     }
 }
 
+static void stage5_trace_translated_block(const translated_block_t *block) {
+    static bool inited = false;
+    static uint32_t filter_pc = 0;
+    static int budget = 0;
+    if (!inited) {
+        const char *pcv = getenv("SLOW32_DBT_TRACE_TRANSLATED_BLOCK_PC");
+        if (pcv && pcv[0] != '\0') {
+            filter_pc = (uint32_t)strtoul(pcv, NULL, 0);
+            const char *maxv = getenv("SLOW32_DBT_TRACE_TRANSLATED_BLOCK_MAX");
+            budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 8;
+            if (budget < 0) budget = 0;
+        }
+        inited = true;
+    }
+    if (filter_pc == 0 || budget == 0 || !block) return;
+    if (block->guest_pc != filter_pc) return;
+
+    fprintf(stderr,
+            "stage5-block-finalize block_pc=0x%08X guest_size=%u host_size=%u exits=%u side_exits=%u\n",
+            block->guest_pc, block->guest_size, block->host_size,
+            block->exit_count, block->side_exit_count);
+
+    for (uint8_t i = 0; i < block->exit_count; i++) {
+        bool owned_by_side_exit = false;
+        for (uint8_t s = 0; s < block->side_exit_count; s++) {
+            if (block->side_exit_pcs[s] == block->exits[i].branch_pc) {
+                owned_by_side_exit = true;
+                break;
+            }
+        }
+        fprintf(stderr,
+                "  exit[%u] target=0x%08X branch_pc=0x%08X chained=%u side_owned=%u\n",
+                i,
+                block->exits[i].target_pc,
+                block->exits[i].branch_pc,
+                block->exits[i].chained ? 1u : 0u,
+                owned_by_side_exit ? 1u : 0u);
+    }
+    for (uint8_t s = 0; s < block->side_exit_count; s++) {
+        fprintf(stderr, "  side_exit_pc[%u]=0x%08X\n", s, block->side_exit_pcs[s]);
+    }
+    budget--;
+}
+
 static bool stage5_region_contains_jal_or_jalr(const stage5_lift_region_t *region) {
     if (!region) return false;
     for (uint32_t i = 0; i < region->ir_count; i++) {
@@ -7429,6 +7473,7 @@ cached_block_done:
     } else {
         block->side_exit_count = 0;
     }
+    stage5_trace_translated_block(block);
 
     // Commit code to cache
     cache_commit_code(cache, block->host_size);
