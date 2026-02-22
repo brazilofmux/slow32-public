@@ -47,9 +47,9 @@ typedef struct {
 } stage5_ir_node_t;
 
 #define STAGE5_MAX_IR_NODES 128
-// Keep side-exit lifting disabled until Stage5 side-exit emission is fully
-// hardened against superblock formation pathologies.
-#define STAGE5_MAX_SIDE_EXITS 0
+// Allow bounded side-exit lifting so Stage5 can reason about superblock-shaped
+// regions. Emission ownership stays gated separately in translate.c.
+#define STAGE5_MAX_SIDE_EXITS 2
 
 typedef struct {
     uint32_t start_pc;

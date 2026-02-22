@@ -46,6 +46,50 @@ static bool is_cmp_opcode(uint8_t opcode) {
            opcode == 0x1C || opcode == 0x1D || opcode == 0x16 || opcode == 0x17;
 }
 
+// For BEQ/BNE x, r0 (or r0, x), find the nearest dominating non-synthetic
+// compare that defines x, as long as x is not clobbered in-between.
+static int find_cmp_branch_zero_cmp_idx(const stage5_lift_region_t *region,
+                                        int branch_idx) {
+    if (!region || branch_idx <= 0 || branch_idx >= (int)region->ir_count) {
+        return -1;
+    }
+    const stage5_ir_node_t *b = &region->ir[branch_idx];
+    if (b->kind != STAGE5_IR_BRANCH) {
+        return -1;
+    }
+    if (b->opcode != 0x48 && b->opcode != 0x49) {  // BEQ/BNE only
+        return -1;
+    }
+
+    uint8_t cmp_rd = 0;
+    if (b->rs1 == 0 && b->rs2 != 0) {
+        cmp_rd = b->rs2;
+    } else if (b->rs2 == 0 && b->rs1 != 0) {
+        cmp_rd = b->rs1;
+    } else {
+        return -1;
+    }
+
+    for (int i = branch_idx - 1; i >= 0; i--) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) {
+            continue;
+        }
+        // Do not fuse across an intervening control-flow boundary.
+        if (n->kind == STAGE5_IR_BRANCH) {
+            return -1;
+        }
+        if (n->rd == cmp_rd && n->kind == STAGE5_IR_CMP && is_cmp_opcode(n->opcode)) {
+            return i;
+        }
+        // Any non-compare write to cmp_rd blocks fusion.
+        if (n->rd == cmp_rd) {
+            return -1;
+        }
+    }
+    return -1;
+}
+
 void stage5_burg_result_init(stage5_burg_result_t *result) {
     if (!result) {
         return;
@@ -114,18 +158,14 @@ bool stage5_burg_select(const stage5_lift_region_t *region, stage5_burg_result_t
         if (n->kind == STAGE5_IR_BRANCH && is_branch_opcode(n->opcode)) {
             if (i > 0) {
                 const stage5_ir_node_t *p = &region->ir[i - 1];
-                if (p->kind == STAGE5_IR_CMP) {
-                    if (p->synthetic) {
-                        has_concrete_cover = true;  // direct compare-branch
-                        break;
-                    }
-                    // Branch uses cmp result rd against r0.
-                    if ((n->rs1 == p->rd && n->rs2 == 0) ||
-                        (n->rs2 == p->rd && n->rs1 == 0)) {
-                        has_concrete_cover = true;
-                        break;
-                    }
+                if (p->kind == STAGE5_IR_CMP && p->synthetic) {
+                    has_concrete_cover = true;  // direct compare-branch
+                    break;
                 }
+            }
+            if (find_cmp_branch_zero_cmp_idx(region, (int)i) >= 0) {
+                has_concrete_cover = true;
+                break;
             }
         }
     }
@@ -156,13 +196,9 @@ bool stage5_burg_select(const stage5_lift_region_t *region, stage5_burg_result_t
         }
 
         if (is_branch_opcode(n->opcode)) {
-            if (i > 0) {
-                const stage5_ir_node_t *p = &region->ir[i - 1];
-                if (p->kind == STAGE5_IR_CMP && !p->synthetic && is_cmp_opcode(p->opcode) &&
-                    ((n->rs1 == p->rd && n->rs2 == 0) || (n->rs2 == p->rd && n->rs1 == 0))) {
-                    result->pattern = STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO;
-                    break;
-                }
+            if (find_cmp_branch_zero_cmp_idx(region, i) >= 0) {
+                result->pattern = STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO;
+                break;
             }
             result->pattern = direct_branch_pattern_for_opcode(n->opcode);
             break;

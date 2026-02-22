@@ -76,5 +76,5 @@ awk '
   /^Stage5 emit guest insts:/ ||
   /^Stage5 emit host bytes:/ ||
   /^Stage5 emit bytes\/guest-inst:/ ||
-  /^  emit pattern /
+  /^  emit /
 ' "$E5"

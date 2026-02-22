@@ -50,6 +50,15 @@ uint64_t stage5_emit_pattern_host_bytes[STAGE5_BURG_PATTERN_COUNT] = {0};
 uint32_t stage5_emit_fallback = 0;
 uint32_t stage5_emit_fallback_non_terminal = 0;
 uint32_t stage5_emit_fallback_shape = 0;
+uint32_t stage5_emit_fallback_superblock_policy = 0;
+uint32_t stage5_emit_fallback_policy_guardrail = 0;
+uint32_t stage5_emit_fallback_policy_jalr_indirect = 0;
+uint32_t stage5_emit_fallback_policy_direct_branch = 0;
+uint32_t stage5_emit_prefilter_skip = 0;
+uint32_t stage5_emit_prefilter_skip_branch_head = 0;
+uint32_t stage5_emit_prefilter_skip_noncmp_head = 0;
+uint32_t stage5_emit_prefilter_branch_probe = 0;
+uint32_t stage5_emit_fallback_side_exit_unowned = 0;
 uint32_t stage5_emit_fallback_single_unhandled = 0;
 uint32_t stage5_emit_fallback_cmp_branch_miss = 0;
 uint32_t stage5_emit_fallback_not_ended = 0;
@@ -65,6 +74,30 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
 static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg);
 static inline void flush_pending_write(translate_ctx_t *ctx);
 static inline void flush_pending_cond(translate_ctx_t *ctx);
+
+// Stage5 superblock ownership roadmap:
+// enable narrow side-exit ownership first (forward BEQ/BNE only), then expand.
+static const bool stage5_enable_side_exit_emit = true;
+
+static inline bool stage5_side_exit_supported(const stage5_ir_node_t *n) {
+    if (!n) return false;
+    if (!n->is_side_exit || n->kind != STAGE5_IR_BRANCH) return false;
+    return n->opcode == OP_BEQ || n->opcode == OP_BNE ||
+           n->opcode == OP_BLT || n->opcode == OP_BGE ||
+           n->opcode == OP_BLTU || n->opcode == OP_BGEU;
+}
+
+static bool stage5_region_side_exits_supported(const stage5_lift_region_t *region) {
+    if (!region || region->side_exit_count == 0) return true;
+    uint32_t seen = 0;
+    for (uint32_t i = 0; i < region->ir_count; i++) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (!n->is_side_exit) continue;
+        if (!stage5_side_exit_supported(n)) return false;
+        seen++;
+    }
+    return seen == region->side_exit_count;
+}
 
 static inline uint64_t stage5_now_ns(void) {
     struct timespec ts;
@@ -94,6 +127,115 @@ static inline bool stage5_pattern_is_direct_branch(stage5_burg_pattern_t pattern
            pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_NE ||
            pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL ||
            pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_RELU;
+}
+
+static inline bool stage5_prefilter_is_cmp_opcode(uint8_t opcode) {
+    return opcode == OP_SLT || opcode == OP_SLTU ||
+           opcode == OP_SEQ || opcode == OP_SNE ||
+           opcode == OP_SGT || opcode == OP_SGTU ||
+           opcode == OP_SLE || opcode == OP_SLEU ||
+           opcode == OP_SGE || opcode == OP_SGEU ||
+           opcode == OP_SLTI || opcode == OP_SLTIU;
+}
+
+static bool stage5_prefilter_has_cmp_branch_zero(translate_ctx_t *ctx,
+                                                 uint32_t guest_pc,
+                                                 int max_scan_insts) {
+    if (!ctx || max_scan_insts <= 1) return false;
+    uint32_t pc = guest_pc;
+    uint8_t cmp_rd = 0;
+    bool cmp_valid = false;
+
+    for (int i = 0; i < max_scan_insts; i++) {
+        if (pc >= ctx->cpu->code_limit || (ctx->cpu->code_limit - pc) < 4) break;
+        uint32_t raw = *(uint32_t *)(ctx->cpu->mem_base + pc);
+        decoded_inst_t inst = decode_instruction(raw);
+
+        if (stage5_prefilter_is_cmp_opcode(inst.opcode) && inst.rd != 0) {
+            cmp_rd = inst.rd;
+            cmp_valid = true;
+        } else if ((inst.opcode == OP_BEQ || inst.opcode == OP_BNE) && cmp_valid) {
+            bool uses_cmp = (inst.rs1 == cmp_rd && inst.rs2 == 0) ||
+                            (inst.rs2 == cmp_rd && inst.rs1 == 0);
+            if (uses_cmp) {
+                return true;
+            }
+            // Unmatched branch terminates the straight-line candidate.
+            break;
+        } else {
+            if (cmp_valid && inst.rd == cmp_rd && inst.rd != 0) {
+                cmp_valid = false;
+            }
+            // Any control-flow op ends the scan window.
+            if (inst.opcode == OP_JAL || inst.opcode == OP_JALR ||
+                inst.opcode == OP_BEQ || inst.opcode == OP_BNE ||
+                inst.opcode == OP_BLT || inst.opcode == OP_BGE ||
+                inst.opcode == OP_BLTU || inst.opcode == OP_BGEU ||
+                inst.opcode == OP_HALT || inst.opcode == OP_DEBUG ||
+                inst.opcode == OP_YIELD) {
+                break;
+            }
+        }
+
+        pc += 4;
+    }
+    return false;
+}
+
+static bool stage5_prefilter_has_near_terminal(translate_ctx_t *ctx,
+                                               uint32_t guest_pc,
+                                               int max_scan_insts) {
+    if (!ctx || max_scan_insts <= 0) return false;
+    uint32_t pc = guest_pc;
+    for (int i = 0; i < max_scan_insts; i++) {
+        if (pc >= ctx->cpu->code_limit || (ctx->cpu->code_limit - pc) < 4) break;
+        uint32_t raw = *(uint32_t *)(ctx->cpu->mem_base + pc);
+        decoded_inst_t inst = decode_instruction(raw);
+        if (inst.opcode == OP_JAL || inst.opcode == OP_JALR ||
+            inst.opcode == OP_BEQ || inst.opcode == OP_BNE ||
+            inst.opcode == OP_BLT || inst.opcode == OP_BGE ||
+            inst.opcode == OP_BLTU || inst.opcode == OP_BGEU ||
+            inst.opcode == OP_HALT || inst.opcode == OP_DEBUG ||
+            inst.opcode == OP_YIELD) {
+            return true;
+        }
+        pc += 4;
+    }
+    return false;
+}
+
+// Match BEQ/BNE x,r0 (or r0,x) to a prior non-synthetic compare producing x,
+// with no intervening clobber of x.
+static int stage5_find_cmp_branch_zero_cmp_idx(const stage5_lift_region_t *region,
+                                               int branch_idx) {
+    if (!region || branch_idx <= 0 || branch_idx >= (int)region->ir_count) {
+        return -1;
+    }
+    const stage5_ir_node_t *b = &region->ir[branch_idx];
+    if (b->kind != STAGE5_IR_BRANCH) return -1;
+    if (b->opcode != OP_BEQ && b->opcode != OP_BNE) return -1;
+
+    uint8_t cmp_rd = 0;
+    if (b->rs1 == 0 && b->rs2 != 0) cmp_rd = b->rs2;
+    else if (b->rs2 == 0 && b->rs1 != 0) cmp_rd = b->rs1;
+    else return -1;
+
+    for (int i = branch_idx - 1; i >= 0; i--) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) continue;
+        // Do not fuse across an intervening control-flow boundary.
+        if (n->kind == STAGE5_IR_BRANCH) return -1;
+        if (n->rd == cmp_rd &&
+            n->kind == STAGE5_IR_CMP &&
+            (n->opcode == OP_SLT || n->opcode == OP_SLTU || n->opcode == OP_SEQ ||
+             n->opcode == OP_SNE || n->opcode == OP_SGT || n->opcode == OP_SGTU ||
+             n->opcode == OP_SLE || n->opcode == OP_SLEU || n->opcode == OP_SGE ||
+             n->opcode == OP_SGEU || n->opcode == OP_SLTI || n->opcode == OP_SLTIU)) {
+            return i;
+        }
+        if (n->rd == cmp_rd) return -1;
+    }
+    return -1;
 }
 
 // Map SLOW-32 branch opcode to x86 inverted condition code (for side-exit skip).
@@ -179,6 +321,75 @@ static inline bool stage5_translate_bne_compact(translate_ctx_t *ctx,
 
     size_t jcc_patch = emit_offset(e) + 2;
     emit_jne_rel32(e, 0);
+
+    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
+        ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
+    }
+    emit_exit_chained(ctx, fall_pc, ctx->exit_idx++);
+
+    size_t taken_offset = emit_offset(e);
+    emit_patch_rel32(e, jcc_patch, taken_offset);
+    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
+        ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
+    }
+    emit_exit_chained(ctx, taken_pc, ctx->exit_idx++);
+
+    return true;
+}
+
+// Size-first direct branch fast path for single-instruction BEQ regions.
+// This intentionally skips Stage4 superblock/backedge branch shaping.
+static inline bool stage5_translate_beq_compact(translate_ctx_t *ctx,
+                                                uint8_t rs1, uint8_t rs2, int32_t imm) {
+    emit_ctx_t *e = &ctx->emit;
+    uint32_t fall_pc = ctx->guest_pc + 4;
+    uint32_t taken_pc = fall_pc + imm;
+    uint32_t branch_pc = ctx->guest_pc;
+
+    if (ctx->block) {
+        ctx->block->flags |= BLOCK_FLAG_DIRECT;
+    }
+
+    if (ctx->pending_cond.valid) {
+        flush_pending_cond(ctx);
+    }
+
+    if (rs1 == 0 && rs2 == 0) {
+        flush_pending_write(ctx);
+        emit_xor_r32_r32(e, RAX, RAX);
+    } else if (rs1 == 0) {
+        x64_reg_t h2 = guest_host_reg(ctx, rs2);
+        if (h2 != X64_NOREG) {
+            flush_pending_write(ctx);
+            emit_test_r32_r32(e, h2, h2);
+        } else {
+            emit_load_guest_reg(ctx, RAX, rs2);
+            emit_test_r32_r32(e, RAX, RAX);
+        }
+    } else if (rs2 == 0) {
+        x64_reg_t h1 = guest_host_reg(ctx, rs1);
+        if (h1 != X64_NOREG) {
+            flush_pending_write(ctx);
+            emit_test_r32_r32(e, h1, h1);
+        } else {
+            emit_load_guest_reg(ctx, RAX, rs1);
+            emit_test_r32_r32(e, RAX, RAX);
+        }
+    } else {
+        x64_reg_t h1 = guest_host_reg(ctx, rs1);
+        x64_reg_t h2 = guest_host_reg(ctx, rs2);
+        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : RAX;
+        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : RCX;
+        if (h1 == X64_NOREG) emit_load_guest_reg(ctx, RAX, rs1);
+        if (h2 == X64_NOREG) emit_load_guest_reg(ctx, RCX, rs2);
+        if (h1 != X64_NOREG || h2 != X64_NOREG) {
+            flush_pending_write(ctx);
+        }
+        emit_cmp_r32_r32(e, cmp_a, cmp_b);
+    }
+
+    size_t jcc_patch = emit_offset(e) + 2;
+    emit_je_rel32(e, 0);
 
     if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
         ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
@@ -575,6 +786,52 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         return false;
     }
 
+    // Cheap prefilter: skip Stage5 work for opcode families currently owned by
+    // Stage4 policy.
+    uint32_t raw0_pref = *(uint32_t *)(ctx->cpu->mem_base + guest_pc);
+    decoded_inst_t inst_pref = decode_instruction(raw0_pref);
+    bool is_branch_op =
+        inst_pref.opcode == OP_BEQ || inst_pref.opcode == OP_BNE ||
+        inst_pref.opcode == OP_BLT || inst_pref.opcode == OP_BGE ||
+        inst_pref.opcode == OP_BLTU || inst_pref.opcode == OP_BGEU;
+    bool allow_branch_probe =
+        ctx->superblock_enabled &&
+        is_branch_op &&
+        inst_pref.imm > 0;
+    bool is_cmp_op = stage5_prefilter_is_cmp_opcode(inst_pref.opcode);
+    bool is_small_terminal_start =
+        inst_pref.opcode == OP_HALT || inst_pref.opcode == OP_DEBUG ||
+        inst_pref.opcode == OP_YIELD ||
+        (inst_pref.opcode == OP_JAL && inst_pref.rd != 31);
+    // Slightly wider bounded scan to catch compare->branch-zero pairs with
+    // small arithmetic/memory setup between producer and branch.
+    bool has_near_cmp_branch_zero =
+        stage5_prefilter_has_cmp_branch_zero(ctx, guest_pc, 24);
+    bool has_near_terminal =
+        stage5_prefilter_has_near_terminal(ctx, guest_pc, 8);
+    if ((ctx->superblock_enabled && is_branch_op && !allow_branch_probe) ||
+        inst_pref.opcode == OP_JALR ||
+        (inst_pref.opcode == OP_JAL && inst_pref.rd == 31)) {
+        stage5_emit_prefilter_skip++;
+        if (ctx->superblock_enabled && is_branch_op) {
+            stage5_emit_prefilter_skip_branch_head++;
+        }
+        return false;
+    }
+    if (allow_branch_probe) {
+        stage5_emit_prefilter_branch_probe++;
+    }
+    if (ctx->superblock_enabled &&
+        !is_cmp_op &&
+        !is_small_terminal_start &&
+        !has_near_cmp_branch_zero &&
+        !has_near_terminal &&
+        !allow_branch_probe) {
+        stage5_emit_prefilter_skip++;
+        stage5_emit_prefilter_skip_noncmp_head++;
+        return false;
+    }
+
     stage5_lift_attempted++;
 
     stage5_lift_region_t region;
@@ -619,29 +876,71 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     // selected compare/branch families are emitted directly.
     bool saved_superblock_enabled = ctx->superblock_enabled;
     ctx->superblock_enabled = false;
+    bool side_exit_owned = stage5_region_side_exits_supported(&region);
+
+    bool allow_small_direct_branch =
+        stage5_pattern_is_direct_branch(emitted_pattern) &&
+        region.guest_inst_count <= 24;
+    bool allow_jal_call =
+        emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
+        emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG;
+    bool allow_jal_jump =
+        emitted_pattern == STAGE5_BURG_PATTERN_JAL_JUMP;
+    bool allow_jalr_ret =
+        emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_SHORT ||
+        emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_LONG;
 
     // Superblock guardrail: for larger branch-ending regions, keep Stage4 in
     // control so forward-branch extension and side-exit shaping remain intact.
     if (saved_superblock_enabled &&
         region.has_terminal_branch &&
         region.guest_inst_count > 2 &&
-        emitted_pattern != STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO) {
+        emitted_pattern != STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO &&
+        !allow_small_direct_branch &&
+        !allow_jal_call &&
+        !allow_jal_jump &&
+        !allow_jalr_ret &&
+        !(region.side_exit_count > 0 && side_exit_owned)) {
         ctx->superblock_enabled = saved_superblock_enabled;
         stage5_emit_fallback++;
         stage5_emit_fallback_shape++;
+        stage5_emit_fallback_superblock_policy++;
+        stage5_emit_fallback_policy_guardrail++;
         return false;
     }
 
-    // Policy fallback: these return/indirect forms are currently cheaper in
-    // Stage4's mature path.
-    if (emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_SHORT ||
-        emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_LONG ||
-        emitted_pattern == STAGE5_BURG_PATTERN_JALR_INDIRECT ||
-        emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
-        emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG) {
+    if ((!stage5_enable_side_exit_emit || !side_exit_owned) &&
+        region.side_exit_count > 0) {
         ctx->superblock_enabled = saved_superblock_enabled;
         stage5_emit_fallback++;
         stage5_emit_fallback_shape++;
+        stage5_emit_fallback_side_exit_unowned++;
+        return false;
+    }
+
+    // Policy fallback: keep indirect JALR forms on Stage4's mature path for now.
+    if (emitted_pattern == STAGE5_BURG_PATTERN_JALR_INDIRECT) {
+        ctx->superblock_enabled = saved_superblock_enabled;
+        stage5_emit_fallback++;
+        stage5_emit_fallback_shape++;
+        stage5_emit_fallback_superblock_policy++;
+        stage5_emit_fallback_policy_jalr_indirect++;
+        return false;
+    }
+
+    // Superblock-first policy: keep larger direct branches on the Stage4 path.
+    if (saved_superblock_enabled &&
+        (emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_EQ ||
+         emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_NE ||
+         emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL ||
+         emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_RELU) &&
+        !allow_small_direct_branch &&
+        !(region.side_exit_count > 0 && side_exit_owned)) {
+        ctx->superblock_enabled = saved_superblock_enabled;
+        stage5_emit_fallback++;
+        stage5_emit_fallback_shape++;
+        stage5_emit_fallback_superblock_policy++;
+        stage5_emit_fallback_policy_direct_branch++;
         return false;
     }
 
@@ -688,7 +987,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         ctx->current_inst_idx = term_idx;
         bool ended = false;
         switch (t->opcode) {
-            case OP_BEQ:  ended = translate_beq(ctx, t->rs1, t->rs2, t->imm); break;
+            case OP_BEQ:  ended = stage5_translate_beq_compact(ctx, t->rs1, t->rs2, t->imm); break;
             case OP_BNE:  ended = stage5_translate_bne_compact(ctx, t->rs1, t->rs2, t->imm); break;
             case OP_BLT:  ended = translate_blt(ctx, t->rs1, t->rs2, t->imm); break;
             case OP_BGE:  ended = translate_bge(ctx, t->rs1, t->rs2, t->imm); break;
@@ -757,7 +1056,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                 return true;
             case OP_BEQ:
-                if (translate_beq(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
+                if (stage5_translate_beq_compact(ctx, inst0.rs1, inst0.rs2, inst0.imm)) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                     return true;
@@ -811,6 +1110,38 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         }
     } else if (region.guest_inst_count == 2 && guest_pc + 8 <= ctx->cpu->code_limit) {
         // Family B: two-instruction compare -> branch-on-result.
+        if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO) {
+            int terminal_idx = -1;
+            for (int i = (int)region.ir_count - 1; i >= 0; i--) {
+                if (!region.ir[i].synthetic && region.ir[i].kind == STAGE5_IR_BRANCH) {
+                    terminal_idx = i;
+                    break;
+                }
+            }
+            int fuse_cmp_idx = stage5_find_cmp_branch_zero_cmp_idx(&region, terminal_idx);
+            if (fuse_cmp_idx >= 0 && terminal_idx >= 0) {
+                stage5_ir_node_t *c = &region.ir[fuse_cmp_idx];
+                stage5_ir_node_t *b = &region.ir[terminal_idx];
+                bool cmp_is_imm = (c->opcode == OP_SLTI || c->opcode == OP_SLTIU);
+                ctx->guest_pc = b->pc;
+                ctx->current_inst_idx = terminal_idx;
+                bool ended = stage5_emit_cmp_branch_fused(ctx,
+                    c->opcode, c->rs1, c->rs2, c->imm, cmp_is_imm,
+                    b->opcode, b->imm, b->pc);
+                if (ended) {
+                    ctx->superblock_enabled = saved_superblock_enabled;
+                    stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                    return true;
+                }
+                stage5_emit_fallback_not_ended++;
+            } else {
+                stage5_emit_fallback_cmp_branch_miss++;
+            }
+            ctx->superblock_enabled = saved_superblock_enabled;
+            stage5_emit_fallback++;
+            return false;
+        }
+
         uint32_t raw1 = *(uint32_t *)(ctx->cpu->mem_base + guest_pc + 4);
         decoded_inst_t inst1 = decode_instruction(raw1);
 
@@ -858,6 +1189,41 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
 
         // Family B fallback: generic prefix + terminal for 2-inst regions.
         if (!branch_uses_cmp_rd) {
+            bool inst0_is_branch =
+                inst0.opcode == OP_BEQ || inst0.opcode == OP_BNE ||
+                inst0.opcode == OP_BLT || inst0.opcode == OP_BGE ||
+                inst0.opcode == OP_BLTU || inst0.opcode == OP_BGEU;
+            bool side_exit_capacity_blocked =
+                (ctx->exit_idx >= MAX_BLOCK_EXITS ||
+                 ctx->deferred_exit_count >= MAX_BLOCK_EXITS);
+
+            // If the first op is a branch but we cannot shape it as a side-exit
+            // prefix, still keep Stage5 ownership by emitting the branch as a
+            // normal terminal block.
+            if (inst0_is_branch && (inst0.imm <= 0 || side_exit_capacity_blocked)) {
+                ctx->guest_pc = guest_pc;
+                ctx->current_inst_idx = 0;
+                bool ended = false;
+                switch (inst0.opcode) {
+                    case OP_BEQ:  ended = translate_beq(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
+                    case OP_BNE:  ended = translate_bne(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
+                    case OP_BLT:  ended = translate_blt(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
+                    case OP_BGE:  ended = translate_bge(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
+                    case OP_BLTU: ended = translate_bltu(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
+                    case OP_BGEU: ended = translate_bgeu(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
+                    default: break;
+                }
+                if (ended) {
+                    ctx->superblock_enabled = saved_superblock_enabled;
+                    stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                    return true;
+                }
+                stage5_emit_fallback_not_ended++;
+                ctx->superblock_enabled = saved_superblock_enabled;
+                stage5_emit_fallback++;
+                return false;
+            }
+
             bool ok_prefix = true;
             ctx->guest_pc = guest_pc;
             ctx->current_inst_idx = 0;
@@ -903,6 +1269,92 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 case OP_STW:  translate_stw(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
                 case OP_STH:  translate_sth(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
                 case OP_STB:  translate_stb(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
+                case OP_BEQ:
+                case OP_BNE:
+                case OP_BLT:
+                case OP_BGE:
+                case OP_BLTU:
+                case OP_BGEU: {
+                    // Two-inst shape: forward branch as side exit + terminal.
+                    if (inst0.imm <= 0 ||
+                        ctx->exit_idx >= MAX_BLOCK_EXITS ||
+                        ctx->deferred_exit_count >= MAX_BLOCK_EXITS) {
+                        ok_prefix = false;
+                        break;
+                    }
+
+                    emit_ctx_t *e = &ctx->emit;
+                    uint32_t branch_pc = guest_pc;
+                    uint32_t fall_pc = guest_pc + 4;
+                    uint32_t taken_pc = fall_pc + inst0.imm;
+
+                    flush_pending_cond(ctx);
+
+                    if ((inst0.opcode == OP_BEQ || inst0.opcode == OP_BNE) &&
+                        (inst0.rs1 == 0 || inst0.rs2 == 0)) {
+                        uint8_t rz = (inst0.rs1 == 0) ? inst0.rs2 : inst0.rs1;
+                        x64_reg_t hz = (rz != 0) ? guest_host_reg(ctx, rz) : X64_NOREG;
+                        if (rz == 0) {
+                            flush_pending_write(ctx);
+                            emit_xor_r32_r32(e, RAX, RAX);
+                            emit_test_r32_r32(e, RAX, RAX);
+                        } else if (hz != X64_NOREG) {
+                            flush_pending_write(ctx);
+                            emit_test_r32_r32(e, hz, hz);
+                        } else {
+                            emit_load_guest_reg(ctx, RAX, rz);
+                            emit_test_r32_r32(e, RAX, RAX);
+                        }
+                    } else {
+                        x64_reg_t h1 = (inst0.rs1 != 0) ? guest_host_reg(ctx, inst0.rs1) : X64_NOREG;
+                        x64_reg_t h2 = (inst0.rs2 != 0) ? guest_host_reg(ctx, inst0.rs2) : X64_NOREG;
+                        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : RAX;
+                        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : RCX;
+                        if (h1 == X64_NOREG) {
+                            flush_pending_write(ctx);
+                            if (inst0.rs1 == 0) emit_xor_r32_r32(e, RAX, RAX);
+                            else emit_load_guest_reg(ctx, RAX, inst0.rs1);
+                        }
+                        if (h2 == X64_NOREG) {
+                            if (inst0.rs2 == 0) emit_xor_r32_r32(e, RCX, RCX);
+                            else emit_load_guest_reg(ctx, RCX, inst0.rs2);
+                        }
+                        if (h1 != X64_NOREG || h2 != X64_NOREG) {
+                            flush_pending_write(ctx);
+                        }
+                        emit_cmp_r32_r32(e, cmp_a, cmp_b);
+                    }
+
+                    uint8_t inv_cc = stage5_branch_inv_cc(inst0.opcode);
+                    emit_jcc_short(e, inv_cc, 5);
+                    size_t jmp_patch = emit_offset(e) + 1;
+                    emit_jmp_rel32(e, 0);
+
+                    int di = ctx->deferred_exit_count++;
+                    ctx->deferred_exits[di].jmp_patch_offset = jmp_patch;
+                    ctx->deferred_exits[di].target_pc = taken_pc;
+                    ctx->deferred_exits[di].exit_idx = ctx->exit_idx;
+                    ctx->deferred_exits[di].branch_pc = branch_pc;
+                    for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
+                        ctx->deferred_exits[di].dirty_snapshot[s] = ctx->reg_alloc[s].dirty;
+                        ctx->deferred_exits[di].allocated_snapshot[s] = ctx->reg_alloc[s].allocated;
+                        ctx->deferred_exits[di].guest_reg_snapshot[s] = ctx->reg_alloc[s].guest_reg;
+                    }
+                    ctx->deferred_exits[di].pending_write_valid = ctx->pending_write.valid;
+                    ctx->deferred_exits[di].pending_write_guest_reg = ctx->pending_write.guest_reg;
+                    ctx->deferred_exits[di].pending_write_host_reg = ctx->pending_write.host_reg;
+
+                    if (ctx->block) {
+                        ctx->block->flags |= BLOCK_FLAG_DIRECT;
+                    }
+                    if (ctx->side_exit_emitted < MAX_BLOCK_EXITS) {
+                        ctx->side_exit_pcs[ctx->side_exit_emitted] = branch_pc;
+                    }
+                    ctx->exit_idx++;
+                    ctx->side_exit_emitted++;
+                    stage5_emit_side_exits++;
+                    break;
+                }
                 default:
                     ok_prefix = false;
                     break;
@@ -939,7 +1391,11 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 }
                 stage5_emit_fallback_not_ended++;
             } else {
-                stage5_emit_fallback_cmp_branch_miss++;
+                if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO) {
+                    stage5_emit_fallback_cmp_branch_miss++;
+                } else {
+                    stage5_emit_fallback_shape++;
+                }
                 stage5_emit_unhandled_opcode_hist[inst0.opcode & 0x7F]++;
             }
         }
@@ -960,10 +1416,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
 
         // For CMP_BRANCH_ZERO, also skip the compare node (fused with branch).
         int fuse_cmp_idx = -1;
-        if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO &&
-            terminal_idx > 0 && !region.ir[terminal_idx - 1].synthetic &&
-            region.ir[terminal_idx - 1].kind == STAGE5_IR_CMP) {
-            fuse_cmp_idx = terminal_idx - 1;
+        if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO && terminal_idx > 0) {
+            fuse_cmp_idx = stage5_find_cmp_branch_zero_cmp_idx(&region, terminal_idx);
         }
 
         for (uint32_t i = 0; i < region.ir_count; i++) {
@@ -974,7 +1428,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
 
             // Side-exit branch: emit compare + jcc_short + jmp trampoline,
             // record deferred cold stub, and continue with fall-through.
-            if (n->is_side_exit && n->kind == STAGE5_IR_BRANCH &&
+            if (stage5_enable_side_exit_emit &&
+                stage5_side_exit_supported(n) &&
                 ctx->exit_idx < MAX_BLOCK_EXITS &&
                 ctx->deferred_exit_count < MAX_BLOCK_EXITS) {
                 emit_ctx_t *e = &ctx->emit;
@@ -988,26 +1443,36 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 // the compare result into pending_cond.
                 flush_pending_cond(ctx);
 
-                // Emit the compare for this branch.
-                // Always use CMP (not TEST) for correct signed/unsigned semantics
-                // across all branch types (BEQ/BNE/BLT/BGE/BLTU/BGEU).
-                {
+                // Emit compare for side-exit branch.
+                // For BEQ/BNE with one zero operand, prefer TEST.
+                if ((n->opcode == OP_BEQ || n->opcode == OP_BNE) &&
+                    (n->rs1 == 0 || n->rs2 == 0)) {
+                    uint8_t rz = (n->rs1 == 0) ? n->rs2 : n->rs1;
+                    x64_reg_t hz = (rz != 0) ? guest_host_reg(ctx, rz) : X64_NOREG;
+                    if (rz == 0) {
+                        flush_pending_write(ctx);
+                        emit_xor_r32_r32(e, RAX, RAX);
+                        emit_test_r32_r32(e, RAX, RAX);
+                    } else if (hz != X64_NOREG) {
+                        flush_pending_write(ctx);
+                        emit_test_r32_r32(e, hz, hz);
+                    } else {
+                        emit_load_guest_reg(ctx, RAX, rz);
+                        emit_test_r32_r32(e, RAX, RAX);
+                    }
+                } else {
                     x64_reg_t h1 = (n->rs1 != 0) ? guest_host_reg(ctx, n->rs1) : X64_NOREG;
                     x64_reg_t h2 = (n->rs2 != 0) ? guest_host_reg(ctx, n->rs2) : X64_NOREG;
                     x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : RAX;
                     x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : RCX;
                     if (h1 == X64_NOREG) {
                         flush_pending_write(ctx);
-                        if (n->rs1 == 0)
-                            emit_xor_r32_r32(e, RAX, RAX);
-                        else
-                            emit_load_guest_reg(ctx, RAX, n->rs1);
+                        if (n->rs1 == 0) emit_xor_r32_r32(e, RAX, RAX);
+                        else emit_load_guest_reg(ctx, RAX, n->rs1);
                     }
                     if (h2 == X64_NOREG) {
-                        if (n->rs2 == 0)
-                            emit_xor_r32_r32(e, RCX, RCX);
-                        else
-                            emit_load_guest_reg(ctx, RCX, n->rs2);
+                        if (n->rs2 == 0) emit_xor_r32_r32(e, RCX, RCX);
+                        else emit_load_guest_reg(ctx, RCX, n->rs2);
                     }
                     if (h1 != X64_NOREG || h2 != X64_NOREG)
                         flush_pending_write(ctx);
@@ -1040,7 +1505,11 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (ctx->block) {
                     ctx->block->flags |= BLOCK_FLAG_DIRECT;
                 }
+                if (ctx->side_exit_emitted < MAX_BLOCK_EXITS) {
+                    ctx->side_exit_pcs[ctx->side_exit_emitted] = branch_pc;
+                }
                 ctx->exit_idx++;
+                ctx->side_exit_emitted++;
                 stage5_emit_side_exits++;
                 continue;
             }

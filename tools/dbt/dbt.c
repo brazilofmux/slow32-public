@@ -1708,7 +1708,8 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Native intrinsic stubs: %" PRIu32 "\n", native_stub_count);
         }
 
-        if (stage5_lift_attempted > 0 || stage5_burg_attempted > 0 || stage5_fallback_total > 0) {
+        if (stage5_lift_attempted > 0 || stage5_burg_attempted > 0 ||
+            stage5_fallback_total > 0 || stage5_emit_prefilter_skip > 0) {
             fprintf(stderr, "Stage5 lift attempted: %" PRIu32 "\n", stage5_lift_attempted);
             fprintf(stderr, "Stage5 lift success:   %" PRIu32 "\n", stage5_lift_success);
             fprintf(stderr, "Stage5 BURG attempted: %" PRIu32 "\n", stage5_burg_attempted);
@@ -1794,7 +1795,8 @@ int main(int argc, char **argv) {
                             k + 1, top_opcode[k], top_count[k]);
                 }
             }
-            if (stage5_emit_attempted > 0 || stage5_emit_success > 0 || stage5_emit_fallback > 0) {
+            if (stage5_emit_attempted > 0 || stage5_emit_success > 0 ||
+                stage5_emit_fallback > 0 || stage5_emit_prefilter_skip > 0) {
                 fprintf(stderr, "Stage5 emit attempted: %" PRIu32 "\n", stage5_emit_attempted);
                 fprintf(stderr, "Stage5 emit success:   %" PRIu32 "\n", stage5_emit_success);
                 fprintf(stderr, "Stage5 emit fallback:  %" PRIu32 "\n", stage5_emit_fallback);
@@ -1865,6 +1867,42 @@ int main(int argc, char **argv) {
                 if (stage5_emit_fallback_shape > 0) {
                     fprintf(stderr, "  emit shape: %" PRIu32 "\n",
                             stage5_emit_fallback_shape);
+                }
+                if (stage5_emit_fallback_superblock_policy > 0) {
+                    fprintf(stderr, "  emit superblock_policy: %" PRIu32 "\n",
+                            stage5_emit_fallback_superblock_policy);
+                    if (stage5_emit_fallback_policy_guardrail > 0) {
+                        fprintf(stderr, "  emit policy guardrail: %" PRIu32 "\n",
+                                stage5_emit_fallback_policy_guardrail);
+                    }
+                    if (stage5_emit_fallback_policy_jalr_indirect > 0) {
+                        fprintf(stderr, "  emit policy jalr_indirect: %" PRIu32 "\n",
+                                stage5_emit_fallback_policy_jalr_indirect);
+                    }
+                    if (stage5_emit_fallback_policy_direct_branch > 0) {
+                        fprintf(stderr, "  emit policy direct_branch: %" PRIu32 "\n",
+                                stage5_emit_fallback_policy_direct_branch);
+                    }
+                }
+                if (stage5_emit_prefilter_skip > 0) {
+                    fprintf(stderr, "  emit prefilter_skip: %" PRIu32 "\n",
+                            stage5_emit_prefilter_skip);
+                    if (stage5_emit_prefilter_skip_branch_head > 0) {
+                        fprintf(stderr, "  emit prefilter branch_head: %" PRIu32 "\n",
+                                stage5_emit_prefilter_skip_branch_head);
+                    }
+                    if (stage5_emit_prefilter_skip_noncmp_head > 0) {
+                        fprintf(stderr, "  emit prefilter noncmp_head: %" PRIu32 "\n",
+                                stage5_emit_prefilter_skip_noncmp_head);
+                    }
+                    if (stage5_emit_prefilter_branch_probe > 0) {
+                        fprintf(stderr, "  emit prefilter branch_probe: %" PRIu32 "\n",
+                                stage5_emit_prefilter_branch_probe);
+                    }
+                }
+                if (stage5_emit_fallback_side_exit_unowned > 0) {
+                    fprintf(stderr, "  emit side_exit_unowned: %" PRIu32 "\n",
+                            stage5_emit_fallback_side_exit_unowned);
                 }
                 if (stage5_emit_fallback_single_unhandled > 0) {
                     fprintf(stderr, "  emit single_unhandled: %" PRIu32 "\n",
