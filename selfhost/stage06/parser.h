@@ -36,6 +36,13 @@ static int   ps_ginit[P_MAX_GLOBALS]; /* initial value for scalars */
 static int   ps_gstr[P_MAX_GLOBALS];  /* string init: pool index, -1 if none */
 static int   ps_nglobals;
 
+/* Array/struct initializer pool for globals */
+#define PS_MAX_INIT_POOL 8192
+static int ps_ginit_pool[PS_MAX_INIT_POOL];
+static int ps_ginit_start[P_MAX_GLOBALS]; /* -1 = no init list */
+static int ps_ginit_count[P_MAX_GLOBALS]; /* number of values */
+static int ps_ginit_pool_len;
+
 /* goto/label table (per-function, reset at each function) */
 #define P_MAX_LABELS 512
 static char *ps_lblname[P_MAX_LABELS];
@@ -474,8 +481,33 @@ static int add_global(char *name, int ty, int size_bytes) {
     ps_gtype[idx] = ty;
     ps_gsize[idx] = size_bytes;
     ps_gstr[idx] = -1;
+    ps_ginit_start[idx] = -1;
+    ps_ginit_count[idx] = 0;
     ps_nglobals = ps_nglobals + 1;
     return idx;
+}
+
+/* Parse a compile-time constant integer (for global initializers) */
+static int parse_const_int(void) {
+    int neg;
+    int ci;
+    neg = 0;
+    if (lex_tok == TK_MINUS) { neg = 1; next(); }
+    if (lex_tok == TK_NUM) {
+        ci = lex_val;
+        next();
+        return neg ? (0 - ci) : ci;
+    }
+    if (lex_tok == TK_IDENT) {
+        ci = find_const(lex_str);
+        if (ci >= 0) {
+            ci = ps_cval[ci];
+            next();
+            return neg ? (0 - ci) : ci;
+        }
+    }
+    p_error("expected constant integer in initializer");
+    return 0;
 }
 
 /* --- Expression parser (operator precedence climbing) --- */
@@ -976,12 +1008,23 @@ static Node *parse_stmt(void) {
     Node *c;
     Node *t;
     Node *e;
+    Node *head;
+    Node *tail;
+    Node *a;
     int ty;
     int off;
     int count;
     int ci;
     int cv;
     int neg;
+    int si;
+    int base;
+    int nf;
+    int nsi;
+    int nnf;
+    int nj;
+    int mi_off;
+    int mi_ty;
     char nm[256];
     /* Lexer save/restore for label lookahead */
     int sv_tok; int sv_val; int sv_slen; int sv_rcs; int sv_ract;
@@ -1222,7 +1265,7 @@ static Node *parse_stmt(void) {
         memcpy(nm, lex_str, lex_slen + 1);
         next();
 
-        /* Array declaration: type name[N]; */
+        /* Array declaration: type name[N]; or type name[N] = {v1, v2, ...}; */
         if (lex_tok == TK_LBRACK) {
             next();
             if (lex_tok != TK_NUM) {
@@ -1233,14 +1276,85 @@ static Node *parse_stmt(void) {
             next();
             expect(TK_RBRACK);
             off = add_local_array(nm, ty, count);
+            head = NULL;
+            if (lex_tok == TK_ASSIGN) {
+                next();
+                expect(TK_LBRACE);
+                tail = NULL;
+                ci = 0;
+                while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+                    if (ci > 0) expect(TK_COMMA);
+                    if (ci >= count) { p_error("too many initializers"); break; }
+                    /* *(arr + ci) = expr  →  deref(arr + index) = value */
+                    n = nd_var(nm, off, ty + TY_PTR);
+                    n->is_local = 1;
+                    n->is_array = 1;
+                    a = nd_binop(TK_PLUS, n, nd_num(ci));
+                    a = nd_unary(TK_STAR, a);
+                    a = nd_assign(a, parse_assign());
+                    a = nd_expr_stmt(a);
+                    if (head == NULL) { head = a; tail = a; }
+                    else { tail->next = a; tail = a; }
+                    ci = ci + 1;
+                }
+                expect(TK_RBRACE);
+            }
             expect(TK_SEMI);
+            if (head != NULL) return nd_block(head);
             return nd_block(NULL);
         }
 
-        /* Scalar: type name; or type name = expr; */
+        /* Scalar or struct: type name; or type name = expr; */
         off = add_local(nm, ty);
         if (lex_tok == TK_ASSIGN) {
             next();
+            if (lex_tok == TK_LBRACE && ty_is_struct(ty)) {
+                /* Local struct initializer: struct S s = {v1, v2, ...}; */
+                next();
+                si = ty_struct_idx(ty);
+                base = st_first[si];
+                nf = st_nfields[si];
+                head = NULL;
+                tail = NULL;
+                ci = 0;  /* field index */
+                while (ci < nf && lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+                    if (ty_is_struct(stm_type[base + ci])) {
+                        /* Nested struct: flatten */
+                        nsi = ty_struct_idx(stm_type[base + ci]);
+                        nnf = st_nfields[nsi];
+                        nj = 0;
+                        while (nj < nnf && lex_tok != TK_RBRACE) {
+                            if (head != NULL) expect(TK_COMMA);
+                            mi_off = stm_off[base + ci] + stm_off[st_first[nsi] + nj];
+                            mi_ty = stm_type[st_first[nsi] + nj];
+                            n = nd_var(nm, off, ty);
+                            n->is_local = 1;
+                            a = nd_member(n, mi_off, mi_ty);
+                            a = nd_assign(a, parse_assign());
+                            a = nd_expr_stmt(a);
+                            if (head == NULL) { head = a; tail = a; }
+                            else { tail->next = a; tail = a; }
+                            nj = nj + 1;
+                        }
+                    } else {
+                        if (head != NULL) expect(TK_COMMA);
+                        mi_off = stm_off[base + ci];
+                        mi_ty = stm_type[base + ci];
+                        n = nd_var(nm, off, ty);
+                        n->is_local = 1;
+                        a = nd_member(n, mi_off, mi_ty);
+                        a = nd_assign(a, parse_assign());
+                        a = nd_expr_stmt(a);
+                        if (head == NULL) { head = a; tail = a; }
+                        else { tail->next = a; tail = a; }
+                    }
+                    ci = ci + 1;
+                }
+                expect(TK_RBRACE);
+                expect(TK_SEMI);
+                if (head != NULL) return nd_block(head);
+                return nd_block(NULL);
+            }
             n = nd_assign(nd_var(nm, off, ty), parse_expr());
             n->lhs->is_local = 1;
             expect(TK_SEMI);
@@ -1323,6 +1437,14 @@ static Node *parse_top_decl(void) {
     int i;
     int count;
     int neg;
+    int idx;
+    int gi;
+    int si;
+    int base;
+    int nf;
+    int nsi;
+    int nnf;
+    int nj;
 
     /* Skip static/const qualifiers (single-file compiler, no semantic effect) */
     while (lex_tok == TK_STATIC || lex_tok == TK_CONST) next();
@@ -1409,20 +1531,58 @@ static Node *parse_top_decl(void) {
     /* Global variable: type name; or type name = expr; or type name[N]; */
     if (lex_tok == TK_SEMI || lex_tok == TK_ASSIGN) {
         if (ty_is_struct(ty)) {
-            add_global(nm, ty, ty_size(ty));
+            idx = add_global(nm, ty, ty_size(ty));
         } else {
-            add_global(nm, ty, 0);
+            idx = add_global(nm, ty, 0);
         }
         if (lex_tok == TK_ASSIGN) {
             next();
-            if (lex_tok == TK_STRING) {
-                ps_gstr[ps_nglobals - 1] = lex_val;
+            if (lex_tok == TK_LBRACE && ty_is_struct(ty)) {
+                /* Struct initializer: struct S s = {v1, v2, ...}; */
+                next();
+                ps_ginit_start[idx] = ps_ginit_pool_len;
+                si = ty_struct_idx(ty);
+                base = st_first[si];
+                nf = st_nfields[si];
+                gi = 0;  /* counts total values consumed */
+                i = 0;   /* field index */
+                while (i < nf && lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+                    if (ty_is_struct(stm_type[base + i])) {
+                        /* Nested struct: flatten its fields */
+                        nsi = ty_struct_idx(stm_type[base + i]);
+                        nnf = st_nfields[nsi];
+                        nj = 0;
+                        while (nj < nnf && lex_tok != TK_RBRACE) {
+                            if (gi > 0) expect(TK_COMMA);
+                            if (ps_ginit_pool_len >= PS_MAX_INIT_POOL) {
+                                p_error("init pool overflow"); break;
+                            }
+                            ps_ginit_pool[ps_ginit_pool_len] = parse_const_int();
+                            ps_ginit_pool_len = ps_ginit_pool_len + 1;
+                            gi = gi + 1;
+                            nj = nj + 1;
+                        }
+                    } else {
+                        if (gi > 0) expect(TK_COMMA);
+                        if (ps_ginit_pool_len >= PS_MAX_INIT_POOL) {
+                            p_error("init pool overflow"); break;
+                        }
+                        ps_ginit_pool[ps_ginit_pool_len] = parse_const_int();
+                        ps_ginit_pool_len = ps_ginit_pool_len + 1;
+                        gi = gi + 1;
+                    }
+                    i = i + 1;
+                }
+                ps_ginit_count[idx] = ps_ginit_pool_len - ps_ginit_start[idx];
+                expect(TK_RBRACE);
+            } else if (lex_tok == TK_STRING) {
+                ps_gstr[idx] = lex_val;
                 next();
             } else {
                 neg = 0;
                 if (lex_tok == TK_MINUS) { neg = 1; next(); }
                 if (lex_tok == TK_NUM) {
-                    ps_ginit[ps_nglobals - 1] = neg ? (0 - lex_val) : lex_val;
+                    ps_ginit[idx] = neg ? (0 - lex_val) : lex_val;
                     next();
                 }
             }
@@ -1439,8 +1599,26 @@ static Node *parse_top_decl(void) {
         count = lex_val;
         next();
         expect(TK_RBRACK);
+        idx = add_global(nm, ty + TY_PTR, ty_size(ty) * count);
+        if (lex_tok == TK_ASSIGN) {
+            next();
+            expect(TK_LBRACE);
+            ps_ginit_start[idx] = ps_ginit_pool_len;
+            gi = 0;
+            while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+                if (gi > 0) expect(TK_COMMA);
+                if (gi >= count) { p_error("too many initializers"); break; }
+                if (ps_ginit_pool_len >= PS_MAX_INIT_POOL) {
+                    p_error("init pool overflow"); break;
+                }
+                ps_ginit_pool[ps_ginit_pool_len] = parse_const_int();
+                ps_ginit_pool_len = ps_ginit_pool_len + 1;
+                gi = gi + 1;
+            }
+            ps_ginit_count[idx] = gi;
+            expect(TK_RBRACE);
+        }
         expect(TK_SEMI);
-        add_global(nm, ty + TY_PTR, ty_size(ty) * count);
         return NULL;
     }
 

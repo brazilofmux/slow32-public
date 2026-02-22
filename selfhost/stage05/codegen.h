@@ -1018,6 +1018,7 @@ static void gen_data(void) {
     int i;
     int j;
     int len;
+    int elem_sz;
     char *sp;
     int ch;
 
@@ -1045,7 +1046,38 @@ static void gen_data(void) {
     /* Global variables (initialized → .data, uninitialized → .bss) */
     i = 0;
     while (i < ps_nglobals) {
-        if (ps_gsize[i] == 0 && ps_gstr[i] >= 0) {
+        if (ps_ginit_start[i] >= 0) {
+            /* Array/struct initializer list */
+            cg_s(".global ");
+            cg_s(ps_gname[i]);
+            cg_c(10);
+            cg_s(ps_gname[i]);
+            cg_s(":\n");
+            /* Determine element size: char arrays use .byte, else .word */
+            elem_sz = 4;
+            if (ty_is_ptr(ps_gtype[i]) &&
+                (ty_deref(ps_gtype[i]) & TY_BASE_MASK) == TY_CHAR) {
+                elem_sz = 1;
+            }
+            j = 0;
+            while (j < ps_ginit_count[i]) {
+                if (elem_sz == 1) {
+                    cg_s("    .byte ");
+                } else {
+                    cg_s("    .word ");
+                }
+                cg_n(ps_ginit_pool[ps_ginit_start[i] + j]);
+                cg_c(10);
+                j = j + 1;
+            }
+            /* Remaining bytes zero-filled */
+            len = ps_gsize[i] - (ps_ginit_count[i] * elem_sz);
+            if (len > 0) {
+                cg_s("    .space ");
+                cg_n(len);
+                cg_c(10);
+            }
+        } else if (ps_gsize[i] == 0 && ps_gstr[i] >= 0) {
             /* String-initialized scalar: .word .LSN */
             cg_s(".global ");
             cg_s(ps_gname[i]);
@@ -1071,7 +1103,9 @@ static void gen_data(void) {
     cg_s(".bss\n");
     i = 0;
     while (i < ps_nglobals) {
-        if (ps_gsize[i] > 0) {
+        if (ps_ginit_start[i] >= 0) {
+            /* Already emitted in .data */
+        } else if (ps_gsize[i] > 0) {
             /* Array */
             cg_s(".global ");
             cg_s(ps_gname[i]);
