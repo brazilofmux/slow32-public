@@ -230,6 +230,20 @@ static bool stage5_region_regflow_guard_hit(const stage5_lift_region_t *region,
     return cross_hit || span_hit || live_hit;
 }
 
+static uint32_t stage5_choose_regflow_retry_budget(const stage5_lift_region_t *region) {
+    if (!region || region->guest_inst_count <= 1) return 0;
+    uint32_t budget = region->guest_inst_count / 2u;
+    if (region->cfg_valid && region->cfg_block_count > 1) {
+        uint32_t head_block = region->cfg_blocks[0].inst_count;
+        if (head_block > 0 && head_block < region->guest_inst_count) {
+            budget = head_block;
+        }
+    }
+    if (budget < 2u) budget = 2u;
+    if (budget >= region->guest_inst_count) return 0;
+    return budget;
+}
+
 static bool stage5_validate_abort_on_mismatch(void) {
     static bool inited = false;
     static bool enabled = false;
@@ -2248,8 +2262,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     stage5_validate_region(ctx, &region);
     bool regflow_retry_applied = false;
     if (stage5_region_regflow_guard_hit(&region, ctx->superblock_enabled, NULL, NULL, NULL)) {
-        uint32_t retry_budget = region.guest_inst_count / 2u;
-        if (retry_budget >= 4u && retry_budget < region.guest_inst_count) {
+        uint32_t retry_budget = stage5_choose_regflow_retry_budget(&region);
+        if (retry_budget > 0) {
             stage5_emit_regflow_retry_attempted++;
             stage5_lift_attempted++;
             stage5_lift_region_t retry_region;
