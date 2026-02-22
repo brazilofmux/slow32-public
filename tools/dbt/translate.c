@@ -3727,6 +3727,35 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
              (inst1.rs2 == inst0.rd && inst1.rs1 == 0));
 
         if (branch_uses_cmp_rd) {
+            if (stage5_codegen_enabled()) {
+                int terminal_idx = -1;
+                for (int i = (int)region.ir_count - 1; i >= 0; i--) {
+                    if (!region.ir[i].synthetic && region.ir[i].kind == STAGE5_IR_BRANCH) {
+                        terminal_idx = i;
+                        break;
+                    }
+                }
+                uint8_t fuse_branch_opcode = 0;
+                int fuse_extra_skip_idx = -1;
+                int fuse_cmp_idx = stage5_find_cmp_branch_fused_info(&region, terminal_idx,
+                                                                     emitted_pattern,
+                                                                     &fuse_branch_opcode,
+                                                                     &fuse_extra_skip_idx);
+                (void)fuse_branch_opcode;
+                (void)fuse_extra_skip_idx;
+
+                bool cg_ok = stage5_codegen(ctx, &region, guest_pc,
+                    terminal_idx, fuse_cmp_idx, emitted_pattern,
+                    synth_block_end, side_exit_emit_enabled,
+                    &side_exit_family_cfg);
+                if (cg_ok) {
+                    ctx->superblock_enabled = saved_superblock_enabled;
+                    stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                    if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
+                    return true;
+                }
+            }
+
             ctx->guest_pc = guest_pc;
             ctx->current_inst_idx = 0;
             switch (inst0.opcode) {
