@@ -1713,13 +1713,15 @@ bool stage5_codegen(translate_ctx_t *ctx,
     bool side_exit_family_c = se_cfg ? se_cfg->family_c : false;
     bool side_exit_codegen = cg_side_exit_enabled();
     bool use_cmp_mix_fusion = cg_pattern_uses_cmp_mix_fusion(emitted_pattern);
+    bool predicate_native_enabled =
+        cg_predicate_native_enabled() || cg_boolpair_native_enabled();
     bool boolpair_native_active =
         (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR &&
-         cg_boolpair_native_enabled());
+         predicate_native_enabled);
     bool pred_native_active =
         ((emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP ||
           emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP) &&
-         cg_predicate_native_enabled());
+         predicate_native_enabled);
     bool predicate_native_active = boolpair_native_active || pred_native_active;
     if (predicate_native_active) {
         stage5_codegen_boolpair_native_attempted++;
@@ -1735,10 +1737,10 @@ bool stage5_codegen(translate_ctx_t *ctx,
     // Keep newer predicate families on the established translate.c terminal
     // path until dedicated native lowering is validated.
     if ((emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR &&
-         !cg_boolpair_native_enabled()) ||
+         !predicate_native_enabled) ||
         ((emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP ||
           emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP) &&
-         !cg_predicate_native_enabled())) {
+         !predicate_native_enabled)) {
         stage5_codegen_fallback++;
         stage5_codegen_fallback_preflight++;
         if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
