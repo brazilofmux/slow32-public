@@ -43,6 +43,9 @@ declare -a MODES=(
 
 printf "%-24s %-6s %-12s\n" "mode" "rc" "notes"
 
+stable_first=""
+unstable_modes=()
+
 for row in "${MODES[@]}"; do
     name="${row%%|*}"
     envs="${row#*|}"
@@ -67,4 +70,21 @@ for row in "${MODES[@]}"; do
         [[ -n "$notes" ]] || notes="failed"
     fi
     printf "%-24s %-6s %-12s\n" "$name" "$rc" "$notes"
+    if [[ $rc -eq 0 ]]; then
+        if [[ -z "$stable_first" ]]; then
+            stable_first="$name"
+        fi
+    else
+        unstable_modes+=("$name")
+    fi
 done
+
+echo
+if [[ -n "$stable_first" ]]; then
+    echo "recommended: $stable_first"
+fi
+if [[ ${#unstable_modes[@]} -gt 0 ]]; then
+    echo "unstable: ${unstable_modes[*]}"
+else
+    echo "unstable: none"
+fi
