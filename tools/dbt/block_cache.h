@@ -25,6 +25,7 @@ typedef struct translated_block translated_block_t;
 #define BLOCK_FLAG_INDIRECT  0x02   // Has indirect exit (JALR)
 #define BLOCK_FLAG_CALL      0x04   // Ends with JAL (call)
 #define BLOCK_FLAG_RETURN    0x08   // Ends with JR r31 (return)
+#define BLOCK_FLAG_STAGE5    0x10   // Emitted via Stage5 pilot path
 
 // Exit slot for tracking chain targets
 typedef struct {

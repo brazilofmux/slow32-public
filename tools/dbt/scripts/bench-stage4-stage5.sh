@@ -89,5 +89,7 @@ awk '
   /^Stage5 emit guest insts:/ ||
   /^Stage5 emit host bytes:/ ||
   /^Stage5 emit bytes\/guest-inst:/ ||
+  /^Stage5 hot coverage:/ ||
+  /^Stage5 weighted host-byte share:/ ||
   /^  emit /
 ' "$E5"

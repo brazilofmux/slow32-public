@@ -900,12 +900,40 @@ void cache_print_stats(block_cache_t *cache) {
             uint32_t total = hot[i]->reg_cache_hits + hot[i]->reg_cache_misses;
             uint32_t pct = total ? (hot[i]->reg_cache_hits * 100) / total : 0;
             fprintf(stderr,
-                    "  0x%08X: %u executions, %u bytes host code, regcache=%u/%u (%u%%)\n",
-                    hot[i]->guest_pc, hot[i]->exec_count, hot[i]->host_size,
+                    "  0x%08X%s: %u executions, %u bytes host code, regcache=%u/%u (%u%%)\n",
+                    hot[i]->guest_pc,
+                    (hot[i]->flags & BLOCK_FLAG_STAGE5) ? " [s5]" : "",
+                    hot[i]->exec_count, hot[i]->host_size,
                     hot[i]->reg_cache_hits, total, pct);
         } else {
-            fprintf(stderr, "  0x%08X: %u executions, %u bytes host code\n",
-                    hot[i]->guest_pc, hot[i]->exec_count, hot[i]->host_size);
+            fprintf(stderr, "  0x%08X%s: %u executions, %u bytes host code\n",
+                    hot[i]->guest_pc,
+                    (hot[i]->flags & BLOCK_FLAG_STAGE5) ? " [s5]" : "",
+                    hot[i]->exec_count, hot[i]->host_size);
+        }
+    }
+
+    uint64_t exec_total = 0;
+    uint64_t exec_stage5 = 0;
+    uint64_t weighted_host_total = 0;
+    uint64_t weighted_host_stage5 = 0;
+    for (uint32_t i = 0; i < cache->block_pool_used; i++) {
+        translated_block_t *b = &cache->block_pool[i];
+        if (b->host_code == NULL) continue;
+        exec_total += b->exec_count;
+        weighted_host_total += (uint64_t)b->exec_count * (uint64_t)b->host_size;
+        if (b->flags & BLOCK_FLAG_STAGE5) {
+            exec_stage5 += b->exec_count;
+            weighted_host_stage5 += (uint64_t)b->exec_count * (uint64_t)b->host_size;
+        }
+    }
+    if (exec_total > 0) {
+        double pct_exec = 100.0 * (double)exec_stage5 / (double)exec_total;
+        fprintf(stderr, "Stage5 hot coverage: exec=%" PRIu64 "/%" PRIu64 " (%.1f%%)\n",
+                exec_stage5, exec_total, pct_exec);
+        if (weighted_host_total > 0) {
+            double pct_whost = 100.0 * (double)weighted_host_stage5 / (double)weighted_host_total;
+            fprintf(stderr, "Stage5 weighted host-byte share: %.1f%%\n", pct_whost);
         }
     }
 }

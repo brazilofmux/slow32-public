@@ -68,7 +68,7 @@ static void apply_stage5_native_bench_profile(int *stage_out,
     if (stage_out) *stage_out = 5;
     if (two_pass_out) *two_pass_out = false;
     if (two_pass_forced_out) *two_pass_forced_out = true;
-    if (show_stats_out) *show_stats_out = true;
+    (void)show_stats_out;
     // Stable Stage5-native baseline for apples-to-apples benchmarking.
     strict_carry_enabled = true;
     stage5_burg_hook_enabled = true;
@@ -77,6 +77,7 @@ static void apply_stage5_native_bench_profile(int *stage_out,
     reg_cache_enabled = true;
     peephole_enabled = true;
     profile_side_exits = false;
+    setenv("SLOW32_DBT_STAGE5_BENCH_PROFILE", "1", 1);
 }
 
 // MMIO state

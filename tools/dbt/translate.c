@@ -189,6 +189,45 @@ static bool stage5_emit_calls_enabled(void) {
     return enabled;
 }
 
+static bool stage5_bench_profile_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_PROFILE");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+static uint32_t stage5_bench_max_jal_jump_ginst(void) {
+    static bool inited = false;
+    static uint32_t limit = 2;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_MAX_JAL_JUMP_GINST");
+        if (v && v[0] != '\0') {
+            unsigned long x = strtoul(v, NULL, 0);
+            if (x > 0 && x <= MAX_BLOCK_INSTS) limit = (uint32_t)x;
+        }
+        inited = true;
+    }
+    return limit;
+}
+
+static uint32_t stage5_bench_max_direct_branch_ginst(void) {
+    static bool inited = false;
+    static uint32_t limit = 16;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_MAX_DIRECT_BRANCH_GINST");
+        if (v && v[0] != '\0') {
+            unsigned long x = strtoul(v, NULL, 0);
+            if (x > 0 && x <= MAX_BLOCK_INSTS) limit = (uint32_t)x;
+        }
+        inited = true;
+    }
+    return limit;
+}
+
 static uint32_t stage5_emit_regflow_cross_limit(void) {
     static bool inited = false;
     static uint32_t limit = 10;
@@ -2497,12 +2536,14 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     if (allow_branch_probe) {
         stage5_emit_prefilter_branch_probe++;
     }
+    bool bench_profile = stage5_bench_profile_enabled();
     if (ctx->superblock_enabled &&
         !is_cmp_op &&
         !is_small_terminal_start &&
         !has_near_cmp_branch_zero &&
         !has_near_terminal &&
-        !allow_branch_probe) {
+        !allow_branch_probe &&
+        !bench_profile) {
         stage5_emit_prefilter_skip++;
         stage5_emit_prefilter_skip_noncmp_head++;
         return false;
@@ -2610,6 +2651,30 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     stage5_burg_pattern_t emitted_pattern = result.pattern;
 
     bool synth_block_end = (result.pattern == STAGE5_BURG_PATTERN_BLOCK_END);
+    if (bench_profile &&
+        emitted_pattern == STAGE5_BURG_PATTERN_JAL_JUMP &&
+        region.guest_inst_count > stage5_bench_max_jal_jump_ginst()) {
+        stage5_emit_fallback++;
+        stage5_emit_fallback_shape++;
+        stage5_emit_fallback_superblock_policy++;
+        return false;
+    }
+    if (bench_profile &&
+        stage5_pattern_is_direct_branch(emitted_pattern) &&
+        region.guest_inst_count > stage5_bench_max_direct_branch_ginst()) {
+        stage5_emit_fallback++;
+        stage5_emit_fallback_shape++;
+        stage5_emit_fallback_superblock_policy++;
+        return false;
+    }
+    if (bench_profile &&
+        synth_block_end &&
+        region.guest_inst_count > 8u) {
+        stage5_emit_fallback++;
+        stage5_emit_fallback_shape++;
+        stage5_emit_fallback_superblock_policy++;
+        return false;
+    }
     if ((!region.has_terminal_branch && !synth_block_end) || region.guest_inst_count == 0) {
         stage5_emit_fallback++;
         stage5_emit_fallback_non_terminal++;
@@ -2619,10 +2684,14 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     uint32_t raw0 = *(uint32_t *)(ctx->cpu->mem_base + guest_pc);
     decoded_inst_t inst0 = decode_instruction(raw0);
 
-    // Keep pilot control-flow deterministic: disable superblock extension while
-    // selected compare/branch families are emitted directly.
+    // Keep pilot control-flow deterministic by default: disable superblock
+    // extension while selected compare/branch families are emitted directly.
+    // In benchmark profile, keep superblock behavior enabled to measure
+    // throughput potential with fewer dispatcher round-trips.
     bool saved_superblock_enabled = ctx->superblock_enabled;
-    ctx->superblock_enabled = false;
+    if (!bench_profile) {
+        ctx->superblock_enabled = false;
+    }
     bool side_exit_owned = stage5_region_side_exits_supported(&region);
     bool side_exit_call_guard = stage5_region_contains_jal_or_jalr(&region);
     bool side_exit_emit_enabled = stage5_side_exit_emit_enabled();
@@ -2694,7 +2763,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         !allow_jal_call &&
         !allow_jal_jump &&
         !allow_jalr_ret &&
-        !(region.side_exit_count > 0 && side_exit_owned)) {
+        !(region.side_exit_count > 0 && side_exit_owned) &&
+        !bench_profile) {
         ctx->superblock_enabled = saved_superblock_enabled;
         stage5_emit_fallback++;
         stage5_emit_fallback_shape++;
@@ -2741,7 +2811,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
          emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_RELU) &&
         !allow_small_direct_branch &&
         emitted_pattern != STAGE5_BURG_PATTERN_DIRECT_BRANCH_RELU &&
-        emitted_pattern != STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL) {
+        emitted_pattern != STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL &&
+        !bench_profile) {
         ctx->superblock_enabled = saved_superblock_enabled;
         stage5_emit_fallback++;
         stage5_emit_fallback_shape++;
@@ -8826,6 +8897,7 @@ retry_translate:
 
     // Reset block metadata before translation
     memset(block, 0, sizeof(*block));
+    bool stage5_emitted_block = false;
     block->guest_pc = guest_pc;
     block->host_code = code_start;
 
@@ -8871,6 +8943,7 @@ retry_translate:
         stage5_emit_calls++;
         stage5_emit_time_ns += dt;
         if (stage5_emitted) {
+            stage5_emitted_block = true;
             stage5_emit_success_time_ns += dt;
             goto cached_block_done;
         }
@@ -9095,6 +9168,9 @@ retry_translate:
     emit_exit_chained(ctx, ctx->guest_pc, ctx->exit_idx++);
 
 cached_block_done:
+    if (stage5_emitted_block) {
+        block->flags |= BLOCK_FLAG_STAGE5;
+    }
     // Emit deferred (out-of-line) side exit cold stubs after the hot path
     if (ctx->deferred_exit_count > 0) {
         emit_deferred_side_exits(ctx);

@@ -42,8 +42,8 @@ else
     echo "keeping tmpdir: $tmpdir" >&2
 fi
 
-printf "%-20s %-5s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s\n" \
-  "test" "rc" "t4(s)" "t5(s)" "sel" "emit" "ginst" "b/gi" "jret_s" "jret_l" "jind"
+printf "%-20s %-5s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s\n" \
+  "test" "rc" "t4(s)" "t5(s)" "sel" "emit" "ginst" "b/gi" "hot%" "wht%" "jret_s" "jret_l" "jind"
 
 for t in "${TESTS[@]}"; do
     if [[ ! -f "$t" ]]; then
@@ -51,7 +51,13 @@ for t in "${TESTS[@]}"; do
         continue
     fi
 
-    base=$(basename "$(dirname "$t")")
+    base_dir=$(basename "$(dirname "$t")")
+    if [[ "$base_dir" == "." || "$base_dir" == ".." ]]; then
+        base=$(basename "$t")
+        base=${base%.s32x}
+    else
+        base="$base_dir"
+    fi
     out4="$tmpdir/${base}.s4.out"
     err4="$tmpdir/${base}.s4.err"
     out5="$tmpdir/${base}.s5.out"
@@ -114,6 +120,8 @@ for t in "${TESTS[@]}"; do
     emit=$(awk '/^Stage5 emit success:/ {print $4}' "$err5" | tail -n1)
     ginst=$(awk '/^Stage5 emit guest insts:/ {print $5}' "$err5" | tail -n1)
     bgi=$(awk '/^Stage5 emit bytes\/guest-inst:/ {print $4}' "$err5" | tail -n1)
+    hot_cov=$(awk '/^Stage5 hot coverage:/ {x=$5; gsub(/[()%]/, "", x); print x}' "$err5" | tail -n1)
+    hot_wht=$(awk '/^Stage5 weighted host-byte share:/ {gsub(/%/, "", $5); print $5}' "$err5" | tail -n1)
     jret_s=$(awk '/^  emit pattern jalr_ret_short/ {for(i=1;i<=NF;i++) if($i ~ /^bpg=/){sub(/^bpg=/,"",$i); print $i}}' "$err5" | tail -n1)
     jret_l=$(awk '/^  emit pattern jalr_ret_long/ {for(i=1;i<=NF;i++) if($i ~ /^bpg=/){sub(/^bpg=/,"",$i); print $i}}' "$err5" | tail -n1)
     jind=$(awk '/^  emit pattern jalr_indirect/ {for(i=1;i<=NF;i++) if($i ~ /^bpg=/){sub(/^bpg=/,"",$i); print $i}}' "$err5" | tail -n1)
@@ -124,10 +132,12 @@ for t in "${TESTS[@]}"; do
     [[ -n "$emit" ]] || emit="-"
     [[ -n "$ginst" ]] || ginst="-"
     [[ -n "$bgi" ]] || bgi="-"
+    [[ -n "$hot_cov" ]] || hot_cov="-"
+    [[ -n "$hot_wht" ]] || hot_wht="-"
     [[ -n "$jret_s" ]] || jret_s="-"
     [[ -n "$jret_l" ]] || jret_l="-"
     [[ -n "$jind" ]] || jind="-"
 
-    printf "%-20s %-5s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s\n" \
-      "$base" "$rc" "$t4" "$t5" "$sel" "$emit" "$ginst" "$bgi" "$jret_s" "$jret_l" "$jind"
+    printf "%-20s %-5s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s\n" \
+      "$base" "$rc" "$t4" "$t5" "$sel" "$emit" "$ginst" "$bgi" "$hot_cov" "$hot_wht" "$jret_s" "$jret_l" "$jind"
 done
