@@ -1488,14 +1488,11 @@ static bool cg_emit_node(stage5_cg_t *cg, const stage5_ir_node_t *n) {
         case OP_MULH:
             return cg_emit_mulh(cg, n);
         case OP_MULHU:
-            translate_mulhu(cg->ctx, n->rd, n->rs1, n->rs2);
-            return true;
+            return cg_emit_mulhu(cg, n);
         case OP_DIV:
-            translate_div(cg->ctx, n->rd, n->rs1, n->rs2);
-            return true;
+            return cg_emit_div(cg, n);
         case OP_REM:
-            translate_rem(cg->ctx, n->rd, n->rs1, n->rs2);
-            return true;
+            return cg_emit_rem(cg, n);
         case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
         case OP_FSQRT_S: case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
         case OP_FCVT_W_S: case OP_FCVT_WU_S: case OP_FCVT_S_W: case OP_FCVT_S_WU:
@@ -2643,7 +2640,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
                     stage5_translate_jal_jump_compact_for_codegen(ctx,
                         last->rd, last->imm);
                 } else {
-                    translate_jal(ctx, last->rd, last->imm);
+                    cg_emit_jal_terminal(&cg, last->rd, last->imm);
                 }
                 ended = true;
                 break;
