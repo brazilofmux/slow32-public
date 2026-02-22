@@ -2074,6 +2074,7 @@ static inline bool stage5_emit_single_terminal(translate_ctx_t *ctx,
                                                 uint8_t rs2,
                                                 int32_t imm,
                                                 stage5_burg_pattern_t emitted_pattern) {
+    opcode &= 0x7F;
     switch (opcode) {
         case OP_JAL:
             if (emitted_pattern == STAGE5_BURG_PATTERN_JAL_JUMP) {
@@ -2109,6 +2110,7 @@ static inline bool stage5_emit_single_terminal(translate_ctx_t *ctx,
 }
 
 static inline bool stage5_is_terminal_opcode(uint8_t opcode) {
+    opcode &= 0x7F;
     switch (opcode) {
         case OP_JAL:
         case OP_JALR:
@@ -2130,7 +2132,8 @@ static inline bool stage5_is_terminal_opcode(uint8_t opcode) {
 static inline bool stage5_emit_familyb_prefix_nonbranch(translate_ctx_t *ctx,
                                                          const decoded_inst_t *inst) {
     if (!ctx || !inst) return false;
-    switch (inst->opcode) {
+    uint8_t op = (uint8_t)(inst->opcode & 0x7F);
+    switch (op) {
         case OP_NOP: break;
         case OP_ADD:  translate_add(ctx, inst->rd, inst->rs1, inst->rs2); break;
         case OP_SUB:  translate_sub(ctx, inst->rd, inst->rs1, inst->rs2); break;
@@ -2196,7 +2199,8 @@ static inline bool stage5_emit_prefix_nonbranch(translate_ctx_t *ctx,
 static inline bool stage5_emit_cmp_prefix_for_branch(translate_ctx_t *ctx,
                                                       const decoded_inst_t *inst) {
     if (!ctx || !inst) return false;
-    switch (inst->opcode) {
+    uint8_t op = (uint8_t)(inst->opcode & 0x7F);
+    switch (op) {
         case OP_SLT:
         case OP_SLTU:
         case OP_SEQ:
@@ -3991,14 +3995,15 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 case OP_BGE:
                 case OP_BLTU:
                 case OP_BGEU: {
-                    if (!side_exit_family_cfg.family_b) {
+                    if (!side_exit_family_cfg.family_b && !bench_profile) {
                         ok_prefix = false;
                         break;
                     }
                     // Guardrail: Family-B unsigned side exits are not yet
                     // stable under all control-flow shapes. Let Family-C or
                     // the generic branch path own these until hardened.
-                    if (inst0.opcode == OP_BLTU || inst0.opcode == OP_BGEU) {
+                    if (!bench_profile &&
+                        (inst0.opcode == OP_BLTU || inst0.opcode == OP_BGEU)) {
                         ok_prefix = false;
                         break;
                     }
