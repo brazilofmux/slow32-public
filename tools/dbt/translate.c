@@ -6,6 +6,7 @@
 #include "stage5_lift.h"
 #include "stage5_burg.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <time.h>
@@ -82,9 +83,43 @@ static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg);
 static inline void flush_pending_write(translate_ctx_t *ctx);
 static inline void flush_pending_cond(translate_ctx_t *ctx);
 
-// Stage5 superblock ownership roadmap:
-// enable narrow side-exit ownership first (forward BEQ/BNE only), then expand.
-static const bool stage5_enable_side_exit_emit = false;
+// Stage5 side-exit emission is off by default.
+// Enable for experiments with: SLOW32_DBT_STAGE5_SIDE_EXIT=1
+static bool stage5_side_exit_emit_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_SIDE_EXIT");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+typedef enum {
+    STAGE5_SIDE_EXIT_MODE_EQNE = 0,    // BEQ/BNE
+    STAGE5_SIDE_EXIT_MODE_EQNE_U = 1,  // BEQ/BNE/BLTU/BGEU
+    STAGE5_SIDE_EXIT_MODE_ALL = 2      // + BLT/BGE
+} stage5_side_exit_mode_t;
+
+static stage5_side_exit_mode_t stage5_side_exit_mode(void) {
+    static bool inited = false;
+    static stage5_side_exit_mode_t mode = STAGE5_SIDE_EXIT_MODE_EQNE_U;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_SIDE_EXIT_MODE");
+        if (v) {
+            if (strcmp(v, "eqne") == 0) {
+                mode = STAGE5_SIDE_EXIT_MODE_EQNE;
+            } else if (strcmp(v, "all") == 0) {
+                mode = STAGE5_SIDE_EXIT_MODE_ALL;
+            } else {
+                mode = STAGE5_SIDE_EXIT_MODE_EQNE_U;
+            }
+        }
+        inited = true;
+    }
+    return mode;
+}
 
 static bool stage5_region_contains_jal_or_jalr(const stage5_lift_region_t *region) {
     if (!region) return false;
@@ -99,8 +134,17 @@ static bool stage5_region_contains_jal_or_jalr(const stage5_lift_region_t *regio
 static inline bool stage5_side_exit_supported(const stage5_ir_node_t *n) {
     if (!n) return false;
     if (!n->is_side_exit || n->kind != STAGE5_IR_BRANCH) return false;
-    return n->opcode == OP_BEQ || n->opcode == OP_BNE ||
-           n->opcode == OP_BLTU || n->opcode == OP_BGEU;
+    if (n->opcode == OP_BEQ || n->opcode == OP_BNE) return true;
+    stage5_side_exit_mode_t mode = stage5_side_exit_mode();
+    if (mode >= STAGE5_SIDE_EXIT_MODE_EQNE_U &&
+        (n->opcode == OP_BLTU || n->opcode == OP_BGEU)) {
+        return true;
+    }
+    if (mode >= STAGE5_SIDE_EXIT_MODE_ALL &&
+        (n->opcode == OP_BLT || n->opcode == OP_BGE)) {
+        return true;
+    }
+    return false;
 }
 
 static bool stage5_region_side_exits_supported(const stage5_lift_region_t *region) {
@@ -940,6 +984,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     ctx->superblock_enabled = false;
     bool side_exit_owned = stage5_region_side_exits_supported(&region);
     bool side_exit_call_guard = stage5_region_contains_jal_or_jalr(&region);
+    bool side_exit_emit_enabled = stage5_side_exit_emit_enabled();
     if (region.side_exit_count > 0) {
         for (uint32_t i = 0; i < region.ir_count; i++) {
             const stage5_ir_node_t *n = &region.ir[i];
@@ -953,7 +998,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         stage5_emit_region_side_exit_total++;
         if (side_exit_owned) {
             stage5_emit_region_side_exit_owned++;
-            if (!stage5_enable_side_exit_emit) {
+            if (!side_exit_emit_enabled) {
                 stage5_emit_region_side_exit_disabled++;
             } else if (side_exit_call_guard) {
                 stage5_emit_region_side_exit_call_guard++;
@@ -994,7 +1039,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         return false;
     }
 
-    if ((!stage5_enable_side_exit_emit || !side_exit_owned || side_exit_call_guard) &&
+    if ((!side_exit_emit_enabled || !side_exit_owned || side_exit_call_guard) &&
         region.side_exit_count > 0) {
         ctx->superblock_enabled = saved_superblock_enabled;
         stage5_emit_fallback++;
@@ -1516,7 +1561,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
 
             // Side-exit branch: emit compare + jcc_short + jmp trampoline,
             // record deferred cold stub, and continue with fall-through.
-            if (stage5_enable_side_exit_emit &&
+            if (side_exit_emit_enabled &&
                 stage5_side_exit_supported(n) &&
                 ctx->exit_idx < MAX_BLOCK_EXITS &&
                 ctx->deferred_exit_count < MAX_BLOCK_EXITS) {
