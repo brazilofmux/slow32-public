@@ -79,6 +79,9 @@ uint32_t stage5_validate_skipped_terminal = 0;
 uint32_t stage5_validate_skipped_mem_mmio = 0;
 uint32_t stage5_validate_skipped_mem_oob = 0;
 uint32_t stage5_validate_skipped_mem_capacity = 0;
+uint32_t stage5_validate_skip_call_indirect_opcode_hist[128] = {0};
+uint32_t stage5_validate_skip_terminal_opcode_hist[128] = {0};
+uint32_t stage5_validate_skip_mem_opcode_hist[128] = {0};
 uint32_t stage5_validate_mismatch = 0;
 uint32_t stage5_validate_ok = 0;
 uint32_t stage5_emit_fused_cmp_branch = 0;
@@ -411,10 +414,12 @@ static bool stage5_validate_region_eligible(const stage5_lift_region_t *region) 
         bool jalr_ret = (n->opcode == OP_JALR && n->rd == 0 && n->rs1 == REG_LR && n->imm == 0);
         if ((n->opcode == OP_JALR && !jalr_ret) || (n->opcode == OP_JAL && n->rd == 31)) {
             stage5_validate_skipped_call_indirect++;
+            stage5_validate_skip_call_indirect_opcode_hist[n->opcode & 0x7F]++;
             return false;
         }
         if (stage5_validate_is_terminal_unsupported(n->opcode)) {
             stage5_validate_skipped_terminal++;
+            stage5_validate_skip_terminal_opcode_hist[n->opcode & 0x7F]++;
             return false;
         }
     }
@@ -633,14 +638,17 @@ static bool stage5_validate_region(const translate_ctx_t *ctx,
         if (!stage5_validate_execute_decoded(&ref, &ref_mem, &inst, pc)) {
             if (ref_mem.status == STAGE5_VALIDATE_MEM_MMIO) {
                 stage5_validate_skipped_mem_mmio++;
+                stage5_validate_skip_mem_opcode_hist[inst.opcode & 0x7F]++;
                 return true;
             }
             if (ref_mem.status == STAGE5_VALIDATE_MEM_OOB) {
                 stage5_validate_skipped_mem_oob++;
+                stage5_validate_skip_mem_opcode_hist[inst.opcode & 0x7F]++;
                 return true;
             }
             if (ref_mem.status == STAGE5_VALIDATE_MEM_CAPACITY) {
                 stage5_validate_skipped_mem_capacity++;
+                stage5_validate_skip_mem_opcode_hist[inst.opcode & 0x7F]++;
                 return true;
             }
             stage5_validate_skipped_load_store++;
@@ -650,14 +658,17 @@ static bool stage5_validate_region(const translate_ctx_t *ctx,
             !stage5_validate_execute_ir(&ir, &ir_mem, node, inst.opcode, inst.imm, pc)) {
             if (ir_mem.status == STAGE5_VALIDATE_MEM_MMIO) {
                 stage5_validate_skipped_mem_mmio++;
+                stage5_validate_skip_mem_opcode_hist[inst.opcode & 0x7F]++;
                 return true;
             }
             if (ir_mem.status == STAGE5_VALIDATE_MEM_OOB) {
                 stage5_validate_skipped_mem_oob++;
+                stage5_validate_skip_mem_opcode_hist[inst.opcode & 0x7F]++;
                 return true;
             }
             if (ir_mem.status == STAGE5_VALIDATE_MEM_CAPACITY) {
                 stage5_validate_skipped_mem_capacity++;
+                stage5_validate_skip_mem_opcode_hist[inst.opcode & 0x7F]++;
                 return true;
             }
             stage5_validate_mismatch++;

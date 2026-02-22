@@ -1514,6 +1514,31 @@ static void parse_service_list(const char *list, char names[][S32_MAX_SVC_NAME],
     }
 }
 
+static void print_top_opcode_hist(const char *label, const uint32_t hist[128]) {
+    uint32_t top_count[3] = {0, 0, 0};
+    uint32_t top_opcode[3] = {0, 0, 0};
+    for (uint32_t op = 0; op < 128; op++) {
+        uint32_t c = hist[op];
+        if (c == 0) continue;
+        for (int k = 0; k < 3; k++) {
+            if (c > top_count[k]) {
+                for (int m = 2; m > k; m--) {
+                    top_count[m] = top_count[m - 1];
+                    top_opcode[m] = top_opcode[m - 1];
+                }
+                top_count[k] = c;
+                top_opcode[k] = op;
+                break;
+            }
+        }
+    }
+    for (int k = 0; k < 3; k++) {
+        if (top_count[k] == 0) break;
+        fprintf(stderr, "  %s top%d: op=0x%02X count=%" PRIu32 "\n",
+                label, k + 1, top_opcode[k], top_count[k]);
+    }
+}
+
 int main(int argc, char **argv) {
     /* Endianness check: SLOW-32 is Little-Endian and this emulator 
      * relies on host endianness for code translation performance. */
@@ -2350,10 +2375,14 @@ int main(int argc, char **argv) {
             if (stage5_validate_skipped_call_indirect > 0) {
                 fprintf(stderr, "  validate skipped call/indirect: %" PRIu32 "\n",
                         stage5_validate_skipped_call_indirect);
+                print_top_opcode_hist("validate skip call/indirect",
+                                      stage5_validate_skip_call_indirect_opcode_hist);
             }
             if (stage5_validate_skipped_terminal > 0) {
                 fprintf(stderr, "  validate skipped terminal: %" PRIu32 "\n",
                         stage5_validate_skipped_terminal);
+                print_top_opcode_hist("validate skip terminal",
+                                      stage5_validate_skip_terminal_opcode_hist);
             }
             if (stage5_validate_skipped_mem_mmio > 0) {
                 fprintf(stderr, "  validate skipped mem-mmio: %" PRIu32 "\n",
@@ -2366,6 +2395,12 @@ int main(int argc, char **argv) {
             if (stage5_validate_skipped_mem_capacity > 0) {
                 fprintf(stderr, "  validate skipped mem-capacity: %" PRIu32 "\n",
                         stage5_validate_skipped_mem_capacity);
+            }
+            if (stage5_validate_skipped_mem_mmio > 0 ||
+                stage5_validate_skipped_mem_oob > 0 ||
+                stage5_validate_skipped_mem_capacity > 0) {
+                print_top_opcode_hist("validate skip mem",
+                                      stage5_validate_skip_mem_opcode_hist);
             }
         }
 
