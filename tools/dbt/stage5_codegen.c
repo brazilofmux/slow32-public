@@ -1257,7 +1257,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
             case OP_BGE:
             case OP_BLTU:
             case OP_BGEU:
-                ended = stage5_translate_branch_direct_for_codegen(ctx,
+                ended = stage5_translate_branch_terminal_for_codegen(ctx,
                     last->opcode, last->rs1, last->rs2, last->imm);
                 break;
             default:
