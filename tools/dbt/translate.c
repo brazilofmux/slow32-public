@@ -5,6 +5,7 @@
 #include "block_cache.h"
 #include "stage5_lift.h"
 #include "stage5_burg.h"
+#include "stage5_codegen.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1332,6 +1333,17 @@ static bool stage5_side_exit_emit_enabled(void) {
     return enabled;
 }
 
+static bool stage5_codegen_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
 static bool dbt_nop_compact_enabled(void) {
     static bool inited = false;
     static bool enabled = true;
@@ -2470,6 +2482,33 @@ static inline void stage5_record_emit_success(translate_ctx_t *ctx,
         stage5_emit_pattern_guest_insts[pattern] += guest_insts;
         stage5_emit_pattern_host_bytes[pattern] += host_bytes;
     }
+}
+
+// ============================================================================
+// Bridge functions for stage5_codegen.c
+// Expose static functions needed by the native codegen.
+// ============================================================================
+
+void emit_exit_chained_for_codegen(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx) {
+    emit_exit_chained(ctx, target_pc, exit_idx);
+}
+
+bool stage5_emit_cmp_branch_fused_for_codegen(translate_ctx_t *ctx,
+    uint8_t cmp_opcode, uint8_t cmp_rs1, uint8_t cmp_rs2,
+    int32_t cmp_imm, bool cmp_is_imm,
+    uint8_t branch_opcode, int32_t branch_imm, uint32_t branch_pc) {
+    return stage5_emit_cmp_branch_fused(ctx, cmp_opcode, cmp_rs1, cmp_rs2,
+        cmp_imm, cmp_is_imm, branch_opcode, branch_imm, branch_pc);
+}
+
+bool stage5_translate_branch_terminal_for_codegen(translate_ctx_t *ctx,
+    uint8_t opcode, uint8_t rs1, uint8_t rs2, int32_t imm) {
+    return stage5_translate_branch_terminal(ctx, opcode, rs1, rs2, imm);
+}
+
+void stage5_translate_jal_jump_compact_for_codegen(translate_ctx_t *ctx,
+    uint8_t rd, int32_t imm) {
+    stage5_translate_jal_jump_compact(ctx, rd, imm);
 }
 
 // ============================================================================
@@ -3650,6 +3689,21 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         int fuse_cmp_idx = -1;
         if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO && terminal_idx > 0) {
             fuse_cmp_idx = stage5_find_cmp_branch_zero_cmp_idx(&region, terminal_idx);
+        }
+
+        // Try native codegen first (gated by SLOW32_DBT_STAGE5_CODEGEN=1)
+        if (stage5_codegen_enabled()) {
+            bool cg_ok = stage5_codegen(ctx, &region, guest_pc,
+                terminal_idx, fuse_cmp_idx, emitted_pattern,
+                synth_block_end, side_exit_emit_enabled,
+                &side_exit_family_cfg);
+            if (cg_ok) {
+                ctx->superblock_enabled = saved_superblock_enabled;
+                stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
+                if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
+                return true;
+            }
+            // Native codegen aborted — fall through to existing Family C dispatch
         }
 
         for (uint32_t i = 0; i < region.ir_count; i++) {

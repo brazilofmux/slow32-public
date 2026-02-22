@@ -25,6 +25,7 @@
 #include "translate.h"
 #include "block_cache.h"
 #include "stage5_burg.h"
+#include "stage5_codegen.h"
 
 // Reuse components from the emulator
 #include "../emulator/s32x_loader.h"
@@ -2691,6 +2692,37 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "  reg-flow max span seen: %" PRIu32 "\n",
                         stage5_reg_flow_max_span_seen);
             }
+        }
+
+        if (stage5_codegen_attempted > 0 || stage5_codegen_success > 0) {
+            fprintf(stderr, "Stage5 codegen attempted: %" PRIu32 "\n", stage5_codegen_attempted);
+            fprintf(stderr, "Stage5 codegen success:   %" PRIu32 "\n", stage5_codegen_success);
+            fprintf(stderr, "Stage5 codegen fallback:  %" PRIu32 "\n", stage5_codegen_fallback);
+            if (stage5_codegen_fallback_unsupported_op > 0) {
+                fprintf(stderr, "  codegen unsupported op: %" PRIu32 "\n",
+                        stage5_codegen_fallback_unsupported_op);
+            }
+            if (stage5_codegen_guest_insts > 0) {
+                fprintf(stderr, "Stage5 codegen guest insts: %" PRIu64 "\n",
+                        stage5_codegen_guest_insts);
+            }
+            if (stage5_codegen_host_bytes > 0) {
+                fprintf(stderr, "Stage5 codegen host bytes: %" PRIu64 "\n",
+                        stage5_codegen_host_bytes);
+            }
+            if (stage5_codegen_guest_insts > 0 && stage5_codegen_host_bytes > 0) {
+                double bpg = (double)stage5_codegen_host_bytes /
+                             (double)stage5_codegen_guest_insts;
+                fprintf(stderr, "Stage5 codegen bytes/guest-inst: %.2f\n", bpg);
+            }
+            fprintf(stderr, "  codegen regs allocated histogram:");
+            for (int h = 0; h <= REG_ALLOC_SLOTS; h++) {
+                if (stage5_codegen_regs_allocated_hist[h] > 0) {
+                    fprintf(stderr, " [%d]=%" PRIu32, h,
+                            stage5_codegen_regs_allocated_hist[h]);
+                }
+            }
+            fprintf(stderr, "\n");
         }
 
         if (stage >= 2) {

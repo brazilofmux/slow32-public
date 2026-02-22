@@ -1,0 +1,62 @@
+// SLOW-32 DBT: Stage 5 Native Codegen
+// Region-level register allocation + direct x86-64 emission
+//
+// Replaces the Family C translate_*() dispatch loop with native emission
+// using the pre-assigned host registers from ctx->reg_alloc[].
+
+#ifndef STAGE5_CODEGEN_H
+#define STAGE5_CODEGEN_H
+
+#include "stage5_lift.h"
+#include "translate.h"
+
+// Try native codegen for a lifted region.
+// On success: emits prefix + terminal into ctx->emit, returns true.
+// On failure: returns false (caller falls through to Family C dispatch).
+//
+// Preconditions:
+//   - ctx->reg_alloc[] already populated by reg_alloc_prescan() + prologue emitted
+//   - region is a valid lifted region with IR nodes
+//   - BURG pattern and terminal_idx already determined by caller
+//
+// The codegen uses ctx->reg_alloc as-is (no re-planning). It emits x86-64
+// directly for ALU/shift/memory/compare prefix instructions, then delegates
+// terminal emission to existing stage5_emit_cmp_branch_fused() or
+// translate_jal()/translate_jalr()/etc.
+bool stage5_codegen(translate_ctx_t *ctx,
+                    const stage5_lift_region_t *region,
+                    uint32_t guest_pc,
+                    int terminal_idx,
+                    int fuse_cmp_idx,
+                    int emitted_pattern,
+                    bool synth_block_end,
+                    bool side_exit_emit_enabled,
+                    const void *side_exit_family_cfg_ptr);
+
+// Telemetry counters (defined in stage5_codegen.c)
+extern uint32_t stage5_codegen_attempted;
+extern uint32_t stage5_codegen_success;
+extern uint32_t stage5_codegen_fallback;
+extern uint32_t stage5_codegen_fallback_unsupported_op;
+extern uint64_t stage5_codegen_guest_insts;
+extern uint64_t stage5_codegen_host_bytes;
+extern uint32_t stage5_codegen_regs_allocated_hist[REG_ALLOC_SLOTS + 1];
+
+// Bridge functions (defined in translate.c, expose static functions to codegen)
+void emit_exit_chained_for_codegen(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
+
+bool stage5_emit_cmp_branch_fused_for_codegen(translate_ctx_t *ctx,
+    uint8_t cmp_opcode, uint8_t cmp_rs1, uint8_t cmp_rs2,
+    int32_t cmp_imm, bool cmp_is_imm,
+    uint8_t branch_opcode, int32_t branch_imm, uint32_t branch_pc);
+
+bool stage5_translate_branch_terminal_for_codegen(translate_ctx_t *ctx,
+    uint8_t opcode, uint8_t rs1, uint8_t rs2, int32_t imm);
+
+void stage5_translate_jal_jump_compact_for_codegen(translate_ctx_t *ctx,
+    uint8_t rd, int32_t imm);
+
+// Side-exit counters (defined in translate.c)
+extern uint32_t stage5_emit_side_exits;
+
+#endif // STAGE5_CODEGEN_H
