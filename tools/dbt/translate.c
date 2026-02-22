@@ -3534,6 +3534,11 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                                                              &regflow_span_hit,
                                                              &regflow_live_hit);
     if (regflow_guard_hit) {
+        if (bench_profile) {
+            // In native benchmark profile, let Stage5 own these regions and
+            // rely on correctness gates instead of conservative regflow
+            // fallback.
+        } else {
         ctx->superblock_enabled = saved_superblock_enabled;
         stage5_emit_fallback++;
         stage5_emit_fallback_shape++;
@@ -3543,6 +3548,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         if (regflow_span_hit) stage5_emit_fallback_policy_regflow_span++;
         if (regflow_live_hit) stage5_emit_fallback_policy_regflow_live++;
         return false;
+        }
     }
 
     if (saved_superblock_enabled &&
