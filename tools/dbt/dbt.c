@@ -2260,6 +2260,14 @@ int main(int argc, char **argv) {
                                 stage5_emit_regflow_retry_recent_half_success,
                                 stage5_emit_regflow_retry_recent_half_attempted);
                     }
+                    if (stage5_emit_regflow_retry_cooldown_events > 0) {
+                        fprintf(stderr,
+                                "    retry cooldown events: %" PRIu32 " (cfg=%" PRIu32 ", term=%" PRIu32 ", half=%" PRIu32 ")\n",
+                                stage5_emit_regflow_retry_cooldown_events,
+                                stage5_emit_regflow_retry_cooldown_cfg,
+                                stage5_emit_regflow_retry_cooldown_term,
+                                stage5_emit_regflow_retry_cooldown_half);
+                    }
                 }
                 if (stage5_emit_prefilter_skip > 0) {
                     fprintf(stderr, "  emit prefilter_skip: %" PRIu32 "\n",

@@ -85,6 +85,10 @@ uint32_t stage5_emit_regflow_retry_recent_term_attempted = 0;
 uint32_t stage5_emit_regflow_retry_recent_term_success = 0;
 uint32_t stage5_emit_regflow_retry_recent_half_attempted = 0;
 uint32_t stage5_emit_regflow_retry_recent_half_success = 0;
+uint32_t stage5_emit_regflow_retry_cooldown_events = 0;
+uint32_t stage5_emit_regflow_retry_cooldown_cfg = 0;
+uint32_t stage5_emit_regflow_retry_cooldown_term = 0;
+uint32_t stage5_emit_regflow_retry_cooldown_half = 0;
 uint32_t stage5_emit_policy_allow_call = 0;
 uint32_t stage5_emit_prefilter_skip = 0;
 uint32_t stage5_emit_prefilter_skip_branch_head = 0;
@@ -357,6 +361,22 @@ static inline uint32_t *stage5_retry_recent_success_ptr(int retry_choice) {
     return NULL;
 }
 
+static inline uint32_t *stage5_retry_fail_streak_ptr(int retry_choice) {
+    static uint32_t cfg = 0, term = 0, half = 0;
+    if (retry_choice == 1) return &cfg;
+    if (retry_choice == 2) return &term;
+    if (retry_choice == 3) return &half;
+    return NULL;
+}
+
+static inline uint32_t *stage5_retry_cooldown_until_ptr(int retry_choice) {
+    static uint32_t cfg = 0, term = 0, half = 0;
+    if (retry_choice == 1) return &cfg;
+    if (retry_choice == 2) return &term;
+    if (retry_choice == 3) return &half;
+    return NULL;
+}
+
 static void stage5_retry_maybe_decay_recent(void) {
     uint32_t period = stage5_retry_decay_period();
     if (period == 0) return;
@@ -381,6 +401,31 @@ static void stage5_retry_note_success(int retry_choice) {
     if (s) (*s)++;
 }
 
+static bool stage5_retry_is_cooled_down(int retry_choice) {
+    uint32_t *until = stage5_retry_cooldown_until_ptr(retry_choice);
+    if (!until) return false;
+    return stage5_emit_regflow_retry_attempted < *until;
+}
+
+static void stage5_retry_note_outcome(int retry_choice, bool accepted) {
+    uint32_t *streak = stage5_retry_fail_streak_ptr(retry_choice);
+    uint32_t *until = stage5_retry_cooldown_until_ptr(retry_choice);
+    if (!streak || !until) return;
+    if (accepted) {
+        *streak = 0;
+        return;
+    }
+    if (*streak < 255u) (*streak)++;
+    if (*streak >= 3u) {
+        *streak = 0;
+        *until = stage5_emit_regflow_retry_attempted + 8u;
+        stage5_emit_regflow_retry_cooldown_events++;
+        if (retry_choice == 1) stage5_emit_regflow_retry_cooldown_cfg++;
+        if (retry_choice == 2) stage5_emit_regflow_retry_cooldown_term++;
+        if (retry_choice == 3) stage5_emit_regflow_retry_cooldown_half++;
+    }
+}
+
 static void stage5_adapt_retry_order(uint32_t *budgets, int *choices, int count) {
     if (!budgets || !choices || count <= 1) return;
     const uint32_t min_samples = 8;
@@ -388,6 +433,8 @@ static void stage5_adapt_retry_order(uint32_t *budgets, int *choices, int count)
         for (int j = i + 1; j < count; j++) {
             int ci = choices[i];
             int cj = choices[j];
+            bool cool_i = stage5_retry_is_cooled_down(ci);
+            bool cool_j = stage5_retry_is_cooled_down(cj);
             uint32_t ai = stage5_retry_attempted_for_choice(ci);
             uint32_t aj = stage5_retry_attempted_for_choice(cj);
             uint32_t si = stage5_retry_emit_success_for_choice(ci);
@@ -419,6 +466,8 @@ static void stage5_adapt_retry_order(uint32_t *budgets, int *choices, int count)
                     score_j = (long_j * 3 + rec_j * 7) / 10;
                 }
             }
+            if (cool_i) score_i -= 2000;
+            if (cool_j) score_j -= 2000;
             if (score_j > score_i) {
                 uint32_t tb = budgets[i];
                 budgets[i] = budgets[j];
@@ -2501,6 +2550,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         for (int ri = 0; ri < retry_count && !regflow_retry_applied; ri++) {
             uint32_t retry_budget = retry_budgets[ri];
             int retry_choice = retry_choices[ri];
+            bool accepted_retry = false;
             stage5_emit_regflow_retry_attempted++;
             stage5_retry_note_attempt(retry_choice);
             stage5_retry_maybe_decay_recent();
@@ -2520,6 +2570,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     region = retry_region;
                     regflow_retry_applied = true;
                     regflow_retry_choice = retry_choice;
+                    accepted_retry = true;
                     stage5_emit_regflow_retry_accepted++;
                     if (retry_choice == 1) stage5_emit_regflow_retry_cfg_accepted++;
                     if (retry_choice == 2) stage5_emit_regflow_retry_term_accepted++;
@@ -2536,6 +2587,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             } else {
                 stage5_record_lift_fallback(&retry_region);
             }
+            stage5_retry_note_outcome(retry_choice, accepted_retry);
         }
     }
     stage5_burg_attempted++;
