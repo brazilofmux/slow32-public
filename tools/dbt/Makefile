@@ -34,7 +34,7 @@ HDRS = cpu_state.h $(ARCH_HDRS) translate.h block_cache.h dbt_limits.h \
 # Main target
 TARGET = slow32-dbt
 
-.PHONY: all clean test test-diff compare-safe-unsafe compare-safe-unsafe-strict stress-safe-unsafe sweep-peephole sweep-peephole-strict stage5-gate debug disasm
+.PHONY: all clean test test-diff compare-safe-unsafe compare-safe-unsafe-strict stress-safe-unsafe sweep-peephole sweep-peephole-strict stage5-gate stage5-gate-fast debug disasm
 
 all: $(TARGET)
 	@echo "Built for $(UNAME_M)"
@@ -109,6 +109,11 @@ stage5-gate: $(TARGET)
 	@SWEEP_REQUIRE_STABLE=1 ./scripts/sweep-peephole-call-guards.sh "$(SWEEP_ITERS)" $(TESTS)
 	@echo "Stage5 gate: stress safe-vs-unsafe (iters=$(STRESS_ITERS))"
 	@./scripts/stress-stage5-safe-unsafe.sh "$(STRESS_ITERS)" $(TESTS)
+
+# Quick local preflight for rapid iteration.
+stage5-gate-fast: SWEEP_ITERS=20
+stage5-gate-fast: STRESS_ITERS=20
+stage5-gate-fast: stage5-gate
 
 clean:
 	rm -f *.o $(TARGET)
