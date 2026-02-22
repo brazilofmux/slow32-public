@@ -50,6 +50,9 @@ static bool stage5_emit_hook_enabled = false;
 static bool align_traps_enabled = false;
 static bool intrinsics_disabled = false;
 static bool bounds_checks_disabled = false;
+static bool trace_branch_exit_enabled = false;
+static int trace_branch_exit_budget = 0;
+static uint32_t trace_branch_exit_pc_filter = 0;
 
 // MMIO state
 static mmio_ring_state_t mmio_state;
@@ -78,6 +81,61 @@ typedef struct {
 
 static volatile dbt_cpu_state_t *g_dbt_cpu = NULL;
 static dbt_probe_state_t *g_dbt_probe = NULL;
+
+static void dbt_init_branch_trace_from_env(void) {
+    static bool inited = false;
+    if (inited) return;
+    inited = true;
+
+    const char *v = getenv("SLOW32_DBT_TRACE_BRANCH_EXIT");
+    trace_branch_exit_enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+    if (!trace_branch_exit_enabled) return;
+
+    const char *maxv = getenv("SLOW32_DBT_TRACE_BRANCH_EXIT_MAX");
+    trace_branch_exit_budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 64;
+    if (trace_branch_exit_budget < 0) trace_branch_exit_budget = 0;
+
+    const char *pcv = getenv("SLOW32_DBT_TRACE_BRANCH_PC");
+    if (pcv && pcv[0] != '\0') {
+        trace_branch_exit_pc_filter = (uint32_t)strtoul(pcv, NULL, 0);
+    }
+}
+
+static void dbt_trace_branch_exit(block_cache_t *cache,
+                                  translated_block_t *block,
+                                  dbt_cpu_state_t *cpu) {
+    (void)cache;
+    if (!trace_branch_exit_enabled) return;
+    if (trace_branch_exit_budget == 0) return;
+    if (cpu->exit_reason != EXIT_BRANCH &&
+        cpu->exit_reason != EXIT_INDIRECT &&
+        cpu->exit_reason != EXIT_BLOCK_END) {
+        return;
+    }
+    if (trace_branch_exit_pc_filter != 0 && cpu->pc != trace_branch_exit_pc_filter) {
+        return;
+    }
+
+    int exit_idx = -1;
+    uint32_t branch_pc = 0;
+    uint32_t target_pc = 0;
+    if (block) {
+        for (int i = 0; i < block->exit_count; i++) {
+            if (block->exits[i].target_pc == cpu->pc) {
+                exit_idx = i;
+                branch_pc = block->exits[i].branch_pc;
+                target_pc = block->exits[i].target_pc;
+                break;
+            }
+        }
+    }
+
+    fprintf(stderr,
+            "dbt-branch-exit reason=%u next_pc=0x%08X block_pc=0x%08X exit_idx=%d branch_pc=0x%08X target_pc=0x%08X info=0x%08X\n",
+            cpu->exit_reason, cpu->pc, block ? block->guest_pc : 0, exit_idx,
+            branch_pc, target_pc, cpu->exit_info);
+    trace_branch_exit_budget--;
+}
 
 // Async-signal-safe hex printer: writes "0xNNNNNNNN" to buf, returns length
 static int probe_hex32(char *buf, uint32_t val) {
@@ -854,6 +912,8 @@ static void run_dbt_stage2(dbt_cpu_state_t *cpu, block_cache_t *cache) {
             execute_translated(cpu, (translated_block_fn)block->host_code);
         }
 
+        dbt_trace_branch_exit(cache, block, cpu);
+
         dispatch_iter++;
 
         // Check probe flag
@@ -962,6 +1022,8 @@ static void run_dbt_stage3(dbt_cpu_state_t *cpu, block_cache_t *cache) {
             execute_translated(cpu, (translated_block_fn)block->host_code);
         }
 
+        dbt_trace_branch_exit(cache, block, cpu);
+
         dispatch_iter++;
 
         // Check probe flag
@@ -1038,6 +1100,13 @@ static void run_dbt_stage3(dbt_cpu_state_t *cpu, block_cache_t *cache) {
             case EXIT_FAULT_STORE:
                 fprintf(stderr, "DBT: Memory fault at PC=0x%08X, addr=0x%08X\n",
                         cpu->pc, cpu->exit_info);
+                if (trace_branch_exit_enabled && block) {
+                    uint32_t guest_end = block->guest_pc + block->guest_size;
+                    fprintf(stderr,
+                            "dbt-fault-context block_pc=0x%08X block_end=0x%08X host_size=%u exits=%u side_exits=%u\n",
+                            block->guest_pc, guest_end, block->host_size,
+                            block->exit_count, block->side_exit_count);
+                }
                 cpu->halted = true;
                 break;
 
@@ -1123,6 +1192,8 @@ static void run_dbt_stage4plus(dbt_cpu_state_t *cpu, block_cache_t *cache,
             execute_translated(cpu, (translated_block_fn)block->host_code);
         }
 
+        dbt_trace_branch_exit(cache, block, cpu);
+
         dispatch_iter++;
 
         // Check probe flag
@@ -1181,6 +1252,13 @@ static void run_dbt_stage4plus(dbt_cpu_state_t *cpu, block_cache_t *cache,
             case EXIT_FAULT_STORE:
                 fprintf(stderr, "DBT: Memory fault at PC=0x%08X, addr=0x%08X\n",
                         cpu->pc, cpu->exit_info);
+                if (trace_branch_exit_enabled && block) {
+                    uint32_t guest_end = block->guest_pc + block->guest_size;
+                    fprintf(stderr,
+                            "dbt-fault-context block_pc=0x%08X block_end=0x%08X host_size=%u exits=%u side_exits=%u\n",
+                            block->guest_pc, guest_end, block->host_size,
+                            block->exit_count, block->side_exit_count);
+                }
                 cpu->halted = true;
                 break;
 
@@ -1439,6 +1517,7 @@ int main(int argc, char **argv) {
         emit_trace_pc = dump_pc;
     }
     dbt_set_emit_trace(emit_trace, emit_trace_pc);
+    dbt_init_branch_trace_from_env();
 
     // Initialize CPU
     dbt_cpu_state_t cpu;
