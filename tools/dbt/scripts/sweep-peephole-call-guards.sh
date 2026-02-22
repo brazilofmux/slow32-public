@@ -16,7 +16,18 @@ shift || true
 if [[ $# -gt 0 ]]; then
     TESTS=("$@")
 else
-    TESTS=("$ROOT/regression/results/feature-strtod/test.s32x")
+    TESTS=()
+    for t in \
+        "$ROOT/regression/results/feature-branches/test.s32x" \
+        "$ROOT/regression/results/bench-loops/test.s32x" \
+        "$ROOT/regression/results/feature-crc32/test.s32x" \
+        "$ROOT/regression/results/feature-strtod/test.s32x"; do
+        [[ -f "$t" ]] && TESTS+=("$t")
+    done
+    if [[ ${#TESTS[@]} -eq 0 ]]; then
+        echo "error: no default regression .s32x files found under regression/results" >&2
+        exit 1
+    fi
 fi
 
 declare -a MODES=(

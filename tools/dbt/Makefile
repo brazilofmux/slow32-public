@@ -34,7 +34,7 @@ HDRS = cpu_state.h $(ARCH_HDRS) translate.h block_cache.h dbt_limits.h \
 # Main target
 TARGET = slow32-dbt
 
-.PHONY: all clean test
+.PHONY: all clean test test-diff stress-safe-unsafe sweep-peephole debug disasm
 
 all: $(TARGET)
 	@echo "Built for $(UNAME_M)"
@@ -64,6 +64,24 @@ test-diff: $(TARGET)
 	@echo "Running differential tests against interpreter..."
 	@./scripts/diff-test.sh
 
+# Repeated Stage5 safe-vs-unsafe stability stress.
+# Usage examples:
+#   make stress-safe-unsafe ITERS=200
+#   make stress-safe-unsafe ITERS=50 TESTS="../../regression/results/feature-strtod/test.s32x"
+ITERS ?= 100
+TESTS ?=
+stress-safe-unsafe: $(TARGET)
+	@echo "Running safe-vs-unsafe stress (iters=$(ITERS))..."
+	@./scripts/stress-stage5-safe-unsafe.sh "$(ITERS)" $(TESTS)
+
+# Sweep peephole call-guard modes and report mismatches.
+# Usage examples:
+#   make sweep-peephole ITERS=120
+#   make sweep-peephole ITERS=80 TESTS=".../feature-strtod/test.s32x"
+sweep-peephole: $(TARGET)
+	@echo "Running peephole guard sweep (iters=$(ITERS))..."
+	@./scripts/sweep-peephole-call-guards.sh "$(ITERS)" $(TESTS)
+
 clean:
 	rm -f *.o $(TARGET)
 
@@ -75,5 +93,3 @@ debug: $(TARGET)
 # Disassemble generated code for debugging
 disasm: $(TARGET)
 	objdump -d $(TARGET) | less
-
-.PHONY: debug disasm
