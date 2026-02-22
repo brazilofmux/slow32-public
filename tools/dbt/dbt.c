@@ -2248,6 +2248,18 @@ int main(int argc, char **argv) {
                                 stage5_emit_regflow_retry_explore_term_first,
                                 stage5_emit_regflow_retry_explore_half_first);
                     }
+                    if (stage5_emit_regflow_retry_decay_events > 0) {
+                        fprintf(stderr,
+                                "    retry decay events: %" PRIu32 " recent cfg=%" PRIu32 "/%" PRIu32
+                                " term=%" PRIu32 "/%" PRIu32 " half=%" PRIu32 "/%" PRIu32 "\n",
+                                stage5_emit_regflow_retry_decay_events,
+                                stage5_emit_regflow_retry_recent_cfg_success,
+                                stage5_emit_regflow_retry_recent_cfg_attempted,
+                                stage5_emit_regflow_retry_recent_term_success,
+                                stage5_emit_regflow_retry_recent_term_attempted,
+                                stage5_emit_regflow_retry_recent_half_success,
+                                stage5_emit_regflow_retry_recent_half_attempted);
+                    }
                 }
                 if (stage5_emit_prefilter_skip > 0) {
                     fprintf(stderr, "  emit prefilter_skip: %" PRIu32 "\n",
