@@ -1646,20 +1646,27 @@ static __attribute__((unused)) bool cg_emit_side_exit(stage5_cg_t *cg, const sta
     return true;
 }
 
-// Native BEQ/BNE terminal emission for predicate families.
+// Native branch terminal emission for predicate families.
 // Mirrors stage5 compact branch semantics without routing through translate.c.
-static bool cg_emit_branch_terminal_beq_bne(stage5_cg_t *cg,
-                                            uint8_t opcode,
-                                            uint8_t rs1, uint8_t rs2,
-                                            int32_t imm,
-                                            uint32_t branch_pc) {
+static bool cg_emit_branch_terminal_native(stage5_cg_t *cg,
+                                           uint8_t opcode,
+                                           uint8_t rs1, uint8_t rs2,
+                                           int32_t imm,
+                                           uint32_t branch_pc) {
     translate_ctx_t *ctx = cg->ctx;
     emit_ctx_t *e = cg->e;
     uint32_t fall_pc = branch_pc + 4;
     uint32_t taken_pc = fall_pc + imm;
+    void (*emit_taken_jcc)(emit_ctx_t *, int32_t) = NULL;
 
-    if (!(opcode == OP_BEQ || opcode == OP_BNE)) {
-        return false;
+    switch (opcode) {
+        case OP_BEQ:  emit_taken_jcc = emit_je_rel32;  break;
+        case OP_BNE:  emit_taken_jcc = emit_jne_rel32; break;
+        case OP_BLT:  emit_taken_jcc = emit_jl_rel32;  break;
+        case OP_BGE:  emit_taken_jcc = emit_jge_rel32; break;
+        case OP_BLTU: emit_taken_jcc = emit_jb_rel32;  break;
+        case OP_BGEU: emit_taken_jcc = emit_jae_rel32; break;
+        default: return false;
     }
 
     if (ctx->block) {
@@ -1669,10 +1676,10 @@ static bool cg_emit_branch_terminal_beq_bne(stage5_cg_t *cg,
     // Ensure deferred compare/write state is materialized before compare.
     stage5_flush_pending_for_codegen(ctx);
 
-    if (rs1 == 0 && rs2 == 0) {
+    if ((opcode == OP_BEQ || opcode == OP_BNE) && rs1 == 0 && rs2 == 0) {
         emit_xor_r32_r32(e, RAX, RAX);
         emit_test_r32_r32(e, RAX, RAX);
-    } else if (rs1 == 0 || rs2 == 0) {
+    } else if ((opcode == OP_BEQ || opcode == OP_BNE) && (rs1 == 0 || rs2 == 0)) {
         uint8_t rz = (rs1 == 0) ? rs2 : rs1;
         x64_reg_t hz = cg_guest_host(cg, rz);
         if (hz != X64_NOREG) {
@@ -1697,11 +1704,7 @@ static bool cg_emit_branch_terminal_beq_bne(stage5_cg_t *cg,
     }
 
     size_t jcc_patch = emit_offset(e) + 2;
-    if (opcode == OP_BEQ) {
-        emit_je_rel32(e, 0);
-    } else {
-        emit_jne_rel32(e, 0);
-    }
+    emit_taken_jcc(e, 0);
 
     if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
         ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
@@ -1958,9 +1961,8 @@ bool stage5_codegen(translate_ctx_t *ctx,
             case OP_BGE:
             case OP_BLTU:
             case OP_BGEU:
-                if (predicate_native_active &&
-                    (last->opcode == OP_BEQ || last->opcode == OP_BNE)) {
-                    ended = cg_emit_branch_terminal_beq_bne(&cg, last->opcode,
+                if (predicate_native_active) {
+                    ended = cg_emit_branch_terminal_native(&cg, last->opcode,
                         last->rs1, last->rs2, last->imm, last->pc);
                 } else {
                     ended = stage5_translate_branch_terminal_for_codegen(ctx,
