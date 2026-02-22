@@ -2366,6 +2366,18 @@ static bool cg_emit_branch_terminal_native(stage5_cg_t *cg,
     return true;
 }
 
+static bool cg_emit_phi_for_edge(stage5_cg_t *cg,
+                                 const stage5_lift_region_t *region,
+                                 const stage5_phi_elim_plan_t *phi_plan,
+                                 uint32_t pred_pc,
+                                 uint32_t succ_pc) {
+    if (!phi_plan || !region || !region->cfg_valid) return true;
+    int pred_block = cg_find_cfg_block_by_pc(region, pred_pc);
+    int succ_block = cg_find_cfg_block_by_pc(region, succ_pc);
+    if (pred_block < 0 || succ_block < 0) return true;
+    return cg_emit_phi_edge_copies(cg, phi_plan, pred_block, succ_block);
+}
+
 // ============================================================================
 // Main codegen entry point
 // ============================================================================
@@ -2831,6 +2843,14 @@ bool stage5_codegen(translate_ctx_t *ctx,
     } else if (synth_block_end) {
         ctx->guest_pc = guest_pc + region->guest_inst_count * 4;
         // reg_cache_flush is called by emit_exit_chained
+        if (!cg_emit_phi_for_edge(&cg, region, have_phi_plan ? &phi_plan : NULL,
+                                  guest_pc, ctx->guest_pc)) {
+            stage5_codegen_fallback++;
+            stage5_codegen_fallback_terminal++;
+            if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
+            cg_state_restore(ctx, &saved);
+            return false;
+        }
         emit_exit_chained_for_codegen(ctx, ctx->guest_pc, ctx->exit_idx++);
         ended = true;
     } else if (fuse_cmp_idx >= 0 && terminal_idx >= 0) {
@@ -2892,19 +2912,16 @@ bool stage5_codegen(translate_ctx_t *ctx,
             case OP_BGE:
             case OP_BLTU:
             case OP_BGEU:
+                ended = cg_emit_branch_terminal_native(&cg, region,
+                    have_phi_plan ? &phi_plan : NULL, last->opcode,
+                    last->rs1, last->rs2, last->imm, last->pc);
                 if (predicate_native_active) {
-                    ended = cg_emit_branch_terminal_native(&cg, region,
-                        have_phi_plan ? &phi_plan : NULL, last->opcode,
-                        last->rs1, last->rs2, last->imm, last->pc);
                     if (ended) {
                         stage5_codegen_predicate_native_terminal_success++;
                         stage5_codegen_predicate_native_terminal_opcode_hist[last->opcode & 0x7F]++;
                     } else {
                         stage5_codegen_predicate_native_terminal_fallback++;
                     }
-                } else {
-                    ended = stage5_translate_branch_terminal_for_codegen(ctx,
-                        last->opcode, last->rs1, last->rs2, last->imm);
                 }
                 break;
             default:
