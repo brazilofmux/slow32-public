@@ -76,6 +76,7 @@ uint32_t stage5_emit_region_side_exit_unsupported = 0;
 uint32_t stage5_emit_region_side_exit_disabled = 0;
 uint32_t stage5_emit_region_side_exit_call_guard = 0;
 uint32_t stage5_emit_side_exit_forced_family_c_unsigned = 0;
+uint32_t stage5_emit_side_exit_forced_family_c_b_only = 0;
 uint32_t stage5_emit_side_exit_auto_backedge_retry_unsigned = 0;
 uint32_t stage5_emit_side_exit_opcode_hist[128] = {0};
 uint32_t stage5_emit_side_exit_unsupported_opcode_hist[128] = {0};
@@ -173,9 +174,12 @@ typedef struct {
 static stage5_side_exit_family_cfg_t stage5_side_exit_family_cfg(void) {
     static bool inited = false;
     static stage5_side_exit_family_cfg_t cfg;
+    static bool allow_unsafe_family_b = false;
     if (!inited) {
         cfg.family_b = false;
         cfg.family_c = true;
+        const char *unsafe = getenv("SLOW32_DBT_STAGE5_ALLOW_UNSAFE_FAMILY_B");
+        allow_unsafe_family_b = (unsafe && unsafe[0] != '\0' && strcmp(unsafe, "0") != 0);
         const char *v = getenv("SLOW32_DBT_STAGE5_SIDE_EXIT_FAMILY");
         if (v && v[0] != '\0') {
             cfg.family_b = false;
@@ -184,6 +188,12 @@ static stage5_side_exit_family_cfg_t stage5_side_exit_family_cfg(void) {
                 if (*p == 'b' || *p == 'B') cfg.family_b = true;
                 if (*p == 'c' || *p == 'C') cfg.family_c = true;
             }
+        }
+        // Guardrail: Family-B-only mode is currently unstable on some inputs
+        // (e.g. strtod). Keep Family-C active so branch ownership remains safe.
+        if (!allow_unsafe_family_b && cfg.family_b && !cfg.family_c) {
+            cfg.family_c = true;
+            stage5_emit_side_exit_forced_family_c_b_only++;
         }
         // Guardrail: unsigned side-exit modes currently require Family-C.
         // Family-B can mis-handle these shapes and fault (observed in strtod).

@@ -1941,6 +1941,11 @@ int main(int argc, char **argv) {
                                 "  emit side_exit forced_family_c_unsigned: %" PRIu32 "\n",
                                 stage5_emit_side_exit_forced_family_c_unsigned);
                     }
+                    if (stage5_emit_side_exit_forced_family_c_b_only > 0) {
+                        fprintf(stderr,
+                                "  emit side_exit forced_family_c_b_only: %" PRIu32 "\n",
+                                stage5_emit_side_exit_forced_family_c_b_only);
+                    }
                     if (stage5_emit_side_exit_auto_backedge_retry_unsigned > 0) {
                         fprintf(stderr,
                                 "  emit side_exit auto_backedge_retry_unsigned: %" PRIu32 "\n",
