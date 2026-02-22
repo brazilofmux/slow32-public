@@ -1152,6 +1152,12 @@ static Node *parse_stmt(void) {
     char *sv_rp; char *sv_rts; char *sv_rte;
     char sv_str[256];
 
+    /* null statement */
+    if (lex_tok == TK_SEMI) {
+        next();
+        return nd_block(NULL);
+    }
+
     /* return statement */
     if (lex_tok == TK_RETURN) {
         next();

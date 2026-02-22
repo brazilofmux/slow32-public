@@ -32,6 +32,7 @@ static int pp_dep;                 /* ifdef nesting depth */
 static int pp_taken[PP_MAX_IF];   /* 1 if any branch taken at this depth */
 
 static char pp_sdir[256];         /* source directory prefix for includes */
+static char pp_idir[256];         /* -I include search path for <> includes */
 
 /* --- Text helpers (read from lex_src[lex_pos]) --- */
 
@@ -542,44 +543,13 @@ static void pp_undef(void) {
     pp_sync();
 }
 
-static void pp_include(void) {
-    char path[512];
-    int pi;
+static void pp_splice_file(char *path) {
     int fd;
     int n;
     int tail_len;
     int i;
     char *tmp;
 
-    pp_skip_ws();
-    if (lex_src[lex_pos] != 34) {  /* '"' */
-        /* Not a quoted include — skip (e.g. <...>) */
-        pp_skip_line();
-        pp_sync();
-        return;
-    }
-    lex_pos = lex_pos + 1;  /* skip opening quote */
-
-    /* Build path: pp_sdir + filename */
-    pi = 0;
-    i = 0;
-    while (pp_sdir[i] != 0) {
-        path[pi] = pp_sdir[i];
-        pi = pi + 1;
-        i = i + 1;
-    }
-    while (lex_src[lex_pos] != 34 && lex_src[lex_pos] != 0 && lex_src[lex_pos] != 10) {
-        path[pi] = lex_src[lex_pos];
-        pi = pi + 1;
-        lex_pos = lex_pos + 1;
-    }
-    path[pi] = 0;
-    if (lex_src[lex_pos] == 34) {
-        lex_pos = lex_pos + 1;  /* skip closing quote */
-    }
-    pp_skip_line();  /* skip rest of line */
-
-    /* Read file */
     fd = open(path, 0);
     if (fd < 0) {
         fputs("s12cc: cannot open include: ", stderr);
@@ -598,13 +568,11 @@ static void pp_include(void) {
 
     /* Splice: shift tail right by n, insert file content */
     tail_len = lex_len - lex_pos;
-    /* Backward copy to avoid overlap */
     i = tail_len - 1;
     while (i >= 0) {
         lex_src[lex_pos + n + i] = lex_src[lex_pos + i];
         i = i - 1;
     }
-    /* Copy file content */
     i = 0;
     while (i < n) {
         lex_src[lex_pos + i] = tmp[i];
@@ -614,6 +582,94 @@ static void pp_include(void) {
     lex_src[lex_len] = 0;
     free(tmp);
     pp_sync();
+}
+
+static void pp_include(void) {
+    char path[512];
+    char fname[256];
+    int pi;
+    int fi;
+    int fd;
+    int angle;
+
+    pp_skip_ws();
+    angle = 0;
+    if (lex_src[lex_pos] == 34) {  /* '"' */
+        lex_pos = lex_pos + 1;
+        /* Extract filename */
+        fi = 0;
+        while (lex_src[lex_pos] != 34 && lex_src[lex_pos] != 0 && lex_src[lex_pos] != 10) {
+            fname[fi] = lex_src[lex_pos];
+            fi = fi + 1;
+            lex_pos = lex_pos + 1;
+        }
+        fname[fi] = 0;
+        if (lex_src[lex_pos] == 34) lex_pos = lex_pos + 1;
+    } else if (lex_src[lex_pos] == 60) {  /* '<' */
+        angle = 1;
+        lex_pos = lex_pos + 1;
+        fi = 0;
+        while (lex_src[lex_pos] != 62 && lex_src[lex_pos] != 0 && lex_src[lex_pos] != 10) {
+            fname[fi] = lex_src[lex_pos];
+            fi = fi + 1;
+            lex_pos = lex_pos + 1;
+        }
+        fname[fi] = 0;
+        if (lex_src[lex_pos] == 62) lex_pos = lex_pos + 1;
+    } else {
+        pp_skip_line();
+        pp_sync();
+        return;
+    }
+    pp_skip_line();
+
+    if (angle) {
+        /* Angle-bracket: search -I directory */
+        if (pp_idir[0] == 0) {
+            /* No -I path set; silently skip */
+            pp_sync();
+            return;
+        }
+        pi = 0;
+        fi = 0;
+        while (pp_idir[fi] != 0) {
+            path[pi] = pp_idir[fi];
+            pi = pi + 1;
+            fi = fi + 1;
+        }
+        fi = 0;
+        while (fname[fi] != 0) {
+            path[pi] = fname[fi];
+            pi = pi + 1;
+            fi = fi + 1;
+        }
+        path[pi] = 0;
+        /* Try opening; silently skip if not found */
+        fd = open(path, 0);
+        if (fd < 0) {
+            pp_sync();
+            return;
+        }
+        close(fd);
+        pp_splice_file(path);
+    } else {
+        /* Quoted: search source directory */
+        pi = 0;
+        fi = 0;
+        while (pp_sdir[fi] != 0) {
+            path[pi] = pp_sdir[fi];
+            pi = pi + 1;
+            fi = fi + 1;
+        }
+        fi = 0;
+        while (fname[fi] != 0) {
+            path[pi] = fname[fi];
+            pi = pi + 1;
+            fi = fi + 1;
+        }
+        path[pi] = 0;
+        pp_splice_file(path);
+    }
 }
 
 /* --- #if expression evaluator --- */

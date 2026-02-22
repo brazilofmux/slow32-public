@@ -158,26 +158,76 @@ int main(int argc, char **argv) {
     int fd;
     int n;
     int i;
+    int j;
     int last_slash;
+    int argi;
+    char *infile;
+    char *outfile;
     char *src;
     Node *prog;
 
-    if (argc < 3) {
-        fputs("Usage: s12cc input.c output.s\n", stderr);
+    /* Parse arguments: [-I dir] input.c output.s */
+    pp_idir[0] = 0;
+    infile = 0;
+    outfile = 0;
+    argi = 1;
+    while (argi < argc) {
+        if (argv[argi][0] == 45 && argv[argi][1] == 73) {  /* "-I" */
+            if (argv[argi][2] != 0) {
+                /* -Idir (no space) */
+                i = 0;
+                j = 2;
+                while (argv[argi][j] != 0) {
+                    pp_idir[i] = argv[argi][j];
+                    i = i + 1;
+                    j = j + 1;
+                }
+                /* Ensure trailing slash */
+                if (i > 0 && pp_idir[i - 1] != 47) {
+                    pp_idir[i] = 47;
+                    i = i + 1;
+                }
+                pp_idir[i] = 0;
+            } else if (argi + 1 < argc) {
+                /* -I dir (with space) */
+                argi = argi + 1;
+                i = 0;
+                j = 0;
+                while (argv[argi][j] != 0) {
+                    pp_idir[i] = argv[argi][j];
+                    i = i + 1;
+                    j = j + 1;
+                }
+                if (i > 0 && pp_idir[i - 1] != 47) {
+                    pp_idir[i] = 47;
+                    i = i + 1;
+                }
+                pp_idir[i] = 0;
+            }
+        } else if (infile == 0) {
+            infile = argv[argi];
+        } else if (outfile == 0) {
+            outfile = argv[argi];
+        }
+        argi = argi + 1;
+    }
+
+    if (infile == 0 || outfile == 0) {
+        fputs("Usage: s12cc [-I dir] input.c output.s\n", stderr);
         return 1;
     }
 
     /* Extract source directory for #include resolution */
     last_slash = -1;
     i = 0;
-    while (argv[1][i] != 0) {
-        if (argv[1][i] == 47) last_slash = i;  /* '/' */
+    while (infile[i] != 0) {
+        if (infile[i] == 47) last_slash = i;  /* '/' */
         i = i + 1;
     }
     if (last_slash >= 0) {
         i = 0;
         while (i <= last_slash) {
-            pp_sdir[i] = argv[1][i];
+            pp_sdir[i] = infile[i];
             i = i + 1;
         }
         pp_sdir[i] = 0;
@@ -192,10 +242,10 @@ int main(int argc, char **argv) {
     ps_ntypedefs = 0;
 
     /* Read source file */
-    fd = open(argv[1], 0);
+    fd = open(infile, 0);
     if (fd < 0) {
         fputs("s12cc: cannot open input: ", stderr);
-        fputs(argv[1], stderr);
+        fputs(infile, stderr);
         fputc(10, stderr);
         return 1;
     }
@@ -224,10 +274,10 @@ int main(int argc, char **argv) {
     gen_program(prog);
 
     /* Write output */
-    fd = open(argv[2], 26);  /* O_WRONLY | O_CREAT | O_TRUNC */
+    fd = open(outfile, 26);  /* O_WRONLY | O_CREAT | O_TRUNC */
     if (fd < 0) {
         fputs("s12cc: cannot open output: ", stderr);
-        fputs(argv[2], stderr);
+        fputs(outfile, stderr);
         fputc(10, stderr);
         return 1;
     }
