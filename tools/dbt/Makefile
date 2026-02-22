@@ -74,7 +74,8 @@ SWEEP_ITERS ?= $(ITERS)
 STRESS_ITERS ?= $(ITERS)
 STAGE5_FAST_TESTS ?= ../../regression/results/feature-strtod/test.s32x \
 	../../regression/results/feature-crc32/test.s32x \
-	../../regression/results/feature-branches/test.s32x
+	../../regression/results/feature-branches/test.s32x \
+	../../regression/results/feature-function-calls/test.s32x
 
 compare-safe-unsafe: $(TARGET)
 	@echo "Comparing safe-vs-unsafe Stage5 output..."
