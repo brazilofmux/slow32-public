@@ -56,6 +56,9 @@ static uint32_t trace_branch_exit_pc_filter = 0;
 static bool trace_block_exits_enabled = false;
 static int trace_block_exits_budget = 0;
 static uint32_t trace_block_exits_pc = 0;
+static bool trace_block_regs_enabled = false;
+static int trace_block_regs_budget = 0;
+static uint32_t trace_block_regs_pc = 0;
 
 // MMIO state
 static mmio_ring_state_t mmio_state;
@@ -110,6 +113,15 @@ static void dbt_init_branch_trace_from_env(void) {
         const char *bmax = getenv("SLOW32_DBT_TRACE_BLOCK_EXITS_MAX");
         trace_block_exits_budget = (bmax && bmax[0] != '\0') ? atoi(bmax) : 8;
         if (trace_block_exits_budget < 0) trace_block_exits_budget = 0;
+    }
+
+    const char *br = getenv("SLOW32_DBT_TRACE_BLOCK_REGS_PC");
+    if (br && br[0] != '\0') {
+        trace_block_regs_enabled = true;
+        trace_block_regs_pc = (uint32_t)strtoul(br, NULL, 0);
+        const char *rmax = getenv("SLOW32_DBT_TRACE_BLOCK_REGS_MAX");
+        trace_block_regs_budget = (rmax && rmax[0] != '\0') ? atoi(rmax) : 8;
+        if (trace_block_regs_budget < 0) trace_block_regs_budget = 0;
     }
 }
 
@@ -168,6 +180,20 @@ static void dbt_trace_block_exits(translated_block_t *block) {
         fprintf(stderr, "  side_exit_pc[%u]=0x%08X\n", i, block->side_exit_pcs[i]);
     }
     trace_block_exits_budget--;
+}
+
+static void dbt_trace_block_regs(dbt_cpu_state_t *cpu, translated_block_t *block) {
+    if (!trace_block_regs_enabled || !cpu || !block) return;
+    if (trace_block_regs_budget == 0) return;
+    if (trace_block_regs_pc != 0 && block->guest_pc != trace_block_regs_pc) return;
+
+    fprintf(stderr,
+            "dbt-block-regs block_pc=0x%08X pc=0x%08X r7=%08X r10=%08X r12=%08X r14=%08X r15=%08X r16=%08X r18=%08X r19=%08X r20=%08X r21=%08X r23=%08X r28=%08X\n",
+            block->guest_pc, cpu->pc,
+            cpu->regs[7], cpu->regs[10], cpu->regs[12], cpu->regs[14], cpu->regs[15],
+            cpu->regs[16], cpu->regs[18], cpu->regs[19], cpu->regs[20], cpu->regs[21],
+            cpu->regs[23], cpu->regs[28]);
+    trace_block_regs_budget--;
 }
 
 // Async-signal-safe hex printer: writes "0xNNNNNNNN" to buf, returns length
@@ -1208,6 +1234,7 @@ static void run_dbt_stage4plus(dbt_cpu_state_t *cpu, block_cache_t *cache,
         }
 
         dbt_trace_block_exits(block);
+        dbt_trace_block_regs(cpu, block);
 
         // Execute translated code
         if (profile_timing) {
