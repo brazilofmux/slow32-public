@@ -2142,6 +2142,28 @@ static inline bool stage5_emit_prefix_nonbranch(translate_ctx_t *ctx,
     return stage5_emit_familyb_prefix_nonbranch(ctx, &inst);
 }
 
+static inline bool stage5_emit_cmp_prefix_for_branch(translate_ctx_t *ctx,
+                                                      const decoded_inst_t *inst) {
+    if (!ctx || !inst) return false;
+    switch (inst->opcode) {
+        case OP_SLT:
+        case OP_SLTU:
+        case OP_SEQ:
+        case OP_SNE:
+        case OP_SGT:
+        case OP_SGTU:
+        case OP_SLE:
+        case OP_SLEU:
+        case OP_SGE:
+        case OP_SGEU:
+        case OP_SLTI:
+        case OP_SLTIU:
+            return stage5_emit_familyb_prefix_nonbranch(ctx, inst);
+        default:
+            return false;
+    }
+}
+
 static inline bool stage5_prefilter_is_cmp_opcode(uint8_t opcode) {
     return opcode == OP_SLT || opcode == OP_SLTU ||
            opcode == OP_SEQ || opcode == OP_SNE ||
@@ -3799,23 +3821,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         if (branch_uses_cmp_rd) {
             ctx->guest_pc = guest_pc;
             ctx->current_inst_idx = 0;
-            switch (inst0.opcode) {
-                case OP_SLT:   translate_slt(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SLTU:  translate_sltu(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SEQ:   translate_seq(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SNE:   translate_sne(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SGT:   translate_sgt(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SGTU:  translate_sgtu(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SLE:   translate_sle(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SLEU:  translate_sleu(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SGE:   translate_sge(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SGEU:  translate_sgeu(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SLTI:  translate_slti(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
-                case OP_SLTIU: translate_sltiu(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
-                default:
-                    branch_uses_cmp_rd = false;
-                    break;
-            }
+            branch_uses_cmp_rd = stage5_emit_cmp_prefix_for_branch(ctx, &inst0);
 
             if (branch_uses_cmp_rd) {
                 ctx->guest_pc = guest_pc + 4;
