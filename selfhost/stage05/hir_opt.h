@@ -345,6 +345,32 @@ static int ho_const_fold(void) {
                 }
             }
 
+            /* Strength reduction: unsigned DIV by power-of-2 -> SRL */
+            if (h_kind[i] == HI_DIV && (h_ty[i] & TY_UNSIGNED) && s2c) {
+                b = h_val[h_src2[i]];
+                if (b > 0 && (b & (b - 1)) == 0) {
+                    shift = 0; tmp = b;
+                    while (tmp > 1) { shift = shift + 1; tmp = tmp >> 1; }
+                    ci = hi_emit(HI_ICONST, TY_INT, -1, -1, shift, NULL);
+                    h_blk[ci] = h_blk[i];
+                    h_kind[i] = HI_SRL;
+                    h_src2[i] = ci;
+                    changed = 1;
+                }
+            }
+
+            /* Strength reduction: unsigned REM by power-of-2 -> AND mask */
+            if (h_kind[i] == HI_REM && (h_ty[i] & TY_UNSIGNED) && s2c) {
+                b = h_val[h_src2[i]];
+                if (b > 0 && (b & (b - 1)) == 0) {
+                    ci = hi_emit(HI_ICONST, TY_INT, -1, -1, b - 1, NULL);
+                    h_blk[ci] = h_blk[i];
+                    h_kind[i] = HI_AND;
+                    h_src2[i] = ci;
+                    changed = 1;
+                }
+            }
+
             /* Same-operand simplifications (only if not already folded) */
             if (h_kind[i] == k && h_src1[i] >= 0 && h_src1[i] == h_src2[i]) {
                 /* x - x -> 0, x ^ x -> 0, x % x -> 0 */
