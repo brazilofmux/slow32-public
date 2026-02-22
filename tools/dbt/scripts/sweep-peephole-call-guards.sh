@@ -5,6 +5,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 STRESS="$ROOT/tools/dbt/scripts/stress-stage5-safe-unsafe.sh"
 REQUIRE_STABLE="${SWEEP_REQUIRE_STABLE:-0}"
+KEEP_TMP="${DBT_KEEP_TMP:-0}"
 
 if [[ ! -x "$STRESS" ]]; then
     echo "error: missing executable script: $STRESS" >&2
@@ -42,6 +43,11 @@ declare -a MODES=(
     "guard_none_no_jcc_no_immimm|SLOW32_DBT_PEEPHOLE_GUARD_CALLS=none SLOW32_DBT_NO_PEEPHOLE_JCC=1 SLOW32_DBT_NO_PEEPHOLE_IMMIMM=1"
 )
 
+TMPDIR=$(mktemp -d /tmp/sweep-peephole.XXXXXX)
+if [[ "$KEEP_TMP" = "0" ]]; then
+    trap 'rm -rf "$TMPDIR"' EXIT
+fi
+
 printf "%-24s %-6s %-12s\n" "mode" "rc" "notes"
 
 stable_first=""
@@ -56,17 +62,17 @@ for row in "${MODES[@]}"; do
     set +e
     if [[ -n "$envs" ]]; then
         # shellcheck disable=SC2086
-        env DBT_KEEP_TMP=1 $envs bash "$STRESS" "$ITERS" "${TESTS[@]}" >/tmp/sweep-peephole."$name".out 2>/tmp/sweep-peephole."$name".err
+        env DBT_KEEP_TMP=1 $envs bash "$STRESS" "$ITERS" "${TESTS[@]}" >"$TMPDIR/$name.out" 2>"$TMPDIR/$name.err"
     else
-        env DBT_KEEP_TMP=1 bash "$STRESS" "$ITERS" "${TESTS[@]}" >/tmp/sweep-peephole."$name".out 2>/tmp/sweep-peephole."$name".err
+        env DBT_KEEP_TMP=1 bash "$STRESS" "$ITERS" "${TESTS[@]}" >"$TMPDIR/$name.out" 2>"$TMPDIR/$name.err"
     fi
     rc=$?
     set -e
 
     if [[ $rc -ne 0 ]]; then
-        notes=$(rg -n "mismatch:|failed to run command|command not found" /tmp/sweep-peephole."$name".err | head -n1 | sed 's/^[0-9]*://')
+        notes=$(rg -n "mismatch:|failed to run command|command not found" "$TMPDIR/$name.err" | head -n1 | sed 's/^[0-9]*://')
         if [[ -z "$notes" ]]; then
-            notes=$(tail -n 1 /tmp/sweep-peephole."$name".err | tr -d '\n')
+            notes=$(tail -n 1 "$TMPDIR/$name.err" | tr -d '\n')
         fi
         [[ -n "$notes" ]] || notes="failed"
     fi
@@ -91,4 +97,8 @@ if [[ ${#unstable_modes[@]} -gt 0 ]]; then
     fi
 else
     echo "unstable: none"
+fi
+
+if [[ "$KEEP_TMP" != "0" ]]; then
+    echo "artifacts: $TMPDIR"
 fi
