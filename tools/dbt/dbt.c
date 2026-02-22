@@ -55,6 +55,8 @@ static bool bounds_checks_disabled = false;
 static bool trace_branch_exit_enabled = false;
 static int trace_branch_exit_budget = 0;
 static uint32_t trace_branch_exit_pc_filter = 0;
+static char trace_branch_exit_pc_filter_spec[256];
+static bool trace_branch_exit_pc_filter_has_spec = false;
 static bool trace_block_exits_enabled = false;
 static int trace_block_exits_budget = 0;
 static uint32_t trace_block_exits_pc = 0;
@@ -133,6 +135,13 @@ static void dbt_init_branch_trace_from_env(void) {
         const char *pcv = getenv("SLOW32_DBT_TRACE_BRANCH_PC");
         if (pcv && pcv[0] != '\0') {
             trace_branch_exit_pc_filter = (uint32_t)strtoul(pcv, NULL, 0);
+            size_t n = strlen(pcv);
+            if (n >= sizeof(trace_branch_exit_pc_filter_spec)) {
+                n = sizeof(trace_branch_exit_pc_filter_spec) - 1;
+            }
+            memcpy(trace_branch_exit_pc_filter_spec, pcv, n);
+            trace_branch_exit_pc_filter_spec[n] = '\0';
+            trace_branch_exit_pc_filter_has_spec = true;
         }
     }
 
@@ -155,6 +164,26 @@ static void dbt_init_branch_trace_from_env(void) {
     }
 }
 
+static bool dbt_trace_pc_matches_filter(uint32_t pc) {
+    if (!trace_branch_exit_pc_filter_has_spec) {
+        return trace_branch_exit_pc_filter != 0 && pc == trace_branch_exit_pc_filter;
+    }
+    const char *p = trace_branch_exit_pc_filter_spec;
+    while (*p) {
+        while (*p == ' ' || *p == '\t' || *p == ',') p++;
+        if (!*p) break;
+        char *end = NULL;
+        unsigned long x = strtoul(p, &end, 0);
+        if (end != p) {
+            if ((uint32_t)x == pc) return true;
+            p = end;
+            continue;
+        }
+        while (*p && *p != ',') p++;
+    }
+    return false;
+}
+
 static void dbt_trace_branch_exit(block_cache_t *cache,
                                   translated_block_t *block,
                                   dbt_cpu_state_t *cpu) {
@@ -166,10 +195,6 @@ static void dbt_trace_branch_exit(block_cache_t *cache,
         cpu->exit_reason != EXIT_BLOCK_END) {
         return;
     }
-    if (trace_branch_exit_pc_filter != 0 && cpu->pc != trace_branch_exit_pc_filter) {
-        return;
-    }
-
     int exit_idx = -1;
     uint32_t branch_pc = 0;
     uint32_t target_pc = 0;
@@ -181,6 +206,15 @@ static void dbt_trace_branch_exit(block_cache_t *cache,
                 target_pc = block->exits[i].target_pc;
                 break;
             }
+        }
+    }
+
+    if (trace_branch_exit_pc_filter != 0) {
+        bool match_next = dbt_trace_pc_matches_filter(cpu->pc);
+        bool match_branch = dbt_trace_pc_matches_filter(branch_pc);
+        bool match_target = dbt_trace_pc_matches_filter(target_pc);
+        if (!match_next && !match_branch && !match_target) {
+            return;
         }
     }
 

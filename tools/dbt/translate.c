@@ -1722,6 +1722,53 @@ static void stage5_trace_translated_block_guest_words(const translate_ctx_t *ctx
     budget--;
 }
 
+static void stage5_trace_translated_block_host_bytes(const translate_ctx_t *ctx,
+                                                     const translated_block_t *block) {
+    static bool inited = false;
+    static bool enabled = false;
+    static uint32_t filter_pc = 0;
+    static int budget = 0;
+    static uint32_t max_bytes = 256;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_TRACE_TRANSLATED_BLOCK_HOST_BYTES");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        const char *pcv = getenv("SLOW32_DBT_TRACE_TRANSLATED_BLOCK_PC");
+        if (pcv && pcv[0] != '\0') {
+            filter_pc = (uint32_t)strtoul(pcv, NULL, 0);
+        }
+        const char *maxv = getenv("SLOW32_DBT_TRACE_TRANSLATED_BLOCK_MAX");
+        budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 8;
+        if (budget < 0) budget = 0;
+        const char *hbv = getenv("SLOW32_DBT_TRACE_TRANSLATED_BLOCK_HOST_BYTES_MAX");
+        if (hbv && hbv[0] != '\0') {
+            max_bytes = (uint32_t)strtoul(hbv, NULL, 0);
+        }
+        inited = true;
+    }
+    if (!enabled || !ctx || !block || !block->host_code) return;
+    if (budget == 0) return;
+    if (filter_pc != 0 && block->guest_pc != filter_pc) return;
+
+    uint32_t n = block->host_size;
+    if (n > max_bytes) n = max_bytes;
+    fprintf(stderr,
+            "stage5-block-host-bytes block_pc=0x%08X host_size=%u dump=%u\n",
+            block->guest_pc, block->host_size, n);
+    for (uint32_t i = 0; i < n; i += 16) {
+        uint32_t row_end = i + 16;
+        if (row_end > n) row_end = n;
+        fprintf(stderr, "  +0x%04X:", i);
+        for (uint32_t j = i; j < row_end; j++) {
+            fprintf(stderr, " %02X", block->host_code[j]);
+        }
+        fprintf(stderr, "\n");
+    }
+    if (n < block->host_size) {
+        fprintf(stderr, "  ... truncated (%u bytes omitted)\n", block->host_size - n);
+    }
+    budget--;
+}
+
 static void stage5_trace_side_exit_policy(uint32_t guest_pc,
                                           stage5_burg_pattern_t pattern,
                                           const stage5_lift_region_t *region,
@@ -9916,6 +9963,7 @@ cached_block_done:
     }
     stage5_trace_translated_block(ctx, block);
     stage5_trace_translated_block_guest_words(ctx, block);
+    stage5_trace_translated_block_host_bytes(ctx, block);
 
     // Commit code to cache
     cache_commit_code(cache, block->host_size);
