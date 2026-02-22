@@ -3783,18 +3783,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             if (inst0_is_branch && (inst0.imm <= 0 || side_exit_capacity_blocked)) {
                 ctx->guest_pc = guest_pc;
                 ctx->current_inst_idx = 0;
-                bool ended = false;
-                switch (inst0.opcode) {
-                    case OP_BEQ:
-                    case OP_BNE:
-                    case OP_BLT:
-                    case OP_BGE:
-                    case OP_BLTU:
-                    case OP_BGEU:
-                        ended = stage5_translate_branch_terminal(ctx, inst0.opcode, inst0.rs1, inst0.rs2, inst0.imm);
-                        break;
-                    default: break;
-                }
+                bool ended = stage5_emit_single_terminal(ctx, inst0.opcode, inst0.rd,
+                                                         inst0.rs1, inst0.rs2, inst0.imm,
+                                                         emitted_pattern);
                 if (ended) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
@@ -3971,30 +3962,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             if (ok_prefix) {
                 ctx->guest_pc = guest_pc + 4;
                 ctx->current_inst_idx = 1;
-                bool ended = false;
-                switch (inst1.opcode) {
-                    case OP_JAL:
-                        if (emitted_pattern == STAGE5_BURG_PATTERN_JAL_JUMP) {
-                            stage5_translate_jal_jump_compact(ctx, inst1.rd, inst1.imm);
-                        } else {
-                            translate_jal(ctx, inst1.rd, inst1.imm);
-                        }
-                        ended = true;
-                        break;
-                    case OP_JALR:  translate_jalr(ctx, inst1.rd, inst1.rs1, inst1.imm); ended = true; break;
-                    case OP_HALT:  translate_halt(ctx); ended = true; break;
-                    case OP_DEBUG: translate_debug(ctx, inst1.rs1); ended = true; break;
-                    case OP_YIELD: translate_yield(ctx); ended = true; break;
-                    case OP_BEQ:
-                    case OP_BNE:
-                    case OP_BLT:
-                    case OP_BGE:
-                    case OP_BLTU:
-                    case OP_BGEU:
-                        ended = stage5_translate_branch_terminal(ctx, inst1.opcode, inst1.rs1, inst1.rs2, inst1.imm);
-                        break;
-                    default: ended = false; break;
-                }
+                bool ended = stage5_emit_single_terminal(ctx, inst1.opcode, inst1.rd,
+                                                         inst1.rs1, inst1.rs2, inst1.imm,
+                                                         emitted_pattern);
                 if (ended) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
@@ -4236,31 +4206,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 stage5_ir_node_t *last = &region.ir[terminal_idx];
                 ctx->guest_pc = last->pc;
                 ctx->current_inst_idx = terminal_idx;
-                switch (last->opcode) {
-                    case OP_JAL:
-                        if (emitted_pattern == STAGE5_BURG_PATTERN_JAL_JUMP) {
-                            stage5_translate_jal_jump_compact(ctx, last->rd, last->imm);
-                        } else {
-                            translate_jal(ctx, last->rd, last->imm);
-                        }
-                        ended = true;
-                        break;
-                    case OP_JALR:  translate_jalr(ctx, last->rd, last->rs1, last->imm); ended = true; break;
-                    case OP_HALT:  translate_halt(ctx); ended = true; break;
-                    case OP_DEBUG: translate_debug(ctx, last->rs1); ended = true; break;
-                    case OP_YIELD: translate_yield(ctx); ended = true; break;
-                    case OP_BEQ:
-                    case OP_BNE:
-                    case OP_BLT:
-                    case OP_BGE:
-                    case OP_BLTU:
-                    case OP_BGEU:
-                        ended = stage5_translate_branch_terminal(ctx, last->opcode, last->rs1, last->rs2, last->imm);
-                        break;
-                    default:
-                        ended = false;
-                        break;
-                }
+                ended = stage5_emit_single_terminal(ctx, last->opcode, last->rd,
+                                                    last->rs1, last->rs2, last->imm,
+                                                    emitted_pattern);
             }
             if (ended) {
                 ctx->superblock_enabled = saved_superblock_enabled;
