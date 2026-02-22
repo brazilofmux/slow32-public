@@ -34,7 +34,7 @@ HDRS = cpu_state.h $(ARCH_HDRS) translate.h block_cache.h dbt_limits.h \
 # Main target
 TARGET = slow32-dbt
 
-.PHONY: all clean test test-diff compare-safe-unsafe compare-safe-unsafe-strict stress-safe-unsafe sweep-peephole sweep-peephole-strict stage5-gate stage5-gate-fast debug disasm
+.PHONY: all clean test test-diff compare-safe-unsafe compare-safe-unsafe-strict stress-safe-unsafe sweep-peephole sweep-peephole-strict stage5-validate-preflight stage5-gate stage5-gate-fast debug disasm
 
 all: $(TARGET)
 	@echo "Built for $(UNAME_M)"
@@ -81,6 +81,10 @@ compare-safe-unsafe-strict: $(TARGET)
 	@echo "Comparing safe-vs-unsafe Stage5 output (strict)..."
 	@DBT_REQUIRE_MATCH=1 ./scripts/compare-stage5-safe-unsafe.sh $(TESTS)
 
+stage5-validate-preflight: $(TARGET)
+	@echo "Running Stage5 lift validator preflight..."
+	@./scripts/stage5-validate-preflight.sh $(TESTS)
+
 stress-safe-unsafe: $(TARGET)
 	@echo "Running safe-vs-unsafe stress (iters=$(ITERS))..."
 	@./scripts/stress-stage5-safe-unsafe.sh "$(ITERS)" $(TESTS)
@@ -103,6 +107,8 @@ sweep-peephole-strict: $(TARGET)
 #   make stage5-gate
 #   make stage5-gate TESTS="../../regression/results/feature-strtod/test.s32x" SWEEP_ITERS=80 STRESS_ITERS=200
 stage5-gate: $(TARGET)
+	@echo "Stage5 gate: lift validator preflight"
+	@./scripts/stage5-validate-preflight.sh $(TESTS)
 	@echo "Stage5 gate: strict compare"
 	@SLOW32_DBT_STAGE5_VALIDATE_LIFT=1 SLOW32_DBT_STAGE5_VALIDATE_REQUIRE=1 \
 	 DBT_REQUIRE_MATCH=1 ./scripts/compare-stage5-safe-unsafe.sh $(TESTS)
