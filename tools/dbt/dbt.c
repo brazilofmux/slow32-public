@@ -61,6 +61,24 @@ static bool trace_block_regs_enabled = false;
 static int trace_block_regs_budget = 0;
 static uint32_t trace_block_regs_pc = 0;
 
+static void apply_stage5_native_bench_profile(int *stage_out,
+                                              bool *two_pass_out,
+                                              bool *two_pass_forced_out,
+                                              bool *show_stats_out) {
+    if (stage_out) *stage_out = 5;
+    if (two_pass_out) *two_pass_out = false;
+    if (two_pass_forced_out) *two_pass_forced_out = true;
+    if (show_stats_out) *show_stats_out = true;
+    // Stable Stage5-native baseline for apples-to-apples benchmarking.
+    strict_carry_enabled = true;
+    stage5_burg_hook_enabled = true;
+    stage5_emit_hook_enabled = true;
+    superblock_enabled = true;
+    reg_cache_enabled = true;
+    peephole_enabled = true;
+    profile_side_exits = false;
+}
+
 // MMIO state
 static mmio_ring_state_t mmio_state;
 static bool mmio_initialized = false;
@@ -1477,6 +1495,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -C        Enable strict carry guardrails (disable unsigned cmp-branch fusion)\n");
     fprintf(stderr, "  -G        Enable Stage 5 lift/BURG hook telemetry (default: off)\n");
     fprintf(stderr, "  -W        Enable Stage 5 pilot emission (small terminal families)\n");
+    fprintf(stderr, "  -N        Enable Stage 5 native benchmark profile\n");
     fprintf(stderr, "  -t        Two-pass superblock profiling (Stage 4/5 only)\n");
     fprintf(stderr, "  -M <n>    Min samples before using side-exit rate\n");
     fprintf(stderr, "  -T <pct>  Max taken %% to allow superblock extension\n");
@@ -1558,6 +1577,7 @@ int main(int argc, char **argv) {
     bool dump_offenders = false;
     bool disassemble_offenders = false;
     uint32_t dump_pc = 0;
+    bool stage5_native_bench_profile = false;
     int stage = 4;  // Default to Stage 4 now
     const char *filename = NULL;
     dbt_probe_state_t probe = {0};
@@ -1634,6 +1654,10 @@ int main(int argc, char **argv) {
                     break;
                 case 'W':
                     stage5_emit_hook_enabled = true;
+                    break;
+                case 'N':
+                    stage5_native_bench_profile = true;
+                    apply_stage5_native_bench_profile(&stage, &two_pass, &two_pass_forced, &show_stats);
                     break;
                 case 'I':
                     intrinsics_disabled = true;
@@ -1761,6 +1785,8 @@ int main(int argc, char **argv) {
                     stage5_burg_hook_enabled ? "enabled" : "disabled");
             fprintf(stderr, "  Stage5 emit:  %s\n",
                     stage5_emit_hook_enabled ? "enabled" : "disabled");
+            fprintf(stderr, "  Stage5 bench: %s\n",
+                    stage5_native_bench_profile ? "enabled" : "disabled");
         }
         if (cpu.intrinsics_enabled) {
             fprintf(stderr, "  Intrinsics:   enabled\n");

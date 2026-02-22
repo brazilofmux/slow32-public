@@ -34,7 +34,7 @@ HDRS = cpu_state.h $(ARCH_HDRS) translate.h block_cache.h dbt_limits.h \
 # Main target
 TARGET = slow32-dbt
 
-.PHONY: all clean test test-diff compare-safe-unsafe compare-safe-unsafe-strict stress-safe-unsafe sweep-peephole sweep-peephole-strict stage5-validate-preflight stage5-gate stage5-gate-fast debug disasm
+.PHONY: all clean test test-diff compare-safe-unsafe compare-safe-unsafe-strict stress-safe-unsafe sweep-peephole sweep-peephole-strict stage5-validate-preflight stage5-gate stage5-gate-fast stage5-native-bench debug disasm
 
 all: $(TARGET)
 	@echo "Built for $(UNAME_M)"
@@ -128,6 +128,23 @@ stage5-gate-fast: SWEEP_ITERS=20
 stage5-gate-fast: STRESS_ITERS=20
 stage5-gate-fast: TESTS=$(STAGE5_FAST_TESTS)
 stage5-gate-fast: stage5-gate
+
+# Run the DBT in Stage5-native benchmark profile.
+# Usage:
+#   make stage5-native-bench BIN=../../benchmark_core.s32x
+# Optional:
+#   ARGS="..."   extra guest args
+#   DBT_ARGS="..." extra dbt args (e.g. -p)
+BIN ?=
+ARGS ?=
+DBT_ARGS ?=
+stage5-native-bench: $(TARGET)
+	@if [ -z "$(BIN)" ]; then \
+		echo "usage: make stage5-native-bench BIN=<program.s32x> [ARGS='...'] [DBT_ARGS='...']"; \
+		exit 1; \
+	fi
+	@echo "Running Stage5-native benchmark profile: $(BIN)"
+	@./$(TARGET) -N $(DBT_ARGS) $(BIN) $(ARGS)
 
 clean:
 	rm -f *.o $(TARGET)
