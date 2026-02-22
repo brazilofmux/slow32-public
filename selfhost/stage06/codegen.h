@@ -1116,9 +1116,7 @@ static void gen_data(void) {
     while (i < ps_nglobals) {
         if (ps_ginit_start[i] >= 0) {
             /* Array/struct initializer list */
-            cg_s(".global ");
-            cg_s(ps_gname[i]);
-            cg_c(10);
+            if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
             cg_s(ps_gname[i]);
             cg_s(":\n");
             /* Determine element size: char arrays use .byte, else .word */
@@ -1147,18 +1145,14 @@ static void gen_data(void) {
             }
         } else if (ps_gsize[i] == 0 && ps_gstr[i] >= 0) {
             /* String-initialized scalar: .word .LSN */
-            cg_s(".global ");
-            cg_s(ps_gname[i]);
-            cg_c(10);
+            if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
             cg_s(ps_gname[i]);
             cg_s(":\n    .word .LS");
             cg_n(ps_gstr[i]);
             cg_c(10);
         } else if (ps_gsize[i] == 0 && ps_ginit[i] != 0) {
             /* Integer-initialized scalar: stays in .data */
-            cg_s(".global ");
-            cg_s(ps_gname[i]);
-            cg_c(10);
+            if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
             cg_s(ps_gname[i]);
             cg_s(":\n    .word ");
             cg_n(ps_ginit[i]);
@@ -1175,18 +1169,14 @@ static void gen_data(void) {
             /* Already emitted in .data */
         } else if (ps_gsize[i] > 0) {
             /* Array */
-            cg_s(".global ");
-            cg_s(ps_gname[i]);
-            cg_c(10);
+            if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
             cg_s(ps_gname[i]);
             cg_s(":\n    .space ");
             cg_n(ps_gsize[i]);
             cg_c(10);
         } else if (ps_ginit[i] == 0 && ps_gstr[i] < 0) {
             /* Zero-init scalar (not string-initialized) */
-            cg_s(".global ");
-            cg_s(ps_gname[i]);
-            cg_c(10);
+            if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
             cg_s(ps_gname[i]);
             cg_s(":\n    .space 4\n");
         }

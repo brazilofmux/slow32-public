@@ -24,6 +24,8 @@ static char *ps_lname[P_MAX_LOCALS];  /* local var names */
 static int   ps_loff[P_MAX_LOCALS];   /* local var offsets from fp */
 static int   ps_ltype[P_MAX_LOCALS];  /* local var types */
 static int   ps_larr[P_MAX_LOCALS];   /* 1 if array (addr, no load) */
+static int   ps_lstatic[P_MAX_LOCALS]; /* 1 = static local, 0 = normal */
+static char *ps_lsname[P_MAX_LOCALS];  /* mangled name (static locals only) */
 static int   ps_nlocals;
 static int   ps_stack;                /* current stack allocation */
 static int   ps_nparams;              /* params in current func */
@@ -34,7 +36,13 @@ static int   ps_gtype[P_MAX_GLOBALS]; /* global var types */
 static int   ps_gsize[P_MAX_GLOBALS]; /* size in bytes (0=scalar, >0=array) */
 static int   ps_ginit[P_MAX_GLOBALS]; /* initial value for scalars */
 static int   ps_gstr[P_MAX_GLOBALS];  /* string init: pool index, -1 if none */
+static int   ps_glocal[P_MAX_GLOBALS]; /* 1 = static local (suppress .global) */
 static int   ps_nglobals;
+
+/* Static local variable state */
+static char *ps_cur_func;             /* current function name, NULL outside */
+static char  ps_sl_buf[256];          /* scratch buffer for name mangling */
+static int   ps_sl_count;             /* global static-local counter */
 
 /* Array/struct initializer pool for globals */
 #define PS_MAX_INIT_POOL 8192
@@ -455,6 +463,8 @@ static int add_local(char *name, int ty) {
     ps_loff[idx] = 0 - ps_stack;
     ps_ltype[idx] = ty;
     ps_larr[idx] = 0;
+    ps_lstatic[idx] = 0;
+    ps_lsname[idx] = NULL;
     ps_nlocals = ps_nlocals + 1;
     return ps_loff[idx];
 }
@@ -495,8 +505,36 @@ static int add_global(char *name, int ty, int size_bytes) {
     ps_gstr[idx] = -1;
     ps_ginit_start[idx] = -1;
     ps_ginit_count[idx] = 0;
+    ps_glocal[idx] = 0;
     ps_nglobals = ps_nglobals + 1;
     return idx;
+}
+
+/* Build mangled name for a static local: funcname.varname.N */
+static void ps_mangle_static(char *func, char *var) {
+    int i;
+    int j;
+    int v;
+    int d;
+    char digits[12];
+    i = 0;
+    j = 0;
+    while (func[j]) { ps_sl_buf[i] = func[j]; i = i + 1; j = j + 1; }
+    ps_sl_buf[i] = '.'; i = i + 1;
+    j = 0;
+    while (var[j]) { ps_sl_buf[i] = var[j]; i = i + 1; j = j + 1; }
+    ps_sl_buf[i] = '.'; i = i + 1;
+    /* append counter digits */
+    v = ps_sl_count;
+    if (v == 0) {
+        ps_sl_buf[i] = '0'; i = i + 1;
+    } else {
+        d = 0;
+        while (v > 0) { digits[d] = '0' + (v % 10); d = d + 1; v = v / 10; }
+        while (d > 0) { d = d - 1; ps_sl_buf[i] = digits[d]; i = i + 1; }
+    }
+    ps_sl_buf[i] = 0;
+    ps_sl_count = ps_sl_count + 1;
 }
 
 /* Parse a compile-time constant integer (for global initializers) */
@@ -566,6 +604,12 @@ static Node *parse_primary(void) {
         /* Check local variable first (enables fn ptr calls via postfix) */
         li = find_local(nm);
         if (li >= 0) {
+            if (ps_lstatic[li]) {
+                n = nd_var(ps_lsname[li], 0, ps_ltype[li]);
+                n->is_local = 0;
+                n->is_array = 0;
+                return n;
+            }
             n = nd_var(nm, ps_loff[li], ps_ltype[li]);
             n->is_local = 1;
             n->is_array = ps_larr[li];
@@ -1239,8 +1283,16 @@ static Node *parse_stmt(void) {
         return nd_block(NULL);
     }
 
-    /* Skip static/const qualifiers before local declarations */
-    while (lex_tok == TK_STATIC || lex_tok == TK_CONST) next();
+    /* Track static qualifier before local declarations */
+    {
+    int is_static;
+    int sl_gi;
+    int sl_li;
+    is_static = 0;
+    while (lex_tok == TK_STATIC || lex_tok == TK_CONST) {
+        if (lex_tok == TK_STATIC) is_static = 1;
+        next();
+    }
 
     /* local variable declaration */
     if (is_type()) {
@@ -1279,6 +1331,29 @@ static Node *parse_stmt(void) {
         }
         memcpy(nm, lex_str, lex_slen + 1);
         next();
+
+        /* Static local scalar: emit as global with mangled name */
+        if (is_static && lex_tok != TK_LBRACK) {
+            ps_mangle_static(ps_cur_func, nm);
+            sl_gi = add_global(ps_sl_buf, ty, 0);
+            ps_glocal[sl_gi] = 1;
+            if (lex_tok == TK_ASSIGN) {
+                next();
+                ps_ginit[sl_gi] = parse_const_int();
+            }
+            expect(TK_SEMI);
+            /* Add to local table for scoped name lookup */
+            sl_li = ps_nlocals;
+            if (sl_li >= P_MAX_LOCALS) { p_error("too many locals"); return nd_num(0); }
+            ps_lname[sl_li] = strdup(nm);
+            ps_loff[sl_li] = 0;
+            ps_ltype[sl_li] = ty;
+            ps_larr[sl_li] = 0;
+            ps_lstatic[sl_li] = 1;
+            ps_lsname[sl_li] = strdup(ps_sl_buf);
+            ps_nlocals = ps_nlocals + 1;
+            return nd_block(NULL);
+        }
 
         /* Array declaration: type name[N]; or type name[N] = ...; or type name[] = ...; */
         if (lex_tok == TK_LBRACK) {
@@ -1439,6 +1514,7 @@ static Node *parse_stmt(void) {
         expect(TK_SEMI);
         return nd_block(NULL);
     }
+    } /* end is_static scope */
 
     /* Label detection: identifier followed by colon */
     if (lex_tok == TK_IDENT) {
@@ -1744,6 +1820,7 @@ static Node *parse_top_decl(void) {
     i = 0;
     while (i < ps_nlocals) {
         free(ps_lname[i]);
+        if (ps_lsname[i]) free(ps_lsname[i]);
         i = i + 1;
     }
     ps_nlocals = 0;
@@ -1856,6 +1933,7 @@ params_done:
     fn->args = phead;
     fn->nparams = ps_nparams;
     fn->is_varargs = ps_is_varargs;
+    ps_cur_func = fn->name;
     fn->body = parse_block();
     fn->locals_size = ps_stack;
 
