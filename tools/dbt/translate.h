@@ -85,6 +85,7 @@ extern uint32_t stage5_emit_region_side_exit_disabled;
 extern uint32_t stage5_emit_region_side_exit_call_guard;
 extern uint32_t stage5_emit_side_exit_opcode_hist[128];
 extern uint32_t stage5_emit_side_exit_unsupported_opcode_hist[128];
+extern uint32_t stage5_emit_side_exit_emitted_opcode_hist[128];
 extern uint32_t stage5_emit_unhandled_opcode_hist[128];
 extern uint32_t stage5_emit_calls;
 extern uint64_t stage5_emit_time_ns;
@@ -207,6 +208,7 @@ typedef struct {
         bool pending_write_valid;
         uint8_t pending_write_guest_reg;
         host_reg_t pending_write_host_reg;
+        bool force_full_flush;
     } deferred_exits[MAX_BLOCK_EXITS];
 } translate_ctx_t;
 

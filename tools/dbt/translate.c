@@ -77,6 +77,7 @@ uint32_t stage5_emit_region_side_exit_disabled = 0;
 uint32_t stage5_emit_region_side_exit_call_guard = 0;
 uint32_t stage5_emit_side_exit_opcode_hist[128] = {0};
 uint32_t stage5_emit_side_exit_unsupported_opcode_hist[128] = {0};
+uint32_t stage5_emit_side_exit_emitted_opcode_hist[128] = {0};
 
 static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
 static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg);
@@ -102,6 +103,13 @@ typedef enum {
     STAGE5_SIDE_EXIT_MODE_ALL = 2      // + BLT/BGE
 } stage5_side_exit_mode_t;
 
+typedef enum {
+    STAGE5_SIDE_EXIT_UNSIGNED_NONE = 0,
+    STAGE5_SIDE_EXIT_UNSIGNED_BOTH = 1,
+    STAGE5_SIDE_EXIT_UNSIGNED_BLTU = 2,
+    STAGE5_SIDE_EXIT_UNSIGNED_BGEU = 3
+} stage5_side_exit_unsigned_mode_t;
+
 static stage5_side_exit_mode_t stage5_side_exit_mode(void) {
     static bool inited = false;
     static stage5_side_exit_mode_t mode = STAGE5_SIDE_EXIT_MODE_EQNE;
@@ -114,6 +122,27 @@ static stage5_side_exit_mode_t stage5_side_exit_mode(void) {
                 mode = STAGE5_SIDE_EXIT_MODE_EQNE_U;
             } else if (strcmp(v, "all") == 0) {
                 mode = STAGE5_SIDE_EXIT_MODE_ALL;
+            }
+        }
+        inited = true;
+    }
+    return mode;
+}
+
+static stage5_side_exit_unsigned_mode_t stage5_side_exit_unsigned_mode(void) {
+    static bool inited = false;
+    static stage5_side_exit_unsigned_mode_t mode = STAGE5_SIDE_EXIT_UNSIGNED_BOTH;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_SIDE_EXIT_UNSIGNED");
+        if (v) {
+            if (strcmp(v, "none") == 0) {
+                mode = STAGE5_SIDE_EXIT_UNSIGNED_NONE;
+            } else if (strcmp(v, "bltu") == 0) {
+                mode = STAGE5_SIDE_EXIT_UNSIGNED_BLTU;
+            } else if (strcmp(v, "bgeu") == 0) {
+                mode = STAGE5_SIDE_EXIT_UNSIGNED_BGEU;
+            } else {
+                mode = STAGE5_SIDE_EXIT_UNSIGNED_BOTH;
             }
         }
         inited = true;
@@ -153,6 +182,13 @@ static stage5_side_exit_family_cfg_t stage5_side_exit_family_cfg(void) {
                 if (*p == 'b' || *p == 'B') cfg.family_b = true;
                 if (*p == 'c' || *p == 'C') cfg.family_c = true;
             }
+        }
+        // Guardrail: unsigned side-exit modes currently require Family-C.
+        // Family-B can mis-handle these shapes and fault (observed in strtod).
+        if (stage5_side_exit_mode() >= STAGE5_SIDE_EXIT_MODE_EQNE_U &&
+            stage5_side_exit_unsigned_mode() != STAGE5_SIDE_EXIT_UNSIGNED_NONE) {
+            cfg.family_b = false;
+            cfg.family_c = true;
         }
         inited = true;
     }
@@ -209,7 +245,11 @@ static inline bool stage5_side_exit_opcode_supported(uint8_t opcode) {
     stage5_side_exit_mode_t mode = stage5_side_exit_mode();
     if (mode >= STAGE5_SIDE_EXIT_MODE_EQNE_U &&
         (opcode == OP_BLTU || opcode == OP_BGEU)) {
-        return true;
+        stage5_side_exit_unsigned_mode_t umode = stage5_side_exit_unsigned_mode();
+        if (umode == STAGE5_SIDE_EXIT_UNSIGNED_BOTH) return true;
+        if (umode == STAGE5_SIDE_EXIT_UNSIGNED_BLTU && opcode == OP_BLTU) return true;
+        if (umode == STAGE5_SIDE_EXIT_UNSIGNED_BGEU && opcode == OP_BGEU) return true;
+        return false;
     }
     if (mode >= STAGE5_SIDE_EXIT_MODE_ALL &&
         (opcode == OP_BLT || opcode == OP_BGE)) {
@@ -1485,6 +1525,13 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                         ok_prefix = false;
                         break;
                     }
+                    // Guardrail: Family-B unsigned side exits are not yet
+                    // stable under all control-flow shapes. Let Family-C or
+                    // the generic branch path own these until hardened.
+                    if (inst0.opcode == OP_BLTU || inst0.opcode == OP_BGEU) {
+                        ok_prefix = false;
+                        break;
+                    }
                     if (!stage5_side_exit_opcode_supported(inst0.opcode)) {
                         ok_prefix = false;
                         break;
@@ -1524,16 +1571,18 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     } else {
                         x64_reg_t h1 = (inst0.rs1 != 0) ? guest_host_reg(ctx, inst0.rs1) : X64_NOREG;
                         x64_reg_t h2 = (inst0.rs2 != 0) ? guest_host_reg(ctx, inst0.rs2) : X64_NOREG;
-                        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : RAX;
-                        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : RCX;
+                        x64_reg_t t1 = RAX, t2 = RCX;
+                        stage5_pick_cmp_scratch_regs(ctx, h1, h2, &t1, &t2);
+                        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : t1;
+                        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : t2;
                         if (h1 == X64_NOREG) {
                             flush_pending_write(ctx);
-                            if (inst0.rs1 == 0) emit_xor_r32_r32(e, RAX, RAX);
-                            else emit_load_guest_reg(ctx, RAX, inst0.rs1);
+                            if (inst0.rs1 == 0) emit_xor_r32_r32(e, t1, t1);
+                            else emit_load_guest_reg(ctx, t1, inst0.rs1);
                         }
                         if (h2 == X64_NOREG) {
-                            if (inst0.rs2 == 0) emit_xor_r32_r32(e, RCX, RCX);
-                            else emit_load_guest_reg(ctx, RCX, inst0.rs2);
+                            if (inst0.rs2 == 0) emit_xor_r32_r32(e, t2, t2);
+                            else emit_load_guest_reg(ctx, t2, inst0.rs2);
                         }
                         if (h1 != X64_NOREG || h2 != X64_NOREG) {
                             flush_pending_write(ctx);
@@ -1559,6 +1608,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     ctx->deferred_exits[di].pending_write_valid = ctx->pending_write.valid;
                     ctx->deferred_exits[di].pending_write_guest_reg = ctx->pending_write.guest_reg;
                     ctx->deferred_exits[di].pending_write_host_reg = ctx->pending_write.host_reg;
+                    ctx->deferred_exits[di].force_full_flush =
+                        (inst0.opcode == OP_BLTU || inst0.opcode == OP_BGEU);
 
                     if (ctx->block) {
                         ctx->block->flags |= BLOCK_FLAG_DIRECT;
@@ -1569,6 +1620,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     ctx->exit_idx++;
                     ctx->side_exit_emitted++;
                     stage5_emit_side_exits++;
+                    stage5_emit_side_exit_emitted_opcode_hist[inst0.opcode & 0x7F]++;
                     break;
                 }
                 default:
@@ -1722,6 +1774,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 ctx->deferred_exits[di].pending_write_valid = ctx->pending_write.valid;
                 ctx->deferred_exits[di].pending_write_guest_reg = ctx->pending_write.guest_reg;
                 ctx->deferred_exits[di].pending_write_host_reg = ctx->pending_write.host_reg;
+                ctx->deferred_exits[di].force_full_flush =
+                    (n->opcode == OP_BLTU || n->opcode == OP_BGEU);
 
                 if (ctx->block) {
                     ctx->block->flags |= BLOCK_FLAG_DIRECT;
@@ -1732,6 +1786,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 ctx->exit_idx++;
                 ctx->side_exit_emitted++;
                 stage5_emit_side_exits++;
+                stage5_emit_side_exit_emitted_opcode_hist[n->opcode & 0x7F]++;
                 continue;
             }
 
@@ -3926,11 +3981,23 @@ static void emit_deferred_side_exits(translate_ctx_t *ctx) {
                     GUEST_REG_OFFSET(ctx->deferred_exits[i].pending_write_guest_reg),
                     ctx->deferred_exits[i].pending_write_host_reg);
             }
-            // Flush dirty cached registers using full allocation snapshot
-            reg_alloc_flush_snapshot(ctx,
-                ctx->deferred_exits[i].dirty_snapshot,
-                ctx->deferred_exits[i].allocated_snapshot,
-                ctx->deferred_exits[i].guest_reg_snapshot);
+            // Unsigned side exits are prone to loop-carried dirty-state drift.
+            // Force a full snapshot flush there; otherwise keep dirty-only flush.
+            if (ctx->deferred_exits[i].force_full_flush) {
+                bool full_dirty[REG_ALLOC_SLOTS];
+                for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
+                    full_dirty[s] = ctx->deferred_exits[i].allocated_snapshot[s];
+                }
+                reg_alloc_flush_snapshot(ctx,
+                    full_dirty,
+                    ctx->deferred_exits[i].allocated_snapshot,
+                    ctx->deferred_exits[i].guest_reg_snapshot);
+            } else {
+                reg_alloc_flush_snapshot(ctx,
+                    ctx->deferred_exits[i].dirty_snapshot,
+                    ctx->deferred_exits[i].allocated_snapshot,
+                    ctx->deferred_exits[i].guest_reg_snapshot);
+            }
         }
 
         // Record branch_pc on block exit
@@ -4447,6 +4514,7 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
             ctx->deferred_exits[di].pending_write_valid = ctx->pending_write.valid;
             ctx->deferred_exits[di].pending_write_guest_reg = ctx->pending_write.guest_reg;
             ctx->deferred_exits[di].pending_write_host_reg = ctx->pending_write.host_reg;
+            ctx->deferred_exits[di].force_full_flush = false;
 
         }
 
@@ -7151,7 +7219,13 @@ cached_block_done:
         }
     }
 
-    if (ctx->avoid_backedge_extend && ctx->superblock_enabled &&
+    bool unsigned_side_exits_enabled =
+        (stage5_side_exit_mode() >= STAGE5_SIDE_EXIT_MODE_EQNE_U) &&
+        (stage5_side_exit_unsigned_mode() != STAGE5_SIDE_EXIT_UNSIGNED_NONE);
+    bool avoid_backedge_extend_effective =
+        ctx->avoid_backedge_extend || unsigned_side_exits_enabled;
+
+    if (avoid_backedge_extend_effective && ctx->superblock_enabled &&
         ctx->side_exit_emitted > 0 && !forced_no_superblock) {
         bool has_backedge = false;
         for (uint32_t eidx = 0; eidx < block->exit_count; eidx++) {

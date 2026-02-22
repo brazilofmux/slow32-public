@@ -1961,6 +1961,31 @@ int main(int argc, char **argv) {
                                     k + 1, top_opcode[k], top_count[k]);
                         }
                     }
+                    if (stage5_emit_side_exits > 0) {
+                        uint32_t top_count[3] = {0, 0, 0};
+                        uint32_t top_opcode[3] = {0, 0, 0};
+                        for (uint32_t op = 0; op < 128; op++) {
+                            uint32_t c = stage5_emit_side_exit_emitted_opcode_hist[op];
+                            if (c == 0) continue;
+                            for (int k = 0; k < 3; k++) {
+                                if (c > top_count[k]) {
+                                    for (int m = 2; m > k; m--) {
+                                        top_count[m] = top_count[m - 1];
+                                        top_opcode[m] = top_opcode[m - 1];
+                                    }
+                                    top_count[k] = c;
+                                    top_opcode[k] = op;
+                                    break;
+                                }
+                            }
+                        }
+                        for (int k = 0; k < 3; k++) {
+                            if (top_count[k] == 0) break;
+                            fprintf(stderr,
+                                    "  emit side_exit emitted top%d: op=0x%02X count=%" PRIu32 "\n",
+                                    k + 1, top_opcode[k], top_count[k]);
+                        }
+                    }
                 }
                 if (stage5_emit_fallback > 0) {
                     uint32_t top_count[3] = {0, 0, 0};
