@@ -216,6 +216,148 @@ static int find_cmp_branch_xor1_cmp_idx(const stage5_lift_region_t *region,
     return cmp_idx;
 }
 
+// Conservative boolean-domain checker used by predicate branch shapes.
+// Returns true when `reg` is proven to hold a 0/1 value at `use_idx`.
+static bool reg_is_bool_domain_before(const stage5_lift_region_t *region,
+                                      int use_idx, uint8_t reg, int depth) {
+    if (!region || depth > 8) return false;
+    if (reg == 0) return true;
+    for (int i = use_idx - 1; i >= 0; i--) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) continue;
+        if (n->rd != reg) continue;
+        if (n->kind == STAGE5_IR_CMP && is_cmp_opcode(n->opcode)) {
+            return true;
+        }
+        if (n->opcode == 0x12 && n->imm == 1) {  // ANDI x,*,1
+            return true;
+        }
+        if (n->opcode == 0x10 && n->imm == 0) {  // ADDI copy
+            return reg_is_bool_domain_before(region, i, n->rs1, depth + 1);
+        }
+        if (n->opcode == 0x11 && n->imm == 0) {  // ORI copy
+            return reg_is_bool_domain_before(region, i, n->rs1, depth + 1);
+        }
+        if (n->opcode == 0x1E && (n->imm == 0 || n->imm == 1)) {  // XORI
+            return reg_is_bool_domain_before(region, i, n->rs1, depth + 1);
+        }
+        if (n->opcode == 0x02 || n->opcode == 0x03 || n->opcode == 0x04) {  // XOR/OR/AND
+            return reg_is_bool_domain_before(region, i, n->rs1, depth + 1) &&
+                   reg_is_bool_domain_before(region, i, n->rs2, depth + 1);
+        }
+        return false;
+    }
+    return false;
+}
+
+static bool reg_depends_on_cmp_before(const stage5_lift_region_t *region,
+                                      int use_idx, uint8_t reg, int depth) {
+    if (!region || depth > 8) return false;
+    if (reg == 0) return false;
+    for (int i = use_idx - 1; i >= 0; i--) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) continue;
+        if (n->rd != reg) continue;
+        if (n->kind == STAGE5_IR_CMP && is_cmp_opcode(n->opcode)) return true;
+        switch (n->opcode) {
+            case 0x00:  // ADD
+            case 0x01:  // SUB
+            case 0x02:  // XOR
+            case 0x03:  // OR
+            case 0x04:  // AND
+                return reg_depends_on_cmp_before(region, i, n->rs1, depth + 1) ||
+                       reg_depends_on_cmp_before(region, i, n->rs2, depth + 1);
+            case 0x10:  // ADDI
+            case 0x11:  // ORI
+            case 0x12:  // ANDI
+            case 0x1E:  // XORI
+            case 0x13:  // SLLI
+            case 0x14:  // SRLI
+            case 0x15:  // SRAI
+                return reg_depends_on_cmp_before(region, i, n->rs1, depth + 1);
+            default:
+                return false;
+        }
+    }
+    return false;
+}
+
+// Match BEQ/BNE a,b where at least one operand is boolean-domain (0/1-ish),
+// and at least one compare op exists in-prefix to classify this as predicate flow.
+static int find_cmp_branch_boolpair_cmp_idx(const stage5_lift_region_t *region,
+                                            int branch_idx) {
+    if (!region || branch_idx <= 0 || branch_idx >= (int)region->ir_count) {
+        return -1;
+    }
+    const stage5_ir_node_t *b = &region->ir[branch_idx];
+    if (b->kind != STAGE5_IR_BRANCH) return -1;
+    if (b->opcode != 0x48 && b->opcode != 0x49) return -1;
+    if (b->rs1 == 0 || b->rs2 == 0) return -1;  // zero/const forms handled elsewhere
+
+    bool rs1_bool = reg_is_bool_domain_before(region, branch_idx, b->rs1, 0);
+    bool rs2_bool = reg_is_bool_domain_before(region, branch_idx, b->rs2, 0);
+    if (!rs1_bool && !rs2_bool) return -1;
+
+    int first_cmp_idx = -1;
+    for (int i = 0; i < branch_idx; i++) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) continue;
+        if (n->kind == STAGE5_IR_CMP && is_cmp_opcode(n->opcode)) {
+            first_cmp_idx = i;
+            break;
+        }
+    }
+    return first_cmp_idx;
+}
+
+// Match BEQ/BNE a,b where at least one side dataflow-depends on a compare result.
+static int find_cmp_branch_cmpdep_cmp_idx(const stage5_lift_region_t *region,
+                                          int branch_idx) {
+    if (!region || branch_idx <= 0 || branch_idx >= (int)region->ir_count) return -1;
+    const stage5_ir_node_t *b = &region->ir[branch_idx];
+    if (b->kind != STAGE5_IR_BRANCH) return -1;
+    if (b->opcode != 0x48 && b->opcode != 0x49) return -1;
+
+    bool rs1_dep = reg_depends_on_cmp_before(region, branch_idx, b->rs1, 0);
+    bool rs2_dep = reg_depends_on_cmp_before(region, branch_idx, b->rs2, 0);
+    if (!rs1_dep && !rs2_dep) return -1;
+
+    for (int i = 0; i < branch_idx; i++) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) continue;
+        if (n->kind == STAGE5_IR_CMP && is_cmp_opcode(n->opcode)) return i;
+    }
+    return -1;
+}
+
+// Match BEQ/BNE where compare ops exist in-prefix but branch operands are not
+// dataflow-dependent on compare outputs (semantic branch with cmp noise).
+static int find_cmp_branch_nocmpdep_cmp_idx(const stage5_lift_region_t *region,
+                                            int branch_idx) {
+    if (!region || branch_idx <= 0 || branch_idx >= (int)region->ir_count) return -1;
+    const stage5_ir_node_t *b = &region->ir[branch_idx];
+    if (b->kind != STAGE5_IR_BRANCH) return -1;
+    if (b->opcode != 0x48 && b->opcode != 0x49) return -1;
+
+    bool has_cmp_prefix = false;
+    int first_cmp_idx = -1;
+    for (int i = 0; i < branch_idx; i++) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) continue;
+        if (n->kind == STAGE5_IR_CMP && is_cmp_opcode(n->opcode)) {
+            has_cmp_prefix = true;
+            if (first_cmp_idx < 0) first_cmp_idx = i;
+        }
+    }
+    if (!has_cmp_prefix) return -1;
+
+    bool rs1_dep = reg_depends_on_cmp_before(region, branch_idx, b->rs1, 0);
+    bool rs2_dep = reg_depends_on_cmp_before(region, branch_idx, b->rs2, 0);
+    if (rs1_dep || rs2_dep) return -1;
+
+    return first_cmp_idx;
+}
+
 void stage5_burg_result_init(stage5_burg_result_t *result) {
     if (!result) {
         return;
@@ -301,6 +443,18 @@ bool stage5_burg_select(const stage5_lift_region_t *region, stage5_burg_result_t
                 has_concrete_cover = true;
                 break;
             }
+            if (find_cmp_branch_boolpair_cmp_idx(region, (int)i) >= 0) {
+                has_concrete_cover = true;
+                break;
+            }
+            if (find_cmp_branch_cmpdep_cmp_idx(region, (int)i) >= 0) {
+                has_concrete_cover = true;
+                break;
+            }
+            if (find_cmp_branch_nocmpdep_cmp_idx(region, (int)i) >= 0) {
+                has_concrete_cover = true;
+                break;
+            }
         }
     }
     if (!has_concrete_cover) {
@@ -340,6 +494,18 @@ bool stage5_burg_select(const stage5_lift_region_t *region, stage5_burg_result_t
             }
             if (find_cmp_branch_xor1_cmp_idx(region, i) >= 0) {
                 result->pattern = STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1;
+                break;
+            }
+            if (find_cmp_branch_boolpair_cmp_idx(region, i) >= 0) {
+                result->pattern = STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR;
+                break;
+            }
+            if (find_cmp_branch_cmpdep_cmp_idx(region, i) >= 0) {
+                result->pattern = STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP;
+                break;
+            }
+            if (find_cmp_branch_nocmpdep_cmp_idx(region, i) >= 0) {
+                result->pattern = STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP;
                 break;
             }
             result->pattern = direct_branch_pattern_for_opcode(n->opcode);
@@ -425,6 +591,12 @@ const char *stage5_burg_pattern_str(stage5_burg_pattern_t pattern) {
             return "cmp_branch_const01";
         case STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1:
             return "cmp_branch_xor1";
+        case STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR:
+            return "cmp_branch_boolpair";
+        case STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP:
+            return "cmp_branch_cmpdep";
+        case STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP:
+            return "cmp_branch_nocmpdep";
         case STAGE5_BURG_PATTERN_BLOCK_END:
             return "block_end";
         case STAGE5_BURG_PATTERN_GENERIC:

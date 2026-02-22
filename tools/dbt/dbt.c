@@ -1529,6 +1529,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_FUSED_BRANCH=1  Allow fused cmp+branch terminal codegen\n");
     fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_BRANCH_TERM=1  Allow branch terminal codegen\n");
     fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX=1  Allow BEQ/BNE terminals in cmp-mixed regions\n");
+    fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_PREDICATE_BRANCH_ONLY=1  Require CMP_BRANCH_* BURG patterns for cmp-mixed branches\n");
     fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_SIDE_EXIT=1  Allow native side-exit emission in codegen\n");
 }
 
@@ -2748,6 +2749,10 @@ int main(int argc, char **argv) {
                 if (stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_term > 0) {
                     fprintf(stderr, "      reason noncanonical term: %" PRIu32 "\n",
                             stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_term);
+                    print_top_opcode_hist("branch+cmp noncanonical term",
+                                          stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_term_opcode_hist);
+                    print_top_opcode_hist("branch+cmp noncanonical cmp-prefix",
+                                          stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_cmp_opcode_hist);
                 }
                 if (stage5_codegen_fallback_preflight_branch_cmp_mix_reason_nonadjacent > 0) {
                     fprintf(stderr, "      reason nonadjacent cmp:  %" PRIu32 "\n",
@@ -2756,10 +2761,34 @@ int main(int argc, char **argv) {
                 if (stage5_codegen_fallback_preflight_branch_cmp_mix_reason_rd_mismatch > 0) {
                     fprintf(stderr, "      reason rd mismatch:      %" PRIu32 "\n",
                             stage5_codegen_fallback_preflight_branch_cmp_mix_reason_rd_mismatch);
+                    print_top_opcode_hist("branch+cmp rd mismatch def",
+                                          stage5_codegen_fallback_preflight_branch_cmp_mix_reason_rd_mismatch_opcode_hist);
+                }
+                if (stage5_codegen_branch_cmp_mix_passthrough_rd_mismatch_xor > 0) {
+                    fprintf(stderr, "      passthrough rd_mismatch xor: %" PRIu32 "\n",
+                            stage5_codegen_branch_cmp_mix_passthrough_rd_mismatch_xor);
                 }
                 if (stage5_codegen_fallback_preflight_branch_cmp_mix_reason_opcode > 0) {
                     fprintf(stderr, "      reason opcode class:     %" PRIu32 "\n",
                             stage5_codegen_fallback_preflight_branch_cmp_mix_reason_opcode);
+                }
+                if (stage5_codegen_fallback_preflight_branch_cmp_mix_reason_predicate_policy > 0) {
+                    fprintf(stderr, "      reason predicate policy: %" PRIu32 "\n",
+                            stage5_codegen_fallback_preflight_branch_cmp_mix_reason_predicate_policy);
+                    uint32_t eq = stage5_codegen_fallback_preflight_branch_cmp_mix_reason_predicate_policy_pattern_hist[STAGE5_BURG_PATTERN_DIRECT_BRANCH_EQ];
+                    uint32_t ne = stage5_codegen_fallback_preflight_branch_cmp_mix_reason_predicate_policy_pattern_hist[STAGE5_BURG_PATTERN_DIRECT_BRANCH_NE];
+                    uint32_t rel = stage5_codegen_fallback_preflight_branch_cmp_mix_reason_predicate_policy_pattern_hist[STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL];
+                    uint32_t relu = stage5_codegen_fallback_preflight_branch_cmp_mix_reason_predicate_policy_pattern_hist[STAGE5_BURG_PATTERN_DIRECT_BRANCH_RELU];
+                    if (eq > 0) fprintf(stderr, "        predicate policy pattern direct_branch_eq: %" PRIu32 "\n", eq);
+                    if (ne > 0) fprintf(stderr, "        predicate policy pattern direct_branch_ne: %" PRIu32 "\n", ne);
+                    if (rel > 0) fprintf(stderr, "        predicate policy pattern direct_branch_rel: %" PRIu32 "\n", rel);
+                    if (relu > 0) fprintf(stderr, "        predicate policy pattern direct_branch_relu: %" PRIu32 "\n", relu);
+                    for (int pi = 0; pi < 64; pi++) {
+                        uint32_t c = stage5_codegen_fallback_preflight_branch_cmp_mix_reason_predicate_policy_pattern_hist[pi];
+                        if (c == 0) continue;
+                        fprintf(stderr, "        predicate policy pattern %s: %" PRIu32 "\n",
+                                stage5_burg_pattern_str((stage5_burg_pattern_t)pi), c);
+                    }
                 }
                 if (stage5_codegen_fallback_preflight_branch_cmp_mix_reason_multi_cmp > 0) {
                     fprintf(stderr, "      reason multi cmp nodes:  %" PRIu32 "\n",

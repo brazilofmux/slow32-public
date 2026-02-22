@@ -33,8 +33,14 @@ uint32_t stage5_codegen_fallback_preflight_terminal;
 uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix;
 uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_opcode_hist[128];
 uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_term;
+uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_term_opcode_hist[128];
+uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_cmp_opcode_hist[128];
 uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_nonadjacent;
 uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_rd_mismatch;
+uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_rd_mismatch_opcode_hist[128];
+uint32_t stage5_codegen_branch_cmp_mix_passthrough_rd_mismatch_xor;
+uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_predicate_policy;
+uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_predicate_policy_pattern_hist[64];
 uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_opcode;
 uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_multi_cmp;
 uint32_t stage5_codegen_fallback_side_exit;
@@ -164,6 +170,32 @@ static bool cg_trace_mix_enabled(void) {
         inited = true;
     }
     return enabled;
+}
+
+static bool cg_predicate_branch_only_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_PREDICATE_BRANCH_ONLY");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+static bool cg_pattern_is_predicate_branch(int emitted_pattern) {
+    return emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO ||
+           emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CONST01 ||
+           emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1 ||
+           emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR ||
+           emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP ||
+           emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP;
+}
+
+static bool cg_pattern_uses_cmp_mix_fusion(int emitted_pattern) {
+    return emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO ||
+           emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CONST01 ||
+           emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1;
 }
 
 // ============================================================================
@@ -900,11 +932,13 @@ static bool cg_mix_cmp_opcode_allowed(uint8_t opcode) {
 // Return true iff `reg` is provably zero at `use_idx` by local backwards scan.
 // Conservative by design: only accepts explicit zero-def patterns and bails out
 // on any other reaching definition.
-static bool cg_reg_known_const01_at(const stage5_lift_region_t *region,
-                                    int use_idx,
-                                    uint8_t reg,
-                                    int *out_value) {
+static bool cg_reg_known_const01_at_depth(const stage5_lift_region_t *region,
+                                          int use_idx,
+                                          uint8_t reg,
+                                          int depth,
+                                          int *out_value) {
     if (out_value) *out_value = -1;
+    if (depth > 8) return false;
     if (reg == 0) {
         if (out_value) *out_value = 0;
         return true;
@@ -917,21 +951,85 @@ static bool cg_reg_known_const01_at(const stage5_lift_region_t *region,
             if (out_value) *out_value = 0;
             return true;
         }
+        if (n->opcode == OP_ADDI && n->imm == 0) {
+            return cg_reg_known_const01_at_depth(region, i, n->rs1, depth + 1, out_value);
+        }
         if (n->opcode == OP_ADDI && n->rs1 == 0 && (n->imm == 0 || n->imm == 1)) {
             if (out_value) *out_value = n->imm;
             return true;
+        }
+        if (n->opcode == OP_ADDI && (n->imm == 0 || n->imm == 1)) {
+            int base = -1;
+            if (cg_reg_known_const01_at_depth(region, i, n->rs1, depth + 1, &base)) {
+                int v = base + n->imm;
+                if (v == 0 || v == 1) {
+                    if (out_value) *out_value = v;
+                    return true;
+                }
+            }
         }
         if (n->opcode == OP_ORI && n->rs1 == 0 && (n->imm == 0 || n->imm == 1)) {
             if (out_value) *out_value = n->imm;
             return true;
         }
+        if (n->opcode == OP_ORI && (n->imm == 0 || n->imm == 1)) {
+            int base = -1;
+            if (cg_reg_known_const01_at_depth(region, i, n->rs1, depth + 1, &base)) {
+                int v = base | n->imm;
+                if (v == 0 || v == 1) {
+                    if (out_value) *out_value = v;
+                    return true;
+                }
+            }
+        }
         if (n->opcode == OP_XORI && n->rs1 == 0 && (n->imm == 0 || n->imm == 1)) {
             if (out_value) *out_value = n->imm;
             return true;
         }
+        if (n->opcode == OP_XORI && (n->imm == 0 || n->imm == 1)) {
+            int base = -1;
+            if (cg_reg_known_const01_at_depth(region, i, n->rs1, depth + 1, &base)) {
+                int v = base ^ n->imm;
+                if (v == 0 || v == 1) {
+                    if (out_value) *out_value = v;
+                    return true;
+                }
+            }
+        }
+        if (n->opcode == OP_ANDI && (n->imm == 0 || n->imm == 1)) {
+            int base = -1;
+            if (cg_reg_known_const01_at_depth(region, i, n->rs1, depth + 1, &base)) {
+                int v = base & n->imm;
+                if (v == 0 || v == 1) {
+                    if (out_value) *out_value = v;
+                    return true;
+                }
+            }
+        }
+        if (n->opcode == OP_XOR || n->opcode == OP_OR || n->opcode == OP_AND) {
+            int v1 = -1, v2 = -1;
+            if (cg_reg_known_const01_at_depth(region, i, n->rs1, depth + 1, &v1) &&
+                cg_reg_known_const01_at_depth(region, i, n->rs2, depth + 1, &v2)) {
+                int v = -1;
+                if (n->opcode == OP_XOR) v = v1 ^ v2;
+                else if (n->opcode == OP_OR) v = v1 | v2;
+                else v = v1 & v2;
+                if (v == 0 || v == 1) {
+                    if (out_value) *out_value = v;
+                    return true;
+                }
+            }
+        }
         return false;
     }
     return false;
+}
+
+static bool cg_reg_known_const01_at(const stage5_lift_region_t *region,
+                                    int use_idx,
+                                    uint8_t reg,
+                                    int *out_value) {
+    return cg_reg_known_const01_at_depth(region, use_idx, reg, 0, out_value);
 }
 
 // Extract compare-result register used by terminal BEQ/BNE against constant 0/1.
@@ -1003,6 +1101,28 @@ static void cg_trace_mix_rd_mismatch(const stage5_lift_region_t *region,
                 n->synthetic ? 1 : 0, n->kind,
                 (i == terminal_idx) ? " <term>" : "",
                 (i == nearest_def_idx) ? " <def>" : "");
+    }
+}
+
+static void cg_trace_mix_noncanonical_term(const stage5_lift_region_t *region,
+                                           int terminal_idx) {
+    if (!cg_trace_mix_enabled()) return;
+    if (terminal_idx < 0 || terminal_idx >= (int)region->ir_count) return;
+    int lo = terminal_idx - 6;
+    if (lo < 0) lo = 0;
+    int hi = terminal_idx + 1;
+    if (hi >= (int)region->ir_count) hi = (int)region->ir_count - 1;
+    const stage5_ir_node_t *term = &region->ir[terminal_idx];
+    fprintf(stderr,
+            "[stage5-mix] noncanonical-term term_idx=%d op=0x%02X rs1=r%u rs2=r%u imm=%d\n",
+            terminal_idx, term->opcode, term->rs1, term->rs2, term->imm);
+    for (int i = lo; i <= hi; i++) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        fprintf(stderr,
+                "[stage5-mix]   ir[%d] op=0x%02X rd=r%u rs1=r%u rs2=r%u imm=%d syn=%d kind=%d%s\n",
+                i, n->opcode, n->rd, n->rs1, n->rs2, n->imm,
+                n->synthetic ? 1 : 0, n->kind,
+                (i == terminal_idx) ? " <term>" : "");
     }
 }
 
@@ -1160,6 +1280,7 @@ static int cg_find_branch_cmp_mix_idx(const stage5_lift_region_t *region,
 static bool cg_region_preflight(const stage5_lift_region_t *region,
                                 int terminal_idx,
                                 int fuse_cmp_idx,
+                                int emitted_pattern,
                                 bool synth_block_end,
                                 bool side_exit_emit_enabled,
                                 bool side_exit_family_c) {
@@ -1168,7 +1289,9 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
     bool fused_branch_enabled = cg_fused_branch_enabled();
     bool branch_term_enabled = cg_branch_term_enabled();
     bool branch_cmp_mix_enabled = cg_branch_cmp_mix_enabled();
+    bool use_cmp_mix_fusion = cg_pattern_uses_cmp_mix_fusion(emitted_pattern);
     bool side_exit_enabled = cg_side_exit_enabled();
+    bool predicate_branch_only = cg_predicate_branch_only_enabled();
 
     if (fuse_cmp_idx >= 0 && !fused_branch_enabled) {
         stage5_codegen_fallback_preflight_fused_branch++;
@@ -1233,35 +1356,75 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
                 }
             }
             if (has_cmp_prefix) {
-                uint32_t reason = 0;
-                uint8_t reason_opcode = first_cmp_opcode;
-                int mix_idx = -1;
-                uint8_t mix_norm_branch_opcode = term->opcode;
-                if (branch_cmp_mix_enabled && (term->opcode == OP_BEQ || term->opcode == OP_BNE)) {
-                    uint8_t trace_cond_reg = 0;
-                    int trace_def_idx = -1;
-                    mix_idx = cg_find_branch_cmp_mix_idx(region, terminal_idx, fuse_cmp_idx,
-                                                         &reason, &reason_opcode,
-                                                         &mix_norm_branch_opcode,
-                                                         NULL,
-                                                         &trace_cond_reg,
-                                                         &trace_def_idx);
-                    if (mix_idx < 0 && reason == 4) {
-                        cg_trace_mix_rd_mismatch(region, terminal_idx, trace_def_idx, trace_cond_reg);
+                if (predicate_branch_only &&
+                    !cg_pattern_is_predicate_branch(emitted_pattern)) {
+                    stage5_codegen_fallback_preflight_branch_cmp_mix++;
+                    stage5_codegen_fallback_preflight_branch_cmp_mix_reason_predicate_policy++;
+                    if (emitted_pattern >= 0 && emitted_pattern < 64) {
+                        stage5_codegen_fallback_preflight_branch_cmp_mix_reason_predicate_policy_pattern_hist[emitted_pattern]++;
+                    }
+                    stage5_codegen_fallback_preflight_branch_cmp_mix_opcode_hist[term->opcode & 0x7F]++;
+                    return false;
+                }
+                if (use_cmp_mix_fusion) {
+                    uint32_t reason = 0;
+                    uint8_t reason_opcode = first_cmp_opcode;
+                    int mix_idx = -1;
+                    uint8_t mix_norm_branch_opcode = term->opcode;
+                    if (branch_cmp_mix_enabled && (term->opcode == OP_BEQ || term->opcode == OP_BNE)) {
+                        uint8_t trace_cond_reg = 0;
+                        int trace_def_idx = -1;
+                        mix_idx = cg_find_branch_cmp_mix_idx(region, terminal_idx, fuse_cmp_idx,
+                                                             &reason, &reason_opcode,
+                                                             &mix_norm_branch_opcode,
+                                                             NULL,
+                                                             &trace_cond_reg,
+                                                             &trace_def_idx);
+                        if (mix_idx < 0 && reason == 4) {
+                            cg_trace_mix_rd_mismatch(region, terminal_idx, trace_def_idx, trace_cond_reg);
+                        } else if (mix_idx < 0 && reason == 1) {
+                            cg_trace_mix_noncanonical_term(region, terminal_idx);
+                        }
+                    }
+                    if (mix_idx < 0) {
+                    bool allow_boolpair_terminal = !use_cmp_mix_fusion &&
+                        (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR ||
+                         emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP ||
+                         emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP);
+                    if (allow_boolpair_terminal) {
+                        // Explicit predicate-family shape with non-zero/non-const
+                        // boolean operands; use normal branch terminal lowering.
+                    } else {
+                    bool passthrough = false;
+                    if (reason == 4 && reason_opcode == OP_XOR) {
+                        passthrough = true;
+                        stage5_codegen_branch_cmp_mix_passthrough_rd_mismatch_xor++;
+                    }
+                    if (passthrough) {
+                        // Keep normal branch terminal emission instead of forcing
+                        // cmp-mix fallback.
+                    } else {
+                        stage5_codegen_fallback_preflight_branch_cmp_mix++;
+                        stage5_codegen_fallback_preflight_branch_cmp_mix_opcode_hist[reason_opcode & 0x7F]++;
+                        switch (reason) {
+                            case 1:
+                                stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_term++;
+                                stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_term_opcode_hist[reason_opcode & 0x7F]++;
+                                stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_cmp_opcode_hist[first_cmp_opcode & 0x7F]++;
+                                break;
+                            case 2: stage5_codegen_fallback_preflight_branch_cmp_mix_reason_opcode++; break;
+                            case 3: stage5_codegen_fallback_preflight_branch_cmp_mix_reason_nonadjacent++; break;
+                            case 4:
+                                stage5_codegen_fallback_preflight_branch_cmp_mix_reason_rd_mismatch++;
+                                stage5_codegen_fallback_preflight_branch_cmp_mix_reason_rd_mismatch_opcode_hist[reason_opcode & 0x7F]++;
+                                break;
+                            case 5: stage5_codegen_fallback_preflight_branch_cmp_mix_reason_multi_cmp++; break;
+                            default: break;
+                        }
+                        return false;
+                    }
                     }
                 }
-                if (mix_idx < 0) {
-                    stage5_codegen_fallback_preflight_branch_cmp_mix++;
-                    stage5_codegen_fallback_preflight_branch_cmp_mix_opcode_hist[reason_opcode & 0x7F]++;
-                    switch (reason) {
-                        case 1: stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_term++; break;
-                        case 2: stage5_codegen_fallback_preflight_branch_cmp_mix_reason_opcode++; break;
-                        case 3: stage5_codegen_fallback_preflight_branch_cmp_mix_reason_nonadjacent++; break;
-                        case 4: stage5_codegen_fallback_preflight_branch_cmp_mix_reason_rd_mismatch++; break;
-                        case 5: stage5_codegen_fallback_preflight_branch_cmp_mix_reason_multi_cmp++; break;
-                        default: break;
-                    }
-                    return false;
                 }
             }
         }
@@ -1501,17 +1664,30 @@ bool stage5_codegen(translate_ctx_t *ctx,
     const side_exit_cfg_t *se_cfg = (const side_exit_cfg_t *)side_exit_family_cfg_ptr;
     bool side_exit_family_c = se_cfg ? se_cfg->family_c : false;
     bool side_exit_codegen = cg_side_exit_enabled();
+    bool use_cmp_mix_fusion = cg_pattern_uses_cmp_mix_fusion(emitted_pattern);
+
+    // Keep newer predicate families on the established translate.c terminal
+    // path until dedicated native lowering is validated.
+    if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR ||
+        emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP ||
+        emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP) {
+        stage5_codegen_fallback++;
+        stage5_codegen_fallback_preflight++;
+        return false;
+    }
+
     int mix_cmp_idx = -1;
     int mix_extra_skip_idx = -1;
     uint8_t mix_branch_opcode = 0;
-    if (cg_branch_cmp_mix_enabled()) {
+    if (cg_branch_cmp_mix_enabled() && use_cmp_mix_fusion) {
         mix_cmp_idx = cg_find_branch_cmp_mix_idx(region, terminal_idx, fuse_cmp_idx,
                                                  NULL, NULL, &mix_branch_opcode,
                                                  &mix_extra_skip_idx,
                                                  NULL, NULL);
     }
 
-    if (!cg_region_preflight(region, terminal_idx, fuse_cmp_idx, synth_block_end,
+    if (!cg_region_preflight(region, terminal_idx, fuse_cmp_idx, emitted_pattern,
+                             synth_block_end,
                              side_exit_emit_enabled, side_exit_family_c)) {
         stage5_codegen_fallback++;
         stage5_codegen_fallback_preflight++;

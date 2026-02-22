@@ -2229,6 +2229,15 @@ static int stage5_find_cmp_branch_fused_info(const stage5_lift_region_t *region,
     if (pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1) {
         return stage5_find_cmp_branch_xor1_cmp_idx(region, branch_idx, branch_opcode_out, extra_skip_idx_out);
     }
+    if (pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR) {
+        return -1;  // branch emitted via terminal path (no fused cmp node)
+    }
+    if (pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP) {
+        return -1;  // branch emitted via terminal path (no fused cmp node)
+    }
+    if (pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP) {
+        return -1;  // branch emitted via terminal path (no fused cmp node)
+    }
     return -1;
 }
 
@@ -3198,6 +3207,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         region.guest_inst_count > 2 &&
         emitted_pattern != STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO &&
         emitted_pattern != STAGE5_BURG_PATTERN_CMP_BRANCH_CONST01 &&
+        emitted_pattern != STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR &&
+        emitted_pattern != STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP &&
+        emitted_pattern != STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP &&
         emitted_pattern != STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1 &&
         !allow_small_direct_branch &&
         !allow_direct_branch_with_side_exit &&
@@ -3838,6 +3850,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             } else {
                 if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO ||
                     emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CONST01 ||
+                    emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR ||
+                    emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP ||
+                    emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP ||
                     emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1) {
                     stage5_emit_fallback_cmp_branch_miss++;
                 } else {
