@@ -142,6 +142,47 @@ static bool stage5_validate_abort_on_mismatch(void) {
     return enabled;
 }
 
+static bool stage5_validate_trace_skip_call_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_VALIDATE_TRACE_SKIP_CALL");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+static int stage5_validate_trace_skip_call_budget(void) {
+    static bool inited = false;
+    static int budget = 0;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_VALIDATE_TRACE_SKIP_CALL_MAX");
+        budget = (v && v[0] != '\0') ? atoi(v) : 16;
+        if (budget < 0) budget = 0;
+        inited = true;
+    }
+    return budget;
+}
+
+static void stage5_validate_trace_skip_call(const stage5_lift_region_t *region,
+                                            const stage5_ir_node_t *node,
+                                            uint32_t idx,
+                                            const char *reason) {
+    static int emitted = 0;
+    if (!stage5_validate_trace_skip_call_enabled()) return;
+    int budget = stage5_validate_trace_skip_call_budget();
+    if (emitted >= budget) return;
+    if (!region || !node) return;
+    emitted++;
+    fprintf(stderr,
+            "stage5-validate-skip-call reason=%s block_pc=0x%08X node_idx=%u pc=0x%08X op=0x%02X rd=%u rs1=%u rs2=%u imm=%d side_exit=%u\n",
+            reason ? reason : "call_indirect",
+            region->start_pc, idx, node->pc, node->opcode,
+            node->rd, node->rs1, node->rs2, node->imm,
+            node->is_side_exit ? 1u : 0u);
+}
+
 typedef struct {
     uint32_t regs[32];
     uint32_t pc;
@@ -419,6 +460,14 @@ static bool stage5_validate_region_eligible(const stage5_lift_region_t *region) 
             (jal_call && !is_last)) {
             stage5_validate_skipped_call_indirect++;
             stage5_validate_skip_call_indirect_opcode_hist[n->opcode & 0x7F]++;
+            if (n->opcode == OP_JALR) {
+                stage5_validate_trace_skip_call(region, n, i,
+                                                jalr_ret ? "jalr_ret_nonterminal" : "jalr_nonret");
+            } else if (jal_call) {
+                stage5_validate_trace_skip_call(region, n, i, "jal_call_nonterminal");
+            } else {
+                stage5_validate_trace_skip_call(region, n, i, "call_indirect");
+            }
             return false;
         }
         if (stage5_validate_is_terminal_unsupported(n->opcode)) {
