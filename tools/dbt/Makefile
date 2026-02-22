@@ -34,7 +34,7 @@ HDRS = cpu_state.h $(ARCH_HDRS) translate.h block_cache.h dbt_limits.h \
 # Main target
 TARGET = slow32-dbt
 
-.PHONY: all clean test test-diff compare-safe-unsafe compare-safe-unsafe-strict stress-safe-unsafe sweep-peephole sweep-peephole-strict stage5-validate-preflight stage5-gate stage5-gate-fast stage5-native-bench stage5-native-compare stage5-native-bench-compare debug disasm
+.PHONY: all clean test test-diff compare-safe-unsafe compare-safe-unsafe-strict stress-safe-unsafe sweep-peephole sweep-peephole-strict stage5-validate-preflight stage5-gate stage5-gate-fast stage5-native-bench stage5-native-compare stage5-native-bench-compare stage5-native-compare-sideexit stage5-native-bench-compare-sideexit debug disasm
 
 all: $(TARGET)
 	@echo "Built for $(UNAME_M)"
@@ -163,6 +163,22 @@ stage5-native-bench-compare: $(TARGET)
 	fi
 	@echo "Benchmarking Stage4 (-4) vs Stage5-native (-N): $(BIN), runs=$(RUNS)"
 	@STAGE4_ARGS="-4" STAGE5_ARGS="-N" ./scripts/bench-stage4-stage5.sh "$(BIN)" "$(RUNS)"
+
+# Throughput probe variant: enable Stage5 side-exit emission while comparing
+# against Stage4.
+stage5-native-compare-sideexit: $(TARGET)
+	@echo "Comparing Stage4 (-4) vs Stage5-native (-N + side-exit)..."
+	@SLOW32_DBT_STAGE5_SIDE_EXIT=1 SLOW32_DBT_STAGE5_SIDE_EXIT_MODE=eqne_u \
+	 STAGE4_ARGS="-4" STAGE5_ARGS="-N" ./scripts/compare-stage4-stage5.sh $(TESTS)
+
+stage5-native-bench-compare-sideexit: $(TARGET)
+	@if [ -z "$(BIN)" ]; then \
+		echo "usage: make stage5-native-bench-compare-sideexit BIN=<program.s32x> [RUNS=30]"; \
+		exit 1; \
+	fi
+	@echo "Benchmarking Stage4 (-4) vs Stage5-native (-N + side-exit): $(BIN), runs=$(RUNS)"
+	@SLOW32_DBT_STAGE5_SIDE_EXIT=1 SLOW32_DBT_STAGE5_SIDE_EXIT_MODE=eqne_u \
+	 STAGE4_ARGS="-4" STAGE5_ARGS="-N" ./scripts/bench-stage4-stage5.sh "$(BIN)" "$(RUNS)"
 
 clean:
 	rm -f *.o $(TARGET)
