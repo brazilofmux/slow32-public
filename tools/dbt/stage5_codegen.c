@@ -2164,11 +2164,35 @@ static const stage5_phi_edge_plan_t *cg_find_phi_edge_plan(const stage5_phi_elim
     return NULL;
 }
 
-static void cg_emit_guest_reg_copy(translate_ctx_t *ctx, uint8_t dst_reg, uint8_t src_reg) {
+static void cg_emit_guest_reg_copy(stage5_cg_t *cg, uint8_t dst_reg, uint8_t src_reg) {
     if (dst_reg == 0 || src_reg == 0 || dst_reg == src_reg) return;
+    translate_ctx_t *ctx = cg->ctx;
+    emit_ctx_t *e = cg->e;
+
     stage5_flush_pending_for_codegen(ctx);
-    emit_load_guest_reg(ctx, RAX, src_reg);
-    emit_store_guest_reg(ctx, dst_reg, RAX);
+
+    x64_reg_t h_src = cg_guest_host(cg, src_reg);
+    x64_reg_t h_dst = cg_guest_host(cg, dst_reg);
+
+    if (h_dst != X64_NOREG) {
+        if (h_src != X64_NOREG) {
+            if (h_src != h_dst) {
+                emit_mov_r32_r32(e, h_dst, h_src);
+            }
+        } else {
+            emit_mov_r32_m32(e, h_dst, RBP, GUEST_REG_OFFSET(src_reg));
+        }
+        cg_mark_dirty(cg, dst_reg);
+        return;
+    }
+
+    if (h_src != X64_NOREG) {
+        emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(dst_reg), h_src);
+    } else {
+        emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(src_reg));
+        emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(dst_reg), RAX);
+    }
+    cg_mark_dirty(cg, dst_reg);
 }
 
 static bool cg_emit_phi_edge_copies(stage5_cg_t *cg,
@@ -2204,7 +2228,7 @@ static bool cg_emit_phi_edge_copies(stage5_cg_t *cg,
             }
             if (src_is_pending_dst) continue;
 
-            cg_emit_guest_reg_copy(cg->ctx, dst, src);
+            cg_emit_guest_reg_copy(cg, dst, src);
             done[i] = true;
             rem--;
             progressed = true;
@@ -2229,12 +2253,17 @@ static bool cg_emit_phi_edge_copies(stage5_cg_t *cg,
         }
 
         stage5_flush_pending_for_codegen(cg->ctx);
-        emit_load_guest_reg(cg->ctx, R10, dst0);
+        x64_reg_t h_dst0 = cg_guest_host(cg, dst0);
+        if (h_dst0 != X64_NOREG) {
+            emit_mov_r32_r32(cg->e, R10, h_dst0);
+        } else {
+            emit_load_guest_reg(cg->ctx, R10, dst0);
+        }
 
         uint8_t curr_dst = dst0;
         uint8_t curr_src = src0;
         while (curr_src != dst0) {
-            cg_emit_guest_reg_copy(cg->ctx, curr_dst, curr_src);
+            cg_emit_guest_reg_copy(cg, curr_dst, curr_src);
 
             bool found = false;
             for (uint8_t i = 0; i < edge->copy_count; i++) {
@@ -2265,7 +2294,13 @@ static bool cg_emit_phi_edge_copies(stage5_cg_t *cg,
         }
 
         stage5_flush_pending_for_codegen(cg->ctx);
-        emit_store_guest_reg(cg->ctx, curr_dst, R10);
+        x64_reg_t h_dst = cg_guest_host(cg, curr_dst);
+        if (h_dst != X64_NOREG) {
+            emit_mov_r32_r32(cg->e, h_dst, R10);
+        } else {
+            emit_mov_m32_r32(cg->e, RBP, GUEST_REG_OFFSET(curr_dst), R10);
+        }
+        cg_mark_dirty(cg, curr_dst);
         for (uint8_t i = 0; i < edge->copy_count; i++) {
             if (done[i]) continue;
             if (edge->copies[i].guest_reg == curr_dst &&
