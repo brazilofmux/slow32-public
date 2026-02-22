@@ -15,6 +15,7 @@ static int   pp_dval[PP_MAX_DEFS];
 static char *pp_dbody[PP_MAX_DEFS];   /* body text (strdup'd), NULL = int-only */
 static int   pp_dnpar[PP_MAX_DEFS];   /* param count, -1 = object-like */
 static char *pp_dparm[PP_MAX_DEFS];   /* packed param names "a\0b\0" (strdup'd) */
+static int   pp_dvar[PP_MAX_DEFS];    /* 1 = variadic macro (.../__VA_ARGS__) */
 static int   pp_ndefs;
 
 #define PP_EXP_SZ 8192
@@ -127,6 +128,7 @@ static void pp_add(char *name, int val) {
         if (pp_dbody[i] != 0) { free(pp_dbody[i]); pp_dbody[i] = 0; }
         if (pp_dparm[i] != 0) { free(pp_dparm[i]); pp_dparm[i] = 0; }
         pp_dnpar[i] = -1;
+        pp_dvar[i] = 0;
         return;
     }
     if (pp_ndefs >= PP_MAX_DEFS) {
@@ -138,6 +140,7 @@ static void pp_add(char *name, int val) {
     pp_dbody[pp_ndefs] = 0;
     pp_dnpar[pp_ndefs] = -1;
     pp_dparm[pp_ndefs] = 0;
+    pp_dvar[pp_ndefs] = 0;
     pp_ndefs = pp_ndefs + 1;
 }
 
@@ -295,6 +298,30 @@ static int pp_expand_func(int di) {
                     }
                     k = k + 1;
                 }
+            } else if (pp_dvar[di] && strcmp(iname, "__VA_ARGS__") == 0) {
+                /* Substitute variadic arguments (all args from npar onwards) */
+                int va;
+                va = pp_dnpar[di];
+                while (va < nargs) {
+                    if (va > pp_dnpar[di]) {
+                        /* Insert ", " separator between variadic args */
+                        if (exp_len < PP_EXP_SZ - 1) {
+                            pp_exp[exp_len] = 44; exp_len = exp_len + 1;
+                        }
+                        if (exp_len < PP_EXP_SZ - 1) {
+                            pp_exp[exp_len] = 32; exp_len = exp_len + 1;
+                        }
+                    }
+                    k = 0;
+                    while (k < arg_len[va]) {
+                        if (exp_len < PP_EXP_SZ - 1) {
+                            pp_exp[exp_len] = lex_src[arg_start[va] + k];
+                            exp_len = exp_len + 1;
+                        }
+                        k = k + 1;
+                    }
+                    va = va + 1;
+                }
             } else {
                 /* Copy identifier as-is */
                 k = 0;
@@ -391,6 +418,7 @@ static void pp_define(void) {
     int c;
     int bi;
     int pi;
+    int is_var;
 
     pp_skip_ws();
     pp_read_name(name);
@@ -404,10 +432,18 @@ static void pp_define(void) {
         lex_pos = lex_pos + 1;  /* skip '(' */
         npar = 0;
         pi = 0;
+        is_var = 0;
         pp_skip_ws();
         if (lex_src[lex_pos] != 41) {  /* not ')' — has params */
             while (1) {
                 pp_skip_ws();
+                /* Check for variadic '...' */
+                if (lex_src[lex_pos] == 46 && lex_src[lex_pos + 1] == 46 &&
+                    lex_src[lex_pos + 2] == 46) {
+                    lex_pos = lex_pos + 3;
+                    is_var = 1;
+                    break;
+                }
                 c = lex_src[lex_pos];
                 while ((c >= 97 && c <= 122) || (c >= 65 && c <= 90) ||
                        (c >= 48 && c <= 57) || c == 95) {
@@ -427,6 +463,7 @@ static void pp_define(void) {
                 }
             }
         }
+        pp_skip_ws();
         if (lex_src[lex_pos] == 41) {  /* ')' */
             lex_pos = lex_pos + 1;
         }
@@ -443,6 +480,9 @@ static void pp_define(void) {
         }
         pp_def_body[bi] = 0;
         pp_add_func(name, npar, pp_def_parms, pi, pp_def_body);
+        if (is_var) {
+            pp_dvar[pp_find(name)] = 1;
+        }
         pp_skip_line();
         pp_sync();
         return;

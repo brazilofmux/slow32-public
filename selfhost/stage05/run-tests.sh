@@ -411,7 +411,7 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     echo ""
     echo "=== Step 3: gen1_cc compiler tests ==="
 
-    for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c "$TESTS_DIR"/test_phase3.c "$TESTS_DIR"/test_phase4.c "$TESTS_DIR"/test_phase5.c "$TESTS_DIR"/test_phase6.c "$TESTS_DIR"/test_phase7.c "$TESTS_DIR"/test_phase8.c "$TESTS_DIR"/test_phase9.c "$TESTS_DIR"/test_phase10.c "$TESTS_DIR"/test_phase11.c "$TESTS_DIR"/test_phase12.c "$TESTS_DIR"/test_phase13.c "$TESTS_DIR"/test_phase14.c "$TESTS_DIR"/test_phase16.c "$TESTS_DIR"/test_phase17.c "$TESTS_DIR"/test_phase18.c "$TESTS_DIR"/test_phase19.c "$TESTS_DIR"/test_phase20.c "$TESTS_DIR"/test_phase21.c "$TESTS_DIR"/test_phase22.c "$TESTS_DIR"/test_short.c; do
+    for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c "$TESTS_DIR"/test_phase3.c "$TESTS_DIR"/test_phase4.c "$TESTS_DIR"/test_phase5.c "$TESTS_DIR"/test_phase6.c "$TESTS_DIR"/test_phase7.c "$TESTS_DIR"/test_phase8.c "$TESTS_DIR"/test_phase9.c "$TESTS_DIR"/test_phase10.c "$TESTS_DIR"/test_phase11.c "$TESTS_DIR"/test_phase12.c "$TESTS_DIR"/test_phase13.c "$TESTS_DIR"/test_phase14.c "$TESTS_DIR"/test_phase16.c "$TESTS_DIR"/test_phase17.c "$TESTS_DIR"/test_phase18.c "$TESTS_DIR"/test_phase19.c "$TESTS_DIR"/test_phase20.c "$TESTS_DIR"/test_phase21.c "$TESTS_DIR"/test_phase22.c "$TESTS_DIR"/test_phase23.c "$TESTS_DIR"/test_short.c; do
         [[ -f "$tst" ]] || continue
         tname="$(basename "$tst" .c)"
         TOTAL=$((TOTAL + 1))

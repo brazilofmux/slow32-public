@@ -7,7 +7,7 @@
  */
 
 /* --- Output buffer --- */
-#define CG_MAX_OUT 2097152
+#define CG_MAX_OUT 4194304
 
 static char cg_out[CG_MAX_OUT];
 static int  cg_olen;
