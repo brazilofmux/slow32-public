@@ -53,6 +53,9 @@ static void opt_fold(Node *n) {
 
     if (!n) return;
 
+    /* Skip folding for 64-bit expressions (ND_NUM only has 32-bit val) */
+    if (ty_is_llong(n->ty)) return;
+
     /* Recurse into children first (post-order) */
     opt_fold(n->lhs);
     opt_fold(n->rhs);

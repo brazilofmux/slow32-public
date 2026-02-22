@@ -27,6 +27,7 @@ static int ho_resolve(int inst) {
 static int ho_src2_is_ref(int k) {
     if (k >= HI_ADD && k <= HI_SGEU) return 1;
     if (k == HI_STORE) return 1;
+    if (k == HI_RET) return 1;
     return 0;
 }
 

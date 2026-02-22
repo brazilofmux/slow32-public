@@ -18,7 +18,8 @@ int memcpy(char *dst, char *src, int n);
 #define TY_CHAR   1
 #define TY_SHORT  2
 #define TY_VOID   3
-#define TY_STRUCT_BASE 4  /* struct index i → type = 4+i; fits 4..255 */
+#define TY_LLONG  4       /* long long (64-bit) */
+#define TY_STRUCT_BASE 5  /* struct index i → type = 5+i; fits 5..255 */
 #define TY_PTR  256   /* add to base: TY_PTR+TY_CHAR = char*, TY_PTR+TY_INT = int* */
 
 #define TY_UNSIGNED  0x4000  /* flag bit: unsigned qualifier */
@@ -43,6 +44,10 @@ static int   stm_count;
 
 /* --- Type helpers --- */
 
+static int ty_is_llong(int ty) {
+    return (ty & TY_BASE_MASK) == TY_LLONG && (ty & TY_PTR_MASK) == 0;
+}
+
 static int ty_is_struct(int ty) {
     int base;
     base = ty & TY_BASE_MASK;
@@ -57,6 +62,7 @@ static int ty_size(int ty) {
     if (ty & TY_PTR_MASK) return 4;
     if ((ty & TY_BASE_MASK) >= TY_STRUCT_BASE)
         return st_size[(ty & TY_BASE_MASK) - TY_STRUCT_BASE];
+    if ((ty & TY_BASE_MASK) == TY_LLONG) return 8;
     if ((ty & TY_BASE_MASK) == TY_CHAR) return 1;
     if ((ty & TY_BASE_MASK) == TY_SHORT) return 2;
     return 4;
@@ -194,6 +200,10 @@ static Node *nd_binop(int op, Node *l, Node *r) {
         n->ty = l->ty;
     } else if (ty_is_ptr(r->ty)) {
         n->ty = r->ty;
+    } else if (ty_is_llong(l->ty) || ty_is_llong(r->ty)) {
+        n->ty = TY_LLONG;
+        if ((l->ty & TY_UNSIGNED) || (r->ty & TY_UNSIGNED))
+            n->ty = TY_LLONG | TY_UNSIGNED;
     } else {
         n->ty = TY_INT;
         /* Propagate unsigned for arithmetic/bitwise ops */
@@ -235,7 +245,7 @@ static Node *nd_call(char *nm, Node *a, int na) {
     n->name = strdup(nm);
     n->args = a;
     n->nparams = na;
-    n->ty = TY_INT;
+    n->ty = TY_INT;  /* updated by parser via find_func_type() */
     return n;
 }
 

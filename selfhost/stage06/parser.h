@@ -35,6 +35,7 @@ static char *ps_gname[P_MAX_GLOBALS]; /* global var names */
 static int   ps_gtype[P_MAX_GLOBALS]; /* global var types */
 static int   ps_gsize[P_MAX_GLOBALS]; /* size in bytes (0=scalar, >0=array) */
 static int   ps_ginit[P_MAX_GLOBALS]; /* initial value for scalars */
+static int   ps_ginit_hi[P_MAX_GLOBALS]; /* hi word for 64-bit global initializers */
 static int   ps_gstr[P_MAX_GLOBALS];  /* string init: pool index, -1 if none */
 static int   ps_glocal[P_MAX_GLOBALS]; /* 1 = static local (suppress .global) */
 static int   ps_nglobals;
@@ -67,6 +68,12 @@ static int   ps_nconsts;
 static char *ps_tdname[PS_MAX_TYPEDEFS];
 static int   ps_tdtype[PS_MAX_TYPEDEFS];
 static int   ps_ntypedefs;
+
+/* Function return type table (for 64-bit return value tracking) */
+#define PS_MAX_FUNCS 256
+static char *ps_fname[PS_MAX_FUNCS];
+static int   ps_ftype[PS_MAX_FUNCS];
+static int   ps_nfuncs;
 
 /* Forward declarations */
 static Node *parse_expr(void);
@@ -172,6 +179,34 @@ static void add_typedef(char *name, int ty) {
     ps_tdname[ps_ntypedefs] = strdup(name);
     ps_tdtype[ps_ntypedefs] = ty;
     ps_ntypedefs = ps_ntypedefs + 1;
+}
+
+/* Function return type table helpers */
+static int find_func_type(char *name) {
+    int i;
+    i = ps_nfuncs - 1;
+    while (i >= 0) {
+        if (strcmp(name, ps_fname[i]) == 0) return ps_ftype[i];
+        i = i - 1;
+    }
+    return TY_INT;  /* default to int if not found */
+}
+
+static void add_func_type(char *name, int ty) {
+    int i;
+    /* Update existing entry if already registered */
+    i = ps_nfuncs - 1;
+    while (i >= 0) {
+        if (strcmp(name, ps_fname[i]) == 0) {
+            ps_ftype[i] = ty;
+            return;
+        }
+        i = i - 1;
+    }
+    if (ps_nfuncs >= PS_MAX_FUNCS) return;
+    ps_fname[ps_nfuncs] = strdup(name);
+    ps_ftype[ps_nfuncs] = ty;
+    ps_nfuncs = ps_nfuncs + 1;
 }
 
 /* Find or create a label for goto/label. Returns codegen label ID. */
@@ -303,12 +338,21 @@ static int parse_type(void) {
         if (lex_tok == TK_CHAR) { ty = TY_CHAR | TY_UNSIGNED; next(); }
         else if (lex_tok == TK_SHORT) { ty = TY_SHORT | TY_UNSIGNED; next(); }
         else if (lex_tok == TK_INT) { ty = TY_INT | TY_UNSIGNED; next(); }
-        else if (lex_tok == TK_LONG) { ty = TY_INT | TY_UNSIGNED; next(); }
+        else if (lex_tok == TK_LONG) {
+            next();
+            if (lex_tok == TK_LONG) {
+                ty = TY_LLONG | TY_UNSIGNED; next();
+            } else {
+                ty = TY_INT | TY_UNSIGNED;
+            }
+            if (lex_tok == TK_INT) next();
+        }
         else { ty = TY_INT | TY_UNSIGNED; }
     }
     else if (lex_tok == TK_LONG) {
         next();
-        if (lex_tok == TK_INT) { ty = TY_INT; next(); }
+        if (lex_tok == TK_LONG) { ty = TY_LLONG; next(); if (lex_tok == TK_INT) next(); }
+        else if (lex_tok == TK_INT) { ty = TY_INT; next(); }
         else if (lex_tok == TK_UNSIGNED) { ty = TY_INT | TY_UNSIGNED; next(); }
         else { ty = TY_INT; }
     }
@@ -502,6 +546,7 @@ static int add_global(char *name, int ty, int size_bytes) {
     ps_gname[idx] = strdup(name);
     ps_gtype[idx] = ty;
     ps_gsize[idx] = size_bytes;
+    ps_ginit_hi[idx] = 0;
     ps_gstr[idx] = -1;
     ps_ginit_start[idx] = -1;
     ps_ginit_count[idx] = 0;
@@ -696,7 +741,9 @@ static Node *parse_primary(void) {
                 }
             }
             expect(TK_RPAREN);
-            return nd_call(nm, head, nargs);
+            n = nd_call(nm, head, nargs);
+            n->ty = find_func_type(nm);
+            return n;
         }
 
         /* Bare function name: load address (for function pointers) */
@@ -1738,6 +1785,13 @@ static Node *parse_top_decl(void) {
                 if (lex_tok == TK_MINUS) { neg = 1; next(); }
                 if (lex_tok == TK_NUM) {
                     ps_ginit[idx] = neg ? (0 - lex_val) : lex_val;
+                    /* Sign-extend for long long globals */
+                    if (ty_is_llong(ty)) {
+                        if (ps_ginit[idx] < 0)
+                            ps_ginit_hi[idx] = -1;
+                        else
+                            ps_ginit_hi[idx] = 0;
+                    }
                     next();
                 }
             }
@@ -1922,11 +1976,12 @@ params_done:
     /* Prototype: type name(params); */
     if (lex_tok == TK_SEMI) {
         next();
-        /* Just skip — we don't need prototypes in a single-pass compiler */
+        add_func_type(nm, ty);
         return NULL;
     }
 
     /* Function body */
+    add_func_type(nm, ty);
     fn = nd_new(ND_FUNC);
     fn->name = strdup(nm);
     fn->ty = ty;  /* store return type for sema pass */

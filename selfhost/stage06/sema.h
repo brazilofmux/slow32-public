@@ -14,6 +14,11 @@ static int sema_ret_ty;   /* current function's return type */
 static int sema_arith_type(int lty, int rty) {
     if (ty_is_ptr(lty)) return lty;
     if (ty_is_ptr(rty)) return rty;
+    if (ty_is_llong(lty) || ty_is_llong(rty)) {
+        if ((lty & TY_UNSIGNED) || (rty & TY_UNSIGNED))
+            return TY_LLONG | TY_UNSIGNED;
+        return TY_LLONG;
+    }
     if ((lty & TY_UNSIGNED) || (rty & TY_UNSIGNED))
         return TY_INT | TY_UNSIGNED;
     return TY_INT;

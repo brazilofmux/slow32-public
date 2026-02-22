@@ -235,7 +235,7 @@ compile_and_link() {
     run_exe "$ld" "$WORKDIR/${name}-link.log" \
         -o "$exe" --mmio 64K \
         "$RUNTIME_CRT0" "$obj" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-        $LIBC_OBJS
+        $BUILTINS64_OBJ $LIBC_OBJS
     if [[ ! -s "$exe" ]]; then
         echo "  $name: FAIL (link)" >&2
         tail -n 20 "$WORKDIR/${name}-link.log" >&2
@@ -267,6 +267,12 @@ run_exe "$AS_EXE" "$WORKDIR/crt0.log" "$CRT0_SRC" "$WORKDIR/crt0.s32o"
 run_exe "$AS_EXE" "$WORKDIR/mmio_no_start.log" "$MMIO_NO_START_SRC" "$WORKDIR/mmio_no_start.s32o"
 [[ -s "$WORKDIR/mmio_no_start.s32o" ]] || { echo "failed to assemble mmio_no_start" >&2; exit 1; }
 
+BUILTINS64_SRC="$SCRIPT_DIR/builtins64.s"
+if [[ -f "$BUILTINS64_SRC" ]]; then
+    run_exe "$AS_EXE" "$WORKDIR/builtins64.log" "$BUILTINS64_SRC" "$WORKDIR/builtins64.s32o"
+    [[ -s "$WORKDIR/builtins64.s32o" ]] || { echo "failed to assemble builtins64" >&2; exit 1; }
+fi
+
 # Build libc with stage04 compiler
 LIBC_OBJS=""
 for name in string_extra string_more ctype convert stdio malloc; do
@@ -284,6 +290,10 @@ run_exe "$AS_EXE" "$WORKDIR/start.as.log" "$WORKDIR/start.s" "$WORKDIR/start.s32
 
 RUNTIME_CRT0="$WORKDIR/crt0.s32o"
 RUNTIME_MMIO_NO_START_OBJ="$WORKDIR/mmio_no_start.s32o"
+BUILTINS64_OBJ=""
+if [[ -s "$WORKDIR/builtins64.s32o" ]]; then
+    BUILTINS64_OBJ="$WORKDIR/builtins64.s32o"
+fi
 LIBC_START_OBJ="$WORKDIR/start.s32o"
 STAGE4_LIBC_OBJS="$LIBC_OBJS"
 STAGE4_LIBC_START_OBJ="$LIBC_START_OBJ"
@@ -327,7 +337,7 @@ else
         run_exe "$LD_EXE" "$WORKDIR/gen1_cc-link.log" \
             -o "$WORKDIR/gen1_cc.s32x" --mmio 64K \
             "$RUNTIME_CRT0" "$WORKDIR/gen1_cc.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-            $LIBC_OBJS
+            $BUILTINS64_OBJ $LIBC_OBJS
         if [[ ! -s "$WORKDIR/gen1_cc.s32x" ]]; then
             printf "  %-30s FAIL (link)\n" "gen1_cc-build:"
             FAIL=$((FAIL + 1))
@@ -356,7 +366,7 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     echo "=== Step 2b: Recompile libc with gen1_cc (HIR/SSA ABI) ==="
     EXEC_TIMEOUT=300
 
-    for name in string_extra string_more ctype convert stdio malloc; do
+    for name in string_extra string_more ctype convert stdio malloc printf_varargs convert64; do
         run_exe "$GEN1_CC_EXE" "$WORKDIR/g1_${name}.cc.log" "$LIBC_DIR/${name}.c" "$WORKDIR/g1_${name}.s"
         if [[ ! -s "$WORKDIR/g1_${name}.s" ]]; then
             echo "  WARN: gen1 failed to compile ${name}.c, falling back to stage04 libc" >&2
@@ -401,7 +411,7 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     echo ""
     echo "=== Step 3: gen1_cc compiler tests ==="
 
-    for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c "$TESTS_DIR"/test_phase3.c "$TESTS_DIR"/test_phase4.c "$TESTS_DIR"/test_phase5.c "$TESTS_DIR"/test_phase6.c "$TESTS_DIR"/test_phase7.c "$TESTS_DIR"/test_phase8.c "$TESTS_DIR"/test_phase9.c "$TESTS_DIR"/test_phase10.c "$TESTS_DIR"/test_phase11.c "$TESTS_DIR"/test_phase12.c "$TESTS_DIR"/test_phase13.c "$TESTS_DIR"/test_phase14.c "$TESTS_DIR"/test_phase16.c "$TESTS_DIR"/test_phase17.c "$TESTS_DIR"/test_phase18.c "$TESTS_DIR"/test_phase19.c "$TESTS_DIR"/test_phase20.c "$TESTS_DIR"/test_short.c; do
+    for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c "$TESTS_DIR"/test_phase3.c "$TESTS_DIR"/test_phase4.c "$TESTS_DIR"/test_phase5.c "$TESTS_DIR"/test_phase6.c "$TESTS_DIR"/test_phase7.c "$TESTS_DIR"/test_phase8.c "$TESTS_DIR"/test_phase9.c "$TESTS_DIR"/test_phase10.c "$TESTS_DIR"/test_phase11.c "$TESTS_DIR"/test_phase12.c "$TESTS_DIR"/test_phase13.c "$TESTS_DIR"/test_phase14.c "$TESTS_DIR"/test_phase16.c "$TESTS_DIR"/test_phase17.c "$TESTS_DIR"/test_phase18.c "$TESTS_DIR"/test_phase19.c "$TESTS_DIR"/test_phase20.c "$TESTS_DIR"/test_phase21.c "$TESTS_DIR"/test_phase22.c "$TESTS_DIR"/test_short.c; do
         [[ -f "$tst" ]] || continue
         tname="$(basename "$tst" .c)"
         TOTAL=$((TOTAL + 1))
@@ -438,7 +448,7 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
         run_exe "$LD_EXE" "$WORKDIR/${tname}-ld.log" \
             -o "$WORKDIR/${tname}.s32x" --mmio 64K \
             "$RUNTIME_CRT0" "$WORKDIR/${tname}.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-            $LIBC_OBJS
+            $BUILTINS64_OBJ $LIBC_OBJS
         if [[ ! -s "$WORKDIR/${tname}.s32x" ]]; then
             printf "  %-30s FAIL (link)\n" "$tname:"
             tail -n 20 "$WORKDIR/${tname}-ld.log" >&2
@@ -489,7 +499,7 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$GEN1_CC_EXE" ]]; then
             run_exe "$LD_EXE" "$WORKDIR/fp-gen2-link.log" \
                 -o "$WORKDIR/fp-gen2.s32x" --mmio 64K \
                 "$RUNTIME_CRT0" "$WORKDIR/fp-gen2.s32o" "$STAGE4_LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-                $STAGE4_LIBC_OBJS
+                $BUILTINS64_OBJ $STAGE4_LIBC_OBJS
             if [[ ! -s "$WORKDIR/fp-gen2.s32x" ]]; then
                 printf "  %-30s FAIL (link)\n" "fixed-point:"
                 FAIL=$((FAIL + 1))
@@ -511,7 +521,7 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$GEN1_CC_EXE" ]]; then
                         run_exe "$LD_EXE" "$WORKDIR/fp-gen3-link.log" \
                             -o "$WORKDIR/fp-gen3.s32x" --mmio 64K \
                             "$RUNTIME_CRT0" "$WORKDIR/fp-gen3.s32o" "$STAGE4_LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-                            $STAGE4_LIBC_OBJS
+                            $BUILTINS64_OBJ $STAGE4_LIBC_OBJS
                         if [[ ! -s "$WORKDIR/fp-gen3.s32x" ]]; then
                             printf "  %-30s FAIL (gen3 link)\n" "fixed-point:"
                             FAIL=$((FAIL + 1))
@@ -702,7 +712,7 @@ else
         run_exe "$LD_EXE" "$WORKDIR/s32-as-link.log" \
             -o "$WORKDIR/s32-as.s32x" --mmio 64K \
             "$RUNTIME_CRT0" "$WORKDIR/s32-as.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-            $LIBC_OBJS
+            $BUILTINS64_OBJ $LIBC_OBJS
         if [[ ! -s "$WORKDIR/s32-as.s32x" ]]; then
             printf "  %-30s FAIL (link)\n" "s32-as-build:"
             FAIL=$((FAIL + 1))
@@ -729,7 +739,7 @@ else
         run_exe "$LD_EXE" "$WORKDIR/s32-ar-link.log" \
             -o "$WORKDIR/s32-ar.s32x" --mmio 64K \
             "$RUNTIME_CRT0" "$WORKDIR/s32-ar.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-            $LIBC_OBJS
+            $BUILTINS64_OBJ $LIBC_OBJS
         if [[ ! -s "$WORKDIR/s32-ar.s32x" ]]; then
             printf "  %-30s FAIL (link)\n" "s32-ar-build:"
             FAIL=$((FAIL + 1))
@@ -756,7 +766,7 @@ else
         run_exe "$LD_EXE" "$WORKDIR/s32-ld-link.log" \
             -o "$WORKDIR/s32-ld.s32x" --mmio 64K \
             "$RUNTIME_CRT0" "$WORKDIR/s32-ld.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-            $LIBC_OBJS
+            $BUILTINS64_OBJ $LIBC_OBJS
         if [[ ! -s "$WORKDIR/s32-ld.s32x" ]]; then
             printf "  %-30s FAIL (link)\n" "s32-ld-build:"
             FAIL=$((FAIL + 1))
@@ -806,7 +816,7 @@ if [[ -s "$GEN1_CC_EXE" && -s "$STAGE_AS_EXE" && -s "$STAGE_LD_EXE" ]]; then
         run_exe "$STAGE_LD_EXE" "$WORKDIR/e2e-${tst}-ld.log" \
             -o "$WORKDIR/e2e-${tst}.s32x" --mmio 64K \
             "$RUNTIME_CRT0" "$WORKDIR/e2e-${tst}.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-            $LIBC_OBJS
+            $BUILTINS64_OBJ $LIBC_OBJS
         if [[ ! -s "$WORKDIR/e2e-${tst}.s32x" ]]; then
             printf "  %-30s FAIL (link)\n" "e2e-${tst}:"
             FAIL=$((FAIL + 1))
@@ -848,7 +858,7 @@ if [[ -s "$GEN1_CC_EXE" && -s "$STAGE_AS_EXE" && -s "$STAGE_LD_EXE" ]]; then
             run_exe "$STAGE_LD_EXE" "$WORKDIR/e2e-ar-ld.log" \
                 -o "$WORKDIR/e2e-ar-test.s32x" --mmio 64K \
                 "$RUNTIME_CRT0" "$WORKDIR/e2e-ar-test.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-                "$WORKDIR/e2e-libc.s32a"
+                $BUILTINS64_OBJ "$WORKDIR/e2e-libc.s32a"
             if [[ ! -s "$WORKDIR/e2e-ar-test.s32x" ]]; then
                 printf "  %-30s FAIL (link with archive)\n" "e2e-archive:"
                 FAIL=$((FAIL + 1))

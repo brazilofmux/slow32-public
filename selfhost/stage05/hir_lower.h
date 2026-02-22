@@ -38,6 +38,23 @@ static int hl_goto_id[HL_MAX_GOTO];
 static int hl_goto_blk[HL_MAX_GOTO];
 static int hl_ngoto;
 
+/* --- 64-bit twin-value tracking --- */
+/* After hl_expr() for a TY_LLONG expression, hl_hi holds the hi word index.
+ * Callers must save hl_hi before calling hl_expr() again. */
+static int hl_hi;
+
+/* Widen a 32-bit value to 64-bit (sign or zero extend) */
+static void hl_widen64(int val, int from_ty, int *out_lo, int *out_hi) {
+    int c31;
+    *out_lo = val;
+    if (from_ty & TY_UNSIGNED) {
+        *out_hi = hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
+    } else {
+        c31 = hi_emit(HI_ICONST, TY_INT, -1, -1, 31, NULL);
+        *out_hi = hi_emit(HI_SRA, TY_INT, val, c31, 0, NULL);
+    }
+}
+
 /* Forward declarations */
 static int hl_expr(Node *n);
 static int hl_addr(Node *n);
@@ -291,11 +308,32 @@ static int hl_expr(Node *n) {
             return hl_addr(n);
         }
         addr = hl_addr(n);
+        if (ty_is_llong(n->ty)) {
+            lv = hi_emit(HI_LOAD, TY_INT, addr, -1, 0, NULL);
+            tmp = hi_emit(HI_ADDI, TY_INT, addr, -1, 4, NULL);
+            hl_hi = hi_emit(HI_LOAD, TY_INT, tmp, -1, 0, NULL);
+            return lv;
+        }
         return hi_emit(HI_LOAD, n->ty, addr, -1, 0, NULL);
     }
 
     /* Assignment */
     if (n->kind == ND_ASSIGN) {
+        if (ty_is_llong(n->ty)) {
+            int val_hi;
+            int addr4;
+            val = hl_expr(n->rhs);
+            val_hi = hl_hi;
+            if (!ty_is_llong(n->rhs->ty)) {
+                hl_widen64(val, n->rhs->ty, &val, &val_hi);
+            }
+            addr = hl_addr(n->lhs);
+            hi_emit(HI_STORE, TY_INT, addr, val, 0, NULL);
+            addr4 = hi_emit(HI_ADDI, TY_INT, addr, -1, 4, NULL);
+            hi_emit(HI_STORE, TY_INT, addr4, val_hi, 0, NULL);
+            hl_hi = val_hi;
+            return val;
+        }
         val = hl_expr(n->rhs);
         addr = hl_addr(n->lhs);
         hi_emit(HI_STORE, n->ty, addr, val, 0, NULL);
@@ -305,14 +343,52 @@ static int hl_expr(Node *n) {
     /* Unary operations */
     if (n->kind == ND_UNARY) {
         if (n->op == TK_MINUS) {
+            if (ty_is_llong(n->ty)) {
+                int lv_hi;
+                int r_lo;
+                int r_hi;
+                int borrow;
+                int z;
+                lv = hl_expr(n->lhs);
+                lv_hi = hl_hi;
+                if (!ty_is_llong(n->lhs->ty)) hl_widen64(lv, n->lhs->ty, &lv, &lv_hi);
+                z = hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
+                r_lo = hi_emit(HI_SUB, TY_INT, z, lv, 0, NULL);
+                borrow = hi_emit(HI_SLTU, TY_INT, z, lv, 0, NULL);
+                r_hi = hi_emit(HI_SUB, TY_INT, z, lv_hi, 0, NULL);
+                r_hi = hi_emit(HI_SUB, TY_INT, r_hi, borrow, 0, NULL);
+                hl_hi = r_hi;
+                return r_lo;
+            }
             lv = hl_expr(n->lhs);
             return hi_emit(HI_NEG, n->ty, lv, -1, 0, NULL);
         }
         if (n->op == TK_BANG) {
+            if (ty_is_llong(n->lhs->ty)) {
+                int lv_hi;
+                int eq_lo;
+                int eq_hi;
+                int z;
+                lv = hl_expr(n->lhs);
+                lv_hi = hl_hi;
+                z = hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
+                eq_lo = hi_emit(HI_SEQ, TY_INT, lv, z, 0, NULL);
+                eq_hi = hi_emit(HI_SEQ, TY_INT, lv_hi, z, 0, NULL);
+                return hi_emit(HI_AND, TY_INT, eq_lo, eq_hi, 0, NULL);
+            }
             lv = hl_expr(n->lhs);
             return hi_emit(HI_NOT, n->ty, lv, -1, 0, NULL);
         }
         if (n->op == TK_TILDE) {
+            if (ty_is_llong(n->ty)) {
+                int lv_hi;
+                lv = hl_expr(n->lhs);
+                lv_hi = hl_hi;
+                if (!ty_is_llong(n->lhs->ty)) hl_widen64(lv, n->lhs->ty, &lv, &lv_hi);
+                lv = hi_emit(HI_BNOT, TY_INT, lv, -1, 0, NULL);
+                hl_hi = hi_emit(HI_BNOT, TY_INT, lv_hi, -1, 0, NULL);
+                return lv;
+            }
             lv = hl_expr(n->lhs);
             return hi_emit(HI_BNOT, n->ty, lv, -1, 0, NULL);
         }
@@ -380,6 +456,191 @@ static int hl_expr(Node *n) {
 
             hl_switch_block(join_blk);
             return hi_emit(HI_LOAD, TY_INT, tmp, -1, 0, NULL);
+        }
+
+        /* 64-bit binary operations */
+        if (ty_is_llong(n->ty) || (sema_is_cmp(n->op) && (ty_is_llong(n->lhs->ty) || ty_is_llong(n->rhs->ty)))) {
+            int lv_hi;
+            int rv_hi;
+            int r_lo;
+            int r_hi;
+            int carry;
+            int carg_base2;
+            int eq_lo;
+            int eq_hi;
+            int hi_lt;
+            int hi_eq;
+            int lo_lt;
+            int tmp2;
+
+            lv = hl_expr(n->lhs);
+            lv_hi = hl_hi;
+            if (!ty_is_llong(n->lhs->ty)) hl_widen64(lv, n->lhs->ty, &lv, &lv_hi);
+            rv = hl_expr(n->rhs);
+            rv_hi = hl_hi;
+            if (!ty_is_llong(n->rhs->ty)) hl_widen64(rv, n->rhs->ty, &rv, &rv_hi);
+
+            if (n->op == TK_PLUS) {
+                r_lo = hi_emit(HI_ADD, TY_INT, lv, rv, 0, NULL);
+                carry = hi_emit(HI_SLTU, TY_INT, r_lo, lv, 0, NULL);
+                r_hi = hi_emit(HI_ADD, TY_INT, lv_hi, rv_hi, 0, NULL);
+                r_hi = hi_emit(HI_ADD, TY_INT, r_hi, carry, 0, NULL);
+                hl_hi = r_hi;
+                return r_lo;
+            }
+            if (n->op == TK_MINUS) {
+                carry = hi_emit(HI_SLTU, TY_INT, lv, rv, 0, NULL);
+                r_lo = hi_emit(HI_SUB, TY_INT, lv, rv, 0, NULL);
+                r_hi = hi_emit(HI_SUB, TY_INT, lv_hi, rv_hi, 0, NULL);
+                r_hi = hi_emit(HI_SUB, TY_INT, r_hi, carry, 0, NULL);
+                hl_hi = r_hi;
+                return r_lo;
+            }
+            if (n->op == TK_AMP) {
+                r_lo = hi_emit(HI_AND, TY_INT, lv, rv, 0, NULL);
+                hl_hi = hi_emit(HI_AND, TY_INT, lv_hi, rv_hi, 0, NULL);
+                return r_lo;
+            }
+            if (n->op == TK_PIPE) {
+                r_lo = hi_emit(HI_OR, TY_INT, lv, rv, 0, NULL);
+                hl_hi = hi_emit(HI_OR, TY_INT, lv_hi, rv_hi, 0, NULL);
+                return r_lo;
+            }
+            if (n->op == TK_CARET) {
+                r_lo = hi_emit(HI_XOR, TY_INT, lv, rv, 0, NULL);
+                hl_hi = hi_emit(HI_XOR, TY_INT, lv_hi, rv_hi, 0, NULL);
+                return r_lo;
+            }
+            /* Comparisons — result is TY_INT */
+            if (n->op == TK_EQ) {
+                eq_lo = hi_emit(HI_SEQ, TY_INT, lv, rv, 0, NULL);
+                eq_hi = hi_emit(HI_SEQ, TY_INT, lv_hi, rv_hi, 0, NULL);
+                return hi_emit(HI_AND, TY_INT, eq_lo, eq_hi, 0, NULL);
+            }
+            if (n->op == TK_NE) {
+                eq_lo = hi_emit(HI_SNE, TY_INT, lv, rv, 0, NULL);
+                eq_hi = hi_emit(HI_SNE, TY_INT, lv_hi, rv_hi, 0, NULL);
+                return hi_emit(HI_OR, TY_INT, eq_lo, eq_hi, 0, NULL);
+            }
+            if (n->op == TK_LT) {
+                if (n->ty & TY_UNSIGNED) {
+                    hi_lt = hi_emit(HI_SLTU, TY_INT, lv_hi, rv_hi, 0, NULL);
+                    hi_eq = hi_emit(HI_SEQ, TY_INT, lv_hi, rv_hi, 0, NULL);
+                } else {
+                    hi_lt = hi_emit(HI_SLT, TY_INT, lv_hi, rv_hi, 0, NULL);
+                    hi_eq = hi_emit(HI_SEQ, TY_INT, lv_hi, rv_hi, 0, NULL);
+                }
+                lo_lt = hi_emit(HI_SLTU, TY_INT, lv, rv, 0, NULL);
+                tmp2 = hi_emit(HI_AND, TY_INT, hi_eq, lo_lt, 0, NULL);
+                return hi_emit(HI_OR, TY_INT, hi_lt, tmp2, 0, NULL);
+            }
+            if (n->op == TK_GT) {
+                if (n->ty & TY_UNSIGNED) {
+                    hi_lt = hi_emit(HI_SLTU, TY_INT, rv_hi, lv_hi, 0, NULL);
+                    hi_eq = hi_emit(HI_SEQ, TY_INT, lv_hi, rv_hi, 0, NULL);
+                } else {
+                    hi_lt = hi_emit(HI_SLT, TY_INT, rv_hi, lv_hi, 0, NULL);
+                    hi_eq = hi_emit(HI_SEQ, TY_INT, lv_hi, rv_hi, 0, NULL);
+                }
+                lo_lt = hi_emit(HI_SLTU, TY_INT, rv, lv, 0, NULL);
+                tmp2 = hi_emit(HI_AND, TY_INT, hi_eq, lo_lt, 0, NULL);
+                return hi_emit(HI_OR, TY_INT, hi_lt, tmp2, 0, NULL);
+            }
+            if (n->op == TK_LE) {
+                /* a <= b  is  !(b < a) */
+                if (n->ty & TY_UNSIGNED) {
+                    hi_lt = hi_emit(HI_SLTU, TY_INT, rv_hi, lv_hi, 0, NULL);
+                    hi_eq = hi_emit(HI_SEQ, TY_INT, lv_hi, rv_hi, 0, NULL);
+                } else {
+                    hi_lt = hi_emit(HI_SLT, TY_INT, rv_hi, lv_hi, 0, NULL);
+                    hi_eq = hi_emit(HI_SEQ, TY_INT, lv_hi, rv_hi, 0, NULL);
+                }
+                lo_lt = hi_emit(HI_SLTU, TY_INT, rv, lv, 0, NULL);
+                tmp2 = hi_emit(HI_AND, TY_INT, hi_eq, lo_lt, 0, NULL);
+                tmp2 = hi_emit(HI_OR, TY_INT, hi_lt, tmp2, 0, NULL);
+                return hi_emit(HI_NOT, TY_INT, tmp2, -1, 0, NULL);
+            }
+            if (n->op == TK_GE) {
+                /* a >= b  is  !(a < b) */
+                if (n->ty & TY_UNSIGNED) {
+                    hi_lt = hi_emit(HI_SLTU, TY_INT, lv_hi, rv_hi, 0, NULL);
+                    hi_eq = hi_emit(HI_SEQ, TY_INT, lv_hi, rv_hi, 0, NULL);
+                } else {
+                    hi_lt = hi_emit(HI_SLT, TY_INT, lv_hi, rv_hi, 0, NULL);
+                    hi_eq = hi_emit(HI_SEQ, TY_INT, lv_hi, rv_hi, 0, NULL);
+                }
+                lo_lt = hi_emit(HI_SLTU, TY_INT, lv, rv, 0, NULL);
+                tmp2 = hi_emit(HI_AND, TY_INT, hi_eq, lo_lt, 0, NULL);
+                tmp2 = hi_emit(HI_OR, TY_INT, hi_lt, tmp2, 0, NULL);
+                return hi_emit(HI_NOT, TY_INT, tmp2, -1, 0, NULL);
+            }
+            /* Mul/Div/Rem/Shifts — emit CALL to helper */
+            if (n->op == TK_STAR) {
+                carg_base2 = h_ncarg;
+                h_carg[h_ncarg] = lv;      h_ncarg = h_ncarg + 1;
+                h_carg[h_ncarg] = lv_hi;   h_ncarg = h_ncarg + 1;
+                h_carg[h_ncarg] = rv;      h_ncarg = h_ncarg + 1;
+                h_carg[h_ncarg] = rv_hi;   h_ncarg = h_ncarg + 1;
+                r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__muldi3");
+                h_cbase[r_lo] = carg_base2;
+                hl_hi = hi_emit(HI_CALLHI, TY_INT, r_lo, -1, 0, NULL);
+                return r_lo;
+            }
+            if (n->op == TK_SLASH) {
+                carg_base2 = h_ncarg;
+                h_carg[h_ncarg] = lv;      h_ncarg = h_ncarg + 1;
+                h_carg[h_ncarg] = lv_hi;   h_ncarg = h_ncarg + 1;
+                h_carg[h_ncarg] = rv;      h_ncarg = h_ncarg + 1;
+                h_carg[h_ncarg] = rv_hi;   h_ncarg = h_ncarg + 1;
+                if (n->ty & TY_UNSIGNED) {
+                    r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__udivdi3");
+                } else {
+                    r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__divdi3");
+                }
+                h_cbase[r_lo] = carg_base2;
+                hl_hi = hi_emit(HI_CALLHI, TY_INT, r_lo, -1, 0, NULL);
+                return r_lo;
+            }
+            if (n->op == TK_PERCENT) {
+                carg_base2 = h_ncarg;
+                h_carg[h_ncarg] = lv;      h_ncarg = h_ncarg + 1;
+                h_carg[h_ncarg] = lv_hi;   h_ncarg = h_ncarg + 1;
+                h_carg[h_ncarg] = rv;      h_ncarg = h_ncarg + 1;
+                h_carg[h_ncarg] = rv_hi;   h_ncarg = h_ncarg + 1;
+                if (n->ty & TY_UNSIGNED) {
+                    r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__umoddi3");
+                } else {
+                    r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 4, "__moddi3");
+                }
+                h_cbase[r_lo] = carg_base2;
+                hl_hi = hi_emit(HI_CALLHI, TY_INT, r_lo, -1, 0, NULL);
+                return r_lo;
+            }
+            if (n->op == TK_LSHIFT) {
+                carg_base2 = h_ncarg;
+                h_carg[h_ncarg] = lv;      h_ncarg = h_ncarg + 1;
+                h_carg[h_ncarg] = lv_hi;   h_ncarg = h_ncarg + 1;
+                h_carg[h_ncarg] = rv;      h_ncarg = h_ncarg + 1;
+                r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "__ashldi3");
+                h_cbase[r_lo] = carg_base2;
+                hl_hi = hi_emit(HI_CALLHI, TY_INT, r_lo, -1, 0, NULL);
+                return r_lo;
+            }
+            if (n->op == TK_RSHIFT) {
+                carg_base2 = h_ncarg;
+                h_carg[h_ncarg] = lv;      h_ncarg = h_ncarg + 1;
+                h_carg[h_ncarg] = lv_hi;   h_ncarg = h_ncarg + 1;
+                h_carg[h_ncarg] = rv;      h_ncarg = h_ncarg + 1;
+                if (n->ty & TY_UNSIGNED) {
+                    r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "__lshrdi3");
+                } else {
+                    r_lo = hi_emit(HI_CALL, TY_INT, -1, -1, 3, "__ashrdi3");
+                }
+                h_cbase[r_lo] = carg_base2;
+                hl_hi = hi_emit(HI_CALLHI, TY_INT, r_lo, -1, 0, NULL);
+                return r_lo;
+            }
+            /* Logical && || handled elsewhere */
         }
 
         /* Pointer arithmetic: scale the integer operand */
@@ -468,7 +729,17 @@ static int hl_expr(Node *n) {
 
     /* Type cast */
     if (n->kind == ND_CAST) {
-        return hl_expr(n->lhs);
+        lv = hl_expr(n->lhs);
+        if (ty_is_llong(n->ty) && !ty_is_llong(n->lhs->ty)) {
+            /* Widen 32->64 */
+            hl_widen64(lv, n->lhs->ty, &lv, &hl_hi);
+            return lv;
+        }
+        if (!ty_is_llong(n->ty) && ty_is_llong(n->lhs->ty)) {
+            /* Truncate 64->32: just use lo word */
+            return lv;
+        }
+        return lv;
     }
 
     /* Comma operator */
@@ -498,6 +769,19 @@ static int hl_expr(Node *n) {
         int new_ap;
         addr = hl_addr(n->lhs);
         ap_val = hi_emit(HI_LOAD, TY_INT, addr, -1, 0, NULL);
+        if (ty_is_llong(n->ty)) {
+            /* 64-bit: load lo and hi words, advance ap by 8 */
+            int lo;
+            int ap4;
+            int hi;
+            lo = hi_emit(HI_LOAD, TY_INT, ap_val, -1, 0, NULL);
+            ap4 = hi_emit(HI_ADDI, TY_INT, ap_val, -1, 4, NULL);
+            hi = hi_emit(HI_LOAD, TY_INT, ap4, -1, 0, NULL);
+            new_ap = hi_emit(HI_ADDI, TY_INT, ap_val, -1, 8, NULL);
+            hi_emit(HI_STORE, TY_INT, addr, new_ap, 0, NULL);
+            hl_hi = hi;
+            return lo;
+        }
         val = hi_emit(HI_LOAD, n->ty, ap_val, -1, 0, NULL);
         new_ap = hi_emit(HI_ADDI, TY_INT, ap_val, -1, 4, NULL);
         hi_emit(HI_STORE, TY_INT, addr, new_ap, 0, NULL);
@@ -507,28 +791,49 @@ static int hl_expr(Node *n) {
     /* Direct function call */
     if (n->kind == ND_CALL) {
         int av[16];
+        int av_hi[16];
+        int is64[16];
+        int phys_count;
+        int ret_ty;
         /* Lower all arguments first (inner calls may use h_carg) */
         a = n->args;
         nargs = 0;
         while (a) {
             if (nargs >= 16) p_error("too many call args (limit 16)");
             av[nargs] = hl_expr(a);
+            if (ty_is_llong(a->ty)) {
+                av_hi[nargs] = hl_hi;
+                is64[nargs] = 1;
+            } else {
+                av_hi[nargs] = -1;
+                is64[nargs] = 0;
+            }
             nargs = nargs + 1;
             a = a->next;
         }
-        /* Now record args in h_carg (after inner calls are done) */
+        /* Now record args in h_carg, expanding 64-bit args to lo/hi pairs */
         carg_base = h_ncarg;
+        phys_count = 0;
         i = 0;
         while (i < nargs) {
-            if (h_ncarg >= HIR_MAX_CARG) {
-                p_error("too many call args (hir)");
-            }
+            if (h_ncarg >= HIR_MAX_CARG) p_error("too many call args (hir)");
             h_carg[h_ncarg] = av[i];
             h_ncarg = h_ncarg + 1;
+            phys_count = phys_count + 1;
+            if (is64[i]) {
+                if (h_ncarg >= HIR_MAX_CARG) p_error("too many call args (hir)");
+                h_carg[h_ncarg] = av_hi[i];
+                h_ncarg = h_ncarg + 1;
+                phys_count = phys_count + 1;
+            }
             i = i + 1;
         }
-        i = hi_emit(HI_CALL, TY_INT, -1, -1, nargs, n->name);
+        ret_ty = find_func_type(n->name);
+        i = hi_emit(HI_CALL, TY_INT, -1, -1, phys_count, n->name);
         h_cbase[i] = carg_base;
+        if (ty_is_llong(ret_ty)) {
+            hl_hi = hi_emit(HI_CALLHI, TY_INT, i, -1, 0, NULL);
+        }
         return i;
     }
 
@@ -540,26 +845,42 @@ static int hl_expr(Node *n) {
     /* Indirect call through expression */
     if (n->kind == ND_CALL_PTR) {
         int av[16];
+        int av_hi2[16];
+        int is64_2[16];
+        int phys_count2;
         callee = hl_expr(n->lhs);
         a = n->args;
         nargs = 0;
         while (a) {
             if (nargs >= 16) p_error("too many call args (limit 16)");
             av[nargs] = hl_expr(a);
+            if (ty_is_llong(a->ty)) {
+                av_hi2[nargs] = hl_hi;
+                is64_2[nargs] = 1;
+            } else {
+                av_hi2[nargs] = -1;
+                is64_2[nargs] = 0;
+            }
             nargs = nargs + 1;
             a = a->next;
         }
         carg_base = h_ncarg;
+        phys_count2 = 0;
         i = 0;
         while (i < nargs) {
-            if (h_ncarg >= HIR_MAX_CARG) {
-                p_error("too many call args (hir)");
-            }
+            if (h_ncarg >= HIR_MAX_CARG) p_error("too many call args (hir)");
             h_carg[h_ncarg] = av[i];
             h_ncarg = h_ncarg + 1;
+            phys_count2 = phys_count2 + 1;
+            if (is64_2[i]) {
+                if (h_ncarg >= HIR_MAX_CARG) p_error("too many call args (hir)");
+                h_carg[h_ncarg] = av_hi2[i];
+                h_ncarg = h_ncarg + 1;
+                phys_count2 = phys_count2 + 1;
+            }
             i = i + 1;
         }
-        i = hi_emit(HI_CALLP, TY_INT, callee, -1, nargs, NULL);
+        i = hi_emit(HI_CALLP, TY_INT, callee, -1, phys_count2, NULL);
         h_cbase[i] = carg_base;
         return i;
     }
@@ -604,7 +925,11 @@ static void hl_stmt(Node *n) {
     if (n->kind == ND_RETURN) {
         if (n->lhs) {
             lv = hl_expr(n->lhs);
-            hi_emit(HI_RET, 0, lv, -1, 0, NULL);
+            if (ty_is_llong(n->lhs->ty)) {
+                hi_emit(HI_RET, 0, lv, hl_hi, 0, NULL);
+            } else {
+                hi_emit(HI_RET, 0, lv, -1, 0, NULL);
+            }
         } else {
             hi_emit(HI_RET, 0, -1, -1, 0, NULL);
         }
@@ -876,7 +1201,8 @@ static void hl_func(Node *fn) {
 
     hir_reset();
     hl_nalloca = 0;
-    hl_nparams = fn->nparams;
+    hl_nparams = fn->nparams;  /* will be updated by param expansion for llong */
+    hl_hi = -1;
     hl_temp_stack = fn->locals_size;
     hl_loop_depth = 0;
     hl_sw_depth = 0;
@@ -886,12 +1212,31 @@ static void hl_func(Node *fn) {
     hl_switch_block(entry);
 
     /* Emit PARAM+STORE for each parameter (enables SSA promotion) */
-    pi = 0;
-    while (pi < fn->nparams) {
-        param_inst = hi_emit(HI_PARAM, TY_INT, -1, -1, pi, NULL);
-        param_alloca = hl_get_alloca(-8 - (pi + 1) * 4, TY_INT);
-        hi_emit(HI_STORE, TY_INT, param_alloca, param_inst, 0, NULL);
-        pi = pi + 1;
+    {
+        int phys_idx;
+        int param_hi;
+        int a4;
+        Node *pp;
+        phys_idx = 0;
+        pp = fn->args;
+        while (pp) {
+            if (ty_is_llong(pp->ty)) {
+                param_inst = hi_emit(HI_PARAM, TY_INT, -1, -1, phys_idx, NULL);
+                param_hi = hi_emit(HI_PARAM, TY_INT, -1, -1, phys_idx + 1, NULL);
+                param_alloca = hl_get_alloca(pp->offset, TY_INT);
+                hi_emit(HI_STORE, TY_INT, param_alloca, param_inst, 0, NULL);
+                a4 = hi_emit(HI_ADDI, TY_INT, param_alloca, -1, 4, NULL);
+                hi_emit(HI_STORE, TY_INT, a4, param_hi, 0, NULL);
+                phys_idx = phys_idx + 2;
+            } else {
+                param_inst = hi_emit(HI_PARAM, TY_INT, -1, -1, phys_idx, NULL);
+                param_alloca = hl_get_alloca(pp->offset, TY_INT);
+                hi_emit(HI_STORE, TY_INT, param_alloca, param_inst, 0, NULL);
+                phys_idx = phys_idx + 1;
+            }
+            pp = pp->next;
+        }
+        hl_nparams = phys_idx;
     }
 
     hl_stmt(fn->body);

@@ -1,7 +1,7 @@
 /* Selfhost libc: trimmed varargs formatter
  *
- * Supports: %d %i %u %x %X %o %p %c %s %%
- * Excludes: width/precision/flags, float, 64-bit formats.
+ * Supports: %d %i %u %x %X %o %p %c %s %% %lld %lli %llu %llx %llX %llo
+ * Excludes: width/precision/flags, float.
  *
  * Compiled only by stage05+ compilers (not stage04 bootstrap compiler).
  */
@@ -62,9 +62,28 @@ static int fmt_u32(char *buf, unsigned int v, int base, int upper) {
     return i;
 }
 
+static int fmt_u64(char *buf, unsigned long long v, int base, int upper) {
+    int i;
+    int d;
+    i = 0;
+    if (v == 0) {
+        buf[i] = '0';
+        return 1;
+    }
+    while (v > 0) {
+        d = (int)(v % (unsigned long long)base);
+        if (d < 10) buf[i] = '0' + (char)d;
+        else buf[i] = (upper ? 'A' : 'a') + (char)(d - 10);
+        v = v / (unsigned long long)base;
+        i = i + 1;
+    }
+    return i;
+}
+
 static int vf_core(FILE *fp, char *out, unsigned int size, const char *fmt, va_list ap, int to_file) {
     const char *p;
     int pos;
+    int lmod;
     p = fmt;
     pos = 0;
     while (*p) {
@@ -80,6 +99,16 @@ static int vf_core(FILE *fp, char *out, unsigned int size, const char *fmt, va_l
             p = p + 1;
             continue;
         }
+        /* Parse length modifier */
+        lmod = 0;
+        if (*p == 'l') {
+            p = p + 1;
+            lmod = 1;
+            if (*p == 'l') {
+                p = p + 1;
+                lmod = 2;
+            }
+        }
         if (*p == 'c') {
             int c;
             c = va_arg(ap, int);
@@ -92,6 +121,28 @@ static int vf_core(FILE *fp, char *out, unsigned int size, const char *fmt, va_l
             s = va_arg(ap, char *);
             if (!s) s = "(null)";
             if (fmt_emit_str(to_file, fp, out, size, &pos, s) < 0) return -1;
+            p = p + 1;
+            continue;
+        }
+        if (lmod == 2 && (*p == 'd' || *p == 'i')) {
+            char tmp[24];
+            long long v64;
+            unsigned long long uv64;
+            int n;
+            int j;
+            v64 = va_arg(ap, long long);
+            if (v64 < 0) {
+                if (fmt_emit_char(to_file, fp, out, size, &pos, '-') < 0) return -1;
+                uv64 = (unsigned long long)(0 - v64);
+            } else {
+                uv64 = (unsigned long long)v64;
+            }
+            n = fmt_u64(tmp, uv64, 10, 0);
+            j = n - 1;
+            while (j >= 0) {
+                if (fmt_emit_char(to_file, fp, out, size, &pos, tmp[j]) < 0) return -1;
+                j = j - 1;
+            }
             p = p + 1;
             continue;
         }
@@ -109,6 +160,26 @@ static int vf_core(FILE *fp, char *out, unsigned int size, const char *fmt, va_l
                 uv = (unsigned int)v;
             }
             n = fmt_u32(tmp, uv, 10, 0);
+            j = n - 1;
+            while (j >= 0) {
+                if (fmt_emit_char(to_file, fp, out, size, &pos, tmp[j]) < 0) return -1;
+                j = j - 1;
+            }
+            p = p + 1;
+            continue;
+        }
+        if (lmod == 2 && (*p == 'u' || *p == 'x' || *p == 'X' || *p == 'o')) {
+            char tmp[24];
+            int n;
+            int j;
+            int base;
+            int upper;
+            base = 10;
+            upper = 0;
+            if (*p == 'x' || *p == 'X') base = 16;
+            if (*p == 'o') base = 8;
+            if (*p == 'X') upper = 1;
+            n = fmt_u64(tmp, va_arg(ap, unsigned long long), base, upper);
             j = n - 1;
             while (j >= 0) {
                 if (fmt_emit_char(to_file, fp, out, size, &pos, tmp[j]) < 0) return -1;

@@ -48,6 +48,7 @@
 #define HI_COPY     39
 #define HI_ADDI     40
 #define HI_GETFP    41
+#define HI_CALLHI   42  /* hi word of 64-bit return: src1=CALL instruction */
 
 /* --- Limits --- */
 #define HIR_MAX_INST   16384

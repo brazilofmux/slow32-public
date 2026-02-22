@@ -1380,6 +1380,10 @@ static void hcg_inst(int idx) {
 
     /* Return */
     if (k == HI_RET) {
+        /* 64-bit return: put hi word in r2 first */
+        if (s2 >= 0) {
+            hcg_into(2, s2);
+        }
         if (s1 >= 0) {
             if (hcg_const_imm_inst(s1, &off)) {
                 if (off == 0) cg_rri("addi", 1, 0, 0);
@@ -1397,6 +1401,8 @@ static void hcg_inst(int idx) {
 
     /* Direct call */
     if (k == HI_CALL) {
+        int has_callhi;
+        int rd2;
         nargs = h_val[idx];
         base = h_cbase[idx];
 
@@ -1428,6 +1434,18 @@ static void hcg_inst(int idx) {
             cg_rri("addi", 29, 29, (nargs - regc) * 4);
         }
 
+        /* Check for CALLHI following this CALL */
+        has_callhi = 0;
+        if (idx + 1 < bb_end[h_blk[idx]] && h_kind[idx + 1] == HI_CALLHI) {
+            has_callhi = 1;
+            rd2 = hcg_dst(idx + 1);
+            /* Capture r2 (hi word) before any register shuffling */
+            if (rd2 != 2) {
+                cg_rri("addi", rd2, 2, 0);
+            }
+            hcg_maybe_spill(idx + 1);
+        }
+
         rd = hcg_dst(idx);
         if (rd != 1) {
             cg_rri("addi", rd, 1, 0);
@@ -1437,8 +1455,15 @@ static void hcg_inst(int idx) {
         return;
     }
 
+    /* CALLHI — already handled by preceding CALL */
+    if (k == HI_CALLHI) {
+        return;
+    }
+
     /* Indirect call */
     if (k == HI_CALLP) {
+        int has_callhi2;
+        int rd2b;
         nargs = h_val[idx];
         base = h_cbase[idx];
 
@@ -1471,6 +1496,17 @@ static void hcg_inst(int idx) {
         cg_s("    jalr r31, r2, 0\n");
 
         cg_rri("addi", 29, 29, (nargs - regc + 1) * 4);
+
+        /* Check for CALLHI following this CALLP */
+        has_callhi2 = 0;
+        if (idx + 1 < bb_end[h_blk[idx]] && h_kind[idx + 1] == HI_CALLHI) {
+            has_callhi2 = 1;
+            rd2b = hcg_dst(idx + 1);
+            if (rd2b != 2) {
+                cg_rri("addi", rd2b, 2, 0);
+            }
+            hcg_maybe_spill(idx + 1);
+        }
 
         rd = hcg_dst(idx);
         if (rd != 1) {
@@ -1774,6 +1810,15 @@ static void gen_data(void) {
             cg_s(":\n    .word .LS");
             cg_n(ps_gstr[i]);
             cg_c(10);
+        } else if (ps_gsize[i] == 0 && ty_is_llong(ps_gtype[i]) && (ps_ginit[i] != 0 || ps_ginit_hi[i] != 0)) {
+            /* 64-bit initialized global */
+            if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
+            cg_s(ps_gname[i]);
+            cg_s(":\n    .word ");
+            cg_n(ps_ginit[i]);
+            cg_s("\n    .word ");
+            cg_n(ps_ginit_hi[i]);
+            cg_c(10);
         } else if (ps_gsize[i] == 0 && ps_ginit[i] != 0) {
             if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
             cg_s(ps_gname[i]);
@@ -1796,6 +1841,11 @@ static void gen_data(void) {
             cg_s(":\n    .space ");
             cg_n(ps_gsize[i]);
             cg_c(10);
+        } else if (ty_is_llong(ps_gtype[i]) && ps_ginit[i] == 0 && ps_ginit_hi[i] == 0 && ps_gstr[i] < 0) {
+            /* 64-bit uninitialized global */
+            if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
+            cg_s(ps_gname[i]);
+            cg_s(":\n    .space 8\n");
         } else if (ps_ginit[i] == 0 && ps_gstr[i] < 0) {
             if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
             cg_s(ps_gname[i]);
