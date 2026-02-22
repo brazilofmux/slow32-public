@@ -13,6 +13,7 @@ DIAG_BLOCK_PC="${DBT_DIAG_BLOCK_PC:-}"
 DIAG_BRANCH_PC="${DBT_DIAG_BRANCH_PC:-}"
 DIAG_MAX="${DBT_DIAG_MAX:-64}"
 KEEP_TMP="${DBT_KEEP_TMP:-0}"
+REQUIRE_MATCH="${DBT_REQUIRE_MATCH:-0}"
 
 if [[ ! -x "$DBT" ]]; then
     echo "error: missing executable: $DBT" >&2
@@ -38,6 +39,7 @@ else
 fi
 
 printf "%-20s %-6s %-8s %-8s\n" "test" "rc" "safe(s)" "unsf(s)"
+mismatch_count=0
 
 for t in "${TESTS[@]}"; do
     if [[ ! -f "$t" ]]; then
@@ -107,6 +109,9 @@ for t in "${TESTS[@]}"; do
         set -e
         echo "diag[$base]: rc=$diag_rc logs: $diag_out $diag_err" >&2
     fi
+    if [[ "$rc" != "ok" ]]; then
+        mismatch_count=$((mismatch_count + 1))
+    fi
 
     ts=$(awk '/^Time: / {print $2}' "$err_safe" | tail -n1)
     tu=$(awk '/^Time: / {print $2}' "$err_unsafe" | tail -n1)
@@ -114,3 +119,9 @@ for t in "${TESTS[@]}"; do
     [[ -n "$tu" ]] || tu="-"
     printf "%-20s %-6s %-8s %-8s\n" "$base" "$rc" "$ts" "$tu"
 done
+
+echo
+echo "summary: mismatches=$mismatch_count"
+if [[ "$REQUIRE_MATCH" != "0" && $mismatch_count -ne 0 ]]; then
+    exit 2
+fi

@@ -34,7 +34,7 @@ HDRS = cpu_state.h $(ARCH_HDRS) translate.h block_cache.h dbt_limits.h \
 # Main target
 TARGET = slow32-dbt
 
-.PHONY: all clean test test-diff stress-safe-unsafe sweep-peephole sweep-peephole-strict debug disasm
+.PHONY: all clean test test-diff compare-safe-unsafe compare-safe-unsafe-strict stress-safe-unsafe sweep-peephole sweep-peephole-strict debug disasm
 
 all: $(TARGET)
 	@echo "Built for $(UNAME_M)"
@@ -70,6 +70,14 @@ test-diff: $(TARGET)
 #   make stress-safe-unsafe ITERS=50 TESTS="../../regression/results/feature-strtod/test.s32x"
 ITERS ?= 100
 TESTS ?=
+compare-safe-unsafe: $(TARGET)
+	@echo "Comparing safe-vs-unsafe Stage5 output..."
+	@./scripts/compare-stage5-safe-unsafe.sh $(TESTS)
+
+compare-safe-unsafe-strict: $(TARGET)
+	@echo "Comparing safe-vs-unsafe Stage5 output (strict)..."
+	@DBT_REQUIRE_MATCH=1 ./scripts/compare-stage5-safe-unsafe.sh $(TESTS)
+
 stress-safe-unsafe: $(TARGET)
 	@echo "Running safe-vs-unsafe stress (iters=$(ITERS))..."
 	@./scripts/stress-stage5-safe-unsafe.sh "$(ITERS)" $(TESTS)
