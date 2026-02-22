@@ -177,9 +177,7 @@ static inline void stage5_validate_reg_write(stage5_validate_state_t *s, uint8_t
 }
 
 static bool stage5_validate_is_terminal_unsupported(uint8_t opcode) {
-    return opcode == OP_JALR ||
-           opcode == OP_YIELD || opcode == OP_DEBUG || opcode == OP_HALT ||
-           opcode == OP_ASSERT_EQ;
+    return opcode == OP_JALR;
 }
 
 static void stage5_validate_mem_init(stage5_validate_mem_t *m, const dbt_cpu_state_t *cpu) {
@@ -529,6 +527,14 @@ static bool stage5_validate_execute_op(stage5_validate_state_t *s,
         case OP_JAL:
             stage5_validate_reg_write(s, rd, pc + 4);
             next_pc = pc + (uint32_t)imm;
+            break;
+        case OP_DEBUG:
+        case OP_YIELD:
+        case OP_HALT:
+        case OP_ASSERT_EQ:
+            // Semantic-only validation mode: these opcodes may cause host-side
+            // effects in real execution, but do not alter architectural state
+            // tracked by this checker (regs/pc/memory shadow).
             break;
         case OP_BEQ:  if (rs1 == rs2) next_pc = next_pc + (uint32_t)imm; break;
         case OP_BNE:  if (rs1 != rs2) next_pc = next_pc + (uint32_t)imm; break;
