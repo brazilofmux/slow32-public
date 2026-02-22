@@ -319,6 +319,35 @@ static int hl_expr(Node *n) {
 
     /* Assignment */
     if (n->kind == ND_ASSIGN) {
+        if (ty_is_struct(n->ty)) {
+            /* Struct assignment: word-by-word copy */
+            int sa;
+            int da;
+            int sz;
+            int off;
+            int tmp;
+            int sp;
+            int dp;
+            sa = hl_addr(n->rhs);
+            da = hl_addr(n->lhs);
+            sz = ty_size(n->ty);
+            off = 0;
+            while (off + 4 <= sz) {
+                sp = hi_emit(HI_ADDI, TY_INT, sa, -1, off, NULL);
+                tmp = hi_emit(HI_LOAD, TY_INT, sp, -1, 0, NULL);
+                dp = hi_emit(HI_ADDI, TY_INT, da, -1, off, NULL);
+                hi_emit(HI_STORE, TY_INT, dp, tmp, 0, NULL);
+                off = off + 4;
+            }
+            while (off < sz) {
+                sp = hi_emit(HI_ADDI, TY_INT, sa, -1, off, NULL);
+                tmp = hi_emit(HI_LOAD, TY_CHAR, sp, -1, 0, NULL);
+                dp = hi_emit(HI_ADDI, TY_INT, da, -1, off, NULL);
+                hi_emit(HI_STORE, TY_CHAR, dp, tmp, 0, NULL);
+                off = off + 1;
+            }
+            return da;
+        }
         if (ty_is_llong(n->ty)) {
             int val_hi;
             int addr4;
