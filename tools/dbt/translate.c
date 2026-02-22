@@ -283,6 +283,54 @@ static void stage5_record_regflow_retry_emit_success(int retry_choice) {
     }
 }
 
+static uint32_t stage5_retry_attempted_for_choice(int retry_choice) {
+    if (retry_choice == 1) return stage5_emit_regflow_retry_cfg_attempted;
+    if (retry_choice == 2) return stage5_emit_regflow_retry_term_attempted;
+    if (retry_choice == 3) return stage5_emit_regflow_retry_half_attempted;
+    return 0;
+}
+
+static uint32_t stage5_retry_emit_success_for_choice(int retry_choice) {
+    if (retry_choice == 1) return stage5_emit_regflow_retry_cfg_emit_success;
+    if (retry_choice == 2) return stage5_emit_regflow_retry_term_emit_success;
+    if (retry_choice == 3) return stage5_emit_regflow_retry_half_emit_success;
+    return 0;
+}
+
+static int stage5_retry_base_priority(int retry_choice) {
+    if (retry_choice == 1) return 300; // cfg_head
+    if (retry_choice == 2) return 200; // terminal
+    if (retry_choice == 3) return 100; // half
+    return 0;
+}
+
+static void stage5_adapt_retry_order(uint32_t *budgets, int *choices, int count) {
+    if (!budgets || !choices || count <= 1) return;
+    const uint32_t min_samples = 8;
+    for (int i = 0; i < count; i++) {
+        for (int j = i + 1; j < count; j++) {
+            int ci = choices[i];
+            int cj = choices[j];
+            uint32_t ai = stage5_retry_attempted_for_choice(ci);
+            uint32_t aj = stage5_retry_attempted_for_choice(cj);
+            uint32_t si = stage5_retry_emit_success_for_choice(ci);
+            uint32_t sj = stage5_retry_emit_success_for_choice(cj);
+            int score_i = (ai >= min_samples) ? (int)((si * 1000u) / (ai ? ai : 1u))
+                                              : stage5_retry_base_priority(ci);
+            int score_j = (aj >= min_samples) ? (int)((sj * 1000u) / (aj ? aj : 1u))
+                                              : stage5_retry_base_priority(cj);
+            if (score_j > score_i) {
+                uint32_t tb = budgets[i];
+                budgets[i] = budgets[j];
+                budgets[j] = tb;
+                int tc = choices[i];
+                choices[i] = choices[j];
+                choices[j] = tc;
+            }
+        }
+    }
+}
+
 static bool stage5_validate_abort_on_mismatch(void) {
     static bool inited = false;
     static bool enabled = false;
@@ -2324,6 +2372,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             retry_choices[retry_count] = 3;
             retry_count++;
         }
+        stage5_adapt_retry_order(retry_budgets, retry_choices, retry_count);
         for (int ri = 0; ri < retry_count && !regflow_retry_applied; ri++) {
             uint32_t retry_budget = retry_budgets[ri];
             int retry_choice = retry_choices[ri];
