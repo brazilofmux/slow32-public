@@ -175,6 +175,17 @@ static bool cg_boolpair_native_enabled(void) {
     return enabled;
 }
 
+static bool cg_predicate_native_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_PREDICATE_NATIVE");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
 static bool cg_boolpair_trace_enabled(void) {
     static bool inited = false;
     static bool enabled = false;
@@ -1705,7 +1716,12 @@ bool stage5_codegen(translate_ctx_t *ctx,
     bool boolpair_native_active =
         (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR &&
          cg_boolpair_native_enabled());
-    if (boolpair_native_active) {
+    bool pred_native_active =
+        ((emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP ||
+          emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP) &&
+         cg_predicate_native_enabled());
+    bool predicate_native_active = boolpair_native_active || pred_native_active;
+    if (predicate_native_active) {
         stage5_codegen_boolpair_native_attempted++;
         cg_trace_boolpair_region(region, guest_pc, terminal_idx);
         if (cg_boolpair_skip_pc_enabled(guest_pc)) {
@@ -1720,11 +1736,12 @@ bool stage5_codegen(translate_ctx_t *ctx,
     // path until dedicated native lowering is validated.
     if ((emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR &&
          !cg_boolpair_native_enabled()) ||
-        emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP ||
-        emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP) {
+        ((emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP ||
+          emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP) &&
+         !cg_predicate_native_enabled())) {
         stage5_codegen_fallback++;
         stage5_codegen_fallback_preflight++;
-        if (boolpair_native_active) stage5_codegen_boolpair_native_fallback++;
+        if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
         return false;
     }
 
@@ -1743,7 +1760,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
                              side_exit_emit_enabled, side_exit_family_c)) {
         stage5_codegen_fallback++;
         stage5_codegen_fallback_preflight++;
-        if (boolpair_native_active) stage5_codegen_boolpair_native_fallback++;
+        if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
         return false;
     }
 
@@ -1768,7 +1785,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
                 if (!cg_emit_side_exit(&cg, n)) {
                     stage5_codegen_fallback++;
                     stage5_codegen_fallback_side_exit++;
-                    if (boolpair_native_active) stage5_codegen_boolpair_native_fallback++;
+                    if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
                     cg_state_restore(ctx, &saved);
                     return false;
                 }
@@ -1777,7 +1794,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
             } else {
                 stage5_codegen_fallback++;
                 stage5_codegen_fallback_side_exit++;
-                if (boolpair_native_active) stage5_codegen_boolpair_native_fallback++;
+                if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
                 cg_state_restore(ctx, &saved);
                 return false;
             }
@@ -1790,7 +1807,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
             // Unsupported instruction — abort
             stage5_codegen_fallback++;
             stage5_codegen_fallback_emit_node++;
-            if (boolpair_native_active) stage5_codegen_boolpair_native_fallback++;
+            if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
             cg_state_restore(ctx, &saved);
             return false;
         }
@@ -1832,7 +1849,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
         const stage5_ir_node_t *last = &region->ir[terminal_idx];
         ctx->guest_pc = last->pc;
         ctx->current_inst_idx = terminal_idx;
-        if (boolpair_native_active) {
+        if (predicate_native_active) {
             stage5_flush_pending_for_codegen(ctx);
         }
         switch (last->opcode) {
@@ -1879,7 +1896,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
     if (!ended) {
         stage5_codegen_fallback++;
         stage5_codegen_fallback_terminal++;
-        if (boolpair_native_active) stage5_codegen_boolpair_native_fallback++;
+        if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
         if (terminal_idx >= 0 && terminal_idx < (int)region->ir_count) {
             stage5_codegen_fallback_terminal_opcode_hist[
                 region->ir[terminal_idx].opcode & 0x7F]++;
@@ -1894,7 +1911,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
 
     size_t emit_end = emit_offset(cg.e);
     stage5_codegen_success++;
-    if (boolpair_native_active) stage5_codegen_boolpair_native_success++;
+    if (predicate_native_active) stage5_codegen_boolpair_native_success++;
     stage5_codegen_guest_insts += region->guest_inst_count;
     if (emit_end > emit_start) {
         stage5_codegen_host_bytes += (uint64_t)(emit_end - emit_start);
