@@ -319,6 +319,20 @@ static uint32_t stage5_bench_max_jalr_ret_long_ginst(void) {
     return limit;
 }
 
+static uint32_t stage5_bench_max_block_end_ginst(void) {
+    static bool inited = false;
+    static uint32_t limit = 8;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_MAX_BLOCK_END_GINST");
+        if (v && v[0] != '\0') {
+            unsigned long x = strtoul(v, NULL, 0);
+            if (x > 0 && x <= MAX_BLOCK_INSTS) limit = (uint32_t)x;
+        }
+        inited = true;
+    }
+    return limit;
+}
+
 static uint32_t stage5_emit_regflow_cross_limit(void) {
     static bool inited = false;
     static uint32_t limit = 10;
@@ -3416,7 +3430,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     }
     if (bench_profile &&
         synth_block_end &&
-        region.guest_inst_count > 8u) {
+        region.guest_inst_count > stage5_bench_max_block_end_ginst()) {
         stage5_emit_fallback++;
         stage5_emit_fallback_shape++;
         stage5_emit_fallback_superblock_policy++;

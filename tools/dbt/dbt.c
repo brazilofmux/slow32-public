@@ -95,6 +95,13 @@ static void apply_stage5_native_bench_profile(int *stage_out,
     setenv("SLOW32_DBT_STAGE5_SIDE_EXIT", "1", 0);
     setenv("SLOW32_DBT_STAGE5_SIDE_EXIT_MODE", "all", 0);
     setenv("SLOW32_DBT_STAGE5_BENCH_PROFILE", "1", 1);
+    setenv("SLOW32_DBT_STAGE5_BENCH_MAX_JAL_JUMP_GINST", "64", 0);
+    setenv("SLOW32_DBT_STAGE5_BENCH_MAX_DIRECT_BRANCH_GINST", "64", 0);
+    setenv("SLOW32_DBT_STAGE5_BENCH_MAX_BLOCK_END_GINST", "64", 0);
+    setenv("SLOW32_DBT_STAGE5_BENCH_MAX_JAL_CALL_GINST", "64", 0);
+    setenv("SLOW32_DBT_STAGE5_BENCH_MAX_JAL_CALL_LONG_GINST", "64", 0);
+    setenv("SLOW32_DBT_STAGE5_BENCH_MAX_JALR_RET_SHORT_GINST", "64", 0);
+    setenv("SLOW32_DBT_STAGE5_BENCH_MAX_JALR_RET_LONG_GINST", "64", 0);
 }
 
 // MMIO state
