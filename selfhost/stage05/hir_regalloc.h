@@ -41,6 +41,7 @@ static int ra_used[RA_NPHY];        /* 1 if register was assigned */
 static int ra_csave_reg[RA_NPHY];   /* physical register number */
 static int ra_csave_off[RA_NPHY];   /* fp offset for save slot */
 static int ra_ncsave;               /* count of registers to save */
+static int ra_stat_spills;          /* cumulative spill count across all functions */
 
 /* =================================================================
  * Step 1: Compute linearized positions (RPO block order)
@@ -485,6 +486,7 @@ static void ra_assign_spills(void) {
             hi_has_value(h_kind[i]) && !hi_is_remat(h_kind[i])) {
             hl_temp_stack = hl_temp_stack + 4;
             ra_spill_off[i] = 0 - hl_temp_stack;
+            ra_stat_spills = ra_stat_spills + 1;
         }
         i = i + 1;
     }

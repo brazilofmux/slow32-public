@@ -84,6 +84,7 @@ static int bg_iconst_seen_use[HIR_MAX_INST];
 static int bg_iconst_seen_nonimm[HIR_MAX_INST];
 static int bg_stat_iconst_use_op[BG_OP_SZ];
 static int bg_stat_iconst_nonimm_use_op[BG_OP_SZ];
+static int bg_stat_burg_skipped;
 
 /* Init flag */
 static int bg_inited;
@@ -826,6 +827,7 @@ static void hir_burg(void) {
             bg_fold[i] = 0;
             i = i + 1;
         }
+        bg_stat_burg_skipped = bg_stat_burg_skipped + 1;
         return;
     }
 

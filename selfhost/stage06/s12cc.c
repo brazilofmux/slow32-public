@@ -266,6 +266,10 @@ int main(int argc, char **argv) {
     fput_uint(stderr, bg_stat_sel_faddr);
     fputs(" saddr=", stderr);
     fput_uint(stderr, bg_stat_sel_saddr);
+    fputs(" burg_skipped=", stderr);
+    fput_uint(stderr, bg_stat_burg_skipped);
+    fputs(" spills=", stderr);
+    fput_uint(stderr, ra_stat_spills);
     fputs("\n", stderr);
     fputs("hir_imm_sel: add ", stderr);
     fput_uint(stderr, hcg_stat_imm_hit_add);
