@@ -33,6 +33,7 @@ uint32_t stage5_codegen_fallback_preflight_side_exit_cmpdep_mem;
 uint32_t stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_load;
 uint32_t stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store;
 uint32_t stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_stb;
+uint32_t stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_stb_beq;
 uint32_t stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_sth;
 uint32_t stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_stw;
 uint32_t stage5_codegen_fallback_preflight_terminal;
@@ -1960,14 +1961,24 @@ bool stage5_codegen(translate_ctx_t *ctx,
                 return false;
             }
             if (has_store_stb && !cg_allow_cmpdep_side_exit_store_stb()) {
-                stage5_codegen_fallback++;
-                stage5_codegen_fallback_preflight++;
-                stage5_codegen_fallback_preflight_side_exit++;
-                stage5_codegen_fallback_preflight_side_exit_cmpdep_mem++;
-                stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store++;
-                stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_stb++;
-                stage5_codegen_boolpair_native_fallback++;
-                return false;
+                bool block_stb = true;
+                if (terminal_idx >= 0 && terminal_idx < (int)region->ir_count) {
+                    // Narrow guardrail: current known drift family is stb with
+                    // cmpdep side-exit regions that terminate on BEQ.
+                    const stage5_ir_node_t *term = &region->ir[terminal_idx];
+                    block_stb = (term->opcode == OP_BEQ);
+                }
+                if (block_stb) {
+                    stage5_codegen_fallback++;
+                    stage5_codegen_fallback_preflight++;
+                    stage5_codegen_fallback_preflight_side_exit++;
+                    stage5_codegen_fallback_preflight_side_exit_cmpdep_mem++;
+                    stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store++;
+                    stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_stb++;
+                    stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_stb_beq++;
+                    stage5_codegen_boolpair_native_fallback++;
+                    return false;
+                }
             }
             if (has_store_sth && !cg_allow_cmpdep_side_exit_store_sth()) {
                 stage5_codegen_fallback++;

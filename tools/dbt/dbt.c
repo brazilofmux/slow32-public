@@ -2751,6 +2751,10 @@ int main(int argc, char **argv) {
                         if (stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_stb > 0) {
                             fprintf(stderr, "          store stb:                  %" PRIu32 "\n",
                                     stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_stb);
+                            if (stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_stb_beq > 0) {
+                                fprintf(stderr, "            stb+beq narrow-guard:    %" PRIu32 "\n",
+                                        stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_stb_beq);
+                            }
                         }
                         if (stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_sth > 0) {
                             fprintf(stderr, "          store sth:                  %" PRIu32 "\n",
