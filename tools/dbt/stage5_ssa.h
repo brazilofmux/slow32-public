@@ -26,6 +26,7 @@ typedef struct {
 
 typedef struct {
     uint8_t guest_reg;
+    uint8_t src_guest_reg;
     uint16_t src_value;
     uint16_t dst_value;
 } stage5_phi_copy_t;

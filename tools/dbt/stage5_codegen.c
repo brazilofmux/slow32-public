@@ -2141,9 +2141,150 @@ static __attribute__((unused)) bool cg_emit_side_exit(stage5_cg_t *cg, const sta
         n->opcode, n->rs1, n->rs2, n->imm, n->pc);
 }
 
+static int cg_find_cfg_block_by_pc(const stage5_lift_region_t *region, uint32_t pc) {
+    if (!region || !region->cfg_valid) return -1;
+    for (uint32_t i = 0; i < region->cfg_block_count; i++) {
+        const stage5_cfg_block_t *b = &region->cfg_blocks[i];
+        if (pc >= b->start_pc && pc < b->end_pc) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static const stage5_phi_edge_plan_t *cg_find_phi_edge_plan(const stage5_phi_elim_plan_t *plan,
+                                                           int pred_block, int succ_block) {
+    if (!plan || pred_block < 0 || succ_block < 0) return NULL;
+    for (uint16_t i = 0; i < plan->edge_plan_count; i++) {
+        const stage5_phi_edge_plan_t *e = &plan->edges[i];
+        if ((int)e->pred_block == pred_block && (int)e->succ_block == succ_block) {
+            return e;
+        }
+    }
+    return NULL;
+}
+
+static void cg_emit_guest_reg_copy(translate_ctx_t *ctx, uint8_t dst_reg, uint8_t src_reg) {
+    if (dst_reg == 0 || src_reg == 0 || dst_reg == src_reg) return;
+    stage5_flush_pending_for_codegen(ctx);
+    emit_load_guest_reg(ctx, RAX, src_reg);
+    emit_store_guest_reg(ctx, dst_reg, RAX);
+}
+
+static bool cg_emit_phi_edge_copies(stage5_cg_t *cg,
+                                    const stage5_phi_elim_plan_t *plan,
+                                    int pred_block, int succ_block) {
+    const stage5_phi_edge_plan_t *edge = cg_find_phi_edge_plan(plan, pred_block, succ_block);
+    if (!edge || edge->copy_count == 0) return true;
+
+    bool done[STAGE5_MAX_PHI_COPIES_PER_EDGE];
+    memset(done, 0, sizeof(done));
+    uint8_t rem = edge->copy_count;
+
+    while (rem > 0) {
+        bool progressed = false;
+        for (uint8_t i = 0; i < edge->copy_count; i++) {
+            if (done[i]) continue;
+            uint8_t src = edge->copies[i].src_guest_reg;
+            uint8_t dst = edge->copies[i].guest_reg;
+            if (src == 0 || dst == 0 || src == dst) {
+                done[i] = true;
+                rem--;
+                progressed = true;
+                continue;
+            }
+
+            bool src_is_pending_dst = false;
+            for (uint8_t j = 0; j < edge->copy_count; j++) {
+                if (done[j] || i == j) continue;
+                if (edge->copies[j].guest_reg == src) {
+                    src_is_pending_dst = true;
+                    break;
+                }
+            }
+            if (src_is_pending_dst) continue;
+
+            cg_emit_guest_reg_copy(cg->ctx, dst, src);
+            done[i] = true;
+            rem--;
+            progressed = true;
+        }
+        if (progressed) continue;
+
+        int seed = -1;
+        for (uint8_t i = 0; i < edge->copy_count; i++) {
+            if (!done[i]) {
+                seed = (int)i;
+                break;
+            }
+        }
+        if (seed < 0) break;
+
+        uint8_t dst0 = edge->copies[seed].guest_reg;
+        uint8_t src0 = edge->copies[seed].src_guest_reg;
+        if (dst0 == 0 || src0 == 0) {
+            done[seed] = true;
+            rem--;
+            continue;
+        }
+
+        stage5_flush_pending_for_codegen(cg->ctx);
+        emit_load_guest_reg(cg->ctx, R10, dst0);
+
+        uint8_t curr_dst = dst0;
+        uint8_t curr_src = src0;
+        while (curr_src != dst0) {
+            cg_emit_guest_reg_copy(cg->ctx, curr_dst, curr_src);
+
+            bool found = false;
+            for (uint8_t i = 0; i < edge->copy_count; i++) {
+                if (done[i]) continue;
+                if (edge->copies[i].guest_reg == curr_dst &&
+                    edge->copies[i].src_guest_reg == curr_src) {
+                    done[i] = true;
+                    rem--;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return false;
+
+            uint8_t next_src = 0;
+            bool next_found = false;
+            for (uint8_t i = 0; i < edge->copy_count; i++) {
+                if (done[i]) continue;
+                if (edge->copies[i].guest_reg == curr_src) {
+                    next_src = edge->copies[i].src_guest_reg;
+                    next_found = true;
+                    break;
+                }
+            }
+            if (!next_found || next_src == 0) return false;
+            curr_dst = curr_src;
+            curr_src = next_src;
+        }
+
+        stage5_flush_pending_for_codegen(cg->ctx);
+        emit_store_guest_reg(cg->ctx, curr_dst, R10);
+        for (uint8_t i = 0; i < edge->copy_count; i++) {
+            if (done[i]) continue;
+            if (edge->copies[i].guest_reg == curr_dst &&
+                edge->copies[i].src_guest_reg == curr_src) {
+                done[i] = true;
+                rem--;
+                break;
+            }
+        }
+    }
+
+    return true;
+}
+
 // Native branch terminal emission for predicate families.
 // Mirrors stage5 compact branch semantics without routing through translate.c.
 static bool cg_emit_branch_terminal_native(stage5_cg_t *cg,
+                                           const stage5_lift_region_t *region,
+                                           const stage5_phi_elim_plan_t *phi_plan,
                                            uint8_t opcode,
                                            uint8_t rs1, uint8_t rs2,
                                            int32_t imm,
@@ -2204,12 +2345,21 @@ static bool cg_emit_branch_terminal_native(stage5_cg_t *cg,
     if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
         ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
     }
+    int pred_block = cg_find_cfg_block_by_pc(region, branch_pc);
+    int fall_block = cg_find_cfg_block_by_pc(region, fall_pc);
+    if (!cg_emit_phi_edge_copies(cg, phi_plan, pred_block, fall_block)) {
+        return false;
+    }
     emit_exit_chained_for_codegen(ctx, fall_pc, ctx->exit_idx++);
 
     size_t taken_offset = emit_offset(e);
     emit_patch_rel32(e, jcc_patch, taken_offset);
     if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
         ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
+    }
+    int taken_block = cg_find_cfg_block_by_pc(region, taken_pc);
+    if (!cg_emit_phi_edge_copies(cg, phi_plan, pred_block, taken_block)) {
+        return false;
     }
     emit_exit_chained_for_codegen(ctx, taken_pc, ctx->exit_idx++);
 
@@ -2372,6 +2522,8 @@ bool stage5_codegen(translate_ctx_t *ctx,
     cg.current_idx = 0;
 
     bool terminal_fused = false;
+    stage5_phi_elim_plan_t phi_plan;
+    bool have_phi_plan = false;
     size_t emit_start = emit_offset(cg.e);
 
     // The side_exit_family_cfg_ptr is a pointer to a stage5_side_exit_family_cfg_t
@@ -2532,7 +2684,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
             cg_state_restore(ctx, &saved);
             return false;
         }
-        stage5_phi_elim_plan_t phi_plan;
         if (!stage5_ssa_build_phi_elim_plan(region, &ssa, &phi_plan)) {
             stage5_codegen_fallback++;
             stage5_codegen_fallback_preflight++;
@@ -2540,6 +2691,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
             cg_state_restore(ctx, &saved);
             return false;
         }
+        have_phi_plan = true;
     }
 
     // ========================================================================
@@ -2741,7 +2893,8 @@ bool stage5_codegen(translate_ctx_t *ctx,
             case OP_BLTU:
             case OP_BGEU:
                 if (predicate_native_active) {
-                    ended = cg_emit_branch_terminal_native(&cg, last->opcode,
+                    ended = cg_emit_branch_terminal_native(&cg, region,
+                        have_phi_plan ? &phi_plan : NULL, last->opcode,
                         last->rs1, last->rs2, last->imm, last->pc);
                     if (ended) {
                         stage5_codegen_predicate_native_terminal_success++;

@@ -175,6 +175,7 @@ bool stage5_ssa_build_phi_elim_plan(const stage5_lift_region_t *region,
     uint8_t pred_count[STAGE5_MAX_CFG_BLOCKS];
     uint8_t preds[STAGE5_MAX_CFG_BLOCKS][STAGE5_MAX_CFG_BLOCKS];
     uint16_t phi_value[STAGE5_MAX_CFG_BLOCKS][32];
+    uint8_t value_to_reg[STAGE5_SSA_MAX_VALUES];
     uint16_t entry_value[STAGE5_MAX_CFG_BLOCKS][32];
     uint16_t exit_value[STAGE5_MAX_CFG_BLOCKS][32];
     uint8_t block_has_def[STAGE5_MAX_CFG_BLOCKS][32];
@@ -183,10 +184,26 @@ bool stage5_ssa_build_phi_elim_plan(const stage5_lift_region_t *region,
     memset(pred_count, 0, sizeof(pred_count));
     memset(preds, 0xFF, sizeof(preds));
     memset(phi_value, 0, sizeof(phi_value));
+    memset(value_to_reg, 0, sizeof(value_to_reg));
     memset(entry_value, 0, sizeof(entry_value));
     memset(exit_value, 0, sizeof(exit_value));
     memset(block_has_def, 0, sizeof(block_has_def));
     memset(block_last_def_value, 0, sizeof(block_last_def_value));
+
+    for (uint8_t r = 1; r < 32; r++) {
+        for (uint32_t i = 0; i < region->ir_count; i++) {
+            if (overlay->node_use0_valid[i] && overlay->node_use0_reg[i] == r) {
+                uint16_t v = overlay->node_use0_value[i];
+                if (v != 0 && v < STAGE5_SSA_MAX_VALUES) value_to_reg[v] = r;
+                break;
+            }
+            if (overlay->node_use1_valid[i] && overlay->node_use1_reg[i] == r) {
+                uint16_t v = overlay->node_use1_value[i];
+                if (v != 0 && v < STAGE5_SSA_MAX_VALUES) value_to_reg[v] = r;
+                break;
+            }
+        }
+    }
 
     for (uint32_t b = 0; b < region->cfg_block_count; b++) {
         const stage5_cfg_block_t *blk = &region->cfg_blocks[b];
@@ -199,6 +216,9 @@ bool stage5_ssa_build_phi_elim_plan(const stage5_lift_region_t *region,
             if (rd != 0 && overlay->node_def_value[i] != 0) {
                 block_has_def[b][rd] = 1;
                 block_last_def_value[b][rd] = overlay->node_def_value[i];
+                if (overlay->node_def_value[i] < STAGE5_SSA_MAX_VALUES) {
+                    value_to_reg[overlay->node_def_value[i]] = rd;
+                }
             }
         }
         for (uint8_t s = 0; s < blk->succ_count; s++) {
@@ -303,6 +323,7 @@ bool stage5_ssa_build_phi_elim_plan(const stage5_lift_region_t *region,
                 if (edge.copy_count >= STAGE5_MAX_PHI_COPIES_PER_EDGE) return false;
                 stage5_phi_copy_t *c = &edge.copies[edge.copy_count++];
                 c->guest_reg = r;
+                c->src_guest_reg = (src < STAGE5_SSA_MAX_VALUES) ? value_to_reg[src] : 0;
                 c->src_value = src;
                 c->dst_value = dst;
             }
