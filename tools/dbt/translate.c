@@ -455,14 +455,15 @@ static bool stage5_validate_region_eligible(const stage5_lift_region_t *region) 
         const stage5_ir_node_t *n = &region->ir[i];
         bool is_last = (i + 1u == region->ir_count);
         bool jalr_ret = (n->opcode == OP_JALR && n->rd == 0 && n->rs1 == REG_LR && n->imm == 0);
+        bool jalr_nolink_terminal = (n->opcode == OP_JALR && n->rd == 0 && is_last);
         bool jal_call = (n->opcode == OP_JAL && n->rd == 31);
-        if ((n->opcode == OP_JALR && (!jalr_ret || !is_last)) ||
+        if ((n->opcode == OP_JALR && !jalr_nolink_terminal) ||
             (jal_call && !is_last)) {
             stage5_validate_skipped_call_indirect++;
             stage5_validate_skip_call_indirect_opcode_hist[n->opcode & 0x7F]++;
             if (n->opcode == OP_JALR) {
                 stage5_validate_trace_skip_call(region, n, i,
-                                                jalr_ret ? "jalr_ret_nonterminal" : "jalr_nonret");
+                                                jalr_ret ? "jalr_ret_nonterminal" : "jalr_nonterminal_or_link");
             } else if (jal_call) {
                 stage5_validate_trace_skip_call(region, n, i, "jal_call_nonterminal");
             } else {
