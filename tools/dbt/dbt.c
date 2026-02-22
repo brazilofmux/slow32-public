@@ -2745,6 +2745,26 @@ int main(int argc, char **argv) {
             if (stage5_codegen_fallback_preflight_branch_cmp_mix > 0) {
                 fprintf(stderr, "    preflight branch+cmp mix: %" PRIu32 "\n",
                         stage5_codegen_fallback_preflight_branch_cmp_mix);
+                if (stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_term > 0) {
+                    fprintf(stderr, "      reason noncanonical term: %" PRIu32 "\n",
+                            stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_term);
+                }
+                if (stage5_codegen_fallback_preflight_branch_cmp_mix_reason_nonadjacent > 0) {
+                    fprintf(stderr, "      reason nonadjacent cmp:  %" PRIu32 "\n",
+                            stage5_codegen_fallback_preflight_branch_cmp_mix_reason_nonadjacent);
+                }
+                if (stage5_codegen_fallback_preflight_branch_cmp_mix_reason_rd_mismatch > 0) {
+                    fprintf(stderr, "      reason rd mismatch:      %" PRIu32 "\n",
+                            stage5_codegen_fallback_preflight_branch_cmp_mix_reason_rd_mismatch);
+                }
+                if (stage5_codegen_fallback_preflight_branch_cmp_mix_reason_opcode > 0) {
+                    fprintf(stderr, "      reason opcode class:     %" PRIu32 "\n",
+                            stage5_codegen_fallback_preflight_branch_cmp_mix_reason_opcode);
+                }
+                if (stage5_codegen_fallback_preflight_branch_cmp_mix_reason_multi_cmp > 0) {
+                    fprintf(stderr, "      reason multi cmp nodes:  %" PRIu32 "\n",
+                            stage5_codegen_fallback_preflight_branch_cmp_mix_reason_multi_cmp);
+                }
                 print_top_opcode_hist("codegen preflight branch+cmp mix",
                                       stage5_codegen_fallback_preflight_branch_cmp_mix_opcode_hist);
             }

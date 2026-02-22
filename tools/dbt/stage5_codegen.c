@@ -32,6 +32,11 @@ uint32_t stage5_codegen_fallback_preflight_side_exit;
 uint32_t stage5_codegen_fallback_preflight_terminal;
 uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix;
 uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_opcode_hist[128];
+uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_term;
+uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_nonadjacent;
+uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_rd_mismatch;
+uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_opcode;
+uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_multi_cmp;
 uint32_t stage5_codegen_fallback_side_exit;
 uint32_t stage5_codegen_fallback_emit_node;
 uint32_t stage5_codegen_fallback_terminal;
@@ -95,11 +100,66 @@ static bool cg_branch_cmp_mix_enabled(void) {
     return enabled;
 }
 
+static bool cg_branch_cmp_mix_slt_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX_SLT");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+static bool cg_branch_cmp_mix_slti_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX_SLTI");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+static bool cg_branch_cmp_mix_sltiu_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX_SLTIU");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+static bool cg_branch_cmp_mix_unsigned_rr_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX_UNSIGNED_RR");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
 static bool cg_side_exit_enabled(void) {
     static bool inited = false;
     static bool enabled = false;
     if (!inited) {
         const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_SIDE_EXIT");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+static bool cg_trace_mix_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_TRACE_MIX");
         enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
         inited = true;
     }
@@ -521,31 +581,23 @@ static bool cg_emit_mul(stage5_cg_t *cg, const stage5_ir_node_t *n) {
 
 // Comparisons: SLT, SLTU, SEQ, SNE, SGT, SGTU, SLE, SLEU, SGE, SGEU
 static bool cg_emit_cmp_rr(stage5_cg_t *cg, const stage5_ir_node_t *n) {
-    uint8_t rd = n->rd, rs1 = n->rs1, rs2 = n->rs2;
+    uint8_t rd = n->rd;
     if (rd == 0) return true;
 
     emit_ctx_t *e = cg->e;
-
-    // Resolve compare operands first (before clobbering anything)
-    x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX);
-    x64_reg_t src2_h;
-    if (src1_h == RCX) {
-        src2_h = cg_resolve_src(cg, rs2, RDX);
-    } else {
-        src2_h = cg_resolve_src(cg, rs2, RCX);
-    }
-
-    emit_cmp_r32_r32(e, src1_h, src2_h);
-
     x64_reg_t dst_h = cg_resolve_dst(cg, rd);
-    // Mirror translate.c semantics exactly: SETcc then MOVZX to materialize 0/1.
+    x64_reg_t lhs_h = cg_resolve_src(cg, n->rs1, RCX);
+    x64_reg_t rhs_h = cg_resolve_src(cg, n->rs2, RDX);
+
+    emit_cmp_r32_r32(e, lhs_h, rhs_h);
+
     switch (n->opcode) {
-        case OP_SLT:  emit_setl(e, dst_h); break;
-        case OP_SLTU: emit_setb(e, dst_h); break;
-        case OP_SEQ:  emit_sete(e, dst_h); break;
+        case OP_SLT:  emit_setl(e, dst_h);  break;
+        case OP_SLTU: emit_setb(e, dst_h);  break;
+        case OP_SEQ:  emit_sete(e, dst_h);  break;
         case OP_SNE:  emit_setne(e, dst_h); break;
-        case OP_SGT:  emit_setg(e, dst_h); break;
-        case OP_SGTU: emit_seta(e, dst_h); break;
+        case OP_SGT:  emit_setg(e, dst_h);  break;
+        case OP_SGTU: emit_seta(e, dst_h);  break;
         case OP_SLE:  emit_setle(e, dst_h); break;
         case OP_SLEU: emit_setbe(e, dst_h); break;
         case OP_SGE:  emit_setge(e, dst_h); break;
@@ -553,7 +605,6 @@ static bool cg_emit_cmp_rr(stage5_cg_t *cg, const stage5_ir_node_t *n) {
         default: return false;
     }
     emit_movzx_r32_r8(e, dst_h, dst_h);
-
     cg_mark_dirty(cg, rd);
     cg_store_spilled(cg, rd, dst_h);
     return true;
@@ -561,24 +612,20 @@ static bool cg_emit_cmp_rr(stage5_cg_t *cg, const stage5_ir_node_t *n) {
 
 // Compare immediate: SLTI, SLTIU
 static bool cg_emit_cmp_ri(stage5_cg_t *cg, const stage5_ir_node_t *n) {
-    uint8_t rd = n->rd, rs1 = n->rs1;
-    int32_t imm = n->imm;
+    uint8_t rd = n->rd;
     if (rd == 0) return true;
 
     emit_ctx_t *e = cg->e;
-
-    // Resolve source and compare FIRST (before touching destination)
-    x64_reg_t src1_h = cg_resolve_src(cg, rs1, RAX);
-    emit_cmp_r32_imm32(e, src1_h, imm);
-
     x64_reg_t dst_h = cg_resolve_dst(cg, rd);
+    x64_reg_t lhs_h = cg_resolve_src(cg, n->rs1, RCX);
+    emit_cmp_r32_imm32(e, lhs_h, n->imm);
+
     switch (n->opcode) {
         case OP_SLTI:  emit_setl(e, dst_h); break;
         case OP_SLTIU: emit_setb(e, dst_h); break;
         default: return false;
     }
     emit_movzx_r32_r8(e, dst_h, dst_h);
-
     cg_mark_dirty(cg, rd);
     cg_store_spilled(cg, rd, dst_h);
     return true;
@@ -821,6 +868,295 @@ static bool cg_terminal_supported(uint8_t opcode, bool branch_term_enabled) {
     }
 }
 
+// Identify canonical compare+branch mix candidates when BURG did not provide
+// fuse_cmp_idx. Returns:
+//   >=0 : cmp idx to fuse with terminal branch
+//   -1  : cmp exists but not safely fusible
+//   -2  : no cmp in prefix (nothing to fuse)
+//
+// This supports nonadjacent cmp->branch when simple def-use checks prove the
+// compare result register is not used/clobbered before the terminal branch.
+static bool cg_is_cmp_opcode(uint8_t opcode) {
+    return (opcode == OP_SLT || opcode == OP_SLTU ||
+            opcode == OP_SEQ || opcode == OP_SNE ||
+            opcode == OP_SGT || opcode == OP_SGTU ||
+            opcode == OP_SLE || opcode == OP_SLEU ||
+            opcode == OP_SGE || opcode == OP_SGEU ||
+            opcode == OP_SLTI || opcode == OP_SLTIU);
+}
+
+static bool cg_mix_cmp_opcode_allowed(uint8_t opcode) {
+    bool allow_slt = cg_branch_cmp_mix_slt_enabled();
+    bool allow_slti = cg_branch_cmp_mix_slti_enabled();
+    bool allow_sltiu = cg_branch_cmp_mix_sltiu_enabled();
+    bool allow_unsigned_rr = cg_branch_cmp_mix_unsigned_rr_enabled();
+    return (opcode == OP_SEQ || opcode == OP_SNE ||
+            (allow_slt && opcode == OP_SLT) ||
+            (allow_slti && opcode == OP_SLTI) ||
+            (allow_sltiu && opcode == OP_SLTIU) ||
+            (allow_unsigned_rr && (opcode == OP_SLTU || opcode == OP_SGTU)));
+}
+
+// Return true iff `reg` is provably zero at `use_idx` by local backwards scan.
+// Conservative by design: only accepts explicit zero-def patterns and bails out
+// on any other reaching definition.
+static bool cg_reg_known_const01_at(const stage5_lift_region_t *region,
+                                    int use_idx,
+                                    uint8_t reg,
+                                    int *out_value) {
+    if (out_value) *out_value = -1;
+    if (reg == 0) {
+        if (out_value) *out_value = 0;
+        return true;
+    }
+    for (int i = use_idx - 1; i >= 0; i--) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) continue;
+        if (n->rd != reg) continue;
+        if (n->opcode == OP_LUI && n->imm == 0) {
+            if (out_value) *out_value = 0;
+            return true;
+        }
+        if (n->opcode == OP_ADDI && n->rs1 == 0 && (n->imm == 0 || n->imm == 1)) {
+            if (out_value) *out_value = n->imm;
+            return true;
+        }
+        if (n->opcode == OP_ORI && n->rs1 == 0 && (n->imm == 0 || n->imm == 1)) {
+            if (out_value) *out_value = n->imm;
+            return true;
+        }
+        if (n->opcode == OP_XORI && n->rs1 == 0 && (n->imm == 0 || n->imm == 1)) {
+            if (out_value) *out_value = n->imm;
+            return true;
+        }
+        return false;
+    }
+    return false;
+}
+
+// Extract compare-result register used by terminal BEQ/BNE against constant 0/1.
+// Accepts canonical rd-vs-r0, rd-vs-rX where rX is proven 0, and rd-vs-rX where
+// rX is proven 1 by flipping BEQ/BNE sense.
+static bool cg_branch_cmp_test_cond_info(const stage5_lift_region_t *region,
+                                         int terminal_idx,
+                                         const stage5_ir_node_t *term,
+                                         uint8_t *out_reg,
+                                         uint8_t *out_norm_branch_opcode) {
+    if (!out_reg) return false;
+    if (!out_norm_branch_opcode) return false;
+    *out_reg = 0;
+    *out_norm_branch_opcode = term->opcode;
+    if (!(term->opcode == OP_BEQ || term->opcode == OP_BNE)) return false;
+    if (term->rs1 == 0 && term->rs2 != 0) {
+        *out_reg = term->rs2;
+        return true;
+    }
+    if (term->rs2 == 0 && term->rs1 != 0) {
+        *out_reg = term->rs1;
+        return true;
+    }
+    // Noncanonical form: cond_reg compared against reg proven constant 0/1.
+    if (term->rs1 != 0 && term->rs2 != 0) {
+        int v2 = -1, v1 = -1;
+        bool k2 = cg_reg_known_const01_at(region, terminal_idx, term->rs2, &v2);
+        bool k1 = cg_reg_known_const01_at(region, terminal_idx, term->rs1, &v1);
+        if (k2 && (v2 == 0 || v2 == 1)) {
+            *out_reg = term->rs1;
+            if (v2 == 1) {
+                *out_norm_branch_opcode = (term->opcode == OP_BEQ) ? OP_BNE : OP_BEQ;
+            }
+            return true;
+        }
+        if (k1 && (v1 == 0 || v1 == 1)) {
+            *out_reg = term->rs2;
+            if (v1 == 1) {
+                *out_norm_branch_opcode = (term->opcode == OP_BEQ) ? OP_BNE : OP_BEQ;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+static void cg_trace_mix_rd_mismatch(const stage5_lift_region_t *region,
+                                     int terminal_idx,
+                                     int nearest_def_idx,
+                                     uint8_t cond_reg) {
+    if (!cg_trace_mix_enabled()) return;
+    if (terminal_idx < 0 || terminal_idx >= (int)region->ir_count) return;
+
+    int lo = terminal_idx - 6;
+    if (lo < 0) lo = 0;
+    int hi = terminal_idx + 1;
+    if (hi >= (int)region->ir_count) hi = (int)region->ir_count - 1;
+
+    const stage5_ir_node_t *term = &region->ir[terminal_idx];
+    fprintf(stderr,
+            "[stage5-mix] rd-mismatch term_idx=%d op=0x%02X rs1=r%u rs2=r%u imm=%d cond=r%u def_idx=%d\n",
+            terminal_idx, term->opcode, term->rs1, term->rs2, term->imm,
+            cond_reg, nearest_def_idx);
+    for (int i = lo; i <= hi; i++) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        fprintf(stderr,
+                "[stage5-mix]   ir[%d] op=0x%02X rd=r%u rs1=r%u rs2=r%u imm=%d syn=%d kind=%d%s%s\n",
+                i, n->opcode, n->rd, n->rs1, n->rs2, n->imm,
+                n->synthetic ? 1 : 0, n->kind,
+                (i == terminal_idx) ? " <term>" : "",
+                (i == nearest_def_idx) ? " <def>" : "");
+    }
+}
+
+static int cg_find_branch_cmp_mix_idx(const stage5_lift_region_t *region,
+                                      int terminal_idx,
+                                      int fuse_cmp_idx,
+                                      uint32_t *reason_out,
+                                      uint8_t *reason_opcode_out,
+                                      uint8_t *norm_branch_opcode_out,
+                                      int *extra_skip_idx_out,
+                                      uint8_t *trace_cond_reg_out,
+                                      int *trace_def_idx_out) {
+    if (reason_out) *reason_out = 0;
+    if (reason_opcode_out) *reason_opcode_out = 0;
+    if (norm_branch_opcode_out) *norm_branch_opcode_out = 0;
+    if (extra_skip_idx_out) *extra_skip_idx_out = -1;
+    if (trace_cond_reg_out) *trace_cond_reg_out = 0;
+    if (trace_def_idx_out) *trace_def_idx_out = -1;
+    if (terminal_idx <= 0 || terminal_idx >= (int)region->ir_count || fuse_cmp_idx >= 0) {
+        return -2;
+    }
+    const stage5_ir_node_t *term = &region->ir[terminal_idx];
+    if (!(term->opcode == OP_BEQ || term->opcode == OP_BNE)) {
+        return -2;
+    }
+
+    uint8_t br_cond_reg = 0;
+    uint8_t norm_branch_opcode = term->opcode;
+    if (!cg_branch_cmp_test_cond_info(region, terminal_idx, term, &br_cond_reg,
+                                      &norm_branch_opcode)) {
+        if (reason_out) *reason_out = 1;  // noncanonical term
+        if (reason_opcode_out) *reason_opcode_out = term->opcode;
+        return -1;
+    }
+    if (trace_cond_reg_out) *trace_cond_reg_out = br_cond_reg;
+    if (norm_branch_opcode_out) *norm_branch_opcode_out = norm_branch_opcode;
+
+    int cmp_nodes_seen = 0;
+    int first_cmp_idx = -1;
+    for (int i = 0; i < terminal_idx; i++) {
+        if (fuse_cmp_idx >= 0 && i == fuse_cmp_idx) continue;
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) continue;
+        if (cg_is_cmp_opcode(n->opcode)) {
+            if (first_cmp_idx < 0) first_cmp_idx = i;
+            cmp_nodes_seen++;
+        }
+    }
+    if (cmp_nodes_seen == 0) return -2;
+
+    int cmp_idx = -1;
+    for (int i = terminal_idx - 1; i >= 0; i--) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) continue;
+        if (n->rd == br_cond_reg) {
+            cmp_idx = i;
+            break;
+        }
+    }
+    if (cmp_idx < 0) {
+        if (reason_out) *reason_out = 4;  // rd mismatch/no defining compare
+        if (reason_opcode_out && first_cmp_idx >= 0) {
+            *reason_opcode_out = region->ir[first_cmp_idx].opcode;
+        }
+        if (trace_def_idx_out) *trace_def_idx_out = -1;
+        return -1;
+    }
+    if (trace_def_idx_out) *trace_def_idx_out = cmp_idx;
+
+    const stage5_ir_node_t *cmp = &region->ir[cmp_idx];
+    if (!cg_is_cmp_opcode(cmp->opcode)) {
+        // Narrow rd-mismatch unlock:
+        //   cmp_rd = CMP(...)
+        //   br_cond = XOR(cmp_rd, const1_reg)
+        //   BEQ/BNE br_cond, 0
+        // Normalize to branch on cmp_rd with flipped branch sense and skip XOR.
+        if (cmp->opcode == OP_XOR) {
+            int xor_idx = cmp_idx;
+            uint8_t src_cmp = 0, src_k = 0;
+            if (cmp->rs1 != 0 && cmp->rs2 != 0) {
+                int k2 = -1, k1 = -1;
+                bool rs2_k = cg_reg_known_const01_at(region, cmp_idx, cmp->rs2, &k2) && k2 == 1;
+                bool rs1_k = cg_reg_known_const01_at(region, cmp_idx, cmp->rs1, &k1) && k1 == 1;
+                if (rs2_k) { src_cmp = cmp->rs1; src_k = cmp->rs2; }
+                else if (rs1_k) { src_cmp = cmp->rs2; src_k = cmp->rs1; }
+            }
+            if (src_cmp != 0 && src_k != 0) {
+                int src_def_idx = -1;
+                for (int i = cmp_idx - 1; i >= 0; i--) {
+                    const stage5_ir_node_t *d = &region->ir[i];
+                    if (d->synthetic) continue;
+                    if (d->rd == src_cmp) { src_def_idx = i; break; }
+                }
+                if (src_def_idx >= 0) {
+                    const stage5_ir_node_t *d = &region->ir[src_def_idx];
+                    if (cg_is_cmp_opcode(d->opcode) && cg_mix_cmp_opcode_allowed(d->opcode)) {
+                        for (int i = src_def_idx + 1; i < cmp_idx; i++) {
+                            const stage5_ir_node_t *n = &region->ir[i];
+                            if (n->synthetic) continue;
+                            if (n->rd == src_cmp || n->rs1 == src_cmp || n->rs2 == src_cmp) {
+                                if (reason_out) *reason_out = 4;
+                                if (reason_opcode_out) *reason_opcode_out = cmp->opcode;
+                                return -1;
+                            }
+                        }
+                        cmp_idx = src_def_idx;
+                        cmp = &region->ir[cmp_idx];
+                        if (norm_branch_opcode_out) {
+                            uint8_t b = norm_branch_opcode;
+                            *norm_branch_opcode_out = (b == OP_BEQ) ? OP_BNE : OP_BEQ;
+                        }
+                        if (extra_skip_idx_out) *extra_skip_idx_out = xor_idx;
+                    } else {
+                        if (reason_out) *reason_out = 4;
+                        if (reason_opcode_out) *reason_opcode_out = d->opcode;
+                        return -1;
+                    }
+                } else {
+                    if (reason_out) *reason_out = 4;
+                    if (reason_opcode_out) *reason_opcode_out = cmp->opcode;
+                    return -1;
+                }
+            } else {
+                if (reason_out) *reason_out = 4;
+                if (reason_opcode_out) *reason_opcode_out = cmp->opcode;
+                return -1;
+            }
+        } else {
+            if (reason_out) *reason_out = 4;  // nearest def is not compare
+            if (reason_opcode_out) *reason_opcode_out = cmp->opcode;
+            return -1;
+        }
+    }
+    if (!cg_mix_cmp_opcode_allowed(cmp->opcode)) {
+        if (reason_out) *reason_out = 2;  // opcode class blocked by gate
+        if (reason_opcode_out) *reason_opcode_out = cmp->opcode;
+        return -1;
+    }
+
+    for (int i = cmp_idx + 1; i < terminal_idx; i++) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) continue;
+        if (n->rd == br_cond_reg ||
+            n->rs1 == br_cond_reg ||
+            n->rs2 == br_cond_reg) {
+            if (reason_out) *reason_out = 3;  // nonadjacent not dataflow-safe
+            if (reason_opcode_out) *reason_opcode_out = cmp->opcode;
+            return -1;
+        }
+    }
+
+    return cmp_idx;
+}
+
 static bool cg_region_preflight(const stage5_lift_region_t *region,
                                 int terminal_idx,
                                 int fuse_cmp_idx,
@@ -884,30 +1220,48 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
             (term->opcode == OP_BEQ || term->opcode == OP_BNE ||
              term->opcode == OP_BLT || term->opcode == OP_BGE ||
              term->opcode == OP_BLTU || term->opcode == OP_BGEU)) {
-            bool allow_mix = branch_cmp_mix_enabled &&
-                             (term->opcode == OP_BEQ || term->opcode == OP_BNE);
-            // Conservative safety gate: avoid branch-terminal regions that
-            // also contain compare prefix nodes until cmp+branch interactions
-            // are fully audited.
+            bool has_cmp_prefix = false;
+            uint8_t first_cmp_opcode = 0;
             for (uint32_t i = 0; i < region->ir_count; i++) {
-                if ((int)i == terminal_idx || (fuse_cmp_idx >= 0 && (int)i == fuse_cmp_idx)) {
-                    continue;
-                }
+                if ((int)i == terminal_idx || (fuse_cmp_idx >= 0 && (int)i == fuse_cmp_idx)) continue;
                 const stage5_ir_node_t *n = &region->ir[i];
                 if (n->synthetic) continue;
-                if (n->opcode == OP_SLT || n->opcode == OP_SLTU ||
-                    n->opcode == OP_SEQ || n->opcode == OP_SNE ||
-                    n->opcode == OP_SGT || n->opcode == OP_SGTU ||
-                    n->opcode == OP_SLE || n->opcode == OP_SLEU ||
-                    n->opcode == OP_SGE || n->opcode == OP_SGEU ||
-                    n->opcode == OP_SLTI || n->opcode == OP_SLTIU) {
-                    bool signed_rr_cmp =
-                        (n->opcode == OP_SEQ || n->opcode == OP_SNE);
-                    if (!allow_mix || !signed_rr_cmp) {
-                        stage5_codegen_fallback_preflight_branch_cmp_mix++;
-                        stage5_codegen_fallback_preflight_branch_cmp_mix_opcode_hist[n->opcode & 0x7F]++;
-                        return false;
+                if (cg_is_cmp_opcode(n->opcode)) {
+                    has_cmp_prefix = true;
+                    first_cmp_opcode = n->opcode;
+                    break;
+                }
+            }
+            if (has_cmp_prefix) {
+                uint32_t reason = 0;
+                uint8_t reason_opcode = first_cmp_opcode;
+                int mix_idx = -1;
+                uint8_t mix_norm_branch_opcode = term->opcode;
+                if (branch_cmp_mix_enabled && (term->opcode == OP_BEQ || term->opcode == OP_BNE)) {
+                    uint8_t trace_cond_reg = 0;
+                    int trace_def_idx = -1;
+                    mix_idx = cg_find_branch_cmp_mix_idx(region, terminal_idx, fuse_cmp_idx,
+                                                         &reason, &reason_opcode,
+                                                         &mix_norm_branch_opcode,
+                                                         NULL,
+                                                         &trace_cond_reg,
+                                                         &trace_def_idx);
+                    if (mix_idx < 0 && reason == 4) {
+                        cg_trace_mix_rd_mismatch(region, terminal_idx, trace_def_idx, trace_cond_reg);
                     }
+                }
+                if (mix_idx < 0) {
+                    stage5_codegen_fallback_preflight_branch_cmp_mix++;
+                    stage5_codegen_fallback_preflight_branch_cmp_mix_opcode_hist[reason_opcode & 0x7F]++;
+                    switch (reason) {
+                        case 1: stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_term++; break;
+                        case 2: stage5_codegen_fallback_preflight_branch_cmp_mix_reason_opcode++; break;
+                        case 3: stage5_codegen_fallback_preflight_branch_cmp_mix_reason_nonadjacent++; break;
+                        case 4: stage5_codegen_fallback_preflight_branch_cmp_mix_reason_rd_mismatch++; break;
+                        case 5: stage5_codegen_fallback_preflight_branch_cmp_mix_reason_multi_cmp++; break;
+                        default: break;
+                    }
+                    return false;
                 }
             }
         }
@@ -1147,6 +1501,15 @@ bool stage5_codegen(translate_ctx_t *ctx,
     const side_exit_cfg_t *se_cfg = (const side_exit_cfg_t *)side_exit_family_cfg_ptr;
     bool side_exit_family_c = se_cfg ? se_cfg->family_c : false;
     bool side_exit_codegen = cg_side_exit_enabled();
+    int mix_cmp_idx = -1;
+    int mix_extra_skip_idx = -1;
+    uint8_t mix_branch_opcode = 0;
+    if (cg_branch_cmp_mix_enabled()) {
+        mix_cmp_idx = cg_find_branch_cmp_mix_idx(region, terminal_idx, fuse_cmp_idx,
+                                                 NULL, NULL, &mix_branch_opcode,
+                                                 &mix_extra_skip_idx,
+                                                 NULL, NULL);
+    }
 
     if (!cg_region_preflight(region, terminal_idx, fuse_cmp_idx, synth_block_end,
                              side_exit_emit_enabled, side_exit_family_c)) {
@@ -1164,6 +1527,8 @@ bool stage5_codegen(translate_ctx_t *ctx,
         if (n->synthetic) continue;
         if (terminal_idx >= 0 && (int)i == terminal_idx) continue;
         if (fuse_cmp_idx >= 0 && (int)i == fuse_cmp_idx) continue;
+        if (mix_cmp_idx >= 0 && (int)i == mix_cmp_idx) continue;
+        if (mix_extra_skip_idx >= 0 && (int)i == mix_extra_skip_idx) continue;
 
         // Optional side-exit ownership by native codegen.
         if (n->is_side_exit && n->kind == STAGE5_IR_BRANCH &&
@@ -1221,6 +1586,16 @@ bool stage5_codegen(translate_ctx_t *ctx,
         ended = stage5_emit_cmp_branch_fused_for_codegen(ctx,
             c->opcode, c->rs1, c->rs2, c->imm, cmp_is_imm,
             b->opcode, b->imm, b->pc);
+    } else if (mix_cmp_idx >= 0 && terminal_idx >= 0) {
+        // Native fast path for canonical compare-result branch mixes.
+        const stage5_ir_node_t *c = &region->ir[mix_cmp_idx];
+        const stage5_ir_node_t *b = &region->ir[terminal_idx];
+        ctx->guest_pc = b->pc;
+        ctx->current_inst_idx = terminal_idx;
+        uint8_t branch_opcode = mix_branch_opcode ? mix_branch_opcode : b->opcode;
+        ended = stage5_emit_cmp_branch_fused_for_codegen(ctx,
+            c->opcode, c->rs1, c->rs2, 0, false,
+            branch_opcode, b->imm, b->pc);
     } else if (terminal_idx >= 0) {
         const stage5_ir_node_t *last = &region->ir[terminal_idx];
         ctx->guest_pc = last->pc;

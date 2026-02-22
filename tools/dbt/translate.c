@@ -2086,6 +2086,152 @@ static int stage5_find_cmp_branch_zero_cmp_idx(const stage5_lift_region_t *regio
     return -1;
 }
 
+static bool stage5_reg_is_const01_before(const stage5_lift_region_t *region,
+                                         int use_idx, uint8_t reg, int want) {
+    if (reg == 0) return want == 0;
+    for (int i = use_idx - 1; i >= 0; i--) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) continue;
+        if (n->rd != reg) continue;
+        if (n->opcode == OP_ADDI && n->rs1 == 0 && (n->imm == 0 || n->imm == 1)) return n->imm == want;
+        if (n->opcode == OP_ORI  && n->rs1 == 0 && (n->imm == 0 || n->imm == 1)) return n->imm == want;
+        if (n->opcode == OP_XORI && n->rs1 == 0 && (n->imm == 0 || n->imm == 1)) return n->imm == want;
+        if (n->opcode == OP_LUI  && n->imm == 0) return want == 0;
+        return false;
+    }
+    return false;
+}
+
+static int stage5_find_cmp_branch_const01_cmp_idx(const stage5_lift_region_t *region,
+                                                  int branch_idx,
+                                                  uint8_t *branch_opcode_out) {
+    if (!region || branch_idx <= 0 || branch_idx >= (int)region->ir_count) return -1;
+    const stage5_ir_node_t *b = &region->ir[branch_idx];
+    if (b->kind != STAGE5_IR_BRANCH) return -1;
+    if (b->opcode != OP_BEQ && b->opcode != OP_BNE) return -1;
+    if (branch_opcode_out) *branch_opcode_out = b->opcode;
+
+    int k1 = -1, k2 = -1;
+    bool rs1_const = stage5_reg_is_const01_before(region, branch_idx, b->rs1, 0) ||
+                     stage5_reg_is_const01_before(region, branch_idx, b->rs1, 1);
+    bool rs2_const = stage5_reg_is_const01_before(region, branch_idx, b->rs2, 0) ||
+                     stage5_reg_is_const01_before(region, branch_idx, b->rs2, 1);
+    if (rs1_const) {
+        if (stage5_reg_is_const01_before(region, branch_idx, b->rs1, 0)) k1 = 0;
+        else if (stage5_reg_is_const01_before(region, branch_idx, b->rs1, 1)) k1 = 1;
+    }
+    if (rs2_const) {
+        if (stage5_reg_is_const01_before(region, branch_idx, b->rs2, 0)) k2 = 0;
+        else if (stage5_reg_is_const01_before(region, branch_idx, b->rs2, 1)) k2 = 1;
+    }
+
+    uint8_t cmp_rd = 0;
+    int const_k = -1;
+    if ((k1 == 0 || k1 == 1) && b->rs2 != 0) { cmp_rd = b->rs2; const_k = k1; }
+    else if ((k2 == 0 || k2 == 1) && b->rs1 != 0) { cmp_rd = b->rs1; const_k = k2; }
+    else return -1;
+    if (cmp_rd == 0) return -1;
+
+    for (int i = branch_idx - 1; i >= 0; i--) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) continue;
+        if (n->kind == STAGE5_IR_BRANCH) return -1;
+        if (n->rd == cmp_rd &&
+            n->kind == STAGE5_IR_CMP &&
+            (n->opcode == OP_SLT || n->opcode == OP_SLTU || n->opcode == OP_SEQ ||
+             n->opcode == OP_SNE || n->opcode == OP_SGT || n->opcode == OP_SGTU ||
+             n->opcode == OP_SLE || n->opcode == OP_SLEU || n->opcode == OP_SGE ||
+             n->opcode == OP_SGEU || n->opcode == OP_SLTI || n->opcode == OP_SLTIU)) {
+            if (branch_opcode_out && const_k == 1) {
+                *branch_opcode_out = (b->opcode == OP_BEQ) ? OP_BNE : OP_BEQ;
+            }
+            return i;
+        }
+        if (n->rd == cmp_rd) return -1;
+    }
+    return -1;
+}
+
+static int stage5_find_cmp_branch_xor1_cmp_idx(const stage5_lift_region_t *region,
+                                               int branch_idx,
+                                               uint8_t *branch_opcode_out,
+                                               int *extra_skip_idx_out) {
+    if (!region || branch_idx <= 1 || branch_idx >= (int)region->ir_count) return -1;
+    const stage5_ir_node_t *b = &region->ir[branch_idx];
+    if (b->kind != STAGE5_IR_BRANCH) return -1;
+    if (b->opcode != OP_BEQ && b->opcode != OP_BNE) return -1;
+    if (branch_opcode_out) *branch_opcode_out = b->opcode;
+    if (extra_skip_idx_out) *extra_skip_idx_out = -1;
+
+    uint8_t pred_rd = 0;
+    if (b->rs1 == 0 && b->rs2 != 0) pred_rd = b->rs2;
+    else if (b->rs2 == 0 && b->rs1 != 0) pred_rd = b->rs1;
+    else return -1;
+
+    int xor_idx = -1;
+    for (int i = branch_idx - 1; i >= 0; i--) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) continue;
+        if (n->kind == STAGE5_IR_BRANCH) return -1;
+        if (n->rd == pred_rd) {
+            if (n->opcode == OP_XOR) xor_idx = i;
+            break;
+        }
+    }
+    if (xor_idx < 0) return -1;
+    const stage5_ir_node_t *x = &region->ir[xor_idx];
+    if (x->rs1 == 0 || x->rs2 == 0) return -1;
+
+    uint8_t cmp_rd = 0;
+    if (stage5_reg_is_const01_before(region, xor_idx, x->rs1, 1)) cmp_rd = x->rs2;
+    else if (stage5_reg_is_const01_before(region, xor_idx, x->rs2, 1)) cmp_rd = x->rs1;
+    else return -1;
+
+    int cmp_idx = -1;
+    for (int i = xor_idx - 1; i >= 0; i--) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) continue;
+        if (n->kind == STAGE5_IR_BRANCH) return -1;
+        if (n->rd == cmp_rd) {
+            if (n->kind == STAGE5_IR_CMP &&
+                (n->opcode == OP_SLT || n->opcode == OP_SLTU || n->opcode == OP_SEQ ||
+                 n->opcode == OP_SNE || n->opcode == OP_SGT || n->opcode == OP_SGTU ||
+                 n->opcode == OP_SLE || n->opcode == OP_SLEU || n->opcode == OP_SGE ||
+                 n->opcode == OP_SGEU || n->opcode == OP_SLTI || n->opcode == OP_SLTIU)) {
+                cmp_idx = i;
+            }
+            break;
+        }
+    }
+    if (cmp_idx < 0) return -1;
+    if (branch_opcode_out) {
+        *branch_opcode_out = (b->opcode == OP_BEQ) ? OP_BNE : OP_BEQ;
+    }
+    if (extra_skip_idx_out) *extra_skip_idx_out = xor_idx;
+    return cmp_idx;
+}
+
+static int stage5_find_cmp_branch_fused_info(const stage5_lift_region_t *region,
+                                             int branch_idx,
+                                             stage5_burg_pattern_t pattern,
+                                             uint8_t *branch_opcode_out,
+                                             int *extra_skip_idx_out) {
+    if (branch_opcode_out && region && branch_idx >= 0 && branch_idx < (int)region->ir_count) {
+        *branch_opcode_out = region->ir[branch_idx].opcode;
+    }
+    if (extra_skip_idx_out) *extra_skip_idx_out = -1;
+    if (pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO) {
+        return stage5_find_cmp_branch_zero_cmp_idx(region, branch_idx);
+    }
+    if (pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CONST01) {
+        return stage5_find_cmp_branch_const01_cmp_idx(region, branch_idx, branch_opcode_out);
+    }
+    if (pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1) {
+        return stage5_find_cmp_branch_xor1_cmp_idx(region, branch_idx, branch_opcode_out, extra_skip_idx_out);
+    }
+    return -1;
+}
+
 // Map SLOW-32 branch opcode to x86 inverted condition code (for side-exit skip).
 // The inverted CC means: skip trampoline when branch is NOT taken.
 static uint8_t stage5_branch_inv_cc(uint8_t opcode) {
@@ -3051,6 +3197,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         region.has_terminal_branch &&
         region.guest_inst_count > 2 &&
         emitted_pattern != STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO &&
+        emitted_pattern != STAGE5_BURG_PATTERN_CMP_BRANCH_CONST01 &&
+        emitted_pattern != STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1 &&
         !allow_small_direct_branch &&
         !allow_direct_branch_with_side_exit &&
         !allow_jal_call &&
@@ -3241,17 +3389,26 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     }
 
     if (term_idx > 0 && region.guest_inst_count == 2 &&
-        result.pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO) {
+        (result.pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO ||
+         result.pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1)) {
         stage5_ir_node_t *c = &region.ir[term_idx - 1];
         stage5_ir_node_t *b = &region.ir[term_idx];
         bool cmp_is_imm = (c->opcode == OP_SLTI || c->opcode == OP_SLTIU);
+        uint8_t branch_opcode = b->opcode;
+        int extra_skip_idx = -1;
+        int fuse_cmp_idx = stage5_find_cmp_branch_fused_info(&region, term_idx, result.pattern,
+                                                             &branch_opcode, &extra_skip_idx);
+        if (fuse_cmp_idx >= 0) {
+            c = &region.ir[fuse_cmp_idx];
+            cmp_is_imm = (c->opcode == OP_SLTI || c->opcode == OP_SLTIU);
+        }
 
         // BURG-native fused path: CMP + Jcc with no intermediate rd.
         ctx->guest_pc = b->pc;
         ctx->current_inst_idx = term_idx;
         bool fused = stage5_emit_cmp_branch_fused(ctx,
             c->opcode, c->rs1, c->rs2, c->imm, cmp_is_imm,
-            b->opcode, b->imm, b->pc);
+            branch_opcode, b->imm, b->pc);
         if (fused) {
             ctx->superblock_enabled = saved_superblock_enabled;
             stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
@@ -3360,7 +3517,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         }
     } else if (region.guest_inst_count == 2 && guest_pc + 8 <= ctx->cpu->code_limit) {
         // Family B: two-instruction compare -> branch-on-result.
-        if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO) {
+        if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO ||
+            emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1) {
             int terminal_idx = -1;
             for (int i = (int)region.ir_count - 1; i >= 0; i--) {
                 if (!region.ir[i].synthetic && region.ir[i].kind == STAGE5_IR_BRANCH) {
@@ -3368,7 +3526,10 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     break;
                 }
             }
-            int fuse_cmp_idx = stage5_find_cmp_branch_zero_cmp_idx(&region, terminal_idx);
+            uint8_t branch_opcode = 0;
+            int extra_skip_idx = -1;
+            int fuse_cmp_idx = stage5_find_cmp_branch_fused_info(&region, terminal_idx, emitted_pattern,
+                                                                 &branch_opcode, &extra_skip_idx);
             if (fuse_cmp_idx >= 0 && terminal_idx >= 0) {
                 stage5_ir_node_t *c = &region.ir[fuse_cmp_idx];
                 stage5_ir_node_t *b = &region.ir[terminal_idx];
@@ -3377,7 +3538,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 ctx->current_inst_idx = terminal_idx;
                 bool ended = stage5_emit_cmp_branch_fused(ctx,
                     c->opcode, c->rs1, c->rs2, c->imm, cmp_is_imm,
-                    b->opcode, b->imm, b->pc);
+                    branch_opcode ? branch_opcode : b->opcode, b->imm, b->pc);
                 if (ended) {
                     ctx->superblock_enabled = saved_superblock_enabled;
                     stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
@@ -3675,7 +3836,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 }
                 stage5_record_emit_not_ended(inst1.opcode, STAGE5_NOT_ENDED_FAMILYB_PREFIX_TERMINAL);
             } else {
-                if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO) {
+                if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO ||
+                    emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CONST01 ||
+                    emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1) {
                     stage5_emit_fallback_cmp_branch_miss++;
                 } else {
                     stage5_emit_fallback_shape++;
@@ -3700,8 +3863,13 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
 
         // For CMP_BRANCH_ZERO, also skip the compare node (fused with branch).
         int fuse_cmp_idx = -1;
-        if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO && terminal_idx > 0) {
-            fuse_cmp_idx = stage5_find_cmp_branch_zero_cmp_idx(&region, terminal_idx);
+        int fuse_extra_skip_idx = -1;
+        uint8_t fuse_branch_opcode = 0;
+        if ((emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO ||
+             emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1) &&
+            terminal_idx > 0) {
+            fuse_cmp_idx = stage5_find_cmp_branch_fused_info(&region, terminal_idx, emitted_pattern,
+                                                             &fuse_branch_opcode, &fuse_extra_skip_idx);
         }
 
         // Try native codegen first (gated by SLOW32_DBT_STAGE5_CODEGEN=1)
@@ -3724,6 +3892,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             if (n->synthetic) continue;
             if (terminal_idx >= 0 && (int)i == terminal_idx) continue;
             if (fuse_cmp_idx >= 0 && (int)i == fuse_cmp_idx) continue;
+            if (fuse_extra_skip_idx >= 0 && (int)i == fuse_extra_skip_idx) continue;
 
             // Side-exit branch: emit compare + jcc_short + jmp trampoline,
             // record deferred cold stub, and continue with fall-through.
@@ -3892,7 +4061,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 ctx->current_inst_idx = terminal_idx;
                 ended = stage5_emit_cmp_branch_fused(ctx,
                     c->opcode, c->rs1, c->rs2, c->imm, cmp_is_imm,
-                    b->opcode, b->imm, b->pc);
+                    (fuse_branch_opcode ? fuse_branch_opcode : b->opcode), b->imm, b->pc);
             } else if (terminal_idx >= 0) {
                 stage5_ir_node_t *last = &region.ir[terminal_idx];
                 ctx->guest_pc = last->pc;
