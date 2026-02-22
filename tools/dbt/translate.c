@@ -3549,36 +3549,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             break;
         }
     }
-    if (term_idx >= 0 && region.guest_inst_count == 1 &&
-        stage5_pattern_is_terminal(result.pattern)) {
-        stage5_ir_node_t *t = &region.ir[term_idx];
-        ctx->guest_pc = t->pc;
-        ctx->current_inst_idx = term_idx;
-        bool ended = stage5_emit_single_terminal(ctx, t->opcode, t->rd, t->rs1, t->rs2,
-                                                 t->imm, emitted_pattern);
-        if (ended) {
-            ctx->superblock_enabled = saved_superblock_enabled;
-            stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-            if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
-            return true;
-        }
-    }
-
-    if (term_idx >= 0 && region.guest_inst_count == 1 &&
-        stage5_pattern_is_direct_branch(result.pattern)) {
-        stage5_ir_node_t *t = &region.ir[term_idx];
-        ctx->guest_pc = t->pc;
-        ctx->current_inst_idx = term_idx;
-        bool ended = stage5_emit_single_terminal(ctx, t->opcode, t->rd, t->rs1, t->rs2,
-                                                 t->imm, emitted_pattern);
-        if (ended) {
-            ctx->superblock_enabled = saved_superblock_enabled;
-            stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
-            if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
-            return true;
-        }
-    }
-
     if (term_idx > 0 && region.guest_inst_count == 2 &&
         (result.pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO ||
          result.pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1)) {
