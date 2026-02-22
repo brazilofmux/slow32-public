@@ -1236,6 +1236,10 @@ static bool stage5_side_exit_emit_enabled(void) {
     static bool enabled = false;
     if (!inited) {
         const char *v = getenv("SLOW32_DBT_STAGE5_SIDE_EXIT");
+        if (!v || v[0] == '\0') {
+            // Backward-compatible alias used by older local benchmark scripts.
+            v = getenv("SLOW32_DBT_STAGE5_SIDE_EXIT_EMIT");
+        }
         enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
         inited = true;
     }
@@ -2725,6 +2729,12 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     bool allow_small_direct_branch =
         stage5_pattern_is_direct_branch(emitted_pattern) &&
         region.guest_inst_count <= 9;
+    bool allow_direct_branch_with_side_exit =
+        stage5_pattern_is_direct_branch(emitted_pattern) &&
+        region.side_exit_count > 0 &&
+        side_exit_emit_enabled &&
+        side_exit_owned &&
+        !side_exit_call_guard;
     bool allow_jal_call =
         emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
         emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG;
@@ -2760,6 +2770,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         region.guest_inst_count > 2 &&
         emitted_pattern != STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO &&
         !allow_small_direct_branch &&
+        !allow_direct_branch_with_side_exit &&
         !allow_jal_call &&
         !allow_jal_jump &&
         !allow_jalr_ret &&
@@ -2810,6 +2821,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
          emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL ||
          emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_RELU) &&
         !allow_small_direct_branch &&
+        !allow_direct_branch_with_side_exit &&
         emitted_pattern != STAGE5_BURG_PATTERN_DIRECT_BRANCH_RELU &&
         emitted_pattern != STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL &&
         !bench_profile) {

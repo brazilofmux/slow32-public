@@ -77,6 +77,10 @@ static void apply_stage5_native_bench_profile(int *stage_out,
     reg_cache_enabled = true;
     peephole_enabled = true;
     profile_side_exits = false;
+    // Benchmark profile defaults should exercise Stage5-owned side exits.
+    // Use overwrite=0 so explicit caller env still wins.
+    setenv("SLOW32_DBT_STAGE5_SIDE_EXIT", "1", 0);
+    setenv("SLOW32_DBT_STAGE5_SIDE_EXIT_MODE", "eqne_u", 0);
     setenv("SLOW32_DBT_STAGE5_BENCH_PROFILE", "1", 1);
 }
 
