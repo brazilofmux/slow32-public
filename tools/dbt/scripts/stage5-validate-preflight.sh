@@ -16,7 +16,8 @@ else
     TESTS=()
     for t in \
         "$ROOT/regression/results/feature-strtod/test.s32x" \
-        "$ROOT/regression/results/feature-crc32/test.s32x"; do
+        "$ROOT/regression/results/feature-crc32/test.s32x" \
+        "$ROOT/regression/results/feature-branches/test.s32x"; do
         [[ -f "$t" ]] && TESTS+=("$t")
     done
     if [[ ${#TESTS[@]} -eq 0 ]]; then
