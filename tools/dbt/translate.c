@@ -104,21 +104,88 @@ typedef enum {
 
 static stage5_side_exit_mode_t stage5_side_exit_mode(void) {
     static bool inited = false;
-    static stage5_side_exit_mode_t mode = STAGE5_SIDE_EXIT_MODE_EQNE_U;
+    static stage5_side_exit_mode_t mode = STAGE5_SIDE_EXIT_MODE_EQNE;
     if (!inited) {
         const char *v = getenv("SLOW32_DBT_STAGE5_SIDE_EXIT_MODE");
         if (v) {
             if (strcmp(v, "eqne") == 0) {
                 mode = STAGE5_SIDE_EXIT_MODE_EQNE;
+            } else if (strcmp(v, "eqne_u") == 0) {
+                mode = STAGE5_SIDE_EXIT_MODE_EQNE_U;
             } else if (strcmp(v, "all") == 0) {
                 mode = STAGE5_SIDE_EXIT_MODE_ALL;
-            } else {
-                mode = STAGE5_SIDE_EXIT_MODE_EQNE_U;
             }
         }
         inited = true;
     }
     return mode;
+}
+
+static inline bool stage5_side_exit_opcode_supported(uint8_t opcode);
+
+static bool stage5_side_exit_trace_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_TRACE_SIDE_EXIT");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+typedef struct {
+    bool family_b;
+    bool family_c;
+} stage5_side_exit_family_cfg_t;
+
+static stage5_side_exit_family_cfg_t stage5_side_exit_family_cfg(void) {
+    static bool inited = false;
+    static stage5_side_exit_family_cfg_t cfg;
+    if (!inited) {
+        cfg.family_b = false;
+        cfg.family_c = true;
+        const char *v = getenv("SLOW32_DBT_STAGE5_SIDE_EXIT_FAMILY");
+        if (v && v[0] != '\0') {
+            cfg.family_b = false;
+            cfg.family_c = false;
+            for (const char *p = v; *p; p++) {
+                if (*p == 'b' || *p == 'B') cfg.family_b = true;
+                if (*p == 'c' || *p == 'C') cfg.family_c = true;
+            }
+        }
+        inited = true;
+    }
+    return cfg;
+}
+
+static int stage5_side_exit_trace_budget(void) {
+    static bool inited = false;
+    static int budget = 0;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_TRACE_SIDE_EXIT_MAX");
+        budget = (v && v[0] != '\0') ? atoi(v) : 64;
+        if (budget < 0) budget = 0;
+        inited = true;
+    }
+    return budget;
+}
+
+static void stage5_side_exit_trace_emit(uint8_t opcode,
+                                        uint8_t rs1,
+                                        uint8_t rs2,
+                                        int32_t imm,
+                                        uint32_t branch_pc,
+                                        uint32_t fall_pc,
+                                        uint32_t taken_pc) {
+    static int emitted = 0;
+    if (!stage5_side_exit_trace_enabled()) return;
+    int budget = stage5_side_exit_trace_budget();
+    if (emitted >= budget) return;
+    emitted++;
+    fprintf(stderr,
+            "stage5-side-exit pc=0x%08X op=0x%02X rs1=%u rs2=%u imm=%d fall=0x%08X taken=0x%08X\n",
+            branch_pc, opcode, rs1, rs2, imm, fall_pc, taken_pc);
 }
 
 static bool stage5_region_contains_jal_or_jalr(const stage5_lift_region_t *region) {
@@ -134,14 +201,18 @@ static bool stage5_region_contains_jal_or_jalr(const stage5_lift_region_t *regio
 static inline bool stage5_side_exit_supported(const stage5_ir_node_t *n) {
     if (!n) return false;
     if (!n->is_side_exit || n->kind != STAGE5_IR_BRANCH) return false;
-    if (n->opcode == OP_BEQ || n->opcode == OP_BNE) return true;
+    return stage5_side_exit_opcode_supported(n->opcode);
+}
+
+static inline bool stage5_side_exit_opcode_supported(uint8_t opcode) {
+    if (opcode == OP_BEQ || opcode == OP_BNE) return true;
     stage5_side_exit_mode_t mode = stage5_side_exit_mode();
     if (mode >= STAGE5_SIDE_EXIT_MODE_EQNE_U &&
-        (n->opcode == OP_BLTU || n->opcode == OP_BGEU)) {
+        (opcode == OP_BLTU || opcode == OP_BGEU)) {
         return true;
     }
     if (mode >= STAGE5_SIDE_EXIT_MODE_ALL &&
-        (n->opcode == OP_BLT || n->opcode == OP_BGE)) {
+        (opcode == OP_BLT || opcode == OP_BGE)) {
         return true;
     }
     return false;
@@ -731,7 +802,8 @@ decoded_inst_t decode_instruction(uint32_t raw) {
             inst.imm = (((raw >> 8) & 0xF) << 1) |
                        (((raw >> 25) & 0x3F) << 5) |
                        (((raw >> 7) & 0x1) << 11) |
-                       (((int32_t)raw >> 31) << 12);
+                       (((raw >> 31) & 0x1) << 12);
+            if (inst.imm & 0x1000) inst.imm |= 0xFFFFE000;  // Sign-extend
             break;
 
         // U-type (upper immediate)
@@ -985,6 +1057,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     bool side_exit_owned = stage5_region_side_exits_supported(&region);
     bool side_exit_call_guard = stage5_region_contains_jal_or_jalr(&region);
     bool side_exit_emit_enabled = stage5_side_exit_emit_enabled();
+    stage5_side_exit_family_cfg_t side_exit_family_cfg = stage5_side_exit_family_cfg();
     if (region.side_exit_count > 0) {
         for (uint32_t i = 0; i < region.ir_count; i++) {
             const stage5_ir_node_t *n = &region.ir[i];
@@ -1327,7 +1400,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 inst0.opcode == OP_BLT || inst0.opcode == OP_BGE ||
                 inst0.opcode == OP_BLTU || inst0.opcode == OP_BGEU;
             bool side_exit_capacity_blocked =
-                (ctx->exit_idx >= MAX_BLOCK_EXITS ||
+                (ctx->exit_idx + 2 >= MAX_BLOCK_EXITS ||
                  ctx->deferred_exit_count >= MAX_BLOCK_EXITS);
 
             // If the first op is a branch but we cannot shape it as a side-exit
@@ -1408,9 +1481,17 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 case OP_BGE:
                 case OP_BLTU:
                 case OP_BGEU: {
+                    if (!side_exit_family_cfg.family_b) {
+                        ok_prefix = false;
+                        break;
+                    }
+                    if (!stage5_side_exit_opcode_supported(inst0.opcode)) {
+                        ok_prefix = false;
+                        break;
+                    }
                     // Two-inst shape: forward branch as side exit + terminal.
                     if (inst0.imm <= 0 ||
-                        ctx->exit_idx >= MAX_BLOCK_EXITS ||
+                        ctx->exit_idx + 2 >= MAX_BLOCK_EXITS ||
                         ctx->deferred_exit_count >= MAX_BLOCK_EXITS) {
                         ok_prefix = false;
                         break;
@@ -1420,6 +1501,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     uint32_t branch_pc = guest_pc;
                     uint32_t fall_pc = guest_pc + 4;
                     uint32_t taken_pc = fall_pc + inst0.imm;
+                    stage5_side_exit_trace_emit(inst0.opcode, inst0.rs1, inst0.rs2, inst0.imm,
+                                                branch_pc, fall_pc, taken_pc);
 
                     flush_pending_cond(ctx);
 
@@ -1562,13 +1645,16 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             // Side-exit branch: emit compare + jcc_short + jmp trampoline,
             // record deferred cold stub, and continue with fall-through.
             if (side_exit_emit_enabled &&
+                side_exit_family_cfg.family_c &&
                 stage5_side_exit_supported(n) &&
-                ctx->exit_idx < MAX_BLOCK_EXITS &&
+                ctx->exit_idx + 2 < MAX_BLOCK_EXITS &&
                 ctx->deferred_exit_count < MAX_BLOCK_EXITS) {
                 emit_ctx_t *e = &ctx->emit;
                 uint32_t branch_pc = n->pc;
                 uint32_t fall_pc = branch_pc + 4;
                 uint32_t taken_pc = fall_pc + n->imm;
+                stage5_side_exit_trace_emit(n->opcode, n->rs1, n->rs2, n->imm,
+                                            branch_pc, fall_pc, taken_pc);
                 ctx->guest_pc = branch_pc;
 
                 // Materialize any deferred comparison (pending_cond) before
