@@ -5282,7 +5282,7 @@ typedef enum {
 
 static peephole_call_guard_mode_t dbt_peephole_call_guard_mode(void) {
     static bool inited = false;
-    static peephole_call_guard_mode_t mode = PEEPHOLE_CALL_GUARD_JCC;
+    static peephole_call_guard_mode_t mode = PEEPHOLE_CALL_GUARD_NONE;
     if (!inited) {
         const char *v = getenv("SLOW32_DBT_PEEPHOLE_GUARD_CALLS");
         if (v && v[0] != '\0') {
@@ -5729,7 +5729,8 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len, uint32_t guest_pc
         if (p < len && (code[p] & 0xF8) == 0xB8) {
             uint8_t rd0 = (code[p] & 0x07) | ((rex_a & 0x01) ? 0x08 : 0x00);
             size_t imm0 = p + 1;
-            size_t end0 = imm0 + 4;
+            size_t imm0_size = (rex_a & 0x08) ? 8 : 4;
+            size_t end0 = imm0 + imm0_size;
             if (end0 <= len) {
                 size_t q = end0;
                 uint8_t rex_b = 0;
@@ -5739,7 +5740,8 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len, uint32_t guest_pc
                 if (q < len && (code[q] & 0xF8) == 0xB8) {
                     uint8_t rd1 = (code[q] & 0x07) | ((rex_b & 0x01) ? 0x08 : 0x00);
                     size_t imm1 = q + 1;
-                    size_t end1 = imm1 + 4;
+                    size_t imm1_size = (rex_b & 0x08) ? 8 : 4;
+                    size_t end1 = imm1 + imm1_size;
                     if (end1 <= len && rd0 == rd1) {
                         if (!dbt_peephole_immimm_enabled()) {
                             peephole_guard_skip_immimm_global_count++;
