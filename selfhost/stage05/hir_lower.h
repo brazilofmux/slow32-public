@@ -297,6 +297,21 @@ static int hl_expr(Node *n) {
         return hi_emit(HI_ICONST, n->ty, -1, -1, n->val, NULL);
     }
 
+    /* Float/double literal */
+    if (n->kind == ND_FNUM) {
+        if (ty_is_double(n->ty)) {
+            /* f64: lo bits in val, hi bits in val_hi — treated like llong */
+            int flo;
+            int fhi;
+            flo = hi_emit(HI_ICONST, TY_INT, -1, -1, n->val, NULL);
+            fhi = hi_emit(HI_ICONST, TY_INT, -1, -1, n->val_hi, NULL);
+            hl_hi = fhi;
+            return flo;
+        }
+        /* f32: bits stored as int, same representation */
+        return hi_emit(HI_ICONST, TY_FLOAT, -1, -1, n->val, NULL);
+    }
+
     /* String literal */
     if (n->kind == ND_STRING) {
         return hi_emit(HI_SADDR, n->ty, -1, -1, n->val, NULL);
@@ -390,6 +405,8 @@ static int hl_expr(Node *n) {
                 return r_lo;
             }
             lv = hl_expr(n->lhs);
+            if (ty_is_float(n->lhs->ty))
+                return hi_emit(HI_FNEG, TY_FLOAT, lv, -1, 0, NULL);
             return hi_emit(HI_NEG, n->ty, lv, -1, 0, NULL);
         }
         if (n->op == TK_BANG) {
@@ -759,6 +776,25 @@ static int hl_expr(Node *n) {
             return hi_emit(HI_SUB, n->ty, lv, rv, 0, NULL);
         }
 
+        /* Floating-point binary operations (f32) */
+        if (ty_is_float(n->lhs->ty) || ty_is_float(n->rhs->ty)) {
+            lv = hl_expr(n->lhs);
+            rv = hl_expr(n->rhs);
+            if (n->op == TK_PLUS)  return hi_emit(HI_FADD, TY_FLOAT, lv, rv, 0, NULL);
+            if (n->op == TK_MINUS) return hi_emit(HI_FSUB, TY_FLOAT, lv, rv, 0, NULL);
+            if (n->op == TK_STAR)  return hi_emit(HI_FMUL, TY_FLOAT, lv, rv, 0, NULL);
+            if (n->op == TK_SLASH) return hi_emit(HI_FDIV, TY_FLOAT, lv, rv, 0, NULL);
+            if (n->op == TK_EQ)    return hi_emit(HI_FEQ, TY_INT, lv, rv, 0, NULL);
+            if (n->op == TK_NE) {
+                val = hi_emit(HI_FEQ, TY_INT, lv, rv, 0, NULL);
+                return hi_emit(HI_NOT, TY_INT, val, -1, 0, NULL);
+            }
+            if (n->op == TK_LT) return hi_emit(HI_FLT, TY_INT, lv, rv, 0, NULL);
+            if (n->op == TK_LE) return hi_emit(HI_FLE, TY_INT, lv, rv, 0, NULL);
+            if (n->op == TK_GT) return hi_emit(HI_FLT, TY_INT, rv, lv, 0, NULL);
+            if (n->op == TK_GE) return hi_emit(HI_FLE, TY_INT, rv, lv, 0, NULL);
+        }
+
         /* Regular binary op */
         lv = hl_expr(n->lhs);
         rv = hl_expr(n->rhs);
@@ -839,6 +875,14 @@ static int hl_expr(Node *n) {
         if (!ty_is_llong(n->ty) && ty_is_llong(n->lhs->ty)) {
             /* Truncate 64->32: just use lo word */
             return lv;
+        }
+        /* int → float */
+        if (ty_is_float(n->ty) && !ty_is_fp(n->lhs->ty)) {
+            return hi_emit(HI_FCVT_ItoF, TY_FLOAT, lv, -1, 0, NULL);
+        }
+        /* float → int */
+        if (!ty_is_fp(n->ty) && ty_is_float(n->lhs->ty)) {
+            return hi_emit(HI_FCVT_FtoI, TY_INT, lv, -1, 0, NULL);
         }
         return lv;
     }

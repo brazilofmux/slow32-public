@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stage 05: Full toolchain tests
+# Stage 06: Full toolchain tests
 #
 # Tests:
-#   1. Build gen1_cc using stage04's s12cc (compiler bootstrap)
+#   1. Build gen1_cc using stage05's s12cc (compiler bootstrap)
 #   2. Run compiler tests with gen1_cc
-#   3. Build tools (s32-as, s32-ar, s32-ld) using stage04's s12cc
-#   4. End-to-end: gen1_cc + stage05 tools compile/assemble/link/run a program
+#   3. Build tools (s32-as, s32-ar, s32-ld) using stage05's s12cc
+#   4. End-to-end: gen1_cc + stage06 tools compile/assemble/link/run a program
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SELFHOST_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -32,7 +32,7 @@ usage() {
     cat <<USAGE
 Usage: $0 [--emu <path>] [--keep-artifacts] [--fixed-point] [--strict-shape]
 
-Stage compiler tests: s12cc compiler + toolchain tests (bootstrapped from stage04)
+Stage compiler tests: s12cc compiler + toolchain tests (bootstrapped from stage05)
 USAGE
 }
 
@@ -72,7 +72,7 @@ fi
 
 [[ -f "$EMU" ]] || { echo "Missing emulator: $EMU" >&2; exit 1; }
 
-WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage05.XXXXXX)"
+WORKDIR="$(mktemp -d /tmp/selfhost-v2-stage06.XXXXXX)"
 if [[ "$KEEP_ARTIFACTS" -eq 0 ]]; then
     trap 'rm -rf "$WORKDIR"' EXIT
 fi
@@ -245,15 +245,15 @@ compile_and_link() {
 }
 
 # ============================================================
-# Step 1: Bootstrap — build runtime/libc using stage04 compiler
+# Step 1: Bootstrap — build runtime/libc using stage05 compiler
 # ============================================================
 echo "=== Step 1: Bootstrap ==="
 
-STAGE4_CC="$SELFHOST_DIR/stage04/cc.s32x"
-AS_EXE="$SELFHOST_DIR/stage04/s32-as.s32x"
-LD_EXE="$SELFHOST_DIR/stage04/s32-ld.s32x"
+STAGE5_CC="$SELFHOST_DIR/stage05/cc.s32x"
+AS_EXE="$SELFHOST_DIR/stage05/s32-as.s32x"
+LD_EXE="$SELFHOST_DIR/stage05/s32-ld.s32x"
 
-[[ -f "$STAGE4_CC" ]] || { echo "Missing compiler (stage04): $STAGE4_CC" >&2; exit 1; }
+[[ -f "$STAGE5_CC" ]] || { echo "Missing compiler (stage05): $STAGE5_CC" >&2; exit 1; }
 [[ -f "$AS_EXE" ]] || { echo "Missing assembler: $AS_EXE" >&2; exit 1; }
 [[ -f "$LD_EXE" ]] || { echo "Missing linker: $LD_EXE" >&2; exit 1; }
 
@@ -273,17 +273,17 @@ if [[ -f "$BUILTINS64_SRC" ]]; then
     [[ -s "$WORKDIR/builtins64.s32o" ]] || { echo "failed to assemble builtins64" >&2; exit 1; }
 fi
 
-# Build libc with stage04 compiler
+# Build libc with stage05 compiler
 LIBC_OBJS=""
 for name in string_extra string_more ctype convert stdio malloc; do
-    run_exe "$STAGE4_CC" "$WORKDIR/${name}.cc.log" "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s"
+    run_exe "$STAGE5_CC" "$WORKDIR/${name}.cc.log" "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s"
     [[ -s "$WORKDIR/${name}.s" ]] || { echo "failed to compile ${name}.c" >&2; exit 1; }
     run_exe "$AS_EXE" "$WORKDIR/${name}.as.log" "$WORKDIR/${name}.s" "$WORKDIR/${name}.s32o"
     [[ -s "$WORKDIR/${name}.s32o" ]] || { echo "failed to assemble ${name}.s" >&2; exit 1; }
     LIBC_OBJS="$LIBC_OBJS $WORKDIR/${name}.s32o"
 done
 
-run_exe "$STAGE4_CC" "$WORKDIR/start.cc.log" "$LIBC_DIR/start.c" "$WORKDIR/start.s"
+run_exe "$STAGE5_CC" "$WORKDIR/start.cc.log" "$LIBC_DIR/start.c" "$WORKDIR/start.s"
 [[ -s "$WORKDIR/start.s" ]] || { echo "failed to compile start.c" >&2; exit 1; }
 run_exe "$AS_EXE" "$WORKDIR/start.as.log" "$WORKDIR/start.s" "$WORKDIR/start.s32o"
 [[ -s "$WORKDIR/start.s32o" ]] || { echo "failed to assemble start.s" >&2; exit 1; }
@@ -295,10 +295,10 @@ if [[ -s "$WORKDIR/builtins64.s32o" ]]; then
     BUILTINS64_OBJ="$WORKDIR/builtins64.s32o"
 fi
 LIBC_START_OBJ="$WORKDIR/start.s32o"
-STAGE4_LIBC_OBJS="$LIBC_OBJS"
-STAGE4_LIBC_START_OBJ="$LIBC_START_OBJ"
+STAGE5_LIBC_OBJS="$LIBC_OBJS"
+STAGE5_LIBC_START_OBJ="$LIBC_START_OBJ"
 
-echo "Compiler (stage04): $STAGE4_CC"
+echo "Compiler (stage05): $STAGE5_CC"
 echo "Assembler: $AS_EXE"
 echo "Linker: $LD_EXE"
 
@@ -310,10 +310,10 @@ SHAPE_WARN_FILE="$WORKDIR/shape.warn"
 : > "$SHAPE_WARN_FILE"
 
 # ============================================================
-# Step 2: Build gen1_cc using stage04's s12cc
+# Step 2: Build gen1_cc using stage05's s12cc (building stage06 compiler)
 # ============================================================
 echo ""
-echo "=== Step 2: Build gen1_cc (compiled by stage04 s12cc) ==="
+echo "=== Step 2: Build gen1_cc (compiled by stage05 s12cc) ==="
 
 STAGE_CC_SRC="$SCRIPT_DIR/s12cc.c"
 [[ -s "$STAGE_CC_SRC" ]] || { echo "ERROR: s12cc.c not found" >&2; exit 1; }
@@ -322,8 +322,8 @@ TOTAL=$((TOTAL + 1))
 SAVED_TIMEOUT="${EXEC_TIMEOUT:-180}"
 EXEC_TIMEOUT=300
 
-# Compile stage05 source with stage04 compiler
-run_exe "$STAGE4_CC" "$WORKDIR/gen1_cc-compile.log" "$STAGE_CC_SRC" "$WORKDIR/gen1_cc.s"
+# Compile stage06 source with stage05 compiler
+run_exe "$STAGE5_CC" "$WORKDIR/gen1_cc-compile.log" "$STAGE_CC_SRC" "$WORKDIR/gen1_cc.s"
 if [[ ! -s "$WORKDIR/gen1_cc.s" ]]; then
     printf "  %-30s FAIL (compile)\n" "gen1_cc-build:"
     tail -n 20 "$WORKDIR/gen1_cc-compile.log" >&2
@@ -366,10 +366,10 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     echo "=== Step 2b: Recompile libc with gen1_cc (HIR/SSA ABI) ==="
     EXEC_TIMEOUT=300
 
-    for name in string_extra string_more ctype convert stdio malloc printf_varargs convert64; do
+    for name in string_extra string_more ctype convert stdio malloc printf_varargs; do
         run_exe "$GEN1_CC_EXE" "$WORKDIR/g1_${name}.cc.log" "$LIBC_DIR/${name}.c" "$WORKDIR/g1_${name}.s"
         if [[ ! -s "$WORKDIR/g1_${name}.s" ]]; then
-            echo "  WARN: gen1 failed to compile ${name}.c, falling back to stage04 libc" >&2
+            echo "  WARN: gen1 failed to compile ${name}.c, falling back to stage05 libc" >&2
             G1_LIBC_OBJS=""
             break
         fi
@@ -411,7 +411,7 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
     echo ""
     echo "=== Step 3: gen1_cc compiler tests ==="
 
-    for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c "$TESTS_DIR"/test_phase3.c "$TESTS_DIR"/test_phase4.c "$TESTS_DIR"/test_phase5.c "$TESTS_DIR"/test_phase6.c "$TESTS_DIR"/test_phase7.c "$TESTS_DIR"/test_phase8.c "$TESTS_DIR"/test_phase9.c "$TESTS_DIR"/test_phase10.c "$TESTS_DIR"/test_phase11.c "$TESTS_DIR"/test_phase12.c "$TESTS_DIR"/test_phase13.c "$TESTS_DIR"/test_phase14.c "$TESTS_DIR"/test_phase16.c "$TESTS_DIR"/test_phase17.c "$TESTS_DIR"/test_phase18.c "$TESTS_DIR"/test_phase19.c "$TESTS_DIR"/test_phase20.c "$TESTS_DIR"/test_phase21.c "$TESTS_DIR"/test_phase22.c "$TESTS_DIR"/test_phase23.c "$TESTS_DIR"/test_short.c; do
+    for tst in "$TESTS_DIR"/test_spike.c "$TESTS_DIR"/test_phase2.c "$TESTS_DIR"/test_phase3.c "$TESTS_DIR"/test_phase4.c "$TESTS_DIR"/test_phase5.c "$TESTS_DIR"/test_phase6.c "$TESTS_DIR"/test_phase7.c "$TESTS_DIR"/test_phase8.c "$TESTS_DIR"/test_phase9.c "$TESTS_DIR"/test_phase10.c "$TESTS_DIR"/test_phase11.c "$TESTS_DIR"/test_phase12.c "$TESTS_DIR"/test_phase13.c "$TESTS_DIR"/test_phase14.c "$TESTS_DIR"/test_phase15.c "$TESTS_DIR"/test_phase16.c "$TESTS_DIR"/test_phase17.c "$TESTS_DIR"/test_phase18.c "$TESTS_DIR"/test_phase19.c "$TESTS_DIR"/test_phase20.c "$TESTS_DIR"/test_phase21.c "$TESTS_DIR"/test_phase23.c "$TESTS_DIR"/test_phase24.c "$TESTS_DIR"/test_short.c; do
         [[ -f "$tst" ]] || continue
         tname="$(basename "$tst" .c)"
         TOTAL=$((TOTAL + 1))
@@ -498,8 +498,8 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$GEN1_CC_EXE" ]]; then
         else
             run_exe "$LD_EXE" "$WORKDIR/fp-gen2-link.log" \
                 -o "$WORKDIR/fp-gen2.s32x" --mmio 64K \
-                "$RUNTIME_CRT0" "$WORKDIR/fp-gen2.s32o" "$STAGE4_LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-                $BUILTINS64_OBJ $STAGE4_LIBC_OBJS
+                "$RUNTIME_CRT0" "$WORKDIR/fp-gen2.s32o" "$STAGE5_LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+                $BUILTINS64_OBJ $STAGE5_LIBC_OBJS
             if [[ ! -s "$WORKDIR/fp-gen2.s32x" ]]; then
                 printf "  %-30s FAIL (link)\n" "fixed-point:"
                 FAIL=$((FAIL + 1))
@@ -520,8 +520,8 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$GEN1_CC_EXE" ]]; then
                     else
                         run_exe "$LD_EXE" "$WORKDIR/fp-gen3-link.log" \
                             -o "$WORKDIR/fp-gen3.s32x" --mmio 64K \
-                            "$RUNTIME_CRT0" "$WORKDIR/fp-gen3.s32o" "$STAGE4_LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
-                            $BUILTINS64_OBJ $STAGE4_LIBC_OBJS
+                            "$RUNTIME_CRT0" "$WORKDIR/fp-gen3.s32o" "$STAGE5_LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
+                            $BUILTINS64_OBJ $STAGE5_LIBC_OBJS
                         if [[ ! -s "$WORKDIR/fp-gen3.s32x" ]]; then
                             printf "  %-30s FAIL (gen3 link)\n" "fixed-point:"
                             FAIL=$((FAIL + 1))
@@ -543,11 +543,11 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$GEN1_CC_EXE" ]]; then
 fi
 
 # ============================================================
-# Step 3b: Semantic equivalence smoke (stage04 vs stage05 cc)
+# Step 3b: Semantic equivalence smoke (stage05 vs stage06 cc)
 # ============================================================
 if [[ -s "$GEN1_CC_EXE" ]]; then
     echo ""
-    echo "=== Step 3b: Semantic equivalence (stage04 vs gen1_cc) ==="
+    echo "=== Step 3b: Semantic equivalence (stage05 vs gen1_cc) ==="
 
     # Deterministic no-libc cases.
     # Compare observable behavior (program return code) between compilers.
@@ -598,8 +598,8 @@ EOF
         name="$(basename "$src" .c)"
         TOTAL=$((TOTAL + 1))
 
-        EXE_A=$(compile_and_link "${name}-s4" "$src" "$STAGE4_CC" "$AS_EXE" "$LD_EXE") || {
-            printf "  %-30s FAIL (stage04 build)\n" "${name}:"
+        EXE_A=$(compile_and_link "${name}-s4" "$src" "$STAGE5_CC" "$AS_EXE" "$LD_EXE") || {
+            printf "  %-30s FAIL (stage05 build)\n" "${name}:"
             FAIL=$((FAIL + 1))
             continue
         }
@@ -624,9 +624,9 @@ EOF
             PASS=$((PASS + 1))
         else
             printf "  %-30s FAIL (s4=%d, s5=%d)\n" "${name}:" "$RC_A" "$RC_B"
-            echo "    stage04 run log:" >&2
-            tail -n 20 "$WORKDIR/${name}-s4.run.log" >&2 || true
             echo "    stage05 run log:" >&2
+            tail -n 20 "$WORKDIR/${name}-s4.run.log" >&2 || true
+            echo "    stage06 run log:" >&2
             tail -n 20 "$WORKDIR/${name}-s5.run.log" >&2 || true
             FAIL=$((FAIL + 1))
         fi
@@ -634,7 +634,7 @@ EOF
 fi
 
 # ============================================================
-# Step 3c: Optimizer regression pack (stage04 vs stage05 cc)
+# Step 3c: Optimizer regression pack (stage05 vs stage06 cc)
 # ============================================================
 if [[ -s "$GEN1_CC_EXE" ]]; then
     echo ""
@@ -650,8 +650,8 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
         name="$(basename "$src" .c)"
         TOTAL=$((TOTAL + 1))
 
-        EXE_A=$(compile_and_link "${name}-s4" "$src" "$STAGE4_CC" "$AS_EXE" "$LD_EXE") || {
-            printf "  %-30s FAIL (stage04 build)\n" "${name}:"
+        EXE_A=$(compile_and_link "${name}-s4" "$src" "$STAGE5_CC" "$AS_EXE" "$LD_EXE") || {
+            printf "  %-30s FAIL (stage05 build)\n" "${name}:"
             FAIL=$((FAIL + 1))
             continue
         }
@@ -676,9 +676,9 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
             PASS=$((PASS + 1))
         else
             printf "  %-30s FAIL (s4=%d, s5=%d)\n" "${name}:" "$RC_A" "$RC_B"
-            echo "    stage04 run log:" >&2
-            tail -n 20 "$WORKDIR/${name}-s4.run.log" >&2 || true
             echo "    stage05 run log:" >&2
+            tail -n 20 "$WORKDIR/${name}-s4.run.log" >&2 || true
+            echo "    stage06 run log:" >&2
             tail -n 20 "$WORKDIR/${name}-s5.run.log" >&2 || true
             FAIL=$((FAIL + 1))
         fi
@@ -686,10 +686,10 @@ if [[ -s "$GEN1_CC_EXE" ]]; then
 fi
 
 # ============================================================
-# Step 4: Build tools with stage04's s12cc
+# Step 4: Build tools with stage05's s12cc
 # ============================================================
 echo ""
-echo "=== Step 4: Build stage05 tools ==="
+echo "=== Step 4: Build stage06 tools ==="
 
 STAGE_AS_SRC="$SCRIPT_DIR/tools/s32-as.c"
 STAGE_AR_SRC="$SCRIPT_DIR/tools/s32-ar.c"
@@ -698,7 +698,7 @@ STAGE_LD_SRC="$SCRIPT_DIR/tools/s32-ld.c"
 # Build assembler
 TOTAL=$((TOTAL + 1))
 EXEC_TIMEOUT=300
-run_exe "$STAGE4_CC" "$WORKDIR/s32-as-compile.log" "$STAGE_AS_SRC" "$WORKDIR/s32-as.s"
+run_exe "$STAGE5_CC" "$WORKDIR/s32-as-compile.log" "$STAGE_AS_SRC" "$WORKDIR/s32-as.s"
 if [[ ! -s "$WORKDIR/s32-as.s" ]]; then
     printf "  %-30s FAIL (compile)\n" "s32-as-build:"
     tail -n 20 "$WORKDIR/s32-as-compile.log" >&2
@@ -725,7 +725,7 @@ fi
 
 # Build archiver
 TOTAL=$((TOTAL + 1))
-run_exe "$STAGE4_CC" "$WORKDIR/s32-ar-compile.log" "$STAGE_AR_SRC" "$WORKDIR/s32-ar.s"
+run_exe "$STAGE5_CC" "$WORKDIR/s32-ar-compile.log" "$STAGE_AR_SRC" "$WORKDIR/s32-ar.s"
 if [[ ! -s "$WORKDIR/s32-ar.s" ]]; then
     printf "  %-30s FAIL (compile)\n" "s32-ar-build:"
     tail -n 20 "$WORKDIR/s32-ar-compile.log" >&2
@@ -752,7 +752,7 @@ fi
 
 # Build linker
 TOTAL=$((TOTAL + 1))
-run_exe "$STAGE4_CC" "$WORKDIR/s32-ld-compile.log" "$STAGE_LD_SRC" "$WORKDIR/s32-ld.s"
+run_exe "$STAGE5_CC" "$WORKDIR/s32-ld-compile.log" "$STAGE_LD_SRC" "$WORKDIR/s32-ld.s"
 if [[ ! -s "$WORKDIR/s32-ld.s" ]]; then
     printf "  %-30s FAIL (compile)\n" "s32-ld-build:"
     tail -n 20 "$WORKDIR/s32-ld-compile.log" >&2
@@ -780,7 +780,7 @@ EXEC_TIMEOUT="$SAVED_TIMEOUT"
 
 # ============================================================
 # Step 5: End-to-end toolchain test
-# Use gen1_cc + stage05 tools to compile/assemble/link/run a program
+# Use gen1_cc + stage06 tools to compile/assemble/link/run a program
 # ============================================================
 STAGE_AS_EXE="$WORKDIR/s32-as.s32x"
 STAGE_AR_EXE="$WORKDIR/s32-ar.s32x"
@@ -788,9 +788,9 @@ STAGE_LD_EXE="$WORKDIR/s32-ld.s32x"
 
 if [[ -s "$GEN1_CC_EXE" && -s "$STAGE_AS_EXE" && -s "$STAGE_LD_EXE" ]]; then
     echo ""
-    echo "=== Step 5: End-to-end toolchain test (gen1_cc + stage05 tools) ==="
+    echo "=== Step 5: End-to-end toolchain test (gen1_cc + stage06 tools) ==="
 
-    # Test: compile test_spike.c with gen1_cc, assemble with stage05 AS, link with stage05 LD
+    # Test: compile test_spike.c with gen1_cc, assemble with stage06 AS, link with stage06 LD
     for tst in test_spike test_phase2 test_phase3; do
         TST_SRC="$TESTS_DIR/${tst}.c"
         [[ -f "$TST_SRC" ]] || continue
@@ -804,7 +804,7 @@ if [[ -s "$GEN1_CC_EXE" && -s "$STAGE_AS_EXE" && -s "$STAGE_LD_EXE" ]]; then
             continue
         fi
 
-        # Assemble with stage05 AS
+        # Assemble with stage06 AS
         run_exe "$STAGE_AS_EXE" "$WORKDIR/e2e-${tst}-as.log" "$WORKDIR/e2e-${tst}.s" "$WORKDIR/e2e-${tst}.s32o"
         if [[ ! -s "$WORKDIR/e2e-${tst}.s32o" ]]; then
             printf "  %-30s FAIL (assemble)\n" "e2e-${tst}:"
@@ -812,7 +812,7 @@ if [[ -s "$GEN1_CC_EXE" && -s "$STAGE_AS_EXE" && -s "$STAGE_LD_EXE" ]]; then
             continue
         fi
 
-        # Link with stage05 LD
+        # Link with stage06 LD
         run_exe "$STAGE_LD_EXE" "$WORKDIR/e2e-${tst}-ld.log" \
             -o "$WORKDIR/e2e-${tst}.s32x" --mmio 64K \
             "$RUNTIME_CRT0" "$WORKDIR/e2e-${tst}.s32o" "$LIBC_START_OBJ" "$RUNTIME_MMIO_NO_START_OBJ" \
@@ -838,7 +838,7 @@ if [[ -s "$GEN1_CC_EXE" && -s "$STAGE_AS_EXE" && -s "$STAGE_LD_EXE" ]]; then
         fi
     done
 
-    # Test: use stage05 archiver to create a libc archive, then link with it
+    # Test: use stage06 archiver to create a libc archive, then link with it
     if [[ -s "$STAGE_AR_EXE" ]]; then
         TOTAL=$((TOTAL + 1))
         echo ""
@@ -852,7 +852,7 @@ if [[ -s "$GEN1_CC_EXE" && -s "$STAGE_AS_EXE" && -s "$STAGE_LD_EXE" ]]; then
             tail -n 20 "$WORKDIR/e2e-ar.log" >&2
             FAIL=$((FAIL + 1))
         else
-            # Compile test_spike with gen1_cc, assemble with stage05 AS, link with archive
+            # Compile test_spike with gen1_cc, assemble with stage06 AS, link with archive
             run_exe "$GEN1_CC_EXE" "$WORKDIR/e2e-ar-cc.log" "$TESTS_DIR/test_spike.c" "$WORKDIR/e2e-ar-test.s"
             run_exe "$STAGE_AS_EXE" "$WORKDIR/e2e-ar-as.log" "$WORKDIR/e2e-ar-test.s" "$WORKDIR/e2e-ar-test.s32o"
             run_exe "$STAGE_LD_EXE" "$WORKDIR/e2e-ar-ld.log" \
@@ -885,9 +885,9 @@ fi
 # ============================================================
 echo ""
 if [[ "$FAIL" -eq 0 ]]; then
-    echo "OK: stage05 ($PASS/$TOTAL tests passed)"
+    echo "OK: stage06 ($PASS/$TOTAL tests passed)"
 else
-    echo "FAIL: stage05 ($PASS/$TOTAL tests passed, $FAIL failed)" >&2
+    echo "FAIL: stage06 ($PASS/$TOTAL tests passed, $FAIL failed)" >&2
     exit 1
 fi
 

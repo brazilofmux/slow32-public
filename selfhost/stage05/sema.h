@@ -14,6 +14,9 @@ static int sema_ret_ty;   /* current function's return type */
 static int sema_arith_type(int lty, int rty) {
     if (ty_is_ptr(lty)) return lty;
     if (ty_is_ptr(rty)) return rty;
+    /* Float promotion: double > float > long long > int */
+    if (ty_is_double(lty) || ty_is_double(rty)) return TY_DOUBLE;
+    if (ty_is_float(lty) || ty_is_float(rty)) return TY_FLOAT;
     if (ty_is_llong(lty) || ty_is_llong(rty)) {
         if ((lty & TY_UNSIGNED) || (rty & TY_UNSIGNED))
             return TY_LLONG | TY_UNSIGNED;

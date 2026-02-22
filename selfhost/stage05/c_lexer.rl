@@ -28,6 +28,7 @@ int stderr;
 #define TK_STRING     2
 #define TK_CHARLIT    3
 #define TK_IDENT      4
+#define TK_FNUM       5   /* float/double literal */
 
 #define TK_AUTO       10
 #define TK_BREAK      11
@@ -130,6 +131,8 @@ static int  lex_line;
 static int  lex_col;
 static int  lex_tok;
 static int  lex_val;
+static int  lex_fval_hi;   /* high 32 bits for double literals */
+static int  lex_fty;       /* TY_FLOAT or TY_DOUBLE for float literals */
 static char lex_str[LEX_STR_SZ];
 static int  lex_slen;
 
@@ -352,6 +355,210 @@ static void lex_parse_num(char *ts, char *te) {
     lex_val = val;
 }
 
+/* === Helper: decimal to IEEE 754 binary32 (32-bit int only) === */
+/* sig: decimal significand (up to 9 digits, fits int)
+ * exp10: decimal exponent (value = sig * 10^exp10)
+ * neg: sign (0=positive, 1=negative)
+ * Returns: IEEE 754 binary32 bits packed in int */
+
+static int lex_soft_f32(int sig, int exp10, int neg) {
+    int m;
+    int e2;
+    int biased;
+
+    if (sig == 0) return neg ? (1 << 31) : 0;
+
+    m = sig;
+    e2 = 0;
+
+    /* Normalize m to [2^20, 2^27) for precision headroom.
+     * Max after *5 is ~2^29.3, still fits 32-bit signed int. */
+    while (m < 0 || m >= (1 << 27)) { m = (m >> 1) & 0x7FFFFFFF; e2 = e2 + 1; }
+    while (m < (1 << 20)) { m = m << 1; e2 = e2 - 1; }
+
+    /* Apply 10^exp10 = 2^exp10 * 5^exp10 */
+    while (exp10 > 0) {
+        m = m * 5;
+        e2 = e2 + 1;
+        while (m < 0 || m >= (1 << 27)) { m = (m >> 1) & 0x7FFFFFFF; e2 = e2 + 1; }
+        exp10 = exp10 - 1;
+    }
+    while (exp10 < 0) {
+        while (m < (1 << 24)) { m = m << 1; e2 = e2 - 1; }
+        m = (m + 2) / 5;  /* rounded division */
+        e2 = e2 - 1;
+        exp10 = exp10 + 1;
+    }
+
+    /* Normalize to [2^23, 2^24) for f32 mantissa */
+    while (m >= (1 << 24)) {
+        m = (m + 1) >> 1;  /* round */
+        e2 = e2 + 1;
+    }
+    while (m > 0 && m < (1 << 23)) { m = m << 1; e2 = e2 - 1; }
+
+    /* value = m * 2^e2, m in [2^23, 2^24)
+     * IEEE: 1.frac * 2^(biased-127), biased = e2+150 */
+    biased = e2 + 150;
+
+    if (biased >= 255) return (neg << 31) | 0x7F800000;  /* infinity */
+    if (biased <= 0) {
+        if (biased < -23) return neg << 31;  /* zero */
+        m = m >> (1 - biased);
+        biased = 0;
+    }
+
+    return (neg << 31) | (biased << 23) | (m & 0x7FFFFF);
+}
+
+/* === Helper: decimal to IEEE 754 binary64 (32-bit int only) === */
+/* Computes f32 first, then promotes to f64 by adjusting exponent and
+ * extending mantissa.  Precision limited to ~24 bits (f32 level),
+ * sufficient for bootstrap. */
+/* Returns lo 32 bits; lex_fval_hi receives hi 32 bits */
+
+static int lex_soft_f64(int sig, int exp10, int neg) {
+    int f32bits;
+    int s;
+    int exp8;
+    int mant23;
+    int exp11;
+    int hi;
+    int lo;
+
+    if (sig == 0) {
+        lex_fval_hi = neg ? (1 << 31) : 0;
+        return 0;
+    }
+
+    /* Compute f32 representation first */
+    f32bits = lex_soft_f32(sig, exp10, neg);
+
+    s = (f32bits >> 31) & 1;
+    exp8 = (f32bits >> 23) & 0xFF;
+    mant23 = f32bits & 0x7FFFFF;
+
+    if (exp8 == 0) {
+        /* Zero or denormal → f64 zero */
+        lex_fval_hi = s << 31;
+        return 0;
+    }
+    if (exp8 == 255) {
+        /* Infinity or NaN */
+        lex_fval_hi = (s << 31) | 0x7FF00000;
+        if (mant23) lex_fval_hi = lex_fval_hi | 0x80000;  /* NaN */
+        return 0;
+    }
+
+    /* Normal: f64_exp = f32_exp - 127 + 1023 = f32_exp + 896 */
+    exp11 = exp8 + 896;
+
+    /* f64 mantissa = f32 mantissa << 29 (52-23 = 29 extra bits, all zero)
+     * Split into hi (top 20 bits) and lo (bottom 32 bits):
+     *   f64_mant[51:32] = mant23 >> 3  (top 20 bits of 23-bit mantissa)
+     *   f64_mant[31:0]  = (mant23 & 7) << 29  (bottom 3 bits shifted up) */
+    hi = (s << 31) | (exp11 << 20) | (mant23 >> 3);
+    lo = (mant23 & 7) << 29;
+
+    lex_fval_hi = hi;
+    return lo;
+}
+
+/* === Helper: parse float literal from ts..te === */
+
+static void lex_parse_fnum(char *ts, char *te) {
+    int sig;
+    int exp10;
+    int neg;
+    int is_float;
+    int ch;
+    char *np;
+    int saw_dot;
+    int frac_digits;
+    int eneg;
+    int eval;
+
+    sig = 0;
+    exp10 = 0;
+    neg = 0;
+    is_float = 0;  /* 0=double, 1=float */
+    saw_dot = 0;
+    frac_digits = 0;
+    np = ts;
+
+    /* Parse sign (unlikely in literal, but handle) */
+    if (np < te && *np == 45) { neg = 1; np = np + 1; }
+    else if (np < te && *np == 43) { np = np + 1; }
+
+    /* Parse integer and fractional parts */
+    while (np < te) {
+        ch = *np & 255;
+        if (ch == 46) { /* '.' */
+            saw_dot = 1;
+            np = np + 1;
+        } else if (ch == 101 || ch == 69) { /* 'e' or 'E' */
+            break;
+        } else if (ch == 102 || ch == 70) { /* 'f' or 'F' */
+            is_float = 1;
+            np = np + 1;
+        } else if (ch == 108 || ch == 76) { /* 'l' or 'L' */
+            np = np + 1;  /* skip suffix */
+        } else if (ch >= 48 && ch <= 57) {
+            /* Accumulate up to 9 significant digits (999999999 < 2^30) */
+            if (sig < 100000000) {
+                sig = sig * 10 + (ch - 48);
+                if (saw_dot) frac_digits = frac_digits + 1;
+            } else {
+                /* Overflow: just adjust exponent for excess digits */
+                if (!saw_dot) exp10 = exp10 + 1;
+            }
+            np = np + 1;
+        } else {
+            break;
+        }
+    }
+    exp10 = exp10 - frac_digits;
+
+    /* Parse exponent */
+    if (np < te && (*np == 101 || *np == 69)) {
+        np = np + 1;
+        eneg = 0;
+        eval = 0;
+        if (np < te && *np == 45) { eneg = 1; np = np + 1; }
+        else if (np < te && *np == 43) { np = np + 1; }
+        while (np < te) {
+            ch = *np & 255;
+            if (ch >= 48 && ch <= 57) {
+                eval = eval * 10 + (ch - 48);
+                np = np + 1;
+            } else {
+                break;
+            }
+        }
+        if (eneg) exp10 = exp10 - eval;
+        else exp10 = exp10 + eval;
+    }
+
+    /* Check trailing suffix */
+    while (np < te) {
+        ch = *np & 255;
+        if (ch == 102 || ch == 70) { is_float = 1; np = np + 1; }
+        else if (ch == 108 || ch == 76) { np = np + 1; }
+        else { break; }
+    }
+
+    /* Convert to IEEE 754 bits */
+    if (is_float) {
+        lex_val = lex_soft_f32(sig, exp10, neg);
+        lex_fval_hi = 0;
+        lex_fty = 5;  /* TY_FLOAT */
+    } else {
+        lex_val = lex_soft_f64(sig, exp10, neg);
+        lex_fty = 6;  /* TY_DOUBLE */
+    }
+    lex_tok = TK_FNUM;
+}
+
 /* === Helper: parse string literal from ts..te (includes quotes) === */
 
 static void lex_parse_str(char *ts, char *te) {
@@ -445,6 +652,20 @@ static void lex_parse_id(char *ts, char *te) {
         # --- Block comment ---
         '/*' any* :>> '*/' => {
             lex_count_nl(ts, te);
+        };
+
+        # --- Float literals (before integers for longest-match priority) ---
+        [0-9]+ '.' [0-9]* ([eE] [+\-]? [0-9]+)? [fFlL]* => {
+            lex_parse_fnum(ts, te);
+            fbreak;
+        };
+        '.' [0-9]+ ([eE] [+\-]? [0-9]+)? [fFlL]* => {
+            lex_parse_fnum(ts, te);
+            fbreak;
+        };
+        [0-9]+ [eE] [+\-]? [0-9]+ [fFlL]* => {
+            lex_parse_fnum(ts, te);
+            fbreak;
         };
 
         # --- Numeric literals ---

@@ -1307,6 +1307,56 @@ static void hcg_inst(int idx) {
         return;
     }
 
+    /* Floating-point binary arithmetic (f32) */
+    if (k >= HI_FADD && k <= HI_FDIV) {
+        rs1 = hcg_src(s1, 1);
+        rs2 = hcg_src(s2, 2);
+        rd = hcg_dst(idx);
+        if (k == HI_FADD) cg_rrr("fadd.s", rd, rs1, rs2);
+        else if (k == HI_FSUB) cg_rrr("fsub.s", rd, rs1, rs2);
+        else if (k == HI_FMUL) cg_rrr("fmul.s", rd, rs1, rs2);
+        else if (k == HI_FDIV) cg_rrr("fdiv.s", rd, rs1, rs2);
+        hcg_maybe_spill(idx);
+        return;
+    }
+
+    /* Floating-point negate (f32) */
+    if (k == HI_FNEG) {
+        rs1 = hcg_src(s1, 1);
+        rd = hcg_dst(idx);
+        cg_rrr("fneg.s", rd, rs1, 0);
+        hcg_maybe_spill(idx);
+        return;
+    }
+
+    /* Floating-point comparisons (f32) → int result */
+    if (k == HI_FEQ || k == HI_FLT || k == HI_FLE) {
+        rs1 = hcg_src(s1, 1);
+        rs2 = hcg_src(s2, 2);
+        rd = hcg_dst(idx);
+        if (k == HI_FEQ) cg_rrr("feq.s", rd, rs1, rs2);
+        else if (k == HI_FLT) cg_rrr("flt.s", rd, rs1, rs2);
+        else cg_rrr("fle.s", rd, rs1, rs2);
+        hcg_maybe_spill(idx);
+        return;
+    }
+
+    /* Float-int conversions (f32) */
+    if (k == HI_FCVT_ItoF) {
+        rs1 = hcg_src(s1, 1);
+        rd = hcg_dst(idx);
+        cg_rrr("fcvt.s.w", rd, rs1, 0);
+        hcg_maybe_spill(idx);
+        return;
+    }
+    if (k == HI_FCVT_FtoI) {
+        rs1 = hcg_src(s1, 1);
+        rd = hcg_dst(idx);
+        cg_rrr("fcvt.w.s", rd, rs1, 0);
+        hcg_maybe_spill(idx);
+        return;
+    }
+
     /* Unary: negate */
     if (k == HI_NEG) {
         rs1 = hcg_src(s1, 1);

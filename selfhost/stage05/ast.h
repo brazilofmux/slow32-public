@@ -19,7 +19,9 @@ int memcpy(char *dst, char *src, int n);
 #define TY_SHORT  2
 #define TY_VOID   3
 #define TY_LLONG  4       /* long long (64-bit) */
-#define TY_STRUCT_BASE 5  /* struct index i → type = 5+i; fits 5..255 */
+#define TY_FLOAT  5       /* float (32-bit IEEE 754) */
+#define TY_DOUBLE 6       /* double (64-bit IEEE 754) */
+#define TY_STRUCT_BASE 7  /* struct index i → type = 7+i; fits 7..255 */
 #define TY_PTR  256   /* add to base: TY_PTR+TY_CHAR = char*, TY_PTR+TY_INT = int* */
 
 #define TY_UNSIGNED  0x4000  /* flag bit: unsigned qualifier */
@@ -48,6 +50,20 @@ static int ty_is_llong(int ty) {
     return (ty & TY_BASE_MASK) == TY_LLONG && (ty & TY_PTR_MASK) == 0;
 }
 
+static int ty_is_float(int ty) {
+    return (ty & TY_BASE_MASK) == TY_FLOAT && (ty & TY_PTR_MASK) == 0;
+}
+
+static int ty_is_double(int ty) {
+    return (ty & TY_BASE_MASK) == TY_DOUBLE && (ty & TY_PTR_MASK) == 0;
+}
+
+static int ty_is_fp(int ty) {
+    int base;
+    base = ty & TY_BASE_MASK;
+    return (base == TY_FLOAT || base == TY_DOUBLE) && (ty & TY_PTR_MASK) == 0;
+}
+
 static int ty_is_struct(int ty) {
     int base;
     base = ty & TY_BASE_MASK;
@@ -62,7 +78,9 @@ static int ty_size(int ty) {
     if (ty & TY_PTR_MASK) return 4;
     if ((ty & TY_BASE_MASK) >= TY_STRUCT_BASE)
         return st_size[(ty & TY_BASE_MASK) - TY_STRUCT_BASE];
+    if ((ty & TY_BASE_MASK) == TY_DOUBLE) return 8;
     if ((ty & TY_BASE_MASK) == TY_LLONG) return 8;
+    if ((ty & TY_BASE_MASK) == TY_FLOAT) return 4;
     if ((ty & TY_BASE_MASK) == TY_CHAR) return 1;
     if ((ty & TY_BASE_MASK) == TY_SHORT) return 2;
     return 4;
@@ -116,13 +134,15 @@ static int ty_is_unsigned(int ty) {
 #define ND_CALL_PTR 32   /* indirect call through expression: lhs=callee, args=arglist */
 #define ND_VA_START 33   /* va_start: lhs = ap variable */
 #define ND_VA_ARG   34   /* va_arg:   lhs = ap variable, ty = requested type */
+#define ND_FNUM     35   /* float/double literal: val=lo bits, val_hi=hi bits (f64) */
 
 /* --- AST node --- */
 struct Node {
     int kind;
     int ty;           /* expression type: TY_INT, TY_PTR+TY_CHAR, etc */
     int op;           /* BINOP/UNARY: operator token (TK_PLUS etc) */
-    int val;          /* NUM: integer value; STRING: string pool index */
+    int val;          /* NUM: integer value; STRING: string pool index; FNUM: lo bits */
+    int val_hi;       /* FNUM: hi 32 bits for f64 literal */
     char *name;       /* VAR/FUNC/CALL: name */
     int offset;       /* VAR: stack offset from fp (locals) */
     int is_local;     /* VAR: 1=local, 0=global */
@@ -161,6 +181,15 @@ static Node *nd_num(int v) {
     n = nd_new(ND_NUM);
     n->val = v;
     n->ty = TY_INT;
+    return n;
+}
+
+static Node *nd_fnum(int lo, int hi, int ty) {
+    Node *n;
+    n = nd_new(ND_FNUM);
+    n->val = lo;
+    n->val_hi = hi;
+    n->ty = ty;
     return n;
 }
 

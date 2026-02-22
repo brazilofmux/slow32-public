@@ -28,6 +28,9 @@ static int ho_src2_is_ref(int k) {
     if (k >= HI_ADD && k <= HI_SGEU) return 1;
     if (k == HI_STORE) return 1;
     if (k == HI_RET) return 1;
+    /* FP binary ops: FADD..FDIV, FEQ/FLT/FLE */
+    if (k >= HI_FADD && k <= HI_FDIV) return 1;
+    if (k >= HI_FEQ && k <= HI_FLE) return 1;
     return 0;
 }
 

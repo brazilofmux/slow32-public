@@ -33,8 +33,8 @@ static int bg_pcost[BG_MAX_PAT];   /* base cost */
 static int bg_npat;
 
 /* Per-operator index (41 ops + 1 sentinel = 42) */
-#define BG_MAX_OP 41
-#define BG_OP_SZ 42
+#define BG_MAX_OP 55
+#define BG_OP_SZ 56
 static int bg_ofirst[BG_OP_SZ];
 static int bg_ocount[BG_OP_SZ];
 static int bg_sorted[BG_MAX_PAT];
@@ -333,6 +333,8 @@ static int bg_src2_is_ref(int k) {
     if (k >= HI_ADD && k <= HI_SGEU) return 1;
     if (k == HI_STORE) return 1;
     if (k == HI_RET) return 1;
+    if (k >= HI_FADD && k <= HI_FDIV) return 1;
+    if (k >= HI_FEQ && k <= HI_FLE) return 1;
     return 0;
 }
 
@@ -515,6 +517,20 @@ static char *bg_op_name(int op) {
     if (op == HI_COPY) return "copy";
     if (op == HI_ADDI) return "addi";
     if (op == HI_GETFP) return "getfp";
+    if (op == HI_CALLHI) return "callhi";
+    if (op == HI_FADD) return "fadd";
+    if (op == HI_FSUB) return "fsub";
+    if (op == HI_FMUL) return "fmul";
+    if (op == HI_FDIV) return "fdiv";
+    if (op == HI_FNEG) return "fneg";
+    if (op == HI_FEQ) return "feq";
+    if (op == HI_FLT) return "flt";
+    if (op == HI_FLE) return "fle";
+    if (op == HI_FCVT_ItoF) return "fcvt_itof";
+    if (op == HI_FCVT_FtoI) return "fcvt_ftoi";
+    if (op == HI_FCVT_FtoD) return "fcvt_ftod";
+    if (op == HI_FCVT_DtoF) return "fcvt_dtof";
+    if (op == HI_FCONST) return "fconst";
     return "?";
 }
 

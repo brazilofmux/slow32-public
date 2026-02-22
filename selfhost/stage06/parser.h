@@ -142,6 +142,8 @@ static int is_type(void) {
     if (lex_tok == TK_SIGNED) return 1;
     if (lex_tok == TK_LONG) return 1;
     if (lex_tok == TK_SHORT) return 1;
+    if (lex_tok == TK_FLOAT) return 1;
+    if (lex_tok == TK_DOUBLE) return 1;
     if (lex_tok == TK_CONST) return 1;
     if (lex_tok == TK_VOLATILE) return 1;
     if (lex_tok == TK_IDENT && find_typedef(lex_str) >= 0) return 1;
@@ -356,8 +358,11 @@ static int parse_type(void) {
         if (lex_tok == TK_LONG) { ty = TY_LLONG; next(); if (lex_tok == TK_INT) next(); }
         else if (lex_tok == TK_INT) { ty = TY_INT; next(); }
         else if (lex_tok == TK_UNSIGNED) { ty = TY_INT | TY_UNSIGNED; next(); }
+        else if (lex_tok == TK_DOUBLE) { ty = TY_DOUBLE; next(); }
         else { ty = TY_INT; }
     }
+    else if (lex_tok == TK_FLOAT) { ty = TY_FLOAT; next(); }
+    else if (lex_tok == TK_DOUBLE) { ty = TY_DOUBLE; next(); }
     else if (lex_tok == TK_STRUCT) {
         next();
         if (lex_tok != TK_IDENT) {
@@ -627,6 +632,13 @@ static Node *parse_primary(void) {
         v = lex_val;
         next();
         return nd_num(v);
+    }
+
+    /* Float/double literal */
+    if (lex_tok == TK_FNUM) {
+        n = nd_fnum(lex_val, lex_fval_hi, lex_fty);
+        next();
+        return n;
     }
 
     /* Character literal */

@@ -50,6 +50,21 @@
 #define HI_GETFP    41
 #define HI_CALLHI   42  /* hi word of 64-bit return: src1=CALL instruction */
 
+/* Floating-point operations (f32/f64 determined by h_ty) */
+#define HI_FADD     43  /* FP add */
+#define HI_FSUB     44  /* FP subtract */
+#define HI_FMUL     45  /* FP multiply */
+#define HI_FDIV     46  /* FP divide */
+#define HI_FNEG     47  /* FP negate */
+#define HI_FEQ      48  /* FP equal → int 0/1 */
+#define HI_FLT      49  /* FP less than → int 0/1 */
+#define HI_FLE      50  /* FP less-equal → int 0/1 */
+#define HI_FCVT_ItoF 51 /* int to float conversion */
+#define HI_FCVT_FtoI 52 /* float to int conversion */
+#define HI_FCVT_FtoD 53 /* f32 to f64 promotion */
+#define HI_FCVT_DtoF 54 /* f64 to f32 truncation */
+#define HI_FCONST   55  /* float constant: val=bits (f32 in val, f64 in val+val_hi via CALLHI-like) */
+
 /* --- Limits --- */
 #define HIR_MAX_INST   16384
 #define HIR_MAX_BLOCK  2048
