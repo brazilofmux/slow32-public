@@ -161,6 +161,191 @@ static bool is_terminal_cf_opcode(uint8_t opcode) {
            opcode == OP_YIELD || opcode == OP_DEBUG || opcode == OP_HALT;
 }
 
+static bool stage5_cfg_is_branch_opcode(uint8_t opcode) {
+    return is_branch_opcode(opcode);
+}
+
+static bool stage5_cfg_is_region_pc(const uint32_t *pcs, uint32_t count, uint32_t pc) {
+    for (uint32_t i = 0; i < count; i++) {
+        if (pcs[i] == pc) return true;
+    }
+    return false;
+}
+
+static bool stage5_cfg_insert_pc_sorted(uint32_t *pcs, uint32_t *count, uint32_t pc) {
+    uint32_t n = *count;
+    if (n >= STAGE5_MAX_CFG_BLOCKS) return false;
+    for (uint32_t i = 0; i < n; i++) {
+        if (pcs[i] == pc) return true;
+        if (pc < pcs[i]) {
+            for (uint32_t j = n; j > i; j--) pcs[j] = pcs[j - 1];
+            pcs[i] = pc;
+            *count = n + 1;
+            return true;
+        }
+    }
+    pcs[n] = pc;
+    *count = n + 1;
+    return true;
+}
+
+static int stage5_cfg_find_block_by_start(const stage5_lift_region_t *region, uint32_t start_pc) {
+    for (uint32_t i = 0; i < region->cfg_block_count; i++) {
+        if (region->cfg_blocks[i].start_pc == start_pc) return (int)i;
+    }
+    return -1;
+}
+
+static stage5_cfg_term_kind_t stage5_cfg_classify_term(uint8_t opcode, uint8_t rd, uint8_t rs1, int32_t imm) {
+    if (stage5_cfg_is_branch_opcode(opcode)) return STAGE5_CFG_TERM_BRANCH_COND;
+    if (opcode == OP_JAL) {
+        return rd == 31 ? STAGE5_CFG_TERM_JAL_CALL : STAGE5_CFG_TERM_JAL_JUMP;
+    }
+    if (opcode == OP_JALR) {
+        return (rd == 0 && rs1 == 31 && imm == 0)
+            ? STAGE5_CFG_TERM_JALR_RET
+            : STAGE5_CFG_TERM_JALR_INDIRECT;
+    }
+    if (opcode == OP_HALT) return STAGE5_CFG_TERM_HALT;
+    if (opcode == OP_DEBUG) return STAGE5_CFG_TERM_DEBUG;
+    if (opcode == OP_YIELD) return STAGE5_CFG_TERM_YIELD;
+    return STAGE5_CFG_TERM_FALLTHROUGH;
+}
+
+static void stage5_cfg_add_succ(stage5_cfg_block_t *blk, uint32_t pc) {
+    if (blk->succ_count >= 2) return;
+    for (uint8_t i = 0; i < blk->succ_count; i++) {
+        if (blk->succ_pc[i] == pc) return;
+    }
+    blk->succ_pc[blk->succ_count] = pc;
+    blk->succ_block[blk->succ_count] = -1;
+    blk->succ_count++;
+}
+
+static void stage5_build_cfg(stage5_lift_region_t *region) {
+    region->cfg_block_count = 0;
+    region->cfg_valid = false;
+    if (!region || region->ir_count == 0) return;
+
+    // Collect linear instruction PCs and decode fields from lifted IR.
+    uint32_t inst_pcs[STAGE5_MAX_IR_NODES];
+    uint8_t inst_op[STAGE5_MAX_IR_NODES];
+    uint8_t inst_rd[STAGE5_MAX_IR_NODES];
+    uint8_t inst_rs1[STAGE5_MAX_IR_NODES];
+    int32_t inst_imm[STAGE5_MAX_IR_NODES];
+    uint32_t inst_count = 0;
+
+    uint32_t seen_pc[STAGE5_MAX_IR_NODES];
+    uint32_t seen_count = 0;
+    for (uint32_t i = 0; i < region->ir_count; i++) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) continue;
+        bool seen = false;
+        for (uint32_t j = 0; j < seen_count; j++) {
+            if (seen_pc[j] == n->pc) {
+                seen = true;
+                break;
+            }
+        }
+        if (seen) continue;
+        if (inst_count >= STAGE5_MAX_IR_NODES) return;
+        seen_pc[seen_count++] = n->pc;
+        inst_pcs[inst_count] = n->pc;
+        inst_op[inst_count] = n->opcode;
+        inst_rd[inst_count] = n->rd;
+        inst_rs1[inst_count] = n->rs1;
+        inst_imm[inst_count] = n->imm;
+        inst_count++;
+    }
+    if (inst_count == 0) return;
+
+    // Identify CFG block starts.
+    uint32_t block_starts[STAGE5_MAX_CFG_BLOCKS];
+    uint32_t block_count = 0;
+    if (!stage5_cfg_insert_pc_sorted(block_starts, &block_count, inst_pcs[0])) return;
+    for (uint32_t i = 0; i < inst_count; i++) {
+        uint8_t op = inst_op[i];
+        uint32_t pc = inst_pcs[i];
+        int32_t imm = inst_imm[i];
+        if (stage5_cfg_is_branch_opcode(op)) {
+            uint32_t fall_pc = pc + 4;
+            uint32_t taken_pc = fall_pc + (uint32_t)imm;
+            if (stage5_cfg_is_region_pc(inst_pcs, inst_count, fall_pc) &&
+                !stage5_cfg_insert_pc_sorted(block_starts, &block_count, fall_pc)) {
+                return;
+            }
+            if (stage5_cfg_is_region_pc(inst_pcs, inst_count, taken_pc) &&
+                !stage5_cfg_insert_pc_sorted(block_starts, &block_count, taken_pc)) {
+                return;
+            }
+        }
+    }
+
+    if (block_count > STAGE5_MAX_CFG_BLOCKS) return;
+    region->cfg_block_count = block_count;
+
+    // Build blocks with terminal classification and successor PCs.
+    for (uint32_t b = 0; b < block_count; b++) {
+        stage5_cfg_block_t *blk = &region->cfg_blocks[b];
+        blk->start_pc = block_starts[b];
+        blk->end_pc = (b + 1 < block_count) ? block_starts[b + 1] : region->end_pc;
+        blk->first_inst = 0;
+        blk->inst_count = 0;
+        blk->term_kind = STAGE5_CFG_TERM_FALLTHROUGH;
+        blk->succ_count = 0;
+        blk->succ_pc[0] = blk->succ_pc[1] = 0;
+        blk->succ_block[0] = blk->succ_block[1] = -1;
+
+        bool found_first = false;
+        uint32_t first = 0;
+        uint32_t count = 0;
+        for (uint32_t i = 0; i < inst_count; i++) {
+            if (inst_pcs[i] < blk->start_pc) continue;
+            if (inst_pcs[i] >= blk->end_pc) break;
+            if (!found_first) {
+                first = i;
+                found_first = true;
+            }
+            count++;
+        }
+        if (!found_first || count == 0) continue;
+
+        blk->first_inst = (uint16_t)first;
+        blk->inst_count = (uint16_t)count;
+        uint32_t last_i = first + count - 1;
+        uint32_t last_pc = inst_pcs[last_i];
+        uint8_t last_op = inst_op[last_i];
+        uint8_t last_rd = inst_rd[last_i];
+        uint8_t last_rs1 = inst_rs1[last_i];
+        int32_t last_imm = inst_imm[last_i];
+        blk->term_kind = stage5_cfg_classify_term(last_op, last_rd, last_rs1, last_imm);
+
+        if (blk->term_kind == STAGE5_CFG_TERM_BRANCH_COND) {
+            uint32_t fall_pc = last_pc + 4;
+            uint32_t taken_pc = fall_pc + (uint32_t)last_imm;
+            stage5_cfg_add_succ(blk, fall_pc);
+            stage5_cfg_add_succ(blk, taken_pc);
+        } else if (blk->term_kind == STAGE5_CFG_TERM_JAL_CALL) {
+            stage5_cfg_add_succ(blk, last_pc + (uint32_t)last_imm); // call target
+            stage5_cfg_add_succ(blk, last_pc + 4);                  // return site
+        } else if (blk->term_kind == STAGE5_CFG_TERM_JAL_JUMP) {
+            stage5_cfg_add_succ(blk, last_pc + (uint32_t)last_imm);
+        } else if (blk->term_kind == STAGE5_CFG_TERM_FALLTHROUGH) {
+            stage5_cfg_add_succ(blk, last_pc + 4);
+        }
+    }
+
+    // Map successor PCs to local block IDs where possible.
+    for (uint32_t b = 0; b < region->cfg_block_count; b++) {
+        stage5_cfg_block_t *blk = &region->cfg_blocks[b];
+        for (uint8_t s = 0; s < blk->succ_count; s++) {
+            blk->succ_block[s] = (int16_t)stage5_cfg_find_block_by_start(region, blk->succ_pc[s]);
+        }
+    }
+
+    region->cfg_valid = true;
+}
+
 static void decode_inst_fields(uint32_t raw, uint8_t opcode,
                                uint8_t *rd, uint8_t *rs1, uint8_t *rs2, int32_t *imm) {
     *rd = (raw >> 7) & 0x1F;
@@ -272,6 +457,8 @@ void stage5_lift_region_init(stage5_lift_region_t *region, uint32_t start_pc) {
     region->unsupported_opcode = 0;
     region->side_exit_count = 0;
     region->ir_count = 0;
+    region->cfg_block_count = 0;
+    region->cfg_valid = false;
     region->reason = STAGE5_LIFT_NOT_IMPLEMENTED;
 }
 
@@ -420,6 +607,7 @@ bool stage5_lift_superblock(stage5_lift_region_t *region,
             region->has_terminal_branch = true;
             region->end_pc = pc;
             region->reason = STAGE5_LIFT_OK;
+            stage5_build_cfg(region);
             return true;
         }
 
@@ -437,6 +625,7 @@ bool stage5_lift_superblock(stage5_lift_region_t *region,
             pc += 4;
             region->end_pc = pc;
             region->reason = STAGE5_LIFT_OK;
+            stage5_build_cfg(region);
             return true;
         }
 
@@ -459,6 +648,7 @@ bool stage5_lift_superblock(stage5_lift_region_t *region,
         // synthesize an explicit block-end chained exit.
         region->ended_by_budget = true;
         region->reason = STAGE5_LIFT_OK;
+        stage5_build_cfg(region);
         return true;
     }
     region->reason = STAGE5_LIFT_INVALID_CONTROL_FLOW;

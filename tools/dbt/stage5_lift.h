@@ -47,9 +47,33 @@ typedef struct {
 } stage5_ir_node_t;
 
 #define STAGE5_MAX_IR_NODES 128
+#define STAGE5_MAX_CFG_BLOCKS 64
 // Allow bounded side-exit lifting so Stage5 can reason about superblock-shaped
 // regions. Emission ownership stays gated separately in translate.c.
 #define STAGE5_MAX_SIDE_EXITS 2
+
+typedef enum {
+    STAGE5_CFG_TERM_FALLTHROUGH = 0,
+    STAGE5_CFG_TERM_BRANCH_COND,
+    STAGE5_CFG_TERM_JAL_CALL,
+    STAGE5_CFG_TERM_JAL_JUMP,
+    STAGE5_CFG_TERM_JALR_RET,
+    STAGE5_CFG_TERM_JALR_INDIRECT,
+    STAGE5_CFG_TERM_HALT,
+    STAGE5_CFG_TERM_DEBUG,
+    STAGE5_CFG_TERM_YIELD
+} stage5_cfg_term_kind_t;
+
+typedef struct {
+    uint32_t start_pc;
+    uint32_t end_pc;      // exclusive
+    uint16_t first_inst;  // index into linear lifted instruction PCs
+    uint16_t inst_count;
+    stage5_cfg_term_kind_t term_kind;
+    uint8_t succ_count;
+    uint32_t succ_pc[2];   // successor PCs (may be outside region)
+    int16_t succ_block[2]; // successor block index, -1 if outside region/unknown
+} stage5_cfg_block_t;
 
 typedef struct {
     uint32_t start_pc;
@@ -65,6 +89,9 @@ typedef struct {
     uint32_t side_exit_count;
     uint32_t ir_count;
     stage5_ir_node_t ir[STAGE5_MAX_IR_NODES];
+    uint32_t cfg_block_count;
+    bool cfg_valid;
+    stage5_cfg_block_t cfg_blocks[STAGE5_MAX_CFG_BLOCKS];
     stage5_lift_reason_t reason;
 } stage5_lift_region_t;
 
