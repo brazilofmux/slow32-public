@@ -171,10 +171,17 @@ static void dbt_trace_block_exits(translated_block_t *block) {
             "dbt-block-exits block_pc=0x%08X block_end=0x%08X host_size=%u exits=%u side_exits=%u\n",
             block->guest_pc, guest_end, block->host_size, block->exit_count, block->side_exit_count);
     for (uint8_t i = 0; i < block->exit_count; i++) {
+        bool side_owned = false;
+        for (uint8_t s = 0; s < block->side_exit_count; s++) {
+            if (block->side_exit_pcs[s] == block->exits[i].branch_pc) {
+                side_owned = true;
+                break;
+            }
+        }
         fprintf(stderr,
-                "  exit[%u] target=0x%08X branch_pc=0x%08X chained=%u\n",
+                "  exit[%u] target=0x%08X branch_pc=0x%08X chained=%u side_owned=%u\n",
                 i, block->exits[i].target_pc, block->exits[i].branch_pc,
-                block->exits[i].chained ? 1u : 0u);
+                block->exits[i].chained ? 1u : 0u, side_owned ? 1u : 0u);
     }
     for (uint8_t i = 0; i < block->side_exit_count; i++) {
         fprintf(stderr, "  side_exit_pc[%u]=0x%08X\n", i, block->side_exit_pcs[i]);
@@ -2044,6 +2051,18 @@ int main(int argc, char **argv) {
                 if (stage5_emit_fallback_side_exit_unowned > 0) {
                     fprintf(stderr, "  emit side_exit_unowned: %" PRIu32 "\n",
                             stage5_emit_fallback_side_exit_unowned);
+                    if (stage5_emit_fallback_side_exit_disabled > 0) {
+                        fprintf(stderr, "  emit side_exit disabled: %" PRIu32 "\n",
+                                stage5_emit_fallback_side_exit_disabled);
+                    }
+                    if (stage5_emit_fallback_side_exit_unsupported > 0) {
+                        fprintf(stderr, "  emit side_exit unsupported: %" PRIu32 "\n",
+                                stage5_emit_fallback_side_exit_unsupported);
+                    }
+                    if (stage5_emit_fallback_side_exit_call_guard > 0) {
+                        fprintf(stderr, "  emit side_exit call_guard: %" PRIu32 "\n",
+                                stage5_emit_fallback_side_exit_call_guard);
+                    }
                 }
                 if (stage5_emit_fallback_single_unhandled > 0) {
                     fprintf(stderr, "  emit single_unhandled: %" PRIu32 "\n",
@@ -2070,6 +2089,13 @@ int main(int argc, char **argv) {
                             "  emit inblock_backedge: total=%" PRIu32 " with_side_exit=%" PRIu32 "\n",
                             stage_emit_inblock_backedge_total,
                             stage_emit_inblock_backedge_with_side_exit);
+                    if (stage5_backedge_dirty_promotions > 0) {
+                        fprintf(stderr,
+                                "  emit backedge_dirty_promotions: total=%" PRIu32
+                                " r15=%" PRIu32 "\n",
+                                stage5_backedge_dirty_promotions,
+                                stage5_backedge_dirty_promotions_r15);
+                    }
                 }
                 if (stage5_deferred_exit_flush_full > 0 ||
                     stage5_deferred_exit_flush_dirty > 0) {

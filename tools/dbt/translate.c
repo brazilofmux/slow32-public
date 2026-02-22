@@ -60,6 +60,9 @@ uint32_t stage5_emit_prefilter_skip_branch_head = 0;
 uint32_t stage5_emit_prefilter_skip_noncmp_head = 0;
 uint32_t stage5_emit_prefilter_branch_probe = 0;
 uint32_t stage5_emit_fallback_side_exit_unowned = 0;
+uint32_t stage5_emit_fallback_side_exit_disabled = 0;
+uint32_t stage5_emit_fallback_side_exit_unsupported = 0;
+uint32_t stage5_emit_fallback_side_exit_call_guard = 0;
 uint32_t stage5_emit_fallback_single_unhandled = 0;
 uint32_t stage5_emit_fallback_cmp_branch_miss = 0;
 uint32_t stage5_emit_fallback_not_ended = 0;
@@ -88,6 +91,8 @@ uint32_t stage5_deferred_exit_flush_dirty = 0;
 uint32_t stage5_deferred_exit_pending_write_r15 = 0;
 uint32_t stage5_deferred_exit_snapshot_r15_allocated = 0;
 uint32_t stage5_deferred_exit_snapshot_r15_dirty = 0;
+uint32_t stage5_backedge_dirty_promotions = 0;
+uint32_t stage5_backedge_dirty_promotions_r15 = 0;
 
 static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
 static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg);
@@ -417,6 +422,65 @@ static void stage5_trace_translated_block(const translated_block_t *block) {
     for (uint8_t s = 0; s < block->side_exit_count; s++) {
         fprintf(stderr, "  side_exit_pc[%u]=0x%08X\n", s, block->side_exit_pcs[s]);
     }
+    budget--;
+}
+
+static void stage5_trace_side_exit_policy(uint32_t guest_pc,
+                                          stage5_burg_pattern_t pattern,
+                                          const stage5_lift_region_t *region,
+                                          bool side_exit_emit_enabled,
+                                          bool side_exit_owned,
+                                          bool side_exit_call_guard) {
+    static bool inited = false;
+    static uint32_t filter_pc = 0;
+    static int budget = 0;
+    if (!inited) {
+        const char *pcv = getenv("SLOW32_DBT_TRACE_SIDE_EXIT_POLICY_PC");
+        if (pcv && pcv[0] != '\0') {
+            filter_pc = (uint32_t)strtoul(pcv, NULL, 0);
+            const char *maxv = getenv("SLOW32_DBT_TRACE_SIDE_EXIT_POLICY_MAX");
+            budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 16;
+            if (budget < 0) budget = 0;
+        }
+        inited = true;
+    }
+    if (filter_pc == 0 || budget == 0 || !region) return;
+    if (guest_pc != filter_pc) return;
+
+    fprintf(stderr,
+            "stage5-side-exit-policy pc=0x%08X pattern=%s side_exits=%u emit_enabled=%u owned=%u call_guard=%u terminal=%u insts=%u ir=%u\n",
+            guest_pc, stage5_burg_pattern_str(pattern), region->side_exit_count,
+            side_exit_emit_enabled ? 1u : 0u,
+            side_exit_owned ? 1u : 0u,
+            side_exit_call_guard ? 1u : 0u,
+            region->has_terminal_branch ? 1u : 0u,
+            region->guest_inst_count, region->ir_count);
+    budget--;
+}
+
+static void stage5_trace_backedge_dirty_promotion(uint32_t branch_pc,
+                                                  uint32_t taken_pc,
+                                                  int deferred_idx,
+                                                  int slot_idx,
+                                                  uint8_t guest_reg) {
+    static bool inited = false;
+    static uint32_t filter_pc = 0;
+    static int budget = 0;
+    if (!inited) {
+        const char *pcv = getenv("SLOW32_DBT_TRACE_BACKEDGE_DIRTY_PC");
+        if (pcv && pcv[0] != '\0') {
+            filter_pc = (uint32_t)strtoul(pcv, NULL, 0);
+            const char *maxv = getenv("SLOW32_DBT_TRACE_BACKEDGE_DIRTY_MAX");
+            budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 32;
+            if (budget < 0) budget = 0;
+        }
+        inited = true;
+    }
+    if (filter_pc == 0 || budget == 0) return;
+    if (branch_pc != filter_pc) return;
+    fprintf(stderr,
+            "stage5-backedge-dirty branch_pc=0x%08X taken=0x%08X deferred_idx=%d slot=%d guest_r=%u\n",
+            branch_pc, taken_pc, deferred_idx, slot_idx, guest_reg);
     budget--;
 }
 
@@ -1316,6 +1380,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             stage5_emit_region_side_exit_unsupported++;
         }
     }
+    stage5_trace_side_exit_policy(guest_pc, emitted_pattern, &region,
+                                  side_exit_emit_enabled, side_exit_owned,
+                                  side_exit_call_guard);
 
     bool allow_small_direct_branch =
         stage5_pattern_is_direct_branch(emitted_pattern) &&
@@ -1354,6 +1421,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         stage5_emit_fallback++;
         stage5_emit_fallback_shape++;
         stage5_emit_fallback_side_exit_unowned++;
+        if (!side_exit_emit_enabled) stage5_emit_fallback_side_exit_disabled++;
+        if (!side_exit_owned) stage5_emit_fallback_side_exit_unsupported++;
+        if (side_exit_call_guard) stage5_emit_fallback_side_exit_call_guard++;
         return false;
     }
 
@@ -4776,6 +4846,14 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
                 if (ctx->deferred_exits[di].allocated_snapshot[s]) {
                     uint8_t guest_reg = ctx->deferred_exits[di].guest_reg_snapshot[s];
                     if (ctx->loop_written_regs & (1u << guest_reg)) {
+                        if (!ctx->deferred_exits[di].dirty_snapshot[s]) {
+                            stage5_backedge_dirty_promotions++;
+                            if (guest_reg == 15) {
+                                stage5_backedge_dirty_promotions_r15++;
+                            }
+                            stage5_trace_backedge_dirty_promotion(branch_pc, taken_pc,
+                                                                  di, s, guest_reg);
+                        }
                         ctx->deferred_exits[di].dirty_snapshot[s] = true;
                     }
                 }
