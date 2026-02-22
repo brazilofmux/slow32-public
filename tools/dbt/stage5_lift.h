@@ -64,6 +64,17 @@ typedef enum {
     STAGE5_CFG_TERM_YIELD
 } stage5_cfg_term_kind_t;
 
+typedef enum {
+    STAGE5_CFG_EDGE_NORMAL = 0,
+    STAGE5_CFG_EDGE_FALLTHROUGH,
+    STAGE5_CFG_EDGE_BRANCH_TAKEN,
+    STAGE5_CFG_EDGE_CALL_TARGET,
+    STAGE5_CFG_EDGE_CALL_RET_SITE,
+    STAGE5_CFG_EDGE_RETURN_CONT
+} stage5_cfg_edge_kind_t;
+
+#define STAGE5_CFG_PC_RETURN_CONT 0xFFFFFFFFu
+
 typedef struct {
     uint32_t start_pc;
     uint32_t end_pc;      // exclusive
@@ -73,6 +84,7 @@ typedef struct {
     uint8_t succ_count;
     uint32_t succ_pc[2];   // successor PCs (may be outside region)
     int16_t succ_block[2]; // successor block index, -1 if outside region/unknown
+    stage5_cfg_edge_kind_t succ_kind[2];
 } stage5_cfg_block_t;
 
 typedef struct {

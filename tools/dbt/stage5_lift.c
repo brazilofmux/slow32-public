@@ -212,13 +212,14 @@ static stage5_cfg_term_kind_t stage5_cfg_classify_term(uint8_t opcode, uint8_t r
     return STAGE5_CFG_TERM_FALLTHROUGH;
 }
 
-static void stage5_cfg_add_succ(stage5_cfg_block_t *blk, uint32_t pc) {
+static void stage5_cfg_add_succ(stage5_cfg_block_t *blk, uint32_t pc, stage5_cfg_edge_kind_t kind) {
     if (blk->succ_count >= 2) return;
     for (uint8_t i = 0; i < blk->succ_count; i++) {
-        if (blk->succ_pc[i] == pc) return;
+        if (blk->succ_pc[i] == pc && blk->succ_kind[i] == kind) return;
     }
     blk->succ_pc[blk->succ_count] = pc;
     blk->succ_block[blk->succ_count] = -1;
+    blk->succ_kind[blk->succ_count] = kind;
     blk->succ_count++;
 }
 
@@ -295,6 +296,7 @@ static void stage5_build_cfg(stage5_lift_region_t *region) {
         blk->succ_count = 0;
         blk->succ_pc[0] = blk->succ_pc[1] = 0;
         blk->succ_block[0] = blk->succ_block[1] = -1;
+        blk->succ_kind[0] = blk->succ_kind[1] = STAGE5_CFG_EDGE_NORMAL;
 
         bool found_first = false;
         uint32_t first = 0;
@@ -323,15 +325,17 @@ static void stage5_build_cfg(stage5_lift_region_t *region) {
         if (blk->term_kind == STAGE5_CFG_TERM_BRANCH_COND) {
             uint32_t fall_pc = last_pc + 4;
             uint32_t taken_pc = fall_pc + (uint32_t)last_imm;
-            stage5_cfg_add_succ(blk, fall_pc);
-            stage5_cfg_add_succ(blk, taken_pc);
+            stage5_cfg_add_succ(blk, fall_pc, STAGE5_CFG_EDGE_FALLTHROUGH);
+            stage5_cfg_add_succ(blk, taken_pc, STAGE5_CFG_EDGE_BRANCH_TAKEN);
         } else if (blk->term_kind == STAGE5_CFG_TERM_JAL_CALL) {
-            stage5_cfg_add_succ(blk, last_pc + (uint32_t)last_imm); // call target
-            stage5_cfg_add_succ(blk, last_pc + 4);                  // return site
+            stage5_cfg_add_succ(blk, last_pc + (uint32_t)last_imm, STAGE5_CFG_EDGE_CALL_TARGET);
+            stage5_cfg_add_succ(blk, last_pc + 4, STAGE5_CFG_EDGE_CALL_RET_SITE);
         } else if (blk->term_kind == STAGE5_CFG_TERM_JAL_JUMP) {
-            stage5_cfg_add_succ(blk, last_pc + (uint32_t)last_imm);
+            stage5_cfg_add_succ(blk, last_pc + (uint32_t)last_imm, STAGE5_CFG_EDGE_NORMAL);
+        } else if (blk->term_kind == STAGE5_CFG_TERM_JALR_RET) {
+            stage5_cfg_add_succ(blk, STAGE5_CFG_PC_RETURN_CONT, STAGE5_CFG_EDGE_RETURN_CONT);
         } else if (blk->term_kind == STAGE5_CFG_TERM_FALLTHROUGH) {
-            stage5_cfg_add_succ(blk, last_pc + 4);
+            stage5_cfg_add_succ(blk, last_pc + 4, STAGE5_CFG_EDGE_FALLTHROUGH);
         }
     }
 
