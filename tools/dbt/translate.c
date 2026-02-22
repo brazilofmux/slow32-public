@@ -180,7 +180,8 @@ static inline void stage5_validate_reg_write(stage5_validate_state_t *s, uint8_t
 }
 
 static bool stage5_validate_is_terminal_unsupported(uint8_t opcode) {
-    return opcode == OP_JALR;
+    (void)opcode;
+    return false;
 }
 
 static void stage5_validate_mem_init(stage5_validate_mem_t *m, const dbt_cpu_state_t *cpu) {
@@ -411,8 +412,11 @@ static void stage5_validate_dump_repro(const translate_ctx_t *ctx,
 static bool stage5_validate_region_eligible(const stage5_lift_region_t *region) {
     for (uint32_t i = 0; i < region->ir_count; i++) {
         const stage5_ir_node_t *n = &region->ir[i];
+        bool is_last = (i + 1u == region->ir_count);
         bool jalr_ret = (n->opcode == OP_JALR && n->rd == 0 && n->rs1 == REG_LR && n->imm == 0);
-        if ((n->opcode == OP_JALR && !jalr_ret) || (n->opcode == OP_JAL && n->rd == 31)) {
+        bool jal_call = (n->opcode == OP_JAL && n->rd == 31);
+        if ((n->opcode == OP_JALR && (!jalr_ret || !is_last)) ||
+            (jal_call && !is_last)) {
             stage5_validate_skipped_call_indirect++;
             stage5_validate_skip_call_indirect_opcode_hist[n->opcode & 0x7F]++;
             return false;
@@ -714,7 +718,10 @@ static bool stage5_validate_region(const translate_ctx_t *ctx,
 
         if (inst.opcode == OP_BEQ || inst.opcode == OP_BNE ||
             inst.opcode == OP_BLT || inst.opcode == OP_BGE ||
-            inst.opcode == OP_BLTU || inst.opcode == OP_BGEU) {
+            inst.opcode == OP_BLTU || inst.opcode == OP_BGEU ||
+            inst.opcode == OP_JAL || inst.opcode == OP_JALR ||
+            inst.opcode == OP_DEBUG || inst.opcode == OP_YIELD ||
+            inst.opcode == OP_HALT || inst.opcode == OP_ASSERT_EQ) {
             break;
         }
     }
