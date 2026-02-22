@@ -69,6 +69,10 @@ uint64_t stage5_emit_success_time_ns = 0;
 uint64_t stage5_emit_fallback_time_ns = 0;
 uint32_t stage5_emit_fused_cmp_branch = 0;
 uint32_t stage5_emit_side_exits = 0;
+uint32_t stage5_emit_region_side_exit_total = 0;
+uint32_t stage5_emit_region_side_exit_owned = 0;
+uint32_t stage5_emit_region_side_exit_unsupported = 0;
+uint32_t stage5_emit_region_side_exit_disabled = 0;
 
 static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
 static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg);
@@ -77,13 +81,12 @@ static inline void flush_pending_cond(translate_ctx_t *ctx);
 
 // Stage5 superblock ownership roadmap:
 // enable narrow side-exit ownership first (forward BEQ/BNE only), then expand.
-static const bool stage5_enable_side_exit_emit = false;
+static const bool stage5_enable_side_exit_emit = true;
 
 static inline bool stage5_side_exit_supported(const stage5_ir_node_t *n) {
     if (!n) return false;
     if (!n->is_side_exit || n->kind != STAGE5_IR_BRANCH) return false;
     return n->opcode == OP_BEQ || n->opcode == OP_BNE ||
-           n->opcode == OP_BLT || n->opcode == OP_BGE ||
            n->opcode == OP_BLTU || n->opcode == OP_BGEU;
 }
 
@@ -923,6 +926,17 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     bool saved_superblock_enabled = ctx->superblock_enabled;
     ctx->superblock_enabled = false;
     bool side_exit_owned = stage5_region_side_exits_supported(&region);
+    if (region.side_exit_count > 0) {
+        stage5_emit_region_side_exit_total++;
+        if (side_exit_owned) {
+            stage5_emit_region_side_exit_owned++;
+            if (!stage5_enable_side_exit_emit) {
+                stage5_emit_region_side_exit_disabled++;
+            }
+        } else {
+            stage5_emit_region_side_exit_unsupported++;
+        }
+    }
 
     bool allow_small_direct_branch =
         stage5_pattern_is_direct_branch(emitted_pattern) &&
