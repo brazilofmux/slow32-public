@@ -15,6 +15,7 @@ DIAG_BLOCK_PC="${DBT_DIAG_BLOCK_PC:-}"
 DIAG_BRANCH_PC="${DBT_DIAG_BRANCH_PC:-}"
 DIAG_MAX="${DBT_DIAG_MAX:-64}"
 KEEP_TMP="${DBT_KEEP_TMP:-0}"
+REQUIRE_MATCH="${DBT_REQUIRE_MATCH:-0}"
 
 if [[ ! -x "$DBT" ]]; then
     echo "error: missing executable: $DBT" >&2
@@ -44,6 +45,8 @@ fi
 
 printf "%-20s %-5s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s\n" \
   "test" "rc" "t4(s)" "t5(s)" "sel" "emit" "ginst" "b/gi" "hot%" "wht%" "jret_s" "jret_l" "jind"
+
+any_mismatch=0
 
 for t in "${TESTS[@]}"; do
     if [[ ! -f "$t" ]]; then
@@ -140,4 +143,12 @@ for t in "${TESTS[@]}"; do
 
     printf "%-20s %-5s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s\n" \
       "$base" "$rc" "$t4" "$t5" "$sel" "$emit" "$ginst" "$bgi" "$hot_cov" "$hot_wht" "$jret_s" "$jret_l" "$jind"
+
+    if [[ "$rc" != "ok" ]]; then
+        any_mismatch=1
+    fi
 done
+
+if [[ "$REQUIRE_MATCH" != "0" && "$any_mismatch" != "0" ]]; then
+    exit 1
+fi

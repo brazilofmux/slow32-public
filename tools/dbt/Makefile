@@ -34,7 +34,7 @@ HDRS = cpu_state.h $(ARCH_HDRS) translate.h block_cache.h dbt_limits.h \
 # Main target
 TARGET = slow32-dbt
 
-.PHONY: all clean test test-diff compare-safe-unsafe compare-safe-unsafe-strict stress-safe-unsafe sweep-peephole sweep-peephole-strict stage5-validate-preflight stage5-gate stage5-gate-fast stage5-native-bench stage5-native-compare stage5-native-bench-compare stage5-native-compare-sideexit stage5-native-bench-compare-sideexit debug disasm
+.PHONY: all clean test test-diff compare-safe-unsafe compare-safe-unsafe-strict stress-safe-unsafe sweep-peephole sweep-peephole-strict stage5-validate-preflight stage5-gate stage5-gate-fast stage5-gate-ref stage5-gate-ref-fast stage5-native-bench stage5-native-compare stage5-native-bench-compare stage5-native-compare-sideexit stage5-native-bench-compare-sideexit debug disasm
 
 all: $(TARGET)
 	@echo "Built for $(UNAME_M)"
@@ -128,6 +128,15 @@ stage5-gate-fast: SWEEP_ITERS=20
 stage5-gate-fast: STRESS_ITERS=20
 stage5-gate-fast: TESTS=$(STAGE5_FAST_TESTS)
 stage5-gate-fast: stage5-gate
+
+# Stage4 reference parity gate for Stage5-native profile.
+stage5-gate-ref: $(TARGET)
+	@echo "Stage5 reference gate: strict Stage4 vs Stage5-native compare"
+	@DBT_REQUIRE_MATCH=1 STAGE4_ARGS="-4" STAGE5_ARGS="-N" \
+	 ./scripts/compare-stage4-stage5.sh $(TESTS)
+
+stage5-gate-ref-fast: TESTS=$(STAGE5_FAST_TESTS)
+stage5-gate-ref-fast: stage5-gate-ref
 
 # Run the DBT in Stage5-native benchmark profile.
 # Usage:
