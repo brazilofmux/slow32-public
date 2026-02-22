@@ -1921,6 +1921,9 @@ static inline bool stage5_side_exit_supported(const stage5_ir_node_t *n) {
 }
 
 static inline bool stage5_side_exit_opcode_supported(uint8_t opcode) {
+    // Lifted opcodes may carry internal flag bits in the high bit; side-exit
+    // policy is defined on the canonical 7-bit ISA opcode.
+    opcode &= 0x7F;
     if (opcode == OP_BEQ || opcode == OP_BNE) return true;
     stage5_side_exit_mode_t mode = stage5_side_exit_mode();
     if (mode >= STAGE5_SIDE_EXIT_MODE_EQNE_U &&
