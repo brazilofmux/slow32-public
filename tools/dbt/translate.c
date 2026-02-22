@@ -2076,6 +2076,57 @@ static inline bool stage5_emit_single_terminal(translate_ctx_t *ctx,
     }
 }
 
+static inline bool stage5_emit_familyb_prefix_nonbranch(translate_ctx_t *ctx,
+                                                         const decoded_inst_t *inst) {
+    if (!ctx || !inst) return false;
+    switch (inst->opcode) {
+        case OP_NOP: break;
+        case OP_ADD:  translate_add(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_SUB:  translate_sub(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_ADDI: translate_addi(ctx, inst->rd, inst->rs1, inst->imm); break;
+        case OP_AND:  translate_and(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_OR:   translate_or(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_XOR:  translate_xor(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_ANDI: translate_andi(ctx, inst->rd, inst->rs1, inst->imm); break;
+        case OP_ORI:  translate_ori(ctx, inst->rd, inst->rs1, inst->imm); break;
+        case OP_XORI: translate_xori(ctx, inst->rd, inst->rs1, inst->imm); break;
+        case OP_SLL:  translate_sll(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_SRL:  translate_srl(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_SRA:  translate_sra(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_SLLI: translate_slli(ctx, inst->rd, inst->rs1, inst->imm); break;
+        case OP_SRLI: translate_srli(ctx, inst->rd, inst->rs1, inst->imm); break;
+        case OP_SRAI: translate_srai(ctx, inst->rd, inst->rs1, inst->imm); break;
+        case OP_SLT:  translate_slt(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_SLTU: translate_sltu(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_SEQ:  translate_seq(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_SNE:  translate_sne(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_SGT:  translate_sgt(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_SGTU: translate_sgtu(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_SLE:  translate_sle(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_SLEU: translate_sleu(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_SGE:  translate_sge(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_SGEU: translate_sgeu(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_SLTI: translate_slti(ctx, inst->rd, inst->rs1, inst->imm); break;
+        case OP_SLTIU:translate_sltiu(ctx, inst->rd, inst->rs1, inst->imm); break;
+        case OP_MUL:  translate_mul(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_MULHU: translate_mulhu(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_DIV:  translate_div(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_REM:  translate_rem(ctx, inst->rd, inst->rs1, inst->rs2); break;
+        case OP_LUI:  translate_lui(ctx, inst->rd, inst->imm); break;
+        case OP_LDW:  translate_ldw(ctx, inst->rd, inst->rs1, inst->imm); break;
+        case OP_LDH:  translate_ldh(ctx, inst->rd, inst->rs1, inst->imm); break;
+        case OP_LDB:  translate_ldb(ctx, inst->rd, inst->rs1, inst->imm); break;
+        case OP_LDHU: translate_ldhu(ctx, inst->rd, inst->rs1, inst->imm); break;
+        case OP_LDBU: translate_ldbu(ctx, inst->rd, inst->rs1, inst->imm); break;
+        case OP_STW:  translate_stw(ctx, inst->rs1, inst->rs2, inst->imm); break;
+        case OP_STH:  translate_sth(ctx, inst->rs1, inst->rs2, inst->imm); break;
+        case OP_STB:  translate_stb(ctx, inst->rs1, inst->rs2, inst->imm); break;
+        default:
+            return false;
+    }
+    return true;
+}
+
 static inline bool stage5_prefilter_is_cmp_opcode(uint8_t opcode) {
     return opcode == OP_SLT || opcode == OP_SLTU ||
            opcode == OP_SEQ || opcode == OP_SNE ||
@@ -3802,47 +3853,49 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             ctx->guest_pc = guest_pc;
             ctx->current_inst_idx = 0;
             switch (inst0.opcode) {
-                case OP_NOP: break;
-                case OP_ADD:  translate_add(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SUB:  translate_sub(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_ADDI: translate_addi(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
-                case OP_AND:  translate_and(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_OR:   translate_or(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_XOR:  translate_xor(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_ANDI: translate_andi(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
-                case OP_ORI:  translate_ori(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
-                case OP_XORI: translate_xori(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
-                case OP_SLL:  translate_sll(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SRL:  translate_srl(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SRA:  translate_sra(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SLLI: translate_slli(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
-                case OP_SRLI: translate_srli(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
-                case OP_SRAI: translate_srai(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
-                case OP_SLT:  translate_slt(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SLTU: translate_sltu(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SEQ:  translate_seq(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SNE:  translate_sne(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SGT:  translate_sgt(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SGTU: translate_sgtu(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SLE:  translate_sle(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SLEU: translate_sleu(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SGE:  translate_sge(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SGEU: translate_sgeu(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_SLTI: translate_slti(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
-                case OP_SLTIU:translate_sltiu(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
-                case OP_MUL:  translate_mul(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_MULHU: translate_mulhu(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_DIV:  translate_div(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_REM:  translate_rem(ctx, inst0.rd, inst0.rs1, inst0.rs2); break;
-                case OP_LUI:  translate_lui(ctx, inst0.rd, inst0.imm); break;
-                case OP_LDW:  translate_ldw(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
-                case OP_LDH:  translate_ldh(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
-                case OP_LDB:  translate_ldb(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
-                case OP_LDHU: translate_ldhu(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
-                case OP_LDBU: translate_ldbu(ctx, inst0.rd, inst0.rs1, inst0.imm); break;
-                case OP_STW:  translate_stw(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
-                case OP_STH:  translate_sth(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
-                case OP_STB:  translate_stb(ctx, inst0.rs1, inst0.rs2, inst0.imm); break;
+                case OP_NOP:
+                case OP_ADD:
+                case OP_SUB:
+                case OP_ADDI:
+                case OP_AND:
+                case OP_OR:
+                case OP_XOR:
+                case OP_ANDI:
+                case OP_ORI:
+                case OP_XORI:
+                case OP_SLL:
+                case OP_SRL:
+                case OP_SRA:
+                case OP_SLLI:
+                case OP_SRLI:
+                case OP_SRAI:
+                case OP_SLT:
+                case OP_SLTU:
+                case OP_SEQ:
+                case OP_SNE:
+                case OP_SGT:
+                case OP_SGTU:
+                case OP_SLE:
+                case OP_SLEU:
+                case OP_SGE:
+                case OP_SGEU:
+                case OP_SLTI:
+                case OP_SLTIU:
+                case OP_MUL:
+                case OP_MULHU:
+                case OP_DIV:
+                case OP_REM:
+                case OP_LUI:
+                case OP_LDW:
+                case OP_LDH:
+                case OP_LDB:
+                case OP_LDHU:
+                case OP_LDBU:
+                case OP_STW:
+                case OP_STH:
+                case OP_STB:
+                    ok_prefix = stage5_emit_familyb_prefix_nonbranch(ctx, &inst0);
+                    break;
                 case OP_BEQ:
                 case OP_BNE:
                 case OP_BLT:
