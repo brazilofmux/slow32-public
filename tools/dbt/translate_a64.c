@@ -61,6 +61,7 @@ uint32_t stage5_emit_fallback_policy_direct_branch = 0;
 uint32_t stage5_emit_fallback_policy_bench_jal_jump = 0;
 uint32_t stage5_emit_fallback_policy_bench_direct_branch = 0;
 uint32_t stage5_emit_fallback_policy_bench_block_end = 0;
+uint32_t stage5_emit_fallback_policy_bench_jal_call = 0;
 uint32_t stage5_emit_fallback_policy_call_return = 0;
 uint32_t stage5_emit_fallback_policy_regflow = 0;
 uint32_t stage5_emit_fallback_policy_regflow_cross = 0;
@@ -89,6 +90,8 @@ uint32_t stage5_emit_region_side_exit_disabled = 0;
 uint32_t stage5_emit_region_side_exit_call_guard = 0;
 uint32_t stage5_emit_region_side_exit_call_guard_jal = 0;
 uint32_t stage5_emit_region_side_exit_call_guard_jalr = 0;
+uint32_t stage5_emit_policy_allow_call = 0;
+uint32_t stage5_emit_policy_allow_call_bench = 0;
 uint32_t stage5_emit_unhandled_opcode_hist[128] = {0};
 
 // ============================================================================

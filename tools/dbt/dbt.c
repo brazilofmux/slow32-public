@@ -2221,6 +2221,10 @@ int main(int argc, char **argv) {
                         fprintf(stderr, "  emit policy bench_block_end: %" PRIu32 "\n",
                                 stage5_emit_fallback_policy_bench_block_end);
                     }
+                    if (stage5_emit_fallback_policy_bench_jal_call > 0) {
+                        fprintf(stderr, "  emit policy bench_jal_call: %" PRIu32 "\n",
+                                stage5_emit_fallback_policy_bench_jal_call);
+                    }
                     if (stage5_emit_fallback_policy_call_return > 0) {
                         fprintf(stderr, "  emit policy call_return: %" PRIu32 "\n",
                                 stage5_emit_fallback_policy_call_return);
@@ -2249,6 +2253,10 @@ int main(int argc, char **argv) {
                 if (stage5_emit_policy_allow_call > 0) {
                     fprintf(stderr, "  emit policy allow_call: %" PRIu32 "\n",
                             stage5_emit_policy_allow_call);
+                    if (stage5_emit_policy_allow_call_bench > 0) {
+                        fprintf(stderr, "    allow_call bench: %" PRIu32 "\n",
+                                stage5_emit_policy_allow_call_bench);
+                    }
                 }
                 if (stage5_emit_regflow_retry_attempted > 0) {
                     fprintf(stderr, "  emit regflow_retry attempted: %" PRIu32 "\n",

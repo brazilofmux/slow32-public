@@ -58,6 +58,7 @@ uint32_t stage5_emit_fallback_policy_direct_branch = 0;
 uint32_t stage5_emit_fallback_policy_bench_jal_jump = 0;
 uint32_t stage5_emit_fallback_policy_bench_direct_branch = 0;
 uint32_t stage5_emit_fallback_policy_bench_block_end = 0;
+uint32_t stage5_emit_fallback_policy_bench_jal_call = 0;
 uint32_t stage5_emit_fallback_policy_call_return = 0;
 uint32_t stage5_emit_fallback_policy_regflow = 0;
 uint32_t stage5_emit_fallback_policy_regflow_cross = 0;
@@ -94,6 +95,7 @@ uint32_t stage5_emit_regflow_retry_cooldown_cfg = 0;
 uint32_t stage5_emit_regflow_retry_cooldown_term = 0;
 uint32_t stage5_emit_regflow_retry_cooldown_half = 0;
 uint32_t stage5_emit_policy_allow_call = 0;
+uint32_t stage5_emit_policy_allow_call_bench = 0;
 uint32_t stage5_emit_prefilter_skip = 0;
 uint32_t stage5_emit_prefilter_skip_branch_head = 0;
 uint32_t stage5_emit_prefilter_skip_noncmp_head = 0;
@@ -234,6 +236,20 @@ static uint32_t stage5_bench_max_direct_branch_ginst(void) {
     static uint32_t limit = 16;
     if (!inited) {
         const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_MAX_DIRECT_BRANCH_GINST");
+        if (v && v[0] != '\0') {
+            unsigned long x = strtoul(v, NULL, 0);
+            if (x > 0 && x <= MAX_BLOCK_INSTS) limit = (uint32_t)x;
+        }
+        inited = true;
+    }
+    return limit;
+}
+
+static uint32_t stage5_bench_max_jal_call_ginst(void) {
+    static bool inited = false;
+    static uint32_t limit = 4;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_MAX_JAL_CALL_GINST");
         if (v && v[0] != '\0') {
             unsigned long x = strtoul(v, NULL, 0);
             if (x > 0 && x <= MAX_BLOCK_INSTS) limit = (uint32_t)x;
@@ -2908,22 +2924,34 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     }
 
     // Policy fallback: keep call/return/indirect JALR forms on Stage4's mature path.
+    bool bench_allow_jal_call_short =
+        bench_profile &&
+        emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT &&
+        region.guest_inst_count <= stage5_bench_max_jal_call_ginst();
+    bool allow_jal_call_emit = stage5_emit_calls_enabled() || bench_allow_jal_call_short;
+
     if (((emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
           emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG) &&
-         !stage5_emit_calls_enabled()) ||
+         !allow_jal_call_emit) ||
         emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_SHORT ||
         emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_LONG) {
         ctx->superblock_enabled = saved_superblock_enabled;
         stage5_emit_fallback++;
         stage5_emit_fallback_shape++;
         stage5_emit_fallback_superblock_policy++;
+        if ((emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
+             emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG) &&
+            bench_profile) {
+            stage5_emit_fallback_policy_bench_jal_call++;
+        }
         stage5_emit_fallback_policy_call_return++;
         return false;
     }
     if ((emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
          emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG) &&
-        stage5_emit_calls_enabled()) {
+        allow_jal_call_emit) {
         stage5_emit_policy_allow_call++;
+        if (bench_allow_jal_call_short) stage5_emit_policy_allow_call_bench++;
     }
 
     // Superblock-first policy: keep larger direct branches on the Stage4 path.
