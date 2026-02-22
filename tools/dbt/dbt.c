@@ -2212,6 +2212,10 @@ int main(int argc, char **argv) {
                     if (stage5_emit_fallback_policy_bench_jal_jump > 0) {
                         fprintf(stderr, "  emit policy bench_jal_jump: %" PRIu32 "\n",
                                 stage5_emit_fallback_policy_bench_jal_jump);
+                        if (stage5_emit_fallback_policy_bench_jal_jump_backedge > 0) {
+                            fprintf(stderr, "    bench_jal_jump backedge: %" PRIu32 "\n",
+                                    stage5_emit_fallback_policy_bench_jal_jump_backedge);
+                        }
                     }
                     if (stage5_emit_fallback_policy_bench_direct_branch > 0) {
                         fprintf(stderr, "  emit policy bench_direct_branch: %" PRIu32 "\n",

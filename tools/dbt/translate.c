@@ -56,6 +56,7 @@ uint32_t stage5_emit_fallback_policy_guardrail = 0;
 uint32_t stage5_emit_fallback_policy_jalr_indirect = 0;
 uint32_t stage5_emit_fallback_policy_direct_branch = 0;
 uint32_t stage5_emit_fallback_policy_bench_jal_jump = 0;
+uint32_t stage5_emit_fallback_policy_bench_jal_jump_backedge = 0;
 uint32_t stage5_emit_fallback_policy_bench_direct_branch = 0;
 uint32_t stage5_emit_fallback_policy_bench_block_end = 0;
 uint32_t stage5_emit_fallback_policy_bench_jal_call = 0;
@@ -1847,6 +1848,19 @@ static bool stage5_region_side_exits_supported(const stage5_lift_region_t *regio
     return seen == region->side_exit_count;
 }
 
+static bool stage5_region_terminal_jal_imm(const stage5_lift_region_t *region,
+                                           int32_t *imm_out) {
+    if (!region) return false;
+    for (int i = (int)region->ir_count - 1; i >= 0; i--) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic || n->kind != STAGE5_IR_BRANCH) continue;
+        if (n->opcode != OP_JAL) return false;
+        if (imm_out) *imm_out = n->imm;
+        return true;
+    }
+    return false;
+}
+
 static inline uint64_t stage5_now_ns(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -2813,6 +2827,20 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         stage5_emit_fallback_superblock_policy++;
         stage5_emit_fallback_policy_bench_jal_jump++;
         return false;
+    }
+    if (bench_profile &&
+        emitted_pattern == STAGE5_BURG_PATTERN_JAL_JUMP &&
+        region.guest_inst_count > 2u) {
+        int32_t jal_imm = 0;
+        if (stage5_region_terminal_jal_imm(&region, &jal_imm) && jal_imm < 0) {
+            // Guardrail: large backward JAL jumps can over-specialize hot loops
+            // and regress throughput in benchmark profile.
+            stage5_emit_fallback++;
+            stage5_emit_fallback_shape++;
+            stage5_emit_fallback_superblock_policy++;
+            stage5_emit_fallback_policy_bench_jal_jump_backedge++;
+            return false;
+        }
     }
     if (bench_profile &&
         stage5_pattern_is_direct_branch(emitted_pattern) &&

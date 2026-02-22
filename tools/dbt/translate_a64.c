@@ -59,6 +59,7 @@ uint32_t stage5_emit_fallback_policy_guardrail = 0;
 uint32_t stage5_emit_fallback_policy_jalr_indirect = 0;
 uint32_t stage5_emit_fallback_policy_direct_branch = 0;
 uint32_t stage5_emit_fallback_policy_bench_jal_jump = 0;
+uint32_t stage5_emit_fallback_policy_bench_jal_jump_backedge = 0;
 uint32_t stage5_emit_fallback_policy_bench_direct_branch = 0;
 uint32_t stage5_emit_fallback_policy_bench_block_end = 0;
 uint32_t stage5_emit_fallback_policy_bench_jal_call = 0;
