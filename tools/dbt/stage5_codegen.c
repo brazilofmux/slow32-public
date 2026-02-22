@@ -342,6 +342,24 @@ static bool cg_pattern_uses_cmp_mix_fusion(int emitted_pattern) {
            emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1;
 }
 
+static bool cg_opcode_is_mem(uint8_t op) {
+    return op == OP_LDB || op == OP_LDH || op == OP_LDW ||
+           op == OP_LDBU || op == OP_LDHU ||
+           op == OP_STB || op == OP_STH || op == OP_STW;
+}
+
+static bool cg_region_has_mem_prefix(const stage5_lift_region_t *region,
+                                     int terminal_idx) {
+    if (!region) return false;
+    for (uint32_t i = 0; i < region->ir_count; i++) {
+        if (terminal_idx >= 0 && (int)i == terminal_idx) continue;
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) continue;
+        if (cg_opcode_is_mem(n->opcode)) return true;
+    }
+    return false;
+}
+
 // ============================================================================
 // Forward declarations for translate.c functions we need
 // ============================================================================
@@ -1794,6 +1812,16 @@ bool stage5_codegen(translate_ctx_t *ctx,
     }
     if (predicate_native_active && side_exit_codegen && region->side_exit_count > 0) {
         if (!allow_cmpdep_with_side_exit) {
+            stage5_codegen_fallback++;
+            stage5_codegen_fallback_preflight++;
+            stage5_codegen_fallback_preflight_side_exit++;
+            stage5_codegen_boolpair_native_fallback++;
+            return false;
+        }
+        // Guardrail: cmpdep + side-exit ownership still drifts on some
+        // memory-touching regions (e.g. strtod loops). Keep those on the
+        // established fallback path until fully validated.
+        if (cg_region_has_mem_prefix(region, terminal_idx)) {
             stage5_codegen_fallback++;
             stage5_codegen_fallback_preflight++;
             stage5_codegen_fallback_preflight_side_exit++;
