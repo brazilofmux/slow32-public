@@ -2368,6 +2368,21 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Stage5 validate eligible:  %" PRIu32 "\n", stage5_validate_eligible);
             fprintf(stderr, "Stage5 validate ok:        %" PRIu32 "\n", stage5_validate_ok);
             fprintf(stderr, "Stage5 validate mismatch:  %" PRIu32 "\n", stage5_validate_mismatch);
+            if (stage5_validate_eligible > 0) {
+                double avg_len = (double)stage5_validate_eligible_guest_insts /
+                                 (double)stage5_validate_eligible;
+                fprintf(stderr, "  validate eligible avg guest insts: %.2f\n", avg_len);
+                fprintf(stderr,
+                        "  validate eligible len buckets: 1-2=%" PRIu32
+                        " 3-4=%" PRIu32 " 5-8=%" PRIu32 " 9-16=%" PRIu32 " 17+=%" PRIu32 "\n",
+                        stage5_validate_eligible_len_hist[0],
+                        stage5_validate_eligible_len_hist[1],
+                        stage5_validate_eligible_len_hist[2],
+                        stage5_validate_eligible_len_hist[3],
+                        stage5_validate_eligible_len_hist[4]);
+                print_top_opcode_hist("validate eligible terminal",
+                                      stage5_validate_eligible_terminal_opcode_hist);
+            }
             if (stage5_validate_skipped_load_store > 0) {
                 fprintf(stderr, "  validate skipped unsupported: %" PRIu32 "\n",
                         stage5_validate_skipped_load_store);

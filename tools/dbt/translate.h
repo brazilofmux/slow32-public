@@ -125,6 +125,9 @@ extern uint32_t stage5_validate_skipped_mem_capacity;
 extern uint32_t stage5_validate_skip_call_indirect_opcode_hist[128];
 extern uint32_t stage5_validate_skip_terminal_opcode_hist[128];
 extern uint32_t stage5_validate_skip_mem_opcode_hist[128];
+extern uint64_t stage5_validate_eligible_guest_insts;
+extern uint32_t stage5_validate_eligible_len_hist[5];
+extern uint32_t stage5_validate_eligible_terminal_opcode_hist[128];
 extern uint32_t stage5_validate_mismatch;
 extern uint32_t stage5_validate_ok;
 

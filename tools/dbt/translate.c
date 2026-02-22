@@ -82,6 +82,9 @@ uint32_t stage5_validate_skipped_mem_capacity = 0;
 uint32_t stage5_validate_skip_call_indirect_opcode_hist[128] = {0};
 uint32_t stage5_validate_skip_terminal_opcode_hist[128] = {0};
 uint32_t stage5_validate_skip_mem_opcode_hist[128] = {0};
+uint64_t stage5_validate_eligible_guest_insts = 0;
+uint32_t stage5_validate_eligible_len_hist[5] = {0}; // 1-2,3-4,5-8,9-16,17+
+uint32_t stage5_validate_eligible_terminal_opcode_hist[128] = {0};
 uint32_t stage5_validate_mismatch = 0;
 uint32_t stage5_validate_ok = 0;
 uint32_t stage5_emit_fused_cmp_branch = 0;
@@ -658,6 +661,24 @@ static bool stage5_validate_region(const translate_ctx_t *ctx,
         return true;
     }
     stage5_validate_eligible++;
+    stage5_validate_eligible_guest_insts += region->guest_inst_count;
+    if (region->guest_inst_count <= 2) {
+        stage5_validate_eligible_len_hist[0]++;
+    } else if (region->guest_inst_count <= 4) {
+        stage5_validate_eligible_len_hist[1]++;
+    } else if (region->guest_inst_count <= 8) {
+        stage5_validate_eligible_len_hist[2]++;
+    } else if (region->guest_inst_count <= 16) {
+        stage5_validate_eligible_len_hist[3]++;
+    } else {
+        stage5_validate_eligible_len_hist[4]++;
+    }
+    for (int i = (int)region->ir_count - 1; i >= 0; i--) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        if (n->synthetic) continue;
+        stage5_validate_eligible_terminal_opcode_hist[n->opcode & 0x7F]++;
+        break;
+    }
 
     stage5_validate_state_t ref = {0}, ir = {0};
     stage5_validate_mem_t ref_mem, ir_mem;
