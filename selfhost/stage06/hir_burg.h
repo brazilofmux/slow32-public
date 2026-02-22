@@ -376,18 +376,15 @@ static void bg_profile_iconst_consumers(void) {
     int c;
     int v;
 
+    /* Reset per-instruction flags (per-function) */
     i = 0;
     while (i < h_ninst) {
         bg_iconst_seen_use[i] = 0;
         bg_iconst_seen_nonimm[i] = 0;
         i = i + 1;
     }
-    i = 0;
-    while (i <= BG_MAX_OP) {
-        bg_stat_iconst_use_op[i] = 0;
-        bg_stat_iconst_nonimm_use_op[i] = 0;
-        i = i + 1;
-    }
+    /* Note: bg_stat_iconst_use_op[] and bg_stat_iconst_nonimm_use_op[]
+     * are NOT reset here — they accumulate across functions. */
 
     i = 0;
     while (i < h_ninst) {
