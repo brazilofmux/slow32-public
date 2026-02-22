@@ -2240,6 +2240,14 @@ int main(int argc, char **argv) {
                         fprintf(stderr, "    retry avg guest insts: %.2f -> %.2f (max drop=%" PRIu32 ")\n",
                                 avg_before, avg_after, stage5_emit_regflow_retry_max_reduction);
                     }
+                    if (stage5_emit_regflow_retry_explore_events > 0) {
+                        fprintf(stderr,
+                                "    retry exploration events: %" PRIu32 " (cfg=%" PRIu32 ", term=%" PRIu32 ", half=%" PRIu32 ")\n",
+                                stage5_emit_regflow_retry_explore_events,
+                                stage5_emit_regflow_retry_explore_cfg_first,
+                                stage5_emit_regflow_retry_explore_term_first,
+                                stage5_emit_regflow_retry_explore_half_first);
+                    }
                 }
                 if (stage5_emit_prefilter_skip > 0) {
                     fprintf(stderr, "  emit prefilter_skip: %" PRIu32 "\n",

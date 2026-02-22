@@ -74,6 +74,10 @@ uint32_t stage5_emit_regflow_retry_half_emit_success = 0;
 uint64_t stage5_emit_regflow_retry_guest_before_total = 0;
 uint64_t stage5_emit_regflow_retry_guest_after_total = 0;
 uint32_t stage5_emit_regflow_retry_max_reduction = 0;
+uint32_t stage5_emit_regflow_retry_explore_events = 0;
+uint32_t stage5_emit_regflow_retry_explore_cfg_first = 0;
+uint32_t stage5_emit_regflow_retry_explore_term_first = 0;
+uint32_t stage5_emit_regflow_retry_explore_half_first = 0;
 uint32_t stage5_emit_policy_allow_call = 0;
 uint32_t stage5_emit_prefilter_skip = 0;
 uint32_t stage5_emit_prefilter_skip_branch_head = 0;
@@ -304,6 +308,19 @@ static int stage5_retry_base_priority(int retry_choice) {
     return 0;
 }
 
+static uint32_t stage5_retry_explore_period(void) {
+    static bool inited = false;
+    static uint32_t period = 16; // 0 disables exploration
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_RETRY_EXPLORE_EVERY");
+        if (v && v[0] != '\0') {
+            period = (uint32_t)strtoul(v, NULL, 0);
+        }
+        inited = true;
+    }
+    return period;
+}
+
 static void stage5_adapt_retry_order(uint32_t *budgets, int *choices, int count) {
     if (!budgets || !choices || count <= 1) return;
     const uint32_t min_samples = 8;
@@ -328,6 +345,31 @@ static void stage5_adapt_retry_order(uint32_t *budgets, int *choices, int count)
                 choices[j] = tc;
             }
         }
+    }
+
+    // Exploration: occasionally force a non-top candidate first so the policy
+    // can recover if workload characteristics drift.
+    uint32_t period = stage5_retry_explore_period();
+    uint32_t total_attempts = stage5_emit_regflow_retry_cfg_attempted +
+                              stage5_emit_regflow_retry_term_attempted +
+                              stage5_emit_regflow_retry_half_attempted;
+    if (period > 0 &&
+        count > 1 &&
+        total_attempts >= (min_samples * 2u) &&
+        (total_attempts % period) == 0) {
+        static uint32_t explore_phase = 0;
+        int pick = 1 + (int)(explore_phase % (uint32_t)(count - 1));
+        explore_phase++;
+        uint32_t tb = budgets[0];
+        budgets[0] = budgets[pick];
+        budgets[pick] = tb;
+        int tc = choices[0];
+        choices[0] = choices[pick];
+        choices[pick] = tc;
+        stage5_emit_regflow_retry_explore_events++;
+        if (choices[0] == 1) stage5_emit_regflow_retry_explore_cfg_first++;
+        if (choices[0] == 2) stage5_emit_regflow_retry_explore_term_first++;
+        if (choices[0] == 3) stage5_emit_regflow_retry_explore_half_first++;
     }
 }
 
