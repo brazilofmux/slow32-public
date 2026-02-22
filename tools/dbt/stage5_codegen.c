@@ -901,9 +901,7 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
                     n->opcode == OP_SGE || n->opcode == OP_SGEU ||
                     n->opcode == OP_SLTI || n->opcode == OP_SLTIU) {
                     bool signed_rr_cmp =
-                        (n->opcode == OP_SLT || n->opcode == OP_SEQ ||
-                         n->opcode == OP_SNE || n->opcode == OP_SGT ||
-                         n->opcode == OP_SLE || n->opcode == OP_SGE);
+                        (n->opcode == OP_SEQ || n->opcode == OP_SNE);
                     if (!allow_mix || !signed_rr_cmp) {
                         stage5_codegen_fallback_preflight_branch_cmp_mix++;
                         stage5_codegen_fallback_preflight_branch_cmp_mix_opcode_hist[n->opcode & 0x7F]++;
