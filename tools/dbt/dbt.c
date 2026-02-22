@@ -64,6 +64,8 @@ static uint32_t trace_block_exits_pc = 0;
 static bool trace_block_regs_enabled = false;
 static int trace_block_regs_budget = 0;
 static uint32_t trace_block_regs_pc = 0;
+static bool trace_block_store_preview_enabled = false;
+static uint32_t trace_block_store_pc = 0;
 
 static void apply_stage5_native_bench_profile(int *stage_out,
                                               bool *two_pass_out,
@@ -164,6 +166,12 @@ static void dbt_init_branch_trace_from_env(void) {
         const char *rmax = getenv("SLOW32_DBT_TRACE_BLOCK_REGS_MAX");
         trace_block_regs_budget = (rmax && rmax[0] != '\0') ? atoi(rmax) : 8;
         if (trace_block_regs_budget < 0) trace_block_regs_budget = 0;
+    }
+
+    const char *sp = getenv("SLOW32_DBT_TRACE_BLOCK_STORE_PC");
+    if (sp && sp[0] != '\0') {
+        trace_block_store_preview_enabled = true;
+        trace_block_store_pc = (uint32_t)strtoul(sp, NULL, 0);
     }
 }
 
@@ -301,6 +309,30 @@ static void dbt_trace_block_regs(dbt_cpu_state_t *cpu, translated_block_t *block
             cpu->regs[7], cpu->regs[10], cpu->regs[12], cpu->regs[14], cpu->regs[15],
             cpu->regs[16], cpu->regs[18], cpu->regs[19], cpu->regs[20], cpu->regs[21],
             cpu->regs[23], cpu->regs[28]);
+    if (trace_block_store_preview_enabled &&
+        trace_block_store_pc != 0 &&
+        trace_block_store_pc + 4 <= cpu->code_limit) {
+        uint32_t raw = *(uint32_t *)(cpu->mem_base + trace_block_store_pc);
+        decoded_inst_t d = decode_instruction(raw);
+        if (d.opcode == OP_STB || d.opcode == OP_STH || d.opcode == OP_STW) {
+            uint32_t base = cpu->regs[d.rs1];
+            uint32_t src = cpu->regs[d.rs2];
+            uint32_t addr = base + (uint32_t)d.imm;
+            uint32_t val = src;
+            uint32_t size = 4;
+            if (d.opcode == OP_STB) {
+                val &= 0xFFu;
+                size = 1;
+            } else if (d.opcode == OP_STH) {
+                val &= 0xFFFFu;
+                size = 2;
+            }
+            fprintf(stderr,
+                    "dbt-block-store-preview block_pc=0x%08X store_pc=0x%08X op=0x%02X rs1=r%u(0x%08X) rs2=r%u(0x%08X) imm=%d addr=0x%08X size=%u value=0x%08X\n",
+                    block->guest_pc, trace_block_store_pc, d.opcode,
+                    d.rs1, base, d.rs2, src, d.imm, addr, size, val);
+        }
+    }
     trace_block_regs_budget--;
 }
 
