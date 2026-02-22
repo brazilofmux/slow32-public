@@ -2751,6 +2751,17 @@ int main(int argc, char **argv) {
                     fprintf(stderr, "  emit cmp_branch_miss: %" PRIu32 "\n",
                             stage5_emit_fallback_cmp_branch_miss);
                 }
+                if (stage5_emit_fallback_helper_cmp_prefix_fail > 0 ||
+                    stage5_emit_fallback_helper_prefix_nonbranch_fail > 0 ||
+                    stage5_emit_fallback_helper_single_terminal_fail > 0) {
+                    fprintf(stderr,
+                            "  emit helper_fail: cmp_prefix=%" PRIu32
+                            " prefix_nonbranch=%" PRIu32
+                            " single_terminal=%" PRIu32 "\n",
+                            stage5_emit_fallback_helper_cmp_prefix_fail,
+                            stage5_emit_fallback_helper_prefix_nonbranch_fail,
+                            stage5_emit_fallback_helper_single_terminal_fail);
+                }
                 if (stage5_emit_fallback_not_ended > 0) {
                     fprintf(stderr, "  emit not_ended: %" PRIu32 "\n",
                             stage5_emit_fallback_not_ended);

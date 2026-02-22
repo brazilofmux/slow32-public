@@ -121,6 +121,9 @@ uint32_t stage5_emit_fallback_side_exit_call_guard_jal = 0;
 uint32_t stage5_emit_fallback_side_exit_call_guard_jalr = 0;
 uint32_t stage5_emit_fallback_single_unhandled = 0;
 uint32_t stage5_emit_fallback_cmp_branch_miss = 0;
+uint32_t stage5_emit_fallback_helper_cmp_prefix_fail = 0;
+uint32_t stage5_emit_fallback_helper_prefix_nonbranch_fail = 0;
+uint32_t stage5_emit_fallback_helper_single_terminal_fail = 0;
 uint32_t stage5_emit_fallback_not_ended = 0;
 uint32_t stage5_emit_not_ended_opcode_hist[128] = {0};
 uint32_t stage5_emit_not_ended_reason_single_terminal = 0;
@@ -3712,6 +3715,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
             return true;
         }
+        stage5_emit_fallback_helper_single_terminal_fail++;
         switch (inst0.opcode) {
             case OP_BEQ:
             case OP_BNE:
@@ -3822,6 +3826,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             ctx->guest_pc = guest_pc;
             ctx->current_inst_idx = 0;
             branch_uses_cmp_rd = stage5_emit_cmp_prefix_for_branch(ctx, &inst0);
+            if (!branch_uses_cmp_rd) {
+                stage5_emit_fallback_helper_cmp_prefix_fail++;
+            }
 
             if (branch_uses_cmp_rd) {
                 ctx->guest_pc = guest_pc + 4;
@@ -3864,6 +3871,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
+                stage5_emit_fallback_helper_single_terminal_fail++;
                 stage5_record_emit_not_ended(inst0.opcode, STAGE5_NOT_ENDED_FAMILYB_BRANCH_FIRST);
                 ctx->superblock_enabled = saved_superblock_enabled;
                 stage5_emit_fallback++;
@@ -3916,6 +3924,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 case OP_STH:
                 case OP_STB:
                     ok_prefix = stage5_emit_familyb_prefix_nonbranch(ctx, &inst0);
+                    if (!ok_prefix) {
+                        stage5_emit_fallback_helper_prefix_nonbranch_fail++;
+                    }
                     break;
                 case OP_BEQ:
                 case OP_BNE:
@@ -4045,6 +4056,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
+                stage5_emit_fallback_helper_single_terminal_fail++;
                 stage5_record_emit_not_ended(inst1.opcode, STAGE5_NOT_ENDED_FAMILYB_PREFIX_TERMINAL);
             } else {
                 if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO ||
@@ -4254,6 +4266,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 case OP_STB:
                     ok_prefix = stage5_emit_prefix_nonbranch(ctx, n->opcode, n->rd,
                                                              n->rs1, n->rs2, n->imm);
+                    if (!ok_prefix) {
+                        stage5_emit_fallback_helper_prefix_nonbranch_fail++;
+                    }
                     break;
                 default:
                     ok_prefix = false;
@@ -4286,6 +4301,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 ended = stage5_emit_single_terminal(ctx, last->opcode, last->rd,
                                                     last->rs1, last->rs2, last->imm,
                                                     emitted_pattern);
+                if (!ended) {
+                    stage5_emit_fallback_helper_single_terminal_fail++;
+                }
             }
             if (ended) {
                 ctx->superblock_enabled = saved_superblock_enabled;
