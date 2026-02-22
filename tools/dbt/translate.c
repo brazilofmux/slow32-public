@@ -291,6 +291,57 @@ static void stage5_trace_deferred_exit(const char *phase,
     budget--;
 }
 
+static void stage5_trace_deferred_exit_flush(const translate_ctx_t *ctx,
+                                             int deferred_idx,
+                                             bool full_flush) {
+    static bool inited = false;
+    static uint32_t filter_pc = 0;
+    static int budget = 0;
+    if (!inited) {
+        const char *pcv = getenv("SLOW32_DBT_TRACE_DEFERRED_EXIT_PC");
+        if (pcv && pcv[0] != '\0') {
+            filter_pc = (uint32_t)strtoul(pcv, NULL, 0);
+            const char *maxv = getenv("SLOW32_DBT_TRACE_DEFERRED_EXIT_MAX");
+            budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 32;
+            if (budget < 0) budget = 0;
+        }
+        inited = true;
+    }
+    if (filter_pc == 0 || budget == 0 || !ctx) return;
+    if (deferred_idx < 0 || deferred_idx >= ctx->deferred_exit_count) return;
+
+    const int di = deferred_idx;
+    if (ctx->deferred_exits[di].branch_pc != filter_pc) return;
+
+    int slot_r15 = -1;
+    bool allocated_r15 = false;
+    bool dirty_r15 = false;
+    for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
+        if (ctx->deferred_exits[di].guest_reg_snapshot[s] == 15) {
+            slot_r15 = s;
+            allocated_r15 = ctx->deferred_exits[di].allocated_snapshot[s];
+            dirty_r15 = ctx->deferred_exits[di].dirty_snapshot[s];
+            break;
+        }
+    }
+
+    bool pending_r15 = ctx->deferred_exits[di].pending_write_valid &&
+                       ctx->deferred_exits[di].pending_write_guest_reg == 15;
+
+    fprintf(stderr,
+            "stage5-deferred-exit phase=flush idx=%d branch_pc=0x%08X target=0x%08X full=%u pending_r15=%u slot_r15=%d alloc_r15=%u dirty_r15=%u side_exit_emitted=%d\n",
+            deferred_idx,
+            ctx->deferred_exits[di].branch_pc,
+            ctx->deferred_exits[di].target_pc,
+            full_flush ? 1u : 0u,
+            pending_r15 ? 1u : 0u,
+            slot_r15,
+            allocated_r15 ? 1u : 0u,
+            dirty_r15 ? 1u : 0u,
+            ctx->side_exit_emitted);
+    budget--;
+}
+
 static bool stage5_region_contains_jal_or_jalr(const stage5_lift_region_t *region) {
     if (!region) return false;
     for (uint32_t i = 0; i < region->ir_count; i++) {
@@ -4054,6 +4105,7 @@ static void emit_deferred_side_exits(translate_ctx_t *ctx) {
             // Unsigned side exits are prone to loop-carried dirty-state drift.
             // Force a full snapshot flush there; otherwise keep dirty-only flush.
             if (ctx->deferred_exits[i].force_full_flush) {
+                stage5_trace_deferred_exit_flush(ctx, i, true);
                 bool full_dirty[REG_ALLOC_SLOTS];
                 for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
                     full_dirty[s] = ctx->deferred_exits[i].allocated_snapshot[s];
@@ -4063,6 +4115,7 @@ static void emit_deferred_side_exits(translate_ctx_t *ctx) {
                     ctx->deferred_exits[i].allocated_snapshot,
                     ctx->deferred_exits[i].guest_reg_snapshot);
             } else {
+                stage5_trace_deferred_exit_flush(ctx, i, false);
                 reg_alloc_flush_snapshot(ctx,
                     ctx->deferred_exits[i].dirty_snapshot,
                     ctx->deferred_exits[i].allocated_snapshot,
