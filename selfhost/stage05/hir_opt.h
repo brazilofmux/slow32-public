@@ -780,8 +780,21 @@ static int ho_dce(void) {
 /* ----------------------------------------------------------------
  * CSE (Common Subexpression Elimination)
  * Hash table keyed on (kind, src1, src2, val).
- * Forward scan: if duplicate found, replace with COPY.
+ * Forward scan: if duplicate found in a dominating block, replace
+ * with COPY. Uses ssa_idom[] for cross-block domination checks.
  * ---------------------------------------------------------------- */
+
+static int ho_dominates(int a, int b) {
+    int depth;
+    depth = 0;
+    while (b >= 0 && depth < 200) {
+        if (b == a) return 1;
+        if (b == ssa_idom[b]) return 0;
+        b = ssa_idom[b];
+        depth = depth + 1;
+    }
+    return 0;
+}
 #define HO_CSE_SLOTS  2048
 #define HO_CSE_MASK   2047
 
@@ -837,7 +850,7 @@ static int ho_cse(void) {
         j = ho_cse_head[slot];
         while (j >= 0) {
             if (h_kind[j] == k && h_src1[j] == s1 && h_src2[j] == s2 &&
-                h_val[j] == v && h_blk[j] == h_blk[i]) {
+                h_val[j] == v && ho_dominates(h_blk[j], h_blk[i])) {
                 found = j;
                 j = -1;  /* break */
             } else {
