@@ -2815,6 +2815,12 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "Stage5 codegen guest insts: %" PRIu64 "\n",
                         stage5_codegen_guest_insts);
             }
+            if (stage5_codegen_boolpair_native_attempted > 0) {
+                fprintf(stderr, "  codegen boolpair native attempt/success/fallback: %" PRIu32 "/%" PRIu32 "/%" PRIu32 "\n",
+                        stage5_codegen_boolpair_native_attempted,
+                        stage5_codegen_boolpair_native_success,
+                        stage5_codegen_boolpair_native_fallback);
+            }
             if (stage5_codegen_host_bytes > 0) {
                 fprintf(stderr, "Stage5 codegen host bytes: %" PRIu64 "\n",
                         stage5_codegen_host_bytes);

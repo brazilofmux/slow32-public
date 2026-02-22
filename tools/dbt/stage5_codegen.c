@@ -50,6 +50,9 @@ uint32_t stage5_codegen_fallback_terminal_opcode_hist[128];
 uint64_t stage5_codegen_guest_insts;
 uint64_t stage5_codegen_host_bytes;
 uint32_t stage5_codegen_regs_allocated_hist[REG_ALLOC_SLOTS + 1];
+uint32_t stage5_codegen_boolpair_native_attempted;
+uint32_t stage5_codegen_boolpair_native_success;
+uint32_t stage5_codegen_boolpair_native_fallback;
 
 static bool cg_cmp_rr_enabled(void) {
     static bool inited = false;
@@ -159,6 +162,66 @@ static bool cg_side_exit_enabled(void) {
         inited = true;
     }
     return enabled;
+}
+
+static bool cg_boolpair_native_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_BOOLPAIR_NATIVE");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+static bool cg_boolpair_trace_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_BOOLPAIR_TRACE");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+static bool cg_boolpair_skip_pc_enabled(uint32_t guest_pc) {
+    static bool inited = false;
+    static bool has_pc = false;
+    static uint32_t skip_pc = 0;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_BOOLPAIR_SKIP_PC");
+        if (v && v[0] != '\0') {
+            char *end = NULL;
+            unsigned long p = strtoul(v, &end, 0);
+            if (end != v && *end == '\0') {
+                has_pc = true;
+                skip_pc = (uint32_t)p;
+            }
+        }
+        inited = true;
+    }
+    return has_pc && guest_pc == skip_pc;
+}
+
+static void cg_trace_boolpair_region(const stage5_lift_region_t *region,
+                                     uint32_t guest_pc,
+                                     int terminal_idx) {
+    if (!cg_boolpair_trace_enabled() || !region) return;
+    fprintf(stderr, "[stage5-boolpair] pc=0x%08X ginst=%u ir=%u term=%d\n",
+            guest_pc, region->guest_inst_count, region->ir_count, terminal_idx);
+    int lo = terminal_idx - 6;
+    if (lo < 0) lo = 0;
+    int hi = terminal_idx;
+    if (hi >= (int)region->ir_count) hi = (int)region->ir_count - 1;
+    for (int i = lo; i <= hi; i++) {
+        const stage5_ir_node_t *n = &region->ir[i];
+        fprintf(stderr,
+                "[stage5-boolpair]   ir[%d] op=0x%02X rd=r%u rs1=r%u rs2=r%u imm=%d syn=%d kind=%d%s\n",
+                i, n->opcode, n->rd, n->rs1, n->rs2, n->imm,
+                n->synthetic ? 1 : 0, n->kind, (i == terminal_idx) ? " <term>" : "");
+    }
 }
 
 static bool cg_trace_mix_enabled(void) {
@@ -721,16 +784,7 @@ static inline void cg_flush_pending(stage5_cg_t *cg) {
         cg->e->rax_pending = false;
     }
     if (ctx->pending_cond.valid) {
-        // Pending cond from a previous translate_* call needs to be
-        // materialized. Since we can't call the static materialize_pending_cond,
-        // just invalidate it. The comparison result was already written to rd
-        // by the translate_* function, so the value is in the cached register.
-        // Actually, pending_cond means the write was DEFERRED. We need to
-        // materialize it. Since we can't call the static function, let's
-        // do the safe thing: disable codegen when pending_cond is active.
-        // In practice, pending_cond is only set by translate_slt/etc (not by
-        // load/store), so this shouldn't happen.
-        ctx->pending_cond.valid = false;
+        stage5_flush_pending_for_codegen(ctx);
     }
 }
 
@@ -1484,25 +1538,8 @@ static __attribute__((unused)) bool cg_emit_side_exit(stage5_cg_t *cg, const sta
     uint32_t taken_pc = fall_pc + n->imm;
     ctx->guest_pc = branch_pc;
 
-    // Flush any pending comparison state
-    if (ctx->pending_cond.valid) {
-        // Materialize pending cond: store result to guest reg
-        // This is the simple path — just store 0/1.
-        // Actually, the native codegen doesn't use pending_cond (it does direct
-        // emission). But translate_* calls from load/store may have set it.
-        // Flush by emitting the store.
-        // pending_cond is used by the Stage 4 fusion path. In native codegen,
-        // we won't have a pending_cond from our own ALU emission, but a
-        // translate_* call (for loads/stores) might have set it.
-        // The safest thing: just invalidate it (the value was already emitted
-        // by the translate_* call's compare-branch fusion path).
-        // Actually, pending_cond is set by translate_slt etc and consumed by
-        // translate_beq etc. Since we do our own cmp emission, we should
-        // flush any leftover pending_cond.
-        //
-        // We can safely just invalidate it since our codegen doesn't rely on it.
-        ctx->pending_cond.valid = false;
-    }
+    // Flush any pending comparison/write state before side-exit compare.
+    stage5_flush_pending_for_codegen(ctx);
 
     // Flush pending write before comparison
     if (ctx->pending_write.valid) {
@@ -1665,14 +1702,29 @@ bool stage5_codegen(translate_ctx_t *ctx,
     bool side_exit_family_c = se_cfg ? se_cfg->family_c : false;
     bool side_exit_codegen = cg_side_exit_enabled();
     bool use_cmp_mix_fusion = cg_pattern_uses_cmp_mix_fusion(emitted_pattern);
+    bool boolpair_native_active =
+        (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR &&
+         cg_boolpair_native_enabled());
+    if (boolpair_native_active) {
+        stage5_codegen_boolpair_native_attempted++;
+        cg_trace_boolpair_region(region, guest_pc, terminal_idx);
+        if (cg_boolpair_skip_pc_enabled(guest_pc)) {
+            stage5_codegen_fallback++;
+            stage5_codegen_fallback_preflight++;
+            stage5_codegen_boolpair_native_fallback++;
+            return false;
+        }
+    }
 
     // Keep newer predicate families on the established translate.c terminal
     // path until dedicated native lowering is validated.
-    if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR ||
+    if ((emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR &&
+         !cg_boolpair_native_enabled()) ||
         emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP ||
         emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP) {
         stage5_codegen_fallback++;
         stage5_codegen_fallback_preflight++;
+        if (boolpair_native_active) stage5_codegen_boolpair_native_fallback++;
         return false;
     }
 
@@ -1691,6 +1743,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
                              side_exit_emit_enabled, side_exit_family_c)) {
         stage5_codegen_fallback++;
         stage5_codegen_fallback_preflight++;
+        if (boolpair_native_active) stage5_codegen_boolpair_native_fallback++;
         return false;
     }
 
@@ -1715,6 +1768,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
                 if (!cg_emit_side_exit(&cg, n)) {
                     stage5_codegen_fallback++;
                     stage5_codegen_fallback_side_exit++;
+                    if (boolpair_native_active) stage5_codegen_boolpair_native_fallback++;
                     cg_state_restore(ctx, &saved);
                     return false;
                 }
@@ -1723,6 +1777,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
             } else {
                 stage5_codegen_fallback++;
                 stage5_codegen_fallback_side_exit++;
+                if (boolpair_native_active) stage5_codegen_boolpair_native_fallback++;
                 cg_state_restore(ctx, &saved);
                 return false;
             }
@@ -1735,6 +1790,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
             // Unsupported instruction — abort
             stage5_codegen_fallback++;
             stage5_codegen_fallback_emit_node++;
+            if (boolpair_native_active) stage5_codegen_boolpair_native_fallback++;
             cg_state_restore(ctx, &saved);
             return false;
         }
@@ -1776,6 +1832,9 @@ bool stage5_codegen(translate_ctx_t *ctx,
         const stage5_ir_node_t *last = &region->ir[terminal_idx];
         ctx->guest_pc = last->pc;
         ctx->current_inst_idx = terminal_idx;
+        if (boolpair_native_active) {
+            stage5_flush_pending_for_codegen(ctx);
+        }
         switch (last->opcode) {
             case OP_JAL:
                 if (emitted_pattern == STAGE5_BURG_PATTERN_JAL_JUMP) {
@@ -1820,6 +1879,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
     if (!ended) {
         stage5_codegen_fallback++;
         stage5_codegen_fallback_terminal++;
+        if (boolpair_native_active) stage5_codegen_boolpair_native_fallback++;
         if (terminal_idx >= 0 && terminal_idx < (int)region->ir_count) {
             stage5_codegen_fallback_terminal_opcode_hist[
                 region->ir[terminal_idx].opcode & 0x7F]++;
@@ -1834,6 +1894,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
 
     size_t emit_end = emit_offset(cg.e);
     stage5_codegen_success++;
+    if (boolpair_native_active) stage5_codegen_boolpair_native_success++;
     stage5_codegen_guest_insts += region->guest_inst_count;
     if (emit_end > emit_start) {
         stage5_codegen_host_bytes += (uint64_t)(emit_end - emit_start);

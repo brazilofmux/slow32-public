@@ -2674,6 +2674,11 @@ bool stage5_translate_branch_direct_for_codegen(translate_ctx_t *ctx,
     }
 }
 
+void stage5_flush_pending_for_codegen(translate_ctx_t *ctx) {
+    flush_pending_cond(ctx);
+    flush_pending_write(ctx);
+}
+
 void stage5_translate_jal_jump_compact_for_codegen(translate_ctx_t *ctx,
     uint8_t rd, int32_t imm) {
     stage5_translate_jal_jump_compact(ctx, rd, imm);
