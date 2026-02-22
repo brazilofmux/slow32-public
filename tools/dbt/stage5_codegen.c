@@ -2532,6 +2532,14 @@ bool stage5_codegen(translate_ctx_t *ctx,
             cg_state_restore(ctx, &saved);
             return false;
         }
+        stage5_phi_elim_plan_t phi_plan;
+        if (!stage5_ssa_build_phi_elim_plan(region, &ssa, &phi_plan)) {
+            stage5_codegen_fallback++;
+            stage5_codegen_fallback_preflight++;
+            if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
+            cg_state_restore(ctx, &saved);
+            return false;
+        }
     }
 
     // ========================================================================

@@ -26,6 +26,7 @@
 #include "block_cache.h"
 #include "stage5_burg.h"
 #include "stage5_codegen.h"
+#include "stage5_ssa.h"
 
 // Reuse components from the emulator
 #include "../emulator/s32x_loader.h"
@@ -2403,6 +2404,32 @@ int main(int argc, char **argv) {
                             stage5_burg_pattern_hist[p]);
                 }
             }
+            if (stage5_ssa_regions_attempted > 0) {
+                fprintf(stderr, "Stage5 SSA attempted:  %" PRIu32 "\n", stage5_ssa_regions_attempted);
+                fprintf(stderr, "Stage5 SSA built:      %" PRIu32 "\n", stage5_ssa_regions_built);
+                if (stage5_ssa_regions_needs_phi > 0) {
+                    fprintf(stderr, "Stage5 SSA needs_phi:  %" PRIu32 "\n",
+                            stage5_ssa_regions_needs_phi);
+                }
+                if (stage5_ssa_values_total > 0 && stage5_ssa_regions_built > 0) {
+                    double avg_values = (double)stage5_ssa_values_total /
+                                        (double)stage5_ssa_regions_built;
+                    fprintf(stderr, "  ssa avg values/region: %.2f\n", avg_values);
+                }
+                if (stage5_ssa_phi_plans_built > 0) {
+                    fprintf(stderr, "Stage5 SSA phi plans:  %" PRIu32 "\n", stage5_ssa_phi_plans_built);
+                    if (stage5_ssa_phi_edge_plans_total > 0) {
+                        double avg_edges = (double)stage5_ssa_phi_edge_plans_total /
+                                           (double)stage5_ssa_phi_plans_built;
+                        fprintf(stderr, "  phi avg edge plans/region: %.2f\n", avg_edges);
+                    }
+                    if (stage5_ssa_phi_copies_total > 0) {
+                        double avg_copies = (double)stage5_ssa_phi_copies_total /
+                                            (double)stage5_ssa_phi_plans_built;
+                        fprintf(stderr, "  phi avg copies/region: %.2f\n", avg_copies);
+                    }
+                }
+            }
             fprintf(stderr, "Stage5 fallback total: %" PRIu32 "\n", stage5_fallback_total);
             if (stage5_fallback_lift_not_implemented > 0) {
                 fprintf(stderr, "  lift not_implemented: %" PRIu32 "\n",
@@ -2536,6 +2563,18 @@ int main(int argc, char **argv) {
                 if (stage5_emit_fallback_shape > 0) {
                     fprintf(stderr, "  emit shape: %" PRIu32 "\n",
                             stage5_emit_fallback_shape);
+                }
+                if (stage5_codegen_fused_addi_mem > 0) {
+                    fprintf(stderr, "  emit fused addi_mem: %" PRIu32 "\n",
+                            stage5_codegen_fused_addi_mem);
+                }
+                if (stage5_codegen_evictions > 0) {
+                    fprintf(stderr, "  emit codegen evictions: %" PRIu32 "\n",
+                            stage5_codegen_evictions);
+                }
+                if (stage5_codegen_native_loads > 0 || stage5_codegen_native_stores > 0) {
+                    fprintf(stderr, "  emit native loads: %" PRIu64 ", stores: %" PRIu64 "\n",
+                            stage5_codegen_native_loads, stage5_codegen_native_stores);
                 }
                 if (stage5_emit_fallback_superblock_policy > 0) {
                     fprintf(stderr, "  emit superblock_policy: %" PRIu32 "\n",
