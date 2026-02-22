@@ -365,13 +365,23 @@ static void hcg_maybe_spill(int idx) {
 /* --- Typed load/store helpers --- */
 
 /* Emit load from [areg+0] into dreg with appropriate width */
-/* Emit symbol name for SADDR/GADDR/FADDR instruction */
+/* Emit symbol reference for SADDR/GADDR/FADDR, with ADDI offset folding.
+ * Uses bg_ssym[]/bg_soff[] computed before BURG folding. */
 static void hcg_emit_sym(int inst) {
-    if (h_kind[inst] == HI_SADDR) {
+    int base;
+    int off;
+    base = bg_ssym[inst];
+    off = bg_soff[inst];
+    if (base < 0) base = inst;
+    if (h_kind[base] == HI_SADDR) {
         cg_s(".LS");
-        cg_n(h_val[inst]);
+        cg_n(h_val[base]);
     } else {
-        cg_s(h_name[inst]);
+        cg_s(h_name[base]);
+    }
+    if (off != 0) {
+        cg_s("+");
+        cg_n(off);
     }
 }
 

@@ -784,6 +784,7 @@ static int ho_dce(void) {
  * with COPY. Uses ssa_idom[] for cross-block domination checks.
  * ---------------------------------------------------------------- */
 
+/* Does block a dominate block b?  Walk idom chain from b toward root. */
 static int ho_dominates(int a, int b) {
     int depth;
     depth = 0;
@@ -878,6 +879,174 @@ static int ho_cse(void) {
 }
 
 /* ----------------------------------------------------------------
+ * Dead store elimination
+ * If two STOREs in the same block write to the same address with
+ * no intervening LOAD/CALL/CALLP, the first STORE is dead.
+ * ---------------------------------------------------------------- */
+
+static int ho_stat_dse;
+
+static int ho_dse_pass(void) {
+    int changed;
+    int i;
+    int j;
+    int addr;
+    int blk;
+    int end;
+    int alive;
+    int jk;
+
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] != HI_STORE) { i = i + 1; continue; }
+        addr = h_src1[i];  /* address operand of STORE */
+        blk = h_blk[i];
+        end = bb_end[blk];
+
+        /* Scan forward in same block for another STORE to same address */
+        alive = 1;
+        j = i + 1;
+        while (j < end && alive) {
+            jk = h_kind[j];
+            if (jk == HI_NOP) { j = j + 1; continue; }
+            /* If any LOAD/CALL/CALLP, the stored value might be observed */
+            if (jk == HI_LOAD || jk == HI_CALL || jk == HI_CALLP) {
+                alive = 0;
+            }
+            /* Found another STORE to same address — first store is dead */
+            if (jk == HI_STORE && h_src1[j] == addr) {
+                h_kind[i] = HI_NOP;
+                h_src1[i] = -1;
+                h_src2[i] = -1;
+                changed = 1;
+                ho_stat_dse = ho_stat_dse + 1;
+                alive = 0;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return changed;
+}
+
+/* ----------------------------------------------------------------
+ * Memory forwarding (store-load, load-load, load-store elimination)
+ *
+ * Within a basic block, track the "last known value" for each address:
+ *   STORE addr val → remember val for addr
+ *   LOAD addr      → if we know the value at addr, replace with COPY
+ *                     Also remember the LOAD's result for addr
+ *   STORE/CALL/CALLP → invalidate all known values
+ * ---------------------------------------------------------------- */
+
+static int ho_stat_slf;   /* store-load and load-load forwards */
+static int ho_stat_lse;   /* load-store eliminations */
+
+/* Small table for tracking known values per address.
+ * Key: address (instruction index), Value: known value (instruction index). */
+#define HO_MEM_SLOTS 64
+static int ho_mem_addr[HO_MEM_SLOTS];  /* address, or -1 if empty */
+static int ho_mem_val[HO_MEM_SLOTS];   /* known value at that address */
+static int ho_mem_ty[HO_MEM_SLOTS];    /* type of the value */
+static int ho_mem_cnt;
+
+static void ho_mem_clear(void) { ho_mem_cnt = 0; }
+
+static int ho_mem_find(int addr) {
+    int k;
+    k = 0;
+    while (k < ho_mem_cnt) {
+        if (ho_mem_addr[k] == addr) return k;
+        k = k + 1;
+    }
+    return -1;
+}
+
+static void ho_mem_set(int addr, int val, int ty) {
+    int k;
+    k = ho_mem_find(addr);
+    if (k >= 0) {
+        ho_mem_val[k] = val;
+        ho_mem_ty[k] = ty;
+        return;
+    }
+    if (ho_mem_cnt < HO_MEM_SLOTS) {
+        ho_mem_addr[ho_mem_cnt] = addr;
+        ho_mem_val[ho_mem_cnt] = val;
+        ho_mem_ty[ho_mem_cnt] = ty;
+        ho_mem_cnt = ho_mem_cnt + 1;
+    }
+}
+
+static int ho_mem_fwd(void) {
+    int changed;
+    int i;
+    int b;
+    int start;
+    int end;
+    int k;
+    int kk;
+    int addr;
+    int val;
+
+    changed = 0;
+    b = 0;
+    while (b < bb_nblk) {
+        start = bb_start[b];
+        end = bb_end[b];
+        if (start < 0 || end <= start) { b = b + 1; continue; }
+
+        ho_mem_clear();
+        i = start;
+        while (i < end) {
+            k = h_kind[i];
+            if (k == HI_NOP) { i = i + 1; continue; }
+
+            if (k == HI_STORE) {
+                addr = h_src1[i];
+                val = h_src2[i];
+                /* Check if we're storing the same value we just loaded.
+                 * LOAD addr → v; STORE addr, v  → eliminate the STORE */
+                kk = ho_mem_find(addr);
+                if (kk >= 0 && ho_mem_val[kk] == val && ho_mem_ty[kk] == h_ty[i]) {
+                    h_kind[i] = HI_NOP;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                    ho_stat_lse = ho_stat_lse + 1;
+                } else {
+                    /* Record: after this STORE, addr holds val */
+                    ho_mem_set(addr, val, h_ty[i]);
+                }
+            }
+            else if (k == HI_LOAD) {
+                addr = h_src1[i];
+                kk = ho_mem_find(addr);
+                if (kk >= 0 && ho_mem_ty[kk] == h_ty[i]) {
+                    /* We know the value at this address — forward it */
+                    h_kind[i] = HI_COPY;
+                    h_src1[i] = ho_mem_val[kk];
+                    h_src2[i] = -1;
+                    changed = 1;
+                    ho_stat_slf = ho_stat_slf + 1;
+                } else {
+                    /* Record: after this LOAD, addr holds result i */
+                    ho_mem_set(addr, i, h_ty[i]);
+                }
+            }
+            else if (k == HI_CALL || k == HI_CALLP) {
+                /* Calls may write to any memory — invalidate all */
+                ho_mem_clear();
+            }
+            i = i + 1;
+        }
+        b = b + 1;
+    }
+    return changed;
+}
+
+/* ----------------------------------------------------------------
  * Main optimization driver: iterate until fixpoint
  * ---------------------------------------------------------------- */
 
@@ -909,6 +1078,8 @@ static void hir_opt(void) {
         changed = changed | ho_branch_simplify();
         changed = changed | ho_dead_blocks();
         changed = changed | ho_phi_simplify();
+        changed = changed | ho_dse_pass();
+        changed = changed | ho_mem_fwd();
         changed = changed | ho_dce();
         iter = iter + 1;
     }
