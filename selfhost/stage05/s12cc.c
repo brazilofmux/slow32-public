@@ -308,6 +308,8 @@ int main(int argc, char **argv) {
     fput_uint(stderr, hcg_stat_copy_emit);
     fputs(" addi0_elide=", stderr);
     fput_uint(stderr, hcg_stat_addi0_elide);
+    fputs(" divrem_pow2=", stderr);
+    fput_uint(stderr, hcg_stat_divrem_pow2);
     fputs("\n", stderr);
     fputs("hir_iconst_use: total=", stderr);
     fput_uint(stderr, bg_stat_iconst_total);

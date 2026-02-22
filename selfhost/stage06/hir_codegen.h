@@ -119,6 +119,7 @@ static int hcg_stat_li_lui_only;
 static int hcg_stat_li_lui_addi;
 static int hcg_stat_copy_emit;
 static int hcg_stat_addi0_elide;
+static int hcg_stat_divrem_pow2;
 
 /* --- Load immediate into register --- */
 static void hcg_li(int reg, int v) {
@@ -752,6 +753,8 @@ static void hcg_inst(int idx) {
     int vreg;
     int cond;
     int base_i;
+    int n;
+    int tmp;
 
     k = h_kind[idx];
     if (k == HI_NOP) return;
@@ -1187,6 +1190,37 @@ static void hcg_inst(int idx) {
             return;
         }
         if (imm_opp) hcg_stat_imm_miss_cmp = hcg_stat_imm_miss_cmp + 1;
+    }
+
+    /* Signed DIV/REM by power-of-2 — peephole at codegen time.
+     * Signed DIV by 2^n:  srai rT,rS,31; srli rT,rT,(32-n); add rD,rS,rT; srai rD,rD,n
+     * Signed REM by 2^n:  srai rT,rS,31; srli rT,rT,(32-n); add rT,rS,rT;
+     *                     srai rT,rT,n; slli rT,rT,n; sub rD,rS,rT
+     * Only for signed (not TY_UNSIGNED). Unsigned already handled by hir_opt.h. */
+    if ((k == HI_DIV || k == HI_REM) && !(ty & TY_UNSIGNED) &&
+        hcg_const_imm_inst(s2, &off) && off > 1 && (off & (off - 1)) == 0) {
+        n = 0;
+        tmp = off;
+        while (tmp > 1) { n = n + 1; tmp = tmp >> 1; }
+        rs1 = hcg_src(s1, 1);
+        rd = hcg_dst(idx);
+        /* r2 = bias: srai r2, rS, 31 -> srli r2, r2, (32-n) */
+        cg_rri("srai", 2, rs1, 31);
+        cg_rri("srli", 2, 2, 32 - n);
+        if (k == HI_DIV) {
+            /* add rD, rS, r2; srai rD, rD, n */
+            cg_rrr("add", rd, rs1, 2);
+            cg_rri("srai", rd, rd, n);
+        } else {
+            /* add r2, rS, r2; srai r2, r2, n; slli r2, r2, n; sub rD, rS, r2 */
+            cg_rrr("add", 2, rs1, 2);
+            cg_rri("srai", 2, 2, n);
+            cg_rri("slli", 2, 2, n);
+            cg_rrr("sub", rd, rs1, 2);
+        }
+        hcg_stat_divrem_pow2 = hcg_stat_divrem_pow2 + 1;
+        hcg_maybe_spill(idx);
+        return;
     }
 
     /* Binary arithmetic/logic/comparison */
