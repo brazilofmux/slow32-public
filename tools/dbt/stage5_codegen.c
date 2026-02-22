@@ -53,6 +53,11 @@ uint32_t stage5_codegen_regs_allocated_hist[REG_ALLOC_SLOTS + 1];
 uint32_t stage5_codegen_boolpair_native_attempted;
 uint32_t stage5_codegen_boolpair_native_success;
 uint32_t stage5_codegen_boolpair_native_fallback;
+uint32_t stage5_codegen_predicate_native_terminal_success;
+uint32_t stage5_codegen_predicate_native_terminal_fallback;
+uint32_t stage5_codegen_predicate_native_terminal_opcode_hist[128];
+uint64_t stage5_codegen_predicate_native_guest_insts;
+uint64_t stage5_codegen_predicate_native_host_bytes;
 
 static bool cg_cmp_rr_enabled(void) {
     static bool inited = false;
@@ -1964,6 +1969,12 @@ bool stage5_codegen(translate_ctx_t *ctx,
                 if (predicate_native_active) {
                     ended = cg_emit_branch_terminal_native(&cg, last->opcode,
                         last->rs1, last->rs2, last->imm, last->pc);
+                    if (ended) {
+                        stage5_codegen_predicate_native_terminal_success++;
+                        stage5_codegen_predicate_native_terminal_opcode_hist[last->opcode & 0x7F]++;
+                    } else {
+                        stage5_codegen_predicate_native_terminal_fallback++;
+                    }
                 } else {
                     ended = stage5_translate_branch_terminal_for_codegen(ctx,
                         last->opcode, last->rs1, last->rs2, last->imm);
@@ -1997,6 +2008,13 @@ bool stage5_codegen(translate_ctx_t *ctx,
     stage5_codegen_guest_insts += region->guest_inst_count;
     if (emit_end > emit_start) {
         stage5_codegen_host_bytes += (uint64_t)(emit_end - emit_start);
+    }
+    if (predicate_native_active) {
+        stage5_codegen_predicate_native_guest_insts += region->guest_inst_count;
+        if (emit_end > emit_start) {
+            stage5_codegen_predicate_native_host_bytes +=
+                (uint64_t)(emit_end - emit_start);
+        }
     }
 
     return true;

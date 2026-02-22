@@ -70,6 +70,11 @@ extern uint32_t stage5_codegen_regs_allocated_hist[REG_ALLOC_SLOTS + 1];
 extern uint32_t stage5_codegen_boolpair_native_attempted;
 extern uint32_t stage5_codegen_boolpair_native_success;
 extern uint32_t stage5_codegen_boolpair_native_fallback;
+extern uint32_t stage5_codegen_predicate_native_terminal_success;
+extern uint32_t stage5_codegen_predicate_native_terminal_fallback;
+extern uint32_t stage5_codegen_predicate_native_terminal_opcode_hist[128];
+extern uint64_t stage5_codegen_predicate_native_guest_insts;
+extern uint64_t stage5_codegen_predicate_native_host_bytes;
 
 // Bridge functions (defined in translate.c, expose static functions to codegen)
 void emit_exit_chained_for_codegen(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);

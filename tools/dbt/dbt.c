@@ -2816,10 +2816,18 @@ int main(int argc, char **argv) {
                         stage5_codegen_guest_insts);
             }
             if (stage5_codegen_boolpair_native_attempted > 0) {
-                fprintf(stderr, "  codegen boolpair native attempt/success/fallback: %" PRIu32 "/%" PRIu32 "/%" PRIu32 "\n",
+                fprintf(stderr, "  codegen predicate-native attempt/success/fallback: %" PRIu32 "/%" PRIu32 "/%" PRIu32 "\n",
                         stage5_codegen_boolpair_native_attempted,
                         stage5_codegen_boolpair_native_success,
                         stage5_codegen_boolpair_native_fallback);
+            }
+            if (stage5_codegen_predicate_native_terminal_success > 0 ||
+                stage5_codegen_predicate_native_terminal_fallback > 0) {
+                fprintf(stderr, "  codegen predicate-native terminal success/fallback: %" PRIu32 "/%" PRIu32 "\n",
+                        stage5_codegen_predicate_native_terminal_success,
+                        stage5_codegen_predicate_native_terminal_fallback);
+                print_top_opcode_hist("predicate-native terminal opcodes",
+                                      stage5_codegen_predicate_native_terminal_opcode_hist);
             }
             if (stage5_codegen_host_bytes > 0) {
                 fprintf(stderr, "Stage5 codegen host bytes: %" PRIu64 "\n",
@@ -2829,6 +2837,12 @@ int main(int argc, char **argv) {
                 double bpg = (double)stage5_codegen_host_bytes /
                              (double)stage5_codegen_guest_insts;
                 fprintf(stderr, "Stage5 codegen bytes/guest-inst: %.2f\n", bpg);
+            }
+            if (stage5_codegen_predicate_native_guest_insts > 0 &&
+                stage5_codegen_predicate_native_host_bytes > 0) {
+                double pbpg = (double)stage5_codegen_predicate_native_host_bytes /
+                              (double)stage5_codegen_predicate_native_guest_insts;
+                fprintf(stderr, "Stage5 predicate-native bytes/guest-inst: %.2f\n", pbpg);
             }
             fprintf(stderr, "  codegen regs allocated histogram:");
             for (int h = 0; h <= REG_ALLOC_SLOTS; h++) {
