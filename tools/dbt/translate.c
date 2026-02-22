@@ -102,6 +102,8 @@ uint32_t stage5_emit_fallback_side_exit_unowned = 0;
 uint32_t stage5_emit_fallback_side_exit_disabled = 0;
 uint32_t stage5_emit_fallback_side_exit_unsupported = 0;
 uint32_t stage5_emit_fallback_side_exit_call_guard = 0;
+uint32_t stage5_emit_fallback_side_exit_call_guard_jal = 0;
+uint32_t stage5_emit_fallback_side_exit_call_guard_jalr = 0;
 uint32_t stage5_emit_fallback_single_unhandled = 0;
 uint32_t stage5_emit_fallback_cmp_branch_miss = 0;
 uint32_t stage5_emit_fallback_not_ended = 0;
@@ -148,6 +150,8 @@ uint32_t stage5_emit_region_side_exit_owned = 0;
 uint32_t stage5_emit_region_side_exit_unsupported = 0;
 uint32_t stage5_emit_region_side_exit_disabled = 0;
 uint32_t stage5_emit_region_side_exit_call_guard = 0;
+uint32_t stage5_emit_region_side_exit_call_guard_jal = 0;
+uint32_t stage5_emit_region_side_exit_call_guard_jalr = 0;
 uint32_t stage5_emit_side_exit_forced_family_c_unsigned = 0;
 uint32_t stage5_emit_side_exit_forced_family_c_b_only = 0;
 uint32_t stage5_emit_side_exit_auto_backedge_retry_unsigned = 0;
@@ -1734,14 +1738,26 @@ static void stage5_trace_exit_slot(const char *phase,
     budget--;
 }
 
-static bool stage5_region_contains_jal_or_jalr(const stage5_lift_region_t *region) {
-    if (!region) return false;
+static bool stage5_region_contains_jal_or_jalr(const stage5_lift_region_t *region,
+                                                bool *has_jal_out,
+                                                bool *has_jalr_out) {
+    bool has_jal = false;
+    bool has_jalr = false;
+    if (!region) {
+        if (has_jal_out) *has_jal_out = false;
+        if (has_jalr_out) *has_jalr_out = false;
+        return false;
+    }
     for (uint32_t i = 0; i < region->ir_count; i++) {
         const stage5_ir_node_t *n = &region->ir[i];
         if (n->synthetic) continue;
-        if (n->opcode == OP_JAL || n->opcode == OP_JALR) return true;
+        if (n->opcode == OP_JAL) has_jal = true;
+        if (n->opcode == OP_JALR) has_jalr = true;
+        if (has_jal && has_jalr) break;
     }
-    return false;
+    if (has_jal_out) *has_jal_out = has_jal;
+    if (has_jalr_out) *has_jalr_out = has_jalr;
+    return has_jal || has_jalr;
 }
 
 static inline bool stage5_side_exit_supported(const stage5_ir_node_t *n) {
@@ -2783,7 +2799,10 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         ctx->superblock_enabled = false;
     }
     bool side_exit_owned = stage5_region_side_exits_supported(&region);
-    bool side_exit_call_guard = stage5_region_contains_jal_or_jalr(&region);
+    bool side_exit_guard_has_jal = false;
+    bool side_exit_guard_has_jalr = false;
+    bool side_exit_call_guard = stage5_region_contains_jal_or_jalr(
+        &region, &side_exit_guard_has_jal, &side_exit_guard_has_jalr);
     bool side_exit_emit_enabled = stage5_side_exit_emit_enabled();
     stage5_side_exit_family_cfg_t side_exit_family_cfg = stage5_side_exit_family_cfg();
     if (region.side_exit_count > 0) {
@@ -2803,6 +2822,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 stage5_emit_region_side_exit_disabled++;
             } else if (side_exit_call_guard) {
                 stage5_emit_region_side_exit_call_guard++;
+                if (side_exit_guard_has_jal) stage5_emit_region_side_exit_call_guard_jal++;
+                if (side_exit_guard_has_jalr) stage5_emit_region_side_exit_call_guard_jalr++;
             }
         } else {
             stage5_emit_region_side_exit_unsupported++;
@@ -2878,7 +2899,11 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         stage5_emit_fallback_side_exit_unowned++;
         if (!side_exit_emit_enabled) stage5_emit_fallback_side_exit_disabled++;
         if (!side_exit_owned) stage5_emit_fallback_side_exit_unsupported++;
-        if (side_exit_call_guard) stage5_emit_fallback_side_exit_call_guard++;
+        if (side_exit_call_guard) {
+            stage5_emit_fallback_side_exit_call_guard++;
+            if (side_exit_guard_has_jal) stage5_emit_fallback_side_exit_call_guard_jal++;
+            if (side_exit_guard_has_jalr) stage5_emit_fallback_side_exit_call_guard_jalr++;
+        }
         return false;
     }
 

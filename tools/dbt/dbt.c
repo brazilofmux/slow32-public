@@ -2346,6 +2346,13 @@ int main(int argc, char **argv) {
                     if (stage5_emit_fallback_side_exit_call_guard > 0) {
                         fprintf(stderr, "  emit side_exit call_guard: %" PRIu32 "\n",
                                 stage5_emit_fallback_side_exit_call_guard);
+                        if (stage5_emit_fallback_side_exit_call_guard_jal > 0 ||
+                            stage5_emit_fallback_side_exit_call_guard_jalr > 0) {
+                            fprintf(stderr,
+                                    "    call_guard split: jal=%" PRIu32 " jalr=%" PRIu32 "\n",
+                                    stage5_emit_fallback_side_exit_call_guard_jal,
+                                    stage5_emit_fallback_side_exit_call_guard_jalr);
+                        }
                     }
                 }
                 if (stage5_emit_fallback_single_unhandled > 0) {
@@ -2452,6 +2459,14 @@ int main(int argc, char **argv) {
                             stage5_emit_region_side_exit_unsupported,
                             stage5_emit_region_side_exit_disabled,
                             stage5_emit_region_side_exit_call_guard);
+                    if (stage5_emit_region_side_exit_call_guard_jal > 0 ||
+                        stage5_emit_region_side_exit_call_guard_jalr > 0) {
+                        fprintf(stderr,
+                                "    side_exit call_guard split: jal=%" PRIu32
+                                " jalr=%" PRIu32 "\n",
+                                stage5_emit_region_side_exit_call_guard_jal,
+                                stage5_emit_region_side_exit_call_guard_jalr);
+                    }
                     if (stage5_emit_side_exit_forced_family_c_unsigned > 0) {
                         fprintf(stderr,
                                 "  emit side_exit forced_family_c_unsigned: %" PRIu32 "\n",

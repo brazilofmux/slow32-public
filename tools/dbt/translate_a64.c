@@ -69,6 +69,12 @@ uint32_t stage5_emit_fallback_policy_regflow_live = 0;
 uint32_t stage5_emit_fallback_single_unhandled = 0;
 uint32_t stage5_emit_fallback_cmp_branch_miss = 0;
 uint32_t stage5_emit_fallback_not_ended = 0;
+uint32_t stage5_emit_fallback_side_exit_unowned = 0;
+uint32_t stage5_emit_fallback_side_exit_disabled = 0;
+uint32_t stage5_emit_fallback_side_exit_unsupported = 0;
+uint32_t stage5_emit_fallback_side_exit_call_guard = 0;
+uint32_t stage5_emit_fallback_side_exit_call_guard_jal = 0;
+uint32_t stage5_emit_fallback_side_exit_call_guard_jalr = 0;
 uint32_t stage5_emit_not_ended_opcode_hist[128] = {0};
 uint32_t stage5_emit_not_ended_reason_single_terminal = 0;
 uint32_t stage5_emit_not_ended_reason_cmp_branch_fused = 0;
@@ -76,6 +82,13 @@ uint32_t stage5_emit_not_ended_reason_familyb_cmp_rd = 0;
 uint32_t stage5_emit_not_ended_reason_familyb_branch_first = 0;
 uint32_t stage5_emit_not_ended_reason_familyb_prefix_terminal = 0;
 uint32_t stage5_emit_not_ended_reason_familyc_terminal = 0;
+uint32_t stage5_emit_region_side_exit_total = 0;
+uint32_t stage5_emit_region_side_exit_owned = 0;
+uint32_t stage5_emit_region_side_exit_unsupported = 0;
+uint32_t stage5_emit_region_side_exit_disabled = 0;
+uint32_t stage5_emit_region_side_exit_call_guard = 0;
+uint32_t stage5_emit_region_side_exit_call_guard_jal = 0;
+uint32_t stage5_emit_region_side_exit_call_guard_jalr = 0;
 uint32_t stage5_emit_unhandled_opcode_hist[128] = {0};
 
 // ============================================================================
