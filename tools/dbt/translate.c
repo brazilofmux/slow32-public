@@ -252,6 +252,40 @@ static uint8_t stage5_branch_inv_cc(uint8_t opcode) {
     }
 }
 
+// Pick two scratch GPRs for compare materialization, preferring regs that
+// won't clobber an active pending write.
+static inline void stage5_pick_cmp_scratch_regs(translate_ctx_t *ctx,
+                                                x64_reg_t avoid1,
+                                                x64_reg_t avoid2,
+                                                x64_reg_t *out_a,
+                                                x64_reg_t *out_b) {
+    static const x64_reg_t k_candidates[] = {RAX, RCX, RDX, R10};
+    x64_reg_t pending =
+        (ctx && ctx->pending_write.valid) ? ctx->pending_write.host_reg : X64_NOREG;
+
+    x64_reg_t a = RAX;
+    x64_reg_t b = RCX;
+
+    for (size_t i = 0; i < sizeof(k_candidates) / sizeof(k_candidates[0]); i++) {
+        x64_reg_t r = k_candidates[i];
+        if (r == avoid1 || r == avoid2 || r == pending) continue;
+        a = r;
+        break;
+    }
+    for (size_t i = 0; i < sizeof(k_candidates) / sizeof(k_candidates[0]); i++) {
+        x64_reg_t r = k_candidates[i];
+        if (r == a || r == avoid1 || r == avoid2 || r == pending) continue;
+        b = r;
+        break;
+    }
+    if (b == a) {
+        b = (a == RAX) ? RCX : RAX;
+    }
+
+    *out_a = a;
+    *out_b = b;
+}
+
 static inline void stage5_translate_jal_jump_compact(translate_ctx_t *ctx,
                                                      uint8_t rd, int32_t imm) {
     emit_ctx_t *e = &ctx->emit;
@@ -309,10 +343,12 @@ static inline bool stage5_translate_bne_compact(translate_ctx_t *ctx,
     } else {
         x64_reg_t h1 = guest_host_reg(ctx, rs1);
         x64_reg_t h2 = guest_host_reg(ctx, rs2);
-        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : RAX;
-        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : RCX;
-        if (h1 == X64_NOREG) emit_load_guest_reg(ctx, RAX, rs1);
-        if (h2 == X64_NOREG) emit_load_guest_reg(ctx, RCX, rs2);
+        x64_reg_t t1 = RAX, t2 = RCX;
+        stage5_pick_cmp_scratch_regs(ctx, h1, h2, &t1, &t2);
+        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : t1;
+        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : t2;
+        if (h1 == X64_NOREG) emit_load_guest_reg(ctx, t1, rs1);
+        if (h2 == X64_NOREG) emit_load_guest_reg(ctx, t2, rs2);
         if (h1 != X64_NOREG || h2 != X64_NOREG) {
             flush_pending_write(ctx);
         }
@@ -378,10 +414,12 @@ static inline bool stage5_translate_beq_compact(translate_ctx_t *ctx,
     } else {
         x64_reg_t h1 = guest_host_reg(ctx, rs1);
         x64_reg_t h2 = guest_host_reg(ctx, rs2);
-        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : RAX;
-        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : RCX;
-        if (h1 == X64_NOREG) emit_load_guest_reg(ctx, RAX, rs1);
-        if (h2 == X64_NOREG) emit_load_guest_reg(ctx, RCX, rs2);
+        x64_reg_t t1 = RAX, t2 = RCX;
+        stage5_pick_cmp_scratch_regs(ctx, h1, h2, &t1, &t2);
+        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : t1;
+        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : t2;
+        if (h1 == X64_NOREG) emit_load_guest_reg(ctx, t1, rs1);
+        if (h2 == X64_NOREG) emit_load_guest_reg(ctx, t2, rs2);
         if (h1 != X64_NOREG || h2 != X64_NOREG) {
             flush_pending_write(ctx);
         }
@@ -436,21 +474,29 @@ static bool stage5_emit_cmp_branch_fused(translate_ctx_t *ctx,
     if (cmp_is_imm) {
         // SLTI/SLTIU: compare rs1 against immediate
         x64_reg_t h1 = guest_host_reg(ctx, cmp_rs1);
+        x64_reg_t t1 = RAX, t2 = RCX;
+        stage5_pick_cmp_scratch_regs(ctx, h1, X64_NOREG, &t1, &t2);
+        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : t1;
         if (h1 != X64_NOREG) {
             flush_pending_write(ctx);
-            emit_cmp_r32_imm32(e, h1, cmp_imm);
         } else {
-            emit_load_guest_reg(ctx, RAX, cmp_rs1);
-            emit_cmp_r32_imm32(e, RAX, cmp_imm);
+            flush_pending_write(ctx);
+            emit_load_guest_reg(ctx, t1, cmp_rs1);
         }
+        emit_cmp_r32_imm32(e, cmp_a, cmp_imm);
     } else {
         // Register-register compare
         x64_reg_t h1 = guest_host_reg(ctx, cmp_rs1);
         x64_reg_t h2 = guest_host_reg(ctx, cmp_rs2);
-        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : RAX;
-        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : RCX;
-        if (h1 == X64_NOREG) emit_load_guest_reg(ctx, RAX, cmp_rs1);
-        if (h2 == X64_NOREG) emit_load_guest_reg(ctx, RCX, cmp_rs2);
+        x64_reg_t t1 = RAX, t2 = RCX;
+        stage5_pick_cmp_scratch_regs(ctx, h1, h2, &t1, &t2);
+        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : t1;
+        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : t2;
+        if (h1 == X64_NOREG) {
+            flush_pending_write(ctx);
+            emit_load_guest_reg(ctx, t1, cmp_rs1);
+        }
+        if (h2 == X64_NOREG) emit_load_guest_reg(ctx, t2, cmp_rs2);
         if (h1 != X64_NOREG || h2 != X64_NOREG) {
             flush_pending_write(ctx);
         }
@@ -1466,16 +1512,18 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 } else {
                     x64_reg_t h1 = (n->rs1 != 0) ? guest_host_reg(ctx, n->rs1) : X64_NOREG;
                     x64_reg_t h2 = (n->rs2 != 0) ? guest_host_reg(ctx, n->rs2) : X64_NOREG;
-                    x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : RAX;
-                    x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : RCX;
+                    x64_reg_t t1 = RAX, t2 = RCX;
+                    stage5_pick_cmp_scratch_regs(ctx, h1, h2, &t1, &t2);
+                    x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : t1;
+                    x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : t2;
                     if (h1 == X64_NOREG) {
                         flush_pending_write(ctx);
-                        if (n->rs1 == 0) emit_xor_r32_r32(e, RAX, RAX);
-                        else emit_load_guest_reg(ctx, RAX, n->rs1);
+                        if (n->rs1 == 0) emit_xor_r32_r32(e, t1, t1);
+                        else emit_load_guest_reg(ctx, t1, n->rs1);
                     }
                     if (h2 == X64_NOREG) {
-                        if (n->rs2 == 0) emit_xor_r32_r32(e, RCX, RCX);
-                        else emit_load_guest_reg(ctx, RCX, n->rs2);
+                        if (n->rs2 == 0) emit_xor_r32_r32(e, t2, t2);
+                        else emit_load_guest_reg(ctx, t2, n->rs2);
                     }
                     if (h1 != X64_NOREG || h2 != X64_NOREG)
                         flush_pending_write(ctx);
