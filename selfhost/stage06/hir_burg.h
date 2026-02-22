@@ -61,6 +61,8 @@ static int bg_sel[HIR_MAX_INST];
 static int bg_fold[HIR_MAX_INST];  /* 1 = folded into parent */
 static int bg_uses[HIR_MAX_INST];  /* use count per value */
 static int bg_foff[HIR_MAX_INST];  /* precomputed faddr offset */
+static int bg_ssym[HIR_MAX_INST];  /* base symbol inst for SADDR chain (-1=none) */
+static int bg_soff[HIR_MAX_INST];  /* accumulated offset for SADDR chain */
 
 /* Stats */
 static int bg_stat_folded;
@@ -147,6 +149,7 @@ static void bg_init(void) {
     /* ADDI */
     bg_add_pat(BG_IMM,   HI_ADDI, BG_IMM, -1, 0);
     bg_add_pat(BG_FADDR, HI_ADDI, BG_FADDR, -1, 0);
+    bg_add_pat(BG_SADDR, HI_ADDI, BG_SADDR, -1, 0);
     bg_add_pat(BG_REG,   HI_ADDI, BG_FADDR, -1, 1);
     bg_add_pat(BG_REG,   HI_ADDI, BG_REG,   -1, 1);
 
@@ -568,7 +571,11 @@ static void bg_count_uses(void) {
     }
 }
 
-/* --- Precompute frame-relative offsets --- */
+/* --- Precompute frame-relative and symbol-relative offsets --- */
+
+static int bg_is_sym(int k) {
+    return k == HI_GADDR || k == HI_SADDR || k == HI_FADDR;
+}
 
 static void bg_compute_foff(void) {
     int i;
@@ -579,6 +586,7 @@ static void bg_compute_foff(void) {
     i = 0;
     while (i < h_ninst) {
         k = h_kind[i];
+        /* Frame offsets */
         if (k == HI_ALLOCA) {
             bg_foff[i] = h_val[i];
         } else if (k == HI_ADDI) {
@@ -592,6 +600,23 @@ static void bg_compute_foff(void) {
             }
         } else {
             bg_foff[i] = 0;
+        }
+        /* Symbol offsets for SADDR chains */
+        if (bg_is_sym(k)) {
+            bg_ssym[i] = i;
+            bg_soff[i] = 0;
+        } else if (k == HI_ADDI) {
+            s1 = h_src1[i];
+            if (s1 >= 0 && bg_ssym[s1] >= 0) {
+                bg_ssym[i] = bg_ssym[s1];
+                bg_soff[i] = bg_soff[s1] + h_val[i];
+            } else {
+                bg_ssym[i] = -1;
+                bg_soff[i] = 0;
+            }
+        } else {
+            bg_ssym[i] = -1;
+            bg_soff[i] = 0;
         }
         i = i + 1;
     }
