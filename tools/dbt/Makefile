@@ -34,7 +34,7 @@ HDRS = cpu_state.h $(ARCH_HDRS) translate.h block_cache.h dbt_limits.h \
 # Main target
 TARGET = slow32-dbt
 
-.PHONY: all clean test test-diff stress-safe-unsafe sweep-peephole debug disasm
+.PHONY: all clean test test-diff stress-safe-unsafe sweep-peephole sweep-peephole-strict debug disasm
 
 all: $(TARGET)
 	@echo "Built for $(UNAME_M)"
@@ -81,6 +81,11 @@ stress-safe-unsafe: $(TARGET)
 sweep-peephole: $(TARGET)
 	@echo "Running peephole guard sweep (iters=$(ITERS))..."
 	@./scripts/sweep-peephole-call-guards.sh "$(ITERS)" $(TESTS)
+
+# Strict sweep: non-zero if any mode is unstable.
+sweep-peephole-strict: $(TARGET)
+	@echo "Running strict peephole guard sweep (iters=$(ITERS))..."
+	@SWEEP_REQUIRE_STABLE=1 ./scripts/sweep-peephole-call-guards.sh "$(ITERS)" $(TESTS)
 
 clean:
 	rm -f *.o $(TARGET)
