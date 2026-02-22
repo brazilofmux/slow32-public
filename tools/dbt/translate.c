@@ -878,7 +878,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     ctx->superblock_enabled = false;
     bool side_exit_owned = stage5_region_side_exits_supported(&region);
 
-    bool allow_small_direct_branch = false;
+    bool allow_small_direct_branch =
+        stage5_pattern_is_direct_branch(emitted_pattern) &&
+        region.guest_inst_count <= 9;
     bool allow_jal_call =
         emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
         emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG;
@@ -920,13 +922,11 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     if (emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
         emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG ||
         emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_SHORT ||
-        emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_LONG ||
-        emitted_pattern == STAGE5_BURG_PATTERN_JALR_INDIRECT) {
+        emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_LONG) {
         ctx->superblock_enabled = saved_superblock_enabled;
         stage5_emit_fallback++;
         stage5_emit_fallback_shape++;
         stage5_emit_fallback_superblock_policy++;
-        stage5_emit_fallback_policy_jalr_indirect++;
         return false;
     }
 
@@ -936,6 +936,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
          emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_NE ||
          emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL ||
          emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_RELU) &&
+        !allow_small_direct_branch &&
         emitted_pattern != STAGE5_BURG_PATTERN_DIRECT_BRANCH_RELU &&
         emitted_pattern != STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL) {
         ctx->superblock_enabled = saved_superblock_enabled;
