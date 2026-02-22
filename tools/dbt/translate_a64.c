@@ -58,6 +58,12 @@ uint32_t stage5_emit_fallback_single_unhandled = 0;
 uint32_t stage5_emit_fallback_cmp_branch_miss = 0;
 uint32_t stage5_emit_fallback_not_ended = 0;
 uint32_t stage5_emit_not_ended_opcode_hist[128] = {0};
+uint32_t stage5_emit_not_ended_reason_single_terminal = 0;
+uint32_t stage5_emit_not_ended_reason_cmp_branch_fused = 0;
+uint32_t stage5_emit_not_ended_reason_familyb_cmp_rd = 0;
+uint32_t stage5_emit_not_ended_reason_familyb_branch_first = 0;
+uint32_t stage5_emit_not_ended_reason_familyb_prefix_terminal = 0;
+uint32_t stage5_emit_not_ended_reason_familyc_terminal = 0;
 uint32_t stage5_emit_unhandled_opcode_hist[128] = {0};
 
 // ============================================================================

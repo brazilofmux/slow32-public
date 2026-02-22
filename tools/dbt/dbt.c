@@ -2343,6 +2343,30 @@ int main(int argc, char **argv) {
                 if (stage5_emit_fallback_not_ended > 0) {
                     fprintf(stderr, "  emit not_ended: %" PRIu32 "\n",
                             stage5_emit_fallback_not_ended);
+                    if (stage5_emit_not_ended_reason_single_terminal > 0) {
+                        fprintf(stderr, "    not_ended single_terminal: %" PRIu32 "\n",
+                                stage5_emit_not_ended_reason_single_terminal);
+                    }
+                    if (stage5_emit_not_ended_reason_cmp_branch_fused > 0) {
+                        fprintf(stderr, "    not_ended cmp_branch_fused: %" PRIu32 "\n",
+                                stage5_emit_not_ended_reason_cmp_branch_fused);
+                    }
+                    if (stage5_emit_not_ended_reason_familyb_cmp_rd > 0) {
+                        fprintf(stderr, "    not_ended familyb_cmp_rd: %" PRIu32 "\n",
+                                stage5_emit_not_ended_reason_familyb_cmp_rd);
+                    }
+                    if (stage5_emit_not_ended_reason_familyb_branch_first > 0) {
+                        fprintf(stderr, "    not_ended familyb_branch_first: %" PRIu32 "\n",
+                                stage5_emit_not_ended_reason_familyb_branch_first);
+                    }
+                    if (stage5_emit_not_ended_reason_familyb_prefix_terminal > 0) {
+                        fprintf(stderr, "    not_ended familyb_prefix_terminal: %" PRIu32 "\n",
+                                stage5_emit_not_ended_reason_familyb_prefix_terminal);
+                    }
+                    if (stage5_emit_not_ended_reason_familyc_terminal > 0) {
+                        fprintf(stderr, "    not_ended familyc_terminal: %" PRIu32 "\n",
+                                stage5_emit_not_ended_reason_familyc_terminal);
+                    }
                     uint8_t top_op[3] = {0};
                     uint32_t top_ct[3] = {0};
                     for (uint32_t op = 0; op < 128; op++) {
