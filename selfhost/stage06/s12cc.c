@@ -237,7 +237,9 @@ int main(int argc, char **argv) {
     /* Print optimization stats to stderr */
     fputs("hir_opt: ", stderr);
     fput_uint(stderr, ho_stat_elim);
-    fputs(" HIR instructions eliminated\n", stderr);
+    fputs(" HIR instructions eliminated, cse=", stderr);
+    fput_uint(stderr, ho_stat_cse);
+    fputs("\n", stderr);
     fputs("hir_licm: ", stderr);
     fput_uint(stderr, licm_stat_hoisted);
     fputs(" instructions hoisted\n", stderr);
@@ -310,6 +312,8 @@ int main(int argc, char **argv) {
     fput_uint(stderr, hcg_stat_addi0_elide);
     fputs(" divrem_pow2=", stderr);
     fput_uint(stderr, hcg_stat_divrem_pow2);
+    fputs(" tailcall=", stderr);
+    fput_uint(stderr, hcg_stat_tailcall);
     fputs("\n", stderr);
     fputs("hir_iconst_use: total=", stderr);
     fput_uint(stderr, bg_stat_iconst_total);

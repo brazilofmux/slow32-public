@@ -617,6 +617,34 @@ static int hl_expr(Node *n) {
                 return r_lo;
             }
             if (n->op == TK_LSHIFT) {
+                /* Inline constant shifts, call helper for variable shifts */
+                if (n->rhs->kind == ND_NUM && n->rhs->val >= 0 && n->rhs->val <= 63) {
+                    int sn;
+                    int sc;
+                    sn = n->rhs->val;
+                    if (sn == 0) {
+                        hl_hi = lv_hi;
+                        return lv;
+                    }
+                    if (sn < 32) {
+                        sc = hi_emit(HI_ICONST, TY_INT, -1, -1, sn, NULL);
+                        r_lo = hi_emit(HI_SLL, TY_INT, lv, sc, 0, NULL);
+                        sc = hi_emit(HI_ICONST, TY_INT, -1, -1, sn, NULL);
+                        r_hi = hi_emit(HI_SLL, TY_INT, lv_hi, sc, 0, NULL);
+                        sc = hi_emit(HI_ICONST, TY_INT, -1, -1, 32 - sn, NULL);
+                        tmp2 = hi_emit(HI_SRL, TY_INT, lv, sc, 0, NULL);
+                        hl_hi = hi_emit(HI_OR, TY_INT, r_hi, tmp2, 0, NULL);
+                        return r_lo;
+                    }
+                    if (sn == 32) {
+                        hl_hi = lv;
+                        return hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
+                    }
+                    /* sn > 32 */
+                    sc = hi_emit(HI_ICONST, TY_INT, -1, -1, sn - 32, NULL);
+                    hl_hi = hi_emit(HI_SLL, TY_INT, lv, sc, 0, NULL);
+                    return hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
+                }
                 carg_base2 = h_ncarg;
                 h_carg[h_ncarg] = lv;      h_ncarg = h_ncarg + 1;
                 h_carg[h_ncarg] = lv_hi;   h_ncarg = h_ncarg + 1;
@@ -627,6 +655,50 @@ static int hl_expr(Node *n) {
                 return r_lo;
             }
             if (n->op == TK_RSHIFT) {
+                /* Inline constant shifts, call helper for variable shifts */
+                if (n->rhs->kind == ND_NUM && n->rhs->val >= 0 && n->rhs->val <= 63) {
+                    int sn;
+                    int sc;
+                    int is_arith;
+                    sn = n->rhs->val;
+                    is_arith = !(n->ty & TY_UNSIGNED);
+                    if (sn == 0) {
+                        hl_hi = lv_hi;
+                        return lv;
+                    }
+                    if (sn < 32) {
+                        sc = hi_emit(HI_ICONST, TY_INT, -1, -1, sn, NULL);
+                        r_lo = hi_emit(HI_SRL, TY_INT, lv, sc, 0, NULL);
+                        sc = hi_emit(HI_ICONST, TY_INT, -1, -1, 32 - sn, NULL);
+                        tmp2 = hi_emit(HI_SLL, TY_INT, lv_hi, sc, 0, NULL);
+                        r_lo = hi_emit(HI_OR, TY_INT, r_lo, tmp2, 0, NULL);
+                        sc = hi_emit(HI_ICONST, TY_INT, -1, -1, sn, NULL);
+                        hl_hi = hi_emit(is_arith ? HI_SRA : HI_SRL, TY_INT,
+                                        lv_hi, sc, 0, NULL);
+                        return r_lo;
+                    }
+                    if (sn == 32) {
+                        r_lo = lv_hi;
+                        if (is_arith) {
+                            sc = hi_emit(HI_ICONST, TY_INT, -1, -1, 31, NULL);
+                            hl_hi = hi_emit(HI_SRA, TY_INT, lv_hi, sc, 0, NULL);
+                        } else {
+                            hl_hi = hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
+                        }
+                        return r_lo;
+                    }
+                    /* sn > 32 */
+                    sc = hi_emit(HI_ICONST, TY_INT, -1, -1, sn - 32, NULL);
+                    r_lo = hi_emit(is_arith ? HI_SRA : HI_SRL, TY_INT,
+                                   lv_hi, sc, 0, NULL);
+                    if (is_arith) {
+                        sc = hi_emit(HI_ICONST, TY_INT, -1, -1, 31, NULL);
+                        hl_hi = hi_emit(HI_SRA, TY_INT, lv_hi, sc, 0, NULL);
+                    } else {
+                        hl_hi = hi_emit(HI_ICONST, TY_INT, -1, -1, 0, NULL);
+                    }
+                    return r_lo;
+                }
                 carg_base2 = h_ncarg;
                 h_carg[h_ncarg] = lv;      h_ncarg = h_ncarg + 1;
                 h_carg[h_ncarg] = lv_hi;   h_ncarg = h_ncarg + 1;

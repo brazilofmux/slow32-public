@@ -778,6 +778,93 @@ static int ho_dce(void) {
 }
 
 /* ----------------------------------------------------------------
+ * CSE (Common Subexpression Elimination)
+ * Hash table keyed on (kind, src1, src2, val).
+ * Forward scan: if duplicate found, replace with COPY.
+ * ---------------------------------------------------------------- */
+#define HO_CSE_SLOTS  2048
+#define HO_CSE_MASK   2047
+
+static int ho_cse_head[HO_CSE_SLOTS];   /* slot -> first inst index, -1 if empty */
+static int ho_cse_next[HIR_MAX_INST];    /* inst -> next in chain, -1 if end */
+static int ho_stat_cse;
+
+static int ho_cse_hash(int kind, int s1, int s2, int val) {
+    int h;
+    h = kind * 73 + (s1 + 1) * 131 + (s2 + 1) * 257 + val * 37;
+    if (h < 0) h = 0 - h;
+    return h & HO_CSE_MASK;
+}
+
+static int ho_cse_eligible(int k) {
+    /* Binary arithmetic/logic/comparison (not div/rem) */
+    if (k >= HI_ADD && k <= HI_SGEU && k != HI_DIV && k != HI_REM) return 1;
+    /* Unary */
+    if (k == HI_NEG || k == HI_NOT || k == HI_BNOT) return 1;
+    /* ADDI */
+    if (k == HI_ADDI) return 1;
+    return 0;
+}
+
+static int ho_cse(void) {
+    int i;
+    int k;
+    int s1;
+    int s2;
+    int v;
+    int slot;
+    int j;
+    int found;
+    int changed;
+
+    /* Initialize hash table */
+    i = 0;
+    while (i < HO_CSE_SLOTS) { ho_cse_head[i] = -1; i = i + 1; }
+
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_NOP || !ho_cse_eligible(k)) { i = i + 1; continue; }
+
+        s1 = h_src1[i];
+        s2 = h_src2[i];
+        v = h_val[i];
+        slot = ho_cse_hash(k, s1, s2, v);
+
+        /* Search chain for match */
+        found = -1;
+        j = ho_cse_head[slot];
+        while (j >= 0) {
+            if (h_kind[j] == k && h_src1[j] == s1 && h_src2[j] == s2 &&
+                h_val[j] == v && h_blk[j] == h_blk[i]) {
+                found = j;
+                j = -1;  /* break */
+            } else {
+                j = ho_cse_next[j];
+            }
+        }
+
+        if (found >= 0) {
+            /* Replace with COPY of the earlier instruction */
+            h_kind[i] = HI_COPY;
+            h_src1[i] = found;
+            h_src2[i] = -1;
+            h_val[i] = 0;
+            changed = 1;
+            ho_stat_cse = ho_stat_cse + 1;
+        } else {
+            /* Insert into hash table */
+            ho_cse_next[i] = ho_cse_head[slot];
+            ho_cse_head[slot] = i;
+        }
+
+        i = i + 1;
+    }
+    return changed;
+}
+
+/* ----------------------------------------------------------------
  * Main optimization driver: iterate until fixpoint
  * ---------------------------------------------------------------- */
 
@@ -805,6 +892,7 @@ static void hir_opt(void) {
         changed = 0;
         changed = changed | ho_copy_prop();
         changed = changed | ho_const_fold();
+        changed = changed | ho_cse();
         changed = changed | ho_branch_simplify();
         changed = changed | ho_dead_blocks();
         changed = changed | ho_phi_simplify();

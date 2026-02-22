@@ -120,6 +120,7 @@ static int hcg_stat_li_lui_addi;
 static int hcg_stat_copy_emit;
 static int hcg_stat_addi0_elide;
 static int hcg_stat_divrem_pow2;
+static int hcg_stat_tailcall;
 
 /* --- Load immediate into register --- */
 static void hcg_li(int reg, int v) {
@@ -729,6 +730,67 @@ static char *hcg_binop_name(int k) {
     if (k == HI_SLEU) return "sleu";
     if (k == HI_SGEU) return "sgeu";
     return "add";
+}
+
+/* --- Tail call detection ---
+ * Returns 1 if CALL at idx is immediately followed by RET(CALL_result)
+ * in the same block, with no CALLHI and no stack args. */
+static int hcg_is_tailcall(int idx) {
+    int blk;
+    int end;
+    int j;
+    int jk;
+
+    /* Conservative guards */
+    if (hcg_va_save_size > 0) return 0;       /* varargs fn */
+    if (h_val[idx] > 8) return 0;              /* stack args */
+
+    blk = h_blk[idx];
+    end = bb_end[blk];
+
+    /* Scan forward for next non-NOP instruction */
+    j = idx + 1;
+    while (j < end && h_kind[j] == HI_NOP) j = j + 1;
+    if (j >= end) return 0;
+    jk = h_kind[j];
+
+    /* CALLHI means 64-bit return — skip tail call */
+    if (jk == HI_CALLHI) return 0;
+
+    /* Must be RET with src1 = this CALL */
+    if (jk != HI_RET) return 0;
+    if (h_src1[j] != idx) return 0;
+    if (h_src2[j] >= 0) return 0;             /* 64-bit return value */
+    return 1;
+}
+
+/* Emit inline epilogue for tail call (same as normal epilogue but no return) */
+static void hcg_emit_epilogue_inline(void) {
+    int i;
+    int fs;
+    fs = hcg_frame;
+
+    /* Restore callee-saved registers */
+    i = 0;
+    while (i < ra_ncsave) {
+        hcg_restore_reg(ra_csave_reg[i], ra_csave_off[i]);
+        i = i + 1;
+    }
+
+    /* Restore r31, r30, adjust sp */
+    if (fs <= 2047) {
+        cg_s("    ldw r31, r29, ");
+        cg_n(fs - 4);
+        cg_c(10);
+        cg_s("    ldw r30, r29, ");
+        cg_n(fs - 8);
+        cg_c(10);
+        cg_rri("addi", 29, 29, fs);
+    } else {
+        cg_rri("addi", 29, 30, 0);
+        cg_s("    ldw r31, r29, -4\n");
+        cg_s("    ldw r30, r29, -8\n");
+    }
 }
 
 /* --- Generate code for one HIR instruction (BURG-dispatched) --- */
@@ -1437,18 +1499,34 @@ static void hcg_inst(int idx) {
     if (k == HI_CALL) {
         int has_callhi;
         int rd2;
+        int is_tail;
         nargs = h_val[idx];
         base = h_cbase[idx];
 
         regc = nargs;
         if (regc > 8) regc = 8;
 
+        /* Load register args (r3..r10) */
         i = 0;
         while (i < regc) {
             hcg_into(3 + i, h_carg[base + i]);
             i = i + 1;
         }
 
+        /* Check for tail call BEFORE emitting stack args or jal */
+        is_tail = hcg_is_tailcall(idx);
+
+        if (is_tail) {
+            /* Tail call: epilogue + jump (no link) */
+            hcg_emit_epilogue_inline();
+            cg_s("    jal r0, ");
+            cg_s(h_name[idx]);
+            cg_c(10);
+            hcg_stat_tailcall = hcg_stat_tailcall + 1;
+            return;
+        }
+
+        /* Normal call: push stack args, call with link */
         i = nargs - 1;
         while (i >= regc) {
             if (hcg_const_is_zero(h_carg[base + i])) {
