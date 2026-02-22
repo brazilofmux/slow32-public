@@ -1,8 +1,8 @@
 // SLOW-32 DBT: Stage 5 Native Codegen
 // Region-level register allocation + direct x86-64 emission
 //
-// Replaces the Family C translate_*() dispatch loop with native emission
-// using the pre-assigned host registers from ctx->reg_alloc[].
+// Emits native x86-64 for all prefix and most terminal instructions.
+// Delegates only FP (translate_fp_r_type).
 
 #ifndef STAGE5_CODEGEN_H
 #define STAGE5_CODEGEN_H
@@ -82,9 +82,20 @@ extern uint32_t stage5_codegen_predicate_native_terminal_fallback;
 extern uint32_t stage5_codegen_predicate_native_terminal_opcode_hist[128];
 extern uint64_t stage5_codegen_predicate_native_guest_insts;
 extern uint64_t stage5_codegen_predicate_native_host_bytes;
+extern uint32_t stage5_codegen_fused_addi_mem;
+extern uint32_t stage5_codegen_evictions;
+extern uint64_t stage5_codegen_native_loads;
+extern uint64_t stage5_codegen_native_stores;
 
 // Bridge functions (defined in translate.c, expose static functions to codegen)
 void emit_exit_chained_for_codegen(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
+void emit_exit_for_codegen(translate_ctx_t *ctx, exit_reason_t reason, uint32_t next_pc);
+void emit_fault_exit_for_codegen(translate_ctx_t *ctx, exit_reason_t reason,
+                                  uint32_t pc, x64_reg_t info_reg);
+void reg_cache_flush_for_codegen(translate_ctx_t *ctx);
+void flush_cached_host_regs_for_codegen(translate_ctx_t *ctx, x64_reg_t r1, x64_reg_t r2);
+void emit_indirect_lookup_for_codegen(translate_ctx_t *ctx, x64_reg_t target_reg);
+void emit_ras_predict_for_codegen(translate_ctx_t *ctx, x64_reg_t target_reg);
 
 bool stage5_emit_cmp_branch_fused_for_codegen(translate_ctx_t *ctx,
     uint8_t cmp_opcode, uint8_t cmp_rs1, uint8_t cmp_rs2,

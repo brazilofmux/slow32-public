@@ -5,7 +5,7 @@
 // MUL, MULH, MULHU, DIV, REM, loads, stores) using the pre-assigned host
 // registers from ctx->reg_alloc[] (set up by reg_alloc_prescan()).
 // Emits native terminals for JAL, HALT, DEBUG, YIELD.
-// Delegates FP to translate_fp_r_type() and JALR to translate_jalr().
+// Delegates FP to translate_fp_r_type().
 
 #include "stage5_codegen.h"
 #include "stage5_burg.h"
@@ -2279,6 +2279,58 @@ static void cg_emit_jal_terminal(stage5_cg_t *cg, uint8_t rd, int32_t imm) {
     emit_exit_chained_for_codegen(ctx, target_pc, ctx->exit_idx++);
 }
 
+// ============================================================================
+// Native JALR terminal
+// ============================================================================
+
+static void cg_emit_jalr_terminal(stage5_cg_t *cg, uint8_t rd, uint8_t rs1, int32_t imm) {
+    translate_ctx_t *ctx = cg->ctx;
+    emit_ctx_t *e = cg->e;
+    uint32_t return_pc = ctx->guest_pc + 4;
+
+    // target = (rs1 + imm) & ~1
+    uint32_t protect = (1u << rs1);
+    x64_reg_t src_h = cg_resolve_src(cg, rs1, RAX, protect);
+    if (src_h != RAX) {
+        emit_mov_r32_r32(e, RAX, src_h);
+    }
+    if (imm != 0) {
+        emit_add_r32_imm32(e, RAX, imm);
+    }
+    emit_and_r32_imm32(e, RAX, (int32_t)~1u);
+
+    // We use R8/R9 in lookup paths; evict their cached ownership first.
+    flush_cached_host_regs_for_codegen(ctx, R8, R9);
+
+    // rd gets return address if linked.
+    if (rd != 0) {
+        emit_mov_r64_r64(e, R8, RAX); // preserve computed target
+        x64_reg_t dst_h = cg_resolve_dst(cg, rd, 0);
+        emit_mov_r32_imm32(e, dst_h, return_pc);
+        cg_mark_dirty(cg, rd);
+        cg_store_spilled(cg, rd, dst_h);
+        emit_mov_r64_r64(e, RAX, R8); // restore target
+    }
+
+    bool is_return = (rd == 0 && rs1 == REG_LR && imm == 0);
+    if (ctx->block) {
+        ctx->block->flags |= BLOCK_FLAG_INDIRECT;
+        if (is_return) {
+            ctx->block->flags |= BLOCK_FLAG_RETURN;
+        }
+    }
+
+    if (ctx->ras_enabled && is_return && ctx->inline_lookup_enabled) {
+        emit_ras_predict_for_codegen(ctx, RAX);
+    } else if (ctx->inline_lookup_enabled && ctx->cache) {
+        emit_indirect_lookup_for_codegen(ctx, RAX);
+    } else {
+        emit_mov_m32_r32(e, RBP, CPU_PC_OFFSET, RAX);
+        emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_INDIRECT);
+        emit_ret(e);
+    }
+}
+
 bool stage5_codegen(translate_ctx_t *ctx,
                     const stage5_lift_region_t *region,
                     uint32_t guest_pc,
@@ -2645,7 +2697,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
                 ended = true;
                 break;
             case OP_JALR:
-                translate_jalr(ctx, last->rd, last->rs1, last->imm);
+                cg_emit_jalr_terminal(&cg, last->rd, last->rs1, last->imm);
                 ended = true;
                 break;
             case OP_HALT:

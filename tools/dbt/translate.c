@@ -2544,7 +2544,7 @@ static inline void stage5_translate_jal_jump_compact(translate_ctx_t *ctx,
     if (ctx->block) {
         ctx->block->flags |= BLOCK_FLAG_DIRECT;
     }
-    emit_exit(ctx, EXIT_BRANCH, target_pc);
+    emit_exit_chained(ctx, target_pc, ctx->exit_idx++);
 }
 
 // Size-first direct branch fast path for single-instruction BNE regions.
@@ -2886,8 +2886,41 @@ static inline void stage5_record_emit_success(translate_ctx_t *ctx,
 // Expose static functions needed by the native codegen.
 // ============================================================================
 
+// Forward declarations (defined below)
+static void emit_exit_with_info_reg(translate_ctx_t *ctx, exit_reason_t reason,
+                                     uint32_t next_pc, x64_reg_t info_reg);
+static void reg_cache_flush(translate_ctx_t *ctx);
+static void flush_cached_host_regs(translate_ctx_t *ctx, x64_reg_t r1, x64_reg_t r2);
+static void emit_indirect_lookup(translate_ctx_t *ctx, x64_reg_t target_reg);
+static void emit_ras_predict(translate_ctx_t *ctx, x64_reg_t target_reg);
+
 void emit_exit_chained_for_codegen(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx) {
     emit_exit_chained(ctx, target_pc, exit_idx);
+}
+
+void emit_exit_for_codegen(translate_ctx_t *ctx, exit_reason_t reason, uint32_t next_pc) {
+    emit_exit(ctx, reason, next_pc);
+}
+
+void emit_fault_exit_for_codegen(translate_ctx_t *ctx, exit_reason_t reason,
+                                  uint32_t pc, x64_reg_t info_reg) {
+    emit_exit_with_info_reg(ctx, reason, pc, info_reg);
+}
+
+void reg_cache_flush_for_codegen(translate_ctx_t *ctx) {
+    reg_cache_flush(ctx);
+}
+
+void flush_cached_host_regs_for_codegen(translate_ctx_t *ctx, x64_reg_t r1, x64_reg_t r2) {
+    flush_cached_host_regs(ctx, r1, r2);
+}
+
+void emit_indirect_lookup_for_codegen(translate_ctx_t *ctx, x64_reg_t target_reg) {
+    emit_indirect_lookup(ctx, target_reg);
+}
+
+void emit_ras_predict_for_codegen(translate_ctx_t *ctx, x64_reg_t target_reg) {
+    emit_ras_predict(ctx, target_reg);
 }
 
 bool stage5_emit_cmp_branch_fused_for_codegen(translate_ctx_t *ctx,
