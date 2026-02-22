@@ -2218,6 +2218,12 @@ int main(int argc, char **argv) {
                                 stage5_emit_regflow_retry_cfg_accepted,
                                 stage5_emit_regflow_retry_cfg_emit_success);
                     }
+                    if (stage5_emit_regflow_retry_term_attempted > 0) {
+                        fprintf(stderr, "    terminal attempt/accept/success: %" PRIu32 "/%" PRIu32 "/%" PRIu32 "\n",
+                                stage5_emit_regflow_retry_term_attempted,
+                                stage5_emit_regflow_retry_term_accepted,
+                                stage5_emit_regflow_retry_term_emit_success);
+                    }
                     if (stage5_emit_regflow_retry_half_attempted > 0) {
                         fprintf(stderr, "    half     attempt/accept/success: %" PRIu32 "/%" PRIu32 "/%" PRIu32 "\n",
                                 stage5_emit_regflow_retry_half_attempted,
