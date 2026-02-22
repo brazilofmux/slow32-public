@@ -91,6 +91,7 @@ link_exe() {
 echo "[1/5] Assemble runtime"
 assemble "$CRT0_SRC" "$WORKDIR/crt0.s32o" "$WORKDIR/crt0.log"
 assemble "$MMIO_NO_START_SRC" "$WORKDIR/mmio_no_start.s32o" "$WORKDIR/mmio_no_start.log"
+assemble "$SCRIPT_DIR/builtins64.s" "$WORKDIR/builtins64.s32o" "$WORKDIR/builtins64.log"
 
 # --- Build libc (compiled by stage05 s12cc) ---
 echo "[2/5] Build libc"
@@ -110,6 +111,7 @@ assemble "$WORKDIR/s32-as.s" "$WORKDIR/s32-as.s32o" "$WORKDIR/s32-as.as.log"
 link_exe "$WORKDIR/s32-as.link.log" -o "$SCRIPT_DIR/s32-as.s32x" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/s32-as.s32o" "$WORKDIR/start.s32o" \
     "$WORKDIR/mmio_no_start.s32o" \
+    "$WORKDIR/builtins64.s32o" \
     $LIBC_OBJS
 [[ -s "$SCRIPT_DIR/s32-as.s32x" ]] || { echo "s32-as link failed" >&2; exit 1; }
 echo "  OK: s32-as.s32x ($(wc -c < "$SCRIPT_DIR/s32-as.s32x") bytes)"
@@ -121,6 +123,7 @@ assemble "$WORKDIR/s32-ar.s" "$WORKDIR/s32-ar.s32o" "$WORKDIR/s32-ar.as.log"
 link_exe "$WORKDIR/s32-ar.link.log" -o "$SCRIPT_DIR/s32-ar.s32x" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/s32-ar.s32o" "$WORKDIR/start.s32o" \
     "$WORKDIR/mmio_no_start.s32o" \
+    "$WORKDIR/builtins64.s32o" \
     $LIBC_OBJS
 [[ -s "$SCRIPT_DIR/s32-ar.s32x" ]] || { echo "s32-ar link failed" >&2; exit 1; }
 echo "  OK: s32-ar.s32x ($(wc -c < "$SCRIPT_DIR/s32-ar.s32x") bytes)"
@@ -132,6 +135,7 @@ assemble "$WORKDIR/s32-ld.s" "$WORKDIR/s32-ld.s32o" "$WORKDIR/s32-ld.as.log"
 link_exe "$WORKDIR/s32-ld.link.log" -o "$SCRIPT_DIR/s32-ld.s32x" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/s32-ld.s32o" "$WORKDIR/start.s32o" \
     "$WORKDIR/mmio_no_start.s32o" \
+    "$WORKDIR/builtins64.s32o" \
     $LIBC_OBJS
 [[ -s "$SCRIPT_DIR/s32-ld.s32x" ]] || { echo "s32-ld link failed" >&2; exit 1; }
 echo "  OK: s32-ld.s32x ($(wc -c < "$SCRIPT_DIR/s32-ld.s32x") bytes)"
@@ -143,6 +147,7 @@ assemble "$WORKDIR/slow32dump.s" "$WORKDIR/slow32dump.s32o" "$WORKDIR/slow32dump
 link_exe "$WORKDIR/slow32dump.link.log" -o "$SCRIPT_DIR/slow32dump.s32x" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/slow32dump.s32o" "$WORKDIR/start.s32o" \
     "$WORKDIR/mmio_no_start.s32o" \
+    "$WORKDIR/builtins64.s32o" \
     $LIBC_OBJS
 [[ -s "$SCRIPT_DIR/slow32dump.s32x" ]] || { echo "slow32dump link failed" >&2; exit 1; }
 echo "  OK: slow32dump.s32x ($(wc -c < "$SCRIPT_DIR/slow32dump.s32x") bytes)"
@@ -154,6 +159,7 @@ assemble "$WORKDIR/slow32dis.s" "$WORKDIR/slow32dis.s32o" "$WORKDIR/slow32dis.as
 link_exe "$WORKDIR/slow32dis.link.log" -o "$SCRIPT_DIR/slow32dis.s32x" --mmio 64K \
     "$WORKDIR/crt0.s32o" "$WORKDIR/slow32dis.s32o" "$WORKDIR/start.s32o" \
     "$WORKDIR/mmio_no_start.s32o" \
+    "$WORKDIR/builtins64.s32o" \
     $LIBC_OBJS
 [[ -s "$SCRIPT_DIR/slow32dis.s32x" ]] || { echo "slow32dis link failed" >&2; exit 1; }
 echo "  OK: slow32dis.s32x ($(wc -c < "$SCRIPT_DIR/slow32dis.s32x") bytes)"
