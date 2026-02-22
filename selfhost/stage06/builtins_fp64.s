@@ -129,8 +129,7 @@ __fp64_le:
 # int → double: r3=int, returns r1:r2=double
 .global __fp64_cvt_itoD
 __fp64_cvt_itoD:
-    addi r4, r3, 0
-    fcvt.d.w r4, r4, r0
+    fcvt.d.w r4, r3, r0
     addi r1, r4, 0
     addi r2, r5, 0
     jalr r0, r31, 0
@@ -146,8 +145,7 @@ __fp64_cvt_DtoI:
 # float → double: r3=float_bits, returns r1:r2=double
 .global __fp64_cvt_ftoD
 __fp64_cvt_ftoD:
-    addi r4, r3, 0
-    fcvt.d.s r4, r4, r0
+    fcvt.d.s r4, r3, r0
     addi r1, r4, 0
     addi r2, r5, 0
     jalr r0, r31, 0
