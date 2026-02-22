@@ -1646,6 +1646,78 @@ static __attribute__((unused)) bool cg_emit_side_exit(stage5_cg_t *cg, const sta
     return true;
 }
 
+// Native BEQ/BNE terminal emission for predicate families.
+// Mirrors stage5 compact branch semantics without routing through translate.c.
+static bool cg_emit_branch_terminal_beq_bne(stage5_cg_t *cg,
+                                            uint8_t opcode,
+                                            uint8_t rs1, uint8_t rs2,
+                                            int32_t imm,
+                                            uint32_t branch_pc) {
+    translate_ctx_t *ctx = cg->ctx;
+    emit_ctx_t *e = cg->e;
+    uint32_t fall_pc = branch_pc + 4;
+    uint32_t taken_pc = fall_pc + imm;
+
+    if (!(opcode == OP_BEQ || opcode == OP_BNE)) {
+        return false;
+    }
+
+    if (ctx->block) {
+        ctx->block->flags |= BLOCK_FLAG_DIRECT;
+    }
+
+    // Ensure deferred compare/write state is materialized before compare.
+    stage5_flush_pending_for_codegen(ctx);
+
+    if (rs1 == 0 && rs2 == 0) {
+        emit_xor_r32_r32(e, RAX, RAX);
+        emit_test_r32_r32(e, RAX, RAX);
+    } else if (rs1 == 0 || rs2 == 0) {
+        uint8_t rz = (rs1 == 0) ? rs2 : rs1;
+        x64_reg_t hz = cg_guest_host(cg, rz);
+        if (hz != X64_NOREG) {
+            emit_test_r32_r32(e, hz, hz);
+        } else {
+            emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(rz));
+            emit_test_r32_r32(e, RAX, RAX);
+        }
+    } else {
+        x64_reg_t h1 = cg_guest_host(cg, rs1);
+        x64_reg_t h2 = cg_guest_host(cg, rs2);
+        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : RAX;
+        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : RCX;
+
+        if (h1 == X64_NOREG) {
+            emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(rs1));
+        }
+        if (h2 == X64_NOREG) {
+            emit_mov_r32_m32(e, RCX, RBP, GUEST_REG_OFFSET(rs2));
+        }
+        emit_cmp_r32_r32(e, cmp_a, cmp_b);
+    }
+
+    size_t jcc_patch = emit_offset(e) + 2;
+    if (opcode == OP_BEQ) {
+        emit_je_rel32(e, 0);
+    } else {
+        emit_jne_rel32(e, 0);
+    }
+
+    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
+        ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
+    }
+    emit_exit_chained_for_codegen(ctx, fall_pc, ctx->exit_idx++);
+
+    size_t taken_offset = emit_offset(e);
+    emit_patch_rel32(e, jcc_patch, taken_offset);
+    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
+        ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
+    }
+    emit_exit_chained_for_codegen(ctx, taken_pc, ctx->exit_idx++);
+
+    return true;
+}
+
 // ============================================================================
 // Main codegen entry point
 // ============================================================================
@@ -1886,8 +1958,14 @@ bool stage5_codegen(translate_ctx_t *ctx,
             case OP_BGE:
             case OP_BLTU:
             case OP_BGEU:
-                ended = stage5_translate_branch_terminal_for_codegen(ctx,
-                    last->opcode, last->rs1, last->rs2, last->imm);
+                if (predicate_native_active &&
+                    (last->opcode == OP_BEQ || last->opcode == OP_BNE)) {
+                    ended = cg_emit_branch_terminal_beq_bne(&cg, last->opcode,
+                        last->rs1, last->rs2, last->imm, last->pc);
+                } else {
+                    ended = stage5_translate_branch_terminal_for_codegen(ctx,
+                        last->opcode, last->rs1, last->rs2, last->imm);
+                }
                 break;
             default:
                 ended = false;
