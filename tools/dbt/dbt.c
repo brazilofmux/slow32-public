@@ -57,6 +57,7 @@ static int trace_branch_exit_budget = 0;
 static uint32_t trace_branch_exit_pc_filter = 0;
 static char trace_branch_exit_pc_filter_spec[256];
 static bool trace_branch_exit_pc_filter_has_spec = false;
+static bool trace_branch_exit_regs_enabled = false;
 static bool trace_block_exits_enabled = false;
 static int trace_block_exits_budget = 0;
 static uint32_t trace_block_exits_pc = 0;
@@ -127,6 +128,8 @@ static void dbt_init_branch_trace_from_env(void) {
 
     const char *v = getenv("SLOW32_DBT_TRACE_BRANCH_EXIT");
     trace_branch_exit_enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+    const char *rv = getenv("SLOW32_DBT_TRACE_BRANCH_REGS");
+    trace_branch_exit_regs_enabled = (rv && rv[0] != '\0' && strcmp(rv, "0") != 0);
     if (trace_branch_exit_enabled) {
         const char *maxv = getenv("SLOW32_DBT_TRACE_BRANCH_EXIT_MAX");
         trace_branch_exit_budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 64;
@@ -184,6 +187,18 @@ static bool dbt_trace_pc_matches_filter(uint32_t pc) {
     return false;
 }
 
+static bool dbt_eval_branch_taken(uint8_t opcode, uint32_t rs1, uint32_t rs2) {
+    switch (opcode) {
+        case OP_BEQ:  return rs1 == rs2;
+        case OP_BNE:  return rs1 != rs2;
+        case OP_BLT:  return (int32_t)rs1 <  (int32_t)rs2;
+        case OP_BGE:  return (int32_t)rs1 >= (int32_t)rs2;
+        case OP_BLTU: return rs1 <  rs2;
+        case OP_BGEU: return rs1 >= rs2;
+        default: return false;
+    }
+}
+
 static void dbt_trace_branch_exit(block_cache_t *cache,
                                   translated_block_t *block,
                                   dbt_cpu_state_t *cpu) {
@@ -222,6 +237,28 @@ static void dbt_trace_branch_exit(block_cache_t *cache,
             "dbt-branch-exit reason=%u next_pc=0x%08X block_pc=0x%08X exit_idx=%d branch_pc=0x%08X target_pc=0x%08X info=0x%08X\n",
             cpu->exit_reason, cpu->pc, block ? block->guest_pc : 0, exit_idx,
             branch_pc, target_pc, cpu->exit_info);
+    if (trace_branch_exit_regs_enabled &&
+        branch_pc != 0 &&
+        branch_pc + 4 <= cpu->code_limit) {
+        uint32_t raw = *(uint32_t *)(cpu->mem_base + branch_pc);
+        decoded_inst_t d = decode_instruction(raw);
+        if (d.opcode == OP_BEQ || d.opcode == OP_BNE ||
+            d.opcode == OP_BLT || d.opcode == OP_BGE ||
+            d.opcode == OP_BLTU || d.opcode == OP_BGEU) {
+            uint32_t rs1v = cpu->regs[d.rs1];
+            uint32_t rs2v = cpu->regs[d.rs2];
+            uint32_t fall_pc = branch_pc + 4;
+            uint32_t taken_pc = fall_pc + (uint32_t)d.imm;
+            bool cond_taken = dbt_eval_branch_taken(d.opcode, rs1v, rs2v);
+            const char *path = "other";
+            if (cpu->pc == taken_pc) path = "taken";
+            else if (cpu->pc == fall_pc) path = "fall";
+            fprintf(stderr,
+                    "dbt-branch-regs branch_pc=0x%08X op=0x%02X rs1=r%u(0x%08X) rs2=r%u(0x%08X) imm=%d cond_taken=%u next_pc=0x%08X path=%s taken_pc=0x%08X fall_pc=0x%08X\n",
+                    branch_pc, d.opcode, d.rs1, rs1v, d.rs2, rs2v, d.imm,
+                    cond_taken ? 1u : 0u, cpu->pc, path, taken_pc, fall_pc);
+        }
+    }
     trace_branch_exit_budget--;
 }
 
