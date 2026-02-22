@@ -1025,6 +1025,9 @@ static Node *parse_stmt(void) {
     int nj;
     int mi_off;
     int mi_ty;
+    int sp_idx;
+    int slen;
+    char *sp;
     char nm[256];
     /* Lexer save/restore for label lookahead */
     int sv_tok; int sv_val; int sv_slen; int sv_rcs; int sv_ract;
@@ -1265,39 +1268,86 @@ static Node *parse_stmt(void) {
         memcpy(nm, lex_str, lex_slen + 1);
         next();
 
-        /* Array declaration: type name[N]; or type name[N] = {v1, v2, ...}; */
+        /* Array declaration: type name[N]; or type name[N] = ...; or type name[] = ...; */
         if (lex_tok == TK_LBRACK) {
             next();
-            if (lex_tok != TK_NUM) {
-                p_error("expected array size");
-                return nd_num(0);
+            count = -1;
+            if (lex_tok == TK_NUM) {
+                count = lex_val;
+                next();
             }
-            count = lex_val;
-            next();
             expect(TK_RBRACK);
-            off = add_local_array(nm, ty, count);
             head = NULL;
             if (lex_tok == TK_ASSIGN) {
                 next();
-                expect(TK_LBRACE);
-                tail = NULL;
-                ci = 0;
-                while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
-                    if (ci > 0) expect(TK_COMMA);
-                    if (ci >= count) { p_error("too many initializers"); break; }
-                    /* *(arr + ci) = expr  →  deref(arr + index) = value */
-                    n = nd_var(nm, off, ty + TY_PTR);
-                    n->is_local = 1;
-                    n->is_array = 1;
-                    a = nd_binop(TK_PLUS, n, nd_num(ci));
-                    a = nd_unary(TK_STAR, a);
-                    a = nd_assign(a, parse_assign());
-                    a = nd_expr_stmt(a);
-                    if (head == NULL) { head = a; tail = a; }
-                    else { tail->next = a; tail = a; }
-                    ci = ci + 1;
+                if (lex_tok == TK_STRING) {
+                    /* String array init: char s[N] = "str" or char s[] = "str" */
+                    sp_idx = lex_val;
+                    slen = lex_str_len[sp_idx];
+                    if (count < 0) count = slen + 1;
+                    off = add_local_array(nm, ty, count);
+                    sp = lex_strpool + lex_str_off[sp_idx];
+                    tail = NULL;
+                    ci = 0;
+                    while (ci < slen && ci < count) {
+                        n = nd_var(nm, off, ty + TY_PTR);
+                        n->is_local = 1;
+                        n->is_array = 1;
+                        a = nd_binop(TK_PLUS, n, nd_num(ci));
+                        a = nd_unary(TK_STAR, a);
+                        a = nd_assign(a, nd_num(sp[ci] & 255));
+                        a = nd_expr_stmt(a);
+                        if (head == NULL) { head = a; tail = a; }
+                        else { tail->next = a; tail = a; }
+                        ci = ci + 1;
+                    }
+                    if (ci < count) {
+                        /* null terminator */
+                        n = nd_var(nm, off, ty + TY_PTR);
+                        n->is_local = 1;
+                        n->is_array = 1;
+                        a = nd_binop(TK_PLUS, n, nd_num(ci));
+                        a = nd_unary(TK_STAR, a);
+                        a = nd_assign(a, nd_num(0));
+                        a = nd_expr_stmt(a);
+                        if (head == NULL) { head = a; tail = a; }
+                        else { tail->next = a; tail = a; }
+                    }
+                    next();
+                } else if (lex_tok == TK_LBRACE) {
+                    if (count < 0) {
+                        p_error("array size required for brace init");
+                        return nd_num(0);
+                    }
+                    off = add_local_array(nm, ty, count);
+                    next();
+                    tail = NULL;
+                    ci = 0;
+                    while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+                        if (ci > 0) expect(TK_COMMA);
+                        if (ci >= count) { p_error("too many initializers"); break; }
+                        n = nd_var(nm, off, ty + TY_PTR);
+                        n->is_local = 1;
+                        n->is_array = 1;
+                        a = nd_binop(TK_PLUS, n, nd_num(ci));
+                        a = nd_unary(TK_STAR, a);
+                        a = nd_assign(a, parse_assign());
+                        a = nd_expr_stmt(a);
+                        if (head == NULL) { head = a; tail = a; }
+                        else { tail->next = a; tail = a; }
+                        ci = ci + 1;
+                    }
+                    expect(TK_RBRACE);
+                } else {
+                    p_error("expected string or { in array init");
+                    return nd_num(0);
                 }
-                expect(TK_RBRACE);
+            } else {
+                if (count < 0) {
+                    p_error("array size required without initializer");
+                    return nd_num(0);
+                }
+                off = add_local_array(nm, ty, count);
             }
             expect(TK_SEMI);
             if (head != NULL) return nd_block(head);
@@ -1445,6 +1495,9 @@ static Node *parse_top_decl(void) {
     int nsi;
     int nnf;
     int nj;
+    int sp_idx;
+    int slen;
+    char *sp;
 
     /* Skip static/const qualifiers (single-file compiler, no semantic effect) */
     while (lex_tok == TK_STATIC || lex_tok == TK_CONST) next();
@@ -1592,31 +1645,67 @@ static Node *parse_top_decl(void) {
     }
     if (lex_tok == TK_LBRACK) {
         next();
-        if (lex_tok != TK_NUM) {
-            p_error("expected array size");
-            return NULL;
+        count = -1;
+        if (lex_tok == TK_NUM) {
+            count = lex_val;
+            next();
         }
-        count = lex_val;
-        next();
         expect(TK_RBRACK);
-        idx = add_global(nm, ty + TY_PTR, ty_size(ty) * count);
         if (lex_tok == TK_ASSIGN) {
             next();
-            expect(TK_LBRACE);
-            ps_ginit_start[idx] = ps_ginit_pool_len;
-            gi = 0;
-            while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
-                if (gi > 0) expect(TK_COMMA);
-                if (gi >= count) { p_error("too many initializers"); break; }
-                if (ps_ginit_pool_len >= PS_MAX_INIT_POOL) {
-                    p_error("init pool overflow"); break;
+            if (lex_tok == TK_STRING) {
+                /* String array init: char s[N] = "str" or char s[] = "str" */
+                sp_idx = lex_val;
+                slen = lex_str_len[sp_idx];
+                if (count < 0) count = slen + 1;
+                idx = add_global(nm, ty + TY_PTR, ty_size(ty) * count);
+                ps_ginit_start[idx] = ps_ginit_pool_len;
+                sp = lex_strpool + lex_str_off[sp_idx];
+                gi = 0;
+                while (gi < slen && gi < count) {
+                    ps_ginit_pool[ps_ginit_pool_len] = sp[gi] & 255;
+                    ps_ginit_pool_len = ps_ginit_pool_len + 1;
+                    gi = gi + 1;
                 }
-                ps_ginit_pool[ps_ginit_pool_len] = parse_const_int();
-                ps_ginit_pool_len = ps_ginit_pool_len + 1;
-                gi = gi + 1;
+                if (gi < count) {
+                    /* null terminator */
+                    ps_ginit_pool[ps_ginit_pool_len] = 0;
+                    ps_ginit_pool_len = ps_ginit_pool_len + 1;
+                    gi = gi + 1;
+                }
+                ps_ginit_count[idx] = gi;
+                next();
+            } else if (lex_tok == TK_LBRACE) {
+                if (count < 0) {
+                    p_error("array size required for brace init");
+                    return NULL;
+                }
+                idx = add_global(nm, ty + TY_PTR, ty_size(ty) * count);
+                next();
+                ps_ginit_start[idx] = ps_ginit_pool_len;
+                gi = 0;
+                while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+                    if (gi > 0) expect(TK_COMMA);
+                    if (gi >= count) { p_error("too many initializers"); break; }
+                    if (ps_ginit_pool_len >= PS_MAX_INIT_POOL) {
+                        p_error("init pool overflow"); break;
+                    }
+                    ps_ginit_pool[ps_ginit_pool_len] = parse_const_int();
+                    ps_ginit_pool_len = ps_ginit_pool_len + 1;
+                    gi = gi + 1;
+                }
+                ps_ginit_count[idx] = gi;
+                expect(TK_RBRACE);
+            } else {
+                p_error("expected string or { in array init");
+                return NULL;
             }
-            ps_ginit_count[idx] = gi;
-            expect(TK_RBRACE);
+        } else {
+            if (count < 0) {
+                p_error("array size required without initializer");
+                return NULL;
+            }
+            idx = add_global(nm, ty + TY_PTR, ty_size(ty) * count);
         }
         expect(TK_SEMI);
         return NULL;
