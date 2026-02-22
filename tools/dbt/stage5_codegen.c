@@ -2201,16 +2201,38 @@ static bool cg_emit_phi_edge_copies(stage5_cg_t *cg,
     const stage5_phi_edge_plan_t *edge = cg_find_phi_edge_plan(plan, pred_block, succ_block);
     if (!edge || edge->copy_count == 0) return true;
 
+    // Peephole for edge copies: drop no-ops and duplicate (dst<-src) pairs.
+    stage5_phi_copy_t copies[STAGE5_MAX_PHI_COPIES_PER_EDGE];
+    uint8_t copy_count = 0;
+    for (uint8_t i = 0; i < edge->copy_count; i++) {
+        const stage5_phi_copy_t *c = &edge->copies[i];
+        if (c->guest_reg == 0 || c->src_guest_reg == 0 || c->guest_reg == c->src_guest_reg) {
+            continue;
+        }
+        bool dup = false;
+        for (uint8_t j = 0; j < copy_count; j++) {
+            if (copies[j].guest_reg == c->guest_reg &&
+                copies[j].src_guest_reg == c->src_guest_reg) {
+                dup = true;
+                break;
+            }
+        }
+        if (!dup && copy_count < STAGE5_MAX_PHI_COPIES_PER_EDGE) {
+            copies[copy_count++] = *c;
+        }
+    }
+    if (copy_count == 0) return true;
+
     bool done[STAGE5_MAX_PHI_COPIES_PER_EDGE];
     memset(done, 0, sizeof(done));
-    uint8_t rem = edge->copy_count;
+    uint8_t rem = copy_count;
 
     while (rem > 0) {
         bool progressed = false;
-        for (uint8_t i = 0; i < edge->copy_count; i++) {
+        for (uint8_t i = 0; i < copy_count; i++) {
             if (done[i]) continue;
-            uint8_t src = edge->copies[i].src_guest_reg;
-            uint8_t dst = edge->copies[i].guest_reg;
+            uint8_t src = copies[i].src_guest_reg;
+            uint8_t dst = copies[i].guest_reg;
             if (src == 0 || dst == 0 || src == dst) {
                 done[i] = true;
                 rem--;
@@ -2219,9 +2241,9 @@ static bool cg_emit_phi_edge_copies(stage5_cg_t *cg,
             }
 
             bool src_is_pending_dst = false;
-            for (uint8_t j = 0; j < edge->copy_count; j++) {
+            for (uint8_t j = 0; j < copy_count; j++) {
                 if (done[j] || i == j) continue;
-                if (edge->copies[j].guest_reg == src) {
+                if (copies[j].guest_reg == src) {
                     src_is_pending_dst = true;
                     break;
                 }
@@ -2236,7 +2258,7 @@ static bool cg_emit_phi_edge_copies(stage5_cg_t *cg,
         if (progressed) continue;
 
         int seed = -1;
-        for (uint8_t i = 0; i < edge->copy_count; i++) {
+        for (uint8_t i = 0; i < copy_count; i++) {
             if (!done[i]) {
                 seed = (int)i;
                 break;
@@ -2244,8 +2266,8 @@ static bool cg_emit_phi_edge_copies(stage5_cg_t *cg,
         }
         if (seed < 0) break;
 
-        uint8_t dst0 = edge->copies[seed].guest_reg;
-        uint8_t src0 = edge->copies[seed].src_guest_reg;
+        uint8_t dst0 = copies[seed].guest_reg;
+        uint8_t src0 = copies[seed].src_guest_reg;
         if (dst0 == 0 || src0 == 0) {
             done[seed] = true;
             rem--;
@@ -2266,10 +2288,10 @@ static bool cg_emit_phi_edge_copies(stage5_cg_t *cg,
             cg_emit_guest_reg_copy(cg, curr_dst, curr_src);
 
             bool found = false;
-            for (uint8_t i = 0; i < edge->copy_count; i++) {
+            for (uint8_t i = 0; i < copy_count; i++) {
                 if (done[i]) continue;
-                if (edge->copies[i].guest_reg == curr_dst &&
-                    edge->copies[i].src_guest_reg == curr_src) {
+                if (copies[i].guest_reg == curr_dst &&
+                    copies[i].src_guest_reg == curr_src) {
                     done[i] = true;
                     rem--;
                     found = true;
@@ -2280,10 +2302,10 @@ static bool cg_emit_phi_edge_copies(stage5_cg_t *cg,
 
             uint8_t next_src = 0;
             bool next_found = false;
-            for (uint8_t i = 0; i < edge->copy_count; i++) {
+            for (uint8_t i = 0; i < copy_count; i++) {
                 if (done[i]) continue;
-                if (edge->copies[i].guest_reg == curr_src) {
-                    next_src = edge->copies[i].src_guest_reg;
+                if (copies[i].guest_reg == curr_src) {
+                    next_src = copies[i].src_guest_reg;
                     next_found = true;
                     break;
                 }
@@ -2301,10 +2323,10 @@ static bool cg_emit_phi_edge_copies(stage5_cg_t *cg,
             emit_mov_m32_r32(cg->e, RBP, GUEST_REG_OFFSET(curr_dst), R10);
         }
         cg_mark_dirty(cg, curr_dst);
-        for (uint8_t i = 0; i < edge->copy_count; i++) {
+        for (uint8_t i = 0; i < copy_count; i++) {
             if (done[i]) continue;
-            if (edge->copies[i].guest_reg == curr_dst &&
-                edge->copies[i].src_guest_reg == curr_src) {
+            if (copies[i].guest_reg == curr_dst &&
+                copies[i].src_guest_reg == curr_src) {
                 done[i] = true;
                 rem--;
                 break;
