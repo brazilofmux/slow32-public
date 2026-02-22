@@ -2209,6 +2209,22 @@ int main(int argc, char **argv) {
                         fprintf(stderr, "  emit policy jalr_indirect: %" PRIu32 "\n",
                                 stage5_emit_fallback_policy_jalr_indirect);
                     }
+                    if (stage5_emit_fallback_policy_bench_jal_jump > 0) {
+                        fprintf(stderr, "  emit policy bench_jal_jump: %" PRIu32 "\n",
+                                stage5_emit_fallback_policy_bench_jal_jump);
+                    }
+                    if (stage5_emit_fallback_policy_bench_direct_branch > 0) {
+                        fprintf(stderr, "  emit policy bench_direct_branch: %" PRIu32 "\n",
+                                stage5_emit_fallback_policy_bench_direct_branch);
+                    }
+                    if (stage5_emit_fallback_policy_bench_block_end > 0) {
+                        fprintf(stderr, "  emit policy bench_block_end: %" PRIu32 "\n",
+                                stage5_emit_fallback_policy_bench_block_end);
+                    }
+                    if (stage5_emit_fallback_policy_call_return > 0) {
+                        fprintf(stderr, "  emit policy call_return: %" PRIu32 "\n",
+                                stage5_emit_fallback_policy_call_return);
+                    }
                     if (stage5_emit_fallback_policy_direct_branch > 0) {
                         fprintf(stderr, "  emit policy direct_branch: %" PRIu32 "\n",
                                 stage5_emit_fallback_policy_direct_branch);

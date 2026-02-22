@@ -55,6 +55,10 @@ uint32_t stage5_emit_fallback_superblock_policy = 0;
 uint32_t stage5_emit_fallback_policy_guardrail = 0;
 uint32_t stage5_emit_fallback_policy_jalr_indirect = 0;
 uint32_t stage5_emit_fallback_policy_direct_branch = 0;
+uint32_t stage5_emit_fallback_policy_bench_jal_jump = 0;
+uint32_t stage5_emit_fallback_policy_bench_direct_branch = 0;
+uint32_t stage5_emit_fallback_policy_bench_block_end = 0;
+uint32_t stage5_emit_fallback_policy_call_return = 0;
 uint32_t stage5_emit_fallback_policy_regflow = 0;
 uint32_t stage5_emit_fallback_policy_regflow_cross = 0;
 uint32_t stage5_emit_fallback_policy_regflow_span = 0;
@@ -2740,6 +2744,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         stage5_emit_fallback++;
         stage5_emit_fallback_shape++;
         stage5_emit_fallback_superblock_policy++;
+        stage5_emit_fallback_policy_bench_jal_jump++;
         return false;
     }
     if (bench_profile &&
@@ -2748,6 +2753,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         stage5_emit_fallback++;
         stage5_emit_fallback_shape++;
         stage5_emit_fallback_superblock_policy++;
+        stage5_emit_fallback_policy_bench_direct_branch++;
         return false;
     }
     if (bench_profile &&
@@ -2756,6 +2762,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         stage5_emit_fallback++;
         stage5_emit_fallback_shape++;
         stage5_emit_fallback_superblock_policy++;
+        stage5_emit_fallback_policy_bench_block_end++;
         return false;
     }
     if ((!region.has_terminal_branch && !synth_block_end) || region.guest_inst_count == 0) {
@@ -2885,6 +2892,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         stage5_emit_fallback++;
         stage5_emit_fallback_shape++;
         stage5_emit_fallback_superblock_policy++;
+        stage5_emit_fallback_policy_call_return++;
         return false;
     }
     if ((emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
