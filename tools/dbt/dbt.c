@@ -1527,6 +1527,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_CMP_RR=1  Allow Stage5 native codegen for compare rr ops\n");
     fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_CMP_RI=1  Allow Stage5 native codegen for compare imm ops\n");
     fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_FUSED_BRANCH=1  Allow fused cmp+branch terminal codegen\n");
+    fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_BRANCH_TERM=1  Allow branch terminal codegen\n");
 }
 
 static void parse_service_list(const char *list, char names[][S32_MAX_SVC_NAME], int *count, int max) {
@@ -2704,6 +2705,26 @@ int main(int argc, char **argv) {
             if (stage5_codegen_fallback_unsupported_op > 0) {
                 fprintf(stderr, "  codegen unsupported op: %" PRIu32 "\n",
                         stage5_codegen_fallback_unsupported_op);
+            }
+            if (stage5_codegen_fallback_preflight > 0) {
+                fprintf(stderr, "  codegen preflight:      %" PRIu32 "\n",
+                        stage5_codegen_fallback_preflight);
+            }
+            if (stage5_codegen_fallback_preflight_branch_cmp_mix > 0) {
+                fprintf(stderr, "    preflight branch+cmp mix: %" PRIu32 "\n",
+                        stage5_codegen_fallback_preflight_branch_cmp_mix);
+            }
+            if (stage5_codegen_fallback_side_exit > 0) {
+                fprintf(stderr, "  codegen side_exit:      %" PRIu32 "\n",
+                        stage5_codegen_fallback_side_exit);
+            }
+            if (stage5_codegen_fallback_emit_node > 0) {
+                fprintf(stderr, "  codegen emit_node:      %" PRIu32 "\n",
+                        stage5_codegen_fallback_emit_node);
+            }
+            if (stage5_codegen_fallback_terminal > 0) {
+                fprintf(stderr, "  codegen terminal:       %" PRIu32 "\n",
+                        stage5_codegen_fallback_terminal);
             }
             if (stage5_codegen_guest_insts > 0) {
                 fprintf(stderr, "Stage5 codegen guest insts: %" PRIu64 "\n",

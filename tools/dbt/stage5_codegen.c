@@ -21,6 +21,11 @@ uint32_t stage5_codegen_attempted;
 uint32_t stage5_codegen_success;
 uint32_t stage5_codegen_fallback;
 uint32_t stage5_codegen_fallback_unsupported_op;
+uint32_t stage5_codegen_fallback_preflight;
+uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix;
+uint32_t stage5_codegen_fallback_side_exit;
+uint32_t stage5_codegen_fallback_emit_node;
+uint32_t stage5_codegen_fallback_terminal;
 uint64_t stage5_codegen_guest_insts;
 uint64_t stage5_codegen_host_bytes;
 uint32_t stage5_codegen_regs_allocated_hist[REG_ALLOC_SLOTS + 1];
@@ -58,6 +63,17 @@ static bool cg_fused_branch_enabled(void) {
     return enabled;
 }
 
+static bool cg_branch_term_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_TERM");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
 // ============================================================================
 // Forward declarations for translate.c functions we need
 // ============================================================================
@@ -81,6 +97,109 @@ typedef struct {
     const stage5_lift_region_t *region;
     uint32_t emitted_insts;        // Number of guest instructions emitted
 } stage5_cg_t;
+
+typedef struct {
+    size_t emit_offset;
+    bool emit_overflow;
+    bool emit_rax_pending;
+    uint32_t guest_pc;
+    int current_inst_idx;
+    int exit_idx;
+    int side_exit_emitted;
+    int deferred_exit_count;
+    int pc_map_count;
+    int validated_range_count;
+
+    struct {
+        uint8_t guest_reg;
+        bool allocated;
+        bool dirty;
+    } reg_alloc[REG_ALLOC_SLOTS];
+    int8_t reg_alloc_map[32];
+
+    struct {
+        bool valid;
+        uint8_t guest_reg;
+        host_reg_t host_reg;
+        bool can_skip_store;
+    } pending_write;
+
+    struct {
+        bool valid;
+        uint8_t opcode;
+        uint8_t rd;
+        uint8_t rs1, rs2;
+        bool rs2_is_imm;
+        int32_t imm;
+        int inst_idx;
+    } pending_cond;
+
+    struct {
+        bool valid;
+        uint32_t value;
+    } reg_constants[32];
+
+    struct {
+        uint8_t guest_reg;
+        uint32_t lo_offset;
+        uint32_t hi_end;
+        bool is_store_ok;
+    } validated_ranges[MAX_VALIDATED_RANGES];
+
+    struct {
+        size_t jmp_patch_offset;
+        uint32_t target_pc;
+        int exit_idx;
+        uint32_t branch_pc;
+        bool dirty_snapshot[REG_ALLOC_SLOTS];
+        bool allocated_snapshot[REG_ALLOC_SLOTS];
+        uint8_t guest_reg_snapshot[REG_ALLOC_SLOTS];
+        bool pending_write_valid;
+        uint8_t pending_write_guest_reg;
+        host_reg_t pending_write_host_reg;
+        bool force_full_flush;
+    } deferred_exits[MAX_BLOCK_EXITS];
+} stage5_codegen_state_t;
+
+static void cg_state_save(stage5_codegen_state_t *s, const translate_ctx_t *ctx) {
+    s->emit_offset = ctx->emit.offset;
+    s->emit_overflow = ctx->emit.overflow;
+    s->emit_rax_pending = ctx->emit.rax_pending;
+    s->guest_pc = ctx->guest_pc;
+    s->current_inst_idx = ctx->current_inst_idx;
+    s->exit_idx = ctx->exit_idx;
+    s->side_exit_emitted = ctx->side_exit_emitted;
+    s->deferred_exit_count = ctx->deferred_exit_count;
+    s->pc_map_count = ctx->pc_map_count;
+    s->validated_range_count = ctx->validated_range_count;
+    memcpy(s->reg_alloc, ctx->reg_alloc, sizeof(s->reg_alloc));
+    memcpy(s->reg_alloc_map, ctx->reg_alloc_map, sizeof(s->reg_alloc_map));
+    memcpy(&s->pending_write, &ctx->pending_write, sizeof(s->pending_write));
+    memcpy(&s->pending_cond, &ctx->pending_cond, sizeof(s->pending_cond));
+    memcpy(s->reg_constants, ctx->reg_constants, sizeof(s->reg_constants));
+    memcpy(s->validated_ranges, ctx->validated_ranges, sizeof(s->validated_ranges));
+    memcpy(s->deferred_exits, ctx->deferred_exits, sizeof(s->deferred_exits));
+}
+
+static void cg_state_restore(translate_ctx_t *ctx, const stage5_codegen_state_t *s) {
+    ctx->emit.offset = s->emit_offset;
+    ctx->emit.overflow = s->emit_overflow;
+    ctx->emit.rax_pending = s->emit_rax_pending;
+    ctx->guest_pc = s->guest_pc;
+    ctx->current_inst_idx = s->current_inst_idx;
+    ctx->exit_idx = s->exit_idx;
+    ctx->side_exit_emitted = s->side_exit_emitted;
+    ctx->deferred_exit_count = s->deferred_exit_count;
+    ctx->pc_map_count = s->pc_map_count;
+    ctx->validated_range_count = s->validated_range_count;
+    memcpy(ctx->reg_alloc, s->reg_alloc, sizeof(s->reg_alloc));
+    memcpy(ctx->reg_alloc_map, s->reg_alloc_map, sizeof(s->reg_alloc_map));
+    memcpy(&ctx->pending_write, &s->pending_write, sizeof(s->pending_write));
+    memcpy(&ctx->pending_cond, &s->pending_cond, sizeof(s->pending_cond));
+    memcpy(ctx->reg_constants, s->reg_constants, sizeof(s->reg_constants));
+    memcpy(ctx->validated_ranges, s->validated_ranges, sizeof(s->validated_ranges));
+    memcpy(ctx->deferred_exits, s->deferred_exits, sizeof(s->deferred_exits));
+}
 
 // ============================================================================
 // Register resolution helpers
@@ -620,7 +739,7 @@ static bool cg_opcode_supported(uint8_t opcode, bool cmp_rr_enabled, bool cmp_ri
     }
 }
 
-static bool cg_terminal_supported(uint8_t opcode) {
+static bool cg_terminal_supported(uint8_t opcode, bool branch_term_enabled) {
     switch (opcode) {
         case OP_JAL:
         case OP_JALR:
@@ -628,6 +747,9 @@ static bool cg_terminal_supported(uint8_t opcode) {
         case OP_DEBUG:
         case OP_YIELD:
             return true;
+        case OP_BEQ:
+        case OP_BNE:
+            return branch_term_enabled;
         default:
             return false;
     }
@@ -642,6 +764,7 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
     bool cmp_rr_enabled = cg_cmp_rr_enabled();
     bool cmp_ri_enabled = cmp_rr_enabled && cg_cmp_ri_enabled();
     bool fused_branch_enabled = cg_fused_branch_enabled();
+    bool branch_term_enabled = cg_branch_term_enabled();
 
     if (fuse_cmp_idx >= 0 && !fused_branch_enabled) {
         return false;
@@ -675,8 +798,32 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
 
     if (terminal_idx >= 0) {
         const stage5_ir_node_t *term = &region->ir[terminal_idx];
-        if (!cg_terminal_supported(term->opcode)) {
+        if (!cg_terminal_supported(term->opcode, branch_term_enabled)) {
             return false;
+        }
+        if (branch_term_enabled &&
+            (term->opcode == OP_BEQ || term->opcode == OP_BNE ||
+             term->opcode == OP_BLT || term->opcode == OP_BGE ||
+             term->opcode == OP_BLTU || term->opcode == OP_BGEU)) {
+            // Conservative safety gate: avoid branch-terminal regions that
+            // also contain compare prefix nodes until cmp+branch interactions
+            // are fully audited.
+            for (uint32_t i = 0; i < region->ir_count; i++) {
+                if ((int)i == terminal_idx || (fuse_cmp_idx >= 0 && (int)i == fuse_cmp_idx)) {
+                    continue;
+                }
+                const stage5_ir_node_t *n = &region->ir[i];
+                if (n->synthetic) continue;
+                if (n->opcode == OP_SLT || n->opcode == OP_SLTU ||
+                    n->opcode == OP_SEQ || n->opcode == OP_SNE ||
+                    n->opcode == OP_SGT || n->opcode == OP_SGTU ||
+                    n->opcode == OP_SLE || n->opcode == OP_SLEU ||
+                    n->opcode == OP_SGE || n->opcode == OP_SGEU ||
+                    n->opcode == OP_SLTI || n->opcode == OP_SLTIU) {
+                    stage5_codegen_fallback_preflight_branch_cmp_mix++;
+                    return false;
+                }
+            }
         }
     }
 
@@ -886,6 +1033,9 @@ bool stage5_codegen(translate_ctx_t *ctx,
                     const void *side_exit_family_cfg_ptr) {
     stage5_codegen_attempted++;
 
+    stage5_codegen_state_t saved;
+    cg_state_save(&saved, ctx);
+
     // Count allocated registers
     {
         int count = 0;
@@ -914,6 +1064,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
     if (!cg_region_preflight(region, terminal_idx, fuse_cmp_idx, synth_block_end,
                              side_exit_emit_enabled, side_exit_family_c)) {
         stage5_codegen_fallback++;
+        stage5_codegen_fallback_preflight++;
         return false;
     }
 
@@ -935,6 +1086,8 @@ bool stage5_codegen(translate_ctx_t *ctx,
             ctx->exit_idx + 2 < MAX_BLOCK_EXITS &&
             ctx->deferred_exit_count < MAX_BLOCK_EXITS) {
             stage5_codegen_fallback++;
+            stage5_codegen_fallback_side_exit++;
+            cg_state_restore(ctx, &saved);
             return false;
         }
 
@@ -944,6 +1097,8 @@ bool stage5_codegen(translate_ctx_t *ctx,
         if (!cg_emit_node(&cg, n)) {
             // Unsupported instruction — abort
             stage5_codegen_fallback++;
+            stage5_codegen_fallback_emit_node++;
+            cg_state_restore(ctx, &saved);
             return false;
         }
         cg.emitted_insts++;
@@ -1017,6 +1172,8 @@ bool stage5_codegen(translate_ctx_t *ctx,
 
     if (!ended) {
         stage5_codegen_fallback++;
+        stage5_codegen_fallback_terminal++;
+        cg_state_restore(ctx, &saved);
         return false;
     }
 
