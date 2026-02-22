@@ -2182,6 +2182,22 @@ int main(int argc, char **argv) {
                         fprintf(stderr, "  emit policy direct_branch: %" PRIu32 "\n",
                                 stage5_emit_fallback_policy_direct_branch);
                     }
+                    if (stage5_emit_fallback_policy_regflow > 0) {
+                        fprintf(stderr, "  emit policy regflow: %" PRIu32 "\n",
+                                stage5_emit_fallback_policy_regflow);
+                        if (stage5_emit_fallback_policy_regflow_cross > 0) {
+                            fprintf(stderr, "    regflow cross: %" PRIu32 "\n",
+                                    stage5_emit_fallback_policy_regflow_cross);
+                        }
+                        if (stage5_emit_fallback_policy_regflow_span > 0) {
+                            fprintf(stderr, "    regflow span: %" PRIu32 "\n",
+                                    stage5_emit_fallback_policy_regflow_span);
+                        }
+                        if (stage5_emit_fallback_policy_regflow_live > 0) {
+                            fprintf(stderr, "    regflow live: %" PRIu32 "\n",
+                                    stage5_emit_fallback_policy_regflow_live);
+                        }
+                    }
                 }
                 if (stage5_emit_policy_allow_call > 0) {
                     fprintf(stderr, "  emit policy allow_call: %" PRIu32 "\n",
@@ -2432,6 +2448,13 @@ int main(int argc, char **argv) {
             fprintf(stderr, "  cfg spill_likely regions: %" PRIu32 "\n",
                     stage5_cfg_spill_likely_regions);
             fprintf(stderr, "  cfg max live seen: %" PRIu32 "\n", stage5_cfg_max_live_seen);
+            if (stage5_reg_flow_regions > 0) {
+                double avg_cross_regs = (double)stage5_reg_flow_cross_block_regs_total /
+                                        (double)stage5_reg_flow_regions;
+                fprintf(stderr, "  reg-flow avg cross-block regs/region: %.2f\n", avg_cross_regs);
+                fprintf(stderr, "  reg-flow max span seen: %" PRIu32 "\n",
+                        stage5_reg_flow_max_span_seen);
+            }
         }
 
         if (stage >= 2) {

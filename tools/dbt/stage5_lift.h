@@ -92,6 +92,17 @@ typedef struct {
 } stage5_cfg_block_t;
 
 typedef struct {
+    uint16_t first_def;
+    uint16_t last_def;
+    uint16_t first_use;
+    uint16_t last_use;
+    uint16_t def_count;
+    uint16_t use_count;
+    uint8_t live_blocks;
+    bool live_across_edge;
+} stage5_reg_flow_t;
+
+typedef struct {
     uint32_t start_pc;
     uint32_t end_pc;
     uint32_t node_count;
@@ -111,6 +122,10 @@ typedef struct {
     uint32_t cfg_liveness_iterations;
     uint32_t cfg_max_live;
     bool cfg_spill_likely; // coarse pressure hint: true when max_live > 8
+    bool reg_flow_valid;
+    stage5_reg_flow_t reg_flow[32];
+    uint32_t reg_flow_cross_block_regs;
+    uint32_t reg_flow_max_span;
     stage5_lift_reason_t reason;
 } stage5_lift_region_t;
 

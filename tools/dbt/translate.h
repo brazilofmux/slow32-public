@@ -68,6 +68,10 @@ extern uint32_t stage5_emit_fallback_superblock_policy;
 extern uint32_t stage5_emit_fallback_policy_guardrail;
 extern uint32_t stage5_emit_fallback_policy_jalr_indirect;
 extern uint32_t stage5_emit_fallback_policy_direct_branch;
+extern uint32_t stage5_emit_fallback_policy_regflow;
+extern uint32_t stage5_emit_fallback_policy_regflow_cross;
+extern uint32_t stage5_emit_fallback_policy_regflow_span;
+extern uint32_t stage5_emit_fallback_policy_regflow_live;
 extern uint32_t stage5_emit_policy_allow_call;
 extern uint32_t stage5_emit_prefilter_skip;
 extern uint32_t stage5_emit_prefilter_skip_branch_head;
@@ -136,6 +140,9 @@ extern uint32_t stage5_cfg_blocks_total;
 extern uint64_t stage5_cfg_liveness_iterations_total;
 extern uint32_t stage5_cfg_spill_likely_regions;
 extern uint32_t stage5_cfg_max_live_seen;
+extern uint32_t stage5_reg_flow_regions;
+extern uint64_t stage5_reg_flow_cross_block_regs_total;
+extern uint32_t stage5_reg_flow_max_span_seen;
 
 // Translation context
 typedef struct {

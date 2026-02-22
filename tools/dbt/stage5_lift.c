@@ -165,6 +165,13 @@ static inline uint32_t reg_mask(uint8_t reg) {
     return (reg == 0) ? 0u : (1u << (reg & 31u));
 }
 
+static uint16_t min_u16_or(uint16_t a, uint16_t b) {
+    if (a == 0xFFFFu && b == 0xFFFFu) return 0xFFFFu;
+    if (a == 0xFFFFu) return b;
+    if (b == 0xFFFFu) return a;
+    return (a < b) ? a : b;
+}
+
 static void stage5_cfg_inst_rw_masks(uint8_t opcode, uint8_t rd, uint8_t rs1, uint8_t rs2,
                                      uint32_t *read_mask, uint32_t *write_mask) {
     uint32_t r = 0, w = 0;
@@ -209,6 +216,90 @@ static void stage5_cfg_inst_rw_masks(uint8_t opcode, uint8_t rd, uint8_t rs1, ui
     }
     *read_mask = r;
     *write_mask = w;
+}
+
+static void stage5_build_reg_flow(stage5_lift_region_t *region,
+                                  const uint8_t *inst_op,
+                                  const uint8_t *inst_rd,
+                                  const uint8_t *inst_rs1,
+                                  const uint8_t *inst_rs2,
+                                  uint32_t inst_count) {
+    if (!region) return;
+    region->reg_flow_valid = false;
+    region->reg_flow_cross_block_regs = 0;
+    region->reg_flow_max_span = 0;
+    if (inst_count == 0) return;
+
+    for (int r = 0; r < 32; r++) {
+        region->reg_flow[r].first_def = 0xFFFFu;
+        region->reg_flow[r].last_def = 0xFFFFu;
+        region->reg_flow[r].first_use = 0xFFFFu;
+        region->reg_flow[r].last_use = 0xFFFFu;
+        region->reg_flow[r].def_count = 0;
+        region->reg_flow[r].use_count = 0;
+        region->reg_flow[r].live_blocks = 0;
+        region->reg_flow[r].live_across_edge = false;
+    }
+
+    for (uint32_t i = 0; i < inst_count; i++) {
+        uint32_t read_mask = 0, write_mask = 0;
+        stage5_cfg_inst_rw_masks(inst_op[i], inst_rd[i], inst_rs1[i], inst_rs2[i],
+                                 &read_mask, &write_mask);
+        for (uint8_t r = 1; r < 32; r++) {
+            uint32_t bit = 1u << r;
+            if (read_mask & bit) {
+                stage5_reg_flow_t *f = &region->reg_flow[r];
+                f->use_count++;
+                uint16_t ii = (uint16_t)i;
+                f->first_use = min_u16_or(f->first_use, ii);
+                f->last_use = ii;
+            }
+            if (write_mask & bit) {
+                stage5_reg_flow_t *f = &region->reg_flow[r];
+                f->def_count++;
+                uint16_t ii = (uint16_t)i;
+                f->first_def = min_u16_or(f->first_def, ii);
+                f->last_def = ii;
+            }
+        }
+    }
+
+    uint32_t cross_edge_mask = 0;
+    for (uint32_t b = 0; b < region->cfg_block_count; b++) {
+        const stage5_cfg_block_t *blk = &region->cfg_blocks[b];
+        uint32_t live_any = blk->live_in_mask | blk->live_out_mask;
+        for (uint8_t r = 1; r < 32; r++) {
+            if (live_any & (1u << r)) {
+                if (region->reg_flow[r].live_blocks < 255) {
+                    region->reg_flow[r].live_blocks++;
+                }
+            }
+        }
+        for (uint8_t s = 0; s < blk->succ_count; s++) {
+            int sb = blk->succ_block[s];
+            if (sb < 0 || (uint32_t)sb >= region->cfg_block_count) continue;
+            uint32_t x = blk->live_out_mask & region->cfg_blocks[sb].live_in_mask;
+            cross_edge_mask |= x;
+        }
+    }
+
+    for (uint8_t r = 1; r < 32; r++) {
+        stage5_reg_flow_t *f = &region->reg_flow[r];
+        if (cross_edge_mask & (1u << r)) {
+            f->live_across_edge = true;
+            region->reg_flow_cross_block_regs++;
+        }
+        uint16_t first = min_u16_or(f->first_def, f->first_use);
+        uint16_t last = (f->last_def == 0xFFFFu) ? f->last_use :
+                        (f->last_use == 0xFFFFu ? f->last_def :
+                         (f->last_def > f->last_use ? f->last_def : f->last_use));
+        if (first != 0xFFFFu && last != 0xFFFFu && last >= first) {
+            uint32_t span = (uint32_t)(last - first + 1u);
+            if (span > region->reg_flow_max_span) region->reg_flow_max_span = span;
+        }
+    }
+
+    region->reg_flow_valid = true;
 }
 
 static bool stage5_cfg_is_branch_opcode(uint8_t opcode) {
@@ -455,6 +546,7 @@ static void stage5_build_cfg(stage5_lift_region_t *region) {
     }
     region->cfg_max_live = max_live;
     region->cfg_spill_likely = (max_live > 8u);
+    stage5_build_reg_flow(region, inst_op, inst_rd, inst_rs1, inst_rs2, inst_count);
 
     region->cfg_valid = true;
 }
@@ -575,6 +667,9 @@ void stage5_lift_region_init(stage5_lift_region_t *region, uint32_t start_pc) {
     region->cfg_liveness_iterations = 0;
     region->cfg_max_live = 0;
     region->cfg_spill_likely = false;
+    region->reg_flow_valid = false;
+    region->reg_flow_cross_block_regs = 0;
+    region->reg_flow_max_span = 0;
     region->reason = STAGE5_LIFT_NOT_IMPLEMENTED;
 }
 

@@ -55,6 +55,10 @@ uint32_t stage5_emit_fallback_superblock_policy = 0;
 uint32_t stage5_emit_fallback_policy_guardrail = 0;
 uint32_t stage5_emit_fallback_policy_jalr_indirect = 0;
 uint32_t stage5_emit_fallback_policy_direct_branch = 0;
+uint32_t stage5_emit_fallback_policy_regflow = 0;
+uint32_t stage5_emit_fallback_policy_regflow_cross = 0;
+uint32_t stage5_emit_fallback_policy_regflow_span = 0;
+uint32_t stage5_emit_fallback_policy_regflow_live = 0;
 uint32_t stage5_emit_policy_allow_call = 0;
 uint32_t stage5_emit_prefilter_skip = 0;
 uint32_t stage5_emit_prefilter_skip_branch_head = 0;
@@ -93,6 +97,9 @@ uint32_t stage5_cfg_blocks_total = 0;
 uint64_t stage5_cfg_liveness_iterations_total = 0;
 uint32_t stage5_cfg_spill_likely_regions = 0;
 uint32_t stage5_cfg_max_live_seen = 0;
+uint32_t stage5_reg_flow_regions = 0;
+uint64_t stage5_reg_flow_cross_block_regs_total = 0;
+uint32_t stage5_reg_flow_max_span_seen = 0;
 uint32_t stage5_emit_fused_cmp_branch = 0;
 uint32_t stage5_emit_side_exits = 0;
 uint32_t stage5_emit_region_side_exit_total = 0;
@@ -149,6 +156,48 @@ static bool stage5_emit_calls_enabled(void) {
         inited = true;
     }
     return enabled;
+}
+
+static uint32_t stage5_emit_regflow_cross_limit(void) {
+    static bool inited = false;
+    static uint32_t limit = 10;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_REGFLOW_MAX_CROSS");
+        if (v && v[0] != '\0') {
+            unsigned long x = strtoul(v, NULL, 0);
+            if (x < 32ul) limit = (uint32_t)x;
+        }
+        inited = true;
+    }
+    return limit;
+}
+
+static uint32_t stage5_emit_regflow_span_limit(void) {
+    static bool inited = false;
+    static uint32_t limit = 24;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_REGFLOW_MAX_SPAN");
+        if (v && v[0] != '\0') {
+            unsigned long x = strtoul(v, NULL, 0);
+            if (x <= MAX_BLOCK_INSTS) limit = (uint32_t)x;
+        }
+        inited = true;
+    }
+    return limit;
+}
+
+static uint32_t stage5_emit_regflow_live_limit(void) {
+    static bool inited = false;
+    static uint32_t limit = 10;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_REGFLOW_MAX_LIVE");
+        if (v && v[0] != '\0') {
+            unsigned long x = strtoul(v, NULL, 0);
+            if (x < 32ul) limit = (uint32_t)x;
+        }
+        inited = true;
+    }
+    return limit;
 }
 
 static bool stage5_validate_abort_on_mismatch(void) {
@@ -826,6 +875,13 @@ static void stage5_record_cfg_metrics(const stage5_lift_region_t *region) {
     if (region->cfg_spill_likely) stage5_cfg_spill_likely_regions++;
     if (region->cfg_max_live > stage5_cfg_max_live_seen) {
         stage5_cfg_max_live_seen = region->cfg_max_live;
+    }
+    if (region->reg_flow_valid) {
+        stage5_reg_flow_regions++;
+        stage5_reg_flow_cross_block_regs_total += region->reg_flow_cross_block_regs;
+        if (region->reg_flow_max_span > stage5_reg_flow_max_span_seen) {
+            stage5_reg_flow_max_span_seen = region->reg_flow_max_span;
+        }
     }
 }
 
@@ -2237,6 +2293,35 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
 
     // Superblock guardrail: for larger branch-ending regions, keep Stage4 in
     // control so forward-branch extension and side-exit shaping remain intact.
+    bool regflow_guard_hit = false;
+    bool regflow_cross_hit = false;
+    bool regflow_span_hit = false;
+    bool regflow_live_hit = false;
+    if (saved_superblock_enabled &&
+        region.cfg_valid &&
+        region.reg_flow_valid &&
+        region.cfg_block_count > 1 &&
+        region.guest_inst_count >= 4) {
+        uint32_t cross_limit = stage5_emit_regflow_cross_limit();
+        uint32_t span_limit = stage5_emit_regflow_span_limit();
+        uint32_t live_limit = stage5_emit_regflow_live_limit();
+        regflow_cross_hit = region.reg_flow_cross_block_regs > cross_limit;
+        regflow_span_hit = region.reg_flow_max_span > span_limit;
+        regflow_live_hit = region.cfg_max_live > live_limit;
+        regflow_guard_hit = regflow_cross_hit || regflow_span_hit || regflow_live_hit;
+    }
+    if (regflow_guard_hit) {
+        ctx->superblock_enabled = saved_superblock_enabled;
+        stage5_emit_fallback++;
+        stage5_emit_fallback_shape++;
+        stage5_emit_fallback_superblock_policy++;
+        stage5_emit_fallback_policy_regflow++;
+        if (regflow_cross_hit) stage5_emit_fallback_policy_regflow_cross++;
+        if (regflow_span_hit) stage5_emit_fallback_policy_regflow_span++;
+        if (regflow_live_hit) stage5_emit_fallback_policy_regflow_live++;
+        return false;
+    }
+
     if (saved_superblock_enabled &&
         region.has_terminal_branch &&
         region.guest_inst_count > 2 &&
