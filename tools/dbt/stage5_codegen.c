@@ -165,6 +165,18 @@ static void cg_mark_dst(stage5_cg_t *cg, const lir_node_t *l, x64_reg_t dst_h, i
     }
 }
 
+// Direct guest-memory writes to a GPR (outside cg_mark_dst) must invalidate
+// any dirty slot aliases for that register, or a later cg_sync_all can write
+// a stale value back over the fresh one.
+static void cg_kill_dirty_aliases_for_gpr(stage5_cg_t *cg, uint8_t gpr) {
+    if (gpr == 0) return;
+    for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+        if (cg->ssa_slot_dirty[s] && cg->ssa_slot_guest_reg[s] == gpr) {
+            cg->ssa_slot_guest_reg[s] = 0;
+        }
+    }
+}
+
 // ============================================================================
 // LIR Emission (Native x86-64, ZERO Stage 4 dependencies)
 // ============================================================================
@@ -497,7 +509,15 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_
             // Store: [R14 + addr + disp] = val
             x64_reg_t base = cg_resolve_val(cg, l->src_v[0], RAX);
             x64_reg_t val = cg_resolve_val(cg, l->src_v[1], RCX);
-            if (base != RAX) emit_mov_r32_r32(e, RAX, base);
+            if (base != RAX) {
+                // If value currently lives in RAX, preserve it before clobbering
+                // RAX with the address base.
+                if (val == RAX) {
+                    emit_mov_r32_r32(e, RCX, RAX);
+                    val = RCX;
+                }
+                emit_mov_r32_r32(e, RAX, base);
+            }
             if (l->disp != 0) emit_add_r32_imm32(e, RAX, l->disp);
             switch (l->size) {
                 case 1: emit_mov_m8_r8_idx(e, R14, RAX, val); break;
@@ -623,6 +643,7 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_
                 // Write to guest register directly (bypass RA since we're about to exit)
                 cg_sync_all(cg);
                 emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(l->rd), RAX);
+                cg_kill_dirty_aliases_for_gpr(cg, l->rd);
 
                 // Push to RAS for return prediction
                 // ras_top = (ras_top + 1) & RAS_MASK
@@ -686,6 +707,7 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_
 
                 // Write link register
                 emit_mov_m32_imm32(e, RBP, GUEST_REG_OFFSET(l->rd), return_pc);
+                cg_kill_dirty_aliases_for_gpr(cg, l->rd);
 
                 // Push to RAS
                 emit_push_r64(e, RCX); // save target across RAS update
