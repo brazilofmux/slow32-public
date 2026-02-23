@@ -35,8 +35,17 @@ typedef struct stage5_cg_s {
 
     int8_t ssa_value_slot[STAGE5_SSA_MAX_VALUES];
     uint16_t ssa_slot_value[STAGE5_RA_HOST_SLOTS];
-    bool ssa_slot_dirty[STAGE5_RA_HOST_SLOTS];
-    uint8_t ssa_slot_guest_reg[STAGE5_RA_HOST_SLOTS];
+
+    // Precomputed from LIR: RA-plan-driven flush support
+    bool is_block_defined[STAGE5_SSA_MAX_VALUES];
+    uint16_t value_def_lir_idx[STAGE5_SSA_MAX_VALUES];
+    uint16_t spilled_def_for_gpr[32];
+
+    // Deferred exit snapshots (slot_value + spilled state at each side exit)
+    struct {
+        uint16_t slot_value[STAGE5_RA_HOST_SLOTS];
+        uint16_t spilled_gpr[32];
+    } exit_snapshot[MAX_BLOCK_EXITS];
 } stage5_cg_t;
 
 // Standard x86-64 calling convention for FP helper
@@ -50,18 +59,42 @@ static const x64_reg_t ra_hosts[STAGE5_RA_HOST_SLOTS] = {
 // Native Runtime Helpers
 // ============================================================================
 
-static void cg_sync_all(stage5_cg_t *cg) {
+// RA-plan-driven flush: walks slots, finds the latest block-defined value per
+// guest register, emits store.  Reads only immutable/stable state — can be
+// called multiple times with identical results (no mutable dirty bits).
+static void cg_flush_exit(stage5_cg_t *cg) {
+    int8_t latest_slot[32];
+    uint16_t latest_def_idx[32];
+    memset(latest_slot, -1, sizeof(latest_slot));
+    memset(latest_def_idx, 0, sizeof(latest_def_idx));
+
     for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
-        if (cg->ssa_slot_dirty[s] && cg->ssa_slot_guest_reg[s] > 0) {
-            emit_mov_m32_r32(cg->e, RBP, GUEST_REG_OFFSET(cg->ssa_slot_guest_reg[s]), ra_hosts[s]);
-            cg->ssa_slot_dirty[s] = false;
+        uint16_t v = cg->ssa_slot_value[s];
+        if (v == 0 || !cg->is_block_defined[v]) continue;
+        uint8_t gpr = cg->ssa->value_to_reg[v];
+        if (gpr == 0) continue;
+        uint16_t def_idx = cg->value_def_lir_idx[v];
+        if (latest_slot[gpr] < 0 || def_idx > latest_def_idx[gpr]) {
+            latest_slot[gpr] = (int8_t)s;
+            latest_def_idx[gpr] = def_idx;
         }
+    }
+
+    // Suppress flush if a later spill already wrote to guest memory
+    for (int g = 1; g < 32; g++) {
+        if (latest_slot[g] >= 0 && cg->spilled_def_for_gpr[g] > latest_def_idx[g])
+            latest_slot[g] = -1;
+    }
+
+    for (int g = 1; g < 32; g++) {
+        if (latest_slot[g] >= 0)
+            emit_mov_m32_r32(cg->e, RBP, GUEST_REG_OFFSET(g), ra_hosts[latest_slot[g]]);
     }
 }
 
 // RET-based exit: returns to C dispatcher. Used for HALT/DEBUG/YIELD.
 static void cg_exit_native(stage5_cg_t *cg, uint32_t next_pc, uint32_t reason) {
-    cg_sync_all(cg);
+    cg_flush_exit(cg);
     emit_mov_m32_imm32(cg->e, RBP, CPU_PC_OFFSET, next_pc);
     emit_mov_m32_imm32(cg->e, RBP, CPU_EXIT_REASON_OFFSET, reason);
     emit_ret(cg->e);
@@ -72,7 +105,7 @@ static void cg_exit_chained(stage5_cg_t *cg, uint32_t target_pc) {
     translate_ctx_t *ctx = cg->ctx;
     emit_ctx_t *e = cg->e;
 
-    cg_sync_all(cg);
+    cg_flush_exit(cg);
     emit_mov_m32_imm32(e, RBP, CPU_PC_OFFSET, target_pc);
 
     // Record patch site BEFORE emitting the JMP
@@ -131,48 +164,20 @@ static x64_reg_t cg_resolve_val(stage5_cg_t *cg, uint16_t v, x64_reg_t scratch) 
     return scratch;
 }
 
-// Mark destination slot as dirty after writing.
-// If the slot held a different dirty value, flush it first.
-static void cg_mark_dst(stage5_cg_t *cg, const lir_node_t *l, x64_reg_t dst_h, int8_t dst_slot) {
+// Mark destination after writing.  Update ssa_slot_value.
+// Slot contents are NOT cleared for stale same-GPR aliases — cg_resolve_val
+// needs them, and the pre-flush + cg_flush_exit use latest-def resolution
+// to avoid writing stale values over newer ones.
+static void cg_mark_dst(stage5_cg_t *cg, const lir_node_t *l, x64_reg_t dst_h, int8_t dst_slot, uint32_t lir_idx) {
     if (l->dst_v == 0) return;
     uint8_t gpr = cg->ssa->value_to_reg[l->dst_v];
     if (dst_slot >= 0) {
-        // Invalidate any OTHER dirty slot mapping to the same guest register.
-        // Without this, cg_sync_all could write a stale earlier definition
-        // AFTER the latest one (higher slot number wins), corrupting the result.
-        if (gpr != 0) {
-            for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
-                if (s != dst_slot && cg->ssa_slot_dirty[s] && cg->ssa_slot_guest_reg[s] == gpr) {
-                    cg->ssa_slot_guest_reg[s] = 0;
-                }
-            }
-        }
-        // Old occupant already pre-flushed before instruction emission.
         cg->ssa_slot_value[dst_slot] = l->dst_v;
-        cg->ssa_slot_dirty[dst_slot] = true;
-        cg->ssa_slot_guest_reg[dst_slot] = gpr;
     } else {
-        // Spilled destination writes guest memory directly; any dirty slot
-        // still aliasing this guest register is now stale and must be killed.
+        // Spilled: write to guest memory, record for supersession
         if (gpr != 0) {
-            for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
-                if (cg->ssa_slot_dirty[s] && cg->ssa_slot_guest_reg[s] == gpr) {
-                    cg->ssa_slot_guest_reg[s] = 0;
-                }
-            }
             emit_mov_m32_r32(cg->e, RBP, GUEST_REG_OFFSET(gpr), dst_h);
-        }
-    }
-}
-
-// Direct guest-memory writes to a GPR (outside cg_mark_dst) must invalidate
-// any dirty slot aliases for that register, or a later cg_sync_all can write
-// a stale value back over the fresh one.
-static void cg_kill_dirty_aliases_for_gpr(stage5_cg_t *cg, uint8_t gpr) {
-    if (gpr == 0) return;
-    for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
-        if (cg->ssa_slot_dirty[s] && cg->ssa_slot_guest_reg[s] == gpr) {
-            cg->ssa_slot_guest_reg[s] = 0;
+            cg->spilled_def_for_gpr[gpr] = lir_idx;
         }
     }
 }
@@ -193,19 +198,41 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_
     if (dst_slot >= 0) dst_h = ra_hosts[dst_slot];
     else if (l->dst_v != 0) dst_h = RAX;
 
-    // Pre-flush: if destination slot holds a different dirty value,
+    // Pre-flush: if destination slot holds a different block-defined value,
     // flush it BEFORE the instruction overwrites the host register.
-    // (cg_mark_dst runs AFTER emission, so the register would already hold
-    // the new value — too late to recover the old one.)
+    // We must only flush if this is the LATEST definition for that GPR —
+    // a newer definition may exist in another slot or already be written
+    // to guest memory (spill / earlier pre-flush).
     if (l->dst_v != 0 && dst_slot >= 0 &&
-        cg->ssa_slot_dirty[dst_slot] &&
         cg->ssa_slot_value[dst_slot] != 0 &&
         cg->ssa_slot_value[dst_slot] != l->dst_v) {
-        uint8_t old_gpr = cg->ssa_slot_guest_reg[dst_slot];
-        if (old_gpr != 0) {
-            emit_mov_m32_r32(cg->e, RBP, GUEST_REG_OFFSET(old_gpr), ra_hosts[dst_slot]);
+        uint16_t old_v = cg->ssa_slot_value[dst_slot];
+        if (cg->is_block_defined[old_v]) {
+            uint8_t old_gpr = cg->ssa->value_to_reg[old_v];
+            uint16_t old_def = cg->value_def_lir_idx[old_v];
+            bool is_latest = (old_gpr != 0);
+            // Check if a newer block-defined value for same GPR is in another slot
+            if (is_latest) {
+                for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+                    if (s == dst_slot) continue;
+                    uint16_t sv = cg->ssa_slot_value[s];
+                    if (sv != 0 && cg->is_block_defined[sv] &&
+                        cg->ssa->value_to_reg[sv] == old_gpr &&
+                        cg->value_def_lir_idx[sv] > old_def) {
+                        is_latest = false;
+                        break;
+                    }
+                }
+            }
+            // Check if a newer def was already written to guest memory
+            if (is_latest && cg->spilled_def_for_gpr[old_gpr] > old_def)
+                is_latest = false;
+            if (is_latest) {
+                emit_mov_m32_r32(cg->e, RBP, GUEST_REG_OFFSET(old_gpr), ra_hosts[dst_slot]);
+                // Record so later pre-flushes of older defs for same GPR are skipped
+                cg->spilled_def_for_gpr[old_gpr] = old_def;
+            }
         }
-        cg->ssa_slot_dirty[dst_slot] = false;
     }
 
     switch (l->op) {
@@ -426,9 +453,12 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_
             if (dst_h != X64_NOREG && dst_h != result_reg) {
                 emit_mov_r32_r32(e, dst_h, result_reg);
             } else if (dst_h == X64_NOREG) {
-                // Spilled — store from result_reg
+                // Spilled — store from result_reg directly to guest memory
                 uint8_t gpr = cg->ssa->value_to_reg[l->dst_v];
-                if (gpr != 0) emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(gpr), result_reg);
+                if (gpr != 0) {
+                    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(gpr), result_reg);
+                    cg->spilled_def_for_gpr[gpr] = lir_idx;
+                }
                 return true; // skip cg_mark_dst
             }
             break;
@@ -473,9 +503,12 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_
             }
             emit_movzx_r32_r8(e, out, out);
             if (dst_h == X64_NOREG) {
-                // Spilled
+                // Spilled — store directly to guest memory
                 uint8_t gpr = cg->ssa->value_to_reg[l->dst_v];
-                if (gpr != 0) emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(gpr), out);
+                if (gpr != 0) {
+                    emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(gpr), out);
+                    cg->spilled_def_for_gpr[gpr] = lir_idx;
+                }
                 return true;
             }
             break;
@@ -580,49 +613,35 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_
                     ctx->deferred_exits[di].branch_pc = l->guest_pc;
                     ctx->deferred_exits[di].force_full_flush = false;
 
-                    // Snapshot current slot state for deferred stub emission.
-                    // Slots may be repurposed between this side exit and the
-                    // end of the block, so cg_sync_all at stub time would use
-                    // stale guest_reg mappings.
-                    for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
-                        ctx->deferred_exits[di].dirty_snapshot[s] = cg->ssa_slot_dirty[s];
-                        ctx->deferred_exits[di].guest_reg_snapshot[s] = cg->ssa_slot_guest_reg[s];
-                    }
+                    // Snapshot immutable slot state for deferred stub emission.
+                    // Slots may be repurposed between this side exit and block end.
+                    for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++)
+                        cg->exit_snapshot[di].slot_value[s] = cg->ssa_slot_value[s];
+                    memcpy(cg->exit_snapshot[di].spilled_gpr,
+                           cg->spilled_def_for_gpr, sizeof(cg->spilled_def_for_gpr));
+
                     if (getenv("S5_TRACE")) {
                         fprintf(stderr, "[S5-SNAP] side_exit gpc=0x%08X target=0x%08X di=%d\n",
                                 l->guest_pc, side_exit_pc, di);
                         for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
-                            if (ctx->deferred_exits[di].dirty_snapshot[s]) {
-                                fprintf(stderr, "  snap[%d] dirty=1 gpr=%u\n",
-                                        s, ctx->deferred_exits[di].guest_reg_snapshot[s]);
+                            uint16_t v = cg->exit_snapshot[di].slot_value[s];
+                            if (v != 0 && cg->is_block_defined[v]) {
+                                fprintf(stderr, "  snap[%d] val=%u gpr=%u\n",
+                                        s, v, cg->ssa->value_to_reg[v]);
                             }
                         }
                     }
                 }
             } else {
-                // Save dirty state before first exit (cg_sync_all clears dirty).
-                // Both paths need the same flush sequence.
-                bool saved_dirty[STAGE5_RA_HOST_SLOTS];
-                uint8_t saved_gpr[STAGE5_RA_HOST_SLOTS];
-                for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
-                    saved_dirty[s] = cg->ssa_slot_dirty[s];
-                    saved_gpr[s] = cg->ssa_slot_guest_reg[s];
-                }
-
+                // Terminal branch: cg_flush_exit is pure/idempotent (reads only
+                // immutable state), so both paths produce the same flush — no
+                // dirty save/restore needed.
                 size_t jcc_patch = emit_offset(e);
                 emit_byte(e, 0x0F);
                 emit_byte(e, cc);
                 emit_dword(e, 0); // placeholder rel32
-                // Terminal branch: emit both paths
                 // Fall-through path
                 cg_exit_chained(cg, fall_pc);
-
-                // Restore dirty state for taken path
-                for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
-                    cg->ssa_slot_dirty[s] = saved_dirty[s];
-                    cg->ssa_slot_guest_reg[s] = saved_gpr[s];
-                }
-
                 // Taken path
                 size_t taken_start = emit_offset(e);
                 cg_exit_chained(cg, taken_pc);
@@ -637,13 +656,12 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_
             uint32_t return_pc = l->guest_pc + 4;
             uint32_t target_pc = l->guest_pc + l->imm;
 
+            // Flush all block-defined values first, then write link register
+            cg_flush_exit(cg);
+
             if (l->rd != 0) {
-                // Save return address to link register
-                emit_mov_r32_imm32(e, RAX, return_pc);
-                // Write to guest register directly (bypass RA since we're about to exit)
-                cg_sync_all(cg);
-                emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(l->rd), RAX);
-                cg_kill_dirty_aliases_for_gpr(cg, l->rd);
+                // Write return address to link register (AFTER flush)
+                emit_mov_m32_imm32(e, RBP, GUEST_REG_OFFSET(l->rd), return_pc);
 
                 // Push to RAS for return prediction
                 // ras_top = (ras_top + 1) & RAS_MASK
@@ -653,10 +671,7 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_
                 emit_mov_m32_r32(e, RBP, CPU_RAS_TOP_OFFSET, RCX);
                 // ras_stack[ras_top] = return_pc
                 // Address: RBP + RAS_STACK_OFFSET + RCX*4
-                emit_mov_r32_imm32(e, RAX, return_pc);
                 emit_mov_m32_imm32_sib(e, RBP, RCX, 2, CPU_RAS_STACK_OFFSET, return_pc);
-            } else {
-                cg_sync_all(cg);
             }
 
             // Emit chained exit to target
@@ -699,15 +714,11 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_
             emit_and_r32_imm32(e, RAX, (int32_t)~1u);
 
             if (l->rd != 0) {
-                // Save target, write return address
+                // Save target, flush, write return address
                 emit_mov_r32_r32(e, RCX, RAX);
-
-                // Sync all cached registers
-                cg_sync_all(cg);
-
-                // Write link register
+                cg_flush_exit(cg);
+                // Write link register (AFTER flush)
                 emit_mov_m32_imm32(e, RBP, GUEST_REG_OFFSET(l->rd), return_pc);
-                cg_kill_dirty_aliases_for_gpr(cg, l->rd);
 
                 // Push to RAS
                 emit_push_r64(e, RCX); // save target across RAS update
@@ -718,7 +729,7 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_
                 emit_mov_m32_imm32_sib(e, RBP, RDX, 2, CPU_RAS_STACK_OFFSET, return_pc);
                 emit_pop_r64(e, RAX); // restore target
             } else {
-                cg_sync_all(cg);
+                cg_flush_exit(cg);
             }
 
             // Set PC and exit reason
@@ -737,7 +748,7 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_
                 // DEBUG: output character from rs1
                 x64_reg_t val = cg_resolve_val(cg, l->src_v[0], RAX);
                 if (val != RAX) emit_mov_r32_r32(e, RAX, val);
-                cg_sync_all(cg);
+                cg_flush_exit(cg);
                 emit_mov_m32_r32(e, RBP, CPU_EXIT_INFO_OFFSET, RAX);
                 emit_mov_m32_imm32(e, RBP, CPU_PC_OFFSET, next_pc);
                 emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_DEBUG);
@@ -747,7 +758,7 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_
                 cg_exit_native(cg, next_pc, EXIT_YIELD);
             } else {
                 // HALT (0x7F)
-                cg_sync_all(cg);
+                cg_flush_exit(cg);
                 emit_mov_m32_imm32(e, RBP, CPU_PC_OFFSET, l->guest_pc);
                 emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_HALT);
                 emit_ret(e);
@@ -758,8 +769,8 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_
         // ---- FP Helper (call out to C function) ----
 
         case LIR_OP_FP_HELPER: {
-            // Sync all registers, call C helper, reload
-            cg_sync_all(cg);
+            // Flush all registers, call C helper, reload
+            cg_flush_exit(cg);
 
             // x86-64 SysV ABI: rdi=cpu, esi=opcode, edx=rd, ecx=rs1, r8d=rs2
             emit_mov_r64_r64(e, RDI, RBP);  // cpu
@@ -772,12 +783,13 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_
             emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)dbt_fp_helper);
             emit_call_r64(e, RAX);
 
-            // Reload any cached registers that the C call may have clobbered
+            // Reload all occupied slots from guest memory (C call may have clobbered)
             for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
-                if (cg->ssa_slot_guest_reg[s] > 0) {
-                    emit_mov_r32_m32(e, ra_hosts[s], RBP, GUEST_REG_OFFSET(cg->ssa_slot_guest_reg[s]));
-                    cg->ssa_slot_dirty[s] = false;
-                }
+                uint16_t v = cg->ssa_slot_value[s];
+                if (v == 0) continue;
+                uint8_t gpr = cg->ssa->value_to_reg[v];
+                if (gpr != 0)
+                    emit_mov_r32_m32(e, ra_hosts[s], RBP, GUEST_REG_OFFSET(gpr));
             }
             return true; // FP helper writes directly to cpu state
         }
@@ -808,14 +820,14 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_
             return false;
     }
 
-    // Mark destination dirty
-    cg_mark_dst(cg, l, dst_h, dst_slot);
+    // Mark destination
+    cg_mark_dst(cg, l, dst_h, dst_slot, lir_idx);
     return true;
 }
 
 // Emit deferred side-exit stubs (cold paths placed after hot code).
-// Uses per-exit slot snapshots instead of cg_sync_all, because slots
-// may have been repurposed between the side exit and end of block.
+// Uses per-exit snapshot of ssa_slot_value + spilled_def_for_gpr to derive
+// the flush set from immutable RA plan data (same algorithm as cg_flush_exit).
 static void cg_emit_deferred_exits(stage5_cg_t *cg) {
     translate_ctx_t *ctx = cg->ctx;
     emit_ctx_t *e = cg->e;
@@ -826,14 +838,29 @@ static void cg_emit_deferred_exits(stage5_cg_t *cg) {
 
         uint32_t target_pc = ctx->deferred_exits[di].target_pc;
 
-        // Flush dirty slots using the snapshot captured at the side-exit point
+        // Flush using snapshot — same latest-def algorithm as cg_flush_exit
+        int8_t latest_slot[32];
+        uint16_t latest_def_idx[32];
+        memset(latest_slot, -1, sizeof(latest_slot));
+        memset(latest_def_idx, 0, sizeof(latest_def_idx));
         for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
-            if (ctx->deferred_exits[di].dirty_snapshot[s] &&
-                ctx->deferred_exits[di].guest_reg_snapshot[s] > 0) {
-                emit_mov_m32_r32(e, RBP,
-                    GUEST_REG_OFFSET(ctx->deferred_exits[di].guest_reg_snapshot[s]),
-                    ra_hosts[s]);
+            uint16_t v = cg->exit_snapshot[di].slot_value[s];
+            if (v == 0 || !cg->is_block_defined[v]) continue;
+            uint8_t gpr = cg->ssa->value_to_reg[v];
+            if (gpr == 0) continue;
+            uint16_t def_idx = cg->value_def_lir_idx[v];
+            if (latest_slot[gpr] < 0 || def_idx > latest_def_idx[gpr]) {
+                latest_slot[gpr] = (int8_t)s;
+                latest_def_idx[gpr] = def_idx;
             }
+        }
+        for (int g = 1; g < 32; g++) {
+            if (latest_slot[g] >= 0 && cg->exit_snapshot[di].spilled_gpr[g] > latest_def_idx[g])
+                latest_slot[g] = -1;
+        }
+        for (int g = 1; g < 32; g++) {
+            if (latest_slot[g] >= 0)
+                emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(g), ra_hosts[latest_slot[g]]);
         }
 
         // Emit chained exit (PC store + JMP, no sync)
@@ -931,7 +958,19 @@ bool stage5_codegen(translate_ctx_t *ctx, const stage5_lift_region_t *region, ui
         }
     }
 
-    // 6. Load live-ins from guest memory
+    // 6. Precompute block-defined flags and def indices from LIR
+    memset(cg.is_block_defined, 0, sizeof(cg.is_block_defined));
+    memset(cg.value_def_lir_idx, 0, sizeof(cg.value_def_lir_idx));
+    memset(cg.spilled_def_for_gpr, 0, sizeof(cg.spilled_def_for_gpr));
+    for (uint32_t i = 0; i < lir.node_count; i++) {
+        uint16_t v = lir.nodes[i].dst_v;
+        if (v != 0) {
+            cg.is_block_defined[v] = true;
+            cg.value_def_lir_idx[v] = (uint16_t)i;
+        }
+    }
+
+    // 7. Load live-ins from guest memory
     for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
         for (uint16_t i = 0; i < ra_plan.interval_count; i++) {
             if (ra_plan.intervals[i].assigned_slot == s && ra_plan.intervals[i].start_idx == 0) {
@@ -940,14 +979,13 @@ bool stage5_codegen(translate_ctx_t *ctx, const stage5_lift_region_t *region, ui
                 if (gpr != 0) {
                     emit_mov_r32_m32(cg.e, ra_hosts[s], RBP, GUEST_REG_OFFSET(gpr));
                     cg.ssa_slot_value[s] = v;
-                    cg.ssa_slot_guest_reg[s] = gpr;
                 }
                 break;
             }
         }
     }
 
-    // 7. Emit LIR nodes
+    // 8. Emit LIR nodes
     static bool s5_trace = false;
     static int s5_trace_init = 0;
     if (!s5_trace_init) { s5_trace = getenv("S5_TRACE") != NULL; s5_trace_init = 1; }
@@ -969,8 +1007,9 @@ bool stage5_codegen(translate_ctx_t *ctx, const stage5_lift_region_t *region, ui
         }
         for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
             if (cg.ssa_slot_value[s]) {
-                fprintf(stderr, "  slot[%d] val=%u gpr=%u dirty=%d\n",
-                        s, cg.ssa_slot_value[s], cg.ssa_slot_guest_reg[s], cg.ssa_slot_dirty[s]);
+                uint16_t v = cg.ssa_slot_value[s];
+                fprintf(stderr, "  slot[%d] val=%u gpr=%u block_def=%d\n",
+                        s, v, ssa.value_to_reg[v], cg.is_block_defined[v]);
             }
         }
     }
@@ -989,13 +1028,13 @@ bool stage5_codegen(translate_ctx_t *ctx, const stage5_lift_region_t *region, ui
         }
     }
 
-    // 8. Synthesize block-end exit if no explicit terminal
+    // 9. Synthesize block-end exit if no explicit terminal
     if (!ended) {
         uint32_t end_pc = guest_pc + region->guest_inst_count * 4;
         cg_exit_chained(&cg, end_pc);
     }
 
-    // 9. Emit deferred side-exit stubs (cold code after hot path)
+    // 10. Emit deferred side-exit stubs (cold code after hot path)
     cg_emit_deferred_exits(&cg);
 
     // Mark block as Stage 5 and set guest size directly.
