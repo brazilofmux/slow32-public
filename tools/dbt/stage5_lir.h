@@ -42,6 +42,9 @@ typedef enum {
     LIR_OP_TEST_RR,
     LIR_OP_SETCC,       // dst_v = cond
     LIR_OP_JCC,         // if (cond) jump imm
+    LIR_OP_CMP_JCC,     // fused: cmp src0, src1; jcc (cond in l->cond)
+    LIR_OP_CMP_RI_JCC,  // fused: cmp src0, disp; jcc (cond in l->cond)
+    LIR_OP_TEST_JCC,    // fused: test src0, src0; jcc (cond in l->cond)
     LIR_OP_JMP,         // jump imm
     LIR_OP_CALL,
     LIR_OP_RET,

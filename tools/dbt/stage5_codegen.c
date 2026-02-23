@@ -191,6 +191,70 @@ static uint8_t invert_x86_cc(uint8_t cc) {
     return cc ^ 1; // x86 condition codes: even/odd pairs are inverses
 }
 
+// Shared branch emission: emits JCC with side-exit or terminal handling.
+// Called after the comparison/test instruction has already been emitted.
+// cc is the x86 JCC opcode byte (0x84=JE, 0x85=JNE, 0x8C=JL, etc.)
+static bool cg_emit_conditional_branch(stage5_cg_t *cg, const lir_node_t *l,
+                                        uint32_t lir_idx, uint8_t cc) {
+    emit_ctx_t *e = cg->e;
+    uint32_t taken_pc = l->guest_pc + 4 + l->imm;
+    uint32_t fall_pc = l->guest_pc + 4;
+
+    if (l->is_side_exit) {
+        uint32_t side_exit_pc = taken_pc;
+        uint8_t side_cc = cc;
+
+        const stage5_lir_t *lir = cg->lir;
+        if (lir_idx + 1 < lir->node_count &&
+            lir->nodes[lir_idx + 1].guest_pc == taken_pc) {
+            side_cc = invert_x86_cc(cc);
+            side_exit_pc = fall_pc;
+        }
+
+        size_t jcc_patch = emit_offset(e);
+        emit_byte(e, 0x0F);
+        emit_byte(e, side_cc);
+        emit_dword(e, 0);
+
+        translate_ctx_t *ctx = cg->ctx;
+        if (ctx->deferred_exit_count < MAX_BLOCK_EXITS) {
+            int di = ctx->deferred_exit_count++;
+            ctx->deferred_exits[di].jmp_patch_offset = jcc_patch + 2;
+            ctx->deferred_exits[di].target_pc = side_exit_pc;
+            ctx->deferred_exits[di].exit_idx = ctx->exit_idx++;
+            ctx->deferred_exits[di].branch_pc = l->guest_pc;
+            ctx->deferred_exits[di].force_full_flush = false;
+
+            for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++)
+                cg->exit_snapshot[di].slot_value[s] = cg->ssa_slot_value[s];
+            memcpy(cg->exit_snapshot[di].spilled_gpr,
+                   cg->spilled_def_for_gpr, sizeof(cg->spilled_def_for_gpr));
+
+            if (getenv("S5_TRACE")) {
+                fprintf(stderr, "[S5-SNAP] side_exit gpc=0x%08X target=0x%08X di=%d\n",
+                        l->guest_pc, side_exit_pc, di);
+                for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+                    uint16_t v = cg->exit_snapshot[di].slot_value[s];
+                    if (v != 0 && cg->is_block_defined[v]) {
+                        fprintf(stderr, "  snap[%d] val=%u gpr=%u\n",
+                                s, v, cg->ssa->value_to_reg[v]);
+                    }
+                }
+            }
+        }
+    } else {
+        size_t jcc_patch = emit_offset(e);
+        emit_byte(e, 0x0F);
+        emit_byte(e, cc);
+        emit_dword(e, 0);
+        cg_exit_chained(cg, fall_pc);
+        size_t taken_start = emit_offset(e);
+        cg_exit_chained(cg, taken_pc);
+        emit_patch_rel32(e, jcc_patch + 2, taken_start);
+    }
+    return true;
+}
+
 static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_idx) {
     emit_ctx_t *e = cg->e;
     x64_reg_t dst_h = X64_NOREG;
@@ -563,6 +627,7 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_
         // ---- Conditional Branch ----
 
         case LIR_OP_JCC: {
+            // Plain branch: compare two operands, then branch based on guest opcode
             x64_reg_t h1 = cg_resolve_val(cg, l->src_v[0], RAX);
             x64_reg_t h2 = cg_resolve_val(cg, l->src_v[1], RCX);
             emit_cmp_r32_r32(e, h1, h2);
@@ -577,77 +642,29 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_
                 case 0x4D: cc = 0x83; break; // BGEU -> JAE
                 default: return false;
             }
+            return cg_emit_conditional_branch(cg, l, lir_idx, cc);
+        }
 
-            uint32_t taken_pc = l->guest_pc + 4 + l->imm;
-            uint32_t fall_pc = l->guest_pc + 4;
+        case LIR_OP_CMP_JCC: {
+            // Fused compare+branch: cmp src0, src1; jcc
+            x64_reg_t h1 = cg_resolve_val(cg, l->src_v[0], RAX);
+            x64_reg_t h2 = cg_resolve_val(cg, l->src_v[1], RCX);
+            emit_cmp_r32_r32(e, h1, h2);
+            return cg_emit_conditional_branch(cg, l, lir_idx, l->cond);
+        }
 
-            if (l->is_side_exit) {
-                // Determine which direction the lifter traced by looking at the
-                // next LIR node's guest_pc. The hot path (LIR continuation) is
-                // whichever direction the lifter followed.
-                uint32_t side_exit_pc = taken_pc;
-                uint8_t side_cc = cc;
+        case LIR_OP_CMP_RI_JCC: {
+            // Fused compare-immediate+branch: cmp src0, imm; jcc
+            x64_reg_t h1 = cg_resolve_val(cg, l->src_v[0], RAX);
+            emit_cmp_r32_imm32(e, h1, l->disp);
+            return cg_emit_conditional_branch(cg, l, lir_idx, l->cond);
+        }
 
-                // Check if lifter traced the taken path
-                const stage5_lir_t *lir = cg->lir;
-                if (lir_idx + 1 < lir->node_count &&
-                    lir->nodes[lir_idx + 1].guest_pc == taken_pc) {
-                    // Lifter traced taken: hot path = taken, cold = fall-through
-                    // Invert condition so JCC fires on the cold (not-taken) path
-                    side_cc = invert_x86_cc(cc);
-                    side_exit_pc = fall_pc;
-                }
-                // else: lifter traced fall-through (default), side exit = taken_pc
-
-                size_t jcc_patch = emit_offset(e);
-                emit_byte(e, 0x0F);
-                emit_byte(e, side_cc);
-                emit_dword(e, 0); // placeholder rel32
-
-                translate_ctx_t *ctx = cg->ctx;
-                if (ctx->deferred_exit_count < MAX_BLOCK_EXITS) {
-                    int di = ctx->deferred_exit_count++;
-                    ctx->deferred_exits[di].jmp_patch_offset = jcc_patch + 2;
-                    ctx->deferred_exits[di].target_pc = side_exit_pc;
-                    ctx->deferred_exits[di].exit_idx = ctx->exit_idx++;
-                    ctx->deferred_exits[di].branch_pc = l->guest_pc;
-                    ctx->deferred_exits[di].force_full_flush = false;
-
-                    // Snapshot immutable slot state for deferred stub emission.
-                    // Slots may be repurposed between this side exit and block end.
-                    for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++)
-                        cg->exit_snapshot[di].slot_value[s] = cg->ssa_slot_value[s];
-                    memcpy(cg->exit_snapshot[di].spilled_gpr,
-                           cg->spilled_def_for_gpr, sizeof(cg->spilled_def_for_gpr));
-
-                    if (getenv("S5_TRACE")) {
-                        fprintf(stderr, "[S5-SNAP] side_exit gpc=0x%08X target=0x%08X di=%d\n",
-                                l->guest_pc, side_exit_pc, di);
-                        for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
-                            uint16_t v = cg->exit_snapshot[di].slot_value[s];
-                            if (v != 0 && cg->is_block_defined[v]) {
-                                fprintf(stderr, "  snap[%d] val=%u gpr=%u\n",
-                                        s, v, cg->ssa->value_to_reg[v]);
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Terminal branch: cg_flush_exit is pure/idempotent (reads only
-                // immutable state), so both paths produce the same flush — no
-                // dirty save/restore needed.
-                size_t jcc_patch = emit_offset(e);
-                emit_byte(e, 0x0F);
-                emit_byte(e, cc);
-                emit_dword(e, 0); // placeholder rel32
-                // Fall-through path
-                cg_exit_chained(cg, fall_pc);
-                // Taken path
-                size_t taken_start = emit_offset(e);
-                cg_exit_chained(cg, taken_pc);
-                emit_patch_rel32(e, jcc_patch + 2, taken_start);
-            }
-            return true;
+        case LIR_OP_TEST_JCC: {
+            // Fused test+branch: test src0, src0; jnz/jz
+            x64_reg_t h1 = cg_resolve_val(cg, l->src_v[0], RAX);
+            emit_test_r32_r32(e, h1, h1);
+            return cg_emit_conditional_branch(cg, l, lir_idx, l->cond);
         }
 
         // ---- JAL (Direct Call/Jump) ----
@@ -1021,7 +1038,9 @@ bool stage5_codegen(translate_ctx_t *ctx, const stage5_lift_region_t *region, ui
         }
         lir_op_t op = lir.nodes[i].op;
         if (!lir.nodes[i].is_side_exit &&
-            (op == LIR_OP_JCC || op == LIR_OP_SYSCALL ||
+            (op == LIR_OP_JCC || op == LIR_OP_CMP_JCC ||
+             op == LIR_OP_CMP_RI_JCC || op == LIR_OP_TEST_JCC ||
+             op == LIR_OP_SYSCALL ||
              op == LIR_OP_RET || op == LIR_OP_CALL || op == LIR_OP_JMP)) {
             ended = true;
             break;

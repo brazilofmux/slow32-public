@@ -103,9 +103,35 @@ static uint8_t cmp_opcode_to_x86_cc(uint8_t guest_opcode) {
     }
 }
 
+// Check if a MIR op is a comparison (CMP_EQ..CMP_LEU).
+static bool is_mir_cmp(mir_op_t op) {
+    return op >= MIR_OP_CMP_EQ && op <= MIR_OP_CMP_LEU;
+}
+
+// Compute fused x86 JCC condition code from a CMP guest opcode and branch type.
+// The CMP determines the comparison (e.g. SLT → JL), and the branch type
+// determines polarity (BNE = branch if TRUE, BEQ = branch if FALSE → invert).
+static uint8_t fuse_cmp_branch_cc(uint8_t cmp_guest_opcode, uint8_t branch_guest_opcode) {
+    uint8_t setcc = cmp_opcode_to_x86_cc(cmp_guest_opcode); // e.g. 0x94 for SETE
+    uint8_t jcc = setcc - 0x10; // SETcc 0x9x → Jcc 0x8x
+    if (branch_guest_opcode == 0x49) // BNE: branch if TRUE
+        return jcc;
+    else // BEQ (0x48): branch if FALSE → invert
+        return jcc ^ 1;
+}
+
 bool stage5_burg_lower(const stage5_mir_t *mir, const stage5_ssa_overlay_t *ssa, stage5_lir_t *lir) {
     if (!mir || !ssa || !lir) return false;
     memset(lir, 0, sizeof(*lir));
+
+    // Build value_def_mir[]: map SSA value ID → defining MIR node index.
+    // Used for O(1) lookups in address-mode folding and compare+branch fusion.
+    int16_t value_def_mir[STAGE5_SSA_MAX_VALUES];
+    memset(value_def_mir, -1, sizeof(value_def_mir));
+    for (uint32_t j = 0; j < mir->node_count; j++) {
+        if (mir->nodes[j].dst_v != 0)
+            value_def_mir[mir->nodes[j].dst_v] = (int16_t)j;
+    }
 
     bool used[STAGE5_MAX_MIR_NODES] = {0};
 
@@ -201,7 +227,7 @@ bool stage5_burg_lower(const stage5_mir_t *mir, const stage5_ssa_overlay_t *ssa,
                 l->cond = 1; // remainder
                 break;
 
-            // Comparisons: CMP + SETCC fused pair
+            // Comparisons: CMP + SETCC pair (standalone, not fused with branch)
             case MIR_OP_CMP_EQ:
             case MIR_OP_CMP_NE:
             case MIR_OP_CMP_LT:
@@ -238,10 +264,7 @@ bool stage5_burg_lower(const stage5_mir_t *mir, const stage5_ssa_overlay_t *ssa,
             case MIR_OP_LOAD: {
                 // Addressing mode fusion: check if src_v[0] is an ADD(v, const)
                 uint16_t addr_v = m->src_v[0];
-                int addr_m_idx = -1;
-                for (uint32_t j = 0; j < i; j++) {
-                    if (mir->nodes[j].dst_v == addr_v) { addr_m_idx = (int)j; break; }
-                }
+                int addr_m_idx = (addr_v != 0) ? value_def_mir[addr_v] : -1;
 
                 if (addr_m_idx >= 0) {
                     const mir_node_t *am = &mir->nodes[addr_m_idx];
@@ -269,10 +292,7 @@ bool stage5_burg_lower(const stage5_mir_t *mir, const stage5_ssa_overlay_t *ssa,
 
             case MIR_OP_STORE: {
                 uint16_t addr_v = m->src_v[0];
-                int addr_m_idx = -1;
-                for (uint32_t j = 0; j < i; j++) {
-                    if (mir->nodes[j].dst_v == addr_v) { addr_m_idx = (int)j; break; }
-                }
+                int addr_m_idx = (addr_v != 0) ? value_def_mir[addr_v] : -1;
 
                 if (addr_m_idx >= 0) {
                     const mir_node_t *am = &mir->nodes[addr_m_idx];
@@ -296,12 +316,73 @@ bool stage5_burg_lower(const stage5_mir_t *mir, const stage5_ssa_overlay_t *ssa,
                 break;
             }
 
-            case MIR_OP_BRANCH:
-                l->op = LIR_OP_JCC;
-                l->src_v[0] = m->src_v[0];
-                l->src_v[1] = m->src_v[1];
-                l->imm = m->imm;
+            case MIR_OP_BRANCH: {
+                // Compare+branch fusion for BEQ/BNE against zero register.
+                //
+                // SLOW-32 pattern:  sXX rd, rs1, rs2; bne/beq rd, r0, target
+                // Without fusion:   cmp + setcc + movzx + cmp + jcc  (5+ x86 insns)
+                // With CMP_JCC:     cmp + jcc                        (2 x86 insns)
+                // With TEST_JCC:    test + jcc                       (2 x86 insns)
+                uint8_t br_opcode = m->guest_opcode;
+                bool is_beq_bne = (br_opcode == 0x48 || br_opcode == 0x49);
+
+                // Identify the condition value when one branch operand is r0
+                uint16_t cond_v = 0;
+                if (is_beq_bne) {
+                    if (m->src_v[1] == 0 && m->src_v[0] != 0)
+                        cond_v = m->src_v[0];
+                    else if (m->src_v[0] == 0 && m->src_v[1] != 0)
+                        cond_v = m->src_v[1];
+                }
+
+                // Try CMP+BRANCH fusion: cond_v defined by single-use CMP_xx
+                int cmp_mir_idx = -1;
+                if (cond_v != 0 && ssa->value_use_count[cond_v] == 1) {
+                    int16_t def = value_def_mir[cond_v];
+                    if (def >= 0 && is_mir_cmp(mir->nodes[def].op))
+                        cmp_mir_idx = def;
+                }
+
+                if (cmp_mir_idx >= 0) {
+                    // Fused compare+branch: consume the CMP node
+                    const mir_node_t *cm = &mir->nodes[cmp_mir_idx];
+                    uint8_t jcc = fuse_cmp_branch_cc(cm->guest_opcode, br_opcode);
+
+                    bool is_cmp_imm = is_i_format_guest(cm->guest_opcode);
+                    bool has_const_src1 = !is_cmp_imm && cm->src_v[1] != 0 &&
+                                          ssa->value_is_const[cm->src_v[1]];
+                    bool has_zero_src1 = !is_cmp_imm && cm->src_v[1] == 0;
+
+                    if (is_cmp_imm || has_const_src1 || has_zero_src1) {
+                        l->op = LIR_OP_CMP_RI_JCC;
+                        l->src_v[0] = cm->src_v[0];
+                        l->disp = is_cmp_imm ? cm->imm
+                                : has_zero_src1 ? 0
+                                : (int32_t)ssa->value_const_val[cm->src_v[1]];
+                    } else {
+                        l->op = LIR_OP_CMP_JCC;
+                        l->src_v[0] = cm->src_v[0];
+                        l->src_v[1] = cm->src_v[1];
+                    }
+                    l->cond = jcc;
+                    l->imm = m->imm;
+                    used[cmp_mir_idx] = true;
+                } else if (cond_v != 0) {
+                    // TEST+branch: one operand is r0 but CMP not fusable
+                    // test reg, reg; jnz/jz — avoids materializing zero
+                    l->op = LIR_OP_TEST_JCC;
+                    l->src_v[0] = cond_v;
+                    l->cond = (br_opcode == 0x49) ? 0x85 : 0x84; // JNZ : JZ
+                    l->imm = m->imm;
+                } else {
+                    // Plain branch (BLT/BGE/BLTU/BGEU, or BEQ/BNE without r0)
+                    l->op = LIR_OP_JCC;
+                    l->src_v[0] = m->src_v[0];
+                    l->src_v[1] = m->src_v[1];
+                    l->imm = m->imm;
+                }
                 break;
+            }
 
             case MIR_OP_CALL:
                 l->op = LIR_OP_CALL;
