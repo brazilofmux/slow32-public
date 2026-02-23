@@ -2824,6 +2824,119 @@ static bool cg_emit_branch_terminal_native(stage5_cg_t *cg,
     return true;
 }
 
+// SSA/RA-aware branch terminal emission for NOCMPDEP pattern.
+// Resolves branch operands via SSA value -> RA slot -> host register
+// instead of Stage 4's cg_guest_host() register cache.
+static bool cg_emit_branch_terminal_ssa_ra(stage5_cg_t *cg,
+                                           const stage5_lift_region_t *region,
+                                           const stage5_phi_elim_plan_t *phi_plan,
+                                           uint8_t opcode,
+                                           uint8_t rs1, uint8_t rs2,
+                                           int32_t imm,
+                                           uint32_t branch_pc,
+                                           int terminal_idx) {
+    translate_ctx_t *ctx = cg->ctx;
+    emit_ctx_t *e = cg->e;
+    uint32_t fall_pc = branch_pc + 4;
+    uint32_t taken_pc = fall_pc + imm;
+    void (*emit_taken_jcc)(emit_ctx_t *, int32_t) = NULL;
+
+    switch (opcode) {
+        case OP_BEQ:  emit_taken_jcc = emit_je_rel32;  break;
+        case OP_BNE:  emit_taken_jcc = emit_jne_rel32; break;
+        case OP_BLT:  emit_taken_jcc = emit_jl_rel32;  break;
+        case OP_BGE:  emit_taken_jcc = emit_jge_rel32; break;
+        case OP_BLTU: emit_taken_jcc = emit_jb_rel32;  break;
+        case OP_BGEU: emit_taken_jcc = emit_jae_rel32; break;
+        default: return false;
+    }
+
+    if (ctx->block) {
+        ctx->block->flags |= BLOCK_FLAG_DIRECT;
+    }
+
+    // Resolve branch operands via SSA -> RA host registers.
+    // r0 is always zero and has no SSA value.
+    x64_reg_t h1 = X64_NOREG, h2 = X64_NOREG;
+
+    if (rs1 != 0 && cg->ssa &&
+        terminal_idx >= 0 && terminal_idx < STAGE5_MAX_IR_NODES &&
+        cg->ssa->node_use0_valid[terminal_idx]) {
+        uint16_t v = cg->ssa->node_use0_value[terminal_idx];
+        if (v > 0 && v < STAGE5_SSA_MAX_VALUES) {
+            int8_t slot = cg->ssa_value_slot[v];
+            if (slot >= 0 && slot < REG_ALLOC_SLOTS) {
+                h1 = cg_reg_alloc_hosts[slot];
+            }
+        }
+    }
+
+    if (rs2 != 0 && cg->ssa &&
+        terminal_idx >= 0 && terminal_idx < STAGE5_MAX_IR_NODES &&
+        cg->ssa->node_use1_valid[terminal_idx]) {
+        uint16_t v = cg->ssa->node_use1_value[terminal_idx];
+        if (v > 0 && v < STAGE5_SSA_MAX_VALUES) {
+            int8_t slot = cg->ssa_value_slot[v];
+            if (slot >= 0 && slot < REG_ALLOC_SLOTS) {
+                h2 = cg_reg_alloc_hosts[slot];
+            }
+        }
+    }
+
+    // Emit comparison.
+    if ((opcode == OP_BEQ || opcode == OP_BNE) && rs1 == 0 && rs2 == 0) {
+        emit_xor_r32_r32(e, RAX, RAX);
+        emit_test_r32_r32(e, RAX, RAX);
+    } else if ((opcode == OP_BEQ || opcode == OP_BNE) && (rs1 == 0 || rs2 == 0)) {
+        uint8_t rz = (rs1 == 0) ? rs2 : rs1;
+        x64_reg_t hz = (rs1 == 0) ? h2 : h1;
+        if (hz == X64_NOREG) {
+            emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(rz));
+            hz = RAX;
+        }
+        emit_test_r32_r32(e, hz, hz);
+    } else {
+        x64_reg_t cmp_a = h1, cmp_b = h2;
+        if (cmp_a == X64_NOREG) {
+            emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(rs1));
+            cmp_a = RAX;
+        }
+        if (cmp_b == X64_NOREG) {
+            emit_mov_r32_m32(e, RCX, RBP, GUEST_REG_OFFSET(rs2));
+            cmp_b = RCX;
+        }
+        emit_cmp_r32_r32(e, cmp_a, cmp_b);
+    }
+
+    size_t jcc_patch = emit_offset(e) + 2;
+    emit_taken_jcc(e, 0);
+
+    // Fall-through edge: PHI copies + chained exit.
+    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
+        ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
+    }
+    int pred_block = cg_find_cfg_block_by_pc(region, branch_pc);
+    int fall_block = cg_find_cfg_block_by_pc(region, fall_pc);
+    if (!cg_emit_parallel_copy_edge(cg, phi_plan, pred_block, fall_block)) {
+        return false;
+    }
+    emit_exit_chained_for_codegen(ctx, fall_pc, ctx->exit_idx++);
+
+    // Taken edge: patch Jcc target, PHI copies + chained exit.
+    size_t taken_offset = emit_offset(e);
+    emit_patch_rel32(e, jcc_patch, taken_offset);
+    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
+        ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
+    }
+    int taken_block = cg_find_cfg_block_by_pc(region, taken_pc);
+    if (!cg_emit_parallel_copy_edge(cg, phi_plan, pred_block, taken_block)) {
+        return false;
+    }
+    emit_exit_chained_for_codegen(ctx, taken_pc, ctx->exit_idx++);
+
+    return true;
+}
+
 static bool cg_emit_cmp_branch_fused_native(stage5_cg_t *cg,
                                             const stage5_lift_region_t *region,
                                             const stage5_phi_elim_plan_t *phi_plan,
@@ -3122,7 +3235,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
     if (predicate_native_active) {
         cg_trace_boolpair_region(region, guest_pc, terminal_idx);
     }
-
     if (predicate_native_active && side_exit_codegen && region->side_exit_count > 0) {
         if (!allow_cmpdep_with_side_exit) {
             stage5_codegen_fallback++;
@@ -3157,11 +3269,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
             }
         }
     }
-    if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP) {
-        stage5_codegen_fallback++;
-        return false;
-    }
-
     int mix_cmp_idx = -1;
     int mix_extra_skip_idx = -1;
     uint8_t mix_branch_opcode = 0;
@@ -3485,9 +3592,17 @@ bool stage5_codegen(translate_ctx_t *ctx,
             case OP_BGE:
             case OP_BLTU:
             case OP_BGEU:
-                ended = cg_emit_branch_terminal_native(&cg, region,
-                    have_phi_plan ? &phi_plan : NULL, last->opcode,
-                    last->rs1, last->rs2, last->imm, last->pc);
+                if (cg.ra_plan &&
+                    emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP) {
+                    ended = cg_emit_branch_terminal_ssa_ra(&cg, region,
+                        have_phi_plan ? &phi_plan : NULL, last->opcode,
+                        last->rs1, last->rs2, last->imm, last->pc,
+                        terminal_idx);
+                } else {
+                    ended = cg_emit_branch_terminal_native(&cg, region,
+                        have_phi_plan ? &phi_plan : NULL, last->opcode,
+                        last->rs1, last->rs2, last->imm, last->pc);
+                }
                 if (predicate_native_active) {
                     if (ended) {
                     } else {

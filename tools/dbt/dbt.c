@@ -1857,7 +1857,7 @@ int main(int argc, char **argv) {
     bool dump_offenders = false;
     bool disassemble_offenders = false;
     uint32_t dump_pc = 0;
-    int stage = 4;  // Default to Stage 4 now
+    int stage = 5;
     const char *filename = NULL;
     dbt_probe_state_t probe = {0};
     probe.probe_interval_sec = 1;
@@ -1992,12 +1992,6 @@ int main(int argc, char **argv) {
                     break;
                 case '5':
                     stage = 5;
-                    strict_carry_enabled = true;
-                    stage5_burg_hook_enabled = true;
-                    stage5_emit_hook_enabled = true;
-                    superblock_enabled = true;
-                    reg_cache_enabled = true;
-                    peephole_enabled = true;
                     break;
                 default:
                     fprintf(stderr, "Unknown option: %s\n", argv[i]);
@@ -2017,6 +2011,13 @@ int main(int argc, char **argv) {
     if (!filename) {
         usage(argv[0]);
         return 1;
+    }
+
+    // Derive Stage 5 sub-options from stage selection.
+    if (stage >= 5) {
+        strict_carry_enabled = true;
+        stage5_burg_hook_enabled = true;
+        stage5_emit_hook_enabled = true;
     }
 
     if (emit_trace && emit_trace_pc == 0 && dump_pc != 0) {
