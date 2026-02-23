@@ -76,66 +76,6 @@ static bool trace_replay_pre_valid = false;
 static uint32_t trace_replay_pre_block_pc = 0;
 static uint32_t trace_replay_pre_regs[32];
 
-static bool env_flag_enabled(const char *name, bool default_value) {
-    const char *v = getenv(name);
-    if (!v || v[0] == '\0') return default_value;
-    return strcmp(v, "0") != 0;
-}
-
-static void apply_stage5_native_bench_profile(int *stage_out,
-                                              bool *two_pass_out,
-                                              bool *two_pass_forced_out,
-                                              bool *show_stats_out) {
-    if (stage_out) *stage_out = 5;
-    if (two_pass_out) *two_pass_out = false;
-    if (two_pass_forced_out) *two_pass_forced_out = true;
-    (void)show_stats_out;
-    // Stable Stage5-native baseline for apples-to-apples benchmarking.
-    strict_carry_enabled = true;
-    stage5_burg_hook_enabled = true;
-    stage5_emit_hook_enabled = true;
-    superblock_enabled = true;
-    reg_cache_enabled = true;
-    peephole_enabled = true;
-    profile_side_exits = false;
-    // Stage5-native profile: enable side exits by default.
-    // Use overwrite=0 so explicit caller env still wins.
-    setenv("SLOW32_DBT_STAGE5_SIDE_EXIT", "1", 0);
-    setenv("SLOW32_DBT_STAGE5_SIDE_EXIT_MODE", "all", 0);
-    // Force Stage5-native policy defaults for the -N profile.
-    // These use overwrite=1 so shell environment drift does not silently pull
-    // benchmarking back toward Stage4 fallback policy.
-    setenv("SLOW32_DBT_STAGE5_NATIVE_CALL_RETURN", "1", 1);
-    setenv("SLOW32_DBT_STAGE5_LEGACY_SUPERBLOCK_POLICY", "0", 1);
-    setenv("SLOW32_DBT_STAGE5_PREFILTER_STRICT", "0", 1);
-    // Keep baseline on mature Stage5 emitter; native codegen path is still
-    // experimental and should be opted in explicitly.
-    setenv("SLOW32_DBT_STAGE5_CODEGEN", "0", 1);
-    // Size/consistency profile: disable RAS predictor duplication in blocks.
-    // Correctness is unchanged; returns still use indirect dispatch/lookup.
-    setenv("SLOW32_DBT_RAS", "0", 1);
-    // Size-oriented profile: no inline probes; indirects go straight through
-    // shared dispatcher lookup code.
-    setenv("SLOW32_DBT_INLINE_LOOKUP_PROBES", "0", 1);
-    // Phase 1 region growth: keep cold regions moderate, expand hot traces.
-    setenv("SLOW32_DBT_STAGE5_LIFT_BUDGET_BASE", "64", 1);
-    setenv("SLOW32_DBT_STAGE5_LIFT_BUDGET_HOT", "96", 1);
-    setenv("SLOW32_DBT_STAGE5_LIFT_HOT_THRESHOLD", "256", 1);
-    // Phase 2 trace stitching: thread through bounded forward JAL jump islands.
-    setenv("SLOW32_DBT_STAGE5_TRACE_STITCH", "1", 1);
-    setenv("SLOW32_DBT_STAGE5_TRACE_STITCH_MAX_JUMPS", "4", 1);
-    // Phase 2b: optionally stitch hot trace through forward BEQ/BNE taken path.
-    setenv("SLOW32_DBT_STAGE5_TRACE_STITCH_BRANCH_TAKEN", "1", 1);
-    setenv("SLOW32_DBT_STAGE5_TRACE_STITCH_MAX_TAKEN_BRANCHES", "8", 1);
-    setenv("SLOW32_DBT_STAGE5_BENCH_PROFILE", "1", 1);
-    setenv("SLOW32_DBT_STAGE5_BENCH_MAX_JAL_JUMP_GINST", "64", 0);
-    setenv("SLOW32_DBT_STAGE5_BENCH_MAX_DIRECT_BRANCH_GINST", "64", 0);
-    setenv("SLOW32_DBT_STAGE5_BENCH_MAX_BLOCK_END_GINST", "64", 0);
-    setenv("SLOW32_DBT_STAGE5_BENCH_MAX_JAL_CALL_GINST", "64", 0);
-    setenv("SLOW32_DBT_STAGE5_BENCH_MAX_JAL_CALL_LONG_GINST", "64", 0);
-    setenv("SLOW32_DBT_STAGE5_BENCH_MAX_JALR_RET_SHORT_GINST", "64", 0);
-    setenv("SLOW32_DBT_STAGE5_BENCH_MAX_JALR_RET_LONG_GINST", "64", 0);
-}
 
 // MMIO state
 static mmio_ring_state_t mmio_state;
@@ -1679,8 +1619,8 @@ static void run_dbt_stage4plus(dbt_cpu_state_t *cpu, block_cache_t *cache,
                                bool strict_carry, bool stage5_mode) {
     translate_ctx_t ctx;
     translate_init_cached(&ctx, cpu, cache);
-    ctx.inline_lookup_enabled = env_flag_enabled("SLOW32_DBT_INLINE_LOOKUP", true);
-    ctx.ras_enabled = ctx.inline_lookup_enabled && env_flag_enabled("SLOW32_DBT_RAS", true);
+    ctx.inline_lookup_enabled = true;
+    ctx.ras_enabled = true;
     ctx.superblock_enabled = superblock_enabled; // Enable Stage 4 superblock extension
     ctx.profile_side_exits = profile_side_exits;
     ctx.side_exit_info_enabled = profile_side_exits;   // Study-only diagnostics
@@ -1863,9 +1803,6 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -S        Toggle superblock expansion (default: on)\n");
     fprintf(stderr, "  -R        Toggle fixed register cache (default: on)\n");
     fprintf(stderr, "  -C        Enable strict carry guardrails (disable unsigned cmp-branch fusion)\n");
-    fprintf(stderr, "  -G        Enable Stage 5 lift/BURG hook telemetry (default: off)\n");
-    fprintf(stderr, "  -W        Enable Stage 5 pilot emission (small terminal families)\n");
-    fprintf(stderr, "  -N        Enable Stage 5 native benchmark profile\n");
     fprintf(stderr, "  -t        Two-pass superblock profiling (Stage 4/5 only)\n");
     fprintf(stderr, "  -M <n>    Min samples before using side-exit rate\n");
     fprintf(stderr, "  -T <pct>  Max taken %% to allow superblock extension\n");
@@ -1879,26 +1816,13 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -2        Use Stage 2 mode (block cache + chaining)\n");
     fprintf(stderr, "  -3        Use Stage 3 mode (inline indirect lookup)\n");
     fprintf(stderr, "  -4        Use Stage 4 mode (superblock extension, default)\n");
-    fprintf(stderr, "  -5        Use Stage 5 mode (Stage 4 + strict carry guardrails)\n");
+    fprintf(stderr, "  -5        Use Stage 5 mode (SSA/BURG/RA compiler backend)\n");
     fprintf(stderr, "  --allow <list>  Only allow these MMIO services (comma-separated)\n");
     fprintf(stderr, "  --deny <list>   Deny these MMIO services (comma-separated)\n");
     fprintf(stderr, "\nEnvironment:\n");
     fprintf(stderr, "  SLOW32_DBT_ALIGN_TRAP=1  Trap on unaligned LD/ST/fetch\n");
-    fprintf(stderr, "  SLOW32_DBT_STAGE5_VALIDATE_LIFT=1  Validate lift semantics against decoded steps\n");
-    fprintf(stderr, "  SLOW32_DBT_STAGE5_VALIDATE_ABORT=1 Abort on first validation mismatch\n");
-    fprintf(stderr, "  SLOW32_DBT_STAGE5_VALIDATE_REQUIRE=1 Return non-zero if validator reports mismatches\n");
-    fprintf(stderr, "  SLOW32_DBT_STAGE5_EMIT_CALLS=1  Allow Stage5 emit for terminal JAL call regions\n");
-    fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_CMP_RR=1  Allow Stage5 native codegen for compare rr ops\n");
-    fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_CMP_RI=1  Allow Stage5 native codegen for compare imm ops\n");
-    fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_FUSED_BRANCH=1  Allow fused cmp+branch terminal codegen\n");
-    fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_BRANCH_TERM=1  Allow branch terminal codegen\n");
-    fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX=1  Allow BEQ/BNE terminals in cmp-mixed regions\n");
-    fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_PREDICATE_BRANCH_ONLY=1  Require CMP_BRANCH_* BURG patterns for cmp-mixed branches\n");
-    fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_SIDE_EXIT=1  Allow native side-exit emission in codegen\n");
-    fprintf(stderr, "  SLOW32_DBT_STAGE5_TRACE_STITCH=1  Lift through bounded forward JAL r0,+imm jump islands\n");
-    fprintf(stderr, "  SLOW32_DBT_STAGE5_TRACE_STITCH_MAX_JUMPS=N  Max stitched forward JAL jumps per region (1..32)\n");
-    fprintf(stderr, "  SLOW32_DBT_STAGE5_TRACE_STITCH_BRANCH_TAKEN=1  Continue lift on taken path for forward BEQ/BNE side exits\n");
-    fprintf(stderr, "  SLOW32_DBT_STAGE5_TRACE_STITCH_MAX_TAKEN_BRANCHES=N  Max taken-stitched BEQ/BNE side exits per region (1..32)\n");
+    fprintf(stderr, "  SLOW32_DBT_EMIT_TRACE=1  Trace emitted x86-64 code\n");
+    fprintf(stderr, "  SLOW32_DBT_EMIT_TRACE_PC=0xNNN  Only trace block at guest PC\n");
 }
 
 static void parse_service_list(const char *list, char names[][S32_MAX_SVC_NAME], int *count, int max) {
@@ -1933,7 +1857,6 @@ int main(int argc, char **argv) {
     bool dump_offenders = false;
     bool disassemble_offenders = false;
     uint32_t dump_pc = 0;
-    bool stage5_native_bench_profile = false;
     int stage = 4;  // Default to Stage 4 now
     const char *filename = NULL;
     dbt_probe_state_t probe = {0};
@@ -1941,10 +1864,6 @@ int main(int argc, char **argv) {
     const char *trace_env = getenv("SLOW32_DBT_EMIT_TRACE");
     const char *trace_pc_env = getenv("SLOW32_DBT_EMIT_TRACE_PC");
     const char *align_env = getenv("SLOW32_DBT_ALIGN_TRAP");
-    const char *validate_require_env = getenv("SLOW32_DBT_STAGE5_VALIDATE_REQUIRE");
-    bool validate_require_clean =
-        (validate_require_env && validate_require_env[0] != '\0' &&
-         strcmp(validate_require_env, "0") != 0);
     bool emit_trace = (trace_env && atoi(trace_env) != 0);
     if (align_env && atoi(align_env) != 0) {
         align_traps_enabled = true;
@@ -2011,10 +1930,6 @@ int main(int argc, char **argv) {
                 case 'W':
                     stage5_emit_hook_enabled = true;
                     break;
-                case 'N':
-                    stage5_native_bench_profile = true;
-                    apply_stage5_native_bench_profile(&stage, &two_pass, &two_pass_forced, &show_stats);
-                    break;
                 case 'I':
                     intrinsics_disabled = true;
                     break;
@@ -2077,6 +1992,12 @@ int main(int argc, char **argv) {
                     break;
                 case '5':
                     stage = 5;
+                    strict_carry_enabled = true;
+                    stage5_burg_hook_enabled = true;
+                    stage5_emit_hook_enabled = true;
+                    superblock_enabled = true;
+                    reg_cache_enabled = true;
+                    peephole_enabled = true;
                     break;
                 default:
                     fprintf(stderr, "Unknown option: %s\n", argv[i]);
@@ -2135,14 +2056,6 @@ int main(int argc, char **argv) {
         if (stage >= 4 || strict_carry_enabled) {
             fprintf(stderr, "  Strict carry: %s\n",
                     (stage == 5 || strict_carry_enabled) ? "enabled" : "disabled");
-        }
-        if (stage == 5) {
-            fprintf(stderr, "  Stage5 hook:  %s\n",
-                    stage5_burg_hook_enabled ? "enabled" : "disabled");
-            fprintf(stderr, "  Stage5 emit:  %s\n",
-                    stage5_emit_hook_enabled ? "enabled" : "disabled");
-            fprintf(stderr, "  Stage5 bench: %s\n",
-                    stage5_native_bench_profile ? "enabled" : "disabled");
         }
         if (cpu.intrinsics_enabled) {
             fprintf(stderr, "  Intrinsics:   enabled\n");
@@ -2327,8 +2240,6 @@ int main(int argc, char **argv) {
 
     // Results
     int exit_code = cpu.regs[REG_RV];
-    (void)validate_require_clean;
-
     if (show_stats || verbose) {
         double elapsed = (end.tv_sec - start.tv_sec) +
                         (end.tv_nsec - start.tv_nsec) / 1e9;
