@@ -27,6 +27,7 @@
 #include "stage5_burg.h"
 #include "stage5_codegen.h"
 #include "stage5_ssa.h"
+#include "stage5_ra.h"
 
 // Reuse components from the emulator
 #include "../emulator/s32x_loader.h"
@@ -75,6 +76,12 @@ static bool trace_replay_pre_valid = false;
 static uint32_t trace_replay_pre_block_pc = 0;
 static uint32_t trace_replay_pre_regs[32];
 
+static bool env_flag_enabled(const char *name, bool default_value) {
+    const char *v = getenv(name);
+    if (!v || v[0] == '\0') return default_value;
+    return strcmp(v, "0") != 0;
+}
+
 static void apply_stage5_native_bench_profile(int *stage_out,
                                               bool *two_pass_out,
                                               bool *two_pass_forced_out,
@@ -91,10 +98,24 @@ static void apply_stage5_native_bench_profile(int *stage_out,
     reg_cache_enabled = true;
     peephole_enabled = true;
     profile_side_exits = false;
-    // Benchmark profile defaults should exercise Stage5-owned side exits.
+    // Stage5-native profile: enable side exits by default.
     // Use overwrite=0 so explicit caller env still wins.
     setenv("SLOW32_DBT_STAGE5_SIDE_EXIT", "1", 0);
     setenv("SLOW32_DBT_STAGE5_SIDE_EXIT_MODE", "all", 0);
+    // Force Stage5-native policy defaults for the -N profile.
+    // These use overwrite=1 so shell environment drift does not silently pull
+    // benchmarking back toward Stage4 fallback policy.
+    setenv("SLOW32_DBT_STAGE5_NATIVE_CALL_RETURN", "1", 1);
+    setenv("SLOW32_DBT_STAGE5_LEGACY_SUPERBLOCK_POLICY", "0", 1);
+    setenv("SLOW32_DBT_STAGE5_PREFILTER_STRICT", "0", 1);
+    // Keep baseline on mature Stage5 emitter; native codegen path is still
+    // experimental and should be opted in explicitly.
+    setenv("SLOW32_DBT_STAGE5_CODEGEN", "0", 1);
+    // Size/consistency profile: disable RAS predictor duplication in blocks.
+    // Correctness is unchanged; returns still use indirect dispatch/lookup.
+    setenv("SLOW32_DBT_RAS", "0", 1);
+    // Size-oriented profile: keep inline lookup, but with minimal probes.
+    setenv("SLOW32_DBT_INLINE_LOOKUP_PROBES", "1", 1);
     setenv("SLOW32_DBT_STAGE5_BENCH_PROFILE", "1", 1);
     setenv("SLOW32_DBT_STAGE5_BENCH_MAX_JAL_JUMP_GINST", "64", 0);
     setenv("SLOW32_DBT_STAGE5_BENCH_MAX_DIRECT_BRANCH_GINST", "64", 0);
@@ -1647,8 +1668,8 @@ static void run_dbt_stage4plus(dbt_cpu_state_t *cpu, block_cache_t *cache,
                                bool strict_carry, bool stage5_mode) {
     translate_ctx_t ctx;
     translate_init_cached(&ctx, cpu, cache);
-    ctx.inline_lookup_enabled = true;   // Keep Stage 3 inline lookup
-    ctx.ras_enabled = true;              // Keep Stage 3 RAS
+    ctx.inline_lookup_enabled = env_flag_enabled("SLOW32_DBT_INLINE_LOOKUP", true);
+    ctx.ras_enabled = ctx.inline_lookup_enabled && env_flag_enabled("SLOW32_DBT_RAS", true);
     ctx.superblock_enabled = superblock_enabled; // Enable Stage 4 superblock extension
     ctx.profile_side_exits = profile_side_exits;
     ctx.side_exit_info_enabled = profile_side_exits;   // Study-only diagnostics
@@ -2428,6 +2449,20 @@ int main(int argc, char **argv) {
                                             (double)stage5_ssa_phi_plans_built;
                         fprintf(stderr, "  phi avg copies/region: %.2f\n", avg_copies);
                     }
+                }
+            }
+            if (stage5_ra_regions_attempted > 0) {
+                fprintf(stderr, "Stage5 RA attempted:   %" PRIu32 "\n", stage5_ra_regions_attempted);
+                fprintf(stderr, "Stage5 RA planned:     %" PRIu32 "\n", stage5_ra_regions_planned);
+                if (stage5_ra_intervals_total > 0 && stage5_ra_regions_planned > 0) {
+                    double avg_intervals = (double)stage5_ra_intervals_total /
+                                           (double)stage5_ra_regions_planned;
+                    fprintf(stderr, "  ra avg intervals/region: %.2f\n", avg_intervals);
+                }
+                if (stage5_ra_spills_total > 0 && stage5_ra_regions_planned > 0) {
+                    double avg_spills = (double)stage5_ra_spills_total /
+                                        (double)stage5_ra_regions_planned;
+                    fprintf(stderr, "  ra avg spills/region: %.2f\n", avg_spills);
                 }
             }
             fprintf(stderr, "Stage5 fallback total: %" PRIu32 "\n", stage5_fallback_total);
@@ -3243,6 +3278,21 @@ int main(int argc, char **argv) {
                         stage5_codegen_fallback_terminal);
                 print_top_opcode_hist("codegen terminal fallback",
                                       stage5_codegen_fallback_terminal_opcode_hist);
+            }
+            {
+                bool printed_codegen_pattern = false;
+                for (int p = 1; p < STAGE5_BURG_PATTERN_COUNT; p++) {
+                    if (stage5_codegen_pattern_fallback[p] == 0) continue;
+                    if (!printed_codegen_pattern) {
+                        fprintf(stderr, "  codegen fallback by pattern:\n");
+                        printed_codegen_pattern = true;
+                    }
+                    uint32_t att = stage5_codegen_pattern_attempt[p];
+                    uint32_t fb = stage5_codegen_pattern_fallback[p];
+                    double rate = (att > 0) ? ((double)fb * 100.0 / (double)att) : 0.0;
+                    fprintf(stderr, "    %-20s fallback=%" PRIu32 " attempt=%" PRIu32 " (%.1f%%)\n",
+                            stage5_burg_pattern_str((stage5_burg_pattern_t)p), fb, att, rate);
+                }
             }
             if (stage5_codegen_guest_insts > 0) {
                 fprintf(stderr, "Stage5 codegen guest insts: %" PRIu64 "\n",

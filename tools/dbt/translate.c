@@ -49,6 +49,8 @@ uint64_t stage5_emit_success_host_bytes = 0;
 uint32_t stage5_emit_pattern_success[STAGE5_BURG_PATTERN_COUNT] = {0};
 uint64_t stage5_emit_pattern_guest_insts[STAGE5_BURG_PATTERN_COUNT] = {0};
 uint64_t stage5_emit_pattern_host_bytes[STAGE5_BURG_PATTERN_COUNT] = {0};
+uint32_t stage5_codegen_pattern_attempt[STAGE5_BURG_PATTERN_COUNT] = {0};
+uint32_t stage5_codegen_pattern_fallback[STAGE5_BURG_PATTERN_COUNT] = {0};
 uint32_t stage5_emit_fallback = 0;
 uint32_t stage5_emit_fallback_non_terminal = 0;
 uint32_t stage5_emit_fallback_shape = 0;
@@ -219,6 +221,32 @@ static bool stage5_emit_calls_enabled(void) {
     if (!inited) {
         const char *v = getenv("SLOW32_DBT_STAGE5_EMIT_CALLS");
         enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+static bool stage5_native_call_return_enabled(void) {
+    static bool inited = false;
+    static bool enabled = true;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_NATIVE_CALL_RETURN");
+        if (v && v[0] != '\0') {
+            enabled = (strcmp(v, "0") != 0);
+        }
+        inited = true;
+    }
+    return enabled;
+}
+
+static bool stage5_legacy_superblock_policy_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_LEGACY_SUPERBLOCK_POLICY");
+        if (v && v[0] != '\0') {
+            enabled = (strcmp(v, "0") != 0);
+        }
         inited = true;
     }
     return enabled;
@@ -1897,6 +1925,30 @@ static void stage5_trace_exit_slot(const char *phase,
     budget--;
 }
 
+static void stage5_trace_emit_unhandled(uint32_t block_pc,
+                                        stage5_burg_pattern_t pattern,
+                                        uint32_t guest_inst_count,
+                                        uint8_t opcode,
+                                        const char *where) {
+    static bool inited = false;
+    static bool enabled = false;
+    static int budget = 0;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_TRACE_UNHANDLED");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        const char *maxv = getenv("SLOW32_DBT_STAGE5_TRACE_UNHANDLED_MAX");
+        budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 64;
+        if (budget < 0) budget = 0;
+        inited = true;
+    }
+    if (!enabled || budget == 0) return;
+    fprintf(stderr,
+            "stage5-unhandled where=%s block_pc=0x%08X pattern=%s ginst=%u opcode=0x%02X\n",
+            where ? where : "unknown",
+            block_pc, stage5_burg_pattern_str(pattern), guest_inst_count, opcode);
+    budget--;
+}
+
 static bool stage5_region_side_exit_call_guard_needed(const stage5_lift_region_t *region,
                                                        bool *has_jal_out,
                                                        bool *has_jalr_out,
@@ -2019,6 +2071,20 @@ static inline bool stage5_pattern_is_direct_branch(stage5_burg_pattern_t pattern
            pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_NE ||
            pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL ||
            pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_RELU;
+}
+
+static inline bool stage5_pattern_is_cmp_branch(stage5_burg_pattern_t pattern) {
+    switch (pattern) {
+        case STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO:
+        case STAGE5_BURG_PATTERN_CMP_BRANCH_CONST01:
+        case STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR:
+        case STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP:
+        case STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP:
+        case STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1:
+            return true;
+        default:
+            return false;
+    }
 }
 
 static inline void stage5_translate_jal_jump_compact(translate_ctx_t *ctx,
@@ -2292,6 +2358,45 @@ static bool stage5_prefilter_has_near_terminal(translate_ctx_t *ctx,
         pc += 4;
     }
     return false;
+}
+
+static int stage5_prefilter_cmp_scan_limit(void) {
+    static bool inited = false;
+    static int limit = 24;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_PREFILTER_CMP_SCAN");
+        if (v && v[0] != '\0') {
+            int x = atoi(v);
+            if (x >= 2 && x <= (int)MAX_BLOCK_INSTS) limit = x;
+        }
+        inited = true;
+    }
+    return limit;
+}
+
+static int stage5_prefilter_terminal_scan_limit(void) {
+    static bool inited = false;
+    static int limit = 12;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_PREFILTER_TERM_SCAN");
+        if (v && v[0] != '\0') {
+            int x = atoi(v);
+            if (x >= 1 && x <= (int)MAX_BLOCK_INSTS) limit = x;
+        }
+        inited = true;
+    }
+    return limit;
+}
+
+static bool stage5_prefilter_strict_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_PREFILTER_STRICT");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
 }
 
 // Match BEQ/BNE x,r0 (or r0,x) to a prior non-synthetic compare producing x,
@@ -2954,6 +3059,10 @@ void stage5_flush_pending_for_codegen(translate_ctx_t *ctx) {
     flush_pending_write(ctx);
 }
 
+void stage5_flush_pending_cond_for_codegen(translate_ctx_t *ctx) {
+    flush_pending_cond(ctx);
+}
+
 bool stage5_side_exit_opcode_supported_for_codegen(uint8_t opcode) {
     return stage5_side_exit_opcode_supported(opcode);
 }
@@ -3314,9 +3423,11 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     // Slightly wider bounded scan to catch compare->branch-zero pairs with
     // small arithmetic/memory setup between producer and branch.
     bool has_near_cmp_branch_zero =
-        stage5_prefilter_has_cmp_branch_zero(ctx, guest_pc, 24);
+        stage5_prefilter_has_cmp_branch_zero(ctx, guest_pc,
+                                             stage5_prefilter_cmp_scan_limit());
     bool has_near_terminal =
-        stage5_prefilter_has_near_terminal(ctx, guest_pc, 8);
+        stage5_prefilter_has_near_terminal(ctx, guest_pc,
+                                           stage5_prefilter_terminal_scan_limit());
     if ((ctx->superblock_enabled && is_branch_op && !allow_branch_probe) ||
         inst_pref.opcode == OP_JALR ||
         (inst_pref.opcode == OP_JAL && inst_pref.rd == 31 && !stage5_emit_calls_enabled())) {
@@ -3330,7 +3441,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         stage5_emit_prefilter_branch_probe++;
     }
     bool bench_profile = stage5_bench_profile_enabled();
-    if (ctx->superblock_enabled &&
+    if (stage5_prefilter_strict_enabled() &&
+        ctx->superblock_enabled &&
         !is_cmp_op &&
         !is_small_terminal_start &&
         !has_near_cmp_branch_zero &&
@@ -3588,7 +3700,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         }
     }
 
-    if (saved_superblock_enabled &&
+    if (stage5_legacy_superblock_policy_enabled() &&
+        saved_superblock_enabled &&
         region.has_terminal_branch &&
         region.guest_inst_count > 2 &&
         emitted_pattern != STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO &&
@@ -3628,7 +3741,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         return false;
     }
 
-    // Policy fallback: keep call/return/indirect JALR forms on Stage4's mature path.
+    // Policy fallback: Stage5-native for call/return by default.
+    // Set SLOW32_DBT_STAGE5_NATIVE_CALL_RETURN=0 to force legacy Stage4 path.
+    bool native_call_return = stage5_native_call_return_enabled();
     bool bench_allow_jal_call_short =
         bench_profile &&
         emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT &&
@@ -3648,7 +3763,18 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_LONG &&
         stage5_bench_max_jalr_ret_long_ginst() > 0 &&
         region.guest_inst_count <= stage5_bench_max_jalr_ret_long_ginst();
-    bool allow_jal_call_emit = stage5_emit_calls_enabled() || bench_allow_jal_call_short;
+    bool native_allow_jal_call =
+        native_call_return &&
+        (emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
+         emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG);
+    bool native_allow_jalr_ret =
+        native_call_return &&
+        (emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_SHORT ||
+         emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_LONG);
+    bool allow_jal_call_emit =
+        stage5_emit_calls_enabled() ||
+        native_allow_jal_call ||
+        bench_allow_jal_call_short;
     if (!allow_jal_call_emit && bench_allow_jal_call_long) {
         allow_jal_call_emit = true;
     }
@@ -3660,7 +3786,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_LONG;
 
     if ((is_jal_call && !allow_jal_call_emit) ||
-        (is_jalr_ret && !(bench_allow_jalr_ret_short || bench_allow_jalr_ret_long))) {
+        (is_jalr_ret &&
+         !(native_allow_jalr_ret || bench_allow_jalr_ret_short || bench_allow_jalr_ret_long))) {
         ctx->superblock_enabled = saved_superblock_enabled;
         stage5_emit_fallback++;
         stage5_emit_fallback_shape++;
@@ -3706,7 +3833,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     }
 
     // Superblock-first policy: keep larger direct branches on the Stage4 path.
-    if (saved_superblock_enabled &&
+    if (stage5_legacy_superblock_policy_enabled() &&
+        saved_superblock_enabled &&
         (emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_EQ ||
          emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_NE ||
          emitted_pattern == STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL ||
@@ -3764,6 +3892,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     // Family A: single-instruction terminals and direct conditional branches.
     if (region.guest_inst_count == 1) {
         if (stage5_codegen_enabled()) {
+            if ((uint32_t)emitted_pattern < STAGE5_BURG_PATTERN_COUNT) {
+                stage5_codegen_pattern_attempt[emitted_pattern]++;
+            }
             int terminal_idx = -1;
             for (int i = (int)region.ir_count - 1; i >= 0; i--) {
                 if (region.ir[i].synthetic) continue;
@@ -3796,6 +3927,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                 return true;
             }
+            if ((uint32_t)emitted_pattern < STAGE5_BURG_PATTERN_COUNT) {
+                stage5_codegen_pattern_fallback[emitted_pattern]++;
+            }
         }
 
         ctx->guest_pc = guest_pc;
@@ -3821,9 +3955,15 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             default:
                 stage5_emit_fallback_single_unhandled++;
                 stage5_emit_unhandled_opcode_hist[inst0.opcode & 0x7F]++;
+                stage5_trace_emit_unhandled(guest_pc, emitted_pattern,
+                                            region.guest_inst_count,
+                                            inst0.opcode & 0x7F,
+                                            "family-a-single");
                 break;
         }
-    } else if (region.guest_inst_count == 2 && guest_pc + 8 <= ctx->cpu->code_limit) {
+    } else if (region.guest_inst_count == 2 &&
+               guest_pc + 8 <= ctx->cpu->code_limit &&
+               stage5_pattern_is_cmp_branch(emitted_pattern)) {
         // Family B: two-instruction compare -> branch-on-result.
         if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO ||
             emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1) {
@@ -3897,6 +4037,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         (void)fuse_extra_skip_idx;
 
         if (stage5_codegen_enabled()) {
+            if ((uint32_t)emitted_pattern < STAGE5_BURG_PATTERN_COUNT) {
+                stage5_codegen_pattern_attempt[emitted_pattern]++;
+            }
             bool cg_ok = stage5_codegen(ctx, &region, guest_pc,
                 terminal_idx, fuse_cmp_idx, emitted_pattern,
                 synth_block_end, side_exit_emit_enabled,
@@ -3906,6 +4049,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 stage5_record_emit_success(ctx, emitted_pattern, region.guest_inst_count, emit_start_size);
                 if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                 return true;
+            }
+            if ((uint32_t)emitted_pattern < STAGE5_BURG_PATTERN_COUNT) {
+                stage5_codegen_pattern_fallback[emitted_pattern]++;
             }
         }
 
@@ -4209,21 +4355,24 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     stage5_emit_fallback_shape++;
                 }
                 stage5_emit_unhandled_opcode_hist[inst0.opcode & 0x7F]++;
+                stage5_trace_emit_unhandled(guest_pc, emitted_pattern,
+                                            region.guest_inst_count,
+                                            inst0.opcode & 0x7F,
+                                            "family-b-prefix");
             }
         }
-    } else if (region.guest_inst_count >= 3 && region.guest_inst_count <= MAX_BLOCK_INSTS) {
+    } else if (region.guest_inst_count >= 2 && region.guest_inst_count <= MAX_BLOCK_INSTS) {
         // Family C: IR-driven straight-line prefix ending in a terminal/branch.
         bool ok_prefix = true;
         uint8_t first_bad_prefix_opcode = 0;
         int terminal_idx = -1;
 
-        if (region.has_terminal_branch) {
-            for (int i = (int)region.ir_count - 1; i >= 0; i--) {
-                if (!region.ir[i].synthetic && region.ir[i].kind == STAGE5_IR_BRANCH) {
-                    terminal_idx = i;
-                    break;
-                }
-            }
+        for (int i = (int)region.ir_count - 1; i >= 0; i--) {
+            if (region.ir[i].synthetic) continue;
+            if (region.ir[i].kind != STAGE5_IR_BRANCH) continue;
+            if (region.ir[i].is_side_exit) continue;
+            terminal_idx = i;
+            break;
         }
 
         // For CMP_BRANCH_ZERO, also skip the compare node (fused with branch).
@@ -4239,6 +4388,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
 
         // Try native codegen first (gated by SLOW32_DBT_STAGE5_CODEGEN=1)
         if (stage5_codegen_enabled()) {
+            if ((uint32_t)emitted_pattern < STAGE5_BURG_PATTERN_COUNT) {
+                stage5_codegen_pattern_attempt[emitted_pattern]++;
+            }
             bool cg_ok = stage5_codegen(ctx, &region, guest_pc,
                 terminal_idx, fuse_cmp_idx, emitted_pattern,
                 synth_block_end, side_exit_emit_enabled,
@@ -4250,6 +4402,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 return true;
             }
             // Native codegen aborted — fall through to existing Family C dispatch
+            if ((uint32_t)emitted_pattern < STAGE5_BURG_PATTERN_COUNT) {
+                stage5_codegen_pattern_fallback[emitted_pattern]++;
+            }
         }
 
         for (uint32_t i = 0; i < region.ir_count; i++) {
@@ -4460,6 +4615,10 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         } else {
             stage5_emit_fallback_shape++;
             stage5_emit_unhandled_opcode_hist[first_bad_prefix_opcode & 0x7F]++;
+            stage5_trace_emit_unhandled(guest_pc, emitted_pattern,
+                                        region.guest_inst_count,
+                                        first_bad_prefix_opcode & 0x7F,
+                                        "family-c-prefix");
         }
     } else {
         stage5_emit_fallback_shape++;
@@ -6606,7 +6765,21 @@ static void emit_deferred_side_exits(translate_ctx_t *ctx) {
 // Stage 3: Inline indirect branch lookup
 // ============================================================================
 
-static const int INLINE_LOOKUP_MAX_PROBES = 4;
+#define INLINE_LOOKUP_MAX_PROBES 4
+
+static int inline_lookup_probe_count(void) {
+    static bool inited = false;
+    static int probes = INLINE_LOOKUP_MAX_PROBES;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_INLINE_LOOKUP_PROBES");
+        if (v && v[0] != '\0') {
+            int x = atoi(v);
+            if (x >= 1 && x <= INLINE_LOOKUP_MAX_PROBES) probes = x;
+        }
+        inited = true;
+    }
+    return probes;
+}
 
 // Emit inline hash table lookup for indirect branches with bounded probing.
 // target_reg contains the guest PC to look up.
@@ -6615,6 +6788,7 @@ static void emit_indirect_lookup_with_target(translate_ctx_t *ctx,
                                              x64_reg_t target_reg,
                                              x64_reg_t target_save) {
     emit_ctx_t *e = &ctx->emit;
+    int probe_count = inline_lookup_probe_count();
     size_t null_patches[INLINE_LOOKUP_MAX_PROBES];
     size_t null_patch_count = 0;
     size_t last_cmp_patch = 0;
@@ -6637,7 +6811,7 @@ static void emit_indirect_lookup_with_target(translate_ctx_t *ctx,
     // r10d = hash index (probe cursor)
     emit_mov_r32_r32(e, R10, RDX);
 
-    for (int probe = 0; probe < INLINE_LOOKUP_MAX_PROBES; probe++) {
+    for (int probe = 0; probe < probe_count; probe++) {
         if (probe > 0) {
             emit_add_r32_imm32(e, R10, 1);
             emit_and_r32_r32(e, R10, RCX);
@@ -6662,7 +6836,7 @@ static void emit_indirect_lookup_with_target(translate_ctx_t *ctx,
         emit_mov_r64_m64(e, RAX, RDX, 8);
         emit_jmp_r64(e, RAX);
 
-        if (probe < INLINE_LOOKUP_MAX_PROBES - 1) {
+        if (probe < probe_count - 1) {
             size_t next_probe = emit_offset(e);
             emit_patch_rel32(e, cmp_miss_patch, next_probe);
         } else {
