@@ -18,11 +18,11 @@ static void *partition_r(void *base, size_t num, size_t size,
     
     for (size_t j = 0; j < num - 1; j++) {
         if (compar(array + j * size, pivot, arg) <= 0) {
-            swap(array + i * size, array + j * size, size);
+            memswap(array + i * size, array + j * size, size);
             i++;
         }
     }
-    swap(array + i * size, pivot, size);
+    memswap(array + i * size, pivot, size);
     return array + i * size;
 }
 
