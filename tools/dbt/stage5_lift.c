@@ -214,7 +214,14 @@ static bool is_terminal_cf_opcode(uint8_t opcode) {
 }
 
 static bool stage5_lift_trace_stitch_taken_branch_enabled(void) {
-    return true;
+    static int init = 0;
+    static bool enabled = false; // default OFF: safer than speculative taken stitching
+    if (!init) {
+        const char *e = getenv("S5_STITCH_TAKEN");
+        enabled = (e && e[0] == '1');
+        init = 1;
+    }
+    return enabled;
 }
 
 static uint32_t stage5_lift_trace_stitch_max_taken_branches(void) {
