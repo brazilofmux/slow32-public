@@ -10,11 +10,16 @@
 #include "stage5_codegen.h"
 #include "stage5_burg.h"
 #include "stage5_ssa.h"
+#include "stage5_ra.h"
 #include "block_cache.h"
 #include "cpu_state.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+// Runtime FP helper implemented in translate.c
+void dbt_fp_helper(dbt_cpu_state_t *cpu, uint32_t opcode,
+                   uint32_t rd, uint32_t rs1, uint32_t rs2);
 
 // ============================================================================
 // Telemetry counters
@@ -71,6 +76,7 @@ uint32_t stage5_codegen_fused_addi_mem;
 uint32_t stage5_codegen_evictions;
 uint64_t stage5_codegen_native_loads;
 uint64_t stage5_codegen_native_stores;
+uint64_t stage5_codegen_dce_skipped;
 
 static bool cg_env_flag_enabled(const char *name, bool default_enabled) {
     const char *v = getenv(name);
@@ -551,6 +557,10 @@ typedef struct {
     translate_ctx_t *ctx;
     emit_ctx_t *e;
     const stage5_lift_region_t *region;
+    const stage5_ssa_overlay_t *ssa;
+    const stage5_ra_plan_t *ra_plan;
+    int8_t ssa_value_slot[STAGE5_SSA_MAX_VALUES];
+    uint16_t ssa_slot_value[STAGE5_RA_HOST_SLOTS];
     uint32_t emitted_insts;        // Number of guest instructions emitted
     int current_idx;               // Current instruction index in region->ir
 } stage5_cg_t;
@@ -656,6 +666,38 @@ static void cg_state_restore(translate_ctx_t *ctx, const stage5_codegen_state_t 
     memcpy(ctx->reg_constants, s->reg_constants, sizeof(s->reg_constants));
     memcpy(ctx->validated_ranges, s->validated_ranges, sizeof(s->validated_ranges));
     memcpy(ctx->deferred_exits, s->deferred_exits, sizeof(s->deferred_exits));
+}
+
+static void cg_clear_reg_cache_state(stage5_cg_t *cg) {
+    translate_ctx_t *ctx = cg->ctx;
+    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+        ctx->reg_alloc[i].allocated = false;
+        ctx->reg_alloc[i].dirty = false;
+        ctx->reg_alloc[i].guest_reg = 0;
+    }
+    for (int g = 0; g < 32; g++) {
+        ctx->reg_alloc_map[g] = -1;
+    }
+}
+
+static void cg_ssa_invalidate_slots(stage5_cg_t *cg) {
+    for (int i = 0; i < STAGE5_RA_HOST_SLOTS; i++) {
+        cg->ssa_slot_value[i] = 0;
+    }
+}
+
+static void cg_ssa_init_slots(stage5_cg_t *cg, const stage5_ra_plan_t *plan) {
+    for (int i = 0; i < STAGE5_SSA_MAX_VALUES; i++) {
+        cg->ssa_value_slot[i] = -1;
+    }
+    cg_ssa_invalidate_slots(cg);
+    if (!plan) return;
+    for (uint16_t i = 0; i < plan->interval_count; i++) {
+        const stage5_ra_interval_t *it = &plan->intervals[i];
+        if (it->value_id < STAGE5_SSA_MAX_VALUES) {
+            cg->ssa_value_slot[it->value_id] = it->assigned_slot;
+        }
+    }
 }
 
 // ============================================================================
@@ -1103,6 +1145,62 @@ static bool cg_emit_mulh(stage5_cg_t *cg, const stage5_ir_node_t *n) {
     return true;
 }
 
+static bool cg_emit_fp_helper(stage5_cg_t *cg, const stage5_ir_node_t *n) {
+    translate_ctx_t *ctx = cg->ctx;
+    emit_ctx_t *e = cg->e;
+    uint8_t rd = n->rd;
+
+    // Match translate_fp_r_type semantics before helper call.
+    stage5_flush_pending_for_codegen(ctx);
+
+    // Invalidate constants/bounds for destination register(s).
+    if (rd != 0) {
+        ctx->reg_constants[rd].valid = false;
+        for (int i = 0; i < ctx->validated_range_count; i++) {
+            if (ctx->validated_ranges[i].guest_reg == rd) {
+                ctx->validated_ranges[i].guest_reg = 0;
+            }
+        }
+        if (rd + 1 < 32) {
+            ctx->reg_constants[rd + 1].valid = false;
+            for (int i = 0; i < ctx->validated_range_count; i++) {
+                if (ctx->validated_ranges[i].guest_reg == (uint8_t)(rd + 1)) {
+                    ctx->validated_ranges[i].guest_reg = 0;
+                }
+            }
+        }
+    }
+
+    // Flush all allocated cached regs to memory (helper reads cpu->regs).
+    if (ctx->reg_cache_enabled) {
+        for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+            if (!ctx->reg_alloc[i].allocated) continue;
+            uint8_t greg = ctx->reg_alloc[i].guest_reg;
+            emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(greg), cg_reg_alloc_hosts[i]);
+            ctx->reg_alloc[i].dirty = false;
+        }
+    }
+
+    // SysV ABI: RDI=cpu, ESI=opcode, EDX=rd, ECX=rs1, R8D=rs2
+    emit_mov_r64_r64(e, RDI, RBP);
+    emit_mov_r32_imm32(e, RSI, n->opcode);
+    emit_mov_r32_imm32(e, RDX, n->rd);
+    emit_mov_r32_imm32(e, RCX, n->rs1);
+    emit_mov_r32_imm32(e, R8, n->rs2);
+    emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)dbt_fp_helper);
+    emit_call_r64(e, RAX);
+
+    // Helper can modify any guest reg; reload all cached host regs.
+    if (ctx->reg_cache_enabled) {
+        for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+            if (!ctx->reg_alloc[i].allocated) continue;
+            uint8_t greg = ctx->reg_alloc[i].guest_reg;
+            emit_mov_r32_m32(e, cg_reg_alloc_hosts[i], RBP, GUEST_REG_OFFSET(greg));
+        }
+    }
+    return true;
+}
+
 // MULHU: rd = hi(rs1 * rs2) (unsigned)
 // Uses MUL r/m32 (one-operand form): EDX:EAX = EAX * src (unsigned)
 static bool cg_emit_mulhu(stage5_cg_t *cg, const stage5_ir_node_t *n) {
@@ -1504,14 +1602,373 @@ static bool cg_emit_node(stage5_cg_t *cg, const stage5_ir_node_t *n) {
         case OP_FCVT_D_S: case OP_FCVT_S_D: case OP_FNEG_D: case OP_FABS_D:
         case OP_FCVT_L_S: case OP_FCVT_LU_S: case OP_FCVT_S_L: case OP_FCVT_S_LU:
         case OP_FCVT_L_D: case OP_FCVT_LU_D: case OP_FCVT_D_L: case OP_FCVT_D_LU:
-            translate_fp_r_type(cg->ctx, n->opcode, n->rd, n->rs1, n->rs2);
-            return true;
+            return cg_emit_fp_helper(cg, n);
 
         default:
             // Unknown opcode — abort
             stage5_codegen_fallback_unsupported_op++;
             return false;
     }
+}
+
+static bool cg_emit_node_ssa_ra(stage5_cg_t *cg, uint32_t idx, const stage5_ir_node_t *n) {
+    if (!cg->ssa || !cg->ra_plan) return false;
+    if (idx >= STAGE5_MAX_IR_NODES) return false;
+
+    bool is_alu_rr = (n->opcode == OP_ADD || n->opcode == OP_SUB ||
+                      n->opcode == OP_AND || n->opcode == OP_OR || n->opcode == OP_XOR);
+    bool is_alu_ri = (n->opcode == OP_ADDI || n->opcode == OP_ANDI ||
+                      n->opcode == OP_ORI || n->opcode == OP_XORI);
+    bool is_shift_ri = (n->opcode == OP_SLLI || n->opcode == OP_SRLI || n->opcode == OP_SRAI);
+    bool is_shift_rr = (n->opcode == OP_SLL || n->opcode == OP_SRL || n->opcode == OP_SRA);
+    bool is_cmp_rr = (n->opcode == OP_SLT || n->opcode == OP_SLTU ||
+                      n->opcode == OP_SEQ || n->opcode == OP_SNE ||
+                      n->opcode == OP_SGT || n->opcode == OP_SGTU ||
+                      n->opcode == OP_SLE || n->opcode == OP_SLEU ||
+                      n->opcode == OP_SGE || n->opcode == OP_SGEU);
+    bool is_cmp_ri = (n->opcode == OP_SLTI || n->opcode == OP_SLTIU);
+    bool is_lui = (n->opcode == OP_LUI);
+    bool is_mul_rr = (n->opcode == OP_MUL);
+    bool is_mulh = (n->opcode == OP_MULH);
+    bool is_mulhu = (n->opcode == OP_MULHU);
+    bool is_div = (n->opcode == OP_DIV);
+    bool is_rem = (n->opcode == OP_REM);
+    bool is_load = (n->opcode == OP_LDW || n->opcode == OP_LDH || n->opcode == OP_LDB ||
+                    n->opcode == OP_LDHU || n->opcode == OP_LDBU);
+    bool is_store = (n->opcode == OP_STW || n->opcode == OP_STH || n->opcode == OP_STB);
+    bool is_muldiv_rr = is_mul_rr || is_mulh || is_mulhu || is_div || is_rem;
+    bool is_rr = is_alu_rr || is_shift_rr || is_cmp_rr || is_muldiv_rr;
+    bool is_ri = is_alu_ri || is_shift_ri || is_cmp_ri;
+    if (!is_rr && !is_ri && !is_lui && !is_load && !is_store) return false;
+    if (!is_store && n->rd == 0) return false;
+
+    // Local copy-prop/identity simplifications in SSA lane.
+    bool copy_from_use0 = false;
+    bool copy_from_use1 = false;
+    bool zero_result = false;
+    bool one_result = false;
+    bool imm_result = false;
+    uint32_t imm_result_value = 0;
+    switch (n->opcode) {
+        case OP_ADDI:
+            if (n->rs1 == 0) {
+                imm_result = true;
+                imm_result_value = (uint32_t)n->imm;
+            } else {
+                copy_from_use0 = (n->imm == 0);
+            }
+            break;
+        case OP_ORI:
+            if (n->rs1 == 0) {
+                imm_result = true;
+                imm_result_value = (uint32_t)n->imm;
+            } else {
+                copy_from_use0 = (n->imm == 0);
+            }
+            break;
+        case OP_XORI:
+            if (n->rs1 == 0) {
+                imm_result = true;
+                imm_result_value = (uint32_t)n->imm;
+            } else {
+                copy_from_use0 = (n->imm == 0);
+            }
+            break;
+        case OP_ANDI:
+            if (n->rs1 == 0) {
+                zero_result = true;
+            } else {
+                copy_from_use0 = (n->imm == -1);
+                zero_result = (n->imm == 0);
+            }
+            break;
+        case OP_SLLI:
+        case OP_SRLI:
+        case OP_SRAI:
+            if (n->rs1 == 0) zero_result = true;
+            else copy_from_use0 = ((n->imm & 31) == 0);
+            break;
+        case OP_ADD:
+        case OP_OR:
+        case OP_XOR:
+            if (n->rs2 == 0) copy_from_use0 = true;
+            if (n->rs1 == 0) copy_from_use1 = true;
+            if (n->opcode == OP_OR && n->rs1 == n->rs2) copy_from_use0 = true;
+            if (n->opcode == OP_XOR && n->rs1 == n->rs2) zero_result = true;
+            break;
+        case OP_SUB:
+            if (n->rs2 == 0) copy_from_use0 = true;
+            if (n->rs1 == n->rs2) zero_result = true;
+            break;
+        case OP_AND:
+            if (n->rs2 == 0 || n->rs1 == 0) zero_result = true;
+            else if (n->rs1 == n->rs2) copy_from_use0 = true;
+            break;
+        case OP_SLT:
+        case OP_SLTU:
+        case OP_SNE:
+        case OP_SGT:
+        case OP_SGTU:
+            if (n->rs1 == n->rs2) zero_result = true;
+            break;
+        case OP_SEQ:
+        case OP_SLE:
+        case OP_SLEU:
+        case OP_SGE:
+        case OP_SGEU:
+            if (n->rs1 == n->rs2) one_result = true;
+            break;
+        case OP_MUL:
+        case OP_MULH:
+        case OP_MULHU:
+            if (n->rs1 == 0 || n->rs2 == 0) zero_result = true;
+            break;
+        default:
+            break;
+    }
+    if (zero_result || one_result || imm_result) {
+        copy_from_use0 = false;
+        copy_from_use1 = false;
+    }
+    if (copy_from_use0 && copy_from_use1) copy_from_use1 = false;
+
+    uint16_t def_v = cg->ssa->node_def_value[idx];
+    uint16_t use0_v = cg->ssa->node_use0_valid[idx] ? cg->ssa->node_use0_value[idx] : 0;
+    bool need_use0 = !is_lui && !is_store && !zero_result && !one_result &&
+                     !imm_result && !copy_from_use1;
+    bool need_use1 = (is_rr || is_store) && !zero_result && !one_result &&
+                     !imm_result && !copy_from_use0;
+    uint16_t use1_v = (need_use1 && cg->ssa->node_use1_valid[idx]) ? cg->ssa->node_use1_value[idx] : 0;
+    if (!is_store && def_v == 0) return false;
+    if ((need_use0 || is_store) && use0_v == 0) return false;
+    if (need_use1 && use1_v == 0) return false;
+    if (def_v >= STAGE5_SSA_MAX_VALUES || use0_v >= STAGE5_SSA_MAX_VALUES ||
+        use1_v >= STAGE5_SSA_MAX_VALUES) return false;
+
+    int8_t def_slot = !is_store ? cg->ssa_value_slot[def_v] : -1;
+    int8_t use0_slot = cg->ssa_value_slot[use0_v];
+    int8_t use1_slot = need_use1 ? cg->ssa_value_slot[use1_v] : -1;
+    if (!is_store && def_slot < 0) return false;
+    if ((need_use0 || is_store) && use0_slot < 0) return false;
+    if (need_use1 && use1_slot < 0) return false;
+
+    x64_reg_t dst_h = !is_store ? cg_reg_alloc_hosts[def_slot] : X64_NOREG;
+    x64_reg_t src0_h = (need_use0 || is_store) ? cg_reg_alloc_hosts[use0_slot] : X64_NOREG;
+    x64_reg_t src1_h = need_use1 ? cg_reg_alloc_hosts[use1_slot] : X64_NOREG;
+
+    uint8_t use0_reg = (need_use0 || is_store) ? cg->ssa->node_use0_reg[idx] : 0;
+    uint8_t use1_reg = need_use1 ? cg->ssa->node_use1_reg[idx] : 0;
+    uint8_t def_reg = !is_store ? cg->ssa->node_def_reg[idx] : 0;
+
+    if ((need_use0 || is_store) && cg->ssa_slot_value[use0_slot] != use0_v) {
+        if (use0_reg == 0) emit_xor_r32_r32(cg->e, src0_h, src0_h);
+        else emit_mov_r32_m32(cg->e, src0_h, RBP, GUEST_REG_OFFSET(use0_reg));
+        cg->ssa_slot_value[use0_slot] = use0_v;
+    }
+    if (need_use1 && cg->ssa_slot_value[use1_slot] != use1_v) {
+        if (use1_reg == 0) emit_xor_r32_r32(cg->e, src1_h, src1_h);
+        else emit_mov_r32_m32(cg->e, src1_h, RBP, GUEST_REG_OFFSET(use1_reg));
+        cg->ssa_slot_value[use1_slot] = use1_v;
+    }
+
+    if (is_alu_rr) {
+        if (n->opcode == OP_SUB && dst_h == src1_h && dst_h != src0_h) {
+            emit_mov_r32_r32(cg->e, RAX, src1_h);
+            emit_mov_r32_r32(cg->e, dst_h, src0_h);
+            emit_sub_r32_r32(cg->e, dst_h, RAX);
+        } else if (dst_h == src1_h && dst_h != src0_h) {
+            switch (n->opcode) {
+                case OP_ADD: emit_add_r32_r32(cg->e, dst_h, src0_h); break;
+                case OP_AND: emit_and_r32_r32(cg->e, dst_h, src0_h); break;
+                case OP_OR:  emit_or_r32_r32(cg->e, dst_h, src0_h); break;
+                case OP_XOR: emit_xor_r32_r32(cg->e, dst_h, src0_h); break;
+                default: return false;
+            }
+        } else {
+            if (dst_h != src0_h) emit_mov_r32_r32(cg->e, dst_h, src0_h);
+            switch (n->opcode) {
+                case OP_ADD: emit_add_r32_r32(cg->e, dst_h, src1_h); break;
+                case OP_SUB: emit_sub_r32_r32(cg->e, dst_h, src1_h); break;
+                case OP_AND: emit_and_r32_r32(cg->e, dst_h, src1_h); break;
+                case OP_OR:  emit_or_r32_r32(cg->e, dst_h, src1_h); break;
+                case OP_XOR: emit_xor_r32_r32(cg->e, dst_h, src1_h); break;
+                default: return false;
+            }
+        }
+    } else if (is_alu_ri) {
+        if (dst_h != src0_h) emit_mov_r32_r32(cg->e, dst_h, src0_h);
+        switch (n->opcode) {
+            case OP_ADDI: emit_add_r32_imm32(cg->e, dst_h, n->imm); break;
+            case OP_ANDI: emit_and_r32_imm32(cg->e, dst_h, n->imm); break;
+            case OP_ORI:  emit_or_r32_imm32(cg->e, dst_h, n->imm); break;
+            case OP_XORI: emit_xor_r32_imm32(cg->e, dst_h, n->imm); break;
+            default: return false;
+        }
+    } else if (is_shift_ri) {
+        if (dst_h != src0_h) emit_mov_r32_r32(cg->e, dst_h, src0_h);
+        switch (n->opcode) {
+            case OP_SLLI: emit_shl_r32_imm8(cg->e, dst_h, (uint8_t)(n->imm & 31)); break;
+            case OP_SRLI: emit_shr_r32_imm8(cg->e, dst_h, (uint8_t)(n->imm & 31)); break;
+            case OP_SRAI: emit_sar_r32_imm8(cg->e, dst_h, (uint8_t)(n->imm & 31)); break;
+            default: return false;
+        }
+    } else if (is_shift_rr) {
+        emit_mov_r32_r32(cg->e, RCX, src1_h);
+        if (dst_h != src0_h) emit_mov_r32_r32(cg->e, dst_h, src0_h);
+        switch (n->opcode) {
+            case OP_SLL: emit_shl_r32_cl(cg->e, dst_h); break;
+            case OP_SRL: emit_shr_r32_cl(cg->e, dst_h); break;
+            case OP_SRA: emit_sar_r32_cl(cg->e, dst_h); break;
+            default: return false;
+        }
+    } else if (is_cmp_rr) {
+        emit_cmp_r32_r32(cg->e, src0_h, src1_h);
+        switch (n->opcode) {
+            case OP_SLT:  emit_setl(cg->e, dst_h);  break;
+            case OP_SLTU: emit_setb(cg->e, dst_h);  break;
+            case OP_SEQ:  emit_sete(cg->e, dst_h);  break;
+            case OP_SNE:  emit_setne(cg->e, dst_h); break;
+            case OP_SGT:  emit_setg(cg->e, dst_h);  break;
+            case OP_SGTU: emit_seta(cg->e, dst_h);  break;
+            case OP_SLE:  emit_setle(cg->e, dst_h); break;
+            case OP_SLEU: emit_setbe(cg->e, dst_h); break;
+            case OP_SGE:  emit_setge(cg->e, dst_h); break;
+            case OP_SGEU: emit_setae(cg->e, dst_h); break;
+            default: return false;
+        }
+        emit_movzx_r32_r8(cg->e, dst_h, dst_h);
+    } else if (is_cmp_ri) {
+        emit_cmp_r32_imm32(cg->e, src0_h, n->imm);
+        switch (n->opcode) {
+            case OP_SLTI:  emit_setl(cg->e, dst_h); break;
+            case OP_SLTIU: emit_setb(cg->e, dst_h); break;
+            default: return false;
+        }
+        emit_movzx_r32_r8(cg->e, dst_h, dst_h);
+    } else if (is_load) {
+        uint32_t access_size = 4;
+        switch (n->opcode) {
+            case OP_LDW: access_size = 4; break;
+            case OP_LDH:
+            case OP_LDHU: access_size = 2; break;
+            case OP_LDB:
+            case OP_LDBU: access_size = 1; break;
+            default: return false;
+        }
+
+        if (use0_reg == 0) {
+            emit_mov_r32_imm32(cg->e, RAX, (uint32_t)n->imm);
+        } else {
+            if (src0_h != RAX) emit_mov_r32_r32(cg->e, RAX, src0_h);
+            if (n->imm != 0) emit_add_r32_imm32(cg->e, RAX, n->imm);
+        }
+        cg_emit_bounds_check(cg, access_size, false, n->pc);
+        switch (n->opcode) {
+            case OP_LDW:  emit_mov_r32_m32_idx(cg->e, dst_h, R14, RAX); break;
+            case OP_LDH:  emit_movsx_r32_m16_idx(cg->e, dst_h, R14, RAX); break;
+            case OP_LDB:  emit_movsx_r32_m8_idx(cg->e, dst_h, R14, RAX); break;
+            case OP_LDHU: emit_movzx_r32_m16_idx(cg->e, dst_h, R14, RAX); break;
+            case OP_LDBU: emit_movzx_r32_m8_idx(cg->e, dst_h, R14, RAX); break;
+            default: return false;
+        }
+        stage5_codegen_native_loads++;
+    } else if (is_store) {
+        uint32_t access_size = 4;
+        switch (n->opcode) {
+            case OP_STW: access_size = 4; break;
+            case OP_STH: access_size = 2; break;
+            case OP_STB: access_size = 1; break;
+            default: return false;
+        }
+
+        if (use0_reg == 0) {
+            emit_mov_r32_imm32(cg->e, RAX, (uint32_t)n->imm);
+        } else {
+            if (src0_h != RAX) emit_mov_r32_r32(cg->e, RAX, src0_h);
+            if (n->imm != 0) emit_add_r32_imm32(cg->e, RAX, n->imm);
+        }
+        cg_emit_bounds_check(cg, access_size, true, n->pc);
+        switch (n->opcode) {
+            case OP_STW: emit_mov_m32_r32_idx(cg->e, R14, RAX, src1_h); break;
+            case OP_STH: emit_mov_m16_r16_idx(cg->e, R14, RAX, src1_h); break;
+            case OP_STB: emit_mov_m8_r8_idx(cg->e, R14, RAX, src1_h); break;
+            default: return false;
+        }
+        stage5_codegen_native_stores++;
+        return true;
+    } else if (zero_result || one_result || imm_result || copy_from_use0 || copy_from_use1) {
+        if (zero_result) {
+            emit_xor_r32_r32(cg->e, dst_h, dst_h);
+        } else if (one_result) {
+            emit_mov_r32_imm32(cg->e, dst_h, 1);
+        } else if (imm_result) {
+            emit_mov_r32_imm32(cg->e, dst_h, imm_result_value);
+        } else {
+            x64_reg_t src_h = copy_from_use1 ? src1_h : src0_h;
+            if (dst_h != src_h) emit_mov_r32_r32(cg->e, dst_h, src_h);
+        }
+    } else if (is_lui) {
+        emit_mov_r32_imm32(cg->e, dst_h, (uint32_t)n->imm);
+    } else if (is_mul_rr) {
+        if (dst_h == src1_h && dst_h != src0_h) {
+            emit_mov_r32_r32(cg->e, dst_h, src1_h);
+            emit_imul_r32_r32(cg->e, dst_h, src0_h);
+        } else {
+            if (dst_h != src0_h) emit_mov_r32_r32(cg->e, dst_h, src0_h);
+            emit_imul_r32_r32(cg->e, dst_h, src1_h);
+        }
+    } else if (is_mulh) {
+        if (src0_h != RAX) emit_mov_r32_r32(cg->e, RAX, src0_h);
+        emit_imul_one_r32(cg->e, src1_h);
+        if (dst_h != RDX) emit_mov_r32_r32(cg->e, dst_h, RDX);
+    } else if (is_mulhu) {
+        if (src0_h != RAX) emit_mov_r32_r32(cg->e, RAX, src0_h);
+        emit_mul_r32(cg->e, src1_h);
+        if (dst_h != RDX) emit_mov_r32_r32(cg->e, dst_h, RDX);
+    } else if (is_div) {
+        if (src0_h != RAX) emit_mov_r32_r32(cg->e, RAX, src0_h);
+        emit_cmp_r32_imm32(cg->e, src1_h, -1);
+        emit_jne_rel32(cg->e, 0);
+        size_t patch_not_neg1 = cg->e->offset - 4;
+        emit_cmp_r32_imm32(cg->e, RAX, (int32_t)0x80000000);
+        emit_jne_rel32(cg->e, 0);
+        size_t patch_not_intmin = cg->e->offset - 4;
+        emit_mov_r32_imm32(cg->e, RAX, 0x80000000);
+        emit_jmp_rel32(cg->e, 0);
+        size_t patch_skip_idiv = cg->e->offset - 4;
+        emit_patch_rel32(cg->e, patch_not_neg1, cg->e->offset);
+        emit_patch_rel32(cg->e, patch_not_intmin, cg->e->offset);
+        emit_cdq(cg->e);
+        emit_idiv_r32(cg->e, src1_h);
+        emit_patch_rel32(cg->e, patch_skip_idiv, cg->e->offset);
+        if (dst_h != RAX) emit_mov_r32_r32(cg->e, dst_h, RAX);
+    } else if (is_rem) {
+        if (src0_h != RAX) emit_mov_r32_r32(cg->e, RAX, src0_h);
+        emit_cmp_r32_imm32(cg->e, src1_h, -1);
+        emit_jne_rel32(cg->e, 0);
+        size_t patch_not_neg1 = cg->e->offset - 4;
+        emit_cmp_r32_imm32(cg->e, RAX, (int32_t)0x80000000);
+        emit_jne_rel32(cg->e, 0);
+        size_t patch_not_intmin = cg->e->offset - 4;
+        emit_xor_r32_r32(cg->e, RAX, RAX);
+        emit_jmp_rel32(cg->e, 0);
+        size_t patch_skip_idiv = cg->e->offset - 4;
+        emit_patch_rel32(cg->e, patch_not_neg1, cg->e->offset);
+        emit_patch_rel32(cg->e, patch_not_intmin, cg->e->offset);
+        emit_cdq(cg->e);
+        emit_idiv_r32(cg->e, src1_h);
+        emit_mov_r32_r32(cg->e, RAX, RDX);
+        emit_patch_rel32(cg->e, patch_skip_idiv, cg->e->offset);
+        if (dst_h != RAX) emit_mov_r32_r32(cg->e, dst_h, RAX);
+    } else {
+        return false;
+    }
+
+    if (def_reg == 0) return true;
+    emit_mov_m32_r32(cg->e, RBP, GUEST_REG_OFFSET(def_reg), dst_h);
+    cg->ssa_slot_value[def_slot] = def_v;
+    cg_mark_dirty(cg, def_reg);
+    return true;
 }
 
 static bool cg_opcode_supported(uint8_t opcode, bool cmp_rr_enabled, bool cmp_ri_enabled) {
@@ -1566,6 +2023,38 @@ static bool cg_terminal_supported(uint8_t opcode, bool branch_term_enabled) {
         default:
             return false;
     }
+}
+
+static bool cg_opcode_dce_pure(uint8_t opcode) {
+    switch (opcode) {
+        case OP_NOP:
+        case OP_ADD: case OP_SUB: case OP_AND: case OP_OR: case OP_XOR:
+        case OP_ADDI: case OP_ANDI: case OP_ORI: case OP_XORI:
+        case OP_SLL: case OP_SRL: case OP_SRA:
+        case OP_SLLI: case OP_SRLI: case OP_SRAI:
+        case OP_SLT: case OP_SLTU: case OP_SEQ: case OP_SNE:
+        case OP_SGT: case OP_SGTU: case OP_SLE: case OP_SLEU:
+        case OP_SGE: case OP_SGEU:
+        case OP_SLTI: case OP_SLTIU:
+        case OP_LUI:
+        case OP_MUL: case OP_MULH: case OP_MULHU:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static bool cg_can_dce_prefix_node(const stage5_lift_region_t *region,
+                                   uint32_t idx,
+                                   const stage5_ir_node_t *n) {
+    if (!region || !n) return false;
+    if (n->synthetic || n->is_side_exit) return false;
+    if (!cg_opcode_dce_pure(n->opcode)) return false;
+    if (n->rd == 0 || n->rd >= 32) return true;
+    if (!region->reg_flow_valid) return false;
+    const stage5_reg_flow_t *f = &region->reg_flow[n->rd];
+    if (f->live_across_edge) return false;
+    return ((int)f->last_use < (int)idx);
 }
 
 // Identify canonical compare+branch mix candidates when BURG did not provide
@@ -2129,16 +2618,172 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
 // using the same deferred exit infrastructure.
 // ============================================================================
 
-// Forward declarations for translate.c static functions we need:
-// stage5_branch_inv_cc, stage5_side_exit_supported, stage5_pick_cmp_scratch_regs,
-// stage5_side_exit_trace_emit
-// These are static in translate.c so we can't call them directly.
-// Replicate the minimal versions here.
+static uint8_t cg_branch_inv_cc(uint8_t opcode) {
+    switch (opcode) {
+        case OP_BEQ:  return 0x05;  // JNE
+        case OP_BNE:  return 0x04;  // JE
+        case OP_BLT:  return 0x0D;  // JGE
+        case OP_BGE:  return 0x0C;  // JL
+        case OP_BLTU: return 0x03;  // JAE
+        case OP_BGEU: return 0x02;  // JB
+        default:      return 0xFF;
+    }
+}
 
-static __attribute__((unused)) bool cg_emit_side_exit(stage5_cg_t *cg, const stage5_ir_node_t *n) {
-    (void)cg;
-    return stage5_emit_side_exit_for_codegen(cg->ctx,
-        n->opcode, n->rs1, n->rs2, n->imm, n->pc);
+static uint8_t cg_branch_cc(uint8_t opcode) {
+    switch (opcode) {
+        case OP_BEQ:  return 0x04;  // JE
+        case OP_BNE:  return 0x05;  // JNE
+        case OP_BLT:  return 0x0C;  // JL
+        case OP_BGE:  return 0x0D;  // JGE
+        case OP_BLTU: return 0x02;  // JB
+        case OP_BGEU: return 0x03;  // JAE
+        default:      return 0xFF;
+    }
+}
+
+static void cg_pick_cmp_scratch_regs(stage5_cg_t *cg,
+                                     x64_reg_t avoid1, x64_reg_t avoid2,
+                                     x64_reg_t *out_a, x64_reg_t *out_b) {
+    static const x64_reg_t k_candidates[] = {RAX, RCX, RDX, R10};
+    translate_ctx_t *ctx = cg->ctx;
+    x64_reg_t pending =
+        (ctx && ctx->pending_write.valid) ? ctx->pending_write.host_reg : X64_NOREG;
+
+    x64_reg_t a = RAX;
+    x64_reg_t b = RCX;
+    for (size_t i = 0; i < sizeof(k_candidates) / sizeof(k_candidates[0]); i++) {
+        x64_reg_t r = k_candidates[i];
+        if (r == avoid1 || r == avoid2 || r == pending) continue;
+        a = r;
+        break;
+    }
+    for (size_t i = 0; i < sizeof(k_candidates) / sizeof(k_candidates[0]); i++) {
+        x64_reg_t r = k_candidates[i];
+        if (r == a || r == avoid1 || r == avoid2 || r == pending) continue;
+        b = r;
+        break;
+    }
+    if (b == a) b = (a == RAX) ? RCX : RAX;
+    *out_a = a;
+    *out_b = b;
+}
+
+static bool cg_emit_side_exit(stage5_cg_t *cg, const stage5_ir_node_t *n) {
+    translate_ctx_t *ctx = cg->ctx;
+    emit_ctx_t *e = cg->e;
+    if (!ctx || !n) return false;
+    if (!stage5_side_exit_opcode_supported_for_codegen(n->opcode)) return false;
+    if (ctx->exit_idx + 2 >= MAX_BLOCK_EXITS ||
+        ctx->deferred_exit_count >= MAX_BLOCK_EXITS) {
+        return false;
+    }
+
+    uint32_t fall_pc = n->pc + 4;
+    uint32_t taken_pc = fall_pc + n->imm;
+    ctx->guest_pc = n->pc;
+
+    // Match Family-C side-exit semantics: only cond is flushed here.
+    stage5_flush_pending_cond_for_codegen(ctx);
+
+    if ((n->opcode == OP_BEQ || n->opcode == OP_BNE) &&
+        (n->rs1 == 0 || n->rs2 == 0)) {
+        uint8_t rz = (n->rs1 == 0) ? n->rs2 : n->rs1;
+        x64_reg_t hz = (rz != 0) ? cg_guest_host(cg, rz) : X64_NOREG;
+        if (rz == 0) {
+            if (ctx->pending_write.valid) {
+                emit_mov_m32_r32(e, RBP,
+                    GUEST_REG_OFFSET(ctx->pending_write.guest_reg),
+                    ctx->pending_write.host_reg);
+                ctx->pending_write.valid = false;
+                e->rax_pending = false;
+            }
+            emit_xor_r32_r32(e, RAX, RAX);
+            emit_test_r32_r32(e, RAX, RAX);
+        } else if (hz != X64_NOREG) {
+            if (ctx->pending_write.valid) {
+                emit_mov_m32_r32(e, RBP,
+                    GUEST_REG_OFFSET(ctx->pending_write.guest_reg),
+                    ctx->pending_write.host_reg);
+                ctx->pending_write.valid = false;
+                e->rax_pending = false;
+            }
+            emit_test_r32_r32(e, hz, hz);
+        } else {
+            emit_load_guest_reg(ctx, RAX, rz);
+            emit_test_r32_r32(e, RAX, RAX);
+        }
+    } else {
+        x64_reg_t h1 = (n->rs1 != 0) ? cg_guest_host(cg, n->rs1) : X64_NOREG;
+        x64_reg_t h2 = (n->rs2 != 0) ? cg_guest_host(cg, n->rs2) : X64_NOREG;
+        x64_reg_t t1 = RAX, t2 = RCX;
+        cg_pick_cmp_scratch_regs(cg, h1, h2, &t1, &t2);
+        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : t1;
+        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : t2;
+        if (h1 == X64_NOREG) {
+            if (ctx->pending_write.valid) {
+                emit_mov_m32_r32(e, RBP,
+                    GUEST_REG_OFFSET(ctx->pending_write.guest_reg),
+                    ctx->pending_write.host_reg);
+                ctx->pending_write.valid = false;
+                e->rax_pending = false;
+            }
+            if (n->rs1 == 0) emit_xor_r32_r32(e, t1, t1);
+            else emit_load_guest_reg(ctx, t1, n->rs1);
+        }
+        if (h2 == X64_NOREG) {
+            if (n->rs2 == 0) emit_xor_r32_r32(e, t2, t2);
+            else emit_load_guest_reg(ctx, t2, n->rs2);
+        }
+        if (h1 != X64_NOREG || h2 != X64_NOREG) {
+            if (ctx->pending_write.valid) {
+                emit_mov_m32_r32(e, RBP,
+                    GUEST_REG_OFFSET(ctx->pending_write.guest_reg),
+                    ctx->pending_write.host_reg);
+                ctx->pending_write.valid = false;
+                e->rax_pending = false;
+            }
+        }
+        emit_cmp_r32_r32(e, cmp_a, cmp_b);
+    }
+
+    uint8_t inv_cc = cg_branch_inv_cc(n->opcode);
+    uint8_t cc = cg_branch_cc(n->opcode);
+    if (inv_cc == 0xFF || cc == 0xFF) return false;
+    // side_exit_on_taken:
+    //   true  => keep existing behavior (skip trampoline on not-taken).
+    //   false => stitched-taken mode (skip trampoline on taken).
+    emit_jcc_short(e, n->side_exit_on_taken ? inv_cc : cc, 5);
+
+    size_t jmp_patch = emit_offset(e) + 1;
+    emit_jmp_rel32(e, 0);
+
+    int di = ctx->deferred_exit_count++;
+    ctx->deferred_exits[di].jmp_patch_offset = jmp_patch;
+    ctx->deferred_exits[di].target_pc = n->side_exit_on_taken ? taken_pc : fall_pc;
+    ctx->deferred_exits[di].exit_idx = ctx->exit_idx;
+    ctx->deferred_exits[di].branch_pc = n->pc;
+    for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
+        ctx->deferred_exits[di].dirty_snapshot[s] = ctx->reg_alloc[s].dirty;
+        ctx->deferred_exits[di].allocated_snapshot[s] = ctx->reg_alloc[s].allocated;
+        ctx->deferred_exits[di].guest_reg_snapshot[s] = ctx->reg_alloc[s].guest_reg;
+    }
+    ctx->deferred_exits[di].pending_write_valid = ctx->pending_write.valid;
+    ctx->deferred_exits[di].pending_write_guest_reg = ctx->pending_write.guest_reg;
+    ctx->deferred_exits[di].pending_write_host_reg = ctx->pending_write.host_reg;
+    ctx->deferred_exits[di].force_full_flush =
+        (n->opcode == OP_BLTU || n->opcode == OP_BGEU);
+
+    if (ctx->block) {
+        ctx->block->flags |= BLOCK_FLAG_DIRECT;
+    }
+    if (ctx->side_exit_emitted < MAX_BLOCK_EXITS) {
+        ctx->side_exit_pcs[ctx->side_exit_emitted] = n->pc;
+    }
+    ctx->exit_idx++;
+    ctx->side_exit_emitted++;
+    stage5_emit_side_exits++;
+    return true;
 }
 
 static int cg_find_cfg_block_by_pc(const stage5_lift_region_t *region, uint32_t pc) {
@@ -2422,6 +3067,99 @@ static bool cg_emit_branch_terminal_native(stage5_cg_t *cg,
     return true;
 }
 
+static bool cg_emit_cmp_branch_fused_native(stage5_cg_t *cg,
+                                            const stage5_lift_region_t *region,
+                                            const stage5_phi_elim_plan_t *phi_plan,
+                                            uint8_t cmp_opcode,
+                                            uint8_t cmp_rs1, uint8_t cmp_rs2,
+                                            int32_t cmp_imm, bool cmp_is_imm,
+                                            uint8_t branch_opcode,
+                                            int32_t branch_imm,
+                                            uint32_t branch_pc) {
+    translate_ctx_t *ctx = cg->ctx;
+    emit_ctx_t *e = cg->e;
+    uint32_t fall_pc = branch_pc + 4;
+    uint32_t taken_pc = fall_pc + branch_imm;
+
+    if (ctx->block) {
+        ctx->block->flags |= BLOCK_FLAG_DIRECT;
+    }
+
+    stage5_flush_pending_for_codegen(ctx);
+
+    if (cmp_is_imm) {
+        x64_reg_t h1 = cg_guest_host(cg, cmp_rs1);
+        if (h1 != X64_NOREG) {
+            emit_cmp_r32_imm32(e, h1, cmp_imm);
+        } else {
+            if (cmp_rs1 == 0) emit_xor_r32_r32(e, RAX, RAX);
+            else emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(cmp_rs1));
+            emit_cmp_r32_imm32(e, RAX, cmp_imm);
+        }
+    } else {
+        x64_reg_t h1 = cg_guest_host(cg, cmp_rs1);
+        x64_reg_t h2 = cg_guest_host(cg, cmp_rs2);
+        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : RAX;
+        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : RCX;
+        if (h1 == X64_NOREG) {
+            if (cmp_rs1 == 0) emit_xor_r32_r32(e, RAX, RAX);
+            else emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(cmp_rs1));
+        }
+        if (h2 == X64_NOREG) {
+            if (cmp_rs2 == 0) emit_xor_r32_r32(e, RCX, RCX);
+            else emit_mov_r32_m32(e, RCX, RBP, GUEST_REG_OFFSET(cmp_rs2));
+        }
+        emit_cmp_r32_r32(e, cmp_a, cmp_b);
+    }
+
+    bool is_bne = (branch_opcode == OP_BNE);
+    uint8_t taken_cc = 0;
+    switch (cmp_opcode) {
+        case OP_SLT:  case OP_SLTI:  taken_cc = is_bne ? 0x8C : 0x8D; break; // JL : JGE
+        case OP_SLTU: case OP_SLTIU: taken_cc = is_bne ? 0x82 : 0x83; break; // JB : JAE
+        case OP_SEQ:                taken_cc = is_bne ? 0x84 : 0x85; break; // JE : JNE
+        case OP_SNE:                taken_cc = is_bne ? 0x85 : 0x84; break; // JNE : JE
+        case OP_SGT:                taken_cc = is_bne ? 0x8F : 0x8E; break; // JG : JLE
+        case OP_SGTU:               taken_cc = is_bne ? 0x87 : 0x86; break; // JA : JBE
+        case OP_SLE:                taken_cc = is_bne ? 0x8E : 0x8F; break; // JLE : JG
+        case OP_SLEU:               taken_cc = is_bne ? 0x86 : 0x87; break; // JBE : JA
+        case OP_SGE:                taken_cc = is_bne ? 0x8D : 0x8C; break; // JGE : JL
+        case OP_SGEU:               taken_cc = is_bne ? 0x83 : 0x82; break; // JAE : JB
+        default:
+            return false;
+    }
+
+    void (*emit_jcc_taken)(emit_ctx_t *, int32_t) =
+        (void (*)(emit_ctx_t *, int32_t))emit_jcc_rel32_from_cc(taken_cc);
+    if (!emit_jcc_taken) return false;
+
+    size_t jcc_patch = emit_offset(e) + 2;
+    emit_jcc_taken(e, 0);
+
+    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
+        ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
+    }
+    int pred_block = cg_find_cfg_block_by_pc(region, branch_pc);
+    int fall_block = cg_find_cfg_block_by_pc(region, fall_pc);
+    if (!cg_emit_parallel_copy_edge(cg, phi_plan, pred_block, fall_block)) {
+        return false;
+    }
+    emit_exit_chained_for_codegen(ctx, fall_pc, ctx->exit_idx++);
+
+    size_t taken_offset = emit_offset(e);
+    emit_patch_rel32(e, jcc_patch, taken_offset);
+    if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
+        ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
+    }
+    int taken_block = cg_find_cfg_block_by_pc(region, taken_pc);
+    if (!cg_emit_parallel_copy_edge(cg, phi_plan, pred_block, taken_block)) {
+        return false;
+    }
+    emit_exit_chained_for_codegen(ctx, taken_pc, ctx->exit_idx++);
+
+    return true;
+}
+
 static bool cg_emit_phi_for_edge(stage5_cg_t *cg,
                                  const stage5_lift_region_t *region,
                                  const stage5_phi_elim_plan_t *phi_plan,
@@ -2498,6 +3236,22 @@ static void cg_emit_jal_terminal(stage5_cg_t *cg, uint8_t rd, int32_t imm) {
     emit_exit_chained_for_codegen(ctx, target_pc, ctx->exit_idx++);
 }
 
+static void cg_emit_jal_jump_compact_terminal(stage5_cg_t *cg, uint8_t rd, int32_t imm) {
+    translate_ctx_t *ctx = cg->ctx;
+    emit_ctx_t *e = cg->e;
+    uint32_t return_pc = ctx->guest_pc + 4;
+    uint32_t target_pc = ctx->guest_pc + imm;
+
+    if (rd != 0) {
+        emit_mov_r32_imm32(e, RAX, return_pc);
+        emit_store_guest_reg(ctx, rd, RAX);
+    }
+    if (ctx->block) {
+        ctx->block->flags |= BLOCK_FLAG_DIRECT;
+    }
+    emit_exit_chained_for_codegen(ctx, target_pc, ctx->exit_idx++);
+}
+
 // ============================================================================
 // Native JALR terminal
 // ============================================================================
@@ -2550,6 +3304,24 @@ static void cg_emit_jalr_terminal(stage5_cg_t *cg, uint8_t rd, uint8_t rs1, int3
     }
 }
 
+static void cg_emit_halt_terminal(stage5_cg_t *cg) {
+    translate_ctx_t *ctx = cg->ctx;
+    emit_exit_for_codegen(ctx, EXIT_HALT, ctx->guest_pc + 4);
+}
+
+static void cg_emit_debug_terminal(stage5_cg_t *cg, uint8_t rs1) {
+    translate_ctx_t *ctx = cg->ctx;
+    emit_ctx_t *e = cg->e;
+    emit_load_guest_reg(ctx, RAX, rs1);
+    emit_mov_m32_r32(e, RBP, CPU_EXIT_INFO_OFFSET, RAX);
+    emit_exit_for_codegen(ctx, EXIT_DEBUG, ctx->guest_pc + 4);
+}
+
+static void cg_emit_yield_terminal(stage5_cg_t *cg) {
+    translate_ctx_t *ctx = cg->ctx;
+    emit_exit_for_codegen(ctx, EXIT_YIELD, ctx->guest_pc + 4);
+}
+
 bool stage5_codegen(translate_ctx_t *ctx,
                     const stage5_lift_region_t *region,
                     uint32_t guest_pc,
@@ -2590,6 +3362,10 @@ bool stage5_codegen(translate_ctx_t *ctx,
     cg.current_idx = 0;
 
     bool terminal_fused = false;
+    stage5_ssa_overlay_t ssa;
+    stage5_ra_plan_t ra_plan;
+    bool have_ssa = false;
+    bool have_ra = false;
     stage5_phi_elim_plan_t phi_plan;
     bool have_phi_plan = false;
     size_t emit_start = emit_offset(cg.e);
@@ -2744,7 +3520,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
     // Build a region-local SSA overlay (value numbering + def/use links).
     // This is a foundation pass for later SSA-side simplification and RA work.
     if (stage5_ssa_enabled()) {
-        stage5_ssa_overlay_t ssa;
         if (!stage5_ssa_build_overlay(region, &ssa)) {
             stage5_codegen_fallback++;
             stage5_codegen_fallback_preflight++;
@@ -2752,6 +3527,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
             cg_state_restore(ctx, &saved);
             return false;
         }
+        have_ssa = true;
         if (!stage5_ssa_build_phi_elim_plan(region, &ssa, &phi_plan)) {
             stage5_codegen_fallback++;
             stage5_codegen_fallback_preflight++;
@@ -2760,6 +3536,27 @@ bool stage5_codegen(translate_ctx_t *ctx,
             return false;
         }
         have_phi_plan = true;
+
+        if (stage5_ra_enabled()) {
+            if (!stage5_ra_build_plan(region, &ssa, &ra_plan)) {
+                stage5_codegen_fallback++;
+                stage5_codegen_fallback_preflight++;
+                if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
+                cg_state_restore(ctx, &saved);
+                return false;
+            }
+            have_ra = true;
+        }
+    }
+
+    cg.ssa = have_ssa ? &ssa : NULL;
+    cg.ra_plan = have_ra ? &ra_plan : NULL;
+    cg_ssa_init_slots(&cg, cg.ra_plan);
+    if (cg.ra_plan) {
+        // Stage 5 SSA/RA lane owns these host regs for the region.
+        // Flush pending state, then reset stage4-style cache mappings.
+        reg_cache_flush_for_codegen(ctx);
+        cg_clear_reg_cache_state(&cg);
     }
 
     // ========================================================================
@@ -2774,6 +3571,10 @@ bool stage5_codegen(translate_ctx_t *ctx,
         if (fuse_cmp_idx >= 0 && (int)i == fuse_cmp_idx) continue;
         if (mix_cmp_idx >= 0 && (int)i == mix_cmp_idx) continue;
         if (mix_extra_skip_idx >= 0 && (int)i == mix_extra_skip_idx) continue;
+        if (cg_can_dce_prefix_node(region, i, n)) {
+            stage5_codegen_dce_skipped++;
+            continue;
+        }
 
         // Try to fuse ADDI + LOAD/STORE (Addressing Mode Fusion)
         if (n->opcode == OP_ADDI && n->rd != 0 && n->rd != n->rs1 &&
@@ -2799,6 +3600,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
                     bool addi_emitted = false;
                     ctx->guest_pc = n->pc;
                     ctx->current_inst_idx = (int)i;
+                    cg_ssa_invalidate_slots(&cg);
                     if (!cg_emit_node(&cg, n)) {
                          stage5_codegen_fallback++;
                          stage5_codegen_fallback_emit_node++;
@@ -2818,6 +3620,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
                     fused.rs1 = n->rs1;
                     fused.imm = total_disp;
                     bool is_load = (next_n->opcode >= OP_LDB && next_n->opcode <= OP_LDHU);
+                    cg_ssa_invalidate_slots(&cg);
                     if (is_load) {
                         fused_ok = cg_emit_load(&cg, &fused);
                     } else {
@@ -2856,6 +3659,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
                 return false;
             }
             if (side_exit_codegen) {
+                cg_ssa_invalidate_slots(&cg);
                 if (!cg_emit_side_exit(&cg, n)) {
                     stage5_codegen_fallback++;
                     stage5_codegen_fallback_side_exit++;
@@ -2877,7 +3681,16 @@ bool stage5_codegen(translate_ctx_t *ctx,
         ctx->guest_pc = n->pc;
         ctx->current_inst_idx = (int)i;
 
-        if (!cg_emit_node(&cg, n)) {
+        bool emitted = false;
+        if (cg.ra_plan) {
+            cg_flush_pending(&cg);
+            emitted = cg_emit_node_ssa_ra(&cg, i, n);
+        }
+        if (!emitted) {
+            cg_ssa_invalidate_slots(&cg);
+            emitted = cg_emit_node(&cg, n);
+        }
+        if (!emitted) {
             // Unsupported instruction — abort
             stage5_codegen_fallback++;
             stage5_codegen_fallback_emit_node++;
@@ -2910,13 +3723,14 @@ bool stage5_codegen(translate_ctx_t *ctx,
         emit_exit_chained_for_codegen(ctx, ctx->guest_pc, ctx->exit_idx++);
         ended = true;
     } else if (fuse_cmp_idx >= 0 && terminal_idx >= 0) {
-        // Fused compare+branch — delegate to existing emitter
+        // Fused compare+branch — fully native Stage5 path.
         const stage5_ir_node_t *c = &region->ir[fuse_cmp_idx];
         const stage5_ir_node_t *b = &region->ir[terminal_idx];
         bool cmp_is_imm = (c->opcode == OP_SLTI || c->opcode == OP_SLTIU);
         ctx->guest_pc = b->pc;
         ctx->current_inst_idx = terminal_idx;
-        ended = stage5_emit_cmp_branch_fused_for_codegen(ctx,
+        ended = cg_emit_cmp_branch_fused_native(&cg, region,
+            have_phi_plan ? &phi_plan : NULL,
             c->opcode, c->rs1, c->rs2, c->imm, cmp_is_imm,
             b->opcode, b->imm, b->pc);
     } else if (mix_cmp_idx >= 0 && terminal_idx >= 0) {
@@ -2926,7 +3740,8 @@ bool stage5_codegen(translate_ctx_t *ctx,
         ctx->guest_pc = b->pc;
         ctx->current_inst_idx = terminal_idx;
         uint8_t branch_opcode = mix_branch_opcode ? mix_branch_opcode : b->opcode;
-        ended = stage5_emit_cmp_branch_fused_for_codegen(ctx,
+        ended = cg_emit_cmp_branch_fused_native(&cg, region,
+            have_phi_plan ? &phi_plan : NULL,
             c->opcode, c->rs1, c->rs2, 0, false,
             branch_opcode, b->imm, b->pc);
     } else if (terminal_idx >= 0) {
@@ -2939,8 +3754,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
         switch (last->opcode) {
             case OP_JAL:
                 if (emitted_pattern == STAGE5_BURG_PATTERN_JAL_JUMP) {
-                    stage5_translate_jal_jump_compact_for_codegen(ctx,
-                        last->rd, last->imm);
+                    cg_emit_jal_jump_compact_terminal(&cg, last->rd, last->imm);
                 } else {
                     cg_emit_jal_terminal(&cg, last->rd, last->imm);
                 }
@@ -2951,15 +3765,15 @@ bool stage5_codegen(translate_ctx_t *ctx,
                 ended = true;
                 break;
             case OP_HALT:
-                translate_halt(ctx);
+                cg_emit_halt_terminal(&cg);
                 ended = true;
                 break;
             case OP_DEBUG:
-                translate_debug(ctx, last->rs1);
+                cg_emit_debug_terminal(&cg, last->rs1);
                 ended = true;
                 break;
             case OP_YIELD:
-                translate_yield(ctx);
+                cg_emit_yield_terminal(&cg);
                 ended = true;
                 break;
             case OP_BEQ:

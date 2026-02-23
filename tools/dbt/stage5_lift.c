@@ -1,6 +1,8 @@
 // SLOW-32 DBT Stage 5: Superblock lifting IR (scaffold)
 
 #include "stage5_lift.h"
+#include <stdlib.h>
+#include <string.h>
 
 #define STAGE5_MAX_NODES 256
 
@@ -161,6 +163,60 @@ static bool is_terminal_cf_opcode(uint8_t opcode) {
            opcode == OP_YIELD || opcode == OP_DEBUG || opcode == OP_HALT;
 }
 
+static bool stage5_lift_trace_stitch_taken_branch_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_TRACE_STITCH_BRANCH_TAKEN");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+static uint32_t stage5_lift_trace_stitch_max_taken_branches(void) {
+    static bool inited = false;
+    static uint32_t max_taken = 8;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_TRACE_STITCH_MAX_TAKEN_BRANCHES");
+        if (v && v[0] != '\0') {
+            uint32_t parsed = (uint32_t)strtoul(v, NULL, 0);
+            if (parsed > 0 && parsed <= 32) {
+                max_taken = parsed;
+            }
+        }
+        inited = true;
+    }
+    return max_taken;
+}
+
+static bool stage5_lift_trace_stitch_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_TRACE_STITCH");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
+static uint32_t stage5_lift_trace_stitch_max_jumps(void) {
+    static bool inited = false;
+    static uint32_t max_jumps = 4;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_TRACE_STITCH_MAX_JUMPS");
+        if (v && v[0] != '\0') {
+            uint32_t parsed = (uint32_t)strtoul(v, NULL, 0);
+            if (parsed > 0 && parsed <= 32) {
+                max_jumps = parsed;
+            }
+        }
+        inited = true;
+    }
+    return max_jumps;
+}
+
 static inline uint32_t reg_mask(uint8_t reg) {
     return (reg == 0) ? 0u : (1u << (reg & 31u));
 }
@@ -306,6 +362,10 @@ static bool stage5_cfg_is_branch_opcode(uint8_t opcode) {
     return is_branch_opcode(opcode);
 }
 
+static bool stage5_cfg_is_terminator_opcode(uint8_t opcode) {
+    return stage5_cfg_is_branch_opcode(opcode) || is_terminal_cf_opcode(opcode);
+}
+
 static bool stage5_cfg_is_region_pc(const uint32_t *pcs, uint32_t count, uint32_t pc) {
     for (uint32_t i = 0; i < count; i++) {
         if (pcs[i] == pc) return true;
@@ -411,6 +471,11 @@ static void stage5_build_cfg(stage5_lift_region_t *region) {
         uint8_t op = inst_op[i];
         uint32_t pc = inst_pcs[i];
         int32_t imm = inst_imm[i];
+        if (i > 0 && stage5_cfg_is_terminator_opcode(inst_op[i - 1])) {
+            if (!stage5_cfg_insert_pc_sorted(block_starts, &block_count, pc)) {
+                return;
+            }
+        }
         if (stage5_cfg_is_branch_opcode(op)) {
             uint32_t fall_pc = pc + 4;
             uint32_t taken_pc = fall_pc + (uint32_t)imm;
@@ -560,12 +625,8 @@ static void decode_inst_fields(uint32_t raw, uint8_t opcode,
 
     if (is_simple_alu_opcode(opcode) || is_compare_opcode(opcode) || is_address_opcode(opcode) ||
         opcode == OP_JALR) {
-        // I-type immediates (including logical immediates for now; this is sufficient
-        // for Stage5 structural matching telemetry).
+        // I-type immediates are sign-extended from bit 31.
         *imm = ((int32_t)raw) >> 20;
-        if (opcode == OP_ORI || opcode == OP_ANDI || opcode == OP_XORI || opcode == OP_SLTIU) {
-            *imm = (int32_t)((raw >> 20) & 0xFFF);
-        }
     }
     if (opcode == OP_STB || opcode == OP_STH || opcode == OP_STW) {
         int32_t simm = (int32_t)(((raw >> 7) & 0x1F) | ((raw >> 20) & 0xFE0));
@@ -643,6 +704,7 @@ static bool append_ir_node(stage5_lift_region_t *region, stage5_ir_node_kind_t k
     n->pc = pc;
     n->synthetic = synthetic;
     n->is_side_exit = false;
+    n->side_exit_on_taken = true;
     return true;
 }
 
@@ -660,6 +722,8 @@ void stage5_lift_region_init(stage5_lift_region_t *region, uint32_t start_pc) {
     region->has_unsigned_cmp = false;
     region->has_unsupported_opcode = false;
     region->unsupported_opcode = 0;
+    region->stitched_jal_count = 0;
+    region->stitched_taken_branch_count = 0;
     region->side_exit_count = 0;
     region->ir_count = 0;
     region->cfg_block_count = 0;
@@ -798,12 +862,30 @@ bool stage5_lift_superblock(stage5_lift_region_t *region,
             if (is_unsigned_branch_opcode(opcode)) {
                 region->has_unsigned_cmp = true;
             }
+            uint32_t fall_pc = pc + 4;
+            uint32_t taken_pc = fall_pc + (uint32_t)imm;
             region->guest_inst_count++;
-            pc += 4;
+            pc = fall_pc;
 
             if (can_side_exit) {
                 // Mark this branch as a side exit and continue lifting.
                 region->ir[region->ir_count - 1].is_side_exit = true;
+                bool stitch_taken =
+                    stage5_lift_trace_stitch_taken_branch_enabled() &&
+                    (region->stitched_taken_branch_count <
+                     stage5_lift_trace_stitch_max_taken_branches()) &&
+                    (opcode == OP_BEQ || opcode == OP_BNE) &&
+                    imm > 0 &&
+                    taken_pc > fall_pc &&
+                    taken_pc < code_limit &&
+                    (code_limit - taken_pc) >= 4;
+                if (stitch_taken) {
+                    // Compiler-style trace threading: continue on taken path,
+                    // make fall-through the side exit edge.
+                    region->ir[region->ir_count - 1].side_exit_on_taken = false;
+                    region->stitched_taken_branch_count++;
+                    pc = taken_pc;
+                }
                 region->side_exit_count++;
                 prev_was_compare = false;
                 if (region->node_count > STAGE5_MAX_NODES) {
@@ -823,6 +905,35 @@ bool stage5_lift_superblock(stage5_lift_region_t *region,
         }
 
         if (is_terminal_cf_opcode(opcode)) {
+            if (opcode == OP_JAL &&
+                rd == 0 &&
+                imm > 0 &&
+                stage5_lift_trace_stitch_enabled() &&
+                region->stitched_jal_count < stage5_lift_trace_stitch_max_jumps()) {
+                uint32_t target_pc = pc + (uint32_t)imm;
+                if (target_pc > pc &&
+                    target_pc < code_limit &&
+                    (code_limit - target_pc) >= 4) {
+                    region->node_count++;
+                    region->value_count++;
+                    if (!append_ir_node(region, STAGE5_IR_BRANCH, opcode, rd, rs1, rs2, imm, pc, false)) {
+                        region->end_pc = pc;
+                        return false;
+                    }
+                    region->stitched_jal_count++;
+                    saw_supported = true;
+                    region->guest_inst_count++;
+                    pc = target_pc;
+                    prev_was_compare = false;
+                    if (region->node_count > STAGE5_MAX_NODES) {
+                        region->reason = STAGE5_LIFT_REGION_TOO_LARGE;
+                        region->end_pc = pc;
+                        return false;
+                    }
+                    continue;
+                }
+            }
+
             // Direct/indirect jump terminals are valid region exits for this slice.
             region->node_count++;
             region->value_count++;

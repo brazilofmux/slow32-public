@@ -25,6 +25,10 @@ uint32_t cbz_peephole_count = 0;      // CBZ/CBNZ peephole counter for stats
 uint32_t native_stub_count = 0;       // Native intrinsic stub counter
 uint32_t stage5_lift_attempted = 0;
 uint32_t stage5_lift_success = 0;
+uint32_t stage5_lift_stitched_regions = 0;
+uint64_t stage5_lift_stitched_jal_total = 0;
+uint32_t stage5_lift_stitched_taken_regions = 0;
+uint64_t stage5_lift_stitched_taken_branch_total = 0;
 uint32_t stage5_burg_attempted = 0;
 uint32_t stage5_burg_selected = 0;
 uint64_t stage5_burg_selected_guest_insts = 0;
@@ -412,6 +416,65 @@ static uint32_t stage5_emit_regflow_live_limit(void) {
         inited = true;
     }
     return limit;
+}
+
+static uint32_t stage5_lift_budget_base(void) {
+    static bool inited = false;
+    static uint32_t limit = 64;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_LIFT_BUDGET_BASE");
+        if (v && v[0] != '\0') {
+            unsigned long x = strtoul(v, NULL, 0);
+            if (x >= 2 && x <= MAX_BLOCK_INSTS) limit = (uint32_t)x;
+        }
+        if (limit > MAX_BLOCK_INSTS) limit = MAX_BLOCK_INSTS;
+        inited = true;
+    }
+    return limit;
+}
+
+static uint32_t stage5_lift_budget_hot(void) {
+    static bool inited = false;
+    static uint32_t limit = MAX_BLOCK_INSTS;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_LIFT_BUDGET_HOT");
+        if (v && v[0] != '\0') {
+            unsigned long x = strtoul(v, NULL, 0);
+            if (x >= 2 && x <= MAX_BLOCK_INSTS) limit = (uint32_t)x;
+        }
+        if (limit > MAX_BLOCK_INSTS) limit = MAX_BLOCK_INSTS;
+        inited = true;
+    }
+    return limit;
+}
+
+static uint32_t stage5_lift_hot_threshold(void) {
+    static bool inited = false;
+    static uint32_t threshold = 256;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_STAGE5_LIFT_HOT_THRESHOLD");
+        if (v && v[0] != '\0') {
+            unsigned long x = strtoul(v, NULL, 0);
+            threshold = (uint32_t)x;
+        }
+        inited = true;
+    }
+    return threshold;
+}
+
+static uint32_t stage5_pick_lift_budget(translate_ctx_t *ctx, uint32_t guest_pc) {
+    uint32_t base = stage5_lift_budget_base();
+    uint32_t hot = stage5_lift_budget_hot();
+    if (hot < base) hot = base;
+    if (!ctx || !ctx->cache) return base;
+
+    uint32_t threshold = stage5_lift_hot_threshold();
+    if (threshold == 0) return hot;
+
+    uint32_t idx = cache_hash(guest_pc);
+    uint32_t heat = ctx->cache->side_exit_total_profile[idx];
+    if (heat >= threshold) return hot;
+    return base;
 }
 
 static bool stage5_region_regflow_guard_hit(const stage5_lift_region_t *region,
@@ -1357,6 +1420,14 @@ static bool stage5_validate_region(const translate_ctx_t *ctx,
 
 static void stage5_record_cfg_metrics(const stage5_lift_region_t *region) {
     if (!region || !region->cfg_valid) return;
+    if (region->stitched_jal_count > 0) {
+        stage5_lift_stitched_regions++;
+        stage5_lift_stitched_jal_total += region->stitched_jal_count;
+    }
+    if (region->stitched_taken_branch_count > 0) {
+        stage5_lift_stitched_taken_regions++;
+        stage5_lift_stitched_taken_branch_total += region->stitched_taken_branch_count;
+    }
     stage5_cfg_regions++;
     stage5_cfg_blocks_total += region->cfg_block_count;
     stage5_cfg_liveness_iterations_total += region->cfg_liveness_iterations;
@@ -2602,6 +2673,18 @@ static uint8_t stage5_branch_inv_cc(uint8_t opcode) {
     }
 }
 
+static uint8_t stage5_branch_cc(uint8_t opcode) {
+    switch (opcode) {
+        case 0x48: return 0x04;  // BEQ  -> JE
+        case 0x49: return 0x05;  // BNE  -> JNE
+        case 0x4A: return 0x0C;  // BLT  -> JL
+        case 0x4B: return 0x0D;  // BGE  -> JGE
+        case 0x4C: return 0x02;  // BLTU -> JB
+        case 0x4D: return 0x03;  // BGEU -> JAE
+        default:   return 0xFF;
+    }
+}
+
 // Pick two scratch GPRs for compare materialization, preferring regs that
 // won't clobber an active pending write.
 static inline void stage5_pick_cmp_scratch_regs(translate_ctx_t *ctx,
@@ -3369,8 +3452,9 @@ static void stage5_try_select_noop(translate_ctx_t *ctx, uint32_t guest_pc) {
 
     stage5_lift_region_t region;
     stage5_lift_region_init(&region, guest_pc);
+    uint32_t lift_budget = stage5_pick_lift_budget(ctx, guest_pc);
     if (!stage5_lift_superblock(&region, ctx->cpu->mem_base, ctx->cpu->code_limit,
-                                MAX_BLOCK_INSTS)) {
+                                lift_budget)) {
         stage5_record_lift_fallback(&region);
         return;
     }
@@ -3458,8 +3542,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
 
     stage5_lift_region_t region;
     stage5_lift_region_init(&region, guest_pc);
+    uint32_t lift_budget = stage5_pick_lift_budget(ctx, guest_pc);
     if (!stage5_lift_superblock(&region, ctx->cpu->mem_base, ctx->cpu->code_limit,
-                                MAX_BLOCK_INSTS)) {
+                                lift_budget)) {
         stage5_record_lift_fallback(&region);
         return false;
     }
@@ -3962,6 +4047,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 break;
         }
     } else if (region.guest_inst_count == 2 &&
+               region.stitched_jal_count == 0 &&
+               region.stitched_taken_branch_count == 0 &&
                guest_pc + 8 <= ctx->cpu->code_limit &&
                stage5_pattern_is_cmp_branch(emitted_pattern)) {
         // Family B: two-instruction compare -> branch-on-result.
@@ -4474,7 +4561,12 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
 
                 // Short jcc (2 bytes) skips the 5-byte jmp trampoline.
                 uint8_t inv_cc = stage5_branch_inv_cc(n->opcode);
-                emit_jcc_short(e, inv_cc, 5);
+                uint8_t cc = stage5_branch_cc(n->opcode);
+                if (inv_cc == 0xFF || cc == 0xFF) {
+                    ok_prefix = false;
+                    break;
+                }
+                emit_jcc_short(e, n->side_exit_on_taken ? inv_cc : cc, 5);
 
                 // 5-byte jmp rel32 trampoline to cold stub (patched later).
                 size_t jmp_patch = emit_offset(e) + 1;
@@ -4483,7 +4575,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 // Record deferred side exit.
                 int di = ctx->deferred_exit_count++;
                 ctx->deferred_exits[di].jmp_patch_offset = jmp_patch;
-                ctx->deferred_exits[di].target_pc = taken_pc;
+                ctx->deferred_exits[di].target_pc =
+                    n->side_exit_on_taken ? taken_pc : fall_pc;
                 ctx->deferred_exits[di].exit_idx = ctx->exit_idx;
                 ctx->deferred_exits[di].branch_pc = branch_pc;
                 for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
@@ -6774,7 +6867,7 @@ static int inline_lookup_probe_count(void) {
         const char *v = getenv("SLOW32_DBT_INLINE_LOOKUP_PROBES");
         if (v && v[0] != '\0') {
             int x = atoi(v);
-            if (x >= 1 && x <= INLINE_LOOKUP_MAX_PROBES) probes = x;
+            if (x >= 0 && x <= INLINE_LOOKUP_MAX_PROBES) probes = x;
         }
         inited = true;
     }

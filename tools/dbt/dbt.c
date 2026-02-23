@@ -114,8 +114,19 @@ static void apply_stage5_native_bench_profile(int *stage_out,
     // Size/consistency profile: disable RAS predictor duplication in blocks.
     // Correctness is unchanged; returns still use indirect dispatch/lookup.
     setenv("SLOW32_DBT_RAS", "0", 1);
-    // Size-oriented profile: keep inline lookup, but with minimal probes.
-    setenv("SLOW32_DBT_INLINE_LOOKUP_PROBES", "1", 1);
+    // Size-oriented profile: no inline probes; indirects go straight through
+    // shared dispatcher lookup code.
+    setenv("SLOW32_DBT_INLINE_LOOKUP_PROBES", "0", 1);
+    // Phase 1 region growth: keep cold regions moderate, expand hot traces.
+    setenv("SLOW32_DBT_STAGE5_LIFT_BUDGET_BASE", "64", 1);
+    setenv("SLOW32_DBT_STAGE5_LIFT_BUDGET_HOT", "96", 1);
+    setenv("SLOW32_DBT_STAGE5_LIFT_HOT_THRESHOLD", "256", 1);
+    // Phase 2 trace stitching: thread through bounded forward JAL jump islands.
+    setenv("SLOW32_DBT_STAGE5_TRACE_STITCH", "1", 1);
+    setenv("SLOW32_DBT_STAGE5_TRACE_STITCH_MAX_JUMPS", "4", 1);
+    // Phase 2b: optionally stitch hot trace through forward BEQ/BNE taken path.
+    setenv("SLOW32_DBT_STAGE5_TRACE_STITCH_BRANCH_TAKEN", "1", 1);
+    setenv("SLOW32_DBT_STAGE5_TRACE_STITCH_MAX_TAKEN_BRANCHES", "8", 1);
     setenv("SLOW32_DBT_STAGE5_BENCH_PROFILE", "1", 1);
     setenv("SLOW32_DBT_STAGE5_BENCH_MAX_JAL_JUMP_GINST", "64", 0);
     setenv("SLOW32_DBT_STAGE5_BENCH_MAX_DIRECT_BRANCH_GINST", "64", 0);
@@ -1884,6 +1895,10 @@ static void usage(const char *prog) {
     fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX=1  Allow BEQ/BNE terminals in cmp-mixed regions\n");
     fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_PREDICATE_BRANCH_ONLY=1  Require CMP_BRANCH_* BURG patterns for cmp-mixed branches\n");
     fprintf(stderr, "  SLOW32_DBT_STAGE5_CODEGEN_SIDE_EXIT=1  Allow native side-exit emission in codegen\n");
+    fprintf(stderr, "  SLOW32_DBT_STAGE5_TRACE_STITCH=1  Lift through bounded forward JAL r0,+imm jump islands\n");
+    fprintf(stderr, "  SLOW32_DBT_STAGE5_TRACE_STITCH_MAX_JUMPS=N  Max stitched forward JAL jumps per region (1..32)\n");
+    fprintf(stderr, "  SLOW32_DBT_STAGE5_TRACE_STITCH_BRANCH_TAKEN=1  Continue lift on taken path for forward BEQ/BNE side exits\n");
+    fprintf(stderr, "  SLOW32_DBT_STAGE5_TRACE_STITCH_MAX_TAKEN_BRANCHES=N  Max taken-stitched BEQ/BNE side exits per region (1..32)\n");
 }
 
 static void parse_service_list(const char *list, char names[][S32_MAX_SVC_NAME], int *count, int max) {
@@ -2403,6 +2418,18 @@ int main(int argc, char **argv) {
             stage5_fallback_total > 0 || stage5_emit_prefilter_skip > 0) {
             fprintf(stderr, "Stage5 lift attempted: %" PRIu32 "\n", stage5_lift_attempted);
             fprintf(stderr, "Stage5 lift success:   %" PRIu32 "\n", stage5_lift_success);
+            if (stage5_lift_stitched_regions > 0) {
+                fprintf(stderr, "Stage5 lift stitched regions: %" PRIu32 "\n",
+                        stage5_lift_stitched_regions);
+                fprintf(stderr, "Stage5 lift stitched jumps:   %" PRIu64 "\n",
+                        stage5_lift_stitched_jal_total);
+            }
+            if (stage5_lift_stitched_taken_regions > 0) {
+                fprintf(stderr, "Stage5 lift stitched taken regions: %" PRIu32 "\n",
+                        stage5_lift_stitched_taken_regions);
+                fprintf(stderr, "Stage5 lift stitched taken branches: %" PRIu64 "\n",
+                        stage5_lift_stitched_taken_branch_total);
+            }
             fprintf(stderr, "Stage5 BURG attempted: %" PRIu32 "\n", stage5_burg_attempted);
             fprintf(stderr, "Stage5 BURG selected:  %" PRIu32 "\n", stage5_burg_selected);
             if (stage5_burg_selected_guest_insts > 0) {

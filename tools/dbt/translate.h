@@ -19,7 +19,7 @@ typedef struct block_cache block_cache_t;
 typedef struct translated_block translated_block_t;
 
 // Maximum instructions per basic block
-#define MAX_BLOCK_INSTS 64
+#define MAX_BLOCK_INSTS 96
 
 #include "dbt_limits.h"
 
@@ -37,6 +37,10 @@ extern uint32_t cbz_peephole_count;
 extern uint32_t native_stub_count;
 extern uint32_t stage5_lift_attempted;
 extern uint32_t stage5_lift_success;
+extern uint32_t stage5_lift_stitched_regions;
+extern uint64_t stage5_lift_stitched_jal_total;
+extern uint32_t stage5_lift_stitched_taken_regions;
+extern uint64_t stage5_lift_stitched_taken_branch_total;
 extern uint32_t stage5_burg_attempted;
 extern uint32_t stage5_burg_selected;
 extern uint64_t stage5_burg_selected_guest_insts;
@@ -46,6 +50,8 @@ extern uint32_t stage5_burg_pattern_hist[];
 extern uint32_t stage5_emit_pattern_success[];
 extern uint64_t stage5_emit_pattern_guest_insts[];
 extern uint64_t stage5_emit_pattern_host_bytes[];
+extern uint32_t stage5_codegen_pattern_attempt[];
+extern uint32_t stage5_codegen_pattern_fallback[];
 extern uint32_t stage5_fallback_total;
 extern uint32_t stage5_fallback_lift_not_implemented;
 extern uint32_t stage5_fallback_lift_unsupported_opcode;
