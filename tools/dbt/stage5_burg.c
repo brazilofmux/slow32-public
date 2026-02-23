@@ -40,8 +40,13 @@ static void lower_alu_rr_ri(const mir_node_t *m, const stage5_ssa_overlay_t *ssa
         l->imm = m->imm;
         return;
     }
-    // R-format with constant src2: fold to immediate
-    if (m->src_v[1] != 0 && ssa->value_is_const[m->src_v[1]]) {
+    // R-format with zero register (SSA value 0) or constant src2: fold to immediate
+    if (m->src_v[1] == 0) {
+        l->op = op_ri;
+        l->imm = 0;
+        return;
+    }
+    if (ssa->value_is_const[m->src_v[1]]) {
         l->op = op_ri;
         l->imm = (int32_t)ssa->value_const_val[m->src_v[1]];
         return;
@@ -62,7 +67,12 @@ static void lower_shift(const mir_node_t *m, const stage5_ssa_overlay_t *ssa,
         l->imm = m->imm & 0x1F; // shift amount, 5 bits
         return;
     }
-    if (m->src_v[1] != 0 && ssa->value_is_const[m->src_v[1]]) {
+    if (m->src_v[1] == 0) {
+        l->op = op_ri;
+        l->imm = 0;
+        return;
+    }
+    if (ssa->value_is_const[m->src_v[1]]) {
         l->op = op_ri;
         l->imm = (int32_t)(ssa->value_const_val[m->src_v[1]] & 0x1F);
         return;

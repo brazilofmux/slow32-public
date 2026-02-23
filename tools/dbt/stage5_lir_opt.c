@@ -18,8 +18,24 @@ void stage5_lir_optimize(stage5_lir_t *lir, const stage5_ssa_overlay_t *ssa) {
             continue;
         }
 
-        // 2. ADD RI 0
-        if (l->op == LIR_OP_ADD_RI && l->imm == 0) {
+        // 2. ADD/SUB/OR/XOR RI 0 → copy (identity ops)
+        if (l->imm == 0 && (l->op == LIR_OP_ADD_RI || l->op == LIR_OP_SUB_RI ||
+                            l->op == LIR_OP_OR_RI  || l->op == LIR_OP_XOR_RI)) {
+            if (l->dst_v == l->src_v[0]) l->op = LIR_OP_NOP;
+            else l->op = LIR_OP_MOV_RR;
+            continue;
+        }
+
+        // 3. AND RI 0 → zero (AND with 0 clears register)
+        if (l->op == LIR_OP_AND_RI && l->imm == 0) {
+            l->op = LIR_OP_MOV_RI;
+            l->imm = 0;
+            continue;
+        }
+
+        // 4. SHL/SHR/SAR RI 0 → copy (shift by 0 = identity)
+        if (l->imm == 0 && (l->op == LIR_OP_SHL_RI || l->op == LIR_OP_SHR_RI ||
+                            l->op == LIR_OP_SAR_RI)) {
             if (l->dst_v == l->src_v[0]) l->op = LIR_OP_NOP;
             else l->op = LIR_OP_MOV_RR;
             continue;
