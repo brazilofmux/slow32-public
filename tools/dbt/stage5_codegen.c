@@ -1515,6 +1515,10 @@ static bool cg_emit_node(stage5_cg_t *cg, const stage5_ir_node_t *n) {
     switch (n->opcode) {
         case OP_NOP:
             return true;
+        case OP_JAL:
+            // Trace-stitched jump island connector (JAL r0,+imm) can be
+            // treated as already-linearized control flow in prefix emission.
+            return (n->rd == 0 && n->imm > 0);
 
         // ALU register-register
         case OP_ADD:

@@ -2044,10 +2044,12 @@ static bool stage5_region_side_exit_call_guard_needed(const stage5_lift_region_t
     for (int i = 0; i < (int)region->ir_count; i++) {
         const stage5_ir_node_t *n = &region->ir[i];
         if (n->synthetic) continue;
-        if (n->opcode == OP_JAL) has_jal = true;
-        if (n->opcode == OP_JALR) has_jalr = true;
+        bool is_jal_call = (n->opcode == OP_JAL && n->rd == REG_LR);
+        bool is_jalr_like = (n->opcode == OP_JALR);
+        if (is_jal_call) has_jal = true;
+        if (is_jalr_like) has_jalr = true;
         if (last_side_exit_idx >= 0 &&
-            (n->opcode == OP_JAL || n->opcode == OP_JALR) &&
+            (is_jal_call || is_jalr_like) &&
             i <= last_side_exit_idx) {
             guard_needed = true;
         }
@@ -4656,6 +4658,14 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                                                              n->rs1, n->rs2, n->imm);
                     if (!ok_prefix) {
                         stage5_emit_fallback_helper_prefix_nonbranch_fail++;
+                    }
+                    break;
+                case OP_JAL:
+                    // Trace-stitched jump island connector (JAL r0,+imm).
+                    // Control flow is already linearized in lifted IR.
+                    ok_prefix = (n->rd == 0 && n->imm > 0);
+                    if (!ok_prefix) {
+                        first_bad_prefix_opcode = op;
                     }
                     break;
                 default:
