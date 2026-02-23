@@ -29,8 +29,14 @@ typedef enum {
     LIR_OP_SHL_RI,
     LIR_OP_SHR_RI,
     LIR_OP_SAR_RI,
+    LIR_OP_SHL_RR,      // dst = src0 << src1 (needs CL)
+    LIR_OP_SHR_RR,      // dst = src0 >> src1 (needs CL)
+    LIR_OP_SAR_RR,      // dst = src0 >>> src1 (needs CL)
     LIR_OP_IMUL_RR,
-    LIR_OP_IDIV,        // implicit RAX/RDX
+    LIR_OP_MULH_RR,     // signed high multiply
+    LIR_OP_MULHU_RR,    // unsigned high multiply
+    LIR_OP_IDIV,        // implicit RAX/RDX, cond=0 quotient, cond=1 remainder
+    LIR_OP_UDIV,        // unsigned divide
     LIR_OP_CMP_RR,
     LIR_OP_CMP_RI,
     LIR_OP_TEST_RR,
@@ -50,7 +56,9 @@ typedef struct {
     uint16_t src_v[2];
     int32_t imm;
     int32_t disp;
-    uint8_t cond;       // x86 CC
+    uint8_t cond;       // x86 CC (or remainder flag for DIV)
+    uint8_t size;       // memory access size: 1, 2, or 4
+    bool is_signed;     // signed memory access (for sub-word loads)
     uint32_t guest_pc;
     uint8_t rd, rs1, rs2; // original GPRs
     bool is_side_exit;

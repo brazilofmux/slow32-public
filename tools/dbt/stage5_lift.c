@@ -18,6 +18,7 @@ enum {
     OP_SLT = 0x08,
     OP_SLTU = 0x09,
     OP_MUL = 0x0A,
+    OP_MULH = 0x0B,
     OP_DIV = 0x0C,
     OP_REM = 0x0D,
     OP_SEQ = 0x0E,
@@ -130,6 +131,7 @@ static bool is_simple_alu_opcode(uint8_t opcode) {
         case OP_SLL:
         case OP_SRL:
         case OP_SRA:
+        case OP_MULH:
         case OP_ADDI:
         case OP_ORI:
         case OP_ANDI:
@@ -246,7 +248,7 @@ static void stage5_cfg_inst_rw_masks(uint8_t opcode, uint8_t rd, uint8_t rs1, ui
         case OP_SLL: case OP_SRL: case OP_SRA:
         case OP_SLT: case OP_SLTU: case OP_SEQ: case OP_SNE:
         case OP_SGT: case OP_SGTU: case OP_SLE: case OP_SLEU:
-        case OP_SGE: case OP_SGEU: case OP_MUL: case OP_DIV:
+        case OP_SGE: case OP_SGEU: case OP_MUL: case OP_MULH: case OP_DIV:
         case OP_REM: case OP_MULHU:
             r = reg_mask(rs1) | reg_mask(rs2);
             w = reg_mask(rd);
@@ -690,7 +692,7 @@ static stage5_ir_node_kind_t node_kind_for_opcode(uint8_t opcode) {
         case OP_SLL: case OP_SLLI: return STAGE5_IR_SLL;
         case OP_SRL: case OP_SRLI: return STAGE5_IR_SRL;
         case OP_SRA: case OP_SRAI: return STAGE5_IR_SRA;
-        case OP_MUL: case OP_MULHU: case OP_DIV: case OP_REM:
+        case OP_MUL: case OP_MULH: case OP_MULHU: case OP_DIV: case OP_REM:
             return STAGE5_IR_ADD;   // arithmetic class for initial Stage5 matching
         case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
         case OP_FSQRT_S: case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:

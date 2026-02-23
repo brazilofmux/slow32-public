@@ -14,7 +14,9 @@ static mir_op_t mir_op_from_guest(uint8_t opcode) {
         case 0x05: case 0x13: return MIR_OP_SLL;
         case 0x06: case 0x14: return MIR_OP_SRL;
         case 0x07: case 0x15: return MIR_OP_SRA;
-        case 0x0A: case 0x1F: return MIR_OP_MUL;
+        case 0x0A: return MIR_OP_MUL;
+        case 0x0B: return MIR_OP_MULH;
+        case 0x1F: return MIR_OP_MULHU;
         case 0x0C: return MIR_OP_DIV;
         case 0x0D: return MIR_OP_REM;
         case 0x0E: return MIR_OP_CMP_EQ;

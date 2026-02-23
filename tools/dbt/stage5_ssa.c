@@ -22,7 +22,7 @@ static bool stage5_ssa_opcode_uses_rs2(uint8_t op) {
     switch (op) {
         case 0x00: case 0x01: case 0x02: case 0x03: case 0x04: // RR ALU
         case 0x05: case 0x06: case 0x07: case 0x08: case 0x09: // RR Shift/Cmp
-        case 0x0A: case 0x0C: case 0x0D: case 0x1F:           // RR Mul/Div
+        case 0x0A: case 0x0B: case 0x0C: case 0x0D: case 0x1F: // RR Mul/Div
         case 0x0E: case 0x0F: case 0x18: case 0x19:           // RR Cmp
         case 0x1A: case 0x1B: case 0x1C: case 0x1D:           // RR Cmp
         case 0x38: case 0x39: case 0x3A:                      // STB, STH, STW

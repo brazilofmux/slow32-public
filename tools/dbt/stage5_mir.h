@@ -21,6 +21,8 @@ typedef enum {
     MIR_OP_SRL,         // dst = src0 >> src1
     MIR_OP_SRA,         // dst = src0 >>> src1
     MIR_OP_MUL,         // dst = src0 * src1
+    MIR_OP_MULH,        // dst = (src0 * src1) >> 32 (signed high)
+    MIR_OP_MULHU,       // dst = (src0 * src1) >> 32 (unsigned high)
     MIR_OP_DIV,         // dst = src0 / src1
     MIR_OP_REM,         // dst = src0 % src1
     MIR_OP_CMP_EQ,      // dst = (src0 == src1)
