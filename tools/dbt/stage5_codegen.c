@@ -37,10 +37,6 @@ static bool cg_cmp_ri_enabled(void) {
     return true;
 }
 
-static bool cg_fused_branch_enabled(void) {
-    return true;
-}
-
 static bool cg_branch_term_enabled(void) {
     return true;
 }
@@ -67,30 +63,6 @@ static bool cg_branch_cmp_mix_unsigned_rr_enabled(void) {
 
 static bool cg_side_exit_enabled(void) {
     return true;
-}
-
-static bool cg_boolpair_native_enabled(void) {
-    return true;
-}
-
-static bool cg_predicate_native_enabled(void) {
-    return true;
-}
-
-static bool cg_allow_cmpdep_side_exit(void) {
-    return true;
-}
-
-static bool cg_allow_cmpdep_side_exit_loads(void) {
-    return true;
-}
-
-static bool cg_allow_cmpdep_side_exit_stores(void) {
-    return false;
-}
-
-static bool cg_allow_cmpdep_side_exit_stores_has_override(void) {
-    return false;
 }
 
 static bool cg_allow_cmpdep_side_exit_store_stb(void) {
@@ -171,19 +143,6 @@ static void cg_trace_boolpair_region(const stage5_lift_region_t *region,
 
 static bool cg_trace_mix_enabled(void) {
     return false;
-}
-
-static bool cg_predicate_branch_only_enabled(void) {
-    return false;
-}
-
-static bool cg_pattern_is_predicate_branch(int emitted_pattern) {
-    return emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_ZERO ||
-           emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CONST01 ||
-           emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1 ||
-           emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR ||
-           emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP ||
-           emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP;
 }
 
 static bool cg_pattern_uses_cmp_mix_fusion(int emitted_pattern) {
@@ -2284,16 +2243,10 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
                                 bool side_exit_enabled) {
     bool cmp_rr_enabled = cg_cmp_rr_enabled();
     bool cmp_ri_enabled = cmp_rr_enabled && cg_cmp_ri_enabled();
-    bool fused_branch_enabled = cg_fused_branch_enabled();
     bool branch_term_enabled = cg_branch_term_enabled();
     bool branch_cmp_mix_enabled = cg_branch_cmp_mix_enabled();
     bool use_cmp_mix_fusion = cg_pattern_uses_cmp_mix_fusion(emitted_pattern);
     bool side_exit_codegen = cg_side_exit_enabled();
-    bool predicate_branch_only = cg_predicate_branch_only_enabled();
-
-    if (fuse_cmp_idx >= 0 && !fused_branch_enabled) {
-        return false;
-    }
 
     if (!synth_block_end && terminal_idx < 0) {
         return false;
@@ -2349,12 +2302,6 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
                 }
             }
             if (has_cmp_prefix) {
-                if (predicate_branch_only &&
-                    !cg_pattern_is_predicate_branch(emitted_pattern)) {
-                    if (emitted_pattern >= 0 && emitted_pattern < 64) {
-                    }
-                    return false;
-                }
                 if (use_cmp_mix_fusion) {
                     uint32_t reason = 0;
                     uint8_t reason_opcode = first_cmp_opcode;
@@ -3167,49 +3114,26 @@ bool stage5_codegen(translate_ctx_t *ctx,
     bool side_exit_codegen = cg_side_exit_enabled();
     bool use_cmp_mix_fusion = cg_pattern_uses_cmp_mix_fusion(emitted_pattern);
     bool allow_cmpdep_with_side_exit =
-        (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP) &&
-        cg_allow_cmpdep_side_exit();
-    bool predicate_native_enabled =
-        cg_predicate_native_enabled() || cg_boolpair_native_enabled();
-    bool boolpair_native_active =
-        (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR &&
-         predicate_native_enabled);
-    bool pred_native_active =
-        ((emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP ||
-          emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP) &&
-         predicate_native_enabled);
-    bool predicate_native_active = boolpair_native_active || pred_native_active;
+        (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP);
+    bool predicate_native_active =
+        (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR ||
+         emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP ||
+         emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP);
     if (predicate_native_active) {
         cg_trace_boolpair_region(region, guest_pc, terminal_idx);
     }
 
-    // Keep newer predicate families on the established translate.c terminal
-    // path until dedicated native lowering is validated.
-    if ((emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_BOOLPAIR &&
-         !predicate_native_enabled) ||
-        ((emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP ||
-          emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP) &&
-         !predicate_native_enabled)) {
-        stage5_codegen_fallback++;
-        return false;
-    }
     if (predicate_native_active && side_exit_codegen && region->side_exit_count > 0) {
         if (!allow_cmpdep_with_side_exit) {
             stage5_codegen_fallback++;
             return false;
         }
         if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP) {
-            bool has_load = false;
-            bool has_store = false;
             bool has_store_stb = false;
             bool has_store_sth = false;
             bool has_store_stw = false;
-            cg_region_mem_prefix_flags(region, terminal_idx, &has_load, &has_store,
+            cg_region_mem_prefix_flags(region, terminal_idx, NULL, NULL,
                                        &has_store_stb, &has_store_sth, &has_store_stw);
-            if (has_load && !cg_allow_cmpdep_side_exit_loads()) {
-                stage5_codegen_fallback++;
-                return false;
-            }
             if (has_store_stb && !cg_allow_cmpdep_side_exit_store_stb()) {
                 bool block_stb = true;
                 if (terminal_idx >= 0 && terminal_idx < (int)region->ir_count) {
@@ -3228,12 +3152,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
                 return false;
             }
             if (has_store_stw && !cg_allow_cmpdep_side_exit_store_stw()) {
-                stage5_codegen_fallback++;
-                return false;
-            }
-            if (has_store &&
-                cg_allow_cmpdep_side_exit_stores_has_override() &&
-                !cg_allow_cmpdep_side_exit_stores()) {
                 stage5_codegen_fallback++;
                 return false;
             }
