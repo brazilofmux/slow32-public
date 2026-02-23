@@ -1814,6 +1814,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -t        Two-pass superblock profiling (Stage 4/5 only)\n");
     fprintf(stderr, "  -M <n>    Min samples before using side-exit rate\n");
     fprintf(stderr, "  -T <pct>  Max taken %% to allow superblock extension\n");
+    fprintf(stderr, "  -d [N]    Dump top N hot blocks with guest+host disassembly (default 5)\n");
     fprintf(stderr, "  -D        Dump top offender blocks\n");
     fprintf(stderr, "  -O        Disassemble offender host blocks (uses objdump)\n");
     fprintf(stderr, "  -X <pc>   Dump block containing guest PC\n");
@@ -1864,6 +1865,7 @@ int main(int argc, char **argv) {
     bool two_pass_forced = false;
     bool dump_offenders = false;
     bool disassemble_offenders = false;
+    int dump_hot_count = 0;
     uint32_t dump_pc = 0;
     int stage = 4;
     const char *stage_env = getenv("DBT_STAGE");
@@ -1972,6 +1974,14 @@ int main(int argc, char **argv) {
                     } else {
                         fprintf(stderr, "Option -T requires a value\n");
                         return 1;
+                    }
+                    break;
+                case 'd':
+                    dump_hot_count = 5;
+                    show_stats = true;
+                    if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') {
+                        dump_hot_count = atoi(argv[++i]);
+                        if (dump_hot_count < 1) dump_hot_count = 5;
                     }
                     break;
                 case 'D':
@@ -2321,7 +2331,11 @@ int main(int argc, char **argv) {
                 cache_dump_offender_blocks(&cache, cpu.mem_base, disassemble_offenders);
             }
             if (dump_pc != 0) {
-                cache_dump_block_for_pc(&cache, cpu.mem_base, dump_pc, disassemble_offenders);
+                cache_dump_block_for_pc(&cache, cpu.mem_base, dump_pc,
+                                        disassemble_offenders || dump_hot_count > 0);
+            }
+            if (dump_hot_count > 0) {
+                cache_dump_hot_blocks(&cache, cpu.mem_base, dump_hot_count, true);
             }
         }
     }

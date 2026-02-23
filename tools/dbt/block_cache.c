@@ -1005,6 +1005,224 @@ void cache_reset_stats(block_cache_t *cache) {
     cache->patch_rel_oob_count = 0;
 }
 
+static void dump_objdump(const uint8_t *data, uint32_t len, uint32_t pc);
+
+// ============================================================================
+// Inline SLOW-32 disassembler (extracted from tools/utilities/slow32dis.c)
+// ============================================================================
+
+typedef enum {
+    S32_FMT_R, S32_FMT_I, S32_FMT_S, S32_FMT_B, S32_FMT_U, S32_FMT_J, S32_FMT_UNKNOWN
+} s32_fmt_t;
+
+typedef struct {
+    const char *mnemonic;
+    uint32_t opcode;
+    s32_fmt_t format;
+} s32_inst_info_t;
+
+static s32_inst_info_t s32_instructions[] = {
+    {"add",   0x00, S32_FMT_R}, {"sub",   0x01, S32_FMT_R},
+    {"xor",   0x02, S32_FMT_R}, {"or",    0x03, S32_FMT_R},
+    {"and",   0x04, S32_FMT_R}, {"sll",   0x05, S32_FMT_R},
+    {"srl",   0x06, S32_FMT_R}, {"sra",   0x07, S32_FMT_R},
+    {"slt",   0x08, S32_FMT_R}, {"sltu",  0x09, S32_FMT_R},
+    {"mul",   0x0A, S32_FMT_R}, {"mulh",  0x0B, S32_FMT_R},
+    {"div",   0x0C, S32_FMT_R}, {"rem",   0x0D, S32_FMT_R},
+    {"seq",   0x0E, S32_FMT_R}, {"sne",   0x0F, S32_FMT_R},
+    {"addi",  0x10, S32_FMT_I}, {"ori",   0x11, S32_FMT_I},
+    {"andi",  0x12, S32_FMT_I}, {"slli",  0x13, S32_FMT_I},
+    {"srli",  0x14, S32_FMT_I}, {"srai",  0x15, S32_FMT_I},
+    {"slti",  0x16, S32_FMT_I}, {"sltiu", 0x17, S32_FMT_I},
+    {"sgt",   0x18, S32_FMT_R}, {"sgtu",  0x19, S32_FMT_R},
+    {"sle",   0x1A, S32_FMT_R}, {"sleu",  0x1B, S32_FMT_R},
+    {"sge",   0x1C, S32_FMT_R}, {"sgeu",  0x1D, S32_FMT_R},
+    {"xori",  0x1E, S32_FMT_I}, {"mulhu", 0x1F, S32_FMT_R},
+    {"lui",   0x20, S32_FMT_U},
+    {"ldb",   0x30, S32_FMT_I}, {"ldh",   0x31, S32_FMT_I},
+    {"ldw",   0x32, S32_FMT_I}, {"ldbu",  0x33, S32_FMT_I},
+    {"ldhu",  0x34, S32_FMT_I},
+    {"stb",   0x38, S32_FMT_S}, {"sth",   0x39, S32_FMT_S},
+    {"stw",   0x3A, S32_FMT_S},
+    {"assert_eq", 0x3F, S32_FMT_R},
+    {"jal",   0x40, S32_FMT_J}, {"jalr",  0x41, S32_FMT_I},
+    {"beq",   0x48, S32_FMT_B}, {"bne",   0x49, S32_FMT_B},
+    {"blt",   0x4A, S32_FMT_B}, {"bge",   0x4B, S32_FMT_B},
+    {"bltu",  0x4C, S32_FMT_B}, {"bgeu",  0x4D, S32_FMT_B},
+    {"nop",   0x50, S32_FMT_R}, {"yield", 0x51, S32_FMT_R},
+    {"debug", 0x52, S32_FMT_I},
+    {"fadd.s", 0x53, S32_FMT_R}, {"fsub.s", 0x54, S32_FMT_R},
+    {"fmul.s", 0x55, S32_FMT_R}, {"fdiv.s", 0x56, S32_FMT_R},
+    {"fsqrt.s", 0x57, S32_FMT_R}, {"feq.s", 0x58, S32_FMT_R},
+    {"flt.s", 0x59, S32_FMT_R}, {"fle.s", 0x5A, S32_FMT_R},
+    {"fcvt.w.s", 0x5B, S32_FMT_R}, {"fcvt.wu.s", 0x5C, S32_FMT_R},
+    {"fcvt.s.w", 0x5D, S32_FMT_R}, {"fcvt.s.wu", 0x5E, S32_FMT_R},
+    {"fneg.s", 0x5F, S32_FMT_R}, {"fabs.s", 0x60, S32_FMT_R},
+    {"fadd.d", 0x61, S32_FMT_R}, {"fsub.d", 0x62, S32_FMT_R},
+    {"fmul.d", 0x63, S32_FMT_R}, {"fdiv.d", 0x64, S32_FMT_R},
+    {"fsqrt.d", 0x65, S32_FMT_R}, {"feq.d", 0x66, S32_FMT_R},
+    {"flt.d", 0x67, S32_FMT_R}, {"fle.d", 0x68, S32_FMT_R},
+    {"fcvt.w.d", 0x69, S32_FMT_R}, {"fcvt.wu.d", 0x6A, S32_FMT_R},
+    {"fcvt.d.w", 0x6B, S32_FMT_R}, {"fcvt.d.wu", 0x6C, S32_FMT_R},
+    {"fcvt.d.s", 0x6D, S32_FMT_R}, {"fcvt.s.d", 0x6E, S32_FMT_R},
+    {"fneg.d", 0x6F, S32_FMT_R}, {"fabs.d", 0x70, S32_FMT_R},
+    {"fcvt.l.s", 0x71, S32_FMT_R}, {"fcvt.lu.s", 0x72, S32_FMT_R},
+    {"fcvt.s.l", 0x73, S32_FMT_R}, {"fcvt.s.lu", 0x74, S32_FMT_R},
+    {"fcvt.l.d", 0x75, S32_FMT_R}, {"fcvt.lu.d", 0x76, S32_FMT_R},
+    {"fcvt.d.l", 0x77, S32_FMT_R}, {"fcvt.d.lu", 0x78, S32_FMT_R},
+    {"halt",  0x7F, S32_FMT_R},
+    {NULL, 0, S32_FMT_UNKNOWN}
+};
+
+static inline uint32_t s32_extract_opcode(uint32_t inst)  { return inst & 0x7F; }
+static inline int      s32_extract_rd(uint32_t inst)       { return (inst >> 7) & 0x1F; }
+static inline int      s32_extract_rs1(uint32_t inst)      { return (inst >> 15) & 0x1F; }
+static inline int      s32_extract_rs2(uint32_t inst)      { return (inst >> 20) & 0x1F; }
+static inline int      s32_extract_imm_i(uint32_t inst)    { return (int32_t)inst >> 20; }
+static inline int      s32_extract_imm_s(uint32_t inst) {
+    return ((inst >> 7) & 0x1F) | (((int32_t)inst >> 25) << 5);
+}
+static inline int      s32_extract_imm_b(uint32_t inst) {
+    return (((inst >> 8) & 0xF) << 1) | (((inst >> 25) & 0x3F) << 5) |
+           (((inst >> 7) & 0x1) << 11) | (((int32_t)inst >> 31) << 12);
+}
+static inline int      s32_extract_imm_u(uint32_t inst)    { return inst & 0xFFFFF000; }
+static inline int      s32_extract_imm_j(uint32_t inst) {
+    uint32_t imm20 = (inst >> 31) & 0x1;
+    uint32_t imm10_1 = (inst >> 21) & 0x3FF;
+    uint32_t imm11 = (inst >> 20) & 0x1;
+    uint32_t imm19_12 = (inst >> 12) & 0xFF;
+    int32_t imm = (imm20 << 20) | (imm19_12 << 12) | (imm11 << 11) | (imm10_1 << 1);
+    if (imm & 0x100000) imm |= 0xFFE00000;
+    return imm;
+}
+
+static s32_inst_info_t *s32_find_instruction(uint32_t opcode) {
+    for (int i = 0; s32_instructions[i].mnemonic; i++) {
+        if (s32_instructions[i].opcode == opcode) return &s32_instructions[i];
+    }
+    return NULL;
+}
+
+static const char *s32_reg_name(int reg) {
+    static char bufs[4][16];
+    static int idx = 0;
+    if (reg == 0) return "zero";
+    if (reg == 29) return "sp";
+    if (reg == 30) return "fp";
+    if (reg == 31) return "lr";
+    char *buf = bufs[idx]; idx = (idx + 1) % 4;
+    snprintf(buf, 16, "r%d", reg);
+    return buf;
+}
+
+static void s32_disasm_one(uint32_t addr, uint32_t inst) {
+    uint32_t opcode = s32_extract_opcode(inst);
+    s32_inst_info_t *info = s32_find_instruction(opcode);
+
+    fprintf(stderr, "    0x%08x: %08x  ", addr, inst);
+    if (!info) { fprintf(stderr, "unknown 0x%02x\n", opcode); return; }
+
+    fprintf(stderr, "%-10s", info->mnemonic);
+    if (opcode == 0x7F) { fputc('\n', stderr); return; }
+    if (opcode == 0x52) { fprintf(stderr, "%s\n", s32_reg_name(s32_extract_rs1(inst))); return; }
+
+    switch (info->format) {
+    case S32_FMT_R:
+        fprintf(stderr, "%s, %s, %s\n", s32_reg_name(s32_extract_rd(inst)),
+                s32_reg_name(s32_extract_rs1(inst)), s32_reg_name(s32_extract_rs2(inst)));
+        break;
+    case S32_FMT_I: {
+        int rd = s32_extract_rd(inst), rs1 = s32_extract_rs1(inst), imm = s32_extract_imm_i(inst);
+        if (opcode >= 0x30 && opcode <= 0x34)
+            fprintf(stderr, "%s, %s+%d\n", s32_reg_name(rd), s32_reg_name(rs1), imm);
+        else
+            fprintf(stderr, "%s, %s, %d\n", s32_reg_name(rd), s32_reg_name(rs1), imm);
+        break;
+    }
+    case S32_FMT_S:
+        fprintf(stderr, "%s+%d, %s\n", s32_reg_name(s32_extract_rs1(inst)),
+                s32_extract_imm_s(inst), s32_reg_name(s32_extract_rs2(inst)));
+        break;
+    case S32_FMT_B:
+        fprintf(stderr, "%s, %s, 0x%x\n", s32_reg_name(s32_extract_rs1(inst)),
+                s32_reg_name(s32_extract_rs2(inst)), addr + 4 + s32_extract_imm_b(inst));
+        break;
+    case S32_FMT_U:
+        fprintf(stderr, "%s, 0x%x\n", s32_reg_name(s32_extract_rd(inst)),
+                (uint32_t)s32_extract_imm_u(inst) >> 12);
+        break;
+    case S32_FMT_J: {
+        int rd = s32_extract_rd(inst), imm = s32_extract_imm_j(inst);
+        uint32_t target = addr + imm;
+        if (rd == 0)
+            fprintf(stderr, "0x%x\n", target);
+        else
+            fprintf(stderr, "%s, 0x%x\n", s32_reg_name(rd), target);
+        break;
+    }
+    default:
+        fputc('\n', stderr);
+        break;
+    }
+}
+
+// ============================================================================
+// Hot block dump
+// ============================================================================
+
+void cache_dump_hot_blocks(block_cache_t *cache, uint8_t *mem_base,
+                           int count, bool host_disasm) {
+    if (count <= 0) return;
+    if (count > 64) count = 64;
+
+    // Allocate top-N array on stack (bounded by 64)
+    translated_block_t **hot = calloc(count, sizeof(translated_block_t *));
+    if (!hot) return;
+
+    for (uint32_t i = 0; i < cache->block_pool_used; i++) {
+        translated_block_t *b = &cache->block_pool[i];
+        if (b->host_code == NULL) continue;
+
+        for (int j = 0; j < count; j++) {
+            if (hot[j] == NULL || b->exec_count > hot[j]->exec_count) {
+                for (int k = count - 1; k > j; k--)
+                    hot[k] = hot[k - 1];
+                hot[j] = b;
+                break;
+            }
+        }
+    }
+
+    for (int i = 0; i < count && hot[i]; i++) {
+        translated_block_t *b = hot[i];
+        uint32_t guest_insts = b->guest_size / 4;
+
+        fprintf(stderr,
+                "\n=== Block 0x%08X%s — %u guest insts, %u host bytes, %u executions ===\n",
+                b->guest_pc,
+                (b->flags & BLOCK_FLAG_STAGE5) ? " [s5]" : "",
+                guest_insts, b->host_size, b->exec_count);
+
+        // Guest disassembly
+        fprintf(stderr, "  Guest:\n");
+        for (uint32_t j = 0; j < guest_insts; j++) {
+            uint32_t addr = b->guest_pc + j * 4;
+            uint32_t inst;
+            memcpy(&inst, mem_base + addr, 4);
+            s32_disasm_one(addr, inst);
+        }
+
+        // Host disassembly
+        if (host_disasm) {
+            fprintf(stderr, "  Host:\n");
+            dump_objdump(b->host_code, b->host_size, b->guest_pc);
+        }
+    }
+
+    free(hot);
+}
+
 static void dump_bytes(const uint8_t *data, uint32_t len, uint32_t max_len) {
     uint32_t n = len < max_len ? len : max_len;
     for (uint32_t i = 0; i < n; i++) {

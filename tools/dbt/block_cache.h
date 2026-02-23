@@ -210,6 +210,8 @@ void cache_reset_stats(block_cache_t *cache);
 void cache_dump_offender_blocks(block_cache_t *cache, uint8_t *mem_base, bool disassemble);
 void cache_dump_block_for_pc(block_cache_t *cache, uint8_t *mem_base, uint32_t pc,
                              bool disassemble);
+void cache_dump_hot_blocks(block_cache_t *cache, uint8_t *mem_base,
+                           int count, bool host_disasm);
 
 // Side-exit profiling helpers
 uint32_t cache_side_exit_taken_count(block_cache_t *cache, uint32_t branch_pc);
