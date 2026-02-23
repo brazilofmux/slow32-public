@@ -6,6 +6,7 @@
 #include "stage5_ssa.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 // Distinguish I-format (immediate) from R-format guest opcodes.
 // I-format ops have their operand in m->imm, not m->src_v[1].
@@ -84,7 +85,11 @@ static uint8_t cmp_opcode_to_x86_cc(uint8_t guest_opcode) {
         case 0x1B:              return 0x96; // SLEU -> SETBE
         case 0x1C:              return 0x9D; // SGE  -> SETGE
         case 0x1D:              return 0x93; // SGEU -> SETAE
-        default:                return 0x94; // fallback SETE
+        default:
+            fprintf(stderr,
+                    "FATAL: stage5_burg: unsupported compare opcode 0x%02X\n",
+                    guest_opcode);
+            abort();
     }
 }
 

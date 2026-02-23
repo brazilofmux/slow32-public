@@ -445,7 +445,11 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_
                 case 0x96: emit_setbe(e, out); break;  // LEU (unsigned below-or-equal)
                 case 0x9D: emit_setge(e, out); break;  // GE (signed)
                 case 0x93: emit_setae(e, out); break;  // GEU (unsigned above-or-equal)
-                default: emit_sete(e, out); break;
+                default:
+                    fprintf(stderr,
+                            "FATAL: stage5_codegen: unsupported SETCC condition 0x%02X at pc=0x%08X\n",
+                            l->cond, l->guest_pc);
+                    abort();
             }
             emit_movzx_r32_r8(e, out, out);
             if (dst_h == X64_NOREG) {

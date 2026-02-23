@@ -2,6 +2,8 @@
 
 #include "stage5_mir.h"
 #include "stage5_ssa.h"
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static mir_op_t mir_op_from_guest(uint8_t opcode) {
@@ -23,8 +25,12 @@ static mir_op_t mir_op_from_guest(uint8_t opcode) {
         case 0x0F: return MIR_OP_CMP_NE;
         case 0x08: case 0x16: return MIR_OP_CMP_LT;
         case 0x09: case 0x17: return MIR_OP_CMP_LTU;
+        case 0x18: return MIR_OP_CMP_LT;   // SGT (disambiguated by guest_opcode in BURG)
+        case 0x19: return MIR_OP_CMP_LTU;  // SGTU
         case 0x1A: return MIR_OP_CMP_LE;
         case 0x1B: return MIR_OP_CMP_LEU;
+        case 0x1C: return MIR_OP_CMP_LE;   // SGE
+        case 0x1D: return MIR_OP_CMP_LEU;  // SGEU
         case 0x20: return MIR_OP_CONST;
         case 0x30: case 0x31: case 0x32: case 0x33: case 0x34: return MIR_OP_LOAD;
         case 0x38: case 0x39: case 0x3A: return MIR_OP_STORE;
@@ -35,7 +41,11 @@ static mir_op_t mir_op_from_guest(uint8_t opcode) {
         case 0x51: return MIR_OP_YIELD;
         case 0x52: return MIR_OP_DEBUG;
         case 0x53: case 0x61: return MIR_OP_FP;
-        default: return MIR_OP_NOP;
+        default:
+            fprintf(stderr,
+                    "FATAL: stage5_mir: unhandled guest opcode 0x%02X in MIR lowering\n",
+                    opcode);
+            abort();
     }
 }
 
