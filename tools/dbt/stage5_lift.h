@@ -117,6 +117,7 @@ typedef struct {
     uint32_t stitched_jal_count;
     uint32_t stitched_taken_branch_count;
     uint32_t side_exit_count;
+    uint32_t side_exit_capacity_hits;
     uint32_t ir_count;
     stage5_ir_node_t ir[STAGE5_MAX_IR_NODES];
     uint32_t cfg_block_count;

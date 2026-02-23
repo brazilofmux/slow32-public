@@ -29,6 +29,8 @@ uint32_t stage5_lift_stitched_regions = 0;
 uint64_t stage5_lift_stitched_jal_total = 0;
 uint32_t stage5_lift_stitched_taken_regions = 0;
 uint64_t stage5_lift_stitched_taken_branch_total = 0;
+uint32_t stage5_lift_side_exit_capacity_regions = 0;
+uint64_t stage5_lift_side_exit_capacity_total = 0;
 uint32_t stage5_burg_attempted = 0;
 uint32_t stage5_burg_selected = 0;
 uint64_t stage5_burg_selected_guest_insts = 0;
@@ -203,6 +205,7 @@ uint32_t peephole_call_block_jcc_fold_count = 0;
 uint32_t peephole_call_block_other_rewrite_count = 0;
 
 static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
+static void emit_exit_chained_compact(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
 static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg);
 static inline void flush_pending_write(translate_ctx_t *ctx);
 static inline void flush_pending_cond(translate_ctx_t *ctx);
@@ -1428,6 +1431,10 @@ static void stage5_record_cfg_metrics(const stage5_lift_region_t *region) {
         stage5_lift_stitched_taken_regions++;
         stage5_lift_stitched_taken_branch_total += region->stitched_taken_branch_count;
     }
+    if (region->side_exit_capacity_hits > 0) {
+        stage5_lift_side_exit_capacity_regions++;
+        stage5_lift_side_exit_capacity_total += region->side_exit_capacity_hits;
+    }
     stage5_cfg_regions++;
     stage5_cfg_blocks_total += region->cfg_block_count;
     stage5_cfg_liveness_iterations_total += region->cfg_liveness_iterations;
@@ -2314,6 +2321,18 @@ static inline bool stage5_emit_familyb_prefix_nonbranch(translate_ctx_t *ctx,
         case OP_STW:  translate_stw(ctx, inst->rs1, inst->rs2, inst->imm); break;
         case OP_STH:  translate_sth(ctx, inst->rs1, inst->rs2, inst->imm); break;
         case OP_STB:  translate_stb(ctx, inst->rs1, inst->rs2, inst->imm); break;
+        case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
+        case OP_FSQRT_S: case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
+        case OP_FCVT_W_S: case OP_FCVT_WU_S: case OP_FCVT_S_W: case OP_FCVT_S_WU:
+        case OP_FNEG_S: case OP_FABS_S:
+        case OP_FADD_D: case OP_FSUB_D: case OP_FMUL_D: case OP_FDIV_D:
+        case OP_FSQRT_D: case OP_FEQ_D: case OP_FLT_D: case OP_FLE_D:
+        case OP_FCVT_W_D: case OP_FCVT_WU_D: case OP_FCVT_D_W: case OP_FCVT_D_WU:
+        case OP_FCVT_D_S: case OP_FCVT_S_D: case OP_FNEG_D: case OP_FABS_D:
+        case OP_FCVT_L_S: case OP_FCVT_LU_S: case OP_FCVT_S_L: case OP_FCVT_S_LU:
+        case OP_FCVT_L_D: case OP_FCVT_LU_D: case OP_FCVT_D_L: case OP_FCVT_D_LU:
+            translate_fp_r_type(ctx, op, inst->rd, inst->rs1, inst->rs2);
+            break;
         default:
             return false;
     }
@@ -4656,6 +4675,18 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 case OP_STW:
                 case OP_STH:
                 case OP_STB:
+                // FP ops are legal prefix nodes and already supported by the
+                // shared non-branch emitter path.
+                case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
+                case OP_FSQRT_S: case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
+                case OP_FCVT_W_S: case OP_FCVT_WU_S: case OP_FCVT_S_W: case OP_FCVT_S_WU:
+                case OP_FNEG_S: case OP_FABS_S:
+                case OP_FADD_D: case OP_FSUB_D: case OP_FMUL_D: case OP_FDIV_D:
+                case OP_FSQRT_D: case OP_FEQ_D: case OP_FLT_D: case OP_FLE_D:
+                case OP_FCVT_W_D: case OP_FCVT_WU_D: case OP_FCVT_D_W: case OP_FCVT_D_WU:
+                case OP_FCVT_D_S: case OP_FCVT_S_D: case OP_FNEG_D: case OP_FABS_D:
+                case OP_FCVT_L_S: case OP_FCVT_LU_S: case OP_FCVT_S_L: case OP_FCVT_S_LU:
+                case OP_FCVT_L_D: case OP_FCVT_LU_D: case OP_FCVT_D_L: case OP_FCVT_D_LU:
                     ok_prefix = stage5_emit_prefix_nonbranch(ctx, op, n->rd,
                                                              n->rs1, n->rs2, n->imm);
                     if (!ok_prefix) {

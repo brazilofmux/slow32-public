@@ -14,6 +14,17 @@
 #include <stddef.h>
 #include <sys/mman.h>
 
+static bool cache_exit_validate_enabled(void) {
+    static bool inited = false;
+    static bool enabled = false;
+    if (!inited) {
+        const char *v = getenv("SLOW32_DBT_VALIDATE_EXIT_SLOTS");
+        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
+        inited = true;
+    }
+    return enabled;
+}
+
 // Maximum number of blocks we can store
 #define MAX_BLOCKS 131072
 
@@ -517,7 +528,7 @@ void cache_commit_code(block_cache_t *cache, uint32_t size) {
 
 void cache_record_exit(block_cache_t *cache, translated_block_t *block,
                        int exit_idx, uint32_t target_pc, uint8_t *patch_site) {
-    if (exit_idx >= MAX_BLOCK_EXITS) {
+    if (!block || exit_idx < 0 || exit_idx >= MAX_BLOCK_EXITS) {
         return;  // Shouldn't happen
     }
     if (cache) {
@@ -529,6 +540,19 @@ void cache_record_exit(block_cache_t *cache, translated_block_t *block,
                     "DBT: cache_record_exit patch_site OOB block=0x%08X exit=%d target=0x%08X patch=%p range=[%p,%p)\n",
                     block ? block->guest_pc : 0, exit_idx, target_pc,
                     (void *)patch_site, (void *)base, (void *)limit);
+        }
+        if (cache_exit_validate_enabled()) {
+            block_exit_t *slot = &block->exits[exit_idx];
+            bool slot_used = (slot->patch_site != NULL) || (slot->target_pc != 0);
+            if (slot_used &&
+                (slot->target_pc != target_pc || slot->patch_site != patch_site)) {
+                cache->exit_overwrite_count++;
+                fprintf(stderr,
+                        "DBT: exit slot overwrite block=0x%08X exit=%d prev_target=0x%08X prev_patch=%p new_target=0x%08X new_patch=%p\n",
+                        block->guest_pc, exit_idx,
+                        slot->target_pc, (void *)slot->patch_site,
+                        target_pc, (void *)patch_site);
+            }
         }
     }
 
@@ -549,6 +573,26 @@ void cache_chain_incoming(block_cache_t *cache, translated_block_t *target) {
 
 void cache_record_pending_chain(block_cache_t *cache, translated_block_t *block,
                                 int exit_idx, uint32_t target_pc) {
+    if (!cache || !block || exit_idx < 0 || exit_idx >= MAX_BLOCK_EXITS) {
+        if (cache && cache_exit_validate_enabled()) {
+            cache->pending_invalid_ref_count++;
+            fprintf(stderr,
+                    "DBT: invalid pending-chain record block=%p exit=%d target=0x%08X\n",
+                    (void *)block, exit_idx, target_pc);
+        }
+        return;
+    }
+    if (block < cache->block_pool ||
+        block >= (cache->block_pool + cache->block_pool_size)) {
+        if (cache_exit_validate_enabled()) {
+            cache->pending_invalid_ref_count++;
+            fprintf(stderr,
+                    "DBT: pending-chain block outside pool block=%p pool=[%p,%p)\n",
+                    (void *)block, (void *)cache->block_pool,
+                    (void *)(cache->block_pool + cache->block_pool_size));
+        }
+        return;
+    }
     if (cache->chain_pending_used >= CHAIN_PENDING_POOL_SIZE) {
         return;  // Pool exhausted
     }
@@ -575,7 +619,33 @@ void cache_chain_pending(block_cache_t *cache, translated_block_t *target) {
         if (cache->chain_pending_entries[idx].target_pc == target_pc) {
             uint32_t block_idx = cache->chain_pending_entries[idx].block_idx;
             uint8_t exit_idx = cache->chain_pending_entries[idx].exit_idx;
+            if (block_idx >= cache->block_pool_used || exit_idx >= MAX_BLOCK_EXITS) {
+                cache->pending_invalid_ref_count++;
+                if (cache_exit_validate_enabled()) {
+                    fprintf(stderr,
+                            "DBT: pending-chain invalid ref target=0x%08X block_idx=%u pool_used=%u exit_idx=%u\n",
+                            target_pc, block_idx, cache->block_pool_used, exit_idx);
+                }
+                // Remove invalid entry from list.
+                if (prev >= 0) {
+                    cache->chain_pending_entries[prev].next = next;
+                } else {
+                    cache->chain_pending_head[hash] = next;
+                }
+                idx = next;
+                continue;
+            }
             translated_block_t *b = &cache->block_pool[block_idx];
+
+            if (cache_exit_validate_enabled()) {
+                block_exit_t *ex = &b->exits[exit_idx];
+                if (ex->target_pc != target_pc) {
+                    cache->pending_mismatch_count++;
+                    fprintf(stderr,
+                            "DBT: pending-chain mismatch block=0x%08X exit=%u pending_target=0x%08X slot_target=0x%08X\n",
+                            b->guest_pc, exit_idx, target_pc, ex->target_pc);
+                }
+            }
 
             if (b->host_code != NULL &&
                 exit_idx < b->exit_count &&
@@ -683,12 +753,18 @@ void cache_print_stats(block_cache_t *cache) {
 
     fprintf(stderr, "Chains made:   %lu\n", cache->chain_count);
     if (cache->patch_attempt_count > 0 || cache->patch_oob_count > 0 ||
-        cache->patch_rel_oob_count > 0) {
+        cache->patch_rel_oob_count > 0 ||
+        cache->exit_overwrite_count > 0 ||
+        cache->pending_invalid_ref_count > 0 ||
+        cache->pending_mismatch_count > 0) {
         fprintf(stderr,
-                "Patch stats:   attempts=%lu oob=%lu rel_oob=%lu\n",
+                "Patch stats:   attempts=%lu oob=%lu rel_oob=%lu exit_overwrite=%lu pending_invalid=%lu pending_mismatch=%lu\n",
                 cache->patch_attempt_count,
                 cache->patch_oob_count,
-                cache->patch_rel_oob_count);
+                cache->patch_rel_oob_count,
+                cache->exit_overwrite_count,
+                cache->pending_invalid_ref_count,
+                cache->pending_mismatch_count);
     }
     fprintf(stderr, "Cache flushes: %lu\n", cache->flush_count);
 

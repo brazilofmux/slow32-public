@@ -41,6 +41,8 @@ extern uint32_t stage5_lift_stitched_regions;
 extern uint64_t stage5_lift_stitched_jal_total;
 extern uint32_t stage5_lift_stitched_taken_regions;
 extern uint64_t stage5_lift_stitched_taken_branch_total;
+extern uint32_t stage5_lift_side_exit_capacity_regions;
+extern uint64_t stage5_lift_side_exit_capacity_total;
 extern uint32_t stage5_burg_attempted;
 extern uint32_t stage5_burg_selected;
 extern uint64_t stage5_burg_selected_guest_insts;

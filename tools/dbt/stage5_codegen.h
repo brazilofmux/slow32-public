@@ -86,6 +86,7 @@ extern uint32_t stage5_codegen_fused_addi_mem;
 extern uint32_t stage5_codegen_evictions;
 extern uint64_t stage5_codegen_native_loads;
 extern uint64_t stage5_codegen_native_stores;
+extern uint64_t stage5_codegen_dce_skipped;
 
 // Bridge functions (defined in translate.c, expose static functions to codegen)
 void emit_exit_chained_for_codegen(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
@@ -109,6 +110,7 @@ bool stage5_translate_branch_direct_for_codegen(translate_ctx_t *ctx,
     uint8_t opcode, uint8_t rs1, uint8_t rs2, int32_t imm);
 
 void stage5_flush_pending_for_codegen(translate_ctx_t *ctx);
+void stage5_flush_pending_cond_for_codegen(translate_ctx_t *ctx);
 bool stage5_side_exit_opcode_supported_for_codegen(uint8_t opcode);
 bool stage5_emit_side_exit_for_codegen(translate_ctx_t *ctx,
     uint8_t opcode, uint8_t rs1, uint8_t rs2, int32_t imm, uint32_t branch_pc);

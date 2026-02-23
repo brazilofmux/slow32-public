@@ -2430,6 +2430,12 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "Stage5 lift stitched taken branches: %" PRIu64 "\n",
                         stage5_lift_stitched_taken_branch_total);
             }
+            if (stage5_lift_side_exit_capacity_regions > 0) {
+                fprintf(stderr, "Stage5 lift side-exit cap regions: %" PRIu32 "\n",
+                        stage5_lift_side_exit_capacity_regions);
+                fprintf(stderr, "Stage5 lift side-exit cap hits:    %" PRIu64 "\n",
+                        stage5_lift_side_exit_capacity_total);
+            }
             fprintf(stderr, "Stage5 BURG attempted: %" PRIu32 "\n", stage5_burg_attempted);
             fprintf(stderr, "Stage5 BURG selected:  %" PRIu32 "\n", stage5_burg_selected);
             if (stage5_burg_selected_guest_insts > 0) {

@@ -105,6 +105,9 @@ struct block_cache {
     uint64_t patch_attempt_count;  // Dynamic chain patch attempts
     uint64_t patch_oob_count;      // Patch-site bounds violations
     uint64_t patch_rel_oob_count;  // rel32 out-of-range attempts
+    uint64_t exit_overwrite_count; // Exit slot overwritten with conflicting metadata
+    uint64_t pending_invalid_ref_count; // Pending-chain entry referenced invalid block/exit
+    uint64_t pending_mismatch_count; // Pending-chain entry disagreed with exit metadata
 
     // Chain pending index: reverse lookup for O(1) chaining
     // chain_pending[hash] = index into chain_pending_entries[], or -1

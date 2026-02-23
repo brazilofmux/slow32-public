@@ -22,14 +22,14 @@ else
 endif
 
 # Source files
-SRCS = dbt.c $(ARCH_SRCS) block_cache.c stage5_lift.c stage5_burg.c stage5_ssa.c stage5_codegen.c
+SRCS = dbt.c $(ARCH_SRCS) block_cache.c stage5_lift.c stage5_burg.c stage5_ssa.c stage5_ra.c stage5_codegen.c
 EMULATOR_SRCS = ../emulator/mmio_ring.c
 OBJS = $(SRCS:.c=.o)
 EMULATOR_OBJS = mmio_ring.o
 
 # Headers
 HDRS = cpu_state.h $(ARCH_HDRS) translate.h block_cache.h dbt_limits.h \
-	stage5_lift.h stage5_burg.h stage5_ssa.h stage5_codegen.h
+	stage5_lift.h stage5_burg.h stage5_ssa.h stage5_ra.h stage5_codegen.h
 
 # Main target
 TARGET = slow32-dbt

@@ -59,6 +59,44 @@ enum {
     ,
     OP_YIELD = 0x51,
     OP_DEBUG = 0x52,
+    OP_FADD_S = 0x53,
+    OP_FSUB_S = 0x54,
+    OP_FMUL_S = 0x55,
+    OP_FDIV_S = 0x56,
+    OP_FSQRT_S = 0x57,
+    OP_FEQ_S = 0x58,
+    OP_FLT_S = 0x59,
+    OP_FLE_S = 0x5A,
+    OP_FCVT_W_S = 0x5B,
+    OP_FCVT_WU_S = 0x5C,
+    OP_FCVT_S_W = 0x5D,
+    OP_FCVT_S_WU = 0x5E,
+    OP_FNEG_S = 0x5F,
+    OP_FABS_S = 0x60,
+    OP_FADD_D = 0x61,
+    OP_FSUB_D = 0x62,
+    OP_FMUL_D = 0x63,
+    OP_FDIV_D = 0x64,
+    OP_FSQRT_D = 0x65,
+    OP_FEQ_D = 0x66,
+    OP_FLT_D = 0x67,
+    OP_FLE_D = 0x68,
+    OP_FCVT_W_D = 0x69,
+    OP_FCVT_WU_D = 0x6A,
+    OP_FCVT_D_W = 0x6B,
+    OP_FCVT_D_WU = 0x6C,
+    OP_FCVT_D_S = 0x6D,
+    OP_FCVT_S_D = 0x6E,
+    OP_FNEG_D = 0x6F,
+    OP_FABS_D = 0x70,
+    OP_FCVT_L_S = 0x71,
+    OP_FCVT_LU_S = 0x72,
+    OP_FCVT_S_L = 0x73,
+    OP_FCVT_S_LU = 0x74,
+    OP_FCVT_L_D = 0x75,
+    OP_FCVT_LU_D = 0x76,
+    OP_FCVT_D_L = 0x77,
+    OP_FCVT_D_LU = 0x78,
     OP_HALT = 0x7F
 };
 
@@ -104,6 +142,16 @@ static bool is_simple_alu_opcode(uint8_t opcode) {
         case OP_DIV:
         case OP_REM:
         case OP_XORI:
+        case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
+        case OP_FSQRT_S: case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
+        case OP_FCVT_W_S: case OP_FCVT_WU_S: case OP_FCVT_S_W: case OP_FCVT_S_WU:
+        case OP_FNEG_S: case OP_FABS_S:
+        case OP_FADD_D: case OP_FSUB_D: case OP_FMUL_D: case OP_FDIV_D:
+        case OP_FSQRT_D: case OP_FEQ_D: case OP_FLT_D: case OP_FLE_D:
+        case OP_FCVT_W_D: case OP_FCVT_WU_D: case OP_FCVT_D_W: case OP_FCVT_D_WU:
+        case OP_FCVT_D_S: case OP_FCVT_S_D: case OP_FNEG_D: case OP_FABS_D:
+        case OP_FCVT_L_S: case OP_FCVT_LU_S: case OP_FCVT_S_L: case OP_FCVT_S_LU:
+        case OP_FCVT_L_D: case OP_FCVT_LU_D: case OP_FCVT_D_L: case OP_FCVT_D_LU:
             return true;
         default:
             return false;
@@ -262,6 +310,23 @@ static void stage5_cfg_inst_rw_masks(uint8_t opcode, uint8_t rd, uint8_t rs1, ui
             break;
         case OP_JALR:
             r = reg_mask(rs1);
+            w = reg_mask(rd);
+            break;
+        case OP_FSQRT_S: case OP_FCVT_W_S: case OP_FCVT_WU_S:
+        case OP_FCVT_S_W: case OP_FCVT_S_WU: case OP_FNEG_S: case OP_FABS_S:
+        case OP_FSQRT_D: case OP_FCVT_W_D: case OP_FCVT_WU_D:
+        case OP_FCVT_D_W: case OP_FCVT_D_WU: case OP_FCVT_D_S: case OP_FCVT_S_D:
+        case OP_FNEG_D: case OP_FABS_D:
+        case OP_FCVT_L_S: case OP_FCVT_LU_S: case OP_FCVT_S_L: case OP_FCVT_S_LU:
+        case OP_FCVT_L_D: case OP_FCVT_LU_D: case OP_FCVT_D_L: case OP_FCVT_D_LU:
+            r = reg_mask(rs1);
+            w = reg_mask(rd);
+            break;
+        case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
+        case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
+        case OP_FADD_D: case OP_FSUB_D: case OP_FMUL_D: case OP_FDIV_D:
+        case OP_FEQ_D: case OP_FLT_D: case OP_FLE_D:
+            r = reg_mask(rs1) | reg_mask(rs2);
             w = reg_mask(rd);
             break;
         case OP_DEBUG:
@@ -665,6 +730,17 @@ static stage5_ir_node_kind_t node_kind_for_opcode(uint8_t opcode) {
         case OP_SRA: case OP_SRAI: return STAGE5_IR_SRA;
         case OP_MUL: case OP_MULHU: case OP_DIV: case OP_REM:
             return STAGE5_IR_ADD;   // arithmetic class for initial Stage5 matching
+        case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
+        case OP_FSQRT_S: case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
+        case OP_FCVT_W_S: case OP_FCVT_WU_S: case OP_FCVT_S_W: case OP_FCVT_S_WU:
+        case OP_FNEG_S: case OP_FABS_S:
+        case OP_FADD_D: case OP_FSUB_D: case OP_FMUL_D: case OP_FDIV_D:
+        case OP_FSQRT_D: case OP_FEQ_D: case OP_FLT_D: case OP_FLE_D:
+        case OP_FCVT_W_D: case OP_FCVT_WU_D: case OP_FCVT_D_W: case OP_FCVT_D_WU:
+        case OP_FCVT_D_S: case OP_FCVT_S_D: case OP_FNEG_D: case OP_FABS_D:
+        case OP_FCVT_L_S: case OP_FCVT_LU_S: case OP_FCVT_S_L: case OP_FCVT_S_LU:
+        case OP_FCVT_L_D: case OP_FCVT_LU_D: case OP_FCVT_D_L: case OP_FCVT_D_LU:
+            return STAGE5_IR_ADD;   // scalar FP op class for Stage5 matching
         case OP_LUI:
             return STAGE5_IR_CONST;
         case OP_SLT: case OP_SLTU: case OP_SEQ: case OP_SNE:
@@ -725,6 +801,7 @@ void stage5_lift_region_init(stage5_lift_region_t *region, uint32_t start_pc) {
     region->stitched_jal_count = 0;
     region->stitched_taken_branch_count = 0;
     region->side_exit_count = 0;
+    region->side_exit_capacity_hits = 0;
     region->ir_count = 0;
     region->cfg_block_count = 0;
     region->cfg_valid = false;
@@ -844,6 +921,9 @@ bool stage5_lift_superblock(stage5_lift_region_t *region,
 #else
             bool can_side_exit = false;
 #endif
+            if (imm > 0 && !can_side_exit) {
+                region->side_exit_capacity_hits++;
+            }
 
             if (!prev_was_compare) {
                 region->node_count++;  // synthetic compare node
