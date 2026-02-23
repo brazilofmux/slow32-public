@@ -1156,6 +1156,10 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     stage5_lift_region_init(&region, guest_pc);
     if (!stage5_lift_superblock(&region, ctx->cpu->mem_base, ctx->cpu->code_limit,
                                 STAGE5_LIFT_BUDGET)) {
+        fprintf(stderr,
+                "stage5-fail pc=0x%08X step=lift reason=%s insts=%u nodes=%u unsupported=0x%02X\n",
+                guest_pc, stage5_lift_reason_str(region.reason),
+                region.guest_inst_count, region.node_count, region.unsupported_opcode);
         return false;
     }
 
@@ -1163,6 +1167,12 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     stage5_burg_result_t result;
     stage5_burg_result_init(&result);
     if (!stage5_burg_select(&region, &result) || !result.selected) {
+        fprintf(stderr,
+                "stage5-fail pc=0x%08X step=burg reason=%s insts=%u nodes=%u terminal=%u budget_end=%u\n",
+                guest_pc, stage5_burg_reason_str(result.reason),
+                region.guest_inst_count, region.node_count,
+                region.has_terminal_branch ? 1u : 0u,
+                region.ended_by_budget ? 1u : 0u);
         return false;
     }
 
@@ -1170,6 +1180,11 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     bool synth_block_end = (result.pattern == STAGE5_BURG_PATTERN_BLOCK_END);
 
     if ((!region.has_terminal_branch && !synth_block_end) || region.guest_inst_count == 0) {
+        fprintf(stderr,
+                "stage5-fail pc=0x%08X step=cover pattern=%s terminal=%u synth=%u insts=%u\n",
+                guest_pc, stage5_burg_pattern_str(result.pattern),
+                region.has_terminal_branch ? 1u : 0u,
+                synth_block_end ? 1u : 0u, region.guest_inst_count);
         return false;
     }
 
@@ -1199,10 +1214,17 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     bool side_exit_enabled = stage5_region_side_exits_supported(&region);
 
     // Stage 5 codegen: SSA → RA → native x86-64 emission.
-    // On failure, the entire region falls back to Stage 4.
-    return stage5_codegen(ctx, &region, guest_pc,
-        terminal_idx, fuse_cmp_idx, emitted_pattern,
-        synth_block_end, side_exit_enabled);
+    // On failure, the caller treats this as fatal in Stage 5 mode.
+    if (!stage5_codegen(ctx, &region, guest_pc,
+                        terminal_idx, fuse_cmp_idx, emitted_pattern,
+                        synth_block_end, side_exit_enabled)) {
+        fprintf(stderr,
+                "stage5-fail pc=0x%08X step=codegen pattern=%s term_idx=%d fuse_cmp=%d side_exits=%u\n",
+                guest_pc, stage5_burg_pattern_str(emitted_pattern),
+                terminal_idx, fuse_cmp_idx, region.side_exit_count);
+        return false;
+    }
+    return true;
 }
 
 // ============================================================================
@@ -6496,6 +6518,11 @@ retry_translate:
             stage5_emitted_block = true;
             goto cached_block_done;
         }
+        fprintf(stderr,
+                "FATAL: Stage 5 codegen failed for block at PC=0x%08X "
+                "(elapsed=%llu ns)\n",
+                guest_pc, (unsigned long long)dt);
+        abort();
     }
 
     if (DBT_TRACE) {

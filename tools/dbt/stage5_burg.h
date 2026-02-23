@@ -7,6 +7,9 @@
 #include <stdint.h>
 
 #include "stage5_lift.h"
+#include "stage5_mir.h"
+#include "stage5_lir.h"
+#include "stage5_ssa.h"
 
 typedef enum {
     STAGE5_BURG_OK = 0,
@@ -52,6 +55,7 @@ typedef struct {
 
 void stage5_burg_result_init(stage5_burg_result_t *result);
 bool stage5_burg_select(const stage5_lift_region_t *region, stage5_burg_result_t *result);
+bool stage5_burg_lower(const stage5_mir_t *mir, const stage5_ssa_overlay_t *ssa, stage5_lir_t *lir);
 const char *stage5_burg_reason_str(stage5_burg_reason_t reason);
 const char *stage5_burg_pattern_str(stage5_burg_pattern_t pattern);
 

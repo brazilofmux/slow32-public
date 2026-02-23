@@ -1,40 +1,20 @@
-// SLOW-32 DBT: Stage 5 SSA-value register allocation (preliminary)
+// SLOW-32 DBT Stage 5: Linear Scan Register Allocator
+// Operates on LIR nodes using SSA Value IDs as virtual registers.
 
 #include "stage5_ra.h"
-
 #include <string.h>
 #include <stdlib.h>
-
-uint32_t stage5_ra_regions_attempted;
-uint32_t stage5_ra_regions_planned;
-uint64_t stage5_ra_intervals_total;
-uint64_t stage5_ra_spills_total;
-
-bool stage5_ra_enabled(void) {
-    return true;
-}
 
 static int cmp_interval_start(const void *a, const void *b) {
     const stage5_ra_interval_t *ia = (const stage5_ra_interval_t *)a;
     const stage5_ra_interval_t *ib = (const stage5_ra_interval_t *)b;
-    if (ia->start_idx < ib->start_idx) return -1;
-    if (ia->start_idx > ib->start_idx) return 1;
-    if (ia->end_idx < ib->end_idx) return -1;
-    if (ia->end_idx > ib->end_idx) return 1;
-    return 0;
+    if (ia->start_idx != ib->start_idx) return ia->start_idx - ib->start_idx;
+    return ia->end_idx - ib->end_idx;
 }
 
-bool stage5_ra_build_plan(const stage5_lift_region_t *region,
-                          const stage5_ssa_overlay_t *ssa,
-                          stage5_ra_plan_t *plan) {
-    stage5_ra_regions_attempted++;
-    if (!region || !ssa || !plan) return false;
+bool stage5_ra_build_plan_lir(const stage5_lir_t *lir, const stage5_ssa_overlay_t *ssa, stage5_ra_plan_t *plan) {
+    if (!lir || !ssa || !plan) return false;
     memset(plan, 0, sizeof(*plan));
-
-    if (ssa->value_count == 0 || region->ir_count == 0) {
-        stage5_ra_regions_planned++;
-        return true;
-    }
 
     uint16_t first_use[STAGE5_SSA_MAX_VALUES];
     uint16_t last_use[STAGE5_SSA_MAX_VALUES];
@@ -43,50 +23,30 @@ bool stage5_ra_build_plan(const stage5_lift_region_t *region,
     memset(last_use, 0xFF, sizeof(last_use));
     memset(is_def, 0, sizeof(is_def));
 
-    // First pass: identify which values are defined in the region.
-    for (uint32_t i = 0; i < region->ir_count; i++) {
-        uint16_t def = ssa->node_def_value[i];
-        if (def > 0 && def < STAGE5_SSA_MAX_VALUES) {
-            is_def[def] = true;
+    // Compute live ranges
+    for (uint32_t i = 0; i < lir->node_count; i++) {
+        const lir_node_t *l = &lir->nodes[i];
+        if (l->dst_v != 0 && l->dst_v < STAGE5_SSA_MAX_VALUES) {
+            is_def[l->dst_v] = true;
+            if (first_use[l->dst_v] == 0xFFFFu) first_use[l->dst_v] = (uint16_t)i;
+            last_use[l->dst_v] = (uint16_t)i;
+        }
+        for (int k = 0; k < 2; k++) {
+            uint16_t u = l->src_v[k];
+            if (u != 0 && u < STAGE5_SSA_MAX_VALUES) {
+                if (first_use[u] == 0xFFFFu) first_use[u] = 0; // Live-in
+                last_use[u] = (uint16_t)i;
+            }
         }
     }
 
-    // Second pass: compute live ranges.
-    // Live-in values (used but never defined in the region) get start_idx=0
-    // because they are loaded into host registers at region entry.
-    for (uint32_t i = 0; i < region->ir_count; i++) {
-        uint16_t def = ssa->node_def_value[i];
-        uint16_t u0 = ssa->node_use0_valid[i] ? ssa->node_use0_value[i] : 0;
-        uint16_t u1 = ssa->node_use1_valid[i] ? ssa->node_use1_value[i] : 0;
-
-        if (def > 0 && def < STAGE5_SSA_MAX_VALUES) {
-            if (first_use[def] == 0xFFFFu) first_use[def] = (uint16_t)i;
-            if (last_use[def] == 0xFFFFu) last_use[def] = (uint16_t)i;
-        }
-        if (u0 > 0 && u0 < STAGE5_SSA_MAX_VALUES) {
-            if (first_use[u0] == 0xFFFFu) {
-                // Live-in: start at 0 so the entry load doesn't get clobbered.
-                first_use[u0] = is_def[u0] ? (uint16_t)i : 0;
-            }
-            last_use[u0] = (uint16_t)i;
-        }
-        if (u1 > 0 && u1 < STAGE5_SSA_MAX_VALUES) {
-            if (first_use[u1] == 0xFFFFu) {
-                first_use[u1] = is_def[u1] ? (uint16_t)i : 0;
-            }
-            last_use[u1] = (uint16_t)i;
-        }
-    }
-
-    for (uint16_t v = 1; v <= ssa->value_count && v < STAGE5_SSA_MAX_VALUES; v++) {
-        if (first_use[v] == 0xFFFFu || last_use[v] == 0xFFFFu) continue;
-        if (plan->interval_count >= STAGE5_RA_MAX_INTERVALS) return false;
+    for (uint16_t v = 1; v <= ssa->value_count; v++) {
+        if (first_use[v] == 0xFFFFu) continue;
         stage5_ra_interval_t *it = &plan->intervals[plan->interval_count++];
         it->value_id = v;
         it->start_idx = first_use[v];
         it->end_idx = last_use[v];
         it->assigned_slot = -1;
-        it->spilled = false;
     }
 
     qsort(plan->intervals, plan->interval_count, sizeof(plan->intervals[0]), cmp_interval_start);
@@ -94,48 +54,54 @@ bool stage5_ra_build_plan(const stage5_lift_region_t *region,
     uint16_t active[STAGE5_RA_MAX_INTERVALS];
     uint16_t active_count = 0;
     bool slot_used[STAGE5_RA_HOST_SLOTS];
-    memset(slot_used, 0, sizeof(slot_used));
 
     for (uint16_t i = 0; i < plan->interval_count; i++) {
         stage5_ra_interval_t *cur = &plan->intervals[i];
-
+        
+        // Expire old intervals
         uint16_t w = 0;
         memset(slot_used, 0, sizeof(slot_used));
         for (uint16_t k = 0; k < active_count; k++) {
             stage5_ra_interval_t *a = &plan->intervals[active[k]];
-            if (a->end_idx < cur->start_idx) {
-                continue;
-            }
+            if (a->end_idx < cur->start_idx) continue;
             active[w++] = active[k];
-            if (!a->spilled && a->assigned_slot >= 0 && a->assigned_slot < STAGE5_RA_HOST_SLOTS) {
-                slot_used[a->assigned_slot] = true;
-            }
+            if (!a->spilled && a->assigned_slot >= 0) slot_used[a->assigned_slot] = true;
         }
         active_count = w;
 
+        // Allocate slot
         int slot = -1;
         for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
-            if (!slot_used[s]) {
-                slot = s;
-                break;
-            }
+            if (!slot_used[s]) { slot = s; break; }
         }
 
         if (slot >= 0) {
             cur->assigned_slot = (int8_t)slot;
-            cur->spilled = false;
         } else {
-            cur->assigned_slot = -1;
-            cur->spilled = true;
-            plan->spilled_count++;
-        }
+            // Spill the one that ends furthest
+            int victim = -1;
+            uint16_t max_end = cur->end_idx;
+            for (uint16_t k = 0; k < active_count; k++) {
+                stage5_ra_interval_t *a = &plan->intervals[active[k]];
+                if (!a->spilled && a->end_idx > max_end) { max_end = a->end_idx; victim = k; }
+            }
 
-        if (active_count >= STAGE5_RA_MAX_INTERVALS) return false;
+            if (victim >= 0) {
+                stage5_ra_interval_t *v_it = &plan->intervals[active[victim]];
+                cur->assigned_slot = v_it->assigned_slot;
+                v_it->assigned_slot = -1;
+                v_it->spilled = true;
+                plan->spilled_count++;
+            } else {
+                cur->spilled = true;
+                plan->spilled_count++;
+            }
+        }
         active[active_count++] = i;
     }
 
-    stage5_ra_regions_planned++;
-    stage5_ra_intervals_total += plan->interval_count;
-    stage5_ra_spills_total += plan->spilled_count;
     return true;
 }
+
+bool stage5_ra_enabled(void) { return true; }
+bool stage5_ra_build_plan(const stage5_lift_region_t *region, const stage5_ssa_overlay_t *ssa, stage5_ra_plan_t *plan) { return false; }
