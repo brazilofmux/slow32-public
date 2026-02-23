@@ -156,6 +156,15 @@ echo "Libc: $LIBC_DIR"
 assemble_s "$RUNTIME_DIR/crt0.s" "$WORKDIR/crt0.s32o" "$WORKDIR/crt0.log"
 assemble_s "$RUNTIME_DIR/mmio_no_start.s" "$WORKDIR/mmio_no_start.s32o" "$WORKDIR/mmio_no_start.log"
 
+# 64-bit builtins (stages 05/06 provide builtins64.s for __udivdi3 etc.)
+BUILTIN_OBJS=""
+if [[ -f "$RUNTIME_DIR/builtins64.s" ]]; then
+    assemble_s "$RUNTIME_DIR/builtins64.s" "$WORKDIR/builtins64.s32o" "$WORKDIR/builtins64.as.log"
+    BUILTIN_OBJS="$WORKDIR/builtins64.s32o"
+elif [[ -f "$RUNTIME_DIR/lib/builtins64.s32o" ]]; then
+    BUILTIN_OBJS="$RUNTIME_DIR/lib/builtins64.s32o"
+fi
+
 LIBC_OBJS=""
 for name in string_extra string_more ctype convert stdio malloc; do
     compile_c "$LIBC_DIR/${name}.c" "$WORKDIR/${name}.s" "$WORKDIR/${name}.cc.log"
@@ -178,7 +187,7 @@ link_and_run_expect_zero() {
     if ! run_exe "$LD_EXE" "$WORKDIR/${name}.ld.log" \
         -o "$exe" --mmio 64K \
         "$WORKDIR/crt0.s32o" "$@" "$WORKDIR/start.s32o" "$WORKDIR/mmio_no_start.s32o" \
-        $LIBC_OBJS; then
+        $LIBC_OBJS $BUILTIN_OBJS; then
         printf "  %-26s FAIL (link)\n" "${name}:"
         FAIL=$((FAIL + 1))
         return
