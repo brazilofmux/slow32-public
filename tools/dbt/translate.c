@@ -23,193 +23,13 @@ uint32_t cmp_branch_fusion_count = 0;  // Global fusion counter for stats
 uint32_t cmp_branch_fusion_carry_skipped = 0; // Unsigned fusions skipped in strict-carry mode
 uint32_t cbz_peephole_count = 0;      // CBZ/CBNZ peephole counter for stats
 uint32_t native_stub_count = 0;       // Native intrinsic stub counter
-uint32_t stage5_lift_attempted = 0;
-uint32_t stage5_lift_success = 0;
-uint32_t stage5_lift_stitched_regions = 0;
-uint64_t stage5_lift_stitched_jal_total = 0;
-uint32_t stage5_lift_stitched_taken_regions = 0;
-uint64_t stage5_lift_stitched_taken_branch_total = 0;
-uint32_t stage5_lift_side_exit_capacity_regions = 0;
-uint64_t stage5_lift_side_exit_capacity_total = 0;
-uint32_t stage5_burg_attempted = 0;
-uint32_t stage5_burg_selected = 0;
-uint64_t stage5_burg_selected_guest_insts = 0;
-uint32_t stage5_select_calls = 0;
-uint64_t stage5_select_time_ns = 0;
-uint32_t stage5_burg_pattern_hist[STAGE5_BURG_PATTERN_COUNT] = {0};
-uint32_t stage5_fallback_total = 0;
-uint32_t stage5_fallback_lift_not_implemented = 0;
-uint32_t stage5_fallback_lift_unsupported_opcode = 0;
-uint32_t stage5_fallback_lift_region_too_large = 0;
-uint32_t stage5_fallback_lift_invalid_cfg = 0;
-uint32_t stage5_fallback_lift_internal = 0;
-uint32_t stage5_fallback_burg_not_implemented = 0;
-uint32_t stage5_fallback_burg_no_cover = 0;
-uint32_t stage5_fallback_burg_illegal_cover = 0;
-uint32_t stage5_fallback_burg_internal = 0;
-uint32_t stage5_fallback_unsupported_opcode_hist[128] = {0};
-uint32_t stage5_emit_attempted = 0;
-uint32_t stage5_emit_success = 0;
-uint64_t stage5_emit_success_guest_insts = 0;
-uint64_t stage5_emit_success_host_bytes = 0;
-uint32_t stage5_emit_pattern_success[STAGE5_BURG_PATTERN_COUNT] = {0};
-uint64_t stage5_emit_pattern_guest_insts[STAGE5_BURG_PATTERN_COUNT] = {0};
-uint64_t stage5_emit_pattern_host_bytes[STAGE5_BURG_PATTERN_COUNT] = {0};
-uint32_t stage5_codegen_pattern_attempt[STAGE5_BURG_PATTERN_COUNT] = {0};
-uint32_t stage5_codegen_pattern_fallback[STAGE5_BURG_PATTERN_COUNT] = {0};
-uint32_t stage5_emit_fallback = 0;
-uint32_t stage5_emit_fallback_non_terminal = 0;
-uint32_t stage5_emit_fallback_shape = 0;
-uint32_t stage5_emit_fallback_superblock_policy = 0;
-uint32_t stage5_emit_fallback_policy_guardrail = 0;
-uint32_t stage5_emit_fallback_policy_jalr_indirect = 0;
-uint32_t stage5_emit_fallback_policy_direct_branch = 0;
-uint32_t stage5_emit_fallback_policy_bench_jal_jump = 0;
-uint32_t stage5_emit_fallback_policy_bench_jal_jump_backedge = 0;
-uint32_t stage5_emit_fallback_policy_bench_direct_branch = 0;
-uint32_t stage5_emit_fallback_policy_bench_block_end = 0;
-uint32_t stage5_emit_fallback_policy_bench_jal_call = 0;
-uint32_t stage5_emit_fallback_policy_bench_jalr_ret = 0;
-uint32_t stage5_emit_fallback_policy_bench_jalr_ret_short = 0;
-uint32_t stage5_emit_fallback_policy_bench_jalr_ret_long = 0;
-uint32_t stage5_emit_fallback_policy_call_return = 0;
-uint32_t stage5_emit_fallback_policy_call_return_jal_call_disabled = 0;
-uint32_t stage5_emit_fallback_policy_call_return_jal_call_long = 0;
-uint32_t stage5_emit_fallback_policy_call_return_jalr_ret = 0;
-uint32_t stage5_emit_fallback_policy_call_return_jalr_ret_short = 0;
-uint32_t stage5_emit_fallback_policy_call_return_jalr_ret_long = 0;
-uint32_t stage5_emit_fallback_policy_regflow = 0;
-uint32_t stage5_emit_fallback_policy_regflow_cross = 0;
-uint32_t stage5_emit_fallback_policy_regflow_span = 0;
-uint32_t stage5_emit_fallback_policy_regflow_live = 0;
-uint32_t stage5_emit_regflow_retry_attempted = 0;
-uint32_t stage5_emit_regflow_retry_accepted = 0;
-uint32_t stage5_emit_regflow_retry_emit_success = 0;
-uint32_t stage5_emit_regflow_retry_cfg_attempted = 0;
-uint32_t stage5_emit_regflow_retry_cfg_accepted = 0;
-uint32_t stage5_emit_regflow_retry_cfg_emit_success = 0;
-uint32_t stage5_emit_regflow_retry_term_attempted = 0;
-uint32_t stage5_emit_regflow_retry_term_accepted = 0;
-uint32_t stage5_emit_regflow_retry_term_emit_success = 0;
-uint32_t stage5_emit_regflow_retry_half_attempted = 0;
-uint32_t stage5_emit_regflow_retry_half_accepted = 0;
-uint32_t stage5_emit_regflow_retry_half_emit_success = 0;
-uint64_t stage5_emit_regflow_retry_guest_before_total = 0;
-uint64_t stage5_emit_regflow_retry_guest_after_total = 0;
-uint32_t stage5_emit_regflow_retry_max_reduction = 0;
-uint32_t stage5_emit_regflow_retry_explore_events = 0;
-uint32_t stage5_emit_regflow_retry_explore_cfg_first = 0;
-uint32_t stage5_emit_regflow_retry_explore_term_first = 0;
-uint32_t stage5_emit_regflow_retry_explore_half_first = 0;
-uint32_t stage5_emit_regflow_retry_decay_events = 0;
-uint32_t stage5_emit_regflow_retry_recent_cfg_attempted = 0;
-uint32_t stage5_emit_regflow_retry_recent_cfg_success = 0;
-uint32_t stage5_emit_regflow_retry_recent_term_attempted = 0;
-uint32_t stage5_emit_regflow_retry_recent_term_success = 0;
-uint32_t stage5_emit_regflow_retry_recent_half_attempted = 0;
-uint32_t stage5_emit_regflow_retry_recent_half_success = 0;
-uint32_t stage5_emit_regflow_retry_cooldown_events = 0;
-uint32_t stage5_emit_regflow_retry_cooldown_cfg = 0;
-uint32_t stage5_emit_regflow_retry_cooldown_term = 0;
-uint32_t stage5_emit_regflow_retry_cooldown_half = 0;
-uint32_t stage5_emit_policy_allow_call = 0;
-uint32_t stage5_emit_policy_allow_call_bench = 0;
-uint32_t stage5_emit_policy_allow_jalr_ret_bench = 0;
-uint32_t stage5_emit_policy_allow_jalr_ret_bench_short = 0;
-uint32_t stage5_emit_policy_allow_jalr_ret_bench_long = 0;
-uint32_t stage5_emit_prefilter_skip = 0;
-uint32_t stage5_emit_prefilter_skip_branch_head = 0;
-uint32_t stage5_emit_prefilter_skip_noncmp_head = 0;
-uint32_t stage5_emit_prefilter_branch_probe = 0;
-uint32_t stage5_emit_fallback_side_exit_unowned = 0;
-uint32_t stage5_emit_fallback_side_exit_disabled = 0;
-uint32_t stage5_emit_fallback_side_exit_unsupported = 0;
-uint32_t stage5_emit_fallback_side_exit_call_guard = 0;
-uint32_t stage5_emit_fallback_side_exit_call_guard_jal = 0;
-uint32_t stage5_emit_fallback_side_exit_call_guard_jalr = 0;
-uint32_t stage5_emit_fallback_single_unhandled = 0;
-uint32_t stage5_emit_fallback_cmp_branch_miss = 0;
-uint32_t stage5_emit_fallback_helper_cmp_prefix_fail = 0;
-uint32_t stage5_emit_fallback_helper_prefix_nonbranch_fail = 0;
-uint32_t stage5_emit_fallback_helper_single_terminal_fail = 0;
-uint32_t stage5_emit_fallback_helper_single_terminal_fail_opcode_hist[256] = {0};
-uint32_t stage5_emit_fallback_not_ended = 0;
-uint32_t stage5_emit_not_ended_opcode_hist[128] = {0};
-uint32_t stage5_emit_not_ended_reason_single_terminal = 0;
-uint32_t stage5_emit_not_ended_reason_cmp_branch_fused = 0;
-uint32_t stage5_emit_not_ended_reason_familyb_cmp_rd = 0;
-uint32_t stage5_emit_not_ended_reason_familyb_branch_first = 0;
-uint32_t stage5_emit_not_ended_reason_familyb_prefix_terminal = 0;
-uint32_t stage5_emit_not_ended_reason_familyc_terminal = 0;
-uint32_t stage5_emit_unhandled_opcode_hist[128] = {0};
-uint32_t stage5_emit_calls = 0;
-uint64_t stage5_emit_time_ns = 0;
-uint64_t stage5_emit_success_time_ns = 0;
-uint64_t stage5_emit_fallback_time_ns = 0;
-uint32_t stage5_validate_attempted = 0;
-uint32_t stage5_validate_eligible = 0;
-uint32_t stage5_validate_skipped_load_store = 0;
-uint32_t stage5_validate_skipped_call_indirect = 0;
-uint32_t stage5_validate_skipped_terminal = 0;
-uint32_t stage5_validate_skipped_mem_mmio = 0;
-uint32_t stage5_validate_skipped_mem_oob = 0;
-uint32_t stage5_validate_skipped_mem_capacity = 0;
-uint32_t stage5_validate_skip_call_indirect_opcode_hist[128] = {0};
-uint32_t stage5_validate_skip_terminal_opcode_hist[128] = {0};
-uint32_t stage5_validate_skip_mem_opcode_hist[128] = {0};
-uint64_t stage5_validate_eligible_guest_insts = 0;
-uint32_t stage5_validate_eligible_len_hist[5] = {0}; // 1-2,3-4,5-8,9-16,17+
-uint32_t stage5_validate_eligible_terminal_opcode_hist[128] = {0};
-uint32_t stage5_validate_mismatch = 0;
-uint32_t stage5_validate_ok = 0;
-uint32_t stage5_cfg_regions = 0;
-uint32_t stage5_cfg_blocks_total = 0;
-uint64_t stage5_cfg_liveness_iterations_total = 0;
-uint32_t stage5_cfg_spill_likely_regions = 0;
-uint32_t stage5_cfg_max_live_seen = 0;
-uint32_t stage5_reg_flow_regions = 0;
-uint64_t stage5_reg_flow_cross_block_regs_total = 0;
-uint32_t stage5_reg_flow_max_span_seen = 0;
-uint32_t stage5_emit_fused_cmp_branch = 0;
 uint32_t stage5_emit_side_exits = 0;
-uint32_t stage5_emit_region_side_exit_total = 0;
-uint32_t stage5_emit_region_side_exit_owned = 0;
-uint32_t stage5_emit_region_side_exit_unsupported = 0;
-uint32_t stage5_emit_region_side_exit_disabled = 0;
-uint32_t stage5_emit_region_side_exit_call_guard = 0;
-uint32_t stage5_emit_region_side_exit_call_guard_jal = 0;
-uint32_t stage5_emit_region_side_exit_call_guard_jalr = 0;
-uint32_t stage5_emit_region_side_exit_call_guard_relaxed_after_only = 0;
-uint32_t stage5_emit_side_exit_forced_family_c_unsigned = 0;
-uint32_t stage5_emit_side_exit_forced_family_c_b_only = 0;
-uint32_t stage5_emit_side_exit_auto_backedge_retry_unsigned = 0;
-uint32_t stage5_emit_side_exit_opcode_hist[128] = {0};
-uint32_t stage5_emit_side_exit_unsupported_opcode_hist[128] = {0};
-uint32_t stage5_emit_side_exit_emitted_opcode_hist[128] = {0};
-uint32_t stage_emit_inblock_backedge_total = 0;
-uint32_t stage_emit_inblock_backedge_with_side_exit = 0;
-uint32_t stage5_deferred_exit_flush_full = 0;
-uint32_t stage5_deferred_exit_flush_dirty = 0;
-uint32_t stage5_deferred_exit_pending_write_r15 = 0;
-uint32_t stage5_deferred_exit_snapshot_r15_allocated = 0;
-uint32_t stage5_deferred_exit_snapshot_r15_dirty = 0;
-uint32_t stage5_backedge_dirty_promotions = 0;
-uint32_t stage5_backedge_dirty_promotions_r15 = 0;
-uint32_t peephole_guard_skip_calls_count = 0;
-uint32_t peephole_guard_skip_jcc_calls_count = 0;
-uint32_t peephole_guard_skip_immimm_calls_count = 0;
-uint32_t peephole_guard_skip_immimm_global_count = 0;
-uint32_t peephole_call_block_seen_count = 0;
-uint32_t peephole_call_block_rewrite_count = 0;
-uint32_t peephole_call_block_jcc_fold_count = 0;
-uint32_t peephole_call_block_other_rewrite_count = 0;
 
 static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
 static void emit_exit_chained_compact(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
 static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg);
 static inline void flush_pending_write(translate_ctx_t *ctx);
 static inline void flush_pending_cond(translate_ctx_t *ctx);
-static void stage5_retry_note_success(int retry_choice);
 
 static bool stage5_validate_lift_enabled(void) { return false; }
 static bool stage5_emit_calls_enabled(void) { return false; }
@@ -303,198 +123,11 @@ static uint32_t stage5_retry_budget_terminal(const stage5_lift_region_t *region)
 }
 
 static void stage5_record_regflow_retry_emit_success(int retry_choice) {
-    if (retry_choice <= 0) return;
-    stage5_emit_regflow_retry_emit_success++;
-    stage5_retry_note_success(retry_choice);
-    if (retry_choice == 1) {
-        stage5_emit_regflow_retry_cfg_emit_success++;
-    } else if (retry_choice == 2) {
-        stage5_emit_regflow_retry_term_emit_success++;
-    } else if (retry_choice == 3) {
-        stage5_emit_regflow_retry_half_emit_success++;
-    }
-}
-
-static uint32_t stage5_retry_attempted_for_choice(int retry_choice) {
-    if (retry_choice == 1) return stage5_emit_regflow_retry_cfg_attempted;
-    if (retry_choice == 2) return stage5_emit_regflow_retry_term_attempted;
-    if (retry_choice == 3) return stage5_emit_regflow_retry_half_attempted;
-    return 0;
-}
-
-static uint32_t stage5_retry_emit_success_for_choice(int retry_choice) {
-    if (retry_choice == 1) return stage5_emit_regflow_retry_cfg_emit_success;
-    if (retry_choice == 2) return stage5_emit_regflow_retry_term_emit_success;
-    if (retry_choice == 3) return stage5_emit_regflow_retry_half_emit_success;
-    return 0;
-}
-
-static int stage5_retry_base_priority(int retry_choice) {
-    if (retry_choice == 1) return 300; // cfg_head
-    if (retry_choice == 2) return 200; // terminal
-    if (retry_choice == 3) return 100; // half
-    return 0;
-}
-
-static uint32_t stage5_retry_explore_period(void) { return 16; }
-static uint32_t stage5_retry_decay_period(void) { return 64; }
-
-static inline uint32_t *stage5_retry_recent_attempted_ptr(int retry_choice) {
-    if (retry_choice == 1) return &stage5_emit_regflow_retry_recent_cfg_attempted;
-    if (retry_choice == 2) return &stage5_emit_regflow_retry_recent_term_attempted;
-    if (retry_choice == 3) return &stage5_emit_regflow_retry_recent_half_attempted;
-    return NULL;
-}
-
-static inline uint32_t *stage5_retry_recent_success_ptr(int retry_choice) {
-    if (retry_choice == 1) return &stage5_emit_regflow_retry_recent_cfg_success;
-    if (retry_choice == 2) return &stage5_emit_regflow_retry_recent_term_success;
-    if (retry_choice == 3) return &stage5_emit_regflow_retry_recent_half_success;
-    return NULL;
-}
-
-static inline uint32_t *stage5_retry_fail_streak_ptr(int retry_choice) {
-    static uint32_t cfg = 0, term = 0, half = 0;
-    if (retry_choice == 1) return &cfg;
-    if (retry_choice == 2) return &term;
-    if (retry_choice == 3) return &half;
-    return NULL;
-}
-
-static inline uint32_t *stage5_retry_cooldown_until_ptr(int retry_choice) {
-    static uint32_t cfg = 0, term = 0, half = 0;
-    if (retry_choice == 1) return &cfg;
-    if (retry_choice == 2) return &term;
-    if (retry_choice == 3) return &half;
-    return NULL;
-}
-
-static void stage5_retry_maybe_decay_recent(void) {
-    uint32_t period = stage5_retry_decay_period();
-    if (period == 0) return;
-    uint32_t total = stage5_emit_regflow_retry_attempted;
-    if (total == 0 || (total % period) != 0) return;
-    stage5_emit_regflow_retry_recent_cfg_attempted >>= 1;
-    stage5_emit_regflow_retry_recent_cfg_success >>= 1;
-    stage5_emit_regflow_retry_recent_term_attempted >>= 1;
-    stage5_emit_regflow_retry_recent_term_success >>= 1;
-    stage5_emit_regflow_retry_recent_half_attempted >>= 1;
-    stage5_emit_regflow_retry_recent_half_success >>= 1;
-    stage5_emit_regflow_retry_decay_events++;
-}
-
-static void stage5_retry_note_attempt(int retry_choice) {
-    uint32_t *a = stage5_retry_recent_attempted_ptr(retry_choice);
-    if (a) (*a)++;
-}
-
-static void stage5_retry_note_success(int retry_choice) {
-    uint32_t *s = stage5_retry_recent_success_ptr(retry_choice);
-    if (s) (*s)++;
-}
-
-static bool stage5_retry_is_cooled_down(int retry_choice) {
-    uint32_t *until = stage5_retry_cooldown_until_ptr(retry_choice);
-    if (!until) return false;
-    return stage5_emit_regflow_retry_attempted < *until;
-}
-
-static void stage5_retry_note_outcome(int retry_choice, bool accepted) {
-    uint32_t *streak = stage5_retry_fail_streak_ptr(retry_choice);
-    uint32_t *until = stage5_retry_cooldown_until_ptr(retry_choice);
-    if (!streak || !until) return;
-    if (accepted) {
-        *streak = 0;
-        return;
-    }
-    if (*streak < 255u) (*streak)++;
-    if (*streak >= 3u) {
-        *streak = 0;
-        *until = stage5_emit_regflow_retry_attempted + 8u;
-        stage5_emit_regflow_retry_cooldown_events++;
-        if (retry_choice == 1) stage5_emit_regflow_retry_cooldown_cfg++;
-        if (retry_choice == 2) stage5_emit_regflow_retry_cooldown_term++;
-        if (retry_choice == 3) stage5_emit_regflow_retry_cooldown_half++;
-    }
+    (void)retry_choice;
 }
 
 static void stage5_adapt_retry_order(uint32_t *budgets, int *choices, int count) {
-    if (!budgets || !choices || count <= 1) return;
-    const uint32_t min_samples = 8;
-    for (int i = 0; i < count; i++) {
-        for (int j = i + 1; j < count; j++) {
-            int ci = choices[i];
-            int cj = choices[j];
-            bool cool_i = stage5_retry_is_cooled_down(ci);
-            bool cool_j = stage5_retry_is_cooled_down(cj);
-            uint32_t ai = stage5_retry_attempted_for_choice(ci);
-            uint32_t aj = stage5_retry_attempted_for_choice(cj);
-            uint32_t si = stage5_retry_emit_success_for_choice(ci);
-            uint32_t sj = stage5_retry_emit_success_for_choice(cj);
-            uint32_t rai = 0, rsi = 0, raj = 0, rsj = 0;
-            uint32_t *pai = stage5_retry_recent_attempted_ptr(ci);
-            uint32_t *psi = stage5_retry_recent_success_ptr(ci);
-            uint32_t *paj = stage5_retry_recent_attempted_ptr(cj);
-            uint32_t *psj = stage5_retry_recent_success_ptr(cj);
-            if (pai) rai = *pai;
-            if (psi) rsi = *psi;
-            if (paj) raj = *paj;
-            if (psj) rsj = *psj;
-            int score_i = stage5_retry_base_priority(ci);
-            int score_j = stage5_retry_base_priority(cj);
-            if (ai >= min_samples) {
-                int long_i = (int)((si * 1000u) / (ai ? ai : 1u));
-                score_i = long_i;
-                if (rai >= 4u) {
-                    int rec_i = (int)((rsi * 1000u) / (rai ? rai : 1u));
-                    score_i = (long_i * 3 + rec_i * 7) / 10;
-                }
-            }
-            if (aj >= min_samples) {
-                int long_j = (int)((sj * 1000u) / (aj ? aj : 1u));
-                score_j = long_j;
-                if (raj >= 4u) {
-                    int rec_j = (int)((rsj * 1000u) / (raj ? raj : 1u));
-                    score_j = (long_j * 3 + rec_j * 7) / 10;
-                }
-            }
-            if (cool_i) score_i -= 2000;
-            if (cool_j) score_j -= 2000;
-            if (score_j > score_i) {
-                uint32_t tb = budgets[i];
-                budgets[i] = budgets[j];
-                budgets[j] = tb;
-                int tc = choices[i];
-                choices[i] = choices[j];
-                choices[j] = tc;
-            }
-        }
-    }
-
-    // Exploration: occasionally force a non-top candidate first so the policy
-    // can recover if workload characteristics drift.
-    uint32_t period = stage5_retry_explore_period();
-    uint32_t total_attempts = stage5_emit_regflow_retry_cfg_attempted +
-                              stage5_emit_regflow_retry_term_attempted +
-                              stage5_emit_regflow_retry_half_attempted;
-    if (period > 0 &&
-        count > 1 &&
-        total_attempts >= (min_samples * 2u) &&
-        (total_attempts % period) == 0) {
-        static uint32_t explore_phase = 0;
-        int pick = 1 + (int)(explore_phase % (uint32_t)(count - 1));
-        explore_phase++;
-        uint32_t tb = budgets[0];
-        budgets[0] = budgets[pick];
-        budgets[pick] = tb;
-        int tc = choices[0];
-        choices[0] = choices[pick];
-        choices[pick] = tc;
-        stage5_emit_regflow_retry_explore_events++;
-        if (choices[0] == 1) stage5_emit_regflow_retry_explore_cfg_first++;
-        if (choices[0] == 2) stage5_emit_regflow_retry_explore_term_first++;
-        if (choices[0] == 3) stage5_emit_regflow_retry_explore_half_first++;
-    }
+    (void)budgets; (void)choices; (void)count;
 }
 
 static bool stage5_validate_abort_on_mismatch(void) {
@@ -798,8 +431,6 @@ static bool stage5_validate_region_eligible(const stage5_lift_region_t *region) 
         bool jal_call = (n->opcode == OP_JAL && n->rd == 31);
         if ((n->opcode == OP_JALR && !jalr_nolink_terminal) ||
             (jal_call && !is_last)) {
-            stage5_validate_skipped_call_indirect++;
-            stage5_validate_skip_call_indirect_opcode_hist[n->opcode & 0x7F]++;
             if (n->opcode == OP_JALR) {
                 stage5_validate_trace_skip_call(region, n, i,
                                                 jalr_ret ? "jalr_ret_nonterminal" : "jalr_nonterminal_or_link");
@@ -811,8 +442,6 @@ static bool stage5_validate_region_eligible(const stage5_lift_region_t *region) 
             return false;
         }
         if (stage5_validate_is_terminal_unsupported(n->opcode)) {
-            stage5_validate_skipped_terminal++;
-            stage5_validate_skip_terminal_opcode_hist[n->opcode & 0x7F]++;
             return false;
         }
     }
@@ -991,28 +620,19 @@ static bool stage5_validate_region(const translate_ctx_t *ctx,
         return true;
     }
 
-    stage5_validate_attempted++;
 
     if (!stage5_validate_region_eligible(region)) {
         return true;
     }
-    stage5_validate_eligible++;
-    stage5_validate_eligible_guest_insts += region->guest_inst_count;
     if (region->guest_inst_count <= 2) {
-        stage5_validate_eligible_len_hist[0]++;
     } else if (region->guest_inst_count <= 4) {
-        stage5_validate_eligible_len_hist[1]++;
     } else if (region->guest_inst_count <= 8) {
-        stage5_validate_eligible_len_hist[2]++;
     } else if (region->guest_inst_count <= 16) {
-        stage5_validate_eligible_len_hist[3]++;
     } else {
-        stage5_validate_eligible_len_hist[4]++;
     }
     for (int i = (int)region->ir_count - 1; i >= 0; i--) {
         const stage5_ir_node_t *n = &region->ir[i];
         if (n->synthetic) continue;
-        stage5_validate_eligible_terminal_opcode_hist[n->opcode & 0x7F]++;
         break;
     }
 
@@ -1037,7 +657,6 @@ static bool stage5_validate_region(const translate_ctx_t *ctx,
         decoded_inst_t inst = decode_instruction(raw);
         const stage5_ir_node_t *node = stage5_validate_find_node(region, pc, inst.opcode);
         if (inst.opcode != OP_NOP && !node) {
-            stage5_validate_mismatch++;
             fprintf(stderr,
                     "stage5-validate mismatch: missing-node block_pc=0x%08X step=%u pc=0x%08X op=0x%02X\n",
                     region->start_pc, step, pc, inst.opcode);
@@ -1048,41 +667,27 @@ static bool stage5_validate_region(const translate_ctx_t *ctx,
         }
         if (!stage5_validate_execute_decoded(&ref, &ref_mem, &inst, pc)) {
             if (ref_mem.status == STAGE5_VALIDATE_MEM_MMIO) {
-                stage5_validate_skipped_mem_mmio++;
-                stage5_validate_skip_mem_opcode_hist[inst.opcode & 0x7F]++;
                 return true;
             }
             if (ref_mem.status == STAGE5_VALIDATE_MEM_OOB) {
-                stage5_validate_skipped_mem_oob++;
-                stage5_validate_skip_mem_opcode_hist[inst.opcode & 0x7F]++;
                 return true;
             }
             if (ref_mem.status == STAGE5_VALIDATE_MEM_CAPACITY) {
-                stage5_validate_skipped_mem_capacity++;
-                stage5_validate_skip_mem_opcode_hist[inst.opcode & 0x7F]++;
                 return true;
             }
-            stage5_validate_skipped_load_store++;
             return true;
         }
         if (inst.opcode != OP_NOP &&
             !stage5_validate_execute_ir(&ir, &ir_mem, node, inst.opcode, inst.imm, pc)) {
             if (ir_mem.status == STAGE5_VALIDATE_MEM_MMIO) {
-                stage5_validate_skipped_mem_mmio++;
-                stage5_validate_skip_mem_opcode_hist[inst.opcode & 0x7F]++;
                 return true;
             }
             if (ir_mem.status == STAGE5_VALIDATE_MEM_OOB) {
-                stage5_validate_skipped_mem_oob++;
-                stage5_validate_skip_mem_opcode_hist[inst.opcode & 0x7F]++;
                 return true;
             }
             if (ir_mem.status == STAGE5_VALIDATE_MEM_CAPACITY) {
-                stage5_validate_skipped_mem_capacity++;
-                stage5_validate_skip_mem_opcode_hist[inst.opcode & 0x7F]++;
                 return true;
             }
-            stage5_validate_mismatch++;
             fprintf(stderr,
                     "stage5-validate mismatch: unsupported-ir block_pc=0x%08X step=%u pc=0x%08X op=0x%02X\n",
                     region->start_pc, step, pc, inst.opcode);
@@ -1104,7 +709,6 @@ static bool stage5_validate_region(const translate_ctx_t *ctx,
                     break;
                 }
             }
-            stage5_validate_mismatch++;
             fprintf(stderr,
                     "stage5-validate mismatch: state block_pc=0x%08X step=%u pc=0x%08X op=0x%02X ref_next=0x%08X ir_next=0x%08X",
                     region->start_pc, step, pc, inst.opcode, ref.pc, ir.pc);
@@ -1133,37 +737,18 @@ static bool stage5_validate_region(const translate_ctx_t *ctx,
         }
     }
 
-    stage5_validate_ok++;
     return true;
 }
 
 static void stage5_record_cfg_metrics(const stage5_lift_region_t *region) {
     if (!region || !region->cfg_valid) return;
     if (region->stitched_jal_count > 0) {
-        stage5_lift_stitched_regions++;
-        stage5_lift_stitched_jal_total += region->stitched_jal_count;
     }
     if (region->stitched_taken_branch_count > 0) {
-        stage5_lift_stitched_taken_regions++;
-        stage5_lift_stitched_taken_branch_total += region->stitched_taken_branch_count;
     }
     if (region->side_exit_capacity_hits > 0) {
-        stage5_lift_side_exit_capacity_regions++;
-        stage5_lift_side_exit_capacity_total += region->side_exit_capacity_hits;
-    }
-    stage5_cfg_regions++;
-    stage5_cfg_blocks_total += region->cfg_block_count;
-    stage5_cfg_liveness_iterations_total += region->cfg_liveness_iterations;
-    if (region->cfg_spill_likely) stage5_cfg_spill_likely_regions++;
-    if (region->cfg_max_live > stage5_cfg_max_live_seen) {
-        stage5_cfg_max_live_seen = region->cfg_max_live;
     }
     if (region->reg_flow_valid) {
-        stage5_reg_flow_regions++;
-        stage5_reg_flow_cross_block_regs_total += region->reg_flow_cross_block_regs;
-        if (region->reg_flow_max_span > stage5_reg_flow_max_span_seen) {
-            stage5_reg_flow_max_span_seen = region->reg_flow_max_span;
-        }
     }
 }
 
@@ -1245,22 +830,17 @@ static void stage5_count_deferred_exit_flush(const translate_ctx_t *ctx,
 
     const int di = deferred_idx;
     if (full_flush) {
-        stage5_deferred_exit_flush_full++;
     } else {
-        stage5_deferred_exit_flush_dirty++;
     }
 
     if (ctx->deferred_exits[di].pending_write_valid &&
         ctx->deferred_exits[di].pending_write_guest_reg == 15) {
-        stage5_deferred_exit_pending_write_r15++;
     }
 
     for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
         if (ctx->deferred_exits[di].guest_reg_snapshot[s] != 15) continue;
         if (!ctx->deferred_exits[di].allocated_snapshot[s]) break;
-        stage5_deferred_exit_snapshot_r15_allocated++;
         if (ctx->deferred_exits[di].dirty_snapshot[s]) {
-            stage5_deferred_exit_snapshot_r15_dirty++;
         }
         break;
     }
@@ -1498,26 +1078,18 @@ typedef enum {
 
 static inline void stage5_record_emit_not_ended(uint8_t opcode,
                                                  stage5_not_ended_reason_t reason) {
-    stage5_emit_fallback_not_ended++;
-    stage5_emit_not_ended_opcode_hist[opcode & 0x7F]++;
     switch (reason) {
         case STAGE5_NOT_ENDED_SINGLE_TERMINAL:
-            stage5_emit_not_ended_reason_single_terminal++;
             break;
         case STAGE5_NOT_ENDED_CMP_BRANCH_FUSED:
-            stage5_emit_not_ended_reason_cmp_branch_fused++;
             break;
         case STAGE5_NOT_ENDED_FAMILYB_CMP_RD:
-            stage5_emit_not_ended_reason_familyb_cmp_rd++;
             break;
         case STAGE5_NOT_ENDED_FAMILYB_BRANCH_FIRST:
-            stage5_emit_not_ended_reason_familyb_branch_first++;
             break;
         case STAGE5_NOT_ENDED_FAMILYB_PREFIX_TERMINAL:
-            stage5_emit_not_ended_reason_familyb_prefix_terminal++;
             break;
         case STAGE5_NOT_ENDED_FAMILYC_TERMINAL:
-            stage5_emit_not_ended_reason_familyc_terminal++;
             break;
     }
 }
@@ -2348,7 +1920,6 @@ static bool stage5_emit_cmp_branch_fused(translate_ctx_t *ctx,
     }
     emit_exit_chained(ctx, taken_pc, ctx->exit_idx++);
 
-    stage5_emit_fused_cmp_branch++;
     (void)fall_cc;  // reserved for future inv_cc usage
     return true;
 }
@@ -2357,19 +1928,7 @@ static inline void stage5_record_emit_success(translate_ctx_t *ctx,
                                               stage5_burg_pattern_t pattern,
                                               uint32_t guest_insts,
                                               size_t emit_start_size) {
-    stage5_emit_success++;
-    stage5_emit_success_guest_insts += guest_insts;
-    size_t emit_end_size = emit_offset(&ctx->emit);
-    uint64_t host_bytes = 0;
-    if (emit_end_size >= emit_start_size) {
-        host_bytes = (uint64_t)(emit_end_size - emit_start_size);
-        stage5_emit_success_host_bytes += host_bytes;
-    }
-    if ((uint32_t)pattern < STAGE5_BURG_PATTERN_COUNT) {
-        stage5_emit_pattern_success[pattern]++;
-        stage5_emit_pattern_guest_insts[pattern] += guest_insts;
-        stage5_emit_pattern_host_bytes[pattern] += host_bytes;
-    }
+    (void)ctx; (void)pattern; (void)guest_insts; (void)emit_start_size;
 }
 
 // ============================================================================
@@ -2544,7 +2103,6 @@ bool stage5_emit_side_exit_for_codegen(translate_ctx_t *ctx,
     ctx->exit_idx++;
     ctx->side_exit_emitted++;
     stage5_emit_side_exits++;
-    stage5_emit_side_exit_emitted_opcode_hist[opcode & 0x7F]++;
     return true;
 }
 
@@ -2698,49 +2256,35 @@ void translate_init_cached(translate_ctx_t *ctx, dbt_cpu_state_t *cpu, block_cac
 
 static void stage5_record_lift_fallback(const stage5_lift_region_t *region) {
     stage5_lift_reason_t reason = region ? region->reason : STAGE5_LIFT_INTERNAL_ERROR;
-    stage5_fallback_total++;
     switch (reason) {
         case STAGE5_LIFT_NOT_IMPLEMENTED:
-            stage5_fallback_lift_not_implemented++;
             break;
         case STAGE5_LIFT_UNSUPPORTED_OPCODE:
-            stage5_fallback_lift_unsupported_opcode++;
             if (region && region->has_unsupported_opcode) {
-                stage5_fallback_unsupported_opcode_hist[region->unsupported_opcode & 0x7F]++;
             }
             break;
         case STAGE5_LIFT_REGION_TOO_LARGE:
-            stage5_fallback_lift_region_too_large++;
             break;
         case STAGE5_LIFT_INVALID_CONTROL_FLOW:
-            stage5_fallback_lift_invalid_cfg++;
             break;
         case STAGE5_LIFT_INTERNAL_ERROR:
-            stage5_fallback_lift_internal++;
             break;
         default:
-            stage5_fallback_lift_internal++;
             break;
     }
 }
 
 static void stage5_record_burg_fallback(stage5_burg_reason_t reason) {
-    stage5_fallback_total++;
     switch (reason) {
         case STAGE5_BURG_NOT_IMPLEMENTED:
-            stage5_fallback_burg_not_implemented++;
             break;
         case STAGE5_BURG_NO_COVER:
-            stage5_fallback_burg_no_cover++;
             break;
         case STAGE5_BURG_ILLEGAL_COVER:
-            stage5_fallback_burg_illegal_cover++;
             break;
         case STAGE5_BURG_INTERNAL_ERROR:
-            stage5_fallback_burg_internal++;
             break;
         default:
-            stage5_fallback_burg_internal++;
             break;
     }
 }
@@ -2751,7 +2295,6 @@ static void stage5_try_select_noop(translate_ctx_t *ctx, uint32_t guest_pc) {
         return;
     }
 
-    stage5_lift_attempted++;
 
     stage5_lift_region_t region;
     stage5_lift_region_init(&region, guest_pc);
@@ -2762,10 +2305,8 @@ static void stage5_try_select_noop(translate_ctx_t *ctx, uint32_t guest_pc) {
         return;
     }
 
-    stage5_lift_success++;
     stage5_record_cfg_metrics(&region);
     stage5_validate_region(ctx, &region);
-    stage5_burg_attempted++;
 
     stage5_burg_result_t result;
     stage5_burg_result_init(&result);
@@ -2775,10 +2316,7 @@ static void stage5_try_select_noop(translate_ctx_t *ctx, uint32_t guest_pc) {
     }
 
     if (result.selected) {
-        stage5_burg_selected++;
-        stage5_burg_selected_guest_insts += region.guest_inst_count;
         if ((uint32_t)result.pattern < STAGE5_BURG_PATTERN_COUNT) {
-            stage5_burg_pattern_hist[result.pattern]++;
         }
     } else {
         stage5_record_burg_fallback(result.reason);
@@ -2818,14 +2356,11 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     if ((ctx->superblock_enabled && is_branch_op && !allow_branch_probe) ||
         inst_pref.opcode == OP_JALR ||
         (inst_pref.opcode == OP_JAL && inst_pref.rd == 31 && !stage5_emit_calls_enabled())) {
-        stage5_emit_prefilter_skip++;
         if (ctx->superblock_enabled && is_branch_op) {
-            stage5_emit_prefilter_skip_branch_head++;
         }
         return false;
     }
     if (allow_branch_probe) {
-        stage5_emit_prefilter_branch_probe++;
     }
     bool bench_profile = stage5_bench_profile_enabled();
     if (stage5_prefilter_strict_enabled() &&
@@ -2836,12 +2371,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         !has_near_terminal &&
         !allow_branch_probe &&
         !bench_profile) {
-        stage5_emit_prefilter_skip++;
-        stage5_emit_prefilter_skip_noncmp_head++;
         return false;
     }
 
-    stage5_lift_attempted++;
 
     stage5_lift_region_t region;
     stage5_lift_region_init(&region, guest_pc);
@@ -2852,7 +2384,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         return false;
     }
 
-    stage5_lift_success++;
     stage5_record_cfg_metrics(&region);
     stage5_validate_region(ctx, &region);
     bool regflow_retry_applied = false;
@@ -2884,19 +2415,10 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         for (int ri = 0; ri < retry_count && !regflow_retry_applied; ri++) {
             uint32_t retry_budget = retry_budgets[ri];
             int retry_choice = retry_choices[ri];
-            bool accepted_retry = false;
-            stage5_emit_regflow_retry_attempted++;
-            stage5_retry_note_attempt(retry_choice);
-            stage5_retry_maybe_decay_recent();
-            if (retry_choice == 1) stage5_emit_regflow_retry_cfg_attempted++;
-            if (retry_choice == 2) stage5_emit_regflow_retry_term_attempted++;
-            if (retry_choice == 3) stage5_emit_regflow_retry_half_attempted++;
-            stage5_lift_attempted++;
             stage5_lift_region_t retry_region;
             stage5_lift_region_init(&retry_region, guest_pc);
             if (stage5_lift_superblock(&retry_region, ctx->cpu->mem_base, ctx->cpu->code_limit,
                                        retry_budget)) {
-                stage5_lift_success++;
                 stage5_record_cfg_metrics(&retry_region);
                 stage5_validate_region(ctx, &retry_region);
                 if (!stage5_region_regflow_guard_hit(&retry_region, ctx->superblock_enabled,
@@ -2904,27 +2426,12 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     region = retry_region;
                     regflow_retry_applied = true;
                     regflow_retry_choice = retry_choice;
-                    accepted_retry = true;
-                    stage5_emit_regflow_retry_accepted++;
-                    if (retry_choice == 1) stage5_emit_regflow_retry_cfg_accepted++;
-                    if (retry_choice == 2) stage5_emit_regflow_retry_term_accepted++;
-                    if (retry_choice == 3) stage5_emit_regflow_retry_half_accepted++;
-                    stage5_emit_regflow_retry_guest_before_total += retry_initial_guest_inst_count;
-                    stage5_emit_regflow_retry_guest_after_total += region.guest_inst_count;
-                    if (retry_initial_guest_inst_count > region.guest_inst_count) {
-                        uint32_t red = retry_initial_guest_inst_count - region.guest_inst_count;
-                        if (red > stage5_emit_regflow_retry_max_reduction) {
-                            stage5_emit_regflow_retry_max_reduction = red;
-                        }
-                    }
                 }
             } else {
                 stage5_record_lift_fallback(&retry_region);
             }
-            stage5_retry_note_outcome(retry_choice, accepted_retry);
         }
     }
-    stage5_burg_attempted++;
 
     stage5_burg_result_t result;
     stage5_burg_result_init(&result);
@@ -2933,13 +2440,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         return false;
     }
 
-    stage5_burg_selected++;
-    stage5_burg_selected_guest_insts += region.guest_inst_count;
     if ((uint32_t)result.pattern < STAGE5_BURG_PATTERN_COUNT) {
-        stage5_burg_pattern_hist[result.pattern]++;
     }
 
-    stage5_emit_attempted++;
     size_t emit_start_size = emit_offset(&ctx->emit);
     stage5_burg_pattern_t emitted_pattern = result.pattern;
 
@@ -2947,10 +2450,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     if (bench_profile &&
         emitted_pattern == STAGE5_BURG_PATTERN_JAL_JUMP &&
         region.guest_inst_count > stage5_bench_max_jal_jump_ginst()) {
-        stage5_emit_fallback++;
-        stage5_emit_fallback_shape++;
-        stage5_emit_fallback_superblock_policy++;
-        stage5_emit_fallback_policy_bench_jal_jump++;
         return false;
     }
     if (bench_profile &&
@@ -2961,34 +2460,20 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         if (stage5_region_terminal_jal_imm(&region, &jal_imm) && jal_imm < 0) {
             // Guardrail: large backward JAL jumps can over-specialize hot loops
             // and regress throughput in benchmark profile.
-            stage5_emit_fallback++;
-            stage5_emit_fallback_shape++;
-            stage5_emit_fallback_superblock_policy++;
-            stage5_emit_fallback_policy_bench_jal_jump_backedge++;
             return false;
         }
     }
     if (bench_profile &&
         stage5_pattern_is_direct_branch(emitted_pattern) &&
         region.guest_inst_count > stage5_bench_max_direct_branch_ginst()) {
-        stage5_emit_fallback++;
-        stage5_emit_fallback_shape++;
-        stage5_emit_fallback_superblock_policy++;
-        stage5_emit_fallback_policy_bench_direct_branch++;
         return false;
     }
     if (bench_profile &&
         synth_block_end &&
         region.guest_inst_count > stage5_bench_max_block_end_ginst()) {
-        stage5_emit_fallback++;
-        stage5_emit_fallback_shape++;
-        stage5_emit_fallback_superblock_policy++;
-        stage5_emit_fallback_policy_bench_block_end++;
         return false;
     }
     if ((!region.has_terminal_branch && !synth_block_end) || region.guest_inst_count == 0) {
-        stage5_emit_fallback++;
-        stage5_emit_fallback_non_terminal++;
         return false;
     }
 
@@ -3019,26 +2504,16 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             const stage5_ir_node_t *n = &region.ir[i];
             if (!n->is_side_exit) continue;
             uint8_t op = n->opcode & 0x7F;
-            stage5_emit_side_exit_opcode_hist[op]++;
             if (!stage5_side_exit_supported(n)) {
-                stage5_emit_side_exit_unsupported_opcode_hist[op]++;
             }
         }
-        stage5_emit_region_side_exit_total++;
         if (side_exit_owned) {
-            stage5_emit_region_side_exit_owned++;
             if (side_exit_call_guard_after_only) {
-                stage5_emit_region_side_exit_call_guard_relaxed_after_only++;
             }
             if (!side_exit_emit_enabled) {
-                stage5_emit_region_side_exit_disabled++;
             } else if (side_exit_call_guard_effective) {
-                stage5_emit_region_side_exit_call_guard++;
-                if (side_exit_guard_has_jal) stage5_emit_region_side_exit_call_guard_jal++;
-                if (side_exit_guard_has_jalr) stage5_emit_region_side_exit_call_guard_jalr++;
             }
         } else {
-            stage5_emit_region_side_exit_unsupported++;
         }
     }
     stage5_trace_side_exit_policy(guest_pc, emitted_pattern, &region,
@@ -3079,13 +2554,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             // fallback.
         } else {
         ctx->superblock_enabled = saved_superblock_enabled;
-        stage5_emit_fallback++;
-        stage5_emit_fallback_shape++;
-        stage5_emit_fallback_superblock_policy++;
-        stage5_emit_fallback_policy_regflow++;
-        if (regflow_cross_hit) stage5_emit_fallback_policy_regflow_cross++;
-        if (regflow_span_hit) stage5_emit_fallback_policy_regflow_span++;
-        if (regflow_live_hit) stage5_emit_fallback_policy_regflow_live++;
         return false;
         }
     }
@@ -3108,25 +2576,13 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         !(region.side_exit_count > 0 && side_exit_owned) &&
         !bench_profile) {
         ctx->superblock_enabled = saved_superblock_enabled;
-        stage5_emit_fallback++;
-        stage5_emit_fallback_shape++;
-        stage5_emit_fallback_superblock_policy++;
-        stage5_emit_fallback_policy_guardrail++;
         return false;
     }
 
     if ((!side_exit_emit_enabled || !side_exit_owned || side_exit_call_guard_effective) &&
         region.side_exit_count > 0) {
         ctx->superblock_enabled = saved_superblock_enabled;
-        stage5_emit_fallback++;
-        stage5_emit_fallback_shape++;
-        stage5_emit_fallback_side_exit_unowned++;
-        if (!side_exit_emit_enabled) stage5_emit_fallback_side_exit_disabled++;
-        if (!side_exit_owned) stage5_emit_fallback_side_exit_unsupported++;
         if (side_exit_call_guard_effective) {
-            stage5_emit_fallback_side_exit_call_guard++;
-            if (side_exit_guard_has_jal) stage5_emit_fallback_side_exit_call_guard_jal++;
-            if (side_exit_guard_has_jalr) stage5_emit_fallback_side_exit_call_guard_jalr++;
         }
         return false;
     }
@@ -3179,32 +2635,19 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         (is_jalr_ret &&
          !(native_allow_jalr_ret || bench_allow_jalr_ret_short || bench_allow_jalr_ret_long))) {
         ctx->superblock_enabled = saved_superblock_enabled;
-        stage5_emit_fallback++;
-        stage5_emit_fallback_shape++;
-        stage5_emit_fallback_superblock_policy++;
         if (is_jal_call && bench_profile) {
-            stage5_emit_fallback_policy_bench_jal_call++;
         } else if (is_jalr_ret && bench_profile) {
-            stage5_emit_fallback_policy_bench_jalr_ret++;
             if (emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_SHORT) {
-                stage5_emit_fallback_policy_bench_jalr_ret_short++;
             } else if (emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_LONG) {
-                stage5_emit_fallback_policy_bench_jalr_ret_long++;
             }
         }
-        stage5_emit_fallback_policy_call_return++;
         if (is_jal_call) {
             if (emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG) {
-                stage5_emit_fallback_policy_call_return_jal_call_long++;
             } else {
-                stage5_emit_fallback_policy_call_return_jal_call_disabled++;
             }
         } else if (is_jalr_ret) {
-            stage5_emit_fallback_policy_call_return_jalr_ret++;
             if (emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_SHORT) {
-                stage5_emit_fallback_policy_call_return_jalr_ret_short++;
             } else if (emitted_pattern == STAGE5_BURG_PATTERN_JALR_RET_LONG) {
-                stage5_emit_fallback_policy_call_return_jalr_ret_long++;
             }
         }
         return false;
@@ -3212,14 +2655,9 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     if ((emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
          emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG) &&
         allow_jal_call_emit) {
-        stage5_emit_policy_allow_call++;
         if (bench_allow_jal_call_short || bench_allow_jal_call_long) {
-            stage5_emit_policy_allow_call_bench++;
         }
     } else if (is_jalr_ret && (bench_allow_jalr_ret_short || bench_allow_jalr_ret_long)) {
-        stage5_emit_policy_allow_jalr_ret_bench++;
-        if (bench_allow_jalr_ret_short) stage5_emit_policy_allow_jalr_ret_bench_short++;
-        if (bench_allow_jalr_ret_long) stage5_emit_policy_allow_jalr_ret_bench_long++;
     }
 
     // Superblock-first policy: keep larger direct branches on the Stage4 path.
@@ -3235,10 +2673,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         emitted_pattern != STAGE5_BURG_PATTERN_DIRECT_BRANCH_REL &&
         !bench_profile) {
         ctx->superblock_enabled = saved_superblock_enabled;
-        stage5_emit_fallback++;
-        stage5_emit_fallback_shape++;
-        stage5_emit_fallback_superblock_policy++;
-        stage5_emit_fallback_policy_direct_branch++;
         return false;
     }
 
@@ -3283,7 +2717,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     if (region.guest_inst_count == 1) {
         if (stage5_codegen_enabled()) {
             if ((uint32_t)emitted_pattern < STAGE5_BURG_PATTERN_COUNT) {
-                stage5_codegen_pattern_attempt[emitted_pattern]++;
             }
             int terminal_idx = -1;
             for (int i = (int)region.ir_count - 1; i >= 0; i--) {
@@ -3318,7 +2751,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 return true;
             }
             if ((uint32_t)emitted_pattern < STAGE5_BURG_PATTERN_COUNT) {
-                stage5_codegen_pattern_fallback[emitted_pattern]++;
             }
         }
 
@@ -3331,8 +2763,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
             return true;
         }
-        stage5_emit_fallback_helper_single_terminal_fail++;
-        stage5_emit_fallback_helper_single_terminal_fail_opcode_hist[inst0.opcode]++;
         switch (inst0.opcode) {
             case OP_BEQ:
             case OP_BNE:
@@ -3343,8 +2773,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 stage5_record_emit_not_ended(inst0.opcode, STAGE5_NOT_ENDED_SINGLE_TERMINAL);
                 break;
             default:
-                stage5_emit_fallback_single_unhandled++;
-                stage5_emit_unhandled_opcode_hist[inst0.opcode & 0x7F]++;
                 stage5_trace_emit_unhandled(guest_pc, emitted_pattern,
                                             region.guest_inst_count,
                                             inst0.opcode & 0x7F,
@@ -3387,10 +2815,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 }
                 stage5_record_emit_not_ended(b->opcode, STAGE5_NOT_ENDED_CMP_BRANCH_FUSED);
             } else {
-                stage5_emit_fallback_cmp_branch_miss++;
             }
             ctx->superblock_enabled = saved_superblock_enabled;
-            stage5_emit_fallback++;
             return false;
         }
 
@@ -3430,7 +2856,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
 
         if (stage5_codegen_enabled()) {
             if ((uint32_t)emitted_pattern < STAGE5_BURG_PATTERN_COUNT) {
-                stage5_codegen_pattern_attempt[emitted_pattern]++;
             }
             bool cg_ok = stage5_codegen(ctx, &region, guest_pc,
                 terminal_idx, fuse_cmp_idx, emitted_pattern,
@@ -3443,7 +2868,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 return true;
             }
             if ((uint32_t)emitted_pattern < STAGE5_BURG_PATTERN_COUNT) {
-                stage5_codegen_pattern_fallback[emitted_pattern]++;
             }
         }
 
@@ -3458,7 +2882,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             ctx->current_inst_idx = 0;
             branch_uses_cmp_rd = stage5_emit_cmp_prefix_for_branch(ctx, &inst0);
             if (!branch_uses_cmp_rd) {
-                stage5_emit_fallback_helper_cmp_prefix_fail++;
             }
 
             if (branch_uses_cmp_rd) {
@@ -3501,14 +2924,12 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 ctx->current_inst_idx = 0;
                 ok_prefix = stage5_emit_familyb_prefix_nonbranch(ctx, &inst0);
                 if (!ok_prefix) {
-                    stage5_emit_fallback_helper_prefix_nonbranch_fail++;
                 }
                 if (ok_prefix) {
                     ctx->guest_pc = guest_pc + 4;
                     ctx->current_inst_idx = 1;
                     ok_prefix = stage5_emit_familyb_prefix_nonbranch(ctx, &inst1);
                     if (!ok_prefix) {
-                        stage5_emit_fallback_helper_prefix_nonbranch_fail++;
                     }
                 }
                 if (ok_prefix) {
@@ -3536,11 +2957,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     if (regflow_retry_applied) stage5_record_regflow_retry_emit_success(regflow_retry_choice);
                     return true;
                 }
-                stage5_emit_fallback_helper_single_terminal_fail++;
-                stage5_emit_fallback_helper_single_terminal_fail_opcode_hist[inst0.opcode]++;
                 stage5_record_emit_not_ended(inst0.opcode, STAGE5_NOT_ENDED_FAMILYB_BRANCH_FIRST);
                 ctx->superblock_enabled = saved_superblock_enabled;
-                stage5_emit_fallback++;
                 return false;
             }
 
@@ -3591,7 +3009,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 case OP_STB:
                     ok_prefix = stage5_emit_familyb_prefix_nonbranch(ctx, &inst0);
                     if (!ok_prefix) {
-                        stage5_emit_fallback_helper_prefix_nonbranch_fail++;
                     }
                     break;
                 case OP_BEQ:
@@ -3704,7 +3121,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     ctx->exit_idx++;
                     ctx->side_exit_emitted++;
                     stage5_emit_side_exits++;
-                    stage5_emit_side_exit_emitted_opcode_hist[inst0.opcode & 0x7F]++;
                     break;
                 }
                 default:
@@ -3730,8 +3146,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     return true;
                 }
                 if (ok_prefix) {
-                    stage5_emit_fallback_helper_single_terminal_fail++;
-                    stage5_emit_fallback_helper_single_terminal_fail_opcode_hist[inst1.opcode]++;
                     stage5_record_emit_not_ended(inst1.opcode, STAGE5_NOT_ENDED_FAMILYB_PREFIX_TERMINAL);
                 }
             }
@@ -3742,11 +3156,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP ||
                     emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP ||
                     emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_XOR1) {
-                    stage5_emit_fallback_cmp_branch_miss++;
                 } else {
-                    stage5_emit_fallback_shape++;
                 }
-                stage5_emit_unhandled_opcode_hist[inst0.opcode & 0x7F]++;
                 stage5_trace_emit_unhandled(guest_pc, emitted_pattern,
                                             region.guest_inst_count,
                                             inst0.opcode & 0x7F,
@@ -3781,7 +3192,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         // Try native codegen first (gated by SLOW32_DBT_STAGE5_CODEGEN=1)
         if (stage5_codegen_enabled()) {
             if ((uint32_t)emitted_pattern < STAGE5_BURG_PATTERN_COUNT) {
-                stage5_codegen_pattern_attempt[emitted_pattern]++;
             }
             bool cg_ok = stage5_codegen(ctx, &region, guest_pc,
                 terminal_idx, fuse_cmp_idx, emitted_pattern,
@@ -3795,7 +3205,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             }
             // Native codegen aborted — fall through to existing Family C dispatch
             if ((uint32_t)emitted_pattern < STAGE5_BURG_PATTERN_COUNT) {
-                stage5_codegen_pattern_fallback[emitted_pattern]++;
             }
         }
 
@@ -3908,7 +3317,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                 ctx->exit_idx++;
                 ctx->side_exit_emitted++;
                 stage5_emit_side_exits++;
-                stage5_emit_side_exit_emitted_opcode_hist[n->opcode & 0x7F]++;
                 continue;
             }
 
@@ -3972,7 +3380,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                     ok_prefix = stage5_emit_prefix_nonbranch(ctx, op, n->rd,
                                                              n->rs1, n->rs2, n->imm);
                     if (!ok_prefix) {
-                        stage5_emit_fallback_helper_prefix_nonbranch_fail++;
                     }
                     break;
                 case OP_JAL:
@@ -4015,8 +3422,6 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
                                                     last->rs1, last->rs2, last->imm,
                                                     emitted_pattern);
                 if (!ended) {
-                    stage5_emit_fallback_helper_single_terminal_fail++;
-                    stage5_emit_fallback_helper_single_terminal_fail_opcode_hist[last->opcode]++;
                 }
             }
             if (ended) {
@@ -4031,19 +3436,15 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             }
             stage5_record_emit_not_ended(term_op, STAGE5_NOT_ENDED_FAMILYC_TERMINAL);
         } else {
-            stage5_emit_fallback_shape++;
-            stage5_emit_unhandled_opcode_hist[first_bad_prefix_opcode & 0x7F]++;
             stage5_trace_emit_unhandled(guest_pc, emitted_pattern,
                                         region.guest_inst_count,
                                         first_bad_prefix_opcode & 0x7F,
                                         "family-c-prefix");
         }
     } else {
-        stage5_emit_fallback_shape++;
     }
 
     ctx->superblock_enabled = saved_superblock_enabled;
-    stage5_emit_fallback++;
     return false;
 }
 
@@ -6724,9 +6125,7 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
     }
 
     if (backedge_host_offset != (size_t)-1) {
-        stage_emit_inblock_backedge_total++;
         if (ctx->side_exit_emitted > 0) {
-            stage_emit_inblock_backedge_with_side_exit++;
         }
         // In-block back-edge: emit tight loop
         //   [compare]
@@ -6749,9 +6148,7 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
                     uint8_t guest_reg = ctx->deferred_exits[di].guest_reg_snapshot[s];
                     if (ctx->loop_written_regs & (1u << guest_reg)) {
                         if (!ctx->deferred_exits[di].dirty_snapshot[s]) {
-                            stage5_backedge_dirty_promotions++;
                             if (guest_reg == 15) {
-                                stage5_backedge_dirty_promotions_r15++;
                             }
                             stage5_trace_backedge_dirty_promotion(branch_pc, taken_pc,
                                                                   di, s, guest_reg);
@@ -7086,10 +6483,8 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len, uint32_t guest_pc
     bool has_call = (guard_mode != PEEPHOLE_CALL_GUARD_NONE) &&
                     x64_block_has_call(code, len);
     if (has_call) {
-        peephole_call_block_seen_count++;
     }
     if (has_call && guard_mode == PEEPHOLE_CALL_GUARD_ALL) {
-        peephole_guard_skip_calls_count++;
         dbt_trace_peephole_hit(guest_pc, "guard_skip_calls", 0);
         return 0;
     }
@@ -7137,8 +6532,6 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len, uint32_t guest_pc
             }
             dbt_trace_peephole_hit(guest_pc, "jcc_fold", i0);
             if (has_call) {
-                peephole_call_block_rewrite_count++;
-                peephole_call_block_jcc_fold_count++;
                 dbt_trace_peephole_call_hit(guest_pc, "jcc_fold", i0);
             }
             hits++;
@@ -7154,7 +6547,6 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len, uint32_t guest_pc
                    code[i0 + 4] == 0x00 &&
                    code[i0 + 5] == 0x00 &&
                    code[i0 + 6] == 0xE9) {
-            peephole_guard_skip_jcc_calls_count++;
             dbt_trace_peephole_hit(guest_pc, "guard_skip_jcc_on_call", i0);
         }
 
@@ -7171,8 +6563,6 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len, uint32_t guest_pc
             }
             dbt_trace_peephole_hit(guest_pc, "dstore8", i0);
             if (has_call) {
-                peephole_call_block_rewrite_count++;
-                peephole_call_block_other_rewrite_count++;
                 dbt_trace_peephole_call_hit(guest_pc, "dstore8", i0);
             }
             hits++;
@@ -7195,8 +6585,6 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len, uint32_t guest_pc
             }
             dbt_trace_peephole_hit(guest_pc, "dstore32", i0);
             if (has_call) {
-                peephole_call_block_rewrite_count++;
-                peephole_call_block_other_rewrite_count++;
                 dbt_trace_peephole_call_hit(guest_pc, "dstore32", i0);
             }
             hits++;
@@ -7273,8 +6661,6 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len, uint32_t guest_pc
                                         code[i0 + 1] = 0x90;
                                         dbt_trace_peephole_hit(guest_pc, "mov_cmp", i0);
                                         if (has_call) {
-                                            peephole_call_block_rewrite_count++;
-                                            peephole_call_block_other_rewrite_count++;
                                             dbt_trace_peephole_call_hit(guest_pc, "mov_cmp", i0);
                                         }
                                         hits++;
@@ -7307,8 +6693,6 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len, uint32_t guest_pc
                         code[i0 + 3] = (uint8_t)(0xC0 | (rm_cmp << 3) | rm_cmp);
                         dbt_trace_peephole_hit(guest_pc, "xor_cmp_to_test", i0);
                         if (has_call) {
-                            peephole_call_block_rewrite_count++;
-                            peephole_call_block_other_rewrite_count++;
                             dbt_trace_peephole_call_hit(guest_pc, "xor_cmp_to_test", i0);
                         }
                         hits++;
@@ -7356,8 +6740,6 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len, uint32_t guest_pc
                             code[i0 + 10] = 0x90;
                             dbt_trace_peephole_hit(guest_pc, "imm_store_imm", i0);
                             if (has_call) {
-                                peephole_call_block_rewrite_count++;
-                                peephole_call_block_other_rewrite_count++;
                                 dbt_trace_peephole_call_hit(guest_pc, "imm_store_imm", i0);
                             }
                             hits++;
@@ -7403,8 +6785,6 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len, uint32_t guest_pc
                                     }
                                     dbt_trace_peephole_hit(guest_pc, "zero_store_zero", i0);
                                     if (has_call) {
-                                        peephole_call_block_rewrite_count++;
-                                        peephole_call_block_other_rewrite_count++;
                                         dbt_trace_peephole_call_hit(guest_pc, "zero_store_zero", i0);
                                     }
                                     hits++;
@@ -7446,7 +6826,6 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len, uint32_t guest_pc
                     size_t end1 = imm1 + imm1_size;
                     if (end1 <= len && rd0 == rd1) {
                         if (!dbt_peephole_immimm_enabled()) {
-                            peephole_guard_skip_immimm_global_count++;
                             dbt_trace_peephole_hit(guest_pc, "guard_skip_imm_imm_global", i0);
                             i = end0;
                             continue;
@@ -7454,7 +6833,6 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len, uint32_t guest_pc
                         if (has_call &&
                             guard_mode == PEEPHOLE_CALL_GUARD_JCC &&
                             !dbt_peephole_allow_immimm_on_call()) {
-                            peephole_guard_skip_immimm_calls_count++;
                             dbt_trace_peephole_hit(guest_pc, "guard_skip_imm_imm_on_call", i0);
                         } else {
                             for (size_t k = i0; k < end0; k++) {
@@ -7462,8 +6840,6 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len, uint32_t guest_pc
                             }
                             dbt_trace_peephole_hit(guest_pc, "imm_imm_same_reg", i0);
                             if (has_call) {
-                                peephole_call_block_rewrite_count++;
-                                peephole_call_block_other_rewrite_count++;
                                 dbt_trace_peephole_call_hit(guest_pc, "imm_imm_same_reg", i0);
                             }
                             hits++;
@@ -7530,8 +6906,6 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len, uint32_t guest_pc
                 }
                 dbt_trace_peephole_hit(guest_pc, "mov_load_store_pair", i0);
                 if (has_call) {
-                    peephole_call_block_rewrite_count++;
-                    peephole_call_block_other_rewrite_count++;
                     dbt_trace_peephole_call_hit(guest_pc, "mov_load_store_pair", i0);
                 }
                 hits++;
@@ -7545,8 +6919,6 @@ static size_t peephole_optimize_x64(uint8_t *code, size_t len, uint32_t guest_pc
                 }
                 dbt_trace_peephole_hit(guest_pc, "mov_store_load_pair", i0);
                 if (has_call) {
-                    peephole_call_block_rewrite_count++;
-                    peephole_call_block_other_rewrite_count++;
                     dbt_trace_peephole_call_hit(guest_pc, "mov_store_load_pair", i0);
                 }
                 hits++;
@@ -9364,21 +8736,15 @@ retry_translate:
         uint64_t t0 = stage5_now_ns();
         stage5_try_select_noop(ctx, guest_pc);
         uint64_t dt = stage5_now_ns() - t0;
-        stage5_select_calls++;
-        stage5_select_time_ns += dt;
     }
     if (ctx->stage5_burg_enabled && ctx->stage5_emit_enabled) {
         uint64_t t0 = stage5_now_ns();
         bool stage5_emitted = stage5_try_emit_pilot(ctx, guest_pc);
         uint64_t dt = stage5_now_ns() - t0;
-        stage5_emit_calls++;
-        stage5_emit_time_ns += dt;
         if (stage5_emitted) {
             stage5_emitted_block = true;
-            stage5_emit_success_time_ns += dt;
             goto cached_block_done;
         }
-        stage5_emit_fallback_time_ns += dt;
     }
 
     if (DBT_TRACE) {
@@ -9645,7 +9011,6 @@ cached_block_done:
         }
         if (has_backedge) {
             if (unsigned_side_exits_enabled) {
-                stage5_emit_side_exit_auto_backedge_retry_unsigned++;
             }
             forced_no_superblock = true;
             ctx->superblock_enabled = false;

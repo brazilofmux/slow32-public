@@ -27,56 +27,7 @@ void dbt_fp_helper(dbt_cpu_state_t *cpu, uint32_t opcode,
 uint32_t stage5_codegen_attempted;
 uint32_t stage5_codegen_success;
 uint32_t stage5_codegen_fallback;
-uint32_t stage5_codegen_fallback_unsupported_op;
-uint32_t stage5_codegen_fallback_preflight;
-uint32_t stage5_codegen_fallback_preflight_fused_branch;
-uint32_t stage5_codegen_fallback_preflight_missing_terminal;
-uint32_t stage5_codegen_fallback_preflight_bad_terminal_index;
-uint32_t stage5_codegen_fallback_preflight_bad_fuse_index;
-uint32_t stage5_codegen_fallback_preflight_opcode;
-uint32_t stage5_codegen_fallback_preflight_opcode_hist[128];
-uint32_t stage5_codegen_fallback_preflight_side_exit;
-uint32_t stage5_codegen_fallback_preflight_side_exit_cmpdep_mem;
-uint32_t stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_load;
-uint32_t stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store;
-uint32_t stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_stb;
-uint32_t stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_stb_beq;
-uint32_t stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_sth;
-uint32_t stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_stw;
-uint32_t stage5_codegen_fallback_preflight_terminal;
-uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix;
-uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_opcode_hist[128];
-uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_term;
-uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_term_opcode_hist[128];
-uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_cmp_opcode_hist[128];
-uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_nonadjacent;
-uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_rd_mismatch;
-uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_rd_mismatch_opcode_hist[128];
-uint32_t stage5_codegen_branch_cmp_mix_passthrough_rd_mismatch_xor;
-uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_predicate_policy;
-uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_predicate_policy_pattern_hist[64];
-uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_opcode;
-uint32_t stage5_codegen_fallback_preflight_branch_cmp_mix_reason_multi_cmp;
-uint32_t stage5_codegen_fallback_side_exit;
 uint32_t stage5_codegen_fallback_emit_node;
-uint32_t stage5_codegen_fallback_terminal;
-uint32_t stage5_codegen_fallback_terminal_opcode_hist[128];
-uint64_t stage5_codegen_guest_insts;
-uint64_t stage5_codegen_host_bytes;
-uint32_t stage5_codegen_regs_allocated_hist[REG_ALLOC_SLOTS + 1];
-uint32_t stage5_codegen_boolpair_native_attempted;
-uint32_t stage5_codegen_boolpair_native_success;
-uint32_t stage5_codegen_boolpair_native_fallback;
-uint32_t stage5_codegen_predicate_native_terminal_success;
-uint32_t stage5_codegen_predicate_native_terminal_fallback;
-uint32_t stage5_codegen_predicate_native_terminal_opcode_hist[128];
-uint64_t stage5_codegen_predicate_native_guest_insts;
-uint64_t stage5_codegen_predicate_native_host_bytes;
-uint32_t stage5_codegen_fused_addi_mem;
-uint32_t stage5_codegen_evictions;
-uint64_t stage5_codegen_native_loads;
-uint64_t stage5_codegen_native_stores;
-uint64_t stage5_codegen_dce_skipped;
 
 static bool cg_cmp_rr_enabled(void) {
     return true;
@@ -619,7 +570,6 @@ static x64_reg_t cg_alloc_reg(stage5_cg_t *cg, uint8_t guest_reg, bool is_write,
             emit_mov_m32_r32(cg->e, RBP, GUEST_REG_OFFSET(old_g), cg_reg_alloc_hosts[best_slot]);
         }
         ctx->reg_alloc_map[old_g] = -1;
-        stage5_codegen_evictions++;
 
         ctx->reg_alloc[best_slot].guest_reg = guest_reg;
         ctx->reg_alloc[best_slot].allocated = true;
@@ -1322,7 +1272,6 @@ static bool cg_emit_load(stage5_cg_t *cg, const stage5_ir_node_t *n) {
 
     cg_mark_dirty(cg, n->rd);
     cg_store_spilled(cg, n->rd, dst_h);
-    stage5_codegen_native_loads++;
     return true;
 }
 
@@ -1362,7 +1311,6 @@ static bool cg_emit_store(stage5_cg_t *cg, const stage5_ir_node_t *n) {
         default: return false;
     }
 
-    stage5_codegen_native_stores++;
     return true;
 }
 
@@ -1477,7 +1425,6 @@ static bool cg_emit_node(stage5_cg_t *cg, const stage5_ir_node_t *n) {
 
         default:
             // Unknown opcode — abort
-            stage5_codegen_fallback_unsupported_op++;
             return false;
     }
 }
@@ -1775,7 +1722,6 @@ static bool cg_emit_node_ssa_ra(stage5_cg_t *cg, uint32_t idx, const stage5_ir_n
             case OP_LDBU: emit_movzx_r32_m8_idx(cg->e, dst_h, R14, RAX); break;
             default: return false;
         }
-        stage5_codegen_native_loads++;
     } else if (is_store) {
         uint32_t access_size = 4;
         switch (n->opcode) {
@@ -1798,7 +1744,6 @@ static bool cg_emit_node_ssa_ra(stage5_cg_t *cg, uint32_t idx, const stage5_ir_n
             case OP_STB: emit_mov_m8_r8_idx(cg->e, R14, RAX, src1_h); break;
             default: return false;
         }
-        stage5_codegen_native_stores++;
         return true;
     } else if (zero_result || one_result || imm_result || copy_from_use0 || copy_from_use1) {
         if (zero_result) {
@@ -2358,22 +2303,18 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
     bool predicate_branch_only = cg_predicate_branch_only_enabled();
 
     if (fuse_cmp_idx >= 0 && !fused_branch_enabled) {
-        stage5_codegen_fallback_preflight_fused_branch++;
         return false;
     }
 
     if (!synth_block_end && terminal_idx < 0) {
-        stage5_codegen_fallback_preflight_missing_terminal++;
         return false;
     }
 
     if (terminal_idx >= (int)region->ir_count) {
-        stage5_codegen_fallback_preflight_bad_terminal_index++;
         return false;
     }
 
     if (fuse_cmp_idx >= (int)region->ir_count) {
-        stage5_codegen_fallback_preflight_bad_fuse_index++;
         return false;
     }
 
@@ -2383,20 +2324,16 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
         if (terminal_idx >= 0 && (int)i == terminal_idx) continue;
         if (fuse_cmp_idx >= 0 && (int)i == fuse_cmp_idx) continue;
         if (!cg_opcode_supported(n->opcode, cmp_rr_enabled, cmp_ri_enabled)) {
-            stage5_codegen_fallback_preflight_opcode++;
-            stage5_codegen_fallback_preflight_opcode_hist[n->opcode & 0x7F]++;
             return false;
         }
         if (n->is_side_exit && n->kind == STAGE5_IR_BRANCH &&
             side_exit_emit_enabled && side_exit_family_c) {
             if (!stage5_side_exit_opcode_supported_for_codegen(n->opcode)) {
-                stage5_codegen_fallback_preflight_side_exit++;
                 return false;
             }
             if (side_exit_enabled) {
                 continue;
             }
-            stage5_codegen_fallback_preflight_side_exit++;
             return false;
         }
     }
@@ -2404,7 +2341,6 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
     if (terminal_idx >= 0) {
         const stage5_ir_node_t *term = &region->ir[terminal_idx];
         if (!cg_terminal_supported(term->opcode, branch_term_enabled)) {
-            stage5_codegen_fallback_preflight_terminal++;
             return false;
         }
         if (branch_term_enabled &&
@@ -2426,12 +2362,8 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
             if (has_cmp_prefix) {
                 if (predicate_branch_only &&
                     !cg_pattern_is_predicate_branch(emitted_pattern)) {
-                    stage5_codegen_fallback_preflight_branch_cmp_mix++;
-                    stage5_codegen_fallback_preflight_branch_cmp_mix_reason_predicate_policy++;
                     if (emitted_pattern >= 0 && emitted_pattern < 64) {
-                        stage5_codegen_fallback_preflight_branch_cmp_mix_reason_predicate_policy_pattern_hist[emitted_pattern]++;
                     }
-                    stage5_codegen_fallback_preflight_branch_cmp_mix_opcode_hist[term->opcode & 0x7F]++;
                     return false;
                 }
                 if (use_cmp_mix_fusion) {
@@ -2466,29 +2398,11 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
                     bool passthrough = false;
                     if (reason == 4 && reason_opcode == OP_XOR) {
                         passthrough = true;
-                        stage5_codegen_branch_cmp_mix_passthrough_rd_mismatch_xor++;
                     }
                     if (passthrough) {
                         // Keep normal branch terminal emission instead of forcing
                         // cmp-mix fallback.
                     } else {
-                        stage5_codegen_fallback_preflight_branch_cmp_mix++;
-                        stage5_codegen_fallback_preflight_branch_cmp_mix_opcode_hist[reason_opcode & 0x7F]++;
-                        switch (reason) {
-                            case 1:
-                                stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_term++;
-                                stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_term_opcode_hist[reason_opcode & 0x7F]++;
-                                stage5_codegen_fallback_preflight_branch_cmp_mix_reason_noncanonical_cmp_opcode_hist[first_cmp_opcode & 0x7F]++;
-                                break;
-                            case 2: stage5_codegen_fallback_preflight_branch_cmp_mix_reason_opcode++; break;
-                            case 3: stage5_codegen_fallback_preflight_branch_cmp_mix_reason_nonadjacent++; break;
-                            case 4:
-                                stage5_codegen_fallback_preflight_branch_cmp_mix_reason_rd_mismatch++;
-                                stage5_codegen_fallback_preflight_branch_cmp_mix_reason_rd_mismatch_opcode_hist[reason_opcode & 0x7F]++;
-                                break;
-                            case 5: stage5_codegen_fallback_preflight_branch_cmp_mix_reason_multi_cmp++; break;
-                            default: break;
-                        }
                         return false;
                     }
                     }
@@ -3244,21 +3158,12 @@ bool stage5_codegen(translate_ctx_t *ctx,
     cg_state_save(&saved, ctx);
     if (cg_codegen_skip_pc_enabled(guest_pc)) {
         stage5_codegen_fallback++;
-        stage5_codegen_fallback_preflight++;
         return false;
     }
     cg_trace_codegen_region(guest_pc, emitted_pattern, region);
     cg_trace_regalloc(ctx, guest_pc);
 
-    // Count allocated registers
-    {
-        int count = 0;
-        for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
-            if (ctx->reg_alloc[i].allocated) count++;
-        }
-        if (count <= REG_ALLOC_SLOTS)
-            stage5_codegen_regs_allocated_hist[count]++;
-    }
+    // (allocated register count tracking removed)
 
     // Set up codegen context
     stage5_cg_t cg;
@@ -3298,12 +3203,9 @@ bool stage5_codegen(translate_ctx_t *ctx,
          predicate_native_enabled);
     bool predicate_native_active = boolpair_native_active || pred_native_active;
     if (predicate_native_active) {
-        stage5_codegen_boolpair_native_attempted++;
         cg_trace_boolpair_region(region, guest_pc, terminal_idx);
         if (cg_boolpair_skip_pc_enabled(guest_pc)) {
             stage5_codegen_fallback++;
-            stage5_codegen_fallback_preflight++;
-            stage5_codegen_boolpair_native_fallback++;
             return false;
         }
     }
@@ -3316,16 +3218,11 @@ bool stage5_codegen(translate_ctx_t *ctx,
           emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP) &&
          !predicate_native_enabled)) {
         stage5_codegen_fallback++;
-        stage5_codegen_fallback_preflight++;
-        if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
         return false;
     }
     if (predicate_native_active && side_exit_codegen && region->side_exit_count > 0) {
         if (!allow_cmpdep_with_side_exit) {
             stage5_codegen_fallback++;
-            stage5_codegen_fallback_preflight++;
-            stage5_codegen_fallback_preflight_side_exit++;
-            stage5_codegen_boolpair_native_fallback++;
             return false;
         }
         if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_CMPDEP) {
@@ -3338,11 +3235,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
                                        &has_store_stb, &has_store_sth, &has_store_stw);
             if (has_load && !cg_allow_cmpdep_side_exit_loads()) {
                 stage5_codegen_fallback++;
-                stage5_codegen_fallback_preflight++;
-                stage5_codegen_fallback_preflight_side_exit++;
-                stage5_codegen_fallback_preflight_side_exit_cmpdep_mem++;
-                stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_load++;
-                stage5_codegen_boolpair_native_fallback++;
                 return false;
             }
             if (has_store_stb && !cg_allow_cmpdep_side_exit_store_stb()) {
@@ -3355,53 +3247,27 @@ bool stage5_codegen(translate_ctx_t *ctx,
                 }
                 if (block_stb) {
                     stage5_codegen_fallback++;
-                    stage5_codegen_fallback_preflight++;
-                    stage5_codegen_fallback_preflight_side_exit++;
-                    stage5_codegen_fallback_preflight_side_exit_cmpdep_mem++;
-                    stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store++;
-                    stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_stb++;
-                    stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_stb_beq++;
-                    stage5_codegen_boolpair_native_fallback++;
                     return false;
                 }
             }
             if (has_store_sth && !cg_allow_cmpdep_side_exit_store_sth()) {
                 stage5_codegen_fallback++;
-                stage5_codegen_fallback_preflight++;
-                stage5_codegen_fallback_preflight_side_exit++;
-                stage5_codegen_fallback_preflight_side_exit_cmpdep_mem++;
-                stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store++;
-                stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_sth++;
-                stage5_codegen_boolpair_native_fallback++;
                 return false;
             }
             if (has_store_stw && !cg_allow_cmpdep_side_exit_store_stw()) {
                 stage5_codegen_fallback++;
-                stage5_codegen_fallback_preflight++;
-                stage5_codegen_fallback_preflight_side_exit++;
-                stage5_codegen_fallback_preflight_side_exit_cmpdep_mem++;
-                stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store++;
-                stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store_stw++;
-                stage5_codegen_boolpair_native_fallback++;
                 return false;
             }
             if (has_store &&
                 cg_allow_cmpdep_side_exit_stores_has_override() &&
                 !cg_allow_cmpdep_side_exit_stores()) {
                 stage5_codegen_fallback++;
-                stage5_codegen_fallback_preflight++;
-                stage5_codegen_fallback_preflight_side_exit++;
-                stage5_codegen_fallback_preflight_side_exit_cmpdep_mem++;
-                stage5_codegen_fallback_preflight_side_exit_cmpdep_mem_store++;
-                stage5_codegen_boolpair_native_fallback++;
                 return false;
             }
         }
     }
     if (emitted_pattern == STAGE5_BURG_PATTERN_CMP_BRANCH_NOCMPDEP) {
         stage5_codegen_fallback++;
-        stage5_codegen_fallback_preflight++;
-        if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
         return false;
     }
 
@@ -3419,8 +3285,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
                              synth_block_end,
                              side_exit_emit_enabled, side_exit_family_c)) {
         stage5_codegen_fallback++;
-        stage5_codegen_fallback_preflight++;
-        if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
         return false;
     }
 
@@ -3429,16 +3293,12 @@ bool stage5_codegen(translate_ctx_t *ctx,
     if (stage5_ssa_enabled()) {
         if (!stage5_ssa_build_overlay(region, &ssa)) {
             stage5_codegen_fallback++;
-            stage5_codegen_fallback_preflight++;
-            if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
             cg_state_restore(ctx, &saved);
             return false;
         }
         have_ssa = true;
         if (!stage5_ssa_build_phi_elim_plan(region, &ssa, &phi_plan)) {
             stage5_codegen_fallback++;
-            stage5_codegen_fallback_preflight++;
-            if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
             cg_state_restore(ctx, &saved);
             return false;
         }
@@ -3447,8 +3307,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
         if (stage5_ra_enabled()) {
             if (!stage5_ra_build_plan(region, &ssa, &ra_plan)) {
                 stage5_codegen_fallback++;
-                stage5_codegen_fallback_preflight++;
-                if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
                 cg_state_restore(ctx, &saved);
                 return false;
             }
@@ -3517,7 +3375,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
         if (mix_cmp_idx >= 0 && (int)i == mix_cmp_idx) continue;
         if (mix_extra_skip_idx >= 0 && (int)i == mix_extra_skip_idx) continue;
         if (cg_can_dce_prefix_node(region, i, n)) {
-            stage5_codegen_dce_skipped++;
             continue;
         }
 
@@ -3549,7 +3406,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
                     if (!cg_emit_node(&cg, n)) {
                          stage5_codegen_fallback++;
                          stage5_codegen_fallback_emit_node++;
-                         if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
                          cg_state_restore(ctx, &saved);
                          return false;
                     }
@@ -3572,7 +3428,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
                         fused_ok = cg_emit_store(&cg, &fused);
                     }
                     if (fused_ok) {
-                        stage5_codegen_fused_addi_mem++;
                         cg.emitted_insts++;
                         if (next_idx == terminal_idx) terminal_fused = true;
                         i = next_idx; 
@@ -3598,8 +3453,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
             // Keep them on the established fallback path for now.
             if (predicate_native_active && !allow_cmpdep_with_side_exit) {
                 stage5_codegen_fallback++;
-                stage5_codegen_fallback_side_exit++;
-                if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
                 cg_state_restore(ctx, &saved);
                 return false;
             }
@@ -3607,8 +3460,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
                 cg_ssa_invalidate_slots(&cg);
                 if (!cg_emit_side_exit(&cg, n)) {
                     stage5_codegen_fallback++;
-                    stage5_codegen_fallback_side_exit++;
-                    if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
                     cg_state_restore(ctx, &saved);
                     return false;
                 }
@@ -3616,8 +3467,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
                 continue;
             } else {
                 stage5_codegen_fallback++;
-                stage5_codegen_fallback_side_exit++;
-                if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
                 cg_state_restore(ctx, &saved);
                 return false;
             }
@@ -3634,7 +3483,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
             if (!emitted) {
                 stage5_codegen_fallback++;
                 stage5_codegen_fallback_emit_node++;
-                if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
                 cg_state_restore(ctx, &saved);
                 return false;
             }
@@ -3643,7 +3491,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
             if (!emitted) {
                 stage5_codegen_fallback++;
                 stage5_codegen_fallback_emit_node++;
-                if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
                 cg_state_restore(ctx, &saved);
                 return false;
             }
@@ -3683,8 +3530,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
         if (!cg_emit_phi_for_edge(&cg, region, have_phi_plan ? &phi_plan : NULL,
                                   guest_pc, ctx->guest_pc)) {
             stage5_codegen_fallback++;
-            stage5_codegen_fallback_terminal++;
-            if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
             cg_state_restore(ctx, &saved);
             return false;
         }
@@ -3755,10 +3600,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
                     last->rs1, last->rs2, last->imm, last->pc);
                 if (predicate_native_active) {
                     if (ended) {
-                        stage5_codegen_predicate_native_terminal_success++;
-                        stage5_codegen_predicate_native_terminal_opcode_hist[last->opcode & 0x7F]++;
                     } else {
-                        stage5_codegen_predicate_native_terminal_fallback++;
                     }
                 }
                 break;
@@ -3770,12 +3612,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
 
     if (!ended) {
         stage5_codegen_fallback++;
-        stage5_codegen_fallback_terminal++;
-        if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
-        if (terminal_idx >= 0 && terminal_idx < (int)region->ir_count) {
-            stage5_codegen_fallback_terminal_opcode_hist[
-                region->ir[terminal_idx].opcode & 0x7F]++;
-        }
         cg_state_restore(ctx, &saved);
         return false;
     }
@@ -3784,20 +3620,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
     // Success: update telemetry
     // ========================================================================
 
-    size_t emit_end = emit_offset(cg.e);
     stage5_codegen_success++;
-    if (predicate_native_active) stage5_codegen_boolpair_native_success++;
-    stage5_codegen_guest_insts += region->guest_inst_count;
-    if (emit_end > emit_start) {
-        stage5_codegen_host_bytes += (uint64_t)(emit_end - emit_start);
-    }
-    if (predicate_native_active) {
-        stage5_codegen_predicate_native_guest_insts += region->guest_inst_count;
-        if (emit_end > emit_start) {
-            stage5_codegen_predicate_native_host_bytes +=
-                (uint64_t)(emit_end - emit_start);
-        }
-    }
-
     return true;
 }

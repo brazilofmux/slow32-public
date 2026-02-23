@@ -837,31 +837,6 @@ void cache_print_stats(block_cache_t *cache) {
     if (cache->peephole_hits > 0) {
         fprintf(stderr, "Peephole rewrites: %lu\n", cache->peephole_hits);
     }
-    if (peephole_guard_skip_calls_count > 0) {
-        fprintf(stderr, "Peephole guard (call blocks skipped): %" PRIu32 "\n",
-                peephole_guard_skip_calls_count);
-    }
-    if (peephole_guard_skip_jcc_calls_count > 0) {
-        fprintf(stderr, "Peephole guard (jcc-fold skipped on call blocks): %" PRIu32 "\n",
-                peephole_guard_skip_jcc_calls_count);
-    }
-    if (peephole_guard_skip_immimm_calls_count > 0) {
-        fprintf(stderr, "Peephole guard (imm-imm skipped on call blocks): %" PRIu32 "\n",
-                peephole_guard_skip_immimm_calls_count);
-    }
-    if (peephole_guard_skip_immimm_global_count > 0) {
-        fprintf(stderr, "Peephole guard (imm-imm globally skipped): %" PRIu32 "\n",
-                peephole_guard_skip_immimm_global_count);
-    }
-    if (peephole_call_block_seen_count > 0) {
-        fprintf(stderr,
-                "Peephole call-blocks: seen=%" PRIu32 " rewrites=%" PRIu32
-                " jcc=%" PRIu32 " other=%" PRIu32 "\n",
-                peephole_call_block_seen_count,
-                peephole_call_block_rewrite_count,
-                peephole_call_block_jcc_fold_count,
-                peephole_call_block_other_rewrite_count);
-    }
 
     // Side-exit profile summary (debug)
     uint32_t max_total = 0;
