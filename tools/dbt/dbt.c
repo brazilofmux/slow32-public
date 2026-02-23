@@ -1694,6 +1694,14 @@ static void run_dbt_stage4plus(dbt_cpu_state_t *cpu, block_cache_t *cache,
 
         dbt_trace_branch_exit(cache, block, cpu);
 
+        // Temporary debug: trace register state after each block
+        if (getenv("S5_REGDUMP")) {
+            fprintf(stderr, "[S5-DISP] blk=0x%08X exit=%u pc=0x%08X r1=0x%08X r3=0x%08X r11=0x%08X r12=0x%08X r13=0x%08X sp=0x%08X fp=0x%08X lr=0x%08X\n",
+                    block->guest_pc, cpu->exit_reason, cpu->pc,
+                    cpu->regs[1], cpu->regs[3], cpu->regs[11], cpu->regs[12], cpu->regs[13],
+                    cpu->regs[29], cpu->regs[30], cpu->regs[31]);
+        }
+
         dispatch_iter++;
 
         // Check probe flag

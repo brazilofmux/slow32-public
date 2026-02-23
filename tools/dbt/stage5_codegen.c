@@ -16,6 +16,7 @@
 #include "translate.h"
 #include "dbt_limits.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 // Telemetry
@@ -135,10 +136,21 @@ static x64_reg_t cg_resolve_val(stage5_cg_t *cg, uint16_t v, x64_reg_t scratch) 
 static void cg_mark_dst(stage5_cg_t *cg, const lir_node_t *l, x64_reg_t dst_h, int8_t dst_slot) {
     if (l->dst_v == 0) return;
     if (dst_slot >= 0) {
+        uint8_t gpr = cg->ssa->value_to_reg[l->dst_v];
+        // Invalidate any OTHER dirty slot mapping to the same guest register.
+        // Without this, cg_sync_all could write a stale earlier definition
+        // AFTER the latest one (higher slot number wins), corrupting the result.
+        if (gpr != 0) {
+            for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+                if (s != dst_slot && cg->ssa_slot_dirty[s] && cg->ssa_slot_guest_reg[s] == gpr) {
+                    cg->ssa_slot_guest_reg[s] = 0;
+                }
+            }
+        }
         // Old occupant already pre-flushed before instruction emission.
         cg->ssa_slot_value[dst_slot] = l->dst_v;
         cg->ssa_slot_dirty[dst_slot] = true;
-        cg->ssa_slot_guest_reg[dst_slot] = cg->ssa->value_to_reg[l->dst_v];
+        cg->ssa_slot_guest_reg[dst_slot] = gpr;
     } else {
         uint8_t gpr = cg->ssa->value_to_reg[l->dst_v];
         if (gpr != 0) emit_mov_m32_r32(cg->e, RBP, GUEST_REG_OFFSET(gpr), dst_h);
@@ -149,7 +161,12 @@ static void cg_mark_dst(stage5_cg_t *cg, const lir_node_t *l, x64_reg_t dst_h, i
 // LIR Emission (Native x86-64, ZERO Stage 4 dependencies)
 // ============================================================================
 
-static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l) {
+// Invert an x86 JCC condition code (0x84 JE → 0x85 JNE, etc.)
+static uint8_t invert_x86_cc(uint8_t cc) {
+    return cc ^ 1; // x86 condition codes: even/odd pairs are inverses
+}
+
+static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_idx) {
     emit_ctx_t *e = cg->e;
     x64_reg_t dst_h = X64_NOREG;
     int8_t dst_slot = (l->dst_v != 0) ? cg->ssa_value_slot[l->dst_v] : -1;
@@ -499,63 +516,81 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l) {
             uint32_t taken_pc = l->guest_pc + 4 + l->imm;
             uint32_t fall_pc = l->guest_pc + 4;
 
-            size_t jcc_patch = emit_offset(e);
-            emit_byte(e, 0x0F);
-            emit_byte(e, cc);
-            emit_dword(e, 0); // placeholder rel32
-
             if (l->is_side_exit) {
-                // Side exit: taken path is cold, fall-through continues
-                // Emit taken path out-of-line, patch JCC to it
-                size_t taken_start = emit_offset(e);
-                // Fall-through continues after this; taken exit is cold
-                // We need to emit the taken exit AFTER fall-through code,
-                // but we don't know where fall-through ends yet.
-                // Use a deferred approach: emit taken exit inline, then JMP over
-                // Actually for simplicity: emit taken exit inline, then patch.
+                // Determine which direction the lifter traced by looking at the
+                // next LIR node's guest_pc. The hot path (LIR continuation) is
+                // whichever direction the lifter followed.
+                uint32_t side_exit_pc = taken_pc;
+                uint8_t side_cc = cc;
 
-                // Taken path: chained exit
-                // But wait - in side-exit mode, the JCC jumps to the cold path.
-                // The hot path (not-taken) is fall-through.
-                // Emit: JCC to taken_exit; [fall-through continues]; ...
-                // At end of block: taken_exit: cg_exit_chained(taken_pc)
+                // Check if lifter traced the taken path
+                const stage5_lir_t *lir = cg->lir;
+                if (lir_idx + 1 < lir->node_count &&
+                    lir->nodes[lir_idx + 1].guest_pc == taken_pc) {
+                    // Lifter traced taken: hot path = taken, cold = fall-through
+                    // Invert condition so JCC fires on the cold (not-taken) path
+                    side_cc = invert_x86_cc(cc);
+                    side_exit_pc = fall_pc;
+                }
+                // else: lifter traced fall-through (default), side exit = taken_pc
 
-                // For now, just emit inline:
-                // Fall-through continues after jcc placeholder
-                // We'll patch the jcc to point to a later taken stub.
-                // Since we continue emitting LIR nodes after this,
-                // we defer the taken exit.
+                size_t jcc_patch = emit_offset(e);
+                emit_byte(e, 0x0F);
+                emit_byte(e, side_cc);
+                emit_dword(e, 0); // placeholder rel32
 
-                // Record for deferred side exit
-                // Actually: just set taken path as hot (fall-through) and
-                // emit a simple taken exit right here, then patch JCC to skip.
-                // No — the JCC should jump to the side exit.
-                // The hot path is fall-through (not taken).
-
-                // Simple inline approach for side exits:
-                // JCC taken_stub
-                // ... (fall-through, more LIR nodes follow)
-                // taken_stub: cg_exit_chained(taken_pc)
-
-                // We can't emit the stub now because more LIR follows.
-                // Instead, save the patch location and emit the stub after
-                // the main block terminates. For simplicity in the first pass,
-                // emit it at the END of the block using the deferred exit mechanism.
-
-                // Store deferred info in translate_ctx
                 translate_ctx_t *ctx = cg->ctx;
                 if (ctx->deferred_exit_count < MAX_BLOCK_EXITS) {
                     int di = ctx->deferred_exit_count++;
-                    ctx->deferred_exits[di].jmp_patch_offset = jcc_patch + 2; // offset of rel32
-                    ctx->deferred_exits[di].target_pc = taken_pc;
+                    ctx->deferred_exits[di].jmp_patch_offset = jcc_patch + 2;
+                    ctx->deferred_exits[di].target_pc = side_exit_pc;
                     ctx->deferred_exits[di].exit_idx = ctx->exit_idx++;
                     ctx->deferred_exits[di].branch_pc = l->guest_pc;
                     ctx->deferred_exits[di].force_full_flush = false;
+
+                    // Snapshot current slot state for deferred stub emission.
+                    // Slots may be repurposed between this side exit and the
+                    // end of the block, so cg_sync_all at stub time would use
+                    // stale guest_reg mappings.
+                    for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+                        ctx->deferred_exits[di].dirty_snapshot[s] = cg->ssa_slot_dirty[s];
+                        ctx->deferred_exits[di].guest_reg_snapshot[s] = cg->ssa_slot_guest_reg[s];
+                    }
+                    if (getenv("S5_TRACE")) {
+                        fprintf(stderr, "[S5-SNAP] side_exit gpc=0x%08X target=0x%08X di=%d\n",
+                                l->guest_pc, side_exit_pc, di);
+                        for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+                            if (ctx->deferred_exits[di].dirty_snapshot[s]) {
+                                fprintf(stderr, "  snap[%d] dirty=1 gpr=%u\n",
+                                        s, ctx->deferred_exits[di].guest_reg_snapshot[s]);
+                            }
+                        }
+                    }
                 }
             } else {
+                // Save dirty state before first exit (cg_sync_all clears dirty).
+                // Both paths need the same flush sequence.
+                bool saved_dirty[STAGE5_RA_HOST_SLOTS];
+                uint8_t saved_gpr[STAGE5_RA_HOST_SLOTS];
+                for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+                    saved_dirty[s] = cg->ssa_slot_dirty[s];
+                    saved_gpr[s] = cg->ssa_slot_guest_reg[s];
+                }
+
+                size_t jcc_patch = emit_offset(e);
+                emit_byte(e, 0x0F);
+                emit_byte(e, cc);
+                emit_dword(e, 0); // placeholder rel32
                 // Terminal branch: emit both paths
                 // Fall-through path
                 cg_exit_chained(cg, fall_pc);
+
+                // Restore dirty state for taken path
+                for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+                    cg->ssa_slot_dirty[s] = saved_dirty[s];
+                    cg->ssa_slot_guest_reg[s] = saved_gpr[s];
+                }
+
                 // Taken path
                 size_t taken_start = emit_offset(e);
                 cg_exit_chained(cg, taken_pc);
@@ -744,15 +779,63 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l) {
     return true;
 }
 
-// Emit deferred side-exit stubs (cold paths placed after hot code)
+// Emit deferred side-exit stubs (cold paths placed after hot code).
+// Uses per-exit slot snapshots instead of cg_sync_all, because slots
+// may have been repurposed between the side exit and end of block.
 static void cg_emit_deferred_exits(stage5_cg_t *cg) {
     translate_ctx_t *ctx = cg->ctx;
+    emit_ctx_t *e = cg->e;
+
     for (int di = 0; di < ctx->deferred_exit_count; di++) {
-        size_t stub_start = emit_offset(cg->e);
-        // Patch the JCC/JMP to point here
-        emit_patch_rel32(cg->e, ctx->deferred_exits[di].jmp_patch_offset, stub_start);
-        // Emit chained exit
-        cg_exit_chained(cg, ctx->deferred_exits[di].target_pc);
+        size_t stub_start = emit_offset(e);
+        emit_patch_rel32(e, ctx->deferred_exits[di].jmp_patch_offset, stub_start);
+
+        uint32_t target_pc = ctx->deferred_exits[di].target_pc;
+
+        // Flush dirty slots using the snapshot captured at the side-exit point
+        for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+            if (ctx->deferred_exits[di].dirty_snapshot[s] &&
+                ctx->deferred_exits[di].guest_reg_snapshot[s] > 0) {
+                emit_mov_m32_r32(e, RBP,
+                    GUEST_REG_OFFSET(ctx->deferred_exits[di].guest_reg_snapshot[s]),
+                    ra_hosts[s]);
+            }
+        }
+
+        // Emit chained exit (PC store + JMP, no sync)
+        emit_mov_m32_imm32(e, RBP, CPU_PC_OFFSET, target_pc);
+
+        uint8_t *patch_site = emit_ptr(e) + 1;
+        translated_block_t *target = ctx->cache ? cache_lookup(ctx->cache, target_pc) : NULL;
+
+        if (target && target->host_code) {
+            int64_t rel = (int64_t)(target->host_code - (patch_site + 4));
+            if (rel >= INT32_MIN && rel <= INT32_MAX) {
+                emit_jmp_rel32(e, (int32_t)rel);
+            } else if (ctx->cache && ctx->cache->shared_branch_exit) {
+                int64_t srel = (int64_t)(ctx->cache->shared_branch_exit - (patch_site + 4));
+                emit_jmp_rel32(e, (int32_t)srel);
+            } else {
+                emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_BRANCH);
+                emit_ret(e);
+                continue;
+            }
+        } else if (ctx->cache && ctx->cache->shared_branch_exit) {
+            int64_t rel = (int64_t)(ctx->cache->shared_branch_exit - (patch_site + 4));
+            emit_jmp_rel32(e, (int32_t)rel);
+        } else {
+            emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_BRANCH);
+            emit_ret(e);
+            continue;
+        }
+
+        // Record exit for future chaining
+        int exit_idx = ctx->deferred_exits[di].exit_idx;
+        if (exit_idx < MAX_BLOCK_EXITS && ctx->block) {
+            cache_record_exit(ctx->cache, ctx->block, exit_idx, target_pc, patch_site);
+            if (!target || !target->host_code)
+                cache_record_pending_chain(ctx->cache, ctx->block, exit_idx, target_pc);
+        }
     }
 }
 
@@ -831,9 +914,35 @@ bool stage5_codegen(translate_ctx_t *ctx, const stage5_lift_region_t *region, ui
     }
 
     // 7. Emit LIR nodes
+    static bool s5_trace = false;
+    static int s5_trace_init = 0;
+    if (!s5_trace_init) { s5_trace = getenv("S5_TRACE") != NULL; s5_trace_init = 1; }
+    if (s5_trace) {
+        fprintf(stderr, "[S5] block pc=0x%08X insts=%u lir=%u ra_intervals=%u spilled=%u\n",
+                guest_pc, region->guest_inst_count, lir.node_count,
+                ra_plan.interval_count, ra_plan.spilled_count);
+        for (uint32_t i = 0; i < lir.node_count; i++) {
+            lir_node_t *l = &lir.nodes[i];
+            fprintf(stderr, "  [%u] op=%d gpc=0x%X dst_v=%u src0=%u src1=%u imm=%d disp=%d sz=%u rd=%u rs1=%u rs2=%u side=%d\n",
+                    i, l->op, l->guest_pc, l->dst_v, l->src_v[0], l->src_v[1],
+                    l->imm, l->disp, l->size, l->rd, l->rs1, l->rs2, l->is_side_exit);
+        }
+        for (uint16_t i = 0; i < ra_plan.interval_count; i++) {
+            fprintf(stderr, "  ra[%u] v=%u slot=%d start=%u end=%u spilled=%d gpr=%u\n",
+                    i, ra_plan.intervals[i].value_id, ra_plan.intervals[i].assigned_slot,
+                    ra_plan.intervals[i].start_idx, ra_plan.intervals[i].end_idx,
+                    ra_plan.intervals[i].spilled, ssa.value_to_reg[ra_plan.intervals[i].value_id]);
+        }
+        for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+            if (cg.ssa_slot_value[s]) {
+                fprintf(stderr, "  slot[%d] val=%u gpr=%u dirty=%d\n",
+                        s, cg.ssa_slot_value[s], cg.ssa_slot_guest_reg[s], cg.ssa_slot_dirty[s]);
+            }
+        }
+    }
     bool ended = false;
     for (uint32_t i = 0; i < lir.node_count; i++) {
-        if (!cg_emit_lir_node(&cg, &lir.nodes[i])) {
+        if (!cg_emit_lir_node(&cg, &lir.nodes[i], i)) {
             stage5_codegen_fallback++;
             return false;
         }
@@ -855,9 +964,12 @@ bool stage5_codegen(translate_ctx_t *ctx, const stage5_lift_region_t *region, ui
     // 9. Emit deferred side-exit stubs (cold code after hot path)
     cg_emit_deferred_exits(&cg);
 
-    // Mark block as Stage 5
+    // Mark block as Stage 5 and set guest size directly.
+    // Stage 5 owns its own block finalization — translate_block_cached
+    // does NOT run any Stage 4 post-processing on Stage 5 blocks.
     if (ctx->block) {
         ctx->block->flags |= BLOCK_FLAG_STAGE5 | BLOCK_FLAG_DIRECT;
+        ctx->block->guest_size = region->guest_inst_count * 4;
     }
 
     stage5_codegen_success++;

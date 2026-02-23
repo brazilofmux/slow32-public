@@ -1051,6 +1051,18 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
 
     // Stage 5 codegen: SSA → RA → native x86-64 emission.
     // On failure, the caller treats this as fatal in Stage 5 mode.
+    if (getenv("S5_REGDUMP")) {
+        fprintf(stderr, "[S5-LIFT] pc=0x%08X insts=%u ir=%u term_idx=%d fuse_cmp=%d pattern=%s side_exits=%u\n",
+                guest_pc, region.guest_inst_count, region.ir_count,
+                terminal_idx, fuse_cmp_idx, stage5_burg_pattern_str(emitted_pattern),
+                region.side_exit_count);
+        for (unsigned i = 0; i < region.ir_count; i++) {
+            fprintf(stderr, "  ir[%u] pc=0x%04X op=0x%02X rd=%u rs1=%u rs2=%u imm=%d%s\n",
+                    i, region.ir[i].pc, region.ir[i].opcode,
+                    region.ir[i].rd, region.ir[i].rs1, region.ir[i].rs2,
+                    region.ir[i].imm, region.ir[i].synthetic ? " (synth)" : "");
+        }
+    }
     if (!stage5_codegen(ctx, &region, guest_pc,
                         terminal_idx, fuse_cmp_idx, emitted_pattern,
                         synth_block_end, side_exit_enabled)) {
@@ -6315,7 +6327,6 @@ retry_translate:
 
     // Reset block metadata before translation
     memset(block, 0, sizeof(*block));
-    bool stage5_emitted_block = false;
     block->guest_pc = guest_pc;
     block->host_code = code_start;
 
@@ -6340,25 +6351,44 @@ retry_translate:
     reg_alloc_reset(ctx);
     const_prop_reset(ctx);
     bounds_elim_reset(ctx);
-    if (ctx->reg_cache_enabled) {
-        reg_alloc_prescan(ctx, guest_pc);
-        reg_alloc_emit_prologue(ctx);
-    }
-
-    // Stage 5 codegen: lift → BURG → SSA/RA → native x86-64 emission.
+    // ================================================================
+    // Stage 5: completely separate codegen path.
+    // Stage 5 has its own SSA/RA/LIR pipeline and its own live-in
+    // loading, deferred exit stubs, and block finalization.
+    // It MUST NOT flow through any Stage 4 code (reg_alloc, peephole,
+    // nop-compact, deferred_side_exits, back-edge retry, etc.).
+    // ================================================================
     if (ctx->stage5_burg_enabled && ctx->stage5_emit_enabled) {
         uint64_t t0 = stage5_now_ns();
         bool stage5_emitted = stage5_try_emit_pilot(ctx, guest_pc);
         uint64_t dt = stage5_now_ns() - t0;
         if (stage5_emitted) {
-            stage5_emitted_block = true;
-            goto cached_block_done;
+            // Stage 5 finalization — completely separate from Stage 4.
+            // block->flags and block->guest_size already set by stage5_codegen.
+            block->host_size = emit_offset(e);
+            stage5_trace_translated_block(ctx, block);
+            stage5_trace_translated_block_guest_words(ctx, block);
+            stage5_trace_translated_block_host_bytes(ctx, block);
+            cache_commit_code(cache, block->host_size);
+            cache_insert(cache, block);
+            cache_chain_incoming(cache, block);
+            ctx->block = NULL;
+            ctx->superblock_enabled = saved_superblock_enabled;
+            return block;
         }
         fprintf(stderr,
                 "FATAL: Stage 5 codegen failed for block at PC=0x%08X "
                 "(elapsed=%llu ns)\n",
                 guest_pc, (unsigned long long)dt);
         abort();
+    }
+
+    // ================================================================
+    // Stage 4: reg-alloc prologue and instruction-by-instruction translation
+    // ================================================================
+    if (ctx->reg_cache_enabled) {
+        reg_alloc_prescan(ctx, guest_pc);
+        reg_alloc_emit_prologue(ctx);
     }
 
     if (DBT_TRACE) {
@@ -6579,9 +6609,6 @@ retry_translate:
     emit_exit_chained(ctx, ctx->guest_pc, ctx->exit_idx++);
 
 cached_block_done:
-    if (stage5_emitted_block) {
-        block->flags |= BLOCK_FLAG_STAGE5;
-    }
     // Emit deferred (out-of-line) side exit cold stubs after the hot path
     if (ctx->deferred_exit_count > 0) {
         emit_deferred_side_exits(ctx);
