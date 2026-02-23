@@ -12,7 +12,7 @@
 
 // Try native codegen for a lifted region.
 // On success: emits prefix + terminal into ctx->emit, returns true.
-// On failure: returns false (caller falls through to Family C dispatch).
+// On failure: returns false (caller falls through to Stage 4 dispatch).
 //
 // Preconditions:
 //   - ctx->reg_alloc[] already populated by reg_alloc_prescan() + prologue emitted
@@ -30,8 +30,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
                     int fuse_cmp_idx,
                     int emitted_pattern,
                     bool synth_block_end,
-                    bool side_exit_emit_enabled,
-                    const void *side_exit_family_cfg_ptr);
+                    bool side_exit_enabled);
 
 // Telemetry counters (defined in stage5_codegen.c)
 extern uint32_t stage5_codegen_attempted;

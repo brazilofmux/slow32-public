@@ -109,11 +109,6 @@ static bool cg_boolpair_trace_enabled(void) {
     return false;
 }
 
-static bool cg_boolpair_skip_pc_enabled(uint32_t guest_pc) {
-    (void)guest_pc;
-    return false;
-}
-
 static bool cg_codegen_trace_enabled(void) {
     return false;
 }
@@ -142,11 +137,6 @@ static void cg_trace_regalloc(translate_ctx_t *ctx, uint32_t guest_pc) {
         if (s >= 0) fprintf(stderr, " g%u->s%d", g, s);
     }
     fprintf(stderr, "\n");
-}
-
-static bool cg_codegen_skip_pc_enabled(uint32_t guest_pc) {
-    (void)guest_pc;
-    return false;
 }
 
 static void cg_trace_codegen_region(uint32_t guest_pc,
@@ -2291,15 +2281,14 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
                                 int fuse_cmp_idx,
                                 int emitted_pattern,
                                 bool synth_block_end,
-                                bool side_exit_emit_enabled,
-                                bool side_exit_family_c) {
+                                bool side_exit_enabled) {
     bool cmp_rr_enabled = cg_cmp_rr_enabled();
     bool cmp_ri_enabled = cmp_rr_enabled && cg_cmp_ri_enabled();
     bool fused_branch_enabled = cg_fused_branch_enabled();
     bool branch_term_enabled = cg_branch_term_enabled();
     bool branch_cmp_mix_enabled = cg_branch_cmp_mix_enabled();
     bool use_cmp_mix_fusion = cg_pattern_uses_cmp_mix_fusion(emitted_pattern);
-    bool side_exit_enabled = cg_side_exit_enabled();
+    bool side_exit_codegen = cg_side_exit_enabled();
     bool predicate_branch_only = cg_predicate_branch_only_enabled();
 
     if (fuse_cmp_idx >= 0 && !fused_branch_enabled) {
@@ -2327,11 +2316,11 @@ static bool cg_region_preflight(const stage5_lift_region_t *region,
             return false;
         }
         if (n->is_side_exit && n->kind == STAGE5_IR_BRANCH &&
-            side_exit_emit_enabled && side_exit_family_c) {
+            side_exit_enabled) {
             if (!stage5_side_exit_opcode_supported_for_codegen(n->opcode)) {
                 return false;
             }
-            if (side_exit_enabled) {
+            if (side_exit_codegen) {
                 continue;
             }
             return false;
@@ -3150,20 +3139,13 @@ bool stage5_codegen(translate_ctx_t *ctx,
                     int fuse_cmp_idx,
                     int emitted_pattern,
                     bool synth_block_end,
-                    bool side_exit_emit_enabled,
-                    const void *side_exit_family_cfg_ptr) {
+                    bool side_exit_enabled) {
     stage5_codegen_attempted++;
 
     stage5_codegen_state_t saved;
     cg_state_save(&saved, ctx);
-    if (cg_codegen_skip_pc_enabled(guest_pc)) {
-        stage5_codegen_fallback++;
-        return false;
-    }
     cg_trace_codegen_region(guest_pc, emitted_pattern, region);
     cg_trace_regalloc(ctx, guest_pc);
-
-    // (allocated register count tracking removed)
 
     // Set up codegen context
     stage5_cg_t cg;
@@ -3182,11 +3164,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
     bool have_phi_plan = false;
     size_t emit_start = emit_offset(cg.e);
 
-    // The side_exit_family_cfg_ptr is a pointer to a stage5_side_exit_family_cfg_t
-    // struct from translate.c. We just need the family_c bool.
-    typedef struct { bool family_b; bool family_c; } side_exit_cfg_t;
-    const side_exit_cfg_t *se_cfg = (const side_exit_cfg_t *)side_exit_family_cfg_ptr;
-    bool side_exit_family_c = se_cfg ? se_cfg->family_c : false;
     bool side_exit_codegen = cg_side_exit_enabled();
     bool use_cmp_mix_fusion = cg_pattern_uses_cmp_mix_fusion(emitted_pattern);
     bool allow_cmpdep_with_side_exit =
@@ -3204,10 +3181,6 @@ bool stage5_codegen(translate_ctx_t *ctx,
     bool predicate_native_active = boolpair_native_active || pred_native_active;
     if (predicate_native_active) {
         cg_trace_boolpair_region(region, guest_pc, terminal_idx);
-        if (cg_boolpair_skip_pc_enabled(guest_pc)) {
-            stage5_codegen_fallback++;
-            return false;
-        }
     }
 
     // Keep newer predicate families on the established translate.c terminal
@@ -3282,8 +3255,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
     }
 
     if (!cg_region_preflight(region, terminal_idx, fuse_cmp_idx, emitted_pattern,
-                             synth_block_end,
-                             side_exit_emit_enabled, side_exit_family_c)) {
+                             synth_block_end, side_exit_enabled)) {
         stage5_codegen_fallback++;
         return false;
     }
@@ -3445,7 +3417,7 @@ bool stage5_codegen(translate_ctx_t *ctx,
 
         // Optional side-exit ownership by native codegen.
         if (n->is_side_exit && n->kind == STAGE5_IR_BRANCH &&
-            side_exit_emit_enabled && side_exit_family_c &&
+            side_exit_enabled &&
             ctx->exit_idx + 2 < MAX_BLOCK_EXITS &&
             ctx->deferred_exit_count < MAX_BLOCK_EXITS) {
             // Guardrail: predicate-native regions with in-prefix side exits
