@@ -46,6 +46,10 @@ typedef struct stage5_cg_s {
         uint16_t slot_value[STAGE5_RA_HOST_SLOTS];
         uint16_t spilled_gpr[32];
     } exit_snapshot[MAX_BLOCK_EXITS];
+
+    // Self-loop back-edge support
+    size_t loop_body_offset;        // Host offset right after prologue loads
+    int8_t entry_gpr_for_slot[STAGE5_RA_HOST_SLOTS]; // Slot -> guest reg at entry (-1 = empty)
 } stage5_cg_t;
 
 // Standard x86-64 calling convention for FP helper
@@ -191,6 +195,185 @@ static uint8_t invert_x86_cc(uint8_t cc) {
     return cc ^ 1; // x86 condition codes: even/odd pairs are inverses
 }
 
+// Self-loop back-edge: when the terminal branch targets the block's own
+// start PC, emit a direct jmp back to the loop body (skipping the prologue
+// reload).  Emits a register shuffle sequence if needed to move values
+// to their expected entry slots.  Returns true if emitted, false to fall back.
+static bool cg_emit_self_loop_branch(stage5_cg_t *cg, const lir_node_t *l,
+                                      uint32_t lir_idx, uint8_t cc) {
+    emit_ctx_t *e = cg->e;
+    uint32_t fall_pc = l->guest_pc + 4;
+
+    // --- Compute end-of-block latest slot per gpr (block-defined values only) ---
+    int8_t latest_slot[32];
+    uint16_t latest_def_idx[32];
+    memset(latest_slot, -1, sizeof(latest_slot));
+    memset(latest_def_idx, 0, sizeof(latest_def_idx));
+
+    for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+        uint16_t v = cg->ssa_slot_value[s];
+        if (v == 0 || !cg->is_block_defined[v]) continue;
+        uint8_t gpr = cg->ssa->value_to_reg[v];
+        if (gpr == 0) continue;
+        uint16_t def_idx = cg->value_def_lir_idx[v];
+        if (latest_slot[gpr] < 0 || def_idx > latest_def_idx[gpr]) {
+            latest_slot[gpr] = (int8_t)s;
+            latest_def_idx[gpr] = def_idx;
+        }
+    }
+    for (int g = 1; g < 32; g++) {
+        if (latest_slot[g] >= 0 && cg->spilled_def_for_gpr[g] > latest_def_idx[g])
+            latest_slot[g] = -1;
+    }
+
+    // --- Build shuffle plan per entry slot ---
+    // shuffle_src[s]: -2 = no-op, -1 = reload from memory, 0-7 = copy from slot
+    int8_t shuffle_src[STAGE5_RA_HOST_SLOTS];
+    uint8_t shuffle_gpr[STAGE5_RA_HOST_SLOTS];
+    int shuffle_count = 0;
+
+    for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+        shuffle_src[s] = -2;
+        shuffle_gpr[s] = 0;
+        int8_t g = cg->entry_gpr_for_slot[s];
+        if (g <= 0) continue;
+
+        if (latest_slot[g] >= 0) {
+            // Block-defined output lives in a slot
+            if (latest_slot[g] == s) {
+                // Already in the right place
+            } else {
+                shuffle_src[s] = latest_slot[g];
+                shuffle_gpr[s] = (uint8_t)g;
+                shuffle_count++;
+            }
+        } else {
+            // No block-defined output in a slot.  Check if gpr was modified
+            // at all — if a block-defined value for this gpr was spilled to
+            // memory (pre-flushed), the live-in in the slot is stale.
+            if (cg->spilled_def_for_gpr[(uint8_t)g] > 0) {
+                // Modified and spilled to memory — must reload
+                shuffle_src[s] = -1;
+                shuffle_gpr[s] = (uint8_t)g;
+                shuffle_count++;
+            } else {
+                uint16_t v = cg->ssa_slot_value[s];
+                if (v != 0 && cg->ssa->value_to_reg[v] == (uint8_t)g &&
+                    !cg->is_block_defined[v]) {
+                    // Slot still holds the original live-in value — no move
+                } else {
+                    // Slot was repurposed — reload
+                    shuffle_src[s] = -1;
+                    shuffle_gpr[s] = (uint8_t)g;
+                    shuffle_count++;
+                }
+            }
+        }
+    }
+
+    // Bail if too many shuffles (diminishing returns vs flush+reload)
+    if (shuffle_count > 6) return false;
+
+    static bool s5_trace = false;
+    static int s5_trace_init = 0;
+    if (!s5_trace_init) { s5_trace = getenv("S5_TRACE") != NULL; s5_trace_init = 1; }
+    if (s5_trace) {
+        fprintf(stderr, "[S5-LOOP] self-loop back-edge at gpc=0x%08X -> 0x%08X, "
+                "shuffles=%d, %d deferred exits\n",
+                l->guest_pc, cg->region->start_pc, shuffle_count,
+                cg->ctx->deferred_exit_count);
+        for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+            int8_t eg = cg->entry_gpr_for_slot[s];
+            uint16_t ev = cg->ssa_slot_value[s];
+            uint8_t eg2 = ev ? cg->ssa->value_to_reg[ev] : 0;
+            fprintf(stderr, "  slot[%d] entry_gpr=%d  end_val=%u(gpr=%u,bd=%d)  latest_slot[%d]=%d  spilled[%d]=%u  shuffle=%d\n",
+                    s, eg, ev, eg2, ev ? cg->is_block_defined[ev] : 0,
+                    eg > 0 ? eg : 0, eg > 0 ? latest_slot[eg] : -99,
+                    eg > 0 ? eg : 0, eg > 0 ? (unsigned)cg->spilled_def_for_gpr[eg] : 0,
+                    shuffle_src[s]);
+        }
+    }
+
+    // --- Emit branch ---
+    size_t jcc_patch = emit_offset(e);
+    emit_byte(e, 0x0F);
+    emit_byte(e, cc);
+    emit_dword(e, 0);
+
+    // Fall-through: normal loop-exit (flush + chained exit)
+    cg_exit_chained(cg, fall_pc);
+
+    // Taken path: shuffle registers then jump back to loop body
+    size_t taken_offset = emit_offset(e);
+    emit_patch_rel32(e, jcc_patch + 2, taken_offset);
+
+    // Phase 1: register-to-register copies in dependency order.
+    // Must happen BEFORE memory reloads because a reload can clobber a slot
+    // that is a copy source (e.g., slot 2 holds new r4, gets reloaded with
+    // r3 from memory, but slot 4 needs the old slot 2 value).
+    // Use RAX as scratch for breaking cycles.
+    bool done[STAGE5_RA_HOST_SLOTS];
+    for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++)
+        done[s] = (shuffle_src[s] < 0);
+
+    for (;;) {
+        bool any_pending = false;
+        bool progress = false;
+        for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+            if (done[s]) continue;
+            any_pending = true;
+            // Safe to write to s if no other pending move reads from s
+            bool s_is_source = false;
+            for (int j = 0; j < STAGE5_RA_HOST_SLOTS; j++) {
+                if (!done[j] && j != s && shuffle_src[j] == s) {
+                    s_is_source = true;
+                    break;
+                }
+            }
+            if (!s_is_source) {
+                emit_mov_r32_r32(e, ra_hosts[s], ra_hosts[shuffle_src[s]]);
+                done[s] = true;
+                progress = true;
+            }
+        }
+        if (!any_pending) break;
+        if (!progress) {
+            // Cycle: save one slot to scratch and unwind the chain
+            for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+                if (done[s]) continue;
+                emit_mov_r32_r32(e, RAX, ra_hosts[s]);
+                int cur = s;
+                while (!done[cur]) {
+                    int src = shuffle_src[cur];
+                    if (src == s) {
+                        // Last in cycle: get saved value from scratch
+                        emit_mov_r32_r32(e, ra_hosts[cur], RAX);
+                    } else {
+                        emit_mov_r32_r32(e, ra_hosts[cur], ra_hosts[src]);
+                    }
+                    done[cur] = true;
+                    if (src == s) break;
+                    cur = src;
+                }
+                break; // restart outer loop to find more cycles/moves
+            }
+        }
+    }
+
+    // Phase 2: memory reloads (after reg-reg copies so we don't clobber sources)
+    for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+        if (shuffle_src[s] == -1) {
+            emit_mov_r32_m32(e, ra_hosts[s], RBP, GUEST_REG_OFFSET(shuffle_gpr[s]));
+        }
+    }
+
+    // Jump back to loop body (after prologue)
+    int32_t rel = (int32_t)cg->loop_body_offset - (int32_t)(emit_offset(e) + 5);
+    emit_jmp_rel32(e, rel);
+
+    return true;
+}
+
 // Shared branch emission: emits JCC with side-exit or terminal handling.
 // Called after the comparison/test instruction has already been emitted.
 // cc is the x86 JCC opcode byte (0x84=JE, 0x85=JNE, 0x8C=JL, etc.)
@@ -243,6 +426,16 @@ static bool cg_emit_conditional_branch(stage5_cg_t *cg, const lir_node_t *l,
             }
         }
     } else {
+        // Self-loop detection: if taken target is the block's own start PC,
+        // try to emit a direct back-edge (skip flush+reload)
+        if (taken_pc == cg->region->start_pc) {
+            if (cg_emit_self_loop_branch(cg, l, lir_idx, cc))
+                return true;
+            if (getenv("S5_TRACE"))
+                fprintf(stderr, "[S5-LOOP-FAIL] gpc=0x%08X taken=0x%08X start=0x%08X\n",
+                        l->guest_pc, taken_pc, cg->region->start_pc);
+        }
+
         size_t jcc_patch = emit_offset(e);
         emit_byte(e, 0x0F);
         emit_byte(e, cc);
@@ -999,6 +1192,18 @@ bool stage5_codegen(translate_ctx_t *ctx, const stage5_lift_region_t *region, ui
                 }
                 break;
             }
+        }
+    }
+
+    // 7b. Record entry mapping for self-loop back-edge optimization
+    cg.loop_body_offset = emit_offset(cg.e);
+    for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+        cg.entry_gpr_for_slot[s] = -1;
+        uint16_t v = cg.ssa_slot_value[s];
+        if (v != 0) {
+            uint8_t gpr = ssa.value_to_reg[v];
+            if (gpr != 0)
+                cg.entry_gpr_for_slot[s] = (int8_t)gpr;
         }
     }
 
