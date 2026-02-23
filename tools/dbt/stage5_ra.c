@@ -47,9 +47,22 @@ bool stage5_ra_build_plan(const stage5_lift_region_t *region,
 
     uint16_t first_use[STAGE5_SSA_MAX_VALUES];
     uint16_t last_use[STAGE5_SSA_MAX_VALUES];
+    bool is_def[STAGE5_SSA_MAX_VALUES];
     memset(first_use, 0xFF, sizeof(first_use));
     memset(last_use, 0xFF, sizeof(last_use));
+    memset(is_def, 0, sizeof(is_def));
 
+    // First pass: identify which values are defined in the region.
+    for (uint32_t i = 0; i < region->ir_count; i++) {
+        uint16_t def = ssa->node_def_value[i];
+        if (def > 0 && def < STAGE5_SSA_MAX_VALUES) {
+            is_def[def] = true;
+        }
+    }
+
+    // Second pass: compute live ranges.
+    // Live-in values (used but never defined in the region) get start_idx=0
+    // because they are loaded into host registers at region entry.
     for (uint32_t i = 0; i < region->ir_count; i++) {
         uint16_t def = ssa->node_def_value[i];
         uint16_t u0 = ssa->node_use0_valid[i] ? ssa->node_use0_value[i] : 0;
@@ -60,11 +73,16 @@ bool stage5_ra_build_plan(const stage5_lift_region_t *region,
             if (last_use[def] == 0xFFFFu) last_use[def] = (uint16_t)i;
         }
         if (u0 > 0 && u0 < STAGE5_SSA_MAX_VALUES) {
-            if (first_use[u0] == 0xFFFFu) first_use[u0] = (uint16_t)i;
+            if (first_use[u0] == 0xFFFFu) {
+                // Live-in: start at 0 so the entry load doesn't get clobbered.
+                first_use[u0] = is_def[u0] ? (uint16_t)i : 0;
+            }
             last_use[u0] = (uint16_t)i;
         }
         if (u1 > 0 && u1 < STAGE5_SSA_MAX_VALUES) {
-            if (first_use[u1] == 0xFFFFu) first_use[u1] = (uint16_t)i;
+            if (first_use[u1] == 0xFFFFu) {
+                first_use[u1] = is_def[u1] ? (uint16_t)i : 0;
+            }
             last_use[u1] = (uint16_t)i;
         }
     }

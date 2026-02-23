@@ -1469,14 +1469,8 @@ static bool stage5_side_exit_emit_enabled(void) {
 }
 
 static bool stage5_codegen_enabled(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
+    // Stage 5 codegen is always on — no more gates.
+    return true;
 }
 
 static bool dbt_nop_compact_enabled(void) {

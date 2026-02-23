@@ -561,6 +561,8 @@ typedef struct {
     const stage5_ra_plan_t *ra_plan;
     int8_t ssa_value_slot[STAGE5_SSA_MAX_VALUES];
     uint16_t ssa_slot_value[STAGE5_RA_HOST_SLOTS];
+    bool ssa_slot_dirty[STAGE5_RA_HOST_SLOTS];      // slot has been written
+    uint8_t ssa_slot_guest_reg[STAGE5_RA_HOST_SLOTS]; // guest reg in this slot
     uint32_t emitted_insts;        // Number of guest instructions emitted
     int current_idx;               // Current instruction index in region->ir
 } stage5_cg_t;
@@ -691,11 +693,103 @@ static void cg_ssa_init_slots(stage5_cg_t *cg, const stage5_ra_plan_t *plan) {
         cg->ssa_value_slot[i] = -1;
     }
     cg_ssa_invalidate_slots(cg);
+    for (int i = 0; i < STAGE5_RA_HOST_SLOTS; i++) {
+        cg->ssa_slot_dirty[i] = false;
+        cg->ssa_slot_guest_reg[i] = 0;
+    }
     if (!plan) return;
     for (uint16_t i = 0; i < plan->interval_count; i++) {
         const stage5_ra_interval_t *it = &plan->intervals[i];
         if (it->value_id < STAGE5_SSA_MAX_VALUES) {
             cg->ssa_value_slot[it->value_id] = it->assigned_slot;
+        }
+    }
+}
+
+// ============================================================================
+// SSA/RA region entry: load live-in values into RA-assigned host registers
+// ============================================================================
+
+static void cg_ssa_ra_load_live_ins(stage5_cg_t *cg) {
+    if (!cg->ssa || !cg->ra_plan) return;
+    const stage5_ssa_overlay_t *ssa = cg->ssa;
+    const stage5_lift_region_t *region = cg->region;
+
+    // A live-in value is one that is used before it is defined in the region.
+    // Walk IR forward: for each use, if the value has no prior def in the
+    // region, it's a live-in and must be loaded from guest register memory.
+    bool value_defined[STAGE5_SSA_MAX_VALUES];
+    memset(value_defined, 0, sizeof(value_defined));
+
+    for (uint32_t i = 0; i < region->ir_count; i++) {
+        // Check uses first — a use before def means live-in
+        if (ssa->node_use0_valid[i]) {
+            uint16_t v = ssa->node_use0_value[i];
+            if (v > 0 && v < STAGE5_SSA_MAX_VALUES && !value_defined[v]) {
+                int8_t slot = cg->ssa_value_slot[v];
+                uint8_t greg = ssa->node_use0_reg[i];
+                if (slot >= 0 && slot < STAGE5_RA_HOST_SLOTS && greg > 0 && greg < 32) {
+                    emit_mov_r32_m32(cg->e, cg_reg_alloc_hosts[slot],
+                                     RBP, GUEST_REG_OFFSET(greg));
+                    cg->ssa_slot_value[slot] = v;
+                    cg->ssa_slot_guest_reg[slot] = greg;
+                    value_defined[v] = true;  // now loaded, don't load again
+                }
+            }
+        }
+        if (ssa->node_use1_valid[i]) {
+            uint16_t v = ssa->node_use1_value[i];
+            if (v > 0 && v < STAGE5_SSA_MAX_VALUES && !value_defined[v]) {
+                int8_t slot = cg->ssa_value_slot[v];
+                uint8_t greg = ssa->node_use1_reg[i];
+                if (slot >= 0 && slot < STAGE5_RA_HOST_SLOTS && greg > 0 && greg < 32) {
+                    emit_mov_r32_m32(cg->e, cg_reg_alloc_hosts[slot],
+                                     RBP, GUEST_REG_OFFSET(greg));
+                    cg->ssa_slot_value[slot] = v;
+                    cg->ssa_slot_guest_reg[slot] = greg;
+                    value_defined[v] = true;
+                }
+            }
+        }
+        // Then mark definitions
+        uint16_t dv = ssa->node_def_value[i];
+        if (dv > 0 && dv < STAGE5_SSA_MAX_VALUES) {
+            value_defined[dv] = true;
+        }
+    }
+}
+
+// ============================================================================
+// SSA/RA region exit: store dirty live-out values back to guest registers
+// ============================================================================
+
+static void cg_ssa_ra_store_live_outs(stage5_cg_t *cg) {
+    if (!cg->ssa || !cg->ra_plan) return;
+    for (int i = 0; i < STAGE5_RA_HOST_SLOTS; i++) {
+        if (cg->ssa_slot_dirty[i] && cg->ssa_slot_guest_reg[i] > 0) {
+            emit_mov_m32_r32(cg->e, RBP,
+                             GUEST_REG_OFFSET(cg->ssa_slot_guest_reg[i]),
+                             cg_reg_alloc_hosts[i]);
+        }
+    }
+}
+
+// ============================================================================
+// SSA/RA helper-call boundary: flush all dirty slots, reload after call
+// ============================================================================
+
+static void cg_ssa_ra_flush_before_helper(stage5_cg_t *cg) {
+    cg_ssa_ra_store_live_outs(cg);
+}
+
+static void cg_ssa_ra_reload_after_helper(stage5_cg_t *cg) {
+    // After a helper call, any host register contents are clobbered.
+    // Reload all values that are still live (have valid slot assignments).
+    for (int i = 0; i < STAGE5_RA_HOST_SLOTS; i++) {
+        if (cg->ssa_slot_value[i] != 0 && cg->ssa_slot_guest_reg[i] > 0) {
+            emit_mov_r32_m32(cg->e, cg_reg_alloc_hosts[i],
+                             RBP, GUEST_REG_OFFSET(cg->ssa_slot_guest_reg[i]));
+            cg->ssa_slot_dirty[i] = false;
         }
     }
 }
@@ -1171,8 +1265,12 @@ static bool cg_emit_fp_helper(stage5_cg_t *cg, const stage5_ir_node_t *n) {
         }
     }
 
-    // Flush all allocated cached regs to memory (helper reads cpu->regs).
-    if (ctx->reg_cache_enabled) {
+    // Flush registers to memory before helper call.
+    if (cg->ra_plan) {
+        // SSA/RA path: flush dirty RA slots to guest memory.
+        cg_ssa_ra_flush_before_helper(cg);
+    } else if (ctx->reg_cache_enabled) {
+        // Stage 4 path: flush all allocated cached regs.
         for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
             if (!ctx->reg_alloc[i].allocated) continue;
             uint8_t greg = ctx->reg_alloc[i].guest_reg;
@@ -1190,8 +1288,12 @@ static bool cg_emit_fp_helper(stage5_cg_t *cg, const stage5_ir_node_t *n) {
     emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)dbt_fp_helper);
     emit_call_r64(e, RAX);
 
-    // Helper can modify any guest reg; reload all cached host regs.
-    if (ctx->reg_cache_enabled) {
+    // Helper can modify any guest reg; reload all live host regs.
+    if (cg->ra_plan) {
+        // SSA/RA path: reload values still live after the call.
+        cg_ssa_ra_reload_after_helper(cg);
+    } else if (ctx->reg_cache_enabled) {
+        // Stage 4 path: reload all allocated cached regs.
         for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
             if (!ctx->reg_alloc[i].allocated) continue;
             uint8_t greg = ctx->reg_alloc[i].guest_reg;
@@ -1764,15 +1866,48 @@ static bool cg_emit_node_ssa_ra(stage5_cg_t *cg, uint32_t idx, const stage5_ir_n
     uint8_t use1_reg = need_use1 ? cg->ssa->node_use1_reg[idx] : 0;
     uint8_t def_reg = !is_store ? cg->ssa->node_def_reg[idx] : 0;
 
+    // --- Spill dirty slots BEFORE clobbering host registers ---
+    // When RA reuses a slot, the previous occupant's dirty value must reach
+    // guest memory while the host register still holds the old value.
+    if (!is_store && def_slot >= 0 && cg->ssa_slot_dirty[def_slot] &&
+        cg->ssa_slot_guest_reg[def_slot] != 0 &&
+        cg->ssa_slot_guest_reg[def_slot] != def_reg) {
+        emit_mov_m32_r32(cg->e, RBP,
+                         GUEST_REG_OFFSET(cg->ssa_slot_guest_reg[def_slot]),
+                         cg_reg_alloc_hosts[def_slot]);
+        cg->ssa_slot_dirty[def_slot] = false;
+    }
+    if ((need_use0 || is_store) && cg->ssa_slot_value[use0_slot] != use0_v &&
+        use0_slot != def_slot &&
+        cg->ssa_slot_dirty[use0_slot] && cg->ssa_slot_guest_reg[use0_slot] != 0) {
+        emit_mov_m32_r32(cg->e, RBP,
+                         GUEST_REG_OFFSET(cg->ssa_slot_guest_reg[use0_slot]),
+                         cg_reg_alloc_hosts[use0_slot]);
+        cg->ssa_slot_dirty[use0_slot] = false;
+    }
+    if (need_use1 && cg->ssa_slot_value[use1_slot] != use1_v &&
+        use1_slot != def_slot && use1_slot != use0_slot &&
+        cg->ssa_slot_dirty[use1_slot] && cg->ssa_slot_guest_reg[use1_slot] != 0) {
+        emit_mov_m32_r32(cg->e, RBP,
+                         GUEST_REG_OFFSET(cg->ssa_slot_guest_reg[use1_slot]),
+                         cg_reg_alloc_hosts[use1_slot]);
+        cg->ssa_slot_dirty[use1_slot] = false;
+    }
+
+    // --- Operand reloads (slot value mismatch) ---
     if ((need_use0 || is_store) && cg->ssa_slot_value[use0_slot] != use0_v) {
         if (use0_reg == 0) emit_xor_r32_r32(cg->e, src0_h, src0_h);
         else emit_mov_r32_m32(cg->e, src0_h, RBP, GUEST_REG_OFFSET(use0_reg));
         cg->ssa_slot_value[use0_slot] = use0_v;
+        cg->ssa_slot_guest_reg[use0_slot] = use0_reg;
+        cg->ssa_slot_dirty[use0_slot] = false;
     }
     if (need_use1 && cg->ssa_slot_value[use1_slot] != use1_v) {
         if (use1_reg == 0) emit_xor_r32_r32(cg->e, src1_h, src1_h);
         else emit_mov_r32_m32(cg->e, src1_h, RBP, GUEST_REG_OFFSET(use1_reg));
         cg->ssa_slot_value[use1_slot] = use1_v;
+        cg->ssa_slot_guest_reg[use1_slot] = use1_reg;
+        cg->ssa_slot_dirty[use1_slot] = false;
     }
 
     if (is_alu_rr) {
@@ -1969,9 +2104,12 @@ static bool cg_emit_node_ssa_ra(stage5_cg_t *cg, uint32_t idx, const stage5_ir_n
     }
 
     if (def_reg == 0) return true;
-    emit_mov_m32_r32(cg->e, RBP, GUEST_REG_OFFSET(def_reg), dst_h);
+    // Value lives in host register — NO store to memory here.
+    // Dirty spill for slot reuse already happened above (before computation).
+    // Writeback happens at region exit (live-outs) or before helper calls.
     cg->ssa_slot_value[def_slot] = def_v;
-    cg_mark_dirty(cg, def_reg);
+    cg->ssa_slot_dirty[def_slot] = true;
+    cg->ssa_slot_guest_reg[def_slot] = def_reg;
     return true;
 }
 
@@ -3561,6 +3699,44 @@ bool stage5_codegen(translate_ctx_t *ctx,
         // Flush pending state, then reset stage4-style cache mappings.
         reg_cache_flush_for_codegen(ctx);
         cg_clear_reg_cache_state(&cg);
+
+        if (cg_codegen_trace_enabled()) {
+            fprintf(stderr, "[stage5-ra-entry] pc=0x%08X values=%u intervals=%u spills=%u\n",
+                    guest_pc, cg.ssa->value_count, cg.ra_plan->interval_count,
+                    cg.ra_plan->spilled_count);
+            for (uint16_t v = 1; v <= cg.ssa->value_count && v < STAGE5_SSA_MAX_VALUES; v++) {
+                int8_t sl = cg.ssa_value_slot[v];
+                fprintf(stderr, "  v%u -> slot %d\n", v, sl);
+            }
+            for (uint32_t ni = 0; ni < region->ir_count; ni++) {
+                const stage5_ir_node_t *nn = &region->ir[ni];
+                if (nn->synthetic) continue;
+                fprintf(stderr, "  ir[%u] op=0x%02X rd=r%u rs1=r%u rs2=r%u imm=%d"
+                        " def_v=%u use0_v=%u(%s,g%u) use1_v=%u(%s,g%u)\n",
+                        ni, nn->opcode, nn->rd, nn->rs1, nn->rs2, nn->imm,
+                        cg.ssa->node_def_value[ni],
+                        cg.ssa->node_use0_value[ni],
+                        cg.ssa->node_use0_valid[ni] ? "Y" : "N",
+                        cg.ssa->node_use0_reg[ni],
+                        cg.ssa->node_use1_value[ni],
+                        cg.ssa->node_use1_valid[ni] ? "Y" : "N",
+                        cg.ssa->node_use1_reg[ni]);
+            }
+        }
+
+        // Load live-in values into RA-assigned host registers.
+        cg_ssa_ra_load_live_ins(&cg);
+
+        if (cg_codegen_trace_enabled()) {
+            fprintf(stderr, "[stage5-ra-loaded] pc=0x%08X:", guest_pc);
+            for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+                if (cg.ssa_slot_value[s] != 0) {
+                    fprintf(stderr, " s%d=v%u(g%u)", s, cg.ssa_slot_value[s],
+                            cg.ssa_slot_guest_reg[s]);
+                }
+            }
+            fprintf(stderr, "\n");
+        }
     }
 
     // ========================================================================
@@ -3687,20 +3863,25 @@ bool stage5_codegen(translate_ctx_t *ctx,
 
         bool emitted = false;
         if (cg.ra_plan) {
-            cg_flush_pending(&cg);
+            // SSA/RA path — no Stage 4 fallback.  If this can't handle
+            // the opcode the region fails entirely.
             emitted = cg_emit_node_ssa_ra(&cg, i, n);
-        }
-        if (!emitted) {
-            cg_ssa_invalidate_slots(&cg);
+            if (!emitted) {
+                stage5_codegen_fallback++;
+                stage5_codegen_fallback_emit_node++;
+                if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
+                cg_state_restore(ctx, &saved);
+                return false;
+            }
+        } else {
             emitted = cg_emit_node(&cg, n);
-        }
-        if (!emitted) {
-            // Unsupported instruction — abort
-            stage5_codegen_fallback++;
-            stage5_codegen_fallback_emit_node++;
-            if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
-            cg_state_restore(ctx, &saved);
-            return false;
+            if (!emitted) {
+                stage5_codegen_fallback++;
+                stage5_codegen_fallback_emit_node++;
+                if (predicate_native_active) stage5_codegen_boolpair_native_fallback++;
+                cg_state_restore(ctx, &saved);
+                return false;
+            }
         }
         cg.emitted_insts++;
     }
@@ -3708,6 +3889,24 @@ bool stage5_codegen(translate_ctx_t *ctx,
     // ========================================================================
     // Phase 2: Emit terminal
     // ========================================================================
+
+    // Store all dirty live-out values back to guest register memory.
+    // This satisfies the register file contract at the region boundary.
+    if (cg.ra_plan) {
+        if (cg_codegen_trace_enabled()) {
+            fprintf(stderr, "[stage5-ra-exit] pc=0x%08X slots:", guest_pc);
+            for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+                if (cg.ssa_slot_dirty[s] && cg.ssa_slot_guest_reg[s] > 0) {
+                    fprintf(stderr, " s%d=g%u(dirty)", s, cg.ssa_slot_guest_reg[s]);
+                } else if (cg.ssa_slot_value[s] != 0) {
+                    fprintf(stderr, " s%d=v%u(clean,g%u)", s, cg.ssa_slot_value[s],
+                            cg.ssa_slot_guest_reg[s]);
+                }
+            }
+            fprintf(stderr, "\n");
+        }
+        cg_ssa_ra_store_live_outs(&cg);
+    }
 
     bool ended = false;
 
