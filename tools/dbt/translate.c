@@ -3709,6 +3709,8 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     bool side_exit_call_guard = stage5_region_side_exit_call_guard_needed(
         &region, &side_exit_guard_has_jal, &side_exit_guard_has_jalr,
         &side_exit_call_guard_after_only);
+    bool side_exit_call_guard_effective =
+        side_exit_call_guard && !side_exit_call_guard_after_only;
     bool side_exit_emit_enabled = stage5_side_exit_emit_enabled();
     stage5_side_exit_family_cfg_t side_exit_family_cfg = stage5_side_exit_family_cfg();
     if (region.side_exit_count > 0) {
@@ -3729,7 +3731,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
             }
             if (!side_exit_emit_enabled) {
                 stage5_emit_region_side_exit_disabled++;
-            } else if (side_exit_call_guard) {
+            } else if (side_exit_call_guard_effective) {
                 stage5_emit_region_side_exit_call_guard++;
                 if (side_exit_guard_has_jal) stage5_emit_region_side_exit_call_guard_jal++;
                 if (side_exit_guard_has_jalr) stage5_emit_region_side_exit_call_guard_jalr++;
@@ -3740,7 +3742,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
     }
     stage5_trace_side_exit_policy(guest_pc, emitted_pattern, &region,
                                   side_exit_emit_enabled, side_exit_owned,
-                                  side_exit_call_guard);
+                                  side_exit_call_guard_effective);
 
     bool allow_small_direct_branch =
         stage5_pattern_is_direct_branch(emitted_pattern) &&
@@ -3750,7 +3752,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         region.side_exit_count > 0 &&
         side_exit_emit_enabled &&
         side_exit_owned &&
-        !side_exit_call_guard;
+        !side_exit_call_guard_effective;
     bool allow_jal_call =
         emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_SHORT ||
         emitted_pattern == STAGE5_BURG_PATTERN_JAL_CALL_LONG;
@@ -3812,7 +3814,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         return false;
     }
 
-    if ((!side_exit_emit_enabled || !side_exit_owned || side_exit_call_guard) &&
+    if ((!side_exit_emit_enabled || !side_exit_owned || side_exit_call_guard_effective) &&
         region.side_exit_count > 0) {
         ctx->superblock_enabled = saved_superblock_enabled;
         stage5_emit_fallback++;
@@ -3820,7 +3822,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
         stage5_emit_fallback_side_exit_unowned++;
         if (!side_exit_emit_enabled) stage5_emit_fallback_side_exit_disabled++;
         if (!side_exit_owned) stage5_emit_fallback_side_exit_unsupported++;
-        if (side_exit_call_guard) {
+        if (side_exit_call_guard_effective) {
             stage5_emit_fallback_side_exit_call_guard++;
             if (side_exit_guard_has_jal) stage5_emit_fallback_side_exit_call_guard_jal++;
             if (side_exit_guard_has_jalr) stage5_emit_fallback_side_exit_call_guard_jalr++;
