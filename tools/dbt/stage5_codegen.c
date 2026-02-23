@@ -135,8 +135,8 @@ static x64_reg_t cg_resolve_val(stage5_cg_t *cg, uint16_t v, x64_reg_t scratch) 
 // If the slot held a different dirty value, flush it first.
 static void cg_mark_dst(stage5_cg_t *cg, const lir_node_t *l, x64_reg_t dst_h, int8_t dst_slot) {
     if (l->dst_v == 0) return;
+    uint8_t gpr = cg->ssa->value_to_reg[l->dst_v];
     if (dst_slot >= 0) {
-        uint8_t gpr = cg->ssa->value_to_reg[l->dst_v];
         // Invalidate any OTHER dirty slot mapping to the same guest register.
         // Without this, cg_sync_all could write a stale earlier definition
         // AFTER the latest one (higher slot number wins), corrupting the result.
@@ -152,8 +152,16 @@ static void cg_mark_dst(stage5_cg_t *cg, const lir_node_t *l, x64_reg_t dst_h, i
         cg->ssa_slot_dirty[dst_slot] = true;
         cg->ssa_slot_guest_reg[dst_slot] = gpr;
     } else {
-        uint8_t gpr = cg->ssa->value_to_reg[l->dst_v];
-        if (gpr != 0) emit_mov_m32_r32(cg->e, RBP, GUEST_REG_OFFSET(gpr), dst_h);
+        // Spilled destination writes guest memory directly; any dirty slot
+        // still aliasing this guest register is now stale and must be killed.
+        if (gpr != 0) {
+            for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+                if (cg->ssa_slot_dirty[s] && cg->ssa_slot_guest_reg[s] == gpr) {
+                    cg->ssa_slot_guest_reg[s] = 0;
+                }
+            }
+            emit_mov_m32_r32(cg->e, RBP, GUEST_REG_OFFSET(gpr), dst_h);
+        }
     }
 }
 
