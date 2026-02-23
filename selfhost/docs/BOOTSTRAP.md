@@ -606,7 +606,7 @@ Layer E is where the compiler stops being "Subset C" and becomes "C." Expect thi
 
 - **Verification:**
 
-  - Compile and run MY-BASIC, SLOW BASIC, or another complex workload that uses unions, varargs, and function pointers.
+  - Compile and run SLOW BASIC, or another complex workload that uses unions, varargs, and function pointers.
   - Rebuild the toolchain using the new compiler and compare against LLVM-built binaries for behavioral parity.
   - Expand the regression suite to include headers and libc functions that were previously out-of-scope.
 
@@ -784,7 +784,7 @@ Option 3 is probably the right balance. The exact split depends on what the subs
 
 ### On the Full Emulator
 
-The Stage 0 emulator is deliberately austere — enough for Forth and the subset C toolchain, nothing more. Full C programs (SLOW BASIC, MY-BASIC, anything with floating point or complex I/O) still need a richer emulator: complete MMIO coverage, floating point instruction semantics, robust memory management, debugging features. That work no longer has its own numbered stage, but it remains a **Stage 13/14 deliverable**. Treat emulator upgrades as part of "full C bring-up" exit criteria.
+The Stage 0 emulator is deliberately austere — enough for Forth and the subset C toolchain, nothing more. Full C programs (SLOW BASIC, anything with floating point or complex I/O) still need a richer emulator: complete MMIO coverage, floating point instruction semantics, robust memory management, debugging features. That work no longer has its own numbered stage, but it remains a **Stage 13/14 deliverable**. Treat emulator upgrades as part of "full C bring-up" exit criteria.
 
 The simplest path is enhancing `s32-emu.c` on the host. It grows from ~780 to ~1,500 lines but remains auditable. The ambitious path is building a SLOW-32 emulator in C, compiled by the self-hosted toolchain, running on Stage 0 (metacircular emulation). Slow, but it proves the toolchain handles non-trivial code. And if the full C toolchain can compile a DBT (dynamic binary translator) — SLOW-32 translating SLOW-32 blocks to... SLOW-32 blocks with optimized dispatch — that's a serious validation of the compiler's capability, even if the performance story is ironic.
 

@@ -2,7 +2,7 @@
 
 ## Context
 
-MY-BASIC (basic/) served its purpose — it found the JALR eviction bug — but it's someone else's dialect. I wanted a custom BASIC that feels like the BASICs they grew up with (CoCo, GWBASIC, QuickBASIC, Business BASIC): recursive-descent parser, no line numbers, labels, real SUB/FUNCTION, optional LET, DATA/READ, stronger typing. SLOW-32 can't do SOUND/COLOR/DRAW, but it has full file I/O, floating-point, and plenty of memory for an interpreter.
+I wanted a custom BASIC that feels like the BASICs they grew up with (CoCo, GWBASIC, QuickBASIC, Business BASIC): recursive-descent parser, no line numbers, labels, real SUB/FUNCTION, optional LET, DATA/READ, stronger typing. SLOW-32 can't do SOUND/COLOR/DRAW, but it has full file I/O, floating-point, and plenty of memory for an interpreter.
 
 **Name**: SLOW BASIC
 **Directory**: `sbasic/` (parallel to `forth/`)
