@@ -1866,6 +1866,8 @@ int main(int argc, char **argv) {
     bool disassemble_offenders = false;
     uint32_t dump_pc = 0;
     int stage = 4;
+    const char *stage_env = getenv("DBT_STAGE");
+    if (stage_env) stage = atoi(stage_env);
     const char *filename = NULL;
     dbt_probe_state_t probe = {0};
     probe.probe_interval_sec = 1;
