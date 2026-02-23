@@ -108,6 +108,12 @@ static bool is_mir_cmp(mir_op_t op) {
     return op >= MIR_OP_CMP_EQ && op <= MIR_OP_CMP_LEU;
 }
 
+// Check if an SSA value is known to be zero: either hardware r0 (value 0)
+// or a compile-time constant with value 0.
+static bool is_known_zero(uint16_t v, const stage5_ssa_overlay_t *ssa) {
+    return v == 0 || (ssa->value_is_const[v] && ssa->value_const_val[v] == 0);
+}
+
 // Compute fused x86 JCC condition code from a CMP guest opcode and branch type.
 // The CMP determines the comparison (e.g. SLT → JL), and the branch type
 // determines polarity (BNE = branch if TRUE, BEQ = branch if FALSE → invert).
@@ -326,12 +332,13 @@ bool stage5_burg_lower(const stage5_mir_t *mir, const stage5_ssa_overlay_t *ssa,
                 uint8_t br_opcode = m->guest_opcode;
                 bool is_beq_bne = (br_opcode == 0x48 || br_opcode == 0x49);
 
-                // Identify the condition value when one branch operand is r0
+                // Identify the condition value when one branch operand is zero
+                // (hardware r0 OR any SSA constant known to be 0)
                 uint16_t cond_v = 0;
                 if (is_beq_bne) {
-                    if (m->src_v[1] == 0 && m->src_v[0] != 0)
+                    if (is_known_zero(m->src_v[1], ssa) && !is_known_zero(m->src_v[0], ssa))
                         cond_v = m->src_v[0];
-                    else if (m->src_v[0] == 0 && m->src_v[1] != 0)
+                    else if (is_known_zero(m->src_v[0], ssa) && !is_known_zero(m->src_v[1], ssa))
                         cond_v = m->src_v[1];
                 }
 
