@@ -11,16 +11,7 @@ uint64_t stage5_ra_intervals_total;
 uint64_t stage5_ra_spills_total;
 
 bool stage5_ra_enabled(void) {
-    static bool inited = false;
-    static bool enabled = true;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_RA");
-        if (v && v[0] != '\0') {
-            enabled = (strcmp(v, "0") != 0);
-        }
-        inited = true;
-    }
-    return enabled;
+    return true;
 }
 
 static int cmp_interval_start(const void *a, const void *b) {

@@ -78,296 +78,102 @@ uint64_t stage5_codegen_native_loads;
 uint64_t stage5_codegen_native_stores;
 uint64_t stage5_codegen_dce_skipped;
 
-static bool cg_env_flag_enabled(const char *name, bool default_enabled) {
-    const char *v = getenv(name);
-    if (!v || v[0] == '\0') {
-        return default_enabled;
-    }
-    return strcmp(v, "0") != 0;
-}
-
 static bool cg_cmp_rr_enabled(void) {
-    static bool inited = false;
-    static bool enabled = true;
-    if (!inited) {
-        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_CMP_RR", true);
-        inited = true;
-    }
-    return enabled;
+    return true;
 }
 
 static bool cg_cmp_ri_enabled(void) {
-    static bool inited = false;
-    static bool enabled = true;
-    if (!inited) {
-        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_CMP_RI", true);
-        inited = true;
-    }
-    return enabled;
+    return true;
 }
 
 static bool cg_fused_branch_enabled(void) {
-    static bool inited = false;
-    static bool enabled = true;
-    if (!inited) {
-        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_FUSED_BRANCH", true);
-        inited = true;
-    }
-    return enabled;
+    return true;
 }
 
 static bool cg_branch_term_enabled(void) {
-    static bool inited = false;
-    static bool enabled = true;
-    if (!inited) {
-        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_TERM", true);
-        inited = true;
-    }
-    return enabled;
+    return true;
 }
 
 static bool cg_branch_cmp_mix_enabled(void) {
-    static bool inited = false;
-    static bool enabled = true;
-    if (!inited) {
-        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX", true);
-        inited = true;
-    }
-    return enabled;
+    return true;
 }
 
 static bool cg_branch_cmp_mix_slt_enabled(void) {
-    static bool inited = false;
-    static bool enabled = true;
-    if (!inited) {
-        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX_SLT", true);
-        inited = true;
-    }
-    return enabled;
+    return true;
 }
 
 static bool cg_branch_cmp_mix_slti_enabled(void) {
-    static bool inited = false;
-    static bool enabled = true;
-    if (!inited) {
-        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX_SLTI", true);
-        inited = true;
-    }
-    return enabled;
+    return true;
 }
 
 static bool cg_branch_cmp_mix_sltiu_enabled(void) {
-    static bool inited = false;
-    static bool enabled = true;
-    if (!inited) {
-        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX_SLTIU", true);
-        inited = true;
-    }
-    return enabled;
+    return true;
 }
 
 static bool cg_branch_cmp_mix_unsigned_rr_enabled(void) {
-    static bool inited = false;
-    static bool enabled = true;
-    if (!inited) {
-        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_BRANCH_CMP_MIX_UNSIGNED_RR", true);
-        inited = true;
-    }
-    return enabled;
+    return true;
 }
 
 static bool cg_side_exit_enabled(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_SIDE_EXIT");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
+    return true;
 }
 
 static bool cg_boolpair_native_enabled(void) {
-    static bool inited = false;
-    static bool enabled = true;
-    if (!inited) {
-        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_BOOLPAIR_NATIVE", true);
-        inited = true;
-    }
-    return enabled;
+    return true;
 }
 
 static bool cg_predicate_native_enabled(void) {
-    static bool inited = false;
-    static bool enabled = true;
-    if (!inited) {
-        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_PREDICATE_NATIVE", true);
-        inited = true;
-    }
-    return enabled;
+    return true;
 }
 
 static bool cg_allow_cmpdep_side_exit(void) {
-    static bool inited = false;
-    static bool enabled = true;
-    if (!inited) {
-        enabled = cg_env_flag_enabled("SLOW32_DBT_STAGE5_CODEGEN_ALLOW_CMPDEP_SIDE_EXIT", true);
-        inited = true;
-    }
-    return enabled;
+    return true;
 }
 
 static bool cg_allow_cmpdep_side_exit_loads(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_ALLOW_CMPDEP_SIDE_EXIT_LOADS");
-        // Default-on once cmpdep side-exit ownership is enabled: loads are
-        // currently parity-clean, stores are still guarded separately.
-        if (!v || v[0] == '\0') {
-            enabled = true;
-        } else {
-            enabled = (strcmp(v, "0") != 0);
-        }
-        inited = true;
-    }
-    return enabled;
+    return true;
 }
 
 static bool cg_allow_cmpdep_side_exit_stores(void) {
-    static bool inited = false;
-    static bool has_override = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_ALLOW_CMPDEP_SIDE_EXIT_STORES");
-        has_override = (v && v[0] != '\0');
-        enabled = (has_override && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
+    return false;
 }
 
 static bool cg_allow_cmpdep_side_exit_stores_has_override(void) {
-    static bool inited = false;
-    static bool has_override = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_ALLOW_CMPDEP_SIDE_EXIT_STORES");
-        has_override = (v && v[0] != '\0');
-        inited = true;
-    }
-    return has_override;
+    return false;
 }
 
 static bool cg_allow_cmpdep_side_exit_store_stb(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_ALLOW_CMPDEP_SIDE_EXIT_STORE_STB");
-        if (!v || v[0] == '\0') {
-            enabled = true;
-        } else {
-            enabled = (strcmp(v, "0") != 0);
-        }
-        inited = true;
-    }
-    return enabled;
+    return false;
 }
 
 static bool cg_allow_cmpdep_side_exit_store_sth(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_ALLOW_CMPDEP_SIDE_EXIT_STORE_STH");
-        if (!v || v[0] == '\0') {
-            enabled = true;
-        } else {
-            enabled = (strcmp(v, "0") != 0);
-        }
-        inited = true;
-    }
-    return enabled;
+    return false;
 }
 
 static bool cg_allow_cmpdep_side_exit_store_stw(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_ALLOW_CMPDEP_SIDE_EXIT_STORE_STW");
-        if (!v || v[0] == '\0') {
-            enabled = true;
-        } else {
-            enabled = (strcmp(v, "0") != 0);
-        }
-        inited = true;
-    }
-    return enabled;
+    return false;
 }
 
 static bool cg_boolpair_trace_enabled(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_BOOLPAIR_TRACE");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
+    return false;
 }
 
 static bool cg_boolpair_skip_pc_enabled(uint32_t guest_pc) {
-    static bool inited = false;
-    static bool has_pc = false;
-    static uint32_t skip_pc = 0;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_BOOLPAIR_SKIP_PC");
-        if (v && v[0] != '\0') {
-            char *end = NULL;
-            unsigned long p = strtoul(v, &end, 0);
-            if (end != v && *end == '\0') {
-                has_pc = true;
-                skip_pc = (uint32_t)p;
-            }
-        }
-        inited = true;
-    }
-    return has_pc && guest_pc == skip_pc;
+    (void)guest_pc;
+    return false;
 }
 
 static bool cg_codegen_trace_enabled(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_TRACE");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
+    return false;
 }
 
 static bool cg_regalloc_trace_enabled(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_TRACE_REGALLOC");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
+    return false;
 }
 
 static bool cg_regalloc_trace_pc_match(uint32_t guest_pc) {
-    static bool inited = false;
-    static bool has_pc = false;
-    static uint32_t trace_pc = 0;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_TRACE_REGALLOC_PC");
-        if (v && v[0] != '\0') {
-            trace_pc = (uint32_t)strtoul(v, NULL, 0);
-            has_pc = true;
-        }
-        inited = true;
-    }
-    return !has_pc || guest_pc == trace_pc;
+    (void)guest_pc;
+    return false;
 }
 
 static void cg_trace_regalloc(translate_ctx_t *ctx, uint32_t guest_pc) {
@@ -388,34 +194,7 @@ static void cg_trace_regalloc(translate_ctx_t *ctx, uint32_t guest_pc) {
 }
 
 static bool cg_codegen_skip_pc_enabled(uint32_t guest_pc) {
-    static bool inited = false;
-    static char spec[256];
-    static bool has_spec = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_SKIP_PC");
-        if (v && v[0] != '\0') {
-            size_t n = strlen(v);
-            if (n >= sizeof(spec)) n = sizeof(spec) - 1;
-            memcpy(spec, v, n);
-            spec[n] = '\0';
-            has_spec = true;
-        }
-        inited = true;
-    }
-    if (!has_spec) return false;
-    const char *p = spec;
-    while (*p) {
-        while (*p == ' ' || *p == '\t' || *p == ',') p++;
-        if (!*p) break;
-        char *end = NULL;
-        unsigned long x = strtoul(p, &end, 0);
-        if (end != p) {
-            if ((uint32_t)x == guest_pc) return true;
-            p = end;
-            continue;
-        }
-        while (*p && *p != ',') p++;
-    }
+    (void)guest_pc;
     return false;
 }
 
@@ -450,25 +229,11 @@ static void cg_trace_boolpair_region(const stage5_lift_region_t *region,
 }
 
 static bool cg_trace_mix_enabled(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_TRACE_MIX");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
+    return false;
 }
 
 static bool cg_predicate_branch_only_enabled(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_CODEGEN_PREDICATE_BRANCH_ONLY");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
+    return false;
 }
 
 static bool cg_pattern_is_predicate_branch(int emitted_pattern) {

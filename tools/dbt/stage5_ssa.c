@@ -15,16 +15,7 @@ uint64_t stage5_ssa_phi_edge_plans_total;
 uint64_t stage5_ssa_phi_copies_total;
 
 bool stage5_ssa_enabled(void) {
-    static bool inited = false;
-    static bool enabled = true;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_SSA");
-        if (v && v[0] != '\0') {
-            enabled = (strcmp(v, "0") != 0);
-        }
-        inited = true;
-    }
-    return enabled;
+    return true;
 }
 
 static bool stage5_ssa_opcode_uses_rs1(uint8_t op) {

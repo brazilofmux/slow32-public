@@ -212,57 +212,19 @@ static bool is_terminal_cf_opcode(uint8_t opcode) {
 }
 
 static bool stage5_lift_trace_stitch_taken_branch_enabled(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_TRACE_STITCH_BRANCH_TAKEN");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
+    return true;
 }
 
 static uint32_t stage5_lift_trace_stitch_max_taken_branches(void) {
-    static bool inited = false;
-    static uint32_t max_taken = 8;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_TRACE_STITCH_MAX_TAKEN_BRANCHES");
-        if (v && v[0] != '\0') {
-            uint32_t parsed = (uint32_t)strtoul(v, NULL, 0);
-            if (parsed > 0 && parsed <= 32) {
-                max_taken = parsed;
-            }
-        }
-        inited = true;
-    }
-    return max_taken;
+    return 8;
 }
 
 static bool stage5_lift_trace_stitch_enabled(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_TRACE_STITCH");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
+    return true;
 }
 
 static uint32_t stage5_lift_trace_stitch_max_jumps(void) {
-    static bool inited = false;
-    static uint32_t max_jumps = 4;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_TRACE_STITCH_MAX_JUMPS");
-        if (v && v[0] != '\0') {
-            uint32_t parsed = (uint32_t)strtoul(v, NULL, 0);
-            if (parsed > 0 && parsed <= 32) {
-                max_jumps = parsed;
-            }
-        }
-        inited = true;
-    }
-    return max_jumps;
+    return 4;
 }
 
 static inline uint32_t reg_mask(uint8_t reg) {

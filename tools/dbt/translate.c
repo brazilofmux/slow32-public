@@ -211,259 +211,25 @@ static inline void flush_pending_write(translate_ctx_t *ctx);
 static inline void flush_pending_cond(translate_ctx_t *ctx);
 static void stage5_retry_note_success(int retry_choice);
 
-static bool stage5_validate_lift_enabled(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_VALIDATE_LIFT");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
-}
-
-static bool stage5_emit_calls_enabled(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_EMIT_CALLS");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
-}
-
-static bool stage5_native_call_return_enabled(void) {
-    static bool inited = false;
-    static bool enabled = true;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_NATIVE_CALL_RETURN");
-        if (v && v[0] != '\0') {
-            enabled = (strcmp(v, "0") != 0);
-        }
-        inited = true;
-    }
-    return enabled;
-}
-
-static bool stage5_legacy_superblock_policy_enabled(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_LEGACY_SUPERBLOCK_POLICY");
-        if (v && v[0] != '\0') {
-            enabled = (strcmp(v, "0") != 0);
-        }
-        inited = true;
-    }
-    return enabled;
-}
-
-static bool stage5_bench_profile_enabled(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_PROFILE");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
-}
-
-static uint32_t stage5_bench_max_jal_jump_ginst(void) {
-    static bool inited = false;
-    static uint32_t limit = MAX_BLOCK_INSTS;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_MAX_JAL_JUMP_GINST");
-        if (v && v[0] != '\0') {
-            unsigned long x = strtoul(v, NULL, 0);
-            if (x > 0 && x <= MAX_BLOCK_INSTS) limit = (uint32_t)x;
-        }
-        inited = true;
-    }
-    return limit;
-}
-
-static uint32_t stage5_bench_max_direct_branch_ginst(void) {
-    static bool inited = false;
-    static uint32_t limit = MAX_BLOCK_INSTS;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_MAX_DIRECT_BRANCH_GINST");
-        if (v && v[0] != '\0') {
-            unsigned long x = strtoul(v, NULL, 0);
-            if (x > 0 && x <= MAX_BLOCK_INSTS) limit = (uint32_t)x;
-        }
-        inited = true;
-    }
-    return limit;
-}
-
-static uint32_t stage5_bench_max_jal_call_ginst(void) {
-    static bool inited = false;
-    static uint32_t limit = MAX_BLOCK_INSTS;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_MAX_JAL_CALL_GINST");
-        if (v && v[0] != '\0') {
-            unsigned long x = strtoul(v, NULL, 0);
-            if (x > 0 && x <= MAX_BLOCK_INSTS) limit = (uint32_t)x;
-        }
-        inited = true;
-    }
-    return limit;
-}
-
-static uint32_t stage5_bench_max_jal_call_long_ginst(void) {
-    static bool inited = false;
-    static uint32_t limit = MAX_BLOCK_INSTS;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_MAX_JAL_CALL_LONG_GINST");
-        if (v && v[0] != '\0') {
-            unsigned long x = strtoul(v, NULL, 0);
-            if (x <= MAX_BLOCK_INSTS) limit = (uint32_t)x;
-        }
-        inited = true;
-    }
-    return limit;
-}
-
-static uint32_t stage5_bench_max_jalr_ret_short_ginst(void) {
-    static bool inited = false;
-    static uint32_t limit = MAX_BLOCK_INSTS;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_MAX_JALR_RET_SHORT_GINST");
-        if (v && v[0] != '\0') {
-            unsigned long x = strtoul(v, NULL, 0);
-            if (x <= MAX_BLOCK_INSTS) limit = (uint32_t)x;
-        }
-        inited = true;
-    }
-    return limit;
-}
-
-static uint32_t stage5_bench_max_jalr_ret_long_ginst(void) {
-    static bool inited = false;
-    static uint32_t limit = MAX_BLOCK_INSTS;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_MAX_JALR_RET_LONG_GINST");
-        if (v && v[0] != '\0') {
-            unsigned long x = strtoul(v, NULL, 0);
-            if (x <= MAX_BLOCK_INSTS) limit = (uint32_t)x;
-        }
-        inited = true;
-    }
-    return limit;
-}
-
-static uint32_t stage5_bench_max_block_end_ginst(void) {
-    static bool inited = false;
-    static uint32_t limit = MAX_BLOCK_INSTS;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_MAX_BLOCK_END_GINST");
-        if (v && v[0] != '\0') {
-            unsigned long x = strtoul(v, NULL, 0);
-            if (x > 0 && x <= MAX_BLOCK_INSTS) limit = (uint32_t)x;
-        }
-        inited = true;
-    }
-    return limit;
-}
-
-static bool stage5_bench_jal_jump_backedge_guard_enabled(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_BENCH_GUARD_JAL_JUMP_BACKEDGE");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
-}
-
-static uint32_t stage5_emit_regflow_cross_limit(void) {
-    static bool inited = false;
-    static uint32_t limit = 10;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_REGFLOW_MAX_CROSS");
-        if (v && v[0] != '\0') {
-            unsigned long x = strtoul(v, NULL, 0);
-            if (x < 32ul) limit = (uint32_t)x;
-        }
-        inited = true;
-    }
-    return limit;
-}
-
-static uint32_t stage5_emit_regflow_span_limit(void) {
-    static bool inited = false;
-    static uint32_t limit = 24;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_REGFLOW_MAX_SPAN");
-        if (v && v[0] != '\0') {
-            unsigned long x = strtoul(v, NULL, 0);
-            if (x <= MAX_BLOCK_INSTS) limit = (uint32_t)x;
-        }
-        inited = true;
-    }
-    return limit;
-}
-
-static uint32_t stage5_emit_regflow_live_limit(void) {
-    static bool inited = false;
-    static uint32_t limit = 10;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_REGFLOW_MAX_LIVE");
-        if (v && v[0] != '\0') {
-            unsigned long x = strtoul(v, NULL, 0);
-            if (x < 32ul) limit = (uint32_t)x;
-        }
-        inited = true;
-    }
-    return limit;
-}
-
-static uint32_t stage5_lift_budget_base(void) {
-    static bool inited = false;
-    static uint32_t limit = 64;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_LIFT_BUDGET_BASE");
-        if (v && v[0] != '\0') {
-            unsigned long x = strtoul(v, NULL, 0);
-            if (x >= 2 && x <= MAX_BLOCK_INSTS) limit = (uint32_t)x;
-        }
-        if (limit > MAX_BLOCK_INSTS) limit = MAX_BLOCK_INSTS;
-        inited = true;
-    }
-    return limit;
-}
-
-static uint32_t stage5_lift_budget_hot(void) {
-    static bool inited = false;
-    static uint32_t limit = MAX_BLOCK_INSTS;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_LIFT_BUDGET_HOT");
-        if (v && v[0] != '\0') {
-            unsigned long x = strtoul(v, NULL, 0);
-            if (x >= 2 && x <= MAX_BLOCK_INSTS) limit = (uint32_t)x;
-        }
-        if (limit > MAX_BLOCK_INSTS) limit = MAX_BLOCK_INSTS;
-        inited = true;
-    }
-    return limit;
-}
-
-static uint32_t stage5_lift_hot_threshold(void) {
-    static bool inited = false;
-    static uint32_t threshold = 256;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_LIFT_HOT_THRESHOLD");
-        if (v && v[0] != '\0') {
-            unsigned long x = strtoul(v, NULL, 0);
-            threshold = (uint32_t)x;
-        }
-        inited = true;
-    }
-    return threshold;
-}
+static bool stage5_validate_lift_enabled(void) { return false; }
+static bool stage5_emit_calls_enabled(void) { return false; }
+static bool stage5_native_call_return_enabled(void) { return true; }
+static bool stage5_legacy_superblock_policy_enabled(void) { return false; }
+static bool stage5_bench_profile_enabled(void) { return true; }
+static uint32_t stage5_bench_max_jal_jump_ginst(void) { return MAX_BLOCK_INSTS; }
+static uint32_t stage5_bench_max_direct_branch_ginst(void) { return MAX_BLOCK_INSTS; }
+static uint32_t stage5_bench_max_jal_call_ginst(void) { return MAX_BLOCK_INSTS; }
+static uint32_t stage5_bench_max_jal_call_long_ginst(void) { return MAX_BLOCK_INSTS; }
+static uint32_t stage5_bench_max_jalr_ret_short_ginst(void) { return MAX_BLOCK_INSTS; }
+static uint32_t stage5_bench_max_jalr_ret_long_ginst(void) { return MAX_BLOCK_INSTS; }
+static uint32_t stage5_bench_max_block_end_ginst(void) { return MAX_BLOCK_INSTS; }
+static bool stage5_bench_jal_jump_backedge_guard_enabled(void) { return false; }
+static uint32_t stage5_emit_regflow_cross_limit(void) { return 10; }
+static uint32_t stage5_emit_regflow_span_limit(void) { return 24; }
+static uint32_t stage5_emit_regflow_live_limit(void) { return 10; }
+static uint32_t stage5_lift_budget_base(void) { return 64; }
+static uint32_t stage5_lift_budget_hot(void) { return MAX_BLOCK_INSTS; }
+static uint32_t stage5_lift_hot_threshold(void) { return 256; }
 
 static uint32_t stage5_pick_lift_budget(translate_ctx_t *ctx, uint32_t guest_pc) {
     uint32_t base = stage5_lift_budget_base();
@@ -570,31 +336,8 @@ static int stage5_retry_base_priority(int retry_choice) {
     return 0;
 }
 
-static uint32_t stage5_retry_explore_period(void) {
-    static bool inited = false;
-    static uint32_t period = 16; // 0 disables exploration
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_RETRY_EXPLORE_EVERY");
-        if (v && v[0] != '\0') {
-            period = (uint32_t)strtoul(v, NULL, 0);
-        }
-        inited = true;
-    }
-    return period;
-}
-
-static uint32_t stage5_retry_decay_period(void) {
-    static bool inited = false;
-    static uint32_t period = 64; // 0 disables decay
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_RETRY_DECAY_EVERY");
-        if (v && v[0] != '\0') {
-            period = (uint32_t)strtoul(v, NULL, 0);
-        }
-        inited = true;
-    }
-    return period;
-}
+static uint32_t stage5_retry_explore_period(void) { return 16; }
+static uint32_t stage5_retry_decay_period(void) { return 64; }
 
 static inline uint32_t *stage5_retry_recent_attempted_ptr(int retry_choice) {
     if (retry_choice == 1) return &stage5_emit_regflow_retry_recent_cfg_attempted;
@@ -755,38 +498,11 @@ static void stage5_adapt_retry_order(uint32_t *budgets, int *choices, int count)
 }
 
 static bool stage5_validate_abort_on_mismatch(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_VALIDATE_ABORT");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
+    return false;
 }
 
-static bool stage5_validate_trace_skip_call_enabled(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_VALIDATE_TRACE_SKIP_CALL");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
-}
-
-static int stage5_validate_trace_skip_call_budget(void) {
-    static bool inited = false;
-    static int budget = 0;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_VALIDATE_TRACE_SKIP_CALL_MAX");
-        budget = (v && v[0] != '\0') ? atoi(v) : 16;
-        if (budget < 0) budget = 0;
-        inited = true;
-    }
-    return budget;
-}
+static bool stage5_validate_trace_skip_call_enabled(void) { return false; }
+static int stage5_validate_trace_skip_call_budget(void) { return 0; }
 
 static void stage5_validate_trace_skip_call(const stage5_lift_region_t *region,
                                             const stage5_ir_node_t *node,
@@ -1452,52 +1168,15 @@ static void stage5_record_cfg_metrics(const stage5_lift_region_t *region) {
 }
 
 // Stage5 side-exit emission is off by default.
-// Enable for experiments with: SLOW32_DBT_STAGE5_SIDE_EXIT=1
-static bool stage5_side_exit_emit_enabled(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_SIDE_EXIT");
-        if (!v || v[0] == '\0') {
-            // Backward-compatible alias used by older local benchmark scripts.
-            v = getenv("SLOW32_DBT_STAGE5_SIDE_EXIT_EMIT");
-        }
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
-}
+static bool stage5_side_exit_emit_enabled(void) { return true; }
 
 static bool stage5_codegen_enabled(void) {
     // Stage 5 codegen is always on — no more gates.
     return true;
 }
 
-static bool dbt_nop_compact_enabled(void) {
-    static bool inited = false;
-    static bool enabled = true;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_NO_NOP_COMPACT");
-        if (v && v[0] != '\0' && strcmp(v, "0") != 0) {
-            enabled = false;
-        }
-        inited = true;
-    }
-    return enabled;
-}
-
-static bool dbt_peephole_jcc_fold_enabled(void) {
-    static bool inited = false;
-    static bool enabled = true;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_NO_PEEPHOLE_JCC");
-        if (v && v[0] != '\0' && strcmp(v, "0") != 0) {
-            enabled = false;
-        }
-        inited = true;
-    }
-    return enabled;
-}
+static bool dbt_nop_compact_enabled(void) { return true; }
+static bool dbt_peephole_jcc_fold_enabled(void) { return true; }
 
 typedef enum {
     STAGE5_SIDE_EXIT_MODE_EQNE = 0,    // BEQ/BNE
@@ -1512,58 +1191,12 @@ typedef enum {
     STAGE5_SIDE_EXIT_UNSIGNED_BGEU = 3
 } stage5_side_exit_unsigned_mode_t;
 
-static stage5_side_exit_mode_t stage5_side_exit_mode(void) {
-    static bool inited = false;
-    static stage5_side_exit_mode_t mode = STAGE5_SIDE_EXIT_MODE_EQNE;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_SIDE_EXIT_MODE");
-        if (v) {
-            if (strcmp(v, "eqne") == 0) {
-                mode = STAGE5_SIDE_EXIT_MODE_EQNE;
-            } else if (strcmp(v, "eqne_u") == 0) {
-                mode = STAGE5_SIDE_EXIT_MODE_EQNE_U;
-            } else if (strcmp(v, "all") == 0) {
-                mode = STAGE5_SIDE_EXIT_MODE_ALL;
-            }
-        }
-        inited = true;
-    }
-    return mode;
-}
-
-static stage5_side_exit_unsigned_mode_t stage5_side_exit_unsigned_mode(void) {
-    static bool inited = false;
-    static stage5_side_exit_unsigned_mode_t mode = STAGE5_SIDE_EXIT_UNSIGNED_BOTH;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_SIDE_EXIT_UNSIGNED");
-        if (v) {
-            if (strcmp(v, "none") == 0) {
-                mode = STAGE5_SIDE_EXIT_UNSIGNED_NONE;
-            } else if (strcmp(v, "bltu") == 0) {
-                mode = STAGE5_SIDE_EXIT_UNSIGNED_BLTU;
-            } else if (strcmp(v, "bgeu") == 0) {
-                mode = STAGE5_SIDE_EXIT_UNSIGNED_BGEU;
-            } else {
-                mode = STAGE5_SIDE_EXIT_UNSIGNED_BOTH;
-            }
-        }
-        inited = true;
-    }
-    return mode;
-}
+static stage5_side_exit_mode_t stage5_side_exit_mode(void) { return STAGE5_SIDE_EXIT_MODE_ALL; }
+static stage5_side_exit_unsigned_mode_t stage5_side_exit_unsigned_mode(void) { return STAGE5_SIDE_EXIT_UNSIGNED_BOTH; }
 
 static inline bool stage5_side_exit_opcode_supported(uint8_t opcode);
 
-static bool stage5_side_exit_trace_enabled(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_TRACE_SIDE_EXIT");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
-}
+static bool stage5_side_exit_trace_enabled(void) { return false; }
 
 typedef struct {
     bool family_b;
@@ -1571,55 +1204,9 @@ typedef struct {
 } stage5_side_exit_family_cfg_t;
 
 static stage5_side_exit_family_cfg_t stage5_side_exit_family_cfg(void) {
-    static bool inited = false;
-    static stage5_side_exit_family_cfg_t cfg;
-    static bool allow_unsafe_family_b = false;
-    if (!inited) {
-        cfg.family_b = false;
-        cfg.family_c = true;
-        const char *unsafe = getenv("SLOW32_DBT_STAGE5_ALLOW_UNSAFE_FAMILY_B");
-        allow_unsafe_family_b = (unsafe && unsafe[0] != '\0' && strcmp(unsafe, "0") != 0);
-        const char *v = getenv("SLOW32_DBT_STAGE5_SIDE_EXIT_FAMILY");
-        if (v && v[0] != '\0') {
-            cfg.family_b = false;
-            cfg.family_c = false;
-            for (const char *p = v; *p; p++) {
-                if (*p == 'b' || *p == 'B') cfg.family_b = true;
-                if (*p == 'c' || *p == 'C') cfg.family_c = true;
-            }
-        }
-        // Guardrail: Family-B-only mode is currently unstable on some inputs
-        // (e.g. strtod). Keep Family-C active so branch ownership remains safe.
-        if (!allow_unsafe_family_b && cfg.family_b && !cfg.family_c) {
-            cfg.family_c = true;
-            stage5_emit_side_exit_forced_family_c_b_only++;
-        }
-        // Guardrail: unsigned side-exit modes currently require Family-C.
-        // Family-B can mis-handle these shapes and fault (observed in strtod).
-        if (stage5_side_exit_mode() >= STAGE5_SIDE_EXIT_MODE_EQNE_U &&
-            stage5_side_exit_unsigned_mode() != STAGE5_SIDE_EXIT_UNSIGNED_NONE) {
-            if (cfg.family_b || !cfg.family_c) {
-                stage5_emit_side_exit_forced_family_c_unsigned++;
-            }
-            cfg.family_b = false;
-            cfg.family_c = true;
-        }
-        inited = true;
-    }
-    return cfg;
+    return (stage5_side_exit_family_cfg_t){ .family_b = false, .family_c = true };
 }
-
-static int stage5_side_exit_trace_budget(void) {
-    static bool inited = false;
-    static int budget = 0;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_TRACE_SIDE_EXIT_MAX");
-        budget = (v && v[0] != '\0') ? atoi(v) : 64;
-        if (budget < 0) budget = 0;
-        inited = true;
-    }
-    return budget;
-}
+static int stage5_side_exit_trace_budget(void) { return 0; }
 
 static void stage5_side_exit_trace_emit(uint8_t opcode,
                                         uint8_t rs1,
@@ -1641,102 +1228,13 @@ static void stage5_side_exit_trace_emit(uint8_t opcode,
 static void stage5_trace_deferred_exit(const char *phase,
                                        const translate_ctx_t *ctx,
                                        int deferred_idx) {
-    static bool inited = false;
-    static uint32_t filter_pc = 0;
-    static int budget = 0;
-    if (!inited) {
-        const char *pcv = getenv("SLOW32_DBT_TRACE_DEFERRED_EXIT_PC");
-        if (pcv && pcv[0] != '\0') {
-            filter_pc = (uint32_t)strtoul(pcv, NULL, 0);
-            const char *maxv = getenv("SLOW32_DBT_TRACE_DEFERRED_EXIT_MAX");
-            budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 32;
-            if (budget < 0) budget = 0;
-        }
-        inited = true;
-    }
-    if (filter_pc == 0 || budget == 0 || !phase || !ctx) return;
-    if (deferred_idx < 0 || deferred_idx >= ctx->deferred_exit_count) return;
-
-    const int di = deferred_idx;
-    if (ctx->deferred_exits[di].branch_pc != filter_pc) return;
-
-    int slot_r15 = -1;
-    bool slot_r15_dirty = false;
-    for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
-        if (ctx->deferred_exits[di].allocated_snapshot[s] &&
-            ctx->deferred_exits[di].guest_reg_snapshot[s] == 15) {
-            slot_r15 = s;
-            slot_r15_dirty = ctx->deferred_exits[di].dirty_snapshot[s];
-            break;
-        }
-    }
-
-    fprintf(stderr,
-            "stage5-deferred-exit phase=%s idx=%d branch_pc=0x%08X target=0x%08X exit_idx=%d pending_valid=%u pending_g=%u pending_h=%d force_full=%u slot_r15=%d slot_r15_dirty=%u side_exit_emitted=%d deferred_count=%d\n",
-            phase, deferred_idx,
-            ctx->deferred_exits[di].branch_pc,
-            ctx->deferred_exits[di].target_pc,
-            ctx->deferred_exits[di].exit_idx,
-            ctx->deferred_exits[di].pending_write_valid ? 1u : 0u,
-            ctx->deferred_exits[di].pending_write_guest_reg,
-            (int)ctx->deferred_exits[di].pending_write_host_reg,
-            ctx->deferred_exits[di].force_full_flush ? 1u : 0u,
-            slot_r15,
-            slot_r15_dirty ? 1u : 0u,
-            ctx->side_exit_emitted,
-            ctx->deferred_exit_count);
-    budget--;
+    (void)phase; (void)ctx; (void)deferred_idx;
 }
 
 static void stage5_trace_deferred_exit_flush(const translate_ctx_t *ctx,
                                              int deferred_idx,
                                              bool full_flush) {
-    static bool inited = false;
-    static uint32_t filter_pc = 0;
-    static int budget = 0;
-    if (!inited) {
-        const char *pcv = getenv("SLOW32_DBT_TRACE_DEFERRED_EXIT_PC");
-        if (pcv && pcv[0] != '\0') {
-            filter_pc = (uint32_t)strtoul(pcv, NULL, 0);
-            const char *maxv = getenv("SLOW32_DBT_TRACE_DEFERRED_EXIT_MAX");
-            budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 32;
-            if (budget < 0) budget = 0;
-        }
-        inited = true;
-    }
-    if (filter_pc == 0 || budget == 0 || !ctx) return;
-    if (deferred_idx < 0 || deferred_idx >= ctx->deferred_exit_count) return;
-
-    const int di = deferred_idx;
-    if (ctx->deferred_exits[di].branch_pc != filter_pc) return;
-
-    int slot_r15 = -1;
-    bool allocated_r15 = false;
-    bool dirty_r15 = false;
-    for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
-        if (ctx->deferred_exits[di].guest_reg_snapshot[s] == 15) {
-            slot_r15 = s;
-            allocated_r15 = ctx->deferred_exits[di].allocated_snapshot[s];
-            dirty_r15 = ctx->deferred_exits[di].dirty_snapshot[s];
-            break;
-        }
-    }
-
-    bool pending_r15 = ctx->deferred_exits[di].pending_write_valid &&
-                       ctx->deferred_exits[di].pending_write_guest_reg == 15;
-
-    fprintf(stderr,
-            "stage5-deferred-exit phase=flush idx=%d branch_pc=0x%08X target=0x%08X full=%u pending_r15=%u slot_r15=%d alloc_r15=%u dirty_r15=%u side_exit_emitted=%d\n",
-            deferred_idx,
-            ctx->deferred_exits[di].branch_pc,
-            ctx->deferred_exits[di].target_pc,
-            full_flush ? 1u : 0u,
-            pending_r15 ? 1u : 0u,
-            slot_r15,
-            allocated_r15 ? 1u : 0u,
-            dirty_r15 ? 1u : 0u,
-            ctx->side_exit_emitted);
-    budget--;
+    (void)ctx; (void)deferred_idx; (void)full_flush;
 }
 
 static void stage5_count_deferred_exit_flush(const translate_ctx_t *ctx,
@@ -1770,132 +1268,20 @@ static void stage5_count_deferred_exit_flush(const translate_ctx_t *ctx,
 
 static void stage5_trace_translated_block(const translate_ctx_t *ctx,
                                           const translated_block_t *block) {
-    static bool inited = false;
-    static uint32_t filter_pc = 0;
-    static int budget = 0;
-    if (!inited) {
-        const char *pcv = getenv("SLOW32_DBT_TRACE_TRANSLATED_BLOCK_PC");
-        if (pcv && pcv[0] != '\0') {
-            filter_pc = (uint32_t)strtoul(pcv, NULL, 0);
-            const char *maxv = getenv("SLOW32_DBT_TRACE_TRANSLATED_BLOCK_MAX");
-            budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 8;
-            if (budget < 0) budget = 0;
-        }
-        inited = true;
-    }
-    if (filter_pc == 0 || budget == 0 || !block) return;
-    if (block->guest_pc != filter_pc) return;
-
-    uint64_t host_off = 0;
-    if (ctx && ctx->cache && ctx->cache->code_buffer && block->host_code) {
-        host_off = (uint64_t)(block->host_code - ctx->cache->code_buffer);
-    }
-    fprintf(stderr,
-            "stage5-block-finalize block_pc=0x%08X guest_size=%u host_size=%u host_off=0x%llX exits=%u side_exits=%u\n",
-            block->guest_pc, block->guest_size, block->host_size,
-            (unsigned long long)host_off, block->exit_count, block->side_exit_count);
-
-    for (uint8_t i = 0; i < block->exit_count; i++) {
-        bool owned_by_side_exit = false;
-        for (uint8_t s = 0; s < block->side_exit_count; s++) {
-            if (block->side_exit_pcs[s] == block->exits[i].branch_pc) {
-                owned_by_side_exit = true;
-                break;
-            }
-        }
-        fprintf(stderr,
-                "  exit[%u] target=0x%08X branch_pc=0x%08X chained=%u side_owned=%u\n",
-                i,
-                block->exits[i].target_pc,
-                block->exits[i].branch_pc,
-                block->exits[i].chained ? 1u : 0u,
-                owned_by_side_exit ? 1u : 0u);
-    }
-    for (uint8_t s = 0; s < block->side_exit_count; s++) {
-        fprintf(stderr, "  side_exit_pc[%u]=0x%08X\n", s, block->side_exit_pcs[s]);
-    }
-    budget--;
+    (void)ctx;
+    (void)block;
 }
 
 static void stage5_trace_translated_block_guest_words(const translate_ctx_t *ctx,
                                                       const translated_block_t *block) {
-    static bool inited = false;
-    static uint32_t filter_pc = 0;
-    static int budget = 0;
-    if (!inited) {
-        const char *pcv = getenv("SLOW32_DBT_TRACE_TRANSLATED_BLOCK_PC");
-        if (pcv && pcv[0] != '\0') {
-            filter_pc = (uint32_t)strtoul(pcv, NULL, 0);
-            const char *maxv = getenv("SLOW32_DBT_TRACE_TRANSLATED_BLOCK_MAX");
-            budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 8;
-            if (budget < 0) budget = 0;
-        }
-        inited = true;
-    }
-    if (filter_pc == 0 || budget == 0 || !ctx || !block) return;
-    if (block->guest_pc != filter_pc) return;
-
-    uint32_t insts = block->guest_size / 4;
-    if (insts > MAX_BLOCK_INSTS) insts = MAX_BLOCK_INSTS;
-    fprintf(stderr, "stage5-block-guest-words block_pc=0x%08X insts=%u\n",
-            block->guest_pc, insts);
-    for (uint32_t i = 0; i < insts; i++) {
-        uint32_t pc = block->guest_pc + i * 4;
-        if (pc + 4 > ctx->cpu->code_limit) break;
-        uint32_t raw = *(uint32_t *)(ctx->cpu->mem_base + pc);
-        decoded_inst_t d = decode_instruction(raw);
-        fprintf(stderr,
-                "  [%02u] pc=0x%08X raw=0x%08X op=0x%02X rd=%u rs1=%u rs2=%u imm=%d\n",
-                i, pc, raw, d.opcode, d.rd, d.rs1, d.rs2, d.imm);
-    }
-    budget--;
+    (void)ctx;
+    (void)block;
 }
 
 static void stage5_trace_translated_block_host_bytes(const translate_ctx_t *ctx,
                                                      const translated_block_t *block) {
-    static bool inited = false;
-    static bool enabled = false;
-    static uint32_t filter_pc = 0;
-    static int budget = 0;
-    static uint32_t max_bytes = 256;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_TRACE_TRANSLATED_BLOCK_HOST_BYTES");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        const char *pcv = getenv("SLOW32_DBT_TRACE_TRANSLATED_BLOCK_PC");
-        if (pcv && pcv[0] != '\0') {
-            filter_pc = (uint32_t)strtoul(pcv, NULL, 0);
-        }
-        const char *maxv = getenv("SLOW32_DBT_TRACE_TRANSLATED_BLOCK_MAX");
-        budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 8;
-        if (budget < 0) budget = 0;
-        const char *hbv = getenv("SLOW32_DBT_TRACE_TRANSLATED_BLOCK_HOST_BYTES_MAX");
-        if (hbv && hbv[0] != '\0') {
-            max_bytes = (uint32_t)strtoul(hbv, NULL, 0);
-        }
-        inited = true;
-    }
-    if (!enabled || !ctx || !block || !block->host_code) return;
-    if (budget == 0) return;
-    if (filter_pc != 0 && block->guest_pc != filter_pc) return;
-
-    uint32_t n = block->host_size;
-    if (n > max_bytes) n = max_bytes;
-    fprintf(stderr,
-            "stage5-block-host-bytes block_pc=0x%08X host_size=%u dump=%u\n",
-            block->guest_pc, block->host_size, n);
-    for (uint32_t i = 0; i < n; i += 16) {
-        uint32_t row_end = i + 16;
-        if (row_end > n) row_end = n;
-        fprintf(stderr, "  +0x%04X:", i);
-        for (uint32_t j = i; j < row_end; j++) {
-            fprintf(stderr, " %02X", block->host_code[j]);
-        }
-        fprintf(stderr, "\n");
-    }
-    if (n < block->host_size) {
-        fprintf(stderr, "  ... truncated (%u bytes omitted)\n", block->host_size - n);
-    }
-    budget--;
+    (void)ctx;
+    (void)block;
 }
 
 static void stage5_trace_side_exit_policy(uint32_t guest_pc,
@@ -1904,31 +1290,12 @@ static void stage5_trace_side_exit_policy(uint32_t guest_pc,
                                           bool side_exit_emit_enabled,
                                           bool side_exit_owned,
                                           bool side_exit_call_guard) {
-    static bool inited = false;
-    static uint32_t filter_pc = 0;
-    static int budget = 0;
-    if (!inited) {
-        const char *pcv = getenv("SLOW32_DBT_TRACE_SIDE_EXIT_POLICY_PC");
-        if (pcv && pcv[0] != '\0') {
-            filter_pc = (uint32_t)strtoul(pcv, NULL, 0);
-            const char *maxv = getenv("SLOW32_DBT_TRACE_SIDE_EXIT_POLICY_MAX");
-            budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 16;
-            if (budget < 0) budget = 0;
-        }
-        inited = true;
-    }
-    if (filter_pc == 0 || budget == 0 || !region) return;
-    if (guest_pc != filter_pc) return;
-
-    fprintf(stderr,
-            "stage5-side-exit-policy pc=0x%08X pattern=%s side_exits=%u emit_enabled=%u owned=%u call_guard=%u terminal=%u insts=%u ir=%u\n",
-            guest_pc, stage5_burg_pattern_str(pattern), region->side_exit_count,
-            side_exit_emit_enabled ? 1u : 0u,
-            side_exit_owned ? 1u : 0u,
-            side_exit_call_guard ? 1u : 0u,
-            region->has_terminal_branch ? 1u : 0u,
-            region->guest_inst_count, region->ir_count);
-    budget--;
+    (void)guest_pc;
+    (void)pattern;
+    (void)region;
+    (void)side_exit_emit_enabled;
+    (void)side_exit_owned;
+    (void)side_exit_call_guard;
 }
 
 static void stage5_trace_backedge_dirty_promotion(uint32_t branch_pc,
@@ -1936,25 +1303,11 @@ static void stage5_trace_backedge_dirty_promotion(uint32_t branch_pc,
                                                   int deferred_idx,
                                                   int slot_idx,
                                                   uint8_t guest_reg) {
-    static bool inited = false;
-    static uint32_t filter_pc = 0;
-    static int budget = 0;
-    if (!inited) {
-        const char *pcv = getenv("SLOW32_DBT_TRACE_BACKEDGE_DIRTY_PC");
-        if (pcv && pcv[0] != '\0') {
-            filter_pc = (uint32_t)strtoul(pcv, NULL, 0);
-            const char *maxv = getenv("SLOW32_DBT_TRACE_BACKEDGE_DIRTY_MAX");
-            budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 32;
-            if (budget < 0) budget = 0;
-        }
-        inited = true;
-    }
-    if (filter_pc == 0 || budget == 0) return;
-    if (branch_pc != filter_pc) return;
-    fprintf(stderr,
-            "stage5-backedge-dirty branch_pc=0x%08X taken=0x%08X deferred_idx=%d slot=%d guest_r=%u\n",
-            branch_pc, taken_pc, deferred_idx, slot_idx, guest_reg);
-    budget--;
+    (void)branch_pc;
+    (void)taken_pc;
+    (void)deferred_idx;
+    (void)slot_idx;
+    (void)guest_reg;
 }
 
 static void stage5_trace_exit_slot(const char *phase,
@@ -1963,38 +1316,12 @@ static void stage5_trace_exit_slot(const char *phase,
                                    int exit_idx,
                                    uint32_t target_pc,
                                    int deferred_idx) {
-    static bool inited = false;
-    static uint32_t filter_pc = 0;
-    static int budget = 0;
-    if (!inited) {
-        const char *pcv = getenv("SLOW32_DBT_TRACE_EXIT_SLOT_PC");
-        if (pcv && pcv[0] != '\0') {
-            filter_pc = (uint32_t)strtoul(pcv, NULL, 0);
-            const char *maxv = getenv("SLOW32_DBT_TRACE_EXIT_SLOT_MAX");
-            budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 64;
-            if (budget < 0) budget = 0;
-        }
-        inited = true;
-    }
-    if (filter_pc == 0 || budget == 0 || !phase || !ctx) return;
-    if (branch_pc != filter_pc) return;
-
-    uint32_t slot_target = 0;
-    uint32_t slot_branch = 0;
-    uint32_t slot_chained = 0;
-    if (ctx->block && exit_idx >= 0 && exit_idx < MAX_BLOCK_EXITS) {
-        slot_target = ctx->block->exits[exit_idx].target_pc;
-        slot_branch = ctx->block->exits[exit_idx].branch_pc;
-        slot_chained = ctx->block->exits[exit_idx].chained ? 1u : 0u;
-    }
-
-    fprintf(stderr,
-            "stage5-exit-slot phase=%s branch_pc=0x%08X exit_idx=%d target=0x%08X deferred_idx=%d block_pc=0x%08X slot_target=0x%08X slot_branch=0x%08X slot_chained=%u side_exit_emitted=%d deferred_count=%d\n",
-            phase, branch_pc, exit_idx, target_pc, deferred_idx,
-            ctx->block ? ctx->block->guest_pc : 0,
-            slot_target, slot_branch, slot_chained,
-            ctx->side_exit_emitted, ctx->deferred_exit_count);
-    budget--;
+    (void)phase;
+    (void)ctx;
+    (void)branch_pc;
+    (void)exit_idx;
+    (void)target_pc;
+    (void)deferred_idx;
 }
 
 static void stage5_trace_emit_unhandled(uint32_t block_pc,
@@ -2002,23 +1329,11 @@ static void stage5_trace_emit_unhandled(uint32_t block_pc,
                                         uint32_t guest_inst_count,
                                         uint8_t opcode,
                                         const char *where) {
-    static bool inited = false;
-    static bool enabled = false;
-    static int budget = 0;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_TRACE_UNHANDLED");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        const char *maxv = getenv("SLOW32_DBT_STAGE5_TRACE_UNHANDLED_MAX");
-        budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 64;
-        if (budget < 0) budget = 0;
-        inited = true;
-    }
-    if (!enabled || budget == 0) return;
-    fprintf(stderr,
-            "stage5-unhandled where=%s block_pc=0x%08X pattern=%s ginst=%u opcode=0x%02X\n",
-            where ? where : "unknown",
-            block_pc, stage5_burg_pattern_str(pattern), guest_inst_count, opcode);
-    budget--;
+    (void)block_pc;
+    (void)pattern;
+    (void)guest_inst_count;
+    (void)opcode;
+    (void)where;
 }
 
 static bool stage5_region_side_exit_call_guard_needed(const stage5_lift_region_t *region,
@@ -2447,42 +1762,15 @@ static bool stage5_prefilter_has_near_terminal(translate_ctx_t *ctx,
 }
 
 static int stage5_prefilter_cmp_scan_limit(void) {
-    static bool inited = false;
-    static int limit = 24;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_PREFILTER_CMP_SCAN");
-        if (v && v[0] != '\0') {
-            int x = atoi(v);
-            if (x >= 2 && x <= (int)MAX_BLOCK_INSTS) limit = x;
-        }
-        inited = true;
-    }
-    return limit;
+    return 24;
 }
 
 static int stage5_prefilter_terminal_scan_limit(void) {
-    static bool inited = false;
-    static int limit = 12;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_PREFILTER_TERM_SCAN");
-        if (v && v[0] != '\0') {
-            int x = atoi(v);
-            if (x >= 1 && x <= (int)MAX_BLOCK_INSTS) limit = x;
-        }
-        inited = true;
-    }
-    return limit;
+    return 12;
 }
 
 static bool stage5_prefilter_strict_enabled(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_STAGE5_PREFILTER_STRICT");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
+    return false;
 }
 
 // Match BEQ/BNE x,r0 (or r0,x) to a prior non-synthetic compare producing x,
@@ -6898,17 +6186,7 @@ static void emit_deferred_side_exits(translate_ctx_t *ctx) {
 #define INLINE_LOOKUP_MAX_PROBES 4
 
 static int inline_lookup_probe_count(void) {
-    static bool inited = false;
-    static int probes = INLINE_LOOKUP_MAX_PROBES;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_INLINE_LOOKUP_PROBES");
-        if (v && v[0] != '\0') {
-            int x = atoi(v);
-            if (x >= 0 && x <= INLINE_LOOKUP_MAX_PROBES) probes = x;
-        }
-        inited = true;
-    }
-    return probes;
+    return INLINE_LOOKUP_MAX_PROBES;
 }
 
 // Emit inline hash table lookup for indirect branches with bounded probing.
@@ -7763,46 +7041,15 @@ typedef enum {
 } peephole_call_guard_mode_t;
 
 static peephole_call_guard_mode_t dbt_peephole_call_guard_mode(void) {
-    static bool inited = false;
-    static peephole_call_guard_mode_t mode = PEEPHOLE_CALL_GUARD_NONE;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_PEEPHOLE_GUARD_CALLS");
-        if (v && v[0] != '\0') {
-            if (strcmp(v, "0") == 0 || strcmp(v, "none") == 0) {
-                mode = PEEPHOLE_CALL_GUARD_NONE;
-            } else if (strcmp(v, "all") == 0 || strcmp(v, "1") == 0) {
-                mode = PEEPHOLE_CALL_GUARD_ALL;
-            } else {
-                mode = PEEPHOLE_CALL_GUARD_JCC;
-            }
-        }
-        inited = true;
-    }
-    return mode;
+    return PEEPHOLE_CALL_GUARD_NONE;
 }
 
 static bool dbt_peephole_allow_immimm_on_call(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_PEEPHOLE_CALL_ALLOW_IMMIMM");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
+    return false;
 }
 
 static bool dbt_peephole_immimm_enabled(void) {
-    static bool inited = false;
-    static bool enabled = true;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_NO_PEEPHOLE_IMMIMM");
-        if (v && v[0] != '\0' && strcmp(v, "0") != 0) {
-            enabled = false;
-        }
-        inited = true;
-    }
-    return enabled;
+    return true;
 }
 
 static bool x64_block_has_call(const uint8_t *code, size_t len) {
@@ -7823,42 +7070,15 @@ static bool x64_block_has_call(const uint8_t *code, size_t len) {
 }
 
 static void dbt_trace_peephole_hit(uint32_t guest_pc, const char *pattern, size_t off) {
-    static bool inited = false;
-    static uint32_t filter_pc = 0;
-    static int budget = 0;
-    if (!inited) {
-        const char *pcv = getenv("SLOW32_DBT_TRACE_PEEPHOLE_PC");
-        if (pcv && pcv[0] != '\0') {
-            filter_pc = (uint32_t)strtoul(pcv, NULL, 0);
-            const char *maxv = getenv("SLOW32_DBT_TRACE_PEEPHOLE_MAX");
-            budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 64;
-            if (budget < 0) budget = 0;
-        }
-        inited = true;
-    }
-    if (filter_pc == 0 || budget == 0 || !pattern) return;
-    if (guest_pc != filter_pc) return;
-    fprintf(stderr, "stage5-peephole block_pc=0x%08X off=0x%zX pattern=%s\n",
-            guest_pc, off, pattern);
-    budget--;
+    (void)guest_pc;
+    (void)pattern;
+    (void)off;
 }
 
 static void dbt_trace_peephole_call_hit(uint32_t guest_pc, const char *pattern, size_t off) {
-    static bool inited = false;
-    static bool enabled = false;
-    static int budget = 0;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_TRACE_PEEPHOLE_CALLS");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        const char *maxv = getenv("SLOW32_DBT_TRACE_PEEPHOLE_CALLS_MAX");
-        budget = (maxv && maxv[0] != '\0') ? atoi(maxv) : 64;
-        if (budget < 0) budget = 0;
-        inited = true;
-    }
-    if (!enabled || budget == 0 || !pattern) return;
-    fprintf(stderr, "stage5-peephole-call block_pc=0x%08X off=0x%zX pattern=%s\n",
-            guest_pc, off, pattern);
-    budget--;
+    (void)guest_pc;
+    (void)pattern;
+    (void)off;
 }
 
 static size_t peephole_optimize_x64(uint8_t *code, size_t len, uint32_t guest_pc) {

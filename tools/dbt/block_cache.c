@@ -15,14 +15,7 @@
 #include <sys/mman.h>
 
 static bool cache_exit_validate_enabled(void) {
-    static bool inited = false;
-    static bool enabled = false;
-    if (!inited) {
-        const char *v = getenv("SLOW32_DBT_VALIDATE_EXIT_SLOTS");
-        enabled = (v && v[0] != '\0' && strcmp(v, "0") != 0);
-        inited = true;
-    }
-    return enabled;
+    return false;
 }
 
 // Maximum number of blocks we can store
