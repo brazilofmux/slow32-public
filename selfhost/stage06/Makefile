@@ -8,26 +8,36 @@ RUNTIME_SRCS = crt0.s mmio_no_start.s
 TOOL_SRCS = tools/s32-as.c tools/s32_formats_min.h tools/s32-ar.c tools/s32ar_min.h tools/s32-ld.c tools/s32util_min.h tools/slow32dump.c tools/slow32dis.c
 BOOTSTRAP_CC = ../stage05/cc.s32x
 BOOTSTRAP = $(BOOTSTRAP_CC) ../stage05/s32-as.s32x ../stage05/s32-ld.s32x
+CC_STAMP = .cc-built.stamp
+TOOLS_STAMP = .tools-built.stamp
 
 .PHONY: all tools verify clean
 
 all: cc.s32x tools
 
 # Build the compiler executable
-cc.s32x: $(COMPILER_SRCS) $(LIBC_SRCS) $(RUNTIME_SRCS) $(BOOTSTRAP)
+cc.s32x: $(CC_STAMP)
+
+$(CC_STAMP): $(COMPILER_SRCS) $(LIBC_SRCS) $(RUNTIME_SRCS) $(BOOTSTRAP)
 	@echo "Building cc.s32x (stage06, bootstrapped from stage05)..."
 	@bash build-s12cc.sh
+	@touch $(CC_STAMP)
 
 # Build assembler, archiver, linker, dump, disassembler
 tools: s32-as.s32x s32-ar.s32x s32-ld.s32x slow32dump.s32x slow32dis.s32x
 
-s32-as.s32x s32-ar.s32x s32-ld.s32x slow32dump.s32x slow32dis.s32x: $(TOOL_SRCS) $(LIBC_SRCS) $(RUNTIME_SRCS) $(BOOTSTRAP)
+$(TOOLS_STAMP): $(TOOL_SRCS) $(LIBC_SRCS) $(RUNTIME_SRCS) $(BOOTSTRAP)
 	@echo "Building stage06 tools (s32-as, s32-ar, s32-ld, slow32dump, slow32dis)..."
 	@bash build-tools.sh
+	@touch $(TOOLS_STAMP)
+
+s32-as.s32x s32-ar.s32x s32-ld.s32x slow32dump.s32x slow32dis.s32x: $(TOOLS_STAMP)
+	@:
 
 verify: cc.s32x s32-as.s32x s32-ar.s32x s32-ld.s32x slow32dump.s32x slow32dis.s32x
 	@echo "--- Stage 06: full toolchain tests ---"
 	@bash run-tests.sh
 
 clean:
-	rm -f cc.s32x s32-as.s32x s32-ar.s32x s32-ld.s32x slow32dump.s32x slow32dis.s32x
+	rm -f cc.s32x s32-as.s32x s32-ar.s32x s32-ld.s32x slow32dump.s32x slow32dis.s32x \
+		$(CC_STAMP) $(TOOLS_STAMP)

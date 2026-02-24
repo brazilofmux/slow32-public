@@ -74,13 +74,15 @@ void __stdio_init(void) {
 
 static FILE *pool_alloc(void) {
     int i;
-    for (i = 0; i < FILE_POOL_SIZE; i = i + 1) {
+    i = 0;
+    while (i < FILE_POOL_SIZE) {
         if (!_file_pool[i].used) {
             _file_pool[i].used = 1;
             _file_pool[i].error = 0;
             _file_pool[i].eof = 0;
             return &_file_pool[i];
         }
+        i = i + 1;
     }
     return (FILE *)0;
 }

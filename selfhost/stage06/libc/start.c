@@ -74,12 +74,14 @@ void __slow32_start(void) {
 
                 /* Parse NUL-separated strings into argv array */
                 offset = 0;
-                for (i = 0; i < arg_count; i = i + 1) {
+                i = 0;
+                while (i < arg_count) {
                     args_argv[i] = args_blob + offset;
                     while (offset < total && args_blob[offset] != 0)
                         offset = offset + 1;
                     if (offset < total)
                         offset = offset + 1;
+                    i = i + 1;
                 }
                 args_argv[arg_count] = (char *)0;
                 argc = arg_count;
