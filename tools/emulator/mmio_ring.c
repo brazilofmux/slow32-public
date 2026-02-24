@@ -1686,7 +1686,9 @@ static void process_request(mmio_ring_state_t *mmio, mmio_cpu_iface_t *cpu, io_d
                 break;
             }
             memcpy(buffer, mmio->data_buffer + offset, req->length);
-            buffer[old_len] = '\0';
+            // old_len includes the NUL terminator of oldpath.
+            // Preserve the first byte of newpath by terminating at old_len - 1.
+            buffer[old_len - 1] = '\0';
             buffer[req->length] = '\0';
 
             const char *oldpath = buffer;
