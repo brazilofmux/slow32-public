@@ -48,7 +48,7 @@ cd "$ROOT_DIR"
 compile() {
     local src="$1" asm="$2" log="$3"
     set +e
-    timeout "${EXEC_TIMEOUT:-300}" "$EMU" "$STAGE5_CC" "$src" "$asm" >"$log" 2>&1
+    timeout "${EXEC_TIMEOUT:-1200}" "$EMU" "$STAGE5_CC" "$src" "$asm" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -62,7 +62,7 @@ compile() {
 assemble() {
     local src="$1" obj="$2" log="$3"
     set +e
-    timeout 120 "$EMU" "$STAGE5_AS" "$src" "$obj" >"$log" 2>&1
+    timeout "${EXEC_TIMEOUT:-1200}" "$EMU" "$STAGE5_AS" "$src" "$obj" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -77,7 +77,7 @@ link_exe() {
     local log="$1"
     shift
     set +e
-    timeout 120 "$EMU" "$STAGE5_LD" "$@" >"$log" 2>&1
+    timeout "${EXEC_TIMEOUT:-1200}" "$EMU" "$STAGE5_LD" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then

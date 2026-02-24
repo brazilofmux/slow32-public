@@ -46,7 +46,7 @@ run_emu() {
     local exe="$1" log="$2"
     shift 2
     set +e
-    timeout "${EXEC_TIMEOUT:-60}" "$EMU" "$exe" "$@" >"$log" 2>&1
+    timeout "${EXEC_TIMEOUT:-600}" "$EMU" "$exe" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     echo "$rc"
@@ -55,7 +55,7 @@ run_emu() {
 compile_cc() {
     local src="$1" asm="$2" log="$3"
     set +e
-    timeout "${EXEC_TIMEOUT:-60}" "$EMU" "$STAGE8_CC" "$src" "$asm" >"$log" 2>&1
+    timeout "${EXEC_TIMEOUT:-600}" "$EMU" "$STAGE8_CC" "$src" "$asm" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then

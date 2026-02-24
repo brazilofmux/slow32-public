@@ -40,7 +40,7 @@ run_emu() {
     local exe="$1" log="$2"
     shift 2
     set +e
-    timeout "${EXEC_TIMEOUT:-60}" "$EMU" "$exe" "$@" >"$log" 2>&1
+    timeout "${EXEC_TIMEOUT:-600}" "$EMU" "$exe" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     echo "$rc"

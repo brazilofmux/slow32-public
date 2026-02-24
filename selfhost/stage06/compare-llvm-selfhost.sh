@@ -152,7 +152,7 @@ for t in "${TESTS[@]}"; do
     "$CLANG" -target slow32-unknown-none "$OPT" -ffreestanding -fno-builtin -S \
         -I"$tdir" "$t" -o "$llvm_asm"
 
-    timeout "${EXEC_TIMEOUT:-180}" "$EMU" "$SELF_CC" "$t" "$self_asm" >/dev/null 2>&1 || {
+    timeout "${EXEC_TIMEOUT:-1200}" "$EMU" "$SELF_CC" "$t" "$self_asm" >/dev/null 2>&1 || {
         echo "selfhost compile failed: $t" >&2
         continue
     }

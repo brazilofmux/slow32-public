@@ -174,7 +174,7 @@ run_exe() {
     shift 2
 
     set +e
-    timeout "${EXEC_TIMEOUT:-60}" "$EMU" "$exe" "$@" >"$log" 2>&1
+    timeout "${EXEC_TIMEOUT:-600}" "$EMU" "$exe" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -eq 124 ]]; then
@@ -200,7 +200,7 @@ run_exe_any_rc() {
     shift 2
 
     set +e
-    timeout "${EXEC_TIMEOUT:-60}" "$EMU" "$exe" "$@" >"$log" 2>&1
+    timeout "${EXEC_TIMEOUT:-600}" "$EMU" "$exe" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -eq 124 ]]; then

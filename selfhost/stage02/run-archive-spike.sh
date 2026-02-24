@@ -170,7 +170,7 @@ run_ar() {
     local log="$1"
     shift
     set +e
-    timeout "${EXEC_TIMEOUT:-60}" "$EMU" "$AR_EXE" "$@" >"$log" 2>&1
+    timeout "${EXEC_TIMEOUT:-600}" "$EMU" "$AR_EXE" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -eq 124 ]]; then

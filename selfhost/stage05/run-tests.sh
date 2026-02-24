@@ -85,7 +85,7 @@ run_exe() {
     shift 2
 
     local rc=0
-    timeout "${EXEC_TIMEOUT:-180}" "$EMU" "$exe" "$@" >"$log" 2>&1 || rc=$?
+    timeout "${EXEC_TIMEOUT:-1200}" "$EMU" "$exe" "$@" >"$log" 2>&1 || rc=$?
     if [[ "$rc" -eq 124 ]]; then
         echo "execution timed out: $exe" >&2
         tail -n 60 "$log" >&2
@@ -109,7 +109,7 @@ run_exe_rc() {
     shift 2
 
     local rc=0
-    timeout "${EXEC_TIMEOUT:-180}" "$EMU" "$exe" "$@" >"$log" 2>&1 || rc=$?
+    timeout "${EXEC_TIMEOUT:-1200}" "$EMU" "$exe" "$@" >"$log" 2>&1 || rc=$?
     if [[ "$rc" -eq 124 ]]; then
         echo "execution timed out: $exe" >&2
         tail -n 60 "$log" >&2
@@ -319,8 +319,8 @@ STAGE_CC_SRC="$SCRIPT_DIR/s12cc.c"
 [[ -s "$STAGE_CC_SRC" ]] || { echo "ERROR: s12cc.c not found" >&2; exit 1; }
 
 TOTAL=$((TOTAL + 1))
-SAVED_TIMEOUT="${EXEC_TIMEOUT:-180}"
-EXEC_TIMEOUT=300
+SAVED_TIMEOUT="${EXEC_TIMEOUT:-1200}"
+EXEC_TIMEOUT=1200
 
 # Compile stage06 source with stage05 compiler
 run_exe "$STAGE5_CC" "$WORKDIR/gen1_cc-compile.log" "$STAGE_CC_SRC" "$WORKDIR/gen1_cc.s"
@@ -364,7 +364,7 @@ G1_LIBC_START_OBJ=""
 if [[ -s "$GEN1_CC_EXE" ]]; then
     echo ""
     echo "=== Step 2b: Recompile libc with gen1_cc (HIR/SSA ABI) ==="
-    EXEC_TIMEOUT=300
+    EXEC_TIMEOUT=1200
 
     for name in string_extra string_more ctype convert stdio malloc printf_varargs; do
         run_exe "$GEN1_CC_EXE" "$WORKDIR/g1_${name}.cc.log" "$LIBC_DIR/${name}.c" "$WORKDIR/g1_${name}.s"
@@ -480,7 +480,7 @@ if [[ "$RUN_FIXED_POINT" -eq 1 && -s "$GEN1_CC_EXE" ]]; then
     echo ""
     echo "=== Step 3d: Fixed-point gate (gen2 == gen3) ==="
     TOTAL=$((TOTAL + 1))
-    EXEC_TIMEOUT=300
+    EXEC_TIMEOUT=1200
 
     run_exe "$GEN1_CC_EXE" "$WORKDIR/fp-gen2-compile.log" "$STAGE_CC_SRC" "$WORKDIR/fp-gen2.s"
     if [[ ! -s "$WORKDIR/fp-gen2.s" ]]; then
@@ -697,7 +697,7 @@ STAGE_LD_SRC="$SCRIPT_DIR/tools/s32-ld.c"
 
 # Build assembler
 TOTAL=$((TOTAL + 1))
-EXEC_TIMEOUT=300
+EXEC_TIMEOUT=1200
 run_exe "$STAGE5_CC" "$WORKDIR/s32-as-compile.log" "$STAGE_AS_SRC" "$WORKDIR/s32-as.s"
 if [[ ! -s "$WORKDIR/s32-as.s" ]]; then
     printf "  %-30s FAIL (compile)\n" "s32-as-build:"

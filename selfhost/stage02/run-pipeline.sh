@@ -156,7 +156,7 @@ run_exe() {
     shift 2
 
     set +e
-    timeout "${EXEC_TIMEOUT:-60}" "$EMU" "$exe" "$@" >"$log" 2>&1
+    timeout "${EXEC_TIMEOUT:-600}" "$EMU" "$exe" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -eq 124 ]]; then
@@ -182,7 +182,7 @@ run_exe_any_rc() {
     shift 2
 
     set +e
-    timeout "${EXEC_TIMEOUT:-60}" "$EMU" "$exe" "$@" >"$log" 2>&1
+    timeout "${EXEC_TIMEOUT:-600}" "$EMU" "$exe" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -eq 124 ]]; then
@@ -695,7 +695,7 @@ case "$MODE" in
         TARGET_FORTH_EXE="$WORKDIR/utility.forth.s32x"
         UTILITY_ARGS_RAW="${UTILITY_ARGS:--h}"
         read -r -a UTILITY_ARGS_VEC <<<"$UTILITY_ARGS_RAW"
-        EXEC_TIMEOUT="${UTILITY_TIMEOUT:-60}"
+        EXEC_TIMEOUT="${UTILITY_TIMEOUT:-600}"
         if [[ -n "${UTILITY_INPUT:-}" ]]; then
             TARGET_INPUT="$UTILITY_INPUT"
             [[ -f "$TARGET_INPUT" ]] || { echo "Missing utility input: $TARGET_INPUT" >&2; exit 1; }

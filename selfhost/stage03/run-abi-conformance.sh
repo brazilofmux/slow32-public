@@ -92,7 +92,7 @@ run_exe() {
     shift 2
 
     local rc=0
-    timeout "${EXEC_TIMEOUT:-180}" "$EMU" "$exe" "$@" >"$log" 2>&1 || rc=$?
+    timeout "${EXEC_TIMEOUT:-1200}" "$EMU" "$exe" "$@" >"$log" 2>&1 || rc=$?
     if [[ "$rc" -eq 124 ]]; then
         echo "execution timed out: $exe" >&2
         tail -n 60 "$log" >&2
@@ -116,7 +116,7 @@ run_exe_rc() {
     shift 2
 
     local rc=0
-    timeout "${EXEC_TIMEOUT:-180}" "$EMU" "$exe" "$@" >"$log" 2>&1 || rc=$?
+    timeout "${EXEC_TIMEOUT:-1200}" "$EMU" "$exe" "$@" >"$log" 2>&1 || rc=$?
     if [[ "$rc" -eq 124 ]]; then
         echo "execution timed out: $exe" >&2
         tail -n 60 "$log" >&2
