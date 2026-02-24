@@ -839,8 +839,9 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
     emit_mov_w32_imm32(e, W1, target_pc);
     emit_str_w32_imm(e, W1, W20, CPU_PC_OFFSET);
 
-    if (ctx->cache == NULL) {
-        // Stage 1: always return to dispatcher
+    if (ctx->cache == NULL || paranoid_mode) {
+        // Stage 1/paranoid: always return to C dispatcher so shadow verification
+        // can run after each translated guest block.
         emit_mov_w32_imm32(e, W1, EXIT_BRANCH);
         emit_str_w32_imm(e, W1, W20, CPU_EXIT_REASON_OFFSET);
         emit_ret_lr(e);
@@ -889,8 +890,9 @@ static void emit_exit_chained_compact(translate_ctx_t *ctx, uint32_t target_pc, 
     emit_mov_w32_imm32(e, W1, target_pc);
     emit_str_w32_imm(e, W1, W20, CPU_PC_OFFSET);
 
-    if (ctx->cache == NULL) {
-        // Stage 1: always return to dispatcher
+    if (ctx->cache == NULL || paranoid_mode) {
+        // Stage 1/paranoid: always return to C dispatcher so shadow verification
+        // can run after each translated guest block.
         emit_mov_w32_imm32(e, W1, EXIT_BRANCH);
         emit_str_w32_imm(e, W1, W20, CPU_EXIT_REASON_OFFSET);
         emit_ret_lr(e);
