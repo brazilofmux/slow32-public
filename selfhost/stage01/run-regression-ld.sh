@@ -38,7 +38,7 @@ run_forth() {
     local log_file="$2"
 
     set +e
-    cat "$PRELUDE" "$script_file" - <<FTH | timeout 120 "$EMU" "$KERNEL" >"$log_file" 2>&1
+    cat "$PRELUDE" "$script_file" - <<FTH | timeout "${SELFHOST_TIMEOUT:-120}" "$EMU" "$KERNEL" >"$log_file" 2>&1
 $cmd_text
 BYE
 FTH

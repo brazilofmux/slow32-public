@@ -53,7 +53,7 @@ run_forth() {
     local log_file="$4"
 
     set +e
-    cat "$PRELUDE" "$script_a" "$script_b" - <<FTH | timeout 120 "$EMU" "$KERNEL" >"$log_file" 2>&1
+    cat "$PRELUDE" "$script_a" "$script_b" - <<FTH | timeout "${SELFHOST_TIMEOUT:-120}" "$EMU" "$KERNEL" >"$log_file" 2>&1
 $cmd_text
 FTH
     local rc=$?
@@ -91,7 +91,7 @@ grep -q "test3.s32o" "$WORKDIR/ar-list.log" || {
 set +e
 (
     cd "$XDIR"
-    cat "$PRELUDE" "$AR_FTH" - <<FTH | timeout 120 "$EMU" "$KERNEL" >"$WORKDIR/ar-extract.log" 2>&1
+    cat "$PRELUDE" "$AR_FTH" - <<FTH | timeout "${SELFHOST_TIMEOUT:-120}" "$EMU" "$KERNEL" >"$WORKDIR/ar-extract.log" 2>&1
 S" $ARC" S" test3.s32o" AR-X1
 BYE
 FTH

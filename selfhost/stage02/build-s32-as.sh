@@ -42,7 +42,7 @@ run_forth() {
     local body="$2"
     local log="$3"
     set +e
-    cat "$PRELUDE" "$script" - <<FTH | timeout 300 "$EMU" "$KERNEL" >"$log" 2>&1
+    cat "$PRELUDE" "$script" - <<FTH | timeout "${SELFHOST_TIMEOUT:-300}" "$EMU" "$KERNEL" >"$log" 2>&1
 $body
 FTH
     local rc=$?

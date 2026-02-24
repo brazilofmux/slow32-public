@@ -56,7 +56,7 @@ cd "$ROOT_DIR"
 compile() {
     local src="$1" asm="$2" log="$3"
     set +e
-    timeout "${EXEC_TIMEOUT:-2400}" "$EMU" "$STAGE4_CC" "$src" "$asm" >"$log" 2>&1
+    timeout "${SELFHOST_TIMEOUT:-2400}" "$EMU" "$STAGE4_CC" "$src" "$asm" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -70,7 +70,7 @@ compile() {
 assemble() {
     local src="$1" obj="$2" log="$3"
     set +e
-    timeout "${EXEC_TIMEOUT:-2400}" "$EMU" "$STAGE4_AS" "$src" "$obj" >"$log" 2>&1
+    timeout "${SELFHOST_TIMEOUT:-2400}" "$EMU" "$STAGE4_AS" "$src" "$obj" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -85,7 +85,7 @@ link_exe() {
     local log="$1"
     shift
     set +e
-    timeout "${EXEC_TIMEOUT:-2400}" "$EMU" "$STAGE4_LD" "$@" >"$log" 2>&1
+    timeout "${SELFHOST_TIMEOUT:-2400}" "$EMU" "$STAGE4_LD" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -141,7 +141,7 @@ echo "  gen1: $OUT_EXE ($(wc -c < "$OUT_EXE") bytes)"
 compile_gen1() {
     local src="$1" asm="$2" log="$3"
     set +e
-    timeout "${EXEC_TIMEOUT:-2400}" "$EMU" "$OUT_EXE" "$src" "$asm" >"$log" 2>&1
+    timeout "${SELFHOST_TIMEOUT:-2400}" "$EMU" "$OUT_EXE" "$src" "$asm" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -197,7 +197,7 @@ link_exe "$WORKDIR/smoke.link.log" -o "$WORKDIR/smoke.s32x" --mmio 64K \
     "$LIBC_OUT_DIR/stdio.s32o" "$LIBC_OUT_DIR/malloc.s32o"
 
 set +e
-timeout "${EXEC_TIMEOUT:-2400}" "$EMU" "$WORKDIR/smoke.s32x" > "$WORKDIR/smoke.out" 2>&1
+timeout "${SELFHOST_TIMEOUT:-2400}" "$EMU" "$WORKDIR/smoke.s32x" > "$WORKDIR/smoke.out" 2>&1
 SMOKE_RC=$?
 set -e
 

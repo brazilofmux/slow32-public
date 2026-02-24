@@ -61,7 +61,7 @@ echo "  runtime built OK"
 # ============================================================
 echo "=== Step 2: Build gen1 (stage05 → s12cc.c) ==="
 
-timeout "${EXEC_TIMEOUT:-1200}" "$DBT" "$STAGE5_CC" "$SCRIPT_DIR/s12cc.c" "$WORKDIR/gen1.s" >/dev/null 2>&1
+timeout "${SELFHOST_TIMEOUT:-1200}" "$DBT" "$STAGE5_CC" "$SCRIPT_DIR/s12cc.c" "$WORKDIR/gen1.s" >/dev/null 2>&1
 echo "  gen1.s: $(wc -l < "$WORKDIR/gen1.s") lines"
 
 "$DBT" "$STAGE5_AS" "$WORKDIR/gen1.s" "$WORKDIR/gen1.s32o" >/dev/null 2>&1
@@ -76,7 +76,7 @@ echo "  gen1.s32x: $(wc -c < "$WORKDIR/gen1.s32x") bytes"
 # ============================================================
 echo "=== Step 3: Build gen2 (gen1 → s12cc.c) ==="
 
-timeout "${EXEC_TIMEOUT:-1200}" "$DBT" "$WORKDIR/gen1.s32x" "$SCRIPT_DIR/s12cc.c" "$WORKDIR/gen2.s" >/dev/null 2>&1
+timeout "${SELFHOST_TIMEOUT:-1200}" "$DBT" "$WORKDIR/gen1.s32x" "$SCRIPT_DIR/s12cc.c" "$WORKDIR/gen2.s" >/dev/null 2>&1
 echo "  gen2.s: $(wc -l < "$WORKDIR/gen2.s") lines"
 
 "$DBT" "$STAGE5_AS" "$WORKDIR/gen2.s" "$WORKDIR/gen2.s32o" >/dev/null 2>&1

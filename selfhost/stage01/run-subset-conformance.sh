@@ -76,7 +76,7 @@ run_forth() {
     local log_file="$4"
 
     set +e
-    cat "$PRELUDE" "$script_a" "$script_b" - <<FTH | timeout 180 "$EMU" "$KERNEL" >"$log_file" 2>&1
+    cat "$PRELUDE" "$script_a" "$script_b" - <<FTH | timeout "${SELFHOST_TIMEOUT:-180}" "$EMU" "$KERNEL" >"$log_file" 2>&1
 $cmd_text
 FTH
     local rc=$?
@@ -148,7 +148,7 @@ run_exe() {
     local log="$2"
 
     set +e
-    timeout 30 "$EMU" "$exe" >"$log" 2>&1
+    timeout "${SELFHOST_TIMEOUT:-30}" "$EMU" "$exe" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -eq 124 ]]; then

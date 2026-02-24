@@ -43,7 +43,7 @@ run_forth() {
     local body="$2"
     local log="$3"
     set +e
-    cat "$PRELUDE" "$script" - <<FTH | timeout 300 "$EMU" "$KERNEL" >"$log" 2>&1
+    cat "$PRELUDE" "$script" - <<FTH | timeout "${SELFHOST_TIMEOUT:-300}" "$EMU" "$KERNEL" >"$log" 2>&1
 $body
 FTH
     local rc=$?
@@ -65,7 +65,7 @@ BYE" "$log"
 assemble() {
     local src="$1" obj="$2" log="$3"
     set +e
-    timeout 120 "$EMU" "$STAGE2_AS" "$src" "$obj" >"$log" 2>&1
+    timeout "${SELFHOST_TIMEOUT:-120}" "$EMU" "$STAGE2_AS" "$src" "$obj" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then

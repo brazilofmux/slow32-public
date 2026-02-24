@@ -94,7 +94,7 @@ fi
 LOG="$WORKDIR/cc.log"
 
 set +e
-cat "$PRELUDE" "$CC_DBG" - <<FTH | timeout 180 "$EMU" "$KERNEL" >"$LOG" 2>&1
+cat "$PRELUDE" "$CC_DBG" - <<FTH | timeout "${SELFHOST_TIMEOUT:-180}" "$EMU" "$KERNEL" >"$LOG" 2>&1
 S" $SRC" S" $ASM_OUT" COMPILE-FILE
 BYE
 FTH

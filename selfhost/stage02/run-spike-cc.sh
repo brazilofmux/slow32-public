@@ -38,7 +38,7 @@ _start:
     halt
 ASM
 set +e
-timeout 30 "$EMU" "$STAGE2_AS" "$WORKDIR/minicrt0.s" "$WORKDIR/minicrt0.s32o" >/dev/null 2>&1
+timeout "${SELFHOST_TIMEOUT:-30}" "$EMU" "$STAGE2_AS" "$WORKDIR/minicrt0.s" "$WORKDIR/minicrt0.s32o" >/dev/null 2>&1
 set -e
 [[ -s "$WORKDIR/minicrt0.s32o" ]] || { echo "Failed to assemble minicrt0" >&2; exit 1; }
 
@@ -46,7 +46,7 @@ run_emu() {
     local exe="$1" log="$2"
     shift 2
     set +e
-    timeout "${EXEC_TIMEOUT:-600}" "$EMU" "$exe" "$@" >"$log" 2>&1
+    timeout "${SELFHOST_TIMEOUT:-600}" "$EMU" "$exe" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     echo "$rc"
@@ -55,7 +55,7 @@ run_emu() {
 compile_cc() {
     local src="$1" asm="$2" log="$3"
     set +e
-    timeout "${EXEC_TIMEOUT:-600}" "$EMU" "$STAGE8_CC" "$src" "$asm" >"$log" 2>&1
+    timeout "${SELFHOST_TIMEOUT:-600}" "$EMU" "$STAGE8_CC" "$src" "$asm" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -69,7 +69,7 @@ compile_cc() {
 assemble() {
     local src="$1" obj="$2" log="$3"
     set +e
-    timeout 120 "$EMU" "$STAGE2_AS" "$src" "$obj" >"$log" 2>&1
+    timeout "${SELFHOST_TIMEOUT:-120}" "$EMU" "$STAGE2_AS" "$src" "$obj" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then
@@ -84,7 +84,7 @@ link_exe() {
     local log="$1"
     shift
     set +e
-    timeout 120 "$EMU" "$STAGE2_LD" "$@" >"$log" 2>&1
+    timeout "${SELFHOST_TIMEOUT:-120}" "$EMU" "$STAGE2_LD" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -ne 0 && "$rc" -ne 96 ]]; then

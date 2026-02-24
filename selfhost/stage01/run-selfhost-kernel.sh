@@ -81,7 +81,7 @@ run_forth() {
     local log="$4"
 
     set +e
-    cat "$PRELUDE" "$script_a" "$script_b" - <<FTH | timeout 300 "$EMU" "$KERNEL" >"$log" 2>&1
+    cat "$PRELUDE" "$script_a" "$script_b" - <<FTH | timeout "${SELFHOST_TIMEOUT:-300}" "$EMU" "$KERNEL" >"$log" 2>&1
 $body
 FTH
     local rc=$?
@@ -153,7 +153,7 @@ fi
 if [[ "$SKIP_BOOT" -eq 0 ]]; then
     echo "[3/5] Boot smoke (gen1)"
     set +e
-    printf '1 2 + . CR BYE\n' | timeout 90 "$EMU" "$OUT_EXE" >"$WORKDIR/boot.log" 2>&1
+    printf '1 2 + . CR BYE\n' | timeout "${SELFHOST_TIMEOUT:-90}" "$EMU" "$OUT_EXE" >"$WORKDIR/boot.log" 2>&1
     boot_rc=$?
     set -e
     if [[ "$boot_rc" -ne 0 && "$boot_rc" -ne 96 ]]; then

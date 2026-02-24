@@ -80,7 +80,7 @@ run_exe() {
     shift 2
 
     local rc=0
-    timeout "${EXEC_TIMEOUT:-1200}" "$EMU" "$exe" "$@" >"$log" 2>&1 || rc=$?
+    timeout "${SELFHOST_TIMEOUT:-1200}" "$EMU" "$exe" "$@" >"$log" 2>&1 || rc=$?
     if [[ "$rc" -eq 124 ]]; then
         echo "execution timed out: $exe" >&2
         tail -n 60 "$log" >&2
@@ -104,7 +104,7 @@ run_exe_rc() {
     shift 2
 
     local rc=0
-    timeout "${EXEC_TIMEOUT:-1200}" "$EMU" "$exe" "$@" >"$log" 2>&1 || rc=$?
+    timeout "${SELFHOST_TIMEOUT:-1200}" "$EMU" "$exe" "$@" >"$log" 2>&1 || rc=$?
     if [[ "$rc" -eq 124 ]]; then
         echo "execution timed out: $exe" >&2
         tail -n 60 "$log" >&2
@@ -404,10 +404,6 @@ if [[ "$MERGED_SZ" -ge 131072 ]]; then
     exit 1
 fi
 
-# Save and bump timeout for self-compilation (compiling 62KB source is slow)
-SAVED_TIMEOUT="${EXEC_TIMEOUT:-1200}"
-EXEC_TIMEOUT=1200
-
 # Gen1 compile: compiler (compiled by cc-min) compiles merged -> gen2
 GEN2_S32CC_ASM="$WORKDIR/gen2-s32cc.s"
 run_exe "$GEN1_CC_EXE" "$WORKDIR/gen1-s32cc-compile.log" "$S32CC_MERGED" "$GEN2_S32CC_ASM"
@@ -455,9 +451,6 @@ if [[ ! -s "$GEN3_S32CC_ASM" ]]; then
 fi
 GEN3_ASM_SZ="$(wc -c < "$GEN3_S32CC_ASM")"
 echo "  Gen2 → Gen3: OK ($GEN3_ASM_SZ bytes asm)"
-
-# Restore timeout
-EXEC_TIMEOUT="$SAVED_TIMEOUT"
 
 # Fixed-point check: gen2.s must equal gen3.s
 TOTAL=$((TOTAL + 1))

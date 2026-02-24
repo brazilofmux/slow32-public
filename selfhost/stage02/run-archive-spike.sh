@@ -95,7 +95,7 @@ run_forth() {
     local cmd_text="$2"
     local log_file="$3"
     set +e
-    cat "$PRELUDE" "$script_a" - <<FTH | timeout 180 "$EMU" "$KERNEL" >"$log_file" 2>&1
+    cat "$PRELUDE" "$script_a" - <<FTH | timeout "${SELFHOST_TIMEOUT:-180}" "$EMU" "$KERNEL" >"$log_file" 2>&1
 $cmd_text
 FTH
     local rc=$?
@@ -170,7 +170,7 @@ run_ar() {
     local log="$1"
     shift
     set +e
-    timeout "${EXEC_TIMEOUT:-600}" "$EMU" "$AR_EXE" "$@" >"$log" 2>&1
+    timeout "${SELFHOST_TIMEOUT:-600}" "$EMU" "$AR_EXE" "$@" >"$log" 2>&1
     local rc=$?
     set -e
     if [[ "$rc" -eq 124 ]]; then
@@ -194,12 +194,12 @@ if [[ "$MODE" == "extract" ]]; then
     )
     [[ -f "$WORKDIR/extract/helper.s32o" ]] || { echo "extract mode failed to recover helper.s32o" >&2; exit 1; }
     set +e
-    timeout 60 "$EMU" "$LINKER_EXE" "$MAIN_OBJ" "$WORKDIR/extract/helper.s32o" "$OUT_EXE" >"$WORKDIR/archive_spike.link.log" 2>&1
+    timeout "${SELFHOST_TIMEOUT:-60}" "$EMU" "$LINKER_EXE" "$MAIN_OBJ" "$WORKDIR/extract/helper.s32o" "$OUT_EXE" >"$WORKDIR/archive_spike.link.log" 2>&1
     RC=$?
     set -e
 else
     set +e
-    timeout 60 "$EMU" "$LINKER_EXE" "$MAIN_OBJ" "$ARCHIVE" "$OUT_EXE" >"$WORKDIR/archive_spike.link.log" 2>&1
+    timeout "${SELFHOST_TIMEOUT:-60}" "$EMU" "$LINKER_EXE" "$MAIN_OBJ" "$ARCHIVE" "$OUT_EXE" >"$WORKDIR/archive_spike.link.log" 2>&1
     RC=$?
     set -e
 fi
