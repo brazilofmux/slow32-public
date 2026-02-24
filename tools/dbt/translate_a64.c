@@ -12,6 +12,7 @@
 
 #include "translate.h"
 #include "block_cache.h"
+#include "shadow_interp.h"
 #include "stage5_burg.h"
 #include <stdio.h>
 #include <string.h>
@@ -847,7 +848,10 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
     }
 
     // Stage 2: chain to target if already translated
-    translated_block_t *target = cache_lookup(ctx->cache, target_pc);
+    // In paranoid mode, skip direct chaining — always go through shared_branch_exit
+    // so every block exit returns to the C dispatch loop for shadow verification.
+    translated_block_t *target = paranoid_mode ? NULL
+                                               : cache_lookup(ctx->cache, target_pc);
 
     if (target && target->host_code) {
         // Target already translated - emit direct B
@@ -894,7 +898,8 @@ static void emit_exit_chained_compact(translate_ctx_t *ctx, uint32_t target_pc, 
     }
 
     // Stage 2+: chain to target if already translated
-    translated_block_t *target = cache_lookup(ctx->cache, target_pc);
+    translated_block_t *target = paranoid_mode ? NULL
+                                               : cache_lookup(ctx->cache, target_pc);
 
     if (target && target->host_code) {
         // Target already translated - emit direct B

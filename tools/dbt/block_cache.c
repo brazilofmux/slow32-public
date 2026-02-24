@@ -3,6 +3,7 @@
 
 #include "block_cache.h"
 #include "cpu_state.h"
+#include "shadow_interp.h"  // paranoid_mode (disables chaining)
 #ifdef __aarch64__
 #include "emit_a64.h"
 #endif
@@ -560,6 +561,8 @@ void cache_record_exit(block_cache_t *cache, translated_block_t *block,
 }
 
 void cache_chain_incoming(block_cache_t *cache, translated_block_t *target) {
+    // Paranoid mode: disable chaining so every block returns to dispatcher
+    if (paranoid_mode) return;
     // Use the O(1) pending chain index if available
     cache_chain_pending(cache, target);
 }

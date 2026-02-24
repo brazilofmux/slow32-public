@@ -472,3 +472,5 @@ Commit `a851552` message says it fixes issues `#1/#2/#19/#25`, but touched files
 No Stage0 emulator source file is touched in that commit. If Stage0 fixes were landed
 earlier, the message should clarify that this commit updates tracking/docs for #1/#2
 rather than containing those code changes directly.
+
+### 30. While Stage 4 slow32-dbt on ARM produces the correct artifacts, it does not execute the stage 06 compiler correctly itself. This is being investigated.

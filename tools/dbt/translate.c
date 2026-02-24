@@ -3,6 +3,7 @@
 
 #include "translate.h"
 #include "block_cache.h"
+#include "shadow_interp.h"
 #include "stage5_lift.h"
 #include "stage5_burg.h"
 #include "stage5_codegen.h"
@@ -3049,7 +3050,8 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
     }
 
     // Stage 2 mode: try to chain, or emit patchable jump to dispatcher
-    translated_block_t *target = cache_lookup(ctx->cache, target_pc);
+    translated_block_t *target = paranoid_mode ? NULL
+                                               : cache_lookup(ctx->cache, target_pc);
 
     // Record the patch site (where the rel32 offset will be)
     uint8_t *patch_site = emit_ptr(e) + 1;  // After jmp opcode (E9)
@@ -3114,7 +3116,8 @@ static void emit_exit_chained_compact(translate_ctx_t *ctx, uint32_t target_pc,
     }
 
     // Try to chain to already-translated target
-    translated_block_t *target = cache_lookup(ctx->cache, target_pc);
+    translated_block_t *target = paranoid_mode ? NULL
+                                               : cache_lookup(ctx->cache, target_pc);
     uint8_t *patch_site = emit_ptr(e) + 1;  // After jmp opcode (E9)
 
     if (target && target->host_code) {

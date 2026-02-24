@@ -40,6 +40,9 @@ uint32_t stage5_codegen_fallback_emit_node = 0;
 #include "../emulator/s32x_loader.h"
 #include "../emulator/mmio_ring.h"
 
+// Paranoid mode: lockstep shadow interpreter
+#include "shadow_interp.h"
+
 #define STAGE1_CODE_BUFFER_SIZE (64 * 1024)    // 64KB for Stage 1 translated code
 #define GUEST_MEM_SIZE   (256 * 1024 * 1024)  // 256MB guest memory (must cover stack at 0x0FFFFFF0)
 
@@ -83,6 +86,12 @@ static bool trace_replay_pre_valid = false;
 static uint32_t trace_replay_pre_block_pc = 0;
 static uint32_t trace_replay_pre_regs[32];
 
+
+// Paranoid mode state
+static shadow_state_t paranoid_shadow;
+static bool paranoid_verbose = false;
+static uint32_t paranoid_pc_filter = 0;
+static uint64_t paranoid_skip = 0;
 
 // MMIO state
 static mmio_ring_state_t mmio_state;
@@ -1626,14 +1635,14 @@ static void run_dbt_stage4plus(dbt_cpu_state_t *cpu, block_cache_t *cache,
                                bool strict_carry, bool stage5_mode) {
     translate_ctx_t ctx;
     translate_init_cached(&ctx, cpu, cache);
-    ctx.inline_lookup_enabled = true;
-    ctx.ras_enabled = true;
-    ctx.superblock_enabled = superblock_enabled; // Enable Stage 4 superblock extension
+    ctx.inline_lookup_enabled = !paranoid_mode;  // Disable inline lookup in paranoid mode
+    ctx.ras_enabled = !paranoid_mode;             // Disable RAS prediction in paranoid mode
+    ctx.superblock_enabled = paranoid_mode ? false : superblock_enabled;
     ctx.profile_side_exits = profile_side_exits;
     ctx.side_exit_info_enabled = profile_side_exits;   // Study-only diagnostics
     ctx.avoid_backedge_extend = avoid_backedge_extend;
-    ctx.peephole_enabled = peephole_enabled;
-    ctx.reg_cache_enabled = reg_cache_enabled;
+    ctx.peephole_enabled = paranoid_mode ? false : peephole_enabled;
+    ctx.reg_cache_enabled = paranoid_mode ? false : reg_cache_enabled;
     ctx.strict_carry = strict_carry;
     ctx.stage5_burg_enabled = stage5_mode && stage5_burg_hook_enabled;
     ctx.stage5_emit_enabled = stage5_mode && stage5_emit_hook_enabled;
@@ -1681,6 +1690,13 @@ static void run_dbt_stage4plus(dbt_cpu_state_t *cpu, block_cache_t *cache,
             trace_replay_pre_valid = false;
         }
 
+        // Paranoid mode: snapshot and pre-execute shadow before DBT runs
+        // (shadow must read memory in its pre-block state)
+        if (paranoid_mode) {
+            shadow_snapshot(&paranoid_shadow, cpu);
+            shadow_pre_execute(&paranoid_shadow, block);
+        }
+
         // Execute translated code
         if (profile_timing) {
 #if defined(__x86_64__) || defined(__i386__) || defined(__aarch64__)
@@ -1697,6 +1713,11 @@ static void run_dbt_stage4plus(dbt_cpu_state_t *cpu, block_cache_t *cache,
 #endif
         } else {
             execute_cached_block(cpu, block);
+        }
+
+        // Paranoid mode: verify after execution
+        if (paranoid_mode) {
+            shadow_verify(&paranoid_shadow, cpu, block, dispatch_iter);
         }
 
         dbt_trace_branch_exit(cache, block, cpu);
@@ -1835,6 +1856,10 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -5        Use Stage 5 mode (SSA/BURG/RA compiler backend)\n");
     fprintf(stderr, "  --allow <list>  Only allow these MMIO services (comma-separated)\n");
     fprintf(stderr, "  --deny <list>   Deny these MMIO services (comma-separated)\n");
+    fprintf(stderr, "  --paranoid            Lockstep shadow interpreter (verify every block)\n");
+    fprintf(stderr, "  --paranoid-verbose    Print progress every 100K blocks\n");
+    fprintf(stderr, "  --paranoid-pc <addr>  Only verify blocks starting at <addr>\n");
+    fprintf(stderr, "  --paranoid-skip <N>   Skip first N blocks before verifying\n");
     fprintf(stderr, "\nEnvironment:\n");
     fprintf(stderr, "  SLOW32_DBT_ALIGN_TRAP=1  Trap on unaligned LD/ST/fetch\n");
     fprintf(stderr, "  SLOW32_DBT_EMIT_TRACE=1  Trace emitted x86-64 code\n");
@@ -1892,10 +1917,33 @@ int main(int argc, char **argv) {
         emit_trace_pc = (uint32_t)strtoul(trace_pc_env, NULL, 0);
     }
 
-    // Pre-scan for --allow/--deny (strip before single-char parser)
+    // Pre-scan for --paranoid and --allow/--deny (strip before single-char parser)
     svc_policy_t svc_policy = { .default_allow = true };
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--allow") == 0 && i + 1 < argc) {
+        if (strcmp(argv[i], "--paranoid") == 0) {
+            paranoid_mode = true;
+            memmove(&argv[i], &argv[i + 1], (argc - i - 1) * sizeof(char *));
+            argc -= 1;
+            i--;
+        } else if (strcmp(argv[i], "--paranoid-verbose") == 0) {
+            paranoid_mode = true;
+            paranoid_verbose = true;
+            memmove(&argv[i], &argv[i + 1], (argc - i - 1) * sizeof(char *));
+            argc -= 1;
+            i--;
+        } else if (strcmp(argv[i], "--paranoid-pc") == 0 && i + 1 < argc) {
+            paranoid_mode = true;
+            paranoid_pc_filter = (uint32_t)strtoul(argv[i + 1], NULL, 0);
+            memmove(&argv[i], &argv[i + 2], (argc - i - 2) * sizeof(char *));
+            argc -= 2;
+            i--;
+        } else if (strcmp(argv[i], "--paranoid-skip") == 0 && i + 1 < argc) {
+            paranoid_mode = true;
+            paranoid_skip = (uint64_t)strtoull(argv[i + 1], NULL, 0);
+            memmove(&argv[i], &argv[i + 2], (argc - i - 2) * sizeof(char *));
+            argc -= 2;
+            i--;
+        } else if (strcmp(argv[i], "--allow") == 0 && i + 1 < argc) {
             parse_service_list(argv[i + 1], svc_policy.allow_list, &svc_policy.allow_count, S32_MAX_SERVICES);
             memmove(&argv[i], &argv[i + 2], (argc - i - 2) * sizeof(char *));
             argc -= 2;
@@ -2095,6 +2143,26 @@ int main(int argc, char **argv) {
             if (cpu.num_intercepts > 0)
                 fprintf(stderr, "    math intercepts: %d functions\n", cpu.num_intercepts);
         }
+        if (paranoid_mode) {
+            fprintf(stderr, "  Paranoid:     enabled\n");
+            if (paranoid_pc_filter)
+                fprintf(stderr, "    PC filter:  0x%08X\n", paranoid_pc_filter);
+            if (paranoid_skip)
+                fprintf(stderr, "    Skip first: %" PRIu64 " blocks\n", paranoid_skip);
+        }
+    }
+
+    // Initialize paranoid mode shadow interpreter
+    if (paranoid_mode) {
+        // Disable intrinsics — the DBT inlines intrinsic calls into blocks,
+        // changing control flow in ways the shadow can't replicate.
+        cpu.intrinsics_enabled = false;
+
+        shadow_init(&paranoid_shadow, &cpu);
+        paranoid_shadow.verbose = paranoid_verbose;
+        paranoid_shadow.pc_filter = paranoid_pc_filter;
+        paranoid_shadow.skip_count = paranoid_skip;
+        paranoid_shadow.skip_remaining = paranoid_skip;
     }
 
     // Initialize block cache for Stage 2 and 3
@@ -2110,6 +2178,19 @@ int main(int argc, char **argv) {
         // Stage 3: Set up inline lookup table pointer in CPU state
         cpu.lookup_table = cache.blocks;
         cpu.lookup_mask = BLOCK_CACHE_MASK;
+
+        // In paranoid mode, neuter the native dispatcher so it just RETs.
+        // This forces every block exit to return to the C dispatch loop,
+        // ensuring shadow_snapshot/shadow_verify run between each block.
+        if (paranoid_mode && cache.native_dispatcher) {
+#ifdef __aarch64__
+            *(uint32_t *)cache.native_dispatcher = 0xD65F03C0;  // RET
+            __builtin___clear_cache((char *)cache.native_dispatcher,
+                                    (char *)cache.native_dispatcher + 4);
+#else
+            cache.native_dispatcher[0] = 0xC3;  // RET
+#endif
+        }
     }
 
     // Run
@@ -2345,6 +2426,11 @@ int main(int argc, char **argv) {
                 cache_dump_hot_blocks(&cache, cpu.mem_base, dump_hot_count, true);
             }
         }
+    }
+
+    // Print paranoid mode stats
+    if (paranoid_mode) {
+        shadow_print_stats(&paranoid_shadow);
     }
 
     // Cleanup

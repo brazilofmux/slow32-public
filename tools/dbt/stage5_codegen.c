@@ -13,6 +13,7 @@
 #include "emit_x64.h"
 #include "cpu_state.h"
 #include "block_cache.h"
+#include "shadow_interp.h"
 #include "translate.h"
 #include "dbt_limits.h"
 #include <stdio.h>
@@ -116,7 +117,8 @@ static void cg_exit_chained(stage5_cg_t *cg, uint32_t target_pc) {
     uint8_t *patch_site = emit_ptr(e) + 1; // points to rel32 within JMP
 
     // Try to chain directly to already-translated target
-    translated_block_t *target = ctx->cache ? cache_lookup(ctx->cache, target_pc) : NULL;
+    translated_block_t *target = (ctx->cache && !paranoid_mode)
+                                     ? cache_lookup(ctx->cache, target_pc) : NULL;
     if (target && target->host_code) {
         int64_t rel = (int64_t)(target->host_code - (patch_site + 4));
         if (rel >= INT32_MIN && rel <= INT32_MAX) {
@@ -889,7 +891,8 @@ static bool cg_emit_lir_node(stage5_cg_t *cg, const lir_node_t *l, uint32_t lir_
 
             uint8_t *patch_site = emit_ptr(e) + 1;
             translate_ctx_t *ctx = cg->ctx;
-            translated_block_t *target = ctx->cache ? cache_lookup(ctx->cache, target_pc) : NULL;
+            translated_block_t *target = (ctx->cache && !paranoid_mode)
+                                             ? cache_lookup(ctx->cache, target_pc) : NULL;
 
             if (target && target->host_code) {
                 int64_t rel = (int64_t)(target->host_code - (patch_site + 4));
@@ -1077,7 +1080,8 @@ static void cg_emit_deferred_exits(stage5_cg_t *cg) {
         emit_mov_m32_imm32(e, RBP, CPU_PC_OFFSET, target_pc);
 
         uint8_t *patch_site = emit_ptr(e) + 1;
-        translated_block_t *target = ctx->cache ? cache_lookup(ctx->cache, target_pc) : NULL;
+        translated_block_t *target = (ctx->cache && !paranoid_mode)
+                                         ? cache_lookup(ctx->cache, target_pc) : NULL;
 
         if (target && target->host_code) {
             int64_t rel = (int64_t)(target->host_code - (patch_site + 4));
