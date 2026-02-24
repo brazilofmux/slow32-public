@@ -1818,7 +1818,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -D        Dump top offender blocks\n");
     fprintf(stderr, "  -O        Disassemble offender host blocks (uses objdump)\n");
     fprintf(stderr, "  -X <pc>   Dump block containing guest PC\n");
-    fprintf(stderr, "  -I        Disable intrinsic recognition (memcpy/memset native stubs)\n");
+    fprintf(stderr, "  -I        Disable intrinsic recognition (native stubs)\n");
     fprintf(stderr, "  -U        UNSAFE: Disable all bounds/W^X checks (for benchmarking)\n");
     fprintf(stderr, "  -q [N]    Probe: sample PC every N seconds (default 1) via SIGALRM\n");
     fprintf(stderr, "  -1        Use Stage 1 mode (no caching)\n");

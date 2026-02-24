@@ -5454,6 +5454,9 @@ block_done:
 // Intrinsic recognition: emit native stubs for known functions
 // ============================================================================
 
+// Forward declaration — defined after math stubs
+static void emit_intrinsic_return(translate_ctx_t *ctx);
+
 // Emit a native memcpy/memmove stub:
 //   guest r3=dest, r4=src, r5=count → host memcpy/memmove
 //   returns dest in guest r1, jumps to guest r31
@@ -5519,13 +5522,7 @@ static bool emit_native_memcpy_stub(translate_ctx_t *ctx, translated_block_t *bl
 
     emit_pop_r64(e, RAX);  // Restore stack alignment
 
-    // Set PC to guest r31 (link register)
-    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(REG_LR));
-    emit_mov_m32_r32(e, RBP, CPU_PC_OFFSET, RAX);
-
-    // Exit with EXIT_INDIRECT (returning to whatever the caller was)
-    emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_INDIRECT);
-    emit_ret(e);
+    emit_intrinsic_return(ctx);
 
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;  // Minimal
@@ -5565,11 +5562,7 @@ static bool emit_native_memset_stub(translate_ctx_t *ctx, translated_block_t *bl
     emit_call_r64(e, RAX);
     emit_pop_r64(e, RAX);
 
-    // Return to guest r31
-    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(REG_LR));
-    emit_mov_m32_r32(e, RBP, CPU_PC_OFFSET, RAX);
-    emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_INDIRECT);
-    emit_ret(e);
+    emit_intrinsic_return(ctx);
 
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
@@ -5581,6 +5574,27 @@ static bool emit_native_memset_stub(translate_ctx_t *ctx, translated_block_t *bl
 //   returns length in guest r1, jumps to guest r31
 static bool emit_native_strlen_stub(translate_ctx_t *ctx, translated_block_t *block) {
     emit_ctx_t *e = &ctx->emit;
+    dbt_cpu_state_t *cpu = ctx->cpu;
+
+    // -U (unsafe): emit a direct host strlen call with no generated checks.
+    if (cpu->bounds_checks_disabled) {
+        emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));
+        emit_mov_r64_r64(e, RDI, R14);
+        emit_byte(e, 0x48); emit_byte(e, 0x01); emit_byte(e, MODRM(MOD_DIRECT, RAX, RDI));
+
+        emit_push_r64(e, RAX);
+        emit_mov_r64_imm64(e, RAX, (uint64_t)(uintptr_t)strlen);
+        emit_call_r64(e, RAX);
+        emit_pop_r64(e, RCX);
+
+        emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
+
+        emit_intrinsic_return(ctx);
+
+        block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+        block->guest_size = 4;
+        return !e->overflow;
+    }
 
     // Load guest r3 (str ptr)
     emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(3));
@@ -5622,11 +5636,7 @@ static bool emit_native_strlen_stub(translate_ctx_t *ctx, translated_block_t *bl
     // Return value from memchr is in rax - store length to guest r1
     emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
 
-    // Return to guest r31
-    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(REG_LR));
-    emit_mov_m32_r32(e, RBP, CPU_PC_OFFSET, RAX);
-    emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_INDIRECT);
-    emit_ret(e);
+    emit_intrinsic_return(ctx);
 
     // Fault path (bounds or missing terminator)
     size_t fault_offset = emit_offset(e);
@@ -5666,6 +5676,22 @@ static bool emit_native_memswap_stub(translate_ctx_t *ctx, translated_block_t *b
 
     // rdx = count (already set, zero-extended)
 
+    // Fast path for the common qsort case: swap exactly 4 bytes.
+    emit_cmp_r32_imm32(e, RDX, 4);
+    size_t not_4_patch = emit_offset(e) + 2;
+    emit_jne_rel32(e, 0);  // jump into generic loop
+
+    // mov eax, [rdi]
+    emit_byte(e, 0x8B); emit_byte(e, MODRM(MOD_INDIRECT, RAX, RDI));
+    // mov ecx, [rsi]
+    emit_byte(e, 0x8B); emit_byte(e, MODRM(MOD_INDIRECT, RCX, RSI));
+    // mov [rdi], ecx
+    emit_byte(e, 0x89); emit_byte(e, MODRM(MOD_INDIRECT, RCX, RDI));
+    // mov [rsi], eax
+    emit_byte(e, 0x89); emit_byte(e, MODRM(MOD_INDIRECT, RAX, RSI));
+    size_t fast4_done_patch = emit_offset(e) + 1;
+    emit_jmp_rel32(e, 0);  // patched to .Ldone
+
     // Qword swap loop: while (rdx >= 8) { swap 8 bytes via rax/rcx }
     //   .Lqword_loop:
     //     cmp rdx, 8
@@ -5692,6 +5718,7 @@ static bool emit_native_memswap_stub(translate_ctx_t *ctx, translated_block_t *b
     //   .Ldone:
 
     size_t qword_loop = emit_offset(e);
+    emit_patch_rel32(e, not_4_patch, qword_loop);
 
     // cmp edx, 8
     emit_cmp_r32_imm32(e, RDX, 8);
@@ -5752,13 +5779,10 @@ static bool emit_native_memswap_stub(translate_ctx_t *ctx, translated_block_t *b
 
     // .Ldone:
     size_t done = emit_offset(e);
+    emit_patch_rel32(e, fast4_done_patch, done);
     emit_patch_rel32(e, jz_patch + 2, done);  // +2 to skip 0F 84 opcode bytes
 
-    // Return to guest r31
-    emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(REG_LR));
-    emit_mov_m32_r32(e, RBP, CPU_PC_OFFSET, RAX);
-    emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_INDIRECT);
-    emit_ret(e);
+    emit_intrinsic_return(ctx);
 
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
@@ -5769,12 +5793,40 @@ static bool emit_native_memswap_stub(translate_ctx_t *ctx, translated_block_t *b
 // Math function interception emitters
 // ============================================================================
 
-// Helper: emit the common epilogue for math stubs (set PC = LR, exit indirect)
-static void emit_math_epilogue(emit_ctx_t *e) {
+// Emit intrinsic stub return using RAS prediction + inline lookup.
+// This replaces the naive EXIT_INDIRECT path that bypassed all chaining
+// and prediction, causing massive dispatcher traffic for hot intrinsics.
+// All scratch registers (RAX, RCX, RDX, R8, R9, R10) must be free.
+static void emit_intrinsic_return(translate_ctx_t *ctx) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Load return address from guest link register
     emit_mov_r32_m32(e, RAX, RBP, GUEST_REG_OFFSET(REG_LR));
-    emit_mov_m32_r32(e, RBP, CPU_PC_OFFSET, RAX);
-    emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_INDIRECT);
-    emit_ret(e);
+
+    // Intrinsic stubs don't use the register cache. Temporarily disable it
+    // so reg_cache_flush() inside emit_ras_predict/emit_indirect_lookup
+    // doesn't flush stale allocations left over from a previous block.
+    bool saved_rc = ctx->reg_cache_enabled;
+    bool saved_pw = ctx->pending_write.valid;
+    bool saved_pc = ctx->pending_cond.valid;
+    ctx->reg_cache_enabled = false;
+    ctx->pending_write.valid = false;
+    ctx->pending_cond.valid = false;
+
+    // Use the same three-way dispatch as translate_jalr for returns
+    if (ctx->ras_enabled && ctx->inline_lookup_enabled) {
+        emit_ras_predict(ctx, RAX);
+    } else if (ctx->inline_lookup_enabled && ctx->cache) {
+        emit_indirect_lookup(ctx, RAX);
+    } else {
+        emit_mov_m32_r32(e, RBP, CPU_PC_OFFSET, RAX);
+        emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_INDIRECT);
+        emit_ret(e);
+    }
+
+    ctx->reg_cache_enabled = saved_rc;
+    ctx->pending_write.valid = saved_pw;
+    ctx->pending_cond.valid = saved_pc;
 }
 
 // float fn(float) — SIG_F32_F32
@@ -5804,7 +5856,7 @@ static bool emit_native_math_f32_unary(translate_ctx_t *ctx, translated_block_t 
     // Store result to guest r1
     emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
 
-    emit_math_epilogue(e);
+    emit_intrinsic_return(ctx);
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
@@ -5843,7 +5895,7 @@ static bool emit_native_math_f64_unary(translate_ctx_t *ctx, translated_block_t 
     emit_byte(e, 0x48); emit_byte(e, 0xC1); emit_byte(e, 0xE8); emit_byte(e, 0x20);
     emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(2), RAX);
 
-    emit_math_epilogue(e);
+    emit_intrinsic_return(ctx);
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
@@ -5874,7 +5926,7 @@ static bool emit_native_math_f32_binary(translate_ctx_t *ctx, translated_block_t
     emit_byte(e, 0x66); emit_byte(e, 0x0F); emit_byte(e, 0x7E); emit_byte(e, 0xC0);
     emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
 
-    emit_math_epilogue(e);
+    emit_intrinsic_return(ctx);
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
@@ -5913,7 +5965,7 @@ static bool emit_native_math_f64_binary(translate_ctx_t *ctx, translated_block_t
     emit_byte(e, 0x48); emit_byte(e, 0xC1); emit_byte(e, 0xE8); emit_byte(e, 0x20); // shr rax,32
     emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(2), RAX);
 
-    emit_math_epilogue(e);
+    emit_intrinsic_return(ctx);
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
@@ -5946,7 +5998,7 @@ static bool emit_native_math_f64_i32(translate_ctx_t *ctx, translated_block_t *b
     emit_byte(e, 0x48); emit_byte(e, 0xC1); emit_byte(e, 0xE8); emit_byte(e, 0x20);
     emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(2), RAX);
 
-    emit_math_epilogue(e);
+    emit_intrinsic_return(ctx);
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
@@ -5974,7 +6026,7 @@ static bool emit_native_math_f32_i32(translate_ctx_t *ctx, translated_block_t *b
     emit_byte(e, 0x66); emit_byte(e, 0x0F); emit_byte(e, 0x7E); emit_byte(e, 0xC0);
     emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
 
-    emit_math_epilogue(e);
+    emit_intrinsic_return(ctx);
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
@@ -6011,7 +6063,7 @@ static bool emit_native_math_f64_dptr(translate_ctx_t *ctx, translated_block_t *
     emit_byte(e, 0x48); emit_byte(e, 0xC1); emit_byte(e, 0xE8); emit_byte(e, 0x20);
     emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(2), RAX);
 
-    emit_math_epilogue(e);
+    emit_intrinsic_return(ctx);
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
@@ -6045,7 +6097,7 @@ static bool emit_native_math_f64_iptr(translate_ctx_t *ctx, translated_block_t *
     emit_byte(e, 0x48); emit_byte(e, 0xC1); emit_byte(e, 0xE8); emit_byte(e, 0x20);
     emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(2), RAX);
 
-    emit_math_epilogue(e);
+    emit_intrinsic_return(ctx);
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
@@ -6076,7 +6128,7 @@ static bool emit_native_math_f32_fptr(translate_ctx_t *ctx, translated_block_t *
     emit_byte(e, 0x66); emit_byte(e, 0x0F); emit_byte(e, 0x7E); emit_byte(e, 0xC0);
     emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
 
-    emit_math_epilogue(e);
+    emit_intrinsic_return(ctx);
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
@@ -6104,7 +6156,7 @@ static bool emit_native_math_f32_iptr(translate_ctx_t *ctx, translated_block_t *
     emit_byte(e, 0x66); emit_byte(e, 0x0F); emit_byte(e, 0x7E); emit_byte(e, 0xC0);
     emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
 
-    emit_math_epilogue(e);
+    emit_intrinsic_return(ctx);
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
@@ -6131,7 +6183,7 @@ static bool emit_native_math_i32_f64(translate_ctx_t *ctx, translated_block_t *b
     // Result is in eax (int), store to guest r1
     emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(1), RAX);
 
-    emit_math_epilogue(e);
+    emit_intrinsic_return(ctx);
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
@@ -6216,6 +6268,7 @@ static translated_block_t *try_emit_intrinsic(translate_ctx_t *ctx, uint32_t gue
         bool ok = emit_native_math_stub(ctx, block, math_fn, math_sig);
         if (!ok) return NULL;
 
+        native_stub_count++;
         block->host_size = emit_offset(e);
         cache_commit_code(cache, block->host_size);
         cache_insert(cache, block);
@@ -6258,6 +6311,7 @@ static translated_block_t *try_emit_intrinsic(translate_ctx_t *ctx, uint32_t gue
 
     if (!ok) return NULL;
 
+    native_stub_count++;
     block->host_size = emit_offset(e);
     cache_commit_code(cache, block->host_size);
     cache_insert(cache, block);

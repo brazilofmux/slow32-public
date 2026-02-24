@@ -2971,17 +2971,42 @@ static void emit_a64_stub_prologue(emit_ctx_t *e) {
     emit_stp_x64_pre(e, W29, W30, WZR, -16);  // WZR=31=SP in load/store context
 }
 
-// Helper: emit stub epilogue (restore LR, set PC = guest LR, exit indirect)
-static void emit_a64_stub_epilogue(emit_ctx_t *e) {
-    // LDP X29, X30, [SP], #16
+// Helper: emit stub epilogue with RAS prediction + inline lookup.
+// Replaces the old EXIT_INDIRECT path that bypassed all chaining.
+static void emit_a64_stub_epilogue(translate_ctx_t *ctx) {
+    emit_ctx_t *e = &ctx->emit;
+
+    // Restore host frame (STP was done in prologue)
     emit_ldp_x64_post(e, W29, W30, WZR, 16);
-    // PC = guest r31 (link register)
+
+    // Load guest return address
     emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(REG_LR));
-    emit_str_w32_imm(e, W0, W20, CPU_PC_OFFSET);
-    // exit_reason = EXIT_INDIRECT
-    emit_mov_w32_imm32(e, W0, EXIT_INDIRECT);
-    emit_str_w32_imm(e, W0, W20, CPU_EXIT_REASON_OFFSET);
-    emit_ret_lr(e);
+
+    // Intrinsic stubs don't use the register cache. Temporarily disable it
+    // so reg_cache_flush() inside emit_ras_predict/emit_inline_lookup
+    // doesn't flush stale allocations left over from a previous block.
+    bool saved_rc = ctx->reg_cache_enabled;
+    bool saved_pw = ctx->pending_write.valid;
+    bool saved_pc = ctx->pending_cond.valid;
+    ctx->reg_cache_enabled = false;
+    ctx->pending_write.valid = false;
+    ctx->pending_cond.valid = false;
+
+    // Use the same dispatch as translate_jalr for returns
+    if (ctx->ras_enabled && ctx->inline_lookup_enabled && ctx->cache) {
+        emit_ras_predict(ctx, W0);
+    } else if (ctx->inline_lookup_enabled && ctx->cache) {
+        emit_inline_lookup(ctx, W0);
+    } else {
+        emit_str_w32_imm(e, W0, W20, CPU_PC_OFFSET);
+        emit_mov_w32_imm32(e, W0, EXIT_INDIRECT);
+        emit_str_w32_imm(e, W0, W20, CPU_EXIT_REASON_OFFSET);
+        emit_ret_lr(e);
+    }
+
+    ctx->reg_cache_enabled = saved_rc;
+    ctx->pending_write.valid = saved_pw;
+    ctx->pending_cond.valid = saved_pc;
 }
 
 // Helper: emit BLR to a host function via X8
@@ -3152,7 +3177,7 @@ static bool emit_native_memcpy_stub_a64(translate_ctx_t *ctx, translated_block_t
 
     size_t done_offset = emit_offset(e);
     patch_imm19_branches(e, &done_patch, 1, done_offset);
-    emit_a64_stub_epilogue(e);
+    emit_a64_stub_epilogue(ctx);
 
     size_t fault_load_offset = emit_offset(e);
     emit_a64_stub_fault_exit(ctx, EXIT_FAULT_LOAD, W1);
@@ -3198,7 +3223,7 @@ static bool emit_native_memset_stub_a64(translate_ctx_t *ctx, translated_block_t
 
     size_t done_offset = emit_offset(e);
     patch_imm19_branches(e, &done_patch, 1, done_offset);
-    emit_a64_stub_epilogue(e);
+    emit_a64_stub_epilogue(ctx);
 
     size_t fault_store_offset = emit_offset(e);
     emit_a64_stub_fault_exit(ctx, EXIT_FAULT_STORE, W0);
@@ -3214,8 +3239,22 @@ static bool emit_native_memset_stub_a64(translate_ctx_t *ctx, translated_block_t
 // Guest: r3=str → r1=length
 static bool emit_native_strlen_stub_a64(translate_ctx_t *ctx, translated_block_t *block) {
     emit_ctx_t *e = &ctx->emit;
+    dbt_cpu_state_t *cpu = ctx->cpu;
 
     emit_a64_stub_prologue(e);
+
+    // -U (unsafe): emit a direct host strlen call with no generated checks.
+    if (cpu->bounds_checks_disabled) {
+        emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(3));
+        emit_add_x64_x64_w32_uxtw(e, W0, W21, W0);
+        emit_a64_call_host(e, (void *)strlen);
+        emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
+        emit_a64_stub_epilogue(ctx);
+
+        block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
+        block->guest_size = 4;
+        return !e->overflow;
+    }
 
     // Load guest r3 (string pointer)
     emit_ldr_w32_imm(e, W0, W20, GUEST_REG_OFFSET(3));
@@ -3250,7 +3289,7 @@ static bool emit_native_strlen_stub_a64(translate_ctx_t *ctx, translated_block_t
     // Store length to guest r1
     emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
 
-    emit_a64_stub_epilogue(e);
+    emit_a64_stub_epilogue(ctx);
 
     // Fault path (bounds check or null not found)
     size_t fault_offset = emit_offset(e);
@@ -3350,7 +3389,7 @@ static bool emit_native_memswap_stub_a64(translate_ctx_t *ctx, translated_block_
     *cbz_patch = (*cbz_patch & ~(0x7FFFF << 5)) | ((cbz_imm19 & 0x7FFFF) << 5);
 
     patch_imm19_branches(e, &done_patch, 1, done_offset);
-    emit_a64_stub_epilogue(e);
+    emit_a64_stub_epilogue(ctx);
 
     size_t fault_a_offset = emit_offset(e);
     emit_a64_stub_fault_exit(ctx, EXIT_FAULT_STORE, W0);
@@ -3385,7 +3424,7 @@ static bool emit_native_math_f32_unary_a64(translate_ctx_t *ctx, translated_bloc
     emit_fmov_w32_s(e, W0, 0);
     emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
 
-    emit_a64_stub_epilogue(e);
+    emit_a64_stub_epilogue(ctx);
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
@@ -3404,7 +3443,7 @@ static bool emit_native_math_f64_unary_a64(translate_ctx_t *ctx, translated_bloc
 
     emit_a64_store_f64_result(e);  // D0 → r1:r2
 
-    emit_a64_stub_epilogue(e);
+    emit_a64_stub_epilogue(ctx);
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
@@ -3430,7 +3469,7 @@ static bool emit_native_math_f32_binary_a64(translate_ctx_t *ctx, translated_blo
     emit_fmov_w32_s(e, W0, 0);
     emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
 
-    emit_a64_stub_epilogue(e);
+    emit_a64_stub_epilogue(ctx);
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
@@ -3455,7 +3494,7 @@ static bool emit_native_math_f64_binary_a64(translate_ctx_t *ctx, translated_blo
 
     emit_a64_store_f64_result(e);
 
-    emit_a64_stub_epilogue(e);
+    emit_a64_stub_epilogue(ctx);
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
@@ -3477,7 +3516,7 @@ static bool emit_native_math_f64_i32_a64(translate_ctx_t *ctx, translated_block_
 
     emit_a64_store_f64_result(e);
 
-    emit_a64_stub_epilogue(e);
+    emit_a64_stub_epilogue(ctx);
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
@@ -3502,7 +3541,7 @@ static bool emit_native_math_f32_i32_a64(translate_ctx_t *ctx, translated_block_
     emit_fmov_w32_s(e, W0, 0);
     emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
 
-    emit_a64_stub_epilogue(e);
+    emit_a64_stub_epilogue(ctx);
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
@@ -3531,7 +3570,7 @@ static bool emit_native_math_f64_dptr_a64(translate_ctx_t *ctx, translated_block
 
     emit_a64_store_f64_result(e);
 
-    emit_a64_stub_epilogue(e);
+    emit_a64_stub_epilogue(ctx);
 
     size_t fault_offset = emit_offset(e);
     emit_a64_stub_fault_exit(ctx, EXIT_FAULT_STORE, W0);
@@ -3562,7 +3601,7 @@ static bool emit_native_math_f64_iptr_a64(translate_ctx_t *ctx, translated_block
 
     emit_a64_store_f64_result(e);
 
-    emit_a64_stub_epilogue(e);
+    emit_a64_stub_epilogue(ctx);
 
     size_t fault_offset = emit_offset(e);
     emit_a64_stub_fault_exit(ctx, EXIT_FAULT_STORE, W0);
@@ -3599,7 +3638,7 @@ static bool emit_native_math_f32_fptr_a64(translate_ctx_t *ctx, translated_block
     emit_fmov_w32_s(e, W0, 0);
     emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
 
-    emit_a64_stub_epilogue(e);
+    emit_a64_stub_epilogue(ctx);
 
     size_t fault_offset = emit_offset(e);
     emit_a64_stub_fault_exit(ctx, EXIT_FAULT_STORE, W0);
@@ -3632,7 +3671,7 @@ static bool emit_native_math_f32_iptr_a64(translate_ctx_t *ctx, translated_block
     emit_fmov_w32_s(e, W0, 0);
     emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
 
-    emit_a64_stub_epilogue(e);
+    emit_a64_stub_epilogue(ctx);
 
     size_t fault_offset = emit_offset(e);
     emit_a64_stub_fault_exit(ctx, EXIT_FAULT_STORE, W0);
@@ -3657,7 +3696,7 @@ static bool emit_native_math_i32_f64_a64(translate_ctx_t *ctx, translated_block_
     // Result is in W0 (int), store to r1
     emit_str_w32_imm(e, W0, W20, GUEST_REG_OFFSET(1));
 
-    emit_a64_stub_epilogue(e);
+    emit_a64_stub_epilogue(ctx);
     block->flags |= BLOCK_FLAG_INDIRECT | BLOCK_FLAG_RETURN;
     block->guest_size = 4;
     return !e->overflow;
