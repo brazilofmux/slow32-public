@@ -6,7 +6,6 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "emit_x64.h"
 #include "stage5_lift.h"
 
 typedef enum {

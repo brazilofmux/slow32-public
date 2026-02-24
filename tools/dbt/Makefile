@@ -22,7 +22,13 @@ else
 endif
 
 # Source files
-SRCS = dbt.c $(ARCH_SRCS) block_cache.c stage5_lift.c stage5_burg.c stage5_ssa.c stage5_ra.c stage5_codegen.c stage5_mir.c stage5_lir_opt.c
+STAGE5_COMMON_SRCS = stage5_lift.c stage5_burg.c stage5_ssa.c stage5_ra.c stage5_mir.c stage5_lir_opt.c
+ifeq ($(UNAME_M),aarch64)
+    STAGE5_ARCH_SRCS =
+else
+    STAGE5_ARCH_SRCS = stage5_codegen.c
+endif
+SRCS = dbt.c $(ARCH_SRCS) block_cache.c $(STAGE5_COMMON_SRCS) $(STAGE5_ARCH_SRCS)
 EMULATOR_SRCS = ../emulator/mmio_ring.c
 OBJS = $(SRCS:.c=.o)
 EMULATOR_OBJS = mmio_ring.o

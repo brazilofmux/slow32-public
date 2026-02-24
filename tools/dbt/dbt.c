@@ -25,9 +25,16 @@
 #include "translate.h"
 #include "block_cache.h"
 #include "stage5_burg.h"
-#include "stage5_codegen.h"
 #include "stage5_ssa.h"
 #include "stage5_ra.h"
+#if defined(__aarch64__)
+uint32_t stage5_codegen_attempted = 0;
+uint32_t stage5_codegen_success = 0;
+uint32_t stage5_codegen_fallback = 0;
+uint32_t stage5_codegen_fallback_emit_node = 0;
+#else
+#include "stage5_codegen.h"
+#endif
 
 // Reuse components from the emulator
 #include "../emulator/s32x_loader.h"
