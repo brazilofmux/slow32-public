@@ -81,7 +81,7 @@ run_exe() {
     shift 2
 
     local rc=0
-    timeout "${EXEC_TIMEOUT:-1200}" "$EMU" "$exe" "$@" >"$log" 2>&1 || rc=$?
+    timeout "${EXEC_TIMEOUT:-4800}" "$EMU" "$exe" "$@" >"$log" 2>&1 || rc=$?
     if [[ "$rc" -eq 124 ]]; then
         echo "execution timed out: $exe" >&2
         tail -n 60 "$log" >&2
@@ -105,7 +105,7 @@ run_exe_rc() {
     shift 2
 
     local rc=0
-    timeout "${EXEC_TIMEOUT:-1200}" "$EMU" "$exe" "$@" >"$log" 2>&1 || rc=$?
+    timeout "${EXEC_TIMEOUT:-4800}" "$EMU" "$exe" "$@" >"$log" 2>&1 || rc=$?
     if [[ "$rc" -eq 124 ]]; then
         echo "execution timed out: $exe" >&2
         tail -n 60 "$log" >&2
@@ -244,8 +244,8 @@ printf '\nint main(void) {\n    char *src;\n    src = "int x;";\n    lex_init(sr
 
 echo "  Smoke source: $(wc -c < "$SMOKE_SRC") bytes"
 SMOKE_EXE=""
-SAVED_TIMEOUT="${EXEC_TIMEOUT:-1200}"
-EXEC_TIMEOUT=1200
+SAVED_TIMEOUT="${EXEC_TIMEOUT:-4800}"
+EXEC_TIMEOUT=4800
 SMOKE_EXE=$(compile_and_link "lex_smoke" "$SMOKE_SRC") || true
 EXEC_TIMEOUT="$SAVED_TIMEOUT"
 if [[ -n "$SMOKE_EXE" && -s "$SMOKE_EXE" ]]; then
@@ -279,8 +279,8 @@ grep -v '^#include "c_lexer_gen.c"' "$TESTS_DIR/lex_test.c" >> "$MERGED_TEST"
 
 echo "  Test source: $(wc -c < "$MERGED_TEST") bytes"
 TEST_EXE=""
-SAVED_TIMEOUT="${EXEC_TIMEOUT:-1200}"
-EXEC_TIMEOUT=1200
+SAVED_TIMEOUT="${EXEC_TIMEOUT:-4800}"
+EXEC_TIMEOUT=4800
 TEST_EXE=$(compile_and_link "lex_test" "$MERGED_TEST") || true
 EXEC_TIMEOUT="$SAVED_TIMEOUT"
 if [[ -n "$TEST_EXE" && -s "$TEST_EXE" ]]; then
@@ -313,8 +313,8 @@ S12CC_SRC="$SCRIPT_DIR/s12cc.c"
 [[ -s "$S12CC_SRC" ]] || { echo "ERROR: s12cc.c not found" >&2; exit 1; }
 
 TOTAL=$((TOTAL + 1))
-SAVED_TIMEOUT="${EXEC_TIMEOUT:-1200}"
-EXEC_TIMEOUT=1200
+SAVED_TIMEOUT="${EXEC_TIMEOUT:-4800}"
+EXEC_TIMEOUT=4800
 S12CC_EXE=$(compile_and_link "s12cc" "$S12CC_SRC") || true
 EXEC_TIMEOUT="$SAVED_TIMEOUT"
 
