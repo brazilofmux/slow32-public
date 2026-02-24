@@ -15,6 +15,7 @@
 #include "translate.h"      // decode_instruction, OP_* constants
 
 bool paranoid_mode = false;
+bool dbt_no_chain = false;
 
 // ============================================================================
 // Initialization

@@ -1635,8 +1635,8 @@ static void run_dbt_stage4plus(dbt_cpu_state_t *cpu, block_cache_t *cache,
                                bool strict_carry, bool stage5_mode) {
     translate_ctx_t ctx;
     translate_init_cached(&ctx, cpu, cache);
-    ctx.inline_lookup_enabled = !paranoid_mode;  // Disable inline lookup in paranoid mode
-    ctx.ras_enabled = !paranoid_mode;             // Disable RAS prediction in paranoid mode
+    ctx.inline_lookup_enabled = !(paranoid_mode || dbt_no_chain);
+    ctx.ras_enabled = !(paranoid_mode || dbt_no_chain);
     ctx.superblock_enabled = paranoid_mode ? false : superblock_enabled;
     ctx.profile_side_exits = profile_side_exits;
     ctx.side_exit_info_enabled = profile_side_exits;   // Study-only diagnostics
@@ -1864,6 +1864,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "  SLOW32_DBT_ALIGN_TRAP=1  Trap on unaligned LD/ST/fetch\n");
     fprintf(stderr, "  SLOW32_DBT_EMIT_TRACE=1  Trace emitted x86-64 code\n");
     fprintf(stderr, "  SLOW32_DBT_EMIT_TRACE_PC=0xNNN  Only trace block at guest PC\n");
+    fprintf(stderr, "  SLOW32_DBT_NO_CHAIN=1  Disable direct chaining + inline lookup\n");
 }
 
 static void parse_service_list(const char *list, char names[][S32_MAX_SVC_NAME], int *count, int max) {
@@ -1908,7 +1909,9 @@ int main(int argc, char **argv) {
     const char *trace_env = getenv("SLOW32_DBT_EMIT_TRACE");
     const char *trace_pc_env = getenv("SLOW32_DBT_EMIT_TRACE_PC");
     const char *align_env = getenv("SLOW32_DBT_ALIGN_TRAP");
+    const char *no_chain_env = getenv("SLOW32_DBT_NO_CHAIN");
     bool emit_trace = (trace_env && atoi(trace_env) != 0);
+    dbt_no_chain = (no_chain_env && atoi(no_chain_env) != 0);
     if (align_env && atoi(align_env) != 0) {
         align_traps_enabled = true;
     }

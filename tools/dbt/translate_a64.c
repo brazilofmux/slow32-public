@@ -839,7 +839,7 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
     emit_mov_w32_imm32(e, W1, target_pc);
     emit_str_w32_imm(e, W1, W20, CPU_PC_OFFSET);
 
-    if (ctx->cache == NULL || paranoid_mode) {
+    if (ctx->cache == NULL || paranoid_mode || dbt_no_chain) {
         // Stage 1/paranoid: always return to C dispatcher so shadow verification
         // can run after each translated guest block.
         emit_mov_w32_imm32(e, W1, EXIT_BRANCH);
@@ -851,7 +851,7 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
     // Stage 2: chain to target if already translated
     // In paranoid mode, skip direct chaining — always go through shared_branch_exit
     // so every block exit returns to the C dispatch loop for shadow verification.
-    translated_block_t *target = paranoid_mode ? NULL
+    translated_block_t *target = (paranoid_mode || dbt_no_chain) ? NULL
                                                : cache_lookup(ctx->cache, target_pc);
 
     if (target && target->host_code) {
@@ -890,7 +890,7 @@ static void emit_exit_chained_compact(translate_ctx_t *ctx, uint32_t target_pc, 
     emit_mov_w32_imm32(e, W1, target_pc);
     emit_str_w32_imm(e, W1, W20, CPU_PC_OFFSET);
 
-    if (ctx->cache == NULL || paranoid_mode) {
+    if (ctx->cache == NULL || paranoid_mode || dbt_no_chain) {
         // Stage 1/paranoid: always return to C dispatcher so shadow verification
         // can run after each translated guest block.
         emit_mov_w32_imm32(e, W1, EXIT_BRANCH);
@@ -900,7 +900,7 @@ static void emit_exit_chained_compact(translate_ctx_t *ctx, uint32_t target_pc, 
     }
 
     // Stage 2+: chain to target if already translated
-    translated_block_t *target = paranoid_mode ? NULL
+    translated_block_t *target = (paranoid_mode || dbt_no_chain) ? NULL
                                                : cache_lookup(ctx->cache, target_pc);
 
     if (target && target->host_code) {
@@ -1303,7 +1303,17 @@ static void emit_mem_access_check(translate_ctx_t *ctx, a64_reg_t addr_reg,
 
 static inline a64_reg_t resolve_src(translate_ctx_t *ctx, uint8_t guest_reg, a64_reg_t scratch) {
     a64_reg_t h = guest_host_reg(ctx, guest_reg);
-    if (h != A64_NOREG) return h;
+    if (h != A64_NOREG) {
+        // If caller plans to use `scratch` as a destination and we currently
+        // have a deferred pending write in that same host register, flush now.
+        // Otherwise a following MOV scratch, h can clobber the pending value.
+        if (ctx->pending_write.valid &&
+            ctx->pending_write.host_reg == scratch &&
+            h != scratch) {
+            flush_pending_write(ctx);
+        }
+        return h;
+    }
     emit_load_guest_reg(ctx, scratch, guest_reg);
     return scratch;
 }
@@ -2128,10 +2138,10 @@ void translate_jalr(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
     // Inline lookup for indirect jumps (Stage 3)
     bool is_return = (rd == 0 && rs1 == REG_LR && imm == 0);
 
-    if (ctx->ras_enabled && is_return && ctx->inline_lookup_enabled && ctx->cache) {
+    if (ctx->ras_enabled && is_return && ctx->inline_lookup_enabled && ctx->cache && !dbt_no_chain) {
         // RAS-predicted return: pop predicted PC, do inline lookup
         emit_ras_predict(ctx, W0);
-    } else if (ctx->inline_lookup_enabled && ctx->cache) {
+    } else if (ctx->inline_lookup_enabled && ctx->cache && !dbt_no_chain) {
         // Generic indirect: inline 4-probe hash lookup
         emit_inline_lookup(ctx, W0);
     } else {
@@ -3000,9 +3010,9 @@ static void emit_a64_stub_epilogue(translate_ctx_t *ctx) {
     ctx->pending_cond.valid = false;
 
     // Use the same dispatch as translate_jalr for returns
-    if (ctx->ras_enabled && ctx->inline_lookup_enabled && ctx->cache) {
+    if (ctx->ras_enabled && ctx->inline_lookup_enabled && ctx->cache && !dbt_no_chain) {
         emit_ras_predict(ctx, W0);
-    } else if (ctx->inline_lookup_enabled && ctx->cache) {
+    } else if (ctx->inline_lookup_enabled && ctx->cache && !dbt_no_chain) {
         emit_inline_lookup(ctx, W0);
     } else {
         emit_str_w32_imm(e, W0, W20, CPU_PC_OFFSET);

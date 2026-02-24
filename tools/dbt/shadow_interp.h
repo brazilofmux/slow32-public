@@ -73,6 +73,8 @@ typedef struct {
 
 // Global paranoid mode flag (checked by block_cache.c to disable chaining)
 extern bool paranoid_mode;
+// Global debug flag: force stage2+ exits through dispatcher (no direct chaining).
+extern bool dbt_no_chain;
 
 // Initialize the shadow state.  Call after dbt_cpu_init + dbt_load_s32x.
 void shadow_init(shadow_state_t *s, dbt_cpu_state_t *cpu);
