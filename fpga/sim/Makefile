@@ -15,6 +15,7 @@ RTL_SRCS = $(RTL_DIR)/slow32_pkg.sv \
            $(RTL_DIR)/slow32_regfile.sv \
            $(RTL_DIR)/slow32_decode.sv \
            $(RTL_DIR)/slow32_alu.sv \
+           $(RTL_DIR)/slow32_divider.sv \
            $(RTL_DIR)/slow32_cpu.sv
 
 TB_SRC = $(SIM_DIR)/slow32_tb.cpp

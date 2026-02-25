@@ -70,8 +70,17 @@ module slow32_cpu (
     logic [31:0] mem_load_data;      // Processed load data (sign/zero extended)
 
     // ---- Control signals ----
-    logic is_load, is_store, is_branch, is_jal, is_jalr;
+    logic is_load, is_store, is_branch, is_jal, is_jalr, is_div;
     logic branch_taken;
+
+    // ---- Divider signals ----
+    logic        div_start;
+    logic        div_done;
+    logic [31:0] div_dividend, div_divisor;
+    logic [31:0] div_quotient, div_remainder;
+    logic        div_sign_q;    // Negate quotient?
+    logic        div_sign_r;    // Negate remainder?
+    logic        div_is_rem;    // REM (not DIV)?
 
     // ========================================================================
     // Submodule instantiation
@@ -113,6 +122,18 @@ module slow32_cpu (
         .result (alu_result)
     );
 
+    // Divider — 32-cycle unsigned restoring division
+    slow32_divider u_divider (
+        .clk       (clk),
+        .rst_n     (rst_n),
+        .start     (div_start),
+        .dividend  (div_dividend),
+        .divisor   (div_divisor),
+        .done      (div_done),
+        .quotient  (div_quotient),
+        .remainder (div_remainder)
+    );
+
     // ========================================================================
     // Instruction classification
     // ========================================================================
@@ -122,6 +143,7 @@ module slow32_cpu (
         is_jal    = (dec_opcode == OP_JAL);
         is_jalr   = (dec_opcode == OP_JALR);
         is_branch = (dec_opcode >= OP_BEQ && dec_opcode <= OP_BGEU);
+        is_div    = (dec_opcode == OP_DIV || dec_opcode == OP_REM);
     end
 
     // ========================================================================
@@ -335,6 +357,12 @@ module slow32_cpu (
             rf_wr_data  <= 32'd0;
             dmem_wen    <= 1'b0;
             dmem_ren    <= 1'b0;
+            div_start   <= 1'b0;
+            div_dividend <= 32'd0;
+            div_divisor  <= 32'd0;
+            div_sign_q  <= 1'b0;
+            div_sign_r  <= 1'b0;
+            div_is_rem  <= 1'b0;
         end else if (!halted) begin
             // Default: clear single-cycle pulses
             debug_valid <= 1'b0;
@@ -342,6 +370,7 @@ module slow32_cpu (
             rf_wr_en    <= 1'b0;
             dmem_wen    <= 1'b0;
             dmem_ren    <= 1'b0;
+            div_start   <= 1'b0;
 
             case (state)
                 // ============================================================
@@ -435,6 +464,32 @@ module slow32_cpu (
                         end
                         pc    <= pc + 32'd4;
                         state <= ST_FETCH;
+                    end else if (is_div) begin
+                        // DIV/REM: check corner cases first
+                        div_is_rem <= (dec_opcode == OP_REM);
+                        if (rs2_reg == 32'd0) begin
+                            // Div-by-zero: quotient=0xFFFFFFFF, remainder=dividend
+                            if (dec_opcode == OP_REM)
+                                alu_out_reg <= rs1_reg;
+                            else
+                                alu_out_reg <= 32'hFFFFFFFF;
+                            state <= ST_WRITEBACK;
+                        end else if (rs1_reg == 32'h80000000 && rs2_reg == 32'hFFFFFFFF) begin
+                            // INT_MIN / -1: quotient=INT_MIN, remainder=0
+                            if (dec_opcode == OP_REM)
+                                alu_out_reg <= 32'd0;
+                            else
+                                alu_out_reg <= 32'h80000000;
+                            state <= ST_WRITEBACK;
+                        end else begin
+                            // Normal case: compute |rs1|, |rs2|, start unsigned divider
+                            div_sign_q <= rs1_reg[31] ^ rs2_reg[31];
+                            div_sign_r <= rs1_reg[31];
+                            div_dividend <= rs1_reg[31] ? (~rs1_reg + 32'd1) : rs1_reg;
+                            div_divisor  <= rs2_reg[31] ? (~rs2_reg + 32'd1) : rs2_reg;
+                            div_start    <= 1'b1;
+                            state        <= ST_DIVIDE;
+                        end
                     end else begin
                         // ALU instruction: go to WRITEBACK
                         state <= ST_WRITEBACK;
@@ -467,6 +522,19 @@ module slow32_cpu (
                         rf_wr_data <= alu_out_reg;
                     pc    <= pc + 32'd4;
                     state <= ST_FETCH;
+                end
+
+                // ============================================================
+                // DIVIDE: Wait for divider, apply sign correction
+                // ============================================================
+                ST_DIVIDE: begin
+                    if (div_done) begin
+                        if (div_is_rem)
+                            alu_out_reg <= div_sign_r ? (~div_remainder + 32'd1) : div_remainder;
+                        else
+                            alu_out_reg <= div_sign_q ? (~div_quotient + 32'd1) : div_quotient;
+                        state <= ST_WRITEBACK;
+                    end
                 end
 
                 default: state <= ST_FETCH;

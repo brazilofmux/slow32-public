@@ -86,7 +86,8 @@ package slow32_pkg;
     ST_DECODE    = 3'd1,
     ST_EXECUTE   = 3'd2,
     ST_MEMORY    = 3'd3,
-    ST_WRITEBACK = 3'd4
+    ST_WRITEBACK = 3'd4,
+    ST_DIVIDE    = 3'd7
   } state_t;
 
   // ---- ALU operation codes (internal) ----
