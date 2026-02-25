@@ -634,6 +634,7 @@ static error_t fn_curdir(value_t *args, int nargs, value_t *out) {
 /* PEEK/POKE simulated memory state */
 extern unsigned char peek_poke_mem[];
 int def_seg = 0;  /* DEF SEG segment (address = seg*16 + offset) */
+int console_width = 80; /* WIDTH setting */
 #define PEEK_POKE_SIZE 65536
 
 /* PEEK(addr) - read byte from simulated memory (uses DEF SEG) */

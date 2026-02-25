@@ -606,6 +606,15 @@ void stmt_free(stmt_t *s) {
                 expr_free(s->poke_stmt.addr);
                 expr_free(s->poke_stmt.value);
                 break;
+            case STMT_LSET:
+            case STMT_RSET:
+                expr_free(s->lrset.value);
+                break;
+            case STMT_WIDTH:
+                expr_free(s->width_stmt.columns);
+                break;
+            case STMT_NOOP:
+                break;
         }
         free(s);
         s = next;

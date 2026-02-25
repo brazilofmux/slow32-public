@@ -159,6 +159,10 @@ typedef enum {
     STMT_POKE,
     STMT_SCREEN,
     STMT_DEF_SEG,
+    STMT_LSET,
+    STMT_RSET,
+    STMT_WIDTH,
+    STMT_NOOP,  /* parsed-and-discarded: FIELD, CHAIN, PCOPY, KEY, SOUND, PLAY */
 } stmt_type_t;
 
 /* Print item: expression + separator */
@@ -530,6 +534,17 @@ typedef struct stmt {
             struct expr *addr;
             struct expr *value;
         } poke_stmt;
+
+        /* STMT_LSET / STMT_RSET */
+        struct {
+            char varname[64];
+            struct expr *value;
+        } lrset;
+
+        /* STMT_WIDTH */
+        struct {
+            struct expr *columns;
+        } width_stmt;
     };
 } stmt_t;
 

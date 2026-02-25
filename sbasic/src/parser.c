@@ -1952,6 +1952,90 @@ static stmt_t *parse_stmt(parser_t *p) {
             return s;
         }
 
+        case TOK_LSET: case TOK_RSET: {
+            stmt_type_t stype = (tok->type == TOK_LSET) ? STMT_LSET : STMT_RSET;
+            int line = tok->line;
+            lexer_next(&p->lex);
+            if (!lexer_check(&p->lex, TOK_IDENT)) {
+                parser_error(p, ERR_SYNTAX); return NULL;
+            }
+            token_t var = lexer_next(&p->lex);
+            if (!expect(p, TOK_EQ)) return NULL;
+            expr_t *val = parse_expr(p);
+            if (!val) return NULL;
+            stmt_t *s = stmt_alloc(stype, line);
+            if (!s) { expr_free(val); parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+            strncpy(s->lrset.varname, var.text, 63);
+            s->lrset.varname[63] = '\0';
+            s->lrset.value = val;
+            return s;
+        }
+
+        case TOK_WIDTH: {
+            int line = tok->line;
+            lexer_next(&p->lex);
+            expr_t *cols = parse_expr(p);
+            if (!cols) return NULL;
+            stmt_t *s = stmt_alloc(STMT_WIDTH, line);
+            if (!s) { expr_free(cols); parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+            s->width_stmt.columns = cols;
+            return s;
+        }
+
+        case TOK_FIELD: {
+            /* FIELD #n, w AS var$, w AS var$, ... — parse and discard (no-op) */
+            int line = tok->line;
+            lexer_next(&p->lex);
+            lexer_match(&p->lex, TOK_HASH); /* optional # */
+            expr_t *e = parse_expr(p); /* file number */
+            if (e) expr_free(e);
+            while (lexer_match(&p->lex, TOK_COMMA)) {
+                e = parse_expr(p); /* width */
+                if (e) expr_free(e);
+                if (!lexer_match(&p->lex, TOK_AS)) break;
+                if (lexer_check(&p->lex, TOK_IDENT)) lexer_next(&p->lex); /* var name */
+            }
+            return stmt_alloc(STMT_NOOP, line);
+        }
+
+        case TOK_CHAIN: case TOK_PLAY: {
+            /* Single string-expr argument, no-op */
+            int line = tok->line;
+            lexer_next(&p->lex);
+            if (!at_stmt_end(p)) {
+                expr_t *e = parse_expr(p);
+                if (e) expr_free(e);
+            }
+            return stmt_alloc(STMT_NOOP, line);
+        }
+
+        case TOK_PCOPY: case TOK_SOUND: {
+            /* Two numeric arguments, no-op */
+            int line = tok->line;
+            lexer_next(&p->lex);
+            expr_t *e = parse_expr(p);
+            if (e) expr_free(e);
+            if (lexer_match(&p->lex, TOK_COMMA)) {
+                e = parse_expr(p);
+                if (e) expr_free(e);
+            }
+            return stmt_alloc(STMT_NOOP, line);
+        }
+
+        case TOK_KEY: {
+            /* KEY n, string$ / KEY ON / KEY OFF / KEY LIST — all no-op */
+            int line = tok->line;
+            lexer_next(&p->lex);
+            /* Consume everything until end of statement */
+            while (!at_stmt_end(p)) {
+                if (lexer_check(&p->lex, TOK_COMMA)) { lexer_next(&p->lex); continue; }
+                expr_t *e = parse_expr(p);
+                if (e) expr_free(e);
+                else break;
+            }
+            return stmt_alloc(STMT_NOOP, line);
+        }
+
         case TOK_GOTO: {
             int line = tok->line;
             lexer_next(&p->lex);

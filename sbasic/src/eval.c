@@ -2376,6 +2376,51 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             return ERR_NONE;
         }
 
+        case STMT_LSET:
+        case STMT_RSET: {
+            /* LSET/RSET var$ = expr$: pad/truncate to var's current length */
+            value_t *cur = env_get(env, s->lrset.varname);
+            if (!cur || cur->type != VAL_STRING) return ERR_TYPE_MISMATCH;
+            int curlen = cur->sval ? cur->sval->len : 0;
+            if (curlen == 0) return ERR_NONE; /* zero-length: nothing to do */
+            value_t nv;
+            EVAL_CHECK(eval_expr(env, s->lrset.value, &nv));
+            if (nv.type != VAL_STRING) { val_clear(&nv); return ERR_TYPE_MISMATCH; }
+            const char *src = nv.sval ? nv.sval->data : "";
+            int srclen = nv.sval ? nv.sval->len : 0;
+            char *buf = malloc(curlen + 1);
+            if (!buf) { val_clear(&nv); return ERR_OUT_OF_MEMORY; }
+            memset(buf, ' ', curlen);
+            buf[curlen] = '\0';
+            int copylen = srclen < curlen ? srclen : curlen;
+            if (s->type == STMT_LSET) {
+                memcpy(buf, src, copylen);
+            } else {
+                memcpy(buf + curlen - copylen, src, copylen);
+            }
+            val_clear(&nv);
+            value_t result = val_string(buf, curlen);
+            free(buf);
+            env_set(env, s->lrset.varname, &result);
+            val_clear(&result);
+            return ERR_NONE;
+        }
+
+        case STMT_WIDTH: {
+            extern int console_width;
+            value_t v;
+            EVAL_CHECK(eval_expr(env, s->width_stmt.columns, &v));
+            int w;
+            error_t err = val_to_integer(&v, &w);
+            val_clear(&v);
+            if (err != ERR_NONE) return err;
+            if (w >= 20 && w <= 255) console_width = w;
+            return ERR_NONE;
+        }
+
+        case STMT_NOOP:
+            return ERR_NONE;
+
         case STMT_KILL:         return exec_kill(env, s);
         case STMT_NAME:         return exec_name(env, s);
         case STMT_GET:          return exec_get(env, s);
