@@ -2336,17 +2336,35 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         }
 
         case STMT_POKE: {
+            extern int def_seg;
             value_t av, vv;
             EVAL_CHECK(eval_expr(env, s->poke_stmt.addr, &av));
             error_t err = eval_expr(env, s->poke_stmt.value, &vv);
             if (err != ERR_NONE) { val_clear(&av); return err; }
-            int addr, val;
-            err = val_to_integer(&av, &addr);
+            int offset, val;
+            err = val_to_integer(&av, &offset);
             if (err == ERR_NONE) err = val_to_integer(&vv, &val);
             val_clear(&av); val_clear(&vv);
             if (err != ERR_NONE) return err;
+            int addr = def_seg * 16 + offset;
             if (addr < 0 || addr >= PEEK_POKE_SIZE) return ERR_ILLEGAL_FUNCTION_CALL;
             peek_poke_mem[addr] = (unsigned char)(val & 0xFF);
+            return ERR_NONE;
+        }
+
+        case STMT_DEF_SEG: {
+            extern int def_seg;
+            if (s->shell_stmt.command) {
+                value_t v;
+                EVAL_CHECK(eval_expr(env, s->shell_stmt.command, &v));
+                int seg;
+                error_t err = val_to_integer(&v, &seg);
+                val_clear(&v);
+                if (err != ERR_NONE) return err;
+                def_seg = seg;
+            } else {
+                def_seg = 0;
+            }
             return ERR_NONE;
         }
 

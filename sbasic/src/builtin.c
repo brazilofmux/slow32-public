@@ -631,16 +631,35 @@ static error_t fn_curdir(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
-/* PEEK(addr) - read byte from simulated memory */
+/* PEEK/POKE simulated memory state */
 extern unsigned char peek_poke_mem[];
+int def_seg = 0;  /* DEF SEG segment (address = seg*16 + offset) */
 #define PEEK_POKE_SIZE 65536
 
+/* PEEK(addr) - read byte from simulated memory (uses DEF SEG) */
 static error_t fn_peek(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
-    int addr;
-    EVAL_CHECK(val_to_integer(&args[0], &addr));
+    int offset;
+    EVAL_CHECK(val_to_integer(&args[0], &offset));
+    int addr = def_seg * 16 + offset;
     if (addr < 0 || addr >= PEEK_POKE_SIZE) return ERR_ILLEGAL_FUNCTION_CALL;
     *out = val_integer((int)peek_poke_mem[addr]);
+    return ERR_NONE;
+}
+
+/* STRIG(n) - joystick trigger state (stub, returns 0) */
+static error_t fn_strig(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    (void)args;
+    *out = val_integer(0);
+    return ERR_NONE;
+}
+
+/* STICK(n) - joystick position (stub, returns 0) */
+static error_t fn_stick(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    (void)args;
+    *out = val_integer(0);
     return ERR_NONE;
 }
 
@@ -1158,6 +1177,8 @@ static const builtin_entry_t builtins[] = {
     { "FILEEXISTS", fn_fileexists },
     { "FRE",      fn_fre },
     { "PEEK",     fn_peek },
+    { "STRIG",    fn_strig },
+    { "STICK",    fn_stick },
     { NULL, NULL }
 };
 

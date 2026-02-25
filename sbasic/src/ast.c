@@ -599,6 +599,7 @@ void stmt_free(stmt_t *s) {
             case STMT_MKDIR:
             case STMT_RMDIR:
             case STMT_SCREEN:
+            case STMT_DEF_SEG:
                 expr_free(s->shell_stmt.command);
                 break;
             case STMT_POKE:

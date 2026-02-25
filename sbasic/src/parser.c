@@ -1850,13 +1850,25 @@ static stmt_t *parse_stmt(parser_t *p) {
         }
 
         case TOK_DEF: {
-            /* DEF FNname(params) = expr */
             int line = tok->line;
             lexer_next(&p->lex);
             if (!lexer_check(&p->lex, TOK_IDENT)) {
-                parser_error_detail(p, ERR_SYNTAX, "Expected FN name after DEF");
+                parser_error_detail(p, ERR_SYNTAX, "Expected FN name or SEG after DEF");
                 return NULL;
             }
+            /* DEF SEG [= expr] */
+            if (strcmp(lexer_peek(&p->lex)->text, "SEG") == 0) {
+                lexer_next(&p->lex); /* consume SEG */
+                stmt_t *s = stmt_alloc(STMT_DEF_SEG, line);
+                if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+                s->shell_stmt.command = NULL;
+                if (lexer_match(&p->lex, TOK_EQ)) {
+                    s->shell_stmt.command = parse_expr(p);
+                    if (!s->shell_stmt.command) { stmt_free(s); return NULL; }
+                }
+                return s;
+            }
+            /* DEF FNname(params) = expr */
             token_t fname = lexer_next(&p->lex);
             stmt_t *s = stmt_alloc(STMT_DEF_FN, line);
             if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
