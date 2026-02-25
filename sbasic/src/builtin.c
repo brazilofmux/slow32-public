@@ -224,6 +224,27 @@ static error_t fn_log2(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+static error_t fn_round(value_t *args, int nargs, value_t *out) {
+    if (nargs < 1 || nargs > 2) return ERR_ILLEGAL_FUNCTION_CALL;
+    double v; EVAL_CHECK(get_num(&args[0], &v));
+    int decimals = 0;
+    if (nargs == 2) {
+        EVAL_CHECK(val_to_integer(&args[1], &decimals));
+    }
+    if (decimals == 0) {
+        *out = val_double(floor(v + 0.5));
+    } else {
+        double mul = 1.0;
+        int d = decimals < 0 ? -decimals : decimals;
+        for (int i = 0; i < d; i++) mul *= 10.0;
+        if (decimals > 0)
+            *out = val_double(floor(v * mul + 0.5) / mul);
+        else
+            *out = val_double(floor(v / mul + 0.5) * mul);
+    }
+    return ERR_NONE;
+}
+
 static error_t fn_rnd(value_t *args, int nargs, value_t *out) {
     if (nargs > 1) return ERR_ILLEGAL_FUNCTION_CALL;
     if (nargs == 1) {
@@ -590,6 +611,32 @@ static error_t fn_timer(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+/* DATE$ - return current date as "MM/DD/YYYY" */
+static error_t fn_date(value_t *args, int nargs, value_t *out) {
+    if (nargs != 0) return ERR_ILLEGAL_FUNCTION_CALL;
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+    if (!tm) { *out = val_string_cstr(""); return ERR_NONE; }
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%02d/%02d/%04d",
+             tm->tm_mon + 1, tm->tm_mday, tm->tm_year + 1900);
+    *out = val_string_cstr(buf);
+    return ERR_NONE;
+}
+
+/* TIME$ - return current time as "HH:MM:SS" */
+static error_t fn_time_str(value_t *args, int nargs, value_t *out) {
+    if (nargs != 0) return ERR_ILLEGAL_FUNCTION_CALL;
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+    if (!tm) { *out = val_string_cstr(""); return ERR_NONE; }
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%02d:%02d:%02d",
+             tm->tm_hour, tm->tm_min, tm->tm_sec);
+    *out = val_string_cstr(buf);
+    return ERR_NONE;
+}
+
 /* TAB(n) - return spaces to reach absolute column n (1-based) */
 static error_t fn_tab(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
@@ -904,8 +951,11 @@ static const builtin_entry_t builtins[] = {
     { "LOG",      fn_log },
     { "LOG10",    fn_log10 },
     { "LOG2",     fn_log2 },
+    { "ROUND",    fn_round },
     { "RND",      fn_rnd },
     { "TIMER",    fn_timer },
+    { "DATE$",    fn_date },
+    { "TIME$",    fn_time_str },
     { "TAB",      fn_tab },
     { "SPC",      fn_spc },
     /* String */
