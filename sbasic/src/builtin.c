@@ -133,6 +133,20 @@ static error_t fn_atn2(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+static error_t fn_asin(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    double v; EVAL_CHECK(get_num(&args[0], &v));
+    *out = val_double(asin(v));
+    return ERR_NONE;
+}
+
+static error_t fn_acos(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    double v; EVAL_CHECK(get_num(&args[0], &v));
+    *out = val_double(acos(v));
+    return ERR_NONE;
+}
+
 /* Hyperbolic functions */
 static error_t fn_sinh(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
@@ -830,6 +844,8 @@ static const builtin_entry_t builtins[] = {
     { "TAN",      fn_tan },
     { "ATN",      fn_atn },
     { "ATN2",     fn_atn2 },
+    { "ASIN",     fn_asin },
+    { "ACOS",     fn_acos },
     { "SINH",     fn_sinh },
     { "COSH",     fn_cosh },
     { "TANH",     fn_tanh },
