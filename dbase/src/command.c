@@ -21,6 +21,7 @@
 #include "ast.h"
 #include "browse.h"
 #include "menu.h"
+#include "csv_import.h"
 
 /* Persistent expression context */
 static expr_ctx_t expr_ctx;
@@ -3280,7 +3281,156 @@ static void cmd_copy_structure_extended(dbf_t *db, const char *arg) {
     printf("%d field(s) copied to %s.\n", db->field_count, filename);
 }
 
-/* ---- APPEND FROM [FOR cond] ---- */
+/* ---- APPEND FROM DELIMITED helper ---- */
+
+typedef struct {
+    dbf_t *db;
+    const char *cond_str;
+    expr_ctx_t *ectx;
+    dbf_t *saved_db;
+    int count;
+    int error;
+} append_delim_ctx_t;
+
+static int append_row_cb(int line, const csv_row_t *row, void *ud) {
+    append_delim_ctx_t *ctx = (append_delim_ctx_t *)ud;
+    dbf_t *db = ctx->db;
+    int f, nf;
+    char formatted[256];
+
+    (void)line;
+
+    dbf_append_blank(db);
+
+    /* Fill fields positionally: CSV field 0 -> DB field 0, etc. */
+    nf = row->num_fields;
+    if (nf > db->field_count) nf = db->field_count;
+
+    for (f = 0; f < nf; f++) {
+        const char *val = row->fields[f];
+        char type = db->fields[f].type;
+        int flen = db->fields[f].length;
+        int fdec = db->fields[f].decimals;
+
+        if (type == 'M') continue; /* skip memo fields */
+
+        switch (type) {
+        case 'C':
+            field_format_char(formatted, flen, val);
+            break;
+        case 'N':
+            field_format_numeric(formatted, flen, fdec, val);
+            break;
+        case 'D':
+            field_format_date(formatted, val);
+            break;
+        case 'L':
+            field_format_logical(formatted, val);
+            break;
+        default:
+            field_format_char(formatted, flen, val);
+            break;
+        }
+        dbf_set_field_raw(db, f, formatted);
+    }
+
+    /* Evaluate FOR condition against the destination record */
+    if (ctx->cond_str) {
+        value_t cond;
+        ctx->ectx->db = db;
+        if (expr_eval_str(ctx->ectx, ctx->cond_str, &cond) != 0) {
+            report_expr_error();
+            ctx->ectx->db = ctx->saved_db;
+            ctx->error = 1;
+            return 1; /* stop processing */
+        }
+        ctx->ectx->db = ctx->saved_db;
+        if (cond.type != VAL_LOGIC || !cond.logic) {
+            /* Condition false: undo the append */
+            db->record_count--;
+            db->current_record = 0;
+            db->record_dirty = 0;
+            dbf_write_header_counts(db);
+            return 0; /* continue */
+        }
+    }
+
+    dbf_flush_record(db);
+    indexes_insert_current(db);
+    ctx->count++;
+    return 0;
+}
+
+static void cmd_append_from_delimited(dbf_t *db, const char *filename,
+                                       char quote_char, int blank_mode,
+                                       const char *cond_str) {
+    static csv_parser_t parser; /* ~33KB — static to avoid stack overflow */
+    append_delim_ctx_t ctx;
+    FILE *fp;
+    char buf[4096];
+    int n;
+
+    ctx.db = db;
+    ctx.cond_str = cond_str;
+    ctx.ectx = &expr_ctx;
+    ctx.saved_db = expr_ctx.db;
+    ctx.count = 0;
+    ctx.error = 0;
+
+    if (blank_mode) {
+        csv_import_blank(filename, append_row_cb, &ctx);
+        printf("%d record(s) appended.\n", ctx.count);
+        return;
+    }
+
+    fp = fopen(filename, "rb");
+    if (!fp) {
+        file_not_found(filename);
+        return;
+    }
+
+    csv_parser_init(&parser, quote_char, append_row_cb, &ctx);
+
+    while ((n = fread(buf, 1, sizeof(buf), fp)) > 0) {
+        if (csv_parser_feed(&parser, buf, n, 0) < 0) break;
+        if (ctx.error) break;
+    }
+
+    /* Final flush on EOF */
+    if (!ctx.error && !parser.error)
+        csv_parser_feed(&parser, "", 0, 1);
+
+    fclose(fp);
+
+    if (parser.error == 1)
+        printf("CSV parse error at line %d.\n", parser.line_number);
+
+    printf("%d record(s) appended.\n", ctx.count);
+}
+
+/* ---- Parse filename without forcing .DBF extension ---- */
+static const char *parse_filename_raw(const char *arg, char *filename, int size) {
+    const char *p = skip_ws(arg);
+    int i = 0;
+    while (*p && *p != ' ' && *p != '\t' && i < size - 1)
+        filename[i++] = *p++;
+    filename[i] = '\0';
+    path_normalize(filename);
+    upper_basename(filename);
+    trim_right(filename);
+    return p;
+}
+
+/* ---- Check if filename has a dot extension ---- */
+static int has_extension(const char *filename) {
+    const char *base = strrchr(filename, '/');
+    const char *dot;
+    if (!base) base = filename;
+    dot = strrchr(base, '.');
+    return dot != NULL && dot != base;
+}
+
+/* ---- APPEND FROM [DELIMITED [WITH <char>|BLANK]] [FOR cond] ---- */
 static void cmd_append_from(dbf_t *db, const char *arg) {
     char filename[64];
     const char *p;
@@ -3289,23 +3439,66 @@ static void cmd_append_from(dbf_t *db, const char *arg) {
     uint32_t i;
     int count = 0;
     dbf_t *saved_db;
+    int delimited = 0;
+    int blank_mode = 0;
+    char quote_char = '"';
 
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
 
-    p = parse_filename(arg, filename, sizeof(filename));
+    /* Parse filename without forcing .DBF — we'll add extension later */
+    p = parse_filename_raw(arg, filename, sizeof(filename));
 
-    if (filename[0] == '\0' || str_icmp(filename, ".DBF") == 0) {
-        printf("Syntax: APPEND FROM <filename> [FOR cond]\n");
+    if (filename[0] == '\0') {
+        printf("Syntax: APPEND FROM <filename> [DELIMITED [WITH <char>|BLANK]] [FOR cond]\n");
         return;
     }
 
+    /* Check for DELIMITED keyword */
+    p = skip_ws(p);
+    if (str_imatch(p, "DELIMITED")) {
+        delimited = 1;
+        p = skip_ws(p + 9);
+
+        /* Check for WITH clause */
+        if (str_imatch(p, "WITH")) {
+            p = skip_ws(p + 4);
+            if (str_imatch(p, "BLANK")) {
+                blank_mode = 1;
+                p = skip_ws(p + 5);
+            } else if (*p) {
+                /* WITH <char> — custom quote character */
+                quote_char = *p++;
+                p = skip_ws(p);
+            }
+        }
+    }
+
+    /* Parse FOR clause */
     p = skip_ws(p);
     if (str_imatch(p, "FOR")) {
         cond_str = skip_ws(p + 3);
     }
+
+    /* Add default extension if none provided */
+    if (!has_extension(filename)) {
+        if (delimited) {
+            if ((int)strlen(filename) + 4 < (int)sizeof(filename))
+                strcat(filename, ".TXT");
+        } else {
+            if ((int)strlen(filename) + 4 < (int)sizeof(filename))
+                strcat(filename, ".DBF");
+        }
+    }
+
+    if (delimited) {
+        cmd_append_from_delimited(db, filename, quote_char, blank_mode, cond_str);
+        return;
+    }
+
+    /* ---- Standard DBF-to-DBF import ---- */
 
     dbf_init(&source);
     if (dbf_open(&source, filename) < 0) {
