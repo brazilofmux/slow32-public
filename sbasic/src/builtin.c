@@ -935,6 +935,7 @@ static const builtin_entry_t builtins[] = {
     { "CINT",     fn_cint },
     { "CLNG",     fn_cint },
     { "CDBL",     fn_cdbl },
+    { "CSNG",     fn_cdbl },
     { "SIN",      fn_sin },
     { "COS",      fn_cos },
     { "TAN",      fn_tan },
