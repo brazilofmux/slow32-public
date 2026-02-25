@@ -305,45 +305,16 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
             if (e->unary.op == OP_NEG) {
                 err = val_neg(&operand, out);
             } else {
-                *out = val_integer(val_is_true(&operand) ? 0 : -1);
-                err = ERR_NONE;
+                double dv;
+                err = val_to_double(&operand, &dv);
+                if (err == ERR_NONE)
+                    *out = val_integer(~(int)dv);
             }
             val_clear(&operand);
             return err;
         }
 
         case EXPR_BINARY: {
-            if (e->binary.op == OP_AND) {
-                value_t left;
-                EVAL_CHECK(eval_expr(env, e->binary.left, &left));
-                if (!val_is_true(&left)) {
-                    val_clear(&left);
-                    *out = val_integer(0);
-                    return ERR_NONE;
-                }
-                val_clear(&left);
-                value_t right;
-                EVAL_CHECK(eval_expr(env, e->binary.right, &right));
-                *out = val_integer(val_is_true(&right) ? -1 : 0);
-                val_clear(&right);
-                return ERR_NONE;
-            }
-            if (e->binary.op == OP_OR) {
-                value_t left;
-                EVAL_CHECK(eval_expr(env, e->binary.left, &left));
-                if (val_is_true(&left)) {
-                    val_clear(&left);
-                    *out = val_integer(-1);
-                    return ERR_NONE;
-                }
-                val_clear(&left);
-                value_t right;
-                EVAL_CHECK(eval_expr(env, e->binary.right, &right));
-                *out = val_integer(val_is_true(&right) ? -1 : 0);
-                val_clear(&right);
-                return ERR_NONE;
-            }
-
             value_t left, right;
             EVAL_CHECK(eval_expr(env, e->binary.left, &left));
             error_t err = eval_expr(env, e->binary.right, &right);
@@ -360,6 +331,18 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
                 case OP_IDIV: err = val_idiv(&left, &right, out); break;
                 case OP_MOD:  err = val_mod(&left, &right, out); break;
                 case OP_POW:  err = val_pow(&left, &right, out); break;
+                case OP_AND: case OP_OR: case OP_XOR: {
+                    double dl, dr;
+                    err = val_to_double(&left, &dl);
+                    if (err == ERR_NONE) err = val_to_double(&right, &dr);
+                    if (err == ERR_NONE) {
+                        int il = (int)dl, ir = (int)dr;
+                        if (e->binary.op == OP_AND) *out = val_integer(il & ir);
+                        else if (e->binary.op == OP_OR) *out = val_integer(il | ir);
+                        else *out = val_integer(il ^ ir);
+                    }
+                    break;
+                }
                 default:      err = ERR_INTERNAL; break;
             }
             val_clear(&left);

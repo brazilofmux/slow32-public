@@ -196,7 +196,7 @@ static expr_t *parse_and(parser_t *p) {
     return left;
 }
 
-static expr_t *parse_expr(parser_t *p) {
+static expr_t *parse_or(parser_t *p) {
     expr_t *left = parse_and(p);
     if (!left) return NULL;
     while (lexer_check(&p->lex, TOK_OR)) {
@@ -205,6 +205,19 @@ static expr_t *parse_expr(parser_t *p) {
         expr_t *right = parse_and(p);
         if (!right) { expr_free(left); return NULL; }
         left = expr_binary(OP_OR, left, right, line);
+    }
+    return left;
+}
+
+static expr_t *parse_expr(parser_t *p) {
+    expr_t *left = parse_or(p);
+    if (!left) return NULL;
+    while (lexer_check(&p->lex, TOK_XOR)) {
+        int line = lexer_peek(&p->lex)->line;
+        lexer_next(&p->lex);
+        expr_t *right = parse_or(p);
+        if (!right) { expr_free(left); return NULL; }
+        left = expr_binary(OP_XOR, left, right, line);
     }
     return left;
 }

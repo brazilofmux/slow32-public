@@ -55,7 +55,7 @@ typedef enum {
     TOK_DOT,
 
     /* Extra keywords */
-    TOK_BEEP, TOK_TRACE, TOK_SPLIT,
+    TOK_BEEP, TOK_TRACE, TOK_SPLIT, TOK_XOR,
 
     /* REPL commands */
     TOK_RUN, TOK_LIST, TOK_NEW, TOK_LOAD, TOK_SAVE, TOK_BYE,

@@ -17,7 +17,7 @@ typedef enum {
 /* Binary operators */
 typedef enum {
     OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_IDIV, OP_MOD, OP_POW,
-    OP_AND, OP_OR,
+    OP_AND, OP_OR, OP_XOR,
 } binop_t;
 
 /* Unary operators */

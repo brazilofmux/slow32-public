@@ -82,6 +82,7 @@ static const keyword_t keywords[] = {
     { "BEEP",   TOK_BEEP },
     { "TRACE",  TOK_TRACE },
     { "SPLIT",  TOK_SPLIT },
+    { "XOR",    TOK_XOR },
     { "RUN",    TOK_RUN },
     { "LIST",   TOK_LIST },
     { "NEW",    TOK_NEW },
