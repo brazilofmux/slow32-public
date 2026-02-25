@@ -45,6 +45,19 @@ static int in_key_handler;  /* re-entrancy guard */
 #define DBASE_KEY_INS   22
 #define DBASE_KEY_DEL    7
 
+/* Extended key codes (above ASCII range) */
+#define DBASE_KEY_SHIFT_TAB 256
+#define DBASE_KEY_F1   257
+#define DBASE_KEY_F2   258
+#define DBASE_KEY_F3   259
+#define DBASE_KEY_F4   260
+#define DBASE_KEY_F5   261
+#define DBASE_KEY_F6   262
+#define DBASE_KEY_F7   263
+#define DBASE_KEY_F8   264
+#define DBASE_KEY_F9   265
+#define DBASE_KEY_F10  266
+
 void screen_init(void) {
     memset(&scr, 0, sizeof(scr));
     scr.fg_color = 7; /* white */
@@ -1202,6 +1215,7 @@ int read_dbase_key(void) {
         int ch2 = term_getkey();
         if (ch2 == '[') {
             int ch3 = term_getkey();
+            /* Letter sequences */
             switch (ch3) {
             case 'A': return DBASE_KEY_UP;
             case 'B': return DBASE_KEY_DOWN;
@@ -1209,19 +1223,52 @@ int read_dbase_key(void) {
             case 'D': return DBASE_KEY_LEFT;
             case 'H': return DBASE_KEY_HOME;
             case 'F': return DBASE_KEY_END;
-            case '5':  /* PgUp: ESC [ 5 ~ */
-                if (term_kbhit()) term_getkey(); /* consume ~ */
-                return DBASE_KEY_PGUP;
-            case '6':  /* PgDn: ESC [ 6 ~ */
-                if (term_kbhit()) term_getkey();
-                return DBASE_KEY_PGDN;
-            case '2':  /* Ins: ESC [ 2 ~ */
-                if (term_kbhit()) term_getkey();
-                return DBASE_KEY_INS;
-            case '3':  /* Del: ESC [ 3 ~ */
-                if (term_kbhit()) term_getkey();
-                return DBASE_KEY_DEL;
-            default: return ch3; /* unknown sequence — return last byte */
+            case 'Z': return DBASE_KEY_SHIFT_TAB;
+            }
+            /* Numeric sequences: ESC [ <num> ~ */
+            if (ch3 >= '0' && ch3 <= '9') {
+                int num = ch3 - '0';
+                if (term_kbhit()) {
+                    int ch4 = term_getkey();
+                    if (ch4 >= '0' && ch4 <= '9') {
+                        num = num * 10 + (ch4 - '0');
+                        if (term_kbhit()) term_getkey(); /* consume ~ */
+                    }
+                    /* else ch4 is '~', already consumed */
+                }
+                switch (num) {
+                case 1:  return DBASE_KEY_HOME;
+                case 2:  return DBASE_KEY_INS;
+                case 3:  return DBASE_KEY_DEL;
+                case 4:  return DBASE_KEY_END;
+                case 5:  return DBASE_KEY_PGUP;
+                case 6:  return DBASE_KEY_PGDN;
+                case 11: return DBASE_KEY_F1;
+                case 12: return DBASE_KEY_F2;
+                case 13: return DBASE_KEY_F3;
+                case 14: return DBASE_KEY_F4;
+                case 15: return DBASE_KEY_F5;
+                case 17: return DBASE_KEY_F6;
+                case 18: return DBASE_KEY_F7;
+                case 19: return DBASE_KEY_F8;
+                case 20: return DBASE_KEY_F9;
+                case 21: return DBASE_KEY_F10;
+                default: return 0;
+                }
+            }
+            return ch3; /* unknown sequence — return last byte */
+        } else if (ch2 == 'O') {
+            /* SS3 sequences: F1-F4 on some terminals */
+            if (!term_kbhit()) return ch2;
+            int ch3 = term_getkey();
+            switch (ch3) {
+            case 'P': return DBASE_KEY_F1;
+            case 'Q': return DBASE_KEY_F2;
+            case 'R': return DBASE_KEY_F3;
+            case 'S': return DBASE_KEY_F4;
+            case 'H': return DBASE_KEY_HOME;
+            case 'F': return DBASE_KEY_END;
+            default: return ch3;
             }
         }
         return ch2; /* ESC + something else */

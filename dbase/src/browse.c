@@ -28,6 +28,7 @@
 #define DBASE_KEY_END    6
 #define DBASE_KEY_INS   22
 #define DBASE_KEY_DEL    7
+#define DBASE_KEY_SHIFT_TAB 256
 
 /* ------------------------------------------------------------------ */
 /*  Shared helpers                                                     */
@@ -224,7 +225,8 @@ static int edit_cell(browse_state_t *bs, int field_idx,
 
         if (key == 13 || key == 10 || key == 9 ||
             key == DBASE_KEY_UP || key == DBASE_KEY_DOWN) {
-            /* Accept */
+            /* Accept — restore normal attribute before returning */
+            term_set_attr(0);
             break;
         }
 
@@ -771,8 +773,8 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
     compute_columns(&bs);
 
     term_set_raw(1);
-    term_begin_update();
     term_clear(0);
+    term_begin_update();
     browse_paint_headers(&bs);
     browse_paint_all_rows(&bs);
     browse_paint_status(&bs);
@@ -840,7 +842,7 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
                     dbf_read_record(db, last);
                 }
             }
-        } else if (key == DBASE_KEY_LEFT) {
+        } else if (key == DBASE_KEY_LEFT || key == DBASE_KEY_SHIFT_TAB) {
             if (bs.cur_field > 0) {
                 int old_col = bs.cur_field - bs.first_field;
                 bs.cur_field--;
@@ -857,7 +859,7 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
                 browse_paint_status(&bs);
                 term_end_update();
             }
-        } else if (key == DBASE_KEY_RIGHT) {
+        } else if (key == DBASE_KEY_RIGHT || key == 9) { /* Right or Tab */
             if (bs.cur_field < nf - 1) {
                 int old_col = bs.cur_field - bs.first_field;
                 bs.cur_field++;
