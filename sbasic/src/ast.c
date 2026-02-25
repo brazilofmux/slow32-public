@@ -415,6 +415,7 @@ void stmt_free(stmt_t *s) {
                     expr_free(s->print.items[i].expr);
                 free(s->print.items);
                 free(s->print.using_fmt);
+                expr_free(s->print.using_expr);
                 break;
             case STMT_INPUT:
                 free(s->input.prompt);

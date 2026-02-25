@@ -329,16 +329,24 @@ static stmt_t *parse_print(parser_t *p) {
         return parse_print_file(p);
     stmt_t *s = stmt_print(line);
     if (at_stmt_end(p)) return s;
-    /* PRINT USING "format"; expr; expr; ... */
+    /* PRINT USING "format"; expr; expr; ...
+       PRINT USING expr$; expr; expr; ... */
     if (lexer_check(&p->lex, TOK_USING)) {
         lexer_next(&p->lex);
-        if (!lexer_check(&p->lex, TOK_STRING_LIT)) {
-            parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
-        }
-        token_t fmt = lexer_next(&p->lex);
-        s->print.using_fmt = strdup(fmt.text);
-        if (!s->print.using_fmt) {
-            parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
+        if (lexer_check(&p->lex, TOK_STRING_LIT)) {
+            /* Literal format string */
+            token_t fmt = lexer_next(&p->lex);
+            s->print.using_fmt = strdup(fmt.text);
+            if (!s->print.using_fmt) {
+                parser_error(p, ERR_OUT_OF_MEMORY); stmt_free(s); return NULL;
+            }
+        } else {
+            /* Expression format string (variable, function call, etc.) */
+            expr_t *fe = parse_expr(p);
+            if (!fe || p->error != ERR_NONE) {
+                expr_free(fe); stmt_free(s); return NULL;
+            }
+            s->print.using_expr = fe;
         }
         if (!lexer_match(&p->lex, TOK_SEMICOLON)) {
             parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;

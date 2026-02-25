@@ -558,61 +558,213 @@ static int fmt_fixed(char *buf, int bufsz, double val, int width, int dec) {
     return pos;
 }
 
+/* Insert commas every 3 digits in the integer part of a formatted number.
+   Works in-place on buf (must have room for expansion).
+   Commas consume leading padding spaces so total width stays constant. */
+static void insert_commas(char *buf, int bufsz) {
+    /* Find the integer digit region: skip leading spaces/stars/signs,
+       stop at '.' or end of string */
+    int len = (int)strlen(buf);
+    int first_digit = -1, last_digit = -1;
+    int dot_pos = -1;
+    for (int i = 0; i < len; i++) {
+        if (buf[i] == '.') { dot_pos = i; break; }
+        if (buf[i] >= '0' && buf[i] <= '9') {
+            if (first_digit < 0) first_digit = i;
+            last_digit = i;
+        }
+    }
+    if (dot_pos < 0) {
+        /* No dot — digits go to end (before any trailing sign) */
+        for (int i = len - 1; i >= 0; i--) {
+            if (buf[i] >= '0' && buf[i] <= '9') { last_digit = i; break; }
+        }
+        for (int i = 0; i < len; i++) {
+            if (buf[i] >= '0' && buf[i] <= '9') {
+                if (first_digit < 0) first_digit = i;
+                break;
+            }
+        }
+    }
+    if (first_digit < 0 || last_digit < 0) return;
+    int ndigits = last_digit - first_digit + 1;
+    int ncommas = (ndigits - 1) / 3;
+    if (ncommas <= 0) return;
+
+    /* Count available leading padding (spaces or stars before first digit) */
+    int avail_pad = 0;
+    for (int i = 0; i < first_digit; i++) {
+        if (buf[i] == ' ' || buf[i] == '*') avail_pad++;
+    }
+    /* We can only insert as many commas as we have padding to consume */
+    if (ncommas > avail_pad) ncommas = avail_pad;
+    if (ncommas <= 0) return;
+
+    /* Build new string: remove ncommas leading pad chars, insert commas */
+    char tmp[512];
+    int out = 0;
+    /* Copy leading padding minus ncommas */
+    int skip = ncommas;
+    for (int i = 0; i < first_digit && out < bufsz - 1; i++) {
+        if (skip > 0 && (buf[i] == ' ' || buf[i] == '*')) { skip--; continue; }
+        tmp[out++] = buf[i];
+    }
+    /* Copy digits with commas */
+    int digits_from_right = last_digit - first_digit + 1;
+    for (int i = first_digit; i <= last_digit && out < bufsz - 1; i++) {
+        tmp[out++] = buf[i];
+        int remain = last_digit - i;
+        if (remain > 0 && remain % 3 == 0 && out < bufsz - 1)
+            tmp[out++] = ',';
+    }
+    /* Copy rest (decimal part, trailing sign, etc.) */
+    for (int i = last_digit + 1; i < len && out < bufsz - 1; i++)
+        tmp[out++] = buf[i];
+    tmp[out] = '\0';
+    /* Copy back */
+    for (int i = 0; i <= out; i++) buf[i] = tmp[i];
+}
+
 static int format_using_num(const char *fmt, double val) {
     const char *start = fmt;
-    int has_plus = 0, has_minus = 0, has_dollar = 0, has_stars = 0;
-    int has_dot = 0, has_exp = 0;
+    int has_lead_plus = 0, has_trail_plus = 0;
+    int has_trail_minus = 0;
+    int has_dollar = 0, has_stars = 0;
+    int has_dot = 0, has_exp = 0, has_commas = 0;
     int width = 0, decimals = 0;
 
+    /* --- Parse phase --- */
     const char *p = fmt;
-    if (*p == '+') { has_plus = 1; p++; width++; }
-    if (p[0] == '$' && p[1] == '$') { has_dollar = 1; p += 2; width += 2; }
-    if (p[0] == '*' && p[1] == '*') { has_stars = 1; p += 2; width += 2; }
-    while (*p == '#') { width++; p++; }
-    if (*p == '.') { has_dot = 1; p++; width++; while (*p == '#') { decimals++; width++; p++; } }
-    if (*p == '-') { has_minus = 1; p++; width++; }
-    if (p[0] == '^' && p[1] == '^' && p[2] == '^' && p[3] == '^') { has_exp = 1; p += 4; width += 4; }
+    if (*p == '+') { has_lead_plus = 1; p++; width++; }
+    /* **$ must be checked before ** or $$ */
+    if (p[0] == '*' && p[1] == '*' && p[2] == '$') {
+        has_stars = 1; has_dollar = 1; p += 3; width += 3;
+    } else if (p[0] == '$' && p[1] == '$') {
+        has_dollar = 1; p += 2; width += 2;
+    } else if (p[0] == '*' && p[1] == '*') {
+        has_stars = 1; p += 2; width += 2;
+    }
+    while (*p == '#' || *p == ',') {
+        if (*p == ',') has_commas = 1;
+        width++; p++;
+    }
+    if (*p == '.') {
+        has_dot = 1; p++; width++;
+        while (*p == '#') { decimals++; width++; p++; }
+    }
+    /* Trailing sign: - or + after digit section */
+    if (*p == '-') { has_trail_minus = 1; p++; width++; }
+    else if (*p == '+' && !has_lead_plus) { has_trail_plus = 1; p++; width++; }
+    if (p[0] == '^' && p[1] == '^' && p[2] == '^' && p[3] == '^') {
+        has_exp = 1; p += 4; width += 4;
+    }
 
     if (width == 0) return 0;
 
+    int is_neg = (val < 0.0);
+    int any_sign = has_lead_plus || has_trail_plus || has_trail_minus;
+    double abs_val = fmt_fabs(val);
+
     char buf[512];
     if (has_exp) {
-        /* Scientific notation: manually format */
-        int neg = (val < 0.0);
-        double av = fmt_fabs(val);
+        /* Scientific notation */
+        double av = abs_val;
         int exp_val = 0;
         if (av != 0.0) {
             while (av >= 10.0) { av /= 10.0; exp_val++; }
-            while (av < 1.0) { av *= 10.0; exp_val--; }
+            while (av < 1.0)  { av *= 10.0; exp_val--; }
         }
-        if (neg) av = -av;
-        /* Format mantissa without exponent part */
-        int mw = width - 4; /* subtract ^^^^  */
-        fmt_fixed(buf, sizeof(buf), av, mw, decimals);
-        col_puts(buf);
-        /* Exponent */
+        int mw = width - 4; /* subtract ^^^^ */
+        if (has_trail_minus || has_trail_plus) mw--;
+        if (any_sign) {
+            /* Format absolute value, prepend sign */
+            char tmp[512];
+            fmt_fixed(tmp, sizeof(tmp), av, mw - 1, decimals);
+            /* Replace first leading space with sign char */
+            char sc = is_neg ? '-' : '+';
+            int tlen = (int)strlen(tmp);
+            int i = 0;
+            while (i < tlen && tmp[i] == ' ') i++;
+            if (i > 0 && has_lead_plus) { tmp[i - 1] = sc; }
+            else if (has_lead_plus) {
+                /* No padding — prepend */
+                buf[0] = sc;
+                for (int j = 0; j <= tlen; j++) buf[j + 1] = tmp[j];
+                col_puts(buf);
+                goto exp_part;
+            }
+            col_puts(tmp);
+        } else {
+            if (is_neg) av = -av;
+            fmt_fixed(buf, sizeof(buf), av, mw, decimals);
+            col_puts(buf);
+        }
+exp_part:
         col_printf("E%c%02d", exp_val >= 0 ? '+' : '-',
                exp_val >= 0 ? exp_val : -exp_val);
+        if (has_trail_minus) { col_puts(is_neg ? "-" : " "); }
+        else if (has_trail_plus) { col_puts(is_neg ? "-" : "+"); }
     } else {
-        int fw = width - has_minus;
-        fmt_fixed(buf, sizeof(buf), val, fw, decimals);
+        /* Fixed-point format */
+        int fw = width;
+        if (has_trail_minus || has_trail_plus) fw--;
+        /* When sign option active, format absolute value */
+        double fval = any_sign ? abs_val : val;
+        /* For leading +, reserve one position for the sign character */
+        if (has_lead_plus) fw--;
+        fmt_fixed(buf, sizeof(buf), fval, fw, decimals);
         int blen = (int)strlen(buf);
+
+        /* Overflow check: if formatted number (trimmed) exceeds field width */
+        {
+            int trimlen = blen;
+            int j = 0;
+            while (j < blen && buf[j] == ' ') j++;
+            trimlen = blen - j;
+            if (trimlen > fw) {
+                /* Overflow: emit % then the raw number */
+                col_puts("%");
+                col_puts(buf + j);
+                if (has_trail_minus) col_puts(is_neg ? "-" : " ");
+                else if (has_trail_plus) col_puts(is_neg ? "-" : "+");
+                return (int)(p - start);
+            }
+        }
+
+        /* Insert commas if format contained them */
+        if (has_commas) {
+            insert_commas(buf, sizeof(buf));
+            blen = (int)strlen(buf);
+        }
+
+        /* Star fill */
         if (has_stars) {
             for (int i = 0; i < blen; i++) {
                 if (buf[i] == ' ') buf[i] = '*';
                 else break;
             }
         }
+        /* Dollar sign: place $ just before first digit */
         if (has_dollar && blen > 0) {
             int i = 0;
             while (i < blen && (buf[i] == ' ' || buf[i] == '*')) i++;
             if (i > 0) buf[i - 1] = '$';
         }
-        col_puts(buf);
-        if (has_minus) {
-            if (val < 0.0) col_puts("-");
-            else col_puts(" ");
+        /* Leading + sign: replace leading padding with sign */
+        if (has_lead_plus) {
+            char sc = is_neg ? '-' : '+';
+            /* Shift buf right by 1, prepend sign */
+            char tmp[512];
+            tmp[0] = sc;
+            for (int i = 0; i <= blen && i < (int)sizeof(tmp) - 2; i++)
+                tmp[i + 1] = buf[i];
+            col_puts(tmp);
+        } else {
+            col_puts(buf);
         }
+        /* Trailing sign */
+        if (has_trail_minus) { col_puts(is_neg ? "-" : " "); }
+        else if (has_trail_plus) { col_puts(is_neg ? "-" : "+"); }
     }
     return (int)(p - start);
 }
@@ -643,11 +795,13 @@ static int format_using_str(const char *fmt, const char *str, int slen) {
     return 0;
 }
 
-static error_t exec_print(env_t *env, stmt_t *s) {
-    /* PRINT USING */
-    if (s->print.using_fmt) {
-        const char *fmt = s->print.using_fmt;
-        int arg_idx = 0;
+/* Execute PRINT USING — separated to reduce register pressure in exec_print */
+static error_t exec_print_using(env_t *env, stmt_t *s, const char *fmt_str) {
+    int arg_idx = 0;
+    /* Outer loop: reuse format string when args remain */
+    for (;;) {
+        const char *fmt = fmt_str;
+        int args_this_pass = 0;
         while (*fmt) {
             if (*fmt == '#' || *fmt == '+' || *fmt == '$' || *fmt == '*') {
                 /* Numeric format */
@@ -655,10 +809,10 @@ static error_t exec_print(env_t *env, stmt_t *s) {
                     value_t v;
                     EVAL_CHECK(eval_expr(env, s->print.items[arg_idx].expr, &v));
                     double d = 0.0;
-                    val_to_double(&v, &d);  /* best-effort; strings → 0 */
+                    val_to_double(&v, &d);
                     val_clear(&v);
                     int consumed = format_using_num(fmt, d);
-                    if (consumed > 0) { fmt += consumed; arg_idx++; continue; }
+                    if (consumed > 0) { fmt += consumed; arg_idx++; args_this_pass++; continue; }
                 }
                 col_printf("%c", *fmt++);
             } else if (*fmt == '!' || *fmt == '&' || *fmt == '\\') {
@@ -670,7 +824,7 @@ static error_t exec_print(env_t *env, stmt_t *s) {
                     int slen = (v.type == VAL_STRING) ? v.sval->len : 0;
                     int consumed = format_using_str(fmt, str, slen);
                     val_clear(&v);
-                    if (consumed > 0) { fmt += consumed; arg_idx++; continue; }
+                    if (consumed > 0) { fmt += consumed; arg_idx++; args_this_pass++; continue; }
                 }
                 col_printf("%c", *fmt++);
             } else if (*fmt == '_') {
@@ -681,9 +835,35 @@ static error_t exec_print(env_t *env, stmt_t *s) {
                 col_printf("%c", *fmt++);
             }
         }
+        /* If all args consumed, or no args consumed this pass, stop */
+        if (arg_idx >= s->print.nitems || args_this_pass == 0)
+            break;
+        /* More args remain — print newline and restart format */
         col_puts("\n");
-        return ERR_NONE;
     }
+    col_puts("\n");
+    return ERR_NONE;
+}
+
+/* Evaluate a USING expression and dispatch to exec_print_using */
+static error_t exec_print_using_expr(env_t *env, stmt_t *s) {
+    char fmt_buf[1024];
+    value_t fv;
+    EVAL_CHECK(eval_expr(env, s->print.using_expr, &fv));
+    if (fv.type == VAL_STRING && fv.sval)
+        snprintf(fmt_buf, sizeof(fmt_buf), "%s", fv.sval->data);
+    else
+        fmt_buf[0] = '\0';
+    val_clear(&fv);
+    return exec_print_using(env, s, fmt_buf);
+}
+
+static error_t exec_print(env_t *env, stmt_t *s) {
+    /* PRINT USING */
+    if (s->print.using_fmt)
+        return exec_print_using(env, s, s->print.using_fmt);
+    if (s->print.using_expr)
+        return exec_print_using_expr(env, s);
 
     int needs_newline = 1;
 

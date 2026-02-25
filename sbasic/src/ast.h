@@ -182,7 +182,8 @@ typedef struct stmt {
         struct {
             print_item_t *items;
             int nitems;
-            char *using_fmt;    /* PRINT USING format string (NULL = normal) */
+            char *using_fmt;    /* PRINT USING format string literal (NULL = normal) */
+            struct expr *using_expr; /* PRINT USING <expr>; ... (NULL = literal or normal) */
         } print;
 
         /* STMT_INPUT */
