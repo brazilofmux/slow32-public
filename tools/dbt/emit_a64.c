@@ -817,17 +817,17 @@ void emit_fcmp_d(emit_ctx_t *ctx, int rn, int rm) {
 // Floating-point Convert
 // ============================================================================
 
-// FCVT: 00011110 type 1 00000 opcode Rn Rd
-// opcode: 000=S, 001=D, 010=H
-// For FCVT <Sd>, <Dn>: type=01 (D), opcode=000 (S)
-// For FCVT <Dd>, <Sn>: type=00 (S), opcode=001 (D)
+// FCVT between scalar float widths:
+//   FCVT Sd, Dn  : base 0x1E624000
+//   FCVT Dd, Sn  : base 0x1E22C000
+// The two forms are not related by a simple type bit flip.
 void emit_fcvt_s_d(emit_ctx_t *ctx, int sd, int dn) {
-    uint32_t inst = 0x1E22C000 | ((dn & 0x1F) << 5) | (sd & 0x1F);
+    uint32_t inst = 0x1E624000 | ((dn & 0x1F) << 5) | (sd & 0x1F);
     emit_inst(ctx, inst);
 }
 
 void emit_fcvt_d_s(emit_ctx_t *ctx, int dd, int sn) {
-    uint32_t inst = 0x1E260000 | ((sn & 0x1F) << 5) | (dd & 0x1F);
+    uint32_t inst = 0x1E22C000 | ((sn & 0x1F) << 5) | (dd & 0x1F);
     emit_inst(ctx, inst);
 }
 

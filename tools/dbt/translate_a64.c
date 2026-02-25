@@ -2861,7 +2861,7 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
             case OP_DIV:  translate_div(ctx, inst.rd, inst.rs1, inst.rs2); break;
             case OP_REM:  translate_rem(ctx, inst.rd, inst.rs1, inst.rs2); break;
 
-            // All floating-point → interpreter fallback
+            // Floating-point
             case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
             case OP_FSQRT_S: case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
             case OP_FCVT_W_S: case OP_FCVT_WU_S: case OP_FCVT_S_W: case OP_FCVT_S_WU:
@@ -2873,7 +2873,7 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
             case OP_FCVT_L_S: case OP_FCVT_LU_S: case OP_FCVT_S_L: case OP_FCVT_S_LU:
             case OP_FCVT_L_D: case OP_FCVT_LU_D: case OP_FCVT_D_L: case OP_FCVT_D_LU:
                 translate_fp_r_type(ctx, inst.opcode, inst.rd, inst.rs1, inst.rs2);
-                goto block_done;
+                break;
 
             // Upper immediate
             case OP_LUI:  translate_lui(ctx, inst.rd, inst.imm); break;
@@ -3977,7 +3977,7 @@ retry_translate:
             case OP_ASSERT_EQ: translate_assert_eq(ctx, inst.rs1, inst.rs2); break;
             case OP_NOP:   translate_nop(ctx); break;
 
-            // Floating-point → halt
+            // Floating-point
             case OP_FADD_S: case OP_FSUB_S: case OP_FMUL_S: case OP_FDIV_S:
             case OP_FSQRT_S: case OP_FEQ_S: case OP_FLT_S: case OP_FLE_S:
             case OP_FCVT_W_S: case OP_FCVT_WU_S: case OP_FCVT_S_W: case OP_FCVT_S_WU:
@@ -3989,7 +3989,7 @@ retry_translate:
             case OP_FCVT_L_S: case OP_FCVT_LU_S: case OP_FCVT_S_L: case OP_FCVT_S_LU:
             case OP_FCVT_L_D: case OP_FCVT_LU_D: case OP_FCVT_D_L: case OP_FCVT_D_LU:
                 translate_fp_r_type(ctx, inst.opcode, inst.rd, inst.rs1, inst.rs2);
-                goto cached_done;
+                break;
 
             default:
                 fprintf(stderr, "DBT: Unknown opcode 0x%02X at PC 0x%08X\n",
