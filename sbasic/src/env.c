@@ -103,6 +103,15 @@ int env_has_local(env_t *env, const char *name) {
     return find_entry(env, name) != NULL;
 }
 
+int env_exists(env_t *env, const char *name) {
+    env_t *scope = env;
+    while (scope) {
+        if (find_entry(scope, name)) return 1;
+        scope = scope->parent;
+    }
+    return 0;
+}
+
 void env_set_const(env_t *env, const char *name, const value_t *val) {
     var_entry_t *e = find_entry(env, name);
     if (!e)

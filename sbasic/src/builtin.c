@@ -133,6 +133,28 @@ static error_t fn_atn2(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+/* Hyperbolic functions */
+static error_t fn_sinh(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    double v; EVAL_CHECK(get_num(&args[0], &v));
+    *out = val_double(sinh(v));
+    return ERR_NONE;
+}
+
+static error_t fn_cosh(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    double v; EVAL_CHECK(get_num(&args[0], &v));
+    *out = val_double(cosh(v));
+    return ERR_NONE;
+}
+
+static error_t fn_tanh(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    double v; EVAL_CHECK(get_num(&args[0], &v));
+    *out = val_double(tanh(v));
+    return ERR_NONE;
+}
+
 static error_t fn_exp(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     double v; EVAL_CHECK(get_num(&args[0], &v));
@@ -808,6 +830,9 @@ static const builtin_entry_t builtins[] = {
     { "TAN",      fn_tan },
     { "ATN",      fn_atn },
     { "ATN2",     fn_atn2 },
+    { "SINH",     fn_sinh },
+    { "COSH",     fn_cosh },
+    { "TANH",     fn_tanh },
     { "EXP",      fn_exp },
     { "LOG",      fn_log },
     { "LOG10",    fn_log10 },

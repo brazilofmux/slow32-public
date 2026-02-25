@@ -42,6 +42,9 @@ void env_set_global(env_t *env, const char *name, const value_t *val);
 /* Check if variable exists in this scope (not parent) */
 int env_has_local(env_t *env, const char *name);
 
+/* Check if variable exists in any scope (without auto-creating) */
+int env_exists(env_t *env, const char *name);
+
 /* Set variable as const (creates and marks const) */
 void env_set_const(env_t *env, const char *name, const value_t *val);
 

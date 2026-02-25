@@ -47,6 +47,92 @@ static void program_add_line(const char *line) {
     program_count++;
 }
 
+/* --- $INCLUDE directive processing --- */
+
+#define MAX_INCLUDE_DEPTH 16
+
+/* Extract filename from $INCLUDE directive. Returns NULL if not an include.
+ * Supports:
+ *   $INCLUDE: "filename.bas"
+ *   $INCLUDE: 'filename.bas'
+ *   '$INCLUDE: 'filename.bas'    (QBasic-style, in comment)
+ *   REM $INCLUDE: 'filename.bas' (QBasic-style, in REM)
+ */
+static const char *parse_include(const char *line) {
+    const char *p = line;
+    while (*p == ' ' || *p == '\t') p++;
+
+    /* Skip leading ' or REM (QBasic puts includes in comments) */
+    if (*p == '\'') p++;
+    else if (toupper((unsigned char)p[0]) == 'R' &&
+             toupper((unsigned char)p[1]) == 'E' &&
+             toupper((unsigned char)p[2]) == 'M' &&
+             (p[3] == ' ' || p[3] == '\t'))
+        p += 4;
+
+    while (*p == ' ' || *p == '\t') p++;
+
+    /* Match $INCLUDE: */
+    if (*p != '$') return NULL;
+    p++;
+    if (!(toupper((unsigned char)p[0]) == 'I' &&
+          toupper((unsigned char)p[1]) == 'N' &&
+          toupper((unsigned char)p[2]) == 'C' &&
+          toupper((unsigned char)p[3]) == 'L' &&
+          toupper((unsigned char)p[4]) == 'U' &&
+          toupper((unsigned char)p[5]) == 'D' &&
+          toupper((unsigned char)p[6]) == 'E'))
+        return NULL;
+    p += 7;
+
+    /* Optional colon */
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p == ':') p++;
+    while (*p == ' ' || *p == '\t') p++;
+
+    /* Extract filename from quotes or apostrophes */
+    static char fname_buf[256];
+    char delim = *p;
+    if (delim != '"' && delim != '\'') return NULL;
+    p++;
+    int len = 0;
+    while (*p && *p != delim && len < 255)
+        fname_buf[len++] = *p++;
+    fname_buf[len] = '\0';
+    return (len > 0) ? fname_buf : NULL;
+}
+
+static void include_file(const char *filename, int depth);
+
+static void program_add_line_with_includes(const char *line, int depth) {
+    const char *fname = parse_include(line);
+    if (fname) {
+        include_file(fname, depth);
+    } else {
+        program_add_line(line);
+    }
+}
+
+static void include_file(const char *filename, int depth) {
+    if (depth >= MAX_INCLUDE_DEPTH) {
+        printf("$INCLUDE nested too deep: %s\n", filename);
+        return;
+    }
+    FILE *f = fopen(filename, "r");
+    if (!f) {
+        printf("$INCLUDE file not found: %s\n", filename);
+        return;
+    }
+    char line[MAX_LINE_LEN];
+    while (fgets(line, sizeof(line), f)) {
+        int len = (int)strlen(line);
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
+            line[--len] = '\0';
+        program_add_line_with_includes(line, depth + 1);
+    }
+    fclose(f);
+}
+
 /* Build program text from stored lines */
 static char *program_get_text(void) {
     int total = 0;
@@ -134,7 +220,7 @@ static void cmd_load(const char *filename) {
         int len = (int)strlen(line);
         while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
             line[--len] = '\0';
-        program_add_line(line);
+        program_add_line_with_includes(line, 0);
     }
     fclose(f);
     printf("Loaded %d lines from %s\n", program_count, filename);
@@ -250,9 +336,9 @@ static int load_and_run_stdin(void) {
             continue;
         }
 
-        /* Otherwise add as program line */
+        /* Otherwise add as program line (processing $INCLUDE directives) */
         if (*trimmed != '\0')
-            program_add_line(trimmed);
+            program_add_line_with_includes(trimmed, 0);
     }
     return 0;
 }

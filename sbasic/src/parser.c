@@ -905,12 +905,21 @@ static stmt_t *parse_dim_or_redim(parser_t *p, int is_redim) {
             parser_error(p, ERR_SYNTAX); return NULL;
         }
         token_t tname = lexer_next(&p->lex);
-        /* Check if it's a primitive type name */
+        /* Check if it's a primitive type name — declare scalar variable */
         if (strcmp(tname.text, "INTEGER") == 0 ||
             strcmp(tname.text, "DOUBLE") == 0 ||
             strcmp(tname.text, "STRING") == 0) {
-            /* Scalar declaration with type — just ignore (var gets typed by suffix) */
-            return stmt_alloc(STMT_REM, line);
+            stmt_t *s = stmt_alloc(STMT_DIM_SCALAR, line);
+            if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+            strncpy(s->dim_scalar.name, name.text, 63);
+            s->dim_scalar.name[63] = '\0';
+            if (strcmp(tname.text, "INTEGER") == 0)
+                s->dim_scalar.scalar_type = VAL_INTEGER;
+            else if (strcmp(tname.text, "DOUBLE") == 0)
+                s->dim_scalar.scalar_type = VAL_DOUBLE;
+            else
+                s->dim_scalar.scalar_type = VAL_STRING;
+            return s;
         }
         return stmt_dim_as_type(name.text, tname.text, line);
     }
@@ -1510,20 +1519,28 @@ static stmt_t *parse_paren_dispatch(parser_t *p, const char *name, int line) {
 }
 
 static stmt_t *parse_option(parser_t *p, int line) {
-    /* Already consumed "OPTION" as an ident. Expect BASE 0/1 */
-    if (!lexer_check(&p->lex, TOK_IDENT) ||
-        strcmp(lexer_peek(&p->lex)->text, "BASE") != 0) {
+    /* Already consumed "OPTION" as an ident. Expect BASE 0/1 or EXPLICIT */
+    if (!lexer_check(&p->lex, TOK_IDENT)) {
         parser_error(p, ERR_SYNTAX); return NULL;
     }
-    lexer_next(&p->lex); /* consume BASE */
-    if (!lexer_check(&p->lex, TOK_INTEGER_LIT)) {
-        parser_error(p, ERR_SYNTAX); return NULL;
+    if (strcmp(lexer_peek(&p->lex)->text, "BASE") == 0) {
+        lexer_next(&p->lex); /* consume BASE */
+        if (!lexer_check(&p->lex, TOK_INTEGER_LIT)) {
+            parser_error(p, ERR_SYNTAX); return NULL;
+        }
+        token_t t = lexer_next(&p->lex);
+        if (t.ival != 0 && t.ival != 1) {
+            parser_error(p, ERR_ILLEGAL_FUNCTION_CALL); return NULL;
+        }
+        return stmt_option_base(t.ival, line);
     }
-    token_t t = lexer_next(&p->lex);
-    if (t.ival != 0 && t.ival != 1) {
-        parser_error(p, ERR_ILLEGAL_FUNCTION_CALL); return NULL;
+    if (strcmp(lexer_peek(&p->lex)->text, "EXPLICIT") == 0) {
+        lexer_next(&p->lex);
+        stmt_t *s = stmt_alloc(STMT_OPTION_EXPLICIT, line);
+        return s;
     }
-    return stmt_option_base(t.ival, line);
+    parser_error(p, ERR_SYNTAX);
+    return NULL;
 }
 
 /* --- Main statement dispatch --- */

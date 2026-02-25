@@ -79,6 +79,9 @@ static int eval_depth = 0;
 /* TRACE mode: print line numbers as they execute */
 static int trace_enabled = 0;
 
+/* OPTION EXPLICIT: require variables to be declared before use */
+static int option_explicit = 0;
+
 /* Is this a real error (trappable by ON ERROR) or a flow-control signal? */
 static int is_trappable_error(error_t err) {
     switch (err) {
@@ -1124,6 +1127,10 @@ static int lvalue_is_const(env_t *env, expr_t *e) {
 static error_t exec_assign(env_t *env, stmt_t *s) {
     if (env_is_const(env, s->assign.name))
         return ERR_CONST_REASSIGN;
+
+    /* OPTION EXPLICIT: variable must already exist */
+    if (option_explicit && !env_exists(env, s->assign.name))
+        return ERR_UNDEFINED_VAR;
 
     value_t v;
     EVAL_CHECK(eval_expr(env, s->assign.value, &v));
@@ -2200,6 +2207,24 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_BEEP:
             return ERR_NONE;
 
+        case STMT_OPTION_EXPLICIT:
+            option_explicit = 1;
+            return ERR_NONE;
+
+        case STMT_DIM_SCALAR: {
+            /* Declare scalar variable with default value */
+            value_t def;
+            if (s->dim_scalar.scalar_type == VAL_INTEGER)
+                def = val_integer(0);
+            else if (s->dim_scalar.scalar_type == VAL_DOUBLE)
+                def = val_double(0.0);
+            else
+                def = val_string_cstr("");
+            env_set(env, s->dim_scalar.name, &def);
+            val_clear(&def);
+            return ERR_NONE;
+        }
+
         case STMT_TRACE:
             trace_enabled = s->trace.enabled;
             return ERR_NONE;
@@ -2376,6 +2401,7 @@ error_t eval_program(env_t *env, stmt_t *program) {
     on_error_err_line = 0;
     resume_is_next = 0;
     trace_enabled = 0;
+    option_explicit = 0;
 
     error_t result = ERR_NONE;
 

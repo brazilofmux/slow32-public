@@ -573,6 +573,8 @@ void stmt_free(stmt_t *s) {
                 break;
             case STMT_BEEP:
             case STMT_TRACE:
+            case STMT_OPTION_EXPLICIT:
+            case STMT_DIM_SCALAR:
                 break;
             case STMT_SPLIT:
                 expr_free(s->split.str_expr);

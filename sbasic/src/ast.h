@@ -146,6 +146,8 @@ typedef enum {
     STMT_BEEP,
     STMT_TRACE,
     STMT_SPLIT,
+    STMT_OPTION_EXPLICIT,
+    STMT_DIM_SCALAR,
 } stmt_type_t;
 
 /* Print item: expression + separator */
@@ -479,6 +481,12 @@ typedef struct stmt {
             char labels[16][64];
             int nlabels;
         } on_branch;
+
+        /* STMT_DIM_SCALAR: DIM x AS INTEGER/DOUBLE/STRING */
+        struct {
+            char name[64];
+            val_type_t scalar_type;
+        } dim_scalar;
 
         /* STMT_TRACE */
         struct {
