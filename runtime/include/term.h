@@ -45,4 +45,11 @@ int term_save_screen(void);
 /* Restore screen contents (pop from emulator-side stack). Returns 0 on success. */
 int term_restore_screen(void);
 
+/* Begin buffered update: subsequent term ops update shadow buffer only (no stdout).
+   Call term_end_update() to diff and emit minimum ANSI. */
+void term_begin_update(void);
+
+/* End buffered update: diff shadow buffer vs snapshot, emit only changed cells. */
+void term_end_update(void);
+
 #endif /* _TERM_H */

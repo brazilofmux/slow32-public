@@ -18,6 +18,7 @@
 #define MAX_FILENAME   256
 #define MAX_SEARCH     256
 #define MAX_MESSAGE    256
+#define MAX_DIRTY      256  /* max screen rows for dirty tracking */
 #define QUIT_CONFIRM   2    /* presses of Ctrl-Q to force-quit when modified */
 
 /* Internal key codes (above ASCII range) */
@@ -60,6 +61,14 @@ typedef struct {
     line_t cut_line;            /* cut buffer (single line) */
     int has_cut;
     char message[MAX_MESSAGE];
+    char dirty[MAX_DIRTY];      /* 1 = screen row needs redraw */
+    int dirty_status;           /* 1 = status bar needs redraw */
+    int dirty_bottom;           /* 1 = message/help bar needs redraw */
+    int prev_row_offset;        /* detect scroll changes */
+    int prev_col_offset;
+    int prev_gutter_width;
+    int prev_num_lines;         /* detect line count changes (gutter width) */
+    char prev_message[MAX_MESSAGE];
 } editor_t;
 
 static editor_t E;
@@ -175,6 +184,33 @@ static int compute_gutter_width(void) {
     int digits = 1;
     while (n >= 10) { digits++; n /= 10; }
     return digits + 1; /* digits + space */
+}
+
+/* ---- Dirty Tracking ---- */
+
+/* Mark all screen rows dirty (e.g. after scroll) */
+static void dirty_all(void) {
+    int i;
+    for (i = 0; i < E.edit_rows && i < MAX_DIRTY; i++)
+        E.dirty[i] = 1;
+    E.dirty_status = 1;
+    E.dirty_bottom = 1;
+}
+
+/* Mark a single file row dirty (translates to screen row) */
+static void dirty_file_row(int file_row) {
+    int screen_row = file_row - E.row_offset;
+    if (screen_row >= 0 && screen_row < E.edit_rows && screen_row < MAX_DIRTY)
+        E.dirty[screen_row] = 1;
+}
+
+/* Mark file row and all rows below it dirty (for insert/delete line) */
+static void dirty_from_file_row(int file_row) {
+    int screen_row = file_row - E.row_offset;
+    int i;
+    if (screen_row < 0) screen_row = 0;
+    for (i = screen_row; i < E.edit_rows && i < MAX_DIRTY; i++)
+        E.dirty[i] = 1;
 }
 
 /* ---- File I/O ---- */
@@ -427,25 +463,68 @@ static void editor_scroll(void) {
 }
 
 static void editor_refresh_screen(void) {
-    E.gutter_width = compute_gutter_width();
-    editor_scroll();
-    editor_draw_rows();
-    editor_draw_status_bar();
+    int y;
+    int new_gutter = compute_gutter_width();
 
-    /* Message bar or help bar */
-    if (E.message[0]) {
-        term_gotoxy(E.screen_rows, 1);
-        term_set_attr(7);
-        {
-            int len = strlen(E.message);
-            int i;
-            term_puts(E.message);
-            for (i = len; i < E.screen_cols; i++)
-                term_putc(' ');
+    editor_scroll();
+
+    /* Detect changes that require full redraw */
+    if (E.row_offset != E.prev_row_offset ||
+        E.col_offset != E.prev_col_offset ||
+        new_gutter != E.prev_gutter_width) {
+        dirty_all();
+    }
+    E.prev_row_offset = E.row_offset;
+    E.prev_col_offset = E.col_offset;
+    E.prev_gutter_width = new_gutter;
+    E.gutter_width = new_gutter;
+
+    /* Detect status bar changes */
+    if (E.num_lines != E.prev_num_lines) {
+        E.dirty_status = 1;
+        E.prev_num_lines = E.num_lines;
+    }
+
+    /* Detect message bar changes */
+    if (strcmp(E.message, E.prev_message) != 0) {
+        E.dirty_bottom = 1;
+        strncpy(E.prev_message, E.message, MAX_MESSAGE - 1);
+        E.prev_message[MAX_MESSAGE - 1] = '\0';
+    }
+
+    term_begin_update();
+
+    /* Only redraw dirty rows */
+    for (y = 0; y < E.edit_rows; y++) {
+        if (y < MAX_DIRTY && E.dirty[y]) {
+            int file_row = E.row_offset + y;
+            editor_draw_row(y + 1, file_row);
+            E.dirty[y] = 0;
         }
-        term_set_attr(0);
-    } else {
-        editor_draw_help_bar();
+    }
+
+    if (E.dirty_status) {
+        editor_draw_status_bar();
+        E.dirty_status = 0;
+    }
+
+    if (E.dirty_bottom) {
+        /* Message bar or help bar */
+        if (E.message[0]) {
+            term_gotoxy(E.screen_rows, 1);
+            term_set_attr(7);
+            {
+                int len = strlen(E.message);
+                int i;
+                term_puts(E.message);
+                for (i = len; i < E.screen_cols; i++)
+                    term_putc(' ');
+            }
+            term_set_attr(0);
+        } else {
+            editor_draw_help_bar();
+        }
+        E.dirty_bottom = 0;
     }
 
     /* Position cursor */
@@ -454,6 +533,8 @@ static void editor_refresh_screen(void) {
         int screen_x = E.gutter_width + (E.cx - E.col_offset) + 1;
         term_gotoxy(screen_y, screen_x);
     }
+
+    term_end_update();
 }
 
 /* ---- Cursor Movement ---- */
@@ -528,6 +609,7 @@ static void editor_insert_char(int ch) {
     E.cx++;
     E.modified = 1;
     E.quit_count = 0;
+    dirty_file_row(E.cy);
 }
 
 static void editor_insert_newline(void) {
@@ -537,6 +619,8 @@ static void editor_insert_newline(void) {
     E.cx = 0;
     E.modified = 1;
     E.quit_count = 0;
+    dirty_from_file_row(E.cy - 1);
+    E.dirty_status = 1;
 }
 
 static void editor_insert_tab(void) {
@@ -552,12 +636,15 @@ static void editor_backspace(void) {
         line_delete_char(&E.lines[E.cy], E.cx - 1);
         E.cx--;
         E.modified = 1;
+        dirty_file_row(E.cy);
     } else if (E.cy > 0) {
         /* Join with previous line */
         E.cx = E.lines[E.cy - 1].len;
         editor_join_lines(E.cy - 1);
         E.cy--;
         E.modified = 1;
+        dirty_from_file_row(E.cy);
+        E.dirty_status = 1;
     }
     E.quit_count = 0;
 }
@@ -567,10 +654,13 @@ static void editor_delete(void) {
     if (E.cx < E.lines[E.cy].len) {
         line_delete_char(&E.lines[E.cy], E.cx);
         E.modified = 1;
+        dirty_file_row(E.cy);
     } else if (E.cy < E.num_lines - 1) {
         /* Join with next line */
         editor_join_lines(E.cy);
         E.modified = 1;
+        dirty_from_file_row(E.cy);
+        E.dirty_status = 1;
     }
     E.quit_count = 0;
 }
@@ -593,6 +683,8 @@ static void editor_cut_line(void) {
     E.modified = 1;
     E.quit_count = 0;
     editor_set_message("Line cut");
+    dirty_from_file_row(E.cy);
+    E.dirty_status = 1;
 }
 
 static void editor_paste_line(void) {
@@ -606,6 +698,8 @@ static void editor_paste_line(void) {
     E.modified = 1;
     E.quit_count = 0;
     editor_set_message("Line pasted");
+    dirty_from_file_row(E.cy);
+    E.dirty_status = 1;
 }
 
 /* ---- Search ---- */
@@ -728,6 +822,7 @@ static void editor_process_key(int key) {
     case CTRL('e'):
         editor_move_cursor(key);
         E.quit_count = 0;
+        E.dirty_status = 1;  /* cursor position changed */
         break;
 
     case 8: /* backspace */
@@ -749,6 +844,7 @@ static void editor_process_key(int key) {
 
     case CTRL('s'): /* save */
         editor_save();
+        E.dirty_status = 1;
         break;
 
     case CTRL('q'): /* quit */
@@ -766,10 +862,14 @@ static void editor_process_key(int key) {
     case CTRL('x'): /* save and quit */
         if (editor_save() == 0)
             E.running = 0;
+        E.dirty_status = 1;
+        E.dirty_bottom = 1;
         break;
 
     case CTRL('f'): /* find */
         editor_find();
+        E.dirty_status = 1;
+        E.dirty_bottom = 1;
         break;
 
     case CTRL('k'): /* cut line */
@@ -792,6 +892,8 @@ static void editor_process_key(int key) {
             E.cy = lineno - 1;
             E.cx = 0;
             editor_clamp_cx();
+            E.dirty_status = 1;
+            E.dirty_bottom = 1;
         }
         break;
 
@@ -1046,6 +1148,10 @@ int main(int argc, char *argv[]) {
     }
 
     E.gutter_width = compute_gutter_width();
+    E.prev_gutter_width = E.gutter_width;
+    E.prev_num_lines = E.num_lines;
+    E.prev_row_offset = -1;  /* force initial dirty_all */
+    E.prev_col_offset = -1;
 
     /* Enter raw mode and clear screen */
     term_set_raw(1);

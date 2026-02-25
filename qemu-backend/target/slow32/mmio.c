@@ -112,7 +112,9 @@
 #define S32_TERM_PUTS         9
 #define S32_TERM_SAVE_SCREEN  10
 #define S32_TERM_RESTORE_SCREEN 11
-#define S32_TERM_OPCODE_COUNT 12
+#define S32_TERM_BEGIN_UPDATE 12
+#define S32_TERM_END_UPDATE   13
+#define S32_TERM_OPCODE_COUNT 14
 
 typedef struct Slow32MMIODesc {
     uint32_t opcode;
@@ -468,6 +470,11 @@ typedef struct {
     /* Save stack */
     Slow32TermScreenSave save_stack[TERM_MAX_SAVE_DEPTH];
     int save_depth;
+    /* Buffered update state (for begin/end update diffing) */
+    bool in_update;
+    Slow32TermCell *prev_cells;   /* snapshot taken at begin_update */
+    int prev_cur_row, prev_cur_col;
+    int prev_cur_attr, prev_cur_fg, prev_cur_bg;
 } Slow32TermState;
 
 static void *slow32_term_create(void)
@@ -515,6 +522,7 @@ static void slow32_term_cleanup(void *state)
     for (int i = 0; i < ts->save_depth; i++) {
         g_free(ts->save_stack[i].cells);
     }
+    g_free(ts->prev_cells);
     g_free(ts->cells);
     g_free(ts);
 }
@@ -671,8 +679,10 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
     case S32_TERM_MOVE_CURSOR: {
         uint32_t row = (req->status >> 16) & 0xFFFF;
         uint32_t col = req->status & 0xFFFF;
-        fprintf(stdout, "\033[%u;%uH", row, col);
-        fflush(stdout);
+        if (!ts->in_update) {
+            fprintf(stdout, "\033[%u;%uH", row, col);
+            fflush(stdout);
+        }
         ts->cur_row = (int)row - 1;  /* shadow: 0-based */
         ts->cur_col = (int)col - 1;
         resp->status = S32_MMIO_STATUS_OK;
@@ -680,29 +690,33 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
     }
 
     case S32_TERM_CLEAR: {
-        switch (req->status) {
-        case 0:
-            fprintf(stdout, "\033[2J\033[H");
-            break;
-        case 1:
-            fprintf(stdout, "\033[K");
-            break;
-        case 2:
-            fprintf(stdout, "\033[J");
-            break;
-        default:
-            fprintf(stdout, "\033[2J\033[H");
-            break;
+        if (!ts->in_update) {
+            switch (req->status) {
+            case 0:
+                fprintf(stdout, "\033[2J\033[H");
+                break;
+            case 1:
+                fprintf(stdout, "\033[K");
+                break;
+            case 2:
+                fprintf(stdout, "\033[J");
+                break;
+            default:
+                fprintf(stdout, "\033[2J\033[H");
+                break;
+            }
+            fflush(stdout);
         }
-        fflush(stdout);
         slow32_term_shadow_clear(ts, (int)req->status);
         resp->status = S32_MMIO_STATUS_OK;
         break;
     }
 
     case S32_TERM_SET_ATTR:
-        fprintf(stdout, "\033[%um", req->status);
-        fflush(stdout);
+        if (!ts->in_update) {
+            fprintf(stdout, "\033[%um", req->status);
+            fflush(stdout);
+        }
         ts->cur_attr = (int)req->status;
         resp->status = S32_MMIO_STATUS_OK;
         break;
@@ -731,8 +745,10 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
     case S32_TERM_SET_COLOR: {
         uint32_t fg = (req->status >> 8) & 0xFF;
         uint32_t bg = req->status & 0xFF;
-        fprintf(stdout, "\033[3%u;4%um", fg, bg);
-        fflush(stdout);
+        if (!ts->in_update) {
+            fprintf(stdout, "\033[3%u;4%um", fg, bg);
+            fflush(stdout);
+        }
         ts->cur_fg = (int)fg;
         ts->cur_bg = (int)bg;
         resp->status = S32_MMIO_STATUS_OK;
@@ -741,8 +757,10 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
 
     case S32_TERM_PUTC: {
         int ch = (int)(req->status & 0xFF);
-        fputc(ch, stdout);
-        fflush(stdout);
+        if (!ts->in_update) {
+            fputc(ch, stdout);
+            fflush(stdout);
+        }
         slow32_term_shadow_putc(ts, ch);
         resp->status = S32_MMIO_STATUS_OK;
         break;
@@ -755,12 +773,16 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         }
         if (len > 0) {
             slow32_mmio_copy_from_guest(env, req->offset, ctx->scratch, len);
-            fwrite(ctx->scratch, 1, len, stdout);
+            if (!ts->in_update) {
+                fwrite(ctx->scratch, 1, len, stdout);
+            }
             for (uint32_t i = 0; i < len; i++) {
                 slow32_term_shadow_putc(ts, ctx->scratch[i]);
             }
         }
-        fflush(stdout);
+        if (!ts->in_update) {
+            fflush(stdout);
+        }
         resp->status = S32_MMIO_STATUS_OK;
         break;
     }
@@ -858,6 +880,97 @@ static void slow32_term_handle(void *state, Slow32MMIOCtx *ctx,
         fflush(stdout);
         g_free(s->cells);
         s->cells = NULL;
+        resp->status = S32_MMIO_STATUS_OK;
+        break;
+    }
+
+    case S32_TERM_BEGIN_UPDATE: {
+        if (ts->in_update || !ts->cells) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            break;
+        }
+        /* Snapshot current shadow buffer */
+        size_t ncells = (size_t)ts->rows * ts->cols;
+        ts->prev_cells = g_memdup2(ts->cells,
+                                    ncells * sizeof(Slow32TermCell));
+        if (!ts->prev_cells) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            break;
+        }
+        ts->prev_cur_row = ts->cur_row;
+        ts->prev_cur_col = ts->cur_col;
+        ts->prev_cur_attr = ts->cur_attr;
+        ts->prev_cur_fg = ts->cur_fg;
+        ts->prev_cur_bg = ts->cur_bg;
+        ts->in_update = true;
+        resp->status = S32_MMIO_STATUS_OK;
+        break;
+    }
+
+    case S32_TERM_END_UPDATE: {
+        if (!ts->in_update || !ts->prev_cells) {
+            resp->status = S32_MMIO_STATUS_ERR;
+            break;
+        }
+        ts->in_update = false;
+        /* Diff prev_cells vs cells, emit minimum ANSI */
+        int out_attr = ts->prev_cur_attr;
+        int out_fg = ts->prev_cur_fg;
+        int out_bg = ts->prev_cur_bg;
+        int out_row = ts->prev_cur_row;
+        int out_col = ts->prev_cur_col;
+        for (int r = 0; r < ts->rows; r++) {
+            for (int c = 0; c < ts->cols; c++) {
+                int idx = r * ts->cols + c;
+                Slow32TermCell *prev = &ts->prev_cells[idx];
+                Slow32TermCell *cur = &ts->cells[idx];
+                if (cur->ch == prev->ch && cur->attr == prev->attr &&
+                    cur->fg == prev->fg && cur->bg == prev->bg) {
+                    continue;
+                }
+                /* Position cursor if needed */
+                if (r != out_row || c != out_col) {
+                    fprintf(stdout, "\033[%d;%dH", r + 1, c + 1);
+                    out_row = r;
+                    out_col = c;
+                }
+                /* Set attributes if changed */
+                if (cur->attr != out_attr) {
+                    fprintf(stdout, "\033[%um", (unsigned)cur->attr);
+                    out_attr = cur->attr;
+                    /* Reset colors after attr change (attr 0 resets everything) */
+                    if (cur->attr == 0) {
+                        out_fg = 7;
+                        out_bg = 0;
+                    }
+                }
+                if (cur->fg != out_fg || cur->bg != out_bg) {
+                    fprintf(stdout, "\033[3%u;4%um",
+                            (unsigned)cur->fg, (unsigned)cur->bg);
+                    out_fg = cur->fg;
+                    out_bg = cur->bg;
+                }
+                fputc(cur->ch, stdout);
+                out_col++;
+                if (out_col >= ts->cols) {
+                    out_col = 0;
+                    out_row++;
+                }
+            }
+        }
+        /* Restore final cursor position and attributes */
+        if (ts->cur_attr != out_attr) {
+            fprintf(stdout, "\033[%um", (unsigned)ts->cur_attr);
+        }
+        if (ts->cur_fg != out_fg || ts->cur_bg != out_bg) {
+            fprintf(stdout, "\033[3%u;4%um",
+                    (unsigned)ts->cur_fg, (unsigned)ts->cur_bg);
+        }
+        fprintf(stdout, "\033[%d;%dH",
+                ts->cur_row + 1, ts->cur_col + 1);
+        fflush(stdout);
+        g_free(ts->prev_cells);
+        ts->prev_cells = NULL;
         resp->status = S32_MMIO_STATUS_OK;
         break;
     }

@@ -195,7 +195,9 @@ typedef struct s32_mmio_envp_info {
 #define S32_TERM_PUTS         9   // Output string at cursor (data in buffer)
 #define S32_TERM_SAVE_SCREEN  10  // Push screen contents onto internal stack
 #define S32_TERM_RESTORE_SCREEN 11 // Pop screen contents and repaint
-#define S32_TERM_OPCODE_COUNT 12  // Total opcodes for term service
+#define S32_TERM_BEGIN_UPDATE 12  // Begin buffered update (shadow only, no stdout)
+#define S32_TERM_END_UPDATE   13  // End update: diff shadow vs prev, emit minimum ANSI
+#define S32_TERM_OPCODE_COUNT 14  // Total opcodes for term service
 
 // Access mode constants for S32_MMIO_OP_ACCESS
 #define S32_MMIO_F_OK 0  // File exists

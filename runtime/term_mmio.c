@@ -139,3 +139,13 @@ int term_restore_screen(void) {
     int result = s32_mmio_request(term_base_opcode + 11, 0, 0, 0);
     return (result == (int)S32_MMIO_STATUS_OK) ? 0 : -1;
 }
+
+void term_begin_update(void) {
+    if (!term_initialized) return;
+    s32_mmio_request(term_base_opcode + 12, 0, 0, 0);
+}
+
+void term_end_update(void) {
+    if (!term_initialized) return;
+    s32_mmio_request(term_base_opcode + 13, 0, 0, 0);
+}

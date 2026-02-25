@@ -22,7 +22,7 @@ cd "$QEMU_DIR"
 # that occurred AFTER this base commit. The generated patches will include those
 # renames, which will BREAK Docker builds pinned to $BASE_COMMIT.
 # After generating, manually review and edit patches to contain ONLY slow32 additions.
-BASE_COMMIT="986001fd12"  # Last upstream commit before our work — also pinned in Dockerfile.emulator
+BASE_COMMIT="07f97d5da0"  # Last upstream commit before our work — also pinned in Dockerfile.emulator
 CURRENT_COMMIT="HEAD"
 
 echo "Using commit $BASE_COMMIT as base for patch generation..."
