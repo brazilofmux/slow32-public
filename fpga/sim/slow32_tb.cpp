@@ -1,7 +1,7 @@
-// slow32_tb.cpp — Verilator testbench for SLOW-32 CPU
+// slow32_tb.cpp — Verilator testbench for SLOW-32 top-level (CPU + caches)
 //
-// Loads .s32x executables, provides flat memory model, captures DEBUG output.
-// Usage: ./obj_dir/Vslow32_cpu <program.s32x> [--trace] [--max-cycles N]
+// Loads .s32x executables, provides memory bus model, captures DEBUG output.
+// Usage: ./obj_dir/Vslow32_top <program.s32x> [--trace] [--max-cycles N] [--mem-latency N]
 
 #include <cstdio>
 #include <cstdlib>
@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <string>
 
-#include "Vslow32_cpu.h"
+#include "Vslow32_top.h"
 #include "verilated.h"
 
 // .s32x format constants
@@ -79,13 +79,13 @@ static bool load_s32x(const char *path) {
 
 static uint32_t mem_read_word(uint32_t addr) {
     addr &= ~3u;
-    if (addr + 4 <= mem_size) return rd32(mem, addr);
+    if (addr < mem_size && addr + 4 <= mem_size) return rd32(mem, addr);
     return 0;
 }
 
-static void mem_write(uint32_t addr, uint32_t data, uint8_t byte_en) {
+static void mem_write_bytes(uint32_t addr, uint32_t data, uint8_t byte_en) {
     addr &= ~3u;
-    if (addr + 4 > mem_size) return;
+    if (addr >= mem_size || addr + 4 > mem_size) return;
     if (byte_en & 1) mem[addr + 0] = (data >>  0) & 0xFF;
     if (byte_en & 2) mem[addr + 1] = (data >>  8) & 0xFF;
     if (byte_en & 4) mem[addr + 2] = (data >> 16) & 0xFF;
@@ -98,23 +98,26 @@ int main(int argc, char **argv) {
     const char *s32x_path = nullptr;
     uint64_t max_cycles = 100000000ULL;
     bool trace = false;
+    int mem_latency = 1;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--trace") == 0) trace = true;
         else if (strcmp(argv[i], "--max-cycles") == 0 && i + 1 < argc)
             max_cycles = strtoull(argv[++i], nullptr, 0);
+        else if (strcmp(argv[i], "--mem-latency") == 0 && i + 1 < argc)
+            mem_latency = atoi(argv[++i]);
         else if (argv[i][0] != '-' && argv[i][0] != '+')
             s32x_path = argv[i];
     }
 
     if (!s32x_path) {
-        fprintf(stderr, "Usage: %s <program.s32x> [--trace] [--max-cycles N]\n", argv[0]);
+        fprintf(stderr, "Usage: %s <program.s32x> [--trace] [--max-cycles N] [--mem-latency N]\n", argv[0]);
         return 1;
     }
 
     if (!load_s32x(s32x_path)) return 1;
 
-    Vslow32_cpu *dut = new Vslow32_cpu;
+    Vslow32_top *dut = new Vslow32_top;
 
     // Connect initialization inputs
     dut->init_pc = entry_point;
@@ -123,8 +126,8 @@ int main(int argc, char **argv) {
     // Reset sequence
     dut->clk = 0;
     dut->rst_n = 0;
-    dut->imem_rdata = 0;
-    dut->dmem_rdata = 0;
+    dut->mem_ready = 0;
+    dut->mem_rdata = 0;
     for (int i = 0; i < 4; i++) {
         dut->clk = 0; dut->eval();
         dut->clk = 1; dut->eval();
@@ -136,26 +139,76 @@ int main(int argc, char **argv) {
     uint64_t cycle = 0;
     int exit_code = 0;
 
+    // Memory latency state
+    int mem_wait = 0;
+    bool mem_pending = false;
+    uint32_t mem_pending_rdata = 0;
+    bool mem_pending_is_write = false;
+
     while (cycle < max_cycles) {
-        // Falling edge: drive memory inputs
+        // === Falling edge ===
         dut->clk = 0;
+        dut->eval();  // Settle combinational outputs (mem_req, mem_addr, etc.)
 
-        // Instruction memory
-        dut->imem_rdata = mem_read_word(dut->imem_addr);
+        if (trace && cycle < 100) {
+            fprintf(stderr, "[%04llu] req=%d wr=%d addr=%08X be=%X halt=%d dbg=%d\n",
+                    (unsigned long long)cycle,
+                    (int)dut->mem_req, (int)dut->mem_wr,
+                    dut->mem_addr, dut->mem_byte_en,
+                    (int)dut->halted, (int)dut->debug_valid);
+        }
 
-        // Data memory read
-        if (dut->dmem_ren)
-            dut->dmem_rdata = mem_read_word(dut->dmem_addr);
+        // Memory bus model
+        if (mem_latency <= 1) {
+            // Instant: respond in same delta cycle
+            if (dut->mem_req) {
+                if (dut->mem_wr)
+                    mem_write_bytes(dut->mem_addr, dut->mem_wdata, dut->mem_byte_en);
+                dut->mem_rdata = mem_read_word(dut->mem_addr);
+                dut->mem_ready = 1;
+            } else {
+                dut->mem_ready = 0;
+            }
+        } else {
+            // Multi-cycle latency
+            if (mem_pending) {
+                mem_wait--;
+                if (mem_wait <= 0) {
+                    if (!mem_pending_is_write)
+                        dut->mem_rdata = mem_pending_rdata;
+                    dut->mem_ready = 1;
+                    mem_pending = false;
+                } else {
+                    dut->mem_ready = 0;
+                }
+            } else if (dut->mem_req) {
+                mem_pending = true;
+                mem_pending_is_write = dut->mem_wr;
+                mem_wait = mem_latency - 1;
 
-        dut->eval();
+                if (dut->mem_wr)
+                    mem_write_bytes(dut->mem_addr, dut->mem_wdata, dut->mem_byte_en);
+                else
+                    mem_pending_rdata = mem_read_word(dut->mem_addr);
 
-        // Rising edge
+                if (mem_wait <= 0) {
+                    if (!mem_pending_is_write)
+                        dut->mem_rdata = mem_pending_rdata;
+                    dut->mem_ready = 1;
+                    mem_pending = false;
+                } else {
+                    dut->mem_ready = 0;
+                }
+            } else {
+                dut->mem_ready = 0;
+            }
+        }
+
+        dut->eval();  // Propagate memory response through caches
+
+        // === Rising edge ===
         dut->clk = 1;
         dut->eval();
-
-        // Data memory write (committed on rising edge)
-        if (dut->dmem_wen)
-            mem_write(dut->dmem_addr, dut->dmem_wdata, dut->dmem_byte_en);
 
         // Capture DEBUG output
         if (dut->debug_valid)

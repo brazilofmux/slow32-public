@@ -2,7 +2,7 @@
 
 VERILATOR ?= verilator
 VERILATOR_FLAGS = --cc --exe --build -j 0 \
-                  --top-module slow32_cpu \
+                  --top-module slow32_top \
                   -Wall -Wno-fatal \
                   --trace \
                   -CFLAGS "-O2 -std=c++17"
@@ -16,22 +16,26 @@ RTL_SRCS = $(RTL_DIR)/slow32_pkg.sv \
            $(RTL_DIR)/slow32_decode.sv \
            $(RTL_DIR)/slow32_alu.sv \
            $(RTL_DIR)/slow32_divider.sv \
-           $(RTL_DIR)/slow32_cpu.sv
+           $(RTL_DIR)/slow32_cpu.sv \
+           $(RTL_DIR)/slow32_icache.sv \
+           $(RTL_DIR)/slow32_dcache.sv \
+           $(RTL_DIR)/slow32_mem_arb.sv \
+           $(RTL_DIR)/slow32_top.sv
 
 TB_SRC = $(SIM_DIR)/slow32_tb.cpp
 
 # Build the simulator
 .PHONY: build
-build: obj_dir/Vslow32_cpu
+build: obj_dir/Vslow32_top
 
-obj_dir/Vslow32_cpu: $(RTL_SRCS) $(TB_SRC)
+obj_dir/Vslow32_top: $(RTL_SRCS) $(TB_SRC)
 	$(VERILATOR) $(VERILATOR_FLAGS) $(RTL_SRCS) $(TB_SRC)
 
 # Run a single test
 # Usage: make run TEST=path/to/test.s32x
 .PHONY: run
 run: build
-	./obj_dir/Vslow32_cpu $(TEST)
+	./obj_dir/Vslow32_top $(TEST)
 
 # Regression test targets (DEBUG-only tests, no MMIO needed)
 REGRESSION_DIR = ../../regression
@@ -58,7 +62,7 @@ test: build
 			skip=$$((skip + 1)); \
 			continue; \
 		fi; \
-		actual=$$(timeout 10 ./obj_dir/Vslow32_cpu "$$s32x" 2>/dev/null); \
+		actual=$$(timeout 10 ./obj_dir/Vslow32_top "$$s32x" 2>/dev/null); \
 		rc=$$?; \
 		exp=$$(cat "$$expected"); \
 		if [ "$$actual" = "$$exp" ] && [ $$rc -eq 0 ]; then \

@@ -30,6 +30,10 @@ module slow32_cpu (
     output logic        dmem_ren,
     input  logic [31:0] dmem_rdata,
 
+    // Cache ready signals
+    input  logic        imem_ready,    // I-cache: instruction data valid
+    input  logic        dmem_ready,    // D-cache: load/store data valid
+
     // Status outputs
     output logic        halted,
     output logic        debug_valid,
@@ -320,10 +324,16 @@ module slow32_cpu (
     logic divide_stall;
     assign divide_stall = div_busy;
 
+    // Cache stalls: freeze entire pipeline when cache not ready
+    logic icache_stall, dcache_stall;
+    assign icache_stall = running && !imem_ready;
+    assign dcache_stall = running && ex_mem_valid && (ex_mem_is_load || ex_mem_is_store) && !dmem_ready;
+
     // Combined stall signals
     // Load-use: freeze IF only; EX advances (load → MEM), ID inserts bubble via flush_id_ex
     // Divide: freeze IF, ID, and EX
-    assign stall_ex = divide_stall;
+    // Cache stalls: freeze entire pipeline (same as divide stall)
+    assign stall_ex = divide_stall || icache_stall || dcache_stall;
     assign stall_id = stall_ex;
     assign stall_if = load_use_hazard || stall_ex;
 
@@ -775,8 +785,8 @@ module slow32_cpu (
                                 id_ex_opcode == OP_NOP || id_ex_opcode == OP_YIELD)
                                 ex_mem_rf_wr_en <= 1'b0;
                         end
-                    end else begin
-                        // Stalled (divider busy): check if divider just finished
+                    end else if (divide_stall) begin
+                        // Stalled on divider: check if divider just finished
                         if (div_done) begin
                             div_busy <= 1'b0;
                             // Latch divider result with sign correction
@@ -807,6 +817,7 @@ module slow32_cpu (
                             ex_mem_valid <= 1'b0;
                         end
                     end
+                    // else: cache stall — pipeline completely frozen, no register updates
 
                     // ---- ID stage: IF/ID → ID/EX ----
                     if (!stall_id) begin
