@@ -23,7 +23,7 @@ entry:
 ; CHECK: addi [[BASE]], [[BASE]], -2048
 ; CHECK: addi [[BASE]], [[BASE]], -2048
 ; CHECK: addi [[BASE]], [[BASE]], -2048
-; CHECK: addi [[OFF:r[0-9]+]], [[BASE]], -1768
+; CHECK: addi [[OFF:r[0-9]+]], [[BASE]], -1772
 ; CHECK: add [[ADDR:r[0-9]+]], [[OFF]], {{r[0-9]+}}
 ; CHECK: stw [[ADDR]]+{{-?[0-9]+}},
   %val = load i32, ptr %ptr, align 4

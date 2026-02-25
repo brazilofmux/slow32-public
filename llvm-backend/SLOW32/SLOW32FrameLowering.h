@@ -2,6 +2,7 @@
 #define LLVM_LIB_TARGET_SLOW32_SLOW32FRAMELOWERING_H
 #include "llvm/CodeGen/TargetFrameLowering.h"
 namespace llvm {
+class RegScavenger;
 class SLOW32FrameLowering : public TargetFrameLowering {
 public:
   SLOW32FrameLowering() : TargetFrameLowering(StackGrowsDown, Align(16), 0, Align(16)) {}
@@ -12,6 +13,9 @@ public:
   MachineBasicBlock::iterator
   eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
                                 MachineBasicBlock::iterator I) const override;
+
+  void processFunctionBeforeFrameFinalized(
+      MachineFunction &MF, RegScavenger *RS = nullptr) const override;
 };
 }
 #endif

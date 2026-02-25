@@ -8,6 +8,7 @@
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/RegisterScavenging.h"
 #include <algorithm>
 #include <cassert>
 
@@ -161,4 +162,19 @@ SLOW32FrameLowering::eliminateCallFramePseudoInstr(
   }
   
   return MBB.erase(I);
+}
+
+void SLOW32FrameLowering::processFunctionBeforeFrameFinalized(
+    MachineFunction &MF, RegScavenger *RS) const {
+  if (!RS)
+    return;
+
+  MachineFrameInfo &MFI = MF.getFrameInfo();
+
+  // estimateStackSize can under-estimate, so use an 11-bit check (2047) to
+  // give ourselves a safety margin over the 12-bit signed immediate range.
+  if (!isInt<11>(MFI.estimateStackSize(MF))) {
+    int FI = MFI.CreateSpillStackObject(4, Align(4));
+    RS->addScavengingFrameIndex(FI);
+  }
 }
