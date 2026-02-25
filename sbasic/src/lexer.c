@@ -86,6 +86,11 @@ static const keyword_t keywords[] = {
     { "IMP",    TOK_IMP },
     { "EQV",    TOK_EQV },
     { "ELSEIF", TOK_ELSEIF },
+    { "DEF",    TOK_DEF },
+    { "SHELL",  TOK_SHELL },
+    { "CHDIR",  TOK_CHDIR },
+    { "MKDIR",  TOK_MKDIR },
+    { "RMDIR",  TOK_RMDIR },
     { "RUN",    TOK_RUN },
     { "LIST",   TOK_LIST },
     { "NEW",    TOK_NEW },
@@ -244,9 +249,8 @@ static token_t scan_token(lexer_t *lex) {
             tok.ival = (len > 0) ? (int)strtol(tok.text, NULL, base) : 0;
             return tok;
         }
-        /* Bare '&' with no recognized prefix → integer 0 (QBasic compat) */
-        tok.type = TOK_INTEGER_LIT;
-        tok.ival = 0;
+        /* Bare '&' → string concatenation operator */
+        tok.type = TOK_AMPERSAND;
         return tok;
     }
 

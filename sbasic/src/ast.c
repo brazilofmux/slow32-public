@@ -590,6 +590,15 @@ void stmt_free(stmt_t *s) {
                     expr_free(s->print.items[i].expr);
                 free(s->print.items);
                 break;
+            case STMT_DEF_FN:
+                expr_free(s->def_fn.body);
+                break;
+            case STMT_SHELL:
+            case STMT_CHDIR:
+            case STMT_MKDIR:
+            case STMT_RMDIR:
+                expr_free(s->shell_stmt.command);
+                break;
         }
         free(s);
         s = next;
@@ -962,5 +971,7 @@ void stmt_append(stmt_t **head, stmt_t **tail, stmt_t *s) {
     } else {
         (*tail)->next = s;
     }
+    /* Follow chain to find real tail (e.g., label + body) */
+    while (s->next) s = s->next;
     *tail = s;
 }

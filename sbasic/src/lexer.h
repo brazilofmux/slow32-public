@@ -56,6 +56,10 @@ typedef enum {
 
     /* Extra keywords */
     TOK_BEEP, TOK_TRACE, TOK_SPLIT, TOK_XOR, TOK_IMP, TOK_EQV, TOK_ELSEIF,
+    TOK_AMPERSAND,
+    TOK_DEF,
+    TOK_SHELL,
+    TOK_CHDIR, TOK_MKDIR, TOK_RMDIR,
 
     /* REPL commands */
     TOK_RUN, TOK_LIST, TOK_NEW, TOK_LOAD, TOK_SAVE, TOK_BYE,

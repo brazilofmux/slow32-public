@@ -170,8 +170,12 @@ static expr_t *parse_mul(parser_t *p) {
 static expr_t *parse_add(parser_t *p) {
     expr_t *left = parse_mul(p);
     if (!left) return NULL;
-    while (lexer_check(&p->lex, TOK_PLUS) || lexer_check(&p->lex, TOK_MINUS)) {
-        binop_t op = lexer_check(&p->lex, TOK_PLUS) ? OP_ADD : OP_SUB;
+    while (lexer_check(&p->lex, TOK_PLUS) || lexer_check(&p->lex, TOK_MINUS) ||
+           lexer_check(&p->lex, TOK_AMPERSAND)) {
+        binop_t op;
+        if (lexer_check(&p->lex, TOK_AMPERSAND)) op = OP_STRCAT;
+        else if (lexer_check(&p->lex, TOK_PLUS)) op = OP_ADD;
+        else op = OP_SUB;
         int line = lexer_peek(&p->lex)->line;
         lexer_next(&p->lex);
         expr_t *right = parse_mul(p);
@@ -1476,11 +1480,18 @@ static stmt_t *parse_on(parser_t *p) {
             lexer_next(&p->lex);
             return stmt_on_error("", line);
         }
-        if (!lexer_check(&p->lex, TOK_IDENT)) {
+        char err_label[64];
+        if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
+            token_t num = lexer_next(&p->lex);
+            snprintf(err_label, sizeof(err_label), "%d", num.ival);
+        } else if (lexer_check(&p->lex, TOK_IDENT)) {
+            token_t label = lexer_next(&p->lex);
+            strncpy(err_label, label.text, 63);
+            err_label[63] = '\0';
+        } else {
             parser_error(p, ERR_SYNTAX); return NULL;
         }
-        token_t label = lexer_next(&p->lex);
-        return stmt_on_error(label.text, line);
+        return stmt_on_error(err_label, line);
     }
 
     /* ON expr GOTO/GOSUB label1, label2, ... */
@@ -1499,17 +1510,31 @@ static stmt_t *parse_on(parser_t *p) {
 
     stmt_t *s = is_gosub ? stmt_on_gosub(index, line) : stmt_on_goto(index, line);
 
-    if (!lexer_check(&p->lex, TOK_IDENT)) {
-        parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
-    }
-    token_t label = lexer_next(&p->lex);
-    stmt_on_branch_add_label(s, label.text);
-    while (lexer_match(&p->lex, TOK_COMMA)) {
-        if (!lexer_check(&p->lex, TOK_IDENT)) {
+    {
+        char lbl[64];
+        if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
+            token_t num = lexer_next(&p->lex);
+            snprintf(lbl, sizeof(lbl), "%d", num.ival);
+        } else if (lexer_check(&p->lex, TOK_IDENT)) {
+            token_t label = lexer_next(&p->lex);
+            strncpy(lbl, label.text, 63); lbl[63] = '\0';
+        } else {
             parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
         }
-        label = lexer_next(&p->lex);
-        stmt_on_branch_add_label(s, label.text);
+        stmt_on_branch_add_label(s, lbl);
+    }
+    while (lexer_match(&p->lex, TOK_COMMA)) {
+        char lbl[64];
+        if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
+            token_t num = lexer_next(&p->lex);
+            snprintf(lbl, sizeof(lbl), "%d", num.ival);
+        } else if (lexer_check(&p->lex, TOK_IDENT)) {
+            token_t label = lexer_next(&p->lex);
+            strncpy(lbl, label.text, 63); lbl[63] = '\0';
+        } else {
+            parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+        }
+        stmt_on_branch_add_label(s, lbl);
     }
     return s;
 }
@@ -1657,6 +1682,15 @@ static stmt_t *parse_option(parser_t *p, int line) {
 static stmt_t *parse_stmt(parser_t *p) {
     if (p->error != ERR_NONE) return NULL;
     token_t *tok = lexer_peek(&p->lex);
+
+    /* Line number at start of statement → label only (body parsed by caller) */
+    if (tok->type == TOK_INTEGER_LIT) {
+        char label_name[64];
+        snprintf(label_name, sizeof(label_name), "%d", tok->ival);
+        int line = tok->line;
+        lexer_next(&p->lex);
+        return stmt_label(label_name, line);
+    }
 
     switch (tok->type) {
         case TOK_PRINT:    return parse_print(p);
@@ -1809,24 +1843,100 @@ static stmt_t *parse_stmt(parser_t *p) {
             return s;
         }
 
-        case TOK_GOTO: {
+        case TOK_DEF: {
+            /* DEF FNname(params) = expr */
             int line = tok->line;
             lexer_next(&p->lex);
             if (!lexer_check(&p->lex, TOK_IDENT)) {
+                parser_error_detail(p, ERR_SYNTAX, "Expected FN name after DEF");
+                return NULL;
+            }
+            token_t fname = lexer_next(&p->lex);
+            stmt_t *s = stmt_alloc(STMT_DEF_FN, line);
+            if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+            strncpy(s->def_fn.name, fname.text, 63);
+            s->def_fn.name[63] = '\0';
+            s->def_fn.nparams = 0;
+            s->def_fn.body = NULL;
+            if (lexer_match(&p->lex, TOK_LPAREN)) {
+                if (!lexer_check(&p->lex, TOK_RPAREN)) {
+                    do {
+                        if (!lexer_check(&p->lex, TOK_IDENT)) {
+                            parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+                        }
+                        token_t param = lexer_next(&p->lex);
+                        int pi = s->def_fn.nparams;
+                        if (pi >= 8) { parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL; }
+                        strncpy(s->def_fn.params[pi], param.text, 63);
+                        s->def_fn.params[pi][63] = '\0';
+                        s->def_fn.param_types[pi] = var_type_from_name(param.text);
+                        s->def_fn.nparams++;
+                    } while (lexer_match(&p->lex, TOK_COMMA));
+                }
+                if (!expect(p, TOK_RPAREN)) { stmt_free(s); return NULL; }
+            }
+            if (!expect(p, TOK_EQ)) { stmt_free(s); return NULL; }
+            s->def_fn.body = parse_expr(p);
+            if (!s->def_fn.body) { stmt_free(s); return NULL; }
+            return s;
+        }
+
+        case TOK_SHELL: {
+            int line = tok->line;
+            lexer_next(&p->lex);
+            expr_t *cmd = parse_expr(p);
+            if (!cmd) return NULL;
+            stmt_t *s = stmt_alloc(STMT_SHELL, line);
+            if (!s) { expr_free(cmd); parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+            s->shell_stmt.command = cmd;
+            return s;
+        }
+
+        case TOK_CHDIR: case TOK_MKDIR: case TOK_RMDIR: {
+            stmt_type_t stype = (tok->type == TOK_CHDIR) ? STMT_CHDIR :
+                                (tok->type == TOK_MKDIR) ? STMT_MKDIR : STMT_RMDIR;
+            int line = tok->line;
+            lexer_next(&p->lex);
+            expr_t *path = parse_expr(p);
+            if (!path) return NULL;
+            stmt_t *s = stmt_alloc(stype, line);
+            if (!s) { expr_free(path); parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+            s->shell_stmt.command = path;
+            return s;
+        }
+
+        case TOK_GOTO: {
+            int line = tok->line;
+            lexer_next(&p->lex);
+            char label_name[64];
+            if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
+                token_t num = lexer_next(&p->lex);
+                snprintf(label_name, sizeof(label_name), "%d", num.ival);
+            } else if (lexer_check(&p->lex, TOK_IDENT)) {
+                token_t label = lexer_next(&p->lex);
+                strncpy(label_name, label.text, 63);
+                label_name[63] = '\0';
+            } else {
                 parser_error(p, ERR_SYNTAX); return NULL;
             }
-            token_t label = lexer_next(&p->lex);
-            return stmt_goto(label.text, line);
+            return stmt_goto(label_name, line);
         }
 
         case TOK_GOSUB: {
             int line = tok->line;
             lexer_next(&p->lex);
-            if (!lexer_check(&p->lex, TOK_IDENT)) {
+            char label_name[64];
+            if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
+                token_t num = lexer_next(&p->lex);
+                snprintf(label_name, sizeof(label_name), "%d", num.ival);
+            } else if (lexer_check(&p->lex, TOK_IDENT)) {
+                token_t label = lexer_next(&p->lex);
+                strncpy(label_name, label.text, 63);
+                label_name[63] = '\0';
+            } else {
                 parser_error(p, ERR_SYNTAX); return NULL;
             }
-            token_t label = lexer_next(&p->lex);
-            return stmt_gosub(label.text, line);
+            return stmt_gosub(label_name, line);
         }
 
         case TOK_RETURN:

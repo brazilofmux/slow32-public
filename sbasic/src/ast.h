@@ -17,7 +17,7 @@ typedef enum {
 /* Binary operators */
 typedef enum {
     OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_IDIV, OP_MOD, OP_POW,
-    OP_AND, OP_OR, OP_XOR, OP_IMP, OP_EQV,
+    OP_AND, OP_OR, OP_XOR, OP_IMP, OP_EQV, OP_STRCAT,
 } binop_t;
 
 /* Unary operators */
@@ -150,6 +150,11 @@ typedef enum {
     STMT_DIM_SCALAR,
     STMT_LINE_INPUT_CONSOLE,
     STMT_WRITE_CONSOLE,
+    STMT_DEF_FN,
+    STMT_SHELL,
+    STMT_CHDIR,
+    STMT_MKDIR,
+    STMT_RMDIR,
 } stmt_type_t;
 
 /* Print item: expression + separator */
@@ -501,6 +506,20 @@ typedef struct stmt {
             struct expr *delim_expr;
             char array_name[64];
         } split;
+
+        /* STMT_DEF_FN: DEF FNname(params) = expr */
+        struct {
+            char name[64];
+            char params[8][64];
+            val_type_t param_types[8];
+            int nparams;
+            struct expr *body;
+        } def_fn;
+
+        /* STMT_SHELL / STMT_CHDIR / STMT_MKDIR / STMT_RMDIR */
+        struct {
+            struct expr *command;
+        } shell_stmt;
     };
 } stmt_t;
 

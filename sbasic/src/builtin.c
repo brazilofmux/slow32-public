@@ -8,6 +8,7 @@
 #include <math.h>
 #include <time.h>
 #include <dirent.h>
+#include <unistd.h>
 #include <slow32_args.h>
 
 /* Simple LCG random number generator */
@@ -618,6 +619,18 @@ static error_t fn_cvd(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+/* CURDIR$() - return current working directory */
+static error_t fn_curdir(value_t *args, int nargs, value_t *out) {
+    if (nargs != 0) return ERR_ILLEGAL_FUNCTION_CALL;
+    char buf[256];
+    if (!getcwd(buf, sizeof(buf))) {
+        *out = val_string_cstr("");
+        return ERR_NONE;
+    }
+    *out = val_string_cstr(buf);
+    return ERR_NONE;
+}
+
 /* FILEEXISTS(path$) - return -1 (true) if file exists, 0 (false) otherwise */
 static error_t fn_fileexists(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
@@ -1120,6 +1133,7 @@ static const builtin_entry_t builtins[] = {
     { "COMMAND$", fn_command },
     { "INKEY$",   fn_inkey },
     { "DIR$",     fn_dir },
+    { "CURDIR$",  fn_curdir },
     { "FILEEXISTS", fn_fileexists },
     { NULL, NULL }
 };

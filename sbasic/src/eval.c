@@ -325,6 +325,41 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
 
             switch (e->binary.op) {
                 case OP_ADD:  err = val_add(&left, &right, out); break;
+                case OP_STRCAT: {
+                    /* & operator: coerce both to strings and concatenate */
+                    char lbuf[64], rbuf[64];
+                    const char *ls, *rs;
+                    int llen, rlen;
+                    if (left.type == VAL_STRING) {
+                        ls = left.sval ? left.sval->data : "";
+                        llen = left.sval ? left.sval->len : 0;
+                    } else if (left.type == VAL_INTEGER) {
+                        snprintf(lbuf, sizeof(lbuf), "%d", left.ival);
+                        ls = lbuf; llen = (int)strlen(lbuf);
+                    } else {
+                        snprintf(lbuf, sizeof(lbuf), "%g", left.dval);
+                        ls = lbuf; llen = (int)strlen(lbuf);
+                    }
+                    if (right.type == VAL_STRING) {
+                        rs = right.sval ? right.sval->data : "";
+                        rlen = right.sval ? right.sval->len : 0;
+                    } else if (right.type == VAL_INTEGER) {
+                        snprintf(rbuf, sizeof(rbuf), "%d", right.ival);
+                        rs = rbuf; rlen = (int)strlen(rbuf);
+                    } else {
+                        snprintf(rbuf, sizeof(rbuf), "%g", right.dval);
+                        rs = rbuf; rlen = (int)strlen(rbuf);
+                    }
+                    int total = llen + rlen;
+                    char *buf = malloc(total + 1);
+                    if (!buf) { err = ERR_OUT_OF_MEMORY; break; }
+                    memcpy(buf, ls, llen);
+                    memcpy(buf + llen, rs, rlen);
+                    buf[total] = '\0';
+                    *out = val_string(buf, total);
+                    free(buf);
+                    break;
+                }
                 case OP_SUB:  err = val_sub(&left, &right, out); break;
                 case OP_MUL:  err = val_mul(&left, &right, out); break;
                 case OP_DIV:  err = val_div(&left, &right, out); break;
@@ -385,6 +420,23 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
             proc_entry_t *proc = find_proc(e->call.name);
             if (proc && proc->def->type == STMT_FUNC_DEF)
                 return call_proc(env, proc, e->call.args, e->call.nargs, out);
+            if (proc && proc->def->type == STMT_DEF_FN) {
+                /* DEF FN: evaluate body expression with params bound */
+                stmt_t *def = proc->def;
+                if (e->call.nargs != def->def_fn.nparams)
+                    return ERR_ILLEGAL_FUNCTION_CALL;
+                env_t *fn_env = env_create(env);
+                for (int i = 0; i < def->def_fn.nparams; i++) {
+                    value_t av;
+                    error_t err = eval_expr(env, e->call.args[i], &av);
+                    if (err != ERR_NONE) { env_destroy(fn_env); return err; }
+                    env_set(fn_env, def->def_fn.params[i], &av);
+                    val_clear(&av);
+                }
+                error_t err = eval_expr(fn_env, def->def_fn.body, out);
+                env_destroy(fn_env);
+                return err;
+            }
 
             /* 2. Check for array element access */
             sb_array_t *arr = array_find(e->call.name);
@@ -2181,6 +2233,58 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_LINE_INPUT:   return exec_line_input(env, s);
         case STMT_LINE_INPUT_CONSOLE: return exec_line_input_console(env, s);
         case STMT_WRITE_CONSOLE: return exec_write_console(env, s);
+        case STMT_DEF_FN: {
+            /* Register DEF FN in proc table */
+            if (proc_count >= MAX_PROCS) return ERR_OUT_OF_MEMORY;
+            strncpy(proc_table[proc_count].name, s->def_fn.name, 63);
+            proc_table[proc_count].name[63] = '\0';
+            proc_table[proc_count].def = s;
+            proc_table[proc_count].static_env = NULL;
+            proc_count++;
+            return ERR_NONE;
+        }
+
+        case STMT_SHELL: {
+            value_t cmd;
+            EVAL_CHECK(eval_expr(env, s->shell_stmt.command, &cmd));
+            if (cmd.type != VAL_STRING) { val_clear(&cmd); return ERR_TYPE_MISMATCH; }
+            col_puts("SHELL not supported: ");
+            col_puts(cmd.sval ? cmd.sval->data : "");
+            col_puts("\n");
+            val_clear(&cmd);
+            return ERR_NONE;
+        }
+
+        case STMT_CHDIR: {
+            value_t path;
+            EVAL_CHECK(eval_expr(env, s->shell_stmt.command, &path));
+            if (path.type != VAL_STRING) { val_clear(&path); return ERR_TYPE_MISMATCH; }
+            int r = chdir(path.sval ? path.sval->data : "");
+            val_clear(&path);
+            if (r != 0) return ERR_FILE_NOT_FOUND;
+            return ERR_NONE;
+        }
+
+        case STMT_MKDIR: {
+            value_t path;
+            EVAL_CHECK(eval_expr(env, s->shell_stmt.command, &path));
+            if (path.type != VAL_STRING) { val_clear(&path); return ERR_TYPE_MISMATCH; }
+            int r = mkdir(path.sval ? path.sval->data : "", 0777);
+            val_clear(&path);
+            if (r != 0) return ERR_FILE_NOT_FOUND;
+            return ERR_NONE;
+        }
+
+        case STMT_RMDIR: {
+            value_t path;
+            EVAL_CHECK(eval_expr(env, s->shell_stmt.command, &path));
+            if (path.type != VAL_STRING) { val_clear(&path); return ERR_TYPE_MISMATCH; }
+            int r = rmdir(path.sval ? path.sval->data : "");
+            val_clear(&path);
+            if (r != 0) return ERR_FILE_NOT_FOUND;
+            return ERR_NONE;
+        }
+
         case STMT_KILL:         return exec_kill(env, s);
         case STMT_NAME:         return exec_name(env, s);
         case STMT_GET:          return exec_get(env, s);
