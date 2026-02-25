@@ -70,7 +70,8 @@ static int on_error_err_code = 0;    /* ERR value */
 static int on_error_err_line = 0;    /* ERL value */
 static int on_error_resume_pc = 0;   /* PC to RESUME to */
 static int on_error_resume_next_pc = 0; /* PC for RESUME NEXT */
-static int resume_is_next = 0;       /* set by RESUME stmt for eval_program */
+static int resume_is_next = 0;       /* set by RESUME stmt for eval_program: 0=retry, 1=next, 2=label */
+static char resume_label[64] = "";   /* target label for RESUME label */
 
 /* Recursion depth limit (guards against C stack overflow) */
 #define MAX_EVAL_DEPTH 48
@@ -2452,6 +2453,10 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
 
         case STMT_RESUME:
             resume_is_next = s->resume_stmt.resume_next;
+            if (resume_is_next == 2) {
+                strncpy(resume_label, s->resume_stmt.label, 63);
+                resume_label[63] = '\0';
+            }
             return ERR_RESUME_WITHOUT_ERROR; /* handled in eval_program loop */
 
         case STMT_ERROR_RAISE: {
@@ -2703,6 +2708,7 @@ error_t eval_program(env_t *env, stmt_t *program) {
     on_error_err_code = 0;
     on_error_err_line = 0;
     resume_is_next = 0;
+    resume_label[0] = '\0';
     trace_enabled = 0;
     option_explicit = 0;
 
@@ -2764,12 +2770,16 @@ error_t eval_program(env_t *env, stmt_t *program) {
             continue;
         }
 
-        /* RESUME / RESUME NEXT (from error handler) */
+        /* RESUME / RESUME NEXT / RESUME label (from error handler) */
         if (err == ERR_RESUME_WITHOUT_ERROR && on_error_active) {
             on_error_active = 0;
-            if (resume_is_next)
+            if (resume_is_next == 1)
                 pc = on_error_resume_next_pc;
-            else
+            else if (resume_is_next == 2) {
+                int idx = find_label(resume_label);
+                if (idx < 0) { err = ERR_UNDEFINED_LABEL; break; }
+                pc = idx;
+            } else
                 pc = on_error_resume_pc;
             continue;
         }

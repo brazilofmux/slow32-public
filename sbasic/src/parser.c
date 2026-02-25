@@ -102,6 +102,21 @@ static expr_t *parse_primary(parser_t *p) {
         }
         return expr_variable(t.text, var_type_from_name(t.text), t.line);
     }
+    /* SEEK(#n) as function in expression context */
+    if (tok->type == TOK_SEEK) {
+        token_t t = lexer_next(&p->lex);
+        if (lexer_match(&p->lex, TOK_LPAREN)) {
+            expr_t *call = expr_call("SEEK", t.line);
+            lexer_match(&p->lex, TOK_HASH); /* skip decorative # */
+            expr_t *arg = parse_expr(p);
+            if (!arg) { expr_free(call); return NULL; }
+            expr_call_add_arg(call, arg);
+            if (!expect(p, TOK_RPAREN)) { expr_free(call); return NULL; }
+            return call;
+        }
+        parser_error_detail(p, ERR_SYNTAX, "Expected ( after SEEK in expression");
+        return NULL;
+    }
     if (tok->type == TOK_LPAREN) {
         lexer_next(&p->lex);
         expr_t *e = parse_expr(p);
@@ -1014,8 +1029,14 @@ static stmt_t *parse_dim_or_redim(parser_t *p, int is_redim) {
             else if (strcmp(tname.text, "DOUBLE") == 0 ||
                      strcmp(tname.text, "SINGLE") == 0)
                 s->dim_scalar.scalar_type = VAL_DOUBLE;
-            else
+            else {
                 s->dim_scalar.scalar_type = VAL_STRING;
+                /* Accept STRING * n (fixed-length) syntax — treat as regular string */
+                if (lexer_match(&p->lex, TOK_STAR)) {
+                    expr_t *e = parse_expr(p);
+                    if (e) expr_free(e); /* ignore the length */
+                }
+            }
             return s;
         }
         return stmt_dim_as_type(name.text, tname.text, line);
@@ -1528,6 +1549,37 @@ static stmt_t *parse_on(parser_t *p) {
         return stmt_on_error(err_label, line);
     }
 
+    /* ON TIMER(n) GOSUB label — no-op stub */
+    if (lexer_check(&p->lex, TOK_IDENT) &&
+        strcmp(lexer_peek(&p->lex)->text, "TIMER") == 0) {
+        lexer_next(&p->lex); /* consume TIMER */
+        if (lexer_match(&p->lex, TOK_LPAREN)) {
+            expr_t *e = parse_expr(p);
+            if (e) expr_free(e);
+            lexer_match(&p->lex, TOK_RPAREN);
+        }
+        /* Consume GOSUB label */
+        if (lexer_check(&p->lex, TOK_GOSUB)) lexer_next(&p->lex);
+        if (lexer_check(&p->lex, TOK_INTEGER_LIT) || lexer_check(&p->lex, TOK_IDENT))
+            lexer_next(&p->lex);
+        return stmt_alloc(STMT_NOOP, line);
+    }
+
+    /* ON KEY(n) GOSUB label — no-op stub */
+    if (lexer_check(&p->lex, TOK_KEY)) {
+        lexer_next(&p->lex); /* consume KEY */
+        if (lexer_match(&p->lex, TOK_LPAREN)) {
+            expr_t *e = parse_expr(p);
+            if (e) expr_free(e);
+            lexer_match(&p->lex, TOK_RPAREN);
+        }
+        /* Consume GOSUB label */
+        if (lexer_check(&p->lex, TOK_GOSUB)) lexer_next(&p->lex);
+        if (lexer_check(&p->lex, TOK_INTEGER_LIT) || lexer_check(&p->lex, TOK_IDENT))
+            lexer_next(&p->lex);
+        return stmt_alloc(STMT_NOOP, line);
+    }
+
     /* ON expr GOTO/GOSUB label1, label2, ... */
     expr_t *index = parse_expr(p);
     if (!index) return NULL;
@@ -1573,16 +1625,28 @@ static stmt_t *parse_on(parser_t *p) {
     return s;
 }
 
-/* RESUME [NEXT] */
+/* RESUME [NEXT | label | linenumber] */
 static stmt_t *parse_resume(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
     lexer_next(&p->lex); /* consume RESUME */
-    int resume_next = 0;
     if (lexer_check(&p->lex, TOK_NEXT)) {
         lexer_next(&p->lex);
-        resume_next = 1;
+        return stmt_resume(1, NULL, line);
     }
-    return stmt_resume(resume_next, line);
+    /* RESUME linenumber */
+    if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
+        token_t num = lexer_next(&p->lex);
+        char label[64];
+        snprintf(label, sizeof(label), "%d", num.ival);
+        return stmt_resume(2, label, line);
+    }
+    /* RESUME label */
+    if (lexer_check(&p->lex, TOK_IDENT)) {
+        token_t lbl = lexer_next(&p->lex);
+        return stmt_resume(2, lbl.text, line);
+    }
+    /* Bare RESUME */
+    return stmt_resume(0, NULL, line);
 }
 
 /* ERROR n */
@@ -2067,6 +2131,45 @@ static stmt_t *parse_stmt(parser_t *p) {
                 expr_t *e = parse_expr(p);
                 if (e) expr_free(e);
                 else break;
+            }
+            return stmt_alloc(STMT_NOOP, line);
+        }
+
+        case TOK_PALETTE: {
+            /* PALETTE [attr, color] — no-op */
+            int line = tok->line;
+            lexer_next(&p->lex);
+            while (!at_stmt_end(p)) {
+                if (lexer_check(&p->lex, TOK_COMMA)) { lexer_next(&p->lex); continue; }
+                expr_t *e = parse_expr(p);
+                if (e) expr_free(e);
+                else break;
+            }
+            return stmt_alloc(STMT_NOOP, line);
+        }
+
+        case TOK_WAIT: {
+            /* WAIT port, expr [, expr] — no-op */
+            int line = tok->line;
+            lexer_next(&p->lex);
+            while (!at_stmt_end(p)) {
+                if (lexer_check(&p->lex, TOK_COMMA)) { lexer_next(&p->lex); continue; }
+                expr_t *e = parse_expr(p);
+                if (e) expr_free(e);
+                else break;
+            }
+            return stmt_alloc(STMT_NOOP, line);
+        }
+
+        case TOK_OUT: {
+            /* OUT port, value — no-op */
+            int line = tok->line;
+            lexer_next(&p->lex);
+            expr_t *e = parse_expr(p);
+            if (e) expr_free(e);
+            if (lexer_match(&p->lex, TOK_COMMA)) {
+                e = parse_expr(p);
+                if (e) expr_free(e);
             }
             return stmt_alloc(STMT_NOOP, line);
         }

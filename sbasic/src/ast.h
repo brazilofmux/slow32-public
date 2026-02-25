@@ -476,7 +476,8 @@ typedef struct stmt {
 
         /* STMT_RESUME */
         struct {
-            int resume_next;    /* 0 = RESUME, 1 = RESUME NEXT */
+            int resume_next;    /* 0 = RESUME, 1 = RESUME NEXT, 2 = RESUME label */
+            char label[64];     /* target label (when resume_next == 2) */
         } resume_stmt;
 
         /* STMT_ERROR_RAISE */
@@ -657,7 +658,7 @@ stmt_t *stmt_field_assign(const char *var, const char *field,
 stmt_t *stmt_mid_assign(const char *var, expr_t *start, expr_t *length,
                          expr_t *value, int line);
 stmt_t *stmt_on_error(const char *label, int line);
-stmt_t *stmt_resume(int resume_next, int line);
+stmt_t *stmt_resume(int resume_next, const char *label, int line);
 stmt_t *stmt_error_raise(expr_t *errnum, int line);
 stmt_t *stmt_deftype(val_type_t type, char from, char to, int line);
 stmt_t *stmt_on_goto(expr_t *index, int line);

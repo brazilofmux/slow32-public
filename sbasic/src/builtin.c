@@ -686,6 +686,42 @@ static error_t fn_stick(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+/* SEEK(n) - return current file position (1-based) */
+static error_t fn_seek(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    int handle;
+    EVAL_CHECK(val_to_integer(&args[0], &handle));
+    FILE *fp = fileio_get(handle);
+    if (!fp) { *out = val_integer(0); return ERR_NONE; }
+    long pos = ftell(fp);
+    *out = val_integer(pos < 0 ? 1 : (int)(pos + 1));
+    return ERR_NONE;
+}
+
+/* INP(port) - hardware port read (stub, returns 0) */
+static error_t fn_inp(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    (void)args;
+    *out = val_integer(0);
+    return ERR_NONE;
+}
+
+/* VARPTR(var) - return dummy address for variable */
+static error_t fn_varptr(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    (void)args;
+    *out = val_integer(0);
+    return ERR_NONE;
+}
+
+/* SADD(str$) - return dummy string address */
+static error_t fn_sadd(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    (void)args;
+    *out = val_integer(0);
+    return ERR_NONE;
+}
+
 /* LPOS(n) - printer column position (stub, returns 0) */
 static error_t fn_lpos(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
@@ -1235,6 +1271,10 @@ static const builtin_entry_t builtins[] = {
     { "FILEEXISTS", fn_fileexists },
     { "FRE",      fn_fre },
     { "LPOS",     fn_lpos },
+    { "INP",      fn_inp },
+    { "VARPTR",   fn_varptr },
+    { "SADD",     fn_sadd },
+    { "SEEK",     fn_seek },
     { "PEEK",     fn_peek },
     { "STRIG",    fn_strig },
     { "STICK",    fn_stick },

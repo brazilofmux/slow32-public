@@ -936,10 +936,15 @@ stmt_t *stmt_on_error(const char *label, int line) {
     return s;
 }
 
-stmt_t *stmt_resume(int resume_next, int line) {
+stmt_t *stmt_resume(int resume_next, const char *label, int line) {
     stmt_t *s = stmt_alloc(STMT_RESUME, line);
     if (!s) return NULL;
     s->resume_stmt.resume_next = resume_next;
+    s->resume_stmt.label[0] = '\0';
+    if (label) {
+        strncpy(s->resume_stmt.label, label, 63);
+        s->resume_stmt.label[63] = '\0';
+    }
     return s;
 }
 
