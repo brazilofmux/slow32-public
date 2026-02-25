@@ -238,6 +238,41 @@ static void cmd_save(const char *filename) {
     printf("Saved %d lines to %s\n", program_count, filename);
 }
 
+/* DELETE n or DELETE n-m (1-based line numbers) */
+static void cmd_delete(const char *arg) {
+    if (program_count == 0) {
+        printf("No program\n");
+        return;
+    }
+    int from = 0, to = 0;
+    const char *p = arg;
+    while (*p >= '0' && *p <= '9') { from = from * 10 + (*p - '0'); p++; }
+    if (from == 0) {
+        printf("Usage: DELETE n or DELETE n-m\n");
+        return;
+    }
+    if (*p == '-') {
+        p++;
+        while (*p >= '0' && *p <= '9') { to = to * 10 + (*p - '0'); p++; }
+        if (to == 0) to = program_count;
+    } else {
+        to = from;
+    }
+    if (from < 1) from = 1;
+    if (to > program_count) to = program_count;
+    if (from > to) {
+        printf("Invalid range\n");
+        return;
+    }
+    int count = to - from + 1;
+    for (int i = from - 1; i < to; i++)
+        free(program_lines[i]);
+    for (int i = to; i < program_count; i++)
+        program_lines[i - count] = program_lines[i];
+    program_count -= count;
+    printf("Deleted %d line%s\n", count, count == 1 ? "" : "s");
+}
+
 /* --- Input reading --- */
 
 static int read_line(char *buf, int bufsize) {
@@ -333,6 +368,10 @@ static int load_and_run_stdin(void) {
         }
         if (match_cmd(trimmed, "SAVE")) {
             cmd_save(cmd_arg(trimmed, "SAVE"));
+            continue;
+        }
+        if (match_cmd(trimmed, "DELETE")) {
+            cmd_delete(cmd_arg(trimmed, "DELETE"));
             continue;
         }
 
