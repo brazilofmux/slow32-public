@@ -51,7 +51,7 @@ for testfile in "$BASDIR"/tests/*.bas; do
     TOTAL=$((TOTAL + 1))
 
     # Run test: merge stdout+stderr, filter emulator lines
-    raw_output=$( (cat "$testfile"; echo "RUN") | "$EMU" "$SBASIC" 2>&1 )
+    raw_output=$( (cat "$testfile"; echo "RUN") | (cd "$BASDIR" && "$EMU" "$SBASIC") 2>&1 )
     actual=$( printf '%s\n' "$raw_output" | filter_output )
 
     if [ "$STRICT_FAULTS" = "1" ] && printf '%s\n' "$raw_output" | has_fault_signature; then
