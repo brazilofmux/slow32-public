@@ -209,7 +209,7 @@ static expr_t *parse_or(parser_t *p) {
     return left;
 }
 
-static expr_t *parse_expr(parser_t *p) {
+static expr_t *parse_xor(parser_t *p) {
     expr_t *left = parse_or(p);
     if (!left) return NULL;
     while (lexer_check(&p->lex, TOK_XOR)) {
@@ -218,6 +218,32 @@ static expr_t *parse_expr(parser_t *p) {
         expr_t *right = parse_or(p);
         if (!right) { expr_free(left); return NULL; }
         left = expr_binary(OP_XOR, left, right, line);
+    }
+    return left;
+}
+
+static expr_t *parse_eqv(parser_t *p) {
+    expr_t *left = parse_xor(p);
+    if (!left) return NULL;
+    while (lexer_check(&p->lex, TOK_EQV)) {
+        int line = lexer_peek(&p->lex)->line;
+        lexer_next(&p->lex);
+        expr_t *right = parse_xor(p);
+        if (!right) { expr_free(left); return NULL; }
+        left = expr_binary(OP_EQV, left, right, line);
+    }
+    return left;
+}
+
+static expr_t *parse_expr(parser_t *p) {
+    expr_t *left = parse_eqv(p);
+    if (!left) return NULL;
+    while (lexer_check(&p->lex, TOK_IMP)) {
+        int line = lexer_peek(&p->lex)->line;
+        lexer_next(&p->lex);
+        expr_t *right = parse_eqv(p);
+        if (!right) { expr_free(left); return NULL; }
+        left = expr_binary(OP_IMP, left, right, line);
     }
     return left;
 }

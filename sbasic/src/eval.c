@@ -331,7 +331,7 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
                 case OP_IDIV: err = val_idiv(&left, &right, out); break;
                 case OP_MOD:  err = val_mod(&left, &right, out); break;
                 case OP_POW:  err = val_pow(&left, &right, out); break;
-                case OP_AND: case OP_OR: case OP_XOR: {
+                case OP_AND: case OP_OR: case OP_XOR: case OP_IMP: case OP_EQV: {
                     double dl, dr;
                     err = val_to_double(&left, &dl);
                     if (err == ERR_NONE) err = val_to_double(&right, &dr);
@@ -339,7 +339,9 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
                         int il = (int)dl, ir = (int)dr;
                         if (e->binary.op == OP_AND) *out = val_integer(il & ir);
                         else if (e->binary.op == OP_OR) *out = val_integer(il | ir);
-                        else *out = val_integer(il ^ ir);
+                        else if (e->binary.op == OP_XOR) *out = val_integer(il ^ ir);
+                        else if (e->binary.op == OP_IMP) *out = val_integer(~il | ir);
+                        else *out = val_integer(~(il ^ ir));
                     }
                     break;
                 }

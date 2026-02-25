@@ -169,6 +169,30 @@ static error_t fn_tanh(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+/* Inverse hyperbolic functions */
+static error_t fn_asinh(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    double v; EVAL_CHECK(get_num(&args[0], &v));
+    *out = val_double(log(v + sqrt(v * v + 1.0)));
+    return ERR_NONE;
+}
+
+static error_t fn_acosh(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    double v; EVAL_CHECK(get_num(&args[0], &v));
+    if (v < 1.0) return ERR_ILLEGAL_FUNCTION_CALL;
+    *out = val_double(log(v + sqrt(v * v - 1.0)));
+    return ERR_NONE;
+}
+
+static error_t fn_atanh(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    double v; EVAL_CHECK(get_num(&args[0], &v));
+    if (v <= -1.0 || v >= 1.0) return ERR_ILLEGAL_FUNCTION_CALL;
+    *out = val_double(0.5 * log((1.0 + v) / (1.0 - v)));
+    return ERR_NONE;
+}
+
 static error_t fn_exp(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     double v; EVAL_CHECK(get_num(&args[0], &v));
@@ -189,6 +213,14 @@ static error_t fn_log10(value_t *args, int nargs, value_t *out) {
     double v; EVAL_CHECK(get_num(&args[0], &v));
     if (v <= 0.0) return ERR_ILLEGAL_FUNCTION_CALL;
     *out = val_double(log10(v));
+    return ERR_NONE;
+}
+
+static error_t fn_log2(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    double v; EVAL_CHECK(get_num(&args[0], &v));
+    if (v <= 0.0) return ERR_ILLEGAL_FUNCTION_CALL;
+    *out = val_double(log2(v));
     return ERR_NONE;
 }
 
@@ -849,9 +881,13 @@ static const builtin_entry_t builtins[] = {
     { "SINH",     fn_sinh },
     { "COSH",     fn_cosh },
     { "TANH",     fn_tanh },
+    { "ASINH",    fn_asinh },
+    { "ACOSH",    fn_acosh },
+    { "ATANH",    fn_atanh },
     { "EXP",      fn_exp },
     { "LOG",      fn_log },
     { "LOG10",    fn_log10 },
+    { "LOG2",     fn_log2 },
     { "RND",      fn_rnd },
     { "TIMER",    fn_timer },
     { "TAB",      fn_tab },
