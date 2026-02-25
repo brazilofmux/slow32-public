@@ -540,6 +540,7 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
 /* --- Print column tracking --- */
 
 int print_col = 0;
+int print_row = 1;
 int *active_print_col = &print_col;
 
 /* Update a column counter by scanning a string (same logic as col_puts) */
@@ -555,11 +556,14 @@ static void update_col(int *col, const char *s) {
     }
 }
 
-/* Print a string to stdout and update print_col */
+/* Print a string to stdout and update print_col/print_row */
 static void col_puts(const char *s) {
     while (*s) {
         putchar(*s);
-        if (*s == '\n' || *s == '\r')
+        if (*s == '\n') {
+            print_col = 0;
+            print_row++;
+        } else if (*s == '\r')
             print_col = 0;
         else if (*s == '\t')
             print_col = (print_col + 8) & ~7;  /* tab stops every 8 */
@@ -1012,6 +1016,7 @@ static error_t exec_cls(stmt_t *s) {
     (void)s;
     sb_term_cls();
     print_col = 0;
+    print_row = 1;
     return ERR_NONE;
 }
 
@@ -1032,6 +1037,7 @@ static error_t exec_locate(env_t *env, stmt_t *s) {
     if (row < 1 || col < 1) return ERR_ILLEGAL_FUNCTION_CALL;
     sb_term_locate(row, col);
     print_col = col - 1;
+    print_row = row;
     return ERR_NONE;
 }
 
@@ -2379,6 +2385,7 @@ error_t eval_program(env_t *env, stmt_t *program) {
     deftype_init();
     type_def_count = 0;
     print_col = 0;
+    print_row = 1;
     eval_depth = 0;
     on_error_label_idx = -1;
     on_error_active = 0;

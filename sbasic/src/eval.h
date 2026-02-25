@@ -19,8 +19,9 @@ error_t eval_stmts(env_t *env, stmt_t *stmts);
    First pass collects labels and procedure definitions. */
 error_t eval_program(env_t *env, stmt_t *program);
 
-/* Current print column (0-based), for TAB() */
+/* Current print position (column 0-based, row 1-based) */
 extern int print_col;
+extern int print_row;
 
 /* Points to the active column counter (stdout or file) for TAB() */
 extern int *active_print_col;

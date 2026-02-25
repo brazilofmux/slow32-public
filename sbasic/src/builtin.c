@@ -635,6 +635,22 @@ static error_t fn_lof(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+/* CSRLIN - current cursor row (1-based) */
+static error_t fn_csrlin(value_t *args, int nargs, value_t *out) {
+    (void)args;
+    if (nargs != 0) return ERR_ILLEGAL_FUNCTION_CALL;
+    *out = val_integer(print_row);
+    return ERR_NONE;
+}
+
+/* POS(0) - current cursor column (1-based) */
+static error_t fn_pos(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    (void)args; /* argument ignored, QBasic convention */
+    *out = val_integer(print_col + 1);
+    return ERR_NONE;
+}
+
 /* INPUT$(n [, #handle]) - read n characters from file or stdin */
 static error_t fn_input_str(value_t *args, int nargs, value_t *out) {
     if (nargs < 1 || nargs > 2) return ERR_ILLEGAL_FUNCTION_CALL;
@@ -917,6 +933,8 @@ static const builtin_entry_t builtins[] = {
     { "FREEFILE", fn_freefile },
     { "LOC",      fn_loc },
     { "LOF",      fn_lof },
+    { "CSRLIN",   fn_csrlin },
+    { "POS",      fn_pos },
     { "INPUT$",   fn_input_str },
     /* System */
     { "ENVIRON$", fn_environ },
