@@ -45,7 +45,11 @@ module slow32_cpu (
     output logic [4:0]  assert_rs2,
     output logic [31:0] assert_val1,
     output logic [31:0] assert_val2,
-    output logic [31:0] assert_pc
+    output logic [31:0] assert_pc,
+
+    // Branch predictor → I-cache redirect
+    output logic        bp_redirect,
+    output logic [31:0] bp_redirect_addr
 );
 
     // ========================================================================
@@ -114,6 +118,7 @@ module slow32_cpu (
     logic        id_ex_is_load, id_ex_is_store, id_ex_is_branch;
     logic        id_ex_is_jal, id_ex_is_jalr, id_ex_is_div;
     logic        id_ex_rf_wr_en;
+    logic        id_ex_id_redirected;  // This instruction was predicted at ID stage
 
     // ========================================================================
     // EX/MEM pipeline register
@@ -229,6 +234,29 @@ module slow32_cpu (
                 default:
                     id_rf_wr_en = 1'b0;
             endcase
+        end
+    end
+
+    // ========================================================================
+    // ID stage: branch prediction (JAL early resolve + BTFNT)
+    // ========================================================================
+    logic [31:0] id_branch_target;
+    logic        id_predict_redirect;
+
+    always_comb begin
+        id_branch_target    = 32'd0;
+        id_predict_redirect = 1'b0;
+
+        if (if_id_valid && !stall_id && !flush_id_ex) begin
+            if (id_is_jal) begin
+                // JAL: always taken, resolve at ID
+                id_predict_redirect = 1'b1;
+                id_branch_target    = if_id_pc + dec_imm_j;
+            end else if (id_is_branch && dec_imm_b[31]) begin
+                // Backward branch: predict taken (BTFNT)
+                id_predict_redirect = 1'b1;
+                id_branch_target    = if_id_pc + 32'd4 + dec_imm_b;
+            end
         end
     end
 
@@ -430,26 +458,40 @@ module slow32_cpu (
 
     always_comb begin
         branch_target = 32'd0;
-        if (id_ex_is_branch)
-            branch_target = id_ex_pc + 32'd4 + id_ex_imm_b;
+        if (id_ex_id_redirected && id_ex_is_branch && !branch_taken)
+            branch_target = id_ex_pc + 32'd4;                  // Mispredict: fall-through
+        else if (id_ex_is_branch)
+            branch_target = id_ex_pc + 32'd4 + id_ex_imm_b;   // Branch target
         else if (id_ex_is_jal)
-            branch_target = id_ex_pc + id_ex_imm_j;
+            branch_target = id_ex_pc + id_ex_imm_j;            // JAL target
         else if (id_ex_is_jalr)
-            branch_target = alu_result & ~32'd1;
+            branch_target = alu_result & ~32'd1;               // JALR target
     end
 
     always_comb begin
         ex_redirect = 1'b0;
         if (id_ex_valid && !stall_ex) begin
-            if ((id_ex_is_branch && branch_taken) || id_ex_is_jal || id_ex_is_jalr)
-                ex_redirect = 1'b1;
-            if (id_ex_opcode == OP_HALT)
-                ex_redirect = 1'b1;  // Flush pipeline on halt
+            if (id_ex_id_redirected) begin
+                // Was predicted at ID — validate
+                // JAL: always correct, no EX redirect needed
+                // Backward branch predicted taken: check actual condition
+                if (id_ex_is_branch && !branch_taken) begin
+                    // MISPREDICT: predicted taken, actually not taken
+                    ex_redirect = 1'b1;
+                end
+            end else begin
+                // Not predicted — handle normally
+                if ((id_ex_is_branch && branch_taken) || id_ex_is_jalr)
+                    ex_redirect = 1'b1;
+                if (id_ex_opcode == OP_HALT)
+                    ex_redirect = 1'b1;  // Flush pipeline on halt
+            end
         end
     end
 
-    // Flush IF/ID and ID/EX when EX stage redirects (or load-use inserts bubble)
-    assign flush_if_id = ex_redirect;
+    // Flush IF/ID when EX redirects OR ID predicts a branch
+    // Flush ID/EX when EX redirects OR load-use hazard (NOT on ID prediction — branch must advance to EX)
+    assign flush_if_id = ex_redirect || id_predict_redirect;
     assign flush_id_ex = ex_redirect || load_use_hazard;
 
     // ========================================================================
@@ -576,6 +618,13 @@ module slow32_cpu (
     assign rf_wr_data = mem_wb_rf_wr_data;
 
     // ========================================================================
+    // Branch predictor → I-cache redirect
+    // ========================================================================
+    // EX redirect has priority (mispredict correction overrides ID prediction)
+    assign bp_redirect      = ex_redirect || id_predict_redirect;
+    assign bp_redirect_addr = ex_redirect ? branch_target : id_branch_target;
+
+    // ========================================================================
     // Instruction fetch address
     // ========================================================================
     assign imem_addr = pc;
@@ -646,6 +695,7 @@ module slow32_cpu (
             id_ex_is_jalr  <= 1'b0;
             id_ex_is_div   <= 1'b0;
             id_ex_rf_wr_en <= 1'b0;
+            id_ex_id_redirected <= 1'b0;
 
             ex_mem_valid     <= 1'b0;
             ex_mem_alu_result <= 32'd0;
@@ -847,6 +897,7 @@ module slow32_cpu (
                             id_ex_is_jalr  <= id_is_jalr;
                             id_ex_is_div   <= id_is_div;
                             id_ex_rf_wr_en <= id_rf_wr_en;
+                            id_ex_id_redirected <= id_predict_redirect;
                         end
                     end
                     // else: stalled — hold ID/EX contents
@@ -862,9 +913,11 @@ module slow32_cpu (
                             if_id_ir    <= imem_rdata;
                         end
 
-                        // Advance PC
+                        // Advance PC: EX redirect > ID prediction > sequential
                         if (ex_redirect)
                             pc <= branch_target;
+                        else if (id_predict_redirect)
+                            pc <= id_branch_target;
                         else
                             pc <= pc + 32'd4;
                     end

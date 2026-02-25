@@ -42,6 +42,10 @@ module slow32_top (
     logic [31:0] cpu_imem_rdata;
     logic        cpu_imem_ready;
 
+    // Branch predictor redirect → I-cache
+    logic        bp_redirect;
+    logic [31:0] bp_redirect_addr;
+
     // CPU ↔ D-cache wires
     logic [31:0] cpu_dmem_addr;
     logic [31:0] cpu_dmem_wdata;
@@ -96,7 +100,9 @@ module slow32_top (
         .assert_rs2  (assert_rs2),
         .assert_val1 (assert_val1),
         .assert_val2 (assert_val2),
-        .assert_pc   (assert_pc)
+        .assert_pc   (assert_pc),
+        .bp_redirect      (bp_redirect),
+        .bp_redirect_addr (bp_redirect_addr)
     );
 
     // ========================================================================
@@ -108,6 +114,8 @@ module slow32_top (
         .cpu_addr   (cpu_imem_addr),
         .cpu_rdata  (cpu_imem_rdata),
         .cpu_ready  (cpu_imem_ready),
+        .redirect      (bp_redirect),
+        .redirect_addr (bp_redirect_addr),
         .mem_req    (ic_mem_req),
         .mem_addr   (ic_mem_addr),
         .mem_ready  (ic_mem_ready),

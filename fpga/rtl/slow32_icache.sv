@@ -20,6 +20,10 @@ module slow32_icache (
     output logic [31:0] cpu_rdata,     // Instruction word
     output logic        cpu_ready,     // 1 = instruction valid
 
+    // Redirect feed-forward (from branch predictor / EX redirect)
+    input  logic        redirect,      // Redirect this cycle
+    input  logic [31:0] redirect_addr, // Target address to start reading
+
     // Memory bus side (for refills)
     output logic        mem_req,       // Request to memory bus
     output logic [31:0] mem_addr,      // Word address for refill
@@ -111,7 +115,9 @@ module slow32_icache (
 
     always_comb begin
         if (state == S_REFILL_DONE || state == S_BRAM_REREAD)
-            bram_rd_addr = refill_addr;     // Re-read after refill write
+            bram_rd_addr = refill_addr;      // Re-read after refill write (highest priority)
+        else if (redirect)
+            bram_rd_addr = redirect_addr;    // Redirect: start reading target immediately
         else if (delivering_hit)
             bram_rd_addr = cpu_addr + 32'd4; // Speculative next-sequential
         else
