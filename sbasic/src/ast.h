@@ -156,6 +156,8 @@ typedef enum {
     STMT_MKDIR,
     STMT_RMDIR,
     STMT_LPRINT,
+    STMT_POKE,
+    STMT_SCREEN,
 } stmt_type_t;
 
 /* Print item: expression + separator */
@@ -517,10 +519,16 @@ typedef struct stmt {
             struct expr *body;
         } def_fn;
 
-        /* STMT_SHELL / STMT_CHDIR / STMT_MKDIR / STMT_RMDIR */
+        /* STMT_SHELL / STMT_CHDIR / STMT_MKDIR / STMT_RMDIR / STMT_SCREEN */
         struct {
             struct expr *command;
         } shell_stmt;
+
+        /* STMT_POKE */
+        struct {
+            struct expr *addr;
+            struct expr *value;
+        } poke_stmt;
     };
 } stmt_t;
 

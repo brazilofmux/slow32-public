@@ -598,7 +598,12 @@ void stmt_free(stmt_t *s) {
             case STMT_CHDIR:
             case STMT_MKDIR:
             case STMT_RMDIR:
+            case STMT_SCREEN:
                 expr_free(s->shell_stmt.command);
+                break;
+            case STMT_POKE:
+                expr_free(s->poke_stmt.addr);
+                expr_free(s->poke_stmt.value);
                 break;
         }
         free(s);

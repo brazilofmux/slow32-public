@@ -631,6 +631,19 @@ static error_t fn_curdir(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+/* PEEK(addr) - read byte from simulated memory */
+extern unsigned char peek_poke_mem[];
+#define PEEK_POKE_SIZE 65536
+
+static error_t fn_peek(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    int addr;
+    EVAL_CHECK(val_to_integer(&args[0], &addr));
+    if (addr < 0 || addr >= PEEK_POKE_SIZE) return ERR_ILLEGAL_FUNCTION_CALL;
+    *out = val_integer((int)peek_poke_mem[addr]);
+    return ERR_NONE;
+}
+
 /* FRE(x) - return free memory (QBasic compat, returns constant) */
 static error_t fn_fre(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
@@ -1144,6 +1157,7 @@ static const builtin_entry_t builtins[] = {
     { "CURDIR$",  fn_curdir },
     { "FILEEXISTS", fn_fileexists },
     { "FRE",      fn_fre },
+    { "PEEK",     fn_peek },
     { NULL, NULL }
 };
 

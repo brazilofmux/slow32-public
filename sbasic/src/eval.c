@@ -79,6 +79,10 @@ static int eval_depth = 0;
 /* TRACE mode: print line numbers as they execute */
 static int trace_enabled = 0;
 
+/* PEEK/POKE simulated memory (64KB) */
+#define PEEK_POKE_SIZE 65536
+unsigned char peek_poke_mem[PEEK_POKE_SIZE];
+
 /* OPTION EXPLICIT: require variables to be declared before use */
 static int option_explicit = 0;
 
@@ -2328,6 +2332,29 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             int r = rmdir(path.sval ? path.sval->data : "");
             val_clear(&path);
             if (r != 0) return ERR_FILE_NOT_FOUND;
+            return ERR_NONE;
+        }
+
+        case STMT_POKE: {
+            value_t av, vv;
+            EVAL_CHECK(eval_expr(env, s->poke_stmt.addr, &av));
+            error_t err = eval_expr(env, s->poke_stmt.value, &vv);
+            if (err != ERR_NONE) { val_clear(&av); return err; }
+            int addr, val;
+            err = val_to_integer(&av, &addr);
+            if (err == ERR_NONE) err = val_to_integer(&vv, &val);
+            val_clear(&av); val_clear(&vv);
+            if (err != ERR_NONE) return err;
+            if (addr < 0 || addr >= PEEK_POKE_SIZE) return ERR_ILLEGAL_FUNCTION_CALL;
+            peek_poke_mem[addr] = (unsigned char)(val & 0xFF);
+            return ERR_NONE;
+        }
+
+        case STMT_SCREEN: {
+            /* No-op: accept SCREEN mode but ignore it (text-only) */
+            value_t mode;
+            EVAL_CHECK(eval_expr(env, s->shell_stmt.command, &mode));
+            val_clear(&mode);
             return ERR_NONE;
         }
 

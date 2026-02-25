@@ -1911,6 +1911,35 @@ static stmt_t *parse_stmt(parser_t *p) {
             return s;
         }
 
+        case TOK_POKE: {
+            int line = tok->line;
+            lexer_next(&p->lex);
+            expr_t *addr = parse_expr(p);
+            if (!addr) return NULL;
+            if (!lexer_match(&p->lex, TOK_COMMA)) {
+                expr_free(addr);
+                parser_error(p, ERR_SYNTAX); return NULL;
+            }
+            expr_t *val = parse_expr(p);
+            if (!val) { expr_free(addr); return NULL; }
+            stmt_t *s = stmt_alloc(STMT_POKE, line);
+            if (!s) { expr_free(addr); expr_free(val); parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+            s->poke_stmt.addr = addr;
+            s->poke_stmt.value = val;
+            return s;
+        }
+
+        case TOK_SCREEN: {
+            int line = tok->line;
+            lexer_next(&p->lex);
+            expr_t *mode = parse_expr(p);
+            if (!mode) return NULL;
+            stmt_t *s = stmt_alloc(STMT_SCREEN, line);
+            if (!s) { expr_free(mode); parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+            s->shell_stmt.command = mode;
+            return s;
+        }
+
         case TOK_GOTO: {
             int line = tok->line;
             lexer_next(&p->lex);
