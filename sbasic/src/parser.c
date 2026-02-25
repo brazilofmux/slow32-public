@@ -355,7 +355,7 @@ static stmt_t *parse_block(parser_t *p, int flags) {
             /* Don't consume — let the caller handle it */
             break;
         }
-        if ((flags & BLK_ELSE) && tt == TOK_ELSE) break;
+        if ((flags & BLK_ELSE) && (tt == TOK_ELSE || tt == TOK_ELSEIF)) break;
         if ((flags & BLK_WEND) && tt == TOK_WEND) break;
         if ((flags & BLK_NEXT) && tt == TOK_NEXT) break;
         if ((flags & BLK_LOOP) && tt == TOK_LOOP) break;
@@ -566,7 +566,10 @@ static stmt_t *parse_if(parser_t *p) {
     /* Block form */
     stmt_t *then_body = parse_block(p, BLK_END_IF | BLK_ELSE);
     stmt_t *else_body = NULL;
-    if (lexer_check(&p->lex, TOK_ELSE)) {
+    if (lexer_check(&p->lex, TOK_ELSEIF)) {
+        /* ELSEIF becomes a nested IF in the else branch */
+        else_body = parse_if(p);  /* parse_if consumes ELSEIF like IF */
+    } else if (lexer_check(&p->lex, TOK_ELSE)) {
         lexer_next(&p->lex);
         else_body = parse_block(p, BLK_END_IF);
     }

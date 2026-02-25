@@ -85,6 +85,7 @@ static const keyword_t keywords[] = {
     { "XOR",    TOK_XOR },
     { "IMP",    TOK_IMP },
     { "EQV",    TOK_EQV },
+    { "ELSEIF", TOK_ELSEIF },
     { "RUN",    TOK_RUN },
     { "LIST",   TOK_LIST },
     { "NEW",    TOK_NEW },

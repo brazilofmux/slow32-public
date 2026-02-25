@@ -514,6 +514,73 @@ static error_t fn_string(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+/* MKI$(n) - pack integer into 2-byte string (little-endian) */
+static error_t fn_mki(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    int v; EVAL_CHECK(val_to_integer(&args[0], &v));
+    char buf[2];
+    buf[0] = (char)(v & 0xFF);
+    buf[1] = (char)((v >> 8) & 0xFF);
+    *out = val_string(buf, 2);
+    return ERR_NONE;
+}
+
+/* MKL$(n) - pack long integer into 4-byte string (little-endian) */
+static error_t fn_mkl(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    int v; EVAL_CHECK(val_to_integer(&args[0], &v));
+    char buf[4];
+    buf[0] = (char)(v & 0xFF);
+    buf[1] = (char)((v >> 8) & 0xFF);
+    buf[2] = (char)((v >> 16) & 0xFF);
+    buf[3] = (char)((v >> 24) & 0xFF);
+    *out = val_string(buf, 4);
+    return ERR_NONE;
+}
+
+/* MKD$(n) - pack double into 8-byte string */
+static error_t fn_mkd(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    double v; EVAL_CHECK(get_num(&args[0], &v));
+    char buf[8];
+    memcpy(buf, &v, 8);
+    *out = val_string(buf, 8);
+    return ERR_NONE;
+}
+
+/* CVI(s$) - unpack 2-byte string to integer (little-endian) */
+static error_t fn_cvi(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    if (args[0].type != VAL_STRING) return ERR_TYPE_MISMATCH;
+    if (!args[0].sval || args[0].sval->len < 2) return ERR_ILLEGAL_FUNCTION_CALL;
+    const unsigned char *p = (const unsigned char *)args[0].sval->data;
+    int v = (int)(short)(p[0] | (p[1] << 8));
+    *out = val_integer(v);
+    return ERR_NONE;
+}
+
+/* CVL(s$) - unpack 4-byte string to long integer (little-endian) */
+static error_t fn_cvl(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    if (args[0].type != VAL_STRING) return ERR_TYPE_MISMATCH;
+    if (!args[0].sval || args[0].sval->len < 4) return ERR_ILLEGAL_FUNCTION_CALL;
+    const unsigned char *p = (const unsigned char *)args[0].sval->data;
+    int v = (int)(p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24));
+    *out = val_integer(v);
+    return ERR_NONE;
+}
+
+/* CVD(s$) - unpack 8-byte string to double */
+static error_t fn_cvd(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    if (args[0].type != VAL_STRING) return ERR_TYPE_MISMATCH;
+    if (!args[0].sval || args[0].sval->len < 8) return ERR_ILLEGAL_FUNCTION_CALL;
+    double v;
+    memcpy(&v, args[0].sval->data, 8);
+    *out = val_double(v);
+    return ERR_NONE;
+}
+
 /* HEX$(n) - hexadecimal string */
 static error_t fn_hex(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
@@ -980,6 +1047,13 @@ static const builtin_entry_t builtins[] = {
     { "HEX$",     fn_hex },
     { "OCT$",     fn_oct },
     { "REPLACE$", fn_replace },
+    /* Binary packing */
+    { "MKI$",     fn_mki },
+    { "MKL$",     fn_mkl },
+    { "MKD$",     fn_mkd },
+    { "CVI",      fn_cvi },
+    { "CVL",      fn_cvl },
+    { "CVD",      fn_cvd },
     /* File I/O */
     { "EOF",      fn_eof },
     { "FREEFILE", fn_freefile },
