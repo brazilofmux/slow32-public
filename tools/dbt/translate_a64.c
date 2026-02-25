@@ -839,7 +839,7 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
     emit_mov_w32_imm32(e, W1, target_pc);
     emit_str_w32_imm(e, W1, W20, CPU_PC_OFFSET);
 
-    if (ctx->cache == NULL || paranoid_mode || dbt_no_chain) {
+    if (ctx->cache == NULL || paranoid_mode) {
         // Stage 1/paranoid: always return to C dispatcher so shadow verification
         // can run after each translated guest block.
         emit_mov_w32_imm32(e, W1, EXIT_BRANCH);
@@ -849,8 +849,8 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
     }
 
     // Stage 2: chain to target if already translated
-    // In paranoid mode, skip direct chaining — always go through shared_branch_exit
-    // so every block exit returns to the C dispatch loop for shadow verification.
+    // In paranoid/no-chain mode, skip direct chaining — always go through
+    // shared_branch_exit so every block exit returns to the C dispatch loop.
     translated_block_t *target = (paranoid_mode || dbt_no_chain) ? NULL
                                                : cache_lookup(ctx->cache, target_pc);
 
@@ -890,7 +890,7 @@ static void emit_exit_chained_compact(translate_ctx_t *ctx, uint32_t target_pc, 
     emit_mov_w32_imm32(e, W1, target_pc);
     emit_str_w32_imm(e, W1, W20, CPU_PC_OFFSET);
 
-    if (ctx->cache == NULL || paranoid_mode || dbt_no_chain) {
+    if (ctx->cache == NULL || paranoid_mode) {
         // Stage 1/paranoid: always return to C dispatcher so shadow verification
         // can run after each translated guest block.
         emit_mov_w32_imm32(e, W1, EXIT_BRANCH);
