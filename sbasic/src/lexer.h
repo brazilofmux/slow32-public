@@ -51,7 +51,7 @@ typedef enum {
 
     /* Stage 6 keywords */
     TOK_TYPE, TOK_STATIC, TOK_ON, TOK_ERROR,
-    TOK_RESUME, TOK_DEFINT, TOK_DEFDBL, TOK_DEFSTR,
+    TOK_RESUME, TOK_DEFINT, TOK_DEFDBL, TOK_DEFSTR, TOK_DEFSNG,
     TOK_DOT,
 
     /* Extra keywords */

@@ -737,6 +737,30 @@ static error_t fn_oct(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+/* BIN$(n) - binary string */
+static error_t fn_bin(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    int v;
+    EVAL_CHECK(val_to_integer(&args[0], &v));
+    char buf[33];
+    unsigned int uv = (unsigned int)v;
+    int pos = 0;
+    if (uv == 0) {
+        buf[pos++] = '0';
+    } else {
+        char tmp[33];
+        int tpos = 0;
+        while (uv > 0) {
+            tmp[tpos++] = '0' + (uv & 1);
+            uv >>= 1;
+        }
+        while (tpos > 0) buf[pos++] = tmp[--tpos];
+    }
+    buf[pos] = '\0';
+    *out = val_string_cstr(buf);
+    return ERR_NONE;
+}
+
 /* REPLACE$(str, find, replacement) */
 static error_t fn_replace(value_t *args, int nargs, value_t *out) {
     if (nargs != 3) return ERR_ILLEGAL_FUNCTION_CALL;
@@ -1153,6 +1177,7 @@ static const builtin_entry_t builtins[] = {
     { "STRING$",  fn_string },
     { "HEX$",     fn_hex },
     { "OCT$",     fn_oct },
+    { "BIN$",     fn_bin },
     { "REPLACE$", fn_replace },
     /* Binary packing */
     { "MKI$",     fn_mki },

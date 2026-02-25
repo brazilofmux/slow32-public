@@ -972,15 +972,19 @@ static stmt_t *parse_dim_or_redim(parser_t *p, int is_redim) {
         token_t tname = lexer_next(&p->lex);
         /* Check if it's a primitive type name — declare scalar variable */
         if (strcmp(tname.text, "INTEGER") == 0 ||
+            strcmp(tname.text, "LONG") == 0 ||
             strcmp(tname.text, "DOUBLE") == 0 ||
+            strcmp(tname.text, "SINGLE") == 0 ||
             strcmp(tname.text, "STRING") == 0) {
             stmt_t *s = stmt_alloc(STMT_DIM_SCALAR, line);
             if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
             strncpy(s->dim_scalar.name, name.text, 63);
             s->dim_scalar.name[63] = '\0';
-            if (strcmp(tname.text, "INTEGER") == 0)
+            if (strcmp(tname.text, "INTEGER") == 0 ||
+                strcmp(tname.text, "LONG") == 0)
                 s->dim_scalar.scalar_type = VAL_INTEGER;
-            else if (strcmp(tname.text, "DOUBLE") == 0)
+            else if (strcmp(tname.text, "DOUBLE") == 0 ||
+                     strcmp(tname.text, "SINGLE") == 0)
                 s->dim_scalar.scalar_type = VAL_DOUBLE;
             else
                 s->dim_scalar.scalar_type = VAL_STRING;
@@ -1026,8 +1030,10 @@ static stmt_t *parse_dim_or_redim(parser_t *p, int is_redim) {
             return NULL;
         }
         token_t tn = lexer_next(&p->lex);
-        if (strcmp(tn.text, "INTEGER") == 0) type = VAL_INTEGER;
-        else if (strcmp(tn.text, "DOUBLE") == 0) type = VAL_DOUBLE;
+        if (strcmp(tn.text, "INTEGER") == 0 || strcmp(tn.text, "LONG") == 0)
+            type = VAL_INTEGER;
+        else if (strcmp(tn.text, "DOUBLE") == 0 || strcmp(tn.text, "SINGLE") == 0)
+            type = VAL_DOUBLE;
         else if (strcmp(tn.text, "STRING") == 0) type = VAL_STRING;
         else {
             parser_error(p, ERR_SYNTAX);
@@ -1789,6 +1795,7 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_ERROR:    return parse_error_stmt(p);
         case TOK_DEFINT:   return parse_deftype(p, VAL_INTEGER);
         case TOK_DEFDBL:   return parse_deftype(p, VAL_DOUBLE);
+        case TOK_DEFSNG:   return parse_deftype(p, VAL_DOUBLE);
         case TOK_DEFSTR:   return parse_deftype(p, VAL_STRING);
 
         case TOK_BEEP:

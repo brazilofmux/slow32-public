@@ -79,6 +79,7 @@ static const keyword_t keywords[] = {
     { "DEFINT", TOK_DEFINT },
     { "DEFDBL", TOK_DEFDBL },
     { "DEFSTR", TOK_DEFSTR },
+    { "DEFSNG", TOK_DEFSNG },
     { "BEEP",   TOK_BEEP },
     { "TRACE",  TOK_TRACE },
     { "SPLIT",  TOK_SPLIT },
@@ -302,7 +303,7 @@ static token_t scan_token(lexer_t *lex) {
         if (peek_char(lex) == '%') {
             next_char(lex);
             is_double = 0;
-        } else if (peek_char(lex) == '#') {
+        } else if (peek_char(lex) == '#' || peek_char(lex) == '!') {
             next_char(lex);
             is_double = 1;
         }
@@ -350,8 +351,11 @@ static token_t scan_token(lexer_t *lex) {
         upper[len] = '\0';
 
         /* Check for type suffix */
-        if (peek_char(lex) == '$' || peek_char(lex) == '%' || peek_char(lex) == '#') {
+        if (peek_char(lex) == '$' || peek_char(lex) == '%' ||
+            peek_char(lex) == '#' || peek_char(lex) == '!') {
             tok.suffix = next_char(lex);
+            /* Treat ! (single) same as # (double) since we only have double */
+            if (tok.suffix == '!') tok.suffix = '#';
             tok.text[len] = tok.suffix;
             tok.text[len + 1] = '\0';
         }
@@ -397,6 +401,7 @@ static token_t scan_token(lexer_t *lex) {
         case ',': tok.type = TOK_COMMA; break;
         case ';': tok.type = TOK_SEMICOLON; break;
         case ':': tok.type = TOK_COLON; break;
+        case '?': tok.type = TOK_PRINT; break;
         case '=': tok.type = TOK_EQ; break;
         case '#': tok.type = TOK_HASH; break;
         case '.':
