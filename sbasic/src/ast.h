@@ -148,6 +148,8 @@ typedef enum {
     STMT_SPLIT,
     STMT_OPTION_EXPLICIT,
     STMT_DIM_SCALAR,
+    STMT_LINE_INPUT_CONSOLE,
+    STMT_WRITE_CONSOLE,
 } stmt_type_t;
 
 /* Print item: expression + separator */

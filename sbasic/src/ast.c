@@ -580,6 +580,16 @@ void stmt_free(stmt_t *s) {
                 expr_free(s->split.str_expr);
                 expr_free(s->split.delim_expr);
                 break;
+            case STMT_LINE_INPUT_CONSOLE:
+                free(s->input.prompt);
+                free(s->input.varnames);
+                free(s->input.vartypes);
+                break;
+            case STMT_WRITE_CONSOLE:
+                for (int i = 0; i < s->print.nitems; i++)
+                    expr_free(s->print.items[i].expr);
+                free(s->print.items);
+                break;
         }
         free(s);
         s = next;

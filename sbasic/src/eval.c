@@ -1706,6 +1706,70 @@ static error_t exec_line_input(env_t *env, stmt_t *s) {
     return ERR_NONE;
 }
 
+/* LINE INPUT (console) — read full line without comma/quote parsing */
+static error_t exec_line_input_console(env_t *env, stmt_t *s) {
+    if (s->input.prompt)
+        col_puts(s->input.prompt);
+
+    char line[1024];
+    int pos = 0;
+    int ch;
+    while ((ch = getchar()) != EOF && ch != '\n') {
+        if (pos < 1023)
+            line[pos++] = (char)ch;
+    }
+    line[pos] = '\0';
+    print_col = 0;
+
+    if (ch == EOF && pos == 0)
+        return ERR_INPUT_PAST_END;
+
+    if (s->input.nvars > 0) {
+        if (env_is_const(env, s->input.varnames[0]))
+            return ERR_CONST_REASSIGN;
+        value_t val = val_string_cstr(line);
+        env_set(env, s->input.varnames[0], &val);
+        val_clear(&val);
+    }
+    return ERR_NONE;
+}
+
+/* WRITE (console) — comma-delimited, quoted string output */
+static error_t exec_write_console(env_t *env, stmt_t *s) {
+    for (int i = 0; i < s->print.nitems; i++) {
+        if (i > 0) col_puts(",");
+        print_item_t *item = &s->print.items[i];
+        if (item->expr) {
+            value_t v;
+            EVAL_CHECK(eval_expr(env, item->expr, &v));
+            switch (v.type) {
+                case VAL_INTEGER: {
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "%d", v.ival);
+                    col_puts(buf);
+                    break;
+                }
+                case VAL_DOUBLE: {
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "%g", v.dval);
+                    col_puts(buf);
+                    break;
+                }
+                case VAL_STRING: {
+                    col_puts("\"");
+                    col_puts(v.sval ? v.sval->data : "");
+                    col_puts("\"");
+                    break;
+                }
+                case VAL_RECORD: break;
+            }
+            val_clear(&v);
+        }
+    }
+    col_puts("\n");
+    return ERR_NONE;
+}
+
 static error_t exec_kill(env_t *env, stmt_t *s) {
     value_t fname;
     EVAL_CHECK(eval_expr(env, s->kill_stmt.filename, &fname));
@@ -2115,6 +2179,8 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_WRITE_FILE:   return exec_write_file(env, s);
         case STMT_INPUT_FILE:   return exec_input_file(env, s);
         case STMT_LINE_INPUT:   return exec_line_input(env, s);
+        case STMT_LINE_INPUT_CONSOLE: return exec_line_input_console(env, s);
+        case STMT_WRITE_CONSOLE: return exec_write_console(env, s);
         case STMT_KILL:         return exec_kill(env, s);
         case STMT_NAME:         return exec_name(env, s);
         case STMT_GET:          return exec_get(env, s);
