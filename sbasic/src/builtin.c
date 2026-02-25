@@ -411,6 +411,43 @@ static error_t fn_instr(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+/* INSTRREV(haystack$, needle$ [, start]) - search from right */
+static error_t fn_instrrev(value_t *args, int nargs, value_t *out) {
+    const char *haystack, *needle;
+    int hlen, nlen, start;
+    if (nargs == 2) {
+        if (args[0].type != VAL_STRING || args[1].type != VAL_STRING)
+            return ERR_TYPE_MISMATCH;
+        haystack = args[0].sval->data;
+        hlen = args[0].sval->len;
+        needle = args[1].sval->data;
+        nlen = args[1].sval->len;
+        start = hlen;
+    } else if (nargs == 3) {
+        if (args[0].type != VAL_STRING || args[1].type != VAL_STRING)
+            return ERR_TYPE_MISMATCH;
+        haystack = args[0].sval->data;
+        hlen = args[0].sval->len;
+        needle = args[1].sval->data;
+        nlen = args[1].sval->len;
+        EVAL_CHECK(val_to_integer(&args[2], &start));
+    } else {
+        return ERR_ILLEGAL_FUNCTION_CALL;
+    }
+    if (nlen == 0 || start < 1) { *out = val_integer(0); return ERR_NONE; }
+    /* Search backwards from start position */
+    int last = start - 1;
+    if (last + nlen > hlen) last = hlen - nlen;
+    for (int i = last; i >= 0; i--) {
+        if (memcmp(haystack + i, needle, nlen) == 0) {
+            *out = val_integer(i + 1);
+            return ERR_NONE;
+        }
+    }
+    *out = val_integer(0);
+    return ERR_NONE;
+}
+
 /* UCASE$(str) */
 static error_t fn_ucase(value_t *args, int nargs, value_t *out) {
     if (nargs != 1 || args[0].type != VAL_STRING) return ERR_TYPE_MISMATCH;
@@ -578,6 +615,21 @@ static error_t fn_cvd(value_t *args, int nargs, value_t *out) {
     double v;
     memcpy(&v, args[0].sval->data, 8);
     *out = val_double(v);
+    return ERR_NONE;
+}
+
+/* FILEEXISTS(path$) - return -1 (true) if file exists, 0 (false) otherwise */
+static error_t fn_fileexists(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    if (args[0].type != VAL_STRING) return ERR_TYPE_MISMATCH;
+    const char *path = args[0].sval ? args[0].sval->data : "";
+    FILE *f = fopen(path, "r");
+    if (f) {
+        fclose(f);
+        *out = val_integer(-1); /* true */
+    } else {
+        *out = val_integer(0);  /* false */
+    }
     return ERR_NONE;
 }
 
@@ -1037,6 +1089,7 @@ static const builtin_entry_t builtins[] = {
     { "RIGHT$",   fn_right },
     { "MID$",     fn_mid },
     { "INSTR",    fn_instr },
+    { "INSTRREV", fn_instrrev },
     { "UCASE$",   fn_ucase },
     { "LCASE$",   fn_lcase },
     { "LTRIM$",   fn_ltrim },
@@ -1067,6 +1120,7 @@ static const builtin_entry_t builtins[] = {
     { "COMMAND$", fn_command },
     { "INKEY$",   fn_inkey },
     { "DIR$",     fn_dir },
+    { "FILEEXISTS", fn_fileexists },
     { NULL, NULL }
 };
 
