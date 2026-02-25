@@ -25,6 +25,6 @@ Comparisons:
 
 Logic:
 1 AND 0 = 0
-1 OR 0 =-1
+1 OR 0 = 1
 NOT 0 =-1
 
