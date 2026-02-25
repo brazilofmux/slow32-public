@@ -1171,6 +1171,58 @@ static error_t fn_dir(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+/* MIN(a, b) / MAX(a, b) */
+static error_t fn_min(value_t *args, int nargs, value_t *out) {
+    if (nargs < 2) return ERR_ILLEGAL_FUNCTION_CALL;
+    double a, b;
+    EVAL_CHECK(get_num(&args[0], &a));
+    EVAL_CHECK(get_num(&args[1], &b));
+    *out = val_double(a < b ? a : b);
+    return ERR_NONE;
+}
+
+static error_t fn_max(value_t *args, int nargs, value_t *out) {
+    if (nargs < 2) return ERR_ILLEGAL_FUNCTION_CALL;
+    double a, b;
+    EVAL_CHECK(get_num(&args[0], &a));
+    EVAL_CHECK(get_num(&args[1], &b));
+    *out = val_double(a > b ? a : b);
+    return ERR_NONE;
+}
+
+/* FLOOR(x) / CEIL(x) */
+static error_t fn_floor(value_t *args, int nargs, value_t *out) {
+    if (nargs < 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    double v; EVAL_CHECK(get_num(&args[0], &v));
+    *out = val_double(floor(v));
+    return ERR_NONE;
+}
+
+static error_t fn_ceil(value_t *args, int nargs, value_t *out) {
+    if (nargs < 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    double v; EVAL_CHECK(get_num(&args[0], &v));
+    /* ceil: smallest integer >= v */
+    double f = floor(v);
+    *out = val_double(v == f ? f : f + 1.0);
+    return ERR_NONE;
+}
+
+/* REVERSE$(str) */
+static error_t fn_reverse(value_t *args, int nargs, value_t *out) {
+    if (nargs < 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    if (args[0].type != VAL_STRING) return ERR_TYPE_MISMATCH;
+    const char *src = args[0].sval ? args[0].sval->data : "";
+    int len = (int)strlen(src);
+    char *buf = malloc(len + 1);
+    if (!buf) return ERR_OUT_OF_MEMORY;
+    for (int i = 0; i < len; i++)
+        buf[i] = src[len - 1 - i];
+    buf[len] = '\0';
+    *out = val_string_cstr(buf);
+    free(buf);
+    return ERR_NONE;
+}
+
 /* ================================================================
  * RANDOMIZE support (called from eval, not dispatch table)
  * ================================================================ */
@@ -1217,6 +1269,10 @@ static const builtin_entry_t builtins[] = {
     { "LOG10",    fn_log10 },
     { "LOG2",     fn_log2 },
     { "ROUND",    fn_round },
+    { "MIN",      fn_min },
+    { "MAX",      fn_max },
+    { "FLOOR",    fn_floor },
+    { "CEIL",     fn_ceil },
     { "RND",      fn_rnd },
     { "TIMER",    fn_timer },
     { "DATE$",    fn_date },
@@ -1245,6 +1301,7 @@ static const builtin_entry_t builtins[] = {
     { "OCT$",     fn_oct },
     { "BIN$",     fn_bin },
     { "REPLACE$", fn_replace },
+    { "REVERSE$", fn_reverse },
     /* Binary packing */
     { "MKI$",     fn_mki },
     { "MKL$",     fn_mkl },

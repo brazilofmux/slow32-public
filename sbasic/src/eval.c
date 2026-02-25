@@ -1026,6 +1026,30 @@ static error_t exec_print(env_t *env, stmt_t *s) {
 
 /* LPRINT — like PRINT but output to stderr */
 static error_t exec_lprint(env_t *env, stmt_t *s) {
+    /* LPRINT USING */
+    if (s->print.using_fmt || s->print.using_expr) {
+        FILE *saved_fp = col_output_fp;
+        col_output_fp = stderr;
+        const char *fmt;
+        char fmt_buf[1024];
+        if (s->print.using_fmt) {
+            fmt = s->print.using_fmt;
+        } else {
+            value_t fv;
+            error_t err = eval_expr(env, s->print.using_expr, &fv);
+            if (err != ERR_NONE) { col_output_fp = saved_fp; return err; }
+            if (fv.type == VAL_STRING && fv.sval)
+                snprintf(fmt_buf, sizeof(fmt_buf), "%s", fv.sval->data);
+            else
+                fmt_buf[0] = '\0';
+            val_clear(&fv);
+            fmt = fmt_buf;
+        }
+        error_t err = exec_print_using_items(env, s->print.items, s->print.nitems, fmt);
+        col_output_fp = saved_fp;
+        return err;
+    }
+
     int needs_newline = 1;
 
     for (int i = 0; i < s->print.nitems; i++) {
