@@ -852,7 +852,14 @@ static stmt_t *parse_sub(parser_t *p) {
     /* Parameters */
     if (lexer_match(&p->lex, TOK_LPAREN)) {
         if (!lexer_check(&p->lex, TOK_RPAREN)) {
+            /* Skip optional BYVAL/BYREF */
+            if (lexer_check(&p->lex, TOK_IDENT) &&
+                (strcmp(lexer_peek(&p->lex)->text, "BYVAL") == 0 ||
+                 strcmp(lexer_peek(&p->lex)->text, "BYREF") == 0))
+                lexer_next(&p->lex);
             token_t param = lexer_next(&p->lex);
+            /* Skip optional () for array params */
+            if (lexer_match(&p->lex, TOK_LPAREN)) lexer_match(&p->lex, TOK_RPAREN);
             val_type_t ptype = var_type_from_name(param.text);
             if (lexer_match(&p->lex, TOK_AS)) {
                 token_t tn = lexer_next(&p->lex);
@@ -862,7 +869,14 @@ static stmt_t *parse_sub(parser_t *p) {
             }
             stmt_proc_add_param(s, param.text, ptype);
             while (lexer_match(&p->lex, TOK_COMMA)) {
+                /* Skip optional BYVAL/BYREF */
+                if (lexer_check(&p->lex, TOK_IDENT) &&
+                    (strcmp(lexer_peek(&p->lex)->text, "BYVAL") == 0 ||
+                     strcmp(lexer_peek(&p->lex)->text, "BYREF") == 0))
+                    lexer_next(&p->lex);
                 param = lexer_next(&p->lex);
+                /* Skip optional () for array params */
+                if (lexer_match(&p->lex, TOK_LPAREN)) lexer_match(&p->lex, TOK_RPAREN);
                 ptype = var_type_from_name(param.text);
                 if (lexer_match(&p->lex, TOK_AS)) {
                     token_t tn = lexer_next(&p->lex);
@@ -895,7 +909,14 @@ static stmt_t *parse_function(parser_t *p) {
     /* Parameters */
     if (lexer_match(&p->lex, TOK_LPAREN)) {
         if (!lexer_check(&p->lex, TOK_RPAREN)) {
+            /* Skip optional BYVAL/BYREF */
+            if (lexer_check(&p->lex, TOK_IDENT) &&
+                (strcmp(lexer_peek(&p->lex)->text, "BYVAL") == 0 ||
+                 strcmp(lexer_peek(&p->lex)->text, "BYREF") == 0))
+                lexer_next(&p->lex);
             token_t param = lexer_next(&p->lex);
+            /* Skip optional () for array params */
+            if (lexer_match(&p->lex, TOK_LPAREN)) lexer_match(&p->lex, TOK_RPAREN);
             val_type_t ptype = var_type_from_name(param.text);
             if (lexer_match(&p->lex, TOK_AS)) {
                 token_t tn = lexer_next(&p->lex);
@@ -905,7 +926,14 @@ static stmt_t *parse_function(parser_t *p) {
             }
             stmt_proc_add_param(s, param.text, ptype);
             while (lexer_match(&p->lex, TOK_COMMA)) {
+                /* Skip optional BYVAL/BYREF */
+                if (lexer_check(&p->lex, TOK_IDENT) &&
+                    (strcmp(lexer_peek(&p->lex)->text, "BYVAL") == 0 ||
+                     strcmp(lexer_peek(&p->lex)->text, "BYREF") == 0))
+                    lexer_next(&p->lex);
                 param = lexer_next(&p->lex);
+                /* Skip optional () for array params */
+                if (lexer_match(&p->lex, TOK_LPAREN)) lexer_match(&p->lex, TOK_RPAREN);
                 ptype = var_type_from_name(param.text);
                 if (lexer_match(&p->lex, TOK_AS)) {
                     token_t tn = lexer_next(&p->lex);
@@ -1263,6 +1291,23 @@ static stmt_t *parse_print_file(parser_t *p) {
     if (!handle) return NULL;
     lexer_match(&p->lex, TOK_COMMA); /* consume separator after #n */
     stmt_t *s = stmt_print_file(handle, line);
+    /* PRINT #n, USING "fmt"; expr; ... */
+    if (lexer_check(&p->lex, TOK_USING)) {
+        lexer_next(&p->lex);
+        if (lexer_check(&p->lex, TOK_STRING_LIT)) {
+            token_t fmt = lexer_next(&p->lex);
+            s->print_file.using_fmt = strdup(fmt.text);
+        } else {
+            expr_t *fe = parse_expr(p);
+            if (!fe || p->error != ERR_NONE) {
+                expr_free(fe); stmt_free(s); return NULL;
+            }
+            s->print_file.using_expr = fe;
+        }
+        if (!lexer_match(&p->lex, TOK_SEMICOLON)) {
+            parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+        }
+    }
     while (!at_stmt_end(p)) {
         expr_t *e = parse_expr(p);
         if (!e || p->error != ERR_NONE) {
@@ -2174,6 +2219,35 @@ static stmt_t *parse_stmt(parser_t *p) {
             return stmt_alloc(STMT_NOOP, line);
         }
 
+        case TOK_COMMON: {
+            /* COMMON [SHARED] var [, var, ...] — no-op (all vars are already shared) */
+            int line = tok->line;
+            lexer_next(&p->lex);
+            if (lexer_check(&p->lex, TOK_SHARED)) lexer_next(&p->lex);
+            while (!at_stmt_end(p)) {
+                if (lexer_check(&p->lex, TOK_COMMA)) { lexer_next(&p->lex); continue; }
+                /* Consume var name and optional type/array syntax */
+                if (lexer_check(&p->lex, TOK_IDENT) || lexer_check(&p->lex, TOK_NAME)) {
+                    lexer_next(&p->lex);
+                    /* Optional () for arrays */
+                    if (lexer_match(&p->lex, TOK_LPAREN)) {
+                        if (!lexer_match(&p->lex, TOK_RPAREN)) {
+                            expr_t *e = parse_expr(p);
+                            if (e) expr_free(e);
+                            lexer_match(&p->lex, TOK_RPAREN);
+                        }
+                    }
+                    /* Optional AS type */
+                    if (lexer_check(&p->lex, TOK_AS)) {
+                        lexer_next(&p->lex);
+                        if (lexer_check(&p->lex, TOK_IDENT) || lexer_check(&p->lex, TOK_NAME))
+                            lexer_next(&p->lex);
+                    }
+                } else break;
+            }
+            return stmt_alloc(STMT_NOOP, line);
+        }
+
         case TOK_CLEAR: {
             /* CLEAR [, himem [, stack]] — reset all variables */
             int line = tok->line;
@@ -2251,9 +2325,21 @@ static stmt_t *parse_stmt(parser_t *p) {
             return stmt_gosub(label_name, line);
         }
 
-        case TOK_RETURN:
+        case TOK_RETURN: {
             lexer_next(&p->lex);
-            return stmt_return(tok->line);
+            /* RETURN [label | linenumber] */
+            const char *rlabel = NULL;
+            char rlbuf[64];
+            if (lexer_check(&p->lex, TOK_IDENT) || lexer_check(&p->lex, TOK_NAME)) {
+                token_t lt = lexer_next(&p->lex);
+                rlabel = lt.text;
+            } else if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
+                token_t lt = lexer_next(&p->lex);
+                snprintf(rlbuf, sizeof(rlbuf), "%s", lt.text);
+                rlabel = rlbuf;
+            }
+            return stmt_return(rlabel, tok->line);
+        }
 
         case TOK_LET: {
             lexer_next(&p->lex);

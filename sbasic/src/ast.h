@@ -162,7 +162,7 @@ typedef enum {
     STMT_LSET,
     STMT_RSET,
     STMT_WIDTH,
-    STMT_NOOP,  /* parsed-and-discarded: FIELD, CHAIN, PCOPY, KEY, SOUND, PLAY, VIEW PRINT, ENVIRON */
+    STMT_NOOP,  /* parsed-and-discarded: FIELD, CHAIN, PCOPY, KEY, SOUND, PLAY, VIEW PRINT, ENVIRON, COMMON */
     STMT_CLEAR,
 } stmt_type_t;
 
@@ -404,6 +404,8 @@ typedef struct stmt {
             struct expr *handle_num;
             print_item_t *items;
             int nitems;
+            char *using_fmt;         /* PRINT #n, USING "fmt"; ... */
+            struct expr *using_expr; /* PRINT #n, USING expr; ... */
         } print_file;
 
         /* STMT_INPUT_FILE / STMT_LINE_INPUT */
@@ -584,7 +586,7 @@ stmt_t *stmt_do_loop(expr_t *pre_cond, int pre_until,
 stmt_t *stmt_select(expr_t *test, case_clause_t *clauses, int line);
 stmt_t *stmt_goto(const char *label, int line);
 stmt_t *stmt_gosub(const char *label, int line);
-stmt_t *stmt_return(int line);
+stmt_t *stmt_return(const char *label, int line);
 stmt_t *stmt_label(const char *name, int line);
 stmt_t *stmt_proc_def(stmt_type_t type, const char *name, int line);
 void stmt_proc_add_param(stmt_t *s, const char *name, val_type_t type);

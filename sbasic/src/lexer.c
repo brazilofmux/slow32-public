@@ -110,6 +110,7 @@ static const keyword_t keywords[] = {
     { "PALETTE", TOK_PALETTE },
     { "WAIT",   TOK_WAIT },
     { "OUT",    TOK_OUT },
+    { "COMMON", TOK_COMMON },
     { "RUN",    TOK_RUN },
     { "LIST",   TOK_LIST },
     { "NEW",    TOK_NEW },

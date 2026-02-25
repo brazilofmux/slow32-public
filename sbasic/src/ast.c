@@ -263,8 +263,14 @@ stmt_t *stmt_gosub(const char *label, int line) {
     return s;
 }
 
-stmt_t *stmt_return(int line) {
-    return stmt_alloc(STMT_RETURN, line);
+stmt_t *stmt_return(const char *label, int line) {
+    stmt_t *s = stmt_alloc(STMT_RETURN, line);
+    if (!s) return NULL;
+    if (label)
+        strncpy(s->goto_stmt.label, label, 63);
+    else
+        s->goto_stmt.label[0] = '\0';
+    return s;
 }
 
 stmt_t *stmt_label(const char *name, int line) {
@@ -528,6 +534,8 @@ void stmt_free(stmt_t *s) {
                 for (int i = 0; i < s->print_file.nitems; i++)
                     expr_free(s->print_file.items[i].expr);
                 free(s->print_file.items);
+                free(s->print_file.using_fmt);
+                expr_free(s->print_file.using_expr);
                 break;
             case STMT_INPUT_FILE:
             case STMT_LINE_INPUT:
@@ -764,6 +772,8 @@ stmt_t *stmt_print_file(expr_t *handle, int line) {
     s->print_file.handle_num = handle;
     s->print_file.items = NULL;
     s->print_file.nitems = 0;
+    s->print_file.using_fmt = NULL;
+    s->print_file.using_expr = NULL;
     return s;
 }
 

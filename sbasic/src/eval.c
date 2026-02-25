@@ -72,6 +72,7 @@ static int on_error_resume_pc = 0;   /* PC to RESUME to */
 static int on_error_resume_next_pc = 0; /* PC for RESUME NEXT */
 static int resume_is_next = 0;       /* set by RESUME stmt for eval_program: 0=retry, 1=next, 2=label */
 static char resume_label[64] = "";   /* target label for RESUME label */
+static char return_label[64] = "";   /* target label for RETURN label */
 
 /* Recursion depth limit (guards against C stack overflow) */
 #define MAX_EVAL_DEPTH 48
@@ -614,9 +615,13 @@ static void update_col(int *col, const char *s) {
 }
 
 /* Print a string to stdout and update print_col/print_row */
+/* Output destination for col_puts/col_printf (default stdout) */
+static FILE *col_output_fp = NULL;
+
 static void col_puts(const char *s) {
+    FILE *fp = col_output_fp ? col_output_fp : stdout;
     while (*s) {
-        putchar(*s);
+        fputc(*s, fp);
         if (*s == '\n') {
             print_col = 0;
             print_row++;
@@ -903,7 +908,7 @@ static int format_using_str(const char *fmt, const char *str, int slen) {
 }
 
 /* Execute PRINT USING — separated to reduce register pressure in exec_print */
-static error_t exec_print_using(env_t *env, stmt_t *s, const char *fmt_str) {
+static error_t exec_print_using_items(env_t *env, print_item_t *items, int nitems, const char *fmt_str) {
     int arg_idx = 0;
     /* Outer loop: reuse format string when args remain */
     for (;;) {
@@ -912,9 +917,9 @@ static error_t exec_print_using(env_t *env, stmt_t *s, const char *fmt_str) {
         while (*fmt) {
             if (*fmt == '#' || *fmt == '+' || *fmt == '$' || *fmt == '*') {
                 /* Numeric format */
-                if (arg_idx < s->print.nitems && s->print.items[arg_idx].expr) {
+                if (arg_idx < nitems && items[arg_idx].expr) {
                     value_t v;
-                    EVAL_CHECK(eval_expr(env, s->print.items[arg_idx].expr, &v));
+                    EVAL_CHECK(eval_expr(env, items[arg_idx].expr, &v));
                     double d = 0.0;
                     val_to_double(&v, &d);
                     val_clear(&v);
@@ -924,9 +929,9 @@ static error_t exec_print_using(env_t *env, stmt_t *s, const char *fmt_str) {
                 col_printf("%c", *fmt++);
             } else if (*fmt == '!' || *fmt == '&' || *fmt == '\\') {
                 /* String format */
-                if (arg_idx < s->print.nitems && s->print.items[arg_idx].expr) {
+                if (arg_idx < nitems && items[arg_idx].expr) {
                     value_t v;
-                    EVAL_CHECK(eval_expr(env, s->print.items[arg_idx].expr, &v));
+                    EVAL_CHECK(eval_expr(env, items[arg_idx].expr, &v));
                     const char *str = (v.type == VAL_STRING) ? v.sval->data : "";
                     int slen = (v.type == VAL_STRING) ? v.sval->len : 0;
                     int consumed = format_using_str(fmt, str, slen);
@@ -943,13 +948,17 @@ static error_t exec_print_using(env_t *env, stmt_t *s, const char *fmt_str) {
             }
         }
         /* If all args consumed, or no args consumed this pass, stop */
-        if (arg_idx >= s->print.nitems || args_this_pass == 0)
+        if (arg_idx >= nitems || args_this_pass == 0)
             break;
         /* More args remain — print newline and restart format */
         col_puts("\n");
     }
     col_puts("\n");
     return ERR_NONE;
+}
+
+static error_t exec_print_using(env_t *env, stmt_t *s, const char *fmt_str) {
+    return exec_print_using_items(env, s->print.items, s->print.nitems, fmt_str);
 }
 
 /* Evaluate a USING expression and dispatch to exec_print_using */
@@ -1647,6 +1656,31 @@ static error_t exec_print_file(env_t *env, stmt_t *s) {
     int *saved_col = active_print_col;
     if (file_col) active_print_col = file_col;
 
+    /* PRINT #n, USING */
+    if (s->print_file.using_fmt || s->print_file.using_expr) {
+        FILE *saved_fp = col_output_fp;
+        col_output_fp = fp;
+        const char *fmt;
+        char fmt_buf[1024];
+        if (s->print_file.using_fmt) {
+            fmt = s->print_file.using_fmt;
+        } else {
+            value_t fv;
+            err = eval_expr(env, s->print_file.using_expr, &fv);
+            if (err != ERR_NONE) { col_output_fp = saved_fp; active_print_col = saved_col; return err; }
+            if (fv.type == VAL_STRING && fv.sval)
+                snprintf(fmt_buf, sizeof(fmt_buf), "%s", fv.sval->data);
+            else
+                fmt_buf[0] = '\0';
+            val_clear(&fv);
+            fmt = fmt_buf;
+        }
+        err = exec_print_using_items(env, s->print_file.items, s->print_file.nitems, fmt);
+        col_output_fp = saved_fp;
+        active_print_col = saved_col;
+        return err;
+    }
+
     char buf[1024];
     int needs_newline = 1;
     for (int i = 0; i < s->print_file.nitems; i++) {
@@ -2229,6 +2263,8 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         }
 
         case STMT_RETURN:
+            strncpy(return_label, s->goto_stmt.label, 63);
+            return_label[63] = '\0';
             return ERR_RETURN;
 
         case STMT_SWAP: {
@@ -2709,6 +2745,7 @@ error_t eval_program(env_t *env, stmt_t *program) {
     on_error_err_line = 0;
     resume_is_next = 0;
     resume_label[0] = '\0';
+    return_label[0] = '\0';
     trace_enabled = 0;
     option_explicit = 0;
 
@@ -2766,7 +2803,16 @@ error_t eval_program(env_t *env, stmt_t *program) {
                 result = ERR_RETURN_WITHOUT_GOSUB;
                 break;
             }
-            pc = gosub_stack[--gosub_top];
+            gosub_top--;  /* pop the stack */
+            if (return_label[0]) {
+                /* RETURN label — jump to specified label instead of caller */
+                int idx = find_label(return_label);
+                if (idx < 0) { result = ERR_UNDEFINED_LABEL; break; }
+                pc = idx;
+                return_label[0] = '\0';
+            } else {
+                pc = gosub_stack[gosub_top];
+            }
             continue;
         }
 
