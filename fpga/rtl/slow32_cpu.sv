@@ -1,8 +1,12 @@
-// slow32_cpu.sv — Top-level SLOW-32 CPU: multi-cycle FSM + datapath
+// slow32_cpu.sv — 5-stage in-order pipelined SLOW-32 CPU
 //
-// Architecture: INIT_SP → INIT_FP → FETCH → DECODE → EXECUTE → MEMORY → WRITEBACK
-// Memory interface: Harvard-ish (separate instruction/data ports)
-// Matches ISA from selfhost/stage00/s32-emu.c exactly.
+// Stages: IF → ID → EX → MEM → WB
+// Hazard handling:
+//   - Data forwarding: EX/MEM → EX, MEM/WB → EX
+//   - Load-use stall: 1-cycle bubble when EX is a load and ID needs the result
+//   - Divide stall: 32-cycle stall while divider runs
+//   - Branch/jump flush: 2-cycle penalty (flush IF/ID and ID/EX)
+// Write-through register file handles WB→ID same-cycle bypass.
 
 import slow32_pkg::*;
 
@@ -11,8 +15,8 @@ module slow32_cpu (
     input  logic        rst_n,
 
     // Initialization inputs (latched on reset release)
-    input  logic [31:0] init_pc,   // Entry point
-    input  logic [31:0] init_sp,   // Initial stack pointer (r29 and r30)
+    input  logic [31:0] init_pc,
+    input  logic [31:0] init_sp,
 
     // Instruction memory port
     output logic [31:0] imem_addr,
@@ -40,55 +44,100 @@ module slow32_cpu (
     output logic [31:0] assert_pc
 );
 
-    // ---- State machine ----
-    state_t state;
+    // ========================================================================
+    // Init state machine (2-cycle init, then pipeline runs)
+    // ========================================================================
+    cpu_state_t cpu_state;
+    logic       running;
+    assign running = (cpu_state == ST_RUNNING);
 
-    // ---- PC ----
+    // ========================================================================
+    // PC
+    // ========================================================================
     logic [31:0] pc;
 
-    // ---- Instruction register ----
-    logic [31:0] ir;
+    // ========================================================================
+    // Pipeline control signals
+    // ========================================================================
+    logic stall_if, stall_id, stall_ex;
+    logic flush_if_id, flush_id_ex;
 
-    // ---- Decoded fields (from decoder, active when ir is valid) ----
-    logic [6:0]  dec_opcode;
-    logic [4:0]  dec_rd, dec_rs1, dec_rs2;
-    logic [31:0] dec_imm_i, dec_imm_iz, dec_imm_s, dec_imm_b, dec_imm_u, dec_imm_j;
-
-    // ---- Register file ----
-    logic [31:0] rs1_val, rs2_val;   // Combinational read outputs
-    logic [31:0] rs1_reg, rs2_reg;   // Latched copies for EXECUTE/MEMORY
-    logic        rf_wr_en;
-    logic [4:0]  rf_wr_addr;
-    logic [31:0] rf_wr_data;
-
-    // ---- ALU ----
-    alu_op_t     alu_op;
-    logic [31:0] alu_a, alu_b, alu_result;
-
-    // ---- Memory stage data ----
-    logic [31:0] alu_out_reg;        // Latched ALU result
-    logic [31:0] mem_load_data;      // Processed load data (sign/zero extended)
-
-    // ---- Control signals ----
-    logic is_load, is_store, is_branch, is_jal, is_jalr, is_div;
-    logic branch_taken;
-
-    // ---- Divider signals ----
+    // ========================================================================
+    // Divider signals
+    // ========================================================================
     logic        div_start;
     logic        div_done;
     logic [31:0] div_dividend, div_divisor;
     logic [31:0] div_quotient, div_remainder;
-    logic        div_sign_q;    // Negate quotient?
-    logic        div_sign_r;    // Negate remainder?
-    logic        div_is_rem;    // REM (not DIV)?
+    logic        div_busy;       // Divider is running
+    logic        div_sign_q;     // Negate quotient?
+    logic        div_sign_r;     // Negate remainder?
+    logic        div_is_rem;     // REM (not DIV)?
+    logic [4:0]  div_rd;         // Saved destination register
+
+    // ========================================================================
+    // IF/ID pipeline register
+    // ========================================================================
+    logic        if_id_valid;
+    logic [31:0] if_id_pc;
+    logic [31:0] if_id_ir;
+
+    // ========================================================================
+    // Decoder outputs (combinational, driven from if_id_ir)
+    // ========================================================================
+    logic [6:0]  dec_opcode;
+    logic [4:0]  dec_rd, dec_rs1, dec_rs2;
+    logic [31:0] dec_imm_i, dec_imm_iz, dec_imm_s, dec_imm_b, dec_imm_u, dec_imm_j;
+
+    // ========================================================================
+    // Register file signals
+    // ========================================================================
+    logic [31:0] rs1_val, rs2_val;
+    logic        rf_wr_en;
+    logic [4:0]  rf_wr_addr;
+    logic [31:0] rf_wr_data;
+
+    // ========================================================================
+    // ID/EX pipeline register
+    // ========================================================================
+    logic        id_ex_valid;
+    logic [31:0] id_ex_pc;
+    logic [4:0]  id_ex_rs1, id_ex_rs2, id_ex_rd;
+    logic [31:0] id_ex_rs1_val, id_ex_rs2_val;
+    logic [6:0]  id_ex_opcode;
+    alu_op_t     id_ex_alu_op;
+    logic [31:0] id_ex_imm_i, id_ex_imm_iz, id_ex_imm_s, id_ex_imm_b, id_ex_imm_u, id_ex_imm_j;
+    logic        id_ex_is_load, id_ex_is_store, id_ex_is_branch;
+    logic        id_ex_is_jal, id_ex_is_jalr, id_ex_is_div;
+    logic        id_ex_rf_wr_en;
+
+    // ========================================================================
+    // EX/MEM pipeline register
+    // ========================================================================
+    logic        ex_mem_valid;
+    logic [31:0] ex_mem_alu_result;
+    logic [31:0] ex_mem_rf_wr_data;
+    logic [31:0] ex_mem_store_data;
+    logic [4:0]  ex_mem_rd;
+    logic [6:0]  ex_mem_opcode;
+    logic        ex_mem_is_load, ex_mem_is_store;
+    logic        ex_mem_rf_wr_en;
+
+    // ========================================================================
+    // MEM/WB pipeline register
+    // ========================================================================
+    logic        mem_wb_valid;
+    logic [31:0] mem_wb_rf_wr_data;
+    logic [4:0]  mem_wb_rd;
+    logic        mem_wb_rf_wr_en;
 
     // ========================================================================
     // Submodule instantiation
     // ========================================================================
 
-    // Decoder — combinational, driven by IR
+    // Decoder — driven from IF/ID instruction register
     slow32_decode u_decode (
-        .instr   (ir),
+        .instr   (if_id_ir),
         .opcode  (dec_opcode),
         .rd      (dec_rd),
         .rs1     (dec_rs1),
@@ -101,7 +150,7 @@ module slow32_cpu (
         .imm_j   (dec_imm_j)
     );
 
-    // Register file
+    // Register file (write-through bypass built in)
     slow32_regfile u_regfile (
         .clk      (clk),
         .rst_n    (rst_n),
@@ -115,6 +164,9 @@ module slow32_cpu (
     );
 
     // ALU
+    alu_op_t     alu_op;
+    logic [31:0] alu_a, alu_b, alu_result;
+
     slow32_alu u_alu (
         .op     (alu_op),
         .a      (alu_a),
@@ -122,7 +174,7 @@ module slow32_cpu (
         .result (alu_result)
     );
 
-    // Divider — 32-cycle unsigned restoring division
+    // Divider
     slow32_divider u_divider (
         .clk       (clk),
         .rst_n     (rst_n),
@@ -135,163 +187,344 @@ module slow32_cpu (
     );
 
     // ========================================================================
-    // Instruction classification
+    // ID stage: instruction classification (combinational from decoder output)
     // ========================================================================
+    logic id_is_load, id_is_store, id_is_branch, id_is_jal, id_is_jalr, id_is_div;
+    logic id_rf_wr_en;
+
     always_comb begin
-        is_load   = (dec_opcode >= OP_LDB && dec_opcode <= OP_LDHU);
-        is_store  = (dec_opcode >= OP_STB && dec_opcode <= OP_STW);
-        is_jal    = (dec_opcode == OP_JAL);
-        is_jalr   = (dec_opcode == OP_JALR);
-        is_branch = (dec_opcode >= OP_BEQ && dec_opcode <= OP_BGEU);
-        is_div    = (dec_opcode == OP_DIV || dec_opcode == OP_REM);
+        id_is_load   = (dec_opcode >= OP_LDB && dec_opcode <= OP_LDHU);
+        id_is_store  = (dec_opcode >= OP_STB && dec_opcode <= OP_STW);
+        id_is_jal    = (dec_opcode == OP_JAL);
+        id_is_jalr   = (dec_opcode == OP_JALR);
+        id_is_branch = (dec_opcode >= OP_BEQ && dec_opcode <= OP_BGEU);
+        id_is_div    = (dec_opcode == OP_DIV || dec_opcode == OP_REM);
     end
 
-    // ========================================================================
-    // ALU operation selection
-    // ========================================================================
+    // Will this instruction write a register?
     always_comb begin
-        alu_op = ALU_ADD;  // Default
+        id_rf_wr_en = 1'b0;
+        if (if_id_valid) begin
+            case (dec_opcode)
+                OP_ADD, OP_SUB, OP_XOR, OP_OR, OP_AND,
+                OP_SLL, OP_SRL, OP_SRA, OP_SLT, OP_SLTU,
+                OP_MUL, OP_MULH, OP_DIV, OP_REM,
+                OP_SEQ, OP_SNE, OP_MULHU:
+                    id_rf_wr_en = 1'b1;
+                OP_ADDI, OP_ORI, OP_ANDI, OP_SLLI, OP_SRLI, OP_SRAI,
+                OP_SLTI, OP_SLTIU, OP_XORI:
+                    id_rf_wr_en = 1'b1;
+                OP_SGT, OP_SGTU, OP_SLE, OP_SLEU, OP_SGE, OP_SGEU:
+                    id_rf_wr_en = 1'b1;
+                OP_LUI:
+                    id_rf_wr_en = 1'b1;
+                OP_LDB, OP_LDH, OP_LDW, OP_LDBU, OP_LDHU:
+                    id_rf_wr_en = 1'b1;
+                OP_JAL, OP_JALR:
+                    id_rf_wr_en = 1'b1;
+                default:
+                    id_rf_wr_en = 1'b0;
+            endcase
+        end
+    end
+
+    // ALU op selection (combinational from decoder output)
+    alu_op_t id_alu_op;
+    always_comb begin
+        id_alu_op = ALU_ADD;
         case (dec_opcode)
-            OP_ADD:   alu_op = ALU_ADD;
-            OP_SUB:   alu_op = ALU_SUB;
-            OP_XOR:   alu_op = ALU_XOR;
-            OP_OR:    alu_op = ALU_OR;
-            OP_AND:   alu_op = ALU_AND;
-            OP_SLL:   alu_op = ALU_SLL;
-            OP_SRL:   alu_op = ALU_SRL;
-            OP_SRA:   alu_op = ALU_SRA;
-            OP_SLT:   alu_op = ALU_SLT;
-            OP_SLTU:  alu_op = ALU_SLTU;
-            OP_MUL:   alu_op = ALU_MUL;
-            OP_MULH:  alu_op = ALU_MULH;
-            OP_DIV:   alu_op = ALU_DIV;
-            OP_REM:   alu_op = ALU_REM;
-            OP_SEQ:   alu_op = ALU_SEQ;
-            OP_SNE:   alu_op = ALU_SNE;
-            OP_ADDI:  alu_op = ALU_ADD;
-            OP_ORI:   alu_op = ALU_OR;
-            OP_ANDI:  alu_op = ALU_AND;
-            OP_SLLI:  alu_op = ALU_SLL;
-            OP_SRLI:  alu_op = ALU_SRL;
-            OP_SRAI:  alu_op = ALU_SRA;
-            OP_SLTI:  alu_op = ALU_SLT;
-            OP_SLTIU: alu_op = ALU_SLTU;
-            OP_XORI:  alu_op = ALU_XOR;
-            OP_SGT:   alu_op = ALU_SGT;
-            OP_SGTU:  alu_op = ALU_SGTU;
-            OP_SLE:   alu_op = ALU_SLE;
-            OP_SLEU:  alu_op = ALU_SLEU;
-            OP_SGE:   alu_op = ALU_SGE;
-            OP_SGEU:  alu_op = ALU_SGEU;
-            OP_MULHU: alu_op = ALU_MULHU;
-            OP_LUI:   alu_op = ALU_PASS_B;
-            OP_LDB, OP_LDH, OP_LDW, OP_LDBU, OP_LDHU: alu_op = ALU_ADD;
-            OP_STB, OP_STH, OP_STW:                     alu_op = ALU_ADD;
-            OP_JAL, OP_JALR: alu_op = ALU_ADD;
-            default: alu_op = ALU_ADD;
+            OP_ADD:   id_alu_op = ALU_ADD;
+            OP_SUB:   id_alu_op = ALU_SUB;
+            OP_XOR:   id_alu_op = ALU_XOR;
+            OP_OR:    id_alu_op = ALU_OR;
+            OP_AND:   id_alu_op = ALU_AND;
+            OP_SLL:   id_alu_op = ALU_SLL;
+            OP_SRL:   id_alu_op = ALU_SRL;
+            OP_SRA:   id_alu_op = ALU_SRA;
+            OP_SLT:   id_alu_op = ALU_SLT;
+            OP_SLTU:  id_alu_op = ALU_SLTU;
+            OP_MUL:   id_alu_op = ALU_MUL;
+            OP_MULH:  id_alu_op = ALU_MULH;
+            OP_DIV:   id_alu_op = ALU_DIV;
+            OP_REM:   id_alu_op = ALU_REM;
+            OP_SEQ:   id_alu_op = ALU_SEQ;
+            OP_SNE:   id_alu_op = ALU_SNE;
+            OP_ADDI:  id_alu_op = ALU_ADD;
+            OP_ORI:   id_alu_op = ALU_OR;
+            OP_ANDI:  id_alu_op = ALU_AND;
+            OP_SLLI:  id_alu_op = ALU_SLL;
+            OP_SRLI:  id_alu_op = ALU_SRL;
+            OP_SRAI:  id_alu_op = ALU_SRA;
+            OP_SLTI:  id_alu_op = ALU_SLT;
+            OP_SLTIU: id_alu_op = ALU_SLTU;
+            OP_XORI:  id_alu_op = ALU_XOR;
+            OP_SGT:   id_alu_op = ALU_SGT;
+            OP_SGTU:  id_alu_op = ALU_SGTU;
+            OP_SLE:   id_alu_op = ALU_SLE;
+            OP_SLEU:  id_alu_op = ALU_SLEU;
+            OP_SGE:   id_alu_op = ALU_SGE;
+            OP_SGEU:  id_alu_op = ALU_SGEU;
+            OP_MULHU: id_alu_op = ALU_MULHU;
+            OP_LUI:   id_alu_op = ALU_PASS_B;
+            OP_LDB, OP_LDH, OP_LDW, OP_LDBU, OP_LDHU: id_alu_op = ALU_ADD;
+            OP_STB, OP_STH, OP_STW:                     id_alu_op = ALU_ADD;
+            OP_JAL, OP_JALR: id_alu_op = ALU_ADD;
+            default: id_alu_op = ALU_ADD;
         endcase
     end
 
     // ========================================================================
-    // ALU operand selection
+    // Hazard detection (combinational)
+    // ========================================================================
+
+    // Load-use hazard: instruction in EX is a load, and instruction in ID
+    // reads the load's destination register
+    logic load_use_hazard;
+    always_comb begin
+        load_use_hazard = 1'b0;
+        if (id_ex_valid && id_ex_is_load && id_ex_rd != 5'd0) begin
+            if (if_id_valid) begin
+                // Check rs1 usage
+                if (dec_rs1 == id_ex_rd) begin
+                    // Almost all instructions use rs1
+                    case (dec_opcode)
+                        OP_LUI, OP_JAL, OP_NOP, OP_YIELD, OP_HALT:
+                            ;  // These don't use rs1
+                        default:
+                            load_use_hazard = 1'b1;
+                    endcase
+                end
+                // Check rs2 usage (R-type, stores, branches)
+                if (dec_rs2 == id_ex_rd) begin
+                    case (dec_opcode)
+                        OP_ADD, OP_SUB, OP_XOR, OP_OR, OP_AND,
+                        OP_SLL, OP_SRL, OP_SRA, OP_SLT, OP_SLTU,
+                        OP_MUL, OP_MULH, OP_DIV, OP_REM,
+                        OP_SEQ, OP_SNE, OP_MULHU,
+                        OP_SGT, OP_SGTU, OP_SLE, OP_SLEU, OP_SGE, OP_SGEU:
+                            load_use_hazard = 1'b1;
+                        OP_STB, OP_STH, OP_STW:
+                            load_use_hazard = 1'b1;
+                        OP_BEQ, OP_BNE, OP_BLT, OP_BGE, OP_BLTU, OP_BGEU:
+                            load_use_hazard = 1'b1;
+                        OP_ASSERT_EQ:
+                            load_use_hazard = 1'b1;
+                        default: ;
+                    endcase
+                end
+            end
+        end
+    end
+
+    // Divide stall: divider is busy
+    logic divide_stall;
+    assign divide_stall = div_busy;
+
+    // Combined stall signals
+    // Load-use: freeze IF only; EX advances (load → MEM), ID inserts bubble via flush_id_ex
+    // Divide: freeze IF, ID, and EX
+    assign stall_ex = divide_stall;
+    assign stall_id = stall_ex;
+    assign stall_if = load_use_hazard || stall_ex;
+
+    // ========================================================================
+    // EX stage: forwarding logic (combinational)
+    // ========================================================================
+    logic [31:0] fwd_rs1, fwd_rs2;
+
+    always_comb begin
+        // rs1 forwarding
+        if (ex_mem_valid && ex_mem_rf_wr_en && ex_mem_rd != 5'd0 &&
+            ex_mem_rd == id_ex_rs1)
+            fwd_rs1 = ex_mem_rf_wr_data;
+        else if (mem_wb_valid && mem_wb_rf_wr_en && mem_wb_rd != 5'd0 &&
+                 mem_wb_rd == id_ex_rs1)
+            fwd_rs1 = mem_wb_rf_wr_data;
+        else
+            fwd_rs1 = id_ex_rs1_val;
+
+        // rs2 forwarding
+        if (ex_mem_valid && ex_mem_rf_wr_en && ex_mem_rd != 5'd0 &&
+            ex_mem_rd == id_ex_rs2)
+            fwd_rs2 = ex_mem_rf_wr_data;
+        else if (mem_wb_valid && mem_wb_rf_wr_en && mem_wb_rd != 5'd0 &&
+                 mem_wb_rd == id_ex_rs2)
+            fwd_rs2 = mem_wb_rf_wr_data;
+        else
+            fwd_rs2 = id_ex_rs2_val;
+    end
+
+    // ========================================================================
+    // EX stage: ALU operand selection (combinational, uses forwarded values)
     // ========================================================================
     always_comb begin
-        alu_a = rs1_reg;
-        alu_b = rs2_reg;
+        alu_op = id_ex_alu_op;
+        alu_a  = fwd_rs1;
+        alu_b  = fwd_rs2;
 
-        case (dec_opcode)
+        case (id_ex_opcode)
             // I-type with sign-extended immediate
             OP_ADDI, OP_SLLI, OP_SRLI, OP_SRAI, OP_SLTI:
-                alu_b = dec_imm_i;
+                alu_b = id_ex_imm_i;
 
             // I-type with zero-extended immediate
             OP_ORI, OP_ANDI, OP_XORI, OP_SLTIU:
-                alu_b = dec_imm_iz;
+                alu_b = id_ex_imm_iz;
 
             // LUI: pass U-type immediate
             OP_LUI: begin
                 alu_a = 32'd0;
-                alu_b = dec_imm_u;
+                alu_b = id_ex_imm_u;
             end
 
             // Loads: rs1 + sign-extended I-type offset
             OP_LDB, OP_LDH, OP_LDW, OP_LDBU, OP_LDHU:
-                alu_b = dec_imm_i;
+                alu_b = id_ex_imm_i;
 
             // Stores: rs1 + sign-extended S-type offset
             OP_STB, OP_STH, OP_STW:
-                alu_b = dec_imm_s;
+                alu_b = id_ex_imm_s;
 
-            // JALR: rs1 + imm_i (computes target address)
+            // JALR: rs1 + imm_i
             OP_JALR:
-                alu_b = dec_imm_i;
+                alu_b = id_ex_imm_i;
 
             default: begin
-                alu_a = rs1_reg;
-                alu_b = rs2_reg;
+                alu_a = fwd_rs1;
+                alu_b = fwd_rs2;
             end
         endcase
     end
 
     // ========================================================================
-    // Branch condition evaluation
+    // EX stage: branch evaluation (combinational, uses forwarded values)
     // ========================================================================
+    logic branch_taken;
+    logic [31:0] branch_target;
+    logic ex_redirect;  // Take a branch/jump, flush pipeline
+
     always_comb begin
         branch_taken = 1'b0;
-        case (dec_opcode)
-            OP_BEQ:  branch_taken = (rs1_reg == rs2_reg);
-            OP_BNE:  branch_taken = (rs1_reg != rs2_reg);
-            OP_BLT:  branch_taken = ($signed(rs1_reg) <  $signed(rs2_reg));
-            OP_BGE:  branch_taken = ($signed(rs1_reg) >= $signed(rs2_reg));
-            OP_BLTU: branch_taken = (rs1_reg <  rs2_reg);
-            OP_BGEU: branch_taken = (rs1_reg >= rs2_reg);
-            default: branch_taken = 1'b0;
-        endcase
+        if (id_ex_valid && id_ex_is_branch) begin
+            case (id_ex_opcode)
+                OP_BEQ:  branch_taken = (fwd_rs1 == fwd_rs2);
+                OP_BNE:  branch_taken = (fwd_rs1 != fwd_rs2);
+                OP_BLT:  branch_taken = ($signed(fwd_rs1) <  $signed(fwd_rs2));
+                OP_BGE:  branch_taken = ($signed(fwd_rs1) >= $signed(fwd_rs2));
+                OP_BLTU: branch_taken = (fwd_rs1 <  fwd_rs2);
+                OP_BGEU: branch_taken = (fwd_rs1 >= fwd_rs2);
+                default: branch_taken = 1'b0;
+            endcase
+        end
+    end
+
+    always_comb begin
+        branch_target = 32'd0;
+        if (id_ex_is_branch)
+            branch_target = id_ex_pc + 32'd4 + id_ex_imm_b;
+        else if (id_ex_is_jal)
+            branch_target = id_ex_pc + id_ex_imm_j;
+        else if (id_ex_is_jalr)
+            branch_target = alu_result & ~32'd1;
+    end
+
+    always_comb begin
+        ex_redirect = 1'b0;
+        if (id_ex_valid && !stall_ex) begin
+            if ((id_ex_is_branch && branch_taken) || id_ex_is_jal || id_ex_is_jalr)
+                ex_redirect = 1'b1;
+            if (id_ex_opcode == OP_HALT)
+                ex_redirect = 1'b1;  // Flush pipeline on halt
+        end
+    end
+
+    // Flush IF/ID and ID/EX when EX stage redirects (or load-use inserts bubble)
+    assign flush_if_id = ex_redirect;
+    assign flush_id_ex = ex_redirect || load_use_hazard;
+
+    // ========================================================================
+    // EX stage: compute writeback data for this instruction
+    // ========================================================================
+    logic [31:0] ex_wr_data;
+    logic        ex_is_div_corner;
+    logic [31:0] ex_div_corner_result;
+
+    // DIV/REM corner case detection
+    always_comb begin
+        ex_is_div_corner = 1'b0;
+        ex_div_corner_result = 32'd0;
+        if (id_ex_valid && id_ex_is_div) begin
+            if (fwd_rs2 == 32'd0) begin
+                // Div-by-zero
+                ex_is_div_corner = 1'b1;
+                ex_div_corner_result = (id_ex_opcode == OP_REM) ? fwd_rs1 : 32'hFFFFFFFF;
+            end else if (fwd_rs1 == 32'h80000000 && fwd_rs2 == 32'hFFFFFFFF) begin
+                // INT_MIN / -1
+                ex_is_div_corner = 1'b1;
+                ex_div_corner_result = (id_ex_opcode == OP_REM) ? 32'd0 : 32'h80000000;
+            end
+        end
+    end
+
+    always_comb begin
+        if (id_ex_is_jal || id_ex_is_jalr)
+            ex_wr_data = id_ex_pc + 32'd4;  // Link address
+        else if (id_ex_is_div && ex_is_div_corner)
+            ex_wr_data = ex_div_corner_result;
+        else
+            ex_wr_data = alu_result;
     end
 
     // ========================================================================
-    // Memory interface: data port
+    // MEM stage: memory interface (active when EX/MEM has a load or store)
     // ========================================================================
-    assign dmem_addr = alu_out_reg;
+    assign dmem_addr = ex_mem_alu_result;
 
-    // Store data: rs2_reg positioned on correct byte lanes
+    // dmem_ren/dmem_wen
+    assign dmem_ren = ex_mem_valid && ex_mem_is_load;
+    assign dmem_wen = ex_mem_valid && ex_mem_is_store;
+
+    // Store data: position on correct byte lanes
     always_comb begin
         dmem_wdata   = 32'd0;
         dmem_byte_en = 4'b0000;
-        case (dec_opcode)
-            OP_STB: begin
-                dmem_wdata   = {4{rs2_reg[7:0]}};
-                case (alu_out_reg[1:0])
-                    2'd0: dmem_byte_en = 4'b0001;
-                    2'd1: dmem_byte_en = 4'b0010;
-                    2'd2: dmem_byte_en = 4'b0100;
-                    2'd3: dmem_byte_en = 4'b1000;
-                endcase
-            end
-            OP_STH: begin
-                dmem_wdata   = {2{rs2_reg[15:0]}};
-                case (alu_out_reg[1])
-                    1'd0: dmem_byte_en = 4'b0011;
-                    1'd1: dmem_byte_en = 4'b1100;
-                endcase
-            end
-            OP_STW: begin
-                dmem_wdata   = rs2_reg;
-                dmem_byte_en = 4'b1111;
-            end
-            default: begin
-                dmem_wdata   = 32'd0;
-                dmem_byte_en = 4'b0000;
-            end
-        endcase
+        if (ex_mem_valid && ex_mem_is_store) begin
+            case (ex_mem_opcode)
+                OP_STB: begin
+                    dmem_wdata = {4{ex_mem_store_data[7:0]}};
+                    case (ex_mem_alu_result[1:0])
+                        2'd0: dmem_byte_en = 4'b0001;
+                        2'd1: dmem_byte_en = 4'b0010;
+                        2'd2: dmem_byte_en = 4'b0100;
+                        2'd3: dmem_byte_en = 4'b1000;
+                    endcase
+                end
+                OP_STH: begin
+                    dmem_wdata = {2{ex_mem_store_data[15:0]}};
+                    case (ex_mem_alu_result[1])
+                        1'd0: dmem_byte_en = 4'b0011;
+                        1'd1: dmem_byte_en = 4'b1100;
+                    endcase
+                end
+                OP_STW: begin
+                    dmem_wdata   = ex_mem_store_data;
+                    dmem_byte_en = 4'b1111;
+                end
+                default: begin
+                    dmem_wdata   = 32'd0;
+                    dmem_byte_en = 4'b0000;
+                end
+            endcase
+        end
     end
 
     // Load data: extract and sign/zero extend from full word
+    logic [31:0] mem_load_data;
     always_comb begin
         mem_load_data = dmem_rdata;
-        case (dec_opcode)
+        case (ex_mem_opcode)
             OP_LDB: begin
-                case (alu_out_reg[1:0])
+                case (ex_mem_alu_result[1:0])
                     2'd0: mem_load_data = {{24{dmem_rdata[7]}},  dmem_rdata[7:0]};
                     2'd1: mem_load_data = {{24{dmem_rdata[15]}}, dmem_rdata[15:8]};
                     2'd2: mem_load_data = {{24{dmem_rdata[23]}}, dmem_rdata[23:16]};
@@ -299,7 +532,7 @@ module slow32_cpu (
                 endcase
             end
             OP_LDBU: begin
-                case (alu_out_reg[1:0])
+                case (ex_mem_alu_result[1:0])
                     2'd0: mem_load_data = {24'd0, dmem_rdata[7:0]};
                     2'd1: mem_load_data = {24'd0, dmem_rdata[15:8]};
                     2'd2: mem_load_data = {24'd0, dmem_rdata[23:16]};
@@ -307,25 +540,30 @@ module slow32_cpu (
                 endcase
             end
             OP_LDH: begin
-                case (alu_out_reg[1])
+                case (ex_mem_alu_result[1])
                     1'd0: mem_load_data = {{16{dmem_rdata[15]}}, dmem_rdata[15:0]};
                     1'd1: mem_load_data = {{16{dmem_rdata[31]}}, dmem_rdata[31:16]};
                 endcase
             end
             OP_LDHU: begin
-                case (alu_out_reg[1])
+                case (ex_mem_alu_result[1])
                     1'd0: mem_load_data = {16'd0, dmem_rdata[15:0]};
                     1'd1: mem_load_data = {16'd0, dmem_rdata[31:16]};
                 endcase
             end
-            OP_LDW: begin
+            OP_LDW:
                 mem_load_data = dmem_rdata;
-            end
-            default: begin
+            default:
                 mem_load_data = dmem_rdata;
-            end
         endcase
     end
+
+    // ========================================================================
+    // WB stage: register file write
+    // ========================================================================
+    assign rf_wr_en   = mem_wb_valid && mem_wb_rf_wr_en && (mem_wb_rd != 5'd0);
+    assign rf_wr_addr = mem_wb_rd;
+    assign rf_wr_data = mem_wb_rf_wr_data;
 
     // ========================================================================
     // Instruction fetch address
@@ -333,211 +571,295 @@ module slow32_cpu (
     assign imem_addr = pc;
 
     // ========================================================================
-    // Main FSM
+    // EX stage: DEBUG instruction
+    // ========================================================================
+    logic ex_debug_valid;
+    logic [7:0] ex_debug_char;
+    always_comb begin
+        ex_debug_valid = id_ex_valid && !stall_ex && (id_ex_opcode == OP_DEBUG);
+        ex_debug_char  = fwd_rs1[7:0];
+    end
+
+    // ========================================================================
+    // EX stage: ASSERT_EQ instruction
+    // ========================================================================
+    logic ex_assert_fail;
+    always_comb begin
+        ex_assert_fail = 1'b0;
+        if (id_ex_valid && !stall_ex && id_ex_opcode == OP_ASSERT_EQ) begin
+            if (fwd_rs1 != fwd_rs2)
+                ex_assert_fail = 1'b1;
+        end
+    end
+
+    // ========================================================================
+    // Main pipeline clock logic
     // ========================================================================
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state       <= ST_INIT_SP;
-            pc          <= 32'd0;
-            ir          <= 32'd0;
-            rs1_reg     <= 32'd0;
-            rs2_reg     <= 32'd0;
-            alu_out_reg <= 32'd0;
-            halted      <= 1'b0;
-            debug_valid <= 1'b0;
-            debug_char  <= 8'd0;
-            assert_fail <= 1'b0;
-            assert_rs1  <= 5'd0;
-            assert_rs2  <= 5'd0;
-            assert_val1 <= 32'd0;
-            assert_val2 <= 32'd0;
-            assert_pc   <= 32'd0;
-            rf_wr_en    <= 1'b0;
-            rf_wr_addr  <= 5'd0;
-            rf_wr_data  <= 32'd0;
-            dmem_wen    <= 1'b0;
-            dmem_ren    <= 1'b0;
-            div_start   <= 1'b0;
+            cpu_state    <= ST_INIT_SP;
+            pc           <= 32'd0;
+            halted       <= 1'b0;
+            debug_valid  <= 1'b0;
+            debug_char   <= 8'd0;
+            assert_fail  <= 1'b0;
+            assert_rs1   <= 5'd0;
+            assert_rs2   <= 5'd0;
+            assert_val1  <= 32'd0;
+            assert_val2  <= 32'd0;
+            assert_pc    <= 32'd0;
+
+            // Pipeline registers
+            if_id_valid  <= 1'b0;
+            if_id_pc     <= 32'd0;
+            if_id_ir     <= 32'd0;
+
+            id_ex_valid  <= 1'b0;
+            id_ex_pc     <= 32'd0;
+            id_ex_rs1    <= 5'd0;
+            id_ex_rs2    <= 5'd0;
+            id_ex_rd     <= 5'd0;
+            id_ex_rs1_val <= 32'd0;
+            id_ex_rs2_val <= 32'd0;
+            id_ex_opcode <= 7'd0;
+            id_ex_alu_op <= ALU_ADD;
+            id_ex_imm_i  <= 32'd0;
+            id_ex_imm_iz <= 32'd0;
+            id_ex_imm_s  <= 32'd0;
+            id_ex_imm_b  <= 32'd0;
+            id_ex_imm_u  <= 32'd0;
+            id_ex_imm_j  <= 32'd0;
+            id_ex_is_load  <= 1'b0;
+            id_ex_is_store <= 1'b0;
+            id_ex_is_branch <= 1'b0;
+            id_ex_is_jal   <= 1'b0;
+            id_ex_is_jalr  <= 1'b0;
+            id_ex_is_div   <= 1'b0;
+            id_ex_rf_wr_en <= 1'b0;
+
+            ex_mem_valid     <= 1'b0;
+            ex_mem_alu_result <= 32'd0;
+            ex_mem_rf_wr_data <= 32'd0;
+            ex_mem_store_data <= 32'd0;
+            ex_mem_rd        <= 5'd0;
+            ex_mem_opcode    <= 7'd0;
+            ex_mem_is_load   <= 1'b0;
+            ex_mem_is_store  <= 1'b0;
+            ex_mem_rf_wr_en  <= 1'b0;
+
+            mem_wb_valid     <= 1'b0;
+            mem_wb_rf_wr_data <= 32'd0;
+            mem_wb_rd        <= 5'd0;
+            mem_wb_rf_wr_en  <= 1'b0;
+
+            // Divider
+            div_start    <= 1'b0;
             div_dividend <= 32'd0;
             div_divisor  <= 32'd0;
-            div_sign_q  <= 1'b0;
-            div_sign_r  <= 1'b0;
-            div_is_rem  <= 1'b0;
-        end else if (!halted) begin
+            div_busy     <= 1'b0;
+            div_sign_q   <= 1'b0;
+            div_sign_r   <= 1'b0;
+            div_is_rem   <= 1'b0;
+            div_rd       <= 5'd0;
+        end else if (halted) begin
+            // Stay halted, clear pulses
+            debug_valid <= 1'b0;
+            assert_fail <= 1'b0;
+            div_start   <= 1'b0;
+        end else begin
             // Default: clear single-cycle pulses
             debug_valid <= 1'b0;
             assert_fail <= 1'b0;
-            rf_wr_en    <= 1'b0;
-            dmem_wen    <= 1'b0;
-            dmem_ren    <= 1'b0;
             div_start   <= 1'b0;
 
-            case (state)
+            case (cpu_state)
                 // ============================================================
-                // INIT_SP: Write init_sp to r29 (SP), then init FP
+                // INIT_SP: Write init_sp to r29 (SP)
                 // ============================================================
                 ST_INIT_SP: begin
-                    rf_wr_en   <= 1'b1;
-                    rf_wr_addr <= 5'd29;
-                    rf_wr_data <= init_sp;
-                    state      <= ST_INIT_FP;
+                    // Use the regfile write port directly via WB stage signals
+                    // We'll set mem_wb to write r29
+                    mem_wb_valid     <= 1'b1;
+                    mem_wb_rf_wr_en  <= 1'b1;
+                    mem_wb_rd        <= 5'd29;
+                    mem_wb_rf_wr_data <= init_sp;
+                    cpu_state        <= ST_INIT_FP;
                 end
 
                 // ============================================================
-                // INIT_FP: Write init_sp to r30 (FP), set PC, enter FETCH
+                // INIT_FP: Write init_sp to r30 (FP), set PC, start running
                 // ============================================================
                 ST_INIT_FP: begin
-                    rf_wr_en   <= 1'b1;
-                    rf_wr_addr <= 5'd30;
-                    rf_wr_data <= init_sp;
-                    pc         <= init_pc;
-                    state      <= ST_FETCH;
+                    mem_wb_valid     <= 1'b1;
+                    mem_wb_rf_wr_en  <= 1'b1;
+                    mem_wb_rd        <= 5'd30;
+                    mem_wb_rf_wr_data <= init_sp;
+                    pc               <= init_pc;
+                    cpu_state        <= ST_RUNNING;
                 end
 
                 // ============================================================
-                // FETCH: Latch instruction from imem_rdata
+                // RUNNING: Pipeline operates
                 // ============================================================
-                ST_FETCH: begin
-                    ir    <= imem_rdata;
-                    state <= ST_DECODE;
-                end
+                ST_RUNNING: begin
 
-                // ============================================================
-                // DECODE: Latch register values for EXECUTE
-                // ============================================================
-                ST_DECODE: begin
-                    rs1_reg <= rs1_val;
-                    rs2_reg <= rs2_val;
-                    state   <= ST_EXECUTE;
-                end
+                    // ---- WB stage: MEM/WB → register file (via assign) ----
+                    // (rf_wr_en/addr/data driven by assigns above)
 
-                // ============================================================
-                // EXECUTE: Run ALU, evaluate branches, handle jumps
-                // ============================================================
-                ST_EXECUTE: begin
-                    alu_out_reg <= alu_result;
+                    // ---- MEM stage: EX/MEM → MEM/WB ----
+                    if (!stall_ex) begin
+                        mem_wb_valid <= ex_mem_valid;
+                        mem_wb_rd   <= ex_mem_rd;
+                        mem_wb_rf_wr_en <= ex_mem_rf_wr_en;
+                        if (ex_mem_valid && ex_mem_is_load)
+                            mem_wb_rf_wr_data <= mem_load_data;
+                        else
+                            mem_wb_rf_wr_data <= ex_mem_rf_wr_data;
+                    end
 
-                    if (is_load) begin
-                        dmem_ren <= 1'b1;
-                        state    <= ST_MEMORY;
-                    end else if (is_store) begin
-                        dmem_wen <= 1'b1;
-                        state    <= ST_MEMORY;
-                    end else if (is_branch) begin
-                        if (branch_taken)
-                            pc <= pc + 32'd4 + dec_imm_b;
+                    // ---- EX stage: ID/EX → EX/MEM ----
+                    if (!stall_ex) begin
+                        // Check for HALT
+                        if (id_ex_valid && id_ex_opcode == OP_HALT) begin
+                            halted <= 1'b1;
+                            // Flush everything downstream
+                            ex_mem_valid <= 1'b0;
+                        end
+                        // Check for ASSERT failure
+                        else if (ex_assert_fail) begin
+                            assert_fail <= 1'b1;
+                            assert_rs1  <= id_ex_rs1;
+                            assert_rs2  <= id_ex_rs2;
+                            assert_val1 <= fwd_rs1;
+                            assert_val2 <= fwd_rs2;
+                            assert_pc   <= id_ex_pc;
+                            halted      <= 1'b1;
+                            ex_mem_valid <= 1'b0;
+                        end
+                        // Check for DEBUG
+                        else if (ex_debug_valid) begin
+                            debug_valid <= 1'b1;
+                            debug_char  <= ex_debug_char;
+                            // DEBUG doesn't write back or access memory
+                            ex_mem_valid    <= 1'b0;
+                        end
+                        // DIV/REM: start divider or handle corner case
+                        else if (id_ex_valid && id_ex_is_div && !ex_is_div_corner && !div_busy) begin
+                            // Start divider for normal case
+                            // Save DIV context — ID/EX will be overwritten next cycle
+                            // (div_busy isn't set until next edge, so ID advances this cycle)
+                            div_sign_q  <= fwd_rs1[31] ^ fwd_rs2[31];
+                            div_sign_r  <= fwd_rs1[31];
+                            div_is_rem  <= (id_ex_opcode == OP_REM);
+                            div_rd      <= id_ex_rd;
+                            div_dividend <= fwd_rs1[31] ? (~fwd_rs1 + 32'd1) : fwd_rs1;
+                            div_divisor  <= fwd_rs2[31] ? (~fwd_rs2 + 32'd1) : fwd_rs2;
+                            div_start    <= 1'b1;
+                            div_busy     <= 1'b1;
+                            // Don't advance EX/MEM yet — result comes when div_done fires
+                            ex_mem_valid <= 1'b0;
+                        end
+                        else begin
+                            // Normal instruction: advance to EX/MEM
+                            ex_mem_valid     <= id_ex_valid;
+                            ex_mem_alu_result <= alu_result;
+                            ex_mem_rf_wr_data <= ex_wr_data;
+                            ex_mem_store_data <= fwd_rs2;
+                            ex_mem_rd        <= id_ex_rd;
+                            ex_mem_opcode    <= id_ex_opcode;
+                            ex_mem_is_load   <= id_ex_is_load;
+                            ex_mem_is_store  <= id_ex_is_store;
+                            ex_mem_rf_wr_en  <= id_ex_rf_wr_en;
+                            // Stores and branches don't write back
+                            if (id_ex_is_store || id_ex_is_branch ||
+                                id_ex_opcode == OP_NOP || id_ex_opcode == OP_YIELD)
+                                ex_mem_rf_wr_en <= 1'b0;
+                        end
+                    end else begin
+                        // Stalled (divider busy): check if divider just finished
+                        if (div_done) begin
+                            div_busy <= 1'b0;
+                            // Latch divider result with sign correction
+                            // Use saved div_rd (ID/EX was overwritten when divider started)
+                            ex_mem_valid     <= 1'b1;
+                            ex_mem_rd        <= div_rd;
+                            ex_mem_opcode    <= 7'd0;
+                            ex_mem_is_load   <= 1'b0;
+                            ex_mem_is_store  <= 1'b0;
+                            ex_mem_rf_wr_en  <= 1'b1;
+                            ex_mem_alu_result <= 32'd0;
+                            if (div_is_rem)
+                                ex_mem_rf_wr_data <= div_sign_r ? (~div_remainder + 32'd1) : div_remainder;
+                            else
+                                ex_mem_rf_wr_data <= div_sign_q ? (~div_quotient + 32'd1) : div_quotient;
+                            // Also need to push a bubble through MEM/WB since MEM was
+                            // stalled and WB consumed the old MEM/WB last cycle
+                            mem_wb_valid <= 1'b0;
+                        end else begin
+                            // Still waiting — push bubble through MEM/WB
+                            mem_wb_valid <= ex_mem_valid;
+                            mem_wb_rd    <= ex_mem_rd;
+                            mem_wb_rf_wr_en <= ex_mem_rf_wr_en;
+                            if (ex_mem_valid && ex_mem_is_load)
+                                mem_wb_rf_wr_data <= mem_load_data;
+                            else
+                                mem_wb_rf_wr_data <= ex_mem_rf_wr_data;
+                            ex_mem_valid <= 1'b0;
+                        end
+                    end
+
+                    // ---- ID stage: IF/ID → ID/EX ----
+                    if (!stall_id) begin
+                        if (flush_id_ex) begin
+                            // Insert bubble
+                            id_ex_valid <= 1'b0;
+                        end else begin
+                            id_ex_valid    <= if_id_valid;
+                            id_ex_pc       <= if_id_pc;
+                            id_ex_rs1      <= dec_rs1;
+                            id_ex_rs2      <= dec_rs2;
+                            id_ex_rd       <= dec_rd;
+                            id_ex_rs1_val  <= rs1_val;
+                            id_ex_rs2_val  <= rs2_val;
+                            id_ex_opcode   <= dec_opcode;
+                            id_ex_alu_op   <= id_alu_op;
+                            id_ex_imm_i    <= dec_imm_i;
+                            id_ex_imm_iz   <= dec_imm_iz;
+                            id_ex_imm_s    <= dec_imm_s;
+                            id_ex_imm_b    <= dec_imm_b;
+                            id_ex_imm_u    <= dec_imm_u;
+                            id_ex_imm_j    <= dec_imm_j;
+                            id_ex_is_load  <= id_is_load;
+                            id_ex_is_store <= id_is_store;
+                            id_ex_is_branch <= id_is_branch;
+                            id_ex_is_jal   <= id_is_jal;
+                            id_ex_is_jalr  <= id_is_jalr;
+                            id_ex_is_div   <= id_is_div;
+                            id_ex_rf_wr_en <= id_rf_wr_en;
+                        end
+                    end
+                    // else: stalled — hold ID/EX contents
+
+                    // ---- IF stage: fetch → IF/ID ----
+                    if (!stall_if) begin
+                        if (flush_if_id) begin
+                            // Insert bubble
+                            if_id_valid <= 1'b0;
+                        end else begin
+                            if_id_valid <= 1'b1;
+                            if_id_pc    <= pc;
+                            if_id_ir    <= imem_rdata;
+                        end
+
+                        // Advance PC
+                        if (ex_redirect)
+                            pc <= branch_target;
                         else
                             pc <= pc + 32'd4;
-                        state <= ST_FETCH;
-                    end else if (is_jal) begin
-                        rf_wr_en   <= 1'b1;
-                        rf_wr_addr <= dec_rd;
-                        rf_wr_data <= pc + 32'd4;
-                        pc         <= pc + dec_imm_j;
-                        state      <= ST_FETCH;
-                    end else if (is_jalr) begin
-                        rf_wr_en   <= 1'b1;
-                        rf_wr_addr <= dec_rd;
-                        rf_wr_data <= pc + 32'd4;
-                        pc         <= alu_result & ~32'd1;
-                        state      <= ST_FETCH;
-                    end else if (dec_opcode == OP_DEBUG) begin
-                        debug_valid <= 1'b1;
-                        debug_char  <= rs1_reg[7:0];
-                        pc          <= pc + 32'd4;
-                        state       <= ST_FETCH;
-                    end else if (dec_opcode == OP_HALT) begin
-                        halted <= 1'b1;
-                        state  <= ST_FETCH;
-                    end else if (dec_opcode == OP_NOP || dec_opcode == OP_YIELD) begin
-                        pc    <= pc + 32'd4;
-                        state <= ST_FETCH;
-                    end else if (dec_opcode == OP_ASSERT_EQ) begin
-                        if (rs1_reg != rs2_reg) begin
-                            assert_fail <= 1'b1;
-                            assert_rs1  <= dec_rs1;
-                            assert_rs2  <= dec_rs2;
-                            assert_val1 <= rs1_reg;
-                            assert_val2 <= rs2_reg;
-                            assert_pc   <= pc;
-                            halted      <= 1'b1;
-                        end
-                        pc    <= pc + 32'd4;
-                        state <= ST_FETCH;
-                    end else if (is_div) begin
-                        // DIV/REM: check corner cases first
-                        div_is_rem <= (dec_opcode == OP_REM);
-                        if (rs2_reg == 32'd0) begin
-                            // Div-by-zero: quotient=0xFFFFFFFF, remainder=dividend
-                            if (dec_opcode == OP_REM)
-                                alu_out_reg <= rs1_reg;
-                            else
-                                alu_out_reg <= 32'hFFFFFFFF;
-                            state <= ST_WRITEBACK;
-                        end else if (rs1_reg == 32'h80000000 && rs2_reg == 32'hFFFFFFFF) begin
-                            // INT_MIN / -1: quotient=INT_MIN, remainder=0
-                            if (dec_opcode == OP_REM)
-                                alu_out_reg <= 32'd0;
-                            else
-                                alu_out_reg <= 32'h80000000;
-                            state <= ST_WRITEBACK;
-                        end else begin
-                            // Normal case: compute |rs1|, |rs2|, start unsigned divider
-                            div_sign_q <= rs1_reg[31] ^ rs2_reg[31];
-                            div_sign_r <= rs1_reg[31];
-                            div_dividend <= rs1_reg[31] ? (~rs1_reg + 32'd1) : rs1_reg;
-                            div_divisor  <= rs2_reg[31] ? (~rs2_reg + 32'd1) : rs2_reg;
-                            div_start    <= 1'b1;
-                            state        <= ST_DIVIDE;
-                        end
-                    end else begin
-                        // ALU instruction: go to WRITEBACK
-                        state <= ST_WRITEBACK;
                     end
-                end
+                    // else: stalled — hold PC and IF/ID contents
 
-                // ============================================================
-                // MEMORY: Wait one cycle for memory response
-                // ============================================================
-                ST_MEMORY: begin
-                    dmem_wen <= 1'b0;
-                    dmem_ren <= 1'b0;
-                    if (is_load) begin
-                        state <= ST_WRITEBACK;
-                    end else begin
-                        pc    <= pc + 32'd4;
-                        state <= ST_FETCH;
-                    end
-                end
-
-                // ============================================================
-                // WRITEBACK: Write result to register file, advance PC
-                // ============================================================
-                ST_WRITEBACK: begin
-                    rf_wr_en   <= 1'b1;
-                    rf_wr_addr <= dec_rd;
-                    if (is_load)
-                        rf_wr_data <= mem_load_data;
-                    else
-                        rf_wr_data <= alu_out_reg;
-                    pc    <= pc + 32'd4;
-                    state <= ST_FETCH;
-                end
-
-                // ============================================================
-                // DIVIDE: Wait for divider, apply sign correction
-                // ============================================================
-                ST_DIVIDE: begin
-                    if (div_done) begin
-                        if (div_is_rem)
-                            alu_out_reg <= div_sign_r ? (~div_remainder + 32'd1) : div_remainder;
-                        else
-                            alu_out_reg <= div_sign_q ? (~div_quotient + 32'd1) : div_quotient;
-                        state <= ST_WRITEBACK;
-                    end
-                end
-
-                default: state <= ST_FETCH;
+                end // ST_RUNNING
             endcase
         end
     end

@@ -78,17 +78,12 @@ package slow32_pkg;
   localparam logic [6:0] OP_DEBUG = 7'h52;
   localparam logic [6:0] OP_HALT  = 7'h7F;
 
-  // ---- FSM states ----
-  typedef enum logic [2:0] {
-    ST_INIT_SP   = 3'd5,
-    ST_INIT_FP   = 3'd6,
-    ST_FETCH     = 3'd0,
-    ST_DECODE    = 3'd1,
-    ST_EXECUTE   = 3'd2,
-    ST_MEMORY    = 3'd3,
-    ST_WRITEBACK = 3'd4,
-    ST_DIVIDE    = 3'd7
-  } state_t;
+  // ---- CPU init states (pipeline uses RUNNING for normal operation) ----
+  typedef enum logic [1:0] {
+    ST_INIT_SP  = 2'd0,
+    ST_INIT_FP  = 2'd1,
+    ST_RUNNING  = 2'd2
+  } cpu_state_t;
 
   // ---- ALU operation codes (internal) ----
   typedef enum logic [4:0] {

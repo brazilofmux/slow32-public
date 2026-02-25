@@ -20,9 +20,13 @@ module slow32_regfile (
 
     logic [31:0] regs [1:31];  // r0 is hardwired to 0, not stored
 
-    // Combinational reads (r0 = 0)
-    assign rs1_data = (rs1_addr == 5'd0) ? 32'd0 : regs[rs1_addr];
-    assign rs2_data = (rs2_addr == 5'd0) ? 32'd0 : regs[rs2_addr];
+    // Combinational reads with write-through bypass (r0 = 0)
+    assign rs1_data = (rs1_addr == 5'd0) ? 32'd0 :
+                      (wr_en && wr_addr == rs1_addr) ? wr_data :
+                      regs[rs1_addr];
+    assign rs2_data = (rs2_addr == 5'd0) ? 32'd0 :
+                      (wr_en && wr_addr == rs2_addr) ? wr_data :
+                      regs[rs2_addr];
 
     // Synchronous write (writes to r0 are discarded)
     always_ff @(posedge clk or negedge rst_n) begin
