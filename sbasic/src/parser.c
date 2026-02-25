@@ -14,6 +14,16 @@ static void parser_error(parser_t *p, error_t err) {
     if (p->error == ERR_NONE) {
         p->error = err;
         p->error_line = lexer_peek(&p->lex)->line;
+        p->error_detail[0] = '\0';
+    }
+}
+
+static void parser_error_detail(parser_t *p, error_t err, const char *detail) {
+    if (p->error == ERR_NONE) {
+        p->error = err;
+        p->error_line = lexer_peek(&p->lex)->line;
+        strncpy(p->error_detail, detail, 127);
+        p->error_detail[127] = '\0';
     }
 }
 
@@ -22,7 +32,11 @@ static int expect(parser_t *p, token_type_t type) {
         lexer_next(&p->lex);
         return 1;
     }
-    parser_error(p, ERR_UNEXPECTED_TOKEN);
+    const char *expected = token_type_name(type);
+    const char *got = token_type_name(lexer_peek(&p->lex)->type);
+    char detail[128];
+    snprintf(detail, sizeof(detail), "Expected %s, got %s", expected, got);
+    parser_error_detail(p, ERR_UNEXPECTED_TOKEN, detail);
     return 0;
 }
 
@@ -96,7 +110,12 @@ static expr_t *parse_primary(parser_t *p) {
         return e;
     }
 
-    parser_error(p, ERR_SYNTAX);
+    {
+        char detail[128];
+        const char *got = token_type_name(lexer_peek(&p->lex)->type);
+        snprintf(detail, sizeof(detail), "Expected expression, got %s", got);
+        parser_error_detail(p, ERR_SYNTAX, detail);
+    }
     return NULL;
 }
 
@@ -429,7 +448,7 @@ static stmt_t *parse_input(parser_t *p) {
     stmt_t *s = stmt_input(prompt, line);
     free(prompt);
     if (!lexer_check(&p->lex, TOK_IDENT)) {
-        parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+        parser_error_detail(p, ERR_SYNTAX, "Expected variable after INPUT"); stmt_free(s); return NULL;
     }
     token_t t = lexer_next(&p->lex);
     if (stmt_input_add_var(s, t.text, var_type_from_name(t.text)) < 0) {
@@ -558,7 +577,7 @@ static stmt_t *parse_for(parser_t *p) {
     int line = lexer_peek(&p->lex)->line;
     lexer_next(&p->lex);
     if (!lexer_check(&p->lex, TOK_IDENT)) {
-        parser_error(p, ERR_SYNTAX); return NULL;
+        parser_error_detail(p, ERR_SYNTAX, "Expected variable after FOR"); return NULL;
     }
     token_t var = lexer_next(&p->lex);
     val_type_t vt = var_type_from_name(var.text);
@@ -933,7 +952,7 @@ static stmt_t *parse_dim_or_redim(parser_t *p, int is_redim) {
     }
 
     if (!lexer_check(&p->lex, TOK_IDENT)) {
-        parser_error(p, ERR_SYNTAX); return NULL;
+        parser_error_detail(p, ERR_SYNTAX, "Expected variable name after DIM"); return NULL;
     }
     token_t name = lexer_next(&p->lex);
 
@@ -1127,7 +1146,7 @@ static stmt_t *parse_open(parser_t *p) {
     expr_t *filename = parse_expr(p);
     if (!filename) return NULL;
     if (!lexer_match(&p->lex, TOK_FOR)) {
-        parser_error(p, ERR_SYNTAX); expr_free(filename); return NULL;
+        parser_error_detail(p, ERR_SYNTAX, "Expected FOR after filename in OPEN"); expr_free(filename); return NULL;
     }
     int mode;
     if (lexer_check(&p->lex, TOK_INPUT)) {
@@ -1141,10 +1160,10 @@ static stmt_t *parse_open(parser_t *p) {
     } else if (lexer_check(&p->lex, TOK_RANDOM)) {
         mode = FMODE_RANDOM; lexer_next(&p->lex);
     } else {
-        parser_error(p, ERR_SYNTAX); expr_free(filename); return NULL;
+        parser_error_detail(p, ERR_SYNTAX, "Expected INPUT, OUTPUT, APPEND, BINARY, or RANDOM"); expr_free(filename); return NULL;
     }
     if (!lexer_match(&p->lex, TOK_AS)) {
-        parser_error(p, ERR_SYNTAX); expr_free(filename); return NULL;
+        parser_error_detail(p, ERR_SYNTAX, "Expected AS #n in OPEN"); expr_free(filename); return NULL;
     }
     expr_t *handle = parse_file_handle(p);
     if (!handle) { expr_free(filename); return NULL; }
@@ -1827,7 +1846,12 @@ static stmt_t *parse_stmt(parser_t *p) {
 
         default:
             if (tok->type == TOK_EOF) return NULL;
-            parser_error(p, ERR_SYNTAX);
+            {
+                char detail[128];
+                const char *got = token_type_name(tok->type);
+                snprintf(detail, sizeof(detail), "Unexpected %s", got);
+                parser_error_detail(p, ERR_SYNTAX, detail);
+            }
             return NULL;
     }
 }
@@ -1838,6 +1862,7 @@ void parser_init(parser_t *p, const char *src, int start_line) {
     lexer_init(&p->lex, src, start_line);
     p->error = ERR_NONE;
     p->error_line = 0;
+    p->error_detail[0] = '\0';
 }
 
 stmt_t *parser_parse(parser_t *p) {

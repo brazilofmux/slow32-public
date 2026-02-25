@@ -178,7 +178,11 @@ static void cmd_run(void) {
     stmt_t *program = parser_parse(&parser);
 
     if (parser_had_error(&parser)) {
-        error_print(parser.error, parser.error_line);
+        if (parser.error_detail[0])
+            printf("Error in line %d: %s (%s)\n",
+                   parser.error_line, error_message(parser.error), parser.error_detail);
+        else
+            error_print(parser.error, parser.error_line);
         stmt_free(program);
         free(text);
         return;
@@ -323,7 +327,10 @@ static void exec_direct(const char *line) {
     stmt_t *s = parser_parse_line(&parser);
 
     if (parser_had_error(&parser)) {
-        error_print(parser.error, 0);
+        if (parser.error_detail[0])
+            printf("Error: %s (%s)\n", error_message(parser.error), parser.error_detail);
+        else
+            error_print(parser.error, 0);
         stmt_free(s);
         return;
     }

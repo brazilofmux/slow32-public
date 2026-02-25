@@ -9,6 +9,7 @@ typedef struct {
     lexer_t lex;
     error_t error;
     int error_line;
+    char error_detail[128];
 } parser_t;
 
 /* Initialize parser */
