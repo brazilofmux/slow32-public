@@ -19,7 +19,7 @@ TOTAL=0
 # Filter function: remove emulator status lines
 filter_output() {
     grep -v \
-        -e "^Starting execution" \
+        -e "Starting execution" \
         -e "^MMIO enabled" \
         -e "^HALT at" \
         -e "^Program halted" \

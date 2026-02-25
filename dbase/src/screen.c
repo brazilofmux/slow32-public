@@ -1257,6 +1257,7 @@ int screen_inkey(double timeout) {
 #endif
     /* Fallback: use getchar (blocking only, no timeout) */
     if (timeout == 0.0) return 0;  /* can't poll without terminal */
+    fflush(stdout);
     {
         int c = getchar();
         if (c < 0) return 0;

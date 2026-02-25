@@ -54,6 +54,7 @@ void trim_right(char *s) {
 
 int read_line(char *buf, int size) {
     int c, i = 0;
+    fflush(stdout);
     while (i < size - 1) {
         c = getchar();
         if (c == -1) {  /* EOF */

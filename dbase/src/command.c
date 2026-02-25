@@ -2372,6 +2372,7 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
         if (matched) {
             if (is_display && !to_file && row_count > 0 && (row_count % 20) == 0) {
                 printf("Press any key to continue...");
+                fflush(stdout);
                 getchar();
                 printf("\r                           \r");
             }
@@ -2918,6 +2919,8 @@ static void cmd_wait(const char *arg) {
     } else if (*p == '\0' || str_imatch(p, "TO")) {
         printf("Press any key to continue...");
     }
+
+    fflush(stdout);
 
     if (str_imatch(p, "TO")) {
         int i;
