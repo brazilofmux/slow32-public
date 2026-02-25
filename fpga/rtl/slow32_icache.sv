@@ -193,7 +193,9 @@ module slow32_icache (
 
             case (state)
                 S_IDLE: begin
-                    if (bram_addr_valid && addr_match && !tag_hit) begin
+                    // Redirect has priority over miss-start. If both happen in the
+                    // same cycle, don't start a refill for the old path address.
+                    if (!redirect && bram_addr_valid && addr_match && !tag_hit) begin
                         // Cache miss — start refill
                         state       <= S_REFILL_0;
                         refill_addr <= cpu_addr;
