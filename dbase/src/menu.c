@@ -211,11 +211,11 @@ int menu_activate_popup_ex(const char *name, int from_menubar) {
 
         /* Draw border */
         screen_box(r1, c1, r2, c2, 0);
-        fflush(stdout);
         term_set_raw(1);
 
         for (;;) {
             /* Redraw all bars */
+            term_begin_update();
             for (i = 0; i < p->nbar; i++) {
                 int row = r1 + 1 + i;
                 int j, plen;
@@ -250,6 +250,7 @@ int menu_activate_popup_ex(const char *name, int from_menubar) {
                     term_puts(p->bars[cur].message);
                 }
             }
+            term_end_update();
 
             key = read_dbase_key();
             if (screen_check_key_handler(key)) continue;
@@ -522,11 +523,11 @@ int menu_activate_menu(const char *name) {
 #if HAS_TERM
     if (screen_term_available()) {
         int key;
-        fflush(stdout);
         term_set_raw(1);
 
         for (;;) {
             /* Draw pad bar */
+            term_begin_update();
             for (i = 0; i < m->npad; i++) {
                 term_gotoxy(m->pads[i].row, m->pads[i].col);
                 if (i == cur)
@@ -555,6 +556,7 @@ int menu_activate_menu(const char *name) {
                     term_puts(m->pads[cur].message);
                 }
             }
+            term_end_update();
 
             key = read_dbase_key();
             if (screen_check_key_handler(key)) continue;

@@ -188,6 +188,7 @@ static int edit_cell(browse_state_t *bs, int field_idx,
         int key;
         /* Draw field value in reverse video */
         len = strlen(buf);
+        term_begin_update();
         term_gotoxy(screen_row, screen_col);
         term_set_attr(7);
         {
@@ -199,7 +200,7 @@ static int edit_cell(browse_state_t *bs, int field_idx,
         }
         /* Position cursor */
         term_gotoxy(screen_row, screen_col + pos);
-
+        term_end_update();
 
         key = read_dbase_key();
         if (key < 0) break;
@@ -459,10 +460,11 @@ static void cmd_edit_impl(dbf_t *db, const char *args)
 
     for (;;) {
         int key;
+        term_begin_update();
         edit_paint_header(&bs);
         edit_paint_record(&bs);
         edit_paint_help(&bs);
-
+        term_end_update();
 
         key = read_dbase_key();
         if (key < 0) break;
@@ -769,10 +771,12 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
     compute_columns(&bs);
 
     term_set_raw(1);
+    term_begin_update();
     term_clear(0);
     browse_paint_headers(&bs);
     browse_paint_all_rows(&bs);
     browse_paint_status(&bs);
+    term_end_update();
 
     for (;;) {
         int key = read_dbase_key();
@@ -783,9 +787,11 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
             if (bs.cur_row > 0) {
                 int old_row = bs.cur_row;
                 bs.cur_row--;
+                term_begin_update();
                 browse_paint_row(&bs, old_row, -1);
                 browse_paint_row(&bs, bs.cur_row, -1);
                 browse_paint_status(&bs);
+                term_end_update();
             } else {
                 /* Scroll up: try to get a previous record */
                 uint32_t first = bs.visible_recnos[0];
@@ -798,8 +804,10 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
                         bs.visible_recnos[j] = bs.visible_recnos[j - 1];
                     bs.visible_recnos[0] = db->current_record;
                     if (bs.visible_count < bs.data_rows) bs.visible_count++;
+                    term_begin_update();
                     browse_paint_all_rows(&bs);
                     browse_paint_status(&bs);
+                    term_end_update();
                 } else {
                     dbf_read_record(db, first);
                 }
@@ -808,9 +816,11 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
             if (bs.cur_row < bs.visible_count - 1) {
                 int old_row = bs.cur_row;
                 bs.cur_row++;
+                term_begin_update();
                 browse_paint_row(&bs, old_row, -1);
                 browse_paint_row(&bs, bs.cur_row, -1);
                 browse_paint_status(&bs);
+                term_end_update();
             } else {
                 /* Scroll down: try to get next record */
                 uint32_t last = bs.visible_recnos[bs.visible_count - 1];
@@ -822,8 +832,10 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
                     for (j = 0; j < bs.visible_count - 1; j++)
                         bs.visible_recnos[j] = bs.visible_recnos[j + 1];
                     bs.visible_recnos[bs.visible_count - 1] = new_rec;
+                    term_begin_update();
                     browse_paint_all_rows(&bs);
                     browse_paint_status(&bs);
+                    term_end_update();
                 } else {
                     dbf_read_record(db, last);
                 }
@@ -832,6 +844,7 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
             if (bs.cur_field > 0) {
                 int old_col = bs.cur_field - bs.first_field;
                 bs.cur_field--;
+                term_begin_update();
                 if (bs.cur_field < bs.first_field) {
                     bs.first_field = bs.cur_field;
                     compute_columns(&bs);
@@ -842,11 +855,13 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
                     browse_paint_row(&bs, bs.cur_row, -1);
                 }
                 browse_paint_status(&bs);
+                term_end_update();
             }
         } else if (key == DBASE_KEY_RIGHT) {
             if (bs.cur_field < nf - 1) {
                 int old_col = bs.cur_field - bs.first_field;
                 bs.cur_field++;
+                term_begin_update();
                 if (bs.cur_field >= bs.first_field + bs.num_visible_cols) {
                     bs.first_field++;
                     compute_columns(&bs);
@@ -857,15 +872,18 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
                     browse_paint_row(&bs, bs.cur_row, -1);
                 }
                 browse_paint_status(&bs);
+                term_end_update();
             }
         } else if (key == DBASE_KEY_HOME) {
             if (bs.cur_field != 0 || bs.first_field != 0) {
                 bs.cur_field = 0;
                 bs.first_field = 0;
                 compute_columns(&bs);
+                term_begin_update();
                 browse_paint_headers(&bs);
                 browse_paint_all_rows(&bs);
                 browse_paint_status(&bs);
+                term_end_update();
             }
         } else if (key == DBASE_KEY_END) {
             if (bs.cur_field != nf - 1) {
@@ -886,10 +904,16 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
                         bs.first_field = ff + 1;
                     }
                     compute_columns(&bs);
+                    term_begin_update();
                     browse_paint_headers(&bs);
                     browse_paint_all_rows(&bs);
+                    browse_paint_status(&bs);
+                    term_end_update();
+                } else {
+                    term_begin_update();
+                    browse_paint_status(&bs);
+                    term_end_update();
                 }
-                browse_paint_status(&bs);
             }
         } else if (key == DBASE_KEY_PGDN) {
             /* Page down */
@@ -899,16 +923,20 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
                 if (nav_next(&bs) == 0) {
                     fill_page_forward(&bs, bs.data_rows);
                     bs.cur_row = 0;
+                    term_begin_update();
                     browse_paint_all_rows(&bs);
                     browse_paint_status(&bs);
+                    term_end_update();
                 } else {
                     /* Already at end - move cursor to last row */
                     int old_row = bs.cur_row;
                     bs.cur_row = bs.visible_count - 1;
                     if (old_row != bs.cur_row) {
+                        term_begin_update();
                         browse_paint_row(&bs, old_row, -1);
                         browse_paint_row(&bs, bs.cur_row, -1);
                         browse_paint_status(&bs);
+                        term_end_update();
                     }
                     dbf_read_record(db, last);
                 }
@@ -931,16 +959,20 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
                 if (found > 0) {
                     fill_page_forward(&bs, bs.data_rows);
                     bs.cur_row = 0;
+                    term_begin_update();
                     browse_paint_all_rows(&bs);
                     browse_paint_status(&bs);
+                    term_end_update();
                 } else {
                     /* Already at top */
                     int old_row = bs.cur_row;
                     bs.cur_row = 0;
                     if (old_row != 0) {
+                        term_begin_update();
                         browse_paint_row(&bs, old_row, -1);
                         browse_paint_row(&bs, 0, -1);
                         browse_paint_status(&bs);
+                        term_end_update();
                     }
                     dbf_read_record(db, first);
                 }
@@ -951,8 +983,10 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
                 db->record_buf[0] = (db->record_buf[0] == '*') ? ' ' : '*';
                 db->record_dirty = 1;
                 dbf_flush_record(db);
+                term_begin_update();
                 browse_paint_row(&bs, bs.cur_row, -1);
                 browse_paint_status(&bs);
+                term_end_update();
             }
         } else if (key == 14) { /* Ctrl-N: append blank */
             char old_keys[MAX_INDEXES][MAX_INDEX_KEY + 1];
@@ -964,8 +998,10 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
             nav_bottom(&bs);
             fill_page_forward(&bs, bs.data_rows);
             bs.cur_row = bs.visible_count - 1;
+            term_begin_update();
             browse_paint_all_rows(&bs);
             browse_paint_status(&bs);
+            term_end_update();
             (void)old_keys;
         } else if (key == 13 || key == 10 || (key >= 32 && key < 127)) {
             /* Edit current cell */
@@ -980,8 +1016,10 @@ static void cmd_browse_impl(dbf_t *db, const char *args)
                               bs.col_x[col_in_view],
                               bs.col_w[col_in_view],
                               (key == 13 || key == 10) ? 0 : key);
+                    term_begin_update();
                     browse_paint_row(&bs, bs.cur_row, -1);
                     browse_paint_status(&bs);
+                    term_end_update();
                 }
             }
         }

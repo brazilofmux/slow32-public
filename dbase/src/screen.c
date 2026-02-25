@@ -137,7 +137,6 @@ static void apply_picture(char *out, const char *value, const char *picture, int
 static void goto_pos(int row, int col) {
 #if HAS_TERM
     if (scr.term_available) {
-        fflush(stdout);  /* drain stdio before moving cursor via MMIO */
         term_gotoxy(row, col);
         return;
     }
@@ -222,7 +221,12 @@ void screen_say(int row, int col, const char *expr_str, const char *picture) {
         screen_print_text(formatted);
     } else {
         goto_pos(row, col);
-        printf("%s", formatted);
+#if HAS_TERM
+        if (scr.term_available)
+            term_puts(formatted);
+        else
+#endif
+            printf("%s", formatted);
     }
     screen_update_pos(row, col, (int)strlen(formatted));
 }
@@ -320,7 +324,12 @@ void screen_get(int row, int col, const char *varname, const char *picture,
 
     /* Display the field */
     goto_pos(row, col);
-    printf("%s", scr.gets[scr.ngets].initial);
+#if HAS_TERM
+    if (scr.term_available)
+        term_puts(scr.gets[scr.ngets].initial);
+    else
+#endif
+        printf("%s", scr.gets[scr.ngets].initial);
     screen_update_pos(row, col, (int)strlen(scr.gets[scr.ngets].initial));
 
     scr.ngets++;
@@ -339,7 +348,6 @@ void screen_read(void) {
     if (scr.term_available) {
         /* Full-screen READ with terminal support */
         int escaped = 0;
-        fflush(stdout);  /* flush all pending SAY/GET output before raw mode */
         term_set_raw(1);
 
         for (i = 0; i < scr.ngets && !escaped; i++) {
@@ -374,11 +382,15 @@ void screen_read(void) {
             buf[len] = '\0';
             pos = 0;  /* cursor at start of field (dBase convention) */
 
-            fflush(stdout);
+            term_begin_update();
             term_gotoxy(scr.gets[i].row, scr.gets[i].col);
-            printf("%-*s", fwidth, buf);
-            fflush(stdout);
+            {
+                int fi;
+                for (fi = 0; fi < fwidth; fi++)
+                    term_putc(fi < len ? buf[fi] : ' ');
+            }
             term_gotoxy(scr.gets[i].row, scr.gets[i].col);
+            term_end_update();
 
             for (;;) {
                 key = read_dbase_key();
@@ -398,8 +410,7 @@ void screen_read(void) {
                         pos--;
                         buf[pos] = ' ';
                         term_gotoxy(scr.gets[i].row, scr.gets[i].col + pos);
-                        putchar(' ');
-                        fflush(stdout);
+                        term_putc(' ');
                         term_gotoxy(scr.gets[i].row, scr.gets[i].col + pos);
                     }
                     continue;
@@ -414,8 +425,7 @@ void screen_read(void) {
                     }
                     /* Overwrite mode */
                     buf[pos] = (char)key;
-                    putchar((char)key);
-                    fflush(stdout);
+                    term_putc((char)key);
                     pos++;
                     if (pos >= fwidth) {
                         if (!cmd_get_confirm()) {
@@ -445,14 +455,16 @@ void screen_read(void) {
                     double lo = scr.gets[i].range_lo.num;
                     double hi = scr.gets[i].range_hi.num;
                     if (n < lo || n > hi) {
-                        fflush(stdout);
+                        char rmsg[80];
+                        snprintf(rmsg, sizeof(rmsg), "Range: %g to %g", lo, hi);
                         term_gotoxy(24, 1);
-                        printf("Range: %g to %g", lo, hi);
-                        fflush(stdout);
+                        term_puts(rmsg);
                         term_getkey();  /* wait for acknowledgment */
                         term_gotoxy(24, 1);
-                        printf("%-40s", "");
-                        fflush(stdout);
+                        {
+                            int ri;
+                            for (ri = 0; ri < 40; ri++) term_putc(' ');
+                        }
                         continue;  /* reject, keep current value */
                     }
                 }
@@ -470,14 +482,14 @@ void screen_read(void) {
                               res.type == VAL_LOGIC && res.logic);
                     if (!ok) {
                         if (had_old) memvar_set(store, scr.gets[i].varname, &old_val);
-                        fflush(stdout);
                         term_gotoxy(24, 1);
-                        printf("Invalid entry.");
-                        fflush(stdout);
+                        term_puts("Invalid entry.");
                         term_getkey();  /* wait for acknowledgment */
                         term_gotoxy(24, 1);
-                        printf("%-40s", "");
-                        fflush(stdout);
+                        {
+                            int ri;
+                            for (ri = 0; ri < 40; ri++) term_putc(' ');
+                        }
                         continue;  /* re-edit field */
                     }
                 } else {
@@ -614,7 +626,7 @@ void screen_clear_region(int r1, int c1, int r2, int c2) {
         for (r = r1; r <= r2; r++) {
             int i;
             term_gotoxy(r, c1);
-            for (i = 0; i < w; i++) putchar(' ');
+            for (i = 0; i < w; i++) term_putc(' ');
         }
         term_gotoxy(r1, c1);
         return;
@@ -644,19 +656,19 @@ void screen_box(int r1, int c1, int r2, int c2, int dbl) {
         int r, c;
         /* Top */
         term_gotoxy(r1, c1);
-        putchar(tl);
-        for (c = c1 + 1; c < c2; c++) putchar(h);
-        putchar(tr);
+        term_putc(tl);
+        for (c = c1 + 1; c < c2; c++) term_putc(h);
+        term_putc(tr);
         /* Sides */
         for (r = r1 + 1; r < r2; r++) {
-            term_gotoxy(r, c1); putchar(v);
-            term_gotoxy(r, c2); putchar(v);
+            term_gotoxy(r, c1); term_putc(v);
+            term_gotoxy(r, c2); term_putc(v);
         }
         /* Bottom */
         term_gotoxy(r2, c1);
-        putchar(bl);
-        for (c = c1 + 1; c < c2; c++) putchar(h);
-        putchar(br);
+        term_putc(bl);
+        for (c = c1 + 1; c < c2; c++) term_putc(h);
+        term_putc(br);
         return;
     }
 #endif
@@ -669,7 +681,6 @@ void screen_box(int r1, int c1, int r2, int c2, int dbl) {
 void screen_clear(void) {
 #if HAS_TERM
     if (scr.term_available) {
-        fflush(stdout);
         term_clear(0);
         term_gotoxy(1, 1);
         return;
@@ -714,7 +725,12 @@ void screen_prompt(int row, int col, const char *text, const char *message) {
 
     /* Display the prompt text at the specified position */
     goto_pos(row, col);
-    printf("%s", text);
+#if HAS_TERM
+    if (scr.term_available)
+        term_puts(text);
+    else
+#endif
+        printf("%s", text);
     screen_update_pos(row, col, (int)strlen(text));
 
     scr.nprompts++;
@@ -737,11 +753,11 @@ int screen_menu_to(void) {
 
 #if HAS_TERM
     if (scr.term_available) {
-        fflush(stdout);  /* flush pending SAY/PROMPT output before raw mode */
         term_set_raw(1);
 
         for (;;) {
             /* Redraw all prompts: current in reverse, others normal */
+            term_begin_update();
             for (i = 0; i < n; i++) {
                 term_gotoxy(scr.prompts[i].row, scr.prompts[i].col);
                 if (i == cur)
@@ -772,6 +788,7 @@ int screen_menu_to(void) {
                     term_puts(scr.prompts[cur].message);
                 }
             }
+            term_end_update();
 
             key = read_dbase_key();
             if (key > 0 && screen_check_key_handler(key)) continue;
@@ -1219,7 +1236,6 @@ int screen_inkey(double timeout) {
 #if HAS_TERM
     if (scr.term_available) {
         int key;
-        fflush(stdout);
         term_set_raw(1);
 
         if (timeout == 0.0) {
