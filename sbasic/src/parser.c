@@ -1625,6 +1625,64 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_DEFDBL:   return parse_deftype(p, VAL_DOUBLE);
         case TOK_DEFSTR:   return parse_deftype(p, VAL_STRING);
 
+        case TOK_BEEP:
+            lexer_next(&p->lex);
+            return stmt_alloc(STMT_BEEP, tok->line);
+
+        case TOK_TRACE: {
+            int line = tok->line;
+            lexer_next(&p->lex);
+            stmt_t *s = stmt_alloc(STMT_TRACE, line);
+            if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+            /* Expect ON (keyword) or OFF (identifier) */
+            if (lexer_check(&p->lex, TOK_ON)) {
+                lexer_next(&p->lex);
+                s->trace.enabled = 1;
+            } else if (lexer_check(&p->lex, TOK_IDENT)) {
+                token_t t = lexer_next(&p->lex);
+                if (strcmp(t.text, "OFF") == 0)
+                    s->trace.enabled = 0;
+                else {
+                    parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+                }
+            } else {
+                parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+            }
+            return s;
+        }
+
+        case TOK_SPLIT: {
+            /* SPLIT str_expr, delim_expr, arrayname$() */
+            int line = tok->line;
+            lexer_next(&p->lex);
+            stmt_t *s = stmt_alloc(STMT_SPLIT, line);
+            if (!s) { parser_error(p, ERR_OUT_OF_MEMORY); return NULL; }
+            s->split.str_expr = parse_expr(p);
+            if (!s->split.str_expr || p->error != ERR_NONE) {
+                stmt_free(s); return NULL;
+            }
+            if (!lexer_match(&p->lex, TOK_COMMA)) {
+                parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+            }
+            s->split.delim_expr = parse_expr(p);
+            if (!s->split.delim_expr || p->error != ERR_NONE) {
+                stmt_free(s); return NULL;
+            }
+            if (!lexer_match(&p->lex, TOK_COMMA)) {
+                parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+            }
+            if (!lexer_check(&p->lex, TOK_IDENT)) {
+                parser_error(p, ERR_SYNTAX); stmt_free(s); return NULL;
+            }
+            token_t arr = lexer_next(&p->lex);
+            strncpy(s->split.array_name, arr.text, 63);
+            s->split.array_name[63] = '\0';
+            /* Optional () after array name */
+            if (lexer_match(&p->lex, TOK_LPAREN))
+                lexer_match(&p->lex, TOK_RPAREN);
+            return s;
+        }
+
         case TOK_GOTO: {
             int line = tok->line;
             lexer_next(&p->lex);

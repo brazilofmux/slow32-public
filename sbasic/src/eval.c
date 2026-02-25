@@ -76,6 +76,9 @@ static int resume_is_next = 0;       /* set by RESUME stmt for eval_program */
 #define MAX_EVAL_DEPTH 48
 static int eval_depth = 0;
 
+/* TRACE mode: print line numbers as they execute */
+static int trace_enabled = 0;
+
 /* Is this a real error (trappable by ON ERROR) or a flow-control signal? */
 static int is_trappable_error(error_t err) {
     switch (err) {
@@ -424,6 +427,8 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
                 const char *arrname;
                 if (e->call.args[0]->type == EXPR_VARIABLE)
                     arrname = e->call.args[0]->var.name;
+                else if (e->call.args[0]->type == EXPR_CALL && e->call.args[0]->call.nargs == 0)
+                    arrname = e->call.args[0]->call.name;  /* arr() syntax */
                 else
                     return ERR_ILLEGAL_FUNCTION_CALL;
                 int dim = 1;
@@ -442,6 +447,59 @@ static error_t eval_expr_impl(env_t *env, expr_t *e, value_t *out) {
                     *out = val_integer(a->base);
                 else
                     *out = val_integer(a->base + a->dims[dim - 1] - 1);
+                return ERR_NONE;
+            }
+
+            /* 3b. JOIN$ special handling: JOIN$(array$(), delim$) */
+            if (strcmp(e->call.name, "JOIN$") == 0) {
+                if (e->call.nargs < 1 || e->call.nargs > 2)
+                    return ERR_ILLEGAL_FUNCTION_CALL;
+                const char *arrname;
+                if (e->call.args[0]->type == EXPR_VARIABLE)
+                    arrname = e->call.args[0]->var.name;
+                else if (e->call.args[0]->type == EXPR_CALL && e->call.args[0]->call.nargs == 0)
+                    arrname = e->call.args[0]->call.name;  /* arr$() syntax */
+                else
+                    return ERR_ILLEGAL_FUNCTION_CALL;
+                /* Default delimiter is empty string */
+                char delim[256] = "";
+                if (e->call.nargs == 2) {
+                    value_t dv;
+                    EVAL_CHECK(eval_expr(env, e->call.args[1], &dv));
+                    if (dv.type != VAL_STRING) { val_clear(&dv); return ERR_TYPE_MISMATCH; }
+                    strncpy(delim, dv.sval->data, 255);
+                    delim[255] = '\0';
+                    val_clear(&dv);
+                }
+                sb_array_t *a = array_find(arrname);
+                if (!a) return ERR_UNDEFINED_VAR;
+                int dlen = (int)strlen(delim);
+                /* Calculate total length */
+                int total_len = 0;
+                for (int i = 0; i < a->total; i++) {
+                    if (i > 0) total_len += dlen;
+                    if (a->data[i].type == VAL_STRING && a->data[i].sval)
+                        total_len += a->data[i].sval->len;
+                }
+                if (total_len > MAX_STRING_LEN) total_len = MAX_STRING_LEN;
+                char *buf = malloc(total_len + 1);
+                if (!buf) return ERR_OUT_OF_MEMORY;
+                int pos = 0;
+                for (int i = 0; i < a->total; i++) {
+                    if (i > 0 && dlen > 0 && pos + dlen <= total_len) {
+                        memcpy(buf + pos, delim, dlen);
+                        pos += dlen;
+                    }
+                    if (a->data[i].type == VAL_STRING && a->data[i].sval) {
+                        int slen = a->data[i].sval->len;
+                        if (pos + slen > total_len) slen = total_len - pos;
+                        memcpy(buf + pos, a->data[i].sval->data, slen);
+                        pos += slen;
+                    }
+                }
+                buf[pos] = '\0';
+                *out = val_string(buf, pos);
+                free(buf);
                 return ERR_NONE;
             }
 
@@ -1943,6 +2001,9 @@ static error_t exec_mid_assign(env_t *env, stmt_t *s) {
 /* --- Statement dispatch --- */
 
 error_t eval_stmt(env_t *env, stmt_t *s) {
+    if (trace_enabled && s->type != STMT_REM && s->type != STMT_LABEL
+        && s->type != STMT_DATA && s->type != STMT_TRACE)
+        col_printf("[%d] ", s->line);
     switch (s->type) {
         case STMT_PRINT:        return exec_print(env, s);
         case STMT_INPUT:        return exec_input(env, s);
@@ -2135,6 +2196,54 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
             goto_target = target;
             return ERR_GOSUB;
         }
+
+        case STMT_BEEP:
+            return ERR_NONE;
+
+        case STMT_TRACE:
+            trace_enabled = s->trace.enabled;
+            return ERR_NONE;
+
+        case STMT_SPLIT: {
+            /* SPLIT str$, delim$, array$() */
+            value_t sv, dv;
+            EVAL_CHECK(eval_expr(env, s->split.str_expr, &sv));
+            error_t err2 = eval_expr(env, s->split.delim_expr, &dv);
+            if (err2 != ERR_NONE) { val_clear(&sv); return err2; }
+            const char *str = (sv.type == VAL_STRING && sv.sval) ? sv.sval->data : "";
+            const char *delim = (dv.type == VAL_STRING && dv.sval) ? dv.sval->data : "";
+            int dlen = (int)strlen(delim);
+
+            /* Count pieces */
+            int count = 1;
+            if (dlen > 0) {
+                const char *p = str;
+                while ((p = strstr(p, delim)) != NULL) { count++; p += dlen; }
+            }
+
+            /* REDIM the target array */
+            int sizes[1] = { count };
+            array_erase(s->split.array_name);
+            error_t aerr = array_dim(s->split.array_name, VAL_STRING,
+                                      sizes, 1, option_base);
+            if (aerr != ERR_NONE) { val_clear(&sv); val_clear(&dv); return aerr; }
+
+            /* Split and store */
+            const char *p = str;
+            for (int i = 0; i < count; i++) {
+                const char *next = (dlen > 0) ? strstr(p, delim) : NULL;
+                int plen = next ? (int)(next - p) : (int)strlen(p);
+                if (plen > MAX_STRING_LEN) plen = MAX_STRING_LEN;
+                value_t piece = val_string(p, plen);
+                int idx[1] = { i + option_base };
+                array_set(s->split.array_name, idx, 1, &piece);
+                val_clear(&piece);
+                p = next ? next + dlen : p + plen;
+            }
+            val_clear(&sv);
+            val_clear(&dv);
+            return ERR_NONE;
+        }
     }
 
     return ERR_INTERNAL;
@@ -2266,6 +2375,7 @@ error_t eval_program(env_t *env, stmt_t *program) {
     on_error_err_code = 0;
     on_error_err_line = 0;
     resume_is_next = 0;
+    trace_enabled = 0;
 
     error_t result = ERR_NONE;
 

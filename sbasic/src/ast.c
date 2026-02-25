@@ -571,6 +571,13 @@ void stmt_free(stmt_t *s) {
             case STMT_ON_GOSUB:
                 expr_free(s->on_branch.index);
                 break;
+            case STMT_BEEP:
+            case STMT_TRACE:
+                break;
+            case STMT_SPLIT:
+                expr_free(s->split.str_expr);
+                expr_free(s->split.delim_expr);
+                break;
         }
         free(s);
         s = next;

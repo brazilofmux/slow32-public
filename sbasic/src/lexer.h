@@ -54,6 +54,9 @@ typedef enum {
     TOK_RESUME, TOK_DEFINT, TOK_DEFDBL, TOK_DEFSTR,
     TOK_DOT,
 
+    /* Extra keywords */
+    TOK_BEEP, TOK_TRACE, TOK_SPLIT,
+
     /* REPL commands */
     TOK_RUN, TOK_LIST, TOK_NEW, TOK_LOAD, TOK_SAVE, TOK_BYE,
 

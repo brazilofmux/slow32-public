@@ -142,6 +142,10 @@ typedef enum {
     STMT_DEFTYPE,
     STMT_ON_GOTO,
     STMT_ON_GOSUB,
+    /* Extra statements */
+    STMT_BEEP,
+    STMT_TRACE,
+    STMT_SPLIT,
 } stmt_type_t;
 
 /* Print item: expression + separator */
@@ -475,6 +479,18 @@ typedef struct stmt {
             char labels[16][64];
             int nlabels;
         } on_branch;
+
+        /* STMT_TRACE */
+        struct {
+            int enabled;        /* 1 = ON, 0 = OFF */
+        } trace;
+
+        /* STMT_SPLIT: SPLIT str_expr, delim_expr, array_name$() */
+        struct {
+            struct expr *str_expr;
+            struct expr *delim_expr;
+            char array_name[64];
+        } split;
     };
 } stmt_t;
 
