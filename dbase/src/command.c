@@ -316,6 +316,7 @@ static int parse_field_list(dbf_t *db, const char *arg, int *indices, int max_fi
         /* Also stop at scope keywords that might appear in COPY TO context */
         if (str_imatch(p, "ALL") || str_imatch(p, "REST") ||
             str_imatch(p, "NEXT") || str_imatch(p, "RECORD")) break;
+        if (str_imatch(p, "DELIMITED")) break;
 
         i = 0;
         while (*p && *p != ',' && *p != ' ' && *p != '\t' && i < DBF_MAX_FIELD_NAME - 1)
@@ -3026,7 +3027,99 @@ static void copy_memo_field(dbf_t *src, int si, dbf_t *dest, int di) {
     }
 }
 
-/* ---- COPY TO [FIELDS ...] [scope] [FOR cond] ---- */
+/* Forward declarations for helpers defined later (used by APPEND FROM) */
+static const char *parse_filename_raw(const char *arg, char *filename, int size);
+static int has_extension(const char *filename);
+
+/* ---- COPY TO DELIMITED helper ---- */
+static void copy_to_delimited(dbf_t *db, const char *filename,
+                               int *field_indices, int nfields,
+                               int use_all_fields,
+                               uint32_t start, uint32_t end,
+                               const char *cond_str,
+                               char quote_char, int blank_mode)
+{
+    FILE *fp;
+    uint32_t i;
+    int f, fc, count = 0;
+
+    fp = fopen(filename, "wb");
+    if (!fp) {
+        prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", filename);
+        return;
+    }
+
+    fc = use_all_fields ? db->field_count : nfields;
+
+    for (i = start; i <= end; i++) {
+        char raw[256];
+        int first = 1;
+
+        dbf_read_record(db, i);
+        if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
+
+        if (cond_str) {
+            value_t cond;
+            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
+                report_expr_error();
+                fclose(fp);
+                return;
+            }
+            if (cond.type != VAL_LOGIC || !cond.logic) continue;
+        }
+
+        for (f = 0; f < fc; f++) {
+            int fi = use_all_fields ? f : field_indices[f];
+            char type = db->fields[fi].type;
+            int len;
+
+            if (type == 'M') continue; /* skip memo fields */
+
+            if (!first)
+                fputc(blank_mode ? ' ' : ',', fp);
+            first = 0;
+
+            dbf_get_field_raw(db, fi, raw, sizeof(raw));
+
+            /* Trim trailing spaces */
+            len = strlen(raw);
+            while (len > 0 && raw[len - 1] == ' ') len--;
+            raw[len] = '\0';
+
+            /* Trim leading spaces for non-character fields */
+            if (type != 'C') {
+                char *s = raw;
+                while (*s == ' ') s++;
+                if (s != raw) memmove(raw, s, strlen(s) + 1);
+                len = strlen(raw);
+            }
+
+            if (type == 'C' && !blank_mode) {
+                /* Character: quoted, embedded quotes doubled */
+                int j;
+                fputc(quote_char, fp);
+                for (j = 0; j < len; j++) {
+                    if (raw[j] == quote_char)
+                        fputc(quote_char, fp);
+                    fputc(raw[j], fp);
+                }
+                fputc(quote_char, fp);
+            } else {
+                /* Numeric, Date, Logical, or BLANK mode: unquoted */
+                fputs(raw, fp);
+            }
+        }
+
+        fputc('\r', fp);
+        fputc('\n', fp);
+        count++;
+    }
+
+    fclose(fp);
+    printf("%d record(s) copied.\n", count);
+}
+
+/* ---- COPY TO [FIELDS ...] [scope] [DELIMITED] [FOR cond] ---- */
 static void cmd_copy_to(dbf_t *db, const char *arg) {
     char filename[64];
     const char *p;
@@ -3047,10 +3140,10 @@ static void cmd_copy_to(dbf_t *db, const char *arg) {
         return;
     }
 
-    p = parse_filename(arg, filename, sizeof(filename));
+    p = parse_filename_raw(arg, filename, sizeof(filename));
 
-    if (filename[0] == '\0' || str_icmp(filename, ".DBF") == 0) {
-        printf("Syntax: COPY TO <filename> [FIELDS f1,f2,...] [scope] [FOR cond]\n");
+    if (filename[0] == '\0') {
+        printf("Syntax: COPY TO <filename> [FIELDS f1,f2,...] [scope] [DELIMITED [WITH <char>|BLANK]] [FOR cond]\n");
         return;
     }
 
@@ -3067,12 +3160,52 @@ static void cmd_copy_to(dbf_t *db, const char *arg) {
     /* Parse scope */
     scope = parse_scope(&p);
 
+    /* Check for DELIMITED keyword */
+    p = skip_ws(p);
+    if (str_imatch(p, "DELIMITED")) {
+        int blank_mode = 0;
+        char quote_char = '"';
+        p = skip_ws(p + 9);
+
+        if (str_imatch(p, "WITH")) {
+            p = skip_ws(p + 4);
+            if (str_imatch(p, "BLANK")) {
+                blank_mode = 1;
+                p = skip_ws(p + 5);
+            } else if (*p) {
+                quote_char = *p++;
+                p = skip_ws(p);
+            }
+        }
+
+        if (str_imatch(p, "FOR"))
+            cond_str = skip_ws(p + 3);
+
+        if (!has_extension(filename))
+            strcat(filename, ".TXT");
+
+        use_all_fields = (nfields == 0);
+
+        if (scope_bounds(db, &scope, &start, &end) < 0) {
+            prog_error(ERR_RECORD_RANGE, "Invalid scope");
+            return;
+        }
+
+        copy_to_delimited(db, filename, field_indices, nfields, use_all_fields,
+                          start, end, cond_str, quote_char, blank_mode);
+        return;
+    }
+
     /* Parse FOR */
     if (str_imatch(p, "FOR")) {
         cond_str = skip_ws(p + 3);
     }
 
     use_all_fields = (nfields == 0);
+
+    /* Add .DBF extension if none provided */
+    if (!has_extension(filename))
+        strcat(filename, ".DBF");
 
     /* Build dest field list */
     if (use_all_fields) {
