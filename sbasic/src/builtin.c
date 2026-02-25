@@ -631,6 +631,14 @@ static error_t fn_curdir(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+/* FRE(x) - return free memory (QBasic compat, returns constant) */
+static error_t fn_fre(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    (void)args; /* argument ignored per QBasic convention */
+    *out = val_integer(65536);
+    return ERR_NONE;
+}
+
 /* FILEEXISTS(path$) - return -1 (true) if file exists, 0 (false) otherwise */
 static error_t fn_fileexists(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
@@ -1135,6 +1143,7 @@ static const builtin_entry_t builtins[] = {
     { "DIR$",     fn_dir },
     { "CURDIR$",  fn_curdir },
     { "FILEEXISTS", fn_fileexists },
+    { "FRE",      fn_fre },
     { NULL, NULL }
 };
 

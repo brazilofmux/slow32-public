@@ -60,6 +60,7 @@ typedef enum {
     TOK_DEF,
     TOK_SHELL,
     TOK_CHDIR, TOK_MKDIR, TOK_RMDIR,
+    TOK_LPRINT,
 
     /* REPL commands */
     TOK_RUN, TOK_LIST, TOK_NEW, TOK_LOAD, TOK_SAVE, TOK_BYE,

@@ -155,6 +155,7 @@ typedef enum {
     STMT_CHDIR,
     STMT_MKDIR,
     STMT_RMDIR,
+    STMT_LPRINT,
 } stmt_type_t;
 
 /* Print item: expression + separator */

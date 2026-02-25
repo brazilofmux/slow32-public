@@ -91,6 +91,7 @@ static const keyword_t keywords[] = {
     { "CHDIR",  TOK_CHDIR },
     { "MKDIR",  TOK_MKDIR },
     { "RMDIR",  TOK_RMDIR },
+    { "LPRINT", TOK_LPRINT },
     { "RUN",    TOK_RUN },
     { "LIST",   TOK_LIST },
     { "NEW",    TOK_NEW },

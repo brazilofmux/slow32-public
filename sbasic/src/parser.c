@@ -1694,6 +1694,12 @@ static stmt_t *parse_stmt(parser_t *p) {
 
     switch (tok->type) {
         case TOK_PRINT:    return parse_print(p);
+        case TOK_LPRINT: {
+            /* LPRINT: like PRINT but to stderr. Reuse parse_print, change type. */
+            stmt_t *s = parse_print(p);
+            if (s) s->type = STMT_LPRINT;
+            return s;
+        }
         case TOK_INPUT:    return parse_input(p);
         case TOK_CLS:      return parse_cls(p);
         case TOK_LOCATE:   return parse_locate(p);

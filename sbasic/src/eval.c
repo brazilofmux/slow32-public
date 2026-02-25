@@ -1010,6 +1010,51 @@ static error_t exec_print(env_t *env, stmt_t *s) {
     return ERR_NONE;
 }
 
+/* LPRINT — like PRINT but output to stderr */
+static error_t exec_lprint(env_t *env, stmt_t *s) {
+    int needs_newline = 1;
+
+    for (int i = 0; i < s->print.nitems; i++) {
+        print_item_t *item = &s->print.items[i];
+
+        if (item->expr) {
+            value_t v;
+            EVAL_CHECK(eval_expr(env, item->expr, &v));
+
+            switch (v.type) {
+                case VAL_INTEGER:
+                    if (v.ival >= 0) fprintf(stderr, " %d", v.ival);
+                    else fprintf(stderr, "%d", v.ival);
+                    break;
+                case VAL_DOUBLE:
+                    if (v.dval >= 0) fprintf(stderr, " %g", v.dval);
+                    else fprintf(stderr, "%g", v.dval);
+                    break;
+                case VAL_STRING:
+                    fputs(v.sval->data, stderr);
+                    break;
+                case VAL_RECORD:
+                    break;
+            }
+            val_clear(&v);
+        }
+
+        if (item->sep == ';') {
+            needs_newline = 0;
+        } else if (item->sep == ',') {
+            fputs("\t", stderr);
+            needs_newline = 0;
+        } else {
+            needs_newline = 1;
+        }
+    }
+
+    if (needs_newline)
+        fputs("\n", stderr);
+
+    return ERR_NONE;
+}
+
 static error_t exec_input(env_t *env, stmt_t *s) {
     if (s->input.prompt)
         col_puts(s->input.prompt);
@@ -2120,6 +2165,7 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         col_printf("[%d] ", s->line);
     switch (s->type) {
         case STMT_PRINT:        return exec_print(env, s);
+        case STMT_LPRINT:       return exec_lprint(env, s);
         case STMT_INPUT:        return exec_input(env, s);
         case STMT_CLS:          return exec_cls(s);
         case STMT_LOCATE:       return exec_locate(env, s);

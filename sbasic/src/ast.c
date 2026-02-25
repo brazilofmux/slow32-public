@@ -411,6 +411,7 @@ void stmt_free(stmt_t *s) {
         stmt_t *next = s->next;
         switch (s->type) {
             case STMT_PRINT:
+            case STMT_LPRINT:
                 for (int i = 0; i < s->print.nitems; i++)
                     expr_free(s->print.items[i].expr);
                 free(s->print.items);
