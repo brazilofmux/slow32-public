@@ -25,9 +25,10 @@ typedef struct env {
    for a bare variable name (no $/%/# suffix).  First letter is passed. */
 extern val_type_t (*env_deftype_hook)(char first_letter);
 
-/* Create/destroy environment */
+/* Create/destroy/clear environment */
 env_t *env_create(env_t *parent);
 void env_destroy(env_t *env);
+void env_clear(env_t *env);
 
 /* Get variable value. Auto-creates with default if not found in any scope.
    Returns pointer to stored value (valid until next env operation). */

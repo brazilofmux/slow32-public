@@ -162,7 +162,8 @@ typedef enum {
     STMT_LSET,
     STMT_RSET,
     STMT_WIDTH,
-    STMT_NOOP,  /* parsed-and-discarded: FIELD, CHAIN, PCOPY, KEY, SOUND, PLAY */
+    STMT_NOOP,  /* parsed-and-discarded: FIELD, CHAIN, PCOPY, KEY, SOUND, PLAY, VIEW PRINT, ENVIRON */
+    STMT_CLEAR,
 } stmt_type_t;
 
 /* Print item: expression + separator */

@@ -2421,6 +2421,11 @@ error_t eval_stmt(env_t *env, stmt_t *s) {
         case STMT_NOOP:
             return ERR_NONE;
 
+        case STMT_CLEAR:
+            env_clear(env);
+            array_clear_all();
+            return ERR_NONE;
+
         case STMT_KILL:         return exec_kill(env, s);
         case STMT_NAME:         return exec_name(env, s);
         case STMT_GET:          return exec_get(env, s);

@@ -22,6 +22,12 @@ env_t *env_create(env_t *parent) {
 
 void env_destroy(env_t *env) {
     if (!env) return;
+    env_clear(env);
+    free(env);
+}
+
+void env_clear(env_t *env) {
+    if (!env) return;
     for (int i = 0; i < ENV_HASH_SIZE; i++) {
         var_entry_t *e = env->table[i];
         while (e) {
@@ -30,8 +36,8 @@ void env_destroy(env_t *env) {
             free(e);
             e = next;
         }
+        env->table[i] = NULL;
     }
-    free(env);
 }
 
 /* Find entry in a single scope */

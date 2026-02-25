@@ -614,6 +614,7 @@ void stmt_free(stmt_t *s) {
                 expr_free(s->width_stmt.columns);
                 break;
             case STMT_NOOP:
+            case STMT_CLEAR:
                 break;
         }
         free(s);

@@ -838,10 +838,24 @@ static stmt_t *parse_sub(parser_t *p) {
     if (lexer_match(&p->lex, TOK_LPAREN)) {
         if (!lexer_check(&p->lex, TOK_RPAREN)) {
             token_t param = lexer_next(&p->lex);
-            stmt_proc_add_param(s, param.text, var_type_from_name(param.text));
+            val_type_t ptype = var_type_from_name(param.text);
+            if (lexer_match(&p->lex, TOK_AS)) {
+                token_t tn = lexer_next(&p->lex);
+                if (strcmp(tn.text, "INTEGER") == 0 || strcmp(tn.text, "LONG") == 0) ptype = VAL_INTEGER;
+                else if (strcmp(tn.text, "DOUBLE") == 0 || strcmp(tn.text, "SINGLE") == 0) ptype = VAL_DOUBLE;
+                else if (strcmp(tn.text, "STRING") == 0) ptype = VAL_STRING;
+            }
+            stmt_proc_add_param(s, param.text, ptype);
             while (lexer_match(&p->lex, TOK_COMMA)) {
                 param = lexer_next(&p->lex);
-                stmt_proc_add_param(s, param.text, var_type_from_name(param.text));
+                ptype = var_type_from_name(param.text);
+                if (lexer_match(&p->lex, TOK_AS)) {
+                    token_t tn = lexer_next(&p->lex);
+                    if (strcmp(tn.text, "INTEGER") == 0 || strcmp(tn.text, "LONG") == 0) ptype = VAL_INTEGER;
+                    else if (strcmp(tn.text, "DOUBLE") == 0 || strcmp(tn.text, "SINGLE") == 0) ptype = VAL_DOUBLE;
+                    else if (strcmp(tn.text, "STRING") == 0) ptype = VAL_STRING;
+                }
+                stmt_proc_add_param(s, param.text, ptype);
             }
         }
         expect(p, TOK_RPAREN);
@@ -867,10 +881,24 @@ static stmt_t *parse_function(parser_t *p) {
     if (lexer_match(&p->lex, TOK_LPAREN)) {
         if (!lexer_check(&p->lex, TOK_RPAREN)) {
             token_t param = lexer_next(&p->lex);
-            stmt_proc_add_param(s, param.text, var_type_from_name(param.text));
+            val_type_t ptype = var_type_from_name(param.text);
+            if (lexer_match(&p->lex, TOK_AS)) {
+                token_t tn = lexer_next(&p->lex);
+                if (strcmp(tn.text, "INTEGER") == 0 || strcmp(tn.text, "LONG") == 0) ptype = VAL_INTEGER;
+                else if (strcmp(tn.text, "DOUBLE") == 0 || strcmp(tn.text, "SINGLE") == 0) ptype = VAL_DOUBLE;
+                else if (strcmp(tn.text, "STRING") == 0) ptype = VAL_STRING;
+            }
+            stmt_proc_add_param(s, param.text, ptype);
             while (lexer_match(&p->lex, TOK_COMMA)) {
                 param = lexer_next(&p->lex);
-                stmt_proc_add_param(s, param.text, var_type_from_name(param.text));
+                ptype = var_type_from_name(param.text);
+                if (lexer_match(&p->lex, TOK_AS)) {
+                    token_t tn = lexer_next(&p->lex);
+                    if (strcmp(tn.text, "INTEGER") == 0 || strcmp(tn.text, "LONG") == 0) ptype = VAL_INTEGER;
+                    else if (strcmp(tn.text, "DOUBLE") == 0 || strcmp(tn.text, "SINGLE") == 0) ptype = VAL_DOUBLE;
+                    else if (strcmp(tn.text, "STRING") == 0) ptype = VAL_STRING;
+                }
+                stmt_proc_add_param(s, param.text, ptype);
             }
         }
         expect(p, TOK_RPAREN);
@@ -2039,6 +2067,49 @@ static stmt_t *parse_stmt(parser_t *p) {
                 expr_t *e = parse_expr(p);
                 if (e) expr_free(e);
                 else break;
+            }
+            return stmt_alloc(STMT_NOOP, line);
+        }
+
+        case TOK_CLEAR: {
+            /* CLEAR [, himem [, stack]] — reset all variables */
+            int line = tok->line;
+            lexer_next(&p->lex);
+            /* Skip optional arguments (not meaningful for us) */
+            while (!at_stmt_end(p)) {
+                if (lexer_check(&p->lex, TOK_COMMA)) { lexer_next(&p->lex); continue; }
+                expr_t *e = parse_expr(p);
+                if (e) expr_free(e);
+                else break;
+            }
+            return stmt_alloc(STMT_CLEAR, line);
+        }
+
+        case TOK_ENVIRON: {
+            /* ENVIRON "NAME=VALUE" — no-op, just consume the string expression */
+            int line = tok->line;
+            lexer_next(&p->lex);
+            if (!at_stmt_end(p)) {
+                expr_t *e = parse_expr(p);
+                if (e) expr_free(e);
+            }
+            return stmt_alloc(STMT_NOOP, line);
+        }
+
+        case TOK_VIEW: {
+            /* VIEW PRINT [top TO bottom] — no-op */
+            int line = tok->line;
+            lexer_next(&p->lex);
+            /* Consume PRINT keyword if present */
+            lexer_match(&p->lex, TOK_PRINT);
+            /* Consume optional arguments (top TO bottom) */
+            if (!at_stmt_end(p)) {
+                expr_t *e = parse_expr(p);
+                if (e) expr_free(e);
+                if (lexer_match(&p->lex, TOK_TO)) {
+                    e = parse_expr(p);
+                    if (e) expr_free(e);
+                }
             }
             return stmt_alloc(STMT_NOOP, line);
         }

@@ -586,6 +586,28 @@ static error_t fn_mkd(value_t *args, int nargs, value_t *out) {
     return ERR_NONE;
 }
 
+/* MKS$(n) - pack single-precision float into 4-byte string (little-endian) */
+static error_t fn_mks(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    double v; EVAL_CHECK(get_num(&args[0], &v));
+    float f = (float)v;
+    char buf[4];
+    memcpy(buf, &f, 4);
+    *out = val_string(buf, 4);
+    return ERR_NONE;
+}
+
+/* CVS(s$) - unpack 4-byte string to single-precision float */
+static error_t fn_cvs(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    if (args[0].type != VAL_STRING) return ERR_TYPE_MISMATCH;
+    if (!args[0].sval || args[0].sval->len < 4) return ERR_ILLEGAL_FUNCTION_CALL;
+    float f;
+    memcpy(&f, args[0].sval->data, 4);
+    *out = val_double((double)f);
+    return ERR_NONE;
+}
+
 /* CVI(s$) - unpack 2-byte string to integer (little-endian) */
 static error_t fn_cvi(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
@@ -658,6 +680,14 @@ static error_t fn_strig(value_t *args, int nargs, value_t *out) {
 
 /* STICK(n) - joystick position (stub, returns 0) */
 static error_t fn_stick(value_t *args, int nargs, value_t *out) {
+    if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
+    (void)args;
+    *out = val_integer(0);
+    return ERR_NONE;
+}
+
+/* LPOS(n) - printer column position (stub, returns 0) */
+static error_t fn_lpos(value_t *args, int nargs, value_t *out) {
     if (nargs != 1) return ERR_ILLEGAL_FUNCTION_CALL;
     (void)args;
     *out = val_integer(0);
@@ -1182,9 +1212,11 @@ static const builtin_entry_t builtins[] = {
     /* Binary packing */
     { "MKI$",     fn_mki },
     { "MKL$",     fn_mkl },
+    { "MKS$",     fn_mks },
     { "MKD$",     fn_mkd },
     { "CVI",      fn_cvi },
     { "CVL",      fn_cvl },
+    { "CVS",      fn_cvs },
     { "CVD",      fn_cvd },
     /* File I/O */
     { "EOF",      fn_eof },
@@ -1202,6 +1234,7 @@ static const builtin_entry_t builtins[] = {
     { "CURDIR$",  fn_curdir },
     { "FILEEXISTS", fn_fileexists },
     { "FRE",      fn_fre },
+    { "LPOS",     fn_lpos },
     { "PEEK",     fn_peek },
     { "STRIG",    fn_strig },
     { "STICK",    fn_stick },
