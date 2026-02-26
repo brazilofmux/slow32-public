@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <time.h>
 #include "func.h"
 #include "date.h"
 #include "command.h"
@@ -11,6 +12,8 @@
 #include "program.h"
 #include "util.h"
 #include "menu.h"
+#include "area.h"
+#include "index.h"
 
 extern double floor(double x);
 extern double fmod(double x, double y);
@@ -1150,6 +1153,486 @@ static int fn_program(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result
     return 0;
 }
 
+/* ---- Database info functions ---- */
+
+static int fn_select(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_num((double)(area_get_current_idx() + 1));
+    return 0;
+}
+
+static int fn_alias(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    work_area_t *wa;
+    (void)ctx;
+    if (nargs >= 1 && args[0].type == VAL_NUM) {
+        int idx = (int)args[0].num - 1;
+        wa = area_get(idx);
+    } else {
+        wa = area_get_current();
+    }
+    if (wa && wa->alias[0])
+        *result = val_str(wa->alias);
+    else
+        *result = val_str("");
+    return 0;
+}
+
+static int fn_dbf(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    dbf_t *db;
+    (void)ctx;
+    if (nargs >= 1 && args[0].type == VAL_CHAR) {
+        int idx = area_resolve_alias(args[0].str);
+        if (idx >= 0) db = &area_get(idx)->db;
+        else { *result = val_str(""); return 0; }
+    } else {
+        db = &area_get_current()->db;
+    }
+    if (dbf_is_open(db))
+        *result = val_str(db->filename);
+    else
+        *result = val_str("");
+    return 0;
+}
+
+static int fn_used(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    dbf_t *db;
+    (void)ctx;
+    if (nargs >= 1 && args[0].type == VAL_CHAR) {
+        int idx = area_resolve_alias(args[0].str);
+        if (idx >= 0) db = &area_get(idx)->db;
+        else { *result = val_logic(0); return 0; }
+    } else {
+        db = &area_get_current()->db;
+    }
+    *result = val_logic(dbf_is_open(db));
+    return 0;
+}
+
+static int fn_field(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    dbf_t *db;
+    int n;
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_NUM) {
+        ctx->error = "FIELD requires (number [, alias])";
+        return -1;
+    }
+    n = (int)args[0].num;
+    if (nargs >= 2 && args[1].type == VAL_CHAR) {
+        int idx = area_resolve_alias(args[1].str);
+        if (idx >= 0) db = &area_get(idx)->db;
+        else { *result = val_str(""); return 0; }
+    } else {
+        db = &area_get_current()->db;
+    }
+    if (!dbf_is_open(db) || n < 1 || n > db->field_count) {
+        *result = val_str("");
+        return 0;
+    }
+    *result = val_str(db->fields[n - 1].name);
+    return 0;
+}
+
+static int fn_fcount(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    dbf_t *db;
+    (void)ctx;
+    if (nargs >= 1 && args[0].type == VAL_CHAR) {
+        int idx = area_resolve_alias(args[0].str);
+        if (idx >= 0) db = &area_get(idx)->db;
+        else { *result = val_num(0); return 0; }
+    } else {
+        db = &area_get_current()->db;
+    }
+    if (!dbf_is_open(db))
+        *result = val_num(0);
+    else
+        *result = val_num((double)db->field_count);
+    return 0;
+}
+
+static int fn_fsize(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    dbf_t *db;
+    int idx;
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_CHAR) {
+        ctx->error = "FSIZE requires (field_name)";
+        return -1;
+    }
+    db = &area_get_current()->db;
+    if (!dbf_is_open(db)) { *result = val_num(0); return 0; }
+    idx = dbf_find_field(db, args[0].str);
+    if (idx < 0) { *result = val_num(0); return 0; }
+    *result = val_num((double)db->fields[idx].length);
+    return 0;
+}
+
+static int fn_fieldnum(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    dbf_t *db;
+    int idx;
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_CHAR) {
+        ctx->error = "FIELDNUM requires (field_name)";
+        return -1;
+    }
+    db = &area_get_current()->db;
+    if (!dbf_is_open(db)) { *result = val_num(0); return 0; }
+    idx = dbf_find_field(db, args[0].str);
+    *result = val_num((double)(idx >= 0 ? idx + 1 : 0));
+    return 0;
+}
+
+static int fn_ndx(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    work_area_t *wa;
+    int n;
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_NUM) {
+        ctx->error = "NDX requires (number [, alias])";
+        return -1;
+    }
+    n = (int)args[0].num;
+    if (nargs >= 2 && args[1].type == VAL_CHAR) {
+        int idx = area_resolve_alias(args[1].str);
+        if (idx >= 0) wa = area_get(idx);
+        else { *result = val_str(""); return 0; }
+    } else {
+        wa = area_get_current();
+    }
+    if (n >= 1 && n <= wa->num_indexes && wa->indexes[n - 1].active)
+        *result = val_str(wa->indexes[n - 1].filename);
+    else
+        *result = val_str("");
+    return 0;
+}
+
+static int fn_key(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    work_area_t *wa;
+    index_t *idx;
+    (void)ctx;
+    if (nargs >= 1 && args[0].type == VAL_NUM) {
+        int n = (int)args[0].num - 1;
+        wa = area_get(n >= 0 && n < 10 ? n : area_get_current_idx());
+    } else {
+        wa = area_get_current();
+    }
+    if (wa->order > 0 && wa->order <= wa->num_indexes) {
+        idx = &wa->indexes[wa->order - 1];
+        *result = val_str(idx->key_expr);
+    } else {
+        *result = val_str("");
+    }
+    return 0;
+}
+
+static int fn_order(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    work_area_t *wa;
+    (void)ctx;
+    if (nargs >= 1 && args[0].type == VAL_CHAR) {
+        int idx = area_resolve_alias(args[0].str);
+        if (idx >= 0) wa = area_get(idx);
+        else { *result = val_num(0); return 0; }
+    } else {
+        wa = area_get_current();
+    }
+    *result = val_num((double)wa->order);
+    return 0;
+}
+
+static int fn_lupdate(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    dbf_t *db;
+    (void)args; (void)nargs;
+    db = ctx->db;
+    if (!db || !dbf_is_open(db)) {
+        *result = val_date(0);
+        return 0;
+    }
+    /* Read bytes 1-3 from DBF header: YY, MM, DD */
+    {
+        long pos = ftell(db->fp);
+        unsigned char hdr[4];
+        fseek(db->fp, 1, SEEK_SET);
+        if (fread(hdr, 1, 3, db->fp) == 3) {
+            int y = hdr[0] + 1900;
+            if (y < 1980) y += 100; /* Y2K: years < 80 are 2000s */
+            int m = hdr[1];
+            int d = hdr[2];
+            *result = val_date(date_to_jdn(y, m, d));
+        } else {
+            *result = val_date(0);
+        }
+        fseek(db->fp, pos, SEEK_SET);
+    }
+    return 0;
+}
+
+static int fn_recsize(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)args; (void)nargs;
+    if (!ctx->db || !dbf_is_open(ctx->db))
+        *result = val_num(0);
+    else
+        *result = val_num((double)ctx->db->record_size);
+    return 0;
+}
+
+/* ---- Additional string functions ---- */
+
+static int fn_occurs(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_CHAR) {
+        ctx->error = "OCCURS requires (substring, string)";
+        return -1;
+    }
+    {
+        const char *sub = args[0].str;
+        const char *s = args[1].str;
+        int sublen = strlen(sub);
+        int count = 0;
+        const char *p;
+        if (sublen == 0) { *result = val_num(0); return 0; }
+        p = s;
+        while ((p = strstr(p, sub)) != NULL) {
+            count++;
+            p += sublen;
+        }
+        *result = val_num((double)count);
+    }
+    return 0;
+}
+
+static int fn_rat(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_CHAR) {
+        ctx->error = "RAT requires (substring, string)";
+        return -1;
+    }
+    {
+        const char *sub = args[0].str;
+        const char *s = args[1].str;
+        int sublen = strlen(sub);
+        int slen = strlen(s);
+        int i;
+        if (sublen == 0 || sublen > slen) { *result = val_num(0); return 0; }
+        for (i = slen - sublen; i >= 0; i--) {
+            if (memcmp(s + i, sub, sublen) == 0) {
+                *result = val_num((double)(i + 1));
+                return 0;
+            }
+        }
+        *result = val_num(0);
+    }
+    return 0;
+}
+
+static int fn_proper(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char buf[256];
+    int i, cap_next;
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_CHAR) {
+        ctx->error = "PROPER requires (string)";
+        return -1;
+    }
+    str_copy(buf, args[0].str, sizeof(buf));
+    cap_next = 1;
+    for (i = 0; buf[i]; i++) {
+        if (buf[i] == ' ' || buf[i] == '\t' || buf[i] == '-' || buf[i] == '\'') {
+            cap_next = 1;
+        } else {
+            if (cap_next) {
+                if (buf[i] >= 'a' && buf[i] <= 'z') buf[i] -= 32;
+                cap_next = 0;
+            } else {
+                if (buf[i] >= 'A' && buf[i] <= 'Z') buf[i] += 32;
+            }
+        }
+    }
+    *result = val_str(buf);
+    return 0;
+}
+
+static int fn_strtran(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char buf[512];
+    int pos = 0;
+    (void)ctx;
+    if (nargs < 3 || args[0].type != VAL_CHAR || args[1].type != VAL_CHAR || args[2].type != VAL_CHAR) {
+        ctx->error = "STRTRAN requires (string, from, to)";
+        return -1;
+    }
+    {
+        const char *s = args[0].str;
+        const char *from = args[1].str;
+        const char *to = args[2].str;
+        int fromlen = strlen(from);
+        int tolen = strlen(to);
+        const char *p;
+        if (fromlen == 0) { *result = val_str(s); return 0; }
+        while (*s && pos < (int)sizeof(buf) - 1) {
+            p = strstr(s, from);
+            if (p) {
+                int chunk = (int)(p - s);
+                if (pos + chunk > (int)sizeof(buf) - 1) chunk = (int)sizeof(buf) - 1 - pos;
+                memcpy(buf + pos, s, chunk);
+                pos += chunk;
+                if (pos + tolen <= (int)sizeof(buf) - 1) {
+                    memcpy(buf + pos, to, tolen);
+                    pos += tolen;
+                }
+                s = p + fromlen;
+            } else {
+                int rest = strlen(s);
+                if (pos + rest > (int)sizeof(buf) - 1) rest = (int)sizeof(buf) - 1 - pos;
+                memcpy(buf + pos, s, rest);
+                pos += rest;
+                break;
+            }
+        }
+        buf[pos] = '\0';
+    }
+    *result = val_str(buf);
+    return 0;
+}
+
+static int fn_between(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    if (nargs < 3 || args[0].type != VAL_NUM || args[1].type != VAL_NUM || args[2].type != VAL_NUM) {
+        ctx->error = "BETWEEN requires (value, low, high)";
+        return -1;
+    }
+    *result = val_logic(args[0].num >= args[1].num && args[0].num <= args[2].num);
+    return 0;
+}
+
+static int fn_soundex(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char buf[5];
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_CHAR) {
+        ctx->error = "SOUNDEX requires (string)";
+        return -1;
+    }
+    {
+        /* Standard Soundex: letter -> digit mapping */
+        static const char map[] = "01230120022455012623010202";
+        const char *s = args[0].str;
+        int i, bi = 1;
+        char last;
+        /* Skip to first letter */
+        while (*s && !((*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z'))) s++;
+        if (!*s) { *result = val_str("0000"); return 0; }
+        buf[0] = (*s >= 'a' && *s <= 'z') ? *s - 32 : *s;
+        last = map[buf[0] - 'A'];
+        s++;
+        while (*s && bi < 4) {
+            char c = *s++;
+            if (c >= 'a' && c <= 'z') c -= 32;
+            if (c >= 'A' && c <= 'Z') {
+                char code = map[c - 'A'];
+                if (code != '0' && code != last) {
+                    buf[bi++] = code;
+                    last = code;
+                } else if (code == '0') {
+                    last = '0';
+                }
+            }
+        }
+        while (bi < 4) buf[bi++] = '0';
+        buf[4] = '\0';
+    }
+    *result = val_str(buf);
+    return 0;
+}
+
+/* ---- Date/Time functions ---- */
+
+static int fn_time(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char buf[12];
+    time_t t;
+    struct tm *tm;
+    (void)ctx; (void)args; (void)nargs;
+    t = time(NULL);
+    tm = localtime(&t);
+    if (tm) {
+        snprintf(buf, sizeof(buf), "%02d:%02d:%02d", tm->tm_hour, tm->tm_min, tm->tm_sec);
+    } else {
+        str_copy(buf, "00:00:00", sizeof(buf));
+    }
+    *result = val_str(buf);
+    return 0;
+}
+
+static int fn_seconds(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    time_t t;
+    struct tm *tm;
+    (void)ctx; (void)args; (void)nargs;
+    t = time(NULL);
+    tm = localtime(&t);
+    if (tm)
+        *result = val_num((double)(tm->tm_hour * 3600 + tm->tm_min * 60 + tm->tm_sec));
+    else
+        *result = val_num(0);
+    return 0;
+}
+
+/* ---- System stubs ---- */
+
+static int fn_rlock(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_logic(1);  /* single-user: always succeeds */
+    return 0;
+}
+
+static int fn_getenv(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_CHAR) {
+        ctx->error = "GETENV requires (name)";
+        return -1;
+    }
+    {
+        const char *val = getenv(args[0].str);
+        *result = val_str(val ? val : "");
+    }
+    return 0;
+}
+
+/* ---- SEEK() function form ---- */
+
+static int fn_seek_func(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    index_t *idx;
+    char key[MAX_INDEX_KEY + 1];
+    (void)ctx;
+    if (nargs < 1) {
+        ctx->error = "SEEK requires (expr)";
+        return -1;
+    }
+    idx = cmd_controlling_index();
+    if (!idx) {
+        *result = val_logic(0);
+        return 0;
+    }
+    index_format_key_value(idx->key_type, &args[0], key, sizeof(key));
+    if (idx->key_type == 0)
+        trim_right(key);
+    if (index_seek(idx, key)) {
+        uint32_t rec = index_current_recno(idx);
+        ctx->found = 1;
+        if (rec > 0 && ctx->db) {
+            dbf_read_record(ctx->db, rec);
+            ctx->eof_flag = 0;
+            ctx->bof_flag = 0;
+        }
+        *result = val_logic(1);
+    } else {
+        ctx->found = 0;
+        {
+            uint32_t rec = index_current_recno(idx);
+            if (rec > 0 && ctx->db) {
+                dbf_read_record(ctx->db, rec);
+                ctx->eof_flag = 0;
+            } else {
+                ctx->eof_flag = 1;
+            }
+        }
+        *result = val_logic(0);
+    }
+    return 0;
+}
+
 /* ---- Dispatch table ---- */
 
 typedef int (*func_impl_t)(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
@@ -1252,6 +1735,37 @@ static const func_entry_t func_table[] = {
     { "MESSAGE",   fn_message },
     { "LINENO",    fn_lineno },
     { "PROGRAM",   fn_program },
+    /* Database info */
+    { "SELECT",    fn_select },
+    { "ALIAS",     fn_alias },
+    { "DBF",       fn_dbf },
+    { "USED",      fn_used },
+    { "FIELD",     fn_field },
+    { "FCOUNT",    fn_fcount },
+    { "FSIZE",     fn_fsize },
+    { "FIELDNUM",  fn_fieldnum },
+    { "FIELDPOS",  fn_fieldnum },   /* alias */
+    { "NDX",       fn_ndx },
+    { "KEY",       fn_key },
+    { "ORDER",     fn_order },
+    { "LUPDATE",   fn_lupdate },
+    { "RECSIZE",   fn_recsize },
+    /* Additional string */
+    { "OCCURS",    fn_occurs },
+    { "RAT",       fn_rat },
+    { "PROPER",    fn_proper },
+    { "STRTRAN",   fn_strtran },
+    { "BETWEEN",   fn_between },
+    { "SOUNDEX",   fn_soundex },
+    /* Date/Time */
+    { "TIME",      fn_time },
+    { "SECONDS",   fn_seconds },
+    /* System stubs */
+    { "RLOCK",     fn_rlock },
+    { "FLOCK",     fn_rlock },      /* alias - same behavior */
+    { "GETENV",    fn_getenv },
+    /* SEEK() function form */
+    { "SEEK",      fn_seek_func },
     { NULL, NULL }
 };
 

@@ -48,5 +48,7 @@ int cmd_indexes_update_current(dbf_t *db, char keys[][MAX_INDEX_KEY+1]);
 void cmd_indexes_insert_current(dbf_t *db);
 void cmd_ctx_setup(void);
 int cmd_get_deleted(void);
+int cmd_get_softseek(void);
+int cmd_get_unique(void);
 
 #endif

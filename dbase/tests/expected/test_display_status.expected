@@ -26,3 +26,6 @@ ECHO      = OFF
 MARGIN    = 0
 MESSAGE   = (off)
 WRAP      = OFF
+SOFTSEEK  = OFF
+UNIQUE    = OFF
+

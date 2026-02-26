@@ -4157,7 +4157,7 @@ static void cmd_copy_file(const char *arg) {
 static void cmd_index_on(dbf_t *db, lexer_t *l) {
     char key_expr[256];
     char filename[64];
-    int is_unique = 0;
+    int is_unique = set_opts.unique;
 
     if (!dbf_is_open(db)) {
         prog_error(ERR_NO_DATABASE, "No database in use");
@@ -4357,7 +4357,7 @@ static void cmd_seek(dbf_t *db, const char *arg) {
                 expr_ctx.eof_flag = 1;
             }
         }
-        if (set_opts.talk) printf("Not found.\n");
+        if (set_opts.talk && !set_opts.softseek) printf("Not found.\n");
     }
 }
 
@@ -4942,6 +4942,14 @@ int cmd_get_wrap(void) {
 
 date_format_t cmd_get_date_format(void) {
     return set_opts.date_format;
+}
+
+int cmd_get_softseek(void) {
+    return set_opts.softseek;
+}
+
+int cmd_get_unique(void) {
+    return set_opts.unique;
 }
 
 /* ---- Dispatch ---- */
@@ -5593,6 +5601,71 @@ static void h_restore(dbf_t *db, lexer_t *l) {
     }
 }
 
+/* ---- TYPE <filename> ---- */
+static void cmd_type(const char *arg) {
+    char filename[64];
+    char line[256];
+    FILE *f;
+    const char *p = skip_ws(arg);
+    str_copy(filename, p, sizeof(filename));
+    trim_right(filename);
+    path_normalize(filename);
+    f = fopen(filename, "r");
+    if (!f) {
+        str_upper(filename);
+        f = fopen(filename, "r");
+    }
+    if (!f) {
+        printf("File not found.\n");
+        return;
+    }
+    while (fgets(line, sizeof(line), f)) {
+        printf("%s", line);
+    }
+    fclose(f);
+}
+
+static void h_type(dbf_t *db, lexer_t *l) {
+    char arg[256];
+    (void)db;
+    lex_next(l);
+    lex_get_remaining(l, arg, sizeof(arg));
+    cmd_type(arg);
+}
+
+/* ---- BLANK ---- */
+static void cmd_blank(dbf_t *db) {
+    int i;
+    if (!dbf_is_open(db)) {
+        prog_error(ERR_NO_DATABASE, "No database in use");
+        return;
+    }
+    if (db->current_record == 0) {
+        printf("No current record.\n");
+        return;
+    }
+    for (i = 0; i < db->field_count; i++) {
+        char buf[256];
+        int len = db->fields[i].length;
+        switch (db->fields[i].type) {
+        case 'L':
+            dbf_set_field_raw(db, i, "F");
+            break;
+        default:
+            memset(buf, ' ', len);
+            buf[len] = '\0';
+            dbf_set_field_raw(db, i, buf);
+            break;
+        }
+    }
+    dbf_flush_record(db);
+}
+
+static void h_blank(dbf_t *db, lexer_t *l) {
+    (void)l;
+    cmd_blank(db);
+}
+
 static void h_total(dbf_t *db, lexer_t *l) { (void)db; (void)l; printf("TOTAL ON not implemented.\n"); }
 static void h_join(dbf_t *db, lexer_t *l) { (void)db; (void)l; printf("JOIN WITH not implemented.\n"); }
 static void h_update(dbf_t *db, lexer_t *l) { (void)db; (void)l; printf("UPDATE ON not implemented.\n"); }
@@ -5861,7 +5934,7 @@ static void h_deactivate(dbf_t *db, lexer_t *l) {
 static cmd_entry_t cmd_table[] = {
     { "ACCEPT", h_accept }, { "ACTIVATE", h_activate },
     { "APPEND", h_append },
-    { "AVERAGE", h_average }, { "BROWSE", h_browse },
+    { "AVERAGE", h_average }, { "BLANK", h_blank }, { "BROWSE", h_browse },
     { "CALCULATE", h_calculate },
     { "CANCEL", h_cancel }, { "CASE", h_case },
     { "CHANGE", h_edit }, { "CLEAR", h_clear },
@@ -5897,7 +5970,7 @@ static cmd_entry_t cmd_table[] = {
     { "SKIP", h_skip }, { "SORT", h_sort },
     { "STORE", h_store }, { "SUM", h_sum },
     { "SUSPEND", h_suspend }, { "TOTAL", h_total },
-    { "UPDATE", h_update }, { "USE", h_use },
+    { "TYPE", h_type }, { "UPDATE", h_update }, { "USE", h_use },
     { "WAIT", h_wait }, { "ZAP", h_zap },
     { NULL, NULL }
 };

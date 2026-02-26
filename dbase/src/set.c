@@ -22,6 +22,8 @@ void set_init(set_options_t *opts) {
     opts->margin = 0;
     opts->message_row = -1;  /* disabled by default */
     opts->wrap = 0;
+    opts->softseek = 0;
+    opts->unique = 0;
 }
 
 static int parse_on_off(const char *p) {
@@ -65,6 +67,8 @@ void set_display(const set_options_t *opts) {
     else
         printf("MESSAGE   = (off)\n");
     printf("WRAP      = %s\n", opts->wrap ? "ON" : "OFF");
+    printf("SOFTSEEK  = %s\n", opts->softseek ? "ON" : "OFF");
+    printf("UNIQUE    = %s\n", opts->unique ? "ON" : "OFF");
 }
 
 void set_execute(set_options_t *opts, const char *arg) {
@@ -179,7 +183,18 @@ void set_execute(set_options_t *opts, const char *arg) {
         return;
     }
     if (str_imatch(p, "UNIQUE")) {
-        parse_on_off(p + 6);
+        val = parse_on_off(p + 6);
+        if (val >= 0) opts->unique = val;
+        return;
+    }
+    if (str_imatch(p, "SOFTSEEK")) {
+        val = parse_on_off(p + 8);
+        if (val >= 0) opts->softseek = val;
+        return;
+    }
+    if (str_imatch(p, "NEAR")) {
+        val = parse_on_off(p + 4);
+        if (val >= 0) opts->softseek = val;
         return;
     }
     if (str_imatch(p, "FUNCTION")) {

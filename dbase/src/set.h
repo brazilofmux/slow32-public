@@ -29,6 +29,8 @@ typedef struct set_options {
     int margin;       /* left margin for printer output (0-254) */
     int message_row;  /* row for PROMPT MESSAGE display (-1=disabled) */
     int wrap;         /* 1=ON (MENU TO wraps around) */
+    int softseek;     /* 0=OFF, 1=ON (SEEK nearest on miss) */
+    int unique;       /* 0=OFF, 1=ON (INDEX creates unique) */
 } set_options_t;
 
 void set_init(set_options_t *opts);

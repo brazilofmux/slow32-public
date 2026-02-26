@@ -18,6 +18,8 @@ ECHO      = OFF
 MARGIN    = 0
 MESSAGE   = 24
 WRAP      = ON
+SOFTSEEK  = OFF
+UNIQUE    = OFF
 . . 
 
 
@@ -50,4 +52,6 @@ ECHO      = OFF
 MARGIN    = 0
 MESSAGE   = (off)
 WRAP      = OFF
+SOFTSEEK  = OFF
+UNIQUE    = OFF
 
