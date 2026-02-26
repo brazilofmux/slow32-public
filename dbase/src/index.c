@@ -1252,6 +1252,75 @@ static int key_entry_cmp(const void *a, const void *b, void *userdata) {
     return cmp;
 }
 
+/* ---- Determine key type/length from DBF field definitions (no records needed) ---- */
+static void index_probe_key_from_schema(index_t *idx, dbf_t *db, const char *key_expr) {
+    /* Simple field reference? */
+    int fi = dbf_find_field(db, key_expr);
+    if (fi >= 0) {
+        switch (db->fields[fi].type) {
+        case 'N': case 'F':
+            idx->key_type = 1;
+            idx->key_len = 16;
+            break;
+        case 'D':
+            idx->key_type = 2;
+            idx->key_len = 8;
+            break;
+        default:
+            idx->key_type = 0;
+            idx->key_len = db->fields[fi].length;
+            break;
+        }
+        return;
+    }
+
+    /* Compound expression — sum field widths from '+' separated parts */
+    {
+        char buf[256];
+        const char *p;
+        int total_len = 0;
+        int all_fields = 1;
+
+        str_copy(buf, key_expr, sizeof(buf));
+        p = buf;
+        while (*p) {
+            char part[64];
+            const char *end = strchr(p, '+');
+            int plen = end ? (int)(end - p) : (int)strlen(p);
+            int i, start;
+
+            /* Trim whitespace */
+            if (plen >= (int)sizeof(part)) plen = (int)sizeof(part) - 1;
+            memcpy(part, p, plen);
+            part[plen] = '\0';
+            start = 0;
+            while (part[start] == ' ') start++;
+            i = plen - 1;
+            while (i > start && part[i] == ' ') part[i--] = '\0';
+
+            fi = dbf_find_field(db, part + start);
+            if (fi >= 0) {
+                total_len += db->fields[fi].length;
+            } else {
+                all_fields = 0;
+                break;
+            }
+            p = end ? end + 1 : p + plen;
+        }
+
+        if (all_fields && total_len > 0) {
+            idx->key_type = 0;
+            if (total_len > MAX_INDEX_KEY) total_len = MAX_INDEX_KEY;
+            idx->key_len = total_len;
+            return;
+        }
+    }
+
+    /* Fallback: expression with function calls, etc. — use a reasonable default */
+    idx->key_type = 0;
+    idx->key_len = 10;
+}
+
 /* ---- Probe key type and length without storing entries (O(1) memory) ---- */
 static void index_probe_key_info(index_t *idx, dbf_t *db, expr_ctx_t *ctx,
                                   const char *key_expr) {
@@ -1299,8 +1368,8 @@ static void index_probe_key_info(index_t *idx, dbf_t *db, expr_ctx_t *ctx,
     }
 
     if (!key_type_set) {
-        idx->key_type = 0;
-        idx->key_len = 1;
+        /* No records — fall back to schema-based probe */
+        index_probe_key_from_schema(idx, db, key_expr);
     } else if (idx->key_type == 1) {
         idx->key_len = 16;
     } else if (idx->key_type == 2) {
@@ -1477,8 +1546,8 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
     }
 
     if (!key_type_set) {
-        idx->key_type = 0;
-        idx->key_len = 1;
+        /* No records — fall back to schema-based probe */
+        index_probe_key_from_schema(idx, db, key_expr);
     } else if (idx->key_type == 1) {
         idx->key_len = 16; /* sortable transformed IEEE-754 hex */
     } else if (idx->key_type == 2) {
