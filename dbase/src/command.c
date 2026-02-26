@@ -1055,6 +1055,10 @@ int parse_clauses(lexer_t *l, clause_t *c) {
                 lex_next(l);
                 if (consume_filename(l, c->to_file, sizeof(c->to_file)) < 0)
                     return -1;
+            } else if (l->current.type == TOK_IDENT) {
+                /* TO <variable> for COUNT/SUM/AVERAGE */
+                str_copy(c->to_var, l->current.text, sizeof(c->to_var));
+                lex_next(l);
             } else {
                 return -1; /* Unknown TO clause */
             }
@@ -1401,6 +1405,10 @@ static void cmd_count(dbf_t *db, lexer_t *l) {
     count = process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET, count_cb, NULL);
     if (count < 0) return;
     printf("%d record(s)\n", count);
+    if (c.to_var[0]) {
+        value_t v = val_num((double)count);
+        memvar_set(&memvar_store, c.to_var, &v);
+    }
 }
 
 typedef struct {
@@ -1454,6 +1462,7 @@ static void cmd_sum(dbf_t *db, lexer_t *l) {
         lexer_t tmp = *l;
         while (tmp.current.type != TOK_EOF) {
             if (cmd_kw(&tmp, "FOR") || cmd_kw(&tmp, "WHILE") ||
+                cmd_kw(&tmp, "TO") ||
                 cmd_kw(&tmp, "ALL") || cmd_kw(&tmp, "NEXT") ||
                 cmd_kw(&tmp, "RECORD") || cmd_kw(&tmp, "REST")) {
                 break;
@@ -1468,7 +1477,7 @@ static void cmd_sum(dbf_t *db, lexer_t *l) {
             trim_right(actx.expr);
         }
         if (actx.expr[0] == '\0') {
-            printf("Syntax: SUM <expr> [scope] [FOR <cond>] [WHILE <cond>]\n");
+            printf("Syntax: SUM <expr> [scope] [FOR <cond>] [WHILE <cond>] [TO <var>]\n");
             return;
         }
         lexer_init_ext(l, tmp.token_start, l->store);
@@ -1485,6 +1494,10 @@ static void cmd_sum(dbf_t *db, lexer_t *l) {
         val_to_string(&v, buf, sizeof(buf));
         printf("%d record(s) summed\n", count);
         printf("      SUM: %s\n", buf);
+        if (c.to_var[0]) {
+            value_t tv = val_num(actx.total);
+            memvar_set(&memvar_store, c.to_var, &tv);
+        }
     }
 }
 
@@ -1517,6 +1530,7 @@ static void cmd_average(dbf_t *db, lexer_t *l) {
         lexer_t tmp = *l;
         while (tmp.current.type != TOK_EOF) {
             if (cmd_kw(&tmp, "FOR") || cmd_kw(&tmp, "WHILE") ||
+                cmd_kw(&tmp, "TO") ||
                 cmd_kw(&tmp, "ALL") || cmd_kw(&tmp, "NEXT") ||
                 cmd_kw(&tmp, "RECORD") || cmd_kw(&tmp, "REST")) {
                 break;
@@ -1531,7 +1545,7 @@ static void cmd_average(dbf_t *db, lexer_t *l) {
             trim_right(actx.expr);
         }
         if (actx.expr[0] == '\0') {
-            printf("Syntax: AVERAGE <expr> [scope] [FOR <cond>] [WHILE <cond>]\n");
+            printf("Syntax: AVERAGE <expr> [scope] [FOR <cond>] [WHILE <cond>] [TO <var>]\n");
             return;
         }
         lexer_init_ext(l, tmp.token_start, l->store);
@@ -1548,6 +1562,10 @@ static void cmd_average(dbf_t *db, lexer_t *l) {
         val_to_string(&v, buf, sizeof(buf));
         printf("%d record(s) averaged\n", count);
         printf("  AVERAGE: %s\n", buf);
+        if (c.to_var[0]) {
+            value_t tv = val_num(actx.total / count);
+            memvar_set(&memvar_store, c.to_var, &tv);
+        }
     } else if (count == 0) {
         prog_error(ERR_RECORD_RANGE, "No records");
     }
@@ -2270,10 +2288,6 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
         prog_error(ERR_NO_DATABASE, "No database in use");
         return;
     }
-    if (is_display && (db->current_record == 0 || expr_ctx.eof_flag)) {
-        prog_error(ERR_RECORD_RANGE, "No current record");
-        return;
-    }
 
     if (db->record_count == 0) {
         prog_error(ERR_RECORD_RANGE, "No records");
@@ -2282,16 +2296,32 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
 
     clause_init(&c);
 
-    /* Check if there's a field list before clauses */
+    /* Consume leading scope keyword before field list.
+       dBase syntax: LIST/DISPLAY [ALL|NEXT n|RECORD n|REST] field1, field2 [FOR ...] */
+    if (cmd_kw(l, "ALL")) {
+        c.scope.type = SCOPE_ALL; c.has_scope = 1; lex_next(l);
+    } else if (cmd_kw(l, "NEXT")) {
+        lex_next(l);
+        if (l->current.type == TOK_NUMBER) {
+            c.scope.type = SCOPE_NEXT; c.scope.count = (uint32_t)l->current.num_val;
+            c.has_scope = 1; lex_next(l);
+        }
+    } else if (cmd_kw(l, "RECORD")) {
+        lex_next(l);
+        if (l->current.type == TOK_NUMBER) {
+            c.scope.type = SCOPE_RECORD; c.scope.count = (uint32_t)l->current.num_val;
+            c.has_scope = 1; lex_next(l);
+        }
+    } else if (cmd_kw(l, "REST")) {
+        c.scope.type = SCOPE_REST; c.has_scope = 1; lex_next(l);
+    }
+
+    /* Check if there's a field list before remaining clauses */
     if (l->current.type == TOK_IDENT &&
         !is_keyword(l->current.text, "FOR") &&
         !is_keyword(l->current.text, "WHILE") &&
         !is_keyword(l->current.text, "TO") &&
-        !is_keyword(l->current.text, "OFF") &&
-        !is_keyword(l->current.text, "ALL") &&
-        !is_keyword(l->current.text, "NEXT") &&
-        !is_keyword(l->current.text, "RECORD") &&
-        !is_keyword(l->current.text, "REST")) {
+        !is_keyword(l->current.text, "OFF")) {
 
         const char *p = l->token_start;
         nfields = parse_field_list(db, p, field_indices, DBF_MAX_FIELDS, &p);
@@ -2318,6 +2348,14 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
     } else if (c.scope.type == SCOPE_DEFAULT) {
         c.scope.type = SCOPE_NEXT;
         c.scope.count = 1;
+    }
+
+    /* DISPLAY without ALL/RECORD scope requires a current record */
+    if (is_display && c.scope.type != SCOPE_ALL && c.scope.type != SCOPE_RECORD) {
+        if (db->current_record == 0 || expr_ctx.eof_flag) {
+            prog_error(ERR_RECORD_RANGE, "No current record");
+            return;
+        }
     }
 
     if (c.to_file[0]) {
@@ -2414,8 +2452,10 @@ static void common_list_display(dbf_t *db, lexer_t *l, int is_display) {
             }
             last_rec = current_rec;
             row_count++;
-            if (has_limit) remaining--;
         }
+
+        /* NEXT N counts records examined, not records matched */
+        if (has_limit) remaining--;
 
         /* Advance */
         if (idx) {

@@ -31,6 +31,7 @@ typedef struct {
     int summary;        /* SUMMARY keyword */
     int plain;          /* PLAIN keyword */
     int noeject;        /* NOEJECT keyword */
+    char to_var[32];    /* TO <variable> for COUNT/SUM/AVERAGE */
     struct ast_node *for_ast;
     struct ast_node *while_ast;
 } clause_t;
