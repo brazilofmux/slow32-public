@@ -26,6 +26,9 @@ ECHO      = OFF
 MARGIN    = 0
 MESSAGE   = (off)
 WRAP      = OFF
+MEMOWIDTH = 50
+EPOCH     = 0
+MARK      = (default)
 SOFTSEEK  = OFF
 UNIQUE    = OFF
 

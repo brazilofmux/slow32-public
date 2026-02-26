@@ -31,6 +31,9 @@ typedef struct set_options {
     int wrap;         /* 1=ON (MENU TO wraps around) */
     int softseek;     /* 0=OFF, 1=ON (SEEK nearest on miss) */
     int unique;       /* 0=OFF, 1=ON (INDEX creates unique) */
+    int memowidth;    /* display width for memo fields (default 50) */
+    int epoch;        /* base year for 2-digit year window (0=default <50 rule) */
+    char mark;        /* date separator override; '\0' = use format default */
 } set_options_t;
 
 void set_init(set_options_t *opts);

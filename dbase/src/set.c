@@ -24,6 +24,9 @@ void set_init(set_options_t *opts) {
     opts->wrap = 0;
     opts->softseek = 0;
     opts->unique = 0;
+    opts->memowidth = 50;
+    opts->epoch = 0;
+    opts->mark = '\0';
 }
 
 static int parse_on_off(const char *p) {
@@ -67,6 +70,12 @@ void set_display(const set_options_t *opts) {
     else
         printf("MESSAGE   = (off)\n");
     printf("WRAP      = %s\n", opts->wrap ? "ON" : "OFF");
+    printf("MEMOWIDTH = %d\n", opts->memowidth);
+    printf("EPOCH     = %d\n", opts->epoch);
+    if (opts->mark)
+        printf("MARK      = %c\n", opts->mark);
+    else
+        printf("MARK      = (default)\n");
     printf("SOFTSEEK  = %s\n", opts->softseek ? "ON" : "OFF");
     printf("UNIQUE    = %s\n", opts->unique ? "ON" : "OFF");
 }
@@ -241,6 +250,35 @@ void set_execute(set_options_t *opts, const char *arg) {
         } else {
             opts->message_row = -1;  /* disable */
         }
+        return;
+    }
+    if (str_imatch(p, "MEMOWIDTH")) {
+        p = skip_ws(p + 9);
+        if (str_imatch(p, "TO")) p = skip_ws(p + 2);
+        val = atoi(p);
+        if (val >= 8 && val <= 256)
+            opts->memowidth = val;
+        else
+            printf("MEMOWIDTH must be 8-256.\n");
+        return;
+    }
+    if (str_imatch(p, "EPOCH")) {
+        p = skip_ws(p + 5);
+        if (str_imatch(p, "TO")) p = skip_ws(p + 2);
+        val = atoi(p);
+        if (val == 0 || (val >= 1900 && val <= 2900))
+            opts->epoch = val;
+        else
+            printf("EPOCH must be 0 or 1900-2900.\n");
+        return;
+    }
+    if (str_imatch(p, "MARK")) {
+        p = skip_ws(p + 4);
+        if (str_imatch(p, "TO")) p = skip_ws(p + 2);
+        if (*p)
+            opts->mark = *p;
+        else
+            opts->mark = '\0';
         return;
     }
     if (str_imatch(p, "WRAP")) {

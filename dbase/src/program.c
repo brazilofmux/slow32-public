@@ -1150,9 +1150,10 @@ void prog_do(const char *arg) {
         return;
     }
 
-    /* DO <file> or DO <procedure> [WITH arg1, arg2, ...] */
+    /* DO <file> or DO <procedure> [IN <file>] [WITH arg1, arg2, ...] */
     {
         char name[64];
+        char in_file[64];
         int i = 0;
         program_t *prog;
         int proc_line;
@@ -1163,8 +1164,19 @@ void prog_do(const char *arg) {
             name[i++] = *p++;
         name[i] = '\0';
 
-        /* Parse optional WITH clause */
+        /* Parse optional IN clause */
         p = skip_ws(p);
+        in_file[0] = '\0';
+        if (str_imatch(p, "IN")) {
+            int j = 0;
+            p = skip_ws(p + 2);
+            while (*p && *p != ' ' && *p != '\t' && j < 63)
+                in_file[j++] = *p++;
+            in_file[j] = '\0';
+            p = skip_ws(p);
+        }
+
+        /* Parse optional WITH clause */
         char ref_names[MAX_FUNC_ARGS][MEMVAR_NAMELEN];
         memset(ref_names, 0, sizeof(ref_names));
         if (str_imatch(p, "WITH")) {
@@ -1198,6 +1210,51 @@ void prog_do(const char *arg) {
                 p = skip_ws(p);
                 if (*p == ',') { p++; p = skip_ws(p); }
                 else break;
+            }
+        }
+
+        /* If IN <file> specified, load that file and search for procedure there first */
+        if (in_file[0]) {
+            program_t *in_prog = prog_load(in_file);
+            if (in_prog) {
+                proc_line = find_procedure(in_prog, name);
+                if (proc_line >= 0) {
+                    if (state.running) {
+                        if (push_frame(in_prog, proc_line + 1) < 0) {
+                            prog_free(in_prog);
+                            return;
+                        }
+                        if (with_argc > 0 && state.call_depth > 0) {
+                            call_frame_t *frame = &state.call_stack[state.call_depth - 1];
+                            frame->with_argc = with_argc;
+                            memcpy(frame->with_args, with_args, with_argc * sizeof(value_t));
+                            memcpy(frame->with_ref_names, ref_names, sizeof(ref_names));
+                        }
+                        return;
+                    }
+                    /* Interactive DO — start execution at the procedure */
+                    state.current_prog = in_prog;
+                    state.pc = proc_line + 1;
+                    state.call_depth = 0;
+                    state.loop_depth = 0;
+                    if_skip = 0;
+                    if_depth = 0;
+                    case_active = 0;
+                    case_done = 0;
+                    case_skip = 0;
+                    if (with_argc > 0) {
+                        if (push_frame(in_prog, proc_line + 1) == 0) {
+                            call_frame_t *frame = &state.call_stack[state.call_depth - 1];
+                            frame->with_argc = with_argc;
+                            memcpy(frame->with_args, with_args, with_argc * sizeof(value_t));
+                            memcpy(frame->with_ref_names, ref_names, sizeof(ref_names));
+                            frame->caller_prog = NULL;
+                        }
+                    }
+                    prog_run();
+                    return;
+                }
+                prog_free(in_prog);
             }
         }
 

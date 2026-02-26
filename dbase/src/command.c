@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
+#include <dirent.h>
 #include "command.h"
 #include "dbf.h"
 #include "field.h"
@@ -356,6 +357,7 @@ static void print_field_value(dbf_t *db, int f, char *raw, char *display, FILE *
             PRINT_TO(to_file, "%10s: %s\n", db->fields[f].name, display);
         }
         break;
+    case 'F':
     case 'N':
         field_display_numeric(display, raw, db->fields[f].length);
         if (for_list)
@@ -1891,6 +1893,7 @@ static int replace_cb(dbf_t *db, uint32_t recno, void *userdata) {
             else
                 field_format_char(formatted, db->fields[idx].length, valbuf);
             break;
+        case 'F':
         case 'N':
             field_format_numeric(formatted, db->fields[idx].length,
                                  db->fields[idx].decimals, valbuf);
@@ -2111,6 +2114,7 @@ static void cmd_scatter(dbf_t *db, lexer_t *l) {
             trim_right(raw);
             val = val_str(raw);
             break;
+        case 'F':
         case 'N':
             val = val_num(atof(raw));
             break;
@@ -2187,6 +2191,7 @@ static void cmd_gather(dbf_t *db, lexer_t *l) {
             else
                 field_format_char(formatted, db->fields[fi].length, valbuf);
             break;
+        case 'F':
         case 'N':
             field_format_numeric(formatted, db->fields[fi].length,
                                  db->fields[fi].decimals, valbuf);
@@ -3031,6 +3036,77 @@ static void copy_memo_field(dbf_t *src, int si, dbf_t *dest, int di) {
 static const char *parse_filename_raw(const char *arg, char *filename, int size);
 static int has_extension(const char *filename);
 
+/* ---- COPY TO SDF helper ---- */
+static void copy_to_sdf(dbf_t *db, const char *filename,
+                         int *field_indices, int nfields,
+                         int use_all_fields,
+                         uint32_t start, uint32_t end,
+                         const char *cond_str)
+{
+    FILE *fp;
+    uint32_t i;
+    int f, fc, count = 0;
+
+    fp = fopen(filename, "wb");
+    if (!fp) {
+        prog_error_fmt(ERR_CANNOT_CREATE, "Error creating %s", filename);
+        return;
+    }
+
+    fc = use_all_fields ? db->field_count : nfields;
+
+    for (i = start; i <= end; i++) {
+        char raw[256];
+
+        dbf_read_record(db, i);
+        if (skip_deleted(db->record_buf) || !check_filter(db)) continue;
+
+        if (cond_str) {
+            value_t cond;
+            if (expr_eval_str(&expr_ctx, cond_str, &cond) != 0) {
+                report_expr_error();
+                fclose(fp);
+                return;
+            }
+            if (cond.type != VAL_LOGIC || !cond.logic) continue;
+        }
+
+        for (f = 0; f < fc; f++) {
+            int fi = use_all_fields ? f : field_indices[f];
+            char type = db->fields[fi].type;
+            int flen = db->fields[fi].length;
+            int j;
+
+            if (type == 'M') {
+                /* Memo: write spaces to field width (typically 10) */
+                for (j = 0; j < flen; j++) fputc(' ', fp);
+                continue;
+            }
+
+            dbf_get_field_raw(db, fi, raw, sizeof(raw));
+
+            if (type == 'D') {
+                /* Date: write as YYYYMMDD (8 chars) */
+                for (j = 0; j < 8 && raw[j]; j++) fputc(raw[j], fp);
+                for (; j < 8; j++) fputc(' ', fp);
+            } else {
+                /* C, N, F, L: write raw, padded to field length */
+                int len = strlen(raw);
+                if (len > flen) len = flen;
+                for (j = 0; j < len; j++) fputc(raw[j], fp);
+                for (; j < flen; j++) fputc(' ', fp);
+            }
+        }
+
+        fputc('\r', fp);
+        fputc('\n', fp);
+        count++;
+    }
+
+    fclose(fp);
+    printf("%d record(s) copied.\n", count);
+}
+
 /* ---- COPY TO DELIMITED helper ---- */
 static void copy_to_delimited(dbf_t *db, const char *filename,
                                int *field_indices, int nfields,
@@ -3193,6 +3269,29 @@ static void cmd_copy_to(dbf_t *db, const char *arg) {
 
         copy_to_delimited(db, filename, field_indices, nfields, use_all_fields,
                           start, end, cond_str, quote_char, blank_mode);
+        return;
+    }
+
+    /* Check for SDF keyword */
+    if (str_imatch(p, "SDF") || (str_imatch(p, "TYPE") && str_imatch(skip_ws(p + 4), "SDF"))) {
+        if (str_imatch(p, "TYPE")) p = skip_ws(skip_ws(p + 4) + 3);
+        else p = skip_ws(p + 3);
+
+        if (str_imatch(p, "FOR"))
+            cond_str = skip_ws(p + 3);
+
+        if (!has_extension(filename))
+            strcat(filename, ".TXT");
+
+        use_all_fields = (nfields == 0);
+
+        if (scope_bounds(db, &scope, &start, &end) < 0) {
+            prog_error(ERR_RECORD_RANGE, "Invalid scope");
+            return;
+        }
+
+        copy_to_sdf(db, filename, field_indices, nfields, use_all_fields,
+                     start, end, cond_str);
         return;
     }
 
@@ -3451,6 +3550,7 @@ static int append_row_cb(int line, const csv_row_t *row, void *ud) {
         case 'C':
             field_format_char(formatted, flen, val);
             break;
+        case 'F':
         case 'N':
             field_format_numeric(formatted, flen, fdec, val);
             break;
@@ -3606,6 +3706,100 @@ static void cmd_append_from(dbf_t *db, const char *arg) {
                 quote_char = *p++;
                 p = skip_ws(p);
             }
+        }
+    }
+
+    /* Check for SDF keyword */
+    {
+        int sdf_mode = 0;
+        if (str_imatch(p, "SDF")) {
+            sdf_mode = 1;
+            p = skip_ws(p + 3);
+        } else if (str_imatch(p, "TYPE") && str_imatch(skip_ws(p + 4), "SDF")) {
+            sdf_mode = 1;
+            p = skip_ws(skip_ws(p + 4) + 3);
+        }
+        if (sdf_mode) {
+            /* Parse FOR clause */
+            p = skip_ws(p);
+            if (str_imatch(p, "FOR"))
+                cond_str = skip_ws(p + 3);
+
+            if (!has_extension(filename)) {
+                if ((int)strlen(filename) + 4 < (int)sizeof(filename))
+                    strcat(filename, ".TXT");
+            }
+
+            /* Read SDF file and append records */
+            {
+                FILE *fp = fopen(filename, "rb");
+                char line[4096];
+                int lcount = 0;
+                if (!fp) {
+                    file_not_found(filename);
+                    return;
+                }
+
+                while (fgets(line, sizeof(line), fp)) {
+                    int offset = 0, f;
+                    char formatted[256];
+
+                    /* Strip trailing CR/LF */
+                    {
+                        int len = strlen(line);
+                        while (len > 0 && (line[len-1] == '\r' || line[len-1] == '\n')) len--;
+                        line[len] = '\0';
+                    }
+
+                    if (line[0] == '\0') continue;
+
+                    dbf_append_blank(db);
+
+                    for (f = 0; f < db->field_count; f++) {
+                        int flen = db->fields[f].length;
+                        char slice[256];
+                        int slen;
+
+                        /* Extract fixed-width slice */
+                        slen = strlen(line + offset);
+                        if (slen > flen) slen = flen;
+                        if (slen > 0) memcpy(slice, line + offset, slen);
+                        if (slen < flen) memset(slice + slen, ' ', flen - slen);
+                        slice[flen] = '\0';
+                        offset += flen;
+
+                        /* For date fields, convert from YYYYMMDD */
+                        if (db->fields[f].type == 'D') {
+                            /* SDF dates are YYYYMMDD — store directly */
+                            dbf_set_field_raw(db, f, slice);
+                        } else {
+                            dbf_set_field_raw(db, f, slice);
+                        }
+                    }
+
+                    if (cond_str) {
+                        value_t cond_v;
+                        if (expr_eval_str(&expr_ctx, cond_str, &cond_v) != 0) {
+                            report_expr_error();
+                            fclose(fp);
+                            return;
+                        }
+                        if (cond_v.type != VAL_LOGIC || !cond_v.logic) {
+                            /* Remove the appended record by going back */
+                            db->record_count--;
+                            db->current_record = db->record_count;
+                            continue;
+                        }
+                    }
+
+                    dbf_flush_record(db);
+                    lcount++;
+                }
+
+                fclose(fp);
+                printf("%d record(s) added.\n", lcount);
+            }
+            return;
         }
     }
 
@@ -4952,6 +5146,18 @@ int cmd_get_unique(void) {
     return set_opts.unique;
 }
 
+int cmd_get_memowidth(void) {
+    return set_opts.memowidth;
+}
+
+int cmd_get_epoch(void) {
+    return set_opts.epoch;
+}
+
+char cmd_get_mark(void) {
+    return set_opts.mark;
+}
+
 /* ---- Dispatch ---- */
 /* ---- Command Dispatch Table ---- */
 
@@ -5036,6 +5242,34 @@ static void h_list(dbf_t *db, lexer_t *l) {
         lex_next(l); /* skip LIST */
         lex_next(l); /* skip STRUCTURE */
         cmd_display_structure(db);
+    } else if (cmd_peek_kw(l, "FILES")) {
+        char pattern[64];
+        lex_next(l); /* skip LIST */
+        lex_next(l); /* skip FILES */
+        str_copy(pattern, "*.*", sizeof(pattern));
+        if (cmd_kw(l, "LIKE")) {
+            lex_next(l); /* skip LIKE */
+            if (l->current.type == TOK_IDENT || l->current.type == TOK_STRING) {
+                str_copy(pattern, l->current.text, sizeof(pattern));
+            }
+        }
+        /* List matching files */
+        {
+            DIR *dir = opendir(".");
+            struct dirent *ent;
+            int count = 0;
+            if (dir) {
+                while ((ent = readdir(dir)) != NULL) {
+                    if (ent->d_name[0] == '.') continue;
+                    if (str_like(ent->d_name, pattern)) {
+                        printf("%-16s\n", ent->d_name);
+                        count++;
+                    }
+                }
+                closedir(dir);
+            }
+            printf("%d file(s) found.\n", count);
+        }
     } else {
         lex_next(l);
         cmd_list(db, l);
@@ -5107,7 +5341,17 @@ static void h_sum(dbf_t *db, lexer_t *l) { lex_next(l); cmd_sum(db, l); }
 static void h_average(dbf_t *db, lexer_t *l) { lex_next(l); cmd_average(db, l); }
 static void h_calculate(dbf_t *db, lexer_t *l) { lex_next(l); cmd_calculate(db, l); }
 static void h_reindex(dbf_t *db, lexer_t *l) { (void)l; cmd_reindex(db); }
-static void h_delete(dbf_t *db, lexer_t *l) { lex_next(l); cmd_delete(db, l); }
+static void h_delete(dbf_t *db, lexer_t *l) {
+    lex_next(l); /* skip DELETE */
+    if (cmd_kw(l, "FILE")) {
+        char arg[256];
+        lex_next(l); /* skip FILE */
+        lex_get_remaining(l, arg, sizeof(arg));
+        cmd_erase(arg);
+        return;
+    }
+    cmd_delete(db, l);
+}
 static void h_recall(dbf_t *db, lexer_t *l) { lex_next(l); cmd_recall(db, l); }
 static void h_pack(dbf_t *db, lexer_t *l) { (void)l; cmd_pack(db); }
 static void h_zap(dbf_t *db, lexer_t *l) { (void)l; cmd_zap(db); }

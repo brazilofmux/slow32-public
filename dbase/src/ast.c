@@ -495,6 +495,7 @@ static int eval_field_from_db(dbf_t *db, const char *name, value_t *result) {
         dbf_get_field_raw(db, idx, raw, sizeof(raw));
         switch (db->fields[idx].type) {
         case 'C': *result = val_str(raw); return 0;
+        case 'F':
         case 'N': *result = val_num(atof(raw)); return 0;
         case 'D': *result = val_date(date_from_dbf(raw)); return 0;
         case 'L': *result = val_logic(raw[0] == 'T' || raw[0] == 't'); return 0;

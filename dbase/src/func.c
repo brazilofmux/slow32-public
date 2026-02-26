@@ -715,7 +715,7 @@ static int fn_dtoc(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "DTOC requires (date)";
         return -1;
     }
-    date_to_display(args[0].date, buf, cmd_get_date_format(), cmd_get_century());
+    date_to_display(args[0].date, buf, cmd_get_date_format(), cmd_get_century(), cmd_get_mark());
     *result = val_str(buf);
     return 0;
 }
@@ -726,7 +726,7 @@ static int fn_ctod(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
         ctx->error = "CTOD requires (string)";
         return -1;
     }
-    *result = val_date(date_from_display(args[0].str, cmd_get_date_format()));
+    *result = val_date(date_from_display(args[0].str, cmd_get_date_format(), cmd_get_epoch()));
     return 0;
 }
 
@@ -1633,6 +1633,379 @@ static int fn_seek_func(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resu
     return 0;
 }
 
+/* ---- Tier 2 compatibility functions ---- */
+
+/* val_compare helper: compare two values, returns -1/0/1 */
+static int val_compare(const value_t *a, const value_t *b) {
+    if (a->type == VAL_NUM && b->type == VAL_NUM) {
+        if (a->num < b->num) return -1;
+        if (a->num > b->num) return 1;
+        return 0;
+    }
+    if (a->type == VAL_CHAR && b->type == VAL_CHAR) {
+        return str_icmp(a->str, b->str);
+    }
+    if (a->type == VAL_DATE && b->type == VAL_DATE) {
+        if (a->date < b->date) return -1;
+        if (a->date > b->date) return 1;
+        return 0;
+    }
+    if (a->type == VAL_LOGIC && b->type == VAL_LOGIC) {
+        return a->logic - b->logic;
+    }
+    /* Different types: compare type enum values */
+    return (int)a->type - (int)b->type;
+}
+
+/* ---- Array functions ---- */
+
+static int fn_alen(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 1 || args[0].type != VAL_ARRAY || !args[0].array) {
+        ctx->error = "ALEN requires (array[,dim])";
+        return -1;
+    }
+    {
+        array_t *arr = args[0].array;
+        int dim = (nargs >= 2 && args[1].type == VAL_NUM) ? (int)args[1].num : 0;
+        if (dim == 1)
+            *result = val_num((double)arr->rows);
+        else if (dim == 2)
+            *result = val_num((double)arr->cols);
+        else
+            *result = val_num((double)(arr->rows * (arr->cols > 0 ? arr->cols : 1)));
+    }
+    return 0;
+}
+
+static int fn_ascan(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 2 || args[0].type != VAL_ARRAY || !args[0].array) {
+        ctx->error = "ASCAN requires (array, value)";
+        return -1;
+    }
+    {
+        array_t *arr = args[0].array;
+        int total = arr->rows * (arr->cols > 0 ? arr->cols : 1);
+        int i;
+        for (i = 0; i < total; i++) {
+            if (val_compare(&arr->elements[i], &args[1]) == 0) {
+                *result = val_num((double)(i + 1));
+                return 0;
+            }
+        }
+        *result = val_num(0);
+    }
+    return 0;
+}
+
+static int fn_asort(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 1 || args[0].type != VAL_ARRAY || !args[0].array) {
+        ctx->error = "ASORT requires (array)";
+        return -1;
+    }
+    {
+        array_t *arr = args[0].array;
+        int total = arr->rows * (arr->cols > 0 ? arr->cols : 1);
+        int i, j;
+        /* Insertion sort — stable, in-place */
+        for (i = 1; i < total; i++) {
+            value_t tmp = arr->elements[i];
+            j = i - 1;
+            while (j >= 0 && val_compare(&arr->elements[j], &tmp) > 0) {
+                arr->elements[j + 1] = arr->elements[j];
+                j--;
+            }
+            arr->elements[j + 1] = tmp;
+        }
+        *result = val_num((double)total);
+    }
+    return 0;
+}
+
+static int fn_acopy(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 2 || args[0].type != VAL_ARRAY || !args[0].array ||
+        args[1].type != VAL_ARRAY || !args[1].array) {
+        ctx->error = "ACOPY requires (source, dest[, start, count, dstart])";
+        return -1;
+    }
+    {
+        array_t *src = args[0].array;
+        array_t *dst = args[1].array;
+        int src_total = src->rows * (src->cols > 0 ? src->cols : 1);
+        int dst_total = dst->rows * (dst->cols > 0 ? dst->cols : 1);
+        int start  = (nargs >= 3 && args[2].type == VAL_NUM) ? (int)args[2].num : 1;
+        int count  = (nargs >= 4 && args[3].type == VAL_NUM) ? (int)args[3].num : (src_total - start + 1);
+        int dstart = (nargs >= 5 && args[4].type == VAL_NUM) ? (int)args[4].num : 1;
+        int copied = 0, i;
+
+        for (i = 0; i < count; i++) {
+            int si = start - 1 + i;
+            int di = dstart - 1 + i;
+            if (si < 0 || si >= src_total) break;
+            if (di < 0 || di >= dst_total) break;
+            dst->elements[di] = src->elements[si];
+            copied++;
+        }
+        *result = val_num((double)copied);
+    }
+    return 0;
+}
+
+static int fn_ains(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 2 || args[0].type != VAL_ARRAY || !args[0].array ||
+        args[1].type != VAL_NUM) {
+        ctx->error = "AINS requires (array, element)";
+        return -1;
+    }
+    {
+        array_t *arr = args[0].array;
+        int total = arr->rows * (arr->cols > 0 ? arr->cols : 1);
+        int n = (int)args[1].num - 1;  /* 0-based */
+        int i;
+        if (n < 0 || n >= total) {
+            ctx->error = "AINS element out of range";
+            return -1;
+        }
+        for (i = total - 1; i > n; i--)
+            arr->elements[i] = arr->elements[i - 1];
+        arr->elements[n] = val_str("");
+        *result = val_logic(1);
+    }
+    return 0;
+}
+
+static int fn_adel(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 2 || args[0].type != VAL_ARRAY || !args[0].array ||
+        args[1].type != VAL_NUM) {
+        ctx->error = "ADEL requires (array, element)";
+        return -1;
+    }
+    {
+        array_t *arr = args[0].array;
+        int total = arr->rows * (arr->cols > 0 ? arr->cols : 1);
+        int n = (int)args[1].num - 1;  /* 0-based */
+        int i;
+        if (n < 0 || n >= total) {
+            ctx->error = "ADEL element out of range";
+            return -1;
+        }
+        for (i = n; i < total - 1; i++)
+            arr->elements[i] = arr->elements[i + 1];
+        arr->elements[total - 1] = val_str("");
+        *result = val_logic(1);
+    }
+    return 0;
+}
+
+static int fn_afields(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 1 || args[0].type != VAL_ARRAY || !args[0].array) {
+        ctx->error = "AFIELDS requires (array)";
+        return -1;
+    }
+    if (!ctx->db || !dbf_is_open(ctx->db)) {
+        *result = val_num(0);
+        return 0;
+    }
+    {
+        array_t *arr = args[0].array;
+        int fc = ctx->db->field_count;
+        int total = arr->rows * (arr->cols > 0 ? arr->cols : 1);
+        int is_2d = (arr->cols >= 4);
+        int i;
+        for (i = 0; i < fc && i < (is_2d ? arr->rows : total); i++) {
+            if (is_2d) {
+                arr->elements[i * arr->cols + 0] = val_str(ctx->db->fields[i].name);
+                {
+                    char t[2]; t[0] = ctx->db->fields[i].type; t[1] = '\0';
+                    arr->elements[i * arr->cols + 1] = val_str(t);
+                }
+                arr->elements[i * arr->cols + 2] = val_num((double)ctx->db->fields[i].length);
+                arr->elements[i * arr->cols + 3] = val_num((double)ctx->db->fields[i].decimals);
+            } else {
+                arr->elements[i] = val_str(ctx->db->fields[i].name);
+            }
+        }
+        *result = val_num((double)fc);
+    }
+    return 0;
+}
+
+/* ---- String functions ---- */
+
+static int fn_like(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_CHAR) {
+        ctx->error = "LIKE requires (pattern, string)";
+        return -1;
+    }
+    /* str_like(text, pattern): note LIKE(pattern, string) reverses args */
+    *result = val_logic(str_like(args[1].str, args[0].str));
+    return 0;
+}
+
+static int fn_chrtran(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char buf[256];
+    int bi = 0;
+    (void)ctx;
+    if (nargs < 3 || args[0].type != VAL_CHAR || args[1].type != VAL_CHAR || args[2].type != VAL_CHAR) {
+        ctx->error = "CHRTRAN requires (string, from, to)";
+        return -1;
+    }
+    {
+        const char *s = args[0].str;
+        const char *from = args[1].str;
+        const char *to = args[2].str;
+        int tolen = strlen(to);
+        while (*s && bi < (int)sizeof(buf) - 1) {
+            const char *f = strchr(from, *s);
+            if (f) {
+                int pos = (int)(f - from);
+                if (pos < tolen)
+                    buf[bi++] = to[pos];
+                /* else: delete character (no replacement) */
+            } else {
+                buf[bi++] = *s;
+            }
+            s++;
+        }
+        buf[bi] = '\0';
+    }
+    *result = val_str(buf);
+    return 0;
+}
+
+static void compute_soundex(const char *input, char *out) {
+    static const char map[] = "01230120022455012623010202";
+    const char *s = input;
+    int bi = 1;
+    char last;
+    while (*s && !((*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z'))) s++;
+    if (!*s) { out[0] = '0'; out[1] = '0'; out[2] = '0'; out[3] = '0'; out[4] = '\0'; return; }
+    out[0] = (*s >= 'a' && *s <= 'z') ? *s - 32 : *s;
+    last = map[out[0] - 'A'];
+    s++;
+    while (*s && bi < 4) {
+        char c = *s++;
+        if (c >= 'a' && c <= 'z') c -= 32;
+        if (c >= 'A' && c <= 'Z') {
+            char code = map[c - 'A'];
+            if (code != '0' && code != last) {
+                out[bi++] = code;
+                last = code;
+            } else if (code == '0') {
+                last = '0';
+            }
+        }
+    }
+    while (bi < 4) out[bi++] = '0';
+    out[4] = '\0';
+}
+
+static int fn_difference(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char s1[5], s2[5];
+    int count = 0, i;
+    (void)ctx;
+    if (nargs < 2 || args[0].type != VAL_CHAR || args[1].type != VAL_CHAR) {
+        ctx->error = "DIFFERENCE requires (string1, string2)";
+        return -1;
+    }
+    compute_soundex(args[0].str, s1);
+    compute_soundex(args[1].str, s2);
+    for (i = 0; i < 4; i++) {
+        if (s1[i] == s2[i]) count++;
+    }
+    *result = val_num((double)count);
+    return 0;
+}
+
+/* ---- Date functions ---- */
+
+static int fn_gomonth(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx;
+    if (nargs < 2 || args[0].type != VAL_DATE || args[1].type != VAL_NUM) {
+        ctx->error = "GOMONTH requires (date, months)";
+        return -1;
+    }
+    if (args[0].date == 0) {
+        *result = val_date(0);
+        return 0;
+    }
+    {
+        int y, m, d, n, dim;
+        date_from_jdn(args[0].date, &y, &m, &d);
+        n = (int)args[1].num;
+        m += n;
+        while (m > 12) { m -= 12; y++; }
+        while (m < 1) { m += 12; y--; }
+        dim = date_days_in_month(y, m);
+        if (d > dim) d = dim;
+        *result = val_date(date_to_jdn(y, m, d));
+    }
+    return 0;
+}
+
+static int fn_dmy(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char buf[32];
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_DATE) {
+        ctx->error = "DMY requires (date)";
+        return -1;
+    }
+    if (args[0].date == 0) {
+        *result = val_str("");
+        return 0;
+    }
+    {
+        int y, m, d;
+        date_from_jdn(args[0].date, &y, &m, &d);
+        snprintf(buf, sizeof(buf), "%02d %s %04d", d, date_month_name(m), y);
+    }
+    *result = val_str(buf);
+    return 0;
+}
+
+static int fn_mdy(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    char buf[32];
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_DATE) {
+        ctx->error = "MDY requires (date)";
+        return -1;
+    }
+    if (args[0].date == 0) {
+        *result = val_str("");
+        return 0;
+    }
+    {
+        int y, m, d;
+        date_from_jdn(args[0].date, &y, &m, &d);
+        snprintf(buf, sizeof(buf), "%s %02d, %04d", date_month_name(m), d, y);
+    }
+    *result = val_str(buf);
+    return 0;
+}
+
+/* ---- System stubs ---- */
+
+static int fn_header(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)args; (void)nargs;
+    if (ctx->db && dbf_is_open(ctx->db))
+        *result = val_num((double)ctx->db->header_size);
+    else
+        *result = val_num(0);
+    return 0;
+}
+
+static int fn_memory(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_num(640);
+    return 0;
+}
+
+static int fn_diskspace(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)ctx; (void)args; (void)nargs;
+    *result = val_num(100000000);
+    return 0;
+}
+
 /* ---- Dispatch table ---- */
 
 typedef int (*func_impl_t)(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
@@ -1766,6 +2139,26 @@ static const func_entry_t func_table[] = {
     { "GETENV",    fn_getenv },
     /* SEEK() function form */
     { "SEEK",      fn_seek_func },
+    /* Tier 2: Array functions */
+    { "ALEN",      fn_alen },
+    { "ASCAN",     fn_ascan },
+    { "ASORT",     fn_asort },
+    { "ACOPY",     fn_acopy },
+    { "AINS",      fn_ains },
+    { "ADEL",      fn_adel },
+    { "AFIELDS",   fn_afields },
+    /* Tier 2: String functions */
+    { "LIKE",      fn_like },
+    { "CHRTRAN",   fn_chrtran },
+    { "DIFFERENCE", fn_difference },
+    /* Tier 2: Date functions */
+    { "GOMONTH",   fn_gomonth },
+    { "DMY",       fn_dmy },
+    { "MDY",       fn_mdy },
+    /* Tier 2: System stubs */
+    { "HEADER",    fn_header },
+    { "MEMORY",    fn_memory },
+    { "DISKSPACE", fn_diskspace },
     { NULL, NULL }
 };
 

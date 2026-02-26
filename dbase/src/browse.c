@@ -138,6 +138,7 @@ static void get_field_display(dbf_t *db, int fi, char *buf, int bufsize)
     dbf_get_field_raw(db, fi, raw, sizeof(raw));
     switch (db->fields[fi].type) {
     case 'C': field_display_char(buf, raw, db->fields[fi].length); break;
+    case 'F':
     case 'N': field_display_numeric(buf, raw, db->fields[fi].length); break;
     case 'D': field_display_date(buf, raw); break;
     case 'L': field_display_logical(buf, raw); break;
@@ -295,6 +296,7 @@ static int edit_cell(browse_state_t *bs, int field_idx,
         case 'C':
             ok = (field_format_char(formatted, flen, buf) == 0);
             break;
+        case 'F':
         case 'N':
             ok = (field_format_numeric(formatted, flen,
                     db->fields[field_idx].decimals, buf) == 0);
@@ -319,6 +321,7 @@ static int edit_cell(browse_state_t *bs, int field_idx,
             char old_fmt[256];
             switch (type) {
             case 'C': field_format_char(old_fmt, flen, original); break;
+            case 'F':
             case 'N': field_format_numeric(old_fmt, flen,
                         db->fields[field_idx].decimals, original); break;
             case 'D': field_format_date(old_fmt, original); break;

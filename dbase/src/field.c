@@ -53,7 +53,7 @@ int field_format_numeric(char *buf, int field_len, int decimals, const char *val
 
 int field_format_date(char *buf, const char *value) {
     /* Input: date string in current SET DATE format, Output: YYYYMMDD (8 bytes) */
-    int32_t jdn = date_from_display(value, cmd_get_date_format());
+    int32_t jdn = date_from_display(value, cmd_get_date_format(), cmd_get_epoch());
     date_to_dbf(jdn, buf);
     return 0;
 }
@@ -82,7 +82,7 @@ void field_display_numeric(char *buf, const char *raw, int field_len) {
 void field_display_date(char *buf, const char *raw) {
     /* Input: YYYYMMDD, Output: format-aware date string */
     int32_t jdn = date_from_dbf(raw);
-    date_to_display(jdn, buf, cmd_get_date_format(), cmd_get_century());
+    date_to_display(jdn, buf, cmd_get_date_format(), cmd_get_century(), cmd_get_mark());
 }
 
 void field_display_logical(char *buf, const char *raw) {

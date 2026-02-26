@@ -36,6 +36,9 @@ int cmd_get_margin(void);     /* SET MARGIN TO n */
 int cmd_get_message_row(void); /* SET MESSAGE TO row (-1=disabled) */
 int cmd_get_wrap(void);       /* SET WRAP ON/OFF */
 date_format_t cmd_get_date_format(void);  /* SET DATE format */
+int  cmd_get_memowidth(void);   /* SET MEMOWIDTH TO n */
+int  cmd_get_epoch(void);       /* SET EPOCH TO year */
+char cmd_get_mark(void);        /* SET MARK TO char */
 
 /* Public wrappers for browse.c */
 index_t *cmd_controlling_index(void);

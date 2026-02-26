@@ -98,7 +98,7 @@ void val_to_string(const value_t *v, char *buf, int size) {
         break;
     case VAL_DATE: {
         char mdy[16];
-        date_to_display(v->date, mdy, cmd_get_date_format(), cmd_get_century());
+        date_to_display(v->date, mdy, cmd_get_date_format(), cmd_get_century(), cmd_get_mark());
         str_copy(buf, mdy, size);
         break;
     }
@@ -491,6 +491,7 @@ static int parse_primary(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
                         dbf_get_field_raw(adb, idx, raw, sizeof(raw));
                         switch (adb->fields[idx].type) {
                         case 'C': *result = val_str(raw); return 0;
+                        case 'F':
                         case 'N': *result = val_num(atof(raw)); return 0;
                         case 'D': *result = val_date(date_from_dbf(raw)); return 0;
                         case 'L': *result = val_logic(raw[0] == 'T' || raw[0] == 't'); return 0;
@@ -567,6 +568,7 @@ static int parse_primary(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
                 dbf_get_field_raw(ctx->db, idx, raw, sizeof(raw));
                 switch (ctx->db->fields[idx].type) {
                 case 'C': *result = val_str(raw); return 0;
+                case 'F':
                 case 'N': *result = val_num(atof(raw)); return 0;
                 case 'D': *result = val_date(date_from_dbf(raw)); return 0;
                 case 'L': *result = val_logic(raw[0] == 'T' || raw[0] == 't'); return 0;
