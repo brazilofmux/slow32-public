@@ -10,17 +10,13 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
       SUM: 49500
 1000 record(s) averaged
   AVERAGE: 49.5
-1000 record(s) indexed.
 Found 500: .T. ITEM  500 0
 Found 1: .T. ITEM    1 1
 Not found: .F.
-500 record(s) deleted.
 500 record(s)
-500 record(s) remaining.
 After pack: 500
 Seek after pack: .T. ITEM    1
-500 record(s) sorted.
 First sorted QTY: 1
 Last sorted QTY: 99
 Sorted count: 500
-Database closed.
+

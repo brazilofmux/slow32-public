@@ -23,12 +23,10 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
 . . . Path set
 . . . . . Logged line
 . . . After alternate
-. . 2 record(s) indexed.
-. . Alice
+. . . . Alice
 . . Carol
 . Filtered: 3
-. . 3 record(s) indexed.
-. . Carol
+. . . . Carol
 . . Bob
 . . Alice
 . . inside
@@ -36,5 +34,4 @@ Recovered
 inside
 After sequence
 local
-. . Database closed.
 

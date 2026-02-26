@@ -632,7 +632,7 @@ static void cmd_use(dbf_t *db, const char *arg) {
             wa->locate_last_rec = 0;
             wa->filter_cond[0] = '\0';
             if (wa->filter_ast) { ast_free(wa->filter_ast); wa->filter_ast = NULL; }
-            printf("Database closed.\n");
+            if (set_opts.talk) printf("Database closed.\n");
         }
         return;
     }
@@ -2699,7 +2699,7 @@ static void cmd_delete(dbf_t *db, lexer_t *l) {
         db->record_buf[0] = '*';
         db->record_dirty = 1;
         dbf_flush_record(db);
-        printf("1 record deleted.\n");
+        if (set_opts.talk) printf("1 record deleted.\n");
         return;
     }
 
@@ -2709,8 +2709,10 @@ static void cmd_delete(dbf_t *db, lexer_t *l) {
 
     count = process_records(db, &c, PROC_SKIP_DELETED_ANY | PROC_LEAVE_ON_MATCH, delete_cb, NULL);
     if (count < 0) return;
-    if (count == 1) printf("1 record deleted.\n");
-    else printf("%d record(s) deleted.\n", count);
+    if (set_opts.talk) {
+        if (count == 1) printf("1 record deleted.\n");
+        else printf("%d record(s) deleted.\n", count);
+    }
 }
 
 static void cmd_recall(dbf_t *db, lexer_t *l) {
@@ -2732,7 +2734,7 @@ static void cmd_recall(dbf_t *db, lexer_t *l) {
             db->record_dirty = 1;
             dbf_flush_record(db);
         }
-        printf("1 record recalled.\n");
+        if (set_opts.talk) printf("1 record recalled.\n");
         return;
     }
 
@@ -2743,8 +2745,10 @@ static void cmd_recall(dbf_t *db, lexer_t *l) {
     count = process_records(db, &c, PROC_REQUIRE_DELETED | PROC_LEAVE_ON_MATCH, recall_cb, NULL);
     if (count < 0) return;
 
-    if (count == 1) printf("1 record recalled.\n");
-    else printf("%d record(s) recalled.\n", count);
+    if (set_opts.talk) {
+        if (count == 1) printf("1 record recalled.\n");
+        else printf("%d record(s) recalled.\n", count);
+    }
 }
 
 /* ---- PACK ---- */
@@ -2788,7 +2792,7 @@ static void cmd_pack(dbf_t *db) {
     if (cur_wa()->num_indexes > 0)
         indexes_rebuild_all(db);
 
-    printf("%d record(s) remaining.\n", (int)dst);
+    if (set_opts.talk) printf("%d record(s) remaining.\n", (int)dst);
 }
 
 /* ---- ZAP ---- */
@@ -2814,7 +2818,7 @@ static void cmd_zap(dbf_t *db) {
         db->next_memo_block = 1;
     }
 
-    printf("Zap complete.\n");
+    if (set_opts.talk) printf("Zap complete.\n");
 }
 
 /* ---- ACCEPT ---- */
@@ -3112,7 +3116,7 @@ static void copy_to_sdf(dbf_t *db, const char *filename,
     }
 
     fclose(fp);
-    printf("%d record(s) copied.\n", count);
+    if (set_opts.talk) printf("%d record(s) copied.\n", count);
 }
 
 /* ---- COPY TO DELIMITED helper ---- */
@@ -3200,7 +3204,7 @@ static void copy_to_delimited(dbf_t *db, const char *filename,
     }
 
     fclose(fp);
-    printf("%d record(s) copied.\n", count);
+    if (set_opts.talk) printf("%d record(s) copied.\n", count);
 }
 
 /* ---- COPY TO [FIELDS ...] [scope] [DELIMITED] [FOR cond] ---- */
@@ -3403,7 +3407,7 @@ static void cmd_copy_to(dbf_t *db, const char *arg) {
     }
 
     dbf_close(&dest);
-    printf("%d record(s) copied.\n", count);
+    if (set_opts.talk) printf("%d record(s) copied.\n", count);
 }
 
 /* ---- COPY STRUCTURE TO ---- */
@@ -3620,7 +3624,7 @@ static void cmd_append_from_delimited(dbf_t *db, const char *filename,
 
     if (blank_mode) {
         csv_import_blank(filename, append_row_cb, &ctx);
-        printf("%d record(s) appended.\n", ctx.count);
+        if (set_opts.talk) printf("%d record(s) appended.\n", ctx.count);
         return;
     }
 
@@ -3646,7 +3650,7 @@ static void cmd_append_from_delimited(dbf_t *db, const char *filename,
     if (parser.error == 1)
         printf("CSV parse error at line %d.\n", parser.line_number);
 
-    printf("%d record(s) appended.\n", ctx.count);
+    if (set_opts.talk) printf("%d record(s) appended.\n", ctx.count);
 }
 
 /* ---- Parse filename without forcing .DBF extension ---- */
@@ -3805,7 +3809,7 @@ static void cmd_append_from(dbf_t *db, const char *arg) {
                 }
 
                 fclose(fp);
-                printf("%d record(s) added.\n", lcount);
+                if (set_opts.talk) printf("%d record(s) added.\n", lcount);
             }
             return;
         }
@@ -3885,7 +3889,7 @@ static void cmd_append_from(dbf_t *db, const char *arg) {
     }
 
     dbf_close(&source);
-    printf("%d record(s) appended.\n", count);
+    if (set_opts.talk) printf("%d record(s) appended.\n", count);
 }
 
 /* ---- SORT TO file ON field [/A][/D][/C] [scope] [FOR cond] ---- */
@@ -4234,7 +4238,7 @@ static void cmd_sort(dbf_t *db, const char *arg) {
 
     dbf_close(&dest);
     free(sort_entries);
-    printf("%d record(s) sorted.\n", count);
+    if (set_opts.talk) printf("%d record(s) sorted.\n", count);
 }
 
 /* ---- ERASE <file> ---- */
@@ -4472,7 +4476,7 @@ static void cmd_index_on(dbf_t *db, lexer_t *l) {
         expr_ctx.bof_flag = 0;
     }
 
-    printf("%d record(s) indexed.\n", cur_wa()->indexes[0].nentries);
+    if (set_opts.talk) printf("%d record(s) indexed.\n", cur_wa()->indexes[0].nentries);
 }
 
 /* ---- SET INDEX TO [file1 [, file2 ...]] ---- */
@@ -4684,7 +4688,7 @@ static void cmd_reindex(dbf_t *db) {
         }
     }
 
-    printf("%d record(s) reindexed.\n", total);
+    if (set_opts.talk) printf("%d record(s) reindexed.\n", total);
 }
 
 /* ---- Close all work areas ---- */
@@ -5774,7 +5778,7 @@ static void h_set(dbf_t *db, lexer_t *l) {
             if (arg[0] == '\0') {
                 cur_wa()->filter_cond[0] = '\0';
                 if (cur_wa()->filter_ast) { ast_free(cur_wa()->filter_ast); cur_wa()->filter_ast = NULL; }
-                printf("Filter removed.\n");
+                if (set_opts.talk) printf("Filter removed.\n");
             } else {
                 const char *ast_err;
                 str_copy(cur_wa()->filter_cond, arg, sizeof(cur_wa()->filter_cond));
@@ -5782,7 +5786,7 @@ static void h_set(dbf_t *db, lexer_t *l) {
                 if (!strchr(cur_wa()->filter_cond, '&'))
                     cur_wa()->filter_ast = ast_compile(cur_wa()->filter_cond, &memvar_store, &ast_err);
                 trim_right(arg);
-                printf("Filter: %s\n", arg);
+                if (set_opts.talk) printf("Filter: %s\n", arg);
             }
         }
     } else if (cmd_kw(l, "ORDER")) {

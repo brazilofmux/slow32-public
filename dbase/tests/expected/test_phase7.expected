@@ -3,8 +3,7 @@ Stage 9: AST Expressions
 
 . . . . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Database PEOPLE.DBF created with 2 field(s).
-. . . . . . . . 3 record(s) indexed.
-. T1: INDEX ON
+. . . . . . . . . T1: INDEX ON
 . . Alice 25
 . . Bob 35
 . . Charlie 30
@@ -24,24 +23,17 @@ Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width
 . . Bob
 . . Charlie
 . . Zara
-. . . Zap complete.
-. T6: ZAP EOF: .T.
+. . . . T6: ZAP EOF: .T.
 . . . . T6: After re-add: NewGuy 99
-. . . . . . . . 1 record deleted.
-. 2 record(s) remaining.
-. T7: PACK remaining:
+. . . . . . . . . . T7: PACK remaining:
 . . KeepMe
 . . NewGuy
-. . . Database closed.
-. . T8: REOPEN
+. . . . . T8: REOPEN
 . . . . T8: SEEK Delta: .T. Delta
 . . . Enter field definitions (blank name to finish):
 Field name: Type (C/N/D/L/M): Width (1-254): Field name: Type (C/N/D/L/M): Width (1-19): Decimals: Field name: Database EXTRA.DBF created with 2 field(s).
-. . . . . . Database closed.
-. . 2 record(s) appended.
-. T9: APPEND FROM
+. . . . . . . . . T9: APPEND FROM
 . . T9: SEEK Eve: .T. Eve
 . . T9: SEEK Frank: .T. Frank
 . T9: Total: 5
-. . Database closed.
 
