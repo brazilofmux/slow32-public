@@ -667,8 +667,8 @@ uint32_t index_current_recno(const index_t *idx) {
     }
 }
 
-/* ---- Navigation ---- */
-void index_top(index_t *idx) {
+/* ---- Navigation (ascending-order primitives) ---- */
+static void index_top_asc(index_t *idx) {
     if (!idx->active || idx->nentries == 0 || idx->first_leaf == 0) {
         idx->iter_page = -1;
         idx->iter_pos = -1;
@@ -678,7 +678,7 @@ void index_top(index_t *idx) {
     idx->iter_pos = 0;
 }
 
-void index_bottom(index_t *idx) {
+static void index_bottom_asc(index_t *idx) {
     int pg;
     if (!idx->active || idx->nentries == 0 || idx->first_leaf == 0) {
         idx->iter_page = -1;
@@ -701,7 +701,7 @@ void index_bottom(index_t *idx) {
     }
 }
 
-int index_next(index_t *idx) {
+static int index_next_asc(index_t *idx) {
     ndx_page_t *page;
     if (idx->iter_page < 0 || idx->iter_page >= idx->num_pages)
         return -1;
@@ -724,7 +724,7 @@ int index_next(index_t *idx) {
     return 0;
 }
 
-int index_prev(index_t *idx) {
+static int index_prev_asc(index_t *idx) {
     ndx_page_t *page;
     if (idx->iter_page < 0 || idx->iter_page >= idx->num_pages)
         return -1;
@@ -753,6 +753,27 @@ int index_prev(index_t *idx) {
     }
     page_put(page);
     return 0;
+}
+
+/* ---- Public navigation: descending flag reverses direction ---- */
+void index_top(index_t *idx) {
+    if (idx->descending) index_bottom_asc(idx);
+    else                 index_top_asc(idx);
+}
+
+void index_bottom(index_t *idx) {
+    if (idx->descending) index_top_asc(idx);
+    else                 index_bottom_asc(idx);
+}
+
+int index_next(index_t *idx) {
+    if (idx->descending) return index_prev_asc(idx);
+    else                 return index_next_asc(idx);
+}
+
+int index_prev(index_t *idx) {
+    if (idx->descending) return index_next_asc(idx);
+    else                 return index_prev_asc(idx);
 }
 
 /* ---- Leaf insert at position (assumes not full) ---- */
@@ -1224,7 +1245,96 @@ static int key_entry_cmp(const void *a, const void *b, void *userdata) {
     const key_entry_t *ka = (const key_entry_t *)a;
     const key_entry_t *kb = (const key_entry_t *)b;
     int cmp = key_cmp(ka->key, kb->key, idx->key_len);
-    return idx->descending ? -cmp : cmp;
+    return cmp;
+}
+
+/* ---- Probe key type and length without storing entries (O(1) memory) ---- */
+static void index_probe_key_info(index_t *idx, dbf_t *db, expr_ctx_t *ctx,
+                                  const char *key_expr) {
+    uint32_t i;
+    int max_len = 0;
+    int key_type_set = 0;
+
+    idx->key_len = 10;
+    idx->key_type = 0;
+
+    for (i = 1; i <= db->record_count; i++) {
+        value_t val;
+        char keybuf[MAX_INDEX_KEY + 1];
+        int len;
+
+        dbf_read_record(db, i);
+        if (db->record_buf[0] == '*') continue;
+
+        if (idx->for_ast) {
+            value_t fcond;
+            if (ast_eval(idx->for_ast, ctx, &fcond) != 0) continue;
+            if (fcond.type == VAL_LOGIC && !fcond.logic) continue;
+            if (fcond.type == VAL_NUM && fcond.num == 0.0) continue;
+        }
+
+        if (idx->key_ast) {
+            if (ast_eval(idx->key_ast, ctx, &val) != 0) continue;
+        } else {
+            if (expr_eval_str(ctx, key_expr, &val) != 0) continue;
+        }
+
+        if (!key_type_set) {
+            if (val.type == VAL_NUM) idx->key_type = 1;
+            else if (val.type == VAL_DATE) idx->key_type = 2;
+            else idx->key_type = 0;
+            key_type_set = 1;
+        }
+
+        /* Numeric and date have fixed key lengths — no need to scan further */
+        if (idx->key_type == 1 || idx->key_type == 2) break;
+
+        index_format_key_value(idx->key_type, &val, keybuf, sizeof(keybuf));
+        len = strlen(keybuf);
+        if (len > max_len) max_len = len;
+    }
+
+    if (!key_type_set) {
+        idx->key_type = 0;
+        idx->key_len = 1;
+    } else if (idx->key_type == 1) {
+        idx->key_len = 16;
+    } else if (idx->key_type == 2) {
+        idx->key_len = 8;
+    } else {
+        if (max_len < 1) max_len = 1;
+        if (max_len > MAX_INDEX_KEY) max_len = MAX_INDEX_KEY;
+        idx->key_len = max_len;
+    }
+}
+
+/* ---- Incremental build: insert records one-by-one (O(1) extra memory) ---- */
+static void index_build_incremental(index_t *idx, dbf_t *db, expr_ctx_t *ctx,
+                                     const char *key_expr) {
+    uint32_t i;
+    for (i = 1; i <= db->record_count; i++) {
+        value_t val;
+        char keybuf[MAX_INDEX_KEY + 1];
+
+        dbf_read_record(db, i);
+        if (db->record_buf[0] == '*') continue;
+
+        if (idx->for_ast) {
+            value_t fcond;
+            if (ast_eval(idx->for_ast, ctx, &fcond) != 0) continue;
+            if (fcond.type == VAL_LOGIC && !fcond.logic) continue;
+            if (fcond.type == VAL_NUM && fcond.num == 0.0) continue;
+        }
+
+        if (idx->key_ast) {
+            if (ast_eval(idx->key_ast, ctx, &val) != 0) continue;
+        } else {
+            if (expr_eval_str(ctx, key_expr, &val) != 0) continue;
+        }
+
+        index_format_key_value(idx->key_type, &val, keybuf, sizeof(keybuf));
+        index_insert(idx, keybuf, i);
+    }
 }
 
 /* ---- Build index from database ---- */
@@ -1269,20 +1379,56 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
         idx->key_ast = NULL;
     }
 
-    /* First pass: Determine key length and collect entries */
-    idx->key_len = 10; /* default */
-    idx->key_type = 0; /* char */
-
     saved_db = ctx->db;
     ctx->db = db;
 
+    /* Try to allocate the bulk entries array */
     if (db->record_count > 0) {
         entries = (key_entry_t *)malloc(db->record_count * sizeof(key_entry_t));
     }
+
     if (!entries && db->record_count > 0) {
+        /* ---- INCREMENTAL PATH: bounded memory ---- */
+        index_probe_key_info(idx, db, ctx, key_expr);
+        compute_fanout(idx);
+
+        /* Initialize empty tree */
+        idx->num_pages = 0;
+        idx->nentries = 0;
+        idx->root_page = 0;
+        idx->first_leaf = 0;
+        {
+            ndx_page_t *hdr = (ndx_page_t *)calloc(1, sizeof(ndx_page_t));
+            hdr->page_no = 0;
+            hdr->pin_count = 1;
+            hash_add(idx, hdr);
+            idx->num_pages = 1;
+        }
+
+        /* Open file before inserts so cache_evict can flush dirty pages */
+        idx->fp = fopen(norm_path, "w+b");
+        if (!idx->fp) {
+            free_all_pages(idx);
+            ctx->db = saved_db;
+            return -1;
+        }
+        idx->active = 1;
+
+        index_build_incremental(idx, db, ctx, key_expr);
+
         ctx->db = saved_db;
-        return -1;
+        if (idx->nentries > 0) {
+            index_top(idx);
+        } else {
+            idx->iter_page = -1;
+            idx->iter_pos = -1;
+        }
+        return 0;
     }
+
+    /* ---- BULK PATH: fast sort+pack ---- */
+    idx->key_len = 10;
+    idx->key_type = 0;
 
     for (i = 1; i <= db->record_count; i++) {
         value_t val;
@@ -1313,15 +1459,17 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
         }
 
         index_format_key_value(idx->key_type, &val, keybuf, sizeof(keybuf));
-        int len = strlen(keybuf);
-        if (idx->key_type == 0 && len > max_len) max_len = len;
+        {
+            int len = strlen(keybuf);
+            if (idx->key_type == 0 && len > max_len) max_len = len;
 
-        /* Store entry for sorting */
-        memset(entries[nentries].key, ' ', MAX_INDEX_KEY);
-        if (len > MAX_INDEX_KEY) len = MAX_INDEX_KEY;
-        memcpy(entries[nentries].key, keybuf, len);
-        entries[nentries].recno = i;
-        nentries++;
+            /* Store entry for sorting */
+            memset(entries[nentries].key, ' ', MAX_INDEX_KEY);
+            if (len > MAX_INDEX_KEY) len = MAX_INDEX_KEY;
+            memcpy(entries[nentries].key, keybuf, len);
+            entries[nentries].recno = i;
+            nentries++;
+        }
     }
 
     if (!key_type_set) {
@@ -1363,7 +1511,7 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
         nentries = out;
     }
 
-    /* Second pass: Pack into leaf pages and build tree bottom-up */
+    /* Pack into leaf pages and build tree bottom-up */
     idx->num_pages = 0;
     idx->nentries = 0;
     idx->root_page = 0;
@@ -1386,7 +1534,7 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
 
         for (i = 0; i < (uint32_t)n_leaf_pages; i++) {
             ndx_page_t *leaf = page_new(idx, PAGE_LEAF);
-            if (!leaf) { printf("[DBG] page_new failed at leaf %d\n", (int)i); goto fail; }
+            if (!leaf) goto fail;
             leaf_pages[i] = leaf;
             if (i == 0) idx->first_leaf = leaf->page_no;
             int count_in_page = idx->max_keys_leaf;
@@ -1472,7 +1620,7 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
         page_put(leaf);
     }
 
-    if (entries) free(entries);
+    free(entries);
     ctx->db = saved_db;
 
     /* Position at first entry */
