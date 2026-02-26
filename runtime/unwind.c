@@ -30,6 +30,8 @@ extern int printf(const char *, ...);
 /* Linker-provided symbols for .eh_frame discovery */
 extern uint32_t __eh_frame_start;
 extern uint32_t __eh_frame_end;
+extern uint32_t __eh_frame_hdr_start;
+extern uint32_t __eh_frame_hdr_end;
 
 /* ========================================================================
  * Unwind context: holds register state during unwinding
@@ -424,8 +426,8 @@ static void parse_eh_frame(void) {
                                  (uint32_t)(cie_data - start), length);
                 }
             }
-        } else {
-            /* FDE */
+        } else if (&__eh_frame_hdr_start == &__eh_frame_hdr_end) {
+            /* FDE - only parse here if no optimized header available */
             if (g_num_fdes < MAX_FDES) {
                 int rc = parse_fde(p, length, start, g_cies, g_num_cies,
                               &g_fdes[g_num_fdes]);
@@ -445,17 +447,64 @@ static void parse_eh_frame(void) {
         p = record_end;
     }
 
-    UNWIND_TRACE("[unwind] parse_eh_frame: %d CIEs, %d FDEs\n", g_num_cies, g_num_fdes);
+    UNWIND_TRACE("[unwind] parse_eh_frame: %d CIEs, %d FDEs (linear)\n", g_num_cies, g_num_fdes);
 }
+
+static fde_info_t g_fde_temp;
 
 static fde_info_t *find_fde(uint32_t pc) {
     parse_eh_frame();
+
+    const uint8_t *hdr_ptr = (const uint8_t *)&__eh_frame_hdr_start;
+    const uint8_t *hdr_end = (const uint8_t *)&__eh_frame_hdr_end;
+
+    if (hdr_ptr != hdr_end) {
+        /* Optimized binary search in .eh_frame_hdr */
+        uint32_t fde_count;
+        memcpy(&fde_count, hdr_ptr + 8, 4);
+        if (fde_count > 0) {
+            const uint8_t *table = hdr_ptr + 12;
+            int low = 0;
+            int high = (int)fde_count - 1;
+            int found_idx = -1;
+
+            while (low <= high) {
+                int mid = (low + high) / 2;
+                uint32_t initial_pc;
+                memcpy(&initial_pc, table + mid * 8, 4);
+                if (pc < initial_pc) {
+                    high = mid - 1;
+                } else {
+                    found_idx = mid;
+                    low = mid + 1;
+                }
+            }
+
+            if (found_idx != -1) {
+                uint32_t fde_vaddr;
+                memcpy(&fde_vaddr, table + found_idx * 8 + 4, 4);
+                const uint8_t *p = (const uint8_t *)(uintptr_t)fde_vaddr;
+                uint32_t length = read_u32(&p);
+                if (parse_fde(p, length, (const uint8_t *)&__eh_frame_start, 
+                              g_cies, g_num_cies, &g_fde_temp) == 0) {
+                    if (pc >= g_fde_temp.pc_begin && pc < g_fde_temp.pc_begin + g_fde_temp.pc_range) {
+                        UNWIND_TRACE("[unwind] find_fde(0x%X) -> HDR lookup -> [0x%X..0x%X]\n",
+                                     pc, g_fde_temp.pc_begin, g_fde_temp.pc_begin + g_fde_temp.pc_range);
+                        return &g_fde_temp;
+                    }
+                }
+            }
+        }
+        UNWIND_TRACE("[unwind] find_fde(0x%X) -> HDR lookup -> NOT FOUND\n", pc);
+        return NULL;
+    }
+
+    /* Fallback to linear search in pre-parsed table */
     for (int i = 0; i < g_num_fdes; i++) {
         if (pc >= g_fdes[i].pc_begin &&
             pc < g_fdes[i].pc_begin + g_fdes[i].pc_range) {
-            UNWIND_TRACE("[unwind] find_fde(0x%X) -> FDE #%d [0x%X..0x%X]\n",
-                         pc, i, g_fdes[i].pc_begin,
-                         g_fdes[i].pc_begin + g_fdes[i].pc_range);
+            UNWIND_TRACE("[unwind] find_fde(0x%X) -> linear search -> [0x%X..0x%X]\n",
+                         pc, g_fdes[i].pc_begin, g_fdes[i].pc_begin + g_fdes[i].pc_range);
             return &g_fdes[i];
         }
     }

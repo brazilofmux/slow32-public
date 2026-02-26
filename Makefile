@@ -96,7 +96,7 @@ clean:
 	rm -rf tests/
 	rm -f *.o *.bin *.ll *.s *.s32o *.s32x
 	rm -f benchmark_* assembler_reloc_patch.txt
-	find . -name "*.s32o" -o -name "*.s32x" | grep -v runtime | grep -v regression | grep -v forth/kernel.s32x | xargs rm -f
+	find . -name "*.s32o" -not -path "./runtime/*" -not -path "./regression/*" | xargs rm -f
 
 # C compilation pattern rules
 %.ll: %.c runtime

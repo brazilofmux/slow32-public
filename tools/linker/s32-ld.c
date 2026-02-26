@@ -580,11 +580,11 @@ static bool load_object_file(linker_state_t *ld, const char *filename) {
 static const char *canonical_section_name(const char *name) {
     static const char *const bases[] = {
         ".text.", ".data.", ".bss.", ".rodata.",
-        ".eh_frame.", ".gcc_except_table.",
+        ".eh_frame.", ".eh_frame_hdr.", ".gcc_except_table.",
     };
     static const char *const canonical[] = {
         ".text",  ".data",  ".bss",  ".rodata",
-        ".eh_frame", ".gcc_except_table",
+        ".eh_frame", ".eh_frame_hdr", ".gcc_except_table",
     };
     for (int i = 0; i < (int)(sizeof(bases) / sizeof(bases[0])); i++) {
         if (strncmp(name, bases[i], strlen(bases[i])) == 0) {
@@ -828,6 +828,7 @@ static bool is_rodata_like_section(uint32_t type) {
            type == S32_SEC_TSR ||
            type == S32_SEC_DEBUG ||
            type == S32_SEC_EH_FRAME ||
+           type == S32_SEC_EH_FRAME_HDR ||
            type == S32_SEC_EXCEPT_TABLE;
 }
 
@@ -849,6 +850,7 @@ static void layout_sections(linker_state_t *ld) {
             case S32_SEC_TSR:
             case S32_SEC_DEBUG:
             case S32_SEC_EH_FRAME:
+            case S32_SEC_EH_FRAME_HDR:
             case S32_SEC_EXCEPT_TABLE:
                 rodata_size_needed += sec->size;
                 break;
@@ -980,6 +982,7 @@ static void layout_sections(linker_state_t *ld) {
             case S32_SEC_TSR:
             case S32_SEC_DEBUG:
             case S32_SEC_EH_FRAME:
+            case S32_SEC_EH_FRAME_HDR:
             case S32_SEC_EXCEPT_TABLE:
                 rodata_addr = (rodata_addr + sec->align - 1) & ~(sec->align - 1);
                 sec->vaddr = rodata_addr;
@@ -1257,12 +1260,15 @@ static void inject_init_array_symbols(linker_state_t *ld) {
 // Inject __eh_frame_start/end and __eh_frame_hdr_start/end discovery symbols
 static void inject_eh_frame_symbols(linker_state_t *ld) {
     uint32_t eh_frame_start = 0, eh_frame_end = 0;
+    uint32_t eh_frame_hdr_start = 0, eh_frame_hdr_end = 0;
 
     for (int i = 0; i < ld->num_sections; i++) {
         if (strcmp(ld->sections[i].name, ".eh_frame") == 0) {
             eh_frame_start = ld->sections[i].vaddr;
             eh_frame_end = ld->sections[i].vaddr + ld->sections[i].size;
-            break;
+        } else if (strcmp(ld->sections[i].name, ".eh_frame_hdr") == 0) {
+            eh_frame_hdr_start = ld->sections[i].vaddr;
+            eh_frame_hdr_end = ld->sections[i].vaddr + ld->sections[i].size;
         }
     }
 
@@ -1272,6 +1278,8 @@ static void inject_eh_frame_symbols(linker_state_t *ld) {
     } eh_symbols[] = {
         {"__eh_frame_start", eh_frame_start},
         {"__eh_frame_end", eh_frame_end},
+        {"__eh_frame_hdr_start", eh_frame_hdr_start},
+        {"__eh_frame_hdr_end", eh_frame_hdr_end},
         {NULL, 0}
     };
 
@@ -1411,6 +1419,130 @@ static void collect_relocations(linker_state_t *ld) {
     if (ld->verbose) {
         printf("Collected %d relocations\n", ld->num_relocations);
     }
+}
+
+// .eh_frame_hdr support structures and logic
+typedef struct {
+    uint32_t initial_pc;
+    uint32_t fde_vaddr;
+} fde_entry_t;
+
+static int compare_fde_entries(const void *a, const void *b) {
+    const fde_entry_t *fa = (const fde_entry_t *)a;
+    const fde_entry_t *fb = (const fde_entry_t *)b;
+    if (fa->initial_pc < fb->initial_pc) return -1;
+    if (fa->initial_pc > fb->initial_pc) return 1;
+    return 0;
+}
+
+static void create_eh_frame_hdr(linker_state_t *ld) {
+    // 1. Find combined .eh_frame section to see if it exists
+    int eh_idx = s32_hashmap_get(&ld->section_map, ".eh_frame");
+    if (eh_idx < 0) return;
+    
+    // 2. Count FDEs across all input sections that merged into .eh_frame
+    int num_fdes = 0;
+    for (int f = 0; f < ld->num_input_files; f++) {
+        input_file_t *inf = &ld->input_files[f];
+        for (uint32_t s = 0; s < inf->header.nsections; s++) {
+            const char *sec_name = safe_string(inf, inf->sections[s].name_offset);
+            if (strcmp(sec_name, ".eh_frame") == 0 || strncmp(sec_name, ".eh_frame.", 10) == 0) {
+                uint8_t *data = NULL;
+                size_t size = inf->sections[s].size;
+                if (inf->section_data) {
+                    data = inf->section_data[s];
+                } else {
+                    data = malloc(size);
+                    fseek(inf->file, inf->sections[s].offset, SEEK_SET);
+                    if (fread(data, 1, size, inf->file) != size) {
+                        free(data); continue;
+                    }
+                }
+                
+                const uint8_t *p = data;
+                const uint8_t *end = data + size;
+                while (p + 8 <= end) {
+                    uint32_t len;
+                    memcpy(&len, p, 4);
+                    if (len == 0) { p += 4; continue; }
+                    if (len > (uint32_t)(end - p - 4)) break; // Corrupt
+                    uint32_t id;
+                    memcpy(&id, p + 4, 4);
+                    if (id != 0) num_fdes++;
+                    p += len + 4;
+                }
+                
+                if (!inf->section_data) free(data);
+            }
+        }
+    }
+    
+    if (num_fdes == 0) return;
+    
+    // 3. Create .eh_frame_hdr section
+    // Header: version(1), eh_frame_ptr_enc(1), fde_count_enc(1), table_enc(1), eh_frame_ptr(4), fde_count(4) = 12 bytes
+    // Table: num_fdes * 8 bytes
+    uint32_t hdr_size = 12 + num_fdes * 8;
+    find_or_create_section(ld, ".eh_frame_hdr", S32_SEC_EH_FRAME_HDR, 
+                           S32_SEC_FLAG_READ | S32_SEC_FLAG_ALLOC, 4);
+    int hdr_idx = s32_hashmap_get(&ld->section_map, ".eh_frame_hdr");
+    ld->sections[hdr_idx].size = hdr_size;
+}
+
+static void populate_eh_frame_hdr(linker_state_t *ld) {
+    int eh_idx = s32_hashmap_get(&ld->section_map, ".eh_frame");
+    int hdr_idx = s32_hashmap_get(&ld->section_map, ".eh_frame_hdr");
+    if (eh_idx < 0 || hdr_idx < 0) return;
+    
+    combined_section_t *eh = &ld->sections[eh_idx];
+    combined_section_t *hdr = &ld->sections[hdr_idx];
+    
+    if (!eh->data || !hdr->data) return;
+    
+    // Parse the RELOCATED .eh_frame to collect FDEs
+    fde_entry_t *entries = malloc(eh->size / 8 * sizeof(fde_entry_t)); // Safe upper bound
+    int count = 0;
+    
+    const uint8_t *p = eh->data;
+    const uint8_t *end = eh->data + eh->size;
+    while (p + 8 <= end) {
+        uint32_t len;
+        memcpy(&len, p, 4);
+        if (len == 0) { p += 4; continue; }
+        if (len > (uint32_t)(end - p - 4)) break;
+        uint32_t id;
+        memcpy(&id, p + 4, 4);
+        
+        if (id != 0) {
+            uint32_t pc_begin;
+            memcpy(&pc_begin, p + 8, 4);
+            entries[count].initial_pc = pc_begin;
+            entries[count].fde_vaddr = eh->vaddr + (uint32_t)(p - eh->data);
+            count++;
+        }
+        p += len + 4;
+    }
+    
+    // Sort by initial_pc
+    qsort(entries, count, sizeof(fde_entry_t), compare_fde_entries);
+    
+    // Fill the header
+    uint8_t *d = hdr->data;
+    d[0] = 1; // version
+    d[1] = 0x00; // eh_frame_ptr_enc = absptr
+    d[2] = 0x03; // fde_count_enc = udata4
+    d[3] = 0x03; // table_enc = udata4
+    
+    memcpy(d + 4, &eh->vaddr, 4);
+    memcpy(d + 8, &count, 4);
+    
+    // Fill the table
+    for (int i = 0; i < count; i++) {
+        memcpy(d + 12 + i * 8, &entries[i].initial_pc, 4);
+        memcpy(d + 12 + i * 8 + 4, &entries[i].fde_vaddr, 4);
+    }
+    
+    free(entries);
 }
 
 // Load section data
@@ -1859,6 +1991,9 @@ static void write_memory_map(linker_state_t *ld) {
             case S32_SEC_RODATA: type_str = "RODATA"; break;
             case S32_SEC_DATA:   type_str = "DATA"; break;
             case S32_SEC_BSS:    type_str = "BSS"; break;
+            case S32_SEC_EH_FRAME: type_str = "EH_FRAME"; break;
+            case S32_SEC_EH_FRAME_HDR: type_str = "EH_FRAME_HDR"; break;
+            case S32_SEC_EXCEPT_TABLE: type_str = "EXCEPT_TABLE"; break;
         }
         fprintf(f, "  0x%08X 0x%08X %-12s %s\n",
                 sec->vaddr, sec->size, sec->name, type_str);
@@ -2320,6 +2455,7 @@ int main(int argc, char *argv[]) {
     
     // Link everything
     merge_sections(&ld);
+    create_eh_frame_hdr(&ld);
     build_symbol_table(&ld);
     
     layout_sections(&ld);
@@ -2331,6 +2467,7 @@ int main(int argc, char *argv[]) {
     collect_relocations(&ld);
     load_section_data(&ld);
     apply_relocations(&ld);
+    populate_eh_frame_hdr(&ld);
     
     // Find entry point
     ld.entry_point = find_entry_point(&ld);

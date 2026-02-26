@@ -146,6 +146,7 @@ typedef struct {
 
 // Exception handling sections
 #define S32_SEC_EH_FRAME     0x0030  // .eh_frame (DWARF CFI unwind info)
+#define S32_SEC_EH_FRAME_HDR 0x0031  // .eh_frame_hdr (Optimized FDE lookup table)
 #define S32_SEC_EXCEPT_TABLE 0x0032  // .gcc_except_table (LSDA data)
 
 // Section flags (shared)
