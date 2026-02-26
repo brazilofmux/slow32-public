@@ -3,49 +3,84 @@
 #include <string.h>
 
 // Quick sort implementation
-// swap uses memswap — a single call, no temp buffer, word-optimized in the
-// runtime, and interceptable by the DBT for a native host swap loop.
-static void swap(void *a, void *b, size_t size) {
-    memswap(a, b, size);
-}
+// Median-of-three pivot + recurse-on-smaller/iterate-on-larger to guarantee
+// O(log n) stack depth.  Insertion sort for small partitions.
 
-static void *partition_r(void *base, size_t num, size_t size, 
-                        int (*compar)(const void *, const void *, void *),
-                        void *arg) {
-    char *array = (char *)base;
-    char *pivot = array + (num - 1) * size;
-    size_t i = 0;
-    
-    for (size_t j = 0; j < num - 1; j++) {
-        if (compar(array + j * size, pivot, arg) <= 0) {
-            memswap(array + i * size, array + j * size, size);
-            i++;
-        }
-    }
-    memswap(array + i * size, pivot, size);
-    return array + i * size;
-}
+#define QSORT_INSERTION_THRESHOLD 16
 
-static void qsort_r_recursive(void *base, size_t num, size_t size,
+static void insertion_sort_r(char *base, size_t num, size_t size,
                              int (*compar)(const void *, const void *, void *),
                              void *arg) {
-    if (num <= 1) return;
-    
-    char *pivot = (char *)partition_r(base, num, size, compar, arg);
-    size_t left_size = (pivot - (char *)base) / size;
-    size_t right_size = num - left_size - 1;
-    
-    qsort_r_recursive(base, left_size, size, compar, arg);
-    qsort_r_recursive(pivot + size, right_size, size, compar, arg);
+    for (size_t i = 1; i < num; i++) {
+        size_t j = i;
+        while (j > 0 && compar(base + (j - 1) * size, base + j * size, arg) > 0) {
+            memswap(base + (j - 1) * size, base + j * size, size);
+            j--;
+        }
+    }
+}
+
+static void median_of_three(char *base, size_t num, size_t size,
+                             int (*compar)(const void *, const void *, void *),
+                             void *arg) {
+    char *a = base;
+    char *b = base + (num / 2) * size;
+    char *c = base + (num - 1) * size;
+    if (compar(a, b, arg) > 0) memswap(a, b, size);
+    if (compar(b, c, arg) > 0) memswap(b, c, size);
+    if (compar(a, b, arg) > 0) memswap(a, b, size);
+    /* Median is now in b; move it to last position as pivot */
+    memswap(b, c, size);
 }
 
 void qsort_r(void *base, size_t nmemb, size_t size,
              int (*compar)(const void *, const void *, void *),
              void *arg) {
-    if (base == NULL || nmemb == 0 || size == 0 || compar == NULL) {
+    char *lo = (char *)base;
+    size_t num = nmemb;
+
+    if (base == NULL || nmemb == 0 || size == 0 || compar == NULL)
         return;
+
+    for (;;) {
+        if (num <= 1) return;
+        if (num <= QSORT_INSERTION_THRESHOLD) {
+            insertion_sort_r(lo, num, size, compar, arg);
+            return;
+        }
+
+        /* Median-of-three pivot selection, pivot placed at end */
+        median_of_three(lo, num, size, compar, arg);
+
+        /* Lomuto partition with pivot at last position */
+        {
+            char *pivot = lo + (num - 1) * size;
+            size_t i = 0;
+            size_t j;
+            size_t left_size, right_size;
+
+            for (j = 0; j < num - 1; j++) {
+                if (compar(lo + j * size, pivot, arg) <= 0) {
+                    memswap(lo + i * size, lo + j * size, size);
+                    i++;
+                }
+            }
+            memswap(lo + i * size, pivot, size);
+
+            left_size = i;
+            right_size = num - i - 1;
+
+            /* Recurse on smaller partition, iterate on larger */
+            if (left_size <= right_size) {
+                qsort_r(lo, left_size, size, compar, arg);
+                lo = lo + (i + 1) * size;
+                num = right_size;
+            } else {
+                qsort_r(lo + (i + 1) * size, right_size, size, compar, arg);
+                num = left_size;
+            }
+        }
     }
-    qsort_r_recursive(base, nmemb, size, compar, arg);
 }
 
 // Compatibility wrapper for standard qsort

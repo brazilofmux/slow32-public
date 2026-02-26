@@ -205,9 +205,11 @@ static ndx_page_t *page_new(index_t *idx, int type) {
             if (type == PAGE_LEAF) {
                 p->keys = (char *)calloc(idx->max_keys_leaf + 1, idx->key_len);
                 p->recnos = (uint32_t *)calloc(idx->max_keys_leaf + 1, sizeof(uint32_t));
+                if (!p->keys || !p->recnos) { page_free(p); return NULL; }
             } else {
                 p->keys = (char *)calloc(idx->max_keys_internal + 1, idx->key_len);
                 p->children = (int *)calloc(idx->max_keys_internal + 2, sizeof(int));
+                if (!p->keys || !p->children) { page_free(p); return NULL; }
             }
             return p;
         }
@@ -235,12 +237,14 @@ static ndx_page_t *page_new(index_t *idx, int type) {
         p->keys = (char *)calloc(max_keys + 1, idx->key_len);
         p->recnos = (uint32_t *)calloc(max_keys + 1, sizeof(uint32_t));
         p->children = NULL;
+        if (!p->keys || !p->recnos) { page_free(p); return NULL; }
     } else {
         max_keys = idx->max_keys_internal;
         /* +1 keys and +2 children for temporary overflow before split */
         p->keys = (char *)calloc(max_keys + 1, idx->key_len);
         p->children = (int *)calloc(max_keys + 2, sizeof(int));
         p->recnos = NULL;
+        if (!p->keys || !p->children) { page_free(p); return NULL; }
     }
 
     hash_add(idx, p);
@@ -1382,10 +1386,9 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
 
         for (i = 0; i < (uint32_t)n_leaf_pages; i++) {
             ndx_page_t *leaf = page_new(idx, PAGE_LEAF);
-            if (!leaf) goto fail;
+            if (!leaf) { printf("[DBG] page_new failed at leaf %d\n", (int)i); goto fail; }
             leaf_pages[i] = leaf;
             if (i == 0) idx->first_leaf = leaf->page_no;
-            
             int count_in_page = idx->max_keys_leaf;
             if (current_entry + count_in_page > nentries)
                 count_in_page = nentries - current_entry;
