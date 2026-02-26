@@ -561,26 +561,37 @@ static int parse_primary(expr_ctx_t *ctx, lexer_t *l, value_t *result) {
         }
 
         /* Field reference */
-        if (ctx->db && dbf_is_open(ctx->db) && ctx->db->current_record != 0) {
+        if (ctx->db && dbf_is_open(ctx->db)) {
             int idx = dbf_find_field(ctx->db, name);
             if (idx >= 0) {
                 char raw[256];
-                dbf_get_field_raw(ctx->db, idx, raw, sizeof(raw));
-                switch (ctx->db->fields[idx].type) {
-                case 'C': *result = val_str(raw); return 0;
-                case 'F':
-                case 'N': *result = val_num(atof(raw)); return 0;
-                case 'D': *result = val_date(date_from_dbf(raw)); return 0;
-                case 'L': *result = val_logic(raw[0] == 'T' || raw[0] == 't'); return 0;
-                case 'M': {
-                    int blk = atoi(raw);
-                    char memo[256];
-                    if (blk > 0 && dbf_memo_read(ctx->db, blk, memo, sizeof(memo)) == 0)
-                        *result = val_str(memo);
-                    else
-                        *result = val_str("");
-                    return 0;
-                }
+                if (ctx->db->current_record != 0 &&
+                    dbf_get_field_raw(ctx->db, idx, raw, sizeof(raw)) == 0) {
+                    switch (ctx->db->fields[idx].type) {
+                    case 'C': *result = val_str(raw); return 0;
+                    case 'F':
+                    case 'N': *result = val_num(atof(raw)); return 0;
+                    case 'D': *result = val_date(date_from_dbf(raw)); return 0;
+                    case 'L': *result = val_logic(raw[0] == 'T' || raw[0] == 't'); return 0;
+                    case 'M': {
+                        int blk = atoi(raw);
+                        char memo[256];
+                        if (blk > 0 && dbf_memo_read(ctx->db, blk, memo, sizeof(memo)) == 0)
+                            *result = val_str(memo);
+                        else
+                            *result = val_str("");
+                        return 0;
+                    }
+                    }
+                } else {
+                    /* No current record — return type-appropriate default.
+                       This allows parse_clauses trial eval to find expression extent. */
+                    switch (ctx->db->fields[idx].type) {
+                    case 'C': case 'M': *result = val_str(""); return 0;
+                    case 'F': case 'N': *result = val_num(0); return 0;
+                    case 'D': *result = val_date(0); return 0;
+                    case 'L': *result = val_logic(0); return 0;
+                    }
                 }
             }
         }
