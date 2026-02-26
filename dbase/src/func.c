@@ -1608,7 +1608,7 @@ static int fn_seek_func(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resu
     index_format_key_value(idx->key_type, &args[0], key, sizeof(key));
     if (idx->key_type == 0)
         trim_right(key);
-    if (index_seek(idx, key)) {
+    if (index_seek(idx, key, 0)) {
         uint32_t rec = index_current_recno(idx);
         ctx->found = 1;
         if (rec > 0 && ctx->db) {

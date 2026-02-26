@@ -53,6 +53,8 @@ typedef struct {
     clause_t scan_clause;
     uint32_t scan_current;
     uint32_t scan_end;
+    /* IF nesting depth at loop entry (for LOOP/EXIT unwinding) */
+    int if_depth_at_entry;
 } loop_entry_t;
 
 /* Program execution state */

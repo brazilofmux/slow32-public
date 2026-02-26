@@ -269,7 +269,7 @@ static void follow_relations(void) {
                     idx = &child->indexes[child->order - 1];
                 if (idx && idx->active) {
                     index_format_key_value(idx->key_type, &key, buf, sizeof(buf));
-                    index_seek(idx, buf);
+                    index_seek(idx, buf, 0);
                     {
                         uint32_t rec = index_current_recno(idx);
                         if (rec > 0)
@@ -421,11 +421,18 @@ static int field_display_width(dbf_t *db, int f) {
 
 /* ---- Helper: extract filename stem (without .DBF extension) ---- */
 static void filename_stem(const char *filename, char *stem, int size) {
-    int len;
-    str_copy(stem, filename, size);
-    len = strlen(stem);
-    if (len >= 4 && str_icmp(stem + len - 4, ".DBF") == 0)
-        stem[len - 4] = '\0';
+    const char *base;
+    int len, slen;
+    /* Use just the basename (strip directory) */
+    base = strrchr(filename, '/');
+    base = base ? base + 1 : filename;
+    len = strlen(base);
+    /* Strip .DBF extension before copying to potentially short buffer */
+    if (len >= 4 && str_icmp(base + len - 4, ".DBF") == 0)
+        len -= 4;
+    slen = (len < size - 1) ? len : size - 1;
+    memcpy(stem, base, slen);
+    stem[slen] = '\0';
 }
 
 /* Uppercase only the filename portion (after last slash), not directory components */
@@ -1404,7 +1411,8 @@ static void cmd_count(dbf_t *db, lexer_t *l) {
 
     count = process_records(db, &c, PROC_USE_FILTER | PROC_SKIP_DELETED_SET, count_cb, NULL);
     if (count < 0) return;
-    printf("%d record(s)\n", count);
+    if (set_opts.talk)
+        printf("%d record(s)\n", count);
     if (c.to_var[0]) {
         value_t v = val_num((double)count);
         memvar_set(&memvar_store, c.to_var, &v);
@@ -1492,8 +1500,10 @@ static void cmd_sum(dbf_t *db, lexer_t *l) {
         value_t v = val_num(actx.total);
         char buf[64];
         val_to_string(&v, buf, sizeof(buf));
-        printf("%d record(s) summed\n", count);
-        printf("      SUM: %s\n", buf);
+        if (set_opts.talk) {
+            printf("%d record(s) summed\n", count);
+            printf("      SUM: %s\n", buf);
+        }
         if (c.to_var[0]) {
             value_t tv = val_num(actx.total);
             memvar_set(&memvar_store, c.to_var, &tv);
@@ -1560,8 +1570,10 @@ static void cmd_average(dbf_t *db, lexer_t *l) {
         value_t v = val_num(actx.total / count);
         char buf[64];
         val_to_string(&v, buf, sizeof(buf));
-        printf("%d record(s) averaged\n", count);
-        printf("  AVERAGE: %s\n", buf);
+        if (set_opts.talk) {
+            printf("%d record(s) averaged\n", count);
+            printf("  AVERAGE: %s\n", buf);
+        }
         if (c.to_var[0]) {
             value_t tv = val_num(actx.total / count);
             memvar_set(&memvar_store, c.to_var, &tv);
@@ -4614,7 +4626,13 @@ static void cmd_seek(dbf_t *db, const char *arg) {
     if (idx->key_type == 0)
         trim_right(key);
 
-    if (index_seek(idx, key)) {
+    {
+    /* For string keys with SET EXACT OFF, use prefix matching */
+    int match_len = 0;
+    if (idx->key_type == 0 && !set_opts.exact)
+        match_len = strlen(key);
+
+    if (index_seek(idx, key, match_len)) {
         uint32_t rec = index_current_recno(idx);
         expr_ctx.found = 1;
         if (rec > 0) {
@@ -4635,6 +4653,7 @@ static void cmd_seek(dbf_t *db, const char *arg) {
         }
         if (set_opts.talk && !set_opts.softseek) printf("Not found.\n");
     }
+    } /* match_len scope */
 }
 
 /* ---- FIND <literal> ---- */
@@ -4657,7 +4676,9 @@ static void cmd_find(dbf_t *db, const char *arg) {
     str_copy(key, p, sizeof(key));
     trim_right(key);
 
-    if (index_seek(idx, key)) {
+    {
+    int match_len = (!set_opts.exact && idx->key_type == 0) ? (int)strlen(key) : 0;
+    if (index_seek(idx, key, match_len)) {
         uint32_t rec = index_current_recno(idx);
         expr_ctx.found = 1;
         if (rec > 0) {
@@ -4678,6 +4699,7 @@ static void cmd_find(dbf_t *db, const char *arg) {
         }
         if (set_opts.talk) printf("Not found.\n");
     }
+    } /* match_len scope */
 }
 
 /* ---- REINDEX ---- */
@@ -5891,7 +5913,7 @@ static void h_set(dbf_t *db, lexer_t *l) {
                 trim_right(cur_wa()->relation_expr);
                 
                 lex_next(l); /* skip INTO */
-                if (l->current.type != TOK_IDENT) {
+                if (l->current.type != TOK_IDENT && l->current.type != TOK_NUMBER) {
                     prog_error(ERR_ALIAS_NOT_FOUND, "Invalid work area");
                     return;
                 }

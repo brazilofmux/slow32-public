@@ -1261,6 +1261,7 @@ void prog_do(const char *arg) {
             str_copy(state.loop_stack[state.loop_depth].condition, cond,
                      sizeof(state.loop_stack[state.loop_depth].condition));
             state.loop_stack[state.loop_depth].condition_ast = cond_ast;
+            state.loop_stack[state.loop_depth].if_depth_at_entry = if_depth;
             state.loop_depth++;
             state.pc++;
         } else {
@@ -1719,6 +1720,10 @@ void prog_loop(void) {
 
     loop = &state.loop_stack[state.loop_depth - 1];
 
+    /* Unwind IF nesting back to loop entry level */
+    if_depth = loop->if_depth_at_entry;
+    if_skip = 0;
+
     if (loop->type == 1) {
         /* FOR loop: jump to the NEXT line so it handles increment/check */
         int target = scan_next(state.current_prog, loop->start_line);
@@ -1755,6 +1760,10 @@ void prog_exit_loop(void) {
     }
 
     loop = &state.loop_stack[state.loop_depth - 1];
+
+    /* Unwind IF nesting back to loop entry level */
+    if_depth = loop->if_depth_at_entry;
+    if_skip = 0;
 
     if (loop->type == 1) {
         target = scan_next(state.current_prog, loop->start_line);
@@ -1874,6 +1883,7 @@ void prog_for(const char *arg) {
     str_copy(state.loop_stack[state.loop_depth].varname, varname, MEMVAR_NAMELEN);
     state.loop_stack[state.loop_depth].end_val = end_val.num;
     state.loop_stack[state.loop_depth].step_val = step_val.num;
+    state.loop_stack[state.loop_depth].if_depth_at_entry = if_depth;
     state.loop_depth++;
     state.pc++;
 }
@@ -1970,6 +1980,7 @@ void prog_scan(const char *arg) {
     loop_entry_t *loop = &state.loop_stack[state.loop_depth++];
     loop->start_line = state.pc;
     loop->type = 2; /* SCAN */
+    loop->if_depth_at_entry = if_depth;
     loop->scan_clause = c;
     loop->scan_end = end;
 

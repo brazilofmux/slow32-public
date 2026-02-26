@@ -585,10 +585,11 @@ int index_key_exists(index_t *idx, const char *key, uint32_t exclude_recno) {
 }
 
 /* ---- Seek ---- */
-int index_seek(index_t *idx, const char *key) {
+int index_seek(index_t *idx, const char *key, int match_len) {
     ndx_page_t *leaf;
     char padded[MAX_INDEX_KEY];
     int pos;
+    int cmp_len;
 
     if (!idx->active || idx->nentries == 0) {
         idx->iter_page = -1;
@@ -604,6 +605,9 @@ int index_seek(index_t *idx, const char *key) {
         memcpy(padded, key, len);
     }
 
+    /* For match comparison: use match_len if specified, else full key_len */
+    cmp_len = (match_len > 0 && match_len < idx->key_len) ? match_len : idx->key_len;
+
     leaf = bt_find_leaf(idx, padded);
     if (!leaf) {
         idx->iter_page = -1;
@@ -616,9 +620,9 @@ int index_seek(index_t *idx, const char *key) {
     if (pos < leaf->nkeys) {
         idx->iter_page = leaf->page_no;
         idx->iter_pos = pos;
-        if (key_cmp(page_key(idx, leaf, pos), padded, idx->key_len) == 0) {
+        if (key_cmp(page_key(idx, leaf, pos), padded, cmp_len) == 0) {
             page_put(leaf);
-            return 1; /* exact match */
+            return 1; /* match */
         }
         page_put(leaf);
         return 0;
@@ -630,10 +634,10 @@ int index_seek(index_t *idx, const char *key) {
         idx->iter_page = leaf->next_leaf;
         idx->iter_pos = 0;
         if (next && next->nkeys > 0 &&
-            key_cmp(page_key(idx, next, 0), padded, idx->key_len) == 0) {
+            key_cmp(page_key(idx, next, 0), padded, cmp_len) == 0) {
             page_put(next);
             page_put(leaf);
-            return 1; /* exact match at boundary */
+            return 1; /* match at boundary */
         }
         page_put(next);
     } else {

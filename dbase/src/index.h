@@ -105,8 +105,10 @@ int index_read(index_t *idx, const char *filename);
 /* Close and free index */
 void index_close(index_t *idx);
 
-/* Binary search for key. Positions iterator. Returns 1 if exact match, 0 if not. */
-int index_seek(index_t *idx, const char *key);
+/* Binary search for key. Positions iterator. Returns 1 if exact match, 0 if not.
+   match_len: if >0, compare only first match_len bytes (prefix match for partial keys).
+              if 0, compare full key_len bytes (exact match). */
+int index_seek(index_t *idx, const char *key, int match_len);
 
 /* Get record number at current position. Returns 0 if not positioned. */
 uint32_t index_current_recno(const index_t *idx);
