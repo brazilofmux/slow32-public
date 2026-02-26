@@ -41,9 +41,11 @@ static const char *section_type_name(uint32_t type) {
         case S32_SEC_EVT:     return "EVT";
         case S32_SEC_TSR:     return "TSR";
         case S32_SEC_DEBUG:   return "DEBUG";
-        case S32_SEC_SYMTAB:  return "SYMTAB";
-        case S32_SEC_STRTAB:  return "STRTAB";
-        default:              return "UNKNOWN";
+        case S32_SEC_SYMTAB:       return "SYMTAB";
+        case S32_SEC_STRTAB:       return "STRTAB";
+        case S32_SEC_EH_FRAME:     return "EH_FRAME";
+        case S32_SEC_EXCEPT_TABLE: return "EXCEPT_TBL";
+        default:                   return "UNKNOWN";
     }
 }
 
