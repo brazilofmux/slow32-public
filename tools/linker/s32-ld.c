@@ -580,9 +580,11 @@ static bool load_object_file(linker_state_t *ld, const char *filename) {
 static const char *canonical_section_name(const char *name) {
     static const char *const bases[] = {
         ".text.", ".data.", ".bss.", ".rodata.",
+        ".eh_frame.", ".gcc_except_table.",
     };
     static const char *const canonical[] = {
         ".text",  ".data",  ".bss",  ".rodata",
+        ".eh_frame", ".gcc_except_table",
     };
     for (int i = 0; i < (int)(sizeof(bases) / sizeof(bases[0])); i++) {
         if (strncmp(name, bases[i], strlen(bases[i])) == 0) {
@@ -824,7 +826,9 @@ static bool is_rodata_like_section(uint32_t type) {
     return type == S32_SEC_RODATA ||
            type == S32_SEC_EVT ||
            type == S32_SEC_TSR ||
-           type == S32_SEC_DEBUG;
+           type == S32_SEC_DEBUG ||
+           type == S32_SEC_EH_FRAME ||
+           type == S32_SEC_EXCEPT_TABLE;
 }
 
 static void layout_sections(linker_state_t *ld) {
@@ -844,6 +848,8 @@ static void layout_sections(linker_state_t *ld) {
             case S32_SEC_EVT:
             case S32_SEC_TSR:
             case S32_SEC_DEBUG:
+            case S32_SEC_EH_FRAME:
+            case S32_SEC_EXCEPT_TABLE:
                 rodata_size_needed += sec->size;
                 break;
             case S32_SEC_DATA:
@@ -973,6 +979,8 @@ static void layout_sections(linker_state_t *ld) {
             case S32_SEC_EVT:
             case S32_SEC_TSR:
             case S32_SEC_DEBUG:
+            case S32_SEC_EH_FRAME:
+            case S32_SEC_EXCEPT_TABLE:
                 rodata_addr = (rodata_addr + sec->align - 1) & ~(sec->align - 1);
                 sec->vaddr = rodata_addr;
                 rodata_addr += sec->size;
@@ -1243,6 +1251,65 @@ static void inject_init_array_symbols(linker_state_t *ld) {
     if (ld->verbose && init_array_start != init_array_end) {
         printf("Injected .init_array symbols: 0x%08X - 0x%08X\n",
                init_array_start, init_array_end);
+    }
+}
+
+// Inject __eh_frame_start/end and __eh_frame_hdr_start/end discovery symbols
+static void inject_eh_frame_symbols(linker_state_t *ld) {
+    uint32_t eh_frame_start = 0, eh_frame_end = 0;
+
+    for (int i = 0; i < ld->num_sections; i++) {
+        if (strcmp(ld->sections[i].name, ".eh_frame") == 0) {
+            eh_frame_start = ld->sections[i].vaddr;
+            eh_frame_end = ld->sections[i].vaddr + ld->sections[i].size;
+            break;
+        }
+    }
+
+    struct {
+        const char *name;
+        uint32_t value;
+    } eh_symbols[] = {
+        {"__eh_frame_start", eh_frame_start},
+        {"__eh_frame_end", eh_frame_end},
+        {NULL, 0}
+    };
+
+    for (int i = 0; eh_symbols[i].name != NULL; i++) {
+        int s = s32_hashmap_get(&ld->symbol_map, eh_symbols[i].name);
+        if (s >= 0) {
+            if (ld->symbols[s].defined_in_file < 0) {
+                ld->symbols[s].value = eh_symbols[i].value;
+                ld->symbols[s].defined_in_file = LINKER_DEFINED_FILE;
+                ld->symbols[s].type = 0;
+                ld->symbols[s].binding = 1;
+            }
+        } else {
+            void *old_syms = ld->symbols;
+            DARR_PUSH(ld->symbols, ld->num_symbols, ld->symbols_cap, symbol_entry_t);
+            if (ld->symbols != old_syms) {
+                s32_hashmap_clear(&ld->symbol_map);
+                for (int si = 0; si < ld->num_symbols; si++)
+                    s32_hashmap_put(&ld->symbol_map, ld->symbols[si].name, si);
+            }
+            symbol_entry_t *sym = &ld->symbols[ld->num_symbols];
+            copy_string(sym->name, sizeof(sym->name), eh_symbols[i].name);
+            sym->value = eh_symbols[i].value;
+            sym->size = 0;
+            sym->type = 0;
+            sym->binding = 1;
+            sym->defined_in_file = LINKER_DEFINED_FILE;
+            sym->section_idx = -1;
+            sym->is_weak = false;
+            sym->is_used = false;
+            s32_hashmap_put(&ld->symbol_map, sym->name, ld->num_symbols);
+            ld->num_symbols++;
+        }
+    }
+
+    if (ld->verbose && eh_frame_start != eh_frame_end) {
+        printf("Injected .eh_frame symbols: 0x%08X - 0x%08X\n",
+               eh_frame_start, eh_frame_end);
     }
 }
 
@@ -2260,6 +2327,7 @@ int main(int argc, char *argv[]) {
     update_symbol_values(&ld);  // Update symbol values after sections have addresses
     inject_memory_map_symbols(&ld);  // Add memory map symbols after layout
     inject_init_array_symbols(&ld);  // Add C++ init_array symbols
+    inject_eh_frame_symbols(&ld);   // Add exception handling frame symbols
     collect_relocations(&ld);
     load_section_data(&ld);
     apply_relocations(&ld);

@@ -327,6 +327,10 @@ SLOW32TargetLowering::SLOW32TargetLowering(const TargetMachine &TM)
   setOperationAction(ISD::ConstantPool, MVT::i32, Custom);
   setOperationAction(ISD::BlockAddress, MVT::i32, Custom);
 
+  // FRAMEADDR/RETURNADDR for EH personality support
+  setOperationAction(ISD::FRAMEADDR, MVT::i32, Custom);
+  setOperationAction(ISD::RETURNADDR, MVT::i32, Custom);
+
   // Varargs support - follow RISC-V pattern
   setOperationAction(ISD::VASTART, MVT::Other, Custom);
   // Let LLVM expand VAARG, VACOPY, VAEND
@@ -463,6 +467,8 @@ SDValue SLOW32TargetLowering::LowerOperation(SDValue Op, SelectionDAG &DAG) cons
     case ISD::JumpTable:      return LowerJumpTable(Op, DAG);
     case ISD::ConstantPool:   return LowerConstantPool(Op, DAG);
     case ISD::BlockAddress:   return LowerBlockAddress(Op, DAG);
+    case ISD::FRAMEADDR:      return LowerFRAMEADDR(Op, DAG);
+    case ISD::RETURNADDR:     return LowerRETURNADDR(Op, DAG);
     case ISD::LOAD:           return LowerLOAD(Op, DAG);
     case ISD::STORE:          return LowerSTORE(Op, DAG);
     case ISD::VASTART:        return LowerVASTART(Op, DAG);
@@ -535,6 +541,39 @@ SDValue SLOW32TargetLowering::LowerBlockAddress(SDValue Op,
                                                 BA->getOffset());
   SDNode *Mov = DAG.getMachineNode(SLOW32::LOAD_ADDR, DL, VT, TargetBA);
   return SDValue(Mov, 0);
+}
+
+SDValue SLOW32TargetLowering::LowerFRAMEADDR(SDValue Op,
+                                              SelectionDAG &DAG) const {
+  MachineFunction &MF = DAG.getMachineFunction();
+  MF.getFrameInfo().setFrameAddressIsTaken(true);
+
+  unsigned Depth = Op.getConstantOperandVal(0);
+  if (Depth != 0)
+    report_fatal_error("SLOW32: FRAMEADDR with depth > 0 not supported");
+
+  SDLoc DL(Op);
+  EVT VT = Op.getValueType();
+  SDValue FrameAddr = DAG.getCopyFromReg(DAG.getEntryNode(), DL,
+                                         SLOW32::R30, VT);
+  return FrameAddr;
+}
+
+SDValue SLOW32TargetLowering::LowerRETURNADDR(SDValue Op,
+                                               SelectionDAG &DAG) const {
+  MachineFunction &MF = DAG.getMachineFunction();
+  MF.getFrameInfo().setReturnAddressIsTaken(true);
+
+  unsigned Depth = Op.getConstantOperandVal(0);
+  if (Depth != 0)
+    report_fatal_error("SLOW32: RETURNADDR with depth > 0 not supported");
+
+  SDLoc DL(Op);
+  EVT VT = Op.getValueType();
+  MF.getRegInfo().addLiveIn(SLOW32::R31);
+  SDValue RetAddr = DAG.getCopyFromReg(DAG.getEntryNode(), DL,
+                                       SLOW32::R31, VT);
+  return RetAddr;
 }
 
 SDValue SLOW32TargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const {

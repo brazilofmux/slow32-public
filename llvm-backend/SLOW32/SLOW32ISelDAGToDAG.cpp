@@ -90,7 +90,7 @@ public:
         int64_t CVal = CN->getSExtValue();
         if (isInt<12>(CVal)) {
           Base = N.getOperand(0);
-          Offset = CurDAG->getTargetConstant(CVal, DL, MVT::i32);
+          Offset = CurDAG->getTargetConstant(static_cast<uint32_t>(CVal), DL, MVT::i32);
           return true;
         }
       }
@@ -106,7 +106,7 @@ public:
         int64_t CVal = CN->getSExtValue();
         if (isInt<12>(CVal)) {
           Base = N.getOperand(1);
-          Offset = CurDAG->getTargetConstant(CVal, DL, MVT::i32);
+          Offset = CurDAG->getTargetConstant(static_cast<uint32_t>(CVal), DL, MVT::i32);
           return true;
         }
       }
@@ -141,7 +141,7 @@ public:
         if (auto *C = dyn_cast<ConstantSDNode>(Op1)) {
           int64_t Imm = C->getSExtValue();
           if (isInt<12>(Imm)) {
-            SDValue ImmOp = CurDAG->getTargetConstant(Imm, DL, MVT::i32);
+            SDValue ImmOp = CurDAG->getTargetConstant(static_cast<uint32_t>(Imm), DL, MVT::i32);
             SDNode *Res =
                 CurDAG->getMachineNode(SLOW32::ADDI, DL, N->getValueType(0),
                                        Op0, ImmOp);
@@ -151,7 +151,7 @@ public:
         } else if (auto *C = dyn_cast<ConstantSDNode>(Op0)) {
           int64_t Imm = C->getSExtValue();
           if (isInt<12>(Imm)) {
-            SDValue ImmOp = CurDAG->getTargetConstant(Imm, DL, MVT::i32);
+            SDValue ImmOp = CurDAG->getTargetConstant(static_cast<uint32_t>(Imm), DL, MVT::i32);
             SDNode *Res =
                 CurDAG->getMachineNode(SLOW32::ADDI, DL, N->getValueType(0),
                                        Op1, ImmOp);

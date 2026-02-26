@@ -1,6 +1,7 @@
 #ifndef LLVM_LIB_TARGET_SLOW32_SLOW32ISELLOWERING_H
 #define LLVM_LIB_TARGET_SLOW32_SLOW32ISELLOWERING_H
 
+#include "SLOW32.h"
 #include "llvm/CodeGen/TargetLowering.h"
 #include "llvm/IR/RuntimeLibcalls.h"
 
@@ -42,6 +43,8 @@ public:
   SDValue LowerJumpTable(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerConstantPool(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerBlockAddress(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerFRAMEADDR(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerRETURNADDR(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerVASTART(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerVAARG(SDValue Op, SelectionDAG &DAG) const;
   SDValue LowerBRCOND(SDValue Op, SelectionDAG &DAG) const;
@@ -118,6 +121,16 @@ public:
                                     std::vector<SDValue> &Ops,
                                     SelectionDAG &DAG) const override;
   
+  // Exception handling registers
+  Register
+  getExceptionPointerRegister(const Constant *PersonalityFn) const override {
+    return SLOW32::R3;
+  }
+  Register
+  getExceptionSelectorRegister(const Constant *PersonalityFn) const override {
+    return SLOW32::R4;
+  }
+
   // Custom DAG combines
   SDValue PerformDAGCombine(SDNode *N, DAGCombinerInfo &DCI) const override;
   

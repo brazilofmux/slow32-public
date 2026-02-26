@@ -21,7 +21,7 @@ index a940236c6..b6f99d4f8 100644
    bool isSPARC32() const {
      return getArch() == Triple::sparc || getArch() == Triple::sparcel;
 diff --git a/llvm/lib/TargetParser/Triple.cpp b/llvm/lib/TargetParser/Triple.cpp
-index 0a775fda7..f990227d1 100644
+index 0a775fda7..2c45c10d5 100644
 --- a/llvm/lib/TargetParser/Triple.cpp
 +++ b/llvm/lib/TargetParser/Triple.cpp
 @@ -67,6 +67,7 @@ StringRef Triple::getArchTypeName(ArchType Kind) {
@@ -96,3 +96,11 @@ index 0a775fda7..f990227d1 100644
    case Triple::sparcel:
    case Triple::spir64:
    case Triple::spir:
+@@ -2381,6 +2390,7 @@ ExceptionHandling Triple::getDefaultExceptionHandling() const {
+   case Triple::systemz:
+   case Triple::xcore:
+   case Triple::xtensa:
++  case Triple::slow32:
+     return ExceptionHandling::DwarfCFI;
+   default:
+     break;

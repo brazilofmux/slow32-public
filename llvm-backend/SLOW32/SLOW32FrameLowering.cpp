@@ -8,6 +8,7 @@
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/CFIInstBuilder.h"
 #include "llvm/CodeGen/RegisterScavenging.h"
 #include <algorithm>
 #include <cassert>
@@ -20,16 +21,22 @@ static const Register StackPtr = SLOW32::R29;
 static const Register FramePtr = SLOW32::R30;
 static const Register LinkReg  = SLOW32::R31;
 
+static bool needsDwarfCFI(const MachineFunction &MF) {
+  return MF.needsFrameMoves();
+}
+
 static void emitAddImmediateChain(MachineBasicBlock &MBB,
                                   MachineBasicBlock::iterator InsertPt,
                                   const DebugLoc &DL,
                                   const SLOW32InstrInfo &TII,
                                   Register DestReg, Register SrcReg,
-                                  int64_t Amount) {
+                                  int64_t Amount,
+                                  MachineInstr::MIFlag Flag = MachineInstr::NoFlags) {
   if (DestReg != SrcReg) {
     BuildMI(MBB, InsertPt, DL, TII.get(SLOW32::ADD), DestReg)
         .addReg(SrcReg)
-        .addReg(SLOW32::R0);
+        .addReg(SLOW32::R0)
+        .setMIFlag(Flag);
   }
 
   Register CurrReg = DestReg;
@@ -44,7 +51,8 @@ static void emitAddImmediateChain(MachineBasicBlock &MBB,
 
     BuildMI(MBB, InsertPt, DL, TII.get(SLOW32::ADDI), CurrReg)
         .addReg(CurrReg)
-        .addImm(Step);
+        .addImm(Step)
+        .setMIFlag(Flag);
 
     Remaining -= Step;
   }
@@ -85,23 +93,51 @@ void SLOW32FrameLowering::emitPrologue(MachineFunction &MF, MachineBasicBlock &M
   
   // Adjust stack pointer: sp = sp - framesize (may require multiple steps)
   emitAddImmediateChain(MBB, MBBI, DL, *TII, StackPtr, StackPtr,
-                        -static_cast<int64_t>(FrameSize));
+                        -static_cast<int64_t>(FrameSize),
+                        MachineInstr::FrameSetup);
+
+  // CFA = SP + FrameSize (SP just moved down)
+  if (needsDwarfCFI(MF)) {
+    CFIInstBuilder CFIBuilder(MBB, MBBI, MachineInstr::FrameSetup);
+    CFIBuilder.buildDefCFAOffset(FrameSize);
+  }
 
   // Save old frame pointer: stw sp+4, fp
   BuildMI(MBB, MBBI, DL, TII->get(SLOW32::STW))
       .addReg(StackPtr)
       .addReg(FramePtr)
-      .addImm(4);
+      .addImm(4)
+      .setMIFlag(MachineInstr::FrameSetup);
+
+  // CFA - (FrameSize - 4) = SP + 4, which is where FP is saved
+  if (needsDwarfCFI(MF)) {
+    CFIInstBuilder CFIBuilder(MBB, MBBI, MachineInstr::FrameSetup);
+    CFIBuilder.buildOffset(FramePtr, -(static_cast<int64_t>(FrameSize) - 4));
+  }
 
   // Save link register: stw sp+0, lr
   BuildMI(MBB, MBBI, DL, TII->get(SLOW32::STW))
       .addReg(StackPtr)
       .addReg(LinkReg)
-      .addImm(0);
+      .addImm(0)
+      .setMIFlag(MachineInstr::FrameSetup);
+
+  // LR saved at CFA - FrameSize = SP + 0
+  if (needsDwarfCFI(MF)) {
+    CFIInstBuilder CFIBuilder(MBB, MBBI, MachineInstr::FrameSetup);
+    CFIBuilder.buildOffset(LinkReg, -static_cast<int64_t>(FrameSize));
+  }
 
   // Setup new frame pointer: fp = sp + framesize (point to old fp location)
   emitAddImmediateChain(MBB, MBBI, DL, *TII, FramePtr, StackPtr,
-                        static_cast<int64_t>(FrameSize));
+                        static_cast<int64_t>(FrameSize),
+                        MachineInstr::FrameSetup);
+
+  // CFA = FP + 0
+  if (needsDwarfCFI(MF)) {
+    CFIInstBuilder CFIBuilder(MBB, MBBI, MachineInstr::FrameSetup);
+    CFIBuilder.buildDefCFA(FramePtr, 0);
+  }
 }
 
 void SLOW32FrameLowering::emitEpilogue(MachineFunction &MF, MachineBasicBlock &MBB) const {
@@ -120,20 +156,44 @@ void SLOW32FrameLowering::emitEpilogue(MachineFunction &MF, MachineBasicBlock &M
   // Adjust for saved FP and LR
   FrameSize = FrameSize + 8;
   
+  // Switch CFA back to SP-relative before restoring registers
+  if (needsDwarfCFI(MF)) {
+    CFIInstBuilder CFIBuilder(MBB, MBBI, MachineInstr::FrameDestroy);
+    CFIBuilder.buildDefCFA(StackPtr, FrameSize);
+  }
+
   // SP currently points to bottom of frame
   // Restore link register from SP+0
   BuildMI(MBB, MBBI, DL, TII->get(SLOW32::LDW), LinkReg)
       .addReg(StackPtr)
-      .addImm(0);
+      .addImm(0)
+      .setMIFlag(MachineInstr::FrameDestroy);
+
+  if (needsDwarfCFI(MF)) {
+    CFIInstBuilder CFIBuilder(MBB, MBBI, MachineInstr::FrameDestroy);
+    CFIBuilder.buildRestore(LinkReg);
+  }
 
   // Restore old frame pointer from SP+4
   BuildMI(MBB, MBBI, DL, TII->get(SLOW32::LDW), FramePtr)
       .addReg(StackPtr)
-      .addImm(4);
+      .addImm(4)
+      .setMIFlag(MachineInstr::FrameDestroy);
+
+  if (needsDwarfCFI(MF)) {
+    CFIInstBuilder CFIBuilder(MBB, MBBI, MachineInstr::FrameDestroy);
+    CFIBuilder.buildRestore(FramePtr);
+  }
 
   // Restore stack pointer: sp = sp + framesize
   emitAddImmediateChain(MBB, MBBI, DL, *TII, StackPtr, StackPtr,
-                        static_cast<int64_t>(FrameSize));
+                        static_cast<int64_t>(FrameSize),
+                        MachineInstr::FrameDestroy);
+
+  if (needsDwarfCFI(MF)) {
+    CFIInstBuilder CFIBuilder(MBB, MBBI, MachineInstr::FrameDestroy);
+    CFIBuilder.buildDefCFAOffset(0);
+  }
 }
 
 MachineBasicBlock::iterator

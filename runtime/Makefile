@@ -12,7 +12,7 @@ LLC = $(LLVM_BIN)/llc
 TARGET = slow32-unknown-none
 # Default optimization level (can be overridden per-file)
 OPT_LEVEL = -O2
-CFLAGS_BASE = -target $(TARGET) -S -emit-llvm -Iinclude
+CFLAGS_BASE = -target $(TARGET) -S -emit-llvm -Iinclude -funwind-tables
 CFLAGS = $(CFLAGS_BASE) $(OPT_LEVEL)
 
 # Compiler runtime objects (always needed, linked last)
@@ -27,7 +27,9 @@ LIBC_CORE_OBJS = string.s32o string_extra.s32o \
                  convert.s32o convert_extra.s32o ctype.s32o \
                  printf_enhanced.s32o start.s32o yield.s32o \
                  cxxabi.s32o time_extra.s32o time_stubs.s32o math_int.s32o dtoa.s32o errno.s32o \
-                 setjmp.s32o
+                 setjmp.s32o \
+                 unwind.s32o unwind_asm.s32o cxa_exception.s32o cxa_personality.s32o \
+                 cxa_typeinfo.s32o
 
 # I/O objects for DEBUG version (simple, unbuffered)
 STDIO_DEBUG_OBJS = putchar.s32o stdio_minimal.s32o
@@ -68,7 +70,8 @@ C_SOURCES = printf_enhanced.c convert.c builtins.c string.c malloc.c stdlib_util
             cxxabi.c time_extra.c time_stubs.c math_int.c dtoa.c errno.c \
             fs_mmio.c fs_stub.c dirent_mmio.c dirent_stub.c \
             term_mmio.c term_stub.c \
-            math_hw.c math_soft.c math_cordic.c
+            math_hw.c math_soft.c math_cordic.c \
+            unwind.c cxa_exception.c cxa_personality.c cxa_typeinfo.c
 
 # Default target builds everything
 all: tools $(ALL_OBJS) libs32.s32a libc_debug.s32a libc_mmio.s32a

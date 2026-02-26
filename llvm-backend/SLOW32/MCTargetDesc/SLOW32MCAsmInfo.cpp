@@ -16,7 +16,7 @@ SLOW32MCAsmInfo::SLOW32MCAsmInfo(const Triple &TT) {
   CommentString = "#";
   AlignmentIsInBytes = false;
   SupportsDebugInformation = true;
-  ExceptionsType = ExceptionHandling::None;
+  ExceptionsType = ExceptionHandling::DwarfCFI;
   UseIntegratedAssembler = false;  // Disable for inline asm support without parser
   
   // SLOW32 assembler uses .word instead of .long for 32-bit data

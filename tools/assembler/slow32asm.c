@@ -39,7 +39,10 @@ typedef enum {
     SECTION_DATA,
     SECTION_BSS,
     SECTION_RODATA,
-    SECTION_INIT_ARRAY
+    SECTION_INIT_ARRAY,
+    SECTION_EH_FRAME,
+    SECTION_EXCEPT_TABLE,
+    SECTION_COUNT  // must be last
 } section_t;
 
 typedef struct {
@@ -312,6 +315,15 @@ typedef struct {
     int32_t addend;
 } label_diff_t;
 
+// ULEB128/SLEB128 label-difference fixup (for .uleb128/.sleb128 directives)
+typedef struct {
+    int instruction_index;      // Index of first placeholder byte in instruction array
+    char plus_symbol[MAX_SYMBOL_LEN];
+    char minus_symbol[MAX_SYMBOL_LEN];
+    int32_t addend;
+    bool is_signed;             // true for SLEB128, false for ULEB128
+} uleb_diff_t;
+
 typedef struct {
     label_t *labels;
     int num_labels;
@@ -329,6 +341,7 @@ typedef struct {
     uint32_t bss_size;          // Size of bss section
     uint32_t rodata_size;       // Size of rodata section
     uint32_t init_array_size;   // Size of init_array section
+    uint32_t except_table_size; // Size of .gcc_except_table section
     uint32_t data_start_addr;   // Starting address of data section (0x100000)
     bool generate_object;       // True for object file, false for executable
 
@@ -336,6 +349,35 @@ typedef struct {
     label_diff_t *label_diffs;
     int num_label_diffs;
     int label_diffs_cap;
+
+    // ULEB128/SLEB128 label-difference fixups
+    uleb_diff_t *uleb_diffs;
+    int num_uleb_diffs;
+    int uleb_diffs_cap;
+
+    // .eh_frame binary data (generated from CFI directives)
+    uint8_t *eh_frame_data;
+    uint32_t eh_frame_data_size;
+    uint32_t eh_frame_data_cap;
+
+    // CFI state for building .eh_frame
+    bool cfi_in_proc;                           // Between .cfi_startproc and .cfi_endproc
+    uint32_t cfi_func_start;                    // Code offset at .cfi_startproc
+    uint32_t cfi_last_loc;                      // Code offset at last CFI instruction
+    uint8_t *cfi_fde_instrs;                    // FDE instruction buffer
+    uint32_t cfi_fde_instrs_size;
+    uint32_t cfi_fde_instrs_cap;
+    char cfi_func_symbol[MAX_SYMBOL_LEN];       // Function symbol for FDE
+    bool cfi_has_personality;
+    char cfi_personality_sym[MAX_SYMBOL_LEN];
+    uint8_t cfi_personality_enc;
+    bool cfi_has_lsda;
+    char cfi_lsda_sym[MAX_SYMBOL_LEN];
+    uint8_t cfi_lsda_enc;
+    bool cfi_cie_zr_emitted;
+    uint32_t cfi_cie_zr_offset;
+    bool cfi_cie_zplr_emitted;
+    uint32_t cfi_cie_zplr_offset;
 
     // String table
     char *string_table;
@@ -471,12 +513,486 @@ static instruction_def_t instruction_table[] = {
 // Helper to update the size of the current section
 static void bump_size(assembler_t* as, section_t sec, uint32_t n) {
     switch (sec) {
-        case SECTION_CODE:       as->code_size       += n; break;
-        case SECTION_DATA:       as->data_size       += n; break;
-        case SECTION_RODATA:     as->rodata_size     += n; break;
-        case SECTION_BSS:        as->bss_size        += n; break;
-        case SECTION_INIT_ARRAY: as->init_array_size += n; break;
+        case SECTION_CODE:         as->code_size         += n; break;
+        case SECTION_DATA:         as->data_size         += n; break;
+        case SECTION_RODATA:       as->rodata_size       += n; break;
+        case SECTION_BSS:          as->bss_size          += n; break;
+        case SECTION_INIT_ARRAY:   as->init_array_size   += n; break;
+        case SECTION_EXCEPT_TABLE: as->except_table_size += n; break;
+        case SECTION_EH_FRAME:     break;  // eh_frame uses separate buffer
+        case SECTION_COUNT:        break;
     }
+}
+
+// Forward declarations for functions used by CFI/eh_frame code
+static void add_label(assembler_t *as, const char *name, uint32_t addr);
+static void add_relocation(assembler_t *as, uint32_t offset, const char *symbol,
+                           uint32_t type, int32_t addend, section_t section);
+static label_t *find_label(assembler_t *as, const char *name);
+
+// ============================================================================
+// LEB128 encoding helpers
+// ============================================================================
+
+static int encode_uleb128(uint32_t val, uint8_t *buf) {
+    int len = 0;
+    do {
+        uint8_t byte = val & 0x7F;
+        val >>= 7;
+        if (val) byte |= 0x80;
+        buf[len++] = byte;
+    } while (val);
+    return len;
+}
+
+static int encode_sleb128(int32_t val, uint8_t *buf) {
+    int len = 0;
+    bool more;
+    do {
+        uint8_t byte = val & 0x7F;
+        val >>= 7;
+        more = !((val == 0 && !(byte & 0x40)) || (val == -1 && (byte & 0x40)));
+        if (more) byte |= 0x80;
+        buf[len++] = byte;
+    } while (more);
+    return len;
+}
+
+// Encode ULEB128 in exactly 5 bytes (for forward-reference placeholders)
+static void encode_uleb128_fixed5(uint32_t val, uint8_t *buf) {
+    buf[0] = (val & 0x7F) | 0x80;
+    buf[1] = ((val >> 7) & 0x7F) | 0x80;
+    buf[2] = ((val >> 14) & 0x7F) | 0x80;
+    buf[3] = ((val >> 21) & 0x7F) | 0x80;
+    buf[4] = (val >> 28) & 0x0F;
+}
+
+// Encode SLEB128 in exactly 5 bytes (for forward-reference placeholders)
+static void encode_sleb128_fixed5(int32_t val, uint8_t *buf) {
+    uint32_t uval = (uint32_t)val;
+    buf[0] = (uval & 0x7F) | 0x80;
+    buf[1] = ((uval >> 7) & 0x7F) | 0x80;
+    buf[2] = ((uval >> 14) & 0x7F) | 0x80;
+    buf[3] = ((uval >> 21) & 0x7F) | 0x80;
+    buf[4] = (uval >> 28) & 0x7F;
+    // Sign extend: if negative, set sign bits in last byte
+    if (val < 0) buf[4] |= 0x70;
+}
+
+// ============================================================================
+// .eh_frame binary buffer management
+// ============================================================================
+
+static void eh_frame_ensure(assembler_t *as, uint32_t additional) {
+    uint32_t needed = as->eh_frame_data_size + additional;
+    if (needed <= as->eh_frame_data_cap) return;
+    uint32_t new_cap = as->eh_frame_data_cap ? as->eh_frame_data_cap : 4096;
+    while (new_cap < needed) new_cap *= 2;
+    as->eh_frame_data = realloc(as->eh_frame_data, new_cap);
+    as->eh_frame_data_cap = new_cap;
+}
+
+static void eh_frame_write8(assembler_t *as, uint8_t val) {
+    eh_frame_ensure(as, 1);
+    as->eh_frame_data[as->eh_frame_data_size++] = val;
+}
+
+static void eh_frame_write32(assembler_t *as, uint32_t val) {
+    eh_frame_ensure(as, 4);
+    memcpy(&as->eh_frame_data[as->eh_frame_data_size], &val, 4);
+    as->eh_frame_data_size += 4;
+}
+
+static void eh_frame_write_uleb128(assembler_t *as, uint32_t val) {
+    uint8_t buf[5];
+    int len = encode_uleb128(val, buf);
+    eh_frame_ensure(as, len);
+    memcpy(&as->eh_frame_data[as->eh_frame_data_size], buf, len);
+    as->eh_frame_data_size += len;
+}
+
+static void eh_frame_write_sleb128(assembler_t *as, int32_t val) {
+    uint8_t buf[5];
+    int len = encode_sleb128(val, buf);
+    eh_frame_ensure(as, len);
+    memcpy(&as->eh_frame_data[as->eh_frame_data_size], buf, len);
+    as->eh_frame_data_size += len;
+}
+
+static void eh_frame_pad_align4(assembler_t *as, uint32_t start) {
+    while ((as->eh_frame_data_size - start) % 4)
+        eh_frame_write8(as, 0);  // DW_CFA_nop
+}
+
+// ============================================================================
+// DWARF CFA instruction constants
+// ============================================================================
+
+#define DW_CFA_advance_loc      0x40  // hi 2 bits = 01, lo 6 = delta
+#define DW_CFA_offset           0x80  // hi 2 bits = 10, lo 6 = reg
+#define DW_CFA_restore          0xC0  // hi 2 bits = 11, lo 6 = reg
+#define DW_CFA_nop              0x00
+#define DW_CFA_advance_loc1     0x02
+#define DW_CFA_advance_loc2     0x03
+#define DW_CFA_advance_loc4     0x04
+#define DW_CFA_offset_extended  0x05
+#define DW_CFA_restore_extended 0x06
+#define DW_CFA_def_cfa_op       0x0C
+#define DW_CFA_def_cfa_register 0x0D
+#define DW_CFA_def_cfa_offset   0x0E
+#define DW_CFA_remember_state   0x0A
+#define DW_CFA_restore_state    0x0B
+
+#define SLOW32_CODE_ALIGN  4
+#define SLOW32_DATA_ALIGN  (-4)
+#define SLOW32_RA_REG      31
+
+// ============================================================================
+// CIE emission (Common Information Entry)
+// ============================================================================
+
+// Emit "zR" CIE (no personality function)
+static uint32_t emit_cie_zr(assembler_t *as) {
+    uint32_t cie_start = as->eh_frame_data_size;
+    eh_frame_write32(as, 0);  // length placeholder
+    uint32_t after_length = as->eh_frame_data_size;
+
+    eh_frame_write32(as, 0);  // CIE_id = 0
+    eh_frame_write8(as, 1);   // version
+
+    // Augmentation string "zR\0"
+    eh_frame_write8(as, 'z');
+    eh_frame_write8(as, 'R');
+    eh_frame_write8(as, 0);
+
+    eh_frame_write_uleb128(as, SLOW32_CODE_ALIGN);          // code alignment factor
+    eh_frame_write_sleb128(as, SLOW32_DATA_ALIGN);          // data alignment factor
+    eh_frame_write_uleb128(as, SLOW32_RA_REG);              // return address register
+
+    eh_frame_write_uleb128(as, 1);  // augmentation data length
+    eh_frame_write8(as, 0x00);      // R: FDE encoding = DW_EH_PE_absptr
+
+    // Initial instructions: CFA = r29 (SP) + 0
+    eh_frame_write8(as, DW_CFA_def_cfa_op);
+    eh_frame_write_uleb128(as, 29);  // SP
+    eh_frame_write_uleb128(as, 0);   // offset
+
+    eh_frame_pad_align4(as, after_length);
+
+    // Patch length
+    uint32_t length = as->eh_frame_data_size - after_length;
+    memcpy(&as->eh_frame_data[cie_start], &length, 4);
+    return cie_start;
+}
+
+// Emit "zPLR" CIE (with personality function and LSDA)
+static uint32_t emit_cie_zplr(assembler_t *as) {
+    uint32_t cie_start = as->eh_frame_data_size;
+    eh_frame_write32(as, 0);  // length placeholder
+    uint32_t after_length = as->eh_frame_data_size;
+
+    eh_frame_write32(as, 0);  // CIE_id = 0
+    eh_frame_write8(as, 1);   // version
+
+    // Augmentation string "zPLR\0"
+    eh_frame_write8(as, 'z');
+    eh_frame_write8(as, 'P');
+    eh_frame_write8(as, 'L');
+    eh_frame_write8(as, 'R');
+    eh_frame_write8(as, 0);
+
+    eh_frame_write_uleb128(as, SLOW32_CODE_ALIGN);
+    eh_frame_write_sleb128(as, SLOW32_DATA_ALIGN);
+    eh_frame_write_uleb128(as, SLOW32_RA_REG);
+
+    // Augmentation data: P(1+4) + L(1) + R(1) = 7 bytes
+    eh_frame_write_uleb128(as, 7);
+
+    // P: personality encoding + pointer
+    eh_frame_write8(as, 0x00);  // DW_EH_PE_absptr
+    uint32_t personality_offset = as->eh_frame_data_size;
+    eh_frame_write32(as, 0);    // placeholder (relocation needed)
+    add_relocation(as, personality_offset, as->cfi_personality_sym,
+                   S32O_REL_32, 0, SECTION_EH_FRAME);
+
+    // L: LSDA encoding
+    eh_frame_write8(as, 0x00);  // DW_EH_PE_absptr
+
+    // R: FDE encoding
+    eh_frame_write8(as, 0x00);  // DW_EH_PE_absptr
+
+    // Initial instructions: CFA = r29 (SP) + 0
+    eh_frame_write8(as, DW_CFA_def_cfa_op);
+    eh_frame_write_uleb128(as, 29);
+    eh_frame_write_uleb128(as, 0);
+
+    eh_frame_pad_align4(as, after_length);
+
+    uint32_t length = as->eh_frame_data_size - after_length;
+    memcpy(&as->eh_frame_data[cie_start], &length, 4);
+    return cie_start;
+}
+
+// ============================================================================
+// FDE emission (Frame Description Entry)
+// ============================================================================
+
+static void emit_fde(assembler_t *as) {
+    // Ensure the right CIE is emitted
+    uint32_t cie_offset;
+    if (as->cfi_has_personality) {
+        if (!as->cfi_cie_zplr_emitted) {
+            as->cfi_cie_zplr_offset = emit_cie_zplr(as);
+            as->cfi_cie_zplr_emitted = true;
+        }
+        cie_offset = as->cfi_cie_zplr_offset;
+    } else {
+        if (!as->cfi_cie_zr_emitted) {
+            as->cfi_cie_zr_offset = emit_cie_zr(as);
+            as->cfi_cie_zr_emitted = true;
+        }
+        cie_offset = as->cfi_cie_zr_offset;
+    }
+
+    uint32_t fde_start = as->eh_frame_data_size;
+    eh_frame_write32(as, 0);  // length placeholder
+    uint32_t after_length = as->eh_frame_data_size;
+
+    // CIE pointer: offset from this field to CIE start
+    uint32_t cie_ptr = as->eh_frame_data_size - cie_offset;
+    eh_frame_write32(as, cie_ptr);
+
+    // PC begin (needs relocation)
+    uint32_t pc_begin_offset = as->eh_frame_data_size;
+    eh_frame_write32(as, 0);  // placeholder
+    if (as->cfi_func_symbol[0]) {
+        add_relocation(as, pc_begin_offset, as->cfi_func_symbol,
+                       S32O_REL_32, 0, SECTION_EH_FRAME);
+    }
+
+    // PC range (function size in bytes)
+    uint32_t func_size = as->code_size - as->cfi_func_start;
+    eh_frame_write32(as, func_size);
+
+    // Augmentation data
+    if (as->cfi_has_lsda) {
+        eh_frame_write_uleb128(as, 4);  // 4 bytes for absptr LSDA
+        uint32_t lsda_offset = as->eh_frame_data_size;
+        eh_frame_write32(as, 0);  // placeholder
+        add_relocation(as, lsda_offset, as->cfi_lsda_sym,
+                       S32O_REL_32, 0, SECTION_EH_FRAME);
+    } else if (as->cfi_has_personality) {
+        // zPLR CIE but no LSDA: emit null pointer
+        eh_frame_write_uleb128(as, 4);
+        eh_frame_write32(as, 0);
+    } else {
+        eh_frame_write_uleb128(as, 0);  // no augmentation data
+    }
+
+    // FDE instructions (accumulated during .cfi_* processing)
+    if (as->cfi_fde_instrs_size > 0) {
+        eh_frame_ensure(as, as->cfi_fde_instrs_size);
+        memcpy(&as->eh_frame_data[as->eh_frame_data_size],
+               as->cfi_fde_instrs, as->cfi_fde_instrs_size);
+        as->eh_frame_data_size += as->cfi_fde_instrs_size;
+    }
+
+    eh_frame_pad_align4(as, after_length);
+
+    uint32_t length = as->eh_frame_data_size - after_length;
+    memcpy(&as->eh_frame_data[fde_start], &length, 4);
+}
+
+// ============================================================================
+// CFI FDE instruction buffer helpers
+// ============================================================================
+
+static void cfi_fde_ensure(assembler_t *as, uint32_t additional) {
+    uint32_t needed = as->cfi_fde_instrs_size + additional;
+    if (needed <= as->cfi_fde_instrs_cap) return;
+    uint32_t new_cap = as->cfi_fde_instrs_cap ? as->cfi_fde_instrs_cap : 256;
+    while (new_cap < needed) new_cap *= 2;
+    as->cfi_fde_instrs = realloc(as->cfi_fde_instrs, new_cap);
+    as->cfi_fde_instrs_cap = new_cap;
+}
+
+static void cfi_fde_write8(assembler_t *as, uint8_t val) {
+    cfi_fde_ensure(as, 1);
+    as->cfi_fde_instrs[as->cfi_fde_instrs_size++] = val;
+}
+
+static void cfi_fde_write_uleb128(assembler_t *as, uint32_t val) {
+    uint8_t buf[5];
+    int len = encode_uleb128(val, buf);
+    cfi_fde_ensure(as, len);
+    memcpy(&as->cfi_fde_instrs[as->cfi_fde_instrs_size], buf, len);
+    as->cfi_fde_instrs_size += len;
+}
+
+// Emit DW_CFA_advance_loc* to track code position changes between CFI directives
+static void cfi_emit_advance_loc(assembler_t *as) {
+    if (!as->cfi_in_proc) return;
+    uint32_t delta_bytes = as->code_size - as->cfi_last_loc;
+    if (delta_bytes == 0) return;
+    uint32_t delta = delta_bytes / SLOW32_CODE_ALIGN;
+    as->cfi_last_loc = as->code_size;
+
+    if (delta <= 63) {
+        cfi_fde_write8(as, DW_CFA_advance_loc | (delta & 0x3F));
+    } else if (delta <= 255) {
+        cfi_fde_write8(as, DW_CFA_advance_loc1);
+        cfi_fde_write8(as, (uint8_t)delta);
+    } else if (delta <= 65535) {
+        cfi_fde_write8(as, DW_CFA_advance_loc2);
+        uint16_t val16 = (uint16_t)delta;
+        cfi_fde_ensure(as, 2);
+        memcpy(&as->cfi_fde_instrs[as->cfi_fde_instrs_size], &val16, 2);
+        as->cfi_fde_instrs_size += 2;
+    } else {
+        cfi_fde_write8(as, DW_CFA_advance_loc4);
+        cfi_fde_ensure(as, 4);
+        memcpy(&as->cfi_fde_instrs[as->cfi_fde_instrs_size], &delta, 4);
+        as->cfi_fde_instrs_size += 4;
+    }
+}
+
+// ============================================================================
+// CFI directive handler
+// ============================================================================
+
+static int find_label_index(assembler_t *as, const char *name);
+
+static bool handle_cfi_directive(assembler_t *as, char tokens[][MAX_TOKEN_LEN], int num_tokens) {
+    if (strcmp(tokens[0], ".cfi_startproc") == 0) {
+        as->cfi_in_proc = true;
+        as->cfi_func_start = as->code_size;
+        as->cfi_last_loc = as->code_size;
+        as->cfi_fde_instrs_size = 0;
+        as->cfi_has_personality = false;
+        as->cfi_has_lsda = false;
+        as->cfi_func_symbol[0] = '\0';
+
+        // Find the most recent label at current code address for FDE pc_begin.
+        // Prefer global labels (function names) over local labels.
+        for (int i = as->num_labels - 1; i >= 0; i--) {
+            if (as->labels[i].section == SECTION_CODE &&
+                as->labels[i].address == as->code_size) {
+                if (as->labels[i].is_global) {
+                    copy_string(as->cfi_func_symbol, MAX_SYMBOL_LEN, as->labels[i].name);
+                    break;
+                }
+                if (as->cfi_func_symbol[0] == '\0') {
+                    copy_string(as->cfi_func_symbol, MAX_SYMBOL_LEN, as->labels[i].name);
+                }
+            }
+        }
+        // Generate synthetic label if none found
+        if (as->cfi_func_symbol[0] == '\0') {
+            snprintf(as->cfi_func_symbol, MAX_SYMBOL_LEN, ".Lcfi_func_%u", as->code_size);
+            add_label(as, as->cfi_func_symbol, as->code_size);
+        }
+        return true;
+    }
+
+    if (strcmp(tokens[0], ".cfi_endproc") == 0) {
+        if (!as->cfi_in_proc) {
+            fprintf(stderr, "Error: .cfi_endproc without .cfi_startproc\n");
+            return false;
+        }
+        emit_fde(as);
+        as->cfi_in_proc = false;
+        return true;
+    }
+
+    // All other CFI directives require being inside a proc
+    if (!as->cfi_in_proc) return true;  // silently ignore outside proc
+
+    if (strcmp(tokens[0], ".cfi_def_cfa") == 0 && num_tokens >= 3) {
+        cfi_emit_advance_loc(as);
+        int reg = parse_register(tokens[1]);
+        if (reg < 0) reg = parse_immediate(tokens[1]);
+        int offset = parse_immediate(tokens[2]);
+        cfi_fde_write8(as, DW_CFA_def_cfa_op);
+        cfi_fde_write_uleb128(as, (uint32_t)reg);
+        cfi_fde_write_uleb128(as, (uint32_t)offset);
+        return true;
+    }
+
+    if (strcmp(tokens[0], ".cfi_def_cfa_offset") == 0 && num_tokens >= 2) {
+        cfi_emit_advance_loc(as);
+        int offset = parse_immediate(tokens[1]);
+        cfi_fde_write8(as, DW_CFA_def_cfa_offset);
+        cfi_fde_write_uleb128(as, (uint32_t)offset);
+        return true;
+    }
+
+    if (strcmp(tokens[0], ".cfi_def_cfa_register") == 0 && num_tokens >= 2) {
+        cfi_emit_advance_loc(as);
+        int reg = parse_register(tokens[1]);
+        if (reg < 0) reg = parse_immediate(tokens[1]);
+        cfi_fde_write8(as, DW_CFA_def_cfa_register);
+        cfi_fde_write_uleb128(as, (uint32_t)reg);
+        return true;
+    }
+
+    if (strcmp(tokens[0], ".cfi_offset") == 0 && num_tokens >= 3) {
+        cfi_emit_advance_loc(as);
+        int reg = parse_register(tokens[1]);
+        if (reg < 0) reg = parse_immediate(tokens[1]);
+        int offset = parse_immediate(tokens[2]);
+        // Factored offset: actual_offset / data_alignment_factor
+        uint32_t factored = (uint32_t)(offset / SLOW32_DATA_ALIGN);
+        if (reg >= 0 && reg < 64) {
+            cfi_fde_write8(as, DW_CFA_offset | (reg & 0x3F));
+        } else {
+            cfi_fde_write8(as, DW_CFA_offset_extended);
+            cfi_fde_write_uleb128(as, (uint32_t)reg);
+        }
+        cfi_fde_write_uleb128(as, factored);
+        return true;
+    }
+
+    if (strcmp(tokens[0], ".cfi_restore") == 0 && num_tokens >= 2) {
+        cfi_emit_advance_loc(as);
+        int reg = parse_register(tokens[1]);
+        if (reg < 0) reg = parse_immediate(tokens[1]);
+        if (reg >= 0 && reg < 64) {
+            cfi_fde_write8(as, DW_CFA_restore | (reg & 0x3F));
+        } else {
+            cfi_fde_write8(as, DW_CFA_restore_extended);
+            cfi_fde_write_uleb128(as, (uint32_t)reg);
+        }
+        return true;
+    }
+
+    if (strcmp(tokens[0], ".cfi_remember_state") == 0) {
+        cfi_emit_advance_loc(as);
+        cfi_fde_write8(as, DW_CFA_remember_state);
+        return true;
+    }
+
+    if (strcmp(tokens[0], ".cfi_restore_state") == 0) {
+        cfi_emit_advance_loc(as);
+        cfi_fde_write8(as, DW_CFA_restore_state);
+        return true;
+    }
+
+    if (strcmp(tokens[0], ".cfi_personality") == 0 && num_tokens >= 3) {
+        as->cfi_personality_enc = (uint8_t)parse_immediate(tokens[1]);
+        copy_string(as->cfi_personality_sym, MAX_SYMBOL_LEN, tokens[2]);
+        as->cfi_has_personality = true;
+        return true;
+    }
+
+    if (strcmp(tokens[0], ".cfi_lsda") == 0 && num_tokens >= 3) {
+        as->cfi_lsda_enc = (uint8_t)parse_immediate(tokens[1]);
+        copy_string(as->cfi_lsda_sym, MAX_SYMBOL_LEN, tokens[2]);
+        as->cfi_has_lsda = true;
+        return true;
+    }
+
+    // Silently ignore other CFI directives (.cfi_sections, .cfi_signal_frame, etc.)
+    return true;
 }
 
 // Ensure there is room for at least `additional` more instructions/data bytes
@@ -955,6 +1471,18 @@ static bool assemble_line(assembler_t *as, char *line) {
                     as->current_addr = as->init_array_size;
                     return true;
                 }
+                if (strncmp(tokens[1], ".gcc_except_table", 17) == 0) {
+                    as->current_section = SECTION_EXCEPT_TABLE;
+                    as->current_addr = as->except_table_size;
+                    return true;
+                }
+                if (strncmp(tokens[1], ".eh_frame", 9) == 0) {
+                    // .eh_frame is normally built from CFI directives,
+                    // but allow explicit section for edge cases
+                    as->current_section = SECTION_EH_FRAME;
+                    as->current_addr = as->eh_frame_data_size;
+                    return true;
+                }
                 if (strncmp(tokens[1], ".fpc", 4) == 0) {
                     as->current_section = SECTION_RODATA;
                     as->current_addr = as->rodata_size;
@@ -1145,44 +1673,6 @@ static bool assemble_line(assembler_t *as, char *line) {
                 }
             }
             return true;
-        } else if (strcmp(tokens[0], ".uleb128") == 0 && num_tokens > 1) {
-            // .uleb128 - emit unsigned LEB128 encoded value
-            uint32_t val = (uint32_t)parse_immediate(tokens[1]);
-            do {
-                uint8_t byte = val & 0x7F;
-                val >>= 7;
-                if (val != 0) byte |= 0x80;
-                ensure_instruction_capacity(as, 1);
-                as->instructions[as->num_instructions].instruction = byte | 0x80000000;
-                as->instructions[as->num_instructions].address = as->current_addr;
-                as->instructions[as->num_instructions].section = as->current_section;
-                as->instructions[as->num_instructions].is_data_byte = true;
-                as->num_instructions++;
-                as->current_addr += 1;
-                bump_size(as, as->current_section, 1);
-            } while (val != 0);
-            return true;
-        } else if (strcmp(tokens[0], ".sleb128") == 0 && num_tokens > 1) {
-            // .sleb128 - emit signed LEB128 encoded value
-            int32_t val = parse_immediate(tokens[1]);
-            bool more = true;
-            while (more) {
-                uint8_t byte = val & 0x7F;
-                val >>= 7;
-                if ((val == 0 && !(byte & 0x40)) || (val == -1 && (byte & 0x40)))
-                    more = false;
-                else
-                    byte |= 0x80;
-                ensure_instruction_capacity(as, 1);
-                as->instructions[as->num_instructions].instruction = byte | 0x80000000;
-                as->instructions[as->num_instructions].address = as->current_addr;
-                as->instructions[as->num_instructions].section = as->current_section;
-                as->instructions[as->num_instructions].is_data_byte = true;
-                as->num_instructions++;
-                as->current_addr += 1;
-                bump_size(as, as->current_section, 1);
-            }
-            return true;
         } else if ((strcmp(tokens[0], ".string") == 0 || strcmp(tokens[0], ".asciz") == 0) && num_tokens > 1) {
             // .string/.asciz - each arg is a separate NUL-terminated string
             for (int i = 1; i < num_tokens; i++) {
@@ -1272,6 +1762,93 @@ static bool assemble_line(assembler_t *as, char *line) {
                 bump_size(as, as->current_section, 4);
             }
             return true;
+        } else if ((strcmp(tokens[0], ".uleb128") == 0 || strcmp(tokens[0], ".sleb128") == 0) && num_tokens > 1) {
+            // .uleb128/.sleb128 - emit LEB128-encoded value (used in .gcc_except_table)
+            bool is_signed = (strcmp(tokens[0], ".sleb128") == 0);
+            expr_result_t res = {0};
+            if (!parse_expression_all(tokens[1], &res)) {
+                fprintf(stderr, "%s: failed to parse expression '%s'\n", tokens[0], tokens[1]);
+                return false;
+            }
+
+            if (res.has_symbol && res.has_minus_symbol) {
+                // Label difference: try to resolve now
+                int plus_idx = find_label_index(as, res.symbol);
+                int minus_idx = find_label_index(as, res.minus_symbol);
+                bool resolved = false;
+
+                if (plus_idx >= 0 && as->labels[plus_idx].is_defined &&
+                    minus_idx >= 0 && as->labels[minus_idx].is_defined &&
+                    as->labels[plus_idx].section == as->labels[minus_idx].section) {
+                    // Both labels known: emit compact encoding
+                    int32_t val = (int32_t)(as->labels[plus_idx].address -
+                                            as->labels[minus_idx].address) + res.val;
+                    uint8_t buf[5];
+                    int len;
+                    if (is_signed) {
+                        len = encode_sleb128(val, buf);
+                    } else {
+                        len = encode_uleb128((uint32_t)val, buf);
+                    }
+                    ensure_instruction_capacity(as, len);
+                    for (int i = 0; i < len; i++) {
+                        as->instructions[as->num_instructions].instruction = buf[i];
+                        as->instructions[as->num_instructions].address = as->current_addr;
+                        as->instructions[as->num_instructions].section = as->current_section;
+                        as->instructions[as->num_instructions].is_data_byte = true;
+                        as->num_instructions++;
+                        as->current_addr++;
+                    }
+                    bump_size(as, as->current_section, len);
+                    resolved = true;
+                }
+
+                if (!resolved) {
+                    // Forward reference: emit 5-byte placeholder, resolve later
+                    int first_idx = as->num_instructions;
+                    ensure_instruction_capacity(as, 5);
+                    for (int i = 0; i < 5; i++) {
+                        as->instructions[as->num_instructions].instruction = 0x80;  // placeholder
+                        as->instructions[as->num_instructions].address = as->current_addr;
+                        as->instructions[as->num_instructions].section = as->current_section;
+                        as->instructions[as->num_instructions].is_data_byte = true;
+                        as->num_instructions++;
+                        as->current_addr++;
+                    }
+                    bump_size(as, as->current_section, 5);
+
+                    DARR_PUSH(as->uleb_diffs, as->num_uleb_diffs, as->uleb_diffs_cap, uleb_diff_t);
+                    copy_string(as->uleb_diffs[as->num_uleb_diffs].plus_symbol, MAX_SYMBOL_LEN, res.symbol);
+                    copy_string(as->uleb_diffs[as->num_uleb_diffs].minus_symbol, MAX_SYMBOL_LEN, res.minus_symbol);
+                    as->uleb_diffs[as->num_uleb_diffs].addend = res.val;
+                    as->uleb_diffs[as->num_uleb_diffs].instruction_index = first_idx;
+                    as->uleb_diffs[as->num_uleb_diffs].is_signed = is_signed;
+                    as->num_uleb_diffs++;
+                }
+            } else if (res.has_symbol) {
+                fprintf(stderr, "%s: single symbol references not supported (use label difference or constant)\n", tokens[0]);
+                return false;
+            } else {
+                // Pure constant: emit compact encoding
+                uint8_t buf[5];
+                int len;
+                if (is_signed) {
+                    len = encode_sleb128(res.val, buf);
+                } else {
+                    len = encode_uleb128((uint32_t)res.val, buf);
+                }
+                ensure_instruction_capacity(as, len);
+                for (int i = 0; i < len; i++) {
+                    as->instructions[as->num_instructions].instruction = buf[i];
+                    as->instructions[as->num_instructions].address = as->current_addr;
+                    as->instructions[as->num_instructions].section = as->current_section;
+                    as->instructions[as->num_instructions].is_data_byte = true;
+                    as->num_instructions++;
+                    as->current_addr++;
+                }
+                bump_size(as, as->current_section, len);
+            }
+            return true;
         } else if ((strcmp(tokens[0], ".equ") == 0 || strcmp(tokens[0], ".set") == 0) && num_tokens >= 3) {
             // .equ/.set symbol, value - define a constant
             char *symbol = tokens[1];
@@ -1327,6 +1904,10 @@ static bool assemble_line(assembler_t *as, char *line) {
             as->current_addr = saved_addr;
             return true;
         }
+        // Handle CFI directives (build .eh_frame data)
+        if (strncmp(tokens[0], ".cfi_", 5) == 0) {
+            return handle_cfi_directive(as, tokens, num_tokens);
+        }
         // Known-harmless directives emitted by LLVM/FPC that we can safely ignore
         if (strcmp(tokens[0], ".file") == 0 ||
             strcmp(tokens[0], ".type") == 0 ||
@@ -1347,7 +1928,6 @@ static bool assemble_line(assembler_t *as, char *line) {
             strcmp(tokens[0], ".stabn") == 0 ||
             strcmp(tokens[0], ".stabd") == 0 ||
             strcmp(tokens[0], ".reference") == 0 ||
-            strncmp(tokens[0], ".cfi_", 5) == 0 ||
             strncmp(tokens[0], ".cv_", 4) == 0) {
             return true;
         }
@@ -1989,10 +2569,53 @@ static int resolve_label_diffs(assembler_t *as) {
     return 0;
 }
 
+// Resolve ULEB128/SLEB128 label-difference fixups (for .uleb128/.sleb128 directives)
+static int resolve_uleb_diffs(assembler_t *as) {
+    for (int i = 0; i < as->num_uleb_diffs; i++) {
+        uleb_diff_t *ud = &as->uleb_diffs[i];
+        label_t *plus = find_label(as, ud->plus_symbol);
+        label_t *minus = find_label(as, ud->minus_symbol);
+        if (!plus || !plus->is_defined) {
+            fprintf(stderr, ".uleb128/.sleb128: undefined symbol '%s'\n", ud->plus_symbol);
+            return -1;
+        }
+        if (!minus || !minus->is_defined) {
+            fprintf(stderr, ".uleb128/.sleb128: undefined symbol '%s'\n", ud->minus_symbol);
+            return -1;
+        }
+        if (plus->section != minus->section) {
+            fprintf(stderr, ".uleb128/.sleb128: '%s' and '%s' in different sections\n",
+                    ud->plus_symbol, ud->minus_symbol);
+            return -1;
+        }
+        int32_t val = (int32_t)(plus->address - minus->address) + ud->addend;
+        uint8_t buf[5];
+        if (ud->is_signed) {
+            encode_sleb128_fixed5(val, buf);
+        } else {
+            encode_uleb128_fixed5((uint32_t)val, buf);
+        }
+        // Patch the 5 placeholder bytes in the instruction array
+        int idx = ud->instruction_index;
+        for (int j = 0; j < 5; j++) {
+            as->instructions[idx + j].instruction = buf[j];
+        }
+    }
+    return 0;
+}
+
 static int write_object_file(assembler_t *as, const char *filename) {
     // Resolve label-difference fixups before emitting
     if (as->num_label_diffs > 0) {
         if (resolve_label_diffs(as) != 0) return -1;
+    }
+    if (as->num_uleb_diffs > 0) {
+        if (resolve_uleb_diffs(as) != 0) return -1;
+    }
+
+    // Add .eh_frame zero terminator if we have eh_frame data
+    if (as->eh_frame_data_size > 0) {
+        eh_frame_write32(as, 0);  // zero-length record marks end of .eh_frame
     }
 
     FILE *f = fopen(filename, "wb");
@@ -2010,9 +2633,11 @@ static int write_object_file(assembler_t *as, const char *filename) {
     int num_sections = 0;
     uint32_t text_name_offset = 0, data_name_offset = 0, bss_name_offset = 0;
     uint32_t rodata_name_offset = 0, init_array_name_offset = 0;
+    uint32_t eh_frame_name_offset = 0, except_table_name_offset = 0;
 
     // Count relocations per section
-    int text_relocs = 0, data_relocs = 0, rodata_relocs = 0, bss_relocs = 0, init_array_relocs = 0;
+    int text_relocs = 0, data_relocs = 0, rodata_relocs = 0, bss_relocs = 0;
+    int init_array_relocs = 0, eh_frame_relocs = 0, except_table_relocs = 0;
     for (int i = 0; i < as->num_relocations; i++) {
         switch (as->relocations[i].section) {
             case SECTION_CODE: text_relocs++; break;
@@ -2020,6 +2645,9 @@ static int write_object_file(assembler_t *as, const char *filename) {
             case SECTION_RODATA: rodata_relocs++; break;
             case SECTION_BSS: bss_relocs++; break;
             case SECTION_INIT_ARRAY: init_array_relocs++; break;
+            case SECTION_EH_FRAME: eh_frame_relocs++; break;
+            case SECTION_EXCEPT_TABLE: except_table_relocs++; break;
+            default: break;
         }
     }
 
@@ -2043,15 +2671,25 @@ static int write_object_file(assembler_t *as, const char *filename) {
         init_array_name_offset = add_string(as, ".init_array");
         num_sections++;
     }
+    if (as->eh_frame_data_size > 0) {
+        eh_frame_name_offset = add_string(as, ".eh_frame");
+        num_sections++;
+    }
+    if (as->except_table_size > 0) {
+        except_table_name_offset = add_string(as, ".gcc_except_table");
+        num_sections++;
+    }
 
     // Create mapping from internal section enum to output section index
-    int section_map[5] = {0, 0, 0, 0, 0};  // Maps SECTION_* to output section index
+    int section_map[SECTION_COUNT] = {0};
     int output_section_idx = 1;  // Output sections are 1-based
     if (as->code_size > 0) section_map[SECTION_CODE] = output_section_idx++;
     if (as->rodata_size > 0) section_map[SECTION_RODATA] = output_section_idx++;
     if (as->data_size > 0) section_map[SECTION_DATA] = output_section_idx++;
     if (as->bss_size > 0) section_map[SECTION_BSS] = output_section_idx++;
     if (as->init_array_size > 0) section_map[SECTION_INIT_ARRAY] = output_section_idx++;
+    if (as->eh_frame_data_size > 0) section_map[SECTION_EH_FRAME] = output_section_idx++;
+    if (as->except_table_size > 0) section_map[SECTION_EXCEPT_TABLE] = output_section_idx++;
     
     // Build symbol table (dynamically grown)
     int num_symbols = 0;
@@ -2120,6 +2758,7 @@ static int write_object_file(assembler_t *as, const char *filename) {
     // Calculate relocation table offsets
     uint32_t text_reloc_offset = 0, data_reloc_offset = 0;
     uint32_t rodata_reloc_offset = 0, bss_reloc_offset = 0, init_array_reloc_offset = 0;
+    uint32_t eh_frame_reloc_offset = 0, except_table_reloc_offset = 0;
 
     if (text_relocs > 0) {
         text_reloc_offset = offset;
@@ -2141,15 +2780,24 @@ static int write_object_file(assembler_t *as, const char *filename) {
         init_array_reloc_offset = offset;
         offset += init_array_relocs * sizeof(s32o_reloc_t);
     }
-    
+    if (eh_frame_relocs > 0) {
+        eh_frame_reloc_offset = offset;
+        offset += eh_frame_relocs * sizeof(s32o_reloc_t);
+    }
+    if (except_table_relocs > 0) {
+        except_table_reloc_offset = offset;
+        offset += except_table_relocs * sizeof(s32o_reloc_t);
+    }
+
     uint32_t string_table_offset = offset;
     offset += as->string_table_size;
-    
+
     // Align to 4 bytes
     offset = (offset + 3) & ~3;
-    
+
     // Section data offsets
     uint32_t code_offset = 0, data_offset = 0, rodata_offset = 0, init_array_offset = 0;
+    uint32_t eh_frame_offset = 0, except_table_offset = 0;
     if (as->code_size > 0) {
         code_offset = offset;
         offset += as->code_size;
@@ -2165,6 +2813,14 @@ static int write_object_file(assembler_t *as, const char *filename) {
     if (as->init_array_size > 0) {
         init_array_offset = offset;
         offset += as->init_array_size;
+    }
+    if (as->eh_frame_data_size > 0) {
+        eh_frame_offset = offset;
+        offset += as->eh_frame_data_size;
+    }
+    if (as->except_table_size > 0) {
+        except_table_offset = offset;
+        offset += as->except_table_size;
     }
     // BSS has no data in file
     
@@ -2257,11 +2913,39 @@ static int write_object_file(assembler_t *as, const char *filename) {
         fwrite(&section, sizeof(section), 1, f);
     }
 
+    if (as->eh_frame_data_size > 0) {
+        s32o_section_t section = {
+            .name_offset = eh_frame_name_offset,
+            .type = S32_SEC_EH_FRAME,
+            .flags = S32_SEC_FLAG_READ | S32_SEC_FLAG_ALLOC,
+            .size = as->eh_frame_data_size,
+            .offset = eh_frame_offset,
+            .align = 4,
+            .nrelocs = eh_frame_relocs,
+            .reloc_offset = eh_frame_reloc_offset
+        };
+        fwrite(&section, sizeof(section), 1, f);
+    }
+
+    if (as->except_table_size > 0) {
+        s32o_section_t section = {
+            .name_offset = except_table_name_offset,
+            .type = S32_SEC_EXCEPT_TABLE,
+            .flags = S32_SEC_FLAG_READ | S32_SEC_FLAG_ALLOC,
+            .size = as->except_table_size,
+            .offset = except_table_offset,
+            .align = 4,
+            .nrelocs = except_table_relocs,
+            .reloc_offset = except_table_reloc_offset
+        };
+        fwrite(&section, sizeof(section), 1, f);
+    }
+
     // Write symbol table
     fwrite(symbols, sizeof(s32o_symbol_t), num_symbols, f);
-    
+
     // Write relocations for each section
-    for (int sec = 0; sec < 5; sec++) {
+    for (int sec = 0; sec < SECTION_COUNT; sec++) {
         section_t sec_type = (section_t)sec;
         for (int i = 0; i < as->num_relocations; i++) {
             if (as->relocations[i].section != sec_type) continue;
@@ -2352,8 +3036,29 @@ static int write_object_file(assembler_t *as, const char *filename) {
             }
         }
     }
+    // Write .eh_frame section (from binary buffer, not instruction array)
+    if (as->eh_frame_data_size > 0) {
+        fseek(f, eh_frame_offset, SEEK_SET);
+        fwrite(as->eh_frame_data, 1, as->eh_frame_data_size, f);
+    }
+
+    // Write .gcc_except_table section
+    if (as->except_table_size > 0) {
+        fseek(f, except_table_offset, SEEK_SET);
+        for (int i = 0; i < as->num_instructions; i++) {
+            instruction_t *inst = &as->instructions[i];
+            if (inst->section != SECTION_EXCEPT_TABLE) continue;
+
+            if (inst->is_data_byte) {
+                uint8_t byte = inst->instruction & 0xFF;
+                fwrite(&byte, 1, 1, f);
+            } else {
+                fwrite(&inst->instruction, 4, 1, f);
+            }
+        }
+    }
     // BSS has no data to write
-    
+
     fclose(f);
     free(symbols);
     s32_hashmap_free(&sym_dedup);
@@ -2578,6 +3283,9 @@ int main(int argc, char *argv[]) {
         free(as.labels);
         free(as.relocations);
         free(as.label_diffs);
+        free(as.uleb_diffs);
+        free(as.eh_frame_data);
+        free(as.cfi_fde_instrs);
         free(as.string_table);
         s32_hashmap_free(&as.label_map);
         s32_hashmap_free(&as.string_map);
@@ -2590,6 +3298,9 @@ int main(int argc, char *argv[]) {
     free(as.labels);
     free(as.relocations);
     free(as.label_diffs);
+    free(as.uleb_diffs);
+    free(as.eh_frame_data);
+    free(as.cfi_fde_instrs);
     free(as.string_table);
     s32_hashmap_free(&as.label_map);
     s32_hashmap_free(&as.string_map);

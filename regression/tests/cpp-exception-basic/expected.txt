@@ -1,0 +1,6 @@
+Exception test start
+Throwing 42
+Caught int: 42
+After first catch
+Caught with catch-all
+Exception test done

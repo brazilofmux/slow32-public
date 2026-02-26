@@ -144,6 +144,10 @@ typedef struct {
 #define S32_SEC_SYMTAB   0x0021  // Symbol table
 #define S32_SEC_STRTAB   0x0022  // String table for symbols
 
+// Exception handling sections
+#define S32_SEC_EH_FRAME     0x0030  // .eh_frame (DWARF CFI unwind info)
+#define S32_SEC_EXCEPT_TABLE 0x0032  // .gcc_except_table (LSDA data)
+
 // Section flags (shared)
 #define S32_SEC_FLAG_EXEC   0x0001  // Executable
 #define S32_SEC_FLAG_WRITE  0x0002  // Writable

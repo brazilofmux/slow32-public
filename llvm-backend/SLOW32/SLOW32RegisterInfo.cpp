@@ -27,7 +27,9 @@
 
 using namespace llvm;
 
-SLOW32RegisterInfo::SLOW32RegisterInfo() : SLOW32GenRegisterInfo(SLOW32::R31) {}
+SLOW32RegisterInfo::SLOW32RegisterInfo()
+    : SLOW32GenRegisterInfo(SLOW32::R31, /*DwarfFlavour=*/0, /*EHFlavor=*/0,
+                            /*PC=*/0) {}
 
 const MCPhysReg *
 SLOW32RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
