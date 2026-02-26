@@ -5,8 +5,8 @@
 extern int putchar(int c);
 
 // Static stream objects (minimal: only fd matters for debug runtime)
-static FILE _stdout = { .fd = 1 };
-static FILE _stderr = { .fd = 2 };
+static FILE _stdout = { .fd = 1, .ungetc_char = -1 };
+static FILE _stderr = { .fd = 2, .ungetc_char = -1 };
 
 FILE *stdout = &_stdout;
 FILE *stderr = &_stderr;

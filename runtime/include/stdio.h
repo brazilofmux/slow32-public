@@ -34,6 +34,7 @@ typedef struct FILE {
     size_t buf_size;
     size_t buf_pos;
     size_t buf_len;
+    int ungetc_char;   /* -1 = empty, otherwise pushed-back character */
 } FILE;
 
 extern FILE *stdin;

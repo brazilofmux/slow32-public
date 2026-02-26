@@ -20,9 +20,9 @@
 #define STDIO_BUF_SIZE 4096
 
 // Initializers must match struct FILE layout in stdio.h
-static FILE _stdin  = { .fd = 0, .flags = FLAG_READ, .mode = _IONBF };
-static FILE _stdout = { .fd = 1, .flags = FLAG_WRITE, .mode = _IOLBF };
-static FILE _stderr = { .fd = 2, .flags = FLAG_WRITE, .mode = _IONBF };
+static FILE _stdin  = { .fd = 0, .flags = FLAG_READ, .mode = _IONBF, .ungetc_char = -1 };
+static FILE _stdout = { .fd = 1, .flags = FLAG_WRITE, .mode = _IOLBF, .ungetc_char = -1 };
+static FILE _stderr = { .fd = 2, .flags = FLAG_WRITE, .mode = _IONBF, .ungetc_char = -1 };
 
 FILE *stdin = &_stdin;
 FILE *stdout = &_stdout;
@@ -91,7 +91,8 @@ int fclose(FILE *stream) {
 FILE *fopen(const char *pathname, const char *mode) {
     FILE *f = calloc(1, sizeof(FILE));
     if (!f) return NULL;
-    
+
+    f->ungetc_char = -1;
     f->flags = 0;
     if (strchr(mode, 'r')) f->flags |= FLAG_READ;
     if (strchr(mode, 'w')) f->flags |= FLAG_WRITE | FLAG_CREATE | FLAG_TRUNC;
@@ -330,6 +331,12 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
 }
 
 int fgetc(FILE *stream) {
+    if (stream->ungetc_char >= 0) {
+        int c = stream->ungetc_char;
+        stream->ungetc_char = -1;
+        stream->eof = 0;
+        return c;
+    }
     unsigned char c;
     if (fread(&c, 1, 1, stream) != 1) return EOF;
     return c;
@@ -460,9 +467,10 @@ void perror(const char *s) {
 }
 
 int ungetc(int c, FILE *stream) {
-    /* Minimal stub: not fully implemented */
-    (void)stream;
-    return c;
+    if (c == EOF || !stream) return EOF;
+    stream->ungetc_char = (unsigned char)c;
+    stream->eof = 0;
+    return (unsigned char)c;
 }
 
 int setvbuf(FILE *stream, char *buf, int mode, size_t size) {

@@ -34,6 +34,7 @@ FILE __stdout = {
     .mode = _IOLBF,  // Line buffered
     .fd = 1,
     .flags = _IOWRITE,
+    .ungetc_char = -1,
 #ifdef USE_MMIO
     .flush_fn = __flush_mmio
 #else
@@ -49,6 +50,7 @@ FILE __stderr = {
     .mode = _IONBF,  // Unbuffered
     .fd = 2,
     .flags = _IOWRITE,
+    .ungetc_char = -1,
 #ifdef USE_MMIO
     .flush_fn = __flush_mmio
 #else
