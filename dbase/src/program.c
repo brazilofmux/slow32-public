@@ -55,6 +55,17 @@ static struct {
     int valid;  /* 1 = suspended state exists */
 } suspended;
 
+/* ---- BEGIN SEQUENCE / RECOVER / END SEQUENCE ---- */
+typedef struct {
+    int pc;
+    int call_depth;
+    int loop_depth;
+    program_t *prog;
+} sequence_frame_t;
+
+static sequence_frame_t seq_stack[MAX_SEQUENCE_DEPTH];
+static int seq_depth;
+
 /* ---- Synchronous procedure call support ---- */
 /* When prog_call_sync is active, pop_frame stops execution when
    call_depth returns to the target level. */
@@ -115,6 +126,10 @@ void prog_init(void) {
 
 /* Forward declarations needed by error handling */
 static void prog_run(void);
+static int scan_sequence_end(program_t *prog, int from, int kind);
+static int line_is_kw(const char *line, const char *kw);
+static void save_private(call_frame_t *frame, const char *name);
+static void restore_privates(call_frame_t *frame);
 
 /* Helper: map expression error string to error code */
 int expr_error_code(const char *msg) {
@@ -155,6 +170,38 @@ void prog_error(int code, const char *message) {
         }
         error_state.in_handler = 0;
         error_state.retry = 0;
+        return;
+    }
+
+    /* BEGIN SEQUENCE recovery — scan forward for RECOVER/END SEQUENCE.
+       Note: prog_execute_line does state.pc++ after cmd_execute returns,
+       so we set pc to the target line; the increment lands on target+1. */
+    if (seq_depth > 0 && state.running) {
+        seq_depth--;
+        sequence_frame_t *f = &seq_stack[seq_depth];
+
+        /* Unwind call/loop depth */
+        while (state.call_depth > f->call_depth)
+            state.call_depth--;
+        state.loop_depth = f->loop_depth;
+        state.current_prog = f->prog;
+        cmd_get_memvar_store()->current_depth = state.call_depth;
+
+        /* Scan from BEGIN SEQUENCE for RECOVER or END SEQUENCE */
+        int target = scan_sequence_end(f->prog, f->pc, 0);
+        if (target >= 0) {
+            char line[MAX_LINE_LEN];
+            char *p;
+            str_copy(line, f->prog->lines[target], MAX_LINE_LEN);
+            prog_preprocess(line, cmd_get_memvar_store());
+            p = skip_ws(line);
+            if (line_is_kw(p, "RECOVER"))
+                state.pc = target;  /* pc++ will land on first line after RECOVER */
+            else
+                state.pc = target;  /* pc++ will land on line after END SEQUENCE */
+        } else {
+            state.pc = f->pc;
+        }
         return;
     }
 
@@ -735,6 +782,92 @@ static int scan_endscan(program_t *prog, int from) {
         }
     }
     return -1;
+}
+
+/* ---- Scan forward for RECOVER or END SEQUENCE ----
+   kind: 0=find either RECOVER or END SEQUENCE, 1=find only END SEQUENCE */
+static int scan_sequence_end(program_t *prog, int from, int kind) {
+    int depth = 1;
+    int i;
+    for (i = from + 1; i < prog->nlines; i++) {
+        char line[MAX_LINE_LEN];
+        char *p;
+        str_copy(line, prog->lines[i], MAX_LINE_LEN);
+        prog_preprocess(line, cmd_get_memvar_store());
+        p = skip_ws(line);
+        if (line_is_kw(p, "BEGIN") && str_imatch(skip_ws(p + 5), "SEQUENCE"))
+            depth++;
+        else if (line_is_kw(p, "END") && str_imatch(skip_ws(p + 3), "SEQUENCE")) {
+            depth--;
+            if (depth == 0) return i;
+        } else if (kind == 0 && depth == 1 && line_is_kw(p, "RECOVER")) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void prog_begin_sequence(void) {
+    if (seq_depth >= MAX_SEQUENCE_DEPTH) {
+        prog_error(ERR_STACK_OVERFLOW, "SEQUENCE nesting overflow");
+        return;
+    }
+    seq_stack[seq_depth].pc = state.pc;
+    seq_stack[seq_depth].call_depth = state.call_depth;
+    seq_stack[seq_depth].loop_depth = state.loop_depth;
+    seq_stack[seq_depth].prog = state.current_prog;
+    seq_depth++;
+    state.pc++;
+}
+
+void prog_end_sequence(void) {
+    if (seq_depth > 0)
+        seq_depth--;
+    state.pc++;
+}
+
+void prog_recover(void) {
+    /* During normal flow (no error), skip to END SEQUENCE */
+    if (!state.current_prog) { state.pc++; return; }
+    int target = scan_sequence_end(state.current_prog, state.pc, 1);
+    if (target >= 0)
+        state.pc = target + 1;
+    else
+        state.pc++;
+    if (seq_depth > 0)
+        seq_depth--;
+}
+
+void prog_break(void) {
+    if (seq_depth <= 0) {
+        prog_error(ERR_SYNTAX, "BREAK without BEGIN SEQUENCE");
+        return;
+    }
+    seq_depth--;
+    sequence_frame_t *f = &seq_stack[seq_depth];
+
+    /* Unwind call/loop depth */
+    while (state.call_depth > f->call_depth) {
+        state.call_depth--;
+    }
+    state.loop_depth = f->loop_depth;
+    state.current_prog = f->prog;
+
+    /* Scan from BEGIN SEQUENCE for RECOVER or END SEQUENCE */
+    int target = scan_sequence_end(f->prog, f->pc, 0);
+    if (target >= 0) {
+        char line[MAX_LINE_LEN];
+        char *p;
+        str_copy(line, f->prog->lines[target], MAX_LINE_LEN);
+        prog_preprocess(line, cmd_get_memvar_store());
+        p = skip_ws(line);
+        if (line_is_kw(p, "RECOVER"))
+            state.pc = target + 1;  /* execute lines after RECOVER */
+        else
+            state.pc = target + 1;  /* skip past END SEQUENCE */
+    } else {
+        state.pc = f->pc + 1;
+    }
 }
 
 /* ---- Save PRIVATE variables ---- */
@@ -2122,6 +2255,46 @@ void prog_public(lexer_t *l) {
     if (state.running) state.pc++;
 }
 
+/* ---- LOCAL ---- */
+void prog_local(lexer_t *l) {
+    memvar_store_t *store = cmd_get_memvar_store();
+    char name[MEMVAR_NAMELEN];
+    value_t nil_val = val_nil();
+
+    if (!state.running || state.call_depth <= 0) {
+        while (l->current.type != TOK_EOF) lex_next(l);
+        if (state.running) state.pc++;
+        return;
+    }
+
+    while (l->current.type == TOK_IDENT) {
+        str_copy(name, l->current.text, sizeof(name));
+        str_upper(name);
+
+        if (lex_is_reserved(name)) {
+            char err[128];
+            snprintf(err, sizeof(err), "%s is a reserved keyword", name);
+            prog_error(ERR_SYNTAX, err);
+            return;
+        }
+        /* Save as PRIVATE for cleanup on RETURN */
+        save_private(&state.call_stack[state.call_depth - 1], name);
+        /* Release any existing var */
+        memvar_release(store, name);
+        /* Create fresh LOCAL var */
+        memvar_set_local(store, name, &nil_val);
+
+        lex_next(l);
+        if (l->current.type == TOK_COMMA) {
+            lex_next(l);
+        } else {
+            break;
+        }
+    }
+
+    state.pc++;
+}
+
 /* ---- CANCEL ---- */
 void prog_cancel(void) {
     /* Abort all program execution */
@@ -2246,6 +2419,33 @@ int prog_execute_line(char *line) {
         lexer_t l;
         lexer_init_ext(&l, skip_ws(p + 6), cmd_get_memvar_store());
         prog_public(&l);
+        return 0;
+    }
+
+    if (str_imatch(p, "LOCAL")) {
+        lexer_t l;
+        lexer_init_ext(&l, skip_ws(p + 5), cmd_get_memvar_store());
+        prog_local(&l);
+        return 0;
+    }
+
+    if (str_imatch(p, "BEGIN") && str_imatch(skip_ws(p + 5), "SEQUENCE")) {
+        prog_begin_sequence();
+        return 0;
+    }
+
+    if (str_imatch(p, "RECOVER")) {
+        prog_recover();
+        return 0;
+    }
+
+    if (str_imatch(p, "END") && str_imatch(skip_ws(p + 3), "SEQUENCE")) {
+        prog_end_sequence();
+        return 0;
+    }
+
+    if (str_imatch(p, "BREAK")) {
+        prog_break();
         return 0;
     }
 

@@ -2006,6 +2006,188 @@ static int fn_diskspace(expr_ctx_t *ctx, value_t *args, int nargs, value_t *resu
     return 0;
 }
 
+/* ---- Tier 3: LOOKUP ---- */
+static int fn_lookup(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    if (nargs < 3 || args[0].type != VAL_CHAR ||
+        args[1].type != VAL_CHAR || args[2].type != VAL_CHAR) {
+        ctx->error = "LOOKUP requires (ret_field, search_value, search_field)";
+        return -1;
+    }
+    if (!ctx->db || !dbf_is_open(ctx->db)) {
+        *result = val_str("");
+        return 0;
+    }
+    {
+        const char *ret_name = args[0].str;
+        const char *search_val = args[1].str;
+        const char *search_name = args[2].str;
+        uint32_t saved_rec = ctx->db->current_record;
+        uint32_t i;
+        int found = 0;
+
+        /* Find field indices */
+        int ret_idx = -1, search_idx = -1;
+        for (i = 0; i < (uint32_t)ctx->db->field_count; i++) {
+            if (str_icmp(ctx->db->fields[i].name, ret_name) == 0) ret_idx = (int)i;
+            if (str_icmp(ctx->db->fields[i].name, search_name) == 0) search_idx = (int)i;
+        }
+        if (ret_idx < 0 || search_idx < 0) {
+            *result = val_str("");
+            return 0;
+        }
+
+        for (i = 1; i <= ctx->db->record_count; i++) {
+            char fval[256];
+            dbf_read_record(ctx->db, i);
+            if (ctx->db->record_buf[0] == '*') continue;
+            dbf_get_field_raw(ctx->db, search_idx, fval, sizeof(fval));
+            trim_right(fval);
+            if (str_icmp(fval, search_val) == 0) {
+                char rval[256];
+                dbf_get_field_raw(ctx->db, ret_idx, rval, sizeof(rval));
+                trim_right(rval);
+                *result = val_str(rval);
+                found = 1;
+                break;
+            }
+        }
+        /* Restore original position */
+        if (saved_rec > 0 && saved_rec <= ctx->db->record_count)
+            dbf_read_record(ctx->db, saved_rec);
+        if (!found) *result = val_str("");
+    }
+    return 0;
+}
+
+/* ---- Tier 3: SYS() ---- */
+static int fn_sys(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    int num;
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_NUM) {
+        ctx->error = "SYS requires (number)";
+        return -1;
+    }
+    num = (int)args[0].num;
+    switch (num) {
+    case 0:    *result = val_str("0"); break;
+    case 1: {
+        /* Julian day */
+        time_t t = time(NULL);
+        struct tm *tm = localtime(&t);
+        int y = tm->tm_year + 1900, m = tm->tm_mon + 1, d = tm->tm_mday;
+        int jd = (1461 * (y + 4800 + (m - 14)/12))/4 +
+                 (367 * (m - 2 - 12 * ((m - 14)/12)))/12 -
+                 (3 * ((y + 4900 + (m - 14)/12)/100))/4 + d - 32075;
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%d", jd);
+        *result = val_str(buf);
+        break;
+    }
+    case 2: {
+        /* Seconds since midnight */
+        time_t t = time(NULL);
+        struct tm *tm = localtime(&t);
+        int secs = tm->tm_hour * 3600 + tm->tm_min * 60 + tm->tm_sec;
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%d", secs);
+        *result = val_str(buf);
+        break;
+    }
+    case 3:    *result = val_str("0"); break;
+    case 5:    *result = val_str("C:"); break;
+    case 6:    *result = val_str("PRN"); break;
+    case 10:   *result = val_str("640"); break;
+    case 16: {
+        const char *name = prog_get_program_name();
+        *result = val_str(name ? name : "");
+        break;
+    }
+    case 17:   *result = val_str("SLOW-32"); break;
+    case 2001: *result = val_str("dBASE III Clone 1.0"); break;
+    default:   *result = val_str(""); break;
+    }
+    return 0;
+}
+
+/* ---- Tier 3: SET() ---- */
+static int fn_set(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    int num;
+    const set_options_t *opts;
+    (void)ctx;
+    if (nargs < 1 || args[0].type != VAL_NUM) {
+        ctx->error = "SET requires (number)";
+        return -1;
+    }
+    num = (int)args[0].num;
+    opts = cmd_get_set_opts();
+    switch (num) {
+    case 1:  *result = val_str(opts->talk ? "ON" : "OFF"); break;
+    case 2:  *result = val_str(opts->heading ? "ON" : "OFF"); break;
+    case 3:  *result = val_str(opts->exact ? "ON" : "OFF"); break;
+    case 4:  *result = val_str(opts->deleted ? "ON" : "OFF"); break;
+    case 5:  *result = val_str(opts->confirm ? "ON" : "OFF"); break;
+    case 6:  *result = val_str(opts->bell ? "ON" : "OFF"); break;
+    case 7:  *result = val_str(opts->safety ? "ON" : "OFF"); break;
+    case 8:  *result = val_str(opts->console ? "ON" : "OFF"); break;
+    case 9:  *result = val_str(opts->escape ? "ON" : "OFF"); break;
+    case 10: {
+        const char *names[] = {"AMERICAN","ANSI","BRITISH","FRENCH","GERMAN","ITALIAN","JAPAN"};
+        int idx = (int)opts->date_format;
+        if (idx >= 0 && idx < 7) *result = val_str(names[idx]);
+        else *result = val_str("AMERICAN");
+        break;
+    }
+    case 11: { char b[8]; snprintf(b,sizeof(b),"%d",opts->decimals); *result = val_str(b); break; }
+    case 12: *result = val_str(opts->century ? "ON" : "OFF"); break;
+    case 13: *result = val_str(opts->unique ? "ON" : "OFF"); break;
+    case 14: *result = val_str(opts->softseek ? "ON" : "OFF"); break;
+    case 15: *result = val_str(opts->path); break;
+    case 16: *result = val_str(opts->alternate_on ? "ON" : "OFF"); break;
+    case 17: *result = val_str(opts->device ? "PRINT" : "SCREEN"); break;
+    case 18: { char b[8]; snprintf(b,sizeof(b),"%d",opts->margin); *result = val_str(b); break; }
+    case 19: { char b[8]; snprintf(b,sizeof(b),"%d",opts->memowidth); *result = val_str(b); break; }
+    case 20: { char b[8]; snprintf(b,sizeof(b),"%d",opts->epoch); *result = val_str(b); break; }
+    case 21: {
+        if (opts->mark) { char b[2]; b[0] = opts->mark; b[1] = '\0'; *result = val_str(b); }
+        else *result = val_str("");
+        break;
+    }
+    case 22: *result = val_str(opts->wrap ? "ON" : "OFF"); break;
+    default: *result = val_str(""); break;
+    }
+    return 0;
+}
+
+/* ---- Tier 3: DBSTRUCT() ---- */
+static int fn_dbstruct(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result) {
+    (void)args; (void)nargs;
+    if (!ctx->db || !dbf_is_open(ctx->db)) {
+        *result = val_num(0);
+        return 0;
+    }
+    {
+        int fc = ctx->db->field_count;
+        int i;
+        array_t *arr = (array_t *)calloc(1, sizeof(array_t));
+        if (!arr) { *result = val_num(0); return 0; }
+        arr->rows = fc;
+        arr->cols = 4;
+        arr->elements = (value_t *)calloc(fc * 4, sizeof(value_t));
+        if (!arr->elements) { free(arr); *result = val_num(0); return 0; }
+        for (i = 0; i < fc; i++) {
+            char t[2];
+            arr->elements[i * 4 + 0] = val_str(ctx->db->fields[i].name);
+            t[0] = ctx->db->fields[i].type; t[1] = '\0';
+            arr->elements[i * 4 + 1] = val_str(t);
+            arr->elements[i * 4 + 2] = val_num((double)ctx->db->fields[i].length);
+            arr->elements[i * 4 + 3] = val_num((double)ctx->db->fields[i].decimals);
+        }
+        result->type = VAL_ARRAY;
+        result->array = arr;
+    }
+    return 0;
+}
+
 /* ---- Dispatch table ---- */
 
 typedef int (*func_impl_t)(expr_ctx_t *ctx, value_t *args, int nargs, value_t *result);
@@ -2159,6 +2341,11 @@ static const func_entry_t func_table[] = {
     { "HEADER",    fn_header },
     { "MEMORY",    fn_memory },
     { "DISKSPACE", fn_diskspace },
+    /* Tier 3: Compatibility */
+    { "LOOKUP",    fn_lookup },
+    { "SYS",       fn_sys },
+    { "SET",       fn_set },
+    { "DBSTRUCT",  fn_dbstruct },
     { NULL, NULL }
 };
 

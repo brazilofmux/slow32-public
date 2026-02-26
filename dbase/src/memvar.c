@@ -22,6 +22,10 @@ int memvar_find(const memvar_store_t *store, const char *name, value_t *val) {
     int i;
     for (i = 0; i < MEMVAR_MAX; i++) {
         if (store->vars[i].used && str_icmp(store->vars[i].name, name) == 0) {
+            /* LOCAL vars only visible at exact creation scope */
+            if (store->vars[i].is_local &&
+                store->vars[i].scope_depth != store->current_depth)
+                continue;
             *val = store->vars[i].val;
             return 0;
         }
@@ -39,6 +43,10 @@ int memvar_set(memvar_store_t *store, const char *name, const value_t *val) {
     /* Update existing */
     for (i = 0; i < MEMVAR_MAX; i++) {
         if (store->vars[i].used && str_icmp(store->vars[i].name, uname) == 0) {
+            /* LOCAL vars only writable at exact creation scope */
+            if (store->vars[i].is_local &&
+                store->vars[i].scope_depth != store->current_depth)
+                continue;
             if (store->vars[i].val.type == VAL_ARRAY)
                 array_free(store->vars[i].val.array);
             store->vars[i].val = *val;
@@ -53,6 +61,31 @@ int memvar_set(memvar_store_t *store, const char *name, const value_t *val) {
             store->vars[i].val = *val;
             store->vars[i].used = 1;
             store->vars[i].scope_depth = store->current_depth;
+            store->vars[i].is_local = 0;
+            store->count++;
+            return 0;
+        }
+    }
+
+    prog_error(ERR_TOO_MANY_VARS, "Too many memory variables");
+    return -1;
+}
+
+int memvar_set_local(memvar_store_t *store, const char *name, const value_t *val) {
+    int i;
+    char uname[MEMVAR_NAMELEN];
+
+    str_copy(uname, name, MEMVAR_NAMELEN);
+    str_upper(uname);
+
+    /* Find free slot */
+    for (i = 0; i < MEMVAR_MAX; i++) {
+        if (!store->vars[i].used) {
+            str_copy(store->vars[i].name, uname, MEMVAR_NAMELEN);
+            store->vars[i].val = *val;
+            store->vars[i].used = 1;
+            store->vars[i].scope_depth = store->current_depth;
+            store->vars[i].is_local = 1;
             store->count++;
             return 0;
         }

@@ -283,6 +283,8 @@ static int page_flush(index_t *idx, int page_no) {
         tmp = idx->free_page_head;  memcpy(buf + 32, &tmp, 4);
         tmp = idx->unique;          memcpy(buf + 36, &tmp, 4);
         memcpy(buf + 40, idx->key_expr, 256);
+        memcpy(buf + 296, idx->for_expr, 256);
+        tmp = idx->descending;      memcpy(buf + 552, &tmp, 4);
     } else if (p->type == PAGE_FREE) {
         uint16_t t16;
         uint32_t t32;
@@ -462,12 +464,16 @@ void index_init(index_t *idx) {
     idx->cache_capacity = 64;
     idx->key_ast = NULL;
     idx->key_has_macro = 0;
+    idx->for_expr[0] = '\0';
+    idx->for_ast = NULL;
+    idx->descending = 0;
 }
 
 /* ---- Close ---- */
 void index_close(index_t *idx) {
     free_all_pages(idx);
     index_clear_key_ast(idx);
+    if (idx->for_ast) { ast_free(idx->for_ast); idx->for_ast = NULL; }
     if (idx->fp) {
         fclose(idx->fp);
         idx->fp = NULL;
@@ -481,6 +487,8 @@ void index_close(index_t *idx) {
     idx->filename[0] = '\0';
     idx->key_expr[0] = '\0';
     idx->key_has_macro = 0;
+    idx->for_expr[0] = '\0';
+    idx->descending = 0;
 }
 
 /* ---- Compute max keys from key_len ---- */
@@ -1211,11 +1219,13 @@ static int key_entry_cmp(const void *a, const void *b, void *userdata) {
     index_t *idx = (index_t *)userdata;
     const key_entry_t *ka = (const key_entry_t *)a;
     const key_entry_t *kb = (const key_entry_t *)b;
-    return key_cmp(ka->key, kb->key, idx->key_len);
+    int cmp = key_cmp(ka->key, kb->key, idx->key_len);
+    return idx->descending ? -cmp : cmp;
 }
 
 /* ---- Build index from database ---- */
-int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, const char *filename) {
+int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, const char *filename,
+                const char *for_expr, int descending) {
     uint32_t i;
     dbf_t *saved_db;
     int max_len = 0;
@@ -1237,6 +1247,19 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
 
     str_copy(idx->key_expr, key_expr, sizeof(idx->key_expr));
     str_copy(idx->filename, norm_path, sizeof(idx->filename));
+
+    /* Store FOR/DESCENDING */
+    if (for_expr && for_expr[0]) {
+        str_copy(idx->for_expr, for_expr, sizeof(idx->for_expr));
+        const char *ast_err;
+        if (idx->for_ast) { ast_free(idx->for_ast); idx->for_ast = NULL; }
+        idx->for_ast = ast_compile(for_expr, ctx->vars, &ast_err);
+    } else {
+        idx->for_expr[0] = '\0';
+        if (idx->for_ast) { ast_free(idx->for_ast); idx->for_ast = NULL; }
+    }
+    idx->descending = descending;
+
     if (index_compile_key_ast(idx, ctx->vars) < 0) {
         /* Keep dynamic fallback if AST compile fails. */
         idx->key_ast = NULL;
@@ -1263,6 +1286,14 @@ int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, 
 
         dbf_read_record(db, i);
         if (db->record_buf[0] == '*') continue;
+
+        /* Apply FOR filter */
+        if (idx->for_ast) {
+            value_t fcond;
+            if (ast_eval(idx->for_ast, ctx, &fcond) != 0) continue;
+            if (fcond.type == VAL_LOGIC && !fcond.logic) continue;
+            if (fcond.type == VAL_NUM && fcond.num == 0.0) continue;
+        }
 
         if (idx->key_ast) {
             if (ast_eval(idx->key_ast, ctx, &val) != 0) continue;
@@ -1523,6 +1554,9 @@ static int read_ndx2(index_t *idx, FILE *fp) {
     memcpy(&tmp, buf + 36, 4); idx->unique = (int)tmp;
     memcpy(idx->key_expr, buf + 40, 256);
     idx->key_expr[255] = '\0';
+    memcpy(idx->for_expr, buf + 296, 256);
+    idx->for_expr[255] = '\0';
+    memcpy(&tmp, buf + 552, 4); idx->descending = (int)tmp;
 
     compute_fanout(idx);
 

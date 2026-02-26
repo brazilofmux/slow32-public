@@ -54,4 +54,17 @@ int cmd_get_deleted(void);
 int cmd_get_softseek(void);
 int cmd_get_unique(void);
 
+/* SET ALTERNATE output wrappers */
+FILE *cmd_get_alternate_fp(void);
+int   cmd_get_alternate_on(void);
+void  cmd_output(const char *s);
+void  cmd_output_fmt(const char *fmt, ...);
+
+/* SET options access */
+const set_options_t *cmd_get_set_opts(void);
+const char *cmd_get_path(void);
+
+/* File search using SET PATH */
+int cmd_resolve_file(const char *name, char *resolved, int size);
+
 #endif

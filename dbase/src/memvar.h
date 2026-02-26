@@ -17,6 +17,7 @@ typedef struct {
     value_t val;
     int used;
     int scope_depth;    /* call_depth at which this var was created */
+    int is_local;       /* 1 = LOCAL variable, only visible at exact scope */
 } memvar_t;
 
 typedef struct memvar_store {
@@ -31,6 +32,7 @@ int  memvar_set(memvar_store_t *store, const char *name, const value_t *val);
 int  memvar_declare_array(memvar_store_t *store, const char *name, int rows, int cols);
 int  memvar_set_elem(memvar_store_t *store, const char *name, int row, int col, const value_t *val);
 int  memvar_get_elem(const memvar_store_t *store, const char *name, int row, int col, value_t *val);
+int  memvar_set_local(memvar_store_t *store, const char *name, const value_t *val);
 int  memvar_release(memvar_store_t *store, const char *name);
 void memvar_release_all(memvar_store_t *store);
 int  memvar_release_matching(memvar_store_t *store, const char *pattern, int like);

@@ -1,6 +1,8 @@
 #ifndef SET_H
 #define SET_H
 
+#include <stdio.h>
+
 typedef enum {
     DATE_AMERICAN,   /* MM/DD/YY */
     DATE_ANSI,       /* YY.MM.DD */
@@ -34,6 +36,9 @@ typedef struct set_options {
     int memowidth;    /* display width for memo fields (default 50) */
     int epoch;        /* base year for 2-digit year window (0=default <50 rule) */
     char mark;        /* date separator override; '\0' = use format default */
+    FILE *alternate_fp;   /* file for SET ALTERNATE TO (NULL if none) */
+    int alternate_on;     /* 1 = actively logging */
+    char path[256];       /* SET PATH TO directories (semicolon-separated) */
 } set_options_t;
 
 void set_init(set_options_t *opts);

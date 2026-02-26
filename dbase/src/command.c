@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <time.h>
 #include <dirent.h>
 #include "command.h"
@@ -228,7 +229,8 @@ static void indexes_rebuild_all(dbf_t *db) {
             char key_expr[256], filename[64];
             str_copy(key_expr, idx->key_expr, sizeof(key_expr));
             str_copy(filename, idx->filename, sizeof(filename));
-            index_build(idx, db, &expr_ctx, key_expr, filename);
+            index_build(idx, db, &expr_ctx, key_expr, filename,
+                        idx->for_expr, idx->descending);
             index_write(idx);
         }
     }
@@ -653,6 +655,12 @@ static void cmd_use(dbf_t *db, const char *arg) {
     }
 
     ensure_dbf_ext(filename, sizeof(filename));
+
+    {
+        char resolved[320];
+        if (cmd_resolve_file(filename, resolved, sizeof(resolved)) == 0)
+            str_copy(filename, resolved, sizeof(filename));
+    }
 
     if (dbf_open(db, filename) < 0) {
         file_not_found(filename);
@@ -2978,7 +2986,7 @@ static void cmd_print_expr(const char *arg, int newline) {
     if (*p == '\0') {
         if (newline) {
             if (is_print) screen_print_newline();
-            else printf("\n");
+            else cmd_output("\n");
         }
         return;
     }
@@ -2998,10 +3006,10 @@ static void cmd_print_expr(const char *arg, int newline) {
         val_to_string(&val, buf, sizeof(buf));
         if (!first) {
             if (is_print) screen_print_text(" ");
-            else printf(" ");
+            else cmd_output(" ");
         }
         if (is_print) screen_print_text(buf);
-        else printf("%s", buf);
+        else cmd_output(buf);
         first = 0;
 
         p = skip_ws(p);
@@ -3012,7 +3020,7 @@ static void cmd_print_expr(const char *arg, int newline) {
 
     if (newline) {
         if (is_print) screen_print_newline();
-        else printf("\n");
+        else cmd_output("\n");
     }
 }
 
@@ -4403,6 +4411,31 @@ static void cmd_index_on(dbf_t *db, lexer_t *l) {
         lex_next(l);
     }
 
+    /* Parse optional FOR condition */
+    char for_cond[256];
+    int is_descending = 0;
+    for_cond[0] = '\0';
+
+    if (cmd_kw(l, "FOR")) {
+        lex_next(l); /* skip FOR */
+        const char *for_start = l->token_start;
+        while (l->current.type != TOK_EOF && !cmd_kw(l, "DESCENDING") && !cmd_kw(l, "ASCENDING"))
+            lex_next(l);
+        int flen = (int)(l->token_start - for_start);
+        if (flen > (int)sizeof(for_cond) - 1) flen = (int)sizeof(for_cond) - 1;
+        memcpy(for_cond, for_start, flen);
+        for_cond[flen] = '\0';
+        trim_right(for_cond);
+    }
+
+    if (cmd_kw(l, "DESCENDING")) {
+        is_descending = 1;
+        lex_next(l);
+    } else if (cmd_kw(l, "ASCENDING")) {
+        is_descending = 0;
+        lex_next(l);
+    }
+
     ensure_ndx_ext(filename, sizeof(filename));
 
     if (filename[0] == '\0' || str_icmp(filename, ".NDX") == 0) {
@@ -4415,7 +4448,7 @@ static void cmd_index_on(dbf_t *db, lexer_t *l) {
 
     /* Build the index in slot 0 */
     cur_wa()->indexes[0].unique = is_unique;
-    if (index_build(&cur_wa()->indexes[0], db, &expr_ctx, key_expr, filename) < 0) {
+    if (index_build(&cur_wa()->indexes[0], db, &expr_ctx, key_expr, filename, for_cond, is_descending) < 0) {
         prog_error(ERR_FILE_IO, "Error building index");
         return;
     }
@@ -4472,6 +4505,11 @@ static void cmd_set_index(dbf_t *db, const char *arg) {
             int slot = cur_wa()->num_indexes;
             path_normalize(filename);
             ensure_ndx_ext(filename, sizeof(filename));
+            {
+                char resolved[320];
+                if (cmd_resolve_file(filename, resolved, sizeof(resolved)) == 0)
+                    str_copy(filename, resolved, sizeof(filename));
+            }
             if (index_read(&cur_wa()->indexes[slot], filename) == 0) {
                 index_compile_key_ast(&cur_wa()->indexes[slot], &memvar_store);
                 cur_wa()->num_indexes++;
@@ -4620,7 +4658,8 @@ static void cmd_reindex(dbf_t *db) {
         str_copy(key_expr, idx->key_expr, sizeof(key_expr));
         str_copy(filename, idx->filename, sizeof(filename));
 
-        if (index_build(idx, db, &expr_ctx, key_expr, filename) < 0) {
+        if (index_build(idx, db, &expr_ctx, key_expr, filename,
+                        idx->for_expr, idx->descending) < 0) {
             prog_error_fmt(ERR_FILE_IO, "Error rebuilding index %s", filename);
             return;
         }
@@ -5158,6 +5197,71 @@ char cmd_get_mark(void) {
     return set_opts.mark;
 }
 
+FILE *cmd_get_alternate_fp(void) {
+    return set_opts.alternate_fp;
+}
+
+int cmd_get_alternate_on(void) {
+    return set_opts.alternate_on;
+}
+
+const set_options_t *cmd_get_set_opts(void) {
+    return &set_opts;
+}
+
+const char *cmd_get_path(void) {
+    return set_opts.path;
+}
+
+void cmd_output(const char *s) {
+    printf("%s", s);
+    if (set_opts.alternate_on && set_opts.alternate_fp)
+        fprintf(set_opts.alternate_fp, "%s", s);
+}
+
+void cmd_output_fmt(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+    if (set_opts.alternate_on && set_opts.alternate_fp) {
+        va_start(ap, fmt);
+        vfprintf(set_opts.alternate_fp, fmt, ap);
+        va_end(ap);
+    }
+}
+
+int cmd_resolve_file(const char *name, char *resolved, int size) {
+    FILE *fp;
+
+    /* Try name as-is */
+    fp = fopen(name, "rb");
+    if (fp) { fclose(fp); str_copy(resolved, name, size); return 0; }
+
+    /* Try each directory in SET PATH */
+    if (set_opts.path[0]) {
+        char path_copy[256];
+        char *dir, *save;
+        str_copy(path_copy, set_opts.path, sizeof(path_copy));
+        dir = strtok_r(path_copy, ";,", &save);
+        while (dir) {
+            char trial[320];
+            dir = skip_ws(dir);
+            trim_right(dir);
+            if (dir[0]) {
+                snprintf(trial, sizeof(trial), "%s/%s", dir, name);
+                fp = fopen(trial, "rb");
+                if (fp) { fclose(fp); str_copy(resolved, trial, size); return 0; }
+            }
+            dir = strtok_r(NULL, ";,", &save);
+        }
+    }
+
+    /* Not found - just copy original */
+    str_copy(resolved, name, size);
+    return -1;
+}
+
 /* ---- Dispatch ---- */
 /* ---- Command Dispatch Table ---- */
 
@@ -5602,6 +5706,13 @@ static void h_close(dbf_t *db, lexer_t *l) {
     } else if (cmd_kw(l, "PROCEDURE")) {
         prog_set_procedure(NULL);
         lex_next(l);
+    } else if (cmd_kw(l, "ALTERNATE")) {
+        if (set_opts.alternate_fp) {
+            fclose(set_opts.alternate_fp);
+            set_opts.alternate_fp = NULL;
+        }
+        set_opts.alternate_on = 0;
+        lex_next(l);
     } else if (dbf_is_open(db)) {
         dbf_close(db);
         close_all_indexes(cur_wa());
@@ -5746,6 +5857,41 @@ static void h_set(dbf_t *db, lexer_t *l) {
                 }
                 lex_next(l);
             }
+        }
+    } else if (cmd_kw(l, "ALTERNATE")) {
+        lex_next(l);
+        if (cmd_kw(l, "TO")) {
+            lex_next(l);
+            if (l->current.type == TOK_EOF) {
+                /* SET ALTERNATE TO (no file) — close alternate */
+                if (set_opts.alternate_fp) {
+                    fclose(set_opts.alternate_fp);
+                    set_opts.alternate_fp = NULL;
+                }
+                set_opts.alternate_on = 0;
+            } else {
+                char fname[128];
+                fname[0] = '\0';
+                while (l->current.type != TOK_EOF) {
+                    strncat(fname, l->current.text, sizeof(fname) - strlen(fname) - 1);
+                    lex_next(l);
+                }
+                trim_right(fname);
+                if (set_opts.alternate_fp) {
+                    fclose(set_opts.alternate_fp);
+                    set_opts.alternate_fp = NULL;
+                }
+                set_opts.alternate_fp = fopen(fname, "w");
+                if (!set_opts.alternate_fp) {
+                    prog_error_fmt(ERR_CANNOT_CREATE, "Cannot create %s", fname);
+                }
+            }
+        } else {
+            /* SET ALTERNATE ON/OFF */
+            char arg[256];
+            snprintf(arg, sizeof(arg), "ALTERNATE %s", l->current.text);
+            while (l->current.type != TOK_EOF) lex_next(l);
+            set_execute(&set_opts, arg);
         }
     } else {
         char arg[256];

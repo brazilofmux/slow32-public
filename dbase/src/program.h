@@ -11,6 +11,7 @@ struct lexer;
 #define MAX_LINE_LEN      256
 #define MAX_CALL_DEPTH     32
 #define MAX_LOOP_DEPTH     16
+#define MAX_SEQUENCE_DEPTH  8
 
 /* A loaded program */
 typedef struct {
@@ -99,6 +100,13 @@ void prog_public(struct lexer *l);
 void prog_for(const char *arg);
 void prog_next(void);
 void prog_cancel(void);
+void prog_local(struct lexer *l);
+
+/* BEGIN SEQUENCE error recovery */
+void prog_begin_sequence(void);
+void prog_end_sequence(void);
+void prog_recover(void);
+void prog_break(void);
 
 /* Check if program is running */
 int prog_is_running(void);

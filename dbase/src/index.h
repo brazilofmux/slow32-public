@@ -78,13 +78,19 @@ typedef struct {
 
     int active;
     int unique;             /* 1 = unique index */
+
+    /* Conditional / descending index */
+    char for_expr[256];           /* FOR condition (empty = no filter) */
+    struct ast_node *for_ast;     /* compiled FOR AST */
+    int descending;               /* 1 = descending key order */
 } index_t;
 
 /* Initialize an index structure */
 void index_init(index_t *idx);
 
 /* Build index from database using key expression */
-int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, const char *filename);
+int index_build(index_t *idx, dbf_t *db, expr_ctx_t *ctx, const char *key_expr, const char *filename,
+                const char *for_expr, int descending);
 
 /* Format an evaluated expression value into a canonical index key string
    for the given key type (0=char, 1=numeric, 2=date). */

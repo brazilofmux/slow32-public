@@ -31,4 +31,6 @@ EPOCH     = 0
 MARK      = (default)
 SOFTSEEK  = OFF
 UNIQUE    = OFF
+ALTERNATE = OFF
+PATH      = (none)
 

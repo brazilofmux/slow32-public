@@ -27,6 +27,9 @@ void set_init(set_options_t *opts) {
     opts->memowidth = 50;
     opts->epoch = 0;
     opts->mark = '\0';
+    opts->alternate_fp = NULL;
+    opts->alternate_on = 0;
+    opts->path[0] = '\0';
 }
 
 static int parse_on_off(const char *p) {
@@ -78,6 +81,11 @@ void set_display(const set_options_t *opts) {
         printf("MARK      = (default)\n");
     printf("SOFTSEEK  = %s\n", opts->softseek ? "ON" : "OFF");
     printf("UNIQUE    = %s\n", opts->unique ? "ON" : "OFF");
+    printf("ALTERNATE = %s\n", opts->alternate_on ? "ON" : "OFF");
+    if (opts->path[0])
+        printf("PATH      = %s\n", opts->path);
+    else
+        printf("PATH      = (none)\n");
 }
 
 void set_execute(set_options_t *opts, const char *arg) {
@@ -224,7 +232,21 @@ void set_execute(set_options_t *opts, const char *arg) {
         return;
     }
     if (str_imatch(p, "PATH")) {
-        /* SET PATH TO <path> — skip */
+        p = skip_ws(p + 4);
+        if (str_imatch(p, "TO")) p = skip_ws(p + 2);
+        str_copy(opts->path, p, sizeof(opts->path));
+        trim_right(opts->path);
+        return;
+    }
+    if (str_imatch(p, "ALTERNATE")) {
+        p = skip_ws(p + 9);
+        if (str_imatch(p, "TO")) {
+            /* SET ALTERNATE TO <file> — handled in command.c */
+            return;
+        }
+        val = parse_on_off(p);
+        if (val >= 0) opts->alternate_on = val;
+        else printf("Syntax: SET ALTERNATE ON/OFF or SET ALTERNATE TO <file>\n");
         return;
     }
     if (str_imatch(p, "MARGIN")) {

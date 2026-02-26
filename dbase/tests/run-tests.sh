@@ -36,7 +36,7 @@ filter_output() {
 
 # Clean up any leftover files from previous runs
 rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.DBT "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
-    "$BASDIR"/tests/testfile.txt
+    "$BASDIR"/tests/testfile.txt "$BASDIR"/tests/ALT*.TXT
 
 for testfile in "$BASDIR"/tests/*.txt; do
     [ -f "$testfile" ] || continue
@@ -79,7 +79,7 @@ done
 
 # Final cleanup
 rm -f "$BASDIR"/tests/*.DBF "$BASDIR"/tests/*.DBT "$BASDIR"/tests/*.FRM "$BASDIR"/tests/*.LBL "$BASDIR"/tests/*.NDX \
-    "$BASDIR"/tests/testfile.txt
+    "$BASDIR"/tests/testfile.txt "$BASDIR"/tests/ALT*.TXT
 
 echo ""
 echo "$PASS/$TOTAL passed, $FAIL failed"
