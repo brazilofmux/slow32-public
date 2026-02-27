@@ -30,11 +30,8 @@ uint32_t stage5_emit_side_exits = 0;
 
 static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
 static void emit_exit_chained_compact(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
-static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg);
-static inline void reg_cache_mark_written(translate_ctx_t *ctx, uint8_t guest_reg);
 static x64_reg_t rc_read(translate_ctx_t *ctx, uint8_t guest_reg);
 static x64_reg_t rc_write(translate_ctx_t *ctx, uint8_t guest_reg);
-static inline void flush_pending_write(translate_ctx_t *ctx);
 static inline void flush_pending_cond(translate_ctx_t *ctx);
 
 #define STAGE5_LIFT_BUDGET 64
@@ -1329,26 +1326,6 @@ static void rc_write_imm(translate_ctx_t *ctx, uint8_t guest_reg, uint32_t imm) 
     emit_mov_r32_imm32(&ctx->emit, hd, imm);
 }
 
-// Compatibility shim: always returns NOREG to force non-cached path.
-// With LRU, cached host registers can be evicted by subsequent rc_read/rc_write
-// calls, making it unsafe to hold a host register reference across multiple
-// emit_load_guest_reg calls. The non-cached path copies to scratch registers
-// (RAX/RCX) first, which are safe from eviction.
-// This will be removed when all translate_* functions are converted to
-// use rc_read/rc_write directly (Task 3).
-static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg) {
-    (void)ctx; (void)guest_reg;
-    return X64_NOREG;
-}
-
-// Compatibility shim: mark guest register as written (dirty) in cache.
-static inline void reg_cache_mark_written(translate_ctx_t *ctx, uint8_t guest_reg) {
-    int slot = rc_find(ctx, guest_reg);
-    if (slot >= 0) {
-        ctx->reg_alloc[slot].dirty = true;
-        ctx->reg_alloc[slot].last_use = ++ctx->rc_clock;
-    }
-}
 
 // Reset all constant propagation state (e.g., at block start or back-edge targets)
 static inline void const_prop_reset(translate_ctx_t *ctx) {
@@ -1436,11 +1413,6 @@ static inline bool is_backedge_target(translate_ctx_t *ctx, uint32_t pc) {
     return false;
 }
 
-// flush_pending_write: no-op on x86-64 with LRU (no pending writes).
-// All writes go through rc_write() which caches in host registers.
-static inline void flush_pending_write(translate_ctx_t *ctx) {
-    (void)ctx;
-}
 
 // Materialize a deferred comparison into its destination register
 static void materialize_pending_cond(translate_ctx_t *ctx) {
@@ -2614,7 +2586,7 @@ static void emit_mem_access_check_dynamic(translate_ctx_t *ctx,
 static x64_reg_t emit_compute_addr(translate_ctx_t *ctx, uint8_t rs1, int32_t imm) {
     emit_ctx_t *e = &ctx->emit;
     if (rs1 == 0) {
-        flush_pending_write(ctx);  // About to clobber RAX
+
         emit_mov_r32_imm32(e, RAX, (uint32_t)imm);
         return RAX;
     }
@@ -2622,7 +2594,7 @@ static x64_reg_t emit_compute_addr(translate_ctx_t *ctx, uint8_t rs1, int32_t im
     // Constant folding: if rs1 is a known constant, fold address at translate time
     if (ctx->reg_constants[rs1].valid) {
         uint32_t addr = ctx->reg_constants[rs1].value + (uint32_t)imm;
-        flush_pending_write(ctx);  // About to clobber RAX
+
         emit_mov_r32_imm32(e, RAX, addr);
         return RAX;
     }
@@ -2970,12 +2942,6 @@ static void emit_deferred_side_exits(translate_ctx_t *ctx) {
 
         // Flush state from branch point snapshot (not current translation state)
         if (ctx->reg_cache_enabled) {
-            // Flush snapshotted pending write for non-cached registers
-            if (ctx->deferred_exits[i].pending_write_valid) {
-                emit_mov_m32_r32(e, RBP,
-                    GUEST_REG_OFFSET(ctx->deferred_exits[i].pending_write_guest_reg),
-                    ctx->deferred_exits[i].pending_write_host_reg);
-            }
             // Flush register cache from snapshot
             stage5_count_deferred_exit_flush(ctx, i,
                 ctx->deferred_exits[i].force_full_flush);
@@ -3179,7 +3145,7 @@ void translate_jal(translate_ctx_t *ctx, uint8_t rd, int32_t imm) {
 
     // Store return address if rd != 0
     if (rd != 0) {
-        flush_pending_write(ctx);  // About to clobber RAX directly
+
         emit_mov_r32_imm32(e, RAX, return_pc);
         emit_store_guest_reg(ctx, rd, RAX);
     }
@@ -3221,7 +3187,7 @@ void translate_jalr(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
         emit_mov_r32_imm32(e, RAX, return_pc);
         emit_store_guest_reg(ctx, rd, RAX);
         // Flush any deferred write before restoring target into RAX
-        flush_pending_write(ctx);
+    
         // Restore target
         emit_mov_r64_r64(e, RAX, R8);
     }
@@ -3432,7 +3398,7 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
                 emit_cmp_r32_r32(e, h1, h2);
             }
         } else if (rs1 == 0 && rs2 == 0) {
-            flush_pending_write(ctx);
+        
             emit_xor_r32_r32(e, RAX, RAX);
         } else if (rs1 == 0) {
             emit_load_guest_reg(ctx, RAX, rs2);
@@ -3479,7 +3445,6 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
             // Snapshot full LRU cache state for flushing in cold stub
             memcpy(ctx->deferred_exits[di].snapshot, ctx->reg_alloc,
                    sizeof(ctx->reg_alloc));
-            ctx->deferred_exits[di].pending_write_valid = false;
             ctx->deferred_exits[di].force_full_flush = false;
             stage5_trace_deferred_exit("capture", ctx, di);
             stage5_trace_exit_slot("capture", ctx, branch_pc,
@@ -4812,7 +4777,7 @@ void dbt_fp_helper(dbt_cpu_state_t *cpu, uint32_t opcode,
 // f32 arithmetic: FADD_S, FSUB_S, FMUL_S, FDIV_S
 static void translate_fp_f32_arith(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     emit_ctx_t *e = &ctx->emit;
-    flush_pending_write(ctx);
+
     emit_load_guest_reg(ctx, RAX, rs1);
     emit_load_guest_reg(ctx, RCX, rs2);
     emit_movd_xmm_r32(e, 0, RAX);
@@ -4830,7 +4795,7 @@ static void translate_fp_f32_arith(translate_ctx_t *ctx, uint8_t opcode, uint8_t
 // f32 sqrt: FSQRT_S
 static void translate_fp_f32_sqrt(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1) {
     emit_ctx_t *e = &ctx->emit;
-    flush_pending_write(ctx);
+
     emit_load_guest_reg(ctx, RAX, rs1);
     emit_movd_xmm_r32(e, 0, RAX);
     emit_sqrtss(e, 0, 0);
@@ -4841,7 +4806,7 @@ static void translate_fp_f32_sqrt(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1)
 // f32 comparisons: FEQ_S, FLT_S, FLE_S
 static void translate_fp_f32_cmp(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     emit_ctx_t *e = &ctx->emit;
-    flush_pending_write(ctx);
+
     emit_load_guest_reg(ctx, RAX, rs1);
     emit_load_guest_reg(ctx, RCX, rs2);
     emit_movd_xmm_r32(e, 0, RAX);
@@ -4865,7 +4830,7 @@ static void translate_fp_f32_cmp(translate_ctx_t *ctx, uint8_t opcode, uint8_t r
 // f32 negate: FNEG_S (pure integer xor)
 static void translate_fp_f32_neg(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1) {
     emit_ctx_t *e = &ctx->emit;
-    flush_pending_write(ctx);
+
     emit_load_guest_reg(ctx, RAX, rs1);
     emit_xor_r32_imm32(e, RAX, (int32_t)0x80000000);
     emit_store_guest_reg(ctx, rd, RAX);
@@ -4874,7 +4839,7 @@ static void translate_fp_f32_neg(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1) 
 // f32 absolute value: FABS_S (pure integer and)
 static void translate_fp_f32_abs(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1) {
     emit_ctx_t *e = &ctx->emit;
-    flush_pending_write(ctx);
+
     emit_load_guest_reg(ctx, RAX, rs1);
     emit_and_r32_imm32(e, RAX, 0x7FFFFFFF);
     emit_store_guest_reg(ctx, rd, RAX);
@@ -4883,7 +4848,7 @@ static void translate_fp_f32_abs(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1) 
 // float -> signed int32 (truncating): FCVT_W_S
 static void translate_fp_f32_cvt_w_s(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1) {
     emit_ctx_t *e = &ctx->emit;
-    flush_pending_write(ctx);
+
     emit_load_guest_reg(ctx, RAX, rs1);
     emit_movd_xmm_r32(e, 0, RAX);
     emit_cvttss2si_r32_xmm(e, RAX, 0);
@@ -4894,7 +4859,7 @@ static void translate_fp_f32_cvt_w_s(translate_ctx_t *ctx, uint8_t rd, uint8_t r
 // Use 64-bit cvttss2si then truncate to 32-bit to handle full uint32 range
 static void translate_fp_f32_cvt_wu_s(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1) {
     emit_ctx_t *e = &ctx->emit;
-    flush_pending_write(ctx);
+
     emit_load_guest_reg(ctx, RAX, rs1);
     emit_movd_xmm_r32(e, 0, RAX);
     // Use cvttss2si with 32-bit dest — values > INT32_MAX return 0x80000000
@@ -4906,7 +4871,7 @@ static void translate_fp_f32_cvt_wu_s(translate_ctx_t *ctx, uint8_t rd, uint8_t 
 // signed int32 -> float: FCVT_S_W
 static void translate_fp_f32_cvt_s_w(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1) {
     emit_ctx_t *e = &ctx->emit;
-    flush_pending_write(ctx);
+
     emit_load_guest_reg(ctx, RAX, rs1);
     emit_cvtsi2ss_xmm_r32(e, 0, RAX);
     emit_movd_r32_xmm(e, RAX, 0);
@@ -4917,7 +4882,7 @@ static void translate_fp_f32_cvt_s_w(translate_ctx_t *ctx, uint8_t rd, uint8_t r
 // Zero-extend to 64 bits (32-bit mov already does this), then use 64-bit cvtsi2ss
 static void translate_fp_f32_cvt_s_wu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1) {
     emit_ctx_t *e = &ctx->emit;
-    flush_pending_write(ctx);
+
     emit_load_guest_reg(ctx, RAX, rs1);
     // eax is already zero-extended to rax by 32-bit load
     emit_cvtsi2ss_xmm_r64(e, 0, RAX);
@@ -4929,7 +4894,7 @@ void translate_fp_r_type(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8
     emit_ctx_t *e = &ctx->emit;
 
     // Flush pending write before calling helper (clobbers everything)
-    flush_pending_write(ctx);
+
 
     // Invalidate constant propagation for rd (and rd+1 for register-pair results).
     // The helper writes to cpu->regs directly, bypassing emit_store_guest_reg,
@@ -5022,7 +4987,7 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
     ctx->backedge_target_count = 0;
     ctx->backedge_snapshot_valid = false;
     memset(ctx->side_exit_pcs, 0, sizeof(ctx->side_exit_pcs));
-    memset(ctx->dead_temp_skip, 0, sizeof(ctx->dead_temp_skip));
+
     reg_alloc_reset(ctx);
     const_prop_reset(ctx);
     bounds_elim_reset(ctx);
@@ -5055,7 +5020,7 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
         // At the back-edge jump, if cache is stable (no evictions in loop body),
         // we skip flush entirely — host regs already hold correct values.
         if (is_backedge_target(ctx, ctx->guest_pc)) {
-            flush_pending_write(ctx);
+        
             const_prop_reset(ctx);
             bounds_elim_reset(ctx);
             if (ctx->reg_cache_enabled) {
@@ -5240,7 +5205,7 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
                     target_pc < cpu->code_limit &&
                     ctx->inst_count < MAX_BLOCK_INSTS - 4) {
                     // Flush any pending state before redirecting
-                    flush_pending_write(ctx);
+                
                     ctx->guest_pc = target_pc;
                     ctx->inst_count++;
                     continue;
@@ -6300,7 +6265,7 @@ retry_translate:
     ctx->backedge_target_count = 0;
     ctx->backedge_snapshot_valid = false;
     memset(ctx->side_exit_pcs, 0, sizeof(ctx->side_exit_pcs));
-    memset(ctx->dead_temp_skip, 0, sizeof(ctx->dead_temp_skip));
+
     reg_alloc_reset(ctx);
     const_prop_reset(ctx);
     bounds_elim_reset(ctx);
@@ -6362,7 +6327,7 @@ retry_translate:
 
         // Back-edge target: same zero-cost loop optimization as main loop
         if (is_backedge_target(ctx, ctx->guest_pc)) {
-            flush_pending_write(ctx);
+        
             const_prop_reset(ctx);
             bounds_elim_reset(ctx);
             if (ctx->reg_cache_enabled) {
@@ -6536,7 +6501,7 @@ retry_translate:
                     target_pc > ctx->guest_pc &&
                     target_pc < cpu->code_limit &&
                     ctx->inst_count < MAX_BLOCK_INSTS - 4) {
-                    flush_pending_write(ctx);
+                
                     ctx->guest_pc = target_pc;
                     ctx->inst_count++;
                     continue;
