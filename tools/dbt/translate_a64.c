@@ -267,7 +267,20 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
         // Stop at block-ending instructions
         bool is_block_end = false;
         switch (inst.opcode) {
-            case OP_JAL: case OP_JALR:
+            case OP_JAL: {
+                uint32_t jal_target = pc + inst.imm;
+                if (inst.rd == 0 &&
+                    jal_target > pc &&
+                    jal_target < cpu->code_limit &&
+                    inst_count < MAX_BLOCK_INSTS - 4) {
+                    inst_count++;
+                    pc = jal_target;
+                    continue;
+                }
+                is_block_end = true;
+                break;
+            }
+            case OP_JALR:
             case OP_HALT: case OP_DEBUG: case OP_YIELD:
                 is_block_end = true;
                 break;
@@ -2900,9 +2913,20 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
             case OP_STB:  translate_stb(ctx, inst.rs1, inst.rs2, inst.imm); break;
 
             // Control flow (block-ending)
-            case OP_JAL:
+            case OP_JAL: {
+                uint32_t target_pc = ctx->guest_pc + inst.imm;
+                if (inst.rd == 0 &&
+                    target_pc > ctx->guest_pc &&
+                    target_pc < cpu->code_limit &&
+                    ctx->inst_count < MAX_BLOCK_INSTS - 4) {
+                    flush_pending_write(ctx);
+                    ctx->guest_pc = target_pc;
+                    ctx->inst_count++;
+                    continue;
+                }
                 translate_jal(ctx, inst.rd, inst.imm);
                 goto block_done;
+            }
 
             case OP_JALR:
                 translate_jalr(ctx, inst.rd, inst.rs1, inst.imm);
@@ -3974,7 +3998,17 @@ retry_translate:
             case OP_STW:  translate_stw(ctx, inst.rs1, inst.rs2, inst.imm); break;
             case OP_STH:  translate_sth(ctx, inst.rs1, inst.rs2, inst.imm); break;
             case OP_STB:  translate_stb(ctx, inst.rs1, inst.rs2, inst.imm); break;
-            case OP_JAL:  translate_jal(ctx, inst.rd, inst.imm); goto cached_done;
+            case OP_JAL: {
+                uint32_t target_pc = ctx->guest_pc + inst.imm;
+                if (inst.rd == 0 && target_pc > ctx->guest_pc &&
+                    target_pc < cpu->code_limit && ctx->inst_count < MAX_BLOCK_INSTS - 4) {
+                    flush_pending_write(ctx);
+                    ctx->guest_pc = target_pc;
+                    ctx->inst_count++;
+                    continue;
+                }
+                translate_jal(ctx, inst.rd, inst.imm); goto cached_done;
+            }
             case OP_JALR: translate_jalr(ctx, inst.rd, inst.rs1, inst.imm); goto cached_done;
             case OP_BEQ:  if (translate_beq(ctx, inst.rs1, inst.rs2, inst.imm)) goto cached_done; continue;
             case OP_BNE:  if (translate_bne(ctx, inst.rs1, inst.rs2, inst.imm)) goto cached_done; continue;
