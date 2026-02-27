@@ -32,6 +32,8 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
 static void emit_exit_chained_compact(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
 static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg);
 static inline void reg_cache_mark_written(translate_ctx_t *ctx, uint8_t guest_reg);
+static x64_reg_t rc_read(translate_ctx_t *ctx, uint8_t guest_reg);
+static x64_reg_t rc_write(translate_ctx_t *ctx, uint8_t guest_reg);
 static inline void flush_pending_write(translate_ctx_t *ctx);
 static inline void flush_pending_cond(translate_ctx_t *ctx);
 
@@ -522,40 +524,34 @@ static inline bool stage5_translate_bne_compact(translate_ctx_t *ctx,
         flush_pending_cond(ctx);
     }
 
-    if (rs1 == 0 && rs2 == 0) {
-        flush_pending_write(ctx);
-        emit_xor_r32_r32(e, RAX, RAX);
-    } else if (rs1 == 0) {
-        x64_reg_t h2 = guest_host_reg(ctx, rs2);
-        if (h2 != X64_NOREG) {
-            flush_pending_write(ctx);
+    if (ctx->reg_cache_enabled) {
+        if (rs1 == 0 && rs2 == 0) {
+            emit_xor_r32_r32(e, RAX, RAX);
+        } else if (rs1 == 0) {
+            x64_reg_t h2 = rc_read(ctx, rs2);
             emit_test_r32_r32(e, h2, h2);
-        } else {
-            emit_load_guest_reg(ctx, RAX, rs2);
-            emit_test_r32_r32(e, RAX, RAX);
-        }
-    } else if (rs2 == 0) {
-        x64_reg_t h1 = guest_host_reg(ctx, rs1);
-        if (h1 != X64_NOREG) {
-            flush_pending_write(ctx);
+        } else if (rs2 == 0) {
+            x64_reg_t h1 = rc_read(ctx, rs1);
             emit_test_r32_r32(e, h1, h1);
         } else {
-            emit_load_guest_reg(ctx, RAX, rs1);
-            emit_test_r32_r32(e, RAX, RAX);
+            x64_reg_t h1 = rc_read(ctx, rs1);
+            x64_reg_t h2 = rc_read(ctx, rs2);
+            emit_cmp_r32_r32(e, h1, h2);
         }
     } else {
-        x64_reg_t h1 = guest_host_reg(ctx, rs1);
-        x64_reg_t h2 = guest_host_reg(ctx, rs2);
-        x64_reg_t t1 = RAX, t2 = RCX;
-        stage5_pick_cmp_scratch_regs(ctx, h1, h2, &t1, &t2);
-        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : t1;
-        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : t2;
-        if (h1 == X64_NOREG) emit_load_guest_reg(ctx, t1, rs1);
-        if (h2 == X64_NOREG) emit_load_guest_reg(ctx, t2, rs2);
-        if (h1 != X64_NOREG || h2 != X64_NOREG) {
-            flush_pending_write(ctx);
+        if (rs1 == 0 && rs2 == 0) {
+            emit_xor_r32_r32(e, RAX, RAX);
+        } else if (rs1 == 0) {
+            emit_load_guest_reg(ctx, RAX, rs2);
+            emit_test_r32_r32(e, RAX, RAX);
+        } else if (rs2 == 0) {
+            emit_load_guest_reg(ctx, RAX, rs1);
+            emit_test_r32_r32(e, RAX, RAX);
+        } else {
+            emit_load_guest_reg(ctx, RAX, rs1);
+            emit_load_guest_reg(ctx, RCX, rs2);
+            emit_cmp_r32_r32(e, RAX, RCX);
         }
-        emit_cmp_r32_r32(e, cmp_a, cmp_b);
     }
 
     size_t jcc_patch = emit_offset(e) + 2;
@@ -630,40 +626,34 @@ static inline bool stage5_translate_beq_compact(translate_ctx_t *ctx,
         flush_pending_cond(ctx);
     }
 
-    if (rs1 == 0 && rs2 == 0) {
-        flush_pending_write(ctx);
-        emit_xor_r32_r32(e, RAX, RAX);
-    } else if (rs1 == 0) {
-        x64_reg_t h2 = guest_host_reg(ctx, rs2);
-        if (h2 != X64_NOREG) {
-            flush_pending_write(ctx);
+    if (ctx->reg_cache_enabled) {
+        if (rs1 == 0 && rs2 == 0) {
+            emit_xor_r32_r32(e, RAX, RAX);
+        } else if (rs1 == 0) {
+            x64_reg_t h2 = rc_read(ctx, rs2);
             emit_test_r32_r32(e, h2, h2);
-        } else {
-            emit_load_guest_reg(ctx, RAX, rs2);
-            emit_test_r32_r32(e, RAX, RAX);
-        }
-    } else if (rs2 == 0) {
-        x64_reg_t h1 = guest_host_reg(ctx, rs1);
-        if (h1 != X64_NOREG) {
-            flush_pending_write(ctx);
+        } else if (rs2 == 0) {
+            x64_reg_t h1 = rc_read(ctx, rs1);
             emit_test_r32_r32(e, h1, h1);
         } else {
-            emit_load_guest_reg(ctx, RAX, rs1);
-            emit_test_r32_r32(e, RAX, RAX);
+            x64_reg_t h1 = rc_read(ctx, rs1);
+            x64_reg_t h2 = rc_read(ctx, rs2);
+            emit_cmp_r32_r32(e, h1, h2);
         }
     } else {
-        x64_reg_t h1 = guest_host_reg(ctx, rs1);
-        x64_reg_t h2 = guest_host_reg(ctx, rs2);
-        x64_reg_t t1 = RAX, t2 = RCX;
-        stage5_pick_cmp_scratch_regs(ctx, h1, h2, &t1, &t2);
-        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : t1;
-        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : t2;
-        if (h1 == X64_NOREG) emit_load_guest_reg(ctx, t1, rs1);
-        if (h2 == X64_NOREG) emit_load_guest_reg(ctx, t2, rs2);
-        if (h1 != X64_NOREG || h2 != X64_NOREG) {
-            flush_pending_write(ctx);
+        if (rs1 == 0 && rs2 == 0) {
+            emit_xor_r32_r32(e, RAX, RAX);
+        } else if (rs1 == 0) {
+            emit_load_guest_reg(ctx, RAX, rs2);
+            emit_test_r32_r32(e, RAX, RAX);
+        } else if (rs2 == 0) {
+            emit_load_guest_reg(ctx, RAX, rs1);
+            emit_test_r32_r32(e, RAX, RAX);
+        } else {
+            emit_load_guest_reg(ctx, RAX, rs1);
+            emit_load_guest_reg(ctx, RCX, rs2);
+            emit_cmp_r32_r32(e, RAX, RCX);
         }
-        emit_cmp_r32_r32(e, cmp_a, cmp_b);
     }
 
     size_t jcc_patch = emit_offset(e) + 2;
@@ -711,36 +701,24 @@ static bool stage5_emit_cmp_branch_fused(translate_ctx_t *ctx,
     }
 
     // 1. Emit the comparison operand loads + CMP.
-    if (cmp_is_imm) {
-        // SLTI/SLTIU: compare rs1 against immediate
-        x64_reg_t h1 = guest_host_reg(ctx, cmp_rs1);
-        x64_reg_t t1 = RAX, t2 = RCX;
-        stage5_pick_cmp_scratch_regs(ctx, h1, X64_NOREG, &t1, &t2);
-        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : t1;
-        if (h1 != X64_NOREG) {
-            flush_pending_write(ctx);
+    if (ctx->reg_cache_enabled) {
+        if (cmp_is_imm) {
+            x64_reg_t h1 = rc_read(ctx, cmp_rs1);
+            emit_cmp_r32_imm32(e, h1, cmp_imm);
         } else {
-            flush_pending_write(ctx);
-            emit_load_guest_reg(ctx, t1, cmp_rs1);
+            x64_reg_t h1 = rc_read(ctx, cmp_rs1);
+            x64_reg_t h2 = rc_read(ctx, cmp_rs2);
+            emit_cmp_r32_r32(e, h1, h2);
         }
-        emit_cmp_r32_imm32(e, cmp_a, cmp_imm);
+    } else if (cmp_is_imm) {
+        // SLTI/SLTIU: compare rs1 against immediate
+        emit_load_guest_reg(ctx, RAX, cmp_rs1);
+        emit_cmp_r32_imm32(e, RAX, cmp_imm);
     } else {
         // Register-register compare
-        x64_reg_t h1 = guest_host_reg(ctx, cmp_rs1);
-        x64_reg_t h2 = guest_host_reg(ctx, cmp_rs2);
-        x64_reg_t t1 = RAX, t2 = RCX;
-        stage5_pick_cmp_scratch_regs(ctx, h1, h2, &t1, &t2);
-        x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : t1;
-        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : t2;
-        if (h1 == X64_NOREG) {
-            flush_pending_write(ctx);
-            emit_load_guest_reg(ctx, t1, cmp_rs1);
-        }
-        if (h2 == X64_NOREG) emit_load_guest_reg(ctx, t2, cmp_rs2);
-        if (h1 != X64_NOREG || h2 != X64_NOREG) {
-            flush_pending_write(ctx);
-        }
-        emit_cmp_r32_r32(e, cmp_a, cmp_b);
+        emit_load_guest_reg(ctx, RAX, cmp_rs1);
+        emit_load_guest_reg(ctx, RCX, cmp_rs2);
+        emit_cmp_r32_r32(e, RAX, RCX);
     }
 
     // 2. Map cmp_opcode + branch_condition → x86 Jcc.
@@ -2224,20 +2202,15 @@ void translate_slti(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
 
     // Not fusible — emit immediately
     emit_ctx_t *e = &ctx->emit;
-    x64_reg_t h1 = guest_host_reg(ctx, rs1);
-    if (h1 != X64_NOREG) {
-        flush_pending_write(ctx);
+    if (ctx->reg_cache_enabled) {
+        x64_reg_t h1 = rc_read(ctx, rs1);
         emit_cmp_r32_imm32(e, h1, imm);
+        x64_reg_t hd = rc_write(ctx, rd);
+        emit_setl(e, hd);
+        emit_movzx_r32_r8(e, hd, hd);
     } else {
         emit_load_guest_reg(ctx, RAX, rs1);
         emit_cmp_r32_imm32(e, RAX, imm);
-    }
-    x64_reg_t hd = guest_host_reg(ctx, rd);
-    if (hd != X64_NOREG) {
-        emit_setl(e, hd);
-        emit_movzx_r32_r8(e, hd, hd);
-        reg_cache_mark_written(ctx, rd);
-    } else {
         emit_setl(e, RAX);
         emit_movzx_r32_r8(e, RAX, RAX);
         emit_store_guest_reg(ctx, rd, RAX);
@@ -2266,20 +2239,15 @@ void translate_sltiu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm)
 
     // Not fusible — emit immediately
     emit_ctx_t *e = &ctx->emit;
-    x64_reg_t h1 = guest_host_reg(ctx, rs1);
-    if (h1 != X64_NOREG) {
-        flush_pending_write(ctx);
+    if (ctx->reg_cache_enabled) {
+        x64_reg_t h1 = rc_read(ctx, rs1);
         emit_cmp_r32_imm32(e, h1, imm);
+        x64_reg_t hd = rc_write(ctx, rd);
+        emit_setb(e, hd);
+        emit_movzx_r32_r8(e, hd, hd);
     } else {
         emit_load_guest_reg(ctx, RAX, rs1);
         emit_cmp_r32_imm32(e, RAX, imm);
-    }
-    x64_reg_t hd = guest_host_reg(ctx, rd);
-    if (hd != X64_NOREG) {
-        emit_setb(e, hd);
-        emit_movzx_r32_r8(e, hd, hd);
-        reg_cache_mark_written(ctx, rd);
-    } else {
         emit_setb(e, RAX);
         emit_movzx_r32_r8(e, RAX, RAX);
         emit_store_guest_reg(ctx, rd, RAX);
@@ -2294,75 +2262,82 @@ void translate_mul(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    x64_reg_t hd = guest_host_reg(ctx, rd);
-    if (hd != X64_NOREG) {
-        // IMUL r32, r32 works with any registers; commutative
-        if (rd == rs1) {
-            // hd already has rs1
-            x64_reg_t h2 = guest_host_reg(ctx, rs2);
-            if (h2 != X64_NOREG) emit_imul_r32_r32(e, hd, h2);
-            else { emit_load_guest_reg(ctx, RCX, rs2); emit_imul_r32_r32(e, hd, RCX); }
-        } else if (rd == rs2) {
-            // hd already has rs2; commutative so IMUL hd, rs1
-            x64_reg_t h1 = guest_host_reg(ctx, rs1);
-            if (h1 != X64_NOREG) emit_imul_r32_r32(e, hd, h1);
-            else { emit_load_guest_reg(ctx, RAX, rs1); emit_imul_r32_r32(e, hd, RAX); }
-        } else {
-            emit_load_guest_reg(ctx, hd, rs1);
-            x64_reg_t h2 = guest_host_reg(ctx, rs2);
-            if (h2 != X64_NOREG) emit_imul_r32_r32(e, hd, h2);
-            else { emit_load_guest_reg(ctx, RCX, rs2); emit_imul_r32_r32(e, hd, RCX); }
-        }
-        ctx->reg_alloc[ctx->reg_alloc_map[rd]].dirty = true;
-        ctx->reg_constants[rd].valid = false;
-    } else {
+    if (!ctx->reg_cache_enabled) {
         emit_load_guest_reg(ctx, RAX, rs1);
         emit_load_guest_reg(ctx, RCX, rs2);
         emit_imul_r32_r32(e, RAX, RCX);
         emit_store_guest_reg(ctx, rd, RAX);
+        return;
     }
+
+    // LRU: IMUL r32, r32 works with any registers; commutative
+    x64_reg_t h1 = rc_read(ctx, rs1);
+    x64_reg_t h2 = rc_read(ctx, rs2);
+    x64_reg_t hd = rc_write(ctx, rd);
+    if (hd == h1)       emit_imul_r32_r32(e, hd, h2);
+    else if (hd == h2)  emit_imul_r32_r32(e, hd, h1);  // Commutative
+    else { emit_mov_r32_r32(e, hd, h1); emit_imul_r32_r32(e, hd, h2); }
 }
 
 void translate_mulh(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    emit_load_guest_reg(ctx, RAX, rs1);
-    emit_load_guest_reg(ctx, RCX, rs2);
-    emit_imul_one_r32(e, RCX);  // edx:eax = eax * ecx (signed)
-    emit_mov_r32_r32(e, RAX, RDX);  // High part in edx
-    emit_store_guest_reg(ctx, rd, RAX);
+    if (ctx->reg_cache_enabled) {
+        x64_reg_t h1 = rc_read(ctx, rs1);
+        x64_reg_t h2 = rc_read(ctx, rs2);
+        emit_mov_r32_r32(e, RAX, h1);
+        emit_imul_one_r32(e, h2);   // edx:eax = eax * h2 (signed)
+        x64_reg_t hd = rc_write(ctx, rd);
+        emit_mov_r32_r32(e, hd, RDX);  // High part
+    } else {
+        emit_load_guest_reg(ctx, RAX, rs1);
+        emit_load_guest_reg(ctx, RCX, rs2);
+        emit_imul_one_r32(e, RCX);
+        emit_mov_r32_r32(e, RAX, RDX);
+        emit_store_guest_reg(ctx, rd, RAX);
+    }
 }
 
 void translate_mulhu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
-    emit_load_guest_reg(ctx, RAX, rs1);
-    emit_load_guest_reg(ctx, RCX, rs2);
-    emit_mul_r32(e, RCX);  // edx:eax = eax * ecx (unsigned)
-    emit_mov_r32_r32(e, RAX, RDX);  // High part in edx
-    emit_store_guest_reg(ctx, rd, RAX);
+    if (ctx->reg_cache_enabled) {
+        x64_reg_t h1 = rc_read(ctx, rs1);
+        x64_reg_t h2 = rc_read(ctx, rs2);
+        emit_mov_r32_r32(e, RAX, h1);
+        emit_mul_r32(e, h2);   // edx:eax = eax * h2 (unsigned)
+        x64_reg_t hd = rc_write(ctx, rd);
+        emit_mov_r32_r32(e, hd, RDX);  // High part
+    } else {
+        emit_load_guest_reg(ctx, RAX, rs1);
+        emit_load_guest_reg(ctx, RCX, rs2);
+        emit_mul_r32(e, RCX);
+        emit_mov_r32_r32(e, RAX, RDX);
+        emit_store_guest_reg(ctx, rd, RAX);
+    }
 }
 
 void translate_div(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
 
+    // IDIV requires dividend in EDX:EAX and divisor in any register.
+    // Use emit_load_guest_reg (handles r0 safely) for source loading.
     emit_load_guest_reg(ctx, RAX, rs1);
     emit_load_guest_reg(ctx, RCX, rs2);
 
     // Guard: INT32_MIN / -1 would crash the host (x86 SIGFPE)
     emit_cmp_r32_imm32(e, RCX, -1);
-    emit_jne_rel32(e, 0);  // patch later
-    size_t patch_not_neg1 = e->offset - 4;  // displacement is last 4 bytes
+    emit_jne_rel32(e, 0);
+    size_t patch_not_neg1 = e->offset - 4;
     emit_cmp_r32_imm32(e, RAX, (int32_t)0x80000000);
-    emit_jne_rel32(e, 0);  // patch later
+    emit_jne_rel32(e, 0);
     size_t patch_not_intmin = e->offset - 4;
     // INT32_MIN / -1 = INT32_MIN
-    flush_pending_write(ctx);  // About to clobber RAX
     emit_mov_r32_imm32(e, RAX, 0x80000000);
-    emit_jmp_rel32(e, 0);  // patch later
+    emit_jmp_rel32(e, 0);
     size_t patch_skip_idiv = e->offset - 4;
 
     emit_patch_rel32(e, patch_not_neg1, e->offset);
@@ -2383,15 +2358,14 @@ void translate_rem(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
 
     // Guard: INT32_MIN % -1 would crash the host (x86 SIGFPE)
     emit_cmp_r32_imm32(e, RCX, -1);
-    emit_jne_rel32(e, 0);  // patch later
-    size_t patch_not_neg1 = e->offset - 4;  // displacement is last 4 bytes
+    emit_jne_rel32(e, 0);
+    size_t patch_not_neg1 = e->offset - 4;
     emit_cmp_r32_imm32(e, RAX, (int32_t)0x80000000);
-    emit_jne_rel32(e, 0);  // patch later
+    emit_jne_rel32(e, 0);
     size_t patch_not_intmin = e->offset - 4;
     // INT32_MIN % -1 = 0
-    flush_pending_write(ctx);  // About to clobber RAX
     emit_xor_r32_r32(e, RAX, RAX);
-    emit_jmp_rel32(e, 0);  // patch later
+    emit_jmp_rel32(e, 0);
     size_t patch_skip_idiv = e->offset - 4;
 
     emit_patch_rel32(e, patch_not_neg1, e->offset);
@@ -2679,10 +2653,9 @@ void translate_ldh(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
 
     x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
     emit_mem_access_check(ctx, addr, 2, EXIT_FAULT_LOAD, false, base_reg, imm);
-    x64_reg_t host_rd = guest_host_reg(ctx, rd);
-    if (host_rd != X64_NOREG) {
-        emit_movsx_r32_m16_idx(e, host_rd, R14, addr);
-        reg_cache_mark_written(ctx, rd);
+    if (ctx->reg_cache_enabled) {
+        x64_reg_t hd = rc_write(ctx, rd);
+        emit_movsx_r32_m16_idx(e, hd, R14, addr);
     } else {
         emit_movsx_r32_m16_idx(e, RCX, R14, addr);
         emit_store_guest_reg(ctx, rd, RCX);
@@ -2696,10 +2669,9 @@ void translate_ldb(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
 
     x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
     emit_mem_access_check(ctx, addr, 1, EXIT_FAULT_LOAD, false, base_reg, imm);
-    x64_reg_t host_rd = guest_host_reg(ctx, rd);
-    if (host_rd != X64_NOREG) {
-        emit_movsx_r32_m8_idx(e, host_rd, R14, addr);
-        reg_cache_mark_written(ctx, rd);
+    if (ctx->reg_cache_enabled) {
+        x64_reg_t hd = rc_write(ctx, rd);
+        emit_movsx_r32_m8_idx(e, hd, R14, addr);
     } else {
         emit_movsx_r32_m8_idx(e, RCX, R14, addr);
         emit_store_guest_reg(ctx, rd, RCX);
@@ -2713,10 +2685,9 @@ void translate_ldhu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
 
     x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
     emit_mem_access_check(ctx, addr, 2, EXIT_FAULT_LOAD, false, base_reg, imm);
-    x64_reg_t host_rd = guest_host_reg(ctx, rd);
-    if (host_rd != X64_NOREG) {
-        emit_movzx_r32_m16_idx(e, host_rd, R14, addr);
-        reg_cache_mark_written(ctx, rd);
+    if (ctx->reg_cache_enabled) {
+        x64_reg_t hd = rc_write(ctx, rd);
+        emit_movzx_r32_m16_idx(e, hd, R14, addr);
     } else {
         emit_movzx_r32_m16_idx(e, RCX, R14, addr);
         emit_store_guest_reg(ctx, rd, RCX);
@@ -2730,10 +2701,9 @@ void translate_ldbu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
 
     x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
     emit_mem_access_check(ctx, addr, 1, EXIT_FAULT_LOAD, false, base_reg, imm);
-    x64_reg_t host_rd = guest_host_reg(ctx, rd);
-    if (host_rd != X64_NOREG) {
-        emit_movzx_r32_m8_idx(e, host_rd, R14, addr);
-        reg_cache_mark_written(ctx, rd);
+    if (ctx->reg_cache_enabled) {
+        x64_reg_t hd = rc_write(ctx, rd);
+        emit_movzx_r32_m8_idx(e, hd, R14, addr);
     } else {
         emit_movzx_r32_m8_idx(e, RCX, R14, addr);
         emit_store_guest_reg(ctx, rd, RCX);
@@ -2767,10 +2737,14 @@ void translate_sth(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm) 
 
     x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
     emit_mem_access_check(ctx, addr, 2, EXIT_FAULT_STORE, true, base_reg, imm);
-    x64_reg_t host_rs2 = guest_host_reg(ctx, rs2);
-    if (host_rs2 != X64_NOREG) {
-        flush_pending_write(ctx);
-        emit_mov_m16_r16_idx(e, R14, addr, host_rs2);
+    if (ctx->reg_cache_enabled) {
+        if (rs2 == 0) {
+            emit_xor_r32_r32(e, RCX, RCX);
+            emit_mov_m16_r16_idx(e, R14, addr, RCX);
+        } else {
+            x64_reg_t h2 = rc_read(ctx, rs2);
+            emit_mov_m16_r16_idx(e, R14, addr, h2);
+        }
     } else {
         emit_load_guest_reg(ctx, RCX, rs2);
         emit_mov_m16_r16_idx(e, R14, addr, RCX);
@@ -2783,10 +2757,14 @@ void translate_stb(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2, int32_t imm) 
 
     x64_reg_t addr = emit_compute_addr(ctx, rs1, imm);
     emit_mem_access_check(ctx, addr, 1, EXIT_FAULT_STORE, true, base_reg, imm);
-    x64_reg_t host_rs2 = guest_host_reg(ctx, rs2);
-    if (host_rs2 != X64_NOREG) {
-        flush_pending_write(ctx);
-        emit_mov_m8_r8_idx(e, R14, addr, host_rs2);
+    if (ctx->reg_cache_enabled) {
+        if (rs2 == 0) {
+            emit_xor_r32_r32(e, RCX, RCX);
+            emit_mov_m8_r8_idx(e, R14, addr, RCX);
+        } else {
+            x64_reg_t h2 = rc_read(ctx, rs2);
+            emit_mov_m8_r8_idx(e, R14, addr, h2);
+        }
     } else {
         emit_load_guest_reg(ctx, RCX, rs2);
         emit_mov_m8_r8_idx(e, R14, addr, RCX);
