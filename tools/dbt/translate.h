@@ -96,6 +96,7 @@ typedef struct {
     uint32_t backedge_targets[MAX_BLOCK_INSTS];
     int backedge_target_count;
     uint32_t loop_written_regs; // Bitmask of registers written within the detected loop
+    uint32_t loop_used_regs;    // Bitmask of all registers used (read or written) in loop
 
     // Back-edge cache snapshot: captures reg_alloc state at back-edge target
     // so we can detect if cache is "stable" (no evictions) across the loop body.

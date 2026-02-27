@@ -1080,6 +1080,7 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
     decoded_inst_t decoded[MAX_BLOCK_INSTS];
 
     ctx->loop_written_regs = 0;
+    ctx->loop_used_regs = 0;
     ctx->backedge_target_count = 0;
     ctx->has_backedge = false;
     ctx->backedge_target_pc = 0;
@@ -1139,7 +1140,7 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
                                 ctx->backedge_targets[ctx->backedge_target_count++] = target;
                             }
 
-                            // Compute registers written in the loop body (target to current)
+                            // Compute registers used in the loop body (target to current)
                             uint32_t target_idx = (target - start_pc) / 4;
                             for (int k = target_idx; k <= inst_count; k++) {
                                 uint8_t wr = 0;
@@ -1149,6 +1150,20 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
                                     default: break;
                                 }
                                 if (wr != 0) ctx->loop_written_regs |= (1u << wr);
+                                // Track all registers used (read or written)
+                                uint8_t rs1 = decoded[k].rs1;
+                                uint8_t rs2 = decoded[k].rs2;
+                                if (wr != 0) ctx->loop_used_regs |= (1u << wr);
+                                if (rs1 != 0) ctx->loop_used_regs |= (1u << rs1);
+                                if (rs2 != 0 && decoded[k].format == FMT_R)
+                                    ctx->loop_used_regs |= (1u << rs2);
+                                // Branch source registers
+                                if (decoded[k].format == FMT_B) {
+                                    if (decoded[k].rs1 != 0)
+                                        ctx->loop_used_regs |= (1u << decoded[k].rs1);
+                                    if (decoded[k].rs2 != 0)
+                                        ctx->loop_used_regs |= (1u << decoded[k].rs2);
+                                }
                             }
                         }
                     }
@@ -5044,7 +5059,39 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
             const_prop_reset(ctx);
             bounds_elim_reset(ctx);
             if (ctx->reg_cache_enabled) {
-                // Snapshot current cache state for back-edge stability check
+                // Flush dirty regs to memory so pre-warm loads read correct values
+                rc_flush(ctx);
+
+                // Pre-warm: load all loop-used registers into cache slots.
+                // First, evict any cached registers NOT used in the loop
+                // to make room.  Then allocate + load the loop registers.
+                // These loads execute once on first entry; back-edge JMP
+                // targets the pc_map offset AFTER them, skipping on repeat.
+                uint32_t loop_regs = ctx->loop_used_regs;
+                for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+                    int gr = ctx->reg_alloc[i].guest_reg;
+                    if (gr > 0 && !(loop_regs & (1u << gr))) {
+                        // Slot holds a reg not used in loop — evict it
+                        ctx->reg_alloc_map[gr] = -1;
+                        ctx->reg_alloc[i].guest_reg = -1;
+                        ctx->reg_alloc[i].dirty = false;
+                    }
+                }
+                uint32_t warm = loop_regs;
+                for (int r = 1; r < 32 && warm; r++) {
+                    if (!(warm & (1u << r))) continue;
+                    warm &= ~(1u << r);
+                    if (rc_find(ctx, r) >= 0) continue; // already cached
+                    int slot = rc_alloc(ctx);
+                    ctx->reg_alloc[slot].guest_reg = (int8_t)r;
+                    ctx->reg_alloc[slot].dirty = false;
+                    ctx->reg_alloc[slot].last_use = ++ctx->rc_clock;
+                    ctx->reg_alloc_map[r] = (int8_t)slot;
+                    emit_mov_r32_m32(e, reg_alloc_hosts[slot], RBP,
+                                     GUEST_REG_OFFSET(r));
+                }
+
+                // Snapshot AFTER pre-warm: all loop regs occupied + clean
                 for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
                     ctx->backedge_snapshot[i].guest_reg = ctx->reg_alloc[i].guest_reg;
                     ctx->backedge_snapshot[i].dirty = ctx->reg_alloc[i].dirty;
@@ -5052,14 +5099,15 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
                 memcpy(ctx->backedge_snapshot_map, ctx->reg_alloc_map,
                        sizeof(ctx->backedge_snapshot_map));
                 ctx->backedge_snapshot_valid = true;
-                // DON'T flush or reset — cache persists into loop body
             } else {
                 rc_flush(ctx);
                 reg_alloc_reset(ctx);
             }
         }
 
-        // Record guest PC → host offset for in-block back-edge optimization
+        // Record guest PC → host offset for in-block back-edge optimization.
+        // For back-edge targets with pre-warm, this offset is AFTER the loads,
+        // so the back-edge JMP skips them on subsequent iterations.
         if (ctx->pc_map_count < MAX_BLOCK_INSTS) {
             ctx->pc_map[ctx->pc_map_count].guest_pc = ctx->guest_pc;
             ctx->pc_map[ctx->pc_map_count].host_offset = emit_offset(e);
@@ -6318,6 +6366,32 @@ retry_translate:
             const_prop_reset(ctx);
             bounds_elim_reset(ctx);
             if (ctx->reg_cache_enabled) {
+                rc_flush(ctx);
+
+                // Pre-warm loop registers (same as main translate loop)
+                uint32_t loop_regs = ctx->loop_used_regs;
+                for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+                    int gr = ctx->reg_alloc[i].guest_reg;
+                    if (gr > 0 && !(loop_regs & (1u << gr))) {
+                        ctx->reg_alloc_map[gr] = -1;
+                        ctx->reg_alloc[i].guest_reg = -1;
+                        ctx->reg_alloc[i].dirty = false;
+                    }
+                }
+                uint32_t warm = loop_regs;
+                for (int r = 1; r < 32 && warm; r++) {
+                    if (!(warm & (1u << r))) continue;
+                    warm &= ~(1u << r);
+                    if (rc_find(ctx, r) >= 0) continue;
+                    int slot = rc_alloc(ctx);
+                    ctx->reg_alloc[slot].guest_reg = (int8_t)r;
+                    ctx->reg_alloc[slot].dirty = false;
+                    ctx->reg_alloc[slot].last_use = ++ctx->rc_clock;
+                    ctx->reg_alloc_map[r] = (int8_t)slot;
+                    emit_mov_r32_m32(e, reg_alloc_hosts[slot], RBP,
+                                     GUEST_REG_OFFSET(r));
+                }
+
                 for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
                     ctx->backedge_snapshot[i].guest_reg = ctx->reg_alloc[i].guest_reg;
                     ctx->backedge_snapshot[i].dirty = ctx->reg_alloc[i].dirty;
@@ -6331,7 +6405,8 @@ retry_translate:
             }
         }
 
-        // Record guest PC → host offset for in-block back-edge optimization
+        // Record guest PC → host offset for in-block back-edge optimization.
+        // For back-edge targets with pre-warm, this is AFTER the loads.
         if (ctx->pc_map_count < MAX_BLOCK_INSTS) {
             ctx->pc_map[ctx->pc_map_count].guest_pc = ctx->guest_pc;
             ctx->pc_map[ctx->pc_map_count].host_offset = emit_offset(e);
