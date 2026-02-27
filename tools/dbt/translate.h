@@ -181,6 +181,9 @@ void translate_init(translate_ctx_t *ctx, dbt_cpu_state_t *cpu);
 // Initialize translation context with cache (Stage 2 mode)
 void translate_init_cached(translate_ctx_t *ctx, dbt_cpu_state_t *cpu, block_cache_t *cache);
 
+// Lightweight reset of context for translating a new block (prevents large memsets)
+void translate_reset_for_block(translate_ctx_t *ctx, uint32_t guest_pc);
+
 // Translate a basic block starting at cpu->pc (Stage 1)
 // Returns pointer to executable code
 translated_block_fn translate_block(translate_ctx_t *ctx);

@@ -943,15 +943,6 @@ void translate_init_cached(translate_ctx_t *ctx, dbt_cpu_state_t *cpu, block_cac
     ctx->cpu = cpu;
     ctx->cache = cache;  // Stage 2 mode
     ctx->block = NULL;
-    ctx->inline_lookup_enabled = false;  // Stage 3: disabled by default
-    ctx->ras_enabled = false;            // Stage 3 Phase 2: disabled by default
-    ctx->superblock_enabled = false;     // Stage 4: disabled by default
-    ctx->superblock_depth = 0;
-    ctx->side_exit_info_enabled = false;
-    ctx->avoid_backedge_extend = false;
-    ctx->peephole_enabled = false;
-    ctx->stage5_burg_enabled = false;
-    ctx->stage5_emit_enabled = false;
 }
 
 static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
@@ -1052,14 +1043,13 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
 // ============================================================================
 
 static const x64_reg_t reg_alloc_hosts[REG_ALLOC_SLOTS] = {
-    RBX, R12, R15, RSI, RDI, R11, R8, R9
+    RBX, RSI, RDI, R12, R15, R11, R8, R9
 };
 
 static void reg_alloc_reset(translate_ctx_t *ctx) {
+    memset(ctx->reg_alloc, 0, sizeof(ctx->reg_alloc));
     for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
         ctx->reg_alloc[i].guest_reg = -1;
-        ctx->reg_alloc[i].dirty = false;
-        ctx->reg_alloc[i].last_use = 0;
     }
     memset(ctx->reg_alloc_map, -1, sizeof(ctx->reg_alloc_map));
     ctx->rc_clock = 0;
@@ -1329,9 +1319,7 @@ static void rc_write_imm(translate_ctx_t *ctx, uint8_t guest_reg, uint32_t imm) 
 
 // Reset all constant propagation state (e.g., at block start or back-edge targets)
 static inline void const_prop_reset(translate_ctx_t *ctx) {
-    for (int i = 0; i < 32; i++) {
-        ctx->reg_constants[i].valid = false;
-    }
+    memset(ctx->reg_constants, 0, sizeof(ctx->reg_constants));
     ctx->reg_constants[0].valid = true;
     ctx->reg_constants[0].value = 0;
 }
@@ -1339,6 +1327,30 @@ static inline void const_prop_reset(translate_ctx_t *ctx) {
 // Reset all bounds check elimination state (at block start or back-edge targets)
 static inline void bounds_elim_reset(translate_ctx_t *ctx) {
     ctx->validated_range_count = 0;
+}
+
+void translate_reset_for_block(translate_ctx_t *ctx, uint32_t guest_pc) {
+    ctx->guest_pc = guest_pc;
+    ctx->block_start_pc = guest_pc;
+    ctx->inst_count = 0;
+    ctx->side_exit_emitted = 0;
+    ctx->deferred_exit_count = 0;
+    ctx->pc_map_count = 0;
+    ctx->pending_write.valid = false;
+    ctx->emit.rax_pending = false;
+    ctx->pending_cond.valid = false;
+    ctx->current_inst_idx = 0;
+    ctx->has_backedge = false;
+    ctx->backedge_target_pc = 0;
+    ctx->backedge_target_count = 0;
+    ctx->backedge_snapshot_valid = false;
+    
+    // side_exit_pcs does not need a reset if side_exit_emitted is 0.
+    // It is used as a linear buffer.
+
+    reg_alloc_reset(ctx);
+    const_prop_reset(ctx);
+    bounds_elim_reset(ctx);
 }
 
 // Check if an access is already covered by a previously validated range.
@@ -6058,6 +6070,11 @@ static translated_block_t *try_emit_intrinsic(translate_ctx_t *ctx, uint32_t gue
     dbt_cpu_state_t *cpu = ctx->cpu;
     if (!cpu->intrinsics_enabled) return NULL;
 
+    // Early exit: intrinsics are always in the low (code) region.
+    // Stack is at 0x0Fxxxxxx, Heap usually starts at 0x004xxxxx.
+    // Most intrinsics are in the low 64KB or similar.
+    if (guest_pc > 0x00100000) return NULL;
+
     bool (*emitter)(translate_ctx_t *, translated_block_t *) = NULL;
     bool is_memmove = false;
 
@@ -6248,27 +6265,10 @@ retry_translate:
     block->host_code = code_start;
 
     // Set up translation context
-    ctx->guest_pc = guest_pc;
-    ctx->block_start_pc = guest_pc;
-    ctx->inst_count = 0;
+    translate_reset_for_block(ctx, guest_pc);
     ctx->block = block;
     ctx->exit_idx = 0;
-    ctx->side_exit_emitted = 0;
-    ctx->deferred_exit_count = 0;
-    ctx->pc_map_count = 0;
-    ctx->pending_write.valid = false;
-    ctx->emit.rax_pending = false;
-    ctx->pending_cond.valid = false;
-    ctx->current_inst_idx = 0;
-    ctx->has_backedge = false;
-    ctx->backedge_target_pc = 0;
-    ctx->backedge_target_count = 0;
-    ctx->backedge_snapshot_valid = false;
-    memset(ctx->side_exit_pcs, 0, sizeof(ctx->side_exit_pcs));
 
-    reg_alloc_reset(ctx);
-    const_prop_reset(ctx);
-    bounds_elim_reset(ctx);
     // ================================================================
     // Stage 5: completely separate codegen path.
     // Stage 5 has its own SSA/RA/LIR pipeline and its own live-in
@@ -6276,29 +6276,37 @@ retry_translate:
     // It MUST NOT flow through any Stage 4 code (reg_alloc, peephole,
     // nop-compact, deferred_side_exits, back-edge retry, etc.).
     // ================================================================
+    bool s5_fast_skip = false;
     if (ctx->stage5_burg_enabled && ctx->stage5_emit_enabled) {
-        uint64_t t0 = stage5_now_ns();
-        bool stage5_emitted = stage5_try_emit_pilot(ctx, guest_pc);
-        uint64_t dt = stage5_now_ns() - t0;
-        if (stage5_emitted) {
-            // Stage 5 finalization — completely separate from Stage 4.
-            // block->flags and block->guest_size already set by stage5_codegen.
-            block->host_size = emit_offset(e);
-            stage5_trace_translated_block(ctx, block);
-            stage5_trace_translated_block_guest_words(ctx, block);
-            stage5_trace_translated_block_host_bytes(ctx, block);
-            cache_commit_code(cache, block->host_size);
-            cache_insert(cache, block);
-            cache_chain_incoming(cache, block);
-            ctx->block = NULL;
-            ctx->superblock_enabled = saved_superblock_enabled;
-            return block;
+        // Fast-path skip: don't even try Stage 5 for tiny blocks (1 inst).
+        // These are usually JALR returns or simple jump stubs.
+        uint32_t first_raw = *(uint32_t *)(cpu->mem_base + guest_pc);
+        uint8_t first_op = first_raw & 0x7F;
+        bool single_inst = false;
+        if (first_op == OP_JAL || first_op == OP_JALR || 
+            first_op == OP_HALT || first_op == OP_DEBUG || first_op == OP_YIELD) {
+            single_inst = true;
         }
-        fprintf(stderr,
-                "FATAL: Stage 5 codegen failed for block at PC=0x%08X "
-                "(elapsed=%llu ns)\n",
-                guest_pc, (unsigned long long)dt);
-        abort();
+        
+        if (!single_inst) {
+            uint64_t t0 = stage5_now_ns();
+            bool stage5_emitted = stage5_try_emit_pilot(ctx, guest_pc);
+            uint64_t dt = stage5_now_ns() - t0;
+            if (stage5_emitted) {
+                // Stage 5 finalization — completely separate from Stage 4.
+                // block->flags and block->guest_size already set by stage5_codegen.
+                block->host_size = emit_offset(e);
+                stage5_trace_translated_block(ctx, block);
+                stage5_trace_translated_block_guest_words(ctx, block);
+                stage5_trace_translated_block_host_bytes(ctx, block);
+                cache_commit_code(cache, block->host_size);
+                cache_insert(cache, block);
+                cache_chain_incoming(cache, block);
+                ctx->block = NULL;
+                ctx->superblock_enabled = saved_superblock_enabled;
+                return block;
+            }
+        }
     }
 
     // ================================================================
