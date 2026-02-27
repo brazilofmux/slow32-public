@@ -2638,20 +2638,16 @@ static x64_reg_t emit_compute_addr(translate_ctx_t *ctx, uint8_t rs1, int32_t im
         return RAX;
     }
 
-    x64_reg_t host = guest_host_reg(ctx, rs1);
-    if (host != X64_NOREG) {
-        if (imm == 0) {
-            // Address already in host register — use directly
-            flush_pending_write(ctx);  // Fault path's reg_cache_flush would clear this at translate-time
-            return host;
-        }
-        // LEA: compute base+offset into RAX without clobbering host reg
-        flush_pending_write(ctx);  // About to clobber RAX
+    // LRU direct path: rc_read returns the cached host register
+    if (ctx->reg_cache_enabled) {
+        x64_reg_t host = rc_read(ctx, rs1);
+        if (imm == 0) return host;  // No MOV needed — use cached reg directly
+        // LEA: base+offset into RAX without clobbering cached host reg
         emit_lea_r32_r32_disp(e, RAX, host, imm);
         return RAX;
     }
 
-    // Not allocated — existing path
+    // Non-cache path
     emit_load_guest_reg(ctx, RAX, rs1);
     if (imm != 0) {
         emit_add_r32_imm32(e, RAX, imm);
@@ -3328,19 +3324,24 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
             }
 
             // 1. Emit the comparison
-            x64_reg_t h1 = guest_host_reg(ctx, c_rs1);
-            x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : RAX;
-            if (h1 == X64_NOREG) emit_load_guest_reg(ctx, RAX, c_rs1);
-
-            if (c_rs2_is_imm) {
-                if (h1 != X64_NOREG) flush_pending_write(ctx);
-                emit_cmp_r32_imm32(e, cmp_a, c_imm);
+            x64_reg_t cmp_a, cmp_b;
+            if (ctx->reg_cache_enabled) {
+                cmp_a = rc_read(ctx, c_rs1);
+                if (c_rs2_is_imm) {
+                    emit_cmp_r32_imm32(e, cmp_a, c_imm);
+                } else {
+                    cmp_b = rc_read(ctx, c_rs2);
+                    emit_cmp_r32_r32(e, cmp_a, cmp_b);
+                }
             } else {
-                x64_reg_t h2 = guest_host_reg(ctx, c_rs2);
-                x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : RCX;
-                if (h2 == X64_NOREG) emit_load_guest_reg(ctx, RCX, c_rs2);
-                if (h1 != X64_NOREG) flush_pending_write(ctx);
-                emit_cmp_r32_r32(e, cmp_a, cmp_b);
+                emit_load_guest_reg(ctx, RAX, c_rs1);
+                cmp_a = RAX;
+                if (c_rs2_is_imm) {
+                    emit_cmp_r32_imm32(e, RAX, c_imm);
+                } else {
+                    emit_load_guest_reg(ctx, RCX, c_rs2);
+                    emit_cmp_r32_r32(e, RAX, RCX);
+                }
             }
 
             // 2. Materialize the comparison result into rd.
@@ -3422,37 +3423,34 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
         if (e->trace_enabled) {
             e->trace_tag = "branch_compare";
         }
-        if (rs1 == 0 && rs2 == 0) {
-            flush_pending_write(ctx);  // About to clobber RAX directly
-            emit_xor_r32_r32(e, RAX, RAX);
-        } else if (rs1 == 0) {
-            x64_reg_t h2 = guest_host_reg(ctx, rs2);
-            if (h2 != X64_NOREG) {
-                flush_pending_write(ctx);
+        if (ctx->reg_cache_enabled) {
+            // LRU direct: rc_read returns cached host regs
+            if (rs1 == 0 && rs2 == 0) {
+                emit_xor_r32_r32(e, RAX, RAX);
+            } else if (rs1 == 0) {
+                x64_reg_t h2 = rc_read(ctx, rs2);
                 emit_test_r32_r32(e, h2, h2);
-            } else {
-                emit_load_guest_reg(ctx, RAX, rs2);
-                emit_test_r32_r32(e, RAX, RAX);
-            }
-        } else if (rs2 == 0) {
-            x64_reg_t h1 = guest_host_reg(ctx, rs1);
-            if (h1 != X64_NOREG) {
-                flush_pending_write(ctx);
+            } else if (rs2 == 0) {
+                x64_reg_t h1 = rc_read(ctx, rs1);
                 emit_test_r32_r32(e, h1, h1);
             } else {
-                emit_load_guest_reg(ctx, RAX, rs1);
-                emit_test_r32_r32(e, RAX, RAX);
+                x64_reg_t h1 = rc_read(ctx, rs1);
+                x64_reg_t h2 = rc_read(ctx, rs2);
+                emit_cmp_r32_r32(e, h1, h2);
             }
+        } else if (rs1 == 0 && rs2 == 0) {
+            flush_pending_write(ctx);
+            emit_xor_r32_r32(e, RAX, RAX);
+        } else if (rs1 == 0) {
+            emit_load_guest_reg(ctx, RAX, rs2);
+            emit_test_r32_r32(e, RAX, RAX);
+        } else if (rs2 == 0) {
+            emit_load_guest_reg(ctx, RAX, rs1);
+            emit_test_r32_r32(e, RAX, RAX);
         } else {
-            x64_reg_t h1 = guest_host_reg(ctx, rs1);
-            x64_reg_t h2 = guest_host_reg(ctx, rs2);
-            x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : RAX;
-            x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : RCX;
-            if (h1 == X64_NOREG) emit_load_guest_reg(ctx, RAX, rs1);
-            if (h2 == X64_NOREG) emit_load_guest_reg(ctx, RCX, rs2);
-            if (h1 != X64_NOREG || h2 != X64_NOREG)
-                flush_pending_write(ctx);
-            emit_cmp_r32_r32(e, cmp_a, cmp_b);
+            emit_load_guest_reg(ctx, RAX, rs1);
+            emit_load_guest_reg(ctx, RCX, rs2);
+            emit_cmp_r32_r32(e, RAX, RCX);
         }
         e->trace_tag = saved_tag_cmp;
     }
