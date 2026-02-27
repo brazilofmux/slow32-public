@@ -69,18 +69,19 @@ typedef struct {
     bool stage5_burg_enabled;    // Stage 5 hook toggle (disabled by default)
     bool stage5_emit_enabled;    // Stage 5 pilot emission toggle (disabled by default)
 
-    // Stage 5: Per-block register allocation (8-slot fully-associative)
+    // Stage 5: Per-block register allocation (8-slot LRU demand-driven)
     bool reg_cache_enabled;
     uint32_t reg_cache_hits;
     uint32_t reg_cache_misses;
 
     #define REG_ALLOC_SLOTS 8
     struct {
-        uint8_t guest_reg;
-        bool    allocated;
-        bool    dirty;
+        int8_t  guest_reg;  // -1 = free
+        bool    dirty;      // Value modified since load from memory?
+        int     last_use;   // LRU clock for eviction
     } reg_alloc[REG_ALLOC_SLOTS];
     int8_t reg_alloc_map[32];   // guest_reg -> slot index, or -1
+    int rc_clock;               // LRU timestamp counter
 
     // Guest PC → host code offset map (for in-block back-edge loops)
     int pc_map_count;
@@ -96,7 +97,7 @@ typedef struct {
     int backedge_target_count;
     uint32_t loop_written_regs; // Bitmask of registers written within the detected loop
 
-    // Dead temporary elimination: pending write tracker
+    // Dead temporary elimination: pending write tracker (AArch64 only)
     struct {
         uint8_t guest_reg;    // Which guest register
         host_reg_t host_reg;  // Which host reg holds the value (RAX/W0)
@@ -104,10 +105,8 @@ typedef struct {
         bool can_skip_store;   // Level 2: true if store can be skipped entirely
     } pending_write;
 
-    // Prescan liveness: can_skip_store[i] for each instruction
+    // Prescan liveness (AArch64 only)
     bool dead_temp_skip[MAX_BLOCK_INSTS];
-
-    // Current instruction index (for dead_temp_skip lookup)
     int current_inst_idx;
 
     // Constant propagation: track registers with known values at translate time
@@ -134,7 +133,6 @@ typedef struct {
         uint8_t rs1, rs2;     // Operands of the comparison
         bool rs2_is_imm;      // True if rs2 is an immediate (for SLTI, etc.)
         int32_t imm;          // Immediate value if rs2_is_imm is true
-        int inst_idx;         // Instruction index (for dead_temp_skip lookup)
     } pending_cond;
 
     // Out-of-line side exit stubs (deferred to end of block)
@@ -144,12 +142,14 @@ typedef struct {
         uint32_t target_pc;         // guest PC for this side exit
         int exit_idx;               // exit index for chaining
         uint32_t branch_pc;         // guest PC of the branch instruction
-        // Snapshot of register allocation at the point of the branch
+        // Snapshot of full register cache state at the point of the branch
         // (needed because superblock continuation may reassign slots)
-        bool dirty_snapshot[REG_ALLOC_SLOTS];
-        bool allocated_snapshot[REG_ALLOC_SLOTS];
-        uint8_t guest_reg_snapshot[REG_ALLOC_SLOTS];
-        // Snapshot of pending write at the point of the branch
+        struct {
+            int8_t  guest_reg;
+            bool    dirty;
+            int     last_use;
+        } snapshot[REG_ALLOC_SLOTS];
+        // Snapshot of pending write (AArch64 compat, always false on x86-64)
         bool pending_write_valid;
         uint8_t pending_write_guest_reg;
         host_reg_t pending_write_host_reg;

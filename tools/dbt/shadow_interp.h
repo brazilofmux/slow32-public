@@ -38,6 +38,13 @@ typedef struct {
     // Guest memory pointer (read-only reference to real memory)
     uint8_t *mem_base;
     uint32_t mem_size;
+    uint32_t code_limit;
+    uint32_t rodata_limit;
+    uint32_t mmio_base;
+    bool mmio_enabled;
+    bool wxorx_enabled;
+    bool align_traps_enabled;
+    bool bounds_checks_disabled;
 
     // Block-ending flags set by shadow step
     bool hit_debug;

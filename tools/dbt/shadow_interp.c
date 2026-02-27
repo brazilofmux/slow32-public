@@ -25,6 +25,13 @@ void shadow_init(shadow_state_t *s, dbt_cpu_state_t *cpu) {
     memset(s, 0, sizeof(*s));
     s->mem_base = cpu->mem_base;
     s->mem_size = cpu->mem_size;
+    s->code_limit = cpu->code_limit;
+    s->rodata_limit = cpu->rodata_limit;
+    s->mmio_base = cpu->mmio_base;
+    s->mmio_enabled = cpu->mmio_enabled;
+    s->wxorx_enabled = cpu->wxorx_enabled;
+    s->align_traps_enabled = cpu->align_traps_enabled;
+    s->bounds_checks_disabled = cpu->bounds_checks_disabled;
     s->enabled = true;
     s->check_memory = true;
 
@@ -99,6 +106,36 @@ static uint32_t shadow_load32(shadow_state_t *s, uint32_t addr) {
            ((uint32_t)shadow_load_byte(s, addr + 1) << 8) |
            ((uint32_t)shadow_load_byte(s, addr + 2) << 16) |
            ((uint32_t)shadow_load_byte(s, addr + 3) << 24);
+}
+
+// Mirror fixed-size DBT memory checks (bounds/alignment/MMIO/W^X).
+// Returns true if access would fault.
+static bool shadow_mem_access_fault(shadow_state_t *s, uint32_t addr,
+                                    uint32_t size, bool is_store) {
+    if (s->bounds_checks_disabled) return false;
+    if (s->mem_size < size) return true;
+
+    uint32_t limit = s->mem_size - size;
+    if (addr > limit) return true;
+
+    if (s->align_traps_enabled && size > 1 && (addr & (size - 1)) != 0) {
+        return true;
+    }
+
+    if (!s->mmio_enabled && s->mmio_base != 0) {
+        if (addr >= s->mmio_base && addr < s->mmio_base + 0x10000) {
+            return true;
+        }
+    }
+
+    if (is_store && s->wxorx_enabled) {
+        uint32_t wx_limit = s->rodata_limit ? s->rodata_limit : s->code_limit;
+        if (wx_limit > 0 && addr < wx_limit) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 // ============================================================================
@@ -204,46 +241,86 @@ static bool shadow_step(shadow_state_t *s) {
     // U-type (0x20)
     case 0x20: r[rd] = imm_u; break;                                   // LUI
 
-    // Load instructions (0x30-0x34) — read from shadow buffer / real mem
+    // Load instructions (0x30-0x34)
     case 0x30: { // LDB (sign-extend)
         uint32_t a = r[rs1] + imm_i;
+        if (shadow_mem_access_fault(s, a, 1, false)) {
+            block_end = true;
+            next_pc = pc;
+            break;
+        }
         r[rd] = (uint32_t)(int32_t)(int8_t)shadow_load_byte(s, a);
         break;
     }
     case 0x31: { // LDH (sign-extend)
         uint32_t a = r[rs1] + imm_i;
+        if (shadow_mem_access_fault(s, a, 2, false)) {
+            block_end = true;
+            next_pc = pc;
+            break;
+        }
         r[rd] = (uint32_t)(int32_t)(int16_t)shadow_load16(s, a);
         break;
     }
     case 0x32: { // LDW
         uint32_t a = r[rs1] + imm_i;
+        if (shadow_mem_access_fault(s, a, 4, false)) {
+            block_end = true;
+            next_pc = pc;
+            break;
+        }
         r[rd] = shadow_load32(s, a);
         break;
     }
     case 0x33: { // LDBU (zero-extend)
         uint32_t a = r[rs1] + imm_i;
+        if (shadow_mem_access_fault(s, a, 1, false)) {
+            block_end = true;
+            next_pc = pc;
+            break;
+        }
         r[rd] = shadow_load_byte(s, a);
         break;
     }
     case 0x34: { // LDHU (zero-extend)
         uint32_t a = r[rs1] + imm_i;
+        if (shadow_mem_access_fault(s, a, 2, false)) {
+            block_end = true;
+            next_pc = pc;
+            break;
+        }
         r[rd] = shadow_load16(s, a);
         break;
     }
 
-    // Store instructions (0x38-0x3A) — write to shadow buffer only
+    // Store instructions (0x38-0x3A)
     case 0x38: { // STB
         uint32_t a = r[rs1] + imm_s;
+        if (shadow_mem_access_fault(s, a, 1, true)) {
+            block_end = true;
+            next_pc = pc;
+            break;
+        }
         shadow_store_byte(s, a, (uint8_t)r[rs2]);
         break;
     }
     case 0x39: { // STH
         uint32_t a = r[rs1] + imm_s;
+        if (shadow_mem_access_fault(s, a, 2, true)) {
+            block_end = true;
+            next_pc = pc;
+            break;
+        }
         shadow_store16(s, a, (uint16_t)r[rs2]);
         break;
     }
     case 0x3A: { // STW
         uint32_t a = r[rs1] + imm_s;
+        if (shadow_mem_access_fault(s, a, 4, true)) {
+            block_end = true;
+            next_pc = pc;
+            break;
+        }
         shadow_store32(s, a, r[rs2]);
         break;
     }
@@ -481,22 +558,21 @@ static bool shadow_step(shadow_state_t *s) {
 // Execute the block via shadow interpreter, matching the DBT's control flow.
 //
 // The DBT translates instructions linearly.  Any non-sequential PC change
-// (branch taken, jump) is a block exit — EXCEPT when the target equals
-// block_start, which is a self-loop: the DBT's self-loop optimization keeps
-// execution inside the native code block for these tight loops.
+// (branch taken, jump) is a block exit only when the target leaves the
+// translated block range.
 //
 // So the shadow:
 //   1. Steps forward, checking PC advances by +4 (sequential).
 //   2. If PC changes to something other than old_pc+4:
-//      a. If new PC == block_start → self-loop, continue
+//      a. If new PC remains inside [block_start, block_end) → continue
 //      b. Otherwise → block exit, stop
 //   3. HALT/DEBUG/YIELD → stop immediately
 static void shadow_execute_block(shadow_state_t *s, uint32_t block_start,
                                  uint32_t block_size) {
     uint32_t block_end = block_start + block_size;
-    // In paranoid mode all DBT optimizations (superblock, self-loop, reg_cache)
-    // are disabled, so the DBT exits after each iteration.  The shadow must
-    // match: execute one linear pass through the block and exit on any branch.
+    // In paranoid mode, some transforms still keep control flow within the same
+    // translated block (for example in-block forward JAL r0 inlining). Match
+    // DBT behavior by continuing while the PC stays inside this block range.
     int max_steps = block_size / 4 + 1;
 
     for (int i = 0; i < max_steps; i++) {
@@ -504,12 +580,21 @@ static void shadow_execute_block(shadow_state_t *s, uint32_t block_start,
             break;
         }
         uint32_t pc_before = s->pc;
+        uint32_t raw_before = *(uint32_t *)(s->mem_base + pc_before);
         bool ended = shadow_step(s);
         s->instructions_verified++;
         if (ended) break;  // HALT/DEBUG/YIELD/ASSERT_FAIL
-        // Any non-sequential PC change → block exit
+
         if (s->pc != pc_before + 4) {
-            break;
+            uint8_t op = raw_before & 0x7F;
+            uint8_t rd = (raw_before >> 7) & 0x1F;
+            bool inblock_forward_jal =
+                (op == 0x40) && (rd == 0) &&
+                (s->pc > pc_before) &&
+                (s->pc >= block_start && s->pc < block_end);
+            if (!inblock_forward_jal) {
+                break;
+            }
         }
     }
 }
@@ -636,7 +721,15 @@ static void replay_with_trace(shadow_state_t *s, uint32_t block_start,
 
         step_num++;
         if (ended) break;
-        if (s->pc != pc_before + 4 && s->pc != block_start) break;
+        if (s->pc != pc_before + 4) {
+            uint8_t op = raw & 0x7F;
+            uint8_t rd = (raw >> 7) & 0x1F;
+            bool inblock_forward_jal =
+                (op == 0x40) && (rd == 0) &&
+                (s->pc > pc_before) &&
+                (s->pc >= block_start && s->pc < block_end);
+            if (!inblock_forward_jal) break;
+        }
     }
 }
 

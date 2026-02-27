@@ -53,11 +53,11 @@ for test in $TESTS; do
 
     # Run interpreter - filter to just program output (lines between "Starting" and "HALT")
     # Actually, easier to just compare exit codes and check if both PASS/FAIL in output
-    interp_full=$("$INTERP" "$test" 2>&1) || true
+    interp_full=$("$INTERP" "$test" 2>&1)
     interp_exit=$?
 
     # Run DBT
-    dbt_full=$("$DBT" "${dbt_args[@]}" "$test" 2>&1) || true
+    dbt_full=$("$DBT" "${dbt_args[@]}" "$test" 2>&1)
     dbt_exit=$?
 
     # Extract just the DEBUG output (program's actual output before HALT/stats)

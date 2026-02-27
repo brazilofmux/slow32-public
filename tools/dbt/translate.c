@@ -1,6 +1,8 @@
 // SLOW-32 DBT: Block Translator Implementation
 // Stage 4 - Superblock extension
 
+#define RC_TRACE 0  // Set to 1 to trace LRU cache operations
+
 #include "translate.h"
 #include "block_cache.h"
 #include "shadow_interp.h"
@@ -29,6 +31,7 @@ uint32_t stage5_emit_side_exits = 0;
 static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
 static void emit_exit_chained_compact(translate_ctx_t *ctx, uint32_t target_pc, int exit_idx);
 static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg);
+static inline void reg_cache_mark_written(translate_ctx_t *ctx, uint8_t guest_reg);
 static inline void flush_pending_write(translate_ctx_t *ctx);
 static inline void flush_pending_cond(translate_ctx_t *ctx);
 
@@ -95,20 +98,13 @@ static void stage5_count_deferred_exit_flush(const translate_ctx_t *ctx,
                                              bool full_flush) {
     if (!ctx) return;
     if (deferred_idx < 0 || deferred_idx >= ctx->deferred_exit_count) return;
+    (void)full_flush;
 
     const int di = deferred_idx;
-    if (full_flush) {
-    } else {
-    }
-
-    if (ctx->deferred_exits[di].pending_write_valid &&
-        ctx->deferred_exits[di].pending_write_guest_reg == 15) {
-    }
 
     for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
-        if (ctx->deferred_exits[di].guest_reg_snapshot[s] != 15) continue;
-        if (!ctx->deferred_exits[di].allocated_snapshot[s]) break;
-        if (ctx->deferred_exits[di].dirty_snapshot[s]) {
+        if (ctx->deferred_exits[di].snapshot[s].guest_reg != 15) continue;
+        if (ctx->deferred_exits[di].snapshot[s].dirty) {
         }
         break;
     }
@@ -468,8 +464,7 @@ static inline void stage5_pick_cmp_scratch_regs(translate_ctx_t *ctx,
                                                 x64_reg_t *out_a,
                                                 x64_reg_t *out_b) {
     static const x64_reg_t k_candidates[] = {RAX, RCX, RDX, R10};
-    x64_reg_t pending =
-        (ctx && ctx->pending_write.valid) ? ctx->pending_write.host_reg : X64_NOREG;
+    x64_reg_t pending = X64_NOREG;
 
     x64_reg_t a = RAX;
     x64_reg_t b = RCX;
@@ -962,6 +957,7 @@ void translate_init(translate_ctx_t *ctx, dbt_cpu_state_t *cpu) {
     ctx->cpu = cpu;
     ctx->cache = NULL;  // Stage 1 mode
     ctx->block = NULL;
+    ctx->reg_cache_enabled = true;  // LRU cache always active
     ctx->side_exit_info_enabled = false;
     ctx->avoid_backedge_extend = false;
     ctx->peephole_enabled = false;
@@ -1085,22 +1081,26 @@ static const x64_reg_t reg_alloc_hosts[REG_ALLOC_SLOTS] = {
 };
 
 static void reg_alloc_reset(translate_ctx_t *ctx) {
-    memset(ctx->reg_alloc, 0, sizeof(ctx->reg_alloc));
+    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+        ctx->reg_alloc[i].guest_reg = -1;
+        ctx->reg_alloc[i].dirty = false;
+        ctx->reg_alloc[i].last_use = 0;
+    }
     memset(ctx->reg_alloc_map, -1, sizeof(ctx->reg_alloc_map));
+    ctx->rc_clock = 0;
     ctx->reg_cache_hits = 0;
     ctx->reg_cache_misses = 0;
 }
 
-// Pre-scan block to determine top-used guest registers for allocation
+// Pre-scan block for back-edge detection and jump inlining boundaries.
+// With LRU demand-driven allocation, register counting and dead-temp
+// analysis are no longer needed — the cache naturally handles both.
 static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
     dbt_cpu_state_t *cpu = ctx->cpu;
-    uint32_t use_count[32] = {0};
     uint32_t pc = start_pc;
     int inst_count = 0;
     decoded_inst_t decoded[MAX_BLOCK_INSTS];
 
-    // Initialize dead_temp_skip array
-    memset(ctx->dead_temp_skip, 0, sizeof(ctx->dead_temp_skip));
     ctx->loop_written_regs = 0;
     ctx->backedge_target_count = 0;
     ctx->has_backedge = false;
@@ -1113,33 +1113,6 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
         uint32_t raw = *(uint32_t *)(cpu->mem_base + pc);
         decoded_inst_t inst = decode_instruction(raw);
         decoded[inst_count] = inst;
-
-        // Tally register usage (skip r0)
-        switch (inst.format) {
-            case FMT_R:
-                if (inst.rd != 0)  use_count[inst.rd]++;
-                if (inst.rs1 != 0) use_count[inst.rs1]++;
-                if (inst.rs2 != 0) use_count[inst.rs2]++;
-                break;
-            case FMT_I:
-                if (inst.rd != 0)  use_count[inst.rd]++;
-                if (inst.rs1 != 0) use_count[inst.rs1]++;
-                break;
-            case FMT_S:
-                if (inst.rs1 != 0) use_count[inst.rs1]++;
-                if (inst.rs2 != 0) use_count[inst.rs2]++;
-                break;
-            case FMT_B:
-                if (inst.rs1 != 0) use_count[inst.rs1]++;
-                if (inst.rs2 != 0) use_count[inst.rs2]++;
-                break;
-            case FMT_U:
-                if (inst.rd != 0) use_count[inst.rd]++;
-                break;
-            case FMT_J:
-                if (inst.rd != 0) use_count[inst.rd]++;
-                break;
-        }
 
         // Stop at block-ending instructions
         bool is_block_end = false;
@@ -1187,11 +1160,9 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
                             if (!seen && ctx->backedge_target_count < MAX_BLOCK_INSTS) {
                                 ctx->backedge_targets[ctx->backedge_target_count++] = target;
                             }
-                            
+
                             // Compute registers written in the loop body (target to current)
-                            // Used for minimizing dirty snapshots in deferred side exits
                             uint32_t target_idx = (target - start_pc) / 4;
-                            // Note: inst_count is the current instruction index
                             for (int k = target_idx; k <= inst_count; k++) {
                                 uint8_t wr = 0;
                                 switch (decoded[k].format) {
@@ -1210,94 +1181,12 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
                 break;
         }
         if (is_block_end) {
-            inst_count++;  // Include the block-ending instruction
+            inst_count++;
             break;
         }
 
         pc += 4;
         inst_count++;
-    }
-
-    // Dead temporary elimination: backward liveness scan
-    // For each instruction that writes a register, determine if the value
-    // has at most 1 read before the next write (making store skippable).
-    // Safe with superblocks because pending writes are captured in the
-    // deferred side exit snapshot and flushed correctly in cold stubs.
-    {
-        int read_count_before_write[32];
-        for (int r = 0; r < 32; r++)
-            read_count_before_write[r] = 2;  // Conservative: assume live at block end
-
-        for (int i = inst_count - 1; i >= 0; i--) {
-            decoded_inst_t *dinst = &decoded[i];
-            uint8_t wr = 0;   // written register
-            uint8_t r1 = 0, r2 = 0;  // read registers
-
-            switch (dinst->format) {
-                case FMT_R:
-                    wr = dinst->rd;
-                    r1 = dinst->rs1;
-                    r2 = dinst->rs2;
-                    break;
-                case FMT_I:
-                    wr = dinst->rd;
-                    r1 = dinst->rs1;
-                    break;
-                case FMT_S:
-                    r1 = dinst->rs1;
-                    r2 = dinst->rs2;
-                    break;
-                case FMT_B:
-                    r1 = dinst->rs1;
-                    r2 = dinst->rs2;
-                    break;
-                case FMT_U:
-                    wr = dinst->rd;
-                    break;
-                case FMT_J:
-                    wr = dinst->rd;
-                    break;
-            }
-
-            // Process write first (backward: write kills liveness)
-            if (wr != 0) {
-                ctx->dead_temp_skip[i] = (read_count_before_write[wr] <= 1);
-                read_count_before_write[wr] = 0;
-            }
-
-            // Process reads after (backward: reads establish liveness)
-            if (r1 != 0) read_count_before_write[r1]++;
-            if (r2 != 0) read_count_before_write[r2]++;
-        }
-    }
-
-    // Select top REG_ALLOC_SLOTS registers by use count
-    for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
-        int best = -1;
-        uint32_t best_count = 0;
-        for (int r = 1; r < 32; r++) {
-            if (use_count[r] > best_count) {
-                best_count = use_count[r];
-                best = r;
-            }
-        }
-        if (best < 0 || best_count == 0) break;
-
-        ctx->reg_alloc[s].guest_reg = (uint8_t)best;
-        ctx->reg_alloc[s].allocated = true;
-        ctx->reg_alloc[s].dirty = false;
-        ctx->reg_alloc_map[best] = (int8_t)s;
-        use_count[best] = 0;  // Remove from consideration
-    }
-}
-
-// Emit prologue: load allocated guest registers into host registers
-static void reg_alloc_emit_prologue(translate_ctx_t *ctx) {
-    emit_ctx_t *e = &ctx->emit;
-    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
-        if (!ctx->reg_alloc[i].allocated) continue;
-        emit_mov_r32_m32(e, reg_alloc_hosts[i], RBP,
-                         GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg));
     }
 }
 
@@ -1305,27 +1194,168 @@ static void reg_alloc_emit_prologue(translate_ctx_t *ctx) {
 // Forward declarations
 static void reg_cache_flush(translate_ctx_t *ctx);
 
-// Return the host register for a cached guest register, or X64_NOREG if not cached.
-static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg) {
-    if (!ctx->reg_cache_enabled || guest_reg == 0) return X64_NOREG;
-    int8_t slot = ctx->reg_alloc_map[guest_reg];
-    return (slot >= 0) ? reg_alloc_hosts[slot] : X64_NOREG;
-}
-
 static void bounds_elim_invalidate(translate_ctx_t *ctx, uint8_t guest_reg);
 
-// Mark a cached guest register as written (dirty) without emitting a MOV.
-// Used when loading directly into a cached host register.
-static inline void reg_cache_mark_written(translate_ctx_t *ctx, uint8_t guest_reg) {
+// ============================================================================
+// LRU demand-driven register cache
+// ============================================================================
+
+// Find slot containing guest_reg, or -1 (O(1) via map)
+static inline int rc_find(translate_ctx_t *ctx, int guest_reg) {
+    if (guest_reg <= 0 || guest_reg >= 32) return -1;
+    return ctx->reg_alloc_map[guest_reg];
+}
+
+// Allocate a free slot, evicting LRU if full. Returns slot index.
+static int rc_alloc(translate_ctx_t *ctx) {
+    // First: look for a free slot
+    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+        if (ctx->reg_alloc[i].guest_reg < 0) return i;
+    }
+    // All full: evict LRU
+    int lru = 0;
+    for (int i = 1; i < REG_ALLOC_SLOTS; i++) {
+        if (ctx->reg_alloc[i].last_use < ctx->reg_alloc[lru].last_use)
+            lru = i;
+    }
+    // Writeback if dirty
+    if (ctx->reg_alloc[lru].dirty) {
+        if (RC_TRACE) fprintf(stderr, "    rc_evict: slot%d r%d dirty→flush\n", lru, ctx->reg_alloc[lru].guest_reg);
+        emit_mov_m32_r32(&ctx->emit, RBP,
+                         GUEST_REG_OFFSET(ctx->reg_alloc[lru].guest_reg),
+                         reg_alloc_hosts[lru]);
+    } else {
+        if (RC_TRACE) fprintf(stderr, "    rc_evict: slot%d r%d clean\n", lru, ctx->reg_alloc[lru].guest_reg);
+    }
+    // Clear map entry for evicted guest reg
+    ctx->reg_alloc_map[ctx->reg_alloc[lru].guest_reg] = -1;
+    ctx->reg_alloc[lru].guest_reg = -1;
+    ctx->reg_alloc[lru].dirty = false;
+    return lru;
+}
+
+// Read guest register — returns host register holding its value.
+// Loads from memory on cache miss. r0 → XOR RAX,RAX, returns RAX.
+static x64_reg_t rc_read(translate_ctx_t *ctx, uint8_t guest_reg) {
+    if (guest_reg == 0) {
+        emit_xor_r32_r32(&ctx->emit, RAX, RAX);
+        return RAX;
+    }
+    int slot = rc_find(ctx, guest_reg);
+    if (slot >= 0) {
+        ctx->reg_alloc[slot].last_use = ++ctx->rc_clock;
+        ctx->reg_cache_hits++;
+        if (RC_TRACE) fprintf(stderr, "    rc_read(r%d) HIT slot%d=host%d\n", guest_reg, slot, reg_alloc_hosts[slot]);
+        return reg_alloc_hosts[slot];
+    }
+    // Cache miss: allocate and load
+    ctx->reg_cache_misses++;
+    slot = rc_alloc(ctx);
+    if (RC_TRACE) fprintf(stderr, "    rc_read(r%d) MISS→slot%d=host%d\n", guest_reg, slot, reg_alloc_hosts[slot]);
+    emit_mov_r32_m32(&ctx->emit, reg_alloc_hosts[slot], RBP,
+                     GUEST_REG_OFFSET(guest_reg));
+    ctx->reg_alloc[slot].guest_reg = (int8_t)guest_reg;
+    ctx->reg_alloc[slot].dirty = false;
+    ctx->reg_alloc[slot].last_use = ++ctx->rc_clock;
+    ctx->reg_alloc_map[guest_reg] = (int8_t)slot;
+    return reg_alloc_hosts[slot];
+}
+
+// Write guest register — returns host register to write into. Marks dirty.
+// r0 → returns RAX (discard target).
+static x64_reg_t rc_write(translate_ctx_t *ctx, uint8_t guest_reg) {
+    if (guest_reg == 0) return RAX;
+    int slot = rc_find(ctx, guest_reg);
+    if (slot < 0) {
+        slot = rc_alloc(ctx);
+        ctx->reg_alloc[slot].guest_reg = (int8_t)guest_reg;
+        ctx->reg_alloc_map[guest_reg] = (int8_t)slot;
+        if (RC_TRACE) fprintf(stderr, "    rc_write(r%d) NEW→slot%d=host%d\n", guest_reg, slot, reg_alloc_hosts[slot]);
+    } else {
+        if (RC_TRACE) fprintf(stderr, "    rc_write(r%d) HIT slot%d=host%d\n", guest_reg, slot, reg_alloc_hosts[slot]);
+    }
+    ctx->reg_alloc[slot].dirty = true;
+    ctx->reg_alloc[slot].last_use = ++ctx->rc_clock;
+    // Invalidate constant propagation and bounds for this register
     ctx->reg_constants[guest_reg].valid = false;
     bounds_elim_invalidate(ctx, guest_reg);
-    if (ctx->pending_write.valid && ctx->pending_write.guest_reg == guest_reg) {
-        ctx->pending_write.valid = false;
-        ctx->emit.rax_pending = false;
+    return reg_alloc_hosts[slot];
+}
+
+// Flush all dirty slots to memory. Does NOT clear dirty flags
+// (multiple exit paths each need their own flush code).
+static void rc_flush(translate_ctx_t *ctx) {
+    if (RC_TRACE) {
+        fprintf(stderr, "  rc_flush: ");
+        for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+            if (ctx->reg_alloc[i].guest_reg >= 0) {
+                fprintf(stderr, "[%d:r%d%s] ", i, ctx->reg_alloc[i].guest_reg,
+                        ctx->reg_alloc[i].dirty ? "*" : "");
+            }
+        }
+        fprintf(stderr, "\n");
     }
-    ctx->reg_cache_hits++;
-    int8_t slot = ctx->reg_alloc_map[guest_reg];
-    ctx->reg_alloc[slot].dirty = true;
+    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+        if (ctx->reg_alloc[i].guest_reg >= 0) {
+            // DIAGNOSTIC: flush ALL occupied slots, not just dirty ones
+            emit_mov_m32_r32(&ctx->emit, RBP,
+                             GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg),
+                             reg_alloc_hosts[i]);
+        }
+    }
+}
+
+// Evict a specific host register from the cache (flush + deallocate).
+// Used before JALR code that clobbers R8/R9 as scratch.
+static void rc_evict_host(translate_ctx_t *ctx, x64_reg_t host_reg) {
+    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+        if (reg_alloc_hosts[i] == host_reg && ctx->reg_alloc[i].guest_reg >= 0) {
+            if (ctx->reg_alloc[i].dirty) {
+                emit_mov_m32_r32(&ctx->emit, RBP,
+                                 GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg),
+                                 reg_alloc_hosts[i]);
+            }
+            ctx->reg_alloc_map[ctx->reg_alloc[i].guest_reg] = -1;
+            ctx->reg_alloc[i].guest_reg = -1;
+            ctx->reg_alloc[i].dirty = false;
+            return;
+        }
+    }
+}
+
+// Write an immediate value to a guest register via the cache.
+static void rc_write_imm(translate_ctx_t *ctx, uint8_t guest_reg, uint32_t imm) {
+    if (guest_reg == 0) return;
+    // Record constant for propagation
+    ctx->reg_constants[guest_reg].valid = true;
+    ctx->reg_constants[guest_reg].value = imm;
+    bounds_elim_invalidate(ctx, guest_reg);
+    x64_reg_t hd = rc_write(ctx, guest_reg);
+    // rc_write invalidated constants, so re-set them
+    ctx->reg_constants[guest_reg].valid = true;
+    ctx->reg_constants[guest_reg].value = imm;
+    emit_mov_r32_imm32(&ctx->emit, hd, imm);
+}
+
+// Compatibility shim: always returns NOREG to force non-cached path.
+// With LRU, cached host registers can be evicted by subsequent rc_read/rc_write
+// calls, making it unsafe to hold a host register reference across multiple
+// emit_load_guest_reg calls. The non-cached path copies to scratch registers
+// (RAX/RCX) first, which are safe from eviction.
+// This will be removed when all translate_* functions are converted to
+// use rc_read/rc_write directly (Task 3).
+static inline x64_reg_t guest_host_reg(translate_ctx_t *ctx, uint8_t guest_reg) {
+    (void)ctx; (void)guest_reg;
+    return X64_NOREG;
+}
+
+// Compatibility shim: mark guest register as written (dirty) in cache.
+static inline void reg_cache_mark_written(translate_ctx_t *ctx, uint8_t guest_reg) {
+    int slot = rc_find(ctx, guest_reg);
+    if (slot >= 0) {
+        ctx->reg_alloc[slot].dirty = true;
+        ctx->reg_alloc[slot].last_use = ++ctx->rc_clock;
+    }
 }
 
 // Reset all constant propagation state (e.g., at block start or back-edge targets)
@@ -1414,19 +1444,16 @@ static inline bool is_backedge_target(translate_ctx_t *ctx, uint32_t pc) {
     return false;
 }
 
+// flush_pending_write: no-op on x86-64 with LRU (no pending writes).
+// All writes go through rc_write() which caches in host registers.
 static inline void flush_pending_write(translate_ctx_t *ctx) {
-    if (!ctx->pending_write.valid) return;
-    emit_mov_m32_r32(&ctx->emit, RBP,
-                     GUEST_REG_OFFSET(ctx->pending_write.guest_reg),
-                     ctx->pending_write.host_reg);
-    ctx->pending_write.valid = false;
-    ctx->emit.rax_pending = false;
+    (void)ctx;
 }
 
 // Materialize a deferred comparison into its destination register
 static void materialize_pending_cond(translate_ctx_t *ctx) {
     if (!ctx->pending_cond.valid) return;
-    
+
     emit_ctx_t *e = &ctx->emit;
     uint8_t opcode = ctx->pending_cond.opcode;
     uint8_t rd = ctx->pending_cond.rd;
@@ -1435,25 +1462,17 @@ static void materialize_pending_cond(translate_ctx_t *ctx) {
     bool rs2_is_imm = ctx->pending_cond.rs2_is_imm;
     int32_t imm = ctx->pending_cond.imm;
 
-    // Reset valid bit BEFORE emitting anything that might trigger another flush/materialize
+    // Reset valid bit BEFORE emitting to prevent re-entrant materialization
     ctx->pending_cond.valid = false;
 
-    // Use host registers for comparison operands when available
-    x64_reg_t h1 = guest_host_reg(ctx, rs1);
-    x64_reg_t cmp_a = (h1 != X64_NOREG) ? h1 : RAX;
-    if (h1 == X64_NOREG) emit_load_guest_reg(ctx, RAX, rs1);
-
+    // Load operands into scratch regs first so they remain stable even if
+    // cache activity would otherwise evict/reassign backing host registers.
+    emit_load_guest_reg(ctx, RAX, rs1);
     if (rs2_is_imm) {
-        // Comparison with immediate (SLTI, SLTIU)
-        if (h1 != X64_NOREG) flush_pending_write(ctx);
-        emit_cmp_r32_imm32(e, cmp_a, imm);
+        emit_cmp_r32_imm32(e, RAX, imm);
     } else {
-        // Register-register comparison (SLT, SLTU, SEQ, SNE, ...)
-        x64_reg_t h2 = guest_host_reg(ctx, rs2);
-        x64_reg_t cmp_b = (h2 != X64_NOREG) ? h2 : RCX;
-        if (h2 == X64_NOREG) emit_load_guest_reg(ctx, RCX, rs2);
-        if (h1 != X64_NOREG) flush_pending_write(ctx);
-        emit_cmp_r32_r32(e, cmp_a, cmp_b);
+        emit_load_guest_reg(ctx, RCX, rs2);
+        emit_cmp_r32_r32(e, RAX, RCX);
     }
 
     // Determine correct setcc based on opcode
@@ -1487,248 +1506,77 @@ static inline void flush_pending_cond(translate_ctx_t *ctx) {
 
 static void reg_cache_flush(translate_ctx_t *ctx) {
     flush_pending_cond(ctx);
-    flush_pending_write(ctx);
-    if (!ctx->reg_cache_enabled) {
-        return;
-    }
-    emit_ctx_t *e = &ctx->emit;
-    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
-        if (!ctx->reg_alloc[i].allocated || !ctx->reg_alloc[i].dirty) {
-            continue;
-        }
-        emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg),
-                         reg_alloc_hosts[i]);
-        // NOTE: Do NOT clear dirty here! Multiple code paths (e.g., branch
-        // taken/fall-through, inline lookup probes) all call flush, but only one
-        // executes at runtime. Each path must emit its own flush code.
+    if (ctx->reg_cache_enabled) {
+        rc_flush(ctx);
     }
 }
 
-// Flush using a full allocation snapshot (for deferred side exits)
-// Uses the snapshotted guest_reg mapping, NOT the current ctx->reg_alloc,
-// because superblock continuation may have evicted/reassigned slots since
-// the snapshot was captured.
-// NOTE: Caller must handle pending write flush separately using the snapshot.
-static void reg_alloc_flush_snapshot(translate_ctx_t *ctx,
-                                      const bool *dirty_snapshot,
-                                      const bool *allocated_snapshot,
-                                      const uint8_t *guest_reg_snapshot) {
+// Flush using a snapshot of the register cache state (for deferred side exits).
+// Uses the snapshotted state, NOT the current ctx->reg_alloc, because
+// superblock continuation may have evicted/reassigned slots.
+static void reg_alloc_flush_snapshot(translate_ctx_t *ctx, int deferred_idx) {
     emit_ctx_t *e = &ctx->emit;
-    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
-        if (!allocated_snapshot[i] || !dirty_snapshot[i]) {
-            continue;
+    bool full = ctx->deferred_exits[deferred_idx].force_full_flush;
+    for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
+        int8_t greg = ctx->deferred_exits[deferred_idx].snapshot[s].guest_reg;
+        if (greg < 0) continue;
+        bool should_flush = full || ctx->deferred_exits[deferred_idx].snapshot[s].dirty;
+        if (should_flush) {
+            emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(greg), reg_alloc_hosts[s]);
         }
-        emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(guest_reg_snapshot[i]),
-                         reg_alloc_hosts[i]);
     }
 }
 
-// Flush specific host registers that are about to be used as scratch.
-// Writes dirty cached values back to memory but keeps slots allocated (dirty=false).
-// Used before JALR/RAS code that clobbers R8/R9 as temporaries.
+// Evict R8 and R9 from the cache (used before JALR scratch).
 static void flush_cached_host_regs(translate_ctx_t *ctx, x64_reg_t r1, x64_reg_t r2) {
-    if (!ctx->reg_cache_enabled) return;
-    emit_ctx_t *e = &ctx->emit;
-    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
-        if (!ctx->reg_alloc[i].allocated) continue;
-        if (reg_alloc_hosts[i] == r1 || reg_alloc_hosts[i] == r2) {
-            if (ctx->reg_alloc[i].dirty) {
-                emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg),
-                                 reg_alloc_hosts[i]);
-            }
-            // Fully evict from cache so the host register can be reused as scratch.
-            // Without this, emit_store_guest_reg may still target this host register,
-            // clobbering the scratch value (e.g., JALR target saved in R8).
-            ctx->reg_alloc_map[ctx->reg_alloc[i].guest_reg] = -1;
-            ctx->reg_alloc[i].allocated = false;
-            ctx->reg_alloc[i].dirty = false;
-        }
-    }
+    rc_evict_host(ctx, r1);
+    rc_evict_host(ctx, r2);
 }
 
-// Load guest register into x86-64 register
+// Load guest register into a specific x86-64 register.
+// With LRU, this reads via the cache then moves to dst.
 void emit_load_guest_reg(translate_ctx_t *ctx, x64_reg_t dst, uint8_t guest_reg) {
-    emit_ctx_t *e = &ctx->emit;
-
     if (guest_reg == 0) {
-        // r0 is always 0 — flush pending if it would clobber dst
-        if (ctx->pending_write.valid && dst == ctx->pending_write.host_reg) {
-            flush_pending_write(ctx);
-        }
-        emit_xor_r32_r32(e, dst, dst);
+        // Zero the destination directly without clobbering RAX
+        emit_xor_r32_r32(&ctx->emit, dst, dst);
         return;
     }
-
-    // Dead temporary elimination: check pending write
-    if (ctx->pending_write.valid) {
-        if (guest_reg == ctx->pending_write.guest_reg) {
-            // CONSUME: value is already in pending.host_reg
-            x64_reg_t preg = ctx->pending_write.host_reg;
-            if (!ctx->pending_write.can_skip_store) {
-                // Level 1: still need memory store for later reads
-                emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(guest_reg), preg);
-            }
-            // Level 2: if can_skip_store, skip entirely
-            ctx->pending_write.valid = false;
-            ctx->emit.rax_pending = false;
-            if (dst != preg) {
-                emit_mov_r32_r32(e, dst, preg);
-            }
-            ctx->reg_cache_hits++;
-            return;
-        }
-        if (dst == ctx->pending_write.host_reg) {
-            // About to clobber the pending register — flush first
-            flush_pending_write(ctx);
-        }
-    }
-
     if (!ctx->reg_cache_enabled) {
-        // Load from CPU state: mov dst, [rbp + offset]
-        const char *saved_tag = e->trace_tag;
-        if (e->trace_enabled) {
-            e->trace_tag = "guest_load";
-        }
-        emit_mov_r32_m32(e, dst, RBP, GUEST_REG_OFFSET(guest_reg));
-        e->trace_tag = saved_tag;
+        emit_mov_r32_m32(&ctx->emit, dst, RBP, GUEST_REG_OFFSET(guest_reg));
         return;
     }
-
-    int8_t slot = ctx->reg_alloc_map[guest_reg];
-    if (slot >= 0) {
-        // Allocated — use host register directly
-        ctx->reg_cache_hits++;
-        x64_reg_t host_reg = reg_alloc_hosts[slot];
-        if (dst != host_reg) {
-            emit_mov_r32_r32(e, dst, host_reg);
-        }
-    } else {
-        // Not allocated — memory fallback
-        ctx->reg_cache_misses++;
-        const char *saved_tag = e->trace_tag;
-        if (e->trace_enabled) {
-            e->trace_tag = "guest_load";
-        }
-        emit_mov_r32_m32(e, dst, RBP, GUEST_REG_OFFSET(guest_reg));
-        e->trace_tag = saved_tag;
+    x64_reg_t src = rc_read(ctx, guest_reg);
+    if (dst != src) {
+        emit_mov_r32_r32(&ctx->emit, dst, src);
     }
 }
 
-// Store x86-64 register to guest register
+// Store x86-64 register to guest register via the cache.
 void emit_store_guest_reg(translate_ctx_t *ctx, uint8_t guest_reg, x64_reg_t src) {
-    emit_ctx_t *e = &ctx->emit;
-    if (guest_reg == 0) {
-        // Writes to r0 are discarded
-        return;
-    }
-
-    // Constant propagation: non-constant write invalidates known value
-    ctx->reg_constants[guest_reg].valid = false;
-
-    // Bounds check elimination: invalidate ranges using this register as base
-    bounds_elim_invalidate(ctx, guest_reg);
-
-    // If there's a pending write for the same guest register, discard it
-    if (ctx->pending_write.valid && ctx->pending_write.guest_reg == guest_reg) {
-        ctx->pending_write.valid = false;
-        ctx->emit.rax_pending = false;
-    }
-
+    if (guest_reg == 0) return;
     if (!ctx->reg_cache_enabled) {
-        // Dead temporary elimination: defer RAX stores as pending writes
-        if (src == RAX) {
-            flush_pending_write(ctx);  // Flush any previous pending
-            ctx->pending_write.guest_reg = guest_reg;
-            ctx->pending_write.host_reg = RAX;
-            ctx->pending_write.valid = true;
-            ctx->emit.rax_pending = true;
-            ctx->pending_write.can_skip_store = ctx->dead_temp_skip[ctx->current_inst_idx];
-            return;
-        }
-        // Non-RAX stores (e.g., RCX from loads) — store normally
-        const char *saved_tag = e->trace_tag;
-        if (e->trace_enabled) {
-            e->trace_tag = "guest_store";
-        }
-        emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(guest_reg), src);
-        e->trace_tag = saved_tag;
+        ctx->reg_constants[guest_reg].valid = false;
+        bounds_elim_invalidate(ctx, guest_reg);
+        emit_mov_m32_r32(&ctx->emit, RBP, GUEST_REG_OFFSET(guest_reg), src);
         return;
     }
-
-    int8_t slot = ctx->reg_alloc_map[guest_reg];
-    if (slot >= 0) {
-        // Allocated — move into host register, mark dirty
-        ctx->reg_cache_hits++;
-        x64_reg_t host_reg = reg_alloc_hosts[slot];
-        if (src != host_reg) {
-            emit_mov_r32_r32(e, host_reg, src);
-        }
-        ctx->reg_alloc[slot].dirty = true;
-    } else {
-        // Not allocated — defer RAX stores as pending writes
-        if (src == RAX) {
-            flush_pending_write(ctx);
-            ctx->pending_write.guest_reg = guest_reg;
-            ctx->pending_write.host_reg = RAX;
-            ctx->pending_write.valid = true;
-            ctx->emit.rax_pending = true;
-            ctx->pending_write.can_skip_store = ctx->dead_temp_skip[ctx->current_inst_idx];
-            return;
-        }
-        ctx->reg_cache_misses++;
-        const char *saved_tag = e->trace_tag;
-        if (e->trace_enabled) {
-            e->trace_tag = "guest_store";
-        }
-        emit_mov_m32_r32(e, RBP, GUEST_REG_OFFSET(guest_reg), src);
-        e->trace_tag = saved_tag;
+    x64_reg_t dst = rc_write(ctx, guest_reg);
+    if (dst != src) {
+        emit_mov_r32_r32(&ctx->emit, dst, src);
     }
 }
 
+// Store immediate to guest register via the cache.
 void emit_store_guest_reg_imm32(translate_ctx_t *ctx, uint8_t guest_reg, uint32_t imm) {
-    emit_ctx_t *e = &ctx->emit;
-    if (guest_reg == 0) {
-        return;
-    }
-
-    // Constant propagation: record the known value
-    ctx->reg_constants[guest_reg].valid = true;
-    ctx->reg_constants[guest_reg].value = imm;
-
-    // Bounds check elimination: invalidate ranges using this register as base
-    bounds_elim_invalidate(ctx, guest_reg);
-
-    // Discard pending write for same register (being overwritten)
-    if (ctx->pending_write.valid && ctx->pending_write.guest_reg == guest_reg) {
-        ctx->pending_write.valid = false;
-        ctx->emit.rax_pending = false;
-    }
     if (!ctx->reg_cache_enabled) {
-        const char *saved_tag = e->trace_tag;
-        if (e->trace_enabled) {
-            e->trace_tag = "guest_store_imm";
-        }
-        emit_mov_m32_imm32(e, RBP, GUEST_REG_OFFSET(guest_reg), imm);
-        e->trace_tag = saved_tag;
+        if (guest_reg == 0) return;
+        ctx->reg_constants[guest_reg].valid = true;
+        ctx->reg_constants[guest_reg].value = imm;
+        bounds_elim_invalidate(ctx, guest_reg);
+        emit_mov_m32_imm32(&ctx->emit, RBP, GUEST_REG_OFFSET(guest_reg), imm);
         return;
     }
-
-    int8_t slot = ctx->reg_alloc_map[guest_reg];
-    if (slot >= 0) {
-        // Allocated — mov imm into host register, mark dirty
-        ctx->reg_cache_hits++;
-        emit_mov_r32_imm32(e, reg_alloc_hosts[slot], imm);
-        ctx->reg_alloc[slot].dirty = true;
-    } else {
-        // Not allocated — memory fallback
-        ctx->reg_cache_misses++;
-        const char *saved_tag = e->trace_tag;
-        if (e->trace_enabled) {
-            e->trace_tag = "guest_store_imm";
-        }
-        emit_mov_m32_imm32(e, RBP, GUEST_REG_OFFSET(guest_reg), imm);
-        e->trace_tag = saved_tag;
-    }
+    rc_write_imm(ctx, guest_reg, imm);
 }
 
 // Emit exit sequence
@@ -2386,7 +2234,7 @@ static void translate_cmp_set(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uin
             ctx->pending_cond.rs1 = rs1;
             ctx->pending_cond.rs2 = rs2;
             ctx->pending_cond.rs2_is_imm = false;
-            ctx->pending_cond.inst_idx = ctx->current_inst_idx;
+
             ctx->pending_cond.valid = true;
             // Invalidate constant for rd — the comparison writes rd even though
             // the store is deferred for fusion
@@ -2462,7 +2310,6 @@ void translate_slti(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
         ctx->pending_cond.rs1 = rs1;
         ctx->pending_cond.rs2_is_imm = true;
         ctx->pending_cond.imm = imm;
-        ctx->pending_cond.inst_idx = ctx->current_inst_idx;
         ctx->pending_cond.valid = true;
         ctx->reg_constants[rd].valid = false;
         return;
@@ -2503,7 +2350,7 @@ void translate_sltiu(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm)
             ctx->pending_cond.rs1 = rs1;
             ctx->pending_cond.rs2_is_imm = true;
             ctx->pending_cond.imm = imm;
-            ctx->pending_cond.inst_idx = ctx->current_inst_idx;
+
             ctx->pending_cond.valid = true;
             ctx->reg_constants[rd].valid = false;
             return;
@@ -2784,6 +2631,11 @@ static void emit_mem_access_check_dynamic(translate_ctx_t *ctx,
 
     // -U flag: skip all checks (unsafe, for benchmarking)
     if (cpu->bounds_checks_disabled) return;
+
+    // This check sequence uses R8/R9 scratch registers.
+    if (ctx->reg_cache_enabled) {
+        flush_cached_host_regs(ctx, R8, R9);
+    }
 
     size_t fault_jumps[8];
     int fault_count = 0;
@@ -3089,43 +2941,51 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
         // Once the target is translated and populates the compact table,
         // the probe will hit and the chained JMP becomes dead code.
 
-        // Compact table probe (compile-time constant hash):
-        //   mov eax, HASH*16
-        //   lea rcx, [r13 + rax]    (R13 SIB mod=01 workaround)
-        //   cmp [rcx], target_pc
-        //   jne miss
-        //   jmp [rcx + 8]
-        // miss:
-        //   jmp shared_branch_exit  (patchable)
-        uint32_t hash_offset = compact_hash(target_pc) << 4;
-        emit_mov_r32_imm32(e, RAX, hash_offset);
+        if (paranoid_mode) {
+            // Paranoid mode: skip compact table probe, go straight to
+            // shared_branch_exit so the dispatcher runs the shadow check.
+            patch_site = emit_ptr(e) + 1;
+            int64_t rel = (int64_t)(ctx->cache->shared_branch_exit - (patch_site + 4));
+            emit_jmp_rel32(e, (int32_t)rel);
+        } else {
+            // Compact table probe (compile-time constant hash):
+            //   mov eax, HASH*16
+            //   lea rcx, [r13 + rax]    (R13 SIB mod=01 workaround)
+            //   cmp [rcx], target_pc
+            //   jne miss
+            //   jmp [rcx + 8]
+            // miss:
+            //   jmp shared_branch_exit  (patchable)
+            uint32_t hash_offset = compact_hash(target_pc) << 4;
+            emit_mov_r32_imm32(e, RAX, hash_offset);
 
-        // lea rcx, [r13 + rax + 0] — R13 needs mod=01 disp8=0
-        emit_byte(e, REX_BASE | REX_W | REX_B);   // REX.WB
-        emit_byte(e, 0x8D);                         // LEA
-        emit_byte(e, MODRM(MOD_DISP8, RCX, RSP));   // mod=01, reg=RCX, rm=SIB
-        emit_byte(e, SIB(0, RAX, R13 & 7));         // scale=1, index=RAX, base=R13
-        emit_byte(e, 0x00);                          // disp8=0
+            // lea rcx, [r13 + rax + 0] — R13 needs mod=01 disp8=0
+            emit_byte(e, REX_BASE | REX_W | REX_B);   // REX.WB
+            emit_byte(e, 0x8D);                         // LEA
+            emit_byte(e, MODRM(MOD_DISP8, RCX, RSP));   // mod=01, reg=RCX, rm=SIB
+            emit_byte(e, SIB(0, RAX, R13 & 7));         // scale=1, index=RAX, base=R13
+            emit_byte(e, 0x00);                          // disp8=0
 
-        // cmp dword [rcx], target_pc  (81 39 imm32)
-        emit_byte(e, 0x81);
-        emit_byte(e, 0x39);
-        emit_dword(e, target_pc);
+            // cmp dword [rcx], target_pc  (81 39 imm32)
+            emit_byte(e, 0x81);
+            emit_byte(e, 0x39);
+            emit_dword(e, target_pc);
 
-        // jne miss (short jump over jmp [rcx+8])
-        emit_byte(e, 0x75);
-        emit_byte(e, 0x03);  // skip 3 bytes (jmp [rcx+8])
+            // jne miss (short jump over jmp [rcx+8])
+            emit_byte(e, 0x75);
+            emit_byte(e, 0x03);  // skip 3 bytes (jmp [rcx+8])
 
-        // jmp [rcx + 8]  (FF 61 08)
-        emit_byte(e, 0xFF);
-        emit_byte(e, 0x61);
-        emit_byte(e, 0x08);
+            // jmp [rcx + 8]  (FF 61 08)
+            emit_byte(e, 0xFF);
+            emit_byte(e, 0x61);
+            emit_byte(e, 0x08);
 
-        // miss: jmp shared_branch_exit (patchable)
-        patch_site = emit_ptr(e) + 1;
+            // miss: jmp shared_branch_exit (patchable)
+            patch_site = emit_ptr(e) + 1;
 
-        int64_t rel = (int64_t)(ctx->cache->shared_branch_exit - (patch_site + 4));
-        emit_jmp_rel32(e, (int32_t)rel);
+            int64_t rel = (int64_t)(ctx->cache->shared_branch_exit - (patch_site + 4));
+            emit_jmp_rel32(e, (int32_t)rel);
+        }
 
         // Record for later chaining
         if (ctx->block && exit_idx < MAX_BLOCK_EXITS) {
@@ -3216,27 +3076,12 @@ static void emit_deferred_side_exits(translate_ctx_t *ctx) {
                     GUEST_REG_OFFSET(ctx->deferred_exits[i].pending_write_guest_reg),
                     ctx->deferred_exits[i].pending_write_host_reg);
             }
-            // Unsigned side exits are prone to loop-carried dirty-state drift.
-            // Force a full snapshot flush there; otherwise keep dirty-only flush.
-            if (ctx->deferred_exits[i].force_full_flush) {
-                stage5_count_deferred_exit_flush(ctx, i, true);
-                stage5_trace_deferred_exit_flush(ctx, i, true);
-                bool full_dirty[REG_ALLOC_SLOTS];
-                for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
-                    full_dirty[s] = ctx->deferred_exits[i].allocated_snapshot[s];
-                }
-                reg_alloc_flush_snapshot(ctx,
-                    full_dirty,
-                    ctx->deferred_exits[i].allocated_snapshot,
-                    ctx->deferred_exits[i].guest_reg_snapshot);
-            } else {
-                stage5_count_deferred_exit_flush(ctx, i, false);
-                stage5_trace_deferred_exit_flush(ctx, i, false);
-                reg_alloc_flush_snapshot(ctx,
-                    ctx->deferred_exits[i].dirty_snapshot,
-                    ctx->deferred_exits[i].allocated_snapshot,
-                    ctx->deferred_exits[i].guest_reg_snapshot);
-            }
+            // Flush register cache from snapshot
+            stage5_count_deferred_exit_flush(ctx, i,
+                ctx->deferred_exits[i].force_full_flush);
+            stage5_trace_deferred_exit_flush(ctx, i,
+                ctx->deferred_exits[i].force_full_flush);
+            reg_alloc_flush_snapshot(ctx, i);
         }
 
         // Record branch_pc on block exit
@@ -3561,7 +3406,6 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
             bool c_rs2_is_imm = ctx->pending_cond.rs2_is_imm;
             int32_t c_imm = ctx->pending_cond.imm;
             uint8_t c_rd = ctx->pending_cond.rd;
-            int c_inst_idx = ctx->pending_cond.inst_idx;
 
             // Discard the pending condition BEFORE emitting anything to avoid
             // re-entrant flushes in emit_load_guest_reg clobbering registers.
@@ -3588,14 +3432,10 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
                 emit_cmp_r32_r32(e, cmp_a, cmp_b);
             }
 
-            // 2. Materialize the comparison result into rd — but skip if rd
-            //    is a dead temporary (only consumed by this branch).
+            // 2. Materialize the comparison result into rd.
             //    SETCC, MOVZX, and MOV/store do NOT modify x86 flags,
             //    so the fused Jcc below still reads the correct CMP flags.
-            bool rd_is_dead = (c_inst_idx >= 0 &&
-                               c_inst_idx < MAX_BLOCK_INSTS &&
-                               ctx->dead_temp_skip[c_inst_idx]);
-            if (!rd_is_dead) {
+            {
                 void (*emit_setcc_fn)(emit_ctx_t *, x64_reg_t) = NULL;
                 switch (cmp_op) {
                     case OP_SLT:  case OP_SLTI:  emit_setcc_fn = emit_setl;  break;
@@ -3734,18 +3574,10 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
             ctx->deferred_exits[di].target_pc = taken_pc;
             ctx->deferred_exits[di].exit_idx = ctx->exit_idx;
             ctx->deferred_exits[di].branch_pc = branch_pc;
-            // Snapshot full allocation state for flushing in cold stub
-            // (must capture guest_reg mapping because superblock continuation
-            // may evict/reassign slots before cold stubs are emitted)
-            for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
-                ctx->deferred_exits[di].dirty_snapshot[s] = ctx->reg_alloc[s].dirty;
-                ctx->deferred_exits[di].allocated_snapshot[s] = ctx->reg_alloc[s].allocated;
-                ctx->deferred_exits[di].guest_reg_snapshot[s] = ctx->reg_alloc[s].guest_reg;
-            }
-            // Snapshot pending write state (non-cached register deferred store)
-            ctx->deferred_exits[di].pending_write_valid = ctx->pending_write.valid;
-            ctx->deferred_exits[di].pending_write_guest_reg = ctx->pending_write.guest_reg;
-            ctx->deferred_exits[di].pending_write_host_reg = ctx->pending_write.host_reg;
+            // Snapshot full LRU cache state for flushing in cold stub
+            memcpy(ctx->deferred_exits[di].snapshot, ctx->reg_alloc,
+                   sizeof(ctx->reg_alloc));
+            ctx->deferred_exits[di].pending_write_valid = false;
             ctx->deferred_exits[di].force_full_flush = false;
             stage5_trace_deferred_exit("capture", ctx, di);
             stage5_trace_exit_slot("capture", ctx, branch_pc,
@@ -3801,19 +3633,14 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
         // so they are correctly flushed if a side exit is taken after iterating.
         for (int di = 0; di < ctx->deferred_exit_count; di++) {
             for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
-                // Use the snapshotted allocation (not current), since slots
-                // may have been reassigned since the side exit was captured
-                if (ctx->deferred_exits[di].allocated_snapshot[s]) {
-                    uint8_t guest_reg = ctx->deferred_exits[di].guest_reg_snapshot[s];
-                    if (ctx->loop_written_regs & (1u << guest_reg)) {
-                        if (!ctx->deferred_exits[di].dirty_snapshot[s]) {
-                            if (guest_reg == 15) {
-                            }
-                            stage5_trace_backedge_dirty_promotion(branch_pc, taken_pc,
-                                                                  di, s, guest_reg);
-                        }
-                        ctx->deferred_exits[di].dirty_snapshot[s] = true;
+                if (ctx->deferred_exits[di].snapshot[s].guest_reg < 0) continue;
+                uint8_t guest_reg = (uint8_t)ctx->deferred_exits[di].snapshot[s].guest_reg;
+                if (ctx->loop_written_regs & (1u << guest_reg)) {
+                    if (!ctx->deferred_exits[di].snapshot[s].dirty) {
+                        stage5_trace_backedge_dirty_promotion(branch_pc, taken_pc,
+                                                              di, s, guest_reg);
                     }
+                    ctx->deferred_exits[di].snapshot[s].dirty = true;
                 }
             }
         }
@@ -3827,9 +3654,18 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
         }
         emit_exit_chained(ctx, fall_pc, ctx->exit_idx++);
 
-        // Taken path: direct jump back to loop body (no flush needed)
+        // Taken path: flush dirty registers and jump back to loop body.
+        // With LRU demand-driven allocation, the loop body code was emitted
+        // with the cache state at the back-edge target point. Any rc_read
+        // that was a HIT at translate time did NOT emit a memory load — it
+        // uses the host register directly. For this to be correct on re-entry,
+        // the host registers must match the back-edge-target cache state.
+        // rc_flush writes dirty values using END-OF-BLOCK slot assignments,
+        // which may differ from the back-edge-target assignments if slots
+        // were reassigned during the loop body (LRU eviction).
         size_t taken_offset = emit_offset(e);
         emit_patch_rel32(e, jcc_patch, taken_offset);
+        rc_flush(ctx);
         // Jump directly to the host offset of the back-edge target
         int32_t rel = (int32_t)backedge_host_offset - (int32_t)(emit_offset(e) + 5);
         emit_jmp_rel32(e, rel);
@@ -5172,7 +5008,7 @@ void translate_fp_r_type(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8
     if (ctx->reg_cache_enabled) {
         emit_ctx_t *ef = &ctx->emit;
         for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
-            if (!ctx->reg_alloc[i].allocated) continue;
+            if (ctx->reg_alloc[i].guest_reg < 0) continue;
             uint8_t greg = ctx->reg_alloc[i].guest_reg;
             emit_mov_m32_r32(ef, RBP, GUEST_REG_OFFSET(greg), reg_alloc_hosts[i]);
             ctx->reg_alloc[i].dirty = false;
@@ -5191,7 +5027,7 @@ void translate_fp_r_type(translate_ctx_t *ctx, uint8_t opcode, uint8_t rd, uint8
     // Reload reg cache from memory (helper may have modified any guest regs)
     if (ctx->reg_cache_enabled) {
         for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
-            if (!ctx->reg_alloc[i].allocated) continue;
+            if (ctx->reg_alloc[i].guest_reg < 0) continue;
             uint8_t greg = ctx->reg_alloc[i].guest_reg;
             emit_mov_r32_m32(e, reg_alloc_hosts[i], RBP, GUEST_REG_OFFSET(greg));
         }
@@ -5251,7 +5087,7 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
     bounds_elim_reset(ctx);
     if (ctx->reg_cache_enabled) {
         reg_alloc_prescan(ctx, cpu->pc);
-        reg_alloc_emit_prologue(ctx);
+        // No prologue — LRU demand-driven: registers loaded on first use
     }
 
     if (DBT_TRACE) {
@@ -5279,6 +5115,15 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
             flush_pending_write(ctx);
             const_prop_reset(ctx);
             bounds_elim_reset(ctx);
+            // LRU: flush dirty values THEN reset cache so all rc_reads in
+            // the loop body emit explicit memory loads. Two issues fixed:
+            // 1. Pre-loop code may have dirty cached values that must be
+            //    written to memory before the cache is cleared.
+            // 2. LRU eviction can reassign slots during the loop body, so
+            //    on back-edge re-entry, host registers may hold wrong guest
+            //    values for rc_read HITs that didn't emit a load instruction.
+            rc_flush(ctx);
+            reg_alloc_reset(ctx);
         }
 
         // Record guest PC → host offset for in-block back-edge optimization
@@ -5295,6 +5140,12 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
         if (DBT_TRACE) {
             fprintf(stderr, "  [%d] PC=0x%08X: raw=0x%08X op=0x%02X rd=%d rs1=%d rs2=%d imm=%d\n",
                     ctx->inst_count, ctx->guest_pc, raw, inst.opcode,
+                    inst.rd, inst.rs1, inst.rs2, inst.imm);
+        }
+
+        if (RC_TRACE) {
+            fprintf(stderr, "  [%d] PC=0x%08X: op=0x%02X rd=%d rs1=%d rs2=%d imm=%d\n",
+                    ctx->inst_count, ctx->guest_pc, inst.opcode,
                     inst.rd, inst.rs1, inst.rs2, inst.imm);
         }
 
@@ -6312,7 +6163,16 @@ static translated_block_t *try_emit_intrinsic(translate_ctx_t *ctx, uint32_t gue
         block->guest_pc = guest_pc;
         block->host_code = code_start;
 
+        bool saved_rc = ctx->reg_cache_enabled;
+        bool saved_pw = ctx->pending_write.valid;
+        bool saved_pc = ctx->pending_cond.valid;
+        ctx->reg_cache_enabled = false;
+        ctx->pending_write.valid = false;
+        ctx->pending_cond.valid = false;
         bool ok = emit_native_math_stub(ctx, block, math_fn, math_sig);
+        ctx->reg_cache_enabled = saved_rc;
+        ctx->pending_write.valid = saved_pw;
+        ctx->pending_cond.valid = saved_pc;
         if (!ok) return NULL;
 
         native_stub_count++;
@@ -6349,12 +6209,22 @@ static translated_block_t *try_emit_intrinsic(translate_ctx_t *ctx, uint32_t gue
     block->guest_pc = guest_pc;
     block->host_code = code_start;
 
+    bool saved_rc = ctx->reg_cache_enabled;
+    bool saved_pw = ctx->pending_write.valid;
+    bool saved_pc = ctx->pending_cond.valid;
+    ctx->reg_cache_enabled = false;
+    ctx->pending_write.valid = false;
+    ctx->pending_cond.valid = false;
+
     bool ok;
     if (emitter) {
         ok = emitter(ctx, block);
     } else {
         ok = emit_native_memcpy_stub(ctx, block, is_memmove);
     }
+    ctx->reg_cache_enabled = saved_rc;
+    ctx->pending_write.valid = saved_pw;
+    ctx->pending_cond.valid = saved_pc;
 
     if (!ok) return NULL;
 
@@ -6489,7 +6359,7 @@ retry_translate:
     // ================================================================
     if (ctx->reg_cache_enabled) {
         reg_alloc_prescan(ctx, guest_pc);
-        reg_alloc_emit_prologue(ctx);
+        // No prologue — LRU demand-driven: registers loaded on first use
     }
 
     if (DBT_TRACE) {
@@ -6515,6 +6385,15 @@ retry_translate:
             flush_pending_write(ctx);
             const_prop_reset(ctx);
             bounds_elim_reset(ctx);
+            // LRU: flush dirty values THEN reset cache so all rc_reads in
+            // the loop body emit explicit memory loads. Two issues fixed:
+            // 1. Pre-loop code may have dirty cached values that must be
+            //    written to memory before the cache is cleared.
+            // 2. LRU eviction can reassign slots during the loop body, so
+            //    on back-edge re-entry, host registers may hold wrong guest
+            //    values for rc_read HITs that didn't emit a load instruction.
+            rc_flush(ctx);
+            reg_alloc_reset(ctx);
         }
 
         // Record guest PC → host offset for in-block back-edge optimization
@@ -6531,6 +6410,12 @@ retry_translate:
         if (DBT_TRACE) {
             fprintf(stderr, "  [%d] PC=0x%08X: raw=0x%08X op=0x%02X rd=%d rs1=%d rs2=%d imm=%d\n",
                     ctx->inst_count, ctx->guest_pc, raw, inst.opcode,
+                    inst.rd, inst.rs1, inst.rs2, inst.imm);
+        }
+
+        if (RC_TRACE) {
+            fprintf(stderr, "  [%d] PC=0x%08X: op=0x%02X rd=%d rs1=%d rs2=%d imm=%d\n",
+                    ctx->inst_count, ctx->guest_pc, inst.opcode,
                     inst.rd, inst.rs1, inst.rs2, inst.imm);
         }
 
@@ -6798,6 +6683,20 @@ cached_block_done:
 
     // Commit code to cache
     cache_commit_code(cache, block->host_size);
+
+    // Optional diagnostic dump for first translated block.
+    if (block->guest_pc == 0 && block->host_size > 0 &&
+        getenv("SLOW32_DBT_DUMP_BLOCK0")) {
+        fprintf(stderr, "=== JIT DUMP: PC=0x%08X, host_size=%u ===\n",
+                block->guest_pc, block->host_size);
+        uint8_t *code = (uint8_t *)block->host_code;
+        for (uint32_t i = 0; i < block->host_size && i < 256; i++) {
+            fprintf(stderr, "%02X ", code[i]);
+            if ((i + 1) % 16 == 0) fprintf(stderr, "\n");
+        }
+        if (block->host_size % 16 != 0) fprintf(stderr, "\n");
+        fprintf(stderr, "=== END JIT DUMP ===\n");
+    }
 
     // Insert into cache
     cache_insert(cache, block);
