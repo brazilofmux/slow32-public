@@ -133,6 +133,7 @@ typedef struct {
         uint8_t rs1, rs2;     // Operands of the comparison
         bool rs2_is_imm;      // True if rs2 is an immediate (for SLTI, etc.)
         int32_t imm;          // Immediate value if rs2_is_imm is true
+        int inst_idx;         // Instruction index where compare was deferred
     } pending_cond;
 
     // Out-of-line side exit stubs (deferred to end of block)

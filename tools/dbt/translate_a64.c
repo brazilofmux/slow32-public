@@ -183,6 +183,9 @@ static const a64_reg_t reg_alloc_hosts[REG_ALLOC_SLOTS] = {
 
 static void reg_alloc_reset(translate_ctx_t *ctx) {
     memset(ctx->reg_alloc, 0, sizeof(ctx->reg_alloc));
+    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+        ctx->reg_alloc[i].guest_reg = -1;
+    }
     memset(ctx->reg_alloc_map, -1, sizeof(ctx->reg_alloc_map));
     ctx->reg_cache_hits = 0;
     ctx->reg_cache_misses = 0;
@@ -381,7 +384,6 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
             if (best < 0 || best_count == 0) break;
 
             ctx->reg_alloc[s].guest_reg = (uint8_t)best;
-            ctx->reg_alloc[s].allocated = true;
             ctx->reg_alloc[s].dirty = false;
             ctx->reg_alloc_map[best] = (int8_t)s;
             use_count[best] = 0;  // Remove from consideration
@@ -393,7 +395,7 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
 static void reg_alloc_emit_prologue(translate_ctx_t *ctx) {
     emit_ctx_t *e = &ctx->emit;
     for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
-        if (!ctx->reg_alloc[i].allocated) continue;
+        if (ctx->reg_alloc[i].guest_reg <= 0) continue;
         // LDR Wd, [X20, #offset]
         emit_ldr_w32_imm(e, reg_alloc_hosts[i], W20,
                          GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg));
@@ -593,7 +595,7 @@ static void reg_cache_flush(translate_ctx_t *ctx) {
     if (!ctx->reg_cache_enabled) return;
     emit_ctx_t *e = &ctx->emit;
     for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
-        if (!ctx->reg_alloc[i].allocated || !ctx->reg_alloc[i].dirty) continue;
+        if (ctx->reg_alloc[i].guest_reg <= 0 || !ctx->reg_alloc[i].dirty) continue;
         // STR Wd, [X20, #offset]
         emit_str_w32_imm(e, reg_alloc_hosts[i], W20,
                          GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg));
@@ -602,32 +604,19 @@ static void reg_cache_flush(translate_ctx_t *ctx) {
     }
 }
 
-// Flush using an allocation snapshot (for deferred side exits).
-static void reg_alloc_flush_snapshot(translate_ctx_t *ctx,
-                                      const bool *dirty_snapshot,
-                                      const bool *allocated_snapshot,
-                                      const uint8_t *guest_reg_snapshot) {
-    emit_ctx_t *e = &ctx->emit;
-    for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
-        if (!allocated_snapshot[i] || !dirty_snapshot[i]) continue;
-        emit_str_w32_imm(e, reg_alloc_hosts[i], W20,
-                         GUEST_REG_OFFSET(guest_reg_snapshot[i]));
-    }
-}
-
 // Flush and evict specific host registers being repurposed as scratch.
 static void flush_cached_host_regs(translate_ctx_t *ctx, a64_reg_t r1, a64_reg_t r2) {
     if (!ctx->reg_cache_enabled) return;
     emit_ctx_t *e = &ctx->emit;
     for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
-        if (!ctx->reg_alloc[i].allocated) continue;
+        if (ctx->reg_alloc[i].guest_reg <= 0) continue;
         if (reg_alloc_hosts[i] == r1 || reg_alloc_hosts[i] == r2) {
             if (ctx->reg_alloc[i].dirty) {
                 emit_str_w32_imm(e, reg_alloc_hosts[i], W20,
                                  GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg));
             }
             ctx->reg_alloc_map[ctx->reg_alloc[i].guest_reg] = -1;
-            ctx->reg_alloc[i].allocated = false;
+            ctx->reg_alloc[i].guest_reg = -1;
             ctx->reg_alloc[i].dirty = false;
         }
     }
@@ -995,10 +984,11 @@ static void emit_deferred_side_exits(translate_ctx_t *ctx) {
         }
 
         // Flush dirty cached regs from snapshot
-        reg_alloc_flush_snapshot(ctx,
-            ctx->deferred_exits[i].dirty_snapshot,
-            ctx->deferred_exits[i].allocated_snapshot,
-            ctx->deferred_exits[i].guest_reg_snapshot);
+        for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
+            int8_t g = ctx->deferred_exits[i].snapshot[s].guest_reg;
+            if (g <= 0 || !ctx->deferred_exits[i].snapshot[s].dirty) continue;
+            emit_str_w32_imm(e, reg_alloc_hosts[s], W20, GUEST_REG_OFFSET(g));
+        }
 
         // Record branch_pc for profiling
         int exit_idx = ctx->deferred_exits[i].exit_idx;
@@ -2316,9 +2306,9 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
             ctx->deferred_exits[de_idx].pending_write_valid = false;
 
             for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
-                ctx->deferred_exits[de_idx].dirty_snapshot[i] = ctx->reg_alloc[i].dirty;
-                ctx->deferred_exits[de_idx].allocated_snapshot[i] = ctx->reg_alloc[i].allocated;
-                ctx->deferred_exits[de_idx].guest_reg_snapshot[i] = ctx->reg_alloc[i].guest_reg;
+                ctx->deferred_exits[de_idx].snapshot[i].guest_reg = ctx->reg_alloc[i].guest_reg;
+                ctx->deferred_exits[de_idx].snapshot[i].dirty = ctx->reg_alloc[i].dirty;
+                ctx->deferred_exits[de_idx].snapshot[i].last_use = ctx->reg_alloc[i].last_use;
             }
 
             // Record side exit PC for profiling
