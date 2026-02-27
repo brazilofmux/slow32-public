@@ -13,6 +13,17 @@
 // Forward declaration
 typedef struct translated_block translated_block_t;
 
+// Compact direct-mapped lookup table entry (16 bytes, power-of-2 for shift-based indexing)
+typedef struct {
+    uint32_t guest_pc;    // 0 = empty
+    uint32_t _pad;
+    uint8_t *native_code;
+} compact_entry_t;
+_Static_assert(sizeof(compact_entry_t) == 16, "compact_entry_t must be 16 bytes");
+
+#define COMPACT_TABLE_SIZE  65536
+#define COMPACT_TABLE_MASK  (COMPACT_TABLE_SIZE - 1)
+
 // Block cache size (power of 2 for fast modulo)
 #define BLOCK_CACHE_SIZE 131072
 #define BLOCK_CACHE_MASK (BLOCK_CACHE_SIZE - 1)
@@ -78,6 +89,9 @@ struct block_cache {
     uint8_t *shared_branch_exit;    // mov [rbp+EXIT_REASON], EXIT_BRANCH; jmp native_dispatcher
     uint8_t *native_dispatcher;     // Native dispatch trampoline in code buffer
     uint32_t stubs_end;             // End of shared stubs in code buffer
+
+    // Compact direct-mapped lookup table (64K entries, 1MB)
+    compact_entry_t *compact_table;
 
     // Statistics
     uint64_t lookup_count;
@@ -225,6 +239,11 @@ static inline uint32_t cache_hash(uint32_t guest_pc) {
     // SLOW-32 instructions are 4-byte aligned
     // Shift out low 2 bits and fold higher bits to reduce collisions
     return ((guest_pc >> 2) ^ (guest_pc >> 12)) & BLOCK_CACHE_MASK;
+}
+
+// Compact table hash: simple shift+mask, direct-mapped (no collision resolution)
+static inline uint32_t compact_hash(uint32_t guest_pc) {
+    return (guest_pc >> 2) & COMPACT_TABLE_MASK;
 }
 
 #endif // DBT_BLOCK_CACHE_H

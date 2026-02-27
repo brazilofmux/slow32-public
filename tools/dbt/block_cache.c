@@ -45,11 +45,21 @@ bool cache_init(block_cache_t *cache) {
     cache->block_pool_size = MAX_BLOCKS;
     cache->block_pool_used = 0;
 
+    // Allocate compact direct-mapped lookup table (64K entries × 16 bytes = 1 MB)
+    cache->compact_table = calloc(COMPACT_TABLE_SIZE, sizeof(compact_entry_t));
+    if (!cache->compact_table) {
+        free(cache->block_pool);
+        cache->block_pool = NULL;
+        return false;
+    }
+
     // Allocate executable code buffer
     cache->code_buffer = mmap(NULL, CODE_BUFFER_SIZE,
                               PROT_READ | PROT_WRITE | PROT_EXEC,
                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (cache->code_buffer == MAP_FAILED) {
+        free(cache->compact_table);
+        cache->compact_table = NULL;
         free(cache->block_pool);
         cache->block_pool = NULL;
         return false;
@@ -86,7 +96,8 @@ bool cache_init(block_cache_t *cache) {
     }
 
     // Native dispatcher trampoline (AArch64):
-    // Uses X20=cpu, X22=lookup_table, scratch: W0-W5
+    // Uses X20=cpu, X22=compact_table (preserved), scratch: W0-W6
+    // Loads lookup_table from cpu_state into X6 (scratch)
     {
         uint32_t *p = (uint32_t *)(cache->code_buffer + cache->code_buffer_used);
         cache->native_dispatcher = (uint8_t *)p;
@@ -101,6 +112,10 @@ bool cache_init(block_cache_t *cache) {
         int n = 0;
         uint32_t pc_off = (uint32_t)CPU_PC_OFFSET;
         uint32_t mask_off = (uint32_t)CPU_LOOKUP_MASK_OFFSET;
+        uint32_t lt_off = (uint32_t)CPU_LOOKUP_TABLE_OFFSET;
+
+        // LDR X6, [X20, #lt_off]             ; X6 = cpu->lookup_table (scratch)
+        p[n++] = 0xF9400000 | (((lt_off / 8) & 0xFFF) << 10) | (20 << 5) | 6;
 
         // LDR W1, [X20, #pc_off]             ; W1 = cpu->pc
         p[n++] = 0xB9400000 | (((pc_off / 4) & 0xFFF) << 10) | (20 << 5) | 1;
@@ -126,11 +141,11 @@ bool cache_init(block_cache_t *cache) {
         // .probe:
         int probe_idx = n;
 
-        // LDR X3, [X22, W2, UXTW #3]        ; X3 = blocks[hash] (pointer, scaled by 8)
+        // LDR X3, [X6, W2, UXTW #3]         ; X3 = blocks[hash] (pointer, scaled by 8)
         // Load register (extended): LDR Xt, [Xn, Wm, UXTW #3]
         // 11 111 0 00 0 11 Rm 010 S 10 Rn Rt
         // option=010 (UXTW) at bits[15:13], S=1 at bit[12] for <<3 scaling
-        p[n++] = 0xF8605800 | (2 << 16) | (22 << 5) | 3;
+        p[n++] = 0xF8605800 | (2 << 16) | (6 << 5) | 3;
 
         // CBZ X3, .miss
         int cbz_miss_idx = n;
@@ -240,8 +255,9 @@ bool cache_init(block_cache_t *cache) {
     // On miss: ret to C dispatcher (execute_translated).
     //
     // Register usage (all free at any exit path):
-    //   RBP = &cpu (preserved), R14 = mem_base (preserved), R15 = lookup_table (preserved)
-    //   RAX, RCX, RDX, R8, R10 = scratch
+    //   RBP = &cpu (preserved), R14 = mem_base (preserved), R13 = compact_table (preserved)
+    //   R15 = scratch (loaded from cpu->lookup_table each time)
+    //   RAX, RCX, RDX, R8, R10, R11 = scratch
     {
         uint8_t *p = cache->code_buffer + cache->code_buffer_used;
         cache->native_dispatcher = p;
@@ -258,6 +274,13 @@ bool cache_init(block_cache_t *cache) {
 
         int32_t pc_off = (int32_t)CPU_PC_OFFSET;
         int32_t mask_off = (int32_t)CPU_LOOKUP_MASK_OFFSET;
+        int32_t lt_off = (int32_t)CPU_LOOKUP_TABLE_OFFSET;
+
+        // Load lookup_table base from cpu_state (R15 is now a reg cache slot)
+        // mov r15, [rbp + lookup_table_off] ; r15 = cpu->lookup_table (scratch)
+        *p++ = 0x4C; *p++ = 0x8B; *p++ = 0xBD;
+        *p++ = (lt_off >> 0) & 0xFF; *p++ = (lt_off >> 8) & 0xFF;
+        *p++ = (lt_off >> 16) & 0xFF; *p++ = (lt_off >> 24) & 0xFF;
 
         // mov ecx, [rbp + pc_off]          ; ecx = cpu->pc
         *p++ = 0x8B; *p++ = 0x8D;
@@ -376,6 +399,9 @@ void cache_destroy(block_cache_t *cache) {
     if (cache->block_pool) {
         free(cache->block_pool);
     }
+    if (cache->compact_table) {
+        free(cache->compact_table);
+    }
     memset(cache, 0, sizeof(*cache));
 }
 
@@ -387,6 +413,9 @@ void cache_flush(block_cache_t *cache) {
     // Reset block pool
     memset(cache->block_pool, 0, cache->block_pool_used * sizeof(translated_block_t));
     cache->block_pool_used = 0;
+
+    // Reset compact lookup table
+    memset(cache->compact_table, 0, COMPACT_TABLE_SIZE * sizeof(compact_entry_t));
 
     // Reset code buffer - keep dispatcher stub, shared_branch_exit, and native_dispatcher
     cache->code_buffer_used = cache->stubs_end;
@@ -474,6 +503,14 @@ void cache_insert(block_cache_t *cache, translated_block_t *block) {
         if (cache->blocks[idx] == NULL) {
             cache->blocks[idx] = block;
             cache->block_count++;
+
+            // Also populate compact direct-mapped table (last-writer-wins)
+            if (cache->compact_table && block->host_code) {
+                uint32_t cidx = compact_hash(block->guest_pc);
+                cache->compact_table[cidx].guest_pc = block->guest_pc;
+                cache->compact_table[cidx].native_code = block->host_code;
+            }
+
             return;
         }
         idx = (idx + 1) & BLOCK_CACHE_MASK;

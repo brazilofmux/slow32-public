@@ -4,7 +4,7 @@
 // AArch64 register convention:
 //   X20 = cpu_state pointer (callee-saved)
 //   X21 = mem_base pointer  (callee-saved)
-//   X22 = lookup_table pointer (callee-saved, Stage 3)
+//   X22 = compact_table pointer (callee-saved, Stage 3)
 //   W0  = primary scratch
 //   W1  = secondary scratch
 //   W2  = tertiary scratch
@@ -173,7 +173,7 @@ void translate_init_cached(translate_ctx_t *ctx, dbt_cpu_state_t *cpu, block_cac
 // ============================================================================
 
 // AArch64 callee-saved registers available for guest reg caching.
-// W20/W21/W22 are reserved for cpu_state/mem_base/lookup_table.
+// W20/W21/W22 are reserved for cpu_state/mem_base/compact_table.
 // W29 (FP) and W30 (LR) are preserved by ABI convention.
 static const a64_reg_t reg_alloc_hosts[REG_ALLOC_SLOTS] = {
     W19, W23, W24, W25, W26, W27, W28, A64_NOREG
@@ -865,7 +865,37 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
             ctx->block->exits[exit_idx].chained = true;
         }
     } else {
-        // Target not yet translated — jump to shared_branch_exit
+        // Target not yet translated — probe compact table first, then
+        // fall back to shared_branch_exit (patchable for later chaining).
+        uint32_t hash_offset = compact_hash(target_pc) << 4;
+
+        // Compute entry pointer: X2 = X22 + hash_offset
+        emit_mov_w32_imm32(e, W1, hash_offset);
+        emit_add_x64_x64_w32_uxtw(e, W2, W22, W1);    // X2 = &compact_table[hash]
+
+        // Compare entry.guest_pc with target_pc
+        emit_ldr_w32_imm(e, W4, W2, 0);                // W4 = entry.guest_pc
+        emit_mov_w32_imm32(e, W1, target_pc);
+        emit_cmp_w32_w32(e, W4, W1);                   // match?
+
+        // B.NE miss
+        size_t bne_miss = emit_offset(e);
+        emit_b_cond(e, COND_NE, 0);                    // patch later
+
+        // Hit: jump to native_code
+        emit_ldr_x64_imm(e, W4, W2, 8);                // X4 = entry.native_code
+        emit_br(e, W4);                                 // BR X4
+
+        // miss:
+        {
+            size_t here = emit_offset(e);
+            int32_t rel = (int32_t)(here - bne_miss);
+            uint32_t *inst = (uint32_t *)(e->buf + bne_miss);
+            int32_t imm19 = rel >> 2;
+            *inst = (*inst & ~(0x7FFFF << 5)) | ((imm19 & 0x7FFFF) << 5);
+        }
+
+        // Fall through to shared_branch_exit (patchable)
         uint8_t *patch_site = emit_ptr(e);
         int64_t rel = (int64_t)(ctx->cache->shared_branch_exit - patch_site);
         emit_b(e, (int32_t)rel);
@@ -980,74 +1010,55 @@ static void emit_deferred_side_exits(translate_ctx_t *ctx) {
 // After all probes: [MISS: flush + store PC + jump to native dispatcher]
 // ============================================================================
 
-#define INLINE_LOOKUP_MAX_PROBES 4
-
+// Compact direct-mapped lookup table probe (single probe, X22 = compact_table base)
 static void emit_inline_lookup(translate_ctx_t *ctx, a64_reg_t target_reg) {
     emit_ctx_t *e = &ctx->emit;
 
-    // Save target in W3 (preserved across probes)
+    reg_cache_flush(ctx);
+
+    // Save target in W3 (need it for comparison and fallback)
     if (target_reg != W3) {
         emit_mov_w32_w32(e, W3, target_reg);
     }
 
-    // Compute hash: ((target >> 2) ^ (target >> 12)) & mask
-    emit_lsr_w32_imm(e, W4, W3, 2);              // W4 = target >> 2
-    emit_eor_w32_lsr(e, W4, W4, W3, 12);         // W4 ^= (target >> 12)
-    emit_ldr_w32_imm(e, W5, W20, CPU_LOOKUP_MASK_OFFSET);  // W5 = mask
-    emit_and_w32(e, W4, W4, W5);                  // W4 = hash index
+    // Store target PC (needed by native_dispatcher on miss)
+    emit_str_w32_imm(e, W3, W20, CPU_PC_OFFSET);
 
-    // Track CBZ (null) patch locations — all patched to miss at end
-    size_t null_patches[INLINE_LOOKUP_MAX_PROBES];
-    int null_patch_count = 0;
-
-    for (int probe = 0; probe < INLINE_LOOKUP_MAX_PROBES; probe++) {
-        if (probe > 0) {
-            emit_add_w32_imm(e, W4, W4, 1);      // W4++
-            emit_and_w32(e, W4, W4, W5);          // W4 &= mask
-        }
-
-        // Load block pointer: X6 = lookup_table[hash] (8 bytes per entry)
-        emit_ldr_x64_reg_lsl3(e, W6, W22, W4);   // X6 = [X22 + X4<<3]
-
-        // Null check → miss
-        null_patches[null_patch_count++] = emit_offset(e);
-        emit_cbz_x64(e, W6, 0);                  // Patch later to miss
-
-        // Compare block->guest_pc vs target
-        emit_ldr_w32_imm(e, W7, W6, 0);          // W7 = block->guest_pc
-        emit_cmp_w32_w32(e, W7, W3);             // target match?
-
-        // B.NE → skip hit path to next probe (or miss for last)
-        size_t bne_patch = emit_offset(e);
-        emit_b_cond(e, COND_NE, 0);              // Patch after hit path
-
-        // HIT: flush cached regs, load host_code, jump to translated block
-        reg_cache_flush(ctx);
-        emit_ldr_x64_imm(e, W6, W6, 8);          // X6 = block->host_code
-        emit_br(e, W6);                           // BR X6 — exits block
-
-        // Patch B.NE to here (start of next probe, or miss for last)
-        {
-            size_t here = emit_offset(e);
-            int32_t rel = (int32_t)(here - bne_patch);
-            uint32_t *inst = (uint32_t *)(e->buf + bne_patch);
-            int32_t imm19 = rel >> 2;
-            *inst = (*inst & ~(0x7FFFF << 5)) | ((imm19 & 0x7FFFF) << 5);
-        }
+    // Compute hash: (target >> 2) & COMPACT_TABLE_MASK
+    emit_lsr_w32_imm(e, W1, W3, 2);                          // W1 = target >> 2
+    if (!emit_and_w32_imm(e, W1, W1, COMPACT_TABLE_MASK)) {  // W1 &= 0xFFFF
+        emit_mov_w32_imm32(e, W2, COMPACT_TABLE_MASK);
+        emit_and_w32(e, W1, W1, W2);
     }
 
-    // Miss path: patch all CBZ null branches here
-    size_t miss_offset = emit_offset(e);
-    for (int i = 0; i < null_patch_count; i++) {
-        int32_t rel = (int32_t)(miss_offset - null_patches[i]);
-        uint32_t *inst = (uint32_t *)(e->buf + null_patches[i]);
+    // W1 *= 16 (sizeof(compact_entry_t))
+    emit_lsl_w32_imm(e, W1, W1, 4);                          // W1 = hash * 16
+
+    // X2 = &compact_table[hash]
+    emit_add_x64_x64_w32_uxtw(e, W2, W22, W1);              // X2 = X22 + W1(UXTW)
+
+    // Compare entry.guest_pc with target
+    emit_ldr_w32_imm(e, W4, W2, 0);                          // W4 = entry.guest_pc
+    emit_cmp_w32_w32(e, W4, W3);                             // match?
+
+    // B.NE miss
+    size_t bne_miss = emit_offset(e);
+    emit_b_cond(e, COND_NE, 0);                              // patch later
+
+    // Hit: jump to native_code
+    emit_ldr_x64_imm(e, W4, W2, 8);                          // X4 = entry.native_code
+    emit_br(e, W4);                                           // BR X4
+
+    // miss:
+    {
+        size_t here = emit_offset(e);
+        int32_t rel = (int32_t)(here - bne_miss);
+        uint32_t *inst = (uint32_t *)(e->buf + bne_miss);
         int32_t imm19 = rel >> 2;
         *inst = (*inst & ~(0x7FFFF << 5)) | ((imm19 & 0x7FFFF) << 5);
     }
 
-    // Miss fallback: flush + store PC + jump to native dispatcher
-    reg_cache_flush(ctx);
-    emit_str_w32_imm(e, W3, W20, CPU_PC_OFFSET);
+    // Fallback: store exit reason + jump to native dispatcher
     emit_mov_w32_imm32(e, W1, EXIT_INDIRECT);
     emit_str_w32_imm(e, W1, W20, CPU_EXIT_REASON_OFFSET);
 

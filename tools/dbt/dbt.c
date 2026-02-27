@@ -1153,22 +1153,23 @@ bool dbt_load_s32x(dbt_cpu_state_t *cpu, const char *filename) {
 // ============================================================================
 
 // Assembly trampoline to call translated code
-// Sets up: rbp = &cpu, r14 = cpu->mem_base, r15 = cpu->lookup_table
+// Sets up: rbp = &cpu, r14 = cpu->mem_base, r13 = cpu->compact_table
 //
 // The translated code expects:
 //   rbp = pointer to dbt_cpu_state_t
 //   r14 = cpu->mem_base (guest memory base pointer)
-//   r15 = cpu->lookup_table (block cache base)
+//   r13 = cpu->compact_table (compact direct-mapped lookup table)
+//   r15 = reg cache slot (callee-saved, available for register caching)
 #ifdef __aarch64__
 __attribute__((noinline))
 static void execute_translated(dbt_cpu_state_t *cpu, translated_block_fn block) {
     uint8_t *mem_base = cpu->mem_base;
-    void *lookup_table = cpu->lookup_table;
+    void *compact_table = cpu->compact_table;
 
     // AArch64 trampoline:
     //   x20 = cpu_state pointer (callee-saved)
     //   x21 = mem_base pointer (callee-saved)
-    //   x22 = lookup_table pointer (callee-saved)
+    //   x22 = compact_table pointer (callee-saved)
     //
     // We capture the inputs into caller-saved registers (x0-x3) first,
     // then save callee-saved regs, then set up x20/x21/x22 from the
@@ -1177,7 +1178,7 @@ static void execute_translated(dbt_cpu_state_t *cpu, translated_block_fn block) 
     register uint64_t r_cpu     __asm__("x0") = (uint64_t)cpu;
     register uint64_t r_mem     __asm__("x1") = (uint64_t)mem_base;
     register uint64_t r_block   __asm__("x2") = (uint64_t)block;
-    register uint64_t r_lookup  __asm__("x3") = (uint64_t)lookup_table;
+    register uint64_t r_compact __asm__("x3") = (uint64_t)compact_table;
 
     __asm__ __volatile__(
         // Save callee-saved registers (x19-x28, fp, lr)
@@ -1191,7 +1192,7 @@ static void execute_translated(dbt_cpu_state_t *cpu, translated_block_fn block) 
         // Set up translated code register convention from x0-x3
         "mov x20, x0\n\t"       // x20 = cpu
         "mov x21, x1\n\t"       // x21 = mem_base
-        "mov x22, x3\n\t"       // x22 = lookup_table
+        "mov x22, x3\n\t"       // x22 = compact_table
 
         // Call translated block (address in x2)
         "blr x2\n\t"
@@ -1208,7 +1209,7 @@ static void execute_translated(dbt_cpu_state_t *cpu, translated_block_fn block) 
         : "r" (r_cpu),          // x0 = cpu
           "r" (r_mem),          // x1 = mem_base
           "r" (r_block),        // x2 = block
-          "r" (r_lookup)        // x3 = lookup_table
+          "r" (r_compact)       // x3 = compact_table
         : "x4", "x5", "x6", "x7",
           "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
           "x16", "x17", "x18",
@@ -1220,10 +1221,10 @@ __attribute__((noinline))
 static void execute_translated(dbt_cpu_state_t *cpu, translated_block_fn block) {
     // Get mem_base into a local before inline asm
     uint8_t *mem_base = cpu->mem_base;
-    void *lookup_table = cpu->lookup_table;
+    void *compact_table = cpu->compact_table;
 
     // Use specific registers for inputs to avoid conflicts
-    // rax = cpu, rcx = mem_base, rdx = block
+    // rax = cpu, rcx = mem_base, rdx = block, rsi = compact_table
     // These are caller-saved so we don't need to preserve them
     __asm__ __volatile__(
         // Save callee-saved registers that we'll clobber
@@ -1234,10 +1235,10 @@ static void execute_translated(dbt_cpu_state_t *cpu, translated_block_fn block) 
         "push %%r14\n\t"
         "push %%r15\n\t"
 
-        // Set up our calling convention (inputs are in rax, rcx, rdx)
+        // Set up our calling convention (inputs are in rax, rcx, rdx, rsi)
         "mov %%rax, %%rbp\n\t"   // rbp = cpu
         "mov %%rcx, %%r14\n\t"   // r14 = mem_base
-        "mov %%rsi, %%r15\n\t"   // r15 = lookup_table
+        "mov %%rsi, %%r13\n\t"   // r13 = compact_table
 
         // Call translated block (address in rdx)
         "call *%%rdx\n\t"
@@ -1251,10 +1252,10 @@ static void execute_translated(dbt_cpu_state_t *cpu, translated_block_fn block) 
         "pop %%rbp\n\t"
 
         : // No outputs
-        : "a" (cpu),          // rax = cpu
-          "c" (mem_base),     // rcx = mem_base
-          "d" (block),        // rdx = block
-          "S" (lookup_table)  // rsi = lookup_table
+        : "a" (cpu),           // rax = cpu
+          "c" (mem_base),      // rcx = mem_base
+          "d" (block),         // rdx = block
+          "S" (compact_table)  // rsi = compact_table
         : "rdi", "r8", "r9", "r10", "r11",
           "memory", "cc"
     );
@@ -2181,6 +2182,7 @@ int main(int argc, char **argv) {
         // Stage 3: Set up inline lookup table pointer in CPU state
         cpu.lookup_table = cache.blocks;
         cpu.lookup_mask = BLOCK_CACHE_MASK;
+        cpu.compact_table = cache.compact_table;
 
         // In paranoid mode, neuter the native dispatcher so it just RETs.
         // This forces every block exit to return to the C dispatch loop,
@@ -2274,6 +2276,7 @@ int main(int argc, char **argv) {
         }
         cpu.lookup_table = cache.blocks;
         cpu.lookup_mask = BLOCK_CACHE_MASK;
+        cpu.compact_table = cache.compact_table;
 
         if (verbose) {
             fprintf(stderr, "Two-pass profiling: pass 2 (profile-guided)\n");

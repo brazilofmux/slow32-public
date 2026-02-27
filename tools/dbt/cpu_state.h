@@ -109,6 +109,9 @@ typedef struct {
     uint32_t lookup_mask;       // BLOCK_CACHE_SIZE - 1
     uint32_t _pad3;
 
+    // Compact direct-mapped lookup table (for R13 on x86-64, X22 on AArch64)
+    void *compact_table;        // Pointer to compact_entry_t array
+
     // Stage 3 Phase 2: Return Address Stack (RAS)
     // Offset: 0xF0
     #define RAS_SIZE 32         // Power of 2 for easy masking
@@ -152,6 +155,7 @@ typedef struct {
 #define CPU_ALIGN_TRAPS_OFFSET  offsetof(dbt_cpu_state_t, align_traps_enabled)
 #define CPU_LOOKUP_TABLE_OFFSET offsetof(dbt_cpu_state_t, lookup_table)
 #define CPU_LOOKUP_MASK_OFFSET  offsetof(dbt_cpu_state_t, lookup_mask)
+#define CPU_COMPACT_TABLE_OFFSET offsetof(dbt_cpu_state_t, compact_table)
 #define CPU_RAS_STACK_OFFSET    offsetof(dbt_cpu_state_t, ras_stack)
 #define CPU_RAS_TOP_OFFSET      offsetof(dbt_cpu_state_t, ras_top)
 #define CPU_SIDE_EXIT_TAKEN_OFFSET offsetof(dbt_cpu_state_t, side_exit_taken)

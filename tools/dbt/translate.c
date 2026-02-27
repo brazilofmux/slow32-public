@@ -1081,7 +1081,7 @@ static bool stage5_try_emit_pilot(translate_ctx_t *ctx, uint32_t guest_pc) {
 // ============================================================================
 
 static const x64_reg_t reg_alloc_hosts[REG_ALLOC_SLOTS] = {
-    RBX, R12, R13, RSI, RDI, R11, R8, R9
+    RBX, R12, R15, RSI, RDI, R11, R8, R9
 };
 
 static void reg_alloc_reset(translate_ctx_t *ctx) {
@@ -3070,9 +3070,44 @@ static void emit_exit_chained(translate_ctx_t *ctx, uint32_t target_pc, int exit
                                    exit_idx, target_pc, -1);
         }
     } else {
-        // Target not yet translated - jump to shared_branch_exit stub
-        // (sets exit_reason and returns to dispatcher)
-        // This saves 10 bytes vs inlining the exit_reason store
+        // Target not yet translated - probe compact table first, then
+        // fall back to shared_branch_exit (patchable for later chaining).
+        // Once the target is translated and populates the compact table,
+        // the probe will hit and the chained JMP becomes dead code.
+
+        // Compact table probe (compile-time constant hash):
+        //   mov eax, HASH*16
+        //   lea rcx, [r13 + rax]    (R13 SIB mod=01 workaround)
+        //   cmp [rcx], target_pc
+        //   jne miss
+        //   jmp [rcx + 8]
+        // miss:
+        //   jmp shared_branch_exit  (patchable)
+        uint32_t hash_offset = compact_hash(target_pc) << 4;
+        emit_mov_r32_imm32(e, RAX, hash_offset);
+
+        // lea rcx, [r13 + rax + 0] — R13 needs mod=01 disp8=0
+        emit_byte(e, REX_BASE | REX_W | REX_B);   // REX.WB
+        emit_byte(e, 0x8D);                         // LEA
+        emit_byte(e, MODRM(MOD_DISP8, RCX, RSP));   // mod=01, reg=RCX, rm=SIB
+        emit_byte(e, SIB(0, RAX, R13 & 7));         // scale=1, index=RAX, base=R13
+        emit_byte(e, 0x00);                          // disp8=0
+
+        // cmp dword [rcx], target_pc  (81 39 imm32)
+        emit_byte(e, 0x81);
+        emit_byte(e, 0x39);
+        emit_dword(e, target_pc);
+
+        // jne miss (short jump over jmp [rcx+8])
+        emit_byte(e, 0x75);
+        emit_byte(e, 0x03);  // skip 3 bytes (jmp [rcx+8])
+
+        // jmp [rcx + 8]  (FF 61 08)
+        emit_byte(e, 0xFF);
+        emit_byte(e, 0x61);
+        emit_byte(e, 0x08);
+
+        // miss: jmp shared_branch_exit (patchable)
         patch_site = emit_ptr(e) + 1;
 
         int64_t rel = (int64_t)(ctx->cache->shared_branch_exit - (patch_site + 4));
@@ -3211,97 +3246,81 @@ static void emit_deferred_side_exits(translate_ctx_t *ctx) {
 }
 
 // ============================================================================
-// Stage 3: Inline indirect branch lookup
+// Stage 3: Inline indirect branch lookup (compact direct-mapped table)
 // ============================================================================
 
-#define INLINE_LOOKUP_MAX_PROBES 4
-
-static int inline_lookup_probe_count(void) {
-    return INLINE_LOOKUP_MAX_PROBES;
-}
-
-// Emit inline hash table lookup for indirect branches with bounded probing.
+// Emit compact table probe for indirect branches.
 // target_reg contains the guest PC to look up.
-// target_save is a scratch register that will hold the target for compares/fallback.
-static void emit_indirect_lookup_with_target(translate_ctx_t *ctx,
-                                             x64_reg_t target_reg,
-                                             x64_reg_t target_save) {
+// R13 = compact_table base (16-byte entries).
+// On hit: jumps directly to host code.
+// On miss: jumps to native_dispatcher for full linear-probe fallback.
+//
+// Code emitted (~30 bytes):
+//   mov [rbp+PC], target_reg        ; store target for fallback
+//   mov ecx, target_reg
+//   shr ecx, 2
+//   and ecx, COMPACT_TABLE_MASK
+//   shl rcx, 4                      ; rcx *= 16 (entry size)
+//   lea rdx, [r13 + rcx + 0]        ; rdx = &compact_table[hash]
+//   cmp [rdx], target_reg           ; match?
+//   jne miss
+//   jmp [rdx + 8]                   ; jump to native code
+// miss:
+//   jmp native_dispatcher
+//
+static void emit_compact_probe_indirect(translate_ctx_t *ctx,
+                                        x64_reg_t target_reg) {
     emit_ctx_t *e = &ctx->emit;
-    int probe_count = inline_lookup_probe_count();
-    size_t null_patches[INLINE_LOOKUP_MAX_PROBES];
-    size_t null_patch_count = 0;
-    size_t last_cmp_patch = 0;
-
-    // Save target to target_save (need it for comparison and fallback)
-    if (target_reg != target_save) {
-        emit_mov_r64_r64(e, target_save, target_reg);
-    }
-
-    // Compute hash: ((target >> 2) ^ (target >> 12)) & MASK
-    // Use RCX as a temp and reload mask to avoid clobbering target_save.
-    emit_mov_r32_r32(e, RDX, target_save);                   // rdx = target (32-bit)
-    emit_mov_r32_r32(e, RCX, RDX);                           // rcx = target (temp)
-    emit_shr_r32_imm8(e, RDX, 2);                            // rdx >>= 2
-    emit_shr_r32_imm8(e, RCX, 12);                           // rcx >>= 12
-    emit_xor_r32_r32(e, RDX, RCX);                           // rdx ^= rcx
-    emit_mov_r32_m32(e, RCX, RBP, CPU_LOOKUP_MASK_OFFSET);   // rcx = mask
-    emit_and_r32_r32(e, RDX, RCX);                           // rdx = hash
-
-    // r10d = hash index (probe cursor)
-    emit_mov_r32_r32(e, R10, RDX);
-
-    for (int probe = 0; probe < probe_count; probe++) {
-        if (probe > 0) {
-            emit_add_r32_imm32(e, R10, 1);
-            emit_and_r32_r32(e, R10, RCX);
-        }
-
-        // Load block pointer: blocks[idx] (R10 = index, each entry is 8 bytes)
-        emit_mov_r64_m64_sib(e, RDX, R15, R10, 8, 0);  // rdx = [r15 + r10*8]
-
-        // Check for NULL (miss)
-        emit_test_r64_r64(e, RDX, RDX);
-        null_patches[null_patch_count++] = emit_offset(e) + 2;
-        emit_jz_rel32(e, 0);
-
-        // Compare block->guest_pc with target
-        emit_cmp_m32_r32(e, RDX, 0, target_save);
-        size_t cmp_miss_patch = emit_offset(e) + 2;
-        emit_jne_rel32(e, 0);
-
-        reg_cache_flush(ctx);
-
-        // Hit! Jump to host code
-        emit_mov_r64_m64(e, RAX, RDX, 8);
-        emit_jmp_r64(e, RAX);
-
-        if (probe < probe_count - 1) {
-            size_t next_probe = emit_offset(e);
-            emit_patch_rel32(e, cmp_miss_patch, next_probe);
-        } else {
-            last_cmp_patch = cmp_miss_patch;
-        }
-    }
-
-    // miss_path: Fall back to dispatcher
-    size_t miss_path = emit_offset(e);
-    for (size_t i = 0; i < null_patch_count; i++) {
-        emit_patch_rel32(e, null_patches[i], miss_path);
-    }
-    if (last_cmp_patch != 0) {
-        emit_patch_rel32(e, last_cmp_patch, miss_path);
-    }
 
     reg_cache_flush(ctx);
 
-    // Store target PC
-    emit_mov_m32_r32(e, RBP, CPU_PC_OFFSET, target_save);
+    // Store target PC (needed by native_dispatcher on miss)
+    emit_mov_m32_r32(e, RBP, CPU_PC_OFFSET, target_reg);
+
+    // Compute hash: (target >> 2) & COMPACT_TABLE_MASK
+    if (target_reg != RCX) {
+        emit_mov_r32_r32(e, RCX, target_reg);
+    }
+    emit_shr_r32_imm8(e, RCX, 2);
+    emit_and_r32_imm32(e, RCX, COMPACT_TABLE_MASK);
+
+    // rcx *= 16 (shift left 4 to scale by sizeof(compact_entry_t))
+    // Use 64-bit shift so upper bits are clear
+    emit_byte(e, REX_BASE | REX_W);   // REX.W
+    emit_byte(e, 0xC1);               // shl r/m64, imm8
+    emit_byte(e, MODRM(MOD_DIRECT, 4, RCX));
+    emit_byte(e, 4);
+
+    // lea rdx, [r13 + rcx]
+    // R13 (low 3 bits = 101 = RBP) with mod=00 means [disp32], NOT [R13].
+    // Must use mod=01 with disp8=0 to encode [R13 + index].
+    emit_byte(e, REX_BASE | REX_W | REX_B);  // REX.WB (B for R13 base)
+    emit_byte(e, 0x8D);                       // LEA
+    emit_byte(e, MODRM(MOD_DISP8, RDX, RSP));  // mod=01, reg=RDX, rm=100 (SIB)
+    emit_byte(e, SIB(0, RCX, R13 & 7));         // scale=1, index=RCX, base=R13
+    emit_byte(e, 0x00);                          // disp8 = 0
+
+    // cmp [rdx], target_reg  (compare guest_pc at entry[0])
+    emit_cmp_m32_r32(e, RDX, 0, target_reg);
+
+    // jne miss
+    size_t miss_patch = emit_offset(e) + 2;
+    emit_jne_rel32(e, 0);
+
+    // Hit! jmp [rdx + 8]  (jump to native_code pointer at entry[8])
+    // FF 62 08 = jmp [rdx + 8]
+    emit_byte(e, 0xFF);
+    emit_byte(e, 0x62);
+    emit_byte(e, 0x08);
+
+    // miss:
+    size_t miss_target = emit_offset(e);
+    emit_patch_rel32(e, miss_patch, miss_target);
 
     // Store exit reason = EXIT_INDIRECT
     emit_mov_m32_imm32(e, RBP, CPU_EXIT_REASON_OFFSET, EXIT_INDIRECT);
 
     // Jump to native dispatcher for full linear-probe lookup
-    // (gives indirect branches a second chance beyond the 4-probe inline lookup)
     if (ctx->cache && ctx->cache->native_dispatcher) {
         uint8_t *dispatcher = ctx->cache->native_dispatcher;
         int32_t rel = (int32_t)(dispatcher - (emit_ptr(e) + 5));
@@ -3316,8 +3335,9 @@ static void emit_indirect_lookup_with_target(translate_ctx_t *ctx,
 // On hit: jumps directly to host code
 // On miss: falls back to dispatcher
 static void emit_indirect_lookup(translate_ctx_t *ctx, x64_reg_t target_reg) {
-    emit_indirect_lookup_with_target(ctx, target_reg, R8);
+    emit_compact_probe_indirect(ctx, target_reg);
 }
+
 
 // ============================================================================
 // Stage 3 Phase 2: Return Address Stack (RAS)
@@ -3351,8 +3371,8 @@ static void emit_ras_push(translate_ctx_t *ctx, uint32_t return_pc) {
 // Predict return address using RAS
 // Called at JALR r0, r31, 0 sites (return instruction)
 // target_reg contains the actual return address from r31
-// On RAS hit: jumps directly to the predicted block
-// On RAS miss: falls through to inline lookup (or dispatcher)
+// On RAS hit: jumps directly to the predicted block via compact table
+// On RAS miss: falls through to compact table lookup with actual target
 static void emit_ras_predict(translate_ctx_t *ctx, x64_reg_t target_reg) {
     emit_ctx_t *e = &ctx->emit;
 
@@ -3360,8 +3380,8 @@ static void emit_ras_predict(translate_ctx_t *ctx, x64_reg_t target_reg) {
     // 1. Decrement top with wrap: top = (top - 1) & RAS_MASK
     // 2. Load predicted_pc = ras_stack[top]
     // 3. Compare with actual target
-    // 4. If equal: do inline lookup for predicted_pc (should hit)
-    // 5. If not equal: do inline lookup for actual target
+    // 4. If equal: compact table probe with predicted_pc
+    // 5. If not equal: compact table probe with actual target
 
     // Save actual target to R8 (we need it if RAS misses)
     if (target_reg != R8) {
@@ -3382,20 +3402,15 @@ static void emit_ras_predict(translate_ctx_t *ctx, x64_reg_t target_reg) {
     size_t mismatch_patch = emit_offset(e) + 2;
     emit_jne_rel32(e, 0);  // -> mismatch (use actual target)
 
-    // 4. RAS hit! Use predicted_pc (already in RAX) for inline lookup
-    // Fall through to inline lookup with RAX as target
-
-    // Do inline lookup with RAX (predicted_pc)
-    // Save predicted PC to R9 for comparison/fallback.
-    emit_mov_r32_r32(e, R9, RAX);
-    emit_indirect_lookup_with_target(ctx, RAX, R9);
+    // 4. RAS hit! Use predicted_pc (already in RAX) for compact table probe
+    emit_compact_probe_indirect(ctx, RAX);
 
     // 5. RAS mismatch - use actual target (R8) instead
     size_t mismatch_path = emit_offset(e);
     emit_patch_rel32(e, mismatch_patch, mismatch_path);
 
-    // Fall through to inline lookup with actual target
-    emit_indirect_lookup(ctx, R8);
+    // Fall through to compact table probe with actual target
+    emit_compact_probe_indirect(ctx, R8);
 }
 
 void translate_jal(translate_ctx_t *ctx, uint8_t rd, int32_t imm) {

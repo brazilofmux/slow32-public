@@ -57,7 +57,7 @@ typedef struct stage5_cg_s {
 extern void dbt_fp_helper(dbt_cpu_state_t *cpu, uint32_t opcode, uint32_t rd, uint32_t rs1, uint32_t rs2);
 
 static const x64_reg_t ra_hosts[STAGE5_RA_HOST_SLOTS] = {
-    RBX, R12, R13, RSI, RDI, R11, R8, R9
+    RBX, R12, R15, RSI, RDI, R11, R8, R9
 };
 
 // ============================================================================
