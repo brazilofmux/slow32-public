@@ -97,6 +97,16 @@ typedef struct {
     int backedge_target_count;
     uint32_t loop_written_regs; // Bitmask of registers written within the detected loop
 
+    // Back-edge cache snapshot: captures reg_alloc state at back-edge target
+    // so we can detect if cache is "stable" (no evictions) across the loop body.
+    // Stable → zero-cost back-edge (no flush/reload), unstable → reconciliation stub.
+    struct {
+        int8_t guest_reg;
+        bool   dirty;
+    } backedge_snapshot[REG_ALLOC_SLOTS];
+    int8_t backedge_snapshot_map[32];
+    bool backedge_snapshot_valid;
+
     // Dead temporary elimination: pending write tracker (AArch64 only)
     struct {
         uint8_t guest_reg;    // Which guest register

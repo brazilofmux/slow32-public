@@ -3565,18 +3565,56 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
         }
         emit_exit_chained(ctx, fall_pc, ctx->exit_idx++);
 
-        // Taken path: flush dirty registers and jump back to loop body.
-        // With LRU demand-driven allocation, the loop body code was emitted
-        // with the cache state at the back-edge target point. Any rc_read
-        // that was a HIT at translate time did NOT emit a memory load — it
-        // uses the host register directly. For this to be correct on re-entry,
-        // the host registers must match the back-edge-target cache state.
-        // rc_flush writes dirty values using END-OF-BLOCK slot assignments,
-        // which may differ from the back-edge-target assignments if slots
-        // were reassigned during the loop body (LRU eviction).
+        // Taken path: jump back to loop body.
+        // Check if cache is "stable" — same slot assignments as at the
+        // back-edge target. If stable, host regs already hold correct values
+        // from the previous iteration, so we can skip the flush entirely.
         size_t taken_offset = emit_offset(e);
         emit_patch_rel32(e, jcc_patch, taken_offset);
-        rc_flush(ctx);
+
+        // Classify cache stability:
+        // - "stable": all snapshot-occupied slots still have the same guest reg
+        //   (new allocations in previously-free slots are fine)
+        // - "unstable": some occupied slot was reassigned or evicted (need
+        //   full reconciliation to restore snapshot state)
+        bool cache_stable = ctx->backedge_snapshot_valid;
+        if (cache_stable) {
+            for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+                if (ctx->backedge_snapshot[i].guest_reg >= 0 &&
+                    ctx->backedge_snapshot[i].guest_reg !=
+                    ctx->reg_alloc[i].guest_reg) {
+                    cache_stable = false;
+                    break;
+                }
+            }
+        }
+
+        if (cache_stable) {
+            // Flush only dirty NEW slots (FREE in snapshot, OCCUPIED+DIRTY now).
+            // These guest regs had rc_read MISSes in the loop body, which emitted
+            // memory loads — the loads need up-to-date memory on re-entry.
+            for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+                if (ctx->backedge_snapshot[i].guest_reg < 0 &&
+                    ctx->reg_alloc[i].guest_reg >= 0 &&
+                    ctx->reg_alloc[i].dirty) {
+                    emit_mov_m32_r32(e, RBP,
+                        GUEST_REG_OFFSET(ctx->reg_alloc[i].guest_reg),
+                        reg_alloc_hosts[i]);
+                }
+            }
+        } else {
+            // Unstable: evictions changed slot assignments. Emit
+            // reconciliation: flush dirty to memory, reload snapshot
+            // state so host regs match what the target code expects.
+            rc_flush(ctx);
+            for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+                if (ctx->backedge_snapshot[i].guest_reg >= 0) {
+                    emit_mov_r32_m32(&ctx->emit, reg_alloc_hosts[i], RBP,
+                        GUEST_REG_OFFSET(ctx->backedge_snapshot[i].guest_reg));
+                }
+            }
+        }
+
         // Jump directly to the host offset of the back-edge target
         int32_t rel = (int32_t)backedge_host_offset - (int32_t)(emit_offset(e) + 5);
         emit_jmp_rel32(e, rel);
@@ -4991,6 +5029,7 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
     ctx->has_backedge = false;
     ctx->backedge_target_pc = 0;
     ctx->backedge_target_count = 0;
+    ctx->backedge_snapshot_valid = false;
     memset(ctx->side_exit_pcs, 0, sizeof(ctx->side_exit_pcs));
     memset(ctx->dead_temp_skip, 0, sizeof(ctx->dead_temp_skip));
     reg_alloc_reset(ctx);
@@ -5019,22 +5058,29 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
             goto block_done;
         }
 
-        // Flush pending writes before back-edge target to prevent stale
-        // RAX stores from re-executing with wrong values on loop iterations.
-        // Also invalidate all constants since values may change across iterations.
+        // Back-edge target: snapshot cache state for zero-cost loop optimization.
+        // With LRU, we DON'T flush/reset here. Instead, pre-loop cache state
+        // flows into the loop body (rc_reads that hit → no load emitted).
+        // At the back-edge jump, if cache is stable (no evictions in loop body),
+        // we skip flush entirely — host regs already hold correct values.
         if (is_backedge_target(ctx, ctx->guest_pc)) {
             flush_pending_write(ctx);
             const_prop_reset(ctx);
             bounds_elim_reset(ctx);
-            // LRU: flush dirty values THEN reset cache so all rc_reads in
-            // the loop body emit explicit memory loads. Two issues fixed:
-            // 1. Pre-loop code may have dirty cached values that must be
-            //    written to memory before the cache is cleared.
-            // 2. LRU eviction can reassign slots during the loop body, so
-            //    on back-edge re-entry, host registers may hold wrong guest
-            //    values for rc_read HITs that didn't emit a load instruction.
-            rc_flush(ctx);
-            reg_alloc_reset(ctx);
+            if (ctx->reg_cache_enabled) {
+                // Snapshot current cache state for back-edge stability check
+                for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+                    ctx->backedge_snapshot[i].guest_reg = ctx->reg_alloc[i].guest_reg;
+                    ctx->backedge_snapshot[i].dirty = ctx->reg_alloc[i].dirty;
+                }
+                memcpy(ctx->backedge_snapshot_map, ctx->reg_alloc_map,
+                       sizeof(ctx->backedge_snapshot_map));
+                ctx->backedge_snapshot_valid = true;
+                // DON'T flush or reset — cache persists into loop body
+            } else {
+                rc_flush(ctx);
+                reg_alloc_reset(ctx);
+            }
         }
 
         // Record guest PC → host offset for in-block back-edge optimization
@@ -6228,6 +6274,7 @@ retry_translate:
     ctx->has_backedge = false;
     ctx->backedge_target_pc = 0;
     ctx->backedge_target_count = 0;
+    ctx->backedge_snapshot_valid = false;
     memset(ctx->side_exit_pcs, 0, sizeof(ctx->side_exit_pcs));
     memset(ctx->dead_temp_skip, 0, sizeof(ctx->dead_temp_skip));
     reg_alloc_reset(ctx);
@@ -6289,22 +6336,23 @@ retry_translate:
             goto cached_block_done;
         }
 
-        // Flush pending writes before back-edge target to prevent stale
-        // RAX stores from re-executing with wrong values on loop iterations.
-        // Also invalidate all constants since values may change across iterations.
+        // Back-edge target: same zero-cost loop optimization as main loop
         if (is_backedge_target(ctx, ctx->guest_pc)) {
             flush_pending_write(ctx);
             const_prop_reset(ctx);
             bounds_elim_reset(ctx);
-            // LRU: flush dirty values THEN reset cache so all rc_reads in
-            // the loop body emit explicit memory loads. Two issues fixed:
-            // 1. Pre-loop code may have dirty cached values that must be
-            //    written to memory before the cache is cleared.
-            // 2. LRU eviction can reassign slots during the loop body, so
-            //    on back-edge re-entry, host registers may hold wrong guest
-            //    values for rc_read HITs that didn't emit a load instruction.
-            rc_flush(ctx);
-            reg_alloc_reset(ctx);
+            if (ctx->reg_cache_enabled) {
+                for (int i = 0; i < REG_ALLOC_SLOTS; i++) {
+                    ctx->backedge_snapshot[i].guest_reg = ctx->reg_alloc[i].guest_reg;
+                    ctx->backedge_snapshot[i].dirty = ctx->reg_alloc[i].dirty;
+                }
+                memcpy(ctx->backedge_snapshot_map, ctx->reg_alloc_map,
+                       sizeof(ctx->backedge_snapshot_map));
+                ctx->backedge_snapshot_valid = true;
+            } else {
+                rc_flush(ctx);
+                reg_alloc_reset(ctx);
+            }
         }
 
         // Record guest PC → host offset for in-block back-edge optimization
