@@ -1,13 +1,60 @@
 
 #include "SLOW32AsmPrinter.h"
+#include "SLOW32.h"
 #include "SLOW32MCInstLowering.h"
 #include "MCTargetDesc/SLOW32InstPrinter.h"
+#include "MCTargetDesc/SLOW32MCExpr.h"
 #include "TargetInfo/SLOW32TargetInfo.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
+#include "llvm/MC/MCExpr.h"
+#include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/Support/Debug.h"
 using namespace llvm;
+
+// Expand PseudoLongBR into LUI+ADDI+JALR sequence for the standalone assembler.
+// BranchRelaxation emits this pseudo for conditional branches that are out of
+// range: it inverts the condition into a short branch over a new block that
+// contains this unconditional long jump.
+static void emitPseudoLongBR(const MachineInstr *MI, AsmPrinter &AP) {
+  Register Scratch = MI->getOperand(0).getReg();
+  MCSymbol *TargetSym = MI->getOperand(1).getMBB()->getSymbol();
+  const MCExpr *TargetExpr =
+      MCSymbolRefExpr::create(TargetSym, AP.OutContext);
+
+  // lui scratch, %hi(target)
+  const MCExpr *HiExpr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_HI,
+                                               TargetExpr, AP.OutContext);
+  MCInst LUI;
+  LUI.setOpcode(SLOW32::LUI);
+  LUI.addOperand(MCOperand::createReg(Scratch));
+  LUI.addOperand(MCOperand::createExpr(HiExpr));
+  AP.OutStreamer->emitInstruction(LUI, AP.getSubtargetInfo());
+
+  // addi scratch, scratch, %lo(target)
+  const MCExpr *LoExpr = SLOW32MCExpr::create(SLOW32MCExpr::VK_SLOW32_LO,
+                                               TargetExpr, AP.OutContext);
+  MCInst ADDI;
+  ADDI.setOpcode(SLOW32::ADDI);
+  ADDI.addOperand(MCOperand::createReg(Scratch));
+  ADDI.addOperand(MCOperand::createReg(Scratch));
+  ADDI.addOperand(MCOperand::createExpr(LoExpr));
+  AP.OutStreamer->emitInstruction(ADDI, AP.getSubtargetInfo());
+
+  // jalr r0, scratch, 0
+  MCInst JALR;
+  JALR.setOpcode(SLOW32::JALR);
+  JALR.addOperand(MCOperand::createReg(SLOW32::R0));
+  JALR.addOperand(MCOperand::createReg(Scratch));
+  AP.OutStreamer->emitInstruction(JALR, AP.getSubtargetInfo());
+}
+
 void SLOW32AsmPrinter::emitInstruction(const MachineInstr *MI) {
+  if (MI->getOpcode() == SLOW32::PseudoLongBR) {
+    emitPseudoLongBR(MI, *this);
+    return;
+  }
+
   MCInstLowering Lower(*this);
   MCInst Inst;
   Lower.lower(MI, Inst);

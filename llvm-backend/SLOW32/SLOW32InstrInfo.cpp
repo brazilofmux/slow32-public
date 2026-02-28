@@ -629,7 +629,11 @@ bool SLOW32InstrInfo::isBranchOffsetInRange(unsigned BranchOpc,
   case SLOW32::BGEU:
   case SLOW32::BGTU:
   case SLOW32::BLEU:
-    return isInt<13>(Offset) && IsEven(Offset);
+    // Conditional branches are PC+4 relative: the hardware offset is
+    // (target - branch_addr - 4), but BranchRelaxation passes
+    // (target - branch_addr).  Subtract the instruction size so the
+    // range check matches what the assembler will actually encode.
+    return isInt<13>(Offset - 4) && IsEven(Offset);
   case SLOW32::BR:
   case SLOW32::JAL:
   case SLOW32::JAL_CALL:
