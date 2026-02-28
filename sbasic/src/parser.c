@@ -2328,17 +2328,16 @@ static stmt_t *parse_stmt(parser_t *p) {
         case TOK_RETURN: {
             lexer_next(&p->lex);
             /* RETURN [label | linenumber] */
-            const char *rlabel = NULL;
-            char rlbuf[64];
+            char rlbuf[64] = "";
             if (lexer_check(&p->lex, TOK_IDENT) || lexer_check(&p->lex, TOK_NAME)) {
                 token_t lt = lexer_next(&p->lex);
-                rlabel = lt.text;
+                strncpy(rlbuf, lt.text, 63);
+                rlbuf[63] = '\0';
             } else if (lexer_check(&p->lex, TOK_INTEGER_LIT)) {
                 token_t lt = lexer_next(&p->lex);
                 snprintf(rlbuf, sizeof(rlbuf), "%s", lt.text);
-                rlabel = rlbuf;
             }
-            return stmt_return(rlabel, tok->line);
+            return stmt_return(rlbuf[0] ? rlbuf : NULL, tok->line);
         }
 
         case TOK_LET: {
