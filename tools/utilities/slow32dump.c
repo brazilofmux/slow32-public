@@ -44,6 +44,7 @@ static const char *section_type_name(uint32_t type) {
         case S32_SEC_SYMTAB:       return "SYMTAB";
         case S32_SEC_STRTAB:       return "STRTAB";
         case S32_SEC_EH_FRAME:     return "EH_FRAME";
+        case S32_SEC_EH_FRAME_HDR: return "EH_FRAME_HDR";
         case S32_SEC_EXCEPT_TABLE: return "EXCEPT_TBL";
         default:                   return "UNKNOWN";
     }
@@ -187,12 +188,12 @@ static bool dump_s32o(const char *filename, FILE *f, long file_size, options_t *
 
     if (opts->show_sections) {
         printf("\nSections:\n");
-        printf("Idx Name              Type     Size     Offset   Align  Relocs  Flags\n");
-        printf("--- ----------------- -------- -------- -------- ------ ------- -------\n");
+        printf("Idx Name              Type         Size     Offset   Align  Relocs  Flags\n");
+        printf("--- ----------------- ------------ -------- -------- ------ ------- -------\n");
         for (uint32_t i = 0; i < header.nsections; i++) {
             s32o_section_t *sec = &sections[i];
             const char *name = (sec->name_offset < header.str_size) ? &strtab[sec->name_offset] : "<invalid>";
-            printf("%3d %-17s %-8s %8d %08X %6d %7d ",
+            printf("%3d %-17s %-12s %8d %08X %6d %7d ",
                    i, name, section_type_name(sec->type),
                    sec->size, sec->offset, sec->align, sec->nrelocs);
             if (sec->flags & S32_SEC_FLAG_EXEC) printf("X");
@@ -350,8 +351,8 @@ static bool dump_s32x(const char *filename, FILE *f, long file_size, options_t *
 
     if (opts->show_sections) {
         printf("\nSections:\n");
-        printf("Name              Type     VAddr      Size     Offset   Flags\n");
-        printf("----------------- -------- ---------- -------- -------- -----\n");
+        printf("Name              Type         VAddr      Size     Offset   Flags\n");
+        printf("----------------- ------------ ---------- -------- -------- -----\n");
         fseek(f, header.sec_offset, SEEK_SET);
         for (uint32_t i = 0; i < header.nsections; i++) {
             s32x_section_t section;
@@ -360,7 +361,7 @@ static bool dump_s32x(const char *filename, FILE *f, long file_size, options_t *
                 break;
             }
             const char *name = (section.name_offset < header.str_size) ? &strtab[section.name_offset] : "<invalid>";
-            printf("%-17s %-8s 0x%08X %8d %08X ",
+            printf("%-17s %-12s 0x%08X %8d %08X ",
                    name, section_type_name(section.type),
                    section.vaddr, section.mem_size, section.offset);
             if (section.flags & S32_SEC_FLAG_EXEC) printf("X");
