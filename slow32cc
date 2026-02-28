@@ -18,6 +18,11 @@ VERBOSE=0
 EMIT_ASM=0
 EMIT_LLVM=0
 LIBC_VARIANT="${LIBC:-debug}"
+LINKER_DATA_SIZE=""
+LINKER_HEAP_SIZE=""
+LINKER_STACK_SIZE=""
+LINKER_PASSTHROUGH=()
+
 
 # Colors for output
 RED='\033[0;31m'
@@ -41,6 +46,12 @@ Options:
     -v, --verbose   Verbose output
     -h, --help      Show this help message
     --version       Show version information
+
+Linker memory options (suffixes: K, M):
+    --data-size <n>  Max data+bss segment size [default: 1M]
+    --heap-size <n>  Heap space size [default: 1M]
+    --stack-size <n> Stack size [default: 64K]
+    -Wl,<args>       Pass comma-separated args to linker
 
 Examples:
     $0 hello.c -o hello.bin           # Basic compilation
@@ -110,6 +121,23 @@ while [[ $# -gt 0 ]]; do
         --version)
             echo "slow32cc version $VERSION"
             exit 0
+            ;;
+        --data-size)
+            LINKER_DATA_SIZE="$2"
+            shift 2
+            ;;
+        --heap-size)
+            LINKER_HEAP_SIZE="$2"
+            shift 2
+            ;;
+        --stack-size)
+            LINKER_STACK_SIZE="$2"
+            shift 2
+            ;;
+        -Wl,*)
+            IFS=',' read -ra WL_ARGS <<< "${1#-Wl,}"
+            LINKER_PASSTHROUGH+=("${WL_ARGS[@]}")
+            shift
             ;;
         -*)
             error "Unknown option: $1"
@@ -266,6 +294,12 @@ case "$LIBC_VARIANT" in
         error "Unsupported libc variant: $LIBC_VARIANT"
         ;;
 esac
+
+# Add memory size options
+[ -n "$LINKER_DATA_SIZE" ] && LINKER_EXTRA_ARGS+=(--data-size "$LINKER_DATA_SIZE")
+[ -n "$LINKER_HEAP_SIZE" ] && LINKER_EXTRA_ARGS+=(--heap-size "$LINKER_HEAP_SIZE")
+[ -n "$LINKER_STACK_SIZE" ] && LINKER_EXTRA_ARGS+=(--stack-size "$LINKER_STACK_SIZE")
+[ ${#LINKER_PASSTHROUGH[@]} -gt 0 ] && LINKER_EXTRA_ARGS+=("${LINKER_PASSTHROUGH[@]}")
 
 for dep in "$CRT0" "$LIBC_ARCHIVE" "$LIBS32"; do
     if [ ! -f "$dep" ]; then
