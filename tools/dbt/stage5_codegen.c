@@ -276,6 +276,31 @@ static bool cg_emit_self_loop_branch(stage5_cg_t *cg, const lir_node_t *l,
     // Bail if too many shuffles (diminishing returns vs flush+reload)
     if (shuffle_count > 6) return false;
 
+    // Bail if the loop body uses more distinct guest registers than we have
+    // host slots.  When this happens, the RA evicts and repurposes slots
+    // mid-block, and the shuffle plan cannot reliably reconstruct the entry
+    // mapping from the diverged end-of-block state.  (Ported from RV32IM fix.)
+    {
+        bool gpr_used[32] = {false};
+        // Entry-mapped GPRs
+        for (int s = 0; s < STAGE5_RA_HOST_SLOTS; s++) {
+            int8_t g = cg->entry_gpr_for_slot[s];
+            if (g > 0) gpr_used[g] = true;
+        }
+        // Block-defined GPRs (includes those evicted from slots and spilled)
+        for (uint16_t i = 0; i < cg->lir->node_count; i++) {
+            uint16_t v = cg->lir->nodes[i].dst_v;
+            if (v != 0) {
+                uint8_t g = cg->ssa->value_to_reg[v];
+                if (g != 0) gpr_used[g] = true;
+            }
+        }
+        int nused = 0;
+        for (int r = 1; r < 32; r++)
+            if (gpr_used[r]) nused++;
+        if (nused > STAGE5_RA_HOST_SLOTS) return false;
+    }
+
     static bool s5_trace = false;
     static int s5_trace_init = 0;
     if (!s5_trace_init) { s5_trace = getenv("S5_TRACE") != NULL; s5_trace_init = 1; }
