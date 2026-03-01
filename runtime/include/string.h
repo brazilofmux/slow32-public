@@ -23,6 +23,7 @@ size_t strnlen(const char *s, size_t maxlen);
 int strcasecmp(const char *s1, const char *s2);
 int strncasecmp(const char *s1, const char *s2, size_t n);
 int strcoll(const char *s1, const char *s2);
+char *strcasestr(const char *haystack, const char *needle);
 char *strerror(int errnum);
 
 void *memcpy(void *dest, const void *src, size_t n);
