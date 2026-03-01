@@ -3192,14 +3192,25 @@ void translate_jalr(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
     flush_cached_host_regs(ctx, R8, R9);
 
     // Store return address if rd != 0
-    // Do this BEFORE we potentially clobber RAX with lookup code
+    // Do this BEFORE we potentially clobber RAX with lookup code.
+    // IMPORTANT: Store directly to memory, NOT through the register cache.
+    // rc_write() can re-allocate the just-evicted R8 slot for rd, emitting
+    // MOV R8, RAX which clobbers the saved target.  JALR always ends the
+    // block, so caching rd provides no benefit.
     if (rd != 0) {
         // Save target temporarily
         emit_mov_r64_r64(e, R8, RAX);
-        emit_mov_r32_imm32(e, RAX, return_pc);
-        emit_store_guest_reg(ctx, rd, RAX);
-        // Flush any deferred write before restoring target into RAX
-    
+        // Write return address directly to guest register memory
+        emit_mov_m32_imm32(e, RBP, GUEST_REG_OFFSET(rd), return_pc);
+        // Invalidate any stale cache entry for rd
+        if (ctx->reg_cache_enabled) {
+            int slot = rc_find(ctx, rd);
+            if (slot >= 0) {
+                ctx->reg_alloc_map[rd] = -1;
+                ctx->reg_alloc[slot].guest_reg = -1;
+                ctx->reg_alloc[slot].dirty = false;
+            }
+        }
         // Restore target
         emit_mov_r64_r64(e, RAX, R8);
     }
