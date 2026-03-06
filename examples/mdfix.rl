@@ -15,6 +15,7 @@
  *              [--serial-comma-lint] [--chicago-abbrev] [--chicago-number-lint]
  *              [--canonical] [--canonical-lint] [--footnote-canonical]
  *              [--heading-canonical] [--fence-canonical] [--pandoc-safe-links]
+ *              [--spaced-emdash] [--wrap[=N]] [--technical]
  *              input.md [output.md]
  *   -i  Edit in-place (creates .bak backup)
  *   -n  Dry run — report what would change, touch nothing
@@ -149,6 +150,8 @@ static int  opt_heading_canonical = 0;
 static int  opt_fence_canonical = 0;
 static int  opt_pandoc_safe_links = 0;
 static int  opt_scrivener_repair = 0;
+static int  opt_spaced_emdash = 0;
+static int  opt_wrap_width = 0;       /* 0 = disabled */
 
 static int  serial_comma_warnings = 0;
 static int  number_style_warnings = 0;
@@ -173,6 +176,14 @@ static void enable_canonical_profile(void)
     opt_footnote_canonical = 1;
     opt_heading_canonical = 1;
     opt_fence_canonical = 1;
+}
+
+static void enable_technical_profile(void)
+{
+    enable_canonical_profile();
+    opt_spaced_emdash = 1;
+    if (opt_wrap_width == 0)
+        opt_wrap_width = 78;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -263,6 +274,64 @@ static enum linetype classify(const char *line)
 static int is_list_type(enum linetype t)
 {
     return t == LT_BULLET || t == LT_ORDERED;
+}
+
+/*
+ * Detect list-item continuation lines: LT_TEXT lines indented by 2+ spaces,
+ * appearing after a bullet or ordered list item.  These are part of the
+ * list and should not trigger blank-line-after-list insertion.
+ */
+static int is_list_continuation(const char *line)
+{
+    return (line[0] == ' ' && line[1] == ' ');
+}
+
+static int is_table_line(const char *line)
+{
+    const char *p = line;
+    while (*p == ' ' || *p == '\t')
+        p++;
+    return *p == '|';
+}
+
+static int is_blockquote_line(const char *line)
+{
+    const char *p = line;
+    while (*p == ' ' || *p == '\t')
+        p++;
+    return *p == '>';
+}
+
+static int is_thematic_break(const char *line)
+{
+    const char *p = line;
+    while (*p == ' ' || *p == '\t')
+        p++;
+    char c = *p;
+    if (c != '-' && c != '*' && c != '_')
+        return 0;
+    int count = 0;
+    while (*p) {
+        if (*p == c)
+            count++;
+        else if (*p != ' ' && *p != '\t')
+            return 0;
+        p++;
+    }
+    return count >= 3;
+}
+
+static int is_wrappable(const char *line, enum linetype type)
+{
+    if (type != LT_TEXT)
+        return 0;
+    if (is_table_line(line))
+        return 0;
+    if (is_blockquote_line(line))
+        return 0;
+    if (is_thematic_break(line))
+        return 0;
+    return 1;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -582,8 +651,6 @@ static int fix_fence_canonical(char *line, int linenum, int is_opening)
     if (bi < MAX_LINE - 1) buf[bi++] = c;
 
     if (is_opening && line[j] != '\0') {
-        if (bi < MAX_LINE - 1)
-            buf[bi++] = ' ';
         while (line[j] != '\0' && bi < MAX_LINE - 1)
             buf[bi++] = line[j++];
         while (bi > 0 && buf[bi - 1] == ' ')
@@ -1126,6 +1193,107 @@ static int fix_trailing_ws(char *line, int linenum)
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+ * Paragraph wrapping
+ * ═══════════════════════════════════════════════════════════════════ */
+
+#define MAX_PARA (MAX_LINE * 50)
+
+static const char *para_lines_buf[MAX_LINES];
+static int npara = 0;
+
+static void emit_wrapped(FILE *out, const char *text, int width)
+{
+    int len = (int)strlen(text);
+    int pos = 0;
+
+    while (pos < len) {
+        if (len - pos <= width) {
+            fprintf(out, "%s\n", text + pos);
+            return;
+        }
+
+        /* Find last space at or before pos + width */
+        int break_at = -1;
+        for (int i = pos; i <= pos + width && i < len; i++) {
+            if (text[i] == ' ')
+                break_at = i;
+        }
+
+        if (break_at <= pos) {
+            /* No space within width — find next space (long word) */
+            break_at = pos + width;
+            while (break_at < len && text[break_at] != ' ')
+                break_at++;
+        }
+
+        fwrite(text + pos, 1, break_at - pos, out);
+        fputc('\n', out);
+        pos = break_at;
+        while (pos < len && text[pos] == ' ')
+            pos++;
+    }
+}
+
+/*
+ * Should line i be joined to line i+1?  Only if the current line looks
+ * like it was hard-wrapped (long enough to be near the target width).
+ * Short lines signal an intentional paragraph/stanza break.
+ */
+static int should_join(const char *line, int wrap_width)
+{
+    int len = (int)strlen(line);
+    /* Trim trailing whitespace for length check */
+    while (len > 0 && (line[len - 1] == ' ' || line[len - 1] == '\t'))
+        len--;
+    /* A line shorter than 60% of the wrap width is probably intentionally
+     * short — a title, a metadata line, a list-like structure, etc. */
+    return len >= (wrap_width * 3 / 5);
+}
+
+static void flush_paragraph(FILE *out)
+{
+    if (npara == 0)
+        return;
+
+    if (opt_wrap_width <= 0) {
+        for (int i = 0; i < npara; i++)
+            fprintf(out, "%s\n", para_lines_buf[i]);
+        npara = 0;
+        return;
+    }
+
+    /* Build joined paragraphs, breaking where lines are intentionally short */
+    char joined[MAX_PARA];
+    int pos = 0;
+
+    for (int i = 0; i < npara; i++) {
+        const char *s = para_lines_buf[i];
+        int slen = (int)strlen(s);
+        /* Trim trailing whitespace before joining */
+        while (slen > 0 && (s[slen - 1] == ' ' || s[slen - 1] == '\t'))
+            slen--;
+
+        if (pos + slen >= MAX_PARA)
+            slen = MAX_PARA - pos - 1;
+        memcpy(joined + pos, s, slen);
+        pos += slen;
+
+        /* If this line is short or is the last, flush the accumulated text */
+        if (i == npara - 1 || !should_join(s, opt_wrap_width)) {
+            joined[pos] = '\0';
+            emit_wrapped(out, joined, opt_wrap_width);
+            pos = 0;
+        } else {
+            /* Join with next line via space */
+            if (pos < MAX_PARA - 1)
+                joined[pos++] = ' ';
+        }
+    }
+
+    npara = 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
  * I/O
  * ═══════════════════════════════════════════════════════════════════ */
 
@@ -1181,6 +1349,7 @@ struct scan_ctx {
     int    do_chicago_abbrev;
     int    skip_punct2;
     int    skip_abbrev;
+    int    spaced_emdash;
     int    linenum;
 };
 
@@ -1240,7 +1409,9 @@ static void run_scanner(struct scan_ctx *ctx, const char *input, int len)
                                && (ctx->out[ctx->oi-1] == ' '
                                    || ctx->out[ctx->oi-1] == '\t'))
                             ctx->oi--;
+                        if (ctx->spaced_emdash) EMIT_CHAR(' ');
                         EMIT_EMDASH();
+                        if (ctx->spaced_emdash) EMIT_CHAR(' ');
                         BUMP(FIX_ARROW_ASIDE);
                         BUMP(FIX_CHI_EMDASH_SPACING);
                         fexec next;
@@ -1314,7 +1485,9 @@ static void run_scanner(struct scan_ctx *ctx, const char *input, int len)
                                && (ctx->out[ctx->oi-1] == ' '
                                    || ctx->out[ctx->oi-1] == '\t'))
                             ctx->oi--;
+                        if (ctx->spaced_emdash) EMIT_CHAR(' ');
                         EMIT_EMDASH();
+                        if (ctx->spaced_emdash) EMIT_CHAR(' ');
                         BUMP(FIX_CHI_EMDASH_SPACING);
                         /* Skip past trailing spaces in input */
                         fexec next;
@@ -1345,10 +1518,17 @@ static void run_scanner(struct scan_ctx *ctx, const char *input, int len)
                                && (ctx->out[ctx->oi-1] == ' '
                                    || ctx->out[ctx->oi-1] == '\t'))
                             ctx->oi--;
+                        if (ctx->spaced_emdash) EMIT_CHAR(' ');
                         EMIT_EMDASH();
+                        if (ctx->spaced_emdash) EMIT_CHAR(' ');
                         /* Only count if we actually changed spacing */
-                        if (old_oi != ctx->oi - 3 || next != te)
-                            BUMP(FIX_CHI_EMDASH_SPACING);
+                        if (ctx->spaced_emdash) {
+                            if (old_oi != ctx->oi - 5 || next != te)
+                                BUMP(FIX_CHI_EMDASH_SPACING);
+                        } else {
+                            if (old_oi != ctx->oi - 3 || next != te)
+                                BUMP(FIX_CHI_EMDASH_SPACING);
+                        }
                         fexec next;
                     } else {
                         EMIT_DATA(ts, te);
@@ -1590,6 +1770,7 @@ static int apply_scanner(char *line, int linenum)
     ctx.do_chicago_abbrev = opt_chicago_abbrev;
     ctx.skip_punct2       = should_skip_chicago_punct2(line);
     ctx.skip_abbrev       = should_skip_chicago_abbrev(line);
+    ctx.spaced_emdash     = opt_spaced_emdash;
     ctx.linenum           = linenum;
 
     int len = (int)strlen(line);
@@ -1623,6 +1804,7 @@ static void process(FILE *out)
     int in_code_block      = 0;
 
     enum linetype prev_content_type = LT_BLANK;
+    int prev_was_list_ctx = 0;    /* was previous content in a list context? */
     int had_blank = 1;            /* start-of-file counts as separation */
 
     for (int i = 0; i < nlines; i++) {
@@ -1682,7 +1864,9 @@ static void process(FILE *out)
 
         /* ── Blank line ── */
         if (type == LT_BLANK) {
+            flush_paragraph(out);
             had_blank = 1;
+            prev_was_list_ctx = 0;
             fprintf(out, "\n");
             continue;
         }
@@ -1700,6 +1884,13 @@ static void process(FILE *out)
         }
 
         /*
+         * Determine if we're in a "list context" — the previous content
+         * was a list item or a continuation of one (indented text).
+         */
+        int in_list_context = is_list_type(prev_content_type)
+            || (prev_content_type == LT_TEXT && prev_was_list_ctx);
+
+        /*
          * Fix 2: Insert blank line BEFORE list.
          * If we're entering a list from non-list content with no
          * intervening blank line, pandoc will choke — especially
@@ -1707,9 +1898,10 @@ static void process(FILE *out)
          */
         if (!had_blank
             && is_list_type(type)
-            && !is_list_type(prev_content_type)
+            && !in_list_context
             && prev_content_type != LT_BLANK)
         {
+            flush_paragraph(out);
             if (opt_verbose)
                 fprintf(stderr, "  line %d: inserted blank line before list\n",
                         i + 1);
@@ -1721,11 +1913,14 @@ static void process(FILE *out)
          * Fix 3: Insert blank line AFTER list.
          * If we're leaving a list into non-list content with no
          * intervening blank line, the markdown structure is ambiguous.
+         * Exception: indented continuation lines are part of the list item.
          */
         if (!had_blank
             && !is_list_type(type)
-            && is_list_type(prev_content_type))
+            && in_list_context
+            && !is_list_continuation(line))
         {
+            flush_paragraph(out);
             if (opt_verbose)
                 fprintf(stderr, "  line %d: inserted blank line after list\n",
                         i + 1);
@@ -1753,11 +1948,26 @@ static void process(FILE *out)
         }
 
         /* Write the (possibly modified) line */
-        fprintf(out, "%s\n", line);
+        if (opt_wrap_width > 0 && is_wrappable(line, type)) {
+            para_lines_buf[npara++] = line;
+        } else {
+            flush_paragraph(out);
+            fprintf(out, "%s\n", line);
+        }
+
+        /* Update list context tracking */
+        if (is_list_type(type))
+            prev_was_list_ctx = 1;
+        else if (type == LT_TEXT && is_list_continuation(line))
+            prev_was_list_ctx = prev_was_list_ctx; /* preserve */
+        else
+            prev_was_list_ctx = 0;
 
         prev_content_type = type;
         had_blank = 0;
     }
+
+    flush_paragraph(out);
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1798,6 +2008,7 @@ static void usage(const char *prog)
 {
     fprintf(stderr,
         "Usage: %s [options] input.md [output.md]\n"
+        "       %s [options] -i file.md [file2.md ...]\n"
         "\n"
         "Markdown auto-fixer. Fixes the crap that linter.py complains about.\n"
         "\n"
@@ -1834,6 +2045,12 @@ static void usage(const char *prog)
         "        Wrap bare http(s) URLs in <...> for Pandoc\n"
         "  --scrivener-repair\n"
         "        Repair split heading emphasis across blocks\n"
+        "  --spaced-emdash\n"
+        "        Preserve spaces around em-dashes (word — word, not word—word)\n"
+        "  --wrap[=N]\n"
+        "        Hard-wrap paragraph text to N columns (default: 78)\n"
+        "  --technical\n"
+        "        Technical docs profile: --canonical + --spaced-emdash + --wrap=78\n"
         "  -h    This help\n"
         "\n"
         "Fixes (always on):\n"
@@ -1886,15 +2103,114 @@ static void usage(const char *prog)
         "Lint (opt-in with --chicago-number-lint):\n"
         "  Warn on likely Chicago number-style issues in prose\n"
         "\n"
+        "Fixes (opt-in with --spaced-emdash):\n"
+        " 24. Em-dashes keep surrounding spaces (word — word, not word—word)\n"
+        "\n"
+        "Fixes (opt-in with --wrap[=N]):\n"
+        " 25. Hard-wrap paragraph text at N columns (default 78)\n"
+        "     Skips headings, lists, tables, code blocks, blockquotes\n"
+        "\n"
         "Profile:\n"
         "  --canonical enables: -w, --chicago-punct, --chicago-punct-2,\n"
         "  --chicago-abbrev, --footnote-canonical,\n"
         "  --heading-canonical, --fence-canonical\n"
+        "  --technical enables: --canonical, --spaced-emdash, --wrap=78\n"
         "  --canonical-lint runs --canonical in no-write gate mode and exits\n"
         "  nonzero if any fix or lint warning is detected\n"
         "\n"
         "If no output.md and no -i, you need -n (or --canonical-lint).\n",
-        prog);
+        prog, prog);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * Process one file
+ * ═══════════════════════════════════════════════════════════════════ */
+
+static int process_file(const char *input_path, const char *output_path)
+{
+    /* Reset per-file state */
+    memset(fix_counts, 0, sizeof(fix_counts));
+    serial_comma_warnings = 0;
+    number_style_warnings = 0;
+    npara = 0;
+
+    /* ── Read the entire input into memory ── */
+    FILE *in = fopen(input_path, "r");
+    if (!in) {
+        fprintf(stderr, "Can't open '%s': ", input_path);
+        perror(NULL);
+        return 1;
+    }
+    read_all(in);
+    fclose(in);
+
+    if (opt_verbose)
+        fprintf(stderr, "Read %d lines from %s\n", nlines, input_path);
+
+    /* ── Open output ── */
+    FILE *out = NULL;
+    char bak_path[4096];
+
+    if (opt_dryrun) {
+        out = fopen("/dev/null", "w");
+    } else if (opt_inplace) {
+        snprintf(bak_path, sizeof(bak_path), "%s.bak", input_path);
+        if (rename(input_path, bak_path) != 0) {
+            fprintf(stderr, "Can't create backup '%s': ", bak_path);
+            perror(NULL);
+            return 1;
+        }
+        out = fopen(input_path, "w");
+    } else {
+        out = fopen(output_path, "w");
+    }
+
+    if (!out) {
+        fprintf(stderr, "Can't open output: ");
+        perror(NULL);
+        if (opt_inplace)
+            rename(bak_path, input_path);
+        return 1;
+    }
+
+    /* ── Do the work ── */
+    process(out);
+    fclose(out);
+
+    /* ── Report ── */
+    if (!opt_quiet)
+        print_summary(input_path);
+
+    if (opt_dryrun && !opt_canonical_lint) {
+        printf("(dry run — no files were harmed)\n");
+    } else if (opt_inplace) {
+        int total = 0;
+        for (int i = 0; i < NUM_FIXES; i++)
+            total += fix_counts[i];
+        if (total > 0)
+            printf("Backup: %s\n", bak_path);
+        else if (!opt_quiet)
+            /* No changes — remove the unnecessary backup */
+            rename(bak_path, input_path);
+    }
+
+    if (opt_canonical_lint) {
+        int issues = total_issues();
+        if (issues > 0) {
+            if (!opt_quiet) {
+                fprintf(stderr,
+                    "canonical-lint: failed with %d issue%s.\n",
+                    issues, issues == 1 ? "" : "s");
+            }
+            free_lines();
+            return 2;
+        }
+        if (!opt_quiet)
+            fprintf(stderr, "canonical-lint: clean.\n");
+    }
+
+    free_lines();
+    return 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -1970,6 +2286,42 @@ int main(int argc, char *argv[])
             argi++;
             continue;
         }
+        if (strcmp(argv[argi], "--spaced-emdash") == 0) {
+            opt_spaced_emdash = 1;
+            argi++;
+            continue;
+        }
+        if (strncmp(argv[argi], "--wrap=", 7) == 0) {
+            opt_wrap_width = atoi(argv[argi] + 7);
+            if (opt_wrap_width < 20) {
+                fprintf(stderr, "--wrap width must be >= 20.\n");
+                return 1;
+            }
+            argi++;
+            continue;
+        }
+        if (strcmp(argv[argi], "--wrap") == 0) {
+            if (argi + 1 < argc && isdigit((unsigned char)argv[argi + 1][0])) {
+                opt_wrap_width = atoi(argv[argi + 1]);
+                if (opt_wrap_width < 20) {
+                    fprintf(stderr, "--wrap width must be >= 20.\n");
+                    return 1;
+                }
+                argi += 2;
+            } else {
+                opt_wrap_width = 78;
+                argi++;
+            }
+            continue;
+        }
+        if (strcmp(argv[argi], "--technical") == 0) {
+            opt_canonical = 1;  /* technical implies canonical */
+            opt_spaced_emdash = 1;
+            if (opt_wrap_width == 0)
+                opt_wrap_width = 78;
+            argi++;
+            continue;
+        }
         /* ^ don't eat "-1" as an option — could be a filename */
         const char *opt = argv[argi] + 1;
         while (*opt) {
@@ -1989,24 +2341,42 @@ int main(int argc, char *argv[])
         argi++;
     }
 
-    /* Positional args */
-    if (argi < argc) input_path  = argv[argi++];
-    if (argi < argc) output_path = argv[argi++];
-
-    if (!input_path) {
-        fprintf(stderr, "No input file? Really?\n\n");
-        usage(argv[0]);
-        return 1;
-    }
-
     if (opt_canonical || opt_canonical_lint)
         enable_canonical_profile();
     if (opt_canonical_lint)
         opt_dryrun = 1;
 
-    if (opt_canonical_lint && (opt_inplace || output_path)) {
+    /* Positional args */
+    if (argi >= argc) {
+        fprintf(stderr, "No input file? Really?\n\n");
+        usage(argv[0]);
+        return 1;
+    }
+
+    if (opt_canonical_lint && opt_inplace) {
         fprintf(stderr,
-            "--canonical-lint is no-write gate mode. Omit -i/output path.\n");
+            "--canonical-lint is no-write gate mode. Omit -i.\n");
+        return 1;
+    }
+
+    /* Multi-file mode: -i with multiple args */
+    if (opt_inplace && argi + 1 < argc) {
+        int exit_code = 0;
+        for (; argi < argc; argi++) {
+            int rc = process_file(argv[argi], NULL);
+            if (rc != 0)
+                exit_code = rc;
+        }
+        return exit_code;
+    }
+
+    /* Single-file mode */
+    input_path = argv[argi++];
+    if (argi < argc) output_path = argv[argi++];
+
+    if (opt_canonical_lint && output_path) {
+        fprintf(stderr,
+            "--canonical-lint is no-write gate mode. Omit output path.\n");
         return 1;
     }
 
@@ -2022,82 +2392,5 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    /* ── Read the entire input into memory ── */
-    FILE *in = fopen(input_path, "r");
-    if (!in) {
-        fprintf(stderr, "Can't open '%s': ", input_path);
-        perror(NULL);
-        return 1;
-    }
-    read_all(in);
-    fclose(in);
-
-    if (opt_verbose)
-        fprintf(stderr, "Read %d lines from %s\n", nlines, input_path);
-
-    /* ── Open output ── */
-    FILE *out = NULL;
-    char bak_path[4096];
-
-    if (opt_dryrun) {
-        out = fopen("/dev/null", "w");
-    } else if (opt_inplace) {
-        snprintf(bak_path, sizeof(bak_path), "%s.bak", input_path);
-        if (rename(input_path, bak_path) != 0) {
-            fprintf(stderr, "Can't create backup '%s': ", bak_path);
-            perror(NULL);
-            return 1;
-        }
-        out = fopen(input_path, "w");
-    } else {
-        out = fopen(output_path, "w");
-    }
-
-    if (!out) {
-        fprintf(stderr, "Can't open output: ");
-        perror(NULL);
-        /* If in-place, try to restore the backup */
-        if (opt_inplace)
-            rename(bak_path, input_path);
-        return 1;
-    }
-
-    /* ── Do the work ── */
-    process(out);
-    fclose(out);
-
-    /* ── Report ── */
-    if (!opt_quiet)
-        print_summary(input_path);
-
-    if (opt_dryrun && !opt_canonical_lint) {
-        printf("(dry run — no files were harmed)\n");
-    } else if (opt_inplace) {
-        int total = 0;
-        for (int i = 0; i < NUM_FIXES; i++)
-            total += fix_counts[i];
-        if (total > 0)
-            printf("Backup: %s\n", bak_path);
-        else if (!opt_quiet)
-            /* No changes — remove the unnecessary backup */
-            rename(bak_path, input_path);
-    }
-
-    if (opt_canonical_lint) {
-        int issues = total_issues();
-        if (issues > 0) {
-            if (!opt_quiet) {
-                fprintf(stderr,
-                    "canonical-lint: failed with %d issue%s.\n",
-                    issues, issues == 1 ? "" : "s");
-            }
-            free_lines();
-            return 2;
-        }
-        if (!opt_quiet)
-            fprintf(stderr, "canonical-lint: clean.\n");
-    }
-
-    free_lines();
-    return 0;
+    return process_file(input_path, output_path);
 }
