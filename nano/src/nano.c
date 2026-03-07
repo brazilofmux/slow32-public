@@ -20,6 +20,7 @@
 #define MAX_MESSAGE    256
 #define MAX_DIRTY      256  /* max screen rows for dirty tracking */
 #define QUIT_CONFIRM   2    /* presses of Ctrl-Q to force-quit when modified */
+#define UNDO_MAX       512  /* max undo stack depth */
 
 /* Internal key codes (above ASCII range) */
 #define KEY_NONE    0
@@ -34,6 +35,8 @@
 #define KEY_DEL     1008
 #define KEY_CTRL_LEFT  1009
 #define KEY_CTRL_RIGHT 1010
+#define KEY_ALT_D      1011
+#define KEY_ALT_BS     1012  /* Alt-Backspace */
 
 /* Ctrl key helper */
 #define CTRL(k) ((k) & 0x1f)
@@ -45,6 +48,24 @@ typedef struct {
     int len;
     int cap;
 } line_t;
+
+/* Undo operation types */
+enum {
+    UNDO_INSERT_CHAR,   /* inserted char at (cy, cx-1) */
+    UNDO_DELETE_CHAR,   /* deleted char at (cy, cx) */
+    UNDO_INSERT_LINE,   /* split line: new line created at cy */
+    UNDO_DELETE_LINE,   /* joined lines: line removed at cy+1 */
+    UNDO_FULL_LINE,     /* full line deleted (cut) — stores text */
+    UNDO_ADD_LINE,      /* full line added (paste/dup) */
+};
+
+typedef struct {
+    int type;
+    int cy, cx;         /* cursor position before the operation */
+    char ch;            /* for INSERT_CHAR / DELETE_CHAR */
+    char *text;         /* for FULL_LINE / ADD_LINE (malloc'd copy) */
+    int text_len;
+} undo_entry_t;
 
 typedef struct {
     line_t *lines;
@@ -60,8 +81,13 @@ typedef struct {
     int running;
     int quit_count;             /* consecutive Ctrl-Q presses */
     char search_buf[MAX_SEARCH];
-    line_t cut_line;            /* cut buffer (single line) */
-    int has_cut;
+    line_t *cut_lines;          /* cut buffer (multi-line) */
+    int cut_count;              /* number of lines in cut buffer */
+    int cut_cap;                /* capacity of cut buffer */
+    int last_was_cut;           /* was last action a cut? (for multi-cut) */
+    undo_entry_t undo_stack[UNDO_MAX];
+    int undo_top;               /* next free slot */
+    int redo_top;               /* redo boundary (entries above undo_top) */
     char message[MAX_MESSAGE];
     char dirty[MAX_DIRTY];      /* 1 = screen row needs redraw */
     int dirty_status;           /* 1 = status bar needs redraw */
@@ -78,6 +104,7 @@ static editor_t E;
 /* Forward declarations */
 static void editor_set_message(const char *msg);
 static void editor_prompt(const char *prompt, char *buf, int bufsize);
+static void editor_clamp_cx(void);
 
 /* ---- Line Memory Management ---- */
 
@@ -213,6 +240,166 @@ static void dirty_from_file_row(int file_row) {
     if (screen_row < 0) screen_row = 0;
     for (i = screen_row; i < E.edit_rows && i < MAX_DIRTY; i++)
         E.dirty[i] = 1;
+}
+
+/* ---- Undo/Redo ---- */
+
+static void undo_free_entry(undo_entry_t *e) {
+    if (e->text) { free(e->text); e->text = NULL; }
+}
+
+static void undo_clear(void) {
+    int i;
+    for (i = 0; i < E.undo_top; i++)
+        undo_free_entry(&E.undo_stack[i]);
+    E.undo_top = 0;
+    E.redo_top = 0;
+}
+
+static void undo_push(int type, int cy, int cx, char ch, const char *text, int text_len) {
+    /* Discard any redo entries */
+    int i;
+    for (i = E.undo_top; i < E.redo_top; i++)
+        undo_free_entry(&E.undo_stack[i]);
+    E.redo_top = 0;
+
+    if (E.undo_top >= UNDO_MAX) {
+        /* Drop oldest entry, shift everything down */
+        undo_free_entry(&E.undo_stack[0]);
+        memmove(&E.undo_stack[0], &E.undo_stack[1],
+                (UNDO_MAX - 1) * sizeof(undo_entry_t));
+        E.undo_top = UNDO_MAX - 1;
+    }
+
+    {
+        undo_entry_t *e = &E.undo_stack[E.undo_top++];
+        e->type = type;
+        e->cy = cy;
+        e->cx = cx;
+        e->ch = ch;
+        e->text = NULL;
+        e->text_len = 0;
+        if (text && text_len > 0) {
+            e->text = malloc(text_len + 1);
+            memcpy(e->text, text, text_len);
+            e->text[text_len] = '\0';
+            e->text_len = text_len;
+        }
+    }
+}
+
+static void editor_undo(void) {
+    undo_entry_t *e;
+    if (E.undo_top == 0) {
+        editor_set_message("Nothing to undo");
+        return;
+    }
+    e = &E.undo_stack[--E.undo_top];
+    /* Move entry to redo zone */
+    E.redo_top = E.undo_top + 1;
+
+    switch (e->type) {
+    case UNDO_INSERT_CHAR:
+        /* Undo insert = delete the char */
+        E.cy = e->cy; E.cx = e->cx;
+        line_delete_char(&E.lines[E.cy], E.cx);
+        dirty_file_row(E.cy);
+        break;
+    case UNDO_DELETE_CHAR:
+        /* Undo delete = re-insert the char */
+        E.cy = e->cy; E.cx = e->cx;
+        line_insert_char(&E.lines[E.cy], E.cx, e->ch);
+        dirty_file_row(E.cy);
+        break;
+    case UNDO_INSERT_LINE:
+        /* Undo split = join lines */
+        E.cy = e->cy; E.cx = e->cx;
+        editor_join_lines(E.cy);
+        dirty_from_file_row(E.cy);
+        break;
+    case UNDO_DELETE_LINE:
+        /* Undo join = split line */
+        E.cy = e->cy; E.cx = e->cx;
+        editor_split_line(E.cy, E.cx);
+        dirty_from_file_row(E.cy);
+        break;
+    case UNDO_FULL_LINE:
+        /* Undo cut = re-insert the full line */
+        E.cy = e->cy; E.cx = e->cx;
+        editor_insert_line(E.cy, e->text, e->text_len);
+        dirty_from_file_row(E.cy);
+        break;
+    case UNDO_ADD_LINE:
+        /* Undo paste/dup = remove the line */
+        E.cy = e->cy; E.cx = e->cx;
+        editor_delete_line(e->cy);
+        if (E.num_lines == 0) editor_insert_line(0, "", 0);
+        if (E.cy >= E.num_lines) E.cy = E.num_lines - 1;
+        editor_clamp_cx();
+        dirty_from_file_row(E.cy);
+        break;
+    }
+    E.modified = 1;
+    E.dirty_status = 1;
+    editor_set_message("Undo");
+}
+
+static void editor_redo(void) {
+    undo_entry_t *e;
+    if (E.redo_top == 0 || E.undo_top >= E.redo_top) {
+        editor_set_message("Nothing to redo");
+        return;
+    }
+    e = &E.undo_stack[E.undo_top++];
+
+    switch (e->type) {
+    case UNDO_INSERT_CHAR:
+        /* Redo insert = insert the char again */
+        E.cy = e->cy; E.cx = e->cx;
+        line_insert_char(&E.lines[E.cy], E.cx, e->ch);
+        E.cx++;
+        dirty_file_row(E.cy);
+        break;
+    case UNDO_DELETE_CHAR:
+        /* Redo delete = delete the char again */
+        E.cy = e->cy; E.cx = e->cx;
+        line_delete_char(&E.lines[E.cy], E.cx);
+        dirty_file_row(E.cy);
+        break;
+    case UNDO_INSERT_LINE:
+        /* Redo split = split again */
+        E.cy = e->cy; E.cx = e->cx;
+        editor_split_line(E.cy, E.cx);
+        E.cy++;
+        E.cx = 0;
+        dirty_from_file_row(E.cy - 1);
+        break;
+    case UNDO_DELETE_LINE:
+        /* Redo join = join again */
+        E.cy = e->cy; E.cx = e->cx;
+        editor_join_lines(E.cy);
+        dirty_from_file_row(E.cy);
+        break;
+    case UNDO_FULL_LINE:
+        /* Redo cut = delete the line again */
+        E.cy = e->cy; E.cx = e->cx;
+        editor_delete_line(E.cy);
+        if (E.num_lines == 0) editor_insert_line(0, "", 0);
+        if (E.cy >= E.num_lines) E.cy = E.num_lines - 1;
+        editor_clamp_cx();
+        dirty_from_file_row(E.cy);
+        break;
+    case UNDO_ADD_LINE:
+        /* Redo paste/dup = re-insert the line */
+        editor_insert_line(e->cy, e->text, e->text_len);
+        E.cy = e->cy;
+        E.cx = e->cx;
+        dirty_from_file_row(E.cy);
+        break;
+    }
+    E.modified = 1;
+    E.dirty_status = 1;
+    editor_set_message("Redo");
 }
 
 /* ---- File I/O ---- */
@@ -361,6 +548,8 @@ static int read_key(void) {
         /* Alt-key combos: ESC followed by a letter */
         if (ch2 == 'b' || ch2 == 'B') return KEY_CTRL_LEFT;   /* Alt-B */
         if (ch2 == 'f' || ch2 == 'F') return KEY_CTRL_RIGHT;  /* Alt-F */
+        if (ch2 == 'd' || ch2 == 'D') return KEY_ALT_D;       /* Alt-D */
+        if (ch2 == 127 || ch2 == 8) return KEY_ALT_BS;        /* Alt-Backspace */
         return ch2;
     }
 
@@ -456,7 +645,7 @@ static void editor_draw_status_bar(void) {
 }
 
 static void editor_draw_help_bar(void) {
-    const char *help = " ^S Save  ^Q Quit  ^F Find  ^R Replace  ^K Cut  ^U Paste  ^D Dup";
+    const char *help = " ^S Save  ^Q Quit  ^F Find  ^R Replace  ^K Cut  ^U Paste  ^Z Undo  ^Y Redo";
     int len, i;
 
     term_gotoxy(E.screen_rows, 1);
@@ -671,10 +860,12 @@ static void editor_move_cursor(int key) {
 
 static void editor_insert_char(int ch) {
     if (E.cy >= E.num_lines) return;
+    undo_push(UNDO_INSERT_CHAR, E.cy, E.cx, (char)ch, NULL, 0);
     line_insert_char(&E.lines[E.cy], E.cx, (char)ch);
     E.cx++;
     E.modified = 1;
     E.quit_count = 0;
+    E.last_was_cut = 0;
     dirty_file_row(E.cy);
 }
 
@@ -689,6 +880,8 @@ static void editor_insert_newline(void) {
             indent++;
     }
 
+    undo_push(UNDO_INSERT_LINE, E.cy, E.cx, 0, NULL, 0);
+
     editor_split_line(E.cy, E.cx);
     E.cy++;
     E.cx = 0;
@@ -702,10 +895,17 @@ static void editor_insert_newline(void) {
         memset(newl->text, ' ', indent);
         newl->len += indent;
         E.cx = indent;
+        /* Push undo entries for each indent char so undo fully reverses */
+        {
+            int i;
+            for (i = 0; i < indent; i++)
+                undo_push(UNDO_INSERT_CHAR, E.cy, i, ' ', NULL, 0);
+        }
     }
 
     E.modified = 1;
     E.quit_count = 0;
+    E.last_was_cut = 0;
     dirty_from_file_row(E.cy - 1);
     E.dirty_status = 1;
 }
@@ -720,13 +920,17 @@ static void editor_insert_tab(void) {
 static void editor_backspace(void) {
     if (E.cy >= E.num_lines) return;
     if (E.cx > 0) {
+        char deleted = E.lines[E.cy].text[E.cx - 1];
+        undo_push(UNDO_DELETE_CHAR, E.cy, E.cx - 1, deleted, NULL, 0);
         line_delete_char(&E.lines[E.cy], E.cx - 1);
         E.cx--;
         E.modified = 1;
         dirty_file_row(E.cy);
     } else if (E.cy > 0) {
         /* Join with previous line */
-        E.cx = E.lines[E.cy - 1].len;
+        int join_cx = E.lines[E.cy - 1].len;
+        undo_push(UNDO_DELETE_LINE, E.cy - 1, join_cx, 0, NULL, 0);
+        E.cx = join_cx;
         editor_join_lines(E.cy - 1);
         E.cy--;
         E.modified = 1;
@@ -734,32 +938,58 @@ static void editor_backspace(void) {
         E.dirty_status = 1;
     }
     E.quit_count = 0;
+    E.last_was_cut = 0;
 }
 
 static void editor_delete(void) {
     if (E.cy >= E.num_lines) return;
     if (E.cx < E.lines[E.cy].len) {
+        char deleted = E.lines[E.cy].text[E.cx];
+        undo_push(UNDO_DELETE_CHAR, E.cy, E.cx, deleted, NULL, 0);
         line_delete_char(&E.lines[E.cy], E.cx);
         E.modified = 1;
         dirty_file_row(E.cy);
     } else if (E.cy < E.num_lines - 1) {
         /* Join with next line */
+        undo_push(UNDO_DELETE_LINE, E.cy, E.cx, 0, NULL, 0);
         editor_join_lines(E.cy);
         E.modified = 1;
         dirty_from_file_row(E.cy);
         E.dirty_status = 1;
     }
     E.quit_count = 0;
+    E.last_was_cut = 0;
+}
+
+static void cut_buf_clear(void) {
+    int i;
+    for (i = 0; i < E.cut_count; i++)
+        line_free(&E.cut_lines[i]);
+    E.cut_count = 0;
+}
+
+static void cut_buf_append(const char *text, int len) {
+    if (E.cut_count >= E.cut_cap) {
+        E.cut_cap = E.cut_cap ? E.cut_cap * 2 : 8;
+        E.cut_lines = realloc(E.cut_lines, E.cut_cap * sizeof(line_t));
+    }
+    line_init(&E.cut_lines[E.cut_count]);
+    line_set(&E.cut_lines[E.cut_count], text, len);
+    E.cut_count++;
 }
 
 static void editor_cut_line(void) {
     if (E.cy >= E.num_lines) return;
-    /* Store in cut buffer */
-    if (E.has_cut)
-        line_free(&E.cut_line);
-    line_init(&E.cut_line);
-    line_set(&E.cut_line, E.lines[E.cy].text, E.lines[E.cy].len);
-    E.has_cut = 1;
+
+    /* If last action wasn't cut, clear the buffer */
+    if (!E.last_was_cut)
+        cut_buf_clear();
+
+    /* Append to cut buffer */
+    cut_buf_append(E.lines[E.cy].text, E.lines[E.cy].len);
+
+    /* Push undo */
+    undo_push(UNDO_FULL_LINE, E.cy, E.cx, 0, E.lines[E.cy].text, E.lines[E.cy].len);
 
     editor_delete_line(E.cy);
     if (E.num_lines == 0)
@@ -769,7 +999,12 @@ static void editor_cut_line(void) {
     editor_clamp_cx();
     E.modified = 1;
     E.quit_count = 0;
-    editor_set_message("Line cut");
+    E.last_was_cut = 1;
+    {
+        char msg[MAX_MESSAGE];
+        snprintf(msg, MAX_MESSAGE, "%d line%s cut", E.cut_count, E.cut_count == 1 ? "" : "s");
+        editor_set_message(msg);
+    }
     dirty_from_file_row(E.cy);
     E.dirty_status = 1;
 }
@@ -779,24 +1014,35 @@ static void editor_duplicate_line(void) {
     line_t *l = &E.lines[E.cy];
     editor_insert_line(E.cy + 1, l->text, l->len);
     E.cy++;
+    undo_push(UNDO_ADD_LINE, E.cy, 0, 0, E.lines[E.cy].text, E.lines[E.cy].len);
     E.modified = 1;
     E.quit_count = 0;
+    E.last_was_cut = 0;
     dirty_from_file_row(E.cy - 1);
     E.dirty_status = 1;
 }
 
 static void editor_paste_line(void) {
-    if (!E.has_cut) {
+    int i;
+    if (E.cut_count == 0) {
         editor_set_message("Nothing to paste");
         return;
     }
-    editor_insert_line(E.cy + 1, E.cut_line.text, E.cut_line.len);
-    E.cy++;
+    for (i = 0; i < E.cut_count; i++) {
+        editor_insert_line(E.cy + 1, E.cut_lines[i].text, E.cut_lines[i].len);
+        E.cy++;
+        undo_push(UNDO_ADD_LINE, E.cy, 0, 0, E.cut_lines[i].text, E.cut_lines[i].len);
+    }
     E.cx = 0;
     E.modified = 1;
     E.quit_count = 0;
-    editor_set_message("Line pasted");
-    dirty_from_file_row(E.cy);
+    E.last_was_cut = 0;
+    {
+        char msg[MAX_MESSAGE];
+        snprintf(msg, MAX_MESSAGE, "%d line%s pasted", E.cut_count, E.cut_count == 1 ? "" : "s");
+        editor_set_message(msg);
+    }
+    dirty_from_file_row(E.cy - E.cut_count + 1);
     E.dirty_status = 1;
 }
 
@@ -898,6 +1144,90 @@ static void editor_find(void) {
         }
     }
     editor_set_message("Not found");
+}
+
+static void editor_delete_word_forward(void) {
+    if (E.cy >= E.num_lines) return;
+    line_t *l = &E.lines[E.cy];
+    int start = E.cx;
+    /* Skip word chars, then non-word chars */
+    while (E.cx < l->len && is_word_char(l->text[E.cx])) E.cx++;
+    while (E.cx < l->len && !is_word_char(l->text[E.cx])) E.cx++;
+    if (E.cx > start) {
+        int i;
+        /* Push undo for each deleted char (right to left so undo re-inserts correctly) */
+        for (i = E.cx - 1; i >= start; i--)
+            undo_push(UNDO_DELETE_CHAR, E.cy, start, l->text[i], NULL, 0);
+        memmove(l->text + start, l->text + E.cx, l->len - E.cx + 1);
+        l->len -= (E.cx - start);
+        E.cx = start;
+        E.modified = 1;
+        dirty_file_row(E.cy);
+    }
+    E.quit_count = 0;
+    E.last_was_cut = 0;
+}
+
+static void editor_delete_word_backward(void) {
+    if (E.cy >= E.num_lines) return;
+    line_t *l = &E.lines[E.cy];
+    int end = E.cx;
+    /* Skip non-word chars, then word chars */
+    while (E.cx > 0 && !is_word_char(l->text[E.cx - 1])) E.cx--;
+    while (E.cx > 0 && is_word_char(l->text[E.cx - 1])) E.cx--;
+    if (end > E.cx) {
+        int i;
+        /* Push undo for each deleted char */
+        for (i = E.cx; i < end; i++)
+            undo_push(UNDO_DELETE_CHAR, E.cy, E.cx, l->text[i], NULL, 0);
+        memmove(l->text + E.cx, l->text + end, l->len - end + 1);
+        l->len -= (end - E.cx);
+        E.modified = 1;
+        dirty_file_row(E.cy);
+    }
+    E.quit_count = 0;
+    E.last_was_cut = 0;
+}
+
+static void editor_indent_line(void) {
+    int i;
+    if (E.cy >= E.num_lines) return;
+    line_t *l = &E.lines[E.cy];
+    int spaces = TAB_STOP;
+    line_ensure_cap(l, l->len + spaces + 1);
+    memmove(l->text + spaces, l->text, l->len + 1);
+    memset(l->text, ' ', spaces);
+    l->len += spaces;
+    E.cx += spaces;
+    for (i = 0; i < spaces; i++)
+        undo_push(UNDO_INSERT_CHAR, E.cy, i, ' ', NULL, 0);
+    E.modified = 1;
+    E.quit_count = 0;
+    E.last_was_cut = 0;
+    dirty_file_row(E.cy);
+}
+
+static void editor_unindent_line(void) {
+    if (E.cy >= E.num_lines) return;
+    line_t *l = &E.lines[E.cy];
+    int spaces = 0;
+    while (spaces < TAB_STOP && spaces < l->len && l->text[spaces] == ' ')
+        spaces++;
+    if (spaces > 0) {
+        int i;
+        for (i = spaces - 1; i >= 0; i--)
+            undo_push(UNDO_DELETE_CHAR, E.cy, 0, ' ', NULL, 0);
+        memmove(l->text, l->text + spaces, l->len - spaces + 1);
+        l->len -= spaces;
+        if (E.cx >= spaces)
+            E.cx -= spaces;
+        else
+            E.cx = 0;
+        E.modified = 1;
+        dirty_file_row(E.cy);
+    }
+    E.quit_count = 0;
+    E.last_was_cut = 0;
 }
 
 static void editor_find_replace(void) {
@@ -1087,6 +1417,30 @@ static void editor_process_key(int key) {
         E.dirty_bottom = 1;
         break;
 
+    case CTRL('z'): /* undo */
+        editor_undo();
+        break;
+
+    case CTRL('y'): /* redo */
+        editor_redo();
+        break;
+
+    case KEY_ALT_D: /* delete word forward */
+        editor_delete_word_forward();
+        break;
+
+    case KEY_ALT_BS: /* delete word backward */
+        editor_delete_word_backward();
+        break;
+
+    case CTRL(']'): /* indent line */
+        editor_indent_line();
+        break;
+
+    case CTRL('t'): /* unindent line */
+        editor_unindent_line();
+        break;
+
     case CTRL('g'): /* go to line */
         {
             char linebuf[16] = "";
@@ -1153,7 +1507,11 @@ static int run_tests(void) {
     E.screen_rows = 24;
     E.screen_cols = 80;
     E.edit_rows = 22;
-    E.has_cut = 0;
+    E.cut_lines = NULL;
+    E.cut_count = 0;
+    E.cut_cap = 0;
+    E.undo_top = 0;
+    E.redo_top = 0;
 
     printf("Running buffer unit tests...\n");
 
@@ -1243,15 +1601,14 @@ static int run_tests(void) {
         editor_insert_line(2, "Line3", 5);
         E.cy = 1; E.cx = 0;
         /* Simulate cut */
-        if (E.has_cut) line_free(&E.cut_line);
-        line_init(&E.cut_line);
-        line_set(&E.cut_line, E.lines[E.cy].text, E.lines[E.cy].len);
-        E.has_cut = 1;
+        cut_buf_clear();
+        cut_buf_append(E.lines[E.cy].text, E.lines[E.cy].len);
         editor_delete_line(E.cy);
         test_assert(E.num_lines == 2, "cut: 2 lines remain");
-        test_assert(strcmp(E.cut_line.text, "Line2") == 0, "cut: buffer == Line2");
+        test_assert(E.cut_count == 1, "cut: buffer has 1 line");
+        test_assert(strcmp(E.cut_lines[0].text, "Line2") == 0, "cut: buffer == Line2");
         /* Simulate paste */
-        editor_insert_line(E.cy + 1, E.cut_line.text, E.cut_line.len);
+        editor_insert_line(E.cy + 1, E.cut_lines[0].text, E.cut_lines[0].len);
         E.cy++;
         test_assert(E.num_lines == 3, "paste: 3 lines");
         test_assert(strcmp(E.lines[2].text, "Line2") == 0, "paste: line 2 == Line2");
@@ -1394,12 +1751,117 @@ static int run_tests(void) {
                     "replace: foo->qux in 'foo bar foo baz'");
     }
 
+    /* Test 17: undo insert char */
+    {
+        editor_reset();
+        E.undo_top = 0; E.redo_top = 0;
+        editor_insert_line(0, "AB", 2);
+        E.cy = 0; E.cx = 1;
+        /* Insert 'X' with undo tracking */
+        undo_push(UNDO_INSERT_CHAR, E.cy, E.cx, 'X', NULL, 0);
+        line_insert_char(&E.lines[0], E.cx, 'X');
+        E.cx++;
+        test_assert(strcmp(E.lines[0].text, "AXB") == 0, "undo: inserted AXB");
+        /* Undo it */
+        editor_undo();
+        test_assert(strcmp(E.lines[0].text, "AB") == 0, "undo: back to AB");
+        test_assert(E.cx == 1, "undo: cx restored to 1");
+        /* Redo it */
+        editor_redo();
+        test_assert(strcmp(E.lines[0].text, "AXB") == 0, "redo: back to AXB");
+    }
+
+    /* Test 18: undo delete char */
+    {
+        editor_reset();
+        E.undo_top = 0; E.redo_top = 0;
+        editor_insert_line(0, "ABC", 3);
+        E.cy = 0; E.cx = 1;
+        undo_push(UNDO_DELETE_CHAR, E.cy, E.cx, 'B', NULL, 0);
+        line_delete_char(&E.lines[0], E.cx);
+        test_assert(strcmp(E.lines[0].text, "AC") == 0, "undo-del: deleted to AC");
+        editor_undo();
+        test_assert(strcmp(E.lines[0].text, "ABC") == 0, "undo-del: back to ABC");
+    }
+
+    /* Test 19: multi-line cut */
+    {
+        editor_reset();
+        E.last_was_cut = 0;
+        cut_buf_clear();
+        editor_insert_line(0, "Line1", 5);
+        editor_insert_line(1, "Line2", 5);
+        editor_insert_line(2, "Line3", 5);
+        /* First cut: should clear buffer and add */
+        cut_buf_append("Line1", 5);
+        E.last_was_cut = 1;
+        /* Second consecutive cut: should append */
+        cut_buf_append("Line2", 5);
+        test_assert(E.cut_count == 2, "multi-cut: 2 lines in buffer");
+        test_assert(strcmp(E.cut_lines[0].text, "Line1") == 0, "multi-cut: line 0");
+        test_assert(strcmp(E.cut_lines[1].text, "Line2") == 0, "multi-cut: line 1");
+        /* Non-cut action resets */
+        E.last_was_cut = 0;
+        cut_buf_clear();
+        cut_buf_append("Fresh", 5);
+        test_assert(E.cut_count == 1, "multi-cut: reset to 1");
+    }
+
+    /* Test 20: indent/unindent */
+    {
+        editor_reset();
+        E.undo_top = 0; E.redo_top = 0;
+        editor_insert_line(0, "hello", 5);
+        E.cy = 0; E.cx = 0;
+        /* Indent */
+        {
+            line_t *l = &E.lines[0];
+            line_ensure_cap(l, l->len + TAB_STOP + 1);
+            memmove(l->text + TAB_STOP, l->text, l->len + 1);
+            memset(l->text, ' ', TAB_STOP);
+            l->len += TAB_STOP;
+            E.cx += TAB_STOP;
+        }
+        test_assert(strcmp(E.lines[0].text, "    hello") == 0, "indent: 4 spaces added");
+        test_assert(E.cx == 4, "indent: cx == 4");
+        /* Unindent */
+        {
+            line_t *l = &E.lines[0];
+            int spaces = 0;
+            while (spaces < TAB_STOP && spaces < l->len && l->text[spaces] == ' ')
+                spaces++;
+            memmove(l->text, l->text + spaces, l->len - spaces + 1);
+            l->len -= spaces;
+            E.cx -= spaces;
+        }
+        test_assert(strcmp(E.lines[0].text, "hello") == 0, "unindent: spaces removed");
+        test_assert(E.cx == 0, "unindent: cx == 0");
+    }
+
+    /* Test 21: delete word forward */
+    {
+        editor_reset();
+        editor_insert_line(0, "hello world", 11);
+        E.cy = 0; E.cx = 0;
+        /* Delete "hello " forward */
+        {
+            line_t *l = &E.lines[0];
+            int start = E.cx;
+            while (E.cx < l->len && is_word_char(l->text[E.cx])) E.cx++;
+            while (E.cx < l->len && !is_word_char(l->text[E.cx])) E.cx++;
+            memmove(l->text + start, l->text + E.cx, l->len - E.cx + 1);
+            l->len -= (E.cx - start);
+            E.cx = start;
+        }
+        test_assert(strcmp(E.lines[0].text, "world") == 0, "del-word-fwd: hello removed");
+        test_assert(E.cx == 0, "del-word-fwd: cx == 0");
+    }
+
     /* Cleanup */
     editor_reset();
-    if (E.has_cut) {
-        line_free(&E.cut_line);
-        E.has_cut = 0;
-    }
+    cut_buf_clear();
+    free(E.cut_lines);
+    undo_clear();
     free(E.lines);
 
     printf("%d/%d tests passed\n", test_pass, test_count);
@@ -1473,8 +1935,9 @@ int main(int argc, char *argv[]) {
     for (i = 0; i < E.num_lines; i++)
         line_free(&E.lines[i]);
     free(E.lines);
-    if (E.has_cut)
-        line_free(&E.cut_line);
+    cut_buf_clear();
+    free(E.cut_lines);
+    undo_clear();
 
     return 0;
 }
