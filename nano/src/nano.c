@@ -316,36 +316,51 @@ static int read_key(void) {
             case 'D': return KEY_LEFT;
             case 'H': return KEY_HOME;
             case 'F': return KEY_END;
-            case '1':
-                if (term_kbhit()) {
-                    int ch4 = term_getkey();
-                    if (ch4 == '~') return KEY_HOME;
-                    if (ch4 == ';' && term_kbhit()) {
-                        int ch5 = term_getkey();
-                        if (ch5 == '5' && term_kbhit()) {
-                            int ch6 = term_getkey();
-                            if (ch6 == 'D') return KEY_CTRL_LEFT;
-                            if (ch6 == 'C') return KEY_CTRL_RIGHT;
-                        }
-                    }
+            case '1': {
+                /* ESC[1~ = Home, ESC[1;5D = Ctrl-Left, ESC[1;5C = Ctrl-Right */
+                int ch4 = term_getkey();
+                if (ch4 == '~') return KEY_HOME;
+                if (ch4 == ';') {
+                    int ch5 = term_getkey();
+                    int ch6 = term_getkey();
+                    if (ch5 == '5' && ch6 == 'D') return KEY_CTRL_LEFT;
+                    if (ch5 == '5' && ch6 == 'C') return KEY_CTRL_RIGHT;
+                    if (ch5 == '3' && ch6 == 'D') return KEY_CTRL_LEFT;  /* Alt-Left */
+                    if (ch5 == '3' && ch6 == 'C') return KEY_CTRL_RIGHT; /* Alt-Right */
                 }
                 return KEY_HOME;
+            }
             case '4':
-                if (term_kbhit()) term_getkey(); /* consume ~ */
+                term_getkey(); /* consume ~ */
                 return KEY_END;
             case '5':
-                if (term_kbhit()) term_getkey();
+                term_getkey();
                 return KEY_PGUP;
             case '6':
-                if (term_kbhit()) term_getkey();
+                term_getkey();
                 return KEY_PGDN;
             case '3':
-                if (term_kbhit()) term_getkey();
+                term_getkey();
                 return KEY_DEL;
             default:
                 return ch3;
             }
         }
+        /* ESC ESC [ X = Alt-arrow (some terminals) */
+        if (ch2 == 27) {
+            if (term_kbhit()) {
+                int ch3a = term_getkey();
+                if (ch3a == '[') {
+                    int ch3b = term_getkey();
+                    if (ch3b == 'D') return KEY_CTRL_LEFT;   /* Alt-Left */
+                    if (ch3b == 'C') return KEY_CTRL_RIGHT;  /* Alt-Right */
+                }
+            }
+            return 27;
+        }
+        /* Alt-key combos: ESC followed by a letter */
+        if (ch2 == 'b' || ch2 == 'B') return KEY_CTRL_LEFT;   /* Alt-B */
+        if (ch2 == 'f' || ch2 == 'F') return KEY_CTRL_RIGHT;  /* Alt-F */
         return ch2;
     }
 
