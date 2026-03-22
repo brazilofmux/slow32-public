@@ -2,7 +2,8 @@ diff --git a/hw/Kconfig b/hw/Kconfig
 index b3ed092f7a..f5545b99e2 100644
 --- a/hw/Kconfig
 +++ b/hw/Kconfig
-@@ -63,6 +63,7 @@ source microblaze/Kconfig
+@@ -61,6 +61,7 @@ source m68k/Kconfig
+ source microblaze/Kconfig
  source mips/Kconfig
  source or1k/Kconfig
 +source slow32/Kconfig
@@ -13,7 +14,8 @@ diff --git a/hw/meson.build b/hw/meson.build
 index ef65ba5195..bee66ff99d 100644
 --- a/hw/meson.build
 +++ b/hw/meson.build
-@@ -12,6 +12,7 @@ subdir('microblaze')
+@@ -10,6 +10,7 @@ subdir('m68k')
+ subdir('microblaze')
  subdir('mips')
  subdir('or1k')
 +subdir('slow32')

@@ -3,10 +3,11 @@ index 685e4e29b8..883492e02b 100644
 --- a/qapi/machine.json
 +++ b/qapi/machine.json
 @@ -41,7 +41,7 @@
+              'loongarch64', 'm68k', 'microblaze', 'mips', 'mips64',
               'mips64el', 'mipsel', 'or1k', 'ppc',
               'ppc64', 'riscv32', 'riscv64', 'rx', 's390x', 'sh4',
 -             'sh4eb', 'sparc', 'sparc64', 'tricore',
 +             'sh4eb', 'slow32', 'sparc', 'sparc64', 'tricore',
               'x86_64', 'xtensa', 'xtensaeb' ] }
-
+ 
  ##
