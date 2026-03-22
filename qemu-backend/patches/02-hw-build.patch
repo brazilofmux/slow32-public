@@ -1,8 +1,24 @@
 diff --git a/hw/Kconfig b/hw/Kconfig
-index f8f92b5d03..2f228c9576 100644
+index f8f92b5d03..f5545b99e2 100644
 --- a/hw/Kconfig
 +++ b/hw/Kconfig
-@@ -59,6 +59,7 @@ source m68k/Kconfig
+@@ -13,6 +13,7 @@ source fsi/Kconfig
+ source gpio/Kconfig
+ source hyperv/Kconfig
+ source i2c/Kconfig
++source i3c/Kconfig
+ source ide/Kconfig
+ source input/Kconfig
+ source intc/Kconfig
+@@ -22,6 +23,7 @@ source isa/Kconfig
+ source mem/Kconfig
+ source misc/Kconfig
+ source net/Kconfig
++source nitro/Kconfig
+ source nubus/Kconfig
+ source nvme/Kconfig
+ source nvram/Kconfig
+@@ -59,6 +61,7 @@ source m68k/Kconfig
  source microblaze/Kconfig
  source mips/Kconfig
  source or1k/Kconfig
@@ -11,7 +27,7 @@ index f8f92b5d03..2f228c9576 100644
  source riscv/Kconfig
  source rx/Kconfig
 diff --git a/hw/meson.build b/hw/meson.build
-index 66e46b8090..bb240dce46 100644
+index 66e46b8090..bee66ff99d 100644
 --- a/hw/meson.build
 +++ b/hw/meson.build
 @@ -10,6 +10,7 @@ subdir('m68k')
@@ -22,3 +38,19 @@ index 66e46b8090..bb240dce46 100644
  subdir('ppc')
  subdir('remote')
  subdir('riscv')
+@@ -35,6 +36,7 @@ subdir('dma')
+ subdir('gpio')
+ subdir('hyperv')
+ subdir('i2c')
++subdir('i3c')
+ subdir('ide')
+ subdir('input')
+ subdir('intc')
+@@ -44,6 +46,7 @@ subdir('isa')
+ subdir('mem')
+ subdir('misc')
+ subdir('net')
++subdir('nitro')
+ subdir('nubus')
+ subdir('nvme')
+ subdir('nvram')

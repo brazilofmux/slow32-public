@@ -148,8 +148,11 @@ public:
     }
   }
 
-  bool fixupNeedsRelaxation(const MCFixup &Fixup,
-                            uint64_t Value) const override {
+  bool fixupNeedsRelaxationAdvanced(const MCFragment &, const MCFixup &Fixup,
+                                    const MCValue &, uint64_t Value,
+                                    bool Resolved) const override {
+    if (!Resolved)
+      return true;
     int64_t Offset = static_cast<int64_t>(Value);
     switch (Fixup.getKind()) {
     case SLOW32::fixup_slow32_branch:

@@ -12,7 +12,7 @@ using namespace llvm;
 
 SLOW32MCAsmInfo::SLOW32MCAsmInfo(const Triple &TT) {
   CodePointerSize = CalleeSaveStackSlotSize = 4;
-  PrivateGlobalPrefix = ".L";
+  PrivateLabelPrefix = ".L";
   CommentString = "#";
   AlignmentIsInBytes = false;
   SupportsDebugInformation = true;

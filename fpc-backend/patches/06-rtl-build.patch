@@ -32,7 +32,7 @@ index b7fd07602b..8af8c54afb 100644
  linux_all:
  	$(MAKE) -C linux all
 diff --git a/rtl/embedded/Makefile b/rtl/embedded/Makefile
-index 4aca54d8d2..fe74a3372f 100644
+index 7644b47149..3e8ee5658b 100644
 --- a/rtl/embedded/Makefile
 +++ b/rtl/embedded/Makefile
 @@ -2,7 +2,7 @@
@@ -44,7 +44,7 @@ index 4aca54d8d2..fe74a3372f 100644
  BSDs = freebsd netbsd openbsd darwin dragonfly
  UNIXs = linux $(BSDs) solaris qnx haiku aix
  LIMIT83fs = go32v2 os2 emx watcom msdos win16 atari human68k
-@@ -1213,6 +1213,9 @@ endif
+@@ -1211,6 +1211,9 @@ endif
  ifeq ($(CPU_OS_TARGET),z80-embedded)
  override TARGET_UNITS+=$(SYSTEMUNIT) $(CPU_UNITS) $(UUCHARUNIT) $(OBJPASUNIT) $(ISO7185UNIT) $(EXTPASUNIT) $(HEAPMGRUNIT) $(CONSOLEIOUNIT) $(CPU_SPECIFIC_COMMON_UNITS) $(STRINGSUNIT) $(SORTBASEUNIT) $(DOSUNIT) $(CTYPESUNIT) $(CHARSETUNIT) $(CPALLUNIT) $(SYSCONSTUNIT)
  endif
@@ -54,7 +54,7 @@ index 4aca54d8d2..fe74a3372f 100644
  ifeq ($(CPU_OS_TARGET),i386-embedded)
  override TARGET_LOADERS+=$(LOADERS)
  endif
-@@ -1264,6 +1267,9 @@ endif
+@@ -1262,6 +1265,9 @@ endif
  ifeq ($(CPU_OS_TARGET),z80-embedded)
  override TARGET_LOADERS+=$(LOADERS)
  endif
@@ -64,7 +64,7 @@ index 4aca54d8d2..fe74a3372f 100644
  override INSTALL_FPCPACKAGE=y y
  ifeq ($(CPU_OS_TARGET),i386-embedded)
  override COMPILER_INCLUDEDIR+=$(INC) $(PROCINC) $(ARCH)
-@@ -1316,6 +1322,9 @@ endif
+@@ -1314,6 +1320,9 @@ endif
  ifeq ($(CPU_OS_TARGET),z80-embedded)
  override COMPILER_INCLUDEDIR+=$(INC) $(PROCINC) $(ARCH)
  endif
@@ -74,7 +74,7 @@ index 4aca54d8d2..fe74a3372f 100644
  ifeq ($(CPU_OS_TARGET),i386-embedded)
  override COMPILER_SOURCEDIR+=$(INC) $(PROCINC) $(COMMON) $(ARCH)
  endif
-@@ -1367,6 +1376,9 @@ endif
+@@ -1365,6 +1374,9 @@ endif
  ifeq ($(CPU_OS_TARGET),z80-embedded)
  override COMPILER_SOURCEDIR+=$(INC) $(PROCINC) $(COMMON) $(ARCH)
  endif
