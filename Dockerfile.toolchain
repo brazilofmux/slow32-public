@@ -19,7 +19,7 @@ RUN apk add --no-cache \
 WORKDIR /build
 # Pin to a known-good LLVM commit to avoid transient upstream breakage.
 # Update this SHA when you want to pull in newer upstream changes.
-ARG LLVM_COMMIT=fcd52bdaa45f3cac32fc27b3242651fcb9a50e6d
+ARG LLVM_COMMIT=3258d361cbc5d57e5e507004706eb36acf120066
 RUN wget -q https://github.com/llvm/llvm-project/archive/${LLVM_COMMIT}.zip -O llvm-project.zip && \
     unzip -q llvm-project.zip && \
     mv llvm-project-${LLVM_COMMIT} llvm-project && \
@@ -72,7 +72,7 @@ RUN wget -q "https://sourceforge.net/projects/freepascal/files/Linux/${FPC_VERSI
     rm -rf /build/fpc-*
 
 # Clone FPC source at pinned commit
-ARG FPC_COMMIT=f6e2b5db5106e58fa81146892816db893390359a
+ARG FPC_COMMIT=ce51a37f97d7d2ebd17ab4afa610650de975ffda
 RUN git init /fpc-src && cd /fpc-src && \
     git remote add origin https://gitlab.com/freepascal.org/fpc/source.git && \
     git fetch --depth=1 origin ${FPC_COMMIT} && \
