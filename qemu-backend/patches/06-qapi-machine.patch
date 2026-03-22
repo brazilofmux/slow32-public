@@ -1,17 +1,12 @@
 diff --git a/qapi/machine.json b/qapi/machine.json
-index ef8575b6eb..883492e02b 100644
+index 685e4e29b8..883492e02b 100644
 --- a/qapi/machine.json
 +++ b/qapi/machine.json
-@@ -38,10 +38,10 @@
- ##
- { 'enum' : 'SysEmuTarget',
-   'data' : [ 'aarch64', 'alpha', 'arm', 'avr', 'hexagon', 'hppa', 'i386',
--             'loongarch64', 'm68k', 'microblaze', 'microblazeel', 'mips', 'mips64',
-+             'loongarch64', 'm68k', 'microblaze', 'mips', 'mips64',
+@@ -41,7 +41,7 @@
               'mips64el', 'mipsel', 'or1k', 'ppc',
               'ppc64', 'riscv32', 'riscv64', 'rx', 's390x', 'sh4',
 -             'sh4eb', 'sparc', 'sparc64', 'tricore',
 +             'sh4eb', 'slow32', 'sparc', 'sparc64', 'tricore',
               'x86_64', 'xtensa', 'xtensaeb' ] }
- 
+
  ##
