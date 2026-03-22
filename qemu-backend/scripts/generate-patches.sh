@@ -17,15 +17,17 @@ mkdir -p "$PATCHES_DIR"
 # Change to QEMU directory
 cd "$QEMU_DIR"
 
-# Get the base commit (before our SLOW-32 changes)
-# WARNING: The local QEMU repo may contain upstream renames (e.g., openrisc -> or1k)
-# that occurred AFTER this base commit. The generated patches will include those
-# renames, which will BREAK Docker builds pinned to $BASE_COMMIT.
-# After generating, manually review and edit patches to contain ONLY slow32 additions.
-BASE_COMMIT="07f97d5da0"  # Last upstream commit before our work — also pinned in Dockerfile.emulator
+# Find the upstream base commit automatically via merge-base.
+# This ensures patches contain ONLY our SLOW-32 changes, not upstream diffs.
+BASE_COMMIT=$(git merge-base HEAD origin/master)
+if [ -z "$BASE_COMMIT" ]; then
+    echo "Error: cannot find merge-base with origin/master"
+    echo "Make sure 'git fetch origin' has been run."
+    exit 1
+fi
 CURRENT_COMMIT="HEAD"
 
-echo "Using commit $BASE_COMMIT as base for patch generation..."
+echo "Upstream base (merge-base HEAD origin/master): $(git log --oneline -1 $BASE_COMMIT)"
 echo ""
 
 # 1. Target Kconfig and meson.build

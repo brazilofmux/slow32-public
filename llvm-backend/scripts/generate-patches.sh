@@ -17,14 +17,20 @@ mkdir -p "$PATCHES_DIR"
 # Change to LLVM directory
 cd "$LLVM_DIR"
 
-# Since this is a shallow clone, we'll compare against origin/HEAD
-# which represents the upstream state when we cloned
-echo "Using origin/HEAD as base for patch generation..."
+# Find the upstream base commit automatically via merge-base.
+# This ensures patches contain ONLY our SLOW-32 changes, not upstream diffs.
+BASE=$(git merge-base HEAD origin/main)
+if [ -z "$BASE" ]; then
+    echo "Error: cannot find merge-base with origin/main"
+    echo "Make sure 'git fetch origin' has been run."
+    exit 1
+fi
+echo "Upstream base (merge-base HEAD origin/main): $(git log --oneline -1 $BASE)"
 echo ""
 
 # 1. Triple.h and Triple.cpp (LLVM core architecture support)
 echo "1. Generating LLVM Triple patch..."
-git diff origin/HEAD HEAD -- llvm/include/llvm/TargetParser/Triple.h llvm/lib/TargetParser/Triple.cpp > "$PATCHES_DIR/01-llvm-triple.patch" 2>/dev/null || true
+git diff $BASE HEAD -- llvm/include/llvm/TargetParser/Triple.h llvm/lib/TargetParser/Triple.cpp > "$PATCHES_DIR/01-llvm-triple.patch" 2>/dev/null || true
 
 if [ -s "$PATCHES_DIR/01-llvm-triple.patch" ]; then
     lines=$(wc -l < "$PATCHES_DIR/01-llvm-triple.patch")
@@ -36,7 +42,7 @@ fi
 
 # 2. LLVM CMake files
 echo "2. Generating LLVM CMake patch..."
-git diff origin/HEAD HEAD -- llvm/CMakeLists.txt llvm/lib/Target/CMakeLists.txt > "$PATCHES_DIR/02-llvm-cmake.patch" 2>/dev/null || true
+git diff $BASE HEAD -- llvm/CMakeLists.txt llvm/lib/Target/CMakeLists.txt > "$PATCHES_DIR/02-llvm-cmake.patch" 2>/dev/null || true
 
 if [ -s "$PATCHES_DIR/02-llvm-cmake.patch" ]; then
     lines=$(wc -l < "$PATCHES_DIR/02-llvm-cmake.patch")
@@ -48,7 +54,7 @@ fi
 
 # 3. Clang Targets.cpp
 echo "3. Generating Clang targets patch..."
-git diff origin/HEAD HEAD -- clang/lib/Basic/Targets.cpp > "$PATCHES_DIR/03-clang-targets.patch" 2>/dev/null || true
+git diff $BASE HEAD -- clang/lib/Basic/Targets.cpp > "$PATCHES_DIR/03-clang-targets.patch" 2>/dev/null || true
 
 if [ -s "$PATCHES_DIR/03-clang-targets.patch" ]; then
     lines=$(wc -l < "$PATCHES_DIR/03-clang-targets.patch")
@@ -60,7 +66,7 @@ fi
 
 # 4. Clang CMake files
 echo "4. Generating Clang CMake patch..."
-git diff origin/HEAD HEAD -- clang/lib/Basic/CMakeLists.txt clang/lib/Basic/Targets/CMakeLists.txt > "$PATCHES_DIR/04-clang-cmake.patch" 2>/dev/null || true
+git diff $BASE HEAD -- clang/lib/Basic/CMakeLists.txt clang/lib/Basic/Targets/CMakeLists.txt > "$PATCHES_DIR/04-clang-cmake.patch" 2>/dev/null || true
 
 if [ -s "$PATCHES_DIR/04-clang-cmake.patch" ]; then
     lines=$(wc -l < "$PATCHES_DIR/04-clang-cmake.patch")
