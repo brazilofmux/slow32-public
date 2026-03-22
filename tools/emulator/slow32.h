@@ -9,7 +9,7 @@
 #define NUM_REGS 32
 #define DEFAULT_MEM_SIZE (256 * 1024 * 1024)  // Default 256MB to match architecture spec
 #define MAX_MEM_SIZE (256 * 1024 * 1024)      // Maximum 256MB
-#define CODE_SIZE (1 * 1024 * 1024)           // First 1MB is code (execute-only)
+#define CODE_SIZE (2 * 1024 * 1024)           // First 2MB is code (execute-only)
 #define DATA_START CODE_SIZE                   // Data starts after code
 
 #define REG_ZERO 0

@@ -84,9 +84,9 @@ static s32x_load_result_t load_s32x_header(const char *filename) {
     }
 
     // Validate code limit
-    if (header.code_limit > 0x100000) {
+    if (header.code_limit > 0x200000) {
         snprintf(result.error_msg, sizeof(result.error_msg),
-                 "Code limit exceeds 1MB boundary: 0x%08X", header.code_limit);
+                 "Code limit exceeds 2MB boundary: 0x%08X", header.code_limit);
         return result;
     }
 
@@ -162,9 +162,9 @@ static s32x_load_result_t load_s32x_file(const char *filename, s32x_loader_confi
     }
     
     // Validate memory layout
-    if (header.code_limit > 0x100000) {
-        snprintf(result.error_msg, sizeof(result.error_msg), 
-                 "Code limit exceeds 1MB boundary: 0x%08X", header.code_limit);
+    if (header.code_limit > 0x200000) {
+        snprintf(result.error_msg, sizeof(result.error_msg),
+                 "Code limit exceeds 2MB boundary: 0x%08X", header.code_limit);
         fclose(f);
         return result;
     }
