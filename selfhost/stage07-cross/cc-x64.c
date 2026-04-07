@@ -178,6 +178,9 @@ int main(int argc, char **argv) {
     char *src;
     Node *prog;
 
+    /* x86-64 target: pointers are 8 bytes */
+    ty_ptr_size = 8;
+
     /* Parse arguments: [--crt0] [-c] [-I dir] input.c output */
     pp_idir[0] = 0;
     infile = 0;
