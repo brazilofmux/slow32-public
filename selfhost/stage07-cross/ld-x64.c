@@ -261,12 +261,17 @@ static int gsym_add(const char *name) {
     return idx;
 }
 
-/* Classify a section by name → merged section type */
+/* Classify a section by name → merged section type.
+ * Handles GCC subsections like .rodata.cst4, .text.startup, etc. */
 static int classify_section(const char *name) {
     if (strcmp(name, ".text") == 0) return 1;
+    if (strncmp(name, ".text.", 6) == 0) return 1;
     if (strcmp(name, ".rodata") == 0) return 2;
+    if (strncmp(name, ".rodata.", 8) == 0) return 2;
     if (strcmp(name, ".data") == 0) return 3;
+    if (strncmp(name, ".data.", 6) == 0) return 3;
     if (strcmp(name, ".bss") == 0) return 4;
+    if (strncmp(name, ".bss.", 5) == 0) return 4;
     return 0; /* not a mergeable section */
 }
 

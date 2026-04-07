@@ -33,6 +33,46 @@ char *memset(char *dst, int c, int n);
 int strlen(char *s);
 void exit(int code);
 
+/* FPU operations (compiled by host GCC, linked in) */
+unsigned int fpu_add_s(unsigned int a, unsigned int b);
+unsigned int fpu_sub_s(unsigned int a, unsigned int b);
+unsigned int fpu_mul_s(unsigned int a, unsigned int b);
+unsigned int fpu_div_s(unsigned int a, unsigned int b);
+unsigned int fpu_sqrt_s(unsigned int a);
+int fpu_eq_s(unsigned int a, unsigned int b);
+int fpu_lt_s(unsigned int a, unsigned int b);
+int fpu_le_s(unsigned int a, unsigned int b);
+unsigned int fpu_neg_s(unsigned int a);
+unsigned int fpu_abs_s(unsigned int a);
+int fpu_cvt_w_s(unsigned int a);
+unsigned int fpu_cvt_wu_s(unsigned int a);
+unsigned int fpu_cvt_s_w(int a);
+unsigned int fpu_cvt_s_wu(unsigned int a);
+void fpu_add_d(unsigned int a_lo, unsigned int a_hi, unsigned int b_lo, unsigned int b_hi, unsigned int *r_lo, unsigned int *r_hi);
+void fpu_sub_d(unsigned int a_lo, unsigned int a_hi, unsigned int b_lo, unsigned int b_hi, unsigned int *r_lo, unsigned int *r_hi);
+void fpu_mul_d(unsigned int a_lo, unsigned int a_hi, unsigned int b_lo, unsigned int b_hi, unsigned int *r_lo, unsigned int *r_hi);
+void fpu_div_d(unsigned int a_lo, unsigned int a_hi, unsigned int b_lo, unsigned int b_hi, unsigned int *r_lo, unsigned int *r_hi);
+void fpu_sqrt_d(unsigned int a_lo, unsigned int a_hi, unsigned int *r_lo, unsigned int *r_hi);
+int fpu_eq_d(unsigned int a_lo, unsigned int a_hi, unsigned int b_lo, unsigned int b_hi);
+int fpu_lt_d(unsigned int a_lo, unsigned int a_hi, unsigned int b_lo, unsigned int b_hi);
+int fpu_le_d(unsigned int a_lo, unsigned int a_hi, unsigned int b_lo, unsigned int b_hi);
+void fpu_neg_d(unsigned int a_lo, unsigned int a_hi, unsigned int *r_lo, unsigned int *r_hi);
+void fpu_abs_d(unsigned int a_lo, unsigned int a_hi, unsigned int *r_lo, unsigned int *r_hi);
+int fpu_cvt_w_d(unsigned int a_lo, unsigned int a_hi);
+unsigned int fpu_cvt_wu_d(unsigned int a_lo, unsigned int a_hi);
+void fpu_cvt_d_w(int a, unsigned int *r_lo, unsigned int *r_hi);
+void fpu_cvt_d_wu(unsigned int a, unsigned int *r_lo, unsigned int *r_hi);
+void fpu_cvt_d_s(unsigned int a, unsigned int *r_lo, unsigned int *r_hi);
+unsigned int fpu_cvt_s_d(unsigned int a_lo, unsigned int a_hi);
+void fpu_cvt_l_s(unsigned int a, unsigned int *r_lo, unsigned int *r_hi);
+void fpu_cvt_lu_s(unsigned int a, unsigned int *r_lo, unsigned int *r_hi);
+unsigned int fpu_cvt_s_l(unsigned int a_lo, unsigned int a_hi);
+unsigned int fpu_cvt_s_lu(unsigned int a_lo, unsigned int a_hi);
+void fpu_cvt_l_d(unsigned int a_lo, unsigned int a_hi, unsigned int *r_lo, unsigned int *r_hi);
+void fpu_cvt_lu_d(unsigned int a_lo, unsigned int a_hi, unsigned int *r_lo, unsigned int *r_hi);
+void fpu_cvt_d_l(unsigned int a_lo, unsigned int a_hi, unsigned int *r_lo, unsigned int *r_hi);
+void fpu_cvt_d_lu(unsigned int a_lo, unsigned int a_hi, unsigned int *r_lo, unsigned int *r_hi);
+
 /* s32x format constants */
 #define S32X_MAGIC      0x53333258
 #define S32X_FLAG_MMIO  0x0080
@@ -857,6 +897,8 @@ static void step(struct emu *e) {
     unsigned int mulh_cross2;
     unsigned int mulh_hi;
     unsigned int mulh_carry;
+    unsigned int fpu_lo;
+    unsigned int fpu_hi;
 
     pc_hist_push(e, e->pc);
 
@@ -980,12 +1022,16 @@ static void step(struct emu *e) {
     else if (op == 0x30) {
         a = r[rs1] + imm_i;
         if (!mem_check(e, a, 1, "Load")) return;
-        r[rd] = (unsigned int)(int)(*(char *)(m + a));
+        /* Sign-extend 8 → 32: if bit 7 set, fill upper 24 bits */
+        r[rd] = m[a];
+        if (r[rd] & 0x80) r[rd] = r[rd] | 0xFFFFFF00;
     }
     else if (op == 0x31) {
         a = r[rs1] + imm_i;
         if (!mem_read16(e, a, &v16, "Load")) return;
-        r[rd] = (unsigned int)(int)(short)v16;
+        /* Sign-extend 16 → 32: if bit 15 set, fill upper 16 bits */
+        r[rd] = v16;
+        if (v16 & 0x8000) r[rd] = r[rd] | 0xFFFF0000;
     }
     else if (op == 0x32) {
         a = r[rs1] + imm_i;
@@ -1057,6 +1103,50 @@ static void step(struct emu *e) {
         putchar(r[rs1] & 0xFF);
         fflush(stdout);
     }
+
+    /* ---- f32 instructions (0x53-0x60) ---- */
+    else if (op == 0x53) { r[rd] = fpu_add_s(r[rs1], r[rs2]); }
+    else if (op == 0x54) { r[rd] = fpu_sub_s(r[rs1], r[rs2]); }
+    else if (op == 0x55) { r[rd] = fpu_mul_s(r[rs1], r[rs2]); }
+    else if (op == 0x56) { r[rd] = fpu_div_s(r[rs1], r[rs2]); }
+    else if (op == 0x57) { r[rd] = fpu_sqrt_s(r[rs1]); }
+    else if (op == 0x58) { r[rd] = fpu_eq_s(r[rs1], r[rs2]); }
+    else if (op == 0x59) { r[rd] = fpu_lt_s(r[rs1], r[rs2]); }
+    else if (op == 0x5A) { r[rd] = fpu_le_s(r[rs1], r[rs2]); }
+    else if (op == 0x5B) { r[rd] = fpu_cvt_w_s(r[rs1]); }
+    else if (op == 0x5C) { r[rd] = fpu_cvt_wu_s(r[rs1]); }
+    else if (op == 0x5D) { r[rd] = fpu_cvt_s_w(r[rs1]); }
+    else if (op == 0x5E) { r[rd] = fpu_cvt_s_wu(r[rs1]); }
+    else if (op == 0x5F) { r[rd] = fpu_neg_s(r[rs1]); }
+    else if (op == 0x60) { r[rd] = fpu_abs_s(r[rs1]); }
+
+    /* ---- f64 instructions (0x61-0x70) — register pairs ---- */
+    else if (op == 0x61) { fpu_add_d(r[rs1], r[rs1+1], r[rs2], r[rs2+1], &fpu_lo, &fpu_hi); r[rd] = fpu_lo; r[rd+1] = fpu_hi; }
+    else if (op == 0x62) { fpu_sub_d(r[rs1], r[rs1+1], r[rs2], r[rs2+1], &fpu_lo, &fpu_hi); r[rd] = fpu_lo; r[rd+1] = fpu_hi; }
+    else if (op == 0x63) { fpu_mul_d(r[rs1], r[rs1+1], r[rs2], r[rs2+1], &fpu_lo, &fpu_hi); r[rd] = fpu_lo; r[rd+1] = fpu_hi; }
+    else if (op == 0x64) { fpu_div_d(r[rs1], r[rs1+1], r[rs2], r[rs2+1], &fpu_lo, &fpu_hi); r[rd] = fpu_lo; r[rd+1] = fpu_hi; }
+    else if (op == 0x65) { fpu_sqrt_d(r[rs1], r[rs1+1], &fpu_lo, &fpu_hi); r[rd] = fpu_lo; r[rd+1] = fpu_hi; }
+    else if (op == 0x66) { r[rd] = fpu_eq_d(r[rs1], r[rs1+1], r[rs2], r[rs2+1]); }
+    else if (op == 0x67) { r[rd] = fpu_lt_d(r[rs1], r[rs1+1], r[rs2], r[rs2+1]); }
+    else if (op == 0x68) { r[rd] = fpu_le_d(r[rs1], r[rs1+1], r[rs2], r[rs2+1]); }
+    else if (op == 0x69) { r[rd] = fpu_cvt_w_d(r[rs1], r[rs1+1]); }
+    else if (op == 0x6A) { r[rd] = fpu_cvt_wu_d(r[rs1], r[rs1+1]); }
+    else if (op == 0x6B) { fpu_cvt_d_w(r[rs1], &fpu_lo, &fpu_hi); r[rd] = fpu_lo; r[rd+1] = fpu_hi; }
+    else if (op == 0x6C) { fpu_cvt_d_wu(r[rs1], &fpu_lo, &fpu_hi); r[rd] = fpu_lo; r[rd+1] = fpu_hi; }
+    else if (op == 0x6D) { fpu_cvt_d_s(r[rs1], &fpu_lo, &fpu_hi); r[rd] = fpu_lo; r[rd+1] = fpu_hi; }
+    else if (op == 0x6E) { r[rd] = fpu_cvt_s_d(r[rs1], r[rs1+1]); }
+    else if (op == 0x6F) { fpu_neg_d(r[rs1], r[rs1+1], &fpu_lo, &fpu_hi); r[rd] = fpu_lo; r[rd+1] = fpu_hi; }
+    else if (op == 0x70) { fpu_abs_d(r[rs1], r[rs1+1], &fpu_lo, &fpu_hi); r[rd] = fpu_lo; r[rd+1] = fpu_hi; }
+
+    /* ---- float ↔ int64 conversions (0x71-0x78) ---- */
+    else if (op == 0x71) { fpu_cvt_l_s(r[rs1], &fpu_lo, &fpu_hi); r[rd] = fpu_lo; r[rd+1] = fpu_hi; }
+    else if (op == 0x72) { fpu_cvt_lu_s(r[rs1], &fpu_lo, &fpu_hi); r[rd] = fpu_lo; r[rd+1] = fpu_hi; }
+    else if (op == 0x73) { r[rd] = fpu_cvt_s_l(r[rs1], r[rs1+1]); }
+    else if (op == 0x74) { r[rd] = fpu_cvt_s_lu(r[rs1], r[rs1+1]); }
+    else if (op == 0x75) { fpu_cvt_l_d(r[rs1], r[rs1+1], &fpu_lo, &fpu_hi); r[rd] = fpu_lo; r[rd+1] = fpu_hi; }
+    else if (op == 0x76) { fpu_cvt_lu_d(r[rs1], r[rs1+1], &fpu_lo, &fpu_hi); r[rd] = fpu_lo; r[rd+1] = fpu_hi; }
+    else if (op == 0x77) { fpu_cvt_d_l(r[rs1], r[rs1+1], &fpu_lo, &fpu_hi); r[rd] = fpu_lo; r[rd+1] = fpu_hi; }
+    else if (op == 0x78) { fpu_cvt_d_lu(r[rs1], r[rs1+1], &fpu_lo, &fpu_hi); r[rd] = fpu_lo; r[rd+1] = fpu_hi; }
 
     else if (op == 0x7F) {
         mmio_process(e);
