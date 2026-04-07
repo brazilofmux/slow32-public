@@ -14,17 +14,13 @@ int main(int argc, char **argv) {
 
     i = 0;
     while (i < argc) {
-        write(1, "argv: ", 6);
-        write(1, argv[i], strlen(argv[i]));
-        write(1, "\n", 1);
+        printf("argv[%d]=%s\n", i, argv[i], 0, 0, 0, 0, 0, 0);
         i = i + 1;
     }
 
     home = getenv("HOME");
     if (home) {
-        write(1, "HOME=", 5);
-        write(1, home, strlen(home));
-        write(1, "\n", 1);
+        printf("HOME=%s\n", home, 0, 0, 0, 0, 0, 0, 0);
     } else {
         write(2, "getenv failed\n", 14);
         return 1;

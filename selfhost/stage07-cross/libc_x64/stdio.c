@@ -352,7 +352,10 @@ static void fmt_hex(int val, int width, int zero_pad, int upper,
     }
 }
 
-static int fmt_core(char *fmt, int *args, void (*putfn)(), char **ctx) {
+/* fmt_core: args is pointer-width array (char**) so both int and pointer
+ * values survive the 32/64-bit boundary. For %d/%u/%x, cast to int.
+ * For %s/%p, use as pointer directly. */
+static int fmt_core(char *fmt, char **args, void (*putfn)(), char **ctx) {
     int count;
     int ai;
     int width;
@@ -393,24 +396,24 @@ static int fmt_core(char *fmt, int *args, void (*putfn)(), char **ctx) {
         if (*fmt == 'l') fmt = fmt + 1;
 
         if (*fmt == 'd' || *fmt == 'i') {
-            fmt_int(args[ai], 0, 10, width, zero_pad, putfn, ctx);
+            fmt_int((int)args[ai], 0, 10, width, zero_pad, putfn, ctx);
             ai = ai + 1;
         } else if (*fmt == 'u') {
-            fmt_int(args[ai], 1, 10, width, zero_pad, putfn, ctx);
+            fmt_int((int)args[ai], 1, 10, width, zero_pad, putfn, ctx);
             ai = ai + 1;
         } else if (*fmt == 'x') {
-            fmt_hex(args[ai], width, zero_pad, 0, putfn, ctx);
+            fmt_hex((int)args[ai], width, zero_pad, 0, putfn, ctx);
             ai = ai + 1;
         } else if (*fmt == 'X') {
-            fmt_hex(args[ai], width, zero_pad, 1, putfn, ctx);
+            fmt_hex((int)args[ai], width, zero_pad, 1, putfn, ctx);
             ai = ai + 1;
         } else if (*fmt == 'p') {
             fmt_puts("0x", putfn, ctx);
-            fmt_hex(args[ai], 0, 0, 0, putfn, ctx);
+            fmt_hex((int)args[ai], 0, 0, 0, putfn, ctx);
             ai = ai + 1;
             count = count + 2;
         } else if (*fmt == 'c') {
-            putfn(args[ai], ctx);
+            putfn((int)args[ai], ctx);
             ai = ai + 1;
             count = count + 1;
         } else if (*fmt == 's') {
@@ -418,7 +421,7 @@ static int fmt_core(char *fmt, int *args, void (*putfn)(), char **ctx) {
                 char *s;
                 int slen;
                 int spad;
-                s = (char *)args[ai];
+                s = args[ai];
                 if (width > 0) {
                     slen = strlen(s);
                     spad = width - slen;
@@ -444,9 +447,11 @@ static int fmt_core(char *fmt, int *args, void (*putfn)(), char **ctx) {
     return count;
 }
 
-int fprintf(FILE *f, char *fmt, int a0, int a1, int a2, int a3,
-            int a4, int a5, int a6, int a7) {
-    int args[8];
+/* fprintf/printf: args declared as char* (pointer-width) so both int and
+ * pointer values are preserved across the call boundary on x86-64. */
+int fprintf(FILE *f, char *fmt, char *a0, char *a1, char *a2, char *a3,
+            char *a4, char *a5, char *a6, char *a7) {
+    char *args[8];
     char *ctx;
     file_sys_init();
     args[0] = a0;
@@ -461,8 +466,8 @@ int fprintf(FILE *f, char *fmt, int a0, int a1, int a2, int a3,
     return fmt_core(fmt, args, fmt_putc_file, &ctx);
 }
 
-int printf(char *fmt, int a0, int a1, int a2, int a3,
-           int a4, int a5, int a6, int a7) {
+int printf(char *fmt, char *a0, char *a1, char *a2, char *a3,
+           char *a4, char *a5, char *a6, char *a7) {
     file_sys_init();
     return fprintf(stdout, fmt, a0, a1, a2, a3, a4, a5, a6, a7);
 }
