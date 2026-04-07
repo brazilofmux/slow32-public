@@ -42,6 +42,7 @@ static int   st_count;
 static char *stm_name[ST_MAX_MEMBERS];
 static int   stm_type[ST_MAX_MEMBERS];
 static int   stm_off[ST_MAX_MEMBERS];
+static int   stm_is_arr[ST_MAX_MEMBERS]; /* 1 if array member (address, no load) */
 static int   stm_count;
 
 /* --- Type helpers --- */
@@ -374,12 +375,13 @@ static Node *nd_comma(Node *l, Node *r) {
     return n;
 }
 
-static Node *nd_member(Node *lhs, int offset, int mty) {
+static Node *nd_member(Node *lhs, int offset, int mty, int is_arr) {
     Node *n;
     n = nd_new(ND_MEMBER);
     n->lhs = lhs;
     n->val = offset;
     n->ty = mty;
+    n->is_array = is_arr;
     return n;
 }
 

@@ -325,6 +325,7 @@ static int parse_type(void) {
     int mty;
     int off;
     int max_sz;
+    int arr_count;
     char nm[256];
     /* Skip const/volatile/signed/restrict qualifiers */
     while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE ||
@@ -398,12 +399,32 @@ static int parse_type(void) {
                     return TY_INT;
                 }
                 stm_name[stm_count] = strdup(lex_str);
-                stm_type[stm_count] = mty;
-                stm_off[stm_count] = off;
+                next();
+                /* Check for array member: type name[N]; */
+                arr_count = 0;
+                if (lex_tok == TK_LBRACK) {
+                    next();
+                    if (lex_tok != TK_NUM) {
+                        p_error("array size required in struct member");
+                        return TY_INT;
+                    }
+                    arr_count = lex_val;
+                    next();
+                    expect(TK_RBRACK);
+                }
+                if (arr_count > 0) {
+                    stm_type[stm_count] = mty + TY_PTR;
+                    stm_is_arr[stm_count] = 1;
+                    stm_off[stm_count] = off;
+                    off = off + ty_size(mty) * arr_count;
+                } else {
+                    stm_type[stm_count] = mty;
+                    stm_is_arr[stm_count] = 0;
+                    stm_off[stm_count] = off;
+                    off = off + ty_size(mty);
+                }
                 stm_count = stm_count + 1;
                 st_nfields[si] = st_nfields[si] + 1;
-                off = off + ty_size(mty);
-                next();
                 expect(TK_SEMI);
             }
             expect(TK_RBRACE);
@@ -446,12 +467,32 @@ static int parse_type(void) {
                     return TY_INT;
                 }
                 stm_name[stm_count] = strdup(lex_str);
-                stm_type[stm_count] = mty;
-                stm_off[stm_count] = 0;  /* all union members at offset 0 */
+                next();
+                /* Check for array member: type name[N]; */
+                arr_count = 0;
+                if (lex_tok == TK_LBRACK) {
+                    next();
+                    if (lex_tok != TK_NUM) {
+                        p_error("array size required in union member");
+                        return TY_INT;
+                    }
+                    arr_count = lex_val;
+                    next();
+                    expect(TK_RBRACK);
+                }
+                if (arr_count > 0) {
+                    stm_type[stm_count] = mty + TY_PTR;
+                    stm_is_arr[stm_count] = 1;
+                    stm_off[stm_count] = 0;
+                    if (ty_size(mty) * arr_count > max_sz) max_sz = ty_size(mty) * arr_count;
+                } else {
+                    stm_type[stm_count] = mty;
+                    stm_is_arr[stm_count] = 0;
+                    stm_off[stm_count] = 0;
+                    if (ty_size(mty) > max_sz) max_sz = ty_size(mty);
+                }
                 stm_count = stm_count + 1;
                 st_nfields[si] = st_nfields[si] + 1;
-                if (ty_size(mty) > max_sz) max_sz = ty_size(mty);
-                next();
                 expect(TK_SEMI);
             }
             expect(TK_RBRACE);
@@ -855,7 +896,7 @@ static Node *parse_postfix(void) {
             if (mi < 0) {
                 p_error("undefined struct member");
             }
-            n = nd_member(n, stm_off[mi], stm_type[mi]);
+            n = nd_member(n, stm_off[mi], stm_type[mi], stm_is_arr[mi]);
         } else if (lex_tok == TK_ARROW) {
             next();
             if (lex_tok != TK_IDENT) {
@@ -877,7 +918,7 @@ static Node *parse_postfix(void) {
             if (mi < 0) {
                 p_error("undefined struct member");
             }
-            n = nd_member(n, stm_off[mi], stm_type[mi]);
+            n = nd_member(n, stm_off[mi], stm_type[mi], stm_is_arr[mi]);
         } else if (lex_tok == TK_INC) {
             next();
             pi = nd_new(ND_POST_INC);

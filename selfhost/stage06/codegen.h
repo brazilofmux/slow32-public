@@ -682,8 +682,8 @@ static void gen_expr(Node *n) {
 
     if (n->kind == ND_MEMBER) {
         gen_addr(n);
-        /* Struct-typed member: keep as address; scalar: load */
-        if (!ty_is_struct(n->ty)) {
+        /* Struct-typed or array member: keep as address; scalar: load */
+        if (!ty_is_struct(n->ty) && !n->is_array) {
             cg_load(n->ty);
         }
         return;
