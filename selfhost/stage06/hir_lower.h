@@ -1085,7 +1085,7 @@ static int hl_expr(Node *n) {
     /* Member access */
     if (n->kind == ND_MEMBER) {
         addr = hl_addr(n);
-        if (ty_is_struct(n->ty)) return addr;
+        if (ty_is_struct(n->ty) || n->is_array) return addr;
         if (ty_is_double(n->ty) || ty_is_llong(n->ty)) {
             lv = hi_emit(HI_LOAD, TY_INT, addr, -1, 0, NULL);
             tmp = hi_emit(HI_ADDI, TY_INT, addr, -1, 4, NULL);
