@@ -168,6 +168,64 @@ static void cg_pop(void) {
  * Helpers
  * ============================================================================ */
 
+/* Check if a type needs 64-bit (pointer) operations on x86-64 */
+static int cg_is_ptr_type(int ty) {
+    return ty_is_ptr(ty);
+}
+
+/* Scale a SLOW-32 stack offset (4-byte slots) to x86-64 (8-byte slots).
+ * Frontend offsets: -12, -16, -20, ... (4 bytes apart, starting at -12)
+ * x86-64 offsets:   -16, -24, -32, ... (8 bytes apart, starting at -16)
+ *
+ * The SLOW-32 frontend reserves fp-4 for saved LR and fp-8 for saved FP.
+ * On x86-64, we don't have saved LR/FP in the frame (PUSH RBP handles it).
+ * So we map: frontend_offset → (frontend_offset + 8) * 2
+ * This gives: -12 → (-4)*2 = -8; -16 → (-8)*2 = -16; -20 → (-12)*2 = -24
+ *
+ * Simpler: multiply the offset by 2. This gives sufficient spacing:
+ * -12 → -24; -16 → -32; -20 → -40; etc. (8 bytes between each)
+ */
+static int cg_x64_offset(int slow32_offset) {
+    return slow32_offset * 2;
+}
+
+/* Load a variable from [RBP + scaled_offset] with correct width for type.
+ * Caller passes the SLOW-32 offset; we scale to x86-64 internally. */
+static void cg_load_local(int ty, int offset) {
+    int off;
+    off = cg_x64_offset(offset);
+    if (cg_is_ptr_type(ty)) {
+        x64_mov_rm64(X64_RAX, X64_RBP, off);
+    } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
+        if (ty & TY_UNSIGNED)
+            x64_movzx_rm8(X64_RAX, X64_RBP, off);
+        else
+            x64_movsx_rm8(X64_RAX, X64_RBP, off);
+    } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+        if (ty & TY_UNSIGNED)
+            x64_movzx_rm16(X64_RAX, X64_RBP, off);
+        else
+            x64_movsx_rm16(X64_RAX, X64_RBP, off);
+    } else {
+        x64_mov_rm(X64_RAX, X64_RBP, off);
+    }
+}
+
+/* Store a value to [RBP + scaled_offset] with correct width for type */
+static void cg_store_local(int ty, int offset, int src_reg) {
+    int off;
+    off = cg_x64_offset(offset);
+    if (cg_is_ptr_type(ty)) {
+        x64_mov_mr64(X64_RBP, off, src_reg);
+    } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
+        x64_mov_mr8(X64_RBP, off, src_reg);
+    } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+        x64_mov_mr16(X64_RBP, off, src_reg);
+    } else {
+        x64_mov_mr(X64_RBP, off, src_reg);
+    }
+}
+
 /* Load 32-bit immediate into EAX */
 static void cg_li(int v) {
     if (v == 0) {
@@ -214,9 +272,9 @@ static void cg_store(int ty) {
     }
 }
 
-/* Compute address: RAX = RBP + offset */
+/* Compute address: RAX = RBP + scaled_offset */
 static void cg_frame_off(int off) {
-    x64_lea(X64_RAX, X64_RBP, off);
+    x64_lea(X64_RAX, X64_RBP, cg_x64_offset(off));
 }
 
 /* ============================================================================
@@ -250,7 +308,7 @@ static void gen_addr(Node *n) {
     if (n->kind == ND_MEMBER) {
         gen_addr(n->lhs);
         if (n->val != 0) {
-            x64_add_ri(X64_RAX, n->val);
+            x64_add_ri64(X64_RAX, n->val);
         }
         return;
     }
@@ -283,20 +341,7 @@ static void gen_expr(Node *n) {
             return;
         }
         if (n->is_local) {
-            /* Load local from stack */
-            if (!ty_is_ptr(n->ty) && (n->ty & TY_BASE_MASK) == TY_CHAR) {
-                if (n->ty & TY_UNSIGNED)
-                    x64_movzx_rm8(X64_RAX, X64_RBP, n->offset);
-                else
-                    x64_movsx_rm8(X64_RAX, X64_RBP, n->offset);
-            } else if (!ty_is_ptr(n->ty) && (n->ty & TY_BASE_MASK) == TY_SHORT) {
-                if (n->ty & TY_UNSIGNED)
-                    x64_movzx_rm16(X64_RAX, X64_RBP, n->offset);
-                else
-                    x64_movsx_rm16(X64_RAX, X64_RBP, n->offset);
-            } else {
-                x64_mov_rm(X64_RAX, X64_RBP, n->offset);
-            }
+            cg_load_local(n->ty, n->offset);
         } else {
             /* Global: load address, then load value */
             gen_addr(n);
@@ -395,11 +440,13 @@ static void gen_expr(Node *n) {
                     x64_imul_rri(X64_RAX, X64_RAX, elem_sz);
                 }
                 cg_pop();  /* RCX = pointer, RAX = scaled offset */
+                /* Use 64-bit ops for pointer arithmetic */
+                x64_movsxd(X64_RAX, X64_RAX); /* sign-extend offset to 64-bit */
                 if (n->op == TK_PLUS)
-                    x64_add_rr(X64_RAX, X64_RCX);
+                    x64_add_rr64(X64_RAX, X64_RCX);
                 else {
-                    x64_sub_rr(X64_RCX, X64_RAX); /* RCX = ptr - off */
-                    x64_mov_rr(X64_RAX, X64_RCX);
+                    x64_sub_rr64(X64_RCX, X64_RAX);
+                    x64_mov_rr64(X64_RAX, X64_RCX);
                 }
                 return;
             }
@@ -674,8 +721,9 @@ static void gen_expr(Node *n) {
 
         i = 0;
         while (i < nargs && i < 6) {
-            /* Load arg i from stack: it's at RSP + (nargs-1-i)*8 */
-            x64_mov_rm(arg_reg[i], X64_RSP, (nargs - 1 - i) * 8);
+            /* Load arg i from stack: it's at RSP + (nargs-1-i)*8.
+             * Use 64-bit load so pointer values are preserved. */
+            x64_mov_rm64(arg_reg[i], X64_RSP, (nargs - 1 - i) * 8);
             i = i + 1;
         }
 
@@ -963,7 +1011,8 @@ static void gen_func(Node *fn) {
      * Add 8 for saved LR slot (matching SLOW-32 layout: fp-4=LR, fp-8=FP)
      * Total = 8 + locals_size, rounded up to 16-byte alignment.
      */
-    fs = 8 + fn->locals_size;
+    /* Double the frame size to account for 8-byte slots on x86-64 */
+    fs = 16 + fn->locals_size * 2;
     fs = (fs + 15) & ~15;
     cg_frame_size = fs;
 
@@ -972,14 +1021,19 @@ static void gen_func(Node *fn) {
     x64_mov_rr64(X64_RBP, X64_RSP);
     if (fs > 0) x64_sub_ri64(X64_RSP, fs);
 
-    /* Save register args to stack at same offsets the frontend expects.
-     * Frontend stores param i at offset: -8 - (i+1)*4 = -(12 + i*4)
-     * These are 32-bit stores matching SLOW-32's 32-bit registers.
+    /* Save register args to stack.
+     *
+     * On x86-64, ALL values (including pointers) need 8-byte storage to
+     * avoid truncation. The SLOW-32 frontend assigns 4-byte-spaced offsets.
+     * We simply double the offset magnitude to get 8-byte spacing.
+     * Example: frontend offset -12 → x64 offset -24; -16 → -32; etc.
+     *
+     * The cg_x64_offset() helper handles this scaling everywhere.
      */
     i = 0;
     p = fn->args;
     while (p && i < 6) {
-        x64_mov_mr(X64_RBP, p->offset, x64_arg_regs[i]);
+        x64_mov_mr64(X64_RBP, cg_x64_offset(p->offset), x64_arg_regs[i]);
         i = i + 1;
         p = p->next;
     }
