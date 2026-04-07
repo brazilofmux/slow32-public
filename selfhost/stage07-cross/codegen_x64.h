@@ -1331,7 +1331,14 @@ static void resolve_calls(void) {
             j = j + 1;
         }
         if (!found) {
-            /* Unresolved — will crash at runtime. TODO: external symbols */
+            /* Unresolved call — NOP out the call instruction (E8 xx xx xx xx → 5-byte NOP) */
+            if (off >= 0) {
+                x64_buf[off - 1] = 0x0F;  /* 5-byte NOP: 0F 1F 44 00 00 */
+                x64_buf[off + 0] = 0x1F;
+                x64_buf[off + 1] = 0x44;
+                x64_buf[off + 2] = 0x00;
+                x64_buf[off + 3] = 0x00;
+            }
         }
         i = i + 1;
     }
