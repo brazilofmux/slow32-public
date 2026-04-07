@@ -42,6 +42,9 @@ static int hl_ngoto;
 /* After hl_expr() for a TY_LLONG expression, hl_hi holds the hi word index.
  * Callers must save hl_hi before calling hl_expr() again. */
 static int hl_hi;
+static int hl_struct_ret;   /* 1 if current func returns struct via hidden ptr */
+static int hl_retptr_alloca; /* alloca index for hidden __retptr param */
+static int hl_ret_size;     /* struct return size in bytes */
 
 /* Widen a 32-bit value to 64-bit (sign or zero extend) */
 static void hl_widen64(int val, int from_ty, int *out_lo, int *out_hi) {
@@ -365,7 +368,7 @@ static int hl_expr(Node *n) {
             int tmp;
             int sp;
             int dp;
-            sa = hl_addr(n->rhs);
+            sa = hl_expr(n->rhs);  /* address of source (works for vars, calls, members) */
             da = hl_addr(n->lhs);
             sz = ty_size(n->ty);
             off = 0;
@@ -1169,6 +1172,27 @@ static int hl_expr(Node *n) {
             i = i + 1;
         }
         ret_ty = find_func_type(n->name);
+        if (ty_is_struct(ret_ty)) {
+            /* Struct return: allocate temp, pass address as hidden first arg */
+            int tmp_alloca;
+            int tmp_sz;
+            tmp_sz = ty_size(ret_ty);
+            tmp_sz = ((tmp_sz + 3) / 4) * 4;
+            hl_temp_stack = hl_temp_stack + tmp_sz;
+            tmp_alloca = hi_emit(HI_ALLOCA, TY_INT, -1, -1, 0 - hl_temp_stack, NULL);
+            /* Shift existing cargs right by 1 to make room for hidden first arg */
+            i = h_ncarg;
+            while (i > carg_base) {
+                h_carg[i] = h_carg[i - 1];
+                i = i - 1;
+            }
+            h_carg[carg_base] = tmp_alloca;
+            h_ncarg = h_ncarg + 1;
+            phys_count = phys_count + 1;
+            i = hi_emit(HI_CALL, TY_INT, -1, -1, phys_count, n->name);
+            h_cbase[i] = carg_base;
+            return i;  /* returns the retptr (address of temp struct) */
+        }
         i = hi_emit(HI_CALL, TY_INT, -1, -1, phys_count, n->name);
         h_cbase[i] = carg_base;
         if (ty_is_llong(ret_ty) || ty_is_double(ret_ty)) {
@@ -1263,7 +1287,37 @@ static void hl_stmt(Node *n) {
 
     /* Return */
     if (n->kind == ND_RETURN) {
-        if (n->lhs) {
+        if (n->lhs && hl_struct_ret && ty_is_struct(n->lhs->ty)) {
+            /* Struct return: copy struct to hidden __retptr, then return ptr */
+            {
+                int src_addr;
+                int dst_addr;
+                int copy_i;
+                int copy_sz;
+                int tmp;
+                int src_off;
+                int dst_off;
+                src_addr = hl_addr(n->lhs);
+                dst_addr = hi_emit(HI_LOAD, TY_INT, hl_retptr_alloca, -1, 0, NULL);
+                copy_sz = hl_ret_size;
+                copy_i = 0;
+                while (copy_i + 4 <= copy_sz) {
+                    src_off = hi_emit(HI_ADDI, TY_INT, src_addr, -1, copy_i, NULL);
+                    tmp = hi_emit(HI_LOAD, TY_INT, src_off, -1, 0, NULL);
+                    dst_off = hi_emit(HI_ADDI, TY_INT, dst_addr, -1, copy_i, NULL);
+                    hi_emit(HI_STORE, TY_INT, dst_off, tmp, 0, NULL);
+                    copy_i = copy_i + 4;
+                }
+                while (copy_i < copy_sz) {
+                    src_off = hi_emit(HI_ADDI, TY_INT, src_addr, -1, copy_i, NULL);
+                    tmp = hi_emit(HI_LOAD, TY_CHAR, src_off, -1, 0, NULL);
+                    dst_off = hi_emit(HI_ADDI, TY_INT, dst_addr, -1, copy_i, NULL);
+                    hi_emit(HI_STORE, TY_CHAR, dst_off, tmp, 0, NULL);
+                    copy_i = copy_i + 1;
+                }
+                hi_emit(HI_RET, 0, dst_addr, -1, 0, NULL);
+            }
+        } else if (n->lhs) {
             lv = hl_expr(n->lhs);
             if (ty_is_llong(n->lhs->ty) || ty_is_double(n->lhs->ty)) {
                 hi_emit(HI_RET, 0, lv, hl_hi, 0, NULL);
@@ -1547,6 +1601,9 @@ static void hl_func(Node *fn) {
     hl_loop_depth = 0;
     hl_sw_depth = 0;
     hl_ngoto = 0;
+    hl_struct_ret = ty_is_struct(fn->ty) ? 1 : 0;
+    hl_retptr_alloca = -1;
+    hl_ret_size = hl_struct_ret ? ty_size(fn->ty) : 0;
 
     entry = hir_new_block();
     hl_switch_block(entry);
@@ -1558,6 +1615,15 @@ static void hl_func(Node *fn) {
         int a4;
         Node *pp;
         phys_idx = 0;
+
+        /* Hidden first param for struct return */
+        if (hl_struct_ret) {
+            param_inst = hi_emit(HI_PARAM, TY_INT, -1, -1, 0, NULL);
+            hl_retptr_alloca = hl_get_alloca(fn->offset, TY_INT);
+            hi_emit(HI_STORE, TY_INT, hl_retptr_alloca, param_inst, 0, NULL);
+            phys_idx = 1;
+        }
+
         pp = fn->args;
         while (pp) {
             if (ty_is_llong(pp->ty)) {

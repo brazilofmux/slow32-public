@@ -31,6 +31,8 @@ static int   ps_nlocals;
 static int   ps_stack;                /* current stack allocation */
 static int   ps_nparams;              /* params in current func */
 static int   ps_is_varargs;           /* 1 if current func has ... */
+static int   ps_struct_ret;           /* 1 if current func returns struct via hidden ptr */
+static int   ps_retptr_off;           /* stack offset of hidden __retptr param */
 
 static char *ps_gname[P_MAX_GLOBALS]; /* global var names */
 static int   ps_gtype[P_MAX_GLOBALS]; /* global var types */
@@ -1992,7 +1994,16 @@ static Node *parse_top_decl(void) {
     ps_stack = 8;  /* reserve 8 bytes: saved r31 + saved r30 */
     ps_nparams = 0;
     ps_is_varargs = 0;
+    ps_struct_ret = 0;
+    ps_retptr_off = 0;
     ps_nlabels = 0;
+
+    /* Hidden first param for struct return */
+    if (ty_is_struct(ty)) {
+        ps_struct_ret = 1;
+        ps_retptr_off = add_local("__retptr", TY_PTR + TY_INT);
+        ps_nparams = 1;
+    }
 
     /* Parameters */
     phead = NULL;
@@ -2099,6 +2110,7 @@ params_done:
     fn->args = phead;
     fn->nparams = ps_nparams;
     fn->is_varargs = ps_is_varargs;
+    fn->offset = ps_struct_ret ? ps_retptr_off : 0; /* hidden __retptr offset */
     ps_cur_func = fn->name;
     fn->body = parse_block();
     fn->locals_size = ps_stack;
