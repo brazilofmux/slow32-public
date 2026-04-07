@@ -1,8 +1,6 @@
 /* s32ar_min.h -- cc-min compatible header for s32-ar-port.c */
 
 /* Standard file handles (linker resolves against libc globals) */
-int stdout;
-int stderr;
 
 /* Constants */
 #define NULL 0
@@ -21,13 +19,13 @@ char *strchr(char *s, int c);
 char *memcpy(char *dst, char *src, int n);
 char *memset(char *dst, int c, int n);
 
-int fopen(char *path, char *mode);
-int fclose(int f);
-int fputc(int c, int f);
-int fputs(char *s, int f);
-int fgetc(int f);
-int fseek(int f, int off, int whence);
-int ftell(int f);
-int fwrite(char *buf, int sz, int count, int f);
-int fread(char *buf, int sz, int count, int f);
-int fput_uint(int f, int v);
+int fdopen_path(char *path, char *mode);
+int fdclose(int f);
+int fdputc(int c, int f);
+int fdputs(char *s, int f);
+int fdgetc(int f);
+int fdseek(int f, int off, int whence);
+int fdtell(int f);
+int fdwrite(char *buf, int sz, int count, int f);
+int fdread(char *buf, int sz, int count, int f);
+int fdputuint(int f, int v);

@@ -34,12 +34,11 @@ int strlen(char *s);
 char *strdup(char *s);
 char *calloc(int n, int size);
 void exit(int status);
-int stderr = 2;
 #define NULL 0
 
-/* fputs/fputc: the frontend uses these with int fd, not FILE*.
+/* fd-based I/O: the frontend uses fdputs/fdputc/fdputuint with int fd.
  * Implement via write() so they work on both host and SLOW-32. */
-static int fputs(char *s, int f) {
+static int fdputs(char *s, int f) {
     int len;
     len = 0;
     while (s[len]) len = len + 1;
@@ -47,7 +46,7 @@ static int fputs(char *s, int f) {
     return 0;
 }
 
-static int fputc(int c, int f) {
+static int fdputc(int c, int f) {
     char ch;
     ch = c;
     write(f, &ch, 1);
@@ -55,7 +54,7 @@ static int fputc(int c, int f) {
 }
 
 /* fput_uint: used by lexer/parser for error reporting */
-static void fput_uint(int f, int v) {
+static void fdputuint(int f, int v) {
     char buf[12];
     int i;
     int neg;

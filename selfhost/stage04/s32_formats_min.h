@@ -1,7 +1,6 @@
 /* s32_formats_min.h -- cc-min compatible header for s32-as-port.c */
 
 /* Standard file descriptors */
-#define stderr 2
 
 /* S32O object format magic */
 #define S32O_MAGIC 0x5333324F
@@ -63,12 +62,12 @@ char *memcpy(char *dst, char *src, int n);
 char *memset(char *dst, int c, int n);
 int strtol(char *s, char **endp, int base);
 
-int fopen(char *path, char *mode);
-int fclose(int f);
-int fputc(int c, int f);
-int fwrite(char *buf, int sz, int count, int f);
-int fread(char *buf, int sz, int count, int f);
-char *fgets(char *buf, int sz, int f);
-int fputs(char *s, int f);
-int ftell(int f);
-int fput_uint(int f, int v);
+int fdopen_path(char *path, char *mode);
+int fdclose(int f);
+int fdputc(int c, int f);
+int fdwrite(char *buf, int sz, int count, int f);
+int fdread(char *buf, int sz, int count, int f);
+char *fdgets(char *buf, int sz, int f);
+int fdputs(char *s, int f);
+int fdtell(int f);
+int fdputuint(int f, int v);

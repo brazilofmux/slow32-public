@@ -67,17 +67,17 @@ int ccmin_load_source(const char *path) {
         g_src_dir_len = pi;
     }
     g_src_dir[g_src_dir_len] = 0;
-    f = fopen(path, "rb");
+    f = fdopen_path(path, "rb");
     if (!f) return 0;
     g_src_len = 0;
     for (;;) {
-        ch = fgetc(f);
+        ch = fdgetc(f);
         if (ch < 0) break;
-        if (g_src_len >= MAX_SRC - 1) { fclose(f); return 0; }
+        if (g_src_len >= MAX_SRC - 1) { fdclose(f); return 0; }
         g_src[g_src_len] = ch;
         g_src_len = g_src_len + 1;
     }
-    fclose(f);
+    fdclose(f);
     g_src[g_src_len] = 0;
     return 1;
 }
@@ -183,13 +183,12 @@ static int str_eq(const char *a, const char *b) {
     }
 }
 
-int stderr;
 static void cc_error(const char *msg) {
-    fputs("cc-min:", stderr);
-    fput_uint(stderr, g_line);
-    fputs(": error: ", stderr);
-    fputs(msg, stderr);
-    fputc(10, stderr);
+    fdputs("cc-min:", 2);
+    fdputuint(2, g_line);
+    fdputs(": error: ", 2);
+    fdputs(msg, 2);
+    fdputc(10, 2);
 }
 
 /* Define table (object-like macros) */
@@ -339,20 +338,20 @@ static void process_include(void) {
             k = k + 1;
         }
         g_inc_fullpath[fp] = 0;
-        f = fopen(g_inc_fullpath, "rb");
+        f = fdopen_path(g_inc_fullpath, "rb");
     } else {
-        f = fopen(g_inc_path, "rb");
+        f = fdopen_path(g_inc_path, "rb");
     }
     if (!f) { cc_error("cannot open include file"); return; }
     g_src_len = 0;
     for (;;) {
-        ch = fgetc(f);
+        ch = fdgetc(f);
         if (ch < 0) break;
         if (g_src_len >= MAX_SRC - 1) break;
         g_src[g_src_len] = ch;
         g_src_len = g_src_len + 1;
     }
-    fclose(f);
+    fdclose(f);
     g_src[g_src_len] = 0;
     g_pos = 0;
     g_line = 1;

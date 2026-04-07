@@ -42,7 +42,7 @@ static void print_burg_top_ops(int topn) {
         i = i + 1;
     }
 
-    fputs("hir_burg_top_ops:\n", stderr);
+    fdputs("hir_burg_top_ops:\n", 2);
     r = 0;
     while (r < topn) {
         best = -1;
@@ -57,11 +57,11 @@ static void print_burg_top_ops(int topn) {
         }
         if (best < 0 || bestc <= 0) break;
         used[best] = 1;
-        fputs("  ", stderr);
-        fputs(bg_op_name(best), stderr);
-        fputs("=", stderr);
-        fput_uint(stderr, bestc);
-        fputc(10, stderr);
+        fdputs("  ", 2);
+        fdputs(bg_op_name(best), 2);
+        fdputs("=", 2);
+        fdputuint(2, bestc);
+        fdputc(10, 2);
         r = r + 1;
     }
 }
@@ -81,7 +81,7 @@ static void print_burg_top_patterns(int topn) {
         i = i + 1;
     }
 
-    fputs("hir_burg_top_pats:\n", stderr);
+    fdputs("hir_burg_top_pats:\n", 2);
     r = 0;
     while (r < topn) {
         best = -1;
@@ -98,21 +98,21 @@ static void print_burg_top_patterns(int topn) {
         used[best] = 1;
         lnt = bg_plnt[best];
         rnt = bg_prnt[best];
-        fputs("  #", stderr);
-        fput_uint(stderr, best);
-        fputs(" ", stderr);
-        fputs(bg_op_name(bg_pop[best]), stderr);
-        fputs("(", stderr);
-        if (lnt < 0) fputs("_", stderr);
-        else fputs(bg_nt_name(lnt), stderr);
-        fputs(",", stderr);
-        if (rnt < 0) fputs("_", stderr);
-        else fputs(bg_nt_name(rnt), stderr);
-        fputs(")->", stderr);
-        fputs(bg_nt_name(bg_pnt[best]), stderr);
-        fputs(" x", stderr);
-        fput_uint(stderr, bestc);
-        fputc(10, stderr);
+        fdputs("  #", 2);
+        fdputuint(2, best);
+        fdputs(" ", 2);
+        fdputs(bg_op_name(bg_pop[best]), 2);
+        fdputs("(", 2);
+        if (lnt < 0) fdputs("_", 2);
+        else fdputs(bg_nt_name(lnt), 2);
+        fdputs(",", 2);
+        if (rnt < 0) fdputs("_", 2);
+        else fdputs(bg_nt_name(rnt), 2);
+        fdputs(")->", 2);
+        fdputs(bg_nt_name(bg_pnt[best]), 2);
+        fdputs(" x", 2);
+        fdputuint(2, bestc);
+        fdputc(10, 2);
         r = r + 1;
     }
 }
@@ -130,7 +130,7 @@ static void print_iconst_nonimm_top_ops(int topn) {
         i = i + 1;
     }
 
-    fputs("hir_iconst_nonimm_top_ops:\n", stderr);
+    fdputs("hir_iconst_nonimm_top_ops:\n", 2);
     r = 0;
     while (r < topn) {
         best = -1;
@@ -145,11 +145,11 @@ static void print_iconst_nonimm_top_ops(int topn) {
         }
         if (best < 0 || bestc <= 0) break;
         used[best] = 1;
-        fputs("  ", stderr);
-        fputs(bg_op_name(best), stderr);
-        fputs("=", stderr);
-        fput_uint(stderr, bestc);
-        fputc(10, stderr);
+        fdputs("  ", 2);
+        fdputs(bg_op_name(best), 2);
+        fdputs("=", 2);
+        fdputuint(2, bestc);
+        fdputc(10, 2);
         r = r + 1;
     }
 }
@@ -213,7 +213,7 @@ int main(int argc, char **argv) {
     }
 
     if (infile == 0 || outfile == 0) {
-        fputs("Usage: s12cc [-I dir] input.c output.s\n", stderr);
+        fdputs("Usage: s12cc [-I dir] input.c output.s\n", 2);
         return 1;
     }
 
@@ -244,14 +244,14 @@ int main(int argc, char **argv) {
     /* Read source file */
     fd = open(infile, 0);
     if (fd < 0) {
-        fputs("s12cc: cannot open input: ", stderr);
-        fputs(infile, stderr);
-        fputc(10, stderr);
+        fdputs("s12cc: cannot open input: ", 2);
+        fdputs(infile, 2);
+        fdputc(10, 2);
         return 1;
     }
     src = malloc(LEX_SRC_SZ);
     if (!src) {
-        fputs("s12cc: out of memory\n", stderr);
+        fdputs("s12cc: out of memory\n", 2);
         return 1;
     }
     n = read(fd, src, LEX_SRC_SZ - 1);
@@ -276,114 +276,114 @@ int main(int argc, char **argv) {
     /* Write output */
     fd = open(outfile, 26);  /* O_WRONLY | O_CREAT | O_TRUNC */
     if (fd < 0) {
-        fputs("s12cc: cannot open output: ", stderr);
-        fputs(outfile, stderr);
-        fputc(10, stderr);
+        fdputs("s12cc: cannot open output: ", 2);
+        fdputs(outfile, 2);
+        fdputc(10, 2);
         return 1;
     }
     write(fd, cg_out, cg_olen);
     close(fd);
 
     /* Print optimization stats to stderr */
-    fputs("hir_opt: ", stderr);
-    fput_uint(stderr, ho_stat_elim);
-    fputs(" HIR instructions eliminated, cse=", stderr);
-    fput_uint(stderr, ho_stat_cse);
-    fputs(" dse=", stderr);
-    fput_uint(stderr, ho_stat_dse);
-    fputs(" slf=", stderr);
-    fput_uint(stderr, ho_stat_slf);
-    fputs(" lse=", stderr);
-    fput_uint(stderr, ho_stat_lse);
-    fputs("\n", stderr);
-    fputs("hir_licm: ", stderr);
-    fput_uint(stderr, licm_stat_hoisted);
-    fputs(" instructions hoisted\n", stderr);
-    fputs("hir_burg: ", stderr);
-    fput_uint(stderr, bg_stat_folded);
-    fputs(" folded, ", stderr);
-    fput_uint(stderr, bg_stat_cand);
-    fputs(" cand, rej: uses=", stderr);
-    fput_uint(stderr, bg_stat_rej_uses);
-    fputs(" remat=", stderr);
-    fput_uint(stderr, bg_stat_rej_remat);
-    fputs(" blk=", stderr);
-    fput_uint(stderr, bg_stat_rej_blk);
-    fputs(" cost=", stderr);
-    fput_uint(stderr, bg_stat_rej_cost);
-    fputs("\n", stderr);
-    fputs("hir_burg_select: total=", stderr);
-    fput_uint(stderr, bg_stat_sel_total);
-    fputs(" chain=", stderr);
-    fput_uint(stderr, bg_stat_sel_chain);
-    fputs(" imm=", stderr);
-    fput_uint(stderr, bg_stat_sel_imm);
-    fputs(" faddr=", stderr);
-    fput_uint(stderr, bg_stat_sel_faddr);
-    fputs(" saddr=", stderr);
-    fput_uint(stderr, bg_stat_sel_saddr);
-    fputs(" burg_skipped=", stderr);
-    fput_uint(stderr, bg_stat_burg_skipped);
-    fputs(" spills=", stderr);
-    fput_uint(stderr, ra_stat_spills);
-    fputs("\n", stderr);
-    fputs("hir_imm_sel: add ", stderr);
-    fput_uint(stderr, hcg_stat_imm_hit_add);
-    fputs("/", stderr);
-    fput_uint(stderr, hcg_stat_imm_opp_add);
-    fputs(" miss=", stderr);
-    fput_uint(stderr, hcg_stat_imm_miss_add);
-    fputs(" | sub ", stderr);
-    fput_uint(stderr, hcg_stat_imm_hit_sub);
-    fputs("/", stderr);
-    fput_uint(stderr, hcg_stat_imm_opp_sub);
-    fputs(" miss=", stderr);
-    fput_uint(stderr, hcg_stat_imm_miss_sub);
-    fputs(" | logic ", stderr);
-    fput_uint(stderr, hcg_stat_imm_hit_logic);
-    fputs("/", stderr);
-    fput_uint(stderr, hcg_stat_imm_opp_logic);
-    fputs(" miss=", stderr);
-    fput_uint(stderr, hcg_stat_imm_miss_logic);
-    fputs(" | shift ", stderr);
-    fput_uint(stderr, hcg_stat_imm_hit_shift);
-    fputs("/", stderr);
-    fput_uint(stderr, hcg_stat_imm_opp_shift);
-    fputs(" miss=", stderr);
-    fput_uint(stderr, hcg_stat_imm_miss_shift);
-    fputs(" | cmp ", stderr);
-    fput_uint(stderr, hcg_stat_imm_hit_cmp);
-    fputs("/", stderr);
-    fput_uint(stderr, hcg_stat_imm_opp_cmp);
-    fputs(" miss=", stderr);
-    fput_uint(stderr, hcg_stat_imm_miss_cmp);
-    fputs("\n", stderr);
-    fputs("hir_codegen_li: total=", stderr);
-    fput_uint(stderr, hcg_stat_li_total);
-    fputs(" small=", stderr);
-    fput_uint(stderr, hcg_stat_li_small);
-    fputs(" lui_only=", stderr);
-    fput_uint(stderr, hcg_stat_li_lui_only);
-    fputs(" lui_addi=", stderr);
-    fput_uint(stderr, hcg_stat_li_lui_addi);
-    fputs(" copy_mov=", stderr);
-    fput_uint(stderr, hcg_stat_copy_emit);
-    fputs(" addi0_elide=", stderr);
-    fput_uint(stderr, hcg_stat_addi0_elide);
-    fputs(" divrem_pow2=", stderr);
-    fput_uint(stderr, hcg_stat_divrem_pow2);
-    fputs(" tailcall=", stderr);
-    fput_uint(stderr, hcg_stat_tailcall);
-    fputs("\n", stderr);
-    fputs("hir_iconst_use: total=", stderr);
-    fput_uint(stderr, bg_stat_iconst_total);
-    fputs(" imm_only=", stderr);
-    fput_uint(stderr, bg_stat_iconst_imm_only);
-    fputs(" nonimm=", stderr);
-    fput_uint(stderr, bg_stat_iconst_nonimm);
-    fputs(" unused=", stderr);
-    fput_uint(stderr, bg_stat_iconst_unused);
-    fputs("\n", stderr);
+    fdputs("hir_opt: ", 2);
+    fdputuint(2, ho_stat_elim);
+    fdputs(" HIR instructions eliminated, cse=", 2);
+    fdputuint(2, ho_stat_cse);
+    fdputs(" dse=", 2);
+    fdputuint(2, ho_stat_dse);
+    fdputs(" slf=", 2);
+    fdputuint(2, ho_stat_slf);
+    fdputs(" lse=", 2);
+    fdputuint(2, ho_stat_lse);
+    fdputs("\n", 2);
+    fdputs("hir_licm: ", 2);
+    fdputuint(2, licm_stat_hoisted);
+    fdputs(" instructions hoisted\n", 2);
+    fdputs("hir_burg: ", 2);
+    fdputuint(2, bg_stat_folded);
+    fdputs(" folded, ", 2);
+    fdputuint(2, bg_stat_cand);
+    fdputs(" cand, rej: uses=", 2);
+    fdputuint(2, bg_stat_rej_uses);
+    fdputs(" remat=", 2);
+    fdputuint(2, bg_stat_rej_remat);
+    fdputs(" blk=", 2);
+    fdputuint(2, bg_stat_rej_blk);
+    fdputs(" cost=", 2);
+    fdputuint(2, bg_stat_rej_cost);
+    fdputs("\n", 2);
+    fdputs("hir_burg_select: total=", 2);
+    fdputuint(2, bg_stat_sel_total);
+    fdputs(" chain=", 2);
+    fdputuint(2, bg_stat_sel_chain);
+    fdputs(" imm=", 2);
+    fdputuint(2, bg_stat_sel_imm);
+    fdputs(" faddr=", 2);
+    fdputuint(2, bg_stat_sel_faddr);
+    fdputs(" saddr=", 2);
+    fdputuint(2, bg_stat_sel_saddr);
+    fdputs(" burg_skipped=", 2);
+    fdputuint(2, bg_stat_burg_skipped);
+    fdputs(" spills=", 2);
+    fdputuint(2, ra_stat_spills);
+    fdputs("\n", 2);
+    fdputs("hir_imm_sel: add ", 2);
+    fdputuint(2, hcg_stat_imm_hit_add);
+    fdputs("/", 2);
+    fdputuint(2, hcg_stat_imm_opp_add);
+    fdputs(" miss=", 2);
+    fdputuint(2, hcg_stat_imm_miss_add);
+    fdputs(" | sub ", 2);
+    fdputuint(2, hcg_stat_imm_hit_sub);
+    fdputs("/", 2);
+    fdputuint(2, hcg_stat_imm_opp_sub);
+    fdputs(" miss=", 2);
+    fdputuint(2, hcg_stat_imm_miss_sub);
+    fdputs(" | logic ", 2);
+    fdputuint(2, hcg_stat_imm_hit_logic);
+    fdputs("/", 2);
+    fdputuint(2, hcg_stat_imm_opp_logic);
+    fdputs(" miss=", 2);
+    fdputuint(2, hcg_stat_imm_miss_logic);
+    fdputs(" | shift ", 2);
+    fdputuint(2, hcg_stat_imm_hit_shift);
+    fdputs("/", 2);
+    fdputuint(2, hcg_stat_imm_opp_shift);
+    fdputs(" miss=", 2);
+    fdputuint(2, hcg_stat_imm_miss_shift);
+    fdputs(" | cmp ", 2);
+    fdputuint(2, hcg_stat_imm_hit_cmp);
+    fdputs("/", 2);
+    fdputuint(2, hcg_stat_imm_opp_cmp);
+    fdputs(" miss=", 2);
+    fdputuint(2, hcg_stat_imm_miss_cmp);
+    fdputs("\n", 2);
+    fdputs("hir_codegen_li: total=", 2);
+    fdputuint(2, hcg_stat_li_total);
+    fdputs(" small=", 2);
+    fdputuint(2, hcg_stat_li_small);
+    fdputs(" lui_only=", 2);
+    fdputuint(2, hcg_stat_li_lui_only);
+    fdputs(" lui_addi=", 2);
+    fdputuint(2, hcg_stat_li_lui_addi);
+    fdputs(" copy_mov=", 2);
+    fdputuint(2, hcg_stat_copy_emit);
+    fdputs(" addi0_elide=", 2);
+    fdputuint(2, hcg_stat_addi0_elide);
+    fdputs(" divrem_pow2=", 2);
+    fdputuint(2, hcg_stat_divrem_pow2);
+    fdputs(" tailcall=", 2);
+    fdputuint(2, hcg_stat_tailcall);
+    fdputs("\n", 2);
+    fdputs("hir_iconst_use: total=", 2);
+    fdputuint(2, bg_stat_iconst_total);
+    fdputs(" imm_only=", 2);
+    fdputuint(2, bg_stat_iconst_imm_only);
+    fdputs(" nonimm=", 2);
+    fdputuint(2, bg_stat_iconst_nonimm);
+    fdputs(" unused=", 2);
+    fdputuint(2, bg_stat_iconst_unused);
+    fdputs("\n", 2);
     print_iconst_nonimm_top_ops(8);
     print_burg_top_ops(8);
     print_burg_top_patterns(8);

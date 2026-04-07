@@ -122,23 +122,23 @@ static void next(void) {
 }
 
 static void p_error(char *msg) {
-    fputs("s12cc:", stderr);
-    fput_uint(stderr, lex_line);
-    fputs(": error: ", stderr);
-    fputs(msg, stderr);
-    fputc(10, stderr);
+    fdputs("s12cc:", 2);
+    fdputuint(2, lex_line);
+    fdputs(": error: ", 2);
+    fdputs(msg, 2);
+    fdputc(10, 2);
     exit(1);
 }
 
 static void expect(int tok) {
     if (lex_tok != tok) {
-        fputs("s12cc:", stderr);
-        fput_uint(stderr, lex_line);
-        fputs(": expected token ", stderr);
-        fput_uint(stderr, tok);
-        fputs(" got ", stderr);
-        fput_uint(stderr, lex_tok);
-        fputc(10, stderr);
+        fdputs("s12cc:", 2);
+        fdputuint(2, lex_line);
+        fdputs(": expected token ", 2);
+        fdputuint(2, tok);
+        fdputs(" got ", 2);
+        fdputuint(2, lex_tok);
+        fdputc(10, 2);
         exit(1);
     }
     next();

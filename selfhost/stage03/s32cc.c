@@ -5,21 +5,21 @@ int main(int argc, char **argv) {
     int f;
     int i;
     if (argc < 3) {
-        fputs("usage: s32cc input.c output.s\n", stderr);
+        fdputs("usage: s32cc input.c output.s\n", 2);
         return 1;
     }
     rc = s32cc_compile(argv[1]);
     if (rc != 0) return rc;
-    f = fopen(argv[2], "wb");
+    f = fdopen_path(argv[2], "wb");
     if (!f) {
-        fputs("s32cc: cannot open output file\n", stderr);
+        fdputs("s32cc: cannot open output file\n", 2);
         return 1;
     }
     i = 0;
     while (i < p_olen) {
-        fputc(p_out[i], f);
+        fdputc(p_out[i], f);
         i = i + 1;
     }
-    fclose(f);
+    fdclose(f);
     return 0;
 }

@@ -1,7 +1,5 @@
 /* s32util_min.h -- minimal libc + format constants for selfhost utility tools */
 
-int stdout;
-int stderr;
 
 #define NULL 0
 #define EOF -1
@@ -74,16 +72,16 @@ char *memset(char *dst, int c, int n);
 int strcmp(char *a, char *b);
 int strlen(char *s);
 
-int fopen(char *path, char *mode);
-int fclose(int f);
-int fseek(int f, int off, int whence);
-int ftell(int f);
-int fgetc(int f);
-int fread(char *buf, int sz, int count, int f);
-int fwrite(char *buf, int sz, int count, int f);
-int fputc(int c, int f);
-int fputs(char *s, int f);
-int fput_uint(int f, int v);
+int fdopen_path(char *path, char *mode);
+int fdclose(int f);
+int fdseek(int f, int off, int whence);
+int fdtell(int f);
+int fdgetc(int f);
+int fdread(char *buf, int sz, int count, int f);
+int fdwrite(char *buf, int sz, int count, int f);
+int fdputc(int c, int f);
+int fdputs(char *s, int f);
+int fdputuint(int f, int v);
 
 char *malloc(int n);
 void free(char *p);

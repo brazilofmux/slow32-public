@@ -9,15 +9,15 @@ int pass3_emit_from_ir(const char *out_path) {
     int len;
     int i;
 
-    f = fopen(out_path, "wb");
+    f = fdopen_path(out_path, "wb");
     if (!f) return 0;
     buf = ccmin_get_output_buf();
     len = ccmin_get_output_len();
     i = 0;
     while (i < len) {
-        fputc(buf[i], f);
+        fdputc(buf[i], f);
         i = i + 1;
     }
-    if (fclose(f) != 0) return 0;
+    if (fdclose(f) != 0) return 0;
     return 1;
 }

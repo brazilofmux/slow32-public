@@ -115,7 +115,7 @@ static int hir_new_block(void) {
     int b;
     b = bb_nblk;
     if (b >= HIR_MAX_BLOCK) {
-        fputs("s12cc: too many HIR blocks\n", stderr);
+        fdputs("s12cc: too many HIR blocks\n", 2);
         exit(1);
     }
     bb_start[b] = -1;  /* set lazily when block becomes current */
@@ -135,7 +135,7 @@ static int hi_emit(int kind, int ty, int s1, int s2, int val, char *name) {
     int idx;
     idx = h_ninst;
     if (idx >= HIR_MAX_INST) {
-        fputs("s12cc: too many HIR instructions\n", stderr);
+        fdputs("s12cc: too many HIR instructions\n", 2);
         exit(1);
     }
     h_kind[idx] = kind;

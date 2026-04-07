@@ -687,15 +687,15 @@ int s_add(char *s) {
 }
 
 void w16(int v) {
-    fputc(v & 255, g_out);
-    fputc((v >> 8) & 255, g_out);
+    fdputc(v & 255, g_out);
+    fdputc((v >> 8) & 255, g_out);
 }
 
 void w32(int v) {
-    fputc(v & 255, g_out);
-    fputc((v >> 8) & 255, g_out);
-    fputc((v >> 16) & 255, g_out);
-    fputc((v >> 24) & 255, g_out);
+    fdputc(v & 255, g_out);
+    fdputc((v >> 8) & 255, g_out);
+    fdputc((v >> 16) & 255, g_out);
+    fdputc((v >> 24) & 255, g_out);
 }
 
 int build_syms(int text_idx, int data_idx, int bss_idx) {
@@ -880,13 +880,13 @@ int write_obj(char *out) {
     if (text_idx) { text_data_off = off; off = off + g_tsz; }
     if (data_idx) { data_data_off = off; off = off + g_dsz; }
 
-    g_out = fopen(out, "wb");
+    g_out = fdopen_path(out, "wb");
     if (!g_out) return -1;
 
     v = S32O_MAGIC; w32(v);
     w16(1);
-    fputc(S32_ENDIAN_LITTLE, g_out);
-    fputc(S32_MACHINE_SLOW32, g_out);
+    fdputc(S32_ENDIAN_LITTLE, g_out);
+    fdputc(S32_MACHINE_SLOW32, g_out);
     v = 0; w32(v);
     v = nsec; w32(v);
     v = sec_off; w32(v);
@@ -931,8 +931,8 @@ int write_obj(char *out) {
         v = g_sym_name[i]; w32(v);
         v = g_sym_val[i]; w32(v);
         w16(g_sym_sec[i]);
-        fputc(S32O_SYM_NOTYPE, g_out);
-        fputc(g_sym_bind[i], g_out);
+        fdputc(S32O_SYM_NOTYPE, g_out);
+        fdputc(g_sym_bind[i], g_out);
         v = 0; w32(v);
     }
 
@@ -961,12 +961,12 @@ int write_obj(char *out) {
         }
     }
 
-    fwrite(g_str, 1, g_ssz, g_out);
-    while ((ftell(g_out) & 3) != 0) fputc(0, g_out);
-    if (g_tsz) fwrite(g_text, 1, g_tsz, g_out);
-    if (g_dsz) fwrite(g_data, 1, g_dsz, g_out);
+    fdwrite(g_str, 1, g_ssz, g_out);
+    while ((fdtell(g_out) & 3) != 0) fdputc(0, g_out);
+    if (g_tsz) fdwrite(g_text, 1, g_tsz, g_out);
+    if (g_dsz) fdwrite(g_data, 1, g_dsz, g_out);
 
-    fclose(g_out);
+    fdclose(g_out);
     g_out = 0;
     return 0;
 }
@@ -976,37 +976,37 @@ int main(int argc, char **argv) {
     lno = 0;
 
     if (argc != 3) {
-        fputs("Usage: s32-as <input.s> <output.s32o>\n", stderr);
+        fdputs("Usage: s32-as <input.s> <output.s32o>\n", 2);
         return 1;
     }
 
-    g_in = fopen(argv[1], "rb");
+    g_in = fdopen_path(argv[1], "rb");
     if (!g_in) {
-        fputs("cannot open input\n", stderr);
+        fdputs("cannot open input\n", 2);
         return 1;
     }
 
-    while (fgets(g_line, MAX_LINE, g_in)) {
+    while (fdgets(g_line, MAX_LINE, g_in)) {
         lno = lno + 1;
         if (handle(g_line) != 0) {
-            fputs("assemble error at line ", stderr);
-            fput_uint(stderr, lno);
-            fputc('\n', stderr);
-            fclose(g_in);
+            fdputs("assemble error at line ", 2);
+            fdputuint(2, lno);
+            fdputc('\n', 2);
+            fdclose(g_in);
             g_in = 0;
             return 1;
         }
     }
-    fclose(g_in);
+    fdclose(g_in);
     g_in = 0;
 
     if (resolve_local_text_relocs() != 0) {
-        fputs("resolve local text relocations failed\n", stderr);
+        fdputs("resolve local text relocations failed\n", 2);
         return 1;
     }
 
     if (write_obj(argv[2]) != 0) {
-        fputs("write object failed\n", stderr);
+        fdputs("write object failed\n", 2);
         return 1;
     }
     return 0;

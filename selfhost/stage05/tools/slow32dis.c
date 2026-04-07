@@ -24,8 +24,8 @@ int rd32(char *p) {
 
 void out_hex_nibble(int f, int v) {
     v = v & 15;
-    if (v < 10) fputc('0' + v, f);
-    else fputc('A' + (v - 10), f);
+    if (v < 10) fdputc('0' + v, f);
+    else fdputc('A' + (v - 10), f);
 }
 
 void out_hex32(int f, int v) {
@@ -41,14 +41,14 @@ void out_hex32(int f, int v) {
 
 void out_dec(int f, int v) {
     if (v < 0) {
-        fputc('-', f);
+        fdputc('-', f);
         if (v == -2147483648) {
-            fputs("2147483648", f);
+            fdputs("2147483648", f);
             return;
         }
         v = -v;
     }
-    fput_uint(f, v);
+    fdputuint(f, v);
 }
 
 int signext(int v, int bits) {
@@ -179,67 +179,67 @@ void disassemble_inst(int pc, int inst) {
                     (((inst >> 12) & 0xFF) << 12) |
                     (((inst >> 31) & 1) << 20), 21);
 
-    out_hex32(stdout, pc);
-    fputs(": ", stdout);
-    out_hex32(stdout, inst);
-    fputs("  ", stdout);
-    fputs(op_name(op), stdout);
-    fputs(" ", stdout);
+    out_hex32(1, pc);
+    fdputs(": ", 1);
+    out_hex32(1, inst);
+    fdputs("  ", 1);
+    fdputs(op_name(op), 1);
+    fdputs(" ", 1);
 
     if (op == 0x20) {
-        fputs(reg_name(rd), stdout);
-        fputs(", 0x", stdout);
-        out_hex32(stdout, imm_u);
+        fdputs(reg_name(rd), 1);
+        fdputs(", 0x", 1);
+        out_hex32(1, imm_u);
     } else if (op == 0x40) {
-        fputs(reg_name(rd), stdout);
-        fputs(", 0x", stdout);
-        out_hex32(stdout, pc + imm_j);
+        fdputs(reg_name(rd), 1);
+        fdputs(", 0x", 1);
+        out_hex32(1, pc + imm_j);
     } else if (op == 0x41 || (op >= 0x10 && op <= 0x17) || op == 0x1E) {
-        fputs(reg_name(rd), stdout);
-        fputs(", ", stdout);
-        fputs(reg_name(rs1), stdout);
-        fputs(", ", stdout);
-        out_dec(stdout, imm_i);
+        fdputs(reg_name(rd), 1);
+        fdputs(", ", 1);
+        fdputs(reg_name(rs1), 1);
+        fdputs(", ", 1);
+        out_dec(1, imm_i);
     } else if (op >= 0x30 && op <= 0x34) {
-        fputs(reg_name(rd), stdout);
-        fputs(", ", stdout);
-        out_dec(stdout, imm_i);
-        fputs("(", stdout);
-        fputs(reg_name(rs1), stdout);
-        fputs(")", stdout);
+        fdputs(reg_name(rd), 1);
+        fdputs(", ", 1);
+        out_dec(1, imm_i);
+        fdputs("(", 1);
+        fdputs(reg_name(rs1), 1);
+        fdputs(")", 1);
     } else if (op >= 0x38 && op <= 0x3A) {
-        fputs(reg_name(rs2), stdout);
-        fputs(", ", stdout);
-        out_dec(stdout, imm_s);
-        fputs("(", stdout);
-        fputs(reg_name(rs1), stdout);
-        fputs(")", stdout);
+        fdputs(reg_name(rs2), 1);
+        fdputs(", ", 1);
+        out_dec(1, imm_s);
+        fdputs("(", 1);
+        fdputs(reg_name(rs1), 1);
+        fdputs(")", 1);
     } else if (op >= 0x48 && op <= 0x4D) {
-        fputs(reg_name(rs1), stdout);
-        fputs(", ", stdout);
-        fputs(reg_name(rs2), stdout);
-        fputs(", 0x", stdout);
-        out_hex32(stdout, pc + imm_b);
+        fdputs(reg_name(rs1), 1);
+        fdputs(", ", 1);
+        fdputs(reg_name(rs2), 1);
+        fdputs(", 0x", 1);
+        out_hex32(1, pc + imm_b);
     } else if (op == 0x50 || op == 0x51 || op == 0x7F) {
     } else if (op == 0x52) {
-        fputs(reg_name(rs1), stdout);
+        fdputs(reg_name(rs1), 1);
     } else {
-        fputs(reg_name(rd), stdout);
-        fputs(", ", stdout);
-        fputs(reg_name(rs1), stdout);
-        fputs(", ", stdout);
-        fputs(reg_name(rs2), stdout);
+        fdputs(reg_name(rd), 1);
+        fdputs(", ", 1);
+        fdputs(reg_name(rs1), 1);
+        fdputs(", ", 1);
+        fdputs(reg_name(rs2), 1);
     }
-    fputc('\n', stdout);
+    fdputc('\n', 1);
 }
 
 void disassemble_code(char *buf, int off, int sz, int base, char *name) {
     int p;
-    fputs("\nsection ", stdout);
-    fputs(name, stdout);
-    fputs(" @0x", stdout);
-    out_hex32(stdout, base);
-    fputc('\n', stdout);
+    fdputs("\nsection ", 1);
+    fdputs(name, 1);
+    fdputs(" @0x", 1);
+    out_hex32(1, base);
+    fdputc('\n', 1);
     p = 0;
     while (p + 4 <= sz) {
         int inst;
@@ -257,40 +257,40 @@ int main(int argc, char **argv) {
     char *filename;
 
     if (argc < 2) {
-        fputs("Usage: slow32dis file.s32x|file.s32o\n", stderr);
+        fdputs("Usage: slow32dis file.s32x|file.s32o\n", 2);
         return 1;
     }
     filename = argv[1];
 
-    f = fopen(filename, "rb");
+    f = fdopen_path(filename, "rb");
     if (!f) {
-        fputs("cannot open input\n", stderr);
+        fdputs("cannot open input\n", 2);
         return 1;
     }
-    if (fseek(f, 0, SEEK_END) != 0) {
-        fclose(f);
+    if (fdseek(f, 0, SEEK_END) != 0) {
+        fdclose(f);
         return 1;
     }
-    size = ftell(f);
+    size = fdtell(f);
     if (size < 4) {
-        fclose(f);
+        fdclose(f);
         return 1;
     }
-    if (fseek(f, 0, SEEK_SET) != 0) {
-        fclose(f);
+    if (fdseek(f, 0, SEEK_SET) != 0) {
+        fdclose(f);
         return 1;
     }
     buf = malloc(size);
     if (!buf) {
-        fclose(f);
+        fdclose(f);
         return 1;
     }
-    if (fread(buf, 1, size, f) != size) {
-        fclose(f);
+    if (fdread(buf, 1, size, f) != size) {
+        fdclose(f);
         free(buf);
         return 1;
     }
-    fclose(f);
+    fdclose(f);
 
     magic = rd32(buf);
     if (magic == S32X_MAGIC) {
@@ -378,7 +378,7 @@ int main(int argc, char **argv) {
             i2 = i2 + 1;
         }
     } else {
-        fputs("unknown file format\n", stderr);
+        fdputs("unknown file format\n", 2);
         free(buf);
         return 1;
     }

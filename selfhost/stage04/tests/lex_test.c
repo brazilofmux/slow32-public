@@ -4,49 +4,13 @@
  * Returns 0 on success, non-zero on first failure.
  *
  * Build: merge c_lexer_gen.c + this file, compile with s32-cc.
- * The lexer defines stderr=2 (integer fd).  We provide fd-based
+ * Uses fd-based I/O functions (fdputs, fdputc, fdputuint).
  * I/O wrappers so the libc's FILE*-based fputs is not called.
  */
 
 #include "c_lexer_gen.c"
 
-/* --- fd-based I/O (shadows libc FILE* versions) --- */
-int write(int fd, char *buf, int len);
-
-int fputs(char *s, int fd) {
-    int len;
-    len = strlen(s);
-    write(fd, s, len);
-    return 0;
-}
-
-int fputc(int c, int fd) {
-    char buf[1];
-    buf[0] = c;
-    write(fd, buf, 1);
-    return c;
-}
-
-void fput_uint(int fd, int val) {
-    char buf[11];
-    int i;
-    int d;
-    int started;
-    if (val == 0) { fputc(48, fd); return; }
-    i = 0;
-    d = 1000000000;
-    started = 0;
-    while (d > 0) {
-        if (val >= d || started) {
-            buf[i] = 48 + val / d;
-            val = val - (val / d) * d;
-            i = i + 1;
-            started = 1;
-        }
-        d = d / 10;
-    }
-    write(fd, buf, i);
-}
+/* fd-based I/O provided by libc (stdio.c) */
 
 static int test_pass;
 static int test_fail;
@@ -55,13 +19,13 @@ static int test_total;
 static void check_tok(int expect, char *name) {
     test_total = test_total + 1;
     if (lex_tok != expect) {
-        fputs("FAIL: expected ", stderr);
-        fputs(name, stderr);
-        fputs(" (", stderr);
-        fput_uint(stderr, expect);
-        fputs(") got ", stderr);
-        fput_uint(stderr, lex_tok);
-        fputc(10, stderr);
+        fdputs("FAIL: expected ", 2);
+        fdputs(name, 2);
+        fdputs(" (", 2);
+        fdputuint(2, expect);
+        fdputs(") got ", 2);
+        fdputuint(2, lex_tok);
+        fdputc(10, 2);
         test_fail = test_fail + 1;
     } else {
         test_pass = test_pass + 1;
@@ -70,11 +34,11 @@ static void check_tok(int expect, char *name) {
 
 static void check_val(int expect) {
     if (lex_val != expect) {
-        fputs("FAIL: expected val=", stderr);
-        fput_uint(stderr, expect);
-        fputs(" got ", stderr);
-        fput_uint(stderr, lex_val);
-        fputc(10, stderr);
+        fdputs("FAIL: expected val=", 2);
+        fdputuint(2, expect);
+        fdputs(" got ", 2);
+        fdputuint(2, lex_val);
+        fdputc(10, 2);
         test_fail = test_fail + 1;
         test_pass = test_pass - 1;  /* undo the pass from check_tok */
     }
@@ -82,11 +46,11 @@ static void check_val(int expect) {
 
 static void check_str(char *expect) {
     if (strcmp(lex_str, expect) != 0) {
-        fputs("FAIL: expected str='", stderr);
-        fputs(expect, stderr);
-        fputs("' got '", stderr);
-        fputs(lex_str, stderr);
-        fputs("'\n", stderr);
+        fdputs("FAIL: expected str='", 2);
+        fdputs(expect, 2);
+        fdputs("' got '", 2);
+        fdputs(lex_str, 2);
+        fdputs("'\n", 2);
         test_fail = test_fail + 1;
         test_pass = test_pass - 1;
     }
@@ -245,9 +209,9 @@ static int test_lines(void) {
     lex_next(); /* b on line 3 */
     line_at_b = lex_line;
     if (line_at_b != 3) {
-        fputs("FAIL: expected line=3 at 'b', got ", stderr);
-        fput_uint(stderr, line_at_b);
-        fputc(10, stderr);
+        fdputs("FAIL: expected line=3 at 'b', got ", 2);
+        fdputuint(2, line_at_b);
+        fdputc(10, 2);
         test_total = test_total + 1;
         test_fail = test_fail + 1;
     } else {
@@ -296,17 +260,17 @@ int main(void) {
     test_lines();
     test_punct();
 
-    fputs("Lexer tests: ", stderr);
-    fput_uint(stderr, test_pass);
-    fputc(47, stderr);  /* / */
-    fput_uint(stderr, test_total);
-    fputs(" passed", stderr);
+    fdputs("Lexer tests: ", 2);
+    fdputuint(2, test_pass);
+    fdputc(47, 2);  /* / */
+    fdputuint(2, test_total);
+    fdputs(" passed", 2);
     if (test_fail > 0) {
-        fputs(", ", stderr);
-        fput_uint(stderr, test_fail);
-        fputs(" failed", stderr);
+        fdputs(", ", 2);
+        fdputuint(2, test_fail);
+        fdputs(" failed", 2);
     }
-    fputc(10, stderr);
+    fdputc(10, 2);
 
     if (test_fail > 0) return 1;
     return 0;

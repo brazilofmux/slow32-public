@@ -170,7 +170,7 @@ static Node *nd_new(int kind) {
     Node *n;
     n = calloc(1, sizeof(struct Node));
     if (!n) {
-        fputs("s12cc: out of memory\n", stderr);
+        fdputs("s12cc: out of memory\n", 2);
         exit(1);
     }
     n->kind = kind;

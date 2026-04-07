@@ -115,7 +115,7 @@ static void pp_add(char *name, int val) {
         return;
     }
     if (pp_ndefs >= PP_MAX_DEFS) {
-        fputs("s12cc: too many #defines\n", stderr);
+        fdputs("s12cc: too many #defines\n", 2);
         exit(1);
     }
     pp_dname[pp_ndefs] = strdup(name);
@@ -208,14 +208,14 @@ static void pp_include(void) {
     /* Read file */
     fd = open(path, 0);
     if (fd < 0) {
-        fputs("s12cc: cannot open include: ", stderr);
-        fputs(path, stderr);
-        fputc(10, stderr);
+        fdputs("s12cc: cannot open include: ", 2);
+        fdputs(path, 2);
+        fdputc(10, 2);
         exit(1);
     }
     tmp = malloc(LEX_SRC_SZ);
     if (!tmp) {
-        fputs("s12cc: out of memory for include\n", stderr);
+        fdputs("s12cc: out of memory for include\n", 2);
         exit(1);
     }
     n = read(fd, tmp, LEX_SRC_SZ - lex_len - 1);
@@ -252,7 +252,7 @@ static void pp_directive(void) {
     if (pp_skip) {
         if (strcmp(name, "ifdef") == 0 || strcmp(name, "ifndef") == 0) {
             if (pp_dep >= PP_MAX_IF) {
-                fputs("s12cc: #ifdef nesting too deep\n", stderr);
+                fdputs("s12cc: #ifdef nesting too deep\n", 2);
                 exit(1);
             }
             pp_stk[pp_dep] = pp_skip;
@@ -287,7 +287,7 @@ static void pp_directive(void) {
         pp_skip_ws();
         pp_read_name(name);
         if (pp_dep >= PP_MAX_IF) {
-            fputs("s12cc: #ifdef nesting too deep\n", stderr);
+            fdputs("s12cc: #ifdef nesting too deep\n", 2);
             exit(1);
         }
         pp_stk[pp_dep] = pp_skip;
@@ -303,7 +303,7 @@ static void pp_directive(void) {
         pp_skip_ws();
         pp_read_name(name);
         if (pp_dep >= PP_MAX_IF) {
-            fputs("s12cc: #ifdef nesting too deep\n", stderr);
+            fdputs("s12cc: #ifdef nesting too deep\n", 2);
             exit(1);
         }
         pp_stk[pp_dep] = pp_skip;

@@ -250,3 +250,107 @@ void fput_uint(FILE *fp, unsigned int val) {
         fputc((int)buf[i], fp);
     }
 }
+
+/* === fd-based I/O functions (for code that uses int fd instead of FILE*) === */
+
+int fdopen_path(const char *path, const char *mode) {
+    int flags;
+    flags = 0;
+    if (mode[0] == 'r') flags = 0x01;        /* O_RDONLY */
+    else if (mode[0] == 'w') flags = 0x1A;   /* O_WRONLY|O_CREAT|O_TRUNC */
+    else if (mode[0] == 'a') flags = 0x0E;   /* O_WRONLY|O_CREAT|O_APPEND */
+    else return -1;
+    return open(path, flags);
+}
+
+int fdclose(int fd) {
+    return close(fd);
+}
+
+int fdputc(int c, int fd) {
+    char ch;
+    ch = c;
+    write(fd, &ch, 1);
+    return c;
+}
+
+int fdputs(const char *s, int fd) {
+    unsigned int len;
+    len = strlen(s);
+    write(fd, s, (int)len);
+    return 0;
+}
+
+void fdputuint(int fd, unsigned int val) {
+    char buf[11];
+    int i;
+    i = 0;
+    if (val == 0) {
+        fdputc('0', fd);
+        return;
+    }
+    while (val > 0) {
+        buf[i] = '0' + (int)(val % 10);
+        val = val / 10;
+        i = i + 1;
+    }
+    while (i > 0) {
+        i = i - 1;
+        fdputc((int)buf[i], fd);
+    }
+}
+
+int fdgetc(int fd) {
+    char ch;
+    int n;
+    n = read(fd, &ch, 1);
+    if (n <= 0) return -1;
+    return ch & 255;
+}
+
+int fdread(const char *buf, int sz, int count, int fd) {
+    int total;
+    int n;
+    total = sz * count;
+    if (total <= 0) return 0;
+    n = read(fd, (char *)buf, total);
+    if (n <= 0) return 0;
+    return n / sz;
+}
+
+int fdwrite(const char *buf, int sz, int count, int fd) {
+    int total;
+    int n;
+    total = sz * count;
+    if (total <= 0) return 0;
+    n = write(fd, buf, total);
+    if (n <= 0) return 0;
+    return n / sz;
+}
+
+int fdseek(int fd, int off, int whence) {
+    return lseek(fd, off, whence);
+}
+
+int fdtell(int fd) {
+    return lseek(fd, 0, 1);
+}
+
+char *fdgets(char *buf, int n, int fd) {
+    int i;
+    int c;
+    if (n <= 0) return (char *)0;
+    i = 0;
+    while (i < n - 1) {
+        c = fdgetc(fd);
+        if (c < 0) {
+            if (i == 0) return (char *)0;
+            break;
+        }
+        buf[i] = c;
+        i = i + 1;
+        if (c == 10) break;
+    }
+    buf[i] = 0;
+    return buf;
+}

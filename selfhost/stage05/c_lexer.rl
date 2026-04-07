@@ -13,12 +13,11 @@ int strlen(char *s);
 char *memcpy(char *dst, char *src, int n);
 char *memset(char *dst, int c, int n);
 
-int fputs(char *s, int f);
-int fputc(int c, int f);
-void fput_uint(int f, int v);
+int fdputs(char *s, int f);
+int fdputc(int c, int f);
+void fdputuint(int f, int v);
 void exit(int status);
 
-int stderr;
 #define NULL 0
 
 /* === Token constants (same numbering as s32cc_lex.h) === */

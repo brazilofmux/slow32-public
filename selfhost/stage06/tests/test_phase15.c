@@ -5,10 +5,10 @@ typedef char *va_list;
 int snprintf(char *str, unsigned int size, const char *format, ...);
 int sprintf(char *str, const char *format, ...);
 int vsnprintf(char *str, unsigned int size, const char *format, va_list ap);
-int fprintf(int fp, const char *format, ...);
-int fopen(const char *path, const char *mode);
-int fclose(int fp);
-unsigned int fread(char *ptr, unsigned int size, unsigned int nmemb, int fp);
+int fdopen_path(const char *path, const char *mode);
+int fdclose(int fp);
+int fdwrite(const char *buf, int sz, int count, int fd);
+unsigned int fdread(char *ptr, unsigned int size, unsigned int nmemb, int fp);
 int remove(const char *path);
 
 int my_strlen(char *s) {
@@ -66,18 +66,20 @@ int test_vsnprintf(void) {
 
 int test_fprintf_file(void) {
     char buf[32];
+    char fmtbuf[32];
     int fp;
     unsigned int n;
     int rc;
-    fp = fopen("/tmp/s32-printf-test.txt", "w");
-    if (!fp) return 1;
-    rc = fprintf(fp, "N=%d U=%u", -5, 42);
-    fclose(fp);
+    rc = sprintf(fmtbuf, "N=%d U=%u", -5, 42);
     if (rc != 9) return 2;
-    fp = fopen("/tmp/s32-printf-test.txt", "r");
+    fp = fdopen_path("/tmp/s32-printf-test.txt", "w");
+    if (!fp) return 1;
+    fdwrite(fmtbuf, 1, rc, fp);
+    fdclose(fp);
+    fp = fdopen_path("/tmp/s32-printf-test.txt", "r");
     if (!fp) return 3;
-    n = fread(buf, 1, 31, fp);
-    fclose(fp);
+    n = fdread(buf, 1, 31, fp);
+    fdclose(fp);
     remove("/tmp/s32-printf-test.txt");
     buf[n] = 0;
     if (!my_streq(buf, "N=-5 U=42")) return 4;

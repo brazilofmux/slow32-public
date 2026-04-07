@@ -104,7 +104,7 @@ static int p_sval;
 static char p_sstr[256];
 static int p_sslen;
 
-static void p_err(char *m){fputs("s32cc:",stderr);fput_uint(stderr,lex_line);fputs(": error: ",stderr);fputs(m,stderr);fputc(10,stderr);}
+static void p_err(char *m){fdputs("s32cc:",2);fdputuint(2,lex_line);fdputs(": error: ",2);fdputs(m,2);fdputc(10,2);}
 static int p_seq(char *a,char *b){int i;i=0;while(1){if(a[i]!=b[i])return 0;if(a[i]==0)return 1;i=i+1;}}
 static int p_scpy(char *d,char *s,int m){int i;i=0;while(s[i]!=0&&i<m-1){d[i]=s[i];i=i+1;}d[i]=0;return i;}
 static void p_sset(char *b,int i,char *n){int x;int j;x=i*P_NSZ;j=0;while(n[j]!=0&&j<P_NSZ-1){b[x+j]=n[j];j=j+1;}b[x+j]=0;}
@@ -139,7 +139,7 @@ static void pp_def(void){char nm[128];int i;int v;while(lex_pos<lex_len&&(lex_sr
 
 static void pp_nm(char *nm){int i;while(lex_pos<lex_len&&(lex_src[lex_pos]==32||lex_src[lex_pos]==9))lex_pos=lex_pos+1;i=0;while(lex_pos<lex_len&&(lex_is_alpha(lex_src[lex_pos]&255)||lex_is_digit(lex_src[lex_pos]&255))){if(i<126){nm[i]=lex_src[lex_pos];i=i+1;}lex_pos=lex_pos+1;}nm[i]=0;}
 
-static void pp_include(void){char fn[256];int i;int f;int ch;int n;int d;while(lex_pos<lex_len&&(lex_src[lex_pos]==32||lex_src[lex_pos]==9))lex_pos=lex_pos+1;if(lex_pos>=lex_len||lex_src[lex_pos]!=34){pp_sl();return;}lex_pos=lex_pos+1;d=0;while(p_sdir[d]!=0)d=d+1;i=0;while(i<d){fn[i]=p_sdir[i];i=i+1;}while(lex_pos<lex_len&&lex_src[lex_pos]!=34&&lex_src[lex_pos]!=10){if(d<254){fn[d]=lex_src[lex_pos];d=d+1;}lex_pos=lex_pos+1;}if(lex_pos<lex_len&&lex_src[lex_pos]==34)lex_pos=lex_pos+1;fn[d]=0;pp_sl();f=fopen(fn,"rb");if(!f){p_err("INC");return;}n=0;while(1){ch=fgetc(f);if(ch<0)break;n=n+1;}fclose(f);if(n==0||n>LEX_SRC_SZ-lex_len-1)return;i=lex_len-1;while(i>=lex_pos){lex_src[i+n]=lex_src[i];i=i-1;}f=fopen(fn,"rb");if(!f)return;i=0;while(i<n){ch=fgetc(f);if(ch<0)break;lex_src[lex_pos+i]=ch;i=i+1;}fclose(f);lex_len=lex_len+n;}
+static void pp_include(void){char fn[256];int i;int f;int ch;int n;int d;while(lex_pos<lex_len&&(lex_src[lex_pos]==32||lex_src[lex_pos]==9))lex_pos=lex_pos+1;if(lex_pos>=lex_len||lex_src[lex_pos]!=34){pp_sl();return;}lex_pos=lex_pos+1;d=0;while(p_sdir[d]!=0)d=d+1;i=0;while(i<d){fn[i]=p_sdir[i];i=i+1;}while(lex_pos<lex_len&&lex_src[lex_pos]!=34&&lex_src[lex_pos]!=10){if(d<254){fn[d]=lex_src[lex_pos];d=d+1;}lex_pos=lex_pos+1;}if(lex_pos<lex_len&&lex_src[lex_pos]==34)lex_pos=lex_pos+1;fn[d]=0;pp_sl();f=fdopen_path(fn,"rb");if(!f){p_err("INC");return;}n=0;while(1){ch=fdgetc(f);if(ch<0)break;n=n+1;}fdclose(f);if(n==0||n>LEX_SRC_SZ-lex_len-1)return;i=lex_len-1;while(i>=lex_pos){lex_src[i+n]=lex_src[i];i=i-1;}f=fdopen_path(fn,"rb");if(!f)return;i=0;while(i<n){ch=fdgetc(f);if(ch<0)break;lex_src[lex_pos+i]=ch;i=i+1;}fdclose(f);lex_len=lex_len+n;}
 
 static void pp_dir(void){char d[16];char nm[128];int i;while(lex_pos<lex_len&&(lex_src[lex_pos]==32||lex_src[lex_pos]==9))lex_pos=lex_pos+1;i=0;while(lex_pos<lex_len&&lex_is_alpha(lex_src[lex_pos]&255)){if(i<14){d[i]=lex_src[lex_pos];i=i+1;}lex_pos=lex_pos+1;}d[i]=0;if(pp_skip){if(p_seq(d,"ifdef")||p_seq(d,"ifndef")){pp_dep=pp_dep+1;pp_stk[pp_dep]=1;pp_sl();return;}if(p_seq(d,"endif")){if(pp_dep>0){pp_skip=pp_stk[pp_dep];pp_dep=pp_dep-1;if(pp_dep==0)pp_skip=0;else pp_skip=pp_stk[pp_dep];}pp_sl();return;}if(p_seq(d,"else")){if(pp_dep>0&&(pp_dep<=1||pp_stk[pp_dep-1]==0)){pp_skip=1-pp_skip;pp_stk[pp_dep]=pp_skip;}pp_sl();return;}pp_sl();return;}if(p_seq(d,"define")){pp_def();return;}if(p_seq(d,"include")){pp_include();return;}if(p_seq(d,"ifdef")){pp_nm(nm);pp_dep=pp_dep+1;if(p_fdf(nm)>=0)pp_skip=0;else pp_skip=1;pp_stk[pp_dep]=pp_skip;pp_sl();return;}if(p_seq(d,"ifndef")){pp_nm(nm);pp_dep=pp_dep+1;if(p_fdf(nm)>=0)pp_skip=1;else pp_skip=0;pp_stk[pp_dep]=pp_skip;pp_sl();return;}if(p_seq(d,"endif")){if(pp_dep>0)pp_dep=pp_dep-1;if(pp_dep==0)pp_skip=0;else pp_skip=pp_stk[pp_dep];pp_sl();return;}if(p_seq(d,"else")){if(pp_dep>0){pp_skip=1-pp_skip;pp_stk[pp_dep]=pp_skip;}pp_sl();return;}pp_sl();}
 
@@ -904,11 +904,11 @@ int s32cc_compile(char *path) {
     last = -1; i = 0; while (path[i] != 0) { if (path[i] == 47) last = i; i = i + 1; }
     if (last >= 0 && last < 126) { i = 0; while (i <= last) { p_sdir[i] = path[i]; i = i + 1; } p_sdir[i] = 0; }
     else { p_sdir[0] = 0; }
-    f = fopen(path, "rb");
+    f = fdopen_path(path, "rb");
     if (!f) { p_err("IO"); return 1; }
     lex_len = 0;
-    while (1) { ch = fgetc(f); if (ch < 0) break; if (lex_len >= LEX_SRC_SZ - 1) { fclose(f); p_err("BIG"); return 1; } lex_src[lex_len] = ch; lex_len = lex_len + 1; }
-    fclose(f); lex_src[lex_len] = 0; lex_pos = 0; lex_line = 1; lex_col = 1;
+    while (1) { ch = fdgetc(f); if (ch < 0) break; if (lex_len >= LEX_SRC_SZ - 1) { fdclose(f); p_err("BIG"); return 1; } lex_src[lex_len] = ch; lex_len = lex_len + 1; }
+    fdclose(f); lex_src[lex_len] = 0; lex_pos = 0; lex_line = 1; lex_col = 1;
     p_olen = 0; p_lbl = 0; p_nf = 0; p_nl = 0; p_ng = 0;
     p_ldep = 0; p_femit = 0; p_flen = 0; p_lval = 0; p_ety = 0;
     p_ns = 0; p_nfd = 0; p_ntd = 0; p_nd = 0; p_insw = 0; p_swn = 0;

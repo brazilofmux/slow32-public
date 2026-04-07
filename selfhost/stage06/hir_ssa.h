@@ -176,7 +176,7 @@ static void ssa_build_cfg(void) {
         b = b + 1;
     }
     if (total > SSA_MAX_PRED) {
-        fputs("s12cc: too many CFG edges\n", stderr);
+        fdputs("s12cc: too many CFG edges\n", 2);
         exit(1);
     }
 
@@ -231,7 +231,7 @@ static void ssa_compute_rpo(void) {
                 ssa_vis[s] = 1;
                 top = top + 1;
                 if (top >= SSA_DFS) {
-                    fputs("s12cc: RPO DFS stack overflow\n", stderr);
+                    fdputs("s12cc: RPO DFS stack overflow\n", 2);
                     exit(1);
                 }
                 ssa_rblk[top] = s;
@@ -478,7 +478,7 @@ static void ssa_build_dtree(void) {
         b = b + 1;
     }
     if (total > SSA_DTC_MAX) {
-        fputs("s12cc: too many domtree children\n", stderr);
+        fdputs("s12cc: too many domtree children\n", 2);
         exit(1);
     }
 
@@ -555,7 +555,7 @@ static void ssa_insert_phis(void) {
                     j = 0;
                     while (j < ssa_npred[d]) {
                         if (h_nparg >= HIR_MAX_PARG) {
-                            fputs("s12cc: too many phi args\n", stderr);
+                            fdputs("s12cc: too many phi args\n", 2);
                             exit(1);
                         }
                         h_pblk[h_nparg] = ssa_pred[ssa_pbase[d] + j];
@@ -595,13 +595,13 @@ static void ssa_insert_phis(void) {
 
 static void ssa_vpush(int v, int val) {
     if (ssa_vtop[v] + 1 >= SSA_VD) {
-        fputs("s12cc: SSA var stack overflow\n", stderr);
+        fdputs("s12cc: SSA var stack overflow\n", 2);
         exit(1);
     }
     ssa_vtop[v] = ssa_vtop[v] + 1;
     ssa_vstk[v * SSA_VD + ssa_vtop[v]] = val;
     if (ssa_plog_n >= SSA_PLOG) {
-        fputs("s12cc: SSA push log overflow\n", stderr);
+        fdputs("s12cc: SSA push log overflow\n", 2);
         exit(1);
     }
     ssa_plog[ssa_plog_n] = v;
@@ -714,7 +714,7 @@ static void ssa_rename(void) {
                 ssa_rci[top] = ci + 1;
                 top = top + 1;
                 if (top >= SSA_DFS) {
-                    fputs("s12cc: SSA DFS stack overflow\n", stderr);
+                    fdputs("s12cc: SSA DFS stack overflow\n", 2);
                     exit(1);
                 }
                 ssa_rblk[top] = child;

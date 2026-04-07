@@ -74,7 +74,7 @@ static int hl_get_alloca(int offset, int ty) {
         i = i + 1;
     }
     if (hl_nalloca >= HL_MAX_ALLOCA) {
-        fputs("s12cc: too many allocas\n", stderr);
+        fdputs("s12cc: too many allocas\n", 2);
         exit(1);
     }
     hl_aoff[hl_nalloca] = offset;
@@ -96,7 +96,7 @@ static int hl_label_block(int label_id) {
         i = i + 1;
     }
     if (hl_ngoto >= HL_MAX_GOTO) {
-        fputs("s12cc: too many goto labels\n", stderr);
+        fdputs("s12cc: too many goto labels\n", 2);
         exit(1);
     }
     hl_goto_id[hl_ngoto] = label_id;

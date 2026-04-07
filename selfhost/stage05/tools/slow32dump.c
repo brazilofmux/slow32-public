@@ -24,8 +24,8 @@ int rd32(char *p) {
 
 void out_hex_nibble(int f, int v) {
     v = v & 15;
-    if (v < 10) fputc('0' + v, f);
-    else fputc('A' + (v - 10), f);
+    if (v < 10) fdputc('0' + v, f);
+    else fdputc('A' + (v - 10), f);
 }
 
 void out_hex32(int f, int v) {
@@ -41,14 +41,14 @@ void out_hex32(int f, int v) {
 
 void out_dec(int f, int v) {
     if (v < 0) {
-        fputc('-', f);
+        fdputc('-', f);
         if (v == -2147483648) {
-            fputs("2147483648", f);
+            fdputs("2147483648", f);
             return;
         }
         v = -v;
     }
-    fput_uint(f, v);
+    fdputuint(f, v);
 }
 
 int in_bounds(int off, int size, int total) {
@@ -106,14 +106,14 @@ char *safe_name(char *strtab, int str_sz, int off) {
 }
 
 void print_usage(char *prog) {
-    fputs("Usage: ", stderr);
-    fputs(prog, stderr);
-    fputs(" [options] file.s32o|file.s32x\n", stderr);
-    fputs("  -h  header\n", stderr);
-    fputs("  -S  sections\n", stderr);
-    fputs("  -s  symbols\n", stderr);
-    fputs("  -r  relocations\n", stderr);
-    fputs("  -a  all (default)\n", stderr);
+    fdputs("Usage: ", 2);
+    fdputs(prog, 2);
+    fdputs(" [options] file.s32o|file.s32x\n", 2);
+    fdputs("  -h  header\n", 2);
+    fdputs("  -S  sections\n", 2);
+    fdputs("  -s  symbols\n", 2);
+    fdputs("  -r  relocations\n", 2);
+    fdputs("  -a  all (default)\n", 2);
 }
 
 int main(int argc, char **argv) {
@@ -150,7 +150,7 @@ int main(int argc, char **argv) {
                     show_sym = 1;
                     show_rel = 1;
                 } else {
-                    fputs("unknown option\n", stderr);
+                    fdputs("unknown option\n", 2);
                     print_usage(argv[0]);
                     return 1;
                 }
@@ -172,40 +172,40 @@ int main(int argc, char **argv) {
         show_rel = 1;
     }
 
-    f = fopen(filename, "rb");
+    f = fdopen_path(filename, "rb");
     if (!f) {
-        fputs("cannot open input\n", stderr);
+        fdputs("cannot open input\n", 2);
         return 1;
     }
-    if (fseek(f, 0, SEEK_END) != 0) {
-        fclose(f);
-        fputs("fseek failed\n", stderr);
+    if (fdseek(f, 0, SEEK_END) != 0) {
+        fdclose(f);
+        fdputs("fseek failed\n", 2);
         return 1;
     }
-    size = ftell(f);
+    size = fdtell(f);
     if (size < 4) {
-        fclose(f);
-        fputs("file too small\n", stderr);
+        fdclose(f);
+        fdputs("file too small\n", 2);
         return 1;
     }
-    if (fseek(f, 0, SEEK_SET) != 0) {
-        fclose(f);
-        fputs("fseek failed\n", stderr);
+    if (fdseek(f, 0, SEEK_SET) != 0) {
+        fdclose(f);
+        fdputs("fseek failed\n", 2);
         return 1;
     }
     buf = malloc(size);
     if (!buf) {
-        fclose(f);
-        fputs("out of memory\n", stderr);
+        fdclose(f);
+        fdputs("out of memory\n", 2);
         return 1;
     }
-    if (fread(buf, 1, size, f) != size) {
-        fclose(f);
+    if (fdread(buf, 1, size, f) != size) {
+        fdclose(f);
         free(buf);
-        fputs("read failed\n", stderr);
+        fdputs("read failed\n", 2);
         return 1;
     }
-    fclose(f);
+    fdclose(f);
 
     magic = rd32(buf);
     if (magic == S32O_MAGIC) {
@@ -224,7 +224,7 @@ int main(int argc, char **argv) {
 
         if (size < SIZEOF_S32O_HEADER) {
             free(buf);
-            fputs("bad s32o header\n", stderr);
+            fdputs("bad s32o header\n", 2);
             return 1;
         }
         version = rd16(buf + 4);
@@ -242,27 +242,27 @@ int main(int argc, char **argv) {
             !in_bounds(sym_off, nsymbols * SIZEOF_S32O_SYMBOL, size) ||
             !in_bounds(str_off, str_sz, size)) {
             free(buf);
-            fputs("corrupt s32o table bounds\n", stderr);
+            fdputs("corrupt s32o table bounds\n", 2);
             return 1;
         }
         strtab = buf + str_off;
 
-        fputs(filename, stdout);
-        fputs(": file format s32o-slow32\n", stdout);
+        fdputs(filename, 1);
+        fdputs(": file format s32o-slow32\n", 1);
 
         if (show_h) {
-            fputs("header: ver=", stdout); out_dec(stdout, version);
-            fputs(" endian=", stdout); out_dec(stdout, endian);
-            fputs(" machine=", stdout); out_dec(stdout, machine);
-            fputs(" flags=0x", stdout); out_hex32(stdout, flags);
-            fputc('\n', stdout);
-            fputs("  nsections=", stdout); out_dec(stdout, nsections);
-            fputs(" nsymbols=", stdout); out_dec(stdout, nsymbols);
-            fputs(" str_size=", stdout); out_dec(stdout, str_sz);
-            fputc('\n', stdout);
+            fdputs("header: ver=", 1); out_dec(1, version);
+            fdputs(" endian=", 1); out_dec(1, endian);
+            fdputs(" machine=", 1); out_dec(1, machine);
+            fdputs(" flags=0x", 1); out_hex32(1, flags);
+            fdputc('\n', 1);
+            fdputs("  nsections=", 1); out_dec(1, nsections);
+            fdputs(" nsymbols=", 1); out_dec(1, nsymbols);
+            fdputs(" str_size=", 1); out_dec(1, str_sz);
+            fdputc('\n', 1);
         }
         if (show_sct) {
-            fputs("sections:\n", stdout);
+            fdputs("sections:\n", 1);
             si = 0;
             while (si < nsections) {
                 int so;
@@ -282,21 +282,21 @@ int main(int argc, char **argv) {
                 salign = rd32(buf + so + 20);
                 snrel = rd32(buf + so + 24);
 
-                fputs("  [", stdout); out_dec(stdout, si); fputs("] ", stdout);
-                fputs(safe_name(strtab, str_sz, noff), stdout);
-                fputs(" type=", stdout); fputs(sec_type_name(stype), stdout);
-                fputs(" size=", stdout); out_dec(stdout, ssize);
-                fputs(" off=0x", stdout); out_hex32(stdout, soffset);
-                fputs(" align=", stdout); out_dec(stdout, salign);
-                fputs(" relocs=", stdout); out_dec(stdout, snrel);
-                fputs(" flags=0x", stdout); out_hex32(stdout, sflags);
-                fputc('\n', stdout);
+                fdputs("  [", 1); out_dec(1, si); fdputs("] ", 1);
+                fdputs(safe_name(strtab, str_sz, noff), 1);
+                fdputs(" type=", 1); fdputs(sec_type_name(stype), 1);
+                fdputs(" size=", 1); out_dec(1, ssize);
+                fdputs(" off=0x", 1); out_hex32(1, soffset);
+                fdputs(" align=", 1); out_dec(1, salign);
+                fdputs(" relocs=", 1); out_dec(1, snrel);
+                fdputs(" flags=0x", 1); out_hex32(1, sflags);
+                fdputc('\n', 1);
                 si = si + 1;
             }
         }
         if (show_sym) {
             int si2;
-            fputs("symbols:\n", stdout);
+            fdputs("symbols:\n", 1);
             si2 = 0;
             while (si2 < nsymbols) {
                 int so2;
@@ -313,20 +313,20 @@ int main(int argc, char **argv) {
                 typ = buf[so2 + 10] & 255;
                 bind = buf[so2 + 11] & 255;
                 ssize2 = rd32(buf + so2 + 12);
-                fputs("  [", stdout); out_dec(stdout, si2); fputs("] ", stdout);
-                fputs(safe_name(strtab, str_sz, noff2), stdout);
-                fputs(" val=0x", stdout); out_hex32(stdout, val);
-                fputs(" sec=", stdout); out_dec(stdout, sec);
-                fputs(" type=", stdout); fputs(sym_type_name(typ), stdout);
-                fputs(" bind=", stdout); fputs(sym_bind_name(bind), stdout);
-                fputs(" size=", stdout); out_dec(stdout, ssize2);
-                fputc('\n', stdout);
+                fdputs("  [", 1); out_dec(1, si2); fdputs("] ", 1);
+                fdputs(safe_name(strtab, str_sz, noff2), 1);
+                fdputs(" val=0x", 1); out_hex32(1, val);
+                fdputs(" sec=", 1); out_dec(1, sec);
+                fdputs(" type=", 1); fdputs(sym_type_name(typ), 1);
+                fdputs(" bind=", 1); fdputs(sym_bind_name(bind), 1);
+                fdputs(" size=", 1); out_dec(1, ssize2);
+                fdputc('\n', 1);
                 si2 = si2 + 1;
             }
         }
         if (show_rel) {
             int si3;
-            fputs("relocations:\n", stdout);
+            fdputs("relocations:\n", 1);
             si3 = 0;
             while (si3 < nsections) {
                 int so3;
@@ -337,11 +337,11 @@ int main(int argc, char **argv) {
                 snrel3 = rd32(buf + so3 + 24);
                 roff3 = rd32(buf + so3 + 28);
                 if (snrel3 > 0) {
-                    fputs("  section[", stdout); out_dec(stdout, si3); fputs("]\n", stdout);
+                    fdputs("  section[", 1); out_dec(1, si3); fdputs("]\n", 1);
                 }
                 if (!in_bounds(roff3, snrel3 * SIZEOF_S32O_RELOC, size)) {
                     free(buf);
-                    fputs("corrupt reloc bounds\n", stderr);
+                    fdputs("corrupt reloc bounds\n", 2);
                     return 1;
                 }
                 rj = 0;
@@ -356,11 +356,11 @@ int main(int argc, char **argv) {
                     sym = rd32(buf + ro + 4);
                     typ2 = rd32(buf + ro + 8);
                     add = rd32(buf + ro + 12);
-                    fputs("    off=0x", stdout); out_hex32(stdout, off);
-                    fputs(" sym=", stdout); out_dec(stdout, sym);
-                    fputs(" type=", stdout); fputs(rel_type_name(typ2), stdout);
-                    fputs(" add=", stdout); out_dec(stdout, add);
-                    fputc('\n', stdout);
+                    fdputs("    off=0x", 1); out_hex32(1, off);
+                    fdputs(" sym=", 1); out_dec(1, sym);
+                    fdputs(" type=", 1); fdputs(rel_type_name(typ2), 1);
+                    fdputs(" add=", 1); out_dec(1, add);
+                    fdputc('\n', 1);
                     rj = rj + 1;
                 }
                 si3 = si3 + 1;
@@ -387,7 +387,7 @@ int main(int argc, char **argv) {
 
         if (size < SIZEOF_S32X_HEADER) {
             free(buf);
-            fputs("bad s32x header\n", stderr);
+            fdputs("bad s32x header\n", 2);
             return 1;
         }
         version2 = rd16(buf + 4);
@@ -409,33 +409,33 @@ int main(int argc, char **argv) {
         if (!in_bounds(sec_off2, nsections2 * SIZEOF_S32X_SECTION, size) ||
             !in_bounds(str_off2, str_sz2, size)) {
             free(buf);
-            fputs("corrupt s32x table bounds\n", stderr);
+            fdputs("corrupt s32x table bounds\n", 2);
             return 1;
         }
         strtab2 = buf + str_off2;
 
-        fputs(filename, stdout);
-        fputs(": file format s32x-slow32\n", stdout);
+        fdputs(filename, 1);
+        fdputs(": file format s32x-slow32\n", 1);
 
         if (show_h) {
-            fputs("header: ver=", stdout); out_dec(stdout, version2);
-            fputs(" endian=", stdout); out_dec(stdout, endian2);
-            fputs(" machine=", stdout); out_dec(stdout, machine2);
-            fputs(" entry=0x", stdout); out_hex32(stdout, entry);
-            fputs(" flags=0x", stdout); out_hex32(stdout, flags2);
-            fputc('\n', stdout);
-            fputs("  nsections=", stdout); out_dec(stdout, nsections2);
-            fputs(" mem_size=0x", stdout); out_hex32(stdout, mem_size);
-            fputs(" code_limit=0x", stdout); out_hex32(stdout, code_limit);
-            fputs(" data_limit=0x", stdout); out_hex32(stdout, data_limit);
-            fputc('\n', stdout);
-            fputs("  heap=0x", stdout); out_hex32(stdout, heap_base);
-            fputs(" stack=0x", stdout); out_hex32(stdout, stack_base);
-            fputs(" mmio=0x", stdout); out_hex32(stdout, mmio_base);
-            fputc('\n', stdout);
+            fdputs("header: ver=", 1); out_dec(1, version2);
+            fdputs(" endian=", 1); out_dec(1, endian2);
+            fdputs(" machine=", 1); out_dec(1, machine2);
+            fdputs(" entry=0x", 1); out_hex32(1, entry);
+            fdputs(" flags=0x", 1); out_hex32(1, flags2);
+            fdputc('\n', 1);
+            fdputs("  nsections=", 1); out_dec(1, nsections2);
+            fdputs(" mem_size=0x", 1); out_hex32(1, mem_size);
+            fdputs(" code_limit=0x", 1); out_hex32(1, code_limit);
+            fdputs(" data_limit=0x", 1); out_hex32(1, data_limit);
+            fdputc('\n', 1);
+            fdputs("  heap=0x", 1); out_hex32(1, heap_base);
+            fdputs(" stack=0x", 1); out_hex32(1, stack_base);
+            fdputs(" mmio=0x", 1); out_hex32(1, mmio_base);
+            fdputc('\n', 1);
         }
         if (show_sct) {
-            fputs("sections:\n", stdout);
+            fdputs("sections:\n", 1);
             si4 = 0;
             while (si4 < nsections2) {
                 int so4;
@@ -454,26 +454,26 @@ int main(int argc, char **argv) {
                 sz4 = rd32(buf + so4 + 16);
                 msz4 = rd32(buf + so4 + 20);
                 sflags4 = rd32(buf + so4 + 24);
-                fputs("  [", stdout); out_dec(stdout, si4); fputs("] ", stdout);
-                fputs(safe_name(strtab2, str_sz2, noff4), stdout);
-                fputs(" type=", stdout); fputs(sec_type_name(stype4), stdout);
-                fputs(" vaddr=0x", stdout); out_hex32(stdout, vaddr4);
-                fputs(" off=0x", stdout); out_hex32(stdout, off4);
-                fputs(" size=", stdout); out_dec(stdout, sz4);
-                fputs(" mem=", stdout); out_dec(stdout, msz4);
-                fputs(" flags=0x", stdout); out_hex32(stdout, sflags4);
-                fputc('\n', stdout);
+                fdputs("  [", 1); out_dec(1, si4); fdputs("] ", 1);
+                fdputs(safe_name(strtab2, str_sz2, noff4), 1);
+                fdputs(" type=", 1); fdputs(sec_type_name(stype4), 1);
+                fdputs(" vaddr=0x", 1); out_hex32(1, vaddr4);
+                fdputs(" off=0x", 1); out_hex32(1, off4);
+                fdputs(" size=", 1); out_dec(1, sz4);
+                fdputs(" mem=", 1); out_dec(1, msz4);
+                fdputs(" flags=0x", 1); out_hex32(1, sflags4);
+                fdputc('\n', 1);
                 si4 = si4 + 1;
             }
         }
         if (show_sym) {
-            fputs("symbols: not emitted in base s32x (see SYMTAB section if present)\n", stdout);
+            fdputs("symbols: not emitted in base s32x (see SYMTAB section if present)\n", 1);
         }
         if (show_rel) {
-            fputs("relocations: none in linked s32x\n", stdout);
+            fdputs("relocations: none in linked s32x\n", 1);
         }
     } else {
-        fputs("unknown file magic\n", stderr);
+        fdputs("unknown file magic\n", 2);
         free(buf);
         return 1;
     }
