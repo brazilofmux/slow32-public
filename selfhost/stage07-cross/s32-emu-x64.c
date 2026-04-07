@@ -1,5 +1,39 @@
+/* POSIX/Linux constants */
+#define NULL 0
+#define EOF (-1)
 
+#define O_RDONLY  0
+#define O_WRONLY  1
+#define O_RDWR   2
+#define O_CREAT   64
+#define O_TRUNC  512
+#define O_APPEND 1024
 
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+
+#define STDIN_FILENO  0
+#define STDOUT_FILENO 1
+#define STDERR_FILENO 2
+
+/* External functions (provided by libc_x64.a) */
+int write(int fd, char *buf, int len);
+int read(int fd, char *buf, int len);
+int open(char *path, int flags, int mode);
+int close(int fd);
+int lseek(int fd, int offset, int whence);
+int stat(char *path, char *buf);
+int fstat(int fd, char *buf);
+char *malloc(int size);
+void free(char *ptr);
+char *calloc(int n, int size);
+char *memcpy(char *dst, char *src, int n);
+char *memset(char *dst, int c, int n);
+int strlen(char *s);
+void exit(int code);
+
+/* s32x format constants */
 #define S32X_MAGIC      0x53333258
 #define S32X_FLAG_MMIO  0x0080
 
@@ -128,7 +162,6 @@ struct emu {
     unsigned int r[32];
     unsigned int pc;
     unsigned char *mem;
-    int _pad_mem;
     unsigned int mem_total;
     unsigned int code_limit;
     unsigned int mmio_base;
@@ -136,7 +169,6 @@ struct emu {
     int host_fds[MAX_FDS];
     int fd_owned[MAX_FDS];
     unsigned char *args_blob;
-    int _pad_args_blob;
     unsigned int args_argc;
     unsigned int args_total;
     unsigned int pc_hist[PC_HIST_LEN];

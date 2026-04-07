@@ -691,9 +691,10 @@ static void gen_expr(Node *n) {
 
     if (n->kind == ND_MEMBER) {
         gen_addr(n);
-        if (!ty_is_struct(n->ty)) {
+        if (!ty_is_struct(n->ty) && !n->is_array) {
             cg_load(n->ty);
         }
+        /* Arrays: address IS the value (array-to-pointer decay) */
         return;
     }
 
