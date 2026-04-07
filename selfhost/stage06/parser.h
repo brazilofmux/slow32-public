@@ -24,6 +24,7 @@ static char *ps_lname[P_MAX_LOCALS];  /* local var names */
 static int   ps_loff[P_MAX_LOCALS];   /* local var offsets from fp */
 static int   ps_ltype[P_MAX_LOCALS];  /* local var types */
 static int   ps_larr[P_MAX_LOCALS];   /* 1 if array (addr, no load) */
+static int   ps_lsize[P_MAX_LOCALS];  /* total byte size (arrays: elem_sz*count) */
 static int   ps_lstatic[P_MAX_LOCALS]; /* 1 = static local, 0 = normal */
 static char *ps_lsname[P_MAX_LOCALS];  /* mangled name (static locals only) */
 static int   ps_nlocals;
@@ -415,11 +416,13 @@ static int parse_type(void) {
                 if (arr_count > 0) {
                     stm_type[stm_count] = mty + TY_PTR;
                     stm_is_arr[stm_count] = 1;
+                    stm_arr_size[stm_count] = ty_size(mty) * arr_count;
                     stm_off[stm_count] = off;
                     off = off + ty_size(mty) * arr_count;
                 } else {
                     stm_type[stm_count] = mty;
                     stm_is_arr[stm_count] = 0;
+                    stm_arr_size[stm_count] = 0;
                     stm_off[stm_count] = off;
                     off = off + ty_size(mty);
                 }
@@ -483,11 +486,13 @@ static int parse_type(void) {
                 if (arr_count > 0) {
                     stm_type[stm_count] = mty + TY_PTR;
                     stm_is_arr[stm_count] = 1;
+                    stm_arr_size[stm_count] = ty_size(mty) * arr_count;
                     stm_off[stm_count] = 0;
                     if (ty_size(mty) * arr_count > max_sz) max_sz = ty_size(mty) * arr_count;
                 } else {
                     stm_type[stm_count] = mty;
                     stm_is_arr[stm_count] = 0;
+                    stm_arr_size[stm_count] = 0;
                     stm_off[stm_count] = 0;
                     if (ty_size(mty) > max_sz) max_sz = ty_size(mty);
                 }
@@ -555,6 +560,7 @@ static int add_local(char *name, int ty) {
     ps_loff[idx] = 0 - ps_stack;
     ps_ltype[idx] = ty;
     ps_larr[idx] = 0;
+    ps_lsize[idx] = sz;
     ps_lstatic[idx] = 0;
     ps_lsname[idx] = NULL;
     ps_nlocals = ps_nlocals + 1;
@@ -580,6 +586,7 @@ static int add_local_array(char *name, int elem_ty, int count) {
     ps_loff[idx] = 0 - ps_stack;
     ps_ltype[idx] = elem_ty + TY_PTR;  /* array decays to pointer */
     ps_larr[idx] = 1;
+    ps_lsize[idx] = total;
     ps_nlocals = ps_nlocals + 1;
     return ps_loff[idx];
 }
@@ -819,7 +826,7 @@ static Node *parse_primary(void) {
         return n;
     }
 
-    /* sizeof(type) — basic support */
+    /* sizeof(type_or_expr) */
     if (lex_tok == TK_SIZEOF) {
         next();
         expect(TK_LPAREN);
@@ -827,7 +834,21 @@ static Node *parse_primary(void) {
             v = ty_size(parse_type());
         } else {
             n = parse_expr();
-            v = ty_size(n->ty);
+            if (n->kind == ND_VAR && n->is_array) {
+                /* Local array: use stored total size */
+                if (n->is_local) {
+                    li = find_local(n->name);
+                    v = (li >= 0) ? ps_lsize[li] : ty_size(n->ty);
+                } else {
+                    gi = find_global(n->name);
+                    v = (gi >= 0) ? ps_gsize[gi] : ty_size(n->ty);
+                }
+            } else if (n->kind == ND_MEMBER && n->is_array) {
+                /* Struct array member: arr_size stored in val_hi */
+                v = n->val_hi;
+            } else {
+                v = ty_size(n->ty);
+            }
         }
         expect(TK_RPAREN);
         return nd_num(v);
@@ -896,7 +917,7 @@ static Node *parse_postfix(void) {
             if (mi < 0) {
                 p_error("undefined struct member");
             }
-            n = nd_member(n, stm_off[mi], stm_type[mi], stm_is_arr[mi]);
+            n = nd_member(n, stm_off[mi], stm_type[mi], stm_is_arr[mi], stm_arr_size[mi]);
         } else if (lex_tok == TK_ARROW) {
             next();
             if (lex_tok != TK_IDENT) {
@@ -918,7 +939,7 @@ static Node *parse_postfix(void) {
             if (mi < 0) {
                 p_error("undefined struct member");
             }
-            n = nd_member(n, stm_off[mi], stm_type[mi], stm_is_arr[mi]);
+            n = nd_member(n, stm_off[mi], stm_type[mi], stm_is_arr[mi], stm_arr_size[mi]);
         } else if (lex_tok == TK_INC) {
             next();
             pi = nd_new(ND_POST_INC);
@@ -1591,7 +1612,7 @@ static Node *parse_stmt(void) {
                             mi_ty = stm_type[st_first[nsi] + nj];
                             n = nd_var(nm, off, ty);
                             n->is_local = 1;
-                            a = nd_member(n, mi_off, mi_ty);
+                            a = nd_member(n, mi_off, mi_ty, 0, 0);
                             a = nd_assign(a, parse_assign());
                             a = nd_expr_stmt(a);
                             if (head == NULL) { head = a; tail = a; }
@@ -1604,7 +1625,7 @@ static Node *parse_stmt(void) {
                         mi_ty = stm_type[base + ci];
                         n = nd_var(nm, off, ty);
                         n->is_local = 1;
-                        a = nd_member(n, mi_off, mi_ty);
+                        a = nd_member(n, mi_off, mi_ty, 0, 0);
                         a = nd_assign(a, parse_assign());
                         a = nd_expr_stmt(a);
                         if (head == NULL) { head = a; tail = a; }
