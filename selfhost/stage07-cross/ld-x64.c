@@ -767,6 +767,218 @@ static void write_executable(const char *filename, const char *entry_name) {
 }
 
 /* ============================================================================
+ * Archive support
+ * ============================================================================ */
+
+#define MAX_ARCHIVES 32
+
+typedef struct {
+    uint8_t *data;
+    size_t   size;
+    /* Symbol index (parsed from "/" member) */
+    int      nsyms;
+    char   **sym_names;
+    uint32_t *sym_offsets; /* file offset of member defining each symbol */
+    /* Track which members have been loaded */
+    int      loaded[MAX_OBJECTS]; /* offset → loaded flag */
+    int      nloaded;
+} Archive;
+
+static Archive archives[MAX_ARCHIVES];
+static int     narchives;
+
+static uint32_t read_be32(const uint8_t *p) {
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+           ((uint32_t)p[2] << 8) | p[3];
+}
+
+static void load_archive(const char *path) {
+    if (narchives >= MAX_ARCHIVES) die("too many archives");
+
+    Archive *ar = &archives[narchives];
+    memset(ar, 0, sizeof(*ar));
+
+    ar->data = read_file(path, &ar->size);
+    if (!ar->data) dief("cannot open archive: %s", path);
+
+    /* Check magic */
+    if (ar->size < 8 || memcmp(ar->data, "!<arch>\n", 8) != 0)
+        dief("not an archive: %s", path);
+
+    /* Parse symbol index (first member, named "/") */
+    size_t pos = 8;
+    if (pos + 60 > ar->size) dief("truncated archive: %s", path);
+
+    /* ar header: name[16] mtime[12] uid[6] gid[6] mode[8] size[10] fmag[2] */
+    char *hdr = (char *)(ar->data + pos);
+    if (hdr[0] != '/') dief("archive has no symbol index: %s", path);
+
+    /* Parse size from header (offset 48, 10 chars) */
+    long idx_size = strtol(hdr + 48, NULL, 10);
+    pos += 60; /* skip header */
+
+    if (pos + idx_size > ar->size) dief("truncated archive index: %s", path);
+
+    uint8_t *idx = ar->data + pos;
+    ar->nsyms = read_be32(idx);
+    ar->sym_offsets = malloc(ar->nsyms * sizeof(uint32_t));
+    ar->sym_names = malloc(ar->nsyms * sizeof(char *));
+
+    for (int i = 0; i < ar->nsyms; i++)
+        ar->sym_offsets[i] = read_be32(idx + 4 + i * 4);
+
+    /* Symbol names follow the offset table */
+    char *names = (char *)(idx + 4 + ar->nsyms * 4);
+    for (int i = 0; i < ar->nsyms; i++) {
+        ar->sym_names[i] = names;
+        names += strlen(names) + 1;
+    }
+
+    ar->nloaded = 0;
+    narchives++;
+}
+
+/* Check if an archive member at file offset has already been loaded */
+static int archive_member_loaded(Archive *ar, uint32_t offset) {
+    for (int i = 0; i < ar->nloaded; i++)
+        if (ar->loaded[i] == (int)offset) return 1;
+    return 0;
+}
+
+/* Load an archive member (ELF object at given file offset) as a new Object */
+static void load_archive_member(Archive *ar, uint32_t offset) {
+    if (archive_member_loaded(ar, offset)) return;
+    if (ar->nloaded >= MAX_OBJECTS) die("too many archive members");
+
+    ar->loaded[ar->nloaded++] = offset;
+
+    /* Parse ar member header at offset */
+    if (offset + 60 > ar->size) die("truncated archive member");
+    char *hdr = (char *)(ar->data + offset);
+
+    long mem_size = strtol(hdr + 48, NULL, 10);
+    uint8_t *mem_data = ar->data + offset + 60;
+
+    if (offset + 60 + mem_size > ar->size) die("truncated archive member data");
+
+    /* Create an Object from this data (copy it so Object owns it) */
+    if (nobjects >= MAX_OBJECTS) die("too many objects");
+    Object *obj = &objects[nobjects];
+    memset(obj, 0, sizeof(*obj));
+    obj->data = malloc(mem_size);
+    memcpy(obj->data, mem_data, mem_size);
+    obj->size = mem_size;
+
+    /* Parse ELF (same as load_object but data is already loaded) */
+    obj->ehdr = (Elf64_Ehdr *)obj->data;
+    if (obj->ehdr->e_ident[0] != 0x7F || obj->ehdr->e_type != ET_REL) {
+        free(obj->data);
+        return; /* skip non-ELF members */
+    }
+
+    obj->shdrs = (Elf64_Shdr *)(obj->data + obj->ehdr->e_shoff);
+    obj->nshdr = obj->ehdr->e_shnum;
+
+    if (obj->ehdr->e_shstrndx < obj->nshdr) {
+        Elf64_Shdr *shstr = &obj->shdrs[obj->ehdr->e_shstrndx];
+        obj->shstrtab = (char *)(obj->data + shstr->sh_offset);
+    }
+
+    obj->symtab = NULL;
+    obj->nsyms = 0;
+    obj->strtab = NULL;
+
+    for (int i = 0; i < obj->nshdr; i++) {
+        if (obj->shdrs[i].sh_type == SHT_SYMTAB) {
+            obj->symtab = (Elf64_Sym *)(obj->data + obj->shdrs[i].sh_offset);
+            obj->nsyms = obj->shdrs[i].sh_size / sizeof(Elf64_Sym);
+            int stridx = obj->shdrs[i].sh_link;
+            if (stridx < obj->nshdr)
+                obj->strtab = (char *)(obj->data + obj->shdrs[stridx].sh_offset);
+        }
+    }
+
+    for (int i = 0; i < obj->nshdr && i < MAX_SECTIONS; i++) {
+        const char *name = obj->shstrtab + obj->shdrs[i].sh_name;
+        obj->sec_map[i] = classify_section(name);
+    }
+
+    nobjects++;
+}
+
+/* Scan all loaded objects for undefined symbols, return count */
+static int count_undefined(void) {
+    /* Build a quick set of defined symbols */
+    /* We reuse gsyms but reset it each time */
+    ngsyms = 0;
+
+    for (int oi = 0; oi < nobjects; oi++) {
+        Object *obj = &objects[oi];
+        if (!obj->symtab) continue;
+
+        for (int si = 0; si < obj->nsyms; si++) {
+            Elf64_Sym *sym = &obj->symtab[si];
+            int bind = ELF64_ST_BIND(sym->st_info);
+            int type = ELF64_ST_TYPE(sym->st_info);
+
+            if (bind != STB_GLOBAL && bind != STB_WEAK) continue;
+            if (type == STT_SECTION) continue;
+            if (sym->st_name == 0) continue;
+
+            const char *name = obj->strtab + sym->st_name;
+            int gi = gsym_find(name);
+
+            if (sym->st_shndx == SHN_UNDEF) {
+                if (gi < 0) {
+                    gi = gsym_add(name);
+                }
+                continue;
+            }
+
+            /* Defined */
+            if (gi < 0) {
+                gi = gsym_add(name);
+            }
+            gsyms[gi].defined = 1;
+        }
+    }
+
+    int undef = 0;
+    for (int i = 0; i < ngsyms; i++)
+        if (!gsyms[i].defined) undef++;
+    return undef;
+}
+
+/* Iteratively load archive members that satisfy undefined symbols */
+static void resolve_archives(void) {
+    int changed = 1;
+    while (changed) {
+        changed = 0;
+
+        /* Collect current undefined symbols */
+        ngsyms = 0;
+        count_undefined();
+
+        /* For each undefined symbol, check all archives */
+        for (int gi = 0; gi < ngsyms; gi++) {
+            if (gsyms[gi].defined) continue;
+
+            for (int ai = 0; ai < narchives; ai++) {
+                Archive *ar = &archives[ai];
+                for (int si = 0; si < ar->nsyms; si++) {
+                    if (strcmp(gsyms[gi].name, ar->sym_names[si]) == 0) {
+                        if (!archive_member_loaded(ar, ar->sym_offsets[si])) {
+                            load_archive_member(ar, ar->sym_offsets[si]);
+                            changed = 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/* ============================================================================
  * Main
  * ============================================================================ */
 
@@ -786,15 +998,25 @@ int main(int argc, char **argv) {
             fprintf(stderr, "ld-x64: unknown option: %s\n", argv[i]);
             return 1;
         } else {
-            load_object(argv[i]);
+            /* Detect archive vs object by extension */
+            size_t len = strlen(argv[i]);
+            if (len > 2 && argv[i][len-2] == '.' && argv[i][len-1] == 'a') {
+                load_archive(argv[i]);
+            } else {
+                load_object(argv[i]);
+            }
         }
         i++;
     }
 
-    if (nobjects == 0) {
-        fprintf(stderr, "Usage: ld-x64 [-o output] [-e entry] obj1.o obj2.o ...\n");
+    if (nobjects == 0 && narchives == 0) {
+        fprintf(stderr, "Usage: ld-x64 [-o output] [-e entry] obj1.o obj2.o [lib.a ...]\n");
         return 1;
     }
+
+    /* Phase 0: Resolve archives (iteratively load needed members) */
+    if (narchives > 0)
+        resolve_archives();
 
     /* Phase 1: Merge sections */
     merge_sections();
@@ -802,7 +1024,8 @@ int main(int argc, char **argv) {
     /* Phase 2: Compute layout */
     compute_layout();
 
-    /* Phase 3: Collect and resolve symbols */
+    /* Phase 3: Collect and resolve symbols (reset gsyms for final pass) */
+    ngsyms = 0;
     collect_symbols();
 
     /* Check for undefined symbols */
