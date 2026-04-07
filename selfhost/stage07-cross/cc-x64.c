@@ -91,6 +91,7 @@ static void fdputuint(int f, int v) {
 #include "x64_encode.h"
 #include "elf_writer.h"
 #include "codegen_x64.h"
+#include "obj_writer.h"
 
 int main(int argc, char **argv) {
     int fd;
@@ -99,18 +100,23 @@ int main(int argc, char **argv) {
     int j;
     int last_slash;
     int argi;
+    int compile_only;
     char *infile;
     char *outfile;
     char *src;
     Node *prog;
 
-    /* Parse arguments: [-I dir] input.c output */
+    /* Parse arguments: [-c] [-I dir] input.c output */
     pp_idir[0] = 0;
     infile = 0;
     outfile = 0;
+    compile_only = 0;
     argi = 1;
     while (argi < argc) {
-        if (argv[argi][0] == 45 && argv[argi][1] == 73) {  /* "-I" */
+        if (argv[argi][0] == 45 && argv[argi][1] == 99 && argv[argi][2] == 0) {
+            /* "-c" */
+            compile_only = 1;
+        } else if (argv[argi][0] == 45 && argv[argi][1] == 73) {  /* "-I" */
             if (argv[argi][2] != 0) {
                 i = 0; j = 2;
                 while (argv[argi][j] != 0) {
@@ -129,6 +135,12 @@ int main(int argc, char **argv) {
                 if (i > 0 && pp_idir[i - 1] != 47) { pp_idir[i] = 47; i = i + 1; }
                 pp_idir[i] = 0;
             }
+        } else if (argv[argi][0] == 45 && argv[argi][1] == 111 && argv[argi][2] == 0) {
+            /* "-o" followed by output filename */
+            if (argi + 1 < argc) {
+                argi = argi + 1;
+                outfile = argv[argi];
+            }
         } else if (infile == 0) {
             infile = argv[argi];
         } else if (outfile == 0) {
@@ -138,7 +150,7 @@ int main(int argc, char **argv) {
     }
 
     if (infile == 0 || outfile == 0) {
-        write(2, "Usage: cc-x64 [-I dir] input.c output\n", 41);
+        write(2, "Usage: cc-x64 [-c] [-o output] [-I dir] input.c [output]\n", 57);
         return 1;
     }
 
@@ -188,16 +200,25 @@ int main(int argc, char **argv) {
     /* AST optimization */
     optimize(prog);
 
-    /* x86-64 code generation + ELF output */
+    /* x86-64 code generation */
+    cg_object_mode = compile_only;
     gen_program(prog);
 
-    /* Write ELF */
-    if (elf_write_file(outfile) < 0) {
-        write(2, "cc-x64: cannot write output\n", 31);
-        return 1;
+    if (compile_only) {
+        /* Write relocatable object (.o) */
+        if (obj_write_file(outfile) < 0) {
+            write(2, "cc-x64: cannot write object\n", 28);
+            return 1;
+        }
+        write(2, "cc-x64: wrote object\n", 21);
+    } else {
+        /* Write ELF executable */
+        if (elf_write_file(outfile) < 0) {
+            write(2, "cc-x64: cannot write output\n", 31);
+            return 1;
+        }
+        write(2, "cc-x64: done\n", 13);
     }
-
-    write(2, "cc-x64: done\n", 16);
 
     return 0;
 }

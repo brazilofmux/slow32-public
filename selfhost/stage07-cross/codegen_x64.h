@@ -74,6 +74,10 @@ static int cg_dreloc_kind[CG_MAX_DATA_RELOCS]; /* DRELOC_STRING or DRELOC_GLOBAL
 static int cg_dreloc_idx[CG_MAX_DATA_RELOCS];
 static int cg_ndrelocs;
 
+/* --- Object mode flag --- */
+/* When set, skip _start emission and resolve steps (emit .o instead of ELF) */
+static int cg_object_mode;
+
 /* --- Per-function state --- */
 static int cg_epilog;
 static int cg_frame_size;
@@ -1448,9 +1452,10 @@ static void gen_program(Node *prog) {
     /* Collect globals from parser's symbol table */
     collect_globals(prog);
 
-    /* Emit _start stub first */
+    /* Emit _start stub (only in executable mode, not object mode) */
     entry_off = x64_off;
 
+    if (!cg_object_mode) {
     /* _start:
      *   xor ebp, ebp          ; mark end of frames
      *   mov edi, [rsp]        ; argc (32-bit)
@@ -1511,6 +1516,7 @@ static void gen_program(Node *prog) {
     x64_mov_rr(X64_RDI, X64_RAX);
     x64_mov_ri(X64_RAX, 60);
     x64_syscall();
+    } /* end if (!cg_object_mode) */
 
     /* Generate all functions */
     fn = prog->body;
@@ -1548,7 +1554,13 @@ static void gen_program(Node *prog) {
     /* Build data sections */
     gen_data_sections(prog);
 
-    /* Set up ELF */
+    /* Record code size for driver */
+    cg_olen = x64_off;
+
+    /* In object mode, stop here — caller writes .o via obj_write_file() */
+    if (cg_object_mode) return;
+
+    /* Executable mode: resolve and write ELF */
     elf_init();
     elf_set_text(x64_buf, x64_off);
     if (cg_rodata_len > 0) elf_set_rodata(cg_rodata, cg_rodata_len);
@@ -1558,9 +1570,6 @@ static void gen_program(Node *prog) {
     /* Resolve function calls and data relocations (needs ELF layout finalized) */
     resolve_calls();
     resolve_relocations();
-
-    /* Record code size for driver */
-    cg_olen = x64_off;
 }
 
 /* ============================================================================
