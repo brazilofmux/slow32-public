@@ -256,17 +256,21 @@ static void cg_load(int ty) {
             x64_movzx_rm16(X64_RAX, X64_RAX, 0);
         else
             x64_movsx_rm16(X64_RAX, X64_RAX, 0);
+    } else if (cg_is_ptr_type(ty)) {
+        x64_mov_rm64(X64_RAX, X64_RAX, 0);
     } else {
         x64_mov_rm(X64_RAX, X64_RAX, 0);
     }
 }
 
-/* Store ECX to [RAX] with appropriate width */
+/* Store RCX to [RAX] with appropriate width */
 static void cg_store(int ty) {
     if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
         x64_mov_mr8(X64_RAX, 0, X64_RCX);
     } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
         x64_mov_mr16(X64_RAX, 0, X64_RCX);
+    } else if (cg_is_ptr_type(ty)) {
+        x64_mov_mr64(X64_RAX, 0, X64_RCX);
     } else {
         x64_mov_mr(X64_RAX, 0, X64_RCX);
     }
@@ -284,6 +288,13 @@ static void cg_frame_off(int off) {
 static void gen_expr(Node *n);
 static void gen_stmt(Node *n);
 
+static int cg_strcmp(char *a, char *b) {
+    int i;
+    i = 0;
+    while (a[i] && a[i] == b[i]) i = i + 1;
+    return a[i] - b[i];
+}
+
 /* Generate address of lvalue into RAX */
 static void gen_addr(Node *n) {
     if (n->kind == ND_VAR) {
@@ -294,7 +305,7 @@ static void gen_addr(Node *n) {
             int gi;
             gi = 0;
             while (gi < cg_nglobals) {
-                if (cg_glob_name[gi] == n->name) break;
+                if (cg_strcmp(cg_glob_name[gi], n->name) == 0) break;
                 gi = gi + 1;
             }
             cg_data_addr(DRELOC_GLOBAL, gi);
@@ -573,35 +584,51 @@ static void gen_expr(Node *n) {
      * Let me handle it via a separate path. */
 
     if (n->kind == ND_COMP_ASSIGN) {
-        /* addr → push; load old value → push; eval rhs; pop old; apply; pop addr; store */
+        /* Strategy: eval rhs → push; gen_addr → push addr; load old_val;
+         * pop rhs into RCX; apply op; save result; pop addr; store. */
+        gen_expr(n->rhs);
+        cg_push();          /* stack: [rhs] */
         gen_addr(n->lhs);
-        cg_push();          /* stack: [addr] */
-        x64_mov_rr(X64_RCX, X64_RAX);
-        cg_load(n->ty);    /* RAX = old value (loaded from [RCX]) — wait, cg_load uses RAX as addr */
-        /* Actually: RAX already has address from gen_addr. cg_load loads from [RAX]. */
-        cg_push();          /* stack: [addr, old_val] */
-        gen_expr(n->rhs);  /* RAX = rhs */
-        cg_pop();           /* RCX = old_val */
-        /* Apply: result = old_val op rhs = RCX op RAX */
-        /* But binop helpers expect RCX=lhs, RAX=rhs, which is what we have */
+        cg_push();          /* stack: [rhs, addr] */
+        cg_load(n->ty);    /* RAX = old_val (from [RAX=addr]) */
+        /* Now: RAX = old_val, stack = [rhs, addr] */
+        /* Get rhs from stack: it's at [RSP+8] */
+        x64_mov_rm64(X64_RCX, X64_RSP, 8); /* RCX = rhs */
+
+        /* Apply: result = old_val op rhs. RAX=old_val, RCX=rhs */
         if (n->op == TK_PLUS) x64_add_rr(X64_RAX, X64_RCX);
-        else if (n->op == TK_MINUS) {
-            x64_sub_rr(X64_RCX, X64_RAX);
-            x64_mov_rr(X64_RAX, X64_RCX);
-        }
+        else if (n->op == TK_MINUS) x64_sub_rr(X64_RAX, X64_RCX);
         else if (n->op == TK_STAR) x64_imul_rr(X64_RAX, X64_RCX);
         else if (n->op == TK_AMP) x64_and_rr(X64_RAX, X64_RCX);
         else if (n->op == TK_PIPE) x64_or_rr(X64_RAX, X64_RCX);
         else if (n->op == TK_CARET) x64_xor_rr(X64_RAX, X64_RCX);
-        /* TODO: slash, percent, shifts for compound assign */
+        else if (n->op == TK_SLASH || n->op == TK_PERCENT) {
+            /* RAX = old_val (dividend), RCX = rhs (divisor) */
+            x64_mov_rr(X64_R10, X64_RCX);
+            if (n->ty & TY_UNSIGNED) {
+                x64_zero(X64_RDX);
+                x64_div(X64_R10);
+            } else {
+                x64_cdq();
+                x64_idiv(X64_R10);
+            }
+            if (n->op == TK_PERCENT)
+                x64_mov_rr(X64_RAX, X64_RDX);
+        }
+        else if (n->op == TK_LSHIFT) {
+            /* RAX = old_val, RCX = shift count (already in CL) */
+            x64_shl_cl(X64_RAX);
+        }
+        else if (n->op == TK_RSHIFT) {
+            if (n->ty & TY_UNSIGNED) x64_shr_cl(X64_RAX);
+            else x64_sar_cl(X64_RAX);
+        }
         /* RAX = new_val */
         x64_mov_rr(X64_RCX, X64_RAX);  /* RCX = new_val */
-        cg_pop();                        /* RAX = addr (from first push) */
-        /* WRONG order: we pushed addr first, then old_val. After two pops:
-         * first pop got old_val into RCX, second pop should get addr.
-         * Let me re-check... Actually the store path here is getting complicated.
-         * Let me simplify. */
-        cg_store(n->ty);
+        /* Pop addr into RAX */
+        x64_pop(X64_RAX);              /* RAX = addr */
+        x64_add_ri64(X64_RSP, 8);      /* discard rhs */
+        cg_store(n->ty);               /* store RCX to [RAX] */
         x64_mov_rr(X64_RAX, X64_RCX);  /* result = new_val */
         return;
     }
@@ -667,15 +694,59 @@ static void gen_expr(Node *n) {
     }
 
     if (n->kind == ND_FUNC_REF) {
-        /* Load function address — use call patch mechanism */
-        /* For now, load 0 placeholder */
-        cg_li(0); /* TODO: function address */
+        /* Load function address into RAX.
+         * Emit movabs rax, imm64 with a call patch to resolve later. */
+        cg_cpatch_name[cg_ncpatches] = n->name;
+        cg_cpatch_off[cg_ncpatches] = -(x64_off + 2 + 1); /* negative = func addr patch */
+        cg_ncpatches = cg_ncpatches + 1;
+        x64_mov_ri64(X64_RAX, 0, 0); /* placeholder 64-bit address */
+        return;
+    }
+
+    /* Builtin: __syscall(nr, a0, a1, a2, a3, a4, a5)
+     * Linux syscall convention: rax=nr, rdi=a0, rsi=a1, rdx=a2, r10=a3, r8=a4, r9=a5 */
+    if (n->kind == ND_CALL && n->name && cg_strcmp(n->name, "__syscall") == 0) {
+        Node *arg;
+        int nargs;
+        int sc_regs[7];
+
+        sc_regs[0] = X64_RAX;  /* syscall number */
+        sc_regs[1] = X64_RDI;  /* arg 0 */
+        sc_regs[2] = X64_RSI;  /* arg 1 */
+        sc_regs[3] = X64_RDX;  /* arg 2 */
+        sc_regs[4] = X64_R10;  /* arg 3 (NOT rcx — syscall clobbers it) */
+        sc_regs[5] = X64_R8;   /* arg 4 */
+        sc_regs[6] = X64_R9;   /* arg 5 */
+
+        /* Evaluate all args left-to-right, push to stack */
+        nargs = 0;
+        arg = n->args;
+        while (arg) {
+            gen_expr(arg);
+            cg_push();
+            nargs = nargs + 1;
+            arg = arg->next;
+        }
+
+        /* Pop args into syscall registers (from stack) */
+        i = 0;
+        while (i < nargs && i < 7) {
+            x64_mov_rm64(sc_regs[i], X64_RSP, (nargs - 1 - i) * 8);
+            i = i + 1;
+        }
+        if (nargs > 0)
+            x64_add_ri64(X64_RSP, nargs * 8);
+
+        x64_syscall();
+        /* Result in RAX */
         return;
     }
 
     if (n->kind == ND_CALL || n->kind == ND_CALL_PTR) {
-        /* x86-64 SysV: args in rdi, rsi, rdx, rcx, r8, r9 */
+        /* x86-64 SysV: args in rdi, rsi, rdx, rcx, r8, r9; stack for 7+ */
         int nargs;
+        int nreg;
+        int nstack;
         int arg_reg[6];
         Node *arg;
 
@@ -690,8 +761,10 @@ static void gen_expr(Node *n) {
         nargs = 0;
         arg = n->args;
         while (arg) { nargs = nargs + 1; arg = arg->next; }
+        nreg = nargs < 6 ? nargs : 6;
+        nstack = nargs > 6 ? nargs - 6 : 0;
 
-        /* Evaluate all args left-to-right, push to stack */
+        /* Evaluate ALL args left-to-right, push to stack as temp storage */
         arg = n->args;
         while (arg) {
             gen_expr(arg);
@@ -699,60 +772,67 @@ static void gen_expr(Node *n) {
             arg = arg->next;
         }
 
-        /* For indirect call, evaluate callee and save */
+        /* For indirect call, evaluate callee and save to R10 */
         if (n->kind == ND_CALL_PTR) {
             gen_expr(n->lhs);
-            cg_push();  /* callee addr on stack */
+            x64_mov_rr64(X64_R10, X64_RAX);
         }
 
-        /* Pop args into registers (reverse order from stack) */
-        /* Stack has args in order: first arg deepest.
-         * With nargs pushed, stack looks like:
-         *   [RSP]   = last arg
-         *   [RSP+8] = second-to-last
+        /* Stack now has nargs values:
+         *   [RSP + (nargs-1)*8] = arg0 (first, deepest)
          *   ...
-         *   [RSP + (nargs-1)*8] = first arg
-         * We need first arg in RDI, etc.
-         */
-        if (n->kind == ND_CALL_PTR) {
-            /* Callee is on top, args below */
-            x64_pop(X64_R10);  /* callee → R10 */
-        }
+         *   [RSP]               = arg(nargs-1) (last, top) */
 
+        /* Load register args (0..nreg-1) from their stack positions */
         i = 0;
-        while (i < nargs && i < 6) {
-            /* Load arg i from stack: it's at RSP + (nargs-1-i)*8.
-             * Use 64-bit load so pointer values are preserved. */
+        while (i < nreg) {
             x64_mov_rm64(arg_reg[i], X64_RSP, (nargs - 1 - i) * 8);
             i = i + 1;
         }
 
-        /* Stack args (7+): load from remaining stack positions.
-         * For now, we leave them on the stack. The SysV ABI expects
-         * stack args in right-to-left order, which is how we pushed them.
-         * But we also pushed register args. We need to clean up.
+        /* For stack args: copy them to their final positions.
+         * After we remove temp storage, callee expects stack args at
+         * [RSP], [RSP+8], etc. We need to set up that area.
          *
-         * Simplified approach: pop all pushed args off, then push
-         * stack args back. For Stage X2, limit to 6 args max.
-         */
+         * Strategy: remove temp storage, allocate stack arg space + pad,
+         * then store stack args from registers we saved them to.
+         * But we don't have enough registers. Instead, shuffle in place.
+         *
+         * Simpler: remove all temp, then re-push stack args (right to left).
+         * We need to save them before removing. Use: copy stack args to
+         * the final position below the temp area. */
 
-        /* Ensure 16-byte alignment before CALL.
-         * After pushing nargs values (each 8 bytes), RSP may be misaligned.
-         * RSP was 16-aligned at function entry (after our push rbp),
-         * so after pushing nargs*8 bytes, alignment depends on nargs parity.
-         */
+        if (nstack > 0) {
+            /* Save stack args to R11 one at a time and push.
+             * Stack args are indices 6..nargs-1.
+             * On stack: arg[j] is at [RSP + (nargs-1-j)*8].
+             * Push them in reverse order (last arg first = lowest addr). */
+            int sarg;
 
-        /* Adjust: remove pushed args from stack (we loaded them to regs) */
-        if (nargs > 0)
+            /* First, remove all temp storage */
             x64_add_ri64(X64_RSP, nargs * 8);
 
-        /* For stack args (>6), push them back in reverse order */
-        /* TODO: handle >6 args */
+            /* Alignment padding: nstack pushes must leave RSP 16-aligned.
+             * Frame is currently 16-aligned. nstack pushes + padding. */
+            if (nstack & 1)
+                x64_push(X64_RAX);  /* dummy for alignment */
 
-        /* Align stack for call if needed */
-        /* The frame was set up with aligned RSP. Push/pop pairs maintain
-         * alignment. Since we cleaned up all pushes, we should be aligned.
-         * But let's not worry about edge cases for now. */
+            /* Re-evaluate and push stack args in reverse (last arg first).
+             * This is O(n^2) to walk the arg list but correct. */
+            sarg = nargs - 1;
+            while (sarg >= 6) {
+                arg = n->args;
+                i = 0;
+                while (i < sarg) { arg = arg->next; i = i + 1; }
+                gen_expr(arg);
+                cg_push();
+                sarg = sarg - 1;
+            }
+        } else {
+            /* No stack args: just remove temp storage */
+            if (nargs > 0)
+                x64_add_ri64(X64_RSP, nargs * 8);
+        }
 
         if (n->kind == ND_CALL_PTR) {
             x64_call_r(X64_R10);
@@ -764,7 +844,14 @@ static void gen_expr(Node *n) {
             cg_ncpatches = cg_ncpatches + 1;
             x64_dword(0);
         }
-        /* Result in EAX */
+        /* Clean up stack args + alignment padding */
+        if (nstack > 0) {
+            int cleanup;
+            cleanup = nstack * 8;
+            if (nstack & 1) cleanup = cleanup + 8; /* alignment padding */
+            x64_add_ri64(X64_RSP, cleanup);
+        }
+        /* Result in RAX */
         return;
     }
 
@@ -1037,6 +1124,15 @@ static void gen_func(Node *fn) {
         i = i + 1;
         p = p->next;
     }
+    /* Params 7+ arrive on the caller's stack: [RBP+16], [RBP+24], etc.
+     * Copy them to their assigned local slots. */
+    while (p) {
+        /* Load from caller's stack: [RBP + 16 + (i-6)*8] */
+        x64_mov_rm64(X64_RAX, X64_RBP, 16 + (i - 6) * 8);
+        x64_mov_mr64(X64_RBP, cg_x64_offset(p->offset), X64_RAX);
+        i = i + 1;
+        p = p->next;
+    }
 
     /* Generate function body */
     gen_stmt(fn->body);
@@ -1074,12 +1170,12 @@ static void gen_data_sections(Node *prog) {
     cg_data_len = 0;
     cg_bss_size = 0;
 
-    /* Strings → rodata (from lexer's string pool) */
+    /* Strings → rodata (from lexer's string pool, including NUL terminator) */
     i = 0;
     while (i < cg_nstrings) {
         cg_str_rodata_off[i] = cg_rodata_len;
         j = 0;
-        while (j < cg_str_len[i]) {
+        while (j <= cg_str_len[i]) { /* <= to include NUL terminator */
             if (cg_rodata_len < 65536)
                 cg_rodata[cg_rodata_len] = cg_str_pool[cg_str_off[i] + j];
             cg_rodata_len = cg_rodata_len + 1;
@@ -1088,23 +1184,52 @@ static void gen_data_sections(Node *prog) {
         i = i + 1;
     }
 
-    /* Globals → data (initialized) or bss (uninitialized) */
-    /* For simplicity: all globals go to data, initialized to 0 or value */
+    /* Globals → data section.
+     * All globals go to data for simplicity (even zero-init ones).
+     * String-initialized globals get a pointer relocation. */
     i = 0;
     while (i < cg_nglobals) {
-        cg_glob_data_off[i] = cg_data_len;
-        /* Emit bytes for this global */
-        j = 0;
-        while (j < cg_glob_size[i]) {
-            if (cg_data_len < 65536) {
-                if (j < 4 && cg_glob_has_init[i]) {
-                    cg_data[cg_data_len] = (cg_glob_init[i] >> (j * 8)) & 0xFF;
-                } else {
-                    cg_data[cg_data_len] = 0;
-                }
+        /* Align to 8 bytes for pointer-sized globals */
+        if (cg_glob_size[i] >= 8) {
+            while (cg_data_len & 7) {
+                if (cg_data_len < 65536) cg_data[cg_data_len] = 0;
+                cg_data_len = cg_data_len + 1;
             }
-            cg_data_len = cg_data_len + 1;
-            j = j + 1;
+        } else if (cg_glob_size[i] >= 4) {
+            while (cg_data_len & 3) {
+                if (cg_data_len < 65536) cg_data[cg_data_len] = 0;
+                cg_data_len = cg_data_len + 1;
+            }
+        }
+        cg_glob_data_off[i] = cg_data_len;
+        if (cg_glob_has_init[i] == 2) {
+            /* String-initialized pointer: will be patched with rodata address.
+             * Record a data-section relocation for this. */
+            cg_dreloc_off[cg_ndrelocs] = -(cg_data_len + 1); /* negative = data section offset */
+            cg_dreloc_kind[cg_ndrelocs] = DRELOC_STRING;
+            cg_dreloc_idx[cg_ndrelocs] = cg_glob_init[i]; /* string pool index */
+            cg_ndrelocs = cg_ndrelocs + 1;
+            /* Emit 8 zero bytes (placeholder for pointer) */
+            j = 0;
+            while (j < 8) {
+                if (cg_data_len < 65536) cg_data[cg_data_len] = 0;
+                cg_data_len = cg_data_len + 1;
+                j = j + 1;
+            }
+        } else {
+            /* Emit bytes for this global */
+            j = 0;
+            while (j < cg_glob_size[i]) {
+                if (cg_data_len < 65536) {
+                    if (j < 4 && cg_glob_has_init[i] == 1) {
+                        cg_data[cg_data_len] = (cg_glob_init[i] >> (j * 8)) & 0xFF;
+                    } else {
+                        cg_data[cg_data_len] = 0;
+                    }
+                }
+                cg_data_len = cg_data_len + 1;
+                j = j + 1;
+            }
         }
         i = i + 1;
     }
@@ -1124,20 +1249,39 @@ static void resolve_relocations(void) {
     rodata_base = elf_rodata_vaddr();
     data_base = elf_data_vaddr();
 
-    /* Resolve data relocations (string and global addresses in code) */
+    /* Resolve data relocations (string and global addresses in code/data) */
     i = 0;
     while (i < cg_ndrelocs) {
         off = cg_dreloc_off[i];
+
+        /* Compute target address */
         if (cg_dreloc_kind[i] == DRELOC_STRING) {
             addr = rodata_base + cg_str_rodata_off[cg_dreloc_idx[i]];
         } else {
             addr = data_base + cg_glob_data_off[cg_dreloc_idx[i]];
         }
-        /* Patch the imm64 (lo 32 bits; hi 32 are already 0) */
-        x64_buf[off]     = addr & 0xFF;
-        x64_buf[off + 1] = (addr >> 8) & 0xFF;
-        x64_buf[off + 2] = (addr >> 16) & 0xFF;
-        x64_buf[off + 3] = (addr >> 24) & 0xFF;
+
+        if (off < 0) {
+            /* Negative offset = data section relocation (string-init pointer).
+             * off is -(data_offset + 1), so data_offset = -(off + 1). */
+            int doff;
+            doff = -(off + 1);
+            cg_data[doff]     = addr & 0xFF;
+            cg_data[doff + 1] = (addr >> 8) & 0xFF;
+            cg_data[doff + 2] = (addr >> 16) & 0xFF;
+            cg_data[doff + 3] = (addr >> 24) & 0xFF;
+            cg_data[doff + 4] = 0;
+            cg_data[doff + 5] = 0;
+            cg_data[doff + 6] = 0;
+            cg_data[doff + 7] = 0;
+        } else {
+            /* Code section relocation: patch imm64 */
+            x64_buf[off]     = addr & 0xFF;
+            x64_buf[off + 1] = (addr >> 8) & 0xFF;
+            x64_buf[off + 2] = (addr >> 16) & 0xFF;
+            x64_buf[off + 3] = (addr >> 24) & 0xFF;
+            /* High 32 bits zero (addresses < 4GB) */
+        }
         i = i + 1;
     }
 }
@@ -1146,25 +1290,41 @@ static void resolve_relocations(void) {
  * Resolve function calls
  * ============================================================================ */
 
-static int cg_strcmp(char *a, char *b) {
-    int i;
-    i = 0;
-    while (a[i] && a[i] == b[i]) i = i + 1;
-    return a[i] - b[i];
-}
-
 static void resolve_calls(void) {
     int i;
     int j;
     int found;
+    int off;
+    int text_base;
+
+    text_base = elf_text_vaddr();
 
     i = 0;
     while (i < cg_ncpatches) {
         found = 0;
         j = 0;
+        off = cg_cpatch_off[i];
         while (j < cg_nfuncs) {
             if (cg_strcmp(cg_cpatch_name[i], cg_func_name[j]) == 0) {
-                x64_patch_rel32(cg_cpatch_off[i], cg_func_off[j]);
+                if (off < 0) {
+                    /* Negative offset: function address patch (imm64 in movabs).
+                     * off = -(code_offset + 1), so code_offset = -(off + 1). */
+                    int coff;
+                    int addr;
+                    coff = -(off + 1);
+                    addr = text_base + cg_func_off[j];
+                    x64_buf[coff]     = addr & 0xFF;
+                    x64_buf[coff + 1] = (addr >> 8) & 0xFF;
+                    x64_buf[coff + 2] = (addr >> 16) & 0xFF;
+                    x64_buf[coff + 3] = (addr >> 24) & 0xFF;
+                    x64_buf[coff + 4] = 0;
+                    x64_buf[coff + 5] = 0;
+                    x64_buf[coff + 6] = 0;
+                    x64_buf[coff + 7] = 0;
+                } else {
+                    /* Positive offset: call rel32 patch */
+                    x64_patch_rel32(off, cg_func_off[j]);
+                }
                 found = 1;
                 break;
             }
@@ -1181,19 +1341,63 @@ static void resolve_calls(void) {
  * Collect globals from AST
  * ============================================================================ */
 
+/* Compute x86-64 size for a global variable.
+ * Pointers are 8 bytes on x86-64 (vs 4 on SLOW-32). */
+static int cg_x64_global_size(int ty, int s32_size) {
+    if (s32_size > 0) {
+        /* Array: scale pointer-element arrays by 2x for 8-byte pointers */
+        if (ty_is_ptr(ty) && ty_is_ptr(ty_deref(ty))) {
+            /* Array of pointers: each element 8 bytes instead of 4 */
+            return s32_size * 2;
+        }
+        return s32_size;
+    }
+    /* Scalar */
+    if (ty_is_ptr(ty)) return 8;
+    return ty_size(ty);
+}
+
 static void collect_globals(Node *prog) {
-    Node *fn;
-    /* Walk top-level declarations for global variables.
-     * The parser puts globals in prog->body as ND_VAR nodes between functions.
-     * Actually, globals are tracked by the parser in its global symbol table.
-     * For now, we scan function bodies for global variable references
-     * and register them.
-     *
-     * Simplified: the frontend creates ND_FUNC nodes in prog->body.
-     * Global variables appear as top-level ND_VAR in prog->body.
-     * We'll handle this properly when needed.
-     */
+    int i;
+    int sz;
+
     cg_nglobals = 0;
+
+    /* Copy parser's global symbol table to codegen's */
+    i = 0;
+    while (i < ps_nglobals) {
+        cg_glob_name[cg_nglobals] = ps_gname[i];
+
+        /* Compute size */
+        if (ps_gsize[i] > 0) {
+            sz = ps_gsize[i]; /* array: use parser-computed size */
+        } else {
+            sz = cg_x64_global_size(ps_gtype[i], 0);
+        }
+        cg_glob_size[cg_nglobals] = sz;
+
+        /* Initialized? */
+        if (ps_ginit_start[i] >= 0) {
+            /* Has initializer list (array/struct) — handled in gen_data_sections */
+            cg_glob_has_init[cg_nglobals] = 1;
+            cg_glob_init[cg_nglobals] = 0;
+        } else if (ps_gstr[i] >= 0) {
+            /* String-initialized (char *name = "...") */
+            cg_glob_has_init[cg_nglobals] = 2; /* special: string init */
+            cg_glob_init[cg_nglobals] = ps_gstr[i];
+        } else if (ps_ginit[i] != 0) {
+            /* Scalar with nonzero initial value */
+            cg_glob_has_init[cg_nglobals] = 1;
+            cg_glob_init[cg_nglobals] = ps_ginit[i];
+        } else {
+            /* Uninitialized (BSS) */
+            cg_glob_has_init[cg_nglobals] = 0;
+            cg_glob_init[cg_nglobals] = 0;
+        }
+
+        cg_nglobals = cg_nglobals + 1;
+        i = i + 1;
+    }
 }
 
 /* ============================================================================
@@ -1234,21 +1438,61 @@ static void gen_program(Node *prog) {
     cg_nglobals = 0;
     x64_off = 0;
 
+    /* Collect globals from parser's symbol table */
+    collect_globals(prog);
+
     /* Emit _start stub first */
     entry_off = x64_off;
 
     /* _start:
      *   xor ebp, ebp          ; mark end of frames
-     *   mov edi, [rsp]        ; argc
+     *   mov edi, [rsp]        ; argc (32-bit)
      *   lea rsi, [rsp+8]      ; argv
-     *   call main              ; → placeholder, patch later
+     *   ; compute envp = argv + (argc+1)*8
+     *   movsxd rax, edi        ; sign-extend argc to 64-bit
+     *   inc rax                ; argc+1
+     *   lea rdx, [rsi+rax*8]   ; envp = argv + (argc+1)*8
+     *   ; save rbx/r12 for later use
+     *   push rsi               ; save argv
+     *   push rdi               ; save argc
+     *   ; call __save_envp(envp) — rdi=envp=rdx
+     *   mov rdi, rdx
+     *   call __save_envp
+     *   ; restore argc/argv
+     *   pop rdi                ; argc
+     *   pop rsi                ; argv
+     *   call main
      *   mov edi, eax           ; exit code = main return
      *   mov eax, 60            ; sys_exit
      *   syscall
      */
     x64_xor_rr(X64_RBP, X64_RBP);
-    x64_mov_rm(X64_RDI, X64_RSP, 0);
-    x64_lea(X64_RSI, X64_RSP, 8);
+    x64_mov_rm(X64_RDI, X64_RSP, 0);           /* edi = argc */
+    x64_lea(X64_RSI, X64_RSP, 8);              /* rsi = argv */
+
+    /* movsxd rax, edi (sign-extend argc to 64-bit) */
+    x64_movsxd(X64_RAX, X64_RDI);
+    /* inc rax */
+    x64_add_ri64(X64_RAX, 1);
+    /* lea rdx, [rsi + rax*8] */
+    /* Can't easily encode SIB. Instead: shl rax,3; add rax,rsi; mov rdx,rax */
+    x64_byte(0x48); x64_byte(0xC1); x64_byte(0xE0); x64_byte(0x03); /* shl rax, 3 */
+    x64_add_rr64(X64_RAX, X64_RSI);
+    x64_mov_rr64(X64_RDX, X64_RAX);            /* rdx = envp */
+
+    x64_push(X64_RSI);                          /* save argv */
+    x64_push(X64_RDI);                          /* save argc */
+
+    /* call __save_envp(envp) */
+    x64_mov_rr64(X64_RDI, X64_RDX);
+    x64_byte(0xE8);
+    cg_cpatch_name[cg_ncpatches] = "__save_envp";
+    cg_cpatch_off[cg_ncpatches] = x64_off;
+    cg_ncpatches = cg_ncpatches + 1;
+    x64_dword(0);
+
+    x64_pop(X64_RDI);                           /* argc */
+    x64_pop(X64_RSI);                           /* argv */
 
     /* Call main — record patch */
     x64_byte(0xE8);
@@ -1269,9 +1513,6 @@ static void gen_program(Node *prog) {
         }
         fn = fn->next;
     }
-
-    /* Resolve internal function calls */
-    resolve_calls();
 
     /* Copy string pool from lexer */
     /* The lexer stores strings in lex_strpool / lex_str_off / lex_str_len. */
@@ -1307,7 +1548,8 @@ static void gen_program(Node *prog) {
     if (cg_data_len > 0) elf_set_data(cg_data, cg_data_len);
     elf_set_entry(entry_off);
 
-    /* Resolve data relocations (needs ELF layout finalized) */
+    /* Resolve function calls and data relocations (needs ELF layout finalized) */
+    resolve_calls();
     resolve_relocations();
 
     /* Record code size for driver */

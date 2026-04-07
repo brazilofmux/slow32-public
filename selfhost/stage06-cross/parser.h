@@ -414,8 +414,23 @@ static int parse_type(void) {
                 stm_off[stm_count] = off;
                 stm_count = stm_count + 1;
                 st_nfields[si] = st_nfields[si] + 1;
-                off = off + ty_size(mty);
                 next();
+                if (lex_tok == TK_LBRACK) {
+                    /* Array member: type name[N]; */
+                    int arr_sz;
+                    next(); /* skip '[' */
+                    arr_sz = 0;
+                    if (lex_tok == TK_NUM) {
+                        arr_sz = lex_val;
+                        next();
+                    }
+                    expect(TK_RBRACK);
+                    off = off + ty_size(mty) * arr_sz;
+                    /* Mark member type as pointer (array decays to pointer for access) */
+                    stm_type[stm_count - 1] = mty + TY_PTR;
+                } else {
+                    off = off + ty_size(mty);
+                }
                 expect(TK_SEMI);
             }
             expect(TK_RBRACE);
