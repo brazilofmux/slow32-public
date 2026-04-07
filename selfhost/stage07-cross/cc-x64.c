@@ -93,6 +93,77 @@ static void fdputuint(int f, int v) {
 #include "codegen_x64.h"
 #include "obj_writer.h"
 
+/* Emit a crt0.o with the hand-coded _start stub.
+ * This is the proper kernel-ABI _start that reads argc/argv/envp
+ * from the stack and calls main + __save_envp + sys_exit. */
+static int emit_crt0(char *outfile) {
+    x64_off = 0;
+    cg_nfuncs = 0;
+    cg_ncpatches = 0;
+    cg_ndrelocs = 0;
+    cg_nstrings = 0;
+    cg_str_pool_used = 0;
+    cg_nglobals = 0;
+    cg_rodata_len = 0;
+    cg_data_len = 0;
+    cg_bss_size = 0;
+    cg_object_mode = 1;
+
+    /* Record _start function */
+    cg_func_name[cg_nfuncs] = "_start";
+    cg_func_off[cg_nfuncs] = x64_off;
+    cg_nfuncs = cg_nfuncs + 1;
+
+    /* _start:
+     *   xor ebp, ebp
+     *   mov edi, [rsp]        ; argc
+     *   lea rsi, [rsp+8]      ; argv
+     *   movsxd rax, edi        ; sign-extend argc
+     *   inc rax
+     *   shl rax, 3
+     *   add rax, rsi
+     *   mov rdx, rax          ; envp
+     *   push rsi              ; save argv
+     *   push rdi              ; save argc
+     *   mov rdi, rdx
+     *   call __save_envp
+     *   pop rdi               ; argc
+     *   pop rsi               ; argv
+     *   call main
+     *   mov edi, eax
+     *   mov eax, 60
+     *   syscall
+     */
+    x64_xor_rr(X64_RBP, X64_RBP);
+    x64_mov_rm(X64_RDI, X64_RSP, 0);
+    x64_lea(X64_RSI, X64_RSP, 8);
+    x64_movsxd(X64_RAX, X64_RDI);
+    x64_add_ri64(X64_RAX, 1);
+    x64_byte(0x48); x64_byte(0xC1); x64_byte(0xE0); x64_byte(0x03);
+    x64_add_rr64(X64_RAX, X64_RSI);
+    x64_mov_rr64(X64_RDX, X64_RAX);
+    x64_push(X64_RSI);
+    x64_push(X64_RDI);
+    x64_mov_rr64(X64_RDI, X64_RDX);
+    x64_byte(0xE8);
+    cg_cpatch_name[cg_ncpatches] = "__save_envp";
+    cg_cpatch_off[cg_ncpatches] = x64_off;
+    cg_ncpatches = cg_ncpatches + 1;
+    x64_dword(0);
+    x64_pop(X64_RDI);
+    x64_pop(X64_RSI);
+    x64_byte(0xE8);
+    cg_cpatch_name[cg_ncpatches] = "main";
+    cg_cpatch_off[cg_ncpatches] = x64_off;
+    cg_ncpatches = cg_ncpatches + 1;
+    x64_dword(0);
+    x64_mov_rr(X64_RDI, X64_RAX);
+    x64_mov_ri(X64_RAX, 60);
+    x64_syscall();
+
+    return obj_write_file(outfile);
+}
+
 int main(int argc, char **argv) {
     int fd;
     int n;
@@ -101,19 +172,26 @@ int main(int argc, char **argv) {
     int last_slash;
     int argi;
     int compile_only;
+    int crt0_mode;
     char *infile;
     char *outfile;
     char *src;
     Node *prog;
 
-    /* Parse arguments: [-c] [-I dir] input.c output */
+    /* Parse arguments: [--crt0] [-c] [-I dir] input.c output */
     pp_idir[0] = 0;
     infile = 0;
     outfile = 0;
     compile_only = 0;
+    crt0_mode = 0;
     argi = 1;
     while (argi < argc) {
-        if (argv[argi][0] == 45 && argv[argi][1] == 99 && argv[argi][2] == 0) {
+        if (argv[argi][0] == 45 && argv[argi][1] == 45) {
+            /* Long option starting with "--" */
+            if (strcmp(argv[argi], "--crt0") == 0) {
+                crt0_mode = 1;
+            }
+        } else if (argv[argi][0] == 45 && argv[argi][1] == 99 && argv[argi][2] == 0) {
             /* "-c" */
             compile_only = 1;
         } else if (argv[argi][0] == 45 && argv[argi][1] == 73) {  /* "-I" */
@@ -147,6 +225,17 @@ int main(int argc, char **argv) {
             outfile = argv[argi];
         }
         argi = argi + 1;
+    }
+
+    /* --crt0 mode: emit crt0.o, no source file needed */
+    if (crt0_mode) {
+        if (outfile == 0) outfile = "crt0.o";
+        if (emit_crt0(outfile) < 0) {
+            write(2, "cc-x64: cannot write crt0\n", 25);
+            return 1;
+        }
+        write(2, "cc-x64: wrote crt0\n", 19);
+        return 0;
     }
 
     if (infile == 0 || outfile == 0) {
