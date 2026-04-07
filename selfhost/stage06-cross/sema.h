@@ -1,1 +1,0 @@
-../stage06/sema.h

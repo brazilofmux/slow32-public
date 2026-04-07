@@ -5,6 +5,10 @@
  * Compiled by stage03 s32-cc.
  */
 
+/* Forward declarations (needed for host GCC compilation of cross-compiler) */
+static int find_typedef(char *name);
+static Node *parse_unary(void);
+
 /* --- Shared label counter (used by both parser and codegen) --- */
 static int cg_lbl;    /* label counter (monotonically increasing) */
 

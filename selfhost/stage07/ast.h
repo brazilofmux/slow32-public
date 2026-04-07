@@ -11,7 +11,7 @@ char *strdup(char *s);
 char *malloc(int size);
 char *calloc(int n, int size);
 void free(char *p);
-int memcpy(char *dst, char *src, int n);
+char *memcpy(char *dst, char *src, int n);
 
 /* --- Type encoding --- */
 #define TY_INT    0

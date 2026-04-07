@@ -1,6 +1,6 @@
 /* cc-x64.c -- Cross-compiler: C → x86-64 ELF
  *
- * Uses the same frontend as cc (Stage 06) but emits native
+ * Uses the same frontend as cc (Stage 07) but emits native
  * x86-64 Linux ELF binaries via x64_encode.h + elf_writer.h.
  *
  * Usage: cc-x64 input.c output
