@@ -1076,6 +1076,28 @@ static int hl_expr(Node *n) {
             hl_hi = hi_emit(HI_CALLHI, TY_INT, lv, -1, 0, NULL);
             return lv;
         }
+        /* Narrowing to char: truncate + sign/zero extend */
+        if (!ty_is_ptr(n->ty) && (n->ty & TY_BASE_MASK) == TY_CHAR) {
+            if (n->ty & TY_UNSIGNED) {
+                tmp = hi_emit(HI_ICONST, TY_INT, -1, -1, 255, NULL);
+                return hi_emit(HI_AND, TY_INT, lv, tmp, 0, NULL);
+            } else {
+                tmp = hi_emit(HI_ICONST, TY_INT, -1, -1, 24, NULL);
+                lv = hi_emit(HI_SLL, TY_INT, lv, tmp, 0, NULL);
+                return hi_emit(HI_SRA, TY_INT, lv, tmp, 0, NULL);
+            }
+        }
+        /* Narrowing to short */
+        if (!ty_is_ptr(n->ty) && (n->ty & TY_BASE_MASK) == TY_SHORT) {
+            if (n->ty & TY_UNSIGNED) {
+                tmp = hi_emit(HI_ICONST, TY_INT, -1, -1, 65535, NULL);
+                return hi_emit(HI_AND, TY_INT, lv, tmp, 0, NULL);
+            } else {
+                tmp = hi_emit(HI_ICONST, TY_INT, -1, -1, 16, NULL);
+                lv = hi_emit(HI_SLL, TY_INT, lv, tmp, 0, NULL);
+                return hi_emit(HI_SRA, TY_INT, lv, tmp, 0, NULL);
+            }
+        }
         return lv;
     }
 
