@@ -1008,6 +1008,29 @@ static void hx_emit_inst(int idx) {
         return;
     }
 
+    /* --- Widening: 32→64 sign/zero extend --- */
+
+    if (k == HI_SEXT32) {
+        int sr;
+        int dr;
+        sr = hx_src(h_src1[idx], X64_RAX);
+        dr = hx_dst(idx);
+        x64_movsxd(dr, sr);
+        hx_maybe_spill(idx);
+        return;
+    }
+
+    if (k == HI_ZEXT32) {
+        int sr;
+        int dr;
+        sr = hx_src(h_src1[idx], X64_RAX);
+        dr = hx_dst(idx);
+        /* mov r32d, r32d zero-extends to 64-bit */
+        x64_mov_rr(dr, sr);
+        hx_maybe_spill(idx);
+        return;
+    }
+
     /* --- Float ops: stub (not supported yet) --- */
     if (k >= HI_FADD && k <= HI_FCONST) {
         hx_die("floating-point HIR is not supported yet", idx);

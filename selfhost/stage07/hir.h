@@ -70,6 +70,10 @@
 #define HI_VA_ARG   57  /* va_arg:   src1=current va_list, ty=arg type. Produces argument. */
 #define HI_VA_NEXT  58  /* va_next:  src1=current va_list. Produces updated va_list. */
 
+/* Widening (x64-specific; the optimizer must NOT fold these) */
+#define HI_SEXT32   59  /* sign-extend 32→64: src1=32-bit value → 64-bit signed */
+#define HI_ZEXT32   60  /* zero-extend 32→64: src1=32-bit value → 64-bit unsigned */
+
 /* --- Limits --- */
 #define HIR_MAX_INST   16384
 #define HIR_MAX_BLOCK  2048

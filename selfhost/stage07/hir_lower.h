@@ -351,6 +351,10 @@ static int hl_expr(Node *n) {
             return hl_addr(n);
         }
         addr = hl_addr(n);
+#ifdef S12CC_X64_HOST
+        if (ty_is_llong(n->ty))
+            return hi_emit(HI_LOAD, TY_LLONG, addr, -1, 0, NULL);
+#endif
         if (ty_is_llong(n->ty) || ty_is_double(n->ty)) {
             lv = hi_emit(HI_LOAD, TY_INT, addr, -1, 0, NULL);
             tmp = hi_emit(HI_ADDI, TY_INT, addr, -1, 4, NULL);
@@ -391,6 +395,14 @@ static int hl_expr(Node *n) {
             }
             return da;
         }
+#ifdef S12CC_X64_HOST
+        if (ty_is_llong(n->ty)) {
+            val = hl_expr(n->rhs);
+            addr = hl_addr(n->lhs);
+            hi_emit(HI_STORE, TY_LLONG, addr, val, 0, NULL);
+            return val;
+        }
+#endif
         if (ty_is_llong(n->ty)) {
             int val_hi;
             int addr4;
@@ -431,6 +443,12 @@ static int hl_expr(Node *n) {
     /* Unary operations */
     if (n->kind == ND_UNARY) {
         if (n->op == TK_MINUS) {
+#ifdef S12CC_X64_HOST
+            if (ty_is_llong(n->ty)) {
+                lv = hl_expr(n->lhs);
+                return hi_emit(HI_NEG, TY_LLONG, lv, -1, 0, NULL);
+            }
+#endif
             if (ty_is_llong(n->ty)) {
                 int lv_hi;
                 int r_lo;
@@ -466,6 +484,12 @@ static int hl_expr(Node *n) {
             return hi_emit(HI_NEG, n->ty, lv, -1, 0, NULL);
         }
         if (n->op == TK_BANG) {
+#ifdef S12CC_X64_HOST
+            if (ty_is_llong(n->lhs->ty)) {
+                lv = hl_expr(n->lhs);
+                return hi_emit(HI_NOT, TY_INT, lv, -1, 0, NULL);
+            }
+#endif
             if (ty_is_llong(n->lhs->ty)) {
                 int lv_hi;
                 int eq_lo;
@@ -482,6 +506,12 @@ static int hl_expr(Node *n) {
             return hi_emit(HI_NOT, n->ty, lv, -1, 0, NULL);
         }
         if (n->op == TK_TILDE) {
+#ifdef S12CC_X64_HOST
+            if (ty_is_llong(n->ty)) {
+                lv = hl_expr(n->lhs);
+                return hi_emit(HI_BNOT, TY_LLONG, lv, -1, 0, NULL);
+            }
+#endif
             if (ty_is_llong(n->ty)) {
                 int lv_hi;
                 lv = hl_expr(n->lhs);
@@ -497,6 +527,11 @@ static int hl_expr(Node *n) {
         if (n->op == TK_STAR) {
             lv = hl_expr(n->lhs);
             if (ty_is_struct(n->ty)) return lv;
+#ifdef S12CC_X64_HOST
+            if (ty_is_llong(n->ty)) {
+                return hi_emit(HI_LOAD, TY_LLONG, lv, -1, 0, NULL);
+            }
+#endif
             if (ty_is_double(n->ty) || ty_is_llong(n->ty)) {
                 int t2;
                 val = hi_emit(HI_LOAD, TY_INT, lv, -1, 0, NULL);
@@ -569,6 +604,68 @@ static int hl_expr(Node *n) {
 
         /* 64-bit binary operations */
         if (ty_is_llong(n->ty) || (sema_is_cmp(n->op) && (ty_is_llong(n->lhs->ty) || ty_is_llong(n->rhs->ty)))) {
+#ifdef S12CC_X64_HOST
+        {
+            int llong_cmp;
+            llong_cmp = sema_is_cmp(n->op) && (ty_is_llong(n->lhs->ty) || ty_is_llong(n->rhs->ty));
+            lv = hl_expr(n->lhs);
+            rv = hl_expr(n->rhs);
+            /* Widen non-llong operand to llong if the other is llong */
+            if (ty_is_llong(n->lhs->ty) && !ty_is_llong(n->rhs->ty)) {
+                if (n->rhs->ty & TY_UNSIGNED)
+                    rv = hi_emit(HI_ZEXT32, TY_LLONG, rv, -1, 0, NULL);
+                else
+                    rv = hi_emit(HI_SEXT32, TY_LLONG, rv, -1, 0, NULL);
+            }
+            if (ty_is_llong(n->rhs->ty) && !ty_is_llong(n->lhs->ty)) {
+                if (n->lhs->ty & TY_UNSIGNED)
+                    lv = hi_emit(HI_ZEXT32, TY_LLONG, lv, -1, 0, NULL);
+                else
+                    lv = hi_emit(HI_SEXT32, TY_LLONG, lv, -1, 0, NULL);
+            }
+            if (n->op == TK_PLUS) return hi_emit(HI_ADD, TY_LLONG, lv, rv, 0, NULL);
+            if (n->op == TK_MINUS) return hi_emit(HI_SUB, TY_LLONG, lv, rv, 0, NULL);
+            if (n->op == TK_STAR) return hi_emit(HI_MUL, TY_LLONG, lv, rv, 0, NULL);
+            if (n->op == TK_SLASH) {
+                if (n->ty & TY_UNSIGNED) return hi_emit(HI_DIV, TY_LLONG | TY_UNSIGNED, lv, rv, 0, NULL);
+                return hi_emit(HI_DIV, TY_LLONG, lv, rv, 0, NULL);
+            }
+            if (n->op == TK_PERCENT) {
+                if (n->ty & TY_UNSIGNED) return hi_emit(HI_REM, TY_LLONG | TY_UNSIGNED, lv, rv, 0, NULL);
+                return hi_emit(HI_REM, TY_LLONG, lv, rv, 0, NULL);
+            }
+            if (n->op == TK_AMP) return hi_emit(HI_AND, TY_LLONG, lv, rv, 0, NULL);
+            if (n->op == TK_PIPE) return hi_emit(HI_OR, TY_LLONG, lv, rv, 0, NULL);
+            if (n->op == TK_CARET) return hi_emit(HI_XOR, TY_LLONG, lv, rv, 0, NULL);
+            if (n->op == TK_LSHIFT) return hi_emit(HI_SLL, TY_LLONG, lv, rv, 0, NULL);
+            if (n->op == TK_RSHIFT) {
+                if (n->ty & TY_UNSIGNED) return hi_emit(HI_SRL, TY_LLONG, lv, rv, 0, NULL);
+                return hi_emit(HI_SRA, TY_LLONG, lv, rv, 0, NULL);
+            }
+            if (n->op == TK_EQ) return hi_emit(HI_SEQ, TY_INT, lv, rv, 0, NULL);
+            if (n->op == TK_NE) return hi_emit(HI_SNE, TY_INT, lv, rv, 0, NULL);
+            if (n->op == TK_LT) {
+                if (llong_cmp && (n->lhs->ty & TY_UNSIGNED))
+                    return hi_emit(HI_SLTU, TY_INT, lv, rv, 0, NULL);
+                return hi_emit(HI_SLT, TY_INT, lv, rv, 0, NULL);
+            }
+            if (n->op == TK_GT) {
+                if (llong_cmp && (n->lhs->ty & TY_UNSIGNED))
+                    return hi_emit(HI_SGTU, TY_INT, lv, rv, 0, NULL);
+                return hi_emit(HI_SGT, TY_INT, lv, rv, 0, NULL);
+            }
+            if (n->op == TK_LE) {
+                if (llong_cmp && (n->lhs->ty & TY_UNSIGNED))
+                    return hi_emit(HI_SLEU, TY_INT, lv, rv, 0, NULL);
+                return hi_emit(HI_SLE, TY_INT, lv, rv, 0, NULL);
+            }
+            if (n->op == TK_GE) {
+                if (llong_cmp && (n->lhs->ty & TY_UNSIGNED))
+                    return hi_emit(HI_SGEU, TY_INT, lv, rv, 0, NULL);
+                return hi_emit(HI_SGE, TY_INT, lv, rv, 0, NULL);
+            }
+        }
+#endif
             int lv_hi;
             int rv_hi;
             int r_lo;
@@ -1004,6 +1101,15 @@ static int hl_expr(Node *n) {
     /* Type cast */
     if (n->kind == ND_CAST) {
         lv = hl_expr(n->lhs);
+#ifdef S12CC_X64_HOST
+        if (ty_is_llong(n->ty) && !ty_is_llong(n->lhs->ty) && !ty_is_double(n->lhs->ty)) {
+            /* x64: explicit widening via SEXT32/ZEXT32 (optimizer won't fold) */
+            if (n->lhs->ty & TY_UNSIGNED)
+                return hi_emit(HI_ZEXT32, TY_LLONG, lv, -1, 0, NULL);
+            else
+                return hi_emit(HI_SEXT32, TY_LLONG, lv, -1, 0, NULL);
+        }
+#endif
         if (ty_is_llong(n->ty) && !ty_is_llong(n->lhs->ty) && !ty_is_double(n->lhs->ty)) {
             /* Widen 32->64 */
             hl_widen64(lv, n->lhs->ty, &lv, &hl_hi);
@@ -1114,6 +1220,10 @@ static int hl_expr(Node *n) {
     if (n->kind == ND_MEMBER) {
         addr = hl_addr(n);
         if (ty_is_struct(n->ty) || n->is_array) return addr;
+#ifdef S12CC_X64_HOST
+        if (ty_is_llong(n->ty))
+            return hi_emit(HI_LOAD, TY_LLONG, addr, -1, 0, NULL);
+#endif
         if (ty_is_double(n->ty) || ty_is_llong(n->ty)) {
             lv = hi_emit(HI_LOAD, TY_INT, addr, -1, 0, NULL);
             tmp = hi_emit(HI_ADDI, TY_INT, addr, -1, 4, NULL);
@@ -1194,8 +1304,13 @@ static int hl_expr(Node *n) {
             if (nargs >= 16) p_error("too many call args (limit 16)");
             av[nargs] = hl_expr(a);
             if (ty_is_llong(a->ty) || ty_is_double(a->ty)) {
+#ifdef S12CC_X64_HOST
+                av_hi[nargs] = -1;
+                is64[nargs] = 0;
+#else
                 av_hi[nargs] = hl_hi;
                 is64[nargs] = 1;
+#endif
             } else {
                 av_hi[nargs] = -1;
                 is64[nargs] = 0;
@@ -1244,9 +1359,13 @@ static int hl_expr(Node *n) {
         }
         i = hi_emit(HI_CALL, TY_INT, -1, -1, phys_count, n->name);
         h_cbase[i] = carg_base;
+#ifdef S12CC_X64_HOST
+        /* x64: 64-bit return is a single value, no CALLHI needed */
+#else
         if (ty_is_llong(ret_ty) || ty_is_double(ret_ty)) {
             hl_hi = hi_emit(HI_CALLHI, TY_INT, i, -1, 0, NULL);
         }
+#endif
         return i;
     }
 
@@ -1268,8 +1387,13 @@ static int hl_expr(Node *n) {
             if (nargs >= 16) p_error("too many call args (limit 16)");
             av[nargs] = hl_expr(a);
             if (ty_is_llong(a->ty) || ty_is_double(a->ty)) {
+#ifdef S12CC_X64_HOST
+                av_hi2[nargs] = -1;
+                is64_2[nargs] = 0;
+#else
                 av_hi2[nargs] = hl_hi;
                 is64_2[nargs] = 1;
+#endif
             } else {
                 av_hi2[nargs] = -1;
                 is64_2[nargs] = 0;
@@ -1368,11 +1492,15 @@ static void hl_stmt(Node *n) {
             }
         } else if (n->lhs) {
             lv = hl_expr(n->lhs);
+#ifdef S12CC_X64_HOST
+            hi_emit(HI_RET, 0, lv, -1, 0, NULL);
+#else
             if (ty_is_llong(n->lhs->ty) || ty_is_double(n->lhs->ty)) {
                 hi_emit(HI_RET, 0, lv, hl_hi, 0, NULL);
             } else {
                 hi_emit(HI_RET, 0, lv, -1, 0, NULL);
             }
+#endif
         } else {
             hi_emit(HI_RET, 0, -1, -1, 0, NULL);
         }
@@ -1675,6 +1803,12 @@ static void hl_func(Node *fn) {
         pp = fn->args;
         while (pp) {
             if (ty_is_llong(pp->ty)) {
+#ifdef S12CC_X64_HOST
+                param_inst = hi_emit(HI_PARAM, TY_LLONG, -1, -1, phys_idx, NULL);
+                param_alloca = hl_get_alloca(pp->offset, TY_LLONG);
+                hi_emit(HI_STORE, TY_LLONG, param_alloca, param_inst, 0, NULL);
+                phys_idx = phys_idx + 1;
+#else
                 param_inst = hi_emit(HI_PARAM, TY_INT, -1, -1, phys_idx, NULL);
                 param_hi = hi_emit(HI_PARAM, TY_INT, -1, -1, phys_idx + 1, NULL);
                 param_alloca = hl_get_alloca(pp->offset, TY_INT);
@@ -1682,6 +1816,7 @@ static void hl_func(Node *fn) {
                 a4 = hi_emit(HI_ADDI, TY_INT, param_alloca, -1, 4, NULL);
                 hi_emit(HI_STORE, TY_INT, a4, param_hi, 0, NULL);
                 phys_idx = phys_idx + 2;
+#endif
             } else {
                 param_inst = hi_emit(HI_PARAM, TY_INT, -1, -1, phys_idx, NULL);
                 param_alloca = hl_get_alloca(pp->offset, TY_INT);

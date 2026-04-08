@@ -36,8 +36,8 @@ static int bg_pcost[BG_MAX_PAT];   /* base cost */
 static int bg_npat;
 
 /* Per-operator index */
-#define BG_MAX_OP 58
-#define BG_OP_SZ 59
+#define BG_MAX_OP 60
+#define BG_OP_SZ 61
 static int bg_ofirst[BG_OP_SZ];
 static int bg_ocount[BG_OP_SZ];
 static int bg_sorted[BG_MAX_PAT];
@@ -195,6 +195,10 @@ static void bg_init(void) {
 
     /* PHI */
     bg_add_pat(BG_REG, HI_PHI, -1, -1, 0);
+
+    /* Widening (x64 only) */
+    bg_add_pat(BG_REG,  HI_SEXT32, BG_REG, -1, 1);  /* movsxd */
+    bg_add_pat(BG_REG,  HI_ZEXT32, BG_REG, -1, 1);  /* mov r32d, r32d */
 
     /* Varargs (x64 only) */
     bg_add_pat(BG_REG,  HI_VA_START, -1, -1, 3);

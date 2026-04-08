@@ -148,6 +148,12 @@ static int ho_const_fold(void) {
             s1c = (h_src1[i] >= 0 && h_kind[h_src1[i]] == HI_ICONST);
             s2c = (h_src2[i] >= 0 && h_kind[h_src2[i]] == HI_ICONST);
 
+#ifdef S12CC_X64_HOST
+            /* On x64, skip constant folding for TY_LLONG operations:
+             * h_val is 32-bit and can't hold 64-bit results. */
+            if (ty_is_llong(h_ty[i])) { i = i + 1; continue; }
+#endif
+
             if (s1c && s2c) {
                 /* Both operands constant: evaluate at compile time */
                 a = h_val[h_src1[i]];
