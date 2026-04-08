@@ -1240,8 +1240,8 @@ static int hl_expr(Node *n) {
      * through explicit STORE/LOAD so SSA can promote it. */
     if (n->kind == ND_VA_START) {
         addr = hl_addr(n->lhs);
-        val = hi_emit(HI_VA_START, TY_INT, -1, -1, hl_nparams, NULL);
-        hi_emit(HI_STORE, TY_INT, addr, val, 0, NULL);
+        val = hi_emit(HI_VA_START, TY_PTR, -1, -1, hl_nparams, NULL);
+        hi_emit(HI_STORE, TY_PTR, addr, val, 0, NULL);
         return val;
     }
     if (n->kind == ND_VA_ARG) {
@@ -1249,10 +1249,10 @@ static int hl_expr(Node *n) {
         int arg_val;
         int next_ap;
         addr = hl_addr(n->lhs);
-        cur_ap = hi_emit(HI_LOAD, TY_INT, addr, -1, 0, NULL);
+        cur_ap = hi_emit(HI_LOAD, TY_PTR, addr, -1, 0, NULL);
         arg_val = hi_emit(HI_VA_ARG, n->ty, cur_ap, -1, 0, NULL);
-        next_ap = hi_emit(HI_VA_NEXT, TY_INT, cur_ap, -1, 0, NULL);
-        hi_emit(HI_STORE, TY_INT, addr, next_ap, 0, NULL);
+        next_ap = hi_emit(HI_VA_NEXT, TY_PTR, cur_ap, -1, 0, NULL);
+        hi_emit(HI_STORE, TY_PTR, addr, next_ap, 0, NULL);
         return arg_val;
     }
 #else

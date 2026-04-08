@@ -548,11 +548,15 @@ static void hx_emit_inst(int idx) {
         /* Memory-operand form: op dr, [rbp+disp]
          * When src2 is a single-use LOAD(MEM) in the same block,
          * fold the load into the ALU instruction.  Not for MUL (no
-         * memory-operand imul form we use) or wide (pointer ALU). */
+         * memory-operand imul form we use), wide values, or narrow
+         * loads that require sign/zero extension. */
         else if (!wide && k != HI_MUL &&
                  s2_inst >= 0 && h_kind[s2_inst] == HI_LOAD &&
                  bg_uses[s2_inst] == 1 &&
                  h_blk[s2_inst] == h_blk[idx] &&
+                 !(!ty_is_ptr(h_ty[s2_inst]) &&
+                   (((h_ty[s2_inst] & TY_BASE_MASK) == TY_CHAR) ||
+                    ((h_ty[s2_inst] & TY_BASE_MASK) == TY_SHORT))) &&
                  bg_plnt[(bg_sel[s2_inst] >= 0) ? bg_sel[s2_inst] : 0] == BG_MEM &&
                  bg_sel[s2_inst] >= 0) {
             int foff;
