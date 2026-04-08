@@ -589,16 +589,18 @@ static void hx_emit_inst(int idx) {
         return;
     }
 
-    /* DIV/REM: fixed registers (RAX dividend, RDX extension, result in RAX/RDX) */
+    /* DIV/REM: fixed registers (RAX dividend, RDX extension, result in RAX/RDX).
+     * Divisor goes into RCX (scratch, not allocatable) to avoid clobbering
+     * allocatable R10. */
     if (k == HI_DIV || k == HI_REM) {
         hx_mat(h_src1[idx], X64_RAX);
-        hx_mat(h_src2[idx], X64_R10);
+        hx_mat(h_src2[idx], X64_RCX);
         if (wide) {
-            if (ty & TY_UNSIGNED) { x64_xor_rr(X64_RDX, X64_RDX); x64_div64(X64_R10); }
-            else { x64_cqo(); x64_idiv64(X64_R10); }
+            if (ty & TY_UNSIGNED) { x64_xor_rr(X64_RDX, X64_RDX); x64_div64(X64_RCX); }
+            else { x64_cqo(); x64_idiv64(X64_RCX); }
         } else {
-            if (ty & TY_UNSIGNED) { x64_zero(X64_RDX); x64_div(X64_R10); }
-            else { x64_cdq(); x64_idiv(X64_R10); }
+            if (ty & TY_UNSIGNED) { x64_zero(X64_RDX); x64_div(X64_RCX); }
+            else { x64_cdq(); x64_idiv(X64_RCX); }
         }
         if (k == HI_DIV) hx_spill(idx, X64_RAX);
         else hx_spill(idx, X64_RDX);
@@ -754,8 +756,8 @@ static void hx_emit_inst(int idx) {
             base_inst = bg_ssym[h_src1[idx]];
             soff = bg_soff[h_src1[idx]];
             if (base_inst < 0) hx_die("invalid folded SADDR in load", idx);
-            hx_mat(base_inst, X64_R10);
-            hx_load_typed_off(dr, X64_R10, soff, ty);
+            hx_mat(base_inst, X64_RCX);
+            hx_load_typed_off(dr, X64_RCX, soff, ty);
         } else {
             /* Fallback: load from [register] */
             ar = hx_src(h_src1[idx], X64_RAX);
@@ -785,9 +787,9 @@ static void hx_emit_inst(int idx) {
             base_inst = bg_ssym[h_src1[idx]];
             soff = bg_soff[h_src1[idx]];
             if (base_inst < 0) hx_die("invalid folded SADDR in store", idx);
-            hx_mat(base_inst, X64_R10);
+            hx_mat(base_inst, X64_RCX);
             vr = hx_src(h_src2[idx], X64_RAX);
-            hx_store_typed_off(X64_R10, soff, vr, ty);
+            hx_store_typed_off(X64_RCX, soff, vr, ty);
         } else {
             /* Fallback: store to [register] */
             ar = hx_src(h_src1[idx], X64_RAX);
@@ -917,10 +919,12 @@ static void hx_emit_inst(int idx) {
         int pad;
         nargs = h_val[idx];
 
-        /* For indirect call, save callee address first */
+        /* For indirect call, save callee address first.
+         * Use hx_src to avoid clobbering allocatable registers. */
         if (k == HI_CALLP) {
-            hx_mat(h_src1[idx], X64_R11);
-            x64_push(X64_R11);  /* save callee */
+            int callee_r;
+            callee_r = hx_src(h_src1[idx], X64_RAX);
+            x64_push(callee_r);  /* save callee */
         }
 
         nreg = nargs < 6 ? nargs : 6;
@@ -962,9 +966,9 @@ static void hx_emit_inst(int idx) {
 
         /* Emit the call */
         if (k == HI_CALLP) {
-            /* Callee was pushed before args; it's at [RSP + outgoing + nargs*8] */
-            x64_mov_rm64(X64_R11, X64_RSP, outgoing + nargs * 8);
-            x64_call_r(X64_R11);
+            /* Callee was pushed before args; recover into RAX and call */
+            x64_mov_rm64(X64_RAX, X64_RSP, outgoing + nargs * 8);
+            x64_call_r(X64_RAX);
         } else {
             /* Direct call */
             x64_byte(0xE8);

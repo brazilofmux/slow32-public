@@ -16,7 +16,7 @@
 #define HIR_REGALLOC_X64_H
 
 /* --- Configuration --- */
-#define RA_NPHY 9  /* callee: RBX, R12-R15; caller: RSI, RDI, R8, R9 */
+#define RA_NPHY 11  /* callee: RBX, R12-R15; caller: RSI, RDI, R8, R9, R10, R11 */
 
 /* Mapping: slot index → x64 physical register encoding */
 static int ra_x64_phys[RA_NPHY];
@@ -39,11 +39,13 @@ static void ra_init_x64_regs(void) {
     ra_x64_phys[2] = X64_R13;  ra_x64_is_callee[2] = 1;
     ra_x64_phys[3] = X64_R14;  ra_x64_is_callee[3] = 1;
     ra_x64_phys[4] = X64_R15;  ra_x64_is_callee[4] = 1;
-    /* Caller-saved registers (slots 5-8) */
+    /* Caller-saved registers (slots 5-10) */
     ra_x64_phys[5] = X64_RSI;  ra_x64_is_callee[5] = 0;
     ra_x64_phys[6] = X64_RDI;  ra_x64_is_callee[6] = 0;
     ra_x64_phys[7] = X64_R8;   ra_x64_is_callee[7] = 0;
     ra_x64_phys[8] = X64_R9;   ra_x64_is_callee[8] = 0;
+    ra_x64_phys[9] = X64_R10;  ra_x64_is_callee[9] = 0;
+    ra_x64_phys[10] = X64_R11; ra_x64_is_callee[10] = 0;
     i = 0;
     while (i < RA_X64_REVERSE_SIZE) {
         ra_x64_slot[i] = -1;
