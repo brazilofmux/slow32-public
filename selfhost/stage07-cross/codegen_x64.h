@@ -941,6 +941,7 @@ static void gen_expr(Node *n) {
         int nargs;
         int nreg;
         int nstack;
+        int outgoing_size;
         int arg_reg[6];
         Node *arg;
 
@@ -957,6 +958,8 @@ static void gen_expr(Node *n) {
         while (arg) { nargs = nargs + 1; arg = arg->next; }
         nreg = nargs < 6 ? nargs : 6;
         nstack = nargs > 6 ? nargs - 6 : 0;
+        outgoing_size = nstack * 8;
+        if (nstack & 1) outgoing_size = outgoing_size + 8;
 
         /* Evaluate ALL args left-to-right, push to stack as temp storage */
         arg = n->args;
@@ -984,48 +987,29 @@ static void gen_expr(Node *n) {
             i = i + 1;
         }
 
-        /* For stack args: copy them to their final positions.
-         * After we remove temp storage, callee expects stack args at
-         * [RSP], [RSP+8], etc. We need to set up that area.
-         *
-         * Strategy: remove temp storage, allocate stack arg space + pad,
-         * then store stack args from registers we saved them to.
-         * But we don't have enough registers. Instead, shuffle in place.
-         *
-         * Simpler: remove all temp, then re-push stack args (right to left).
-         * We need to save them before removing. Use: copy stack args to
-         * the final position below the temp area. */
-
         if (nstack > 0) {
-            /* Save stack args to R11 one at a time and push.
-             * Stack args are indices 6..nargs-1.
-             * On stack: arg[j] is at [RSP + (nargs-1-j)*8].
-             * Push them in reverse order (last arg first = lowest addr). */
-            int sarg;
-
-            /* First, remove all temp storage */
-            x64_add_ri64(X64_RSP, nargs * 8);
-
-            /* Alignment padding: nstack pushes must leave RSP 16-aligned.
-             * Frame is currently 16-aligned. nstack pushes + padding. */
-            if (nstack & 1)
-                x64_push(X64_RAX);  /* dummy for alignment */
-
-            /* Re-evaluate and push stack args in reverse (last arg first).
-             * This is O(n^2) to walk the arg list but correct. */
-            sarg = nargs - 1;
-            while (sarg >= 6) {
-                arg = n->args;
-                i = 0;
-                while (i < sarg) { arg = arg->next; i = i + 1; }
-                gen_expr(arg);
-                cg_push();
-                sarg = sarg - 1;
+            /* Keep the evaluated temp area in place, reserve the outgoing
+             * stack-arg area below it, then copy args 6+ into final order.
+             *
+             * Temp layout at current RSP:
+             *   [RSP + (nargs-1)*8] = arg0
+             *   ...
+             *   [RSP]               = arg(nargs-1)
+             *
+             * Final outgoing stack before CALL must be:
+             *   [RSP]               = arg6
+             *   [RSP + 8]           = arg7
+             *   ...
+             *   [RSP + nstack*8]    = optional alignment padding
+             */
+            x64_sub_ri64(X64_RSP, outgoing_size);
+            i = 0;
+            while (i < nstack) {
+                x64_mov_rm64(X64_RAX, X64_RSP,
+                             outgoing_size + (nstack - 1 - i) * 8);
+                x64_mov_mr64(X64_RSP, i * 8, X64_RAX);
+                i = i + 1;
             }
-        } else {
-            /* No stack args: just remove temp storage */
-            if (nargs > 0)
-                x64_add_ri64(X64_RSP, nargs * 8);
         }
 
         if (n->kind == ND_CALL_PTR) {
@@ -1039,27 +1023,26 @@ static void gen_expr(Node *n) {
             x64_dword(0);
         }
         /* Clean up stack args + alignment padding */
-        if (nstack > 0) {
-            int cleanup;
-            cleanup = nstack * 8;
-            if (nstack & 1) cleanup = cleanup + 8; /* alignment padding */
-            x64_add_ri64(X64_RSP, cleanup);
-        }
+        if (nargs > 0 || outgoing_size > 0)
+            x64_add_ri64(X64_RSP, nargs * 8 + outgoing_size);
         /* Result in RAX */
         return;
     }
 
-    /* va_start(ap): set ap to point to the first variadic arg in the save area.
-     * The save area has all 6 register args contiguously at [RBP + cg_va_save_off].
-     * Named params occupy slots 0..nparams-1, so variadic args start at slot nparams.
-     * If nparams >= 6, all named args are in registers and variadics start on the stack
-     * at [RBP + 16] (first stack arg). */
+    /* va_start(ap): va_list is represented as a tagged pointer.
+     *
+     * If unnamed GP args still live in the saved register area, the low three
+     * bits encode how many 8-byte register slots remain and the upper bits are
+     * the current slot pointer. Once those slots are exhausted, va_arg rewrites
+     * the va_list to a plain stack pointer into the caller overflow area. */
     if (n->kind == ND_VA_START) {
         gen_addr(n->lhs);          /* RAX = address of ap variable */
         x64_push(X64_RAX);         /* save address */
         if (cg_nparams < 6) {
-            /* Point to save_area[nparams] */
+            /* Point to save_area[nparams], tag low bits with remaining
+             * register-slot count so va_arg can switch to stack later. */
             x64_lea(X64_RCX, X64_RBP, cg_va_save_off + cg_nparams * 8);
+            x64_or_ri64(X64_RCX, 6 - cg_nparams);
         } else {
             /* All register args are named; variadics start on the stack */
             x64_lea(X64_RCX, X64_RBP, 16 + (cg_nparams - 6) * 8);
@@ -1069,38 +1052,71 @@ static void gen_expr(Node *n) {
         return;
     }
 
-    /* va_arg(ap, type): load value from *ap, then advance ap by 8.
-     * ap is a char* (pointer) pointing to the next arg slot. */
+    /* va_arg(ap, type): load from the current slot, then advance either within
+     * the saved register area or on the caller stack depending on the tag. */
     if (n->kind == ND_VA_ARG) {
+        int patch_stack;
+        int patch_after_load;
+        int patch_after_stack;
+        int patch_use_stack;
         int va_ty;
         va_ty = n->ty;
         gen_addr(n->lhs);          /* RAX = address of ap variable */
         x64_push(X64_RAX);         /* save &ap */
-        x64_mov_rm64(X64_RAX, X64_RAX, 0);  /* RAX = ap (current pointer) */
-        x64_push(X64_RAX);         /* save current ap */
+        x64_mov_rm64(X64_RAX, X64_RAX, 0);  /* RAX = tagged ap */
+        x64_mov_rr64(X64_RCX, X64_RAX);
+        x64_and_ri64(X64_RCX, 7);           /* RCX = remaining reg slots */
+        x64_and_ri64(X64_RAX, -8);          /* RAX = current slot pointer */
+        x64_cmp_ri64(X64_RCX, 0);
+        patch_use_stack = x64_jcc_placeholder(X64_CC_E);
         /* Load value at *ap */
         if (cg_is_64bit(va_ty)) {
-            x64_mov_rm64(X64_RAX, X64_RAX, 0);
+            x64_mov_rm64(X64_RDX, X64_RAX, 0);
         } else if ((va_ty & TY_BASE_MASK) == TY_CHAR) {
             if (va_ty & TY_UNSIGNED)
-                x64_movzx_rm8(X64_RAX, X64_RAX, 0);
+                x64_movzx_rm8(X64_RDX, X64_RAX, 0);
             else
-                x64_movsx_rm8(X64_RAX, X64_RAX, 0);
+                x64_movsx_rm8(X64_RDX, X64_RAX, 0);
         } else if ((va_ty & TY_BASE_MASK) == TY_SHORT) {
             if (va_ty & TY_UNSIGNED)
-                x64_movzx_rm16(X64_RAX, X64_RAX, 0);
+                x64_movzx_rm16(X64_RDX, X64_RAX, 0);
             else
-                x64_movsx_rm16(X64_RAX, X64_RAX, 0);
+                x64_movsx_rm16(X64_RDX, X64_RAX, 0);
         } else {
-            x64_mov_rm(X64_RAX, X64_RAX, 0);  /* 32-bit load */
+            x64_mov_rm(X64_RDX, X64_RAX, 0);  /* 32-bit load */
         }
-        x64_mov_rr64(X64_RDX, X64_RAX);   /* save loaded value in RDX */
-        /* Advance ap: ap += 8 */
-        x64_pop(X64_RCX);          /* RCX = old ap */
-        x64_add_ri64(X64_RCX, 8);  /* advance by 8 */
-        x64_pop(X64_RAX);          /* RAX = &ap */
-        x64_mov_mr64(X64_RAX, 0, X64_RCX);  /* *(&ap) = new_ap */
-        x64_mov_rr64(X64_RAX, X64_RDX);   /* result = loaded value */
+        x64_add_ri64(X64_RAX, 8);
+        x64_sub_ri64(X64_RCX, 1);
+        x64_cmp_ri64(X64_RCX, 0);
+        patch_stack = x64_jcc_placeholder(X64_CC_E);
+        x64_or_rr64(X64_RAX, X64_RCX);
+        patch_after_load = x64_jmp_placeholder();
+        x64_patch_rel32(patch_use_stack, x64_pos());
+        /* Stack path: low bits were zero, so RAX already points at the slot. */
+        if (cg_is_64bit(va_ty)) {
+            x64_mov_rm64(X64_RDX, X64_RAX, 0);
+        } else if ((va_ty & TY_BASE_MASK) == TY_CHAR) {
+            if (va_ty & TY_UNSIGNED)
+                x64_movzx_rm8(X64_RDX, X64_RAX, 0);
+            else
+                x64_movsx_rm8(X64_RDX, X64_RAX, 0);
+        } else if ((va_ty & TY_BASE_MASK) == TY_SHORT) {
+            if (va_ty & TY_UNSIGNED)
+                x64_movzx_rm16(X64_RDX, X64_RAX, 0);
+            else
+                x64_movsx_rm16(X64_RDX, X64_RAX, 0);
+        } else {
+            x64_mov_rm(X64_RDX, X64_RAX, 0);
+        }
+        x64_add_ri64(X64_RAX, 8);
+        patch_after_stack = x64_jmp_placeholder();
+        x64_patch_rel32(patch_stack, x64_pos());
+        x64_lea(X64_RAX, X64_RBP, 16);
+        x64_patch_rel32(patch_after_stack, x64_pos());
+        x64_patch_rel32(patch_after_load, x64_pos());
+        x64_pop(X64_RCX);          /* RCX = &ap */
+        x64_mov_mr64(X64_RCX, 0, X64_RAX);  /* *ap = next tagged/raw slot */
+        x64_mov_rr64(X64_RAX, X64_RDX);     /* result */
         return;
     }
 
