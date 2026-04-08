@@ -1363,6 +1363,19 @@ static void hx_gen_func(Node *fn) {
         i = i + 1;
     }
     if (hx_param_need_temp) {
+        /* Demote all register-allocated PARAMs to spilled.  The regalloc
+         * may assign the same register to multiple PARAMs (their live
+         * ranges don't overlap after SSA), but the prologue loads them
+         * simultaneously from the temp area, causing clobbers. */
+        i = 0;
+        while (i < h_ninst) {
+            if (h_kind[i] == HI_PARAM && ra_reg[i] >= 0 && ra_spill_off[i] == 0) {
+                hl_temp_stack = hl_temp_stack + 8;
+                ra_spill_off[i] = 0 - hl_temp_stack;
+                ra_reg[i] = -1;
+            }
+            i = i + 1;
+        }
         hl_temp_stack = hl_temp_stack + 48;  /* 6 * 8 bytes for arg save area */
         hx_param_temp_base = 0 - hl_temp_stack;
     }
@@ -1411,7 +1424,12 @@ static void hx_gen_func(Node *fn) {
 
     /* Store incoming args to their allocated register or spill slot. */
     if (hx_param_need_temp) {
-        /* Two-phase: save all 6 arg registers to temp area, then distribute */
+        /* Two-phase: save all 6 arg registers to temp area, then
+         * distribute to spill slots.  We CANNOT load directly into
+         * allocated registers here because the regalloc may assign the
+         * same register to multiple PARAMs (short-lived: define → store).
+         * Loading the second would clobber the first.  All PARAMs were
+         * demoted to spilled during the need_temp detection phase. */
         int pi;
         pi = 0;
         while (pi < 6) {
@@ -1422,9 +1440,7 @@ static void hx_gen_func(Node *fn) {
         while (i < h_ninst) {
             if (h_kind[i] == HI_PARAM) {
                 pidx = h_val[i];
-                if (ra_reg[i] >= 0) {
-                    hx_param_to_reg(ra_reg[i], i, pidx, 1);
-                } else if (ra_spill_off[i] != 0) {
+                if (ra_spill_off[i] != 0) {
                     hx_param_to_spill(ra_spill_off[i], i, pidx, 1);
                 }
             }
