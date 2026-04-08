@@ -1335,6 +1335,18 @@ static void hx_gen_func(Node *fn) {
     hx_param_temp_base = 0;
     {
     int pi;
+    int param_exists[6];
+    /* Record which physical param slots actually carry a value */
+    pi = 0;
+    while (pi < 6) { param_exists[pi] = 0; pi = pi + 1; }
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_PARAM && h_val[i] >= 0 && h_val[i] < 6)
+            param_exists[h_val[i]] = 1;
+        i = i + 1;
+    }
+    /* Check for conflict: PARAM allocated to a register that's the arg
+     * register of a DIFFERENT param that actually exists. */
     i = 0;
     while (i < h_ninst && !hx_param_need_temp) {
         if (h_kind[i] == HI_PARAM && ra_reg[i] >= 0) {
@@ -1342,7 +1354,7 @@ static void hx_gen_func(Node *fn) {
             if (pidx < 6) {
                 pi = 0;
                 while (pi < 6 && !hx_param_need_temp) {
-                    if (hx_arg_reg[pi] == ra_reg[i] && pi != pidx)
+                    if (hx_arg_reg[pi] == ra_reg[i] && pi != pidx && param_exists[pi])
                         hx_param_need_temp = 1;
                     pi = pi + 1;
                 }
