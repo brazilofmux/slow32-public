@@ -125,6 +125,25 @@ static int hcg_stat_brc_fuse;
 static int hcg_stat_br_fallthru;
 static int hcg_cur_blk;                  /* current block being emitted */
 
+/* Spill slots must start below any lowered HI_ALLOCA temp, not just
+ * fn->locals_size, because lowering can introduce extra stack temps. */
+static int hcg_hir_frame_base(Node *fn) {
+    int base;
+    int i;
+    int off;
+
+    base = fn->locals_size;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_ALLOCA && h_val[i] < 0) {
+            off = 0 - h_val[i];
+            if (off > base) base = off;
+        }
+        i = i + 1;
+    }
+    return base;
+}
+
 /* --- Load immediate into register --- */
 static void hcg_li(int reg, int v) {
     int hi;
@@ -1924,6 +1943,9 @@ static void hcg_func(Node *fn) {
     /* Compare-and-branch fusion: identify candidates before regalloc
      * so live ranges can be extended for comparison operands */
     hcg_identify_fusions();
+
+    /* Spill slots must not overlap lowering-introduced allocas. */
+    hl_temp_stack = hcg_hir_frame_base(fn);
 
     /* Register allocation: assigns ra_reg[], ra_spill_off[],
      * callee-save info, and updates hl_temp_stack */

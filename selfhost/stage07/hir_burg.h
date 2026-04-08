@@ -894,10 +894,10 @@ static int hcg_is_cmp(int k) {
 static void hcg_identify_fusions(void) {
     int i;
     int k;
-    int s1;
     int root;
     int rk;
     int lim;
+    int ok;
 
     i = 0;
     while (i < h_ninst) {
@@ -914,14 +914,20 @@ static void hcg_identify_fusions(void) {
         k = h_kind[i];
         if (k != HI_BRC) { i = i + 1; continue; }
 
+        ok = 1;
+
         /* Chase COPY chain on s1 to find root value */
         root = h_src1[i];
         lim = 0;
         while (root >= 0 && h_kind[root] == HI_COPY && lim < 64) {
+            if (bg_uses[root] != 1 || h_blk[root] != h_blk[i]) {
+                ok = 0;
+                break;
+            }
             root = h_src1[root];
             lim = lim + 1;
         }
-        if (root < 0) { i = i + 1; continue; }
+        if (!ok || root < 0) { i = i + 1; continue; }
 
         rk = h_kind[root];
         if (!hcg_is_cmp(rk)) { i = i + 1; continue; }
