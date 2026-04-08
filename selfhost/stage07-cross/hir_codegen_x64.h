@@ -369,6 +369,38 @@ static void hx_store_typed(int addr, int src, int ty) {
     }
 }
 
+/* Load from [addr_reg + disp] into dst_reg with appropriate width for ty. */
+static void hx_load_typed_off(int dst, int addr, int disp, int ty) {
+    if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
+        if (ty & TY_UNSIGNED)
+            x64_movzx_rm8(dst, addr, disp);
+        else
+            x64_movsx_rm8(dst, addr, disp);
+    } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+        if (ty & TY_UNSIGNED)
+            x64_movzx_rm16(dst, addr, disp);
+        else
+            x64_movsx_rm16(dst, addr, disp);
+    } else if (hx_is_wide(ty)) {
+        x64_mov_rm64(dst, addr, disp);
+    } else {
+        x64_mov_rm(dst, addr, disp);
+    }
+}
+
+/* Store src_reg to [addr_reg + disp] with appropriate width for ty. */
+static void hx_store_typed_off(int addr, int disp, int src, int ty) {
+    if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
+        x64_mov_mr8(addr, disp, src);
+    } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+        x64_mov_mr16(addr, disp, src);
+    } else if (hx_is_wide(ty)) {
+        x64_mov_mr64(addr, disp, src);
+    } else {
+        x64_mov_mr(addr, disp, src);
+    }
+}
+
 /* ============================================================================
  * Instruction emission
  * ============================================================================ */
@@ -500,9 +532,14 @@ static void hx_emit_inst(int idx) {
             reg_src = (bg_prnt[bg_sel[idx]] == BG_IMM) ? h_src1[idx] : h_src2[idx];
             dr = hx_dst(idx);
             s1r = hx_src(reg_src, X64_RAX);
-            hx_mov_if_needed(dr, s1r);
+            if (k == HI_MUL) {
+                x64_imul_rri(dr, s1r, imm_val);
+            } else {
+                hx_mov_if_needed(dr, s1r);
+            }
             if (k == HI_ADD) x64_add_ri(dr, imm_val);
             else if (k == HI_SUB) x64_sub_ri(dr, imm_val);
+            else if (k == HI_MUL) { }
             else if (k == HI_AND) x64_and_ri(dr, imm_val);
             else if (k == HI_OR)  x64_or_ri(dr, imm_val);
             else if (k == HI_XOR) x64_xor_ri(dr, imm_val);
@@ -666,17 +703,16 @@ static void hx_emit_inst(int idx) {
             /* BURG: load from frame-relative [RBP + disp] */
             int foff;
             foff = bg_foff[h_src1[idx]];
-            if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
-                if (ty & TY_UNSIGNED) x64_movzx_rm8(dr, X64_RBP, foff);
-                else x64_movsx_rm8(dr, X64_RBP, foff);
-            } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
-                if (ty & TY_UNSIGNED) x64_movzx_rm16(dr, X64_RBP, foff);
-                else x64_movsx_rm16(dr, X64_RBP, foff);
-            } else if (hx_is_wide(ty)) {
-                x64_mov_rm64(dr, X64_RBP, foff);
-            } else {
-                x64_mov_rm(dr, X64_RBP, foff);
-            }
+            hx_load_typed_off(dr, X64_RBP, foff, ty);
+        } else if (lnt == BG_SADDR) {
+            /* BURG: load from symbol address [+ constant offset] */
+            int base_inst;
+            int soff;
+            base_inst = bg_ssym[h_src1[idx]];
+            soff = bg_soff[h_src1[idx]];
+            if (base_inst < 0) hx_die("invalid folded SADDR in load", idx);
+            hx_mat(base_inst, X64_R10);
+            hx_load_typed_off(dr, X64_R10, soff, ty);
         } else {
             /* Fallback: load from [register] */
             ar = hx_src(h_src1[idx], X64_RAX);
@@ -698,15 +734,17 @@ static void hx_emit_inst(int idx) {
             int foff;
             foff = bg_foff[h_src1[idx]];
             vr = hx_src(h_src2[idx], X64_RAX);
-            if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
-                x64_mov_mr8(X64_RBP, foff, vr);
-            } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
-                x64_mov_mr16(X64_RBP, foff, vr);
-            } else if (hx_is_wide(ty)) {
-                x64_mov_mr64(X64_RBP, foff, vr);
-            } else {
-                x64_mov_mr(X64_RBP, foff, vr);
-            }
+            hx_store_typed_off(X64_RBP, foff, vr, ty);
+        } else if (lnt == BG_SADDR) {
+            /* BURG: store to symbol address [+ constant offset] */
+            int base_inst;
+            int soff;
+            base_inst = bg_ssym[h_src1[idx]];
+            soff = bg_soff[h_src1[idx]];
+            if (base_inst < 0) hx_die("invalid folded SADDR in store", idx);
+            hx_mat(base_inst, X64_R10);
+            vr = hx_src(h_src2[idx], X64_RAX);
+            hx_store_typed_off(X64_R10, soff, vr, ty);
         } else {
             /* Fallback: store to [register] */
             ar = hx_src(h_src1[idx], X64_RAX);
