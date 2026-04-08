@@ -566,6 +566,62 @@ static void ra_linear_scan(void) {
                 reg = ra_pick_specific(ra_arg_regs[pidx]);
             }
         }
+
+        /* Register coalescing for destructive binary ops: if src1 expires
+         * at this instruction (last use), reuse its register for the result.
+         * This eliminates the mov-before-alu copy (x86-64 ALU is dst=dst op src).
+         * For commutative ops, also try src2.
+         *
+         * The source register is still in the active set (expire uses strict <),
+         * so we force-expire it and take the register directly. */
+        if (reg < 0 && k >= HI_ADD && k <= HI_SRL && !xc) {
+            int s1;
+            int s2;
+            int s1r;
+            int s2r;
+            int ci;
+            s1 = h_src1[inst];
+            s2 = h_src2[inst];
+            s1r = -1; s2r = -1;
+            if (s1 >= 0) s1r = ra_reg[s1];
+            if (s2 >= 0 && ho_src2_is_ref(k)) s2r = ra_reg[s2];
+            /* Prefer src1 (naturally the left operand of destructive op) */
+            if (s1r >= 0 && ra_iend[s1] <= ra_pos[inst]) {
+                /* Force-expire s1 from active set */
+                ci = 0;
+                while (ci < ra_nact) {
+                    if (ra_act[ci] == s1) {
+                        /* Remove from active (shift down) */
+                        while (ci < ra_nact - 1) {
+                            ra_act[ci] = ra_act[ci + 1];
+                            ci = ci + 1;
+                        }
+                        ra_nact = ra_nact - 1;
+                        reg = s1r;
+                        break;
+                    }
+                    ci = ci + 1;
+                }
+            }
+            /* For commutative ops, also try src2 */
+            if (reg < 0 && s2r >= 0 && ra_iend[s2] <= ra_pos[inst] &&
+                k != HI_SUB && k != HI_SLL && k != HI_SRA && k != HI_SRL) {
+                ci = 0;
+                while (ci < ra_nact) {
+                    if (ra_act[ci] == s2) {
+                        while (ci < ra_nact - 1) {
+                            ra_act[ci] = ra_act[ci + 1];
+                            ci = ci + 1;
+                        }
+                        ra_nact = ra_nact - 1;
+                        reg = s2r;
+                        break;
+                    }
+                    ci = ci + 1;
+                }
+            }
+        }
+
         if (reg < 0)
             reg = ra_pick_free(xc);
 

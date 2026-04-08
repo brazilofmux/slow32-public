@@ -1580,6 +1580,42 @@ static void hx_gen_func(Node *fn) {
         i = i + 1;
     }
 
+    /* --- Post-RMW ADDI fold ---
+     * RMW fold reduced some ADDI use counts.  Re-scan for ADDIs that now
+     * have a single use by an RMW store and fold them into the RMW disp. */
+    i = 0;
+    while (i < h_ninst) {
+        if (hx_rmw_flag[i]) {
+            int addr_inst;
+            addr_inst = h_src1[i];
+            if (addr_inst >= 0 && h_kind[addr_inst] == HI_ADDI &&
+                !hx_addi_folded_flag[i] && h_blk[addr_inst] == h_blk[i]) {
+                /* Count remaining uses of this ADDI (after RMW NOPed some) */
+                int uses;
+                int j;
+                int jk;
+                uses = 0;
+                j = 0;
+                while (j < h_ninst) {
+                    jk = h_kind[j];
+                    if (jk != HI_NOP) {
+                        if (h_src1[j] == addr_inst) uses = uses + 1;
+                        if (h_src2[j] >= 0 && h_src2[j] == addr_inst) uses = uses + 1;
+                    }
+                    j = j + 1;
+                }
+                if (uses == 1) {
+                    /* Fold: combine ADDI offset with RMW displacement */
+                    hx_rmw_disp[i] = hx_rmw_disp[i] + h_val[addr_inst];
+                    h_src1[i] = h_src1[addr_inst];
+                    hx_addi_folded[addr_inst] = 1;
+                    h_kind[addr_inst] = HI_NOP;
+                }
+            }
+        }
+        i = i + 1;
+    }
+
     /* --- Register allocation ---
      * Start spill allocation below the deepest lowered alloca, not just the
      * parser's locals_size.  Lowering can introduce extra HI_ALLOCA temps
