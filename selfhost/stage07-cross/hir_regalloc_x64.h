@@ -450,6 +450,41 @@ static int ra_pick_free(int crosses_call) {
     return reg;
 }
 
+/* Try to pick a specific register from the free pool.
+ * Returns the register number if found and removed, -1 otherwise. */
+static int ra_pick_specific(int want) {
+    int i;
+    int j;
+
+    i = 0;
+    while (i < ra_nfree) {
+        if (ra_fstk[i] == want) {
+            /* Remove from free stack by shifting */
+            j = i;
+            while (j < ra_nfree - 1) {
+                ra_fstk[j] = ra_fstk[j + 1];
+                j = j + 1;
+            }
+            ra_nfree = ra_nfree - 1;
+            return want;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+/* SysV ABI arg registers (mirrors hx_arg_reg[] from codegen) */
+static int ra_arg_regs[6];
+
+static void ra_init_arg_regs(void) {
+    ra_arg_regs[0] = X64_RDI;
+    ra_arg_regs[1] = X64_RSI;
+    ra_arg_regs[2] = X64_RDX;
+    ra_arg_regs[3] = X64_RCX;
+    ra_arg_regs[4] = X64_R8;
+    ra_arg_regs[5] = X64_R9;
+}
+
 static void ra_linear_scan(void) {
     int i;
     int inst;
@@ -461,6 +496,9 @@ static void ra_linear_scan(void) {
     int j;
     int slot;
     int xc;
+    int pidx;
+
+    ra_init_arg_regs();
 
     /* Initialize free register pool */
     ra_nfree = RA_NPHY;
@@ -499,7 +537,19 @@ static void ra_linear_scan(void) {
         ra_expire(ra_pos[inst]);
 
         xc = ra_crosses_call[inst];
-        reg = ra_pick_free(xc);
+
+        /* For PARAM instructions, prefer their incoming arg register.
+         * This avoids prologue conflicts (param 0 in RDI assigned to RSI etc.)
+         * and eliminates the need for temp-area saves in most functions. */
+        reg = -1;
+        if (k == HI_PARAM && !xc) {
+            pidx = h_val[inst];
+            if (pidx >= 0 && pidx < 6) {
+                reg = ra_pick_specific(ra_arg_regs[pidx]);
+            }
+        }
+        if (reg < 0)
+            reg = ra_pick_free(xc);
 
         if (reg >= 0) {
             ra_reg[inst] = reg;

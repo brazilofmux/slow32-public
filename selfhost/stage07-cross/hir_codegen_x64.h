@@ -22,6 +22,7 @@ static int hx_fn_nparams;            /* number of named params */
 static int hx_param_need_temp;       /* 1 if prologue needs temp area for args */
 static int hx_param_temp_base;       /* RBP offset of param temp area */
 static int hx_va_save_off;           /* RBP offset of varargs register save area */
+static int hx_no_frame;             /* 1 if function needs no frame (no spills, no callee-saves) */
 
 /* Block code offsets for jump patching */
 static int hx_blk_off[HIR_MAX_BLOCK];  /* code offset of block start, -1=not yet */
@@ -31,6 +32,13 @@ static int hx_blk_off[HIR_MAX_BLOCK];  /* code offset of block start, -1=not yet
 static int hx_bpatch_blk[HX_MAX_BPATCH];
 static int hx_bpatch_off[HX_MAX_BPATCH];  /* offset of rel32 in x64_buf */
 static int hx_nbpatch;
+
+/* ADDI folding: hx_addi_folded_flag[i]=1 if load/store i has a folded ADDI,
+ * hx_addi_folded_disp[i] = the displacement to use in [base+disp] form. */
+static int hx_addi_folded_flag[HIR_MAX_INST];
+static int hx_addi_folded_disp[HIR_MAX_INST];
+/* Legacy name for ADDI emitter check (1 if this ADDI was folded) */
+static int hx_addi_folded[HIR_MAX_INST];
 
 /* x86-64 SysV ABI argument registers */
 static int hx_arg_reg[6];
@@ -75,6 +83,21 @@ static int hx_hir_frame_base(Node *fn) {
     int base;
     int i;
     int off;
+    int has_alloca;
+
+    /* Start with 0 and only reserve space if there are actual allocas
+     * or parser-level locals that need stack slots. */
+    has_alloca = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_ALLOCA) {
+            has_alloca = 1;
+            break;
+        }
+        i = i + 1;
+    }
+
+    if (!has_alloca) return 0;
 
     base = 16 + fn->locals_size * 2;
     i = 0;
@@ -524,6 +547,7 @@ static void hx_emit_inst(int idx) {
 
     /* ADDI: src1 + immediate → dst
      * If BURG selected this as MEM or SADDR, it was folded — no code.
+     * If codegen folded it into a load/store addressing mode, also no code.
      * Otherwise emit LEA or ADD. */
     if (k == HI_ADDI) {
         {
@@ -535,6 +559,8 @@ static void hx_emit_inst(int idx) {
          * load/store — no code emitted at definition site. */
         if (sel_nt == BG_MEM || sel_nt == BG_SADDR || sel_nt == BG_IMM) {
             /* Folded or constant-propagated: no code */
+        } else if (hx_addi_folded[idx]) {
+            /* Will be folded into load/store addressing mode: no code */
         } else {
             int sr;
             int dr;
@@ -834,9 +860,15 @@ static void hx_emit_inst(int idx) {
             hx_mat(base_inst, X64_RCX);
             hx_load_typed_off(dr, X64_RCX, soff, ty);
         } else {
-            /* Fallback: load from [register] */
-            ar = hx_src(h_src1[idx], X64_RAX);
-            hx_load_typed(dr, ar, ty);
+            /* Fold ADDI displacement: if this load has a pre-folded ADDI,
+             * src1 already points to the base and disp is saved. */
+            if (hx_addi_folded_flag[idx]) {
+                ar = hx_src(h_src1[idx], X64_RAX);
+                hx_load_typed_off(dr, ar, hx_addi_folded_disp[idx], ty);
+            } else {
+                ar = hx_src(h_src1[idx], X64_RAX);
+                hx_load_typed(dr, ar, ty);
+            }
         }
         hx_maybe_spill(idx);
         return;
@@ -866,10 +898,16 @@ static void hx_emit_inst(int idx) {
             vr = hx_src(h_src2[idx], X64_RAX);
             hx_store_typed_off(X64_RCX, soff, vr, ty);
         } else {
-            /* Fallback: store to [register] */
-            ar = hx_src(h_src1[idx], X64_RAX);
-            vr = hx_src(h_src2[idx], X64_RCX);
-            hx_store_typed(ar, vr, ty);
+            /* Fold ADDI displacement into store addressing mode */
+            if (hx_addi_folded_flag[idx]) {
+                ar = hx_src(h_src1[idx], X64_RAX);
+                vr = hx_src(h_src2[idx], X64_RCX);
+                hx_store_typed_off(ar, hx_addi_folded_disp[idx], vr, ty);
+            } else {
+                ar = hx_src(h_src1[idx], X64_RAX);
+                vr = hx_src(h_src2[idx], X64_RCX);
+                hx_store_typed(ar, vr, ty);
+            }
         }
         return;
     }
@@ -1304,6 +1342,45 @@ static void hx_gen_func(Node *fn) {
     /* --- BURG instruction selection --- */
     hir_burg();
 
+    /* --- Fold single-use ADDIs into load/store addressing modes ---
+     * Must happen BEFORE regalloc so the NOPed ADDIs don't consume registers.
+     * Only fold ADDIs in the BURG fallback path (not already MEM/SADDR).
+     * When folding, rewrite the LOAD/STORE's src1 to point to the ADDI's
+     * base register and save the displacement.  This ensures liveness
+     * analysis correctly tracks the base register, not the dead ADDI. */
+    i = 0;
+    while (i < h_ninst) {
+        hx_addi_folded[i] = 0;
+        hx_addi_folded_flag[i] = 0;
+        hx_addi_folded_disp[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_LOAD || k == HI_STORE) {
+            int addr_inst;
+            int burg_lnt;
+            int bp;
+            addr_inst = h_src1[i];
+            bp = bg_sel[i];
+            burg_lnt = (bp >= 0) ? bg_plnt[bp] : -1;
+            if (burg_lnt != BG_MEM && burg_lnt != BG_SADDR) {
+                if (addr_inst >= 0 && h_kind[addr_inst] == HI_ADDI &&
+                    bg_uses[addr_inst] == 1 && h_blk[addr_inst] == h_blk[i]) {
+                    /* Save displacement and rewrite src1 to the ADDI's base.
+                     * This ensures liveness tracks the base, not the dead ADDI. */
+                    hx_addi_folded_flag[i] = 1;
+                    hx_addi_folded_disp[i] = h_val[addr_inst];
+                    h_src1[i] = h_src1[addr_inst];
+                    hx_addi_folded[addr_inst] = 1;
+                    h_kind[addr_inst] = HI_NOP;
+                }
+            }
+        }
+        i = i + 1;
+    }
+
     /* --- Register allocation ---
      * Start spill allocation below the deepest lowered alloca, not just the
      * parser's locals_size.  Lowering can introduce extra HI_ALLOCA temps
@@ -1392,6 +1469,12 @@ static void hx_gen_func(Node *fn) {
     fs = (fs + 15) & ~15;  /* 16-byte align */
     hx_frame_size = fs;
 
+    /* --- No-frame optimization: skip prologue/epilogue if possible --- */
+    hx_no_frame = 0;
+    if (fs == 0 && ra_ncsave == 0 && !hx_is_varargs && !hx_param_need_temp) {
+        hx_no_frame = 1;
+    }
+
     /* --- Init block offsets --- */
     hx_nbpatch = 0;
     b = 0;
@@ -1401,9 +1484,11 @@ static void hx_gen_func(Node *fn) {
     }
 
     /* --- Prologue --- */
-    x64_push(X64_RBP);
-    x64_mov_rr64(X64_RBP, X64_RSP);
-    if (fs > 0) x64_sub_ri64(X64_RSP, fs);
+    if (!hx_no_frame) {
+        x64_push(X64_RBP);
+        x64_mov_rr64(X64_RBP, X64_RSP);
+        if (fs > 0) x64_sub_ri64(X64_RSP, fs);
+    }
 
     /* Save callee-saved registers used by regalloc */
     i = 0;
@@ -1497,16 +1582,21 @@ static void hx_gen_func(Node *fn) {
     int epi_off;
     epi_off = x64_off;
 
-    /* Restore callee-saved registers */
-    i = 0;
-    while (i < ra_ncsave) {
-        x64_mov_rm64(ra_csave_reg[i], X64_RBP, ra_csave_off[i]);
-        i = i + 1;
-    }
+    if (hx_no_frame) {
+        /* No frame: just RET */
+        x64_ret();
+    } else {
+        /* Restore callee-saved registers */
+        i = 0;
+        while (i < ra_ncsave) {
+            x64_mov_rm64(ra_csave_reg[i], X64_RBP, ra_csave_off[i]);
+            i = i + 1;
+        }
 
-    x64_mov_rr64(X64_RSP, X64_RBP);
-    x64_pop(X64_RBP);
-    x64_ret();
+        x64_mov_rr64(X64_RSP, X64_RBP);
+        x64_pop(X64_RBP);
+        x64_ret();
+    }
 
     /* Resolve epilog patches (RET instructions jump here) */
     i = 0;
