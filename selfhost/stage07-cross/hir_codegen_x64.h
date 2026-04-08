@@ -440,6 +440,9 @@ static void hx_emit_inst(int idx) {
 
     /* --- Binary ALU: dst = s1 OP s2 ---
      *
+     * If src2 is ICONST, use immediate form (add dr, imm) to avoid a
+     * register load.  MUL uses the three-operand imul dr, s1r, imm.
+     *
      * Commutative ops (ADD, MUL, AND, OR, XOR): if dr==s2r, swap operands.
      * Non-commutative (SUB): if dr==s2r, save s2 to RDX first.
      * x64 ops are destructive (dst = dst OP src), so we mov s1→dr first. */
@@ -451,25 +454,50 @@ static void hx_emit_inst(int idx) {
         int dr;
         int commute;
         int tmp;
+        int s2_inst;
+        int imm_val;
+        int use_imm;
 
         commute = (k != HI_SUB);
-        dr = hx_dst(idx);
-        s1r = hx_src(h_src1[idx], X64_RAX);
-        s2r = hx_src(h_src2[idx], X64_RCX);
+        s2_inst = h_src2[idx];
 
-        /* Handle dr==s2r conflict */
-        if (dr == s2r && dr != s1r) {
-            if (commute) { tmp = s1r; s1r = s2r; s2r = tmp; }
-            else { x64_mov_rr64(X64_RDX, s2r); s2r = X64_RDX; }
+        /* Check if src2 is a small constant (ICONST, not wide, not MUL) */
+        use_imm = 0;
+        if (s2_inst >= 0 && h_kind[s2_inst] == HI_ICONST && !wide && k != HI_MUL) {
+            imm_val = h_val[s2_inst];
+            use_imm = 1;
         }
-        if (wide) hx_mov_if_needed64(dr, s1r); else hx_mov_if_needed(dr, s1r);
 
-        if (k == HI_ADD) { if (wide) x64_add_rr64(dr, s2r); else x64_add_rr(dr, s2r); }
-        else if (k == HI_SUB) { if (wide) x64_sub_rr64(dr, s2r); else x64_sub_rr(dr, s2r); }
-        else if (k == HI_MUL) { if (wide) x64_imul_rr64(dr, s2r); else x64_imul_rr(dr, s2r); }
-        else if (k == HI_AND) { if (wide) x64_and_rr64(dr, s2r); else x64_and_rr(dr, s2r); }
-        else if (k == HI_OR)  { if (wide) x64_or_rr64(dr, s2r); else x64_or_rr(dr, s2r); }
-        else if (k == HI_XOR) { if (wide) x64_xor_rr64(dr, s2r); else x64_xor_rr(dr, s2r); }
+        if (use_imm) {
+            /* Immediate form: op dr, imm */
+            dr = hx_dst(idx);
+            s1r = hx_src(h_src1[idx], X64_RAX);
+            hx_mov_if_needed(dr, s1r);
+            if (k == HI_ADD) x64_add_ri(dr, imm_val);
+            else if (k == HI_SUB) x64_sub_ri(dr, imm_val);
+            else if (k == HI_AND) x64_and_ri(dr, imm_val);
+            else if (k == HI_OR)  x64_or_ri(dr, imm_val);
+            else if (k == HI_XOR) x64_xor_ri(dr, imm_val);
+        } else {
+            /* Register form */
+            dr = hx_dst(idx);
+            s1r = hx_src(h_src1[idx], X64_RAX);
+            s2r = hx_src(h_src2[idx], X64_RCX);
+
+            /* Handle dr==s2r conflict */
+            if (dr == s2r && dr != s1r) {
+                if (commute) { tmp = s1r; s1r = s2r; s2r = tmp; }
+                else { x64_mov_rr64(X64_RDX, s2r); s2r = X64_RDX; }
+            }
+            if (wide) hx_mov_if_needed64(dr, s1r); else hx_mov_if_needed(dr, s1r);
+
+            if (k == HI_ADD) { if (wide) x64_add_rr64(dr, s2r); else x64_add_rr(dr, s2r); }
+            else if (k == HI_SUB) { if (wide) x64_sub_rr64(dr, s2r); else x64_sub_rr(dr, s2r); }
+            else if (k == HI_MUL) { if (wide) x64_imul_rr64(dr, s2r); else x64_imul_rr(dr, s2r); }
+            else if (k == HI_AND) { if (wide) x64_and_rr64(dr, s2r); else x64_and_rr(dr, s2r); }
+            else if (k == HI_OR)  { if (wide) x64_or_rr64(dr, s2r); else x64_or_rr(dr, s2r); }
+            else if (k == HI_XOR) { if (wide) x64_xor_rr64(dr, s2r); else x64_xor_rr(dr, s2r); }
+        }
 
         hx_maybe_spill(idx);
         return;
@@ -491,22 +519,36 @@ static void hx_emit_inst(int idx) {
         return;
     }
 
-    /* --- Shifts: value in dr, count must be in CL (RCX) --- */
+    /* --- Shifts: immediate count uses shl/shr/sar dr, imm;
+     *             variable count requires CL --- */
 
     if (k == HI_SLL || k == HI_SRA || k == HI_SRL) {
         int s1r;
-        int s2r;
         int dr;
+        int s2_inst;
+
         dr = hx_dst(idx);
         s1r = hx_src(h_src1[idx], X64_RAX);
-        s2r = hx_src(h_src2[idx], X64_RCX);
-        if (s2r != X64_RCX) x64_mov_rr(X64_RCX, s2r);
-        /* If dr is RCX (impossible since RCX is not allocatable), we'd have a
-         * problem.  dr is always an allocated reg or RAX, never RCX. */
-        if (wide) hx_mov_if_needed64(dr, s1r); else hx_mov_if_needed(dr, s1r);
-        if (k == HI_SLL) { if (wide) x64_shl_cl64(dr); else x64_shl_cl(dr); }
-        else if (k == HI_SRA) { if (wide) x64_sar_cl64(dr); else x64_sar_cl(dr); }
-        else { if (wide) x64_shr_cl64(dr); else x64_shr_cl(dr); }
+        s2_inst = h_src2[idx];
+
+        if (s2_inst >= 0 && h_kind[s2_inst] == HI_ICONST) {
+            /* Shift by immediate constant */
+            int cnt;
+            cnt = h_val[s2_inst];
+            if (wide) hx_mov_if_needed64(dr, s1r); else hx_mov_if_needed(dr, s1r);
+            if (k == HI_SLL) x64_shl_ri(dr, cnt);
+            else if (k == HI_SRA) x64_sar_ri(dr, cnt);
+            else x64_shr_ri(dr, cnt);
+        } else {
+            /* Variable shift: count in CL */
+            int s2r;
+            s2r = hx_src(s2_inst, X64_RCX);
+            if (s2r != X64_RCX) x64_mov_rr(X64_RCX, s2r);
+            if (wide) hx_mov_if_needed64(dr, s1r); else hx_mov_if_needed(dr, s1r);
+            if (k == HI_SLL) { if (wide) x64_shl_cl64(dr); else x64_shl_cl(dr); }
+            else if (k == HI_SRA) { if (wide) x64_sar_cl64(dr); else x64_sar_cl(dr); }
+            else { if (wide) x64_shr_cl64(dr); else x64_shr_cl(dr); }
+        }
         hx_maybe_spill(idx);
         return;
     }
@@ -606,9 +648,14 @@ static void hx_emit_inst(int idx) {
     /* --- Control flow --- */
 
     if (k == HI_BR) {
+        int cur_blk;
+        cur_blk = h_blk[idx];
         target = h_val[idx];
-        hx_phi_copies(h_blk[idx], target);
-        hx_jump_to_block(target);
+        hx_phi_copies(cur_blk, target);
+        /* Elide jump if target is the next block in layout order */
+        if (target != cur_blk + 1) {
+            hx_jump_to_block(target);
+        }
         return;
     }
 
