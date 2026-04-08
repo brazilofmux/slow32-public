@@ -62,6 +62,9 @@ static void hl_widen64(int val, int from_ty, int *out_lo, int *out_hi) {
  * After return, hl_hi holds the hi word. */
 static int hl_promote_to_f64(int val, int from_ty);
 
+/* Number of physical params (set by hl_func, used by hl_expr for VA_START) */
+static int hl_nparams;
+
 /* Forward declarations */
 static int hl_expr(Node *n);
 static int hl_addr(Node *n);
@@ -1120,7 +1123,30 @@ static int hl_expr(Node *n) {
         return hi_emit(HI_LOAD, n->ty, addr, -1, 0, NULL);
     }
 
-    /* va_start(ap, last) → ap = __getfp() */
+    /* va_start / va_arg */
+#ifdef S12CC_X64_HOST
+    /* x64: VA_START produces the initial tagged pointer; VA_ARG extracts
+     * a value; VA_NEXT advances the pointer.  The va_list variable goes
+     * through explicit STORE/LOAD so SSA can promote it. */
+    if (n->kind == ND_VA_START) {
+        addr = hl_addr(n->lhs);
+        val = hi_emit(HI_VA_START, TY_INT, -1, -1, hl_nparams, NULL);
+        hi_emit(HI_STORE, TY_INT, addr, val, 0, NULL);
+        return val;
+    }
+    if (n->kind == ND_VA_ARG) {
+        int cur_ap;
+        int arg_val;
+        int next_ap;
+        addr = hl_addr(n->lhs);
+        cur_ap = hi_emit(HI_LOAD, TY_INT, addr, -1, 0, NULL);
+        arg_val = hi_emit(HI_VA_ARG, n->ty, cur_ap, -1, 0, NULL);
+        next_ap = hi_emit(HI_VA_NEXT, TY_INT, cur_ap, -1, 0, NULL);
+        hi_emit(HI_STORE, TY_INT, addr, next_ap, 0, NULL);
+        return arg_val;
+    }
+#else
+    /* SLOW-32: va_start(ap, last) → ap = __getfp() */
     if (n->kind == ND_VA_START) {
         addr = hl_addr(n->lhs);
         val = hi_emit(HI_GETFP, TY_INT, -1, -1, 0, NULL);
@@ -1128,7 +1154,7 @@ static int hl_expr(Node *n) {
         return val;
     }
 
-    /* va_arg(ap, type) → val = *ap; ap += 4; return val */
+    /* SLOW-32: va_arg(ap, type) → val = *ap; ap += 4; return val */
     if (n->kind == ND_VA_ARG) {
         int ap_val;
         int new_ap;
@@ -1152,6 +1178,7 @@ static int hl_expr(Node *n) {
         hi_emit(HI_STORE, TY_INT, addr, new_ap, 0, NULL);
         return val;
     }
+#endif
 
     /* Direct function call */
     if (n->kind == ND_CALL) {
@@ -1604,8 +1631,7 @@ static void hl_stmt(Node *n) {
     p_error("unknown statement node (hir)");
 }
 
-/* --- Number of params for SSA (shared with hir_ssa.h) --- */
-static int hl_nparams;
+/* hl_nparams declared above (near forward declarations) for SSA + VA_START */
 
 /* --- Lower one function --- */
 

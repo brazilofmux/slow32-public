@@ -21,6 +21,7 @@ static int hx_is_varargs;            /* 1 if current function is variadic */
 static int hx_fn_nparams;            /* number of named params */
 static int hx_param_need_temp;       /* 1 if prologue needs temp area for args */
 static int hx_param_temp_base;       /* RBP offset of param temp area */
+static int hx_va_save_off;           /* RBP offset of varargs register save area */
 
 /* Block code offsets for jump patching */
 static int hx_blk_off[HIR_MAX_BLOCK];  /* code offset of block start, -1=not yet */
@@ -994,14 +995,146 @@ static void hx_emit_inst(int idx) {
     }
 
     /* CALLHI: high 32 bits of 64-bit return.  On x64, the full 64-bit
-     * result is already in RAX from the CALL.  Extract upper 32 bits. */
+     * result is already stored in the CALL instruction's slot.  Load it
+     * and shift right by 32 to extract the upper half (SLOW-32 hi word). */
     if (k == HI_CALLHI) {
-        hx_die("HI_CALLHI is not supported yet", idx);
+        int dr;
+        hx_mat(h_src1[idx], X64_RAX);  /* load full 64-bit CALL result */
+        /* shr rax, 32 — REX.W C1 /5 ib */
+        x64_byte(0x48); x64_byte(0xC1); x64_byte(0xE8); x64_byte(32);
+        dr = hx_dst(idx);
+        hx_mov_if_needed(dr, X64_RAX);
+        hx_maybe_spill(idx);
+        return;
     }
 
     /* --- Float ops: stub (not supported yet) --- */
     if (k >= HI_FADD && k <= HI_FCONST) {
         hx_die("floating-point HIR is not supported yet", idx);
+    }
+
+    /* --- Varargs --- */
+
+    if (k == HI_VA_START) {
+        /* Compute initial tagged pointer for va_list.
+         * h_val = number of named parameters
+         * Produces the tagged pointer as a value. */
+        int dr;
+        int nparams_va;
+        dr = hx_dst(idx);
+        nparams_va = h_val[idx];
+        if (nparams_va < 6) {
+            x64_lea(dr, X64_RBP, hx_va_save_off + nparams_va * 8);
+            x64_or_ri64(dr, 6 - nparams_va);
+        } else {
+            x64_lea(dr, X64_RBP, 16 + (nparams_va - 6) * 8);
+        }
+        hx_maybe_spill(idx);
+        return;
+    }
+
+    if (k == HI_VA_ARG) {
+        /* Extract argument from tagged va_list pointer.
+         * h_src1 = current va_list value (tagged pointer)
+         * h_ty   = type of argument to retrieve
+         * Produces the argument value. */
+        int sr;
+        int dr;
+        int va_ty;
+        int patch_use_stack;
+        int patch_after;
+
+        sr = hx_src(h_src1[idx], X64_RAX);
+        /* Decode tag: RCX = count, RAX = aligned slot pointer */
+        x64_mov_rr64(X64_RAX, sr);
+        x64_mov_rr64(X64_RCX, X64_RAX);
+        x64_and_ri64(X64_RCX, 7);
+        x64_and_ri64(X64_RAX, -8);
+        x64_test_rr64(X64_RCX, X64_RCX);
+        patch_use_stack = x64_jcc_placeholder(X64_CC_E);
+
+        /* Register path: load from save area slot */
+        va_ty = ty;
+        if (hx_is_wide(va_ty)) {
+            x64_mov_rm64(X64_RDX, X64_RAX, 0);
+        } else if (!ty_is_ptr(va_ty) && (va_ty & TY_BASE_MASK) == TY_CHAR) {
+            if (va_ty & TY_UNSIGNED) x64_movzx_rm8(X64_RDX, X64_RAX, 0);
+            else x64_movsx_rm8(X64_RDX, X64_RAX, 0);
+        } else if (!ty_is_ptr(va_ty) && (va_ty & TY_BASE_MASK) == TY_SHORT) {
+            if (va_ty & TY_UNSIGNED) x64_movzx_rm16(X64_RDX, X64_RAX, 0);
+            else x64_movsx_rm16(X64_RDX, X64_RAX, 0);
+        } else {
+            x64_mov_rm(X64_RDX, X64_RAX, 0);
+        }
+        patch_after = x64_jmp_placeholder();
+
+        /* Stack path */
+        x64_patch_rel32(patch_use_stack, x64_off);
+        if (hx_is_wide(va_ty)) {
+            x64_mov_rm64(X64_RDX, X64_RAX, 0);
+        } else if (!ty_is_ptr(va_ty) && (va_ty & TY_BASE_MASK) == TY_CHAR) {
+            if (va_ty & TY_UNSIGNED) x64_movzx_rm8(X64_RDX, X64_RAX, 0);
+            else x64_movsx_rm8(X64_RDX, X64_RAX, 0);
+        } else if (!ty_is_ptr(va_ty) && (va_ty & TY_BASE_MASK) == TY_SHORT) {
+            if (va_ty & TY_UNSIGNED) x64_movzx_rm16(X64_RDX, X64_RAX, 0);
+            else x64_movsx_rm16(X64_RDX, X64_RAX, 0);
+        } else {
+            x64_mov_rm(X64_RDX, X64_RAX, 0);
+        }
+
+        x64_patch_rel32(patch_after, x64_off);
+        dr = hx_dst(idx);
+        if (dr != X64_RDX) x64_mov_rr64(dr, X64_RDX);
+        hx_maybe_spill(idx);
+        return;
+    }
+
+    if (k == HI_VA_NEXT) {
+        /* Advance tagged va_list pointer to next slot.
+         * h_src1 = current va_list value (tagged pointer)
+         * Produces the updated va_list value. */
+        int sr;
+        int dr;
+        int patch_use_stack;
+        int patch_stack_transition;
+        int patch_after;
+
+        sr = hx_src(h_src1[idx], X64_RAX);
+        /* Decode tag */
+        x64_mov_rr64(X64_RAX, sr);
+        x64_mov_rr64(X64_RCX, X64_RAX);
+        x64_and_ri64(X64_RCX, 7);
+        x64_and_ri64(X64_RAX, -8);
+        x64_test_rr64(X64_RCX, X64_RCX);
+        patch_use_stack = x64_jcc_placeholder(X64_CC_E);
+
+        /* Register path: advance and re-tag */
+        x64_add_ri64(X64_RAX, 8);
+        x64_sub_ri64(X64_RCX, 1);
+        x64_test_rr64(X64_RCX, X64_RCX);
+        patch_stack_transition = x64_jcc_placeholder(X64_CC_E);
+        x64_or_rr64(X64_RAX, X64_RCX);
+        patch_after = x64_jmp_placeholder();
+
+        /* Register→stack transition */
+        x64_patch_rel32(patch_stack_transition, x64_off);
+        x64_lea(X64_RAX, X64_RBP, 16);
+        {
+        int patch_after2;
+        patch_after2 = x64_jmp_placeholder();
+
+        /* Stack path: just advance */
+        x64_patch_rel32(patch_use_stack, x64_off);
+        x64_add_ri64(X64_RAX, 8);
+
+        x64_patch_rel32(patch_after2, x64_off);
+        }
+        x64_patch_rel32(patch_after, x64_off);
+
+        dr = hx_dst(idx);
+        if (dr != X64_RAX) x64_mov_rr64(dr, X64_RAX);
+        hx_maybe_spill(idx);
+        return;
     }
 }
 
@@ -1026,10 +1159,7 @@ static void hx_gen_func(Node *fn) {
 
     hx_is_varargs = fn->is_varargs;
     hx_fn_nparams = fn->nparams;
-
-    if (fn->is_varargs) {
-        hx_die("varargs functions are not supported by --hir", -1);
-    }
+    hx_va_save_off = 0;
 
     /* Record function in symbol table (after varargs check so we don't
      * leave a partial entry on fatal error) */
@@ -1098,6 +1228,12 @@ static void hx_gen_func(Node *fn) {
     }
     }
 
+    /* --- Varargs save area (48 bytes for 6 register args) --- */
+    if (hx_is_varargs) {
+        hl_temp_stack = hl_temp_stack + 48;
+        hx_va_save_off = 0 - hl_temp_stack;
+    }
+
     /* --- Compute frame size --- */
     fs = hl_temp_stack;
     fs = (fs + 15) & ~15;  /* 16-byte align */
@@ -1121,6 +1257,16 @@ static void hx_gen_func(Node *fn) {
     while (i < ra_ncsave) {
         x64_mov_mr64(X64_RBP, ra_csave_off[i], ra_csave_reg[i]);
         i = i + 1;
+    }
+
+    /* For varargs functions, save all 6 register args to the save area.
+     * va_start/va_arg will read from this area. */
+    if (hx_is_varargs) {
+        i = 0;
+        while (i < 6) {
+            x64_mov_mr64(X64_RBP, hx_va_save_off + i * 8, hx_arg_reg[i]);
+            i = i + 1;
+        }
     }
 
     /* Store incoming args to their allocated register or spill slot. */

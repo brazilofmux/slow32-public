@@ -65,6 +65,11 @@
 #define HI_FCVT_DtoF 54 /* f64 to f32 truncation */
 #define HI_FCONST   55  /* float constant: val=bits (f32 in val, f64 in val+val_hi via CALLHI-like) */
 
+/* Varargs (x64-specific; emitted only when S12CC_X64_HOST is defined) */
+#define HI_VA_START 56  /* va_start: val=nparams. Produces initial va_list value. */
+#define HI_VA_ARG   57  /* va_arg:   src1=current va_list, ty=arg type. Produces argument. */
+#define HI_VA_NEXT  58  /* va_next:  src1=current va_list. Produces updated va_list. */
+
 /* --- Limits --- */
 #define HIR_MAX_INST   16384
 #define HIR_MAX_BLOCK  2048
