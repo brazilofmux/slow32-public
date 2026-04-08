@@ -470,12 +470,7 @@ static int load_s32x(struct emu *e, char *path) {
             err_str(path);
             err_str(": truncated section table");
             err_nl();
-            close(fd);
-            free((char *)e->mem);
-            e->mem = 0;
-            e->mem_total = 0;
-            e->code_limit = 0;
-            return 0;
+            goto fail;
         }
 
         type   = rd32(sec, 0x04);
@@ -495,12 +490,7 @@ static int load_s32x(struct emu *e, char *path) {
             err_str(path);
             err_str(": section overflows memory");
             err_nl();
-            close(fd);
-            free((char *)e->mem);
-            e->mem = 0;
-            e->mem_total = 0;
-            e->code_limit = 0;
-            return 0;
+            goto fail;
         }
 
         saved = lseek(fd, 0, SEEK_CUR);
@@ -510,12 +500,7 @@ static int load_s32x(struct emu *e, char *path) {
             err_str(path);
             err_str(": short read for section");
             err_nl();
-            close(fd);
-            free((char *)e->mem);
-            e->mem = 0;
-            e->mem_total = 0;
-            e->code_limit = 0;
-            return 0;
+            goto fail;
         }
         lseek(fd, saved, SEEK_SET);
 
@@ -530,6 +515,14 @@ static int load_s32x(struct emu *e, char *path) {
     e->halted = 0;
 
     return 1;
+
+fail:
+    close(fd);
+    free((char *)e->mem);
+    e->mem = 0;
+    e->mem_total = 0;
+    e->code_limit = 0;
+    return 0;
 }
 
 static void stage_args(struct emu *e, int argc, char **argv) {
