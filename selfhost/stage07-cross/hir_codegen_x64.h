@@ -1,14 +1,12 @@
-/* hir_codegen_x64.h -- Naive HIR to x86-64 code generator
+/* hir_codegen_x64.h -- HIR to x86-64 code generator with register allocation
  *
- * Spill-everything approach: every HIR value gets an 8-byte stack slot.
- * Sources are loaded into scratch registers (RAX, RCX, RDX, R10, R11),
- * computation is performed, and results are stored back to their slot.
- *
- * This is intentionally simple -- correctness first.  BURG instruction
- * selection and linear-scan register allocation will be layered on later.
+ * Uses linear-scan register allocation (hir_regalloc_x64.h) to assign
+ * callee-saved registers (RBX, R12-R15).  Values that don't fit are
+ * spilled to the stack.  RAX/RCX/RDX serve as scratch registers.
  *
  * Requires: x64_encode.h, codegen_x64.h (for infrastructure arrays),
- *           hir.h, hir_lower.h, hir_ssa.h, hir_opt.h, hir_licm.h
+ *           hir.h, hir_lower.h, hir_ssa.h, hir_opt.h, hir_licm.h,
+ *           hir_regalloc_x64.h
  */
 
 #ifndef HIR_CODEGEN_X64_H
@@ -18,11 +16,7 @@
  * Per-function state
  * ============================================================================ */
 
-static int hx_slot[HIR_MAX_INST];    /* RBP offset for each value, 0=none */
-static int hx_nslots;                /* number of allocated slots */
-static int hx_slot_base;             /* RBP offset where slots start (negative) */
 static int hx_frame_size;            /* total frame size */
-static int hx_epilog_patch;          /* patch offset for epilog jump */
 static int hx_is_varargs;            /* 1 if current function is variadic */
 static int hx_fn_nparams;            /* number of named params */
 
@@ -71,13 +65,6 @@ static int hx_find_global(char *name) {
     return -1;
 }
 
-/* Allocate a spill slot.  Returns the RBP offset (negative). */
-static int hx_alloc_slot(void) {
-    int off;
-    off = hx_slot_base - (hx_nslots + 1) * 8;
-    hx_nslots = hx_nslots + 1;
-    return off;
-}
 
 /* ============================================================================
  * Value materialization -- load an HIR value into an x64 register
@@ -90,6 +77,13 @@ static void hx_mat(int inst, int reg) {
 
     if (inst < 0) {
         x64_xor_rr(reg, reg);
+        return;
+    }
+
+    /* Regalloc: if value is in a physical register, use it directly */
+    if (ra_reg[inst] >= 0) {
+        if (reg != ra_reg[inst])
+            x64_mov_rr64(reg, ra_reg[inst]);
         return;
     }
 
@@ -149,7 +143,7 @@ static void hx_mat(int inst, int reg) {
     }
 
     /* Default: load from spill slot */
-    off = hx_slot[inst];
+    off = ra_spill_off[inst];
     if (off != 0) {
         x64_mov_rm64(reg, X64_RBP, off);
     } else {
@@ -158,18 +152,29 @@ static void hx_mat(int inst, int reg) {
     }
 }
 
-/* Store a register to an HIR value's spill slot. */
+/* Store a value to its destination (physical register or spill slot). */
 static void hx_spill(int inst, int reg) {
     int off;
     if (inst < 0) return;
+
+    /* Regalloc: if value has a physical register, move to it */
+    if (ra_reg[inst] >= 0) {
+        if (reg != ra_reg[inst])
+            x64_mov_rr64(ra_reg[inst], reg);
+        return;
+    }
+
+    /* Rematerializable: no store needed (regenerated on demand) */
     if (hi_is_remat(h_kind[inst]) &&
         h_kind[inst] != HI_GADDR &&
         h_kind[inst] != HI_SADDR &&
         h_kind[inst] != HI_FADDR) {
         return;
     }
-    off = hx_slot[inst];
-    if (off == 0) return;  /* no slot allocated */
+
+    /* Store to spill slot */
+    off = ra_spill_off[inst];
+    if (off == 0) return;
     x64_mov_mr64(X64_RBP, off, reg);
 }
 
@@ -645,9 +650,10 @@ static void hx_emit_inst(int idx) {
             j = j + 1;
         }
 
-        /* Set up stack args if needed */
-        if (nstack > 0) {
+        /* Reserve outgoing area (stack args + alignment padding) */
+        if (outgoing > 0) {
             x64_sub_ri64(X64_RSP, outgoing);
+            /* Copy stack args (7+) into outgoing area */
             j = 0;
             while (j < nstack) {
                 x64_mov_rm64(X64_RAX, X64_RSP,
@@ -705,6 +711,7 @@ static void hx_emit_inst(int idx) {
 static void hx_gen_func(Node *fn) {
     int b;
     int i;
+    int k;
     int fs;
     int pidx;
     Node *pp;
@@ -723,7 +730,8 @@ static void hx_gen_func(Node *fn) {
         hx_die("varargs functions are not supported by --hir", -1);
     }
 
-    /* Record function in symbol table */
+    /* Record function in symbol table (after varargs check so we don't
+     * leave a partial entry on fatal error) */
     cg_func_name[cg_nfuncs] = fn->name;
     cg_func_off[cg_nfuncs] = x64_off;
     cg_nfuncs = cg_nfuncs + 1;
@@ -735,41 +743,28 @@ static void hx_gen_func(Node *fn) {
     hir_opt();
     hir_licm();
 
-    /* --- Allocate spill slots --- */
-    hx_nslots = 0;
-    hx_slot_base = -(16 + fn->locals_size * 2);
+    /* --- Register allocation ---
+     * hl_temp_stack was set by the lowering to fn->locals_size (SLOW-32 bytes).
+     * Scale to x64 (8-byte slots) before the regalloc adds spill/callee-save
+     * slots so all offsets are in the same coordinate system. */
+    hl_temp_stack = 16 + fn->locals_size * 2;
+    hir_regalloc();
 
+    /* Assign spill slots for GADDR/SADDR/FADDR (regalloc treats them as
+     * rematerializable, but we cache relocation results to avoid duplicates) */
     i = 0;
     while (i < h_ninst) {
-        hx_slot[i] = 0;
-        if (hi_has_value(h_kind[i]) && !hi_is_remat(h_kind[i])) {
-            /* Needs a spill slot (not rematerializable and not GADDR/SADDR/FADDR
-             * which are handled specially but still need slots for their result) */
-            hx_slot[i] = hx_alloc_slot();
-        }
-        /* GADDR, SADDR, FADDR produce values but go through hx_mat reloc path.
-         * Still need a slot to cache the result. */
-        if (h_kind[i] == HI_GADDR || h_kind[i] == HI_SADDR || h_kind[i] == HI_FADDR) {
-            if (hx_slot[i] == 0) hx_slot[i] = hx_alloc_slot();
+        k = h_kind[i];
+        if ((k == HI_GADDR || k == HI_SADDR || k == HI_FADDR) &&
+            ra_reg[i] < 0 && ra_spill_off[i] == 0) {
+            hl_temp_stack = hl_temp_stack + 8;
+            ra_spill_off[i] = 0 - hl_temp_stack;
         }
         i = i + 1;
     }
 
-    /* Allocate slots for LICM-hoisted instructions */
-    b = 0;
-    while (b < bb_nblk) {
-        i = licm_head[b];
-        while (i >= 0) {
-            if (hi_has_value(h_kind[i]) && !hi_is_remat(h_kind[i])) {
-                if (hx_slot[i] == 0) hx_slot[i] = hx_alloc_slot();
-            }
-            i = licm_next[i];
-        }
-        b = b + 1;
-    }
-
     /* --- Compute frame size --- */
-    fs = -(hx_slot_base) + hx_nslots * 8;
+    fs = hl_temp_stack;
     fs = (fs + 15) & ~15;  /* 16-byte align */
     hx_frame_size = fs;
 
@@ -786,18 +781,35 @@ static void hx_gen_func(Node *fn) {
     x64_mov_rr64(X64_RBP, X64_RSP);
     if (fs > 0) x64_sub_ri64(X64_RSP, fs);
 
-    /* Store incoming register args to their PARAM instruction slots.
-     * Scan HIR for PARAM instructions and store the corresponding register. */
+    /* Save callee-saved registers used by regalloc */
+    i = 0;
+    while (i < ra_ncsave) {
+        x64_mov_mr64(X64_RBP, ra_csave_off[i], ra_csave_reg[i]);
+        i = i + 1;
+    }
+
+    /* Store incoming args to their allocated register or spill slot.
+     * Scan HIR for PARAM instructions. */
     i = 0;
     while (i < h_ninst) {
-        if (h_kind[i] == HI_PARAM && hx_slot[i] != 0) {
+        if (h_kind[i] == HI_PARAM) {
             pidx = h_val[i];  /* physical param index */
-            if (pidx < 6) {
-                x64_mov_mr64(X64_RBP, hx_slot[i], hx_arg_reg[pidx]);
-            } else {
-                /* Stack arg: load from caller frame, store to slot */
-                x64_mov_rm64(X64_RAX, X64_RBP, 16 + (pidx - 6) * 8);
-                x64_mov_mr64(X64_RBP, hx_slot[i], X64_RAX);
+            if (ra_reg[i] >= 0) {
+                /* PARAM allocated to a register */
+                if (pidx < 6) {
+                    if (ra_reg[i] != hx_arg_reg[pidx])
+                        x64_mov_rr64(ra_reg[i], hx_arg_reg[pidx]);
+                } else {
+                    x64_mov_rm64(ra_reg[i], X64_RBP, 16 + (pidx - 6) * 8);
+                }
+            } else if (ra_spill_off[i] != 0) {
+                /* PARAM spilled to stack */
+                if (pidx < 6) {
+                    x64_mov_mr64(X64_RBP, ra_spill_off[i], hx_arg_reg[pidx]);
+                } else {
+                    x64_mov_rm64(X64_RAX, X64_RBP, 16 + (pidx - 6) * 8);
+                    x64_mov_mr64(X64_RBP, ra_spill_off[i], X64_RAX);
+                }
             }
         }
         i = i + 1;
@@ -837,6 +849,13 @@ static void hx_gen_func(Node *fn) {
     {
     int epi_off;
     epi_off = x64_off;
+
+    /* Restore callee-saved registers */
+    i = 0;
+    while (i < ra_ncsave) {
+        x64_mov_rm64(ra_csave_reg[i], X64_RBP, ra_csave_off[i]);
+        i = i + 1;
+    }
 
     x64_mov_rr64(X64_RSP, X64_RBP);
     x64_pop(X64_RBP);

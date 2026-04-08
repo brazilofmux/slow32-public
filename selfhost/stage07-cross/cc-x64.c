@@ -94,6 +94,9 @@ static void fdputuint(int f, int v) {
 
 /* x86-64 backend */
 #include "x64_encode.h"
+
+/* x86-64 register allocation (needs x64_encode.h for register constants) */
+#include "hir_regalloc_x64.h"
 #include "elf_writer.h"
 #include "codegen_x64.h"
 #include "obj_writer.h"
