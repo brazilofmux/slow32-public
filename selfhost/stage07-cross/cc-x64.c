@@ -97,6 +97,7 @@ static void fdputuint(int f, int v) {
 #include "elf_writer.h"
 #include "codegen_x64.h"
 #include "obj_writer.h"
+#include "hir_codegen_x64.h"
 
 static char *hir_op_name(int op) {
     if (op == HI_NOP) return "nop";
@@ -365,6 +366,7 @@ int main(int argc, char **argv) {
     int compile_only;
     int crt0_mode;
     int hir_dump_mode;
+    int hir_mode;
     char *infile;
     char *outfile;
     char *src;
@@ -380,6 +382,7 @@ int main(int argc, char **argv) {
     compile_only = 0;
     crt0_mode = 0;
     hir_dump_mode = 0;
+    hir_mode = 0;
     argi = 1;
     while (argi < argc) {
         if (argv[argi][0] == 45 && argv[argi][1] == 45) {
@@ -388,6 +391,8 @@ int main(int argc, char **argv) {
                 crt0_mode = 1;
             } else if (strcmp(argv[argi], "--hir-dump") == 0) {
                 hir_dump_mode = 1;
+            } else if (strcmp(argv[argi], "--hir") == 0) {
+                hir_mode = 1;
             }
         } else if (argv[argi][0] == 45 && argv[argi][1] == 99 && argv[argi][2] == 0) {
             /* "-c" */
@@ -437,7 +442,7 @@ int main(int argc, char **argv) {
     }
 
     if (infile == 0 || outfile == 0) {
-        write(2, "Usage: cc-x64 [--hir-dump] [-c] [-o output] [-I dir] input.c [output]\n", 70);
+        write(2, "Usage: cc-x64 [--hir|--hir-dump] [-c] [-o output] [-I dir] input.c\n", 67);
         return 1;
     }
 
@@ -492,8 +497,12 @@ int main(int argc, char **argv) {
     }
 
     /* x86-64 code generation */
-    cg_object_mode = compile_only;
-    gen_program(prog);
+    if (hir_mode) {
+        hx_gen_program(prog, compile_only);
+    } else {
+        cg_object_mode = compile_only;
+        gen_program(prog);
+    }
 
     if (compile_only) {
         /* Write relocatable object (.o) */
