@@ -47,6 +47,11 @@ static int hx_addi_folded[HIR_MAX_INST];
 static int hx_sib_flag[HIR_MAX_INST];     /* 1 if this load/store uses SIB */
 static int hx_sib_scale[HIR_MAX_INST];    /* SIB scale: 1=*2, 2=*4, 3=*8 */
 
+/* RMW fold: STORE addr, ADD(LOAD(addr), ICONST) → addl $imm, disp(%base) */
+static int hx_rmw_flag[HIR_MAX_INST];     /* 1 if this store is RMW-folded */
+static int hx_rmw_disp[HIR_MAX_INST];     /* displacement from base */
+static int hx_rmw_imm[HIR_MAX_INST];      /* immediate to add */
+
 /* x86-64 SysV ABI argument registers */
 static int hx_arg_reg[6];
 static int hx_phi_insts[HIR_MAX_INST];
@@ -897,6 +902,14 @@ static void hx_emit_inst(int idx) {
         int vr;
         int pat;
         int lnt;
+
+        /* RMW: addl $imm, disp(%base) */
+        if (hx_rmw_flag[idx]) {
+            ar = hx_src(h_src1[idx], X64_RAX);
+            x64_add_mi(ar, hx_rmw_disp[idx], hx_rmw_imm[idx]);
+            return;
+        }
+
         pat = bg_sel[idx];
         lnt = (pat >= 0) ? bg_plnt[pat] : -1;
         if (lnt == BG_MEM) {
@@ -1500,6 +1513,67 @@ static void hx_gen_func(Node *fn) {
                     /* NOP the consumed ADD and SLL */
                     h_kind[addr] = HI_NOP;
                     h_kind[sll_i] = HI_NOP;
+                }
+            }
+        }
+        i = i + 1;
+    }
+
+    /* --- Fold read-modify-write: STORE addr, ADD(LOAD(addr), ICONST) ---
+     * Emits addl $imm, disp(%base) for patterns like e->pc += 4.
+     * NOPs the LOAD and ADD; rewrites STORE src2 to -1. */
+    i = 0;
+    while (i < h_ninst) {
+        hx_rmw_flag[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_STORE && !hx_sib_flag[i] && !hx_is_wide(h_ty[i])) {
+            int val;
+            int st_addr;
+            val = h_src2[i];
+            if (val >= 0 && h_kind[val] == HI_ADD &&
+                bg_uses[val] == 1 && h_blk[val] == h_blk[i]) {
+                int add_lhs;
+                int add_rhs;
+                int ld_inst;
+                int imm_inst;
+                add_lhs = h_src1[val];
+                add_rhs = h_src2[val];
+                ld_inst = -1; imm_inst = -1;
+                /* ADD(LOAD, ICONST) */
+                if (add_lhs >= 0 && h_kind[add_lhs] == HI_LOAD &&
+                    add_rhs >= 0 && h_kind[add_rhs] == HI_ICONST &&
+                    bg_uses[add_lhs] == 1) {
+                    ld_inst = add_lhs; imm_inst = add_rhs;
+                }
+                /* ADD(ICONST, LOAD) */
+                if (ld_inst < 0 && add_rhs >= 0 && h_kind[add_rhs] == HI_LOAD &&
+                    add_lhs >= 0 && h_kind[add_lhs] == HI_ICONST &&
+                    bg_uses[add_rhs] == 1) {
+                    ld_inst = add_rhs; imm_inst = add_lhs;
+                }
+                if (ld_inst >= 0 && imm_inst >= 0) {
+                    /* Compare addresses: both may be ADDI-folded or raw */
+                    int st_base;
+                    int ld_base;
+                    int st_disp;
+                    int ld_disp;
+                    st_base = h_src1[i];
+                    ld_base = h_src1[ld_inst];
+                    st_disp = hx_addi_folded_flag[i] ? hx_addi_folded_disp[i] : 0;
+                    ld_disp = hx_addi_folded_flag[ld_inst] ? hx_addi_folded_disp[ld_inst] : 0;
+                    if (st_base == ld_base && st_disp == ld_disp) {
+                        hx_rmw_flag[i] = 1;
+                        hx_rmw_disp[i] = st_disp;
+                        hx_rmw_imm[i] = h_val[imm_inst];
+                        /* NOP the load and add; STORE src2 no longer needed */
+                        h_kind[ld_inst] = HI_NOP;
+                        h_kind[val] = HI_NOP;
+                        h_src2[i] = -1;
+                    }
                 }
             }
         }
