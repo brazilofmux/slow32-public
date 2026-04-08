@@ -1174,38 +1174,54 @@ static void hx_emit_inst(int idx) {
 
         nreg = nargs < 6 ? nargs : 6;
         nstack = nargs > 6 ? nargs - 6 : 0;
-        temp_bytes = nargs * 8;
-        if (k == HI_CALLP) temp_bytes = temp_bytes + 8;
-        outgoing = nstack * 8;
-        pad = (16 - ((temp_bytes + outgoing) & 15)) & 15;
-        outgoing = outgoing + pad;
 
-        /* Push all args to stack as temp storage (left to right) */
-        j = 0;
-        while (j < nargs) {
-            arg_idx = h_carg[h_cbase[idx] + j];
-            hx_mat(arg_idx, X64_RAX);
-            x64_push(X64_RAX);
-            j = j + 1;
-        }
+        if (nstack == 0 && k != HI_CALLP) {
+            /* Fast path: ≤6 args, direct call.
+             * Load args right-to-left into arg registers to avoid
+             * clobbering sources (later args in higher-numbered regs). */
+            j = nreg - 1;
+            while (j >= 0) {
+                arg_idx = h_carg[h_cbase[idx] + j];
+                hx_mat(arg_idx, hx_arg_reg[j]);
+                j = j - 1;
+            }
+            /* Ensure 16-byte stack alignment for the call.
+             * RSP after push RBP is 16-byte aligned. Frame (if any) is
+             * 16-byte aligned. So RSP is 16-byte aligned here, and the
+             * CALL pushes 8 bytes → RSP mod 16 == 8, which is correct
+             * (callee sees RSP+8 aligned to 16). No adjustment needed. */
+        } else {
+            /* Slow path: >6 args or indirect call.
+             * Push all args to stack, reload into arg registers. */
+            temp_bytes = nargs * 8;
+            if (k == HI_CALLP) temp_bytes = temp_bytes + 8;
+            outgoing = nstack * 8;
+            pad = (16 - ((temp_bytes + outgoing) & 15)) & 15;
+            outgoing = outgoing + pad;
 
-        /* Load register args from stack positions */
-        j = 0;
-        while (j < nreg) {
-            x64_mov_rm64(hx_arg_reg[j], X64_RSP, (nargs - 1 - j) * 8);
-            j = j + 1;
-        }
-
-        /* Reserve outgoing area (stack args + alignment padding) */
-        if (outgoing > 0) {
-            x64_sub_ri64(X64_RSP, outgoing);
-            /* Copy stack args (7+) into outgoing area */
             j = 0;
-            while (j < nstack) {
-                x64_mov_rm64(X64_RAX, X64_RSP,
-                             outgoing + (nstack - 1 - j) * 8);
-                x64_mov_mr64(X64_RSP, j * 8, X64_RAX);
+            while (j < nargs) {
+                arg_idx = h_carg[h_cbase[idx] + j];
+                hx_mat(arg_idx, X64_RAX);
+                x64_push(X64_RAX);
                 j = j + 1;
+            }
+
+            j = 0;
+            while (j < nreg) {
+                x64_mov_rm64(hx_arg_reg[j], X64_RSP, (nargs - 1 - j) * 8);
+                j = j + 1;
+            }
+
+            if (outgoing > 0) {
+                x64_sub_ri64(X64_RSP, outgoing);
+                j = 0;
+                while (j < nstack) {
+                    x64_mov_rm64(X64_RAX, X64_RSP,
+                                 outgoing + (nstack - 1 - j) * 8);
+                    x64_mov_mr64(X64_RSP, j * 8, X64_RAX);
+                    j = j + 1;
+                }
             }
         }
 
@@ -1223,12 +1239,12 @@ static void hx_emit_inst(int idx) {
             x64_dword(0);
         }
 
-        /* Clean up stack: args + outgoing + maybe saved callee */
-        {
-        int cleanup;
-        cleanup = nargs * 8 + outgoing;
-        if (k == HI_CALLP) cleanup = cleanup + 8;
-        if (cleanup > 0) x64_add_ri64(X64_RSP, cleanup);
+        /* Clean up stack (slow path only — fast path doesn't push) */
+        if (nstack > 0 || k == HI_CALLP) {
+            int cleanup;
+            cleanup = nargs * 8 + outgoing;
+            if (k == HI_CALLP) cleanup = cleanup + 8;
+            if (cleanup > 0) x64_add_ri64(X64_RSP, cleanup);
         }
 
         /* Store return value */
