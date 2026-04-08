@@ -37,6 +37,8 @@ static int hx_nbpatch;
 
 /* x86-64 SysV ABI argument registers */
 static int hx_arg_reg[6];
+static int hx_phi_insts[HIR_MAX_INST];
+static int hx_phi_vals[HIR_MAX_INST];
 
 /* ============================================================================
  * Helpers
@@ -45,6 +47,17 @@ static int hx_arg_reg[6];
 /* Is this type 64-bit on x86-64? */
 static int hx_is_wide(int ty) {
     return ty_is_ptr(ty) || ty_is_llong(ty);
+}
+
+static void hx_die(char *msg, int idx) {
+    fdputs("cc-x64 --hir: ", 2);
+    fdputs(msg, 2);
+    if (idx >= 0) {
+        fdputs(" at HIR inst ", 2);
+        fdputuint(2, idx);
+    }
+    fdputs("\n", 2);
+    exit(1);
 }
 
 /* Find global variable index by name.  Returns -1 if not found. */
@@ -149,7 +162,12 @@ static void hx_mat(int inst, int reg) {
 static void hx_spill(int inst, int reg) {
     int off;
     if (inst < 0) return;
-    if (hi_is_remat(h_kind[inst])) return;  /* rematerializable: no slot needed */
+    if (hi_is_remat(h_kind[inst]) &&
+        h_kind[inst] != HI_GADDR &&
+        h_kind[inst] != HI_SADDR &&
+        h_kind[inst] != HI_FADDR) {
+        return;
+    }
     off = hx_slot[inst];
     if (off == 0) return;  /* no slot allocated */
     x64_mov_mr64(X64_RBP, off, reg);
@@ -219,17 +237,16 @@ static void hx_phi_copies(int from_blk, int to_blk) {
     int i;
     int n;
     int v;
-    int phi_insts[128];
-    int phi_vals[128];
 
     /* Collect PHI nodes and their source values for this edge */
     n = 0;
     i = ssa_phi_head[to_blk];
-    while (i >= 0 && n < 128) {
+    while (i >= 0) {
         if (h_kind[i] == HI_PHI) {
+            if (n >= HIR_MAX_INST) hx_die("too many PHI copies on edge", i);
             v = ssa_phi_find_arg(i, from_blk);
-            phi_insts[n] = i;
-            phi_vals[n] = v;
+            hx_phi_insts[n] = i;
+            hx_phi_vals[n] = v;
             n = n + 1;
         }
         i = ssa_phi_next[i];
@@ -239,7 +256,7 @@ static void hx_phi_copies(int from_blk, int to_blk) {
     /* Phase 1: push all source values (left to right) */
     i = 0;
     while (i < n) {
-        hx_mat(phi_vals[i], X64_RAX);
+        hx_mat(hx_phi_vals[i], X64_RAX);
         x64_push(X64_RAX);
         i = i + 1;
     }
@@ -248,7 +265,7 @@ static void hx_phi_copies(int from_blk, int to_blk) {
     i = n - 1;
     while (i >= 0) {
         x64_pop(X64_RAX);
-        hx_spill(phi_insts[i], X64_RAX);
+        hx_spill(hx_phi_insts[i], X64_RAX);
         i = i - 1;
     }
 }
@@ -594,6 +611,8 @@ static void hx_emit_inst(int idx) {
     /* --- Function calls --- */
 
     if (k == HI_CALL || k == HI_CALLP) {
+        int temp_bytes;
+        int pad;
         nargs = h_val[idx];
 
         /* For indirect call, save callee address first */
@@ -604,8 +623,11 @@ static void hx_emit_inst(int idx) {
 
         nreg = nargs < 6 ? nargs : 6;
         nstack = nargs > 6 ? nargs - 6 : 0;
+        temp_bytes = nargs * 8;
+        if (k == HI_CALLP) temp_bytes = temp_bytes + 8;
         outgoing = nstack * 8;
-        if ((nstack & 1) != 0) outgoing = outgoing + 8;  /* 16-byte align */
+        pad = (16 - ((temp_bytes + outgoing) & 15)) & 15;
+        outgoing = outgoing + pad;
 
         /* Push all args to stack as temp storage (left to right) */
         j = 0;
@@ -667,20 +689,12 @@ static void hx_emit_inst(int idx) {
     /* CALLHI: high 32 bits of 64-bit return.  On x64, the full 64-bit
      * result is already in RAX from the CALL.  Extract upper 32 bits. */
     if (k == HI_CALLHI) {
-        /* h_src1 points to the CALL instruction whose result is in its slot */
-        hx_mat(h_src1[idx], X64_RAX);
-        x64_shr_ri(X64_RAX, 0);  /* TODO: proper hi-word extraction */
-        /* For now, store 0 -- llong returns not fully supported */
-        x64_xor_rr(X64_RAX, X64_RAX);
-        hx_spill(idx, X64_RAX);
-        return;
+        hx_die("HI_CALLHI is not supported yet", idx);
     }
 
     /* --- Float ops: stub (not supported yet) --- */
     if (k >= HI_FADD && k <= HI_FCONST) {
-        x64_xor_rr(X64_RAX, X64_RAX);
-        if (hi_has_value(k)) hx_spill(idx, X64_RAX);
-        return;
+        hx_die("floating-point HIR is not supported yet", idx);
     }
 }
 
@@ -704,6 +718,10 @@ static void hx_gen_func(Node *fn) {
 
     hx_is_varargs = fn->is_varargs;
     hx_fn_nparams = fn->nparams;
+
+    if (fn->is_varargs) {
+        hx_die("varargs functions are not supported by --hir", -1);
+    }
 
     /* Record function in symbol table */
     cg_func_name[cg_nfuncs] = fn->name;
