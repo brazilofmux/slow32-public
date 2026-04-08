@@ -124,6 +124,19 @@ static void ra_compute_pos(void) {
             i = i - 1;
         }
 
+        /* LICM-hoisted instructions are emitted at block top by hx_gen_func(),
+         * so linearization must match that order. */
+        i = licm_head[b];
+        while (i >= 0) {
+            if (h_kind[i] != HI_NOP) {
+                ra_pos[i] = pos;
+                ra_order[ra_norder] = i;
+                ra_norder = ra_norder + 1;
+                pos = pos + 1;
+            }
+            i = licm_next[i];
+        }
+
         /* Regular instructions up to (not including) the terminator */
         i = bb_start[b];
         while (i < bb_end[b]) {
@@ -135,18 +148,6 @@ static void ra_compute_pos(void) {
                 pos = pos + 1;
             }
             i = i + 1;
-        }
-
-        /* LICM-hoisted instructions (after regular, before terminator) */
-        i = licm_head[b];
-        while (i >= 0) {
-            if (h_kind[i] != HI_NOP) {
-                ra_pos[i] = pos;
-                ra_order[ra_norder] = i;
-                ra_norder = ra_norder + 1;
-                pos = pos + 1;
-            }
-            i = licm_next[i];
         }
 
         /* The terminator itself */

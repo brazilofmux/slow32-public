@@ -93,6 +93,11 @@ static void hx_mat(int inst, int reg) {
     if (k == HI_ICONST) {
         if (h_val[inst] == 0) {
             x64_xor_rr(reg, reg);
+        } else if (hx_is_wide(h_ty[inst])) {
+            /* HIR integer constants are 32-bit values; for wide x64 uses,
+             * preserve signed semantics instead of zero-extending. */
+            x64_mov_ri(reg, h_val[inst]);
+            x64_movsxd(reg, reg);
         } else {
             x64_mov_ri(reg, h_val[inst]);
         }
