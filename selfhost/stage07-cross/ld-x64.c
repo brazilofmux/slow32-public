@@ -157,11 +157,8 @@ typedef struct {
     int         nsyms;
     char       *strtab;
 
-    /* Section merge offsets: merged_base[local_shndx] = offset in merged section */
-    uint64_t    text_base;
-    uint64_t    rodata_base;
-    uint64_t    data_base;
-    uint64_t    bss_base;
+    /* Per-input-section base offset within its merged output section. */
+    uint64_t    sec_base[MAX_SECTIONS];
 
     /* Map local section index → which merged section (0=none, 1=text, 2=rodata, 3=data, 4=bss) */
     int         sec_map[MAX_SECTIONS];
@@ -284,6 +281,16 @@ static void ensure_cap(uint8_t **buf, uint64_t *cap, uint64_t needed) {
     *cap = newcap;
 }
 
+static uint64_t class_vaddr(int cls) {
+    switch (cls) {
+    case 1: return text_vaddr;
+    case 2: return rodata_vaddr;
+    case 3: return data_vaddr;
+    case 4: return bss_vaddr;
+    default: return 0;
+    }
+}
+
 /* ============================================================================
  * Load and parse an ELF64 relocatable object
  * ============================================================================ */
@@ -373,7 +380,7 @@ static void merge_sections(void) {
                     ensure_cap(&merged_text, &merged_text_cap, merged_text_len + 1);
                     merged_text[merged_text_len++] = 0xCC; /* INT3 padding */
                 }
-                obj->text_base = merged_text_len;
+                obj->sec_base[si] = merged_text_len;
                 if (sh->sh_size > 0) {
                     ensure_cap(&merged_text, &merged_text_cap, merged_text_len + sh->sh_size);
                     memcpy(merged_text + merged_text_len,
@@ -387,7 +394,7 @@ static void merge_sections(void) {
                     ensure_cap(&merged_rodata, &merged_rodata_cap, merged_rodata_len + 1);
                     merged_rodata[merged_rodata_len++] = 0;
                 }
-                obj->rodata_base = merged_rodata_len;
+                obj->sec_base[si] = merged_rodata_len;
                 if (sh->sh_size > 0) {
                     ensure_cap(&merged_rodata, &merged_rodata_cap, merged_rodata_len + sh->sh_size);
                     memcpy(merged_rodata + merged_rodata_len,
@@ -401,7 +408,7 @@ static void merge_sections(void) {
                     ensure_cap(&merged_data, &merged_data_cap, merged_data_len + 1);
                     merged_data[merged_data_len++] = 0;
                 }
-                obj->data_base = merged_data_len;
+                obj->sec_base[si] = merged_data_len;
                 if (sh->sh_size > 0) {
                     ensure_cap(&merged_data, &merged_data_cap, merged_data_len + sh->sh_size);
                     memcpy(merged_data + merged_data_len,
@@ -413,7 +420,7 @@ static void merge_sections(void) {
             case 4: { /* .bss */
                 while (merged_bss_len & (align - 1))
                     merged_bss_len++;
-                obj->bss_base = merged_bss_len;
+                obj->sec_base[si] = merged_bss_len;
                 merged_bss_len += sh->sh_size;
                 break;
             }
@@ -458,13 +465,8 @@ static uint64_t resolve_local_sym(Object *obj, int sym_idx) {
     if (type == STT_SECTION) {
         int shndx = sym->st_shndx;
         int cls = obj->sec_map[shndx];
-        switch (cls) {
-        case 1: return text_vaddr + obj->text_base;
-        case 2: return rodata_vaddr + obj->rodata_base;
-        case 3: return data_vaddr + obj->data_base;
-        case 4: return bss_vaddr + obj->bss_base;
-        default: return 0;
-        }
+        if (shndx >= MAX_SECTIONS) return 0;
+        return class_vaddr(cls) + obj->sec_base[shndx];
     }
 
     /* Undefined symbol → look up in global table */
@@ -478,21 +480,19 @@ static uint64_t resolve_local_sym(Object *obj, int sym_idx) {
     }
 
     /* Defined symbol: section-relative value + merged base + vaddr */
-    int cls = obj->sec_map[sym->st_shndx];
-    switch (cls) {
-    case 1: return text_vaddr + obj->text_base + sym->st_value;
-    case 2: return rodata_vaddr + obj->rodata_base + sym->st_value;
-    case 3: return data_vaddr + obj->data_base + sym->st_value;
-    case 4: return bss_vaddr + obj->bss_base + sym->st_value;
-    default:
-        /* Global symbols in non-mergeable sections — look up by name */
-        if (bind == STB_GLOBAL && sym->st_name != 0) {
-            int gi = gsym_find(name);
-            if (gi >= 0 && gsyms[gi].defined)
-                return gsyms[gi].value;
-        }
-        return sym->st_value;
+    if (sym->st_shndx < MAX_SECTIONS) {
+        int cls = obj->sec_map[sym->st_shndx];
+        if (cls != 0)
+            return class_vaddr(cls) + obj->sec_base[sym->st_shndx] + sym->st_value;
     }
+
+    /* Global symbols in non-mergeable sections — look up by name */
+    if (bind == STB_GLOBAL && sym->st_name != 0) {
+        int gi = gsym_find(name);
+        if (gi >= 0 && gsyms[gi].defined)
+            return gsyms[gi].value;
+    }
+    return sym->st_value;
 }
 
 /* ============================================================================
@@ -523,14 +523,11 @@ static void collect_symbols(void) {
             }
 
             /* Defined symbol */
-            int cls = obj->sec_map[sym->st_shndx];
+            int cls = sym->st_shndx < MAX_SECTIONS ? obj->sec_map[sym->st_shndx] : 0;
             uint64_t val = sym->st_value;
 
-            switch (cls) {
-            case 1: val += text_vaddr + obj->text_base; break;
-            case 2: val += rodata_vaddr + obj->rodata_base; break;
-            case 3: val += data_vaddr + obj->data_base; break;
-            case 4: val += bss_vaddr + obj->bss_base; break;
+            if (cls != 0 && sym->st_shndx < MAX_SECTIONS) {
+                val += class_vaddr(cls) + obj->sec_base[sym->st_shndx];
             }
 
             if (gi < 0) {
@@ -577,17 +574,17 @@ static void apply_relocations(void) {
             switch (target_cls) {
             case 1:
                 buf = merged_text;
-                buf_base_off = obj->text_base;
+                buf_base_off = obj->sec_base[target_sec];
                 buf_vaddr = text_vaddr;
                 break;
             case 2:
                 buf = merged_rodata;
-                buf_base_off = obj->rodata_base;
+                buf_base_off = obj->sec_base[target_sec];
                 buf_vaddr = rodata_vaddr;
                 break;
             case 3:
                 buf = merged_data;
-                buf_base_off = obj->data_base;
+                buf_base_off = obj->sec_base[target_sec];
                 buf_vaddr = data_vaddr;
                 break;
             default:
