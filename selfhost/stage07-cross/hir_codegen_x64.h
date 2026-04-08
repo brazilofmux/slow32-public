@@ -52,6 +52,12 @@ static int hx_rmw_flag[HIR_MAX_INST];     /* 1 if this store is RMW-folded */
 static int hx_rmw_disp[HIR_MAX_INST];     /* displacement from base */
 static int hx_rmw_imm[HIR_MAX_INST];      /* immediate to add */
 
+/* ALU+SIB: ADD/AND/OR/XOR with SIB memory source operand.
+ * src1 = register operand, src2 = SIB base.
+ * Index stored in hx_alu_sib_idx[] (declared in hir_regalloc_x64.h). */
+static int hx_alu_sib_flag[HIR_MAX_INST];
+static int hx_alu_sib_scale[HIR_MAX_INST];
+
 /* x86-64 SysV ABI argument registers */
 static int hx_arg_reg[6];
 static int hx_phi_insts[HIR_MAX_INST];
@@ -600,6 +606,53 @@ static void hx_emit_inst(int idx) {
 
     if (k == HI_ADD || k == HI_SUB || k == HI_MUL ||
         k == HI_AND || k == HI_OR  || k == HI_XOR) {
+
+        /* ALU+SIB: op dr, [base + index*scale]
+         * Safe only if dr doesn't alias the SIB base or index, since
+         * mov dr,s1r would clobber them.  If dr==s1r (coalesced), no
+         * mov is needed and it's always safe. Otherwise check for alias. */
+        if (hx_alu_sib_flag[idx]) {
+            int adr;
+            int as1r;
+            int abr;
+            int air;
+            int alu_sib_ok;
+            adr = hx_dst(idx);
+            as1r = hx_src(h_src1[idx], X64_RAX);
+            abr = hx_src(h_src2[idx], X64_RCX);
+            air = hx_src(hx_alu_sib_idx[idx], X64_RDX);
+            alu_sib_ok = 1;
+            if (adr != as1r && (adr == abr || adr == air)) {
+                alu_sib_ok = 0;
+            }
+            if (alu_sib_ok) {
+                hx_mov_if_needed(adr, as1r);
+                if (k == HI_ADD) x64_add_rm_sib(adr, abr, air, hx_alu_sib_scale[idx], 0);
+                else if (k == HI_AND) x64_and_rm_sib(adr, abr, air, hx_alu_sib_scale[idx], 0);
+                else if (k == HI_OR) x64_or_rm_sib(adr, abr, air, hx_alu_sib_scale[idx], 0);
+                else x64_xor_rm_sib(adr, abr, air, hx_alu_sib_scale[idx], 0);
+                hx_maybe_spill(idx);
+                return;
+            }
+            /* Alias conflict: fall through to regular ALU path.
+             * The NOPed LOAD won't emit; hx_src(s2) will materialize
+             * from the SIB base register, and the ALU path handles
+             * the rest. But src2 was rewritten to the SIB base, not
+             * the load — we need to materialize the load manually. */
+            /* Emit SIB load first (before any clobbering), then alu */
+            {
+            x64_mov_rm_sib(X64_RCX, abr, air, hx_alu_sib_scale[idx], 0);
+            hx_mov_if_needed(adr, as1r);
+            if (k == HI_ADD) x64_add_rr(adr, X64_RCX);
+            else if (k == HI_AND) x64_and_rr(adr, X64_RCX);
+            else if (k == HI_OR) x64_or_rr(adr, X64_RCX);
+            else x64_xor_rr(adr, X64_RCX);
+            hx_maybe_spill(idx);
+            return;
+            }
+        }
+
+        {
         int s1r;
         int s2r;
         int dr;
@@ -699,6 +752,7 @@ static void hx_emit_inst(int idx) {
         }
 
         hx_maybe_spill(idx);
+        }
         return;
     }
 
@@ -1514,6 +1568,54 @@ static void hx_gen_func(Node *fn) {
                     h_kind[addr] = HI_NOP;
                     h_kind[sll_i] = HI_NOP;
                 }
+            }
+        }
+        i = i + 1;
+    }
+
+    /* --- Fold ALU+SIB: ADD(reg, SIB_LOAD) → add reg, [base+idx*scale] ---
+     * If a SIB-folded LOAD has exactly 1 use and that use is a commutative
+     * ALU op (ADD/AND/OR/XOR), fuse the load into the ALU as a memory
+     * source operand.  Rewrite: ALU.src1=reg operand, ALU.src2=SIB base,
+     * index in hx_alu_sib_idx[].  NOP the LOAD. */
+    i = 0;
+    while (i < h_ninst) {
+        hx_alu_sib_flag[i] = 0;
+        hx_alu_sib_idx[i] = -1;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        /* Only 32-bit commutative ALU ops */
+        if ((k == HI_ADD || k == HI_AND || k == HI_OR || k == HI_XOR) &&
+            !hx_is_wide(h_ty[i])) {
+            int s1;
+            int s2;
+            int ld;
+            int reg_src;
+            s1 = h_src1[i];
+            s2 = h_src2[i];
+            ld = -1; reg_src = -1;
+            /* Check src2 is a SIB load with 1 use */
+            if (s2 >= 0 && h_kind[s2] == HI_LOAD && hx_sib_flag[s2] &&
+                bg_uses[s2] == 1 && h_blk[s2] == h_blk[i]) {
+                ld = s2; reg_src = s1;
+            }
+            /* Commutative: also check src1 */
+            if (ld < 0 && s1 >= 0 && h_kind[s1] == HI_LOAD && hx_sib_flag[s1] &&
+                bg_uses[s1] == 1 && h_blk[s1] == h_blk[i]) {
+                ld = s1; reg_src = s2;
+            }
+            if (ld >= 0 && reg_src >= 0) {
+                hx_alu_sib_flag[i] = 1;
+                hx_alu_sib_scale[i] = hx_sib_scale[ld];
+                hx_alu_sib_idx[i] = h_src2[ld];  /* LOAD.src2 = SIB index */
+                /* Rewrite ALU: src1=reg operand, src2=SIB base (LOAD.src1) */
+                h_src1[i] = reg_src;
+                h_src2[i] = h_src1[ld];
+                /* NOP the load */
+                h_kind[ld] = HI_NOP;
             }
         }
         i = i + 1;

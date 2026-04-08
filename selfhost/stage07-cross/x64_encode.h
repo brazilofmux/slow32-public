@@ -460,6 +460,19 @@ static void x64_alu_rm(int opcode, int dst, int base, int disp) {
 
 static void x64_add_rm(int dst, int base, int disp) { x64_alu_rm(0x01, dst, base, disp); }
 static void x64_sub_rm(int dst, int base, int disp) { x64_alu_rm(0x29, dst, base, disp); }
+
+// Generic: op r32, [base + index*scale + disp]
+static void x64_alu_rm_sib(int opcode, int dst, int base, int index, int scale, int disp) {
+    x64_rex_emit(x64_rex_sib(dst, base, index, 0));
+    x64_byte(opcode + 2);
+    x64_modrm_sib(dst, base, index, scale, disp);
+}
+
+static void x64_add_rm_sib(int dst, int base, int index, int scale, int disp) { x64_alu_rm_sib(0x01, dst, base, index, scale, disp); }
+static void x64_sub_rm_sib(int dst, int base, int index, int scale, int disp) { x64_alu_rm_sib(0x29, dst, base, index, scale, disp); }
+static void x64_and_rm_sib(int dst, int base, int index, int scale, int disp) { x64_alu_rm_sib(0x21, dst, base, index, scale, disp); }
+static void x64_or_rm_sib(int dst, int base, int index, int scale, int disp)  { x64_alu_rm_sib(0x09, dst, base, index, scale, disp); }
+static void x64_xor_rm_sib(int dst, int base, int index, int scale, int disp) { x64_alu_rm_sib(0x31, dst, base, index, scale, disp); }
 static void x64_and_rm(int dst, int base, int disp) { x64_alu_rm(0x21, dst, base, disp); }
 static void x64_or_rm(int dst, int base, int disp)  { x64_alu_rm(0x09, dst, base, disp); }
 static void x64_xor_rm(int dst, int base, int disp) { x64_alu_rm(0x31, dst, base, disp); }

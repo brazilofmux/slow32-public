@@ -15,9 +15,10 @@
 #ifndef HIR_REGALLOC_X64_H
 #define HIR_REGALLOC_X64_H
 
-/* SIB index array (defined in hir_codegen_x64.h, forward-declared here
- * so liveness analysis can track the store index operand). */
-static int hx_sib_index[HIR_MAX_INST];
+/* Side arrays (defined in hir_codegen_x64.h, forward-declared here
+ * so liveness analysis can track extra operands). */
+static int hx_sib_index[HIR_MAX_INST];     /* SIB index for stores */
+static int hx_alu_sib_idx[HIR_MAX_INST];   /* SIB index for ALU+SIB ops */
 
 /* --- Configuration --- */
 #define RA_NPHY 11  /* callee: RBX, R12-R15; caller: RSI, RDI, R8, R9, R10, R11 */
@@ -292,9 +293,12 @@ static void ra_compute_ends(void) {
             ra_extend(h_src2[inst], p);
         }
 
-        /* SIB index for stores (stored in side array, not in src2) */
+        /* SIB index for stores and ALU+SIB (stored in side arrays) */
         if (k == HI_STORE && hx_sib_index[inst] >= 0) {
             ra_extend(hx_sib_index[inst], p);
+        }
+        if (hx_alu_sib_idx[inst] >= 0) {
+            ra_extend(hx_alu_sib_idx[inst], p);
         }
 
         /* Call arguments */
@@ -348,6 +352,13 @@ static void ra_compute_ends(void) {
 
         if (k == HI_STORE && hx_sib_index[inst] >= 0) {
             src = hx_sib_index[inst];
+            if (ra_pos[src] >= 0 && h_blk[src] != h_blk[inst]) {
+                ra_backprop(src, h_blk[inst]);
+            }
+        }
+
+        if (hx_alu_sib_idx[inst] >= 0) {
+            src = hx_alu_sib_idx[inst];
             if (ra_pos[src] >= 0 && h_blk[src] != h_blk[inst]) {
                 ra_backprop(src, h_blk[inst]);
             }
