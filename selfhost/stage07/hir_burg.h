@@ -875,3 +875,84 @@ static void hir_burg(void) {
     /* bg_compute_foff already called above (before any NOP changes) */
     bg_select();  /* Phase 2 of select may NOP folded instructions */
 }
+
+/* ============================================================================
+ * Compare-and-branch fusion identification
+ *
+ * Must live here (after bg_uses is available, before hir_regalloc.h)
+ * so that regalloc can extend live ranges for fused comparison operands.
+ * ============================================================================ */
+
+static int hcg_brc_fuse[HIR_MAX_INST];   /* BRC idx -> fused comparison idx, -1 = none */
+static int hcg_cmp_fused[HIR_MAX_INST];  /* 1 if comparison is fused into a BRC */
+static int hcg_cmp_kind[HIR_MAX_INST];   /* saved comparison kind (before NOP) */
+
+static int hcg_is_cmp(int k) {
+    return (k >= HI_SEQ && k <= HI_SGEU);
+}
+
+static void hcg_identify_fusions(void) {
+    int i;
+    int k;
+    int s1;
+    int root;
+    int rk;
+    int lim;
+
+    i = 0;
+    while (i < h_ninst) {
+        hcg_brc_fuse[i] = -1;
+        hcg_cmp_fused[i] = 0;
+        i = i + 1;
+    }
+
+    /* bg_uses is only valid when BURG ran (not skipped) */
+    if (h_ninst > BG_MAX_INST) return;
+
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k != HI_BRC) { i = i + 1; continue; }
+
+        /* Chase COPY chain on s1 to find root value */
+        root = h_src1[i];
+        lim = 0;
+        while (root >= 0 && h_kind[root] == HI_COPY && lim < 64) {
+            root = h_src1[root];
+            lim = lim + 1;
+        }
+        if (root < 0) { i = i + 1; continue; }
+
+        rk = h_kind[root];
+        if (!hcg_is_cmp(rk)) { i = i + 1; continue; }
+        if (bg_uses[root] != 1) { i = i + 1; continue; }
+        if (h_blk[root] != h_blk[i]) { i = i + 1; continue; }
+
+        /* Reject if either comparison operand was BURG-folded (NOPed).
+         * Folded operands can't be materialized at BRC time. */
+        if (h_src1[root] >= 0 && h_kind[h_src1[root]] == HI_NOP) {
+            i = i + 1; continue;
+        }
+        if (h_src2[root] >= 0 && h_kind[h_src2[root]] == HI_NOP) {
+            i = i + 1; continue;
+        }
+
+        hcg_brc_fuse[i] = root;
+        hcg_cmp_fused[root] = 1;
+        hcg_cmp_kind[root] = rk;
+
+        /* Also mark intermediate COPYs for suppression */
+        {
+            int c;
+            c = h_src1[i];
+            lim = 0;
+            while (c >= 0 && c != root && h_kind[c] == HI_COPY && lim < 64) {
+                hcg_cmp_fused[c] = 1;
+                c = h_src1[c];
+                lim = lim + 1;
+            }
+        }
+
+        i = i + 1;
+    }
+}

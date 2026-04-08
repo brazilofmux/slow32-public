@@ -374,6 +374,10 @@ int main(int argc, char **argv) {
     fdputuint(2, hcg_stat_divrem_pow2);
     fdputs(" tailcall=", 2);
     fdputuint(2, hcg_stat_tailcall);
+    fdputs(" brc_fuse=", 2);
+    fdputuint(2, hcg_stat_brc_fuse);
+    fdputs(" br_fallthru=", 2);
+    fdputuint(2, hcg_stat_br_fallthru);
     fdputs("\n", 2);
     fdputs("hir_iconst_use: total=", 2);
     fdputuint(2, bg_stat_iconst_total);

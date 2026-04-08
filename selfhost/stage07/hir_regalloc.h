@@ -506,12 +506,65 @@ static void ra_assign_spills(void) {
 }
 
 /* =================================================================
+ * Step 4b: Extend live ranges for compare-and-branch fusion
+ *
+ * For each BRC that fuses a comparison, extend the comparison's
+ * operands to the BRC position so they remain in registers.
+ * Then NOP the comparison so regalloc doesn't allocate for it.
+ * ================================================================= */
+
+static void ra_extend_fused_cmp(void) {
+    int i;
+    int cmp;
+    int ca;
+    int cb;
+    int brc_pos;
+    int c;
+    int lim;
+
+    i = 0;
+    while (i < h_ninst) {
+        cmp = hcg_brc_fuse[i];
+        if (cmp < 0) { i = i + 1; continue; }
+
+        brc_pos = ra_pos[i];
+        if (brc_pos < 0) {
+            hcg_brc_fuse[i] = -1;
+            i = i + 1;
+            continue;
+        }
+
+        ca = h_src1[cmp];
+        cb = h_src2[cmp];
+
+        /* Extend comparison operand live ranges to BRC position */
+        ra_extend(ca, brc_pos);
+        ra_extend(cb, brc_pos);
+
+        /* NOP the comparison so regalloc skips it */
+        h_kind[cmp] = HI_NOP;
+
+        /* NOP any intermediate COPYs between BRC and the comparison */
+        c = h_src1[i];
+        lim = 0;
+        while (c >= 0 && c != cmp && lim < 64) {
+            if (hcg_cmp_fused[c]) h_kind[c] = HI_NOP;
+            c = h_src1[c];
+            lim = lim + 1;
+        }
+
+        i = i + 1;
+    }
+}
+
+/* =================================================================
  * Main entry point
  * ================================================================= */
 
 static void hir_regalloc(void) {
     ra_compute_pos();
     ra_compute_ends();
+    ra_extend_fused_cmp();
     ra_linear_scan();
     ra_assign_spills();
 }
