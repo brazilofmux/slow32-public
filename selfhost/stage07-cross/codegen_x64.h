@@ -771,8 +771,8 @@ static void gen_expr(Node *n) {
 
     if (n->kind == ND_POST_INC || n->kind == ND_POST_DEC) {
         gen_addr(n->lhs);
-        cg_push();                      /* save address */
-        x64_mov_rr(X64_RCX, X64_RAX);  /* RCX = addr for load */
+        cg_push();                      /* save address (64-bit on x86-64) */
+        x64_mov_rr64(X64_RCX, X64_RAX);  /* RCX = addr for load */
         cg_load(n->ty);                 /* RAX = old value */
         cg_push();                      /* save old value (return val) */
         /* Compute new value */
@@ -785,9 +785,10 @@ static void gen_expr(Node *n) {
             x64_add_ri(X64_RAX, elem_sz);
         else
             x64_sub_ri(X64_RAX, elem_sz);
-        x64_mov_rr(X64_RCX, X64_RAX);  /* RCX = new value */
+        if (cg_is_64bit(n->ty)) x64_mov_rr64(X64_RCX, X64_RAX);
+        else x64_mov_rr(X64_RCX, X64_RAX);  /* RCX = new value */
         /* Pop addr, store new value */
-        x64_mov_rm(X64_RAX, X64_RSP, 8); /* RAX = addr (2nd on stack) */
+        x64_mov_rm64(X64_RAX, X64_RSP, 8); /* RAX = addr (2nd on stack, 64-bit) */
         cg_store(n->ty);
         /* Result = old value */
         cg_pop();                       /* RAX = old value */
@@ -1196,7 +1197,7 @@ static void gen_stmt(Node *n) {
         cg_break_lbl[cg_loop_depth] = l3;
         cg_cont_lbl[cg_loop_depth] = l2;
         cg_loop_depth = cg_loop_depth + 1;
-        if (n->init) gen_stmt(n->init);
+        if (n->init) gen_expr(n->init);
         cg_ldef(l1);
         if (n->cond) {
             gen_expr(n->cond);
@@ -1315,6 +1316,11 @@ static void gen_stmt(Node *n) {
         }
         return;
     }
+
+    /* Fallback: treat unrecognized node as an expression statement.
+     * This handles for-loop init expressions (ND_ASSIGN, ND_CALL, etc.)
+     * that aren't wrapped in ND_EXPR_STMT. */
+    gen_expr(n);
 }
 
 /* ============================================================================
@@ -1633,14 +1639,11 @@ static void resolve_calls(void) {
             j = j + 1;
         }
         if (!found) {
-            /* Unresolved call — NOP out the call instruction (E8 xx xx xx xx → 5-byte NOP) */
-            if (off >= 0) {
-                x64_buf[off - 1] = 0x0F;  /* 5-byte NOP: 0F 1F 44 00 00 */
-                x64_buf[off + 0] = 0x1F;
-                x64_buf[off + 1] = 0x44;
-                x64_buf[off + 2] = 0x00;
-                x64_buf[off + 3] = 0x00;
-            }
+            /* Unresolved call — fatal error */
+            fdputs("cc-x64: error: unresolved call to '", 2);
+            fdputs(cg_cpatch_name[i], 2);
+            fdputs("'\n", 2);
+            exit(1);
         }
         i = i + 1;
     }
@@ -1751,6 +1754,15 @@ static void gen_program(Node *prog) {
     collect_globals(prog);
 
     /* Emit _start stub (only in executable mode, not object mode) */
+    if (!cg_object_mode) {
+    /* Emit a fallback __save_envp stub (just ret).
+     * If the source defines the real one, it overrides via name lookup. */
+    cg_func_name[cg_nfuncs] = "__save_envp";
+    cg_func_off[cg_nfuncs] = x64_off;
+    cg_nfuncs = cg_nfuncs + 1;
+    x64_ret();
+    }
+
     entry_off = x64_off;
 
     if (!cg_object_mode) {
