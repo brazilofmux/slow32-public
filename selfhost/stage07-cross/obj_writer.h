@@ -399,11 +399,12 @@ static int obj_write_file(char *filename) {
         i = i + 1;
     }
 
-    /* Defined globals → STT_OBJECT in .data */
+    /* Defined globals → STT_OBJECT in .data or .bss */
     i = 0;
     while (i < cg_nglobals) {
         obj_add_sym(cg_glob_name[i], cg_glob_data_off[i],
-                    OBJ_SEC_DATA, OBJ_STB_GLOBAL, OBJ_STT_OBJECT);
+                    cg_glob_in_bss[i] ? OBJ_SEC_BSS : OBJ_SEC_DATA,
+                    OBJ_STB_GLOBAL, OBJ_STT_OBJECT);
         i = i + 1;
     }
 
@@ -513,13 +514,15 @@ static int obj_write_file(char *filename) {
         off = cg_dreloc_off[i];
         if (off >= 0) {
             if (cg_dreloc_kind[i] == DRELOC_STRING) {
-                /* .rodata section symbol (index 2) + offset within rodata */
                 obj_emit_rela(off, OBJ_SEC_RODATA, OBJ_R_X86_64_64,
                               cg_str_rodata_off[cg_dreloc_idx[i]]);
             } else {
-                /* .data section symbol (index 3) + offset within data */
-                obj_emit_rela(off, OBJ_SEC_DATA, OBJ_R_X86_64_64,
-                              cg_glob_data_off[cg_dreloc_idx[i]]);
+                int gidx;
+                int gsec;
+                gidx = cg_dreloc_idx[i];
+                gsec = (gidx < cg_nglobals && cg_glob_in_bss[gidx]) ? OBJ_SEC_BSS : OBJ_SEC_DATA;
+                obj_emit_rela(off, gsec, OBJ_R_X86_64_64,
+                              cg_glob_data_off[gidx]);
             }
         }
         i = i + 1;
@@ -538,8 +541,12 @@ static int obj_write_file(char *filename) {
                 obj_emit_rela(doff, OBJ_SEC_RODATA, OBJ_R_X86_64_64,
                               cg_str_rodata_off[cg_dreloc_idx[i]]);
             } else {
-                obj_emit_rela(doff, OBJ_SEC_DATA, OBJ_R_X86_64_64,
-                              cg_glob_data_off[cg_dreloc_idx[i]]);
+                int gidx;
+                int gsec;
+                gidx = cg_dreloc_idx[i];
+                gsec = (gidx < cg_nglobals && cg_glob_in_bss[gidx]) ? OBJ_SEC_BSS : OBJ_SEC_DATA;
+                obj_emit_rela(doff, gsec, OBJ_R_X86_64_64,
+                              cg_glob_data_off[gidx]);
             }
         }
         i = i + 1;
