@@ -60,6 +60,36 @@ long long sum_longs(int count, ...) {
     return total;
 }
 
+int sum_promoted_chars(int count, ...) {
+    va_list ap;
+    int total;
+    int i;
+    va_start(ap, count);
+    total = 0;
+    i = 0;
+    while (i < count) {
+        total = total + (char)va_arg(ap, int);
+        i = i + 1;
+    }
+    va_end(ap);
+    return total;
+}
+
+int sum_promoted_shorts(int count, ...) {
+    va_list ap;
+    int total;
+    int i;
+    va_start(ap, count);
+    total = 0;
+    i = 0;
+    while (i < count) {
+        total = total + (short)va_arg(ap, int);
+        i = i + 1;
+    }
+    va_end(ap);
+    return total;
+}
+
 int sum_many_ints(int count, ...) {
     va_list ap;
     int total;
@@ -122,6 +152,11 @@ int main(int argc, char **argv) {
     /* Long long varargs */
     ll = sum_longs(3, (long long)100, (long long)200, (long long)300);
     if (ll != 600) fails = fails + 32;
+
+    /* Default-promotion varargs: char and short travel as int */
+    if (sum_promoted_chars(3, (char)1, (char)2, (char)3) != 6) fails = fails + 1024;
+    if (sum_promoted_shorts(3, (short)10, (short)20, (short)30) != 60)
+        fails = fails + 2048;
 
     /* Mixed register/stack varargs: 5 unnamed register args + 2 stack args */
     if (sum_many_ints(7, 1, 2, 3, 4, 5, 6, 7) != 28) fails = fails + 64;

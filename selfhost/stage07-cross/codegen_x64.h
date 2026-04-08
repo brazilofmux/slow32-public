@@ -1092,7 +1092,8 @@ static void gen_expr(Node *n) {
         x64_or_rr64(X64_RAX, X64_RCX);
         patch_after_load = x64_jmp_placeholder();
         x64_patch_rel32(patch_use_stack, x64_pos());
-        /* Stack path: low bits were zero, so RAX already points at the slot. */
+        /* Stack path: low bits were zero, so RAX already points at the slot.
+         * Must match the register-path load logic above. */
         if (cg_is_64bit(va_ty)) {
             x64_mov_rm64(X64_RDX, X64_RAX, 0);
         } else if ((va_ty & TY_BASE_MASK) == TY_CHAR) {
@@ -1380,7 +1381,10 @@ static void gen_func(Node *fn) {
     if (cg_is_varargs) fs = fs + 48;
     fs = (fs + 15) & ~15;
     cg_frame_size = fs;
-    /* The varargs save area is at the bottom of the frame */
+    /* The varargs save area is at the bottom of the frame.
+     * IMPORTANT: this must stay 8-byte aligned because va_start/va_arg use
+     * the low 3 bits of the saved pointer as a tagged remaining-slot count.
+     * Today fs is rounded to 16 bytes, so cg_va_save_off is safely aligned. */
     if (cg_is_varargs) cg_va_save_off = -(fs);
     else cg_va_save_off = 0;
 
