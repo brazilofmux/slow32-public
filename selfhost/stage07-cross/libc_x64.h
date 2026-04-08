@@ -323,9 +323,11 @@ FILE *fopen(char *path, char *mode) {
 
     flags = O_RDONLY;
     if (mode[0] == 'w') {
-        flags = O_WRONLY | O_CREAT | O_TRUNC;
+        if (mode[1] == '+') flags = O_RDWR | O_CREAT | O_TRUNC;
+        else flags = O_WRONLY | O_CREAT | O_TRUNC;
     } else if (mode[0] == 'a') {
-        flags = O_WRONLY | O_CREAT | O_APPEND;
+        if (mode[1] == '+') flags = O_RDWR | O_CREAT | O_APPEND;
+        else flags = O_WRONLY | O_CREAT | O_APPEND;
     } else if (mode[0] == 'r') {
         if (mode[1] == '+') flags = O_RDWR;
         else flags = O_RDONLY;
@@ -421,6 +423,7 @@ int fread(char *ptr, int size, int count, FILE *f) {
     int total;
     int got;
     int ch;
+    if (size <= 0 || count <= 0) return 0;
     total = size * count;
     got = 0;
     while (got < total) {

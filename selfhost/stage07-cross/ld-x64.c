@@ -873,10 +873,17 @@ static void load_archive_member(Archive *ar, uint32_t offset) {
 
     /* Parse ELF (same as load_object but data is already loaded) */
     obj->ehdr = (Elf64_Ehdr *)obj->data;
-    if (obj->ehdr->e_ident[0] != 0x7F || obj->ehdr->e_type != ET_REL) {
+    if (mem_size < sizeof(Elf64_Ehdr) ||
+        obj->ehdr->e_ident[0] != 0x7F ||
+        obj->ehdr->e_ident[1] != 'E' ||
+        obj->ehdr->e_ident[2] != 'L' ||
+        obj->ehdr->e_ident[3] != 'F') {
         free(obj->data);
         return; /* skip non-ELF members */
     }
+    if (obj->ehdr->e_ident[4] != 2) die("archive member is not ELF64");
+    if (obj->ehdr->e_type != ET_REL) die("archive member is not relocatable");
+    if (obj->ehdr->e_machine != EM_X86_64) die("archive member is not x86-64");
 
     obj->shdrs = (Elf64_Shdr *)(obj->data + obj->ehdr->e_shoff);
     obj->nshdr = obj->ehdr->e_shnum;
