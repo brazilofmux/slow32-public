@@ -543,6 +543,27 @@ static void hx_emit_inst(int idx) {
             else if (k == HI_AND) x64_and_ri(dr, imm_val);
             else if (k == HI_OR)  x64_or_ri(dr, imm_val);
             else if (k == HI_XOR) x64_xor_ri(dr, imm_val);
+        }
+        /* Memory-operand form: op dr, [rbp+disp]
+         * When src2 is a single-use LOAD(MEM) in the same block,
+         * fold the load into the ALU instruction.  Not for MUL (no
+         * memory-operand imul form we use) or wide (pointer ALU). */
+        else if (!wide && k != HI_MUL &&
+                 s2_inst >= 0 && h_kind[s2_inst] == HI_LOAD &&
+                 bg_uses[s2_inst] == 1 &&
+                 h_blk[s2_inst] == h_blk[idx] &&
+                 bg_plnt[(bg_sel[s2_inst] >= 0) ? bg_sel[s2_inst] : 0] == BG_MEM &&
+                 bg_sel[s2_inst] >= 0) {
+            int foff;
+            foff = bg_foff[h_src1[s2_inst]];
+            dr = hx_dst(idx);
+            s1r = hx_src(h_src1[idx], X64_RAX);
+            hx_mov_if_needed(dr, s1r);
+            if (k == HI_ADD) x64_add_rm(dr, X64_RBP, foff);
+            else if (k == HI_SUB) x64_sub_rm(dr, X64_RBP, foff);
+            else if (k == HI_AND) x64_and_rm(dr, X64_RBP, foff);
+            else if (k == HI_OR)  x64_or_rm(dr, X64_RBP, foff);
+            else if (k == HI_XOR) x64_xor_rm(dr, X64_RBP, foff);
         } else {
             /* Register form */
             dr = hx_dst(idx);

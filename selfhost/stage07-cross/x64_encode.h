@@ -372,6 +372,24 @@ static void x64_cmp_rr64(int a, int b)     { x64_alu_rr64(0x39, a, b); }
 static void x64_test_rr64(int a, int b)    { x64_alu_rr64(0x85, a, b); }
 
 // ============================================================================
+// ALU — reg, [base + disp] forms (memory source operand)
+// ============================================================================
+
+// Generic: op r32, [base + disp]  (opcode+2 /r for reg-src direction)
+static void x64_alu_rm(int opcode, int dst, int base, int disp) {
+    x64_rex_emit(x64_rex_rr(dst, base, 0));
+    x64_byte(opcode + 2);  /* direction bit: reg is destination */
+    x64_modrm_mem(dst, base, disp);
+}
+
+static void x64_add_rm(int dst, int base, int disp) { x64_alu_rm(0x01, dst, base, disp); }
+static void x64_sub_rm(int dst, int base, int disp) { x64_alu_rm(0x29, dst, base, disp); }
+static void x64_and_rm(int dst, int base, int disp) { x64_alu_rm(0x21, dst, base, disp); }
+static void x64_or_rm(int dst, int base, int disp)  { x64_alu_rm(0x09, dst, base, disp); }
+static void x64_xor_rm(int dst, int base, int disp) { x64_alu_rm(0x31, dst, base, disp); }
+static void x64_cmp_rm(int dst, int base, int disp) { x64_alu_rm(0x39, dst, base, disp); }
+
+// ============================================================================
 // ALU — reg, imm forms
 // ============================================================================
 
