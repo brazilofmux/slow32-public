@@ -1586,15 +1586,55 @@ static void hcg_inst(int idx) {
                 ra = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 1);
                 rb = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 2);
             } else if (ck == HI_SGT) {
-                /* a > b  => inverted: b >= a */
-                brop = "bge";
-                ra = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 2);
-                rb = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 1);
+                /* a > b  => compute (b < a), skip if false */
+                ra = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 1);
+                rb = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 2);
+                skip = cg_label();
+                cg_rrr("slt", 1, ra, rb);
+                cg_s("    beq r1, r0, ");
+                cg_lref(skip);
+                cg_c(10);
+                hcg_phi_copies(h_blk[idx], s2);
+                cg_s("    jal r0, ");
+                cg_lref(hcg_blk_lbl[s2]);
+                cg_c(10);
+                cg_ldef(skip);
+                hcg_phi_copies(h_blk[idx], h_val[idx]);
+                fall_blk = h_val[idx];
+                if (fall_blk != hcg_cur_blk + 1 || fall_blk >= bb_nblk) {
+                    cg_s("    jal r0, ");
+                    cg_lref(hcg_blk_lbl[fall_blk]);
+                    cg_c(10);
+                } else {
+                    hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
+                }
+                hcg_stat_brc_fuse = hcg_stat_brc_fuse + 1;
+                return;
             } else if (ck == HI_SLE) {
-                /* a <= b => inverted: b < a */
-                brop = "blt";
-                ra = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 2);
-                rb = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 1);
+                /* a <= b => compute (b < a), skip if true */
+                ra = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 1);
+                rb = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 2);
+                skip = cg_label();
+                cg_rrr("slt", 1, ra, rb);
+                cg_s("    bne r1, r0, ");
+                cg_lref(skip);
+                cg_c(10);
+                hcg_phi_copies(h_blk[idx], s2);
+                cg_s("    jal r0, ");
+                cg_lref(hcg_blk_lbl[s2]);
+                cg_c(10);
+                cg_ldef(skip);
+                hcg_phi_copies(h_blk[idx], h_val[idx]);
+                fall_blk = h_val[idx];
+                if (fall_blk != hcg_cur_blk + 1 || fall_blk >= bb_nblk) {
+                    cg_s("    jal r0, ");
+                    cg_lref(hcg_blk_lbl[fall_blk]);
+                    cg_c(10);
+                } else {
+                    hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
+                }
+                hcg_stat_brc_fuse = hcg_stat_brc_fuse + 1;
+                return;
             } else if (ck == HI_SLTU) {
                 brop = "bgeu";
                 ra = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 1);
@@ -1604,15 +1644,55 @@ static void hcg_inst(int idx) {
                 ra = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 1);
                 rb = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 2);
             } else if (ck == HI_SGTU) {
-                /* a >u b => inverted: b >=u a */
-                brop = "bgeu";
-                ra = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 2);
-                rb = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 1);
+                /* a >u b => compute (b <u a), skip if false */
+                ra = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 1);
+                rb = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 2);
+                skip = cg_label();
+                cg_rrr("sltu", 1, ra, rb);
+                cg_s("    beq r1, r0, ");
+                cg_lref(skip);
+                cg_c(10);
+                hcg_phi_copies(h_blk[idx], s2);
+                cg_s("    jal r0, ");
+                cg_lref(hcg_blk_lbl[s2]);
+                cg_c(10);
+                cg_ldef(skip);
+                hcg_phi_copies(h_blk[idx], h_val[idx]);
+                fall_blk = h_val[idx];
+                if (fall_blk != hcg_cur_blk + 1 || fall_blk >= bb_nblk) {
+                    cg_s("    jal r0, ");
+                    cg_lref(hcg_blk_lbl[fall_blk]);
+                    cg_c(10);
+                } else {
+                    hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
+                }
+                hcg_stat_brc_fuse = hcg_stat_brc_fuse + 1;
+                return;
             } else if (ck == HI_SLEU) {
-                /* a <=u b => inverted: b <u a */
-                brop = "bltu";
-                ra = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 2);
-                rb = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 1);
+                /* a <=u b => compute (b <u a), skip if true */
+                ra = hcg_const_is_zero(cb) ? 0 : hcg_src(cb, 1);
+                rb = hcg_const_is_zero(ca) ? 0 : hcg_src(ca, 2);
+                skip = cg_label();
+                cg_rrr("sltu", 1, ra, rb);
+                cg_s("    bne r1, r0, ");
+                cg_lref(skip);
+                cg_c(10);
+                hcg_phi_copies(h_blk[idx], s2);
+                cg_s("    jal r0, ");
+                cg_lref(hcg_blk_lbl[s2]);
+                cg_c(10);
+                cg_ldef(skip);
+                hcg_phi_copies(h_blk[idx], h_val[idx]);
+                fall_blk = h_val[idx];
+                if (fall_blk != hcg_cur_blk + 1 || fall_blk >= bb_nblk) {
+                    cg_s("    jal r0, ");
+                    cg_lref(hcg_blk_lbl[fall_blk]);
+                    cg_c(10);
+                } else {
+                    hcg_stat_br_fallthru = hcg_stat_br_fallthru + 1;
+                }
+                hcg_stat_brc_fuse = hcg_stat_brc_fuse + 1;
+                return;
             }
 
             skip = cg_label();
