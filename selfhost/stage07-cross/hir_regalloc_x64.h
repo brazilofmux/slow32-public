@@ -438,19 +438,21 @@ static int ra_pick_free(int crosses_call) {
             i = i - 1;
         }
     } else {
-        /* Prefer caller-saved.  Scan for caller-saved first. */
-        i = ra_nfree - 1;
-        while (i >= 0) {
+        /* Prefer caller-saved.  Scan from bottom (oldest freed) to reduce
+         * false dependencies from register reuse — gives the CPU's OoO
+         * engine more time between a register's last write and next use. */
+        i = 0;
+        while (i < ra_nfree) {
             reg = ra_fstk[i];
             slot = ra_x64_slot[reg];
             if (slot >= 0 && !ra_x64_is_callee[slot]) {
                 best = i;
                 break;
             }
-            i = i - 1;
+            i = i + 1;
         }
-        /* Fallback: any register */
-        if (best < 0 && ra_nfree > 0) best = ra_nfree - 1;
+        /* Fallback: any register (oldest first) */
+        if (best < 0 && ra_nfree > 0) best = 0;
     }
 
     if (best < 0) return -1;
