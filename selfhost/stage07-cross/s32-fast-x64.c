@@ -975,51 +975,56 @@ static void h_lui(struct emu *e, struct dinst *di) { e->r[di->rd] = di->imm; e->
 
 /* Load/Store */
 static void h_ldb(struct emu *e, struct dinst *di) {
-    unsigned int a; a = e->r[di->rs1] + di->imm;
-    if (!mem_check(e, a, 1, "Load")) return;
+    unsigned int a;
+    a = e->r[di->rs1] + di->imm;
+    if (a >= e->mem_total) { mem_check(e, a, 1, "Load"); return; }
     e->r[di->rd] = e->mem[a];
     if (e->r[di->rd] & 0x80) e->r[di->rd] = e->r[di->rd] | 0xFFFFFF00;
     e->pc = e->pc + 4;
 }
 static void h_ldh(struct emu *e, struct dinst *di) {
-    unsigned int a; unsigned short v;
+    unsigned int a;
     a = e->r[di->rs1] + di->imm;
-    if (!mem_read16(e, a, &v, "Load")) return;
-    e->r[di->rd] = v;
-    if (v & 0x8000) e->r[di->rd] = e->r[di->rd] | 0xFFFF0000;
+    if (a + 2 > e->mem_total) { mem_check(e, a, 2, "Load"); return; }
+    e->r[di->rd] = rd16(e->mem, a);
+    if (e->r[di->rd] & 0x8000) e->r[di->rd] = e->r[di->rd] | 0xFFFF0000;
     e->pc = e->pc + 4;
 }
 static void h_ldw(struct emu *e, struct dinst *di) {
-    unsigned int a; unsigned int v;
+    unsigned int a;
     a = e->r[di->rs1] + di->imm;
-    if (!mem_read32(e, a, &v, "Load")) return;
-    e->r[di->rd] = v; e->pc = e->pc + 4;
+    if (a + 4 > e->mem_total) { mem_check(e, a, 4, "Load"); return; }
+    e->r[di->rd] = rd32(e->mem, a); e->pc = e->pc + 4;
 }
 static void h_ldbu(struct emu *e, struct dinst *di) {
-    unsigned int a; a = e->r[di->rs1] + di->imm;
-    if (!mem_check(e, a, 1, "Load")) return;
+    unsigned int a;
+    a = e->r[di->rs1] + di->imm;
+    if (a >= e->mem_total) { mem_check(e, a, 1, "Load"); return; }
     e->r[di->rd] = e->mem[a]; e->pc = e->pc + 4;
 }
 static void h_ldhu(struct emu *e, struct dinst *di) {
-    unsigned int a; unsigned short v;
+    unsigned int a;
     a = e->r[di->rs1] + di->imm;
-    if (!mem_read16(e, a, &v, "Load")) return;
-    e->r[di->rd] = v; e->pc = e->pc + 4;
+    if (a + 2 > e->mem_total) { mem_check(e, a, 2, "Load"); return; }
+    e->r[di->rd] = rd16(e->mem, a); e->pc = e->pc + 4;
 }
 static void h_stb(struct emu *e, struct dinst *di) {
-    unsigned int a; a = e->r[di->rs1] + di->imm;
-    if (!mem_check(e, a, 1, "Store")) return;
+    unsigned int a;
+    a = e->r[di->rs1] + di->imm;
+    if (a >= e->mem_total) { mem_check(e, a, 1, "Store"); return; }
     e->mem[a] = (unsigned char)e->r[di->rs2]; e->pc = e->pc + 4;
 }
 static void h_sth(struct emu *e, struct dinst *di) {
-    unsigned int a; a = e->r[di->rs1] + di->imm;
-    if (!mem_check(e, a, 2, "Store")) return;
+    unsigned int a;
+    a = e->r[di->rs1] + di->imm;
+    if (a + 2 > e->mem_total) { mem_check(e, a, 2, "Store"); return; }
     wr16(e->mem, a, (unsigned short)e->r[di->rs2]); e->pc = e->pc + 4;
 }
 static void h_stw(struct emu *e, struct dinst *di) {
-    unsigned int a; a = e->r[di->rs1] + di->imm;
-    if (!mem_write32(e, a, e->r[di->rs2], "Store")) return;
-    e->pc = e->pc + 4;
+    unsigned int a;
+    a = e->r[di->rs1] + di->imm;
+    if (a + 4 > e->mem_total) { mem_check(e, a, 4, "Store"); return; }
+    wr32(e->mem, a, e->r[di->rs2]); e->pc = e->pc + 4;
 }
 
 /* Assert */
