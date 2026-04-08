@@ -46,7 +46,7 @@ $(OUT)/ld-x64: ld-x64.c x64_encode.h elf_writer.h $(OUT)/crt0.o $(OUT)/libc_x64.
 # --- Emulator (s32fast-hir) ---
 
 $(OUT)/s32fast-hir.o: s32-fast-x64.c $(OUT)/cc-x64
-	$(OUT)/cc-x64 -c $< -o $@
+	$(OUT)/cc-x64 --hir -c $< -o $@
 
 $(OUT)/s32fast-hir: $(OUT)/s32fast-hir.o $(OUT)/crt0.o $(OUT)/libc_x64.a
 	$(CC) $(LDFLAGS) -o $@ $(OUT)/crt0.o $< $(OUT)/libc_x64.a
@@ -73,7 +73,7 @@ TEST_SRCS = $(filter-out $(TEST_SKIP),$(wildcard tests/test_*.c))
 TEST_BINS = $(patsubst tests/%.c,$(OUT)/%,$(TEST_SRCS))
 
 $(OUT)/test_%: tests/test_%.c $(OUT)/cc-x64 $(OUT)/crt0.o $(OUT)/libc_x64.a
-	$(OUT)/cc-x64 -I . -c $< -o $(OUT)/$*.o
+	$(OUT)/cc-x64 --hir -I . -c $< -o $(OUT)/$*.o
 	$(CC) $(LDFLAGS) -o $@ $(OUT)/crt0.o $(OUT)/$*.o $(OUT)/libc_x64.a
 
 test: $(TEST_BINS)

@@ -1527,8 +1527,6 @@ static void hx_gen_func(Node *fn) {
             int burg_lnt;
             int bp;
             addr = h_src1[i];
-            bp = bg_sel[i];
-            burg_lnt = (bp >= 0) ? bg_plnt[bp] : -1;
             if (burg_lnt != BG_MEM && burg_lnt != BG_SADDR &&
                 addr >= 0 && h_kind[addr] == HI_ADD &&
                 hx_is_wide(h_ty[addr]) &&
