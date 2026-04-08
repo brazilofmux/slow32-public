@@ -16,7 +16,7 @@
 /* Labels are tracked as code buffer offsets. Forward references are
  * recorded in a patch list and resolved when the label is defined. */
 
-#define CG_MAX_LABELS  4096
+#define CG_MAX_LABELS  16384
 #define CG_MAX_PATCHES 16384
 
 static int cg_lbl_off[CG_MAX_LABELS]; /* -1 = not yet defined */
@@ -64,7 +64,7 @@ static int   cg_cpatch_off[CG_MAX_CALL_PATCHES]; /* offset of rel32 */
 static int   cg_ncpatches;
 
 /* --- Data relocations (code references to rodata/data addresses) --- */
-#define CG_MAX_DATA_RELOCS 4096
+#define CG_MAX_DATA_RELOCS 16384
 
 #define DRELOC_STRING 0
 #define DRELOC_GLOBAL 1

@@ -1818,9 +1818,16 @@ static void hl_func(Node *fn) {
                 phys_idx = phys_idx + 2;
 #endif
             } else {
+#ifdef S12CC_X64_HOST
+                /* x64: preserve pointer types (8 bytes) vs int (4 bytes) */
+                param_inst = hi_emit(HI_PARAM, pp->ty, -1, -1, phys_idx, NULL);
+                param_alloca = hl_get_alloca(pp->offset, pp->ty);
+                hi_emit(HI_STORE, pp->ty, param_alloca, param_inst, 0, NULL);
+#else
                 param_inst = hi_emit(HI_PARAM, TY_INT, -1, -1, phys_idx, NULL);
                 param_alloca = hl_get_alloca(pp->offset, TY_INT);
                 hi_emit(HI_STORE, TY_INT, param_alloca, param_inst, 0, NULL);
+#endif
                 phys_idx = phys_idx + 1;
             }
             pp = pp->next;
