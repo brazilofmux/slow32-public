@@ -75,13 +75,65 @@ static int ra_iend[HIR_MAX_INST];   /* last use position (end of live interval) 
 static int ra_order[HIR_MAX_INST];  /* instruction indices in position order */
 static int ra_norder;
 
-/* --- Active set (intervals currently occupying registers) --- */
-static int ra_act[RA_NPHY];         /* inst index for each active slot */
-static int ra_nact;
+/* --- Graph-coloring register allocator (IRC) --- */
 
-/* --- Free register stack --- */
-static int ra_fstk[RA_NPHY];        /* stack of free x64 register numbers */
-static int ra_nfree;
+/* Limits */
+#define GC_MAX_NODE  4096
+#define GC_MAX_EDGE  131072
+#define GC_MAX_MOVE  8192
+
+/* Node data */
+static int gc_nnode;                    /* number of nodes */
+static int gc_inst[GC_MAX_NODE];        /* node → HIR inst index */
+static int gc_node[HIR_MAX_INST];       /* HIR inst → node index (-1 = none) */
+
+/* Adjacency lists (CSR-like linked list in flat edge pool) */
+static int gc_adj_head[GC_MAX_NODE];    /* first edge index for node, -1 = none */
+static int gc_adj_peer[GC_MAX_EDGE];    /* peer node of this edge */
+static int gc_adj_next[GC_MAX_EDGE];    /* next edge in node's adj list */
+static int gc_nedge;
+
+/* Node degree (current, decremented during simplify) */
+static int gc_degree[GC_MAX_NODE];
+
+/* Move list */
+static int gc_mv_a[GC_MAX_MOVE];       /* move: node a */
+static int gc_mv_b[GC_MAX_MOVE];       /* move: node b */
+static int gc_nmove;
+
+/* Move worklists: status per move */
+#define GC_MV_WORKLIST  0
+#define GC_MV_ACTIVE    1
+#define GC_MV_COALESCED 2
+#define GC_MV_FROZEN    3
+#define GC_MV_CONSTRAINED 4
+static int gc_mv_status[GC_MAX_MOVE];
+
+/* Per-node move list (linked list of move indices) */
+#define GC_MAX_NMLIST 32768
+static int gc_nmlist_mv[GC_MAX_NMLIST]; /* move index */
+static int gc_nmlist_next[GC_MAX_NMLIST]; /* next in list */
+static int gc_nmlist_head[GC_MAX_NODE]; /* first entry, -1 = none */
+static int gc_nnmlist;
+
+/* Node worklists */
+#define GC_WL_SIMPLIFY  0
+#define GC_WL_FREEZE    1
+#define GC_WL_SPILL     2
+#define GC_WL_COALESCED 3
+#define GC_WL_SELECT    4  /* on select stack */
+#define GC_WL_COLORED   5
+static int gc_wl[GC_MAX_NODE];         /* worklist membership */
+
+/* Select stack */
+static int gc_sel_stk[GC_MAX_NODE];
+static int gc_nsel;
+
+/* Coalescing: alias[n] = merged-into node, or n itself */
+static int gc_alias[GC_MAX_NODE];
+
+/* Coloring result: color per node (slot index 0..RA_NPHY-1), -1 = spilled */
+static int gc_color[GC_MAX_NODE];
 
 /* --- Callee-save tracking --- */
 static int ra_used[RA_NPHY];        /* 1 if slot was assigned */
@@ -393,114 +445,11 @@ static void ra_compute_ends(void) {
 }
 
 /* =================================================================
- * Step 3: Linear scan allocation
- * ================================================================= */
-
-static void ra_expire(int p) {
-    int i;
-    int j;
-    int inst;
-    int reg;
-    int slot;
-
-    i = 0;
-    while (i < ra_nact) {
-        inst = ra_act[i];
-        if (ra_iend[inst] < p) {
-            reg = ra_reg[inst];
-            ra_fstk[ra_nfree] = reg;
-            ra_nfree = ra_nfree + 1;
-            j = i;
-            while (j < ra_nact - 1) {
-                ra_act[j] = ra_act[j + 1];
-                j = j + 1;
-            }
-            ra_nact = ra_nact - 1;
-        } else {
-            i = i + 1;
-        }
-    }
-}
-
-/* Pick a free register from the pool.  Returns the register number,
- * or -1 if none available.
+ * Step 3: Graph-coloring register allocation (IRC)
  *
- * For call-crossing values: only return callee-saved registers.
- * For non-call-crossing: prefer caller-saved (preserve callee-saved
- * for long-lived values). */
-static int ra_pick_free(int crosses_call) {
-    int i;
-    int best;
-    int reg;
-    int slot;
-
-    best = -1;
-
-    if (crosses_call) {
-        /* Must use callee-saved.  Scan free stack for one. */
-        i = ra_nfree - 1;
-        while (i >= 0) {
-            reg = ra_fstk[i];
-            slot = ra_x64_slot[reg];
-            if (slot >= 0 && ra_x64_is_callee[slot]) {
-                best = i;
-                break;
-            }
-            i = i - 1;
-        }
-    } else {
-        /* Prefer caller-saved.  Scan from bottom (oldest freed) to reduce
-         * false dependencies from register reuse — gives the CPU's OoO
-         * engine more time between a register's last write and next use. */
-        i = 0;
-        while (i < ra_nfree) {
-            reg = ra_fstk[i];
-            slot = ra_x64_slot[reg];
-            if (slot >= 0 && !ra_x64_is_callee[slot]) {
-                best = i;
-                break;
-            }
-            i = i + 1;
-        }
-        /* Fallback: any register (oldest first) */
-        if (best < 0 && ra_nfree > 0) best = 0;
-    }
-
-    if (best < 0) return -1;
-
-    reg = ra_fstk[best];
-    /* Remove from free stack by shifting */
-    i = best;
-    while (i < ra_nfree - 1) {
-        ra_fstk[i] = ra_fstk[i + 1];
-        i = i + 1;
-    }
-    ra_nfree = ra_nfree - 1;
-    return reg;
-}
-
-/* Try to pick a specific register from the free pool.
- * Returns the register number if found and removed, -1 otherwise. */
-static int ra_pick_specific(int want) {
-    int i;
-    int j;
-
-    i = 0;
-    while (i < ra_nfree) {
-        if (ra_fstk[i] == want) {
-            /* Remove from free stack by shifting */
-            j = i;
-            while (j < ra_nfree - 1) {
-                ra_fstk[j] = ra_fstk[j + 1];
-                j = j + 1;
-            }
-            ra_nfree = ra_nfree - 1;
-            return want;
-        }
-        i = i + 1;
-    }
-    return -1;
-}
+ * Iterated Register Coalescing (George-Appel, 1996).
+ * Replaces linear scan with global interference graph coloring.
+ * ================================================================= */
 
 /* SysV ABI arg registers (mirrors hx_arg_reg[] from codegen) */
 static int ra_arg_regs[6];
@@ -514,29 +463,759 @@ static void ra_init_arg_regs(void) {
     ra_arg_regs[5] = X64_R9;
 }
 
-static void ra_linear_scan(void) {
+/* --- Adjacency helpers --- */
+
+static int gc_has_edge(int u, int v) {
+    int e;
+    e = gc_adj_head[u];
+    while (e >= 0) {
+        if (gc_adj_peer[e] == v) return 1;
+        e = gc_adj_next[e];
+    }
+    return 0;
+}
+
+static void gc_add_edge(int u, int v) {
+    if (u == v) return;
+    if (gc_has_edge(u, v)) return;
+    if (gc_nedge + 2 > GC_MAX_EDGE) return;
+
+    /* u → v */
+    gc_adj_peer[gc_nedge] = v;
+    gc_adj_next[gc_nedge] = gc_adj_head[u];
+    gc_adj_head[u] = gc_nedge;
+    gc_nedge = gc_nedge + 1;
+
+    /* v → u */
+    gc_adj_peer[gc_nedge] = u;
+    gc_adj_next[gc_nedge] = gc_adj_head[v];
+    gc_adj_head[v] = gc_nedge;
+    gc_nedge = gc_nedge + 1;
+
+    gc_degree[u] = gc_degree[u] + 1;
+    gc_degree[v] = gc_degree[v] + 1;
+}
+
+/* --- Move-list helpers --- */
+
+static void gc_add_node_move(int node, int mv) {
+    int idx;
+    if (gc_nnmlist >= GC_MAX_NMLIST) return;
+    idx = gc_nnmlist;
+    gc_nnmlist = gc_nnmlist + 1;
+    gc_nmlist_mv[idx] = mv;
+    gc_nmlist_next[idx] = gc_nmlist_head[node];
+    gc_nmlist_head[node] = idx;
+}
+
+/* Does node have any active/worklist moves? */
+static int gc_move_related(int n) {
+    int e;
+    int mv;
+    int st;
+    e = gc_nmlist_head[n];
+    while (e >= 0) {
+        mv = gc_nmlist_mv[e];
+        st = gc_mv_status[mv];
+        if (st == GC_MV_WORKLIST || st == GC_MV_ACTIVE) return 1;
+        e = gc_nmlist_next[e];
+    }
+    return 0;
+}
+
+/* Get alias (chase coalesce chain) */
+static int gc_get_alias(int n) {
+    int lim;
+    lim = 0;
+    while (gc_alias[n] != n && lim < GC_MAX_NODE) {
+        n = gc_alias[n];
+        lim = lim + 1;
+    }
+    return n;
+}
+
+/* --- Build interference graph --- */
+
+static void gc_build(void) {
+    int i;
+    int j;
+    int inst;
+    int k;
+    int n;
+    int ai;
+    int aj;
+    int ni;
+    int nj;
+
+    /* Initialize */
+    gc_nnode = 0;
+    gc_nedge = 0;
+    gc_nmove = 0;
+    gc_nnmlist = 0;
+    gc_nsel = 0;
+
+    i = 0;
+    while (i < h_ninst) {
+        gc_node[i] = -1;
+        i = i + 1;
+    }
+
+    /* Create nodes for value-producing, non-remat instructions */
+    i = 0;
+    while (i < ra_norder) {
+        inst = ra_order[i];
+        k = h_kind[inst];
+        if (hi_has_value(k) && !hi_is_remat(k) && k != HI_NOP) {
+            if (gc_nnode < GC_MAX_NODE) {
+                n = gc_nnode;
+                gc_inst[n] = inst;
+                gc_node[inst] = n;
+                gc_adj_head[n] = -1;
+                gc_degree[n] = 0;
+                gc_alias[n] = n;
+                gc_color[n] = -1;
+                gc_nmlist_head[n] = -1;
+                gc_nnode = gc_nnode + 1;
+            }
+        }
+        i = i + 1;
+    }
+
+    /* Build edges: sweep in linear order, maintaining active set.
+     * Two values interfere if their live ranges overlap. */
+    {
+        int act[GC_MAX_NODE];
+        int nact;
+        int p;
+        int aend;
+
+        nact = 0;
+        i = 0;
+        while (i < ra_norder) {
+            inst = ra_order[i];
+            p = ra_pos[inst];
+            ni = gc_node[inst];
+
+            /* Expire dead intervals */
+            j = 0;
+            while (j < nact) {
+                aj = act[j];
+                if (ra_iend[gc_inst[aj]] < p) {
+                    nact = nact - 1;
+                    act[j] = act[nact];
+                } else {
+                    j = j + 1;
+                }
+            }
+
+            /* Add interference edges between new node and all active */
+            if (ni >= 0) {
+                j = 0;
+                while (j < nact) {
+                    gc_add_edge(ni, act[j]);
+                    j = j + 1;
+                }
+                act[nact] = ni;
+                nact = nact + 1;
+            }
+
+            i = i + 1;
+        }
+    }
+}
+
+/* --- Find coalesce candidates (moves) --- */
+
+static void gc_add_move(int na, int nb) {
+    int mv;
+    if (na < 0 || nb < 0 || na == nb) return;
+    if (gc_nmove >= GC_MAX_MOVE) return;
+    mv = gc_nmove;
+    gc_nmove = gc_nmove + 1;
+    gc_mv_a[mv] = na;
+    gc_mv_b[mv] = nb;
+    gc_mv_status[mv] = GC_MV_WORKLIST;
+    gc_add_node_move(na, mv);
+    gc_add_node_move(nb, mv);
+}
+
+static void gc_find_moves(void) {
     int i;
     int inst;
     int k;
-    int reg;
-    int best;
-    int best_end;
-    int spill_inst;
+    int s1;
+    int s2;
+    int nd;
+    int ns1;
+    int ns2;
     int j;
-    int slot;
-    int xc;
+    int a;
+    int na;
     int pidx;
+
+    i = 0;
+    while (i < ra_norder) {
+        inst = ra_order[i];
+        k = h_kind[inst];
+        nd = gc_node[inst];
+        if (nd < 0) { i = i + 1; continue; }
+
+        /* COPY: direct coalesce candidate */
+        if (k == HI_COPY) {
+            s1 = h_src1[inst];
+            if (s1 >= 0) {
+                ns1 = gc_node[s1];
+                if (ns1 >= 0) gc_add_move(nd, ns1);
+            }
+        }
+
+        /* Destructive ALU: src1 wants same register as dst */
+        if (k >= HI_ADD && k <= HI_SRL) {
+            s1 = h_src1[inst];
+            if (s1 >= 0) {
+                ns1 = gc_node[s1];
+                if (ns1 >= 0) gc_add_move(nd, ns1);
+            }
+        }
+
+        /* PHI: each argument wants same register as PHI result */
+        if (k == HI_PHI && h_pbase[inst] >= 0) {
+            j = 0;
+            while (j < h_pcnt[inst]) {
+                a = h_pval[h_pbase[inst] + j];
+                if (a >= 0) {
+                    na = gc_node[a];
+                    if (na >= 0) gc_add_move(nd, na);
+                }
+                j = j + 1;
+            }
+        }
+
+        i = i + 1;
+    }
+}
+
+/* --- IRC main loop --- */
+
+/* Number of available colors for a node.  Call-crossing nodes can only
+ * use callee-saved registers (5).  Others use all 11. */
+static int gc_k(int n) {
+    int inst;
+    inst = gc_inst[n];
+    if (ra_crosses_call[inst]) return 5;
+    return RA_NPHY;
+}
+
+static void gc_make_worklists(void) {
+    int n;
+    int k;
+    n = 0;
+    while (n < gc_nnode) {
+        k = gc_k(n);
+        if (gc_degree[n] >= k) {
+            gc_wl[n] = GC_WL_SPILL;
+        } else if (gc_move_related(n)) {
+            gc_wl[n] = GC_WL_FREEZE;
+        } else {
+            gc_wl[n] = GC_WL_SIMPLIFY;
+        }
+        n = n + 1;
+    }
+}
+
+/* Enable moves for neighbors of node n */
+static void gc_enable_moves(int n) {
+    int e;
+    int mv;
+    int peer;
+    int me;
+
+    /* Enable moves for n itself */
+    me = gc_nmlist_head[n];
+    while (me >= 0) {
+        mv = gc_nmlist_mv[me];
+        if (gc_mv_status[mv] == GC_MV_ACTIVE) {
+            gc_mv_status[mv] = GC_MV_WORKLIST;
+        }
+        me = gc_nmlist_next[me];
+    }
+
+    /* Enable moves for neighbors */
+    e = gc_adj_head[n];
+    while (e >= 0) {
+        peer = gc_adj_peer[e];
+        if (gc_wl[peer] != GC_WL_SELECT && gc_wl[peer] != GC_WL_COALESCED) {
+            me = gc_nmlist_head[peer];
+            while (me >= 0) {
+                mv = gc_nmlist_mv[me];
+                if (gc_mv_status[mv] == GC_MV_ACTIVE) {
+                    gc_mv_status[mv] = GC_MV_WORKLIST;
+                }
+                me = gc_nmlist_next[me];
+            }
+        }
+        e = gc_adj_next[e];
+    }
+}
+
+/* Decrement degree; if it drops below K, move from spill to simplify/freeze */
+static void gc_dec_degree(int n) {
+    int d;
+    int k;
+    d = gc_degree[n];
+    gc_degree[n] = d - 1;
+    k = gc_k(n);
+    if (d == k) {
+        /* Degree just dropped below K */
+        gc_enable_moves(n);
+        if (gc_wl[n] == GC_WL_SPILL) {
+            if (gc_move_related(n)) {
+                gc_wl[n] = GC_WL_FREEZE;
+            } else {
+                gc_wl[n] = GC_WL_SIMPLIFY;
+            }
+        }
+    }
+}
+
+/* Simplify: remove a low-degree non-move-related node */
+static int gc_simplify(void) {
+    int n;
+    int e;
+    int peer;
+    n = 0;
+    while (n < gc_nnode) {
+        if (gc_wl[n] == GC_WL_SIMPLIFY) {
+            gc_wl[n] = GC_WL_SELECT;
+            gc_sel_stk[gc_nsel] = n;
+            gc_nsel = gc_nsel + 1;
+
+            /* Decrement neighbors' degrees */
+            e = gc_adj_head[n];
+            while (e >= 0) {
+                peer = gc_adj_peer[e];
+                if (gc_wl[peer] != GC_WL_SELECT && gc_wl[peer] != GC_WL_COALESCED) {
+                    gc_dec_degree(peer);
+                }
+                e = gc_adj_next[e];
+            }
+            return 1;
+        }
+        n = n + 1;
+    }
+    return 0;
+}
+
+/* George test: can we coalesce u and v?
+ * For every neighbor t of v: t already interferes with u, or degree(t) < K */
+static int gc_george(int u, int v) {
+    int e;
+    int t;
+    int k;
+    e = gc_adj_head[v];
+    while (e >= 0) {
+        t = gc_adj_peer[e];
+        if (gc_wl[t] != GC_WL_SELECT && gc_wl[t] != GC_WL_COALESCED) {
+            k = gc_k(t);
+            if (gc_degree[t] >= k && !gc_has_edge(t, u)) {
+                return 0;
+            }
+        }
+        e = gc_adj_next[e];
+    }
+    return 1;
+}
+
+/* Briggs test: will the merged node have fewer than K high-degree neighbors? */
+static int gc_briggs(int u, int v) {
+    int count;
+    int k;
+    int e;
+    int t;
+    int already;
+
+    k = gc_k(u);  /* conservative: use smaller K */
+    if (gc_k(v) < k) k = gc_k(v);
+
+    count = 0;
+    /* Count high-degree neighbors of u */
+    e = gc_adj_head[u];
+    while (e >= 0) {
+        t = gc_adj_peer[e];
+        if (gc_wl[t] != GC_WL_SELECT && gc_wl[t] != GC_WL_COALESCED && t != v) {
+            if (gc_degree[t] >= k) count = count + 1;
+        }
+        e = gc_adj_next[e];
+    }
+    /* Count high-degree neighbors of v not already counted */
+    e = gc_adj_head[v];
+    while (e >= 0) {
+        t = gc_adj_peer[e];
+        if (gc_wl[t] != GC_WL_SELECT && gc_wl[t] != GC_WL_COALESCED && t != u) {
+            if (gc_degree[t] >= k && !gc_has_edge(t, u)) {
+                count = count + 1;
+            }
+        }
+        e = gc_adj_next[e];
+    }
+    return count < k;
+}
+
+/* Combine two nodes: merge v into u */
+static void gc_combine(int u, int v) {
+    int e;
+    int t;
+
+    gc_wl[v] = GC_WL_COALESCED;
+    gc_alias[v] = u;
+
+    /* Transfer v's move list to u */
+    e = gc_nmlist_head[v];
+    while (e >= 0) {
+        gc_add_node_move(u, gc_nmlist_mv[e]);
+        e = gc_nmlist_next[e];
+    }
+
+    /* Add edges: for each neighbor t of v, add edge(t, u) */
+    e = gc_adj_head[v];
+    while (e >= 0) {
+        t = gc_adj_peer[e];
+        if (gc_wl[t] != GC_WL_SELECT && gc_wl[t] != GC_WL_COALESCED) {
+            gc_add_edge(t, u);
+            gc_dec_degree(t);
+        }
+        e = gc_adj_next[e];
+    }
+
+    /* If u's degree now >= K and it was in freeze, move to spill */
+    if (gc_degree[u] >= gc_k(u) && gc_wl[u] == GC_WL_FREEZE) {
+        gc_wl[u] = GC_WL_SPILL;
+    }
+}
+
+/* Coalesce: try to coalesce one move */
+static int gc_coalesce(void) {
+    int mv;
+    int u;
+    int v;
+    int tmp;
+
+    mv = 0;
+    while (mv < gc_nmove) {
+        if (gc_mv_status[mv] != GC_MV_WORKLIST) { mv = mv + 1; continue; }
+
+        u = gc_get_alias(gc_mv_a[mv]);
+        v = gc_get_alias(gc_mv_b[mv]);
+
+        /* Ensure call-crossing node is u (the survivor) if applicable,
+         * to preserve callee-saved constraint */
+        if (ra_crosses_call[gc_inst[v]] && !ra_crosses_call[gc_inst[u]]) {
+            tmp = u; u = v; v = tmp;
+        }
+
+        if (u == v) {
+            /* Already coalesced */
+            gc_mv_status[mv] = GC_MV_COALESCED;
+            if (!gc_move_related(u) && gc_degree[u] < gc_k(u) && gc_wl[u] == GC_WL_FREEZE) {
+                gc_wl[u] = GC_WL_SIMPLIFY;
+            }
+            return 1;
+        }
+
+        if (gc_has_edge(u, v)) {
+            /* Constrained */
+            gc_mv_status[mv] = GC_MV_CONSTRAINED;
+            if (!gc_move_related(u) && gc_degree[u] < gc_k(u) && gc_wl[u] == GC_WL_FREEZE) {
+                gc_wl[u] = GC_WL_SIMPLIFY;
+            }
+            if (!gc_move_related(v) && gc_degree[v] < gc_k(v) && gc_wl[v] == GC_WL_FREEZE) {
+                gc_wl[v] = GC_WL_SIMPLIFY;
+            }
+            return 1;
+        }
+
+        /* Call-crossing constraint: don't coalesce if it would merge a
+         * call-crossing node with one that can use caller-saved regs */
+        if (ra_crosses_call[gc_inst[u]] != ra_crosses_call[gc_inst[v]]) {
+            gc_mv_status[mv] = GC_MV_CONSTRAINED;
+            return 1;
+        }
+
+        /* Try George or Briggs */
+        if (gc_george(u, v) || gc_briggs(u, v)) {
+            gc_mv_status[mv] = GC_MV_COALESCED;
+            gc_combine(u, v);
+            if (!gc_move_related(u) && gc_degree[u] < gc_k(u)) {
+                if (gc_wl[u] == GC_WL_FREEZE) gc_wl[u] = GC_WL_SIMPLIFY;
+            }
+            return 1;
+        }
+
+        /* Cannot coalesce yet — make active */
+        gc_mv_status[mv] = GC_MV_ACTIVE;
+        return 1;
+    }
+    return 0;
+}
+
+/* Freeze: give up on coalescing a low-degree move-related node */
+static int gc_freeze(void) {
+    int n;
+    int e;
+    int mv;
+
+    n = 0;
+    while (n < gc_nnode) {
+        if (gc_wl[n] == GC_WL_FREEZE) {
+            gc_wl[n] = GC_WL_SIMPLIFY;
+            /* Freeze all moves involving n */
+            e = gc_nmlist_head[n];
+            while (e >= 0) {
+                mv = gc_nmlist_mv[e];
+                if (gc_mv_status[mv] == GC_MV_WORKLIST || gc_mv_status[mv] == GC_MV_ACTIVE) {
+                    int other;
+                    gc_mv_status[mv] = GC_MV_FROZEN;
+                    other = gc_get_alias(gc_mv_a[mv]);
+                    if (other == n) other = gc_get_alias(gc_mv_b[mv]);
+                    if (!gc_move_related(other) && gc_degree[other] < gc_k(other) &&
+                        gc_wl[other] == GC_WL_FREEZE) {
+                        gc_wl[other] = GC_WL_SIMPLIFY;
+                    }
+                }
+                e = gc_nmlist_next[e];
+            }
+            return 1;
+        }
+        n = n + 1;
+    }
+    return 0;
+}
+
+/* Select spill: pick highest-degree node from spill worklist.
+ * Uses cost heuristic: spill the node with lowest uses/degree. */
+static int gc_select_spill(void) {
+    int n;
+    int best;
+    int best_cost;
+    int cost;
+    int inst;
+
+    best = -1;
+    best_cost = 0x7FFFFFFF;
+
+    n = 0;
+    while (n < gc_nnode) {
+        if (gc_wl[n] == GC_WL_SPILL) {
+            inst = gc_inst[n];
+            /* cost = uses * 100 / (degree + 1).  Lower = cheaper to spill. */
+            cost = bg_uses[inst] * 100;
+            cost = cost / (gc_degree[n] + 1);
+            /* Prefer spilling non-call-crossing (they have more color options) */
+            if (!ra_crosses_call[inst]) cost = cost + 50;
+            if (cost < best_cost) {
+                best_cost = cost;
+                best = n;
+            }
+        }
+        n = n + 1;
+    }
+
+    if (best < 0) return 0;
+
+    /* Optimistic spill: move to simplify and try to color later */
+    gc_wl[best] = GC_WL_SIMPLIFY;
+    /* Freeze its moves */
+    {
+        int e;
+        int mv;
+        int other;
+        e = gc_nmlist_head[best];
+        while (e >= 0) {
+            mv = gc_nmlist_mv[e];
+            if (gc_mv_status[mv] == GC_MV_WORKLIST || gc_mv_status[mv] == GC_MV_ACTIVE) {
+                gc_mv_status[mv] = GC_MV_FROZEN;
+                other = gc_get_alias(gc_mv_a[mv]);
+                if (other == best) other = gc_get_alias(gc_mv_b[mv]);
+                if (!gc_move_related(other) && gc_degree[other] < gc_k(other) &&
+                    gc_wl[other] == GC_WL_FREEZE) {
+                    gc_wl[other] = GC_WL_SIMPLIFY;
+                }
+            }
+            e = gc_nmlist_next[e];
+        }
+    }
+    return 1;
+}
+
+/* IRC main loop */
+static void gc_irc(void) {
+    int progress;
+    gc_make_worklists();
+
+    progress = 1;
+    while (progress) {
+        progress = 0;
+        if (gc_simplify()) { progress = 1; continue; }
+        if (gc_coalesce()) { progress = 1; continue; }
+        if (gc_freeze())   { progress = 1; continue; }
+        if (gc_select_spill()) { progress = 1; continue; }
+    }
+}
+
+/* --- Select: pop stack and assign colors --- */
+
+static void gc_select(void) {
+    int i;
+    int n;
+    int inst;
+    int k;
+    int e;
+    int peer;
+    int pa;
+    int pc;
+    int used[RA_NPHY];
+    int c;
+    int hint;
+    int pidx;
+    int s1;
+    int ns1;
 
     ra_init_arg_regs();
 
-    /* Initialize free register pool */
-    ra_nfree = RA_NPHY;
+    /* Pop select stack in reverse */
+    i = gc_nsel - 1;
+    while (i >= 0) {
+        n = gc_sel_stk[i];
+        inst = gc_inst[n];
+        k = gc_k(n);
+
+        /* Mark colors used by live neighbors */
+        c = 0;
+        while (c < RA_NPHY) {
+            used[c] = 0;
+            c = c + 1;
+        }
+
+        e = gc_adj_head[n];
+        while (e >= 0) {
+            peer = gc_adj_peer[e];
+            pa = gc_get_alias(peer);
+            pc = gc_color[pa];
+            if (pc >= 0) {
+                used[pc] = 1;
+            }
+            e = gc_adj_next[e];
+        }
+
+        /* Constraint: call-crossing → must use callee-saved (slots 0-4) */
+        if (ra_crosses_call[inst]) {
+            /* Try PARAM hint first */
+            hint = -1;
+            if (h_kind[inst] == HI_PARAM) {
+                pidx = h_val[inst];
+                if (pidx >= 0 && pidx < 6) {
+                    c = ra_x64_slot[ra_arg_regs[pidx]];
+                    if (c >= 0 && c < 5 && !used[c]) hint = c;
+                }
+            }
+            if (hint >= 0) {
+                gc_color[n] = hint;
+            } else {
+                gc_color[n] = -1;
+                c = 0;
+                while (c < 5) {
+                    if (!used[c]) {
+                        gc_color[n] = c;
+                        break;
+                    }
+                    c = c + 1;
+                }
+            }
+        } else {
+            /* Non-call-crossing: try hints, then prefer caller-saved */
+            hint = -1;
+
+            /* PARAM hint: try ABI register */
+            if (h_kind[inst] == HI_PARAM) {
+                pidx = h_val[inst];
+                if (pidx >= 0 && pidx < 6) {
+                    c = ra_x64_slot[ra_arg_regs[pidx]];
+                    if (c >= 0 && !used[c]) hint = c;
+                }
+            }
+
+            /* ALU hint: try src1's color for destructive ops */
+            if (hint < 0 && h_kind[inst] >= HI_ADD && h_kind[inst] <= HI_SRL) {
+                s1 = h_src1[inst];
+                if (s1 >= 0) {
+                    ns1 = gc_node[s1];
+                    if (ns1 >= 0) {
+                        c = gc_color[gc_get_alias(ns1)];
+                        if (c >= 0 && !used[c]) hint = c;
+                    }
+                }
+            }
+
+            /* COPY hint: try source's color */
+            if (hint < 0 && h_kind[inst] == HI_COPY) {
+                s1 = h_src1[inst];
+                if (s1 >= 0) {
+                    ns1 = gc_node[s1];
+                    if (ns1 >= 0) {
+                        c = gc_color[gc_get_alias(ns1)];
+                        if (c >= 0 && !used[c]) hint = c;
+                    }
+                }
+            }
+
+            if (hint >= 0) {
+                gc_color[n] = hint;
+            } else {
+                gc_color[n] = -1;
+                /* Prefer caller-saved (slots 5-10) */
+                c = 5;
+                while (c < RA_NPHY) {
+                    if (!used[c]) {
+                        gc_color[n] = c;
+                        break;
+                    }
+                    c = c + 1;
+                }
+                /* Fallback: callee-saved (slots 0-4) */
+                if (gc_color[n] < 0) {
+                    c = 0;
+                    while (c < 5) {
+                        if (!used[c]) {
+                            gc_color[n] = c;
+                            break;
+                        }
+                        c = c + 1;
+                    }
+                }
+            }
+        }
+
+        i = i - 1;
+    }
+
+    /* Propagate colors to coalesced nodes */
     i = 0;
-    while (i < RA_NPHY) {
-        ra_fstk[i] = ra_x64_phys[RA_NPHY - 1 - i];
+    while (i < gc_nnode) {
+        if (gc_wl[i] == GC_WL_COALESCED) {
+            gc_color[i] = gc_color[gc_get_alias(i)];
+        }
         i = i + 1;
     }
-    ra_nact = 0;
+}
+
+/* --- Writeback: populate ra_reg[] and ra_used[] --- */
+
+static void gc_writeback(void) {
+    int i;
+    int n;
+    int inst;
+    int c;
+    int slot;
 
     /* Clear used tracking */
     i = 0;
@@ -552,125 +1231,26 @@ static void ra_linear_scan(void) {
         i = i + 1;
     }
 
-    /* Process instructions in linear order */
-    i = 0;
-    while (i < ra_norder) {
-        inst = ra_order[i];
-        k = h_kind[inst];
-
-        if (!hi_has_value(k) || hi_is_remat(k) || k == HI_NOP) {
-            i = i + 1;
-            continue;
+    /* Write colors to ra_reg[] */
+    n = 0;
+    while (n < gc_nnode) {
+        inst = gc_inst[n];
+        c = gc_color[n];
+        if (c >= 0) {
+            ra_reg[inst] = ra_x64_phys[c];
+            ra_used[c] = 1;
         }
-
-        ra_expire(ra_pos[inst]);
-
-        xc = ra_crosses_call[inst];
-
-        /* For PARAM instructions, prefer their incoming arg register.
-         * This avoids prologue conflicts (param 0 in RDI assigned to RSI etc.)
-         * and eliminates the need for temp-area saves in most functions. */
-        reg = -1;
-        if (k == HI_PARAM && !xc) {
-            pidx = h_val[inst];
-            if (pidx >= 0 && pidx < 6) {
-                reg = ra_pick_specific(ra_arg_regs[pidx]);
-            }
-        }
-
-        /* Register coalescing for destructive binary ops: if src1 expires
-         * at this instruction (last use), reuse its register for the result.
-         * This eliminates the mov-before-alu copy (x86-64 ALU is dst=dst op src).
-         * For commutative ops, also try src2.
-         *
-         * The source register is still in the active set (expire uses strict <),
-         * so we force-expire it and take the register directly. */
-        if (reg < 0 && k >= HI_ADD && k <= HI_SRL && !xc) {
-            int s1;
-            int s2;
-            int s1r;
-            int s2r;
-            int ci;
-            s1 = h_src1[inst];
-            s2 = h_src2[inst];
-            s1r = -1; s2r = -1;
-            if (s1 >= 0) s1r = ra_reg[s1];
-            if (s2 >= 0 && ho_src2_is_ref(k)) s2r = ra_reg[s2];
-            /* Prefer src1 (naturally the left operand of destructive op) */
-            if (s1r >= 0 && ra_iend[s1] <= ra_pos[inst]) {
-                /* Force-expire s1 from active set */
-                ci = 0;
-                while (ci < ra_nact) {
-                    if (ra_act[ci] == s1) {
-                        /* Remove from active (shift down) */
-                        while (ci < ra_nact - 1) {
-                            ra_act[ci] = ra_act[ci + 1];
-                            ci = ci + 1;
-                        }
-                        ra_nact = ra_nact - 1;
-                        reg = s1r;
-                        break;
-                    }
-                    ci = ci + 1;
-                }
-            }
-            /* For commutative ops, also try src2 */
-            if (reg < 0 && s2r >= 0 && ra_iend[s2] <= ra_pos[inst] &&
-                k != HI_SUB && k != HI_SLL && k != HI_SRA && k != HI_SRL) {
-                ci = 0;
-                while (ci < ra_nact) {
-                    if (ra_act[ci] == s2) {
-                        while (ci < ra_nact - 1) {
-                            ra_act[ci] = ra_act[ci + 1];
-                            ci = ci + 1;
-                        }
-                        ra_nact = ra_nact - 1;
-                        reg = s2r;
-                        break;
-                    }
-                    ci = ci + 1;
-                }
-            }
-        }
-
-        if (reg < 0)
-            reg = ra_pick_free(xc);
-
-        if (reg >= 0) {
-            ra_reg[inst] = reg;
-            slot = ra_x64_slot[reg];
-            if (slot >= 0) ra_used[slot] = 1;
-            ra_act[ra_nact] = inst;
-            ra_nact = ra_nact + 1;
-        } else {
-            /* No suitable free register — try spilling an active interval
-             * with furthest end.  For call-crossing values, only preempt
-             * another callee-saved allocation. */
-            best = -1;
-            best_end = -1;
-            j = 0;
-            while (j < ra_nact) {
-                if (ra_iend[ra_act[j]] > best_end) {
-                    if (!xc || ra_x64_is_callee[ra_x64_slot[ra_reg[ra_act[j]]]]) {
-                        best = j;
-                        best_end = ra_iend[ra_act[j]];
-                    }
-                }
-                j = j + 1;
-            }
-
-            if (best >= 0 && best_end > ra_iend[inst]) {
-                spill_inst = ra_act[best];
-                reg = ra_reg[spill_inst];
-                ra_reg[spill_inst] = -1;
-                ra_reg[inst] = reg;
-                ra_act[best] = inst;
-            }
-            /* else: spill current interval (ra_reg[inst] stays -1) */
-        }
-
-        i = i + 1;
+        n = n + 1;
     }
+}
+
+/* Top-level graph-coloring allocation */
+static void gc_alloc(void) {
+    gc_build();
+    gc_find_moves();
+    gc_irc();
+    gc_select();
+    gc_writeback();
 }
 
 /* =================================================================
@@ -906,7 +1486,7 @@ static void hir_regalloc(void) {
     ra_compute_ends();
     ra_extend_fused_cmp();
     ra_mark_call_crossing();
-    ra_linear_scan();
+    gc_alloc();
     ra_assign_spills();
 }
 
