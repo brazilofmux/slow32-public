@@ -1016,12 +1016,17 @@ static void hx_emit_inst(int idx) {
         if (h_src1[idx] >= 0) {
             hx_mat(h_src1[idx], X64_RAX);
         }
-        /* Jump to epilog */
-        x64_jmp_rel32(0);
-        /* Record patch -- epilog offset not known yet */
-        hx_bpatch_blk[hx_nbpatch] = -1;  /* special: epilog */
-        hx_bpatch_off[hx_nbpatch] = x64_off - 4;
-        hx_nbpatch = hx_nbpatch + 1;
+        if (hx_no_frame) {
+            /* Frameless: emit ret directly, no epilogue needed */
+            x64_ret();
+        } else {
+            /* Jump to epilog */
+            x64_jmp_rel32(0);
+            /* Record patch -- epilog offset not known yet */
+            hx_bpatch_blk[hx_nbpatch] = -1;  /* special: epilog */
+            hx_bpatch_off[hx_nbpatch] = x64_off - 4;
+            hx_nbpatch = hx_nbpatch + 1;
+        }
         return;
     }
 
