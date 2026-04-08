@@ -281,6 +281,57 @@ static void hx_phi_copies(int from_blk, int to_blk) {
 }
 
 /* ============================================================================
+ * Register-aware helpers: hx_src / hx_dst / hx_maybe_spill
+ *
+ * These avoid the RAX detour when values are already in registers.
+ * hx_src returns the register holding a value (no code if allocated).
+ * hx_dst returns the register to write the result into.
+ * hx_maybe_spill stores the result to its spill slot if needed.
+ * ============================================================================ */
+
+/* Return register containing value.  If allocated, returns the physical
+ * register (no code emitted).  Otherwise materializes into scratch. */
+static int hx_src(int inst, int scratch) {
+    if (inst < 0) {
+        x64_xor_rr(scratch, scratch);
+        return scratch;
+    }
+    if (ra_reg[inst] >= 0) return ra_reg[inst];
+    hx_mat(inst, scratch);
+    return scratch;
+}
+
+/* Return destination register for a result.  If allocated, returns the
+ * physical register.  Otherwise returns RAX (scratch). */
+static int hx_dst(int inst) {
+    if (ra_reg[inst] >= 0) return ra_reg[inst];
+    return X64_RAX;
+}
+
+/* If inst is spilled (not in a register), store RAX to its spill slot. */
+static void hx_maybe_spill(int inst) {
+    int off;
+    if (ra_reg[inst] >= 0) return;
+    if (hi_is_remat(h_kind[inst]) &&
+        h_kind[inst] != HI_GADDR &&
+        h_kind[inst] != HI_SADDR &&
+        h_kind[inst] != HI_FADDR) return;
+    off = ra_spill_off[inst];
+    if (off == 0) return;
+    x64_mov_mr64(X64_RBP, off, X64_RAX);
+}
+
+/* Emit mov dr, sr (64-bit) only if registers differ. */
+static void hx_mov_if_needed64(int dr, int sr) {
+    if (dr != sr) x64_mov_rr64(dr, sr);
+}
+
+/* Emit mov dr, sr (32-bit) only if registers differ. */
+static void hx_mov_if_needed(int dr, int sr) {
+    if (dr != sr) x64_mov_rr(dr, sr);
+}
+
+/* ============================================================================
  * Typed memory access helpers
  * ============================================================================ */
 
@@ -355,8 +406,14 @@ static void hx_emit_inst(int idx) {
 
     /* COPY: src1 → dst */
     if (k == HI_COPY) {
-        hx_mat(h_src1[idx], X64_RAX);
-        hx_spill(idx, X64_RAX);
+        {
+        int sr;
+        int dr;
+        sr = hx_src(h_src1[idx], X64_RAX);
+        dr = hx_dst(idx);
+        hx_mov_if_needed64(dr, sr);
+        hx_maybe_spill(idx);
+        }
         return;
     }
 
@@ -364,48 +421,60 @@ static void hx_emit_inst(int idx) {
      * Always 64-bit: the HIR (designed for 32-bit SLOW-32) often marks
      * pointer-offset ADDI as TY_INT.  64-bit add is always safe. */
     if (k == HI_ADDI) {
-        hx_mat(h_src1[idx], X64_RAX);
-        if (h_val[idx] != 0) {
-            x64_add_ri64(X64_RAX, h_val[idx]);
+        {
+        int sr;
+        int dr;
+        sr = hx_src(h_src1[idx], X64_RAX);
+        dr = hx_dst(idx);
+        hx_mov_if_needed64(dr, sr);
+        if (h_val[idx] != 0) x64_add_ri64(dr, h_val[idx]);
+        hx_maybe_spill(idx);
         }
-        hx_spill(idx, X64_RAX);
         return;
     }
 
     /* PARAM: already stored in prologue, nothing to do here */
     if (k == HI_PARAM) return;
 
-    /* --- Binary arithmetic: load s1→RAX, s2→RCX, compute, store --- */
+    /* --- Binary ALU: dst = s1 OP s2 ---
+     *
+     * Commutative ops (ADD, MUL, AND, OR, XOR): if dr==s2r, swap operands.
+     * Non-commutative (SUB): if dr==s2r, save s2 to RDX first.
+     * x64 ops are destructive (dst = dst OP src), so we mov s1→dr first. */
 
-    if (k == HI_ADD) {
-        hx_mat(h_src1[idx], X64_RAX);
-        hx_mat(h_src2[idx], X64_RCX);
-        if (wide) x64_add_rr64(X64_RAX, X64_RCX);
-        else x64_add_rr(X64_RAX, X64_RCX);
-        hx_spill(idx, X64_RAX);
+    if (k == HI_ADD || k == HI_SUB || k == HI_MUL ||
+        k == HI_AND || k == HI_OR  || k == HI_XOR) {
+        int s1r;
+        int s2r;
+        int dr;
+        int commute;
+        int tmp;
+
+        commute = (k != HI_SUB);
+        dr = hx_dst(idx);
+        s1r = hx_src(h_src1[idx], X64_RAX);
+        s2r = hx_src(h_src2[idx], X64_RCX);
+
+        /* Handle dr==s2r conflict */
+        if (dr == s2r && dr != s1r) {
+            if (commute) { tmp = s1r; s1r = s2r; s2r = tmp; }
+            else { x64_mov_rr64(X64_RDX, s2r); s2r = X64_RDX; }
+        }
+        if (wide) hx_mov_if_needed64(dr, s1r); else hx_mov_if_needed(dr, s1r);
+
+        if (k == HI_ADD) { if (wide) x64_add_rr64(dr, s2r); else x64_add_rr(dr, s2r); }
+        else if (k == HI_SUB) { if (wide) x64_sub_rr64(dr, s2r); else x64_sub_rr(dr, s2r); }
+        else if (k == HI_MUL) { if (wide) x64_imul_rr64(dr, s2r); else x64_imul_rr(dr, s2r); }
+        else if (k == HI_AND) { if (wide) x64_and_rr64(dr, s2r); else x64_and_rr(dr, s2r); }
+        else if (k == HI_OR)  { if (wide) x64_or_rr64(dr, s2r); else x64_or_rr(dr, s2r); }
+        else if (k == HI_XOR) { if (wide) x64_xor_rr64(dr, s2r); else x64_xor_rr(dr, s2r); }
+
+        hx_maybe_spill(idx);
         return;
     }
 
-    if (k == HI_SUB) {
-        hx_mat(h_src1[idx], X64_RAX);
-        hx_mat(h_src2[idx], X64_RCX);
-        if (wide) x64_sub_rr64(X64_RAX, X64_RCX);
-        else x64_sub_rr(X64_RAX, X64_RCX);
-        hx_spill(idx, X64_RAX);
-        return;
-    }
-
-    if (k == HI_MUL) {
-        hx_mat(h_src1[idx], X64_RAX);
-        hx_mat(h_src2[idx], X64_RCX);
-        if (wide) x64_imul_rr64(X64_RAX, X64_RCX);
-        else x64_imul_rr(X64_RAX, X64_RCX);
-        hx_spill(idx, X64_RAX);
-        return;
-    }
-
-    if (k == HI_DIV) {
-        /* dividend in RAX, divisor in R10, cdq/xor EDX, idiv/div R10 */
+    /* DIV/REM: fixed registers (RAX dividend, RDX extension, result in RAX/RDX) */
+    if (k == HI_DIV || k == HI_REM) {
         hx_mat(h_src1[idx], X64_RAX);
         hx_mat(h_src2[idx], X64_R10);
         if (wide) {
@@ -415,123 +484,83 @@ static void hx_emit_inst(int idx) {
             if (ty & TY_UNSIGNED) { x64_zero(X64_RDX); x64_div(X64_R10); }
             else { x64_cdq(); x64_idiv(X64_R10); }
         }
-        hx_spill(idx, X64_RAX);
+        if (k == HI_DIV) hx_spill(idx, X64_RAX);
+        else hx_spill(idx, X64_RDX);
         return;
     }
 
-    if (k == HI_REM) {
-        hx_mat(h_src1[idx], X64_RAX);
-        hx_mat(h_src2[idx], X64_R10);
-        if (wide) {
-            if (ty & TY_UNSIGNED) { x64_xor_rr(X64_RDX, X64_RDX); x64_div64(X64_R10); }
-            else { x64_cqo(); x64_idiv64(X64_R10); }
-        } else {
-            if (ty & TY_UNSIGNED) { x64_zero(X64_RDX); x64_div(X64_R10); }
-            else { x64_cdq(); x64_idiv(X64_R10); }
-        }
-        /* Remainder is in EDX/RDX */
-        hx_spill(idx, X64_RDX);
+    /* --- Shifts: value in dr, count must be in CL (RCX) --- */
+
+    if (k == HI_SLL || k == HI_SRA || k == HI_SRL) {
+        int s1r;
+        int s2r;
+        int dr;
+        dr = hx_dst(idx);
+        s1r = hx_src(h_src1[idx], X64_RAX);
+        s2r = hx_src(h_src2[idx], X64_RCX);
+        if (s2r != X64_RCX) x64_mov_rr(X64_RCX, s2r);
+        /* If dr is RCX (impossible since RCX is not allocatable), we'd have a
+         * problem.  dr is always an allocated reg or RAX, never RCX. */
+        if (wide) hx_mov_if_needed64(dr, s1r); else hx_mov_if_needed(dr, s1r);
+        if (k == HI_SLL) { if (wide) x64_shl_cl64(dr); else x64_shl_cl(dr); }
+        else if (k == HI_SRA) { if (wide) x64_sar_cl64(dr); else x64_sar_cl(dr); }
+        else { if (wide) x64_shr_cl64(dr); else x64_shr_cl(dr); }
+        hx_maybe_spill(idx);
         return;
     }
 
-    /* --- Bitwise ops --- */
-
-    if (k == HI_AND) {
-        hx_mat(h_src1[idx], X64_RAX);
-        hx_mat(h_src2[idx], X64_RCX);
-        if (wide) x64_and_rr64(X64_RAX, X64_RCX);
-        else x64_and_rr(X64_RAX, X64_RCX);
-        hx_spill(idx, X64_RAX);
-        return;
-    }
-
-    if (k == HI_OR) {
-        hx_mat(h_src1[idx], X64_RAX);
-        hx_mat(h_src2[idx], X64_RCX);
-        if (wide) x64_or_rr64(X64_RAX, X64_RCX);
-        else x64_or_rr(X64_RAX, X64_RCX);
-        hx_spill(idx, X64_RAX);
-        return;
-    }
-
-    if (k == HI_XOR) {
-        hx_mat(h_src1[idx], X64_RAX);
-        hx_mat(h_src2[idx], X64_RCX);
-        if (wide) x64_xor_rr64(X64_RAX, X64_RCX);
-        else x64_xor_rr(X64_RAX, X64_RCX);
-        hx_spill(idx, X64_RAX);
-        return;
-    }
-
-    /* --- Shifts: count must be in CL (RCX) --- */
-
-    if (k == HI_SLL) {
-        hx_mat(h_src1[idx], X64_RAX);
-        hx_mat(h_src2[idx], X64_RCX);
-        if (wide) x64_shl_cl64(X64_RAX);
-        else x64_shl_cl(X64_RAX);
-        hx_spill(idx, X64_RAX);
-        return;
-    }
-
-    if (k == HI_SRA) {
-        hx_mat(h_src1[idx], X64_RAX);
-        hx_mat(h_src2[idx], X64_RCX);
-        if (wide) x64_sar_cl64(X64_RAX);
-        else x64_sar_cl(X64_RAX);
-        hx_spill(idx, X64_RAX);
-        return;
-    }
-
-    if (k == HI_SRL) {
-        hx_mat(h_src1[idx], X64_RAX);
-        hx_mat(h_src2[idx], X64_RCX);
-        if (wide) x64_shr_cl64(X64_RAX);
-        else x64_shr_cl(X64_RAX);
-        hx_spill(idx, X64_RAX);
-        return;
-    }
-
-    /* --- Unary ops --- */
+    /* --- Unary ops: dr = OP(s1) --- */
 
     if (k == HI_NEG) {
-        hx_mat(h_src1[idx], X64_RAX);
-        if (wide) x64_neg64(X64_RAX);
-        else x64_neg(X64_RAX);
-        hx_spill(idx, X64_RAX);
+        int sr;
+        int dr;
+        sr = hx_src(h_src1[idx], X64_RAX);
+        dr = hx_dst(idx);
+        if (wide) { hx_mov_if_needed64(dr, sr); x64_neg64(dr); }
+        else { hx_mov_if_needed(dr, sr); x64_neg(dr); }
+        hx_maybe_spill(idx);
         return;
     }
 
     if (k == HI_NOT) {
-        /* Logical NOT: result = (src == 0) ? 1 : 0 */
-        hx_mat(h_src1[idx], X64_RAX);
-        if (hx_is_wide(h_ty[h_src1[idx]])) x64_test_rr64(X64_RAX, X64_RAX);
-        else x64_test_rr(X64_RAX, X64_RAX);
+        /* Logical NOT: result = (src == 0) ? 1 : 0.
+         * Always compute into RAX (SETcc writes AL), then move to dr. */
+        int sr;
+        int dr;
+        sr = hx_src(h_src1[idx], X64_RAX);
+        if (hx_is_wide(h_ty[h_src1[idx]])) x64_test_rr64(sr, sr);
+        else x64_test_rr(sr, sr);
         x64_sete(X64_RAX);
         x64_movzx_rr8(X64_RAX, X64_RAX);
-        hx_spill(idx, X64_RAX);
+        dr = hx_dst(idx);
+        hx_mov_if_needed(dr, X64_RAX);
+        hx_maybe_spill(idx);
         return;
     }
 
     if (k == HI_BNOT) {
-        /* Bitwise NOT */
-        hx_mat(h_src1[idx], X64_RAX);
-        if (wide) x64_not64(X64_RAX);
-        else x64_not(X64_RAX);
-        hx_spill(idx, X64_RAX);
+        int sr;
+        int dr;
+        sr = hx_src(h_src1[idx], X64_RAX);
+        dr = hx_dst(idx);
+        if (wide) { hx_mov_if_needed64(dr, sr); x64_not64(dr); }
+        else { hx_mov_if_needed(dr, sr); x64_not(dr); }
+        hx_maybe_spill(idx);
         return;
     }
 
-    /* --- Comparisons: CMP s1, s2 then SETcc --- */
+    /* --- Comparisons: CMP s1, s2 then SETcc → RAX → dr --- */
 
     if (k >= HI_SEQ && k <= HI_SGEU) {
         int cmp_wide;
+        int s1r;
+        int s2r;
+        int dr;
         cmp_wide = hx_is_wide(h_ty[h_src1[idx]]) || hx_is_wide(h_ty[h_src2[idx]]);
-
-        hx_mat(h_src1[idx], X64_RCX);
-        hx_mat(h_src2[idx], X64_RDX);
-        if (cmp_wide) x64_cmp_rr64(X64_RCX, X64_RDX);
-        else x64_cmp_rr(X64_RCX, X64_RDX);
+        s1r = hx_src(h_src1[idx], X64_RAX);
+        s2r = hx_src(h_src2[idx], X64_RCX);
+        if (cmp_wide) x64_cmp_rr64(s1r, s2r);
+        else x64_cmp_rr(s1r, s2r);
 
         if (k == HI_SEQ) x64_sete(X64_RAX);
         else if (k == HI_SNE) x64_setne(X64_RAX);
@@ -545,23 +574,30 @@ static void hx_emit_inst(int idx) {
         else if (k == HI_SGEU) x64_setae(X64_RAX);
 
         x64_movzx_rr8(X64_RAX, X64_RAX);
-        hx_spill(idx, X64_RAX);
+        dr = hx_dst(idx);
+        hx_mov_if_needed(dr, X64_RAX);
+        hx_maybe_spill(idx);
         return;
     }
 
     /* --- Memory ops --- */
 
     if (k == HI_LOAD) {
-        hx_mat(h_src1[idx], X64_RAX);
-        hx_load_typed(X64_RAX, X64_RAX, ty);
-        hx_spill(idx, X64_RAX);
+        int ar;
+        int dr;
+        ar = hx_src(h_src1[idx], X64_RAX);
+        dr = hx_dst(idx);
+        hx_load_typed(dr, ar, ty);
+        hx_maybe_spill(idx);
         return;
     }
 
     if (k == HI_STORE) {
-        hx_mat(h_src1[idx], X64_RAX);   /* address */
-        hx_mat(h_src2[idx], X64_RCX);   /* value */
-        hx_store_typed(X64_RAX, X64_RCX, ty);
+        int ar;
+        int vr;
+        ar = hx_src(h_src1[idx], X64_RAX);   /* address */
+        vr = hx_src(h_src2[idx], X64_RCX);   /* value */
+        hx_store_typed(ar, vr, ty);
         return;
     }
 
@@ -578,13 +614,14 @@ static void hx_emit_inst(int idx) {
         int cur_blk;
         int true_blk;
         int false_blk;
+        int cr;
         cur_blk = h_blk[idx];
         true_blk = h_src2[idx];    /* target if condition is TRUE */
         false_blk = h_val[idx];    /* target if condition is FALSE */
 
-        hx_mat(h_src1[idx], X64_RAX);
-        if (hx_is_wide(h_ty[h_src1[idx]])) x64_test_rr64(X64_RAX, X64_RAX);
-        else x64_test_rr(X64_RAX, X64_RAX);
+        cr = hx_src(h_src1[idx], X64_RAX);
+        if (hx_is_wide(h_ty[h_src1[idx]])) x64_test_rr64(cr, cr);
+        else x64_test_rr(cr, cr);
 
         /* JE to false path (condition is zero → false) */
         {
