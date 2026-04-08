@@ -160,6 +160,68 @@ static void x64_modrm_mem(int reg, int base, int disp) {
 }
 
 // ============================================================================
+// SIB memory operand — emits ModR/M + SIB for [base + index*scale + disp]
+// scale: 0=1, 1=2, 2=4, 3=8
+// ============================================================================
+
+static void x64_modrm_sib(int reg, int base, int index, int scale, int disp) {
+    int use_disp8;
+    int mod;
+    int force_disp;
+
+    force_disp = ((base & 7) == X64_RBP);
+    use_disp8 = (disp >= -128 && disp <= 127);
+
+    if (disp == 0 && !force_disp)
+        mod = MOD_INDIRECT;
+    else if (use_disp8)
+        mod = MOD_DISP8;
+    else
+        mod = MOD_DISP32;
+
+    x64_byte(MODRM(mod, reg, 4));  /* rm=4 signals SIB follows */
+    x64_byte(SIB(scale, index, base));
+
+    if (mod == MOD_DISP8)
+        x64_byte(disp & 0xFF);
+    else if (mod == MOD_DISP32)
+        x64_dword(disp);
+}
+
+// mov r32, [base + index*scale + disp]
+static void x64_mov_rm_sib(int dst, int base, int index, int scale, int disp) {
+    x64_rex_emit(x64_rex_sib(dst, base, index, 0));
+    x64_byte(0x8B);
+    x64_modrm_sib(dst, base, index, scale, disp);
+}
+
+// mov [base + index*scale + disp], r32
+static void x64_mov_mr_sib(int base, int index, int scale, int disp, int src) {
+    x64_rex_emit(x64_rex_sib(src, base, index, 0));
+    x64_byte(0x89);
+    x64_modrm_sib(src, base, index, scale, disp);
+}
+
+// add dword [base + disp], imm32
+static void x64_add_mi(int base, int disp, int imm) {
+    int use_imm8;
+    int rex;
+    rex = 0;
+    if (base >= 8) rex = rex | REX_B;
+    x64_rex_emit(rex);
+    use_imm8 = (imm >= -128 && imm <= 127);
+    if (use_imm8) {
+        x64_byte(0x83);
+        x64_modrm_mem(0, base, disp);  /* /0 = ADD */
+        x64_byte(imm & 0xFF);
+    } else {
+        x64_byte(0x81);
+        x64_modrm_mem(0, base, disp);  /* /0 = ADD */
+        x64_dword(imm);
+    }
+}
+
+// ============================================================================
 // Data movement
 // ============================================================================
 
