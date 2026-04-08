@@ -40,6 +40,13 @@ static int hx_addi_folded_disp[HIR_MAX_INST];
 /* Legacy name for ADDI emitter check (1 if this ADDI was folded) */
 static int hx_addi_folded[HIR_MAX_INST];
 
+/* SIB fold: LOAD/STORE with [base + index*scale] addressing.
+ * For LOAD:  src1=base, src2=index (rewritten), scale in hx_sib_scale.
+ * For STORE: src1=base, src2=value (unchanged), index in hx_sib_index.
+ * NOTE: hx_sib_index[] is declared in hir_regalloc_x64.h (for liveness). */
+static int hx_sib_flag[HIR_MAX_INST];     /* 1 if this load/store uses SIB */
+static int hx_sib_scale[HIR_MAX_INST];    /* SIB scale: 1=*2, 2=*4, 3=*8 */
+
 /* x86-64 SysV ABI argument registers */
 static int hx_arg_reg[6];
 static int hx_phi_insts[HIR_MAX_INST];
@@ -865,6 +872,17 @@ static void hx_emit_inst(int idx) {
             if (hx_addi_folded_flag[idx]) {
                 ar = hx_src(h_src1[idx], X64_RAX);
                 hx_load_typed_off(dr, ar, hx_addi_folded_disp[idx], ty);
+            } else if (hx_sib_flag[idx]) {
+                /* SIB: src1=base, src2=index, scale in hx_sib_scale */
+                int br;
+                int ir;
+                br = hx_src(h_src1[idx], X64_RAX);
+                ir = hx_src(h_src2[idx], X64_RCX);
+                if (wide) {
+                    x64_mov_rm64_sib(dr, br, ir, hx_sib_scale[idx], 0);
+                } else {
+                    x64_mov_rm_sib(dr, br, ir, hx_sib_scale[idx], 0);
+                }
             } else {
                 ar = hx_src(h_src1[idx], X64_RAX);
                 hx_load_typed(dr, ar, ty);
@@ -903,6 +921,18 @@ static void hx_emit_inst(int idx) {
                 ar = hx_src(h_src1[idx], X64_RAX);
                 vr = hx_src(h_src2[idx], X64_RCX);
                 hx_store_typed_off(ar, hx_addi_folded_disp[idx], vr, ty);
+            } else if (hx_sib_flag[idx]) {
+                /* SIB: src1=base, src2=value, index in hx_sib_index */
+                int br;
+                int ir;
+                br = hx_src(h_src1[idx], X64_RAX);
+                vr = hx_src(h_src2[idx], X64_RDX);
+                ir = hx_src(hx_sib_index[idx], X64_RCX);
+                if (wide) {
+                    x64_mov_mr64_sib(br, ir, hx_sib_scale[idx], 0, vr);
+                } else {
+                    x64_mov_mr_sib(br, ir, hx_sib_scale[idx], 0, vr);
+                }
             } else {
                 ar = hx_src(h_src1[idx], X64_RAX);
                 vr = hx_src(h_src2[idx], X64_RCX);
@@ -1331,6 +1361,12 @@ static void hx_gen_func(Node *fn) {
     hx_fn_nparams = fn->nparams;
     hx_va_save_off = 0;
 
+    /* Align function entry to 16-byte boundary for better icache/branch
+     * prediction behavior.  Pad with INT3 (0xCC). */
+    while (x64_off & 15) {
+        x64_byte(0xCC);
+    }
+
     /* Record function in symbol table (after varargs check so we don't
      * leave a partial entry on fatal error) */
     cg_func_name[cg_nfuncs] = fn->name;
@@ -1380,6 +1416,90 @@ static void hx_gen_func(Node *fn) {
                     h_src1[i] = h_src1[addr_inst];
                     hx_addi_folded[addr_inst] = 1;
                     h_kind[addr_inst] = HI_NOP;
+                }
+            }
+        }
+        i = i + 1;
+    }
+
+    /* --- Fold scaled-index addressing (SIB) into LOAD/STORE ---
+     * Pattern: LOAD [ADD(base, SLL(index, 1..3))]
+     *    or    STORE [ADD(base, SLL(index, 1..3))], value
+     * For LOAD:  rewrite src1=base, src2=index (newly tracked for liveness).
+     * For STORE: rewrite src1=base; index saved in hx_sib_index[].
+     * The ADD and SLL are NOPed so they don't consume registers. */
+    i = 0;
+    while (i < h_ninst) {
+        hx_sib_flag[i] = 0;
+        hx_sib_scale[i] = 0;
+        hx_sib_index[i] = -1;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if ((k == HI_LOAD || k == HI_STORE) &&
+            !hx_addi_folded_flag[i]) {
+            int addr;
+            int burg_lnt;
+            int bp;
+            addr = h_src1[i];
+            bp = bg_sel[i];
+            burg_lnt = (bp >= 0) ? bg_plnt[bp] : -1;
+            if (burg_lnt != BG_MEM && burg_lnt != BG_SADDR &&
+                addr >= 0 && h_kind[addr] == HI_ADD &&
+                hx_is_wide(h_ty[addr]) &&
+                bg_uses[addr] == 1 && h_blk[addr] == h_blk[i]) {
+                int lhs;
+                int rhs;
+                int base_i;
+                int idx_i;
+                int sll_i;
+                int shift;
+                lhs = h_src1[addr];
+                rhs = h_src2[addr];
+                base_i = -1; idx_i = -1; sll_i = -1; shift = -1;
+                /* ADD(base, SLL(index, const)) */
+                if (rhs >= 0 && h_kind[rhs] == HI_SLL &&
+                    bg_uses[rhs] == 1 && h_blk[rhs] == h_blk[i]) {
+                    int sc;
+                    sc = h_src2[rhs];
+                    if (sc >= 0 && h_kind[sc] == HI_ICONST &&
+                        h_val[sc] >= 1 && h_val[sc] <= 3) {
+                        base_i = lhs;
+                        idx_i = h_src1[rhs];
+                        sll_i = rhs;
+                        shift = h_val[sc];
+                    }
+                }
+                /* ADD(SLL(index, const), base) — commutative */
+                if (base_i < 0 && lhs >= 0 && h_kind[lhs] == HI_SLL &&
+                    bg_uses[lhs] == 1 && h_blk[lhs] == h_blk[i]) {
+                    int sc;
+                    sc = h_src2[lhs];
+                    if (sc >= 0 && h_kind[sc] == HI_ICONST &&
+                        h_val[sc] >= 1 && h_val[sc] <= 3) {
+                        base_i = rhs;
+                        idx_i = h_src1[lhs];
+                        sll_i = lhs;
+                        shift = h_val[sc];
+                    }
+                }
+                if (base_i >= 0 && idx_i >= 0 && sll_i >= 0) {
+                    hx_sib_flag[i] = 1;
+                    hx_sib_scale[i] = shift;
+                    /* Rewrite LOAD: src1=base, src2=index */
+                    h_src1[i] = base_i;
+                    if (k == HI_LOAD) {
+                        h_src2[i] = idx_i;
+                    } else {
+                        /* STORE: src2 stays as the value to store.
+                         * Index tracked via side array. */
+                        hx_sib_index[i] = idx_i;
+                    }
+                    /* NOP the consumed ADD and SLL */
+                    h_kind[addr] = HI_NOP;
+                    h_kind[sll_i] = HI_NOP;
                 }
             }
         }

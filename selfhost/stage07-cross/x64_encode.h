@@ -202,6 +202,20 @@ static void x64_mov_mr_sib(int base, int index, int scale, int disp, int src) {
     x64_modrm_sib(src, base, index, scale, disp);
 }
 
+// mov r64, [base + index*scale + disp]
+static void x64_mov_rm64_sib(int dst, int base, int index, int scale, int disp) {
+    x64_byte(REX_BASE | x64_rex_sib(dst, base, index, 1));
+    x64_byte(0x8B);
+    x64_modrm_sib(dst, base, index, scale, disp);
+}
+
+// mov [base + index*scale + disp], r64
+static void x64_mov_mr64_sib(int base, int index, int scale, int disp, int src) {
+    x64_byte(REX_BASE | x64_rex_sib(src, base, index, 1));
+    x64_byte(0x89);
+    x64_modrm_sib(src, base, index, scale, disp);
+}
+
 // add dword [base + disp], imm32
 static void x64_add_mi(int base, int disp, int imm) {
     int use_imm8;

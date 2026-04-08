@@ -15,6 +15,10 @@
 #ifndef HIR_REGALLOC_X64_H
 #define HIR_REGALLOC_X64_H
 
+/* SIB index array (defined in hir_codegen_x64.h, forward-declared here
+ * so liveness analysis can track the store index operand). */
+static int hx_sib_index[HIR_MAX_INST];
+
 /* --- Configuration --- */
 #define RA_NPHY 11  /* callee: RBX, R12-R15; caller: RSI, RDI, R8, R9, R10, R11 */
 
@@ -283,9 +287,14 @@ static void ra_compute_ends(void) {
         /* src1 */
         ra_extend(h_src1[inst], p);
 
-        /* src2 (instruction ref for binops and STORE) */
-        if (h_src2[inst] >= 0 && ho_src2_is_ref(k)) {
+        /* src2 (instruction ref for binops, STORE, and SIB-folded LOAD) */
+        if (h_src2[inst] >= 0 && (ho_src2_is_ref(k) || k == HI_LOAD)) {
             ra_extend(h_src2[inst], p);
+        }
+
+        /* SIB index for stores (stored in side array, not in src2) */
+        if (k == HI_STORE && hx_sib_index[inst] >= 0) {
+            ra_extend(hx_sib_index[inst], p);
         }
 
         /* Call arguments */
@@ -330,8 +339,15 @@ static void ra_compute_ends(void) {
             ra_backprop(src, h_blk[inst]);
         }
 
-        if (h_src2[inst] >= 0 && ho_src2_is_ref(k)) {
+        if (h_src2[inst] >= 0 && (ho_src2_is_ref(k) || k == HI_LOAD)) {
             src = h_src2[inst];
+            if (ra_pos[src] >= 0 && h_blk[src] != h_blk[inst]) {
+                ra_backprop(src, h_blk[inst]);
+            }
+        }
+
+        if (k == HI_STORE && hx_sib_index[inst] >= 0) {
+            src = hx_sib_index[inst];
             if (ra_pos[src] >= 0 && h_blk[src] != h_blk[inst]) {
                 ra_backprop(src, h_blk[inst]);
             }
