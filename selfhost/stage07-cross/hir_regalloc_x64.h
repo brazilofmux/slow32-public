@@ -502,13 +502,170 @@ static void ra_assign_spills(void) {
 }
 
 /* =================================================================
- * Main entry point (no compare-branch fusion for x64 yet)
+ * Compare-branch fusion
+ *
+ * Identifies BRC instructions whose condition is a single-use
+ * comparison (SEQ..SGEU).  The comparison is NOPed and its operand
+ * live ranges extended to the BRC, so the codegen can emit
+ * CMP + Jcc directly instead of SETcc + MOVZX + TEST + Jcc.
+ * ================================================================= */
+
+static int hx_brc_fuse[HIR_MAX_INST];   /* BRC idx → fused comparison idx, -1 = none */
+static int hx_cmp_fused[HIR_MAX_INST];  /* 1 if comparison is fused into a BRC */
+static int hx_cmp_kind[HIR_MAX_INST];   /* saved comparison kind (before NOP) */
+static int hx_use_count[HIR_MAX_INST];  /* use count per instruction */
+
+static int hx_is_cmp(int k) {
+    return (k >= HI_SEQ && k <= HI_SGEU);
+}
+
+static void hx_identify_fusions(void) {
+    int i;
+    int k;
+    int root;
+    int rk;
+    int lim;
+    int j;
+    int base;
+
+    /* Compute use counts */
+    i = 0;
+    while (i < h_ninst) {
+        hx_use_count[i] = 0;
+        hx_brc_fuse[i] = -1;
+        hx_cmp_fused[i] = 0;
+        i = i + 1;
+    }
+
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_NOP) { i = i + 1; continue; }
+        if (h_src1[i] >= 0) hx_use_count[h_src1[i]] = hx_use_count[h_src1[i]] + 1;
+        if (h_src2[i] >= 0 && ho_src2_is_ref(k))
+            hx_use_count[h_src2[i]] = hx_use_count[h_src2[i]] + 1;
+        if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
+            j = 0;
+            base = h_cbase[i];
+            while (j < h_val[i]) {
+                if (h_carg[base + j] >= 0)
+                    hx_use_count[h_carg[base + j]] = hx_use_count[h_carg[base + j]] + 1;
+                j = j + 1;
+            }
+        }
+        if (k == HI_PHI && h_pbase[i] >= 0) {
+            j = 0;
+            while (j < h_pcnt[i]) {
+                if (h_pval[h_pbase[i] + j] >= 0)
+                    hx_use_count[h_pval[h_pbase[i] + j]] = hx_use_count[h_pval[h_pbase[i] + j]] + 1;
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+
+    /* Identify fusable BRC instructions */
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k != HI_BRC) { i = i + 1; continue; }
+
+        /* Chase COPY chain on s1 to find root comparison */
+        root = h_src1[i];
+        lim = 0;
+        while (root >= 0 && h_kind[root] == HI_COPY && lim < 64) {
+            root = h_src1[root];
+            lim = lim + 1;
+        }
+        if (root < 0) { i = i + 1; continue; }
+
+        rk = h_kind[root];
+        if (!hx_is_cmp(rk)) { i = i + 1; continue; }
+        if (hx_use_count[root] != 1) { i = i + 1; continue; }
+        if (h_blk[root] != h_blk[i]) { i = i + 1; continue; }
+
+        /* Reject if comparison operands are NOPed */
+        if (h_src1[root] >= 0 && h_kind[h_src1[root]] == HI_NOP) {
+            i = i + 1; continue;
+        }
+        if (h_src2[root] >= 0 && h_kind[h_src2[root]] == HI_NOP) {
+            i = i + 1; continue;
+        }
+
+        hx_brc_fuse[i] = root;
+        hx_cmp_fused[root] = 1;
+        hx_cmp_kind[root] = rk;
+
+        /* Mark intermediate COPYs for suppression */
+        {
+            int c;
+            c = h_src1[i];
+            lim = 0;
+            while (c >= 0 && c != root && h_kind[c] == HI_COPY && lim < 64) {
+                hx_cmp_fused[c] = 1;
+                c = h_src1[c];
+                lim = lim + 1;
+            }
+        }
+
+        i = i + 1;
+    }
+}
+
+/* Extend live ranges for fused comparisons and NOP them. */
+static void ra_extend_fused_cmp(void) {
+    int i;
+    int cmp;
+    int ca;
+    int cb;
+    int brc_pos;
+    int c;
+    int lim;
+
+    i = 0;
+    while (i < h_ninst) {
+        cmp = hx_brc_fuse[i];
+        if (cmp < 0) { i = i + 1; continue; }
+
+        brc_pos = ra_pos[i];
+        if (brc_pos < 0) {
+            hx_brc_fuse[i] = -1;
+            i = i + 1;
+            continue;
+        }
+
+        ca = h_src1[cmp];
+        cb = h_src2[cmp];
+
+        /* Extend comparison operand live ranges to BRC position */
+        ra_extend(ca, brc_pos);
+        ra_extend(cb, brc_pos);
+
+        /* NOP the comparison so regalloc skips it */
+        h_kind[cmp] = HI_NOP;
+
+        /* NOP intermediate COPYs */
+        c = h_src1[i];
+        lim = 0;
+        while (c >= 0 && c != cmp && lim < 64) {
+            if (hx_cmp_fused[c]) h_kind[c] = HI_NOP;
+            c = h_src1[c];
+            lim = lim + 1;
+        }
+
+        i = i + 1;
+    }
+}
+
+/* =================================================================
+ * Main entry point
  * ================================================================= */
 
 static void hir_regalloc(void) {
     ra_init_x64_regs();
     ra_compute_pos();
     ra_compute_ends();
+    ra_extend_fused_cmp();
     ra_linear_scan();
     ra_assign_spills();
 }

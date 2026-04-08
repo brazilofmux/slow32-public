@@ -614,19 +614,52 @@ static void hx_emit_inst(int idx) {
         int cur_blk;
         int true_blk;
         int false_blk;
-        int cr;
+        int inv_cc;
+        int cmp_idx;
+        int false_patch;
+
         cur_blk = h_blk[idx];
         true_blk = h_src2[idx];    /* target if condition is TRUE */
         false_blk = h_val[idx];    /* target if condition is FALSE */
 
-        cr = hx_src(h_src1[idx], X64_RAX);
-        if (hx_is_wide(h_ty[h_src1[idx]])) x64_test_rr64(cr, cr);
-        else x64_test_rr(cr, cr);
+        cmp_idx = hx_brc_fuse[idx];
+        if (cmp_idx >= 0) {
+            /* Fused compare-and-branch: emit CMP + inverted Jcc */
+            int ck;
+            int s1r;
+            int s2r;
+            int cmp_wide;
 
-        /* JE to false path (condition is zero → false) */
-        {
-        int false_patch;
-        false_patch = x64_jcc_placeholder(X64_CC_E);
+            ck = hx_cmp_kind[cmp_idx];
+            cmp_wide = hx_is_wide(h_ty[h_src1[cmp_idx]]) ||
+                        hx_is_wide(h_ty[h_src2[cmp_idx]]);
+            s1r = hx_src(h_src1[cmp_idx], X64_RAX);
+            s2r = hx_src(h_src2[cmp_idx], X64_RCX);
+            if (cmp_wide) x64_cmp_rr64(s1r, s2r);
+            else x64_cmp_rr(s1r, s2r);
+
+            /* Inverted condition: jump to false path when condition is FALSE */
+            if (ck == HI_SEQ) inv_cc = X64_CC_NE;
+            else if (ck == HI_SNE) inv_cc = X64_CC_E;
+            else if (ck == HI_SLT) inv_cc = X64_CC_GE;
+            else if (ck == HI_SGT) inv_cc = X64_CC_LE;
+            else if (ck == HI_SLE) inv_cc = X64_CC_G;
+            else if (ck == HI_SGE) inv_cc = X64_CC_L;
+            else if (ck == HI_SLTU) inv_cc = X64_CC_AE;
+            else if (ck == HI_SGTU) inv_cc = X64_CC_BE;
+            else if (ck == HI_SLEU) inv_cc = X64_CC_A;
+            else inv_cc = X64_CC_B;  /* SGEU → JB */
+        } else {
+            /* Unfused: TEST condition + JE */
+            int cr;
+            cr = hx_src(h_src1[idx], X64_RAX);
+            if (hx_is_wide(h_ty[h_src1[idx]])) x64_test_rr64(cr, cr);
+            else x64_test_rr(cr, cr);
+            inv_cc = X64_CC_E;
+        }
+
+        /* Jump to false path when condition is FALSE */
+        false_patch = x64_jcc_placeholder(inv_cc);
 
         /* True path: phi copies + jump to true_blk */
         hx_phi_copies(cur_blk, true_blk);
@@ -637,7 +670,6 @@ static void hx_emit_inst(int idx) {
         hx_phi_copies(cur_blk, false_blk);
         if (false_blk != cur_blk + 1) {
             hx_jump_to_block(false_blk);
-        }
         }
         return;
     }
@@ -790,6 +822,7 @@ static void hx_gen_func(Node *fn) {
      * Scale to x64 (8-byte slots) before the regalloc adds spill/callee-save
      * slots so all offsets are in the same coordinate system. */
     hl_temp_stack = 16 + fn->locals_size * 2;
+    hx_identify_fusions();
     hir_regalloc();
 
     /* Assign spill slots for GADDR/SADDR/FADDR (regalloc treats them as
