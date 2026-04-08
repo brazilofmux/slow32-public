@@ -82,6 +82,11 @@ static int cg_object_mode;
 static int cg_epilog;
 static int cg_frame_size;
 
+/* Varargs state (per-function) */
+static int cg_is_varargs;     /* 1 if current function is variadic */
+static int cg_nparams;        /* number of named parameters */
+static int cg_va_save_off;    /* RBP offset of the contiguous va save area */
+
 #define CG_MAX_LOOP 32
 static int cg_break_lbl[CG_MAX_LOOP];
 static int cg_cont_lbl[CG_MAX_LOOP];
@@ -1042,6 +1047,61 @@ static void gen_expr(Node *n) {
         return;
     }
 
+    /* va_start(ap): set ap to point to the first variadic arg in the save area.
+     * The save area has all 6 register args contiguously at [RBP + cg_va_save_off].
+     * Named params occupy slots 0..nparams-1, so variadic args start at slot nparams.
+     * If nparams >= 6, all named args are in registers and variadics start on the stack
+     * at [RBP + 16] (first stack arg). */
+    if (n->kind == ND_VA_START) {
+        gen_addr(n->lhs);          /* RAX = address of ap variable */
+        x64_push(X64_RAX);         /* save address */
+        if (cg_nparams < 6) {
+            /* Point to save_area[nparams] */
+            x64_lea(X64_RCX, X64_RBP, cg_va_save_off + cg_nparams * 8);
+        } else {
+            /* All register args are named; variadics start on the stack */
+            x64_lea(X64_RCX, X64_RBP, 16 + (cg_nparams - 6) * 8);
+        }
+        x64_pop(X64_RAX);          /* RAX = &ap */
+        x64_mov_mr64(X64_RAX, 0, X64_RCX);  /* ap = ptr to first va arg */
+        return;
+    }
+
+    /* va_arg(ap, type): load value from *ap, then advance ap by 8.
+     * ap is a char* (pointer) pointing to the next arg slot. */
+    if (n->kind == ND_VA_ARG) {
+        int va_ty;
+        va_ty = n->ty;
+        gen_addr(n->lhs);          /* RAX = address of ap variable */
+        x64_push(X64_RAX);         /* save &ap */
+        x64_mov_rm64(X64_RAX, X64_RAX, 0);  /* RAX = ap (current pointer) */
+        x64_push(X64_RAX);         /* save current ap */
+        /* Load value at *ap */
+        if (cg_is_64bit(va_ty)) {
+            x64_mov_rm64(X64_RAX, X64_RAX, 0);
+        } else if ((va_ty & TY_BASE_MASK) == TY_CHAR) {
+            if (va_ty & TY_UNSIGNED)
+                x64_movzx_rm8(X64_RAX, X64_RAX, 0);
+            else
+                x64_movsx_rm8(X64_RAX, X64_RAX, 0);
+        } else if ((va_ty & TY_BASE_MASK) == TY_SHORT) {
+            if (va_ty & TY_UNSIGNED)
+                x64_movzx_rm16(X64_RAX, X64_RAX, 0);
+            else
+                x64_movsx_rm16(X64_RAX, X64_RAX, 0);
+        } else {
+            x64_mov_rm(X64_RAX, X64_RAX, 0);  /* 32-bit load */
+        }
+        x64_mov_rr64(X64_RDX, X64_RAX);   /* save loaded value in RDX */
+        /* Advance ap: ap += 8 */
+        x64_pop(X64_RCX);          /* RCX = old ap */
+        x64_add_ri64(X64_RCX, 8);  /* advance by 8 */
+        x64_pop(X64_RAX);          /* RAX = &ap */
+        x64_mov_mr64(X64_RAX, 0, X64_RCX);  /* *(&ap) = new_ap */
+        x64_mov_rr64(X64_RAX, X64_RDX);   /* result = loaded value */
+        return;
+    }
+
     /* Fallback */
     cg_li(0);
 }
@@ -1283,6 +1343,8 @@ static void gen_func(Node *fn) {
     cg_epilog = cg_label();
     cg_loop_depth = 0;
     cg_sw_depth = 0;
+    cg_is_varargs = fn->is_varargs;
+    cg_nparams = fn->nparams;
 
     /* Frame size: 8 (saved rbp is implicit via push rbp) + params + locals
      * The frontend computed locals_size including param storage.
@@ -1291,8 +1353,13 @@ static void gen_func(Node *fn) {
      */
     /* Double the frame size to account for 8-byte slots on x86-64 */
     fs = 16 + fn->locals_size * 2;
+    /* For varargs functions, add 48 bytes for register save area (6 * 8) */
+    if (cg_is_varargs) fs = fs + 48;
     fs = (fs + 15) & ~15;
     cg_frame_size = fs;
+    /* The varargs save area is at the bottom of the frame */
+    if (cg_is_varargs) cg_va_save_off = -(fs);
+    else cg_va_save_off = 0;
 
     /* Prologue */
     x64_push(X64_RBP);
@@ -1323,6 +1390,17 @@ static void gen_func(Node *fn) {
         x64_mov_mr64(X64_RBP, cg_x64_offset(p->offset), X64_RAX);
         i = i + 1;
         p = p->next;
+    }
+
+    /* For varargs functions, save all 6 register args to a contiguous area.
+     * This area is at [RBP + cg_va_save_off] through [RBP + cg_va_save_off + 40].
+     * va_start will point into this area past the named params. */
+    if (cg_is_varargs) {
+        i = 0;
+        while (i < 6) {
+            x64_mov_mr64(X64_RBP, cg_va_save_off + i * 8, x64_arg_regs[i]);
+            i = i + 1;
+        }
     }
 
     /* Generate function body */

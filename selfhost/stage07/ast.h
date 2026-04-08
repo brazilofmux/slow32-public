@@ -76,8 +76,12 @@ static int ty_struct_idx(int ty) {
     return (ty & TY_BASE_MASK) - TY_STRUCT_BASE;
 }
 
+/* Target pointer size: 4 for SLOW-32, 8 for x86-64.
+ * Set by driver before compilation. Default 4 for backward compat. */
+static int ty_ptr_size = 4;
+
 static int ty_size(int ty) {
-    if (ty & TY_PTR_MASK) return 4;
+    if (ty & TY_PTR_MASK) return ty_ptr_size;
     if ((ty & TY_BASE_MASK) >= TY_STRUCT_BASE)
         return st_size[(ty & TY_BASE_MASK) - TY_STRUCT_BASE];
     if ((ty & TY_BASE_MASK) == TY_DOUBLE) return 8;

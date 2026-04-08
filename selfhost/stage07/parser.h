@@ -789,6 +789,26 @@ static Node *parse_primary(void) {
             return nd_assign(n, arg);
         }
 
+        /* __builtin_expect(expr, val) — returns expr (hint ignored) */
+        if (strcmp(nm, "__builtin_expect") == 0) {
+            expect(TK_LPAREN);
+            n = parse_assign();
+            expect(TK_COMMA);
+            parse_assign();  /* discard second arg (the expected value) */
+            expect(TK_RPAREN);
+            return n;
+        }
+
+        /* __builtin___clear_cache(begin, end) — no-op on x86-64 */
+        if (strcmp(nm, "__builtin___clear_cache") == 0) {
+            expect(TK_LPAREN);
+            parse_assign();  /* discard begin */
+            expect(TK_COMMA);
+            parse_assign();  /* discard end */
+            expect(TK_RPAREN);
+            return nd_num(0);
+        }
+
         /* Direct function call: name(args) */
         if (lex_tok == TK_LPAREN) {
             next();
@@ -1790,6 +1810,23 @@ static Node *parse_top_decl(void) {
     int sp_idx;
     int slen;
     char *sp;
+
+    /* _Static_assert(expr, "message") — compile-time check, no codegen */
+    if (lex_tok == TK_STATIC_ASSERT) {
+        int sa_val;
+        Node *sa_expr;
+        next();
+        expect(TK_LPAREN);
+        sa_expr = parse_assign();
+        /* Evaluate constant expression — only supports ND_NUM for now */
+        sa_val = (sa_expr && sa_expr->kind == ND_NUM) ? sa_expr->val : 1;
+        expect(TK_COMMA);
+        if (lex_tok == TK_STRING) next(); /* skip message string */
+        expect(TK_RPAREN);
+        expect(TK_SEMI);
+        if (sa_val == 0) p_error("_Static_assert failed");
+        return NULL;  /* no AST node emitted */
+    }
 
     /* Skip storage class / qualifier keywords (single-file compiler, no semantic effect) */
     while (lex_tok == TK_STATIC || lex_tok == TK_CONST ||

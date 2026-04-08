@@ -74,7 +74,7 @@ static int elf_bss_len;
 static int elf_entry_off;   // offset within .text
 
 // Output buffer — we build the entire ELF in memory then write once
-#define ELF_OUT_SIZE (8 * 1024 * 1024)
+#define ELF_OUT_SIZE 8388608
 static unsigned char elf_out[ELF_OUT_SIZE];
 static int elf_out_len;
 
@@ -197,19 +197,16 @@ static void elf_emit_ehdr(int entry_lo, int entry_hi, int phoff, int phnum) {
 // ============================================================================
 
 static void elf_emit_phdr(int type, int flags,
-                          int offset_lo, int offset_hi,
-                          int vaddr_lo, int vaddr_hi,
-                          int filesz_lo, int filesz_hi,
-                          int memsz_lo, int memsz_hi,
-                          int align) {
+                          int offset, int vaddr,
+                          int filesz, int memsz) {
     elf_emit_word(type);                     // p_type
     elf_emit_word(flags);                    // p_flags
-    elf_emit_xword(offset_lo, offset_hi);    // p_offset
-    elf_emit_xword(vaddr_lo, vaddr_hi);      // p_vaddr
-    elf_emit_xword(vaddr_lo, vaddr_hi);      // p_paddr (= vaddr)
-    elf_emit_xword(filesz_lo, filesz_hi);    // p_filesz
-    elf_emit_xword(memsz_lo, memsz_hi);      // p_memsz
-    elf_emit_xword(align, 0);               // p_align
+    elf_emit_xword(offset, 0);              // p_offset
+    elf_emit_xword(vaddr, 0);               // p_vaddr
+    elf_emit_xword(vaddr, 0);               // p_paddr (= vaddr)
+    elf_emit_xword(filesz, 0);              // p_filesz
+    elf_emit_xword(memsz, 0);               // p_memsz
+    elf_emit_xword(ELF_PAGE_SIZE, 0);       // p_align
 }
 
 // ============================================================================
@@ -227,21 +224,17 @@ static int elf_build(void) {
 
     int text_file_off;
     int text_vaddr_lo;
-    int text_vaddr_hi;
 
     int rodata_file_off;
     int rodata_vaddr_lo;
-    int rodata_vaddr_hi;
     int rodata_page;
 
     int data_file_off;
     int data_vaddr_lo;
-    int data_vaddr_hi;
     int data_page;
     int data_memsz;
 
     int entry_lo;
-    int entry_hi;
 
     ehdr_size = 64;
     phdr_size = 56;
@@ -256,13 +249,11 @@ static int elf_build(void) {
     // .text starts at page boundary after headers
     text_file_off = ELF_PAGE_SIZE;  // file offset
     text_vaddr_lo = (ELF_BASE_ADDR + ELF_PAGE_SIZE) & 0xFFFFFFFF;
-    text_vaddr_hi = 0;
 
     // .rodata after .text (page-aligned)
     rodata_page = elf_page_align(elf_text_len);
     rodata_file_off = text_file_off + rodata_page;
     rodata_vaddr_lo = text_vaddr_lo + rodata_page;
-    rodata_vaddr_hi = 0;
 
     // .data after .rodata (page-aligned)
     if (elf_rodata_len > 0) {
@@ -273,45 +264,34 @@ static int elf_build(void) {
         data_file_off = rodata_file_off;
         data_vaddr_lo = rodata_vaddr_lo;
     }
-    data_vaddr_hi = 0;
     data_memsz = elf_data_len + elf_bss_len;
 
     // Entry point
     entry_lo = text_vaddr_lo + elf_entry_off;
-    entry_hi = 0;
 
     // === Emit ===
     elf_out_len = 0;
 
     // ELF header
-    elf_emit_ehdr(entry_lo, entry_hi, ehdr_size, num_phdr);
+    elf_emit_ehdr(entry_lo, 0, ehdr_size, num_phdr);
 
     // Program header: .text (R+X)
     elf_emit_phdr(PT_LOAD, PF_R | PF_X,
-                  text_file_off, 0,
-                  text_vaddr_lo, text_vaddr_hi,
-                  elf_text_len, 0,
-                  elf_text_len, 0,
-                  ELF_PAGE_SIZE);
+                  text_file_off, text_vaddr_lo,
+                  elf_text_len, elf_text_len);
 
     // Program header: .rodata (R)
     if (elf_rodata_len > 0) {
         elf_emit_phdr(PT_LOAD, PF_R,
-                      rodata_file_off, 0,
-                      rodata_vaddr_lo, rodata_vaddr_hi,
-                      elf_rodata_len, 0,
-                      elf_rodata_len, 0,
-                      ELF_PAGE_SIZE);
+                      rodata_file_off, rodata_vaddr_lo,
+                      elf_rodata_len, elf_rodata_len);
     }
 
     // Program header: .data + .bss (R+W)
     if (elf_data_len > 0 || elf_bss_len > 0) {
         elf_emit_phdr(PT_LOAD, PF_R | PF_W,
-                      data_file_off, 0,
-                      data_vaddr_lo, data_vaddr_hi,
-                      elf_data_len, 0,
-                      data_memsz, 0,
-                      ELF_PAGE_SIZE);
+                      data_file_off, data_vaddr_lo,
+                      elf_data_len, data_memsz);
     }
 
     // Pad to .text file offset

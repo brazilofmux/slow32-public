@@ -1,0 +1,90 @@
+/* test_varargs.c — va_start / va_arg tests for x86-64 cross-compiler
+ *
+ * Tests variadic functions with int, pointer, and long long args.
+ * Expected exit code: 0 (all pass)
+ */
+
+typedef char *va_list;
+
+int sum_ints(int count, ...) {
+    va_list ap;
+    int total;
+    int i;
+    va_start(ap, count);
+    total = 0;
+    i = 0;
+    while (i < count) {
+        total = total + va_arg(ap, int);
+        i = i + 1;
+    }
+    va_end(ap);
+    return total;
+}
+
+int first_of_three(int a, int b, int c, ...) {
+    va_list ap;
+    int val;
+    va_start(ap, c);
+    val = va_arg(ap, int);
+    va_end(ap);
+    return val;
+}
+
+char *get_nth_str(int n, ...) {
+    va_list ap;
+    char *val;
+    int i;
+    va_start(ap, n);
+    i = 0;
+    val = 0;
+    while (i < n) {
+        val = va_arg(ap, char *);
+        i = i + 1;
+    }
+    va_end(ap);
+    return val;
+}
+
+long long sum_longs(int count, ...) {
+    va_list ap;
+    long long total;
+    int i;
+    va_start(ap, count);
+    total = 0;
+    i = 0;
+    while (i < count) {
+        total = total + va_arg(ap, long long);
+        i = i + 1;
+    }
+    va_end(ap);
+    return total;
+}
+
+int main(int argc, char **argv) {
+    int fails;
+    char *s;
+    long long ll;
+    fails = 0;
+
+    /* Basic: sum_ints(3, 10, 20, 30) = 60 */
+    if (sum_ints(3, 10, 20, 30) != 60) fails = fails + 1;
+
+    /* Single arg: sum_ints(1, 42) = 42 */
+    if (sum_ints(1, 42) != 42) fails = fails + 2;
+
+    /* All 6 register slots: sum_ints(5, 1, 2, 3, 4, 5) = 15 */
+    if (sum_ints(5, 1, 2, 3, 4, 5) != 15) fails = fails + 4;
+
+    /* Multiple named params: first_of_three(100, 200, 300, 999) = 999 */
+    if (first_of_three(100, 200, 300, 999) != 999) fails = fails + 8;
+
+    /* Pointer varargs */
+    s = get_nth_str(2, "hello", "world");
+    if (s[0] != 'w') fails = fails + 16;
+
+    /* Long long varargs */
+    ll = sum_longs(3, (long long)100, (long long)200, (long long)300);
+    if (ll != 600) fails = fails + 32;
+
+    return fails;
+}
