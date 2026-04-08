@@ -402,6 +402,56 @@ static void hx_store_typed_off(int addr, int disp, int src, int ty) {
     }
 }
 
+/* Materialize an incoming PARAM value into dst_reg with the correct width.
+ * SysV leaves the upper 32 bits of integer argument registers undefined,
+ * so non-wide params must be canonicalized with 32-bit moves/loads. */
+static void hx_param_to_reg(int dst_reg, int param_inst, int param_idx, int from_temp) {
+    int ty;
+    int wide;
+    int src_off;
+
+    ty = h_ty[param_inst];
+    wide = hx_is_wide(ty);
+    if (from_temp && param_idx < 6) src_off = hx_param_temp_base + param_idx * 8;
+    else src_off = 16 + (param_idx - 6) * 8;
+
+    if (param_idx < 6 && !from_temp) {
+        if (wide) {
+            if (dst_reg != hx_arg_reg[param_idx])
+                x64_mov_rr64(dst_reg, hx_arg_reg[param_idx]);
+        } else {
+            if (dst_reg != hx_arg_reg[param_idx])
+                x64_mov_rr(dst_reg, hx_arg_reg[param_idx]);
+        }
+    } else {
+        if (wide) x64_mov_rm64(dst_reg, X64_RBP, src_off);
+        else x64_mov_rm(dst_reg, X64_RBP, src_off);
+    }
+}
+
+/* Store an incoming PARAM value to a spill slot with the correct width.
+ * Non-wide params are canonicalized into RAX with a 32-bit move/load
+ * before the full 64-bit spill store, so later 64-bit spill reloads are safe. */
+static void hx_param_to_spill(int spill_off, int param_inst, int param_idx, int from_temp) {
+    int ty;
+    int wide;
+    int src_off;
+
+    ty = h_ty[param_inst];
+    wide = hx_is_wide(ty);
+    if (from_temp && param_idx < 6) src_off = hx_param_temp_base + param_idx * 8;
+    else src_off = 16 + (param_idx - 6) * 8;
+
+    if (param_idx < 6 && !from_temp) {
+        if (wide) x64_mov_rr64(X64_RAX, hx_arg_reg[param_idx]);
+        else x64_mov_rr(X64_RAX, hx_arg_reg[param_idx]);
+    } else {
+        if (wide) x64_mov_rm64(X64_RAX, X64_RBP, src_off);
+        else x64_mov_rm(X64_RAX, X64_RBP, src_off);
+    }
+    x64_mov_mr64(X64_RBP, spill_off, X64_RAX);
+}
+
 /* ============================================================================
  * Instruction emission
  * ============================================================================ */
@@ -1310,18 +1360,9 @@ static void hx_gen_func(Node *fn) {
             if (h_kind[i] == HI_PARAM) {
                 pidx = h_val[i];
                 if (ra_reg[i] >= 0) {
-                    if (pidx < 6)
-                        x64_mov_rm64(ra_reg[i], X64_RBP, hx_param_temp_base + pidx * 8);
-                    else
-                        x64_mov_rm64(ra_reg[i], X64_RBP, 16 + (pidx - 6) * 8);
+                    hx_param_to_reg(ra_reg[i], i, pidx, 1);
                 } else if (ra_spill_off[i] != 0) {
-                    if (pidx < 6) {
-                        x64_mov_rm64(X64_RAX, X64_RBP, hx_param_temp_base + pidx * 8);
-                        x64_mov_mr64(X64_RBP, ra_spill_off[i], X64_RAX);
-                    } else {
-                        x64_mov_rm64(X64_RAX, X64_RBP, 16 + (pidx - 6) * 8);
-                        x64_mov_mr64(X64_RBP, ra_spill_off[i], X64_RAX);
-                    }
+                    hx_param_to_spill(ra_spill_off[i], i, pidx, 1);
                 }
             }
             i = i + 1;
@@ -1333,19 +1374,9 @@ static void hx_gen_func(Node *fn) {
             if (h_kind[i] == HI_PARAM) {
                 pidx = h_val[i];
                 if (ra_reg[i] >= 0) {
-                    if (pidx < 6) {
-                        if (ra_reg[i] != hx_arg_reg[pidx])
-                            x64_mov_rr64(ra_reg[i], hx_arg_reg[pidx]);
-                    } else {
-                        x64_mov_rm64(ra_reg[i], X64_RBP, 16 + (pidx - 6) * 8);
-                    }
+                    hx_param_to_reg(ra_reg[i], i, pidx, 0);
                 } else if (ra_spill_off[i] != 0) {
-                    if (pidx < 6) {
-                        x64_mov_mr64(X64_RBP, ra_spill_off[i], hx_arg_reg[pidx]);
-                    } else {
-                        x64_mov_rm64(X64_RAX, X64_RBP, 16 + (pidx - 6) * 8);
-                        x64_mov_mr64(X64_RBP, ra_spill_off[i], X64_RAX);
-                    }
+                    hx_param_to_spill(ra_spill_off[i], i, pidx, 0);
                 }
             }
             i = i + 1;
