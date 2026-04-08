@@ -614,6 +614,7 @@ static void apply_relocations(void) {
                     memcpy(patch, &val, 8);
                     break;
                 }
+                case 4: /* R_X86_64_PLT32: identical to PC32 for static linking */
                 case R_X86_64_PC32: {
                     /* S + A - P → 32-bit PC-relative */
                     int64_t val = (int64_t)(S + A) - (int64_t)P;
