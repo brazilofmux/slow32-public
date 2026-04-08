@@ -665,11 +665,33 @@ static void hx_emit_inst(int idx) {
         int s1r;
         int s2r;
         int dr;
-        cmp_wide = hx_is_wide(h_ty[h_src1[idx]]) || hx_is_wide(h_ty[h_src2[idx]]);
-        s1r = hx_src(h_src1[idx], X64_RAX);
-        s2r = hx_src(h_src2[idx], X64_RCX);
-        if (cmp_wide) x64_cmp_rr64(s1r, s2r);
-        else x64_cmp_rr(s1r, s2r);
+        int pat;
+        int rnt_p;
+        int ca;
+        int cb;
+        ca = h_src1[idx];
+        cb = h_src2[idx];
+        cmp_wide = hx_is_wide(h_ty[ca]) || hx_is_wide(h_ty[cb]);
+        pat = bg_sel[idx];
+        rnt_p = (pat >= 0) ? bg_prnt[pat] : -1;
+
+        /* Comparison with zero → TEST */
+        if (cb >= 0 && h_kind[cb] == HI_ICONST && h_val[cb] == 0 &&
+            (k == HI_SEQ || k == HI_SNE)) {
+            s1r = hx_src(ca, X64_RAX);
+            if (cmp_wide) x64_test_rr64(s1r, s1r);
+            else x64_test_rr(s1r, s1r);
+        }
+        /* Comparison with immediate → CMP r, imm */
+        else if (rnt_p == BG_IMM && !cmp_wide) {
+            s1r = hx_src(ca, X64_RAX);
+            x64_cmp_ri(s1r, h_val[cb]);
+        } else {
+            s1r = hx_src(ca, X64_RAX);
+            s2r = hx_src(cb, X64_RCX);
+            if (cmp_wide) x64_cmp_rr64(s1r, s2r);
+            else x64_cmp_rr(s1r, s2r);
+        }
 
         if (k == HI_SEQ) x64_sete(X64_RAX);
         else if (k == HI_SNE) x64_setne(X64_RAX);
@@ -782,19 +804,41 @@ static void hx_emit_inst(int idx) {
 
         cmp_idx = hx_brc_fuse[idx];
         if (cmp_idx >= 0) {
-            /* Fused compare-and-branch: emit CMP + inverted Jcc */
+            /* Fused compare-and-branch: emit CMP/TEST + inverted Jcc */
             int ck;
             int s1r;
             int s2r;
             int cmp_wide;
+            int ca;
+            int cb;
 
             ck = hx_cmp_kind[cmp_idx];
-            cmp_wide = hx_is_wide(h_ty[h_src1[cmp_idx]]) ||
-                        hx_is_wide(h_ty[h_src2[cmp_idx]]);
-            s1r = hx_src(h_src1[cmp_idx], X64_RAX);
-            s2r = hx_src(h_src2[cmp_idx], X64_RCX);
-            if (cmp_wide) x64_cmp_rr64(s1r, s2r);
-            else x64_cmp_rr(s1r, s2r);
+            ca = h_src1[cmp_idx];
+            cb = h_src2[cmp_idx];
+            cmp_wide = hx_is_wide(h_ty[ca]) || hx_is_wide(h_ty[cb]);
+
+            /* Check for comparison with zero → TEST */
+            if (cb >= 0 && h_kind[cb] == HI_ICONST && h_val[cb] == 0 &&
+                (ck == HI_SEQ || ck == HI_SNE)) {
+                s1r = hx_src(ca, X64_RAX);
+                if (cmp_wide) x64_test_rr64(s1r, s1r);
+                else x64_test_rr(s1r, s1r);
+            } else if (ca >= 0 && h_kind[ca] == HI_ICONST && h_val[ca] == 0 &&
+                       (ck == HI_SEQ || ck == HI_SNE)) {
+                s1r = hx_src(cb, X64_RAX);
+                if (cmp_wide) x64_test_rr64(s1r, s1r);
+                else x64_test_rr(s1r, s1r);
+            }
+            /* Check for comparison with immediate → CMP r, imm */
+            else if (cb >= 0 && h_kind[cb] == HI_ICONST && !cmp_wide) {
+                s1r = hx_src(ca, X64_RAX);
+                x64_cmp_ri(s1r, h_val[cb]);
+            } else {
+                s1r = hx_src(ca, X64_RAX);
+                s2r = hx_src(cb, X64_RCX);
+                if (cmp_wide) x64_cmp_rr64(s1r, s2r);
+                else x64_cmp_rr(s1r, s2r);
+            }
 
             /* Inverted condition: jump to false path when condition is FALSE */
             if (ck == HI_SEQ) inv_cc = X64_CC_NE;
