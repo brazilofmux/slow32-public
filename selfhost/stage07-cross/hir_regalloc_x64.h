@@ -797,8 +797,8 @@ static void hir_regalloc(void) {
     ra_init_x64_regs();
     ra_compute_pos();
     ra_compute_ends();
-    ra_mark_call_crossing();
     ra_extend_fused_cmp();
+    ra_mark_call_crossing();
     ra_linear_scan();
     ra_assign_spills();
 }
