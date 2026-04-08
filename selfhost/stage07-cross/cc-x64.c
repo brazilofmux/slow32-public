@@ -95,7 +95,10 @@ static void fdputuint(int f, int v) {
 /* x86-64 backend */
 #include "x64_encode.h"
 
-/* x86-64 register allocation (needs x64_encode.h for register constants) */
+/* x86-64 BURG instruction selection (needs x64_encode.h, hir_opt.h for ho_src2_is_ref) */
+#include "hir_burg_x64.h"
+
+/* x86-64 register allocation (needs x64_encode.h, hir_burg_x64.h for bg_uses[]) */
 #include "hir_regalloc_x64.h"
 #include "elf_writer.h"
 #include "codegen_x64.h"

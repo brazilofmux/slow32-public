@@ -420,17 +420,27 @@ static void hx_emit_inst(int idx) {
     }
 
     /* ADDI: src1 + immediate → dst
-     * Always 64-bit: the HIR (designed for 32-bit SLOW-32) often marks
-     * pointer-offset ADDI as TY_INT.  64-bit add is always safe. */
+     * If BURG selected this as MEM or SADDR, it was folded — no code.
+     * Otherwise emit LEA or ADD. */
     if (k == HI_ADDI) {
         {
-        int sr;
-        int dr;
-        sr = hx_src(h_src1[idx], X64_RAX);
-        dr = hx_dst(idx);
-        hx_mov_if_needed64(dr, sr);
-        if (h_val[idx] != 0) x64_add_ri64(dr, h_val[idx]);
-        hx_maybe_spill(idx);
+        int pat;
+        int sel_nt;
+        pat = bg_sel[idx];
+        sel_nt = (pat >= 0) ? bg_pnt[pat] : -1;
+        /* If result NT is MEM or SADDR, this ADDI is folded into a parent
+         * load/store — no code emitted at definition site. */
+        if (sel_nt == BG_MEM || sel_nt == BG_SADDR || sel_nt == BG_IMM) {
+            /* Folded or constant-propagated: no code */
+        } else {
+            int sr;
+            int dr;
+            sr = hx_src(h_src1[idx], X64_RAX);
+            dr = hx_dst(idx);
+            hx_mov_if_needed64(dr, sr);
+            if (h_val[idx] != 0) x64_add_ri64(dr, h_val[idx]);
+            hx_maybe_spill(idx);
+        }
         }
         return;
     }
@@ -461,17 +471,35 @@ static void hx_emit_inst(int idx) {
         commute = (k != HI_SUB);
         s2_inst = h_src2[idx];
 
-        /* Check if src2 is a small constant (ICONST, not wide, not MUL) */
+        /* BURG-driven immediate selection: if the selected pattern has
+         * an IMM operand, use immediate form */
         use_imm = 0;
-        if (s2_inst >= 0 && h_kind[s2_inst] == HI_ICONST && !wide && k != HI_MUL) {
+        {
+        int pat;
+        int lnt_p;
+        int rnt_p;
+        int reg_src;
+        pat = bg_sel[idx];
+        lnt_p = (pat >= 0) ? bg_plnt[pat] : -1;
+        rnt_p = (pat >= 0) ? bg_prnt[pat] : -1;
+        reg_src = -1;
+        if (rnt_p == BG_IMM && !wide) {
             imm_val = h_val[s2_inst];
+            reg_src = h_src1[idx];
             use_imm = 1;
+        } else if (lnt_p == BG_IMM && commute && !wide) {
+            imm_val = h_val[h_src1[idx]];
+            reg_src = h_src2[idx];
+            use_imm = 1;
+        }
         }
 
         if (use_imm) {
-            /* Immediate form: op dr, imm */
+            /* Immediate form: op dr, imm (reg_src has the register operand) */
+            int reg_src;
+            reg_src = (bg_prnt[bg_sel[idx]] == BG_IMM) ? h_src1[idx] : h_src2[idx];
             dr = hx_dst(idx);
-            s1r = hx_src(h_src1[idx], X64_RAX);
+            s1r = hx_src(reg_src, X64_RAX);
             hx_mov_if_needed(dr, s1r);
             if (k == HI_ADD) x64_add_ri(dr, imm_val);
             else if (k == HI_SUB) x64_sub_ri(dr, imm_val);
@@ -629,9 +657,31 @@ static void hx_emit_inst(int idx) {
     if (k == HI_LOAD) {
         int ar;
         int dr;
-        ar = hx_src(h_src1[idx], X64_RAX);
+        int pat;
+        int lnt;
+        pat = bg_sel[idx];
+        lnt = (pat >= 0) ? bg_plnt[pat] : -1;
         dr = hx_dst(idx);
-        hx_load_typed(dr, ar, ty);
+        if (lnt == BG_MEM) {
+            /* BURG: load from frame-relative [RBP + disp] */
+            int foff;
+            foff = bg_foff[h_src1[idx]];
+            if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
+                if (ty & TY_UNSIGNED) x64_movzx_rm8(dr, X64_RBP, foff);
+                else x64_movsx_rm8(dr, X64_RBP, foff);
+            } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+                if (ty & TY_UNSIGNED) x64_movzx_rm16(dr, X64_RBP, foff);
+                else x64_movsx_rm16(dr, X64_RBP, foff);
+            } else if (hx_is_wide(ty)) {
+                x64_mov_rm64(dr, X64_RBP, foff);
+            } else {
+                x64_mov_rm(dr, X64_RBP, foff);
+            }
+        } else {
+            /* Fallback: load from [register] */
+            ar = hx_src(h_src1[idx], X64_RAX);
+            hx_load_typed(dr, ar, ty);
+        }
         hx_maybe_spill(idx);
         return;
     }
@@ -639,9 +689,30 @@ static void hx_emit_inst(int idx) {
     if (k == HI_STORE) {
         int ar;
         int vr;
-        ar = hx_src(h_src1[idx], X64_RAX);   /* address */
-        vr = hx_src(h_src2[idx], X64_RCX);   /* value */
-        hx_store_typed(ar, vr, ty);
+        int pat;
+        int lnt;
+        pat = bg_sel[idx];
+        lnt = (pat >= 0) ? bg_plnt[pat] : -1;
+        if (lnt == BG_MEM) {
+            /* BURG: store to frame-relative [RBP + disp] */
+            int foff;
+            foff = bg_foff[h_src1[idx]];
+            vr = hx_src(h_src2[idx], X64_RAX);
+            if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
+                x64_mov_mr8(X64_RBP, foff, vr);
+            } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+                x64_mov_mr16(X64_RBP, foff, vr);
+            } else if (hx_is_wide(ty)) {
+                x64_mov_mr64(X64_RBP, foff, vr);
+            } else {
+                x64_mov_mr(X64_RBP, foff, vr);
+            }
+        } else {
+            /* Fallback: store to [register] */
+            ar = hx_src(h_src1[idx], X64_RAX);
+            vr = hx_src(h_src2[idx], X64_RCX);
+            hx_store_typed(ar, vr, ty);
+        }
         return;
     }
 
@@ -866,10 +937,14 @@ static void hx_gen_func(Node *fn) {
     hir_opt();
     hir_licm();
 
+    /* --- BURG instruction selection --- */
+    hir_burg();
+
     /* --- Register allocation ---
      * hl_temp_stack was set by the lowering to fn->locals_size (SLOW-32 bytes).
      * Scale to x64 (8-byte slots) before the regalloc adds spill/callee-save
-     * slots so all offsets are in the same coordinate system. */
+     * slots so all offsets are in the same coordinate system.
+     * Fusion now uses bg_uses[] from BURG instead of its own use counts. */
     hl_temp_stack = 16 + fn->locals_size * 2;
     hx_identify_fusions();
     hir_regalloc();

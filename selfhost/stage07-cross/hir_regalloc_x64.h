@@ -650,43 +650,13 @@ static void hx_identify_fusions(void) {
     int root;
     int rk;
     int lim;
-    int j;
-    int base;
     int ok;
 
-    /* Compute use counts */
+    /* Initialize fusion arrays (use counts come from BURG's bg_uses[]) */
     i = 0;
     while (i < h_ninst) {
-        hx_use_count[i] = 0;
         hx_brc_fuse[i] = -1;
         hx_cmp_fused[i] = 0;
-        i = i + 1;
-    }
-
-    i = 0;
-    while (i < h_ninst) {
-        k = h_kind[i];
-        if (k == HI_NOP) { i = i + 1; continue; }
-        if (h_src1[i] >= 0) hx_use_count[h_src1[i]] = hx_use_count[h_src1[i]] + 1;
-        if (h_src2[i] >= 0 && ho_src2_is_ref(k))
-            hx_use_count[h_src2[i]] = hx_use_count[h_src2[i]] + 1;
-        if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
-            j = 0;
-            base = h_cbase[i];
-            while (j < h_val[i]) {
-                if (h_carg[base + j] >= 0)
-                    hx_use_count[h_carg[base + j]] = hx_use_count[h_carg[base + j]] + 1;
-                j = j + 1;
-            }
-        }
-        if (k == HI_PHI && h_pbase[i] >= 0) {
-            j = 0;
-            while (j < h_pcnt[i]) {
-                if (h_pval[h_pbase[i] + j] >= 0)
-                    hx_use_count[h_pval[h_pbase[i] + j]] = hx_use_count[h_pval[h_pbase[i] + j]] + 1;
-                j = j + 1;
-            }
-        }
         i = i + 1;
     }
 
@@ -702,7 +672,7 @@ static void hx_identify_fusions(void) {
         root = h_src1[i];
         lim = 0;
         while (root >= 0 && h_kind[root] == HI_COPY && lim < 64) {
-            if (hx_use_count[root] != 1 || h_blk[root] != h_blk[i]) {
+            if (bg_uses[root] != 1 || h_blk[root] != h_blk[i]) {
                 ok = 0;
                 break;
             }
@@ -713,7 +683,7 @@ static void hx_identify_fusions(void) {
 
         rk = h_kind[root];
         if (!hx_is_cmp(rk)) { i = i + 1; continue; }
-        if (hx_use_count[root] != 1) { i = i + 1; continue; }
+        if (bg_uses[root] != 1) { i = i + 1; continue; }
         if (h_blk[root] != h_blk[i]) { i = i + 1; continue; }
 
         /* Reject if comparison operands are NOPed */
