@@ -969,6 +969,36 @@ static void hx_emit_inst(int idx) {
 
     /* --- Function calls --- */
 
+    /* Builtin: __syscall(nr, a0, a1, a2, a3, a4, a5) → inline syscall */
+    if (k == HI_CALL && h_name[idx] && cg_strcmp(h_name[idx], "__syscall") == 0) {
+        int sc_regs[7];
+        int dr;
+        sc_regs[0] = X64_RAX;  sc_regs[1] = X64_RDI;  sc_regs[2] = X64_RSI;
+        sc_regs[3] = X64_RDX;  sc_regs[4] = X64_R10;  sc_regs[5] = X64_R8;
+        sc_regs[6] = X64_R9;
+        nargs = h_val[idx];
+        /* Push all args to stack, then load into syscall registers */
+        j = 0;
+        while (j < nargs) {
+            arg_idx = h_carg[h_cbase[idx] + j];
+            hx_mat(arg_idx, X64_RAX);
+            x64_push(X64_RAX);
+            j = j + 1;
+        }
+        j = 0;
+        while (j < nargs && j < 7) {
+            x64_mov_rm64(sc_regs[j], X64_RSP, (nargs - 1 - j) * 8);
+            j = j + 1;
+        }
+        if (nargs > 0) x64_add_ri64(X64_RSP, nargs * 8);
+        x64_syscall();
+        /* Result in RAX */
+        dr = hx_dst(idx);
+        if (dr != X64_RAX) x64_mov_rr64(dr, X64_RAX);
+        hx_maybe_spill(idx);
+        return;
+    }
+
     if (k == HI_CALL || k == HI_CALLP) {
         int temp_bytes;
         int pad;
