@@ -68,6 +68,7 @@ static int   cg_ncpatches;
 
 #define DRELOC_STRING 0
 #define DRELOC_GLOBAL 1
+#define DRELOC_BSS    2
 
 static int cg_dreloc_off[CG_MAX_DATA_RELOCS];  /* offset of imm64 in code */
 static int cg_dreloc_kind[CG_MAX_DATA_RELOCS]; /* DRELOC_STRING or DRELOC_GLOBAL */
@@ -1425,8 +1426,9 @@ static int cg_data_len;
 
 static int cg_bss_size;
 
-/* Offsets within data section for each global */
+/* Offsets within data/bss section for each global */
 static int cg_glob_data_off[CG_MAX_GLOBALS];
+static int cg_glob_in_bss[CG_MAX_GLOBALS]; /* 1 if in BSS, 0 if in data */
 
 /* Offsets within rodata section for each string */
 static int cg_str_rodata_off[CG_MAX_STRINGS];
@@ -1453,12 +1455,20 @@ static void gen_data_sections(Node *prog) {
         i = i + 1;
     }
 
-    /* Globals → data section.
-     * All globals go to data for simplicity (even zero-init ones).
-     * String-initialized globals get a pointer relocation. */
+    /* Globals → data section (initialized) or BSS (uninitialized).
+     * BSS globals just track an offset + size — no bytes emitted in the file. */
+
+    /* Pass 1: initialized globals → data section */
     i = 0;
     while (i < cg_nglobals) {
-        /* Align to 8 bytes for pointer-sized globals */
+        cg_glob_in_bss[i] = 0;
+        if (cg_glob_has_init[i] == 0) {
+            /* Uninitialized — will go to BSS in pass 2 */
+            cg_glob_in_bss[i] = 1;
+            i = i + 1;
+            continue;
+        }
+        /* Align */
         if (cg_glob_size[i] >= 8) {
             while (cg_data_len & 7) {
                 if (cg_data_len < 65536) cg_data[cg_data_len] = 0;
@@ -1472,13 +1482,11 @@ static void gen_data_sections(Node *prog) {
         }
         cg_glob_data_off[i] = cg_data_len;
         if (cg_glob_has_init[i] == 2) {
-            /* String-initialized pointer: will be patched with rodata address.
-             * Record a data-section relocation for this. */
-            cg_dreloc_off[cg_ndrelocs] = -(cg_data_len + 1); /* negative = data section offset */
+            /* String-initialized pointer */
+            cg_dreloc_off[cg_ndrelocs] = -(cg_data_len + 1);
             cg_dreloc_kind[cg_ndrelocs] = DRELOC_STRING;
-            cg_dreloc_idx[cg_ndrelocs] = cg_glob_init[i]; /* string pool index */
+            cg_dreloc_idx[cg_ndrelocs] = cg_glob_init[i];
             cg_ndrelocs = cg_ndrelocs + 1;
-            /* Emit 8 zero bytes (placeholder for pointer) */
             j = 0;
             while (j < 8) {
                 if (cg_data_len < 65536) cg_data[cg_data_len] = 0;
@@ -1486,7 +1494,7 @@ static void gen_data_sections(Node *prog) {
                 j = j + 1;
             }
         } else {
-            /* Emit bytes for this global */
+            /* Scalar with initial value */
             j = 0;
             while (j < cg_glob_size[i]) {
                 if (cg_data_len < 65536) {
@@ -1499,6 +1507,23 @@ static void gen_data_sections(Node *prog) {
                 cg_data_len = cg_data_len + 1;
                 j = j + 1;
             }
+        }
+        i = i + 1;
+    }
+
+    /* Pass 2: uninitialized globals → BSS (no bytes in file) */
+    cg_bss_size = 0;
+    i = 0;
+    while (i < cg_nglobals) {
+        if (cg_glob_in_bss[i]) {
+            /* Align */
+            if (cg_glob_size[i] >= 8) {
+                while (cg_bss_size & 7) cg_bss_size = cg_bss_size + 1;
+            } else if (cg_glob_size[i] >= 4) {
+                while (cg_bss_size & 3) cg_bss_size = cg_bss_size + 1;
+            }
+            cg_glob_data_off[i] = cg_bss_size;
+            cg_bss_size = cg_bss_size + cg_glob_size[i];
         }
         i = i + 1;
     }
@@ -1527,7 +1552,15 @@ static void resolve_relocations(void) {
         if (cg_dreloc_kind[i] == DRELOC_STRING) {
             addr = rodata_base + cg_str_rodata_off[cg_dreloc_idx[i]];
         } else {
-            addr = data_base + cg_glob_data_off[cg_dreloc_idx[i]];
+            /* DRELOC_GLOBAL: check if this global is in BSS or data */
+            int gidx;
+            gidx = cg_dreloc_idx[i];
+            if (gidx < cg_nglobals && cg_glob_in_bss[gidx]) {
+                /* BSS follows data in memory */
+                addr = data_base + cg_data_len + cg_glob_data_off[gidx];
+            } else {
+                addr = data_base + cg_glob_data_off[gidx];
+            }
         }
 
         if (off < 0) {
@@ -1829,7 +1862,8 @@ static void gen_program(Node *prog) {
     elf_init();
     elf_set_text(x64_buf, x64_off);
     if (cg_rodata_len > 0) elf_set_rodata(cg_rodata, cg_rodata_len);
-    if (cg_data_len > 0) elf_set_data(cg_data, cg_data_len);
+    if (cg_data_len > 0 || cg_bss_size > 0) elf_set_data(cg_data, cg_data_len);
+    if (cg_bss_size > 0) elf_set_bss(cg_bss_size);
     elf_set_entry(entry_off);
 
     /* Resolve function calls and data relocations (needs ELF layout finalized) */
