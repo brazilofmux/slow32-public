@@ -832,6 +832,35 @@ static Node *parse_primary(void) {
         return n;
     }
 
+    /* __builtin_offsetof(type, member) / offsetof(type, member) */
+    if (lex_tok == TK_OFFSETOF) {
+        int oty;
+        int omi;
+        char omn[256];
+        next();
+        expect(TK_LPAREN);
+        oty = parse_type();
+        if (!ty_is_struct(oty)) {
+            p_error("offsetof requires struct/union type");
+            return nd_num(0);
+        }
+        expect(TK_COMMA);
+        if (lex_tok != TK_IDENT) {
+            p_error("expected member name in offsetof");
+            return nd_num(0);
+        }
+        memcpy(omn, lex_str, lex_slen + 1);
+        next();
+        omi = find_member(oty, omn);
+        if (omi < 0) {
+            p_error("unknown member in offsetof");
+            return nd_num(0);
+        }
+        v = stm_off[omi];
+        expect(TK_RPAREN);
+        return nd_num(v);
+    }
+
     /* sizeof(type_or_expr) */
     if (lex_tok == TK_SIZEOF) {
         next();

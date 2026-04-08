@@ -172,9 +172,14 @@ static void cg_pop(void) {
  * Helpers
  * ============================================================================ */
 
-/* Check if a type needs 64-bit (pointer) operations on x86-64 */
+/* Check if a type needs 64-bit operations on x86-64 (pointers or long long) */
+static int cg_is_64bit(int ty) {
+    return ty_is_ptr(ty) || ty_is_llong(ty);
+}
+
+/* Backward compat alias */
 static int cg_is_ptr_type(int ty) {
-    return ty_is_ptr(ty);
+    return cg_is_64bit(ty);
 }
 
 /* Scale a SLOW-32 stack offset (4-byte slots) to x86-64 (8-byte slots).
@@ -330,18 +335,31 @@ static void gen_addr(Node *n) {
     p_error("not an lvalue");
 }
 
-/* Generate expression, result in EAX */
+/* Generate expression, result in EAX (or RAX for 64-bit types) */
 static void gen_expr(Node *n) {
     int l1;
     int l2;
     Node *a;
     int i;
     int elem_sz;
+    int wide;  /* 1 if result type is 64-bit (long long) */
 
     if (!n) { cg_li(0); return; }
+    wide = ty_is_llong(n->ty);
 
     if (n->kind == ND_NUM) {
-        cg_li(n->val);
+        if (wide) {
+            /* 64-bit literal: val=lo32, val_hi=hi32 */
+            if (n->val == 0 && n->val_hi == 0) {
+                x64_xor_rr(X64_RAX, X64_RAX);
+            } else if (n->val_hi == 0) {
+                x64_mov_ri(X64_RAX, n->val);  /* zero-extends to 64-bit */
+            } else {
+                x64_mov_ri64(X64_RAX, n->val, n->val_hi);
+            }
+        } else {
+            cg_li(n->val);
+        }
         return;
     }
 
@@ -371,19 +389,24 @@ static void gen_expr(Node *n) {
         gen_addr(n->lhs);
         cg_pop();          /* RCX = value, RAX = address */
         cg_store(n->ty);
-        x64_mov_rr(X64_RAX, X64_RCX);  /* result = stored value */
+        if (cg_is_64bit(n->ty)) x64_mov_rr64(X64_RAX, X64_RCX);
+        else x64_mov_rr(X64_RAX, X64_RCX);  /* result = stored value */
         return;
     }
 
     if (n->kind == ND_UNARY) {
         if (n->op == TK_MINUS) {
             gen_expr(n->lhs);
-            x64_neg(X64_RAX);
+            if (wide) x64_neg64(X64_RAX);
+            else x64_neg(X64_RAX);
             return;
         }
         if (n->op == TK_BANG) {
             gen_expr(n->lhs);
-            x64_test_rr(X64_RAX, X64_RAX);
+            if (cg_is_64bit(n->lhs->ty))
+                x64_test_rr64(X64_RAX, X64_RAX);
+            else
+                x64_test_rr(X64_RAX, X64_RAX);
             x64_sete(X64_RAX);
             x64_movzx_rr8(X64_RAX, X64_RAX);
             return;
@@ -401,7 +424,8 @@ static void gen_expr(Node *n) {
         }
         if (n->op == TK_TILDE) {
             gen_expr(n->lhs);
-            x64_not(X64_RAX);
+            if (wide) x64_not64(X64_RAX);
+            else x64_not(X64_RAX);
             return;
         }
         p_error("unknown unary op");
@@ -414,10 +438,12 @@ static void gen_expr(Node *n) {
             l1 = cg_label();
             l2 = cg_label();
             gen_expr(n->lhs);
-            x64_test_rr(X64_RAX, X64_RAX);
+            if (cg_is_64bit(n->lhs->ty)) x64_test_rr64(X64_RAX, X64_RAX);
+            else x64_test_rr(X64_RAX, X64_RAX);
             cg_jcc_label(X64_CC_E, l1);
             gen_expr(n->rhs);
-            x64_test_rr(X64_RAX, X64_RAX);
+            if (cg_is_64bit(n->rhs->ty)) x64_test_rr64(X64_RAX, X64_RAX);
+            else x64_test_rr(X64_RAX, X64_RAX);
             x64_setne(X64_RAX);
             x64_movzx_rr8(X64_RAX, X64_RAX);
             cg_jmp_label(l2);
@@ -431,10 +457,12 @@ static void gen_expr(Node *n) {
             l1 = cg_label();
             l2 = cg_label();
             gen_expr(n->lhs);
-            x64_test_rr(X64_RAX, X64_RAX);
+            if (cg_is_64bit(n->lhs->ty)) x64_test_rr64(X64_RAX, X64_RAX);
+            else x64_test_rr(X64_RAX, X64_RAX);
             cg_jcc_label(X64_CC_NE, l1);
             gen_expr(n->rhs);
-            x64_test_rr(X64_RAX, X64_RAX);
+            if (cg_is_64bit(n->rhs->ty)) x64_test_rr64(X64_RAX, X64_RAX);
+            else x64_test_rr(X64_RAX, X64_RAX);
             x64_setne(X64_RAX);
             x64_movzx_rr8(X64_RAX, X64_RAX);
             cg_jmp_label(l2);
@@ -473,107 +501,170 @@ static void gen_expr(Node *n) {
         gen_expr(n->rhs);
         cg_pop();  /* RCX = lhs, RAX = rhs */
 
+        /* Mixed-width promotion: if either operand is 64-bit but the other is
+         * 32-bit, sign/zero-extend the narrow one to 64-bit.
+         * This handles cases like: long_long_var != -42 */
+        {
+        int lhs64;
+        int rhs64;
+        lhs64 = cg_is_64bit(n->lhs->ty);
+        rhs64 = cg_is_64bit(n->rhs->ty);
+        if (lhs64 && !rhs64) {
+            /* RHS (RAX) is 32-bit, need to widen */
+            if (n->rhs->ty & TY_UNSIGNED)
+                x64_mov_rr(X64_RAX, X64_RAX);  /* zero-extend */
+            else
+                x64_movsxd(X64_RAX, X64_RAX);  /* sign-extend */
+        }
+        if (rhs64 && !lhs64) {
+            /* LHS (RCX) is 32-bit, need to widen */
+            if (n->lhs->ty & TY_UNSIGNED)
+                x64_mov_rr(X64_RCX, X64_RCX);
+            else
+                x64_movsxd(X64_RCX, X64_RCX);
+        }
+        }
+
         if (n->op == TK_PLUS) {
-            x64_add_rr(X64_RAX, X64_RCX);
+            if (wide) x64_add_rr64(X64_RAX, X64_RCX);
+            else x64_add_rr(X64_RAX, X64_RCX);
             return;
         }
         if (n->op == TK_MINUS) {
             /* result = lhs - rhs = RCX - RAX */
-            x64_sub_rr(X64_RCX, X64_RAX);
-            x64_mov_rr(X64_RAX, X64_RCX);
+            if (wide) {
+                x64_sub_rr64(X64_RCX, X64_RAX);
+                x64_mov_rr64(X64_RAX, X64_RCX);
+            } else {
+                x64_sub_rr(X64_RCX, X64_RAX);
+                x64_mov_rr(X64_RAX, X64_RCX);
+            }
             return;
         }
         if (n->op == TK_STAR) {
-            x64_imul_rr(X64_RAX, X64_RCX);
+            if (wide) x64_imul_rr64(X64_RAX, X64_RCX);
+            else x64_imul_rr(X64_RAX, X64_RCX);
             return;
         }
         if (n->op == TK_SLASH || n->op == TK_PERCENT) {
-            /* RCX = lhs (dividend), RAX = rhs (divisor)
-             * IDIV: EDX:EAX / src → EAX=quotient, EDX=remainder
-             * Need: lhs in EAX, divisor in a non-RDX reg */
-            x64_mov_rr(X64_R10, X64_RAX);  /* save divisor → R10 */
-            x64_mov_rr(X64_RAX, X64_RCX);  /* lhs → EAX */
-            if (n->ty & TY_UNSIGNED) {
-                x64_zero(X64_RDX);          /* zero-extend for unsigned */
-                x64_div(X64_R10);
+            /* RCX = lhs (dividend), RAX = rhs (divisor) */
+            if (wide) {
+                x64_mov_rr64(X64_R10, X64_RAX);
+                x64_mov_rr64(X64_RAX, X64_RCX);
+                if (n->ty & TY_UNSIGNED) {
+                    x64_xor_rr(X64_RDX, X64_RDX);
+                    x64_div64(X64_R10);
+                } else {
+                    x64_cqo();
+                    x64_idiv64(X64_R10);
+                }
             } else {
-                x64_cdq();                   /* sign-extend EAX → EDX:EAX */
-                x64_idiv(X64_R10);
+                x64_mov_rr(X64_R10, X64_RAX);
+                x64_mov_rr(X64_RAX, X64_RCX);
+                if (n->ty & TY_UNSIGNED) {
+                    x64_zero(X64_RDX);
+                    x64_div(X64_R10);
+                } else {
+                    x64_cdq();
+                    x64_idiv(X64_R10);
+                }
             }
             if (n->op == TK_PERCENT)
-                x64_mov_rr(X64_RAX, X64_RDX);  /* remainder → EAX */
+                x64_mov_rr(X64_RAX, X64_RDX);
             return;
         }
 
-        /* For comparisons: CMP lhs, rhs → SETcc */
+        /* For comparisons: CMP lhs, rhs → SETcc.
+         * Use 64-bit compare if either OPERAND is 64-bit (result is always int). */
+        {
+        int cmp64;
+        cmp64 = cg_is_64bit(n->lhs->ty) || cg_is_64bit(n->rhs->ty);
+
         if (n->op == TK_EQ) {
-            x64_cmp_rr(X64_RCX, X64_RAX);
+            if (cmp64) x64_cmp_rr64(X64_RCX, X64_RAX);
+            else x64_cmp_rr(X64_RCX, X64_RAX);
             x64_sete(X64_RAX);
             x64_movzx_rr8(X64_RAX, X64_RAX);
             return;
         }
         if (n->op == TK_NE) {
-            x64_cmp_rr(X64_RCX, X64_RAX);
+            if (cmp64) x64_cmp_rr64(X64_RCX, X64_RAX);
+            else x64_cmp_rr(X64_RCX, X64_RAX);
             x64_setne(X64_RAX);
             x64_movzx_rr8(X64_RAX, X64_RAX);
             return;
         }
         if (n->op == TK_LT) {
-            x64_cmp_rr(X64_RCX, X64_RAX);
+            if (cmp64) x64_cmp_rr64(X64_RCX, X64_RAX);
+            else x64_cmp_rr(X64_RCX, X64_RAX);
             if (n->ty & TY_UNSIGNED) x64_setb(X64_RAX);
             else x64_setl(X64_RAX);
             x64_movzx_rr8(X64_RAX, X64_RAX);
             return;
         }
         if (n->op == TK_GT) {
-            x64_cmp_rr(X64_RCX, X64_RAX);
+            if (cmp64) x64_cmp_rr64(X64_RCX, X64_RAX);
+            else x64_cmp_rr(X64_RCX, X64_RAX);
             if (n->ty & TY_UNSIGNED) x64_seta(X64_RAX);
             else x64_setg(X64_RAX);
             x64_movzx_rr8(X64_RAX, X64_RAX);
             return;
         }
         if (n->op == TK_LE) {
-            x64_cmp_rr(X64_RCX, X64_RAX);
+            if (cmp64) x64_cmp_rr64(X64_RCX, X64_RAX);
+            else x64_cmp_rr(X64_RCX, X64_RAX);
             if (n->ty & TY_UNSIGNED) x64_setbe(X64_RAX);
             else x64_setle(X64_RAX);
             x64_movzx_rr8(X64_RAX, X64_RAX);
             return;
         }
         if (n->op == TK_GE) {
-            x64_cmp_rr(X64_RCX, X64_RAX);
+            if (cmp64) x64_cmp_rr64(X64_RCX, X64_RAX);
+            else x64_cmp_rr(X64_RCX, X64_RAX);
             if (n->ty & TY_UNSIGNED) x64_setae(X64_RAX);
             else x64_setge(X64_RAX);
             x64_movzx_rr8(X64_RAX, X64_RAX);
             return;
         }
+        }
 
         if (n->op == TK_AMP) {
-            x64_and_rr(X64_RAX, X64_RCX);
+            if (wide) x64_and_rr64(X64_RAX, X64_RCX);
+            else x64_and_rr(X64_RAX, X64_RCX);
             return;
         }
         if (n->op == TK_PIPE) {
-            x64_or_rr(X64_RAX, X64_RCX);
+            if (wide) x64_or_rr64(X64_RAX, X64_RCX);
+            else x64_or_rr(X64_RAX, X64_RCX);
             return;
         }
         if (n->op == TK_CARET) {
-            x64_xor_rr(X64_RAX, X64_RCX);
+            if (wide) x64_xor_rr64(X64_RAX, X64_RCX);
+            else x64_xor_rr(X64_RAX, X64_RCX);
             return;
         }
         if (n->op == TK_LSHIFT) {
             /* result = lhs << rhs; RCX=lhs, RAX=rhs(count) */
-            /* SHL needs count in CL. Swap: EAX↔ECX */
             x64_mov_rr(X64_RDX, X64_RAX);  /* save shift count */
-            x64_mov_rr(X64_RAX, X64_RCX);  /* lhs → EAX */
+            if (wide) x64_mov_rr64(X64_RAX, X64_RCX);
+            else x64_mov_rr(X64_RAX, X64_RCX);
             x64_mov_rr(X64_RCX, X64_RDX);  /* count → ECX (CL) */
-            x64_shl_cl(X64_RAX);
+            if (wide) x64_shl_cl64(X64_RAX);
+            else x64_shl_cl(X64_RAX);
             return;
         }
         if (n->op == TK_RSHIFT) {
             x64_mov_rr(X64_RDX, X64_RAX);
-            x64_mov_rr(X64_RAX, X64_RCX);
+            if (wide) x64_mov_rr64(X64_RAX, X64_RCX);
+            else x64_mov_rr(X64_RAX, X64_RCX);
             x64_mov_rr(X64_RCX, X64_RDX);
-            if (n->ty & TY_UNSIGNED) x64_shr_cl(X64_RAX);
-            else x64_sar_cl(X64_RAX);
+            if (wide) {
+                if (n->ty & TY_UNSIGNED) x64_shr_cl64(X64_RAX);
+                else x64_sar_cl64(X64_RAX);
+            } else {
+                if (n->ty & TY_UNSIGNED) x64_shr_cl(X64_RAX);
+                else x64_sar_cl(X64_RAX);
+            }
             return;
         }
 
@@ -600,40 +691,75 @@ static void gen_expr(Node *n) {
         x64_mov_rm64(X64_RCX, X64_RSP, 8); /* RCX = rhs */
 
         /* Apply: result = old_val op rhs. RAX=old_val, RCX=rhs */
-        if (n->op == TK_PLUS) x64_add_rr(X64_RAX, X64_RCX);
-        else if (n->op == TK_MINUS) x64_sub_rr(X64_RAX, X64_RCX);
-        else if (n->op == TK_STAR) x64_imul_rr(X64_RAX, X64_RCX);
-        else if (n->op == TK_AMP) x64_and_rr(X64_RAX, X64_RCX);
-        else if (n->op == TK_PIPE) x64_or_rr(X64_RAX, X64_RCX);
-        else if (n->op == TK_CARET) x64_xor_rr(X64_RAX, X64_RCX);
+        if (n->op == TK_PLUS) {
+            if (wide) x64_add_rr64(X64_RAX, X64_RCX);
+            else x64_add_rr(X64_RAX, X64_RCX);
+        }
+        else if (n->op == TK_MINUS) {
+            if (wide) x64_sub_rr64(X64_RAX, X64_RCX);
+            else x64_sub_rr(X64_RAX, X64_RCX);
+        }
+        else if (n->op == TK_STAR) {
+            if (wide) x64_imul_rr64(X64_RAX, X64_RCX);
+            else x64_imul_rr(X64_RAX, X64_RCX);
+        }
+        else if (n->op == TK_AMP) {
+            if (wide) x64_and_rr64(X64_RAX, X64_RCX);
+            else x64_and_rr(X64_RAX, X64_RCX);
+        }
+        else if (n->op == TK_PIPE) {
+            if (wide) x64_or_rr64(X64_RAX, X64_RCX);
+            else x64_or_rr(X64_RAX, X64_RCX);
+        }
+        else if (n->op == TK_CARET) {
+            if (wide) x64_xor_rr64(X64_RAX, X64_RCX);
+            else x64_xor_rr(X64_RAX, X64_RCX);
+        }
         else if (n->op == TK_SLASH || n->op == TK_PERCENT) {
-            /* RAX = old_val (dividend), RCX = rhs (divisor) */
-            x64_mov_rr(X64_R10, X64_RCX);
-            if (n->ty & TY_UNSIGNED) {
-                x64_zero(X64_RDX);
-                x64_div(X64_R10);
+            if (wide) {
+                x64_mov_rr64(X64_R10, X64_RCX);
+                if (n->ty & TY_UNSIGNED) {
+                    x64_xor_rr(X64_RDX, X64_RDX);
+                    x64_div64(X64_R10);
+                } else {
+                    x64_cqo();
+                    x64_idiv64(X64_R10);
+                }
             } else {
-                x64_cdq();
-                x64_idiv(X64_R10);
+                x64_mov_rr(X64_R10, X64_RCX);
+                if (n->ty & TY_UNSIGNED) {
+                    x64_zero(X64_RDX);
+                    x64_div(X64_R10);
+                } else {
+                    x64_cdq();
+                    x64_idiv(X64_R10);
+                }
             }
             if (n->op == TK_PERCENT)
                 x64_mov_rr(X64_RAX, X64_RDX);
         }
         else if (n->op == TK_LSHIFT) {
-            /* RAX = old_val, RCX = shift count (already in CL) */
-            x64_shl_cl(X64_RAX);
+            if (wide) x64_shl_cl64(X64_RAX);
+            else x64_shl_cl(X64_RAX);
         }
         else if (n->op == TK_RSHIFT) {
-            if (n->ty & TY_UNSIGNED) x64_shr_cl(X64_RAX);
-            else x64_sar_cl(X64_RAX);
+            if (wide) {
+                if (n->ty & TY_UNSIGNED) x64_shr_cl64(X64_RAX);
+                else x64_sar_cl64(X64_RAX);
+            } else {
+                if (n->ty & TY_UNSIGNED) x64_shr_cl(X64_RAX);
+                else x64_sar_cl(X64_RAX);
+            }
         }
         /* RAX = new_val */
-        x64_mov_rr(X64_RCX, X64_RAX);  /* RCX = new_val */
+        if (wide) x64_mov_rr64(X64_RCX, X64_RAX);
+        else x64_mov_rr(X64_RCX, X64_RAX);
         /* Pop addr into RAX */
         x64_pop(X64_RAX);              /* RAX = addr */
         x64_add_ri64(X64_RSP, 8);      /* discard rhs */
         cg_store(n->ty);               /* store RCX to [RAX] */
-        x64_mov_rr(X64_RAX, X64_RCX);  /* result = new_val */
+        if (wide) x64_mov_rr64(X64_RAX, X64_RCX);
+        else x64_mov_rr(X64_RAX, X64_RCX);  /* result = new_val */
         return;
     }
 
@@ -667,7 +793,8 @@ static void gen_expr(Node *n) {
         l1 = cg_label();
         l2 = cg_label();
         gen_expr(n->cond);
-        x64_test_rr(X64_RAX, X64_RAX);
+        if (n->cond && cg_is_64bit(n->cond->ty)) x64_test_rr64(X64_RAX, X64_RAX);
+        else x64_test_rr(X64_RAX, X64_RAX);
         cg_jcc_label(X64_CC_E, l1);
         gen_expr(n->lhs);
         cg_jmp_label(l2);
@@ -678,8 +805,63 @@ static void gen_expr(Node *n) {
     }
 
     if (n->kind == ND_CAST) {
+        int src_ty;
+        int dst_ty;
+        int dst_base;
+        int src_base;
         gen_expr(n->lhs);
-        /* TODO: actual type conversions (sign-extend, truncate) */
+        src_ty = n->lhs->ty;
+        dst_ty = n->ty;
+        dst_base = dst_ty & TY_BASE_MASK;
+        src_base = src_ty & TY_BASE_MASK;
+
+        /* Narrowing: truncate to char/short then sign/zero extend back to int */
+        if (!ty_is_ptr(dst_ty) && dst_base == TY_CHAR) {
+            if (dst_ty & TY_UNSIGNED)
+                x64_movzx_rr8(X64_RAX, X64_RAX);
+            else
+                x64_movsx_rr8(X64_RAX, X64_RAX);
+            return;
+        }
+        if (!ty_is_ptr(dst_ty) && dst_base == TY_SHORT) {
+            if (dst_ty & TY_UNSIGNED)
+                x64_movzx_rr16(X64_RAX, X64_RAX);
+            else
+                x64_movsx_rr16(X64_RAX, X64_RAX);
+            return;
+        }
+
+        /* Widening: int/char/short → long long */
+        if (ty_is_llong(dst_ty) && !ty_is_llong(src_ty) && !ty_is_ptr(src_ty)) {
+            if (src_ty & TY_UNSIGNED) {
+                /* Zero-extend 32→64: mov eax, eax (clears upper 32 bits) */
+                x64_mov_rr(X64_RAX, X64_RAX);
+            } else {
+                /* Sign-extend 32→64: movsxd rax, eax */
+                x64_movsxd(X64_RAX, X64_RAX);
+            }
+            return;
+        }
+
+        /* Narrowing: long long → int (just use lower 32 bits, already in eax) */
+        if (!ty_is_ptr(dst_ty) && dst_base == TY_INT && ty_is_llong(src_ty)) {
+            /* eax already has the low 32 bits — no-op on x86-64 */
+            return;
+        }
+
+        /* int → pointer: sign-extend to 64-bit */
+        if (ty_is_ptr(dst_ty) && !ty_is_ptr(src_ty) && !ty_is_llong(src_ty)) {
+            if (src_ty & TY_UNSIGNED)
+                x64_mov_rr(X64_RAX, X64_RAX);
+            else
+                x64_movsxd(X64_RAX, X64_RAX);
+            return;
+        }
+
+        /* pointer → int: truncate (just use eax, upper bits ignored) */
+        /* pointer → pointer: no-op */
+        /* int → int: no-op */
+        /* long long → pointer: no-op (both 64-bit) */
         return;
     }
 
@@ -893,7 +1075,8 @@ static void gen_stmt(Node *n) {
     if (n->kind == ND_IF) {
         l1 = cg_label();
         gen_expr(n->cond);
-        x64_test_rr(X64_RAX, X64_RAX);
+        if (n->cond && cg_is_64bit(n->cond->ty)) x64_test_rr64(X64_RAX, X64_RAX);
+        else x64_test_rr(X64_RAX, X64_RAX);
         cg_jcc_label(X64_CC_E, l1);
         gen_stmt(n->body);
         if (n->els) {
@@ -916,7 +1099,8 @@ static void gen_stmt(Node *n) {
         cg_loop_depth = cg_loop_depth + 1;
         cg_ldef(l1);
         gen_expr(n->cond);
-        x64_test_rr(X64_RAX, X64_RAX);
+        if (n->cond && cg_is_64bit(n->cond->ty)) x64_test_rr64(X64_RAX, X64_RAX);
+        else x64_test_rr(X64_RAX, X64_RAX);
         cg_jcc_label(X64_CC_E, l2);
         gen_stmt(n->body);
         cg_jmp_label(l1);
@@ -936,7 +1120,8 @@ static void gen_stmt(Node *n) {
         gen_stmt(n->body);
         cg_ldef(l2);
         gen_expr(n->cond);
-        x64_test_rr(X64_RAX, X64_RAX);
+        if (n->cond && cg_is_64bit(n->cond->ty)) x64_test_rr64(X64_RAX, X64_RAX);
+        else x64_test_rr(X64_RAX, X64_RAX);
         cg_jcc_label(X64_CC_NE, l1);
         cg_ldef(l3);
         cg_loop_depth = cg_loop_depth - 1;
@@ -954,7 +1139,8 @@ static void gen_stmt(Node *n) {
         cg_ldef(l1);
         if (n->cond) {
             gen_expr(n->cond);
-            x64_test_rr(X64_RAX, X64_RAX);
+            if (cg_is_64bit(n->cond->ty)) x64_test_rr64(X64_RAX, X64_RAX);
+            else x64_test_rr(X64_RAX, X64_RAX);
             cg_jcc_label(X64_CC_E, l3);
         }
         gen_stmt(n->body);

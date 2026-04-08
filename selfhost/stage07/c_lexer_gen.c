@@ -65,6 +65,7 @@ void exit(int status);
 #define TK_VOID       41
 #define TK_VOLATILE   42
 #define TK_WHILE      43
+#define TK_OFFSETOF   44  /* __builtin_offsetof */
 
 #define TK_LPAREN     50
 #define TK_RPAREN     51
@@ -237,6 +238,14 @@ int lex_kw_lookup(char *name) {
     }
     if (c == 119) {
         if (strcmp(name, "while") == 0) return TK_WHILE;
+        return 0;
+    }
+    if (c == 95) {  /* '_' */
+        if (strcmp(name, "__builtin_offsetof") == 0) return TK_OFFSETOF;
+        return 0;
+    }
+    if (c == 111) {  /* 'o' */
+        if (strcmp(name, "offsetof") == 0) return TK_OFFSETOF;
         return 0;
     }
     return 0;

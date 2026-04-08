@@ -14,7 +14,7 @@
 // Code buffer — global state
 // ============================================================================
 
-#define X64_BUF_SIZE (4 * 1024 * 1024)
+#define X64_BUF_SIZE 4194304
 
 static unsigned char x64_buf[X64_BUF_SIZE];
 static int x64_off;     // current write position
@@ -290,6 +290,32 @@ static void x64_movzx_rr8(int dst, int src) {
     x64_byte(MODRM(MOD_DIRECT, dst, src));
 }
 
+// movsx r32, r8 (sign-extend byte to dword)
+static void x64_movsx_rr8(int dst, int src) {
+    int rex = x64_rex_rr(dst, src, 0);
+    if (x64_needs_rex_byte(src)) rex = rex | 0;
+    if (rex || x64_needs_rex_byte(src)) x64_byte(REX_BASE | rex);
+    x64_byte(0x0F);
+    x64_byte(0xBE);
+    x64_byte(MODRM(MOD_DIRECT, dst, src));
+}
+
+// movzx r32, r16 (zero-extend word to dword)
+static void x64_movzx_rr16(int dst, int src) {
+    x64_rex_emit(x64_rex_rr(dst, src, 0));
+    x64_byte(0x0F);
+    x64_byte(0xB7);
+    x64_byte(MODRM(MOD_DIRECT, dst, src));
+}
+
+// movsx r32, r16 (sign-extend word to dword)
+static void x64_movsx_rr16(int dst, int src) {
+    x64_rex_emit(x64_rex_rr(dst, src, 0));
+    x64_byte(0x0F);
+    x64_byte(0xBF);
+    x64_byte(MODRM(MOD_DIRECT, dst, src));
+}
+
 // movsxd r64, r32 (sign-extend dword to qword)
 static void x64_movsxd(int dst, int src) {
     x64_byte(REX_BASE | x64_rex_rr(dst, src, 1));
@@ -339,7 +365,11 @@ static void x64_alu_rr64(int opcode, int dst, int src) {
 
 static void x64_add_rr64(int dst, int src) { x64_alu_rr64(0x01, dst, src); }
 static void x64_sub_rr64(int dst, int src) { x64_alu_rr64(0x29, dst, src); }
+static void x64_and_rr64(int dst, int src) { x64_alu_rr64(0x21, dst, src); }
+static void x64_or_rr64(int dst, int src)  { x64_alu_rr64(0x09, dst, src); }
+static void x64_xor_rr64(int dst, int src) { x64_alu_rr64(0x31, dst, src); }
 static void x64_cmp_rr64(int a, int b)     { x64_alu_rr64(0x39, a, b); }
+static void x64_test_rr64(int a, int b)    { x64_alu_rr64(0x85, a, b); }
 
 // ============================================================================
 // ALU — reg, imm forms
@@ -387,7 +417,10 @@ static void x64_alu_ri64(int slash, int dst, int imm) {
 }
 
 static void x64_add_ri64(int dst, int imm) { x64_alu_ri64(0, dst, imm); }
+static void x64_or_ri64(int dst, int imm)  { x64_alu_ri64(1, dst, imm); }
+static void x64_and_ri64(int dst, int imm) { x64_alu_ri64(4, dst, imm); }
 static void x64_sub_ri64(int dst, int imm) { x64_alu_ri64(5, dst, imm); }
+static void x64_xor_ri64(int dst, int imm) { x64_alu_ri64(6, dst, imm); }
 static void x64_cmp_ri64(int dst, int imm) { x64_alu_ri64(7, dst, imm); }
 
 // ============================================================================
@@ -403,11 +436,29 @@ static void x64_neg(int dst) {
     x64_byte(MODRM(MOD_DIRECT, 3, dst));
 }
 
+// neg r64 (REX.W F7 /3)
+static void x64_neg64(int dst) {
+    int rex = REX_W;
+    if (dst >= 8) rex = rex | REX_B;
+    x64_byte(REX_BASE | rex);
+    x64_byte(0xF7);
+    x64_byte(MODRM(MOD_DIRECT, 3, dst));
+}
+
 // not r32 (F7 /2)
 static void x64_not(int dst) {
     int rex = 0;
     if (dst >= 8) rex = rex | REX_B;
     x64_rex_emit(rex);
+    x64_byte(0xF7);
+    x64_byte(MODRM(MOD_DIRECT, 2, dst));
+}
+
+// not r64 (REX.W F7 /2)
+static void x64_not64(int dst) {
+    int rex = REX_W;
+    if (dst >= 8) rex = rex | REX_B;
+    x64_byte(REX_BASE | rex);
     x64_byte(0xF7);
     x64_byte(MODRM(MOD_DIRECT, 2, dst));
 }
@@ -419,6 +470,14 @@ static void x64_not(int dst) {
 // imul r32, r32  (0F AF /r)  — two-operand: dst *= src
 static void x64_imul_rr(int dst, int src) {
     x64_rex_emit(x64_rex_rr(dst, src, 0));
+    x64_byte(0x0F);
+    x64_byte(0xAF);
+    x64_byte(MODRM(MOD_DIRECT, dst, src));
+}
+
+// imul r64, r64  (REX.W 0F AF /r)
+static void x64_imul_rr64(int dst, int src) {
+    x64_byte(REX_BASE | x64_rex_rr(dst, src, 1));
     x64_byte(0x0F);
     x64_byte(0xAF);
     x64_byte(MODRM(MOD_DIRECT, dst, src));
@@ -465,11 +524,29 @@ static void x64_idiv(int src) {
     x64_byte(MODRM(MOD_DIRECT, 7, src));
 }
 
+// idiv r64  (REX.W F7 /7)  — signed 64-bit
+static void x64_idiv64(int src) {
+    int rex = REX_W;
+    if (src >= 8) rex = rex | REX_B;
+    x64_byte(REX_BASE | rex);
+    x64_byte(0xF7);
+    x64_byte(MODRM(MOD_DIRECT, 7, src));
+}
+
 // div r32  (F7 /6)  — unsigned
 static void x64_div(int src) {
     int rex = 0;
     if (src >= 8) rex = rex | REX_B;
     x64_rex_emit(rex);
+    x64_byte(0xF7);
+    x64_byte(MODRM(MOD_DIRECT, 6, src));
+}
+
+// div r64  (REX.W F7 /6)  — unsigned 64-bit
+static void x64_div64(int src) {
+    int rex = REX_W;
+    if (src >= 8) rex = rex | REX_B;
+    x64_byte(REX_BASE | rex);
     x64_byte(0xF7);
     x64_byte(MODRM(MOD_DIRECT, 6, src));
 }
@@ -513,6 +590,15 @@ static void x64_shl_cl(int dst) {
     x64_byte(MODRM(MOD_DIRECT, 4, dst));
 }
 
+// shl r64, cl  (REX.W D3 /4)
+static void x64_shl_cl64(int dst) {
+    int rex = REX_W;
+    if (dst >= 8) rex = rex | REX_B;
+    x64_byte(REX_BASE | rex);
+    x64_byte(0xD3);
+    x64_byte(MODRM(MOD_DIRECT, 4, dst));
+}
+
 // shr r32, imm8  (C1 /5 ib)
 static void x64_shr_ri(int dst, int imm) {
     int rex = 0;
@@ -532,6 +618,15 @@ static void x64_shr_cl(int dst) {
     x64_byte(MODRM(MOD_DIRECT, 5, dst));
 }
 
+// shr r64, cl  (REX.W D3 /5)
+static void x64_shr_cl64(int dst) {
+    int rex = REX_W;
+    if (dst >= 8) rex = rex | REX_B;
+    x64_byte(REX_BASE | rex);
+    x64_byte(0xD3);
+    x64_byte(MODRM(MOD_DIRECT, 5, dst));
+}
+
 // sar r32, imm8  (C1 /7 ib)
 static void x64_sar_ri(int dst, int imm) {
     int rex = 0;
@@ -547,6 +642,15 @@ static void x64_sar_cl(int dst) {
     int rex = 0;
     if (dst >= 8) rex = rex | REX_B;
     x64_rex_emit(rex);
+    x64_byte(0xD3);
+    x64_byte(MODRM(MOD_DIRECT, 7, dst));
+}
+
+// sar r64, cl  (REX.W D3 /7)
+static void x64_sar_cl64(int dst) {
+    int rex = REX_W;
+    if (dst >= 8) rex = rex | REX_B;
+    x64_byte(REX_BASE | rex);
     x64_byte(0xD3);
     x64_byte(MODRM(MOD_DIRECT, 7, dst));
 }
