@@ -68,6 +68,26 @@ static int hx_find_global(char *name) {
     return -1;
 }
 
+/* Compute the deepest x64 frame offset already occupied by lowered HIR
+ * allocas.  This must include lowering-introduced temporaries, not just
+ * parser-level locals_size, or regalloc spill slots can overlap them. */
+static int hx_hir_frame_base(Node *fn) {
+    int base;
+    int i;
+    int off;
+
+    base = 16 + fn->locals_size * 2;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_ALLOCA && h_val[i] < 0) {
+            off = 0 - cg_x64_offset(h_val[i]);
+            if (off > base) base = off;
+        }
+        i = i + 1;
+    }
+    return base;
+}
+
 
 /* ============================================================================
  * Value materialization -- load an HIR value into an x64 register
@@ -1285,11 +1305,12 @@ static void hx_gen_func(Node *fn) {
     hir_burg();
 
     /* --- Register allocation ---
-     * hl_temp_stack was set by the lowering to fn->locals_size (SLOW-32 bytes).
-     * Scale to x64 (8-byte slots) before the regalloc adds spill/callee-save
-     * slots so all offsets are in the same coordinate system.
-     * Fusion now uses bg_uses[] from BURG instead of its own use counts. */
-    hl_temp_stack = 16 + fn->locals_size * 2;
+     * Start spill allocation below the deepest lowered alloca, not just the
+     * parser's locals_size.  Lowering can introduce extra HI_ALLOCA temps
+     * after parsing, and those already occupy fixed frame slots once scaled
+     * through cg_x64_offset().  If we ignore them, spill slots can alias
+     * allocas inside large functions like predecode(). */
+    hl_temp_stack = hx_hir_frame_base(fn);
     hx_identify_fusions();
     hir_regalloc();
 
