@@ -19,6 +19,8 @@
 static int hx_frame_size;            /* total frame size */
 static int hx_is_varargs;            /* 1 if current function is variadic */
 static int hx_fn_nparams;            /* number of named params */
+static int hx_param_need_temp;       /* 1 if prologue needs temp area for args */
+static int hx_param_temp_base;       /* RBP offset of param temp area */
 
 /* Block code offsets for jump patching */
 static int hx_blk_off[HIR_MAX_BLOCK];  /* code offset of block start, -1=not yet */
@@ -838,6 +840,35 @@ static void hx_gen_func(Node *fn) {
         i = i + 1;
     }
 
+    /* --- Detect arg-register conflicts for prologue ---
+     * With caller-saved registers allocatable, a PARAM may be assigned
+     * to a register that's also an incoming-arg register for a different
+     * parameter.  If so, allocate a temp area in the frame. */
+    hx_param_need_temp = 0;
+    hx_param_temp_base = 0;
+    {
+    int pi;
+    i = 0;
+    while (i < h_ninst && !hx_param_need_temp) {
+        if (h_kind[i] == HI_PARAM && ra_reg[i] >= 0) {
+            pidx = h_val[i];
+            if (pidx < 6) {
+                pi = 0;
+                while (pi < 6 && !hx_param_need_temp) {
+                    if (hx_arg_reg[pi] == ra_reg[i] && pi != pidx)
+                        hx_param_need_temp = 1;
+                    pi = pi + 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    if (hx_param_need_temp) {
+        hl_temp_stack = hl_temp_stack + 48;  /* 6 * 8 bytes for arg save area */
+        hx_param_temp_base = 0 - hl_temp_stack;
+    }
+    }
+
     /* --- Compute frame size --- */
     fs = hl_temp_stack;
     fs = (fs + 15) & ~15;  /* 16-byte align */
@@ -863,31 +894,60 @@ static void hx_gen_func(Node *fn) {
         i = i + 1;
     }
 
-    /* Store incoming args to their allocated register or spill slot.
-     * Scan HIR for PARAM instructions. */
-    i = 0;
-    while (i < h_ninst) {
-        if (h_kind[i] == HI_PARAM) {
-            pidx = h_val[i];  /* physical param index */
-            if (ra_reg[i] >= 0) {
-                /* PARAM allocated to a register */
-                if (pidx < 6) {
-                    if (ra_reg[i] != hx_arg_reg[pidx])
-                        x64_mov_rr64(ra_reg[i], hx_arg_reg[pidx]);
-                } else {
-                    x64_mov_rm64(ra_reg[i], X64_RBP, 16 + (pidx - 6) * 8);
-                }
-            } else if (ra_spill_off[i] != 0) {
-                /* PARAM spilled to stack */
-                if (pidx < 6) {
-                    x64_mov_mr64(X64_RBP, ra_spill_off[i], hx_arg_reg[pidx]);
-                } else {
-                    x64_mov_rm64(X64_RAX, X64_RBP, 16 + (pidx - 6) * 8);
-                    x64_mov_mr64(X64_RBP, ra_spill_off[i], X64_RAX);
+    /* Store incoming args to their allocated register or spill slot. */
+    if (hx_param_need_temp) {
+        /* Two-phase: save all 6 arg registers to temp area, then distribute */
+        int pi;
+        pi = 0;
+        while (pi < 6) {
+            x64_mov_mr64(X64_RBP, hx_param_temp_base + pi * 8, hx_arg_reg[pi]);
+            pi = pi + 1;
+        }
+        i = 0;
+        while (i < h_ninst) {
+            if (h_kind[i] == HI_PARAM) {
+                pidx = h_val[i];
+                if (ra_reg[i] >= 0) {
+                    if (pidx < 6)
+                        x64_mov_rm64(ra_reg[i], X64_RBP, hx_param_temp_base + pidx * 8);
+                    else
+                        x64_mov_rm64(ra_reg[i], X64_RBP, 16 + (pidx - 6) * 8);
+                } else if (ra_spill_off[i] != 0) {
+                    if (pidx < 6) {
+                        x64_mov_rm64(X64_RAX, X64_RBP, hx_param_temp_base + pidx * 8);
+                        x64_mov_mr64(X64_RBP, ra_spill_off[i], X64_RAX);
+                    } else {
+                        x64_mov_rm64(X64_RAX, X64_RBP, 16 + (pidx - 6) * 8);
+                        x64_mov_mr64(X64_RBP, ra_spill_off[i], X64_RAX);
+                    }
                 }
             }
+            i = i + 1;
         }
-        i = i + 1;
+    } else {
+        /* No conflicts: direct move (fast path) */
+        i = 0;
+        while (i < h_ninst) {
+            if (h_kind[i] == HI_PARAM) {
+                pidx = h_val[i];
+                if (ra_reg[i] >= 0) {
+                    if (pidx < 6) {
+                        if (ra_reg[i] != hx_arg_reg[pidx])
+                            x64_mov_rr64(ra_reg[i], hx_arg_reg[pidx]);
+                    } else {
+                        x64_mov_rm64(ra_reg[i], X64_RBP, 16 + (pidx - 6) * 8);
+                    }
+                } else if (ra_spill_off[i] != 0) {
+                    if (pidx < 6) {
+                        x64_mov_mr64(X64_RBP, ra_spill_off[i], hx_arg_reg[pidx]);
+                    } else {
+                        x64_mov_rm64(X64_RAX, X64_RBP, 16 + (pidx - 6) * 8);
+                        x64_mov_mr64(X64_RBP, ra_spill_off[i], X64_RAX);
+                    }
+                }
+            }
+            i = i + 1;
+        }
     }
 
     /* --- Emit blocks --- */

@@ -16,22 +16,34 @@
 #define HIR_REGALLOC_X64_H
 
 /* --- Configuration --- */
-#define RA_NPHY 5  /* RBX, R12, R13, R14, R15 */
+#define RA_NPHY 9  /* callee: RBX, R12-R15; caller: RSI, RDI, R8, R9 */
 
 /* Mapping: slot index → x64 physical register encoding */
 static int ra_x64_phys[RA_NPHY];
+
+/* Per-slot: 1 = callee-saved, 0 = caller-saved */
+static int ra_x64_is_callee[RA_NPHY];
 
 /* Reverse mapping: x64 register encoding → slot index (-1 = not allocatable) */
 #define RA_X64_REVERSE_SIZE 16
 static int ra_x64_slot[RA_X64_REVERSE_SIZE];
 
+/* Call-crossing flag: 1 if value's live interval spans a CALL */
+static int ra_crosses_call[HIR_MAX_INST];
+
 static void ra_init_x64_regs(void) {
     int i;
-    ra_x64_phys[0] = X64_RBX;
-    ra_x64_phys[1] = X64_R12;
-    ra_x64_phys[2] = X64_R13;
-    ra_x64_phys[3] = X64_R14;
-    ra_x64_phys[4] = X64_R15;
+    /* Callee-saved registers (slots 0-4) */
+    ra_x64_phys[0] = X64_RBX;  ra_x64_is_callee[0] = 1;
+    ra_x64_phys[1] = X64_R12;  ra_x64_is_callee[1] = 1;
+    ra_x64_phys[2] = X64_R13;  ra_x64_is_callee[2] = 1;
+    ra_x64_phys[3] = X64_R14;  ra_x64_is_callee[3] = 1;
+    ra_x64_phys[4] = X64_R15;  ra_x64_is_callee[4] = 1;
+    /* Caller-saved registers (slots 5-8) */
+    ra_x64_phys[5] = X64_RSI;  ra_x64_is_callee[5] = 0;
+    ra_x64_phys[6] = X64_RDI;  ra_x64_is_callee[6] = 0;
+    ra_x64_phys[7] = X64_R8;   ra_x64_is_callee[7] = 0;
+    ra_x64_phys[8] = X64_R9;   ra_x64_is_callee[8] = 0;
     i = 0;
     while (i < RA_X64_REVERSE_SIZE) {
         ra_x64_slot[i] = -1;
@@ -381,6 +393,61 @@ static void ra_expire(int p) {
     }
 }
 
+/* Pick a free register from the pool.  Returns the register number,
+ * or -1 if none available.
+ *
+ * For call-crossing values: only return callee-saved registers.
+ * For non-call-crossing: prefer caller-saved (preserve callee-saved
+ * for long-lived values). */
+static int ra_pick_free(int crosses_call) {
+    int i;
+    int best;
+    int reg;
+    int slot;
+
+    best = -1;
+
+    if (crosses_call) {
+        /* Must use callee-saved.  Scan free stack for one. */
+        i = ra_nfree - 1;
+        while (i >= 0) {
+            reg = ra_fstk[i];
+            slot = ra_x64_slot[reg];
+            if (slot >= 0 && ra_x64_is_callee[slot]) {
+                best = i;
+                break;
+            }
+            i = i - 1;
+        }
+    } else {
+        /* Prefer caller-saved.  Scan for caller-saved first. */
+        i = ra_nfree - 1;
+        while (i >= 0) {
+            reg = ra_fstk[i];
+            slot = ra_x64_slot[reg];
+            if (slot >= 0 && !ra_x64_is_callee[slot]) {
+                best = i;
+                break;
+            }
+            i = i - 1;
+        }
+        /* Fallback: any register */
+        if (best < 0 && ra_nfree > 0) best = ra_nfree - 1;
+    }
+
+    if (best < 0) return -1;
+
+    reg = ra_fstk[best];
+    /* Remove from free stack by shifting */
+    i = best;
+    while (i < ra_nfree - 1) {
+        ra_fstk[i] = ra_fstk[i + 1];
+        i = i + 1;
+    }
+    ra_nfree = ra_nfree - 1;
+    return reg;
+}
+
 static void ra_linear_scan(void) {
     int i;
     int inst;
@@ -391,6 +458,7 @@ static void ra_linear_scan(void) {
     int spill_inst;
     int j;
     int slot;
+    int xc;
 
     /* Initialize free register pool */
     ra_nfree = RA_NPHY;
@@ -428,33 +496,40 @@ static void ra_linear_scan(void) {
 
         ra_expire(ra_pos[inst]);
 
-        if (ra_nfree > 0) {
-            ra_nfree = ra_nfree - 1;
-            reg = ra_fstk[ra_nfree];
+        xc = ra_crosses_call[inst];
+        reg = ra_pick_free(xc);
+
+        if (reg >= 0) {
             ra_reg[inst] = reg;
             slot = ra_x64_slot[reg];
             if (slot >= 0) ra_used[slot] = 1;
             ra_act[ra_nact] = inst;
             ra_nact = ra_nact + 1;
         } else {
-            best = 0;
-            best_end = ra_iend[ra_act[0]];
-            j = 1;
+            /* No suitable free register — try spilling an active interval
+             * with furthest end.  For call-crossing values, only preempt
+             * another callee-saved allocation. */
+            best = -1;
+            best_end = -1;
+            j = 0;
             while (j < ra_nact) {
                 if (ra_iend[ra_act[j]] > best_end) {
-                    best = j;
-                    best_end = ra_iend[ra_act[j]];
+                    if (!xc || ra_x64_is_callee[ra_x64_slot[ra_reg[ra_act[j]]]]) {
+                        best = j;
+                        best_end = ra_iend[ra_act[j]];
+                    }
                 }
                 j = j + 1;
             }
 
-            if (best_end > ra_iend[inst]) {
+            if (best >= 0 && best_end > ra_iend[inst]) {
                 spill_inst = ra_act[best];
                 reg = ra_reg[spill_inst];
                 ra_reg[spill_inst] = -1;
                 ra_reg[inst] = reg;
                 ra_act[best] = inst;
             }
+            /* else: spill current interval (ra_reg[inst] stays -1) */
         }
 
         i = i + 1;
@@ -487,17 +562,67 @@ static void ra_assign_spills(void) {
         i = i + 1;
     }
 
-    /* Assign 8-byte callee-save slots */
+    /* Assign 8-byte callee-save slots (only for callee-saved registers) */
     ra_ncsave = 0;
     r = 0;
     while (r < RA_NPHY) {
-        if (ra_used[r]) {
+        if (ra_used[r] && ra_x64_is_callee[r]) {
             hl_temp_stack = hl_temp_stack + 8;
             ra_csave_reg[ra_ncsave] = ra_x64_phys[r];
             ra_csave_off[ra_ncsave] = 0 - hl_temp_stack;
             ra_ncsave = ra_ncsave + 1;
         }
         r = r + 1;
+    }
+}
+
+/* =================================================================
+ * Call-crossing detection
+ *
+ * Mark values whose live intervals span a CALL/CALLP instruction.
+ * These must be allocated to callee-saved registers only.
+ * ================================================================= */
+
+#define RA_MAX_CALLS 512
+static int ra_call_positions[RA_MAX_CALLS];
+static int ra_ncalls;
+
+static void ra_mark_call_crossing(void) {
+    int i;
+    int inst;
+    int k;
+    int j;
+    int cp;
+
+    /* Collect CALL/CALLP positions */
+    ra_ncalls = 0;
+    i = 0;
+    while (i < ra_norder) {
+        inst = ra_order[i];
+        k = h_kind[inst];
+        if ((k == HI_CALL || k == HI_CALLP) && ra_ncalls < RA_MAX_CALLS) {
+            ra_call_positions[ra_ncalls] = ra_pos[inst];
+            ra_ncalls = ra_ncalls + 1;
+        }
+        i = i + 1;
+    }
+
+    /* For each value, check if any call falls within its live interval */
+    i = 0;
+    while (i < h_ninst) {
+        ra_crosses_call[i] = 0;
+        if (ra_pos[i] >= 0 && ra_iend[i] > ra_pos[i]) {
+            j = 0;
+            while (j < ra_ncalls) {
+                cp = ra_call_positions[j];
+                if (cp > ra_pos[i] && cp <= ra_iend[i]) {
+                    ra_crosses_call[i] = 1;
+                    break;
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
     }
 }
 
@@ -672,6 +797,7 @@ static void hir_regalloc(void) {
     ra_init_x64_regs();
     ra_compute_pos();
     ra_compute_ends();
+    ra_mark_call_crossing();
     ra_extend_fused_cmp();
     ra_linear_scan();
     ra_assign_spills();
