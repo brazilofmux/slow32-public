@@ -148,6 +148,56 @@ docker run --rm -v $(pwd):/workspace slow32-toolchain bash -c "cd /workspace/reg
 docker run --rm -v $(pwd):/workspace slow32-toolchain bash -c "cd /workspace && clang -target slow32-unknown-none -S -emit-llvm -O2 -Iruntime/include test.c -o test.ll && llc -mtriple=slow32-unknown-none test.ll -o test.s"
 ```
 
+## Cross-Compiler (stage07-cross) — Build, Test, Benchmark
+
+The cross-compiler (`selfhost/stage07-cross/`) compiles C to native x86-64 ELF.
+It has its own Makefile. **Always use `--hir` when compiling with cc-x64** (the Makefile does this).
+
+```bash
+cd selfhost/stage07-cross
+
+# Build everything: cc-x64 (compiler) + s32fast-hir (emulator compiled by cc-x64)
+make
+
+# Run all tests (23 tests)
+make test
+
+# Benchmark: compare cross-compiled emulator vs GCC-compiled emulator
+make bench                    # runs s32fast-hir on benchmark_core.s32x
+time tools/emulator/slow32-fast ~/slow-32/benchmark_core.s32x   # GCC baseline
+
+# Rebuild after changing hir_regalloc_x64.h or hir_codegen_x64.h:
+# (Makefile tracks deps — just `make` rebuilds cc-x64 then recompiles s32fast)
+make
+
+# Manual compilation (if needed):
+out/cc-x64 --hir -c somefile.c -o somefile.o     # compile to .o
+gcc -nostdlib -static -o binary out/crt0.o somefile.o out/libc_x64.a  # link
+
+# Compare codegen quality (inspect hot function):
+objdump -d out/s32fast-hir | sed -n '/<h_add>:/,/ret/p'      # our code
+objdump -d tools/emulator/slow32-fast | sed -n '/<op_add>:/,/ret/p'  # gcc code
+
+# Key benchmark: ~/slow-32/benchmark_core.s32x (reduced iteration count)
+# Expected checksum: 0x8d70b2b
+# GCC slow32-fast: ~0.80s, our s32fast-hir: ~1.63s (2.0x gap as of Apr 2026)
+```
+
+**Bootstrap chain**: host GCC compiles `cc-x64.c` → `out/cc-x64` (the cross-compiler binary).
+Then `cc-x64 --hir` compiles everything else (libc, emulator, tests).
+`out/crt0.o` and `out/libc_x64.a` are pre-built; `make libc` rebuilds them.
+
+**Architecture**: `cc-x64.c` `#include`s all headers — the compiler is a single translation unit.
+Key files for codegen performance:
+- `hir_regalloc_x64.h` — IRC graph-coloring register allocator
+- `hir_codegen_x64.h` — x86-64 instruction emission, SIB/ADDI folds, compare-branch fusion
+- `hir_burg_x64.h` — BURG instruction selection patterns
+- `x64_encode.h` — raw x86-64 instruction encoding
+
+**CRITICAL**: The `--hir` flag selects the HIR codegen path (with regalloc, SIB folds, LICM).
+Without it, cc-x64 falls back to the tree-walk codegen which is 2x slower.
+The Makefile passes `--hir` automatically.
+
 ## Testing Commands
 
 ```bash
