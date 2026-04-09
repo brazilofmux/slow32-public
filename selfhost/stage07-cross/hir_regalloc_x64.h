@@ -1172,24 +1172,88 @@ static void gc_select(void) {
                 gc_color[n] = hint;
             } else {
                 gc_color[n] = -1;
-                /* Prefer caller-saved (slots 5-10) */
-                c = 5;
-                while (c < RA_NPHY) {
-                    if (!used[c]) {
-                        gc_color[n] = c;
-                        break;
+
+                /* Biased coloring: for non-PARAM nodes, avoid colors wanted
+                 * by uncolored PARAM neighbors — but only if doing so doesn't
+                 * force all temps into REX-prefix registers (R8-R11).
+                 * Count available non-REX, non-avoided caller-saved slots;
+                 * if >= 1 remains, apply bias. */
+                {
+                    int avoid[RA_NPHY];
+                    int ac;
+                    int ae;
+                    int ap;
+                    int aa;
+                    int apidx;
+                    int awant;
+                    int non_rex_avail;
+
+                    ac = 0;
+                    while (ac < RA_NPHY) {
+                        avoid[ac] = 0;
+                        ac = ac + 1;
                     }
-                    c = c + 1;
-                }
-                /* Fallback: callee-saved (slots 0-4) */
-                if (gc_color[n] < 0) {
-                    c = 0;
-                    while (c < 5) {
-                        if (!used[c]) {
+
+                    if (h_kind[inst] != HI_PARAM) {
+                        ae = gc_adj_head[n];
+                        while (ae >= 0) {
+                            ap = gc_adj_peer[ae];
+                            aa = gc_get_alias(ap);
+                            if (gc_color[aa] < 0 && h_kind[gc_inst[aa]] == HI_PARAM) {
+                                apidx = h_val[gc_inst[aa]];
+                                if (apidx >= 0 && apidx < 6) {
+                                    awant = ra_x64_slot[ra_arg_regs[apidx]];
+                                    if (awant >= 0) avoid[awant] = 1;
+                                }
+                            }
+                            ae = gc_adj_next[ae];
+                        }
+
+                        /* Check if bias leaves any non-REX caller-saved option.
+                         * Non-REX caller-saved: RSI(5), RDI(6). */
+                        non_rex_avail = 0;
+                        if (!used[5] && !avoid[5]) non_rex_avail = non_rex_avail + 1;
+                        if (!used[6] && !avoid[6]) non_rex_avail = non_rex_avail + 1;
+                        if (non_rex_avail == 0) {
+                            /* Bias would force all temps to REX regs — disable */
+                            ac = 0;
+                            while (ac < RA_NPHY) {
+                                avoid[ac] = 0;
+                                ac = ac + 1;
+                            }
+                        }
+                    }
+
+                    /* Prefer caller-saved, avoiding PARAM-wanted colors */
+                    c = 5;
+                    while (c < RA_NPHY) {
+                        if (!used[c] && !avoid[c]) {
                             gc_color[n] = c;
                             break;
                         }
                         c = c + 1;
+                    }
+                    /* Fallback: caller-saved even if PARAM-wanted */
+                    if (gc_color[n] < 0) {
+                        c = 5;
+                        while (c < RA_NPHY) {
+                            if (!used[c]) {
+                                gc_color[n] = c;
+                                break;
+                            }
+                            c = c + 1;
+                        }
+                    }
+                    /* Fallback: callee-saved */
+                    if (gc_color[n] < 0) {
+                        c = 0;
+                        while (c < 5) {
+                            if (!used[c]) {
+                                gc_color[n] = c;
+                                break;
+                            }
+                            c = c + 1;
+                        }
                     }
                 }
             }
