@@ -1,8 +1,11 @@
-/* hir_regalloc_x64.h -- Linear scan register allocation for x86-64
+/* hir_regalloc_x64.h -- IRC graph-coloring register allocation for x86-64
  *
  * Forked from stage07/hir_regalloc.h (SLOW-32 target).
- * Allocates callee-saved registers RBX, R12-R15 (5 registers).
- * RAX, RCX, RDX are reserved as scratch for the codegen.
+ * Allocates 13 registers: callee-saved RBX, R12-R15 (5) plus
+ * caller-saved RSI, RDI, RCX, RDX, R8-R11 (8).
+ * RAX is reserved as scratch for the codegen.
+ * RCX/RDX are allocatable but constrained at clobber points
+ * (DIV/REM, variable shifts).
  *
  * Reference: Poletto-Sarkar "Linear Scan Register Allocation" (1999).
  *
@@ -21,7 +24,10 @@ static int hx_sib_index[HIR_MAX_INST];     /* SIB index for stores */
 static int hx_alu_sib_idx[HIR_MAX_INST];   /* SIB index for ALU+SIB ops */
 
 /* --- Configuration --- */
-#define RA_NPHY 11  /* callee: RBX, R12-R15; caller: RSI, RDI, R8, R9, R10, R11 */
+#define RA_NPHY 13  /* callee: RBX, R12-R15; caller: RSI, RDI, RCX, RDX, R8-R11 */
+#define RA_SLOT_RCX 7
+#define RA_SLOT_RDX 8
+#define RA_NCALLEE  5  /* number of callee-saved slots (0..4) */
 
 /* Mapping: slot index → x64 physical register encoding */
 static int ra_x64_phys[RA_NPHY];
@@ -36,6 +42,12 @@ static int ra_x64_slot[RA_X64_REVERSE_SIZE];
 /* Call-crossing flag: 1 if value's live interval spans a CALL */
 static int ra_crosses_call[HIR_MAX_INST];
 
+/* Clobber flags: 1 if value's live interval spans an instruction that
+ * architecturally clobbers RCX (variable shifts, DIV/REM) or RDX (DIV/REM).
+ * Values with these flags cannot be allocated to the corresponding register. */
+static int ra_crosses_cx_clobber[HIR_MAX_INST];
+static int ra_crosses_dx_clobber[HIR_MAX_INST];
+
 static void ra_init_x64_regs(void) {
     int i;
     /* Callee-saved registers (slots 0-4) */
@@ -44,13 +56,15 @@ static void ra_init_x64_regs(void) {
     ra_x64_phys[2] = X64_R13;  ra_x64_is_callee[2] = 1;
     ra_x64_phys[3] = X64_R14;  ra_x64_is_callee[3] = 1;
     ra_x64_phys[4] = X64_R15;  ra_x64_is_callee[4] = 1;
-    /* Caller-saved registers (slots 5-10) */
-    ra_x64_phys[5] = X64_RSI;  ra_x64_is_callee[5] = 0;
-    ra_x64_phys[6] = X64_RDI;  ra_x64_is_callee[6] = 0;
-    ra_x64_phys[7] = X64_R8;   ra_x64_is_callee[7] = 0;
-    ra_x64_phys[8] = X64_R9;   ra_x64_is_callee[8] = 0;
-    ra_x64_phys[9] = X64_R10;  ra_x64_is_callee[9] = 0;
-    ra_x64_phys[10] = X64_R11; ra_x64_is_callee[10] = 0;
+    /* Caller-saved registers (slots 5-12): non-REX first for smaller code */
+    ra_x64_phys[5]  = X64_RSI;  ra_x64_is_callee[5]  = 0;
+    ra_x64_phys[6]  = X64_RDI;  ra_x64_is_callee[6]  = 0;
+    ra_x64_phys[7]  = X64_RCX;  ra_x64_is_callee[7]  = 0;  /* RA_SLOT_RCX */
+    ra_x64_phys[8]  = X64_RDX;  ra_x64_is_callee[8]  = 0;  /* RA_SLOT_RDX */
+    ra_x64_phys[9]  = X64_R8;   ra_x64_is_callee[9]  = 0;
+    ra_x64_phys[10] = X64_R9;   ra_x64_is_callee[10] = 0;
+    ra_x64_phys[11] = X64_R10;  ra_x64_is_callee[11] = 0;
+    ra_x64_phys[12] = X64_R11;  ra_x64_is_callee[12] = 0;
     i = 0;
     while (i < RA_X64_REVERSE_SIZE) {
         ra_x64_slot[i] = -1;
@@ -698,12 +712,17 @@ static void gc_find_moves(void) {
 /* --- IRC main loop --- */
 
 /* Number of available colors for a node.  Call-crossing nodes can only
- * use callee-saved registers (5).  Others use all 11. */
+ * use callee-saved registers (5).  Others use all 13, minus any
+ * CX/DX clobber constraints. */
 static int gc_k(int n) {
     int inst;
+    int k;
     inst = gc_inst[n];
-    if (ra_crosses_call[inst]) return 5;
-    return RA_NPHY;
+    if (ra_crosses_call[inst]) return RA_NCALLEE;
+    k = RA_NPHY;
+    if (ra_crosses_cx_clobber[inst]) k = k - 1;
+    if (ra_crosses_dx_clobber[inst]) k = k - 1;
+    return k;
 }
 
 static void gc_make_worklists(void) {
@@ -1107,6 +1126,25 @@ static void gc_select(void) {
             e = gc_adj_next[e];
         }
 
+        /* Also mark CX/DX clobber-constrained slots as used */
+        if (ra_crosses_cx_clobber[inst]) used[RA_SLOT_RCX] = 1;
+        if (ra_crosses_dx_clobber[inst]) used[RA_SLOT_RDX] = 1;
+        /* Folded ALU+SIB uses RCX/RDX as address/load temporaries in codegen,
+         * so the destination cannot live in either register. */
+        if (hx_alu_sib_idx[inst] >= 0 &&
+            (h_kind[inst] == HI_ADD || h_kind[inst] == HI_AND ||
+             h_kind[inst] == HI_OR  || h_kind[inst] == HI_XOR)) {
+            used[RA_SLOT_RCX] = 1;
+            used[RA_SLOT_RDX] = 1;
+        }
+        /* Variable shifts consume CL for the count, so the result cannot
+         * be allocated to RCX. Immediate shifts are fine. */
+        if ((h_kind[inst] == HI_SLL || h_kind[inst] == HI_SRA ||
+             h_kind[inst] == HI_SRL) &&
+            (h_src2[inst] < 0 || h_kind[h_src2[inst]] != HI_ICONST)) {
+            used[RA_SLOT_RCX] = 1;
+        }
+
         /* Constraint: call-crossing → must use callee-saved (slots 0-4) */
         if (ra_crosses_call[inst]) {
             /* Try PARAM hint first */
@@ -1115,7 +1153,7 @@ static void gc_select(void) {
                 pidx = h_val[inst];
                 if (pidx >= 0 && pidx < 6) {
                     c = ra_x64_slot[ra_arg_regs[pidx]];
-                    if (c >= 0 && c < 5 && !used[c]) hint = c;
+                    if (c >= 0 && c < RA_NCALLEE && !used[c]) hint = c;
                 }
             }
             if (hint >= 0) {
@@ -1123,7 +1161,7 @@ static void gc_select(void) {
             } else {
                 gc_color[n] = -1;
                 c = 0;
-                while (c < 5) {
+                while (c < RA_NCALLEE) {
                     if (!used[c]) {
                         gc_color[n] = c;
                         break;
@@ -1210,10 +1248,12 @@ static void gc_select(void) {
                         }
 
                         /* Check if bias leaves any non-REX caller-saved option.
-                         * Non-REX caller-saved: RSI(5), RDI(6). */
+                         * Non-REX caller-saved: RSI(5), RDI(6), RCX(7), RDX(8). */
                         non_rex_avail = 0;
                         if (!used[5] && !avoid[5]) non_rex_avail = non_rex_avail + 1;
                         if (!used[6] && !avoid[6]) non_rex_avail = non_rex_avail + 1;
+                        if (!used[7] && !avoid[7]) non_rex_avail = non_rex_avail + 1;
+                        if (!used[8] && !avoid[8]) non_rex_avail = non_rex_avail + 1;
                         if (non_rex_avail == 0) {
                             /* Bias would force all temps to REX regs — disable */
                             ac = 0;
@@ -1247,7 +1287,7 @@ static void gc_select(void) {
                     /* Fallback: callee-saved */
                     if (gc_color[n] < 0) {
                         c = 0;
-                        while (c < 5) {
+                        while (c < RA_NCALLEE) {
                             if (!used[c]) {
                                 gc_color[n] = c;
                                 break;
@@ -1452,6 +1492,90 @@ static void ra_mark_call_crossing(void) {
 }
 
 /* =================================================================
+ * CX/DX clobber detection
+ *
+ * Mark values whose live intervals span an instruction that
+ * architecturally clobbers RCX (variable shifts, DIV/REM) or
+ * RDX (DIV/REM).  These values cannot be allocated to the
+ * corresponding register.
+ * ================================================================= */
+
+#define RA_MAX_CLOBBERS 1024
+static int ra_cx_clobber_positions[RA_MAX_CLOBBERS];
+static int ra_dx_clobber_positions[RA_MAX_CLOBBERS];
+static int ra_ncx_clobbers;
+static int ra_ndx_clobbers;
+
+static void ra_mark_clobbers(void) {
+    int i;
+    int inst;
+    int k;
+    int j;
+    int cp;
+    int s2_inst;
+
+    /* Collect clobber positions */
+    ra_ncx_clobbers = 0;
+    ra_ndx_clobbers = 0;
+    i = 0;
+    while (i < ra_norder) {
+        inst = ra_order[i];
+        k = h_kind[inst];
+        /* DIV/REM clobbers both RCX (divisor) and RDX (remainder/sign-ext) */
+        if (k == HI_DIV || k == HI_REM) {
+            if (ra_ncx_clobbers < RA_MAX_CLOBBERS) {
+                ra_cx_clobber_positions[ra_ncx_clobbers] = ra_pos[inst];
+                ra_ncx_clobbers = ra_ncx_clobbers + 1;
+            }
+            if (ra_ndx_clobbers < RA_MAX_CLOBBERS) {
+                ra_dx_clobber_positions[ra_ndx_clobbers] = ra_pos[inst];
+                ra_ndx_clobbers = ra_ndx_clobbers + 1;
+            }
+        }
+        /* Variable shifts clobber RCX (shift count in CL) */
+        if (k == HI_SLL || k == HI_SRA || k == HI_SRL) {
+            s2_inst = h_src2[inst];
+            /* Only variable shifts (not immediate) clobber CL */
+            if (s2_inst < 0 || h_kind[s2_inst] != HI_ICONST) {
+                if (ra_ncx_clobbers < RA_MAX_CLOBBERS) {
+                    ra_cx_clobber_positions[ra_ncx_clobbers] = ra_pos[inst];
+                    ra_ncx_clobbers = ra_ncx_clobbers + 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+
+    /* For each value, check if any CX clobber falls within its live interval */
+    i = 0;
+    while (i < h_ninst) {
+        ra_crosses_cx_clobber[i] = 0;
+        ra_crosses_dx_clobber[i] = 0;
+        if (ra_pos[i] >= 0 && ra_iend[i] > ra_pos[i]) {
+            j = 0;
+            while (j < ra_ncx_clobbers) {
+                cp = ra_cx_clobber_positions[j];
+                if (cp > ra_pos[i] && cp < ra_iend[i]) {
+                    ra_crosses_cx_clobber[i] = 1;
+                    break;
+                }
+                j = j + 1;
+            }
+            j = 0;
+            while (j < ra_ndx_clobbers) {
+                cp = ra_dx_clobber_positions[j];
+                if (cp > ra_pos[i] && cp < ra_iend[i]) {
+                    ra_crosses_dx_clobber[i] = 1;
+                    break;
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+}
+
+/* =================================================================
  * Compare-branch fusion
  *
  * Identifies BRC instructions whose condition is a single-use
@@ -1594,6 +1718,7 @@ static void hir_regalloc(void) {
     ra_compute_ends();
     ra_extend_fused_cmp();
     ra_mark_call_crossing();
+    ra_mark_clobbers();
     gc_alloc();
     ra_assign_spills();
 }
