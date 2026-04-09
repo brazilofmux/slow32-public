@@ -1206,6 +1206,50 @@ static void gc_select(void) {
         }
         i = i + 1;
     }
+
+    /* Post-coloring PARAM fix-up: if a PARAM didn't get its ABI register,
+     * and no neighbor has that color, take it to avoid prologue moves. */
+    {
+        int n;
+        int inst;
+        int pidx;
+        int want;
+        int old_c;
+        int conflict;
+        int ei;
+        int peer;
+        int pa;
+
+        ra_init_arg_regs();
+        n = 0;
+        while (n < gc_nnode) {
+            inst = gc_inst[n];
+            if (h_kind[inst] == HI_PARAM && gc_color[n] >= 0 && !ra_crosses_call[inst]) {
+                pidx = h_val[inst];
+                if (pidx >= 0 && pidx < 6) {
+                    want = ra_x64_slot[ra_arg_regs[pidx]];
+                    old_c = gc_color[n];
+                    if (want >= 0 && old_c != want) {
+                        conflict = 0;
+                        ei = gc_adj_head[n];
+                        while (ei >= 0) {
+                            peer = gc_adj_peer[ei];
+                            pa = gc_get_alias(peer);
+                            if (gc_color[pa] == want) {
+                                conflict = 1;
+                                break;
+                            }
+                            ei = gc_adj_next[ei];
+                        }
+                        if (!conflict) {
+                            gc_color[n] = want;
+                        }
+                    }
+                }
+            }
+            n = n + 1;
+        }
+    }
 }
 
 /* --- Writeback: populate ra_reg[] and ra_used[] --- */
