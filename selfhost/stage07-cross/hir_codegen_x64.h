@@ -64,20 +64,12 @@ static int hx_arg_reg[6];
 static int hx_phi_insts[HIR_MAX_INST];
 static int hx_phi_vals[HIR_MAX_INST];
 
-/* --- CX/DX liveness tracking for save/restore ---
+/* --- CX/DX save/restore state ---
  *
- * RCX and RDX are now allocatable but still used as scratch by some
- * codegen patterns (comparisons, stores, SIB addressing, etc.).
- * We track whether a live allocated value currently occupies RCX/RDX
- * and emit save/restore around scratch uses when needed.
- *
- * hx_cx_active / hx_dx_active: HIR inst index of value currently in
- * RCX/RDX, or -1 if register is free at the current codegen point.
- * hx_cx_save_off / hx_dx_save_off: frame slot offsets for save/restore.
- * hx_has_cx_alloc / hx_has_dx_alloc: 1 if any value in function is
- * allocated to RCX/RDX (set after regalloc, controls slot allocation). */
-static int hx_cx_active;
-static int hx_dx_active;
+ * RCX and RDX are allocatable but still used as scratch by some codegen
+ * patterns.  When any value in the function is allocated to CX/DX, we
+ * reserve a frame slot and emit save/restore around every scratch use.
+ * This is conservative but correct. */
 static int hx_cx_save_off;
 static int hx_dx_save_off;
 static int hx_has_cx_alloc;
@@ -104,40 +96,26 @@ static void hx_die(char *msg, int idx) {
 }
 
 /* --- CX/DX save/restore helpers ---
- * Called around scratch uses of RCX/RDX.  Only emit code when the
- * register actually holds a live allocated value (hx_cx_active >= 0). */
+ * Called around scratch uses of RCX/RDX.  Emit save/restore whenever
+ * ANY value in the function is allocated to that register.  This is
+ * conservative but correct — the fine-grained per-instruction tracking
+ * had gaps that caused self-hosting crashes. */
 
 static void hx_save_cx(void) {
-    if (hx_cx_active >= 0)
+    if (hx_has_cx_alloc)
         x64_mov_mr64(X64_RBP, hx_cx_save_off, X64_RCX);
 }
 static void hx_restore_cx(void) {
-    if (hx_cx_active >= 0)
+    if (hx_has_cx_alloc)
         x64_mov_rm64(X64_RCX, X64_RBP, hx_cx_save_off);
 }
 static void hx_save_dx(void) {
-    if (hx_dx_active >= 0)
+    if (hx_has_dx_alloc)
         x64_mov_mr64(X64_RBP, hx_dx_save_off, X64_RDX);
 }
 static void hx_restore_dx(void) {
-    if (hx_dx_active >= 0)
+    if (hx_has_dx_alloc)
         x64_mov_rm64(X64_RDX, X64_RBP, hx_dx_save_off);
-}
-
-/* Pre-emit: clear dead CX/DX owners. Called BEFORE hx_emit_inst. */
-static void hx_update_cxdx_pre(int idx) {
-    int pos;
-    pos = ra_pos[idx];
-    if (hx_cx_active >= 0 && ra_iend[hx_cx_active] < pos)
-        hx_cx_active = -1;
-    if (hx_dx_active >= 0 && ra_iend[hx_dx_active] < pos)
-        hx_dx_active = -1;
-}
-
-/* Post-emit: mark new CX/DX owner. Called AFTER hx_emit_inst. */
-static void hx_update_cxdx_post(int idx) {
-    if (ra_reg[idx] == X64_RCX) hx_cx_active = idx;
-    if (ra_reg[idx] == X64_RDX) hx_dx_active = idx;
 }
 
 /* Safe restore: don't restore if this instruction's result lives
@@ -693,14 +671,30 @@ static void hx_emit_inst(int idx) {
                     as1r = adr;
                 }
             }
-            hx_save_cx();
-            abr = hx_src(h_src2[idx], X64_RCX);
-            if (abr == X64_RDX) {
-                x64_mov_rr64(X64_RAX, X64_RDX);
-                abr = X64_RAX;
+            /* Materialize SIB base and index into scratch registers.
+             * Must avoid clobbering allocated values:
+             * - If index is in RCX, use RDX as scratch for base (and vice versa)
+             * - Always save before using a register as scratch */
+            {
+            int idx_inst;
+            int idx_in_cx;
+            int base_scratch;
+            int index_scratch;
+            idx_inst = hx_alu_sib_idx[idx];
+            idx_in_cx = (idx_inst >= 0 && ra_reg[idx_inst] == X64_RCX);
+            /* Choose scratch for base that doesn't conflict with index */
+            if (idx_in_cx) {
+                base_scratch = X64_RDX;
+                index_scratch = X64_RCX; /* index already there */
+            } else {
+                base_scratch = X64_RCX;
+                index_scratch = X64_RDX;
             }
-            hx_save_dx();
-            air = hx_src(hx_alu_sib_idx[idx], X64_RDX);
+            if (base_scratch == X64_RCX) hx_save_cx(); else hx_save_dx();
+            abr = hx_src(h_src2[idx], base_scratch);
+            if (index_scratch == X64_RCX) hx_save_cx(); else hx_save_dx();
+            air = hx_src(idx_inst, index_scratch);
+            }
             alu_sib_ok = 1;
             if (wide) alu_sib_ok = 0;
             if (adr == X64_RCX || adr == X64_RDX) alu_sib_ok = 0;
@@ -1085,22 +1079,23 @@ static void hx_emit_inst(int idx) {
                 ar = hx_src(h_src1[idx], X64_RAX);
                 hx_load_typed_off(dr, ar, hx_addi_folded_disp[idx], ty);
             } else if (hx_sib_flag[idx]) {
-                /* SIB: src1=base, src2=index, scale in hx_sib_scale */
+                /* SIB: src1=base, src2=index, scale in hx_sib_scale.
+                 * Choose scratch for index that doesn't conflict with base. */
                 int br;
                 int ir;
+                int sib_scratch;
                 br = hx_src(h_src1[idx], X64_RAX);
-                if (br == X64_RCX) {
-                    x64_mov_rr64(X64_RAX, X64_RCX);
-                    br = X64_RAX;
-                }
-                hx_save_cx();
-                ir = hx_src(h_src2[idx], X64_RCX);
+                sib_scratch = X64_RCX;
+                if (br == X64_RCX) sib_scratch = X64_RDX;
+                if (sib_scratch == X64_RCX) hx_save_cx(); else hx_save_dx();
+                ir = hx_src(h_src2[idx], sib_scratch);
                 if (wide) {
                     x64_mov_rm64_sib(dr, br, ir, hx_sib_scale[idx], 0);
                 } else {
                     x64_mov_rm_sib(dr, br, ir, hx_sib_scale[idx], 0);
                 }
-                hx_restore_cx_safe(idx);
+                if (sib_scratch == X64_RCX) hx_restore_cx_safe(idx);
+                else hx_restore_dx_safe(idx);
             } else {
                 ar = hx_src(h_src1[idx], X64_RAX);
                 hx_load_typed(dr, ar, ty);
@@ -1157,30 +1152,40 @@ static void hx_emit_inst(int idx) {
         } else {
             /* Fold ADDI displacement into store addressing mode */
             if (hx_addi_folded_flag[idx]) {
+                {
+                int st_scratch;
                 ar = hx_src(h_src1[idx], X64_RAX);
-                if (ar == X64_RCX) {
-                    x64_mov_rr64(X64_RAX, X64_RCX);
-                    ar = X64_RAX;
-                }
-                hx_save_cx();
-                vr = hx_src(h_src2[idx], X64_RCX);
+                st_scratch = X64_RCX;
+                if (ar == X64_RCX) st_scratch = X64_RDX;
+                if (st_scratch == X64_RCX) hx_save_cx(); else hx_save_dx();
+                vr = hx_src(h_src2[idx], st_scratch);
                 hx_store_typed_off(ar, hx_addi_folded_disp[idx], vr, ty);
-                hx_restore_cx();
+                if (st_scratch == X64_RCX) hx_restore_cx(); else hx_restore_dx();
+                }
             } else if (hx_sib_flag[idx]) {
                 /* SIB: src1=base, src2=value, index in hx_sib_index.
-                 * Resolve all operands safely: move any that are in RCX/RDX
-                 * to other registers before using CX/DX as scratch. */
+                 * Need 3 registers: base(RAX), value, index.
+                 * Choose scratch for value/index to avoid conflicts. */
                 int br;
                 int ir;
+                int val_scratch;
+                int idx_scratch;
                 br = hx_src(h_src1[idx], X64_RAX);
                 if (br == X64_RCX || br == X64_RDX) {
                     x64_mov_rr64(X64_RAX, br);
                     br = X64_RAX;
                 }
+                val_scratch = X64_RDX;
+                idx_scratch = X64_RCX;
                 hx_save_dx();
-                vr = hx_src(h_src2[idx], X64_RDX);
-                hx_save_cx();
-                ir = hx_src(hx_sib_index[idx], X64_RCX);
+                vr = hx_src(h_src2[idx], val_scratch);
+                /* If value ended up in the index scratch reg, swap scratches */
+                if (vr == idx_scratch) {
+                    idx_scratch = val_scratch;
+                    /* value is in RCX, so use RDX for index */
+                }
+                if (idx_scratch == X64_RCX) hx_save_cx(); else hx_save_dx();
+                ir = hx_src(hx_sib_index[idx], idx_scratch);
                 if (wide) {
                     x64_mov_mr64_sib(br, ir, hx_sib_scale[idx], 0, vr);
                 } else {
@@ -1189,15 +1194,16 @@ static void hx_emit_inst(int idx) {
                 hx_restore_cx();
                 hx_restore_dx();
             } else {
+                {
+                int st_scratch;
                 ar = hx_src(h_src1[idx], X64_RAX);
-                if (ar == X64_RCX) {
-                    x64_mov_rr64(X64_RAX, X64_RCX);
-                    ar = X64_RAX;
-                }
-                hx_save_cx();
-                vr = hx_src(h_src2[idx], X64_RCX);
+                st_scratch = X64_RCX;
+                if (ar == X64_RCX) st_scratch = X64_RDX;
+                if (st_scratch == X64_RCX) hx_save_cx(); else hx_save_dx();
+                vr = hx_src(h_src2[idx], st_scratch);
                 hx_store_typed(ar, vr, ty);
-                hx_restore_cx();
+                if (st_scratch == X64_RCX) hx_restore_cx(); else hx_restore_dx();
+                }
             }
         }
         return;
@@ -1376,10 +1382,12 @@ static void hx_emit_inst(int idx) {
         nreg = nargs < 6 ? nargs : 6;
         nstack = nargs > 6 ? nargs - 6 : 0;
 
-        if (nstack == 0 && k != HI_CALLP) {
-            /* Fast path: ≤6 args, direct call.
+        if (nstack == 0 && k != HI_CALLP && !hx_has_cx_alloc && !hx_has_dx_alloc) {
+            /* Fast path: ≤6 args, direct call, no CX/DX allocation.
              * Load args right-to-left into arg registers to avoid
-             * clobbering sources (later args in higher-numbered regs). */
+             * clobbering sources (later args in higher-numbered regs).
+             * Disabled when CX/DX are allocatable because a source
+             * value in RCX could be clobbered by loading arg3 first. */
             j = nreg - 1;
             while (j >= 0) {
                 arg_idx = h_carg[h_cbase[idx] + j];
@@ -2119,10 +2127,6 @@ static void hx_gen_func(Node *fn) {
         }
     }
 
-    /* --- Init CX/DX liveness tracking --- */
-    hx_cx_active = -1;
-    hx_dx_active = -1;
-
     /* --- Emit blocks --- */
     b = 0;
     while (b < bb_nblk) {
@@ -2131,29 +2135,21 @@ static void hx_gen_func(Node *fn) {
         /* Emit LICM-hoisted instructions at block top */
         i = licm_head[b];
         while (i >= 0) {
-            hx_update_cxdx_pre(i);
             hx_emit_inst(i);
-            hx_update_cxdx_post(i);
             i = licm_next[i];
         }
 
-        /* Emit PHI nodes -- these are no-ops (handled at edges).
-         * But we must track CX/DX ownership: PHI values are already in
-         * their allocated registers (from predecessor block's copies). */
+        /* Emit PHI nodes -- these are no-ops (handled at edges) */
         i = ssa_phi_head[b];
         while (i >= 0) {
-            hx_update_cxdx_post(i);
             i = ssa_phi_next[i];
         }
 
         /* Emit block body */
         i = bb_start[b];
         while (i < bb_end[b]) {
-            if (h_kind[i] != HI_NOP && h_kind[i] != HI_PHI) {
-                hx_update_cxdx_pre(i);
+            if (h_kind[i] != HI_NOP && h_kind[i] != HI_PHI)
                 hx_emit_inst(i);
-                hx_update_cxdx_post(i);
-            }
             i = i + 1;
         }
 
