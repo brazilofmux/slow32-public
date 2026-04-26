@@ -97,7 +97,9 @@ run_test() {
     # Optional command-line arguments
     local run_args=()
     if [ -f "$test_path/args.txt" ]; then
-        mapfile -t run_args < "$test_path/args.txt"
+        while IFS= read -r line || [ -n "$line" ]; do
+            run_args+=("$line")
+        done < "$test_path/args.txt"
     fi
 
     if [ "$asm_source" = "c" ]; then

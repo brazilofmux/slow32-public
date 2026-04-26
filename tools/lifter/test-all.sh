@@ -47,7 +47,9 @@ for dir in ../../regression/results/*/; do
     test_src="../../regression/tests/$test"
     args=()
     if [ -f "$test_src/args.txt" ]; then
-        mapfile -t args < "$test_src/args.txt"
+        while IFS= read -r line || [ -n "$line" ]; do
+            args+=("$line")
+        done < "$test_src/args.txt"
     fi
 
     LIFTED=$(timeout 30 ./lifted_native "${args[@]}" 2>&1 || true)
