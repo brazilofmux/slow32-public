@@ -6,13 +6,23 @@ CFLAGS = -Wall -Wextra -O2 -g -std=c11
 CFLAGS += -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L
 CFLAGS += -I../emulator  # For s32x_loader.h
 
+# macOS: _XOPEN_SOURCE unlocks <ucontext.h>; _DARWIN_C_SOURCE re-exposes BSD
+# extensions (MAP_ANON/MAP_ANONYMOUS) that strict POSIX hides.
+ifeq ($(shell uname -s),Darwin)
+    CFLAGS += -D_XOPEN_SOURCE=700 -D_DARWIN_C_SOURCE
+endif
+
 # Disable some warnings that are noisy during development
 CFLAGS += -Wno-unused-parameter -Wno-unused-variable
 
 LDFLAGS = -lm
 
-# Architecture detection: select emitter and translator
+# Architecture detection: select emitter and translator.
+# macOS reports `arm64`, Linux reports `aarch64` — normalize.
 UNAME_M := $(shell uname -m)
+ifeq ($(UNAME_M),arm64)
+    UNAME_M := aarch64
+endif
 ifeq ($(UNAME_M),aarch64)
     ARCH_SRCS = emit_a64.c translate_a64.c
     ARCH_HDRS = emit_a64.h
