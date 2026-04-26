@@ -56,7 +56,7 @@ bool cache_init(block_cache_t *cache) {
     // Allocate executable code buffer
     cache->code_buffer = mmap(NULL, CODE_BUFFER_SIZE,
                               PROT_READ | PROT_WRITE | PROT_EXEC,
-                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                              DBT_JIT_MMAP_FLAGS, -1, 0);
     if (cache->code_buffer == MAP_FAILED) {
         free(cache->compact_table);
         cache->compact_table = NULL;
@@ -68,6 +68,7 @@ bool cache_init(block_cache_t *cache) {
     cache->code_buffer_used = 0;
 
 #ifdef __aarch64__
+    dbt_jit_writable_begin();
     // AArch64 dispatcher stub: just RET (return to execute_translated)
     cache->dispatcher_stub = cache->code_buffer;
     {
@@ -212,6 +213,7 @@ bool cache_init(block_cache_t *cache) {
     // Flush I-cache for all stubs
     __builtin___clear_cache((char *)cache->code_buffer,
                             (char *)cache->code_buffer + cache->code_buffer_used);
+    dbt_jit_writable_end();
 
 #else  // x86-64
 
@@ -735,10 +737,12 @@ void cache_patch_jmp(block_cache_t *cache, uint8_t *patch_site, uint8_t *target)
 
     uint32_t inst = 0x14000000 | (imm26 & 0x03FFFFFF);
     uint32_t *p = (uint32_t *)patch_site;
+    dbt_jit_writable_begin();
     *p = inst;
 
     // Flush I-cache for the patched instruction
     __builtin___clear_cache((char *)patch_site, (char *)(patch_site + 4));
+    dbt_jit_writable_end();
 #else
     // x86-64: patch_site points to the rel32 offset of a jmp or jcc instruction
     // Calculate the relative offset from end of instruction

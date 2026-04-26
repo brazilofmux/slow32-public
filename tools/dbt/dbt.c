@@ -785,7 +785,7 @@ void dbt_cpu_init(dbt_cpu_state_t *cpu) {
     // Allocate executable code buffer (for Stage 1 mode)
     cpu->code_buffer = mmap(NULL, STAGE1_CODE_BUFFER_SIZE,
                             PROT_READ | PROT_WRITE | PROT_EXEC,
-                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                            DBT_JIT_MMAP_FLAGS, -1, 0);
     if (cpu->code_buffer == MAP_FAILED) {
         perror("mmap code buffer");
         exit(1);
@@ -1076,9 +1076,18 @@ bool dbt_load_s32x(dbt_cpu_state_t *cpu, const char *filename) {
         return false;
     }
 
-    // Make code section read-only (after loading)
+    // Make code section read-only (after loading). mprotect rounds the size
+    // up to the host page granule, so on Apple Silicon (16K pages) a code
+    // segment ending mid-page would also lock the next data/BSS page; round
+    // down to the host page boundary instead. The unaligned tail stays
+    // writable — closing that requires page-aligning the guest layout in the
+    // linker.
     if (cpu->code_limit > 0 && cpu->wxorx_enabled) {
-        mprotect(cpu->mem_base, cpu->code_limit, PROT_READ);
+        long pagesize = sysconf(_SC_PAGESIZE);
+        size_t prot_size = (size_t)cpu->code_limit & ~((size_t)pagesize - 1);
+        if (prot_size > 0) {
+            mprotect(cpu->mem_base, prot_size, PROT_READ);
+        }
     }
 
     if (cpu->mmio_enabled && !mmio_initialized) {
@@ -2189,9 +2198,11 @@ int main(int argc, char **argv) {
         // ensuring shadow_snapshot/shadow_verify run between each block.
         if (paranoid_mode && cache.native_dispatcher) {
 #ifdef __aarch64__
+            dbt_jit_writable_begin();
             *(uint32_t *)cache.native_dispatcher = 0xD65F03C0;  // RET
             __builtin___clear_cache((char *)cache.native_dispatcher,
                                     (char *)cache.native_dispatcher + 4);
+            dbt_jit_writable_end();
 #else
             cache.native_dispatcher[0] = 0xC3;  // RET
 #endif

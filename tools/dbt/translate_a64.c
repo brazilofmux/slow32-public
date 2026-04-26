@@ -2761,6 +2761,8 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
     dbt_cpu_state_t *cpu = ctx->cpu;
     emit_ctx_t *e = &ctx->emit;
 
+    dbt_jit_writable_begin();
+
     // Reset emitter
     emit_init(e, cpu->code_buffer, cpu->code_buffer_size);
 
@@ -2998,6 +3000,8 @@ block_done:
     // ARM I-cache is not coherent with D-cache — must flush after writing code
     __builtin___clear_cache((char *)entry, (char *)entry + cpu->code_buffer_used);
 #endif
+
+    dbt_jit_writable_end();
 
     return (translated_block_fn)entry;
 }
@@ -3857,9 +3861,11 @@ static translated_block_t *try_emit_intrinsic_a64(translate_ctx_t *ctx, uint32_t
 // ============================================================================
 
 translated_block_t *translate_block_cached(translate_ctx_t *ctx, uint32_t guest_pc) {
+    dbt_jit_writable_begin();
+
     // Check for intrinsic recognition before normal translation
     translated_block_t *intrinsic_block = try_emit_intrinsic_a64(ctx, guest_pc);
-    if (intrinsic_block) return intrinsic_block;
+    if (intrinsic_block) { dbt_jit_writable_end(); return intrinsic_block; }
 
     dbt_cpu_state_t *cpu = ctx->cpu;
     block_cache_t *cache = ctx->cache;
@@ -3869,7 +3875,7 @@ translated_block_t *translate_block_cached(translate_ctx_t *ctx, uint32_t guest_
 
     // Allocate a block
     translated_block_t *block = cache_alloc_block(cache, guest_pc);
-    if (!block) return NULL;
+    if (!block) { dbt_jit_writable_end(); return NULL; }
 
     uint8_t *code_start = cache_get_code_ptr(cache);
     void *entry = code_start;
@@ -4089,5 +4095,6 @@ cached_done:
 
     ctx->block = NULL;
     ctx->superblock_enabled = saved_superblock_enabled;
+    dbt_jit_writable_end();
     return block;
 }

@@ -10,6 +10,25 @@
 
 #include "dbt_limits.h"
 
+// ============================================================================
+// JIT memory portability (Apple Silicon W^X)
+// ============================================================================
+// Apple Silicon enforces W^X on JIT pages: a single page cannot be both
+// writable and executable. The mmap must use MAP_JIT, and code emission
+// brackets writes with pthread_jit_write_protect_np(0/1) to flip the page
+// between RW and RX. Linux/x86_64 has no such restriction; the helpers
+// compile to no-ops there.
+#if defined(__APPLE__) && defined(__aarch64__)
+#include <pthread.h>
+#define DBT_JIT_MMAP_FLAGS (MAP_PRIVATE | MAP_ANONYMOUS | MAP_JIT)
+static inline void dbt_jit_writable_begin(void) { pthread_jit_write_protect_np(0); }
+static inline void dbt_jit_writable_end(void)   { pthread_jit_write_protect_np(1); }
+#else
+#define DBT_JIT_MMAP_FLAGS (MAP_PRIVATE | MAP_ANONYMOUS)
+static inline void dbt_jit_writable_begin(void) { }
+static inline void dbt_jit_writable_end(void)   { }
+#endif
+
 // Forward declaration
 typedef struct translated_block translated_block_t;
 
