@@ -783,19 +783,21 @@ void cache_print_stats(block_cache_t *cache) {
             100.0 * cache->block_pool_used / cache->block_pool_size);
 
     if (cache->lookup_count > 0) {
-        fprintf(stderr, "Cache lookups: %lu (%.1f%% hit rate)\n",
+        fprintf(stderr, "Cache lookups: %" PRIu64 " (%.1f%% hit rate)\n",
                 cache->lookup_count,
                 100.0 * cache->lookup_hit_count / cache->lookup_count);
     }
 
-    fprintf(stderr, "Chains made:   %lu\n", cache->chain_count);
+    fprintf(stderr, "Chains made:   %" PRIu64 "\n", cache->chain_count);
     if (cache->patch_attempt_count > 0 || cache->patch_oob_count > 0 ||
         cache->patch_rel_oob_count > 0 ||
         cache->exit_overwrite_count > 0 ||
         cache->pending_invalid_ref_count > 0 ||
         cache->pending_mismatch_count > 0) {
         fprintf(stderr,
-                "Patch stats:   attempts=%lu oob=%lu rel_oob=%lu exit_overwrite=%lu pending_invalid=%lu pending_mismatch=%lu\n",
+                "Patch stats:   attempts=%" PRIu64 " oob=%" PRIu64
+                " rel_oob=%" PRIu64 " exit_overwrite=%" PRIu64
+                " pending_invalid=%" PRIu64 " pending_mismatch=%" PRIu64 "\n",
                 cache->patch_attempt_count,
                 cache->patch_oob_count,
                 cache->patch_rel_oob_count,
@@ -803,15 +805,15 @@ void cache_print_stats(block_cache_t *cache) {
                 cache->pending_invalid_ref_count,
                 cache->pending_mismatch_count);
     }
-    fprintf(stderr, "Cache flushes: %lu\n", cache->flush_count);
+    fprintf(stderr, "Cache flushes: %" PRIu64 "\n", cache->flush_count);
 
     // Stage 3 inline lookup stats
     if (cache->inline_miss_count > 0) {
-        fprintf(stderr, "Inline lookup misses: %lu\n", cache->inline_miss_count);
+        fprintf(stderr, "Inline lookup misses: %" PRIu64 "\n", cache->inline_miss_count);
     }
 
     if (cache->superblock_count > 0) {
-        fprintf(stderr, "Superblocks:   %lu (side exits emitted: %lu)\n",
+        fprintf(stderr, "Superblocks:   %" PRIu64 " (side exits emitted: %" PRIu64 ")\n",
                 cache->superblock_count, cache->side_exit_emitted);
         double avg_insts = (double)cache->superblock_inst_total /
                            (double)cache->superblock_count;
@@ -879,7 +881,7 @@ void cache_print_stats(block_cache_t *cache) {
         }
     }
     if (cache->peephole_hits > 0) {
-        fprintf(stderr, "Peephole rewrites: %lu\n", cache->peephole_hits);
+        fprintf(stderr, "Peephole rewrites: %" PRIu64 "\n", cache->peephole_hits);
     }
 
     // Side-exit profile summary (debug)

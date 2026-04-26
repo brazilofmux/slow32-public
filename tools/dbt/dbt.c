@@ -1221,7 +1221,7 @@ static void execute_translated(dbt_cpu_state_t *cpu, translated_block_fn block) 
           "r" (r_compact)       // x3 = compact_table
         : "x4", "x5", "x6", "x7",
           "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
-          "x16", "x17", "x18",
+          "x16", "x17",
           "memory", "cc"
     );
 }
