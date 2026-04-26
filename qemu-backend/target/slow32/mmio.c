@@ -12,6 +12,11 @@
 #include <time.h>
 #include <unistd.h>
 
+#if defined(__APPLE__)
+#include <crt_externs.h>
+#define environ (*_NSGetEnviron())
+#endif
+
 #include "exec/cpu-common.h"
 #include "hw/core/cpu.h"
 #include "qemu/bswap.h"
