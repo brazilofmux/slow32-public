@@ -410,6 +410,19 @@ static inline void const_prop_reset(translate_ctx_t *ctx) {
     ctx->reg_constants[0].value = 0;
 }
 
+// At a back-edge target, only invalidate constants for registers actually
+// written inside the loop body — loop-invariant registers (e.g., a counter
+// limit or a known-zero comparison register) keep their tracked values, which
+// lets fusions like SUBS-then-B.cond fire on counter loops where the compare
+// is against a register that holds a constant.
+static inline void const_prop_reset_loop_written(translate_ctx_t *ctx) {
+    for (int r = 1; r < 32; r++) {
+        if (ctx->loop_written_regs & (1u << r)) {
+            ctx->reg_constants[r].valid = false;
+        }
+    }
+}
+
 // Bounds check elimination helpers
 static inline void bounds_elim_reset(translate_ctx_t *ctx) {
     ctx->validated_range_count = 0;
@@ -486,6 +499,72 @@ static size_t pc_map_lookup(translate_ctx_t *ctx, uint32_t guest_pc) {
             return ctx->pc_map[i].host_offset;
     }
     return (size_t)-1;
+}
+
+// Stats counter for SUBS/ANDS-then-B.cond fusion
+uint32_t flag_branch_fusion_count = 0;
+
+// AArch64 S-bit OR-masks for converting ALU instructions to flag-setting.
+//   ADD/SUB family (immediate or shifted-register): bit 29 = S
+//   AND/BIC (logical): opc field bits 29-30; AND opc=00 → ANDS opc=11
+#define A64_S_BIT_ADDSUB  0x20000000u
+#define A64_S_BIT_LOGICAL 0x60000000u
+
+// Record that the just-emitted ALU instruction can be promoted to flag-setting
+// to fuse with a subsequent CMP-vs-zero + B.cond. Caller invokes this after the
+// emit so emit_offset() points at the byte AFTER the 4-byte ALU instruction.
+static inline void set_pending_flags(translate_ctx_t *ctx, uint8_t dst_guest_reg,
+                                     uint32_t s_bit_mask) {
+    ctx->pending_flags.valid = true;
+    ctx->pending_flags.host_offset = emit_offset(&ctx->emit) - 4;
+    ctx->pending_flags.dst_guest_reg = dst_guest_reg;
+    ctx->pending_flags.s_bit_mask = s_bit_mask;
+}
+
+// Returns true if `guest_reg` is known to hold the constant zero (either it's
+// the hard-wired r0 or constant-propagation tracked it as 0).
+static inline bool is_known_zero(translate_ctx_t *ctx, uint8_t guest_reg) {
+    if (guest_reg == 0) return true;
+    return ctx->reg_constants[guest_reg].valid &&
+           ctx->reg_constants[guest_reg].value == 0;
+}
+
+// Try to fuse a pending flag-setting ALU op with this branch. Returns true if
+// the fusion fired: caller should skip emitting any explicit CMP and go
+// directly to B.cond emission. The pending ALU instruction has been patched
+// in place to set flags.
+static bool try_pending_flags_fusion(translate_ctx_t *ctx, uint8_t rs1, uint8_t rs2) {
+    if (!ctx->pending_flags.valid) {
+        if (DBT_TRACE) fprintf(stderr, "  [flags-fuse] miss: not valid\n");
+        return false;
+    }
+    // Was the pending ALU the most recent emit? If anything else was emitted
+    // since (e.g., a deferred flush), the offsets won't match.
+    if (emit_offset(&ctx->emit) != ctx->pending_flags.host_offset + 4) {
+        if (DBT_TRACE) fprintf(stderr, "  [flags-fuse] miss: offset %zu != %zu+4\n",
+                emit_offset(&ctx->emit), ctx->pending_flags.host_offset);
+        ctx->pending_flags.valid = false;
+        return false;
+    }
+
+    uint8_t fd = ctx->pending_flags.dst_guest_reg;
+    bool match = false;
+    if (rs1 == fd && is_known_zero(ctx, rs2)) match = true;
+    else if (rs2 == fd && is_known_zero(ctx, rs1)) match = true;
+    if (!match) {
+        if (DBT_TRACE) fprintf(stderr, "  [flags-fuse] miss: rs1=%d rs2=%d fd=%d zero1=%d zero2=%d\n",
+                rs1, rs2, fd, is_known_zero(ctx, rs1), is_known_zero(ctx, rs2));
+        return false;
+    }
+
+    // Patch the ALU instruction: OR-in the S-bit mask. SUB → SUBS, AND → ANDS.
+    uint32_t *inst = (uint32_t *)(ctx->emit.buf + ctx->pending_flags.host_offset);
+    *inst |= ctx->pending_flags.s_bit_mask;
+    ctx->pending_flags.valid = false;
+    flag_branch_fusion_count++;
+    if (DBT_TRACE) fprintf(stderr, "  [flags-fuse] HIT at off %zu, dst=r%d\n",
+            ctx->pending_flags.host_offset, fd);
+    return true;
 }
 
 // ============================================================================
@@ -1361,13 +1440,16 @@ void translate_add(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (hd != A64_NOREG) {
         // 3-operand cached path: ADD hd, src1, src2
         a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+        bool emitted_flag_settable = false;
         if (rs2 == 0) {
             if (s1 != hd) emit_mov_w32_w32(e, hd, s1);
         } else {
             a64_reg_t s2 = resolve_src(ctx, rs2, W1);
             emit_add_w32(e, hd, s1, s2);
+            emitted_flag_settable = true;
         }
         reg_cache_mark_written(ctx, rd);
+        if (emitted_flag_settable) set_pending_flags(ctx, rd, A64_S_BIT_ADDSUB);
     } else {
         emit_load_guest_reg(ctx, W0, rs1);
         if (rs2 != 0) {
@@ -1391,13 +1473,16 @@ void translate_sub(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     a64_reg_t hd = guest_host_reg(ctx, rd);
     if (hd != A64_NOREG) {
         a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+        bool emitted_flag_settable = false;
         if (rs2 == 0) {
             if (s1 != hd) emit_mov_w32_w32(e, hd, s1);
         } else {
             a64_reg_t s2 = resolve_src(ctx, rs2, W1);
             emit_sub_w32(e, hd, s1, s2);
+            emitted_flag_settable = true;
         }
         reg_cache_mark_written(ctx, rd);
+        if (emitted_flag_settable) set_pending_flags(ctx, rd, A64_S_BIT_ADDSUB);
     } else {
         emit_load_guest_reg(ctx, W0, rs1);
         if (rs2 != 0) {
@@ -1427,19 +1512,24 @@ void translate_addi(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
     a64_reg_t dst = (hd != A64_NOREG) ? hd : W0;
     a64_reg_t s1 = resolve_src(ctx, rs1, W0);
 
+    bool emitted_flag_settable = false;
     if (imm == 0) {
         if (s1 != dst) emit_mov_w32_w32(e, dst, s1);
     } else if (imm > 0 && (uint32_t)imm < 4096) {
         emit_add_w32_imm(e, dst, s1, (uint32_t)imm);
+        emitted_flag_settable = true;
     } else if (imm < 0 && (uint32_t)(-imm) < 4096) {
         emit_sub_w32_imm(e, dst, s1, (uint32_t)(-imm));
+        emitted_flag_settable = true;
     } else {
         emit_mov_w32_imm32(e, W1, (uint32_t)imm);
         emit_add_w32(e, dst, s1, W1);
+        emitted_flag_settable = true;
     }
 
     if (hd != A64_NOREG) {
         reg_cache_mark_written(ctx, rd);
+        if (emitted_flag_settable) set_pending_flags(ctx, rd, A64_S_BIT_ADDSUB);
     } else {
         emit_store_guest_reg(ctx, rd, W0);
     }
@@ -1465,6 +1555,7 @@ void translate_and(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
             a64_reg_t s2 = resolve_src(ctx, rs2, W1);
             emit_and_w32(e, hd, s1, s2);
             reg_cache_mark_written(ctx, rd);
+            set_pending_flags(ctx, rd, A64_S_BIT_LOGICAL);
         } else {
             emit_load_guest_reg(ctx, W0, rs1);
             a64_reg_t s2 = resolve_src(ctx, rs2, W1);
@@ -1547,8 +1638,12 @@ void translate_andi(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
         emit_mov_w32_imm32(e, W1, (uint32_t)imm);
         emit_and_w32(e, dst, s1, W1);
     }
-    if (hd != A64_NOREG) reg_cache_mark_written(ctx, rd);
-    else emit_store_guest_reg(ctx, rd, W0);
+    if (hd != A64_NOREG) {
+        reg_cache_mark_written(ctx, rd);
+        set_pending_flags(ctx, rd, A64_S_BIT_LOGICAL);
+    } else {
+        emit_store_guest_reg(ctx, rd, W0);
+    }
 }
 
 void translate_ori(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
@@ -2257,30 +2352,38 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
     }
 
     if (!fused) {
-        // Standard comparison: flush any stale pending_cond
-        flush_pending_cond(ctx);
-
-        if ((cond == COND_EQ || cond == COND_NE) && (rs1 == 0 || rs2 == 0)) {
-            // CBZ/CBNZ: skip CMP entirely, saves 2 instructions
-            uint8_t nonzero_reg = (rs1 == 0) ? rs2 : rs1;
-            cbz_reg = resolve_src(ctx, nonzero_reg, W0);
-            cbz_is_nz = (cond == COND_NE);
-            cbz_peephole_count++;
-        } else if (rs1 == 0 || rs2 == 0) {
-            // CMP-against-zero: saves 1 instruction (no MOVZ needed)
-            uint8_t nonzero_reg = (rs1 == 0) ? rs2 : rs1;
-            a64_reg_t s = resolve_src(ctx, nonzero_reg, W0);
-            if (rs1 == 0) {
-                // Comparing 0 vs rs2: flags must reflect (0 - rs2)
-                emit_cmp_w32_w32(e, WZR, s);
-            } else {
-                // Comparing rs1 vs 0
-                emit_cmp_w32_imm(e, s, 0);
-            }
+        // SUBS/ANDS-then-B.cond fusion: if the immediately previous host
+        // instruction was a flag-settable ALU writing the register being
+        // tested against zero, retroactively make it set flags. Skip the CMP.
+        if (branch_is_eq_ne && try_pending_flags_fusion(ctx, rs1, rs2)) {
+            fused = true;
         } else {
-            a64_reg_t s1 = resolve_src(ctx, rs1, W0);
-            a64_reg_t s2 = resolve_src(ctx, rs2, W1);
-            emit_cmp_w32_w32(e, s1, s2);
+            // Standard comparison: flush any stale pending_cond
+            ctx->pending_flags.valid = false;
+            flush_pending_cond(ctx);
+
+            if ((cond == COND_EQ || cond == COND_NE) && (rs1 == 0 || rs2 == 0)) {
+                // CBZ/CBNZ: skip CMP entirely, saves 2 instructions
+                uint8_t nonzero_reg = (rs1 == 0) ? rs2 : rs1;
+                cbz_reg = resolve_src(ctx, nonzero_reg, W0);
+                cbz_is_nz = (cond == COND_NE);
+                cbz_peephole_count++;
+            } else if (rs1 == 0 || rs2 == 0) {
+                // CMP-against-zero: saves 1 instruction (no MOVZ needed)
+                uint8_t nonzero_reg = (rs1 == 0) ? rs2 : rs1;
+                a64_reg_t s = resolve_src(ctx, nonzero_reg, W0);
+                if (rs1 == 0) {
+                    // Comparing 0 vs rs2: flags must reflect (0 - rs2)
+                    emit_cmp_w32_w32(e, WZR, s);
+                } else {
+                    // Comparing rs1 vs 0
+                    emit_cmp_w32_imm(e, s, 0);
+                }
+            } else {
+                a64_reg_t s1 = resolve_src(ctx, rs1, W0);
+                a64_reg_t s2 = resolve_src(ctx, rs2, W1);
+                emit_cmp_w32_w32(e, s1, s2);
+            }
         }
     }
 
@@ -2836,6 +2939,7 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
     ctx->pending_write.valid = false;
     ctx->emit.rax_pending = false;
     ctx->pending_cond.valid = false;
+    ctx->pending_flags.valid = false;
     ctx->current_inst_idx = 0;
     ctx->has_backedge = false;
     ctx->backedge_target_pc = 0;
@@ -2868,7 +2972,7 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
         // Flush pending writes at back-edge targets
         if (is_backedge_target(ctx, ctx->guest_pc)) {
             flush_pending_write(ctx);
-            const_prop_reset(ctx);
+            const_prop_reset_loop_written(ctx);
             bounds_elim_reset(ctx);
         }
 
@@ -3960,6 +4064,7 @@ retry_translate:
     ctx->pending_write.valid = false;
     ctx->emit.rax_pending = false;
     ctx->pending_cond.valid = false;
+    ctx->pending_flags.valid = false;
     ctx->current_inst_idx = 0;
     ctx->has_backedge = false;
     ctx->backedge_target_pc = 0;
@@ -3995,7 +4100,7 @@ retry_translate:
             // At back-edge targets, flush all state so the loop iteration
             // sees consistent memory values for non-cached register accesses.
             reg_cache_flush(ctx);
-            const_prop_reset(ctx);
+            const_prop_reset_loop_written(ctx);
             bounds_elim_reset(ctx);
         }
 

@@ -147,6 +147,18 @@ typedef struct {
         int inst_idx;         // Instruction index where compare was deferred
     } pending_cond;
 
+    // SUBS/ANDS-then-B.cond fusion (AArch64 only): the previously emitted ALU
+    // op writes dst_guest_reg and is the last host instruction in the buffer.
+    // If the next branch tests dst_guest_reg against zero, we patch the ALU's
+    // S-bit (via s_bit_mask) so flags are set as a side effect, and skip the
+    // explicit CMP. Validity is verified by emit_offset == host_offset + 4.
+    struct {
+        bool valid;
+        size_t host_offset;     // Offset of the flag-settable instruction
+        uint8_t dst_guest_reg;  // Guest register written by it
+        uint32_t s_bit_mask;    // OR-mask to convert ALU → flag-setting form
+    } pending_flags;
+
     // Out-of-line side exit stubs (deferred to end of block)
     int deferred_exit_count;
     struct {
