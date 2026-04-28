@@ -338,7 +338,25 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
         inst_count++;
     }
 
-    // Dead temporary elimination: backward liveness scan
+    // Dead temporary elimination: backward liveness scan.
+    //
+    // The "dead temp" optimization (can_skip_store) lets us avoid emitting a
+    // memory STR when a guest reg is written, read once, then overwritten
+    // within the block — the value lives only in the host scratch. But this
+    // analysis only counts in-block reads. In superblock mode, forward
+    // conditional branches are deferred as side exits that can leave the
+    // block at any point. If a side exit fires between our "skipped" write
+    // and the in-block overwrite, control transfers to a chained block that
+    // reloads from memory — and finds the stale pre-write value.
+    //
+    // To stay correct, treat each forward conditional branch (FMT_B, imm > 0)
+    // as a conservative "live" point during the backward scan: bump every
+    // register's read count above the dead-temp threshold, so any write
+    // before the branch can't be marked skippable. Without this, e.g.
+    // dtoa_strtod's "addi r15, fp, -96; stw r15, ...; ...; beq ...; ...;
+    // addi r15, fp, -96 (overwrite)" pattern looks like a dead temp because
+    // the in-block overwrite happens after the BEQ — but the BEQ-taken path
+    // never reaches the overwrite, so memory's r15 must be written.
     {
         int read_count_before_write[32];
         for (int r = 0; r < 32; r++)
@@ -356,6 +374,14 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
                 case FMT_B: r1 = dinst->rs1; r2 = dinst->rs2; break;
                 case FMT_U: wr = dinst->rd; break;
                 case FMT_J: wr = dinst->rd; break;
+            }
+
+            // Forward conditional branch in superblock mode → potential side
+            // exit. Conservatively keep all registers live across it.
+            if (dinst->format == FMT_B && ctx->superblock_enabled && dinst->imm > 0) {
+                for (int r = 1; r < 32; r++) {
+                    if (read_count_before_write[r] < 2) read_count_before_write[r] = 2;
+                }
             }
 
             if (wr != 0) {
