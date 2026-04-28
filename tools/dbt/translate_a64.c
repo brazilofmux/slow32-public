@@ -478,6 +478,16 @@ static inline bool is_backedge_target(translate_ctx_t *ctx, uint32_t pc) {
     return false;
 }
 
+// Look up host code offset for a guest PC within the current block.
+// Returns the host offset, or (size_t)-1 if not found.
+static size_t pc_map_lookup(translate_ctx_t *ctx, uint32_t guest_pc) {
+    for (int i = 0; i < ctx->pc_map_count; i++) {
+        if (ctx->pc_map[i].guest_pc == guest_pc)
+            return ctx->pc_map[i].host_offset;
+    }
+    return (size_t)-1;
+}
+
 // ============================================================================
 // Pending write management (dead temporary elimination)
 // ============================================================================
@@ -2271,6 +2281,54 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
             a64_reg_t s1 = resolve_src(ctx, rs1, W0);
             a64_reg_t s2 = resolve_src(ctx, rs2, W1);
             emit_cmp_w32_w32(e, s1, s2);
+        }
+    }
+
+    // ---- In-block back-edge: emit direct conditional branch back to loop body ----
+    // When the taken target lies inside the current block AND the cache slot
+    // assignments are stable across iterations (guaranteed by AArch64's static
+    // prescan-based allocation), we can branch directly to the loop body and
+    // skip the side-exit's flush + inline-lookup + chain entirely.
+    {
+        size_t backedge_host_offset = (size_t)-1;
+        if (imm < 0 && ctx->reg_cache_enabled &&
+            taken_pc >= ctx->block_start_pc) {
+            backedge_host_offset = pc_map_lookup(ctx, taken_pc);
+        }
+
+        if (backedge_host_offset != (size_t)-1) {
+            // Loop-iteration correctness: deferred side exits emitted during the
+            // loop body captured a dirty-snapshot at translation time. After the
+            // back-edge fires, registers in loop_written_regs are dirty in the
+            // cache even if they were clean at the deferred exit's snapshot.
+            // Conservatively promote them to dirty so flushes are emitted.
+            for (int di = 0; di < ctx->deferred_exit_count; di++) {
+                for (int s = 0; s < REG_ALLOC_SLOTS; s++) {
+                    int8_t g = ctx->deferred_exits[di].snapshot[s].guest_reg;
+                    if (g <= 0) continue;
+                    if (ctx->loop_written_regs & (1u << (uint8_t)g)) {
+                        ctx->deferred_exits[di].snapshot[s].dirty = true;
+                    }
+                }
+            }
+
+            // Emit conditional branch directly to loop body (taken case).
+            size_t bcond_offset = emit_offset(e);
+            int32_t rel = (int32_t)backedge_host_offset - (int32_t)bcond_offset;
+            if (cbz_reg != A64_NOREG) {
+                if (cbz_is_nz) emit_cbnz_w32(e, cbz_reg, rel);
+                else            emit_cbz_w32(e, cbz_reg, rel);
+            } else {
+                emit_b_cond(e, cond, rel);
+            }
+
+            // Fall-through (loop exit): chained side-exit with fall_pc.
+            if (ctx->block && ctx->exit_idx < MAX_BLOCK_EXITS) {
+                ctx->block->exits[ctx->exit_idx].branch_pc = branch_pc;
+            }
+            emit_exit_chained(ctx, fall_pc, ctx->exit_idx++);
+
+            return true;  // Block ends
         }
     }
 
