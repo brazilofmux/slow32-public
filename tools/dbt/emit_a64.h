@@ -231,6 +231,10 @@ void emit_eor_w32(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn, a64_reg_t rm);
 // EOR Wd, Wn, Wm, LSR #shift
 void emit_eor_w32_lsr(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn, a64_reg_t rm, uint32_t shift);
 
+// EOR Wd, Wn, Wm, <shift_type> #shift  (0=LSL, 1=LSR, 2=ASR, 3=ROR)
+void emit_eor_w32_shifted(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn, a64_reg_t rm,
+                          int shift_type, uint32_t shift);
+
 // EOR Wd, Wn, #imm  (logical immediate)
 bool emit_eor_w32_imm(emit_ctx_t *ctx, a64_reg_t rd, a64_reg_t rn, uint32_t imm);
 

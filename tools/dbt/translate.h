@@ -159,6 +159,24 @@ typedef struct {
         uint32_t s_bit_mask;    // OR-mask to convert ALU → flag-setting form
     } pending_flags;
 
+    // Shifted-register fold (AArch64 only): the previous SLLI/SRLI/SRAI was
+    // emitted and computed dst_guest_reg = src_guest_reg <shift> imm. If the
+    // very next instruction is an ALU op that reads dst_guest_reg, we can emit
+    // its shifted-register variant (e.g. EOR Wd, Wn, Wm, LSL #imm) reading
+    // src_guest_reg directly and recomputing the shift inline. The original
+    // shift instruction stays for cache correctness but the dependency chain
+    // through the shift's result is broken — it issues in parallel. Validity
+    // is auto-revoked when emit_offset != host_offset_after (i.e., something
+    // else was emitted between the shift and the candidate consumer).
+    struct {
+        bool valid;
+        size_t host_offset_after;  // emit_offset right after the shift was emitted
+        uint8_t dst_guest_reg;     // SLLI/SRLI/SRAI's rd
+        uint8_t src_guest_reg;     // SLLI/SRLI/SRAI's rs1
+        uint8_t kind;              // 0=LSL, 1=LSR, 2=ASR
+        uint8_t imm;               // 0-31
+    } pending_shift;
+
     // Out-of-line side exit stubs (deferred to end of block)
     int deferred_exit_count;
     struct {

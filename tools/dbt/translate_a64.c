@@ -1594,6 +1594,9 @@ void translate_or(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     }
 }
 
+// Stats counter for shifted-EOR fold
+uint32_t shifted_eor_fold_count = 0;
+
 void translate_xor(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
@@ -1604,6 +1607,34 @@ void translate_xor(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     }
 
     a64_reg_t hd = guest_host_reg(ctx, rd);
+
+    // Shifted-EOR fold: if the previous SLLI/SRLI/SRAI's result is one of our
+    // operands AND nothing else has been emitted since (offset still matches),
+    // recompute the shift inline instead of reading the shift's result. This
+    // shortens the dep chain — the standalone shift issues in parallel with
+    // this EOR.
+    if (hd != A64_NOREG && ctx->pending_shift.valid &&
+        emit_offset(e) == ctx->pending_shift.host_offset_after) {
+        uint8_t sd = ctx->pending_shift.dst_guest_reg;
+        uint8_t shifted_src = ctx->pending_shift.src_guest_reg;
+        uint8_t other = 0;
+        bool match = false;
+        if (rs1 == sd && rs2 != sd) { match = true; other = rs2; }
+        else if (rs2 == sd && rs1 != sd) { match = true; other = rs1; }
+        if (match) {
+            // EOR rd, other, shifted_src, <kind> #imm
+            a64_reg_t rn_reg = resolve_src(ctx, other, W0);
+            a64_reg_t rm_reg = resolve_src(ctx, shifted_src, W1);
+            emit_eor_w32_shifted(e, hd, rn_reg, rm_reg,
+                                 ctx->pending_shift.kind, ctx->pending_shift.imm);
+            reg_cache_mark_written(ctx, rd);
+            ctx->pending_shift.valid = false;
+            shifted_eor_fold_count++;
+            return;
+        }
+    }
+    ctx->pending_shift.valid = false;
+
     if (hd != A64_NOREG) {
         a64_reg_t s1 = resolve_src(ctx, rs1, W0);
         a64_reg_t s2 = resolve_src(ctx, rs2, W1);
@@ -1755,6 +1786,24 @@ void translate_sra(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, uint8_t rs2) {
     }
 }
 
+// Record that the just-emitted shift instruction is a fold candidate. The
+// next ALU op that reads dst can fuse the shift into its shifted-register
+// operand (the original shift stays for cache correctness, but its result
+// drops off the dependency chain).
+static inline void set_pending_shift(translate_ctx_t *ctx, uint8_t dst,
+                                     uint8_t src, uint8_t kind, uint8_t imm) {
+    if (imm == 0 || guest_host_reg(ctx, src) == A64_NOREG) {
+        ctx->pending_shift.valid = false;
+        return;
+    }
+    ctx->pending_shift.valid = true;
+    ctx->pending_shift.host_offset_after = emit_offset(&ctx->emit);
+    ctx->pending_shift.dst_guest_reg = dst;
+    ctx->pending_shift.src_guest_reg = src;
+    ctx->pending_shift.kind = kind;
+    ctx->pending_shift.imm = imm;
+}
+
 void translate_slli(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
     if (rd == 0) return;
     emit_ctx_t *e = &ctx->emit;
@@ -1774,6 +1823,7 @@ void translate_slli(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
     }
     if (hd != A64_NOREG) reg_cache_mark_written(ctx, rd);
     else emit_store_guest_reg(ctx, rd, W0);
+    set_pending_shift(ctx, rd, rs1, 0 /* LSL */, imm & 31);
 }
 
 void translate_srli(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
@@ -1795,6 +1845,7 @@ void translate_srli(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
     }
     if (hd != A64_NOREG) reg_cache_mark_written(ctx, rd);
     else emit_store_guest_reg(ctx, rd, W0);
+    set_pending_shift(ctx, rd, rs1, 1 /* LSR */, imm & 31);
 }
 
 void translate_srai(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) {
@@ -1816,6 +1867,7 @@ void translate_srai(translate_ctx_t *ctx, uint8_t rd, uint8_t rs1, int32_t imm) 
     }
     if (hd != A64_NOREG) reg_cache_mark_written(ctx, rd);
     else emit_store_guest_reg(ctx, rd, W0);
+    set_pending_shift(ctx, rd, rs1, 2 /* ASR */, imm & 31);
 }
 
 // ============================================================================
@@ -2940,6 +2992,7 @@ translated_block_fn translate_block(translate_ctx_t *ctx) {
     ctx->emit.rax_pending = false;
     ctx->pending_cond.valid = false;
     ctx->pending_flags.valid = false;
+    ctx->pending_shift.valid = false;
     ctx->current_inst_idx = 0;
     ctx->has_backedge = false;
     ctx->backedge_target_pc = 0;
@@ -4065,6 +4118,7 @@ retry_translate:
     ctx->emit.rax_pending = false;
     ctx->pending_cond.valid = false;
     ctx->pending_flags.valid = false;
+    ctx->pending_shift.valid = false;
     ctx->current_inst_idx = 0;
     ctx->has_backedge = false;
     ctx->backedge_target_pc = 0;
