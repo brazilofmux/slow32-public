@@ -57,18 +57,28 @@ FROM alpine:3.19 AS fpc-builder
 
 RUN apk add --no-cache build-base git bash tar
 
-# Install host FPC 3.2.2 (statically-linked ppcx64 — works on Alpine/musl)
+# Install host FPC 3.2.2 for the build host's architecture.
+# Stable aliases /opt/fpc/bin/ppc-host and /opt/fpc/units/host let the
+# subsequent build steps stay arch-agnostic.
 WORKDIR /build
 ARG FPC_VERSION=3.2.2
-RUN wget -q "https://sourceforge.net/projects/freepascal/files/Linux/${FPC_VERSION}/fpc-${FPC_VERSION}.x86_64-linux.tar/download" -O fpc-host.tar && \
+RUN MACHINE=$(uname -m) && \
+    case "$MACHINE" in \
+      x86_64)  FPC_ARCH=x86_64;  FPC_PPC=ppcx64 ;; \
+      aarch64) FPC_ARCH=aarch64; FPC_PPC=ppca64 ;; \
+      *) echo "Unsupported host arch for FPC bootstrap: $MACHINE" >&2; exit 1 ;; \
+    esac && \
+    wget -q "https://sourceforge.net/projects/freepascal/files/Linux/${FPC_VERSION}/fpc-${FPC_VERSION}.${FPC_ARCH}-linux.tar/download" -O fpc-host.tar && \
     tar xf fpc-host.tar && \
-    cd fpc-${FPC_VERSION}.x86_64-linux && \
-    tar xf binary.x86_64-linux.tar && \
-    tar xzf base.x86_64-linux.tar.gz && \
+    cd fpc-${FPC_VERSION}.${FPC_ARCH}-linux && \
+    tar xf binary.${FPC_ARCH}-linux.tar && \
+    tar xzf base.${FPC_ARCH}-linux.tar.gz && \
     mkdir -p /opt/fpc/bin /opt/fpc/units && \
-    cp lib/fpc/${FPC_VERSION}/ppcx64 /opt/fpc/bin/ && \
-    chmod +x /opt/fpc/bin/ppcx64 && \
-    cp -r lib/fpc/${FPC_VERSION}/units/x86_64-linux /opt/fpc/units/ && \
+    cp lib/fpc/${FPC_VERSION}/${FPC_PPC} /opt/fpc/bin/ && \
+    chmod +x /opt/fpc/bin/${FPC_PPC} && \
+    ln -sf /opt/fpc/bin/${FPC_PPC} /opt/fpc/bin/ppc-host && \
+    cp -r lib/fpc/${FPC_VERSION}/units/${FPC_ARCH}-linux /opt/fpc/units/ && \
+    ln -sf /opt/fpc/units/${FPC_ARCH}-linux /opt/fpc/units/host && \
     rm -rf /build/fpc-*
 
 # Clone FPC source at pinned commit
@@ -92,13 +102,13 @@ RUN for p in /build/fpc-patches/*.patch; do \
 
 # Generate message include files (msgtxt.inc, msgidx.inc)
 WORKDIR /fpc-src/compiler
-RUN /opt/fpc/bin/ppcx64 -Fu/opt/fpc/units/x86_64-linux/rtl \
+RUN /opt/fpc/bin/ppc-host -Fu/opt/fpc/units/host/rtl \
       -FE. utils/msg2inc.pp && \
     ./msg2inc msg/errore.msg msg msg
 
 # Build ppcs32 (SLOW-32 cross-compiler)
-RUN /opt/fpc/bin/ppcx64 -dslow32 -Fuslow32 -Fusystems -Fislow32 \
-      -Fu/opt/fpc/units/x86_64-linux/rtl -oppcs32 pp.pas
+RUN /opt/fpc/bin/ppc-host -dslow32 -Fuslow32 -Fusystems -Fislow32 \
+      -Fu/opt/fpc/units/host/rtl -oppcs32 pp.pas
 
 # Build system unit (RTL)
 RUN mkdir -p /opt/fpc/slow32-rtl && \
