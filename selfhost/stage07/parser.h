@@ -16,6 +16,8 @@ static int is_gnu_qual_ident(void) {
     if (lex_tok != TK_IDENT) return 0;
     if (strcmp(lex_str, "__restrict") == 0) return 1;
     if (strcmp(lex_str, "__restrict__") == 0) return 1;
+    if (strcmp(lex_str, "__signed") == 0) return 1;
+    if (strcmp(lex_str, "__signed__") == 0) return 1;
     if (strcmp(lex_str, "__const") == 0) return 1;
     if (strcmp(lex_str, "__const__") == 0) return 1;
     if (strcmp(lex_str, "__volatile") == 0) return 1;
@@ -617,6 +619,9 @@ static int parse_type(void) {
                 mty = parse_type();
                 first_decl = 1;
                 while (1) {
+                    int is_fn_ptr_member;
+                    int member_ty;
+
                     if (first_decl) {
                         dty = mty;
                         first_decl = 0;
@@ -625,14 +630,40 @@ static int parse_type(void) {
                         while (ty_is_ptr(dty)) dty = ty_deref(dty);
                         while (lex_tok == TK_STAR) { dty = dty + TY_PTR; next(); }
                     }
+                    if (lex_tok == TK_COLON) {
+                        next();
+                        arr_count = parse_const_int();
+                        require_complete_type(dty, "incomplete bit-field type");
+                        if ((dty & TY_BASE_MASK) == TY_CHAR) {
+                            /* 1-byte aligned */
+                        } else if ((dty & TY_BASE_MASK) == TY_SHORT) {
+                            off = ((off + 1) / 2) * 2;
+                        } else {
+                            off = ((off + 3) / 4) * 4;
+                        }
+                        if (arr_count > 0) off = off + ty_size(dty);
+                        break;
+                    }
+                    is_fn_ptr_member = 0;
+                    member_ty = dty;
+                    if (lex_tok == TK_LPAREN) {
+                        next();
+                        if (lex_tok == TK_STAR) next();
+                        if (lex_tok != TK_IDENT) {
+                            p_error("expected member name");
+                            return TY_INT;
+                        }
+                        is_fn_ptr_member = 1;
+                        member_ty = TY_PTR + TY_INT;
+                    }
                     if (lex_tok != TK_IDENT) {
                         p_error("expected member name");
                         return TY_INT;
                     }
                     /* Align offset: char=1, short=2, else=4 */
-                    if ((dty & TY_BASE_MASK) == TY_CHAR) {
+                    if ((member_ty & TY_BASE_MASK) == TY_CHAR) {
                         /* 1-byte aligned */
-                    } else if ((dty & TY_BASE_MASK) == TY_SHORT) {
+                    } else if ((member_ty & TY_BASE_MASK) == TY_SHORT) {
                         off = ((off + 1) / 2) * 2;
                     } else {
                         off = ((off + 3) / 4) * 4;
@@ -643,6 +674,14 @@ static int parse_type(void) {
                     }
                     stm_name[stm_count] = strdup(lex_str);
                     next();
+                    if (is_fn_ptr_member) {
+                        expect(TK_RPAREN);
+                        if (lex_tok == TK_LPAREN) {
+                            next();
+                            while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
+                            expect(TK_RPAREN);
+                        }
+                    }
                     /* Check for array member: type name[N]; */
                     arr_count = 0;
                     if (lex_tok == TK_LBRACK) {
@@ -654,22 +693,23 @@ static int parse_type(void) {
                         arr_count = parse_const_int();
                         expect(TK_RBRACK);
                     }
+                    skip_gnu_decl_suffixes();
                     if (arr_count > 0) {
-                        require_complete_type(dty, "incomplete struct member");
+                        require_complete_type(member_ty, "incomplete struct member");
                         stm_owner[stm_count] = si;
-                        stm_type[stm_count] = dty + TY_PTR;
+                        stm_type[stm_count] = member_ty + TY_PTR;
                         stm_is_arr[stm_count] = 1;
-                        stm_arr_size[stm_count] = ty_size(dty) * arr_count;
+                        stm_arr_size[stm_count] = ty_size(member_ty) * arr_count;
                         stm_off[stm_count] = off;
-                        off = off + ty_size(dty) * arr_count;
+                        off = off + ty_size(member_ty) * arr_count;
                     } else {
-                        require_complete_type(dty, "incomplete struct member");
+                        require_complete_type(member_ty, "incomplete struct member");
                         stm_owner[stm_count] = si;
-                        stm_type[stm_count] = dty;
+                        stm_type[stm_count] = member_ty;
                         stm_is_arr[stm_count] = 0;
                         stm_arr_size[stm_count] = 0;
                         stm_off[stm_count] = off;
-                        off = off + ty_size(dty);
+                        off = off + ty_size(member_ty);
                     }
                     stm_count = stm_count + 1;
                     st_nfields[si] = st_nfields[si] + 1;
@@ -716,6 +756,9 @@ static int parse_type(void) {
                 mty = parse_type();
                 first_decl = 1;
                 while (1) {
+                    int is_fn_ptr_member;
+                    int member_ty;
+
                     if (first_decl) {
                         dty = mty;
                         first_decl = 0;
@@ -723,6 +766,25 @@ static int parse_type(void) {
                         dty = mty;
                         while (ty_is_ptr(dty)) dty = ty_deref(dty);
                         while (lex_tok == TK_STAR) { dty = dty + TY_PTR; next(); }
+                    }
+                    if (lex_tok == TK_COLON) {
+                        next();
+                        arr_count = parse_const_int();
+                        require_complete_type(dty, "incomplete bit-field type");
+                        if (arr_count > 0 && ty_size(dty) > max_sz) max_sz = ty_size(dty);
+                        break;
+                    }
+                    is_fn_ptr_member = 0;
+                    member_ty = dty;
+                    if (lex_tok == TK_LPAREN) {
+                        next();
+                        if (lex_tok == TK_STAR) next();
+                        if (lex_tok != TK_IDENT) {
+                            p_error("expected member name");
+                            return TY_INT;
+                        }
+                        is_fn_ptr_member = 1;
+                        member_ty = TY_PTR + TY_INT;
                     }
                     if (lex_tok != TK_IDENT) {
                         p_error("expected member name");
@@ -734,6 +796,14 @@ static int parse_type(void) {
                     }
                     stm_name[stm_count] = strdup(lex_str);
                     next();
+                    if (is_fn_ptr_member) {
+                        expect(TK_RPAREN);
+                        if (lex_tok == TK_LPAREN) {
+                            next();
+                            while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
+                            expect(TK_RPAREN);
+                        }
+                    }
                     /* Check for array member: type name[N]; */
                     arr_count = 0;
                     if (lex_tok == TK_LBRACK) {
@@ -745,22 +815,23 @@ static int parse_type(void) {
                         arr_count = parse_const_int();
                         expect(TK_RBRACK);
                     }
+                    skip_gnu_decl_suffixes();
                     if (arr_count > 0) {
-                        require_complete_type(dty, "incomplete union member");
+                        require_complete_type(member_ty, "incomplete union member");
                         stm_owner[stm_count] = si;
-                        stm_type[stm_count] = dty + TY_PTR;
+                        stm_type[stm_count] = member_ty + TY_PTR;
                         stm_is_arr[stm_count] = 1;
-                        stm_arr_size[stm_count] = ty_size(dty) * arr_count;
+                        stm_arr_size[stm_count] = ty_size(member_ty) * arr_count;
                         stm_off[stm_count] = 0;
-                        if (ty_size(dty) * arr_count > max_sz) max_sz = ty_size(dty) * arr_count;
+                        if (ty_size(member_ty) * arr_count > max_sz) max_sz = ty_size(member_ty) * arr_count;
                     } else {
-                        require_complete_type(dty, "incomplete union member");
+                        require_complete_type(member_ty, "incomplete union member");
                         stm_owner[stm_count] = si;
-                        stm_type[stm_count] = dty;
+                        stm_type[stm_count] = member_ty;
                         stm_is_arr[stm_count] = 0;
                         stm_arr_size[stm_count] = 0;
                         stm_off[stm_count] = 0;
-                        if (ty_size(dty) > max_sz) max_sz = ty_size(dty);
+                        if (ty_size(member_ty) > max_sz) max_sz = ty_size(member_ty);
                     }
                     stm_count = stm_count + 1;
                     st_nfields[si] = st_nfields[si] + 1;

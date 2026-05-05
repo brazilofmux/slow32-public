@@ -29,7 +29,7 @@ char *memcpy(char *dst, char *src, int n);
 #define TY_PTR_MASK  0x3F00  /* bits 8-13: pointer depth */
 
 /* --- Struct definition tables --- */
-#define ST_MAX_STRUCTS 64
+#define ST_MAX_STRUCTS 256
 #define ST_MAX_MEMBERS 512
 
 static char *st_name[ST_MAX_STRUCTS];
