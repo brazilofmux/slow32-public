@@ -309,6 +309,40 @@ static int add_struct(char *name) {
     return idx;
 }
 
+static void require_complete_type(int ty, char *msg) {
+    if (ty_is_incomplete_struct(ty)) p_error(msg);
+}
+
+static void make_anon_tag(char *buf, char *prefix) {
+    int i;
+    int n;
+    int tmp[12];
+    int ntmp;
+    i = 0;
+    while (prefix[i] != 0) {
+        buf[i] = prefix[i];
+        i = i + 1;
+    }
+    n = st_count;
+    ntmp = 0;
+    if (n == 0) {
+        tmp[ntmp] = 0;
+        ntmp = ntmp + 1;
+    } else {
+        while (n > 0) {
+            tmp[ntmp] = n % 10;
+            ntmp = ntmp + 1;
+            n = n / 10;
+        }
+    }
+    while (ntmp > 0) {
+        ntmp = ntmp - 1;
+        buf[i] = 48 + tmp[ntmp];
+        i = i + 1;
+    }
+    buf[i] = 0;
+}
+
 static int find_member(int sty, char *name) {
     int si;
     int base;
@@ -330,9 +364,12 @@ static int parse_type(void) {
     int ty;
     int si;
     int mty;
+    int dty;
     int off;
     int max_sz;
     int arr_count;
+    int val;
+    int first_decl;
     char nm[256];
     /* Skip const/volatile/signed/restrict qualifiers */
     while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE ||
@@ -371,15 +408,53 @@ static int parse_type(void) {
     }
     else if (lex_tok == TK_FLOAT) { ty = TY_FLOAT; next(); }
     else if (lex_tok == TK_DOUBLE) { ty = TY_DOUBLE; next(); }
+    else if (lex_tok == TK_ENUM) {
+        next();
+        if (lex_tok == TK_IDENT) next();
+        if (lex_tok == TK_LBRACE) {
+            expect(TK_LBRACE);
+            val = 0;
+            while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+                if (lex_tok != TK_IDENT) p_error("expected enum constant name");
+                if (ps_nconsts >= PS_MAX_CONSTS) p_error("too many enum constants");
+                ps_cname[ps_nconsts] = strdup(lex_str);
+                next();
+                if (lex_tok == TK_ASSIGN) {
+                    next();
+                    if (lex_tok == TK_MINUS) {
+                        next();
+                        if (lex_tok != TK_NUM) p_error("expected number after '-' in enum");
+                        val = 0 - lex_val;
+                        next();
+                    } else if (lex_tok == TK_NUM) {
+                        val = lex_val;
+                        next();
+                    } else {
+                        p_error("expected number in enum initializer");
+                    }
+                }
+                ps_cval[ps_nconsts] = val;
+                ps_nconsts = ps_nconsts + 1;
+                val = val + 1;
+                if (lex_tok == TK_COMMA) next();
+            }
+            expect(TK_RBRACE);
+        }
+        ty = TY_INT;
+    }
     else if (lex_tok == TK_STRUCT) {
         next();
-        if (lex_tok != TK_IDENT) {
+        if (lex_tok == TK_IDENT) {
+            memcpy(nm, lex_str, lex_slen + 1);
+            next();
+            si = find_struct(nm);
+        } else if (lex_tok == TK_LBRACE) {
+            make_anon_tag(nm, "__anon_struct_");
+            si = -1;
+        } else {
             p_error("expected struct tag name");
             return TY_INT;
         }
-        memcpy(nm, lex_str, lex_slen + 1);
-        next();
-        si = find_struct(nm);
         if (lex_tok == TK_LBRACE) {
             /* Struct definition: struct Name { ... } */
             next();
@@ -389,74 +464,92 @@ static int parse_type(void) {
             off = 0;
             while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
                 mty = parse_type();
-                if (lex_tok != TK_IDENT) {
-                    p_error("expected member name");
-                    return TY_INT;
-                }
-                /* Align offset: char=1, short=2, else=4 */
-                if ((mty & TY_BASE_MASK) == TY_CHAR) {
-                    /* 1-byte aligned */
-                } else if ((mty & TY_BASE_MASK) == TY_SHORT) {
-                    off = ((off + 1) / 2) * 2;
-                } else {
-                    off = ((off + 3) / 4) * 4;
-                }
-                if (stm_count >= ST_MAX_MEMBERS) {
-                    p_error("too many struct members");
-                    return TY_INT;
-                }
-                stm_name[stm_count] = strdup(lex_str);
-                next();
-                /* Check for array member: type name[N]; */
-                arr_count = 0;
-                if (lex_tok == TK_LBRACK) {
-                    next();
-                    if (lex_tok != TK_NUM) {
-                        p_error("array size required in struct member");
+                first_decl = 1;
+                while (1) {
+                    if (first_decl) {
+                        dty = mty;
+                        first_decl = 0;
+                    } else {
+                        dty = mty;
+                        while (ty_is_ptr(dty)) dty = ty_deref(dty);
+                        while (lex_tok == TK_STAR) { dty = dty + TY_PTR; next(); }
+                    }
+                    if (lex_tok != TK_IDENT) {
+                        p_error("expected member name");
                         return TY_INT;
                     }
-                    arr_count = lex_val;
+                    /* Align offset: char=1, short=2, else=4 */
+                    if ((dty & TY_BASE_MASK) == TY_CHAR) {
+                        /* 1-byte aligned */
+                    } else if ((dty & TY_BASE_MASK) == TY_SHORT) {
+                        off = ((off + 1) / 2) * 2;
+                    } else {
+                        off = ((off + 3) / 4) * 4;
+                    }
+                    if (stm_count >= ST_MAX_MEMBERS) {
+                        p_error("too many struct members");
+                        return TY_INT;
+                    }
+                    stm_name[stm_count] = strdup(lex_str);
                     next();
-                    expect(TK_RBRACK);
+                    /* Check for array member: type name[N]; */
+                    arr_count = 0;
+                    if (lex_tok == TK_LBRACK) {
+                        next();
+                        if (lex_tok != TK_NUM) {
+                            p_error("array size required in struct member");
+                            return TY_INT;
+                        }
+                        arr_count = lex_val;
+                        next();
+                        expect(TK_RBRACK);
+                    }
+                    if (arr_count > 0) {
+                        require_complete_type(dty, "incomplete struct member");
+                        stm_type[stm_count] = dty + TY_PTR;
+                        stm_is_arr[stm_count] = 1;
+                        stm_arr_size[stm_count] = ty_size(dty) * arr_count;
+                        stm_off[stm_count] = off;
+                        off = off + ty_size(dty) * arr_count;
+                    } else {
+                        require_complete_type(dty, "incomplete struct member");
+                        stm_type[stm_count] = dty;
+                        stm_is_arr[stm_count] = 0;
+                        stm_arr_size[stm_count] = 0;
+                        stm_off[stm_count] = off;
+                        off = off + ty_size(dty);
+                    }
+                    stm_count = stm_count + 1;
+                    st_nfields[si] = st_nfields[si] + 1;
+                    if (lex_tok != TK_COMMA) break;
+                    next();
                 }
-                if (arr_count > 0) {
-                    stm_type[stm_count] = mty + TY_PTR;
-                    stm_is_arr[stm_count] = 1;
-                    stm_arr_size[stm_count] = ty_size(mty) * arr_count;
-                    stm_off[stm_count] = off;
-                    off = off + ty_size(mty) * arr_count;
-                } else {
-                    stm_type[stm_count] = mty;
-                    stm_is_arr[stm_count] = 0;
-                    stm_arr_size[stm_count] = 0;
-                    stm_off[stm_count] = off;
-                    off = off + ty_size(mty);
-                }
-                stm_count = stm_count + 1;
-                st_nfields[si] = st_nfields[si] + 1;
                 expect(TK_SEMI);
             }
             expect(TK_RBRACE);
             /* Round total size to multiple of 4 */
             st_size[si] = ((off + 3) / 4) * 4;
         } else {
-            /* Forward reference: struct Name (no brace) */
+            /* Forward declaration or reference: struct Name (no brace) */
             if (si < 0) {
-                p_error("undefined struct");
-                return TY_INT;
+                si = add_struct(nm);
             }
         }
         ty = TY_STRUCT_BASE + si;
     }
     else if (lex_tok == TK_UNION) {
         next();
-        if (lex_tok != TK_IDENT) {
+        if (lex_tok == TK_IDENT) {
+            memcpy(nm, lex_str, lex_slen + 1);
+            next();
+            si = find_struct(nm);
+        } else if (lex_tok == TK_LBRACE) {
+            make_anon_tag(nm, "__anon_union_");
+            si = -1;
+        } else {
             p_error("expected union tag name");
             return TY_INT;
         }
-        memcpy(nm, lex_str, lex_slen + 1);
-        next();
-        si = find_struct(nm);
         if (lex_tok == TK_LBRACE) {
             /* Union definition: union Name { ... } */
             next();
@@ -467,53 +560,68 @@ static int parse_type(void) {
             max_sz = 0;
             while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
                 mty = parse_type();
-                if (lex_tok != TK_IDENT) {
-                    p_error("expected member name");
-                    return TY_INT;
-                }
-                if (stm_count >= ST_MAX_MEMBERS) {
-                    p_error("too many struct members");
-                    return TY_INT;
-                }
-                stm_name[stm_count] = strdup(lex_str);
-                next();
-                /* Check for array member: type name[N]; */
-                arr_count = 0;
-                if (lex_tok == TK_LBRACK) {
-                    next();
-                    if (lex_tok != TK_NUM) {
-                        p_error("array size required in union member");
+                first_decl = 1;
+                while (1) {
+                    if (first_decl) {
+                        dty = mty;
+                        first_decl = 0;
+                    } else {
+                        dty = mty;
+                        while (ty_is_ptr(dty)) dty = ty_deref(dty);
+                        while (lex_tok == TK_STAR) { dty = dty + TY_PTR; next(); }
+                    }
+                    if (lex_tok != TK_IDENT) {
+                        p_error("expected member name");
                         return TY_INT;
                     }
-                    arr_count = lex_val;
+                    if (stm_count >= ST_MAX_MEMBERS) {
+                        p_error("too many struct members");
+                        return TY_INT;
+                    }
+                    stm_name[stm_count] = strdup(lex_str);
                     next();
-                    expect(TK_RBRACK);
+                    /* Check for array member: type name[N]; */
+                    arr_count = 0;
+                    if (lex_tok == TK_LBRACK) {
+                        next();
+                        if (lex_tok != TK_NUM) {
+                            p_error("array size required in union member");
+                            return TY_INT;
+                        }
+                        arr_count = lex_val;
+                        next();
+                        expect(TK_RBRACK);
+                    }
+                    if (arr_count > 0) {
+                        require_complete_type(dty, "incomplete union member");
+                        stm_type[stm_count] = dty + TY_PTR;
+                        stm_is_arr[stm_count] = 1;
+                        stm_arr_size[stm_count] = ty_size(dty) * arr_count;
+                        stm_off[stm_count] = 0;
+                        if (ty_size(dty) * arr_count > max_sz) max_sz = ty_size(dty) * arr_count;
+                    } else {
+                        require_complete_type(dty, "incomplete union member");
+                        stm_type[stm_count] = dty;
+                        stm_is_arr[stm_count] = 0;
+                        stm_arr_size[stm_count] = 0;
+                        stm_off[stm_count] = 0;
+                        if (ty_size(dty) > max_sz) max_sz = ty_size(dty);
+                    }
+                    stm_count = stm_count + 1;
+                    st_nfields[si] = st_nfields[si] + 1;
+                    if (lex_tok != TK_COMMA) break;
+                    next();
                 }
-                if (arr_count > 0) {
-                    stm_type[stm_count] = mty + TY_PTR;
-                    stm_is_arr[stm_count] = 1;
-                    stm_arr_size[stm_count] = ty_size(mty) * arr_count;
-                    stm_off[stm_count] = 0;
-                    if (ty_size(mty) * arr_count > max_sz) max_sz = ty_size(mty) * arr_count;
-                } else {
-                    stm_type[stm_count] = mty;
-                    stm_is_arr[stm_count] = 0;
-                    stm_arr_size[stm_count] = 0;
-                    stm_off[stm_count] = 0;
-                    if (ty_size(mty) > max_sz) max_sz = ty_size(mty);
-                }
-                stm_count = stm_count + 1;
-                st_nfields[si] = st_nfields[si] + 1;
                 expect(TK_SEMI);
             }
             expect(TK_RBRACE);
             /* Round total size to multiple of 4 */
             st_size[si] = ((max_sz + 3) / 4) * 4;
         } else {
-            /* Forward reference: union Name (no brace) */
+            /* Forward declaration or reference: union Name (no brace) */
             if (si < 0) {
-                p_error("undefined union");
-                return TY_INT;
+                si = add_struct(nm);
+                st_is_union[si] = 1;
             }
         }
         ty = TY_STRUCT_BASE + si;
@@ -558,6 +666,7 @@ static int add_local(char *name, int ty) {
         return 0;
     }
     sz = ty_size(ty);
+    require_complete_type(ty, "incomplete type for local");
     /* Round up to multiple of 4 */
     sz = ((sz + 3) / 4) * 4;
     ps_stack = ps_stack + sz;
@@ -583,6 +692,7 @@ static int add_local_array(char *name, int elem_ty, int count) {
         return 0;
     }
     elem_sz = ty_size(elem_ty);
+    require_complete_type(elem_ty, "incomplete element type");
     total = elem_sz * count;
     /* Round up to multiple of 4 */
     total = ((total + 3) / 4) * 4;
@@ -666,6 +776,47 @@ static int parse_const_int(void) {
     return 0;
 }
 
+static int parse_string_literal(void) {
+    int idxs[64];
+    int nidx;
+    int total;
+    int start;
+    int i;
+    int j;
+    int src;
+
+    nidx = 0;
+    total = 0;
+    while (lex_tok == TK_STRING) {
+        if (nidx >= 64) p_error("too many adjacent string literals");
+        idxs[nidx] = lex_val;
+        total = total + lex_str_len[lex_val];
+        nidx = nidx + 1;
+        next();
+    }
+    if (nidx == 1) return idxs[0];
+    if (lex_str_count >= LEX_POOL_MAX) p_error("too many string literals");
+    if (lex_strpool_len + total + 1 > LEX_POOL_SZ) p_error("string pool overflow");
+    start = lex_strpool_len;
+    i = 0;
+    while (i < nidx) {
+        src = lex_str_off[idxs[i]];
+        j = 0;
+        while (j < lex_str_len[idxs[i]]) {
+            lex_strpool[lex_strpool_len] = lex_strpool[src + j];
+            lex_strpool_len = lex_strpool_len + 1;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    lex_strpool[lex_strpool_len] = 0;
+    lex_strpool_len = lex_strpool_len + 1;
+    lex_str_off[lex_str_count] = start;
+    lex_str_len[lex_str_count] = total;
+    lex_str_count = lex_str_count + 1;
+    return lex_str_count - 1;
+}
+
 /* --- Expression parser (operator precedence climbing) --- */
 
 static Node *parse_primary(void) {
@@ -704,8 +855,7 @@ static Node *parse_primary(void) {
 
     /* String literal */
     if (lex_tok == TK_STRING) {
-        v = lex_val;  /* string pool index */
-        next();
+        v = parse_string_literal();
         return nd_string(v);
     }
 
@@ -1262,6 +1412,7 @@ static Node *parse_stmt(void) {
     int xty;
     int sp_idx;
     int slen;
+    int saw_unnamed_param;
     char *sp;
     char nm[256];
     /* Lexer save/restore for label lookahead */
@@ -1556,7 +1707,7 @@ static Node *parse_stmt(void) {
                 next();
                 if (lex_tok == TK_STRING) {
                     /* String array init: char s[N] = "str" or char s[] = "str" */
-                    sp_idx = lex_val;
+                    sp_idx = parse_string_literal();
                     slen = lex_str_len[sp_idx];
                     if (count < 0) count = slen + 1;
                     off = add_local_array(nm, ty, count);
@@ -1587,7 +1738,6 @@ static Node *parse_stmt(void) {
                         if (head == NULL) { head = a; tail = a; }
                         else { tail->next = a; tail = a; }
                     }
-                    next();
                 } else if (lex_tok == TK_LBRACE) {
                     next();
                     tail = NULL;
@@ -1809,6 +1959,7 @@ static Node *parse_top_decl(void) {
     int nj;
     int sp_idx;
     int slen;
+    int saw_unnamed_param;
     char *sp;
 
     /* _Static_assert(expr, "message") — compile-time check, no codegen */
@@ -1916,6 +2067,7 @@ static Node *parse_top_decl(void) {
     /* Global variable: type name; or type name = expr; or type name[N]; */
     if (lex_tok == TK_SEMI || lex_tok == TK_ASSIGN) {
         if (ty_is_struct(ty)) {
+            require_complete_type(ty, "incomplete global type");
             idx = add_global(nm, ty, ty_size(ty));
         } else {
             idx = add_global(nm, ty, 0);
@@ -1994,9 +2146,10 @@ static Node *parse_top_decl(void) {
             next();
             if (lex_tok == TK_STRING) {
                 /* String array init: char s[N] = "str" or char s[] = "str" */
-                sp_idx = lex_val;
+                sp_idx = parse_string_literal();
                 slen = lex_str_len[sp_idx];
                 if (count < 0) count = slen + 1;
+                require_complete_type(ty, "incomplete element type");
                 idx = add_global(nm, ty + TY_PTR, ty_size(ty) * count);
                 ps_ginit_start[idx] = ps_ginit_pool_len;
                 sp = lex_strpool + lex_str_off[sp_idx];
@@ -2013,7 +2166,6 @@ static Node *parse_top_decl(void) {
                     gi = gi + 1;
                 }
                 ps_ginit_count[idx] = gi;
-                next();
             } else if (lex_tok == TK_LBRACE) {
                 next();
                 si = ps_ginit_pool_len;  /* save pool start */
@@ -2031,6 +2183,7 @@ static Node *parse_top_decl(void) {
                     gi = gi + 1;
                 }
                 if (count < 0) count = gi;
+                require_complete_type(ty, "incomplete element type");
                 idx = add_global(nm, ty + TY_PTR, ty_size(ty) * count);
                 ps_ginit_start[idx] = si;
                 ps_ginit_count[idx] = gi;
@@ -2044,6 +2197,7 @@ static Node *parse_top_decl(void) {
                 p_error("array size required without initializer");
                 return NULL;
             }
+            require_complete_type(ty, "incomplete element type");
             idx = add_global(nm, ty + TY_PTR, ty_size(ty) * count);
         }
         expect(TK_SEMI);
@@ -2067,9 +2221,11 @@ static Node *parse_top_decl(void) {
     ps_struct_ret = 0;
     ps_retptr_off = 0;
     ps_nlabels = 0;
+    saw_unnamed_param = 0;
 
     /* Hidden first param for struct return */
     if (ty_is_struct(ty)) {
+        require_complete_type(ty, "incomplete return type");
         ps_struct_ret = 1;
         ps_retptr_off = add_local("__retptr", TY_PTR + TY_INT);
         ps_nparams = 1;
@@ -2109,9 +2265,15 @@ static Node *parse_top_decl(void) {
                 expect(TK_RPAREN);
             }
         } else if (lex_tok != TK_IDENT) {
-            p_error("expected param name");
-            return NULL;
+            if (lex_tok == TK_COMMA || lex_tok == TK_RPAREN) {
+                p = NULL;
+                saw_unnamed_param = 1;
+            } else {
+                p_error("expected param name");
+                return NULL;
+            }
         } else {
+            require_complete_type(pty, "incomplete parameter type");
             off = add_local(lex_str, pty);
             p = nd_var(lex_str, off, pty);
             p->is_local = 1;
@@ -2149,16 +2311,27 @@ static Node *parse_top_decl(void) {
                     expect(TK_RPAREN);
                 }
             } else if (lex_tok != TK_IDENT) {
-                p_error("expected param name");
-                return NULL;
+                if (lex_tok == TK_COMMA || lex_tok == TK_RPAREN) {
+                    p = NULL;
+                    saw_unnamed_param = 1;
+                } else {
+                    p_error("expected param name");
+                    return NULL;
+                }
             } else {
+                require_complete_type(pty, "incomplete parameter type");
                 off = add_local(lex_str, pty);
                 p = nd_var(lex_str, off, pty);
                 p->is_local = 1;
                 next();
             }
-            ptail->next = p;
-            ptail = p;
+            if (phead == NULL) {
+                phead = p;
+                ptail = p;
+            } else if (p != NULL) {
+                ptail->next = p;
+                ptail = p;
+            }
             ps_nparams = ps_nparams + 1;
         }
     }
@@ -2173,6 +2346,10 @@ params_done:
     }
 
     /* Function body */
+    if (saw_unnamed_param) {
+        p_error("expected param name");
+        return NULL;
+    }
     add_func_type(nm, ty);
     fn = nd_new(ND_FUNC);
     fn->name = strdup(nm);
@@ -2193,9 +2370,28 @@ static Node *parse_program(void) {
     Node *fhead;
     Node *ftail;
     Node *f;
+    int usize_ty;
+    int isize_ty;
 
     ps_nglobals = 0;
+#ifdef S12CC_TARGET_A64
+    pp_add("__aarch64__", 1);
+    pp_add("__LP64__", 1);
+#endif
+    if (ty_ptr_size == 8) {
+        usize_ty = TY_LLONG | TY_UNSIGNED;
+        isize_ty = TY_LLONG;
+    } else {
+        usize_ty = TY_INT | TY_UNSIGNED;
+        isize_ty = TY_INT;
+    }
     add_typedef("va_list", TY_PTR + TY_CHAR);
+    add_typedef("_Bool", TY_INT);
+    add_typedef("bool", TY_INT);
+    add_typedef("size_t", usize_ty);
+    add_typedef("ptrdiff_t", isize_ty);
+    add_typedef("intptr_t", isize_ty);
+    add_typedef("uintptr_t", usize_ty);
     /* C99 fixed-width integer typedefs.  All hosts (SLOW-32 native,
      * x64, AArch64) agree: int=32, long long=64, short=16, char=8. */
     add_typedef("int8_t",   TY_CHAR);

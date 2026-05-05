@@ -68,6 +68,7 @@ static void fdputuint(int f, int v) {
 
 /* Tell the frontend not to redeclare libc — we did it. */
 #define S12CC_X64_HOST 1
+#define S12CC_TARGET_A64 1
 
 #include "c_lexer_gen.c"
 

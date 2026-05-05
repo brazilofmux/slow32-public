@@ -76,6 +76,13 @@ static int ty_struct_idx(int ty) {
     return (ty & TY_BASE_MASK) - TY_STRUCT_BASE;
 }
 
+static int ty_is_incomplete_struct(int ty) {
+    int si;
+    if (!ty_is_struct(ty)) return 0;
+    si = ty_struct_idx(ty);
+    return si >= 0 && st_size[si] == 0;
+}
+
 /* Target pointer size: 4 for SLOW-32, 8 for x86-64.
  * Set by driver before compilation. Default 4 for backward compat. */
 static int ty_ptr_size = 4;

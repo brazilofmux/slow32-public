@@ -120,13 +120,25 @@ $(OUT)/cc_%_exe: $(OUT)/cc_%.o $(OUT)/crt0.o $(OUT)/crt0_stubs.o
 
 test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
          $(OUT)/cc_loop_exe  $(OUT)/cc_recursion_exe \
-         $(OUT)/cc_phi_swap_exe \
+         $(OUT)/cc_phi_swap_exe $(OUT)/cc_fwd_struct_exe \
+         $(OUT)/cc_typedef_enum_exe $(OUT)/cc_proto_unnamed_exe \
+         $(OUT)/cc_bool_exe $(OUT)/cc_ifdef_aarch64_exe \
+         $(OUT)/cc_size_t_exe $(OUT)/cc_adj_string_exe \
+         $(OUT)/cc_struct_multi_decl_exe \
          $(OUT)/cc_string_exe
 	@$(OUT)/cc_hello_exe;     rc=$$?; if [ $$rc -eq 42 ];  then echo "cc_hello:     ok (exit=42)";     else echo "cc_hello:     FAIL (exit=$$rc, expected 42)";     exit 1; fi
 	@$(OUT)/cc_locals_exe;    rc=$$?; if [ $$rc -eq 42 ];  then echo "cc_locals:    ok (exit=42)";     else echo "cc_locals:    FAIL (exit=$$rc, expected 42)";     exit 1; fi
 	@$(OUT)/cc_loop_exe;      rc=$$?; if [ $$rc -eq 47 ];  then echo "cc_loop:      ok (exit=47)";     else echo "cc_loop:      FAIL (exit=$$rc, expected 47)";     exit 1; fi
 	@$(OUT)/cc_recursion_exe; rc=$$?; if [ $$rc -eq 120 ]; then echo "cc_recursion: ok (exit=120)";    else echo "cc_recursion: FAIL (exit=$$rc, expected 120)"; exit 1; fi
 	@$(OUT)/cc_phi_swap_exe;  rc=$$?; if [ $$rc -eq 21 ];  then echo "cc_phi_swap:  ok (exit=21)";     else echo "cc_phi_swap:  FAIL (exit=$$rc, expected 21)";  exit 1; fi
+	@$(OUT)/cc_fwd_struct_exe; rc=$$?; if [ $$rc -eq 42 ]; then echo "cc_fwd_struct: ok (exit=42)";    else echo "cc_fwd_struct: FAIL (exit=$$rc, expected 42)"; exit 1; fi
+	@$(OUT)/cc_typedef_enum_exe; rc=$$?; if [ $$rc -eq 2 ]; then echo "cc_typedef_enum: ok (exit=2)";  else echo "cc_typedef_enum: FAIL (exit=$$rc, expected 2)"; exit 1; fi
+	@$(OUT)/cc_proto_unnamed_exe; rc=$$?; if [ $$rc -eq 2 ]; then echo "cc_proto_unnamed: ok (exit=2)"; else echo "cc_proto_unnamed: FAIL (exit=$$rc, expected 2)"; exit 1; fi
+	@$(OUT)/cc_bool_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_bool:      ok (exit=1)";            else echo "cc_bool:      FAIL (exit=$$rc, expected 1)"; exit 1; fi
+	@$(OUT)/cc_ifdef_aarch64_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_ifdef_aarch64: ok (exit=1)"; else echo "cc_ifdef_aarch64: FAIL (exit=$$rc, expected 1)"; exit 1; fi
+	@$(OUT)/cc_size_t_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_size_t:   ok (exit=1)";          else echo "cc_size_t:   FAIL (exit=$$rc, expected 1)"; exit 1; fi
+	@$(OUT)/cc_adj_string_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_adj_string: ok (exit=1)";      else echo "cc_adj_string: FAIL (exit=$$rc, expected 1)"; exit 1; fi
+	@$(OUT)/cc_struct_multi_decl_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_struct_multi_decl: ok (exit=1)"; else echo "cc_struct_multi_decl: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@out=$$($(OUT)/cc_string_exe 2>&1); rc=$$?; \
 		if [ "$$out" = "hi a64" ] && [ $$rc -eq 0 ]; then \
 			echo "cc_string:    ok (stdout=\"hi a64\", exit=0)"; \
@@ -247,6 +259,14 @@ clean:
 	      $(OUT)/cc_loop.o $(OUT)/cc_loop_exe \
 	      $(OUT)/cc_recursion.o $(OUT)/cc_recursion_exe \
 	      $(OUT)/cc_phi_swap.o $(OUT)/cc_phi_swap_exe \
+	      $(OUT)/cc_fwd_struct.o $(OUT)/cc_fwd_struct_exe \
+	      $(OUT)/cc_typedef_enum.o $(OUT)/cc_typedef_enum_exe \
+	      $(OUT)/cc_proto_unnamed.o $(OUT)/cc_proto_unnamed_exe \
+	      $(OUT)/cc_bool.o $(OUT)/cc_bool_exe \
+	      $(OUT)/cc_ifdef_aarch64.o $(OUT)/cc_ifdef_aarch64_exe \
+	      $(OUT)/cc_size_t.o $(OUT)/cc_size_t_exe \
+	      $(OUT)/cc_adj_string.o $(OUT)/cc_adj_string_exe \
+	      $(OUT)/cc_struct_multi_decl.o $(OUT)/cc_struct_multi_decl_exe \
 	      $(OUT)/cc_string.o $(OUT)/cc_string_exe \
 	      $(OUT)/ld-a64 $(OUT)/ar-a64 \
 	      $(OUT)/cc_lib_a.o $(OUT)/cc_lib_b.o $(OUT)/cc_uses_lib.o \
