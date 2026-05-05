@@ -1176,24 +1176,45 @@ static void hx_emit_inst(int idx) {
                 if (wide) a64_asr_x_imm(dst, r1, v);
                 else      a64_asr_w_imm(dst, r1, v);
                 hx_spill(idx, dst); return;
+            } else if (!wide && k == HI_AND) {
+                /* AArch64 logical-immediate encoding (W form): bit-pattern imm. */
+                r1 = hx_get_src(s1, HX_SCRATCH1);
+                if (a64_and_w_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
+            } else if (!wide && k == HI_OR) {
+                r1 = hx_get_src(s1, HX_SCRATCH1);
+                if (a64_orr_w_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
+            } else if (!wide && k == HI_XOR) {
+                r1 = hx_get_src(s1, HX_SCRATCH1);
+                if (a64_eor_w_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
             }
             /* Fall through to register-register form. */
         }
-        /* Symmetric: HI_ADD with ICONST on the LEFT (commutative). */
-        if (k == HI_ADD && s1 >= 0 && h_kind[s1] == HI_ICONST) {
+        /* Symmetric: ICONST on the LEFT for commutative ops. */
+        if (s1 >= 0 && h_kind[s1] == HI_ICONST) {
             int v;
             v = h_val[s1];
-            if (v >= 0 && v <= 4095) {
+            if (k == HI_ADD) {
+                if (v >= 0 && v <= 4095) {
+                    r1 = hx_get_src(s2, HX_SCRATCH1);
+                    if (wide) a64_add_x_imm(dst, r1, v);
+                    else      a64_add_w_imm(dst, r1, v);
+                    hx_spill(idx, dst); return;
+                }
+                if (v < 0 && v >= -4095) {
+                    r1 = hx_get_src(s2, HX_SCRATCH1);
+                    if (wide) a64_sub_x_imm(dst, r1, -v);
+                    else      a64_sub_w_imm(dst, r1, -v);
+                    hx_spill(idx, dst); return;
+                }
+            } else if (!wide && k == HI_AND) {
                 r1 = hx_get_src(s2, HX_SCRATCH1);
-                if (wide) a64_add_x_imm(dst, r1, v);
-                else      a64_add_w_imm(dst, r1, v);
-                hx_spill(idx, dst); return;
-            }
-            if (v < 0 && v >= -4095) {
+                if (a64_and_w_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
+            } else if (!wide && k == HI_OR) {
                 r1 = hx_get_src(s2, HX_SCRATCH1);
-                if (wide) a64_sub_x_imm(dst, r1, -v);
-                else      a64_sub_w_imm(dst, r1, -v);
-                hx_spill(idx, dst); return;
+                if (a64_orr_w_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
+            } else if (!wide && k == HI_XOR) {
+                r1 = hx_get_src(s2, HX_SCRATCH1);
+                if (a64_eor_w_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
             }
         }
 
