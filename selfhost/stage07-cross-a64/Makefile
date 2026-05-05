@@ -10,9 +10,9 @@ CFLAGS = -O2 -fno-builtin -fno-stack-protector -w
 LDFLAGS = -nostdlib -static
 OUT = out
 
-.PHONY: all test test-encode test-elf test-obj clean
+.PHONY: all test test-encode test-elf test-obj test-crt0 clean
 
-all: test-encode test-elf test-obj
+all: test-encode test-elf test-obj test-crt0
 
 # --- Encoder verification (byte-diff against gas) ---
 
@@ -56,10 +56,39 @@ test-obj: $(OUT)/test_obj $(OUT)/test_obj_global
 		if [ $$rc -eq 42 ]; then echo "test-obj-global: ok (exit=42)"; \
 		else echo "test-obj-global: FAIL (exit=$$rc, expected 42)"; exit 1; fi
 
-test: test-encode test-elf test-obj
+# --- crt0 emitter smoke test ---
+# Builds out/crt0.o via emit_crt0_object, links it with a host-gcc-compiled
+# main (returns argc) and a stub __save_envp, then runs with various arg
+# counts and verifies each exit code matches argc.
+
+$(OUT)/test_crt0: tests/test_crt0.c a64_encode.h obj_writer.h crt0_emit.h tests/cg_stubs.h
+	gcc -O2 -Wall -Wno-unused-function -Wno-pointer-sign -o $@ tests/test_crt0.c
+
+$(OUT)/crt0_main.o: tests/crt0_main.c
+	gcc -O2 -nostdlib -fno-stack-protector -ffreestanding -c $< -o $@
+
+$(OUT)/crt0_stubs.o: tests/crt0_stubs.c
+	gcc -O2 -nostdlib -fno-stack-protector -ffreestanding -c $< -o $@
+
+test-crt0: $(OUT)/test_crt0 $(OUT)/crt0_main.o $(OUT)/crt0_stubs.o
+	@$(OUT)/test_crt0 >/dev/null
+	@ld -o $(OUT)/test_crt0_prog $(OUT)/crt0.o $(OUT)/crt0_main.o $(OUT)/crt0_stubs.o
+	@$(OUT)/test_crt0_prog; rc=$$?; \
+		if [ $$rc -eq 1 ]; then echo "test-crt0 (no args):   ok (exit=1)"; \
+		else echo "test-crt0 (no args):   FAIL (exit=$$rc, expected 1)"; exit 1; fi
+	@$(OUT)/test_crt0_prog one two; rc=$$?; \
+		if [ $$rc -eq 3 ]; then echo "test-crt0 (3 args):    ok (exit=3)"; \
+		else echo "test-crt0 (3 args):    FAIL (exit=$$rc, expected 3)"; exit 1; fi
+	@$(OUT)/test_crt0_prog a b c d e f g; rc=$$?; \
+		if [ $$rc -eq 8 ]; then echo "test-crt0 (8 args):    ok (exit=8)"; \
+		else echo "test-crt0 (8 args):    FAIL (exit=$$rc, expected 8)"; exit 1; fi
+
+test: test-encode test-elf test-obj test-crt0
 
 clean:
 	rm -f $(OUT)/test_encode $(OUT)/test_elf $(OUT)/test_obj $(OUT)/test_obj_global \
-	      $(OUT)/test_exit42 $(OUT)/test_obj.o $(OUT)/test_obj_exe \
+	      $(OUT)/test_crt0 $(OUT)/test_exit42 \
+	      $(OUT)/test_obj.o $(OUT)/test_obj_exe \
 	      $(OUT)/test_obj_global.o $(OUT)/test_obj_global_exe \
+	      $(OUT)/crt0.o $(OUT)/crt0_main.o $(OUT)/crt0_stubs.o $(OUT)/test_crt0_prog \
 	      tests/ref.o tests/ref.bin
