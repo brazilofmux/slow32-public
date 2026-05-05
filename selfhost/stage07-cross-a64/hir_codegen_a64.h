@@ -1308,7 +1308,31 @@ static void hx_gen_func(Node *fn) {
     fs = (fs + 15) & ~15;
     if (fs < 16) fs = 16;        /* always at least save FP/LR */
     hx_frame_size = fs;
-    hx_no_frame = 0;             /* MVP: always create a frame */
+
+    /* No-frame leaf optimization: skip the entire prologue/epilogue
+     * (sub sp / stp fp,lr / add fp / ldp fp,lr / add sp) when this
+     * function:
+     *   - uses no callee-saved regs (ra_ncsave == 0)
+     *   - makes no calls (no HI_CALL/HI_CALLP — so LR survives)
+     *   - has no &local addresses (no HI_ALLOCA — body never references FP)
+     *   - has no actual spills (ra_spill_off[i] == 0 for all i, including
+     *     PARAM nodes — confirms nothing in the body stores to the frame)
+     * Param-to-reg MOVs in the prologue still run; they never touch FP. */
+    hx_no_frame = 0;
+    if (ra_ncsave == 0) {
+        int can_nf;
+        int i_;
+        can_nf = 1;
+        i_ = 0;
+        while (i_ < h_ninst && can_nf) {
+            int k_;
+            k_ = h_kind[i_];
+            if (k_ == HI_CALL || k_ == HI_CALLP || k_ == HI_ALLOCA) can_nf = 0;
+            else if (ra_spill_off[i_] != 0) can_nf = 0;
+            i_ = i_ + 1;
+        }
+        if (can_nf) hx_no_frame = 1;
+    }
 
     /* Prologue.
      *
@@ -1319,33 +1343,50 @@ static void hx_gen_func(Node *fn) {
      *     add x16, sp, #(fs-16)
      *     stp x29, x30, [x16]
      *     mov x29, x16
-     * For small frames keep the simpler `stp [sp, #fs-16]` form. */
-    if (fs <= 4095) a64_sub_x_imm(A64_SP, A64_SP, fs);
-    else {
-        a64_sub_x_imm(A64_SP, A64_SP, fs & 0xFFF);
-        a64_sub_x_imm_lsl12(A64_SP, A64_SP, (fs >> 12) & 0xFFF);
-    }
-    if (fs - 16 <= 504) {
-        a64_stp_x_off(A64_X29, A64_X30, A64_SP, fs - 16);
-        if ((fs - 16) <= 4095) a64_add_x_imm(A64_X29, A64_SP, fs - 16);
+     * For small frames keep the simpler `stp [sp, #fs-16]` form.
+     * No-frame leaves skip the whole sequence. */
+    if (!hx_no_frame) {
+        if (fs <= 4095) a64_sub_x_imm(A64_SP, A64_SP, fs);
         else {
-            a64_add_x_imm(A64_X29, A64_SP, (fs - 16) & 0xFFF);
-            a64_add_x_imm_lsl12(A64_X29, A64_X29, ((fs - 16) >> 12) & 0xFFF);
+            a64_sub_x_imm(A64_SP, A64_SP, fs & 0xFFF);
+            a64_sub_x_imm_lsl12(A64_SP, A64_SP, (fs >> 12) & 0xFFF);
         }
-    } else {
-        /* Compute fp slot in HX_SCRATCH1, then STP at offset 0, then mov FP. */
-        if ((fs - 16) <= 4095) a64_add_x_imm(HX_SCRATCH1, A64_SP, fs - 16);
-        else {
-            a64_add_x_imm(HX_SCRATCH1, A64_SP, (fs - 16) & 0xFFF);
-            a64_add_x_imm_lsl12(HX_SCRATCH1, HX_SCRATCH1, ((fs - 16) >> 12) & 0xFFF);
+        if (fs - 16 <= 504) {
+            a64_stp_x_off(A64_X29, A64_X30, A64_SP, fs - 16);
+            if ((fs - 16) <= 4095) a64_add_x_imm(A64_X29, A64_SP, fs - 16);
+            else {
+                a64_add_x_imm(A64_X29, A64_SP, (fs - 16) & 0xFFF);
+                a64_add_x_imm_lsl12(A64_X29, A64_X29, ((fs - 16) >> 12) & 0xFFF);
+            }
+        } else {
+            /* Compute fp slot in HX_SCRATCH1, then STP at offset 0, then mov FP. */
+            if ((fs - 16) <= 4095) a64_add_x_imm(HX_SCRATCH1, A64_SP, fs - 16);
+            else {
+                a64_add_x_imm(HX_SCRATCH1, A64_SP, (fs - 16) & 0xFFF);
+                a64_add_x_imm_lsl12(HX_SCRATCH1, HX_SCRATCH1, ((fs - 16) >> 12) & 0xFFF);
+            }
+            a64_stp_x_off(A64_X29, A64_X30, HX_SCRATCH1, 0);
+            a64_mov_x(A64_X29, HX_SCRATCH1);
         }
-        a64_stp_x_off(A64_X29, A64_X30, HX_SCRATCH1, 0);
-        a64_mov_x(A64_X29, HX_SCRATCH1);
     }
 
-    /* Save callee-saved regs that regalloc decided to use. */
+    /* Save callee-saved regs that regalloc decided to use.  Adjacent
+     * slots are 4 slow32 units (= 8 bytes) apart, with csave[i+1] at the
+     * lower address; pair them into STP when the lower byte offset fits
+     * the signed-imm7 range (±504, scaled by 8). */
     i = 0;
     while (i < ra_ncsave) {
+        if (i + 1 < ra_ncsave &&
+            ra_csave_off[i + 1] == ra_csave_off[i] - 4) {
+            int boff_lo;
+            boff_lo = cg_a64_offset(ra_csave_off[i + 1]);
+            if (boff_lo >= -512 && boff_lo <= 504 && (boff_lo & 7) == 0) {
+                a64_stp_x_off(ra_csave_reg[i + 1], ra_csave_reg[i],
+                              A64_X29, boff_lo);
+                i = i + 2;
+                continue;
+            }
+        }
         hx_emit_store_from_reg(ra_csave_reg[i], ra_csave_off[i], 1);
         i = i + 1;
     }
@@ -1449,28 +1490,42 @@ static void hx_gen_func(Node *fn) {
         int epi_off;
         epi_off = a64_off;
 
-        /* Restore callee-saved regs */
+        /* Restore callee-saved regs (mirror of prologue's STP pairing). */
         i = 0;
         while (i < ra_ncsave) {
+            if (i + 1 < ra_ncsave &&
+                ra_csave_off[i + 1] == ra_csave_off[i] - 4) {
+                int boff_lo;
+                boff_lo = cg_a64_offset(ra_csave_off[i + 1]);
+                if (boff_lo >= -512 && boff_lo <= 504 && (boff_lo & 7) == 0) {
+                    a64_ldp_x_off(ra_csave_reg[i + 1], ra_csave_reg[i],
+                                  A64_X29, boff_lo);
+                    i = i + 2;
+                    continue;
+                }
+            }
             hx_emit_load_to_reg(ra_csave_reg[i], ra_csave_off[i], 1);
             i = i + 1;
         }
 
-        /* Mirror the prologue's choice (see comment there). */
-        if (fs - 16 <= 504) {
-            a64_ldp_x_off(A64_X29, A64_X30, A64_SP, fs - 16);
-        } else {
-            if ((fs - 16) <= 4095) a64_add_x_imm(HX_SCRATCH1, A64_SP, fs - 16);
-            else {
-                a64_add_x_imm(HX_SCRATCH1, A64_SP, (fs - 16) & 0xFFF);
-                a64_add_x_imm_lsl12(HX_SCRATCH1, HX_SCRATCH1, ((fs - 16) >> 12) & 0xFFF);
+        /* Mirror the prologue's choice (see comment there).  No-frame
+         * leaves skip the whole teardown and emit just `ret`. */
+        if (!hx_no_frame) {
+            if (fs - 16 <= 504) {
+                a64_ldp_x_off(A64_X29, A64_X30, A64_SP, fs - 16);
+            } else {
+                if ((fs - 16) <= 4095) a64_add_x_imm(HX_SCRATCH1, A64_SP, fs - 16);
+                else {
+                    a64_add_x_imm(HX_SCRATCH1, A64_SP, (fs - 16) & 0xFFF);
+                    a64_add_x_imm_lsl12(HX_SCRATCH1, HX_SCRATCH1, ((fs - 16) >> 12) & 0xFFF);
+                }
+                a64_ldp_x_off(A64_X29, A64_X30, HX_SCRATCH1, 0);
             }
-            a64_ldp_x_off(A64_X29, A64_X30, HX_SCRATCH1, 0);
-        }
-        if (fs <= 4095) a64_add_x_imm(A64_SP, A64_SP, fs);
-        else {
-            a64_add_x_imm(A64_SP, A64_SP, fs & 0xFFF);
-            a64_add_x_imm_lsl12(A64_SP, A64_SP, (fs >> 12) & 0xFFF);
+            if (fs <= 4095) a64_add_x_imm(A64_SP, A64_SP, fs);
+            else {
+                a64_add_x_imm(A64_SP, A64_SP, fs & 0xFFF);
+                a64_add_x_imm_lsl12(A64_SP, A64_SP, (fs >> 12) & 0xFFF);
+            }
         }
         a64_ret();
 
