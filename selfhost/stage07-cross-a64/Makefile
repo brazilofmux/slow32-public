@@ -10,9 +10,10 @@ CFLAGS = -O2 -fno-builtin -fno-stack-protector -w
 LDFLAGS = -nostdlib -static
 OUT = out
 
-.PHONY: all test test-encode test-elf test-obj test-crt0 test-cc clean
+.PHONY: all test test-encode test-elf test-obj test-crt0 test-cc test-toolchain clean
 
-all: $(OUT)/cc-a64 test-encode test-elf test-obj test-crt0 test-cc
+all: $(OUT)/cc-a64 $(OUT)/ld-a64 $(OUT)/ar-a64 \
+     test-encode test-elf test-obj test-crt0 test-cc test-toolchain
 
 # --- The cross-compiler itself ---
 # Built by host gcc against the shared frontend (symlinked from ../stage07).
@@ -24,6 +25,15 @@ CC_DEPS = cc-a64.c codegen_a64.h crt0_emit.h elf_writer.h obj_writer.h \
 
 $(OUT)/cc-a64: $(CC_DEPS)
 	$(CC) $(CFLAGS) -o $@ cc-a64.c
+
+# --- Linker (ld-a64) and archiver (ar-a64) ---
+# Both built with host gcc against host stdio/string. Self-contained.
+
+$(OUT)/ld-a64: ld-a64.c
+	gcc -O2 -Wall -o $@ ld-a64.c
+
+$(OUT)/ar-a64: ar-a64.c
+	gcc -O2 -Wall -o $@ ar-a64.c
 
 # --- Encoder verification (byte-diff against gas) ---
 
@@ -122,7 +132,33 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
 $(OUT)/crt0.o: $(OUT)/cc-a64
 	@$(OUT)/cc-a64 --crt0 -o $@ >/dev/null
 
-test: test-encode test-elf test-obj test-crt0 test-cc
+# --- Self-hosted toolchain end-to-end test ---
+# Build a 2-object archive with ar-a64, link it with the main object via
+# ld-a64, run the result. quadruple(10) = double_it(double_it(10)) = 40.
+
+$(OUT)/cc_lib_a.o: tests/cc_lib_a.c $(OUT)/cc-a64
+	@$(OUT)/cc-a64 -c $< -o $@ >/dev/null
+
+$(OUT)/cc_lib_b.o: tests/cc_lib_b.c $(OUT)/cc-a64
+	@$(OUT)/cc-a64 -c $< -o $@ >/dev/null
+
+$(OUT)/cc_uses_lib.o: tests/cc_uses_lib.c $(OUT)/cc-a64
+	@$(OUT)/cc-a64 -c $< -o $@ >/dev/null
+
+$(OUT)/lib_helper.a: $(OUT)/cc_lib_a.o $(OUT)/cc_lib_b.o $(OUT)/ar-a64
+	@$(OUT)/ar-a64 rcs $@ $(OUT)/cc_lib_a.o $(OUT)/cc_lib_b.o >/dev/null 2>&1
+
+$(OUT)/cc_uses_lib_exe: $(OUT)/cc_uses_lib.o $(OUT)/lib_helper.a \
+                       $(OUT)/crt0.o $(OUT)/crt0_stubs.o $(OUT)/ld-a64
+	@$(OUT)/ld-a64 -o $@ $(OUT)/crt0.o $(OUT)/cc_uses_lib.o \
+		$(OUT)/lib_helper.a $(OUT)/crt0_stubs.o >/dev/null
+
+test-toolchain: $(OUT)/cc_uses_lib_exe
+	@$(OUT)/cc_uses_lib_exe; rc=$$?; \
+		if [ $$rc -eq 40 ]; then echo "test-toolchain: ok (exit=40)"; \
+		else echo "test-toolchain: FAIL (exit=$$rc, expected 40)"; exit 1; fi
+
+test: test-encode test-elf test-obj test-crt0 test-cc test-toolchain
 
 clean:
 	rm -f $(OUT)/test_encode $(OUT)/test_elf $(OUT)/test_obj $(OUT)/test_obj_global \
@@ -136,4 +172,7 @@ clean:
 	      $(OUT)/cc_loop.o $(OUT)/cc_loop_exe \
 	      $(OUT)/cc_recursion.o $(OUT)/cc_recursion_exe \
 	      $(OUT)/cc_string.o $(OUT)/cc_string_exe \
+	      $(OUT)/ld-a64 $(OUT)/ar-a64 \
+	      $(OUT)/cc_lib_a.o $(OUT)/cc_lib_b.o $(OUT)/cc_uses_lib.o \
+	      $(OUT)/lib_helper.a $(OUT)/cc_uses_lib_exe \
 	      tests/ref.o tests/ref.bin
