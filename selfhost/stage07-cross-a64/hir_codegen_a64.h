@@ -124,10 +124,28 @@ static void hx_mat_iconst(int dst_reg, int val, int wide) {
     a64_mov_w_imm(dst_reg, val);
 }
 
-/* Compute a frame address (FP + offset) into dst_reg. */
+/* Compute a frame address (FP + offset) into dst_reg.
+ * `frontend_off` is in slow32 4-byte units; cg_a64_offset doubles it. */
 static void hx_emit_frame_addr(int dst_reg, int frontend_off) {
     int off;
     off = cg_a64_offset(frontend_off);
+    if (off >= 0 && off <= 4095) { a64_add_x_imm(dst_reg, A64_X29, off); return; }
+    if (off < 0 && -off <= 4095) { a64_sub_x_imm(dst_reg, A64_X29, -off); return; }
+    if (off > 0) {
+        a64_add_x_imm(dst_reg, A64_X29, off & 0xFFF);
+        a64_add_x_imm_lsl12(dst_reg, dst_reg, (off >> 12) & 0xFFF);
+        return;
+    }
+    {
+        int neg;
+        neg = -off;
+        a64_sub_x_imm(dst_reg, A64_X29, neg & 0xFFF);
+        a64_sub_x_imm_lsl12(dst_reg, dst_reg, (neg >> 12) & 0xFFF);
+    }
+}
+
+/* Same, but the offset is already a byte offset (no doubling). */
+static void hx_emit_frame_addr_bytes(int dst_reg, int off) {
     if (off >= 0 && off <= 4095) { a64_add_x_imm(dst_reg, A64_X29, off); return; }
     if (off < 0 && -off <= 4095) { a64_sub_x_imm(dst_reg, A64_X29, -off); return; }
     if (off > 0) {
@@ -551,6 +569,33 @@ static void hx_emit_inst(int idx) {
          * which is exactly when bg_foff[s1] is meaningful.  Even if
          * bg_select didn't fold s1 (ALLOCA is remat-skipped), the
          * fast-path is correct. */
+        /* BG_SADDR lhs: src1 chain produces a symbol+offset address. */
+        if (lnt == BG_SADDR && s1 >= 0 && bg_ssym[s1] >= 0) {
+            int sym_inst;
+            int sym_off;
+            int sym_name_idx;
+            sym_inst = bg_ssym[s1];
+            sym_off  = bg_soff[s1];
+            if (h_kind[sym_inst] == HI_SADDR) {
+                cg_emit_adrp_add_to(HX_SCRATCH1, CG_STR_PSEUDO_NAME,
+                                    h_val[sym_inst] + sym_off);
+            } else {
+                cg_emit_adrp_add_to(HX_SCRATCH1, h_name[sym_inst], sym_off);
+            }
+            (void)sym_name_idx;
+            if (hx_is_wide(ty)) a64_ldr_x_imm(dst, HX_SCRATCH1, 0);
+            else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
+                if (ty & TY_UNSIGNED) a64_ldrb_imm(dst, HX_SCRATCH1, 0);
+                else                  a64_ldrsb_w_imm(dst, HX_SCRATCH1, 0);
+            }
+            else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+                if (ty & TY_UNSIGNED) a64_ldrh_imm(dst, HX_SCRATCH1, 0);
+                else                  a64_ldrsh_w_imm(dst, HX_SCRATCH1, 0);
+            }
+            else { a64_ldr_w_imm(dst, HX_SCRATCH1, 0); }
+            hx_spill(idx, dst);
+            return;
+        }
         if (lnt == BG_MEM && s1 >= 0) {
             int frame_off;
             frame_off = bg_foff[s1];
@@ -585,7 +630,20 @@ static void hx_emit_inst(int idx) {
                 hx_spill(idx, dst);
                 return;
             }
-            /* Out of range — fall through to general path. */
+            /* Out of imm9 range: compute FP+offset into scratch then LDR. */
+            hx_emit_frame_addr_bytes(HX_SCRATCH1, frame_off);
+            if (hx_is_wide(ty)) a64_ldr_x_imm(dst, HX_SCRATCH1, 0);
+            else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
+                if (ty & TY_UNSIGNED) a64_ldrb_imm(dst, HX_SCRATCH1, 0);
+                else                  a64_ldrsb_w_imm(dst, HX_SCRATCH1, 0);
+            }
+            else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+                if (ty & TY_UNSIGNED) a64_ldrh_imm(dst, HX_SCRATCH1, 0);
+                else                  a64_ldrsh_w_imm(dst, HX_SCRATCH1, 0);
+            }
+            else a64_ldr_w_imm(dst, HX_SCRATCH1, 0);
+            hx_spill(idx, dst);
+            return;
         }
 
         /* General path: address into scratch1, then LDR. */
@@ -613,6 +671,27 @@ static void hx_emit_inst(int idx) {
         pat = bg_sel[idx];
         lnt = (pat >= 0) ? bg_plnt[pat] : -1;
 
+        /* BG_SADDR lhs: emit ADRP+ADD (with addend), then STR. */
+        if (lnt == BG_SADDR && s1 >= 0 && bg_ssym[s1] >= 0) {
+            int sym_inst;
+            int sym_off;
+            sym_inst = bg_ssym[s1];
+            sym_off  = bg_soff[s1];
+            if (h_kind[sym_inst] == HI_SADDR) {
+                cg_emit_adrp_add_to(HX_SCRATCH1, CG_STR_PSEUDO_NAME,
+                                    h_val[sym_inst] + sym_off);
+            } else {
+                cg_emit_adrp_add_to(HX_SCRATCH1, h_name[sym_inst], sym_off);
+            }
+            val_reg = hx_get_src(s2, HX_SCRATCH2);
+            if (hx_is_wide(ty))         a64_str_x_imm(val_reg, HX_SCRATCH1, 0);
+            else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR)
+                a64_strb_imm(val_reg, HX_SCRATCH1, 0);
+            else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT)
+                a64_strh_imm(val_reg, HX_SCRATCH1, 0);
+            else a64_str_w_imm(val_reg, HX_SCRATCH1, 0);
+            return;
+        }
         /* BG_MEM lhs → frame-relative STR.  See LOAD comment. */
         if (lnt == BG_MEM && s1 >= 0) {
             int frame_off;
@@ -637,6 +716,17 @@ static void hx_emit_inst(int idx) {
                 else a64_stur_w_imm(val_reg, A64_X29, frame_off);
                 return;
             }
+            /* Out of imm9 range: compute FP+offset into scratch1 then STR.
+             * (val into scratch2 since scratch1 holds the address.) */
+            hx_emit_frame_addr_bytes(HX_SCRATCH1, frame_off);
+            val_reg = hx_get_src(s2, HX_SCRATCH2);
+            if (hx_is_wide(ty))         a64_str_x_imm(val_reg, HX_SCRATCH1, 0);
+            else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR)
+                a64_strb_imm(val_reg, HX_SCRATCH1, 0);
+            else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT)
+                a64_strh_imm(val_reg, HX_SCRATCH1, 0);
+            else a64_str_w_imm(val_reg, HX_SCRATCH1, 0);
+            return;
         }
 
         addr_reg = hx_get_src(s1, HX_SCRATCH1);
