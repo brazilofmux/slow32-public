@@ -10,9 +10,20 @@ CFLAGS = -O2 -fno-builtin -fno-stack-protector -w
 LDFLAGS = -nostdlib -static
 OUT = out
 
-.PHONY: all test test-encode test-elf test-obj test-crt0 clean
+.PHONY: all test test-encode test-elf test-obj test-crt0 test-cc clean
 
-all: test-encode test-elf test-obj test-crt0
+all: $(OUT)/cc-a64 test-encode test-elf test-obj test-crt0 test-cc
+
+# --- The cross-compiler itself ---
+# Built by host gcc against the shared frontend (symlinked from ../stage07).
+
+CC_DEPS = cc-a64.c codegen_a64.h crt0_emit.h elf_writer.h obj_writer.h \
+          a64_encode.h a64_reloc_kinds.h \
+          ../stage07/parser.h ../stage07/ast.h ../stage07/sema.h \
+          ../stage07/optimize.h ../stage07/pp.h ../stage07/c_lexer_gen.c
+
+$(OUT)/cc-a64: $(CC_DEPS)
+	$(CC) $(CFLAGS) -o $@ cc-a64.c
 
 # --- Encoder verification (byte-diff against gas) ---
 
@@ -83,7 +94,29 @@ test-crt0: $(OUT)/test_crt0 $(OUT)/crt0_main.o $(OUT)/crt0_stubs.o
 		if [ $$rc -eq 8 ]; then echo "test-crt0 (8 args):    ok (exit=8)"; \
 		else echo "test-crt0 (8 args):    FAIL (exit=$$rc, expected 8)"; exit 1; fi
 
-test: test-encode test-elf test-obj test-crt0
+# --- End-to-end cc-a64 smoke tests ---
+# Each entry: compile via cc-a64, link with crt0.o + crt0_stubs.o, run,
+# verify exit code.
+
+# Compile a single .c under tests/ via cc-a64.
+$(OUT)/cc_%.o: tests/cc_%.c $(OUT)/cc-a64
+	@$(OUT)/cc-a64 -c $< -o $@ >/dev/null
+
+$(OUT)/cc_%_exe: $(OUT)/cc_%.o $(OUT)/crt0.o $(OUT)/crt0_stubs.o
+	@ld -o $@ $(OUT)/crt0.o $< $(OUT)/crt0_stubs.o
+
+test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
+         $(OUT)/cc_loop_exe  $(OUT)/cc_recursion_exe
+	@$(OUT)/cc_hello_exe;     rc=$$?; if [ $$rc -eq 42 ];  then echo "cc_hello:     ok (exit=42)";     else echo "cc_hello:     FAIL (exit=$$rc, expected 42)";     exit 1; fi
+	@$(OUT)/cc_locals_exe;    rc=$$?; if [ $$rc -eq 42 ];  then echo "cc_locals:    ok (exit=42)";     else echo "cc_locals:    FAIL (exit=$$rc, expected 42)";     exit 1; fi
+	@$(OUT)/cc_loop_exe;      rc=$$?; if [ $$rc -eq 47 ];  then echo "cc_loop:      ok (exit=47)";     else echo "cc_loop:      FAIL (exit=$$rc, expected 47)";     exit 1; fi
+	@$(OUT)/cc_recursion_exe; rc=$$?; if [ $$rc -eq 120 ]; then echo "cc_recursion: ok (exit=120)";    else echo "cc_recursion: FAIL (exit=$$rc, expected 120)"; exit 1; fi
+
+# crt0 emitted by cc-a64 itself.
+$(OUT)/crt0.o: $(OUT)/cc-a64
+	@$(OUT)/cc-a64 --crt0 -o $@ >/dev/null
+
+test: test-encode test-elf test-obj test-crt0 test-cc
 
 clean:
 	rm -f $(OUT)/test_encode $(OUT)/test_elf $(OUT)/test_obj $(OUT)/test_obj_global \
@@ -91,4 +124,9 @@ clean:
 	      $(OUT)/test_obj.o $(OUT)/test_obj_exe \
 	      $(OUT)/test_obj_global.o $(OUT)/test_obj_global_exe \
 	      $(OUT)/crt0.o $(OUT)/crt0_main.o $(OUT)/crt0_stubs.o $(OUT)/test_crt0_prog \
+	      $(OUT)/cc-a64 \
+	      $(OUT)/cc_hello.o $(OUT)/cc_hello_exe \
+	      $(OUT)/cc_locals.o $(OUT)/cc_locals_exe \
+	      $(OUT)/cc_loop.o $(OUT)/cc_loop_exe \
+	      $(OUT)/cc_recursion.o $(OUT)/cc_recursion_exe \
 	      tests/ref.o tests/ref.bin
