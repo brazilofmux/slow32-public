@@ -781,6 +781,13 @@ static void a64_cmp_x_imm(int rn, int imm12) {
     a64_inst(inst);
 }
 
+// CMN Xn, #imm12  (ADDS XZR, Xn, #imm12) — for compare against -imm
+static void a64_cmn_x_imm(int rn, int imm12) {
+    int inst;
+    inst = 0xB100001F | ((imm12 & 0xFFF) << 10) | ((rn & 0x1F) << 5);
+    a64_inst(inst);
+}
+
 // ============================================================================
 // Conditional set / select
 // ============================================================================

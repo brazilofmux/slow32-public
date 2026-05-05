@@ -1279,7 +1279,25 @@ static void hx_emit_inst(int idx) {
     /* ---------- Comparisons → 0/1 in dst ---------- */
     if (hx_is_cmp_op(k)) {
         int cmp64;
+        int v;
         cmp64 = hx_is_wide(h_ty[s1]) || hx_is_wide(h_ty[s2]);
+        if (s2 >= 0 && h_kind[s2] == HI_ICONST) {
+            v = h_val[s2];
+            if (v >= 0 && v <= 4095) {
+                r1 = hx_get_src(s1, HX_SCRATCH1);
+                if (cmp64) a64_cmp_x_imm(r1, v);
+                else       a64_cmp_w_imm(r1, v);
+                a64_cset_w(dst, hx_cmp_cond(k));
+                hx_spill(idx, dst); return;
+            }
+            if (v < 0 && v >= -4095) {
+                r1 = hx_get_src(s1, HX_SCRATCH1);
+                if (cmp64) a64_cmn_x_imm(r1, -v);
+                else       a64_cmn_w_imm(r1, -v);
+                a64_cset_w(dst, hx_cmp_cond(k));
+                hx_spill(idx, dst); return;
+            }
+        }
         r1 = hx_get_src(s1, HX_SCRATCH1);
         r2 = hx_get_src(s2, HX_SCRATCH2);
         if (cmp64) a64_cmp_x(r1, r2);
@@ -1414,12 +1432,19 @@ static void hx_emit_inst(int idx) {
             cb = h_src2[cmp_idx];
             cmp_wide = hx_is_wide(h_ty[ca]) || hx_is_wide(h_ty[cb]);
 
-            /* CMP with a small unsigned immediate folds into CMP imm12. */
+            /* CMP with imm folds into CMP/CMN imm12.  Negative immediates
+             * use CMN (ADDS XZR/WZR, Wn, #imm) which sets the same flags
+             * as `cmp Wn, #-imm`. */
             if (cb >= 0 && h_kind[cb] == HI_ICONST &&
                 h_val[cb] >= 0 && h_val[cb] <= 4095) {
                 s1r = hx_get_src(ca, HX_SCRATCH1);
                 if (cmp_wide) a64_cmp_x_imm(s1r, h_val[cb]);
                 else          a64_cmp_w_imm(s1r, h_val[cb]);
+            } else if (cb >= 0 && h_kind[cb] == HI_ICONST &&
+                       h_val[cb] < 0 && h_val[cb] >= -4095) {
+                s1r = hx_get_src(ca, HX_SCRATCH1);
+                if (cmp_wide) a64_cmn_x_imm(s1r, -h_val[cb]);
+                else          a64_cmn_w_imm(s1r, -h_val[cb]);
             } else {
                 s1r = hx_get_src(ca, HX_SCRATCH1);
                 s2r = hx_get_src(cb, HX_SCRATCH2);
