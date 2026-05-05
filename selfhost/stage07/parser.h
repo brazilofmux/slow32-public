@@ -357,15 +357,26 @@ static void make_anon_tag(char *buf, char *prefix) {
 
 static int find_member(int sty, char *name) {
     int si;
-    int base;
-    int nf;
     int i;
     si = ty_struct_idx(sty);
-    base = st_first[si];
-    nf = st_nfields[si];
     i = 0;
-    while (i < nf) {
-        if (strcmp(name, stm_name[base + i]) == 0) return base + i;
+    while (i < stm_count) {
+        if (stm_owner[i] == si && strcmp(name, stm_name[i]) == 0) return i;
+        i = i + 1;
+    }
+    return -1;
+}
+
+static int struct_field_nth_idx(int si, int nth) {
+    int i;
+    int seen;
+    i = 0;
+    seen = 0;
+    while (i < stm_count) {
+        if (stm_owner[i] == si) {
+            if (seen == nth) return i;
+            seen = seen + 1;
+        }
         i = i + 1;
     }
     return -1;
@@ -520,6 +531,7 @@ static int parse_type(void) {
                     }
                     if (arr_count > 0) {
                         require_complete_type(dty, "incomplete struct member");
+                        stm_owner[stm_count] = si;
                         stm_type[stm_count] = dty + TY_PTR;
                         stm_is_arr[stm_count] = 1;
                         stm_arr_size[stm_count] = ty_size(dty) * arr_count;
@@ -527,6 +539,7 @@ static int parse_type(void) {
                         off = off + ty_size(dty) * arr_count;
                     } else {
                         require_complete_type(dty, "incomplete struct member");
+                        stm_owner[stm_count] = si;
                         stm_type[stm_count] = dty;
                         stm_is_arr[stm_count] = 0;
                         stm_arr_size[stm_count] = 0;
@@ -610,6 +623,7 @@ static int parse_type(void) {
                     }
                     if (arr_count > 0) {
                         require_complete_type(dty, "incomplete union member");
+                        stm_owner[stm_count] = si;
                         stm_type[stm_count] = dty + TY_PTR;
                         stm_is_arr[stm_count] = 1;
                         stm_arr_size[stm_count] = ty_size(dty) * arr_count;
@@ -617,6 +631,7 @@ static int parse_type(void) {
                         if (ty_size(dty) * arr_count > max_sz) max_sz = ty_size(dty) * arr_count;
                     } else {
                         require_complete_type(dty, "incomplete union member");
+                        stm_owner[stm_count] = si;
                         stm_type[stm_count] = dty;
                         stm_is_arr[stm_count] = 0;
                         stm_arr_size[stm_count] = 0;
@@ -896,9 +911,9 @@ static void parse_global_init_array_fixed(int elem_ty, int count, int gidx) {
 
 static void parse_global_init_struct(int ty, int gidx) {
     int si;
-    int base;
     int nf;
     int i;
+    int mi;
     int field_start;
     int field_ty;
     int arr_elem_ty;
@@ -906,19 +921,20 @@ static void parse_global_init_struct(int ty, int gidx) {
     int struct_start;
 
     si = ty_struct_idx(ty);
-    base = st_first[si];
     nf = st_nfields[si];
     struct_start = ps_ginit_cur_off(gidx);
     expect(TK_LBRACE);
     i = 0;
     while (lex_tok != TK_RBRACE && lex_tok != TK_EOF && i < nf) {
         if (i > 0) expect(TK_COMMA);
-        field_start = struct_start + stm_off[base + i];
+        mi = struct_field_nth_idx(si, i);
+        if (mi < 0) p_error("missing struct field");
+        field_start = struct_start + stm_off[mi];
         while (ps_ginit_cur_off(gidx) < field_start) ps_ginit_emit_byte(0);
-        field_ty = stm_type[base + i];
-        if (stm_is_arr[base + i]) {
+        field_ty = stm_type[mi];
+        if (stm_is_arr[mi]) {
             arr_elem_ty = ty_deref(field_ty);
-            arr_count = stm_arr_size[base + i] / ty_size(arr_elem_ty);
+            arr_count = stm_arr_size[mi] / ty_size(arr_elem_ty);
             parse_global_init_array_fixed(arr_elem_ty, arr_count, gidx);
         } else {
             parse_global_init_value(field_ty, gidx);
@@ -1579,6 +1595,7 @@ static Node *parse_stmt(void) {
     int nsi;
     int nnf;
     int nj;
+    int mi;
     int mi_off;
     int mi_ty;
     int xty;
@@ -1990,19 +2007,22 @@ static Node *parse_stmt(void) {
                 /* Local struct initializer: struct S s = {v1, v2, ...}; */
                 next();
                 si = ty_struct_idx(ty);
-                base = st_first[si];
                 nf = st_nfields[si];
                 ci = 0;  /* field index */
                 while (ci < nf && lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
-                    if (ty_is_struct(stm_type[base + ci])) {
+                    mi = struct_field_nth_idx(si, ci);
+                    if (mi < 0) p_error("missing struct field");
+                    if (ty_is_struct(stm_type[mi])) {
                         /* Nested struct: flatten */
-                        nsi = ty_struct_idx(stm_type[base + ci]);
+                        nsi = ty_struct_idx(stm_type[mi]);
                         nnf = st_nfields[nsi];
                         nj = 0;
                         while (nj < nnf && lex_tok != TK_RBRACE) {
                             if (head != NULL) expect(TK_COMMA);
-                            mi_off = stm_off[base + ci] + stm_off[st_first[nsi] + nj];
-                            mi_ty = stm_type[st_first[nsi] + nj];
+                            base = struct_field_nth_idx(nsi, nj);
+                            if (base < 0) p_error("missing nested struct field");
+                            mi_off = stm_off[mi] + stm_off[base];
+                            mi_ty = stm_type[base];
                             n = nd_var(nm, off, ty);
                             n->is_local = 1;
                             a = nd_member(n, mi_off, mi_ty, 0, 0);
@@ -2014,8 +2034,8 @@ static Node *parse_stmt(void) {
                         }
                     } else {
                         if (head != NULL) expect(TK_COMMA);
-                        mi_off = stm_off[base + ci];
-                        mi_ty = stm_type[base + ci];
+                        mi_off = stm_off[mi];
+                        mi_ty = stm_type[mi];
                         n = nd_var(nm, off, ty);
                         n->is_local = 1;
                         a = nd_member(n, mi_off, mi_ty, 0, 0);

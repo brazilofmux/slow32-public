@@ -32,7 +32,9 @@ static int pp_dep;                 /* ifdef nesting depth */
 static int pp_taken[PP_MAX_IF];   /* 1 if any branch taken at this depth */
 
 static char pp_sdir[256];         /* source directory prefix for includes */
-static char pp_idir[256];         /* -I include search path for <> includes */
+#define PP_MAX_IDIRS 16
+static char pp_idir[PP_MAX_IDIRS][256];  /* -I include search paths for <> includes */
+static int pp_nidirs;
 
 /* --- Text helpers (read from lex_src[lex_pos]) --- */
 
@@ -46,6 +48,25 @@ static void pp_skip_line(void) {
     while (lex_pos < lex_len && lex_src[lex_pos] != 10) {
         lex_pos = lex_pos + 1;
     }
+}
+
+static void pp_add_idir(char *path) {
+    int i;
+    int j;
+
+    if (pp_nidirs >= PP_MAX_IDIRS) return;
+    i = pp_nidirs;
+    j = 0;
+    while (path[j] != 0 && j < 254) {
+        pp_idir[i][j] = path[j];
+        j = j + 1;
+    }
+    if (j > 0 && pp_idir[i][j - 1] != 47) {
+        pp_idir[i][j] = 47;
+        j = j + 1;
+    }
+    pp_idir[i][j] = 0;
+    pp_nidirs = pp_nidirs + 1;
 }
 
 static void pp_read_name(char *buf) {
@@ -623,6 +644,7 @@ static void pp_include(void) {
     int fi;
     int fd;
     int angle;
+    int idir;
 
     pp_skip_ws();
     angle = 0;
@@ -656,34 +678,35 @@ static void pp_include(void) {
     pp_skip_line();
 
     if (angle) {
-        /* Angle-bracket: search -I directory */
-        if (pp_idir[0] == 0) {
-            /* No -I path set; silently skip */
-            pp_sync();
-            return;
+        /* Angle-bracket: search each -I directory in order. */
+        idir = 0;
+        while (idir < pp_nidirs) {
+            pi = 0;
+            fi = 0;
+            while (pp_idir[idir][fi] != 0) {
+                path[pi] = pp_idir[idir][fi];
+                pi = pi + 1;
+                fi = fi + 1;
+            }
+            fi = 0;
+            while (fname[fi] != 0) {
+                path[pi] = fname[fi];
+                pi = pi + 1;
+                fi = fi + 1;
+            }
+            path[pi] = 0;
+            fd = open(path, 0);
+            if (fd >= 0) {
+                close(fd);
+                pp_splice_file(path);
+                return;
+            }
+            idir = idir + 1;
         }
-        pi = 0;
-        fi = 0;
-        while (pp_idir[fi] != 0) {
-            path[pi] = pp_idir[fi];
-            pi = pi + 1;
-            fi = fi + 1;
-        }
-        fi = 0;
-        while (fname[fi] != 0) {
-            path[pi] = fname[fi];
-            pi = pi + 1;
-            fi = fi + 1;
-        }
-        path[pi] = 0;
-        /* Try opening; silently skip if not found */
-        fd = open(path, 0);
-        if (fd < 0) {
-            pp_sync();
-            return;
-        }
-        close(fd);
-        pp_splice_file(path);
+        fdputs("s12cc: cannot open include: ", 2);
+        fdputs(fname, 2);
+        fdputc(10, 2);
+        exit(1);
     } else {
         /* Quoted: search source directory */
         pi = 0;

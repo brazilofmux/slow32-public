@@ -110,7 +110,7 @@ int main(int argc, char **argv) {
     /* AArch64: pointers are 8 bytes — align the frontend's type system. */
     ty_ptr_size = 8;
 
-    pp_idir[0] = 0;
+    pp_nidirs = 0;
     infile = 0;
     outfile = 0;
     compile_only = 0;
@@ -126,16 +126,10 @@ int main(int argc, char **argv) {
             compile_only = 1;
         } else if (argv[argi][0] == 45 && argv[argi][1] == 73) {
             if (argv[argi][2] != 0) {
-                i = 0; j = 2;
-                while (argv[argi][j] != 0) { pp_idir[i] = argv[argi][j]; i = i + 1; j = j + 1; }
-                if (i > 0 && pp_idir[i - 1] != 47) { pp_idir[i] = 47; i = i + 1; }
-                pp_idir[i] = 0;
+                pp_add_idir(argv[argi] + 2);
             } else if (argi + 1 < argc) {
                 argi = argi + 1;
-                i = 0; j = 0;
-                while (argv[argi][j] != 0) { pp_idir[i] = argv[argi][j]; i = i + 1; j = j + 1; }
-                if (i > 0 && pp_idir[i - 1] != 47) { pp_idir[i] = 47; i = i + 1; }
-                pp_idir[i] = 0;
+                pp_add_idir(argv[argi]);
             }
         } else if (argv[argi][0] == 45 && argv[argi][1] == 111 && argv[argi][2] == 0) {
             if (argi + 1 < argc) { argi = argi + 1; outfile = argv[argi]; }
@@ -146,6 +140,10 @@ int main(int argc, char **argv) {
         }
         argi = argi + 1;
     }
+
+    /* Fallback selfhost headers used by stage07 tests and bootstrap code. */
+    pp_add_idir("selfhost/stage07/include");
+    pp_add_idir("../stage07/include");
 
     if (crt0_mode) {
         if (outfile == 0) outfile = "crt0.o";

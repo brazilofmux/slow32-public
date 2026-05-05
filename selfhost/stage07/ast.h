@@ -44,6 +44,7 @@ static int   stm_type[ST_MAX_MEMBERS];
 static int   stm_off[ST_MAX_MEMBERS];
 static int   stm_is_arr[ST_MAX_MEMBERS]; /* 1 if array member (address, no load) */
 static int   stm_arr_size[ST_MAX_MEMBERS]; /* total byte size for array members */
+static int   stm_owner[ST_MAX_MEMBERS]; /* owning struct index for this member */
 static int   stm_count;
 
 /* --- Type helpers --- */

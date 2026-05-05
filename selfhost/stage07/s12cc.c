@@ -167,7 +167,7 @@ int main(int argc, char **argv) {
     Node *prog;
 
     /* Parse arguments: [-I dir] input.c output.s */
-    pp_idir[0] = 0;
+    pp_nidirs = 0;
     infile = 0;
     outfile = 0;
     argi = 1;
@@ -175,34 +175,11 @@ int main(int argc, char **argv) {
         if (argv[argi][0] == 45 && argv[argi][1] == 73) {  /* "-I" */
             if (argv[argi][2] != 0) {
                 /* -Idir (no space) */
-                i = 0;
-                j = 2;
-                while (argv[argi][j] != 0) {
-                    pp_idir[i] = argv[argi][j];
-                    i = i + 1;
-                    j = j + 1;
-                }
-                /* Ensure trailing slash */
-                if (i > 0 && pp_idir[i - 1] != 47) {
-                    pp_idir[i] = 47;
-                    i = i + 1;
-                }
-                pp_idir[i] = 0;
+                pp_add_idir(argv[argi] + 2);
             } else if (argi + 1 < argc) {
                 /* -I dir (with space) */
                 argi = argi + 1;
-                i = 0;
-                j = 0;
-                while (argv[argi][j] != 0) {
-                    pp_idir[i] = argv[argi][j];
-                    i = i + 1;
-                    j = j + 1;
-                }
-                if (i > 0 && pp_idir[i - 1] != 47) {
-                    pp_idir[i] = 47;
-                    i = i + 1;
-                }
-                pp_idir[i] = 0;
+                pp_add_idir(argv[argi]);
             }
         } else if (infile == 0) {
             infile = argv[argi];
@@ -211,6 +188,10 @@ int main(int argc, char **argv) {
         }
         argi = argi + 1;
     }
+
+    /* Fallback selfhost headers used by stage07 tests and bootstrap code. */
+    pp_add_idir("selfhost/stage07/include");
+    pp_add_idir("include");
 
     if (infile == 0 || outfile == 0) {
         fdputs("Usage: s12cc [-I dir] input.c output.s\n", 2);

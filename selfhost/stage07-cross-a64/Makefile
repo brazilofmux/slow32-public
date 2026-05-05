@@ -115,6 +115,10 @@ test-crt0: $(OUT)/test_crt0 $(OUT)/crt0_main.o $(OUT)/crt0_stubs.o
 $(OUT)/cc_%.o: tests/cc_%.c $(OUT)/cc-a64
 	@$(OUT)/cc-a64 -c $< -o $@ >/dev/null
 
+$(OUT)/cc_multi_include.o: tests/cc_multi_include.c $(OUT)/cc-a64 \
+                           tests/inc_one/one.h tests/inc_two/two.h
+	@$(OUT)/cc-a64 -Itests/inc_one -Itests/inc_two -c $< -o $@ >/dev/null
+
 $(OUT)/cc_%_exe: $(OUT)/cc_%.o $(OUT)/crt0.o $(OUT)/crt0_stubs.o
 	@ld -o $@ $(OUT)/crt0.o $< $(OUT)/crt0_stubs.o
 
@@ -126,7 +130,8 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
          $(OUT)/cc_size_t_exe $(OUT)/cc_adj_string_exe \
          $(OUT)/cc_struct_multi_decl_exe $(OUT)/cc_global_struct_table_exe \
          $(OUT)/cc_local_static_assert_exe $(OUT)/cc_fwd_struct_offsetof_exe \
-         $(OUT)/cc_macro_paren_obj_exe \
+         $(OUT)/cc_macro_paren_obj_exe $(OUT)/cc_anon_nested_struct_exe \
+         $(OUT)/cc_multi_include_exe \
          $(OUT)/cc_string_exe
 	@$(OUT)/cc_hello_exe;     rc=$$?; if [ $$rc -eq 42 ];  then echo "cc_hello:     ok (exit=42)";     else echo "cc_hello:     FAIL (exit=$$rc, expected 42)";     exit 1; fi
 	@$(OUT)/cc_locals_exe;    rc=$$?; if [ $$rc -eq 42 ];  then echo "cc_locals:    ok (exit=42)";     else echo "cc_locals:    FAIL (exit=$$rc, expected 42)";     exit 1; fi
@@ -145,6 +150,8 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
 	@$(OUT)/cc_local_static_assert_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_local_static_assert: ok (exit=1)"; else echo "cc_local_static_assert: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_fwd_struct_offsetof_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_fwd_struct_offsetof: ok (exit=1)"; else echo "cc_fwd_struct_offsetof: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_macro_paren_obj_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_macro_paren_obj: ok (exit=1)"; else echo "cc_macro_paren_obj: FAIL (exit=$$rc, expected 1)"; exit 1; fi
+	@$(OUT)/cc_anon_nested_struct_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_anon_nested_struct: ok (exit=1)"; else echo "cc_anon_nested_struct: FAIL (exit=$$rc, expected 1)"; exit 1; fi
+	@$(OUT)/cc_multi_include_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_multi_include: ok (exit=1)"; else echo "cc_multi_include: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@out=$$($(OUT)/cc_string_exe 2>&1); rc=$$?; \
 		if [ "$$out" = "hi a64" ] && [ $$rc -eq 0 ]; then \
 			echo "cc_string:    ok (stdout=\"hi a64\", exit=0)"; \
@@ -277,6 +284,8 @@ clean:
 	      $(OUT)/cc_local_static_assert.o $(OUT)/cc_local_static_assert_exe \
 	      $(OUT)/cc_fwd_struct_offsetof.o $(OUT)/cc_fwd_struct_offsetof_exe \
 	      $(OUT)/cc_macro_paren_obj.o $(OUT)/cc_macro_paren_obj_exe \
+	      $(OUT)/cc_anon_nested_struct.o $(OUT)/cc_anon_nested_struct_exe \
+	      $(OUT)/cc_multi_include.o $(OUT)/cc_multi_include_exe \
 	      $(OUT)/cc_string.o $(OUT)/cc_string_exe \
 	      $(OUT)/ld-a64 $(OUT)/ar-a64 \
 	      $(OUT)/cc_lib_a.o $(OUT)/cc_lib_b.o $(OUT)/cc_uses_lib.o \
