@@ -133,6 +133,7 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
          $(OUT)/cc_macro_paren_obj_exe $(OUT)/cc_anon_nested_struct_exe \
          $(OUT)/cc_multi_include_exe \
          $(OUT)/cc_inline_asm_a64_exe \
+         $(OUT)/cc_dbt_c_forms_exe \
          $(OUT)/cc_string_exe
 	@$(OUT)/cc_hello_exe;     rc=$$?; if [ $$rc -eq 42 ];  then echo "cc_hello:     ok (exit=42)";     else echo "cc_hello:     FAIL (exit=$$rc, expected 42)";     exit 1; fi
 	@$(OUT)/cc_locals_exe;    rc=$$?; if [ $$rc -eq 42 ];  then echo "cc_locals:    ok (exit=42)";     else echo "cc_locals:    FAIL (exit=$$rc, expected 42)";     exit 1; fi
@@ -154,6 +155,7 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
 	@$(OUT)/cc_anon_nested_struct_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_anon_nested_struct: ok (exit=1)"; else echo "cc_anon_nested_struct: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_multi_include_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_multi_include: ok (exit=1)"; else echo "cc_multi_include: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_inline_asm_a64_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_inline_asm_a64: ok (exit=1)"; else echo "cc_inline_asm_a64: FAIL (exit=$$rc, expected 1)"; exit 1; fi
+	@$(OUT)/cc_dbt_c_forms_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_dbt_c_forms: ok (exit=1)"; else echo "cc_dbt_c_forms: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@out=$$($(OUT)/cc_string_exe 2>&1); rc=$$?; \
 		if [ "$$out" = "hi a64" ] && [ $$rc -eq 0 ]; then \
 			echo "cc_string:    ok (stdout=\"hi a64\", exit=0)"; \

@@ -1267,11 +1267,15 @@ static void parse_global_init_array_fixed(int elem_ty, int count, int gidx) {
     next();
     i = 0;
     while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
-        if (i > 0) expect(TK_COMMA);
+        if (i > 0) {
+            expect(TK_COMMA);
+            if (lex_tok == TK_RBRACE) break;
+        }
         if (i >= count) p_error("too many initializers");
         parse_global_init_value(elem_ty, gidx);
         i = i + 1;
     }
+    if (lex_tok == TK_COMMA) next();
     expect(TK_RBRACE);
     while (ps_ginit_cur_off(gidx) < start + (count * elem_sz)) {
         ps_ginit_emit_byte(0);
@@ -1288,6 +1292,7 @@ static void parse_global_init_struct(int ty, int gidx) {
     int arr_elem_ty;
     int arr_count;
     int struct_start;
+    char dnm[256];
 
     si = ty_struct_idx(ty);
     nf = st_nfields[si];
@@ -1295,8 +1300,20 @@ static void parse_global_init_struct(int ty, int gidx) {
     expect(TK_LBRACE);
     i = 0;
     while (lex_tok != TK_RBRACE && lex_tok != TK_EOF && i < nf) {
-        if (i > 0) expect(TK_COMMA);
-        mi = struct_field_nth_idx(si, i);
+        if (i > 0) {
+            expect(TK_COMMA);
+            if (lex_tok == TK_RBRACE) break;
+        }
+        if (lex_tok == TK_DOT) {
+            next();
+            if (lex_tok != TK_IDENT) p_error("expected field name in initializer");
+            memcpy(dnm, lex_str, lex_slen + 1);
+            next();
+            expect(TK_ASSIGN);
+            mi = find_member(ty, dnm);
+        } else {
+            mi = struct_field_nth_idx(si, i);
+        }
         if (mi < 0) p_error("missing struct field");
         field_start = struct_start + stm_off[mi];
         while (ps_ginit_cur_off(gidx) < field_start) ps_ginit_emit_byte(0);
@@ -1310,6 +1327,7 @@ static void parse_global_init_struct(int ty, int gidx) {
         }
         i = i + 1;
     }
+    if (lex_tok == TK_COMMA) next();
     expect(TK_RBRACE);
     while (ps_ginit_cur_off(gidx) < struct_start + ty_size(ty)) {
         ps_ginit_emit_byte(0);
@@ -1556,7 +1574,7 @@ static Node *parse_primary(void) {
             if (ps_lstatic[li]) {
                 n = nd_var(ps_lsname[li], 0, ps_ltype[li]);
                 n->is_local = 0;
-                n->is_array = 0;
+                n->is_array = ps_larr[li];
                 return n;
             }
             n = nd_var(nm, ps_loff[li], ps_ltype[li]);
@@ -2084,6 +2102,7 @@ static Node *parse_stmt(void) {
     int ty;
     int off;
     int count;
+    int count2;
     int ci;
     int cv;
     int neg;
@@ -2201,6 +2220,12 @@ static Node *parse_stmt(void) {
         } else if (is_type()) {
             /* for-loop init declaration: for (int i = 0; ...) */
             ty = parse_type();
+            skip_decl_qualifiers();
+            while (lex_tok == TK_STAR) {
+                ty = ty + TY_PTR;
+                next();
+                skip_decl_qualifiers();
+            }
             if (lex_tok != TK_IDENT) {
                 p_error("expected identifier in for-init");
                 return nd_num(0);
@@ -2438,6 +2463,102 @@ static Node *parse_stmt(void) {
                 count = parse_const_int();
             }
             expect(TK_RBRACK);
+            while (lex_tok == TK_LBRACK) {
+                next();
+                count2 = -1;
+                if (lex_tok != TK_RBRACK) {
+                    count2 = parse_const_int();
+                }
+                expect(TK_RBRACK);
+                if (count < 0 || count2 < 0) {
+                    p_error("array size required without initializer");
+                    return nd_num(0);
+                }
+                count = count * count2;
+            }
+            if (is_static) {
+                sp_idx = -1;
+                neg = 0;
+                if (count < 0) {
+                    if (lex_tok == TK_ASSIGN) {
+                        next();
+                        if (lex_tok == TK_STRING) {
+                            sp_idx = parse_string_literal();
+                            count = lex_str_len[sp_idx] + 1;
+                        } else if (lex_tok == TK_LBRACE) {
+                            neg = 1;
+                        } else {
+                            p_error("array size required without initializer");
+                            return nd_num(0);
+                        }
+                    } else {
+                        p_error("array size required without initializer");
+                        return nd_num(0);
+                    }
+                }
+                if (sp_idx < 0 && lex_tok == TK_ASSIGN) {
+                    next();
+                    if (lex_tok == TK_STRING) {
+                        sp_idx = parse_string_literal();
+                    } else if (lex_tok == TK_LBRACE) {
+                        neg = 1;
+                    } else {
+                        p_error("static local array initializer unsupported");
+                        return nd_num(0);
+                    }
+                }
+                ps_mangle_static(ps_cur_func, nm);
+                sl_gi = add_global(ps_sl_buf, ty + TY_PTR,
+                                   (count >= 0) ? ty_size(ty) * count : 0);
+                ps_glocal[sl_gi] = 1;
+                if (sp_idx >= 0) {
+                    sp = lex_strpool + lex_str_off[sp_idx];
+                    slen = lex_str_len[sp_idx];
+                    ps_ginit_begin(sl_gi);
+                    ci = 0;
+                    while (ci < slen && ci < count) {
+                        ps_ginit_emit_byte(sp[ci] & 255);
+                        ci = ci + 1;
+                    }
+                    while (ci < count) {
+                        ps_ginit_emit_byte(0);
+                        ci = ci + 1;
+                    }
+                    ps_ginit_finish(sl_gi);
+                } else if (neg) {
+                    ps_ginit_begin(sl_gi);
+                    ci = 0;
+                    expect(TK_LBRACE);
+                    while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+                        if (ci > 0) {
+                            expect(TK_COMMA);
+                            if (lex_tok == TK_RBRACE) break;
+                        }
+                        if (count >= 0 && ci >= count) p_error("too many initializers");
+                        parse_global_init_value(ty, sl_gi);
+                        ci = ci + 1;
+                    }
+                    if (lex_tok == TK_COMMA) next();
+                    expect(TK_RBRACE);
+                    if (count < 0) count = ci;
+                    ps_gsize[sl_gi] = ty_size(ty) * count;
+                    while (ps_ginit_cur_off(sl_gi) < ps_gsize[sl_gi]) {
+                        ps_ginit_emit_byte(0);
+                    }
+                    ps_ginit_finish(sl_gi);
+                }
+                expect(TK_SEMI);
+                sl_li = ps_nlocals;
+                if (sl_li >= P_MAX_LOCALS) { p_error("too many locals"); return nd_num(0); }
+                ps_lname[sl_li] = strdup(nm);
+                ps_loff[sl_li] = 0;
+                ps_ltype[sl_li] = ty + TY_PTR;
+                ps_larr[sl_li] = 1;
+                ps_lstatic[sl_li] = 1;
+                ps_lsname[sl_li] = strdup(ps_sl_buf);
+                ps_nlocals = ps_nlocals + 1;
+                return nd_block(NULL);
+            }
             head = NULL;
             if (lex_tok == TK_ASSIGN) {
                 next();
@@ -2541,7 +2662,10 @@ static Node *parse_stmt(void) {
                 nf = st_nfields[si];
                 ci = 0;  /* field index */
                 while (ci < nf && lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
-                    if (ci > 0) expect(TK_COMMA);
+                    if (ci > 0) {
+                        expect(TK_COMMA);
+                        if (lex_tok == TK_RBRACE) break;
+                    }
                     if (lex_tok == TK_DOT) {
                         next();
                         if (lex_tok != TK_IDENT) p_error("expected field name in initializer");
@@ -2592,6 +2716,7 @@ static Node *parse_stmt(void) {
                     }
                     ci = ci + 1;
                 }
+                if (lex_tok == TK_COMMA) next();
                 expect(TK_RBRACE);
                 expect(TK_SEMI);
                 if (head != NULL) return nd_block(head);
@@ -2936,11 +3061,15 @@ static Node *parse_top_decl(void) {
                 ps_ginit_begin(idx);
                 expect(TK_LBRACE);
                 while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
-                    if (gi > 0) expect(TK_COMMA);
+                    if (gi > 0) {
+                        expect(TK_COMMA);
+                        if (lex_tok == TK_RBRACE) break;
+                    }
                     if (count >= 0 && gi >= count) p_error("too many initializers");
                     parse_global_init_value(ty, idx);
                     gi = gi + 1;
                 }
+                if (lex_tok == TK_COMMA) next();
                 expect(TK_RBRACE);
                 if (count < 0) count = gi;
                 require_complete_type(ty, "incomplete element type");
