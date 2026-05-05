@@ -156,6 +156,12 @@ static int ty_is_unsigned(int ty) {
 #define ND_VA_START 33   /* va_start: lhs = ap variable */
 #define ND_VA_ARG   34   /* va_arg:   lhs = ap variable, ty = requested type */
 #define ND_FNUM     35   /* float/double literal: val=lo bits, val_hi=hi bits (f64) */
+#define ND_ASM      36   /* GNU inline asm subset: name=template, lhs=outputs, args=inputs */
+
+/* Inline asm templates recognized by the AArch64 backend. */
+#define ASM_GENERIC             0
+#define ASM_A64_MRS_CNTVCT      1
+#define ASM_A64_DBT_TRAMPOLINE  2
 
 /* --- AST node --- */
 struct Node {
@@ -435,5 +441,18 @@ static Node *nd_call_ptr(Node *callee, Node *a, int na) {
     n->args = a;
     n->nparams = na;
     n->ty = TY_INT;
+    return n;
+}
+
+static Node *nd_asm(char *tmpl, Node *out, Node *in, int kind, int nin) {
+    Node *n;
+    n = nd_new(ND_ASM);
+    n->name = strdup(tmpl);
+    n->lhs = out;
+    n->args = in;
+    n->val = kind;
+    n->nparams = nin;
+    if (out) n->ty = out->ty;
+    else n->ty = TY_INT;
     return n;
 }

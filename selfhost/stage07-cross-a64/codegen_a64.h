@@ -60,6 +60,7 @@ static char *cg_glob_name[CG_MAX_GLOBALS];
 static int   cg_glob_size[CG_MAX_GLOBALS];
 static int   cg_glob_init[CG_MAX_GLOBALS];
 static int   cg_glob_has_init[CG_MAX_GLOBALS];   /* 0=BSS, 1=scalar, 2=string */
+static int   cg_glob_extern[CG_MAX_GLOBALS];     /* 1=undefined object symbol */
 static int   cg_nglobals;
 
 /* Function symbols */
@@ -90,10 +91,12 @@ static int   cg_ncpatches;
 #define DRELOC_STRING 0
 #define DRELOC_GLOBAL 1
 #define DRELOC_BSS    2
+#define DRELOC_SYMBOL 3
 
 static int cg_dreloc_off[CG_MAX_DATA_RELOCS];
 static int cg_dreloc_kind[CG_MAX_DATA_RELOCS];
 static int cg_dreloc_idx[CG_MAX_DATA_RELOCS];
+static char *cg_dreloc_name[CG_MAX_DATA_RELOCS];
 static int cg_ndrelocs;
 
 /* Object mode: write a .o instead of an executable. */
@@ -481,6 +484,28 @@ static void cg_data_addr(int kind, int idx) {
     }
 }
 
+static void cg_emit_a64_dbt_trampoline(void) {
+    a64_stp_x_pre(A64_X29, A64_X30, A64_SP, -16);
+    a64_stp_x_pre(A64_X27, A64_X28, A64_SP, -16);
+    a64_stp_x_pre(A64_X25, A64_X26, A64_SP, -16);
+    a64_stp_x_pre(A64_X23, A64_X24, A64_SP, -16);
+    a64_stp_x_pre(A64_X21, A64_X22, A64_SP, -16);
+    a64_stp_x_pre(A64_X19, A64_X20, A64_SP, -16);
+
+    a64_mov_x(A64_X20, A64_X0);
+    a64_mov_x(A64_X21, A64_X1);
+    a64_mov_x(A64_X22, A64_X3);
+
+    a64_blr(A64_X2);
+
+    a64_ldp_x_post(A64_X19, A64_X20, A64_SP, 16);
+    a64_ldp_x_post(A64_X21, A64_X22, A64_SP, 16);
+    a64_ldp_x_post(A64_X23, A64_X24, A64_SP, 16);
+    a64_ldp_x_post(A64_X25, A64_X26, A64_SP, 16);
+    a64_ldp_x_post(A64_X27, A64_X28, A64_SP, 16);
+    a64_ldp_x_post(A64_X29, A64_X30, A64_SP, 16);
+}
+
 /* Load value at [x0] into w0 / x0 with correct width for type. */
 static void cg_load(int ty) {
     if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
@@ -592,6 +617,50 @@ static void gen_expr(Node *n) {
 
     if (n->kind == ND_STRING) {
         cg_data_addr(DRELOC_STRING, n->val);
+        return;
+    }
+
+    if (n->kind == ND_ASM) {
+        if (n->val == ASM_A64_MRS_CNTVCT) {
+            a64_mrs_cntvct_el0(A64_X0);
+            if (n->lhs) {
+                cg_push();
+                gen_addr(n->lhs);
+                cg_pop();
+                cg_store(n->lhs->ty);
+                if (cg_is_64bit(n->lhs->ty)) a64_mov_x(A64_X0, A64_X1);
+                else                         a64_mov_w(A64_X0, A64_X1);
+            }
+            return;
+        }
+        if (n->val == ASM_A64_DBT_TRAMPOLINE) {
+            int nargs;
+            int arg_reg[4];
+            Node *arg;
+            arg_reg[0] = A64_X0;
+            arg_reg[1] = A64_X1;
+            arg_reg[2] = A64_X2;
+            arg_reg[3] = A64_X3;
+            nargs = 0;
+            arg = n->args;
+            while (arg) {
+                gen_expr(arg);
+                cg_push();
+                nargs = nargs + 1;
+                arg = arg->next;
+            }
+            i = 0;
+            while (i < nargs && i < 4) {
+                int off;
+                off = (nargs - 1 - i) * 16;
+                a64_ldr_x_imm(arg_reg[i], A64_SP, off);
+                i = i + 1;
+            }
+            if (nargs > 0) a64_add_x_imm(A64_SP, A64_SP, nargs * 16);
+            cg_emit_a64_dbt_trampoline();
+            return;
+        }
+        p_error("unsupported inline asm");
         return;
     }
 
@@ -1385,6 +1454,11 @@ static void gen_data_sections(Node *prog) {
     i = 0;
     while (i < cg_nglobals) {
         cg_glob_in_bss[i] = 0;
+        if (cg_glob_extern[i]) {
+            cg_glob_data_off[i] = 0;
+            i = i + 1;
+            continue;
+        }
         if (cg_glob_has_init[i] == 0) {
             cg_glob_in_bss[i] = 1;
             i = i + 1;
@@ -1419,10 +1493,16 @@ static void gen_data_sections(Node *prog) {
             relj = relbase;
             while (relj < relend) {
                 cg_dreloc_off[cg_ndrelocs]  = -(cg_glob_data_off[i] + ps_girel_off[relj] + 1);
-                if (ps_girel_kind[relj] == GIRELOC_STRING)
+                if (ps_girel_kind[relj] == GIRELOC_STRING) {
                     cg_dreloc_kind[cg_ndrelocs] = DRELOC_STRING;
-                else
+                    cg_dreloc_name[cg_ndrelocs] = NULL;
+                } else if (ps_girel_kind[relj] == GIRELOC_SYMBOL) {
+                    cg_dreloc_kind[cg_ndrelocs] = DRELOC_SYMBOL;
+                    cg_dreloc_name[cg_ndrelocs] = ps_girel_name[relj];
+                } else {
                     cg_dreloc_kind[cg_ndrelocs] = DRELOC_GLOBAL;
+                    cg_dreloc_name[cg_ndrelocs] = NULL;
+                }
                 cg_dreloc_idx[cg_ndrelocs]  = ps_girel_idx[relj];
                 cg_ndrelocs = cg_ndrelocs + 1;
                 relj = relj + 1;
@@ -1437,6 +1517,7 @@ static void gen_data_sections(Node *prog) {
             cg_dreloc_off[cg_ndrelocs]  = -(cg_data_len + 1);
             cg_dreloc_kind[cg_ndrelocs] = DRELOC_STRING;
             cg_dreloc_idx[cg_ndrelocs]  = cg_glob_init[i];
+            cg_dreloc_name[cg_ndrelocs] = NULL;
             cg_ndrelocs = cg_ndrelocs + 1;
             j = 0;
             while (j < 8) {
@@ -1516,8 +1597,9 @@ static void cg_resolve_adrp_add(int site_adrp, int site_add, int target,
 
 static void resolve_relocations(void) {
     int i;
-    int rodata_base; int data_base;
+    int text_base; int rodata_base; int data_base;
 
+    text_base = elf_text_vaddr();
     rodata_base = elf_rodata_vaddr();
     data_base   = elf_data_vaddr();
 
@@ -1533,10 +1615,23 @@ static void resolve_relocations(void) {
 
         if (kind == DRELOC_STRING) {
             addr = rodata_base + cg_str_rodata_off[idx];
+        } else if (kind == DRELOC_SYMBOL) {
+            int fi;
+            addr = 0;
+            fi = 0;
+            while (fi < cg_nfuncs) {
+                if (cg_strcmp(cg_dreloc_name[i], cg_func_name[fi]) == 0) {
+                    addr = text_base + cg_func_off[fi];
+                    break;
+                }
+                fi = fi + 1;
+            }
         } else {
             int gidx;
             gidx = idx;
-            if (gidx < cg_nglobals && cg_glob_in_bss[gidx])
+            if (gidx < cg_nglobals && cg_glob_extern[gidx])
+                addr = 0;
+            else if (gidx < cg_nglobals && cg_glob_in_bss[gidx])
                 addr = data_base + cg_data_len + cg_glob_data_off[gidx];
             else
                 addr = data_base + cg_glob_data_off[gidx];
@@ -1609,7 +1704,9 @@ static void resolve_calls(void) {
             j = 0;
             while (j < cg_nglobals) {
                 if (cg_strcmp(name, cg_glob_name[j]) == 0) {
-                    if (cg_glob_in_bss[j])
+                    if (cg_glob_extern[j])
+                        target_addr = 0;
+                    else if (cg_glob_in_bss[j])
                         target_addr = data_base + cg_data_len + cg_glob_data_off[j];
                     else
                         target_addr = data_base + cg_glob_data_off[j];
@@ -1697,6 +1794,7 @@ static void collect_globals(Node *prog) {
     i = 0;
     while (i < ps_nglobals) {
         cg_glob_name[cg_nglobals] = ps_gname[i];
+        cg_glob_extern[cg_nglobals] = ps_gextern[i];
         if (ps_gsize[i] > 0) sz = ps_gsize[i];
         else                 sz = cg_a64_global_size(ps_gtype[i], 0);
         cg_glob_size[cg_nglobals] = sz;

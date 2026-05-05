@@ -345,6 +345,44 @@ static int hl_expr(Node *n) {
         return hi_emit(HI_SADDR, n->ty, -1, -1, n->val, NULL);
     }
 
+    /* GNU inline asm subset */
+    if (n->kind == ND_ASM) {
+        if (n->val == ASM_A64_MRS_CNTVCT) {
+            val = hi_emit(HI_A64_MRS_CNTVCT, n->lhs ? n->lhs->ty : TY_LLONG,
+                          -1, -1, 0, NULL);
+            if (n->lhs) {
+                addr = hl_addr(n->lhs);
+                hi_emit(HI_STORE, n->lhs->ty, addr, val, 0, NULL);
+            }
+            return val;
+        }
+        if (n->val == ASM_A64_DBT_TRAMPOLINE) {
+            int av[8];
+            int base;
+            Node *aa;
+            aa = n->args;
+            nargs = 0;
+            while (aa) {
+                if (nargs >= 8) p_error("too many asm args");
+                av[nargs] = hl_expr(aa);
+                nargs = nargs + 1;
+                aa = aa->next;
+            }
+            base = h_ncarg;
+            i = 0;
+            while (i < nargs) {
+                h_carg[h_ncarg] = av[i];
+                h_ncarg = h_ncarg + 1;
+                i = i + 1;
+            }
+            val = hi_emit(HI_A64_DBT_TRAMPOLINE, TY_INT, -1, -1, nargs, NULL);
+            h_cbase[val] = base;
+            return val;
+        }
+        p_error("unsupported inline asm");
+        return -1;
+    }
+
     /* Variable */
     if (n->kind == ND_VAR) {
         if (n->is_array || ty_is_struct(n->ty)) {

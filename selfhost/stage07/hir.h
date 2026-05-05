@@ -74,6 +74,10 @@
 #define HI_SEXT32   59  /* sign-extend 32→64: src1=32-bit value → 64-bit signed */
 #define HI_ZEXT32   60  /* zero-extend 32→64: src1=32-bit value → 64-bit unsigned */
 
+/* AArch64 inline-asm subset needed by tools/dbt. */
+#define HI_A64_MRS_CNTVCT     61  /* mrs Xt, cntvct_el0 */
+#define HI_A64_DBT_TRAMPOLINE 62  /* execute translated block trampoline; args in h_carg */
+
 /* --- Limits --- */
 #define HIR_MAX_INST   16384
 #define HIR_MAX_BLOCK  2048
@@ -171,6 +175,7 @@ static int hi_has_value(int kind) {
     if (kind == HI_BR) return 0;
     if (kind == HI_BRC) return 0;
     if (kind == HI_RET) return 0;
+    if (kind == HI_A64_DBT_TRAMPOLINE) return 0;
     return 1;
 }
 

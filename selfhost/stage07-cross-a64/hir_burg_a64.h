@@ -34,7 +34,7 @@
 #define BG_INF    999999
 
 /* --- Pattern table --- */
-#define BG_MAX_PAT 128
+#define BG_MAX_PAT 160
 
 static int bg_pnt[BG_MAX_PAT];     /* result nonterminal */
 static int bg_pop[BG_MAX_PAT];     /* HIR operator */
@@ -44,8 +44,8 @@ static int bg_pcost[BG_MAX_PAT];   /* base cost */
 static int bg_npat;
 
 /* Per-operator index */
-#define BG_MAX_OP 60
-#define BG_OP_SZ 61
+#define BG_MAX_OP 62
+#define BG_OP_SZ 63
 static int bg_ofirst[BG_OP_SZ];
 static int bg_ocount[BG_OP_SZ];
 static int bg_sorted[BG_MAX_PAT];
@@ -122,6 +122,7 @@ static void bg_init(void) {
     bg_add_pat(BG_REG,   HI_FADDR,  -1, -1, 2);
     bg_add_pat(BG_REG,   HI_PARAM,  -1, -1, 0);  /* 0: already in register from regalloc */
     bg_add_pat(BG_REG,   HI_GETFP,  -1, -1, 1);
+    bg_add_pat(BG_REG,   HI_A64_MRS_CNTVCT, -1, -1, 1);
 
     /* Addressing: LOAD */
     bg_add_pat(BG_REG,  HI_LOAD, BG_MEM,   -1, 1);  /* ldr r, [Xn + #disp] */
@@ -199,6 +200,7 @@ static void bg_init(void) {
     bg_add_pat(BG_STMT, HI_BR,  -1, -1, 1);
     bg_add_pat(BG_STMT, HI_BRC, BG_REG, -1, 1);
     bg_add_pat(BG_STMT, HI_RET, -1, -1, 1);
+    bg_add_pat(BG_STMT, HI_A64_DBT_TRAMPOLINE, -1, -1, 20);
 
     /* Calls */
     bg_add_pat(BG_REG, HI_CALL,  -1, -1, 3);
@@ -349,7 +351,7 @@ static void bg_count_uses(void) {
         if (h_src1[i] >= 0) bg_uses[h_src1[i]] = bg_uses[h_src1[i]] + 1;
         if (h_src2[i] >= 0 && ho_src2_is_ref(k)) bg_uses[h_src2[i]] = bg_uses[h_src2[i]] + 1;
 
-        if (k == HI_CALL || k == HI_CALLP) {
+        if (k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE) {
             base = h_cbase[i];
             cnt = h_val[i];
             j = 0;

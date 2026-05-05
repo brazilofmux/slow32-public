@@ -351,9 +351,14 @@ static int obj_write_file(char *filename) {
 
     i = 0;
     while (i < cg_nglobals) {
-        obj_add_sym(cg_glob_name[i], cg_glob_data_off[i],
-                    cg_glob_in_bss[i] ? OBJ_SEC_BSS : OBJ_SEC_DATA,
-                    OBJ_STB_GLOBAL, OBJ_STT_OBJECT);
+        if (cg_glob_extern[i]) {
+            obj_add_sym(cg_glob_name[i], 0, 0,
+                        OBJ_STB_GLOBAL, OBJ_STT_OBJECT);
+        } else {
+            obj_add_sym(cg_glob_name[i], cg_glob_data_off[i],
+                        cg_glob_in_bss[i] ? OBJ_SEC_BSS : OBJ_SEC_DATA,
+                        OBJ_STB_GLOBAL, OBJ_STT_OBJECT);
+        }
         i = i + 1;
     }
 
@@ -368,6 +373,15 @@ static int obj_write_file(char *filename) {
                 if (obj_find_sym(cn) < 0)
                     obj_add_sym(cn, 0, 0, OBJ_STB_GLOBAL, OBJ_STT_NOTYPE);
             }
+        }
+        i = i + 1;
+    }
+
+    i = 0;
+    while (i < cg_ndrelocs) {
+        if (cg_dreloc_kind[i] == DRELOC_SYMBOL && cg_dreloc_name[i] != 0) {
+            if (obj_find_sym(cg_dreloc_name[i]) < 0)
+                obj_add_sym(cg_dreloc_name[i], 0, 0, OBJ_STB_GLOBAL, OBJ_STT_NOTYPE);
         }
         i = i + 1;
     }
@@ -462,12 +476,24 @@ static int obj_write_file(char *filename) {
             if (cg_dreloc_kind[i] == DRELOC_STRING) {
                 obj_emit_rela(doff, OBJ_SEC_RODATA, R_AARCH64_ABS64,
                               cg_str_rodata_off[cg_dreloc_idx[i]]);
+            } else if (cg_dreloc_kind[i] == DRELOC_SYMBOL) {
+                int sym;
+                sym = obj_find_sym(cg_dreloc_name[i]);
+                if (sym < 0) sym = 0;
+                obj_emit_rela(doff, sym, R_AARCH64_ABS64, 0);
             } else {
                 int gidx; int gsec;
                 gidx = cg_dreloc_idx[i];
-                gsec = (gidx < cg_nglobals && cg_glob_in_bss[gidx]) ? OBJ_SEC_BSS : OBJ_SEC_DATA;
-                obj_emit_rela(doff, gsec, R_AARCH64_ABS64,
-                              cg_glob_data_off[gidx]);
+                if (gidx < cg_nglobals && cg_glob_extern[gidx]) {
+                    int sym;
+                    sym = obj_find_sym(cg_glob_name[gidx]);
+                    if (sym < 0) sym = 0;
+                    obj_emit_rela(doff, sym, R_AARCH64_ABS64, 0);
+                } else {
+                    gsec = (gidx < cg_nglobals && cg_glob_in_bss[gidx]) ? OBJ_SEC_BSS : OBJ_SEC_DATA;
+                    obj_emit_rela(doff, gsec, R_AARCH64_ABS64,
+                                  cg_glob_data_off[gidx]);
+                }
             }
         }
         i = i + 1;

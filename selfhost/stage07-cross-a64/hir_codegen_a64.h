@@ -862,6 +862,11 @@ static void hx_emit_inst(int idx) {
         hx_spill(idx, dst);
         return;
     }
+    if (k == HI_A64_MRS_CNTVCT) {
+        a64_mrs_cntvct_el0(dst);
+        hx_spill(idx, dst);
+        return;
+    }
     if (k == HI_PARAM) {
         /* The value is supposed to already be in its assigned register
          * (regalloc tries to keep PARAM in arg-reg).  If not, the prologue
@@ -1545,6 +1550,35 @@ static void hx_emit_inst(int idx) {
         return;
     }
 
+    if (k == HI_A64_DBT_TRAMPOLINE) {
+        int base;
+        int nargs;
+        int j;
+        int arg_reg[4];
+        arg_reg[0] = A64_X0;
+        arg_reg[1] = A64_X1;
+        arg_reg[2] = A64_X2;
+        arg_reg[3] = A64_X3;
+        base = h_cbase[idx];
+        nargs = h_val[idx];
+        j = 0;
+        while (j < nargs) {
+            hx_mat(h_carg[base + j], HX_SCRATCH1);
+            a64_str_x_pre(HX_SCRATCH1, A64_SP, -16);
+            j = j + 1;
+        }
+        j = 0;
+        while (j < nargs && j < 4) {
+            int off;
+            off = (nargs - 1 - j) * 16;
+            a64_ldr_x_imm(arg_reg[j], A64_SP, off);
+            j = j + 1;
+        }
+        if (nargs > 0) a64_add_x_imm(A64_SP, A64_SP, nargs * 16);
+        cg_emit_a64_dbt_trampoline();
+        return;
+    }
+
     /* Unhandled */
     hx_die("hx_emit_inst: unhandled kind", idx);
 }
@@ -1666,7 +1700,7 @@ static void hx_gen_func(Node *fn) {
         while (i_ < h_ninst && can_nf) {
             int k_;
             k_ = h_kind[i_];
-            if (k_ == HI_CALL || k_ == HI_CALLP || k_ == HI_ALLOCA) can_nf = 0;
+            if (k_ == HI_CALL || k_ == HI_CALLP || k_ == HI_A64_DBT_TRAMPOLINE || k_ == HI_ALLOCA) can_nf = 0;
             else if (ra_spill_off[i_] != 0) can_nf = 0;
             i_ = i_ + 1;
         }

@@ -18,6 +18,8 @@ static int cg_strcmp(char *a, char *b) {
 
 #define DRELOC_STRING 0
 #define DRELOC_GLOBAL 1
+#define DRELOC_BSS    2
+#define DRELOC_SYMBOL 3
 
 #define CG_MAX_FUNCS    256
 #define CG_MAX_GLOBALS  256
@@ -32,6 +34,7 @@ static int   cg_nfuncs;
 static char *cg_glob_name[CG_MAX_GLOBALS];
 static int   cg_glob_data_off[CG_MAX_GLOBALS];
 static int   cg_glob_in_bss[CG_MAX_GLOBALS];
+static int   cg_glob_extern[CG_MAX_GLOBALS];
 static int   cg_nglobals;
 
 static char *cg_cpatch_name[CG_MAX_PATCHES];
@@ -52,6 +55,7 @@ static void cg_cpatch_add(char *name, int off, int kind, int addend) {
 static int   cg_dreloc_off[CG_MAX_DRELOCS];
 static int   cg_dreloc_kind[CG_MAX_DRELOCS];
 static int   cg_dreloc_idx[CG_MAX_DRELOCS];
+static char *cg_dreloc_name[CG_MAX_DRELOCS];
 static int   cg_ndrelocs;
 
 static int   cg_str_rodata_off[CG_MAX_STRINGS];

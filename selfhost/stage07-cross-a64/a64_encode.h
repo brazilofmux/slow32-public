@@ -1339,6 +1339,11 @@ static void a64_brk(int imm16)   { a64_inst(0xD4200000 | ((imm16 & 0xFFFF) << 5)
 static void a64_svc(int imm16)   { a64_inst(0xD4000001 | ((imm16 & 0xFFFF) << 5)); }
 static void a64_dmb_ishst(void)  { a64_inst(0xD5033ABF); }
 
+/* MRS Xt, CNTVCT_EL0. */
+static void a64_mrs_cntvct_el0(int rt) {
+    a64_inst(0xD53BE040 | (rt & 0x1F));
+}
+
 // ============================================================================
 // Patching helpers — for forward branches whose target is unknown at emit time
 // ============================================================================

@@ -153,6 +153,7 @@ static int   ps_ginit[P_MAX_GLOBALS]; /* initial value for scalars */
 static int   ps_ginit_hi[P_MAX_GLOBALS]; /* hi word for 64-bit global initializers */
 static int   ps_gstr[P_MAX_GLOBALS];  /* string init: pool index, -1 if none */
 static int   ps_glocal[P_MAX_GLOBALS]; /* 1 = static local (suppress .global) */
+static int   ps_gextern[P_MAX_GLOBALS]; /* 1 = declaration only, no storage */
 static int   ps_nglobals;
 
 /* Static local variable state */
@@ -170,12 +171,14 @@ static int ps_ginit_pool_len;
 #define PS_MAX_INIT_RELOCS 8192
 #define GIRELOC_STRING 0
 #define GIRELOC_GLOBAL 1
+#define GIRELOC_SYMBOL 2
 static int ps_girel_start[P_MAX_GLOBALS];
 static int ps_girel_count[P_MAX_GLOBALS];
 static int ps_girel_off[PS_MAX_INIT_RELOCS];
 static int ps_girel_kind[PS_MAX_INIT_RELOCS];
 static int ps_girel_idx[PS_MAX_INIT_RELOCS];
 static int ps_girel_size[PS_MAX_INIT_RELOCS];
+static char *ps_girel_name[PS_MAX_INIT_RELOCS];
 static int ps_ngirelocs;
 
 /* goto/label table (per-function, reset at each function) */
@@ -206,6 +209,7 @@ static Node *parse_expr(void);
 static Node *parse_stmt(void);
 static Node *parse_assign(void);
 static Node *parse_postfix(void);
+static Node *parse_gnu_asm_stmt(void);
 
 /* --- Utilities --- */
 
@@ -922,6 +926,7 @@ static int add_global(char *name, int ty, int size_bytes) {
     ps_gname[idx] = strdup(name);
     ps_gtype[idx] = ty;
     ps_gsize[idx] = size_bytes;
+    ps_ginit[idx] = 0;
     ps_ginit_hi[idx] = 0;
     ps_gstr[idx] = -1;
     ps_ginit_start[idx] = -1;
@@ -929,8 +934,42 @@ static int add_global(char *name, int ty, int size_bytes) {
     ps_girel_start[idx] = -1;
     ps_girel_count[idx] = 0;
     ps_glocal[idx] = 0;
+    ps_gextern[idx] = 0;
     ps_nglobals = ps_nglobals + 1;
     return idx;
+}
+
+static void ps_reset_global_init(int idx) {
+    ps_ginit[idx] = 0;
+    ps_ginit_hi[idx] = 0;
+    ps_gstr[idx] = -1;
+    ps_ginit_start[idx] = -1;
+    ps_ginit_count[idx] = 0;
+    ps_girel_start[idx] = -1;
+    ps_girel_count[idx] = 0;
+}
+
+static int add_extern_global(char *name, int ty, int size_bytes) {
+    int idx;
+    idx = find_global(name);
+    if (idx >= 0) return idx;
+    idx = add_global(name, ty, size_bytes);
+    ps_gextern[idx] = 1;
+    return idx;
+}
+
+static int add_defined_global(char *name, int ty, int size_bytes) {
+    int idx;
+    idx = find_global(name);
+    if (idx >= 0 && ps_gextern[idx]) {
+        ps_gtype[idx] = ty;
+        ps_gsize[idx] = size_bytes;
+        ps_glocal[idx] = 0;
+        ps_gextern[idx] = 0;
+        ps_reset_global_init(idx);
+        return idx;
+    }
+    return add_global(name, ty, size_bytes);
 }
 
 /* Build mangled name for a static local: funcname.varname.N */
@@ -1125,8 +1164,69 @@ static void ps_ginit_add_reloc(int gidx, int kind, int idx, int sz) {
     ps_girel_kind[ps_ngirelocs] = kind;
     ps_girel_idx[ps_ngirelocs] = idx;
     ps_girel_size[ps_ngirelocs] = sz;
+    ps_girel_name[ps_ngirelocs] = NULL;
     ps_ngirelocs = ps_ngirelocs + 1;
     ps_ginit_emit_zeroes(sz);
+}
+
+static void ps_ginit_add_sym_reloc(int gidx, char *name, int sz) {
+    if (ps_ngirelocs >= PS_MAX_INIT_RELOCS) p_error("too many init relocs");
+    ps_girel_off[ps_ngirelocs] = ps_ginit_cur_off(gidx);
+    ps_girel_kind[ps_ngirelocs] = GIRELOC_SYMBOL;
+    ps_girel_idx[ps_ngirelocs] = 0;
+    ps_girel_size[ps_ngirelocs] = sz;
+    ps_girel_name[ps_ngirelocs] = strdup(name);
+    ps_ngirelocs = ps_ngirelocs + 1;
+    ps_ginit_emit_zeroes(sz);
+}
+
+static int try_consume_type_cast(void) {
+    int sv_tok;
+    int sv_val;
+    int sv_slen;
+    int sv_rcs;
+    int sv_ract;
+    char *sv_rp;
+    char *sv_rts;
+    char *sv_rte;
+    char sv_str[256];
+    int ty;
+
+    if (lex_tok != TK_LPAREN) return 0;
+    sv_tok = lex_tok; sv_val = lex_val; sv_slen = lex_slen;
+    sv_rcs = lex_rcs; sv_ract = lex_ract;
+    sv_rp = lex_rp; sv_rts = lex_rts; sv_rte = lex_rte;
+    memcpy(sv_str, lex_str, lex_slen + 1);
+
+    next();
+    if (!is_type()) {
+        lex_tok = sv_tok; lex_val = sv_val; lex_slen = sv_slen;
+        lex_rcs = sv_rcs; lex_ract = sv_ract;
+        lex_rp = sv_rp; lex_rts = sv_rts; lex_rte = sv_rte;
+        memcpy(lex_str, sv_str, sv_slen + 1);
+        return 0;
+    }
+    ty = parse_type();
+    (void)ty;
+    while (lex_tok == TK_STAR) next();
+    skip_decl_qualifiers();
+    expect(TK_RPAREN);
+    return 1;
+}
+
+static int parse_global_init_symbol_reloc(int gidx, int sz) {
+    char nm[256];
+    int ci;
+
+    while (try_consume_type_cast()) {
+    }
+    if (lex_tok != TK_IDENT) return 0;
+    ci = find_const(lex_str);
+    if (ci >= 0) return 0;
+    memcpy(nm, lex_str, lex_slen + 1);
+    next();
+    ps_ginit_add_sym_reloc(gidx, nm, sz);
+    return 1;
 }
 
 static void parse_global_init_value(int ty, int gidx);
@@ -1229,6 +1329,9 @@ static void parse_global_init_value(int ty, int gidx) {
         ps_ginit_add_reloc(gidx, GIRELOC_STRING, sp_idx, ty_size(ty));
         return;
     }
+    if (ty_is_ptr(ty) && parse_global_init_symbol_reloc(gidx, ty_size(ty))) {
+        return;
+    }
     v = parse_const_int();
     ps_ginit_emit_int(v, ty_size(ty));
 }
@@ -1272,6 +1375,132 @@ static int parse_string_literal(void) {
     lex_str_len[lex_str_count] = total;
     lex_str_count = lex_str_count + 1;
     return lex_str_count - 1;
+}
+
+static int ps_str_contains(char *s, char *needle) {
+    int i;
+    int j;
+
+    i = 0;
+    if (needle[0] == 0) return 1;
+    while (s[i]) {
+        j = 0;
+        while (s[i + j] && needle[j] && s[i + j] == needle[j]) {
+            j = j + 1;
+        }
+        if (needle[j] == 0) return 1;
+        i = i + 1;
+    }
+    return 0;
+}
+
+static int classify_gnu_asm(char *tmpl) {
+    if (ps_str_contains(tmpl, "mrs") &&
+        ps_str_contains(tmpl, "cntvct_el0")) {
+        return ASM_A64_MRS_CNTVCT;
+    }
+    if (ps_str_contains(tmpl, "stp x29, x30") &&
+        ps_str_contains(tmpl, "mov x20, x0") &&
+        ps_str_contains(tmpl, "mov x21, x1") &&
+        ps_str_contains(tmpl, "mov x22, x3") &&
+        ps_str_contains(tmpl, "blr x2")) {
+        return ASM_A64_DBT_TRAMPOLINE;
+    }
+    return ASM_GENERIC;
+}
+
+static Node *parse_asm_operands(int *out_count) {
+    Node *head;
+    Node *tail;
+    Node *op;
+    int count;
+
+    head = NULL;
+    tail = NULL;
+    count = 0;
+
+    while (lex_tok != TK_COLON && lex_tok != TK_RPAREN && lex_tok != TK_EOF) {
+        if (count > 0) expect(TK_COMMA);
+
+        /* Optional GNU symbolic operand name: [name] "r" (expr). */
+        if (lex_tok == TK_LBRACK) {
+            next();
+            if (lex_tok == TK_IDENT) next();
+            expect(TK_RBRACK);
+        }
+
+        if (lex_tok != TK_STRING) p_error("expected asm constraint");
+        parse_string_literal();
+        expect(TK_LPAREN);
+        op = parse_assign();
+        expect(TK_RPAREN);
+        op->next = NULL;
+
+        if (head == NULL) {
+            head = op;
+            tail = op;
+        } else {
+            tail->next = op;
+            tail = op;
+        }
+        count = count + 1;
+    }
+
+    *out_count = count;
+    return head;
+}
+
+static void parse_asm_clobbers(void) {
+    while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) {
+        if (lex_tok != TK_STRING) p_error("expected asm clobber");
+        parse_string_literal();
+        if (lex_tok == TK_COMMA) next();
+        else break;
+    }
+}
+
+static Node *parse_gnu_asm_stmt(void) {
+    int tmpl_idx;
+    char *tmpl;
+    Node *outputs;
+    Node *inputs;
+    int nout;
+    int nin;
+
+    if (!is_gnu_asm_ident()) p_error("expected asm");
+    next();
+    while (lex_tok == TK_VOLATILE || is_gnu_qual_ident()) next();
+
+    expect(TK_LPAREN);
+    if (lex_tok != TK_STRING) p_error("expected asm template");
+    tmpl_idx = parse_string_literal();
+    tmpl = lex_strpool + lex_str_off[tmpl_idx];
+
+    outputs = NULL;
+    inputs = NULL;
+    nout = 0;
+    nin = 0;
+
+    if (lex_tok == TK_COLON) {
+        next();
+        if (lex_tok != TK_COLON && lex_tok != TK_RPAREN) {
+            outputs = parse_asm_operands(&nout);
+        }
+        if (lex_tok == TK_COLON) {
+            next();
+            if (lex_tok != TK_COLON && lex_tok != TK_RPAREN) {
+                inputs = parse_asm_operands(&nin);
+            }
+            if (lex_tok == TK_COLON) {
+                next();
+                parse_asm_clobbers();
+            }
+        }
+    }
+
+    expect(TK_RPAREN);
+    (void)nout;
+    return nd_asm(tmpl, outputs, inputs, classify_gnu_asm(tmpl), nin);
 }
 
 /* --- Expression parser (operator precedence climbing) --- */
@@ -1873,10 +2102,18 @@ static Node *parse_stmt(void) {
     int saw_unnamed_param;
     char *sp;
     char nm[256];
+    char dnm[256];
     /* Lexer save/restore for label lookahead */
     int sv_tok; int sv_val; int sv_slen; int sv_rcs; int sv_ract;
     char *sv_rp; char *sv_rts; char *sv_rte;
     char sv_str[256];
+
+    /* GNU inline asm statement. */
+    if (is_gnu_asm_ident()) {
+        n = parse_gnu_asm_stmt();
+        expect(TK_SEMI);
+        return nd_expr_stmt(n);
+    }
 
     /* Function-scope _Static_assert(expr, "message") */
     if (lex_tok == TK_STATIC_ASSERT) {
@@ -2026,7 +2263,7 @@ static Node *parse_stmt(void) {
             neg = 1;
             next();
         }
-        if (lex_tok == TK_NUM) {
+        if (lex_tok == TK_NUM || lex_tok == TK_CHARLIT) {
             cv = lex_val;
             next();
         } else if (lex_tok == TK_IDENT) {
@@ -2096,15 +2333,22 @@ static Node *parse_stmt(void) {
     /* Track static qualifier before local declarations */
     {
     int is_static;
+    int is_extern;
     int sl_gi;
     int sl_li;
     is_static = 0;
+    is_extern = 0;
+    skip_gnu_attributes();
     while (lex_tok == TK_STATIC || lex_tok == TK_CONST ||
+           lex_tok == TK_EXTERN ||
            lex_tok == TK_REGISTER || lex_tok == TK_RESTRICT ||
            lex_tok == TK_AUTO || is_gnu_qual_ident() ||
-           is_gnu_extension_ident() || is_gnu_inline_ident()) {
+           is_gnu_extension_ident() || is_gnu_inline_ident() ||
+           is_gnu_attr_ident()) {
         if (lex_tok == TK_STATIC) is_static = 1;
-        next();
+        if (lex_tok == TK_EXTERN) is_extern = 1;
+        if (is_gnu_attr_ident()) skip_gnu_attributes();
+        else next();
     }
 
     /* local variable declaration */
@@ -2145,6 +2389,23 @@ static Node *parse_stmt(void) {
         }
         memcpy(nm, lex_str, lex_slen + 1);
         next();
+        skip_gnu_decl_suffixes();
+
+        /* Function-scope extern declaration: bind the name as global, but
+         * do not allocate a stack local. */
+        if (is_extern) {
+            if (lex_tok == TK_LBRACK) {
+                next();
+                if (lex_tok != TK_RBRACK) parse_const_int();
+                expect(TK_RBRACK);
+                skip_gnu_decl_suffixes();
+                add_extern_global(nm, ty + TY_PTR, 1);
+            } else {
+                add_extern_global(nm, ty, 0);
+            }
+            expect(TK_SEMI);
+            return nd_block(NULL);
+        }
 
         /* Static local scalar: emit as global with mangled name */
         if (is_static && lex_tok != TK_LBRACK) {
@@ -2281,7 +2542,16 @@ static Node *parse_stmt(void) {
                 ci = 0;  /* field index */
                 while (ci < nf && lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
                     if (ci > 0) expect(TK_COMMA);
-                    mi = struct_field_nth_idx(si, ci);
+                    if (lex_tok == TK_DOT) {
+                        next();
+                        if (lex_tok != TK_IDENT) p_error("expected field name in initializer");
+                        memcpy(dnm, lex_str, lex_slen + 1);
+                        next();
+                        expect(TK_ASSIGN);
+                        mi = find_member(ty, dnm);
+                    } else {
+                        mi = struct_field_nth_idx(si, ci);
+                    }
                     if (mi < 0) p_error("missing struct field");
                     if (ty_is_struct(stm_type[mi])) {
                         /* Nested struct: flatten */
@@ -2446,6 +2716,9 @@ static Node *parse_top_decl(void) {
     int sp_idx;
     int slen;
     int saw_unnamed_param;
+    int xty;
+    int is_extern;
+    int decl_had_init;
     char *sp;
 
     /* _Static_assert(expr, "message") — compile-time check, no codegen */
@@ -2466,11 +2739,18 @@ static Node *parse_top_decl(void) {
     }
 
     /* Skip storage class / qualifier keywords (single-file compiler, no semantic effect) */
+    is_extern = 0;
+    skip_gnu_attributes();
     while (lex_tok == TK_STATIC || lex_tok == TK_CONST ||
            lex_tok == TK_EXTERN || lex_tok == TK_INLINE ||
            lex_tok == TK_REGISTER || lex_tok == TK_RESTRICT ||
            lex_tok == TK_AUTO || is_gnu_qual_ident() ||
-           is_gnu_extension_ident() || is_gnu_inline_ident()) next();
+           is_gnu_extension_ident() || is_gnu_inline_ident() ||
+           is_gnu_attr_ident()) {
+        if (lex_tok == TK_EXTERN) is_extern = 1;
+        if (is_gnu_attr_ident()) skip_gnu_attributes();
+        else next();
+    }
 
     /* Typedef */
     if (lex_tok == TK_TYPEDEF) {
@@ -2560,7 +2840,8 @@ static Node *parse_top_decl(void) {
             expect(TK_RPAREN);
         }
         skip_gnu_decl_suffixes();
-        add_global(nm, TY_INT, 0);
+        if (is_extern) idx = add_extern_global(nm, TY_INT, 0);
+        else           idx = add_defined_global(nm, TY_INT, 0);
         expect(TK_SEMI);
         return NULL;
     }
@@ -2572,35 +2853,59 @@ static Node *parse_top_decl(void) {
     }
     memcpy(nm, lex_str, lex_slen + 1);
     next();
+    skip_gnu_decl_suffixes();
 
-    /* Global variable: type name; or type name = expr; or type name[N]; */
-    if (lex_tok == TK_SEMI || lex_tok == TK_ASSIGN) {
-        if (ty_is_struct(ty)) {
-            require_complete_type(ty, "incomplete global type");
-            idx = add_global(nm, ty, ty_size(ty));
-        } else {
-            idx = add_global(nm, ty, 0);
-        }
-        skip_gnu_decl_suffixes();
-        if (lex_tok == TK_ASSIGN) {
-            next();
-            if (lex_tok == TK_LBRACE && ty_is_struct(ty)) {
-                /* Struct initializer: struct S s = { ... }; */
-                ps_ginit_begin(idx);
-                parse_global_init_value(ty, idx);
-                ps_ginit_finish(idx);
-            } else if (lex_tok == TK_STRING) {
-                ps_gstr[idx] = parse_string_literal();
+    /* Global scalar(s): type name; type name = expr; or type a, b = expr; */
+    if (lex_tok == TK_SEMI || lex_tok == TK_ASSIGN || lex_tok == TK_COMMA) {
+        xty = ty;
+        while (1) {
+            decl_had_init = (lex_tok == TK_ASSIGN);
+            if (ty_is_struct(xty)) {
+                require_complete_type(xty, "incomplete global type");
+                if (is_extern && !decl_had_init)
+                    idx = add_extern_global(nm, xty, ty_size(xty));
+                else
+                    idx = add_defined_global(nm, xty, ty_size(xty));
             } else {
-                ps_ginit[idx] = parse_const_int();
-                /* Sign-extend for long long globals */
-                if (ty_is_llong(ty)) {
-                    if (ps_ginit[idx] < 0)
-                        ps_ginit_hi[idx] = -1;
-                    else
-                        ps_ginit_hi[idx] = 0;
+                if (is_extern && !decl_had_init)
+                    idx = add_extern_global(nm, xty, 0);
+                else
+                    idx = add_defined_global(nm, xty, 0);
+            }
+            skip_gnu_decl_suffixes();
+            if (lex_tok == TK_ASSIGN) {
+                next();
+                if (lex_tok == TK_LBRACE && ty_is_struct(xty)) {
+                    /* Struct initializer: struct S s = { ... }; */
+                    ps_ginit_begin(idx);
+                    parse_global_init_value(xty, idx);
+                    ps_ginit_finish(idx);
+                } else if (lex_tok == TK_STRING) {
+                    ps_gstr[idx] = parse_string_literal();
+                } else {
+                    ps_ginit[idx] = parse_const_int();
+                    /* Sign-extend for long long globals */
+                    if (ty_is_llong(xty)) {
+                        if (ps_ginit[idx] < 0)
+                            ps_ginit_hi[idx] = -1;
+                        else
+                            ps_ginit_hi[idx] = 0;
+                    }
                 }
             }
+            if (lex_tok != TK_COMMA) break;
+            next();
+            xty = ty;
+            while (ty_is_ptr(xty)) xty = ty_deref(xty);
+            while (lex_tok == TK_STAR) { xty = xty + TY_PTR; next(); }
+            skip_decl_qualifiers();
+            if (lex_tok != TK_IDENT) {
+                p_error("expected name in declaration");
+                return NULL;
+            }
+            memcpy(nm, lex_str, lex_slen + 1);
+            next();
+            skip_gnu_decl_suffixes();
         }
         expect(TK_SEMI);
         return NULL;
@@ -2621,13 +2926,13 @@ static Node *parse_top_decl(void) {
                 slen = lex_str_len[sp_idx];
                 if (count < 0) count = slen + 1;
                 require_complete_type(ty, "incomplete element type");
-                idx = add_global(nm, ty + TY_PTR, ty_size(ty) * count);
+                idx = add_defined_global(nm, ty + TY_PTR, ty_size(ty) * count);
                 ps_ginit_begin(idx);
                 parse_global_init_array_fixed(ty, count, idx);
                 ps_ginit_finish(idx);
             } else if (lex_tok == TK_LBRACE) {
                 gi = 0;
-                idx = add_global(nm, ty + TY_PTR, 0);
+                idx = add_defined_global(nm, ty + TY_PTR, 0);
                 ps_ginit_begin(idx);
                 expect(TK_LBRACE);
                 while (lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
@@ -2648,11 +2953,15 @@ static Node *parse_top_decl(void) {
             }
         } else {
             if (count < 0) {
-                p_error("array size required without initializer");
-                return NULL;
+                if (!is_extern) {
+                    p_error("array size required without initializer");
+                    return NULL;
+                }
+                count = 1;
             }
             require_complete_type(ty, "incomplete element type");
-            idx = add_global(nm, ty + TY_PTR, ty_size(ty) * count);
+            if (is_extern) idx = add_extern_global(nm, ty + TY_PTR, ty_size(ty) * count);
+            else           idx = add_defined_global(nm, ty + TY_PTR, ty_size(ty) * count);
         }
         expect(TK_SEMI);
         return NULL;
@@ -2726,10 +3035,12 @@ static Node *parse_top_decl(void) {
                 expect(TK_RPAREN);
             }
         } else if (lex_tok == TK_LBRACK) {
-            pty = pty + TY_PTR;
-            next();
-            if (lex_tok != TK_RBRACK) parse_const_int();
-            expect(TK_RBRACK);
+            while (lex_tok == TK_LBRACK) {
+                pty = pty + TY_PTR;
+                next();
+                if (lex_tok != TK_RBRACK) parse_const_int();
+                expect(TK_RBRACK);
+            }
             p = NULL;
             saw_unnamed_param = 1;
         } else if (lex_tok != TK_IDENT) {
@@ -2744,7 +3055,7 @@ static Node *parse_top_decl(void) {
             require_complete_type(pty, "incomplete parameter type");
             memcpy(pnm, lex_str, lex_slen + 1);
             next();
-            if (lex_tok == TK_LBRACK) {
+            while (lex_tok == TK_LBRACK) {
                 pty = pty + TY_PTR;
                 next();
                 if (lex_tok != TK_RBRACK) parse_const_int();
@@ -2792,10 +3103,12 @@ static Node *parse_top_decl(void) {
                     expect(TK_RPAREN);
                 }
             } else if (lex_tok == TK_LBRACK) {
-                pty = pty + TY_PTR;
-                next();
-                if (lex_tok != TK_RBRACK) parse_const_int();
-                expect(TK_RBRACK);
+                while (lex_tok == TK_LBRACK) {
+                    pty = pty + TY_PTR;
+                    next();
+                    if (lex_tok != TK_RBRACK) parse_const_int();
+                    expect(TK_RBRACK);
+                }
                 p = NULL;
                 saw_unnamed_param = 1;
             } else if (lex_tok != TK_IDENT) {
@@ -2810,7 +3123,7 @@ static Node *parse_top_decl(void) {
                 require_complete_type(pty, "incomplete parameter type");
                 memcpy(pnm, lex_str, lex_slen + 1);
                 next();
-                if (lex_tok == TK_LBRACK) {
+                while (lex_tok == TK_LBRACK) {
                     pty = pty + TY_PTR;
                     next();
                     if (lex_tok != TK_RBRACK) parse_const_int();

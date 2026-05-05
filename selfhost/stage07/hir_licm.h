@@ -289,7 +289,7 @@ static void licm_rewrite(void) {
         }
 
         /* Call arguments */
-        if ((k == HI_CALL || k == HI_CALLP) && h_cbase[i] >= 0) {
+        if ((k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE) && h_cbase[i] >= 0) {
             j = 0;
             while (j < h_val[i]) {
                 a = h_carg[h_cbase[i] + j];
