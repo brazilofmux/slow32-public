@@ -77,14 +77,7 @@ static void fdputuint(int f, int v) {
 #include "sema.h"
 #include "optimize.h"
 
-/* AArch64 backend.  Include order matters:
- *   a64_encode.h        — encoder + buffer
- *   a64_reloc_kinds.h   — A64K_* shared constants (also pulled by obj_writer)
- *   elf_writer.h        — exec writer (used by codegen for vaddr helpers)
- *   codegen_a64.h       — defines cg_* state arrays
- *   obj_writer.h        — consumes cg_*
- *   crt0_emit.h         — uses cg_* and a64_*
- */
+/* AArch64 backend.  Include order matters. */
 #include "a64_encode.h"
 #include "a64_reloc_kinds.h"
 #include "elf_writer.h"
@@ -92,11 +85,22 @@ static void fdputuint(int f, int v) {
 #include "obj_writer.h"
 #include "crt0_emit.h"
 
+/* HIR pipeline pieces — pulled in for the optional --hir codegen path. */
+#include "../stage07/hir.h"
+#include "../stage07/hir_lower.h"
+#include "../stage07/hir_ssa.h"
+#include "../stage07/hir_opt.h"
+#include "../stage07/hir_licm.h"
+#include "hir_burg_a64.h"
+#include "hir_regalloc_a64.h"
+#include "hir_codegen_a64.h"
+
 int main(int argc, char **argv) {
     int fd; int n; int i; int j;
     int last_slash; int argi;
     int compile_only;
     int crt0_mode;
+    int hir_mode;
     char *infile;
     char *outfile;
     char *src;
@@ -110,11 +114,13 @@ int main(int argc, char **argv) {
     outfile = 0;
     compile_only = 0;
     crt0_mode = 0;
+    hir_mode = 0;
     argi = 1;
 
     while (argi < argc) {
         if (argv[argi][0] == 45 && argv[argi][1] == 45) {
             if (strcmp(argv[argi], "--crt0") == 0) crt0_mode = 1;
+            else if (strcmp(argv[argi], "--hir") == 0) hir_mode = 1;
         } else if (argv[argi][0] == 45 && argv[argi][1] == 99 && argv[argi][2] == 0) {
             compile_only = 1;
         } else if (argv[argi][0] == 45 && argv[argi][1] == 73) {
@@ -192,7 +198,8 @@ int main(int argc, char **argv) {
     optimize(prog);
 
     cg_object_mode = compile_only;
-    gen_program(prog);
+    if (hir_mode) hx_gen_program(prog, compile_only);
+    else          gen_program(prog);
 
     if (compile_only) {
         if (obj_write_file(outfile) < 0) {
