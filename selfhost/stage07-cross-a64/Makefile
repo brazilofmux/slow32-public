@@ -10,7 +10,7 @@ CFLAGS = -O2 -fno-builtin -fno-stack-protector -w
 LDFLAGS = -nostdlib -static
 OUT = out
 
-.PHONY: all test test-encode test-elf test-obj test-crt0 test-cc test-toolchain clean
+.PHONY: all test test-encode test-elf test-obj test-crt0 test-cc test-toolchain libc s32fast bench clean
 
 all: $(OUT)/cc-a64 $(OUT)/ld-a64 $(OUT)/ar-a64 \
      test-encode test-elf test-obj test-crt0 test-cc test-toolchain
@@ -162,6 +162,54 @@ test-toolchain: $(OUT)/cc_uses_lib_exe
 		else echo "test-toolchain: FAIL (exit=$$rc, expected 40)"; exit 1; fi
 
 test: test-encode test-elf test-obj test-crt0 test-cc test-toolchain
+
+# --- libc_a64.a — runtime library for cc-a64 outputs ---
+# Most files are symlinks into ../stage07-cross/libc_x64/ since they're
+# host-independent C.  syscalls.c is a64-specific.  fpu_ops.c uses
+# `double`/`float` which our HIR codegen doesn't yet support, so we
+# build it with host gcc (which targets AArch64 directly on this host).
+
+LIBC_A64_HIR_SRCS = libc_a64/syscalls.c libc_a64/string.c libc_a64/malloc.c \
+                   libc_a64/misc.c libc_a64/stdio.c
+LIBC_A64_HIR_OBJS = $(patsubst libc_a64/%.c,$(OUT)/libc_a64_%.o,$(LIBC_A64_HIR_SRCS))
+
+$(OUT)/libc_a64_%.o: libc_a64/%.c $(OUT)/cc-a64
+	@$(OUT)/cc-a64 --hir -c $< -o $@ >/dev/null
+
+$(OUT)/libc_a64_fpu_ops.o: ../stage07-cross/libc_x64/fpu_ops.c
+	gcc -O2 -fno-builtin -fno-stack-protector -ffreestanding -c $< -o $@
+
+# math_stubs.o — sqrt/sqrtf wrappers for fpu_ops.c.  Compiled with host gcc
+# so __builtin_sqrt[f] lowers to hardware FSQRT.
+$(OUT)/libc_a64_math_stubs.o: libc_a64/math_stubs.c
+	gcc -O2 -fno-builtin -fno-stack-protector -ffreestanding -c $< -o $@
+
+$(OUT)/libc_a64.a: $(LIBC_A64_HIR_OBJS) $(OUT)/libc_a64_fpu_ops.o $(OUT)/libc_a64_math_stubs.o $(OUT)/ar-a64
+	@$(OUT)/ar-a64 rcs $@ $(LIBC_A64_HIR_OBJS) $(OUT)/libc_a64_fpu_ops.o $(OUT)/libc_a64_math_stubs.o >/dev/null 2>&1
+
+libc: $(OUT)/libc_a64.a
+
+# --- s32fast-hir — the SLOW-32 emulator, compiled by cc-a64 --hir ---
+# Source is shared with stage07-cross (s32-fast-x64.c — the name is
+# historical; the C is portable).
+
+$(OUT)/s32fast.o: ../stage07-cross/s32-fast-x64.c $(OUT)/cc-a64
+	@$(OUT)/cc-a64 --hir -c $< -o $@ >/dev/null
+
+$(OUT)/s32fast-hir: $(OUT)/s32fast.o $(OUT)/crt0.o $(OUT)/libc_a64.a $(OUT)/ld-a64
+	@$(OUT)/ld-a64 -o $@ $(OUT)/crt0.o $(OUT)/s32fast.o $(OUT)/libc_a64.a >/dev/null
+
+s32fast: $(OUT)/s32fast-hir
+
+BENCH_S32X ?= $(HOME)/slow-32/benchmark_core.s32x
+
+bench: $(OUT)/s32fast-hir
+	@if [ ! -f "$(BENCH_S32X)" ]; then \
+		echo "Benchmark not found: $(BENCH_S32X)"; \
+		echo "Set BENCH_S32X=path/to/benchmark_core.s32x"; \
+		exit 1; \
+	fi
+	time $(OUT)/s32fast-hir $(BENCH_S32X)
 
 clean:
 	rm -f $(OUT)/test_encode $(OUT)/test_elf $(OUT)/test_obj $(OUT)/test_obj_global \

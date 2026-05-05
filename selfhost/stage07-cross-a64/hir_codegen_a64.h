@@ -569,11 +569,15 @@ static void hx_emit_inst(int idx) {
          * which is exactly when bg_foff[s1] is meaningful.  Even if
          * bg_select didn't fold s1 (ALLOCA is remat-skipped), the
          * fast-path is correct. */
-        /* BG_SADDR lhs: src1 chain produces a symbol+offset address. */
-        if (lnt == BG_SADDR && s1 >= 0 && bg_ssym[s1] >= 0) {
+        /* BG_SADDR lhs: src1 chain produces a symbol+offset address.
+         * Only do the integrated ADRP+ADD+LDR when src1 is actually folded
+         * (e.g., bg_select NOPed an HI_ADDI that accumulates into the
+         * symbol address).  When src1 is a bare HI_GADDR/HI_SADDR/HI_FADDR
+         * with bg_uses>1 the value lives in its own register; fall through
+         * to the general path so we don't emit a duplicate ADRP+ADD. */
+        if (lnt == BG_SADDR && s1 >= 0 && bg_fold[s1] && bg_ssym[s1] >= 0) {
             int sym_inst;
             int sym_off;
-            int sym_name_idx;
             sym_inst = bg_ssym[s1];
             sym_off  = bg_soff[s1];
             if (h_kind[sym_inst] == HI_SADDR) {
@@ -582,7 +586,6 @@ static void hx_emit_inst(int idx) {
             } else {
                 cg_emit_adrp_add_to(HX_SCRATCH1, h_name[sym_inst], sym_off);
             }
-            (void)sym_name_idx;
             if (hx_is_wide(ty)) a64_ldr_x_imm(dst, HX_SCRATCH1, 0);
             else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
                 if (ty & TY_UNSIGNED) a64_ldrb_imm(dst, HX_SCRATCH1, 0);
@@ -671,8 +674,9 @@ static void hx_emit_inst(int idx) {
         pat = bg_sel[idx];
         lnt = (pat >= 0) ? bg_plnt[pat] : -1;
 
-        /* BG_SADDR lhs: emit ADRP+ADD (with addend), then STR. */
-        if (lnt == BG_SADDR && s1 >= 0 && bg_ssym[s1] >= 0) {
+        /* BG_SADDR lhs: emit ADRP+ADD (with addend), then STR.  Only when
+         * src1 is actually folded — see LOAD comment above. */
+        if (lnt == BG_SADDR && s1 >= 0 && bg_fold[s1] && bg_ssym[s1] >= 0) {
             int sym_inst;
             int sym_off;
             sym_inst = bg_ssym[s1];
@@ -894,8 +898,20 @@ static void hx_emit_inst(int idx) {
         hx_spill(idx, dst);
         return;
     }
-    if (k == HI_NOT || k == HI_BNOT) {
-        /* Bitwise NOT via MVN (or ORN with XZR for X-form). */
+    if (k == HI_NOT) {
+        /* Logical NOT: dst = (src == 0) ? 1 : 0.
+         * CMP src, #0 ; CSET dst, EQ. */
+        int src_wide;
+        src_wide = hx_is_wide(h_ty[s1]);
+        r1 = hx_get_src(s1, HX_SCRATCH1);
+        if (src_wide) a64_cmp_x_imm(r1, 0);
+        else          a64_cmp_w_imm(r1, 0);
+        a64_cset_w(dst, A64_COND_EQ);
+        hx_spill(idx, dst);
+        return;
+    }
+    if (k == HI_BNOT) {
+        /* Bitwise NOT via MVN (W) or ORN XZR,Xm (X). */
         r1 = hx_get_src(s1, HX_SCRATCH1);
         if (wide) {
             /* ORN Xd, XZR, Rm — mvn x form. */
@@ -1254,17 +1270,37 @@ static void hx_gen_func(Node *fn) {
     hx_frame_size = fs;
     hx_no_frame = 0;             /* MVP: always create a frame */
 
-    /* Prologue */
+    /* Prologue.
+     *
+     * STP/LDP (signed-offset, scaled by 8) only encodes a 7-bit immediate
+     * (±504 bytes).  For frames larger than 504+16, save FP/LR via a
+     * scratch pointer:
+     *     sub sp, sp, #fs
+     *     add x16, sp, #(fs-16)
+     *     stp x29, x30, [x16]
+     *     mov x29, x16
+     * For small frames keep the simpler `stp [sp, #fs-16]` form. */
     if (fs <= 4095) a64_sub_x_imm(A64_SP, A64_SP, fs);
     else {
         a64_sub_x_imm(A64_SP, A64_SP, fs & 0xFFF);
         a64_sub_x_imm_lsl12(A64_SP, A64_SP, (fs >> 12) & 0xFFF);
     }
-    a64_stp_x_off(A64_X29, A64_X30, A64_SP, fs - 16);
-    if ((fs - 16) <= 4095) a64_add_x_imm(A64_X29, A64_SP, fs - 16);
-    else {
-        a64_add_x_imm(A64_X29, A64_SP, (fs - 16) & 0xFFF);
-        a64_add_x_imm_lsl12(A64_X29, A64_X29, ((fs - 16) >> 12) & 0xFFF);
+    if (fs - 16 <= 504) {
+        a64_stp_x_off(A64_X29, A64_X30, A64_SP, fs - 16);
+        if ((fs - 16) <= 4095) a64_add_x_imm(A64_X29, A64_SP, fs - 16);
+        else {
+            a64_add_x_imm(A64_X29, A64_SP, (fs - 16) & 0xFFF);
+            a64_add_x_imm_lsl12(A64_X29, A64_X29, ((fs - 16) >> 12) & 0xFFF);
+        }
+    } else {
+        /* Compute fp slot in HX_SCRATCH1, then STP at offset 0, then mov FP. */
+        if ((fs - 16) <= 4095) a64_add_x_imm(HX_SCRATCH1, A64_SP, fs - 16);
+        else {
+            a64_add_x_imm(HX_SCRATCH1, A64_SP, (fs - 16) & 0xFFF);
+            a64_add_x_imm_lsl12(HX_SCRATCH1, HX_SCRATCH1, ((fs - 16) >> 12) & 0xFFF);
+        }
+        a64_stp_x_off(A64_X29, A64_X30, HX_SCRATCH1, 0);
+        a64_mov_x(A64_X29, HX_SCRATCH1);
     }
 
     /* Save callee-saved regs that regalloc decided to use. */
@@ -1380,7 +1416,17 @@ static void hx_gen_func(Node *fn) {
             i = i + 1;
         }
 
-        a64_ldp_x_off(A64_X29, A64_X30, A64_SP, fs - 16);
+        /* Mirror the prologue's choice (see comment there). */
+        if (fs - 16 <= 504) {
+            a64_ldp_x_off(A64_X29, A64_X30, A64_SP, fs - 16);
+        } else {
+            if ((fs - 16) <= 4095) a64_add_x_imm(HX_SCRATCH1, A64_SP, fs - 16);
+            else {
+                a64_add_x_imm(HX_SCRATCH1, A64_SP, (fs - 16) & 0xFFF);
+                a64_add_x_imm_lsl12(HX_SCRATCH1, HX_SCRATCH1, ((fs - 16) >> 12) & 0xFFF);
+            }
+            a64_ldp_x_off(A64_X29, A64_X30, HX_SCRATCH1, 0);
+        }
         if (fs <= 4095) a64_add_x_imm(A64_SP, A64_SP, fs);
         else {
             a64_add_x_imm(A64_SP, A64_SP, fs & 0xFFF);

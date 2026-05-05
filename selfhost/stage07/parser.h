@@ -2196,6 +2196,16 @@ static Node *parse_program(void) {
 
     ps_nglobals = 0;
     add_typedef("va_list", TY_PTR + TY_CHAR);
+    /* C99 fixed-width integer typedefs.  All hosts (SLOW-32 native,
+     * x64, AArch64) agree: int=32, long long=64, short=16, char=8. */
+    add_typedef("int8_t",   TY_CHAR);
+    add_typedef("uint8_t",  TY_CHAR | TY_UNSIGNED);
+    add_typedef("int16_t",  TY_SHORT);
+    add_typedef("uint16_t", TY_SHORT | TY_UNSIGNED);
+    add_typedef("int32_t",  TY_INT);
+    add_typedef("uint32_t", TY_INT | TY_UNSIGNED);
+    add_typedef("int64_t",  TY_LLONG);
+    add_typedef("uint64_t", TY_LLONG | TY_UNSIGNED);
     next();  /* prime the first token */
 
     fhead = NULL;
