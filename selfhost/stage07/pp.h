@@ -33,7 +33,12 @@ static int pp_taken[PP_MAX_IF];   /* 1 if any branch taken at this depth */
 
 static char pp_sdir[256];         /* source directory prefix for includes */
 #define PP_MAX_IDIRS 16
-static char pp_idir[PP_MAX_IDIRS][256];  /* -I include search paths for <> includes */
+#define PP_IDIR_LEN  256
+/* Flat layout (stage06's parser accepts only literal-int array dimensions
+   and rejects 2-D global arrays): entry i occupies
+   pp_idir[i*PP_IDIR_LEN .. i*PP_IDIR_LEN+PP_IDIR_LEN-1].
+   Size is PP_MAX_IDIRS * PP_IDIR_LEN = 16 * 256 = 4096. */
+static char pp_idir[4096];
 static int pp_nidirs;
 
 /* --- Text helpers (read from lex_src[lex_pos]) --- */
@@ -51,21 +56,21 @@ static void pp_skip_line(void) {
 }
 
 static void pp_add_idir(char *path) {
-    int i;
+    int base;
     int j;
 
     if (pp_nidirs >= PP_MAX_IDIRS) return;
-    i = pp_nidirs;
+    base = pp_nidirs * PP_IDIR_LEN;
     j = 0;
-    while (path[j] != 0 && j < 254) {
-        pp_idir[i][j] = path[j];
+    while (path[j] != 0 && j < PP_IDIR_LEN - 2) {
+        pp_idir[base + j] = path[j];
         j = j + 1;
     }
-    if (j > 0 && pp_idir[i][j - 1] != 47) {
-        pp_idir[i][j] = 47;
+    if (j > 0 && pp_idir[base + j - 1] != 47) {
+        pp_idir[base + j] = 47;
         j = j + 1;
     }
-    pp_idir[i][j] = 0;
+    pp_idir[base + j] = 0;
     pp_nidirs = pp_nidirs + 1;
 }
 
@@ -683,8 +688,8 @@ static void pp_include(void) {
         while (idir < pp_nidirs) {
             pi = 0;
             fi = 0;
-            while (pp_idir[idir][fi] != 0) {
-                path[pi] = pp_idir[idir][fi];
+            while (pp_idir[idir * PP_IDIR_LEN + fi] != 0) {
+                path[pi] = pp_idir[idir * PP_IDIR_LEN + fi];
                 pi = pi + 1;
                 fi = fi + 1;
             }
