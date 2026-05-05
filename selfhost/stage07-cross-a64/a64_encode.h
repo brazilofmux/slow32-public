@@ -1050,6 +1050,59 @@ static void a64_ldursh_w_imm(int rt, int rn, int imm9) {
 }
 
 // ============================================================================
+// Loads / stores — register-indexed (LDR/STR Wt or Xt, [Xn, Xm{, LSL #k}])
+//
+// Encoding (LDR W, register form):
+//   bits[31:21] = 10111000011    (32-bit LDR-reg)
+//   bits[20:16] = Rm
+//   bits[15:13] = option         (011 = LSL, 010 = UXTW)
+//   bit[12]     = S              (0 = no scaling, 1 = scale by access size)
+//   bits[11:10] = 10
+//   bits[9:5]   = Rn
+//   bits[4:0]   = Rt
+//
+// `lsl` here is the shift amount: 0 (S=0, no scale) or the access-size
+// shift (S=1: 2 for W, 3 for X).  Other shift amounts can't be encoded
+// with this form on AArch64.
+// ============================================================================
+
+// LDR Wt, [Xn, Xm, LSL #lsl]   (lsl ∈ {0, 2})
+static void a64_ldr_w_reg_lsl(int rt, int rn, int rm, int lsl) {
+    int s_bit; int inst;
+    s_bit = (lsl == 2) ? 1 : 0;
+    inst = 0xB8606800 | ((rm & 0x1F) << 16) | (s_bit << 12)
+         | ((rn & 0x1F) << 5) | (rt & 0x1F);
+    a64_inst(inst);
+}
+
+// STR Wt, [Xn, Xm, LSL #lsl]   (lsl ∈ {0, 2})
+static void a64_str_w_reg_lsl(int rt, int rn, int rm, int lsl) {
+    int s_bit; int inst;
+    s_bit = (lsl == 2) ? 1 : 0;
+    inst = 0xB8206800 | ((rm & 0x1F) << 16) | (s_bit << 12)
+         | ((rn & 0x1F) << 5) | (rt & 0x1F);
+    a64_inst(inst);
+}
+
+// LDR Xt, [Xn, Xm, LSL #lsl]   (lsl ∈ {0, 3})
+static void a64_ldr_x_reg_lsl(int rt, int rn, int rm, int lsl) {
+    int s_bit; int inst;
+    s_bit = (lsl == 3) ? 1 : 0;
+    inst = 0xF8606800 | ((rm & 0x1F) << 16) | (s_bit << 12)
+         | ((rn & 0x1F) << 5) | (rt & 0x1F);
+    a64_inst(inst);
+}
+
+// STR Xt, [Xn, Xm, LSL #lsl]   (lsl ∈ {0, 3})
+static void a64_str_x_reg_lsl(int rt, int rn, int rm, int lsl) {
+    int s_bit; int inst;
+    s_bit = (lsl == 3) ? 1 : 0;
+    inst = 0xF8206800 | ((rm & 0x1F) << 16) | (s_bit << 12)
+         | ((rn & 0x1F) << 5) | (rt & 0x1F);
+    a64_inst(inst);
+}
+
+// ============================================================================
 // STP / LDP — pair load/store
 // ============================================================================
 

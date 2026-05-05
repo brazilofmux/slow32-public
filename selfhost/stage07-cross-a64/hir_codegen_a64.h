@@ -75,6 +75,16 @@ static int hx_phi_dst_inst[HIR_MAX_INST];   /* PHI inst */
 static int hx_phi_src_val[HIR_MAX_INST];    /* incoming value inst */
 static int hx_phi_n;
 
+/* Indexed-addressing fold (computed by hx_fold_indexed_addr).
+ * For an HI_LOAD/HI_STORE that we want to emit as
+ *     ldr/str Wt/Xt, [base, idx, lsl #shift]
+ * we record the base inst, idx inst, and shift amount keyed on the
+ * load/store inst.  The HI_ADD and HI_SLL feeding it get bg_fold[]=1
+ * so their def sites emit nothing. */
+static int hx_ridx_base[HIR_MAX_INST];   /* base reg inst, -1 if not folded */
+static int hx_ridx_idx[HIR_MAX_INST];    /* index reg inst */
+static int hx_ridx_shift[HIR_MAX_INST];  /* shift amount (0, 2, or 3) */
+
 /* ============================================================================
  * Helpers
  * ============================================================================ */
@@ -370,6 +380,124 @@ static void hx_bcond_to_block(int cond, int blk) {
     a64_b_cond(cond, 0);
 }
 
+/* ----------------------------------------------------------------------
+ * Indexed-addressing fold pass.
+ *
+ * Recognises LOAD/STORE whose address is HI_ADD(base, HI_SLL(idx, k))
+ * (or symmetric) where k is 0 / 2 / 3 matching the access size, and
+ * the ADD and SLL are single-use.  Emits this as the AArch64
+ * register-indexed addressing mode `[Xn, Xm, LSL #k]` (1 instruction
+ * vs the 3 instructions of a separate SLL + ADD + LDR).
+ *
+ * Run after bg_select / bg_count_uses so bg_uses[] is current.  Sets
+ * bg_fold[ADD] = bg_fold[SLL] = 1 to prevent their def-site emissions,
+ * and stores the folded operands for codegen to look up.
+ * ---------------------------------------------------------------------- */
+static int hx_indexed_shift_for_size(int access_size) {
+    if (access_size == 4) return 2;   /* LDR Wt: scale 4 = LSL #2 */
+    if (access_size == 8) return 3;   /* LDR Xt: scale 8 = LSL #3 */
+    return -1;
+}
+
+static int hx_load_store_size(int idx) {
+    int k; int ty;
+    k = h_kind[idx];
+    if (k != HI_LOAD && k != HI_STORE) return -1;
+    ty = h_ty[idx];
+    if (hx_is_wide(ty)) return 8;
+    /* CHAR / SHORT loads use ldrb / ldrh, not the W-register-indexed
+     * form here.  We restrict the fold to W-sized (4-byte) and X-sized
+     * (8-byte) accesses for now. */
+    if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR)  return -1;
+    if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) return -1;
+    return 4;
+}
+
+static void hx_fold_indexed_addr(void) {
+    int i;
+    int access_size; int wanted_shift;
+    int add_inst; int sll_inst;
+    int base_inst; int idx_inst;
+    int shift_amt;
+    int s2_imm_inst;
+    int a; int b;
+
+    i = 0;
+    while (i < h_ninst) {
+        hx_ridx_base[i] = -1;
+        i = i + 1;
+    }
+
+    i = 0;
+    while (i < h_ninst) {
+        access_size = hx_load_store_size(i);
+        if (access_size < 0) { i = i + 1; continue; }
+
+        /* HI_LOAD's address is src1; HI_STORE's address is src1 too
+         * (value being stored is src2). */
+        add_inst = h_src1[i];
+        if (add_inst < 0 || h_kind[add_inst] != HI_ADD) { i = i + 1; continue; }
+        if (bg_uses[add_inst] != 1) { i = i + 1; continue; }
+        if (bg_fold[add_inst]) { i = i + 1; continue; }  /* already folded by BURG */
+
+        /* Try right arm: ADD(base, SLL(idx, k)). */
+        a = h_src1[add_inst];
+        b = h_src2[add_inst];
+        sll_inst = -1;
+        base_inst = -1;
+        if (b >= 0 && h_kind[b] == HI_SLL && bg_uses[b] == 1) {
+            sll_inst = b; base_inst = a;
+        } else if (a >= 0 && h_kind[a] == HI_SLL && bg_uses[a] == 1) {
+            /* Symmetric: ADD(SLL(idx, k), base). */
+            sll_inst = a; base_inst = b;
+        }
+        if (sll_inst < 0) {
+            /* Also accept shift = 0: ADD(base, idx) directly.  Rare
+             * but harmless to fold (saves 1 instruction). */
+            i = i + 1; continue;
+        }
+
+        /* The SLL must have a constant shift amount. */
+        s2_imm_inst = h_src2[sll_inst];
+        if (s2_imm_inst < 0 || h_kind[s2_imm_inst] != HI_ICONST) {
+            i = i + 1; continue;
+        }
+        shift_amt = h_val[s2_imm_inst];
+        wanted_shift = hx_indexed_shift_for_size(access_size);
+        if (shift_amt != 0 && shift_amt != wanted_shift) {
+            /* AArch64 indexed addressing only encodes shift 0 or the
+             * access-size shift.  Other shifts can't fold. */
+            i = i + 1; continue;
+        }
+
+        idx_inst = h_src1[sll_inst];
+        if (idx_inst < 0 || base_inst < 0) { i = i + 1; continue; }
+
+        /* Scratch budget: base needs SCRATCH1 (if spilled), idx needs
+         * SCRATCH2 (if spilled).  For HI_STORE we also need a register
+         * for the value being stored — and we only have two scratches.
+         * Require all operands to be in real registers (ra_reg[] >= 0)
+         * so codegen never has to load via scratch.  Hot dispatch
+         * handlers are register-pressure-light, so this is the common
+         * case anyway. */
+        if (ra_reg[base_inst] < 0) { i = i + 1; continue; }
+        if (ra_reg[idx_inst]  < 0) { i = i + 1; continue; }
+        if (h_kind[i] == HI_STORE) {
+            int v_inst;
+            v_inst = h_src2[i];
+            if (v_inst < 0 || ra_reg[v_inst] < 0) { i = i + 1; continue; }
+        }
+
+        /* Commit the fold. */
+        hx_ridx_base[i]  = base_inst;
+        hx_ridx_idx[i]   = idx_inst;
+        hx_ridx_shift[i] = shift_amt;
+        bg_fold[add_inst] = 1;
+        bg_fold[sll_inst] = 1;
+        i = i + 1;
+    }
+}
+
 /* When BLK is laid down, walk patches and rewrite. */
 static void hx_define_block(int blk) {
     int i;
@@ -505,6 +633,112 @@ static void hx_phi_copies(int from_blk, int to_blk) {
     }
     if (hx_phi_n == 0) return;
 
+    /* Fast path: greedy parallel move via direct register copies.
+     *
+     * For each phi we want to emit `dst_reg = src_reg` (or a hx_mat for
+     * rematerializable / spilled sources).  Hazard: if some other phi
+     * still needs the OLD value of dst_reg as ITS source, we can't
+     * write dst_reg yet.
+     *
+     * Greedy: repeatedly pick any phi whose dst_reg is not the src_reg
+     * of any remaining phi, emit its move, mark done.  If progress
+     * stalls, there's a cycle (e.g., swap) — fall back to the
+     * stack-based parallel move below.
+     *
+     * Phis whose source is rematerializable or spilled have no register
+     * hazard for that src — they can always emit safely (hx_mat loads
+     * via SCRATCH1 or directly into dst_reg). */
+    {
+        int done[HIR_MAX_INST];   /* per-phi bool, indexed by phi position */
+        int phi_src_reg[HIR_MAX_INST];
+        int phi_dst_reg[HIR_MAX_INST];
+        int n_remaining;
+        int progress;
+        int p;
+
+        i = 0;
+        while (i < hx_phi_n) {
+            done[i] = 0;
+            src = hx_phi_src_val[i];
+            dst_inst = hx_phi_dst_inst[i];
+            phi_src_reg[i] = (ra_reg[src] >= 0) ? hx_slot_reg(ra_reg[src]) : -1;
+            phi_dst_reg[i] = hx_dst_reg(dst_inst);
+            /* No-op move (src and dst already share the register): mark
+             * done immediately so it doesn't block others. */
+            if (phi_src_reg[i] >= 0 && phi_src_reg[i] == phi_dst_reg[i]) {
+                hx_spill(dst_inst, phi_dst_reg[i]);
+                done[i] = 1;
+            }
+            i = i + 1;
+        }
+
+        n_remaining = 0;
+        i = 0;
+        while (i < hx_phi_n) { if (!done[i]) n_remaining = n_remaining + 1; i = i + 1; }
+
+        progress = 1;
+        while (n_remaining > 0 && progress) {
+            progress = 0;
+            p = 0;
+            while (p < hx_phi_n) {
+                int blocked;
+                if (done[p]) { p = p + 1; continue; }
+                /* phi_dst_reg[p] is safe to clobber iff no remaining phi
+                 * has phi_dst_reg[p] as its src_reg. */
+                blocked = 0;
+                i = 0;
+                while (i < hx_phi_n) {
+                    if (!done[i] && i != p && phi_src_reg[i] == phi_dst_reg[p]) {
+                        blocked = 1;
+                        i = hx_phi_n;
+                    } else {
+                        i = i + 1;
+                    }
+                }
+                if (!blocked) {
+                    src = hx_phi_src_val[p];
+                    dst_inst = hx_phi_dst_inst[p];
+                    dst_reg = phi_dst_reg[p];
+                    wide = hx_is_wide(h_ty[dst_inst]);
+                    if (phi_src_reg[p] >= 0) {
+                        if (wide) a64_mov_x(dst_reg, phi_src_reg[p]);
+                        else      a64_mov_w(dst_reg, phi_src_reg[p]);
+                    } else {
+                        /* Spilled / rematerialisable source: bring it
+                         * straight into dst_reg. */
+                        hx_mat(src, dst_reg);
+                    }
+                    hx_spill(dst_inst, dst_reg);
+                    done[p] = 1;
+                    n_remaining = n_remaining - 1;
+                    progress = 1;
+                }
+                p = p + 1;
+            }
+        }
+        if (n_remaining == 0) return;
+        /* Otherwise fall through to the stack-based fallback for the
+         * remaining phis (cycles).  We still need to handle them all
+         * uniformly: rebuild the (src, dst) list with only those still
+         * undone. */
+        {
+            int new_n;
+            new_n = 0;
+            i = 0;
+            while (i < hx_phi_n) {
+                if (!done[i]) {
+                    hx_phi_dst_inst[new_n] = hx_phi_dst_inst[i];
+                    hx_phi_src_val[new_n]  = hx_phi_src_val[i];
+                    new_n = new_n + 1;
+                }
+                i = i + 1;
+            }
+            hx_phi_n = new_n;
+            if (hx_phi_n == 0) return;
+        }
+    }
+
+    /* Stack-based parallel move (fallback for cycles). */
     tmp_bytes = hx_phi_n * 8;
     if (tmp_bytes & 15) tmp_bytes = (tmp_bytes + 15) & ~15;
     if (tmp_bytes <= 4095) a64_sub_x_imm(A64_SP, A64_SP, tmp_bytes);
@@ -563,6 +797,9 @@ static void hx_emit_inst(int idx) {
      * comparison that's been NOPed) costs nothing. */
     if (k == HI_ICONST || k == HI_ALLOCA || k == HI_GETFP) return;
 
+    /* Folded into a parent's addressing mode (see hx_fold_indexed_addr). */
+    if (bg_fold[idx] && (k == HI_ADD || k == HI_SLL)) return;
+
     s1 = h_src1[idx];
     s2 = h_src2[idx];
     wide = hx_is_wide(h_ty[idx]);
@@ -603,6 +840,21 @@ static void hx_emit_inst(int idx) {
         ty = h_ty[idx];
         pat = bg_sel[idx];
         lnt = (pat >= 0) ? bg_plnt[pat] : -1;
+
+        /* Indexed addressing: hx_fold_indexed_addr decided this LOAD's
+         * address is base + (idx << shift) and folded the ADD+SLL. */
+        if (hx_ridx_base[idx] >= 0) {
+            int base_r; int idx_r;
+            base_r = hx_get_src(hx_ridx_base[idx], HX_SCRATCH1);
+            idx_r  = hx_get_src(hx_ridx_idx[idx],  HX_SCRATCH2);
+            if (hx_is_wide(ty)) {
+                a64_ldr_x_reg_lsl(dst, base_r, idx_r, hx_ridx_shift[idx]);
+            } else {
+                a64_ldr_w_reg_lsl(dst, base_r, idx_r, hx_ridx_shift[idx]);
+            }
+            hx_spill(idx, dst);
+            return;
+        }
 
         /* BURG selected BG_MEM addressing mode → frame-relative LDR.
          * lnt == BG_MEM matches when src1 is HI_ALLOCA or HI_ADDI (chain),
@@ -713,6 +965,20 @@ static void hx_emit_inst(int idx) {
         ty = h_ty[idx];   /* type of stored value */
         pat = bg_sel[idx];
         lnt = (pat >= 0) ? bg_plnt[pat] : -1;
+
+        /* Indexed addressing: see LOAD branch above. */
+        if (hx_ridx_base[idx] >= 0) {
+            int base_r; int idx_r; int v_r;
+            base_r = hx_get_src(hx_ridx_base[idx], HX_SCRATCH1);
+            idx_r  = hx_get_src(hx_ridx_idx[idx],  HX_SCRATCH2);
+            v_r    = hx_get_src(s2, HX_SCRATCH1);
+            if (hx_is_wide(ty)) {
+                a64_str_x_reg_lsl(v_r, base_r, idx_r, hx_ridx_shift[idx]);
+            } else {
+                a64_str_w_reg_lsl(v_r, base_r, idx_r, hx_ridx_shift[idx]);
+            }
+            return;
+        }
 
         /* BG_SADDR lhs: emit ADRP+ADD (with addend), then STR.  Only when
          * src1 is actually folded — see LOAD comment above. */
@@ -1280,6 +1546,12 @@ static void hx_gen_func(Node *fn) {
     /* Run regalloc.  This sets ra_reg[], ra_spill_off[], and writes
      * the callee-saved set into ra_csave_*. */
     hir_regalloc();
+
+    /* Fold ADD(base, SLL(idx, k)) chains feeding LOAD/STORE into the
+     * AArch64 register-indexed addressing mode.  Must run after
+     * regalloc (so ra_reg[] is final) but before codegen emits the
+     * standalone HI_ADD/HI_SLL.  Sets bg_fold[] on the consumed nodes. */
+    hx_fold_indexed_addr();
 
 
     /* Frame layout
