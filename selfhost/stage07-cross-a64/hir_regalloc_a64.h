@@ -762,6 +762,14 @@ static void gc_drop_phi_edges(void) {
                 while (j < h_pcnt[inst]) {
                     arg = h_pval[h_pbase[inst] + j];
                     if (arg >= 0) {
+                        /* Don't drop edges to phi-args that are PARAMs:
+                         * coalescing a PARAM with a phi-result drifts it
+                         * out of its ABI register, and the prologue's
+                         * sequential `mov dst,arg_reg` materialization
+                         * doesn't handle the resulting parallel-move
+                         * problem (e.g., PARAM 0 placed in X1 clobbers
+                         * PARAM 1's incoming value before it's read). */
+                        if (h_kind[arg] == HI_PARAM) { j = j + 1; continue; }
                         arg_n = gc_node[arg];
                         if (arg_n >= 0) gc_remove_edge(phi_n, arg_n);
                     }
@@ -818,8 +826,10 @@ static void gc_find_moves(void) {
             }
         }
 
-        /* Destructive ALU: src1 wants same register as dst */
-        if (k >= HI_ADD && k <= HI_SRL) {
+        /* Destructive ALU: src1 wants same register as dst.  Includes
+         * HI_ADDI (add-immediate) so `p = p + offset` and friends emit
+         * `add Wd, Wd, #imm` without a follow-up MOV. */
+        if ((k >= HI_ADD && k <= HI_SRL) || k == HI_ADDI) {
             s1 = h_src1[inst];
             if (s1 >= 0) {
                 ns1 = gc_node[s1];
@@ -1301,8 +1311,9 @@ static void gc_select(void) {
                 }
             }
 
-            /* ALU hint: try src1's color for destructive ops */
-            if (hint < 0 && h_kind[inst] >= HI_ADD && h_kind[inst] <= HI_SRL) {
+            /* ALU hint: try src1's color for destructive ops (incl. ADDI) */
+            if (hint < 0 && ((h_kind[inst] >= HI_ADD && h_kind[inst] <= HI_SRL) ||
+                             h_kind[inst] == HI_ADDI)) {
                 s1 = h_src1[inst];
                 if (s1 >= 0) {
                     ns1 = gc_node[s1];
