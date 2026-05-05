@@ -311,7 +311,12 @@ static void ra_backprop(int val, int use_blk) {
         b = b + 1;
     }
 
-    /* Start BFS from use_blk */
+    /* Start BFS from use_blk.  Extending to last(use_blk) is conservative —
+     * for non-phi values used in a loop, this captures the live-out-via-
+     * back-edge case that this single-pass backprop cannot otherwise
+     * compute.  Phi-result/phi-arg interference that this overshoot
+     * introduces is removed after gc_build by gc_drop_phi_edges(), which
+     * implements virtual out-of-SSA coalescing. */
     ra_bvis[use_blk] = 1;
     ra_extend(val, ra_blk_last[use_blk]);
     ra_bwl[0] = use_blk;
@@ -643,11 +648,15 @@ static void gc_build(void) {
             p = ra_pos[inst];
             ni = gc_node[inst];
 
-            /* Expire dead intervals */
+            /* Expire dead intervals.  Use kill-use semantics: a value
+             * whose last use is at pos p dies before any new definition
+             * at the same pos, so phi-results and destructive-ALU dsts
+             * do not interfere with their last-used sources.  This is
+             * what makes phi/destructive-ALU coalescing actually fire. */
             j = 0;
             while (j < nact) {
                 aj = act[j];
-                if (ra_iend[gc_inst[aj]] < p) {
+                if (ra_iend[gc_inst[aj]] <= p) {
                     nact = nact - 1;
                     act[j] = act[nact];
                 } else {
@@ -668,6 +677,99 @@ static void gc_build(void) {
 
             i = i + 1;
         }
+    }
+}
+
+/* --- Virtual out-of-SSA: drop phi-result/phi-arg interference edges ---
+ *
+ * The interference graph built above is over-conservative: by extending
+ * each value's live range to the end of its use-block (needed for
+ * loop-carried non-phi values like a function argument used inside a
+ * loop body), it makes a phi-result and its back-edge phi-arg appear to
+ * overlap inside the loop body, even though out-of-SSA semantics treat
+ * them as the same physical name linked by an implicit copy at the
+ * predecessor terminator.  The IRC coalescer then refuses to merge
+ * them, leaving an explicit `mov phi_reg, new_reg` at every back-edge.
+ *
+ * This pass restores the standard "phi result and phi args don't
+ * interfere with each other" rule by deleting just those edges.  Other
+ * interference relationships (e.g., a phi-arg vs. an unrelated value
+ * computed in the same block) are preserved.  When the IRC later
+ * considers the move-edge between phi-result and phi-arg, only the
+ * remaining structural constraints (Briggs/George) gate the merge.
+ */
+
+static void gc_remove_edge(int u, int v) {
+    int e;
+    int prev;
+    int peer;
+    int found;
+
+    if (u < 0 || v < 0 || u == v) return;
+
+    /* Remove v from u's adjacency list */
+    found = 0;
+    prev = -1;
+    e = gc_adj_head[u];
+    while (e >= 0) {
+        peer = gc_adj_peer[e];
+        if (peer == v) {
+            if (prev < 0) gc_adj_head[u] = gc_adj_next[e];
+            else gc_adj_next[prev] = gc_adj_next[e];
+            found = 1;
+            break;
+        }
+        prev = e;
+        e = gc_adj_next[e];
+    }
+    if (!found) return;
+
+    /* Remove u from v's adjacency list (must succeed if the above did) */
+    prev = -1;
+    e = gc_adj_head[v];
+    while (e >= 0) {
+        peer = gc_adj_peer[e];
+        if (peer == u) {
+            if (prev < 0) gc_adj_head[v] = gc_adj_next[e];
+            else gc_adj_next[prev] = gc_adj_next[e];
+            break;
+        }
+        prev = e;
+        e = gc_adj_next[e];
+    }
+
+    if (gc_degree[u] > 0) gc_degree[u] = gc_degree[u] - 1;
+    if (gc_degree[v] > 0) gc_degree[v] = gc_degree[v] - 1;
+}
+
+static void gc_drop_phi_edges(void) {
+    int i;
+    int j;
+    int k;
+    int phi_n;
+    int arg;
+    int arg_n;
+
+    i = 0;
+    while (i < ra_norder) {
+        int inst;
+        inst = ra_order[i];
+        k = h_kind[inst];
+        if (k == HI_PHI && h_pbase[inst] >= 0) {
+            phi_n = gc_node[inst];
+            if (phi_n >= 0) {
+                j = 0;
+                while (j < h_pcnt[inst]) {
+                    arg = h_pval[h_pbase[inst] + j];
+                    if (arg >= 0) {
+                        arg_n = gc_node[arg];
+                        if (arg_n >= 0) gc_remove_edge(phi_n, arg_n);
+                    }
+                    j = j + 1;
+                }
+            }
+        }
+        i = i + 1;
     }
 }
 
@@ -1382,6 +1484,7 @@ static void gc_writeback(void) {
 /* Top-level graph-coloring allocation */
 static void gc_alloc(void) {
     gc_build();
+    gc_drop_phi_edges();
     gc_find_moves();
     gc_irc();
     gc_select();
