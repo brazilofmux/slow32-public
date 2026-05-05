@@ -21,7 +21,8 @@ char *memcpy(char *dst, char *src, int n);
 #define TY_LLONG  4       /* long long (64-bit) */
 #define TY_FLOAT  5       /* float (32-bit IEEE 754) */
 #define TY_DOUBLE 6       /* double (64-bit IEEE 754) */
-#define TY_STRUCT_BASE 7  /* struct index i → type = 7+i; fits 7..255 */
+#define TY_I128   7       /* __int128 / __uint128_t (128-bit integer) */
+#define TY_STRUCT_BASE 8  /* struct index i → type = 8+i; fits 8..255 */
 #define TY_PTR  256   /* add to base: TY_PTR+TY_CHAR = char*, TY_PTR+TY_INT = int* */
 
 #define TY_UNSIGNED  0x4000  /* flag bit: unsigned qualifier */
@@ -30,7 +31,7 @@ char *memcpy(char *dst, char *src, int n);
 
 /* --- Struct definition tables --- */
 #define ST_MAX_STRUCTS 256
-#define ST_MAX_MEMBERS 512
+#define ST_MAX_MEMBERS 2048
 
 static char *st_name[ST_MAX_STRUCTS];
 static int   st_nfields[ST_MAX_STRUCTS];
@@ -59,6 +60,10 @@ static int ty_is_float(int ty) {
 
 static int ty_is_double(int ty) {
     return (ty & TY_BASE_MASK) == TY_DOUBLE && (ty & TY_PTR_MASK) == 0;
+}
+
+static int ty_is_i128(int ty) {
+    return (ty & TY_BASE_MASK) == TY_I128 && (ty & TY_PTR_MASK) == 0;
 }
 
 static int ty_is_fp(int ty) {
@@ -92,6 +97,7 @@ static int ty_size(int ty) {
     if (ty & TY_PTR_MASK) return ty_ptr_size;
     if ((ty & TY_BASE_MASK) >= TY_STRUCT_BASE)
         return st_size[(ty & TY_BASE_MASK) - TY_STRUCT_BASE];
+    if ((ty & TY_BASE_MASK) == TY_I128) return 16;
     if ((ty & TY_BASE_MASK) == TY_DOUBLE) return 8;
     if ((ty & TY_BASE_MASK) == TY_LLONG) return 8;
     if ((ty & TY_BASE_MASK) == TY_FLOAT) return 4;

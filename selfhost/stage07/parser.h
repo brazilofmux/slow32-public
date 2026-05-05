@@ -130,7 +130,7 @@ static int cg_label(void) {
 /* --- Parser state --- */
 #define P_MAX_LOCALS  128
 #define P_MAX_GLOBALS 8192
-#define PS_MAX_CONSTS 512
+#define PS_MAX_CONSTS 2048
 
 static char *ps_lname[P_MAX_LOCALS];  /* local var names */
 static int   ps_loff[P_MAX_LOCALS];   /* local var offsets from fp */
@@ -378,20 +378,7 @@ static void parse_enum_def(void) {
         next();
         if (lex_tok == TK_ASSIGN) {
             next();
-            /* Parse optional negative sign */
-            if (lex_tok == TK_MINUS) {
-                next();
-                if (lex_tok != TK_NUM) {
-                    p_error("expected number after '-' in enum");
-                }
-                val = 0 - lex_val;
-                next();
-            } else if (lex_tok == TK_NUM) {
-                val = lex_val;
-                next();
-            } else {
-                p_error("expected number in enum initializer");
-            }
+            val = parse_const_int();
         }
         ps_cval[ps_nconsts] = val;
         ps_nconsts = ps_nconsts + 1;
@@ -572,17 +559,7 @@ static int parse_type(void) {
                 next();
                 if (lex_tok == TK_ASSIGN) {
                     next();
-                    if (lex_tok == TK_MINUS) {
-                        next();
-                        if (lex_tok != TK_NUM) p_error("expected number after '-' in enum");
-                        val = 0 - lex_val;
-                        next();
-                    } else if (lex_tok == TK_NUM) {
-                        val = lex_val;
-                        next();
-                    } else {
-                        p_error("expected number in enum initializer");
-                    }
+                    val = parse_const_int();
                 }
                 ps_cval[ps_nconsts] = val;
                 ps_nconsts = ps_nconsts + 1;
@@ -2525,6 +2502,15 @@ static Node *parse_top_decl(void) {
             expect(TK_SEMI);
             return NULL;
         }
+        if (lex_tok == TK_LBRACK) {
+            next();
+            if (lex_tok != TK_RBRACK) parse_const_int();
+            expect(TK_RBRACK);
+            add_typedef(nm, ty + TY_PTR);  /* array typedefs decay to pointer use-sites here */
+            skip_gnu_decl_suffixes();
+            expect(TK_SEMI);
+            return NULL;
+        }
         add_typedef(nm, ty);
         skip_gnu_decl_suffixes();
         expect(TK_SEMI);
@@ -2912,6 +2898,9 @@ static Node *parse_program(void) {
     add_typedef("uint32_t", TY_INT | TY_UNSIGNED);
     add_typedef("int64_t",  TY_LLONG);
     add_typedef("uint64_t", TY_LLONG | TY_UNSIGNED);
+    add_typedef("__int128", TY_I128);
+    add_typedef("__int128_t", TY_I128);
+    add_typedef("__uint128_t", TY_I128 | TY_UNSIGNED);
     next();  /* prime the first token */
 
     fhead = NULL;
