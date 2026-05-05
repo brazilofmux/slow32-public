@@ -659,15 +659,16 @@ static int parse_type(void) {
                             expect(TK_RPAREN);
                         }
                     }
-                    /* Check for array member: type name[N]; */
+                    /* Check for array member: type name[N][M]...; */
                     arr_count = 0;
-                    if (lex_tok == TK_LBRACK) {
+                    while (lex_tok == TK_LBRACK) {
                         next();
                         if (lex_tok == TK_RBRACK) {
                             p_error("array size required in struct member");
                             return TY_INT;
                         }
-                        arr_count = parse_const_int();
+                        if (arr_count == 0) arr_count = 1;
+                        arr_count = arr_count * parse_const_int();
                         expect(TK_RBRACK);
                     }
                     skip_gnu_decl_suffixes();
@@ -781,15 +782,16 @@ static int parse_type(void) {
                             expect(TK_RPAREN);
                         }
                     }
-                    /* Check for array member: type name[N]; */
+                    /* Check for array member: type name[N][M]...; */
                     arr_count = 0;
-                    if (lex_tok == TK_LBRACK) {
+                    while (lex_tok == TK_LBRACK) {
                         next();
                         if (lex_tok == TK_RBRACK) {
                             p_error("array size required in union member");
                             return TY_INT;
                         }
-                        arr_count = parse_const_int();
+                        if (arr_count == 0) arr_count = 1;
+                        arr_count = arr_count * parse_const_int();
                         expect(TK_RBRACK);
                     }
                     skip_gnu_decl_suffixes();
@@ -2278,15 +2280,21 @@ static Node *parse_stmt(void) {
                 nf = st_nfields[si];
                 ci = 0;  /* field index */
                 while (ci < nf && lex_tok != TK_RBRACE && lex_tok != TK_EOF) {
+                    if (ci > 0) expect(TK_COMMA);
                     mi = struct_field_nth_idx(si, ci);
                     if (mi < 0) p_error("missing struct field");
                     if (ty_is_struct(stm_type[mi])) {
                         /* Nested struct: flatten */
+                        neg = 0;
                         nsi = ty_struct_idx(stm_type[mi]);
                         nnf = st_nfields[nsi];
                         nj = 0;
+                        if (lex_tok == TK_LBRACE) {
+                            neg = 1;
+                            next();
+                        }
                         while (nj < nnf && lex_tok != TK_RBRACE) {
-                            if (head != NULL) expect(TK_COMMA);
+                            if (nj > 0) expect(TK_COMMA);
                             base = struct_field_nth_idx(nsi, nj);
                             if (base < 0) p_error("missing nested struct field");
                             mi_off = stm_off[mi] + stm_off[base];
@@ -2300,8 +2308,8 @@ static Node *parse_stmt(void) {
                             else { tail->next = a; tail = a; }
                             nj = nj + 1;
                         }
+                        if (neg) expect(TK_RBRACE);
                     } else {
-                        if (head != NULL) expect(TK_COMMA);
                         mi_off = stm_off[mi];
                         mi_ty = stm_type[mi];
                         n = nd_var(nm, off, ty);
@@ -2584,18 +2592,13 @@ static Node *parse_top_decl(void) {
             } else if (lex_tok == TK_STRING) {
                 ps_gstr[idx] = parse_string_literal();
             } else {
-                neg = 0;
-                if (lex_tok == TK_MINUS) { neg = 1; next(); }
-                if (lex_tok == TK_NUM) {
-                    ps_ginit[idx] = neg ? (0 - lex_val) : lex_val;
-                    /* Sign-extend for long long globals */
-                    if (ty_is_llong(ty)) {
-                        if (ps_ginit[idx] < 0)
-                            ps_ginit_hi[idx] = -1;
-                        else
-                            ps_ginit_hi[idx] = 0;
-                    }
-                    next();
+                ps_ginit[idx] = parse_const_int();
+                /* Sign-extend for long long globals */
+                if (ty_is_llong(ty)) {
+                    if (ps_ginit[idx] < 0)
+                        ps_ginit_hi[idx] = -1;
+                    else
+                        ps_ginit_hi[idx] = 0;
                 }
             }
         }
