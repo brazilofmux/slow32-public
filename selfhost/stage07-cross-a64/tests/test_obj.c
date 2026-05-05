@@ -52,10 +52,7 @@ int main(void) {
     a64_bl(0);
 
     /* Record the call patch */
-    cg_cpatch_name[cg_ncpatches] = "helper";
-    cg_cpatch_off[cg_ncpatches]  = call_site;
-    cg_cpatch_kind[cg_ncpatches] = A64K_CALL26;
-    cg_ncpatches = cg_ncpatches + 1;
+    cg_cpatch_add("helper", call_site, A64K_CALL26, 0);
 
     /* mov w8, #93 ; svc #0 */
     a64_mov_w_imm(A64_X8, 93);

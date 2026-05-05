@@ -106,11 +106,17 @@ $(OUT)/cc_%_exe: $(OUT)/cc_%.o $(OUT)/crt0.o $(OUT)/crt0_stubs.o
 	@ld -o $@ $(OUT)/crt0.o $< $(OUT)/crt0_stubs.o
 
 test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
-         $(OUT)/cc_loop_exe  $(OUT)/cc_recursion_exe
+         $(OUT)/cc_loop_exe  $(OUT)/cc_recursion_exe \
+         $(OUT)/cc_string_exe
 	@$(OUT)/cc_hello_exe;     rc=$$?; if [ $$rc -eq 42 ];  then echo "cc_hello:     ok (exit=42)";     else echo "cc_hello:     FAIL (exit=$$rc, expected 42)";     exit 1; fi
 	@$(OUT)/cc_locals_exe;    rc=$$?; if [ $$rc -eq 42 ];  then echo "cc_locals:    ok (exit=42)";     else echo "cc_locals:    FAIL (exit=$$rc, expected 42)";     exit 1; fi
 	@$(OUT)/cc_loop_exe;      rc=$$?; if [ $$rc -eq 47 ];  then echo "cc_loop:      ok (exit=47)";     else echo "cc_loop:      FAIL (exit=$$rc, expected 47)";     exit 1; fi
 	@$(OUT)/cc_recursion_exe; rc=$$?; if [ $$rc -eq 120 ]; then echo "cc_recursion: ok (exit=120)";    else echo "cc_recursion: FAIL (exit=$$rc, expected 120)"; exit 1; fi
+	@out=$$($(OUT)/cc_string_exe 2>&1); rc=$$?; \
+		if [ "$$out" = "hi a64" ] && [ $$rc -eq 0 ]; then \
+			echo "cc_string:    ok (stdout=\"hi a64\", exit=0)"; \
+		else \
+			echo "cc_string:    FAIL (stdout=\"$$out\", exit=$$rc)"; exit 1; fi
 
 # crt0 emitted by cc-a64 itself.
 $(OUT)/crt0.o: $(OUT)/cc-a64
@@ -129,4 +135,5 @@ clean:
 	      $(OUT)/cc_locals.o $(OUT)/cc_locals_exe \
 	      $(OUT)/cc_loop.o $(OUT)/cc_loop_exe \
 	      $(OUT)/cc_recursion.o $(OUT)/cc_recursion_exe \
+	      $(OUT)/cc_string.o $(OUT)/cc_string_exe \
 	      tests/ref.o tests/ref.bin

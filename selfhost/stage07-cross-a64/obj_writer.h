@@ -359,29 +359,28 @@ static int obj_write_file(char *filename) {
 
     i = 0;
     while (i < cg_ncpatches) {
-        if (!obj_is_defined_func(cg_cpatch_name[i])) {
-            if (obj_find_sym(cg_cpatch_name[i]) < 0)
-                obj_add_sym(cg_cpatch_name[i], 0, 0,
-                            OBJ_STB_GLOBAL, OBJ_STT_NOTYPE);
+        char *cn;
+        cn = cg_cpatch_name[i];
+        /* @@str is the magic string-pseudo-name — no symbol entry needed
+         * (we'll relocate against the .rodata section symbol instead). */
+        if (cg_strcmp(cn, "@@str") != 0) {
+            if (!obj_is_defined_func(cn)) {
+                if (obj_find_sym(cn) < 0)
+                    obj_add_sym(cn, 0, 0, OBJ_STB_GLOBAL, OBJ_STT_NOTYPE);
+            }
         }
         i = i + 1;
     }
 
-    /* ---- Step 3: count relocations ---- */
-    rela_text_count = cg_ncpatches;   /* every patch lives in .text */
+    /* ---- Step 3: count relocations ----
+     * Code-section relocations all live in cg_cpatch (CALL26, ADRP, ADD,
+     * LDST*).  Data-section relocations come from cg_dreloc with off<0
+     * (ABS64 fixups for string-init pointers in .data). */
+    rela_text_count = cg_ncpatches;
     rela_data_count = 0;
-
-    /* Data-section relocations: each entry is an 8-byte ABS64 pointer in
-     * .data (or eventually .rodata) referencing some symbol. The x64 sibling
-     * splits these between .rela.text (positive offset) and .rela.data
-     * (negative offset, encoded as -(off+1)). On AArch64 we never put
-     * absolute pointers in code — we use ADRP/ADD pairs — so all dreloc
-     * entries should belong to .rela.data here. We still respect the same
-     * sign convention so future codegen can use it if useful. */
     i = 0;
     while (i < cg_ndrelocs) {
-        if (cg_dreloc_off[i] >= 0) rela_text_count = rela_text_count + 1;
-        else                       rela_data_count = rela_data_count + 1;
+        if (cg_dreloc_off[i] < 0) rela_data_count = rela_data_count + 1;
         i = i + 1;
     }
 
@@ -428,31 +427,25 @@ static int obj_write_file(char *filename) {
     /* Code patches — one Rela per cg_cpatch entry. */
     i = 0;
     while (i < cg_ncpatches) {
-        int kind; int rtype;
-        off = cg_cpatch_off[i];
-        sym_idx = obj_find_sym(cg_cpatch_name[i]);
-        if (sym_idx < 0) sym_idx = 0;
-        kind  = cg_cpatch_kind[i];
-        rtype = obj_kind_to_rtype(kind);
-        obj_emit_rela(off, sym_idx, rtype, 0);
-        i = i + 1;
-    }
+        int kind; int rtype; int addend;
+        char *cn;
+        off    = cg_cpatch_off[i];
+        cn     = cg_cpatch_name[i];
+        kind   = cg_cpatch_kind[i];
+        rtype  = obj_kind_to_rtype(kind);
+        addend = cg_cpatch_addend[i];
 
-    /* Code-section data references (R_AARCH64_ABS64 — atypical on AArch64). */
-    i = 0;
-    while (i < cg_ndrelocs) {
-        off = cg_dreloc_off[i];
-        if (off >= 0) {
-            if (cg_dreloc_kind[i] == DRELOC_STRING) {
-                obj_emit_rela(off, OBJ_SEC_RODATA, R_AARCH64_ABS64,
-                              cg_str_rodata_off[cg_dreloc_idx[i]]);
-            } else {
-                int gidx; int gsec;
-                gidx = cg_dreloc_idx[i];
-                gsec = (gidx < cg_nglobals && cg_glob_in_bss[gidx]) ? OBJ_SEC_BSS : OBJ_SEC_DATA;
-                obj_emit_rela(off, gsec, R_AARCH64_ABS64,
-                              cg_glob_data_off[gidx]);
-            }
+        if (cg_strcmp(cn, "@@str") == 0) {
+            /* String reference: relocate against .rodata section symbol with
+             * addend = the string's offset into .rodata. */
+            int str_idx;
+            str_idx = addend;
+            obj_emit_rela(off, OBJ_SEC_RODATA, rtype,
+                          cg_str_rodata_off[str_idx]);
+        } else {
+            sym_idx = obj_find_sym(cn);
+            if (sym_idx < 0) sym_idx = 0;
+            obj_emit_rela(off, sym_idx, rtype, addend);
         }
         i = i + 1;
     }

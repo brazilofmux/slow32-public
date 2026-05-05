@@ -37,7 +37,17 @@ static int   cg_nglobals;
 static char *cg_cpatch_name[CG_MAX_PATCHES];
 static int   cg_cpatch_off[CG_MAX_PATCHES];
 static int   cg_cpatch_kind[CG_MAX_PATCHES];
+static int   cg_cpatch_addend[CG_MAX_PATCHES];
 static int   cg_ncpatches;
+
+/* Helper used by codegen and crt0_emit alike. */
+static void cg_cpatch_add(char *name, int off, int kind, int addend) {
+    cg_cpatch_name[cg_ncpatches]   = name;
+    cg_cpatch_off[cg_ncpatches]    = off;
+    cg_cpatch_kind[cg_ncpatches]   = kind;
+    cg_cpatch_addend[cg_ncpatches] = addend;
+    cg_ncpatches = cg_ncpatches + 1;
+}
 
 static int   cg_dreloc_off[CG_MAX_DRELOCS];
 static int   cg_dreloc_kind[CG_MAX_DRELOCS];

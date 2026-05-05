@@ -40,19 +40,13 @@ int main(void) {
     adrp_off = a64_off;
     a64_adrp(A64_X0, 0);
 
-    cg_cpatch_name[cg_ncpatches] = "the_answer";
-    cg_cpatch_off[cg_ncpatches]  = adrp_off;
-    cg_cpatch_kind[cg_ncpatches] = A64K_ADR_HI21;
-    cg_ncpatches = cg_ncpatches + 1;
+    cg_cpatch_add("the_answer", adrp_off, A64K_ADR_HI21, 0);
 
     /* ldr w0, [x0, #0]  (imm12 patched by linker) */
     ldr_off = a64_off;
     a64_ldr_w_imm(A64_X0, A64_X0, 0);
 
-    cg_cpatch_name[cg_ncpatches] = "the_answer";
-    cg_cpatch_off[cg_ncpatches]  = ldr_off;
-    cg_cpatch_kind[cg_ncpatches] = A64K_LDST32_LO12;
-    cg_ncpatches = cg_ncpatches + 1;
+    cg_cpatch_add("the_answer", ldr_off, A64K_LDST32_LO12, 0);
 
     /* mov w8, #93 ; svc #0 */
     a64_mov_w_imm(A64_X8, 93);

@@ -70,12 +70,18 @@ static int   cg_func_off[CG_MAX_FUNCS];
 static int   cg_nfuncs;
 
 /* Call/address patches.  Each entry needs a kind (A64K_*) so the writer
- * knows which AArch64 ELF reloc type to emit. */
+ * knows which AArch64 ELF reloc type to emit.
+ *
+ * The "name" field has special encoding for string-literal references:
+ * the magic name "@@str" means "this is a relocation against .rodata
+ * with addend = cg_str_rodata_off[cg_cpatch_addend[i]]".  For normal
+ * (function/global) entries, addend is unused and stays 0. */
 #define CG_MAX_CALL_PATCHES 8192
 
 static char *cg_cpatch_name[CG_MAX_CALL_PATCHES];
 static int   cg_cpatch_off[CG_MAX_CALL_PATCHES];
 static int   cg_cpatch_kind[CG_MAX_CALL_PATCHES];
+static int   cg_cpatch_addend[CG_MAX_CALL_PATCHES];
 static int   cg_ncpatches;
 
 /* Data-section relocations (8-byte ABS64 fixups). */
@@ -432,59 +438,43 @@ static void cg_li(int v) {
     a64_movk_w(A64_X0, (v >> 16) & 0xFFFF, 16);
 }
 
-/* Load address of a string literal or global into x0 via ADRP+ADD.
- * Records the two AArch64 reloc kinds at the right offsets. */
-static void cg_data_addr(int kind, int idx) {
+/* Magic cpatch name for string-literal references (see cg_cpatch_addend). */
+#define CG_STR_PSEUDO_NAME "@@str"
+
+/* Append a cpatch entry. Use this everywhere — never write to the arrays
+ * directly — so we never forget to populate a parallel field. */
+static void cg_cpatch_add(char *name, int off, int kind, int addend) {
+    cg_cpatch_name[cg_ncpatches]   = name;
+    cg_cpatch_off[cg_ncpatches]    = off;
+    cg_cpatch_kind[cg_ncpatches]   = kind;
+    cg_cpatch_addend[cg_ncpatches] = addend;
+    cg_ncpatches = cg_ncpatches + 1;
+}
+
+/* Record an ADRP+ADD pair as two cpatches.  The pair shares the same name,
+ * kind sequence (ADR_HI21 then ADD_LO12), and addend.  When the writer
+ * emits relocations, it dispatches on kind for the imm field, and on
+ * the name (whether it's "@@str" or a real symbol) for the target. */
+static void cg_emit_adrp_add(char *sym_name, int addend) {
     int adrp_off; int add_off;
-    char *sym_name;
-    int sym_is_string;
 
-    sym_is_string = (kind == DRELOC_STRING);
-    /* Strings go in .rodata under the section symbol; globals are named.
-     * We use a shared helper: emit ADRP+ADD with two patches that point
-     * at either the global's name OR a synthesized name we'll resolve in
-     * the writer.  For simplicity, route them through cg_dreloc_* with
-     * kind=DRELOC_STRING/GLOBAL like x86-64 does — but the AArch64 writer
-     * needs reloc-against-symbol.  Easier path: turn into cg_cpatch with
-     * the right kind. */
-    if (sym_is_string) {
-        /* Strings use the section symbol .rodata + addend = string offset.
-         * We don't have the per-string offset until gen_data_sections runs,
-         * so record a deferred-resolve hint as a dreloc.  But to drive the
-         * obj_writer cleanly, we need the per-string symbol resolution
-         * inline.  Simplest workable approach: keep the dreloc path for
-         * strings and resolve to .rodata + offset post-layout. */
-        cg_dreloc_off[cg_ndrelocs]  = a64_off;          /* ADRP site */
-        cg_dreloc_kind[cg_ndrelocs] = DRELOC_STRING;
-        cg_dreloc_idx[cg_ndrelocs]  = idx;
-        cg_ndrelocs = cg_ndrelocs + 1;
-        adrp_off = a64_off;
-        a64_adrp(A64_X0, 0);
-
-        cg_dreloc_off[cg_ndrelocs]  = a64_off;          /* ADD site */
-        cg_dreloc_kind[cg_ndrelocs] = DRELOC_STRING;
-        cg_dreloc_idx[cg_ndrelocs]  = idx;
-        cg_ndrelocs = cg_ndrelocs + 1;
-        a64_add_x_imm(A64_X0, A64_X0, 0);
-        (void)adrp_off; (void)add_off;
-        return;
-    }
-
-    /* DRELOC_GLOBAL: emit ADRP+ADD against the global's symbol name. */
-    sym_name = cg_glob_name[idx];
     adrp_off = a64_off;
     a64_adrp(A64_X0, 0);
-    cg_cpatch_name[cg_ncpatches] = sym_name;
-    cg_cpatch_off[cg_ncpatches]  = adrp_off;
-    cg_cpatch_kind[cg_ncpatches] = A64K_ADR_HI21;
-    cg_ncpatches = cg_ncpatches + 1;
+    cg_cpatch_add(sym_name, adrp_off, A64K_ADR_HI21, addend);
 
     add_off = a64_off;
     a64_add_x_imm(A64_X0, A64_X0, 0);
-    cg_cpatch_name[cg_ncpatches] = sym_name;
-    cg_cpatch_off[cg_ncpatches]  = add_off;
-    cg_cpatch_kind[cg_ncpatches] = A64K_ADD_LO12;
-    cg_ncpatches = cg_ncpatches + 1;
+    cg_cpatch_add(sym_name, add_off, A64K_ADD_LO12, addend);
+}
+
+/* Load address of a string literal or global into x0 via ADRP+ADD. */
+static void cg_data_addr(int kind, int idx) {
+    if (kind == DRELOC_STRING) {
+        /* String literal — addend will be resolved as cg_str_rodata_off[idx]. */
+        cg_emit_adrp_add(CG_STR_PSEUDO_NAME, idx);
+    } else {
+        cg_emit_adrp_add(cg_glob_name[idx], 0);
+    }
 }
 
 /* Load value at [x0] into w0 / x0 with correct width for type. */
@@ -930,20 +920,7 @@ static void gen_expr(Node *n) {
 
     if (n->kind == ND_FUNC_REF) {
         /* Take address of a function: ADRP+ADD against its symbol. */
-        int adrp_off; int add_off;
-        adrp_off = a64_off;
-        a64_adrp(A64_X0, 0);
-        cg_cpatch_name[cg_ncpatches] = n->name;
-        cg_cpatch_off[cg_ncpatches]  = adrp_off;
-        cg_cpatch_kind[cg_ncpatches] = A64K_ADR_HI21;
-        cg_ncpatches = cg_ncpatches + 1;
-
-        add_off = a64_off;
-        a64_add_x_imm(A64_X0, A64_X0, 0);
-        cg_cpatch_name[cg_ncpatches] = n->name;
-        cg_cpatch_off[cg_ncpatches]  = add_off;
-        cg_cpatch_kind[cg_ncpatches] = A64K_ADD_LO12;
-        cg_ncpatches = cg_ncpatches + 1;
+        cg_emit_adrp_add(n->name, 0);
         return;
     }
 
@@ -1056,10 +1033,7 @@ static void gen_expr(Node *n) {
         if (n->kind == ND_CALL_PTR) {
             a64_blr(A64_X16);
         } else {
-            cg_cpatch_name[cg_ncpatches] = n->name;
-            cg_cpatch_off[cg_ncpatches]  = a64_off;
-            cg_cpatch_kind[cg_ncpatches] = A64K_CALL26;
-            cg_ncpatches = cg_ncpatches + 1;
+            cg_cpatch_add(n->name, a64_off, A64K_CALL26, 0);
             a64_bl(0);
         }
 

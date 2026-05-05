@@ -65,19 +65,13 @@ static void emit_crt0_to_buf(void) {
     a64_mov_x(A64_X0, A64_X2);
     call_envp_off = a64_off;
     a64_bl(0);
-    cg_cpatch_name[cg_ncpatches] = "__save_envp";
-    cg_cpatch_off[cg_ncpatches]  = call_envp_off;
-    cg_cpatch_kind[cg_ncpatches] = A64K_CALL26;
-    cg_ncpatches = cg_ncpatches + 1;
+    cg_cpatch_add("__save_envp", call_envp_off, A64K_CALL26, 0);
 
     /* Restore argc/argv into x0/x1 and BL main */
     a64_ldp_x_off(A64_X0, A64_X1, A64_SP, 16);
     call_main_off = a64_off;
     a64_bl(0);
-    cg_cpatch_name[cg_ncpatches] = "main";
-    cg_cpatch_off[cg_ncpatches]  = call_main_off;
-    cg_cpatch_kind[cg_ncpatches] = A64K_CALL26;
-    cg_ncpatches = cg_ncpatches + 1;
+    cg_cpatch_add("main", call_main_off, A64K_CALL26, 0);
 
     /* sys_exit(w0): mov w8, #93; svc #0 */
     a64_mov_w_imm(A64_X8, A64_SYS_EXIT);
