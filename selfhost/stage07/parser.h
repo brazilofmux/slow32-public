@@ -9,6 +9,104 @@
 static int find_typedef(char *name);
 static Node *parse_unary(void);
 static int parse_string_literal(void);
+static int parse_const_int(void);
+static void next(void);
+
+static int is_gnu_qual_ident(void) {
+    if (lex_tok != TK_IDENT) return 0;
+    if (strcmp(lex_str, "__restrict") == 0) return 1;
+    if (strcmp(lex_str, "__restrict__") == 0) return 1;
+    if (strcmp(lex_str, "__const") == 0) return 1;
+    if (strcmp(lex_str, "__const__") == 0) return 1;
+    if (strcmp(lex_str, "__volatile") == 0) return 1;
+    if (strcmp(lex_str, "__volatile__") == 0) return 1;
+    return 0;
+}
+
+static int is_gnu_attr_ident(void) {
+    if (lex_tok != TK_IDENT) return 0;
+    if (strcmp(lex_str, "__attribute__") == 0) return 1;
+    return 0;
+}
+
+static int is_gnu_asm_ident(void) {
+    if (lex_tok != TK_IDENT) return 0;
+    if (strcmp(lex_str, "__asm__") == 0) return 1;
+    if (strcmp(lex_str, "__asm") == 0) return 1;
+    return 0;
+}
+
+static int is_gnu_extension_ident(void) {
+    if (lex_tok != TK_IDENT) return 0;
+    if (strcmp(lex_str, "__extension__") == 0) return 1;
+    return 0;
+}
+
+static int gnu_float_ident_ty(void) {
+    if (lex_tok != TK_IDENT) return -1;
+    if (strcmp(lex_str, "_Float32") == 0) return TY_FLOAT;
+    if (strcmp(lex_str, "_Float32x") == 0) return TY_DOUBLE;
+    if (strcmp(lex_str, "_Float64") == 0) return TY_DOUBLE;
+    if (strcmp(lex_str, "_Float64x") == 0) return TY_DOUBLE;
+    if (strcmp(lex_str, "_Float128") == 0) return TY_DOUBLE;
+    if (strcmp(lex_str, "__float128") == 0) return TY_DOUBLE;
+    return -1;
+}
+
+static void skip_decl_qualifiers(void) {
+    while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE ||
+           lex_tok == TK_RESTRICT || is_gnu_qual_ident() ||
+           is_gnu_extension_ident()) next();
+}
+
+static void skip_gnu_attributes(void) {
+    int depth;
+
+    while (is_gnu_attr_ident()) {
+        next();
+        if (lex_tok != TK_LPAREN) continue;
+        depth = 0;
+        while (lex_tok != TK_EOF) {
+            if (lex_tok == TK_LPAREN) depth = depth + 1;
+            else if (lex_tok == TK_RPAREN) {
+                depth = depth - 1;
+                next();
+                if (depth <= 0) break;
+                continue;
+            }
+            next();
+        }
+    }
+}
+
+static void skip_gnu_decl_suffixes(void) {
+    int depth;
+
+    while (1) {
+        if (is_gnu_attr_ident() || is_gnu_asm_ident()) {
+            next();
+            if (lex_tok != TK_LPAREN) continue;
+            depth = 0;
+            while (lex_tok != TK_EOF) {
+                if (lex_tok == TK_LPAREN) depth = depth + 1;
+                else if (lex_tok == TK_RPAREN) {
+                    depth = depth - 1;
+                    next();
+                    if (depth <= 0) break;
+                    continue;
+                }
+                next();
+            }
+            continue;
+        }
+        break;
+    }
+}
+
+static int target_long_ty(void) {
+    if (ty_ptr_size == 8) return TY_LLONG;
+    return TY_INT;
+}
 
 /* --- Shared label counter (used by both parser and codegen) --- */
 static int cg_lbl;    /* label counter (monotonically increasing) */
@@ -165,6 +263,9 @@ static int is_type(void) {
     if (lex_tok == TK_DOUBLE) return 1;
     if (lex_tok == TK_CONST) return 1;
     if (lex_tok == TK_VOLATILE) return 1;
+    if (gnu_float_ident_ty() >= 0) return 1;
+    if (is_gnu_extension_ident()) return 1;
+    if (is_gnu_qual_ident()) return 1;
     if (lex_tok == TK_IDENT && find_typedef(lex_str) >= 0) return 1;
     return 0;
 }
@@ -396,7 +497,8 @@ static int parse_type(void) {
     char nm[256];
     /* Skip const/volatile/signed/restrict qualifiers */
     while (lex_tok == TK_CONST || lex_tok == TK_VOLATILE ||
-           lex_tok == TK_SIGNED || lex_tok == TK_RESTRICT) next();
+           lex_tok == TK_SIGNED || lex_tok == TK_RESTRICT ||
+           is_gnu_qual_ident() || is_gnu_extension_ident()) next();
     if (lex_tok == TK_INT)  { ty = TY_INT;  next(); }
     else if (lex_tok == TK_CHAR) { ty = TY_CHAR; next(); }
     else if (lex_tok == TK_VOID) { ty = TY_VOID; next(); }
@@ -408,14 +510,18 @@ static int parse_type(void) {
     else if (lex_tok == TK_UNSIGNED) {
         next();
         if (lex_tok == TK_CHAR) { ty = TY_CHAR | TY_UNSIGNED; next(); }
-        else if (lex_tok == TK_SHORT) { ty = TY_SHORT | TY_UNSIGNED; next(); }
+        else if (lex_tok == TK_SHORT) {
+            ty = TY_SHORT | TY_UNSIGNED;
+            next();
+            if (lex_tok == TK_INT) next();
+        }
         else if (lex_tok == TK_INT) { ty = TY_INT | TY_UNSIGNED; next(); }
         else if (lex_tok == TK_LONG) {
             next();
             if (lex_tok == TK_LONG) {
                 ty = TY_LLONG | TY_UNSIGNED; next();
             } else {
-                ty = TY_INT | TY_UNSIGNED;
+                ty = target_long_ty() | TY_UNSIGNED;
             }
             if (lex_tok == TK_INT) next();
         }
@@ -424,13 +530,26 @@ static int parse_type(void) {
     else if (lex_tok == TK_LONG) {
         next();
         if (lex_tok == TK_LONG) { ty = TY_LLONG; next(); if (lex_tok == TK_INT) next(); }
-        else if (lex_tok == TK_INT) { ty = TY_INT; next(); }
-        else if (lex_tok == TK_UNSIGNED) { ty = TY_INT | TY_UNSIGNED; next(); }
+        else if (lex_tok == TK_INT) { ty = target_long_ty(); next(); }
+        else if (lex_tok == TK_UNSIGNED) {
+            ty = target_long_ty() | TY_UNSIGNED;
+            next();
+            if (lex_tok == TK_INT) next();
+        }
+        else if (lex_tok == TK_SIGNED) {
+            ty = target_long_ty();
+            next();
+            if (lex_tok == TK_INT) next();
+        }
         else if (lex_tok == TK_DOUBLE) { ty = TY_DOUBLE; next(); }
-        else { ty = TY_INT; }
+        else { ty = target_long_ty(); }
     }
     else if (lex_tok == TK_FLOAT) { ty = TY_FLOAT; next(); }
     else if (lex_tok == TK_DOUBLE) { ty = TY_DOUBLE; next(); }
+    else if (gnu_float_ident_ty() >= 0) {
+        ty = gnu_float_ident_ty();
+        next();
+    }
     else if (lex_tok == TK_ENUM) {
         next();
         if (lex_tok == TK_IDENT) next();
@@ -521,12 +640,11 @@ static int parse_type(void) {
                     arr_count = 0;
                     if (lex_tok == TK_LBRACK) {
                         next();
-                        if (lex_tok != TK_NUM) {
+                        if (lex_tok == TK_RBRACK) {
                             p_error("array size required in struct member");
                             return TY_INT;
                         }
-                        arr_count = lex_val;
-                        next();
+                        arr_count = parse_const_int();
                         expect(TK_RBRACK);
                     }
                     if (arr_count > 0) {
@@ -613,12 +731,11 @@ static int parse_type(void) {
                     arr_count = 0;
                     if (lex_tok == TK_LBRACK) {
                         next();
-                        if (lex_tok != TK_NUM) {
+                        if (lex_tok == TK_RBRACK) {
                             p_error("array size required in union member");
                             return TY_INT;
                         }
-                        arr_count = lex_val;
-                        next();
+                        arr_count = parse_const_int();
                         expect(TK_RBRACK);
                     }
                     if (arr_count > 0) {
@@ -786,27 +903,93 @@ static void ps_mangle_static(char *func, char *var) {
     ps_sl_count = ps_sl_count + 1;
 }
 
-/* Parse a compile-time constant integer (for global initializers) */
-static int parse_const_int(void) {
-    int neg;
+static int parse_const_primary(void) {
     int ci;
-    neg = 0;
-    if (lex_tok == TK_MINUS) { neg = 1; next(); }
+    int ty;
+
+    if (lex_tok == TK_LPAREN) {
+        next();
+        ci = parse_const_int();
+        expect(TK_RPAREN);
+        return ci;
+    }
+    if (lex_tok == TK_SIZEOF) {
+        next();
+        expect(TK_LPAREN);
+        if (!is_type()) p_error("expected type in sizeof");
+        ty = parse_type();
+        while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); }
+        skip_decl_qualifiers();
+        expect(TK_RPAREN);
+        return ty_size(ty);
+    }
     if (lex_tok == TK_NUM) {
         ci = lex_val;
         next();
-        return neg ? (0 - ci) : ci;
+        return ci;
     }
     if (lex_tok == TK_IDENT) {
         ci = find_const(lex_str);
         if (ci >= 0) {
-            ci = ps_cval[ci];
             next();
-            return neg ? (0 - ci) : ci;
+            return ps_cval[ci];
         }
     }
-    p_error("expected constant integer in initializer");
+    p_error("expected constant integer");
     return 0;
+}
+
+static int parse_const_unary(void) {
+    if (lex_tok == TK_PLUS) {
+        next();
+        return parse_const_unary();
+    }
+    if (lex_tok == TK_MINUS) {
+        next();
+        return 0 - parse_const_unary();
+    }
+    return parse_const_primary();
+}
+
+static int parse_const_mul(void) {
+    int v;
+    int r;
+
+    v = parse_const_unary();
+    while (lex_tok == TK_STAR || lex_tok == TK_SLASH || lex_tok == TK_PERCENT) {
+        if (lex_tok == TK_STAR) {
+            next();
+            v = v * parse_const_unary();
+        } else if (lex_tok == TK_SLASH) {
+            next();
+            r = parse_const_unary();
+            if (r == 0) p_error("division by zero in constant expression");
+            v = v / r;
+        } else {
+            next();
+            r = parse_const_unary();
+            if (r == 0) p_error("division by zero in constant expression");
+            v = v % r;
+        }
+    }
+    return v;
+}
+
+/* Parse a compile-time constant integer (for initializers and array sizes) */
+static int parse_const_int(void) {
+    int v;
+
+    v = parse_const_mul();
+    while (lex_tok == TK_PLUS || lex_tok == TK_MINUS) {
+        if (lex_tok == TK_PLUS) {
+            next();
+            v = v + parse_const_mul();
+        } else {
+            next();
+            v = v - parse_const_mul();
+        }
+    }
+    return v;
 }
 
 static int ps_ginit_cur_off(int gidx) {
@@ -1832,7 +2015,8 @@ static Node *parse_stmt(void) {
     is_static = 0;
     while (lex_tok == TK_STATIC || lex_tok == TK_CONST ||
            lex_tok == TK_REGISTER || lex_tok == TK_RESTRICT ||
-           lex_tok == TK_AUTO) {
+           lex_tok == TK_AUTO || is_gnu_qual_ident() ||
+           is_gnu_extension_ident()) {
         if (lex_tok == TK_STATIC) is_static = 1;
         next();
     }
@@ -1840,6 +2024,7 @@ static Node *parse_stmt(void) {
     /* local variable declaration */
     if (is_type()) {
         ty = parse_type();
+        skip_decl_qualifiers();
         /* Function pointer declaration: type (*name)(args); */
         if (lex_tok == TK_LPAREN) {
             next();
@@ -1902,9 +2087,8 @@ static Node *parse_stmt(void) {
         if (lex_tok == TK_LBRACK) {
             next();
             count = -1;
-            if (lex_tok == TK_NUM) {
-                count = lex_val;
-                next();
+            if (lex_tok != TK_RBRACK) {
+                count = parse_const_int();
             }
             expect(TK_RBRACK);
             head = NULL;
@@ -2065,6 +2249,7 @@ static Node *parse_stmt(void) {
             while (ty_is_ptr(xty)) xty = ty_deref(xty);
             /* Each declarator adds its own pointer stars */
             while (lex_tok == TK_STAR) { xty = xty + TY_PTR; next(); }
+            skip_decl_qualifiers();
             if (lex_tok != TK_IDENT) break;
             memcpy(nm, lex_str, lex_slen + 1);
             next();
@@ -2151,6 +2336,7 @@ static Node *parse_top_decl(void) {
     Node *ptail;
     Node *p;
     char nm[256];
+    char pnm[256];
     int ty;
     int pty;
     int off;
@@ -2191,7 +2377,8 @@ static Node *parse_top_decl(void) {
     while (lex_tok == TK_STATIC || lex_tok == TK_CONST ||
            lex_tok == TK_EXTERN || lex_tok == TK_INLINE ||
            lex_tok == TK_REGISTER || lex_tok == TK_RESTRICT ||
-           lex_tok == TK_AUTO) next();
+           lex_tok == TK_AUTO || is_gnu_qual_ident() ||
+           is_gnu_extension_ident()) next();
 
     /* Typedef */
     if (lex_tok == TK_TYPEDEF) {
@@ -2220,8 +2407,18 @@ static Node *parse_top_decl(void) {
             p_error("expected typedef name");
             return NULL;
         }
-        add_typedef(lex_str, ty);
+        memcpy(nm, lex_str, lex_slen + 1);
         next();
+        if (lex_tok == TK_LPAREN) {
+            next();
+            while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
+            expect(TK_RPAREN);
+            add_typedef(nm, TY_INT);  /* function types decay to pointer use-sites here */
+            skip_gnu_decl_suffixes();
+            expect(TK_SEMI);
+            return NULL;
+        }
+        add_typedef(nm, ty);
         expect(TK_SEMI);
         return NULL;
     }
@@ -2236,6 +2433,7 @@ static Node *parse_top_decl(void) {
 
     /* Parse return type / variable type */
     ty = parse_type();
+    skip_decl_qualifiers();
 
     /* Bare struct definition: struct Foo { ... }; */
     if (lex_tok == TK_SEMI && ty_is_struct(ty)) {
@@ -2259,6 +2457,7 @@ static Node *parse_top_decl(void) {
             while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
             expect(TK_RPAREN);
         }
+        skip_gnu_decl_suffixes();
         add_global(nm, TY_INT, 0);
         expect(TK_SEMI);
         return NULL;
@@ -2280,6 +2479,7 @@ static Node *parse_top_decl(void) {
         } else {
             idx = add_global(nm, ty, 0);
         }
+        skip_gnu_decl_suffixes();
         if (lex_tok == TK_ASSIGN) {
             next();
             if (lex_tok == TK_LBRACE && ty_is_struct(ty)) {
@@ -2311,11 +2511,11 @@ static Node *parse_top_decl(void) {
     if (lex_tok == TK_LBRACK) {
         next();
         count = -1;
-        if (lex_tok == TK_NUM) {
-            count = lex_val;
-            next();
+        if (lex_tok != TK_RBRACK) {
+            count = parse_const_int();
         }
         expect(TK_RBRACK);
+        skip_gnu_decl_suffixes();
         if (lex_tok == TK_ASSIGN) {
             next();
             if (lex_tok == TK_STRING) {
@@ -2399,13 +2599,16 @@ static Node *parse_top_decl(void) {
         }
         if (lex_tok == TK_VOID) {
             pty = parse_type();
+            skip_decl_qualifiers();
             if (lex_tok == TK_RPAREN) {
                 /* (void) → no params */
                 goto params_done;
             }
         } else {
             pty = parse_type();
+            skip_decl_qualifiers();
         }
+        while (lex_tok == TK_STAR) { pty = pty + TY_PTR; next(); }
         /* Function pointer param: type (*name)(args) */
         if (lex_tok == TK_LPAREN) {
             next();
@@ -2421,6 +2624,13 @@ static Node *parse_top_decl(void) {
                 while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
                 expect(TK_RPAREN);
             }
+        } else if (lex_tok == TK_LBRACK) {
+            pty = pty + TY_PTR;
+            next();
+            if (lex_tok != TK_RBRACK) parse_const_int();
+            expect(TK_RBRACK);
+            p = NULL;
+            saw_unnamed_param = 1;
         } else if (lex_tok != TK_IDENT) {
             if (lex_tok == TK_COMMA || lex_tok == TK_RPAREN) {
                 p = NULL;
@@ -2431,10 +2641,17 @@ static Node *parse_top_decl(void) {
             }
         } else {
             require_complete_type(pty, "incomplete parameter type");
-            off = add_local(lex_str, pty);
-            p = nd_var(lex_str, off, pty);
-            p->is_local = 1;
+            memcpy(pnm, lex_str, lex_slen + 1);
             next();
+            if (lex_tok == TK_LBRACK) {
+                pty = pty + TY_PTR;
+                next();
+                if (lex_tok != TK_RBRACK) parse_const_int();
+                expect(TK_RBRACK);
+            }
+            off = add_local(pnm, pty);
+            p = nd_var(pnm, off, pty);
+            p->is_local = 1;
         }
         ps_nparams = 1;
         phead = p;
@@ -2452,6 +2669,8 @@ static Node *parse_top_decl(void) {
                 return NULL;
             }
             pty = parse_type();
+            skip_decl_qualifiers();
+            while (lex_tok == TK_STAR) { pty = pty + TY_PTR; next(); }
             /* Function pointer param: type (*name)(args) */
             if (lex_tok == TK_LPAREN) {
                 next();
@@ -2467,6 +2686,13 @@ static Node *parse_top_decl(void) {
                     while (lex_tok != TK_RPAREN && lex_tok != TK_EOF) next();
                     expect(TK_RPAREN);
                 }
+            } else if (lex_tok == TK_LBRACK) {
+                pty = pty + TY_PTR;
+                next();
+                if (lex_tok != TK_RBRACK) parse_const_int();
+                expect(TK_RBRACK);
+                p = NULL;
+                saw_unnamed_param = 1;
             } else if (lex_tok != TK_IDENT) {
                 if (lex_tok == TK_COMMA || lex_tok == TK_RPAREN) {
                     p = NULL;
@@ -2477,10 +2703,17 @@ static Node *parse_top_decl(void) {
                 }
             } else {
                 require_complete_type(pty, "incomplete parameter type");
-                off = add_local(lex_str, pty);
-                p = nd_var(lex_str, off, pty);
-                p->is_local = 1;
+                memcpy(pnm, lex_str, lex_slen + 1);
                 next();
+                if (lex_tok == TK_LBRACK) {
+                    pty = pty + TY_PTR;
+                    next();
+                    if (lex_tok != TK_RBRACK) parse_const_int();
+                    expect(TK_RBRACK);
+                }
+                off = add_local(pnm, pty);
+                p = nd_var(pnm, off, pty);
+                p->is_local = 1;
             }
             if (phead == NULL) {
                 phead = p;
@@ -2494,6 +2727,7 @@ static Node *parse_top_decl(void) {
     }
 params_done:
     expect(TK_RPAREN);
+    skip_gnu_decl_suffixes();
 
     /* Prototype: type name(params); */
     if (lex_tok == TK_SEMI) {
@@ -2545,6 +2779,7 @@ static Node *parse_program(void) {
         isize_ty = TY_INT;
     }
     add_typedef("va_list", TY_PTR + TY_CHAR);
+    add_typedef("__builtin_va_list", TY_PTR + TY_CHAR);
     add_typedef("_Bool", TY_INT);
     add_typedef("bool", TY_INT);
     add_typedef("size_t", usize_ty);
