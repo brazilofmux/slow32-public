@@ -10,10 +10,10 @@ CFLAGS = -O2 -fno-builtin -fno-stack-protector -w
 LDFLAGS = -nostdlib -static
 OUT = out
 
-.PHONY: all test test-encode test-elf test-obj test-crt0 test-cc test-toolchain libc s32fast bench clean
+.PHONY: all test test-encode test-elf test-obj test-crt0 test-cc test-toolchain test-archive libc s32fast bench clean
 
 all: $(OUT)/cc-a64 $(OUT)/ld-a64 $(OUT)/ar-a64 \
-     test-encode test-elf test-obj test-crt0 test-cc test-toolchain
+     test-encode test-elf test-obj test-crt0 test-cc test-toolchain test-archive
 
 # --- The cross-compiler itself ---
 # Built by host gcc against the shared frontend (symlinked from ../stage07).
@@ -120,11 +120,13 @@ $(OUT)/cc_%_exe: $(OUT)/cc_%.o $(OUT)/crt0.o $(OUT)/crt0_stubs.o
 
 test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
          $(OUT)/cc_loop_exe  $(OUT)/cc_recursion_exe \
+         $(OUT)/cc_phi_swap_exe \
          $(OUT)/cc_string_exe
 	@$(OUT)/cc_hello_exe;     rc=$$?; if [ $$rc -eq 42 ];  then echo "cc_hello:     ok (exit=42)";     else echo "cc_hello:     FAIL (exit=$$rc, expected 42)";     exit 1; fi
 	@$(OUT)/cc_locals_exe;    rc=$$?; if [ $$rc -eq 42 ];  then echo "cc_locals:    ok (exit=42)";     else echo "cc_locals:    FAIL (exit=$$rc, expected 42)";     exit 1; fi
 	@$(OUT)/cc_loop_exe;      rc=$$?; if [ $$rc -eq 47 ];  then echo "cc_loop:      ok (exit=47)";     else echo "cc_loop:      FAIL (exit=$$rc, expected 47)";     exit 1; fi
 	@$(OUT)/cc_recursion_exe; rc=$$?; if [ $$rc -eq 120 ]; then echo "cc_recursion: ok (exit=120)";    else echo "cc_recursion: FAIL (exit=$$rc, expected 120)"; exit 1; fi
+	@$(OUT)/cc_phi_swap_exe;  rc=$$?; if [ $$rc -eq 21 ];  then echo "cc_phi_swap:  ok (exit=21)";     else echo "cc_phi_swap:  FAIL (exit=$$rc, expected 21)";  exit 1; fi
 	@out=$$($(OUT)/cc_string_exe 2>&1); rc=$$?; \
 		if [ "$$out" = "hi a64" ] && [ $$rc -eq 0 ]; then \
 			echo "cc_string:    ok (stdout=\"hi a64\", exit=0)"; \
@@ -161,7 +163,29 @@ test-toolchain: $(OUT)/cc_uses_lib_exe
 		if [ $$rc -eq 40 ]; then echo "test-toolchain: ok (exit=40)"; \
 		else echo "test-toolchain: FAIL (exit=$$rc, expected 40)"; exit 1; fi
 
-test: test-encode test-elf test-obj test-crt0 test-cc test-toolchain
+$(OUT)/cc_dup_foo_a.o: tests/cc_dup_foo_a.c $(OUT)/cc-a64
+	@$(OUT)/cc-a64 -c $< -o $@ >/dev/null
+
+$(OUT)/cc_dup_foo_b.o: tests/cc_dup_foo_b.c $(OUT)/cc-a64
+	@$(OUT)/cc-a64 -c $< -o $@ >/dev/null
+
+$(OUT)/cc_dup_foo_main.o: tests/cc_dup_foo_main.c $(OUT)/cc-a64
+	@$(OUT)/cc-a64 -c $< -o $@ >/dev/null
+
+$(OUT)/libdup.a: $(OUT)/cc_dup_foo_a.o $(OUT)/cc_dup_foo_b.o $(OUT)/ar-a64
+	@$(OUT)/ar-a64 rcs $@ $(OUT)/cc_dup_foo_a.o $(OUT)/cc_dup_foo_b.o >/dev/null 2>&1
+
+$(OUT)/cc_dup_foo_exe: $(OUT)/cc_dup_foo_main.o $(OUT)/libdup.a \
+                      $(OUT)/crt0.o $(OUT)/crt0_stubs.o $(OUT)/ld-a64
+	@$(OUT)/ld-a64 -o $@ $(OUT)/crt0.o $(OUT)/cc_dup_foo_main.o \
+		$(OUT)/libdup.a $(OUT)/crt0_stubs.o >/dev/null
+
+test-archive: $(OUT)/cc_dup_foo_exe
+	@$(OUT)/cc_dup_foo_exe; rc=$$?; \
+		if [ $$rc -eq 1 ]; then echo "test-archive: ok (exit=1)"; \
+		else echo "test-archive: FAIL (exit=$$rc, expected 1)"; exit 1; fi
+
+test: test-encode test-elf test-obj test-crt0 test-cc test-toolchain test-archive
 
 # --- libc_a64.a — runtime library for cc-a64 outputs ---
 # Most files are symlinks into ../stage07-cross/libc_x64/ since they're
@@ -222,8 +246,11 @@ clean:
 	      $(OUT)/cc_locals.o $(OUT)/cc_locals_exe \
 	      $(OUT)/cc_loop.o $(OUT)/cc_loop_exe \
 	      $(OUT)/cc_recursion.o $(OUT)/cc_recursion_exe \
+	      $(OUT)/cc_phi_swap.o $(OUT)/cc_phi_swap_exe \
 	      $(OUT)/cc_string.o $(OUT)/cc_string_exe \
 	      $(OUT)/ld-a64 $(OUT)/ar-a64 \
 	      $(OUT)/cc_lib_a.o $(OUT)/cc_lib_b.o $(OUT)/cc_uses_lib.o \
 	      $(OUT)/lib_helper.a $(OUT)/cc_uses_lib_exe \
+	      $(OUT)/cc_dup_foo_a.o $(OUT)/cc_dup_foo_b.o \
+	      $(OUT)/cc_dup_foo_main.o $(OUT)/libdup.a $(OUT)/cc_dup_foo_exe \
 	      tests/ref.o tests/ref.bin

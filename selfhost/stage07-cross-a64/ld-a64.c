@@ -991,9 +991,11 @@ static void resolve_archives(void) {
         count_undefined();
 
         for (int gi = 0; gi < ngsyms; gi++) {
+            int matched;
             if (gsyms[gi].defined) continue;
+            matched = 0;
 
-            for (int ai = 0; ai < narchives; ai++) {
+            for (int ai = 0; ai < narchives && !matched; ai++) {
                 Archive *ar = &archives[ai];
                 for (int si = 0; si < ar->nsyms; si++) {
                     if (strcmp(gsyms[gi].name, ar->sym_names[si]) == 0) {
@@ -1001,6 +1003,8 @@ static void resolve_archives(void) {
                             load_archive_member(ar, ar->sym_offsets[si]);
                             changed = 1;
                         }
+                        matched = 1;
+                        break;
                     }
                 }
             }

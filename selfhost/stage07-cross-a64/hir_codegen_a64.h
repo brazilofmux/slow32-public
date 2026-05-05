@@ -439,16 +439,46 @@ static int hx_cmp_inv_cond(int k) {
 
 static int hx_is_cmp_op(int k) { return k >= HI_SEQ && k <= HI_SGEU; }
 
+static void hx_stack_store(int off, int reg, int wide) {
+    if (off >= 0 && off <= 32760 && (off & (wide ? 7 : 3)) == 0) {
+        if (wide) a64_str_x_imm(reg, A64_SP, off);
+        else      a64_str_w_imm(reg, A64_SP, off);
+        return;
+    }
+    if (off >= -256 && off <= 255) {
+        if (wide) a64_stur_x_imm(reg, A64_SP, off);
+        else      a64_stur_w_imm(reg, A64_SP, off);
+        return;
+    }
+    hx_die("hx_stack_store: offset out of range", off);
+}
+
+static void hx_stack_load(int reg, int off, int wide) {
+    if (off >= 0 && off <= 32760 && (off & (wide ? 7 : 3)) == 0) {
+        if (wide) a64_ldr_x_imm(reg, A64_SP, off);
+        else      a64_ldr_w_imm(reg, A64_SP, off);
+        return;
+    }
+    if (off >= -256 && off <= 255) {
+        if (wide) a64_ldur_x_imm(reg, A64_SP, off);
+        else      a64_ldur_w_imm(reg, A64_SP, off);
+        return;
+    }
+    hx_die("hx_stack_load: offset out of range", off);
+}
+
 /* ----- PHI move scheduling -----
  * When control flow leaves a block to a successor that has PHI nodes,
- * we emit the moves that copy each PHI's incoming-from-this-block
- * value into the PHI's destination register.  Cycles handled via
- * the scratch register. */
+ * we materialize each incoming value to a temporary stack slot, then
+ * restore them into the PHI destinations. This preserves parallel-copy
+ * semantics even for cycles like register swaps on loop backedges. */
 
 static void hx_phi_copies(int from_blk, int to_blk) {
-    int i; int src; int dst_inst; int dst_reg; int src_reg;
+    int i; int src; int dst_inst; int dst_reg;
     int wide;
     int j;
+    int tmp_bytes;
+    int tmp_slot;
 
     /* Collect all (PHI_dst, incoming_value) pairs for moves. */
     hx_phi_n = 0;
@@ -473,32 +503,42 @@ static void hx_phi_copies(int from_blk, int to_blk) {
         }
         i = ssa_phi_next[i];
     }
+    if (hx_phi_n == 0) return;
 
-    /* Naive ordering: for each PHI move, materialise src into the dst's
-     * register.  This may overwrite a register some other PHI was reading.
-     * For correctness we copy each src to scratch first, then to dst,
-     * unless we can prove the src reg isn't a future read.
-     *
-     * Conservative: read all srcs into scratch slots on the stack first
-     * (using existing spill slots if any).  But that's heavy.  Instead,
-     * try a simple sequential copy with cycle-detection: if any source
-     * register is also a destination later in the list, route through
-     * scratch.  This is naive and may emit redundant moves but is safe. */
+    tmp_bytes = hx_phi_n * 8;
+    if (tmp_bytes & 15) tmp_bytes = (tmp_bytes + 15) & ~15;
+    if (tmp_bytes <= 4095) a64_sub_x_imm(A64_SP, A64_SP, tmp_bytes);
+    else {
+        a64_sub_x_imm(A64_SP, A64_SP, tmp_bytes & 0xFFF);
+        a64_sub_x_imm_lsl12(A64_SP, A64_SP, (tmp_bytes >> 12) & 0xFFF);
+    }
 
+    /* Phase 1: snapshot every source into the temp area. */
+    i = 0;
+    while (i < hx_phi_n) {
+        src      = hx_phi_src_val[i];
+        wide     = hx_is_wide(h_ty[src]);
+        hx_mat(src, HX_SCRATCH1);
+        hx_stack_store(i * 8, HX_SCRATCH1, wide);
+        i = i + 1;
+    }
+
+    /* Phase 2: restore into destinations. */
     i = 0;
     while (i < hx_phi_n) {
         dst_inst = hx_phi_dst_inst[i];
-        src      = hx_phi_src_val[i];
+        dst_reg  = hx_dst_reg(dst_inst);
         wide     = hx_is_wide(h_ty[dst_inst]);
-
-        /* Where does dst go? */
-        dst_reg = hx_dst_reg(dst_inst);
-
-        /* Load src into dst_reg.  Then if dst was spilled, store. */
-        hx_mat(src, dst_reg);
-        (void)src_reg; (void)wide;
+        tmp_slot = i * 8;
+        hx_stack_load(dst_reg, tmp_slot, wide);
         hx_spill(dst_inst, dst_reg);
         i = i + 1;
+    }
+
+    if (tmp_bytes <= 4095) a64_add_x_imm(A64_SP, A64_SP, tmp_bytes);
+    else {
+        a64_add_x_imm(A64_SP, A64_SP, tmp_bytes & 0xFFF);
+        a64_add_x_imm_lsl12(A64_SP, A64_SP, (tmp_bytes >> 12) & 0xFFF);
     }
 }
 
