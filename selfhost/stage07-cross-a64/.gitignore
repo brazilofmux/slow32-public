@@ -1,0 +1,3 @@
+out/
+tests/ref.bin
+tests/ref.o
