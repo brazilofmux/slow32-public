@@ -974,6 +974,82 @@ static void a64_ldr_x_post(int rt, int rn, int imm9) {
 }
 
 // ============================================================================
+// LDUR / STUR — unscaled signed-offset loads/stores (imm9 in -256..+255).
+// Useful for negative frame offsets (FP-N) which the unsigned-offset
+// form (LDR/STR with byte_off/scale) cannot encode.
+// ============================================================================
+
+// STUR Wt, [Xn, #imm9]
+static void a64_stur_w_imm(int rt, int rn, int imm9) {
+    int inst;
+    inst = 0xB8000000 | ((imm9 & 0x1FF) << 12) | ((rn & 0x1F) << 5) | (rt & 0x1F);
+    a64_inst(inst);
+}
+
+// LDUR Wt, [Xn, #imm9]
+static void a64_ldur_w_imm(int rt, int rn, int imm9) {
+    int inst;
+    inst = 0xB8400000 | ((imm9 & 0x1FF) << 12) | ((rn & 0x1F) << 5) | (rt & 0x1F);
+    a64_inst(inst);
+}
+
+// STUR Xt, [Xn, #imm9]
+static void a64_stur_x_imm(int rt, int rn, int imm9) {
+    int inst;
+    inst = 0xF8000000 | ((imm9 & 0x1FF) << 12) | ((rn & 0x1F) << 5) | (rt & 0x1F);
+    a64_inst(inst);
+}
+
+// LDUR Xt, [Xn, #imm9]
+static void a64_ldur_x_imm(int rt, int rn, int imm9) {
+    int inst;
+    inst = 0xF8400000 | ((imm9 & 0x1FF) << 12) | ((rn & 0x1F) << 5) | (rt & 0x1F);
+    a64_inst(inst);
+}
+
+// STURB Wt, [Xn, #imm9]
+static void a64_sturb_imm(int rt, int rn, int imm9) {
+    int inst;
+    inst = 0x38000000 | ((imm9 & 0x1FF) << 12) | ((rn & 0x1F) << 5) | (rt & 0x1F);
+    a64_inst(inst);
+}
+
+// LDURB Wt, [Xn, #imm9]
+static void a64_ldurb_imm(int rt, int rn, int imm9) {
+    int inst;
+    inst = 0x38400000 | ((imm9 & 0x1FF) << 12) | ((rn & 0x1F) << 5) | (rt & 0x1F);
+    a64_inst(inst);
+}
+
+// LDURSB Wt, [Xn, #imm9]   (sign-extending byte → W)
+static void a64_ldursb_w_imm(int rt, int rn, int imm9) {
+    int inst;
+    inst = 0x38C00000 | ((imm9 & 0x1FF) << 12) | ((rn & 0x1F) << 5) | (rt & 0x1F);
+    a64_inst(inst);
+}
+
+// STURH Wt, [Xn, #imm9]
+static void a64_sturh_imm(int rt, int rn, int imm9) {
+    int inst;
+    inst = 0x78000000 | ((imm9 & 0x1FF) << 12) | ((rn & 0x1F) << 5) | (rt & 0x1F);
+    a64_inst(inst);
+}
+
+// LDURH Wt, [Xn, #imm9]
+static void a64_ldurh_imm(int rt, int rn, int imm9) {
+    int inst;
+    inst = 0x78400000 | ((imm9 & 0x1FF) << 12) | ((rn & 0x1F) << 5) | (rt & 0x1F);
+    a64_inst(inst);
+}
+
+// LDURSH Wt, [Xn, #imm9]
+static void a64_ldursh_w_imm(int rt, int rn, int imm9) {
+    int inst;
+    inst = 0x78C00000 | ((imm9 & 0x1FF) << 12) | ((rn & 0x1F) << 5) | (rt & 0x1F);
+    a64_inst(inst);
+}
+
+// ============================================================================
 // STP / LDP — pair load/store
 // ============================================================================
 

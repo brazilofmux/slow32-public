@@ -43,6 +43,7 @@ static void hir_regalloc(void);
  * ============================================================================ */
 
 static int hx_frame_size;
+static int hx_next_blk;          /* RPO-next block; -1 if none (used to elide degenerate `b next_blk`) */
 static int hx_no_frame;
 static int hx_is_varargs;
 static int hx_fn_nparams;
@@ -252,12 +253,20 @@ static void hx_emit_load_to_reg(int dst_reg, int spill_off, int wide) {
      * offset and emit an LDR. */
     int off;
     off = cg_a64_offset(spill_off);
+    /* Positive scaled-offset form (LDR Wt/Xt, [Xn, #imm12*scale]). */
     if (off >= 0 && off <= 32760 && (off & (wide ? 7 : 3)) == 0) {
         if (wide) a64_ldr_x_imm(dst_reg, A64_X29, off);
         else      a64_ldr_w_imm(dst_reg, A64_X29, off);
         return;
     }
-    /* Compute address into scratch2, then load. */
+    /* Unscaled signed-offset form (LDUR Wt/Xt, [Xn, #imm9]) — covers
+     * spills at FP-N for N in [1, 256]. */
+    if (off >= -256 && off <= 255) {
+        if (wide) a64_ldur_x_imm(dst_reg, A64_X29, off);
+        else      a64_ldur_w_imm(dst_reg, A64_X29, off);
+        return;
+    }
+    /* General path: compute address into scratch2, then load. */
     {
         int neg;
         if (off < 0) {
@@ -287,6 +296,11 @@ static void hx_emit_store_from_reg(int src_reg, int spill_off, int wide) {
     if (off >= 0 && off <= 32760 && (off & (wide ? 7 : 3)) == 0) {
         if (wide) a64_str_x_imm(src_reg, A64_X29, off);
         else      a64_str_w_imm(src_reg, A64_X29, off);
+        return;
+    }
+    if (off >= -256 && off <= 255) {
+        if (wide) a64_stur_x_imm(src_reg, A64_X29, off);
+        else      a64_stur_w_imm(src_reg, A64_X29, off);
         return;
     }
     {
@@ -389,6 +403,22 @@ static int hx_cmp_cond(int k) {
     return A64_COND_EQ;
 }
 
+/* Inverted condition for fused BRC: jump to "not-taken" when comparison
+ * is FALSE, so we want the inverse of hx_cmp_cond. */
+static int hx_cmp_inv_cond(int k) {
+    if (k == HI_SEQ)  return A64_COND_NE;
+    if (k == HI_SNE)  return A64_COND_EQ;
+    if (k == HI_SLT)  return A64_COND_GE;
+    if (k == HI_SGT)  return A64_COND_LE;
+    if (k == HI_SLE)  return A64_COND_GT;
+    if (k == HI_SGE)  return A64_COND_LT;
+    if (k == HI_SLTU) return A64_COND_HS;
+    if (k == HI_SGTU) return A64_COND_LS;
+    if (k == HI_SLEU) return A64_COND_HI;
+    if (k == HI_SGEU) return A64_COND_LO;
+    return A64_COND_NE;
+}
+
 static int hx_is_cmp_op(int k) { return k >= HI_SEQ && k <= HI_SGEU; }
 
 /* ----- PHI move scheduling -----
@@ -469,22 +499,17 @@ static void hx_emit_inst(int idx) {
     if (k == HI_NOP) return;
     if (k == HI_PHI) return;     /* handled at edges via hx_phi_copies */
 
+    /* Rematerializable instructions — no code emitted at the def site;
+     * hx_mat()/hx_remat() regenerate them on demand at each use, so an
+     * unused def (e.g. an HI_ICONST whose only consumer is a fused
+     * comparison that's been NOPed) costs nothing. */
+    if (k == HI_ICONST || k == HI_ALLOCA || k == HI_GETFP) return;
+
     s1 = h_src1[idx];
     s2 = h_src2[idx];
     wide = hx_is_wide(h_ty[idx]);
     dst = hx_dst_reg(idx);
-
-    /* ---------- Constants & addresses (no source ops) ---------- */
-    if (k == HI_ICONST) {
-        hx_mat_iconst(dst, h_val[idx], wide);
-        hx_spill(idx, dst);
-        return;
-    }
-    if (k == HI_ALLOCA) {
-        hx_emit_frame_addr(dst, h_val[idx]);
-        hx_spill(idx, dst);
-        return;
-    }
+    (void)wide;
     if (k == HI_GADDR || k == HI_FADDR) {
         cg_emit_adrp_add_to(dst, h_name[idx], 0);
         hx_spill(idx, dst);
@@ -492,11 +517,6 @@ static void hx_emit_inst(int idx) {
     }
     if (k == HI_SADDR) {
         cg_emit_adrp_add_to(dst, CG_STR_PSEUDO_NAME, h_val[idx]);
-        hx_spill(idx, dst);
-        return;
-    }
-    if (k == HI_GETFP) {
-        a64_mov_x(dst, A64_X29);
         hx_spill(idx, dst);
         return;
     }
@@ -520,16 +540,21 @@ static void hx_emit_inst(int idx) {
     if (k == HI_LOAD) {
         int addr_reg;
         int ty;
+        int pat;
+        int lnt;
         ty = h_ty[idx];
+        pat = bg_sel[idx];
+        lnt = (pat >= 0) ? bg_plnt[pat] : -1;
 
-        /* Compute address into scratch if not already a register. */
-        if (s1 >= 0 && (h_kind[s1] == HI_ALLOCA || h_kind[s1] == HI_ADDI)) {
-            /* Frame-relative: use FP+offset directly when we can. */
-            int foff;
+        /* BURG selected BG_MEM addressing mode → frame-relative LDR.
+         * lnt == BG_MEM matches when src1 is HI_ALLOCA or HI_ADDI (chain),
+         * which is exactly when bg_foff[s1] is meaningful.  Even if
+         * bg_select didn't fold s1 (ALLOCA is remat-skipped), the
+         * fast-path is correct. */
+        if (lnt == BG_MEM && s1 >= 0) {
             int frame_off;
-            foff = bg_foff[s1];
-            frame_off = foff;
-            /* Determine load width from type. */
+            frame_off = bg_foff[s1];
+            /* Positive aligned scaled-offset form (LDR ..., [Xn, #imm12*scale]). */
             if (frame_off >= 0 && frame_off <= 32760) {
                 if (hx_is_wide(ty)) { a64_ldr_x_imm(dst, A64_X29, frame_off); }
                 else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
@@ -544,7 +569,23 @@ static void hx_emit_inst(int idx) {
                 hx_spill(idx, dst);
                 return;
             }
-            /* Fall through to general path. */
+            /* Unscaled signed-offset form for negative frame offsets
+             * (FP-N), imm9 in [-256, 255]. */
+            if (frame_off >= -256 && frame_off <= 255) {
+                if (hx_is_wide(ty)) { a64_ldur_x_imm(dst, A64_X29, frame_off); }
+                else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
+                    if (ty & TY_UNSIGNED) a64_ldurb_imm(dst, A64_X29, frame_off);
+                    else                  a64_ldursb_w_imm(dst, A64_X29, frame_off);
+                }
+                else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+                    if (ty & TY_UNSIGNED) a64_ldurh_imm(dst, A64_X29, frame_off);
+                    else                  a64_ldursh_w_imm(dst, A64_X29, frame_off);
+                }
+                else { a64_ldur_w_imm(dst, A64_X29, frame_off); }
+                hx_spill(idx, dst);
+                return;
+            }
+            /* Out of range — fall through to general path. */
         }
 
         /* General path: address into scratch1, then LDR. */
@@ -566,10 +607,14 @@ static void hx_emit_inst(int idx) {
     if (k == HI_STORE) {
         int addr_reg; int val_reg;
         int ty;
+        int pat;
+        int lnt;
         ty = h_ty[idx];   /* type of stored value */
+        pat = bg_sel[idx];
+        lnt = (pat >= 0) ? bg_plnt[pat] : -1;
 
-        /* Frame-relative shortcut. */
-        if (s1 >= 0 && (h_kind[s1] == HI_ALLOCA || h_kind[s1] == HI_ADDI)) {
+        /* BG_MEM lhs → frame-relative STR.  See LOAD comment. */
+        if (lnt == BG_MEM && s1 >= 0) {
             int frame_off;
             frame_off = bg_foff[s1];
             if (frame_off >= 0 && frame_off <= 32760) {
@@ -580,6 +625,16 @@ static void hx_emit_inst(int idx) {
                 else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT)
                     a64_strh_imm(val_reg, A64_X29, frame_off);
                 else a64_str_w_imm(val_reg, A64_X29, frame_off);
+                return;
+            }
+            if (frame_off >= -256 && frame_off <= 255) {
+                val_reg = hx_get_src(s2, HX_SCRATCH1);
+                if (hx_is_wide(ty))         a64_stur_x_imm(val_reg, A64_X29, frame_off);
+                else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR)
+                    a64_sturb_imm(val_reg, A64_X29, frame_off);
+                else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT)
+                    a64_sturh_imm(val_reg, A64_X29, frame_off);
+                else a64_stur_w_imm(val_reg, A64_X29, frame_off);
                 return;
             }
         }
@@ -599,6 +654,77 @@ static void hx_emit_inst(int idx) {
     if (k == HI_ADD || k == HI_SUB || k == HI_MUL || k == HI_DIV || k == HI_REM
      || k == HI_AND || k == HI_OR  || k == HI_XOR
      || k == HI_SLL || k == HI_SRA || k == HI_SRL) {
+
+        /* Immediate-form fast paths (ADD/SUB imm12, shifts imm6).
+         * AArch64 ADD/SUB take an unsigned 12-bit imm (optionally LSL #12);
+         * we handle the [0, 4095] and [-4095, -1] cases without LSL.  For
+         * shifts the count must fit in [0, 31] (W) or [0, 63] (X). */
+        if (s2 >= 0 && h_kind[s2] == HI_ICONST) {
+            int v;
+            int max_shift;
+            v = h_val[s2];
+            max_shift = wide ? 63 : 31;
+
+            if (k == HI_ADD) {
+                r1 = hx_get_src(s1, HX_SCRATCH1);
+                if (v >= 0 && v <= 4095) {
+                    if (wide) a64_add_x_imm(dst, r1, v);
+                    else      a64_add_w_imm(dst, r1, v);
+                    hx_spill(idx, dst); return;
+                }
+                if (v < 0 && v >= -4095) {
+                    if (wide) a64_sub_x_imm(dst, r1, -v);
+                    else      a64_sub_w_imm(dst, r1, -v);
+                    hx_spill(idx, dst); return;
+                }
+            } else if (k == HI_SUB) {
+                r1 = hx_get_src(s1, HX_SCRATCH1);
+                if (v >= 0 && v <= 4095) {
+                    if (wide) a64_sub_x_imm(dst, r1, v);
+                    else      a64_sub_w_imm(dst, r1, v);
+                    hx_spill(idx, dst); return;
+                }
+                if (v < 0 && v >= -4095) {
+                    if (wide) a64_add_x_imm(dst, r1, -v);
+                    else      a64_add_w_imm(dst, r1, -v);
+                    hx_spill(idx, dst); return;
+                }
+            } else if (k == HI_SLL && v >= 0 && v <= max_shift) {
+                r1 = hx_get_src(s1, HX_SCRATCH1);
+                if (wide) a64_lsl_x_imm(dst, r1, v);
+                else      a64_lsl_w_imm(dst, r1, v);
+                hx_spill(idx, dst); return;
+            } else if (k == HI_SRL && v >= 0 && v <= max_shift) {
+                r1 = hx_get_src(s1, HX_SCRATCH1);
+                if (wide) a64_lsr_x_imm(dst, r1, v);
+                else      a64_lsr_w_imm(dst, r1, v);
+                hx_spill(idx, dst); return;
+            } else if (k == HI_SRA && v >= 0 && v <= max_shift) {
+                r1 = hx_get_src(s1, HX_SCRATCH1);
+                if (wide) a64_asr_x_imm(dst, r1, v);
+                else      a64_asr_w_imm(dst, r1, v);
+                hx_spill(idx, dst); return;
+            }
+            /* Fall through to register-register form. */
+        }
+        /* Symmetric: HI_ADD with ICONST on the LEFT (commutative). */
+        if (k == HI_ADD && s1 >= 0 && h_kind[s1] == HI_ICONST) {
+            int v;
+            v = h_val[s1];
+            if (v >= 0 && v <= 4095) {
+                r1 = hx_get_src(s2, HX_SCRATCH1);
+                if (wide) a64_add_x_imm(dst, r1, v);
+                else      a64_add_w_imm(dst, r1, v);
+                hx_spill(idx, dst); return;
+            }
+            if (v < 0 && v >= -4095) {
+                r1 = hx_get_src(s2, HX_SCRATCH1);
+                if (wide) a64_sub_x_imm(dst, r1, -v);
+                else      a64_sub_w_imm(dst, r1, -v);
+                hx_spill(idx, dst); return;
+            }
+        }
+
         r1 = hx_get_src(s1, HX_SCRATCH1);
         r2 = hx_get_src(s2, HX_SCRATCH2);
         if (k == HI_ADD) {
@@ -737,11 +863,12 @@ static void hx_emit_inst(int idx) {
 
     /* ---------- Control flow ---------- */
     if (k == HI_BR) {
-        /* h_val[idx] = target block.  PHI moves at edge. */
+        /* h_val[idx] = target block.  PHI moves at edge.  If the target
+         * is the next block in RPO order, no `b` is needed (fall-through). */
         int blk;
         blk = h_val[idx];
         hx_phi_copies(h_blk[idx], blk);
-        hx_jump_to_block(blk);
+        if (blk != hx_next_blk) hx_jump_to_block(blk);
         return;
     }
     if (k == HI_BRC) {
@@ -749,48 +876,79 @@ static void hx_emit_inst(int idx) {
          *   src1 = condition value
          *   src2 = then_blk (taken if cond != 0)
          *   val  = else_blk (taken if cond == 0)
-         */
-        int cond_reg; int taken; int notaken;
-        cond_reg = hx_get_src(s1, HX_SCRATCH1);
-        taken    = s2;
-        notaken  = h_val[idx];
-
-        /* Phi copies happen on each taken edge. */
-        /* Emit: cbnz cond_reg, taken; b notaken */
-        /* But phi copies must happen on each edge — for simplicity, apply
-         * them on the path that's taken.  The naive way: emit phi copies
-         * before either branch, but that would clobber the cond reg. */
-        /* Easiest correct approach: branch to a tiny stub that does
-         * phi copies + jump, but we can avoid stubs by emitting:
-         *    cbz cond_reg, lbl_notaken
+         *
+         * Layout (mirrors x64 sibling):
+         *    <CMP/CSET>
+         *    b.cond/cbz  <patch>           ; jumps to NOT-taken on FALSE
          *    <phi copies for taken>
          *    b taken
-         *  lbl_notaken:
+         *  <patch lands here>:
          *    <phi copies for notaken>
          *    b notaken
          */
-        {
-            int after_lbl;
-            int word; int site; int diff; int kept; int imm19;
-            after_lbl = a64_off;
-            a64_cbz_w(cond_reg, 0);   /* placeholder */
-            site = after_lbl;
+        int taken; int notaken;
+        int cmp_idx;
+        int site;
+        int word; int diff; int kept; int imm19;
 
-            /* Taken path */
-            hx_phi_copies(h_blk[idx], taken);
-            hx_jump_to_block(taken);
+        taken    = s2;
+        notaken  = h_val[idx];
+        cmp_idx  = hx_brc_fuse[idx];
+        site     = a64_off;
 
-            /* Patch the CBZ to land here */
-            diff = a64_off - site;
-            word = a64_read_inst(site);
-            kept = word & 0xFF00001F;
-            imm19 = (diff >> 2) & 0x7FFFF;
-            a64_patch_inst(site, kept | (imm19 << 5));
+        if (cmp_idx >= 0) {
+            /* Fused: emit CMP on the original comparison's operands,
+             * then B.cond(inverted) → not-taken. */
+            int ck; int ca; int cb;
+            int s1r; int s2r;
+            int cmp_wide;
+            int inv_cc;
 
-            /* Not-taken path */
-            hx_phi_copies(h_blk[idx], notaken);
-            hx_jump_to_block(notaken);
+            ck = hx_cmp_kind[cmp_idx];
+            ca = h_src1[cmp_idx];
+            cb = h_src2[cmp_idx];
+            cmp_wide = hx_is_wide(h_ty[ca]) || hx_is_wide(h_ty[cb]);
+
+            /* CMP with a small unsigned immediate folds into CMP imm12. */
+            if (cb >= 0 && h_kind[cb] == HI_ICONST &&
+                h_val[cb] >= 0 && h_val[cb] <= 4095) {
+                s1r = hx_get_src(ca, HX_SCRATCH1);
+                if (cmp_wide) a64_cmp_x_imm(s1r, h_val[cb]);
+                else          a64_cmp_w_imm(s1r, h_val[cb]);
+            } else {
+                s1r = hx_get_src(ca, HX_SCRATCH1);
+                s2r = hx_get_src(cb, HX_SCRATCH2);
+                if (cmp_wide) a64_cmp_x(s1r, s2r);
+                else          a64_cmp_w(s1r, s2r);
+            }
+            inv_cc = hx_cmp_inv_cond(ck);
+            site = a64_off;
+            a64_b_cond(inv_cc, 0);   /* placeholder */
+        } else {
+            /* Unfused: cond materialised as 0/1 — CBZ to not-taken on 0. */
+            int cond_reg;
+            cond_reg = hx_get_src(s1, HX_SCRATCH1);
+            site = a64_off;
+            a64_cbz_w(cond_reg, 0);  /* placeholder */
         }
+
+        /* Taken path: phi copies + jump.  We can't elide this even when
+         * taken == next_blk, because the not-taken section is laid down
+         * between us and the next block. */
+        hx_phi_copies(h_blk[idx], taken);
+        hx_jump_to_block(taken);
+
+        /* Patch the conditional branch (B.cond or CBZ — same encoding
+         * shape: imm19 in bits [23:5]). */
+        diff = a64_off - site;
+        word = a64_read_inst(site);
+        kept = word & 0xFF00001F;
+        imm19 = (diff >> 2) & 0x7FFFF;
+        a64_patch_inst(site, kept | (imm19 << 5));
+
+        /* Not-taken path: phi copies + jump (elide if notaken is next block). */
+        hx_phi_copies(h_blk[idx], notaken);
+        if (notaken != hx_next_blk) hx_jump_to_block(notaken);
         return;
     }
     if (k == HI_RET) {
@@ -949,42 +1107,29 @@ static void hx_gen_func(Node *fn) {
     hir_opt();
     hir_licm();
 
-    /* Run BURG's labelling + use-counting + foff precompute, but NOT
-     * its top-down select-and-fold pass.  This MVP codegen doesn't yet
-     * consume bg_sel[] addressing-mode tiles, and folding would NOP
-     * the consumed children — leaving the codegen unable to load them.
-     * The regalloc only needs bg_uses[]; it doesn't care about bg_sel.
-     */
+    /* Run the full BURG pipeline: label, count uses, select+fold.
+     * bg_select() picks tiles top-down and NOPs folded children
+     * (currently HI_ADDI on top of an ALLOCA chain — see LOAD/STORE
+     * codegen which dispatches on bg_plnt[bg_sel[idx]]).  HI_ALLOCA is
+     * remat-skipped at the def site already (see hx_emit_inst top). */
     if (!bg_inited) { bg_init(); bg_build_index(); bg_inited = 1; }
     bg_compute_foff();
     if (h_ninst <= BG_MAX_INST) {
         bg_label();
         bg_count_uses();
+        bg_select();
     } else {
-        /* Function too big — fall through with zero counts. */
-    }
-    /* Clear sel/fold so anything that reads them sees no folding. */
-    {
         int i_;
         i_ = 0;
         while (i_ < h_ninst) { bg_sel[i_] = -1; bg_fold[i_] = 0; i_ = i_ + 1; }
     }
 
 
-    /* Initialise the compare-branch-fusion arrays.  We call the function
-     * but then immediately disable any fusions it identified — our MVP
-     * codegen doesn't yet emit fused CMP+B.cond, so a NOPed comparison
-     * with a live use is fatal. */
+    /* Identify fusable BRCs.  ra_extend_fused_cmp() (called from
+     * hir_regalloc) extends operand live ranges and NOPs the fused
+     * comparison; the BRC codegen below consumes hx_brc_fuse[] to emit
+     * CMP + B.cond instead of CSET + CBZ. */
     hx_identify_fusions();
-    {
-        int i_;
-        i_ = 0;
-        while (i_ < h_ninst) {
-            hx_brc_fuse[i_] = -1;
-            hx_cmp_fused[i_] = 0;
-            i_ = i_ + 1;
-        }
-    }
 
     /* Run regalloc.  This sets ra_reg[], ra_spill_off[], and writes
      * the callee-saved set into ra_csave_*. */
@@ -1044,65 +1189,61 @@ static void hx_gen_func(Node *fn) {
      * ra_reg[] to either an arg-reg (no MOV needed) or a different reg
      * (MOV into it).  Spilled params get stored to their spill slot. */
     {
+        int param_inst[16];
         int p_idx;
         Node *pp;
+
+        /* Build param index → HIR inst map in one pass over the HIR. */
+        p_idx = 0;
+        while (p_idx < 16) { param_inst[p_idx] = -1; p_idx = p_idx + 1; }
+        i = 0;
+        while (i < h_ninst) {
+            if (h_kind[i] == HI_PARAM) {
+                int v;
+                v = h_val[i];
+                if (v >= 0 && v < 16) param_inst[v] = i;
+            }
+            i = i + 1;
+        }
+
         p_idx = 0;
         pp = fn->args;
         while (pp && p_idx < 8) {
-            int param_inst;
+            int pi;
             int slot;
             int dst_reg;
-            /* Find HIR PARAM inst with h_val == p_idx.  The frontend
-             * lowers each arg as an HI_PARAM op early in the function;
-             * we scan the first few HIR ops to find it. */
-            param_inst = -1;
-            i = 0;
-            while (i < h_ninst && i < 64) {
-                if (h_kind[i] == HI_PARAM && h_val[i] == p_idx) {
-                    param_inst = i;
-                    break;
-                }
-                i = i + 1;
-            }
-            if (param_inst < 0) { p_idx = p_idx + 1; pp = pp->next; continue; }
+            pi = param_inst[p_idx];
+            if (pi < 0) { p_idx = p_idx + 1; pp = pp->next; continue; }
 
-            slot = ra_reg[param_inst];
+            slot = ra_reg[pi];
             if (slot >= 0) {
                 dst_reg = hx_slot_reg(slot);
                 if (dst_reg != hx_arg_reg[p_idx])
                     a64_mov_x(dst_reg, hx_arg_reg[p_idx]);
-            } else if (ra_spill_off[param_inst] != 0) {
+            } else if (ra_spill_off[pi] != 0) {
                 hx_emit_store_from_reg(hx_arg_reg[p_idx],
-                                       ra_spill_off[param_inst],
-                                       hx_is_wide(h_ty[param_inst]));
+                                       ra_spill_off[pi],
+                                       hx_is_wide(h_ty[pi]));
             }
             p_idx = p_idx + 1;
             pp = pp->next;
         }
         /* 9th+ args arrive on caller stack at [old_SP + (i-8)*8] = [FP + 16 + (i-8)*8]. */
         while (pp) {
-            int param_inst;
+            int pi;
             int slot;
             int caller_off;
-            param_inst = -1;
-            i = 0;
-            while (i < h_ninst && i < 64) {
-                if (h_kind[i] == HI_PARAM && h_val[i] == p_idx) {
-                    param_inst = i;
-                    break;
-                }
-                i = i + 1;
-            }
-            if (param_inst < 0) { p_idx = p_idx + 1; pp = pp->next; continue; }
+            pi = (p_idx < 16) ? param_inst[p_idx] : -1;
+            if (pi < 0) { p_idx = p_idx + 1; pp = pp->next; continue; }
 
             caller_off = 16 + (p_idx - 8) * 8;
             a64_ldr_x_imm(HX_SCRATCH1, A64_X29, caller_off);
-            slot = ra_reg[param_inst];
+            slot = ra_reg[pi];
             if (slot >= 0) {
                 a64_mov_x(hx_slot_reg(slot), HX_SCRATCH1);
-            } else if (ra_spill_off[param_inst] != 0) {
-                hx_emit_store_from_reg(HX_SCRATCH1, ra_spill_off[param_inst],
-                                       hx_is_wide(h_ty[param_inst]));
+            } else if (ra_spill_off[pi] != 0) {
+                hx_emit_store_from_reg(HX_SCRATCH1, ra_spill_off[pi],
+                                       hx_is_wide(h_ty[pi]));
             }
             p_idx = p_idx + 1;
             pp = pp->next;
@@ -1120,6 +1261,10 @@ static void hx_gen_func(Node *fn) {
         while (rpo_idx < ssa_rpo_cnt) {
             b = ssa_rpo[rpo_idx];
             hx_define_block(b);
+            /* Tell BR/BRC which block lays down next, so a `b next_blk`
+             * at the end of this block can be elided. */
+            if (rpo_idx + 1 < ssa_rpo_cnt) hx_next_blk = ssa_rpo[rpo_idx + 1];
+            else                            hx_next_blk = -1;
             /* Emit LICM-hoisted instructions (live at block-top). */
             i = licm_head[b];
             while (i >= 0) { hx_emit_inst(i); i = licm_next[i]; }
