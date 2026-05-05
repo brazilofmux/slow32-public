@@ -1402,7 +1402,37 @@ static void gen_data_sections(Node *prog) {
             }
         }
         cg_glob_data_off[i] = cg_data_len;
-        if (cg_glob_has_init[i] == 2) {
+        if (ps_ginit_start[i] >= 0) {
+            int off;
+            int relj;
+            int relbase;
+            int relend;
+            off = 0;
+            while (off < ps_ginit_count[i]) {
+                if (cg_data_len < 65536)
+                    cg_data[cg_data_len] = ps_ginit_pool[ps_ginit_start[i] + off];
+                cg_data_len = cg_data_len + 1;
+                off = off + 1;
+            }
+            relbase = ps_girel_start[i];
+            relend = relbase + ps_girel_count[i];
+            relj = relbase;
+            while (relj < relend) {
+                cg_dreloc_off[cg_ndrelocs]  = -(cg_glob_data_off[i] + ps_girel_off[relj] + 1);
+                if (ps_girel_kind[relj] == GIRELOC_STRING)
+                    cg_dreloc_kind[cg_ndrelocs] = DRELOC_STRING;
+                else
+                    cg_dreloc_kind[cg_ndrelocs] = DRELOC_GLOBAL;
+                cg_dreloc_idx[cg_ndrelocs]  = ps_girel_idx[relj];
+                cg_ndrelocs = cg_ndrelocs + 1;
+                relj = relj + 1;
+            }
+            while (off < cg_glob_size[i]) {
+                if (cg_data_len < 65536) cg_data[cg_data_len] = 0;
+                cg_data_len = cg_data_len + 1;
+                off = off + 1;
+            }
+        } else if (cg_glob_has_init[i] == 2) {
             /* String-initialized pointer in .data needs an ABS64 reloc. */
             cg_dreloc_off[cg_ndrelocs]  = -(cg_data_len + 1);
             cg_dreloc_kind[cg_ndrelocs] = DRELOC_STRING;

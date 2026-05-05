@@ -1116,28 +1116,36 @@ static void gen_data(void) {
     while (i < ps_nglobals) {
         if (ps_ginit_start[i] >= 0) {
             /* Array/struct initializer list */
+            int reli;
+            int relend;
+            int off;
             if (!ps_glocal[i]) { cg_s(".global "); cg_s(ps_gname[i]); cg_c(10); }
             cg_s(ps_gname[i]);
             cg_s(":\n");
-            /* Determine element size: char arrays use .byte, else .word */
-            elem_sz = 4;
-            if (ty_is_ptr(ps_gtype[i]) &&
-                (ty_deref(ps_gtype[i]) & TY_BASE_MASK) == TY_CHAR) {
-                elem_sz = 1;
-            }
-            j = 0;
-            while (j < ps_ginit_count[i]) {
-                if (elem_sz == 1) {
-                    cg_s("    .byte ");
+            reli = ps_girel_start[i];
+            relend = reli + ps_girel_count[i];
+            off = 0;
+            while (off < ps_ginit_count[i]) {
+                if (reli < relend && ps_girel_off[reli] == off) {
+                    if (ps_girel_kind[reli] == GIRELOC_STRING) {
+                        cg_s("    .word .LS");
+                        cg_n(ps_girel_idx[reli]);
+                    } else {
+                        cg_s("    .word ");
+                        cg_s(ps_gname[ps_girel_idx[reli]]);
+                    }
+                    cg_c(10);
+                    off = off + ps_girel_size[reli];
+                    reli = reli + 1;
                 } else {
-                    cg_s("    .word ");
+                    cg_s("    .byte ");
+                    cg_n(ps_ginit_pool[ps_ginit_start[i] + off]);
+                    cg_c(10);
+                    off = off + 1;
                 }
-                cg_n(ps_ginit_pool[ps_ginit_start[i] + j]);
-                cg_c(10);
-                j = j + 1;
             }
             /* Remaining bytes zero-filled */
-            len = ps_gsize[i] - (ps_ginit_count[i] * elem_sz);
+            len = ps_gsize[i] - ps_ginit_count[i];
             if (len > 0) {
                 cg_s("    .space ");
                 cg_n(len);

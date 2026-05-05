@@ -109,6 +109,43 @@ static int pp_read_int(void) {
     return val;
 }
 
+static int pp_read_body_text(char *buf) {
+    int bi;
+    int c;
+    int in_str;
+    int in_chr;
+    int esc;
+
+    bi = 0;
+    in_str = 0;
+    in_chr = 0;
+    esc = 0;
+    while (lex_pos < lex_len && lex_src[lex_pos] != 10 && lex_src[lex_pos] != 13) {
+        c = lex_src[lex_pos];
+        if (!in_str && !in_chr && c == 47) {
+            if (lex_src[lex_pos + 1] == 47) break;
+            if (lex_src[lex_pos + 1] == 42) break;
+        }
+        buf[bi] = c;
+        bi = bi + 1;
+        lex_pos = lex_pos + 1;
+        if (esc) {
+            esc = 0;
+        } else if (c == 92) {
+            esc = 1;
+        } else if (!in_chr && c == 34) {
+            in_str = !in_str;
+        } else if (!in_str && c == 39) {
+            in_chr = !in_chr;
+        }
+    }
+    while (bi > 0 && (buf[bi - 1] == 32 || buf[bi - 1] == 9)) {
+        bi = bi - 1;
+    }
+    buf[bi] = 0;
+    return bi;
+}
+
 /* --- Define table --- */
 
 static int pp_find(char *name) {
@@ -377,9 +414,12 @@ static int pp_expand_func(int di) {
 }
 
 static void pp_expand_obj(int di) {
+    int start_pos;
     int ins_pos;
     int body_len;
+    int remove_len;
     int tail_len;
+    int delta;
     int i;
     char *body;
 
@@ -388,25 +428,37 @@ static void pp_expand_obj(int di) {
     while (body[body_len] != 0) body_len = body_len + 1;
 
     ins_pos = lex_rp - lex_src;
+    remove_len = lex_slen;
+    start_pos = ins_pos - remove_len;
     tail_len = lex_len - ins_pos;
+    delta = body_len - remove_len;
 
-    /* Shift tail right by body_len */
-    i = tail_len - 1;
-    while (i >= 0) {
-        lex_src[ins_pos + body_len + i] = lex_src[ins_pos + i];
-        i = i - 1;
+    if (delta > 0) {
+        /* Shift tail right when the expansion is longer than the name. */
+        i = tail_len - 1;
+        while (i >= 0) {
+            lex_src[ins_pos + delta + i] = lex_src[ins_pos + i];
+            i = i - 1;
+        }
+    } else if (delta < 0) {
+        /* Shift tail left when the expansion is shorter than the name. */
+        i = 0;
+        while (i < tail_len) {
+            lex_src[ins_pos + delta + i] = lex_src[ins_pos + i];
+            i = i + 1;
+        }
     }
 
-    /* Copy body text */
+    /* Replace the identifier with the macro body text. */
     i = 0;
     while (i < body_len) {
-        lex_src[ins_pos + i] = body[i];
+        lex_src[start_pos + i] = body[i];
         i = i + 1;
     }
 
-    lex_len = lex_len + body_len;
+    lex_len = lex_len + delta;
     lex_src[lex_len] = 0;
-    lex_pos = ins_pos;
+    lex_pos = start_pos;
     pp_sync();
 }
 
@@ -469,17 +521,7 @@ static void pp_define(void) {
             lex_pos = lex_pos + 1;
         }
         pp_skip_ws();
-        bi = 0;
-        while (lex_pos < lex_len && lex_src[lex_pos] != 10 &&
-               lex_src[lex_pos] != 13) {
-            pp_def_body[bi] = lex_src[lex_pos];
-            bi = bi + 1;
-            lex_pos = lex_pos + 1;
-        }
-        while (bi > 0 && (pp_def_body[bi - 1] == 32 || pp_def_body[bi - 1] == 9)) {
-            bi = bi - 1;
-        }
-        pp_def_body[bi] = 0;
+        bi = pp_read_body_text(pp_def_body);
         pp_add_func(name, npar, pp_def_parms, pi, pp_def_body);
         if (is_var) {
             pp_dvar[pp_find(name)] = 1;
@@ -499,17 +541,7 @@ static void pp_define(void) {
         val = 1;
     } else {
         /* Non-numeric value — store as text body */
-        bi = 0;
-        while (lex_pos < lex_len && lex_src[lex_pos] != 10 &&
-               lex_src[lex_pos] != 13) {
-            pp_def_body[bi] = lex_src[lex_pos];
-            bi = bi + 1;
-            lex_pos = lex_pos + 1;
-        }
-        while (bi > 0 && (pp_def_body[bi - 1] == 32 || pp_def_body[bi - 1] == 9)) {
-            bi = bi - 1;
-        }
-        pp_def_body[bi] = 0;
+        bi = pp_read_body_text(pp_def_body);
         pp_add(name, 0);
         pp_dbody[pp_find(name)] = strdup(pp_def_body);
         pp_skip_line();
