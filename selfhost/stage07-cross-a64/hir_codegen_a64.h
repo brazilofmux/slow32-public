@@ -85,6 +85,15 @@ static int hx_ridx_base[HIR_MAX_INST];   /* base reg inst, -1 if not folded */
 static int hx_ridx_idx[HIR_MAX_INST];    /* index reg inst */
 static int hx_ridx_shift[HIR_MAX_INST];  /* shift amount (0, 2, or 3) */
 
+/* Offset-displacement fold: HI_LOAD/HI_STORE whose address is
+ * HI_ADDI(reg_base, const) gets emitted as
+ *     ldr/str Wt/Xt, [base, #disp]
+ * collapsing 2 instructions (add scratch, base, #imm; ldr ..., [scratch])
+ * into 1.  The HI_ADDI gets bg_fold[]=1.  Mutually exclusive with
+ * indexed addressing on the same LOAD/STORE. */
+static int hx_off_base[HIR_MAX_INST];    /* base inst, -1 if not folded */
+static int hx_off_disp[HIR_MAX_INST];    /* byte displacement */
+
 /* ============================================================================
  * Helpers
  * ============================================================================ */
@@ -425,6 +434,7 @@ static void hx_fold_indexed_addr(void) {
     i = 0;
     while (i < h_ninst) {
         hx_ridx_base[i] = -1;
+        hx_off_base[i]  = -1;
         i = i + 1;
     }
 
@@ -436,7 +446,44 @@ static void hx_fold_indexed_addr(void) {
         /* HI_LOAD's address is src1; HI_STORE's address is src1 too
          * (value being stored is src2). */
         add_inst = h_src1[i];
-        if (add_inst < 0 || h_kind[add_inst] != HI_ADD) { i = i + 1; continue; }
+        if (add_inst < 0) { i = i + 1; continue; }
+
+        /* --- Pattern A: HI_ADDI(base, const) — offset-displacement fold ---
+         * Don't run when BURG already folded this ADDI (BG_MEM/BG_SADDR
+         * chains).  Don't run when the base isn't in a register. */
+        if (h_kind[add_inst] == HI_ADDI && bg_uses[add_inst] == 1 &&
+                !bg_fold[add_inst]) {
+            int base_a; int disp;
+            int v_inst;
+            base_a = h_src1[add_inst];
+            disp   = h_val[add_inst];
+            v_inst = (h_kind[i] == HI_STORE) ? h_src2[i] : -1;
+            if (base_a >= 0 && ra_reg[base_a] >= 0 &&
+                /* For STORE, val also needs a real reg (we only have
+                 * 2 scratches; base may need one). */
+                (v_inst < 0 || ra_reg[v_inst] >= 0)) {
+                /* Encode-range check: positive scaled offset only.
+                 * Scaled by access size, 12-bit unsigned imm. */
+                int max_disp;
+                int aligned;
+                if (access_size == 4) {
+                    max_disp = 4 * 4095;
+                    aligned  = ((disp & 3) == 0);
+                } else /* access_size == 8 */ {
+                    max_disp = 8 * 4095;
+                    aligned  = ((disp & 7) == 0);
+                }
+                if (disp >= 0 && disp <= max_disp && aligned) {
+                    hx_off_base[i] = base_a;
+                    hx_off_disp[i] = disp;
+                    bg_fold[add_inst] = 1;
+                    i = i + 1;
+                    continue;
+                }
+            }
+        }
+
+        if (h_kind[add_inst] != HI_ADD) { i = i + 1; continue; }
         if (bg_uses[add_inst] != 1) { i = i + 1; continue; }
         if (bg_fold[add_inst]) { i = i + 1; continue; }  /* already folded by BURG */
 
@@ -798,7 +845,7 @@ static void hx_emit_inst(int idx) {
     if (k == HI_ICONST || k == HI_ALLOCA || k == HI_GETFP) return;
 
     /* Folded into a parent's addressing mode (see hx_fold_indexed_addr). */
-    if (bg_fold[idx] && (k == HI_ADD || k == HI_SLL)) return;
+    if (bg_fold[idx] && (k == HI_ADD || k == HI_SLL || k == HI_ADDI)) return;
 
     s1 = h_src1[idx];
     s2 = h_src2[idx];
@@ -852,6 +899,16 @@ static void hx_emit_inst(int idx) {
             } else {
                 a64_ldr_w_reg_lsl(dst, base_r, idx_r, hx_ridx_shift[idx]);
             }
+            hx_spill(idx, dst);
+            return;
+        }
+
+        /* Offset-displacement fold: address is base + #const. */
+        if (hx_off_base[idx] >= 0) {
+            int base_r;
+            base_r = hx_get_src(hx_off_base[idx], HX_SCRATCH1);
+            if (hx_is_wide(ty)) a64_ldr_x_imm(dst, base_r, hx_off_disp[idx]);
+            else                a64_ldr_w_imm(dst, base_r, hx_off_disp[idx]);
             hx_spill(idx, dst);
             return;
         }
@@ -977,6 +1034,16 @@ static void hx_emit_inst(int idx) {
             } else {
                 a64_str_w_reg_lsl(v_r, base_r, idx_r, hx_ridx_shift[idx]);
             }
+            return;
+        }
+
+        /* Offset-displacement fold: address is base + #const. */
+        if (hx_off_base[idx] >= 0) {
+            int base_r; int v_r;
+            base_r = hx_get_src(hx_off_base[idx], HX_SCRATCH1);
+            v_r    = hx_get_src(s2, HX_SCRATCH2);
+            if (hx_is_wide(ty)) a64_str_x_imm(v_r, base_r, hx_off_disp[idx]);
+            else                a64_str_w_imm(v_r, base_r, hx_off_disp[idx]);
             return;
         }
 
