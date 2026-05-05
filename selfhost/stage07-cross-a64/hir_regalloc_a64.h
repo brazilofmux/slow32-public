@@ -1402,24 +1402,29 @@ static void ra_assign_spills(void) {
         i = i + 1;
     }
 
-    /* Assign 8-byte spill slots for non-allocated value-producing instructions */
+    /* Assign 8-byte spill slots for non-allocated value-producing instructions.
+     * hl_temp_stack and ra_spill_off are in slow32 frontend units (4 bytes);
+     * cg_a64_offset doubles them to 8-byte AArch64 byte offsets, so a 4-unit
+     * increment yields one 8-byte spill slot. */
     i = 0;
     while (i < h_ninst) {
         if (ra_reg[i] < 0 && h_kind[i] != HI_NOP &&
             hi_has_value(h_kind[i]) && !hi_is_remat(h_kind[i])) {
-            hl_temp_stack = hl_temp_stack + 8;
+            hl_temp_stack = hl_temp_stack + 4;
             ra_spill_off[i] = 0 - hl_temp_stack;
             ra_stat_spills = ra_stat_spills + 1;
         }
         i = i + 1;
     }
 
-    /* Assign 8-byte callee-save slots (only for callee-saved registers) */
+    /* Assign 8-byte callee-save slots (only for callee-saved registers).
+     * Same convention as spill slots: increment hl_temp_stack by 4 slow32
+     * units per 8-byte AArch64 slot (cg_a64_offset doubles it). */
     ra_ncsave = 0;
     r = 0;
     while (r < RA_NPHY) {
         if (ra_used[r] && ra_a64_is_callee[r]) {
-            hl_temp_stack = hl_temp_stack + 8;
+            hl_temp_stack = hl_temp_stack + 4;
             ra_csave_reg[ra_ncsave] = ra_a64_phys[r];
             ra_csave_off[ra_ncsave] = 0 - hl_temp_stack;
             ra_ncsave = ra_ncsave + 1;

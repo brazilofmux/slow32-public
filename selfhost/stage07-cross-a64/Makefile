@@ -20,8 +20,11 @@ all: $(OUT)/cc-a64 $(OUT)/ld-a64 $(OUT)/ar-a64 \
 
 CC_DEPS = cc-a64.c codegen_a64.h crt0_emit.h elf_writer.h obj_writer.h \
           a64_encode.h a64_reloc_kinds.h \
+          hir_codegen_a64.h hir_burg_a64.h hir_regalloc_a64.h \
           ../stage07/parser.h ../stage07/ast.h ../stage07/sema.h \
-          ../stage07/optimize.h ../stage07/pp.h ../stage07/c_lexer_gen.c
+          ../stage07/optimize.h ../stage07/pp.h ../stage07/c_lexer_gen.c \
+          ../stage07/hir.h ../stage07/hir_lower.h ../stage07/hir_ssa.h \
+          ../stage07/hir_opt.h ../stage07/hir_licm.h
 
 $(OUT)/cc-a64: $(CC_DEPS)
 	$(CC) $(CFLAGS) -o $@ cc-a64.c

@@ -455,16 +455,20 @@ static void cg_cpatch_add(char *name, int off, int kind, int addend) {
  * kind sequence (ADR_HI21 then ADD_LO12), and addend.  When the writer
  * emits relocations, it dispatches on kind for the imm field, and on
  * the name (whether it's "@@str" or a real symbol) for the target. */
-static void cg_emit_adrp_add(char *sym_name, int addend) {
+static void cg_emit_adrp_add_to(int dst_reg, char *sym_name, int addend) {
     int adrp_off; int add_off;
 
     adrp_off = a64_off;
-    a64_adrp(A64_X0, 0);
+    a64_adrp(dst_reg, 0);
     cg_cpatch_add(sym_name, adrp_off, A64K_ADR_HI21, addend);
 
     add_off = a64_off;
-    a64_add_x_imm(A64_X0, A64_X0, 0);
+    a64_add_x_imm(dst_reg, dst_reg, 0);
     cg_cpatch_add(sym_name, add_off, A64K_ADD_LO12, addend);
+}
+
+static void cg_emit_adrp_add(char *sym_name, int addend) {
+    cg_emit_adrp_add_to(A64_X0, sym_name, addend);
 }
 
 /* Load address of a string literal or global into x0 via ADRP+ADD. */

@@ -88,15 +88,12 @@ static void hx_die(char *msg, int idx) {
     exit(1);
 }
 
-/* Convert a slot index (0..RA_NPHY-1) to an AArch64 register encoding. */
-static int hx_slot_reg(int slot) {
-    if (slot < 0 || slot >= RA_NPHY) {
-        fdputs("cc-a64 --hir: bad slot ", 2);
-        fdputuint(2, slot);
-        fdputs("\n", 2);
-        exit(1);
-    }
-    return ra_a64_phys[slot];
+/* ra_reg[inst] already stores an AArch64 register encoding (writeback does
+ * `ra_reg[inst] = ra_a64_phys[color]`).  This used to do another phys lookup
+ * which corrupted assignments — now it's an identity, kept for symmetry with
+ * the x64 sibling's call sites. */
+static int hx_slot_reg(int reg_enc) {
+    return reg_enc;
 }
 
 /* The physical register holding the value of HIR instruction `inst`,
@@ -159,19 +156,13 @@ static void hx_remat(int inst, int dst_reg) {
         return;
     }
     if (k == HI_GADDR || k == HI_SADDR || k == HI_FADDR) {
-        /* Look up the global by name (h_name) — emit ADRP+ADD.  For HIR,
-         * GADDR/SADDR symbol resolution goes through the cg_glob_name
-         * table the same way as the tree-walk codegen. */
-        if (k == HI_FADDR) {
-            /* String literal — h_val is the string index. */
-            cg_emit_adrp_add(CG_STR_PSEUDO_NAME, h_val[inst]);
-            if (dst_reg != A64_X0) a64_mov_x(dst_reg, A64_X0);
-            return;
+        if (k == HI_SADDR) {
+            /* String literal — h_val is the lexer string-pool index. */
+            cg_emit_adrp_add_to(dst_reg, CG_STR_PSEUDO_NAME, h_val[inst]);
+        } else {
+            /* GADDR / FADDR → emit ADRP+ADD against the named symbol. */
+            cg_emit_adrp_add_to(dst_reg, h_name[inst], 0);
         }
-        /* GADDR / SADDR → emit_adrp_add against the named symbol; cg_emit_adrp_add
-         * writes to X0, so MOV if dst is different. */
-        cg_emit_adrp_add(h_name[inst], 0);
-        if (dst_reg != A64_X0) a64_mov_x(dst_reg, A64_X0);
         return;
     }
     if (k == HI_GETFP) {
@@ -494,15 +485,13 @@ static void hx_emit_inst(int idx) {
         hx_spill(idx, dst);
         return;
     }
-    if (k == HI_GADDR || k == HI_SADDR) {
-        cg_emit_adrp_add(h_name[idx], 0);
-        if (dst != A64_X0) a64_mov_x(dst, A64_X0);
+    if (k == HI_GADDR || k == HI_FADDR) {
+        cg_emit_adrp_add_to(dst, h_name[idx], 0);
         hx_spill(idx, dst);
         return;
     }
-    if (k == HI_FADDR) {
-        cg_emit_adrp_add(CG_STR_PSEUDO_NAME, h_val[idx]);
-        if (dst != A64_X0) a64_mov_x(dst, A64_X0);
+    if (k == HI_SADDR) {
+        cg_emit_adrp_add_to(dst, CG_STR_PSEUDO_NAME, h_val[idx]);
         hx_spill(idx, dst);
         return;
     }
@@ -1019,9 +1008,12 @@ static void hx_gen_func(Node *fn) {
      * + 16 if varargs (TBD)
      * Round up to 16-byte alignment.
      */
-    spill_slots = 2 * fn->locals_size;
-    callee_save_bytes = ra_ncsave * 8;
-    fs = 16 + spill_slots + callee_save_bytes;
+    /* hl_temp_stack now spans locals + lowered ALLOCA temps + regalloc spills
+     * + callee-save slots (all in slow32 units of 4 bytes).  cg_a64_offset
+     * doubles to AArch64 byte offsets, so frame-byte usage = 2 * hl_temp_stack
+     * plus 16 for FP/LR. */
+    (void)spill_slots; (void)callee_save_bytes;
+    fs = 16 + 2 * hl_temp_stack;
     fs = (fs + 15) & ~15;
     if (fs < 16) fs = 16;        /* always at least save FP/LR */
     hx_frame_size = fs;
@@ -1043,7 +1035,7 @@ static void hx_gen_func(Node *fn) {
     /* Save callee-saved regs that regalloc decided to use. */
     i = 0;
     while (i < ra_ncsave) {
-        hx_emit_store_from_reg(ra_csave_reg[i], ra_csave_off[i] / 4 /* XXX */, 1);
+        hx_emit_store_from_reg(ra_csave_reg[i], ra_csave_off[i], 1);
         i = i + 1;
     }
 
@@ -1149,7 +1141,7 @@ static void hx_gen_func(Node *fn) {
         /* Restore callee-saved regs */
         i = 0;
         while (i < ra_ncsave) {
-            hx_emit_load_to_reg(ra_csave_reg[i], ra_csave_off[i] / 4 /* XXX */, 1);
+            hx_emit_load_to_reg(ra_csave_reg[i], ra_csave_off[i], 1);
             i = i + 1;
         }
 
