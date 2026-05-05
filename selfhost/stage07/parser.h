@@ -42,6 +42,13 @@ static int is_gnu_extension_ident(void) {
     return 0;
 }
 
+static int is_gnu_inline_ident(void) {
+    if (lex_tok != TK_IDENT) return 0;
+    if (strcmp(lex_str, "__inline") == 0) return 1;
+    if (strcmp(lex_str, "__inline__") == 0) return 1;
+    return 0;
+}
+
 static int gnu_float_ident_ty(void) {
     if (lex_tok != TK_IDENT) return -1;
     if (strcmp(lex_str, "_Float32") == 0) return TY_FLOAT;
@@ -181,7 +188,7 @@ static int   ps_cval[PS_MAX_CONSTS];
 static int   ps_nconsts;
 
 /* Typedef table */
-#define PS_MAX_TYPEDEFS 128
+#define PS_MAX_TYPEDEFS 1024
 static char *ps_tdname[PS_MAX_TYPEDEFS];
 static int   ps_tdtype[PS_MAX_TYPEDEFS];
 static int   ps_ntypedefs;
@@ -940,6 +947,17 @@ static int parse_const_primary(void) {
 }
 
 static int parse_const_unary(void) {
+    int ty;
+    int sv_tok;
+    int sv_val;
+    int sv_slen;
+    int sv_rcs;
+    int sv_ract;
+    char *sv_rp;
+    char *sv_rts;
+    char *sv_rte;
+    char sv_str[256];
+
     if (lex_tok == TK_PLUS) {
         next();
         return parse_const_unary();
@@ -947,6 +965,24 @@ static int parse_const_unary(void) {
     if (lex_tok == TK_MINUS) {
         next();
         return 0 - parse_const_unary();
+    }
+    if (lex_tok == TK_LPAREN) {
+        sv_tok = lex_tok; sv_val = lex_val; sv_slen = lex_slen;
+        sv_rcs = lex_rcs; sv_ract = lex_ract;
+        sv_rp = lex_rp; sv_rts = lex_rts; sv_rte = lex_rte;
+        memcpy(sv_str, lex_str, lex_slen + 1);
+        next();
+        if (is_type()) {
+            ty = parse_type();
+            while (lex_tok == TK_STAR) { ty = ty + TY_PTR; next(); }
+            skip_decl_qualifiers();
+            expect(TK_RPAREN);
+            return parse_const_unary();
+        }
+        lex_tok = sv_tok; lex_val = sv_val; lex_slen = sv_slen;
+        lex_rcs = sv_rcs; lex_ract = sv_ract;
+        lex_rp = sv_rp; lex_rts = sv_rts; lex_rte = sv_rte;
+        memcpy(lex_str, sv_str, sv_slen + 1);
     }
     return parse_const_primary();
 }
@@ -2016,7 +2052,7 @@ static Node *parse_stmt(void) {
     while (lex_tok == TK_STATIC || lex_tok == TK_CONST ||
            lex_tok == TK_REGISTER || lex_tok == TK_RESTRICT ||
            lex_tok == TK_AUTO || is_gnu_qual_ident() ||
-           is_gnu_extension_ident()) {
+           is_gnu_extension_ident() || is_gnu_inline_ident()) {
         if (lex_tok == TK_STATIC) is_static = 1;
         next();
     }
@@ -2378,7 +2414,7 @@ static Node *parse_top_decl(void) {
            lex_tok == TK_EXTERN || lex_tok == TK_INLINE ||
            lex_tok == TK_REGISTER || lex_tok == TK_RESTRICT ||
            lex_tok == TK_AUTO || is_gnu_qual_ident() ||
-           is_gnu_extension_ident()) next();
+           is_gnu_extension_ident() || is_gnu_inline_ident()) next();
 
     /* Typedef */
     if (lex_tok == TK_TYPEDEF) {
@@ -2419,6 +2455,7 @@ static Node *parse_top_decl(void) {
             return NULL;
         }
         add_typedef(nm, ty);
+        skip_gnu_decl_suffixes();
         expect(TK_SEMI);
         return NULL;
     }
@@ -2608,7 +2645,11 @@ static Node *parse_top_decl(void) {
             pty = parse_type();
             skip_decl_qualifiers();
         }
-        while (lex_tok == TK_STAR) { pty = pty + TY_PTR; next(); }
+        while (lex_tok == TK_STAR) {
+            pty = pty + TY_PTR;
+            next();
+            skip_decl_qualifiers();
+        }
         /* Function pointer param: type (*name)(args) */
         if (lex_tok == TK_LPAREN) {
             next();
@@ -2670,7 +2711,11 @@ static Node *parse_top_decl(void) {
             }
             pty = parse_type();
             skip_decl_qualifiers();
-            while (lex_tok == TK_STAR) { pty = pty + TY_PTR; next(); }
+            while (lex_tok == TK_STAR) {
+                pty = pty + TY_PTR;
+                next();
+                skip_decl_qualifiers();
+            }
             /* Function pointer param: type (*name)(args) */
             if (lex_tok == TK_LPAREN) {
                 next();
