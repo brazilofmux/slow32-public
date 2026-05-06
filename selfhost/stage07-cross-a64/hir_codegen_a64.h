@@ -341,6 +341,12 @@ static void hx_mat(int inst, int dst_reg) {
                                    ty_is_double(h_ty[inst]));
         } else {
             wide = hx_is_wide(h_ty[inst]);
+            /* Mirror hx_spill: if HI_ADDI was stored as 64-bit because a
+             * source was wide, reload as 64-bit too. */
+            if (!wide && h_kind[inst] == HI_ADDI) {
+                int s1 = h_src1[inst];
+                if (s1 >= 0 && hx_is_wide(h_ty[s1])) wide = 1;
+            }
             hx_emit_load_to_reg(dst_reg, ra_spill_off[inst], wide);
         }
         return;
@@ -375,6 +381,15 @@ static void hx_spill(int inst, int reg) {
         return;
     }
     wide = hx_is_wide(h_ty[inst]);
+    /* HI_ADDI's emitter always uses 64-bit add (wide=1 in hx_emit_add_delta),
+     * so the result occupies a full X register.  If h_ty is TY_INT but a
+     * source is a wide pointer/llong, narrowing the spill drops the high
+     * bits and a later wide reload reads junk (or sign-extended low half).
+     * Promote the spill to 64-bit when any source is wide. */
+    if (!wide && h_kind[inst] == HI_ADDI) {
+        int s1 = h_src1[inst];
+        if (s1 >= 0 && hx_is_wide(h_ty[s1])) wide = 1;
+    }
     hx_emit_store_from_reg(reg, ra_spill_off[inst], wide);
 }
 

@@ -279,11 +279,18 @@ static int hl_addr(Node *n) {
         return hl_expr(n->lhs);
     }
 
-    /* Member access: base address + offset */
+    /* Member access: base address + offset.  Use addr_ty (8-byte ptr on
+     * a64) so the codegen treats the result as wide and doesn't spill it
+     * as a 32-bit int (would truncate the address). */
     if (n->kind == ND_MEMBER) {
+#ifdef S12CC_X64_HOST
+        int addr_ty = TY_PTR | TY_VOID;
+#else
+        int addr_ty = TY_INT;
+#endif
         addr = hl_addr(n->lhs);
         if (n->val != 0) {
-            addr = hi_emit(HI_ADDI, TY_INT, addr, -1, n->val, NULL);
+            addr = hi_emit(HI_ADDI, addr_ty, addr, -1, n->val, NULL);
         }
         return addr;
     }
