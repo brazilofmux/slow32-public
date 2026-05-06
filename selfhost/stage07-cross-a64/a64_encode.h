@@ -1393,6 +1393,39 @@ static void a64_fmov_d_d(int dd, int dn) {
     a64_inst(inst);
 }
 
+/* FMOV Sd, #imm — 8-bit float-immediate form.  Encodes 256 values
+ * (16 mantissas × 8 exponents × 2 signs).  Per ARMv8 VFPExpandImm
+ * (N=32: E=8, F=23): imm8 layout is `a b c d e f g h` mapping to
+ *   sign     = a
+ *   exp[7]   = NOT(b)
+ *   exp[6:2] = b repeated 5 times
+ *   exp[1:0] = c d
+ *   frac[22:19] = e f g h
+ *   frac[18:0]  = 0 */
+static void a64_fmov_s_imm(int sd, int imm8) {
+    int inst;
+    inst = 0x1E201000 | ((imm8 & 0xFF) << 13) | (sd & 0x1F);
+    a64_inst(inst);
+}
+
+/* Test whether `bits` (32-bit IEEE-754 single bit pattern) is encodable
+ * as FMOV Sd,#imm; on success, writes the 8-bit immediate to *imm8.
+ * Encodable iff the low 19 mantissa bits are zero AND the biased
+ * exponent is in [124, 127] ∪ [128, 131]. */
+static int a64_encode_fmov_s_imm(unsigned int bits, int *imm8) {
+    int sign; int exp; int mant; int b; int cd; int efgh;
+    sign = (int)((bits >> 31) & 1);
+    exp  = (int)((bits >> 23) & 0xFF);
+    mant = (int)(bits & 0x7FFFFF);
+    if (mant & 0x7FFFF) return 0;          /* low 19 mantissa bits not zero */
+    efgh = (mant >> 19) & 0xF;
+    if (exp >= 124 && exp <= 127)      { b = 1; cd = exp - 124; }
+    else if (exp >= 128 && exp <= 131) { b = 0; cd = exp - 128; }
+    else return 0;
+    *imm8 = (sign << 7) | (b << 6) | (cd << 4) | efgh;
+    return 1;
+}
+
 // ============================================================================
 // FP arithmetic
 // ============================================================================

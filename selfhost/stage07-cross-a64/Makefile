@@ -188,7 +188,7 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
 	@$(OUT)/cc_tail_call_hir_exe; rc=$$?; if [ $$rc -eq 7 ]; then echo "cc_tail_call (--hir): ok (exit=7)"; else echo "cc_tail_call (--hir): FAIL (exit=$$rc, expected 7)"; exit 1; fi
 	@$(OUT)/cc_alu_imm_exe; rc=$$?; if [ $$rc -eq 8 ]; then echo "cc_alu_imm: ok (exit=8)"; else echo "cc_alu_imm: FAIL (exit=$$rc, expected 8)"; exit 1; fi
 	@$(OUT)/cc_alu_imm_hir_exe; rc=$$?; if [ $$rc -eq 8 ]; then echo "cc_alu_imm (--hir): ok (exit=8)"; else echo "cc_alu_imm (--hir): FAIL (exit=$$rc, expected 8)"; exit 1; fi
-	@$(OUT)/cc_fp_arith_exe; rc=$$?; if [ $$rc -eq 0 ]; then echo "cc_fp_arith (--hir): ok"; else echo "cc_fp_arith (--hir): FAIL (exit=$$rc; bitfield: 1=fadd 2=fsub 4=fmul 8=fdiv 16=fneg 32=fcalc 64=fadd-neg)"; exit 1; fi
+	@$(OUT)/cc_fp_arith_exe; rc=$$?; if [ $$rc -eq 0 ]; then echo "cc_fp_arith (--hir): ok"; else echo "cc_fp_arith (--hir): FAIL (exit=$$rc; bitfield: 1=fadd 2=fsub 4=fmul 8=fdiv 16=fneg 32=fcalc 64=fadd-neg 128=six 256=add_one 512=halfneg 1024=unenc 2048=pi 4096=combo)"; exit 1; fi
 	@out=$$($(OUT)/cc_string_exe 2>&1); rc=$$?; \
 		if [ "$$out" = "hi a64" ] && [ $$rc -eq 0 ]; then \
 			echo "cc_string:    ok (stdout=\"hi a64\", exit=0)"; \

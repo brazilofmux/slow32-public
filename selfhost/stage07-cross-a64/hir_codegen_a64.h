@@ -193,13 +193,30 @@ static void hx_emit_frame_addr_bytes(int dst_reg, int off) {
     }
 }
 
+/* Materialise a 32-bit float bit pattern into a V register.  Tries the
+ * FMOV-imm8 fast path (256 encodable patterns including 1.0, 2.0, 0.5,
+ * etc.); else does the fallback `mov w_scratch, #bits; fmov s_dst, w`. */
+static void hx_mat_fconst_s(int dst_v, unsigned int bits) {
+    int imm8;
+    if (a64_encode_fmov_s_imm(bits, &imm8)) {
+        a64_fmov_s_imm(dst_v, imm8);
+        return;
+    }
+    a64_mov_w_imm(HX_SCRATCH1, (int)bits);
+    a64_fmov_s_w(dst_v, HX_SCRATCH1);
+}
+
 /* Materialise a remat-able value (ICONST, ALLOCA, GADDR, SADDR, FADDR,
  * GETFP) into dst_reg without consulting ra_reg[]. */
 static void hx_remat(int inst, int dst_reg) {
     int k;
     k = h_kind[inst];
     if (k == HI_ICONST) {
-        hx_mat_iconst(dst_reg, h_val[inst], hx_is_wide(h_ty[inst]));
+        if (ty_is_float(h_ty[inst])) {
+            hx_mat_fconst_s(dst_reg, (unsigned int)h_val[inst]);
+        } else {
+            hx_mat_iconst(dst_reg, h_val[inst], hx_is_wide(h_ty[inst]));
+        }
         return;
     }
     if (k == HI_ALLOCA) {
@@ -286,10 +303,8 @@ static void hx_mat(int inst, int dst_reg) {
         return;
     }
 
-    /* Rematerialise (X-class only for now). */
-    if (hx_is_v(inst)) {
-        hx_die("hx_mat: V-class remat not supported (HI_FCONST?)", inst);
-    }
+    /* Rematerialise.  V-class remat handles HI_ICONST with TY_FLOAT
+     * (the lower lowers `3.0f` to HI_ICONST + TY_FLOAT + bit pattern). */
     hx_remat(inst, dst_reg);
 }
 
