@@ -10,9 +10,11 @@ char *memcpy(char *dst, char *src, int n);
 /* ---- Environment ---- */
 
 static char **saved_envp;
+char **environ;     /* POSIX global; set in lockstep with saved_envp */
 
 void __save_envp(char **envp) {
     saved_envp = envp;
+    environ = envp;
 }
 
 char *getenv(char *name) {

@@ -145,6 +145,10 @@ $(OUT)/cc_multi_include.o: tests/cc_multi_include.c $(OUT)/cc-a64 \
 $(OUT)/cc_%_exe: $(OUT)/cc_%.o $(OUT)/crt0.o $(OUT)/crt0_stubs.o
 	@ld -o $@ $(OUT)/crt0.o $< $(OUT)/crt0_stubs.o
 
+# cc_libc_extra needs libc_a64.a (snprintf, qsort, strtoul, etc.).
+$(OUT)/cc_libc_extra_exe: $(OUT)/cc_libc_extra.o $(OUT)/crt0.o $(OUT)/libc_a64.a $(OUT)/ld-a64
+	@$(OUT)/ld-a64 -o $@ $(OUT)/crt0.o $(OUT)/cc_libc_extra.o $(OUT)/libc_a64.a >/dev/null
+
 test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
          $(OUT)/cc_loop_exe  $(OUT)/cc_recursion_exe \
          $(OUT)/cc_phi_swap_exe $(OUT)/cc_fwd_struct_exe \
@@ -163,7 +167,8 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
          $(OUT)/cc_alu_imm_exe \
          $(OUT)/cc_alu_imm_hir_exe \
          $(OUT)/cc_fp_arith_exe \
-         $(OUT)/cc_string_exe
+         $(OUT)/cc_string_exe \
+         $(OUT)/cc_libc_extra_exe
 	@$(OUT)/cc_hello_exe;     rc=$$?; if [ $$rc -eq 42 ];  then echo "cc_hello:     ok (exit=42)";     else echo "cc_hello:     FAIL (exit=$$rc, expected 42)";     exit 1; fi
 	@$(OUT)/cc_locals_exe;    rc=$$?; if [ $$rc -eq 42 ];  then echo "cc_locals:    ok (exit=42)";     else echo "cc_locals:    FAIL (exit=$$rc, expected 42)";     exit 1; fi
 	@$(OUT)/cc_loop_exe;      rc=$$?; if [ $$rc -eq 47 ];  then echo "cc_loop:      ok (exit=47)";     else echo "cc_loop:      FAIL (exit=$$rc, expected 47)";     exit 1; fi
@@ -196,6 +201,7 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
 			echo "cc_string:    ok (stdout=\"hi a64\", exit=0)"; \
 		else \
 			echo "cc_string:    FAIL (stdout=\"$$out\", exit=$$rc)"; exit 1; fi
+	@$(OUT)/cc_libc_extra_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_libc_extra: ok (exit=1)"; else echo "cc_libc_extra: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 
 # crt0 emitted by cc-a64 itself.
 $(OUT)/crt0.o: $(OUT)/cc-a64
@@ -262,7 +268,8 @@ test: test-encode test-elf test-obj test-crt0 test-cc test-toolchain test-archiv
 LIBC_A64_HIR_SRCS = libc_a64/syscalls.c libc_a64/string.c libc_a64/malloc.c \
                    libc_a64/misc.c libc_a64/stdio.c \
                    libc_a64/fpu_ops_a64.c libc_a64/fpu_ops_d_a64.c \
-                   libc_a64/math_stubs.c libc_a64/signal_stubs.c
+                   libc_a64/math_stubs.c libc_a64/signal_stubs.c \
+                   libc_a64/libc_extra.c
 LIBC_A64_HIR_OBJS = $(patsubst libc_a64/%.c,$(OUT)/libc_a64_%.o,$(LIBC_A64_HIR_SRCS))
 
 $(OUT)/libc_a64_%.o: libc_a64/%.c $(OUT)/cc-a64
@@ -323,6 +330,7 @@ clean:
 	      $(OUT)/cc_anon_nested_struct.o $(OUT)/cc_anon_nested_struct_exe \
 	      $(OUT)/cc_multi_include.o $(OUT)/cc_multi_include_exe \
 	      $(OUT)/cc_string.o $(OUT)/cc_string_exe \
+	      $(OUT)/cc_libc_extra.o $(OUT)/cc_libc_extra_exe \
 	      $(OUT)/ld-a64 $(OUT)/ar-a64 \
 	      $(OUT)/cc_lib_a.o $(OUT)/cc_lib_b.o $(OUT)/cc_uses_lib.o \
 	      $(OUT)/lib_helper.a $(OUT)/cc_uses_lib_exe \
