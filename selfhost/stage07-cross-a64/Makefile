@@ -262,7 +262,7 @@ test: test-encode test-elf test-obj test-crt0 test-cc test-toolchain test-archiv
 LIBC_A64_HIR_SRCS = libc_a64/syscalls.c libc_a64/string.c libc_a64/malloc.c \
                    libc_a64/misc.c libc_a64/stdio.c \
                    libc_a64/fpu_ops_a64.c libc_a64/fpu_ops_d_a64.c \
-                   libc_a64/math_stubs.c
+                   libc_a64/math_stubs.c libc_a64/signal_stubs.c
 LIBC_A64_HIR_OBJS = $(patsubst libc_a64/%.c,$(OUT)/libc_a64_%.o,$(LIBC_A64_HIR_SRCS))
 
 $(OUT)/libc_a64_%.o: libc_a64/%.c $(OUT)/cc-a64

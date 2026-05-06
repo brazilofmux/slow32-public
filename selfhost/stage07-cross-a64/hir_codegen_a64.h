@@ -2984,14 +2984,14 @@ static void hx_emit_inst(int idx) {
             int ngrn; int nsrn;
             int sp_adj;
             int callee_reg;
-            int arg_cls[16];     /* RA_CLASS_X / V */
-            int arg_reg[16];     /* dest reg encoding, -1 if on stack */
-            int arg_stack[16];   /* SP-relative byte offset, -1 if in regs */
+            int arg_cls[32];     /* RA_CLASS_X / V */
+            int arg_reg[32];     /* dest reg encoding, -1 if on stack */
+            int arg_stack[32];   /* SP-relative byte offset, -1 if in regs */
             int nstack_slots;
 
             base = h_cbase[idx];
             nargs = h_val[idx];
-            if (nargs > 16) hx_die("HI_CALL: nargs > 16 unsupported", nargs);
+            if (nargs > 32) hx_die("HI_CALL: nargs > 32 unsupported", nargs);
 
             /* Pass 1: assign each arg to a register or stack slot.
              * Classify by ra_class_of (NOT ty_is_fp) so that HI_ALLOCA

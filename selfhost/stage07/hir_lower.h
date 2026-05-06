@@ -1489,9 +1489,9 @@ static int hl_expr(Node *n) {
 
     /* Direct function call */
     if (n->kind == ND_CALL) {
-        int av[16];
-        int av_hi[16];
-        int is64[16];
+        int av[32];
+        int av_hi[32];
+        int is64[32];
         int phys_count;
         int ret_ty;
 
@@ -1517,7 +1517,7 @@ static int hl_expr(Node *n) {
         a = n->args;
         nargs = 0;
         while (a) {
-            if (nargs >= 16) p_error("too many call args (limit 16)");
+            if (nargs >= 32) p_error("too many call args (limit 32)");
             av[nargs] = hl_expr(a);
             if (ty_is_llong(a->ty) || ty_is_double(a->ty)) {
 #ifdef S12CC_X64_HOST
@@ -1597,15 +1597,15 @@ static int hl_expr(Node *n) {
 
     /* Indirect call through expression */
     if (n->kind == ND_CALL_PTR) {
-        int av[16];
-        int av_hi2[16];
-        int is64_2[16];
+        int av[32];
+        int av_hi2[32];
+        int is64_2[32];
         int phys_count2;
         callee = hl_expr(n->lhs);
         a = n->args;
         nargs = 0;
         while (a) {
-            if (nargs >= 16) p_error("too many call args (limit 16)");
+            if (nargs >= 32) p_error("too many call args (limit 32)");
             av[nargs] = hl_expr(a);
             if (ty_is_llong(a->ty) || ty_is_double(a->ty)) {
 #ifdef S12CC_X64_HOST
