@@ -1327,6 +1327,23 @@ static void a64_ldp_x_off(int rt1, int rt2, int rn, int imm) {
     a64_inst(inst);
 }
 
+// W-form LDP/STP (32-bit pair, scaled by 4, imm7 signed → byte range [-256, +252]).
+static void a64_ldp_w_off(int rt1, int rt2, int rn, int imm) {
+    int scaled; int inst;
+    scaled = imm / 4;
+    inst = 0x29400000 | ((scaled & 0x7F) << 15) | ((rt2 & 0x1F) << 10)
+         | ((rn & 0x1F) << 5) | (rt1 & 0x1F);
+    a64_inst(inst);
+}
+
+static void a64_stp_w_off(int rt1, int rt2, int rn, int imm) {
+    int scaled; int inst;
+    scaled = imm / 4;
+    inst = 0x29000000 | ((scaled & 0x7F) << 15) | ((rt2 & 0x1F) << 10)
+         | ((rn & 0x1F) << 5) | (rt1 & 0x1F);
+    a64_inst(inst);
+}
+
 // ============================================================================
 // PC-relative addressing (ADR / ADRP) — used for global / function addresses
 // ============================================================================

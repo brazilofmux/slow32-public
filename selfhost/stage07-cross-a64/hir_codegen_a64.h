@@ -107,6 +107,18 @@ static int hx_off_disp[HIR_MAX_INST];    /* byte displacement */
 static int hx_tce_call[HIR_MAX_INST];
 static int hx_tce_ret[HIR_MAX_INST];
 
+/* LDP/STP lookahead pairing — see hx_find_load_partner / hx_find_store_partner.
+ * When a HI_LOAD/HI_STORE that hits the offset-disp fold path finds a same-base
+ * partner later in the same block, codegen emits LDP/STP at the first inst's
+ * position and sets hx_skip_emit on the partner so the dispatch loop skips
+ * it.  Set in hx_emit_inst's HI_LOAD/HI_STORE branches; cleared per-function. */
+static int hx_skip_emit[HIR_MAX_INST];
+
+/* Right-end (exclusive) of the block currently being emitted.  Used by the
+ * pair-search lookaheads to bound forward scans.  Set in the codegen
+ * dispatch loop in hx_gen_func before each block. */
+static int hx_cur_blk_end;
+
 /* ============================================================================
  * Helpers
  * ============================================================================ */
@@ -1445,6 +1457,190 @@ static void hx_identify_tce(Node *fn) {
 }
 
 /* ============================================================================
+ * LDP/STP partner search — find a same-base, adjacent-disp HI_LOAD/HI_STORE
+ * later in the current block that can fuse with idx into a single LDP/STP.
+ * Returns the partner's HIR index, or -1.
+ *
+ * Preconditions: idx already cleared the offset-disp-fold path
+ * (hx_off_base[idx] >= 0, integer type).
+ *
+ * Safety:
+ *   - Aliasing: stop at any HI_STORE / HI_CALL / HI_CALLP between us
+ *     (memory side-effects could be observed differently after fusion).
+ *     For LDP we additionally stop at HI_LOAD with a *different* base,
+ *     since a same-base later HI_LOAD before any side-effect inst is
+ *     what we want.
+ *   - LDP architectural: rt1 != rt2; rt1/rt2 != base register
+ *     (CONSTRAINED UNPREDICTABLE otherwise).
+ *   - Color clobber: the partner's destination color must not be live
+ *     across (idx, partner).  We approximate with a syntactic scan:
+ *     no inst in (idx, partner) reads or writes that color.
+ *   - Imm range: signed imm7 × access scale (W: ±256/±252 step 4;
+ *     X: ±512/±504 step 8).
+ *   - Partner must also be on the offset-disp-fold path, same width,
+ *     same base instruction, integer type. */
+static int hx_load_pair_safe(int idx, int j, int wide) {
+    int color_b;
+    int color_a;
+    int color_base;
+    int min_off;
+    int diff;
+    int x;
+
+    color_a    = hx_slot_reg(ra_reg[idx]);
+    color_b    = hx_slot_reg(ra_reg[j]);
+    color_base = (ra_reg[hx_off_base[idx]] >= 0)
+                   ? hx_slot_reg(ra_reg[hx_off_base[idx]]) : -1;
+
+    if (color_a == color_b) return 0;                    /* LDP rt1 != rt2 */
+    if (color_base >= 0 && color_a == color_base) return 0;
+    if (color_base >= 0 && color_b == color_base) return 0;
+
+    diff = hx_off_disp[j] - hx_off_disp[idx];
+    if (diff > 0) min_off = hx_off_disp[idx];
+    else          min_off = hx_off_disp[j];
+    if (wide) {
+        if (min_off < -512 || min_off > 504 || (min_off & 7)) return 0;
+    } else {
+        if (min_off < -256 || min_off > 252 || (min_off & 3)) return 0;
+    }
+
+    /* Scan (idx, j) for color clobbers / reads of color_b. */
+    x = idx + 1;
+    while (x < j) {
+        int kx;
+        kx = h_kind[x];
+        if (kx != HI_NOP && kx != HI_PHI) {
+            if (ra_reg[x] >= 0 && hx_slot_reg(ra_reg[x]) == color_b) return 0;
+            if (h_src1[x] >= 0 && ra_reg[h_src1[x]] >= 0
+                    && hx_slot_reg(ra_reg[h_src1[x]]) == color_b) return 0;
+            if (h_src2[x] >= 0 && ra_reg[h_src2[x]] >= 0
+                    && hx_slot_reg(ra_reg[h_src2[x]]) == color_b) return 0;
+        }
+        x = x + 1;
+    }
+    return 1;
+}
+
+static int hx_find_load_partner(int idx, int wide) {
+    int step;
+    int j;
+    int base_inst;
+
+    step = wide ? 8 : 4;
+    base_inst = hx_off_base[idx];
+
+    j = idx + 1;
+    while (j < hx_cur_blk_end) {
+        int kj;
+        kj = h_kind[j];
+        if (kj == HI_NOP || kj == HI_PHI) { j = j + 1; continue; }
+        /* Aliasing barriers: a store / call between us could be observed
+         * (or could clobber state we read).  Stop. */
+        if (kj == HI_STORE || kj == HI_CALL || kj == HI_CALLP) return -1;
+        if (kj == HI_LOAD && !ty_is_fp(h_ty[j])
+                && hx_off_base[j] == base_inst
+                && hx_off_base[j] >= 0
+                && hx_is_wide(h_ty[j]) == wide) {
+            int diff;
+            diff = hx_off_disp[j] - hx_off_disp[idx];
+            if (diff == step || diff == -step) {
+                if (hx_load_pair_safe(idx, j, wide)) return j;
+                /* This particular candidate isn't safe; keep scanning,
+                 * a further-out load might still pair (rare). */
+            }
+        }
+        j = j + 1;
+    }
+    return -1;
+}
+
+/* STP analog.  The value-register read constraint is stricter than for
+ * loads: we need ra_reg[h_src2[partner]] to still hold its def value at
+ * idx's position (no inst between [src2-def, idx] re-uses that color),
+ * and no inst in (idx, partner) clobbers it either. */
+static int hx_store_pair_safe(int idx, int j, int wide) {
+    int color_v_b;
+    int v_b;
+    int min_off;
+    int diff;
+    int x;
+
+    /* Stored-value defs must be live at idx's position. */
+    if (h_src2[j] < 0) return 0;
+    v_b = h_src2[j];
+    /* h_src2[j] must be defined before idx (so its value reaches idx). */
+    if (v_b >= idx) return 0;
+
+    color_v_b = (ra_reg[v_b] >= 0) ? hx_slot_reg(ra_reg[v_b]) : -1;
+    if (color_v_b < 0) return 0;     /* spilled — let normal path reload */
+
+    /* STP allows rt1 == rt2 (storing the same value twice is meaningful);
+     * no architectural rt vs base constraint either.  Just imm range. */
+    diff = hx_off_disp[j] - hx_off_disp[idx];
+    if (diff > 0) min_off = hx_off_disp[idx];
+    else          min_off = hx_off_disp[j];
+    if (wide) {
+        if (min_off < -512 || min_off > 504 || (min_off & 7)) return 0;
+    } else {
+        if (min_off < -256 || min_off > 252 || (min_off & 3)) return 0;
+    }
+
+    /* No inst in (idx, j) may write color_v_b (else partner's value at
+     * idx's position is no longer the same as it would have been at j). */
+    x = idx + 1;
+    while (x < j) {
+        int kx;
+        kx = h_kind[x];
+        if (kx != HI_NOP && kx != HI_PHI) {
+            if (ra_reg[x] >= 0 && hx_slot_reg(ra_reg[x]) == color_v_b) return 0;
+        }
+        x = x + 1;
+    }
+    /* And between v_b's def and idx, no inst may overwrite color_v_b. */
+    x = v_b + 1;
+    while (x <= idx) {
+        int kx;
+        kx = h_kind[x];
+        if (kx != HI_NOP && kx != HI_PHI) {
+            if (ra_reg[x] >= 0 && hx_slot_reg(ra_reg[x]) == color_v_b
+                    && x != v_b) return 0;
+        }
+        x = x + 1;
+    }
+    return 1;
+}
+
+static int hx_find_store_partner(int idx, int wide) {
+    int step;
+    int j;
+    int base_inst;
+
+    step = wide ? 8 : 4;
+    base_inst = hx_off_base[idx];
+
+    j = idx + 1;
+    while (j < hx_cur_blk_end) {
+        int kj;
+        kj = h_kind[j];
+        if (kj == HI_NOP || kj == HI_PHI) { j = j + 1; continue; }
+        if (kj == HI_LOAD || kj == HI_CALL || kj == HI_CALLP) return -1;
+        if (kj == HI_STORE && !ty_is_fp(h_ty[j])
+                && hx_off_base[j] == base_inst
+                && hx_off_base[j] >= 0
+                && hx_is_wide(h_ty[j]) == wide) {
+            int diff;
+            diff = hx_off_disp[j] - hx_off_disp[idx];
+            if (diff == step || diff == -step) {
+                if (hx_store_pair_safe(idx, j, wide)) return j;
+            }
+        }
+        j = j + 1;
+    }
+    return -1;
+}
+
+/* ============================================================================
  * Emit one HIR instruction.
  * ============================================================================ */
 
@@ -1577,9 +1773,34 @@ static void hx_emit_inst(int idx) {
         /* Offset-displacement fold: address is base + #const. */
         if (hx_off_base[idx] >= 0) {
             int base_r;
+            int wide_a;
+            int partner;
+            wide_a = hx_is_wide(ty);
             base_r = hx_get_src(hx_off_base[idx], HX_SCRATCH1);
-            if (hx_is_wide(ty)) a64_ldr_x_imm(dst, base_r, hx_off_disp[idx]);
-            else                a64_ldr_w_imm(dst, base_r, hx_off_disp[idx]);
+            partner = hx_find_load_partner(idx, wide_a);
+            if (partner >= 0) {
+                int part_dst;
+                int diff;
+                int min_off;
+                int rt1; int rt2;
+                part_dst = hx_slot_reg(ra_reg[partner]);
+                diff = hx_off_disp[partner] - hx_off_disp[idx];
+                if (diff > 0) {
+                    min_off = hx_off_disp[idx];
+                    rt1 = dst; rt2 = part_dst;
+                } else {
+                    min_off = hx_off_disp[partner];
+                    rt1 = part_dst; rt2 = dst;
+                }
+                if (wide_a) a64_ldp_x_off(rt1, rt2, base_r, min_off);
+                else        a64_ldp_w_off(rt1, rt2, base_r, min_off);
+                hx_spill(idx, dst);
+                hx_spill(partner, part_dst);
+                hx_skip_emit[partner] = 1;
+                return;
+            }
+            if (wide_a) a64_ldr_x_imm(dst, base_r, hx_off_disp[idx]);
+            else        a64_ldr_w_imm(dst, base_r, hx_off_disp[idx]);
             hx_spill(idx, dst);
             return;
         }
@@ -1750,10 +1971,35 @@ static void hx_emit_inst(int idx) {
         /* Offset-displacement fold: address is base + #const. */
         if (hx_off_base[idx] >= 0) {
             int base_r; int v_r;
+            int wide_a;
+            int partner;
+            wide_a = hx_is_wide(ty);
             base_r = hx_get_src(hx_off_base[idx], HX_SCRATCH1);
             v_r    = hx_get_src(s2, HX_SCRATCH2);
-            if (hx_is_wide(ty)) a64_str_x_imm(v_r, base_r, hx_off_disp[idx]);
-            else                a64_str_w_imm(v_r, base_r, hx_off_disp[idx]);
+            partner = hx_find_store_partner(idx, wide_a);
+            if (partner >= 0) {
+                int part_v;
+                int diff;
+                int min_off;
+                int rt1; int rt2;
+                /* Partner's value reg is already in its assigned color
+                 * (we verified safety above — color_v_b is live). */
+                part_v = hx_slot_reg(ra_reg[h_src2[partner]]);
+                diff = hx_off_disp[partner] - hx_off_disp[idx];
+                if (diff > 0) {
+                    min_off = hx_off_disp[idx];
+                    rt1 = v_r; rt2 = part_v;
+                } else {
+                    min_off = hx_off_disp[partner];
+                    rt1 = part_v; rt2 = v_r;
+                }
+                if (wide_a) a64_stp_x_off(rt1, rt2, base_r, min_off);
+                else        a64_stp_w_off(rt1, rt2, base_r, min_off);
+                hx_skip_emit[partner] = 1;
+                return;
+            }
+            if (wide_a) a64_str_x_imm(v_r, base_r, hx_off_disp[idx]);
+            else        a64_str_w_imm(v_r, base_r, hx_off_disp[idx]);
             return;
         }
 
@@ -2919,6 +3165,9 @@ static void hx_gen_func(Node *fn) {
     i = 0;
     while (i < bb_nblk) { hx_blk_off[i] = -1; i = i + 1; }
     hx_nbpatch = 0;
+    /* Clear LDP/STP lookahead skip-marks for this function. */
+    i = 0;
+    while (i < h_ninst) { hx_skip_emit[i] = 0; i = i + 1; }
 
     {
         int rpo_idx;
@@ -2933,10 +3182,15 @@ static void hx_gen_func(Node *fn) {
             /* Emit LICM-hoisted instructions (live at block-top). */
             i = licm_head[b];
             while (i >= 0) { hx_emit_inst(i); i = licm_next[i]; }
-            /* Emit non-PHI / non-NOP instructions in original order. */
+            /* Emit non-PHI / non-NOP instructions in original order.
+             * Skip any inst that LDP/STP lookahead consumed at an earlier
+             * position (hx_skip_emit). */
+            hx_cur_blk_end = bb_end[b];
             i = bb_start[b];
             while (i < bb_end[b]) {
-                if (h_kind[i] != HI_NOP && h_kind[i] != HI_PHI) hx_emit_inst(i);
+                if (!hx_skip_emit[i]
+                        && h_kind[i] != HI_NOP && h_kind[i] != HI_PHI)
+                    hx_emit_inst(i);
                 i = i + 1;
             }
             rpo_idx = rpo_idx + 1;

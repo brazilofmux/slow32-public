@@ -1658,10 +1658,102 @@ static void gc_writeback(void) {
     }
 }
 
+/* Add interference edges for HI_LOAD pair candidates.  For each pair
+ * (A, B) of HI_LOADs in the same block whose addresses are
+ * HI_ADDI(base, c_a) and HI_ADDI(base, c_b) with |c_b - c_a| matching
+ * the access size, force distinct colors via interference edges:
+ *
+ *   - A vs B (LDP rt1 != rt2)
+ *   - A vs base, B vs base (LDP rt != Xn)
+ *   - B vs every value-producing inst in (A, B) (so B's color isn't
+ *     coalesced with anything live in that range; this is what lets
+ *     the codegen pair them at A's emission point without clobbering
+ *     a live value).
+ *
+ * Stops scanning at HI_STORE / HI_CALL / HI_CALLP (alias / clobber
+ * barriers).  Only triggers for integer types; FP loads use V-class
+ * regs and have their own pairing path.
+ *
+ * Called after gc_build so the graph is allocated. */
+static void hx_pair_load_interference(void) {
+    int a; int b;
+    int base_a; int disp_a;
+    int wide_a; int step;
+    int scan_lim;
+    int na; int nb; int n_base;
+
+    a = 0;
+    while (a < h_ninst) {
+        if (h_kind[a] != HI_LOAD) { a = a + 1; continue; }
+        if (ty_is_fp(h_ty[a]))    { a = a + 1; continue; }
+        na = gc_node[a];
+        if (na < 0) { a = a + 1; continue; }
+        if (h_src1[a] < 0 || h_kind[h_src1[a]] != HI_ADDI) { a = a + 1; continue; }
+        base_a = h_src1[h_src1[a]];
+        disp_a = h_val[h_src1[a]];
+        if (base_a < 0) { a = a + 1; continue; }
+        n_base = gc_node[base_a];
+        wide_a = ty_is_ptr(h_ty[a]) || ty_is_llong(h_ty[a]);
+        step = wide_a ? 8 : 4;
+
+        /* Bound forward search: pairs more than ~32 insts apart almost
+         * never survive to codegen (some intervening op will alias).
+         * Linear scan keeps the pass O(n × K) with small K. */
+        scan_lim = a + 32;
+        if (scan_lim > h_ninst) scan_lim = h_ninst;
+        b = a + 1;
+        while (b < scan_lim && h_blk[b] == h_blk[a]) {
+            int kb;
+            kb = h_kind[b];
+            if (kb == HI_NOP || kb == HI_PHI) { b = b + 1; continue; }
+            if (kb == HI_STORE || kb == HI_CALL || kb == HI_CALLP) break;
+            if (kb == HI_LOAD && !ty_is_fp(h_ty[b])
+                    && (ty_is_ptr(h_ty[b]) || ty_is_llong(h_ty[b])) == wide_a
+                    && h_src1[b] >= 0 && h_kind[h_src1[b]] == HI_ADDI
+                    && h_src1[h_src1[b]] == base_a) {
+                int disp_b;
+                int diff;
+                int min_off;
+                disp_b = h_val[h_src1[b]];
+                diff = disp_b - disp_a;
+                if (diff == step || diff == -step) {
+                    if (diff > 0) min_off = disp_a;
+                    else          min_off = disp_b;
+                    if ((wide_a && min_off >= -512 && min_off <= 504
+                                && (min_off & 7) == 0)
+                       || (!wide_a && min_off >= -256 && min_off <= 252
+                                && (min_off & 3) == 0)) {
+                        int x;
+                        nb = gc_node[b];
+                        if (nb >= 0) {
+                            gc_add_edge(na, nb);
+                            if (n_base >= 0) {
+                                gc_add_edge(na, n_base);
+                                gc_add_edge(nb, n_base);
+                            }
+                            x = a + 1;
+                            while (x < b) {
+                                int nx;
+                                nx = gc_node[x];
+                                if (nx >= 0) gc_add_edge(nb, nx);
+                                x = x + 1;
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+            b = b + 1;
+        }
+        a = a + 1;
+    }
+}
+
 /* Top-level graph-coloring allocation */
 static void gc_alloc(void) {
     gc_build();
     gc_drop_phi_edges();
+    hx_pair_load_interference();
     gc_find_moves();
     gc_irc();
     gc_select();
