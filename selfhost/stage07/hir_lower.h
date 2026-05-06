@@ -1251,14 +1251,29 @@ static int hl_expr(Node *n) {
         }
         /* int → double */
         if (ty_is_double(n->ty) && !ty_is_fp(n->lhs->ty) && !ty_is_llong(n->lhs->ty)) {
+#ifdef S12CC_NATIVE_F64
+            /* Native: HI_FCVT_ItoF with TY_DOUBLE — codegen picks
+             * scvtf sf=0 type=1 by inspecting src/dst types. */
+            return hi_emit(HI_FCVT_ItoF, TY_DOUBLE, lv, -1, 0, NULL);
+#else
             return hl_promote_to_f64(lv, n->lhs->ty);
+#endif
         }
         /* float → double */
         if (ty_is_double(n->ty) && ty_is_float(n->lhs->ty)) {
+#ifdef S12CC_NATIVE_F64
+            return hi_emit(HI_FCVT_FtoD, TY_DOUBLE, lv, -1, 0, NULL);
+#else
             return hl_promote_to_f64(lv, n->lhs->ty);
+#endif
         }
         /* double → int */
         if (!ty_is_fp(n->ty) && !ty_is_llong(n->ty) && ty_is_double(n->lhs->ty)) {
+#ifdef S12CC_NATIVE_F64
+            /* Native: HI_FCVT_FtoI; codegen picks fcvtzs/fcvtzu with
+             * sf=0 (W-form) type=1 (D-form) by inspecting src/dst. */
+            return hi_emit(HI_FCVT_FtoI, n->ty, lv, -1, 0, NULL);
+#else
             int d_hi;
             int cb;
             d_hi = hl_hi;
@@ -1268,9 +1283,13 @@ static int hl_expr(Node *n) {
             lv = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "__fp64_cvt_DtoI");
             h_cbase[lv] = cb;
             return lv;
+#endif
         }
         /* double → float */
         if (ty_is_float(n->ty) && ty_is_double(n->lhs->ty)) {
+#ifdef S12CC_NATIVE_F64
+            return hi_emit(HI_FCVT_DtoF, TY_FLOAT, lv, -1, 0, NULL);
+#else
             int d_hi;
             int cb;
             d_hi = hl_hi;
@@ -1280,9 +1299,15 @@ static int hl_expr(Node *n) {
             lv = hi_emit(HI_CALL, TY_INT, -1, -1, 2, "__fp64_cvt_DtoF");
             h_cbase[lv] = cb;
             return lv;
+#endif
         }
         /* llong → double */
         if (ty_is_double(n->ty) && ty_is_llong(n->lhs->ty)) {
+#ifdef S12CC_NATIVE_F64
+            /* Native: HI_FCVT_ItoF with TY_DOUBLE; codegen picks sf=1
+             * by seeing TY_LLONG on src. */
+            return hi_emit(HI_FCVT_ItoF, TY_DOUBLE, lv, -1, 0, NULL);
+#else
             int d_hi;
             int cb;
             d_hi = hl_hi;
@@ -1293,9 +1318,15 @@ static int hl_expr(Node *n) {
             h_cbase[lv] = cb;
             hl_hi = hi_emit(HI_CALLHI, TY_INT, lv, -1, 0, NULL);
             return lv;
+#endif
         }
         /* double → llong */
         if (ty_is_llong(n->ty) && ty_is_double(n->lhs->ty)) {
+#ifdef S12CC_NATIVE_F64
+            /* Native: HI_FCVT_FtoI with TY_LLONG dst; codegen picks
+             * sf=1 (X-form) type=1 (D-form). */
+            return hi_emit(HI_FCVT_FtoI, n->ty, lv, -1, 0, NULL);
+#else
             int d_hi;
             int cb;
             d_hi = hl_hi;
@@ -1306,6 +1337,7 @@ static int hl_expr(Node *n) {
             h_cbase[lv] = cb;
             hl_hi = hi_emit(HI_CALLHI, TY_INT, lv, -1, 0, NULL);
             return lv;
+#endif
         }
         /* Narrowing to char: truncate + sign/zero extend */
         if (!ty_is_ptr(n->ty) && (n->ty & TY_BASE_MASK) == TY_CHAR) {

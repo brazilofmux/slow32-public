@@ -251,29 +251,28 @@ test: test-encode test-elf test-obj test-crt0 test-cc test-toolchain test-archiv
 
 # --- libc_a64.a — runtime library for cc-a64 outputs ---
 # Most files are symlinks into ../stage07-cross/libc_x64/ since they're
-# host-independent C.  syscalls.c is a64-specific.  fpu_ops_a64.c is
-# the f32 portion (cc-a64 --hir-built — Session 7 milestone); the f64
-# portion stays host-gcc-built in fpu_ops_d_host.c since the lower
-# routes f64 through __fp64_* libcalls that don't go native yet.
+# host-independent C.  syscalls.c is a64-specific.  Both fpu_ops_a64.c
+# (f32) and fpu_ops_d_a64.c (f64) are now cc-a64 --hir-built thanks
+# to S12CC_NATIVE_F64 in cc-a64.c.  The only remaining host-gcc step
+# is math_stubs.c (sqrt/sqrtf via __builtin_sqrt[f]); replacing those
+# with HI_FSQRT would let the host-gcc dependency disappear.
 
 LIBC_A64_HIR_SRCS = libc_a64/syscalls.c libc_a64/string.c libc_a64/malloc.c \
-                   libc_a64/misc.c libc_a64/stdio.c libc_a64/fpu_ops_a64.c
+                   libc_a64/misc.c libc_a64/stdio.c \
+                   libc_a64/fpu_ops_a64.c libc_a64/fpu_ops_d_a64.c
 LIBC_A64_HIR_OBJS = $(patsubst libc_a64/%.c,$(OUT)/libc_a64_%.o,$(LIBC_A64_HIR_SRCS))
 
 $(OUT)/libc_a64_%.o: libc_a64/%.c $(OUT)/cc-a64
 	@$(OUT)/cc-a64 --hir -c $< -o $@ >/dev/null
 
-$(OUT)/libc_a64_fpu_ops_d_host.o: libc_a64/fpu_ops_d_host.c
-	gcc -O2 -fno-builtin -fno-stack-protector -ffreestanding -c $< -o $@
-
-# math_stubs.o — sqrt/sqrtf wrappers for fpu_ops_a64.c.  Compiled with host gcc
-# so __builtin_sqrt[f] lowers to hardware FSQRT.  Could go native with
-# an HI_FSQRT op (encoder exists), follow-up.
+# math_stubs.o — sqrt/sqrtf wrappers for fpu_ops_*_a64.c.  Compiled
+# with host gcc so __builtin_sqrt[f] lowers to hardware FSQRT.  Could
+# go native with an HI_FSQRT op (encoder exists), follow-up.
 $(OUT)/libc_a64_math_stubs.o: libc_a64/math_stubs.c
 	gcc -O2 -fno-builtin -fno-stack-protector -ffreestanding -c $< -o $@
 
-$(OUT)/libc_a64.a: $(LIBC_A64_HIR_OBJS) $(OUT)/libc_a64_fpu_ops_d_host.o $(OUT)/libc_a64_math_stubs.o $(OUT)/ar-a64
-	@$(OUT)/ar-a64 rcs $@ $(LIBC_A64_HIR_OBJS) $(OUT)/libc_a64_fpu_ops_d_host.o $(OUT)/libc_a64_math_stubs.o >/dev/null 2>&1
+$(OUT)/libc_a64.a: $(LIBC_A64_HIR_OBJS) $(OUT)/libc_a64_math_stubs.o $(OUT)/ar-a64
+	@$(OUT)/ar-a64 rcs $@ $(LIBC_A64_HIR_OBJS) $(OUT)/libc_a64_math_stubs.o >/dev/null 2>&1
 
 libc: $(OUT)/libc_a64.a
 

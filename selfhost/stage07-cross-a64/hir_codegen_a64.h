@@ -2508,24 +2508,27 @@ static void hx_emit_inst(int idx) {
 
     /* ---------- Floating-point conversions ---------- */
     if (k == HI_FCVT_ItoF) {
-        /* int → float.  src is X-class, dst is V-class.
-         * Slow32 ints are 32-bit so use W-form (sf=0).  Use S-form
-         * (type=0) since the lower only emits ItoF for TY_FLOAT
-         * destinations. */
-        int rs;
+        /* int → float / double.  src is X-class, dst is V-class.
+         * sf bit comes from the int side (TY_LLONG → 64-bit X form);
+         * type bit comes from the FP side (TY_DOUBLE → D form). */
+        int rs; int sf; int type;
         rs = hx_get_src(s1, HX_SCRATCH1);
-        if (h_ty[s1] & TY_UNSIGNED) a64_ucvtf(0, 0, dst, rs);
-        else                         a64_scvtf(0, 0, dst, rs);
+        sf   = ty_is_llong(h_ty[s1]) ? 1 : 0;
+        type = ty_is_double(h_ty[idx]) ? 1 : 0;
+        if (h_ty[s1] & TY_UNSIGNED) a64_ucvtf(sf, type, dst, rs);
+        else                         a64_scvtf(sf, type, dst, rs);
         hx_spill(idx, dst);
         return;
     }
     if (k == HI_FCVT_FtoI) {
-        /* float → int (round toward zero).  src is V-class, dst is
-         * X-class.  Use W-form / S-form for the same reason as above. */
-        int rs;
+        /* float / double → int / llong (round toward zero).  src is
+         * V-class, dst is X-class.  sf from dst type, type from src. */
+        int rs; int sf; int type;
         rs = hx_get_src(s1, HX_SCRATCH_V1);
-        if (h_ty[idx] & TY_UNSIGNED) a64_fcvtzu(0, 0, dst, rs);
-        else                          a64_fcvtzs(0, 0, dst, rs);
+        sf   = ty_is_llong(h_ty[idx]) ? 1 : 0;
+        type = ty_is_double(h_ty[s1]) ? 1 : 0;
+        if (h_ty[idx] & TY_UNSIGNED) a64_fcvtzu(sf, type, dst, rs);
+        else                          a64_fcvtzs(sf, type, dst, rs);
         hx_spill(idx, dst);
         return;
     }
