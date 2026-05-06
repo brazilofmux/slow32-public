@@ -42,12 +42,13 @@ void free(char *ptr) {
 }
 
 char *calloc(int n, int size) {
-    int total;
-    char *p;
-    total = n * size;
-    p = malloc(total);
-    if (p) memset(p, 0, total);
-    return p;
+    /* Our bump allocator never reuses memory: brk grows monotonically,
+     * free is a no-op, and the kernel guarantees fresh brk pages are
+     * zero-filled.  An explicit memset would eagerly touch every page —
+     * disastrous when calloc is used for 256MB-sized buffers (the
+     * SLOW-32 emulator's `mem` array is one such case), causing 67K
+     * page faults on startup.  Skip it; the pages are already zero. */
+    return malloc(n * size);
 }
 
 char *realloc(char *ptr, int size) {

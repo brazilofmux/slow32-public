@@ -56,7 +56,9 @@ FILE *stdin;
 FILE *stdout;
 FILE *stderr;
 
-static void file_sys_init(void) {
+/* Public: callers may invoke this explicitly to ensure stdio is up
+ * before any printf/fopen call.  s32-fast-x64.c does this in main(). */
+void file_sys_init(void) {
     if (file_init_done) return;
     file_init_done = 1;
 
