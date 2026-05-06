@@ -1056,6 +1056,187 @@ static int ho_mem_fwd(void) {
 }
 
 /* ----------------------------------------------------------------
+ * Single-store alloca promotion (mem2reg, trivial case)
+ *
+ * The lowering emits `STORE alloca, PARAM` at function entry for every
+ * parameter (so `&param` would work) and replaces every read of `param`
+ * with `LOAD alloca`.  Within a basic block, ho_mem_fwd forwards these
+ * loads to the stored value; across blocks it cannot.  Branchy functions
+ * (e.g. h_bne) end up with a real stack spill of `e` plus a reload in
+ * each branch arm.
+ *
+ * This pass handles the trivial single-store case: if an HI_ALLOCA is
+ * referenced only as the address operand of a single HI_STORE and a set
+ * of HI_LOADs (no escapes via h_src2-as-ref / h_carg / h_pval / arithmetic),
+ * and that one STORE dominates every LOAD, replace each LOAD with a
+ * HI_COPY of the stored value and NOP the STORE/ALLOCA.  Subsequent
+ * ho_copy_prop folds the COPYs.
+ *
+ * Multi-store allocas need phi insertion (full mem2reg); we punt those.
+ * ---------------------------------------------------------------- */
+
+/* Does block `a` dominate block `b`? Walks ssa_idom[] from b. */
+static int ho_block_dominates(int a, int b) {
+    int depth;
+    depth = 0;
+    while (b >= 0 && depth < HIR_MAX_BLOCK) {
+        if (b == a) return 1;
+        if (b == ssa_idom[b]) return 0;  /* root */
+        b = ssa_idom[b];
+        depth = depth + 1;
+    }
+    return 0;
+}
+
+static int ho_promote_single_store_alloca(void) {
+    int changed;
+    int i;
+    int fn_has_call;
+
+    /* Conservative gate (precomputed once per function): when a function
+     * contains any HI_CALL/HI_CALLP/DBT trampoline, we skip promoting
+     * allocas whose stored value is an HI_PARAM.  After promotion such
+     * loads become direct PARAM uses, which extends the precolored
+     * range across the call.  IRC coalescing on the extended PARAM live
+     * range can drop ABI hints on sibling PARAMs (see PARAM-coalesce
+     * hazard memory) and produces miscompiled code.  Non-PARAM stored
+     * values and call-free functions are still promoted. */
+    fn_has_call = 0;
+    i = 0;
+    while (i < h_ninst) {
+        int k;
+        k = h_kind[i];
+        if (k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE) {
+            fn_has_call = 1; break;
+        }
+        i = i + 1;
+    }
+
+    changed = 0;
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_ALLOCA) {
+            int store_inst;
+            int n_stores;
+            int has_bad;
+            int j;
+
+            store_inst = -1;
+            n_stores = 0;
+            has_bad = 0;
+
+            /* Scan all instructions, classify any reference to alloca i. */
+            j = 0;
+            while (j < h_ninst) {
+                int k;
+                int s1; int s2;
+
+                k = h_kind[j];
+                if (k == HI_NOP) { j = j + 1; continue; }
+
+                s1 = h_src1[j];
+                s2 = h_src2[j];
+
+                if (k == HI_LOAD && s1 == i) {
+                    /* Direct load via alloca: OK. */
+                } else if (k == HI_STORE && s1 == i) {
+                    /* Direct store *into* alloca.  But if the value being
+                     * stored is also the alloca itself, the address
+                     * escapes through itself — bail. */
+                    if (s2 == i) { has_bad = 1; }
+                    else {
+                        n_stores = n_stores + 1;
+                        store_inst = j;
+                    }
+                } else {
+                    /* Any other reference means the alloca's address is
+                     * being used in a way we can't safely model. */
+                    if (s1 == i) has_bad = 1;
+                    if (s2 == i && ho_src2_is_ref(k)) has_bad = 1;
+                    if (k == HI_CALL || k == HI_CALLP
+                            || k == HI_A64_DBT_TRAMPOLINE) {
+                        int base; int cnt; int kk;
+                        base = h_cbase[j];
+                        cnt = h_val[j];
+                        kk = 0;
+                        while (kk < cnt) {
+                            if (h_carg[base + kk] == i) has_bad = 1;
+                            kk = kk + 1;
+                        }
+                    }
+                    if (k == HI_PHI) {
+                        int base; int cnt; int kk;
+                        base = h_pbase[j];
+                        cnt = h_pcnt[j];
+                        kk = 0;
+                        while (kk < cnt) {
+                            if (h_pval[base + kk] == i) has_bad = 1;
+                            kk = kk + 1;
+                        }
+                    }
+                }
+                j = j + 1;
+            }
+
+            if (!has_bad && n_stores == 1) {
+                int store_val;
+                int store_blk;
+                int can_promote;
+
+                store_val = h_src2[store_inst];
+                store_blk = h_blk[store_inst];
+                can_promote = 1;
+
+                /* Verify the STORE dominates every LOAD. */
+                j = 0;
+                while (j < h_ninst) {
+                    if (h_kind[j] == HI_LOAD && h_src1[j] == i) {
+                        int load_blk;
+                        load_blk = h_blk[j];
+                        if (store_blk == load_blk) {
+                            /* Same block: STORE must come before LOAD. */
+                            if (store_inst >= j) { can_promote = 0; break; }
+                        } else if (!ho_block_dominates(store_blk, load_blk)) {
+                            can_promote = 0;
+                            break;
+                        }
+                    }
+                    j = j + 1;
+                }
+
+                if (can_promote) {
+                    /* See fn_has_call comment at top: punt PARAM-store
+                     * allocas in functions that have any call. */
+                    if (fn_has_call && h_kind[store_val] == HI_PARAM) {
+                        i = i + 1; continue;
+                    }
+                    /* Rewrite each LOAD as COPY(store_val), NOP STORE/ALLOCA. */
+                    j = 0;
+                    while (j < h_ninst) {
+                        if (h_kind[j] == HI_LOAD && h_src1[j] == i) {
+                            h_kind[j] = HI_COPY;
+                            h_src1[j] = store_val;
+                            h_src2[j] = -1;
+                        }
+                        j = j + 1;
+                    }
+                    h_kind[store_inst] = HI_NOP;
+                    h_src1[store_inst] = -1;
+                    h_src2[store_inst] = -1;
+                    h_kind[i] = HI_NOP;
+                    h_src1[i] = -1;
+                    h_src2[i] = -1;
+                    changed = 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+
+    return changed;
+}
+
+/* ----------------------------------------------------------------
  * Main optimization driver: iterate until fixpoint
  * ---------------------------------------------------------------- */
 
@@ -1089,6 +1270,7 @@ static void hir_opt(void) {
         changed = changed | ho_phi_simplify();
         changed = changed | ho_dse_pass();
         changed = changed | ho_mem_fwd();
+        changed = changed | ho_promote_single_store_alloca();
         changed = changed | ho_dce();
         iter = iter + 1;
     }
