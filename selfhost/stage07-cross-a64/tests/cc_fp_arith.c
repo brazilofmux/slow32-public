@@ -19,3 +19,16 @@ float t_halfneg(float x)           { return -0.5f * x; }
 float t_unencodable(float x)       { return x + 0.1f; }
 float t_pi_times(float x)          { return x * 3.14f; }
 float t_combo(float x)             { return x * 2.0f + 1.0f; }
+
+/* Float comparisons — exercise FCMP+CSET (HI_FEQ/FLT/FLE) and
+ * FCMP+B.cond (BRC fusion via `if (a OP b)`). */
+int t_feq_eq(float a, float b)     { return a == b; }
+int t_flt_eq(float a, float b)     { return a < b; }
+int t_fle_eq(float a, float b)     { return a <= b; }
+int t_fgt_eq(float a, float b)     { return a > b; }
+int t_fge_eq(float a, float b)     { return a >= b; }
+
+/* Branch-fusion variants. */
+int t_branch_lt(float a, float b)  { if (a < b)  return 1; return 0; }
+int t_branch_eq(float a, float b)  { if (a == b) return 42; return 7; }
+int t_branch_le(float a, float b)  { if (a <= b) return 99; return 0; }

@@ -1809,7 +1809,9 @@ static int hx_use_count[HIR_MAX_INST];  /* use count per instruction */
 static int hx_bic_fuse[HIR_MAX_INST];   /* 1 = emit BIC/ORN/EON */
 
 static int hx_is_cmp(int k) {
-    return (k >= HI_SEQ && k <= HI_SGEU);
+    if (k >= HI_SEQ && k <= HI_SGEU) return 1;
+    if (k == HI_FEQ || k == HI_FLT || k == HI_FLE) return 1;
+    return 0;
 }
 
 static void hx_identify_fusions(void) {

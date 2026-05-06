@@ -18,6 +18,14 @@ extern float t_halfneg(float);
 extern float t_unencodable(float);
 extern float t_pi_times(float);
 extern float t_combo(float);
+extern int t_feq_eq(float, float);
+extern int t_flt_eq(float, float);
+extern int t_fle_eq(float, float);
+extern int t_fgt_eq(float, float);
+extern int t_fge_eq(float, float);
+extern int t_branch_lt(float, float);
+extern int t_branch_eq(float, float);
+extern int t_branch_le(float, float);
 
 /* Compare floats by bit pattern (exact equality).  Avoids surprises
  * from compiler folding `==` against literal in different ways. */
@@ -40,5 +48,26 @@ int main(void) {
     if (!feq(t_unencodable(0.9f),        1.0f))  code |= 1024;
     if (!feq(t_pi_times(2.0f),           6.28f)) code |= 2048;
     if (!feq(t_combo(3.0f),              7.0f))  code |= 4096;
+    /* Session 4 (FCMP) ops — straight CSET path */
+    if (t_feq_eq(1.0f, 1.0f)        != 1)        code |= 8192;
+    if (t_feq_eq(1.0f, 2.0f)        != 0)        code |= 8192;
+    if (t_flt_eq(1.0f, 2.0f)        != 1)        code |= 16384;
+    if (t_flt_eq(2.0f, 1.0f)        != 0)        code |= 16384;
+    if (t_flt_eq(1.0f, 1.0f)        != 0)        code |= 16384;
+    if (t_fle_eq(1.0f, 2.0f)        != 1)        code |= 32768;
+    if (t_fle_eq(1.0f, 1.0f)        != 1)        code |= 32768;
+    if (t_fle_eq(2.0f, 1.0f)        != 0)        code |= 32768;
+    if (t_fgt_eq(2.0f, 1.0f)        != 1)        code |= 65536;
+    if (t_fgt_eq(1.0f, 2.0f)        != 0)        code |= 65536;
+    if (t_fge_eq(2.0f, 1.0f)        != 1)        code |= 131072;
+    if (t_fge_eq(1.0f, 1.0f)        != 1)        code |= 131072;
+    if (t_fge_eq(1.0f, 2.0f)        != 0)        code |= 131072;
+    /* Session 4 — fused BRC */
+    if (t_branch_lt(1.0f, 2.0f)     != 1)        code |= 262144;
+    if (t_branch_lt(2.0f, 1.0f)     != 0)        code |= 262144;
+    if (t_branch_eq(1.5f, 1.5f)     != 42)       code |= 524288;
+    if (t_branch_eq(1.5f, 2.5f)     != 7)        code |= 524288;
+    if (t_branch_le(1.0f, 2.0f)     != 99)       code |= 1048576;
+    if (t_branch_le(2.0f, 1.0f)     != 0)        code |= 1048576;
     return code;
 }

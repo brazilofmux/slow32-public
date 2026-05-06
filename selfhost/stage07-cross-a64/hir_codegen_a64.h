@@ -781,6 +781,27 @@ static int hx_cmp_inv_cond(int k) {
 }
 
 static int hx_is_cmp_op(int k) { return k >= HI_SEQ && k <= HI_SGEU; }
+static int hx_is_fcmp_op(int k) { return k == HI_FEQ || k == HI_FLT || k == HI_FLE; }
+
+/* AArch64 condition mapping for FP compares (ordered: NaN → false).
+ * LT uses MI (N=1) instead of LT (N!=V) to make unordered → false;
+ * LE uses LS (C=0 OR Z=1) instead of LE for the same reason. */
+static int hx_fcmp_cond(int k) {
+    if (k == HI_FEQ) return A64_COND_EQ;
+    if (k == HI_FLT) return A64_COND_MI;
+    if (k == HI_FLE) return A64_COND_LS;
+    return A64_COND_EQ;
+}
+
+/* Inverted FP cond for fused BRC.  Inverse must include "unordered"
+ * (so branch-to-not-taken fires on NaN, matching the C semantic that
+ * `a < b` etc. are false when either operand is NaN). */
+static int hx_fcmp_inv_cond(int k) {
+    if (k == HI_FEQ) return A64_COND_NE;
+    if (k == HI_FLT) return A64_COND_PL;  /* N=0: ordered-GE and unordered */
+    if (k == HI_FLE) return A64_COND_HI;  /* C=1 AND Z=0: ordered-GT and unordered */
+    return A64_COND_NE;
+}
 
 static void hx_stack_store(int off, int reg, int wide) {
     if (off >= 0 && off <= 32760 && (off & (wide ? 7 : 3)) == 0) {
@@ -2008,7 +2029,7 @@ static void hx_emit_inst(int idx) {
         site     = a64_off;
 
         if (cmp_idx >= 0) {
-            /* Fused: emit CMP on the original comparison's operands,
+            /* Fused: emit (F)CMP on the original comparison's operands,
              * then B.cond(inverted) → not-taken. */
             int ck; int ca; int cb;
             int s1r; int s2r;
@@ -2018,28 +2039,39 @@ static void hx_emit_inst(int idx) {
             ck = hx_cmp_kind[cmp_idx];
             ca = h_src1[cmp_idx];
             cb = h_src2[cmp_idx];
-            cmp_wide = hx_is_wide(h_ty[ca]) || hx_is_wide(h_ty[cb]);
 
-            /* CMP with imm folds into CMP/CMN imm12.  Negative immediates
-             * use CMN (ADDS XZR/WZR, Wn, #imm) which sets the same flags
-             * as `cmp Wn, #-imm`. */
-            if (cb >= 0 && h_kind[cb] == HI_ICONST &&
-                h_val[cb] >= 0 && h_val[cb] <= 4095) {
-                s1r = hx_get_src(ca, HX_SCRATCH1);
-                if (cmp_wide) a64_cmp_x_imm(s1r, h_val[cb]);
-                else          a64_cmp_w_imm(s1r, h_val[cb]);
-            } else if (cb >= 0 && h_kind[cb] == HI_ICONST &&
-                       h_val[cb] < 0 && h_val[cb] >= -4095) {
-                s1r = hx_get_src(ca, HX_SCRATCH1);
-                if (cmp_wide) a64_cmn_x_imm(s1r, -h_val[cb]);
-                else          a64_cmn_w_imm(s1r, -h_val[cb]);
+            if (hx_is_fcmp_op(ck)) {
+                int is_d;
+                is_d = ty_is_double(h_ty[ca]);
+                s1r = hx_get_src(ca, HX_SCRATCH_V1);
+                s2r = hx_get_src(cb, HX_SCRATCH_V2);
+                if (is_d) a64_fcmp_d(s1r, s2r);
+                else      a64_fcmp_s(s1r, s2r);
+                inv_cc = hx_fcmp_inv_cond(ck);
             } else {
-                s1r = hx_get_src(ca, HX_SCRATCH1);
-                s2r = hx_get_src(cb, HX_SCRATCH2);
-                if (cmp_wide) a64_cmp_x(s1r, s2r);
-                else          a64_cmp_w(s1r, s2r);
+                cmp_wide = hx_is_wide(h_ty[ca]) || hx_is_wide(h_ty[cb]);
+
+                /* CMP with imm folds into CMP/CMN imm12.  Negative immediates
+                 * use CMN (ADDS XZR/WZR, Wn, #imm) which sets the same flags
+                 * as `cmp Wn, #-imm`. */
+                if (cb >= 0 && h_kind[cb] == HI_ICONST &&
+                    h_val[cb] >= 0 && h_val[cb] <= 4095) {
+                    s1r = hx_get_src(ca, HX_SCRATCH1);
+                    if (cmp_wide) a64_cmp_x_imm(s1r, h_val[cb]);
+                    else          a64_cmp_w_imm(s1r, h_val[cb]);
+                } else if (cb >= 0 && h_kind[cb] == HI_ICONST &&
+                           h_val[cb] < 0 && h_val[cb] >= -4095) {
+                    s1r = hx_get_src(ca, HX_SCRATCH1);
+                    if (cmp_wide) a64_cmn_x_imm(s1r, -h_val[cb]);
+                    else          a64_cmn_w_imm(s1r, -h_val[cb]);
+                } else {
+                    s1r = hx_get_src(ca, HX_SCRATCH1);
+                    s2r = hx_get_src(cb, HX_SCRATCH2);
+                    if (cmp_wide) a64_cmp_x(s1r, s2r);
+                    else          a64_cmp_w(s1r, s2r);
+                }
+                inv_cc = hx_cmp_inv_cond(ck);
             }
-            inv_cc = hx_cmp_inv_cond(ck);
             site = a64_off;
             a64_b_cond(inv_cc, 0);   /* placeholder */
         } else {
@@ -2232,6 +2264,19 @@ static void hx_emit_inst(int idx) {
         }
         if (nargs > 0) a64_add_x_imm(A64_SP, A64_SP, nargs * 16);
         cg_emit_a64_dbt_trampoline();
+        return;
+    }
+
+    /* ---------- Floating-point comparisons ---------- */
+    if (hx_is_fcmp_op(k)) {
+        int rs1; int rs2; int is_d;
+        is_d = ty_is_double(h_ty[s1]);
+        rs1 = hx_get_src(s1, HX_SCRATCH_V1);
+        rs2 = hx_get_src(s2, HX_SCRATCH_V2);
+        if (is_d) a64_fcmp_d(rs1, rs2);
+        else      a64_fcmp_s(rs1, rs2);
+        a64_cset_w(dst, hx_fcmp_cond(k));
+        hx_spill(idx, dst);
         return;
     }
 
