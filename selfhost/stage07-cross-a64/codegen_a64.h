@@ -731,6 +731,19 @@ static void gen_expr(Node *n) {
     }
 
     if (n->kind == ND_BINOP) {
+        /* Floating-point arithmetic / comparison: not yet supported.
+         * The integer path below would silently mis-emit `add Wd, Wn, Wm`
+         * for `float a + b`, so error out loudly instead.  See
+         * project_a64_float_codegen_plan for the planned implementation. */
+        if (n->lhs && n->rhs
+         && (ty_is_fp(n->lhs->ty) || ty_is_fp(n->rhs->ty))) {
+            fdputs("cc-a64: floating-point arithmetic not yet supported "
+                   "(op '", 2);
+            fdputuint(2, n->op);
+            fdputs("')\n", 2);
+            exit(1);
+        }
+
         /* Short-circuit && */
         if (n->op == TK_LAND) {
             l1 = cg_label();
