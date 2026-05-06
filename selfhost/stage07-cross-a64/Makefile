@@ -153,7 +153,8 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
          $(OUT)/cc_size_t_exe $(OUT)/cc_adj_string_exe \
          $(OUT)/cc_struct_multi_decl_exe $(OUT)/cc_global_struct_table_exe \
          $(OUT)/cc_local_static_assert_exe $(OUT)/cc_fwd_struct_offsetof_exe \
-         $(OUT)/cc_macro_paren_obj_exe $(OUT)/cc_anon_nested_struct_exe \
+         $(OUT)/cc_macro_paren_obj_exe $(OUT)/cc_macro_line_cont_exe \
+         $(OUT)/cc_anon_nested_struct_exe \
          $(OUT)/cc_multi_include_exe \
          $(OUT)/cc_inline_asm_a64_exe \
          $(OUT)/cc_dbt_c_forms_exe \
@@ -180,6 +181,7 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
 	@$(OUT)/cc_local_static_assert_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_local_static_assert: ok (exit=1)"; else echo "cc_local_static_assert: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_fwd_struct_offsetof_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_fwd_struct_offsetof: ok (exit=1)"; else echo "cc_fwd_struct_offsetof: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_macro_paren_obj_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_macro_paren_obj: ok (exit=1)"; else echo "cc_macro_paren_obj: FAIL (exit=$$rc, expected 1)"; exit 1; fi
+	@$(OUT)/cc_macro_line_cont_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_macro_line_cont: ok (exit=1)"; else echo "cc_macro_line_cont: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_anon_nested_struct_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_anon_nested_struct: ok (exit=1)"; else echo "cc_anon_nested_struct: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_multi_include_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_multi_include: ok (exit=1)"; else echo "cc_multi_include: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_inline_asm_a64_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_inline_asm_a64: ok (exit=1)"; else echo "cc_inline_asm_a64: FAIL (exit=$$rc, expected 1)"; exit 1; fi
@@ -317,6 +319,7 @@ clean:
 	      $(OUT)/cc_local_static_assert.o $(OUT)/cc_local_static_assert_exe \
 	      $(OUT)/cc_fwd_struct_offsetof.o $(OUT)/cc_fwd_struct_offsetof_exe \
 	      $(OUT)/cc_macro_paren_obj.o $(OUT)/cc_macro_paren_obj_exe \
+	      $(OUT)/cc_macro_line_cont.o $(OUT)/cc_macro_line_cont_exe \
 	      $(OUT)/cc_anon_nested_struct.o $(OUT)/cc_anon_nested_struct_exe \
 	      $(OUT)/cc_multi_include.o $(OUT)/cc_multi_include_exe \
 	      $(OUT)/cc_string.o $(OUT)/cc_string_exe \

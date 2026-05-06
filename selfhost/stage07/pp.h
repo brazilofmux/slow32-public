@@ -146,7 +146,22 @@ static int pp_read_body_text(char *buf) {
     in_str = 0;
     in_chr = 0;
     esc = 0;
-    while (lex_pos < lex_len && lex_src[lex_pos] != 10 && lex_src[lex_pos] != 13) {
+    while (lex_pos < lex_len) {
+        /* Line splice: backslash + newline (or \r\n) — consume both,
+           bump lex_line so error messages stay correct. */
+        if (lex_src[lex_pos] == 92 && lex_src[lex_pos + 1] == 10) {
+            lex_pos = lex_pos + 2;
+            lex_line = lex_line + 1;
+            continue;
+        }
+        if (lex_src[lex_pos] == 92 && lex_src[lex_pos + 1] == 13 &&
+            lex_src[lex_pos + 2] == 10) {
+            lex_pos = lex_pos + 3;
+            lex_line = lex_line + 1;
+            continue;
+        }
+        /* Real end of macro body: unspliced newline. */
+        if (lex_src[lex_pos] == 10 || lex_src[lex_pos] == 13) break;
         c = lex_src[lex_pos];
         if (!in_str && !in_chr && c == 47) {
             if (lex_src[lex_pos + 1] == 47) break;
