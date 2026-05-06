@@ -954,6 +954,14 @@ static int ra_class_of(int inst) {
     if (kk == HI_FCVT_ItoF) return RA_CLASS_V;
     if (kk == HI_FCVT_FtoD || kk == HI_FCVT_DtoF) return RA_CLASS_V;
     if (kk == HI_FCONST) return RA_CLASS_V;
+    /* Address-producing ops produce pointers (X-class) regardless of
+     * the storage type they refer to.  HI_ALLOCA / HI_GADDR / HI_SADDR /
+     * HI_FADDR / HI_GETFP have h_ty set to the underlying storage type
+     * (e.g. TY_FLOAT for `float f`), so the type-based catch-all below
+     * would mis-route them to V class. */
+    if (kk == HI_ALLOCA) return RA_CLASS_X;
+    if (kk == HI_GADDR || kk == HI_SADDR || kk == HI_FADDR) return RA_CLASS_X;
+    if (kk == HI_GETFP) return RA_CLASS_X;
     /* Catch-all: route by destination type so PARAM/COPY/PHI/LOAD of
      * float/double end up V-class. */
     if (ty_is_fp(h_ty[inst])) return RA_CLASS_V;

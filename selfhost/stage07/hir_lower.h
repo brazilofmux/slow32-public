@@ -1396,7 +1396,12 @@ static int hl_expr(Node *n) {
             h_cbase[i] = carg_base;
             return i;  /* returns the retptr (address of temp struct) */
         }
-        i = hi_emit(HI_CALL, TY_INT, -1, -1, phys_count, n->name);
+        /* Pass ret_ty as h_ty (not the historical TY_INT placeholder) so
+         * codegen / regalloc can route the result to V0 for float returns
+         * vs X0 for int/ptr.  Slow32 backends ignore h_ty here; a64
+         * backend uses it via ra_class_of to pick the right ABI return
+         * register. */
+        i = hi_emit(HI_CALL, ret_ty, -1, -1, phys_count, n->name);
         h_cbase[i] = carg_base;
 #ifdef S12CC_X64_HOST
         /* x64: 64-bit return is a single value, no CALLHI needed */

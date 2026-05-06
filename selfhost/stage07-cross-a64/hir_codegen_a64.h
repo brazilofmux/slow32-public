@@ -456,6 +456,65 @@ static void hx_emit_store_from_reg(int src_reg, int spill_off, int wide) {
     }
 }
 
+/* FP load/store via address reg + byte offset.  Mirrors the int-form
+ * dispatch (scaled imm12 → unscaled imm9 → compute address into
+ * scratch).  Caller passes a V-class dst/src and an X-class addr_reg.
+ * Used by HI_LOAD/HI_STORE when h_ty is float/double — pre-Session 7
+ * those would have emitted X-form ldr/str into a V dst encoding,
+ * which is the wrong physical reg file. */
+static void hx_fp_load_at(int dst_v, int addr_reg, int byte_off, int is_double) {
+    if (byte_off >= 0 && byte_off <= 32760 && (byte_off & (is_double ? 7 : 3)) == 0) {
+        if (is_double) a64_ldr_d_imm(dst_v, addr_reg, byte_off);
+        else           a64_ldr_s_imm(dst_v, addr_reg, byte_off);
+        return;
+    }
+    if (byte_off >= -256 && byte_off <= 255) {
+        if (is_double) a64_ldur_d_imm(dst_v, addr_reg, byte_off);
+        else           a64_ldur_s_imm(dst_v, addr_reg, byte_off);
+        return;
+    }
+    /* Out of range: bake offset into HX_SCRATCH2 and load at zero. */
+    if (byte_off > 0) {
+        if (byte_off <= 4095) a64_add_x_imm(HX_SCRATCH2, addr_reg, byte_off);
+        else { a64_add_x_imm(HX_SCRATCH2, addr_reg, byte_off & 0xFFF);
+               a64_add_x_imm_lsl12(HX_SCRATCH2, HX_SCRATCH2, (byte_off >> 12) & 0xFFF); }
+    } else {
+        int neg;
+        neg = -byte_off;
+        if (neg <= 4095) a64_sub_x_imm(HX_SCRATCH2, addr_reg, neg);
+        else { a64_sub_x_imm(HX_SCRATCH2, addr_reg, neg & 0xFFF);
+               a64_sub_x_imm_lsl12(HX_SCRATCH2, HX_SCRATCH2, (neg >> 12) & 0xFFF); }
+    }
+    if (is_double) a64_ldr_d_imm(dst_v, HX_SCRATCH2, 0);
+    else           a64_ldr_s_imm(dst_v, HX_SCRATCH2, 0);
+}
+
+static void hx_fp_store_at(int src_v, int addr_reg, int byte_off, int is_double) {
+    if (byte_off >= 0 && byte_off <= 32760 && (byte_off & (is_double ? 7 : 3)) == 0) {
+        if (is_double) a64_str_d_imm(src_v, addr_reg, byte_off);
+        else           a64_str_s_imm(src_v, addr_reg, byte_off);
+        return;
+    }
+    if (byte_off >= -256 && byte_off <= 255) {
+        if (is_double) a64_stur_d_imm(src_v, addr_reg, byte_off);
+        else           a64_stur_s_imm(src_v, addr_reg, byte_off);
+        return;
+    }
+    if (byte_off > 0) {
+        if (byte_off <= 4095) a64_add_x_imm(HX_SCRATCH2, addr_reg, byte_off);
+        else { a64_add_x_imm(HX_SCRATCH2, addr_reg, byte_off & 0xFFF);
+               a64_add_x_imm_lsl12(HX_SCRATCH2, HX_SCRATCH2, (byte_off >> 12) & 0xFFF); }
+    } else {
+        int neg;
+        neg = -byte_off;
+        if (neg <= 4095) a64_sub_x_imm(HX_SCRATCH2, addr_reg, neg);
+        else { a64_sub_x_imm(HX_SCRATCH2, addr_reg, neg & 0xFFF);
+               a64_sub_x_imm_lsl12(HX_SCRATCH2, HX_SCRATCH2, (neg >> 12) & 0xFFF); }
+    }
+    if (is_double) a64_str_d_imm(src_v, HX_SCRATCH2, 0);
+    else           a64_str_s_imm(src_v, HX_SCRATCH2, 0);
+}
+
 /* FP variants of the frame load/store helpers.  Mirrors the X-form ones:
  * try scaled-imm12 form first, then unscaled imm9, then materialised
  * scratch address.  is_double picks D-form (8-byte) vs S-form (4-byte). */
@@ -654,6 +713,10 @@ static void hx_fold_indexed_addr(void) {
         if (h_kind[add_inst] != HI_ADD) { i = i + 1; continue; }
         if (bg_uses[add_inst] != 1) { i = i + 1; continue; }
         if (bg_fold[add_inst]) { i = i + 1; continue; }  /* already folded by BURG */
+        /* No FP register-indexed encoders yet (a64_ldr_s/d_reg_lsl).
+         * Skip the fold for V-class load/store; offset-displacement
+         * fold (Pattern A above) still applies and uses ldr s/d imm. */
+        if (ty_is_fp(h_ty[i])) { i = i + 1; continue; }
 
         /* Try right arm: ADD(base, SLL(idx, k)). */
         a = h_src1[add_inst];
@@ -1118,7 +1181,9 @@ static void hx_marshal_call_args(int base, int nargs) {
         int arg_inst;
         int is_fp;
         arg_inst = h_carg[base + j];
-        is_fp = ty_is_fp(h_ty[arg_inst]);
+        /* Classify by ra_class_of (NOT ty_is_fp): HI_ALLOCA / HI_GADDR
+         * etc. carry h_ty=storage-type but produce X-class addresses. */
+        is_fp = (ra_class_of(arg_inst) == RA_CLASS_V);
         src_inst[j] = arg_inst;
         if (is_fp) {
             arg_cls[j] = RA_CLASS_V;
@@ -1449,6 +1514,51 @@ static void hx_emit_inst(int idx) {
         pat = bg_sel[idx];
         lnt = (pat >= 0) ? bg_plnt[pat] : -1;
 
+        /* V-class load: separate path with FP-form ldr s/d.  Passing a
+         * V-reg encoding to a64_ldr_w_imm would target the X file at the
+         * same number — wrong physical register.  Indexed-addr fold is
+         * already gated off for FP loads in hx_fold_indexed_addr; the
+         * other paths reuse the int versions' structure. */
+        if (ty_is_fp(ty)) {
+            int is_d;
+            is_d = ty_is_double(ty);
+
+            /* Offset-displacement fold (Pattern A from
+             * hx_fold_indexed_addr). */
+            if (hx_off_base[idx] >= 0) {
+                addr_reg = hx_get_src(hx_off_base[idx], HX_SCRATCH1);
+                hx_fp_load_at(dst, addr_reg, hx_off_disp[idx], is_d);
+                hx_spill(idx, dst);
+                return;
+            }
+            /* BG_SADDR: symbol+offset chain. */
+            if (lnt == BG_SADDR && s1 >= 0 && bg_fold[s1] && bg_ssym[s1] >= 0) {
+                int sym_inst; int sym_off;
+                sym_inst = bg_ssym[s1];
+                sym_off  = bg_soff[s1];
+                if (h_kind[sym_inst] == HI_SADDR) {
+                    cg_emit_adrp_add_to(HX_SCRATCH1, CG_STR_PSEUDO_NAME,
+                                        h_val[sym_inst] + sym_off);
+                } else {
+                    cg_emit_adrp_add_to(HX_SCRATCH1, h_name[sym_inst], sym_off);
+                }
+                hx_fp_load_at(dst, HX_SCRATCH1, 0, is_d);
+                hx_spill(idx, dst);
+                return;
+            }
+            /* BG_MEM: frame-relative. */
+            if (lnt == BG_MEM && s1 >= 0) {
+                hx_fp_load_at(dst, A64_X29, bg_foff[s1], is_d);
+                hx_spill(idx, dst);
+                return;
+            }
+            /* General path: address in src1. */
+            addr_reg = hx_get_src(s1, HX_SCRATCH1);
+            hx_fp_load_at(dst, addr_reg, 0, is_d);
+            hx_spill(idx, dst);
+            return;
+        }
+
         /* Indexed addressing: hx_fold_indexed_addr decided this LOAD's
          * address is base + (idx << shift) and folded the ADD+SLL. */
         if (hx_ridx_base[idx] >= 0) {
@@ -1583,6 +1693,45 @@ static void hx_emit_inst(int idx) {
         ty = h_ty[idx];   /* type of stored value */
         pat = bg_sel[idx];
         lnt = (pat >= 0) ? bg_plnt[pat] : -1;
+
+        /* V-class store: dispatch to FP-form str s/d.  Mirrors the
+         * V-class HI_LOAD path above. */
+        if (ty_is_fp(ty)) {
+            int is_d;
+            int v_r;
+            is_d = ty_is_double(ty);
+            v_r  = hx_get_src(s2, HX_SCRATCH_V1);
+
+            /* Offset-displacement fold. */
+            if (hx_off_base[idx] >= 0) {
+                addr_reg = hx_get_src(hx_off_base[idx], HX_SCRATCH1);
+                hx_fp_store_at(v_r, addr_reg, hx_off_disp[idx], is_d);
+                return;
+            }
+            /* BG_SADDR. */
+            if (lnt == BG_SADDR && s1 >= 0 && bg_fold[s1] && bg_ssym[s1] >= 0) {
+                int sym_inst; int sym_off;
+                sym_inst = bg_ssym[s1];
+                sym_off  = bg_soff[s1];
+                if (h_kind[sym_inst] == HI_SADDR) {
+                    cg_emit_adrp_add_to(HX_SCRATCH1, CG_STR_PSEUDO_NAME,
+                                        h_val[sym_inst] + sym_off);
+                } else {
+                    cg_emit_adrp_add_to(HX_SCRATCH1, h_name[sym_inst], sym_off);
+                }
+                hx_fp_store_at(v_r, HX_SCRATCH1, 0, is_d);
+                return;
+            }
+            /* BG_MEM. */
+            if (lnt == BG_MEM && s1 >= 0) {
+                hx_fp_store_at(v_r, A64_X29, bg_foff[s1], is_d);
+                return;
+            }
+            /* General path. */
+            addr_reg = hx_get_src(s1, HX_SCRATCH1);
+            hx_fp_store_at(v_r, addr_reg, 0, is_d);
+            return;
+        }
 
         /* Indexed addressing: see LOAD branch above. */
         if (hx_ridx_base[idx] >= 0) {
@@ -2236,12 +2385,14 @@ static void hx_emit_inst(int idx) {
             nargs = h_val[idx];
             if (nargs > 16) hx_die("HI_CALL: nargs > 16 unsupported", nargs);
 
-            /* Pass 1: assign each arg to a register or stack slot. */
+            /* Pass 1: assign each arg to a register or stack slot.
+             * Classify by ra_class_of (NOT ty_is_fp) so that HI_ALLOCA
+             * with h_ty=TY_FLOAT is correctly seen as an X-class pointer. */
             ngrn = 0; nsrn = 0; nstack_slots = 0;
             j = 0;
             while (j < nargs) {
                 int arg = h_carg[base + j];
-                int is_fp = ty_is_fp(h_ty[arg]);
+                int is_fp = (ra_class_of(arg) == RA_CLASS_V);
                 arg_cls[j]   = is_fp ? RA_CLASS_V : RA_CLASS_X;
                 arg_reg[j]   = -1;
                 arg_stack[j] = -1;
