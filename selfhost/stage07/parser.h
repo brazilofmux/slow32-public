@@ -199,7 +199,7 @@ static int   ps_tdtype[PS_MAX_TYPEDEFS];
 static int   ps_ntypedefs;
 
 /* Function return type table (for 64-bit return value tracking) */
-#define PS_MAX_FUNCS 256
+#define PS_MAX_FUNCS 4096
 static char *ps_fname[PS_MAX_FUNCS];
 static int   ps_ftype[PS_MAX_FUNCS];
 static int   ps_nfuncs;

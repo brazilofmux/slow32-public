@@ -292,6 +292,27 @@ $(OUT)/s32fast-hir: $(OUT)/s32fast.o $(OUT)/crt0.o $(OUT)/libc_a64.a $(OUT)/ld-a
 
 s32fast: $(OUT)/s32fast-hir
 
+# --- dbt-a64 — the SLOW-32 dynamic binary translator, compiled by cc-a64 --hir ---
+# Sources are the AArch64-relevant subset of tools/dbt/ (x86_64-specific
+# files emit_x64.c, translate.c, stage5_codegen.c are excluded).
+# Linked against libc_a64.a — note that mmio_ring_a64.c (in libc_a64) is
+# a focused stripped-down replacement for tools/emulator/mmio_ring.c.
+DBT_DIR = ../../tools/dbt
+DBT_SRCS = $(DBT_DIR)/dbt.c $(DBT_DIR)/emit_a64.c $(DBT_DIR)/translate_a64.c \
+           $(DBT_DIR)/block_cache.c $(DBT_DIR)/shadow_interp.c \
+           $(DBT_DIR)/stage5_lift.c $(DBT_DIR)/stage5_burg.c \
+           $(DBT_DIR)/stage5_ssa.c $(DBT_DIR)/stage5_ra.c \
+           $(DBT_DIR)/stage5_mir.c $(DBT_DIR)/stage5_lir_opt.c
+DBT_OBJS = $(patsubst $(DBT_DIR)/%.c,$(OUT)/dbt_%.o,$(DBT_SRCS))
+
+$(OUT)/dbt_%.o: $(DBT_DIR)/%.c $(OUT)/cc-a64
+	@$(OUT)/cc-a64 --hir -c $< -o $@ >/dev/null
+
+$(OUT)/dbt-a64: $(DBT_OBJS) $(OUT)/crt0.o $(OUT)/libc_a64.a $(OUT)/ld-a64
+	@$(OUT)/ld-a64 -o $@ $(OUT)/crt0.o $(DBT_OBJS) $(OUT)/libc_a64.a >/dev/null
+
+dbt: $(OUT)/dbt-a64
+
 BENCH_S32X ?= $(HOME)/slow-32/benchmark_core.s32x
 
 bench: $(OUT)/s32fast-hir

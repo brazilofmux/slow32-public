@@ -438,21 +438,26 @@ static int hl_expr(Node *n) {
             int tmp;
             int sp;
             int dp;
+#ifdef S12CC_X64_HOST
+            int addr_ty = TY_PTR | TY_VOID;
+#else
+            int addr_ty = TY_INT;
+#endif
             sa = hl_expr(n->rhs);  /* address of source (works for vars, calls, members) */
             da = hl_addr(n->lhs);
             sz = ty_size(n->ty);
             off = 0;
             while (off + 4 <= sz) {
-                sp = hi_emit(HI_ADDI, TY_INT, sa, -1, off, NULL);
+                sp = hi_emit(HI_ADDI, addr_ty, sa, -1, off, NULL);
                 tmp = hi_emit(HI_LOAD, TY_INT, sp, -1, 0, NULL);
-                dp = hi_emit(HI_ADDI, TY_INT, da, -1, off, NULL);
+                dp = hi_emit(HI_ADDI, addr_ty, da, -1, off, NULL);
                 hi_emit(HI_STORE, TY_INT, dp, tmp, 0, NULL);
                 off = off + 4;
             }
             while (off < sz) {
-                sp = hi_emit(HI_ADDI, TY_INT, sa, -1, off, NULL);
+                sp = hi_emit(HI_ADDI, addr_ty, sa, -1, off, NULL);
                 tmp = hi_emit(HI_LOAD, TY_CHAR, sp, -1, 0, NULL);
-                dp = hi_emit(HI_ADDI, TY_INT, da, -1, off, NULL);
+                dp = hi_emit(HI_ADDI, addr_ty, da, -1, off, NULL);
                 hi_emit(HI_STORE, TY_CHAR, dp, tmp, 0, NULL);
                 off = off + 1;
             }
@@ -1556,10 +1561,15 @@ static int hl_expr(Node *n) {
             /* Struct return: allocate temp, pass address as hidden first arg */
             int tmp_alloca;
             int tmp_sz;
+#ifdef S12CC_X64_HOST
+            int addr_ty = TY_PTR | TY_VOID;
+#else
+            int addr_ty = TY_INT;
+#endif
             tmp_sz = ty_size(ret_ty);
             tmp_sz = ((tmp_sz + 3) / 4) * 4;
             hl_temp_stack = hl_temp_stack + tmp_sz;
-            tmp_alloca = hi_emit(HI_ALLOCA, TY_INT, -1, -1, 0 - hl_temp_stack, NULL);
+            tmp_alloca = hi_emit(HI_ALLOCA, addr_ty, -1, -1, 0 - hl_temp_stack, NULL);
             /* Shift existing cargs right by 1 to make room for hidden first arg */
             i = h_ncarg;
             while (i > carg_base) {
@@ -1569,7 +1579,7 @@ static int hl_expr(Node *n) {
             h_carg[carg_base] = tmp_alloca;
             h_ncarg = h_ncarg + 1;
             phys_count = phys_count + 1;
-            i = hi_emit(HI_CALL, TY_INT, -1, -1, phys_count, n->name);
+            i = hi_emit(HI_CALL, addr_ty, -1, -1, phys_count, n->name);
             h_cbase[i] = carg_base;
             return i;  /* returns the retptr (address of temp struct) */
         }
@@ -1691,21 +1701,26 @@ static void hl_stmt(Node *n) {
                 int tmp;
                 int src_off;
                 int dst_off;
+#ifdef S12CC_X64_HOST
+                int addr_ty = TY_PTR | TY_VOID;
+#else
+                int addr_ty = TY_INT;
+#endif
                 src_addr = hl_addr(n->lhs);
-                dst_addr = hi_emit(HI_LOAD, TY_INT, hl_retptr_alloca, -1, 0, NULL);
+                dst_addr = hi_emit(HI_LOAD, addr_ty, hl_retptr_alloca, -1, 0, NULL);
                 copy_sz = hl_ret_size;
                 copy_i = 0;
                 while (copy_i + 4 <= copy_sz) {
-                    src_off = hi_emit(HI_ADDI, TY_INT, src_addr, -1, copy_i, NULL);
+                    src_off = hi_emit(HI_ADDI, addr_ty, src_addr, -1, copy_i, NULL);
                     tmp = hi_emit(HI_LOAD, TY_INT, src_off, -1, 0, NULL);
-                    dst_off = hi_emit(HI_ADDI, TY_INT, dst_addr, -1, copy_i, NULL);
+                    dst_off = hi_emit(HI_ADDI, addr_ty, dst_addr, -1, copy_i, NULL);
                     hi_emit(HI_STORE, TY_INT, dst_off, tmp, 0, NULL);
                     copy_i = copy_i + 4;
                 }
                 while (copy_i < copy_sz) {
-                    src_off = hi_emit(HI_ADDI, TY_INT, src_addr, -1, copy_i, NULL);
+                    src_off = hi_emit(HI_ADDI, addr_ty, src_addr, -1, copy_i, NULL);
                     tmp = hi_emit(HI_LOAD, TY_CHAR, src_off, -1, 0, NULL);
-                    dst_off = hi_emit(HI_ADDI, TY_INT, dst_addr, -1, copy_i, NULL);
+                    dst_off = hi_emit(HI_ADDI, addr_ty, dst_addr, -1, copy_i, NULL);
                     hi_emit(HI_STORE, TY_CHAR, dst_off, tmp, 0, NULL);
                     copy_i = copy_i + 1;
                 }
@@ -2013,11 +2028,19 @@ static void hl_func(Node *fn) {
         Node *pp;
         phys_idx = 0;
 
-        /* Hidden first param for struct return */
+        /* Hidden first param for struct return.  On 64-bit hosts the
+         * retptr is a pointer (8 bytes); using TY_INT silently truncates
+         * to 32 bits and the high bits of the caller's stack address are
+         * lost on the first store-through. */
         if (hl_struct_ret) {
-            param_inst = hi_emit(HI_PARAM, TY_INT, -1, -1, 0, NULL);
-            hl_retptr_alloca = hl_get_alloca(fn->offset, TY_INT);
-            hi_emit(HI_STORE, TY_INT, hl_retptr_alloca, param_inst, 0, NULL);
+#ifdef S12CC_X64_HOST
+            int retptr_ty = TY_PTR | TY_VOID;
+#else
+            int retptr_ty = TY_INT;
+#endif
+            param_inst = hi_emit(HI_PARAM, retptr_ty, -1, -1, 0, NULL);
+            hl_retptr_alloca = hl_get_alloca(fn->offset, retptr_ty);
+            hi_emit(HI_STORE, retptr_ty, hl_retptr_alloca, param_inst, 0, NULL);
             phys_idx = 1;
         }
 

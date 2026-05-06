@@ -2051,17 +2051,17 @@ static void hx_emit_inst(int idx) {
     }
     if (k == HI_PARAM) {
         /* The value is supposed to already be in its assigned register
-         * (regalloc tries to keep PARAM in arg-reg).  If not, the prologue
-         * stored it to spill slot — load now. */
-        int slot; int reg;
-        slot = ra_reg[idx];
-        if (slot >= 0) {
-            reg = hx_slot_reg(slot);
-            /* If reg differs from the AAPCS arg reg, prologue already MOV'd. */
-            (void)reg;
+         * (regalloc tries to keep PARAM in arg-reg) or already spilled
+         * to ra_spill_off[idx] by the prologue.  Only spill here if the
+         * regalloc gave the PARAM a register — in which case the source
+         * is the assigned register (already moved by the prologue) and
+         * hx_spill stores to ra_spill_off if set.  When no register was
+         * assigned, the prologue did the spill directly from the AAPCS
+         * arg register; calling hx_spill with a guessed source (X0) here
+         * would clobber the spill slot with the wrong value. */
+        if (ra_reg[idx] >= 0) {
+            hx_spill(idx, hx_slot_reg(ra_reg[idx]));
         }
-        hx_spill(idx, hx_slot_reg(ra_reg[idx] >= 0 ? ra_reg[idx] : 0));
-        /* Actually, hx_spill checks ra_reg first — if assigned, it returns. */
         return;
     }
 
@@ -3438,6 +3438,26 @@ static void hx_gen_func(Node *fn) {
         p_idx = 0;
         ngrn = 0;
         nsrn = 0;
+        /* Hidden retptr param (struct-returning fn): occupies x0 / param
+         * index 0, but is not in fn->args.  Move it into its assigned
+         * slot before walking the user args, then advance p_idx/ngrn so
+         * the user args pick up x1, x2, ... and param_inst[1..]. */
+        if (ty_is_struct(fn->ty)) {
+            int pi = param_inst[0];
+            if (pi >= 0) {
+                int slot = ra_reg[pi];
+                int src_reg = hx_arg_reg[0];
+                if (slot >= 0) {
+                    int dst_reg = hx_slot_reg(slot);
+                    if (dst_reg != src_reg) a64_mov_x(dst_reg, src_reg);
+                } else if (ra_spill_off[pi] != 0) {
+                    hx_emit_store_from_reg(src_reg, ra_spill_off[pi],
+                                           hx_is_wide(h_ty[pi]));
+                }
+            }
+            p_idx = 1;
+            ngrn = 1;
+        }
         pp = fn->args;
         while (pp) {
             int pi;
