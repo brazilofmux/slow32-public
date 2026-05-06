@@ -38,6 +38,15 @@ extern float t_call_mixed(int, float, int, float);
 extern float t_recurse(float, int);
 extern float t_local_load(float);
 extern float t_array_load(float, float, float, float);
+extern double t_dadd(double, double);
+extern double t_dsub(double, double);
+extern double t_dmul(double, double);
+extern double t_ddiv(double, double);
+extern double t_dcalc(double, double, double);
+extern int    t_dlt(double, double);
+extern int    t_deq(double, double);
+
+static int deq(double a, double b) { return a == b ? 1 : 0; }
 
 /* Session 7 helper: do nothing visible; just ensure the called function
  * spills the FP local to a stack slot (via taking its address). */
@@ -120,5 +129,17 @@ int main(void) {
      * V-class path handles via offset-disp fold (Pattern A). */
     if (!feq(t_local_load(2.0f),     6.0f))      code |= 0x80000000;  /* (2+1)*2=6, after roundtrip */
     if (!feq(t_array_load(1.0f, 2.0f, 3.0f, 4.0f), 10.0f)) code |= 0x80000000;
+    /* Native f64 (post-Session 7).  Bit-pattern compare by exit-code
+     * folding: failures collapse to a single bit since we've exhausted
+     * the 32-bit code space.  Treat any double failure as "fail". */
+    if (!deq(t_dadd(3.0, 4.0),       7.0))   return 100;
+    if (!deq(t_dsub(10.0, 3.0),      7.0))   return 101;
+    if (!deq(t_dmul(2.5, 4.0),       10.0))  return 102;
+    if (!deq(t_ddiv(20.0, 4.0),      5.0))   return 103;
+    if (!deq(t_dcalc(2.0, 3.0, 4.0), 18.0))  return 104;
+    if (t_dlt(1.0, 2.0) != 1) return 105;
+    if (t_dlt(2.0, 1.0) != 0) return 106;
+    if (t_deq(1.5, 1.5) != 1) return 107;
+    if (t_deq(1.5, 2.5) != 0) return 108;
     return code;
 }

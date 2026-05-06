@@ -328,6 +328,26 @@ static int hl_expr(Node *n) {
     /* Float/double literal */
     if (n->kind == ND_FNUM) {
         if (ty_is_double(n->ty)) {
+#ifdef S12CC_NATIVE_F64
+            /* Native: materialise the 64-bit constant via a temp alloca
+             * (two int STOREs lo/hi, then one TY_DOUBLE LOAD).  The
+             * codegen will collapse alloca+store+load into a register
+             * mov in most cases via SLF.  TODO: dedicated HI_DCONST
+             * with rodata pool would be cleaner. */
+            int tmp_alloca;
+            int flo;
+            int fhi;
+            int addr4;
+            hl_temp_stack = hl_temp_stack + 8;
+            tmp_alloca = hi_emit(HI_ALLOCA, TY_DOUBLE, -1, -1,
+                                 0 - hl_temp_stack, NULL);
+            flo = hi_emit(HI_ICONST, TY_INT, -1, -1, n->val, NULL);
+            fhi = hi_emit(HI_ICONST, TY_INT, -1, -1, n->val_hi, NULL);
+            hi_emit(HI_STORE, TY_INT, tmp_alloca, flo, 0, NULL);
+            addr4 = hi_emit(HI_ADDI, TY_INT, tmp_alloca, -1, 4, NULL);
+            hi_emit(HI_STORE, TY_INT, addr4, fhi, 0, NULL);
+            return hi_emit(HI_LOAD, TY_DOUBLE, tmp_alloca, -1, 0, NULL);
+#else
             /* f64: lo bits in val, hi bits in val_hi — treated like llong */
             int flo;
             int fhi;
@@ -335,6 +355,7 @@ static int hl_expr(Node *n) {
             fhi = hi_emit(HI_ICONST, TY_INT, -1, -1, n->val_hi, NULL);
             hl_hi = fhi;
             return flo;
+#endif
         }
         /* f32: bits stored as int, same representation */
         return hi_emit(HI_ICONST, TY_FLOAT, -1, -1, n->val, NULL);
@@ -392,6 +413,10 @@ static int hl_expr(Node *n) {
 #ifdef S12CC_X64_HOST
         if (ty_is_llong(n->ty))
             return hi_emit(HI_LOAD, TY_LLONG, addr, -1, 0, NULL);
+#endif
+#ifdef S12CC_NATIVE_F64
+        if (ty_is_double(n->ty))
+            return hi_emit(HI_LOAD, TY_DOUBLE, addr, -1, 0, NULL);
 #endif
         if (ty_is_llong(n->ty) || ty_is_double(n->ty)) {
             lv = hi_emit(HI_LOAD, TY_INT, addr, -1, 0, NULL);
@@ -457,6 +482,21 @@ static int hl_expr(Node *n) {
             return val;
         }
         if (ty_is_double(n->ty)) {
+#ifdef S12CC_NATIVE_F64
+            /* Native: single 8-byte STORE.  Promote the rhs through
+             * HI_FCVT_*toD if it isn't already a double. */
+            val = hl_expr(n->rhs);
+            if (!ty_is_double(n->rhs->ty)) {
+                if (ty_is_float(n->rhs->ty)) {
+                    val = hi_emit(HI_FCVT_FtoD, TY_DOUBLE, val, -1, 0, NULL);
+                } else {
+                    val = hi_emit(HI_FCVT_ItoF, TY_DOUBLE, val, -1, 0, NULL);
+                }
+            }
+            addr = hl_addr(n->lhs);
+            hi_emit(HI_STORE, TY_DOUBLE, addr, val, 0, NULL);
+            return val;
+#else
             int val_hi;
             int addr4;
             val = hl_expr(n->rhs);
@@ -471,6 +511,7 @@ static int hl_expr(Node *n) {
             hi_emit(HI_STORE, TY_INT, addr4, val_hi, 0, NULL);
             hl_hi = val_hi;
             return val;
+#endif
         }
         val = hl_expr(n->rhs);
         addr = hl_addr(n->lhs);
@@ -974,8 +1015,49 @@ static int hl_expr(Node *n) {
             return hi_emit(HI_SUB, n->ty, lv, rv, 0, NULL);
         }
 
-        /* Floating-point binary operations (f64) via helper calls */
+        /* Floating-point binary operations (f64).
+         *
+         * Slow32 / x64 hosts use libcalls with int-pair representation
+         * (lo, hi).  S12CC_NATIVE_F64 hosts (a64) emit native HI_F* with
+         * TY_DOUBLE — single V-class value, no pair packing. */
         if (ty_is_double(n->lhs->ty) || ty_is_double(n->rhs->ty)) {
+#ifdef S12CC_NATIVE_F64
+            /* Both operands as single TY_DOUBLE values; promote
+             * non-double operands via HI_FCVT_*toD. */
+            int lvn; int rvn;
+            lvn = hl_expr(n->lhs);
+            if (!ty_is_double(n->lhs->ty)) {
+                if (ty_is_float(n->lhs->ty)) {
+                    lvn = hi_emit(HI_FCVT_FtoD, TY_DOUBLE, lvn, -1, 0, NULL);
+                } else {
+                    /* int → double */
+                    lvn = hi_emit(HI_FCVT_ItoF, TY_DOUBLE, lvn, -1, 0, NULL);
+                }
+            }
+            rvn = hl_expr(n->rhs);
+            if (!ty_is_double(n->rhs->ty)) {
+                if (ty_is_float(n->rhs->ty)) {
+                    rvn = hi_emit(HI_FCVT_FtoD, TY_DOUBLE, rvn, -1, 0, NULL);
+                } else {
+                    rvn = hi_emit(HI_FCVT_ItoF, TY_DOUBLE, rvn, -1, 0, NULL);
+                }
+            }
+            if (n->op == TK_PLUS)  return hi_emit(HI_FADD, TY_DOUBLE, lvn, rvn, 0, NULL);
+            if (n->op == TK_MINUS) return hi_emit(HI_FSUB, TY_DOUBLE, lvn, rvn, 0, NULL);
+            if (n->op == TK_STAR)  return hi_emit(HI_FMUL, TY_DOUBLE, lvn, rvn, 0, NULL);
+            if (n->op == TK_SLASH) return hi_emit(HI_FDIV, TY_DOUBLE, lvn, rvn, 0, NULL);
+            if (n->op == TK_EQ)    return hi_emit(HI_FEQ, TY_INT, lvn, rvn, 0, NULL);
+            if (n->op == TK_NE) {
+                int v;
+                v = hi_emit(HI_FEQ, TY_INT, lvn, rvn, 0, NULL);
+                return hi_emit(HI_NOT, TY_INT, v, -1, 0, NULL);
+            }
+            if (n->op == TK_LT) return hi_emit(HI_FLT, TY_INT, lvn, rvn, 0, NULL);
+            if (n->op == TK_LE) return hi_emit(HI_FLE, TY_INT, lvn, rvn, 0, NULL);
+            if (n->op == TK_GT) return hi_emit(HI_FLT, TY_INT, rvn, lvn, 0, NULL);
+            if (n->op == TK_GE) return hi_emit(HI_FLE, TY_INT, rvn, lvn, 0, NULL);
+            /* Fallthrough: shouldn't reach here for valid ops. */
+#else
             int lv_hi;
             int rv_hi;
             int cb;
@@ -1046,6 +1128,7 @@ static int hl_expr(Node *n) {
             h_cbase[r] = cb;
             hl_hi = hi_emit(HI_CALLHI, TY_INT, r, -1, 0, NULL);
             return r;
+#endif
         }
 
         /* Floating-point binary operations (f32) */

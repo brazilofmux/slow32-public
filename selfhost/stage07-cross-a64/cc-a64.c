@@ -70,6 +70,12 @@ static void fdputuint(int f, int v) {
 #define S12CC_X64_HOST 1
 #define S12CC_TARGET_A64 1
 
+/* Native f64 lowering: emit HI_F* with TY_DOUBLE instead of __fp64_*
+ * libcalls in the binary-op path.  Other f64 sites in stage07/hir_lower.h
+ * still use the pair-based representation; see
+ * project_a64_float_codegen_plan for the next steps to a full conversion. */
+#define S12CC_NATIVE_F64 1
+
 #include "c_lexer_gen.c"
 
 #include "pp.h"

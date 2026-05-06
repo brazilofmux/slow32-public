@@ -84,3 +84,12 @@ float t_array_load(float a, float b, float c, float d) {
     h_take_addr(&arr[0]);   /* may mutate via pointer */
     return arr[0] + arr[1] + arr[2] + arr[3];
 }
+
+/* Native f64 — exercises the S12CC_NATIVE_F64 lowering. */
+double t_dadd(double a, double b)  { return a + b; }
+double t_dsub(double a, double b)  { return a - b; }
+double t_dmul(double a, double b)  { return a * b; }
+double t_ddiv(double a, double b)  { return a / b; }
+double t_dcalc(double a, double b, double c) { return (a + b) * c - a; }
+int    t_dlt (double a, double b)  { return a < b; }
+int    t_deq (double a, double b)  { return a == b; }
