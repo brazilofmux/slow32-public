@@ -340,12 +340,25 @@ static int obj_write_file(char *filename) {
     obj_add_sym(0, 0, OBJ_SEC_DATA,   OBJ_STB_LOCAL, OBJ_STT_SECTION);
     obj_add_sym(0, 0, OBJ_SEC_BSS,    OBJ_STB_LOCAL, OBJ_STT_SECTION);
 
+    /* ELF requires STB_LOCAL symbols before STB_GLOBAL.  Emit static
+     * functions first, then mark the boundary. */
+    i = 0;
+    while (i < cg_nfuncs) {
+        if (cg_func_local[i]) {
+            obj_add_sym(cg_func_name[i], cg_func_off[i],
+                        OBJ_SEC_TEXT, OBJ_STB_LOCAL, OBJ_STT_FUNC);
+        }
+        i = i + 1;
+    }
+
     obj_first_global = obj_nsyms;
 
     i = 0;
     while (i < cg_nfuncs) {
-        obj_add_sym(cg_func_name[i], cg_func_off[i],
-                    OBJ_SEC_TEXT, OBJ_STB_GLOBAL, OBJ_STT_FUNC);
+        if (!cg_func_local[i]) {
+            obj_add_sym(cg_func_name[i], cg_func_off[i],
+                        OBJ_SEC_TEXT, OBJ_STB_GLOBAL, OBJ_STT_FUNC);
+        }
         i = i + 1;
     }
 

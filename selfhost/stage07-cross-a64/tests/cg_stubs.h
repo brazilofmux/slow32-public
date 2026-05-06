@@ -29,6 +29,7 @@ static int cg_strcmp(char *a, char *b) {
 
 static char *cg_func_name[CG_MAX_FUNCS];
 static int   cg_func_off[CG_MAX_FUNCS];
+static int   cg_func_local[CG_MAX_FUNCS];
 static int   cg_nfuncs;
 
 static char *cg_glob_name[CG_MAX_GLOBALS];

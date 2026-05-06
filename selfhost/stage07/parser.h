@@ -2843,6 +2843,7 @@ static Node *parse_top_decl(void) {
     int saw_unnamed_param;
     int xty;
     int is_extern;
+    int is_static;
     int decl_had_init;
     char *sp;
 
@@ -2863,8 +2864,12 @@ static Node *parse_top_decl(void) {
         return NULL;  /* no AST node emitted */
     }
 
-    /* Skip storage class / qualifier keywords (single-file compiler, no semantic effect) */
+    /* Storage class / qualifier keywords.  We honour `static` on
+     * function definitions (emit STB_LOCAL); other qualifiers (const,
+     * inline, register, restrict, auto, GNU attrs) have no semantic
+     * effect in this single-file compiler. */
     is_extern = 0;
+    is_static = 0;
     skip_gnu_attributes();
     while (lex_tok == TK_STATIC || lex_tok == TK_CONST ||
            lex_tok == TK_EXTERN || lex_tok == TK_INLINE ||
@@ -2873,6 +2878,7 @@ static Node *parse_top_decl(void) {
            is_gnu_extension_ident() || is_gnu_inline_ident() ||
            is_gnu_attr_ident()) {
         if (lex_tok == TK_EXTERN) is_extern = 1;
+        if (lex_tok == TK_STATIC) is_static = 1;
         if (is_gnu_attr_ident()) skip_gnu_attributes();
         else next();
     }
@@ -3295,6 +3301,7 @@ params_done:
     fn->args = phead;
     fn->nparams = ps_nparams;
     fn->is_varargs = ps_is_varargs;
+    fn->is_static = is_static;
     fn->offset = ps_struct_ret ? ps_retptr_off : 0; /* hidden __retptr offset */
     ps_cur_func = fn->name;
     fn->body = parse_block();

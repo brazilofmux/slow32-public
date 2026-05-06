@@ -2631,8 +2631,9 @@ static void hx_gen_func(Node *fn) {
     /* Align to 16 bytes (NOP padding). */
     while (a64_off & 15) a64_inst(0xD503201F);
 
-    cg_func_name[cg_nfuncs] = fn->name;
-    cg_func_off[cg_nfuncs]  = a64_off;
+    cg_func_name[cg_nfuncs]  = fn->name;
+    cg_func_off[cg_nfuncs]   = a64_off;
+    cg_func_local[cg_nfuncs] = fn->is_static;
     cg_nfuncs = cg_nfuncs + 1;
 
     /* Run the HIR pipeline. */

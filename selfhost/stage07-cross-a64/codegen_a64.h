@@ -68,6 +68,7 @@ static int   cg_nglobals;
 
 static char *cg_func_name[CG_MAX_FUNCS];
 static int   cg_func_off[CG_MAX_FUNCS];
+static int   cg_func_local[CG_MAX_FUNCS];  /* 1 = static (STB_LOCAL), 0 = global */
 static int   cg_nfuncs;
 
 /* Call/address patches.  Each entry needs a kind (A64K_*) so the writer
@@ -1361,8 +1362,9 @@ static void gen_func(Node *fn) {
     a64_arg_regs[6] = A64_X6;
     a64_arg_regs[7] = A64_X7;
 
-    cg_func_name[cg_nfuncs] = fn->name;
-    cg_func_off[cg_nfuncs]  = a64_off;
+    cg_func_name[cg_nfuncs]  = fn->name;
+    cg_func_off[cg_nfuncs]   = a64_off;
+    cg_func_local[cg_nfuncs] = fn->is_static;
     cg_nfuncs = cg_nfuncs + 1;
 
     cg_epilog     = cg_label();

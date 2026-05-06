@@ -176,6 +176,7 @@ struct Node {
     int is_array;     /* VAR: 1=array (address, no load) */
     int nparams;      /* FUNC: number of parameters */
     int is_varargs;   /* FUNC: 1 if variadic (...) */
+    int is_static;    /* FUNC: 1 if `static` storage class — emit STB_LOCAL */
     int locals_size;  /* FUNC: total local stack bytes */
     struct Node *lhs; /* BINOP/ASSIGN/UNARY: left/operand */
     struct Node *rhs; /* BINOP/ASSIGN: right */
