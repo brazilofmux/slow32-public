@@ -39,3 +39,28 @@ float t_u2f(unsigned int x)     { return (float)x; }
 int   t_f2i(float x)            { return (int)x; }
 unsigned int t_f2u(float x)     { return (unsigned int)x; }
 float t_round_via_int(float x)  { return (float)((int)x); }   /* ItoF ∘ FtoI */
+
+/* Session 6: CALL-side AAPCS64 FP arg marshalling.  Runner provides
+ * h_* helpers; cc-a64 compiles t_call_* that call into them. */
+extern float h_one(float x);
+extern float h_two(float a, float b);
+extern float h_six(float a, float b, float c,
+                   float d, float e, float f);
+extern float h_mixed(int n, float a, int m, float b);
+
+float t_call_simple(float x)       { return h_one(x + 1.0f); }
+float t_call_swap(float a, float b){ return h_two(b, a); }    /* swap (cycle) */
+float t_call_pass_through(float a, float b, float c, float d, float e, float f) {
+    return h_six(a, b, c, d, e, f);
+}
+float t_call_mixed(int n, float a, int m, float b) {
+    return h_mixed(n, a, m, b);
+}
+
+/* Self-recursion with mixed args — exercises both PARAM (Session 2)
+ * and CALL marshal (Session 6) for the mixed case in a tail-recursive
+ * loop.  Returns x + n. */
+float t_recurse(float x, int n) {
+    if (n == 0) return x;
+    return t_recurse(x + 1.0f, n - 1);
+}

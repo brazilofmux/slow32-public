@@ -31,6 +31,23 @@ extern float t_u2f(unsigned int);
 extern int   t_f2i(float);
 extern unsigned int t_f2u(float);
 extern float t_round_via_int(float);
+extern float t_call_simple(float);
+extern float t_call_swap(float, float);
+extern float t_call_pass_through(float, float, float, float, float, float);
+extern float t_call_mixed(int, float, int, float);
+extern float t_recurse(float, int);
+
+/* Helpers called by t_call_* — provided by host gcc, so they use the
+ * AArch64 AAPCS64 calling convention natively (V-args in V0..V7).  If
+ * cc-a64's CALL-side marshalling is correct, these get the expected
+ * float values. */
+float h_one(float x)                  { return x * 10.0f; }
+float h_two(float a, float b)         { return a - b; }
+float h_six(float a, float b, float c,
+            float d, float e, float f) { return a + b + c + d + e + f; }
+float h_mixed(int n, float a, int m, float b) {
+    return (float)(n * m) + a + b;
+}
 
 /* Compare floats by bit pattern (exact equality).  Avoids surprises
  * from compiler folding `==` against literal in different ways. */
@@ -84,5 +101,11 @@ int main(void) {
     if (t_f2u(2147483904.0f)         != 2147483904u) code |= 16777216;  /* fits unsigned, not signed */
     if (!feq(t_round_via_int(3.9f),  3.0f))      code |= 33554432;
     if (!feq(t_round_via_int(-3.9f), -3.0f))     code |= 33554432;
+    /* Session 6 — CALL-side FP arg marshalling */
+    if (!feq(t_call_simple(2.0f),    30.0f))     code |= 67108864;       /* (2+1)*10 */
+    if (!feq(t_call_swap(3.0f, 7.0f), 4.0f))     code |= 134217728;      /* h_two(b,a)=b-a=4 */
+    if (!feq(t_call_pass_through(1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f), 21.0f)) code |= 268435456;
+    if (!feq(t_call_mixed(2, 3.0f, 5, 4.0f), 17.0f)) code |= 536870912;  /* 2*5 + 3 + 4 */
+    if (!feq(t_recurse(1.0f, 5),     6.0f))      code |= 1073741824;
     return code;
 }

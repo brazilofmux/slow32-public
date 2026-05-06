@@ -1099,21 +1099,36 @@ static void hx_marshal_call_args(int base, int nargs) {
     int src_inst[8];
     int dst_reg[8];
     int src_reg[8];
+    int arg_cls[8];     /* RA_CLASS_X (X0..X7) or RA_CLASS_V (V0..V7) */
     int n_remaining;
     int progress;
     int p;
     int i;
     int wide;
+    int ngrn; int nsrn;
 
     if (nargs > 8) hx_die("hx_marshal_call_args: stack args unsupported", nargs);
     n = nargs;
 
+    /* AAPCS64: int args fill X0..X7 via NGRN, FP args fill V0..V7 via
+     * NSRN — independent counters, different physical reg files. */
+    ngrn = 0; nsrn = 0;
     j = 0;
     while (j < n) {
         int arg_inst;
+        int is_fp;
         arg_inst = h_carg[base + j];
+        is_fp = ty_is_fp(h_ty[arg_inst]);
         src_inst[j] = arg_inst;
-        dst_reg[j]  = hx_arg_reg[j];
+        if (is_fp) {
+            arg_cls[j] = RA_CLASS_V;
+            dst_reg[j] = nsrn;          /* V0..V7 share encoding 0..7 */
+            nsrn = nsrn + 1;
+        } else {
+            arg_cls[j] = RA_CLASS_X;
+            dst_reg[j] = hx_arg_reg[ngrn];
+            ngrn = ngrn + 1;
+        }
         src_reg[j]  = (ra_reg[arg_inst] >= 0) ? hx_slot_reg(ra_reg[arg_inst]) : -1;
         done[j] = 0;
         if (src_reg[j] >= 0 && src_reg[j] == dst_reg[j]) done[j] = 1;
@@ -1134,7 +1149,11 @@ static void hx_marshal_call_args(int base, int nargs) {
             blocked = 0;
             i = 0;
             while (i < n) {
-                if (!done[i] && i != p && src_reg[i] == dst_reg[p]) {
+                /* Cross-class never conflicts (different physical files);
+                 * within a class, same reg encoding is a true conflict. */
+                if (!done[i] && i != p
+                 && arg_cls[i] == arg_cls[p]
+                 && src_reg[i] == dst_reg[p]) {
                     blocked = 1;
                     i = n;
                 } else {
@@ -1144,8 +1163,16 @@ static void hx_marshal_call_args(int base, int nargs) {
             if (!blocked) {
                 wide = hx_is_wide(h_ty[src_inst[p]]);
                 if (src_reg[p] >= 0) {
-                    if (wide) a64_mov_x(dst_reg[p], src_reg[p]);
-                    else      a64_mov_w(dst_reg[p], src_reg[p]);
+                    if (arg_cls[p] == RA_CLASS_V) {
+                        if (ty_is_double(h_ty[src_inst[p]]))
+                            a64_fmov_d_d(dst_reg[p], src_reg[p]);
+                        else
+                            a64_fmov_s_s(dst_reg[p], src_reg[p]);
+                    } else if (wide) {
+                        a64_mov_x(dst_reg[p], src_reg[p]);
+                    } else {
+                        a64_mov_w(dst_reg[p], src_reg[p]);
+                    }
                 } else {
                     /* Spilled or rematerialisable: bring directly into dst. */
                     hx_mat(src_inst[p], dst_reg[p]);
@@ -1177,8 +1204,16 @@ static void hx_marshal_call_args(int base, int nargs) {
         while (i < n) {
             if (!done[i]) {
                 wide = hx_is_wide(h_ty[src_inst[i]]);
-                hx_mat(src_inst[i], HX_SCRATCH1);
-                hx_stack_store(slot * 8, HX_SCRATCH1, wide);
+                if (arg_cls[i] == RA_CLASS_V) {
+                    hx_mat(src_inst[i], HX_SCRATCH_V1);
+                    if (ty_is_double(h_ty[src_inst[i]]))
+                        a64_str_d_imm(HX_SCRATCH_V1, A64_SP, slot * 8);
+                    else
+                        a64_str_s_imm(HX_SCRATCH_V1, A64_SP, slot * 8);
+                } else {
+                    hx_mat(src_inst[i], HX_SCRATCH1);
+                    hx_stack_store(slot * 8, HX_SCRATCH1, wide);
+                }
                 slot = slot + 1;
             }
             i = i + 1;
@@ -1188,7 +1223,14 @@ static void hx_marshal_call_args(int base, int nargs) {
         while (i < n) {
             if (!done[i]) {
                 wide = hx_is_wide(h_ty[src_inst[i]]);
-                hx_stack_load(dst_reg[i], slot * 8, wide);
+                if (arg_cls[i] == RA_CLASS_V) {
+                    if (ty_is_double(h_ty[src_inst[i]]))
+                        a64_ldr_d_imm(dst_reg[i], A64_SP, slot * 8);
+                    else
+                        a64_ldr_s_imm(dst_reg[i], A64_SP, slot * 8);
+                } else {
+                    hx_stack_load(dst_reg[i], slot * 8, wide);
+                }
                 slot = slot + 1;
             }
             i = i + 1;
@@ -2177,37 +2219,76 @@ static void hx_emit_inst(int idx) {
             return;
         }
 
-        /* Regular call. AAPCS64: first 8 args in X0..X7, rest on stack. */
+        /* Regular call.  AAPCS64: int args fill X0..X7 via NGRN, FP args
+         * fill V0..V7 via NSRN (independent counters); overflows go on
+         * the stack in declaration order at 8-byte slots. */
         {
             int base; int nargs; int j;
-            int nstack;
+            int ngrn; int nsrn;
             int sp_adj;
             int callee_reg;
+            int arg_cls[16];     /* RA_CLASS_X / V */
+            int arg_reg[16];     /* dest reg encoding, -1 if on stack */
+            int arg_stack[16];   /* SP-relative byte offset, -1 if in regs */
+            int nstack_slots;
+
             base = h_cbase[idx];
             nargs = h_val[idx];
+            if (nargs > 16) hx_die("HI_CALL: nargs > 16 unsupported", nargs);
 
-            nstack = (nargs > 8) ? (nargs - 8) : 0;
-            sp_adj = nstack * 8;
+            /* Pass 1: assign each arg to a register or stack slot. */
+            ngrn = 0; nsrn = 0; nstack_slots = 0;
+            j = 0;
+            while (j < nargs) {
+                int arg = h_carg[base + j];
+                int is_fp = ty_is_fp(h_ty[arg]);
+                arg_cls[j]   = is_fp ? RA_CLASS_V : RA_CLASS_X;
+                arg_reg[j]   = -1;
+                arg_stack[j] = -1;
+                if (is_fp) {
+                    if (nsrn < 8) { arg_reg[j] = nsrn; nsrn = nsrn + 1; }
+                    else { arg_stack[j] = nstack_slots * 8; nstack_slots = nstack_slots + 1; }
+                } else {
+                    if (ngrn < 8) { arg_reg[j] = hx_arg_reg[ngrn]; ngrn = ngrn + 1; }
+                    else { arg_stack[j] = nstack_slots * 8; nstack_slots = nstack_slots + 1; }
+                }
+                j = j + 1;
+            }
+            sp_adj = nstack_slots * 8;
             if (sp_adj & 15) sp_adj = (sp_adj + 15) & ~15;
 
-            /* Load register args into X0..X7. */
+            /* Pass 2: register-passed args.  Sequential-mov hazard exists
+             * (PARAM 0 placed in X1, want bar(b, a) → swap clobbers) — for
+             * V class we hint PARAMs to V0..V7 so it rarely fires; the
+             * TCE marshal in hx_marshal_call_args has the proper
+             * parallel-move scheduler if/when we need it here too. */
             j = 0;
-            while (j < nargs && j < 8) {
-                int arg_inst;
-                arg_inst = h_carg[base + j];
-                hx_mat(arg_inst, hx_arg_reg[j]);
+            while (j < nargs) {
+                if (arg_reg[j] >= 0) {
+                    int arg = h_carg[base + j];
+                    hx_mat(arg, arg_reg[j]);
+                }
                 j = j + 1;
             }
 
-            /* Stack args (9th+).  Pre-allocate, then store. */
+            /* Pass 3: stack args.  Pre-allocate area, then store. */
             if (sp_adj > 0) {
                 a64_sub_x_imm(A64_SP, A64_SP, sp_adj);
-                j = 8;
+                j = 0;
                 while (j < nargs) {
-                    int arg_inst; int reg;
-                    arg_inst = h_carg[base + j];
-                    reg = hx_get_src(arg_inst, HX_SCRATCH1);
-                    a64_str_x_imm(reg, A64_SP, (j - 8) * 8);
+                    if (arg_stack[j] >= 0) {
+                        int arg = h_carg[base + j];
+                        if (arg_cls[j] == RA_CLASS_V) {
+                            int rs = hx_get_src(arg, HX_SCRATCH_V1);
+                            if (ty_is_double(h_ty[arg]))
+                                a64_str_d_imm(rs, A64_SP, arg_stack[j]);
+                            else
+                                a64_str_s_imm(rs, A64_SP, arg_stack[j]);
+                        } else {
+                            int rs = hx_get_src(arg, HX_SCRATCH1);
+                            a64_str_x_imm(rs, A64_SP, arg_stack[j]);
+                        }
+                    }
                     j = j + 1;
                 }
             }
@@ -2224,8 +2305,15 @@ static void hx_emit_inst(int idx) {
             if (sp_adj > 0)
                 a64_add_x_imm(A64_SP, A64_SP, sp_adj);
 
-            /* Result in x0. */
-            if (dst != A64_X0) a64_mov_x(dst, A64_X0);
+            /* Result lands in V0 for float/double return, X0 otherwise. */
+            if (hx_is_v(idx)) {
+                if (dst != A64_V0) {
+                    if (ty_is_double(h_ty[idx])) a64_fmov_d_d(dst, A64_V0);
+                    else                          a64_fmov_s_s(dst, A64_V0);
+                }
+            } else {
+                if (dst != A64_X0) a64_mov_x(dst, A64_X0);
+            }
             hx_spill(idx, dst);
             return;
         }
