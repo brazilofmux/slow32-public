@@ -93,11 +93,12 @@ static int hx_ridx_shift[HIR_MAX_INST];  /* shift amount (0, 2, or 3) */
 /* Offset-displacement fold: HI_LOAD/HI_STORE whose address is
  * HI_ADDI(reg_base, const) gets emitted as
  *     ldr/str Wt/Xt, [base, #disp]
- * collapsing 2 instructions (add scratch, base, #imm; ldr ..., [scratch])
- * into 1.  The HI_ADDI gets bg_fold[]=1.  Mutually exclusive with
- * indexed addressing on the same LOAD/STORE. */
+ * and the HI_ADDI def is suppressed when all real ADDI uses fold this
+ * way.  Mutually exclusive with indexed addressing on the same LOAD/STORE. */
 static int hx_off_base[HIR_MAX_INST];    /* base inst, -1 if not folded */
 static int hx_off_disp[HIR_MAX_INST];    /* byte displacement */
+static int hx_off_use[HIR_MAX_INST];     /* post-fusion use count */
+static int hx_off_fold_use[HIR_MAX_INST];/* candidate folded LOAD/STORE uses */
 
 /* Tail-call elimination: hx_tce_call[c]==1 marks an HI_CALL that is the
  * last meaningful instruction in its block before HI_RET; emit `b target`
@@ -661,6 +662,92 @@ static int hx_load_store_size(int idx) {
     return 4;
 }
 
+static void hx_count_post_fusion_uses(void) {
+    int i;
+    int j;
+    int k;
+    int base;
+    int cnt;
+
+    i = 0;
+    while (i < h_ninst) {
+        hx_off_use[i] = 0;
+        i = i + 1;
+    }
+
+    i = 0;
+    while (i < h_ninst) {
+        k = h_kind[i];
+        if (k == HI_NOP) { i = i + 1; continue; }
+
+        if (h_src1[i] >= 0) hx_off_use[h_src1[i]] = hx_off_use[h_src1[i]] + 1;
+        if (h_src2[i] >= 0 && ho_src2_is_ref(k))
+            hx_off_use[h_src2[i]] = hx_off_use[h_src2[i]] + 1;
+
+        if (k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE) {
+            base = h_cbase[i];
+            cnt = h_val[i];
+            j = 0;
+            while (j < cnt) {
+                if (h_carg[base + j] >= 0)
+                    hx_off_use[h_carg[base + j]] = hx_off_use[h_carg[base + j]] + 1;
+                j = j + 1;
+            }
+        }
+
+        if (k == HI_PHI) {
+            base = h_pbase[i];
+            cnt = h_pcnt[i];
+            j = 0;
+            while (j < cnt) {
+                if (h_pval[base + j] >= 0)
+                    hx_off_use[h_pval[base + j]] = hx_off_use[h_pval[base + j]] + 1;
+                j = j + 1;
+            }
+        }
+
+        i = i + 1;
+    }
+
+    /* Fused BRCs keep using the NOPed comparison's operands through
+     * hx_brc_fuse[].  Count those side uses so an ADDI feeding a fused
+     * compare is not mistaken for fully folded-away. */
+    i = 0;
+    while (i < h_ninst) {
+        int cmp;
+        cmp = hx_brc_fuse[i];
+        if (cmp >= 0) {
+            if (h_src1[cmp] >= 0) hx_off_use[h_src1[cmp]] = hx_off_use[h_src1[cmp]] + 1;
+            if (h_src2[cmp] >= 0) hx_off_use[h_src2[cmp]] = hx_off_use[h_src2[cmp]] + 1;
+        }
+        i = i + 1;
+    }
+}
+
+static int hx_addi_base_safe_at_use(int add_inst, int base_inst, int use_inst) {
+    int base_reg;
+    int add_reg;
+    int use_pos;
+
+    if (base_inst < 0 || use_inst < 0) return 0;
+    if (h_kind[base_inst] == HI_NOP) return 0;
+    if (ra_reg[base_inst] < 0) return 0;
+
+    use_pos = ra_pos[use_inst];
+    if (use_pos < 0) return 0;
+
+    /* If the original base is live here, regalloc protects its register. */
+    if (ra_iend[base_inst] >= use_pos) return 1;
+
+    /* Otherwise the fold is still safe when IRC coalesced ADDI onto the
+     * base register: the ADDI interval protects the same physical register,
+     * and suppressing the ADDI leaves the original base value there. */
+    if (ra_reg[add_inst] < 0) return 0;
+    base_reg = hx_slot_reg(ra_reg[base_inst]);
+    add_reg = hx_slot_reg(ra_reg[add_inst]);
+    return base_reg == add_reg;
+}
+
 static void hx_fold_indexed_addr(void) {
     int i;
     int access_size; int wanted_shift;
@@ -674,8 +761,11 @@ static void hx_fold_indexed_addr(void) {
     while (i < h_ninst) {
         hx_ridx_base[i] = -1;
         hx_off_base[i]  = -1;
+        hx_off_fold_use[i] = 0;
         i = i + 1;
     }
+
+    hx_count_post_fusion_uses();
 
     i = 0;
     while (i < h_ninst) {
@@ -688,16 +778,19 @@ static void hx_fold_indexed_addr(void) {
         if (add_inst < 0) { i = i + 1; continue; }
 
         /* --- Pattern A: HI_ADDI(base, const) — offset-displacement fold ---
-         * Don't run when BURG already folded this ADDI (BG_MEM/BG_SADDR
-         * chains).  Don't run when the base isn't in a register. */
-        if (h_kind[add_inst] == HI_ADDI && bg_uses[add_inst] == 1 &&
-                !bg_fold[add_inst]) {
+         * This pass runs after regalloc.  Folding a multi-use ADDI is only
+         * safe when every real use is rewritten here; if any consumer still
+         * needs the ADDI value, the standalone ADDI must remain.  Per-use,
+         * the base register must also be protected either by the base's own
+         * live range or by coalescing the ADDI onto the same register. */
+        if (h_kind[add_inst] == HI_ADDI && !bg_fold[add_inst]) {
             int base_a; int disp;
             int v_inst;
             base_a = h_src1[add_inst];
             disp   = h_val[add_inst];
             v_inst = (h_kind[i] == HI_STORE) ? h_src2[i] : -1;
-            if (base_a >= 0 && ra_reg[base_a] >= 0 &&
+            if (base_a >= 0 &&
+                hx_addi_base_safe_at_use(add_inst, base_a, i) &&
                 /* For STORE, val also needs a real reg (we only have
                  * 2 scratches; base may need one). */
                 (v_inst < 0 || ra_reg[v_inst] >= 0)) {
@@ -715,7 +808,7 @@ static void hx_fold_indexed_addr(void) {
                 if (disp >= 0 && disp <= max_disp && aligned) {
                     hx_off_base[i] = base_a;
                     hx_off_disp[i] = disp;
-                    bg_fold[add_inst] = 1;
+                    hx_off_fold_use[add_inst] = hx_off_fold_use[add_inst] + 1;
                     i = i + 1;
                     continue;
                 }
@@ -784,6 +877,32 @@ static void hx_fold_indexed_addr(void) {
         hx_ridx_shift[i] = shift_amt;
         bg_fold[add_inst] = 1;
         bg_fold[sll_inst] = 1;
+        i = i + 1;
+    }
+
+    /* Commit only ADDIs whose complete current use set was folded.  This
+     * keeps partially-foldable ADDIs materialised for their remaining users
+     * and also filters out folded-looking sites that were only candidates. */
+    i = 0;
+    while (i < h_ninst) {
+        if (hx_off_base[i] >= 0) {
+            add_inst = h_src1[i];
+            if (add_inst < 0 || h_kind[add_inst] != HI_ADDI ||
+                hx_off_fold_use[add_inst] != hx_off_use[add_inst]) {
+                hx_off_base[i] = -1;
+                hx_off_disp[i] = 0;
+            }
+        }
+        i = i + 1;
+    }
+
+    i = 0;
+    while (i < h_ninst) {
+        if (h_kind[i] == HI_ADDI &&
+            hx_off_fold_use[i] > 0 &&
+            hx_off_fold_use[i] == hx_off_use[i]) {
+            bg_fold[i] = 1;
+        }
         i = i + 1;
     }
 }
