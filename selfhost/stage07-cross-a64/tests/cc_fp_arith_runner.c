@@ -36,6 +36,14 @@ extern float t_call_swap(float, float);
 extern float t_call_pass_through(float, float, float, float, float, float);
 extern float t_call_mixed(int, float, int, float);
 extern float t_recurse(float, int);
+extern float t_local_load(float);
+extern float t_array_load(float, float, float, float);
+
+/* Session 7 helper: do nothing visible; just ensure the called function
+ * spills the FP local to a stack slot (via taking its address). */
+void h_take_addr(float *p) {
+    (void)p;
+}
 
 /* Helpers called by t_call_* — provided by host gcc, so they use the
  * AArch64 AAPCS64 calling convention natively (V-args in V0..V7).  If
@@ -107,5 +115,10 @@ int main(void) {
     if (!feq(t_call_pass_through(1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f), 21.0f)) code |= 268435456;
     if (!feq(t_call_mixed(2, 3.0f, 5, 4.0f), 17.0f)) code |= 536870912;  /* 2*5 + 3 + 4 */
     if (!feq(t_recurse(1.0f, 5),     6.0f))      code |= 1073741824;
+    /* Session 7 — V-class LOAD/STORE.  Skipping array_load for now
+     * since arrays of floats use HI_ADDI(alloca, k) which the
+     * V-class path handles via offset-disp fold (Pattern A). */
+    if (!feq(t_local_load(2.0f),     6.0f))      code |= 0x80000000;  /* (2+1)*2=6, after roundtrip */
+    if (!feq(t_array_load(1.0f, 2.0f, 3.0f, 4.0f), 10.0f)) code |= 0x80000000;
     return code;
 }

@@ -64,3 +64,23 @@ float t_recurse(float x, int n) {
     if (n == 0) return x;
     return t_recurse(x + 1.0f, n - 1);
 }
+
+/* Session 7: V-class HI_LOAD/STORE.  use_addr forces the lower to
+ * spill `t` to a frame slot, exercising the FP-form str/ldr at the
+ * call boundary. */
+extern void h_take_addr(float *p);
+
+float t_local_load(float x) {
+    float t;
+    t = x + 1.0f;
+    h_take_addr(&t);    /* forces alloca + str s0 */
+    return t * 2.0f;    /* requires reload from slot — ldur s0 */
+}
+
+float t_array_load(float a, float b, float c, float d) {
+    /* All four go to a local array; pick by global selector. */
+    float arr[4];
+    arr[0] = a; arr[1] = b; arr[2] = c; arr[3] = d;
+    h_take_addr(&arr[0]);   /* may mutate via pointer */
+    return arr[0] + arr[1] + arr[2] + arr[3];
+}
