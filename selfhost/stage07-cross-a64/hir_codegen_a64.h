@@ -566,20 +566,32 @@ static int hx_access_size_for_ty(int ty) {
     return 4;
 }
 
-static int hx_offset_fold_encodable(int disp, int access_size) {
+/* Positive scaled imm12 form: `ldr/str` with `[base, #imm*scale]` for
+ * `imm` in [0, 4095].  Requires `disp` to be a non-negative multiple of
+ * `access_size` within range. */
+static int hx_offset_fits_scaled_imm12(int disp, int access_size) {
     int max_disp;
-    int aligned;
-
     max_disp = access_size * 4095;
-    aligned = ((disp & (access_size - 1)) == 0);
-    if (disp >= 0 && disp <= max_disp && aligned) return 1;
-    if (disp >= -256 && disp <= 255) return 1;
-    return 0;
+    return disp >= 0 && disp <= max_disp
+        && (disp & (access_size - 1)) == 0;
+}
+
+/* Unscaled signed imm9 form: `ldur/stur` with `[base, #imm]` for `imm`
+ * in [-256, 255].  No alignment requirement. */
+static int hx_offset_fits_imm9(int disp) {
+    return disp >= -256 && disp <= 255;
+}
+
+/* True when an offset-displacement fold is representable in either of
+ * the two AArch64 imm forms.  Useful as a fold-eligibility predicate;
+ * emitters still pick a specific form by sign/alignment. */
+static int hx_offset_fold_encodable(int disp, int access_size) {
+    return hx_offset_fits_scaled_imm12(disp, access_size)
+        || hx_offset_fits_imm9(disp);
 }
 
 static void hx_int_load_at(int dst_reg, int addr_reg, int byte_off, int ty) {
-    if (byte_off >= 0 && hx_offset_fold_encodable(byte_off, hx_access_size_for_ty(ty))
-        && ((byte_off & (hx_access_size_for_ty(ty) - 1)) == 0)) {
+    if (hx_offset_fits_scaled_imm12(byte_off, hx_access_size_for_ty(ty))) {
         if (hx_is_wide(ty)) a64_ldr_x_imm(dst_reg, addr_reg, byte_off);
         else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
             if (ty & TY_UNSIGNED) a64_ldrb_imm(dst_reg, addr_reg, byte_off);
@@ -592,7 +604,7 @@ static void hx_int_load_at(int dst_reg, int addr_reg, int byte_off, int ty) {
         }
         return;
     }
-    if (byte_off >= -256 && byte_off <= 255) {
+    if (hx_offset_fits_imm9(byte_off)) {
         if (hx_is_wide(ty)) a64_ldur_x_imm(dst_reg, addr_reg, byte_off);
         else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
             if (ty & TY_UNSIGNED) a64_ldurb_imm(dst_reg, addr_reg, byte_off);
@@ -622,8 +634,7 @@ static void hx_int_load_at(int dst_reg, int addr_reg, int byte_off, int ty) {
 }
 
 static void hx_int_store_at(int src_reg, int addr_reg, int byte_off, int ty) {
-    if (byte_off >= 0 && hx_offset_fold_encodable(byte_off, hx_access_size_for_ty(ty))
-        && ((byte_off & (hx_access_size_for_ty(ty) - 1)) == 0)) {
+    if (hx_offset_fits_scaled_imm12(byte_off, hx_access_size_for_ty(ty))) {
         if (hx_is_wide(ty)) a64_str_x_imm(src_reg, addr_reg, byte_off);
         else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR)
             a64_strb_imm(src_reg, addr_reg, byte_off);
@@ -633,7 +644,7 @@ static void hx_int_store_at(int src_reg, int addr_reg, int byte_off, int ty) {
             a64_str_w_imm(src_reg, addr_reg, byte_off);
         return;
     }
-    if (byte_off >= -256 && byte_off <= 255) {
+    if (hx_offset_fits_imm9(byte_off)) {
         if (hx_is_wide(ty)) a64_stur_x_imm(src_reg, addr_reg, byte_off);
         else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR)
             a64_sturb_imm(src_reg, addr_reg, byte_off);
@@ -885,6 +896,10 @@ static int hx_addi_base_safe_at_use(int add_inst, int base_inst, int use_inst) {
     if (ra_reg[base_inst] < 0) return 0;
 
     use_pos = ra_pos[use_inst];
+    /* No linearised position means the use is dead/skipped (NOPed comparison,
+     * remat-only def, etc.) — declining to fold is the safe answer; regalloc
+     * decisions about base liveness aren't meaningful at a position regalloc
+     * doesn't index. */
     if (use_pos < 0) return 0;
 
     /* If the original base is live here, regalloc protects its register. */
@@ -2781,6 +2796,11 @@ static void hx_emit_inst(int idx) {
         notaken  = h_val[idx];
         cmp_idx  = hx_brc_fuse[idx];
         site     = a64_off;
+        /* Direct branch on the not-taken edge: when `taken` is the next RPO
+         * block we fall through to it, and as long as the not-taken edge
+         * carries no phi we can branch straight to it without staging a
+         * patched B.cond + intermediate phi-copies block.  The phi-free
+         * gate is what makes this sound — see direct_notaken returns below. */
         direct_notaken = (taken == hx_next_blk && !hx_edge_has_phi(h_blk[idx], notaken));
 
         if (cmp_idx >= 0) {
@@ -2828,6 +2848,9 @@ static void hx_emit_inst(int idx) {
                 inv_cc = hx_cmp_inv_cond(ck);
             }
             if (direct_notaken) {
+                /* B.cond → notaken; fall through into taken-edge phi copies
+                 * and then into taken's first inst.  No notaken phi copies
+                 * are needed (gate above filtered that case out). */
                 hx_bcond_to_block(inv_cc, notaken);
                 hx_phi_copies(h_blk[idx], taken);
                 return;
@@ -2839,6 +2862,8 @@ static void hx_emit_inst(int idx) {
             int cond_reg;
             cond_reg = hx_get_src(s1, HX_SCRATCH1);
             if (direct_notaken) {
+                /* Symmetric to the fused branch above; same gate, same
+                 * fall-through-into-taken-edge-phi-copies layout. */
                 hx_cbz_to_block(cond_reg, notaken);
                 hx_phi_copies(h_blk[idx], taken);
                 return;
@@ -2883,8 +2908,11 @@ static void hx_emit_inst(int idx) {
                 hx_mat(s1, ret_reg);
             }
         }
-        /* In no-frame leaves the epilogue is just RET.  The final block can
-         * fall through to it; earlier return blocks can return directly. */
+        /* In no-frame leaves the epilogue is just RET.  Two cases:
+         *   - Not the final block (hx_next_blk != -1): emit RET in place,
+         *     skipping the branch-to-epilogue + epilogue-RET pair.
+         *   - The final block (hx_next_blk == -1): emit nothing and fall
+         *     through; the function trailer's `ret` will run next. */
         if (hx_no_frame) {
             if (hx_next_blk != -1) a64_ret();
             return;
