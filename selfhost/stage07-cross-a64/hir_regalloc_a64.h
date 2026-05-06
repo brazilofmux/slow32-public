@@ -39,9 +39,27 @@
 static int hx_sib_index[HIR_MAX_INST];     /* SIB index for stores (unused) */
 static int hx_alu_sib_idx[HIR_MAX_INST];   /* SIB index for ALU+SIB (unused) */
 
-/* --- Configuration --- */
-#define RA_NPHY     26   /* X19..X28 (10) + X0..X15 (16) */
-#define RA_NCALLEE  10   /* slots 0..9 are callee-saved */
+/* --- Configuration ---
+ *
+ * Two register classes: X (integer/pointer) and V (SIMD/FP).  IRC
+ * coloring is unified — slot indices live in one space, but each node
+ * has a class and only same-class nodes interfere (different physical
+ * register files don't conflict).  ra_writeback dispatches on class to
+ * pick the right physical-register table.
+ *
+ * X class: 26 slots = X19..X28 (callee-saved, 0..9) + X0..X15
+ *          (caller-saved, 10..25).
+ * V class: 24 slots = V0..V7 + V16..V31, all caller-saved.  V8..V15 are
+ *          AAPCS callee-saved (lower 64 bits) but we don't allocate
+ *          them yet — saving FP callee-saves in the prologue/epilogue
+ *          is deferred to a follow-up session.  Call-crossing V values
+ *          therefore must spill (gc_k returns 0 for them). */
+#define RA_NPHY     26   /* X class total slots */
+#define RA_NCALLEE  10   /* X class callee-saved slots (0..9) */
+#define RA_NPHY_V   24   /* V class total slots */
+#define RA_NCALLEE_V 0   /* V class callee-saved slots (none allocated yet) */
+#define RA_CLASS_X  0
+#define RA_CLASS_V  1
 
 /* The CX/DX clobber slot constants are unused on AArch64 (always-zero
  * arrays below), but referenced by the shared IRC algorithm.  Wire them
@@ -49,15 +67,28 @@ static int hx_alu_sib_idx[HIR_MAX_INST];   /* SIB index for ALU+SIB (unused) */
 #define RA_SLOT_RCX (-1)
 #define RA_SLOT_RDX (-1)
 
-/* Mapping: slot index → AArch64 register encoding (0..30). */
+/* X class: slot index → X-register encoding. */
 static int ra_a64_phys[RA_NPHY];
-
-/* Per-slot: 1 = callee-saved, 0 = caller-saved */
 static int ra_a64_is_callee[RA_NPHY];
 
-/* Reverse mapping: AArch64 register encoding → slot index (-1 = not allocatable). */
+/* V class: slot index → V-register encoding (0..31, same numerical
+ * range as X but different physical file). */
+static int ra_a64_phys_v[RA_NPHY_V];
+static int ra_a64_is_callee_v[RA_NPHY_V];
+
+/* Reverse mappings: register encoding → slot index (-1 = not allocatable). */
 #define RA_A64_REVERSE_SIZE 32
-static int ra_a64_slot[RA_A64_REVERSE_SIZE];
+static int ra_a64_slot[RA_A64_REVERSE_SIZE];     /* X-reg → X-slot */
+static int ra_a64_slot_v[RA_A64_REVERSE_SIZE];   /* V-reg → V-slot */
+
+/* Class of each HIR value's destination register.  Filled in gc_build
+ * (size matches the gc_node[] index space — RA_CLASS_X for nodes that
+ * produce ints/ptrs, RA_CLASS_V for nodes that produce float/double).
+ * Cross-class interference edges are skipped during graph build. */
+static int gc_class[HIR_MAX_INST];
+
+/* Forward decl (defined below; used by gc_build before its definition). */
+static int ra_class_of(int inst);
 
 /* Call-crossing flag: 1 if value's live interval spans a CALL. */
 static int ra_crosses_call[HIR_MAX_INST];
@@ -98,7 +129,44 @@ static void ra_init_a64_regs(void) {
     ra_a64_phys[25] = A64_X15;  ra_a64_is_callee[25] = 0;
 
     i = 0;
-    while (i < RA_A64_REVERSE_SIZE) { ra_a64_slot[i] = -1; i = i + 1; }
+    while (i < RA_A64_REVERSE_SIZE) {
+        ra_a64_slot[i] = -1;
+        ra_a64_slot_v[i] = -1;
+        i = i + 1;
+    }
+
+    /* V class: V0..V7 (caller-saved arg regs) + V16..V31 (caller-saved). */
+    ra_a64_phys_v[0]  = A64_V0;   ra_a64_is_callee_v[0]  = 0;
+    ra_a64_phys_v[1]  = A64_V1;   ra_a64_is_callee_v[1]  = 0;
+    ra_a64_phys_v[2]  = A64_V2;   ra_a64_is_callee_v[2]  = 0;
+    ra_a64_phys_v[3]  = A64_V3;   ra_a64_is_callee_v[3]  = 0;
+    ra_a64_phys_v[4]  = A64_V4;   ra_a64_is_callee_v[4]  = 0;
+    ra_a64_phys_v[5]  = A64_V5;   ra_a64_is_callee_v[5]  = 0;
+    ra_a64_phys_v[6]  = A64_V6;   ra_a64_is_callee_v[6]  = 0;
+    ra_a64_phys_v[7]  = A64_V7;   ra_a64_is_callee_v[7]  = 0;
+    ra_a64_phys_v[8]  = A64_V16;  ra_a64_is_callee_v[8]  = 0;
+    ra_a64_phys_v[9]  = A64_V17;  ra_a64_is_callee_v[9]  = 0;
+    ra_a64_phys_v[10] = A64_V18;  ra_a64_is_callee_v[10] = 0;
+    ra_a64_phys_v[11] = A64_V19;  ra_a64_is_callee_v[11] = 0;
+    ra_a64_phys_v[12] = A64_V20;  ra_a64_is_callee_v[12] = 0;
+    ra_a64_phys_v[13] = A64_V21;  ra_a64_is_callee_v[13] = 0;
+    ra_a64_phys_v[14] = A64_V22;  ra_a64_is_callee_v[14] = 0;
+    ra_a64_phys_v[15] = A64_V23;  ra_a64_is_callee_v[15] = 0;
+    ra_a64_phys_v[16] = A64_V24;  ra_a64_is_callee_v[16] = 0;
+    ra_a64_phys_v[17] = A64_V25;  ra_a64_is_callee_v[17] = 0;
+    ra_a64_phys_v[18] = A64_V26;  ra_a64_is_callee_v[18] = 0;
+    ra_a64_phys_v[19] = A64_V27;  ra_a64_is_callee_v[19] = 0;
+    ra_a64_phys_v[20] = A64_V28;  ra_a64_is_callee_v[20] = 0;
+    ra_a64_phys_v[21] = A64_V29;  ra_a64_is_callee_v[21] = 0;
+    ra_a64_phys_v[22] = A64_V30;  ra_a64_is_callee_v[22] = 0;
+    ra_a64_phys_v[23] = A64_V31;  ra_a64_is_callee_v[23] = 0;
+
+    i = 0;
+    while (i < RA_NPHY_V) {
+        ra_a64_slot_v[ra_a64_phys_v[i]] = i;
+        i = i + 1;
+    }
+
     i = 0;
     while (i < RA_NPHY) {
         ra_a64_slot[ra_a64_phys[i]] = i;
@@ -622,6 +690,7 @@ static void gc_build(void) {
                 n = gc_nnode;
                 gc_inst[n] = inst;
                 gc_node[inst] = n;
+                gc_class[n] = ra_class_of(inst);
                 gc_adj_head[n] = -1;
                 gc_degree[n] = 0;
                 gc_alias[n] = n;
@@ -664,11 +733,16 @@ static void gc_build(void) {
                 }
             }
 
-            /* Add interference edges between new node and all active */
+            /* Add interference edges between new node and all active.
+             * Skip edges between different classes — X-class and V-class
+             * values use different physical register files and never
+             * conflict for coloring purposes. */
             if (ni >= 0) {
                 j = 0;
                 while (j < nact) {
-                    gc_add_edge(ni, act[j]);
+                    if (gc_class[ni] == gc_class[act[j]]) {
+                        gc_add_edge(ni, act[j]);
+                    }
                     j = j + 1;
                 }
                 act[nact] = ni;
@@ -856,13 +930,41 @@ static void gc_find_moves(void) {
 
 /* --- IRC main loop --- */
 
-/* Number of available colors for a node.  Call-crossing nodes can only
- * use callee-saved registers (5).  Others use all 13, minus any
- * CX/DX clobber constraints. */
+/* Class of an HIR value's destination register: X (int/ptr) or V (FP).
+ * For value-producing ops, the class follows ty_is_fp(h_ty[inst]) with
+ * a few corrections: HI_FCVT_FtoI / HI_FEQ / HI_FLT / HI_FLE produce
+ * an int from FP source (X class), and HI_FCVT_ItoF produces FP from
+ * int (V class).  Non-FP-related ops are always X. */
+static int ra_class_of(int inst) {
+    int kk;
+    if (inst < 0) return RA_CLASS_X;
+    kk = h_kind[inst];
+    if (kk == HI_FCVT_FtoI) return RA_CLASS_X;
+    if (kk == HI_FEQ || kk == HI_FLT || kk == HI_FLE) return RA_CLASS_X;
+    if (kk >= HI_FADD && kk <= HI_FNEG) return RA_CLASS_V;
+    if (kk == HI_FCVT_ItoF) return RA_CLASS_V;
+    if (kk == HI_FCVT_FtoD || kk == HI_FCVT_DtoF) return RA_CLASS_V;
+    if (kk == HI_FCONST) return RA_CLASS_V;
+    /* Catch-all: route by destination type so PARAM/COPY/PHI/LOAD of
+     * float/double end up V-class. */
+    if (ty_is_fp(h_ty[inst])) return RA_CLASS_V;
+    return RA_CLASS_X;
+}
+
+/* Number of available colors for a node.  Per class, with the X-class
+ * special case for call-crossing (must use callee-saved).  V class has
+ * no allocated callee-saved slots yet, so a call-crossing V value gets
+ * gc_k=0 and is forced to spill — see RA_NCALLEE_V comment. */
 static int gc_k(int n) {
     int inst;
     int k;
+    int cls;
     inst = gc_inst[n];
+    cls = gc_class[n];
+    if (cls == RA_CLASS_V) {
+        if (ra_crosses_call[inst]) return RA_NCALLEE_V;
+        return RA_NPHY_V;
+    }
     if (ra_crosses_call[inst]) return RA_NCALLEE;
     k = RA_NPHY;
     if (ra_crosses_cx_clobber[inst]) k = k - 1;
@@ -1249,13 +1351,34 @@ static void gc_select(void) {
     /* Pop select stack in reverse */
     i = gc_nsel - 1;
     while (i >= 0) {
+        int cls;
+        int n_total;
+        int n_callee;
+        int param_x_class;
+
         n = gc_sel_stk[i];
         inst = gc_inst[n];
         k = gc_k(n);
+        cls = gc_class[n];
 
-        /* Mark colors used by live neighbors */
+        /* Per-class allocation bounds. */
+        if (cls == RA_CLASS_V) {
+            n_total  = RA_NPHY_V;
+            n_callee = RA_NCALLEE_V;
+        } else {
+            n_total  = RA_NPHY;
+            n_callee = RA_NCALLEE;
+        }
+        /* X-class PARAM hints use ra_arg_regs (X-reg ABI).  V-class
+         * PARAMs need V-reg ABI hints which we don't wire yet — they
+         * fall through to the generic caller-saved preference. */
+        param_x_class = (cls == RA_CLASS_X);
+
+        /* Mark colors used by live neighbors.  All neighbours are same
+         * class (cross-class edges were skipped in gc_build), so their
+         * colors are valid slot indices in this class's color space. */
         c = 0;
-        while (c < RA_NPHY) {
+        while (c < n_total) {
             used[c] = 0;
             c = c + 1;
         }
@@ -1265,7 +1388,7 @@ static void gc_select(void) {
             peer = gc_adj_peer[e];
             pa = gc_get_alias(peer);
             pc = gc_color[pa];
-            if (pc >= 0) {
+            if (pc >= 0 && pc < n_total) {
                 used[pc] = 1;
             }
             e = gc_adj_next[e];
@@ -1274,15 +1397,18 @@ static void gc_select(void) {
         /* AArch64: no CX/DX-style clobber constraints — UDIV/SDIV and
          * LSLV/LSRV/ASRV use general registers, no architectural clobber. */
 
-        /* Constraint: call-crossing → must use callee-saved (slots 0-4) */
+        /* Constraint: call-crossing → must use callee-saved.  V class
+         * has zero allocated callee-saved (RA_NCALLEE_V == 0) so the
+         * loop below produces no color and the value is forced to
+         * spill via ra_assign_spills. */
         if (ra_crosses_call[inst]) {
-            /* Try PARAM hint first */
+            /* Try PARAM hint first (X class only) */
             hint = -1;
-            if (h_kind[inst] == HI_PARAM) {
+            if (param_x_class && h_kind[inst] == HI_PARAM) {
                 pidx = h_val[inst];
                 if (pidx >= 0 && pidx < RA_NARG_REGS) {
                     c = ra_a64_slot[ra_arg_regs[pidx]];
-                    if (c >= 0 && c < RA_NCALLEE && !used[c]) hint = c;
+                    if (c >= 0 && c < n_callee && !used[c]) hint = c;
                 }
             }
             if (hint >= 0) {
@@ -1290,7 +1416,7 @@ static void gc_select(void) {
             } else {
                 gc_color[n] = -1;
                 c = 0;
-                while (c < RA_NCALLEE) {
+                while (c < n_callee) {
                     if (!used[c]) {
                         gc_color[n] = c;
                         break;
@@ -1302,8 +1428,8 @@ static void gc_select(void) {
             /* Non-call-crossing: try hints, then prefer caller-saved */
             hint = -1;
 
-            /* PARAM hint: try ABI register */
-            if (h_kind[inst] == HI_PARAM) {
+            /* PARAM hint: try ABI register (X class only) */
+            if (param_x_class && h_kind[inst] == HI_PARAM) {
                 pidx = h_val[inst];
                 if (pidx >= 0 && pidx < RA_NARG_REGS) {
                     c = ra_a64_slot[ra_arg_regs[pidx]];
@@ -1346,7 +1472,7 @@ static void gc_select(void) {
                  * encoding penalty, so we always apply the bias when we can
                  * (the x64 sibling has a non-REX-availability override). */
                 {
-                    int avoid[RA_NPHY];
+                    int avoid[RA_NPHY];   /* sized for X class; V class is smaller */
                     int ac;
                     int ae;
                     int ap;
@@ -1355,9 +1481,11 @@ static void gc_select(void) {
                     int awant;
 
                     ac = 0;
-                    while (ac < RA_NPHY) { avoid[ac] = 0; ac = ac + 1; }
+                    while (ac < n_total) { avoid[ac] = 0; ac = ac + 1; }
 
-                    if (h_kind[inst] != HI_PARAM) {
+                    /* PARAM-avoidance bias is X-class only (uses
+                     * ra_arg_regs which are X-form). */
+                    if (param_x_class && h_kind[inst] != HI_PARAM) {
                         ae = gc_adj_head[n];
                         while (ae >= 0) {
                             ap = gc_adj_peer[ae];
@@ -1366,23 +1494,24 @@ static void gc_select(void) {
                                 apidx = h_val[gc_inst[aa]];
                                 if (apidx >= 0 && apidx < RA_NARG_REGS) {
                                     awant = ra_a64_slot[ra_arg_regs[apidx]];
-                                    if (awant >= 0) avoid[awant] = 1;
+                                    if (awant >= 0 && awant < n_total)
+                                        avoid[awant] = 1;
                                 }
                             }
                             ae = gc_adj_next[ae];
                         }
                     }
 
-                    /* Prefer caller-saved (slots RA_NCALLEE..), avoiding bias */
-                    c = RA_NCALLEE;
-                    while (c < RA_NPHY) {
+                    /* Prefer caller-saved (slots n_callee..), avoiding bias */
+                    c = n_callee;
+                    while (c < n_total) {
                         if (!used[c] && !avoid[c]) { gc_color[n] = c; break; }
                         c = c + 1;
                     }
                     /* Fallback: caller-saved even if PARAM-wanted */
                     if (gc_color[n] < 0) {
-                        c = RA_NCALLEE;
-                        while (c < RA_NPHY) {
+                        c = n_callee;
+                        while (c < n_total) {
                             if (!used[c]) { gc_color[n] = c; break; }
                             c = c + 1;
                         }
@@ -1390,7 +1519,7 @@ static void gc_select(void) {
                     /* Fallback: callee-saved */
                     if (gc_color[n] < 0) {
                         c = 0;
-                        while (c < RA_NCALLEE) {
+                        while (c < n_callee) {
                             if (!used[c]) { gc_color[n] = c; break; }
                             c = c + 1;
                         }
@@ -1428,7 +1557,10 @@ static void gc_select(void) {
         n = 0;
         while (n < gc_nnode) {
             inst = gc_inst[n];
-            if (h_kind[inst] == HI_PARAM && gc_color[n] >= 0 && !ra_crosses_call[inst]) {
+            /* X-class only: V-class PARAMs would need V0..V7 hints,
+             * deferred to AAPCS-FP-args session. */
+            if (gc_class[n] == RA_CLASS_X
+             && h_kind[inst] == HI_PARAM && gc_color[n] >= 0 && !ra_crosses_call[inst]) {
                 pidx = h_val[inst];
                 if (pidx >= 0 && pidx < RA_NARG_REGS) {
                     want = ra_a64_slot[ra_arg_regs[pidx]];
@@ -1465,7 +1597,11 @@ static void gc_writeback(void) {
     int c;
     int slot;
 
-    /* Clear used tracking */
+    (void)slot;
+
+    /* Clear used tracking.  ra_used[] tracks X-class slots — used by
+     * the prologue to decide which X callee-saves need spilling.  V
+     * class doesn't allocate callee-saves yet, so no parallel tracker. */
     i = 0;
     while (i < RA_NPHY) {
         ra_used[i] = 0;
@@ -1479,14 +1615,20 @@ static void gc_writeback(void) {
         i = i + 1;
     }
 
-    /* Write colors to ra_reg[] */
+    /* Write colors to ra_reg[].  Dispatch on class for the physical-
+     * register table; ra_used[] only tracks X-class for now. */
     n = 0;
     while (n < gc_nnode) {
         inst = gc_inst[n];
         c = gc_color[n];
         if (c >= 0) {
-            ra_reg[inst] = ra_a64_phys[c];
-            ra_used[c] = 1;
+            if (gc_class[n] == RA_CLASS_V) {
+                ra_reg[inst] = ra_a64_phys_v[c];
+                /* (No ra_used_v[] yet — V callee-saves not allocated.) */
+            } else {
+                ra_reg[inst] = ra_a64_phys[c];
+                ra_used[c] = 1;
+            }
         }
         n = n + 1;
     }

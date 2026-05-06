@@ -60,6 +60,42 @@ static int a64_off;     // current write position in bytes
 #define A64_XZR  31
 #define A64_SP   31  /* same encoding as XZR; instruction selects meaning */
 
+/* SIMD/FP register file (V0..V31).  Same 5-bit encoding as the integer
+ * file but a separate physical register file; instructions disambiguate
+ * (e.g. FADD operates on Vn, ADD on Xn).  V0 == 0, ..., V31 == 31. */
+#define A64_V0   0
+#define A64_V1   1
+#define A64_V2   2
+#define A64_V3   3
+#define A64_V4   4
+#define A64_V5   5
+#define A64_V6   6
+#define A64_V7   7
+#define A64_V8   8
+#define A64_V9   9
+#define A64_V10  10
+#define A64_V11  11
+#define A64_V12  12
+#define A64_V13  13
+#define A64_V14  14
+#define A64_V15  15
+#define A64_V16  16
+#define A64_V17  17
+#define A64_V18  18
+#define A64_V19  19
+#define A64_V20  20
+#define A64_V21  21
+#define A64_V22  22
+#define A64_V23  23
+#define A64_V24  24
+#define A64_V25  25
+#define A64_V26  26
+#define A64_V27  27
+#define A64_V28  28
+#define A64_V29  29
+#define A64_V30  30
+#define A64_V31  31
+
 // ============================================================================
 // Condition codes (B.cond, CSET, CSEL, CSINC, ...)
 // ============================================================================
