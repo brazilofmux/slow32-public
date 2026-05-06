@@ -1641,6 +1641,16 @@ static int hx_cmp_fused[HIR_MAX_INST];  /* 1 if comparison is fused into a BRC *
 static int hx_cmp_kind[HIR_MAX_INST];   /* saved comparison kind (before NOP) */
 static int hx_use_count[HIR_MAX_INST];  /* use count per instruction */
 
+/* BIC / ORN / EON peephole.  When set, the AND/OR/XOR at this index
+ * had one operand of the form HI_BNOT(y) with single use; the codegen
+ * emits the corresponding negated-Rm instruction.  Identification
+ * runs post-BURG, pre-regalloc (so regalloc sees y's live range
+ * extended to the binop's use site).  Side effects of the pass:
+ *   - The HI_BNOT instruction is NOPed.
+ *   - The binop's src2 is rewritten to y (BNOT's child).  If the
+ *     BNOT was on src1, src1 and src2 are swapped first (commutative). */
+static int hx_bic_fuse[HIR_MAX_INST];   /* 1 = emit BIC/ORN/EON */
+
 static int hx_is_cmp(int k) {
     return (k >= HI_SEQ && k <= HI_SGEU);
 }
@@ -1711,6 +1721,54 @@ static void hx_identify_fusions(void) {
             }
         }
 
+        i = i + 1;
+    }
+}
+
+/* Identify BIC/ORN/EON peephole opportunities post-BURG, pre-regalloc.
+ * For HI_AND/OR/XOR(x, BNOT(y)) where the BNOT has exactly one use and
+ * lives in the same block, rewrite the binop to use y directly, NOP
+ * the BNOT, and mark hx_bic_fuse[binop]=1 so codegen emits BIC/ORN/EON.
+ * Commutative case (BNOT on src1) gets a swap first. */
+static void hx_identify_bic_peephole(void) {
+    int i;
+    int k;
+
+    i = 0;
+    while (i < h_ninst) {
+        hx_bic_fuse[i] = 0;
+        i = i + 1;
+    }
+
+    i = 0;
+    while (i < h_ninst) {
+        int s1; int s2;
+        int bnot_idx;
+        int y;
+        k = h_kind[i];
+        if (k != HI_AND && k != HI_OR && k != HI_XOR) { i = i + 1; continue; }
+        s1 = h_src1[i];
+        s2 = h_src2[i];
+        bnot_idx = -1;
+        if (s2 >= 0 && h_kind[s2] == HI_BNOT
+            && bg_uses[s2] == 1 && h_blk[s2] == h_blk[i]) {
+            bnot_idx = s2;
+        } else if (s1 >= 0 && h_kind[s1] == HI_BNOT
+                && bg_uses[s1] == 1 && h_blk[s1] == h_blk[i]) {
+            bnot_idx = s1;
+            /* Swap so BNOT is on the right (BIC's Rm is the negated). */
+            h_src1[i] = s2;
+            h_src2[i] = s1;
+            s1 = s2;
+            s2 = bnot_idx;
+        }
+        if (bnot_idx < 0) { i = i + 1; continue; }
+        y = h_src1[bnot_idx];
+        if (y < 0) { i = i + 1; continue; }
+        /* Rewrite: binop(x, BNOT(y)) → binop(x, y) with bic flag. */
+        h_src2[i] = y;
+        hx_bic_fuse[i] = 1;
+        h_kind[bnot_idx] = HI_NOP;
         i = i + 1;
     }
 }

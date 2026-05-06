@@ -292,6 +292,35 @@ static int hx_dst_reg(int inst) {
     return HX_SCRATCH1;
 }
 
+/* If `inst` is HI_ICONST or *EXT32(HI_ICONST), unwrap and return 1, writing
+ * the underlying 32-bit value to *vout and the X-form 64-bit semantic to
+ * *llvout (sign-extended for HI_ICONST/HI_SEXT32, zero-extended for
+ * HI_ZEXT32).  Used by the binary-op fast paths to see through the
+ * widening node the lower inserts for 64-bit ops fed by a 32-bit literal. */
+static int hx_peek_iconst(int inst, int *vout, long long *llvout) {
+    int k;
+    int v;
+    if (inst < 0) return 0;
+    k = h_kind[inst];
+    if (k == HI_ICONST) {
+        v = h_val[inst];
+        *vout = v;
+        *llvout = (long long)v;
+        return 1;
+    }
+    if ((k == HI_SEXT32 || k == HI_ZEXT32) && h_src1[inst] >= 0
+        && h_kind[h_src1[inst]] == HI_ICONST) {
+        v = h_val[h_src1[inst]];
+        *vout = v;
+        if (k == HI_ZEXT32)
+            *llvout = (long long)(unsigned long long)(unsigned int)v;
+        else
+            *llvout = (long long)v;
+        return 1;
+    }
+    return 0;
+}
+
 /* Helper to load/store via scratch when the offset doesn't fit in imm12. */
 static void hx_emit_load_to_reg(int dst_reg, int spill_off, int wide) {
     /* spill_off is a frontend offset (negative).  Compute absolute frame
@@ -1436,6 +1465,54 @@ static void hx_emit_inst(int idx) {
      || k == HI_AND || k == HI_OR  || k == HI_XOR
      || k == HI_SLL || k == HI_SRA || k == HI_SRL) {
 
+        /* Wide-form fast paths: the lower wraps a 32-bit literal in
+         * HI_SEXT32 / HI_ZEXT32 to widen it for a 64-bit op, so the bare
+         * `h_kind == HI_ICONST` checks further down miss it.  Peek
+         * through and try the X-form imm encoders.  Covers ADD/SUB
+         * imm12 (with negate) and AND/OR/XOR logical-imm. */
+        if (wide && (k == HI_ADD || k == HI_SUB
+                  || k == HI_AND || k == HI_OR || k == HI_XOR)) {
+            int v_; long long llv;
+            int ok = 0;
+
+            /* s2-as-constant. */
+            if (hx_peek_iconst(s2, &v_, &llv)) {
+                r1 = hx_get_src(s1, HX_SCRATCH1);
+                if (k == HI_ADD) {
+                    if (llv >= 0 && llv <= 4095) {
+                        a64_add_x_imm(dst, r1, (int)llv); ok = 1;
+                    } else if (llv < 0 && llv >= -4095) {
+                        a64_sub_x_imm(dst, r1, (int)-llv); ok = 1;
+                    }
+                } else if (k == HI_SUB) {
+                    if (llv >= 0 && llv <= 4095) {
+                        a64_sub_x_imm(dst, r1, (int)llv); ok = 1;
+                    } else if (llv < 0 && llv >= -4095) {
+                        a64_add_x_imm(dst, r1, (int)-llv); ok = 1;
+                    }
+                } else if (k == HI_AND) ok = a64_and_x_imm(dst, r1, llv);
+                else if   (k == HI_OR ) ok = a64_orr_x_imm(dst, r1, llv);
+                else                    ok = a64_eor_x_imm(dst, r1, llv);
+            }
+
+            /* Symmetric: s1-as-constant, only for commutative ops
+             * (ADD/AND/OR/XOR — NOT SUB). */
+            if (!ok && k != HI_SUB && hx_peek_iconst(s1, &v_, &llv)) {
+                r1 = hx_get_src(s2, HX_SCRATCH1);
+                if (k == HI_ADD) {
+                    if (llv >= 0 && llv <= 4095) {
+                        a64_add_x_imm(dst, r1, (int)llv); ok = 1;
+                    } else if (llv < 0 && llv >= -4095) {
+                        a64_sub_x_imm(dst, r1, (int)-llv); ok = 1;
+                    }
+                }
+                else if (k == HI_AND) ok = a64_and_x_imm(dst, r1, llv);
+                else if (k == HI_OR ) ok = a64_orr_x_imm(dst, r1, llv);
+                else                  ok = a64_eor_x_imm(dst, r1, llv);
+            }
+            if (ok) { hx_spill(idx, dst); return; }
+        }
+
         /* Immediate-form fast paths (ADD/SUB imm12, shifts imm6).
          * AArch64 ADD/SUB take an unsigned 12-bit imm (optionally LSL #12);
          * we handle the [0, 4095] and [-4095, -1] cases without LSL.  For
@@ -1485,16 +1562,28 @@ static void hx_emit_inst(int idx) {
                 if (wide) a64_asr_x_imm(dst, r1, v);
                 else      a64_asr_w_imm(dst, r1, v);
                 hx_spill(idx, dst); return;
-            } else if (!wide && k == HI_AND) {
-                /* AArch64 logical-immediate encoding (W form): bit-pattern imm. */
+            } else if (k == HI_AND) {
+                /* AArch64 logical-immediate encoding (bit-pattern imm). */
                 r1 = hx_get_src(s1, HX_SCRATCH1);
-                if (a64_and_w_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
-            } else if (!wide && k == HI_OR) {
+                if (wide) {
+                    if (a64_and_x_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
+                } else {
+                    if (a64_and_w_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
+                }
+            } else if (k == HI_OR) {
                 r1 = hx_get_src(s1, HX_SCRATCH1);
-                if (a64_orr_w_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
-            } else if (!wide && k == HI_XOR) {
+                if (wide) {
+                    if (a64_orr_x_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
+                } else {
+                    if (a64_orr_w_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
+                }
+            } else if (k == HI_XOR) {
                 r1 = hx_get_src(s1, HX_SCRATCH1);
-                if (a64_eor_w_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
+                if (wide) {
+                    if (a64_eor_x_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
+                } else {
+                    if (a64_eor_w_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
+                }
             }
             /* Fall through to register-register form. */
         }
@@ -1515,15 +1604,27 @@ static void hx_emit_inst(int idx) {
                     else      a64_sub_w_imm(dst, r1, -v);
                     hx_spill(idx, dst); return;
                 }
-            } else if (!wide && k == HI_AND) {
+            } else if (k == HI_AND) {
                 r1 = hx_get_src(s2, HX_SCRATCH1);
-                if (a64_and_w_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
-            } else if (!wide && k == HI_OR) {
+                if (wide) {
+                    if (a64_and_x_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
+                } else {
+                    if (a64_and_w_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
+                }
+            } else if (k == HI_OR) {
                 r1 = hx_get_src(s2, HX_SCRATCH1);
-                if (a64_orr_w_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
-            } else if (!wide && k == HI_XOR) {
+                if (wide) {
+                    if (a64_orr_x_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
+                } else {
+                    if (a64_orr_w_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
+                }
+            } else if (k == HI_XOR) {
                 r1 = hx_get_src(s2, HX_SCRATCH1);
-                if (a64_eor_w_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
+                if (wide) {
+                    if (a64_eor_x_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
+                } else {
+                    if (a64_eor_w_imm(dst, r1, v)) { hx_spill(idx, dst); return; }
+                }
             }
         }
 
@@ -1563,14 +1664,29 @@ static void hx_emit_inst(int idx) {
                 a64_msub_w(dst, HX_SCRATCH1, r2, r1);
             }
         } else if (k == HI_AND) {
-            if (wide) a64_and_x(dst, r1, r2);
-            else      a64_and_w(dst, r1, r2);
+            if (hx_bic_fuse[idx]) {
+                if (wide) a64_bic_x(dst, r1, r2);
+                else      a64_bic_w(dst, r1, r2);
+            } else {
+                if (wide) a64_and_x(dst, r1, r2);
+                else      a64_and_w(dst, r1, r2);
+            }
         } else if (k == HI_OR) {
-            if (wide) a64_orr_x(dst, r1, r2);
-            else      a64_orr_w(dst, r1, r2);
+            if (hx_bic_fuse[idx]) {
+                if (wide) a64_orn_x(dst, r1, r2);
+                else      a64_orn_w(dst, r1, r2);
+            } else {
+                if (wide) a64_orr_x(dst, r1, r2);
+                else      a64_orr_w(dst, r1, r2);
+            }
         } else if (k == HI_XOR) {
-            if (wide) a64_eor_x(dst, r1, r2);
-            else      a64_eor_w(dst, r1, r2);
+            if (hx_bic_fuse[idx]) {
+                if (wide) a64_eon_x(dst, r1, r2);
+                else      a64_eon_w(dst, r1, r2);
+            } else {
+                if (wide) a64_eor_x(dst, r1, r2);
+                else      a64_eor_w(dst, r1, r2);
+            }
         } else if (k == HI_SLL) {
             if (wide) a64_lslv_x(dst, r1, r2);
             else      a64_lslv_w(dst, r1, r2);
@@ -2017,6 +2133,10 @@ static void hx_gen_func(Node *fn) {
      * comparison; the BRC codegen below consumes hx_brc_fuse[] to emit
      * CMP + B.cond instead of CSET + CBZ. */
     hx_identify_fusions();
+
+    /* Identify BIC/ORN/EON peephole sites.  Rewrites HIR (NOPs the BNOT,
+     * potentially swaps src1/src2) so regalloc sees the post-fold form. */
+    hx_identify_bic_peephole();
 
     /* Run regalloc.  This sets ra_reg[], ra_spill_off[], and writes
      * the callee-saved set into ra_csave_*. */

@@ -521,6 +521,25 @@ static void a64_ands_w(int rd, int rn, int rm) {
     a64_inst(inst);
 }
 
+// BIC/ORN/EON Wd, Wn, Wm — register-form `Wn op ~Wm` (N=1 flips Rm).
+static void a64_bic_w(int rd, int rn, int rm) {
+    int inst;
+    inst = 0x0A200000 | ((rm & 0x1F) << 16) | ((rn & 0x1F) << 5) | (rd & 0x1F);
+    a64_inst(inst);
+}
+
+static void a64_orn_w(int rd, int rn, int rm) {
+    int inst;
+    inst = 0x2A200000 | ((rm & 0x1F) << 16) | ((rn & 0x1F) << 5) | (rd & 0x1F);
+    a64_inst(inst);
+}
+
+static void a64_eon_w(int rd, int rn, int rm) {
+    int inst;
+    inst = 0x4A200000 | ((rm & 0x1F) << 16) | ((rn & 0x1F) << 5) | (rd & 0x1F);
+    a64_inst(inst);
+}
+
 // MVN Wd, Wn  (ORN Wd, WZR, Wn)
 static void a64_mvn_w(int rd, int rn) {
     int inst;
@@ -561,6 +580,110 @@ static int a64_eor_w_imm(int rd, int rn, int imm) {
     return 1;
 }
 
+// Count trailing ones in low 64 bits of v. Returns 0..64.
+static int a64_ctz_ones64(long long v) {
+    int n;
+    n = 0;
+    while (n < 64 && (v & 1)) {
+        v = (long long)((unsigned long long)v >> 1);
+        n = n + 1;
+    }
+    return n;
+}
+
+// AArch64 64-bit logical-immediate encoding.  Same scheme as 32-bit but
+// the additional N=1, esz=64 case enables full-width patterns.  Returns
+// the packed 13-bit field (N<<12 | immr<<6 | imms) so the call site can
+// `inst |= enc << 10` exactly like the W-form (the extra N bit lands at
+// inst bit 22).
+static int a64_encode_logical_imm64(long long val, int *encoded) {
+    int esz; long long mask; long long elem; int uniform; int i; int r;
+    long long rotated; int ones; long long expected; int s; int immr;
+    int imms; int n_bit;
+
+    if (val == 0)    return 0;
+    if (val == -1LL) return 0;
+
+    esz = 2;
+    while (esz <= 64) {
+        if (esz == 64) mask = -1LL;
+        else           mask = ((long long)1 << esz) - 1;
+        elem = val & mask;
+
+        uniform = 1;
+        i = esz;
+        while (i < 64) {
+            long long chunk;
+            chunk = (long long)((unsigned long long)val >> i) & mask;
+            if (chunk != elem) { uniform = 0; i = 64; }
+            else i = i + esz;
+        }
+        if (!uniform) { esz = esz << 1; continue; }
+
+        r = 0;
+        while (r < esz) {
+            if (r == 0) rotated = elem & mask;
+            else {
+                long long lo; long long hi;
+                lo = ((unsigned long long)elem << r) & (unsigned long long)mask;
+                hi = (long long)((unsigned long long)elem >> (esz - r))
+                   & (((long long)1 << r) - 1);
+                rotated = (lo | hi) & mask;
+            }
+            if (rotated != 0 && rotated != mask) {
+                ones = a64_ctz_ones64(rotated);
+                if (ones > 0 && ones < esz) {
+                    expected = ((long long)1 << ones) - 1;
+                    if (rotated == expected) {
+                        s = ones - 1;
+                        immr = r;
+                        if      (esz == 2)  { imms = 0x3C | s; n_bit = 0; }
+                        else if (esz == 4)  { imms = 0x38 | s; n_bit = 0; }
+                        else if (esz == 8)  { imms = 0x30 | s; n_bit = 0; }
+                        else if (esz == 16) { imms = 0x20 | s; n_bit = 0; }
+                        else if (esz == 32) { imms = s;        n_bit = 0; }
+                        else                { imms = s;        n_bit = 1; }
+                        *encoded = (n_bit << 12) | ((immr & 0x3F) << 6)
+                                 | (imms & 0x3F);
+                        return 1;
+                    }
+                }
+            }
+            r = r + 1;
+        }
+        esz = esz << 1;
+    }
+    return 0;
+}
+
+// AND/ORR/EOR Xd, Xn, #imm — 64-bit, return 1 if encodable.
+// `imm` is the full 64-bit value the caller wants AND'd / OR'd / EOR'd.
+// (For SEXT32(ICONST n) widening, pass (long long)(int)n; for ZEXT32,
+//  pass (long long)(unsigned long long)(unsigned int)n.)
+static int a64_and_x_imm(int rd, int rn, long long imm) {
+    int enc; int inst;
+    if (!a64_encode_logical_imm64(imm, &enc)) return 0;
+    inst = 0x92000000 | (enc << 10) | ((rn & 0x1F) << 5) | (rd & 0x1F);
+    a64_inst(inst);
+    return 1;
+}
+
+static int a64_orr_x_imm(int rd, int rn, long long imm) {
+    int enc; int inst;
+    if (!a64_encode_logical_imm64(imm, &enc)) return 0;
+    inst = 0xB2000000 | (enc << 10) | ((rn & 0x1F) << 5) | (rd & 0x1F);
+    a64_inst(inst);
+    return 1;
+}
+
+static int a64_eor_x_imm(int rd, int rn, long long imm) {
+    int enc; int inst;
+    if (!a64_encode_logical_imm64(imm, &enc)) return 0;
+    inst = 0xD2000000 | (enc << 10) | ((rn & 0x1F) << 5) | (rd & 0x1F);
+    a64_inst(inst);
+    return 1;
+}
+
 // ============================================================================
 // Logical — 64-bit
 // ============================================================================
@@ -588,6 +711,25 @@ static void a64_orr_x_lsl(int rd, int rn, int rm, int shift) {
     int inst;
     inst = 0xAA000000 | ((rm & 0x1F) << 16) | ((shift & 0x3F) << 10)
          | ((rn & 0x1F) << 5) | (rd & 0x1F);
+    a64_inst(inst);
+}
+
+// BIC/ORN/EON Xd, Xn, Xm — register-form `Xn op ~Xm` (N=1 flips Rm).
+static void a64_bic_x(int rd, int rn, int rm) {
+    int inst;
+    inst = 0x8A200000 | ((rm & 0x1F) << 16) | ((rn & 0x1F) << 5) | (rd & 0x1F);
+    a64_inst(inst);
+}
+
+static void a64_orn_x(int rd, int rn, int rm) {
+    int inst;
+    inst = 0xAA200000 | ((rm & 0x1F) << 16) | ((rn & 0x1F) << 5) | (rd & 0x1F);
+    a64_inst(inst);
+}
+
+static void a64_eon_x(int rd, int rn, int rm) {
+    int inst;
+    inst = 0xCA200000 | ((rm & 0x1F) << 16) | ((rn & 0x1F) << 5) | (rd & 0x1F);
     a64_inst(inst);
 }
 
