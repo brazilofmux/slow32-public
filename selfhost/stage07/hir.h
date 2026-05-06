@@ -78,6 +78,11 @@
 #define HI_A64_MRS_CNTVCT     61  /* mrs Xt, cntvct_el0 */
 #define HI_A64_DBT_TRAMPOLINE 62  /* execute translated block trampoline; args in h_carg */
 
+/* Floating-point square root.  Single-source FP op; ty selects S/D form.
+ * Recognised by the lower from __builtin_sqrt / __builtin_sqrtf source
+ * patterns and lowered directly to FSQRT on backends that support it. */
+#define HI_FSQRT    63
+
 /* --- Limits --- */
 #define HIR_MAX_INST   16384
 #define HIR_MAX_BLOCK  2048
@@ -209,6 +214,7 @@ static int hi_is_pure(int k) {
     if (k == HI_SADDR) return 1;
     if (k == HI_FADDR) return 1;
     if (k == HI_GETFP) return 1;
+    if (k == HI_FSQRT) return 1;
     return 0;
 }
 

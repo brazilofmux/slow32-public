@@ -1451,6 +1451,25 @@ static int hl_expr(Node *n) {
         int is64[16];
         int phys_count;
         int ret_ty;
+
+#ifdef S12CC_NATIVE_F64
+        /* Recognise __builtin_sqrt / __builtin_sqrtf and emit HI_FSQRT
+         * directly.  Lets libc_a64/math_stubs.c self-compile and drop
+         * the host-gcc step. */
+        if (n->name) {
+            int is_sqrtd; int is_sqrtf;
+            is_sqrtd = (strcmp(n->name, "__builtin_sqrt") == 0);
+            is_sqrtf = (strcmp(n->name, "__builtin_sqrtf") == 0);
+            if ((is_sqrtd || is_sqrtf) && n->args && !n->args->next) {
+                int sv;
+                sv = hl_expr(n->args);
+                return hi_emit(HI_FSQRT,
+                               is_sqrtd ? TY_DOUBLE : TY_FLOAT,
+                               sv, -1, 0, NULL);
+            }
+        }
+#endif
+
         /* Lower all arguments first (inner calls may use h_carg) */
         a = n->args;
         nargs = 0;

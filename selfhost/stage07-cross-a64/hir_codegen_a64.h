@@ -2592,6 +2592,14 @@ static void hx_emit_inst(int idx) {
         hx_spill(idx, dst);
         return;
     }
+    if (k == HI_FSQRT) {
+        int rs1;
+        rs1 = hx_get_src(s1, HX_SCRATCH_V1);
+        if (ty_is_double(h_ty[idx])) a64_fsqrt_d(dst, rs1);
+        else                         a64_fsqrt_s(dst, rs1);
+        hx_spill(idx, dst);
+        return;
+    }
 
     /* Unhandled */
     hx_die("hx_emit_inst: unhandled kind", idx);

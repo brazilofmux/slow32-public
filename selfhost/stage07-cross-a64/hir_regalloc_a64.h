@@ -954,6 +954,7 @@ static int ra_class_of(int inst) {
     if (kk == HI_FCVT_ItoF) return RA_CLASS_V;
     if (kk == HI_FCVT_FtoD || kk == HI_FCVT_DtoF) return RA_CLASS_V;
     if (kk == HI_FCONST) return RA_CLASS_V;
+    if (kk == HI_FSQRT) return RA_CLASS_V;
     /* Address-producing ops produce pointers (X-class) regardless of
      * the storage type they refer to.  HI_ALLOCA / HI_GADDR / HI_SADDR /
      * HI_FADDR / HI_GETFP have h_ty set to the underlying storage type
