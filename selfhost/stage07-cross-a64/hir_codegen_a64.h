@@ -94,6 +94,14 @@ static int hx_ridx_shift[HIR_MAX_INST];  /* shift amount (0, 2, or 3) */
 static int hx_off_base[HIR_MAX_INST];    /* base inst, -1 if not folded */
 static int hx_off_disp[HIR_MAX_INST];    /* byte displacement */
 
+/* Tail-call elimination: hx_tce_call[c]==1 marks an HI_CALL that is the
+ * last meaningful instruction in its block before HI_RET; emit `b target`
+ * instead of `bl + epilogue + ret`.  hx_tce_ret[r]==1 marks the trailing
+ * HI_RET so its emitter is skipped (the TCE call already branched away).
+ * See hx_identify_tce. */
+static int hx_tce_call[HIR_MAX_INST];
+static int hx_tce_ret[HIR_MAX_INST];
+
 /* ============================================================================
  * Helpers
  * ============================================================================ */
@@ -823,6 +831,307 @@ static void hx_phi_copies(int from_blk, int to_blk) {
     }
 }
 
+/* ----- Frame teardown -----
+ * Restores callee-saved regs, FP/LR, and SP — everything the regular epilogue
+ * does except the final `ret`.  Used by the regular epilogue (followed by
+ * `ret`) and by TCE sites (followed by `b target`). */
+
+static void hx_emit_teardown(void) {
+    int fs;
+    int i;
+    fs = hx_frame_size;
+
+    /* Restore callee-saved regs (mirror prologue's STP pairing). */
+    i = 0;
+    while (i < ra_ncsave) {
+        if (i + 1 < ra_ncsave &&
+            ra_csave_off[i + 1] == ra_csave_off[i] - 4) {
+            int boff_lo;
+            boff_lo = cg_a64_offset(ra_csave_off[i + 1]);
+            if (boff_lo >= -512 && boff_lo <= 504 && (boff_lo & 7) == 0) {
+                a64_ldp_x_off(ra_csave_reg[i + 1], ra_csave_reg[i],
+                              A64_X29, boff_lo);
+                i = i + 2;
+                continue;
+            }
+        }
+        hx_emit_load_to_reg(ra_csave_reg[i], ra_csave_off[i], 1);
+        i = i + 1;
+    }
+
+    if (!hx_no_frame) {
+        if (fs - 16 <= 504) {
+            a64_ldp_x_off(A64_X29, A64_X30, A64_SP, fs - 16);
+        } else {
+            if ((fs - 16) <= 4095) a64_add_x_imm(HX_SCRATCH1, A64_SP, fs - 16);
+            else {
+                a64_add_x_imm(HX_SCRATCH1, A64_SP, (fs - 16) & 0xFFF);
+                a64_add_x_imm_lsl12(HX_SCRATCH1, HX_SCRATCH1, ((fs - 16) >> 12) & 0xFFF);
+            }
+            a64_ldp_x_off(A64_X29, A64_X30, HX_SCRATCH1, 0);
+        }
+        if (fs <= 4095) a64_add_x_imm(A64_SP, A64_SP, fs);
+        else {
+            a64_add_x_imm(A64_SP, A64_SP, fs & 0xFFF);
+            a64_add_x_imm_lsl12(A64_SP, A64_SP, (fs >> 12) & 0xFFF);
+        }
+    }
+}
+
+/* ----- Tail-call argument marshal -----
+ * Move the call's arg insts into x0..x7 with parallel-move hazard handling.
+ * Same shape as hx_phi_copies's greedy-then-stack scheduler, but the dests
+ * are the AAPCS arg regs.  Sources can be in any register, spilled, or
+ * rematerialisable.  Restricted to nargs <= 8 (no stack args).
+ *
+ * This must run BEFORE the frame teardown (sources may live in callee-saved
+ * regs that the teardown will restore, or in FP-relative spills which need
+ * FP intact to read). */
+static void hx_marshal_call_args(int base, int nargs) {
+    int j;
+    int n;
+    int done[8];
+    int src_inst[8];
+    int dst_reg[8];
+    int src_reg[8];
+    int n_remaining;
+    int progress;
+    int p;
+    int i;
+    int wide;
+
+    if (nargs > 8) hx_die("hx_marshal_call_args: stack args unsupported", nargs);
+    n = nargs;
+
+    j = 0;
+    while (j < n) {
+        int arg_inst;
+        arg_inst = h_carg[base + j];
+        src_inst[j] = arg_inst;
+        dst_reg[j]  = hx_arg_reg[j];
+        src_reg[j]  = (ra_reg[arg_inst] >= 0) ? hx_slot_reg(ra_reg[arg_inst]) : -1;
+        done[j] = 0;
+        if (src_reg[j] >= 0 && src_reg[j] == dst_reg[j]) done[j] = 1;
+        j = j + 1;
+    }
+
+    n_remaining = 0;
+    j = 0;
+    while (j < n) { if (!done[j]) n_remaining = n_remaining + 1; j = j + 1; }
+
+    progress = 1;
+    while (n_remaining > 0 && progress) {
+        progress = 0;
+        p = 0;
+        while (p < n) {
+            int blocked;
+            if (done[p]) { p = p + 1; continue; }
+            blocked = 0;
+            i = 0;
+            while (i < n) {
+                if (!done[i] && i != p && src_reg[i] == dst_reg[p]) {
+                    blocked = 1;
+                    i = n;
+                } else {
+                    i = i + 1;
+                }
+            }
+            if (!blocked) {
+                wide = hx_is_wide(h_ty[src_inst[p]]);
+                if (src_reg[p] >= 0) {
+                    if (wide) a64_mov_x(dst_reg[p], src_reg[p]);
+                    else      a64_mov_w(dst_reg[p], src_reg[p]);
+                } else {
+                    /* Spilled or rematerialisable: bring directly into dst. */
+                    hx_mat(src_inst[p], dst_reg[p]);
+                }
+                done[p] = 1;
+                n_remaining = n_remaining - 1;
+                progress = 1;
+            }
+            p = p + 1;
+        }
+    }
+
+    if (n_remaining == 0) return;
+
+    /* Cycle: stack-snapshot remaining sources, then restore.  Same pattern
+     * as hx_phi_copies's fallback path. */
+    {
+        int tmp_bytes;
+        int slot;
+        tmp_bytes = n_remaining * 8;
+        if (tmp_bytes & 15) tmp_bytes = (tmp_bytes + 15) & ~15;
+        if (tmp_bytes <= 4095) a64_sub_x_imm(A64_SP, A64_SP, tmp_bytes);
+        else {
+            a64_sub_x_imm(A64_SP, A64_SP, tmp_bytes & 0xFFF);
+            a64_sub_x_imm_lsl12(A64_SP, A64_SP, (tmp_bytes >> 12) & 0xFFF);
+        }
+        slot = 0;
+        i = 0;
+        while (i < n) {
+            if (!done[i]) {
+                wide = hx_is_wide(h_ty[src_inst[i]]);
+                hx_mat(src_inst[i], HX_SCRATCH1);
+                hx_stack_store(slot * 8, HX_SCRATCH1, wide);
+                slot = slot + 1;
+            }
+            i = i + 1;
+        }
+        slot = 0;
+        i = 0;
+        while (i < n) {
+            if (!done[i]) {
+                wide = hx_is_wide(h_ty[src_inst[i]]);
+                hx_stack_load(dst_reg[i], slot * 8, wide);
+                slot = slot + 1;
+            }
+            i = i + 1;
+        }
+        if (tmp_bytes <= 4095) a64_add_x_imm(A64_SP, A64_SP, tmp_bytes);
+        else {
+            a64_add_x_imm(A64_SP, A64_SP, tmp_bytes & 0xFFF);
+            a64_add_x_imm_lsl12(A64_SP, A64_SP, (tmp_bytes >> 12) & 0xFFF);
+        }
+    }
+}
+
+/* Does this value transitively trace back to an HI_ALLOCA?  Used to
+ * block TCE when a frame-local pointer would flow to the callee — after
+ * teardown the pointer dangles. */
+static int hx_traces_to_alloca(int v, int depth) {
+    int k;
+    if (v < 0) return 0;
+    if (depth > 32) return 1;     /* conservative on cycles / deep chains */
+    k = h_kind[v];
+    if (k == HI_ALLOCA) return 1;
+    if (k == HI_ADDI || k == HI_COPY) return hx_traces_to_alloca(h_src1[v], depth + 1);
+    if (k == HI_ADD || k == HI_SUB) {
+        if (hx_traces_to_alloca(h_src1[v], depth + 1)) return 1;
+        return hx_traces_to_alloca(h_src2[v], depth + 1);
+    }
+    return 0;
+}
+
+/* ----- TCE identification -----
+ * Set hx_tce_call[c]/hx_tce_ret[r] for each block that ends:
+ *     ... CALL ... (NOP/PHI/CALLHI/COPY)* RET
+ * with RET's value (chased through COPYs) equal to the call result.
+ * Restricted to direct calls (HI_CALL), nargs <= 8, non-__syscall, no
+ * arg-derived-from-HI_ALLOCA (frame-local ptr would dangle), no varargs
+ * caller, no DBT trampoline. */
+static void hx_identify_tce(Node *fn) {
+    int i; int b;
+    int has_alloca; int has_dbt;
+
+    i = 0;
+    while (i < h_ninst) {
+        hx_tce_call[i] = 0;
+        hx_tce_ret[i] = 0;
+        i = i + 1;
+    }
+
+    if (fn->is_varargs) return;
+
+    has_alloca = 0;
+    has_dbt = 0;
+    i = 0;
+    while (i < h_ninst) {
+        int k;
+        k = h_kind[i];
+        if (k == HI_ALLOCA) has_alloca = 1;
+        if (k == HI_A64_DBT_TRAMPOLINE) has_dbt = 1;
+        i = i + 1;
+    }
+    /* Allow HI_ALLOCA in the function (the lower emits it for the
+     * synthetic retval slot used by multi-return functions; that slot
+     * is read by the regular epilogue, which TCE branches out before).
+     * We DO need to guard per-call: if any arg traces back to an
+     * HI_ALLOCA, the callee gets a pointer into our frame which
+     * dangles after teardown.  See the per-call alloca check below. */
+    (void)has_alloca;
+    if (has_dbt) return;
+
+    b = 0;
+    while (b < bb_nblk) {
+        int last;
+        int call_idx;
+        if (bb_end[b] <= bb_start[b]) { b = b + 1; continue; }
+        last = bb_end[b] - 1;
+        if (h_kind[last] != HI_RET) { b = b + 1; continue; }
+
+        /* Walk backward from RET, skipping HI_NOP / HI_PHI / HI_CALLHI /
+         * HI_COPY; the first non-skipped op must be HI_CALL.  HI_COPY
+         * is reg-to-reg only (no side effect); the TCE branch dead-codes
+         * any COPY between CALL and RET, which is fine because their
+         * only observable effect is via RET's value, and we re-check
+         * that the returned value chains back through COPYs to the
+         * call result. */
+        call_idx = -1;
+        i = last - 1;
+        while (i >= bb_start[b]) {
+            int k;
+            k = h_kind[i];
+            if (k == HI_NOP || k == HI_PHI || k == HI_CALLHI || k == HI_COPY) {
+                i = i - 1;
+                continue;
+            }
+            if (k == HI_CALL) call_idx = i;
+            break;
+        }
+        if (call_idx >= 0) {
+            int ok;
+            char *nm;
+            int v;
+            ok = 1;
+
+            /* RET's value (if any) must be — possibly via HI_COPY chain —
+             * the call result. */
+            if (h_src1[last] >= 0) {
+                v = h_src1[last];
+                while (v >= 0 && h_kind[v] == HI_COPY) v = h_src1[v];
+                if (v != call_idx) ok = 0;
+            }
+
+            /* No stack args. */
+            if (h_val[call_idx] > 8) ok = 0;
+
+            /* Skip __syscall builtin (different ABI: x8 = nr). */
+            nm = h_name[call_idx];
+            if (nm != 0
+             && nm[0] == '_' && nm[1] == '_'
+             && nm[2] == 's' && nm[3] == 'y'
+             && nm[4] == 's' && nm[5] == 'c') ok = 0;
+
+            /* Block if any arg traces back to an HI_ALLOCA — the pointer
+             * would dangle after frame teardown.  Cheap intra-procedural
+             * check; covers the common `return foo(&local)` pattern. */
+            if (ok) {
+                int j;
+                int base;
+                int nargs;
+                base = h_cbase[call_idx];
+                nargs = h_val[call_idx];
+                j = 0;
+                while (j < nargs) {
+                    if (hx_traces_to_alloca(h_carg[base + j], 0)) {
+                        ok = 0;
+                        j = nargs;
+                    } else {
+                        j = j + 1;
+                    }
+                }
+            }
+
+            if (ok) {
+                hx_tce_call[call_idx] = 1;
+                hx_tce_ret[last] = 1;
+            }
+        }
+        b = b + 1;
+    }
+}
+
 /* ============================================================================
  * Emit one HIR instruction.
  * ============================================================================ */
@@ -1482,6 +1791,9 @@ static void hx_emit_inst(int idx) {
         return;
     }
     if (k == HI_RET) {
+        /* If a preceding HI_CALL was tail-call-eliminated, the b-target
+         * has already been emitted; this RET is dead. */
+        if (hx_tce_ret[idx]) return;
         /* If there's a return value, ensure it's in x0. */
         if (s1 >= 0) {
             int slot;
@@ -1532,6 +1844,22 @@ static void hx_emit_inst(int idx) {
             /* Result in x0. */
             if (dst != A64_X0) a64_mov_x(dst, A64_X0);
             hx_spill(idx, dst);
+            return;
+        }
+
+        /* Tail-call elimination: marshal args, tear down our frame,
+         * then `b target`.  hx_identify_tce has verified preconditions
+         * (direct call, nargs <= 8, no alloca/varargs/DBT, RET follows). */
+        if (k == HI_CALL && hx_tce_call[idx]) {
+            int base; int nargs;
+            base = h_cbase[idx];
+            nargs = h_val[idx];
+            hx_marshal_call_args(base, nargs);
+            hx_emit_teardown();
+            cg_cpatch_add(h_name[idx], a64_off, A64K_JUMP26, 0);
+            a64_b(0);
+            /* No hx_spill: the trailing HI_RET (which would consume the
+             * call's value) is NOPed via hx_tce_ret[]. */
             return;
         }
 
@@ -1699,6 +2027,11 @@ static void hx_gen_func(Node *fn) {
      * regalloc (so ra_reg[] is final) but before codegen emits the
      * standalone HI_ADD/HI_SLL.  Sets bg_fold[] on the consumed nodes. */
     hx_fold_indexed_addr();
+
+    /* Identify tail-call sites after regalloc (we need final ra_csave_*
+     * for the teardown sequence; identification itself doesn't depend
+     * on regalloc but we keep it next to the consumers). */
+    hx_identify_tce(fn);
 
 
     /* Frame layout
@@ -1909,43 +2242,7 @@ static void hx_gen_func(Node *fn) {
         int epi_off;
         epi_off = a64_off;
 
-        /* Restore callee-saved regs (mirror of prologue's STP pairing). */
-        i = 0;
-        while (i < ra_ncsave) {
-            if (i + 1 < ra_ncsave &&
-                ra_csave_off[i + 1] == ra_csave_off[i] - 4) {
-                int boff_lo;
-                boff_lo = cg_a64_offset(ra_csave_off[i + 1]);
-                if (boff_lo >= -512 && boff_lo <= 504 && (boff_lo & 7) == 0) {
-                    a64_ldp_x_off(ra_csave_reg[i + 1], ra_csave_reg[i],
-                                  A64_X29, boff_lo);
-                    i = i + 2;
-                    continue;
-                }
-            }
-            hx_emit_load_to_reg(ra_csave_reg[i], ra_csave_off[i], 1);
-            i = i + 1;
-        }
-
-        /* Mirror the prologue's choice (see comment there).  No-frame
-         * leaves skip the whole teardown and emit just `ret`. */
-        if (!hx_no_frame) {
-            if (fs - 16 <= 504) {
-                a64_ldp_x_off(A64_X29, A64_X30, A64_SP, fs - 16);
-            } else {
-                if ((fs - 16) <= 4095) a64_add_x_imm(HX_SCRATCH1, A64_SP, fs - 16);
-                else {
-                    a64_add_x_imm(HX_SCRATCH1, A64_SP, (fs - 16) & 0xFFF);
-                    a64_add_x_imm_lsl12(HX_SCRATCH1, HX_SCRATCH1, ((fs - 16) >> 12) & 0xFFF);
-                }
-                a64_ldp_x_off(A64_X29, A64_X30, HX_SCRATCH1, 0);
-            }
-            if (fs <= 4095) a64_add_x_imm(A64_SP, A64_SP, fs);
-            else {
-                a64_add_x_imm(A64_SP, A64_SP, fs & 0xFFF);
-                a64_add_x_imm_lsl12(A64_SP, A64_SP, (fs >> 12) & 0xFFF);
-            }
-        }
+        hx_emit_teardown();
         a64_ret();
 
         /* Resolve epilog patches (RET pseudo-target = -1) */

@@ -115,6 +115,14 @@ test-crt0: $(OUT)/test_crt0 $(OUT)/crt0_main.o $(OUT)/crt0_stubs.o
 $(OUT)/cc_%.o: tests/cc_%.c $(OUT)/cc-a64
 	@$(OUT)/cc-a64 -c $< -o $@ >/dev/null
 
+# --hir variant: same source, compiled through the HIR pipeline so we can
+# assert codegen-quality features (TCE, regalloc, BURG) on the same test.
+$(OUT)/cc_%_hir.o: tests/cc_%.c $(OUT)/cc-a64
+	@$(OUT)/cc-a64 --hir -c $< -o $@ >/dev/null
+
+$(OUT)/cc_%_hir_exe: $(OUT)/cc_%_hir.o $(OUT)/crt0.o $(OUT)/crt0_stubs.o
+	@ld -o $@ $(OUT)/crt0.o $< $(OUT)/crt0_stubs.o
+
 $(OUT)/cc_multi_include.o: tests/cc_multi_include.c $(OUT)/cc-a64 \
                            tests/inc_one/one.h tests/inc_two/two.h
 	@$(OUT)/cc-a64 -Itests/inc_one -Itests/inc_two -c $< -o $@ >/dev/null
@@ -134,6 +142,8 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
          $(OUT)/cc_multi_include_exe \
          $(OUT)/cc_inline_asm_a64_exe \
          $(OUT)/cc_dbt_c_forms_exe \
+         $(OUT)/cc_tail_call_exe \
+         $(OUT)/cc_tail_call_hir_exe \
          $(OUT)/cc_string_exe
 	@$(OUT)/cc_hello_exe;     rc=$$?; if [ $$rc -eq 42 ];  then echo "cc_hello:     ok (exit=42)";     else echo "cc_hello:     FAIL (exit=$$rc, expected 42)";     exit 1; fi
 	@$(OUT)/cc_locals_exe;    rc=$$?; if [ $$rc -eq 42 ];  then echo "cc_locals:    ok (exit=42)";     else echo "cc_locals:    FAIL (exit=$$rc, expected 42)";     exit 1; fi
@@ -156,6 +166,8 @@ test-cc: $(OUT)/cc_hello_exe $(OUT)/cc_locals_exe \
 	@$(OUT)/cc_multi_include_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_multi_include: ok (exit=1)"; else echo "cc_multi_include: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_inline_asm_a64_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_inline_asm_a64: ok (exit=1)"; else echo "cc_inline_asm_a64: FAIL (exit=$$rc, expected 1)"; exit 1; fi
 	@$(OUT)/cc_dbt_c_forms_exe; rc=$$?; if [ $$rc -eq 1 ]; then echo "cc_dbt_c_forms: ok (exit=1)"; else echo "cc_dbt_c_forms: FAIL (exit=$$rc, expected 1)"; exit 1; fi
+	@$(OUT)/cc_tail_call_exe; rc=$$?; if [ $$rc -eq 7 ]; then echo "cc_tail_call: ok (exit=7)"; else echo "cc_tail_call: FAIL (exit=$$rc, expected 7)"; exit 1; fi
+	@$(OUT)/cc_tail_call_hir_exe; rc=$$?; if [ $$rc -eq 7 ]; then echo "cc_tail_call (--hir): ok (exit=7)"; else echo "cc_tail_call (--hir): FAIL (exit=$$rc, expected 7)"; exit 1; fi
 	@out=$$($(OUT)/cc_string_exe 2>&1); rc=$$?; \
 		if [ "$$out" = "hi a64" ] && [ $$rc -eq 0 ]; then \
 			echo "cc_string:    ok (stdout=\"hi a64\", exit=0)"; \
