@@ -32,3 +32,10 @@ int t_fge_eq(float a, float b)     { return a >= b; }
 int t_branch_lt(float a, float b)  { if (a < b)  return 1; return 0; }
 int t_branch_eq(float a, float b)  { if (a == b) return 42; return 7; }
 int t_branch_le(float a, float b)  { if (a <= b) return 99; return 0; }
+
+/* Float ↔ int conversions — exercises HI_FCVT_ItoF / FtoI. */
+float t_i2f(int x)              { return (float)x; }
+float t_u2f(unsigned int x)     { return (float)x; }
+int   t_f2i(float x)            { return (int)x; }
+unsigned int t_f2u(float x)     { return (unsigned int)x; }
+float t_round_via_int(float x)  { return (float)((int)x); }   /* ItoF ∘ FtoI */

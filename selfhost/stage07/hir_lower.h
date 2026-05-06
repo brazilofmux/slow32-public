@@ -1161,9 +1161,10 @@ static int hl_expr(Node *n) {
         if (ty_is_float(n->ty) && !ty_is_fp(n->lhs->ty) && !ty_is_llong(n->lhs->ty)) {
             return hi_emit(HI_FCVT_ItoF, TY_FLOAT, lv, -1, 0, NULL);
         }
-        /* float → int */
+        /* float → int.  Pass through the destination type (n->ty) so the
+         * codegen can pick fcvtzs vs fcvtzu by inspecting TY_UNSIGNED. */
         if (!ty_is_fp(n->ty) && !ty_is_llong(n->ty) && ty_is_float(n->lhs->ty)) {
-            return hi_emit(HI_FCVT_FtoI, TY_INT, lv, -1, 0, NULL);
+            return hi_emit(HI_FCVT_FtoI, n->ty, lv, -1, 0, NULL);
         }
         /* int → double */
         if (ty_is_double(n->ty) && !ty_is_fp(n->lhs->ty) && !ty_is_llong(n->lhs->ty)) {

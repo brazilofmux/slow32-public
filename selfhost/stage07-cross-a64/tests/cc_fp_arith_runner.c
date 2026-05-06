@@ -26,6 +26,11 @@ extern int t_fge_eq(float, float);
 extern int t_branch_lt(float, float);
 extern int t_branch_eq(float, float);
 extern int t_branch_le(float, float);
+extern float t_i2f(int);
+extern float t_u2f(unsigned int);
+extern int   t_f2i(float);
+extern unsigned int t_f2u(float);
+extern float t_round_via_int(float);
 
 /* Compare floats by bit pattern (exact equality).  Avoids surprises
  * from compiler folding `==` against literal in different ways. */
@@ -69,5 +74,15 @@ int main(void) {
     if (t_branch_eq(1.5f, 2.5f)     != 7)        code |= 524288;
     if (t_branch_le(1.0f, 2.0f)     != 99)       code |= 1048576;
     if (t_branch_le(2.0f, 1.0f)     != 0)        code |= 1048576;
+    /* Session 5 — int ↔ float conversions */
+    if (!feq(t_i2f(7),                7.0f))     code |= 2097152;
+    if (!feq(t_i2f(-3),              -3.0f))     code |= 2097152;
+    if (!feq(t_u2f(0xFFFFFFFFu),     4294967296.0f))  code |= 4194304;  /* 2^32 */
+    if (t_f2i(7.5f)                  != 7)       code |= 8388608;       /* truncate */
+    if (t_f2i(-7.5f)                 != -7)      code |= 8388608;
+    if (t_f2u(7.5f)                  != 7u)      code |= 16777216;
+    if (t_f2u(2147483904.0f)         != 2147483904u) code |= 16777216;  /* fits unsigned, not signed */
+    if (!feq(t_round_via_int(3.9f),  3.0f))      code |= 33554432;
+    if (!feq(t_round_via_int(-3.9f), -3.0f))     code |= 33554432;
     return code;
 }

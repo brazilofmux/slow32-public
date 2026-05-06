@@ -2267,6 +2267,48 @@ static void hx_emit_inst(int idx) {
         return;
     }
 
+    /* ---------- Floating-point conversions ---------- */
+    if (k == HI_FCVT_ItoF) {
+        /* int → float.  src is X-class, dst is V-class.
+         * Slow32 ints are 32-bit so use W-form (sf=0).  Use S-form
+         * (type=0) since the lower only emits ItoF for TY_FLOAT
+         * destinations. */
+        int rs;
+        rs = hx_get_src(s1, HX_SCRATCH1);
+        if (h_ty[s1] & TY_UNSIGNED) a64_ucvtf(0, 0, dst, rs);
+        else                         a64_scvtf(0, 0, dst, rs);
+        hx_spill(idx, dst);
+        return;
+    }
+    if (k == HI_FCVT_FtoI) {
+        /* float → int (round toward zero).  src is V-class, dst is
+         * X-class.  Use W-form / S-form for the same reason as above. */
+        int rs;
+        rs = hx_get_src(s1, HX_SCRATCH_V1);
+        if (h_ty[idx] & TY_UNSIGNED) a64_fcvtzu(0, 0, dst, rs);
+        else                          a64_fcvtzs(0, 0, dst, rs);
+        hx_spill(idx, dst);
+        return;
+    }
+    if (k == HI_FCVT_FtoD) {
+        /* f32 → f64.  Both V-class.  Currently unreachable (the lower
+         * routes f32→f64 via __fp64_cvt_ftoD libcall) but wired for
+         * future when the f64-libcall path is replaced. */
+        int rs;
+        rs = hx_get_src(s1, HX_SCRATCH_V1);
+        a64_fcvt_d_s(dst, rs);
+        hx_spill(idx, dst);
+        return;
+    }
+    if (k == HI_FCVT_DtoF) {
+        /* f64 → f32.  Same caveat as FtoD. */
+        int rs;
+        rs = hx_get_src(s1, HX_SCRATCH_V1);
+        a64_fcvt_s_d(dst, rs);
+        hx_spill(idx, dst);
+        return;
+    }
+
     /* ---------- Floating-point comparisons ---------- */
     if (hx_is_fcmp_op(k)) {
         int rs1; int rs2; int is_d;
