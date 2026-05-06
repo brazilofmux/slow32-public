@@ -547,6 +547,9 @@ static int hl_expr(Node *n) {
             }
             lv = hl_expr(n->lhs);
             if (ty_is_double(n->lhs->ty)) {
+#ifdef S12CC_NATIVE_F64
+                return hi_emit(HI_FNEG, TY_DOUBLE, lv, -1, 0, NULL);
+#else
                 int d_hi;
                 int cb;
                 d_hi = hl_hi;
@@ -557,6 +560,7 @@ static int hl_expr(Node *n) {
                 h_cbase[lv] = cb;
                 hl_hi = hi_emit(HI_CALLHI, TY_INT, lv, -1, 0, NULL);
                 return lv;
+#endif
             }
             if (ty_is_float(n->lhs->ty))
                 return hi_emit(HI_FNEG, TY_FLOAT, lv, -1, 0, NULL);
@@ -1170,6 +1174,29 @@ static int hl_expr(Node *n) {
                 rv = hi_emit(HI_MUL, TY_INT, rv, scale, 0, NULL);
             }
         }
+        /* Float / double LHS: promote the rhs to the LHS's FP type and
+         * emit HI_F*.  hl_binop_kind below would return integer HI_ADD
+         * etc., which is wrong for FP destinations. */
+        if (ty_is_float(n->ty) || ty_is_double(n->ty)) {
+            int rhs_ty;
+            int fkind;
+            rhs_ty = n->rhs->ty;
+            if (ty_is_double(n->ty) && !ty_is_double(rhs_ty)) {
+                if (ty_is_float(rhs_ty))
+                    rv = hi_emit(HI_FCVT_FtoD, TY_DOUBLE, rv, -1, 0, NULL);
+                else
+                    rv = hi_emit(HI_FCVT_ItoF, TY_DOUBLE, rv, -1, 0, NULL);
+            } else if (ty_is_float(n->ty) && !ty_is_fp(rhs_ty)) {
+                rv = hi_emit(HI_FCVT_ItoF, TY_FLOAT, rv, -1, 0, NULL);
+            }
+            if (n->op == TK_PLUS)       fkind = HI_FADD;
+            else if (n->op == TK_MINUS) fkind = HI_FSUB;
+            else if (n->op == TK_STAR)  fkind = HI_FMUL;
+            else                         fkind = HI_FDIV;  /* TK_SLASH */
+            new_val = hi_emit(fkind, n->ty, old_val, rv, 0, NULL);
+            hi_emit(HI_STORE, n->ty, addr, new_val, 0, NULL);
+            return new_val;
+        }
         kind = hl_binop_kind(n->op, n->ty);
         new_val = hi_emit(kind, n->ty, old_val, rv, 0, NULL);
         hi_emit(HI_STORE, n->ty, addr, new_val, 0, NULL);
@@ -1180,6 +1207,22 @@ static int hl_expr(Node *n) {
     if (n->kind == ND_POST_INC || n->kind == ND_POST_DEC) {
         addr = hl_addr(n->lhs);
         old_val = hi_emit(HI_LOAD, n->ty, addr, -1, 0, NULL);
+        /* Float / double: scale is a 1.0 of the right FP type, op is
+         * HI_FADD / HI_FSUB. */
+        if (ty_is_float(n->ty) || ty_is_double(n->ty)) {
+            int one_int;
+            int one_fp;
+            int fkind;
+            one_int = hi_emit(HI_ICONST, TY_INT, -1, -1, 1, NULL);
+            if (ty_is_double(n->ty))
+                one_fp = hi_emit(HI_FCVT_ItoF, TY_DOUBLE, one_int, -1, 0, NULL);
+            else
+                one_fp = hi_emit(HI_FCVT_ItoF, TY_FLOAT, one_int, -1, 0, NULL);
+            fkind = (n->kind == ND_POST_INC) ? HI_FADD : HI_FSUB;
+            new_val = hi_emit(fkind, n->ty, old_val, one_fp, 0, NULL);
+            hi_emit(HI_STORE, n->ty, addr, new_val, 0, NULL);
+            return old_val;
+        }
         if (ty_is_ptr(n->ty)) {
             elem_sz = ty_size(ty_deref(n->ty));
         } else {

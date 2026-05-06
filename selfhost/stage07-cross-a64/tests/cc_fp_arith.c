@@ -93,3 +93,27 @@ double t_ddiv(double a, double b)  { return a / b; }
 double t_dcalc(double a, double b, double c) { return (a + b) * c - a; }
 int    t_dlt (double a, double b)  { return a < b; }
 int    t_deq (double a, double b)  { return a == b; }
+
+/* Native f64 unary neg + compound-assign + postfix inc/dec. */
+double t_dneg(double x)            { return -x; }
+double t_dcompadd(double a, double b) {  /* exercises ND_COMP_ASSIGN double */
+    a += b;
+    a *= 2.0;
+    return a;
+}
+double t_dpostinc(double x) {
+    double t = x;
+    t++;
+    return t;             /* x + 1.0 */
+}
+double t_dpostdec(double x) {
+    double t = x;
+    t--;
+    return t;             /* x - 1.0 */
+}
+double t_daccum(int n) {  /* sum 1.5 n times via s += 1.5 */
+    double s = 0.0;
+    int i;
+    for (i = 0; i < n; i++) s += 1.5;
+    return s;
+}

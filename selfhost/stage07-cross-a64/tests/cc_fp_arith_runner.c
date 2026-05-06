@@ -45,6 +45,11 @@ extern double t_ddiv(double, double);
 extern double t_dcalc(double, double, double);
 extern int    t_dlt(double, double);
 extern int    t_deq(double, double);
+extern double t_dneg(double);
+extern double t_dcompadd(double, double);
+extern double t_dpostinc(double);
+extern double t_dpostdec(double);
+extern double t_daccum(int);
 
 static int deq(double a, double b) { return a == b ? 1 : 0; }
 
@@ -141,5 +146,11 @@ int main(void) {
     if (t_dlt(2.0, 1.0) != 0) return 106;
     if (t_deq(1.5, 1.5) != 1) return 107;
     if (t_deq(1.5, 2.5) != 0) return 108;
+    /* Native f64 unary / postfix / comp-assign */
+    if (!deq(t_dneg(7.0),         -7.0))  return 109;
+    if (!deq(t_dcompadd(3.0, 4.0), 14.0)) return 110;  /* (3+4)*2 = 14 */
+    if (!deq(t_dpostinc(5.0),      6.0))  return 111;
+    if (!deq(t_dpostdec(5.0),      4.0))  return 112;
+    if (!deq(t_daccum(4),          6.0))  return 113;  /* 4 * 1.5 */
     return code;
 }
