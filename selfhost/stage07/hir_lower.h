@@ -94,6 +94,17 @@ static int hl_alloc_temp(void) {
     return 0 - hl_temp_stack;
 }
 
+/* Type to use for an HIR address expression (pointer arithmetic, alloca
+ * results, struct member offsets, etc.).  On 64-bit hosts this MUST be
+ * a wide type so the codegen emits 64-bit ADD/SPILL/RELOAD; otherwise
+ * the upper 32 bits of stack/heap addresses get dropped.  On 32-bit
+ * SLOW-32 native, TY_INT is the right width. */
+#ifdef S12CC_X64_HOST
+#define HL_ADDR_TY  (TY_PTR | TY_VOID)
+#else
+#define HL_ADDR_TY  TY_INT
+#endif
+
 static int hl_label_block(int label_id) {
     int i;
     i = 0;
@@ -279,18 +290,13 @@ static int hl_addr(Node *n) {
         return hl_expr(n->lhs);
     }
 
-    /* Member access: base address + offset.  Use addr_ty (8-byte ptr on
-     * a64) so the codegen treats the result as wide and doesn't spill it
-     * as a 32-bit int (would truncate the address). */
+    /* Member access: base address + offset.  Use HL_ADDR_TY (8-byte ptr
+     * on a64) so the codegen treats the result as wide and doesn't spill
+     * it as a 32-bit int (would truncate the address). */
     if (n->kind == ND_MEMBER) {
-#ifdef S12CC_X64_HOST
-        int addr_ty = TY_PTR | TY_VOID;
-#else
-        int addr_ty = TY_INT;
-#endif
         addr = hl_addr(n->lhs);
         if (n->val != 0) {
-            addr = hi_emit(HI_ADDI, addr_ty, addr, -1, n->val, NULL);
+            addr = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, n->val, NULL);
         }
         return addr;
     }
@@ -351,7 +357,7 @@ static int hl_expr(Node *n) {
             flo = hi_emit(HI_ICONST, TY_INT, -1, -1, n->val, NULL);
             fhi = hi_emit(HI_ICONST, TY_INT, -1, -1, n->val_hi, NULL);
             hi_emit(HI_STORE, TY_INT, tmp_alloca, flo, 0, NULL);
-            addr4 = hi_emit(HI_ADDI, TY_INT, tmp_alloca, -1, 4, NULL);
+            addr4 = hi_emit(HI_ADDI, HL_ADDR_TY, tmp_alloca, -1, 4, NULL);
             hi_emit(HI_STORE, TY_INT, addr4, fhi, 0, NULL);
             return hi_emit(HI_LOAD, TY_DOUBLE, tmp_alloca, -1, 0, NULL);
 #else
@@ -427,7 +433,7 @@ static int hl_expr(Node *n) {
 #endif
         if (ty_is_llong(n->ty) || ty_is_double(n->ty)) {
             lv = hi_emit(HI_LOAD, TY_INT, addr, -1, 0, NULL);
-            tmp = hi_emit(HI_ADDI, TY_INT, addr, -1, 4, NULL);
+            tmp = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, 4, NULL);
             hl_hi = hi_emit(HI_LOAD, TY_INT, tmp, -1, 0, NULL);
             return lv;
         }
@@ -445,26 +451,21 @@ static int hl_expr(Node *n) {
             int tmp;
             int sp;
             int dp;
-#ifdef S12CC_X64_HOST
-            int addr_ty = TY_PTR | TY_VOID;
-#else
-            int addr_ty = TY_INT;
-#endif
             sa = hl_expr(n->rhs);  /* address of source (works for vars, calls, members) */
             da = hl_addr(n->lhs);
             sz = ty_size(n->ty);
             off = 0;
             while (off + 4 <= sz) {
-                sp = hi_emit(HI_ADDI, addr_ty, sa, -1, off, NULL);
+                sp = hi_emit(HI_ADDI, HL_ADDR_TY, sa, -1, off, NULL);
                 tmp = hi_emit(HI_LOAD, TY_INT, sp, -1, 0, NULL);
-                dp = hi_emit(HI_ADDI, addr_ty, da, -1, off, NULL);
+                dp = hi_emit(HI_ADDI, HL_ADDR_TY, da, -1, off, NULL);
                 hi_emit(HI_STORE, TY_INT, dp, tmp, 0, NULL);
                 off = off + 4;
             }
             while (off < sz) {
-                sp = hi_emit(HI_ADDI, addr_ty, sa, -1, off, NULL);
+                sp = hi_emit(HI_ADDI, HL_ADDR_TY, sa, -1, off, NULL);
                 tmp = hi_emit(HI_LOAD, TY_CHAR, sp, -1, 0, NULL);
-                dp = hi_emit(HI_ADDI, addr_ty, da, -1, off, NULL);
+                dp = hi_emit(HI_ADDI, HL_ADDR_TY, da, -1, off, NULL);
                 hi_emit(HI_STORE, TY_CHAR, dp, tmp, 0, NULL);
                 off = off + 1;
             }
@@ -488,7 +489,7 @@ static int hl_expr(Node *n) {
             }
             addr = hl_addr(n->lhs);
             hi_emit(HI_STORE, TY_INT, addr, val, 0, NULL);
-            addr4 = hi_emit(HI_ADDI, TY_INT, addr, -1, 4, NULL);
+            addr4 = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, 4, NULL);
             hi_emit(HI_STORE, TY_INT, addr4, val_hi, 0, NULL);
             hl_hi = val_hi;
             return val;
@@ -519,7 +520,7 @@ static int hl_expr(Node *n) {
             }
             addr = hl_addr(n->lhs);
             hi_emit(HI_STORE, TY_INT, addr, val, 0, NULL);
-            addr4 = hi_emit(HI_ADDI, TY_INT, addr, -1, 4, NULL);
+            addr4 = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, 4, NULL);
             hi_emit(HI_STORE, TY_INT, addr4, val_hi, 0, NULL);
             hl_hi = val_hi;
             return val;
@@ -630,7 +631,7 @@ static int hl_expr(Node *n) {
             if (ty_is_double(n->ty) || ty_is_llong(n->ty)) {
                 int t2;
                 val = hi_emit(HI_LOAD, TY_INT, lv, -1, 0, NULL);
-                t2 = hi_emit(HI_ADDI, TY_INT, lv, -1, 4, NULL);
+                t2 = hi_emit(HI_ADDI, HL_ADDR_TY, lv, -1, 4, NULL);
                 hl_hi = hi_emit(HI_LOAD, TY_INT, t2, -1, 0, NULL);
                 return val;
             }
@@ -1435,7 +1436,7 @@ static int hl_expr(Node *n) {
 #endif
         if (ty_is_double(n->ty) || ty_is_llong(n->ty)) {
             lv = hi_emit(HI_LOAD, TY_INT, addr, -1, 0, NULL);
-            tmp = hi_emit(HI_ADDI, TY_INT, addr, -1, 4, NULL);
+            tmp = hi_emit(HI_ADDI, HL_ADDR_TY, addr, -1, 4, NULL);
             hl_hi = hi_emit(HI_LOAD, TY_INT, tmp, -1, 0, NULL);
             return lv;
         }
@@ -1568,15 +1569,10 @@ static int hl_expr(Node *n) {
             /* Struct return: allocate temp, pass address as hidden first arg */
             int tmp_alloca;
             int tmp_sz;
-#ifdef S12CC_X64_HOST
-            int addr_ty = TY_PTR | TY_VOID;
-#else
-            int addr_ty = TY_INT;
-#endif
             tmp_sz = ty_size(ret_ty);
             tmp_sz = ((tmp_sz + 3) / 4) * 4;
             hl_temp_stack = hl_temp_stack + tmp_sz;
-            tmp_alloca = hi_emit(HI_ALLOCA, addr_ty, -1, -1, 0 - hl_temp_stack, NULL);
+            tmp_alloca = hi_emit(HI_ALLOCA, HL_ADDR_TY, -1, -1, 0 - hl_temp_stack, NULL);
             /* Shift existing cargs right by 1 to make room for hidden first arg */
             i = h_ncarg;
             while (i > carg_base) {
@@ -1586,7 +1582,7 @@ static int hl_expr(Node *n) {
             h_carg[carg_base] = tmp_alloca;
             h_ncarg = h_ncarg + 1;
             phys_count = phys_count + 1;
-            i = hi_emit(HI_CALL, addr_ty, -1, -1, phys_count, n->name);
+            i = hi_emit(HI_CALL, HL_ADDR_TY, -1, -1, phys_count, n->name);
             h_cbase[i] = carg_base;
             return i;  /* returns the retptr (address of temp struct) */
         }
@@ -1708,26 +1704,21 @@ static void hl_stmt(Node *n) {
                 int tmp;
                 int src_off;
                 int dst_off;
-#ifdef S12CC_X64_HOST
-                int addr_ty = TY_PTR | TY_VOID;
-#else
-                int addr_ty = TY_INT;
-#endif
                 src_addr = hl_addr(n->lhs);
-                dst_addr = hi_emit(HI_LOAD, addr_ty, hl_retptr_alloca, -1, 0, NULL);
+                dst_addr = hi_emit(HI_LOAD, HL_ADDR_TY, hl_retptr_alloca, -1, 0, NULL);
                 copy_sz = hl_ret_size;
                 copy_i = 0;
                 while (copy_i + 4 <= copy_sz) {
-                    src_off = hi_emit(HI_ADDI, addr_ty, src_addr, -1, copy_i, NULL);
+                    src_off = hi_emit(HI_ADDI, HL_ADDR_TY, src_addr, -1, copy_i, NULL);
                     tmp = hi_emit(HI_LOAD, TY_INT, src_off, -1, 0, NULL);
-                    dst_off = hi_emit(HI_ADDI, addr_ty, dst_addr, -1, copy_i, NULL);
+                    dst_off = hi_emit(HI_ADDI, HL_ADDR_TY, dst_addr, -1, copy_i, NULL);
                     hi_emit(HI_STORE, TY_INT, dst_off, tmp, 0, NULL);
                     copy_i = copy_i + 4;
                 }
                 while (copy_i < copy_sz) {
-                    src_off = hi_emit(HI_ADDI, addr_ty, src_addr, -1, copy_i, NULL);
+                    src_off = hi_emit(HI_ADDI, HL_ADDR_TY, src_addr, -1, copy_i, NULL);
                     tmp = hi_emit(HI_LOAD, TY_CHAR, src_off, -1, 0, NULL);
-                    dst_off = hi_emit(HI_ADDI, addr_ty, dst_addr, -1, copy_i, NULL);
+                    dst_off = hi_emit(HI_ADDI, HL_ADDR_TY, dst_addr, -1, copy_i, NULL);
                     hi_emit(HI_STORE, TY_CHAR, dst_off, tmp, 0, NULL);
                     copy_i = copy_i + 1;
                 }
@@ -2040,14 +2031,9 @@ static void hl_func(Node *fn) {
          * to 32 bits and the high bits of the caller's stack address are
          * lost on the first store-through. */
         if (hl_struct_ret) {
-#ifdef S12CC_X64_HOST
-            int retptr_ty = TY_PTR | TY_VOID;
-#else
-            int retptr_ty = TY_INT;
-#endif
-            param_inst = hi_emit(HI_PARAM, retptr_ty, -1, -1, 0, NULL);
-            hl_retptr_alloca = hl_get_alloca(fn->offset, retptr_ty);
-            hi_emit(HI_STORE, retptr_ty, hl_retptr_alloca, param_inst, 0, NULL);
+            param_inst = hi_emit(HI_PARAM, HL_ADDR_TY, -1, -1, 0, NULL);
+            hl_retptr_alloca = hl_get_alloca(fn->offset, HL_ADDR_TY);
+            hi_emit(HI_STORE, HL_ADDR_TY, hl_retptr_alloca, param_inst, 0, NULL);
             phys_idx = 1;
         }
 
