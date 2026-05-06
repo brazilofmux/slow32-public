@@ -12,9 +12,16 @@ char *memcpy(char *dst, char *src, int n);
 static char **saved_envp;
 char **environ;     /* POSIX global; set in lockstep with saved_envp */
 
+void file_sys_init(void);
+
 void __save_envp(char **envp) {
     saved_envp = envp;
     environ = envp;
+    /* Initialise stdio FILEs eagerly so that fprintf(stderr, ...) — which
+     * binds the parameter before its body's lazy init — sees a non-NULL
+     * stderr on the very first call. dbt's usage()/error paths hit this
+     * before any printf would have triggered the lazy path. */
+    file_sys_init();
 }
 
 char *getenv(char *name) {
