@@ -99,6 +99,8 @@ static int hx_off_base[HIR_MAX_INST];    /* base inst, -1 if not folded */
 static int hx_off_disp[HIR_MAX_INST];    /* byte displacement */
 static int hx_off_use[HIR_MAX_INST];     /* post-fusion use count */
 static int hx_off_fold_use[HIR_MAX_INST];/* candidate folded LOAD/STORE uses */
+static int hx_pre_off_base[HIR_MAX_INST];/* pre-RA single-use fold base */
+static int hx_pre_off_disp[HIR_MAX_INST];/* pre-RA single-use fold disp */
 
 /* Tail-call elimination: hx_tce_call[c]==1 marks an HI_CALL that is the
  * last meaningful instruction in its block before HI_RET; emit `b target`
@@ -169,13 +171,42 @@ static void hx_mat_iconst(int dst_reg, int val, int wide) {
     a64_mov_w_imm(dst_reg, val);
 }
 
+static int hx_emit_add_delta(int dst_reg, int src_reg, long long delta, int wide) {
+    long long mag;
+    if (delta >= 0) {
+        if (delta <= 4095) {
+            if (wide) a64_add_x_imm(dst_reg, src_reg, (int)delta);
+            else      a64_add_w_imm(dst_reg, src_reg, (int)delta);
+            return 1;
+        }
+        if ((delta & 4095) == 0 && delta <= (4095LL << 12)) {
+            if (wide) a64_add_x_imm_lsl12(dst_reg, src_reg, (int)(delta >> 12));
+            else      a64_add_w_imm_lsl12(dst_reg, src_reg, (int)(delta >> 12));
+            return 1;
+        }
+        return 0;
+    }
+
+    mag = 0 - delta;
+    if (mag <= 4095) {
+        if (wide) a64_sub_x_imm(dst_reg, src_reg, (int)mag);
+        else      a64_sub_w_imm(dst_reg, src_reg, (int)mag);
+        return 1;
+    }
+    if ((mag & 4095) == 0 && mag <= (4095LL << 12)) {
+        if (wide) a64_sub_x_imm_lsl12(dst_reg, src_reg, (int)(mag >> 12));
+        else      a64_sub_w_imm_lsl12(dst_reg, src_reg, (int)(mag >> 12));
+        return 1;
+    }
+    return 0;
+}
+
 /* Compute a frame address (FP + offset) into dst_reg.
  * `frontend_off` is in slow32 4-byte units; cg_a64_offset doubles it. */
 static void hx_emit_frame_addr(int dst_reg, int frontend_off) {
     int off;
     off = cg_a64_offset(frontend_off);
-    if (off >= 0 && off <= 4095) { a64_add_x_imm(dst_reg, A64_X29, off); return; }
-    if (off < 0 && -off <= 4095) { a64_sub_x_imm(dst_reg, A64_X29, -off); return; }
+    if (hx_emit_add_delta(dst_reg, A64_X29, off, 1)) return;
     if (off > 0) {
         a64_add_x_imm(dst_reg, A64_X29, off & 0xFFF);
         a64_add_x_imm_lsl12(dst_reg, dst_reg, (off >> 12) & 0xFFF);
@@ -191,8 +222,7 @@ static void hx_emit_frame_addr(int dst_reg, int frontend_off) {
 
 /* Same, but the offset is already a byte offset (no doubling). */
 static void hx_emit_frame_addr_bytes(int dst_reg, int off) {
-    if (off >= 0 && off <= 4095) { a64_add_x_imm(dst_reg, A64_X29, off); return; }
-    if (off < 0 && -off <= 4095) { a64_sub_x_imm(dst_reg, A64_X29, -off); return; }
+    if (hx_emit_add_delta(dst_reg, A64_X29, off, 1)) return;
     if (off > 0) {
         a64_add_x_imm(dst_reg, A64_X29, off & 0xFFF);
         a64_add_x_imm_lsl12(dst_reg, dst_reg, (off >> 12) & 0xFFF);
@@ -528,6 +558,104 @@ static void hx_fp_store_at(int src_v, int addr_reg, int byte_off, int is_double)
     else           a64_str_s_imm(src_v, HX_SCRATCH2, 0);
 }
 
+static int hx_access_size_for_ty(int ty) {
+    if (ty_is_double(ty)) return 8;
+    if (hx_is_wide(ty)) return 8;
+    if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) return 1;
+    if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) return 2;
+    return 4;
+}
+
+static int hx_offset_fold_encodable(int disp, int access_size) {
+    int max_disp;
+    int aligned;
+
+    max_disp = access_size * 4095;
+    aligned = ((disp & (access_size - 1)) == 0);
+    if (disp >= 0 && disp <= max_disp && aligned) return 1;
+    if (disp >= -256 && disp <= 255) return 1;
+    return 0;
+}
+
+static void hx_int_load_at(int dst_reg, int addr_reg, int byte_off, int ty) {
+    if (byte_off >= 0 && hx_offset_fold_encodable(byte_off, hx_access_size_for_ty(ty))
+        && ((byte_off & (hx_access_size_for_ty(ty) - 1)) == 0)) {
+        if (hx_is_wide(ty)) a64_ldr_x_imm(dst_reg, addr_reg, byte_off);
+        else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
+            if (ty & TY_UNSIGNED) a64_ldrb_imm(dst_reg, addr_reg, byte_off);
+            else                  a64_ldrsb_w_imm(dst_reg, addr_reg, byte_off);
+        } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+            if (ty & TY_UNSIGNED) a64_ldrh_imm(dst_reg, addr_reg, byte_off);
+            else                  a64_ldrsh_w_imm(dst_reg, addr_reg, byte_off);
+        } else {
+            a64_ldr_w_imm(dst_reg, addr_reg, byte_off);
+        }
+        return;
+    }
+    if (byte_off >= -256 && byte_off <= 255) {
+        if (hx_is_wide(ty)) a64_ldur_x_imm(dst_reg, addr_reg, byte_off);
+        else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
+            if (ty & TY_UNSIGNED) a64_ldurb_imm(dst_reg, addr_reg, byte_off);
+            else                  a64_ldursb_w_imm(dst_reg, addr_reg, byte_off);
+        } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+            if (ty & TY_UNSIGNED) a64_ldurh_imm(dst_reg, addr_reg, byte_off);
+            else                  a64_ldursh_w_imm(dst_reg, addr_reg, byte_off);
+        } else {
+            a64_ldur_w_imm(dst_reg, addr_reg, byte_off);
+        }
+        return;
+    }
+    if (!hx_emit_add_delta(HX_SCRATCH2, addr_reg, byte_off, 1)) {
+        hx_mat_iconst(HX_SCRATCH2, byte_off, 1);
+        a64_add_x(HX_SCRATCH2, addr_reg, HX_SCRATCH2);
+    }
+    if (hx_is_wide(ty)) a64_ldr_x_imm(dst_reg, HX_SCRATCH2, 0);
+    else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR) {
+        if (ty & TY_UNSIGNED) a64_ldrb_imm(dst_reg, HX_SCRATCH2, 0);
+        else                  a64_ldrsb_w_imm(dst_reg, HX_SCRATCH2, 0);
+    } else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) {
+        if (ty & TY_UNSIGNED) a64_ldrh_imm(dst_reg, HX_SCRATCH2, 0);
+        else                  a64_ldrsh_w_imm(dst_reg, HX_SCRATCH2, 0);
+    } else {
+        a64_ldr_w_imm(dst_reg, HX_SCRATCH2, 0);
+    }
+}
+
+static void hx_int_store_at(int src_reg, int addr_reg, int byte_off, int ty) {
+    if (byte_off >= 0 && hx_offset_fold_encodable(byte_off, hx_access_size_for_ty(ty))
+        && ((byte_off & (hx_access_size_for_ty(ty) - 1)) == 0)) {
+        if (hx_is_wide(ty)) a64_str_x_imm(src_reg, addr_reg, byte_off);
+        else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR)
+            a64_strb_imm(src_reg, addr_reg, byte_off);
+        else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT)
+            a64_strh_imm(src_reg, addr_reg, byte_off);
+        else
+            a64_str_w_imm(src_reg, addr_reg, byte_off);
+        return;
+    }
+    if (byte_off >= -256 && byte_off <= 255) {
+        if (hx_is_wide(ty)) a64_stur_x_imm(src_reg, addr_reg, byte_off);
+        else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR)
+            a64_sturb_imm(src_reg, addr_reg, byte_off);
+        else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT)
+            a64_sturh_imm(src_reg, addr_reg, byte_off);
+        else
+            a64_stur_w_imm(src_reg, addr_reg, byte_off);
+        return;
+    }
+    if (!hx_emit_add_delta(HX_SCRATCH1, addr_reg, byte_off, 1)) {
+        hx_mat_iconst(HX_SCRATCH1, byte_off, 1);
+        a64_add_x(HX_SCRATCH1, addr_reg, HX_SCRATCH1);
+    }
+    if (hx_is_wide(ty)) a64_str_x_imm(src_reg, HX_SCRATCH1, 0);
+    else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR)
+        a64_strb_imm(src_reg, HX_SCRATCH1, 0);
+    else if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT)
+        a64_strh_imm(src_reg, HX_SCRATCH1, 0);
+    else
+        a64_str_w_imm(src_reg, HX_SCRATCH1, 0);
+}
+
 /* FP variants of the frame load/store helpers.  Mirrors the X-form ones:
  * try scaled-imm12 form first, then unscaled imm9, then materialised
  * scratch address.  is_double picks D-form (8-byte) vs S-form (4-byte). */
@@ -629,6 +757,35 @@ static void hx_bcond_to_block(int cond, int blk) {
     a64_b_cond(cond, 0);
 }
 
+static void hx_cbz_to_block(int reg, int blk) {
+    if (hx_blk_off[blk] >= 0) {
+        a64_cbz_w(reg, hx_blk_off[blk] - a64_off);
+        return;
+    }
+    hx_bpatch_blk[hx_nbpatch] = blk;
+    hx_bpatch_off[hx_nbpatch] = a64_off;
+    hx_nbpatch = hx_nbpatch + 1;
+    a64_cbz_w(reg, 0);
+}
+
+static int hx_edge_has_phi(int from_blk, int to_blk) {
+    int p;
+    int j;
+
+    p = ssa_phi_head[to_blk];
+    while (p >= 0) {
+        if (h_kind[p] != HI_NOP) {
+            j = 0;
+            while (j < h_pcnt[p]) {
+                if (h_pblk[h_pbase[p] + j] == from_blk) return 1;
+                j = j + 1;
+            }
+        }
+        p = ssa_phi_next[p];
+    }
+    return 0;
+}
+
 /* ----------------------------------------------------------------------
  * Indexed-addressing fold pass.
  *
@@ -653,13 +810,7 @@ static int hx_load_store_size(int idx) {
     k = h_kind[idx];
     if (k != HI_LOAD && k != HI_STORE) return -1;
     ty = h_ty[idx];
-    if (hx_is_wide(ty)) return 8;
-    /* CHAR / SHORT loads use ldrb / ldrh, not the W-register-indexed
-     * form here.  We restrict the fold to W-sized (4-byte) and X-sized
-     * (8-byte) accesses for now. */
-    if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_CHAR)  return -1;
-    if (!ty_is_ptr(ty) && (ty & TY_BASE_MASK) == TY_SHORT) return -1;
-    return 4;
+    return hx_access_size_for_ty(ty);
 }
 
 static void hx_count_post_fusion_uses(void) {
@@ -748,6 +899,61 @@ static int hx_addi_base_safe_at_use(int add_inst, int base_inst, int use_inst) {
     return base_reg == add_reg;
 }
 
+static void hx_fold_single_use_addi_addr_pre_ra(void) {
+    int i;
+
+    i = 0;
+    while (i < h_ninst) {
+        hx_pre_off_base[i] = -1;
+        hx_pre_off_disp[i] = 0;
+        i = i + 1;
+    }
+
+    hx_count_post_fusion_uses();
+
+    i = 0;
+    while (i < h_ninst) {
+        int access_size;
+        int addr_inst;
+        int base_inst;
+        int disp;
+        int pat;
+        int lnt;
+
+        access_size = hx_load_store_size(i);
+        if (access_size < 0) { i = i + 1; continue; }
+
+        addr_inst = h_src1[i];
+        if (addr_inst < 0 || h_kind[addr_inst] != HI_ADDI) {
+            i = i + 1; continue;
+        }
+        if (hx_off_use[addr_inst] != 1) { i = i + 1; continue; }
+        if (h_blk[addr_inst] != h_blk[i]) { i = i + 1; continue; }
+        if (bg_fold[addr_inst]) { i = i + 1; continue; }
+
+        pat = bg_sel[i];
+        lnt = (pat >= 0) ? bg_plnt[pat] : -1;
+        if (lnt == BG_MEM || lnt == BG_SADDR) { i = i + 1; continue; }
+
+        base_inst = h_src1[addr_inst];
+        disp = h_val[addr_inst];
+        if (base_inst < 0 || h_kind[base_inst] == HI_NOP) {
+            i = i + 1; continue;
+        }
+        if (!hx_offset_fold_encodable(disp, access_size)) {
+            i = i + 1; continue;
+        }
+
+        hx_pre_off_base[i] = base_inst;
+        hx_pre_off_disp[i] = disp;
+        h_src1[i] = base_inst;
+        bg_fold[addr_inst] = 1;
+        h_kind[addr_inst] = HI_NOP;
+
+        i = i + 1;
+    }
+}
+
 static void hx_fold_indexed_addr(void) {
     int i;
     int access_size; int wanted_shift;
@@ -760,7 +966,8 @@ static void hx_fold_indexed_addr(void) {
     i = 0;
     while (i < h_ninst) {
         hx_ridx_base[i] = -1;
-        hx_off_base[i]  = -1;
+        hx_off_base[i]  = hx_pre_off_base[i];
+        hx_off_disp[i]  = hx_pre_off_disp[i];
         hx_off_fold_use[i] = 0;
         i = i + 1;
     }
@@ -771,6 +978,7 @@ static void hx_fold_indexed_addr(void) {
     while (i < h_ninst) {
         access_size = hx_load_store_size(i);
         if (access_size < 0) { i = i + 1; continue; }
+        if (hx_off_base[i] >= 0) { i = i + 1; continue; }
 
         /* HI_LOAD's address is src1; HI_STORE's address is src1 too
          * (value being stored is src2). */
@@ -794,18 +1002,7 @@ static void hx_fold_indexed_addr(void) {
                 /* For STORE, val also needs a real reg (we only have
                  * 2 scratches; base may need one). */
                 (v_inst < 0 || ra_reg[v_inst] >= 0)) {
-                /* Encode-range check: positive scaled offset only.
-                 * Scaled by access size, 12-bit unsigned imm. */
-                int max_disp;
-                int aligned;
-                if (access_size == 4) {
-                    max_disp = 4 * 4095;
-                    aligned  = ((disp & 3) == 0);
-                } else /* access_size == 8 */ {
-                    max_disp = 8 * 4095;
-                    aligned  = ((disp & 7) == 0);
-                }
-                if (disp >= 0 && disp <= max_disp && aligned) {
+                if (hx_offset_fold_encodable(disp, access_size)) {
                     hx_off_base[i] = base_a;
                     hx_off_disp[i] = disp;
                     hx_off_fold_use[add_inst] = hx_off_fold_use[add_inst] + 1;
@@ -821,6 +1018,7 @@ static void hx_fold_indexed_addr(void) {
         /* No FP register-indexed encoders yet (a64_ldr_s/d_reg_lsl).
          * Skip the fold for V-class load/store; offset-displacement
          * fold (Pattern A above) still applies and uses ldr s/d imm. */
+        if (access_size < 4) { i = i + 1; continue; }
         if (ty_is_fp(h_ty[i])) { i = i + 1; continue; }
 
         /* Try right arm: ADD(base, SLL(idx, k)). */
@@ -885,7 +1083,7 @@ static void hx_fold_indexed_addr(void) {
      * and also filters out folded-looking sites that were only candidates. */
     i = 0;
     while (i < h_ninst) {
-        if (hx_off_base[i] >= 0) {
+        if (hx_off_base[i] >= 0 && hx_pre_off_base[i] < 0) {
             add_inst = h_src1[i];
             if (add_inst < 0 || h_kind[add_inst] != HI_ADDI ||
                 hx_off_fold_use[add_inst] != hx_off_use[add_inst]) {
@@ -1575,6 +1773,26 @@ static void hx_identify_tce(Node *fn) {
     }
 }
 
+static void hx_cleanup_redundant_moves(void) {
+    int i;
+
+    i = 0;
+    while (i < h_ninst) {
+        int k;
+        int s;
+        k = h_kind[i];
+        if ((k == HI_COPY || (k == HI_ADDI && h_val[i] == 0)) &&
+            ra_spill_off[i] == 0) {
+            s = h_src1[i];
+            if (s >= 0 && ra_reg[i] >= 0 && ra_reg[s] >= 0 &&
+                hx_slot_reg(ra_reg[i]) == hx_slot_reg(ra_reg[s])) {
+                h_kind[i] = HI_NOP;
+            }
+        }
+        i = i + 1;
+    }
+}
+
 /* ============================================================================
  * LDP/STP partner search — find a same-base, adjacent-disp HI_LOAD/HI_STORE
  * later in the current block that can fuse with idx into a single LDP/STP.
@@ -1584,11 +1802,10 @@ static void hx_identify_tce(Node *fn) {
  * (hx_off_base[idx] >= 0, integer type).
  *
  * Safety:
- *   - Aliasing: stop at any HI_STORE / HI_CALL / HI_CALLP between us
+ *   - Aliasing: stop at any HI_STORE / HI_CALL / HI_CALLP / DBT
+ *     trampoline between loads.  For stores, stop at any intervening
+ *     memory op or call unless it is the actual partner.
  *     (memory side-effects could be observed differently after fusion).
- *     For LDP we additionally stop at HI_LOAD with a *different* base,
- *     since a same-base later HI_LOAD before any side-effect inst is
- *     what we want.
  *   - LDP architectural: rt1 != rt2; rt1/rt2 != base register
  *     (CONSTRAINED UNPREDICTABLE otherwise).
  *   - Color clobber: the partner's destination color must not be live
@@ -1598,6 +1815,21 @@ static void hx_identify_tce(Node *fn) {
  *     X: ±512/±504 step 8).
  *   - Partner must also be on the offset-disp-fold path, same width,
  *     same base instruction, integer type. */
+static int hx_pair_mem_barrier(int kind) {
+    return kind == HI_CALL || kind == HI_CALLP || kind == HI_A64_DBT_TRAMPOLINE;
+}
+
+static int hx_pairable_int_offset_mem(int idx, int kind, int wide) {
+    int access_size;
+
+    if (idx < 0 || h_kind[idx] != kind) return 0;
+    if (hx_off_base[idx] < 0) return 0;
+    if (ty_is_fp(h_ty[idx])) return 0;
+    access_size = hx_access_size_for_ty(h_ty[idx]);
+    if (access_size != (wide ? 8 : 4)) return 0;
+    return 1;
+}
+
 static int hx_load_pair_safe(int idx, int j, int wide) {
     int color_b;
     int color_a;
@@ -1656,11 +1888,9 @@ static int hx_find_load_partner(int idx, int wide) {
         if (kj == HI_NOP || kj == HI_PHI) { j = j + 1; continue; }
         /* Aliasing barriers: a store / call between us could be observed
          * (or could clobber state we read).  Stop. */
-        if (kj == HI_STORE || kj == HI_CALL || kj == HI_CALLP) return -1;
-        if (kj == HI_LOAD && !ty_is_fp(h_ty[j])
-                && hx_off_base[j] == base_inst
-                && hx_off_base[j] >= 0
-                && hx_is_wide(h_ty[j]) == wide) {
+        if (kj == HI_STORE || hx_pair_mem_barrier(kj)) return -1;
+        if (hx_pairable_int_offset_mem(j, HI_LOAD, wide)
+                && hx_off_base[j] == base_inst) {
             int diff;
             diff = hx_off_disp[j] - hx_off_disp[idx];
             if (diff == step || diff == -step) {
@@ -1743,16 +1973,17 @@ static int hx_find_store_partner(int idx, int wide) {
         int kj;
         kj = h_kind[j];
         if (kj == HI_NOP || kj == HI_PHI) { j = j + 1; continue; }
-        if (kj == HI_LOAD || kj == HI_CALL || kj == HI_CALLP) return -1;
-        if (kj == HI_STORE && !ty_is_fp(h_ty[j])
-                && hx_off_base[j] == base_inst
-                && hx_off_base[j] >= 0
-                && hx_is_wide(h_ty[j]) == wide) {
+        if (kj == HI_LOAD || hx_pair_mem_barrier(kj)) return -1;
+        if (kj == HI_STORE) {
             int diff;
-            diff = hx_off_disp[j] - hx_off_disp[idx];
-            if (diff == step || diff == -step) {
-                if (hx_store_pair_safe(idx, j, wide)) return j;
+            if (hx_pairable_int_offset_mem(j, HI_STORE, wide)
+                    && hx_off_base[j] == base_inst) {
+                diff = hx_off_disp[j] - hx_off_disp[idx];
+                if (diff == step || diff == -step) {
+                    if (hx_store_pair_safe(idx, j, wide)) return j;
+                }
             }
+            return -1;
         }
         j = j + 1;
     }
@@ -1893,10 +2124,12 @@ static void hx_emit_inst(int idx) {
         if (hx_off_base[idx] >= 0) {
             int base_r;
             int wide_a;
+            int pairable;
             int partner;
             wide_a = hx_is_wide(ty);
+            pairable = !ty_is_fp(ty) && hx_access_size_for_ty(ty) >= 4;
             base_r = hx_get_src(hx_off_base[idx], HX_SCRATCH1);
-            partner = hx_find_load_partner(idx, wide_a);
+            partner = pairable ? hx_find_load_partner(idx, wide_a) : -1;
             if (partner >= 0) {
                 int part_dst;
                 int diff;
@@ -1918,8 +2151,8 @@ static void hx_emit_inst(int idx) {
                 hx_skip_emit[partner] = 1;
                 return;
             }
-            if (wide_a) a64_ldr_x_imm(dst, base_r, hx_off_disp[idx]);
-            else        a64_ldr_w_imm(dst, base_r, hx_off_disp[idx]);
+            if (ty_is_fp(ty)) hx_fp_load_at(dst, base_r, hx_off_disp[idx], ty_is_double(ty));
+            else              hx_int_load_at(dst, base_r, hx_off_disp[idx], ty);
             hx_spill(idx, dst);
             return;
         }
@@ -2091,11 +2324,13 @@ static void hx_emit_inst(int idx) {
         if (hx_off_base[idx] >= 0) {
             int base_r; int v_r;
             int wide_a;
+            int pairable;
             int partner;
             wide_a = hx_is_wide(ty);
+            pairable = !ty_is_fp(ty) && hx_access_size_for_ty(ty) >= 4;
             base_r = hx_get_src(hx_off_base[idx], HX_SCRATCH1);
             v_r    = hx_get_src(s2, HX_SCRATCH2);
-            partner = hx_find_store_partner(idx, wide_a);
+            partner = pairable ? hx_find_store_partner(idx, wide_a) : -1;
             if (partner >= 0) {
                 int part_v;
                 int diff;
@@ -2117,8 +2352,8 @@ static void hx_emit_inst(int idx) {
                 hx_skip_emit[partner] = 1;
                 return;
             }
-            if (wide_a) a64_str_x_imm(v_r, base_r, hx_off_disp[idx]);
-            else        a64_str_w_imm(v_r, base_r, hx_off_disp[idx]);
+            if (ty_is_fp(ty)) hx_fp_store_at(v_r, base_r, hx_off_disp[idx], ty_is_double(ty));
+            else              hx_int_store_at(v_r, base_r, hx_off_disp[idx], ty);
             return;
         }
 
@@ -2211,17 +2446,9 @@ static void hx_emit_inst(int idx) {
             if (hx_peek_iconst(s2, &v_, &llv)) {
                 r1 = hx_get_src(s1, HX_SCRATCH1);
                 if (k == HI_ADD) {
-                    if (llv >= 0 && llv <= 4095) {
-                        a64_add_x_imm(dst, r1, (int)llv); ok = 1;
-                    } else if (llv < 0 && llv >= -4095) {
-                        a64_sub_x_imm(dst, r1, (int)-llv); ok = 1;
-                    }
+                    ok = hx_emit_add_delta(dst, r1, llv, 1);
                 } else if (k == HI_SUB) {
-                    if (llv >= 0 && llv <= 4095) {
-                        a64_sub_x_imm(dst, r1, (int)llv); ok = 1;
-                    } else if (llv < 0 && llv >= -4095) {
-                        a64_add_x_imm(dst, r1, (int)-llv); ok = 1;
-                    }
+                    ok = hx_emit_add_delta(dst, r1, 0 - llv, 1);
                 } else if (k == HI_AND) ok = a64_and_x_imm(dst, r1, llv);
                 else if   (k == HI_OR ) ok = a64_orr_x_imm(dst, r1, llv);
                 else                    ok = a64_eor_x_imm(dst, r1, llv);
@@ -2232,11 +2459,7 @@ static void hx_emit_inst(int idx) {
             if (!ok && k != HI_SUB && hx_peek_iconst(s1, &v_, &llv)) {
                 r1 = hx_get_src(s2, HX_SCRATCH1);
                 if (k == HI_ADD) {
-                    if (llv >= 0 && llv <= 4095) {
-                        a64_add_x_imm(dst, r1, (int)llv); ok = 1;
-                    } else if (llv < 0 && llv >= -4095) {
-                        a64_sub_x_imm(dst, r1, (int)-llv); ok = 1;
-                    }
+                    ok = hx_emit_add_delta(dst, r1, llv, 1);
                 }
                 else if (k == HI_AND) ok = a64_and_x_imm(dst, r1, llv);
                 else if (k == HI_OR ) ok = a64_orr_x_imm(dst, r1, llv);
@@ -2257,26 +2480,12 @@ static void hx_emit_inst(int idx) {
 
             if (k == HI_ADD) {
                 r1 = hx_get_src(s1, HX_SCRATCH1);
-                if (v >= 0 && v <= 4095) {
-                    if (wide) a64_add_x_imm(dst, r1, v);
-                    else      a64_add_w_imm(dst, r1, v);
-                    hx_spill(idx, dst); return;
-                }
-                if (v < 0 && v >= -4095) {
-                    if (wide) a64_sub_x_imm(dst, r1, -v);
-                    else      a64_sub_w_imm(dst, r1, -v);
+                if (hx_emit_add_delta(dst, r1, v, wide)) {
                     hx_spill(idx, dst); return;
                 }
             } else if (k == HI_SUB) {
                 r1 = hx_get_src(s1, HX_SCRATCH1);
-                if (v >= 0 && v <= 4095) {
-                    if (wide) a64_sub_x_imm(dst, r1, v);
-                    else      a64_sub_w_imm(dst, r1, v);
-                    hx_spill(idx, dst); return;
-                }
-                if (v < 0 && v >= -4095) {
-                    if (wide) a64_add_x_imm(dst, r1, -v);
-                    else      a64_add_w_imm(dst, r1, -v);
+                if (hx_emit_add_delta(dst, r1, 0 - (long long)v, wide)) {
                     hx_spill(idx, dst); return;
                 }
             } else if (k == HI_SLL && v >= 0 && v <= max_shift) {
@@ -2324,16 +2533,8 @@ static void hx_emit_inst(int idx) {
             int v;
             v = h_val[s1];
             if (k == HI_ADD) {
-                if (v >= 0 && v <= 4095) {
-                    r1 = hx_get_src(s2, HX_SCRATCH1);
-                    if (wide) a64_add_x_imm(dst, r1, v);
-                    else      a64_add_w_imm(dst, r1, v);
-                    hx_spill(idx, dst); return;
-                }
-                if (v < 0 && v >= -4095) {
-                    r1 = hx_get_src(s2, HX_SCRATCH1);
-                    if (wide) a64_sub_x_imm(dst, r1, -v);
-                    else      a64_sub_w_imm(dst, r1, -v);
+                r1 = hx_get_src(s2, HX_SCRATCH1);
+                if (hx_emit_add_delta(dst, r1, v, wide)) {
                     hx_spill(idx, dst); return;
                 }
             } else if (k == HI_AND) {
@@ -2517,11 +2718,7 @@ static void hx_emit_inst(int idx) {
         int v;
         v = h_val[idx];
         r1 = hx_get_src(s1, HX_SCRATCH1);
-        if (v >= 0 && v <= 4095) {
-            a64_add_x_imm(dst, r1, v);
-        } else if (v < 0 && -v <= 4095) {
-            a64_sub_x_imm(dst, r1, -v);
-        } else {
+        if (!hx_emit_add_delta(dst, r1, v, 1)) {
             /* Large constant: materialise into scratch then ADD. */
             hx_mat_iconst(HX_SCRATCH2, v, 1);
             a64_add_x(dst, r1, HX_SCRATCH2);
@@ -2578,11 +2775,13 @@ static void hx_emit_inst(int idx) {
         int cmp_idx;
         int site;
         int word; int diff; int kept; int imm19;
+        int direct_notaken;
 
         taken    = s2;
         notaken  = h_val[idx];
         cmp_idx  = hx_brc_fuse[idx];
         site     = a64_off;
+        direct_notaken = (taken == hx_next_blk && !hx_edge_has_phi(h_blk[idx], notaken));
 
         if (cmp_idx >= 0) {
             /* Fused: emit (F)CMP on the original comparison's operands,
@@ -2628,12 +2827,22 @@ static void hx_emit_inst(int idx) {
                 }
                 inv_cc = hx_cmp_inv_cond(ck);
             }
+            if (direct_notaken) {
+                hx_bcond_to_block(inv_cc, notaken);
+                hx_phi_copies(h_blk[idx], taken);
+                return;
+            }
             site = a64_off;
             a64_b_cond(inv_cc, 0);   /* placeholder */
         } else {
             /* Unfused: cond materialised as 0/1 — CBZ to not-taken on 0. */
             int cond_reg;
             cond_reg = hx_get_src(s1, HX_SCRATCH1);
+            if (direct_notaken) {
+                hx_cbz_to_block(cond_reg, notaken);
+                hx_phi_copies(h_blk[idx], taken);
+                return;
+            }
             site = a64_off;
             a64_cbz_w(cond_reg, 0);  /* placeholder */
         }
@@ -2673,6 +2882,12 @@ static void hx_emit_inst(int idx) {
             } else {
                 hx_mat(s1, ret_reg);
             }
+        }
+        /* In no-frame leaves the epilogue is just RET.  The final block can
+         * fall through to it; earlier return blocks can return directly. */
+        if (hx_no_frame) {
+            if (hx_next_blk != -1) a64_ret();
+            return;
         }
         /* Branch to epilogue.  Use bpatch with blk = -1. */
         hx_bpatch_blk[hx_nbpatch] = -1;
@@ -3036,6 +3251,11 @@ static void hx_gen_func(Node *fn) {
      * potentially swaps src1/src2) so regalloc sees the post-fold form. */
     hx_identify_bic_peephole();
 
+    /* Single-use ADDI address folds can be committed before regalloc:
+     * rewrite the memory op to read the original base so liveness and
+     * coloring never see the dead address temporary. */
+    hx_fold_single_use_addi_addr_pre_ra();
+
     /* Run regalloc.  This sets ra_reg[], ra_spill_off[], and writes
      * the callee-saved set into ra_csave_*. */
     hir_regalloc();
@@ -3051,6 +3271,7 @@ static void hx_gen_func(Node *fn) {
      * on regalloc but we keep it next to the consumers). */
     hx_identify_tce(fn);
 
+    hx_cleanup_redundant_moves();
 
     /* Frame layout
      * ------------
