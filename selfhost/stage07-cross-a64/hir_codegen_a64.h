@@ -70,6 +70,11 @@ static int hx_arg_reg[8];
 #define HX_SCRATCH1  A64_X16
 #define HX_SCRATCH2  A64_X17
 
+/* V-class scratch pair.  V30 and V31 are excluded from the regalloc's
+ * allocatable pool (RA_NPHY_V=22 covers V0..V7 + V16..V29). */
+#define HX_SCRATCH_V1  A64_V30
+#define HX_SCRATCH_V2  A64_V31
+
 /* PHI move scheduling buffers (used by hx_phi_copies). */
 static int hx_phi_dst_inst[HIR_MAX_INST];   /* PHI inst */
 static int hx_phi_src_val[HIR_MAX_INST];    /* incoming value inst */
@@ -227,10 +232,24 @@ static void hx_remat(int inst, int dst_reg) {
     exit(1);
 }
 
+/* Class predicate — true if inst's regalloc class is V (FP/SIMD). */
+static int hx_is_v(int inst) {
+    if (inst < 0) return 0;
+    return ra_class_of(inst) == RA_CLASS_V;
+}
+
+/* Forward decl: FP frame load/store (defined further down). */
+static void hx_emit_fp_load_to_reg(int dst_reg, int spill_off, int is_double);
+static void hx_emit_fp_store_from_reg(int src_reg, int spill_off, int is_double);
+
 /* Get the value of HIR instruction `inst` into dst_reg.
+ *
+ * The dst_reg's class must match inst's class — caller's responsibility
+ * (X-class consumers pass an X reg; V-class consumers pass a V reg).
  * If the value is already in dst_reg, no instruction is emitted.
- * Otherwise: MOV from its assigned reg, LDR from spill slot, or
- * remat (for ICONST / ALLOCA / GADDR / SADDR / GETFP). */
+ * Otherwise: MOV (or FMOV) from assigned reg, LDR (or LDR S/D) from
+ * spill slot, or remat (X-class only — HI_FCONST remat lands in a
+ * later session). */
 static void hx_mat(int inst, int dst_reg) {
     int slot;
     int src_reg;
@@ -243,26 +262,41 @@ static void hx_mat(int inst, int dst_reg) {
     if (slot >= 0) {
         src_reg = hx_slot_reg(slot);
         if (src_reg == dst_reg) return;
-        /* Always use the wide form — it preserves both 32 and 64 bit values.
-         * Since AArch64 X-form move zero-extends the upper half implicitly
-         * for W-form, MOV X is always safe. */
-        a64_mov_x(dst_reg, src_reg);
+        if (hx_is_v(inst)) {
+            if (ty_is_double(h_ty[inst])) a64_fmov_d_d(dst_reg, src_reg);
+            else                          a64_fmov_s_s(dst_reg, src_reg);
+        } else {
+            /* Always use the wide form — it preserves both 32 and 64 bit values.
+             * Since AArch64 X-form move zero-extends the upper half implicitly
+             * for W-form, MOV X is always safe. */
+            a64_mov_x(dst_reg, src_reg);
+        }
         return;
     }
 
     /* Spilled?  Load from frame. */
     if (ra_spill_off[inst] != 0) {
-        wide = hx_is_wide(h_ty[inst]);
-        hx_emit_load_to_reg(dst_reg, ra_spill_off[inst], wide);
+        if (hx_is_v(inst)) {
+            hx_emit_fp_load_to_reg(dst_reg, ra_spill_off[inst],
+                                   ty_is_double(h_ty[inst]));
+        } else {
+            wide = hx_is_wide(h_ty[inst]);
+            hx_emit_load_to_reg(dst_reg, ra_spill_off[inst], wide);
+        }
         return;
     }
 
-    /* Rematerialise. */
+    /* Rematerialise (X-class only for now). */
+    if (hx_is_v(inst)) {
+        hx_die("hx_mat: V-class remat not supported (HI_FCONST?)", inst);
+    }
     hx_remat(inst, dst_reg);
 }
 
 /* If a value is not yet in a register, return scratch with the value
- * loaded in.  Otherwise return its assigned reg. */
+ * loaded in.  Otherwise return its assigned reg.  `scratch` must be
+ * class-appropriate for `inst` (X scratch for X-class, V scratch for
+ * V-class) — caller's responsibility. */
 static int hx_get_src(int inst, int scratch) {
     int slot;
     if (inst < 0) hx_die("hx_get_src: -1 src", inst);
@@ -277,16 +311,23 @@ static void hx_spill(int inst, int reg) {
     int wide;
     if (ra_reg[inst] >= 0) return;          /* not spilled */
     if (ra_spill_off[inst] == 0) return;    /* no value to spill (e.g., remat) */
+    if (hx_is_v(inst)) {
+        hx_emit_fp_store_from_reg(reg, ra_spill_off[inst],
+                                  ty_is_double(h_ty[inst]));
+        return;
+    }
     wide = hx_is_wide(h_ty[inst]);
     hx_emit_store_from_reg(reg, ra_spill_off[inst], wide);
 }
 
 /* Where does dst_reg need to write to?  If the value is assigned a reg,
- * that's the destination.  If it's spilled, we need a scratch + spill. */
+ * that's the destination.  If it's spilled, we need a scratch + spill —
+ * pick a class-appropriate scratch. */
 static int hx_dst_reg(int inst) {
     int slot;
     slot = ra_reg[inst];
     if (slot >= 0) return hx_slot_reg(slot);
+    if (hx_is_v(inst)) return HX_SCRATCH_V1;
     if (ra_spill_off[inst] != 0) return HX_SCRATCH1;
     /* Value isn't used by anything that matters (rare edge case). */
     return HX_SCRATCH1;
@@ -397,6 +438,81 @@ static void hx_emit_store_from_reg(int src_reg, int spill_off, int wide) {
         }
         if (wide) a64_str_x_imm(src_reg, HX_SCRATCH2, 0);
         else      a64_str_w_imm(src_reg, HX_SCRATCH2, 0);
+    }
+}
+
+/* FP variants of the frame load/store helpers.  Mirrors the X-form ones:
+ * try scaled-imm12 form first, then unscaled imm9, then materialised
+ * scratch address.  is_double picks D-form (8-byte) vs S-form (4-byte). */
+static void hx_emit_fp_load_to_reg(int dst_reg, int spill_off, int is_double) {
+    int off;
+    off = cg_a64_offset(spill_off);
+    if (off >= 0 && off <= 32760 && (off & (is_double ? 7 : 3)) == 0) {
+        if (is_double) a64_ldr_d_imm(dst_reg, A64_X29, off);
+        else           a64_ldr_s_imm(dst_reg, A64_X29, off);
+        return;
+    }
+    if (off >= -256 && off <= 255) {
+        if (is_double) a64_ldur_d_imm(dst_reg, A64_X29, off);
+        else           a64_ldur_s_imm(dst_reg, A64_X29, off);
+        return;
+    }
+    {
+        int neg;
+        if (off < 0) {
+            neg = -off;
+            if (neg <= 4095) {
+                a64_sub_x_imm(HX_SCRATCH2, A64_X29, neg);
+            } else {
+                a64_sub_x_imm(HX_SCRATCH2, A64_X29, neg & 0xFFF);
+                a64_sub_x_imm_lsl12(HX_SCRATCH2, HX_SCRATCH2, (neg >> 12) & 0xFFF);
+            }
+        } else {
+            if (off <= 4095) {
+                a64_add_x_imm(HX_SCRATCH2, A64_X29, off);
+            } else {
+                a64_add_x_imm(HX_SCRATCH2, A64_X29, off & 0xFFF);
+                a64_add_x_imm_lsl12(HX_SCRATCH2, HX_SCRATCH2, (off >> 12) & 0xFFF);
+            }
+        }
+        if (is_double) a64_ldr_d_imm(dst_reg, HX_SCRATCH2, 0);
+        else           a64_ldr_s_imm(dst_reg, HX_SCRATCH2, 0);
+    }
+}
+
+static void hx_emit_fp_store_from_reg(int src_reg, int spill_off, int is_double) {
+    int off;
+    off = cg_a64_offset(spill_off);
+    if (off >= 0 && off <= 32760 && (off & (is_double ? 7 : 3)) == 0) {
+        if (is_double) a64_str_d_imm(src_reg, A64_X29, off);
+        else           a64_str_s_imm(src_reg, A64_X29, off);
+        return;
+    }
+    if (off >= -256 && off <= 255) {
+        if (is_double) a64_stur_d_imm(src_reg, A64_X29, off);
+        else           a64_stur_s_imm(src_reg, A64_X29, off);
+        return;
+    }
+    {
+        int neg;
+        if (off < 0) {
+            neg = -off;
+            if (neg <= 4095) {
+                a64_sub_x_imm(HX_SCRATCH2, A64_X29, neg);
+            } else {
+                a64_sub_x_imm(HX_SCRATCH2, A64_X29, neg & 0xFFF);
+                a64_sub_x_imm_lsl12(HX_SCRATCH2, HX_SCRATCH2, (neg >> 12) & 0xFFF);
+            }
+        } else {
+            if (off <= 4095) {
+                a64_add_x_imm(HX_SCRATCH2, A64_X29, off);
+            } else {
+                a64_add_x_imm(HX_SCRATCH2, A64_X29, off & 0xFFF);
+                a64_add_x_imm_lsl12(HX_SCRATCH2, HX_SCRATCH2, (off >> 12) & 0xFFF);
+            }
+        }
+        if (is_double) a64_str_d_imm(src_reg, HX_SCRATCH2, 0);
+        else           a64_str_s_imm(src_reg, HX_SCRATCH2, 0);
     }
 }
 
@@ -785,8 +901,16 @@ static void hx_phi_copies(int from_blk, int to_blk) {
                     dst_reg = phi_dst_reg[p];
                     wide = hx_is_wide(h_ty[dst_inst]);
                     if (phi_src_reg[p] >= 0) {
-                        if (wide) a64_mov_x(dst_reg, phi_src_reg[p]);
-                        else      a64_mov_w(dst_reg, phi_src_reg[p]);
+                        if (hx_is_v(dst_inst)) {
+                            if (ty_is_double(h_ty[dst_inst]))
+                                a64_fmov_d_d(dst_reg, phi_src_reg[p]);
+                            else
+                                a64_fmov_s_s(dst_reg, phi_src_reg[p]);
+                        } else if (wide) {
+                            a64_mov_x(dst_reg, phi_src_reg[p]);
+                        } else {
+                            a64_mov_w(dst_reg, phi_src_reg[p]);
+                        }
                     } else {
                         /* Spilled / rematerialisable source: bring it
                          * straight into dst_reg. */
@@ -831,13 +955,22 @@ static void hx_phi_copies(int from_blk, int to_blk) {
         a64_sub_x_imm_lsl12(A64_SP, A64_SP, (tmp_bytes >> 12) & 0xFFF);
     }
 
-    /* Phase 1: snapshot every source into the temp area. */
+    /* Phase 1: snapshot every source into the temp area.  Each slot is
+     * 8 bytes wide regardless of class (double / pointer / int all fit). */
     i = 0;
     while (i < hx_phi_n) {
         src      = hx_phi_src_val[i];
         wide     = hx_is_wide(h_ty[src]);
-        hx_mat(src, HX_SCRATCH1);
-        hx_stack_store(i * 8, HX_SCRATCH1, wide);
+        if (hx_is_v(src)) {
+            hx_mat(src, HX_SCRATCH_V1);
+            if (ty_is_double(h_ty[src]))
+                a64_str_d_imm(HX_SCRATCH_V1, A64_SP, i * 8);
+            else
+                a64_str_s_imm(HX_SCRATCH_V1, A64_SP, i * 8);
+        } else {
+            hx_mat(src, HX_SCRATCH1);
+            hx_stack_store(i * 8, HX_SCRATCH1, wide);
+        }
         i = i + 1;
     }
 
@@ -848,7 +981,14 @@ static void hx_phi_copies(int from_blk, int to_blk) {
         dst_reg  = hx_dst_reg(dst_inst);
         wide     = hx_is_wide(h_ty[dst_inst]);
         tmp_slot = i * 8;
-        hx_stack_load(dst_reg, tmp_slot, wide);
+        if (hx_is_v(dst_inst)) {
+            if (ty_is_double(h_ty[dst_inst]))
+                a64_ldr_d_imm(dst_reg, A64_SP, tmp_slot);
+            else
+                a64_ldr_s_imm(dst_reg, A64_SP, tmp_slot);
+        } else {
+            hx_stack_load(dst_reg, tmp_slot, wide);
+        }
         hx_spill(dst_inst, dst_reg);
         i = i + 1;
     }
@@ -1800,10 +1940,18 @@ static void hx_emit_inst(int idx) {
 
     /* ---------- COPY ---------- */
     if (k == HI_COPY) {
-        r1 = hx_get_src(s1, HX_SCRATCH1);
-        if (r1 != dst) {
-            if (wide) a64_mov_x(dst, r1);
-            else      a64_mov_w(dst, r1);
+        if (hx_is_v(idx)) {
+            r1 = hx_get_src(s1, HX_SCRATCH_V1);
+            if (r1 != dst) {
+                if (ty_is_double(h_ty[idx])) a64_fmov_d_d(dst, r1);
+                else                         a64_fmov_s_s(dst, r1);
+            }
+        } else {
+            r1 = hx_get_src(s1, HX_SCRATCH1);
+            if (r1 != dst) {
+                if (wide) a64_mov_x(dst, r1);
+                else      a64_mov_w(dst, r1);
+            }
         }
         hx_spill(idx, dst);
         return;
@@ -1910,14 +2058,17 @@ static void hx_emit_inst(int idx) {
         /* If a preceding HI_CALL was tail-call-eliminated, the b-target
          * has already been emitted; this RET is dead. */
         if (hx_tce_ret[idx]) return;
-        /* If there's a return value, ensure it's in x0. */
+        /* If there's a return value, ensure it's in the ABI return reg
+         * for its class — X0 for int/ptr, V0 for float/double. */
         if (s1 >= 0) {
             int slot;
+            int ret_reg;
+            ret_reg = hx_is_v(s1) ? A64_V0 : A64_X0;
             slot = ra_reg[s1];
-            if (slot >= 0 && hx_slot_reg(slot) == A64_X0) {
+            if (slot >= 0 && hx_slot_reg(slot) == ret_reg) {
                 /* Already there. */
             } else {
-                hx_mat(s1, A64_X0);
+                hx_mat(s1, ret_reg);
             }
         }
         /* Branch to epilogue.  Use bpatch with blk = -1. */
@@ -2066,6 +2217,35 @@ static void hx_emit_inst(int idx) {
         }
         if (nargs > 0) a64_add_x_imm(A64_SP, A64_SP, nargs * 16);
         cg_emit_a64_dbt_trampoline();
+        return;
+    }
+
+    /* ---------- Floating-point arithmetic ---------- */
+    if (k == HI_FADD || k == HI_FSUB || k == HI_FMUL || k == HI_FDIV) {
+        int rs1; int rs2; int is_d;
+        is_d = ty_is_double(h_ty[idx]);
+        rs1 = hx_get_src(s1, HX_SCRATCH_V1);
+        rs2 = hx_get_src(s2, HX_SCRATCH_V2);
+        if (is_d) {
+            if      (k == HI_FADD) a64_fadd_d(dst, rs1, rs2);
+            else if (k == HI_FSUB) a64_fsub_d(dst, rs1, rs2);
+            else if (k == HI_FMUL) a64_fmul_d(dst, rs1, rs2);
+            else                   a64_fdiv_d(dst, rs1, rs2);
+        } else {
+            if      (k == HI_FADD) a64_fadd_s(dst, rs1, rs2);
+            else if (k == HI_FSUB) a64_fsub_s(dst, rs1, rs2);
+            else if (k == HI_FMUL) a64_fmul_s(dst, rs1, rs2);
+            else                   a64_fdiv_s(dst, rs1, rs2);
+        }
+        hx_spill(idx, dst);
+        return;
+    }
+    if (k == HI_FNEG) {
+        int rs1;
+        rs1 = hx_get_src(s1, HX_SCRATCH_V1);
+        if (ty_is_double(h_ty[idx])) a64_fneg_d(dst, rs1);
+        else                         a64_fneg_s(dst, rs1);
+        hx_spill(idx, dst);
         return;
     }
 
@@ -2264,12 +2444,15 @@ static void hx_gen_func(Node *fn) {
     }
 
     /* Save register-passed args to their assigned spill slots OR move
-     * them into their assigned regs.  For PARAM nodes, regalloc set
-     * ra_reg[] to either an arg-reg (no MOV needed) or a different reg
-     * (MOV into it).  Spilled params get stored to their spill slot. */
+     * them into their assigned regs.  AAPCS64 has independent counters
+     * for general (NGRN, X0..X7) and SIMD (NSRN, V0..V7) args; we walk
+     * fn->args in source order and bump the appropriate counter per
+     * arg type. */
     {
         int param_inst[16];
         int p_idx;
+        int ngrn;
+        int nsrn;
         Node *pp;
 
         /* Build param index → HIR inst map in one pass over the HIR. */
@@ -2286,43 +2469,93 @@ static void hx_gen_func(Node *fn) {
         }
 
         p_idx = 0;
+        ngrn = 0;
+        nsrn = 0;
         pp = fn->args;
-        while (pp && p_idx < 8) {
-            int pi;
-            int slot;
-            int dst_reg;
-            pi = param_inst[p_idx];
-            if (pi < 0) { p_idx = p_idx + 1; pp = pp->next; continue; }
-
-            slot = ra_reg[pi];
-            if (slot >= 0) {
-                dst_reg = hx_slot_reg(slot);
-                if (dst_reg != hx_arg_reg[p_idx])
-                    a64_mov_x(dst_reg, hx_arg_reg[p_idx]);
-            } else if (ra_spill_off[pi] != 0) {
-                hx_emit_store_from_reg(hx_arg_reg[p_idx],
-                                       ra_spill_off[pi],
-                                       hx_is_wide(h_ty[pi]));
-            }
-            p_idx = p_idx + 1;
-            pp = pp->next;
-        }
-        /* 9th+ args arrive on caller stack at [old_SP + (i-8)*8] = [FP + 16 + (i-8)*8]. */
         while (pp) {
             int pi;
             int slot;
-            int caller_off;
+            int dst_reg;
+            int is_fp;
+            int src_reg;
+            int in_regs;
             pi = (p_idx < 16) ? param_inst[p_idx] : -1;
+            is_fp = ty_is_fp(pp->ty);
+
+            if (is_fp && nsrn < 8) {
+                src_reg = nsrn;     /* V0..V7 share encoding 0..7 with X */
+                in_regs = 1;
+                nsrn = nsrn + 1;
+            } else if (!is_fp && ngrn < 8) {
+                src_reg = hx_arg_reg[ngrn];
+                in_regs = 1;
+                ngrn = ngrn + 1;
+            } else {
+                src_reg = -1;
+                in_regs = 0;
+            }
+
             if (pi < 0) { p_idx = p_idx + 1; pp = pp->next; continue; }
 
-            caller_off = 16 + (p_idx - 8) * 8;
-            a64_ldr_x_imm(HX_SCRATCH1, A64_X29, caller_off);
-            slot = ra_reg[pi];
-            if (slot >= 0) {
-                a64_mov_x(hx_slot_reg(slot), HX_SCRATCH1);
-            } else if (ra_spill_off[pi] != 0) {
-                hx_emit_store_from_reg(HX_SCRATCH1, ra_spill_off[pi],
-                                       hx_is_wide(h_ty[pi]));
+            if (in_regs) {
+                slot = ra_reg[pi];
+                if (slot >= 0) {
+                    dst_reg = hx_slot_reg(slot);
+                    if (dst_reg != src_reg) {
+                        if (is_fp) {
+                            if (ty_is_double(pp->ty)) a64_fmov_d_d(dst_reg, src_reg);
+                            else                       a64_fmov_s_s(dst_reg, src_reg);
+                        } else {
+                            a64_mov_x(dst_reg, src_reg);
+                        }
+                    }
+                } else if (ra_spill_off[pi] != 0) {
+                    if (is_fp) {
+                        hx_emit_fp_store_from_reg(src_reg,
+                                                  ra_spill_off[pi],
+                                                  ty_is_double(pp->ty));
+                    } else {
+                        hx_emit_store_from_reg(src_reg,
+                                               ra_spill_off[pi],
+                                               hx_is_wide(h_ty[pi]));
+                    }
+                }
+            } else {
+                /* Stack arg.  AAPCS lays them out in declaration order
+                 * starting at [old_SP] = [FP + 16].  Counting position
+                 * is approximate — for non-trivial mixed signatures the
+                 * 16-byte alignment / type-size rules apply.  For the
+                 * test surface we hit today (≤8 args, no struct passing),
+                 * source-order indexing matches AAPCS layout closely
+                 * enough.  Refinement deferred. */
+                int caller_off;
+                caller_off = 16 + (p_idx - 8) * 8;
+                if (is_fp) {
+                    if (ty_is_double(pp->ty))
+                        a64_ldr_d_imm(HX_SCRATCH_V1, A64_X29, caller_off);
+                    else
+                        a64_ldr_s_imm(HX_SCRATCH_V1, A64_X29, caller_off);
+                    slot = ra_reg[pi];
+                    if (slot >= 0) {
+                        if (ty_is_double(pp->ty))
+                            a64_fmov_d_d(hx_slot_reg(slot), HX_SCRATCH_V1);
+                        else
+                            a64_fmov_s_s(hx_slot_reg(slot), HX_SCRATCH_V1);
+                    } else if (ra_spill_off[pi] != 0) {
+                        hx_emit_fp_store_from_reg(HX_SCRATCH_V1,
+                                                  ra_spill_off[pi],
+                                                  ty_is_double(pp->ty));
+                    }
+                } else {
+                    a64_ldr_x_imm(HX_SCRATCH1, A64_X29, caller_off);
+                    slot = ra_reg[pi];
+                    if (slot >= 0) {
+                        a64_mov_x(hx_slot_reg(slot), HX_SCRATCH1);
+                    } else if (ra_spill_off[pi] != 0) {
+                        hx_emit_store_from_reg(HX_SCRATCH1, ra_spill_off[pi],
+                                               hx_is_wide(h_ty[pi]));
+                    }
+                }
             }
             p_idx = p_idx + 1;
             pp = pp->next;

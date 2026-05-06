@@ -1515,6 +1515,32 @@ static void a64_str_d_imm(int dt, int rn, int byte_off) {
     a64_inst(inst);
 }
 
+/* FP unscaled (signed imm9) load/store — used for negative FP-relative
+ * frame offsets, where the scaled form isn't reachable. */
+static void a64_stur_s_imm(int st, int rn, int imm9) {
+    int inst;
+    inst = 0xBC000000 | ((imm9 & 0x1FF) << 12) | ((rn & 0x1F) << 5) | (st & 0x1F);
+    a64_inst(inst);
+}
+
+static void a64_ldur_s_imm(int st, int rn, int imm9) {
+    int inst;
+    inst = 0xBC400000 | ((imm9 & 0x1FF) << 12) | ((rn & 0x1F) << 5) | (st & 0x1F);
+    a64_inst(inst);
+}
+
+static void a64_stur_d_imm(int dt, int rn, int imm9) {
+    int inst;
+    inst = 0xFC000000 | ((imm9 & 0x1FF) << 12) | ((rn & 0x1F) << 5) | (dt & 0x1F);
+    a64_inst(inst);
+}
+
+static void a64_ldur_d_imm(int dt, int rn, int imm9) {
+    int inst;
+    inst = 0xFC400000 | ((imm9 & 0x1FF) << 12) | ((rn & 0x1F) << 5) | (dt & 0x1F);
+    a64_inst(inst);
+}
+
 // ============================================================================
 // System / misc
 // ============================================================================

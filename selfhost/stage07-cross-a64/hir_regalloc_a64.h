@@ -56,7 +56,7 @@ static int hx_alu_sib_idx[HIR_MAX_INST];   /* SIB index for ALU+SIB (unused) */
  *          therefore must spill (gc_k returns 0 for them). */
 #define RA_NPHY     26   /* X class total slots */
 #define RA_NCALLEE  10   /* X class callee-saved slots (0..9) */
-#define RA_NPHY_V   24   /* V class total slots */
+#define RA_NPHY_V   22   /* V class total slots (V0..V7 + V16..V29) */
 #define RA_NCALLEE_V 0   /* V class callee-saved slots (none allocated yet) */
 #define RA_CLASS_X  0
 #define RA_CLASS_V  1
@@ -158,8 +158,7 @@ static void ra_init_a64_regs(void) {
     ra_a64_phys_v[19] = A64_V27;  ra_a64_is_callee_v[19] = 0;
     ra_a64_phys_v[20] = A64_V28;  ra_a64_is_callee_v[20] = 0;
     ra_a64_phys_v[21] = A64_V29;  ra_a64_is_callee_v[21] = 0;
-    ra_a64_phys_v[22] = A64_V30;  ra_a64_is_callee_v[22] = 0;
-    ra_a64_phys_v[23] = A64_V31;  ra_a64_is_callee_v[23] = 0;
+    /* V30/V31 reserved as HX_SCRATCH_V1/V2 — see hir_codegen_a64.h. */
 
     i = 0;
     while (i < RA_NPHY_V) {
@@ -567,10 +566,12 @@ static void ra_compute_ends(void) {
  * Replaces linear scan with global interference graph coloring.
  * ================================================================= */
 
-/* AArch64 AAPCS64 arg registers — 8 of them (X0..X7).  Sites that on
- * x86-64 checked "pidx < 6" use the RA_NARG_REGS macro here. */
+/* AArch64 AAPCS64 arg registers — 8 each for X (X0..X7) and V (V0..V7).
+ * Sites that on x86-64 checked "pidx < 6" use the RA_NARG_REGS macro
+ * here.  V-class hint lookup uses ra_v_arg_regs in parallel with X. */
 #define RA_NARG_REGS 8
 static int ra_arg_regs[RA_NARG_REGS];
+static int ra_v_arg_regs[RA_NARG_REGS];
 
 static void ra_init_arg_regs(void) {
     ra_arg_regs[0] = A64_X0;
@@ -581,6 +582,14 @@ static void ra_init_arg_regs(void) {
     ra_arg_regs[5] = A64_X5;
     ra_arg_regs[6] = A64_X6;
     ra_arg_regs[7] = A64_X7;
+    ra_v_arg_regs[0] = A64_V0;
+    ra_v_arg_regs[1] = A64_V1;
+    ra_v_arg_regs[2] = A64_V2;
+    ra_v_arg_regs[3] = A64_V3;
+    ra_v_arg_regs[4] = A64_V4;
+    ra_v_arg_regs[5] = A64_V5;
+    ra_v_arg_regs[6] = A64_V6;
+    ra_v_arg_regs[7] = A64_V7;
 }
 
 /* --- Adjacency helpers --- */
@@ -1369,9 +1378,9 @@ static void gc_select(void) {
             n_total  = RA_NPHY;
             n_callee = RA_NCALLEE;
         }
-        /* X-class PARAM hints use ra_arg_regs (X-reg ABI).  V-class
-         * PARAMs need V-reg ABI hints which we don't wire yet — they
-         * fall through to the generic caller-saved preference. */
+        /* PARAM hints: X class uses ra_arg_regs / ra_a64_slot,
+         * V class uses ra_v_arg_regs / ra_a64_slot_v.  Same shape; the
+         * dispatch below selects based on `cls`. */
         param_x_class = (cls == RA_CLASS_X);
 
         /* Mark colors used by live neighbors.  All neighbours are same
@@ -1402,12 +1411,15 @@ static void gc_select(void) {
          * loop below produces no color and the value is forced to
          * spill via ra_assign_spills. */
         if (ra_crosses_call[inst]) {
-            /* Try PARAM hint first (X class only) */
+            /* Try PARAM hint first */
             hint = -1;
-            if (param_x_class && h_kind[inst] == HI_PARAM) {
+            if (h_kind[inst] == HI_PARAM) {
                 pidx = h_val[inst];
                 if (pidx >= 0 && pidx < RA_NARG_REGS) {
-                    c = ra_a64_slot[ra_arg_regs[pidx]];
+                    if (param_x_class)
+                        c = ra_a64_slot[ra_arg_regs[pidx]];
+                    else
+                        c = ra_a64_slot_v[ra_v_arg_regs[pidx]];
                     if (c >= 0 && c < n_callee && !used[c]) hint = c;
                 }
             }
@@ -1428,11 +1440,14 @@ static void gc_select(void) {
             /* Non-call-crossing: try hints, then prefer caller-saved */
             hint = -1;
 
-            /* PARAM hint: try ABI register (X class only) */
-            if (param_x_class && h_kind[inst] == HI_PARAM) {
+            /* PARAM hint: try ABI register */
+            if (h_kind[inst] == HI_PARAM) {
                 pidx = h_val[inst];
                 if (pidx >= 0 && pidx < RA_NARG_REGS) {
-                    c = ra_a64_slot[ra_arg_regs[pidx]];
+                    if (param_x_class)
+                        c = ra_a64_slot[ra_arg_regs[pidx]];
+                    else
+                        c = ra_a64_slot_v[ra_v_arg_regs[pidx]];
                     if (c >= 0 && !used[c]) hint = c;
                 }
             }
@@ -1557,13 +1572,13 @@ static void gc_select(void) {
         n = 0;
         while (n < gc_nnode) {
             inst = gc_inst[n];
-            /* X-class only: V-class PARAMs would need V0..V7 hints,
-             * deferred to AAPCS-FP-args session. */
-            if (gc_class[n] == RA_CLASS_X
-             && h_kind[inst] == HI_PARAM && gc_color[n] >= 0 && !ra_crosses_call[inst]) {
+            if (h_kind[inst] == HI_PARAM && gc_color[n] >= 0 && !ra_crosses_call[inst]) {
                 pidx = h_val[inst];
                 if (pidx >= 0 && pidx < RA_NARG_REGS) {
-                    want = ra_a64_slot[ra_arg_regs[pidx]];
+                    if (gc_class[n] == RA_CLASS_V)
+                        want = ra_a64_slot_v[ra_v_arg_regs[pidx]];
+                    else
+                        want = ra_a64_slot[ra_arg_regs[pidx]];
                     old_c = gc_color[n];
                     if (want >= 0 && old_c != want) {
                         conflict = 0;
