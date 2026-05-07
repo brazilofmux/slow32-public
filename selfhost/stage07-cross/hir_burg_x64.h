@@ -193,6 +193,10 @@ static void bg_init(void) {
     bg_add_pat(BG_REG, HI_CALL,  -1, -1, 3);
     bg_add_pat(BG_REG, HI_CALLP, BG_REG, -1, 3);
 
+    /* x86-64 inline-asm subset for tools/dbt */
+    bg_add_pat(BG_STMT, HI_X64_RDTSC, BG_REG, BG_REG, 4);
+    bg_add_pat(BG_STMT, HI_X64_DBT_TRAMPOLINE, -1, -1, 20);
+
     /* PHI */
     bg_add_pat(BG_REG, HI_PHI, -1, -1, 0);
 
@@ -338,7 +342,7 @@ static void bg_count_uses(void) {
         if (h_src1[i] >= 0) bg_uses[h_src1[i]] = bg_uses[h_src1[i]] + 1;
         if (h_src2[i] >= 0 && ho_src2_is_ref(k)) bg_uses[h_src2[i]] = bg_uses[h_src2[i]] + 1;
 
-        if (k == HI_CALL || k == HI_CALLP) {
+        if (k == HI_CALL || k == HI_CALLP || k == HI_X64_DBT_TRAMPOLINE) {
             base = h_cbase[i];
             cnt = h_val[i];
             j = 0;

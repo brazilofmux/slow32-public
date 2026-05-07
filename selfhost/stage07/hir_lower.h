@@ -426,6 +426,42 @@ static int hl_expr(Node *n) {
         if (n->val == ASM_A64_ISB) {
             return hi_emit(HI_A64_ISB, TY_INT, -1, -1, 0, NULL);
         }
+        if (n->val == ASM_X64_RDTSC) {
+            /* Outputs are "=a"(lo), "=d"(hi) — two 32-bit lvalues.
+             * Lower as: emit HI_X64_RDTSC with src1 = &lo, src2 = &hi.
+             * Codegen issues `lfence;rdtsc` and stores eax/edx via the
+             * passed pointers. */
+            int lo_addr; int hi_addr;
+            Node *out;
+            out = n->lhs;
+            if (!out || !out->next) p_error("rdtsc asm needs two outputs");
+            lo_addr = hl_addr(out);
+            hi_addr = hl_addr(out->next);
+            return hi_emit(HI_X64_RDTSC, TY_INT, lo_addr, hi_addr, 0, NULL);
+        }
+        if (n->val == ASM_X64_DBT_TRAMPOLINE) {
+            int av[8];
+            int base;
+            Node *aa;
+            aa = n->args;
+            nargs = 0;
+            while (aa) {
+                if (nargs >= 8) p_error("too many asm args");
+                av[nargs] = hl_expr(aa);
+                nargs = nargs + 1;
+                aa = aa->next;
+            }
+            base = h_ncarg;
+            i = 0;
+            while (i < nargs) {
+                h_carg[h_ncarg] = av[i];
+                h_ncarg = h_ncarg + 1;
+                i = i + 1;
+            }
+            val = hi_emit(HI_X64_DBT_TRAMPOLINE, TY_INT, -1, -1, nargs, NULL);
+            h_cbase[val] = base;
+            return val;
+        }
         p_error("unsupported inline asm");
         return -1;
     }

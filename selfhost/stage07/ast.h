@@ -180,7 +180,7 @@ static int ty_is_unsigned(int ty) {
 #define ND_FNUM     35   /* float/double literal: val=lo bits, val_hi=hi bits (f64) */
 #define ND_ASM      36   /* GNU inline asm subset: name=template, lhs=outputs, args=inputs */
 
-/* Inline asm templates recognized by the AArch64 backend. */
+/* Inline asm templates recognized by the AArch64 / x86-64 backends. */
 #define ASM_GENERIC             0
 #define ASM_A64_MRS_CNTVCT      1
 #define ASM_A64_DBT_TRAMPOLINE  2
@@ -188,6 +188,8 @@ static int ty_is_unsigned(int ty) {
 #define ASM_A64_IC_IVAU         4
 #define ASM_A64_DSB_ISH         5
 #define ASM_A64_ISB             6
+#define ASM_X64_RDTSC           7  /* lfence; rdtsc — split eax/edx outputs */
+#define ASM_X64_DBT_TRAMPOLINE  8  /* execute_translated trampoline */
 
 /* --- AST node --- */
 struct Node {

@@ -1455,6 +1455,16 @@ static int classify_gnu_asm(char *tmpl) {
     if (ps_str_contains(tmpl, "isb")) {
         return ASM_A64_ISB;
     }
+    /* x86-64 patterns. */
+    if (ps_str_contains(tmpl, "rdtsc")) {
+        return ASM_X64_RDTSC;
+    }
+    if (ps_str_contains(tmpl, "push %%rbp") &&
+        ps_str_contains(tmpl, "mov %%rax, %%rbp") &&
+        ps_str_contains(tmpl, "mov %%rsi, %%r13") &&
+        ps_str_contains(tmpl, "call *%%rdx")) {
+        return ASM_X64_DBT_TRAMPOLINE;
+    }
     return ASM_GENERIC;
 }
 

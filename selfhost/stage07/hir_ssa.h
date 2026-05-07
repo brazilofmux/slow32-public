@@ -416,7 +416,8 @@ static void ssa_find_promo(void) {
             }
         }
         /* Call arguments */
-        if (k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE) {
+        if (k == HI_CALL || k == HI_CALLP ||
+            k == HI_A64_DBT_TRAMPOLINE || k == HI_X64_DBT_TRAMPOLINE) {
             j = 0;
             while (j < h_val[i]) {
                 a = h_carg[h_cbase[i] + j];

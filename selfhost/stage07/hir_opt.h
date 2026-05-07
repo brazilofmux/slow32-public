@@ -74,7 +74,9 @@ static int ho_copy_prop(void) {
         }
 
         /* Rewrite call args */
-        if ((k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE) && h_cbase[i] >= 0) {
+        if ((k == HI_CALL || k == HI_CALLP ||
+             k == HI_A64_DBT_TRAMPOLINE || k == HI_X64_DBT_TRAMPOLINE) &&
+            h_cbase[i] >= 0) {
             base = h_cbase[i];
             cnt = h_val[i];
             j = 0;
@@ -733,7 +735,9 @@ static void ho_count_uses(void) {
             ho_use[h_src2[i]] = ho_use[h_src2[i]] + 1;
 
         /* Call arguments */
-        if ((k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE) && h_cbase[i] >= 0) {
+        if ((k == HI_CALL || k == HI_CALLP ||
+             k == HI_A64_DBT_TRAMPOLINE || k == HI_X64_DBT_TRAMPOLINE) &&
+            h_cbase[i] >= 0) {
             base = h_cbase[i];
             cnt = h_val[i];
             j = 0;
@@ -921,7 +925,8 @@ static int ho_dse_pass(void) {
             if (jk == HI_NOP) { j = j + 1; continue; }
             /* If any LOAD/CALL/CALLP, the stored value might be observed */
             if (jk == HI_LOAD || jk == HI_CALL || jk == HI_CALLP ||
-                jk == HI_A64_DBT_TRAMPOLINE || hi_is_a64_cache_asm(jk)) {
+                jk == HI_A64_DBT_TRAMPOLINE || hi_is_a64_cache_asm(jk) ||
+                jk == HI_X64_DBT_TRAMPOLINE || jk == HI_X64_RDTSC) {
                 alive = 0;
             }
             /* Found another STORE to same address — first store is dead */
@@ -1045,8 +1050,9 @@ static int ho_mem_fwd(void) {
                     ho_mem_set(addr, i, h_ty[i]);
                 }
             }
-            else if (k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE ||
-                     hi_is_a64_cache_asm(k)) {
+            else if (k == HI_CALL || k == HI_CALLP ||
+                     k == HI_A64_DBT_TRAMPOLINE || hi_is_a64_cache_asm(k) ||
+                     k == HI_X64_DBT_TRAMPOLINE || k == HI_X64_RDTSC) {
                 /* Calls may write to any memory — invalidate all */
                 ho_mem_clear();
             }
@@ -1108,8 +1114,9 @@ static int ho_promote_single_store_alloca(void) {
     while (i < h_ninst) {
         int k;
         k = h_kind[i];
-        if (k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE ||
-            hi_is_a64_cache_asm(k)) {
+        if (k == HI_CALL || k == HI_CALLP ||
+            k == HI_A64_DBT_TRAMPOLINE || hi_is_a64_cache_asm(k) ||
+            k == HI_X64_DBT_TRAMPOLINE || k == HI_X64_RDTSC) {
             fn_has_call = 1; break;
         }
         i = i + 1;
@@ -1158,6 +1165,7 @@ static int ho_promote_single_store_alloca(void) {
                     if (s2 == i && ho_src2_is_ref(k)) has_bad = 1;
                     if (k == HI_CALL || k == HI_CALLP
                             || k == HI_A64_DBT_TRAMPOLINE
+                            || k == HI_X64_DBT_TRAMPOLINE
                             || hi_is_a64_cache_asm(k)) {
                         int base; int cnt; int kk;
                         base = h_cbase[j];

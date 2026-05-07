@@ -876,6 +876,19 @@ static void x64_syscall(void) {
     x64_byte(0x05);
 }
 
+// lfence  (0F AE E8) — load-fence; serialize loads before rdtsc
+static void x64_lfence(void) {
+    x64_byte(0x0F);
+    x64_byte(0xAE);
+    x64_byte(0xE8);
+}
+
+// rdtsc  (0F 31) — read time-stamp counter into edx:eax
+static void x64_rdtsc(void) {
+    x64_byte(0x0F);
+    x64_byte(0x31);
+}
+
 // ============================================================================
 // Patching
 // ============================================================================

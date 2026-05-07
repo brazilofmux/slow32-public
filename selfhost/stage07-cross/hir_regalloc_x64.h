@@ -368,7 +368,8 @@ static void ra_compute_ends(void) {
         }
 
         /* Call arguments */
-        if ((k == HI_CALL || k == HI_CALLP) && h_cbase[inst] >= 0) {
+        if ((k == HI_CALL || k == HI_CALLP || k == HI_X64_DBT_TRAMPOLINE) &&
+            h_cbase[inst] >= 0) {
             j = 0;
             while (j < h_val[inst]) {
                 ra_extend(h_carg[h_cbase[inst] + j], p);
@@ -430,7 +431,8 @@ static void ra_compute_ends(void) {
             }
         }
 
-        if ((k == HI_CALL || k == HI_CALLP) && h_cbase[inst] >= 0) {
+        if ((k == HI_CALL || k == HI_CALLP || k == HI_X64_DBT_TRAMPOLINE) &&
+            h_cbase[inst] >= 0) {
             j = 0;
             while (j < h_val[inst]) {
                 src = h_carg[h_cbase[inst] + j];
@@ -1465,7 +1467,9 @@ static void ra_mark_call_crossing(void) {
     while (i < ra_norder) {
         inst = ra_order[i];
         k = h_kind[inst];
-        if ((k == HI_CALL || k == HI_CALLP) && ra_ncalls < RA_MAX_CALLS) {
+        if ((k == HI_CALL || k == HI_CALLP ||
+             k == HI_X64_DBT_TRAMPOLINE || k == HI_X64_RDTSC) &&
+            ra_ncalls < RA_MAX_CALLS) {
             ra_call_positions[ra_ncalls] = ra_pos[inst];
             ra_ncalls = ra_ncalls + 1;
         }

@@ -1334,6 +1334,80 @@ static void hx_emit_inst(int idx) {
         return;
     }
 
+    /* --- x86-64 inline-asm subset (tools/dbt) --- */
+
+    if (k == HI_X64_RDTSC) {
+        /* Inputs: src1 = address of `lo` (uint32 *), src2 = address of `hi`.
+         * Effects: emit `lfence; rdtsc`, then store eax → [src1], edx → [src2].
+         * Materialize the address operands into RBX and RDI before the
+         * timestamp read so eax/edx aren't clobbered.  RBX is callee-saved
+         * (must be preserved by the surrounding regalloc bookkeeping
+         * already, since RDTSC is treated like a call); RDI is caller-saved
+         * scratch.  Neither is the result of the rdtsc itself. */
+        x64_lfence();
+        x64_rdtsc();
+        /* eax has lo, edx has hi.  Materialize address operands into
+         * registers that aren't ax/dx, then store. */
+        hx_mat(h_src1[idx], X64_RBX);
+        x64_mov_mr(X64_RBX, 0, X64_RAX);   /* mov [rbx], eax  (32-bit) */
+        hx_mat(h_src2[idx], X64_RBX);
+        x64_mov_mr(X64_RBX, 0, X64_RDX);   /* mov [rbx], edx  (32-bit) */
+        return;
+    }
+
+    if (k == HI_X64_DBT_TRAMPOLINE) {
+        /* Trampoline that mirrors the inline asm in tools/dbt/dbt.c
+         * execute_translated() for x86-64.  Args (in h_carg order):
+         *     0: cpu          → rax  (then mov rbp, rax inside the asm)
+         *     1: mem_base     → rcx  (then mov r14, rcx)
+         *     2: block        → rdx  (call *rdx)
+         *     3: compact_table→ rsi  (then mov r13, rsi)
+         *
+         * The asm saves all 6 callee-saved GPRs on the stack, sets up the
+         * translated-block register convention (rbp=cpu, r14=mem_base,
+         * r13=compact_table), calls *rdx, then restores. */
+        nargs = h_val[idx];
+        if (nargs != 4) p_error("x64 dbt trampoline expects 4 args");
+
+        /* Push args in order, then pop into target regs.  The push/pop
+         * dance avoids any aliasing if regalloc already placed an arg
+         * value into one of the destination registers. */
+        j = 0;
+        while (j < nargs) {
+            arg_idx = h_carg[h_cbase[idx] + j];
+            hx_mat(arg_idx, X64_RAX);
+            x64_push(X64_RAX);
+            j = j + 1;
+        }
+        /* Load back: stack now has [cpu, mem_base, block, compact_table]
+         * with compact_table at SP and cpu at SP+24. */
+        x64_mov_rm64(X64_RSI, X64_RSP, 0);   /* compact_table → rsi */
+        x64_mov_rm64(X64_RDX, X64_RSP, 8);   /* block         → rdx */
+        x64_mov_rm64(X64_RCX, X64_RSP, 16);  /* mem_base      → rcx */
+        x64_mov_rm64(X64_RAX, X64_RSP, 24);  /* cpu           → rax */
+        x64_add_ri64(X64_RSP, 32);
+
+        /* Trampoline proper: save callee-saves, set up translated-block
+         * register convention, call *rdx, restore. */
+        x64_push(X64_RBP);
+        x64_push(X64_RBX);
+        x64_push(X64_R12);
+        x64_push(X64_R13);
+        x64_push(X64_R14);
+        x64_push(X64_R15);
+        x64_mov_rr64(X64_RBP, X64_RAX);   /* rbp = cpu */
+        x64_mov_rr64(X64_R14, X64_RCX);   /* r14 = mem_base */
+        x64_mov_rr64(X64_R13, X64_RSI);   /* r13 = compact_table */
+        x64_call_r(X64_RDX);
+        x64_pop(X64_R15);
+        x64_pop(X64_R14);
+        x64_pop(X64_R13);
+        x64_pop(X64_R12);
+        x64_pop(X64_RBX);
+        x64_pop(X64_RBP);
+        return;
+    }
+
     /* --- Function calls --- */
 
     /* Builtin: __syscall(nr, a0, a1, a2, a3, a4, a5) → inline syscall */

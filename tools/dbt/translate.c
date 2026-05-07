@@ -34,6 +34,13 @@ static x64_reg_t rc_read(translate_ctx_t *ctx, uint8_t guest_reg);
 static x64_reg_t rc_write(translate_ctx_t *ctx, uint8_t guest_reg);
 static inline void flush_pending_cond(translate_ctx_t *ctx);
 
+/* Function-pointer type for `emit_jcc_*_rel32` emitters.  Named so that
+ * cast sites can use `(emit_jcc_fn_t)` instead of the bare function-
+ * pointer cast syntax `(void (*)(emit_ctx_t *, int32_t))`, which the
+ * self-hosted s12cc front-end (used by selfhost/stage07-cross to compile
+ * this file) does not parse. */
+typedef void (*emit_jcc_fn_t)(emit_ctx_t *, int32_t);
+
 #define STAGE5_LIFT_BUDGET 64
 
 // Side-exit emission is always enabled.
@@ -770,7 +777,7 @@ static bool stage5_emit_cmp_branch_fused(translate_ctx_t *ctx,
     }
 
     void (*emit_jcc_taken)(emit_ctx_t *, int32_t) =
-        (void (*)(emit_ctx_t *, int32_t))emit_jcc_rel32_from_cc(taken_cc);
+        (emit_jcc_fn_t)emit_jcc_rel32_from_cc(taken_cc);
     if (!emit_jcc_taken) return false;
 
     // 3. Emit branch exits.
@@ -3377,13 +3384,13 @@ static bool translate_branch_common(translate_ctx_t *ctx, uint8_t rs1, uint8_t r
 
                 if (is_bne) {
                     // if (cond != 0) jump  =>  jump if comparison was TRUE
-                    emit_jcc = (void (*)(emit_ctx_t *, int32_t))emit_jcc_rel32_from_cc(base_cc);
-                    emit_jcc_inv = (void (*)(emit_ctx_t *, int32_t))emit_jcc_rel32_from_cc(base_cc_inv);
+                    emit_jcc = (emit_jcc_fn_t)emit_jcc_rel32_from_cc(base_cc);
+                    emit_jcc_inv = (emit_jcc_fn_t)emit_jcc_rel32_from_cc(base_cc_inv);
                     inv_cc = base_cc_inv & 0x0F;
                 } else {
                     // if (cond == 0) jump  =>  jump if comparison was FALSE
-                    emit_jcc = (void (*)(emit_ctx_t *, int32_t))emit_jcc_rel32_from_cc(base_cc_inv);
-                    emit_jcc_inv = (void (*)(emit_ctx_t *, int32_t))emit_jcc_rel32_from_cc(base_cc);
+                    emit_jcc = (emit_jcc_fn_t)emit_jcc_rel32_from_cc(base_cc_inv);
+                    emit_jcc_inv = (emit_jcc_fn_t)emit_jcc_rel32_from_cc(base_cc);
                     inv_cc = base_cc & 0x0F;
                 }
 
@@ -4284,12 +4291,17 @@ skip_insn:;
 static size_t nop_compact_x64(uint8_t *code, size_t len,
                                translated_block_t *block)
 {
-    // Skip oversized blocks to limit stack usage (~3 bytes per position)
+    // Skip oversized blocks to limit memory usage (~3 bytes per position)
     if (len > 16384) return len;
 
+    /* Static buffers (single-threaded DBT) — avoid VLAs so the self-hosted
+     * s12cc front-end can compile this file. */
+    static bool is_nop[16384];
+    static uint8_t original[16384];
+    static uint16_t shift[16385];
+
     // Phase 1: Classify bytes — find standalone 1-byte NOPs
-    bool is_nop[len];
-    memset(is_nop, 0, sizeof(is_nop));
+    memset(is_nop, 0, len * sizeof(bool));
     size_t pos = 0;
     while (pos < len) {
         int ilen = x64_insn_length(code, pos, len);
@@ -4312,11 +4324,9 @@ static size_t nop_compact_x64(uint8_t *code, size_t len,
     if (nop_count == 0) return len;
 
     // Keep a copy so we can safely abort compaction if post-checks fail.
-    uint8_t original[len];
     memcpy(original, code, len);
 
     // Phase 2: Build cumulative shift map
-    uint16_t shift[len + 1];
     uint16_t cum = 0;
     for (size_t i = 0; i <= len; i++) {
         shift[i] = cum;
@@ -4422,8 +4432,9 @@ static size_t nop_compact_x64(uint8_t *code, size_t len,
 
     // Phase 7: Validate that in-block branch/call targets still land on
     // instruction boundaries after compaction. If not, revert compaction.
-    bool is_start[new_len + 1];
-    memset(is_start, 0, sizeof(is_start));
+    /* Static buffer (single-threaded DBT) — avoid VLA. */
+    static bool is_start[16385];
+    memset(is_start, 0, (new_len + 1) * sizeof(bool));
     is_start[0] = true;
     pos = 0;
     while (pos < new_len) {

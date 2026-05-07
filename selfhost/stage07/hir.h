@@ -87,6 +87,11 @@
  * patterns and lowered directly to FSQRT on backends that support it. */
 #define HI_FSQRT    67
 
+/* x86-64 inline-asm subset needed by tools/dbt.  Both ops produce no
+ * value; their effects are stores via addresses passed as arguments. */
+#define HI_X64_RDTSC          68  /* lfence;rdtsc → store eax to src1, edx to src2 */
+#define HI_X64_DBT_TRAMPOLINE 69  /* execute translated block trampoline; args in h_carg */
+
 /* --- Limits --- */
 #define HIR_MAX_INST   16384
 #define HIR_MAX_BLOCK  2048
@@ -189,6 +194,8 @@ static int hi_has_value(int kind) {
     if (kind == HI_A64_IC_IVAU) return 0;
     if (kind == HI_A64_DSB_ISH) return 0;
     if (kind == HI_A64_ISB) return 0;
+    if (kind == HI_X64_RDTSC) return 0;
+    if (kind == HI_X64_DBT_TRAMPOLINE) return 0;
     return 1;
 }
 
