@@ -11,7 +11,7 @@
  * (the asm-generic table) — different from x86-64.
  */
 
-int __syscall();
+long __syscall();
 
 int write(int fd, char *buf, int len) {
     return __syscall(64, fd, buf, len, 0, 0, 0);
@@ -46,8 +46,8 @@ int fstat(int fd, char *buf) {
     return __syscall(80, fd, buf, 0, 0, 0, 0);
 }
 
-int sys_brk(int addr) {
-    return __syscall(214, addr, 0, 0, 0, 0, 0);
+char *sys_brk(char *addr) {
+    return (char *)__syscall(214, addr, 0, 0, 0, 0, 0);
 }
 
 void exit(int code) {

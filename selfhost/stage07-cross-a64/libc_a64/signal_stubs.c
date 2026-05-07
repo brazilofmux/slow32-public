@@ -8,7 +8,7 @@
  * dispatch-loop operation works.
  */
 
-int __syscall();
+long __syscall();
 
 /* ---- Process control ---- */
 
@@ -39,7 +39,7 @@ int clock_gettime(int clk, void *ts) {
 /* ---- Memory ---- */
 
 char *mmap(char *addr, long length, int prot, int flags, int fd, long offset) {
-    return (char *)(long)__syscall(222, addr, length, prot, flags, fd, offset);
+    return (char *)__syscall(222, addr, length, prot, flags, fd, offset);
 }
 
 int munmap(char *addr, long length) {
