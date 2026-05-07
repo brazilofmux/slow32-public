@@ -55,6 +55,85 @@ static void pp_skip_line(void) {
     }
 }
 
+/* Raw-byte scan from lex_pos to the next preprocessor directive (`#`),
+ * or to EOF.  Used while pp_skip is set so we don't full-tokenize the
+ * skipped region — that path goes through the Ragel lexer, which has
+ * no rule for `\` (line-continuation) outside string/char literals and
+ * loops forever when a skipped block contains a multi-line `#define`
+ * body.  This scanner just respects strings, char literals, and
+ * comments while advancing lex_pos. */
+static void pp_fast_skip_to_directive(void) {
+    int c;
+    while (lex_pos < lex_len) {
+        c = lex_src[lex_pos] & 255;
+        if (c == 32 || c == 9 || c == 11 || c == 12 || c == 13) {
+            lex_pos = lex_pos + 1;
+            continue;
+        }
+        if (c == 10) {
+            lex_pos = lex_pos + 1;
+            lex_line = lex_line + 1;
+            continue;
+        }
+        /* Backslash-newline: line continuation — consume both. */
+        if (c == 92 && lex_pos + 1 < lex_len && lex_src[lex_pos + 1] == 10) {
+            lex_pos = lex_pos + 2;
+            lex_line = lex_line + 1;
+            continue;
+        }
+        /* Line comment */
+        if (c == 47 && lex_pos + 1 < lex_len && lex_src[lex_pos + 1] == 47) {
+            while (lex_pos < lex_len && lex_src[lex_pos] != 10) {
+                lex_pos = lex_pos + 1;
+            }
+            continue;
+        }
+        /* Block comment */
+        if (c == 47 && lex_pos + 1 < lex_len && lex_src[lex_pos + 1] == 42) {
+            lex_pos = lex_pos + 2;
+            while (lex_pos + 1 < lex_len &&
+                   !(lex_src[lex_pos] == 42 && lex_src[lex_pos + 1] == 47)) {
+                if (lex_src[lex_pos] == 10) lex_line = lex_line + 1;
+                lex_pos = lex_pos + 1;
+            }
+            if (lex_pos + 1 < lex_len) lex_pos = lex_pos + 2;
+            continue;
+        }
+        /* String literal: consume until matching `"`, honoring escapes. */
+        if (c == 34) {
+            lex_pos = lex_pos + 1;
+            while (lex_pos < lex_len && lex_src[lex_pos] != 34) {
+                if (lex_src[lex_pos] == 92 && lex_pos + 1 < lex_len) {
+                    if (lex_src[lex_pos + 1] == 10) lex_line = lex_line + 1;
+                    lex_pos = lex_pos + 2;
+                    continue;
+                }
+                if (lex_src[lex_pos] == 10) lex_line = lex_line + 1;
+                lex_pos = lex_pos + 1;
+            }
+            if (lex_pos < lex_len) lex_pos = lex_pos + 1;
+            continue;
+        }
+        /* Char literal */
+        if (c == 39) {
+            lex_pos = lex_pos + 1;
+            while (lex_pos < lex_len && lex_src[lex_pos] != 39) {
+                if (lex_src[lex_pos] == 92 && lex_pos + 1 < lex_len) {
+                    lex_pos = lex_pos + 2;
+                    continue;
+                }
+                lex_pos = lex_pos + 1;
+            }
+            if (lex_pos < lex_len) lex_pos = lex_pos + 1;
+            continue;
+        }
+        /* Found a directive marker. */
+        if (c == 35) return;
+        /* Anything else: skip the byte. */
+        lex_pos = lex_pos + 1;
+    }
+}
+
 static void pp_add_idir(char *path) {
     int base;
     int j;

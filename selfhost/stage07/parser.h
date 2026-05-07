@@ -216,6 +216,15 @@ static Node *parse_gnu_asm_stmt(void);
 static void next(void) {
     int di;
     while (1) {
+        if (pp_skip) {
+            pp_fast_skip_to_directive();
+            if (lex_pos >= lex_len) {
+                lex_tok = TK_EOF;
+                pp_sync();
+                return;
+            }
+            pp_sync();
+        }
         lex_next();
         if (lex_tok == TK_HASH) { pp_directive(); continue; }
         if (pp_skip) { continue; }

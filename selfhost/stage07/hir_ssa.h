@@ -47,8 +47,13 @@ static int ssa_dtc_base[HIR_MAX_BLOCK];
 static int ssa_dtc_cnt[HIR_MAX_BLOCK];
 
 /* --- Rename: per-variable value stack --- */
-#define SSA_VD 64
-#define SSA_VSTK_SZ 16384
+/* SSA_VD bounds the depth of the per-variable value stack along any
+ * single dominator-tree path during SSA rename.  64 was tight: a few
+ * deeply-nested functions in tools/dbt (block_cache.c) hit the cap.
+ * 256 leaves comfortable headroom; the cost is just static memory in
+ * the compiler. */
+#define SSA_VD 256
+#define SSA_VSTK_SZ 65536
 static int ssa_vstk[SSA_VSTK_SZ];
 static int ssa_vtop[SSA_MAX_PROMO];
 
