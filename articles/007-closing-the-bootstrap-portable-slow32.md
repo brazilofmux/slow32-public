@@ -2,7 +2,7 @@
 
 **A 933-line C interpreter is the only piece of the system that the host has to compile. From there, SLOW-32 builds its own toolchain, generates its own native code on AArch64 and x86-64, and runs guest binaries at near-native speed without ever calling out to the host compiler again. ARM64 is closed today. AMD64 is days away.**
 
-*Five months ago the headline number was speed: roughly six billion guest instructions per second on a Ryzen, beating QEMU on real workloads. That was a property of the JIT. This piece is about closure — and a new personal best of **7.2 billion instructions per second** on my Mac Book Pro. The system no longer needs to ask the host for anything after the first 933 lines.*
+*Five months ago the headline number was speed: roughly six billion guest instructions per second on a Ryzen, beating QEMU on real workloads. That was a property of the JIT. This piece is about closure — and a new personal best of **7.2 billion instructions per second** on my MacBook Pro. The system no longer needs to ask the host for anything after the first 933 lines.*
 
 ---
 
@@ -12,9 +12,9 @@ A toolchain is closed when nothing outside of it has to be trusted to keep it wo
 
 Every other compiler I've ever depended on is open in some specific sense. Clang depends on the system C++ runtime. GCC depends on you having a previous GCC. Even self-hosting languages — Go, Rust, OCaml — originally shipped as a binary blob bootstrapped from a compiler in another language. That isn't bad engineering; it's the only way to get started. But it does mean the chain of trust threads through a lot of other people's machines.
 
-SLOW-32 today threads through one file: `selfhost/stage00/s32-emu.c`, a 933-line C interpreter for the SLOW-32 ISA. That's the only thing the host has to compile. Every other piece of the environment — the C compiler, the assembler, the linker, the runtime, the high-speed emulator, the dynamic binary translator — runs *inside* SLOW-32, gets compiled *by* SLOW-32, and emits the native code that makes SLOW-32 fast on whatever you're sitting in front of.
+SLOW-32 today threads through one file: [`selfhost/stage00/s32-emu.c`](https://github.com/brazilofmux/slow32-public/blob/main/selfhost/stage00/s32-emu.c), a 933-line C interpreter for the SLOW-32 ISA. That's the only thing the host has to compile. Every other piece of the environment — the C compiler, the assembler, the linker, the runtime, the high-speed emulator, the dynamic binary translator — runs *inside* SLOW-32, gets compiled *by* SLOW-32, and emits the native code that makes SLOW-32 fast on whatever you're sitting in front of. (Full repo: [github.com/brazilofmux/slow32-public](https://github.com/brazilofmux/slow32-public). Open it in another tab; I'll wait.)
 
-I shipped the AArch64 leg of that chain over the last few weeks. The x86-64 leg has been working a long time at the JIT level — that's where the 6 BIPS number from the previous article came from — but the corresponding cross-compiler closure is what Claude (the AI agent) is finishing now. When that lands, the same recipe runs on either architecture from the same root.
+I shipped the AArch64 leg of that chain over the last few weeks. The x86-64 leg has been working a long time at the JIT level — that's where the 6 BIPS number from the previous article came from — but the corresponding cross-compiler closure is what's landing next. The detail of that work has its own section below.
 
 This piece is about how the chain works, what closing it actually required, and why I think this changes what a 32-bit hobby ISA gets to be.
 
@@ -25,10 +25,10 @@ This piece is about how the chain works, what closing it actually required, and 
 Here is the procedure on a fresh laptop, stripped to its essentials.
 
 1. The host C compiler builds the 933-line interpreter `s32-emu`. That is the entire host-specific surface of the project.
-2. The interpreter loads `stage07`, a precompiled SLOW-32 binary that contains the full self-hosted C compiler with both AArch64 and x86-64 back ends.
+2. The interpreter loads `stage07`, a precompiled SLOW-32 binary that contains the full self-hosted C compiler with both AArch64 and x86-64 back ends. *(If you're worried about the Ken Thompson hack here: don't. This blob can be strictly re-derived from portable C source, and that re-derivation is exercised regularly. More on that two paragraphs down.)*
 3. `stage07` produces a native cross-compiler for the host: `cc-a64` on ARM64, `cc-x64` on x86-64.
-4. The cross-compiler builds the runtime, the high-speed emulator (`slow32-fast`), and the JIT (`slow32-dbt`) as native ELF.
-5. From here on, SLOW-32 guest programs run through the JIT at multi-GIPS speeds.
+4. The cross-compiler builds the runtime, the high-speed emulator (`slow32-fast`), and the JIT dynamic binary translator (`slow32-dbt`) as native ELF.
+5. From here on, SLOW-32 guest programs run through the JIT — the dynamic binary translator that turns guest blocks into host machine code on the fly — at multi-GIPS speeds.
 
 After step 1, the host compiler is gone from the chain. Everything else is the system compiling itself.
 
@@ -60,7 +60,7 @@ A short tour of the fixes that landed, in roughly the order they hurt:
 
 - **Struct member alignment.** The original SLOW-32 layout rule was four-byte maximum alignment, which is fine on the guest. On a 64-bit host, struct members with pointer or `long` fields need natural alignment; otherwise stores tear and reads observe partial values. Fixing this required teaching `stage07` about host-driven alignment as a separate concept from guest layout.
 - **`size_t` and pointer width.** The runtime's `stddef.h` was hardcoded for 32-bit hosts. After the cross-compiler started producing 64-bit code, every `size_t`-typed return path needed to know it was running on a 64-bit machine. One audited line in `stddef.h`, plus a tour of every callsite that consumed it.
-- **Pointer returns from libc.** AArch64's ABI returns pointers in `x0` as 64-bit values; `cc-a64` was, in some cases, treating them as 32-bit and silently truncating. Caught by a memory-corruption bug in the DBT's block cache.
+- **Pointer returns from libc.** AArch64's ABI returns pointers in `x0` as 64-bit values; `cc-a64` was, in some cases, treating them as 32-bit and silently truncating them. Caught the hard way: a maddening memory-corruption bug in the DBT's block cache that vanished and reappeared depending on the malloc arena's high bits.
 - **A codegen workaround for snapshot copies.** `cc-a64`'s common-subexpression eliminator had a bug that confused two distinct snapshot pointers. The fix in the back end is real but complicated; the fix that unblocked the DBT was a one-line hoist in the DBT itself, marked clearly as a workaround. Both will live until the back end gets a proper fix.
 - **STORE base/value collision guard.** The DBT's edge table needed a guard against a case in which the base register and the value register of a store were the same physical register. AArch64 has no equivalent of x86's tolerance for this in the encoding — you have to detect it in software.
 - **Icache + superblock exits.** The big one. JIT-emitted code on AArch64 is not visible to the instruction cache until you issue explicit `dc cvau` and `ic ivau` barriers. The DBT was emitting the right inline assembly, but `cc-a64` was dropping the asm on the floor. The fix taught the cross-compiler about cache-maintenance inline asm and routed DBT flushes through proper barriers, which closed a class of bugs where superblock exits would land in stale code and execute the previous tenant.
@@ -111,11 +111,15 @@ The practical consequence for anyone using SLOW-32 is portability with teeth. I 
 
 ## Reproducibility
 
-**Repository:** [github.com/brazilofmux/slow32-public](https://github.com/brazilofmux/slow32-public)
+I don't expect you to take my word for it. Here is how you can verify the closure on your own machine today.
 
-**Trust root:** `selfhost/stage00/s32-emu.c` — 933 lines. Read it.
+- **Repository:** [github.com/brazilofmux/slow32-public](https://github.com/brazilofmux/slow32-public)
+- **Trust root:** [`selfhost/stage00/s32-emu.c`](https://github.com/brazilofmux/slow32-public/blob/main/selfhost/stage00/s32-emu.c) — 933 lines. Read it.
+- **Hardware (AArch64):** MacBook Pro, Apple silicon.
+- **Hardware (x86-64, prior article):** AMD Ryzen 5 3600. AMD64 numbers from the closed loop will publish when the cross-compiler closure lands.
+- **Validation:** every stage in the chain is differential-tested against `s32-emu.c`. If any of them produces different register or memory state on a regression test, the build fails.
 
-**The chain end to end** (AArch64 today; AMD64 days away):
+The chain end to end (AArch64 today; AMD64 days away):
 
 ```bash
 # 1. Build the trust root.
@@ -133,19 +137,21 @@ make                       # produces out/cc-a64 and the AArch64 fast emulator
 ./tools/dbt/slow32-dbt -4 myprogram.s32x
 ```
 
-**Hardware** (AArch64): MacBook Pro, Apple silicon. **Hardware** (x86-64, prior article): AMD Ryzen 5 3600. AMD64 numbers from the closed loop will publish when the cross-compiler closure lands.
-
-**Validation:** every stage in the chain is differential-tested against `s32-emu.c`. If any of them produces different register or memory state on a regression test, the build fails.
-
 ---
 
 ## Why This Matters
 
 When I started SLOW-32 I thought of it as an educational ISA with a pleasant property — clean enough to JIT well. The 6 BIPS milestone made it an interesting performance artifact. Closing the bootstrap loop is what turns it into something else: a small, portable execution environment that owns its own toolchain.
 
-This is the moment the physical chip’s ISA stopped mattering much. Someone still has to fabricate silicon, but whether that silicon speaks ARM or x86 is now almost cosmetic. It’s just a fast FPGA whose LUTs happen to implement someone else’s architecture. My orthogonal 32-bit RISC has become the real machine the software experiences. The hardware is emulating *my* virtual machine, not the other way around.
+This is the moment the physical chip’s ISA stopped mattering much. Someone still has to fabricate silicon, but whether that silicon speaks ARM or x86 is now almost cosmetic. It’s just a fast FPGA whose LUTs happen to implement someone else’s architecture. My orthogonal 32-bit RISC has become the real machine the software experiences. **The hardware is emulating *my* virtual machine, not the other way around.**
 
 What I want from a 32-bit hobby ISA, in the end, is the property that a binary I produce today will still run at full speed on a machine I haven't bought yet, without depending on the continued existence and stability of any specific host compiler. With the AArch64 leg closed and the AMD64 leg closing, that's the property I have. The interpreter is the contract. Everything else is just code.
+
+---
+
+*If you're building your own toy ISA, compiler, or self-hosted runtime, how do you handle the bootstrap problem? What's your trust root? I'd love to hear about it in the comments.*
+
+[Subscribe]
 
 ---
 
