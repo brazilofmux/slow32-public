@@ -3386,8 +3386,12 @@ static Node *parse_program(void) {
     }
     add_typedef("va_list", TY_PTR + TY_CHAR);
     add_typedef("__builtin_va_list", TY_PTR + TY_CHAR);
-    add_typedef("_Bool", TY_INT);
-    add_typedef("bool", TY_INT);
+    /* C99 _Bool / C++ bool: 1 byte unsigned per the standard.  Matches
+     * gcc/clang and lets cc-x64-compiled structs layout-match anything
+     * else linked into the same binary.  Was TY_INT for a long time,
+     * which silently corrupted any struct containing a bool field. */
+    add_typedef("_Bool", TY_CHAR | TY_UNSIGNED);
+    add_typedef("bool", TY_CHAR | TY_UNSIGNED);
     add_typedef("size_t", usize_ty);
     add_typedef("ptrdiff_t", isize_ty);
     add_typedef("intptr_t", isize_ty);
