@@ -2393,7 +2393,6 @@ static void hx_gen_func(Node *fn) {
     while (b < bb_nblk) {
         int term;
         int j;
-        int hoisted_done;
 
         hx_define_block(b);
 
@@ -2416,27 +2415,77 @@ static void hx_gen_func(Node *fn) {
             i = i - 1;
         }
 
-        /* Emit body instructions, then hoisted clones, then terminator.
-         * LICM-hoisted clones may reference values defined in this block's
-         * body, so the body has to come first to avoid use-before-def. */
-        hoisted_done = 0;
-        i = bb_start[b];
-        while (i < bb_end[b]) {
-            if (i == term) {
-                /* About to emit the terminator -- emit hoisted first. */
-                j = licm_head[b];
-                while (j >= 0) { hx_emit_inst(j); j = licm_next[j]; }
-                hoisted_done = 1;
-                hx_emit_inst(i);
-            } else if (h_kind[i] != HI_NOP && h_kind[i] != HI_PHI) {
-                hx_emit_inst(i);
+        /* LICM-hoisted clones can have a two-way dependency with this
+         * block's body:
+         *  - clones whose operands are defined in earlier blocks (or are
+         *    rematerialisable) are safe to emit at the TOP of the block,
+         *    and the body's own instructions can use them.  Example: a
+         *    hoisted `ADDI ctx, 0x8cc` referencing the function param.
+         *  - clones whose operands are defined in THIS block's body
+         *    (e.g. a hoisted `ADDI cpu, 0xa8` after `cpu = ctx->cpu` in
+         *    the entry block) must be emitted AFTER the body so they see
+         *    the loaded value.
+         * Split the hoisted list into "early" (top) and "late" (bottom)
+         * based on whether each clone references any def from this block. */
+        {
+            int top_first = -1;
+            int top_last = -1;
+            int bot_first = -1;
+            int bot_last = -1;
+            int h = licm_head[b];
+            while (h >= 0) {
+                int next_h = licm_next[h];
+                int dep_local = 0;
+                int s1 = h_src1[h];
+                int s2 = h_src2[h];
+                /* An operand creates a body-dep only if it's defined in
+                 * THIS block AND isn't always-available (params,
+                 * rematerialisable values, PHIs).  Rematerialisable values
+                 * are regenerated on demand; PHIs and params are live at
+                 * block entry. */
+                if (s1 >= 0 && h_blk[s1] == b &&
+                    h_kind[s1] != HI_PARAM && h_kind[s1] != HI_PHI &&
+                    !hi_is_remat(h_kind[s1])) dep_local = 1;
+                if (s2 >= 0 && ho_src2_is_ref(h_kind[h]) && h_blk[s2] == b &&
+                    h_kind[s2] != HI_PARAM && h_kind[s2] != HI_PHI &&
+                    !hi_is_remat(h_kind[s2])) dep_local = 1;
+                /* Append to top or bottom list */
+                if (!dep_local) {
+                    licm_next[h] = -1;
+                    if (top_last >= 0) licm_next[top_last] = h;
+                    else                top_first = h;
+                    top_last = h;
+                } else {
+                    licm_next[h] = -1;
+                    if (bot_last >= 0) licm_next[bot_last] = h;
+                    else                bot_first = h;
+                    bot_last = h;
+                }
+                h = next_h;
             }
-            i = i + 1;
-        }
-        /* If the block had no terminator (rare), emit hoisted at the end. */
-        if (!hoisted_done) {
-            j = licm_head[b];
+
+            /* Emit top-hoisted (no body deps) first. */
+            j = top_first;
             while (j >= 0) { hx_emit_inst(j); j = licm_next[j]; }
+
+            /* Emit body, with bottom-hoisted (body-dep) inserted before
+             * the terminator. */
+            i = bb_start[b];
+            while (i < bb_end[b]) {
+                if (i == term) {
+                    j = bot_first;
+                    while (j >= 0) { hx_emit_inst(j); j = licm_next[j]; }
+                    bot_first = -1;
+                    hx_emit_inst(i);
+                } else if (h_kind[i] != HI_NOP && h_kind[i] != HI_PHI) {
+                    hx_emit_inst(i);
+                }
+                i = i + 1;
+            }
+            if (bot_first >= 0) {
+                j = bot_first;
+                while (j >= 0) { hx_emit_inst(j); j = licm_next[j]; }
+            }
         }
 
         b = b + 1;

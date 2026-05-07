@@ -93,7 +93,15 @@ static int ra_norder;
 
 /* Limits */
 #define GC_MAX_NODE  4096
-#define GC_MAX_EDGE  131072
+/* Edge pool size: large functions like dbt's translate_block_cached have
+ * ~1000 simultaneously-live values inside hot dispatch loops, which makes
+ * the dense interference graph need ~500K bidirectional edges.  At
+ * 131072 we used to silently drop edges past the cap, which caused later
+ * nodes to interfere with nothing in the IRC and all collapse onto
+ * color 0 (=RBX).  1M edges keeps the cost bounded (8MB × 2 = 16MB BSS)
+ * while accommodating translate_block_cached and similar hot hub
+ * functions.  Spill-on-overflow logic below makes overflow safe. */
+#define GC_MAX_EDGE  1048576
 #define GC_MAX_MOVE  8192
 
 /* Node data */
@@ -148,6 +156,14 @@ static int gc_alias[GC_MAX_NODE];
 
 /* Coloring result: color per node (slot index 0..RA_NPHY-1), -1 = spilled */
 static int gc_color[GC_MAX_NODE];
+
+/* Force-spill flag: set when gc_add_edge couldn't record an edge because
+ * GC_MAX_EDGE was exhausted.  Such a node will be left uncolored
+ * (gc_color = -1) so the IRC's coloring step doesn't accidentally share
+ * a register with an unrecorded interferer.  Without this guard, a
+ * silent-drop in gc_add_edge causes multiple call args to collapse onto
+ * the same physical register and overwrite each other before the call. */
+static int gc_force_spill[GC_MAX_NODE];
 
 /* --- Callee-save tracking --- */
 static int ra_used[RA_NPHY];        /* 1 if slot was assigned */
@@ -209,11 +225,31 @@ static void ra_compute_pos(void) {
             i = i - 1;
         }
 
-        /* Regular instructions up to (not including) the terminator FIRST.
-         * LICM-hoisted clones may reference values defined in this block's
-         * body (e.g. an entry-block load of `cpu = ctx->cpu` whose result
-         * is used by a hoisted `ADDI cpu, 0xa8`), so the body must be
-         * linearized before the hoisted list to maintain def-before-use. */
+        /* LICM-hoisted clones split: those without a body-local dep go
+         * at block top (so body can use them); those with a body-local
+         * dep go just before the terminator (so they see body's defs).
+         * This split must match the order in hx_gen_func()'s emission. */
+        i = licm_head[b];
+        while (i >= 0) {
+            int s1 = h_src1[i];
+            int s2 = h_src2[i];
+            int dep_local = 0;
+            if (s1 >= 0 && h_blk[s1] == b &&
+                h_kind[s1] != HI_PARAM && h_kind[s1] != HI_PHI &&
+                !hi_is_remat(h_kind[s1])) dep_local = 1;
+            if (s2 >= 0 && ho_src2_is_ref(h_kind[i]) && h_blk[s2] == b &&
+                h_kind[s2] != HI_PARAM && h_kind[s2] != HI_PHI &&
+                !hi_is_remat(h_kind[s2])) dep_local = 1;
+            if (!dep_local && h_kind[i] != HI_NOP) {
+                ra_pos[i] = pos;
+                ra_order[ra_norder] = i;
+                ra_norder = ra_norder + 1;
+                pos = pos + 1;
+            }
+            i = licm_next[i];
+        }
+
+        /* Regular block body up to (not including) the terminator. */
         i = bb_start[b];
         while (i < bb_end[b]) {
             if (i == term) break;
@@ -226,10 +262,19 @@ static void ra_compute_pos(void) {
             i = i + 1;
         }
 
-        /* LICM-hoisted instructions, emitted just before the terminator. */
+        /* Body-dep hoisted clones, between body and terminator. */
         i = licm_head[b];
         while (i >= 0) {
-            if (h_kind[i] != HI_NOP) {
+            int s1 = h_src1[i];
+            int s2 = h_src2[i];
+            int dep_local = 0;
+            if (s1 >= 0 && h_blk[s1] == b &&
+                h_kind[s1] != HI_PARAM && h_kind[s1] != HI_PHI &&
+                !hi_is_remat(h_kind[s1])) dep_local = 1;
+            if (s2 >= 0 && ho_src2_is_ref(h_kind[i]) && h_blk[s2] == b &&
+                h_kind[s2] != HI_PARAM && h_kind[s2] != HI_PHI &&
+                !hi_is_remat(h_kind[s2])) dep_local = 1;
+            if (dep_local && h_kind[i] != HI_NOP) {
                 ra_pos[i] = pos;
                 ra_order[ra_norder] = i;
                 ra_norder = ra_norder + 1;
@@ -497,7 +542,14 @@ static int gc_has_edge(int u, int v) {
 static void gc_add_edge(int u, int v) {
     if (u == v) return;
     if (gc_has_edge(u, v)) return;
-    if (gc_nedge + 2 > GC_MAX_EDGE) return;
+    if (gc_nedge + 2 > GC_MAX_EDGE) {
+        /* Can't record this interference -- mark both nodes as
+         * force-spill so they get spill slots instead of potentially
+         * sharing a color with the unrecorded interferer. */
+        if (u >= 0 && u < GC_MAX_NODE) gc_force_spill[u] = 1;
+        if (v >= 0 && v < GC_MAX_NODE) gc_force_spill[v] = 1;
+        return;
+    }
 
     /* u → v */
     gc_adj_peer[gc_nedge] = v;
@@ -576,6 +628,11 @@ static void gc_build(void) {
     i = 0;
     while (i < h_ninst) {
         gc_node[i] = -1;
+        i = i + 1;
+    }
+    i = 0;
+    while (i < GC_MAX_NODE) {
+        gc_force_spill[i] = 0;
         i = i + 1;
     }
 
@@ -1389,6 +1446,10 @@ static void gc_writeback(void) {
     while (n < gc_nnode) {
         inst = gc_inst[n];
         c = gc_color[n];
+        /* Force-spill nodes whose interference couldn't be recorded fully
+         * (GC_MAX_EDGE overflow): the color we computed is unsafe because
+         * we may have missed an interferer that happens to share it. */
+        if (gc_force_spill[n]) c = -1;
         if (c >= 0) {
             /* Floating-point values never live in a GPR — codegen always
              * shuttles them through XMM scratch + spill slot.  Leaving the
@@ -1404,6 +1465,7 @@ static void gc_writeback(void) {
         }
         n = n + 1;
     }
+
 }
 
 /* Top-level graph-coloring allocation */
