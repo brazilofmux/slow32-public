@@ -219,7 +219,6 @@ static inline void reg_cache_mark_written(translate_ctx_t *ctx, uint8_t guest_re
 // Pre-scan block: tally register usage, dead temporary analysis, back-edge detection,
 // and select top-used guest registers for caching in host callee-saved registers.
 static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
-    dbt_cpu_state_t *cpu = ctx->cpu;
     uint32_t use_count[32] = {0};
 
     memset(ctx->dead_temp_skip, 0, sizeof(ctx->dead_temp_skip));
@@ -233,10 +232,10 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
     int inst_count = 0;
 
     while (inst_count < MAX_BLOCK_INSTS) {
-        if (pc >= cpu->code_limit || (cpu->code_limit - pc) < 4)
+        if (pc >= ctx->cpu->code_limit || (ctx->cpu->code_limit - pc) < 4)
             break;
 
-        uint32_t raw = *(uint32_t *)(cpu->mem_base + pc);
+        uint32_t raw = *(uint32_t *)(ctx->cpu->mem_base + pc);
         decoded_inst_t inst = decode_instruction(raw);
         decoded[inst_count] = inst;
 
@@ -274,7 +273,7 @@ static void reg_alloc_prescan(translate_ctx_t *ctx, uint32_t start_pc) {
                 uint32_t jal_target = pc + inst.imm;
                 if (inst.rd == 0 &&
                     jal_target > pc &&
-                    jal_target < cpu->code_limit &&
+                    jal_target < ctx->cpu->code_limit &&
                     inst_count < MAX_BLOCK_INSTS - 4) {
                     inst_count++;
                     pc = jal_target;

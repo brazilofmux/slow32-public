@@ -3436,6 +3436,18 @@ static void hx_gen_func(Node *fn) {
         int ngrn;
         int nsrn;
         Node *pp;
+        int pm_inst[16];
+        int pm_src_reg[16];
+        int pm_dst_reg[16];
+        int pm_cls[16];
+        int pm_spill_off[16];
+        int pm_to_spill[16];
+        int pm_n;
+        int ps_inst[16];
+        int ps_is_fp[16];
+        int ps_is_double[16];
+        int ps_caller_off[16];
+        int ps_n;
 
         /* Build param index → HIR inst map in one pass over the HIR. */
         p_idx = 0;
@@ -3453,6 +3465,8 @@ static void hx_gen_func(Node *fn) {
         p_idx = 0;
         ngrn = 0;
         nsrn = 0;
+        pm_n = 0;
+        ps_n = 0;
         /* Hidden retptr param (struct-returning fn): occupies x0 / param
          * index 0, but is not in fn->args.  Move it into its assigned
          * slot before walking the user args, then advance p_idx/ngrn so
@@ -3463,11 +3477,21 @@ static void hx_gen_func(Node *fn) {
                 int slot = ra_reg[pi];
                 int src_reg = hx_arg_reg[0];
                 if (slot >= 0) {
-                    int dst_reg = hx_slot_reg(slot);
-                    if (dst_reg != src_reg) a64_mov_x(dst_reg, src_reg);
+                    pm_inst[pm_n] = pi;
+                    pm_src_reg[pm_n] = src_reg;
+                    pm_dst_reg[pm_n] = hx_slot_reg(slot);
+                    pm_cls[pm_n] = RA_CLASS_X;
+                    pm_spill_off[pm_n] = 0;
+                    pm_to_spill[pm_n] = 0;
+                    pm_n = pm_n + 1;
                 } else if (ra_spill_off[pi] != 0) {
-                    hx_emit_store_from_reg(src_reg, ra_spill_off[pi],
-                                           hx_is_wide(h_ty[pi]));
+                    pm_inst[pm_n] = pi;
+                    pm_src_reg[pm_n] = src_reg;
+                    pm_dst_reg[pm_n] = -1;
+                    pm_cls[pm_n] = RA_CLASS_X;
+                    pm_spill_off[pm_n] = ra_spill_off[pi];
+                    pm_to_spill[pm_n] = 1;
+                    pm_n = pm_n + 1;
                 }
             }
             p_idx = 1;
@@ -3503,24 +3527,21 @@ static void hx_gen_func(Node *fn) {
                 slot = ra_reg[pi];
                 if (slot >= 0) {
                     dst_reg = hx_slot_reg(slot);
-                    if (dst_reg != src_reg) {
-                        if (is_fp) {
-                            if (ty_is_double(pp->ty)) a64_fmov_d_d(dst_reg, src_reg);
-                            else                       a64_fmov_s_s(dst_reg, src_reg);
-                        } else {
-                            a64_mov_x(dst_reg, src_reg);
-                        }
-                    }
+                    pm_inst[pm_n] = pi;
+                    pm_src_reg[pm_n] = src_reg;
+                    pm_dst_reg[pm_n] = dst_reg;
+                    pm_cls[pm_n] = is_fp ? RA_CLASS_V : RA_CLASS_X;
+                    pm_spill_off[pm_n] = 0;
+                    pm_to_spill[pm_n] = 0;
+                    pm_n = pm_n + 1;
                 } else if (ra_spill_off[pi] != 0) {
-                    if (is_fp) {
-                        hx_emit_fp_store_from_reg(src_reg,
-                                                  ra_spill_off[pi],
-                                                  ty_is_double(pp->ty));
-                    } else {
-                        hx_emit_store_from_reg(src_reg,
-                                               ra_spill_off[pi],
-                                               hx_is_wide(h_ty[pi]));
-                    }
+                    pm_inst[pm_n] = pi;
+                    pm_src_reg[pm_n] = src_reg;
+                    pm_dst_reg[pm_n] = -1;
+                    pm_cls[pm_n] = is_fp ? RA_CLASS_V : RA_CLASS_X;
+                    pm_spill_off[pm_n] = ra_spill_off[pi];
+                    pm_to_spill[pm_n] = 1;
+                    pm_n = pm_n + 1;
                 }
             } else {
                 /* Stack arg.  AAPCS lays them out in declaration order
@@ -3529,38 +3550,197 @@ static void hx_gen_func(Node *fn) {
                  * 16-byte alignment / type-size rules apply.  For the
                  * test surface we hit today (≤8 args, no struct passing),
                  * source-order indexing matches AAPCS layout closely
-                 * enough.  Refinement deferred. */
+                 * enough.  Refinement deferred.
+                 *
+                 * Defer materialization until register-passed params have
+                 * been moved out of ABI arg registers.  A stack arg's
+                 * allocator-chosen home may be x0/x1/... and would clobber
+                 * an incoming register arg if emitted during this scan. */
                 int caller_off;
                 caller_off = 16 + (p_idx - 8) * 8;
-                if (is_fp) {
-                    if (ty_is_double(pp->ty))
-                        a64_ldr_d_imm(HX_SCRATCH_V1, A64_X29, caller_off);
-                    else
-                        a64_ldr_s_imm(HX_SCRATCH_V1, A64_X29, caller_off);
-                    slot = ra_reg[pi];
-                    if (slot >= 0) {
-                        if (ty_is_double(pp->ty))
-                            a64_fmov_d_d(hx_slot_reg(slot), HX_SCRATCH_V1);
-                        else
-                            a64_fmov_s_s(hx_slot_reg(slot), HX_SCRATCH_V1);
-                    } else if (ra_spill_off[pi] != 0) {
-                        hx_emit_fp_store_from_reg(HX_SCRATCH_V1,
-                                                  ra_spill_off[pi],
-                                                  ty_is_double(pp->ty));
-                    }
-                } else {
-                    a64_ldr_x_imm(HX_SCRATCH1, A64_X29, caller_off);
-                    slot = ra_reg[pi];
-                    if (slot >= 0) {
-                        a64_mov_x(hx_slot_reg(slot), HX_SCRATCH1);
-                    } else if (ra_spill_off[pi] != 0) {
-                        hx_emit_store_from_reg(HX_SCRATCH1, ra_spill_off[pi],
-                                               hx_is_wide(h_ty[pi]));
-                    }
+                if (ps_n < 16) {
+                    ps_inst[ps_n] = pi;
+                    ps_is_fp[ps_n] = is_fp;
+                    ps_is_double[ps_n] = is_fp && ty_is_double(pp->ty);
+                    ps_caller_off[ps_n] = caller_off;
+                    ps_n = ps_n + 1;
                 }
             }
             p_idx = p_idx + 1;
             pp = pp->next;
+        }
+
+        /* Register-passed params form a parallel copy from ABI arg
+         * registers into allocator-chosen homes.  Sequential moves can
+         * clobber a later source (e.g. x1->x2, x2->x3, x3->x1), so use a
+         * small greedy scheduler and stack fallback for cycles. */
+        {
+            int done[16];
+            int n_remaining;
+            int progress;
+            int p;
+            int q;
+
+            p = 0;
+            while (p < pm_n) {
+                done[p] = 0;
+                if (!pm_to_spill[p] && pm_src_reg[p] == pm_dst_reg[p])
+                    done[p] = 1;
+                p = p + 1;
+            }
+
+            /* Spill destinations do not clobber ABI arg registers; snapshot
+             * them first so later register moves cannot destroy their source. */
+            p = 0;
+            while (p < pm_n) {
+                if (pm_to_spill[p]) {
+                    if (pm_cls[p] == RA_CLASS_V) {
+                        hx_emit_fp_store_from_reg(pm_src_reg[p],
+                                                  pm_spill_off[p],
+                                                  ty_is_double(h_ty[pm_inst[p]]));
+                    } else {
+                        hx_emit_store_from_reg(pm_src_reg[p],
+                                               pm_spill_off[p],
+                                               hx_is_wide(h_ty[pm_inst[p]]));
+                    }
+                    done[p] = 1;
+                }
+                p = p + 1;
+            }
+
+            n_remaining = 0;
+            p = 0;
+            while (p < pm_n) {
+                if (!done[p]) n_remaining = n_remaining + 1;
+                p = p + 1;
+            }
+
+            progress = 1;
+            while (n_remaining > 0 && progress) {
+                progress = 0;
+                p = 0;
+                while (p < pm_n) {
+                    int blocked;
+                    if (done[p]) { p = p + 1; continue; }
+                    blocked = 0;
+                    q = 0;
+                    while (q < pm_n) {
+                        if (!done[q] && q != p &&
+                            pm_cls[q] == pm_cls[p] &&
+                            pm_src_reg[q] == pm_dst_reg[p]) {
+                            blocked = 1;
+                            q = pm_n;
+                        } else {
+                            q = q + 1;
+                        }
+                    }
+                    if (!blocked) {
+                        if (pm_cls[p] == RA_CLASS_V) {
+                            if (ty_is_double(h_ty[pm_inst[p]]))
+                                a64_fmov_d_d(pm_dst_reg[p], pm_src_reg[p]);
+                            else
+                                a64_fmov_s_s(pm_dst_reg[p], pm_src_reg[p]);
+                        } else if (hx_is_wide(h_ty[pm_inst[p]])) {
+                            a64_mov_x(pm_dst_reg[p], pm_src_reg[p]);
+                        } else {
+                            a64_mov_w(pm_dst_reg[p], pm_src_reg[p]);
+                        }
+                        done[p] = 1;
+                        n_remaining = n_remaining - 1;
+                        progress = 1;
+                    }
+                    p = p + 1;
+                }
+            }
+
+            if (n_remaining > 0) {
+                int tmp_bytes;
+                int slot;
+                tmp_bytes = n_remaining * 8;
+                if (tmp_bytes & 15) tmp_bytes = (tmp_bytes + 15) & ~15;
+                if (tmp_bytes <= 4095) a64_sub_x_imm(A64_SP, A64_SP, tmp_bytes);
+                else {
+                    a64_sub_x_imm(A64_SP, A64_SP, tmp_bytes & 0xFFF);
+                    a64_sub_x_imm_lsl12(A64_SP, A64_SP, (tmp_bytes >> 12) & 0xFFF);
+                }
+
+                slot = 0;
+                p = 0;
+                while (p < pm_n) {
+                    if (!done[p]) {
+                        if (pm_cls[p] == RA_CLASS_V) {
+                            if (ty_is_double(h_ty[pm_inst[p]]))
+                                a64_str_d_imm(pm_src_reg[p], A64_SP, slot * 8);
+                            else
+                                a64_str_s_imm(pm_src_reg[p], A64_SP, slot * 8);
+                        } else {
+                            hx_stack_store(slot * 8, pm_src_reg[p],
+                                           hx_is_wide(h_ty[pm_inst[p]]));
+                        }
+                        slot = slot + 1;
+                    }
+                    p = p + 1;
+                }
+
+                slot = 0;
+                p = 0;
+                while (p < pm_n) {
+                    if (!done[p]) {
+                        if (pm_cls[p] == RA_CLASS_V) {
+                            if (ty_is_double(h_ty[pm_inst[p]]))
+                                a64_ldr_d_imm(pm_dst_reg[p], A64_SP, slot * 8);
+                            else
+                                a64_ldr_s_imm(pm_dst_reg[p], A64_SP, slot * 8);
+                        } else {
+                            hx_stack_load(pm_dst_reg[p], slot * 8,
+                                          hx_is_wide(h_ty[pm_inst[p]]));
+                        }
+                        slot = slot + 1;
+                    }
+                    p = p + 1;
+                }
+
+                if (tmp_bytes <= 4095) a64_add_x_imm(A64_SP, A64_SP, tmp_bytes);
+                else {
+                    a64_add_x_imm(A64_SP, A64_SP, tmp_bytes & 0xFFF);
+                    a64_add_x_imm_lsl12(A64_SP, A64_SP, (tmp_bytes >> 12) & 0xFFF);
+                }
+            }
+        }
+
+        p_idx = 0;
+        while (p_idx < ps_n) {
+            int pi;
+            int slot;
+            pi = ps_inst[p_idx];
+            slot = ra_reg[pi];
+            if (ps_is_fp[p_idx]) {
+                if (ps_is_double[p_idx])
+                    a64_ldr_d_imm(HX_SCRATCH_V1, A64_X29,
+                                   ps_caller_off[p_idx]);
+                else
+                    a64_ldr_s_imm(HX_SCRATCH_V1, A64_X29,
+                                   ps_caller_off[p_idx]);
+                if (slot >= 0) {
+                    if (ps_is_double[p_idx])
+                        a64_fmov_d_d(hx_slot_reg(slot), HX_SCRATCH_V1);
+                    else
+                        a64_fmov_s_s(hx_slot_reg(slot), HX_SCRATCH_V1);
+                } else if (ra_spill_off[pi] != 0) {
+                    hx_emit_fp_store_from_reg(HX_SCRATCH_V1,
+                                              ra_spill_off[pi],
+                                              ps_is_double[p_idx]);
+                }
+            } else {
+                a64_ldr_x_imm(HX_SCRATCH1, A64_X29, ps_caller_off[p_idx]);
+                if (slot >= 0) {
+                    a64_mov_x(hx_slot_reg(slot), HX_SCRATCH1);
+                } else if (ra_spill_off[pi] != 0) {
+                    hx_emit_store_from_reg(HX_SCRATCH1, ra_spill_off[pi],
+                                           hx_is_wide(h_ty[pi]));
+                }
+            }
+            p_idx = p_idx + 1;
         }
     }
 

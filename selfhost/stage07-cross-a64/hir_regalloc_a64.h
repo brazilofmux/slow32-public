@@ -625,6 +625,17 @@ static void gc_add_edge(int u, int v) {
     gc_degree[v] = gc_degree[v] + 1;
 }
 
+static void gc_add_inst_edge(int a, int b) {
+    int na;
+    int nb;
+    if (a < 0 || b < 0 || a == b) return;
+    na = gc_node[a];
+    nb = gc_node[b];
+    if (na < 0 || nb < 0 || na == nb) return;
+    if (gc_class[na] != gc_class[nb]) return;
+    gc_add_edge(na, nb);
+}
+
 /* --- Move-list helpers --- */
 
 static void gc_add_node_move(int node, int mv) {
@@ -759,6 +770,106 @@ static void gc_build(void) {
             }
 
             i = i + 1;
+        }
+    }
+
+    /* Values consumed by the same instruction are simultaneously live at
+     * that instruction even if all of them die there.  The interval sweep
+     * above uses kill-at-use semantics so a destination can reuse its last
+     * source register, but that also means source/source conflicts at the
+     * same position need explicit edges.  This matters most for calls:
+     * two call arguments cannot share one physical register before the
+     * argument marshal runs. */
+    {
+        int ops[40];
+        int nops;
+        int base;
+        int nargs;
+        int o;
+        int p;
+        int src;
+
+        i = 0;
+        while (i < ra_norder) {
+            inst = ra_order[i];
+            k = h_kind[inst];
+            nops = 0;
+
+            if (h_src1[inst] >= 0) {
+                ops[nops] = h_src1[inst];
+                nops = nops + 1;
+            }
+            if (h_src2[inst] >= 0 && (ho_src2_is_ref(k) || k == HI_LOAD)) {
+                ops[nops] = h_src2[inst];
+                nops = nops + 1;
+            }
+            if (k == HI_STORE && hx_sib_index[inst] >= 0) {
+                ops[nops] = hx_sib_index[inst];
+                nops = nops + 1;
+            }
+            if (hx_alu_sib_idx[inst] >= 0) {
+                ops[nops] = hx_alu_sib_idx[inst];
+                nops = nops + 1;
+            }
+            if ((k == HI_CALL || k == HI_CALLP || k == HI_A64_DBT_TRAMPOLINE) &&
+                h_cbase[inst] >= 0) {
+                base = h_cbase[inst];
+                nargs = h_val[inst];
+                o = 0;
+                while (o < nargs && nops < 40) {
+                    src = h_carg[base + o];
+                    if (src >= 0) {
+                        ops[nops] = src;
+                        nops = nops + 1;
+                    }
+                    o = o + 1;
+                }
+            }
+
+            o = 0;
+            while (o < nops) {
+                p = o + 1;
+                while (p < nops) {
+                    gc_add_inst_edge(ops[o], ops[p]);
+                    p = p + 1;
+                }
+                o = o + 1;
+            }
+
+            i = i + 1;
+        }
+    }
+
+    /* PARAM nodes are linearized as ordinary HIR definitions, but their
+     * incoming ABI register values all exist simultaneously at function
+     * entry and the prologue materializes them as one parallel copy.
+     * Make same-class PARAMs interfere so the allocator cannot assign two
+     * distinct incoming args to one home register. */
+    {
+        int params[32];
+        int nparams;
+        int a;
+        int b;
+
+        nparams = 0;
+        i = 0;
+        while (i < ra_norder && nparams < 32) {
+            inst = ra_order[i];
+            if (h_kind[inst] == HI_PARAM) {
+                params[nparams] = inst;
+                nparams = nparams + 1;
+            }
+            i = i + 1;
+        }
+
+        a = 0;
+        while (a < nparams) {
+            b = a + 1;
+            while (b < nparams) {
+                gc_add_inst_edge(params[a], params[b]);
+                b = b + 1;
+            }
+            a = a + 1;
         }
     }
 }

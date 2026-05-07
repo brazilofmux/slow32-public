@@ -203,7 +203,7 @@ typedef struct {
 // x86-64: Called with rbp = &cpu, r14 = cpu->mem_base
 // AArch64: Called with x20 = &cpu, x21 = cpu->mem_base
 // Returns via 'ret' with exit_reason set in cpu->exit_reason
-typedef void (*translated_block_fn)(void);
+typedef void *translated_block_fn;
 
 // Initialize translation context (Stage 1 mode - no caching)
 void translate_init(translate_ctx_t *ctx, dbt_cpu_state_t *cpu);

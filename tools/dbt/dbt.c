@@ -1184,10 +1184,10 @@ static void execute_translated(dbt_cpu_state_t *cpu, translated_block_fn block) 
     // then save callee-saved regs, then set up x20/x21/x22 from the
     // captured values. This avoids the problem of the compiler putting
     // inputs into callee-saved registers that get clobbered by the saves.
-    register uint64_t r_cpu     __asm__("x0") = (uint64_t)cpu;
-    register uint64_t r_mem     __asm__("x1") = (uint64_t)mem_base;
-    register uint64_t r_block   __asm__("x2") = (uint64_t)block;
-    register uint64_t r_compact __asm__("x3") = (uint64_t)compact_table;
+    register dbt_cpu_state_t *r_cpu __asm__("x0") = cpu;
+    register uint8_t *r_mem         __asm__("x1") = mem_base;
+    register void *r_block          __asm__("x2") = block;
+    register void *r_compact        __asm__("x3") = compact_table;
 
     __asm__ __volatile__(
         // Save callee-saved registers (x19-x28, fp, lr)
