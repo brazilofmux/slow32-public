@@ -12,7 +12,7 @@
 int strlen(char *s);
 char *memcpy(char *dst, char *src, int n);
 int write(int fd, char *buf, int len);
-int __syscall();
+long __syscall();
 
 /* ---- memmove: like memcpy but safe for overlap ---- */
 char *memmove(char *dst, char *src, int n) {
@@ -112,13 +112,13 @@ int setitimer(int which, void *new_val, void *old_val) { return -1; }
 void *signal(int sig, void *handler) { return (void *)(long)-1; }
 int sigaction(int sig, void *act, void *oldact) { return -1; }
 int sigemptyset(void *set) {
-    /* sigset_t on Linux is 128 bytes — zero it out. */
-    int i;
-    char *p = (char *)set;
-    if (set) {
-        i = 0;
-        while (i < 128) { p[i] = 0; i = i + 1; }
-    }
+    /* signal.h defines sigset_t as `unsigned long` (8 bytes). The real
+     * Linux kernel sigset_t is 128 bytes, but our sigaction stub is a
+     * no-op so the kernel layout doesn't matter — only the in-process
+     * struct layout does. Writing 128 bytes here overflows the
+     * `struct sigaction` local on the stack and corrupts the return
+     * address. Match the cc-x64 sigset_t size instead. */
+    if (set) *(long *)set = 0;
     return 0;
 }
 

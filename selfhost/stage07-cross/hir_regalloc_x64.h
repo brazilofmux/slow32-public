@@ -209,20 +209,11 @@ static void ra_compute_pos(void) {
             i = i - 1;
         }
 
-        /* LICM-hoisted instructions are emitted at block top by hx_gen_func(),
-         * so linearization must match that order. */
-        i = licm_head[b];
-        while (i >= 0) {
-            if (h_kind[i] != HI_NOP) {
-                ra_pos[i] = pos;
-                ra_order[ra_norder] = i;
-                ra_norder = ra_norder + 1;
-                pos = pos + 1;
-            }
-            i = licm_next[i];
-        }
-
-        /* Regular instructions up to (not including) the terminator */
+        /* Regular instructions up to (not including) the terminator FIRST.
+         * LICM-hoisted clones may reference values defined in this block's
+         * body (e.g. an entry-block load of `cpu = ctx->cpu` whose result
+         * is used by a hoisted `ADDI cpu, 0xa8`), so the body must be
+         * linearized before the hoisted list to maintain def-before-use. */
         i = bb_start[b];
         while (i < bb_end[b]) {
             if (i == term) break;
@@ -233,6 +224,18 @@ static void ra_compute_pos(void) {
                 pos = pos + 1;
             }
             i = i + 1;
+        }
+
+        /* LICM-hoisted instructions, emitted just before the terminator. */
+        i = licm_head[b];
+        while (i >= 0) {
+            if (h_kind[i] != HI_NOP) {
+                ra_pos[i] = pos;
+                ra_order[ra_norder] = i;
+                ra_norder = ra_norder + 1;
+                pos = pos + 1;
+            }
+            i = licm_next[i];
         }
 
         /* The terminator itself */

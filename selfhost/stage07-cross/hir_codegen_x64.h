@@ -2391,14 +2391,11 @@ static void hx_gen_func(Node *fn) {
     /* --- Emit blocks --- */
     b = 0;
     while (b < bb_nblk) {
-        hx_define_block(b);
+        int term;
+        int j;
+        int hoisted_done;
 
-        /* Emit LICM-hoisted instructions at block top */
-        i = licm_head[b];
-        while (i >= 0) {
-            hx_emit_inst(i);
-            i = licm_next[i];
-        }
+        hx_define_block(b);
 
         /* Emit PHI nodes -- these are no-ops (handled at edges) */
         i = ssa_phi_head[b];
@@ -2406,12 +2403,40 @@ static void hx_gen_func(Node *fn) {
             i = ssa_phi_next[i];
         }
 
-        /* Emit block body */
+        /* Find the block's terminator (last branching instruction). */
+        term = -1;
+        i = bb_end[b] - 1;
+        while (i >= bb_start[b]) {
+            int tk = h_kind[i];
+            if (tk == HI_BR || tk == HI_BRC || tk == HI_RET) {
+                term = i;
+                break;
+            }
+            if (tk != HI_NOP) break;
+            i = i - 1;
+        }
+
+        /* Emit body instructions, then hoisted clones, then terminator.
+         * LICM-hoisted clones may reference values defined in this block's
+         * body, so the body has to come first to avoid use-before-def. */
+        hoisted_done = 0;
         i = bb_start[b];
         while (i < bb_end[b]) {
-            if (h_kind[i] != HI_NOP && h_kind[i] != HI_PHI)
+            if (i == term) {
+                /* About to emit the terminator -- emit hoisted first. */
+                j = licm_head[b];
+                while (j >= 0) { hx_emit_inst(j); j = licm_next[j]; }
+                hoisted_done = 1;
                 hx_emit_inst(i);
+            } else if (h_kind[i] != HI_NOP && h_kind[i] != HI_PHI) {
+                hx_emit_inst(i);
+            }
             i = i + 1;
+        }
+        /* If the block had no terminator (rare), emit hoisted at the end. */
+        if (!hoisted_done) {
+            j = licm_head[b];
+            while (j >= 0) { hx_emit_inst(j); j = licm_next[j]; }
         }
 
         b = b + 1;
