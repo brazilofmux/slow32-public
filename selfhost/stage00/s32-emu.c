@@ -1,5 +1,10 @@
 /* Feature test macros — must precede all includes */
 #define _POSIX_C_SOURCE 200809L
+#ifdef __APPLE__
+/* macOS hides BSD struct stat fields (st_atimespec et al.) under strict POSIX;
+ * _DARWIN_C_SOURCE re-enables them so the timespec mappings below resolve. */
+#define _DARWIN_C_SOURCE
+#endif
 
 /*
  * s32-emu.c — Stage 0 Bootstrap Emulator for SLOW-32
@@ -23,6 +28,13 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <limits.h>
+
+/* macOS spells the POSIX.1-2008 timespec fields st_atimespec/st_mtimespec/st_ctimespec. */
+#ifdef __APPLE__
+#define st_atim st_atimespec
+#define st_mtim st_mtimespec
+#define st_ctim st_ctimespec
+#endif
 
 /* ======================================================================
  * Constants
