@@ -1787,6 +1787,166 @@ static void ra_extend_fused_cmp(void) {
 }
 
 /* =================================================================
+ * Invariant checks
+ *
+ * These run after regalloc with CC_X64_VERIFY=1 in the environment.
+ * They catch the bug classes that have caused recent silent miscompiles:
+ *   - use-before-def in linearized order (LICM ordering, scheduler)
+ *   - register-class collision: an interference edge with same physical
+ *     register on both endpoints (silent IRC graph dropout, etc.)
+ *   - duplicate spill slot for distinct, simultaneously-live SSA values
+ * On any failure they print a diagnostic to stderr and exit(1) -- it's
+ * better to fail loudly at compile time than silently miscompile.
+ * ================================================================= */
+
+static void ra_verify(char *fn_name) {
+    int i;
+    int j;
+    int inst;
+    int p;
+    int s;
+    int err;
+    int k;
+
+    err = 0;
+
+    /* (1) Use-before-def: every operand reference must have been
+     * linearized at a position strictly less than this instruction's,
+     * unless it's a PHI (live at block start) or a rematerializable
+     * value (regenerated on demand by hx_mat). */
+    i = 0;
+    while (i < ra_norder) {
+        inst = ra_order[i];
+        p = ra_pos[inst];
+        k = h_kind[inst];
+
+        s = h_src1[inst];
+        if (s >= 0 && ra_pos[s] >= 0 && h_kind[s] != HI_PHI &&
+            h_kind[s] != HI_PARAM &&
+            !hi_is_remat(h_kind[s]) && ra_pos[s] >= p) {
+            fdputs("RA_VERIFY: use-before-def in ", 2);
+            fdputs(fn_name, 2);
+            fdputs(": inst=", 2); fdputuint(2, inst);
+            fdputs(" k=", 2); fdputuint(2, k);
+            fdputs(" blk=", 2); fdputuint(2, h_blk[inst]);
+            fdputs(" pos=", 2); fdputuint(2, p);
+            fdputs(" src1=", 2); fdputuint(2, s);
+            fdputs(" src1_k=", 2); fdputuint(2, h_kind[s]);
+            fdputs(" src1_blk=", 2); fdputuint(2, h_blk[s]);
+            fdputs(" src1_pos=", 2); fdputuint(2, ra_pos[s]);
+            fdputs("\n", 2);
+            err = err + 1;
+        }
+        if (h_src2[inst] >= 0 && (ho_src2_is_ref(k) || k == HI_LOAD)) {
+            s = h_src2[inst];
+            if (s >= 0 && ra_pos[s] >= 0 && h_kind[s] != HI_PHI &&
+                h_kind[s] != HI_PARAM &&
+                !hi_is_remat(h_kind[s]) && ra_pos[s] >= p) {
+                fdputs("RA_VERIFY: src2 use-before-def in ", 2);
+                fdputs(fn_name, 2);
+                fdputs(": inst=", 2); fdputuint(2, inst);
+                fdputs(" pos=", 2); fdputuint(2, p);
+                fdputs(" src2=", 2); fdputuint(2, s);
+                fdputs(" src2_pos=", 2); fdputuint(2, ra_pos[s]);
+                fdputs("\n", 2);
+                err = err + 1;
+            }
+        }
+        if (k == HI_CALL || k == HI_CALLP || k == HI_X64_DBT_TRAMPOLINE) {
+            if (h_cbase[inst] >= 0) {
+                j = 0;
+                while (j < h_val[inst]) {
+                    s = h_carg[h_cbase[inst] + j];
+                    if (s >= 0 && ra_pos[s] >= 0 && h_kind[s] != HI_PHI &&
+                        h_kind[s] != HI_PARAM &&
+                        !hi_is_remat(h_kind[s]) && ra_pos[s] >= p) {
+                        fdputs("RA_VERIFY: carg use-before-def in ", 2);
+                        fdputs(fn_name, 2);
+                        fdputs(": call=", 2); fdputuint(2, inst);
+                        fdputs(" pos=", 2); fdputuint(2, p);
+                        fdputs(" carg[", 2); fdputuint(2, j);
+                        fdputs("]=", 2); fdputuint(2, s);
+                        fdputs(" pos=", 2); fdputuint(2, ra_pos[s]);
+                        fdputs("\n", 2);
+                        err = err + 1;
+                    }
+                    j = j + 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+
+    /* (2) Same-color interfering pair: two values with an interference
+     * edge that nevertheless share a physical register.  This catches
+     * the IRC-edge-overflow class of bug at its source. */
+    i = 0;
+    while (i < gc_nnode) {
+        int e = gc_adj_head[i];
+        int my_color = gc_color[gc_get_alias(i)];
+        int my_inst = gc_inst[i];
+        int my_reg = my_inst >= 0 ? ra_reg[my_inst] : -1;
+        if (my_reg >= 0) {
+            while (e >= 0) {
+                int peer = gc_adj_peer[e];
+                int pa = gc_get_alias(peer);
+                int peer_inst = gc_inst[pa];
+                int peer_reg = peer_inst >= 0 ? ra_reg[peer_inst] : -1;
+                if (peer_reg == my_reg && peer != i) {
+                    fdputs("RA_VERIFY: interfering pair shares reg in ", 2);
+                    fdputs(fn_name, 2);
+                    fdputs(": node=", 2); fdputuint(2, i);
+                    fdputs(" peer=", 2); fdputuint(2, peer);
+                    fdputs(" reg=", 2); fdputuint(2, my_reg);
+                    fdputs(" my_color=", 2);
+                    if (my_color >= 0) fdputuint(2, my_color); else fdputs("-", 2);
+                    fdputs("\n", 2);
+                    err = err + 1;
+                    break;  /* one diagnostic per node is enough */
+                }
+                e = gc_adj_next[e];
+            }
+        }
+        i = i + 1;
+    }
+
+    /* (3) Spill-slot collision: two distinct value-producing insts
+     * sharing the same negative-fp offset.  Today this should never
+     * happen because ra_assign_spills hands out a fresh slot per inst,
+     * but assert it -- if a future change adds slot reuse, it must
+     * preserve non-overlapping intervals. */
+    i = 0;
+    while (i < h_ninst) {
+        if (ra_spill_off[i] != 0) {
+            j = i + 1;
+            while (j < h_ninst) {
+                if (ra_spill_off[j] == ra_spill_off[i]) {
+                    fdputs("RA_VERIFY: spill-slot collision in ", 2);
+                    fdputs(fn_name, 2);
+                    fdputs(": inst=", 2); fdputuint(2, i);
+                    fdputs(" inst2=", 2); fdputuint(2, j);
+                    fdputs(" off=", 2);
+                    fdputs("(neg)", 2);
+                    fdputs("\n", 2);
+                    err = err + 1;
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+
+    if (err > 0) {
+        fdputs("RA_VERIFY: ", 2);
+        fdputuint(2, err);
+        fdputs(" failure(s) in ", 2);
+        fdputs(fn_name, 2);
+        fdputs(" -- aborting compile\n", 2);
+        exit(1);
+    }
+}
+
+/* =================================================================
  * Main entry point
  * ================================================================= */
 

@@ -2217,6 +2217,9 @@ static void hx_gen_func(Node *fn) {
     hl_temp_stack = hx_hir_frame_base(fn);
     hx_identify_fusions();
     hir_regalloc();
+    if (getenv("CC_X64_VERIFY")) {
+        ra_verify(fn->name ? fn->name : (char *)"<anon>");
+    }
 
     /* Assign spill slots for GADDR/SADDR/FADDR (regalloc treats them as
      * rematerializable, but we cache relocation results to avoid duplicates) */
