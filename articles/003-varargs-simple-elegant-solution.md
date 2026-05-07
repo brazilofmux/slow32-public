@@ -122,10 +122,10 @@ if (IsVarArg) {
 
 This simplicity cascades through the entire system:
 
-1. **Printf is tiny**: Our printf implementation is under 400 lines of straightforward C, with no assembly required.
-2. **Debugging is trivial**: Arguments are always in the same place on the stack. You can inspect them with a simple memory dump.
-3. **No architecture-specific code**: The same varargs macros work everywhere. Port SLOW32 to a new host? Varargs just works.
-4. **Perfect ABI stability**: The calling convention can't change based on argument types or counts. A varargs function looks the same whether it takes 2 arguments or 20.
+1. **Printf is tiny:** Our printf implementation is under 400 lines of straightforward C, with no assembly required.
+2. **Debugging is trivial:** Arguments are always in the same place on the stack. You can inspect them with a simple memory dump.
+3. **No architecture-specific code:** The same varargs macros work everywhere. Port SLOW32 to a new host? Varargs just works.
+4. **Perfect ABI stability:** The calling convention can't change based on argument types or counts. A varargs function looks the same whether it takes 2 arguments or 20.
 
 ## The Test That Proves It
 
@@ -165,9 +165,9 @@ This compiles to clean, efficient code with no special cases or runtime type det
 
 You might worry about the cost of always spilling 8 registers. Let's analyze:
 
-- **Space**: 32 bytes per varargs call frame
-- **Time**: 8 store instructions in the prologue
-- **Cache**: All arguments are now contiguous and cache-friendly
+- **Space:** 32 bytes per varargs call frame
+- **Time:** 8 store instructions in the prologue
+- **Cache:** All arguments are now contiguous and cache-friendly
 
 In practice, the performance impact is negligible. Our printf benchmark shows no measurable difference from architectures with "optimized" varargs. The simplicity gains far outweigh the microscopic cost.
 

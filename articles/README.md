@@ -9,17 +9,20 @@ This directory contains links and references to Substack articles about SLOW-32 
 ## Article Series Outline
 
 ### Introduction Series
+
 - The Philosophy of SLOW-32: Why Another ISA?
 - Application-Level Assembly: Rethinking the Emulator-OS Boundary
 - Building a Clean Compiler Target from Scratch
 
 ### Technical Deep Dives
+
 - The SLOW-32 Instruction Set: Design Decisions
 - Building an LLVM Backend for a Custom ISA
 - Fast Emulation Without the Baggage
 - The W^X Line: Simple Security by Design
 
 ### Implementation Stories
+
 - From Zero to Hello World in a New ISA
 - Debugging Tools That Actually Help
 - Why 64-bit Integers Were Harder Than Expected

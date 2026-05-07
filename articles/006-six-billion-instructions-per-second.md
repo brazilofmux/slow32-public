@@ -105,8 +105,8 @@ The human job, in this new arrangement, is architecture, invariants, staging, tr
 
 All numbers were collected on an AMD Ryzen 5 3600 (6-core, 3.6 GHz base) running Linux. Each measurement is best-of-three sequential runs. Two workloads:
 
-- **benchmark_core**: Pure compute — integer arithmetic, branching, memory access, 10 million iterations, 285 million guest instructions.
-- **validatecsv_ragel**: A real program — a Ragel-generated goto-driven CSV validator processing 103.6 MB of CSV data, 1.1 billion guest instructions.
+- **benchmark_core:** Pure compute — integer arithmetic, branching, memory access, 10 million iterations, 285 million guest instructions.
+- **validatecsv_ragel:** A real program — a Ragel-generated goto-driven CSV validator processing 103.6 MB of CSV data, 1.1 billion guest instructions.
 
 Five emulators, plus native x86-64 for comparison. The two interpreters and the DBT are mine. The QEMU entry is a custom ~4,000-line TCG backend I wrote for SLOW-32 — a full system emulator that loads `.s32x` binaries, enforces W^X, and handles MMIO, built on top of QEMU's Tiny Code Generator framework. It's included here as an independent baseline: QEMU's TCG does competent block-at-a-time translation, but it doesn't do superblocks, register caching, or peephole optimization. It shows what a mature, general-purpose JIT framework achieves without the specialized work that makes the custom DBT fast.
 
@@ -168,7 +168,7 @@ Every programming environment picks its tradeoffs, and the mainstream options oc
 
 **Rust** gives you both speed and safety through the borrow checker. But it's not simple. The borrow checker is a powerful tool that requires training to use effectively, and not all problems decompose cleanly into ownership graphs. Some patterns that are natural in C or Java require significant contortion in Rust.
 
-SLOW-32 occupies a **fourth corner**: simple, fast enough, sandboxed, but restricted. The sandbox is so small and so cheap that *crashing doesn't matter*. A SLOW-32 instance can be as small as 4 KB. Spawn a thousand of them. If one faults — a bad pointer, a runaway loop, a logic error — kill it and restart. No garbage collector pause, no borrow checker negotiation, no segfault postmortem. Just a disposable microcontroller that happens to run on your existing CPU at billions of instructions per second.
+SLOW-32 occupies a **fourth corner:** simple, fast enough, sandboxed, but restricted. The sandbox is so small and so cheap that *crashing doesn't matter*. A SLOW-32 instance can be as small as 4 KB. Spawn a thousand of them. If one faults — a bad pointer, a runaway loop, a logic error — kill it and restart. No garbage collector pause, no borrow checker negotiation, no segfault postmortem. Just a disposable microcontroller that happens to run on your existing CPU at billions of instructions per second.
 
 **The restricted API is a feature, not a limitation.** A SLOW-32 instance talks to the outside world through a single MMIO ring buffer. That's it. No filesystem access, no network sockets, no shared memory. The host decides what the guest can do. This is the security model of a microcontroller, and it's the simplest security model that actually works.
 
@@ -210,10 +210,10 @@ None of this undermines the core result. The point was never to replace native c
 
 For anyone who wants to follow or contribute, here's where the project is headed:
 
-- **Fast-path MMIO**: The biggest remaining bottleneck is the I/O path. A DMA-style approach where the host maps file data directly into guest address space would bypass the ring buffer copy and close the gap to native.
-- **Offline pre-translation**: Save profiles from JIT runs and use them to pre-warm the block cache on subsequent executions — a hybrid AOT/JIT approach.
-- **RISC-V soft core**: A toy FPGA implementation of SLOW-32, not for speed, but to validate the ISA on real hardware and demonstrate the continuum from FPGA to JIT.
-- **Interrupt support**: For embedded-style use cases where the guest needs to respond to asynchronous events.
+- **Fast-path MMIO:** The biggest remaining bottleneck is the I/O path. A DMA-style approach where the host maps file data directly into guest address space would bypass the ring buffer copy and close the gap to native.
+- **Offline pre-translation:** Save profiles from JIT runs and use them to pre-warm the block cache on subsequent executions — a hybrid AOT/JIT approach.
+- **RISC-V soft core:** A toy FPGA implementation of SLOW-32, not for speed, but to validate the ISA on real hardware and demonstrate the continuum from FPGA to JIT.
+- **Interrupt support:** For embedded-style use cases where the guest needs to respond to asynchronous events.
 
 It's worth noting what I investigated and decided *not* to pursue. Profiling showed that all hot loops already fit in single superblocks, so cross-block register allocation wouldn't help on current workloads. Dispatch overhead is effectively zero — block chaining keeps execution in JIT code without returning to C. And tuning superblock extension thresholds produced identical results across all configurations. The DBT appears to be at the point where further gains require either reducing I/O overhead or moving to hardware.
 
@@ -235,13 +235,13 @@ If you're a systems programmer sitting on a stack of ideas you never had time to
 
 ## Reproducibility
 
-**Repository**: [github.com/brazilofmux/slow32-public](https://github.com/brazilofmux/slow32-public)
+**Repository:** [github.com/brazilofmux/slow32-public](https://github.com/brazilofmux/slow32-public)
 
-**Hardware**: AMD Ryzen 5 3600 (6-core, 3.6 GHz base clock), Linux.
+**Hardware:** AMD Ryzen 5 3600 (6-core, 3.6 GHz base clock), Linux.
 
-**Commit**: [`fcbe528`](https://github.com/brazilofmux/slow32-public/tree/fcbe528) — all emulators built with GCC `-O2`, SLOW-32 programs compiled with Clang/LLC `-O2` via the LLVM backend.
+**Commit:** [`fcbe528`](https://github.com/brazilofmux/slow32-public/tree/fcbe528) — all emulators built with GCC `-O2`, SLOW-32 programs compiled with Clang/LLC `-O2` via the LLVM backend.
 
-**Benchmark commands**:
+**Benchmark commands:**
 ```bash
 # Compute benchmark (instruction counts from slow32-fast, timing from time)
 time ./tools/emulator/slow32-fast benchmark_core.s32x
@@ -252,7 +252,7 @@ FILES=$(find csv2 -name '*.csv' -print)
 time ./tools/dbt/slow32-dbt -4 validatecsv_ragel.s32x $FILES
 ```
 
-**Methodology**: Best of 3 runs, executed sequentially to avoid interference. `slow32-fast` reports instruction counts and wall-clock timing directly. The `-U` flag disables bounds/W^X checks for the "unsafe" comparison. Correctness is validated by diffing output against the reference interpreter.
+**Methodology:** Best of 3 runs, executed sequentially to avoid interference. `slow32-fast` reports instruction counts and wall-clock timing directly. The `-U` flag disables bounds/W^X checks for the "unsafe" comparison. Correctness is validated by diffing output against the reference interpreter.
 
 ---
 

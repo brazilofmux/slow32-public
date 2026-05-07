@@ -111,9 +111,9 @@ The practical consequence for anyone using SLOW-32 is portability with teeth. I 
 
 ## Reproducibility
 
-**Repository**: [github.com/brazilofmux/slow32-public](https://github.com/brazilofmux/slow32-public)
+**Repository:** [github.com/brazilofmux/slow32-public](https://github.com/brazilofmux/slow32-public)
 
-**Trust root**: `selfhost/stage00/s32-emu.c` — 933 lines. Read it.
+**Trust root:** `selfhost/stage00/s32-emu.c` — 933 lines. Read it.
 
 **The chain end to end** (AArch64 today; AMD64 days away):
 
@@ -135,7 +135,7 @@ make                       # produces out/cc-a64 and the AArch64 fast emulator
 
 **Hardware** (AArch64): MacBook Pro, Apple silicon. **Hardware** (x86-64, prior article): AMD Ryzen 5 3600. AMD64 numbers from the closed loop will publish when the cross-compiler closure lands.
 
-**Validation**: every stage in the chain is differential-tested against `s32-emu.c`. If any of them produces different register or memory state on a regression test, the build fails.
+**Validation:** every stage in the chain is differential-tested against `s32-emu.c`. If any of them produces different register or memory state on a regression test, the build fails.
 
 ---
 

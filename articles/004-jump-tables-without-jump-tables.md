@@ -181,7 +181,7 @@ This triggers LLVM's "no jump table" optimization path, which includes:
 - Bit tests for switches with power-of-2 cases
 - Range checks for contiguous cases
 
-## The .word Directive
+## The.word Directive
 
 One crucial piece that makes this work is our assembler's `.word` directive:
 
@@ -205,10 +205,10 @@ Even though SLOW-32 can't jump to these addresses, having them as data enables f
 
 Not having indirect jumps forced us to think differently about switch statements. The result? We often get *better* code than architectures with jump tables:
 
-1. **No Branch Predictor Pollution**: Traditional jump tables confuse branch predictors. Our approach uses predictable conditional branches.
-2. **Better Cache Behavior**: Value tables are more compact than jump tables (4 bytes per entry vs potentially distant code targets).
-3. **Security**: No indirect jumps means no jump-oriented programming (JOP) attacks. Control flow is statically analyzable.
-4. **Simplicity**: The CPU doesn't need to handle indirect branch speculation, BTB entries for computed jumps, or any of that complexity.
+1. **No Branch Predictor Pollution:** Traditional jump tables confuse branch predictors. Our approach uses predictable conditional branches.
+2. **Better Cache Behavior:** Value tables are more compact than jump tables (4 bytes per entry vs potentially distant code targets).
+3. **Security:** No indirect jumps means no jump-oriented programming (JOP) attacks. Control flow is statically analyzable.
+4. **Simplicity:** The CPU doesn't need to handle indirect branch speculation, BTB entries for computed jumps, or any of that complexity.
 
 ## Performance Numbers
 
@@ -232,10 +232,10 @@ The value table approach is unbeatable when applicable. Even when we fall back t
 
 Building a CPU without indirect jumps seemed like a limitation at first. But constraints breed creativity:
 
-1. **Trust the Optimizer**: LLVM's switch lowering is remarkably sophisticated. It found optimizations I never would have thought of.
-2. **Data is Code**: When you can't compute jump addresses, compute data addresses instead. The value table hack is brilliant.
-3. **Profile-Guided Optimization**: Even without jump tables, knowing which cases are common lets LLVM reorder comparisons optimally.
-4. **Simplicity Wins**: Our "limited" architecture generates faster, safer, more predictable code than "full-featured" alternatives.
+1. **Trust the Optimizer:** LLVM's switch lowering is remarkably sophisticated. It found optimizations I never would have thought of.
+2. **Data is Code:** When you can't compute jump addresses, compute data addresses instead. The value table hack is brilliant.
+3. **Profile-Guided Optimization:** Even without jump tables, knowing which cases are common lets LLVM reorder comparisons optimally.
+4. **Simplicity Wins:** Our "limited" architecture generates faster, safer, more predictable code than "full-featured" alternatives.
 
 ## What's Next?
 

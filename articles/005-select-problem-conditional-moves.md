@@ -31,9 +31,9 @@ max:                                    # @max
 
 Wait, what? No branches at all! LLVM generated a completely branchless solution using XOR tricks. This is both impressive and surprising. But at -O0, we see a different story with branches and multiple basic blocks.
 
-## Understanding ISD::SELECT
+## Understanding ISD:: SELECT
 
-In LLVM's intermediate representation, the ternary operator becomes an ISD::SELECT node. It has three operands:
+In LLVM's intermediate representation, the ternary operator becomes an ISD:: SELECT node. It has three operands:
 
 1. A condition (typically i1, a single bit)
 2. The true value
@@ -159,27 +159,27 @@ This is brilliant! It uses the sign bit as a mask to conditionally negate the va
 
 The SELECT story taught us several valuable lessons:
 
-1. **Trust the Optimizer**: LLVM's optimizations are incredibly sophisticated. It can generate branchless code using XOR tricks we didn't even consider.
-2. **Context Matters**: LLVM generates different code at different optimization levels - branches for debuggability at -O0, clever bitwise tricks at -O2.
-3. **Don't Fight the Framework**: Our attempts to "help" LLVM with custom lowering just got in the way of its sophisticated optimization passes.
-4. **The XOR Trick**: LLVM's `a = b ^ ((a ^ b) & mask)` pattern is a beautiful example of branchless programming that works on any architecture.
+1. **Trust the Optimizer:** LLVM's optimizations are incredibly sophisticated. It can generate branchless code using XOR tricks we didn't even consider.
+2. **Context Matters:** LLVM generates different code at different optimization levels - branches for debuggability at -O0, clever bitwise tricks at -O2.
+3. **Don't Fight the Framework:** Our attempts to "help" LLVM with custom lowering just got in the way of its sophisticated optimization passes.
+4. **The XOR Trick:** LLVM's `a = b ^ ((a ^ b) & mask)` pattern is a beautiful example of branchless programming that works on any architecture.
 
 ## The Conditional Move Trap
 
 Why don't we just add conditional move instructions to SLOW-32? It's tempting, but consider:
 
-1. **Pipeline Complexity**: Conditional moves require reading three registers and writing one, all in one instruction. This complicates the register file design.
-2. **No Free Lunch**: ARM discovered this with Thumb-2. Conditional execution looks great but makes out-of-order execution much harder.
-3. **Branch Predictors Are Good**: Modern branch predictors achieve 95%+ accuracy. A predicted branch is often faster than a conditional move.
-4. **Code Density**: Our current solution reuses existing instructions. Adding CMOV would increase the ISA complexity for marginal benefit.
+1. **Pipeline Complexity:** Conditional moves require reading three registers and writing one, all in one instruction. This complicates the register file design.
+2. **No Free Lunch:** ARM discovered this with Thumb-2. Conditional execution looks great but makes out-of-order execution much harder.
+3. **Branch Predictors Are Good:** Modern branch predictors achieve 95%+ accuracy. A predicted branch is often faster than a conditional move.
+4. **Code Density:** Our current solution reuses existing instructions. Adding CMOV would increase the ISA complexity for marginal benefit.
 
 ## Real-World Impact
 
 The impact varies dramatically by optimization level:
 
-- **-O0**: Branch-based code for easy debugging
-- **-O1/-O2**: Branchless XOR magic that's often faster
-- **Pattern Recognition**: LLVM recognizes common patterns like `abs()` and generates specialized sequences
+- **-O0:** Branch-based code for easy debugging
+- **-O1/-O2:** Branchless XOR magic that's often faster
+- **Pattern Recognition:** LLVM recognizes common patterns like `abs()` and generates specialized sequences
 
 The abs_diff function is particularly impressive - LLVM generates just 5 instructions using the sign-bit trick, avoiding branches entirely.
 

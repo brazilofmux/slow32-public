@@ -188,10 +188,10 @@ Both compile correctly and produce the right results. The carry propagates prope
 
 This 64-bit breakthrough was just one chapter in the LLVM backend journey. In upcoming articles, we'll dive into:
 
-- **Varargs Mystery**: Why were arguments appearing in reverse order? (Spoiler: register save ordering)
-- **Jump Tables**: How to implement switch statements without a native jump table instruction
-- **The SELECT Problem**: Why conditional moves are trickier than they look
-- **Calling Convention Crimes**: How we were accidentally clobbering registers across function calls
+- **Varargs Mystery:** Why were arguments appearing in reverse order? (Spoiler: register save ordering)
+- **Jump Tables:** How to implement switch statements without a native jump table instruction
+- **The SELECT Problem:** Why conditional moves are trickier than they look
+- **Calling Convention Crimes:** How we were accidentally clobbering registers across function calls
 
 Each of these has its own "aha!" moment and clever solution.
 
