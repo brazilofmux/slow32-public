@@ -189,7 +189,7 @@ static int ra_norder;
 
 /* Limits */
 #define GC_MAX_NODE  4096
-#define GC_MAX_EDGE  131072
+#define GC_MAX_EDGE  524288
 #define GC_MAX_MOVE  8192
 
 /* Node data */

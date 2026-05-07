@@ -1031,7 +1031,13 @@ static void hx_fold_indexed_addr(void) {
                 hx_addi_base_safe_at_use(add_inst, base_a, i) &&
                 /* For STORE, val also needs a real reg (we only have
                  * 2 scratches; base may need one). */
-                (v_inst < 0 || ra_reg[v_inst] >= 0)) {
+                (v_inst < 0 || ra_reg[v_inst] >= 0) &&
+                /* STORE reads address base and value simultaneously.
+                 * Regalloc only saw the materialized ADDI address as
+                 * the STORE source, so if codegen substitutes base_a,
+                 * it must reject a base/value color collision here. */
+                (v_inst < 0 || ty_is_fp(h_ty[i]) ||
+                 hx_slot_reg(ra_reg[base_a]) != hx_slot_reg(ra_reg[v_inst]))) {
                 if (hx_offset_fold_encodable(disp, access_size)) {
                     hx_off_base[i] = base_a;
                     hx_off_disp[i] = disp;

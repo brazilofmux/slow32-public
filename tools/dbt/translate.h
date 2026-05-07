@@ -37,6 +37,34 @@ extern uint32_t cbz_peephole_count;
 extern uint32_t native_stub_count;
 extern uint32_t stage5_emit_side_exits;
 
+#define REG_ALLOC_SLOTS 8
+
+typedef struct {
+    int8_t  guest_reg;  // -1 = free
+    bool    dirty;      // Value modified since load from memory?
+    int     last_use;   // LRU clock for eviction
+} reg_alloc_slot_t;
+
+typedef struct {
+    int8_t guest_reg;
+    bool   dirty;
+} backedge_snapshot_slot_t;
+
+typedef struct {
+    size_t jmp_patch_offset;    // offset of rel32 in the inline jmp to cold stub
+    uint32_t target_pc;         // guest PC for this side exit
+    int exit_idx;               // exit index for chaining
+    uint32_t branch_pc;         // guest PC of the branch instruction
+    // Snapshot of full register cache state at the point of the branch
+    // (needed because superblock continuation may reassign slots)
+    reg_alloc_slot_t snapshot[REG_ALLOC_SLOTS];
+    // Snapshot of pending write (AArch64 compat, always false on x86-64)
+    bool pending_write_valid;
+    uint8_t pending_write_guest_reg;
+    host_reg_t pending_write_host_reg;
+    bool force_full_flush;
+} deferred_exit_t;
+
 // Translation context
 typedef struct {
     dbt_cpu_state_t *cpu;
@@ -74,12 +102,7 @@ typedef struct {
     uint32_t reg_cache_hits;
     uint32_t reg_cache_misses;
 
-    #define REG_ALLOC_SLOTS 8
-    struct {
-        int8_t  guest_reg;  // -1 = free
-        bool    dirty;      // Value modified since load from memory?
-        int     last_use;   // LRU clock for eviction
-    } reg_alloc[REG_ALLOC_SLOTS];
+    reg_alloc_slot_t reg_alloc[REG_ALLOC_SLOTS];
     int8_t reg_alloc_map[32];   // guest_reg -> slot index, or -1
     int rc_clock;               // LRU timestamp counter
 
@@ -101,10 +124,7 @@ typedef struct {
     // Back-edge cache snapshot: captures reg_alloc state at back-edge target
     // so we can detect if cache is "stable" (no evictions) across the loop body.
     // Stable → zero-cost back-edge (no flush/reload), unstable → reconciliation stub.
-    struct {
-        int8_t guest_reg;
-        bool   dirty;
-    } backedge_snapshot[REG_ALLOC_SLOTS];
+    backedge_snapshot_slot_t backedge_snapshot[REG_ALLOC_SLOTS];
     int8_t backedge_snapshot_map[32];
     bool backedge_snapshot_valid;
 
@@ -179,24 +199,7 @@ typedef struct {
 
     // Out-of-line side exit stubs (deferred to end of block)
     int deferred_exit_count;
-    struct {
-        size_t jmp_patch_offset;    // offset of rel32 in the inline jmp to cold stub
-        uint32_t target_pc;         // guest PC for this side exit
-        int exit_idx;               // exit index for chaining
-        uint32_t branch_pc;         // guest PC of the branch instruction
-        // Snapshot of full register cache state at the point of the branch
-        // (needed because superblock continuation may reassign slots)
-        struct {
-            int8_t  guest_reg;
-            bool    dirty;
-            int     last_use;
-        } snapshot[REG_ALLOC_SLOTS];
-        // Snapshot of pending write (AArch64 compat, always false on x86-64)
-        bool pending_write_valid;
-        uint8_t pending_write_guest_reg;
-        host_reg_t pending_write_host_reg;
-        bool force_full_flush;
-    } deferred_exits[MAX_BLOCK_EXITS];
+    deferred_exit_t deferred_exits[MAX_BLOCK_EXITS];
 } translate_ctx_t;
 
 // Translated block function signature
