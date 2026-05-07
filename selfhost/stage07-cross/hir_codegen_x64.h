@@ -81,7 +81,9 @@ static int hx_has_dx_alloc;
 
 /* Is this type 64-bit on x86-64? */
 static int hx_is_wide(int ty) {
-    return ty_is_ptr(ty) || ty_is_llong(ty);
+    /* "wide" = needs 8-byte memory access on x64.  Pointers, long long,
+     * and double all fit.  Float (4 bytes) does not. */
+    return ty_is_ptr(ty) || ty_is_llong(ty) || ty_is_double(ty);
 }
 
 static void hx_die(char *msg, int idx) {
@@ -263,6 +265,54 @@ static void hx_mat(int inst, int reg) {
         /* No slot (unused value or error) -- zero */
         x64_xor_rr(reg, reg);
     }
+}
+
+/* Load an FP value (float or double) into an XMM register.
+ *
+ * Floating-point HIR values are never assigned to GPRs by regalloc
+ * (see gc_writeback in hir_regalloc_x64.h) — they always live in 8-byte
+ * spill slots.  This helper covers the spill-slot reload path plus a
+ * couple of remat-style cases (HI_FCONST, fall-back zero).
+ *
+ * RAX is used as a scratch GPR for FCONST materialisation. */
+static void hx_load_xmm(int inst, int xmm) {
+    int off;
+    int is_d;
+    if (inst < 0) {
+        x64_xor_rr64(X64_RAX, X64_RAX);
+        x64_movq_xmm_r(xmm, X64_RAX);
+        return;
+    }
+    is_d = ty_is_double(h_ty[inst]);
+    if (h_kind[inst] == HI_FCONST) {
+        /* f64 FCONST not supported; lower never emits one. */
+        x64_mov_ri(X64_RAX, h_val[inst]);
+        x64_movd_xmm_r(xmm, X64_RAX);
+        return;
+    }
+    off = ra_spill_off[inst];
+    if (off != 0) {
+        if (is_d) x64_movsd_rm(xmm, X64_RBP, off);
+        else      x64_movss_rm(xmm, X64_RBP, off);
+        return;
+    }
+    /* No slot — zero (defensive). */
+    x64_xor_rr64(X64_RAX, X64_RAX);
+    if (is_d) x64_movq_xmm_r(xmm, X64_RAX);
+    else      x64_movd_xmm_r(xmm, X64_RAX);
+}
+
+/* Store an XMM value to inst's spill slot.  Width is selected by the
+ * inst's type (float → 4 bytes, double → 8 bytes). */
+static void hx_store_xmm(int inst, int xmm) {
+    int off;
+    int is_d;
+    if (inst < 0) return;
+    off = ra_spill_off[inst];
+    if (off == 0) return;
+    is_d = ty_is_double(h_ty[inst]);
+    if (is_d) x64_movsd_mr(X64_RBP, off, xmm);
+    else      x64_movss_mr(X64_RBP, off, xmm);
 }
 
 /* Store a value to its destination (physical register or spill slot). */
@@ -1574,10 +1624,146 @@ static void hx_emit_inst(int idx) {
         return;
     }
 
-    /* --- Float ops: stub (not supported yet) --- */
-    if (k >= HI_FADD && k <= HI_FCONST) {
-        hx_die("floating-point HIR is not supported yet", idx);
+    /* --- Floating-point ops (SSE2 scalar) ---
+     *
+     * FP values always live in spill slots — codegen loads operands into
+     * XMM0/XMM1 scratch, computes, stores XMM0 back to the dst spill slot.
+     * Comparison results land in a GPR (boolean) via SETcc + SETNP-AND for
+     * IEEE-754 ordered semantics. */
+    if (k == HI_FADD || k == HI_FSUB || k == HI_FMUL || k == HI_FDIV) {
+        int is_d;
+        is_d = ty_is_double(h_ty[idx]);
+        hx_load_xmm(h_src1[idx], X64_XMM0);
+        hx_load_xmm(h_src2[idx], X64_XMM1);
+        if (is_d) {
+            if      (k == HI_FADD) x64_addsd(X64_XMM0, X64_XMM1);
+            else if (k == HI_FSUB) x64_subsd(X64_XMM0, X64_XMM1);
+            else if (k == HI_FMUL) x64_mulsd(X64_XMM0, X64_XMM1);
+            else                   x64_divsd(X64_XMM0, X64_XMM1);
+        } else {
+            if      (k == HI_FADD) x64_addss(X64_XMM0, X64_XMM1);
+            else if (k == HI_FSUB) x64_subss(X64_XMM0, X64_XMM1);
+            else if (k == HI_FMUL) x64_mulss(X64_XMM0, X64_XMM1);
+            else                   x64_divss(X64_XMM0, X64_XMM1);
+        }
+        hx_store_xmm(idx, X64_XMM0);
+        return;
     }
+    if (k == HI_FNEG) {
+        /* Sign-flip via xor with 0x80000000 (f32) / 0x8000_0000_0000_0000 (f64).
+         * Build the mask in RAX, ferry to XMM1, xorps/xorpd. */
+        int is_d;
+        is_d = ty_is_double(h_ty[idx]);
+        hx_load_xmm(h_src1[idx], X64_XMM0);
+        if (is_d) {
+            x64_mov_ri64(X64_RAX, 0, 0x80000000);
+            x64_movq_xmm_r(X64_XMM1, X64_RAX);
+            x64_xorpd(X64_XMM0, X64_XMM1);
+        } else {
+            x64_mov_ri(X64_RAX, 0x80000000);
+            x64_movd_xmm_r(X64_XMM1, X64_RAX);
+            x64_xorps(X64_XMM0, X64_XMM1);
+        }
+        hx_store_xmm(idx, X64_XMM0);
+        return;
+    }
+    if (k == HI_FSQRT) {
+        int is_d;
+        is_d = ty_is_double(h_ty[idx]);
+        hx_load_xmm(h_src1[idx], X64_XMM0);
+        if (is_d) x64_sqrtsd(X64_XMM0, X64_XMM0);
+        else      x64_sqrtss(X64_XMM0, X64_XMM0);
+        hx_store_xmm(idx, X64_XMM0);
+        return;
+    }
+    if (k == HI_FEQ || k == HI_FLT || k == HI_FLE) {
+        /* IEEE-754 ordered semantics: result is (cmp_cc) AND (not unordered).
+         * UCOMI* sets ZF=PF=CF=1 on unordered, so SETNP gives !unordered. */
+        int is_d;
+        int dr;
+        is_d = ty_is_double(h_ty[h_src1[idx]]);
+        hx_load_xmm(h_src1[idx], X64_XMM0);
+        hx_load_xmm(h_src2[idx], X64_XMM1);
+        if (is_d) x64_ucomisd(X64_XMM0, X64_XMM1);
+        else      x64_ucomiss(X64_XMM0, X64_XMM1);
+        if (k == HI_FEQ)      x64_sete(X64_RAX);
+        else if (k == HI_FLT) x64_setb(X64_RAX);
+        else                  x64_setbe(X64_RAX);
+        hx_save_dx();
+        x64_setnp(X64_RDX);
+        x64_and_rr(X64_RAX, X64_RDX);
+        hx_restore_dx_safe(idx);
+        x64_movzx_rr8(X64_RAX, X64_RAX);
+        dr = hx_dst(idx);
+        hx_mov_if_needed(dr, X64_RAX);
+        hx_maybe_spill(idx);
+        return;
+    }
+    if (k == HI_FCVT_ItoF) {
+        /* int → float/double.  Source is in a GPR; pick the right
+         * cvtsi2 form by destination FP width and source GPR width. */
+        int sr;
+        int dst_d;
+        int src_64;
+        sr = hx_src(h_src1[idx], X64_RAX);
+        dst_d = ty_is_double(h_ty[idx]);
+        src_64 = hx_is_wide(h_ty[h_src1[idx]]);
+        if (dst_d) {
+            if (src_64) x64_cvtsi2sd_64(X64_XMM0, sr);
+            else        x64_cvtsi2sd_32(X64_XMM0, sr);
+        } else {
+            if (src_64) x64_cvtsi2ss_64(X64_XMM0, sr);
+            else        x64_cvtsi2ss_32(X64_XMM0, sr);
+        }
+        hx_store_xmm(idx, X64_XMM0);
+        return;
+    }
+    if (k == HI_FCVT_FtoI) {
+        /* float/double → int (truncating).  Source FP width from src,
+         * dest GPR width from dst. */
+        int dr;
+        int src_d;
+        int dst_64;
+        src_d = ty_is_double(h_ty[h_src1[idx]]);
+        dst_64 = hx_is_wide(h_ty[idx]);
+        hx_load_xmm(h_src1[idx], X64_XMM0);
+        dr = hx_dst(idx);
+        if (src_d) {
+            if (dst_64) x64_cvttsd2si_64(dr, X64_XMM0);
+            else        x64_cvttsd2si_32(dr, X64_XMM0);
+        } else {
+            if (dst_64) x64_cvttss2si_64(dr, X64_XMM0);
+            else        x64_cvttss2si_32(dr, X64_XMM0);
+        }
+        hx_maybe_spill(idx);
+        return;
+    }
+    if (k == HI_FCVT_FtoD) {
+        hx_load_xmm(h_src1[idx], X64_XMM0);
+        x64_cvtss2sd(X64_XMM0, X64_XMM0);
+        hx_store_xmm(idx, X64_XMM0);
+        return;
+    }
+    if (k == HI_FCVT_DtoF) {
+        hx_load_xmm(h_src1[idx], X64_XMM0);
+        x64_cvtsd2ss(X64_XMM0, X64_XMM0);
+        hx_store_xmm(idx, X64_XMM0);
+        return;
+    }
+    if (k == HI_FCONST) {
+        /* f64 FCONST (val + val_hi) is not emitted by the current lower
+         * — only f32 constants would land here, and even those are rare
+         * in practice (DBT sources don't use FP literals). */
+        if (ty_is_double(h_ty[idx])) {
+            hx_die("HI_FCONST f64 not supported", idx);
+        }
+        x64_mov_ri(X64_RAX, h_val[idx]);
+        x64_movd_xmm_r(X64_XMM0, X64_RAX);
+        hx_store_xmm(idx, X64_XMM0);
+        return;
+    }
+    /* HI_FADDR is handled by the existing GADDR/SADDR/FADDR remat path
+     * in hx_mat — it produces a GPR address, not an FP value. */
 
     /* --- Varargs --- */
 
@@ -1743,6 +1929,7 @@ static void hx_gen_func(Node *fn) {
      * leave a partial entry on fatal error) */
     cg_func_name[cg_nfuncs] = fn->name;
     cg_func_off[cg_nfuncs] = x64_off;
+    cg_func_is_local[cg_nfuncs] = fn->is_static;
     cg_nfuncs = cg_nfuncs + 1;
 
     /* --- Run HIR pipeline --- */

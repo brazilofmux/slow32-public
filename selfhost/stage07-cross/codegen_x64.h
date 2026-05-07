@@ -47,6 +47,7 @@ static char *cg_glob_name[CG_MAX_GLOBALS];
 static int   cg_glob_size[CG_MAX_GLOBALS];
 static int   cg_glob_init[CG_MAX_GLOBALS]; /* initial value (or 0) */
 static int   cg_glob_has_init[CG_MAX_GLOBALS]; /* 1 if initialized */
+static int   cg_glob_is_local[CG_MAX_GLOBALS]; /* 1 if `static` (file-local) */
 static int   cg_nglobals;
 
 /* --- Function symbol table (for call resolution) --- */
@@ -54,6 +55,7 @@ static int   cg_nglobals;
 
 static char *cg_func_name[CG_MAX_FUNCS];
 static int   cg_func_off[CG_MAX_FUNCS];  /* offset in code buffer */
+static int   cg_func_is_local[CG_MAX_FUNCS]; /* 1 if `static` */
 static int   cg_nfuncs;
 
 /* --- Call patch list (function call relocations) --- */
@@ -1698,7 +1700,19 @@ static void collect_globals(Node *prog) {
     /* Copy parser's global symbol table to codegen's */
     i = 0;
     while (i < ps_nglobals) {
+        /* Skip extern declarations — those don't define storage in this
+         * TU, only reference it.  Used during obj_writer's symbol pass:
+         * if a TU only references an extern global, we need to leave the
+         * symbol UND so the linker pulls in the definition from another
+         * object.  References show up via cg_drelocs (data relocations);
+         * the obj_writer adds an UND symbol for any DRELOC_GLOBAL whose
+         * name isn't in cg_glob_name. */
+        if (ps_gextern[i]) {
+            i = i + 1;
+            continue;
+        }
         cg_glob_name[cg_nglobals] = ps_gname[i];
+        cg_glob_is_local[cg_nglobals] = ps_glocal[i];
 
         /* Compute size */
         if (ps_gsize[i] > 0) {

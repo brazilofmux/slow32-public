@@ -77,6 +77,11 @@ static void fdputuint(int f, int v) {
 /* Skip the frontend's own libc declarations since we provided them above */
 #define S12CC_X64_HOST 1
 
+/* Native f64 codegen via SSE2 scalar instructions.  With this set, the
+ * lower emits HI_F* ops with TY_DOUBLE for f64 binary arithmetic instead
+ * of __fp64_* libcalls; hir_codegen_x64.h handles them directly. */
+#define S12CC_NATIVE_F64 1
+
 /* Include generated lexer — skip its libc preamble */
 /* We handle this by defining the symbols it would declare */
 #include "c_lexer_gen.c"

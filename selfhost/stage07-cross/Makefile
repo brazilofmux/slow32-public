@@ -54,7 +54,8 @@ $(OUT)/crt0.o: $(OUT)/cc-x64
 # the comment at the top of libc_x64/fpu_ops.c).
 
 LIBC_X64_HIR_SRCS = libc_x64/syscalls.c libc_x64/string.c libc_x64/stdio.c \
-                    libc_x64/malloc.c libc_x64/misc.c libc_x64/mmio_ring_x64.c
+                    libc_x64/malloc.c libc_x64/misc.c libc_x64/mmio_ring_x64.c \
+                    libc_x64/extras.c
 LIBC_X64_HIR_OBJS = $(patsubst libc_x64/%.c,$(OUT)/libc_x64_%.o,$(LIBC_X64_HIR_SRCS))
 
 $(OUT)/libc_x64_%.o: libc_x64/%.c $(OUT)/cc-x64

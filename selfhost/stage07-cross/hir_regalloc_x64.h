@@ -1387,6 +1387,15 @@ static void gc_writeback(void) {
         inst = gc_inst[n];
         c = gc_color[n];
         if (c >= 0) {
+            /* Floating-point values never live in a GPR — codegen always
+             * shuttles them through XMM scratch + spill slot.  Leaving the
+             * GPR uncoloured here means ra_assign_spills() will give the
+             * value an 8-byte stack slot and codegen's hx_*_xmm helpers
+             * will load/store via the slot. */
+            if (ty_is_fp(h_ty[inst])) {
+                n = n + 1;
+                continue;
+            }
             ra_reg[inst] = ra_x64_phys[c];
             ra_used[c] = 1;
         }

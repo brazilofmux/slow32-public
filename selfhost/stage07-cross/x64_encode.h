@@ -786,6 +786,8 @@ static void x64_setb(int dst)  { x64_setcc(0x92, dst); }
 static void x64_setae(int dst) { x64_setcc(0x93, dst); }
 static void x64_seta(int dst)  { x64_setcc(0x97, dst); }
 static void x64_setbe(int dst) { x64_setcc(0x96, dst); }
+static void x64_setp(int dst)  { x64_setcc(0x9A, dst); }
+static void x64_setnp(int dst) { x64_setcc(0x9B, dst); }
 
 // ============================================================================
 // Control flow
@@ -887,6 +889,157 @@ static void x64_lfence(void) {
 static void x64_rdtsc(void) {
     x64_byte(0x0F);
     x64_byte(0x31);
+}
+
+// ============================================================================
+// SSE2 scalar — XMM registers and float/double instructions
+// ============================================================================
+//
+// XMM register encoding shares the GPR 0..15 numbering: XMM0..XMM7 ride
+// REX.B=0/0..7, XMM8..XMM15 ride REX.B=1.  Caller-saved across SysV calls.
+
+#define X64_XMM0   0
+#define X64_XMM1   1
+#define X64_XMM2   2
+#define X64_XMM3   3
+#define X64_XMM4   4
+#define X64_XMM5   5
+#define X64_XMM6   6
+#define X64_XMM7   7
+#define X64_XMM8   8
+#define X64_XMM9   9
+#define X64_XMM10 10
+#define X64_XMM11 11
+#define X64_XMM12 12
+#define X64_XMM13 13
+#define X64_XMM14 14
+#define X64_XMM15 15
+
+// Generic SSE2 reg/reg form: <prefix?> <REX?> 0F <op> /r
+//   prefix==0 means no mandatory prefix (e.g., UCOMISS, MOVAPS).
+//   reg field encodes dst, rm field encodes src.
+static void x64_sse_rr(int prefix, int op, int dst, int src) {
+    if (prefix) x64_byte(prefix);
+    x64_rex_emit(x64_rex_rr(dst, src, 0));
+    x64_byte(0x0F);
+    x64_byte(op);
+    x64_byte(MODRM(MOD_DIRECT, dst, src));
+}
+
+// Same with REX.W set (used for cvtsi2s? from 64-bit, cvtts?2si to 64-bit).
+static void x64_sse_rr_w(int prefix, int op, int dst, int src) {
+    if (prefix) x64_byte(prefix);
+    x64_byte(REX_BASE | x64_rex_rr(dst, src, 1));
+    x64_byte(0x0F);
+    x64_byte(op);
+    x64_byte(MODRM(MOD_DIRECT, dst, src));
+}
+
+// SSE2 reg/mem form: <prefix?> <REX?> 0F <op> /r [base+disp]
+static void x64_sse_rm(int prefix, int op, int dst, int base, int disp) {
+    if (prefix) x64_byte(prefix);
+    x64_rex_emit(x64_rex_rr(dst, base, 0));
+    x64_byte(0x0F);
+    x64_byte(op);
+    x64_modrm_mem(dst, base, disp);
+}
+
+// --- f32 (single-precision, F3 prefix) ---
+static void x64_addss(int dst, int src)  { x64_sse_rr(0xF3, 0x58, dst, src); }
+static void x64_subss(int dst, int src)  { x64_sse_rr(0xF3, 0x5C, dst, src); }
+static void x64_mulss(int dst, int src)  { x64_sse_rr(0xF3, 0x59, dst, src); }
+static void x64_divss(int dst, int src)  { x64_sse_rr(0xF3, 0x5E, dst, src); }
+static void x64_sqrtss(int dst, int src) { x64_sse_rr(0xF3, 0x51, dst, src); }
+static void x64_movss_rr(int dst, int src) { x64_sse_rr(0xF3, 0x10, dst, src); }
+static void x64_movss_rm(int dst, int base, int disp) {
+    x64_sse_rm(0xF3, 0x10, dst, base, disp);
+}
+static void x64_movss_mr(int base, int disp, int src) {
+    x64_sse_rm(0xF3, 0x11, src, base, disp);
+}
+
+// --- f64 (double-precision, F2 prefix) ---
+static void x64_addsd(int dst, int src)  { x64_sse_rr(0xF2, 0x58, dst, src); }
+static void x64_subsd(int dst, int src)  { x64_sse_rr(0xF2, 0x5C, dst, src); }
+static void x64_mulsd(int dst, int src)  { x64_sse_rr(0xF2, 0x59, dst, src); }
+static void x64_divsd(int dst, int src)  { x64_sse_rr(0xF2, 0x5E, dst, src); }
+static void x64_sqrtsd(int dst, int src) { x64_sse_rr(0xF2, 0x51, dst, src); }
+static void x64_movsd_rr(int dst, int src) { x64_sse_rr(0xF2, 0x10, dst, src); }
+static void x64_movsd_rm(int dst, int base, int disp) {
+    x64_sse_rm(0xF2, 0x10, dst, base, disp);
+}
+static void x64_movsd_mr(int base, int disp, int src) {
+    x64_sse_rm(0xF2, 0x11, src, base, disp);
+}
+
+// --- Compares (set EFLAGS for ucomi*; ZF/PF/CF) ---
+static void x64_ucomiss(int a, int b) { x64_sse_rr(0,    0x2E, a, b); }
+static void x64_ucomisd(int a, int b) { x64_sse_rr(0x66, 0x2E, a, b); }
+
+// --- Conversions ---
+// CVTSI2SS xmm, r/m32:    int32 → f32
+static void x64_cvtsi2ss_32(int xmm_dst, int gpr_src) {
+    x64_sse_rr(0xF3, 0x2A, xmm_dst, gpr_src);
+}
+// CVTSI2SS xmm, r/m64:    int64 → f32
+static void x64_cvtsi2ss_64(int xmm_dst, int gpr_src) {
+    x64_sse_rr_w(0xF3, 0x2A, xmm_dst, gpr_src);
+}
+// CVTSI2SD xmm, r/m32:    int32 → f64
+static void x64_cvtsi2sd_32(int xmm_dst, int gpr_src) {
+    x64_sse_rr(0xF2, 0x2A, xmm_dst, gpr_src);
+}
+// CVTSI2SD xmm, r/m64:    int64 → f64
+static void x64_cvtsi2sd_64(int xmm_dst, int gpr_src) {
+    x64_sse_rr_w(0xF2, 0x2A, xmm_dst, gpr_src);
+}
+// CVTTSS2SI r32, xmm:    f32 → int32 (truncate)
+static void x64_cvttss2si_32(int gpr_dst, int xmm_src) {
+    x64_sse_rr(0xF3, 0x2C, gpr_dst, xmm_src);
+}
+// CVTTSS2SI r64, xmm:    f32 → int64 (truncate)
+static void x64_cvttss2si_64(int gpr_dst, int xmm_src) {
+    x64_sse_rr_w(0xF3, 0x2C, gpr_dst, xmm_src);
+}
+// CVTTSD2SI r32, xmm:    f64 → int32 (truncate)
+static void x64_cvttsd2si_32(int gpr_dst, int xmm_src) {
+    x64_sse_rr(0xF2, 0x2C, gpr_dst, xmm_src);
+}
+// CVTTSD2SI r64, xmm:    f64 → int64 (truncate)
+static void x64_cvttsd2si_64(int gpr_dst, int xmm_src) {
+    x64_sse_rr_w(0xF2, 0x2C, gpr_dst, xmm_src);
+}
+// CVTSS2SD xmm, xmm:     f32 → f64
+static void x64_cvtss2sd(int dst, int src) { x64_sse_rr(0xF3, 0x5A, dst, src); }
+// CVTSD2SS xmm, xmm:     f64 → f32
+static void x64_cvtsd2ss(int dst, int src) { x64_sse_rr(0xF2, 0x5A, dst, src); }
+
+// --- xmm ↔ gpr bit-pattern moves ---
+// MOVD xmm, r/m32:        gpr32 → xmm (low 32 bits, zero upper)
+static void x64_movd_xmm_r(int xmm_dst, int gpr_src) {
+    x64_sse_rr(0x66, 0x6E, xmm_dst, gpr_src);
+}
+// MOVD r/m32, xmm:        xmm low 32 bits → gpr32
+static void x64_movd_r_xmm(int gpr_dst, int xmm_src) {
+    x64_sse_rr(0x66, 0x7E, xmm_src, gpr_dst);
+}
+// MOVQ xmm, r/m64:        gpr64 → xmm (low 64 bits, zero upper)
+static void x64_movq_xmm_r(int xmm_dst, int gpr_src) {
+    x64_sse_rr_w(0x66, 0x6E, xmm_dst, gpr_src);
+}
+// MOVQ r/m64, xmm:        xmm low 64 bits → gpr64
+static void x64_movq_r_xmm(int gpr_dst, int xmm_src) {
+    x64_sse_rr_w(0x66, 0x7E, xmm_src, gpr_dst);
+}
+
+// --- Bitwise (used for FNEG via XOR with sign mask) ---
+static void x64_xorps(int dst, int src) { x64_sse_rr(0,    0x57, dst, src); }
+static void x64_xorpd(int dst, int src) { x64_sse_rr(0x66, 0x57, dst, src); }
+static void x64_xorps_rm(int dst, int base, int disp) {
+    x64_sse_rm(0, 0x57, dst, base, disp);
+}
+static void x64_xorpd_rm(int dst, int base, int disp) {
+    x64_sse_rm(0x66, 0x57, dst, base, disp);
 }
 
 // ============================================================================

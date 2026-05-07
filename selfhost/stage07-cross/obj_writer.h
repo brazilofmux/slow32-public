@@ -389,22 +389,46 @@ static int obj_write_file(char *filename) {
     obj_add_sym(0, 0, OBJ_SEC_DATA,   OBJ_STB_LOCAL, OBJ_STT_SECTION);
     obj_add_sym(0, 0, OBJ_SEC_BSS,    OBJ_STB_LOCAL, OBJ_STT_SECTION);
 
-    obj_first_global = obj_nsyms; /* = 5 */
-
-    /* Defined functions → STT_FUNC in .text */
+    /* Local symbols (static functions, static globals) — must come
+     * before obj_first_global per ELF symtab layout. */
     i = 0;
     while (i < cg_nfuncs) {
-        obj_add_sym(cg_func_name[i], cg_func_off[i],
-                    OBJ_SEC_TEXT, OBJ_STB_GLOBAL, OBJ_STT_FUNC);
+        if (cg_func_is_local[i]) {
+            obj_add_sym(cg_func_name[i], cg_func_off[i],
+                        OBJ_SEC_TEXT, OBJ_STB_LOCAL, OBJ_STT_FUNC);
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while (i < cg_nglobals) {
+        if (cg_glob_is_local[i]) {
+            obj_add_sym(cg_glob_name[i], cg_glob_data_off[i],
+                        cg_glob_in_bss[i] ? OBJ_SEC_BSS : OBJ_SEC_DATA,
+                        OBJ_STB_LOCAL, OBJ_STT_OBJECT);
+        }
         i = i + 1;
     }
 
-    /* Defined globals → STT_OBJECT in .data or .bss */
+    obj_first_global = obj_nsyms;
+
+    /* Non-static functions → STT_FUNC, STB_GLOBAL */
+    i = 0;
+    while (i < cg_nfuncs) {
+        if (!cg_func_is_local[i]) {
+            obj_add_sym(cg_func_name[i], cg_func_off[i],
+                        OBJ_SEC_TEXT, OBJ_STB_GLOBAL, OBJ_STT_FUNC);
+        }
+        i = i + 1;
+    }
+
+    /* Non-static globals → STT_OBJECT, STB_GLOBAL */
     i = 0;
     while (i < cg_nglobals) {
-        obj_add_sym(cg_glob_name[i], cg_glob_data_off[i],
-                    cg_glob_in_bss[i] ? OBJ_SEC_BSS : OBJ_SEC_DATA,
-                    OBJ_STB_GLOBAL, OBJ_STT_OBJECT);
+        if (!cg_glob_is_local[i]) {
+            obj_add_sym(cg_glob_name[i], cg_glob_data_off[i],
+                        cg_glob_in_bss[i] ? OBJ_SEC_BSS : OBJ_SEC_DATA,
+                        OBJ_STB_GLOBAL, OBJ_STT_OBJECT);
+        }
         i = i + 1;
     }
 
